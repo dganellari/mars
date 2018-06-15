@@ -291,37 +291,40 @@ namespace mars {
         const auto m32 = m(3, 2);
         const auto m33 = m(3, 3);
         
-        return
+        return (m00 == 0. ? 0. : (
         m00 * det(
             Matrix<T, 3, 3>({
                 m11, m12, m13,
                 m21, m22, m23,
                 m31, m32, m33
             
-        }))
-        
-        - m01 * det(
+        }))))
+        -
+        (m01 == 0. ? 0. :
+         m01 * det(
             Matrix<T, 3, 3>({
                 m10, m12, m13,
                 m20, m22, m23,
                 m30, m32, m33
-        }))
-        
-        + m02 * det(
+        })))
+        +
+        (m02 == 0. ? 0. : (
+         m02 * det(
             Matrix<T, 3, 3>({
                 m10, m11, m13,
                 m20, m21, m23,
                 m30, m31, m33
             
-        }))
-        
-        - m03 * det(
+        }))))
+        -
+        (m03 == 0. ? 0. : (
+         m03 * det(
             Matrix<T, 3, 3>({
                 m10, m11, m12,
                 m20, m21, m22,
                 m30, m31, m32
             
-        }));
+        }))));
     }
     
     template<Integer Dim, Integer ManifoldDim>

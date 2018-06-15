@@ -27,12 +27,20 @@ int main(const int argc, const char *argv[])
 	tri2.nodes[1] = 1;
 	tri2.nodes[2] = 2;
 
+	Pentatope4 ptope;
+	ptope.nodes[0] = 0;
+	ptope.nodes[1] = 1;
+	ptope.nodes[2] = 2;
+	ptope.nodes[3] = 3;
+	ptope.nodes[4] = 4;
+
 	std::vector<Vector4r> points4(
 	{
-		{ 2., 0., 0., 0. },
 		{ 0., 0., 0., 0. },
+		{ 2., 0., 0., 0. },
 		{ 0., 2., 0., 0. },
-		{ 0., 0., 2., 0. }
+		{ 0., 0., 2., 0. },
+		{ 0., 0., 0., 2. }
 	});
 
 	std::vector<Vector2r> points2(
@@ -43,12 +51,16 @@ int main(const int argc, const char *argv[])
 	});
 
 	std::cout << "===================" << std::endl;
-	// std::cout << "vol(line2): " << volume(line, points2) << std::endl;
-	// std::cout << "vol(tri2):  " << volume(tri2, points2) << std::endl;
+	std::cout << "vol(line2): " << volume(line, points2) << std::endl;
+	std::cout << "vol(tri2):  " << volume(tri2, points2) << std::endl;
 	std::cout << "vol(tri4):  " << volume(tri4, points4) << std::endl;
-	// std::cout << "vol(tet4):  " << volume(tet, points4) << std::endl;
+	std::cout << "vol(tet4):  " << volume(tet, points4) << std::endl;
+	std::cout << "vol(ptope): " << volume(ptope, points4) << std::endl;
 	std::cout << "===================" << std::endl;
 
+	Matrix<Real, 4, 4> J44;
+	jacobian(ptope, points4, J44); 
+	std::cout << "J(ptope):\n" << J44 << std::endl;
 
 	Matrix<Real, 4, 2> Jtri4;
 	jacobian(tri4, points4, Jtri4);
