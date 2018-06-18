@@ -369,10 +369,14 @@ namespace mars {
 
 
     template<Integer ManifoldDim>
+    using SimplexInterpolator = Matrix< Real,
+                                        ManifoldDim + 1 + Combinations<ManifoldDim + 1, 2>::value,
+                                        ManifoldDim + 1>; 
+
+
+    template<Integer ManifoldDim>
     inline void red_refinement_interpolator(
-        Matrix<Real, 
-               ManifoldDim + 1 + Combinations<ManifoldDim + 1, 2>::value,
-               ManifoldDim + 1> &interp)
+        SimplexInterpolator<ManifoldDim> &interp)
     {
         interp.zero();
 
