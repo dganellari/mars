@@ -1,0 +1,194 @@
+#ifndef MARS_MATRIX_HPP
+#define MARS_MATRIX_HPP 
+
+#include <array>
+#include <initializer_list>
+#include <cmath>
+#include <iostream>
+
+namespace mars {
+
+	template<typename T, Integer Rows, Integer Cols>
+	class Matrix {
+	public:
+		Matrix() {}
+
+	    Matrix(std::initializer_list<T> values)
+	    {
+	        std::copy(std::begin(values), std::end(values), std::begin(this->values));
+	    }
+	    
+	    inline constexpr static Integer rows() { return Rows; }
+	    inline constexpr static Integer cols() { return Cols; }
+	    
+	    inline T &operator()(const Integer i, const Integer j)
+	    {
+	        assert(i < Rows);
+	        assert(j < Cols);
+	        return values[i*cols() + j];
+	    }
+	    
+	    inline const T &operator()(const Integer i, const Integer j) const
+	    {
+	        assert(i < Rows);
+	        assert(j < Cols);
+	        return values[i*cols() + j];
+	    }
+	    
+	    inline void col(const Integer c, const Vector<T, Rows> &v)
+	    {
+	        assert(c < Cols);
+
+	        for(Integer d = 0; d < Rows; ++d) {
+	            (*this)(d, c) = v(d);
+	        }
+	    }
+	        
+	    inline void zero()
+	    {
+	        std::fill(begin(values), end(values), 0.);
+	    }
+
+
+	    void describe(std::ostream &os) const
+	    {
+	        for(Integer i = 0; i < Rows; ++i) {
+	            for(Integer j = 0; j < Cols; ++j) {
+	                os << (*this)(i, j) << " ";
+	            }
+	            os << "\n";
+	        }
+
+	        os << "\n";
+	    }
+
+	    friend std::ostream &operator<<(std::ostream &os, const Matrix &m)
+	    {
+	        m.describe(os);
+	        return os;
+	    }
+
+	    std::array<T, Rows * Cols> values;
+	};
+
+	template<typename T, Integer Rows, Integer Cols>
+	inline T det(const Matrix<T, Rows, Cols> &m)
+	{
+	    if(Rows > Cols) {
+	        Matrix<T, Rows, Rows> m_square;
+	        for(Integer i = 0; i < Rows; ++i) {
+
+	            for(Integer j = 0; j < Cols; ++j) {
+	                m_square(i, j) = m(i, j);
+	            }
+
+	            for(Integer j = Cols; j < Rows; ++j) {
+	                m_square(i, j) = i == j;
+	            }
+	        }
+
+	        return det(m_square);
+	    } else {
+	        Matrix<T, Cols, Cols> m_square;
+
+	        for(Integer j = 0; j < Cols; ++j) {
+	            for(Integer i = 0; i < Rows; ++i) {
+	                m_square(i, j) = m(i, j);
+	            }
+
+	            for(Integer i = Rows; i < Cols; ++i) {
+	                m_square(i, j) = i == j;
+	            }
+	        }
+
+	        return det(m_square);
+	    }
+
+	    
+	}
+	
+	template<typename T>
+	inline T det(const Matrix<T, 1, 1> &m)
+	{
+	    return m(0, 0);
+	}
+	
+	template<typename T>
+	inline T det(const Matrix<T, 2, 2> &m)
+	{
+	    return m(0, 0) * m(1, 1) - m(1, 0) * m(0, 1);
+	}
+	
+	template<typename T>
+	inline T det(const Matrix<T, 3, 3> &m)
+	{
+	    return
+	    m(0,0) * m(1,1) * m(2,2)  +
+	    m(0,1) * m(1,2) * m(2,0)  +
+	    m(0,2) * m(1,0) * m(2,1)  -
+	    m(0,0) * m(1,2) * m(2,1)  -
+	    m(0,1) * m(1,0) * m(2,2)  -
+	    m(0,2) * m(1,1) * m(2,0);
+	}
+	
+	template<typename T>
+	inline T det(const Matrix<T, 4, 4> &m)
+	{
+	    const auto m00 = m(0, 0);
+	    const auto m01 = m(0, 1);
+	    const auto m02 = m(0, 2);
+	    const auto m03 = m(0, 3);
+	    
+	    const auto m10 = m(1, 0);
+	    const auto m11 = m(1, 1);
+	    const auto m12 = m(1, 2);
+	    const auto m13 = m(1, 3);
+	    
+	    const auto m20 = m(2, 0);
+	    const auto m21 = m(2, 1);
+	    const auto m22 = m(2, 2);
+	    const auto m23 = m(2, 3);
+	    
+	    const auto m30 = m(3, 0);
+	    const auto m31 = m(3, 1);
+	    const auto m32 = m(3, 2);
+	    const auto m33 = m(3, 3);
+	    
+	    return (m00 == 0. ? 0. : (
+	    m00 * det(
+	        Matrix<T, 3, 3>({
+	            m11, m12, m13,
+	            m21, m22, m23,
+	            m31, m32, m33
+	        
+	    }))))
+	    -
+	    (m01 == 0. ? 0. :
+	     m01 * det(
+	        Matrix<T, 3, 3>({
+	            m10, m12, m13,
+	            m20, m22, m23,
+	            m30, m32, m33
+	    })))
+	    +
+	    (m02 == 0. ? 0. : (
+	     m02 * det(
+	        Matrix<T, 3, 3>({
+	            m10, m11, m13,
+	            m20, m21, m23,
+	            m30, m31, m33
+	        
+	    }))))
+	    -
+	    (m03 == 0. ? 0. : (
+	     m03 * det(
+	        Matrix<T, 3, 3>({
+	            m10, m11, m12,
+	            m20, m21, m22,
+	            m30, m31, m32
+	        
+	    }))));
+	}
+}
+
+#endif //MARS_MATRIX_HPP

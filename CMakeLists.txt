@@ -4,6 +4,8 @@ project(mars)
 include_directories(.)
 
 list(APPEND MARS_HEADERS 
+	vector.hpp
+	matrix.hpp
 	simplex.hpp
 	)
 
