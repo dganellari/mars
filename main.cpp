@@ -4,10 +4,18 @@
 #include <cassert>
 #include "simplex.hpp"
 #include "lagrange_element.hpp"
+#include "mesh.hpp"
 
 void test_midpoint_index()
 {
 	using namespace mars;
+
+	//tri
+	{
+		const auto i01 = midpoint_index<2>(0, 1); assert(i01 == 3);
+		const auto i02 = midpoint_index<2>(0, 2); assert(i02 == 4);
+		const auto i03 = midpoint_index<2>(1, 2); assert(i03 == 5);
+	}
 
 	//tet
 	{
@@ -39,13 +47,6 @@ void test_midpoint_index()
 	}
 }
 
-namespace mars {
-template<Integer ManifoldDim>
-using SimplexInterpolator = Matrix< Real,
-									ManifoldDim + 1 + Combinations<ManifoldDim + 1, 2>::value,
-									ManifoldDim + 1>; 
-}
-
 void test_red_refinement_interpolator()
 {
 	using namespace mars;
@@ -61,6 +62,43 @@ void test_red_refinement_interpolator()
 	SimplexInterpolator<4> mat4;
 	red_refinement_interpolator<4>(mat4);
 	mat4.describe(std::cout);
+}
+
+void test_red_refinement()
+{
+	using namespace mars;
+
+	Pentatope4 ptope;
+	ptope.nodes[0] = 0;
+	ptope.nodes[1] = 1;
+	ptope.nodes[2] = 2;
+	ptope.nodes[3] = 3;
+	ptope.nodes[4] = 4;
+
+	std::vector<Vector4r> points(
+	{
+		{ 0., 0., 0., 0. },
+		{ 2., 0., 0., 0. },
+		{ 0., 2., 0., 0. },
+		{ 0., 0., 2., 0. },
+		{ 0., 0., 0., 2. }
+	});
+
+	SimplexInterpolator<4> interp;
+	std::array<Pentatope4, 16> sub_simplices;
+	std::vector<Vector4r> sub_points;
+
+	red_refinement<4, 4, 16>(ptope, points, sub_simplices, sub_points, interp);
+
+}
+
+void test_mfem_mesh()
+{	
+	using namespace mars;
+
+	Mesh<4, 4> mesh;
+	read_mesh("../data/cube4d_24.MFEM", mesh);
+	mesh.describe(std::cout);
 }
 
 int main(const int argc, const char *argv[])
@@ -137,5 +175,9 @@ int main(const int argc, const char *argv[])
 
 	test_midpoint_index();
 	test_red_refinement_interpolator();
+	test_red_refinement();
+	test_mfem_mesh();
 	return EXIT_SUCCESS;
 }
+
+

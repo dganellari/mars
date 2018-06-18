@@ -22,6 +22,24 @@ namespace mars {
 	    static const Integer value = 0;
 	};
 
+	template<Integer Base, Integer Expon>
+	class Power {
+	public:
+		static const Integer value = Base * Power<Base, Expon>::value;
+	};
+
+	template<Integer Base>
+	class Power<Base, 1> {
+	public:
+		static const Integer value = Base;
+	};
+
+	template<Integer Base>
+	class Power<Base, 0> {
+	public:
+		static const Integer value = 1;
+	};
+
 	template<Integer N, Integer ChooseM>
 	class Combinations {
 	public:

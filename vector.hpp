@@ -18,6 +18,16 @@ namespace mars {
 	    {
 	        std::copy(std::begin(values), std::end(values), std::begin(this->values));
 	    }
+
+	    friend Vector operator*(const T &factor, const Vector &v)
+	    {
+	    	Vector ret;
+	    	for(Integer i = 0; i < Dim; ++i) {
+	    	    ret(i) = factor * v(i);
+	    	}
+	    	
+	    	return ret;
+	    }
 	    
 	    Vector operator-(const Vector &right) const
 	    {
@@ -37,6 +47,15 @@ namespace mars {
 	        }
 	        
 	        return ret;
+	    }
+
+	    Vector operator+=(const Vector &right)
+	    {
+	        for(Integer i = 0; i < Dim; ++i) {
+	            (*this)(i) += right(i);
+	        }
+	        
+	        return *this;
 	    }
 
 	    Vector operator*(const Vector &right) const

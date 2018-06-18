@@ -68,6 +68,23 @@ namespace mars {
 	        return os;
 	    }
 
+	    template<Integer OtherCols>
+	    inline Matrix<T, Rows, OtherCols> operator * (const Matrix<T, Cols, OtherCols> &other) const
+	    {
+	    	Matrix<T, Rows, OtherCols> ret;
+	    	ret.zero();
+
+	    	for(Integer i = 0; i < Rows; ++i) {
+	    		for(Integer j = 0; j < Cols; ++j) {
+	    			for(Integer k = 0; k < OtherCols; ++k) {
+	    				ret(i, k) += (*this)(i, j) * other(j, k);
+	    			}
+	    		}
+	    	}
+
+	    	return ret;
+	    }
+
 	    std::array<T, Rows * Cols> values;
 	};
 
@@ -103,8 +120,19 @@ namespace mars {
 
 	        return det(m_square);
 	    }
+	}
 
-	    
+	template<typename T, Integer Rows, Integer Cols>
+	Matrix<T, Cols, Rows> transpose(const Matrix<T, Rows, Cols> &mat)
+	{
+		Matrix<T, Cols, Rows> ret;
+		for(Integer i = 0; i < Rows; ++i) {
+			for(Integer j = 0; j < Cols; ++j) {
+				ret(j, i) = mat(i, j);
+			}
+		}
+
+		return ret;
 	}
 	
 	template<typename T>

@@ -92,7 +92,7 @@ namespace mars {
     template<Integer Dim>
     class Simplex<Dim, 2> {
     public:
-        std::array<Integer, 3> sides;
+        // std::array<Integer, 3> sides;
         std::array<Integer, 3> nodes;
         Integer id;
 
@@ -117,7 +117,7 @@ namespace mars {
     template<Integer Dim>
     class Simplex<Dim, 3> {
     public:
-        std::array<Integer, 4> sides;
+        // std::array<Integer, 4> sides;
         std::array<Integer, 4> nodes;
         Integer id;
 
@@ -146,7 +146,7 @@ namespace mars {
     template<Integer Dim>
     class Simplex<Dim, 4> {
     public:
-        std::array<Integer, 5> sides;
+        // std::array<Integer, 5> sides;
         std::array<Integer, 5> nodes;
         Integer id;
 
@@ -173,6 +173,70 @@ namespace mars {
             
             return ref_;
         }
+
+        void side(
+            const Integer &side_num,
+            Simplex<Dim, 3> &side) const
+        {
+            switch(side_num)
+            {
+                case 0:
+                {
+                    side.nodes[0] = nodes[0];
+                    side.nodes[1] = nodes[1];
+                    side.nodes[2] = nodes[2];
+                    side.nodes[3] = nodes[3];
+                    break;
+                }
+
+                case 1:
+                {   
+                    side.nodes[0] = nodes[0];
+                    side.nodes[1] = nodes[1];
+                    side.nodes[2] = nodes[3];
+                    side.nodes[3] = nodes[4];
+                    break;
+                }
+
+                case 2:
+                {   
+                    side.nodes[0] = nodes[0];
+                    side.nodes[1] = nodes[4];
+                    side.nodes[2] = nodes[2];
+                    side.nodes[3] = nodes[3];
+                    break;
+                }
+
+                case 3:
+                {   
+                    side.nodes[0] = nodes[0];
+                    side.nodes[1] = nodes[1];
+                    side.nodes[2] = nodes[2];
+                    side.nodes[3] = nodes[3];
+                    break;
+                }
+
+                case 4:
+                {   
+                    side.nodes[0] = nodes[3];
+                    side.nodes[1] = nodes[1];
+                    side.nodes[2] = nodes[4];
+                    side.nodes[3] = nodes[2];
+                    break;
+                }
+
+                default: {
+                    assert(false);
+                    break;
+                }
+            }
+        }
+    };
+
+    template<Integer ManifoldDim>
+    class NSubSimplices {
+    public:
+        static const Integer value = Power<2, ManifoldDim>::value;
     };
     
     template<Integer Dim, Integer ManifoldDim>
@@ -201,6 +265,65 @@ namespace mars {
         const auto ip1 = i + 1;
         const auto jp1 = j + 1;
         return ((ip1 - 1) * (ManifoldDim - (ip1/2.)) + jp1 + ManifoldDim) - 1;
+    }
+
+    template<Integer Dim>
+    inline void fixed_red_refinement(std::array<Simplex<Dim, 1>, 2> &sub_simplices)
+    {
+        sub_simplices[0].nodes = {0, 2};
+        sub_simplices[1].nodes = {2, 1};
+    }
+
+    template<Integer Dim>
+    inline void fixed_red_refinement(std::array<Simplex<Dim, 2>, 4> &sub_simplices)
+    {
+        sub_simplices[0].nodes = {0, 3, 4};
+        sub_simplices[1].nodes = {1, 5, 3};
+        sub_simplices[2].nodes = {2, 4, 5};
+        sub_simplices[3].nodes = {3, 5, 4};
+    }
+
+    template<Integer Dim>
+    inline void fixed_red_refinement(std::array<Simplex<Dim, 3>, 8> &sub_simplices)
+    {
+        //corner tets
+        sub_simplices[0].nodes = {0, 4, 5, 6};
+        sub_simplices[1].nodes = {4, 1, 7, 8};
+        sub_simplices[2].nodes = {5, 7, 2, 9};
+        sub_simplices[3].nodes = {6, 8, 9, 3};
+
+        //octahedron tets
+        sub_simplices[4].nodes = {4, 7, 5, 8};
+        sub_simplices[5].nodes = {4, 8, 5, 6};
+        sub_simplices[6].nodes = {6, 8, 5, 9};
+        sub_simplices[7].nodes = {7, 6, 5, 9};
+    }
+
+    inline void fixed_red_refinement(std::array<Simplex<4, 4>, 16> &sub_simplices)
+    {
+        sub_simplices[0].nodes  = {0, 5, 7, 8, 9};
+        sub_simplices[1].nodes  = {5, 1, 9, 10, 11};
+       
+        sub_simplices[2].nodes  = {6, 9, 2, 12, 13};
+        sub_simplices[3].nodes  = {7, 10, 12, 3, 14};
+       
+        sub_simplices[4].nodes  = {8, 11, 13, 14, 4}; 
+        sub_simplices[5].nodes  = {7, 8, 10, 12, 14};
+
+        sub_simplices[6].nodes  = {6, 8, 9, 12, 13};
+        sub_simplices[7].nodes  = {6, 7, 8, 9, 12};
+
+        sub_simplices[8].nodes  = {8, 9, 12, 13, 14};
+        sub_simplices[9].nodes  = {5, 8, 9, 10, 11};
+
+        sub_simplices[10].nodes = {5, 7, 8, 9, 10};
+        sub_simplices[11].nodes = {8, 9, 10, 11, 14};
+
+        sub_simplices[12].nodes = {5, 6, 7, 8, 9};
+        sub_simplices[13].nodes = {8, 9, 11, 13, 14};
+
+        sub_simplices[14].nodes = {8, 9, 10, 12, 14};
+        sub_simplices[15].nodes = {7, 8, 9, 10, 12};
     }
     
     template<Integer Dim, Integer ManifoldDim>
@@ -264,66 +387,29 @@ namespace mars {
         return ref_vol * det(J);
     }
 
-    inline Vector4r normal(
-    	const Vector4r &x0,
-    	const Vector4r &x1,
-    	const Vector4r &x2,
-    	const Vector4r &x3) {
 
-      	Vector4r ret;
-
-      	//row 1
-      	const Real m10 = x1(0) - x0(0);
-      	const Real m11 = x1(1) - x0(1);
-      	const Real m12 = x1(2) - x0(2);
-      	const Real m13 = x1(3) - x0(3);
-
-      	//row 2
-      	const Real m20 = x2(0) - x0(0);
-      	const Real m21 = x2(1) - x0(1);
-      	const Real m22 = x2(2) - x0(2);
-      	const Real m23 = x2(3) - x0(3);
-
-      	//row 3
-      	const Real m30 = x3(0) - x0(0);
-      	const Real m31 = x3(1) - x0(1);
-      	const Real m32 = x3(2) - x0(2);
-      	const Real m33 = x3(3) - x0(3);
-
-      	ret[0] = det(
-            Matrix<Real, 3, 3>({
-                m11, m12, m13,
-                m21, m22, m23,
-                m31, m32, m33
-        }));
+    template<Integer Dim, Integer ManifoldDim>
+    inline Real unsigned_volume(const Simplex<Dim, ManifoldDim>  &simplex,
+                                const std::vector<Vector<Real, Dim>> &points)
+    {
+        static_assert(Dim >= ManifoldDim, "Dim must be greater or equal ManifoldDim");
         
-        ret[1] = -det(
-            Matrix<Real, 3, 3>({
-                m10, m12, m13,
-                m20, m22, m23,
-                m30, m32, m33
-        }));
-        
-        ret[2] = det(
-            Matrix<Real, 3, 3>({
-                m10, m11, m13,
-                m20, m21, m23,
-                m30, m31, m33
-        }));
-        
-        ret[3] = -det(
-            Matrix<Real, 3, 3>({
-                m10, m11, m12,
-                m20, m21, m22,
-                m30, m31, m32
-        }));
+        Matrix<Real, Dim, ManifoldDim> J;
+        jacobian(simplex, points, J);
 
-        ret.normalize();
-
-        return ret;
+        //this hack does not work (must find submanifold plane and compute volume there)
+        // if(!check_and_fix_jac(J)) {
+        //     return 0.;
+        // }
+        auto ref_vol = (1./Factorial<ManifoldDim>::value);
+        
+        if(Dim > ManifoldDim) {
+          Matrix<Real, ManifoldDim, ManifoldDim> JtJ = transpose(J) * J;
+          return ref_vol * std::sqrt(det(JtJ));
+        } else {
+            return ref_vol * std::abs(det(J));
+        }
     }
-
-  
 
     template<Integer Dim, Integer ManifoldDim>
     inline Vector<Real, Dim> normal(
@@ -364,6 +450,7 @@ namespace mars {
         if(apply_normalization) {
             ret.normalize();
         }
+
         return ret;
     }
 
@@ -391,6 +478,34 @@ namespace mars {
                 interp(offset, j) = 0.5;
             }
         }
+    }
+
+    template<Integer Dim, Integer ManifoldDim>
+    void refine_points(
+        const std::vector<Vector<Real, Dim>> &parent_points,
+        const SimplexInterpolator<ManifoldDim> &interp,
+        std::vector<Vector<Real, Dim>> &children_points)
+    {
+        children_points.resize(interp.rows());
+        for(Integer i = 0; i < interp.rows(); ++i) {
+            children_points[i].zero();
+            for(Integer j = 0; j < interp.cols(); ++j) {
+                children_points[i] += interp(i, j) * parent_points[j];
+            }
+        }
+    }
+
+    template<Integer Dim, Integer ManifoldDim, Integer NSubs>
+    void red_refinement(
+        const Simplex<Dim, ManifoldDim> &parent,
+        const std::vector<Vector<Real, Dim>> &parent_points,
+        std::array<Simplex<Dim, ManifoldDim>, NSubs> &children, 
+        std::vector<Vector<Real, Dim>> &children_points,
+        SimplexInterpolator<ManifoldDim> &interp)
+    {
+        red_refinement_interpolator<ManifoldDim>(interp);
+        refine_points<Dim, ManifoldDim>(parent_points, interp, children_points);
+        fixed_red_refinement(children);
     }
 }
 
