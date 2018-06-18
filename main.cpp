@@ -1,7 +1,67 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <cassert>
 #include "simplex.hpp"
+#include "lagrange_element.hpp"
+
+void test_midpoint_index()
+{
+	using namespace mars;
+
+	//tet
+	{
+		const auto i01 = midpoint_index<3>(0, 1); assert(i01 == 4);
+		const auto i02 = midpoint_index<3>(0, 2); assert(i02 == 5);
+		const auto i03 = midpoint_index<3>(0, 3); assert(i03 == 6);
+
+		const auto i04 = midpoint_index<3>(1, 2); assert(i04 == 7);
+		const auto i13 = midpoint_index<3>(1, 3); assert(i13 == 8);
+
+		const auto i23 = midpoint_index<3>(2, 3); assert(i23 == 9);
+	}
+
+	//pentatope
+	{
+		const auto i01 = midpoint_index<4>(0, 1); assert(i01 == 5);
+		const auto i02 = midpoint_index<4>(0, 2); assert(i02 == 6);
+		const auto i03 = midpoint_index<4>(0, 3); assert(i03 == 7);
+		const auto i04 = midpoint_index<4>(0, 4); assert(i04 == 8);
+
+		const auto i12 = midpoint_index<4>(1, 2); assert(i12 == 9);
+		const auto i13 = midpoint_index<4>(1, 3); assert(i13 == 10);
+		const auto i14 = midpoint_index<4>(1, 4); assert(i14 == 11);
+
+		const auto i23 = midpoint_index<4>(2, 3); assert(i23 == 12);
+		const auto i24 = midpoint_index<4>(2, 4); assert(i24 == 13);
+
+		const auto i34 = midpoint_index<4>(3, 4); assert(i34 == 14);
+	}
+}
+
+namespace mars {
+template<Integer ManifoldDim>
+using SimplexInterpolator = Matrix< Real,
+									ManifoldDim + 1 + Combinations<ManifoldDim + 1, 2>::value,
+									ManifoldDim + 1>; 
+}
+
+void test_red_refinement_interpolator()
+{
+	using namespace mars;
+
+	SimplexInterpolator<2> mat2;
+	red_refinement_interpolator<2>(mat2);
+	mat2.describe(std::cout);
+
+	SimplexInterpolator<3> mat3;
+	red_refinement_interpolator<3>(mat3);
+	mat3.describe(std::cout);
+
+	SimplexInterpolator<4> mat4;
+	red_refinement_interpolator<4>(mat4);
+	mat4.describe(std::cout);
+}
 
 int main(const int argc, const char *argv[])
 {
@@ -74,5 +134,8 @@ int main(const int argc, const char *argv[])
 	std::cout << n1 << std::endl;
 	std::cout << n3 << std::endl;
 	std::cout << n4 << std::endl;
+
+	test_midpoint_index();
+	test_red_refinement_interpolator();
 	return EXIT_SUCCESS;
 }

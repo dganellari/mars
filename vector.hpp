@@ -110,9 +110,10 @@ namespace mars {
 	        return *this;
 	    }
 
-	    inline void zero()
+	    inline Vector &zero()
 	    {
 	        std::fill(begin(values), end(values), 0.);
+	        return *this;
 	    }
 	};
 }

@@ -62,6 +62,12 @@ namespace mars {
     class Simplex<Dim, 0> {
     public:
         Integer id;
+
+        inline static std::vector<Vector<Real, Dim>> &ref()
+        {
+            static std::vector<Vector<Real, Dim>> ref_(1, Vector<Real, Dim>().zero());
+            return ref_;
+        }
     };
     
     template<Integer Dim>
@@ -69,6 +75,18 @@ namespace mars {
     public:
         std::array<Integer, 2> nodes;
         Integer id;
+
+        inline static std::vector<Vector<Real, Dim>> &ref()
+        {
+            static std::vector<Vector<Real, Dim>> ref_;
+            if(ref_.empty()) {
+                ref_.resize(2);
+                ref_[0] = Vector<Real, Dim>().zero();
+                ref_[1] = Vector<Real, Dim>().zero();
+                ref_[1](0) = 1.;
+            }
+            return ref_;
+        }
     };
     
     template<Integer Dim>
@@ -77,6 +95,23 @@ namespace mars {
         std::array<Integer, 3> sides;
         std::array<Integer, 3> nodes;
         Integer id;
+
+
+        inline static std::vector<Vector<Real, Dim>> &ref()
+        {
+            static std::vector<Vector<Real, Dim>> ref_;
+            if(ref_.empty()) {
+                ref_.resize(3);
+                ref_[0] = Vector<Real, Dim>().zero();
+                ref_[1] = Vector<Real, Dim>().zero();
+                ref_[1](0) = 1.;
+
+                ref_[2] = Vector<Real, Dim>().zero();
+                ref_[2](1) = 1.;
+            }
+
+            return ref_;
+        }
     };
     
     template<Integer Dim>
@@ -85,6 +120,27 @@ namespace mars {
         std::array<Integer, 4> sides;
         std::array<Integer, 4> nodes;
         Integer id;
+
+
+        inline static std::vector<Vector<Real, Dim>> &ref()
+        {
+            static std::vector<Vector<Real, Dim>> ref_;
+            if(ref_.empty()) {
+                ref_.resize(4);
+                ref_[0] = Vector<Real, Dim>().zero();
+               
+                ref_[1] = Vector<Real, Dim>().zero();
+                ref_[1](0) = 1.;
+
+                ref_[2] = Vector<Real, Dim>().zero();
+                ref_[2](1) = 1.;
+
+                ref_[3] = Vector<Real, Dim>().zero();
+                ref_[3](2) = 1.;
+            }
+            
+            return ref_;
+        }
     };
     
     template<Integer Dim>
@@ -93,6 +149,30 @@ namespace mars {
         std::array<Integer, 5> sides;
         std::array<Integer, 5> nodes;
         Integer id;
+
+
+        inline static std::vector<Vector<Real, Dim>> &ref()
+        {
+            static std::vector<Vector<Real, Dim>> ref_;
+            if(ref_.empty()) {
+                ref_.resize(5);
+                ref_[0] = Vector<Real, Dim>().zero();
+               
+                ref_[1] = Vector<Real, Dim>().zero();
+                ref_[1](0) = 1.;
+
+                ref_[2] = Vector<Real, Dim>().zero();
+                ref_[2](1) = 1.;
+
+                ref_[3] = Vector<Real, Dim>().zero();
+                ref_[3](2) = 1.;
+
+                ref_[4] = Vector<Real, Dim>().zero();
+                ref_[4](3) = 1.;
+            }
+            
+            return ref_;
+        }
     };
     
     template<Integer Dim, Integer ManifoldDim>
@@ -111,6 +191,16 @@ namespace mars {
     inline constexpr static Integer n_dims(const Simplex<Dim, ManifoldDim> &)
     {
         return Dim;
+    }
+
+    template<Integer ManifoldDim>
+    inline Integer midpoint_index(
+        const Integer i,
+        const Integer j)
+    {
+        const auto ip1 = i + 1;
+        const auto jp1 = j + 1;
+        return ((ip1 - 1) * (ManifoldDim - (ip1/2.)) + jp1 + ManifoldDim) - 1;
     }
     
     template<Integer Dim, Integer ManifoldDim>
@@ -233,6 +323,8 @@ namespace mars {
         return ret;
     }
 
+  
+
     template<Integer Dim, Integer ManifoldDim>
     inline Vector<Real, Dim> normal(
         const Simplex<Dim, ManifoldDim>      &simplex,
@@ -273,6 +365,28 @@ namespace mars {
             ret.normalize();
         }
         return ret;
+    }
+
+
+    template<Integer ManifoldDim>
+    inline void red_refinement_interpolator(
+        Matrix<Real, 
+               ManifoldDim + 1 + Combinations<ManifoldDim + 1, 2>::value,
+               ManifoldDim + 1> &interp)
+    {
+        interp.zero();
+
+        for(Integer i = 0; i < ManifoldDim + 1; ++i) {
+            interp(i, i) = 1.;
+        }
+
+        for(Integer i = 0; i < ManifoldDim + 1; ++i) {
+            for(Integer j = i + 1; j < ManifoldDim + 1; ++j) {
+                Integer offset = midpoint_index<ManifoldDim>(i, j); 
+                interp(offset, i) = 0.5;
+                interp(offset, j) = 0.5;
+            }
+        }
     }
 }
 

@@ -21,6 +21,12 @@ namespace mars {
 	public:
 	    static const Integer value = 0;
 	};
+
+	template<Integer N, Integer ChooseM>
+	class Combinations {
+	public:
+		static const Integer value = Factorial<N>::value/(Factorial<ChooseM>::value * Factorial<N-ChooseM>::value);
+	};
 }
 
 #endif //MARS_STATIC_MATH_HPP
