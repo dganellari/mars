@@ -104,8 +104,8 @@ void test_mfem_mesh()
 	// mesh.describe_dual_graph(std::cout);
 
 	mesh.refine_element(0);
-	// mesh.describe(std::cout, true);
-	mesh.describe(std::cout, false);
+	mesh.describe(std::cout, true);
+	// mesh.describe(std::cout, false);
 }
 
 int main(const int argc, const char *argv[])

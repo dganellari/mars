@@ -306,6 +306,45 @@ namespace mars {
 
     inline void fixed_red_refinement(std::array<Simplex<4, 4>, 16> &sub_simplices)
     {
+        sub_simplices[0].nodes  = {0, 5, 6, 7, 8};
+        sub_simplices[1].nodes  = {5, 1, 9, 10, 11};
+        
+        sub_simplices[2].nodes  = {6, 9, 2, 12, 13};
+        sub_simplices[3].nodes  = {7, 10, 12, 3, 14};
+        
+        sub_simplices[4].nodes  = {8, 11, 13, 14, 4}; 
+        //wrong
+        // sub_simplices[5].nodes  = {5, 8, 9, 12, 14};
+        sub_simplices[5].nodes  = {5, 8, 9, 14, 12};
+
+        //wrong
+        // sub_simplices[6].nodes  = {5, 7, 8, 12, 14};
+        sub_simplices[6].nodes  = {5, 7, 8, 14, 12};
+        sub_simplices[7].nodes  = {6, 8, 9, 12, 13};
+
+        //wrong
+        // sub_simplices[8].nodes  = {5, 6, 7, 8, 12};
+        sub_simplices[8].nodes  = {5, 6, 7, 12, 8};
+        sub_simplices[9].nodes  = {8, 9, 12, 14, 15};
+
+        sub_simplices[10].nodes = {5, 8, 9, 11, 14};
+        sub_simplices[11].nodes = {5, 7, 10, 12, 14};
+
+        //wrong
+        // sub_simplices[12].nodes = {5, 9, 10, 12, 14};
+        sub_simplices[12].nodes = {5, 9, 10, 14, 12};
+        //wrong
+        // sub_simplices[13].nodes = {5, 6, 8, 9, 12};
+        sub_simplices[13].nodes = {5, 6, 8, 12, 9};
+
+        sub_simplices[14].nodes = {8, 9, 11, 13, 14};
+        //wrong
+        // sub_simplices[15].nodes = {5, 9, 10, 12, 14};
+        sub_simplices[15].nodes = {5, 9, 10, 14, 12};
+    }
+
+    inline void non_cyclic_fixing(std::array<Simplex<4, 4>, 16> &sub_simplices)
+    {
         sub_simplices[0].nodes  = {0, 5, 7, 8, 9};
         sub_simplices[1].nodes  = {5, 1, 9, 10, 11};
        

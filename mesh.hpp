@@ -108,13 +108,13 @@ namespace mars {
 				point_ids.push_back( add_point(p) );
 			}
 
-			Integer c_ind = 0;
+			// Integer c_ind = 0;
 			for(auto &c : children) {
 				for(Integer i = 0; i < ManifoldDim + 1; ++i) {
 					c.nodes[i] = point_ids[c.nodes[i]];
 				}
 
-				std::cout << c_ind++ << std::endl;
+				// std::cout << c_ind++ << std::endl;
 				repair_element(add_elem(c), true);
 			}
 
@@ -146,10 +146,10 @@ namespace mars {
 			}
 		}
 
-		void repair()
+		void repair(const bool verbose = false)
 		{
 			for(std::size_t i = 0; i < elements_.size(); ++i) {
-				repair_element(i);
+				repair_element(i, verbose);
 			}
 		}
 
@@ -352,7 +352,7 @@ namespace mars {
 		std::vector< std::shared_ptr<SimplexInterpolator<ManifoldDim>> > interp_;
 	};
 
-	bool read_mesh(const std::string &path, Mesh<4, 4> &mesh)
+	bool read_mesh(const std::string &path, Mesh<4, 4> &mesh, const bool verbose = false)
 	{
 		std::ifstream is(path);
 		if(!is.good()) {
@@ -414,7 +414,7 @@ namespace mars {
 
 		is.close();
 
-		mesh.repair();
+		mesh.repair(verbose);
 		return true;
 	}
 
