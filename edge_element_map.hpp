@@ -62,7 +62,6 @@ namespace mars {
 		void build(const Mesh<Dim, ManifoldDim> &mesh)
 		{	
 			auto ne = mesh.n_elements();
-
 			for(Integer i = 0; i < ne; ++i) {
 				update(mesh.elem(i));
 			}
