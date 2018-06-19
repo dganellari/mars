@@ -80,6 +80,8 @@ namespace mars {
 			for(std::size_t i = 0; i < elements_.size(); ++i) {
 				const auto &e = elements_[i];
 				const Real vol = volume(e, points_);
+				const auto b   = barycenter(e, points_);
+
 				os << "---------------------------------\n";
 				os << "[" << i << "]: vol: " << vol << ", ";
 				for(auto v : e.nodes) {
@@ -91,14 +93,17 @@ namespace mars {
 				Simplex<Dim, ManifoldDim-1> side;
 				Matrix<Real, Dim, Dim-1> J;
 
-				os << "sides:";
+				os << "sides:\n";
 				for(Integer k = 0; k < n_sides(e); ++k) {
 					e.side(k, side);
 					os << "==============\n";
 					jacobian(side, points_, J);
-					const Real area   = volume(side, points_);
+		
+					const auto n = normal(side, points_);
+					const auto sign = dot(points_[side.nodes[0]] - b, n) > 0? 1 : -1;
 					const Real u_area = unsigned_volume(side, points_);
-					
+					const Real area   = sign * u_area;
+
 					J.describe(os);
 					os << area << " == " << u_area << std::endl;
 				}

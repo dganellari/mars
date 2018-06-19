@@ -58,6 +58,15 @@ namespace mars {
 	        return *this;
 	    }
 
+	    Vector operator/=(const T &right)
+	    {
+	        for(Integer i = 0; i < Dim; ++i) {
+	            (*this)(i) /= right;
+	        }
+	        
+	        return *this;
+	    }
+
 	    Vector operator*(const Vector &right) const
 	    {
 	        Vector ret;
@@ -135,6 +144,17 @@ namespace mars {
 	        return *this;
 	    }
 	};
+
+	template<typename T, Integer Dim>
+	inline T dot(const Vector<T, Dim> &left, const Vector<T, Dim> &right)
+	{
+		T ret = 0.;
+		for(Integer d = 0; d < Dim; ++d) {
+			ret += left(d) * right(d);
+		}
+
+		return ret;
+	}
 }
 
 #endif //MARS_VECTOR_HPP

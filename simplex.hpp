@@ -201,9 +201,9 @@ namespace mars {
                 case 2:
                 {   
                     side.nodes[0] = nodes[0];
-                    side.nodes[1] = nodes[4];
+                    side.nodes[1] = nodes[3];
                     side.nodes[2] = nodes[2];
-                    side.nodes[3] = nodes[3];
+                    side.nodes[3] = nodes[4];
                     break;
                 }
 
@@ -218,9 +218,9 @@ namespace mars {
 
                 case 4:
                 {   
-                    side.nodes[0] = nodes[3];
+                    side.nodes[0] = nodes[4];
                     side.nodes[1] = nodes[1];
-                    side.nodes[2] = nodes[4];
+                    side.nodes[2] = nodes[3];
                     side.nodes[3] = nodes[2];
                     break;
                 }
@@ -409,6 +409,22 @@ namespace mars {
         } else {
             return ref_vol * std::abs(det(J));
         }
+    }
+
+    template<Integer Dim, Integer ManifoldDim>
+    inline Vector<Real, Dim> barycenter(
+        const Simplex<Dim, ManifoldDim>      &simplex,
+        const std::vector<Vector<Real, Dim>> &points)
+    {
+        Vector<Real, Dim> b;
+        b.zero();
+
+        for(Integer i = 0; i < n_nodes(simplex); ++i) {
+            b += points[simplex.nodes[i]];
+        }
+
+        b /= n_nodes(simplex);
+        return b;
     }
 
     template<Integer Dim, Integer ManifoldDim>
