@@ -2,6 +2,7 @@
 #define MARS_MESH_HPP
 
 #include "simplex.hpp"
+#include "edge_element_map.hpp"
 
 #include <vector>
 #include <array>
@@ -10,6 +11,14 @@
 #include <memory>
 
 namespace mars {
+	enum RefinementFlag {
+		NONE = 0,
+		RED = 1,
+		GREEN_1 = 2,
+		GREEN_2 = 3,
+		GREEN_3 = 4,
+	};
+
 	template<Integer Dim, Integer ManifoldDim = Dim>
 	class Mesh {
 	public:
@@ -76,7 +85,7 @@ namespace mars {
 			}
 		}		
 
-		inline void refine_element(const Integer element_id)
+		inline void red_refine_element(const Integer element_id)
 		{
 			static const Integer NSubs = NSubSimplices<ManifoldDim>::value;
 			static_assert(NSubSimplices<ManifoldDim>::value > 0, "!");

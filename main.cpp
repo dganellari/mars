@@ -103,7 +103,7 @@ void test_mfem_mesh()
 	mesh.build_dual_graph();
 	// mesh.describe_dual_graph(std::cout);
 
-	mesh.refine_element(0);
+	mesh.red_refine_element(0);
 	mesh.describe(std::cout, true);
 	// mesh.describe(std::cout, false);
 }
