@@ -99,6 +99,9 @@ void test_mfem_mesh()
 	Mesh<4, 4> mesh;
 	read_mesh("../data/cube4d_24.MFEM", mesh);
 	mesh.describe(std::cout);
+
+	mesh.build_dual_graph();
+	mesh.describe_dual_graph(std::cout);
 }
 
 int main(const int argc, const char *argv[])

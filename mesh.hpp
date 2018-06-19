@@ -25,6 +25,11 @@ namespace mars {
 			return elements_[id];
 		}
 
+		inline const Simplex<Dim, ManifoldDim> &elem(const Integer id) const
+		{
+			return elements_[id];
+		}
+
 		inline Integer add_point(const Vector<Real, Dim> &point)
 		{
 			points_.push_back(point);
@@ -48,7 +53,7 @@ namespace mars {
 			e.nodes = nodes;
 			return e.id;
 		}
-	
+
 		inline void set_refinement_flag(const Integer &element_id, const Integer flag)
 		{
 			refinement_flag_[element_id] = flag;
@@ -98,7 +103,7 @@ namespace mars {
 					e.side(k, side);
 					os << "==============\n";
 					jacobian(side, points_, J);
-		
+
 					const auto n = normal(side, points_);
 					const auto sign = dot(points_[side.nodes[0]] - b, n) > 0? 1 : -1;
 					const Real u_area = unsigned_volume(side, points_);
@@ -114,6 +119,139 @@ namespace mars {
 
 			for(std::size_t i = 0; i < points_.size(); ++i) {
 				points_[i].describe(os);
+			}
+		}
+
+		inline Integer n_nodes() const
+		{
+			return points_.size();
+		}
+
+		inline Integer n_elements() const
+		{
+			return elements_.size();
+		}
+
+		bool have_common_side(const Integer e_index_1, const Integer e_index_2) const
+		{
+			const auto &e1 = elem(e_index_1);
+			const auto &e2 = elem(e_index_2);
+
+			Integer n_common_nodes = 0;
+			for(Integer i = 0; i < ManifoldDim + 1; ++i) {
+				for(Integer j = 0; j < ManifoldDim + 1; ++j) {
+					n_common_nodes += e1.nodes[i] == e2.nodes[j];
+				}
+			}
+
+			assert(n_common_nodes <= ManifoldDim);
+			return n_common_nodes == ManifoldDim;
+		}
+
+		Integer common_side_num(const Integer e_index_1, const Integer e_index_2) const
+		{
+			const auto &e1 = elem(e_index_1);
+			const auto &e2 = elem(e_index_2);
+
+			Simplex<Dim, ManifoldDim-1> side;
+			for(Integer k = 0; k < n_sides(e1); ++k) {
+				e1.side(k, side);				
+				
+				Integer nn = 0;
+
+				for(Integer i = 0; i < ManifoldDim; ++i) {
+					const auto side_node = side.nodes[i];
+
+					for(Integer j = 0; j < ManifoldDim + 1; ++j) {
+						if(side_node == e2.nodes[j]) {
+							nn++;
+							break;
+						}
+					}
+				}
+
+				if(nn == ManifoldDim) {
+					return k;
+				}
+			}
+
+			assert(false);
+			return INVALID_INDEX;
+		}
+
+		void describe_dual_graph(std::ostream &os) const
+		{
+			for(std::size_t i = 0; i < dual_graph_.size(); ++i) {
+				os << "[" << i << "]:";
+				for(std::size_t j = 0; j < dual_graph_[i].size(); ++j) {
+					os << " " << dual_graph_[i][j];
+				}
+				os << "\n";
+			}
+		}
+
+		void build_dual_graph()
+		{
+			const Integer n_nodes    = this->n_nodes();
+			const Integer n_elements = this->n_elements();
+			Integer el_index_size = 0;
+
+			std::vector< std::vector< Integer> > node_2_element(n_nodes);
+			dual_graph_.resize(n_elements);
+
+			for(Integer i = 0; i < n_elements; ++i) {
+				const auto &e    = elem(i);
+				const Integer nn = ManifoldDim + 1;
+
+				std::fill(std::begin(dual_graph_[i]), std::end(dual_graph_[i]), INVALID_INDEX);
+
+				for(Integer k = 0; k < nn; ++k) {
+					node_2_element[e.nodes[k]].push_back(i);
+				}
+			}
+
+			std::vector<Integer> el_offset(n_elements, 0);
+
+			for(Integer i = 0; i < n_nodes; ++i) {
+				const auto &elements = node_2_element[i];
+
+				for(std::size_t e_i = 0; e_i < elements.size(); ++e_i) {
+					const Integer e = elements[e_i];
+
+					for(std::size_t e_i_adj = 0; e_i_adj < elements.size(); ++e_i_adj) {
+						if(e_i == e_i_adj) continue;
+
+						const Integer e_adj = elements[e_i_adj];
+
+						bool must_add = true;
+						for(Integer k = 0; k < el_offset[e]; ++k) {
+							if(e_adj == dual_graph_[e][k]) {
+								must_add = false;
+							}
+						}
+
+						if(must_add && have_common_side(e, e_adj)) {
+							assert(el_offset[e] < ManifoldDim + 1);
+							dual_graph_[e][el_offset[e]] = e_adj;
+							++el_offset[e];
+						}
+					}
+				}
+			}
+
+			for(Integer i = 0; i < n_elements; ++i) {
+				const std::array<Integer, ManifoldDim+1> neighs = dual_graph_[i];
+
+				std::fill(std::begin(dual_graph_[i]), std::end(dual_graph_[i]), INVALID_INDEX);
+
+				for(Integer j = 0; j < neighs.size(); ++j) {
+					if(neighs[j] == INVALID_INDEX) break;
+
+					const auto s = common_side_num(i, neighs[j]);
+					assert(s != INVALID_INDEX);
+					assert(dual_graph_[i][s] == INVALID_INDEX);
+					dual_graph_[i][s] = neighs[j];
+				}
 			}
 		}
 

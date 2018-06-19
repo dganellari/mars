@@ -211,8 +211,8 @@ namespace mars {
                 {   
                     side.nodes[0] = nodes[0];
                     side.nodes[1] = nodes[1];
-                    side.nodes[2] = nodes[2];
-                    side.nodes[3] = nodes[3];
+                    side.nodes[2] = nodes[4];
+                    side.nodes[3] = nodes[2];
                     break;
                 }
 
