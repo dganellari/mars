@@ -98,87 +98,91 @@ void test_mfem_mesh()
 
 	Mesh<4, 4> mesh;
 	read_mesh("../data/cube4d_24.MFEM", mesh);
-	mesh.describe(std::cout);
+	// mesh.describe(std::cout);
 
 	mesh.build_dual_graph();
-	mesh.describe_dual_graph(std::cout);
+	// mesh.describe_dual_graph(std::cout);
+
+	mesh.refine_element(0);
+	// mesh.describe(std::cout, true);
+	mesh.describe(std::cout, false);
 }
 
 int main(const int argc, const char *argv[])
 {
 	using namespace mars;
 
-	Tetrahedron4 tet; 
-	tet.nodes[0] = 0;
-	tet.nodes[1] = 1;
-	tet.nodes[2] = 2;
-	tet.nodes[3] = 3;
+	// Tetrahedron4 tet; 
+	// tet.nodes[0] = 0;
+	// tet.nodes[1] = 1;
+	// tet.nodes[2] = 2;
+	// tet.nodes[3] = 3;
 
-	Triangle4 tri4;
-	tri4.nodes[0] = 1;
-	tri4.nodes[1] = 2;
-	tri4.nodes[2] = 3;
+	// Triangle4 tri4;
+	// tri4.nodes[0] = 1;
+	// tri4.nodes[1] = 2;
+	// tri4.nodes[2] = 3;
 
-	Line2 line;
-	line.nodes[0] = 0;
-	line.nodes[1] = 1;
+	// Line2 line;
+	// line.nodes[0] = 0;
+	// line.nodes[1] = 1;
 
-	Triangle2 tri2;
-	tri2.nodes[0] = 0;
-	tri2.nodes[1] = 1;
-	tri2.nodes[2] = 2;
+	// Triangle2 tri2;
+	// tri2.nodes[0] = 0;
+	// tri2.nodes[1] = 1;
+	// tri2.nodes[2] = 2;
 
-	Pentatope4 ptope;
-	ptope.nodes[0] = 0;
-	ptope.nodes[1] = 1;
-	ptope.nodes[2] = 2;
-	ptope.nodes[3] = 3;
-	ptope.nodes[4] = 4;
+	// Pentatope4 ptope;
+	// ptope.nodes[0] = 0;
+	// ptope.nodes[1] = 1;
+	// ptope.nodes[2] = 2;
+	// ptope.nodes[3] = 3;
+	// ptope.nodes[4] = 4;
 
-	std::vector<Vector4r> points4(
-	{
-		{ 0., 0., 0., 0. },
-		{ 2., 0., 0., 0. },
-		{ 0., 2., 0., 0. },
-		{ 0., 0., 2., 0. },
-		{ 0., 0., 0., 2. }
-	});
+	// std::vector<Vector4r> points4(
+	// {
+	// 	{ 0., 0., 0., 0. },
+	// 	{ 2., 0., 0., 0. },
+	// 	{ 0., 2., 0., 0. },
+	// 	{ 0., 0., 2., 0. },
+	// 	{ 0., 0., 0., 2. }
+	// });
 
-	std::vector<Vector2r> points2(
-	{
-		{ 0., 0. },
-		{ 1., 0. },
-		{ 0., 1. }
-	});
+	// std::vector<Vector2r> points2(
+	// {
+	// 	{ 0., 0. },
+	// 	{ 1., 0. },
+	// 	{ 0., 1. }
+	// });
 
-	std::cout << "===================" << std::endl;
-	std::cout << "vol(line2): " << volume(line, points2) << std::endl;
-	std::cout << "vol(tri2):  " << volume(tri2, points2) << std::endl;
-	std::cout << "vol(tri4):  " << volume(tri4, points4) << std::endl;
-	std::cout << "vol(tet4):  " << volume(tet, points4) << std::endl;
-	std::cout << "vol(ptope): " << volume(ptope, points4) << std::endl;
-	std::cout << "===================" << std::endl;
+	// std::cout << "===================" << std::endl;
+	// std::cout << "vol(line2): " << volume(line, points2) << std::endl;
+	// std::cout << "vol(tri2):  " << volume(tri2, points2) << std::endl;
+	// std::cout << "vol(tri4):  " << volume(tri4, points4) << std::endl;
+	// std::cout << "vol(tet4):  " << volume(tet, points4) << std::endl;
+	// std::cout << "vol(ptope): " << volume(ptope, points4) << std::endl;
+	// std::cout << "===================" << std::endl;
 
-	Matrix<Real, 4, 4> J44;
-	jacobian(ptope, points4, J44); 
-	std::cout << "J(ptope):\n" << J44 << std::endl;
+	// Matrix<Real, 4, 4> J44;
+	// jacobian(ptope, points4, J44); 
+	// std::cout << "J(ptope):\n" << J44 << std::endl;
 
-	Matrix<Real, 4, 2> Jtri4;
-	jacobian(tri4, points4, Jtri4);
-	check_and_fix_jac(Jtri4);
-	std::cout << "J(tri4):\n" << Jtri4 << std::endl;
+	// Matrix<Real, 4, 2> Jtri4;
+	// jacobian(tri4, points4, Jtri4);
+	// check_and_fix_jac(Jtri4);
+	// std::cout << "J(tri4):\n" << Jtri4 << std::endl;
 
-	auto n1 = normal(line, points2);
-	auto n3 = normal(tri4, points4);
-	auto n4 = normal(tet, points4);
+	// auto n1 = normal(line, points2);
+	// auto n3 = normal(tri4, points4);
+	// auto n4 = normal(tet, points4);
 
-	std::cout << n1 << std::endl;
-	std::cout << n3 << std::endl;
-	std::cout << n4 << std::endl;
+	// std::cout << n1 << std::endl;
+	// std::cout << n3 << std::endl;
+	// std::cout << n4 << std::endl;
 
-	test_midpoint_index();
-	test_red_refinement_interpolator();
-	test_red_refinement();
+	// test_midpoint_index();
+	// test_red_refinement_interpolator();
+	// test_red_refinement();
 	test_mfem_mesh();
 	return EXIT_SUCCESS;
 }

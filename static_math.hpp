@@ -25,7 +25,7 @@ namespace mars {
 	template<Integer Base, Integer Expon>
 	class Power {
 	public:
-		static const Integer value = Base * Power<Base, Expon>::value;
+		static const Integer value = Base * Power<Base, Expon-1>::value;
 	};
 
 	template<Integer Base>

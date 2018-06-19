@@ -7,6 +7,7 @@
 #include <array>
 #include <fstream>
 #include <sstream>
+#include <memory>
 
 namespace mars {
 	template<Integer Dim, Integer ManifoldDim = Dim>
@@ -17,6 +18,7 @@ namespace mars {
 			const std::size_t n_points)
 		{
 			elements_.reserve(n_elements);
+			active_.reserve(n_elements);
 			points_.reserve(n_points);
 		}
 
@@ -38,9 +40,12 @@ namespace mars {
 
 		inline Integer add_elem(const Simplex<Dim, ManifoldDim> &elem)
 		{
-			elem.id = elements_.size();
+			auto id = elements_.size();
 			elements_.push_back(elem);
-			return elem.id;
+			elements_.back().id = id;
+			active_.push_back(true);
+			assert(elements_.back().id == id);
+			return elements_.back().id;
 		}
 
 		template<std::size_t NNodes>
@@ -51,6 +56,8 @@ namespace mars {
 			auto &e = elements_.back();
 			e.id = elements_.size() - 1;
 			e.nodes = nodes;
+			active_.push_back(true);
+			assert(e.id == elements_.size() - 1);
 			return e.id;
 		}
 
@@ -59,30 +66,98 @@ namespace mars {
 			refinement_flag_[element_id] = flag;
 		}
 
+		inline void points(const Integer element_id, std::vector<Vector<Real, Dim>> &pts)
+		{
+			auto &e = elements_[element_id];
+			pts.resize(ManifoldDim + 1);
+			
+			for(Integer i = 0; i < ManifoldDim + 1; ++i) {
+				pts[i] = points_[e.nodes[i]];
+			}
+		}		
+
+		inline void refine_element(const Integer element_id)
+		{
+			static const Integer NSubs = NSubSimplices<ManifoldDim>::value;
+			static_assert(NSubSimplices<ManifoldDim>::value > 0, "!");
+
+			auto &e = elements_[element_id];
+			std::vector<Vector<Real, Dim>> parent_points;
+			points(element_id, parent_points);
+
+			std::array<Simplex<Dim, ManifoldDim>, NSubs> children;
+			std::vector<Vector<Real, Dim>> children_points;
+			auto interp = std::make_shared< SimplexInterpolator<ManifoldDim> >();
+
+			red_refinement<Dim, ManifoldDim, NSubs>(
+			    e,
+			    parent_points,
+			    children, 
+			    children_points,
+			    *interp
+			);
+
+			if(interp_.size() <= element_id) {
+				interp_.resize(element_id + 1);
+			}
+
+			interp_[element_id] = interp;
+
+			std::vector<Integer> point_ids;
+			for(auto &p : children_points) {
+				point_ids.push_back( add_point(p) );
+			}
+
+			Integer c_ind = 0;
+			for(auto &c : children) {
+				for(Integer i = 0; i < ManifoldDim + 1; ++i) {
+					c.nodes[i] = point_ids[c.nodes[i]];
+				}
+
+				std::cout << c_ind++ << std::endl;
+				repair_element(add_elem(c), true);
+			}
+
+			active_[element_id] = false;
+		}
+
 		inline void refine(const Integer n_levels)
 		{
 
 		}
 
-		void repair()
+		void repair_element(const Integer element_id, const bool verbose = false)
 		{
-			for(std::size_t i = 0; i < elements_.size(); ++i) {
-				auto &e = elements_[i];
-				const Real vol = volume(e, points_);
+			assert(element_id >= 0);
 
-				if(vol < 0.) {
-					if(Dim == 4) {
-						std::swap(e.nodes[3], e.nodes[4]);
-						const Real vol_after = volume(e, points_);
-						assert(vol_after > 0.);
-					}
+			auto &e = elements_[element_id];
+			const Real vol = volume(e, points_);
+
+			if(vol < 0.) {
+				if(verbose) {
+					std::cout << element_id << " has negative volume" << std::endl;
+				}
+
+				if(Dim == 4) {
+					std::swap(e.nodes[3], e.nodes[4]);
+					const Real vol_after = volume(e, points_);
+					assert(vol_after > 0.);
 				}
 			}
 		}
 
-		void describe(std::ostream &os) const
+		void repair()
 		{
 			for(std::size_t i = 0; i < elements_.size(); ++i) {
+				repair_element(i);
+			}
+		}
+
+		void describe(std::ostream &os, const bool print_sides = false) const
+		{
+			for(std::size_t i = 0; i < elements_.size(); ++i) {
+				if(!active_[i]) continue;
+
 				const auto &e = elements_[i];
 				const Real vol = volume(e, points_);
 				const auto b   = barycenter(e, points_);
@@ -95,22 +170,24 @@ namespace mars {
 
 				os << "\n";
 
-				Simplex<Dim, ManifoldDim-1> side;
-				Matrix<Real, Dim, Dim-1> J;
+				if(print_sides) {
+					Simplex<Dim, ManifoldDim-1> side;
+					Matrix<Real, Dim, Dim-1> J;
 
-				os << "sides:\n";
-				for(Integer k = 0; k < n_sides(e); ++k) {
-					e.side(k, side);
-					os << "==============\n";
-					jacobian(side, points_, J);
+					os << "sides:\n";
+					for(Integer k = 0; k < n_sides(e); ++k) {
+						e.side(k, side);
+						os << "==============\n";
+						jacobian(side, points_, J);
 
-					const auto n = normal(side, points_);
-					const auto sign = dot(points_[side.nodes[0]] - b, n) > 0? 1 : -1;
-					const Real u_area = unsigned_volume(side, points_);
-					const Real area   = sign * u_area;
+						const auto n = normal(side, points_);
+						const auto sign = dot(points_[side.nodes[0]] - b, n) > 0? 1 : -1;
+						const Real u_area = unsigned_volume(side, points_);
+						const Real area   = sign * u_area;
 
-					J.describe(os);
-					os << area << " == " << u_area << std::endl;
+						J.describe(os);
+						os << area << " == " << u_area << std::endl;
+					}
 				}
 
 				os << "---------------------------------\n";
@@ -190,6 +267,11 @@ namespace mars {
 			}
 		}
 
+		void uniform_refinement()
+		{
+
+		}
+
 		void build_dual_graph()
 		{
 			const Integer n_nodes    = this->n_nodes();
@@ -200,6 +282,8 @@ namespace mars {
 			dual_graph_.resize(n_elements);
 
 			for(Integer i = 0; i < n_elements; ++i) {
+				if(!active_[i]) continue;
+
 				const auto &e    = elem(i);
 				const Integer nn = ManifoldDim + 1;
 
@@ -240,6 +324,8 @@ namespace mars {
 			}
 
 			for(Integer i = 0; i < n_elements; ++i) {
+				if(!active_[i]) continue;
+
 				const std::array<Integer, ManifoldDim+1> neighs = dual_graph_[i];
 
 				std::fill(std::begin(dual_graph_[i]), std::end(dual_graph_[i]), INVALID_INDEX);
@@ -262,6 +348,8 @@ namespace mars {
 		//refinement
 		std::vector<Integer> refinement_flag_;
 		std::vector<std::array<Integer, ManifoldDim+1>> dual_graph_;
+		std::vector<bool> active_;
+		std::vector< std::shared_ptr<SimplexInterpolator<ManifoldDim>> > interp_;
 	};
 
 	bool read_mesh(const std::string &path, Mesh<4, 4> &mesh)

@@ -61,7 +61,8 @@ namespace mars {
     template<Integer Dim>
     class Simplex<Dim, 0> {
     public:
-        Integer id;
+        Integer id = INVALID_INDEX;
+        Integer parent_id = INVALID_INDEX;
 
         inline static std::vector<Vector<Real, Dim>> &ref()
         {
@@ -74,7 +75,8 @@ namespace mars {
     class Simplex<Dim, 1> {
     public:
         std::array<Integer, 2> nodes;
-        Integer id;
+        Integer id = INVALID_INDEX;
+        Integer parent_id = INVALID_INDEX;
 
         inline static std::vector<Vector<Real, Dim>> &ref()
         {
@@ -94,7 +96,8 @@ namespace mars {
     public:
         // std::array<Integer, 3> sides;
         std::array<Integer, 3> nodes;
-        Integer id;
+        Integer id = INVALID_INDEX;
+        Integer parent_id = INVALID_INDEX;
 
 
         inline static std::vector<Vector<Real, Dim>> &ref()
@@ -119,7 +122,8 @@ namespace mars {
     public:
         // std::array<Integer, 4> sides;
         std::array<Integer, 4> nodes;
-        Integer id;
+        Integer id = INVALID_INDEX;
+        Integer parent_id = INVALID_INDEX;
 
 
         inline static std::vector<Vector<Real, Dim>> &ref()
@@ -148,7 +152,8 @@ namespace mars {
     public:
         // std::array<Integer, 5> sides;
         std::array<Integer, 5> nodes;
-        Integer id;
+        Integer id = INVALID_INDEX;
+        Integer parent_id = INVALID_INDEX;
 
 
         inline static std::vector<Vector<Real, Dim>> &ref()
@@ -308,20 +313,25 @@ namespace mars {
         sub_simplices[3].nodes  = {7, 10, 12, 3, 14};
        
         sub_simplices[4].nodes  = {8, 11, 13, 14, 4}; 
+        //wrong
         sub_simplices[5].nodes  = {7, 8, 10, 12, 14};
 
         sub_simplices[6].nodes  = {6, 8, 9, 12, 13};
         sub_simplices[7].nodes  = {6, 7, 8, 9, 12};
 
+        //wrong
         sub_simplices[8].nodes  = {8, 9, 12, 13, 14};
+        //wrong
         sub_simplices[9].nodes  = {5, 8, 9, 10, 11};
 
+        //wrong
         sub_simplices[10].nodes = {5, 7, 8, 9, 10};
         sub_simplices[11].nodes = {8, 9, 10, 11, 14};
 
         sub_simplices[12].nodes = {5, 6, 7, 8, 9};
         sub_simplices[13].nodes = {8, 9, 11, 13, 14};
 
+        //wrong
         sub_simplices[14].nodes = {8, 9, 10, 12, 14};
         sub_simplices[15].nodes = {7, 8, 9, 10, 12};
     }
@@ -522,6 +532,10 @@ namespace mars {
         red_refinement_interpolator<ManifoldDim>(interp);
         refine_points<Dim, ManifoldDim>(parent_points, interp, children_points);
         fixed_red_refinement(children);
+
+        for(auto &c : children) {
+            c.parent_id = parent.id;
+        }
     }
 }
 
