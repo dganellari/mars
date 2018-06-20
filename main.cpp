@@ -92,31 +92,47 @@ void test_red_refinement()
 
 }
 
-void test_mfem_mesh_2D()
-{	
+
+template<mars::Integer Dim, mars::Integer ManifoldDim>
+void test_mesh(mars::Mesh<Dim, ManifoldDim> &mesh)
+{
 	using namespace mars;
 
-	Mesh<2, 2> mesh;
-	read_mesh("../data/square_2.MFEM", mesh);
-	// mesh.describe(std::cout, false);
-
+	static const Integer n_refinments = 1;
 	mesh.build_dual_graph();
+	Integer nbs = mesh.n_boundary_sides();
+	std::cout << "n_boundary_sides: " << nbs << std::endl;
 	mesh.check_side_ordering();
 	// mesh.describe_dual_graph(std::cout);
 
-	// mesh.red_refine_element(0);
-	// mesh.red_refine_element(1);
+	std::cout << "-------------------------" << std::endl;
 
-	// mesh.uniform_refinement(2);
+	mesh.uniform_refinement(n_refinments);
+	std::cout << "n_elements: " << mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes:    " << mesh.n_nodes() << std::endl;
 
-	mesh.red_green_refinement({0});
-
-
+	mesh.build_dual_graph();
+	std::cout << "n_boundary_sides: " << mesh.n_boundary_sides() << " == " << Power<2, (ManifoldDim - 1) * n_refinments>::value * nbs << std::endl;
 
 	// mesh.describe(std::cout, true);
-	mesh.describe(std::cout, false);
+	// mesh.describe(std::cout, false);
 }
 
+void test_mfem_mesh_2D()
+{	
+	using namespace mars;
+	Mesh<2, 2> mesh;
+	read_mesh("../data/square_2.MFEM", mesh);
+	test_mesh(mesh);
+}
+
+void test_mfem_mesh_3D()
+{	
+	using namespace mars;
+	Mesh<3, 3> mesh;
+	read_mesh("../data/cube_6.MFEM", mesh, true);
+	test_mesh(mesh);
+}
 
 void test_mfem_mesh_4D()
 {	
@@ -124,17 +140,7 @@ void test_mfem_mesh_4D()
 
 	Mesh<4, 4> mesh;
 	read_mesh("../data/cube4d_24.MFEM", mesh);
-	// mesh.describe(std::cout);
-
-	mesh.build_dual_graph();
-	mesh.check_side_ordering();
-	// mesh.describe_dual_graph(std::cout);
-
-	mesh.uniform_refinement(1);
-	std::cout << mesh.n_active_elements() << std::endl;
-	std::cout << mesh.n_nodes() << std::endl;
-	// mesh.describe(std::cout, true);
-	// mesh.describe(std::cout, false);
+	test_mesh(mesh);
 }
 
 int main(const int argc, const char *argv[])
@@ -214,7 +220,8 @@ int main(const int argc, const char *argv[])
 	// test_red_refinement();
 	
 	// test_mfem_mesh_2D();
-	test_mfem_mesh_4D();
+	test_mfem_mesh_3D();
+	// test_mfem_mesh_4D();
 
 	return EXIT_SUCCESS;
 }

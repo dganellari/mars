@@ -133,6 +133,52 @@ namespace mars {
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
 
+        void side(
+            const Integer &side_num,
+            Simplex<Dim, 2> &side) const
+        {
+            switch(side_num) {
+                case 0:
+                {   
+                    side.nodes[0] = nodes[0];
+                    side.nodes[1] = nodes[2];
+                    side.nodes[2] = nodes[1];
+                    break;
+                }
+
+                case 1:
+                {
+                    side.nodes[0] = nodes[0];
+                    side.nodes[1] = nodes[3];
+                    side.nodes[2] = nodes[2];
+                    break;
+                }
+
+                case 2:
+                {
+                    side.nodes[0] = nodes[0];
+                    side.nodes[1] = nodes[1];
+                    side.nodes[2] = nodes[3];
+                    break;
+                }
+
+                case 3:
+                {
+                    side.nodes[0] = nodes[1];
+                    side.nodes[1] = nodes[2];
+                    side.nodes[2] = nodes[3];
+                    break;
+                }
+
+                default:
+                {
+                    assert(false);
+                    break;
+                }
+
+            }
+        }
+
 
         inline static std::vector<Vector<Real, Dim>> &ref()
         {

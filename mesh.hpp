@@ -377,6 +377,28 @@ namespace mars {
 			}
 		}
 
+		Integer n_boundary_sides() const
+		{
+			assert( !dual_graph_.empty() && "requires that build_dual_graph is called first");
+
+			Integer ret = 0;
+			for(Integer i = 0; i < n_elements(); ++i) {
+				if(!active_[i]) continue;
+
+				const auto &e = elem(i);
+				const auto &e_adj = dual_graph_[i];
+				for(Integer k = 0; k < e_adj.size(); ++k) {
+					const Integer j = e_adj[k];
+					if(j == INVALID_INDEX) {
+						ret++;
+					}
+
+				}
+			}
+
+			return ret;
+		}
+
 		bool check_side_ordering() const
 		{
 			assert( !dual_graph_.empty() && "requires that build_dual_graph is called first");
@@ -384,6 +406,8 @@ namespace mars {
 			Simplex<Dim, ManifoldDim-1> side, other_side;
 
 			for(Integer i = 0; i < n_elements(); ++i) {
+				if(!active_[i]) continue;
+				
 				const auto &e = elem(i);
 				const auto &e_adj = dual_graph_[i];
 				for(Integer k = 0; k < e_adj.size(); ++k) {
@@ -423,8 +447,9 @@ namespace mars {
 
 						if(side.nodes[q] != other_side.nodes[other_q]) {
 							std::cerr << "common face not matching for (" << i << ", " << k << ") and (" << j << ", " << other_side_index << ")" << std::endl;
-							assert(side.nodes[q] == other_side.nodes[other_q]);
-							return false;
+							// assert(side.nodes[q] == other_side.nodes[other_q]);
+							// return false;
+							break;
 						}
 					}
 				}
