@@ -98,7 +98,7 @@ void test_mesh(mars::Mesh<Dim, ManifoldDim> &mesh)
 {
 	using namespace mars;
 
-	static const Integer n_refinments = 1;
+	static const Integer n_refinements = 3;
 	mesh.build_dual_graph();
 	Integer nbs = mesh.n_boundary_sides();
 	std::cout << "n_boundary_sides: " << nbs << std::endl;
@@ -108,13 +108,13 @@ void test_mesh(mars::Mesh<Dim, ManifoldDim> &mesh)
 	std::cout << "-------------------------" << std::endl;
 
 	// mesh.red_refine_element(0);
-	mesh.uniform_refinement(n_refinments);
+	mesh.uniform_refinement(n_refinements);
 	std::cout << "n_elements: " << mesh.n_active_elements() << std::endl;
 	std::cout << "n_nodes:    " << mesh.n_nodes() << std::endl;
 
 	mesh.build_dual_graph();
 	mesh.check_side_ordering();
-	std::cout << "n_boundary_sides: " << mesh.n_boundary_sides() << " == " << Power<2, (ManifoldDim - 1) * n_refinments>::value * nbs << std::endl;
+	std::cout << "n_boundary_sides: " << mesh.n_boundary_sides() << " == " << Power<2, (ManifoldDim - 1) * n_refinements>::value * nbs << std::endl;
 
 	// mesh.describe(std::cout, true);
 	// mesh.describe(std::cout, false);
@@ -141,7 +141,8 @@ void test_mfem_mesh_4D()
 	using namespace mars;
 
 	Mesh<4, 4> mesh;
-	read_mesh("../data/cube4d_24.MFEM", mesh);
+	read_mesh("../data/pentatope_1.MFEM", mesh);
+	// read_mesh("../data/cube4d_24.MFEM", mesh);
 	test_mesh(mesh);
 }
 
@@ -222,8 +223,8 @@ int main(const int argc, const char *argv[])
 	// test_red_refinement();
 	
 	// test_mfem_mesh_2D();
-	test_mfem_mesh_3D();
-	// test_mfem_mesh_4D();
+	// test_mfem_mesh_3D();
+	test_mfem_mesh_4D();
 
 	return EXIT_SUCCESS;
 }

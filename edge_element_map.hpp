@@ -32,8 +32,22 @@ namespace mars {
 		}
 
 		template<Integer Dim, Integer ManifoldDim>
+		void update_active(const Mesh<Dim, ManifoldDim> &mesh)
+		{
+			auto ne = mesh.n_elements();
+			for(Integer i = 0; i < ne; ++i) {
+				if(mesh.is_active(i)) {
+					update(mesh.elem(i));
+				}
+			}
+		}
+
+
+		template<Integer Dim, Integer ManifoldDim>
 		void build(const Mesh<Dim, ManifoldDim> &mesh)
 		{	
+			mapping_.clear();
+			
 			auto ne = mesh.n_elements();
 			for(Integer i = 0; i < ne; ++i) {
 				update(mesh.elem(i));

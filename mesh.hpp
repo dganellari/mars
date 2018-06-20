@@ -44,6 +44,11 @@ namespace mars {
 			return elements_[id];
 		}
 
+		inline bool is_active(const Integer id) const
+		{
+			return active_[id];
+		}
+
 		inline Integer add_point(const Vector<Real, Dim> &point)
 		{
 			points_.push_back(point);
@@ -100,7 +105,7 @@ namespace mars {
 			static const Integer NSubs = NSubSimplices<ManifoldDim>::value;
 			static_assert(NSubSimplices<ManifoldDim>::value > 0, "!");
 
-			auto &e = elements_[element_id];
+			auto &parent_e = elements_[element_id];
 			std::vector<Vector<Real, Dim>> parent_points;
 			points(element_id, parent_points);
 
@@ -108,8 +113,13 @@ namespace mars {
 			std::vector<Vector<Real, Dim>> children_points;
 			auto interp = std::make_shared< SimplexInterpolator<ManifoldDim> >();
 
+			Simplex<Dim, ManifoldDim> modified_e = parent_e;
+			if(ManifoldDim == 4) {
+				std::sort(modified_e.nodes.begin(), modified_e.nodes.end());
+			}
+
 			red_refinement<Dim, ManifoldDim, NSubs>(
-			    e,
+			    modified_e,
 			    parent_points,
 			    children, 
 			    children_points,
@@ -123,17 +133,17 @@ namespace mars {
 			std::vector<Integer> point_ids(interp->rows(), INVALID_INDEX);
 
 			for(Integer i = 0; i < ManifoldDim + 1; ++i) {
-				point_ids[i] = e.nodes[i];
+				point_ids[i] = modified_e.nodes[i];
 
             	for(Integer j = i + 1; j < ManifoldDim + 1; ++j) {
                 	Integer offset = midpoint_index<ManifoldDim>(i, j); 
-                	point_ids[offset] = edge_node_map_.get(e.nodes[i], e.nodes[j]);
+                	point_ids[offset] = edge_node_map_.get(modified_e.nodes[i], modified_e.nodes[j]);
 
                 	if(point_ids[offset] == INVALID_INDEX) {
                 		const auto new_id = add_point(children_points[offset]);
                 		edge_node_map_.update(
-                			e.nodes[i],
-                			e.nodes[j],
+                			modified_e.nodes[i],
+                			modified_e.nodes[j],
 							new_id
 						);
 
@@ -150,7 +160,9 @@ namespace mars {
 					c.nodes[i] = point_ids[c.nodes[i]];
 				}
 
-				repair_element(add_elem(c), true);
+				// std::sort(c.nodes.begin(), c.nodes.end()); add_elem(c);
+
+				repair_element(add_elem(c), ManifoldDim != 4);
 			}
 
 			active_[element_id] = false;
@@ -402,6 +414,11 @@ namespace mars {
 		bool check_side_ordering() const
 		{
 			assert( !dual_graph_.empty() && "requires that build_dual_graph is called first");
+			
+			if(ManifoldDim == 4) {
+				std::cerr << "not implemented for 4d yet" << std::endl;
+				return false;
+			}
 
 			Simplex<Dim, ManifoldDim-1> side, other_side;
 
@@ -422,10 +439,11 @@ namespace mars {
 					Integer other_side_index = 0;
 					{
 						auto it = std::find(other_adj.begin(), other_adj.end(), i);
-						assert(it != other_adj.end());
+						
 
 						if(it == other_adj.end()) {
-							std::cerr << "Bad dual graph" << std::endl;
+							std::cerr << "Bad dual graph for " <<  i << " <-> " << j << std::endl;
+							assert(it != other_adj.end());
 							return false;
 						}
 
@@ -447,6 +465,19 @@ namespace mars {
 
 						if(side.nodes[q] != other_side.nodes[other_q]) {
 							std::cerr << "common face not matching for (" << i << ", " << k << ") and (" << j << ", " << other_side_index << ")" << std::endl;
+							std::cerr << "[ ";
+							for(auto s : side.nodes) {
+								std::cerr << s << " ";
+							}
+							std::cerr << " ]\n";
+
+							std::cerr << "[ ";
+							for(auto s : other_side.nodes) {
+								std::cerr << s << " ";
+							}
+							std::cerr << " ]\n";
+							
+
 							// assert(side.nodes[q] == other_side.nodes[other_q]);
 							// return false;
 							break;
@@ -469,9 +500,11 @@ namespace mars {
 					}
 				}
 			}
+
+			// update_dual_graph();
 		}
 
-		void build_dual_graph()
+		void update_dual_graph()
 		{
 			const Integer n_nodes    = this->n_nodes();
 			const Integer n_elements = this->n_elements();
@@ -534,10 +567,21 @@ namespace mars {
 
 					const auto s = common_side_num(i, neighs[j]);
 					assert(s != INVALID_INDEX);
-					assert(dual_graph_[i][s] == INVALID_INDEX);
+
+					if(dual_graph_[i][s] != INVALID_INDEX) {
+						std::cerr << "bad side numbering or creation" << std::endl;
+						assert(dual_graph_[i][s] == INVALID_INDEX);
+					}
+
 					dual_graph_[i][s] = neighs[j];
 				}
 			}
+		}
+
+		void build_dual_graph()
+		{
+			dual_graph_.clear();
+			update_dual_graph();
 		}
 
 	private:
