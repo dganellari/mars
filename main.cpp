@@ -92,7 +92,24 @@ void test_red_refinement()
 
 }
 
-void test_mfem_mesh()
+void test_mfem_mesh_2D()
+{	
+	using namespace mars;
+
+	Mesh<2, 2> mesh;
+	read_mesh("../data/square_2.MFEM", mesh);
+	mesh.describe(std::cout);
+
+	mesh.build_dual_graph();
+	mesh.describe_dual_graph(std::cout);
+
+	mesh.red_refine_element(0);
+	mesh.describe(std::cout, true);
+	// mesh.describe(std::cout, false);
+}
+
+
+void test_mfem_mesh_4D()
 {	
 	using namespace mars;
 
@@ -183,7 +200,9 @@ int main(const int argc, const char *argv[])
 	// test_midpoint_index();
 	// test_red_refinement_interpolator();
 	// test_red_refinement();
-	test_mfem_mesh();
+	// test_mfem_mesh_4D();
+	test_mfem_mesh_2D();
+
 	return EXIT_SUCCESS;
 }
 

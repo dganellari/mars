@@ -3,6 +3,7 @@
 
 #include "simplex.hpp"
 #include "edge_element_map.hpp"
+#include "edge_node_map.hpp"
 
 #include <vector>
 #include <array>
@@ -361,7 +362,8 @@ namespace mars {
 		std::vector< std::shared_ptr<SimplexInterpolator<ManifoldDim>> > interp_;
 	};
 
-	bool read_mesh(const std::string &path, Mesh<4, 4> &mesh, const bool verbose = false)
+	template<Integer Dim, Integer ManifoldDim>
+	bool read_mesh(const std::string &path, Mesh<Dim, ManifoldDim> &mesh, const bool verbose = false)
 	{
 		std::ifstream is(path);
 		if(!is.good()) {
@@ -380,7 +382,7 @@ namespace mars {
 			if(line == "dimension") {
 				std::getline(is, line);
 				dim = atoi(line.c_str());
-				assert(dim == 4);
+				assert(dim == ManifoldDim);
 			} else if(line == "elements") {
 				std::getline(is, line);
 				n_elements = atoi(line.c_str());
@@ -391,10 +393,10 @@ namespace mars {
 					std::stringstream ss(line);
 					int attr, type;
 
-					std::array<Integer, 5> nodes;
+					std::array<Integer, ManifoldDim+1> nodes;
 					ss >> attr >> type;
 
-					for(Integer k = 0; k < 5; ++k) {
+					for(Integer k = 0; k < ManifoldDim+1; ++k) {
 						ss >> nodes[k];
 					}
 
@@ -405,13 +407,14 @@ namespace mars {
 				n_nodes = atoi(line.c_str());
 				std::getline(is, line);
 				n_coords = atoi(line.c_str());
-				assert(n_coords == 4);
+				assert(n_coords == Dim);
 
-				Vector<Real, 4> p;
+				Vector<Real, Dim> p;
+				p.zero();
 				for(Integer i = 0; i < n_nodes; ++i) {
 					assert(is.good());
 
-					for(Integer k = 0; k < 4; ++k) {
+					for(Integer k = 0; k < n_coords; ++k) {
 						is >> p(k);
 					}
 

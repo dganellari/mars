@@ -100,6 +100,14 @@ namespace mars {
         Integer parent_id = INVALID_INDEX;
 
 
+        void side(
+            const Integer &side_num,
+            Simplex<Dim, 1> &side) const
+        {
+            side.nodes[0] = nodes[side_num];
+            side.nodes[1] = nodes[side_num == 2? 0 : (side_num + 1)];
+        }
+
         inline static std::vector<Vector<Real, Dim>> &ref()
         {
             static std::vector<Vector<Real, Dim>> ref_;
