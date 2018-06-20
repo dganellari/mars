@@ -98,14 +98,15 @@ void test_mfem_mesh_2D()
 
 	Mesh<2, 2> mesh;
 	read_mesh("../data/square_2.MFEM", mesh);
-	mesh.describe(std::cout);
+	mesh.describe(std::cout, false);
 
 	mesh.build_dual_graph();
-	mesh.describe_dual_graph(std::cout);
+	// mesh.describe_dual_graph(std::cout);
 
 	mesh.red_refine_element(0);
-	mesh.describe(std::cout, true);
-	// mesh.describe(std::cout, false);
+	mesh.red_refine_element(1);
+	// mesh.describe(std::cout, true);
+	mesh.describe(std::cout, false);
 }
 
 

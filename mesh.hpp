@@ -111,12 +111,29 @@ namespace mars {
 				interp_.resize(element_id + 1);
 			}
 
-			interp_[element_id] = interp;
+			std::vector<Integer> point_ids(interp->rows(), INVALID_INDEX);
 
-			std::vector<Integer> point_ids;
-			for(auto &p : children_points) {
-				point_ids.push_back( add_point(p) );
-			}
+			for(Integer i = 0; i < ManifoldDim + 1; ++i) {
+				point_ids[i] = e.nodes[i];
+
+            	for(Integer j = i + 1; j < ManifoldDim + 1; ++j) {
+                	Integer offset = midpoint_index<ManifoldDim>(i, j); 
+                	point_ids[offset] = edge_node_map_.get(e.nodes[i], e.nodes[j]);
+
+                	if(point_ids[offset] == INVALID_INDEX) {
+                		const auto new_id = add_point(children_points[offset]);
+                		edge_node_map_.update(
+                			e.nodes[i],
+                			e.nodes[j],
+							new_id
+						);
+
+						point_ids[offset] = new_id;
+                	}
+            	}
+            }
+
+			interp_[element_id] = interp;
 
 			// Integer c_ind = 0;
 			for(auto &c : children) {
@@ -148,10 +165,26 @@ namespace mars {
 					std::cout << element_id << " has negative volume" << std::endl;
 				}
 
-				if(Dim == 4) {
-					std::swap(e.nodes[3], e.nodes[4]);
-					const Real vol_after = volume(e, points_);
-					assert(vol_after > 0.);
+				switch(Dim) {
+					case 2:
+					{
+						std::swap(e.nodes[1], e.nodes[2]);
+						const Real vol_after = volume(e, points_);
+						assert(vol_after > 0.);
+						break;
+					}
+					case 4:
+					{
+						std::swap(e.nodes[3], e.nodes[4]);
+						const Real vol_after = volume(e, points_);
+						assert(vol_after > 0.);
+						break;
+					}
+					default: 
+					{
+						assert(false && "implement me");
+						break;
+					}
 				}
 			}
 		}
@@ -205,6 +238,7 @@ namespace mars {
 			}
 
 			for(std::size_t i = 0; i < points_.size(); ++i) {
+				os << i << ") ";
 				points_[i].describe(os);
 			}
 		}
@@ -360,6 +394,8 @@ namespace mars {
 		std::vector<std::array<Integer, ManifoldDim+1>> dual_graph_;
 		std::vector<bool> active_;
 		std::vector< std::shared_ptr<SimplexInterpolator<ManifoldDim>> > interp_;
+		EdgeNodeMap edge_node_map_;
+
 	};
 
 	template<Integer Dim, Integer ManifoldDim>

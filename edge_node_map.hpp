@@ -18,8 +18,9 @@ namespace mars {
 			mapping_[Edge(an_edge_node, another_edge_node)] = midpoint_node;
 		}
 
-		inline Integer get(const Integer an_edge_node,
-			        const Integer another_edge_node) const
+		inline Integer get(
+			const Integer an_edge_node,
+			const Integer another_edge_node) const
 		{
 			auto it = mapping_.find(Edge(an_edge_node, another_edge_node));
 			if(it == mapping_.end()) {
