@@ -347,19 +347,20 @@ namespace mars {
     {
         //corner tets
         sub_simplices[0].nodes = {0, 4, 5, 6};
-        sub_simplices[1].nodes = {4, 1, 7, 8};
-        sub_simplices[2].nodes = {5, 7, 2, 9};
+        sub_simplices[1].nodes = {1, 7, 4, 8};
+        sub_simplices[2].nodes = {2, 5, 7, 9};
         sub_simplices[3].nodes = {6, 8, 9, 3};
 
         //octahedron tets
-        sub_simplices[4].nodes = {4, 7, 5, 8};
-        sub_simplices[5].nodes = {4, 8, 5, 6};
+        sub_simplices[4].nodes = {4, 8, 7, 5};
+        sub_simplices[5].nodes = {6, 5, 8, 4};
         sub_simplices[6].nodes = {6, 8, 5, 9};
-        sub_simplices[7].nodes = {7, 6, 5, 9};
+        sub_simplices[7].nodes = {8, 7, 5, 9};
     }
 
     inline void fixed_red_refinement(std::array<Simplex<4, 4>, 16> &sub_simplices)
     {
+        //adapted from neumuller's paper
         sub_simplices[0].nodes  = {0, 5, 6, 7, 8};
         sub_simplices[1].nodes  = {5, 1, 9, 10, 11};
         
