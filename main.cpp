@@ -141,8 +141,8 @@ void test_mfem_mesh_4D()
 	using namespace mars;
 
 	Mesh<4, 4> mesh;
-	read_mesh("../data/pentatope_1.MFEM", mesh);
-	// read_mesh("../data/cube4d_24.MFEM", mesh);
+	// read_mesh("../data/pentatope_1.MFEM", mesh);
+	read_mesh("../data/cube4d_24.MFEM", mesh);
 	test_mesh(mesh);
 }
 

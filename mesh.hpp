@@ -114,7 +114,9 @@ namespace mars {
 			auto interp = std::make_shared< SimplexInterpolator<ManifoldDim> >();
 
 			Simplex<Dim, ManifoldDim> modified_e = parent_e;
+			
 			if(ManifoldDim == 4) {
+				//4D hack
 				std::sort(modified_e.nodes.begin(), modified_e.nodes.end());
 			}
 
@@ -162,6 +164,7 @@ namespace mars {
 
 				// std::sort(c.nodes.begin(), c.nodes.end()); add_elem(c);
 
+				//4D hack
 				repair_element(add_elem(c), ManifoldDim != 4);
 			}
 
