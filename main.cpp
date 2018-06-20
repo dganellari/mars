@@ -98,7 +98,7 @@ void test_mfem_mesh_2D()
 
 	Mesh<2, 2> mesh;
 	read_mesh("../data/square_2.MFEM", mesh);
-	mesh.describe(std::cout, false);
+	// mesh.describe(std::cout, false);
 
 	mesh.build_dual_graph();
 	// mesh.describe_dual_graph(std::cout);
@@ -110,7 +110,7 @@ void test_mfem_mesh_2D()
 
 
 	// mesh.describe(std::cout, true);
-	mesh.describe(std::cout, false);
+	// mesh.describe(std::cout, false);
 }
 
 
@@ -125,8 +125,10 @@ void test_mfem_mesh_4D()
 	mesh.build_dual_graph();
 	// mesh.describe_dual_graph(std::cout);
 
-	mesh.uniform_refinement(1);
-	mesh.describe(std::cout, true);
+	mesh.uniform_refinement(5);
+	std::cout << mesh.n_elements() << std::endl;
+	std::cout << mesh.n_nodes() << std::endl;
+	// mesh.describe(std::cout, true);
 	// mesh.describe(std::cout, false);
 }
 
