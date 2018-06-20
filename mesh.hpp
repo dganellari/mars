@@ -129,19 +129,18 @@ namespace mars {
 						);
 
 						point_ids[offset] = new_id;
+						assert(new_id < this->n_nodes());
                 	}
             	}
             }
 
 			interp_[element_id] = interp;
 
-			// Integer c_ind = 0;
 			for(auto &c : children) {
 				for(Integer i = 0; i < ManifoldDim + 1; ++i) {
 					c.nodes[i] = point_ids[c.nodes[i]];
 				}
 
-				// std::cout << c_ind++ << std::endl;
 				repair_element(add_elem(c), true);
 			}
 
@@ -311,9 +310,17 @@ namespace mars {
 			}
 		}
 
-		void uniform_refinement()
+		void uniform_refinement(const Integer n_levels = 1)
 		{
+			for(Integer l = 0; l < n_levels; ++l) {
+				auto ne = n_elements();
 
+				for(Integer i = 0; i < ne; ++i) {
+					if(active_[i]) {
+						red_refine_element(i);
+					}
+				}
+			}
 		}
 
 		void build_dual_graph()

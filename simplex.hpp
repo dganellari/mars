@@ -333,7 +333,7 @@ namespace mars {
         //wrong
         // sub_simplices[8].nodes  = {5, 6, 7, 8, 12};
         sub_simplices[8].nodes  = {5, 6, 7, 12, 8};
-        sub_simplices[9].nodes  = {8, 9, 12, 14, 15};
+        sub_simplices[9].nodes  = {8, 9, 12, 14, 13};
 
         sub_simplices[10].nodes = {5, 8, 9, 11, 14};
         sub_simplices[11].nodes = {5, 7, 10, 12, 14};

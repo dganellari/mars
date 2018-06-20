@@ -103,8 +103,12 @@ void test_mfem_mesh_2D()
 	mesh.build_dual_graph();
 	// mesh.describe_dual_graph(std::cout);
 
-	mesh.red_refine_element(0);
-	mesh.red_refine_element(1);
+	// mesh.red_refine_element(0);
+	// mesh.red_refine_element(1);
+
+	mesh.uniform_refinement(2);
+
+
 	// mesh.describe(std::cout, true);
 	mesh.describe(std::cout, false);
 }
@@ -121,7 +125,7 @@ void test_mfem_mesh_4D()
 	mesh.build_dual_graph();
 	// mesh.describe_dual_graph(std::cout);
 
-	mesh.red_refine_element(0);
+	mesh.uniform_refinement(1);
 	mesh.describe(std::cout, true);
 	// mesh.describe(std::cout, false);
 }
@@ -201,8 +205,9 @@ int main(const int argc, const char *argv[])
 	// test_midpoint_index();
 	// test_red_refinement_interpolator();
 	// test_red_refinement();
-	// test_mfem_mesh_4D();
-	test_mfem_mesh_2D();
+	
+	// test_mfem_mesh_2D();
+	test_mfem_mesh_4D();
 
 	return EXIT_SUCCESS;
 }
