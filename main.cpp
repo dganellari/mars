@@ -123,27 +123,33 @@ void test_mesh(mars::Mesh<Dim, ManifoldDim> &mesh)
 void test_mfem_mesh_2D()
 {	
 	using namespace mars;
+	std::cout << "======================================\n";
 	Mesh<2, 2> mesh;
 	read_mesh("../data/square_2.MFEM", mesh);
 	test_mesh(mesh);
+	std::cout << "======================================\n";
 }
 
 void test_mfem_mesh_3D()
 {	
 	using namespace mars;
+
+	std::cout << "======================================\n";
 	Mesh<3, 3> mesh;
 	read_mesh("../data/cube_6.MFEM", mesh, true);
 	test_mesh(mesh);
+	std::cout << "======================================\n";
 }
 
 void test_mfem_mesh_4D()
 {	
 	using namespace mars;
-
+	std::cout << "======================================\n";
 	Mesh<4, 4> mesh;
 	// read_mesh("../data/pentatope_1.MFEM", mesh);
 	read_mesh("../data/cube4d_24.MFEM", mesh);
 	test_mesh(mesh);
+	std::cout << "======================================\n";
 }
 
 int main(const int argc, const char *argv[])
@@ -222,8 +228,8 @@ int main(const int argc, const char *argv[])
 	// test_red_refinement_interpolator();
 	// test_red_refinement();
 	
-	// test_mfem_mesh_2D();
-	// test_mfem_mesh_3D();
+	test_mfem_mesh_2D();
+	test_mfem_mesh_3D();
 	test_mfem_mesh_4D();
 
 	return EXIT_SUCCESS;

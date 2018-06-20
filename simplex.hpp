@@ -362,7 +362,7 @@ namespace mars {
         
     inline void special_cyclic_fixing(std::array<Simplex<4, 4>, 16> &sub_simplices)
     {
-        //adapted from neumuller's paper
+        //taken from neumuller's paper
         sub_simplices[0].nodes  = {0, 5, 6, 7,  8};
         sub_simplices[1].nodes  = {5, 1, 9, 10, 11};
         
