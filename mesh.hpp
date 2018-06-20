@@ -10,6 +10,7 @@
 #include <fstream>
 #include <sstream>
 #include <memory>
+#include <algorithm>  
 
 namespace mars {
 	enum RefinementFlag {
@@ -18,6 +19,7 @@ namespace mars {
 		GREEN_1 = 2,
 		GREEN_2 = 3,
 		GREEN_3 = 4,
+		CHILD_OF_GREEN = 5
 	};
 
 	template<Integer Dim, Integer ManifoldDim = Dim>
@@ -54,6 +56,7 @@ namespace mars {
 			elements_.push_back(elem);
 			elements_.back().id = id;
 			active_.push_back(true);
+			refinement_flag_.push_back(NONE);
 			assert(elements_.back().id == id);
 			return elements_.back().id;
 		}
@@ -67,6 +70,7 @@ namespace mars {
 			e.id = elements_.size() - 1;
 			e.nodes = nodes;
 			active_.push_back(true);
+			refinement_flag_.push_back(NONE);
 			assert(e.id == elements_.size() - 1);
 			return e.id;
 		}
@@ -74,6 +78,11 @@ namespace mars {
 		inline void set_refinement_flag(const Integer &element_id, const Integer flag)
 		{
 			refinement_flag_[element_id] = flag;
+		}
+
+		inline Integer refinement_flag(const Integer &element_id)
+		{
+			return refinement_flag_[element_id];
 		}
 
 		inline void points(const Integer element_id, std::vector<Vector<Real, Dim>> &pts)
@@ -147,11 +156,6 @@ namespace mars {
 			active_[element_id] = false;
 		}
 
-		inline void refine(const Integer n_levels)
-		{
-
-		}
-
 		void repair_element(const Integer element_id, const bool verbose = false)
 		{
 			assert(element_id >= 0);
@@ -165,9 +169,23 @@ namespace mars {
 				}
 
 				switch(Dim) {
+					case 1:
+					{
+						std::swap(e.nodes[0], e.nodes[1]);
+						const Real vol_after = volume(e, points_);
+						assert(vol_after > 0.);
+						break;
+					}
 					case 2:
 					{
 						std::swap(e.nodes[1], e.nodes[2]);
+						const Real vol_after = volume(e, points_);
+						assert(vol_after > 0.);
+						break;
+					}
+					case 3:
+					{
+						std::swap(e.nodes[2], e.nodes[3]);
 						const Real vol_after = volume(e, points_);
 						assert(vol_after > 0.);
 						break;
@@ -252,6 +270,16 @@ namespace mars {
 			return elements_.size();
 		}
 
+		inline Integer n_active_elements() const
+		{
+			Integer ret = 0;
+			for(auto a : active_) {
+				ret += a;
+			}
+
+			return ret;
+		}
+
 		bool have_common_side(const Integer e_index_1, const Integer e_index_2) const
 		{
 			const auto &e1 = elem(e_index_1);
@@ -308,6 +336,101 @@ namespace mars {
 				}
 				os << "\n";
 			}
+		}
+
+		void red_green_refinement(const std::vector<Integer> &elements_to_refine)
+		{
+			build_dual_graph();
+			edge_element_map_.build(*this);
+
+			for(auto &e : elements_to_refine) {
+				set_refinement_flag(e, RED);
+			}
+
+			std::vector<Integer> red_green_elements = elements_to_refine;
+			for(auto &e : elements_to_refine) {
+				const auto &adj = dual_graph_[e];
+				for(auto a : adj) {
+					if(a == INVALID_INDEX) continue;
+
+					switch(refinement_flag(a))
+					{
+						case RED:
+						{
+							continue;
+						}
+						case NONE:
+						{
+							set_refinement_flag(a, GREEN_1);
+							red_green_elements.push_back(a);
+							break;
+						}
+						case GREEN_1:
+						case GREEN_2:
+						case GREEN_3:
+						{
+							assert(false && "implement me");
+							break;
+						}
+					}
+				}
+			}
+		}
+
+		bool check_side_ordering() const
+		{
+			assert( !dual_graph_.empty() && "requires that build_dual_graph is called first");
+
+			Simplex<Dim, ManifoldDim-1> side, other_side;
+
+			for(Integer i = 0; i < n_elements(); ++i) {
+				const auto &e = elem(i);
+				const auto &e_adj = dual_graph_[i];
+				for(Integer k = 0; k < e_adj.size(); ++k) {
+					const Integer j = e_adj[k];
+					if(j == INVALID_INDEX) continue;
+					e.side(k, side);
+
+					const auto &other = elem(j);
+					const auto &other_adj = dual_graph_[j];
+
+
+					Integer other_side_index = 0;
+					{
+						auto it = std::find(other_adj.begin(), other_adj.end(), i);
+						assert(it != other_adj.end());
+
+						if(it == other_adj.end()) {
+							std::cerr << "Bad dual graph" << std::endl;
+							return false;
+						}
+
+						other_side_index = std::distance(other_adj.begin(), it);
+						other.side(other_side_index, other_side);
+					}
+
+					auto it = std::find(other_side.nodes.begin(), other_side.nodes.end(), side.nodes[0]);
+					assert(it != other_side.nodes.end());
+
+					Integer other_offset = std::distance(other_side.nodes.begin(), it);
+
+					for(Integer q = 0; q < ManifoldDim; ++q) {
+						Integer other_q = other_offset - q;
+						
+						if(other_q < 0) {
+							other_q += ManifoldDim;
+						}
+
+						if(side.nodes[q] != other_side.nodes[other_q]) {
+							std::cerr << "common face not matching for (" << i << ", " << k << ") and (" << j << ", " << other_side_index << ")" << std::endl;
+							assert(side.nodes[q] == other_side.nodes[other_q]);
+							return false;
+						}
+					}
+				}
+			}
+
+			return true;
 		}
 
 		void uniform_refinement(const Integer n_levels = 1)
@@ -402,6 +525,7 @@ namespace mars {
 		std::vector<bool> active_;
 		std::vector< std::shared_ptr<SimplexInterpolator<ManifoldDim>> > interp_;
 		EdgeNodeMap edge_node_map_;
+		EdgeElementMap edge_element_map_;
 
 	};
 

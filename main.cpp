@@ -101,16 +101,20 @@ void test_mfem_mesh_2D()
 	// mesh.describe(std::cout, false);
 
 	mesh.build_dual_graph();
+	mesh.check_side_ordering();
 	// mesh.describe_dual_graph(std::cout);
 
 	// mesh.red_refine_element(0);
 	// mesh.red_refine_element(1);
 
-	mesh.uniform_refinement(2);
+	// mesh.uniform_refinement(2);
+
+	mesh.red_green_refinement({0});
+
 
 
 	// mesh.describe(std::cout, true);
-	// mesh.describe(std::cout, false);
+	mesh.describe(std::cout, false);
 }
 
 
@@ -123,10 +127,11 @@ void test_mfem_mesh_4D()
 	// mesh.describe(std::cout);
 
 	mesh.build_dual_graph();
+	mesh.check_side_ordering();
 	// mesh.describe_dual_graph(std::cout);
 
-	mesh.uniform_refinement(5);
-	std::cout << mesh.n_elements() << std::endl;
+	mesh.uniform_refinement(1);
+	std::cout << mesh.n_active_elements() << std::endl;
 	std::cout << mesh.n_nodes() << std::endl;
 	// mesh.describe(std::cout, true);
 	// mesh.describe(std::cout, false);
