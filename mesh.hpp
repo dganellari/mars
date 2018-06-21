@@ -5,6 +5,17 @@
 #include "edge_element_map.hpp"
 #include "edge_node_map.hpp"
 
+namespace moonolith {
+	using Integer = mars::Integer;
+}
+
+#include "moonolith_config.hpp"
+#include "moonolith_mesh.hpp"
+// #include "moonolith_svg_canvas.hpp"
+#include "moonolith_eps_canvas.hpp"
+#include "moonolith_plotter.hpp"
+#include "moonolith_func_to_color.hpp"
+
 #include <vector>
 #include <array>
 #include <fstream>
@@ -19,7 +30,8 @@ namespace mars {
 		GREEN_1 = 2,
 		GREEN_2 = 3,
 		GREEN_3 = 4,
-		CHILD_OF_GREEN = 5
+		CHILD_OF_GREEN = 5,
+		PARENT_PROMOTED_TO_RED = 6
 	};
 
 	template<Integer Dim, Integer ManifoldDim = Dim>
@@ -55,6 +67,16 @@ namespace mars {
 			return points_.size() - 1;
 		}
 
+		inline const Vector<Real, Dim> &point(const Integer i) const
+		{
+			return points_[i];
+		}
+
+		const std::vector<Vector<Real, Dim>> &points() const
+		{
+			return points_;
+		}
+
 		inline Integer add_elem(const Simplex<Dim, ManifoldDim> &elem)
 		{
 			auto id = elements_.size();
@@ -85,7 +107,7 @@ namespace mars {
 			refinement_flag_[element_id] = flag;
 		}
 
-		inline Integer refinement_flag(const Integer &element_id)
+		inline Integer refinement_flag(const Integer &element_id) const
 		{
 			return refinement_flag_[element_id];
 		}
@@ -98,7 +120,186 @@ namespace mars {
 			for(Integer i = 0; i < ManifoldDim + 1; ++i) {
 				pts[i] = points_[e.nodes[i]];
 			}
-		}		
+		}	
+
+		void red_green_refinement(const std::vector<Integer> &elements_to_refine)
+		{
+			update_dual_graph();
+			edge_element_map_.build(*this);
+
+			for(auto &e : elements_to_refine) {
+				if(!is_active(e)) {
+					std::cerr << e << " cannot refine inactive" << std::endl;
+					continue;
+				}
+
+				set_refinement_flag(e, RED);
+			}
+
+			std::vector<Integer> red_elements = elements_to_refine;
+			std::vector<Integer> potential_green_elements, green_elements;
+			for(auto &e : red_elements) {
+				const auto &adj = dual_graph_[e];
+				for(auto a : adj) {
+					if(a == INVALID_INDEX) continue;
+
+					switch(refinement_flag(a))
+					{
+						case RED:
+						{
+							continue;
+						}
+						case NONE:
+						{
+							set_refinement_flag(a, GREEN_1);
+							potential_green_elements.push_back(a);
+							break;
+						}
+						case GREEN_1:
+						{
+							set_refinement_flag(a, GREEN_2);
+							potential_green_elements.push_back(a);
+							break;
+						}
+						case GREEN_2:
+						{
+							set_refinement_flag(a, RED);
+							red_elements.push_back(a);
+							break;
+						}
+						case GREEN_3:
+						{
+							assert(false && "implement me");
+							break;
+						}
+					}
+				}
+			}
+
+			for(auto e : red_elements) {
+				red_refine_element(e);
+			}
+
+			green_elements.reserve(potential_green_elements.size());
+			for(auto e : potential_green_elements) {
+				if(refinement_flag(e) != RED) {
+					green_elements.push_back(e);
+				}
+			}
+
+			for(auto e : green_elements) {
+				green_refine_element(e);
+			}
+		}	
+
+		inline void green_refine_element(const Integer element_id)
+		{
+			auto &e = elem(element_id);
+			active_[element_id] = false;
+
+			const auto &adj = dual_graph_[element_id];
+			std::array<Integer, ManifoldDim> side_flags;
+			std::vector<Integer> red_side_index;
+			std::vector<Integer> green_side_index;
+
+			Integer n_red_neighs = 0;
+			Integer n_green_neighs = 0;
+			
+			Integer k = 0;
+			for(auto a : adj) {
+				if(a == INVALID_INDEX) {
+					side_flags[k++] = INVALID_INDEX;
+				 	continue;
+				}
+
+				if(refinement_flag(a) == RED) {
+					red_side_index.push_back(k);
+					++n_red_neighs;
+				} else if(refinement_flag(a) == GREEN_1) {
+					++n_green_neighs;
+					green_side_index.push_back(k);
+				}
+				
+				side_flags[k++] = refinement_flag(a);
+			}
+
+			Simplex<Dim, ManifoldDim-1> side_1, side_2;
+			Simplex<Dim, ManifoldDim> child;
+			child.parent_id = element_id;
+
+
+			switch(n_red_neighs) {
+				case 1: 
+				{	
+					e.side(red_side_index[0], side_1);
+					
+					Integer n0 = side_1.nodes[0];
+					Integer n1 = side_1.nodes[1];
+					const Integer midpoint = edge_node_map_.get(n0, n1);
+					const Integer opposite = e.vertex_opposite_to_side(red_side_index[0]);
+
+					child.nodes[0] = n0;
+					child.nodes[1] = opposite;
+					child.nodes[2] = midpoint;
+
+					e.children.push_back( add_elem(child) );
+
+					child.nodes[0] = n1;
+					child.nodes[1] = midpoint;
+					child.nodes[2] = opposite;
+
+					e.children.push_back( add_elem(child) );
+					break;
+				}
+
+				case 2:
+				{
+					e.side(red_side_index[0], side_1);
+					
+					Integer n1_0 = side_1.nodes[0];
+					Integer n1_1 = side_1.nodes[1];
+					const Integer midpoint_1 = edge_node_map_.get(n1_0, n1_1);
+					const Integer opposite_1 = e.vertex_opposite_to_side(red_side_index[0]);
+
+					e.side(red_side_index[1], side_2);
+					
+					Integer n2_0 = side_2.nodes[0];
+					Integer n2_1 = side_2.nodes[1];
+					const Integer midpoint_2 = edge_node_map_.get(n2_0, n2_1);
+					const Integer opposite_2 = e.vertex_opposite_to_side(red_side_index[1]);
+
+
+					child.nodes[0] = midpoint_1;
+					child.nodes[1] = opposite_2;
+					child.nodes[2] = opposite_1;
+
+					e.children.push_back( add_elem(child) ); 
+
+					child.nodes[0] = midpoint_1;
+					child.nodes[1] = midpoint_2;
+					child.nodes[2] = n2_0;
+
+					e.children.push_back( add_elem(child) ); 
+
+					child.nodes[0] = midpoint_1;
+					child.nodes[1] = n2_1;
+					child.nodes[2] = midpoint_2;
+
+					e.children.push_back( add_elem(child) ); 
+					break;
+				}
+
+				case 3:
+				{
+					std::cerr << "[" << element_id << "] should have been promoted to RED" << std::endl;
+					break;
+				}
+				default:
+				{
+					assert(false);
+				}
+			}
+		}
 
 		inline void red_refine_element(const Integer element_id)
 		{
@@ -353,44 +554,7 @@ namespace mars {
 			}
 		}
 
-		void red_green_refinement(const std::vector<Integer> &elements_to_refine)
-		{
-			build_dual_graph();
-			edge_element_map_.build(*this);
-
-			for(auto &e : elements_to_refine) {
-				set_refinement_flag(e, RED);
-			}
-
-			std::vector<Integer> red_green_elements = elements_to_refine;
-			for(auto &e : elements_to_refine) {
-				const auto &adj = dual_graph_[e];
-				for(auto a : adj) {
-					if(a == INVALID_INDEX) continue;
-
-					switch(refinement_flag(a))
-					{
-						case RED:
-						{
-							continue;
-						}
-						case NONE:
-						{
-							set_refinement_flag(a, GREEN_1);
-							red_green_elements.push_back(a);
-							break;
-						}
-						case GREEN_1:
-						case GREEN_2:
-						case GREEN_3:
-						{
-							assert(false && "implement me");
-							break;
-						}
-					}
-				}
-			}
-		}
+		
 
 		Integer n_boundary_sides() const
 		{
@@ -507,11 +671,15 @@ namespace mars {
 			// update_dual_graph();
 		}
 
-		void update_dual_graph()
+		void update_dual_graph(const bool force = false)
 		{
 			const Integer n_nodes    = this->n_nodes();
 			const Integer n_elements = this->n_elements();
 			Integer el_index_size = 0;
+
+			if(dual_graph_.size() == n_elements && !force) {
+				return;
+			}
 
 			std::vector< std::vector< Integer> > node_2_element(n_nodes);
 			dual_graph_.resize(n_elements);
@@ -583,8 +751,18 @@ namespace mars {
 
 		void build_dual_graph()
 		{
-			dual_graph_.clear();
+			// dual_graph_.clear();
 			update_dual_graph();
+		}
+
+		inline Integer root(const Integer id) const
+		{	
+			Integer current_id = id;
+			while(elem(current_id).parent_id != INVALID_INDEX) {
+				current_id = elem(current_id).parent_id;
+			}
+
+			return current_id;
 		}
 
 	private:
@@ -600,6 +778,168 @@ namespace mars {
 		EdgeElementMap edge_element_map_;
 
 	};
+
+	enum PlotFun
+	{
+		PLOT_ROOT = 0,
+		PLOT_FLAG = 1,
+		PLOT_ID = 2,
+		PLOT_PARENT = 3,
+		PLOT_PARENT_FLAG = 4
+	};
+
+	inline void flag_color(const Integer flag, Real &r, Real &g, Real &b)
+	{
+		r = 0.; g = 0.; b = 0;
+		switch(flag)
+		{
+			case RED: {
+				r = 1.;
+				break;
+			}
+			case GREEN_1:
+			case GREEN_2:
+			case GREEN_3:
+			{
+				g = 1.;
+				break;
+			}
+			default: {
+				r = 1.; 
+				g = 1.;
+				b = 1.;
+				break;
+			}
+		}
+	}
+
+
+	template<Integer Dim>
+	bool write_mesh(
+		const std::string &path,
+		const Mesh<Dim, 2> &mesh,
+		const Real scale_factor = 1.,
+		const PlotFun plot_fun = PLOT_ROOT)
+	{
+
+		moonolith::Mesh m;
+		m.dim = Dim;
+
+		m.points.resize(mesh.n_nodes() * Dim);
+		m.el_index.resize(mesh.n_active_elements() * 3);
+
+		for(Integer i = 0; i < mesh.n_nodes(); ++i) {
+			for(Integer d = 0; d < Dim; ++d) {
+				m.points[i * Dim + d] = mesh.point(i)(d) * scale_factor;
+			}
+		}
+
+		m.elem_type.resize(mesh.n_active_elements());
+		std::fill(m.elem_type.begin(), m.elem_type.end(), moonolith::ElemType::TRI3);
+		m.uniform_elem_type = moonolith::ElemType::TRI3;
+		m.has_uniform_elem_type = true;
+
+		m.el_ptr.resize(m.elem_type.size() + 1);
+
+		m.el_ptr[0] = 0;
+		for(std::size_t i = 1; i < m.el_ptr.size(); ++i) {
+			m.el_ptr[i] = m.el_ptr[i - 1] + 3;
+		}
+
+		Integer k = 0;
+		for(std::size_t i = 0; i < mesh.n_elements(); ++i) {
+			if(mesh.is_active(i)) {
+				for(Integer j = 0; j < 3; ++j) {
+					m.el_index[k * 3 + j] = mesh.elem(i).nodes[j];
+				}
+
+				k++;
+			}
+		}
+
+		// moonolith::SVGCanvas canvas;
+		moonolith::EPSCanvas canvas;
+		canvas.set_line_width(0.1/mesh.n_active_elements());
+
+		std::vector<Real> f, hsv;
+
+		if(plot_fun == PLOT_FLAG || plot_fun == PLOT_PARENT_FLAG) {
+			f.resize(mesh.n_active_elements() * 3);
+		} else {
+			f.resize(mesh.n_active_elements());
+		}
+		for(std::size_t i = 0, k = 0; i < mesh.n_elements(); ++i) {
+			if(mesh.is_active(i)) {
+				switch(plot_fun) {
+					case PLOT_ROOT: {
+						f[k++] = mesh.root(i);
+						break;
+					}
+
+					case PLOT_FLAG: {
+						Real r = 0., g = 0., b = 0;
+						flag_color(mesh.refinement_flag(i), r, g, b);
+						f[k * 3]     = r;
+						f[k * 3 + 1] = g;
+						f[k * 3 + 2] = b; 
+
+						k++;
+						break;
+					}
+
+					case PLOT_PARENT_FLAG: {
+						Real r = 0., g = 0., b = 0;
+						if(mesh.elem(i).parent_id != INVALID_INDEX) {
+							flag_color(mesh.refinement_flag(mesh.elem(i).parent_id), r, g, b);
+						} else {
+							flag_color(NONE, r, g, b);
+						}
+
+						f[k * 3]     = r;
+						f[k * 3 + 1] = g;
+						f[k * 3 + 2] = b; 
+
+						k++;
+						break;
+					}
+
+					case PLOT_PARENT: {
+						if(mesh.elem(i).parent_id != INVALID_INDEX) {
+							f[k++] = mesh.elem(i).parent_id;
+						} else {
+							f[k++] = mesh.elem(i).id;
+						}
+						break;
+					}
+
+					default:
+					{
+						f[k++] = mesh.elem(i).id;
+						break;
+					}
+				}
+			}
+		}
+
+		if(plot_fun == PLOT_FLAG || plot_fun == PLOT_PARENT_FLAG) {
+			hsv = f;
+		} else {
+			moonolith::func_to_hsv(f, hsv);
+		}
+
+		canvas.fill_mesh(m, hsv);
+		canvas.set_color(0,0,0);
+		canvas.stroke_mesh(m);
+
+		for(std::size_t i = 0, k = 0; i < mesh.n_elements(); ++i) {
+			if(mesh.is_active(i)) {
+				auto b = barycenter(mesh.elem(i), mesh.points());
+				canvas.draw_text(b(0)*scale_factor, b(1)*scale_factor, 4./mesh.n_active_elements(), "Arial", std::to_string(i), true);
+			}
+		}
+
+		return canvas.write(path);
+	}
 
 	template<Integer Dim, Integer ManifoldDim>
 	bool read_mesh(const std::string &path, Mesh<Dim, ManifoldDim> &mesh, const bool verbose = false)

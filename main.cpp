@@ -98,7 +98,7 @@ void test_mesh(mars::Mesh<Dim, ManifoldDim> &mesh)
 {
 	using namespace mars;
 
-	static const Integer n_refinements = 3;
+	static const Integer n_refinements = 1;
 	mesh.build_dual_graph();
 	Integer nbs = mesh.n_boundary_sides();
 	std::cout << "n_boundary_sides: " << nbs << std::endl;
@@ -126,7 +126,18 @@ void test_mfem_mesh_2D()
 	std::cout << "======================================\n";
 	Mesh<2, 2> mesh;
 	read_mesh("../data/square_2.MFEM", mesh);
+	
 	test_mesh(mesh);
+	write_mesh("mesh_2.eps", mesh, 10., PLOT_ID);
+	// mesh.describe(std::cout);
+	// write_mesh("mesh_2_refined.eps", mesh, 10., PLOT_PARENT);
+
+	// mesh.red_green_refinement({0});
+	mesh.red_green_refinement({2, 3, 4});
+	mesh.red_green_refinement({20});
+	// write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_FLAG);
+	write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_PARENT_FLAG);
+
 	std::cout << "======================================\n";
 }
 
@@ -229,8 +240,8 @@ int main(const int argc, const char *argv[])
 	// test_red_refinement();
 	
 	test_mfem_mesh_2D();
-	test_mfem_mesh_3D();
-	test_mfem_mesh_4D();
+	// test_mfem_mesh_3D();
+	// test_mfem_mesh_4D();
 
 	return EXIT_SUCCESS;
 }

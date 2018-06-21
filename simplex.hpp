@@ -98,14 +98,21 @@ namespace mars {
         std::array<Integer, 3> nodes;
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
+       
+        std::vector<Integer> children;
         
         
-        void side(
-                  const Integer &side_num,
+        void side(const Integer &side_num,
                   Simplex<Dim, 1> &side) const
         {
             side.nodes[0] = nodes[side_num];
             side.nodes[1] = nodes[side_num == 2? 0 : (side_num + 1)];
+        }
+
+        Integer vertex_opposite_to_side(const Integer &side_num) const
+        {
+            Integer opposite = side_num + 2;
+            return nodes[opposite > 2? (opposite - 3) : opposite];
         }
         
         inline static std::vector<Vector<Real, Dim>> &ref()
