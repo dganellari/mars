@@ -98,6 +98,8 @@ void test_mesh(mars::Mesh<Dim, ManifoldDim> &mesh)
 {
 	using namespace mars;
 
+	RedGreenRefinement<Dim, ManifoldDim> rgr(mesh);
+
 	static const Integer n_refinements = 1;
 	mesh.build_dual_graph();
 	Integer nbs = mesh.n_boundary_sides();
@@ -108,7 +110,7 @@ void test_mesh(mars::Mesh<Dim, ManifoldDim> &mesh)
 	std::cout << "-------------------------" << std::endl;
 
 	// mesh.red_refine_element(0);
-	mesh.uniform_refinement(n_refinements);
+	rgr.uniformly_refine(n_refinements);
 	std::cout << "n_elements: " << mesh.n_active_elements() << std::endl;
 	std::cout << "n_nodes:    " << mesh.n_nodes() << std::endl;
 
@@ -126,26 +128,28 @@ void test_mfem_mesh_2D()
 	std::cout << "======================================\n";
 	Mesh<2, 2> mesh;
 	read_mesh("../data/square_2.MFEM", mesh);
+
+	RedGreenRefinement<2, 2> rgr(mesh);
 	
 	test_mesh(mesh);
 	write_mesh("mesh_2.eps", mesh, 10., PLOT_ID);
 	// mesh.describe(std::cout);
 	// write_mesh("mesh_2_refined.eps", mesh, 10., PLOT_PARENT);
 
-	// mesh.red_green_refinement({0});
-	mesh.red_green_refinement({2, 3, 4});
-	write_mesh("mesh_2_rg1.eps", mesh, 10., PLOT_PARENT_FLAG);
-	mesh.red_green_refinement({20, 29});
-	// write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_FLAG);
-	write_mesh("mesh_2_rg2.eps", mesh, 10., PLOT_PARENT_FLAG);
+	// rgr.refine({0});
+	rgr.refine({2, 3, 4});
+	write_mesh("mesh_2_rg1.eps", mesh, 10., PLOT_PARENT_TAG);
+	rgr.refine({20, 29});
+	// write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_TAG);
+	write_mesh("mesh_2_rg2.eps", mesh, 10., PLOT_PARENT_TAG);
 
-	mesh.red_green_refinement({35});
-	// write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_FLAG);
-	write_mesh("mesh_2_rg3.eps", mesh, 10., PLOT_PARENT_FLAG);
+	rgr.refine({35});
+	// write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_TAG);
+	write_mesh("mesh_2_rg3.eps", mesh, 10., PLOT_PARENT_TAG);
 
-	mesh.red_green_refinement({36});
-	// write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_FLAG);
-	write_mesh("mesh_2_rg4.eps", mesh, 10., PLOT_PARENT_FLAG);
+	rgr.refine({36});
+	// write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_TAG);
+	write_mesh("mesh_2_rg4.eps", mesh, 10., PLOT_PARENT_TAG);
 
 	std::cout << "n_boundary_sides: " << mesh.n_boundary_sides() << std::endl;
 

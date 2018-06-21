@@ -6,9 +6,7 @@
 #include <algorithm>  
 
 namespace mars {
-
-
-
+	
 	template<Integer Dim, Integer ManifoldDim>
 	class Mesh;
 

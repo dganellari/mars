@@ -5,6 +5,7 @@
 #include "edge_element_map.hpp"
 #include "edge_node_map.hpp"
 #include "dual_graph.hpp"
+#include "red_green_refinement.hpp"
 
 namespace moonolith {
 	using Integer = mars::Integer;
@@ -25,39 +26,6 @@ namespace moonolith {
 #include <algorithm>  
 
 namespace mars {
-	enum RefinementFlag {
-		NONE = 0,
-		RED = 1,
-		GREEN_1 = 2,
-		GREEN_2 = 3,
-		GREEN_3 = 4,
-		CHILD_OF_GREEN = 5,
-		PARENT_PROMOTED_TO_RED = 6
-	};
-
-	template<Integer ManifoldDim>
-	class Refinement {
-	public:
-		class Trigger {
-		public:
-			//red|green|...
-			Integer flag;
-
-			//element id
-			Integer element;
-
-			//self=Manifold|side=Manifold-1|sub-side=Manifold-2|....|edge=1
-			Integer type;
-
-			//face index|edge index
-			Integer index;
-		};
-
-		std::vector<Trigger> triggers;
-	};
-
-	template<>
-	class Refinement<0> {};
 
 	template<Integer Dim, Integer ManifoldDim = Dim>
 	class Mesh {
@@ -86,6 +54,11 @@ namespace mars {
 			return active_[id];
 		}
 
+		inline void set_active(const Integer id, const bool val)
+		{
+			active_[id] = val;
+		}
+
 		inline Integer add_point(const Vector<Real, Dim> &point)
 		{
 			points_.push_back(point);
@@ -108,7 +81,7 @@ namespace mars {
 			elements_.push_back(elem);
 			elements_.back().id = id;
 			active_.push_back(true);
-			refinement_flag_.push_back(NONE);
+			// refinement_flag_.push_back(NONE);
 			assert(elements_.back().id == id);
 			return elements_.back().id;
 		}
@@ -122,20 +95,20 @@ namespace mars {
 			e.id = elements_.size() - 1;
 			e.nodes = nodes;
 			active_.push_back(true);
-			refinement_flag_.push_back(NONE);
+			// refinement_flag_.push_back(NONE);
 			assert(e.id == elements_.size() - 1);
 			return e.id;
 		}
 
-		inline void set_refinement_flag(const Integer &element_id, const Integer flag)
-		{
-			refinement_flag_[element_id] = flag;
-		}
+		// inline void set_refinement_flag(const Integer &element_id, const Integer flag)
+		// {
+		// 	refinement_flag_[element_id] = flag;
+		// }
 
-		inline Integer refinement_flag(const Integer &element_id) const
-		{
-			return refinement_flag_[element_id];
-		}
+		// inline Integer refinement_flag(const Integer &element_id) const
+		// {
+		// 	return refinement_flag_[element_id];
+		// }
 
 		inline void points(const Integer element_id, std::vector<Vector<Real, Dim>> &pts)
 		{
@@ -147,31 +120,18 @@ namespace mars {
 			}
 		}
 
-		inline bool is_green(const Integer id) const
-		{
-			if(INVALID_INDEX == id) return false;
+		// inline bool is_green(const Integer id) const
+		// {
+		// 	if(INVALID_INDEX == id) return false;
 
-			switch(refinement_flag(id)) 
-			{
-				case GREEN_1: return true;
-				case GREEN_2: return true;
-				case GREEN_3: return true;
-				default: return false;
-			}
-		}	
-
-		inline Integer n_adjacients(const Integer id) const
-		{
-			// Integer ret = 0;
-			// for(auto a : dual_graph_.adj(id)) {
-			// 	ret += a != INVALID_INDEX;
-			// }
-
-			// return ret;
-
-			return dual_graph_.n_adjacients(id);
-		}
-
+		// 	switch(refinement_flag(id)) 
+		// 	{
+		// 		case GREEN_1: return true;
+		// 		case GREEN_2: return true;
+		// 		case GREEN_3: return true;
+		// 		default: return false;
+		// 	}
+		// }	
 
 		inline void deactivate_children(const Integer id)
 		{
@@ -180,327 +140,327 @@ namespace mars {
 			}
 		}
 
-		void propagate_flags(
-			std::vector<Integer> &red_elements,
-			std::vector<Integer> &green_elements)
-		{
-			std::vector<Integer> potential_green_elements;
-			for(auto &e : red_elements) {
-				const auto &adj = dual_graph_.adj(e);
-				for(auto a : adj) {
-					if(a == INVALID_INDEX || !is_active(a)) continue;
-					auto flag = refinement_flag(a);
+		// void propagate_flags(
+		// 	std::vector<Integer> &red_elements,
+		// 	std::vector<Integer> &green_elements)
+		// {
+		// 	std::vector<Integer> potential_green_elements;
+		// 	for(auto &e : red_elements) {
+		// 		const auto &adj = dual_graph_.adj(e);
+		// 		for(auto a : adj) {
+		// 			if(a == INVALID_INDEX || !is_active(a)) continue;
+		// 			auto flag = refinement_flag(a);
 
-					if(!elem(a).children.empty()) {
-						std::cout << "promoting " << a << " to red" << std::endl;
-						set_refinement_flag(a, RED);
-						//deactivate children
-						deactivate_children(a);
-						red_elements.push_back(a); 
-						continue;
-					}
+		// 			if(!elem(a).children.empty()) {
+		// 				std::cout << "promoting " << a << " to red" << std::endl;
+		// 				set_refinement_flag(a, RED);
+		// 				//deactivate children
+		// 				deactivate_children(a);
+		// 				red_elements.push_back(a); 
+		// 				continue;
+		// 			}
 
-					const auto parent = elem(a).parent_id;
-					if(is_green(parent)) {
-						std::cout << "promoting " << a << " to red" << std::endl;
-						set_refinement_flag(parent, RED);
-						//deparentctivate children
-						deactivate_children(parent);
-						red_elements.push_back(parent);
-					}
+		// 			const auto parent = elem(a).parent_id;
+		// 			if(is_green(parent)) {
+		// 				std::cout << "promoting " << a << " to red" << std::endl;
+		// 				set_refinement_flag(parent, RED);
+		// 				//deparentctivate children
+		// 				deactivate_children(parent);
+		// 				red_elements.push_back(parent);
+		// 			}
 
-					switch(flag)
-					{
-						case RED:
-						{
-							continue;
-						}
-						case NONE:
-						{
-							if(n_adjacients(a) == 1) {
-								set_refinement_flag(a, RED);
-								red_elements.push_back(a);
-							} else {
-								set_refinement_flag(a, GREEN_1);
-								potential_green_elements.push_back(a);
-							}
+		// 			switch(flag)
+		// 			{
+		// 				case RED:
+		// 				{
+		// 					continue;
+		// 				}
+		// 				case NONE:
+		// 				{
+		// 					if(dual_graph_.n_adjacients(a) == 1) {
+		// 						set_refinement_flag(a, RED);
+		// 						red_elements.push_back(a);
+		// 					} else {
+		// 						set_refinement_flag(a, GREEN_1);
+		// 						potential_green_elements.push_back(a);
+		// 					}
 
-							break;
-						}
-						case GREEN_1:
-						{
-							if(n_adjacients(a) == 2) {
-								set_refinement_flag(a, RED);
-								red_elements.push_back(a);
-							} else {
-								set_refinement_flag(a, GREEN_2);
-								potential_green_elements.push_back(a);
-							}
+		// 					break;
+		// 				}
+		// 				case GREEN_1:
+		// 				{
+		// 					if(dual_graph_.n_adjacients(a) == 2) {
+		// 						set_refinement_flag(a, RED);
+		// 						red_elements.push_back(a);
+		// 					} else {
+		// 						set_refinement_flag(a, GREEN_2);
+		// 						potential_green_elements.push_back(a);
+		// 					}
 
-							break;
-						}
-						case GREEN_2:
-						{
-							if(n_adjacients(a) == 3) {
-								set_refinement_flag(a, RED);
-								red_elements.push_back(a);
-							} else {
-								//GREEN_3?
-								set_refinement_flag(a, RED);
-								red_elements.push_back(a);
-							}
+		// 					break;
+		// 				}
+		// 				case GREEN_2:
+		// 				{
+		// 					if(dual_graph_.n_adjacients(a) == 3) {
+		// 						set_refinement_flag(a, RED);
+		// 						red_elements.push_back(a);
+		// 					} else {
+		// 						//GREEN_3?
+		// 						set_refinement_flag(a, RED);
+		// 						red_elements.push_back(a);
+		// 					}
 
-							break;
-						}
-						case GREEN_3:
-						{
-							assert(false && "implement me");
-							break;
-						}
-					}
-				}
-			}
+		// 					break;
+		// 				}
+		// 				case GREEN_3:
+		// 				{
+		// 					assert(false && "implement me");
+		// 					break;
+		// 				}
+		// 			}
+		// 		}
+		// 	}
 
-			green_elements.clear();
-			green_elements.reserve(potential_green_elements.size());
-			for(auto e : potential_green_elements) {
-				if(refinement_flag(e) != RED && is_active(e)) {
-					green_elements.push_back(e);
-				}
-			}
-		}
+		// 	green_elements.clear();
+		// 	green_elements.reserve(potential_green_elements.size());
+		// 	for(auto e : potential_green_elements) {
+		// 		if(refinement_flag(e) != RED && is_active(e)) {
+		// 			green_elements.push_back(e);
+		// 		}
+		// 	}
+		// }
 
-		void red_green_refinement(const std::vector<Integer> &elements_to_refine)
-		{
-			std::vector<Integer> promoted_elements;
-			std::vector<Integer> red_elements, green_elements;
-			for(auto &e : elements_to_refine) {
-				if(!is_active(e)) {
-					std::cerr << e << " cannot refine inactive" << std::endl;
-					continue;
-				}
+		// void red_green_refinement(const std::vector<Integer> &elements_to_refine)
+		// {
+		// 	std::vector<Integer> promoted_elements;
+		// 	std::vector<Integer> red_elements, green_elements;
+		// 	for(auto &e : elements_to_refine) {
+		// 		if(!is_active(e)) {
+		// 			std::cerr << e << " cannot refine inactive" << std::endl;
+		// 			continue;
+		// 		}
 
-				auto parent = elem(e).parent_id;
+		// 		auto parent = elem(e).parent_id;
 				
-				if(is_green(parent)) {
-					std::cout << "promoting " << parent << " to red" << std::endl;
-					//promote parent to red
-					set_refinement_flag(parent, RED);
-					//deactivate children
-					deactivate_children(parent);
-					active_[parent] = true;
-					promoted_elements.push_back(parent);
-					continue;
-				}
+		// 		if(is_green(parent)) {
+		// 			std::cout << "promoting " << parent << " to red" << std::endl;
+		// 			//promote parent to red
+		// 			set_refinement_flag(parent, RED);
+		// 			//deactivate children
+		// 			deactivate_children(parent);
+		// 			active_[parent] = true;
+		// 			promoted_elements.push_back(parent);
+		// 			continue;
+		// 		}
 
-				set_refinement_flag(e, RED);
-				red_elements.push_back(e);
-			}
+		// 		set_refinement_flag(e, RED);
+		// 		red_elements.push_back(e);
+		// 	}
 
-			update_dual_graph();
+		// 	update_dual_graph();
 
-			propagate_flags(promoted_elements, green_elements);
+		// 	propagate_flags(promoted_elements, green_elements);
 
-			for(auto e : promoted_elements) {
-				red_refine_element(e);
-			}
+		// 	for(auto e : promoted_elements) {
+		// 		red_refine_element(e);
+		// 	}
 
-			for(auto e : green_elements) {
-				green_refine_element(e);
-			}
+		// 	for(auto e : green_elements) {
+		// 		green_refine_element(e);
+		// 	}
 
-			update_dual_graph();
-			edge_element_map_.build(*this);
+		// 	update_dual_graph();
+		// 	edge_element_map_.build(*this);
 
-			propagate_flags(red_elements, green_elements);
-			for(auto e : red_elements) {
-				red_refine_element(e);
-			}
+		// 	propagate_flags(red_elements, green_elements);
+		// 	for(auto e : red_elements) {
+		// 		red_refine_element(e);
+		// 	}
 
-			for(auto e : green_elements) {
-				green_refine_element(e);
-			}
-		}	
+		// 	for(auto e : green_elements) {
+		// 		green_refine_element(e);
+		// 	}
+		// }	
 
-		inline void green_refine_element(const Integer element_id)
-		{
-			auto &e = elem(element_id);
-			active_[element_id] = false;
+		// inline void green_refine_element(const Integer element_id)
+		// {
+		// 	auto &e = elem(element_id);
+		// 	active_[element_id] = false;
 
-			const auto &adj = dual_graph_.adj(element_id);
-			std::array<Integer, ManifoldDim> side_flags;
-			std::vector<Integer> red_side_index;
-			std::vector<Integer> green_side_index;
+		// 	const auto &adj = dual_graph_.adj(element_id);
+		// 	std::array<Integer, ManifoldDim> side_flags;
+		// 	std::vector<Integer> red_side_index;
+		// 	std::vector<Integer> green_side_index;
 
-			Integer n_red_neighs = 0;
-			Integer n_green_neighs = 0;
+		// 	Integer n_red_neighs = 0;
+		// 	Integer n_green_neighs = 0;
 			
-			Integer k = 0;
-			for(auto a : adj) {
-				if(a == INVALID_INDEX) {
-					side_flags[k++] = INVALID_INDEX;
-				 	continue;
-				}
+		// 	Integer k = 0;
+		// 	for(auto a : adj) {
+		// 		if(a == INVALID_INDEX) {
+		// 			side_flags[k++] = INVALID_INDEX;
+		// 		 	continue;
+		// 		}
 
-				if(refinement_flag(a) == RED) {
-					red_side_index.push_back(k);
-					++n_red_neighs;
-				} else if(refinement_flag(a) == GREEN_1) {
-					++n_green_neighs;
-					green_side_index.push_back(k);
-				}
+		// 		if(refinement_flag(a) == RED) {
+		// 			red_side_index.push_back(k);
+		// 			++n_red_neighs;
+		// 		} else if(refinement_flag(a) == GREEN_1) {
+		// 			++n_green_neighs;
+		// 			green_side_index.push_back(k);
+		// 		}
 				
-				side_flags[k++] = refinement_flag(a);
-			}
+		// 		side_flags[k++] = refinement_flag(a);
+		// 	}
 
-			Simplex<Dim, ManifoldDim-1> side_1, side_2;
-			Simplex<Dim, ManifoldDim> child;
-			child.parent_id = element_id;
-			e.children.clear();
+		// 	Simplex<Dim, ManifoldDim-1> side_1, side_2;
+		// 	Simplex<Dim, ManifoldDim> child;
+		// 	child.parent_id = element_id;
+		// 	e.children.clear();
 
-			switch(n_red_neighs) {
-				case 1: 
-				{	
-					e.side(red_side_index[0], side_1);
+		// 	switch(n_red_neighs) {
+		// 		case 1: 
+		// 		{	
+		// 			e.side(red_side_index[0], side_1);
 					
-					Integer n0 = side_1.nodes[0];
-					Integer n1 = side_1.nodes[1];
-					const Integer midpoint = edge_node_map_.get(n0, n1);
-					const Integer opposite = e.vertex_opposite_to_side(red_side_index[0]);
+		// 			Integer n0 = side_1.nodes[0];
+		// 			Integer n1 = side_1.nodes[1];
+		// 			const Integer midpoint = edge_node_map_.get(n0, n1);
+		// 			const Integer opposite = e.vertex_opposite_to_side(red_side_index[0]);
 
-					child.nodes[0] = n0;
-					child.nodes[1] = opposite;
-					child.nodes[2] = midpoint;
+		// 			child.nodes[0] = n0;
+		// 			child.nodes[1] = opposite;
+		// 			child.nodes[2] = midpoint;
 
-					e.children.push_back( add_elem(child) );
+		// 			e.children.push_back( add_elem(child) );
 
-					child.nodes[0] = n1;
-					child.nodes[1] = midpoint;
-					child.nodes[2] = opposite;
+		// 			child.nodes[0] = n1;
+		// 			child.nodes[1] = midpoint;
+		// 			child.nodes[2] = opposite;
 
-					e.children.push_back( add_elem(child) );
-					break;
-				}
+		// 			e.children.push_back( add_elem(child) );
+		// 			break;
+		// 		}
 
-				case 2:
-				{
-					e.side(red_side_index[0], side_1);
+		// 		case 2:
+		// 		{
+		// 			e.side(red_side_index[0], side_1);
 					
-					Integer n1_0 = side_1.nodes[0];
-					Integer n1_1 = side_1.nodes[1];
-					const Integer midpoint_1 = edge_node_map_.get(n1_0, n1_1);
-					const Integer opposite_1 = e.vertex_opposite_to_side(red_side_index[0]);
+		// 			Integer n1_0 = side_1.nodes[0];
+		// 			Integer n1_1 = side_1.nodes[1];
+		// 			const Integer midpoint_1 = edge_node_map_.get(n1_0, n1_1);
+		// 			const Integer opposite_1 = e.vertex_opposite_to_side(red_side_index[0]);
 
-					e.side(red_side_index[1], side_2);
+		// 			e.side(red_side_index[1], side_2);
 					
-					Integer n2_0 = side_2.nodes[0];
-					Integer n2_1 = side_2.nodes[1];
-					const Integer midpoint_2 = edge_node_map_.get(n2_0, n2_1);
-					const Integer opposite_2 = e.vertex_opposite_to_side(red_side_index[1]);
+		// 			Integer n2_0 = side_2.nodes[0];
+		// 			Integer n2_1 = side_2.nodes[1];
+		// 			const Integer midpoint_2 = edge_node_map_.get(n2_0, n2_1);
+		// 			const Integer opposite_2 = e.vertex_opposite_to_side(red_side_index[1]);
 
 
-					child.nodes[0] = midpoint_1;
-					child.nodes[1] = opposite_2;
-					child.nodes[2] = opposite_1;
+		// 			child.nodes[0] = midpoint_1;
+		// 			child.nodes[1] = opposite_2;
+		// 			child.nodes[2] = opposite_1;
 
-					e.children.push_back( add_elem(child) ); 
+		// 			e.children.push_back( add_elem(child) ); 
 
-					child.nodes[0] = midpoint_1;
-					child.nodes[1] = midpoint_2;
-					child.nodes[2] = n2_0;
+		// 			child.nodes[0] = midpoint_1;
+		// 			child.nodes[1] = midpoint_2;
+		// 			child.nodes[2] = n2_0;
 
-					e.children.push_back( add_elem(child) ); 
+		// 			e.children.push_back( add_elem(child) ); 
 
-					child.nodes[0] = midpoint_1;
-					child.nodes[1] = n2_1;
-					child.nodes[2] = midpoint_2;
+		// 			child.nodes[0] = midpoint_1;
+		// 			child.nodes[1] = n2_1;
+		// 			child.nodes[2] = midpoint_2;
 
-					e.children.push_back( add_elem(child) ); 
-					break;
-				}
+		// 			e.children.push_back( add_elem(child) ); 
+		// 			break;
+		// 		}
 
-				case 3:
-				{
-					std::cerr << "[" << element_id << "] should have been promoted to RED" << std::endl;
-					break;
-				}
-				default:
-				{
-					assert(false);
-				}
-			}
-		}
+		// 		case 3:
+		// 		{
+		// 			std::cerr << "[" << element_id << "] should have been promoted to RED" << std::endl;
+		// 			break;
+		// 		}
+		// 		default:
+		// 		{
+		// 			assert(false);
+		// 		}
+		// 	}
+		// }
 
-		inline void red_refine_element(const Integer element_id)
-		{
-			static const Integer NSubs = NSubSimplices<ManifoldDim>::value;
-			static_assert(NSubSimplices<ManifoldDim>::value > 0, "!");
+		// inline void red_refine_element(const Integer element_id)
+		// {
+		// 	static const Integer NSubs = NSubSimplices<ManifoldDim>::value;
+		// 	static_assert(NSubSimplices<ManifoldDim>::value > 0, "!");
 
-			auto &parent_e = elements_[element_id];
-			std::vector<Vector<Real, Dim>> parent_points;
-			points(element_id, parent_points);
+		// 	auto &parent_e = elements_[element_id];
+		// 	std::vector<Vector<Real, Dim>> parent_points;
+		// 	points(element_id, parent_points);
 
-			std::array<Simplex<Dim, ManifoldDim>, NSubs> children;
-			std::vector<Vector<Real, Dim>> children_points;
-			auto interp = std::make_shared< SimplexInterpolator<ManifoldDim> >();
+		// 	std::array<Simplex<Dim, ManifoldDim>, NSubs> children;
+		// 	std::vector<Vector<Real, Dim>> children_points;
+		// 	auto interp = std::make_shared< SimplexInterpolator<ManifoldDim> >();
 
-			Simplex<Dim, ManifoldDim> modified_e = parent_e;
+		// 	Simplex<Dim, ManifoldDim> modified_e = parent_e;
 			
-			if(ManifoldDim == 4) {
-				//4D hack
-				std::sort(modified_e.nodes.begin(), modified_e.nodes.end());
-			}
+		// 	if(ManifoldDim == 4) {
+		// 		//4D hack
+		// 		std::sort(modified_e.nodes.begin(), modified_e.nodes.end());
+		// 	}
 
-			red_refinement<Dim, ManifoldDim, NSubs>(
-			    modified_e,
-			    parent_points,
-			    children, 
-			    children_points,
-			    *interp
-			);
+		// 	red_refinement<Dim, ManifoldDim, NSubs>(
+		// 	    modified_e,
+		// 	    parent_points,
+		// 	    children, 
+		// 	    children_points,
+		// 	    *interp
+		// 	);
 
-			if(interp_.size() <= element_id) {
-				interp_.resize(element_id + 1);
-			}
+		// 	if(interp_.size() <= element_id) {
+		// 		interp_.resize(element_id + 1);
+		// 	}
 
-			std::vector<Integer> point_ids(interp->rows(), INVALID_INDEX);
+		// 	std::vector<Integer> point_ids(interp->rows(), INVALID_INDEX);
 
-			for(Integer i = 0; i < ManifoldDim + 1; ++i) {
-				point_ids[i] = modified_e.nodes[i];
+		// 	for(Integer i = 0; i < ManifoldDim + 1; ++i) {
+		// 		point_ids[i] = modified_e.nodes[i];
 
-            	for(Integer j = i + 1; j < ManifoldDim + 1; ++j) {
-                	Integer offset = midpoint_index<ManifoldDim>(i, j); 
-                	point_ids[offset] = edge_node_map_.get(modified_e.nodes[i], modified_e.nodes[j]);
+  //           	for(Integer j = i + 1; j < ManifoldDim + 1; ++j) {
+  //               	Integer offset = midpoint_index<ManifoldDim>(i, j); 
+  //               	point_ids[offset] = edge_node_map_.get(modified_e.nodes[i], modified_e.nodes[j]);
 
-                	if(point_ids[offset] == INVALID_INDEX) {
-                		const auto new_id = add_point(children_points[offset]);
-                		edge_node_map_.update(
-                			modified_e.nodes[i],
-                			modified_e.nodes[j],
-							new_id
-						);
+  //               	if(point_ids[offset] == INVALID_INDEX) {
+  //               		const auto new_id = add_point(children_points[offset]);
+  //               		edge_node_map_.update(
+  //               			modified_e.nodes[i],
+  //               			modified_e.nodes[j],
+		// 					new_id
+		// 				);
 
-						point_ids[offset] = new_id;
-						assert(new_id < this->n_nodes());
-                	}
-            	}
-            }
+		// 				point_ids[offset] = new_id;
+		// 				assert(new_id < this->n_nodes());
+  //               	}
+  //           	}
+  //           }
 
-			interp_[element_id] = interp;
+		// 	interp_[element_id] = interp;
 
-			for(auto &c : children) {
-				for(Integer i = 0; i < ManifoldDim + 1; ++i) {
-					c.nodes[i] = point_ids[c.nodes[i]];
-				}
+		// 	for(auto &c : children) {
+		// 		for(Integer i = 0; i < ManifoldDim + 1; ++i) {
+		// 			c.nodes[i] = point_ids[c.nodes[i]];
+		// 		}
 
-				// std::sort(c.nodes.begin(), c.nodes.end()); add_elem(c);
+		// 		// std::sort(c.nodes.begin(), c.nodes.end()); add_elem(c);
 
-				//4D hack
-				repair_element(add_elem(c), ManifoldDim != 4);
-			}
+		// 		//4D hack
+		// 		repair_element(add_elem(c), ManifoldDim != 4);
+		// 	}
 
-			active_[element_id] = false;
-		}
+		// 	active_[element_id] = false;
+		// }
 
 		void repair_element(const Integer element_id, const bool verbose = false)
 		{
@@ -778,18 +738,20 @@ namespace mars {
 			return true;
 		}
 
-		void uniform_refinement(const Integer n_levels = 1)
-		{
-			for(Integer l = 0; l < n_levels; ++l) {
-				auto ne = n_elements();
+		// void uniform_refinement(const Integer n_levels = 1)
+		// {
+		// 	for(Integer l = 0; l < n_levels; ++l) {
+		// 		auto ne = n_elements();
 
-				for(Integer i = 0; i < ne; ++i) {
-					if(active_[i]) {
-						red_refine_element(i);
-					}
-				}
-			}
-		}
+		// 		for(Integer i = 0; i < ne; ++i) {
+		// 			if(active_[i]) {
+		// 				red_refine_element(i);
+		// 			}
+		// 		}
+		// 	}
+		// }
+
+		DualGraph<ManifoldDim> &dual_graph() { return dual_graph_; }
 
 		void update_dual_graph(const bool force = false)
 		{
@@ -812,27 +774,31 @@ namespace mars {
 			return current_id;
 		}
 
+		std::vector<Integer> &tags() { return tags_; }
+		const std::vector<Integer> &tags() const { return tags_; }
+
 	private:
 		std::vector< Simplex<Dim, ManifoldDim> > elements_;
 		std::vector< Vector<Real, Dim> > points_;
 		
 		//refinement
-		std::vector<Integer> refinement_flag_;
+		// std::vector<Integer> refinement_flag_;
+		std::vector<Integer> tags_;
 		DualGraph<ManifoldDim> dual_graph_;
 		std::vector<bool> active_;
-		std::vector< std::shared_ptr<SimplexInterpolator<ManifoldDim>> > interp_;
-		EdgeNodeMap edge_node_map_;
-		EdgeElementMap edge_element_map_;
+		// std::vector< std::shared_ptr<SimplexInterpolator<ManifoldDim>> > interp_;
+		// EdgeNodeMap edge_node_map_;
+		// EdgeElementMap edge_element_map_;
 
 	};
 
 	enum PlotFun
 	{
 		PLOT_ROOT = 0,
-		PLOT_FLAG = 1,
+		PLOT_TAG = 1,
 		PLOT_ID = 2,
 		PLOT_PARENT = 3,
-		PLOT_PARENT_FLAG = 4
+		PLOT_PARENT_TAG = 4
 	};
 
 	inline void flag_color(const Integer flag, Real &r, Real &g, Real &b)
@@ -910,7 +876,7 @@ namespace mars {
 
 		std::vector<Real> f, hsv;
 
-		if(plot_fun == PLOT_FLAG || plot_fun == PLOT_PARENT_FLAG) {
+		if(plot_fun == PLOT_TAG || plot_fun == PLOT_PARENT_TAG) {
 			f.resize(mesh.n_active_elements() * 3);
 		} else {
 			f.resize(mesh.n_active_elements());
@@ -923,9 +889,9 @@ namespace mars {
 						break;
 					}
 
-					case PLOT_FLAG: {
+					case PLOT_TAG: {
 						Real r = 0., g = 0., b = 0;
-						flag_color(mesh.refinement_flag(i), r, g, b);
+						flag_color(mesh.tags()[i], r, g, b);
 						f[k * 3]     = r;
 						f[k * 3 + 1] = g;
 						f[k * 3 + 2] = b; 
@@ -934,10 +900,10 @@ namespace mars {
 						break;
 					}
 
-					case PLOT_PARENT_FLAG: {
+					case PLOT_PARENT_TAG: {
 						Real r = 0., g = 0., b = 0;
 						if(mesh.elem(i).parent_id != INVALID_INDEX) {
-							flag_color(mesh.refinement_flag(mesh.elem(i).parent_id), r, g, b);
+							flag_color(mesh.tags()[mesh.elem(i).parent_id], r, g, b);
 						} else {
 							flag_color(NONE, r, g, b);
 						}
@@ -968,7 +934,7 @@ namespace mars {
 			}
 		}
 
-		if(plot_fun == PLOT_FLAG || plot_fun == PLOT_PARENT_FLAG) {
+		if(plot_fun == PLOT_TAG || plot_fun == PLOT_PARENT_TAG) {
 			hsv = f;
 		} else {
 			moonolith::func_to_hsv(f, hsv);
