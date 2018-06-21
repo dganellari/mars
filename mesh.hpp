@@ -4,6 +4,7 @@
 #include "simplex.hpp"
 #include "edge_element_map.hpp"
 #include "edge_node_map.hpp"
+#include "dual_graph.hpp"
 
 namespace moonolith {
 	using Integer = mars::Integer;
@@ -33,6 +34,30 @@ namespace mars {
 		CHILD_OF_GREEN = 5,
 		PARENT_PROMOTED_TO_RED = 6
 	};
+
+	template<Integer ManifoldDim>
+	class Refinement {
+	public:
+		class Trigger {
+		public:
+			//red|green|...
+			Integer flag;
+
+			//element id
+			Integer element;
+
+			//self=Manifold|side=Manifold-1|sub-side=Manifold-2|....|edge=1
+			Integer type;
+
+			//face index|edge index
+			Integer index;
+		};
+
+		std::vector<Trigger> triggers;
+	};
+
+	template<>
+	class Refinement<0> {};
 
 	template<Integer Dim, Integer ManifoldDim = Dim>
 	class Mesh {
@@ -137,12 +162,14 @@ namespace mars {
 
 		inline Integer n_adjacients(const Integer id) const
 		{
-			Integer ret = 0;
-			for(auto a : dual_graph_[id]) {
-				ret += a != INVALID_INDEX;
-			}
+			// Integer ret = 0;
+			// for(auto a : dual_graph_.adj(id)) {
+			// 	ret += a != INVALID_INDEX;
+			// }
 
-			return ret;
+			// return ret;
+
+			return dual_graph_.n_adjacients(id);
 		}
 
 
@@ -159,7 +186,7 @@ namespace mars {
 		{
 			std::vector<Integer> potential_green_elements;
 			for(auto &e : red_elements) {
-				const auto &adj = dual_graph_[e];
+				const auto &adj = dual_graph_.adj(e);
 				for(auto a : adj) {
 					if(a == INVALID_INDEX || !is_active(a)) continue;
 					auto flag = refinement_flag(a);
@@ -300,7 +327,7 @@ namespace mars {
 			auto &e = elem(element_id);
 			active_[element_id] = false;
 
-			const auto &adj = dual_graph_[element_id];
+			const auto &adj = dual_graph_.adj(element_id);
 			std::array<Integer, ManifoldDim> side_flags;
 			std::vector<Integer> red_side_index;
 			std::vector<Integer> green_side_index;
@@ -648,16 +675,9 @@ namespace mars {
 
 		void describe_dual_graph(std::ostream &os) const
 		{
-			for(std::size_t i = 0; i < dual_graph_.size(); ++i) {
-				os << "[" << i << "]:";
-				for(std::size_t j = 0; j < dual_graph_[i].size(); ++j) {
-					os << " " << dual_graph_[i][j];
-				}
-				os << "\n";
-			}
+			dual_graph_.describe(os);
 		}
 
-		
 
 		Integer n_boundary_sides() const
 		{
@@ -668,13 +688,12 @@ namespace mars {
 				if(!active_[i]) continue;
 
 				const auto &e = elem(i);
-				const auto &e_adj = dual_graph_[i];
+				const auto &e_adj = dual_graph_.adj(i);
 				for(Integer k = 0; k < e_adj.size(); ++k) {
 					const Integer j = e_adj[k];
 					if(j == INVALID_INDEX) {
 						ret++;
 					}
-
 				}
 			}
 
@@ -696,14 +715,14 @@ namespace mars {
 				if(!active_[i]) continue;
 				
 				const auto &e = elem(i);
-				const auto &e_adj = dual_graph_[i];
+				const auto &e_adj = dual_graph_.adj(i);
 				for(Integer k = 0; k < e_adj.size(); ++k) {
 					const Integer j = e_adj[k];
 					if(j == INVALID_INDEX) continue;
 					e.side(k, side);
 
 					const auto &other = elem(j);
-					const auto &other_adj = dual_graph_[j];
+					const auto &other_adj = dual_graph_.adj(j);
 
 
 					Integer other_side_index = 0;
@@ -770,86 +789,11 @@ namespace mars {
 					}
 				}
 			}
-
-			// update_dual_graph();
 		}
 
 		void update_dual_graph(const bool force = false)
 		{
-			const Integer n_nodes    = this->n_nodes();
-			const Integer n_elements = this->n_elements();
-			Integer el_index_size = 0;
-
-			if(dual_graph_.size() == n_elements && !force) {
-				return;
-			}
-
-			std::vector< std::vector< Integer> > node_2_element(n_nodes);
-			dual_graph_.resize(n_elements);
-
-			for(Integer i = 0; i < n_elements; ++i) {
-				if(!active_[i]) continue;
-
-				const auto &e    = elem(i);
-				const Integer nn = ManifoldDim + 1;
-
-				std::fill(std::begin(dual_graph_[i]), std::end(dual_graph_[i]), INVALID_INDEX);
-
-				for(Integer k = 0; k < nn; ++k) {
-					node_2_element[e.nodes[k]].push_back(i);
-				}
-			}
-
-			std::vector<Integer> el_offset(n_elements, 0);
-
-			for(Integer i = 0; i < n_nodes; ++i) {
-				const auto &elements = node_2_element[i];
-
-				for(std::size_t e_i = 0; e_i < elements.size(); ++e_i) {
-					const Integer e = elements[e_i];
-
-					for(std::size_t e_i_adj = 0; e_i_adj < elements.size(); ++e_i_adj) {
-						if(e_i == e_i_adj) continue;
-
-						const Integer e_adj = elements[e_i_adj];
-
-						bool must_add = true;
-						for(Integer k = 0; k < el_offset[e]; ++k) {
-							if(e_adj == dual_graph_[e][k]) {
-								must_add = false;
-							}
-						}
-
-						if(must_add && have_common_side(e, e_adj)) {
-							assert(el_offset[e] < ManifoldDim + 1);
-							dual_graph_[e][el_offset[e]] = e_adj;
-							++el_offset[e];
-						}
-					}
-				}
-			}
-
-			for(Integer i = 0; i < n_elements; ++i) {
-				if(!active_[i]) continue;
-
-				const std::array<Integer, ManifoldDim+1> neighs = dual_graph_[i];
-
-				std::fill(std::begin(dual_graph_[i]), std::end(dual_graph_[i]), INVALID_INDEX);
-
-				for(Integer j = 0; j < neighs.size(); ++j) {
-					if(neighs[j] == INVALID_INDEX) break;
-
-					const auto s = common_side_num(i, neighs[j]);
-					assert(s != INVALID_INDEX);
-
-					if(dual_graph_[i][s] != INVALID_INDEX) {
-						std::cerr << "bad side numbering or creation" << std::endl;
-						assert(dual_graph_[i][s] == INVALID_INDEX);
-					}
-
-					dual_graph_[i][s] = neighs[j];
-				}
-			}
+			dual_graph_.update(*this, force);
 		}
 
 		void build_dual_graph()
@@ -874,7 +818,7 @@ namespace mars {
 		
 		//refinement
 		std::vector<Integer> refinement_flag_;
-		std::vector<std::array<Integer, ManifoldDim+1>> dual_graph_;
+		DualGraph<ManifoldDim> dual_graph_;
 		std::vector<bool> active_;
 		std::vector< std::shared_ptr<SimplexInterpolator<ManifoldDim>> > interp_;
 		EdgeNodeMap edge_node_map_;
