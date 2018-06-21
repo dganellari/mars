@@ -134,9 +134,20 @@ void test_mfem_mesh_2D()
 
 	// mesh.red_green_refinement({0});
 	mesh.red_green_refinement({2, 3, 4});
-	mesh.red_green_refinement({20});
+	write_mesh("mesh_2_rg1.eps", mesh, 10., PLOT_PARENT_FLAG);
+	mesh.red_green_refinement({20, 29});
 	// write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_FLAG);
-	write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_PARENT_FLAG);
+	write_mesh("mesh_2_rg2.eps", mesh, 10., PLOT_PARENT_FLAG);
+
+	mesh.red_green_refinement({35});
+	// write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_FLAG);
+	write_mesh("mesh_2_rg3.eps", mesh, 10., PLOT_PARENT_FLAG);
+
+	mesh.red_green_refinement({36});
+	// write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_FLAG);
+	write_mesh("mesh_2_rg4.eps", mesh, 10., PLOT_PARENT_FLAG);
+
+	std::cout << "n_boundary_sides: " << mesh.n_boundary_sides() << std::endl;
 
 	std::cout << "======================================\n";
 }

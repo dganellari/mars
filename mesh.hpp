@@ -120,30 +120,69 @@ namespace mars {
 			for(Integer i = 0; i < ManifoldDim + 1; ++i) {
 				pts[i] = points_[e.nodes[i]];
 			}
+		}
+
+		inline bool is_green(const Integer id) const
+		{
+			if(INVALID_INDEX == id) return false;
+
+			switch(refinement_flag(id)) 
+			{
+				case GREEN_1: return true;
+				case GREEN_2: return true;
+				case GREEN_3: return true;
+				default: return false;
+			}
 		}	
 
-		void red_green_refinement(const std::vector<Integer> &elements_to_refine)
+		inline Integer n_adjacients(const Integer id) const
 		{
-			update_dual_graph();
-			edge_element_map_.build(*this);
-
-			for(auto &e : elements_to_refine) {
-				if(!is_active(e)) {
-					std::cerr << e << " cannot refine inactive" << std::endl;
-					continue;
-				}
-
-				set_refinement_flag(e, RED);
+			Integer ret = 0;
+			for(auto a : dual_graph_[id]) {
+				ret += a != INVALID_INDEX;
 			}
 
-			std::vector<Integer> red_elements = elements_to_refine;
-			std::vector<Integer> potential_green_elements, green_elements;
+			return ret;
+		}
+
+
+		inline void deactivate_children(const Integer id)
+		{
+			for(auto c : elem(id).children) {
+				active_[c] = false;
+			}
+		}
+
+		void propagate_flags(
+			std::vector<Integer> &red_elements,
+			std::vector<Integer> &green_elements)
+		{
+			std::vector<Integer> potential_green_elements;
 			for(auto &e : red_elements) {
 				const auto &adj = dual_graph_[e];
 				for(auto a : adj) {
-					if(a == INVALID_INDEX) continue;
+					if(a == INVALID_INDEX || !is_active(a)) continue;
+					auto flag = refinement_flag(a);
 
-					switch(refinement_flag(a))
+					if(!elem(a).children.empty()) {
+						std::cout << "promoting " << a << " to red" << std::endl;
+						set_refinement_flag(a, RED);
+						//deactivate children
+						deactivate_children(a);
+						red_elements.push_back(a); 
+						continue;
+					}
+
+					const auto parent = elem(a).parent_id;
+					if(is_green(parent)) {
+						std::cout << "promoting " << a << " to red" << std::endl;
+						set_refinement_flag(parent, RED);
+						//deparentctivate children
+						deactivate_children(parent);
+						red_elements.push_back(parent);
+					}
+
+					switch(flag)
 					{
 						case RED:
 						{
@@ -151,20 +190,39 @@ namespace mars {
 						}
 						case NONE:
 						{
-							set_refinement_flag(a, GREEN_1);
-							potential_green_elements.push_back(a);
+							if(n_adjacients(a) == 1) {
+								set_refinement_flag(a, RED);
+								red_elements.push_back(a);
+							} else {
+								set_refinement_flag(a, GREEN_1);
+								potential_green_elements.push_back(a);
+							}
+
 							break;
 						}
 						case GREEN_1:
 						{
-							set_refinement_flag(a, GREEN_2);
-							potential_green_elements.push_back(a);
+							if(n_adjacients(a) == 2) {
+								set_refinement_flag(a, RED);
+								red_elements.push_back(a);
+							} else {
+								set_refinement_flag(a, GREEN_2);
+								potential_green_elements.push_back(a);
+							}
+
 							break;
 						}
 						case GREEN_2:
 						{
-							set_refinement_flag(a, RED);
-							red_elements.push_back(a);
+							if(n_adjacients(a) == 3) {
+								set_refinement_flag(a, RED);
+								red_elements.push_back(a);
+							} else {
+								//GREEN_3?
+								set_refinement_flag(a, RED);
+								red_elements.push_back(a);
+							}
+
 							break;
 						}
 						case GREEN_3:
@@ -176,15 +234,60 @@ namespace mars {
 				}
 			}
 
-			for(auto e : red_elements) {
+			green_elements.clear();
+			green_elements.reserve(potential_green_elements.size());
+			for(auto e : potential_green_elements) {
+				if(refinement_flag(e) != RED && is_active(e)) {
+					green_elements.push_back(e);
+				}
+			}
+		}
+
+		void red_green_refinement(const std::vector<Integer> &elements_to_refine)
+		{
+			std::vector<Integer> promoted_elements;
+			std::vector<Integer> red_elements, green_elements;
+			for(auto &e : elements_to_refine) {
+				if(!is_active(e)) {
+					std::cerr << e << " cannot refine inactive" << std::endl;
+					continue;
+				}
+
+				auto parent = elem(e).parent_id;
+				
+				if(is_green(parent)) {
+					std::cout << "promoting " << parent << " to red" << std::endl;
+					//promote parent to red
+					set_refinement_flag(parent, RED);
+					//deactivate children
+					deactivate_children(parent);
+					active_[parent] = true;
+					promoted_elements.push_back(parent);
+					continue;
+				}
+
+				set_refinement_flag(e, RED);
+				red_elements.push_back(e);
+			}
+
+			update_dual_graph();
+
+			propagate_flags(promoted_elements, green_elements);
+
+			for(auto e : promoted_elements) {
 				red_refine_element(e);
 			}
 
-			green_elements.reserve(potential_green_elements.size());
-			for(auto e : potential_green_elements) {
-				if(refinement_flag(e) != RED) {
-					green_elements.push_back(e);
-				}
+			for(auto e : green_elements) {
+				green_refine_element(e);
+			}
+
+			update_dual_graph();
+			edge_element_map_.build(*this);
+
+			propagate_flags(red_elements, green_elements);
+			for(auto e : red_elements) {
+				red_refine_element(e);
 			}
 
 			for(auto e : green_elements) {
@@ -226,7 +329,7 @@ namespace mars {
 			Simplex<Dim, ManifoldDim-1> side_1, side_2;
 			Simplex<Dim, ManifoldDim> child;
 			child.parent_id = element_id;
-
+			e.children.clear();
 
 			switch(n_red_neighs) {
 				case 1: 
