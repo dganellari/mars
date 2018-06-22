@@ -28,6 +28,15 @@ namespace mars {
 			return dual_graph_[id];
 		}
 
+		inline const std::array<Integer, ManifoldDim+1> &safe_adj(const Integer id) const
+		{
+			if(dual_graph_.size() <= id) {
+				dual_graph_.resize(id+1);
+			}
+			
+			return dual_graph_[id];
+		}
+
 		template<Integer Dim>
 		void update(
 			const Mesh<Dim, ManifoldDim> &mesh,

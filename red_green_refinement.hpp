@@ -46,6 +46,73 @@ namespace mars {
 		RedGreenRefinement(Mesh<Dim, ManifoldDim> &mesh)
 		: mesh(mesh)
 		{}
+
+		void update_child(const Integer id)
+		{
+			const auto &e = mesh.elem(id);
+			const auto p_id = e.parent_id;
+			const auto &parent_e = mesh.elem(p_id);
+
+			const auto &adj = mesh.dual_graph().adj(parent_e);
+
+			std::map<Integer, std::vector<Integer> > local_node_2_element;
+
+			for(auto a : adj) {
+				for(auto c : mesh.elem(a).children) {
+					for(auto n : mesh.elem(c).nodes) {
+						local_node_2_element[n].push_back(c);
+					}
+				}
+			}
+
+			for(Integer i = 0; i < ManifoldDim + 1; ++i) {
+				auto it = local_node_2_element.find(e.nodes[i]);
+				if(it == local_node_2_element.end()) continue;
+
+				for(auto other : it->second) {
+					if(mesh.have_common_side(id, other)) {
+						auto &e_adj = mesh.dual_graph().safe_adj(id);
+						e_adj[mesh.common_side_num(id, other)] = other;
+
+						auto &other_adj = mesh.dual_graph().safe_adj(other);
+						other_adj[mesh.common_side_num(other, id)] = id;
+					}
+				}
+			}
+		}
+		
+		// void red_refine(std::vector<Integer> &red_elements)
+		// {
+		// 	if(refinement_flag_.size() != mesh.n_elements()) {
+		// 		refinement_flag_.resize(mesh.n_elements(), NONE);
+		// 	}
+
+		// 	std::vector<Integer> promoted_elements;
+		// 	std::vector<Integer> red_elements, green_elements;
+		// 	for(auto &e : elements_to_refine) {
+		// 		if(!mesh.is_active(e)) {
+		// 			std::cerr << e << " cannot refine inactive" << std::endl;
+		// 			continue;
+		// 		}
+
+		// 		auto parent = mesh.elem(e).parent_id;
+				
+		// 		if(is_green(parent)) {
+		// 			std::cout << "promoting " << parent << " to red" << std::endl;
+		// 			//promote parent to red
+		// 			set_refinement_flag(parent, RED);
+		// 			//deactivate children
+		// 			mesh.deactivate_children(parent);
+		// 			mesh.set_active(parent, true);
+		// 			promoted_elements.push_back(parent);
+		// 			continue;
+		// 		}
+
+		// 		set_refinement_flag(e, RED);
+		// 		red_elements.push_back(e);
+		// 	}
+
+		// }
 		
 		void propagate_flags(
 			std::vector<Integer> &red_elements,
@@ -84,38 +151,38 @@ namespace mars {
 						}
 						case NONE:
 						{
-							if(mesh.dual_graph().n_adjacients(a) == 1) {
-								set_refinement_flag(a, RED);
-								red_elements.push_back(a);
-							} else {
+							// if(mesh.dual_graph().n_adjacients(a) == 1) {
+							// 	set_refinement_flag(a, RED);
+							// 	red_elements.push_back(a);
+							// } else {
 								set_refinement_flag(a, GREEN_1);
 								potential_green_elements.push_back(a);
-							}
+							// }
 
 							break;
 						}
 						case GREEN_1:
 						{
-							if(mesh.dual_graph().n_adjacients(a) == 2) {
-								set_refinement_flag(a, RED);
-								red_elements.push_back(a);
-							} else {
+							// if(mesh.dual_graph().n_adjacients(a) == 2) {
+							// 	set_refinement_flag(a, RED);
+							// 	red_elements.push_back(a);
+							// } else {
 								set_refinement_flag(a, GREEN_2);
 								potential_green_elements.push_back(a);
-							}
+							// }
 
 							break;
 						}
 						case GREEN_2:
 						{
-							if(mesh.dual_graph().n_adjacients(a) == 3) {
-								set_refinement_flag(a, RED);
-								red_elements.push_back(a);
-							} else {
+							// if(mesh.dual_graph().n_adjacients(a) == 3) {
+							// 	set_refinement_flag(a, RED);
+							// 	red_elements.push_back(a);
+							// } else {
 								//GREEN_3?
 								set_refinement_flag(a, RED);
 								red_elements.push_back(a);
-							}
+							// }
 
 							break;
 						}
@@ -365,6 +432,7 @@ namespace mars {
             }
 
 			interp_[element_id] = interp;
+			parent_e.children.clear();
 
 			for(auto &c : children) {
 				for(Integer i = 0; i < ManifoldDim + 1; ++i) {
@@ -374,7 +442,9 @@ namespace mars {
 				// std::sort(c.nodes.begin(), c.nodes.end()); add_elem(c);
 
 				//4D hack
-				mesh.repair_element(add_elem(c), ManifoldDim != 4);
+				const auto c_id = add_elem(c);
+				mesh.repair_element(c_id, ManifoldDim != 4);
+				parent_e.children.push_back(c_id);
 			}
 
 			mesh.set_active(element_id, false);

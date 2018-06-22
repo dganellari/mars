@@ -139,6 +139,8 @@ namespace mars {
         std::array<Integer, 4> nodes;
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
+
+        std::vector<Integer> children;
         
         void side(
                   const Integer &side_num,
@@ -215,6 +217,8 @@ namespace mars {
         std::array<Integer, 5> nodes;
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
+
+        std::vector<Integer> children;
         
         
         inline static std::vector<Vector<Real, Dim>> &ref()
