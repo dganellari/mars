@@ -47,17 +47,31 @@ namespace mars {
 		: mesh(mesh)
 		{}
 
-		void update_child(const Integer id)
+		void update_children(const Integer id)
+		{
+			for(auto c : mesh.elem(id).children) {
+				update_element(c);
+			}
+		}
+
+		void update_element(const Integer id)
 		{
 			const auto &e = mesh.elem(id);
 			const auto p_id = e.parent_id;
 			const auto &parent_e = mesh.elem(p_id);
-
-			const auto &adj = mesh.dual_graph().adj(parent_e);
+			const auto &adj = mesh.dual_graph().adj(p_id);
 
 			std::map<Integer, std::vector<Integer> > local_node_2_element;
 
+			for(auto c : mesh.elem(p_id).children) {
+				for(auto n : mesh.elem(c).nodes) {
+					local_node_2_element[n].push_back(c);
+				}
+			}
+
 			for(auto a : adj) {
+				if(a == INVALID_INDEX) continue;
+
 				for(auto c : mesh.elem(a).children) {
 					for(auto n : mesh.elem(c).nodes) {
 						local_node_2_element[n].push_back(c);
@@ -65,12 +79,17 @@ namespace mars {
 				}
 			}
 
+			bool updated = false;
+
 			for(Integer i = 0; i < ManifoldDim + 1; ++i) {
 				auto it = local_node_2_element.find(e.nodes[i]);
 				if(it == local_node_2_element.end()) continue;
 
 				for(auto other : it->second) {
+					if(id == other) continue;
+
 					if(mesh.have_common_side(id, other)) {
+						updated = true;
 						auto &e_adj = mesh.dual_graph().safe_adj(id);
 						e_adj[mesh.common_side_num(id, other)] = other;
 
@@ -79,40 +98,146 @@ namespace mars {
 					}
 				}
 			}
+
+			if(!updated) {
+				std::cerr << "element " << id << " with parent " << p_id << " not updated " << std::endl;
+				assert(updated);
+			}
+		}
+
+		void promote_to_red(const Integer green_parent)
+		{
+			set_refinement_flag(green_parent, RED);
+			mesh.deactivate_children(green_parent);
+			mesh.set_active(green_parent, true);
 		}
 		
-		// void red_refine(std::vector<Integer> &red_elements)
-		// {
-		// 	if(refinement_flag_.size() != mesh.n_elements()) {
-		// 		refinement_flag_.resize(mesh.n_elements(), NONE);
-		// 	}
+		void red_refine(const std::vector<Integer> &elements_to_refine)
+		{
+			update_dual_graph();
+			assert(mesh.n_elements() == mesh.dual_graph().size());
 
-		// 	std::vector<Integer> promoted_elements;
-		// 	std::vector<Integer> red_elements, green_elements;
-		// 	for(auto &e : elements_to_refine) {
-		// 		if(!mesh.is_active(e)) {
-		// 			std::cerr << e << " cannot refine inactive" << std::endl;
-		// 			continue;
-		// 		}
+			if(elements_to_refine.empty()) return;
 
-		// 		auto parent = mesh.elem(e).parent_id;
+			if(refinement_flag_.empty()) {
+				refinement_flag_.resize(mesh.n_elements(), NONE);
+			}
+
+			std::vector<Integer> promoted;
+			std::vector<Integer> red_elements;
+			for(auto &e : elements_to_refine) {
+				if(!mesh.is_active(e)) {
+					std::cerr << e << " cannot refine inactive" << std::endl;
+					continue;
+				}
+
+				auto parent = mesh.elem(e).parent_id;
 				
-		// 		if(is_green(parent)) {
-		// 			std::cout << "promoting " << parent << " to red" << std::endl;
-		// 			//promote parent to red
-		// 			set_refinement_flag(parent, RED);
-		// 			//deactivate children
-		// 			mesh.deactivate_children(parent);
-		// 			mesh.set_active(parent, true);
-		// 			promoted_elements.push_back(parent);
-		// 			continue;
-		// 		}
+				if(is_green(parent)) {
+					promote_to_red(parent);
+					promoted.push_back(parent);
+				} else {
+					set_refinement_flag(e, RED);
+					red_elements.push_back(e);
+				}
+			}
 
-		// 		set_refinement_flag(e, RED);
-		// 		red_elements.push_back(e);
-		// 	}
+			for(auto &e : red_elements) {
+				const auto &adj = mesh.dual_graph().adj(e);
+				for(auto a : adj) {
+					if(a == INVALID_INDEX || !mesh.is_active(a) || mesh.elem(a).parent_id == INVALID_INDEX) continue;
+					auto parent = mesh.elem(a).parent_id;
+					
+					if(is_green(parent)) {
+						promote_to_red(parent);
+						promoted.push_back(parent);
+					}
+				}
+			}
 
-		// }
+			for(auto &e : promoted) {
+				red_refine_element(e);
+				update_element(e);
+			}
+
+			for(auto &e : red_elements) {
+				red_refine_element(e);
+			}
+
+			//update dual_graph for children
+			for(auto e : promoted) {
+				update_children(e);
+			}
+
+			for(auto e : red_elements) {
+				update_children(e);
+			}
+
+			// assert(mesh.n_elements() == mesh.dual_graph().size());
+			mesh.tags() = refinement_flag_;
+		}
+
+		void green_refine()
+		{
+			std::vector<Integer> green_elements, promoted_elements;
+			for(Integer i = 0; i < mesh.n_elements(); ++i) {
+				if(mesh.is_active(i) && !is_red(i)) {
+					const auto &adj = mesh.dual_graph().adj(i);
+
+					Integer n_red_neighs = 0;
+					for(auto a : adj) {
+						if(a == INVALID_INDEX || mesh.is_active(a)) continue;
+						if(is_red(a)) {
+							n_red_neighs++;
+						}
+					}
+
+					if(n_red_neighs == 0) continue;
+
+
+					switch(n_red_neighs) {
+						case 1: 
+						{
+							set_refinement_flag(i, GREEN_1); 
+							green_elements.push_back(i);
+							break;
+						}
+						case 2: 
+						{
+							set_refinement_flag(i, GREEN_2); 
+							green_elements.push_back(i);
+							break;
+						}
+						case 3:
+						{
+							set_refinement_flag(i, RED);
+							promoted_elements.push_back(i);
+							break;
+						}
+						default: 
+						{
+							assert(false);
+							break;
+						}
+					}
+				}
+			}
+
+			if(!promoted_elements.empty()) {
+				std::cout << "handling promoted elements" << std::endl;
+				red_refine(promoted_elements);
+				green_refine();
+				return;
+			}
+
+			for(auto e : green_elements) {
+				green_refine_element(e);
+			}
+
+			update_dual_graph();
+
+			mesh.tags() = refinement_flag_;
+		}
 		
 		void propagate_flags(
 			std::vector<Integer> &red_elements,
@@ -206,7 +331,7 @@ namespace mars {
 
 		void refine(const std::vector<Integer> &elements_to_refine)
 		{
-			if(refinement_flag_.size() != mesh.n_elements()) {
+			if(refinement_flag_.empty()) {
 				refinement_flag_.resize(mesh.n_elements(), NONE);
 			}
 
@@ -264,7 +389,6 @@ namespace mars {
 
 		inline void green_refine_element(const Integer element_id)
 		{
-			auto &e = mesh.elem(element_id);
 			mesh.set_active(element_id, false);
 
 			const auto &adj = mesh.dual_graph().adj(element_id);
@@ -296,66 +420,66 @@ namespace mars {
 			Simplex<Dim, ManifoldDim-1> side_1, side_2;
 			Simplex<Dim, ManifoldDim> child;
 			child.parent_id = element_id;
-			e.children.clear();
+			mesh.elem(element_id).children.clear();
 
 			switch(n_red_neighs) {
 				case 1: 
 				{	
-					e.side(red_side_index[0], side_1);
+					mesh.elem(element_id).side(red_side_index[0], side_1);
 					
 					Integer n0 = side_1.nodes[0];
 					Integer n1 = side_1.nodes[1];
 					const Integer midpoint = edge_node_map_.get(n0, n1);
-					const Integer opposite = e.vertex_opposite_to_side(red_side_index[0]);
+					const Integer opposite = mesh.elem(element_id).vertex_opposite_to_side(red_side_index[0]);
 
 					child.nodes[0] = n0;
 					child.nodes[1] = opposite;
 					child.nodes[2] = midpoint;
 
-					e.children.push_back( add_elem(child) );
+					mesh.elem(element_id).children.push_back( add_elem(child) );
 
 					child.nodes[0] = n1;
 					child.nodes[1] = midpoint;
 					child.nodes[2] = opposite;
 
-					e.children.push_back( add_elem(child) );
+					mesh.elem(element_id).children.push_back( add_elem(child) );
 					break;
 				}
 
 				case 2:
 				{
-					e.side(red_side_index[0], side_1);
+					mesh.elem(element_id).side(red_side_index[0], side_1);
 					
 					Integer n1_0 = side_1.nodes[0];
 					Integer n1_1 = side_1.nodes[1];
 					const Integer midpoint_1 = edge_node_map_.get(n1_0, n1_1);
-					const Integer opposite_1 = e.vertex_opposite_to_side(red_side_index[0]);
+					const Integer opposite_1 = mesh.elem(element_id).vertex_opposite_to_side(red_side_index[0]);
 
-					e.side(red_side_index[1], side_2);
+					mesh.elem(element_id).side(red_side_index[1], side_2);
 					
 					Integer n2_0 = side_2.nodes[0];
 					Integer n2_1 = side_2.nodes[1];
 					const Integer midpoint_2 = edge_node_map_.get(n2_0, n2_1);
-					const Integer opposite_2 = e.vertex_opposite_to_side(red_side_index[1]);
+					const Integer opposite_2 = mesh.elem(element_id).vertex_opposite_to_side(red_side_index[1]);
 
 
 					child.nodes[0] = midpoint_1;
 					child.nodes[1] = opposite_2;
 					child.nodes[2] = opposite_1;
 
-					e.children.push_back( add_elem(child) ); 
+					mesh.elem(element_id).children.push_back( add_elem(child) ); 
 
 					child.nodes[0] = midpoint_1;
 					child.nodes[1] = midpoint_2;
 					child.nodes[2] = n2_0;
 
-					e.children.push_back( add_elem(child) ); 
+					mesh.elem(element_id).children.push_back( add_elem(child) ); 
 
 					child.nodes[0] = midpoint_1;
 					child.nodes[1] = n2_1;
 					child.nodes[2] = midpoint_2;
 
-					e.children.push_back( add_elem(child) ); 
+					mesh.elem(element_id).children.push_back( add_elem(child) ); 
 					break;
 				}
 
@@ -381,7 +505,6 @@ namespace mars {
 			static const Integer NSubs = NSubSimplices<ManifoldDim>::value;
 			static_assert(NSubSimplices<ManifoldDim>::value > 0, "!");
 
-			auto &parent_e = mesh.elem(element_id);
 			std::vector<Vector<Real, Dim>> parent_points;
 			mesh.points(element_id, parent_points);
 
@@ -389,7 +512,7 @@ namespace mars {
 			std::vector<Vector<Real, Dim>> children_points;
 			auto interp = std::make_shared< SimplexInterpolator<ManifoldDim> >();
 
-			Simplex<Dim, ManifoldDim> modified_e = parent_e;
+			Simplex<Dim, ManifoldDim> modified_e = mesh.elem(element_id);
 			
 			if(ManifoldDim == 4) {
 				//4D hack
@@ -432,7 +555,7 @@ namespace mars {
             }
 
 			interp_[element_id] = interp;
-			parent_e.children.clear();
+			mesh.elem(element_id).children.clear();
 
 			for(auto &c : children) {
 				for(Integer i = 0; i < ManifoldDim + 1; ++i) {
@@ -444,9 +567,10 @@ namespace mars {
 				//4D hack
 				const auto c_id = add_elem(c);
 				mesh.repair_element(c_id, ManifoldDim != 4);
-				parent_e.children.push_back(c_id);
+				mesh.elem(element_id).children.push_back(c_id);
 			}
 
+			assert(mesh.elem(element_id).children.size() == NSubs);
 			mesh.set_active(element_id, false);
 		}
 
@@ -474,6 +598,11 @@ namespace mars {
 				case GREEN_3: return true;
 				default: return false;
 			}
+		}
+
+		inline bool is_red(const Integer id) const
+		{
+			return refinement_flag(id) == RED;
 		}
 
 		inline void set_refinement_flag(const Integer &element_id, const Integer flag)

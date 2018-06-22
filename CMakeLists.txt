@@ -4,9 +4,19 @@ project(mars)
 include_directories(.)
 
 list(APPEND MARS_HEADERS 
-	vector.hpp
+	base.hpp
+	bisection.hpp
+	dual_graph.hpp
+	edge.hpp
+	edge_element_map.hpp
+	edge_node_map.hpp
+	lagrange_element.hpp
 	matrix.hpp
+	mesh.hpp
+	red_green_refinement.hpp
 	simplex.hpp
+	static_math.hpp
+	vector.hpp
 	)
 
 list(APPEND MARS_SOURCES

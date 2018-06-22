@@ -15,6 +15,9 @@ namespace mars {
 	public:
 		inline Integer n_adjacients(const Integer id) const
 		{
+			assert(id >= 0);
+			assert(id < dual_graph_.size());
+
 			Integer ret = 0;
 			for(auto a : dual_graph_[id]) {
 				ret += a != INVALID_INDEX;
@@ -25,10 +28,28 @@ namespace mars {
 
 		inline const std::array<Integer, ManifoldDim+1> &adj(const Integer id) const
 		{
+			assert(id >= 0);
+			assert(id < dual_graph_.size());
+			return dual_graph_[id];
+		}
+
+		inline std::array<Integer, ManifoldDim+1> &adj(const Integer id)
+		{
+			assert(id >= 0);
+			assert(id < dual_graph_.size());
 			return dual_graph_[id];
 		}
 
 		inline const std::array<Integer, ManifoldDim+1> &safe_adj(const Integer id) const
+		{
+			if(dual_graph_.size() <= id) {
+				dual_graph_.resize(id+1);
+			}
+			
+			return dual_graph_[id];
+		}
+
+		inline std::array<Integer, ManifoldDim+1> &safe_adj(const Integer id)
 		{
 			if(dual_graph_.size() <= id) {
 				dual_graph_.resize(id+1);
@@ -122,6 +143,12 @@ namespace mars {
 		{
 			return dual_graph_.empty();
 		}
+
+		inline Integer size() const 
+		{
+			return dual_graph_.size();
+		}
+
 
 
 		void describe(std::ostream &os) const

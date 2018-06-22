@@ -137,19 +137,32 @@ void test_mfem_mesh_2D()
 	// write_mesh("mesh_2_refined.eps", mesh, 10., PLOT_PARENT);
 
 	// rgr.refine({0});
-	rgr.refine({2, 3, 4});
-	write_mesh("mesh_2_rg1.eps", mesh, 10., PLOT_PARENT_TAG);
-	rgr.refine({20, 29});
-	// write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_TAG);
-	write_mesh("mesh_2_rg2.eps", mesh, 10., PLOT_PARENT_TAG);
+	// rgr.refine({2, 3, 4});
+	rgr.red_refine({2, 3, 4});
+	write_mesh("mesh_2_1r.eps", mesh, 10., PLOT_PARENT_TAG);
 
-	rgr.refine({35});
-	// write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_TAG);
-	write_mesh("mesh_2_rg3.eps", mesh, 10., PLOT_PARENT_TAG);
+	rgr.green_refine();
+	write_mesh("mesh_2_1g.eps", mesh, 10., PLOT_PARENT_TAG);
 
-	rgr.refine({36});
+
+	// rgr.refine({20, 29});
+	// // write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_TAG);
+	// write_mesh("mesh_2_rg2.eps", mesh, 10., PLOT_PARENT_TAG);
+
+	// rgr.refine({35});
+	// // write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_TAG);
+	// write_mesh("mesh_2_rg3.eps", mesh, 10., PLOT_PARENT_TAG);
+
+	// rgr.red_refine({36});
+	// // write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_TAG);
+	// write_mesh("mesh_2_r4.eps", mesh, 10., PLOT_PARENT_TAG);
+	// mesh.describe(std::cout);
+	mesh.dual_graph().describe(std::cout);
+
+	// rgr.green_refine();
 	// write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_TAG);
-	write_mesh("mesh_2_rg4.eps", mesh, 10., PLOT_PARENT_TAG);
+	// write_mesh("mesh_2_g4.eps", mesh, 10., PLOT_PARENT_TAG);
+	// write_mesh("mesh_2_rg4.eps", mesh, 10., PLOT_TAG);
 
 	std::cout << "n_boundary_sides: " << mesh.n_boundary_sides() << std::endl;
 
@@ -253,10 +266,11 @@ int main(const int argc, const char *argv[])
 	// test_midpoint_index();
 	// test_red_refinement_interpolator();
 	// test_red_refinement();
-	
+		
+	// test_mfem_mesh_3D();
+	// test_mfem_mesh_4D();
 	test_mfem_mesh_2D();
-	test_mfem_mesh_3D();
-	test_mfem_mesh_4D();
+	
 
 	return EXIT_SUCCESS;
 }

@@ -41,21 +41,29 @@ namespace mars {
 
 		inline Simplex<Dim, ManifoldDim> &elem(const Integer id)
 		{
+			assert(id >= 0);
+			assert(id < n_elements());
 			return elements_[id];
 		}
 
 		inline const Simplex<Dim, ManifoldDim> &elem(const Integer id) const
 		{
+			assert(id >= 0);
+			assert(id < n_elements());
 			return elements_[id];
 		}
 
 		inline bool is_active(const Integer id) const
 		{
+			assert(id >= 0);
+			assert(id < n_elements());
 			return active_[id];
 		}
 
 		inline void set_active(const Integer id, const bool val)
 		{
+			assert(id >= 0);
+			assert(id < active_.size());
 			active_[id] = val;
 		}
 
@@ -67,6 +75,8 @@ namespace mars {
 
 		inline const Vector<Real, Dim> &point(const Integer i) const
 		{
+			assert(i >= 0);
+			assert(i < points_.size());
 			return points_[i];
 		}
 
@@ -98,9 +108,12 @@ namespace mars {
 			return e.id;
 		}
 
-		inline void points(const Integer element_id, std::vector<Vector<Real, Dim>> &pts)
+		inline void points(const Integer id, std::vector<Vector<Real, Dim>> &pts)
 		{
-			auto &e = elements_[element_id];
+			assert(id >= 0);
+			assert(id < n_elements());
+
+			auto &e = elements_[id];
 			pts.resize(ManifoldDim + 1);
 			
 			for(Integer i = 0; i < ManifoldDim + 1; ++i) {
@@ -110,6 +123,9 @@ namespace mars {
 
 		inline void deactivate_children(const Integer id)
 		{
+			assert(id >= 0);
+			assert(id < n_elements());
+
 			for(auto c : elem(id).children) {
 				active_[c] = false;
 			}
@@ -118,6 +134,7 @@ namespace mars {
 		void repair_element(const Integer element_id, const bool verbose = false)
 		{
 			assert(element_id >= 0);
+			assert(element_id < n_elements());
 
 			auto &e = elements_[element_id];
 			const Real vol = volume(e, points_);
@@ -387,6 +404,7 @@ namespace mars {
 		}
 
 		DualGraph<ManifoldDim> &dual_graph() { return dual_graph_; }
+		const DualGraph<ManifoldDim> &dual_graph() const { return dual_graph_; }
 
 		void update_dual_graph(const bool force = false)
 		{
@@ -400,6 +418,8 @@ namespace mars {
 
 		inline Integer root(const Integer id) const
 		{	
+			if(id == INVALID_INDEX) return INVALID_INDEX;
+
 			Integer current_id = id;
 			while(elem(current_id).parent_id != INVALID_INDEX) {
 				current_id = elem(current_id).parent_id;
@@ -571,10 +591,17 @@ namespace mars {
 		canvas.set_color(0,0,0);
 		canvas.stroke_mesh(m);
 
+
+
 		for(std::size_t i = 0, k = 0; i < mesh.n_elements(); ++i) {
 			if(mesh.is_active(i)) {
 				auto b = barycenter(mesh.elem(i), mesh.points());
-				canvas.draw_text(b(0)*scale_factor, b(1)*scale_factor, 4./mesh.n_active_elements(), "Arial", std::to_string(i), true);
+				canvas.draw_text(b(0)*scale_factor, b(1)*scale_factor, 4./mesh.n_active_elements(), "Courier", std::to_string(i), true);
+
+				for(auto n : mesh.elem(i).nodes) {
+					auto p = mesh.point(n);
+					canvas.draw_text(p(0)*scale_factor, p(1)*scale_factor, 4./mesh.n_active_elements(), "Courier", std::to_string(n), true);
+				}
 			}
 		}
 
