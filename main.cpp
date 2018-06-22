@@ -255,8 +255,8 @@ int main(const int argc, const char *argv[])
 	// test_red_refinement();
 	
 	test_mfem_mesh_2D();
-	// test_mfem_mesh_3D();
-	// test_mfem_mesh_4D();
+	test_mfem_mesh_3D();
+	test_mfem_mesh_4D();
 
 	return EXIT_SUCCESS;
 }

@@ -46,8 +46,7 @@ namespace mars {
 		RedGreenRefinement(Mesh<Dim, ManifoldDim> &mesh)
 		: mesh(mesh)
 		{}
-
-
+		
 		void propagate_flags(
 			std::vector<Integer> &red_elements,
 			std::vector<Integer> &green_elements)
@@ -416,8 +415,6 @@ namespace mars {
 		{
 			return refinement_flag_[element_id];
 		}
-
-		
 
 	private:
 
