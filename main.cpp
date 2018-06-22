@@ -145,26 +145,32 @@ void test_mfem_mesh_2D()
 	write_mesh("mesh_2_1g.eps", mesh, 10., PLOT_PARENT_TAG);
 
 
-	// rgr.refine({20, 29});
-	// // write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_TAG);
-	// write_mesh("mesh_2_rg2.eps", mesh, 10., PLOT_PARENT_TAG);
-
-	// rgr.refine({35});
-	// // write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_TAG);
-	// write_mesh("mesh_2_rg3.eps", mesh, 10., PLOT_PARENT_TAG);
-
-	// rgr.red_refine({36});
-	// // write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_TAG);
-	// write_mesh("mesh_2_r4.eps", mesh, 10., PLOT_PARENT_TAG);
-	// mesh.describe(std::cout);
-	mesh.dual_graph().describe(std::cout);
-
-	// rgr.green_refine();
+	rgr.refine({20, 29});
 	// write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_TAG);
-	// write_mesh("mesh_2_g4.eps", mesh, 10., PLOT_PARENT_TAG);
-	// write_mesh("mesh_2_rg4.eps", mesh, 10., PLOT_TAG);
+	write_mesh("mesh_2_rg2.eps", mesh, 10., PLOT_PARENT_TAG);
 
-	std::cout << "n_boundary_sides: " << mesh.n_boundary_sides() << std::endl;
+	rgr.red_refine({35});
+	write_mesh("mesh_2_r3.eps", mesh, 10., PLOT_PARENT_TAG);
+	mesh.describe(std::cout);
+	mesh.describe_dual_graph(std::cout);
+
+
+	rgr.green_refine();
+	// write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_TAG);
+	write_mesh("mesh_2_rg3.eps", mesh, 10., PLOT_PARENT_TAG);
+
+	// rgr.refine({36});
+	// // // write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_TAG);
+	// write_mesh("mesh_2_r4.eps", mesh, 10., PLOT_PARENT_TAG);
+	// // mesh.describe(std::cout);
+	// mesh.dual_graph().describe(std::cout);
+
+	// // rgr.green_refine();
+	// // write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_TAG);
+	// // write_mesh("mesh_2_g4.eps", mesh, 10., PLOT_PARENT_TAG);
+	// // write_mesh("mesh_2_rg4.eps", mesh, 10., PLOT_TAG);
+
+	// std::cout << "n_boundary_sides: " << mesh.n_boundary_sides() << std::endl;
 
 	std::cout << "======================================\n";
 }

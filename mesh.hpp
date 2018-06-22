@@ -592,6 +592,21 @@ namespace mars {
 		canvas.stroke_mesh(m);
 
 
+		for(std::size_t i = 0, k = 0; i < mesh.n_elements(); ++i) {
+			if(mesh.is_active(i)) {
+				for(auto n : mesh.elem(i).nodes) {
+					auto p = mesh.point(n);
+					canvas.set_color(1., 1., 1.);
+					canvas.fill_circle(p(0)*scale_factor, p(1)*scale_factor, 4./mesh.n_active_elements());
+					canvas.set_color(0., 0., 0.);
+					canvas.stroke_circle(p(0)*scale_factor, p(1)*scale_factor, 4./mesh.n_active_elements());
+
+					canvas.update_box(p(0)*scale_factor + 4./mesh.n_active_elements(), p(1)*scale_factor + scale_factor/10.);
+					canvas.update_box(p(0)*scale_factor - 4./mesh.n_active_elements(), p(1)*scale_factor - scale_factor/10.);
+				}
+			}
+		}
+
 
 		for(std::size_t i = 0, k = 0; i < mesh.n_elements(); ++i) {
 			if(mesh.is_active(i)) {

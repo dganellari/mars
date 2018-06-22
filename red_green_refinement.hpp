@@ -173,7 +173,7 @@ namespace mars {
 				update_children(e);
 			}
 
-			// assert(mesh.n_elements() == mesh.dual_graph().size());
+			assert(mesh.n_elements() == mesh.dual_graph().size());
 			mesh.tags() = refinement_flag_;
 		}
 
@@ -224,6 +224,10 @@ namespace mars {
 			}
 
 			if(!promoted_elements.empty()) {
+				for(auto e : green_elements) {
+					set_refinement_flag(e, NONE);
+				}
+				
 				std::cout << "handling promoted elements" << std::endl;
 				red_refine(promoted_elements);
 				green_refine();
@@ -239,152 +243,10 @@ namespace mars {
 			mesh.tags() = refinement_flag_;
 		}
 		
-		void propagate_flags(
-			std::vector<Integer> &red_elements,
-			std::vector<Integer> &green_elements)
-		{
-			std::vector<Integer> potential_green_elements;
-			for(auto &e : red_elements) {
-				const auto &adj = mesh.dual_graph().adj(e);
-				for(auto a : adj) {
-					if(a == INVALID_INDEX || !mesh.is_active(a)) continue;
-					auto flag = refinement_flag(a);
-
-					if(!mesh.elem(a).children.empty()) {
-						std::cout << "promoting " << a << " to red" << std::endl;
-						set_refinement_flag(a, RED);
-						//deactivate children
-						mesh.deactivate_children(a);
-						red_elements.push_back(a); 
-						continue;
-					}
-
-					const auto parent = mesh.elem(a).parent_id;
-					if(is_green(parent)) {
-						std::cout << "promoting " << a << " to red" << std::endl;
-						set_refinement_flag(parent, RED);
-						//deparentctivate children
-						mesh.deactivate_children(parent);
-						red_elements.push_back(parent);
-					}
-
-					switch(flag)
-					{
-						case RED:
-						{
-							continue;
-						}
-						case NONE:
-						{
-							// if(mesh.dual_graph().n_adjacients(a) == 1) {
-							// 	set_refinement_flag(a, RED);
-							// 	red_elements.push_back(a);
-							// } else {
-								set_refinement_flag(a, GREEN_1);
-								potential_green_elements.push_back(a);
-							// }
-
-							break;
-						}
-						case GREEN_1:
-						{
-							// if(mesh.dual_graph().n_adjacients(a) == 2) {
-							// 	set_refinement_flag(a, RED);
-							// 	red_elements.push_back(a);
-							// } else {
-								set_refinement_flag(a, GREEN_2);
-								potential_green_elements.push_back(a);
-							// }
-
-							break;
-						}
-						case GREEN_2:
-						{
-							// if(mesh.dual_graph().n_adjacients(a) == 3) {
-							// 	set_refinement_flag(a, RED);
-							// 	red_elements.push_back(a);
-							// } else {
-								//GREEN_3?
-								set_refinement_flag(a, RED);
-								red_elements.push_back(a);
-							// }
-
-							break;
-						}
-						case GREEN_3:
-						{
-							assert(false && "implement me");
-							break;
-						}
-					}
-				}
-			}
-
-			green_elements.clear();
-			green_elements.reserve(potential_green_elements.size());
-			for(auto e : potential_green_elements) {
-				if(refinement_flag(e) != RED && mesh.is_active(e)) {
-					green_elements.push_back(e);
-				}
-			}
-		}
-
 		void refine(const std::vector<Integer> &elements_to_refine)
 		{
-			if(refinement_flag_.empty()) {
-				refinement_flag_.resize(mesh.n_elements(), NONE);
-			}
-
-			std::vector<Integer> promoted_elements;
-			std::vector<Integer> red_elements, green_elements;
-			for(auto &e : elements_to_refine) {
-				if(!mesh.is_active(e)) {
-					std::cerr << e << " cannot refine inactive" << std::endl;
-					continue;
-				}
-
-				auto parent = mesh.elem(e).parent_id;
-				
-				if(is_green(parent)) {
-					std::cout << "promoting " << parent << " to red" << std::endl;
-					//promote parent to red
-					set_refinement_flag(parent, RED);
-					//deactivate children
-					mesh.deactivate_children(parent);
-					mesh.set_active(parent, true);
-					promoted_elements.push_back(parent);
-					continue;
-				}
-
-				set_refinement_flag(e, RED);
-				red_elements.push_back(e);
-			}
-
-			update_dual_graph();
-
-			propagate_flags(promoted_elements, green_elements);
-
-			for(auto e : promoted_elements) {
-				red_refine_element(e);
-			}
-
-			for(auto e : green_elements) {
-				green_refine_element(e);
-			}
-
-			update_dual_graph();
-			edge_element_map_.build(mesh);
-
-			propagate_flags(red_elements, green_elements);
-			for(auto e : red_elements) {
-				red_refine_element(e);
-			}
-
-			for(auto e : green_elements) {
-				green_refine_element(e);
-			}
-
-			mesh.tags() = refinement_flag_;
+			red_refine(elements_to_refine);
+			green_refine();
 		}	
 
 		inline void green_refine_element(const Integer element_id)
