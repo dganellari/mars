@@ -4,6 +4,8 @@
 #include <vector>
 #include <array>
 #include <algorithm>  
+#include <deque>
+#include <set>
 
 namespace mars {
 	
@@ -54,22 +56,37 @@ namespace mars {
 			}
 		}
 
-		void update_element(const Integer id)
+		void update_element(const Integer id, const bool promoted = false)
 		{
 			const auto &e = mesh.elem(id);
 			const auto p_id = e.parent_id;
-			const auto &parent_e = mesh.elem(p_id);
-			const auto &adj = mesh.dual_graph().adj(p_id);
+			// const auto &parent_e = mesh.elem(p_id);
+
+			//emplace if not there
+			mesh.dual_graph().safe_adj(id);
+
+			std::fill(
+				mesh.dual_graph().adj(id).begin(), 
+				mesh.dual_graph().adj(id).end(), 
+				INVALID_INDEX);
 
 			std::map<Integer, std::vector<Integer> > local_node_2_element;
 
 			for(auto c : mesh.elem(p_id).children) {
-				for(auto n : mesh.elem(c).nodes) {
-					local_node_2_element[n].push_back(c);
+				if(mesh.elem(c).children.empty() || !promoted) {
+					for(auto n : mesh.elem(c).nodes) {
+						local_node_2_element[n].push_back(c);
+					}
+				} else {
+					for(auto cc : mesh.elem(c).children) {
+						for(auto n : mesh.elem(cc).nodes) {
+							local_node_2_element[n].push_back(cc);
+						}
+					}
 				}
 			}
 
-			for(auto a : adj) {
+			for(auto a : mesh.dual_graph().adj(p_id)) {
 				if(a == INVALID_INDEX) continue;
 
 				for(auto c : mesh.elem(a).children) {
@@ -103,78 +120,132 @@ namespace mars {
 				std::cerr << "element " << id << " with parent " << p_id << " not updated " << std::endl;
 				assert(updated);
 			}
+
+			if(id == 9) {
+				mesh.dual_graph().describe_adj(9, std::cout);
+			}
 		}
 
 		void promote_to_red(const Integer green_parent)
 		{
+			std::cout << "promoted to red " << green_parent << std::endl;
+			assert(is_green(green_parent));
 			set_refinement_flag(green_parent, RED);
 			mesh.deactivate_children(green_parent);
 			mesh.set_active(green_parent, true);
 		}
+
+		void breadth_first_promote_green(
+			const Integer id,
+			std::set<Integer> &promoted)
+		{
+			std::deque<Integer> to_visit;
+			to_visit.push_back(id);
+			std::set<Integer> visited;
+
+			promoted.clear();
+
+			while(!to_visit.empty()) {
+				auto f = to_visit.front(); to_visit.pop_front();
+				auto parent = mesh.elem(f).parent_id;
+				visited.insert(f);
+
+				if(is_green(parent)) {
+					promoted.insert(parent);
+					mesh.set_active(f, false);
+				} 
+
+				const auto &adj = mesh.dual_graph().adj(f);
+
+				for(auto a : adj) {
+					if(a != INVALID_INDEX && mesh.is_active(a) && is_green(mesh.elem(a).parent_id)) {
+						if(visited.find(a) == visited.end()) {
+							to_visit.push_back(a);
+						}
+					}
+				}
+			}
+
+			for(auto p : promoted) {
+				promote_to_red(p);
+			}
+		}
 		
-		void red_refine(const std::vector<Integer> &elements_to_refine)
+		bool red_refine(const std::vector<Integer> &elements_to_refine)
 		{
 			update_dual_graph();
 			assert(mesh.n_elements() == mesh.dual_graph().size());
 
-			if(elements_to_refine.empty()) return;
+			if(elements_to_refine.empty()) return false;
 
 			if(refinement_flag_.empty()) {
 				refinement_flag_.resize(mesh.n_elements(), NONE);
 			}
 
+			std::set<Integer> promoted_neighs;
 			std::vector<Integer> promoted;
 			std::vector<Integer> red_elements;
-			for(auto &e : elements_to_refine) {
+
+			bool has_refinement = false;
+			for(auto e : elements_to_refine) {
+				if(!mesh.is_valid(e)) {
+					std::cerr << e << " skipping invalid element" << e << std::endl;
+					continue;
+				}
+
 				if(!mesh.is_active(e)) {
 					std::cerr << e << " cannot refine inactive" << std::endl;
 					continue;
 				}
 
-				auto parent = mesh.elem(e).parent_id;
-				
-				if(is_green(parent)) {
-					promote_to_red(parent);
-					promoted.push_back(parent);
-				} else {
+				if(!is_green(mesh.elem(e).parent_id)) {
 					set_refinement_flag(e, RED);
 					red_elements.push_back(e);
 				}
+
+				breadth_first_promote_green(e, promoted_neighs);
+				promoted.insert(promoted.end(), promoted_neighs.begin(), promoted_neighs.end());
+				has_refinement = true;
+			}
+
+			for(auto e : promoted) {
+				red_elements.push_back(e);
+				breadth_first_promote_green(e, promoted_neighs);
+				promoted.insert(promoted.end(), promoted_neighs.begin(), promoted_neighs.end());
+			}
+
+			if(!has_refinement) {
+				std::cerr << "did not refine" << std::endl;
+				return false;
+			}
+
+			for(auto e : red_elements) {
+				std::cout << e << " ";
+			}
+
+			std::cout << std::endl;
+
+			for(auto &e : red_elements) {
+				red_refine_element(e);
 			}
 
 			for(auto &e : red_elements) {
-				const auto &adj = mesh.dual_graph().adj(e);
-				for(auto a : adj) {
-					if(a == INVALID_INDEX || !mesh.is_active(a) || mesh.elem(a).parent_id == INVALID_INDEX) continue;
-					auto parent = mesh.elem(a).parent_id;
-					
-					if(is_green(parent)) {
-						promote_to_red(parent);
-						promoted.push_back(parent);
-					}
-				}
-			}
-
-			for(auto &e : promoted) {
-				red_refine_element(e);
 				update_element(e);
 			}
 
-			for(auto &e : red_elements) {
-				red_refine_element(e);
-			}
-
-			//update dual_graph for children
-			for(auto e : promoted) {
-				update_children(e);
-			}
+			// for(auto &e : promoted) {
+			// 	update_element(e, true);
+			// }
 
 			for(auto e : red_elements) {
 				update_children(e);
 			}
 
+			update_dual_graph();
 			assert(mesh.n_elements() == mesh.dual_graph().size());
+
 			mesh.tags() = refinement_flag_;
+			return true;
 		}
 
 		void green_refine()
@@ -202,21 +273,23 @@ namespace mars {
 							green_elements.push_back(i);
 							break;
 						}
+
 						case 2: 
 						{
 							set_refinement_flag(i, GREEN_2); 
 							green_elements.push_back(i);
 							break;
 						}
-						case 3:
+						// case 3:
+						// {
+						// 	set_refinement_flag(i, RED);
+						// 	promoted_elements.push_back(i);
+						// 	break;
+						// }
+						default: 
 						{
 							set_refinement_flag(i, RED);
 							promoted_elements.push_back(i);
-							break;
-						}
-						default: 
-						{
-							assert(false);
 							break;
 						}
 					}
@@ -227,7 +300,7 @@ namespace mars {
 				for(auto e : green_elements) {
 					set_refinement_flag(e, NONE);
 				}
-				
+
 				std::cout << "handling promoted elements" << std::endl;
 				red_refine(promoted_elements);
 				green_refine();
@@ -236,6 +309,7 @@ namespace mars {
 
 			for(auto e : green_elements) {
 				green_refine_element(e);
+				update_element(e);
 			}
 
 			update_dual_graph();
@@ -243,10 +317,11 @@ namespace mars {
 			mesh.tags() = refinement_flag_;
 		}
 		
-		void refine(const std::vector<Integer> &elements_to_refine)
+		bool refine(const std::vector<Integer> &elements_to_refine)
 		{
-			red_refine(elements_to_refine);
+			if(!red_refine(elements_to_refine)) return false;
 			green_refine();
+			return true;
 		}	
 
 		inline void green_refine_element(const Integer element_id)

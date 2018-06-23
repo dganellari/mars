@@ -60,6 +60,11 @@ namespace mars {
 			return active_[id];
 		}
 
+		inline bool is_valid(const Integer id) const
+		{
+			return id >= 0 && id < n_elements();
+		}
+
 		inline void set_active(const Integer id, const bool val)
 		{
 			assert(id >= 0);
@@ -187,6 +192,27 @@ namespace mars {
 			for(std::size_t i = 0; i < elements_.size(); ++i) {
 				repair_element(i, verbose);
 			}
+		}
+
+		bool is_boundary(const Integer id) {
+			auto &adj = dual_graph_.adj(id);
+
+			for(auto a : adj) {
+				if(a == INVALID_INDEX) return true;
+			}
+
+			return false;
+		}
+
+		void describe_boundary_elements(std::ostream &os)
+		{
+			std::cout << "-------------------------\n";
+			for(std::size_t i = 0; i < elements_.size(); ++i) {
+				if(active_[i] && is_boundary(i)) {
+					dual_graph().describe_adj(i, os);
+				}
+			}
+			std::cout << "-------------------------\n";
 		}
 
 		void describe(std::ostream &os, const bool print_sides = false) const
@@ -597,9 +623,9 @@ namespace mars {
 				for(auto n : mesh.elem(i).nodes) {
 					auto p = mesh.point(n);
 					canvas.set_color(1., 1., 1.);
-					canvas.fill_circle(p(0)*scale_factor, p(1)*scale_factor, 4./mesh.n_active_elements());
+					canvas.fill_circle(p(0)*scale_factor, p(1)*scale_factor, 1./std::sqrt(mesh.n_active_elements()));
 					canvas.set_color(0., 0., 0.);
-					canvas.stroke_circle(p(0)*scale_factor, p(1)*scale_factor, 4./mesh.n_active_elements());
+					canvas.stroke_circle(p(0)*scale_factor, p(1)*scale_factor, 1./std::sqrt(mesh.n_active_elements()));
 
 					canvas.update_box(p(0)*scale_factor + 4./mesh.n_active_elements(), p(1)*scale_factor + scale_factor/10.);
 					canvas.update_box(p(0)*scale_factor - 4./mesh.n_active_elements(), p(1)*scale_factor - scale_factor/10.);
@@ -611,11 +637,11 @@ namespace mars {
 		for(std::size_t i = 0, k = 0; i < mesh.n_elements(); ++i) {
 			if(mesh.is_active(i)) {
 				auto b = barycenter(mesh.elem(i), mesh.points());
-				canvas.draw_text(b(0)*scale_factor, b(1)*scale_factor, 4./mesh.n_active_elements(), "Courier", std::to_string(i), true);
+				canvas.draw_text(b(0)*scale_factor, b(1)*scale_factor, 1./std::sqrt(mesh.n_active_elements()), "Courier", std::to_string(i), true);
 
 				for(auto n : mesh.elem(i).nodes) {
 					auto p = mesh.point(n);
-					canvas.draw_text(p(0)*scale_factor, p(1)*scale_factor, 4./mesh.n_active_elements(), "Courier", std::to_string(n), true);
+					canvas.draw_text(p(0)*scale_factor, p(1)*scale_factor, 1./std::sqrt(mesh.n_active_elements()), "Courier", std::to_string(n), true);
 				}
 			}
 		}

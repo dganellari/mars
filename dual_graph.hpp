@@ -154,12 +154,17 @@ namespace mars {
 		void describe(std::ostream &os) const
 		{
 			for(std::size_t i = 0; i < dual_graph_.size(); ++i) {
-				os << "[" << i << "]:";
-				for(std::size_t j = 0; j < adj(i).size(); ++j) {
-					os << " " << adj(i)[j];
-				}
-				os << "\n";
+				describe_adj(i, os);
 			}
+		}
+
+		void describe_adj(const Integer i, std::ostream &os) const
+		{
+			os << "[" << i << "]:";
+			for(std::size_t j = 0; j < adj(i).size(); ++j) {
+				os << " " << adj(i)[j];
+			}
+			os << "\n";
 		}
 
 	private:
