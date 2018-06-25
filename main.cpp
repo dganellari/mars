@@ -222,7 +222,12 @@ void test_mfem_mesh_4D()
 	Mesh<4, 4> mesh;
 	// read_mesh("../data/pentatope_1.MFEM", mesh);
 	read_mesh("../data/cube4d_24.MFEM", mesh);
-	test_mesh(mesh);
+	// test_mesh(mesh);
+
+	RedGreenRefinement<4, 4> rgr(mesh);
+	rgr.red_refine({0});
+	mesh.describe(std::cout);
+	write_element("elem_4.eps", rgr, 0, 10, true);
 	std::cout << "======================================\n";
 }
 
@@ -303,7 +308,7 @@ int main(const int argc, const char *argv[])
 	// test_red_refinement();
 		
 	test_mfem_mesh_3D();
-	// test_mfem_mesh_4D();
+	test_mfem_mesh_4D();
 	// test_mfem_mesh_2D();
 	
 

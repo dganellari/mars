@@ -22,6 +22,12 @@ namespace mars {
 	template<Integer Dim, Integer ManifoldDim>
 	class RedGreenRefinement;
 
+	class RGB {
+	public:
+		Real r, g, b;
+		RGB(const Real r = 0., const Real g = 0., const Real b = 0.) : r(r), g(g), b(b) {}
+	};
+
 
 	enum PlotFun
 	{
@@ -206,13 +212,141 @@ namespace mars {
 		return canvas.write(path);
 	}
 
+	template<class Canvas, Integer Dim, Integer ManifoldDim>
+	void draw_element(
+		const Mesh<Dim, ManifoldDim> &m,
+		const Integer element_id,
+		const Real cx,
+		const Real cy,
+		const Real scale_factor,
+		const RGB &rgb,
+		Canvas &canvas)
+	{
+		const Real node_size = 0.5;
+		const Real line_width_e = 0.04;
+
+		const auto &e = m.elem(element_id);
+		std::array<Real, 2*(ManifoldDim+1)> xy;
+
+		const Real dAngle = 2.*M_PI/n_nodes(e);
+
+		for(Integer k = 0; k < n_nodes(e); ++k) {
+			xy[k * 2]     = cx + std::cos(dAngle * k) * scale_factor;
+			xy[k * 2 + 1] = cy + std::sin(dAngle * k) * scale_factor;
+		}
+
+		canvas.set_line_width(line_width_e);
+		canvas.set_color(rgb.r, rgb.g, rgb.b);
+		canvas.stroke_polygon(&xy[0], n_nodes(e));
+
+		for(Integer k = 0; k < n_nodes(e); ++k) {
+			canvas.set_color(0., 0., 0.);
+			canvas.stroke_circle(xy[k*2], xy[k*2+1], node_size*2.);
+			canvas.set_color(1., 1., 1.);
+			canvas.fill_circle(xy[k*2], xy[k*2+1], node_size*1.94);
+		}
+
+		canvas.set_color(0., 0., 0.);
+		for(Integer k = 0; k < n_nodes(e); ++k) {
+			canvas.draw_text(xy[k*2], xy[k*2+1], 1, "Courier", std::to_string(e.nodes[k]), true);
+		}
+	}
+
+	template<Integer Dim, Integer ManifoldDim, class Canvas>
+	void draw_element_as_child(
+		const Mesh<Dim, ManifoldDim> &m,
+		const EdgeNodeMap &en_map,
+		const Integer element_id,
+		const Real cx,
+		const Real cy,
+		const Real scale_factor,
+		const RGB &rgb,
+		Canvas &canvas)
+	{
+		const Real node_size = 0.5;
+		const Real line_width_e = 0.04;
+
+		std::array<Real, 2*(ManifoldDim+1)> c_xy;
+		std::array<Integer, (ManifoldDim+1)> c_index;
+		std::array<Integer, (ManifoldDim+1)> is_midpoint;
+
+		
+
+		const auto &c = m.elem(element_id);
+		const auto &e = m.elem(c.parent_id);
+
+		const auto &e_nodes = e.nodes;
+		const auto &c_nodes = c.nodes;
+
+		const Real dAngle = 2.*M_PI/n_nodes(e);
+
+		Integer index = 0;
+		for(Integer k = 0; k < ManifoldDim + 1; ++k) {
+			auto it = std::find(c_nodes.begin(), c_nodes.end(), e_nodes[k]);
+
+			if(it != c_nodes.end()) {
+				c_xy[index * 2]     = cx + std::cos(dAngle * k) * scale_factor;
+				c_xy[index * 2 + 1] = cy + std::sin(dAngle * k) * scale_factor;
+				c_index[index] = e_nodes[k];
+				is_midpoint[index] = false;
+				++index;
+			}
+
+			for(Integer j = k + 1; j < ManifoldDim + 1; ++j) {
+				auto v = en_map.get(e_nodes[k], e_nodes[j]);
+				if(v == INVALID_INDEX) continue;
+				auto it = std::find(c_nodes.begin(), c_nodes.end(), v);
+
+				if(it != c_nodes.end()) {
+					c_xy[index * 2]     = cx + (std::cos(dAngle * k) + std::cos(dAngle * j)) * scale_factor/2.;
+					c_xy[index * 2 + 1] = cy + (std::sin(dAngle * k) + std::sin(dAngle * j)) * scale_factor/2.;
+					c_index[index] = v;
+					is_midpoint[index] = true;
+					++index;
+				}
+			}
+
+			assert(index <= ManifoldDim+1);
+		}
+
+		canvas.set_line_width(0.1);
+		canvas.set_color(
+			rgb.r, rgb.g, rgb.b
+		);
+
+		for(Integer i = 0; i < ManifoldDim + 1; ++i) {
+			for(Integer j = i + 1; j < ManifoldDim + 1; ++j) {
+				canvas.stroke_line(c_xy[i*2], c_xy[i*2+1], c_xy[j*2], c_xy[j*2+1]);
+			}
+		}
+
+		canvas.set_dashing(0.5);
+		
+		for(Integer k = 0; k < n_nodes(c); ++k) {
+			if(!is_midpoint[k]) continue;
+			canvas.set_color(0.5, 0.5, 0.5);
+			canvas.stroke_circle(c_xy[k*2], c_xy[k*2+1], node_size*2.);
+			canvas.set_color(1., 1., 1.);
+			canvas.fill_circle(c_xy[k*2], c_xy[k*2+1], node_size*1.94);
+		}
+
+		canvas.set_line_width(line_width_e);
+
+		canvas.set_color(0,0,0);
+		for(Integer k = 0; k < n_nodes(c); ++k) {
+			canvas.draw_text(c_xy[k*2], c_xy[k*2+1], 1, "Courier", std::to_string(c_index[k]), true);
+		}
+
+		canvas.clear_dashing();
+	}
+
 	template<Integer Dim, Integer ManifoldDim>
 	bool write_element(
 		const std::string &path,
 		const RedGreenRefinement<Dim, ManifoldDim> &rgr,
 		const Integer element_id,
-		const Real scale_factor = 1.,
-		const Integer draw_child = -1)
+		const Real scale_factor,
+		const Integer child_num)
 	{
 		const auto &m = rgr.get_mesh();
 		const auto &e = m.elem(element_id);
@@ -220,8 +354,8 @@ namespace mars {
 
 		const Real color_map[8][3] =
 		{
-			{1., 0., 0.},
-			{0., 1., 0.},
+			{1., 0., 1.},
+			{0.5, 0.5, 1.},
 			{0., 0., 1.},
 			{1., 0.5, 0.},
 
@@ -243,20 +377,24 @@ namespace mars {
 			0.06
 		};
 
+
 		const Real margin = 1.3;
 		const Real node_size = 0.5;
 		const Real line_width_e = 0.04;
 
+		const Real canvas_w = 3 * 2. * (margin * scale_factor);
+		const Real canvas_h = 3 * 2. * (margin * scale_factor);
+
 		moonolith::EPSCanvas canvas;
 		
-		canvas.update_box(-margin * scale_factor, -margin * scale_factor);
-		canvas.update_box(margin * scale_factor, margin * scale_factor);
+		canvas.update_box(-canvas_w/2, -canvas_h/2);
+		canvas.update_box(canvas_w/2, canvas_h/2);
 
 		std::array<Real, 2*(ManifoldDim+1)> xy;
 
 		const Real dAngle = 2.*M_PI/n_nodes(e);
-		const Real cx = (margin * scale_factor)/2.;
-		const Real cy = (margin * scale_factor)/2.;
+		const Real cx = 0.;
+		const Real cy = 0.;
 
 		for(Integer k = 0; k < n_nodes(e); ++k) {
 			xy[k * 2]     = cx + std::cos(dAngle * k) * scale_factor;
@@ -264,7 +402,9 @@ namespace mars {
 		}
 
 		canvas.set_line_width(line_width_e);
-		canvas.set_color(0,0,0);
+		Real r, g, b;
+		flag_color(rgr.refinement_flag(element_id), r, g, b);
+		canvas.set_color(r, g, b);
 		canvas.stroke_polygon(&xy[0], n_nodes(e));
 
 
@@ -272,10 +412,8 @@ namespace mars {
 		std::array<Integer, (ManifoldDim+1)> c_index;
 		std::array<Integer, (ManifoldDim+1)> is_midpoint;
 
-		if(draw_child != INVALID_INDEX && !e.children.empty()) {
-			Integer child_num = 0;
-			for(auto c_i : e.children) {
-				const auto &c = m.elem(c_i);
+		if(child_num != INVALID_INDEX && !e.children.empty()) {
+				const auto &c = m.elem(e.children[child_num]);
 
 				Integer index = 0;
 				for(Integer k = 0; k < ManifoldDim + 1; ++k) {
@@ -317,39 +455,43 @@ namespace mars {
 					color_map[child_num][2]
 				);
 
-				// canvas.set_dashing(0.5);
+				
 				for(Integer i = 0; i < ManifoldDim + 1; ++i) {
 					for(Integer j = i + 1; j < ManifoldDim + 1; ++j) {
 						canvas.stroke_line(c_xy[i*2], c_xy[i*2+1], c_xy[j*2], c_xy[j*2+1]);
 					}
 				}
 
+				canvas.set_dashing(0.5);
 				for(Integer k = 0; k < n_nodes(c); ++k) {
-					if(is_midpoint[k]) {
-						canvas.set_color(0.5, 0.5, 0.5);
-					} else {
-						canvas.set_color(0., 0., 0.);
-					}
+					if(!is_midpoint[k]) continue;
+					canvas.set_color(0.5, 0.5, 0.5);
+					
+					// else {
+					// 	canvas.set_color(0., 0., 0.);
+					// }
 
 					canvas.stroke_circle(c_xy[k*2], c_xy[k*2+1], node_size*2.);
 					canvas.set_color(1., 1., 1.);
 					canvas.fill_circle(c_xy[k*2], c_xy[k*2+1], node_size*1.94);
 				}
+				canvas.set_line_width(line_width_e);
 
 				canvas.set_color(0,0,0);
 				for(Integer k = 0; k < n_nodes(c); ++k) {
 					canvas.draw_text(c_xy[k*2], c_xy[k*2+1], 1, "Courier", std::to_string(c_index[k]), true);
 				}
 
-				++child_num;
-			}
+				// ++child_num;
+			// }
 		}
 
-		canvas.set_line_width(line_width_e);
+		
 
-		// canvas.clear_dashing();
+		canvas.clear_dashing();
 
 		// if(!plot_children) {
+		canvas.set_line_width(0.1);
 			for(Integer k = 0; k < n_nodes(e); ++k) {
 				canvas.set_color(0., 0., 0.);
 				canvas.stroke_circle(xy[k*2], xy[k*2+1], node_size*2.);
