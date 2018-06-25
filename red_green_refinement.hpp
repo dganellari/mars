@@ -62,6 +62,9 @@ namespace mars {
 			const auto p_id = e.parent_id;
 			// const auto &parent_e = mesh.elem(p_id);
 
+			//FIXME?
+			if(p_id == INVALID_INDEX) return;
+
 			//emplace if not there
 			mesh.dual_graph().safe_adj(id);
 
@@ -241,7 +244,7 @@ namespace mars {
 				update_children(e);
 			}
 
-			update_dual_graph();
+			// update_dual_graph();
 			assert(mesh.n_elements() == mesh.dual_graph().size());
 
 			mesh.tags() = refinement_flag_;
@@ -265,7 +268,6 @@ namespace mars {
 
 					if(n_red_neighs == 0) continue;
 
-
 					switch(n_red_neighs) {
 						case 1: 
 						{
@@ -280,12 +282,7 @@ namespace mars {
 							green_elements.push_back(i);
 							break;
 						}
-						// case 3:
-						// {
-						// 	set_refinement_flag(i, RED);
-						// 	promoted_elements.push_back(i);
-						// 	break;
-						// }
+
 						default: 
 						{
 							set_refinement_flag(i, RED);
@@ -550,6 +547,21 @@ namespace mars {
 		inline Integer refinement_flag(const Integer &element_id) const
 		{
 			return refinement_flag_[element_id];
+		}
+
+		inline Mesh<Dim, ManifoldDim> &get_mesh()
+		{
+			return mesh;
+		}
+
+		inline const Mesh<Dim, ManifoldDim> &get_mesh() const
+		{
+			return mesh;
+		}
+
+		const EdgeNodeMap &edge_node_map() const
+		{
+			return edge_node_map_;
 		}
 
 	private:

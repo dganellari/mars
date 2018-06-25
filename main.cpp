@@ -175,20 +175,20 @@ void test_mfem_mesh_2D()
 	// write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_TAG);
 	write_mesh("mesh_2_rg3.eps", mesh, 10., PLOT_PARENT_TAG);
 
-	// rgr.red_refine({36, 65}); 
-	// std::cout << "red 4" << std::endl;
-	// mesh.describe_boundary_elements(std::cout);
+	rgr.red_refine({44, 49, 27}); 
+	std::cout << "red 4" << std::endl;
+	mesh.describe_boundary_elements(std::cout);
 
 
-	// write_mesh("mesh_2_r4.eps", mesh, 10., PLOT_PARENT_TAG);
-	// rgr.green_refine();
+	write_mesh("mesh_2_r4.eps", mesh, 10., PLOT_PARENT_TAG);
+	rgr.green_refine();
 
-	// std::cout << "__________________________\n";
-	// // // write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_TAG);
-	// write_mesh("mesh_2_rg4.eps", mesh, 10., PLOT_PARENT_TAG);
+	std::cout << "__________________________\n";
+	// // write_mesh("mesh_2_rg.eps", mesh, 10., PLOT_TAG);
+	write_mesh("mesh_2_rg4.eps", mesh, 10., PLOT_PARENT_TAG);
 
-	// std::cout << "green 4" << std::endl;
-	// mesh.describe_boundary_elements(std::cout);
+	std::cout << "green 4" << std::endl;
+	mesh.describe_boundary_elements(std::cout);
 
 
 	// rgr.refine({70, 80});
@@ -207,7 +207,11 @@ void test_mfem_mesh_3D()
 	std::cout << "======================================\n";
 	Mesh<3, 3> mesh;
 	read_mesh("../data/cube_6.MFEM", mesh, true);
-	test_mesh(mesh);
+	// test_mesh(mesh);
+	RedGreenRefinement<3, 3> rgr(mesh);
+	rgr.red_refine({0});
+	mesh.describe(std::cout);
+	write_element("elem_3.eps", rgr, 0, 10, true);
 	std::cout << "======================================\n";
 }
 
@@ -298,9 +302,9 @@ int main(const int argc, const char *argv[])
 	// test_red_refinement_interpolator();
 	// test_red_refinement();
 		
-	// test_mfem_mesh_3D();
+	test_mfem_mesh_3D();
 	// test_mfem_mesh_4D();
-	test_mfem_mesh_2D();
+	// test_mfem_mesh_2D();
 	
 
 	return EXIT_SUCCESS;
