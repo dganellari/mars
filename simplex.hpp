@@ -326,6 +326,12 @@ namespace mars {
     {
         return Dim;
     }
+
+    template<Integer Dim, Integer ManifoldDim>
+    inline bool has_node(const Simplex<Dim, ManifoldDim> &s, const Integer &node)
+    {
+        return std::find(s.nodes.begin(), s.nodes.end(), node) != s.nodes.end();
+    }
     
     template<Integer ManifoldDim>
     inline Integer midpoint_index(

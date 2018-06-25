@@ -8,6 +8,11 @@ namespace mars {
 	class Edge {
 	public:
 		std::array<Integer, 2> nodes;
+		Edge()
+		{
+			nodes[0] = -1;
+			nodes[1] = -1;
+		}
 
 		Edge(const Integer a_node, const Integer another_node)
 		{

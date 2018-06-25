@@ -56,6 +56,16 @@ namespace mars {
 			return id >= 0 && id < n_elements();
 		}
 
+		inline bool is_child(
+			const Integer parent_id,
+			const Integer child_id) const
+		{
+			return std::find(
+				elem(parent_id).children.begin(),
+				elem(parent_id).children.end(),
+				child_id) != elem(parent_id).children.end();
+		}
+
 		inline void set_active(const Integer id, const bool val)
 		{
 			assert(id >= 0);
