@@ -152,6 +152,13 @@ void test_mfem_mesh_2D()
 	write_element("elem_2.eps", rgr, 2, 10, INVALID_INDEX);
 	write_element_with_sides("elem_sides_2.eps", rgr, 0, 10, INVALID_INDEX);
 
+
+	write_element_with_subsurfaces(
+	"elem_ss_2.eps",
+	rgr,
+	2,
+	10);
+
 	// rgr.red_refine({16});
 	// std::cout << "red 2" << std::endl;
 	// mesh.describe_boundary_elements(std::cout);
@@ -215,6 +222,12 @@ void test_mfem_mesh_3D()
 	mesh.describe(std::cout);
 	write_element("elem_3.eps", rgr, 0, 10, INVALID_INDEX);
 	write_element_with_sides("elem_sides_3.eps", rgr, 0, 10, INVALID_INDEX);
+
+	write_element_with_subsurfaces(
+	"elem_ss_3.eps",
+	rgr,
+	0,
+	10);
 	std::cout << "======================================\n";
 }
 
@@ -239,6 +252,13 @@ void test_mfem_mesh_4D()
 	mlem.update(mesh.elem(0));
 	mlem.update(mesh.elem(1));
 	mlem.describe(std::cout);
+
+
+	write_element_with_subsurfaces(
+	"elem_ss_4.eps",
+	rgr,
+	0,
+	10);
 }
 
 int main(const int argc, const char *argv[])

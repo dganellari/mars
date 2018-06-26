@@ -208,7 +208,7 @@ namespace mars {
 			std::vector<Integer> &res) const
 		{
 			if(sub_manifold_dim == N) {
-				return map_.adj(sub_manifold_dim, e, res);
+				return map_.adj(e, res);
 			} else {
 				return sub_elem_map_.adj(sub_manifold_dim, e, res);
 			}
@@ -273,7 +273,7 @@ namespace mars {
 			std::vector<Integer> &res) const
 		{
 			assert(sub_manifold_dim == N);
-			return map_.adj(sub_manifold_dim, e, res);
+			return map_.adj(e, res);
 		}
 
 	private:

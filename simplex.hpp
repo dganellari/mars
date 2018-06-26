@@ -101,6 +101,28 @@ namespace mars {
        
         std::vector<Integer> children;
         
+        Integer opposite(const Integer &v1, const Integer &v2) const
+        {
+            if(nodes[0] == v1) {
+                if(nodes[1] == v2) {
+                    return nodes[2];
+                } else {
+                    return nodes[1];
+                }
+            } else {
+                if(nodes[1] == v1) {
+                    return nodes[2];
+                } else {
+                    return nodes[1];
+                }
+            }
+        }
+
+        void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
+        {
+            v1 = nodes[edge_num];
+            v2 = nodes[edge_num == 2? 0 : (edge_num + 1)];
+        }
         
         void side(const Integer &side_num,
                   Simplex<Dim, 1> &side) const
@@ -141,6 +163,60 @@ namespace mars {
         Integer parent_id = INVALID_INDEX;
 
         std::vector<Integer> children;
+
+        void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
+        {
+            switch(edge_num) 
+            {
+                case 0:
+                {
+                    v1 = nodes[0];
+                    v2 = nodes[1];
+                    break;
+                }
+
+                case 1:
+                {
+                    v1 = nodes[0];
+                    v2 = nodes[2];
+                    break;
+                }
+
+                case 2:
+                {
+                    v1 = nodes[0];
+                    v2 = nodes[3];
+                    break;
+                }
+
+                case 3:
+                {
+                    v1 = nodes[1];
+                    v2 = nodes[2];
+                    break;
+                }
+
+                case 4:
+                {
+                    v1 = nodes[1];
+                    v2 = nodes[3];
+                    break;
+                }
+
+                case 5:
+                {
+                    v1 = nodes[2];
+                    v2 = nodes[3];
+                    break;
+                }
+
+                default:
+                {
+                    assert(false);
+                    break;
+                }
+            }
+        }
         
         void side(
                   const Integer &side_num,
@@ -243,9 +319,90 @@ namespace mars {
             
             return ref_;
         }
+
+        void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
+        {
+            switch(edge_num) 
+            {
+                case 0:
+                {
+                    v1 = nodes[0];
+                    v2 = nodes[1];
+                    break;
+                }
+
+                case 1:
+                {
+                    v1 = nodes[0];
+                    v2 = nodes[2];
+                    break;
+                }
+
+                case 2:
+                {
+                    v1 = nodes[0];
+                    v2 = nodes[3];
+                    break;
+                }
+
+                case 3:
+                {
+                    v1 = nodes[0];
+                    v2 = nodes[4];
+                    break;
+                }
+
+                case 4:
+                {
+                    v1 = nodes[1];
+                    v2 = nodes[2];
+                    break;
+                }
+
+                case 5:
+                {
+                    v1 = nodes[1];
+                    v2 = nodes[3];
+                    break;
+                }
+
+                case 6:
+                {
+                    v1 = nodes[1];
+                    v2 = nodes[4];
+                    break;
+                }
+
+                case 7:
+                {
+                    v1 = nodes[2];
+                    v2 = nodes[3];
+                    break;
+                }
+
+                case 8:
+                {
+                    v1 = nodes[2];
+                    v2 = nodes[4];
+                    break;
+                }
+
+                case 9:
+                {
+                    v1 = nodes[3];
+                    v2 = nodes[4];
+                    break;
+                }
+
+                default:
+                {
+                    assert(false);
+                    break;
+                }
+            }
+        }
         
-        void side(
-                  const Integer &side_num,
+        void side(const Integer &side_num,
                   Simplex<Dim, 3> &side) const
         {
             switch(side_num)
@@ -325,6 +482,12 @@ namespace mars {
     inline constexpr static Integer n_dims(const Simplex<Dim, ManifoldDim> &)
     {
         return Dim;
+    }
+
+    template<Integer Dim, Integer ManifoldDim>
+    inline constexpr static Integer n_edges(const Simplex<Dim, ManifoldDim> &)
+    {
+        return Combinations<ManifoldDim + 1, 2>::value;
     }
 
     template<Integer Dim, Integer ManifoldDim>
