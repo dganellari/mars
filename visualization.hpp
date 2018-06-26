@@ -240,13 +240,16 @@ namespace mars {
 		const Real cy,
 		const Real scale_factor,
 		const RGB &rgb,
-		Canvas &canvas)
+		Canvas &canvas,
+		const bool sort_nodes = true)
 	{
 
 		std::cout << "rgb: " << rgb.r << " " << rgb.g << " " << rgb.b << std::endl;
 
 		auto e = m.elem(element_id);
-		std::sort(e.nodes.begin(), e.nodes.end());
+		if(sort_nodes) {
+			std::sort(e.nodes.begin(), e.nodes.end());
+		}
 
 		Simplex<Dim, ManifoldDim-1> side;
 		e.side(side_num, side);
@@ -302,13 +305,16 @@ namespace mars {
 		const Real cy,
 		const Real scale_factor,
 		const RGB &rgb,
-		Canvas &canvas)
+		Canvas &canvas,
+		const bool sort_nodes = true)
 	{
 		const Real node_size = 0.5;
 		const Real line_width_e = 0.04;
 
 		auto e = m.elem(element_id);
-		std::sort(e.nodes.begin(), e.nodes.end());
+		if(sort_nodes) {
+			std::sort(e.nodes.begin(), e.nodes.end());
+		}
 
 		std::array<Real, 2*(ManifoldDim+1)> xy;
 
@@ -592,7 +598,7 @@ namespace mars {
 		const auto &m = rgr.get_mesh();
 		const auto &e = m.elem(element_id);
 		auto sorted_nodes = e.nodes;
-		std::sort(sorted_nodes.begin(), sorted_nodes.end());
+		// std::sort(sorted_nodes.begin(), sorted_nodes.end());
 
 		std::vector<Real> hsv;
 		mesh_color(m, PLOT_ID, hsv, false);
@@ -643,8 +649,8 @@ namespace mars {
 					cy,
 					scale_factor,
 					rgb,
-					canvas
-					);
+					canvas,
+					false);
 
 				if(a != INVALID_INDEX) {
 					e.side(side_num, side);
@@ -667,7 +673,8 @@ namespace mars {
 						a_cy,
 						scale_factor,
 						rgb,
-						canvas);
+						canvas,
+						false);
 
 					draw_element_side(
 						m,
@@ -677,7 +684,8 @@ namespace mars {
 						a_cy,
 						scale_factor,
 						e_rgb,
-						canvas
+						canvas,
+						false
 						);
 				}
 
@@ -709,7 +717,8 @@ namespace mars {
 						cy,
 						scale_factor,
 						rgb,
-						canvas
+						canvas,
+						false
 						);
 
 					if(adj[s] != INVALID_INDEX) {
@@ -733,7 +742,8 @@ namespace mars {
 							a_cy,
 							scale_factor,
 							rgb,
-							canvas);
+							canvas,
+							false);
 
 						draw_element_side(
 							m,
@@ -743,7 +753,8 @@ namespace mars {
 							a_cy,
 							scale_factor,
 							e_rgb,
-							canvas
+							canvas,
+							false
 							);
 					}
 				}
@@ -760,7 +771,8 @@ namespace mars {
 			cy,
 			scale_factor,
 			e_rgb,
-			canvas);
+			canvas,
+			false);
 
 		return canvas.write(path);
 	}

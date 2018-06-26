@@ -234,6 +234,11 @@ void test_mfem_mesh_4D()
 	write_element("elem_4.eps", rgr, 0, 10, INVALID_INDEX);
 	write_element_with_sides("elem_sides_4.eps", rgr, 6, 10, INVALID_INDEX);
 	std::cout << "======================================\n";
+
+	MultilevelElementMap<3, 2> mlem;
+	mlem.update(mesh.elem(0));
+	mlem.update(mesh.elem(1));
+	mlem.describe(std::cout);
 }
 
 int main(const int argc, const char *argv[])
@@ -315,7 +320,10 @@ int main(const int argc, const char *argv[])
 	test_mfem_mesh_3D();
 	test_mfem_mesh_4D();
 	test_mfem_mesh_2D();
+
+
 	
+	// Combinations<4, 3>::print_all();
 
 	return EXIT_SUCCESS;
 }

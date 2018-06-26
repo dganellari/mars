@@ -3,40 +3,70 @@
 
 #include "base.hpp"
 #include <array>
+#include <vector>
+#include <algorithm>
+#include <initializer_list>
 
 namespace mars {
-	class Edge {
+
+	template<Integer N>
+	class Side {
 	public:
-		std::array<Integer, 2> nodes;
-		Edge()
+		static_assert(N > 0, "N cannot be zero");
+
+		std::array<Integer, N> nodes;
+		
+		virtual ~Side() {}
+
+		Side()
 		{
-			nodes[0] = -1;
-			nodes[1] = -1;
+			std::fill(nodes.begin(), nodes.end(), INVALID_INDEX);
 		}
 
+		Side(const std::array<Integer, N> &in)
+		: nodes(in)
+		{
+			std::sort(std::begin(nodes), std::end(nodes));
+		}
+
+		Side(const std::vector<Integer> &in)
+		{
+			assert(N == in.size());
+
+			std::copy(std::begin(in), std::end(in), std::begin(nodes));
+			std::sort(std::begin(nodes), std::end(nodes));
+		}
+
+		Side(std::initializer_list<Integer> in)
+		{
+			assert(N == in.size());
+
+			std::copy(std::begin(in), std::end(in), std::begin(nodes));
+			std::sort(std::begin(nodes), std::end(nodes));
+		}
+
+		inline bool operator<(const Side &other) const
+		{
+			for(Integer i = 0; i < N-1; ++i) {
+				if(nodes[i] < other.nodes[i]) {
+					return true;
+				}
+
+				if(nodes[i] > other.nodes[i]) {
+					return false;
+				}
+			}
+
+			return nodes[N-1] < other.nodes[N-1];
+		}
+	};
+
+	class Edge : public Side<2> {
+	public:
+		Edge() : Side<2>() {}
 		Edge(const Integer a_node, const Integer another_node)
-		{
-			if(a_node < another_node) {
-				nodes[0] = a_node;
-				nodes[1] = another_node;
-			} else {
-				nodes[0] = another_node;
-				nodes[1] = a_node;
-			}
-		}
-
-		inline bool operator<(const Edge &other) const
-		{
-			if(nodes[0] < other.nodes[0]) {
-				return true;
-			}
-
-			if(nodes[0] > other.nodes[0]) {
-				return false;
-			}
-
-			return nodes[1] < other.nodes[1];
-		}
+		: Side({a_node, another_node})
+		{}
 	};
 }
 

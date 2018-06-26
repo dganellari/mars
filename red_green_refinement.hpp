@@ -578,7 +578,8 @@ namespace mars {
 		std::vector<Integer> refinement_flag_;
 		std::vector< std::shared_ptr<SimplexInterpolator<ManifoldDim>> > interp_;
 		EdgeNodeMap edge_node_map_;
-		EdgeElementMap edge_element_map_;
+
+		MultilevelElementMap<ManifoldDim, 2> mlem;
 	};
 }
 

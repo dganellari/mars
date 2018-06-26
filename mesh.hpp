@@ -283,7 +283,10 @@ namespace mars {
 			return ret;
 		}
 
-		bool have_common_side(const Integer e_index_1, const Integer e_index_2) const
+		bool have_common_sub_surface(
+			const Integer e_index_1,
+			const Integer e_index_2,
+			const Integer required_common_nodes = ManifoldDim) const
 		{
 			const auto &e1 = elem(e_index_1);
 			const auto &e2 = elem(e_index_2);
@@ -296,10 +299,19 @@ namespace mars {
 			}
 
 			assert(n_common_nodes <= ManifoldDim);
-			return n_common_nodes == ManifoldDim;
+			return n_common_nodes == required_common_nodes;
 		}
 
-		Integer common_side_num(const Integer e_index_1, const Integer e_index_2) const
+		bool have_common_side(
+			const Integer e_index_1,
+			const Integer e_index_2) const
+		{
+			return have_common_sub_surface(e_index_1, e_index_2, ManifoldDim);
+		}
+
+		Integer common_side_num(
+			const Integer e_index_1,
+			const Integer e_index_2) const
 		{
 			const auto &e1 = elem(e_index_1);
 			const auto &e2 = elem(e_index_2);
