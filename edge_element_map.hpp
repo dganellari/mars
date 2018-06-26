@@ -25,8 +25,8 @@ namespace mars {
 		{
 			std::array<Integer, N> s;
 			std::array<Integer, N> nodes;
-			for(Integer i = 0; i < Combinations<ManifoldDim, N>::value; ++i) {
-				Combinations<ManifoldDim, N>::generate(i, &s[0]);
+			for(Integer i = 0; i < Combinations<ManifoldDim+1, N>::value; ++i) {
+				Combinations<ManifoldDim+1, N>::generate(i, &s[0]);
 
 				for(Integer j = 0; j < N; ++j) {
 					nodes[j] = e.nodes[s[j]];
@@ -38,6 +38,17 @@ namespace mars {
 				}
 
 				vec->push_back(e.id);
+			}
+		}
+
+		template<Integer Dim, Integer ManifoldDim>
+		void update(const Mesh<Dim, ManifoldDim> &mesh)
+		{
+			auto ne = mesh.n_elements();
+			for(Integer i = 0; i < ne; ++i) {
+				// if(mesh.is_active(i)) {
+					update(mesh.elem(i));
+				// }
 			}
 		}
 
@@ -84,8 +95,8 @@ namespace mars {
 
 			std::array<Integer, N> s;
 			std::array<Integer, N> nodes;
-			for(Integer i = 0; i < Combinations<ManifoldDim, N>::value; ++i) {
-				Combinations<ManifoldDim, N>::generate(i, &s[0]);
+			for(Integer i = 0; i < Combinations<ManifoldDim+1, N>::value; ++i) {
+				Combinations<ManifoldDim+1, N>::generate(i, &s[0]);
 
 				for(Integer j = 0; j < N; ++j) {
 					nodes[j] = e.nodes[s[j]];
@@ -147,6 +158,13 @@ namespace mars {
 		{
 			map_.update(e);
 			sub_elem_map_.update(e);
+		}
+
+		template<Integer Dim, Integer ManifoldDim>
+		void update(const Mesh<Dim, ManifoldDim> &m)
+		{
+			map_.update(m);
+			sub_elem_map_.update(m);
 		}
 
 		template<Integer M>
@@ -216,6 +234,12 @@ namespace mars {
 		void update(const Simplex<Dim, ManifoldDim> &e)
 		{
 			map_.update(e);
+		}
+
+		template<Integer Dim, Integer ManifoldDim>
+		void update(const Mesh<Dim, ManifoldDim> &m)
+		{
+			map_.update(m);
 		}
 
 		const ElementVector &elements(const Side<N> &side) const

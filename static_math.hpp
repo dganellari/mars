@@ -8,19 +8,26 @@ namespace mars {
 	template<Integer N>
 	class Factorial {
 	public:
-	    static const Integer value = Factorial<N-1>::value * N;
+		static const Integer value = Factorial<N-1>::value * N;
 	};
 
 	template<>
 	class Factorial<1> {
 	public:
-	    static const Integer value = 1;
+		static const Integer value = 1;
 	};
 
 	template<>
 	class Factorial<0> {
 	public:
-	    static const Integer value = 0;
+		static const Integer value = 1;
+	};
+
+
+	template<>
+	class Factorial<-1> {
+	public:
+		static const Integer value = 1;
 	};
 
 	template<Integer Base, Integer Expon>
@@ -416,6 +423,68 @@ namespace mars {
 					comb[0] = 2;
 					comb[1] = 3;
 					comb[2] = 4;
+					return;
+				}
+
+				default:
+				{
+					assert(false);
+					return;
+				}
+			}
+		}
+	};
+
+
+	template<>
+	class Combinations<5, 4> {
+	public:
+		static const Integer value = 5;
+		static void generate(const Integer k, Integer comb[4])
+		{
+			switch(k) {
+				case 0:
+				{
+					comb[0] = 0;
+					comb[1] = 1;
+					comb[2] = 2;
+					comb[3] = 3;
+					return;
+				}
+
+				case 1:
+				{
+					comb[0] = 0;
+					comb[1] = 1;
+					comb[2] = 2;
+					comb[3] = 4;
+					return;
+				}
+
+				case 2:
+				{
+					comb[0] = 0;
+					comb[1] = 1;
+					comb[2] = 3;
+					comb[3] = 4;
+					return;
+				}
+
+				case 3:
+				{
+					comb[0] = 0;
+					comb[1] = 2;
+					comb[2] = 3;
+					comb[3] = 4;
+					return;
+				}
+
+				case 4:
+				{
+					comb[0] = 1;
+					comb[1] = 2;
+					comb[2] = 3;
+					comb[3] = 4;
 					return;
 				}
 

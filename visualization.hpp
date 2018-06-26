@@ -231,11 +231,12 @@ namespace mars {
 	}
 
 
-	template<class Canvas, Integer Dim, Integer ManifoldDim>
-	void draw_element_side(
+
+	template<class Canvas, Integer Dim, Integer ManifoldDim, class NodeVector>
+	void draw_element_subsurface(
 		const Mesh<Dim, ManifoldDim> &m,
 		const Integer element_id,
-		const Integer side_num,
+		const NodeVector &sub_surface_nodes,
 		const Real cx,
 		const Real cy,
 		const Real scale_factor,
@@ -251,33 +252,34 @@ namespace mars {
 			std::sort(e.nodes.begin(), e.nodes.end());
 		}
 
-		Simplex<Dim, ManifoldDim-1> side;
-		e.side(side_num, side);
-
 		const Real node_size = 0.5;
 		const Real line_width_e = 0.2;
-		std::array<Real, 2*ManifoldDim> xy;
-		std::array<Integer, ManifoldDim> node_ids;
+		std::vector<Real> xy(sub_surface_nodes.size()*2);
+		std::vector<Integer> node_ids(sub_surface_nodes.size(), INVALID_INDEX);
 
 		const Real dAngle = 2.*M_PI/n_nodes(e);
 
 		Integer index = 0;
 		for(Integer k = 0; k < n_nodes(e); ++k) {
-			if(has_node(side, e.nodes[k])) {
-				xy[index * 2]     = cx + std::cos(dAngle * k) * scale_factor;
-				xy[index * 2 + 1] = cy + std::sin(dAngle * k) * scale_factor;
-				node_ids[index] = e.nodes[k];
-				++index;
+			if(std::find(
+				sub_surface_nodes.begin(),
+				sub_surface_nodes.end(),
+				e.nodes[k]) != sub_surface_nodes.end()
+				) {
+					xy[index * 2]     = cx + std::cos(dAngle * k) * scale_factor;
+					xy[index * 2 + 1] = cy + std::sin(dAngle * k) * scale_factor;
+					node_ids[index] = e.nodes[k];
+					++index;
 			}
 		}
 
 		canvas.set_line_width(line_width_e);
 		canvas.set_color(rgb.r, rgb.g, rgb.b);
-		canvas.set_dashing(1./(side_num + 2));
-		canvas.stroke_polygon(&xy[0], n_nodes(side));
+		canvas.set_dashing(1./(2. + 2*rand()/double(RAND_MAX)));
+		canvas.stroke_polygon(&xy[0], sub_surface_nodes.size());
 		canvas.clear_dashing();
 
-		for(Integer k = 0; k < n_nodes(side); ++k) {
+		for(Integer k = 0; k < sub_surface_nodes.size(); ++k) {
 			canvas.set_color(0., 0., 0.);
 			canvas.stroke_circle(xy[k*2], xy[k*2+1], node_size*2.);
 			canvas.set_color(1., 1., 1.);
@@ -285,7 +287,7 @@ namespace mars {
 		}
 
 		canvas.set_color(0., 0., 0.);
-		for(Integer k = 0; k < n_nodes(side); ++k) {
+		for(Integer k = 0; k < sub_surface_nodes.size(); ++k) {
 			canvas.draw_text(xy[k*2], xy[k*2+1], 1, "Courier", std::to_string(node_ids[k]), true);
 		}
 
@@ -295,6 +297,30 @@ namespace mars {
 			canvas.set_color(rgb.r, rgb.g, rgb.b);
 			canvas.draw_text(cx, cy - scale_factor * 1.2, 1.5, "Courier", std::to_string(e.id), true);
 		}
+	}
+
+
+	template<class Canvas, Integer Dim, Integer ManifoldDim>
+	void draw_element_side(
+		const Mesh<Dim, ManifoldDim> &m,
+		const Integer element_id,
+		const Integer side_num,
+		const Real cx,
+		const Real cy,
+		const Real scale_factor,
+		const RGB &rgb,
+		Canvas &canvas,
+		const bool sort_nodes = true)
+	{
+		Simplex<Dim, ManifoldDim-1> side;
+		m.elem(element_id).side(side_num, side);
+		draw_element_subsurface(
+			m,
+			element_id,
+			side.nodes,
+			cx, cy, scale_factor, rgb,
+			canvas,
+			sort_nodes);
 	}
 
 	template<class Canvas, Integer Dim, Integer ManifoldDim>
@@ -398,8 +424,8 @@ namespace mars {
 					// c_xy[index * 2]     = cx + (std::cos(dAngle * k) + std::cos(dAngle * j)) * scale_factor/2.;
 					// c_xy[index * 2 + 1] = cy + (std::sin(dAngle * k) + std::sin(dAngle * j)) * scale_factor/2.;
 
-					c_xy[index * 2]     = cx + std::cos(dAngleMid * midpoint_index<ManifoldDim>(k, j)) * scale_factor/1.5;
-					c_xy[index * 2 + 1] = cy + std::sin(dAngleMid * midpoint_index<ManifoldDim>(k, j)) * scale_factor/1.5;
+					c_xy[index * 2]     = cx + std::cos(dAngleMid/2 + dAngleMid * midpoint_index<ManifoldDim>(k, j)) * scale_factor/1.5;
+					c_xy[index * 2 + 1] = cy + std::sin(dAngleMid/2 + dAngleMid * midpoint_index<ManifoldDim>(k, j)) * scale_factor/1.5;
 					c_index[index] = v;
 					is_midpoint[index] = true;
 					edge[index] = Edge(e_nodes[k], e_nodes[j]);
@@ -600,6 +626,9 @@ namespace mars {
 		auto sorted_nodes = e.nodes;
 		// std::sort(sorted_nodes.begin(), sorted_nodes.end());
 
+		// MultilevelElementMap<ManifoldDim, 2> mlem;
+		// mlem.update(rgr.get_mesh());
+
 		std::vector<Real> hsv;
 		mesh_color(m, PLOT_ID, hsv, false);
 
@@ -627,77 +656,10 @@ namespace mars {
 
 		Simplex<Dim, ManifoldDim-1> side;
 
-		if(side_num != INVALID_INDEX) {
-			const auto &adj = m.dual_graph().adj(element_id);
-			const auto a = adj[side_num];
-
-			bool skip = a == INVALID_INDEX && skip_invalid_adj_sides;
-			if(!skip) {
-				auto rgb = RGB(0, 0, 0);
-
-				if(a != INVALID_INDEX) {
-					rgb.r = hsv[a*3];
-					rgb.g = hsv[a*3 + 1];
-					rgb.b = hsv[a*3 + 2];
-				}
-
-				draw_element_side(
-					m,
-					element_id,
-					side_num,
-					cx,
-					cy,
-					scale_factor,
-					rgb,
-					canvas,
-					false);
-
-				if(a != INVALID_INDEX) {
-					e.side(side_num, side);
-					Integer k = 0;
-					for(; k < ManifoldDim + 1; ++k) {
-						auto en = sorted_nodes[k];
-						if(std::find(side.nodes.begin(), side.nodes.end(), en) == side.nodes.end()) {
-							break;
-						}
-					}
-
-
-					const auto a_cx = cx + cos(k * dAngle + M_PI) * 2.5 * scale_factor;
-					const auto a_cy = cy + sin(k * dAngle + M_PI) * 2.5 * scale_factor;
-
-					draw_element(
-						m,
-						a,
-						a_cx,
-						a_cy,
-						scale_factor,
-						rgb,
-						canvas,
-						false);
-
-					draw_element_side(
-						m,
-						a,
-						m.common_side_num(a, element_id),
-						a_cx,
-						a_cy,
-						scale_factor,
-						e_rgb,
-						canvas,
-						false
-						);
-				}
-
-
-
-			}
-
-		} else {
-			for(Integer s = 0; s < n_sides(e); ++s) {
-
+		// for(Integer sub_manifold = ManifoldDim; sub_manifold >= 2; --sub_manifold) {
+			if(side_num != INVALID_INDEX) {
 				const auto &adj = m.dual_graph().adj(element_id);
-				const auto a = adj[s];
+				const auto a = adj[side_num];
 
 				bool skip = a == INVALID_INDEX && skip_invalid_adj_sides;
 				if(!skip) {
@@ -712,18 +674,16 @@ namespace mars {
 					draw_element_side(
 						m,
 						element_id,
-						s,
+						side_num,
 						cx,
 						cy,
 						scale_factor,
 						rgb,
 						canvas,
-						false
-						);
+						false);
 
-					if(adj[s] != INVALID_INDEX) {
-						e.side(s, side);
-
+					if(a != INVALID_INDEX) {
+						e.side(side_num, side);
 						Integer k = 0;
 						for(; k < ManifoldDim + 1; ++k) {
 							auto en = sorted_nodes[k];
@@ -731,6 +691,7 @@ namespace mars {
 								break;
 							}
 						}
+
 
 						const auto a_cx = cx + cos(k * dAngle + M_PI) * 2.5 * scale_factor;
 						const auto a_cy = cy + sin(k * dAngle + M_PI) * 2.5 * scale_factor;
@@ -758,8 +719,74 @@ namespace mars {
 							);
 					}
 				}
-			}
-			
+
+			} else {
+				for(Integer s = 0; s < n_sides(e); ++s) {
+
+					const auto &adj = m.dual_graph().adj(element_id);
+					const auto a = adj[s];
+
+					bool skip = a == INVALID_INDEX && skip_invalid_adj_sides;
+					if(!skip) {
+						auto rgb = RGB(0, 0, 0);
+
+						if(a != INVALID_INDEX) {
+							rgb.r = hsv[a*3];
+							rgb.g = hsv[a*3 + 1];
+							rgb.b = hsv[a*3 + 2];
+						}
+
+						draw_element_side(
+							m,
+							element_id,
+							s,
+							cx,
+							cy,
+							scale_factor,
+							rgb,
+							canvas,
+							false
+							);
+
+						if(adj[s] != INVALID_INDEX) {
+							e.side(s, side);
+
+							Integer k = 0;
+							for(; k < ManifoldDim + 1; ++k) {
+								auto en = sorted_nodes[k];
+								if(std::find(side.nodes.begin(), side.nodes.end(), en) == side.nodes.end()) {
+									break;
+								}
+							}
+
+							const auto a_cx = cx + cos(k * dAngle + M_PI) * 2.5 * scale_factor;
+							const auto a_cy = cy + sin(k * dAngle + M_PI) * 2.5 * scale_factor;
+
+							draw_element(
+								m,
+								a,
+								a_cx,
+								a_cy,
+								scale_factor,
+								rgb,
+								canvas,
+								false);
+
+							draw_element_side(
+								m,
+								a,
+								m.common_side_num(a, element_id),
+								a_cx,
+								a_cy,
+								scale_factor,
+								e_rgb,
+								canvas,
+								false
+								);
+						}
+					}
+				}
+			// }
 		}
 
 
