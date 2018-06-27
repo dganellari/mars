@@ -35,7 +35,8 @@ namespace mars {
 		PLOT_TAG = 1,
 		PLOT_ID = 2,
 		PLOT_PARENT = 3,
-		PLOT_PARENT_TAG = 4
+		PLOT_PARENT_TAG = 4,
+		PLOT_NUMERIC_TAG = 5
 	};
 
 	inline void flag_color(const Integer flag, Real &r, Real &g, Real &b)
@@ -133,6 +134,12 @@ namespace mars {
 						break;
 					}
 
+					case PLOT_NUMERIC_TAG:
+					{
+						f[k++] = mesh.tags()[i];
+						break;
+					}
+
 					default:
 					{
 						f[k++] = mesh.elem(i).id;
@@ -208,18 +215,21 @@ namespace mars {
 			if(mesh.is_active(i)) {
 				for(auto n : mesh.elem(i).nodes) {
 					auto p = mesh.point(n);
-					canvas.set_color(1., 1., 1.);
-					canvas.fill_circle(p(0)*scale_factor, p(1)*scale_factor, 1./std::sqrt(mesh.n_active_elements()));
 					canvas.set_color(0., 0., 0.);
 					canvas.stroke_circle(p(0)*scale_factor, p(1)*scale_factor, 1./std::sqrt(mesh.n_active_elements()));
 
-					canvas.update_box(p(0)*scale_factor + 4./mesh.n_active_elements(), p(1)*scale_factor + scale_factor/10.);
-					canvas.update_box(p(0)*scale_factor - 4./mesh.n_active_elements(), p(1)*scale_factor - scale_factor/10.);
+					canvas.set_color(1., 1., 1.);
+					canvas.fill_circle(p(0)*scale_factor, p(1)*scale_factor, 1./std::sqrt(mesh.n_active_elements()));
+					
+
+					canvas.update_box(p(0)*scale_factor + scale_factor/10., p(1)*scale_factor + scale_factor/10.);
+					canvas.update_box(p(0)*scale_factor - scale_factor/10., p(1)*scale_factor - scale_factor/10.);
 				}
 			}
 		}
 
-
+		canvas.set_color(0., 0., 0.);
+		
 		for(std::size_t i = 0, k = 0; i < mesh.n_elements(); ++i) {
 			if(mesh.is_active(i)) {
 				auto b = barycenter(mesh.elem(i), mesh.points());

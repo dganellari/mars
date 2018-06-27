@@ -45,6 +45,15 @@ namespace mars {
 			std::sort(std::begin(nodes), std::end(nodes));
 		}
 
+		inline bool operator==(const Side &other) const
+		{
+			for(Integer i = 0; i < N; ++i) {
+				if(nodes[i] != other.nodes[i]) return false;
+			}
+
+			return true;
+		}
+
 		inline bool operator<(const Side &other) const
 		{
 			for(Integer i = 0; i < N-1; ++i) {
@@ -58,6 +67,16 @@ namespace mars {
 			}
 
 			return nodes[N-1] < other.nodes[N-1];
+		}
+
+		void describe(std::ostream &os) const
+		{
+			os << "(";
+			for(Integer i = 0; i < N-1; ++i) {
+				os << nodes[i] << ",";
+			}
+
+			os << nodes[N-1] << ")";
 		}
 	};
 

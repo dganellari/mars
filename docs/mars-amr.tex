@@ -1,0 +1,36 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\begin{document}
+
+\section{Bisection algorithm for simplical meshes}
+\label{sec:title}
+
+\begin{itemize}
+	\item Serial algorithm
+	\item Longest edge splitting
+	\item Local refinement propagation so that the levels of refinement of the one-ring
+	neighbors it differs at most one.
+	\item For 2D meshes with triangles isosceles the number of congruence classes is 1. 
+	\item The algorithm works directly for 3D and 4D.
+\end{itemize}
+
+
+\begin{figure}[htbp]
+	\centering
+	\parbox{0.8\linewidth}{
+	\includegraphics[width=0.32\linewidth]{figures/mesh_2_bisect_1} \hfill
+	\includegraphics[width=0.32\linewidth]{figures/mesh_2_bisect_2} \hfill
+	\includegraphics[width=0.32\linewidth]{figures/mesh_2_bisect_3} \par
+	\includegraphics[width=0.32\linewidth]{figures/mesh_2_bisect_4} \hfill
+	\includegraphics[width=0.32\linewidth]{figures/mesh_2_bisect_5} \hfill
+	\includegraphics[width=0.32\linewidth]{figures/mesh_2_bisect_6} \par
+	\includegraphics[width=0.32\linewidth]{figures/mesh_2_bisect_7} \hfill
+	\includegraphics[width=0.32\linewidth]{figures/mesh_2_bisect_8} \hfill
+	\includegraphics[width=0.32\linewidth]{figures/mesh_2_bisect_9} \par
+	}
+	\caption{Steps of the bisection algorithm.}
+	\label{fig:label}
+\end{figure}
+
+\end{document}

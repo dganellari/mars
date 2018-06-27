@@ -266,36 +266,58 @@ void test_mfem_mesh_4D()
 
 void test_bisection_2D()
 {	
-
 	using namespace mars;
 	std::cout << "======================================\n";
 	Mesh<2, 2> mesh;
-	read_mesh("../data/square_2.MFEM", mesh);
+	// read_mesh("../data/square_2.MFEM", mesh);
+	read_mesh("../data/beam-tri.MFEM", mesh);
 	// test_mesh(mesh);
 
 	write_mesh("mesh_2_bisect_1.eps", mesh, 10., PLOT_ID);
 
 	Bisection<2, 2> b(mesh);
-	b.refine({0, 1});
-	write_mesh("mesh_2_bisect_2.eps", mesh, 10., PLOT_ID);
+	b.refine({0});
+	b.refine({1});
+	write_mesh("mesh_2_bisect_2.eps", mesh, 10., PLOT_NUMERIC_TAG);
 
 	b.refine({3, 4});
-	mesh.describe(std::cout);
-	write_mesh("mesh_2_bisect_3.eps", mesh, 10., PLOT_PARENT_TAG);
+	// mesh.describe(std::cout);
+	write_mesh("mesh_2_bisect_3.eps", mesh, 10., PLOT_NUMERIC_TAG);
 
 	b.refine({9, 5});
-	mesh.describe(std::cout);
-	write_mesh("mesh_2_bisect_4.eps", mesh, 10., PLOT_ID);
+	// mesh.describe(std::cout);
+	write_mesh("mesh_2_bisect_4.eps", mesh, 10., PLOT_NUMERIC_TAG);
 
 
 	b.refine({2, 12, 13});
 	// mesh.describe(std::cout);
-	write_mesh("mesh_2_bisect_5.eps", mesh, 10., PLOT_ID);
+	write_mesh("mesh_2_bisect_5.eps", mesh, 10., PLOT_NUMERIC_TAG);
 
 
 	b.refine({18});
 	// mesh.describe(std::cout);
-	write_mesh("mesh_2_bisect_6.eps", mesh, 10., PLOT_ID);
+	write_mesh("mesh_2_bisect_6.eps", mesh, 10., PLOT_NUMERIC_TAG);
+
+
+	b.refine({30, 31, 28, 29});
+	// mesh.describe(std::cout);
+	write_mesh("mesh_2_bisect_7.eps", mesh, 10., PLOT_NUMERIC_TAG);
+
+
+	b.refine({43, 42});
+	// mesh.describe(std::cout);
+	write_mesh("mesh_2_bisect_8.eps", mesh, 10., PLOT_NUMERIC_TAG);
+
+	b.uniform_refine(2);
+	write_mesh("mesh_2_bisect_9.eps", mesh, 10., PLOT_NUMERIC_TAG);
+
+	b.set_verbose(true);
+	b.refine({323});
+	write_mesh("mesh_2_bisect_10.eps", mesh, 10., PLOT_NUMERIC_TAG);
+
+
+	b.refine({304});
+	write_mesh("mesh_2_bisect_11.eps", mesh, 10., PLOT_NUMERIC_TAG);  
 
 }
 
@@ -316,6 +338,9 @@ void test_bisection_3D()
 	std::cout << mesh.n_boundary_sides() << std::endl;
 
 	b.refine({5, 6});
+	b.refine({8, 9});
+
+	b.uniform_refine(4);
 	// mesh.describe(std::cout);
 
 	VTKMeshWriter<Mesh<3, 3>> w;
@@ -334,7 +359,7 @@ void test_bisection_4D()
 	b.refine({0, 1});
 	// mesh.describe(std::cout);
 
-	std::cout << "volume: " << mesh.volume() << std::endl;
+	
 
 	write_element("elem_4_bisect.eps", mesh, b.edge_node_map(), 0, 10, INVALID_INDEX);
 
@@ -347,6 +372,10 @@ void test_bisection_4D()
 
 	b.refine({5, 6});
 	// mesh.describe(std::cout);
+
+	b.uniform_refine(3);
+
+	std::cout << "volume: " << mesh.volume() << std::endl;
 
 
 }
