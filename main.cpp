@@ -5,6 +5,8 @@
 #include "simplex.hpp"
 #include "lagrange_element.hpp"
 #include "mesh.hpp"
+#include "bisection.hpp"
+#include "vtk_writer.hpp"
 
 void test_midpoint_index()
 {
@@ -261,6 +263,81 @@ void test_mfem_mesh_4D()
 	10);
 }
 
+
+void test_bisection_2D()
+{	
+
+	using namespace mars;
+	std::cout << "======================================\n";
+	Mesh<2, 2> mesh;
+	read_mesh("../data/square_2.MFEM", mesh);
+	// test_mesh(mesh);
+
+	write_mesh("mesh_2_bisect_1.eps", mesh, 10., PLOT_ID);
+
+	Bisection<2, 2> b(mesh);
+	b.refine({0, 1});
+	write_mesh("mesh_2_bisect_2.eps", mesh, 10., PLOT_ID);
+
+	b.refine({3, 4});
+	// mesh.describe(std::cout);
+	write_mesh("mesh_2_bisect_3.eps", mesh, 10., PLOT_PARENT_TAG);
+
+	b.refine({9, 5});
+	// mesh.describe(std::cout);
+	write_mesh("mesh_2_bisect_4.eps", mesh, 10., PLOT_ID);
+
+
+	b.refine({2, 12, 13});
+	mesh.describe(std::cout);
+	write_mesh("mesh_2_bisect_5.eps", mesh, 10., PLOT_ID);
+
+
+	b.refine({18});
+	mesh.describe(std::cout);
+	write_mesh("mesh_2_bisect_6.eps", mesh, 10., PLOT_ID);
+
+}
+
+void test_bisection_3D()
+{	
+
+	using namespace mars;
+	std::cout << "======================================\n";
+	Mesh<3, 3> mesh;
+	read_mesh("../data/cube_6.MFEM", mesh, true);
+	mesh.update_dual_graph();
+	std::cout << mesh.n_boundary_sides() << std::endl;
+	Bisection<3, 3> b(mesh);
+	b.refine({0});
+	mesh.describe(std::cout);
+
+	mesh.update_dual_graph();
+	std::cout << mesh.n_boundary_sides() << std::endl;
+
+	b.refine({5, 6});
+	mesh.describe(std::cout);
+
+	VTKMeshWriter<Mesh<3, 3>> w;
+	w.write("mesh_bisect.vtu", mesh);
+}
+
+void test_bisection_4D()
+{	
+	using namespace mars;
+	std::cout << "======================================\n";
+	Mesh<4, 4> mesh;
+	read_mesh("../data/cube4d_24.MFEM", mesh);
+	Bisection<4, 4> b(mesh);
+	b.refine({0, 1});
+	mesh.describe(std::cout);
+
+	b.refine({5, 6});
+	mesh.describe(std::cout);
+
+
+}
+
 int main(const int argc, const char *argv[])
 {
 	using namespace mars;
@@ -337,10 +414,11 @@ int main(const int argc, const char *argv[])
 	// test_red_refinement_interpolator();
 	// test_red_refinement();
 		
-	test_mfem_mesh_3D();
-	test_mfem_mesh_4D();
-	test_mfem_mesh_2D();
-
+	// test_mfem_mesh_3D();
+	// test_mfem_mesh_4D();
+	// test_mfem_mesh_2D();
+	test_bisection_3D();
+	test_bisection_4D();
 
 	
 	// Combinations<4, 3>::print_all();

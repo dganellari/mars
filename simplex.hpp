@@ -109,12 +109,14 @@ namespace mars {
                 } else {
                     return nodes[1];
                 }
-            } else {
-                if(nodes[1] == v1) {
+            } else if(nodes[0] == v2) {
+                if(nodes[0] == v1) {
                     return nodes[2];
                 } else {
                     return nodes[1];
                 }
+            } else {
+                return nodes[0];
             }
         }
 

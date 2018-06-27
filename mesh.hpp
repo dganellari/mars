@@ -18,9 +18,12 @@
 
 namespace mars {
 
-	template<Integer Dim, Integer ManifoldDim = Dim>
+	template<Integer Dim_, Integer ManifoldDim_ = Dim_>
 	class Mesh {
 	public:
+		static const Integer Dim = Dim_;
+		static const Integer ManifoldDim = ManifoldDim_;
+
 		void reserve(
 			const std::size_t n_elements,
 			const std::size_t n_points)
