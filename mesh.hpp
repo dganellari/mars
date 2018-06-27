@@ -146,7 +146,7 @@ namespace mars {
 			assert(element_id < n_elements());
 
 			auto &e = elements_[element_id];
-			const Real vol = volume(e, points_);
+			const Real vol = mars::volume(e, points_);
 
 			if(vol < 0.) {
 				if(verbose) {
@@ -157,28 +157,28 @@ namespace mars {
 					case 1:
 					{
 						std::swap(e.nodes[0], e.nodes[1]);
-						const Real vol_after = volume(e, points_);
+						const Real vol_after = mars::volume(e, points_);
 						assert(vol_after > 0.);
 						break;
 					}
 					case 2:
 					{
 						std::swap(e.nodes[1], e.nodes[2]);
-						const Real vol_after = volume(e, points_);
+						const Real vol_after = mars::volume(e, points_);
 						assert(vol_after > 0.);
 						break;
 					}
 					case 3:
 					{
 						std::swap(e.nodes[2], e.nodes[3]);
-						const Real vol_after = volume(e, points_);
+						const Real vol_after = mars::volume(e, points_);
 						assert(vol_after > 0.);
 						break;
 					}
 					case 4:
 					{
 						std::swap(e.nodes[3], e.nodes[4]);
-						const Real vol_after = volume(e, points_);
+						const Real vol_after = mars::volume(e, points_);
 						assert(vol_after > 0.);
 						break;
 					}
@@ -225,7 +225,7 @@ namespace mars {
 				if(!active_[i]) continue;
 
 				const auto &e = elements_[i];
-				const Real vol = volume(e, points_);
+				const Real vol = mars::volume(e, points_);
 				const auto b   = barycenter(e, points_);
 
 				os << "---------------------------------\n";
@@ -248,7 +248,7 @@ namespace mars {
 
 						const auto n = normal(side, points_);
 						const auto sign = dot(points_[side.nodes[0]] - b, n) > 0? 1 : -1;
-						const Real u_area = unsigned_volume(side, points_);
+						const Real u_area = mars::unsigned_volume(side, points_);
 						const Real area   = sign * u_area;
 
 						J.describe(os);
@@ -456,6 +456,18 @@ namespace mars {
 		void build_dual_graph()
 		{
 			update_dual_graph();
+		}
+
+		Real volume() const
+		{
+			Real ret = 0.;
+			for(Integer i = 0; i < n_elements(); ++i) {
+				if(is_active(i)) {
+					ret += mars::volume(elem(i), points());
+				}
+			}
+
+			return ret;
 		}
 
 		inline Integer root(const Integer id) const

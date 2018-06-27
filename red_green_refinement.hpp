@@ -19,7 +19,8 @@ namespace mars {
 		GREEN_2 = 3,
 		GREEN_3 = 4,
 		CHILD_OF_GREEN = 5,
-		PARENT_PROMOTED_TO_RED = 6
+		PARENT_PROMOTED_TO_RED = 6,
+		BISECTION = 7
 	};
 
 	template<Integer Dim, Integer ManifoldDim>

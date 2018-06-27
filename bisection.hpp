@@ -6,10 +6,6 @@ namespace mars {
 	class Mesh;
 
 
-	enum BisectionType {
-		MARKED_FOR_REFINEMENT = 1
-	};
-
 	
 
 	template<Integer Dim, Integer ManifoldDim>
@@ -26,44 +22,6 @@ namespace mars {
 			edge_element_map_.update(mesh.elem(id));
 			return id;
 		}
-
-
-		// void bisect_element(
-		// 	const Integer element_id,
-		// 	const Edge &edge)
-		// {
-		// 	mesh.elem(element_id).children.clear();
-		// 	mesh.set_active(element_id, false);
-
-		// 	Simplex<Dim, 2> s;
-		// 	s.parent_id = element_id;
-
-		// 	const Integer v1 = edge.nodes[0];
-		// 	const Integer v2 = edge.nodes[1];
-
-		// 	auto midpoint = edge_node_map_.get(v1, v2);
-		// 	auto opposite = mesh.elem(element_id).opposite(v1, v2);
-
-		// 	if(midpoint == INVALID_INDEX) {
-		// 		midpoint = mesh.add_point(0.5 * (mesh.point(v1) + mesh.point(v2)));
-		// 		edge_node_map_.update(v1, v2, midpoint);
-		// 	}
-
-		// 	s.nodes[0] = opposite;
-		// 	s.nodes[1] = midpoint;
-		// 	s.nodes[2] = v1;
-
-		// 	Integer new_id = add_elem(s);
-		// 	mesh.elem(element_id).children.push_back(new_id);
-
-		// 	s.nodes[0] = opposite;
-		// 	s.nodes[1] = v2;
-		// 	s.nodes[2] = midpoint;
-
-		// 	new_id = add_elem(s);
-		// 	mesh.elem(element_id).children.push_back(new_id);
-		// 	return;
-		// }
 
 		void other_nodes(
 			const std::array<Integer, ManifoldDim+1> &nodes,
@@ -122,6 +80,8 @@ namespace mars {
 			return;
 		}
 
+
+		//one possible strategy for refining
 		void longest_edge_ordering(const Simplex<Dim, ManifoldDim> &e, std::vector<Integer> &ordering) const
 		{
 			ordering.clear();
@@ -146,6 +106,7 @@ namespace mars {
 			if(flags.empty()) {
 				flags.resize(mesh.n_elements(), NONE);
 				edge_element_map_.update(mesh);
+				mesh.update_dual_graph();
 			}
 
 			std::vector<Integer> defferred;
@@ -163,7 +124,7 @@ namespace mars {
 					continue;
 				}
 
-				if(flags[i] == MARKED_FOR_REFINEMENT) {
+				if(flags[i] == BISECTION) {
 					continue;
 				}
 
@@ -186,7 +147,7 @@ namespace mars {
 					for(auto n : neighs) {
 						if(!mesh.is_active(n)) continue;
 
-						if(flags[n] == MARKED_FOR_REFINEMENT) {
+						if(flags[n] == BISECTION) {
 							skip_edge = true;
 							break;
 						}
@@ -207,7 +168,7 @@ namespace mars {
 
 					for(auto n : neighs) {
 						if(!mesh.is_active(n)) continue;
-						flags[n] = MARKED_FOR_REFINEMENT;
+						flags[n] = BISECTION;
 					}
 
 					to_refine.emplace_back(i, edge);
@@ -231,7 +192,13 @@ namespace mars {
 			}
 
 
+			mesh.update_dual_graph();
 			mesh.tags() = flags;
+		}
+
+		const EdgeNodeMap &edge_node_map() const
+		{
+			return edge_node_map_;
 		}
 		
 	private:

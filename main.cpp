@@ -107,7 +107,7 @@ void test_mesh(mars::Mesh<Dim, ManifoldDim> &mesh)
 	Integer nbs = mesh.n_boundary_sides();
 	std::cout << "n_boundary_sides: " << nbs << std::endl;
 	mesh.check_side_ordering();
-	// mesh.describe_dual_graph(std::cout);
+	mesh.describe_dual_graph(std::cout);
 
 	std::cout << "-------------------------" << std::endl;
 
@@ -152,12 +152,12 @@ void test_mfem_mesh_2D()
 	write_mesh("mesh_2_rg1.eps", mesh, 10., PLOT_PARENT_TAG);
 
 	write_element("elem_2.eps", rgr, 2, 10, INVALID_INDEX);
-	write_element_with_sides("elem_sides_2.eps", rgr, 0, 10, INVALID_INDEX);
+	write_element_with_sides("elem_sides_2.eps", mesh, 0, 10, INVALID_INDEX);
 
 
 	write_element_with_subsurfaces(
 	"elem_ss_2.eps",
-	rgr,
+	mesh,
 	2,
 	10);
 
@@ -176,8 +176,8 @@ void test_mfem_mesh_2D()
 	// std::cout << "red 3" << std::endl;
 	// mesh.describe_boundary_elements(std::cout);
 	// write_mesh("mesh_2_r3.eps", mesh, 10., PLOT_PARENT_TAG);
-	// // mesh.describe(std::cout);
-	// // mesh.describe_dual_graph(std::cout);
+	// mesh.describe(std::cout);
+	// mesh.describe_dual_graph(std::cout);
 
 
 	// rgr.green_refine();
@@ -221,13 +221,13 @@ void test_mfem_mesh_3D()
 	// test_mesh(mesh);
 	RedGreenRefinement<3, 3> rgr(mesh);
 	rgr.red_refine({0, 2});
-	mesh.describe(std::cout);
+	// mesh.describe(std::cout);
 	write_element("elem_3.eps", rgr, 0, 10, INVALID_INDEX);
-	write_element_with_sides("elem_sides_3.eps", rgr, 0, 10, INVALID_INDEX);
+	write_element_with_sides("elem_sides_3.eps", mesh, 0, 10, INVALID_INDEX);
 
 	write_element_with_subsurfaces(
 	"elem_ss_3.eps",
-	rgr,
+	mesh,
 	0,
 	10);
 	std::cout << "======================================\n";
@@ -244,10 +244,10 @@ void test_mfem_mesh_4D()
 
 	RedGreenRefinement<4, 4> rgr(mesh);
 	rgr.red_refine({0});
-	mesh.describe(std::cout);
-	mesh.describe_dual_graph(std::cout);
+	// mesh.describe(std::cout);
+	// mesh.describe_dual_graph(std::cout);
 	write_element("elem_4.eps", rgr, 0, 10, INVALID_INDEX);
-	write_element_with_sides("elem_sides_4.eps", rgr, 6, 10, INVALID_INDEX);
+	write_element_with_sides("elem_sides_4.eps", mesh, 6, 10, INVALID_INDEX);
 	std::cout << "======================================\n";
 
 	MultilevelElementMap<3, 2> mlem;
@@ -258,7 +258,7 @@ void test_mfem_mesh_4D()
 
 	write_element_with_subsurfaces(
 	"elem_ss_4.eps",
-	rgr,
+	mesh,
 	0,
 	10);
 }
@@ -280,21 +280,21 @@ void test_bisection_2D()
 	write_mesh("mesh_2_bisect_2.eps", mesh, 10., PLOT_ID);
 
 	b.refine({3, 4});
-	// mesh.describe(std::cout);
+	mesh.describe(std::cout);
 	write_mesh("mesh_2_bisect_3.eps", mesh, 10., PLOT_PARENT_TAG);
 
 	b.refine({9, 5});
-	// mesh.describe(std::cout);
+	mesh.describe(std::cout);
 	write_mesh("mesh_2_bisect_4.eps", mesh, 10., PLOT_ID);
 
 
 	b.refine({2, 12, 13});
-	mesh.describe(std::cout);
+	// mesh.describe(std::cout);
 	write_mesh("mesh_2_bisect_5.eps", mesh, 10., PLOT_ID);
 
 
 	b.refine({18});
-	mesh.describe(std::cout);
+	// mesh.describe(std::cout);
 	write_mesh("mesh_2_bisect_6.eps", mesh, 10., PLOT_ID);
 
 }
@@ -310,13 +310,13 @@ void test_bisection_3D()
 	std::cout << mesh.n_boundary_sides() << std::endl;
 	Bisection<3, 3> b(mesh);
 	b.refine({0});
-	mesh.describe(std::cout);
+	// mesh.describe(std::cout);
 
 	mesh.update_dual_graph();
 	std::cout << mesh.n_boundary_sides() << std::endl;
 
 	b.refine({5, 6});
-	mesh.describe(std::cout);
+	// mesh.describe(std::cout);
 
 	VTKMeshWriter<Mesh<3, 3>> w;
 	w.write("mesh_bisect.vtu", mesh);
@@ -328,12 +328,25 @@ void test_bisection_4D()
 	std::cout << "======================================\n";
 	Mesh<4, 4> mesh;
 	read_mesh("../data/cube4d_24.MFEM", mesh);
+
+	std::cout << "volume: " << mesh.volume() << std::endl;
 	Bisection<4, 4> b(mesh);
 	b.refine({0, 1});
-	mesh.describe(std::cout);
+	// mesh.describe(std::cout);
+
+	std::cout << "volume: " << mesh.volume() << std::endl;
+
+	write_element("elem_4_bisect.eps", mesh, b.edge_node_map(), 0, 10, INVALID_INDEX);
+
+	write_element_with_sides(
+	"elem_4_bisect_ss.eps",
+	mesh,
+	0,
+	10,
+	INVALID_INDEX);
 
 	b.refine({5, 6});
-	mesh.describe(std::cout);
+	// mesh.describe(std::cout);
 
 
 }
@@ -417,6 +430,7 @@ int main(const int argc, const char *argv[])
 	// test_mfem_mesh_3D();
 	// test_mfem_mesh_4D();
 	// test_mfem_mesh_2D();
+	test_bisection_2D();
 	test_bisection_3D();
 	test_bisection_4D();
 

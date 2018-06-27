@@ -54,6 +54,11 @@ namespace mars {
 				g = 1.;
 				break;
 			}
+			case BISECTION:
+			{
+				b = 1.;
+				break;
+			}
 			default: {
 				r = 1.; 
 				g = 1.;
@@ -473,18 +478,21 @@ void draw_element_as_child(
 	canvas.clear_dashing();
 }
 
+
+
 	template<Integer Dim, Integer ManifoldDim>
 bool write_element(
 	const std::string &path,
-	const RedGreenRefinement<Dim, ManifoldDim> &rgr,
+	const Mesh<Dim, ManifoldDim> &m,
+	const EdgeNodeMap &en_map,
 	const Integer element_id,
 	const Real scale_factor,
 	const Integer child_num)
 {
-	const auto &m      = rgr.get_mesh();
-	auto e      = m.elem(element_id);
+
+	auto e = m.elem(element_id);
 	std::sort(e.nodes.begin(), e.nodes.end());
-	const auto &en_map = rgr.edge_node_map();
+
 
 	std::vector<Real> hsv;
 	mesh_color(m, PLOT_ID, hsv, false);
@@ -508,7 +516,7 @@ bool write_element(
 	const Real cy = 0.;
 
 	RGB rgb;
-	flag_color(rgr.refinement_flag(element_id), rgb.r, rgb.g, rgb.b);
+	flag_color(m.tags()[element_id], rgb.r, rgb.g, rgb.b);
 
 	std::set<Integer> neigs;
 
@@ -610,18 +618,35 @@ bool write_element(
 	return canvas.write(path);
 }
 
+	template<Integer Dim, Integer ManifoldDim>
+bool write_element(
+	const std::string &path,
+	const RedGreenRefinement<Dim, ManifoldDim> &rgr,
+	const Integer element_id,
+	const Real scale_factor,
+	const Integer child_num)
+	{
+
+		return write_element(
+			path,
+			rgr.get_mesh(),
+			rgr.edge_node_map(),
+			element_id,
+			scale_factor,
+			child_num);
+	}
+
 
 
 	template<Integer Dim, Integer ManifoldDim>
 bool write_element_with_sides(
 	const std::string &path,
-	const RedGreenRefinement<Dim, ManifoldDim> &rgr,
+	const Mesh<Dim, ManifoldDim> &m,
 	const Integer element_id,
 	const Real scale_factor,
 	const Integer side_num,
 	const bool skip_invalid_adj_sides = true)
 {
-	const auto &m = rgr.get_mesh();
 	const auto &e = m.elem(element_id);
 	auto sorted_nodes = e.nodes;
 		// std::sort(sorted_nodes.begin(), sorted_nodes.end());
@@ -809,17 +834,17 @@ bool write_element_with_sides(
 	template<Integer Dim, Integer ManifoldDim>
 bool write_element_with_subsurfaces(
 	const std::string &path,
-	const RedGreenRefinement<Dim, ManifoldDim> &rgr,
+	const Mesh<Dim, ManifoldDim> &m,
 	const Integer element_id,
 	const Real scale_factor)
 {
-	const auto &m = rgr.get_mesh();
+	// const auto &m = rgr.get_mesh();
 	const auto &e = m.elem(element_id);
 	auto sorted_nodes = e.nodes;
 		// std::sort(sorted_nodes.begin(), sorted_nodes.end());
 
 	MultilevelElementMap<ManifoldDim, 2> mlem;
-	mlem.update(rgr.get_mesh());
+	mlem.update(m);
 
 	std::vector<Real> hsv;
 	mesh_color(m, PLOT_ID, hsv, false);

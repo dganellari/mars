@@ -75,6 +75,8 @@ namespace mars {
     class Simplex<Dim, 1> {
     public:
         std::array<Integer, 2> nodes;
+        std::array<Integer, 2> side_tags;
+
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
         
@@ -94,8 +96,9 @@ namespace mars {
     template<Integer Dim>
     class Simplex<Dim, 2> {
     public:
-        // std::array<Integer, 3> sides;
         std::array<Integer, 3> nodes;
+        std::array<Integer, 3> side_tags;
+
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
        
@@ -159,8 +162,9 @@ namespace mars {
     template<Integer Dim>
     class Simplex<Dim, 3> {
     public:
-        // std::array<Integer, 4> sides;
         std::array<Integer, 4> nodes;
+        std::array<Integer, 4> side_tags;
+
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
 
@@ -293,6 +297,8 @@ namespace mars {
     public:
         // std::array<Integer, 5> sides;
         std::array<Integer, 5> nodes;
+        std::array<Integer, 5> side_tags;
+
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
 
