@@ -221,7 +221,6 @@ namespace mars {
 			assert(has_edge(mesh.elem(element_id), edge.nodes[0], edge.nodes[1]));
 
 			std::vector<Integer> edges;
-			// longest_edge_ordering(mesh.elem(element_id), edges);
 			longest_edge_ordering_with_tol(mesh.elem(element_id), edge, edges);
 
 			Edge new_edge;
@@ -273,25 +272,6 @@ namespace mars {
 				if(next_incidents.size() > incidents.size()) {
 					incidents = next_incidents;
 					complete = false;
-				}
-			}
-		}
-
-		void split_neighs(
-			const std::vector<Integer> &neighs,
-			const Integer split_level,
-			std::vector<Integer> &before,
-			std::vector<Integer> &after) const
-		{
-			before.clear();
-			after.clear();
-			for(auto n : neighs) {
-				if(!mesh.is_active(n)) continue;
-
-				if(level[n] >= split_level) {
-					after.push_back(n);
-				} else {
-					before.push_back(n);
 				}
 			}
 		}
@@ -351,106 +331,6 @@ namespace mars {
 			}
 
 			mesh.update_dual_graph();
-			mesh.tags() = level;
-		}
-
-		void refine_(const std::vector<Integer> &elements)
-		{
-			if(flags.empty()) {
-				flags.resize(mesh.n_elements(), NONE);
-				level.resize(mesh.n_elements(), 0);
-				edge_element_map_.update(mesh);
-				mesh.update_dual_graph();
-			}
-
-			std::vector<Integer> defferred;
-			std::vector<std::pair<Integer, Edge>> to_refine;
-
-			for(auto i : elements) {
-				if(!mesh.is_valid(i)) {
-					std::cerr << "tried to refine non-existing element " << i << std::endl;
-					continue;
-				}
-
-
-				if(!mesh.is_active(i)) {
-					std::cerr << "tried to refine inactive element " << i << std::endl;
-					continue;
-				}
-
-				if(flags[i] == BISECTION) {
-					continue;
-				}
-
-
-				Integer edge_to_split = INVALID_INDEX;
-				
-
-				std::vector<Integer> edges;
-				longest_edge_ordering(mesh.elem(i), edges);
-				
-				for(auto edge_num : edges) {
-				// for(Integer edge_num = 0; edge_num < n_edges(mesh.elem(i)); ++edge_num) {
-					
-					Edge edge;
-					mesh.elem(i).edge(edge_num, edge.nodes[0], edge.nodes[1]);
-					edge.fix_ordering();
-
-					auto neighs = edge_element_map_.elements(edge.nodes[0], edge.nodes[1]);
-					
-					bool skip_edge = false;
-					for(auto n : neighs) {
-						if(!mesh.is_active(n)) continue;
-
-						if(flags[n] == BISECTION) {
-							skip_edge = true;
-							break;
-						}
-					}
-
-					if(!skip_edge)  {
-						edge_to_split = edge_num;
-						break;
-					}
-				}
-
-				if(edge_to_split == INVALID_INDEX) {
-					defferred.push_back(i);
-				} else {
-					Edge edge;
-					mesh.elem(i).edge(edge_to_split, edge.nodes[0], edge.nodes[1]);
-					edge.fix_ordering();
-
-					auto neighs = edge_element_map_.elements(edge.nodes[0], edge.nodes[1]);
-
-					for(auto n : neighs) {
-						if(!mesh.is_active(n)) continue;
-						flags[n] = BISECTION;
-					}
-
-					to_refine.emplace_back(i, edge);
-				}
-
-			}
-
-			for(auto &tr : to_refine) {
-				bisect_element(tr.first, tr.second);
-
-				auto neighs = edge_element_map_.elements(tr.second.nodes[0], tr.second.nodes[1]);
-
-				for(auto n : neighs) {
-					if(!mesh.is_active(n)) continue;
-					bisect_element(n, tr.second);
-				}
-			}
-
-			if(!defferred.empty()) {
-				return refine(defferred);
-			}
-
-
-			mesh.update_dual_graph();
-			// mesh.tags() = flags;
 			mesh.tags() = level;
 		}
 
