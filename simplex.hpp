@@ -684,6 +684,36 @@ namespace mars {
             J.col(i-1, vi - v0);
         }
     }
+
+    template<Integer Dim, Integer ManifoldDim>
+    Real in_sphere_radius(
+        const Simplex<Dim, ManifoldDim>  &simplex,
+        const std::vector<Vector<Real, Dim>> &points)
+    {
+        Real areas = 0.;
+        Simplex<Dim, ManifoldDim-1> side;
+        for(Integer i = 0; i < n_sides(simplex); ++i) {
+            simplex.side(i, side);
+            areas += volume(side, points);
+        }
+
+        return Dim * volume(simplex, points)/areas;
+    }
+
+    // template<Integer Dim, Integer ManifoldDim>
+    // Real circum_sphere_radius(
+    //     const Simplex<Dim, ManifoldDim>  &simplex,
+    //     const std::vector<Vector<Real, Dim>> &points)
+    // {
+    //     Real areas = 0.;
+    //     Simplex<Dim, ManifoldDim-1> side;
+    //     for(Integer i = 0; i < n_sides(simplex); ++i) {
+    //         simplex.side(i, side);
+    //         areas += volume(side, points);
+    //     }
+
+    //     return ManifoldDim * volume(simplex, points)/areas;
+    // }
     
     template<Integer Dim, Integer ManifoldDim>
     bool check_and_fix_jac(Matrix<Real, Dim, ManifoldDim> &J)

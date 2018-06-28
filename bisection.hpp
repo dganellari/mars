@@ -25,6 +25,7 @@ namespace mars {
 			flags.push_back(NONE);
 			Integer id = mesh.add_elem(e);
 			mesh.repair_element(id);
+			mesh.update_side_flags_from_parent(id);
 			level.push_back((mesh.elem(id).parent_id == INVALID_INDEX)? 0 : (level[mesh.elem(id).parent_id] + 1)); 
 			edge_element_map_.update(mesh.elem(id));
 			return id;
@@ -321,9 +322,8 @@ namespace mars {
 					continue;
 				}
 
-
 				if(!mesh.is_active(i)) {
-					std::cerr << "tried to refine inactive element " << i << std::endl;
+					// std::cerr << "tried to refine inactive element " << i << std::endl;
 					continue;
 				}
 

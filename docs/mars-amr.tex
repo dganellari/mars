@@ -15,10 +15,9 @@
 	\item The algorithm works directly for 3D and 4D.
 \end{itemize}
 
-
 \begin{figure}[htbp]
 	\centering
-	\parbox{0.8\linewidth}{
+	\parbox{0.5\linewidth}{
 	\includegraphics[width=0.32\linewidth]{figures/mesh_2_bisect_1} \hfill
 	\includegraphics[width=0.32\linewidth]{figures/mesh_2_bisect_2} \hfill
 	\includegraphics[width=0.32\linewidth]{figures/mesh_2_bisect_3} \par
@@ -30,7 +29,35 @@
 	\includegraphics[width=0.32\linewidth]{figures/mesh_2_bisect_9} \par
 	}
 	\caption{Steps of the bisection algorithm.}
-	\label{fig:label}
+	\label{fig:two_dim}
 \end{figure}
+
+\begin{figure}[htbp]
+	\centering
+	\includegraphics[width=0.40\linewidth]{figures/2d_sphere} \hfill
+	\includegraphics[width=0.40\linewidth]{figures/3d_sphere} 
+	\caption{Result for sphere refinement pattern. Left: 2D. Right: 3D.}
+	\label{fig:sphere}
+\end{figure}
+
+\begin{figure}[htbp]
+	\centering
+	\includegraphics[width=0.48\linewidth]{figures/quality3} \hfill
+	\includegraphics[width=0.48\linewidth]{figures/quality4} 
+	\caption{Quality of the elements for several iterations of the adaptive refinement shown in Figure~\ref{fig:sphere}. The $x$ axis represent the total number of elements in the mesh. The $y$ axis the quality criterion (lower is better).
+	 Left: 3D. Right: 4D.}
+	\label{fig:quality}
+\end{figure}
+
+\begin{figure}[htbp]
+	\centering
+	\includegraphics[width=0.8\linewidth]{figures/quality_metrics}
+	\caption{Quality metics. We used ``Alpha'' and ``Tau''. }
+	\label{fig:metrics}
+\end{figure}
+
+
+
+
 
 \end{document}

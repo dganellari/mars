@@ -7,6 +7,7 @@
 #include "mesh.hpp"
 #include "bisection.hpp"
 #include "vtk_writer.hpp"
+#include "quality.hpp"
 
 void test_midpoint_index()
 {
@@ -107,7 +108,7 @@ void test_mesh(mars::Mesh<Dim, ManifoldDim> &mesh)
 	Integer nbs = mesh.n_boundary_sides();
 	std::cout << "n_boundary_sides: " << nbs << std::endl;
 	mesh.check_side_ordering();
-	mesh.describe_dual_graph(std::cout);
+	// mesh.describe_dual_graph(std::cout);
 
 	std::cout << "-------------------------" << std::endl;
 
@@ -233,6 +234,118 @@ void test_mfem_mesh_3D()
 	std::cout << "======================================\n";
 }
 
+template<mars::Integer Dim, mars::Integer ManifoldDim>
+void mark_boundary(mars::Mesh<Dim, ManifoldDim> &mesh)
+{
+	using namespace mars;
+
+	Simplex<Dim, ManifoldDim-1> side;
+	mesh.update_dual_graph();
+	for(Integer i = 0; i < mesh.n_elements(); ++i) {
+		if(!mesh.is_active(i) || !mesh.is_boundary(i)) continue;
+		auto &e = mesh.elem(i);
+
+		std::fill(e.side_tags.begin(), e.side_tags.end(), INVALID_INDEX);
+
+		auto &adj = mesh.dual_graph().adj(i);
+
+		for(Integer k = 0; k < n_sides(e); ++k) {
+			if(adj[k] == INVALID_INDEX) {
+				e.side(k, side);
+				auto n = normal(side, mesh.points());
+
+				Integer tag = 0;
+				for(Integer d = 0; d < Dim; ++d) {
+					if(std::abs(n(d) - 1.) < 1e-8) {
+						tag = (d+1);
+					} else if(std::abs(n(d) + 1.) < 1e-8) {
+						tag = Dim + (d+1);
+					}
+				}
+
+				e.side_tags[k] = tag;
+			}
+		}
+	}
+}
+
+template<mars::Integer Dim, mars::Integer ManifoldDim>
+void print_boundary_info(const mars::Mesh<Dim, ManifoldDim> &mesh)
+{
+	using namespace mars;
+	Simplex<Dim, ManifoldDim-1> side;
+	for(Integer i = 0; i < mesh.n_elements(); ++i) {
+		if(!mesh.is_active(i) || !mesh.is_boundary(i)) continue;
+		auto &e = mesh.elem(i);
+		auto &adj = mesh.dual_graph().adj(i);
+
+		std::cout << "[" << i << "]\n"; 
+		for(Integer k = 0; k < n_sides(e); ++k) {
+			if(adj[k] == INVALID_INDEX) {
+				if(e.side_tags[k] == INVALID_INDEX) {
+					std::cerr << "+++++++++ bad boundary tag ++++++++++++++\n";
+				}
+
+				std::cout << "\ttag(" << k << ") = " << e.side_tags[k] << " ( ";
+				e.side(k, side);
+
+				for(auto n : side.nodes) {
+					std::cout << n << " ";
+				}
+
+				if(e.side_tags[k] == INVALID_INDEX) {
+					std::cerr << "+++++++++++++++++++++++++++++++++++++++";
+				}
+
+				std::cout << ")\n";
+			}
+		}
+
+		std::cout << std::endl;
+	}
+}
+
+namespace mars {
+	template<Integer Dim, Integer ManifoldDim>
+	void mark_hypersphere_for_refinement(
+		const Mesh<Dim, ManifoldDim> &mesh,
+		const Vector<Real, Dim> &center,
+		const Real &radius,
+		std::vector<Integer> &elements)
+	{
+		elements.clear();
+
+		std::vector<Vector<Real, Dim>> points;
+		for(Integer i = 0; i < mesh.n_elements(); ++i) {
+			if(!mesh.is_active(i)) continue;
+			
+			mesh.points(i, points);
+
+			bool inside = false;
+			bool outside = false;
+
+
+			for(const auto &p : points) {
+				auto dir = p - center;
+				auto d = dir.norm();
+				if(d < radius) {
+					inside = true;
+				} else if(d > radius) {
+					outside = true;
+				} else if(std::abs(d) < 1e-16) {
+					inside = true;
+					outside = true;
+					break;
+				}
+			}
+
+			if(inside && outside) {
+				elements.push_back(i);
+			}
+		}
+	}
+}
+
 void test_mfem_mesh_4D()
 {	
 	using namespace mars;
@@ -253,7 +366,7 @@ void test_mfem_mesh_4D()
 	MultilevelElementMap<3, 2> mlem;
 	mlem.update(mesh.elem(0));
 	mlem.update(mesh.elem(1));
-	mlem.describe(std::cout);
+	// mlem.describe(std::cout);
 
 
 	write_element_with_subsurfaces(
@@ -269,101 +382,101 @@ void test_bisection_2D()
 	using namespace mars;
 	std::cout << "======================================\n";
 	Mesh<2, 2> mesh;
-	// read_mesh("../data/square_2.MFEM", mesh);
-	read_mesh("../data/square_2_def.MFEM", mesh);
-	// test_mesh(mesh);
+	read_mesh("../data/square_2.MFEM", mesh);
+	// read_mesh("../data/square_2_def.MFEM", mesh);
 
+
+	Quality<2, 2> q(mesh);
+	q.compute();
+
+
+	mark_boundary(mesh);
+	// print_boundary_info(mesh);
 	write_mesh("mesh_2_bisect_1.eps", mesh, 10., PLOT_ID);
 
 	Bisection<2, 2> b(mesh);
 	b.set_limit_to_1_level_diff(false);
-	b.refine({0});
-	b.refine({1});
+	b.uniform_refine(1);
+
+	Integer n_levels = 10;
+	for(Integer i = 0; i < n_levels; ++i) {
+		std::vector<mars::Integer> elements;
+		
+		mark_hypersphere_for_refinement(
+			mesh,
+			{0.5, 0.5},
+			0.25,
+			elements
+		);
+
+		std::cout << "n_marked(" << i << "/" << n_levels << ") : " << elements.size() << std::endl;
+
+		b.refine(elements);
+		q.compute();
+	}
+
 	write_mesh("mesh_2_bisect_2.eps", mesh, 10., PLOT_NUMERIC_TAG);
 
-	b.refine({3, 4});
-	// mesh.describe(std::cout);
-	write_mesh("mesh_2_bisect_3.eps", mesh, 10., PLOT_NUMERIC_TAG);
+	mesh.update_dual_graph();
+	// print_boundary_info(mesh); 
 
-	b.refine({9, 5});
-	// mesh.describe(std::cout);
-	write_mesh("mesh_2_bisect_4.eps", mesh, 10., PLOT_NUMERIC_TAG);
-
-
-	b.refine({2, 12, 13});
-	// mesh.describe(std::cout);
-	write_mesh("mesh_2_bisect_5.eps", mesh, 10., PLOT_NUMERIC_TAG);
-
-	b.edge_element_map().describe(std::cout);
-
-	b.set_verbose(true);
-	b.refine({18});
-
-	// mesh.describe(std::cout);
-	write_mesh("mesh_2_bisect_6.eps", mesh, 10., PLOT_NUMERIC_TAG);
-
-
-	b.refine({30, 31, 28, 29});
-	// mesh.describe(std::cout);
-	write_mesh("mesh_2_bisect_7.eps", mesh, 10., PLOT_NUMERIC_TAG);
-
-
-	b.refine({43, 42});
-	mesh.describe(std::cout);
-	write_mesh("mesh_2_bisect_8.eps", mesh, 10., PLOT_NUMERIC_TAG);
-
-	b.set_verbose(true);
-	b.uniform_refine(1);
-	write_mesh("mesh_2_bisect_9.eps", mesh, 10., PLOT_NUMERIC_TAG);
-
-	b.set_verbose(true);
-	b.refine({323});
-	write_mesh("mesh_2_bisect_10.eps", mesh, 10., PLOT_NUMERIC_TAG);
-
-
-	b.refine({304});
-	write_mesh("mesh_2_bisect_11.eps", mesh, 10., PLOT_NUMERIC_TAG);  
-
+	q.save_report("quality2.svg");
 }
 
 void test_bisection_3D()
 {	
-
 	using namespace mars;
 	std::cout << "======================================\n";
 	Mesh<3, 3> mesh;
 	read_mesh("../data/cube_6.MFEM", mesh, true);
-	mesh.update_dual_graph();
+
+	Quality<3, 3> q(mesh);
+	q.compute();
+
+	
+	mark_boundary(mesh);
+	// print_boundary_info(mesh);
+
 	std::cout << mesh.n_boundary_sides() << std::endl;
 	std::cout << "volume: " << mesh.volume() << std::endl;
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 
 	Bisection<3, 3> b(mesh);
+	b.uniform_refine(1);
 	b.set_limit_to_1_level_diff(false);
-	b.refine({0});
-	// mesh.describe(std::cout);
 
-	mesh.update_dual_graph();
-	std::cout << mesh.n_boundary_sides() << std::endl;
+	Integer n_levels = 10;
+	for(Integer i = 0; i < n_levels; ++i) {
+		std::vector<mars::Integer> elements;
+		
+		mark_hypersphere_for_refinement(
+			mesh,
+			{0.5, 0.5, 0.5},
+			0.25,
+			elements
+		);
 
-	b.refine({5, 6});
-	b.refine({8, 9});
+		std::cout << "n_marked(" << i << "/" << n_levels << ") : " << elements.size() << std::endl;
 
-	b.uniform_refine(5);
-	// mesh.describe(std::cout);
+		b.refine(elements);
+		q.compute();
+	}
 
 	VTKMeshWriter<Mesh<3, 3>> w;
-	w.write("mesh_bisect.vtu", mesh);
-
-
-	b.uniform_refine(7);
-	// mesh.describe(std::cout);
-
 	w.write("mesh_bisect_refined.vtu", mesh);
 
 	std::cout << "volume: " << mesh.volume() << std::endl;
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+
+	mesh.update_dual_graph();
+	// print_boundary_info(mesh);
+
+	// q.report.normalize_data_points();
+	q.save_report("quality3.svg");
+
+	std::cout << "======================================\n";
 }
+
 
 void test_bisection_4D()
 {	
@@ -371,32 +484,42 @@ void test_bisection_4D()
 	std::cout << "======================================\n";
 	Mesh<4, 4> mesh;
 	read_mesh("../data/cube4d_24.MFEM", mesh);
+	
+	Quality<4, 4> q(mesh);
+	q.compute();
+
+
+	mark_boundary(mesh);
+	// print_boundary_info(mesh);
 
 	std::cout << "volume: " << mesh.volume() << std::endl;
 	Bisection<4, 4> b(mesh);
-	b.set_limit_to_1_level_diff(true);
-	b.refine({0, 1});
-	// mesh.describe(std::cout);
+	b.uniform_refine(1);
+	b.set_limit_to_1_level_diff(false);
 
+	Integer n_levels = 8;
+	for(Integer i = 0; i < n_levels; ++i) {
+		std::vector<mars::Integer> elements;
+		
+		mark_hypersphere_for_refinement(
+			mesh,
+			{0.5, 0.5, 0.5, 0.5},
+			0.25,
+			elements
+		);
+
+		std::cout << "n_marked(" << i << "/" << n_levels << ") : " << elements.size() << std::endl;
+		
+		b.refine(elements);
+		q.compute();
+	}
 	
-
-	write_element("elem_4_bisect.eps", mesh, b.edge_node_map(), 0, 10, INVALID_INDEX);
-
-	write_element_with_sides(
-	"elem_4_bisect_ss.eps",
-	mesh,
-	0,
-	10,
-	INVALID_INDEX);
-
-	b.refine({5, 6});
-	// mesh.describe(std::cout);
-
-	b.uniform_refine(5);
-
 	std::cout << "volume: " << mesh.volume() << std::endl;
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+	mesh.update_dual_graph();
+	// print_boundary_info(mesh);
 
+	q.save_report("quality4.svg");
 
 }
 

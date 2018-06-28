@@ -117,7 +117,7 @@ namespace mars {
 			return e.id;
 		}
 
-		inline void points(const Integer id, std::vector<Vector<Real, Dim>> &pts)
+		inline void points(const Integer id, std::vector<Vector<Real, Dim>> &pts) const
 		{
 			assert(id >= 0);
 			assert(id < n_elements());
@@ -137,6 +137,41 @@ namespace mars {
 
 			for(auto c : elem(id).children) {
 				active_[c] = false;
+			}
+		}
+
+		void update_side_flags_from_parent(const Integer element_id)
+		{
+			auto &e = elem(element_id);
+			const auto parent_id = e.parent_id;
+
+			if(parent_id == INVALID_INDEX) return;
+
+			const auto &parent = elem(parent_id);
+
+			std::fill(e.side_tags.begin(), e.side_tags.end(), INVALID_INDEX);
+
+			Simplex<Dim, ManifoldDim-1> parent_side, side;
+			std::vector<Integer> mid_points;
+
+			for(Integer i = 0; i < n_sides(parent); ++i) {
+				if(parent.side_tags[i] == INVALID_INDEX) continue;
+				parent.side(i, parent_side);
+				auto parent_n = normal(parent_side, points());
+
+				for(Integer j = 0; j < n_sides(e); ++j) {
+					e.side(j, side);
+
+					auto n = normal(side, points());
+
+					const auto angle = dot(parent_n, n);
+
+					//FIXME not an integer test
+					if(std::abs(angle - 1) < 1e-16) {
+						e.side_tags[j] = parent.side_tags[i];
+						break;
+					}
+				}
 			}
 		}
 
@@ -198,8 +233,8 @@ namespace mars {
 			}
 		}
 
-		bool is_boundary(const Integer id) {
-			auto &adj = dual_graph_.adj(id);
+		bool is_boundary(const Integer id) const {
+			const auto &adj = dual_graph_.adj(id);
 
 			for(auto a : adj) {
 				if(a == INVALID_INDEX) return true;
