@@ -276,6 +276,7 @@ void test_bisection_2D()
 	write_mesh("mesh_2_bisect_1.eps", mesh, 10., PLOT_ID);
 
 	Bisection<2, 2> b(mesh);
+	b.set_limit_to_1_level_diff(false);
 	b.refine({0});
 	b.refine({1});
 	write_mesh("mesh_2_bisect_2.eps", mesh, 10., PLOT_NUMERIC_TAG);
@@ -334,7 +335,11 @@ void test_bisection_3D()
 	read_mesh("../data/cube_6.MFEM", mesh, true);
 	mesh.update_dual_graph();
 	std::cout << mesh.n_boundary_sides() << std::endl;
+	std::cout << "volume: " << mesh.volume() << std::endl;
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+
 	Bisection<3, 3> b(mesh);
+	b.set_limit_to_1_level_diff(false);
 	b.refine({0});
 	// mesh.describe(std::cout);
 
@@ -344,11 +349,20 @@ void test_bisection_3D()
 	b.refine({5, 6});
 	b.refine({8, 9});
 
-	b.uniform_refine(4);
+	b.uniform_refine(5);
 	// mesh.describe(std::cout);
 
 	VTKMeshWriter<Mesh<3, 3>> w;
 	w.write("mesh_bisect.vtu", mesh);
+
+
+	b.uniform_refine(7);
+	// mesh.describe(std::cout);
+
+	w.write("mesh_bisect_refined.vtu", mesh);
+
+	std::cout << "volume: " << mesh.volume() << std::endl;
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 }
 
 void test_bisection_4D()
@@ -360,6 +374,7 @@ void test_bisection_4D()
 
 	std::cout << "volume: " << mesh.volume() << std::endl;
 	Bisection<4, 4> b(mesh);
+	b.set_limit_to_1_level_diff(true);
 	b.refine({0, 1});
 	// mesh.describe(std::cout);
 
@@ -377,9 +392,10 @@ void test_bisection_4D()
 	b.refine({5, 6});
 	// mesh.describe(std::cout);
 
-	b.uniform_refine(3);
+	b.uniform_refine(5);
 
 	std::cout << "volume: " << mesh.volume() << std::endl;
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 
 
 }
