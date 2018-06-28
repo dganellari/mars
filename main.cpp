@@ -270,7 +270,7 @@ void test_bisection_2D()
 	std::cout << "======================================\n";
 	Mesh<2, 2> mesh;
 	// read_mesh("../data/square_2.MFEM", mesh);
-	read_mesh("../data/beam-tri.MFEM", mesh);
+	read_mesh("../data/square_2_def.MFEM", mesh);
 	// test_mesh(mesh);
 
 	write_mesh("mesh_2_bisect_1.eps", mesh, 10., PLOT_ID);
@@ -293,8 +293,11 @@ void test_bisection_2D()
 	// mesh.describe(std::cout);
 	write_mesh("mesh_2_bisect_5.eps", mesh, 10., PLOT_NUMERIC_TAG);
 
+	b.edge_element_map().describe(std::cout);
 
+	b.set_verbose(true);
 	b.refine({18});
+
 	// mesh.describe(std::cout);
 	write_mesh("mesh_2_bisect_6.eps", mesh, 10., PLOT_NUMERIC_TAG);
 
@@ -305,10 +308,11 @@ void test_bisection_2D()
 
 
 	b.refine({43, 42});
-	// mesh.describe(std::cout);
+	mesh.describe(std::cout);
 	write_mesh("mesh_2_bisect_8.eps", mesh, 10., PLOT_NUMERIC_TAG);
 
-	b.uniform_refine(2);
+	b.set_verbose(true);
+	b.uniform_refine(1);
 	write_mesh("mesh_2_bisect_9.eps", mesh, 10., PLOT_NUMERIC_TAG);
 
 	b.set_verbose(true);

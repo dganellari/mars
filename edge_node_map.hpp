@@ -30,6 +30,13 @@ namespace mars {
 			return it->second;
 		}
 
+		void describe(std::ostream &os) const
+		{
+			for(const auto &m : mapping_) {
+				os << "(" << m.first.nodes[0] << "," << m.first.nodes[1] << ") -> " << m.second << "\n";
+			}
+		}
+
 		std::map<Edge, Integer> mapping_;
 	};
 }

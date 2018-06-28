@@ -19,9 +19,9 @@ namespace mars {
 		{
 			flags.push_back(NONE);
 			Integer id = mesh.add_elem(e);
-			edge_element_map_.update(mesh.elem(id));
 			mesh.repair_element(id);
 			level.push_back((mesh.elem(id).parent_id == INVALID_INDEX)? 0 : (level[mesh.elem(id).parent_id] + 1)); 
+			edge_element_map_.update(mesh.elem(id));
 			return id;
 		}
 
@@ -115,7 +115,7 @@ namespace mars {
 			const Integer v2 = edge.nodes[1];
 			
 			if(verbose) {
-				std::cout << "bisect(" << v1 << ", " << v2 << ")" << std::endl;
+				std::cout << "bisect(" << v1 << ", " << v2 << ") for " << element_id << std::endl;
 			}
 
 			auto midpoint = edge_node_map_.get(v1, v2);
@@ -151,10 +151,10 @@ namespace mars {
 		void longest_edge_ordering(const Simplex<Dim, ManifoldDim> &e, std::vector<Integer> &ordering) const
 		{
 			ordering.clear();
-
-			Integer v1, v2;
+			
 			std::vector< std::pair<Real, Integer> > len2edge;
 			for(Integer i = 0; i < n_edges(e); ++i) {
+				Integer v1, v2;
 				e.edge(i, v1, v2);
 				len2edge.emplace_back((mesh.point(v1) - mesh.point(v2)).norm(), i);
 			}
@@ -163,11 +163,9 @@ namespace mars {
 
 			ordering.reserve(n_edges(e));
 			for(auto it = len2edge.rbegin(); it != len2edge.rend(); ++it) {
-				e.edge(it->second, v1, v2);
 				ordering.push_back(it->second);
 			}
 		}
-
 
 		bool refine_neigh_elements_recursive(
 			const Integer element_id,
@@ -175,6 +173,11 @@ namespace mars {
 			const Integer max_level)
 		{
 			auto neighs = edge_element_map_.elements(edge.nodes[0], edge.nodes[1]);
+
+			if(verbose) {
+				std::cout << "refine_neigh_elements_recursive: ";
+				edge.describe(std::cout);
+			}
 
 			bool complete = true;
 			for(auto n : neighs) {
@@ -191,21 +194,30 @@ namespace mars {
 			const Edge &edge,
 			const Integer max_level)
 		{
+			assert(has_edge(mesh.elem(element_id), edge.nodes[0], edge.nodes[1]));
+
+			if(verbose) {
+				std::cout << "refine_element_recursive(" << element_id << "): ";
+				edge.describe(std::cout);
+				std::cout << "\n";
+			}
+
 			std::vector<Integer> edges;
 			longest_edge_ordering(mesh.elem(element_id), edges);
 
 			Edge new_edge;
 			mesh.elem(element_id).edge(edges.front(), new_edge.nodes[0], new_edge.nodes[1]);
+			new_edge.fix_ordering();
 
 			if(level[element_id] >= max_level || edge == new_edge) {
-				bisect_element(element_id, edge);
-				// deactivated_element_dual_graph_update(element_id);
-				refine_neigh_elements_recursive(element_id, edge, level[element_id]);
-				return true;
+			// if(edge == new_edge) {
+				refine_element_recursive(element_id, edge);
 			} else {
 				refine_element_recursive(element_id, new_edge);
-				return false;
+				assert(!mesh.is_active(element_id));
 			}
+
+			return false;
 		}
 
 		void refine_element_recursive(const Integer element_id)
@@ -215,56 +227,114 @@ namespace mars {
 
 			Edge edge;
 			mesh.elem(element_id).edge(edges.front(), edge.nodes[0], edge.nodes[1]);
+			edge.fix_ordering();
+
 			refine_element_recursive(element_id, edge);
 		}
 
 		void refine_element_recursive(const Integer element_id, const Edge &edge)
 		{
-			bisect_element(element_id, edge);
-			bool complete = false;
+			if(verbose) {
+				std::cout << "refine_element " << element_id << std::endl;
+			}
+
+			bool complete = false;			
+			std::vector<Integer> before;
+			std::vector<Integer> after;
 
 			while(!complete) {
 				auto neighs = edge_element_map_.elements(edge.nodes[0], edge.nodes[1]);
-				
-				std::vector<Integer> active_elems;
+				split_neighs(neighs, level[element_id], before, after);
 					
 				complete = true;
-				for(auto n : neighs) {
+				for(auto n : before) {
 					if(!mesh.is_active(n)) continue;
-					complete &= refine_element_recursive(n, edge, level[element_id]);
+					assert(has_edge(mesh.elem(n), edge.nodes[0], edge.nodes[1]));
+					refine_element_recursive(n, edge, level[element_id]);
+					complete = false;
+				}
+			}
+
+			if(mesh.is_active(element_id)) {
+				bisect_element(element_id, edge);
+				refine_neigh_elements_recursive(element_id, edge, level[element_id]);
+			}
+
+			while(!complete) {
+				auto neighs = edge_element_map_.elements(edge.nodes[0], edge.nodes[1]);
+				complete = true;
+				
+				for(auto n : neighs) {
+					assert(has_edge(mesh.elem(n), edge.nodes[0], edge.nodes[1]));
+					if(!mesh.is_active(n)) continue;
+					refine_element_recursive(n, edge, level[element_id]);
+					complete = false;
 				}
 			}
 		}
 
-		void refine_element(const Integer element_id, const Edge &edge)
+		void split_neighs(
+			const std::vector<Integer> &neighs,
+			const Integer split_level,
+			std::vector<Integer> &before,
+			std::vector<Integer> &after) const
 		{
-			bisect_element(element_id, edge);
-
-			auto neighs = edge_element_map_.elements(edge.nodes[0], edge.nodes[1]);
-			
-			std::vector<Integer> active_elems;
+			before.clear();
+			after.clear();
 			for(auto n : neighs) {
 				if(!mesh.is_active(n)) continue;
-				bisect_element(n, edge);
-				active_elems.push_back(n);
+
+				if(level[n] >= split_level) {
+					after.push_back(n);
+				} else {
+					before.push_back(n);
+				}
 			}
 
-			// deactivated_element_dual_graph_update(element_id);
-			for(auto n : active_elems) {
-				if(!mesh.is_active(n)) continue;
-				// deactivated_element_dual_graph_update(n);
-			}
+			// std::sort(before.begin(), before.end());
+			// std::sort(after.begin(), after.end());
 		}
 
-		void refine_element(const Integer element_id)
-		{
-			std::vector<Integer> edges;
-			longest_edge_ordering(mesh.elem(element_id), edges);
+		// void refine_element(const Integer element_id, const Edge &edge)
+		// {	
+		// 	if(verbose) {
+		// 		std::cout << "refine_element " << element_id << std::endl;
+		// 	}
 
-			Edge edge;
-			mesh.elem(element_id).edge(edges.front(), edge.nodes[0], edge.nodes[1]);
-			refine_element(element_id, edge);
-		}
+		// 	auto neighs = edge_element_map_.elements(edge.nodes[0], edge.nodes[1]);
+		// 	std::vector<Integer> before;
+		// 	std::vector<Integer> after;
+
+		// 	split_neighs(neighs, level[element_id], before, after);
+
+		// 	for(auto n : before) {
+		// 		if(!mesh.is_active(n)) continue;
+		// 		bisect_element(n, edge);
+		// 	}
+
+		// 	if(mesh.is_active(element_id)) {
+		// 		bisect_element(element_id, edge);
+		// 	}
+
+		// 	for(auto n : after) {
+		// 		if(!mesh.is_active(n)) continue;
+		// 		bisect_element(n, edge);
+		// 	}
+
+		// }
+
+		// void refine_element(const Integer element_id)
+		// {
+		// 	std::vector<Integer> edges;
+		// 	longest_edge_ordering(mesh.elem(element_id), edges);
+
+		// 	assert(!edges.empty());
+
+		// 	Edge edge;
+		// 	mesh.elem(element_id).edge(edges.front(), edge.nodes[0], edge.nodes[1]);
+		// 	edge.fix_ordering();
+		// 	refine_element(element_id, edge);
+		// }
 
 		void uniform_refine(const Integer n_levels)
 		{
@@ -367,6 +437,7 @@ namespace mars {
 					
 					Edge edge;
 					mesh.elem(i).edge(edge_num, edge.nodes[0], edge.nodes[1]);
+					edge.fix_ordering();
 
 					auto neighs = edge_element_map_.elements(edge.nodes[0], edge.nodes[1]);
 					
@@ -391,6 +462,8 @@ namespace mars {
 				} else {
 					Edge edge;
 					mesh.elem(i).edge(edge_to_split, edge.nodes[0], edge.nodes[1]);
+					edge.fix_ordering();
+
 					auto neighs = edge_element_map_.elements(edge.nodes[0], edge.nodes[1]);
 
 					for(auto n : neighs) {
@@ -427,6 +500,11 @@ namespace mars {
 		const EdgeNodeMap &edge_node_map() const
 		{
 			return edge_node_map_;
+		}
+
+		const EdgeElementMap &edge_element_map() const
+		{
+			return edge_element_map_;
 		}
 		
 		void set_verbose(const bool val)

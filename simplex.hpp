@@ -503,6 +503,19 @@ namespace mars {
     {
         return std::find(s.nodes.begin(), s.nodes.end(), node) != s.nodes.end();
     }
+
+    template<Integer Dim, Integer ManifoldDim>
+    inline bool has_edge(const Simplex<Dim, ManifoldDim> &s, const Integer &v1, const Integer &v2)
+    {
+        //FIXME innefficient
+        for(auto n1 : s.nodes) {
+            for(auto n2 : s.nodes) {
+                if(n1 == v1 && n2 == v2) return true;
+            }
+        }
+
+        return false;
+    }
     
     template<Integer ManifoldDim>
     inline Integer midpoint_index(

@@ -26,6 +26,11 @@ namespace mars {
 		Side(const std::array<Integer, N> &in)
 		: nodes(in)
 		{
+			fix_ordering();
+		}
+
+		void fix_ordering()
+		{
 			std::sort(std::begin(nodes), std::end(nodes));
 		}
 
