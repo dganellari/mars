@@ -237,6 +237,8 @@ namespace mars {
 
 			Integer synchronization_loops = 0;
 			while(!complete) {
+
+				//add midpoint global-id if any
 				std::vector< std::vector<Edge> > global_refined_edges(meshes.size());
 				std::vector<Integer> nodes_offsets(meshes.size() + 1, 0);
 				std::vector<Integer> elem_offsets(meshes.size() + 1, 0);
