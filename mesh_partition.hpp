@@ -30,6 +30,8 @@ namespace mars {
 
 		void describe(std::ostream &os) const
 		{
+			os << "===============================\n";
+			os << "elements:\n";
 			for(Integer i = 0; i < mesh.n_elements(); ++i) {
 				if(!mesh.is_active(i)) continue;
 				os << "[" << i << ", " << global_elem_id_[i] << "]";
@@ -37,11 +39,11 @@ namespace mars {
 				for(auto n : mesh.elem(i).nodes) {
 					os << " " << n;
 				}
-				
+
 				os << " ->";
 
 				for(auto n : mesh.elem(i).nodes) {
-					os << " " << global_elem_id_[n];
+					os << " " << global_node_id_[n];
 				}
 
 				if(is_elem_interface(i)) {
@@ -59,6 +61,11 @@ namespace mars {
 				}
 
 				os << "\n";
+			}
+
+			os << "nodes:\n";
+			for(Integer i = 0; i < mesh.n_nodes(); ++i) {
+				os << "[i, " << global_node_id_[i] << "] " << node_partition_id_[i] << "\n";
 			}
 		}
 
@@ -94,21 +101,23 @@ namespace mars {
 
 					if(visited[n] == INVALID_INDEX) {
 						local_n = mesh.add_point(parent_mesh.point(n));
+						global_node_id_.push_back(n);
+						node_partition_id_.push_back(node_partitioning[n]);
 						
-						if(global_node_id_.size() <= local_n) {
-							global_node_id_.resize(local_n + 1);	
-						}
-
-						global_node_id_[local_n] = n;
 						visited[n] = local_n;
-
 					} else {
 						local_n = visited[n];
 					}
 
 					assert(e.nodes[k] == parent_e.nodes[k]);
 					e.nodes[k] = local_n;
+
+					std::cout << local_n << " -> " << n << " == " <<  visited[n] << " -> " << global_node_id_[local_n] << std::endl;
 				}
+			}
+
+			for(auto i : global_node_id_) {
+				visited[i] = INVALID_INDEX;
 			}
 		}
 
@@ -133,6 +142,7 @@ namespace mars {
 		Integer partition_id_;
 		std::vector<Integer> global_elem_id_;
 		std::vector<Integer> global_node_id_;
+		std::vector<Integer> node_partition_id_;
 	};
 }
 
