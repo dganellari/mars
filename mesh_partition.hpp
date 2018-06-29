@@ -11,6 +11,11 @@ namespace mars {
 			this->partition_id_ = partition_id;
 		}
 
+		Integer partition_id() const
+		{
+			return partition_id_;
+		}
+
 		void mark_partition_boundary(
 			const Integer local_element_id,
 			const Integer side_num,
@@ -25,7 +30,22 @@ namespace mars {
 			const Integer local_element_id = mesh.add_elem(element);
 			assert(local_element_id == global_elem_id_.size());
 			global_elem_id_.push_back(element.id);
+			global_to_local_elem_[element.id] = local_element_id;
 			return local_element_id;
+		}
+
+		Simplex<Dim, ManifoldDim> &global_elem(const Integer element_id)
+		{
+			auto it = global_to_local_elem_.find(element_id);
+			assert(it != global_to_local_elem_.end());
+			return mesh.elem(it->second);
+		}
+
+		const Simplex<Dim, ManifoldDim> &global_elem(const Integer element_id) const
+		{
+			auto it = global_to_local_elem_.find(element_id);
+			assert(it != global_to_local_elem_.end());
+			return mesh.elem(it->second);
 		}
 
 		void describe(std::ostream &os) const
@@ -65,7 +85,7 @@ namespace mars {
 
 			os << "nodes:\n";
 			for(Integer i = 0; i < mesh.n_nodes(); ++i) {
-				os << "[i, " << global_node_id_[i] << "] " << node_partition_id_[i] << "\n";
+				os << "[" << i << ", " << global_node_id_[i] << "] " << node_partition_id_[i] << "\n";
 			}
 		}
 
@@ -103,6 +123,7 @@ namespace mars {
 						local_n = mesh.add_point(parent_mesh.point(n));
 						global_node_id_.push_back(n);
 						node_partition_id_.push_back(node_partitioning[n]);
+						global_to_local_node_[n] = local_n;
 						
 						visited[n] = local_n;
 					} else {
@@ -112,13 +133,199 @@ namespace mars {
 					assert(e.nodes[k] == parent_e.nodes[k]);
 					e.nodes[k] = local_n;
 
-					std::cout << local_n << " -> " << n << " == " <<  visited[n] << " -> " << global_node_id_[local_n] << std::endl;
+					// std::cout << local_n << " -> " << n << " == " <<  visited[n] << " -> " << global_node_id_[local_n] << std::endl;
 				}
 			}
 
 			for(auto i : global_node_id_) {
 				visited[i] = INVALID_INDEX;
 			}
+
+			mesh.update_dual_graph();
+		}
+
+		const Mesh<Dim, ManifoldDim> &get_mesh() const
+		{
+			return mesh;
+		}
+
+		Mesh<Dim, ManifoldDim> &get_mesh()
+		{
+			return mesh;
+		}
+
+		bool edge_interfaces(
+			const EdgeElementMap &eem,
+			const Edge &e,
+			std::vector<Integer> &partitions)
+		{
+			if(global_node_id_[e.nodes[0]] == INVALID_INDEX || 
+			   global_node_id_[e.nodes[1]] == INVALID_INDEX)
+			{
+				// assert(false);
+				return false;
+			}
+
+			Simplex<Dim, ManifoldDim-1> side;
+
+			const auto &neighs = eem.elements(e);
+			for(auto n : neighs) {
+				if(n == INVALID_INDEX) continue;
+				if(!is_elem_interface(n)) continue;
+
+				const auto &n_e = mesh.elem(n);
+
+				for(Integer s = 0; s < n_sides(n_e); ++s) {
+					if(!is_partition_tag(n_e.side_tags[s])) continue;
+
+					n_e.side(s, side);
+
+					Integer n_matched = 0;
+					for(auto node : side.nodes) {
+						n_matched += node == e.nodes[0];
+						n_matched += node == e.nodes[1];
+					}
+
+					assert(n_matched <= 2);
+					
+					if(n_matched == 2) {
+						partitions.push_back(tag_to_partition_id(n_e.side_tags[s]));
+					}
+				}
+			}
+			
+			return !partitions.empty();
+		}
+
+		void append_separate_interface_edges(
+			const EdgeElementMap &eem,
+			const std::vector<Edge> &local_edges,
+			std::vector< std::vector<Edge> > &global_edges)
+		{
+			for(auto &e : local_edges) {
+				std::vector<Integer> partitions;
+
+				if(edge_interfaces(eem, e, partitions)) {
+					assert(e.nodes[0] < global_node_id_.size());
+					assert(e.nodes[1] < global_node_id_.size());
+
+					Edge global_edge;
+					global_edge.nodes[0] = global_node_id_[e.nodes[0]];
+					global_edge.nodes[1] = global_node_id_[e.nodes[1]];
+
+					for(auto p : partitions) {
+						global_edges[p].push_back(global_edge);
+					}
+				}
+			}
+		}
+
+		Integer update_ownership_of_midpoints(
+			const EdgeNodeMap &enm,
+			const std::vector<Edge> &refined_edges
+			)
+		{
+			Integer n_new_local_nodes = 0;
+
+			for(auto e : refined_edges) {
+				Integer local_midpoint_id = enm.get(e);
+
+				if(node_partition_id_.size() <= local_midpoint_id) {
+					node_partition_id_.resize(local_midpoint_id + 1, INVALID_INDEX);
+				}
+
+				if(node_partition_id_[local_midpoint_id] == INVALID_INDEX) {
+					auto p0 = node_partition_id_[e.nodes[0]];
+					auto p1 = node_partition_id_[e.nodes[1]];
+
+					assert(p0 != INVALID_INDEX);
+					assert(p1 != INVALID_INDEX);
+
+					if(p0 < p1) {
+						node_partition_id_[local_midpoint_id] = p0;
+					} else {
+						node_partition_id_[local_midpoint_id] = p1;
+					}
+
+					if(node_partition_id_[local_midpoint_id] == partition_id_) {
+						++n_new_local_nodes;
+					}
+				}
+			}
+
+			return n_new_local_nodes;
+		}
+
+		Edge local_edge(const Edge &global_edge) const
+		{
+			auto it_0 = global_to_local_node_.find(global_edge.nodes[0]);
+			assert(it_0 != global_to_local_node_.end());
+
+			auto it_1 = global_to_local_node_.find(global_edge.nodes[1]);
+			assert(it_1 != global_to_local_node_.end());
+
+			return Edge(it_0->second, it_1->second);
+		}
+
+		void localize_edges(
+			const std::vector<Edge> &global_edges,
+			std::vector<Edge> &local_edges)
+		{
+			local_edges.clear();
+			local_edges.reserve(global_edges.size());
+
+			for(auto e : global_edges) {
+				local_edges.push_back(local_edge(e));
+			}
+		}
+
+		inline Integer max_gobal_node_id() const
+		{
+			return *std::max_element(global_node_id_.begin(), global_node_id_.end());
+		}
+
+		inline Integer max_gobal_elem_id() const
+		{
+			return *std::max_element(global_elem_id_.begin(), global_elem_id_.end());
+		}
+
+		void assign_global_node_ids(
+			const Integer begin,
+			const Integer end)
+		{
+			global_node_id_.resize(mesh.n_nodes(), INVALID_INDEX);
+
+			Integer current_id = begin;
+			
+			Integer count = 0;
+			for(Integer i = 0; i < mesh.n_nodes(); ++i) {
+				if(global_node_id_[i] == INVALID_INDEX) {
+					global_node_id_[i] = current_id++;
+					count++;
+				}
+			}
+
+			assert(count == end - begin);
+		}
+
+
+		void assign_global_elem_ids(
+			const Integer begin,
+			const Integer end)
+		{
+			global_elem_id_.resize(mesh.n_elements(), INVALID_INDEX);
+
+			Integer current_id = begin;
+			
+			Integer count = 0;
+			for(Integer i = 0; i < mesh.n_nodes(); ++i) {
+				if(global_elem_id_[i] == INVALID_INDEX) {
+					global_elem_id_[i] = current_id++;
+					count++;
+				}
+			}
+
+			assert(count == end - begin);
 		}
 
 	private:
@@ -143,6 +350,10 @@ namespace mars {
 		std::vector<Integer> global_elem_id_;
 		std::vector<Integer> global_node_id_;
 		std::vector<Integer> node_partition_id_;
+
+		//global to local
+		std::map<Integer, Integer> global_to_local_elem_;
+		std::map<Integer, Integer> global_to_local_node_;
 	};
 }
 

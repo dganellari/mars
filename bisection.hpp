@@ -12,7 +12,7 @@ namespace mars {
 	class Bisection {
 	public:
 		Bisection(Mesh<Dim, ManifoldDim> &mesh)
-		: mesh(mesh), verbose(false), limit_to_1_level_diff(true)
+		: mesh(mesh), verbose(false), limit_to_1_level_diff(false)
 		{}
 
 		void set_limit_to_1_level_diff(const bool val)
@@ -254,6 +254,7 @@ namespace mars {
 		void refine_edge(const Edge &edge)
 		{
 			bool complete = false;
+			bool has_refined = false;
 
 			auto incidents = edge_element_map_.elements(edge);
 
@@ -262,6 +263,8 @@ namespace mars {
 				
 				for(auto i : incidents) {
 					if(!mesh.is_active(i)) continue;
+
+					has_refined = true;
 
 					assert(has_edge(mesh.elem(i), edge.nodes[0], edge.nodes[1]));
 					refine_element_recursive(i, edge, level[i]);
@@ -274,6 +277,10 @@ namespace mars {
 					incidents = next_incidents;
 					complete = false;
 				}
+			}
+
+			if(has_refined) {
+				bisected_edges_.push_back(edge);
 			}
 		}
 
@@ -349,6 +356,33 @@ namespace mars {
 			verbose = val;
 		}
 
+		const Mesh<Dim, ManifoldDim> &get_mesh() const
+		{
+			return mesh;
+		}
+
+		Mesh<Dim, ManifoldDim> &get_mesh()
+		{
+			return mesh;
+		}
+
+		const std::vector<Edge> &bisected_edges() const
+		{
+			return bisected_edges_;
+		}
+
+		void clear_bisected_edges() const
+		{
+			bisected_edges_.clear();
+		}
+
+		void if_exist_refine_edges(const std::vector<Edge> &edges)
+		{
+			for(auto e : edges) {
+				refine_edge(e);
+			}
+		}
+
 	private:
 		Mesh<Dim, ManifoldDim> &mesh;
 		std::vector<Integer> flags;
@@ -358,6 +392,9 @@ namespace mars {
 		EdgeElementMap edge_element_map_;
 		bool verbose;
 		bool limit_to_1_level_diff;
+
+		//tracking the refinement 
+		std::vector<Edge> bisected_edges_;
 	};
 }
 

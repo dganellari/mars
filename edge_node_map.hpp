@@ -22,7 +22,12 @@ namespace mars {
 			const Integer an_edge_node,
 			const Integer another_edge_node) const
 		{
-			auto it = mapping_.find(Edge(an_edge_node, another_edge_node));
+			return get(Edge(an_edge_node, another_edge_node));
+		}
+
+		inline Integer get(const Edge &edge) const
+		{
+			auto it = mapping_.find(edge);
 			if(it == mapping_.end()) {
 				return INVALID_INDEX;
 			}
