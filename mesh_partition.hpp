@@ -53,6 +53,7 @@ namespace mars {
 		void describe(std::ostream &os) const
 		{
 			os << "===============================\n";
+			os << "partition: " << partition_id() << std::endl;
 			os << "elements:\n";
 			for(Integer i = 0; i < mesh.n_elements(); ++i) {
 				if(!mesh.is_active(i)) continue;
@@ -201,13 +202,18 @@ namespace mars {
 
 		void append_separate_interface_edges(
 			const EdgeElementMap &eem,
+			const EdgeNodeMap &enm,
 			const std::vector<Edge> &local_edges,
 			std::vector< std::vector<EdgeSplit> > &global_edges)
 		{
-			for(auto &ge : global_edges) 
-			{
-				ge.clear();
-			}
+			node_partition_id_.resize(mesh.n_nodes(), INVALID_INDEX);
+			global_node_id_.resize(mesh.n_nodes(), INVALID_INDEX);
+
+
+			// for(auto &ge : global_edges) 
+			// {
+			// 	ge.clear();
+			// }
 
 			for(auto &e : local_edges) {
 				std::vector<Integer> partitions;
@@ -216,62 +222,88 @@ namespace mars {
 					assert(e.nodes[0] < global_node_id_.size());
 					assert(e.nodes[1] < global_node_id_.size());
 
-					Edge global_edge;
-					global_edge.nodes[0] = global_node_id_[e.nodes[0]];
-					global_edge.nodes[1] = global_node_id_[e.nodes[1]];
+					Edge global_edge(global_node_id_[e.nodes[0]], global_node_id_[e.nodes[1]]);
+					// global_edge.fix_ordering
 
-					for(auto p : partitions) {
-						global_edges[p].push_back(global_edge);
+					//find midpoint owner and global_id
+					Integer local_midpoint = enm.get(e);
+					assert(local_midpoint != INVALID_INDEX);
+
+					assert(local_midpoint < mesh.n_nodes());
+
+					Integer midpoint = global_node_id_[local_midpoint];
+					Integer owner = node_partition_id_[local_midpoint];
+
+					if(owner == INVALID_INDEX) {
+						//try to claim ownership
+						owner = partition_id();
+					} 
+
+					EdgeSplit global_edge_split(global_edge, midpoint, owner);
+
+					global_edge_split.partitions.insert(partition_id());
+					global_edge_split.partitions.insert(partitions.begin(), partitions.end());
+
+					for(auto p : global_edge_split.partitions) {
+						global_edges[p].push_back(global_edge_split);
 					}
+
+					// std::cout << "[" << partition_id() << "] ";
+					// global_edge_split.describe(std::cout);
+
+					// global_edges[partition_id()].push_back(global_edge_split);
+				} else {
+					Integer local_midpoint = enm.get(e);
+					node_partition_id_[local_midpoint] = partition_id();
 				}
 			}
 		}
 
-		Integer update_ownership_of_midpoints(
-			const EdgeNodeMap &enm,
-			const std::vector<Edge> &refined_edges
-			)
-		{
-			Integer n_new_local_nodes = 0;
+		// Integer update_ownership_of_midpoints(
+		// 	const EdgeNodeMap &enm,
+		// 	const std::vector<Edge> &refined_edges
+		// 	)
+		// {
+		// 	Integer n_new_local_nodes = 0;
 
-			for(auto e : refined_edges) {
-				Integer local_midpoint_id = enm.get(e);
+		// 	for(auto e : refined_edges) {
+		// 		Integer local_midpoint_id = enm.get(e);
 
-				if(node_partition_id_.size() <= local_midpoint_id) {
-					node_partition_id_.resize(local_midpoint_id + 1, INVALID_INDEX);
-				}
+		// 		if(node_partition_id_.size() <= local_midpoint_id) {
+		// 			node_partition_id_.resize(local_midpoint_id + 1, INVALID_INDEX);
+		// 		}
 
-				if(node_partition_id_[local_midpoint_id] == INVALID_INDEX) {
-					auto p0 = node_partition_id_[e.nodes[0]];
-					auto p1 = node_partition_id_[e.nodes[1]];
+		// 		if(node_partition_id_[local_midpoint_id] == INVALID_INDEX) {
+		// 			auto p0 = node_partition_id_[e.nodes[0]];
+		// 			auto p1 = node_partition_id_[e.nodes[1]];
 
-					assert(p0 != INVALID_INDEX);
-					assert(p1 != INVALID_INDEX);
+		// 			assert(p0 != INVALID_INDEX);
+		// 			assert(p1 != INVALID_INDEX);
 
-					if(p0 < p1) {
-						node_partition_id_[local_midpoint_id] = p0;
-					} else {
-						node_partition_id_[local_midpoint_id] = p1;
-					}
+		// 			if(p0 < p1) {
+		// 				node_partition_id_[local_midpoint_id] = p0;
+		// 			} else {
+		// 				node_partition_id_[local_midpoint_id] = p1;
+		// 			}
 
-					if(node_partition_id_[local_midpoint_id] == partition_id_) {
-						++n_new_local_nodes;
-					}
-				}
-			}
+		// 			if(node_partition_id_[local_midpoint_id] == partition_id_) {
+		// 				++n_new_local_nodes;
+		// 			}
+		// 		}
+		// 	}
 
-			return n_new_local_nodes;
-		}
+		// 	return n_new_local_nodes;
+		// }
 
 		Edge local_edge(const Edge &global_edge) const
 		{
 			auto it_0 = global_to_local_node_.find(global_edge.nodes[0]);
 			auto it_1 = global_to_local_node_.find(global_edge.nodes[1]);
 			
-			if(it_0 == global_to_local_node_.end() ||
-			   it_1 == global_to_local_node_.end()) {
-				return Edge();
-			}
+			// if(it_0 == global_to_local_node_.end() ||
+			//    it_1 == global_to_local_node_.end()) {
+			// 	return Edge();
+			// }
 
 			assert(it_0 != global_to_local_node_.end());
 			assert(it_1 != global_to_local_node_.end());
@@ -283,6 +315,8 @@ namespace mars {
 			const EdgeNodeMap &enm,
 			const std::vector<EdgeSplit> &global_edges)
 		{
+			node_partition_id_.resize(mesh.n_nodes(), INVALID_INDEX);
+
 			for(auto es : global_edges) {
 				auto local_e = local_edge(es.edge);
 				if(!local_e.is_valid()) {
@@ -295,6 +329,17 @@ namespace mars {
 				Integer local_mp = enm.get(local_e);
 				if(es.midpoint != INVALID_INDEX) {
 					assign_node_local_to_global(local_mp, es.midpoint);
+				} 
+
+				assert(es.owner != INVALID_INDEX);
+				// assert(local_mp != INVALID_INDEX);
+				
+				if(local_mp != INVALID_INDEX) {
+					if(node_partition_id_.size() <= local_mp) {
+						node_partition_id_.resize(local_mp, INVALID_INDEX);
+					}
+
+					node_partition_id_[local_mp] = es.owner;
 				}
 			}
 		}
@@ -346,6 +391,8 @@ namespace mars {
 		{
 			global_node_id_.resize(mesh.n_nodes(), INVALID_INDEX);
 
+			if(begin == end) return;
+
 			Integer current_id = begin;
 			
 			Integer count = 0;
@@ -353,7 +400,9 @@ namespace mars {
 				if(node_partition_id_[i] != partition_id_ || 
 				   global_node_id_[i] != INVALID_INDEX) continue;
 
-				    global_node_id_[i] = current_id++;
+				    // global_node_id_[i] = current_id++;
+
+					assign_node_local_to_global(i, current_id++);
 					count++;
 			}
 
@@ -387,6 +436,11 @@ namespace mars {
 		const std::vector<Integer> &global_node_id() const
 		{
 			return global_node_id_;
+		}
+
+		const Integer global_node_id(const Integer local_node_id) const
+		{
+			return global_node_id_[local_node_id];
 		}
 
 	private:

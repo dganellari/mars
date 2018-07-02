@@ -51,6 +51,7 @@ namespace mars {
 		Real node_size;
 		Real uniform;
 		bool active_only;
+		bool show_id;
 
 		std::vector<Integer> node_id;
 		std::vector<Integer> element_id;
@@ -61,7 +62,8 @@ namespace mars {
 		  scale_factor(10.),
 		  node_size(2.),
 		  uniform(0.),
-		  active_only(true)
+		  active_only(true),
+		  show_id(true)
 		{}
 	};
 
@@ -270,11 +272,13 @@ namespace mars {
 						canvas.set_color(1., 0., 0.);
 						canvas.stroke_circle(p(0)*opts.scale_factor, p(1)*opts.scale_factor, opts.node_size);
 					} else {
-						canvas.set_color(0., 0., 0.);
-						canvas.stroke_circle(p(0)*opts.scale_factor, p(1)*opts.scale_factor, opts.node_size);
+						if(opts.show_id) {
+							canvas.set_color(0., 0., 0.);
+							canvas.stroke_circle(p(0)*opts.scale_factor, p(1)*opts.scale_factor, opts.node_size);
 
-						canvas.set_color(1., 1., 1.);
-						canvas.fill_circle(p(0)*opts.scale_factor, p(1)*opts.scale_factor, opts.node_size);
+							canvas.set_color(1., 1., 1.);
+							canvas.fill_circle(p(0)*opts.scale_factor, p(1)*opts.scale_factor, opts.node_size);
+						}
 					}
 					
 
@@ -284,30 +288,32 @@ namespace mars {
 			}
 		}
 
-		canvas.set_color(0., 0., 0.);
-		
-		for(std::size_t i = 0, k = 0; i < mesh.n_elements(); ++i) {
-			if(mesh.is_active(i)) {
-				auto b = barycenter(mesh.elem(i), mesh.points());
-				auto e_id = i;
+		if(opts.show_id) {
+			canvas.set_color(0., 0., 0.);
+			
+			for(std::size_t i = 0, k = 0; i < mesh.n_elements(); ++i) {
+				if(mesh.is_active(i)) {
+					auto b = barycenter(mesh.elem(i), mesh.points());
+					auto e_id = i;
 
-				if(!opts.element_id.empty()) {
-					e_id = opts.element_id[i]; 
-				}
-
-				canvas.draw_text(b(0)*opts.scale_factor, b(1)*opts.scale_factor, opts.node_size, "Courier", std::to_string(e_id), true);
-
-				for(auto n : mesh.elem(i).nodes) {
-					auto p = mesh.point(n);
-
-					auto n_id = n;
-
-					if(!opts.node_id.empty()) {
-						n_id = opts.node_id[n]; 
+					if(!opts.element_id.empty()) {
+						e_id = opts.element_id[i]; 
 					}
 
-					if(n_id != INVALID_INDEX) {
-						canvas.draw_text(p(0)*opts.scale_factor, p(1)*opts.scale_factor, opts.node_size, "Courier", std::to_string(n_id), true);
+					canvas.draw_text(b(0)*opts.scale_factor, b(1)*opts.scale_factor, opts.node_size, "Courier", std::to_string(e_id), true);
+
+					for(auto n : mesh.elem(i).nodes) {
+						auto p = mesh.point(n);
+
+						auto n_id = n;
+
+						if(!opts.node_id.empty()) {
+							n_id = opts.node_id[n]; 
+						}
+
+						if(n_id != INVALID_INDEX) {
+							canvas.draw_text(p(0)*opts.scale_factor, p(1)*opts.scale_factor, opts.node_size, "Courier", std::to_string(n_id), true);
+						}
 					}
 				}
 			}
@@ -341,10 +347,19 @@ namespace mars {
 	{
 		moonolith::EPSCanvas canvas;
 
+		Integer n_elements = 0;
+		for(const auto &p : parts) {
+			n_elements += parts[0].get_mesh().n_elements();
+		}
+
 		PlotOpts opts;
 		// opts.scale_factor = scale_factor;
 		opts.plot_fun = plot_fun;
-		opts.node_size = 1./std::sqrt(parts[0].get_mesh().n_active_elements());
+		opts.node_size = 1./std::sqrt(n_elements);
+
+		if(parts[0].get_mesh().n_elements() > 100) {
+			opts.show_id = false;
+		}
 
 		for(const auto &p : parts) {
 			opts.node_id = p.global_node_id();

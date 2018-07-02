@@ -210,9 +210,9 @@ namespace mars {
 			p.add_and_index_nodes(mesh, node_partitioning, visited);
 		}
 
-		for(const auto &p : meshes) {
-			p.describe(std::cout);
-		}
+		// for(const auto &p : meshes) {
+		// 	p.describe(std::cout);
+		// }
 	}
 
 	// template<typename T>
@@ -225,8 +225,10 @@ namespace mars {
 		ParBisection<Dim, ManifoldDim> b(parts);
 		std::vector<std::vector<mars::Integer>> elements(parts.size());
 
-		Integer n_levels = 1;
+		Integer n_levels = 18;
 		for(Integer i = 0; i < n_levels; ++i) {
+			std::cout << "xxxxxxxxxxxxxxxxxxxxxx\n";
+			
 			for(Integer k = 0; k < parts.size(); ++k) {
 				if(k != 1) {
 					mark_hypersphere_for_refinement(
@@ -238,135 +240,12 @@ namespace mars {
 				}
 			}
 
+			b.verbose = i == n_levels-1;
+			// b.verbose = true;
 			b.refine(elements);
+
+			std::cout << "xxxxxxxxxxxxxxxxxxxxxx\n";
 		}
-
-
-
-		// using B = Bisection<Dim, ManifoldDim>;
-
-		// std::vector< ptr<B> > bisection;
-		// for(auto &m : meshes) {
-		// 	// m.describe(std::cout);
-		// 	bisection.push_back(std::make_shared<B>(m.get_mesh()));
-		// }
-
-		// std::cout << "------------------------------\n";
-
-		// Integer n_levels = 1;
-		// for(Integer i = 0; i < n_levels; ++i) {
-		// 	bool complete = false;
-
-		// 	Integer synchronization_loops = 0;
-		// 	while(!complete) {
-
-		// 		//add midpoint global-id if any
-		// 		std::vector< std::vector<EdgeSplit> > global_refined_edges(meshes.size());
-		// 		std::vector<Integer> nodes_offsets(meshes.size() + 1, 0);
-		// 		std::vector<Integer> elem_offsets(meshes.size() + 1, 0);
-
-		// 		//parallel step
-		// 		Integer max_node_id = 0;
-		// 		Integer max_elem_id = 0;
-		// 		for(Integer k = 0; k < meshes.size(); ++k) {
-		// 			auto b_ptr = bisection[k];
-
-		// 			max_node_id = std::max(max_node_id, meshes[k].max_gobal_node_id());
-		// 			max_elem_id = std::max(max_elem_id, meshes[k].max_gobal_elem_id());
-
-		// 			Integer prev_n_elem = b_ptr->get_mesh().n_elements();
-
-		// 			std::vector<mars::Integer> elements;
-		// 			if(meshes[k].partition_id() != 1) {
-		// 				mark_hypersphere_for_refinement(
-		// 					b_ptr->get_mesh(),
-		// 					{0.5, 0.5},
-		// 					0.25,
-		// 					elements
-		// 					);
-
-		// 				b_ptr->refine(elements);
-		// 				std::cout << "n_marked(" << i << "/" << n_levels << ") : " << elements.size() << std::endl;
-		// 			}
-
-		// 			nodes_offsets[k+1] = meshes[k].update_ownership_of_midpoints(
-		// 				b_ptr->edge_node_map(),
-		// 				b_ptr->bisected_edges()
-		// 			);
-
-		// 			elem_offsets[k+1] = b_ptr->get_mesh().n_elements() - prev_n_elem;
-		// 		}
-
-		// 		//sync step
-		// 		//in parallel: exchange global_refined_edges
-
-		// 		nodes_offsets[0] = max_node_id + 1;
-		// 		std::partial_sum(nodes_offsets.begin(), nodes_offsets.end(), nodes_offsets.begin());
-
-		// 		elem_offsets[0] = max_elem_id + 1;
-		// 		std::partial_sum(elem_offsets.begin(), elem_offsets.end(), elem_offsets.begin());
-
-		// 		for(Integer k = 0; k < meshes.size(); ++k) {
-		// 			meshes[k].assign_global_node_ids(
-		// 				nodes_offsets[meshes[k].partition_id()],
-		// 				nodes_offsets[meshes[k].partition_id() + 1]
-		// 			);
-
-		// 			meshes[k].assign_global_elem_ids(
-		// 				elem_offsets[meshes[k].partition_id()],
-		// 				elem_offsets[meshes[k].partition_id() + 1]
-		// 			);
-
-		// 			meshes[k].append_separate_interface_edges(
-		// 				bisection[k]->edge_element_map(),
-		// 				bisection[k]->bisected_edges(),
-		// 				global_refined_edges);
-		// 		}
-
-
-
-		// 		complete = true;
-		// 		for(Integer k = 0; k < meshes.size(); ++k) {
-		// 			if(!global_refined_edges[k].empty()) {
-		// 				complete = false;
-
-		// 				//TODO
-		// 				//refine edges
-		// 				auto b_ptr = bisection[k];
-
-		// 				for(auto ges: global_refined_edges[k]) {	
-		// 					std::vector<Edge> global_edge = {ges.edge};
-		// 					std::vector<Edge> local_edges;
-
-		// 					meshes[k].localize_edges(global_edge, local_edges);
-		// 					b_ptr->if_exist_refine_edges(local_edges);
-
-		// 					meshes[k].update_midpoint_ids(
-		// 						b_ptr->edge_node_map(),
-		// 						{ges});
-
-		// 					complete = true;
-		// 				}
-		// 			} 
-		// 		}
-
-		// 		write_mesh_partitions("parts_" + std::to_string(synchronization_loops) + ".eps", meshes, PLOT_UNIFORM);
-
-		// 		++synchronization_loops;
-		// 	}
-
-		// 	std::cout << "synchronization_loops: " << synchronization_loops << std::endl;
-		// }
-
-		// write_mesh_partitions("parts_final.eps", meshes, PLOT_UNIFORM);
-
-		// Integer p = 0;
-		// for(auto &m : meshes) {
-		// 	std::cout << "p=[" <<  m.partition_id() << "]-------------------------------\n";
-		// 	m.describe(std::cout);
-		// 	// write_mesh("mesh_2_p" + std::to_string(p++) + ".eps", m.get_mesh(), 10., PLOT_ID);
-		// 	std::cout << "-------------------------------\n";
-		// }
 	}
 
 }
