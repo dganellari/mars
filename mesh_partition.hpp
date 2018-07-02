@@ -1,6 +1,8 @@
 #ifndef MARS_MESH_PARTITION_HPP
 #define MARS_MESH_PARTITION_HPP
 
+#include "edge_split.hpp"
+
 namespace mars {
 
 	template<Integer Dim, Integer ManifoldDim>
@@ -200,8 +202,13 @@ namespace mars {
 		void append_separate_interface_edges(
 			const EdgeElementMap &eem,
 			const std::vector<Edge> &local_edges,
-			std::vector< std::vector<Edge> > &global_edges)
+			std::vector< std::vector<EdgeSplit> > &global_edges)
 		{
+			for(auto &ge : global_edges) 
+			{
+				ge.clear();
+			}
+
 			for(auto &e : local_edges) {
 				std::vector<Integer> partitions;
 
@@ -259,12 +266,45 @@ namespace mars {
 		Edge local_edge(const Edge &global_edge) const
 		{
 			auto it_0 = global_to_local_node_.find(global_edge.nodes[0]);
-			assert(it_0 != global_to_local_node_.end());
-
 			auto it_1 = global_to_local_node_.find(global_edge.nodes[1]);
+			
+			if(it_0 == global_to_local_node_.end() ||
+			   it_1 == global_to_local_node_.end()) {
+				return Edge();
+			}
+
+			assert(it_0 != global_to_local_node_.end());
 			assert(it_1 != global_to_local_node_.end());
 
 			return Edge(it_0->second, it_1->second);
+		}
+
+		void update_midpoint_ids(
+			const EdgeNodeMap &enm,
+			const std::vector<EdgeSplit> &global_edges)
+		{
+			for(auto es : global_edges) {
+				auto local_e = local_edge(es.edge);
+				if(!local_e.is_valid()) {
+					std::cerr << "[Error] met invalid edge for ";
+					es.edge.describe(std::cerr);
+					std::cout << std::endl;
+					continue;
+				}
+
+				Integer local_mp = enm.get(local_e);
+				if(es.midpoint != INVALID_INDEX) {
+					assign_node_local_to_global(local_mp, es.midpoint);
+				}
+			}
+		}
+
+		void assign_node_local_to_global(
+			const Integer local_id,
+			const Integer global_id)
+		{
+			global_node_id_[local_id]        = global_id;
+			global_to_local_node_[global_id] = local_id;
 		}
 
 		void localize_edges(
@@ -275,7 +315,8 @@ namespace mars {
 			local_edges.reserve(global_edges.size());
 
 			for(auto e : global_edges) {
-				local_edges.push_back(local_edge(e));
+				auto local_e = local_edge(e);
+				local_edges.push_back(local_e);
 			}
 		}
 
@@ -289,6 +330,16 @@ namespace mars {
 			return *std::max_element(global_elem_id_.begin(), global_elem_id_.end());
 		}
 
+		Integer n_owned_nodes() const
+		{
+			Integer ret = 0;
+			for(auto n : node_partition_id_) {
+				ret += (n == partition_id());
+			}
+
+			return ret;
+		}
+
 		void assign_global_node_ids(
 			const Integer begin,
 			const Integer end)
@@ -299,10 +350,11 @@ namespace mars {
 			
 			Integer count = 0;
 			for(Integer i = 0; i < mesh.n_nodes(); ++i) {
-				if(global_node_id_[i] == INVALID_INDEX) {
-					global_node_id_[i] = current_id++;
+				if(node_partition_id_[i] != partition_id_ || 
+				   global_node_id_[i] != INVALID_INDEX) continue;
+
+				    global_node_id_[i] = current_id++;
 					count++;
-				}
 			}
 
 			assert(count == end - begin);
@@ -318,7 +370,7 @@ namespace mars {
 			Integer current_id = begin;
 			
 			Integer count = 0;
-			for(Integer i = 0; i < mesh.n_nodes(); ++i) {
+			for(Integer i = 0; i < mesh.n_elements(); ++i) {
 				if(global_elem_id_[i] == INVALID_INDEX) {
 					global_elem_id_[i] = current_id++;
 					count++;
@@ -326,6 +378,15 @@ namespace mars {
 			}
 
 			assert(count == end - begin);
+		}
+
+		const std::vector<Integer> &global_elem_id() const
+		{
+			return global_elem_id_;
+		}
+		const std::vector<Integer> &global_node_id() const
+		{
+			return global_node_id_;
 		}
 
 	private:
@@ -344,7 +405,6 @@ namespace mars {
 			return -(tag + 2);
 		}
 
-	private:
 		Mesh<Dim, ManifoldDim> mesh;
 		Integer partition_id_;
 		std::vector<Integer> global_elem_id_;

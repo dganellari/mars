@@ -371,13 +371,20 @@ namespace mars {
 			return bisected_edges_;
 		}
 
-		void clear_bisected_edges() const
+		void clear_bisected_edges()
 		{
 			bisected_edges_.clear();
 		}
 
 		void if_exist_refine_edges(const std::vector<Edge> &edges)
 		{
+			if(flags.empty()) {
+				flags.resize(mesh.n_elements(), NONE);
+				level.resize(mesh.n_elements(), 0);
+				edge_element_map_.update(mesh);
+				mesh.update_dual_graph();
+			}
+
 			for(auto e : edges) {
 				refine_edge(e);
 			}

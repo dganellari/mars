@@ -20,6 +20,9 @@ namespace mars {
 	class Mesh;
 
 	template<Integer Dim, Integer ManifoldDim>
+	class MeshPartition;
+
+	template<Integer Dim, Integer ManifoldDim>
 	class RedGreenRefinement;
 
 	class RGB {
@@ -29,6 +32,7 @@ namespace mars {
 	};
 
 
+
 	enum PlotFun
 	{
 		PLOT_ROOT = 0,
@@ -36,7 +40,29 @@ namespace mars {
 		PLOT_ID = 2,
 		PLOT_PARENT = 3,
 		PLOT_PARENT_TAG = 4,
-		PLOT_NUMERIC_TAG = 5
+		PLOT_NUMERIC_TAG = 5,
+		PLOT_UNIFORM = 6
+	};
+
+	class PlotOpts {
+	public:
+		PlotFun plot_fun;
+		Real scale_factor;
+		Real node_size;
+		Real uniform;
+		bool active_only;
+
+		std::vector<Integer> node_id;
+		std::vector<Integer> element_id;
+		std::vector<Real>    fun;
+
+		PlotOpts()
+		: plot_fun(PLOT_ID),
+		  scale_factor(10.),
+		  node_size(2.),
+		  uniform(0.),
+		  active_only(true)
+		{}
 	};
 
 	inline void flag_color(const Integer flag, Real &r, Real &g, Real &b)
@@ -71,10 +97,14 @@ namespace mars {
 	template<Integer Dim, Integer ManifoldDim>
 	void mesh_color(
 		const Mesh<Dim, ManifoldDim> &mesh,
-		const Integer plot_fun,
-		std::vector<Real> &hsv,
-		const bool active_only = true)
+		const PlotOpts &opts,
+		std::vector<Real> &hsv
+		)
 	{
+
+		const bool active_only = opts.active_only;
+		const Integer plot_fun = opts.plot_fun;
+
 		std::vector<Real> f;
 
 		if(plot_fun == PLOT_TAG || plot_fun == PLOT_PARENT_TAG) {
@@ -89,7 +119,9 @@ namespace mars {
 			} else {
 				f.resize(mesh.n_elements());
 			}
-		}
+		} 
+
+	
 		for(std::size_t i = 0, k = 0; i < mesh.n_elements(); ++i) {
 			if(mesh.is_active(i) || !active_only) {
 				switch(plot_fun) {
@@ -142,26 +174,41 @@ namespace mars {
 
 					default:
 					{
-						f[k++] = mesh.elem(i).id;
+						if(!opts.element_id.empty()) {
+							f[k++] = opts.element_id[mesh.elem(i).id];
+						} else {
+							f[k++] = mesh.elem(i).id;
+						}
 						break;
 					}
 				}
 			}
 		}
 
+		if(plot_fun == PLOT_UNIFORM) {
+			std::fill(std::begin(f), std::end(f), opts.uniform);
+		} 
+
 		if(plot_fun == PLOT_TAG || plot_fun == PLOT_PARENT_TAG) {
 			hsv = f;
+		} else if(plot_fun == PLOT_UNIFORM) {
+			moonolith::func_to_hsv(f, 0., 1., hsv);
 		} else {
-			moonolith::func_to_hsv(f, hsv);
+
+			Real max_el = *std::max_element(std::begin(f), std::end(f));
+			Real min_el = *std::min_element(std::begin(f), std::end(f));
+
+			if(max_el != min_el) {
+				moonolith::func_to_hsv(f, hsv);
+			}
 		}
 	}
 
-	template<Integer Dim>
-	bool write_mesh(
-		const std::string &path,
+	template<class Canvas, Integer Dim>
+	void draw_mesh(
+		Canvas &canvas,
 		const Mesh<Dim, 2> &mesh,
-		const Real scale_factor = 1.,
-		const PlotFun plot_fun = PLOT_ROOT)
+		const PlotOpts &opts)
 	{
 
 		moonolith::Mesh m;
@@ -172,7 +219,7 @@ namespace mars {
 
 		for(Integer i = 0; i < mesh.n_nodes(); ++i) {
 			for(Integer d = 0; d < Dim; ++d) {
-				m.points[i * Dim + d] = mesh.point(i)(d) * scale_factor;
+				m.points[i * Dim + d] = mesh.point(i)(d) * opts.scale_factor;
 			}
 		}
 
@@ -199,31 +246,40 @@ namespace mars {
 			}
 		}
 
-		// moonolith::SVGCanvas canvas;
-		moonolith::EPSCanvas canvas;
 		canvas.set_line_width(0.1/mesh.n_active_elements());
 
 		std::vector<Real> hsv;
-		mesh_color(mesh, plot_fun, hsv);
+		mesh_color(mesh, opts, hsv);
 
 		canvas.fill_mesh(m, hsv);
 		canvas.set_color(0,0,0);
 		canvas.stroke_mesh(m);
 
-
 		for(std::size_t i = 0, k = 0; i < mesh.n_elements(); ++i) {
 			if(mesh.is_active(i)) {
 				for(auto n : mesh.elem(i).nodes) {
 					auto p = mesh.point(n);
-					canvas.set_color(0., 0., 0.);
-					canvas.stroke_circle(p(0)*scale_factor, p(1)*scale_factor, 1./std::sqrt(mesh.n_active_elements()));
 
-					canvas.set_color(1., 1., 1.);
-					canvas.fill_circle(p(0)*scale_factor, p(1)*scale_factor, 1./std::sqrt(mesh.n_active_elements()));
+					auto n_id = n;
+
+					if(!opts.node_id.empty()) {
+						n_id = opts.node_id[n]; 
+					}
+
+					if(n_id == INVALID_INDEX) {
+						canvas.set_color(1., 0., 0.);
+						canvas.stroke_circle(p(0)*opts.scale_factor, p(1)*opts.scale_factor, opts.node_size);
+					} else {
+						canvas.set_color(0., 0., 0.);
+						canvas.stroke_circle(p(0)*opts.scale_factor, p(1)*opts.scale_factor, opts.node_size);
+
+						canvas.set_color(1., 1., 1.);
+						canvas.fill_circle(p(0)*opts.scale_factor, p(1)*opts.scale_factor, opts.node_size);
+					}
 					
 
-					canvas.update_box(p(0)*scale_factor + scale_factor/10., p(1)*scale_factor + scale_factor/10.);
-					canvas.update_box(p(0)*scale_factor - scale_factor/10., p(1)*scale_factor - scale_factor/10.);
+					canvas.update_box(p(0)*opts.scale_factor + opts.scale_factor/10., p(1)*opts.scale_factor + opts.scale_factor/10.);
+					canvas.update_box(p(0)*opts.scale_factor - opts.scale_factor/10., p(1)*opts.scale_factor - opts.scale_factor/10.);
 				}
 			}
 		}
@@ -233,18 +289,71 @@ namespace mars {
 		for(std::size_t i = 0, k = 0; i < mesh.n_elements(); ++i) {
 			if(mesh.is_active(i)) {
 				auto b = barycenter(mesh.elem(i), mesh.points());
-				canvas.draw_text(b(0)*scale_factor, b(1)*scale_factor, 1./std::sqrt(mesh.n_active_elements()), "Courier", std::to_string(i), true);
+				auto e_id = i;
+
+				if(!opts.element_id.empty()) {
+					e_id = opts.element_id[i]; 
+				}
+
+				canvas.draw_text(b(0)*opts.scale_factor, b(1)*opts.scale_factor, opts.node_size, "Courier", std::to_string(e_id), true);
 
 				for(auto n : mesh.elem(i).nodes) {
 					auto p = mesh.point(n);
-					canvas.draw_text(p(0)*scale_factor, p(1)*scale_factor, 1./std::sqrt(mesh.n_active_elements()), "Courier", std::to_string(n), true);
+
+					auto n_id = n;
+
+					if(!opts.node_id.empty()) {
+						n_id = opts.node_id[n]; 
+					}
+
+					if(n_id != INVALID_INDEX) {
+						canvas.draw_text(p(0)*opts.scale_factor, p(1)*opts.scale_factor, opts.node_size, "Courier", std::to_string(n_id), true);
+					}
 				}
 			}
 		}
+	}
 
+
+	template<Integer Dim>
+	bool write_mesh(
+		const std::string &path,
+		const Mesh<Dim, 2> &mesh,
+		const Real scale_factor = 1.,
+		const PlotFun plot_fun = PLOT_ROOT)
+	{
+		moonolith::EPSCanvas canvas;
+		PlotOpts opts;
+		opts.scale_factor = scale_factor;
+		opts.plot_fun = plot_fun;
+		opts.node_size = 1./std::sqrt(mesh.n_active_elements());
+
+		draw_mesh(canvas, mesh, opts);
 		return canvas.write(path);
 	}
 
+
+	template<Integer Dim>
+	bool write_mesh_partitions(
+		const std::string &path,
+		const std::vector<MeshPartition<Dim, 2>> &parts,
+		const PlotFun plot_fun)
+	{
+		moonolith::EPSCanvas canvas;
+
+		PlotOpts opts;
+		// opts.scale_factor = scale_factor;
+		opts.plot_fun = plot_fun;
+		opts.node_size = 1./std::sqrt(parts[0].get_mesh().n_active_elements());
+
+		for(const auto &p : parts) {
+			opts.node_id = p.global_node_id();
+			opts.element_id = p.global_elem_id();
+			opts.uniform = Real(p.partition_id() + 1)/parts.size();
+			draw_mesh(canvas, p.get_mesh(), opts);
+		}
+		return canvas.write(path);
+	}
 
 
 	template<class Canvas, Integer Dim, Integer ManifoldDim, class NodeVector>
@@ -505,7 +614,12 @@ bool write_element(
 
 
 	std::vector<Real> hsv;
-	mesh_color(m, PLOT_ID, hsv, false);
+
+	PlotOpts opts;
+	opts.plot_fun = PLOT_ID;
+	opts.active_only = false;
+
+	mesh_color(m, opts, hsv);
 
 	const Real margin = 1.3;
 	const Real node_size = 0.5;
@@ -665,7 +779,12 @@ bool write_element_with_sides(
 		// mlem.update(rgr.get_mesh());
 
 	std::vector<Real> hsv;
-	mesh_color(m, PLOT_ID, hsv, false);
+
+	PlotOpts opts;
+	opts.plot_fun = PLOT_ID;
+	opts.active_only = false;
+
+	mesh_color(m, opts, hsv);
 
 	const Real margin = 1.3;
 	const Real node_size = 0.5;
@@ -857,7 +976,10 @@ bool write_element_with_subsurfaces(
 	mlem.update(m);
 
 	std::vector<Real> hsv;
-	mesh_color(m, PLOT_ID, hsv, false);
+	PlotOpts opts;
+	opts.plot_fun = PLOT_ID;
+	opts.active_only = false;
+	mesh_color(m, opts, hsv);
 
 	const Real margin = 1.3;
 	const Real node_size = 0.5;

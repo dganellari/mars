@@ -29,6 +29,15 @@ namespace mars {
 			fix_ordering();
 		}
 
+		inline bool is_valid() const
+		{
+			for(auto n : nodes) {
+				if(n == INVALID_INDEX) return false;
+			}
+
+			return true;
+		}
+
 		void fix_ordering()
 		{
 			std::sort(std::begin(nodes), std::end(nodes));
