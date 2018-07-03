@@ -3,6 +3,7 @@
 
 #include "edge_split.hpp"
 #include "edge_split_pool.hpp"
+#include "dof_map.hpp"
 
 namespace mars {
 
@@ -391,7 +392,7 @@ namespace mars {
 			const Integer owner)
 		{
 			assert(local_node_id < mesh.n_nodes());
-			
+
 			global_node_id_.resize(mesh.n_nodes(), INVALID_INDEX);
 			global_node_id_[local_node_id] = owner;
 		}
