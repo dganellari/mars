@@ -38,12 +38,16 @@ namespace mars {
 			return false;
 		}
 
-		void pack(std::vector<std::vector<EdgeSplit>> &splits)
+		void pack(
+			std::vector<std::vector<EdgeSplit>> &splits,
+			const bool clear_buffers)
 		{
 			splits.resize(n_parts);
 
-			for(Integer p = 0; p < n_parts; ++p) {
-				splits[p].clear();
+			if(clear_buffers) {
+				for(Integer p = 0; p < n_parts; ++p) {
+					splits[p].clear();
+				}
 			}
 
 			for(const auto &s : to_communicate) {
@@ -158,7 +162,7 @@ namespace mars {
 			const EdgeNodeMap &enm,
 			MeshPartition<Dim, ManifoldDim> &part)
 		{
-			for(auto gs_it = global_splits.begin(); gs_it != global_splits.end();) {
+			for(auto gs_it = global_splits.begin(); gs_it != global_splits.end(); ) {
 				const auto &gs = gs_it->second;
 				Edge e = part.local_edge(gs.edge);
 				
@@ -169,9 +173,12 @@ namespace mars {
 
 				Integer local_mp = enm.get(e);
 
-				assert(gs.midpoint != INVALID_INDEX);
+				assert(local_mp != INVALID_INDEX);
 
 				part.assign_node_owner(local_mp, gs.owner);
+
+				if(gs.midpoint == INVALID_INDEX) { ++gs_it; continue; }
+				
 				part.assign_node_local_to_global(local_mp, gs.midpoint);
 
 				global_splits.erase(gs_it++);
@@ -192,10 +199,46 @@ namespace mars {
 			}
 		}
 
+		template<Integer Dim, Integer ManifoldDim>
+		void collect_splits_to_local_edges(
+			const MeshPartition<Dim, ManifoldDim> &part,
+			std::vector<Edge> &splits)
+		{
+			splits.clear();
+			splits.reserve(global_splits.size());
+
+			for(auto gs_it = global_splits.begin(); gs_it != global_splits.end(); ++gs_it) {
+				const auto &gs = gs_it->second;
+				auto le = part.local_edge(gs.edge);
+				splits.push_back(le);
+			}
+		}
+
 		inline bool empty() const
 		{
 			return global_splits.empty() && to_communicate.empty();
 		}
+
+		inline std::map<Edge, EdgeSplit>::iterator begin()
+		{
+			return global_splits.begin();
+		}
+
+		inline std::map<Edge, EdgeSplit>::iterator end()
+		{
+			return global_splits.end();
+		}
+
+		inline std::map<Edge, EdgeSplit>::const_iterator begin() const
+		{
+			return global_splits.begin();
+		}
+
+		inline std::map<Edge, EdgeSplit>::const_iterator end() const
+		{
+			return global_splits.end();
+		}
+
 
 		std::map<Edge, EdgeSplit> global_splits;
 		std::vector<EdgeSplit> to_communicate;

@@ -63,7 +63,8 @@ namespace mars {
 
 		inline Integer owner(const Integer local_id) const
 		{
-			assert(local_id < owner_id_.size());
+			if(local_id >= owner_id_.size()) return INVALID_INDEX;
+			// assert(local_id < owner_id_.size());
 			return owner_id_[local_id];
 		}
 
@@ -87,7 +88,9 @@ namespace mars {
 
 		inline Integer global(const Integer local_id) const
 		{
-			assert(local_id < global_id_.size());
+			// assert(local_id < global_id_.size());
+			if(local_id >= global_id_.size()) return INVALID_INDEX;
+
 			return global_id_[local_id];
 		}
 
@@ -126,7 +129,19 @@ namespace mars {
 			Integer ret = 0;
 			for(Integer i = 0; i < global_id_.size(); ++i) {
 				if(owner(i) == partition_id()) {
-					ret += global(i);
+					ret += global(i) == INVALID_INDEX;
+				}
+			}
+
+			return ret;
+		}
+
+		inline Integer n_owned_with_global() const
+		{
+			Integer ret = 0;
+			for(Integer i = 0; i < global_id_.size(); ++i) {
+				if(owner(i) == partition_id()) {
+					ret += global(i) != INVALID_INDEX;
 				}
 			}
 
@@ -159,6 +174,41 @@ namespace mars {
 		inline const std::vector<Integer> &global_id() const
 		{
 			return global_id_;
+		}
+
+		void pack_for_global(
+			std::vector<Integer> &buffer,
+			const bool clear_buffer) const
+		{
+			if(clear_buffer) {
+				buffer.clear();
+			}
+
+			buffer.resize(n_partitions() + 1, 0);
+
+			Integer n = n_owned_without_global();
+			buffer[partition_id()] = n;
+
+			//Hack
+			if(clear_buffer) {
+				buffer[0] = max_id();
+			} else {
+				buffer[0] = std::max(max_id(), buffer[0]);
+			}
+		}
+
+		void unpack_for_global(const std::vector<Integer> &buffer)
+		{
+			Integer range_begin = 0;
+			Integer range_end   = 0;
+
+			for(Integer i = 0; i <= partition_id(); ++i) {
+				range_begin += buffer[i];
+			}
+
+			range_end = range_begin + buffer[partition_id() + 1];
+
+			assign_global_ids(range_begin, range_end);
 		}
 
 	private:

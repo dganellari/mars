@@ -24,6 +24,12 @@ namespace mars {
 		{
 			for(auto &m : parts) {
 				bisection.push_back(std::make_shared<B>(m->get_mesh()));
+				
+				edge_split_pool_.push_back(
+					std::make_shared<EdgeSplitPool>(
+						m->partition_id(),
+						parts.size())
+				);
 			}
 		}
 
@@ -77,7 +83,179 @@ namespace mars {
 			return true;
 		}
 
+		//1) (parallel)
+		void refine_elements(std::vector<std::vector<mars::Integer>> &elements)
+		{
+			if(verbose) {
+				std::cout << "------------------------------\n";
+			}
+
+			if(elements.empty()) {
+				std::cerr << "refinement for elements is empty" << std::endl;
+				return;
+			}
+
+			//local parallel refinement
+			for(Integer k = 0; k < parts.size(); ++k) {
+				if(elements[k].empty()) continue;
+
+				auto b_ptr = bisection[k];
+				b_ptr->refine(elements[k]);
+			}
+		}
+
+		//2) (synchronized)
+		void update_edge_pools()
+		{
+			//parallel for
+			for(Integer k = 0; k < parts.size(); ++k) {
+				parts[k]->update_edge_split_pool(
+					bisection[k]->edge_element_map(),
+					bisection[k]->edge_node_map(),
+					bisection[k]->bisected_edges(),
+					*edge_split_pool_[k]
+				);
+
+				bisection[k]->clear_bisected_edges();
+			}
+
+			//communicate edges
+			//fake commmunication
+			{
+				for(Integer k = 0; k < parts.size(); ++k) {
+					std::vector<std::vector<EdgeSplit>> splits;
+					edge_split_pool_[k]->pack(splits, false);
+
+					for(Integer j = 0; j < parts.size(); ++j) {
+						edge_split_pool_[j]->unpack(k, splits[j]);
+					}
+				}
+			}
+
+		}
+
+		//3) (synchronized)
+		void update_global_ids()
+		{
+			//parallel for
+			for(Integer k = 0; k < parts.size(); ++k) {
+				parts[k]->read_from_edge_pool(
+					bisection[k]->edge_node_map(),
+					*edge_split_pool_[k]
+				);
+			}
+
+			// update global ids
+
+			//communicate offsets
+			//fake commmunication
+			{
+				std::vector<Integer> offsets;
+
+				for(Integer k = 0; k < parts.size(); ++k) {
+					parts[k]->node_map().pack_for_global(offsets, false);
+				}
+
+				for(Integer k = 0; k < parts.size(); ++k) {
+					parts[k]->node_map().unpack_for_global(offsets);
+				}
+			}
+
+			//fake commmunication
+			{
+				std::vector<Integer> offsets;
+				
+				for(Integer k = 0; k < parts.size(); ++k) {
+					parts[k]->elem_map().pack_for_global(offsets, false);
+				}
+
+				for(Integer k = 0; k < parts.size(); ++k) {
+					parts[k]->elem_map().unpack_for_global(offsets);
+				}
+			}
+
+			//parallel for
+			for(Integer k = 0; k < parts.size(); ++k) {
+				parts[k]->write_to_edge_pool(
+					bisection[k]->edge_node_map(),
+					*edge_split_pool_[k]
+				);
+			}
+
+			// communicate edges again for the midpoint index
+			//fake commmunication
+			{
+				for(Integer k = 0; k < parts.size(); ++k) {
+					std::vector<std::vector<EdgeSplit>> splits;
+					edge_split_pool_[k]->pack(splits, false);
+
+					for(Integer j = 0; j < parts.size(); ++j) {
+						if(j == k) continue;
+
+						edge_split_pool_[j]->unpack(k, splits[j]);
+					}
+				}
+			}
+
+			//parallel for
+			for(Integer k = 0; k < parts.size(); ++k) {
+				parts[k]->read_from_edge_pool(
+					bisection[k]->edge_node_map(),
+					*edge_split_pool_[k]
+				);
+			}
+		}
+
+		//4) (parallel)
+		bool conform_interfaces()
+		{
+			//refine edges and go to 2)
+			bool has_more = false;
+			for(Integer k = 0; k < parts.size(); ++k) {
+				// std::vector<EdgeSplit> splits;
+			 // 	edge_split_pool_[k]->collect_splits_to_apply(
+				// 		*parts[k],
+				// 		splits
+				// );
+
+				std::vector<Edge> splits;
+			 	edge_split_pool_[k]->collect_splits_to_local_edges(
+						*parts[k],
+						splits
+				);
+
+			 	//refine edges
+				bisection[k]->if_exist_refine_edges(splits);
+				has_more = has_more || !edge_split_pool_[k]->empty();
+			}
+
+			return has_more;
+		}
+
 		void refine(std::vector<std::vector<mars::Integer>> &elements)
+		{
+			//1)
+			refine_elements(elements);
+
+			bool complete = false;
+
+			Integer loops = 0;
+			while(!complete) {
+				//2)
+				update_edge_pools();
+				
+				//3)
+				update_global_ids();
+
+				//4)
+				complete = conform_interfaces();
+
+				std::cout << "loop " << loops++ << " done" << std::endl;
+			}
+		}
+
+
+		void refine_old(std::vector<std::vector<mars::Integer>> &elements)
 		{
 			if(verbose) {
 				std::cout << "------------------------------\n";
@@ -257,6 +435,7 @@ namespace mars {
 
 		std::vector< ptr<P> > &parts;
 		std::vector< ptr<B> > bisection;
+		std::vector< ptr<EdgeSplitPool> > edge_split_pool_;
 
 		Integer max_node_id = 0;
 		Integer max_elem_id = 0;

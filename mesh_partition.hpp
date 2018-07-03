@@ -268,6 +268,79 @@ namespace mars {
 			}
 		}
 
+		void update_edge_split_pool(
+			const EdgeElementMap &eem,
+			const EdgeNodeMap &enm,
+			const std::vector<Edge> &local_edges,
+			EdgeSplitPool &pool)
+		{
+			for(auto &e : local_edges) {
+				std::vector<Integer> partitions;
+
+				if(edge_interfaces(eem, e, partitions)) {
+					Edge global_edge(
+						node_map_.global(e.nodes[0]),
+						node_map_.global(e.nodes[1])
+					);
+
+					//find midpoint owner and global_id
+					Integer local_midpoint = enm.get(e);
+
+					assert(local_midpoint != INVALID_INDEX);
+					assert(local_midpoint < mesh.n_nodes());
+
+					Integer midpoint = node_map_.global(local_midpoint);
+					Integer owner    = node_map_.owner(local_midpoint);
+
+					EdgeSplit global_edge_split(global_edge, midpoint, owner);
+					pool.add_split(global_edge_split);
+				} else {
+					Integer local_midpoint = enm.get(e);
+					node_map_.set_owner(local_midpoint, partition_id());
+				}
+			}
+		}
+
+		void read_from_edge_pool(
+			const EdgeNodeMap &enm,
+			EdgeSplitPool &pool)
+		{
+			// for(auto it = pool.begin(); it != pool.end(); ++it) {
+			// 	auto &e_split = it->second;
+			// 	auto le = local_edge(e_split.edge);
+			// 	const Integer midpoint = enm.get(le);
+
+			// 	assert(midpoint != INVALID_INDEX);
+			// 	assert(e_split.owner != INVALID_INDEX);
+				
+			// 	node_map_.set_owner(midpoint, e_split.owner);
+				
+			// 	if(e_split.midpoint == INVALID_INDEX) continue;
+
+			// 	assert(e_split.midpoint != INVALID_INDEX);
+			// 	node_map_.set_global(midpoint, e_split.midpoint);
+			// }
+
+			pool.set_midpoint_ids_to(enm, *this);
+		}
+
+		void write_to_edge_pool(
+			const EdgeNodeMap &enm,
+			EdgeSplitPool &pool) const
+		{
+			for(auto it = pool.begin(); it != pool.end(); ++it) {
+				auto &e_split = it->second;
+				auto le = local_edge(e_split.edge);
+				const Integer midpoint = enm.get(le);
+
+				assert(midpoint != INVALID_INDEX);
+				if(node_map_.global(midpoint) == INVALID_INDEX) continue;
+				pool.resolve_midpoint_id(e_split.edge, node_map_.global(midpoint));
+			}
+
+			
+		}
+
 		Edge local_edge(const Edge &global_edge) const
 		{
 			auto n1 = node_map_.local(global_edge.nodes[0]);
@@ -372,6 +445,16 @@ namespace mars {
 		}
 		
 		inline const Map &elem_map() const
+		{
+			return elem_map_;
+		}
+
+		inline Map &node_map()
+		{
+			return node_map_;
+		}
+		
+		inline Map &elem_map()
 		{
 			return elem_map_;
 		}

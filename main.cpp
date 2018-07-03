@@ -213,7 +213,7 @@ void test_partition_2D()
 
 	std::vector<Integer> partitioning(mesh.n_elements());
 
-	Integer n_parts = 4;
+	Integer n_parts = 2;
 	for(Integer i = 0; i < mesh.n_elements(); ++i) {
 		partitioning[i] = i % n_parts;
 	}
@@ -224,6 +224,11 @@ void test_partition_2D()
 	write_mesh("mesh_2_p.eps", mesh, 10., PLOT_ID);
 
 	test_bisection(10, partitions);
+
+	write_mesh_partitions(
+		"par2.eps",
+		partitions,
+		PLOT_UNIFORM);
 
 }
 
