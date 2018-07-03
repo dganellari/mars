@@ -137,7 +137,10 @@ namespace mars {
 			assert(s.is_valid());
 			assert(s.midpoint == INVALID_INDEX);
 			s.midpoint = m_id;
-			to_communicate.push_back(s);
+
+			if(!s.only_on_partition(partition_id)) {
+				to_communicate.push_back(s);
+			}
 		}
 
 		inline Integer midpoint(const Edge &e) const
