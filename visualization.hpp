@@ -22,6 +22,9 @@ namespace mars {
 	template<Integer Dim, Integer ManifoldDim>
 	class MeshPartition;
 
+	template<class Mesh>
+	class VTKMeshWriter;
+
 	template<Integer Dim, Integer ManifoldDim>
 	class RedGreenRefinement;
 
@@ -336,6 +339,21 @@ namespace mars {
 
 		draw_mesh(canvas, mesh, opts);
 		return canvas.write(path);
+	}
+
+	template<Integer Dim>
+	bool write_mesh_partitions(
+		const std::string &path,
+		const std::vector<MeshPartition<Dim, 3>> &parts,
+		const PlotFun plot_fun)
+	{
+		bool ok = true;
+		for(const auto &p : parts) {
+			VTKMeshWriter<Mesh<Dim, 3>> w;
+			ok &= w.write(path + std::to_string(p.partition_id()) + ".vtu", p.get_mesh());
+		}
+
+		return ok;
 	}
 
 

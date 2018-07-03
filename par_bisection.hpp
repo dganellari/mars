@@ -59,6 +59,21 @@ namespace mars {
 
 			delta_elem_offsets[0] = max_elem_id + 1;
 			std::partial_sum(delta_elem_offsets.begin(), delta_elem_offsets.end(), delta_elem_offsets.begin());
+
+			verify_offsets(delta_node_offsets);
+			verify_offsets(delta_elem_offsets);
+		}
+
+		static bool verify_offsets(const std::vector<Integer> &o)
+		{
+			for(std::size_t i = 1; i < o.size(); ++i) {
+				if(o[i-1] > o[i]) {
+					assert(o[i-1] <= o[i]);
+					return false;
+				}
+			}
+
+			return true;
 		}
 
 		void refine(std::vector<std::vector<mars::Integer>> &elements)
@@ -181,6 +196,7 @@ namespace mars {
 									it->second.owner    = ges.owner;
 								} else if(it->second.midpoint == INVALID_INDEX)  {
 									it->second.owner = std::min(k, it->second.owner);
+									assert(it->second.owner >= 0);
 								}
 							}
 						}

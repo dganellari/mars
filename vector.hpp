@@ -143,6 +143,12 @@ namespace mars {
 	        std::fill(begin(values), end(values), 0.);
 	        return *this;
 	    }
+
+	    inline Vector &set(const Real value)
+	    {
+	    	std::fill(begin(values), end(values), value);
+	    	return *this;
+	    }
 	};
 
 	template<typename T, Integer Dim>

@@ -15,6 +15,11 @@
 namespace mars {
 
 	template<Integer Dim, Integer ManifoldDim>
+	class MeshPartition;
+	
+	
+
+	template<Integer Dim, Integer ManifoldDim>
 	void mark_hypersphere_for_refinement(
 		const Mesh<Dim, ManifoldDim> &mesh,
 		const Vector<Real, Dim> &center,
@@ -122,6 +127,63 @@ namespace mars {
 			std::cout << std::endl;
 		}
 	}
+
+	template<Integer Dim, Integer ManifoldDim>
+	void parition_mesh(
+		Mesh<Dim, ManifoldDim> &mesh,
+		const Integer n_partitions,
+		const std::vector<Integer> &partitioning,
+		std::vector<MeshPartition<Dim, ManifoldDim>> &meshes)
+	{
+		assert(partitioning.size() == mesh.n_elements());
+
+		mesh.update_dual_graph();
+
+		meshes.clear();
+		meshes.resize(n_partitions);
+
+		std::vector<Integer> node_partitioning(mesh.n_nodes(), INVALID_INDEX);
+
+		for(Integer i = 0; i < mesh.n_elements(); ++i) {
+			if(!mesh.is_active(i)) continue;
+			const Integer partition_id = partitioning[i];
+			const auto &e = mesh.elem(i);
+
+			auto &p = meshes[partition_id];
+			p.set_partition_id(partition_id);
+
+			const Integer local_element_id = p.add_and_index_elem(e);
+
+			const auto &adj = mesh.dual_graph().adj(i);
+			for(Integer f = 0; f < adj.size(); ++f) {
+				if(adj[f] == INVALID_INDEX) continue;
+
+				const Integer adj_partition_id = partitioning[adj[f]];
+				if(adj_partition_id != partition_id) {
+
+					p.mark_partition_boundary(
+						local_element_id, f, adj_partition_id
+						);
+				}
+			}
+
+			for(Integer k = 0; k < n_nodes(e); ++k) {
+				if(node_partitioning[e.nodes[k]] == INVALID_INDEX) {
+					node_partitioning[e.nodes[k]] = partition_id;
+				}
+			}
+		}
+
+		std::vector<Integer> visited;
+		for(auto &p : meshes) {
+			p.add_and_index_nodes(mesh, node_partitioning, visited);
+		}
+
+		// for(const auto &p : meshes) {
+		// 	p.describe(std::cout);
+		// }
+	}
+
 }
 
 

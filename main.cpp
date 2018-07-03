@@ -159,81 +159,30 @@ void test_bisection_4D()
 }
 
 namespace mars {
-	template<Integer Dim, Integer ManifoldDim>
-	void parition_mesh(
-		Mesh<Dim, ManifoldDim> &mesh,
-		const Integer n_partitions,
-		const std::vector<Integer> &partitioning,
-		std::vector<MeshPartition<Dim, ManifoldDim>> &meshes)
-	{
-		assert(partitioning.size() == mesh.n_elements());
-
-		mesh.update_dual_graph();
-
-		meshes.clear();
-		meshes.resize(n_partitions);
-
-		std::vector<Integer> node_partitioning(mesh.n_nodes(), INVALID_INDEX);
-
-		for(Integer i = 0; i < mesh.n_elements(); ++i) {
-			if(!mesh.is_active(i)) continue;
-			const Integer partition_id = partitioning[i];
-			const auto &e = mesh.elem(i);
-
-			auto &p = meshes[partition_id];
-			p.set_partition_id(partition_id);
-
-			const Integer local_element_id = p.add_and_index_elem(e);
-
-			const auto &adj = mesh.dual_graph().adj(i);
-			for(Integer f = 0; f < adj.size(); ++f) {
-				if(adj[f] == INVALID_INDEX) continue;
-
-				const Integer adj_partition_id = partitioning[adj[f]];
-				if(adj_partition_id != partition_id) {
-
-					p.mark_partition_boundary(
-						local_element_id, f, adj_partition_id
-						);
-				}
-			}
-
-			for(Integer k = 0; k < n_nodes(e); ++k) {
-				if(node_partitioning[e.nodes[k]] == INVALID_INDEX) {
-					node_partitioning[e.nodes[k]] = partition_id;
-				}
-			}
-		}
-
-		std::vector<Integer> visited;
-		for(auto &p : meshes) {
-			p.add_and_index_nodes(mesh, node_partitioning, visited);
-		}
-
-		// for(const auto &p : meshes) {
-		// 	p.describe(std::cout);
-		// }
-	}
-
+	
 	// template<typename T>
 	// using ptr = std::shared_ptr<T>;
 
 
 	template<Integer Dim, Integer ManifoldDim>
-	void test_bisection_on(std::vector<MeshPartition<Dim, ManifoldDim>> &parts)
+	void test_bisection(
+		const Integer n_levels,
+		std::vector<MeshPartition<Dim, ManifoldDim>> &parts)
 	{
 		ParBisection<Dim, ManifoldDim> b(parts);
 		std::vector<std::vector<mars::Integer>> elements(parts.size());
 
-		Integer n_levels = 18;
+		;
 		for(Integer i = 0; i < n_levels; ++i) {
 			std::cout << "xxxxxxxxxxxxxxxxxxxxxx\n";
 			
 			for(Integer k = 0; k < parts.size(); ++k) {
-				if(k != 1) {
+				if(k % 2 == 1) {
+					Vector<Real, Dim> center;
+					center.set(0.5);
 					mark_hypersphere_for_refinement(
 						parts[k].get_mesh(),
-						{0.5, 0.5},
+						center,
 						0.25,
 						elements[k]
 						);
@@ -251,7 +200,7 @@ namespace mars {
 }
 
 
-void test_partition()
+void test_partition_2D()
 {
 	using namespace mars;
 	std::cout << "======================================\n";
@@ -260,14 +209,53 @@ void test_partition()
 	read_mesh("../data/square_2_def.MFEM", mesh);
 
 	Bisection<2, 2> b(mesh);
-	b.uniform_refine(1);
+	b.uniform_refine(2);
+
+	std::vector<Integer> partitioning(mesh.n_elements());
+
+	Integer n_parts = 4;
+	for(Integer i = 0; i < mesh.n_elements(); ++i) {
+		partitioning[i] = i % n_parts;
+	}
 
 	std::vector<MeshPartition<2, 2>> partitions;
-	parition_mesh(mesh, 4, {0, 1, 2, 3, 0, 1}, partitions);
+	parition_mesh(mesh, n_parts, partitioning, partitions);
 
 	write_mesh("mesh_2_p.eps", mesh, 10., PLOT_ID);
 
-	test_bisection_on(partitions);
+	test_bisection(10, partitions);
+
+}
+
+void test_partition_3D()
+{
+	using namespace mars;
+	std::cout << "======================================\n";
+	Mesh<3, 3> mesh;
+	// read_mesh("../data/square_2.MFEM", mesh);
+	read_mesh("../data/cube_6.MFEM", mesh, true);
+
+	Bisection<3, 3> b(mesh);
+	b.uniform_refine(1);
+
+	std::vector<Integer> partitioning(mesh.n_elements());
+
+	Integer n_parts = 2;
+	for(Integer i = 0; i < mesh.n_elements(); ++i) {
+		partitioning[i] = i % n_parts;
+	}
+
+	std::vector<MeshPartition<3, 3>> partitions;
+	parition_mesh(mesh, n_parts, partitioning, partitions);
+
+	write_mesh_partitions(
+		"par3_",
+		partitions,
+		PLOT_NUMERIC_TAG);
+
+	// write_mesh("mesh_3", mesh, 10., PLOT_ID);
+
+	test_bisection(2, partitions);
 
 }
 
@@ -278,7 +266,8 @@ int main(const int argc, const char *argv[])
 	// test_bisection_3D();
 	// test_bisection_4D();
 
-	test_partition();
+	// test_partition_2D();
+	test_partition_3D();
 	return EXIT_SUCCESS;
 }
 
