@@ -344,13 +344,13 @@ namespace mars {
 	template<Integer Dim>
 	bool write_mesh_partitions(
 		const std::string &path,
-		const std::vector<MeshPartition<Dim, 3>> &parts,
+		const std::vector<std::shared_ptr<MeshPartition<Dim, 3>>> &parts,
 		const PlotFun plot_fun)
 	{
 		bool ok = true;
 		for(const auto &p : parts) {
 			VTKMeshWriter<Mesh<Dim, 3>> w;
-			ok &= w.write(path + std::to_string(p.partition_id()) + ".vtu", p.get_mesh());
+			ok &= w.write(path + std::to_string(p->partition_id()) + ".vtu", p->get_mesh());
 		}
 
 		return ok;
@@ -360,14 +360,14 @@ namespace mars {
 	template<Integer Dim>
 	bool write_mesh_partitions(
 		const std::string &path,
-		const std::vector<MeshPartition<Dim, 2>> &parts,
+		const std::vector<std::shared_ptr<MeshPartition<Dim, 2>>> &parts,
 		const PlotFun plot_fun)
 	{
 		moonolith::EPSCanvas canvas;
 
 		Integer n_elements = 0;
 		for(const auto &p : parts) {
-			n_elements += parts[0].get_mesh().n_elements();
+			n_elements += p->get_mesh().n_elements();
 		}
 
 		PlotOpts opts;
@@ -375,15 +375,15 @@ namespace mars {
 		opts.plot_fun = plot_fun;
 		opts.node_size = 1./std::sqrt(n_elements);
 
-		if(parts[0].get_mesh().n_elements() > 100) {
+		if(n_elements > 100) {
 			opts.show_id = false;
 		}
 
 		for(const auto &p : parts) {
-			opts.node_id = p.global_node_id();
-			opts.element_id = p.global_elem_id();
-			opts.uniform = Real(p.partition_id() + 1)/parts.size();
-			draw_mesh(canvas, p.get_mesh(), opts);
+			opts.node_id    = p->node_map().global_id();
+			opts.element_id = p->elem_map().global_id();
+			opts.uniform = Real(p->partition_id() + 1)/parts.size();
+			draw_mesh(canvas, p->get_mesh(), opts);
 		}
 		return canvas.write(path);
 	}

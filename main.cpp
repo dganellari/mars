@@ -167,7 +167,7 @@ namespace mars {
 	template<Integer Dim, Integer ManifoldDim>
 	void test_bisection(
 		const Integer n_levels,
-		std::vector<MeshPartition<Dim, ManifoldDim>> &parts)
+		std::vector<std::shared_ptr<MeshPartition<Dim, ManifoldDim>>> &parts)
 	{
 		ParBisection<Dim, ManifoldDim> b(parts);
 		std::vector<std::vector<mars::Integer>> elements(parts.size());
@@ -181,7 +181,7 @@ namespace mars {
 					Vector<Real, Dim> center;
 					center.set(0.5);
 					mark_hypersphere_for_refinement(
-						parts[k].get_mesh(),
+						parts[k]->get_mesh(),
 						center,
 						0.25,
 						elements[k]
@@ -218,7 +218,7 @@ void test_partition_2D()
 		partitioning[i] = i % n_parts;
 	}
 
-	std::vector<MeshPartition<2, 2>> partitions;
+	std::vector<std::shared_ptr<MeshPartition<2, 2>>> partitions;
 	parition_mesh(mesh, n_parts, partitioning, partitions);
 
 	write_mesh("mesh_2_p.eps", mesh, 10., PLOT_ID);
@@ -245,7 +245,7 @@ void test_partition_3D()
 		partitioning[i] = i % n_parts;
 	}
 
-	std::vector<MeshPartition<3, 3>> partitions;
+	std::vector<std::shared_ptr<MeshPartition<3, 3>>> partitions;
 	parition_mesh(mesh, n_parts, partitioning, partitions);
 
 	write_mesh_partitions(
@@ -266,8 +266,8 @@ int main(const int argc, const char *argv[])
 	// test_bisection_3D();
 	// test_bisection_4D();
 
-	// test_partition_2D();
-	test_partition_3D();
+	test_partition_2D();
+	// test_partition_3D();
 	return EXIT_SUCCESS;
 }
 

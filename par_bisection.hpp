@@ -17,12 +17,13 @@ namespace mars {
 		template<typename T>
 		using ptr = std::shared_ptr<T>;
 		using B = Bisection<Dim, ManifoldDim>;
+		using P = MeshPartition<Dim, ManifoldDim>;
 
-		ParBisection(std::vector<MeshPartition<Dim, ManifoldDim>> &parts)
+		ParBisection(std::vector<ptr<P>> &parts)
 		: parts(parts)
 		{
 			for(auto &m : parts) {
-				bisection.push_back(std::make_shared<B>(m.get_mesh()));
+				bisection.push_back(std::make_shared<B>(m->get_mesh()));
 			}
 		}
 
@@ -41,10 +42,10 @@ namespace mars {
 
 			for(Integer k = 0; k < parts.size(); ++k) {
 				auto b_ptr = bisection[k];
-				max_node_id = std::max(max_node_id, parts[k].max_gobal_node_id());
-				max_elem_id = std::max(max_elem_id, parts[k].max_gobal_elem_id());
+				max_node_id = std::max(max_node_id, parts[k]->max_global_node_id());
+				max_elem_id = std::max(max_elem_id, parts[k]->max_global_elem_id());
 
-				auto n_nodes    = parts[k].n_owned_nodes();
+				auto n_nodes    = parts[k]->n_owned_nodes();
 				auto n_elements = b_ptr->get_mesh().n_elements();
 
 				delta_node_offsets[k+1] = n_nodes    - node_offsets[k+1];
@@ -114,18 +115,18 @@ namespace mars {
 
 				//update midpoint ids
 				for(Integer k = 0; k < parts.size(); ++k) {
-					parts[k].assign_global_node_ids(
-						delta_node_offsets[parts[k].partition_id()],
-						delta_node_offsets[parts[k].partition_id() + 1]
+					parts[k]->assign_global_node_ids(
+						delta_node_offsets[parts[k]->partition_id()],
+						delta_node_offsets[parts[k]->partition_id() + 1]
 					);
 
 					for(auto &mpd : midpoint_id_data) {
 						for(auto &es : mpd) {
 							if(es.owner == k) {
-								Integer midpoint = bisection[k]->edge_node_map().get(parts[k].local_edge(es.edge));
+								Integer midpoint = bisection[k]->edge_node_map().get(parts[k]->local_edge(es.edge));
 								assert(midpoint != INVALID_INDEX);
 
-								Integer global_midpoint = parts[k].global_node_id(midpoint);
+								Integer global_midpoint = parts[k]->global_node_id(midpoint);
 								assert(global_midpoint != INVALID_INDEX);
 								es.midpoint = global_midpoint;
 							}
@@ -142,18 +143,18 @@ namespace mars {
 					for(auto &ges : midpoint_id_data[k]) {
 						// std::cout << "[" << k << "] "; ges.describe(std::cout);
 
-						parts[k].update_midpoint_ids(
+						parts[k]->update_midpoint_ids(
 								bisection[k]->edge_node_map(),
 								{ges}
 						);
 					}
 
-					parts[k].assign_global_elem_ids(
-						delta_elem_offsets[parts[k].partition_id()],
-						delta_elem_offsets[parts[k].partition_id() + 1]
+					parts[k]->assign_global_elem_ids(
+						delta_elem_offsets[parts[k]->partition_id()],
+						delta_elem_offsets[parts[k]->partition_id() + 1]
 					);
 
-					parts[k].append_separate_interface_edges(
+					parts[k]->append_separate_interface_edges(
 						bisection[k]->edge_element_map(),
 						bisection[k]->edge_node_map(),
 						bisection[k]->bisected_edges(),
@@ -219,10 +220,10 @@ namespace mars {
 							std::vector<Edge> global_edge = {ges.edge};
 							std::vector<Edge> local_edges;
 
-							parts[k].localize_edges(global_edge, local_edges);
+							parts[k]->localize_edges(global_edge, local_edges);
 							b_ptr->if_exist_refine_edges(local_edges);
 
-							parts[k].update_midpoint_ids(
+							parts[k]->update_midpoint_ids(
 								b_ptr->edge_node_map(),
 								{ges});
 
@@ -245,8 +246,8 @@ namespace mars {
 
 				Integer p = 0;
 				for(auto &m : parts) {
-					std::cout << "p=[" <<  m.partition_id() << "]-------------------------------\n";
-					m.describe(std::cout);
+					std::cout << "p=[" <<  m->partition_id() << "]-------------------------------\n";
+					m->describe(std::cout);
 					// write_mesh("mesh_2_p" + std::to_string(p++) + ".eps", m.get_mesh(), 10., PLOT_ID);
 					std::cout << "-------------------------------\n";
 				}
@@ -254,7 +255,7 @@ namespace mars {
 			++n_refinements;
 		}
 
-		std::vector<MeshPartition<Dim, ManifoldDim>> &parts;
+		std::vector< ptr<P> > &parts;
 		std::vector< ptr<B> > bisection;
 
 		Integer max_node_id = 0;

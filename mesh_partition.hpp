@@ -10,14 +10,18 @@ namespace mars {
 	template<Integer Dim, Integer ManifoldDim>
 	class MeshPartition {
 	public:
-		void set_partition_id(const Integer partition_id)
+		MeshPartition(
+			const Integer partition_id,
+			const Integer n_partitions)
+		: node_map_(partition_id, n_partitions),
+		  elem_map_(partition_id, n_partitions)
 		{
-			this->partition_id_ = partition_id;
+
 		}
 
 		Integer partition_id() const
 		{
-			return partition_id_;
+			return node_map_.partition_id();
 		}
 
 		void mark_partition_boundary(
@@ -32,24 +36,25 @@ namespace mars {
 		Integer add_and_index_elem(const Simplex<Dim, ManifoldDim> &element)
 		{
 			const Integer local_element_id = mesh.add_elem(element);
-			assert(local_element_id == global_elem_id_.size());
-			global_elem_id_.push_back(element.id);
-			global_to_local_elem_[element.id] = local_element_id;
+			// assert(local_element_id == global_elem_id_.size());
+			// global_elem_id_.push_back(element.id);
+			// global_to_local_elem_[element.id] = local_element_id;
+			elem_map_.add(local_element_id, element.id, partition_id());
 			return local_element_id;
 		}
 
 		Simplex<Dim, ManifoldDim> &global_elem(const Integer element_id)
 		{
-			auto it = global_to_local_elem_.find(element_id);
-			assert(it != global_to_local_elem_.end());
-			return mesh.elem(it->second);
+			auto index = elem_map_.local(element_id);
+			assert(index != INVALID_INDEX);
+			return mesh.elem(index);
 		}
 
 		const Simplex<Dim, ManifoldDim> &global_elem(const Integer element_id) const
 		{
-			auto it = global_to_local_elem_.find(element_id);
-			assert(it != global_to_local_elem_.end());
-			return mesh.elem(it->second);
+			auto index = elem_map_.local(element_id);
+			assert(index != INVALID_INDEX);
+			return mesh.elem(index);
 		}
 
 		void describe(std::ostream &os) const
@@ -59,7 +64,7 @@ namespace mars {
 			os << "elements:\n";
 			for(Integer i = 0; i < mesh.n_elements(); ++i) {
 				if(!mesh.is_active(i)) continue;
-				os << "[" << i << ", " << global_elem_id_[i] << "]";
+				os << "[" << i << ", " << elem_map_.global(i) << "]";
 
 				for(auto n : mesh.elem(i).nodes) {
 					os << " " << n;
@@ -68,7 +73,7 @@ namespace mars {
 				os << " ->";
 
 				for(auto n : mesh.elem(i).nodes) {
-					os << " " << global_node_id_[n];
+					os << " " << node_map_.global(n);
 				}
 
 				if(is_elem_interface(i)) {
@@ -90,7 +95,7 @@ namespace mars {
 
 			os << "nodes:\n";
 			for(Integer i = 0; i < mesh.n_nodes(); ++i) {
-				os << "[" << i << ", " << global_node_id_[i] << "] " << node_partition_id_[i] << "\n";
+				os << "[" << i << ", " << node_map_.global(i) << "] " << node_map_.owner(i) << "\n";
 			}
 		}
 
@@ -118,7 +123,7 @@ namespace mars {
 			for(Integer i = 0; i < mesh.n_elements(); ++i) {
 				assert(mesh.is_active(i));
 				auto &e = mesh.elem(i);
-				const auto &parent_e = parent_mesh.elem(global_elem_id_[i]);
+				const auto &parent_e = parent_mesh.elem(elem_map_.global(i));
 
 				for(Integer k = 0; k < parent_e.nodes.size(); ++k) {
 					const Integer n = parent_e.nodes[k];
@@ -126,9 +131,15 @@ namespace mars {
 
 					if(visited[n] == INVALID_INDEX) {
 						local_n = mesh.add_point(parent_mesh.point(n));
-						global_node_id_.push_back(n);
-						node_partition_id_.push_back(node_partitioning[n]);
-						global_to_local_node_[n] = local_n;
+						// global_node_id_.push_back(n);
+						// node_partition_id_.push_back(node_partitioning[n]);
+						// global_to_local_node_[n] = local_n;
+
+						node_map_.add(
+							local_n,
+							n,
+							node_partitioning[n]
+						);
 						
 						visited[n] = local_n;
 					} else {
@@ -137,13 +148,11 @@ namespace mars {
 
 					assert(e.nodes[k] == parent_e.nodes[k]);
 					e.nodes[k] = local_n;
-
-					// std::cout << local_n << " -> " << n << " == " <<  visited[n] << " -> " << global_node_id_[local_n] << std::endl;
 				}
 			}
 
-			for(auto i : global_node_id_) {
-				visited[i] = INVALID_INDEX;
+			for(Integer i = 0; i < mesh.n_nodes(); ++i) {
+				visited[node_map_.global(i)] = INVALID_INDEX;
 			}
 
 			mesh.update_dual_graph();
@@ -164,8 +173,8 @@ namespace mars {
 			const Edge &e,
 			std::vector<Integer> &partitions)
 		{
-			if(global_node_id_[e.nodes[0]] == INVALID_INDEX || 
-			   global_node_id_[e.nodes[1]] == INVALID_INDEX)
+			if(node_map_.global(e.nodes[0]) == INVALID_INDEX || 
+			   node_map_.global(e.nodes[1]) == INVALID_INDEX)
 			{
 				// assert(false);
 				return false;
@@ -208,8 +217,8 @@ namespace mars {
 			const std::vector<Edge> &local_edges,
 			std::vector< std::vector<EdgeSplit> > &global_edges)
 		{
-			node_partition_id_.resize(mesh.n_nodes(), INVALID_INDEX);
-			global_node_id_.resize(mesh.n_nodes(), INVALID_INDEX);
+			// node_partition_id_.resize(mesh.n_nodes(), INVALID_INDEX);
+			// global_node_id_.resize(mesh.n_nodes(), INVALID_INDEX);
 
 
 			// for(auto &ge : global_edges) 
@@ -221,10 +230,8 @@ namespace mars {
 				std::vector<Integer> partitions;
 
 				if(edge_interfaces(eem, e, partitions)) {
-					assert(e.nodes[0] < global_node_id_.size());
-					assert(e.nodes[1] < global_node_id_.size());
 
-					Edge global_edge(global_node_id_[e.nodes[0]], global_node_id_[e.nodes[1]]);
+					Edge global_edge(node_map_.global(e.nodes[0]), node_map_.global(e.nodes[1]));
 					// global_edge.fix_ordering
 
 					//find midpoint owner and global_id
@@ -233,8 +240,8 @@ namespace mars {
 
 					assert(local_midpoint < mesh.n_nodes());
 
-					Integer midpoint = global_node_id_[local_midpoint];
-					Integer owner = node_partition_id_[local_midpoint];
+					Integer midpoint = node_map_.global(local_midpoint);
+					Integer owner = node_map_.owner(local_midpoint);
 
 					if(owner == INVALID_INDEX) {
 						//try to claim ownership
@@ -256,69 +263,25 @@ namespace mars {
 					// global_edges[partition_id()].push_back(global_edge_split);
 				} else {
 					Integer local_midpoint = enm.get(e);
-					node_partition_id_[local_midpoint] = partition_id();
+					node_map_.set_owner(local_midpoint, partition_id());
 				}
 			}
 		}
 
-		// Integer update_ownership_of_midpoints(
-		// 	const EdgeNodeMap &enm,
-		// 	const std::vector<Edge> &refined_edges
-		// 	)
-		// {
-		// 	Integer n_new_local_nodes = 0;
-
-		// 	for(auto e : refined_edges) {
-		// 		Integer local_midpoint_id = enm.get(e);
-
-		// 		if(node_partition_id_.size() <= local_midpoint_id) {
-		// 			node_partition_id_.resize(local_midpoint_id + 1, INVALID_INDEX);
-		// 		}
-
-		// 		if(node_partition_id_[local_midpoint_id] == INVALID_INDEX) {
-		// 			auto p0 = node_partition_id_[e.nodes[0]];
-		// 			auto p1 = node_partition_id_[e.nodes[1]];
-
-		// 			assert(p0 != INVALID_INDEX);
-		// 			assert(p1 != INVALID_INDEX);
-
-		// 			if(p0 < p1) {
-		// 				node_partition_id_[local_midpoint_id] = p0;
-		// 			} else {
-		// 				node_partition_id_[local_midpoint_id] = p1;
-		// 			}
-
-		// 			if(node_partition_id_[local_midpoint_id] == partition_id_) {
-		// 				++n_new_local_nodes;
-		// 			}
-		// 		}
-		// 	}
-
-		// 	return n_new_local_nodes;
-		// }
-
 		Edge local_edge(const Edge &global_edge) const
 		{
-			auto it_0 = global_to_local_node_.find(global_edge.nodes[0]);
-			auto it_1 = global_to_local_node_.find(global_edge.nodes[1]);
+			auto n1 = node_map_.local(global_edge.nodes[0]);
+			auto n2 = node_map_.local(global_edge.nodes[1]);
 			
-			// if(it_0 == global_to_local_node_.end() ||
-			//    it_1 == global_to_local_node_.end()) {
-			// 	return Edge();
-			// }
-
-			assert(it_0 != global_to_local_node_.end());
-			assert(it_1 != global_to_local_node_.end());
-
-			return Edge(it_0->second, it_1->second);
+			assert(n1 != INVALID_INDEX);
+			assert(n2 != INVALID_INDEX);
+			return Edge(n1, n2);
 		}
 
 		void update_midpoint_ids(
 			const EdgeNodeMap &enm,
 			const std::vector<EdgeSplit> &global_edges)
 		{
-			node_partition_id_.resize(mesh.n_nodes(), INVALID_INDEX);
-
 			for(auto es : global_edges) {
 				auto local_e = local_edge(es.edge);
 				if(!local_e.is_valid()) {
@@ -334,14 +297,9 @@ namespace mars {
 				} 
 
 				assert(es.owner != INVALID_INDEX);
-				// assert(local_mp != INVALID_INDEX);
 				
 				if(local_mp != INVALID_INDEX) {
-					if(node_partition_id_.size() <= local_mp) {
-						node_partition_id_.resize(local_mp, INVALID_INDEX);
-					}
-
-					node_partition_id_[local_mp] = es.owner;
+					node_map_.set_owner(local_mp, es.owner);
 				}
 			}
 		}
@@ -350,8 +308,7 @@ namespace mars {
 			const Integer local_id,
 			const Integer global_id)
 		{
-			global_node_id_[local_id]        = global_id;
-			global_to_local_node_[global_id] = local_id;
+			node_map_.set_global(local_id, global_id);
 		}
 
 		void localize_edges(
@@ -367,58 +324,33 @@ namespace mars {
 			}
 		}
 
-		inline Integer max_gobal_node_id() const
+		inline Integer max_global_node_id() const
 		{
-			return *std::max_element(global_node_id_.begin(), global_node_id_.end());
+			return node_map_.max_id();
 		}
 
-		inline Integer max_gobal_elem_id() const
+		inline Integer max_global_elem_id() const
 		{
-			return *std::max_element(global_elem_id_.begin(), global_elem_id_.end());
+			return elem_map_.max_id();
 		}
 
 		Integer n_owned_nodes() const
 		{
-			Integer ret = 0;
-			for(auto n : node_partition_id_) {
-				ret += (n == partition_id());
-			}
-
-			return ret;
+			return node_map_.n_owned();
 		}
 
 		void assign_node_owner(
 			const Integer local_node_id,
 			const Integer owner)
 		{
-			assert(local_node_id < mesh.n_nodes());
-
-			global_node_id_.resize(mesh.n_nodes(), INVALID_INDEX);
-			global_node_id_[local_node_id] = owner;
+			node_map_.set_owner(local_node_id, owner);
 		}
 
 		void assign_global_node_ids(
 			const Integer begin,
 			const Integer end)
 		{
-			global_node_id_.resize(mesh.n_nodes(), INVALID_INDEX);
-
-			if(begin == end) return;
-
-			Integer current_id = begin;
-			
-			Integer count = 0;
-			for(Integer i = 0; i < mesh.n_nodes(); ++i) {
-				if(node_partition_id_[i] != partition_id_ || 
-				   global_node_id_[i] != INVALID_INDEX) continue;
-
-				    // global_node_id_[i] = current_id++;
-
-					assign_node_local_to_global(i, current_id++);
-					count++;
-			}
-
-			assert(count == end - begin);
+			node_map_.assign_global_ids(begin, end);
 		}
 
 
@@ -426,33 +358,22 @@ namespace mars {
 			const Integer begin,
 			const Integer end)
 		{
-			global_elem_id_.resize(mesh.n_elements(), INVALID_INDEX);
-
-			Integer current_id = begin;
-			
-			Integer count = 0;
-			for(Integer i = 0; i < mesh.n_elements(); ++i) {
-				if(global_elem_id_[i] == INVALID_INDEX) {
-					global_elem_id_[i] = current_id++;
-					count++;
-				}
-			}
-
-			assert(count == end - begin);
-		}
-
-		const std::vector<Integer> &global_elem_id() const
-		{
-			return global_elem_id_;
-		}
-		const std::vector<Integer> &global_node_id() const
-		{
-			return global_node_id_;
+			elem_map_.assign_global_ids(begin, end);
 		}
 
 		const Integer global_node_id(const Integer local_node_id) const
 		{
-			return global_node_id_[local_node_id];
+			return node_map_.global(local_node_id);
+		}
+
+		inline const Map &node_map() const
+		{
+			return node_map_;
+		}
+		
+		inline const Map &elem_map() const
+		{
+			return elem_map_;
 		}
 
 	private:
@@ -471,15 +392,10 @@ namespace mars {
 			return -(tag + 2);
 		}
 
-		Mesh<Dim, ManifoldDim> mesh;
-		Integer partition_id_;
-		std::vector<Integer> global_elem_id_;
-		std::vector<Integer> global_node_id_;
-		std::vector<Integer> node_partition_id_;
+		Mesh<Dim, ManifoldDim> mesh;		
+		Map node_map_;
+		Map elem_map_;
 
-		//global to local
-		std::map<Integer, Integer> global_to_local_elem_;
-		std::map<Integer, Integer> global_to_local_node_;
 	};
 }
 
