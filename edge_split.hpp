@@ -18,7 +18,27 @@ namespace mars {
 		Integer owner;
 		std::set<Integer> partitions;
 
-		void describe(std::ostream &os) const
+		inline bool is_valid() const 
+		{
+			return edge.is_valid();
+		}
+
+		inline bool only_on_partition(const Integer partition_id) const
+		{
+			if(partitions.size() == 1) {
+				return *partitions.begin() == partition_id;
+			}
+
+			return false;
+		}
+
+		// void determine_owner()
+		// {
+		// 	assert(!partitions.empty());
+		// 	owner = *partitions.begin();
+		// }
+
+		inline void describe(std::ostream &os) const
 		{
 			os << "split";
 			edge.describe(os); 

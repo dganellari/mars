@@ -1,0 +1,207 @@
+#ifndef MARS_EDGE_SPLIT_POOL_HPP
+#define MARS_EDGE_SPLIT_POOL_HPP
+
+#include "edge.hpp"
+#include "edge_split.hpp"
+
+namespace mars {
+	class EdgeSplitPool {
+	public:
+		explicit EdgeSplitPool(
+			const Integer partition_id,
+			const Integer n_parts)
+		: partition_id(partition_id), n_parts(n_parts)
+		{}
+
+		//@return true if the split has been solved globally in terms
+		//of ownership and node_id
+		bool add_split(const EdgeSplit &edge_split)
+		{
+			auto &es = get_split(edge_split.edge);
+			if(es.midpoint != INVALID_INDEX) {
+				//does not need to comunicate
+				//is global already
+				return true;
+			}
+
+			//put the split in the global pool
+			const EdgeSplit &gs = add_global_split(partition_id, edge_split);
+
+			if(gs.only_on_partition(partition_id)) {
+				return false;
+			}
+			
+			if(!es.is_valid()) {
+				to_communicate.push_back(gs);
+			} 
+
+			return false;
+		}
+
+		void pack(std::vector<std::vector<EdgeSplit>> &splits)
+		{
+			splits.resize(n_parts);
+
+			for(Integer p = 0; p < n_parts; ++p) {
+				splits[p].clear();
+			}
+
+			for(const auto &s : to_communicate) {
+				for(auto p : s.partitions) {
+					if(p == partition_id) continue;
+
+					splits[p].push_back(s);
+				}
+			}
+
+			to_communicate.clear();
+		}
+
+		inline void unpack(
+			const Integer originator,
+			const std::vector<EdgeSplit> &splits)
+		{
+			for(const auto &s : splits) {
+				add_global_split(originator, s);
+			}
+		}
+
+		const EdgeSplit &add_global_split(
+			const Integer originator,
+			const EdgeSplit &edge_split)
+		{
+			auto it = global_splits.find(edge_split.edge);
+			if(it == global_splits.end()) {
+				return global_splits[edge_split.edge] = edge_split;
+			}
+
+			EdgeSplit &g_split = it->second;
+			if(g_split.midpoint != INVALID_INDEX) {
+				//ownership and global id already determined
+				return g_split;
+			}
+
+			//update ids
+			if(edge_split.midpoint != INVALID_INDEX) {
+				g_split = edge_split;
+				return g_split;
+			}
+
+			//determine owner
+			if(g_split.owner == INVALID_INDEX) {
+				g_split.owner = originator;
+			} else {
+				g_split.owner = std::min(originator, g_split.owner);
+			}
+
+			return g_split;
+		}
+
+		inline const EdgeSplit &get_split(const Edge &e) const
+		{
+			static const EdgeSplit null_;
+
+			auto it = global_splits.find(e);
+			if(it == global_splits.end()) {
+				return null_;
+			}
+
+			return it->second;
+		}
+
+		inline EdgeSplit &get_split(const Edge &e)
+		{
+			static EdgeSplit null_;
+
+			auto it = global_splits.find(e);
+			if(it == global_splits.end()) {
+				return null_;
+			}
+
+			return it->second;
+		}
+
+		inline Integer owner(const Edge &e) const
+		{
+			auto it = global_splits.find(e);
+			if(it == global_splits.end()) {
+				return INVALID_INDEX;
+			}
+
+			return it->second.owner;
+		}
+
+		inline void resolve_midpoint_id(const Edge &e, const Integer m_id)
+		{
+			auto &s = get_split(e);
+			assert(s.is_valid());
+			assert(s.midpoint == INVALID_INDEX);
+			s.midpoint = m_id;
+			to_communicate.push_back(s);
+		}
+
+		inline Integer midpoint(const Edge &e) const
+		{
+			auto it = global_splits.find(e);
+			if(it == global_splits.end()) {
+				return INVALID_INDEX;
+			}
+
+			return it->second.midpoint;
+		}
+
+		template<Integer Dim, Integer ManifoldDim>
+		void set_midpoint_ids_to(
+			const EdgeNodeMap &enm,
+			MeshPartition<Dim, ManifoldDim> &part)
+		{
+			for(auto gs_it = global_splits.begin(); gs_it != global_splits.end();) {
+				const auto &gs = gs_it->second;
+				Edge e = part.local_edge(gs.edge);
+				
+				if(!e.is_valid()) {
+					++gs_it;
+					continue;
+				}
+
+				Integer local_mp = enm.get(e);
+
+				assert(gs.midpoint != INVALID_INDEX);
+
+				part.assign_node_owner(local_mp, gs.owner);
+				part.assign_node_local_to_global(local_mp, gs.midpoint);
+
+				global_splits.erase(gs_it++);
+			}
+		}
+
+		template<Integer Dim, Integer ManifoldDim>
+		void collect_splits_to_apply(
+			const MeshPartition<Dim, ManifoldDim> &part,
+			std::vector<EdgeSplit> &splits)
+		{
+			splits.clear();
+			splits.reserve(global_splits.size());
+
+			for(auto gs_it = global_splits.begin(); gs_it != global_splits.end();) {
+				const auto &gs = gs_it->second;
+				splits.push_back(gs);
+			}
+		}
+
+		inline bool empty() const
+		{
+			return global_splits.empty() && to_communicate.empty();
+		}
+
+		std::map<Edge, EdgeSplit> global_splits;
+		std::vector<EdgeSplit> to_communicate;
+
+		//not really necessary outside debugging
+		// std::vector<EdgeSplit> resolved;
+		Integer partition_id;
+		Integer n_parts;
+	};
+}
+
+#endif //MARS_EDGE_SPLIT_POOL_HPP
