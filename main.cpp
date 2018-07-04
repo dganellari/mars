@@ -172,7 +172,10 @@ namespace mars {
 		ParBisection<Dim, ManifoldDim> b(parts);
 		std::vector<std::vector<mars::Integer>> elements(parts.size());
 
-		;
+		// for(Integer k = 0; k < parts.size(); ++k) {
+		// 	parts[k]->node_map().describe(std::cout);
+		// }
+		
 		for(Integer i = 0; i < n_levels; ++i) {
 			std::cout << "xxxxxxxxxxxxxxxxxxxxxx\n";
 			
@@ -223,7 +226,7 @@ void test_partition_2D()
 
 	write_mesh("mesh_2_p.eps", mesh, 10., PLOT_ID);
 
-	test_bisection(10, partitions);
+	test_bisection(3, partitions);
 
 	write_mesh_partitions(
 		"par2.eps",
@@ -256,11 +259,11 @@ void test_partition_3D()
 	write_mesh_partitions(
 		"par3_",
 		partitions,
-		PLOT_NUMERIC_TAG);
+		PLOT_UNIFORM);
 
 	// write_mesh("mesh_3", mesh, 10., PLOT_ID);
 
-	test_bisection(2, partitions);
+	test_bisection(10, partitions);
 
 }
 

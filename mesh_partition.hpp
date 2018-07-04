@@ -240,8 +240,8 @@ namespace mars {
 
 					assert(local_midpoint < mesh.n_nodes());
 
-					Integer midpoint = node_map_.global(local_midpoint);
-					Integer owner = node_map_.owner(local_midpoint);
+					Integer midpoint = node_map_.insert_global(local_midpoint);
+					Integer owner = node_map_.insert_owner(local_midpoint);
 
 					if(owner == INVALID_INDEX) {
 						//try to claim ownership
@@ -289,10 +289,12 @@ namespace mars {
 					assert(local_midpoint != INVALID_INDEX);
 					assert(local_midpoint < mesh.n_nodes());
 
-					Integer midpoint = node_map_.global(local_midpoint);
-					Integer owner    = node_map_.owner(local_midpoint);
+					Integer midpoint = node_map_.insert_global(local_midpoint);
+					Integer owner    = node_map_.insert_owner(local_midpoint);
 
 					EdgeSplit global_edge_split(global_edge, midpoint, owner);
+					global_edge_split.partitions.insert(partitions.begin(), partitions.end());
+
 					pool.add_split(global_edge_split);
 				} else {
 					Integer local_midpoint = enm.get(e);
@@ -333,7 +335,7 @@ namespace mars {
 				auto le = local_edge(e_split.edge);
 				const Integer midpoint = enm.get(le);
 
-				assert(midpoint != INVALID_INDEX);
+				if(midpoint == INVALID_INDEX) continue;
 				if(node_map_.global(midpoint) == INVALID_INDEX) continue;
 				pool.resolve_midpoint_id(e_split.edge, node_map_.global(midpoint));
 			}

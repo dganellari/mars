@@ -17,6 +17,8 @@ namespace mars {
 		//of ownership and node_id
 		bool add_split(const EdgeSplit &edge_split)
 		{
+			assert(!edge_split.partitions.empty());
+
 			auto &es = get_split(edge_split.edge);
 			if(es.midpoint != INVALID_INDEX) {
 				//does not need to comunicate
@@ -74,9 +76,13 @@ namespace mars {
 			const Integer originator,
 			const EdgeSplit &edge_split)
 		{
+			assert(!edge_split.partitions.empty());
+
 			auto it = global_splits.find(edge_split.edge);
 			if(it == global_splits.end()) {
-				return global_splits[edge_split.edge] = edge_split;
+				auto &es = global_splits[edge_split.edge] = edge_split;
+				es.owner = originator;
+				return es;
 			}
 
 			EdgeSplit &g_split = it->second;
@@ -173,6 +179,8 @@ namespace mars {
 
 				Integer local_mp = enm.get(e);
 
+				if(local_mp == INVALID_INDEX) { ++gs_it; continue; }
+
 				assert(local_mp != INVALID_INDEX);
 
 				part.assign_node_owner(local_mp, gs.owner);
@@ -237,6 +245,22 @@ namespace mars {
 		inline std::map<Edge, EdgeSplit>::const_iterator end() const
 		{
 			return global_splits.end();
+		}
+
+		void describe(std::ostream &os) const
+		{
+			os << ";;;;;;;;;;;;;;;;;;;;;;;;;;;\n";
+			os << "global_splits(" << partition_id << "/" << n_parts << ") empty = " << empty() << "\n"; 
+			for(const auto &gs : global_splits) {
+				gs.second.describe(os);
+			}
+
+			os << "to_communicate\n";
+			for(const auto &gs : to_communicate) {
+				gs.describe(os);
+			}
+
+			os << ";;;;;;;;;;;;;;;;;;;;;;;;;;;\n";
 		}
 
 

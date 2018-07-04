@@ -104,6 +104,26 @@ namespace mars {
 			}
 		}
 
+		void exchange_edge_pools()
+		{
+			//communicate edges
+			//fake commmunication
+			{
+				for(Integer k = 0; k < parts.size(); ++k) {
+					std::vector<std::vector<EdgeSplit>> splits;
+					edge_split_pool_[k]->pack(splits, false);
+
+					for(Integer j = 0; j < parts.size(); ++j) {
+						if(j == k) continue;
+
+						std::cout << "edge_exchange(" << k << ", " << j << ") " << splits[j].size() << std::endl;
+						edge_split_pool_[j]->unpack(k, splits[j]);
+					}
+				}
+			}
+
+		}
+
 		//2) (synchronized)
 		void update_edge_pools()
 		{
@@ -119,19 +139,7 @@ namespace mars {
 				bisection[k]->clear_bisected_edges();
 			}
 
-			//communicate edges
-			//fake commmunication
-			{
-				for(Integer k = 0; k < parts.size(); ++k) {
-					std::vector<std::vector<EdgeSplit>> splits;
-					edge_split_pool_[k]->pack(splits, false);
-
-					for(Integer j = 0; j < parts.size(); ++j) {
-						edge_split_pool_[j]->unpack(k, splits[j]);
-					}
-				}
-			}
-
+			exchange_edge_pools();
 		}
 
 		//3) (synchronized)
@@ -143,7 +151,15 @@ namespace mars {
 					bisection[k]->edge_node_map(),
 					*edge_split_pool_[k]
 				);
+
+				parts[k]->elem_map().resize(parts[k]->get_mesh().n_elements(), k);
 			}
+
+
+			// std::cout << "before " << std::endl;
+			// for(Integer k = 0; k < parts.size(); ++k) {
+			// 	parts[k]->elem_map().describe(std::cout);
+			// }
 
 			// update global ids
 
@@ -182,20 +198,7 @@ namespace mars {
 				);
 			}
 
-			// communicate edges again for the midpoint index
-			//fake commmunication
-			{
-				for(Integer k = 0; k < parts.size(); ++k) {
-					std::vector<std::vector<EdgeSplit>> splits;
-					edge_split_pool_[k]->pack(splits, false);
-
-					for(Integer j = 0; j < parts.size(); ++j) {
-						if(j == k) continue;
-
-						edge_split_pool_[j]->unpack(k, splits[j]);
-					}
-				}
-			}
+			exchange_edge_pools();
 
 			//parallel for
 			for(Integer k = 0; k < parts.size(); ++k) {
@@ -204,7 +207,12 @@ namespace mars {
 					*edge_split_pool_[k]
 				);
 			}
-		}
+
+			// std::cout << "after " << std::endl;
+			// for(Integer k = 0; k < parts.size(); ++k) {
+			// 	parts[k]->elem_map().describe(std::cout);
+			// }
+		}	
 
 		//4) (parallel)
 		bool conform_interfaces()
@@ -226,10 +234,15 @@ namespace mars {
 
 			 	//refine edges
 				bisection[k]->if_exist_refine_edges(splits);
+				
 				has_more = has_more || !edge_split_pool_[k]->empty();
+
+				if(!edge_split_pool_[k]->empty()) {
+					edge_split_pool_[k]->describe(std::cout);
+				}
 			}
 
-			return has_more;
+			return !has_more;
 		}
 
 		void refine(std::vector<std::vector<mars::Integer>> &elements)
@@ -239,6 +252,7 @@ namespace mars {
 
 			bool complete = false;
 
+			Integer max_loops = 10;
 			Integer loops = 0;
 			while(!complete) {
 				//2)
@@ -250,7 +264,24 @@ namespace mars {
 				//4)
 				complete = conform_interfaces();
 
-				std::cout << "loop " << loops++ << " done" << std::endl;
+				std::cout << "loop " << loops++ << " done. complete = " << complete << std::endl;
+
+				// for(auto &es : edge_split_pool_) {
+				// 	es->describe(std::cout);
+				// }
+
+				// for(auto &p : parts) {
+				// 	p->describe(std::cout);
+				// }
+
+				write_mesh_partitions(
+					"par2" + std::to_string(loops) + ".eps",
+					parts,
+					PLOT_UNIFORM);
+
+				if(loops >= max_loops) {
+					assert(false);
+				}
 			}
 		}
 
