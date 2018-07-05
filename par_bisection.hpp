@@ -261,6 +261,11 @@ namespace mars {
 			return !has_more;
 		}
 
+		void print_analysis(const P &part, const EdgeSplitPool &esp)
+		{
+			
+		}
+
 		void refine(std::vector<std::vector<mars::Integer>> &elements)
 		{
 			//1)
@@ -285,8 +290,9 @@ namespace mars {
 				if(loops >= max_loops && !complete) {
 					for(Integer k = 0; k < parts.size(); ++k) {
 						if(!edge_split_pool_[k]->empty()) {
-							edge_split_pool_[k]->describe(std::cout);
-							parts[k]->node_map().describe(std::cout);
+							// edge_split_pool_[k]->describe(std::cout);
+							// parts[k]->node_map().describe(std::cout);
+							print_analysis(*parts[k], *edge_split_pool_[k]);
 						}
 					}
 					

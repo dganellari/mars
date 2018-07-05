@@ -20,24 +20,27 @@ void test_bisection_2D()
 	using namespace mars;
 	std::cout << "======================================\n";
 	Mesh<2, 2> mesh;
-	// read_mesh("../data/square_2.MFEM", mesh);
-	read_mesh("../data/square_2_def.MFEM", mesh);
+	read_mesh("../data/square_2.MFEM", mesh);
+	// read_mesh("../data/square_2_def.MFEM", mesh);
 
 	Quality<2, 2> q(mesh);
 	q.compute();
 
 	mark_boundary(mesh);
 	// print_boundary_info(mesh);
-	write_mesh("mesh_2_bisect_0.eps", mesh, 10., PLOT_ID);
+	
 
 	Bisection<2, 2> b(mesh);
-	// auto edge_select = std::make_shared<NewestVertexEdgeSelect<2, 2>>();
+	auto edge_select = std::make_shared<NewestVertexEdgeSelect<2, 2>>();
 	// auto edge_select = std::make_shared<LongestEdgeSelect<2, 2>>();
-	auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<2, 2>>();
-	// edge_select->set_recursive(true);
-	edge_select->set_recursive(false);
-	b.set_edge_select(edge_select);
+	// auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<2, 2>>();
+	edge_select->set_recursive(true);
+	// edge_select->set_recursive(false);
 	b.uniform_refine(1);
+	b.set_edge_select(edge_select);
+	// b.uniform_refine(3);
+
+	write_mesh("mesh_2_bisect_0.eps", mesh, 10., PLOT_ID);
 
 	Integer n_levels = 16;
 	for(Integer i = 0; i < n_levels; ++i) {
@@ -84,9 +87,9 @@ void test_bisection_3D()
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 
 	Bisection<3, 3> b(mesh);
-	// auto edge_select = std::make_shared<NewestVertexEdgeSelect<3, 3>>();
+	auto edge_select = std::make_shared<NewestVertexEdgeSelect<3, 3>>();
 	// auto edge_select = std::make_shared<LongestEdgeSelect<3, 3>>();
-	auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<3, 3>>();
+	// auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<3, 3>>();
 	
 	b.uniform_refine(3);
 
@@ -181,8 +184,8 @@ namespace mars {
 		std::vector<std::shared_ptr<MeshPartition<Dim, ManifoldDim>>> &parts)
 	{
 		ParBisection<Dim, ManifoldDim> b(parts);
-		// auto edge_select = std::make_shared<NewestVertexEdgeSelect<Dim, ManifoldDim>>();
-		auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<Dim, ManifoldDim>>();
+		auto edge_select = std::make_shared<NewestVertexEdgeSelect<Dim, ManifoldDim>>();
+		// auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<Dim, ManifoldDim>>();
 		// auto edge_select = std::make_shared<LongestEdgeSelect<Dim, ManifoldDim>>();
 		edge_select->set_recursive(true);
 		// edge_select->set_recursive(false);
@@ -229,11 +232,11 @@ void test_partition_2D()
 	read_mesh("../data/square_2_def.MFEM", mesh);
 
 	Bisection<2, 2> b(mesh);
-	b.uniform_refine(4);
+	b.uniform_refine(1);
 
 	std::vector<Integer> partitioning(mesh.n_elements());
 
-	Integer n_parts = mesh.n_active_elements();
+	Integer n_parts = 7;
 	for(Integer i = 0; i < mesh.n_elements(); ++i) {
 		partitioning[i] = i % n_parts;
 	}
@@ -243,7 +246,7 @@ void test_partition_2D()
 
 	write_mesh("mesh_2_p.eps", mesh, 10., PLOT_ID);
 
-	test_bisection(12, partitions);
+	test_bisection(17, partitions);
 
 	write_mesh_partitions(
 		"par2.eps",
@@ -261,11 +264,11 @@ void test_partition_3D()
 	read_mesh("../data/cube_6.MFEM", mesh, true);
 
 	Bisection<3, 3> b(mesh);
-	b.uniform_refine(3);
+	b.uniform_refine(2);
 
 	std::vector<Integer> partitioning(mesh.n_elements());
 
-	Integer n_parts = 6;
+	Integer n_parts = 2;
 	for(Integer i = 0; i < mesh.n_elements(); ++i) {
 		partitioning[i] = i % n_parts;
 	}
@@ -316,8 +319,8 @@ void run_benchmarks()
 int main(const int argc, const char *argv[])
 {
 	using namespace mars;
-	// test_bisection_2D();
-	test_bisection_3D();
+	test_bisection_2D();
+	// test_bisection_3D();
 	// test_bisection_4D();
 
 	// run_benchmarks();
