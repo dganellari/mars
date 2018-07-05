@@ -113,6 +113,61 @@ namespace mars {
 	private:
 		bool recursive_;
 	};
+
+
+	template<Integer Dim, Integer ManifoldDim>
+	class NewestVertexEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
+	public:
+		NewestVertexEdgeSelect()
+		: recursive_(true)
+		{}
+
+		Integer select_edge(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Integer element_id) const override
+		{
+			const auto &e = mesh.elem(element_id);
+			Integer edge_num = 0;
+
+			auto node_ids = e.nodes;
+			std::sort(node_ids.begin(), node_ids.end());
+			Edge edge(node_ids.nodes[0], node_ids.nodes[1]);
+
+			for(Integer i = 0; i < n_edges(e); ++i) {
+				Integer v1, v2;
+				e.edge(i, v1, v2);
+				
+				if(Edge(v1, v2) == edge) {
+					return i;
+				}
+			}
+
+			assert(false);
+			return edge_num;
+		}
+
+		virtual Integer select_edge(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Edge &neighbor_edge,
+			const Integer element_id) const
+		{	
+			(void) neighbor_edge;
+			return select_edge(mesh, element_id);
+		}
+
+		void set_recursive(const bool recursive)
+		{
+			recursive_ = recursive;
+		}
+
+		bool is_recursive() const override
+		{
+			return recursive_;
+		}
+
+	private:
+		bool recursive_;
+	};
 	
 
 	template<Integer Dim, Integer ManifoldDim>
