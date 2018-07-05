@@ -33,6 +33,14 @@ namespace mars {
 			}
 		}
 
+
+		void set_edge_select(const std::shared_ptr<EdgeSelect<Dim, ManifoldDim>> &edge_select)
+		{
+			for(auto &b : bisection) {
+				b->set_edge_select(edge_select);
+			}
+		}
+
 		void update_offsets()
 		{
 			node_offsets.resize(parts.size() + 1, 0);
@@ -283,7 +291,7 @@ namespace mars {
 					}
 					
 					write_mesh_partitions(
-						"par" + std::to_string(loops) + ".eps",
+						"par_" + std::to_string(ManifoldDim) + "_" + std::to_string(loops) + ".eps",
 						parts,
 						PLOT_UNIFORM);
 

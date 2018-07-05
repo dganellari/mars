@@ -13,6 +13,7 @@
 #include "utils.hpp"
 #include "mesh_partition.hpp"
 #include "par_bisection.hpp"
+#include "benchmark.hpp"
 
 void test_bisection_2D()
 {	
@@ -30,7 +31,12 @@ void test_bisection_2D()
 	write_mesh("mesh_2_bisect_0.eps", mesh, 10., PLOT_ID);
 
 	Bisection<2, 2> b(mesh);
-	b.set_limit_to_1_level_diff(false);
+	// auto edge_select = std::make_shared<NewestVertexEdgeSelect<2, 2>>();
+	// auto edge_select = std::make_shared<LongestEdgeSelect<2, 2>>();
+	auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<2, 2>>();
+	// edge_select->set_recursive(true);
+	edge_select->set_recursive(false);
+	b.set_edge_select(edge_select);
 	b.uniform_refine(1);
 
 	Integer n_levels = 16;
@@ -78,8 +84,11 @@ void test_bisection_3D()
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 
 	Bisection<3, 3> b(mesh);
+	// auto edge_select = std::make_shared<NewestVertexEdgeSelect<3, 3>>();
+	// auto edge_select = std::make_shared<LongestEdgeSelect<3, 3>>();
+	auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<3, 3>>();
+	// edge_select->set_recursive(true);
 	b.uniform_refine(1);
-	b.set_limit_to_1_level_diff(false);
 
 	Integer n_levels = 10;
 	for(Integer i = 0; i < n_levels; ++i) {
@@ -130,7 +139,6 @@ void test_bisection_4D()
 	std::cout << "volume: " << mesh.volume() << std::endl;
 	Bisection<4, 4> b(mesh);
 	b.uniform_refine(1);
-	b.set_limit_to_1_level_diff(false);
 
 	Integer n_levels = 8;
 	for(Integer i = 0; i < n_levels; ++i) {
@@ -170,6 +178,11 @@ namespace mars {
 		std::vector<std::shared_ptr<MeshPartition<Dim, ManifoldDim>>> &parts)
 	{
 		ParBisection<Dim, ManifoldDim> b(parts);
+		auto edge_select = std::make_shared<NewestVertexEdgeSelect<Dim, ManifoldDim>>();
+		// auto edge_select = std::make_shared<LongestEdgeSelect<Dim, ManifoldDim>>();
+		edge_select->set_recursive(true);
+		// edge_select->set_recursive(false);
+		b.set_edge_select(edge_select);
 		std::vector<std::vector<mars::Integer>> elements(parts.size());
 
 		// for(Integer k = 0; k < parts.size(); ++k) {
@@ -212,7 +225,7 @@ void test_partition_2D()
 	read_mesh("../data/square_2_def.MFEM", mesh);
 
 	Bisection<2, 2> b(mesh);
-	b.uniform_refine(3);
+	b.uniform_refine(4);
 
 	std::vector<Integer> partitioning(mesh.n_elements());
 
@@ -248,7 +261,7 @@ void test_partition_3D()
 
 	std::vector<Integer> partitioning(mesh.n_elements());
 
-	Integer n_parts = 2;
+	Integer n_parts = 6;
 	for(Integer i = 0; i < mesh.n_elements(); ++i) {
 		partitioning[i] = i % n_parts;
 	}
@@ -273,6 +286,31 @@ void test_partition_3D()
 
 }
 
+void run_benchmarks()
+{	
+	using namespace mars;
+
+	Integer n_levels = 10;
+
+	Benchmark<2, 2> b2;
+	Mesh<2, 2> m2;
+	read_mesh("../data/", m2);
+
+	b2.run(n_levels, m2, "b2");
+
+	Benchmark<3, 3> b3;
+	Mesh<3, 3> m3;
+	read_mesh("../data/", m3);
+
+	b3.run(n_levels, m3, "b3");
+
+	Benchmark<4, 4> b4;
+	Mesh<4, 4> m4;
+	read_mesh("../data/", m4);
+
+	b4.run(n_levels, m4, "b4");
+}
+
 int main(const int argc, const char *argv[])
 {
 	using namespace mars;
@@ -280,8 +318,10 @@ int main(const int argc, const char *argv[])
 	// test_bisection_3D();
 	// test_bisection_4D();
 
+	run_benchmarks();
+
 	// test_partition_2D();
-	test_partition_3D();
+	// test_partition_3D();
 	return EXIT_SUCCESS;
 }
 

@@ -9,7 +9,7 @@ namespace mars {
 	class EdgeSelect {
 	public:
 		virtual ~EdgeSelect() {}
-		virtual Integer select_edge(
+		virtual Integer select(
 			const Mesh<Dim, ManifoldDim> &mesh,
 			const Integer element_id) const
 		{
@@ -17,7 +17,7 @@ namespace mars {
 			return 0;
 		}
 
-		virtual Integer select_edge(
+		virtual Integer select(
 			const Mesh<Dim, ManifoldDim> &mesh,
 			const Edge &neighbor_edge,
 			const Integer element_id) const
@@ -30,16 +30,18 @@ namespace mars {
 		{
 			return false;
 		}
+
+		virtual std::string name() const = 0;
 	};
 
 	template<Integer Dim, Integer ManifoldDim>
 	class LongestEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
 	public:
-		LongestEdgeSelect()
-		: recursive_(true)
+		LongestEdgeSelect(const bool recursive = true)
+		: recursive_(recursive)
 		{}
 
-		Integer select_edge(
+		Integer select(
 			const Mesh<Dim, ManifoldDim> &mesh,
 			const Integer element_id) const override
 		{
@@ -63,10 +65,10 @@ namespace mars {
 			return edge_num;
 		}
 
-		virtual Integer select_edge(
+		virtual Integer select(
 			const Mesh<Dim, ManifoldDim> &mesh,
 			const Edge &neighbor_edge,
-			const Integer element_id) const
+			const Integer element_id) const override
 		{
 			const auto &e = mesh.elem(element_id);
 
@@ -110,6 +112,11 @@ namespace mars {
 			return recursive_;
 		}
 
+		virtual std::string name() const override
+		{
+			return "LongestEdge";
+		}
+
 	private:
 		bool recursive_;
 	};
@@ -118,11 +125,11 @@ namespace mars {
 	template<Integer Dim, Integer ManifoldDim>
 	class NewestVertexEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
 	public:
-		NewestVertexEdgeSelect()
-		: recursive_(true)
+		NewestVertexEdgeSelect(const bool recursive = true)
+		: recursive_(recursive)
 		{}
 
-		Integer select_edge(
+		Integer select(
 			const Mesh<Dim, ManifoldDim> &mesh,
 			const Integer element_id) const override
 		{
@@ -131,7 +138,7 @@ namespace mars {
 
 			auto node_ids = e.nodes;
 			std::sort(node_ids.begin(), node_ids.end());
-			Edge edge(node_ids.nodes[0], node_ids.nodes[1]);
+			Edge edge(node_ids[0], node_ids[1]);
 
 			for(Integer i = 0; i < n_edges(e); ++i) {
 				Integer v1, v2;
@@ -146,13 +153,13 @@ namespace mars {
 			return edge_num;
 		}
 
-		virtual Integer select_edge(
+		virtual Integer select(
 			const Mesh<Dim, ManifoldDim> &mesh,
 			const Edge &neighbor_edge,
-			const Integer element_id) const
+			const Integer element_id) const override
 		{	
 			(void) neighbor_edge;
-			return select_edge(mesh, element_id);
+			return select(mesh, element_id);
 		}
 
 		void set_recursive(const bool recursive)
@@ -165,6 +172,110 @@ namespace mars {
 			return recursive_;
 		}
 
+		virtual std::string name() const override
+		{
+			return "NewestVertex";
+		}
+
+	private:
+		bool recursive_;
+	};
+
+
+	template<Integer Dim, Integer ManifoldDim>
+	class NewestVertexAndLongestEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
+	public:
+		NewestVertexAndLongestEdgeSelect(const bool recursive = true)
+		: recursive_(recursive)
+		{}
+
+		Integer select(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Integer element_id) const override
+		{
+			const auto &e = mesh.elem(element_id);
+			Integer edge_num = 0;
+			Real len = 0;
+
+			auto node_ids = e.nodes;
+			std::sort(node_ids.begin(), node_ids.end());
+			const Integer vertex_to_skip = node_ids.back();
+
+			for(Integer i = 0; i < n_edges(e); ++i) {
+				Integer v1, v2;
+				e.edge(i, v1, v2);
+
+				if(v1 == vertex_to_skip || v2 == vertex_to_skip) continue;
+
+				Real len_i = (mesh.point(v1) - mesh.point(v2)).norm();
+
+				if(len_i > len) {
+					len = len_i;
+					edge_num = i;
+				}
+			}
+
+			return edge_num;
+		}
+
+		virtual Integer select(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Edge &neighbor_edge,
+			const Integer element_id) const override
+		{	
+			const auto &e = mesh.elem(element_id);
+
+			Real len = 0.;
+			Real neigh_len = 0.;
+			Integer edge_num = 0;
+
+			Integer neigh_edge_num = INVALID_INDEX;
+
+			auto node_ids = e.nodes;
+			std::sort(node_ids.begin(), node_ids.end());
+			const Integer vertex_to_skip = node_ids.back();
+
+			for(Integer i = 0; i < n_edges(e); ++i) {
+				Integer v1, v2;
+				e.edge(i, v1, v2);
+
+				if(v1 == vertex_to_skip || v2 == vertex_to_skip) continue;
+
+				const Real dist = (mesh.point(v1) - mesh.point(v2)).norm();
+
+				if(dist > len) {
+					len = dist;
+					edge_num = i;
+				}
+				
+				if(Edge(v1, v2) == neighbor_edge) {
+					neigh_len 	   = dist;
+					neigh_edge_num = i;
+				}
+			}
+
+			if(neigh_len/len >= (0.99)) {
+				edge_num = neigh_edge_num;
+			}
+
+			return edge_num;
+		}
+
+		void set_recursive(const bool recursive)
+		{
+			recursive_ = recursive;
+		}
+
+		bool is_recursive() const override
+		{
+			return recursive_;
+		}
+
+		virtual std::string name() const override
+		{
+			return "NewestVertexAndLongestEdge";
+		}
+
 	private:
 		bool recursive_;
 	};
@@ -174,14 +285,15 @@ namespace mars {
 	class Bisection {
 	public:
 		Bisection(Mesh<Dim, ManifoldDim> &mesh)
-		: mesh(mesh), verbose(false), limit_to_1_level_diff(false)
+		: mesh(mesh), edge_select_(std::make_shared<LongestEdgeSelect<Dim, ManifoldDim>>()),
+		  verbose(false)
 		{}
 
-		void set_limit_to_1_level_diff(const bool val)
+		void set_edge_select(const std::shared_ptr<EdgeSelect<Dim, ManifoldDim>> &edge_select)
 		{
-			limit_to_1_level_diff = val;
+			edge_select_ = edge_select;
 		}
-		
+
 		Integer add_elem(const Simplex<Dim, ManifoldDim> &e)
 		{
 			flags.push_back(NONE);
@@ -314,67 +426,67 @@ namespace mars {
 			return;
 		}
 
-		//one possible strategy for refining
-		void longest_edge_ordering(const Simplex<Dim, ManifoldDim> &e, std::vector<Integer> &ordering) const
-		{
-			ordering.clear();
+		// //one possible strategy for refining
+		// void longest_edge_ordering(const Simplex<Dim, ManifoldDim> &e, std::vector<Integer> &ordering) const
+		// {
+		// 	ordering.clear();
 			
-			std::vector< std::pair<Real, Integer> > len2edge;
-			for(Integer i = 0; i < n_edges(e); ++i) {
-				Integer v1, v2;
-				e.edge(i, v1, v2);
-				len2edge.emplace_back((mesh.point(v1) - mesh.point(v2)).norm(), i);
-			}
+		// 	std::vector< std::pair<Real, Integer> > len2edge;
+		// 	for(Integer i = 0; i < n_edges(e); ++i) {
+		// 		Integer v1, v2;
+		// 		e.edge(i, v1, v2);
+		// 		len2edge.emplace_back((mesh.point(v1) - mesh.point(v2)).norm(), i);
+		// 	}
 
-			std::sort(len2edge.begin(), len2edge.end());
+		// 	std::sort(len2edge.begin(), len2edge.end());
 
-			ordering.reserve(n_edges(e));
-			for(auto it = len2edge.rbegin(); it != len2edge.rend(); ++it) {
-				ordering.push_back(it->second);
-			}
-		}
+		// 	ordering.reserve(n_edges(e));
+		// 	for(auto it = len2edge.rbegin(); it != len2edge.rend(); ++it) {
+		// 		ordering.push_back(it->second);
+		// 	}
+		// }
 
-		void longest_edge_ordering_with_tol(const Simplex<Dim, ManifoldDim> &e, const Edge &edge, std::vector<Integer> &ordering)
-		{
-			ordering.clear();
+		// void longest_edge_ordering_with_tol(const Simplex<Dim, ManifoldDim> &e, const Edge &edge, std::vector<Integer> &ordering)
+		// {
+		// 	ordering.clear();
 			
-			Real best_dist = 0.;
-			Real edge_dist = 0.;
-			Integer edge_index = INVALID_INDEX;
+		// 	Real best_dist = 0.;
+		// 	Real edge_dist = 0.;
+		// 	Integer edge_index = INVALID_INDEX;
 
-			std::vector< std::pair<Real, Integer> > len2edge;
-			for(Integer i = 0; i < n_edges(e); ++i) {
-				Integer v1, v2;
-				e.edge(i, v1, v2);
-				Real dist = (mesh.point(v1) - mesh.point(v2)).norm();
+		// 	std::vector< std::pair<Real, Integer> > len2edge;
+		// 	for(Integer i = 0; i < n_edges(e); ++i) {
+		// 		Integer v1, v2;
+		// 		e.edge(i, v1, v2);
+		// 		Real dist = (mesh.point(v1) - mesh.point(v2)).norm();
 
-				best_dist = std::max(dist, best_dist);
+		// 		best_dist = std::max(dist, best_dist);
 				
-				if(Edge(v1, v2) == edge) {
-					edge_dist = dist;
-					edge_index = i;
-				}
+		// 		if(Edge(v1, v2) == edge) {
+		// 			edge_dist = dist;
+		// 			edge_index = i;
+		// 		}
 
-				len2edge.emplace_back(dist, i);
-			}
+		// 		len2edge.emplace_back(dist, i);
+		// 	}
 
-			std::sort(len2edge.begin(), len2edge.end());
-			ordering.reserve(n_edges(e));
+		// 	std::sort(len2edge.begin(), len2edge.end());
+		// 	ordering.reserve(n_edges(e));
 
-			bool use_edge = false;
-			if(edge_dist/best_dist >= (0.99)) {
-				use_edge = true;
-				ordering.push_back(edge_index);
-			}
+		// 	bool use_edge = false;
+		// 	if(edge_dist/best_dist >= (0.99)) {
+		// 		use_edge = true;
+		// 		ordering.push_back(edge_index);
+		// 	}
 
-			for(auto it = len2edge.rbegin(); it != len2edge.rend(); ++it) {
-				if(use_edge && it->second == edge_index) {
-					continue;
-				} else {
-					ordering.push_back(it->second);
-				}
-			}
-		}
+		// 	for(auto it = len2edge.rbegin(); it != len2edge.rend(); ++it) {
+		// 		if(use_edge && it->second == edge_index) {
+		// 			continue;
+		// 		} else {
+		// 			ordering.push_back(it->second);
+		// 		}
+		// 	}
+		// }
 
 		bool refine_element_recursive(
 			const Integer element_id,
@@ -383,16 +495,15 @@ namespace mars {
 		{
 			assert(has_edge(mesh.elem(element_id), edge.nodes[0], edge.nodes[1]));
 
-			std::vector<Integer> edges;
-			longest_edge_ordering_with_tol(mesh.elem(element_id), edge, edges);
+			const Integer edge_num = edge_select_->select(mesh, edge, element_id);
 
 			Edge new_edge;
-			mesh.elem(element_id).edge(edges.front(), new_edge.nodes[0], new_edge.nodes[1]);
+			mesh.elem(element_id).edge(edge_num, new_edge.nodes[0], new_edge.nodes[1]);
 			new_edge.fix_ordering();
 
 			if(edge == new_edge) {
 				bisect_element(element_id, edge);
-			} else if(limit_to_1_level_diff && level[element_id] >= max_level) {
+			} else if(!edge_select_->is_recursive()) {
 				bisect_element(element_id, edge);
 			} else {
 				refine_edge(new_edge);
@@ -404,11 +515,10 @@ namespace mars {
 
 		void refine_element(const Integer element_id)
 		{
-			std::vector<Integer> edges;
-			longest_edge_ordering(mesh.elem(element_id), edges);
+			const Integer edge_num = edge_select_->select(mesh, element_id);
 
 			Edge edge;
-			mesh.elem(element_id).edge(edges.front(), edge.nodes[0], edge.nodes[1]);
+			mesh.elem(element_id).edge(edge_num, edge.nodes[0], edge.nodes[1]);
 			edge.fix_ordering();
 			refine_edge(edge);
 		}
@@ -559,9 +669,8 @@ namespace mars {
 		std::vector<std::array<Integer, ManifoldDim+1> > side_flags;
 		EdgeNodeMap edge_node_map_;
 		EdgeElementMap edge_element_map_;
+		std::shared_ptr<EdgeSelect<Dim, ManifoldDim>> edge_select_;
 		bool verbose;
-		bool limit_to_1_level_diff;
-
 		//tracking the refinement 
 		std::vector<Edge> bisected_edges_;
 	};
