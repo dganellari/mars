@@ -5,7 +5,114 @@ namespace mars {
 	template<Integer Dim, Integer ManifoldDim>
 	class Mesh;
 
+	template<Integer Dim, Integer ManifoldDim>
+	class EdgeSelect {
+	public:
+		virtual ~EdgeSelect() {}
+		virtual Integer select_edge(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Integer element_id) const
+		{
+			//first edge selected
+			return 0;
+		}
 
+		virtual Integer select_edge(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Edge &neighbor_edge,
+			const Integer element_id) const
+		{
+			//first edge selected
+			return 0;
+		}
+
+		virtual bool is_recursive() const
+		{
+			return false;
+		}
+	};
+
+	template<Integer Dim, Integer ManifoldDim>
+	class LongestEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
+	public:
+		LongestEdgeSelect()
+		: recursive_(true)
+		{}
+
+		Integer select_edge(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Integer element_id) const override
+		{
+			const auto &e = mesh.elem(element_id);
+
+			Integer edge_num = 0;
+			Real len = 0;
+
+			for(Integer i = 0; i < n_edges(e); ++i) {
+				Integer v1, v2;
+				e.edge(i, v1, v2);
+
+				Real len_i = (mesh.point(v1) - mesh.point(v2)).norm();
+
+				if(len_i > len) {
+					len = len_i;
+					edge_num = i;
+				}
+			}
+
+			return edge_num;
+		}
+
+		virtual Integer select_edge(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Edge &neighbor_edge,
+			const Integer element_id) const
+		{
+			const auto &e = mesh.elem(element_id);
+
+			Real len = 0.;
+			Real neigh_len = 0.;
+			Integer edge_num = 0;
+
+			Integer neigh_edge_num = INVALID_INDEX;
+
+			for(Integer i = 0; i < n_edges(e); ++i) {
+				Integer v1, v2;
+				e.edge(i, v1, v2);
+
+				const Real dist = (mesh.point(v1) - mesh.point(v2)).norm();
+
+				if(dist > len) {
+					len = dist;
+					edge_num = i;
+				}
+				
+				if(Edge(v1, v2) == neighbor_edge) {
+					neigh_len 	   = dist;
+					neigh_edge_num = i;
+				}
+			}
+
+			if(neigh_len/len >= (0.99)) {
+				edge_num = neigh_edge_num;
+			}
+
+			return edge_num;
+		}
+
+		void set_recursive(const bool recursive)
+		{
+			recursive_ = recursive;
+		}
+
+		bool is_recursive() const override
+		{
+			return recursive_;
+		}
+
+	private:
+		bool recursive_;
+	};
 	
 
 	template<Integer Dim, Integer ManifoldDim>
