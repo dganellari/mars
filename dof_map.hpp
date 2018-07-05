@@ -58,7 +58,9 @@ namespace mars {
 				owner_id_.resize(local_id + 1, INVALID_INDEX);
 			}
 
-			owner_id_[local_id] = owner;
+			if(owner != INVALID_INDEX) { 
+				owner_id_[local_id] = owner;
+			}
 		}
 
 		inline Integer owner(const Integer local_id) const

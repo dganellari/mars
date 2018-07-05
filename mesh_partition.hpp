@@ -461,6 +461,37 @@ namespace mars {
 			return elem_map_;
 		}
 
+		inline bool is_valid()
+		{
+			bool ret = true;
+			for(Integer i = 0; i < mesh.n_nodes(); ++i) {
+				auto g = node_map_.global(i);
+				auto o = node_map_.owner(i);
+
+				if(g == INVALID_INDEX) {
+					std::cerr << "global(" << i << ") = INVALID_INDEX" << std::endl;
+					ret = false;
+				}
+
+				if(o == INVALID_INDEX) {
+					std::cerr << "owner(" << i << ")  = INVALID_INDEX" << std::endl;
+					ret = false;
+				}
+			}
+
+			for(Integer i = 1; i < mesh.n_nodes(); ++i) {
+				auto g      = node_map_.global(i);
+				auto g_prev = node_map_.global(i-1);
+				if(g == g_prev) {
+					std::cerr << "global(" << (i-1) << ")  == global(" << (i) << ") == " << g << std::endl;
+					ret = false;
+				}
+
+			}
+
+			return ret;
+		}
+
 	private:
 		static bool is_partition_tag(const Integer tag)
 		{

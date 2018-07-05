@@ -209,9 +209,22 @@ namespace mars {
 			}
 
 			// std::cout << "after " << std::endl;
-			// for(Integer k = 0; k < parts.size(); ++k) {
-			// 	parts[k]->elem_map().describe(std::cout);
-			// }
+			for(Integer k = 0; k < parts.size(); ++k) {
+				bool ok = parts[k]->is_valid();
+				
+				if(!ok) {
+					// parts[k]->node_map().describe(std::cout);
+					// edge_split_pool_[k]->describe(std::cout);
+
+					for(Integer j = 0; j < parts.size(); ++j) {
+						parts[j]->node_map().describe(std::cout);
+						edge_split_pool_[j]->describe(std::cout);
+					}
+				}
+
+				assert( ok );
+				// parts[k]->elem_map().describe(std::cout);
+			}
 		}	
 
 		//4) (parallel)
