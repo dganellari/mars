@@ -214,9 +214,9 @@ namespace mars {
 
 			//Hack
 			if(clear_buffer) {
-				buffer[0] = max_id();
+				buffer[0] = max_id() + 1;
 			} else {
-				buffer[0] = std::max(max_id(), buffer[0]);
+				buffer[0] = std::max(max_id() + 1, buffer[0]);
 			}
 		}
 
