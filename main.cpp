@@ -87,8 +87,11 @@ void test_bisection_3D()
 	// auto edge_select = std::make_shared<NewestVertexEdgeSelect<3, 3>>();
 	// auto edge_select = std::make_shared<LongestEdgeSelect<3, 3>>();
 	auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<3, 3>>();
-	// edge_select->set_recursive(true);
-	b.uniform_refine(1);
+	
+	b.uniform_refine(3);
+
+	edge_select->set_recursive(true);
+	b.set_edge_select(edge_select);
 
 	Integer n_levels = 10;
 	for(Integer i = 0; i < n_levels; ++i) {
@@ -178,7 +181,8 @@ namespace mars {
 		std::vector<std::shared_ptr<MeshPartition<Dim, ManifoldDim>>> &parts)
 	{
 		ParBisection<Dim, ManifoldDim> b(parts);
-		auto edge_select = std::make_shared<NewestVertexEdgeSelect<Dim, ManifoldDim>>();
+		// auto edge_select = std::make_shared<NewestVertexEdgeSelect<Dim, ManifoldDim>>();
+		auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<Dim, ManifoldDim>>();
 		// auto edge_select = std::make_shared<LongestEdgeSelect<Dim, ManifoldDim>>();
 		edge_select->set_recursive(true);
 		// edge_select->set_recursive(false);
@@ -290,35 +294,33 @@ void run_benchmarks()
 {	
 	using namespace mars;
 
-	Integer n_levels = 10;
-
 	Benchmark<2, 2> b2;
 	Mesh<2, 2> m2;
-	read_mesh("../data/", m2);
+	read_mesh("../data/square_2_def.MFEM", m2);
 
-	b2.run(n_levels, m2, "b2");
+	b2.run(14, m2, "b2");
 
 	Benchmark<3, 3> b3;
 	Mesh<3, 3> m3;
-	read_mesh("../data/", m3);
+	read_mesh("../data/cube_6.MFEM", m3);
 
-	b3.run(n_levels, m3, "b3");
+	b3.run(15, m3, "b3");
 
 	Benchmark<4, 4> b4;
 	Mesh<4, 4> m4;
-	read_mesh("../data/", m4);
+	read_mesh("../data/cube4d_24.MFEM", m4);
 
-	b4.run(n_levels, m4, "b4");
+	b4.run(6, m4, "b4");
 }
 
 int main(const int argc, const char *argv[])
 {
 	using namespace mars;
 	// test_bisection_2D();
-	// test_bisection_3D();
+	test_bisection_3D();
 	// test_bisection_4D();
 
-	run_benchmarks();
+	// run_benchmarks();
 
 	// test_partition_2D();
 	// test_partition_3D();

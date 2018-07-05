@@ -40,6 +40,8 @@
 	\label{fig:sphere}
 \end{figure}
 
+\section{Quality for recursive longest-edge}
+
 \begin{figure}[htbp]
 	\centering
 	\includegraphics[width=0.48\linewidth]{figures/quality3} \hfill
@@ -55,6 +57,34 @@
 	\caption{Quality metics. We used ``Alpha'' and ``Tau''. }
 	\label{fig:metrics}
 \end{figure}
+
+
+
+\clearpage
+
+\section{Newest-vertex with longest edge for $D>2$}
+
+Without a recurisve closure of the refined edge the overall element quality degrades very fast.
+
+\begin{figure}[htbp]
+	\centering
+	\includegraphics[width=0.48\linewidth]{figures/non-recursive} \hfill
+	\includegraphics[width=0.48\linewidth]{figures/recursive}
+	\caption{Non-recusive vs. recursive (3D).}
+	\label{fig:metrics}
+\end{figure}
+
+\section{Quality of newest vertex with longest edge.}
+
+\begin{figure}[htbp]
+	\centering
+	\includegraphics[width=0.48\linewidth]{figures/NewestVertex_Recursive} \hfill
+	\includegraphics[width=0.48\linewidth]{figures/NewestVertex_and_LongestEdge_Recursive} 
+
+	\caption{Quality of the elements for several iterations of the adaptive refinement shown in Figure~\ref{fig:sphere}. The $x$ axis represent the total number of elements in the 4D mesh. The $y$ axis the quality criterion (lower is better). The influence of longest edge shows on both the better quality and the larger number of elements generated.}
+	\label{fig:quality}
+\end{figure}
+
 
 \section{Parallelization}
 

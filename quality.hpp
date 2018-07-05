@@ -314,6 +314,38 @@ namespace mars {
 				y_ptr->push_back(value);
 			}
 
+			bool save_csv(
+				const std::string &name,
+				const std::string &path,
+				const bool print_header = true) const
+			{
+				std::ofstream os;
+				os.open(path);
+				if(!os.good()) {
+					return false;
+				}
+
+				if(print_header) {
+					os << "name,type,x,y\n";
+				}
+
+				Integer i = 0;
+				for(auto xi : x) {
+					auto yi_iter = y.find(xi.first);
+					assert(yi_iter != y.end());
+
+					for(Integer j = 0; j < xi.second->size(); ++j) {
+						const auto x_val = xi.second->at(j);
+						const auto y_val = yi_iter->second->at(j);
+
+						os << name << "," << xi.first << "," << x_val << "," << y_val << "\n";
+					}
+				}
+
+				os.close();
+				return true;
+			}
+
 			bool save(const std::string &path) const
 			{
 				using namespace moonolith;
@@ -379,7 +411,7 @@ namespace mars {
 				axis.axis[3]=max_y_val;
 				axis.use_integral_values_x = true;
 
-				axis.init_ticks(5, 10);
+				axis.init_ticks(5, 5);
 				// axis.log_x = true;
 				axis.log_y = true;
 
@@ -458,6 +490,11 @@ namespace mars {
 					na,
 					m->q_avg);
 			}
+		}
+
+		bool save_csv(const std::string &name, const std::string &path, const bool print_header = true)
+		{
+			return report.save_csv(name, path, print_header);
 		}
 
 		bool save_report(const std::string &path)
