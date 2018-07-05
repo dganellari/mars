@@ -180,7 +180,7 @@ namespace mars {
 			std::cout << "xxxxxxxxxxxxxxxxxxxxxx\n";
 			
 			for(Integer k = 0; k < parts.size(); ++k) {
-				if(k % 2 == 1) {
+				// if(k % 2 == 1) {
 					Vector<Real, Dim> center;
 					center.set(0.5);
 					mark_hypersphere_for_refinement(
@@ -189,7 +189,7 @@ namespace mars {
 						0.25,
 						elements[k]
 						);
-				}
+				// }
 			}
 
 			b.verbose = i == n_levels-1;
@@ -212,11 +212,11 @@ void test_partition_2D()
 	read_mesh("../data/square_2_def.MFEM", mesh);
 
 	Bisection<2, 2> b(mesh);
-	b.uniform_refine(2);
+	b.uniform_refine(3);
 
 	std::vector<Integer> partitioning(mesh.n_elements());
 
-	Integer n_parts = 2;
+	Integer n_parts = mesh.n_active_elements();
 	for(Integer i = 0; i < mesh.n_elements(); ++i) {
 		partitioning[i] = i % n_parts;
 	}
@@ -226,7 +226,7 @@ void test_partition_2D()
 
 	write_mesh("mesh_2_p.eps", mesh, 10., PLOT_ID);
 
-	test_bisection(3, partitions);
+	test_bisection(12, partitions);
 
 	write_mesh_partitions(
 		"par2.eps",
@@ -244,7 +244,7 @@ void test_partition_3D()
 	read_mesh("../data/cube_6.MFEM", mesh, true);
 
 	Bisection<3, 3> b(mesh);
-	b.uniform_refine(1);
+	b.uniform_refine(3);
 
 	std::vector<Integer> partitioning(mesh.n_elements());
 
@@ -257,13 +257,19 @@ void test_partition_3D()
 	parition_mesh(mesh, n_parts, partitioning, partitions);
 
 	write_mesh_partitions(
-		"par3_",
+		"before_par3_",
 		partitions,
 		PLOT_UNIFORM);
 
 	// write_mesh("mesh_3", mesh, 10., PLOT_ID);
 
-	test_bisection(10, partitions);
+	test_bisection(8, partitions);
+
+	write_mesh_partitions(
+		"before_par3_",
+		partitions,
+		PLOT_UNIFORM);
+
 
 }
 
@@ -274,8 +280,8 @@ int main(const int argc, const char *argv[])
 	// test_bisection_3D();
 	// test_bisection_4D();
 
-	test_partition_2D();
-	// test_partition_3D();
+	// test_partition_2D();
+	test_partition_3D();
 	return EXIT_SUCCESS;
 }
 

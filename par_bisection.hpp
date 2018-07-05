@@ -116,7 +116,7 @@ namespace mars {
 					for(Integer j = 0; j < parts.size(); ++j) {
 						if(j == k) continue;
 
-						std::cout << "edge_exchange(" << k << ", " << j << ") " << splits[j].size() << std::endl;
+						// std::cout << "edge_exchange(" << k << ", " << j << ") " << splits[j].size() << std::endl;
 						edge_split_pool_[j]->unpack(k, splits[j]);
 					}
 				}
@@ -152,14 +152,8 @@ namespace mars {
 					*edge_split_pool_[k]
 				);
 
-				parts[k]->elem_map().resize(parts[k]->get_mesh().n_elements(), k);
+				parts[k]->update_maps();
 			}
-
-
-			// std::cout << "before " << std::endl;
-			// for(Integer k = 0; k < parts.size(); ++k) {
-			// 	parts[k]->elem_map().describe(std::cout);
-			// }
 
 			// update global ids
 
@@ -199,6 +193,7 @@ namespace mars {
 			}
 
 			exchange_edge_pools();
+
 
 			//parallel for
 			for(Integer k = 0; k < parts.size(); ++k) {
@@ -250,9 +245,9 @@ namespace mars {
 				
 				has_more = has_more || !edge_split_pool_[k]->empty();
 
-				if(!edge_split_pool_[k]->empty()) {
-					edge_split_pool_[k]->describe(std::cout);
-				}
+				// if(!edge_split_pool_[k]->empty()) {
+				// 	edge_split_pool_[k]->describe(std::cout);
+				// }
 			}
 
 			return !has_more;
@@ -265,7 +260,7 @@ namespace mars {
 
 			bool complete = false;
 
-			Integer max_loops = 10;
+			Integer max_loops = 5;
 			Integer loops = 0;
 			while(!complete) {
 				//2)
@@ -279,203 +274,34 @@ namespace mars {
 
 				std::cout << "loop " << loops++ << " done. complete = " << complete << std::endl;
 
-				// for(auto &es : edge_split_pool_) {
-				// 	es->describe(std::cout);
-				// }
+				if(loops >= max_loops && !complete) {
+					for(Integer k = 0; k < parts.size(); ++k) {
+						if(!edge_split_pool_[k]->empty()) {
+							edge_split_pool_[k]->describe(std::cout);
+							parts[k]->node_map().describe(std::cout);
+						}
+					}
+					
+					write_mesh_partitions(
+						"par" + std::to_string(loops) + ".eps",
+						parts,
+						PLOT_UNIFORM);
 
-				// for(auto &p : parts) {
-				// 	p->describe(std::cout);
-				// }
-
-				write_mesh_partitions(
-					"par2" + std::to_string(loops) + ".eps",
-					parts,
-					PLOT_UNIFORM);
-
-				if(loops >= max_loops) {
 					assert(false);
 				}
 			}
+
+			if(!complete) print_all();
 		}
 
-
-		void refine_old(std::vector<std::vector<mars::Integer>> &elements)
+		void  __attribute__ ((used))  print_all() const
 		{
-			if(verbose) {
-				std::cout << "------------------------------\n";
-			}
-
-			if(elements.empty()) {
-				std::cerr << "refinement for elements is empty" << std::endl;
-				return;
-			}
-
-			std::vector< std::vector<EdgeSplit> > global_refined_edges(parts.size());
-
-			update_offsets();
-
-			//local parallel refinement
 			for(Integer k = 0; k < parts.size(); ++k) {
-				if(elements[k].empty()) continue;
-
-				auto b_ptr = bisection[k];
-				b_ptr->refine(elements[k]);
+				edge_split_pool_[k]->describe(std::cout);
+				parts[k]->node_map().describe(std::cout);
 			}
-
-			//post-local refinement synchronization
-			bool complete = false;
-			Integer synchronization_loops = 0;
-
-			std::vector<std::vector<EdgeSplit>> midpoint_id_data(parts.size());
-			
-			while(!complete) {
-				for(Integer k = 0; k < parts.size(); ++k) {
-					auto b_ptr = bisection[k];
-				}
-
-				update_offsets();
-
-				//update midpoint ids
-				for(Integer k = 0; k < parts.size(); ++k) {
-					parts[k]->assign_global_node_ids(
-						delta_node_offsets[parts[k]->partition_id()],
-						delta_node_offsets[parts[k]->partition_id() + 1]
-					);
-
-					for(auto &mpd : midpoint_id_data) {
-						for(auto &es : mpd) {
-							if(es.owner == k) {
-								Integer midpoint = bisection[k]->edge_node_map().get(parts[k]->local_edge(es.edge));
-								assert(midpoint != INVALID_INDEX);
-
-								Integer global_midpoint = parts[k]->global_node_id(midpoint);
-								assert(global_midpoint != INVALID_INDEX);
-								es.midpoint = global_midpoint;
-							}
-						}
-					}
-				}
-
-				for(auto &gre : global_refined_edges)
-				{
-					gre.clear();
-				}
-
-				for(Integer k = 0; k < parts.size(); ++k) {
-					for(auto &ges : midpoint_id_data[k]) {
-						// std::cout << "[" << k << "] "; ges.describe(std::cout);
-
-						parts[k]->update_midpoint_ids(
-								bisection[k]->edge_node_map(),
-								{ges}
-						);
-					}
-
-					parts[k]->assign_global_elem_ids(
-						delta_elem_offsets[parts[k]->partition_id()],
-						delta_elem_offsets[parts[k]->partition_id() + 1]
-					);
-
-					parts[k]->append_separate_interface_edges(
-						bisection[k]->edge_element_map(),
-						bisection[k]->edge_node_map(),
-						bisection[k]->bisected_edges(),
-						global_refined_edges
-					);
-
-					auto b_ptr = bisection[k];
-					b_ptr->clear_bisected_edges();
-				}
-
-				complete = true;
-
-				midpoint_id_data.clear();
-				midpoint_id_data.resize(parts.size());
-
-				for(Integer k = 0; k < parts.size(); ++k) {
-
-					if(!global_refined_edges[k].empty()) {
-
-						complete = false;
-						auto b_ptr = bisection[k];
-
-						std::map<Edge, EdgeSplit> edge_2_owner;
-						
-						for(auto ges: global_refined_edges[k]) {
-							if(verbose) {
-								std::cout << "[" << k << "] "; ges.describe(std::cout);
-							}
-
-							auto it = edge_2_owner.find(ges.edge);
-							
-							if(it == edge_2_owner.end()) {
-								edge_2_owner[ges.edge] = ges;
-							} else {
-								if(ges.midpoint != INVALID_INDEX) {
-									assert(it->second.midpoint == INVALID_INDEX ||
-										   it->second.midpoint == ges.midpoint);
-
-									it->second.midpoint = ges.midpoint;
-									it->second.owner    = ges.owner;
-								} else if(it->second.midpoint == INVALID_INDEX)  {
-									it->second.owner = std::min(k, it->second.owner);
-									assert(it->second.owner >= 0);
-								}
-							}
-						}
-
-						for(auto ges: global_refined_edges[k]) {
-							auto it = edge_2_owner.find(ges.edge);
-
-							if(it->second.owner == k) {
-								for(auto p : it->second.partitions) {
-									if(p != k) {
-										midpoint_id_data[p].push_back(it->second);
-									}
-								}
-							}
-						}
-
-						for(auto p_ges: edge_2_owner) {	
-							auto ges = p_ges.second;
-						
-							std::vector<Edge> global_edge = {ges.edge};
-							std::vector<Edge> local_edges;
-
-							parts[k]->localize_edges(global_edge, local_edges);
-							b_ptr->if_exist_refine_edges(local_edges);
-
-							parts[k]->update_midpoint_ids(
-								b_ptr->edge_node_map(),
-								{ges});
-
-							complete = false;
-						}
-					} 
-				}
-				
-				if(verbose) {
-					write_mesh_partitions("parts_"  + std::to_string(n_refinements) + "_" + std::to_string(synchronization_loops) + ".eps", parts, PLOT_UNIFORM);
-				}
-
-				++synchronization_loops;
-			}
-
-			if(verbose) {
-				std::cout << "synchronization_loops: " << synchronization_loops << std::endl;
-				write_mesh_partitions("parts_" + std::to_string(n_refinements) + "_final.eps", parts, PLOT_UNIFORM);
-
-
-				Integer p = 0;
-				for(auto &m : parts) {
-					std::cout << "p=[" <<  m->partition_id() << "]-------------------------------\n";
-					m->describe(std::cout);
-					// write_mesh("mesh_2_p" + std::to_string(p++) + ".eps", m.get_mesh(), 10., PLOT_ID);
-					std::cout << "-------------------------------\n";
-				}
-			}
-			++n_refinements;
 		}
+
 
 		std::vector< ptr<P> > &parts;
 		std::vector< ptr<B> > bisection;

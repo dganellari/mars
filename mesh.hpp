@@ -167,7 +167,7 @@ namespace mars {
 					const auto angle = dot(parent_n, n);
 
 					//FIXME not an integer test
-					if(std::abs(angle - 1) < 1e-14) {
+					if(std::abs(angle - 1) < 1e-10) {
 						e.side_tags[j] = parent.side_tags[i];
 						break;
 					}

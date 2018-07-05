@@ -347,6 +347,14 @@ namespace mars {
 		{
 			auto n1 = node_map_.local(global_edge.nodes[0]);
 			auto n2 = node_map_.local(global_edge.nodes[1]);
+
+			if(n1 == INVALID_INDEX || n2 == INVALID_INDEX) {
+				//retruning invalid edge
+				std::cerr << "[Error] invalid edge ";
+				global_edge.describe(std::cerr);
+				std::cerr << "\n"; 
+				// return Edge();
+			}
 			
 			assert(n1 != INVALID_INDEX);
 			assert(n2 != INVALID_INDEX);
@@ -490,6 +498,12 @@ namespace mars {
 			}
 
 			return ret;
+		}
+
+		void update_maps()
+		{
+			elem_map().resize(get_mesh().n_elements(), partition_id());
+			node_map().resize(get_mesh().n_nodes(), INVALID_INDEX);
 		}
 
 	private:
