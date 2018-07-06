@@ -87,16 +87,16 @@ void test_bisection_3D()
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 
 	Bisection<3, 3> b(mesh);
-	auto edge_select = std::make_shared<NewestVertexEdgeSelect<3, 3>>();
+	// auto edge_select = std::make_shared<NewestVertexEdgeSelect<3, 3>>();
 	// auto edge_select = std::make_shared<LongestEdgeSelect<3, 3>>();
-	// auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<3, 3>>();
+	auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<3, 3>>();
 	
-	b.uniform_refine(3);
+	b.uniform_refine(7);
 
 	edge_select->set_recursive(true);
 	b.set_edge_select(edge_select);
 
-	Integer n_levels = 10;
+	Integer n_levels = 12;
 	for(Integer i = 0; i < n_levels; ++i) {
 		std::vector<mars::Integer> elements;
 		
@@ -184,9 +184,9 @@ namespace mars {
 		std::vector<std::shared_ptr<MeshPartition<Dim, ManifoldDim>>> &parts)
 	{
 		ParBisection<Dim, ManifoldDim> b(parts);
-		auto edge_select = std::make_shared<NewestVertexEdgeSelect<Dim, ManifoldDim>>();
+		// auto edge_select = std::make_shared<NewestVertexEdgeSelect<Dim, ManifoldDim>>();
 		// auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<Dim, ManifoldDim>>();
-		// auto edge_select = std::make_shared<LongestEdgeSelect<Dim, ManifoldDim>>();
+		auto edge_select = std::make_shared<LongestEdgeSelect<Dim, ManifoldDim>>(true, true);
 		edge_select->set_recursive(true);
 		// edge_select->set_recursive(false);
 		b.set_edge_select(edge_select);
@@ -268,7 +268,7 @@ void test_partition_3D()
 
 	std::vector<Integer> partitioning(mesh.n_elements());
 
-	Integer n_parts = 2;
+	Integer n_parts = 5;
 	for(Integer i = 0; i < mesh.n_elements(); ++i) {
 		partitioning[i] = i % n_parts;
 	}
@@ -283,10 +283,10 @@ void test_partition_3D()
 
 	// write_mesh("mesh_3", mesh, 10., PLOT_ID);
 
-	test_bisection(8, partitions);
+	test_bisection(14, partitions);
 
 	write_mesh_partitions(
-		"before_par3_",
+		"after_par3_",
 		partitions,
 		PLOT_UNIFORM);
 
@@ -319,14 +319,14 @@ void run_benchmarks()
 int main(const int argc, const char *argv[])
 {
 	using namespace mars;
-	test_bisection_2D();
+	// test_bisection_2D();
 	// test_bisection_3D();
 	// test_bisection_4D();
 
 	// run_benchmarks();
 
 	// test_partition_2D();
-	// test_partition_3D();
+	test_partition_3D();
 	return EXIT_SUCCESS;
 }
 

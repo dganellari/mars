@@ -37,8 +37,8 @@ namespace mars {
 	template<Integer Dim, Integer ManifoldDim>
 	class LongestEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
 	public:
-		LongestEdgeSelect(const bool recursive = true)
-		: recursive_(recursive)
+		LongestEdgeSelect(const bool recursive = true, const bool use_tollerance = true)
+		: recursive_(recursive), use_tollerance_(use_tollerance)
 		{}
 
 		Integer select(
@@ -70,6 +70,10 @@ namespace mars {
 			const Edge &neighbor_edge,
 			const Integer element_id) const override
 		{
+			if(!use_tollerance_) {
+				return select(mesh, element_id);
+			}
+
 			const auto &e = mesh.elem(element_id);
 
 			Real len = 0.;
@@ -119,6 +123,7 @@ namespace mars {
 
 	private:
 		bool recursive_;
+		bool use_tollerance_;
 	};
 
 
@@ -495,6 +500,12 @@ namespace mars {
 		{
 			assert(has_edge(mesh.elem(element_id), edge.nodes[0], edge.nodes[1]));
 
+			// Edge mandatory_edge = mandatory_edge_splitting(element_id);
+			// if(mandatory_edge.is_valid()) {
+			// 	bisect_element(element_id, mandatory_edge);
+			// 	return false;
+			// }
+
 			const Integer edge_num = edge_select_->select(mesh, edge, element_id);
 
 			Edge new_edge;
@@ -515,6 +526,12 @@ namespace mars {
 
 		void refine_element(const Integer element_id)
 		{
+			// Edge mandatory_edge = mandatory_edge_splitting(element_id);
+			// if(mandatory_edge.is_valid()) {
+			// 	refine_edge(mandatory_edge);
+			// 	return false;
+			// }
+
 			const Integer edge_num = edge_select_->select(mesh, element_id);
 
 			Edge edge;
@@ -622,6 +639,11 @@ namespace mars {
 		{
 			return edge_element_map_;
 		}
+
+	 	EdgeElementMap &edge_element_map()
+		{
+			return edge_element_map_;
+		}
 		
 		void set_verbose(const bool val)
 		{
@@ -648,6 +670,23 @@ namespace mars {
 			bisected_edges_.clear();
 		}
 
+		Edge mandatory_edge_splitting(const Integer element_id)
+		{
+			if(mandatory_edge_splitting_.empty()) {
+				return Edge();
+			}
+
+			assert(element_id < mandatory_edge_splitting_.size());
+			assert(element_id >= 0);
+
+			return mandatory_edge_splitting_[element_id];
+		}
+
+		// void refine_sides(const std::vector<Side<ManifoldDim>> &sides)
+		// {
+
+		// }
+
 		void if_exist_refine_edges(const std::vector<Edge> &edges)
 		{
 			if(flags.empty()) {
@@ -656,6 +695,8 @@ namespace mars {
 				edge_element_map_.update(mesh);
 				mesh.update_dual_graph();
 			}
+
+			// mandatory_edge_splitting_.resize(mesh.n_elements());
 
 			for(auto e : edges) {
 				refine_edge(e);
@@ -673,6 +714,7 @@ namespace mars {
 		bool verbose;
 		//tracking the refinement 
 		std::vector<Edge> bisected_edges_;
+		std::vector<std::vector<Edge>> mandatory_edge_splitting_;
 	};
 }
 

@@ -261,9 +261,119 @@ namespace mars {
 			return !has_more;
 		}
 
-		void print_analysis(const P &part, const EdgeSplitPool &esp)
+		void print_analysis(const Integer partition_id)
 		{
+			const auto &part   = *parts[partition_id];
+			const auto &e_pool = *edge_split_pool_[partition_id];
+			auto &b 	       = *bisection[partition_id];
+			auto &mesh         = part.get_mesh();
+			const auto &enm    = b.edge_node_map();
+
+			std::cout << "print_analysis(" << partition_id << ")" << std::endl;
 			
+			for(Integer i = 0; i < mesh.n_elements(); ++i) {
+				if(!mesh.is_active(i)) continue;
+				const auto &e = mesh.elem(i);
+
+				std::vector<Integer> invalid_nodes;
+				for(auto n : e.nodes) {
+					auto g = part.node_map().global(n);
+					auto o = part.node_map().owner(n);
+
+					if(g == INVALID_INDEX || o == INVALID_INDEX) {
+						invalid_nodes.push_back(n);
+					}
+				}
+
+				if(!invalid_nodes.empty()) {
+					auto &parent = mesh.elem(e.parent_id);
+
+					for(Integer k = 0; k < n_edges(parent); ++k) {
+						Edge edge;
+						parent.edge(k, edge.nodes[0], edge.nodes[1]);
+						edge.fix_ordering();
+
+						Integer midpoint = enm.get(edge);
+
+						for(auto in : invalid_nodes) {
+							if(in != midpoint) continue;
+							Edge global_edge(
+								part.node_map().global(edge.nodes[0]),
+								part.node_map().global(edge.nodes[1])
+							);
+
+							std::cout << midpoint << " split(" 
+									  << global_edge.nodes[0] << ","
+									  << global_edge.nodes[1] << ")\n";
+
+							auto &es = e_pool. get_split(global_edge);
+
+							if(es.is_valid()) {
+								std::cout << "found split ";
+								es.describe(std::cout);
+							}
+						}
+					}
+				}
+			}
+
+			for(auto e_it = e_pool.begin(); e_it != e_pool.end(); ++e_it) {
+				const auto &e_split = e_it->second;
+				const auto local_edge = part.local_edge(e_split.edge);
+
+				if(!local_edge.is_valid()) {
+					std::cout << "INVALID EDGE for ";
+					e_split.describe(std::cout);
+					std::cout << std::endl;
+				} else {
+					Integer midpoint = enm.get(local_edge);
+					if(midpoint != INVALID_INDEX) continue;
+
+					std::cout << "unapplied edge splitting for ";
+					e_split.describe(std::cout);
+					std::cout << std::endl;
+					std::cout << "local_edge = ";
+					local_edge.describe(std::cout);
+					std::cout << std::endl;
+
+					const auto &incident = b.edge_element_map().elements(local_edge);
+					if(incident.empty()) {
+						std::cout << "no incidence for edge\n";
+
+						b.edge_element_map().update(mesh);
+
+						const auto &incident = b.edge_element_map().elements(local_edge);
+						if(!incident.empty()) {
+							std::cout << "you should update the edge_element_map" << std::endl;
+						} else {
+							std::vector<Integer> elems;
+							mesh.find_elements_by_nodes(
+								local_edge.nodes.begin(),
+								local_edge.nodes.end(),
+								elems,
+								false,
+								true);
+
+							for(auto e : elems) {
+								mesh.describe_element(e, std::cout, false);
+							}
+
+							if(elems.empty()) {
+								std::cout << "no elements found\n";
+							}
+						}
+					}
+
+					for(auto a : incident) {
+						if(mesh.is_active(a)) {
+							std::cout << "splitting OK for "    << a  << std::endl;
+						}  else {
+							std::cout << "splitting not OK for " << a << std::endl;
+						}
+					}
+				}
+
+			}
 		}
 
 		void refine(std::vector<std::vector<mars::Integer>> &elements)
@@ -273,7 +383,7 @@ namespace mars {
 
 			bool complete = false;
 
-			Integer max_loops = 5;
+			Integer max_loops = 7;
 			Integer loops = 0;
 			while(!complete) {
 				//2)
@@ -287,12 +397,20 @@ namespace mars {
 
 				std::cout << "loop " << loops++ << " done. complete = " << complete << std::endl;
 
+				// for(Integer k = 0; k < parts.size(); ++k) {
+				// 	if(!edge_split_pool_[k]->empty()) {
+				// 		// edge_split_pool_[k]->describe(std::cout);
+				// 		// parts[k]->node_map().describe(std::cout);
+				// 		print_analysis(parts[k]->partition_id());
+				// 	}
+				// }
+
 				if(loops >= max_loops && !complete) {
 					for(Integer k = 0; k < parts.size(); ++k) {
 						if(!edge_split_pool_[k]->empty()) {
 							// edge_split_pool_[k]->describe(std::cout);
 							// parts[k]->node_map().describe(std::cout);
-							print_analysis(*parts[k], *edge_split_pool_[k]);
+							print_analysis(parts[k]->partition_id());
 						}
 					}
 					

@@ -76,7 +76,7 @@ Without a recurisve closure of the refined edge the overall element quality degr
 
 \section{Quality of newest vertex with longest edge.}
 
-While the longest-edge criterion is superior the hybrid approach (newest vertex + longest edge) 
+While the longest-edge criterion is superior, the hybrid approach (newest vertex + longest edge) 
 stays in the same order of magnitude for the degrading element quality.
 
 \begin{figure}[htbp]
@@ -91,11 +91,28 @@ stays in the same order of magnitude for the degrading element quality.
 
 \section{Parallelization}
 
+The parallel algorithm in 2D works by refinining independently the subdomains, then conforming the 
+interfacing edges (see Figure~\ref{fig:par_refinement}). 
+
+
+%For D $>2$ this does not work since the faces might have been split diffrently because of the compatibility chain (recursive step).
+
+Work in progress for higher dimensions.
+
+
+% \begin{itemize}
+% 	\item The inpendent set strategy
+% 	\item \url{http://www.csc.kth.se/~jjan/transfer/bisect_0509.pdf}
+% 	\item Coarsen and correct faces on the interfaces as in 
+% \end{itemize}
+
+
+
 \begin{figure}[htbp]
 	\centering
 	\includegraphics[width=0.8\linewidth]{figures/partitioning_with_one_part_without_refinement}
-	\caption{Partitioning with one part without refinement.}
-	\label{fig:metrics}
+	\caption{Partitioning with one part without refinement. Color represent partitions.}
+	\label{fig:par_refinement}
 \end{figure}
 
 

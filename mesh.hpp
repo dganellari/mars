@@ -226,6 +226,56 @@ namespace mars {
 			}
 		}
 
+		template<typename Iter>
+		void find_elements_by_nodes(
+			const Iter nodes_begin,
+			const Iter nodes_end,
+			std::vector<Integer> &elements,
+			const bool match_all = true,
+			const bool skip_inactive = true
+			) const
+		{
+			elements.clear();
+
+			const Integer nn = std::distance(nodes_begin, nodes_end);
+
+			for(Integer i = 0; i < n_elements(); ++i) {
+				if(!is_active(i) && skip_inactive) continue;
+
+				const auto &e = elem(i);
+				
+				if(match_all) {
+					Integer n_matching = 0;
+					for(auto e_n : e.nodes) {
+						for(auto n_it = nodes_begin; n_it != nodes_end; ++n_it) {
+							if(*n_it == e_n) {
+								++n_matching;
+								break;
+							}
+						}
+					}
+
+					if(n_matching == nn) {
+						elements.push_back(i);
+					}
+
+				} else {
+					bool found = false;
+					for(auto e_n : e.nodes) {
+						for(auto n_it = nodes_begin; n_it != nodes_end; ++n_it) {
+							if(*n_it == e_n) {
+								elements.push_back(i);
+								found = true;
+								break;
+							}
+						}
+
+						if(found) break;
+					}
+				}
+			}
+		}
+
 		void repair(const bool verbose = false)
 		{
 			for(std::size_t i = 0; i < elements_.size(); ++i) {
@@ -254,45 +304,85 @@ namespace mars {
 			std::cout << "-------------------------\n";
 		}
 
+		void describe_element(const Integer i, std::ostream &os, const bool print_sides = false) const
+		{
+			const auto &e = elem(i);
+			const Real vol = mars::volume(e, points_);
+			const auto b   = barycenter(e, points_);
+
+			os << "---------------------------------\n";
+			os << "[" << i << "]: vol: " << vol << ", ";
+			for(auto v : e.nodes) {
+				os << " " << v;
+			}
+
+			os << "\n";
+
+			if(print_sides) {
+				Simplex<Dim, ManifoldDim-1> side;
+				Matrix<Real, Dim, Dim-1> J;
+
+				os << "sides:\n";
+				for(Integer k = 0; k < n_sides(e); ++k) {
+					e.side(k, side);
+					os << "==============\n";
+					jacobian(side, points_, J);
+
+					const auto n = normal(side, points_);
+					const auto sign = dot(points_[side.nodes[0]] - b, n) > 0? 1 : -1;
+					const Real u_area = mars::unsigned_volume(side, points_);
+					const Real area   = sign * u_area;
+
+					J.describe(os);
+					os << area << " == " << u_area << std::endl;
+				}
+			}
+
+			os << "---------------------------------\n";
+			os << "\n";
+		}
+
 		void describe(std::ostream &os, const bool print_sides = false) const
 		{
 			for(std::size_t i = 0; i < elements_.size(); ++i) {
 				if(!active_[i]) continue;
 
-				const auto &e = elements_[i];
-				const Real vol = mars::volume(e, points_);
-				const auto b   = barycenter(e, points_);
+				describe_element(i, os, print_sides);
 
-				os << "---------------------------------\n";
-				os << "[" << i << "]: vol: " << vol << ", ";
-				for(auto v : e.nodes) {
-					os << " " << v;
-				}
+				// const auto &e = elements_[i];
+				// const Real vol = mars::volume(e, points_);
+				// const auto b   = barycenter(e, points_);
 
-				os << "\n";
+				// os << "---------------------------------\n";
+				// os << "[" << i << "]: vol: " << vol << ", ";
+				// for(auto v : e.nodes) {
+				// 	os << " " << v;
+				// }
 
-				if(print_sides) {
-					Simplex<Dim, ManifoldDim-1> side;
-					Matrix<Real, Dim, Dim-1> J;
+				// os << "\n";
 
-					os << "sides:\n";
-					for(Integer k = 0; k < n_sides(e); ++k) {
-						e.side(k, side);
-						os << "==============\n";
-						jacobian(side, points_, J);
+				// if(print_sides) {
+				// 	Simplex<Dim, ManifoldDim-1> side;
+				// 	Matrix<Real, Dim, Dim-1> J;
 
-						const auto n = normal(side, points_);
-						const auto sign = dot(points_[side.nodes[0]] - b, n) > 0? 1 : -1;
-						const Real u_area = mars::unsigned_volume(side, points_);
-						const Real area   = sign * u_area;
+				// 	os << "sides:\n";
+				// 	for(Integer k = 0; k < n_sides(e); ++k) {
+				// 		e.side(k, side);
+				// 		os << "==============\n";
+				// 		jacobian(side, points_, J);
 
-						J.describe(os);
-						os << area << " == " << u_area << std::endl;
-					}
-				}
+				// 		const auto n = normal(side, points_);
+				// 		const auto sign = dot(points_[side.nodes[0]] - b, n) > 0? 1 : -1;
+				// 		const Real u_area = mars::unsigned_volume(side, points_);
+				// 		const Real area   = sign * u_area;
 
-				os << "---------------------------------\n";
-				os << "\n";
+				// 		J.describe(os);
+				// 		os << area << " == " << u_area << std::endl;
+				// 	}
+				// }
+
+				// os << "---------------------------------\n";
+				// os << "\n";
 			}
 
 			for(std::size_t i = 0; i < points_.size(); ++i) {
