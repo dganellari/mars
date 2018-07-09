@@ -364,6 +364,8 @@ namespace mars {
 		std::vector<EdgeSplit>  to_communicate;
 		Integer partition_id;
 		Integer n_parts;
+
+		// std::vector<Edge, std::set<Integer> > edge_interface;
 	};
 }
 

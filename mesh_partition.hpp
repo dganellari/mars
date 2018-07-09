@@ -88,6 +88,22 @@ namespace mars {
 			os << "\n";
 		}
 
+		void describe_node(const Integer i, std::ostream &os) const
+		{
+			os << "[" << i << ", " << node_map_.global(i) << "] " << node_map_.owner(i) << " ";
+			const auto &p = node_map_.partitions(i);
+
+			if(!p.empty()) {
+				os << "\tshared (";
+				for(auto pi : p) {
+					os << " " << pi;
+				}
+				os << " )";
+			}
+
+			os << "\n";
+		}
+
 		void describe(std::ostream &os) const
 		{
 			os << "===============================\n";
@@ -100,7 +116,7 @@ namespace mars {
 
 			os << "nodes:\n";
 			for(Integer i = 0; i < mesh.n_nodes(); ++i) {
-				os << "[" << i << ", " << node_map_.global(i) << "] " << node_map_.owner(i) << "\n";
+				describe_node(i, os);
 			}
 		}
 
@@ -179,7 +195,7 @@ namespace mars {
 			std::vector<Integer> &partitions)
 		{
 			partitions.clear();
-			
+
 			if(node_map_.global(e.nodes[0]) == INVALID_INDEX || 
 			   node_map_.global(e.nodes[1]) == INVALID_INDEX)
 			{

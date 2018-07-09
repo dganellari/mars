@@ -236,7 +236,7 @@ void test_partition_2D()
 
 	std::vector<Integer> partitioning(mesh.n_elements());
 
-	Integer n_parts = 7;
+	Integer n_parts = 2;
 	for(Integer i = 0; i < mesh.n_elements(); ++i) {
 		partitioning[i] = i % n_parts;
 	}
@@ -248,7 +248,7 @@ void test_partition_2D()
 
 	
 
-	test_bisection(10, partitions);
+	// test_bisection(10, partitions);
 
 	write_mesh_partitions(
 		"par2.eps",
@@ -327,8 +327,8 @@ int main(const int argc, const char *argv[])
 
 	// run_benchmarks();
 
-	// test_partition_2D();
-	test_partition_3D();
+	test_partition_2D();
+	// test_partition_3D();
 	return EXIT_SUCCESS;
 }
 

@@ -148,6 +148,8 @@ namespace mars {
 
 		std::vector<Integer> node_partitioning(mesh.n_nodes(), INVALID_INDEX);
 
+		std::vector<std::set<Integer>> shared_nodes(mesh.n_nodes());
+
 		for(Integer i = 0; i < mesh.n_elements(); ++i) {
 			if(!mesh.is_active(i)) continue;
 			const Integer partition_id = partitioning[i];
@@ -174,17 +176,28 @@ namespace mars {
 				if(node_partitioning[e.nodes[k]] == INVALID_INDEX) {
 					node_partitioning[e.nodes[k]] = partition_id;
 				}
+
+				shared_nodes[e.nodes[k]].insert(partition_id);
 			}
 		}
 
 		std::vector<Integer> visited;
 		for(auto &p : parts) {
 			p->add_and_index_nodes(mesh, node_partitioning, visited);
+
+			auto &nm = p->node_map();
+			for(Integer i = 0; i < p->get_mesh().n_nodes(); ++i) {
+				const auto global_n = nm.global(i);
+				
+				for(auto pid : shared_nodes[global_n]) {
+					nm.add_partition(i, pid);
+				}
+			}
 		}
 
-		// for(const auto &p : meshes) {
-		// 	p->describe(std::cout);
-		// }
+		for(const auto &p : parts) {
+			p->describe(std::cout);
+		}
 	}
 
 }

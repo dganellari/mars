@@ -7,18 +7,18 @@ namespace mars {
 	public:
 		Map(const Integer partition_id,
 			const Integer n_partitions)
-		: partition_id_(partition_id), n_x_partition_(n_partitions + 1, 0)
+		: partition_id_(partition_id), n_partitions_(n_partitions)
 		{}
 
 		inline Integer n_partitions() const
 		{
-			return n_x_partition_.size();
+			return n_partitions_;
 		}
 
-		inline Integer size(const Integer partition_id) const
-		{
-			return n_x_partition_[partition_id + 1] - n_x_partition_[partition_id];
-		}
+		// inline Integer size(const Integer partition_id) const
+		// {
+		// 	return n_x_partition_[partition_id + 1] - n_x_partition_[partition_id];
+		// }
 
 		inline Integer max_id() const
 		{
@@ -252,15 +252,31 @@ namespace mars {
 			owner_id_.resize(n, default_owner);
 		}
 
+		void add_partition(const Integer local_id, const Integer partition_id)
+		{
+			if(partitions_.size() <= local_id) {
+				partitions_.resize(local_id+1);
+			}
+
+			partitions_[local_id].push_back(partition_id);
+		}
+
+		const std::vector<Integer> &partitions(const Integer local_id) const
+		{
+			return partitions_[local_id];
+		}
+
 	private:
 		Integer partition_id_;
+		Integer n_partitions_;
 		std::vector<Integer> global_id_;
 		std::vector<Integer> owner_id_;
 
 		//global to local
 		std::map<Integer, Integer> global_to_local_;
+		std::vector< std::vector<Integer> > partitions_;
 
-		std::vector<Integer> n_x_partition_;
+		// std::vector<Integer> n_x_partition_;
 	};
 
 }
