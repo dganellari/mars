@@ -293,6 +293,16 @@ namespace mars {
 			return false;
 		}
 
+		bool is_interface(const Integer id) const {
+			const auto &adj = dual_graph_.adj(id);
+
+			for(auto a : adj) {
+				if(a < INVALID_INDEX) return true;
+			}
+
+			return false;
+		}
+
 		void describe_boundary_elements(std::ostream &os)
 		{
 			std::cout << "-------------------------\n";

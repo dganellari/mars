@@ -1,6 +1,8 @@
 #ifndef MARS_DOF_MAP_HPP
 #define MARS_DOF_MAP_HPP
 
+#include <algorithm>
+
 namespace mars {
 
 	class Map {
@@ -264,6 +266,43 @@ namespace mars {
 		const std::vector<Integer> &partitions(const Integer local_id) const
 		{
 			return partitions_[local_id];
+		}
+
+		template<class Iter>
+		void intersect_partitions(
+			const Iter &begin,
+			const Iter &end,
+			std::vector<Integer> &out)
+		{
+			out.clear();
+			if(begin == end) return;
+			
+			auto it = begin;
+			auto dist = std::distance(begin, end);
+			if(dist == 1) {
+				out = partitions_[*it];
+				return;
+			}
+
+			auto first_it  = *it++;
+			auto second_it = *it++;
+
+			std::set_intersection(
+				partitions_[first_it].begin(),  partitions_[first_it].end(),
+				partitions_[second_it].begin(), partitions_[second_it].end(),
+				std::back_inserter(out));
+
+			std::vector<Integer> temp = out;
+			for(; it != end; ++it) {
+				out.clear();
+				std::set_intersection(
+					temp.begin(), temp.end(),
+					partitions_[*it].begin(), partitions_[*it].end(),
+					std::back_inserter(out)
+				);
+
+				temp = out;
+			}
 		}
 
 	private:

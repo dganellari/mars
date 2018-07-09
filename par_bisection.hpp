@@ -33,62 +33,11 @@ namespace mars {
 			}
 		}
 
-
 		void set_edge_select(const std::shared_ptr<EdgeSelect<Dim, ManifoldDim>> &edge_select)
 		{
 			for(auto &b : bisection) {
 				b->set_edge_select(edge_select);
 			}
-		}
-
-		void update_offsets()
-		{
-			node_offsets.resize(parts.size() + 1, 0);
-			elem_offsets.resize(parts.size() + 1, 0);
-			delta_node_offsets.resize(parts.size() + 1, 0);
-			delta_elem_offsets.resize(parts.size() + 1, 0);
-			
-			max_node_id = 0;
-			max_elem_id = 0;
-
-			node_offsets[0] = 0;
- 			elem_offsets[0] = 0;
-
-			for(Integer k = 0; k < parts.size(); ++k) {
-				auto b_ptr = bisection[k];
-				max_node_id = std::max(max_node_id, parts[k]->max_global_node_id());
-				max_elem_id = std::max(max_elem_id, parts[k]->max_global_elem_id());
-
-				auto n_nodes    = parts[k]->n_owned_nodes();
-				auto n_elements = b_ptr->get_mesh().n_elements();
-
-				delta_node_offsets[k+1] = n_nodes    - node_offsets[k+1];
-				delta_elem_offsets[k+1] = n_elements - elem_offsets[k+1];
-
-				node_offsets[k+1] = n_nodes;
-				elem_offsets[k+1] = n_elements;
-			}
-
-			delta_node_offsets[0] = max_node_id + 1;
-			std::partial_sum(delta_node_offsets.begin(), delta_node_offsets.end(), delta_node_offsets.begin());
-
-			delta_elem_offsets[0] = max_elem_id + 1;
-			std::partial_sum(delta_elem_offsets.begin(), delta_elem_offsets.end(), delta_elem_offsets.begin());
-
-			verify_offsets(delta_node_offsets);
-			verify_offsets(delta_elem_offsets);
-		}
-
-		static bool verify_offsets(const std::vector<Integer> &o)
-		{
-			for(std::size_t i = 1; i < o.size(); ++i) {
-				if(o[i-1] > o[i]) {
-					assert(o[i-1] <= o[i]);
-					return false;
-				}
-			}
-
-			return true;
 		}
 
 		//1) (parallel)
@@ -491,16 +440,7 @@ namespace mars {
 		std::vector< ptr<P> > &parts;
 		std::vector< ptr<B> > bisection;
 		std::vector< ptr<EdgeSplitPool> > edge_split_pool_;
-
-		Integer max_node_id = 0;
-		Integer max_elem_id = 0;
-		std::vector<Integer> node_offsets;
-		std::vector<Integer> elem_offsets;
-
-		std::vector<Integer> delta_node_offsets;
-		std::vector<Integer> delta_elem_offsets;
 		bool verbose = false;
-		Integer n_refinements = 0;
 	};
 }
 

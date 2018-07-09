@@ -248,7 +248,7 @@ void test_partition_2D()
 
 	
 
-	// test_bisection(10, partitions);
+	test_bisection(10, partitions);
 
 	write_mesh_partitions(
 		"par2.eps",

@@ -189,6 +189,51 @@ namespace mars {
 			return mesh;
 		}
 
+		// bool face_edge_interfaces(
+		// 	const EdgeElementMap &eem,
+		// 	const Edge &e,
+		// 	std::vector<Integer> &partitions)
+		// {
+		// 	partitions.clear();
+
+		// 	if(node_map_.global(e.nodes[0]) == INVALID_INDEX || 
+		// 	   node_map_.global(e.nodes[1]) == INVALID_INDEX)
+		// 	{
+		// 		assert(false);
+		// 		return false;
+		// 	}
+
+		// 	Simplex<Dim, ManifoldDim-1> side;
+
+		// 	const auto &neighs = eem.elements(e);
+		// 	for(auto n : neighs) {
+		// 		if(n == INVALID_INDEX) continue;
+		// 		if(!is_elem_interface(n)) continue;
+
+		// 		const auto &n_e = mesh.elem(n);
+
+		// 		for(Integer s = 0; s < n_sides(n_e); ++s) {
+		// 			if(!is_partition_tag(n_e.side_tags[s])) continue;
+
+		// 			n_e.side(s, side);
+
+		// 			Integer n_matched = 0;
+		// 			for(auto node : side.nodes) {
+		// 				n_matched += node == e.nodes[0];
+		// 				n_matched += node == e.nodes[1];
+		// 			}
+
+		// 			assert(n_matched <= 2);
+					
+		// 			if(n_matched == 2) {
+		// 				partitions.push_back(tag_to_partition_id(n_e.side_tags[s]));
+		// 			}
+		// 		}
+		// 	}
+			
+		// 	return !partitions.empty();
+		// }
+
 		bool edge_interfaces(
 			const EdgeElementMap &eem,
 			const Edge &e,
@@ -203,37 +248,9 @@ namespace mars {
 				return false;
 			}
 
-			Simplex<Dim, ManifoldDim-1> side;
-
-			const auto &neighs = eem.elements(e);
-			for(auto n : neighs) {
-				if(n == INVALID_INDEX) continue;
-				if(!is_elem_interface(n)) continue;
-
-				const auto &n_e = mesh.elem(n);
-
-				for(Integer s = 0; s < n_sides(n_e); ++s) {
-					if(!is_partition_tag(n_e.side_tags[s])) continue;
-
-					n_e.side(s, side);
-
-					Integer n_matched = 0;
-					for(auto node : side.nodes) {
-						n_matched += node == e.nodes[0];
-						n_matched += node == e.nodes[1];
-					}
-
-					assert(n_matched <= 2);
-					
-					if(n_matched == 2) {
-						partitions.push_back(tag_to_partition_id(n_e.side_tags[s]));
-					}
-				}
-			}
-			
+			node_map_.intersect_partitions(e.nodes.begin(), e.nodes.end(), partitions);
 			return !partitions.empty();
 		}
-
 
 		void update_edge_split_pool(
 			const EdgeElementMap &eem,

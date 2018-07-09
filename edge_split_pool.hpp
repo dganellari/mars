@@ -7,6 +7,10 @@
 namespace mars {
 	class EdgeSplitPool {
 	public:
+		template<typename T>
+		using ptr = std::shared_ptr<T>;
+	
+
 		explicit EdgeSplitPool(
 			const Integer partition_id,
 			const Integer n_parts)
@@ -358,6 +362,43 @@ namespace mars {
 			os << ";;;;;;;;;;;;;;;;;;;;;;;;;;;\n";
 		}
 
+		template<Integer Dim, Integer ManifoldDim>
+		void build_edge_interface(const std::vector< ptr< MeshPartition<Dim, ManifoldDim> > > &parts)
+		{
+			const auto &p = parts[partition_id];
+			const auto &mesh = p.get_mesh();
+
+			std::vector<Integer> sharing;
+			for(Integer i = 0; i < mesh.n_elements(); ++i) {
+				if(!mesh.is_active(i)) continue;
+				const auto &e = mesh.elem(i);
+
+				for(Integer i = 0; i < n_edges(e); ++i) {
+					Edge edge;
+					e.edge(i, edge.nodes[0], edge.nodes[1]);
+					edge.fix_ordering();
+					p.partitions(std::begin(edge.nodes), std::end(edge.nodes), sharing);
+
+					if(sharing.size() == 1) {
+						assert(sharing[0] == partition_id);
+						continue;
+					}
+
+					Edge global_edge(
+						p.node_map().global(edge.nodes[0]),
+						p.node_map().global(edge.nodes[1])
+					);
+
+					//FIXME requires communication
+					for(auto s : sharing) {
+						if(parts[s]->local_edge(global_edge).is_valid()) {
+							edge_interface[global_edge].push_back(s);
+						}
+					}
+				}
+			}
+		}
+
 	private:
 		std::vector<EdgeSplit>  splits_;
 		std::map<Edge, Integer> edge_to_split_map;
@@ -365,7 +406,7 @@ namespace mars {
 		Integer partition_id;
 		Integer n_parts;
 
-		// std::vector<Edge, std::set<Integer> > edge_interface;
+		std::map<Edge, std::vector<Integer> > edge_interface;
 	};
 }
 
