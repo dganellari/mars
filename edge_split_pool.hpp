@@ -77,15 +77,25 @@ namespace mars {
 			const EdgeSplit &edge_split)
 		{
 			assert(!edge_split.partitions.empty());
+			assert(edge_to_split_map.size() == splits_.size());
 
-			auto it = global_splits.find(edge_split.edge);
-			if(it == global_splits.end()) {
-				auto &es = global_splits[edge_split.edge] = edge_split;
+			auto e_temp = edge_split.edge;
+			e_temp.fix_ordering();
+
+			auto it = edge_to_split_map.find(e_temp);
+			
+			if(it == edge_to_split_map.end()) {
+				Integer split_id = splits_.size();
+				edge_to_split_map[e_temp] = split_id;
+				splits_.push_back(edge_split);
+				auto &es = splits_.back();
 				es.owner = originator;
+				assert(edge_to_split_map.size() == splits_.size());
+
 				return es;
 			}
 
-			EdgeSplit &g_split = it->second;
+			EdgeSplit &g_split = get_split(it->second);
 			if(g_split.midpoint != INVALID_INDEX) {
 				//ownership and global id already determined
 				return g_split;
@@ -93,6 +103,7 @@ namespace mars {
 
 			//update ids
 			if(edge_split.midpoint != INVALID_INDEX) {
+				assert(edge_split.owner != INVALID_INDEX);
 				g_split = edge_split;
 				return g_split;
 			}
@@ -104,6 +115,7 @@ namespace mars {
 				g_split.owner = std::min(originator, g_split.owner);
 			}
 
+			assert(edge_to_split_map.size() == splits_.size());
 			return g_split;
 		}
 
@@ -111,34 +123,60 @@ namespace mars {
 		{
 			static const EdgeSplit null_;
 
-			auto it = global_splits.find(e);
-			if(it == global_splits.end()) {
+			Edge e_temp = e;
+			e_temp.fix_ordering();
+
+			auto it = edge_to_split_map.find(e_temp);
+			if(it == edge_to_split_map.end()) {
 				return null_;
 			}
 
-			return it->second;
+			return get_split(it->second);
+		}
+
+		inline const EdgeSplit &get_split(const Integer split_id) const
+		{
+			assert(split_id >= 0);
+			assert(split_id < splits_.size());
+			assert(edge_to_split_map.size() == splits_.size());
+
+			return splits_[split_id];
 		}
 
 		inline EdgeSplit &get_split(const Edge &e)
 		{
 			static EdgeSplit null_;
 
-			auto it = global_splits.find(e);
-			if(it == global_splits.end()) {
+
+			Edge e_temp = e;
+			e_temp.fix_ordering();
+
+			auto it = edge_to_split_map.find(e_temp);
+			if(it == edge_to_split_map.end()) {
 				return null_;
 			}
 
-			return it->second;
+			return get_split(it->second);
 		}
+
+		inline EdgeSplit &get_split(const Integer split_id)
+		{
+			assert(split_id >= 0);
+			assert(split_id < splits_.size());
+			assert(edge_to_split_map.size() == splits_.size());
+			
+			return splits_[split_id];
+		}
+
 
 		inline Integer owner(const Edge &e) const
 		{
-			auto it = global_splits.find(e);
-			if(it == global_splits.end()) {
+			auto it = edge_to_split_map.find(e);
+			if(it == edge_to_split_map.end()) {
 				return INVALID_INDEX;
 			}
 
-			return it->second.owner;
+			return get_split(it->second).owner;
 		}
 
 		inline void resolve_midpoint_id(const Edge &e, const Integer m_id)
@@ -155,12 +193,41 @@ namespace mars {
 
 		inline Integer midpoint(const Edge &e) const
 		{
-			auto it = global_splits.find(e);
-			if(it == global_splits.end()) {
+			auto it = edge_to_split_map.find(e);
+			if(it == edge_to_split_map.end()) {
 				return INVALID_INDEX;
 			}
 
-			return it->second.midpoint;
+			return get_split(it->second).midpoint;
+		}
+
+		bool check_consistent() const
+		{
+			assert(edge_to_split_map.size() == splits_.size());
+
+			if(splits_.empty()) return true;
+
+			std::vector<bool> visited(splits_.size(), false);
+
+			for(auto etoid : edge_to_split_map) {
+				auto &s = get_split(etoid.second);
+				assert(s.edge == etoid.first);
+
+				if(s.edge != etoid.first) return false;
+				visited[etoid.second] = true;
+			}
+
+
+			for(Integer i = 0; i < visited.size(); ++i) {
+				if(!visited[i]) {
+					std::cerr << "split(" << i << ") not visited: ";
+					get_split(i).describe(std::cerr);
+					std::cerr << std::endl;
+					return false;
+				}
+			}
+
+			return true;
 		}
 
 		template<Integer Dim, Integer ManifoldDim>
@@ -168,11 +235,22 @@ namespace mars {
 			const EdgeNodeMap &enm,
 			MeshPartition<Dim, ManifoldDim> &part)
 		{
-			for(auto gs_it = global_splits.begin(); gs_it != global_splits.end(); ) {
-				const auto &gs = gs_it->second;
+			assert(check_consistent());
+			if(splits_.empty()) return;
+
+			Integer remove_index = 0;
+			for(auto gs_it = splits_.begin(); gs_it != splits_.end(); ) {
+				const auto &gs = *gs_it;
+				auto map_it = edge_to_split_map.find(gs.edge);
+				map_it->second -= remove_index;
+
 				Edge e = part.local_edge(gs.edge);
 				
 				if(!e.is_valid()) {
+					std::cout << "invalid local edge: ";
+					gs.describe(std::cout);
+					std::cout << "\n";
+
 					++gs_it;
 					continue;
 				}
@@ -189,86 +267,101 @@ namespace mars {
 				
 				part.assign_node_local_to_global(local_mp, gs.midpoint);
 
-				global_splits.erase(gs_it++);
+
+				
+				
+				if(map_it != edge_to_split_map.end()) {
+					edge_to_split_map.erase(map_it);
+				} else {
+					assert(false);
+				}
+
+				splits_.erase(gs_it);
+				remove_index++;
 			}
+
+			assert(edge_to_split_map.size() == splits_.size());
 		}
 
 		template<Integer Dim, Integer ManifoldDim>
 		void collect_splits_to_apply(
 			const MeshPartition<Dim, ManifoldDim> &part,
-			std::vector<EdgeSplit> &splits)
+			std::vector<EdgeSplit> &local_splits)
 		{
-			splits.clear();
-			splits.reserve(global_splits.size());
+			assert(edge_to_split_map.size() == splits_.size());
 
-			for(auto gs_it = global_splits.begin(); gs_it != global_splits.end();) {
-				const auto &gs = gs_it->second;
-				splits.push_back(gs);
+			local_splits.clear();
+			local_splits.reserve(splits_.size());
+
+			for(auto gs_it = splits_.begin(); gs_it != splits_.end();) {
+				const auto &gs = *gs_it;
+				local_splits.push_back(gs);
 			}
 		}
 
 		template<Integer Dim, Integer ManifoldDim>
 		void collect_splits_to_local_edges(
 			const MeshPartition<Dim, ManifoldDim> &part,
-			std::vector<Edge> &splits)
+			std::vector<Edge> &local_splits)
 		{
-			splits.clear();
-			splits.reserve(global_splits.size());
+			local_splits.clear();
+			local_splits.reserve(splits_.size());
 
-			for(auto gs_it = global_splits.begin(); gs_it != global_splits.end(); ++gs_it) {
-				const auto &gs = gs_it->second;
+			for(auto gs_it = splits_.begin(); gs_it != splits_.end(); ++gs_it) {
+				const auto &gs = *gs_it;
 				auto le = part.local_edge(gs.edge);
-				splits.push_back(le);
+				local_splits.push_back(le);
 			}
 		}
 
 		inline bool empty() const
 		{
-			return global_splits.empty() && to_communicate.empty();
+			return splits_.empty() && to_communicate.empty();
 		}
 
-		inline std::map<Edge, EdgeSplit>::iterator begin()
+		inline std::vector<EdgeSplit>::iterator begin()
 		{
-			return global_splits.begin();
+			return splits_.begin();
 		}
 
-		inline std::map<Edge, EdgeSplit>::iterator end()
+		inline std::vector<EdgeSplit>::iterator end()
 		{
-			return global_splits.end();
+			return splits_.end();
 		}
 
-		inline std::map<Edge, EdgeSplit>::const_iterator begin() const
+		inline std::vector<EdgeSplit>::const_iterator begin() const
 		{
-			return global_splits.begin();
+			return splits_.begin();
 		}
 
-		inline std::map<Edge, EdgeSplit>::const_iterator end() const
+		inline std::vector<EdgeSplit>::const_iterator end() const
 		{
-			return global_splits.end();
+			return splits_.end();
 		}
 
 		void describe(std::ostream &os) const
 		{
 			os << ";;;;;;;;;;;;;;;;;;;;;;;;;;;\n";
-			os << "global_splits(" << partition_id << "/" << n_parts << ") empty = " << empty() << "\n"; 
-			for(const auto &gs : global_splits) {
-				gs.second.describe(os);
+			os << "splits(" << partition_id << "/" << n_parts << ") empty = " << empty() << "\n"; 
+			for(const auto &s : splits_) {
+				s.describe(os);
+				auto it = edge_to_split_map.find(s.edge);
+				assert(it != edge_to_split_map.end());
+				os << "local_id = " << it->second << "\n";
 			}
 
 			os << "to_communicate\n";
-			for(const auto &gs : to_communicate) {
-				gs.describe(os);
+			for(const auto &s : to_communicate) {
+				s.describe(os);
 			}
 
 			os << ";;;;;;;;;;;;;;;;;;;;;;;;;;;\n";
 		}
 
-
-		std::map<Edge, EdgeSplit> global_splits;
-		std::vector<EdgeSplit> to_communicate;
-
-		//not really necessary outside debugging
-		// std::vector<EdgeSplit> resolved;
+	private:
+		std::vector<EdgeSplit>  splits_;
+		std::map<Edge, Integer> edge_to_split_map;
+		std::vector<EdgeSplit>  to_communicate;
 		Integer partition_id;
 		Integer n_parts;
 	};

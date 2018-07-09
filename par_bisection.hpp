@@ -219,10 +219,12 @@ namespace mars {
 					// parts[k]->node_map().describe(std::cout);
 					// edge_split_pool_[k]->describe(std::cout);
 
-					for(Integer j = 0; j < parts.size(); ++j) {
-						parts[j]->node_map().describe(std::cout);
-						edge_split_pool_[j]->describe(std::cout);
-					}
+					// for(Integer j = 0; j < parts.size(); ++j) {
+					// 	parts[j]->node_map().describe(std::cout);
+					// 	edge_split_pool_[j]->describe(std::cout);
+					// }
+
+					print_analysis(k);
 				}
 
 				assert( ok );
@@ -271,6 +273,8 @@ namespace mars {
 
 			std::cout << "print_analysis(" << partition_id << ")" << std::endl;
 			
+			std::vector<EdgeSplit> inconsistent_edge_splits;
+
 			for(Integer i = 0; i < mesh.n_elements(); ++i) {
 				if(!mesh.is_active(i)) continue;
 				const auto &e = mesh.elem(i);
@@ -295,6 +299,8 @@ namespace mars {
 
 						Integer midpoint = enm.get(edge);
 
+						if(midpoint == INVALID_INDEX) continue;
+
 						for(auto in : invalid_nodes) {
 							if(in != midpoint) continue;
 							Edge global_edge(
@@ -306,11 +312,13 @@ namespace mars {
 									  << global_edge.nodes[0] << ","
 									  << global_edge.nodes[1] << ")\n";
 
-							auto &es = e_pool. get_split(global_edge);
+							auto &es = e_pool.get_split(global_edge);
 
 							if(es.is_valid()) {
 								std::cout << "found split ";
 								es.describe(std::cout);
+
+								inconsistent_edge_splits.push_back(es);
 							}
 						}
 					}
@@ -318,7 +326,7 @@ namespace mars {
 			}
 
 			for(auto e_it = e_pool.begin(); e_it != e_pool.end(); ++e_it) {
-				const auto &e_split = e_it->second;
+				const auto &e_split = *e_it;
 				const auto local_edge = part.local_edge(e_split.edge);
 
 				if(!local_edge.is_valid()) {
@@ -374,6 +382,53 @@ namespace mars {
 				}
 
 			}
+
+			edge_split_pool_[partition_id]->describe(std::cout);
+			parts[partition_id]->node_map().describe(std::cout);
+
+			for(auto es : inconsistent_edge_splits) {
+				auto owner = es.owner;
+				if(owner == INVALID_INDEX) continue;
+
+				auto b = bisection[owner];
+				auto p = parts[owner];
+
+				Integer lmp = p->local_midpoint(b->edge_node_map(),  es.edge);
+				Integer mp  = p->global_midpoint(b->edge_node_map(), es.edge);
+				es.describe(std::cout);
+				std::cout << "found midpoint in part " << owner <<  " with lid " << lmp << " and gid " << mp << std::endl;
+
+				const auto le = p->local_edge(es.edge);
+				const auto &incident = b->edge_element_map().elements(le);
+
+				for(auto i : incident) {
+					p->describe_element(i, std::cout);
+				}
+
+				std::vector<Integer> edge_interface;
+				p->edge_interfaces(
+					 b->edge_element_map(),
+					le,
+					edge_interface);
+
+				for(auto i : edge_interface) {
+					std::cout << i << " ";
+				}
+
+				std::cout << " == ";
+
+				parts[partition_id]->edge_interfaces(
+					 bisection[partition_id]->edge_element_map(),
+					 part.local_edge(es.edge),
+					 edge_interface);
+
+				for(auto i : edge_interface) {
+					std::cout << i << " ";
+				}
+
+				std::cout << std::endl;
+
+			}
 		}
 
 		void refine(std::vector<std::vector<mars::Integer>> &elements)
@@ -408,8 +463,6 @@ namespace mars {
 				if(loops >= max_loops && !complete) {
 					for(Integer k = 0; k < parts.size(); ++k) {
 						if(!edge_split_pool_[k]->empty()) {
-							// edge_split_pool_[k]->describe(std::cout);
-							// parts[k]->node_map().describe(std::cout);
 							print_analysis(parts[k]->partition_id());
 						}
 					}

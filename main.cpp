@@ -185,7 +185,7 @@ namespace mars {
 	{
 		ParBisection<Dim, ManifoldDim> b(parts);
 		// auto edge_select = std::make_shared<NewestVertexEdgeSelect<Dim, ManifoldDim>>();
-		// auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<Dim, ManifoldDim>>();
+		// auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<Dim, ManifoldDim>>(true, true);
 		auto edge_select = std::make_shared<LongestEdgeSelect<Dim, ManifoldDim>>(true, true);
 		edge_select->set_recursive(true);
 		// edge_select->set_recursive(false);
@@ -232,7 +232,7 @@ void test_partition_2D()
 	read_mesh("../data/square_2_def.MFEM", mesh);
 
 	Bisection<2, 2> b(mesh);
-	b.uniform_refine(1);
+	b.uniform_refine(2);
 
 	std::vector<Integer> partitioning(mesh.n_elements());
 
@@ -246,12 +246,16 @@ void test_partition_2D()
 
 	write_mesh("mesh_2_p.eps", mesh, 10., PLOT_ID);
 
-	test_bisection(17, partitions);
+	
+
+	test_bisection(10, partitions);
 
 	write_mesh_partitions(
 		"par2.eps",
 		partitions,
 		PLOT_UNIFORM);
+
+	// export_parts("part2", partitions);	
 
 }
 
@@ -264,11 +268,11 @@ void test_partition_3D()
 	read_mesh("../data/cube_6.MFEM", mesh, true);
 
 	Bisection<3, 3> b(mesh);
-	b.uniform_refine(2);
+	b.uniform_refine(3);
 
 	std::vector<Integer> partitioning(mesh.n_elements());
 
-	Integer n_parts = 5;
+	Integer n_parts = 3;
 	for(Integer i = 0; i < mesh.n_elements(); ++i) {
 		partitioning[i] = i % n_parts;
 	}
@@ -289,8 +293,6 @@ void test_partition_3D()
 		"after_par3_",
 		partitions,
 		PLOT_UNIFORM);
-
-
 }
 
 void run_benchmarks()

@@ -190,8 +190,8 @@ namespace mars {
 	template<Integer Dim, Integer ManifoldDim>
 	class NewestVertexAndLongestEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
 	public:
-		NewestVertexAndLongestEdgeSelect(const bool recursive = true)
-		: recursive_(recursive)
+		NewestVertexAndLongestEdgeSelect(const bool recursive = true, const bool use_tollerance = true)
+		: recursive_(recursive), use_tollerance_(use_tollerance)
 		{}
 
 		Integer select(
@@ -228,6 +228,10 @@ namespace mars {
 			const Edge &neighbor_edge,
 			const Integer element_id) const override
 		{	
+			if(!use_tollerance_) {
+				return select(mesh, element_id);
+			}
+
 			const auto &e = mesh.elem(element_id);
 
 			Real len = 0.;
@@ -283,6 +287,7 @@ namespace mars {
 
 	private:
 		bool recursive_;
+		bool use_tollerance_;
 	};
 	
 

@@ -68,6 +68,11 @@ namespace mars {
 			return true;
 		}
 
+		inline bool operator!=(const Side &other) const
+		{
+			return !((*this) == other);
+		}
+
 		inline bool operator<(const Side &other) const
 		{
 			for(Integer i = 0; i < N-1; ++i) {

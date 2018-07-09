@@ -341,6 +341,20 @@ namespace mars {
 		return canvas.write(path);
 	}
 
+	template<Integer Dim, Integer ManifoldDim>
+	bool export_parts(
+		const std::string &path,
+		const std::vector<std::shared_ptr<MeshPartition<Dim, ManifoldDim>>> &parts)
+	{
+		bool ok = true;
+		for(const auto &p : parts) {
+			VTKMeshWriter<Mesh<Dim, ManifoldDim>> w;
+			ok &= w.write(path + std::to_string(p->partition_id()) + ".vtu", p->get_mesh());
+		}
+
+		return ok;
+	}
+
 	template<Integer Dim>
 	bool write_mesh_partitions(
 		const std::string &path,

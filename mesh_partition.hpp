@@ -57,6 +57,37 @@ namespace mars {
 			return mesh.elem(index);
 		}
 
+		void describe_element(const Integer element_id, std::ostream &os) const
+		{
+			os << "[" << element_id << ", " << elem_map_.global(element_id) << "]";
+
+			for(auto n : mesh.elem(element_id).nodes) {
+				os << " " << n;
+			}
+
+			os << " ->";
+
+			for(auto n : mesh.elem(element_id).nodes) {
+				os << " " << node_map_.global(n);
+			}
+
+			if(is_elem_interface(element_id)) {
+				os << " | interfaces with: [";
+
+				for(auto st : mesh.elem(element_id).side_tags) {
+					if(is_partition_tag(st)) {
+						os << " " << tag_to_partition_id(st);	
+					} else {
+						os << " -";
+					}
+				}
+
+				os << " ]";
+			}
+
+			os << "\n";
+		}
+
 		void describe(std::ostream &os) const
 		{
 			os << "===============================\n";
@@ -64,33 +95,7 @@ namespace mars {
 			os << "elements:\n";
 			for(Integer i = 0; i < mesh.n_elements(); ++i) {
 				if(!mesh.is_active(i)) continue;
-				os << "[" << i << ", " << elem_map_.global(i) << "]";
-
-				for(auto n : mesh.elem(i).nodes) {
-					os << " " << n;
-				}
-
-				os << " ->";
-
-				for(auto n : mesh.elem(i).nodes) {
-					os << " " << node_map_.global(n);
-				}
-
-				if(is_elem_interface(i)) {
-					os << " | interfaces with: [";
-
-					for(auto st : mesh.elem(i).side_tags) {
-						if(is_partition_tag(st)) {
-							os << " " << tag_to_partition_id(st);	
-						} else {
-							os << " -";
-						}
-					}
-
-					os << " ]";
-				}
-
-				os << "\n";
+				describe_element(i, os);
 			}
 
 			os << "nodes:\n";
@@ -173,10 +178,12 @@ namespace mars {
 			const Edge &e,
 			std::vector<Integer> &partitions)
 		{
+			partitions.clear();
+			
 			if(node_map_.global(e.nodes[0]) == INVALID_INDEX || 
 			   node_map_.global(e.nodes[1]) == INVALID_INDEX)
 			{
-				// assert(false);
+				assert(false);
 				return false;
 			}
 
@@ -211,62 +218,6 @@ namespace mars {
 			return !partitions.empty();
 		}
 
-		void append_separate_interface_edges(
-			const EdgeElementMap &eem,
-			const EdgeNodeMap &enm,
-			const std::vector<Edge> &local_edges,
-			std::vector< std::vector<EdgeSplit> > &global_edges)
-		{
-			// node_partition_id_.resize(mesh.n_nodes(), INVALID_INDEX);
-			// global_node_id_.resize(mesh.n_nodes(), INVALID_INDEX);
-
-
-			// for(auto &ge : global_edges) 
-			// {
-			// 	ge.clear();
-			// }
-
-			for(auto &e : local_edges) {
-				std::vector<Integer> partitions;
-
-				if(edge_interfaces(eem, e, partitions)) {
-
-					Edge global_edge(node_map_.global(e.nodes[0]), node_map_.global(e.nodes[1]));
-					// global_edge.fix_ordering
-
-					//find midpoint owner and global_id
-					Integer local_midpoint = enm.get(e);
-					assert(local_midpoint != INVALID_INDEX);
-
-					assert(local_midpoint < mesh.n_nodes());
-
-					Integer midpoint = node_map_.insert_global(local_midpoint);
-					Integer owner = node_map_.insert_owner(local_midpoint);
-
-					if(owner == INVALID_INDEX) {
-						//try to claim ownership
-						owner = partition_id();
-					} 
-
-					EdgeSplit global_edge_split(global_edge, midpoint, owner);
-
-					global_edge_split.partitions.insert(partition_id());
-					global_edge_split.partitions.insert(partitions.begin(), partitions.end());
-
-					for(auto p : global_edge_split.partitions) {
-						global_edges[p].push_back(global_edge_split);
-					}
-
-					// std::cout << "[" << partition_id() << "] ";
-					// global_edge_split.describe(std::cout);
-
-					// global_edges[partition_id()].push_back(global_edge_split);
-				} else {
-					Integer local_midpoint = enm.get(e);
-					node_map_.set_owner(local_midpoint, partition_id());
-				}
-			}
-		}
 
 		void update_edge_split_pool(
 			const EdgeElementMap &eem,
@@ -307,22 +258,6 @@ namespace mars {
 			const EdgeNodeMap &enm,
 			EdgeSplitPool &pool)
 		{
-			// for(auto it = pool.begin(); it != pool.end(); ++it) {
-			// 	auto &e_split = it->second;
-			// 	auto le = local_edge(e_split.edge);
-			// 	const Integer midpoint = enm.get(le);
-
-			// 	assert(midpoint != INVALID_INDEX);
-			// 	assert(e_split.owner != INVALID_INDEX);
-				
-			// 	node_map_.set_owner(midpoint, e_split.owner);
-				
-			// 	if(e_split.midpoint == INVALID_INDEX) continue;
-
-			// 	assert(e_split.midpoint != INVALID_INDEX);
-			// 	node_map_.set_global(midpoint, e_split.midpoint);
-			// }
-
 			pool.set_midpoint_ids_to(enm, *this);
 		}
 
@@ -331,7 +266,7 @@ namespace mars {
 			EdgeSplitPool &pool) const
 		{
 			for(auto it = pool.begin(); it != pool.end(); ++it) {
-				auto &e_split = it->second;
+				auto &e_split = *it;
 				auto le = local_edge(e_split.edge);
 				const Integer midpoint = enm.get(le);
 
@@ -339,8 +274,26 @@ namespace mars {
 				if(node_map_.global(midpoint) == INVALID_INDEX) continue;
 				pool.resolve_midpoint_id(e_split.edge, node_map_.global(midpoint));
 			}
+		}
 
-			
+		Integer local_midpoint(
+			const EdgeNodeMap &enm,
+			const Edge &global_edge) const
+		{
+			Edge e = local_edge(global_edge);
+			if(!e.is_valid()) return INVALID_INDEX;
+
+			return enm.get(e);
+		}
+
+		Integer global_midpoint(
+			const EdgeNodeMap &enm,
+			const Edge &global_edge) const
+		{
+			auto local = local_midpoint(enm, global_edge);
+			if(local == INVALID_INDEX) return local;
+
+			return node_map_.global(local);
 		}
 
 		Edge local_edge(const Edge &global_edge) const
