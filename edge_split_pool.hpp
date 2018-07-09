@@ -3,6 +3,7 @@
 
 #include "edge.hpp"
 #include "edge_split.hpp"
+#include "dof_map.hpp"
 
 namespace mars {
 	class EdgeSplitPool {
@@ -183,7 +184,10 @@ namespace mars {
 			return get_split(it->second).owner;
 		}
 
-		inline void resolve_midpoint_id(const Edge &e, const Integer m_id)
+		inline void resolve_midpoint_id(
+			const Edge &e,
+			const Integer m_id,
+			Map &node_map)
 		{
 			auto &s = get_split(e);
 			assert(s.is_valid());
@@ -193,6 +197,13 @@ namespace mars {
 			if(!s.only_on_partition(partition_id)) {
 				to_communicate.push_back(s);
 			}
+
+			update_edge_interface(e, m_id);
+
+			std::vector<Integer> parts;
+			edge_interface(e, parts);
+			assert(!parts.empty());
+			node_map.set_partitions(m_id, std::begin(parts), std::end(parts));
 		}
 
 		inline Integer midpoint(const Edge &e) const
@@ -270,10 +281,13 @@ namespace mars {
 				if(gs.midpoint == INVALID_INDEX) { ++gs_it; continue; }
 				
 				part.assign_node_local_to_global(local_mp, gs.midpoint);
+				update_edge_interface(gs.edge, gs.midpoint);
 
+				std::vector<Integer> parts;
+				edge_interface(gs.edge, parts);
+				assert(!parts.empty());
+				part.node_map().set_partitions(gs.midpoint, std::begin(parts), std::end(parts));
 
-				
-				
 				if(map_it != edge_to_split_map.end()) {
 					edge_to_split_map.erase(map_it);
 				} else {
@@ -363,9 +377,13 @@ namespace mars {
 		}
 
 		template<Integer Dim, Integer ManifoldDim>
-		void build_edge_interface(const std::vector< ptr< MeshPartition<Dim, ManifoldDim> > > &parts)
+		void build_edge_interface(
+			const std::vector< ptr< Bisection<Dim, ManifoldDim> > > &b,
+			const std::vector< ptr< MeshPartition<Dim, ManifoldDim> > > &parts)
 		{
-			const auto &p = parts[partition_id];
+			edge_interface_.clear();
+
+			const auto &p    = *parts[partition_id];
 			const auto &mesh = p.get_mesh();
 
 			std::vector<Integer> sharing;
@@ -377,7 +395,10 @@ namespace mars {
 					Edge edge;
 					e.edge(i, edge.nodes[0], edge.nodes[1]);
 					edge.fix_ordering();
-					p.partitions(std::begin(edge.nodes), std::end(edge.nodes), sharing);
+					p.node_map().intersect_partitions(
+						std::begin(edge.nodes),
+						std::end(edge.nodes),
+						sharing);
 
 					if(sharing.size() == 1) {
 						assert(sharing[0] == partition_id);
@@ -389,14 +410,45 @@ namespace mars {
 						p.node_map().global(edge.nodes[1])
 					);
 
+
 					//FIXME requires communication
 					for(auto s : sharing) {
-						if(parts[s]->local_edge(global_edge).is_valid()) {
-							edge_interface[global_edge].push_back(s);
+						if(parts[s]->local_edge_exists(global_edge)) {
+							auto le = parts[s]->local_edge(global_edge);
+							if(!b[s]->edge_element_map().elements(le).empty()) {
+								edge_interface_[global_edge].push_back(s);
+							}
 						}
 					}
 				}
 			}
+		}
+
+		void edge_interface(const Edge &global_edge, std::vector<Integer> &partitions) const
+		{
+			auto it = edge_interface_.find(global_edge);
+			if(it == edge_interface_.end()) {
+				partitions.clear();
+				return;
+			}
+
+			partitions = it->second;
+		}
+
+		void update_edge_interface(
+			const Edge &global_edge,
+			const Integer global_midpoint)
+		{
+			Edge e1(global_edge.nodes[0], global_midpoint);
+			Edge e2(global_edge.nodes[1], global_midpoint);
+
+			auto it = edge_interface_.find(global_edge);
+
+			assert(it != edge_interface_.end());
+			assert(!it->second.empty());
+			
+			edge_interface_[e1] = it->second;
+			edge_interface_[e2] = it->second;
 		}
 
 	private:
@@ -406,7 +458,7 @@ namespace mars {
 		Integer partition_id;
 		Integer n_parts;
 
-		std::map<Edge, std::vector<Integer> > edge_interface;
+		std::map<Edge, std::vector<Integer> > edge_interface_;
 	};
 }
 

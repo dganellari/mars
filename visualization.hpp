@@ -389,7 +389,7 @@ namespace mars {
 		opts.plot_fun = plot_fun;
 		opts.node_size = 1./std::sqrt(n_elements);
 
-		if(n_elements > 100) {
+		if(n_elements > 400) {
 			opts.show_id = false;
 		}
 

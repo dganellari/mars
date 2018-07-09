@@ -248,7 +248,7 @@ void test_partition_2D()
 
 	
 
-	test_bisection(10, partitions);
+	test_bisection(5, partitions);
 
 	write_mesh_partitions(
 		"par2.eps",
@@ -268,11 +268,11 @@ void test_partition_3D()
 	read_mesh("../data/cube_6.MFEM", mesh, true);
 
 	Bisection<3, 3> b(mesh);
-	b.uniform_refine(3);
+	b.uniform_refine(1);
 
 	std::vector<Integer> partitioning(mesh.n_elements());
 
-	Integer n_parts = 3;
+	Integer n_parts = 6;
 	for(Integer i = 0; i < mesh.n_elements(); ++i) {
 		partitioning[i] = i % n_parts;
 	}
@@ -287,7 +287,7 @@ void test_partition_3D()
 
 	// write_mesh("mesh_3", mesh, 10., PLOT_ID);
 
-	test_bisection(14, partitions);
+	test_bisection(1, partitions);
 
 	write_mesh_partitions(
 		"after_par3_",

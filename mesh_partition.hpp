@@ -91,14 +91,19 @@ namespace mars {
 		void describe_node(const Integer i, std::ostream &os) const
 		{
 			os << "[" << i << ", " << node_map_.global(i) << "] " << node_map_.owner(i) << " ";
-			const auto &p = node_map_.partitions(i);
+			
+			if(node_map_.has_partitions(i)) {
+				const auto &p = node_map_.partitions(i);
 
-			if(!p.empty()) {
-				os << "\tshared (";
-				for(auto pi : p) {
-					os << " " << pi;
+				if(!p.empty()) {
+					os << "\tshared (";
+					for(auto pi : p) {
+						os << " " << pi;
+					}
+					os << " )";
 				}
-				os << " )";
+			} else {
+				os << "\t?";
 			}
 
 			os << "\n";
@@ -234,23 +239,59 @@ namespace mars {
 		// 	return !partitions.empty();
 		// }
 
-		bool edge_interfaces(
-			const EdgeElementMap &eem,
-			const Edge &e,
-			std::vector<Integer> &partitions)
-		{
-			partitions.clear();
+		// bool edge_interfaces(
+		// 	const EdgeElementMap &eem,
+		// 	const Edge &e,
+		// 	std::vector<Integer> &partitions)
+		// {
+		// 	partitions.clear();
 
-			if(node_map_.global(e.nodes[0]) == INVALID_INDEX || 
-			   node_map_.global(e.nodes[1]) == INVALID_INDEX)
-			{
-				assert(false);
-				return false;
-			}
+		// 	if(node_map_.global(e.nodes[0]) == INVALID_INDEX || 
+		// 	   node_map_.global(e.nodes[1]) == INVALID_INDEX)
+		// 	{
+		// 		assert(false);
+		// 		return false;
+		// 	}
 
-			node_map_.intersect_partitions(e.nodes.begin(), e.nodes.end(), partitions);
-			return !partitions.empty();
-		}
+		// 	node_map_.intersect_partitions(e.nodes.begin(), e.nodes.end(), partitions);
+		// 	return !partitions.empty();
+		// }
+
+		// void update_edge_split_pool(
+		// 	const EdgeElementMap &eem,
+		// 	const EdgeNodeMap &enm,
+		// 	const std::vector<Edge> &local_edges,
+		// 	EdgeSplitPool &pool)
+		// {
+		// 	for(auto &e : local_edges) {
+		// 		std::vector<Integer> partitions;
+
+		// 		if(edge_interfaces(eem, e, partitions)) {
+		// 			Edge global_edge(
+		// 				node_map_.global(e.nodes[0]),
+		// 				node_map_.global(e.nodes[1])
+		// 			);
+
+		// 			//find midpoint owner and global_id
+		// 			Integer local_midpoint = enm.get(e);
+
+		// 			assert(local_midpoint != INVALID_INDEX);
+		// 			assert(local_midpoint < mesh.n_nodes());
+
+		// 			Integer midpoint = node_map_.insert_global(local_midpoint);
+		// 			Integer owner    = node_map_.insert_owner(local_midpoint);
+
+		// 			EdgeSplit global_edge_split(global_edge, midpoint, owner);
+		// 			global_edge_split.partitions.insert(partitions.begin(), partitions.end());
+
+		// 			pool.add_split(global_edge_split);
+		// 		} else {
+		// 			Integer local_midpoint = enm.get(e);
+		// 			node_map_.set_owner(local_midpoint, partition_id());
+		// 		}
+		// 	}
+		// }
+
 
 		void update_edge_split_pool(
 			const EdgeElementMap &eem,
@@ -261,11 +302,18 @@ namespace mars {
 			for(auto &e : local_edges) {
 				std::vector<Integer> partitions;
 
-				if(edge_interfaces(eem, e, partitions)) {
-					Edge global_edge(
-						node_map_.global(e.nodes[0]),
-						node_map_.global(e.nodes[1])
-					);
+				Edge global_edge(
+					node_map_.global(e.nodes[0]),
+					node_map_.global(e.nodes[1]));
+
+
+				if(global_edge.is_valid()) {
+					pool.edge_interface(global_edge, partitions);
+				} else {
+					assert(false);
+				}
+
+				if(partitions.size() > 1) {
 
 					//find midpoint owner and global_id
 					Integer local_midpoint = enm.get(e);
@@ -281,6 +329,8 @@ namespace mars {
 
 					pool.add_split(global_edge_split);
 				} else {
+					assert(partitions.empty() || *partitions.begin() == partition_id());
+
 					Integer local_midpoint = enm.get(e);
 					node_map_.set_owner(local_midpoint, partition_id());
 				}
@@ -296,7 +346,7 @@ namespace mars {
 
 		void write_to_edge_pool(
 			const EdgeNodeMap &enm,
-			EdgeSplitPool &pool) const
+			EdgeSplitPool &pool)
 		{
 			for(auto it = pool.begin(); it != pool.end(); ++it) {
 				auto &e_split = *it;
@@ -305,7 +355,12 @@ namespace mars {
 
 				if(midpoint == INVALID_INDEX) continue;
 				if(node_map_.global(midpoint) == INVALID_INDEX) continue;
-				pool.resolve_midpoint_id(e_split.edge, node_map_.global(midpoint));
+				
+				pool.resolve_midpoint_id(
+					e_split.edge,
+					node_map_.global(midpoint),
+					node_map_
+					);
 			}
 		}
 
@@ -327,6 +382,18 @@ namespace mars {
 			if(local == INVALID_INDEX) return local;
 
 			return node_map_.global(local);
+		}
+
+		bool local_edge_exists(const Edge &global_edge) const
+		{
+			auto n1 = node_map_.local(global_edge.nodes[0]);
+			auto n2 = node_map_.local(global_edge.nodes[1]);
+
+			if(n1 == INVALID_INDEX || n2 == INVALID_INDEX) {
+				return false;
+			}
+			
+			return true;
 		}
 
 		Edge local_edge(const Edge &global_edge) const
@@ -377,7 +444,7 @@ namespace mars {
 			const Integer local_id,
 			const Integer global_id)
 		{
-			node_map_.set_global(local_id, global_id);
+			node_map_.insert_local_to_global(local_id, global_id);
 		}
 
 		void localize_edges(

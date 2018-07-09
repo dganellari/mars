@@ -82,6 +82,19 @@ namespace mars {
 			}
 		}
 
+		inline void insert_local_to_global(const Integer local_id, const Integer global_id)
+		{
+			if(local_id >= global_id_.size()) {
+				global_id_.resize(local_id + 1, INVALID_INDEX);
+			}
+
+			global_id_[local_id] = global_id;
+
+			if(global_id != INVALID_INDEX) {
+				global_to_local_[global_id] = local_id;
+			}
+		}
+
 		inline Integer local(const Integer global_id) const
 		{
 			auto it = global_to_local_.find(global_id);
@@ -263,8 +276,29 @@ namespace mars {
 			partitions_[local_id].push_back(partition_id);
 		}
 
+		template<class Iter>
+		void set_partitions(const Integer local_id, const Iter begin, const Iter end)
+		{
+			if(partitions_.size() <= local_id) {
+				partitions_.resize(local_id+1);
+			}
+
+			partitions_[local_id].clear();
+			partitions_[local_id].insert(partitions_[local_id].end(), begin, end);
+		}
+
+		bool has_partitions(const Integer local_id) const
+		{
+			if(local_id < partitions_.size()) {
+				return !partitions_[local_id].empty();
+			}
+
+			return false;
+		}
+
 		const std::vector<Integer> &partitions(const Integer local_id) const
 		{
+			assert(local_id < partitions_.size());
 			return partitions_[local_id];
 		}
 
@@ -272,7 +306,7 @@ namespace mars {
 		void intersect_partitions(
 			const Iter &begin,
 			const Iter &end,
-			std::vector<Integer> &out)
+			std::vector<Integer> &out) const
 		{
 			out.clear();
 			if(begin == end) return;
