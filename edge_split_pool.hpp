@@ -413,9 +413,6 @@ namespace mars {
 				// if(!mesh.is_active(i)) continue;
 				const auto &e = mesh.elem(i);
 
-				if(i == 0 && partition_id == 0) {
-					std::cout << "CIAO" << std::endl;
-				}
 
 				for(Integer i = 0; i < n_edges(e); ++i) {
 					Edge edge;
@@ -430,12 +427,9 @@ namespace mars {
 					);
 
 					auto &inter = edge_interface_[global_edge];
+					inter.clear();
 
-					if(global_edge.nodes[0] == 4 && global_edge.nodes[0] == 6 && partition_id == 0) {
-						std::cout << "inter: " << inter.size() << std::endl;
-					}
-
-					if(!inter.empty()) continue;
+					// if(!inter.empty()) continue;
 
 					p.node_map().intersect_partitions(
 						std::begin(edge.nodes),
@@ -458,6 +452,8 @@ namespace mars {
 						}
 					}
 
+
+					assert(!inter.empty());
 					assert(p.node_map().is_unique(inter));
 				}
 			}

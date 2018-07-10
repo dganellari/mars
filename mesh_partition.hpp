@@ -309,9 +309,10 @@ namespace mars {
 
 				if(global_edge.is_valid()) {
 					pool.edge_interface(global_edge, partitions);
-				} else {
-					assert(false);
-				}
+				} 
+				// else {
+				// 	assert(false);
+				// }
 
 				if(partitions.size() > 1) {
 
