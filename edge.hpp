@@ -35,6 +35,10 @@ namespace mars {
 				if(n == INVALID_INDEX) return false;
 			}
 
+			for(Integer i = 1; i < N; ++i) {
+				if(nodes[i-1] >= nodes[i]) return false;
+			}
+
 			return true;
 		}
 

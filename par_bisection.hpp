@@ -52,15 +52,7 @@ namespace mars {
 				return;
 			}
 
-			for(auto &m : parts) {
-				bisection[m->partition_id()]->edge_element_map().update(m->get_mesh());
-				edge_split_pool_[m->partition_id()]->build_edge_interface(
-					bisection,
-					parts
-				);
-
-				m->describe(std::cout);
-			}
+			build_edge_interface();
 
 			//local parallel refinement
 			for(Integer k = 0; k < parts.size(); ++k) {
@@ -69,8 +61,24 @@ namespace mars {
 				auto b_ptr = bisection[k];
 				b_ptr->refine(elements[k]);
 			}
+		}
+
+		void build_edge_interface()
+		{
+			for(auto &m : parts) {
+				bisection[m->partition_id()]->edge_element_map().update(m->get_mesh());
+			}
 
 
+			for(auto &m : parts) {
+				edge_split_pool_[m->partition_id()]->build_edge_interface(
+					bisection,
+					parts
+				);
+
+				// m->describe(std::cout);
+				edge_split_pool_[m->partition_id()]->describe_edge_interface(std::cout);
+			}
 		}
 
 		void exchange_edge_pools()
@@ -193,6 +201,8 @@ namespace mars {
 				assert( ok );
 				// parts[k]->elem_map().describe(std::cout);
 			}
+
+			build_edge_interface();
 		}	
 
 		//4) (parallel)

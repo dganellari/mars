@@ -244,11 +244,16 @@ void test_partition_2D()
 	std::vector<std::shared_ptr<MeshPartition<2, 2>>> partitions;
 	parition_mesh(mesh, n_parts, partitioning, partitions);
 
-	write_mesh("mesh_2_p.eps", mesh, 10., PLOT_ID);
+	// write_mesh("mesh_2_p.eps", mesh, 10., PLOT_ID);
+
+	write_mesh_partitions(
+		"par2_in.eps",
+		partitions,
+		PLOT_UNIFORM);
 
 	
 
-	test_bisection(5, partitions);
+	test_bisection(4, partitions);
 
 	write_mesh_partitions(
 		"par2.eps",

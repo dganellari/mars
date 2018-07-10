@@ -378,29 +378,51 @@ namespace mars {
 			os << ";;;;;;;;;;;;;;;;;;;;;;;;;;;\n";
 		}
 
+		void describe_edge_interface(std::ostream &os) const
+		{
+			os << ";;;;;;;;;;;;;;;;;;;;;;;;;;;\n";
+
+			os << "edge_interface(" << partition_id << ")\n";
+
+			for(const auto &ei : edge_interface_) {
+				ei.first.describe(os);
+				os << " ->";
+				
+				for(auto p : ei.second) {
+					os << " " << p;
+				}
+
+				os << "\n";
+			}
+
+			os << ";;;;;;;;;;;;;;;;;;;;;;;;;;;\n";
+		}
+
 		template<Integer Dim, Integer ManifoldDim>
 		void build_edge_interface(
 			const std::vector< ptr< Bisection<Dim, ManifoldDim> > > &b,
 			const std::vector< ptr< MeshPartition<Dim, ManifoldDim> > > &parts)
 		{
-			edge_interface_.clear();
+			// edge_interface_.clear();
 
 			auto &p    = *parts[partition_id];
 			const auto &mesh = p.get_mesh();
 
 			std::vector<Integer> sharing;
 			for(Integer i = 0; i < mesh.n_elements(); ++i) {
-				if(!mesh.is_active(i)) continue;
+				// if(!mesh.is_active(i)) continue;
 				const auto &e = mesh.elem(i);
+
+				if(i == 0 && partition_id == 0) {
+					std::cout << "CIAO" << std::endl;
+				}
 
 				for(Integer i = 0; i < n_edges(e); ++i) {
 					Edge edge;
 					e.edge(i, edge.nodes[0], edge.nodes[1]);
 					edge.fix_ordering();
-					p.node_map().intersect_partitions(
-						std::begin(edge.nodes),
-						std::end(edge.nodes),
-						sharing);
+
+					assert(edge.is_valid());
 
 					Edge global_edge(
 						p.node_map().global(edge.nodes[0]),
@@ -409,15 +431,22 @@ namespace mars {
 
 					auto &inter = edge_interface_[global_edge];
 
+					if(global_edge.nodes[0] == 4 && global_edge.nodes[0] == 6 && partition_id == 0) {
+						std::cout << "inter: " << inter.size() << std::endl;
+					}
+
 					if(!inter.empty()) continue;
+
+					p.node_map().intersect_partitions(
+						std::begin(edge.nodes),
+						std::end(edge.nodes),
+						sharing);
 
 					if(sharing.size() == 1) {
 						assert(sharing[0] == partition_id);
 						inter.push_back(partition_id);
 						continue;
 					}
-
-					
 
 					//FIXME requires communication
 					for(auto s : sharing) {
@@ -440,7 +469,7 @@ namespace mars {
 			MeshPartition<Dim, ManifoldDim> &p
 			)
 		{
-			for(auto ei : edge_interface_) {
+			for(const auto &ei : edge_interface_) {
 				const auto edge = p.local_edge(ei.first);
 				Integer local_midpoint = enm.get(edge);
 
@@ -469,12 +498,22 @@ namespace mars {
 			Edge e2(global_edge.nodes[1], global_midpoint);
 
 			auto it = edge_interface_.find(global_edge);
+			const auto parent_interface = it->second;
 
 			assert(it != edge_interface_.end());
 			assert(!it->second.empty());
+			// assert(edge_interface_[e1].empty());
+			// assert(edge_interface_[e2].empty());
 			
-			edge_interface_[e1] = it->second;
-			edge_interface_[e2] = it->second;
+			auto &ei1 = edge_interface_[e1];
+			if(ei1.empty()) {
+				ei1 = parent_interface;
+			}
+
+			auto &ei2 = edge_interface_[e2];
+			if(ei2.empty()) {
+				ei2 = parent_interface;
+			}
 		}
 
 	private:
