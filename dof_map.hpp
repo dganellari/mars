@@ -265,6 +265,7 @@ namespace mars {
 		{
 			global_id_.resize(n, INVALID_INDEX);
 			owner_id_.resize(n, default_owner);
+			partitions_.resize(n);
 		}
 
 		void add_partition(const Integer local_id, const Integer partition_id)
@@ -282,9 +283,21 @@ namespace mars {
 			if(partitions_.size() <= local_id) {
 				partitions_.resize(local_id+1);
 			}
+			
+			assert(std::distance(begin, end) > 0);
 
 			partitions_[local_id].clear();
 			partitions_[local_id].insert(partitions_[local_id].end(), begin, end);
+			assert(is_unique(partitions_[local_id]));
+		}
+
+		bool is_unique(const std::vector<Integer> &vec) const
+		{
+			for(std::size_t i = 1; i < vec.size(); ++i) {
+				if(vec[i] == vec[i-1]) return false;
+			}
+
+			return true;
 		}
 
 		bool has_partitions(const Integer local_id) const
@@ -315,6 +328,7 @@ namespace mars {
 			auto dist = std::distance(begin, end);
 			if(dist == 1) {
 				out = partitions_[*it];
+				assert(is_unique(out));
 				return;
 			}
 
@@ -337,6 +351,67 @@ namespace mars {
 
 				temp = out;
 			}
+
+			assert(is_unique(out));
+		}
+
+		bool is_valid(const bool check_partitions = true) const
+		{
+			assert(partition_id_ != INVALID_INDEX);
+			assert(n_partitions_ > 0);
+			assert(global_id_.size() == owner_id_.size());
+			assert(global_id_.size() == global_to_local_.size());
+
+			if(partition_id_ == INVALID_INDEX) return false;
+			if(n_partitions_ <= 0) return false;
+
+			for(Integer i = 0; i < global_id_.size(); ++i) {
+				assert(global_id_[i] != INVALID_INDEX);
+				
+				if(global_id_[i] == INVALID_INDEX) {
+					return false;
+				}
+			}
+
+			for(Integer i = 0; i < owner_id_.size(); ++i) {
+				assert(owner_id_[i] != INVALID_INDEX);
+				
+				if(owner_id_[i] == INVALID_INDEX) {
+					return false;
+				}
+			}
+
+			std::vector<bool> visited(global_id_.size(), false);
+			for(auto gtl : global_to_local_) {
+				visited[gtl.second] = true;
+				assert(gtl.first != INVALID_INDEX);
+
+				if(gtl.first == INVALID_INDEX) {
+					return false;
+				}
+			}
+
+			for(auto v : visited) {
+				assert(v);
+				if(!v) return false;
+			}
+
+			if(!check_partitions) return true;
+
+			assert(partitions_.size() == global_id_.size());
+
+			for(Integer i = 0; i < partitions_.size(); ++i) {
+				assert(partitions_[i].size() > 0);
+
+				auto it = std::find(partitions_[i].begin(), partitions_[i].end(), partition_id_);
+				assert(it != partitions_[i].end());
+
+				if(it == partitions_[i].end()) {
+					return false;
+				}
+			}
+
+			return true;
 		}
 
 	private:

@@ -186,6 +186,7 @@ namespace mars {
 
 		inline void resolve_midpoint_id(
 			const Edge &e,
+			const Integer local_m_id,
 			const Integer m_id,
 			Map &node_map)
 		{
@@ -203,7 +204,8 @@ namespace mars {
 			std::vector<Integer> parts;
 			edge_interface(e, parts);
 			assert(!parts.empty());
-			node_map.set_partitions(m_id, std::begin(parts), std::end(parts));
+
+			node_map.set_partitions(local_m_id, std::begin(parts), std::end(parts));
 		}
 
 		inline Integer midpoint(const Edge &e) const
@@ -286,7 +288,7 @@ namespace mars {
 				std::vector<Integer> parts;
 				edge_interface(gs.edge, parts);
 				assert(!parts.empty());
-				part.node_map().set_partitions(gs.midpoint, std::begin(parts), std::end(parts));
+				part.node_map().set_partitions(local_mp, std::begin(parts), std::end(parts));
 
 				if(map_it != edge_to_split_map.end()) {
 					edge_to_split_map.erase(map_it);
@@ -383,7 +385,7 @@ namespace mars {
 		{
 			edge_interface_.clear();
 
-			const auto &p    = *parts[partition_id];
+			auto &p    = *parts[partition_id];
 			const auto &mesh = p.get_mesh();
 
 			std::vector<Integer> sharing;
@@ -400,26 +402,50 @@ namespace mars {
 						std::end(edge.nodes),
 						sharing);
 
-					if(sharing.size() == 1) {
-						assert(sharing[0] == partition_id);
-						continue;
-					}
-
 					Edge global_edge(
 						p.node_map().global(edge.nodes[0]),
 						p.node_map().global(edge.nodes[1])
 					);
 
+					auto &inter = edge_interface_[global_edge];
+
+					if(!inter.empty()) continue;
+
+					if(sharing.size() == 1) {
+						assert(sharing[0] == partition_id);
+						inter.push_back(partition_id);
+						continue;
+					}
+
+					
 
 					//FIXME requires communication
 					for(auto s : sharing) {
 						if(parts[s]->local_edge_exists(global_edge)) {
 							auto le = parts[s]->local_edge(global_edge);
 							if(!b[s]->edge_element_map().elements(le).empty()) {
-								edge_interface_[global_edge].push_back(s);
+								inter.push_back(s);
 							}
 						}
 					}
+
+					assert(p.node_map().is_unique(inter));
+				}
+			}
+		}
+
+		template<Integer Dim, Integer ManifoldDim>
+		void update_midpoint_parts(
+			const EdgeNodeMap &enm,
+			MeshPartition<Dim, ManifoldDim> &p
+			)
+		{
+			for(auto ei : edge_interface_) {
+				const auto edge = p.local_edge(ei.first);
+				Integer local_midpoint = enm.get(edge);
+
+				if(local_midpoint != INVALID_INDEX && !p.node_map().has_partitions(local_midpoint)) {
+					p.node_map().set_partitions(local_midpoint, std::begin(ei.second), std::end(ei.second));
 				}
 			}
 		}

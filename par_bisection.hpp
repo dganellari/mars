@@ -170,6 +170,8 @@ namespace mars {
 					bisection[k]->edge_node_map(),
 					*edge_split_pool_[k]
 				);
+
+				edge_split_pool_[k]->update_midpoint_parts(bisection[k]->edge_node_map(), *parts[k]);
 			}
 
 			// std::cout << "after " << std::endl;

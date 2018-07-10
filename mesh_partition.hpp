@@ -358,6 +358,7 @@ namespace mars {
 				
 				pool.resolve_midpoint_id(
 					e_split.edge,
+					midpoint,
 					node_map_.global(midpoint),
 					node_map_
 					);
@@ -550,6 +551,7 @@ namespace mars {
 
 			}
 
+			assert(node_map_.is_valid());
 			return ret;
 		}
 
