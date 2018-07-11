@@ -440,10 +440,10 @@ namespace mars {
 						}
 					}
 					
-					write_mesh_partitions(
-						"par_" + std::to_string(ManifoldDim) + "_" + std::to_string(loops) + ".eps",
-						parts,
-						PLOT_UNIFORM);
+					// write_mesh_partitions(
+					// 	"par_" + std::to_string(ManifoldDim) + "_" + std::to_string(loops) + ".eps",
+					// 	parts,
+					// 	PLOT_UNIFORM);
 
 					assert(false);
 				}

@@ -198,6 +198,7 @@ namespace mars {
 		
 		for(Integer i = 0; i < n_levels; ++i) {
 			std::cout << "xxxxxxxxxxxxxxxxxxxxxx\n";
+			std::cout << "level " << i << std::endl;
 			
 			for(Integer k = 0; k < parts.size(); ++k) {
 				// if(k % 2 == 1) {
@@ -230,6 +231,7 @@ void test_partition_2D()
 	Mesh<2, 2> mesh;
 	// read_mesh("../data/square_2.MFEM", mesh);
 	read_mesh("../data/square_2_def.MFEM", mesh);
+	mark_boundary(mesh);
 
 	Bisection<2, 2> b(mesh);
 	b.uniform_refine(3);
@@ -241,26 +243,33 @@ void test_partition_2D()
 		partitioning[i] = i % n_parts;
 	}
 
-	std::vector<std::shared_ptr<MeshPartition<2, 2>>> partitions;
-	parition_mesh(mesh, n_parts, partitioning, partitions);
+	std::vector<std::shared_ptr<MeshPartition<2, 2>>> parts;
+	parition_mesh(mesh, n_parts, partitioning, parts);
 
 	// write_mesh("mesh_2_p.eps", mesh, 10., PLOT_ID);
 
 	write_mesh_partitions(
 		"par2_in.eps",
-		partitions,
+		parts,
 		PLOT_UNIFORM);
 
 	
 
-	test_bisection(15, partitions);
+	test_bisection(15, parts);
 
 	write_mesh_partitions(
 		"par2.eps",
-		partitions,
+		parts,
 		PLOT_UNIFORM);
 
-	// export_parts("part2", partitions);	
+	// export_parts("part2", partitions);
+
+	for(const auto &p : parts) {
+		// p->describe(std::cout);
+		std::cout << p->partition_id() << " n_active_elements: " << p->get_mesh().n_active_elements() << std::endl;
+		// p->get_mesh().update_dual_graph();
+		// print_boundary_info(p->get_mesh());
+	}	
 
 }
 
@@ -271,6 +280,7 @@ void test_partition_3D()
 	Mesh<3, 3> mesh;
 	// read_mesh("../data/square_2.MFEM", mesh);
 	read_mesh("../data/cube_6.MFEM", mesh, true);
+	mark_boundary(mesh);
 
 	Bisection<3, 3> b(mesh);
 	b.uniform_refine(5);
@@ -282,22 +292,63 @@ void test_partition_3D()
 		partitioning[i] = i % n_parts;
 	}
 
-	std::vector<std::shared_ptr<MeshPartition<3, 3>>> partitions;
-	parition_mesh(mesh, n_parts, partitioning, partitions);
+	std::vector<std::shared_ptr<MeshPartition<3, 3>>> parts;
+	parition_mesh(mesh, n_parts, partitioning, parts);
 
 	write_mesh_partitions(
 		"before_par3_",
-		partitions,
+		parts,
 		PLOT_UNIFORM);
 
 	// write_mesh("mesh_3", mesh, 10., PLOT_ID);
 
-	test_bisection(2, partitions);
+	test_bisection(2, parts);
 
 	write_mesh_partitions(
 		"after_par3_",
-		partitions,
+		parts,
 		PLOT_UNIFORM);
+
+	for(const auto &p : parts) {
+		// p->describe(std::cout);
+		std::cout << p->partition_id() << " n_active_elements: " << p->get_mesh().n_active_elements() << std::endl;
+		// p->get_mesh().update_dual_graph();
+		// print_boundary_info(p->get_mesh());
+	}
+}
+
+
+void test_partition_4D()
+{
+	using namespace mars;
+	std::cout << "======================================\n";
+	Mesh<4, 4> mesh;
+	read_mesh("../data/cube4d_24.MFEM", mesh);
+	mark_boundary(mesh);
+
+	Bisection<4, 4> b(mesh);
+	b.uniform_refine(1);
+
+	std::vector<Integer> partitioning(mesh.n_elements());
+
+	Integer n_parts = 2;
+	for(Integer i = 0; i < mesh.n_elements(); ++i) {
+		partitioning[i] = i % n_parts;
+	}
+
+	std::vector<std::shared_ptr<MeshPartition<4, 4>>> parts;
+	parition_mesh(mesh, n_parts, partitioning, parts);
+
+	test_bisection(1, parts);
+	// test_bisection(1, parts);
+
+
+	for(const auto &p : parts) {
+		// p->describe(std::cout);
+		std::cout << p->partition_id() << " n_active_elements: " << p->get_mesh().n_active_elements() << std::endl;
+		// p->get_mesh().update_dual_graph();
+		// print_boundary_info(p->get_mesh());
+	}
 }
 
 void run_benchmarks()
@@ -334,6 +385,7 @@ int main(const int argc, const char *argv[])
 
 	test_partition_2D();
 	test_partition_3D();
+	test_partition_4D();
 	return EXIT_SUCCESS;
 }
 

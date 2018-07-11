@@ -196,7 +196,8 @@ namespace mars {
 		}
 
 		for(const auto &p : parts) {
-			p->describe(std::cout);
+			// p->describe(std::cout);
+			std::cout << p->partition_id() << " n_active_elements: " << p->get_mesh().n_active_elements() << std::endl;
 		}
 	}
 
