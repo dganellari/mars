@@ -166,8 +166,83 @@ void test_bisection_4D()
 
 namespace mars {
 	
-	// template<typename T>
-	// using ptr = std::shared_ptr<T>;
+	template<Integer Dim, Integer ManifoldDim>
+	void test_incomplete(Mesh<Dim, ManifoldDim> &mesh, const bool use_uniform_refinement = false)
+	{
+		typedef mars::GloballyUniqueLongestEdgeSelect<Dim, ManifoldDim> ES;
+
+		// Integer each_node = 1;
+		Integer each_element = 10;
+
+		Map map_incomplete(0, 1);
+		map_incomplete.resize(mesh.n_nodes(), 0);
+		
+		// for(Integer i = 0; i < mesh.n_nodes(); ++i) {
+		// 	if(i % each_node != 0) {
+		// 		map_incomplete.set_global(i, i);
+		// 	}
+		// }
+
+		auto edge_select_incomplete = std::make_shared<ES>(map_incomplete);
+
+		Integer element_index = 0;
+		for(Integer i = 0; i < mesh.n_elements(); ++i) {
+			if(!mesh.is_active(i)) continue;
+
+			if(((element_index++ % each_element) == 0) && 
+				!edge_select_incomplete->can_refine(mesh, i)) {
+				//repair global index
+				for(auto n : mesh.elem(i).nodes) {
+					map_incomplete.set_global(n, n);
+				}
+			}
+		}
+
+		Bisection<Dim, ManifoldDim> b(mesh);
+		b.set_edge_select(edge_select_incomplete);
+
+		if(use_uniform_refinement) {
+			b.uniform_refine(1);
+		} else {
+			Vector<Real, Dim> center;
+			center.set(0.5);
+			std::vector<Integer> elements;
+			mark_hypersphere_for_refinement(
+				mesh,
+				center,
+				0.25,
+				elements
+			);
+
+			b.refine(elements);
+		}
+
+		write_mesh("m2_inc.eps", mesh);
+
+		///////////////////////////////////////////////////
+		
+		Map map(0, 1);
+		auto edge_select = std::make_shared<ES>(map);
+
+		Integer max_iter = 20;
+		for(Integer i = 0; i < max_iter; ++i) {
+			std::cout << "iter: " << (i + 1) << "/" << max_iter << std::endl;
+			map.resize(mesh.n_nodes(), 0);
+			for(Integer i = 0; i < mesh.n_nodes(); ++i) {
+				map.set_global(i, i);
+			}
+
+			b.set_edge_select(edge_select);
+			b.set_fail_if_not_refine(i == max_iter -1);
+
+			if(b.refine_incomplete()) {
+				break;
+			}
+		}
+
+		write_mesh("m2.eps", mesh);
+		print_boundary_info(mesh, true);
+	}
 
 
 	template<Integer Dim, Integer ManifoldDim>
@@ -336,7 +411,7 @@ void test_partition_4D()
 	std::vector<std::shared_ptr<MeshPartition<4, 4>>> parts;
 	parition_mesh(mesh, n_parts, partitioning, parts);
 
-	test_bisection(5, parts, false);
+	test_bisection(3, parts, false);
 
 	for(const auto &p : parts) {
 		std::cout << p->partition_id() << " n_active_elements: " << p->get_mesh().n_active_elements() << std::endl;
@@ -368,17 +443,93 @@ void run_benchmarks()
 	b4.run(6, m4, "b4");
 }
 
+void test_incomplete_2D()
+{
+	using namespace mars;
+	std::cout << "======================================\n";
+	Mesh<2, 2> mesh;
+	read_mesh("../data/square_2.MFEM", mesh);
+	// read_mesh("../data/square_2_def.MFEM", mesh);
+
+	Quality<2, 2> q(mesh);
+	q.compute();
+	mark_boundary(mesh);
+
+
+	Bisection<2, 2> b(mesh);
+	b.uniform_refine(4);
+
+	Integer n_tests = 5;
+	for(Integer i = 0; i < n_tests; ++i) {
+		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
+		test_incomplete(mesh);
+	}
+}
+
+void test_incomplete_3D()
+{
+	using namespace mars;
+	std::cout << "======================================\n";
+	Mesh<3, 3> mesh;
+	read_mesh("../data/cube_6.MFEM", mesh);
+	// read_mesh("../data/square_3_def.MFEM", mesh);
+
+	Quality<3, 3> q(mesh);
+	q.compute();
+	mark_boundary(mesh);
+
+
+	Bisection<3, 3> b(mesh);
+	b.uniform_refine(2);
+
+	Integer n_tests = 17;
+	for(Integer i = 0; i < n_tests; ++i) {
+		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
+		test_incomplete(mesh);
+	}
+}
+
+
+void test_incomplete_4D()
+{
+	using namespace mars;
+	std::cout << "======================================\n";
+	Mesh<4, 4> mesh;
+	read_mesh("../data/cube4d_24.MFEM", mesh);
+	// read_mesh("../data/square_4_def.MFEM", mesh);
+
+	Quality<4, 4> q(mesh);
+	q.compute();
+	mark_boundary(mesh);
+
+
+	Bisection<4, 4> b(mesh);
+	b.uniform_refine(2);
+
+	Integer n_tests = 10;
+	for(Integer i = 0; i < n_tests; ++i) {
+		std::cout << "-----------------\n";
+		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
+		test_incomplete(mesh);
+		std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+		std::cout << "-----------------\n";
+	}
+}
+
 int main(const int argc, const char *argv[])
 {
 	using namespace mars;
 	// test_bisection_2D();
-	test_bisection_3D();
+	// test_bisection_3D();
 	// test_bisection_4D();
 
 	// run_benchmarks();
-	test_partition_2D();
-	test_partition_3D();
-	test_partition_4D();
+	// test_partition_2D();
+	// test_partition_3D();
+	// test_partition_4D();
+	// test_incomplete_2D();
+	test_incomplete_3D();
+	// test_incomplete_4D();
 	return EXIT_SUCCESS;
 }
 

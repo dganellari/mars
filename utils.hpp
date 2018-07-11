@@ -94,7 +94,7 @@ namespace mars {
 	}
 
 	template<Integer Dim, Integer ManifoldDim>
-	void print_boundary_info(const Mesh<Dim, ManifoldDim> &mesh, const bool only_bad_tags)
+	void print_boundary_info(const Mesh<Dim, ManifoldDim> &mesh, const bool only_bad_tags, const bool sort_nodes = true)
 	{
 		Simplex<Dim, ManifoldDim-1> side;
 		for(Integer i = 0; i < mesh.n_elements(); ++i) {
@@ -122,13 +122,32 @@ namespace mars {
 					std::cout << "\ttag(" << k << ") = " << e.side_tags[k] << " ( ";
 					e.side(k, side);
 
-					for(auto n : side.nodes) {
-						std::cout << n << " ";
+					if(sort_nodes) {
+						auto sorted_nodes = side.nodes;
+						std::sort(sorted_nodes.begin(), sorted_nodes.end());
+						for(auto n : sorted_nodes) {
+							std::cout << n << " ";
+						}
+
+					} else {
+
+						for(auto n : side.nodes) {
+							std::cout << n << " ";
+						}
 					}
 
 					std::cout << ")\n";
 
 					if(e.side_tags[k] == INVALID_INDEX) {
+						// if(e.parent_id != INVALID_INDEX) {
+						// 	std::cout << "parent:\n";
+						// 	mesh.describe_element(e.parent_id, std::cout);
+						// 	std::cout << "children:\n";
+						// 	for(auto c : mesh.elem(e.parent_id).children) {
+						// 		mesh.describe_element(c, std::cout);
+						// 	}
+						// }
+
 						std::cerr << "+++++++++++++++++++++++++++++++++++++++\n";
 					}
 				}

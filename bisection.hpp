@@ -37,6 +37,15 @@ namespace mars {
 			return true;
 		}
 
+		virtual void reorder_edge(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Integer element_id,
+			Integer &v1,
+			Integer &v2) const
+		{
+		}
+
+
 		virtual bool is_recursive() const
 		{
 			return false;
@@ -51,6 +60,7 @@ namespace mars {
 		LongestEdgeSelect(const bool recursive = true, const bool use_tollerance = true)
 		: recursive_(recursive), use_tollerance_(use_tollerance)
 		{}
+	
 
 		Integer select(
 			const Mesh<Dim, ManifoldDim> &mesh,
@@ -145,6 +155,17 @@ namespace mars {
 		: recursive_(recursive), use_tollerance_(use_tollerance)
 		{}
 
+		void reorder_edge(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Integer element_id,
+			Integer &v1,
+			Integer &v2) const override
+		{
+			if(v2 < v1) {
+				std::swap(v1, v2);
+			}
+		}
+
 		Integer select(
 			const Mesh<Dim, ManifoldDim> &mesh,
 			const Integer element_id) const override
@@ -218,12 +239,26 @@ namespace mars {
 		: map(map), recursive_(recursive), use_tollerance_(use_tollerance)
 		{}
 
-		virtual bool can_refine(
+		void reorder_edge(
 			const Mesh<Dim, ManifoldDim> &mesh,
-			const Integer element_id) const
+			const Integer element_id,
+			Integer &v1,
+			Integer &v2) const override
+		{
+			if(map.global(v2) < map.global(v1)) {
+				std::swap(v1, v2);
+			}
+		}
+
+		bool can_refine(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Integer element_id) const override
 		{
 			for(auto n : mesh.elem(element_id).nodes) {
+				assert(n != INVALID_INDEX);
+
 				if(map.global(n) == INVALID_INDEX) return false;
+
 				assert(map.local(map.global(n)) != INVALID_INDEX);
 			}
 
@@ -234,6 +269,8 @@ namespace mars {
 			const Mesh<Dim, ManifoldDim> &mesh,
 			const Integer element_id) const override
 		{
+			assert(can_refine(mesh, element_id));
+
 			const auto &e = mesh.elem(element_id);
 			std::vector< std::pair<Edge, Integer> > edge_pairs;
 			edge_pairs.reserve(n_edges(e));
@@ -464,8 +501,12 @@ namespace mars {
 	public:
 		Bisection(Mesh<Dim, ManifoldDim> &mesh)
 		: mesh(mesh), edge_select_(std::make_shared<LongestEdgeSelect<Dim, ManifoldDim>>()),
-		  verbose(false)
+		  verbose(false), fail_if_not_refine(false)
 		{}
+
+		void set_fail_if_not_refine(const bool val) {
+			fail_if_not_refine = val;
+		}
 
 		void set_edge_select(const std::shared_ptr<EdgeSelect<Dim, ManifoldDim>> &edge_select)
 		{
@@ -497,80 +538,89 @@ namespace mars {
 			}
 		}
 
-		void deactivated_element_dual_graph_update(const Integer id)
-		{
-			const auto &e = mesh.elem(id);
+		// void deactivated_element_dual_graph_update(const Integer id)
+		// {
+		// 	const auto &e = mesh.elem(id);
 
-			if(e.children.empty()) {
-				std::cerr << "calling element_deactivated on childless element " << id << std::endl;
-				return;
-			}
+		// 	if(e.children.empty()) {
+		// 		std::cerr << "calling element_deactivated on childless element " << id << std::endl;
+		// 		return;
+		// 	}
 
-			std::fill(
-				mesh.dual_graph().adj(id).begin(), 
-				mesh.dual_graph().adj(id).end(), 
-				INVALID_INDEX);
+		// 	std::fill(
+		// 		mesh.dual_graph().adj(id).begin(), 
+		// 		mesh.dual_graph().adj(id).end(), 
+		// 		INVALID_INDEX);
 
-			std::map<Integer, std::vector<Integer> > local_node_2_element;
+		// 	std::map<Integer, std::vector<Integer> > local_node_2_element;
 
-			for(auto c : mesh.elem(id).children) {
-				for(auto n : mesh.elem(c).nodes) {
-					local_node_2_element[n].push_back(c);
-				}
-			}
+		// 	for(auto c : mesh.elem(id).children) {
+		// 		for(auto n : mesh.elem(c).nodes) {
+		// 			local_node_2_element[n].push_back(c);
+		// 		}
+		// 	}
 
-			for(auto a : mesh.dual_graph().adj(id)) {
-				if(a == INVALID_INDEX) continue;
+		// 	for(auto a : mesh.dual_graph().adj(id)) {
+		// 		if(a == INVALID_INDEX) continue;
 
-				for(auto n : mesh.elem(a).nodes) {
-					local_node_2_element[n].push_back(a);
-				}
+		// 		for(auto n : mesh.elem(a).nodes) {
+		// 			local_node_2_element[n].push_back(a);
+		// 		}
 
-				for(auto c : mesh.elem(a).children) {
-					for(auto n : mesh.elem(c).nodes) {
-						local_node_2_element[n].push_back(c);
-					}
-				}
-			}
+		// 		for(auto c : mesh.elem(a).children) {
+		// 			for(auto n : mesh.elem(c).nodes) {
+		// 				local_node_2_element[n].push_back(c);
+		// 			}
+		// 		}
+		// 	}
 
-			bool updated = false;
+		// 	bool updated = false;
 
-			for(Integer i = 0; i < ManifoldDim + 1; ++i) {
-				auto it = local_node_2_element.find(e.nodes[i]);
-				if(it == local_node_2_element.end()) continue;
+		// 	for(Integer i = 0; i < ManifoldDim + 1; ++i) {
+		// 		auto it = local_node_2_element.find(e.nodes[i]);
+		// 		if(it == local_node_2_element.end()) continue;
 
-				for(auto other : it->second) {
-					if(id == other) continue;
+		// 		for(auto other : it->second) {
+		// 			if(id == other) continue;
 
-					if(mesh.have_common_side(id, other)) {
-						updated = true;
-						auto &e_adj = mesh.dual_graph().safe_adj(id);
-						e_adj[mesh.common_side_num(id, other)] = other;
+		// 			if(mesh.have_common_side(id, other)) {
+		// 				updated = true;
+		// 				auto &e_adj = mesh.dual_graph().safe_adj(id);
+		// 				e_adj[mesh.common_side_num(id, other)] = other;
 
-						auto &other_adj = mesh.dual_graph().safe_adj(other);
-						other_adj[mesh.common_side_num(other, id)] = id;
-					}
-				}
-			}
+		// 				auto &other_adj = mesh.dual_graph().safe_adj(other);
+		// 				other_adj[mesh.common_side_num(other, id)] = id;
+		// 			}
+		// 		}
+		// 	}
 
-			if(!updated) {
-				std::cerr << "element " << id  << " not updated " << std::endl;
-				assert(updated);
-			}
-		}
+		// 	if(!updated) {
+		// 		std::cerr << "element " << id  << " not updated " << std::endl;
+		// 		assert(updated);
+		// 	}
+		// }
 
 		void bisect_element(
 			const Integer element_id,
 			const Edge &edge)
+		{
+			Integer v1 = edge.nodes[0];
+			Integer v2 = edge.nodes[1];
+
+			edge_select_->reorder_edge(mesh, element_id, v1, v2);
+			bisect_element(element_id, v1, v2);
+		}
+
+		void bisect_element(
+			const Integer element_id,
+			const Integer v1,
+			const Integer v2)
 		{
 			mesh.elem(element_id).children.clear();
 			mesh.set_active(element_id, false);
 
 			Simplex<Dim, ManifoldDim> s;
 			s.parent_id = element_id;
-
-			const Integer v1 = edge.nodes[0];
-			const Integer v2 = edge.nodes[1];
 			
 			if(verbose) {
 				std::cout << "bisect(" << v1 << ", " << v2 << ") for " << element_id << std::endl;
@@ -604,68 +654,6 @@ namespace mars {
 			return;
 		}
 
-		// //one possible strategy for refining
-		// void longest_edge_ordering(const Simplex<Dim, ManifoldDim> &e, std::vector<Integer> &ordering) const
-		// {
-		// 	ordering.clear();
-			
-		// 	std::vector< std::pair<Real, Integer> > len2edge;
-		// 	for(Integer i = 0; i < n_edges(e); ++i) {
-		// 		Integer v1, v2;
-		// 		e.edge(i, v1, v2);
-		// 		len2edge.emplace_back((mesh.point(v1) - mesh.point(v2)).norm(), i);
-		// 	}
-
-		// 	std::sort(len2edge.begin(), len2edge.end());
-
-		// 	ordering.reserve(n_edges(e));
-		// 	for(auto it = len2edge.rbegin(); it != len2edge.rend(); ++it) {
-		// 		ordering.push_back(it->second);
-		// 	}
-		// }
-
-		// void longest_edge_ordering_with_tol(const Simplex<Dim, ManifoldDim> &e, const Edge &edge, std::vector<Integer> &ordering)
-		// {
-		// 	ordering.clear();
-			
-		// 	Real best_dist = 0.;
-		// 	Real edge_dist = 0.;
-		// 	Integer edge_index = INVALID_INDEX;
-
-		// 	std::vector< std::pair<Real, Integer> > len2edge;
-		// 	for(Integer i = 0; i < n_edges(e); ++i) {
-		// 		Integer v1, v2;
-		// 		e.edge(i, v1, v2);
-		// 		Real dist = (mesh.point(v1) - mesh.point(v2)).norm();
-
-		// 		best_dist = std::max(dist, best_dist);
-				
-		// 		if(Edge(v1, v2) == edge) {
-		// 			edge_dist = dist;
-		// 			edge_index = i;
-		// 		}
-
-		// 		len2edge.emplace_back(dist, i);
-		// 	}
-
-		// 	std::sort(len2edge.begin(), len2edge.end());
-		// 	ordering.reserve(n_edges(e));
-
-		// 	bool use_edge = false;
-		// 	if(edge_dist/best_dist >= (0.99)) {
-		// 		use_edge = true;
-		// 		ordering.push_back(edge_index);
-		// 	}
-
-		// 	for(auto it = len2edge.rbegin(); it != len2edge.rend(); ++it) {
-		// 		if(use_edge && it->second == edge_index) {
-		// 			continue;
-		// 		} else {
-		// 			ordering.push_back(it->second);
-		// 		}
-		// 	}
-		// }
-
 		bool refine_element_recursive(
 			const Integer element_id,
 			const Edge &edge,
@@ -673,77 +661,90 @@ namespace mars {
 		{
 			assert(has_edge(mesh.elem(element_id), edge.nodes[0], edge.nodes[1]));
 
-			// Edge mandatory_edge = mandatory_edge_splitting(element_id);
-			// if(mandatory_edge.is_valid()) {
-			// 	bisect_element(element_id, mandatory_edge);
-			// 	return false;
-			// }
-
 			const Integer edge_num = edge_select_->select(mesh, edge, element_id);
 
 			Edge new_edge;
 			mesh.elem(element_id).edge(edge_num, new_edge.nodes[0], new_edge.nodes[1]);
 			new_edge.fix_ordering();
 
+			bool success = true;
+
 			if(edge == new_edge) {
 				bisect_element(element_id, edge);
 			} else if(!edge_select_->is_recursive()) {
 				bisect_element(element_id, edge);
 			} else {
-				refine_edge(new_edge);
+				success = refine_edge(new_edge);
 				assert(!mesh.is_active(element_id));
 			}
 
-			return false;
+			return success;
 		}
 
 		void refine_element(const Integer element_id)
 		{
-			// Edge mandatory_edge = mandatory_edge_splitting(element_id);
-			// if(mandatory_edge.is_valid()) {
-			// 	refine_edge(mandatory_edge);
-			// 	return false;
-			// }
+			if(!edge_select_->can_refine(mesh, element_id)) {
+				incomplete_elements_.push_back(element_id);
+				assert(!fail_if_not_refine);
+				return;
+			}
 
 			const Integer edge_num = edge_select_->select(mesh, element_id);
-
 			Edge edge;
 			mesh.elem(element_id).edge(edge_num, edge.nodes[0], edge.nodes[1]);
 			edge.fix_ordering();
 			refine_edge(edge);
 		}
 
-		void refine_edge(const Edge &edge)
+		bool refine_edge(const Edge &edge)
 		{
-			bool complete = false;
+			bool visited_all_incidents = false;
 			bool has_refined = false;
-
+			bool success = true;
+			bool all_done = true;
 			auto incidents = edge_element_map_.elements(edge);
 
-			while(!complete) {
-				complete = true;
+			while(!visited_all_incidents) {
+				visited_all_incidents = true;
 				
 				for(auto i : incidents) {
 					if(!mesh.is_active(i)) continue;
-
-					has_refined = true;
-
+					
 					assert(has_edge(mesh.elem(i), edge.nodes[0], edge.nodes[1]));
-					refine_element_recursive(i, edge, level[i]);
-					complete = false;
+					all_done = false;
+					
+					const bool can_refine = edge_select_->can_refine(mesh, i);
+					if(can_refine) {
+						if(refine_element_recursive(i, edge, level[i])) {
+							visited_all_incidents = false;
+							has_refined = true;
+							continue;
+						} 
+
+						assert(!fail_if_not_refine);
+					}
+
+					assert(!fail_if_not_refine);
+					success = false;
 				}
 
 				const auto &next_incidents = edge_element_map_.elements(edge);
 				
 				if(next_incidents.size() > incidents.size()) {
 					incidents = next_incidents;
-					complete = false;
+					visited_all_incidents = false;
 				}
+			}
+
+			if(!success) {
+				incomplete_edges_.push_back(edge);
 			}
 
 			if(has_refined) {
 				bisected_edges_.push_back(edge);
 			}
+
+			return success || all_done;
 		}
 
 		void uniform_refine(const Integer n_levels)
@@ -843,22 +844,6 @@ namespace mars {
 			bisected_edges_.clear();
 		}
 
-		Edge mandatory_edge_splitting(const Integer element_id)
-		{
-			if(mandatory_edge_splitting_.empty()) {
-				return Edge();
-			}
-
-			assert(element_id < mandatory_edge_splitting_.size());
-			assert(element_id >= 0);
-
-			return mandatory_edge_splitting_[element_id];
-		}
-
-		// void refine_sides(const std::vector<Side<ManifoldDim>> &sides)
-		// {
-
-		// }
 
 		void if_exist_refine_edges(const std::vector<Edge> &edges)
 		{
@@ -869,11 +854,31 @@ namespace mars {
 				mesh.update_dual_graph();
 			}
 
-			// mandatory_edge_splitting_.resize(mesh.n_elements());
-
 			for(auto e : edges) {
 				refine_edge(e);
 			}
+		}
+
+		bool refine_incomplete()
+		{
+			// edge_element_map_.build(mesh);
+
+			std::cout << "incomplete elems: " << incomplete_elements_.size();
+			std::cout << " edges: " << incomplete_edges_.size() << std::endl;
+
+			auto elements_to_refine = std::move(incomplete_elements_);
+			incomplete_elements_.clear();
+			refine(elements_to_refine);
+
+			auto edges_to_refine = std::move(incomplete_edges_);
+			incomplete_edges_.clear();
+			if_exist_refine_edges(edges_to_refine);
+
+
+			mesh.update_dual_graph();
+			mesh.tags() = level;
+
+			return incomplete_elements_.empty() && incomplete_edges_.empty();
 		}
 
 	private:
@@ -885,9 +890,14 @@ namespace mars {
 		EdgeElementMap edge_element_map_;
 		std::shared_ptr<EdgeSelect<Dim, ManifoldDim>> edge_select_;
 		bool verbose;
+
+
 		//tracking the refinement 
 		std::vector<Edge> bisected_edges_;
-		std::vector<std::vector<Edge>> mandatory_edge_splitting_;
+
+		std::vector<Edge>    incomplete_edges_;
+		std::vector<Integer> incomplete_elements_;
+		bool fail_if_not_refine;
 	};
 }
 

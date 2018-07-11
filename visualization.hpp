@@ -323,12 +323,33 @@ namespace mars {
 		}
 	}
 
+	template<Integer Dim>
+	bool write_mesh(
+		const std::string &path,
+		const Mesh<Dim, 3> &mesh
+	)
+	{
+		VTKMeshWriter<Mesh<Dim, 3>> w;
+		return w.write(path + ".vtu", mesh);
+	}
+
+
+	template<Integer Dim>
+	bool write_mesh(
+		const std::string &path,
+		const Mesh<Dim, 4> &mesh
+	)
+	{
+		return false;
+	}
+
+
 
 	template<Integer Dim>
 	bool write_mesh(
 		const std::string &path,
 		const Mesh<Dim, 2> &mesh,
-		const Real scale_factor = 1.,
+		const Real scale_factor = 10.,
 		const PlotFun plot_fun = PLOT_ROOT)
 	{
 		moonolith::EPSCanvas canvas;
