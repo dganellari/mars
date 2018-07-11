@@ -94,7 +94,7 @@ namespace mars {
 	}
 
 	template<Integer Dim, Integer ManifoldDim>
-	void print_boundary_info(const Mesh<Dim, ManifoldDim> &mesh)
+	void print_boundary_info(const Mesh<Dim, ManifoldDim> &mesh, const bool only_bad_tags)
 	{
 		Simplex<Dim, ManifoldDim-1> side;
 		for(Integer i = 0; i < mesh.n_elements(); ++i) {
@@ -102,12 +102,22 @@ namespace mars {
 			auto &e = mesh.elem(i);
 			auto &adj = mesh.dual_graph().adj(i);
 
-			std::cout << "[" << i << "]\n"; 
+
+			if(!only_bad_tags) {
+				std::cout << "[" << i << "]\n"; 
+			}
+
 			for(Integer k = 0; k < n_sides(e); ++k) {
 				if(adj[k] == INVALID_INDEX) {
 					if(e.side_tags[k] == INVALID_INDEX) {
+						if(only_bad_tags) {
+							std::cout << "[" << i << "]\n"; 
+						}
+						
 						std::cerr << "+++++++++ bad boundary tag ++++++++++++++\n";
 					}
+
+					if(only_bad_tags && e.side_tags[k] != INVALID_INDEX) continue;
 
 					std::cout << "\ttag(" << k << ") = " << e.side_tags[k] << " ( ";
 					e.side(k, side);
@@ -116,15 +126,15 @@ namespace mars {
 						std::cout << n << " ";
 					}
 
-					if(e.side_tags[k] == INVALID_INDEX) {
-						std::cerr << "+++++++++++++++++++++++++++++++++++++++";
-					}
-
 					std::cout << ")\n";
+
+					if(e.side_tags[k] == INVALID_INDEX) {
+						std::cerr << "+++++++++++++++++++++++++++++++++++++++\n";
+					}
 				}
 			}
 
-			std::cout << std::endl;
+			// std::cout << std::endl;
 		}
 	}
 

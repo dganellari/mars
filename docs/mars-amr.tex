@@ -77,7 +77,8 @@ Without a recurisve closure of the refined edge the overall element quality degr
 \section{Quality of newest vertex with longest edge.}
 
 While the longest-edge criterion is superior, the hybrid approach (newest vertex + longest edge) 
-stays in the same order of magnitude for the degrading element quality.
+stays in the same order of magnitude for the degrading element quality. 
+With further experiments it appears that the hybrid approach does not consistently generates conforming meshes.
 
 \begin{figure}[htbp]
 	\centering
@@ -97,8 +98,7 @@ interfacing edges (see Figure~\ref{fig:par_refinement}).
 
 %For D $>2$ this does not work since the faces might have been split diffrently because of the compatibility chain (recursive step).
 
-Work in progress for higher dimensions.
-
+In higher dimensions the only local refinement strategy that seems to work well is newest-vertex bisection. 
 
 % \begin{itemize}
 % 	\item The inpendent set strategy
@@ -110,7 +110,8 @@ Work in progress for higher dimensions.
 
 \begin{figure}[htbp]
 	\centering
-	\includegraphics[width=0.8\linewidth]{figures/partitioning_with_one_part_without_refinement}
+	\includegraphics[width=0.48\linewidth]{figures/partitioning_with_one_part_without_refinement} \hfill
+	\includegraphics[width=0.48\linewidth]{figures/newest_vertex_bisection}
 	\caption{Partitioning with one part without refinement. Color represent partitions.}
 	\label{fig:par_refinement}
 \end{figure}

@@ -40,6 +40,7 @@ namespace mars {
 			}
 		}
 
+
 		//1) (parallel)
 		void refine_elements(std::vector<std::vector<mars::Integer>> &elements)
 		{
@@ -404,14 +405,31 @@ namespace mars {
 			}
 		}
 
-		void refine(std::vector<std::vector<mars::Integer>> &elements)
-		{
-			//1)
-			refine_elements(elements);
 
+		void uniform_refine(const Integer n_levels) {
+			
+			for(Integer l = 0; l < n_levels; ++l) {
+				if(verbose) {
+					std::cout << "------------------------------\n";
+				}
+
+				build_edge_interface();
+
+				//local parallel refinement
+				for(Integer k = 0; k < parts.size(); ++k) {
+					auto b_ptr = bisection[k];
+					b_ptr->uniform_refine(1);
+				}
+
+				green_refinement();
+			}
+		}
+
+		void green_refinement()
+		{
 			bool complete = false;
 
-			Integer max_loops = 7;
+			Integer max_loops = 20;
 			Integer loops = 0;
 			while(!complete) {
 				//2)
@@ -450,6 +468,14 @@ namespace mars {
 			}
 
 			if(!complete) print_all();
+		}
+
+		void refine(std::vector<std::vector<mars::Integer>> &elements)
+		{
+			//1)
+			refine_elements(elements);
+			green_refinement();
+			
 		}
 
 		void  __attribute__ ((used))  print_all() const

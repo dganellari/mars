@@ -429,7 +429,7 @@ namespace mars {
 					auto &inter = edge_interface_[global_edge];
 					inter.clear();
 
-					// if(!inter.empty()) continue;
+					if(!inter.empty()) continue;
 
 					p.node_map().intersect_partitions(
 						std::begin(edge.nodes),
