@@ -1,9 +1,13 @@
 #ifndef MARS_BISECTION_HPP
 #define MARS_BISECTION_HPP
 
+#include "dof_map.hpp"
+
 namespace mars {
 	template<Integer Dim, Integer ManifoldDim>
 	class Mesh;
+
+
 
 	template<Integer Dim, Integer ManifoldDim>
 	class EdgeSelect {
@@ -24,6 +28,13 @@ namespace mars {
 		{
 			//first edge selected
 			return 0;
+		}
+
+		virtual bool can_refine(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Integer element_id) const
+		{
+			return true;
 		}
 
 		virtual bool is_recursive() const
@@ -125,6 +136,163 @@ namespace mars {
 		bool recursive_;
 		bool use_tollerance_;
 	};
+
+
+	template<Integer Dim, Integer ManifoldDim>
+	class UniqueLongestEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
+	public:
+		UniqueLongestEdgeSelect(const bool recursive = true, const bool use_tollerance = true)
+		: recursive_(recursive), use_tollerance_(use_tollerance)
+		{}
+
+		Integer select(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Integer element_id) const override
+		{
+			const auto &e = mesh.elem(element_id);
+			std::vector< std::pair<Edge, Integer> > edge_pairs;
+			edge_pairs.reserve(n_edges(e));
+
+			for(Integer i = 0; i < n_edges(e); ++i) {
+				Integer v1, v2;
+				e.edge(i, v1, v2);
+				edge_pairs.emplace_back(Edge(v1, v2), i);
+			}
+
+			std::sort(edge_pairs.begin(), edge_pairs.end());
+
+			Integer edge_num = 0;
+			Real len = 0;
+
+			for(auto &ep : edge_pairs) {
+				const Integer v1 = ep.first.nodes[0];
+				const Integer v2 = ep.first.nodes[1];
+
+				Real len_i = (mesh.point(v1) - mesh.point(v2)).norm();
+
+				if(len_i > len) {
+					len = len_i;
+					edge_num = ep.second;
+				}
+			}
+
+			return edge_num;
+		}
+
+		virtual Integer select(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Edge &neighbor_edge,
+			const Integer element_id) const override
+		{
+			return select(mesh, element_id);
+		}
+
+		void set_recursive(const bool recursive)
+		{
+			recursive_ = recursive;
+		}
+
+		bool is_recursive() const override
+		{
+			return recursive_;
+		}
+
+		virtual std::string name() const override
+		{
+			return "UniqueLongestEdgeSelect";
+		}
+
+	private:
+		bool recursive_;
+		bool use_tollerance_;
+	};
+
+
+	template<Integer Dim, Integer ManifoldDim>
+	class GloballyUniqueLongestEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
+	public:
+		GloballyUniqueLongestEdgeSelect(
+			const Map &map,
+			const bool recursive = true,
+			const bool use_tollerance = true)
+		: map(map), recursive_(recursive), use_tollerance_(use_tollerance)
+		{}
+
+		virtual bool can_refine(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Integer element_id) const
+		{
+			for(auto n : mesh.elem(element_id).nodes) {
+				if(map.global(n) == INVALID_INDEX) return false;
+				assert(map.local(map.global(n)) != INVALID_INDEX);
+			}
+
+			return true;
+		}
+
+		Integer select(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Integer element_id) const override
+		{
+			const auto &e = mesh.elem(element_id);
+			std::vector< std::pair<Edge, Integer> > edge_pairs;
+			edge_pairs.reserve(n_edges(e));
+
+			for(Integer i = 0; i < n_edges(e); ++i) {
+				Integer v1, v2;
+				e.edge(i, v1, v2);
+				edge_pairs.emplace_back(Edge(map.global(v1), map.global(v2)), i);
+			}
+
+			std::sort(edge_pairs.begin(), edge_pairs.end());
+
+			Integer edge_num = 0;
+			Real len = 0;
+
+			for(auto &ep : edge_pairs) {
+				const Integer v1 = map.local(ep.first.nodes[0]);
+				const Integer v2 = map.local(ep.first.nodes[1]);
+
+				Real len_i = (mesh.point(v1) - mesh.point(v2)).norm();
+
+				if(len_i > len) {
+					len = len_i;
+					edge_num = ep.second;
+				}
+			}
+
+			return edge_num;
+		}
+
+		virtual Integer select(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Edge &neighbor_edge,
+			const Integer element_id) const override
+		{
+			return select(mesh, element_id);
+		}
+
+		void set_recursive(const bool recursive)
+		{
+			recursive_ = recursive;
+		}
+
+		bool is_recursive() const override
+		{
+			return recursive_;
+		}
+
+		virtual std::string name() const override
+		{
+			return "GloballyUniqueLongestEdgeSelect";
+		}
+
+	private:
+		const Map &map;
+		bool recursive_;
+		bool use_tollerance_;
+	};
+
 
 
 	template<Integer Dim, Integer ManifoldDim>

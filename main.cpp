@@ -83,11 +83,13 @@ void test_bisection_3D()
 	Bisection<3, 3> b(mesh);
 	b.uniform_refine(8);
 	// auto edge_select = std::make_shared<NewestVertexEdgeSelect<3, 3>>();
-	auto edge_select = std::make_shared<LongestEdgeSelect<3, 3>>(true);
+	// auto edge_select = std::make_shared<LongestEdgeSelect<3, 3>>(true);
+
+	auto edge_select = std::make_shared<UniqueLongestEdgeSelect<3, 3>>(true);	
 	// auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<3, 3>>();
 	b.set_edge_select(edge_select);
 
-	Integer n_levels = 8;
+	Integer n_levels = 10;
 	for(Integer i = 0; i < n_levels; ++i) {
 		std::vector<mars::Integer> elements;
 		
@@ -175,9 +177,10 @@ namespace mars {
 		const bool uniform_refine = false)
 	{
 		ParBisection<Dim, ManifoldDim> b(parts);
-		auto edge_select = std::make_shared<NewestVertexEdgeSelect<Dim, ManifoldDim>>();
+		// auto edge_select = std::make_shared<NewestVertexEdgeSelect<Dim, ManifoldDim>>();
 		// auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<Dim, ManifoldDim>>(true, false);
 		// auto edge_select = std::make_shared<LongestEdgeSelect<Dim, ManifoldDim>>(true, true);
+		auto edge_select = std::make_shared<UniqueLongestEdgeSelect<Dim, ManifoldDim>>();
 		edge_select->set_recursive(true);
 		// edge_select->set_recursive(false);
 		b.set_edge_select(edge_select);
@@ -272,7 +275,8 @@ void test_partition_3D()
 	mark_boundary(mesh);
 
 	Bisection<3, 3> b(mesh);
-	b.uniform_refine(2);
+	b.uniform_refine(1);
+	b.set_edge_select(std::make_shared<UniqueLongestEdgeSelect<3, 3>>());
 
 	std::vector<Integer> partitioning(mesh.n_elements(), 0);
 
@@ -292,7 +296,7 @@ void test_partition_3D()
 		parts,
 		PLOT_UNIFORM);
 
-	test_bisection(14, parts, false);
+	test_bisection(5, parts, false);
 
 	write_mesh_partitions(
 		"after_par3_",
@@ -332,7 +336,7 @@ void test_partition_4D()
 	std::vector<std::shared_ptr<MeshPartition<4, 4>>> parts;
 	parition_mesh(mesh, n_parts, partitioning, parts);
 
-	test_bisection(8, parts, false);
+	test_bisection(5, parts, false);
 
 	for(const auto &p : parts) {
 		std::cout << p->partition_id() << " n_active_elements: " << p->get_mesh().n_active_elements() << std::endl;
@@ -368,12 +372,12 @@ int main(const int argc, const char *argv[])
 {
 	using namespace mars;
 	// test_bisection_2D();
-	// test_bisection_3D();
+	test_bisection_3D();
 	// test_bisection_4D();
 
 	// run_benchmarks();
-	// test_partition_2D();
-	// test_partition_3D();
+	test_partition_2D();
+	test_partition_3D();
 	test_partition_4D();
 	return EXIT_SUCCESS;
 }
