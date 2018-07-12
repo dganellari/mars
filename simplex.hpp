@@ -172,56 +172,10 @@ namespace mars {
 
         void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
         {
-            switch(edge_num) 
-            {
-                case 0:
-                {
-                    v1 = nodes[0];
-                    v2 = nodes[1];
-                    break;
-                }
-
-                case 1:
-                {
-                    v1 = nodes[0];
-                    v2 = nodes[2];
-                    break;
-                }
-
-                case 2:
-                {
-                    v1 = nodes[0];
-                    v2 = nodes[3];
-                    break;
-                }
-
-                case 3:
-                {
-                    v1 = nodes[1];
-                    v2 = nodes[2];
-                    break;
-                }
-
-                case 4:
-                {
-                    v1 = nodes[1];
-                    v2 = nodes[3];
-                    break;
-                }
-
-                case 5:
-                {
-                    v1 = nodes[2];
-                    v2 = nodes[3];
-                    break;
-                }
-
-                default:
-                {
-                    assert(false);
-                    break;
-                }
-            }
+            std::array<Integer, 2> vs;
+            Combinations<4, 2>::choose(edge_num, nodes, vs);
+            v1 = vs[0];
+            v2 = vs[1];
         }
         
         void side(
@@ -295,7 +249,6 @@ namespace mars {
     template<Integer Dim>
     class Simplex<Dim, 4> {
     public:
-        // std::array<Integer, 5> sides;
         std::array<Integer, 5> nodes;
         std::array<Integer, 5> side_tags;
 
@@ -330,89 +283,16 @@ namespace mars {
 
         void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
         {
-            switch(edge_num) 
-            {
-                case 0:
-                {
-                    v1 = nodes[0];
-                    v2 = nodes[1];
-                    break;
-                }
-
-                case 1:
-                {
-                    v1 = nodes[0];
-                    v2 = nodes[2];
-                    break;
-                }
-
-                case 2:
-                {
-                    v1 = nodes[0];
-                    v2 = nodes[3];
-                    break;
-                }
-
-                case 3:
-                {
-                    v1 = nodes[0];
-                    v2 = nodes[4];
-                    break;
-                }
-
-                case 4:
-                {
-                    v1 = nodes[1];
-                    v2 = nodes[2];
-                    break;
-                }
-
-                case 5:
-                {
-                    v1 = nodes[1];
-                    v2 = nodes[3];
-                    break;
-                }
-
-                case 6:
-                {
-                    v1 = nodes[1];
-                    v2 = nodes[4];
-                    break;
-                }
-
-                case 7:
-                {
-                    v1 = nodes[2];
-                    v2 = nodes[3];
-                    break;
-                }
-
-                case 8:
-                {
-                    v1 = nodes[2];
-                    v2 = nodes[4];
-                    break;
-                }
-
-                case 9:
-                {
-                    v1 = nodes[3];
-                    v2 = nodes[4];
-                    break;
-                }
-
-                default:
-                {
-                    assert(false);
-                    break;
-                }
-            }
+            std::array<Integer, 2> vs;
+            Combinations<5, 2>::choose(edge_num, nodes, vs);
+            v1 = vs[0];
+            v2 = vs[1];
         }
         
         void side(const Integer &side_num,
                   Simplex<Dim, 3> &side) const
         {
+            // Combinations<5, 4>::choose(side_num, nodes, side.nodes);
             switch(side_num)
             {
                 case 0:
@@ -465,6 +345,58 @@ namespace mars {
                     break;
                 }
             }
+        }
+    };
+
+    template<Integer Dim>
+    class Simplex<Dim, 5> {
+    public:
+        std::array<Integer, 6> nodes;
+        std::array<Integer, 6> side_tags;
+
+        Integer id = INVALID_INDEX;
+        Integer parent_id = INVALID_INDEX;
+
+        std::vector<Integer> children;
+        
+        inline static std::vector<Vector<Real, Dim>> &ref()
+        {
+            static std::vector<Vector<Real, Dim>> ref_;
+            if(ref_.empty()) {
+                ref_.resize(6);
+                ref_[0] = Vector<Real, Dim>().zero();
+                
+                ref_[1] = Vector<Real, Dim>().zero();
+                ref_[1](0) = 1.;
+                
+                ref_[2] = Vector<Real, Dim>().zero();
+                ref_[2](1) = 1.;
+                
+                ref_[3] = Vector<Real, Dim>().zero();
+                ref_[3](2) = 1.;
+                
+                ref_[4] = Vector<Real, Dim>().zero();
+                ref_[4](3) = 1.;
+
+                ref_[5] = Vector<Real, Dim>().zero();
+                ref_[5](4) = 1.;
+            }
+            
+            return ref_;
+        }
+
+        void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
+        {
+            std::array<Integer, 2> vs;
+            Combinations<6, 2>::choose(edge_num, nodes, vs);
+            v1 = vs[0];
+            v2 = vs[1];
+        }
+        
+        void side(const Integer &side_num,
+                  Simplex<Dim, 4> &side) const
+        {
+            Combinations<6, 5>::choose(side_num, nodes, side.nodes);
         }
     };
     

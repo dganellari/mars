@@ -334,16 +334,6 @@ namespace mars {
 	}
 
 
-	template<Integer Dim>
-	bool write_mesh(
-		const std::string &path,
-		const Mesh<Dim, 4> &mesh
-	)
-	{
-		return false;
-	}
-
-
 
 	template<Integer Dim>
 	bool write_mesh(

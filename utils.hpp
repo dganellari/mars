@@ -388,6 +388,32 @@ namespace mars {
 		}
 	}
 
+	template<Integer Dim>
+	bool write_mesh(
+		const std::string &path,
+		const Mesh<Dim, 4> &mesh
+	)
+	{			
+		std::ofstream os(path + ".MFEM");
+		if(!os.good()) return false;
+		export_mesh(mesh, os);
+		os.close();
+		return false;
+	}
+
+	template<Integer Dim>
+	bool write_mesh(
+		const std::string &path,
+		const Mesh<Dim, 5> &mesh
+	)
+	{	
+		std::ofstream os(path + ".MFEM");
+		if(!os.good()) return false;
+		export_mesh(mesh, os);
+		os.close();
+		return false;
+	}
+
 }
 
 

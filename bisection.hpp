@@ -539,68 +539,6 @@ namespace mars {
 			}
 		}
 
-		// void deactivated_element_dual_graph_update(const Integer id)
-		// {
-		// 	const auto &e = mesh.elem(id);
-
-		// 	if(e.children.empty()) {
-		// 		std::cerr << "calling element_deactivated on childless element " << id << std::endl;
-		// 		return;
-		// 	}
-
-		// 	std::fill(
-		// 		mesh.dual_graph().adj(id).begin(), 
-		// 		mesh.dual_graph().adj(id).end(), 
-		// 		INVALID_INDEX);
-
-		// 	std::map<Integer, std::vector<Integer> > local_node_2_element;
-
-		// 	for(auto c : mesh.elem(id).children) {
-		// 		for(auto n : mesh.elem(c).nodes) {
-		// 			local_node_2_element[n].push_back(c);
-		// 		}
-		// 	}
-
-		// 	for(auto a : mesh.dual_graph().adj(id)) {
-		// 		if(a == INVALID_INDEX) continue;
-
-		// 		for(auto n : mesh.elem(a).nodes) {
-		// 			local_node_2_element[n].push_back(a);
-		// 		}
-
-		// 		for(auto c : mesh.elem(a).children) {
-		// 			for(auto n : mesh.elem(c).nodes) {
-		// 				local_node_2_element[n].push_back(c);
-		// 			}
-		// 		}
-		// 	}
-
-		// 	bool updated = false;
-
-		// 	for(Integer i = 0; i < ManifoldDim + 1; ++i) {
-		// 		auto it = local_node_2_element.find(e.nodes[i]);
-		// 		if(it == local_node_2_element.end()) continue;
-
-		// 		for(auto other : it->second) {
-		// 			if(id == other) continue;
-
-		// 			if(mesh.have_common_side(id, other)) {
-		// 				updated = true;
-		// 				auto &e_adj = mesh.dual_graph().safe_adj(id);
-		// 				e_adj[mesh.common_side_num(id, other)] = other;
-
-		// 				auto &other_adj = mesh.dual_graph().safe_adj(other);
-		// 				other_adj[mesh.common_side_num(other, id)] = id;
-		// 			}
-		// 		}
-		// 	}
-
-		// 	if(!updated) {
-		// 		std::cerr << "element " << id  << " not updated " << std::endl;
-		// 		assert(updated);
-		// 	}
-		// }
-
 		void bisect_element(
 			const Integer element_id,
 			const Edge &edge)
@@ -658,7 +596,6 @@ namespace mars {
 			return;
 		}
 
-
 		inline Integer side_num(
 			const Integer element_id,
 			const Simplex<Dim, ManifoldDim-1> &side) const
@@ -688,7 +625,6 @@ namespace mars {
 				if(same_side) {
 					return i;
 				}
-
 			}
 
 			return INVALID_INDEX;
@@ -765,14 +701,6 @@ namespace mars {
 					assert(found_side);
 				}
 			}
-
-			// if(mesh.is_boundary(element_id)) {
-			// std::cout << "===============================\n";
-			// print_boundary_tags(mesh.elem(element_id));
-			// print_boundary_tags(mesh.elem(e.children[0]));
-			// print_boundary_tags(mesh.elem(e.children[1]));
-			// std::cout << "===============================\n";
-			// }
 		}
 
 		bool refine_element_recursive(
@@ -789,7 +717,6 @@ namespace mars {
 			new_edge.fix_ordering();
 
 			bool success = true;
-
 			if(edge == new_edge) {
 				bisect_element(element_id, edge);
 			} else if(!edge_select_->is_recursive()) {
@@ -888,7 +815,6 @@ namespace mars {
 					if(!mesh.is_active(i)) continue;
 					refine_element(i);
 				}
-
 			}
 
 			mesh.update_dual_graph();
@@ -914,7 +840,6 @@ namespace mars {
 				}
 
 				if(!mesh.is_active(i)) {
-					// std::cerr << "tried to refine inactive element " << i << std::endl;
 					continue;
 				}
 
@@ -965,8 +890,7 @@ namespace mars {
 			bisected_edges_.clear();
 		}
 
-
-		void if_exist_refine_edges(const std::vector<Edge> &edges)
+		void refine_edges(const std::vector<Edge> &edges)
 		{
 			if(flags.empty()) {
 				flags.resize(mesh.n_elements(), NONE);
@@ -978,17 +902,17 @@ namespace mars {
 			for(auto e : edges) {
 				refine_edge(e);
 			}
+
+			mesh.update_dual_graph();
+			mesh.tags() = level;
 		}
 
 		bool refine_incomplete()
 		{
-			// edge_element_map_.build(mesh);
-
 			std::cout << "incomplete elems: " << incomplete_elements_.size();
 			std::cout << " edges: " << incomplete_edges_.size() << std::endl;
 
 			auto elements_to_refine = std::move(incomplete_elements_);
-			// std::sort(elements_to_refine.begin(), elements_to_refine.end());
 
 			incomplete_elements_.clear();
 			refine(elements_to_refine);
@@ -996,13 +920,7 @@ namespace mars {
 			auto edges_to_refine = std::move(incomplete_edges_);
 			incomplete_edges_.clear();
 
-			// std::sort(edges_to_refine.begin(), edges_to_refine.end());
-			if_exist_refine_edges(edges_to_refine);
-
-
-			mesh.update_dual_graph();
-			mesh.tags() = level;
-
+			refine_edges(edges_to_refine);
 			return incomplete_elements_.empty() && incomplete_edges_.empty();
 		}
 

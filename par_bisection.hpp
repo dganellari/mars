@@ -227,7 +227,7 @@ namespace mars {
 				);
 
 			 	//refine edges
-				bisection[k]->if_exist_refine_edges(splits);
+				bisection[k]->refine_edges(splits);
 				
 				has_more = has_more || !edge_split_pool_[k]->empty();
 

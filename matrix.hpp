@@ -88,6 +88,68 @@ namespace mars {
 	    std::array<T, Rows * Cols> values;
 	};
 
+	template<typename T, Integer N>
+	inline void minor(
+		const Integer cof_i,
+		const Integer cof_j,
+		const Matrix<T, N, N> &mat,
+		Matrix<T, N-1, N-1> &m)
+	{
+		Integer i_offset = 0;
+		for(Integer i = 0; i < N; ++i) {
+			if(i == cof_i) {
+				i_offset = -1;
+				continue;
+			}
+
+			Integer j_offset = 0;
+
+			for(Integer j = 0; j < N; ++j) {
+				if(j == cof_j) {
+					j_offset = -1;
+					continue;
+				}
+
+				m(i + i_offset, j + j_offset) = mat(i, j);
+			}
+		}
+	}
+
+	template<typename T, Integer N>
+	inline T det(const Matrix<T, N, N> &m)
+	{
+		std::array<Integer, N> nnz;
+		std::fill(std::begin(nnz), std::end(nnz), 0);
+
+		for(Integer i = 0; i < N; ++i) {
+			for(Integer j = 0; j < N; ++j) {
+				nnz[i] += m(i, j) != 0;
+			}
+		}
+
+		Integer row = 0;
+		for(Integer i = 0; i < N; ++i) {
+			if(nnz[row] > nnz[i]) {
+				row = i;
+			}
+		}
+
+		if(nnz[row] == 0) return 0.;
+
+		Integer ret = 0.;
+			
+		Matrix<T, N-1, N-1> mij;
+		for(Integer j = 0; j < N; ++j) {
+			auto coff = m(row, j);
+			if(coff == 0.) continue;
+
+			minor(row, j, m, mij);
+			ret += coff * det(mij);
+		}
+
+		return 1.;
+	}
+
 	template<typename T, Integer Rows, Integer Cols>
 	inline T det(const Matrix<T, Rows, Cols> &m)
 	{

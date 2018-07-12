@@ -68,6 +68,15 @@ namespace mars {
 	        return *this;
 	    }
 
+	    Vector operator*=(const T &right)
+	    {
+	        for(Integer i = 0; i < Dim; ++i) {
+	            (*this)(i) *= right;
+	        }
+	        
+	        return *this;
+	    }
+
 	    Vector operator/=(const T &right)
 	    {
 	        for(Integer i = 0; i < Dim; ++i) {

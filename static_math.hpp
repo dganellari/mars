@@ -115,7 +115,10 @@ namespace mars {
 			const auto &comb = instance().combs[k];
 
 			for(Integer i = 0; i < ChooseM; ++i) {
-				out[comb[i]] = in[i];
+				assert(comb[i] < N);
+				assert(comb[i] >= 0);
+
+				out[i] = in[comb[i]];
 			}
 		}
 

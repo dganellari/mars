@@ -503,7 +503,6 @@ void test_incomplete_3D()
 	q.save_report("3D.svg");
 }
 
-
 void test_incomplete_4D()
 {
 	using namespace mars;
@@ -544,6 +543,44 @@ void test_incomplete_4D()
 	std::ofstream os_p("bad_mesh_p.MFEM");
 	export_elems_with_bad_tags(mesh, os_p, true, true);
 	os_p.close();
+}
+
+void test_incomplete_5D()
+{
+	using namespace mars;
+	std::cout << "======================================\n";
+	Mesh<5, 5> mesh(true);
+	read_mesh("../data/hexateron_1.MFEM", mesh);
+
+	for(Integer i = 0; i < mesh.n_nodes(); ++i) {
+		mesh.point(i) *= 3.;
+	}
+
+	Quality<5, 5> q(mesh);
+	q.compute();
+	mark_boundary(mesh);
+
+	Bisection<5, 5> b(mesh);
+	b.uniform_refine(1);
+
+	Integer n_tests = 7;
+	for(Integer i = 0; i < n_tests; ++i) {
+		std::cout << "-----------------\n";
+		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
+		test_incomplete(mesh, true);
+		q.compute();
+		std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+		std::cout << "-----------------\n";
+	}
+
+	q.save_csv("glob_long_edge", "5D.csv", true);
+	q.save_report("5D.svg");
+
+	std::ofstream m_os("mesh5.MFEM");
+	export_mesh(mesh, m_os);
+	m_os.close();
+
+	// mesh.describe(std::cout);
 }
 
 void test_incomplete_bad_4D()
@@ -600,9 +637,10 @@ int main(const int argc, const char *argv[])
 	// test_partition_2D();
 	// test_partition_3D();
 	// test_partition_4D();
-	test_incomplete_2D();
-	test_incomplete_3D();
-	test_incomplete_4D();
+	// test_incomplete_2D();
+	// test_incomplete_3D();
+	// test_incomplete_4D();
+	test_incomplete_5D();
 	// test_incomplete_bad_4D();
 
 	// Combinations<5, 4>::print_all();
