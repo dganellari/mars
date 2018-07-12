@@ -463,9 +463,9 @@ void test_incomplete_2D()
 
 
 	Bisection<2, 2> b(mesh);
-	b.uniform_refine(4);
+	b.uniform_refine(2);
 
-	Integer n_tests = 5;
+	Integer n_tests = 4;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
 		test_incomplete(mesh);
@@ -492,7 +492,7 @@ void test_incomplete_3D()
 	Bisection<3, 3> b(mesh);
 	b.uniform_refine(2);
 
-	Integer n_tests = 15;
+	Integer n_tests = 4;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
 		test_incomplete(mesh);
@@ -520,7 +520,7 @@ void test_incomplete_4D()
 	Bisection<4, 4> b(mesh);
 	b.uniform_refine(2);
 
-	Integer n_tests = 6;
+	Integer n_tests = 4;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "-----------------\n";
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 

@@ -140,40 +140,40 @@ namespace mars {
 			}
 		}
 
-		void update_side_flags_from_parent(const Integer element_id)
-		{
-			auto &e = elem(element_id);
-			const auto parent_id = e.parent_id;
+		// void update_side_flags_from_parent(const Integer element_id)
+		// {
+		// 	auto &e = elem(element_id);
+		// 	const auto parent_id = e.parent_id;
 
-			if(parent_id == INVALID_INDEX) return;
+		// 	if(parent_id == INVALID_INDEX) return;
 
-			const auto &parent = elem(parent_id);
+		// 	const auto &parent = elem(parent_id);
 
-			std::fill(e.side_tags.begin(), e.side_tags.end(), INVALID_INDEX);
+		// 	std::fill(e.side_tags.begin(), e.side_tags.end(), INVALID_INDEX);
 
-			Simplex<Dim, ManifoldDim-1> parent_side, side;
-			std::vector<Integer> mid_points;
+		// 	Simplex<Dim, ManifoldDim-1> parent_side, side;
+		// 	std::vector<Integer> mid_points;
 
-			for(Integer i = 0; i < n_sides(parent); ++i) {
-				if(parent.side_tags[i] == INVALID_INDEX) continue;
-				parent.side(i, parent_side);
-				auto parent_n = normal(parent_side, points());
+		// 	for(Integer i = 0; i < n_sides(parent); ++i) {
+		// 		if(parent.side_tags[i] == INVALID_INDEX) continue;
+		// 		parent.side(i, parent_side);
+		// 		auto parent_n = normal(parent_side, points());
 
-				for(Integer j = 0; j < n_sides(e); ++j) {
-					e.side(j, side);
+		// 		for(Integer j = 0; j < n_sides(e); ++j) {
+		// 			e.side(j, side);
 
-					auto n = normal(side, points());
+		// 			auto n = normal(side, points());
 
-					const auto angle = dot(parent_n, n);
+		// 			const auto angle = dot(parent_n, n);
 
-					//FIXME not an integer test
-					if(std::abs(angle - 1) < 1e-8) {
-						e.side_tags[j] = parent.side_tags[i];
-						break;
-					}
-				}
-			}
-		}
+		// 			//FIXME not an integer test
+		// 			if(std::abs(angle - 1) < 1e-8) {
+		// 				e.side_tags[j] = parent.side_tags[i];
+		// 				break;
+		// 			}
+		// 		}
+		// 	}
+		// }
 
 		void repair_element(const Integer element_id, const bool verbose = false)
 		{
@@ -194,41 +194,44 @@ namespace mars {
 					std::cout << element_id << " has negative volume" << std::endl;
 				}
 
-				switch(Dim) {
-					case 1:
-					{
-						std::swap(e.nodes[0], e.nodes[1]);
-						const Real vol_after = mars::volume(e, points_);
-						assert(vol_after > 0.);
-						break;
-					}
-					case 2:
-					{
-						std::swap(e.nodes[1], e.nodes[2]);
-						const Real vol_after = mars::volume(e, points_);
-						assert(vol_after > 0.);
-						break;
-					}
-					case 3:
-					{
-						std::swap(e.nodes[2], e.nodes[3]);
-						const Real vol_after = mars::volume(e, points_);
-						assert(vol_after > 0.);
-						break;
-					}
-					case 4:
-					{
-						std::swap(e.nodes[3], e.nodes[4]);
-						const Real vol_after = mars::volume(e, points_);
-						assert(vol_after > 0.);
-						break;
-					}
-					default: 
-					{
-						assert(false && "implement me");
-						break;
-					}
-				}
+				std::swap(e.nodes[ManifoldDim-1], e.nodes[ManifoldDim]);
+				assert(mars::volume(e, points_) > 0.);
+
+				// switch(Dim) {
+				// 	case 1:
+				// 	{
+				// 		std::swap(e.nodes[0], e.nodes[1]);
+				// 		const Real vol_after = mars::volume(e, points_);
+				// 		assert(vol_after > 0.);
+				// 		break;
+				// 	}
+				// 	case 2:
+				// 	{
+				// 		std::swap(e.nodes[1], e.nodes[2]);
+				// 		const Real vol_after = mars::volume(e, points_);
+				// 		assert(vol_after > 0.);
+				// 		break;
+				// 	}
+				// 	case 3:
+				// 	{
+				// 		std::swap(e.nodes[2], e.nodes[3]);
+				// 		const Real vol_after = mars::volume(e, points_);
+				// 		assert(vol_after > 0.);
+				// 		break;
+				// 	}
+				// 	case 4:
+				// 	{
+				// 		std::swap(e.nodes[3], e.nodes[4]);
+				// 		const Real vol_after = mars::volume(e, points_);
+				// 		assert(vol_after > 0.);
+				// 		break;
+				// 	}
+				// 	default: 
+				// 	{
+				// 		assert(false && "implement me");
+				// 		break;
+				// 	}
+				// }
 			}
 		}
 
