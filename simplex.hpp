@@ -623,10 +623,10 @@ namespace mars {
         Simplex<Dim, ManifoldDim-1> side;
         for(Integer i = 0; i < n_sides(simplex); ++i) {
             simplex.side(i, side);
-            areas += volume(side, points);
+            areas += unsigned_volume(side, points);
         }
 
-        return Dim * volume(simplex, points)/areas;
+        return Dim * unsigned_volume(simplex, points)/areas;
     }
 
     // template<Integer Dim, Integer ManifoldDim>

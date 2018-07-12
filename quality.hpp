@@ -19,7 +19,7 @@ namespace mars {
 				Real ret = 0.;
 				for(Integer i = 0; i < n_sides(s); ++i) {
 					s.side(i, side);
-					ret += volume(side, points);
+					ret += unsigned_volume(side, points);
 				}
 
 				return ret;
@@ -96,7 +96,7 @@ namespace mars {
 				Real ret = -std::numeric_limits<Real>::max();
 				for(Integer i = 0; i < n_sides(s); ++i) {
 					s.side(i, side);
-					ret = std::max(volume(side, points), ret);
+					ret = std::max(unsigned_volume(side, points)), ret;
 				}
 
 				return ret;
@@ -199,7 +199,7 @@ namespace mars {
 			 	const std::vector<Vector<Real, Dim>> &points) override
 			 {
 			 	auto S_avg = Utils::avg_edge_len(s, points);
-			 	auto V     = volume(s, points);
+			 	auto V     = unsigned_volume(s, points);
 
 			 	return pow(S_avg, ManifoldDim)/V;
 			 }
@@ -222,7 +222,7 @@ namespace mars {
 			 	const std::vector<Vector<Real, Dim>> &points) override
 			 {
 			 	auto S_rms = Utils::rms_edge_len(s, points);
-			 	auto V     = volume(s, points);
+			 	auto V     = unsigned_volume(s, points);
 
 			 	return pow(S_rms, ManifoldDim)/V;
 			 }
