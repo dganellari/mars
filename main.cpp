@@ -563,7 +563,7 @@ void test_incomplete_5D()
 	Bisection<5, 5> b(mesh);
 	b.uniform_refine(1);
 
-	Integer n_tests = 7;
+	Integer n_tests = 8;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "-----------------\n";
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
@@ -579,7 +579,43 @@ void test_incomplete_5D()
 	std::ofstream m_os("mesh5.MFEM");
 	export_mesh(mesh, m_os);
 	m_os.close();
+}
 
+
+void test_incomplete_6D()
+{
+	using namespace mars;
+	std::cout << "======================================\n";
+	Mesh<6, 6> mesh(true);
+	read_mesh("../data/uniform_polypeton_1.MFEM", mesh);
+
+	for(Integer i = 0; i < mesh.n_nodes(); ++i) {
+		mesh.point(i) *= 3.;
+	}
+
+	Quality<6, 6> q(mesh);
+	q.compute();
+	mark_boundary(mesh);
+
+	Bisection<6, 6> b(mesh);
+	b.uniform_refine(1);
+
+	Integer n_tests = 7;
+	for(Integer i = 0; i < n_tests; ++i) {
+		std::cout << "-----------------\n";
+		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
+		test_incomplete(mesh, true);
+		q.compute();
+		std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+		std::cout << "-----------------\n";
+	}
+
+	q.save_csv("glob_long_edge", "6D.csv", true);
+	q.save_report("6D.svg");
+
+	std::ofstream m_os("mesh6.MFEM");
+	export_mesh(mesh, m_os);
+	m_os.close();
 	// mesh.describe(std::cout);
 }
 
@@ -641,6 +677,7 @@ int main(const int argc, const char *argv[])
 	// test_incomplete_3D();
 	// test_incomplete_4D();
 	test_incomplete_5D();
+	test_incomplete_6D();
 	// test_incomplete_bad_4D();
 
 	// Combinations<5, 4>::print_all();

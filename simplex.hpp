@@ -18,8 +18,54 @@
 
 namespace mars {
     
+    // template<Integer Dim, Integer ManifoldDim>
+    // class Simplex {};
+
     template<Integer Dim, Integer ManifoldDim>
-    class Simplex {};
+    class Simplex {
+    public:
+        std::array<Integer, ManifoldDim+1> nodes;
+        std::array<Integer, ManifoldDim+1> side_tags;
+
+        Integer id = INVALID_INDEX;
+        Integer parent_id = INVALID_INDEX;
+
+        std::vector<Integer> children;
+        
+        inline static std::vector<Vector<Real, Dim>> &ref()
+        {
+            static const Integer N = ManifoldDim + 1;
+
+            static std::vector<Vector<Real, Dim>> ref_;
+            
+            if(ref_.empty()) {
+                ref_.resize(N);
+
+                ref_[0] = Vector<Real, Dim>().zero();
+                
+                for(Integer i = 0; i < ManifoldDim; ++i) {
+                    ref_[i+1] = Vector<Real, Dim>().zero();
+                    ref_[i+1](i) = 1.;
+                }
+            }
+            
+            return ref_;
+        }
+
+        void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
+        {
+            std::array<Integer, 2> vs;
+            Combinations<ManifoldDim+1, 2>::choose(edge_num, nodes, vs);
+            v1 = vs[0];
+            v2 = vs[1];
+        }
+        
+        void side(const Integer &side_num,
+                  Simplex<Dim, ManifoldDim-1> &side) const
+        {
+            Combinations<ManifoldDim+1, ManifoldDim>::choose(side_num, nodes, side.nodes);
+        }
+    };
     
     template<Integer Dim>
     using Node        = Simplex<Dim, 0>;
@@ -35,6 +81,9 @@ namespace mars {
     
     template<Integer Dim>
     using Pentatope   = Simplex<Dim, 4>;
+
+    template<Integer Dim>
+    using Hexateron   = Simplex<Dim, 5>;
     
     using Node1        = Node<1>;
     using Line1        = Line<1>;
@@ -345,58 +394,6 @@ namespace mars {
                     break;
                 }
             }
-        }
-    };
-
-    template<Integer Dim>
-    class Simplex<Dim, 5> {
-    public:
-        std::array<Integer, 6> nodes;
-        std::array<Integer, 6> side_tags;
-
-        Integer id = INVALID_INDEX;
-        Integer parent_id = INVALID_INDEX;
-
-        std::vector<Integer> children;
-        
-        inline static std::vector<Vector<Real, Dim>> &ref()
-        {
-            static std::vector<Vector<Real, Dim>> ref_;
-            if(ref_.empty()) {
-                ref_.resize(6);
-                ref_[0] = Vector<Real, Dim>().zero();
-                
-                ref_[1] = Vector<Real, Dim>().zero();
-                ref_[1](0) = 1.;
-                
-                ref_[2] = Vector<Real, Dim>().zero();
-                ref_[2](1) = 1.;
-                
-                ref_[3] = Vector<Real, Dim>().zero();
-                ref_[3](2) = 1.;
-                
-                ref_[4] = Vector<Real, Dim>().zero();
-                ref_[4](3) = 1.;
-
-                ref_[5] = Vector<Real, Dim>().zero();
-                ref_[5](4) = 1.;
-            }
-            
-            return ref_;
-        }
-
-        void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
-        {
-            std::array<Integer, 2> vs;
-            Combinations<6, 2>::choose(edge_num, nodes, vs);
-            v1 = vs[0];
-            v2 = vs[1];
-        }
-        
-        void side(const Integer &side_num,
-                  Simplex<Dim, 4> &side) const
-        {
-            Combinations<6, 5>::choose(side_num, nodes, side.nodes);
         }
     };
     
