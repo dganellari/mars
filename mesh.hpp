@@ -180,7 +180,13 @@ namespace mars {
 			assert(element_id >= 0);
 			assert(element_id < n_elements());
 
-			auto &e = elements_[element_id];
+			if(sorted_elements_) {
+				auto &e = elem(element_id);
+				std::sort(e.nodes.begin(), e.nodes.end());
+				// return;
+			}
+
+			auto &e = elem(element_id);
 			const Real vol = mars::volume(e, points_);
 
 			if(vol < 0.) {
@@ -620,12 +626,17 @@ namespace mars {
 		std::vector<Integer> &tags() { return tags_; }
 		const std::vector<Integer> &tags() const { return tags_; }
 
+		Mesh(const bool sorted_elements = false)
+		: sorted_elements_(sorted_elements)
+		{}
+
 	private:
 		std::vector< Simplex<Dim, ManifoldDim> > elements_;
 		std::vector< Vector<Real, Dim> > points_;
 		std::vector<Integer> tags_;
 		DualGraph<ManifoldDim> dual_graph_;
 		std::vector<bool> active_;
+		bool sorted_elements_;
 	};
 
 

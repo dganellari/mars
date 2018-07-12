@@ -629,7 +629,8 @@ namespace mars {
 			auto midpoint = edge_node_map_.get(v1, v2);
 
 			if(midpoint == INVALID_INDEX) {
-				midpoint = mesh.add_point(0.5 * (mesh.point(v1) + mesh.point(v2)));
+				// midpoint = mesh.add_point(0.5 * (mesh.point(v1) + mesh.point(v2)));
+				midpoint = mesh.add_point((mesh.point(v1) + mesh.point(v2))/2.);
 				edge_node_map_.update(v1, v2, midpoint);
 			}
 
@@ -867,11 +868,15 @@ namespace mars {
 			std::cout << " edges: " << incomplete_edges_.size() << std::endl;
 
 			auto elements_to_refine = std::move(incomplete_elements_);
+			// std::sort(elements_to_refine.begin(), elements_to_refine.end());
+
 			incomplete_elements_.clear();
 			refine(elements_to_refine);
 
 			auto edges_to_refine = std::move(incomplete_edges_);
 			incomplete_edges_.clear();
+
+			// std::sort(edges_to_refine.begin(), edges_to_refine.end());
 			if_exist_refine_edges(edges_to_refine);
 
 

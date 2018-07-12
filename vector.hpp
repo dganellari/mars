@@ -28,6 +28,16 @@ namespace mars {
 	    	
 	    	return ret;
 	    }
+
+	    friend Vector operator/(const Vector &v, const T &factor)
+	    {
+	    	Vector ret;
+	    	for(Integer i = 0; i < Dim; ++i) {
+	    	    ret(i) = v(i)/factor;
+	    	}
+	    	
+	    	return ret;
+	    }
 	    
 	    Vector operator-(const Vector &right) const
 	    {

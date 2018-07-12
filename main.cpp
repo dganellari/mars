@@ -135,9 +135,12 @@ void test_bisection_4D()
 
 	std::cout << "volume: " << mesh.volume() << std::endl;
 	Bisection<4, 4> b(mesh);
+	b.set_edge_select(std::make_shared<UniqueLongestEdgeSelect<4, 4>>());
 	b.uniform_refine(1);
+	print_boundary_info(mesh, true);
 
-	Integer n_levels = 8;
+	Integer n_levels = 5;
+
 	for(Integer i = 0; i < n_levels; ++i) {
 		std::vector<mars::Integer> elements;
 		
@@ -172,7 +175,9 @@ namespace mars {
 		typedef mars::GloballyUniqueLongestEdgeSelect<Dim, ManifoldDim> ES;
 
 		// Integer each_node = 1;
+		// Integer each_element = 10;
 		Integer each_element = 10;
+		bool bypass_incomplete = true;
 
 		Map map_incomplete(0, 1);
 		map_incomplete.resize(mesh.n_nodes(), 0);
@@ -185,15 +190,23 @@ namespace mars {
 
 		auto edge_select_incomplete = std::make_shared<ES>(map_incomplete);
 
-		Integer element_index = 0;
-		for(Integer i = 0; i < mesh.n_elements(); ++i) {
-			if(!mesh.is_active(i)) continue;
+		if(bypass_incomplete) {
 
-			if(((element_index++ % each_element) == 0) && 
-				!edge_select_incomplete->can_refine(mesh, i)) {
-				//repair global index
-				for(auto n : mesh.elem(i).nodes) {
-					map_incomplete.set_global(n, n);
+			for(Integer i = 0; i < mesh.n_nodes(); ++i) {
+				map_incomplete.set_global(i, i);
+			}
+
+		} else {
+	 		Integer element_index = 0;
+			for(Integer i = 0; i < mesh.n_elements(); ++i) {
+				if(!mesh.is_active(i)) continue;
+
+				if(((element_index++ % each_element) == 0) && 
+					!edge_select_incomplete->can_refine(mesh, i)) {
+					//repair global index
+					for(auto n : mesh.elem(i).nodes) {
+						map_incomplete.set_global(n, n);
+					}
 				}
 			}
 		}
@@ -494,7 +507,7 @@ void test_incomplete_4D()
 {
 	using namespace mars;
 	std::cout << "======================================\n";
-	Mesh<4, 4> mesh;
+	Mesh<4, 4> mesh(true);
 	read_mesh("../data/cube4d_24.MFEM", mesh);
 	// read_mesh("../data/square_4_def.MFEM", mesh);
 
@@ -506,7 +519,7 @@ void test_incomplete_4D()
 	Bisection<4, 4> b(mesh);
 	b.uniform_refine(2);
 
-	Integer n_tests = 10;
+	Integer n_tests = 8;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "-----------------\n";
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
@@ -528,8 +541,8 @@ int main(const int argc, const char *argv[])
 	// test_partition_3D();
 	// test_partition_4D();
 	// test_incomplete_2D();
-	test_incomplete_3D();
-	// test_incomplete_4D();
+	// test_incomplete_3D();
+	test_incomplete_4D();
 	return EXIT_SUCCESS;
 }
 
