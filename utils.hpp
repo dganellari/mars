@@ -94,66 +94,224 @@ namespace mars {
 	}
 
 	template<Integer Dim, Integer ManifoldDim>
-	void print_boundary_info(const Mesh<Dim, ManifoldDim> &mesh, const bool only_bad_tags, const bool sort_nodes = true)
+	void export_mesh(
+		const Mesh<Dim, ManifoldDim> &mesh,
+		std::ostream &os)
 	{
-		Simplex<Dim, ManifoldDim-1> side;
+
+		os << "MFEM mesh v1.0\n\n";
+		os << "dimension\n" << ManifoldDim << "\n";
+		os << "elements\n" << mesh.n_active_elements() << "\n";
+
+		for(Integer i = 0; i < mesh.n_elements(); ++i) {
+			if(!mesh.is_active(i)) continue;
+
+			os << "-1 " << i << " ";
+
+			const auto &e = mesh.elem(i);
+			for(auto n : e.nodes) {
+				os << " " << n;
+			}
+
+			os << "\n";
+		}
+
+		os << "\n";
+
+		os << "vertices\n" << mesh.n_nodes() << "\n";
+		os << Dim << "\n";
+
+		for(Integer n = 0; n < mesh.n_nodes(); ++n) {
+			
+			for(Integer d = 0; d < Dim; ++d) {
+				os << mesh.point(n)(d);
+
+				if(d < Dim -1) { os << " ";  }
+			}
+
+			os << "\n";
+		}
+	}
+
+
+
+	template<Integer Dim, Integer ManifoldDim>
+	void export_elems_with_bad_tags(
+		const Mesh<Dim, ManifoldDim> &mesh,
+		std::ostream &os,
+		const bool export_parent = false,
+		const bool export_neighs = false)
+	{
+		std::set<Integer> elems;
+		std::set<Integer> nodes;
+
 		for(Integer i = 0; i < mesh.n_elements(); ++i) {
 			if(!mesh.is_active(i) || !mesh.is_boundary(i)) continue;
-			auto &e = mesh.elem(i);
-			auto &adj = mesh.dual_graph().adj(i);
-
-
-			if(!only_bad_tags) {
-				std::cout << "[" << i << "]\n"; 
-			}
+			const auto &e = mesh.elem(i);
+			const auto &adj = mesh.dual_graph().adj(i);
 
 			for(Integer k = 0; k < n_sides(e); ++k) {
 				if(adj[k] == INVALID_INDEX) {
 					if(e.side_tags[k] == INVALID_INDEX) {
-						if(only_bad_tags) {
-							std::cout << "[" << i << "]\n"; 
+
+						Integer e_id = i;
+						if(export_parent) {
+							e_id = mesh.elem(i).parent_id;
 						}
 						
-						std::cerr << "+++++++++ bad boundary tag ++++++++++++++\n";
-					}
+						elems.insert(e_id);
 
-					if(only_bad_tags && e.side_tags[k] != INVALID_INDEX) continue;
-
-					std::cout << "\ttag(" << k << ") = " << e.side_tags[k] << " ( ";
-					e.side(k, side);
-
-					if(sort_nodes) {
-						auto sorted_nodes = side.nodes;
-						std::sort(sorted_nodes.begin(), sorted_nodes.end());
-						for(auto n : sorted_nodes) {
-							std::cout << n << " ";
+						for(auto n : mesh.elem(e_id).nodes) {
+							nodes.insert(n);
 						}
 
-					} else {
 
-						for(auto n : side.nodes) {
-							std::cout << n << " ";
+						if(export_neighs) {
+							const auto &e_adj = mesh.dual_graph().adj(e_id);
+
+							for(Integer k = 0; k < n_sides(mesh.elem(e_id)); ++k) {
+								if(e_adj[k] != INVALID_INDEX) {
+									elems.insert(e_adj[k]);
+
+									for(auto n : mesh.elem(e_adj[k]).nodes) {
+										nodes.insert(n);
+									}
+								}
+							}
 						}
-					}
 
-					std::cout << ")\n";
-
-					if(e.side_tags[k] == INVALID_INDEX) {
-						// if(e.parent_id != INVALID_INDEX) {
-						// 	std::cout << "parent:\n";
-						// 	mesh.describe_element(e.parent_id, std::cout);
-						// 	std::cout << "children:\n";
-						// 	for(auto c : mesh.elem(e.parent_id).children) {
-						// 		mesh.describe_element(c, std::cout);
-						// 	}
-						// }
-
-						std::cerr << "+++++++++++++++++++++++++++++++++++++++\n";
+						break;
 					}
 				}
 			}
+		}
+		std::map<Integer, Integer> global_to_local;
 
-			// std::cout << std::endl;
+		Integer local_id = 0;
+		for(auto s : nodes) {
+			global_to_local[s] = local_id++;
+		}
+
+		os << "MFEM mesh v1.0\n\n";
+		os << "dimension\n" << ManifoldDim << "\n";
+		os << "elements\n" << elems.size() << "\n";
+
+		for(auto e_id : elems) {
+			os << "-1 " << e_id << " ";
+
+			const auto &e = mesh.elem(e_id);
+			for(auto n : e.nodes) {
+				auto it = global_to_local.find(n);
+				assert(it != global_to_local.end());
+
+				os << " " << it->second;
+			}
+
+			os << "\n";
+		}
+
+		os << "\n";
+
+		os << "vertices\n" << nodes.size() << "\n";
+		os << Dim << "\n";
+
+		for(auto n : nodes) {
+			
+			for(Integer d = 0; d < Dim; ++d) {
+				os << mesh.point(n)(d);
+
+				if(d < Dim -1) { os << " ";  }
+			}
+
+			os << "\n";
+		}
+	}
+
+	template<Integer Dim, Integer ManifoldDim>
+	void print_boundary_tags(
+		const Simplex<Dim, ManifoldDim> &e
+	) 
+	{
+		for(auto t : e.side_tags) {
+			if(t == INVALID_INDEX) {
+				std::cout << "- ";
+			} else {
+				std::cout << t << " ";
+			}
+		}
+
+		std::cout << "\n";
+	}
+
+	template<Integer Dim, Integer ManifoldDim>
+	void print_boundary_info(
+		const Mesh<Dim, ManifoldDim> &mesh, 
+		const Integer i,
+		const bool only_bad_tags, const bool sort_nodes = true)
+	{
+		Simplex<Dim, ManifoldDim-1> side;
+
+		auto &e = mesh.elem(i);
+		auto &adj = mesh.dual_graph().adj(i);
+
+
+		if(!only_bad_tags) {
+			std::cout << "[" << i << "]\n"; 
+		}
+
+		for(Integer k = 0; k < n_sides(e); ++k) {
+			if(adj[k] == INVALID_INDEX) {
+				if(e.side_tags[k] == INVALID_INDEX) {
+					if(only_bad_tags) {
+						std::cout << "[" << i << "]\n"; 
+					}
+					
+					std::cerr << "+++++++++ bad boundary tag ++++++++++++++\n";
+				}
+
+				if(only_bad_tags && e.side_tags[k] != INVALID_INDEX) continue;
+
+				std::cout << "\ttag(" << k << ") = " << e.side_tags[k] << " ( ";
+				e.side(k, side);
+
+				if(sort_nodes) {
+					auto sorted_nodes = side.nodes;
+					std::sort(sorted_nodes.begin(), sorted_nodes.end());
+					for(auto n : sorted_nodes) {
+						std::cout << n << " ";
+					}
+
+				} else {
+
+					for(auto n : side.nodes) {
+						std::cout << n << " ";
+					}
+				}
+
+				std::cout << ")\n";
+
+				if(e.side_tags[k] == INVALID_INDEX) {
+					// if(e.parent_id != INVALID_INDEX) {
+					// 	std::cout << "parent:\n";
+					// 	mesh.describe_element(e.parent_id, std::cout);
+					// 	std::cout << "children:\n";
+					// 	for(auto c : mesh.elem(e.parent_id).children) {
+					// 		mesh.describe_element(c, std::cout);
+					// 	}
+					// }
+
+					std::cerr << "+++++++++++++++++++++++++++++++++++++++\n";
+				}
+			}
+		}
+	}
+
+	template<Integer Dim, Integer ManifoldDim>
+	void print_boundary_info(const Mesh<Dim, ManifoldDim> &mesh, const bool only_bad_tags, const bool sort_nodes = true)
+	{
+		for(Integer i = 0; i < mesh.n_elements(); ++i) {
+			if(!mesh.is_active(i) || !mesh.is_boundary(i)) continue;
+			print_boundary_info(mesh, i, only_bad_tags, sort_nodes);
 		}
 	}
 

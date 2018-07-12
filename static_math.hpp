@@ -3,6 +3,7 @@
 
 #include "base.hpp"
 #include <iostream>
+#include <vector>
 
 namespace mars {
 	template<Integer N>
@@ -48,60 +49,92 @@ namespace mars {
 		static const Integer value = 1;
 	};
 
+	template<Integer N, Integer K>
+	class CombinationsAux {
+	public:
+		static const Integer NChooseK = Factorial<N>::value/(Factorial<K>::value * Factorial<N-K>::value);
+		
+		static void apply(std::array<std::array<Integer, K>, NChooseK> &combs)
+		{
+			std::array<Integer, K> data;
+			Integer comb_index = 0;
+			apply(data, 0, 0, combs, comb_index);
+		}
+
+	private:
+		static void apply(
+			std::array<Integer, K> &data,
+			const Integer index, 
+			const Integer i,
+			std::array<std::array<Integer, K>, NChooseK> &combs,
+			Integer &comb_index)
+		{
+			if(index == K) {
+				std::copy(std::begin(data), std::end(data), std::begin(combs[comb_index++]));
+				return;
+			}
+
+			if(i >= N) {
+				return;
+			}
+
+			data[index] = i;
+
+			apply(data, index+1, i+1, combs, comb_index);
+			
+			// current is excluded, replace it with next (Note that
+			// i+1 is passed, but index is not changed)
+			apply(data, index, i+1, combs, comb_index);
+		}
+	};
+
 	template<Integer N, Integer ChooseM>
 	class Combinations {
 	public:
 		static const Integer value = Factorial<N>::value/(Factorial<ChooseM>::value * Factorial<N-ChooseM>::value);
+		std::array<std::array<Integer, ChooseM>, value> combs;
 
+		static void print_all()
+		{
+			for(auto const &c : instance().combs) {
+				for(auto n : c) {
+					std::cout << n << " ";
+				}
 
-		//https://www4.uwsp.edu/math/nwodarz/Math209Files/209-0809F-L10-Section06_03-AlgorithmsForGeneratingPermutationsAndCombinations-Notes.pdf
-		// static void generate(const Integer k, Integer comb[ChooseM])
-		// {
-		// 	assert(k < value);
+				std::cout << std::endl;
+			}
+		}
 
-		// 	for(Integer i = 0; i < ChooseM; ++i) {
-		// 		comb[i] = i;
-		// 	}
+		template<typename T>
+		static void choose(
+			const Integer k,
+			const std::array<T, N> &in,
+			std::array<T, ChooseM> &out)
+		{
+			assert(k < value);
+			const auto &comb = instance().combs[k];
 
-		// 	if(k == 0) {
-		// 		return;
-		// 	}
+			for(Integer i = 0; i < ChooseM; ++i) {
+				out[comb[i]] = in[i];
+			}
+		}
 
-		// 	for(Integer i = 1; i < value; ++i) {
-		// 		Integer m       = ChooseM - 1;
-		// 		Integer max_val = value   - 1;
+		static void generate(const Integer k, Integer comb[ChooseM])
+		{
+			std::copy(instance().combs[k].begin(), instance().combs[k].end(), comb);
+		}
 
-		// 		while(comb[m] == max_val) {
-		// 			--m;
-		// 			--max_val;
-		// 		}
+	private:
+		Combinations()
+		{
+			CombinationsAux<N, ChooseM>::apply(combs);
+		}
 
-		// 		++comb[ChooseM-1];
-
-		// 		for(Integer j = m + 1; j < ChooseM; ++j) {
-		// 			comb[j] = comb[j-1] + 1;
-		// 		}
-
-		// 		if(k == i) {
-		// 			return;
-		// 		}
-		// 	}
-		// }
-
-		// static void print_all(std::ostream &os = std::cout) 
-		// {
-		// 	Integer comb[ChooseM];
-		// 	for(Integer i = 0; i < value; ++i) {
-		// 		generate(i, comb);
-
-		// 		for(Integer k = 0; k < ChooseM; ++k) {
-		// 			os << comb[k] << " ";
-		// 		}
-
-		// 		os << std::endl;
-		// 	}
-		// }
-
+		inline static const Combinations &instance()
+		{	
+			static const Combinations instance_;
+			return instance_;
+		}
 	};
 
 	template<Integer N>
@@ -112,390 +145,402 @@ namespace mars {
 		{
 			comb[0] = k;
 		}
-	};
 
-	template<>
-	class Combinations<3, 2> {
-	public:
-		static const Integer value = 3;
-		static void generate(const Integer k, Integer comb[2])
-		{
-			switch(k) {
-				case 0:
-				{
-					comb[0] = 0;
-					comb[1] = 1;
-					return;
-				}
+		template<typename T>
+		static void choose(
+			const Integer k,
+			const std::array<T, N> &in,
+			std::array<T, 1> &out)
+		{	
 
-				case 1:
-				{
-					comb[0] = 0;
-					comb[1] = 2;
-					return;
-				}
-
-				case 2:
-				{
-					comb[0] = 1;
-					comb[1] = 2;
-					return;
-				}
-
-				default:
-				{
-					assert(false);
-					return;
-				}
-			}
+			assert(k < N);
+			out[0] = in[k];
 		}
 	};
 
+	// template<>
+	// class Combinations<3, 2> {
+	// public:
+	// 	static const Integer value = 3;
+	// 	static void generate(const Integer k, Integer comb[2])
+	// 	{
+	// 		switch(k) {
+	// 			case 0:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 1;
+	// 				return;
+	// 			}
 
-	template<>
-	class Combinations<4, 2> {
-	public:
-		static const Integer value = 6;
-		static void generate(const Integer k, Integer comb[2])
-		{
-			switch(k) {
-				case 0:
-				{
-					comb[0] = 0;
-					comb[1] = 1;
-					return;
-				}
+	// 			case 1:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 2;
+	// 				return;
+	// 			}
 
-				case 1:
-				{
-					comb[0] = 0;
-					comb[1] = 2;
-					return;
-				}
+	// 			case 2:
+	// 			{
+	// 				comb[0] = 1;
+	// 				comb[1] = 2;
+	// 				return;
+	// 			}
 
-				case 2:
-				{
-					comb[0] = 0;
-					comb[1] = 3;
-					return;
-				}
-
-				case 3:
-				{
-					comb[0] = 1;
-					comb[1] = 2;
-					return;
-				}
-
-				case 4:
-				{
-					comb[0] = 1;
-					comb[1] = 3;
-					return;
-				}
-
-				case 5:
-				{
-					comb[0] = 2;
-					comb[1] = 3;
-					return;
-				}
-
-				default:
-				{
-					assert(false);
-					return;
-				}
-			}
-		}
-	};
-
-	template<>
-	class Combinations<4, 3> {
-	public:
-		static const Integer value = 4;
-		static void generate(const Integer k, Integer comb[3])
-		{
-			switch(k) {
-				case 0:
-				{
-					comb[0] = 0;
-					comb[1] = 1;
-					comb[2] = 2;
-					return;
-				}
-
-				case 1:
-				{
-					comb[0] = 0;
-					comb[1] = 1;
-					comb[2] = 3;
-					return;
-				}
-
-				case 2:
-				{
-					comb[0] = 0;
-					comb[1] = 2;
-					comb[2] = 3;
-					return;
-				}
-
-				case 3:
-				{
-					comb[0] = 1;
-					comb[1] = 2;
-					comb[2] = 3;
-					return;
-				}
-			}
-		}
-	};
+	// 			default:
+	// 			{
+	// 				assert(false);
+	// 				return;
+	// 			}
+	// 		}
+	// 	}
+	// };
 
 
-	template<>
-	class Combinations<5, 2> {
-	public:
-		static const Integer value = 10;
-		static void generate(const Integer k, Integer comb[2])
-		{
-			switch(k) {
-				case 0:
-				{
-					comb[0] = 0;
-					comb[1] = 1;
-					return;
-				}
+	// template<>
+	// class Combinations<4, 2> {
+	// public:
+	// 	static const Integer value = 6;
+	// 	static void generate(const Integer k, Integer comb[2])
+	// 	{
+	// 		switch(k) {
+	// 			case 0:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 1;
+	// 				return;
+	// 			}
 
-				case 1:
-				{
-					comb[0] = 0;
-					comb[1] = 2;
-					return;
-				}
+	// 			case 1:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 2;
+	// 				return;
+	// 			}
 
-				case 2:
-				{
-					comb[0] = 0;
-					comb[1] = 3;
-					return;
-				}
+	// 			case 2:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 3;
+	// 				return;
+	// 			}
 
-				case 3:
-				{
-					comb[0] = 0;
-					comb[1] = 4;
-					return;
-				}
+	// 			case 3:
+	// 			{
+	// 				comb[0] = 1;
+	// 				comb[1] = 2;
+	// 				return;
+	// 			}
 
-				case 4:
-				{
-					comb[0] = 1;
-					comb[1] = 2;
-					return;
-				}
+	// 			case 4:
+	// 			{
+	// 				comb[0] = 1;
+	// 				comb[1] = 3;
+	// 				return;
+	// 			}
 
-				case 5:
-				{
-					comb[0] = 1;
-					comb[1] = 3;
-					return;
-				}
+	// 			case 5:
+	// 			{
+	// 				comb[0] = 2;
+	// 				comb[1] = 3;
+	// 				return;
+	// 			}
 
-				case 6:
-				{
-					comb[0] = 1;
-					comb[1] = 4;
-					return;
-				}
+	// 			default:
+	// 			{
+	// 				assert(false);
+	// 				return;
+	// 			}
+	// 		}
+	// 	}
+	// };
 
-				case 7:
-				{
-					comb[0] = 2;
-					comb[1] = 3;
-					return;
-				}
+	// template<>
+	// class Combinations<4, 3> {
+	// public:
+	// 	static const Integer value = 4;
+	// 	static void generate(const Integer k, Integer comb[3])
+	// 	{
+	// 		switch(k) {
+	// 			case 0:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 1;
+	// 				comb[2] = 2;
+	// 				return;
+	// 			}
 
-				case 8:
-				{
-					comb[0] = 2;
-					comb[1] = 4;
-					return;
-				}
+	// 			case 1:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 1;
+	// 				comb[2] = 3;
+	// 				return;
+	// 			}
 
-				case 9:
-				{
-					comb[0] = 3;
-					comb[1] = 4;
-					return;
-				}
+	// 			case 2:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 2;
+	// 				comb[2] = 3;
+	// 				return;
+	// 			}
 
-				default:
-				{
-					assert(false);
-					return;
-				}
-			}
-		}
-	};
-
-	template<>
-	class Combinations<5, 3> {
-	public:
-		static const Integer value = 10;
-		static void generate(const Integer k, Integer comb[3])
-		{
-			switch(k) {
-				case 0:
-				{
-					comb[0] = 0;
-					comb[1] = 1;
-					comb[2] = 2;
-					return;
-				}
-
-				case 1:
-				{
-					comb[0] = 0;
-					comb[1] = 1;
-					comb[2] = 3;
-					return;
-				}
-
-				case 2:
-				{
-					comb[0] = 0;
-					comb[1] = 1;
-					comb[2] = 4;
-					return;
-				}
-
-				case 3:
-				{
-					comb[0] = 0;
-					comb[1] = 2;
-					comb[2] = 3;
-					return;
-				}
-
-				case 4:
-				{
-					comb[0] = 0;
-					comb[1] = 2;
-					comb[1] = 4;
-					return;
-				}
-
-				case 5:
-				{
-					comb[0] = 0;
-					comb[1] = 3;
-					comb[2] = 4;
-					return;
-				}
-
-				case 6:
-				{
-					comb[0] = 1;
-					comb[1] = 2;
-					comb[2] = 3;
-					return;
-				}
-
-				case 7:
-				{
-					comb[0] = 1;
-					comb[1] = 2;
-					comb[2] = 4;
-					return;
-				}
-
-				case 8:
-				{
-					comb[0] = 1;
-					comb[1] = 3;
-					comb[2] = 4;
-					return;
-				}
-
-				case 9:
-				{
-					comb[0] = 2;
-					comb[1] = 3;
-					comb[2] = 4;
-					return;
-				}
-
-				default:
-				{
-					assert(false);
-					return;
-				}
-			}
-		}
-	};
+	// 			case 3:
+	// 			{
+	// 				comb[0] = 1;
+	// 				comb[1] = 2;
+	// 				comb[2] = 3;
+	// 				return;
+	// 			}
+	// 		}
+	// 	}
+	// };
 
 
-	template<>
-	class Combinations<5, 4> {
-	public:
-		static const Integer value = 5;
-		static void generate(const Integer k, Integer comb[4])
-		{
-			switch(k) {
-				case 0:
-				{
-					comb[0] = 0;
-					comb[1] = 1;
-					comb[2] = 2;
-					comb[3] = 3;
-					return;
-				}
+	// template<>
+	// class Combinations<5, 2> {
+	// public:
+	// 	static const Integer value = 10;
+	// 	static void generate(const Integer k, Integer comb[2])
+	// 	{
+	// 		switch(k) {
+	// 			case 0:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 1;
+	// 				return;
+	// 			}
 
-				case 1:
-				{
-					comb[0] = 0;
-					comb[1] = 1;
-					comb[2] = 2;
-					comb[3] = 4;
-					return;
-				}
+	// 			case 1:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 2;
+	// 				return;
+	// 			}
 
-				case 2:
-				{
-					comb[0] = 0;
-					comb[1] = 1;
-					comb[2] = 3;
-					comb[3] = 4;
-					return;
-				}
+	// 			case 2:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 3;
+	// 				return;
+	// 			}
 
-				case 3:
-				{
-					comb[0] = 0;
-					comb[1] = 2;
-					comb[2] = 3;
-					comb[3] = 4;
-					return;
-				}
+	// 			case 3:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 4;
+	// 				return;
+	// 			}
 
-				case 4:
-				{
-					comb[0] = 1;
-					comb[1] = 2;
-					comb[2] = 3;
-					comb[3] = 4;
-					return;
-				}
+	// 			case 4:
+	// 			{
+	// 				comb[0] = 1;
+	// 				comb[1] = 2;
+	// 				return;
+	// 			}
 
-				default:
-				{
-					assert(false);
-					return;
-				}
-			}
-		}
-	};
+	// 			case 5:
+	// 			{
+	// 				comb[0] = 1;
+	// 				comb[1] = 3;
+	// 				return;
+	// 			}
+
+	// 			case 6:
+	// 			{
+	// 				comb[0] = 1;
+	// 				comb[1] = 4;
+	// 				return;
+	// 			}
+
+	// 			case 7:
+	// 			{
+	// 				comb[0] = 2;
+	// 				comb[1] = 3;
+	// 				return;
+	// 			}
+
+	// 			case 8:
+	// 			{
+	// 				comb[0] = 2;
+	// 				comb[1] = 4;
+	// 				return;
+	// 			}
+
+	// 			case 9:
+	// 			{
+	// 				comb[0] = 3;
+	// 				comb[1] = 4;
+	// 				return;
+	// 			}
+
+	// 			default:
+	// 			{
+	// 				assert(false);
+	// 				return;
+	// 			}
+	// 		}
+	// 	}
+	// };
+
+	// template<>
+	// class Combinations<5, 3> {
+	// public:
+	// 	static const Integer value = 10;
+	// 	static void generate(const Integer k, Integer comb[3])
+	// 	{
+	// 		switch(k) {
+	// 			case 0:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 1;
+	// 				comb[2] = 2;
+	// 				return;
+	// 			}
+
+	// 			case 1:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 1;
+	// 				comb[2] = 3;
+	// 				return;
+	// 			}
+
+	// 			case 2:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 1;
+	// 				comb[2] = 4;
+	// 				return;
+	// 			}
+
+	// 			case 3:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 2;
+	// 				comb[2] = 3;
+	// 				return;
+	// 			}
+
+	// 			case 4:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 2;
+	// 				comb[1] = 4;
+	// 				return;
+	// 			}
+
+	// 			case 5:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 3;
+	// 				comb[2] = 4;
+	// 				return;
+	// 			}
+
+	// 			case 6:
+	// 			{
+	// 				comb[0] = 1;
+	// 				comb[1] = 2;
+	// 				comb[2] = 3;
+	// 				return;
+	// 			}
+
+	// 			case 7:
+	// 			{
+	// 				comb[0] = 1;
+	// 				comb[1] = 2;
+	// 				comb[2] = 4;
+	// 				return;
+	// 			}
+
+	// 			case 8:
+	// 			{
+	// 				comb[0] = 1;
+	// 				comb[1] = 3;
+	// 				comb[2] = 4;
+	// 				return;
+	// 			}
+
+	// 			case 9:
+	// 			{
+	// 				comb[0] = 2;
+	// 				comb[1] = 3;
+	// 				comb[2] = 4;
+	// 				return;
+	// 			}
+
+	// 			default:
+	// 			{
+	// 				assert(false);
+	// 				return;
+	// 			}
+	// 		}
+	// 	}
+	// };
+
+
+	// template<>
+	// class Combinations<5, 4> {
+	// public:
+	// 	static const Integer value = 5;
+	// 	static void generate(const Integer k, Integer comb[4])
+	// 	{
+	// 		switch(k) {
+	// 			case 0:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 1;
+	// 				comb[2] = 2;
+	// 				comb[3] = 3;
+	// 				return;
+	// 			}
+
+	// 			case 1:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 1;
+	// 				comb[2] = 2;
+	// 				comb[3] = 4;
+	// 				return;
+	// 			}
+
+	// 			case 2:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 1;
+	// 				comb[2] = 3;
+	// 				comb[3] = 4;
+	// 				return;
+	// 			}
+
+	// 			case 3:
+	// 			{
+	// 				comb[0] = 0;
+	// 				comb[1] = 2;
+	// 				comb[2] = 3;
+	// 				comb[3] = 4;
+	// 				return;
+	// 			}
+
+	// 			case 4:
+	// 			{
+	// 				comb[0] = 1;
+	// 				comb[1] = 2;
+	// 				comb[2] = 3;
+	// 				comb[3] = 4;
+	// 				return;
+	// 			}
+
+	// 			default:
+	// 			{
+	// 				assert(false);
+	// 				return;
+	// 			}
+	// 		}
+	// 	}
+	// };
+
 
 }
 

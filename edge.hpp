@@ -18,6 +18,19 @@ namespace mars {
 		
 		virtual ~Side() {}
 
+
+		Integer &operator[](const Integer i) {
+			assert(i >= 0);
+			assert(i < N);
+			return nodes[i];
+		}
+
+		const Integer &operator[](const Integer i) const {
+			assert(i >= 0);
+			assert(i < N);
+			return nodes[i];
+		}
+
 		Side()
 		{
 			std::fill(nodes.begin(), nodes.end(), INVALID_INDEX);

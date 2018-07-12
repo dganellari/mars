@@ -2,6 +2,7 @@
 #define MARS_BISECTION_HPP
 
 #include "dof_map.hpp"
+#include <iostream>
 
 namespace mars {
 	template<Integer Dim, Integer ManifoldDim>
@@ -60,7 +61,7 @@ namespace mars {
 		LongestEdgeSelect(const bool recursive = true, const bool use_tollerance = true)
 		: recursive_(recursive), use_tollerance_(use_tollerance)
 		{}
-	
+
 
 		Integer select(
 			const Mesh<Dim, ManifoldDim> &mesh,
@@ -501,7 +502,7 @@ namespace mars {
 	public:
 		Bisection(Mesh<Dim, ManifoldDim> &mesh)
 		: mesh(mesh), edge_select_(std::make_shared<LongestEdgeSelect<Dim, ManifoldDim>>()),
-		  verbose(false), fail_if_not_refine(false)
+		verbose(false), fail_if_not_refine(false)
 		{}
 
 		void set_fail_if_not_refine(const bool val) {
@@ -518,7 +519,7 @@ namespace mars {
 			flags.push_back(NONE);
 			Integer id = mesh.add_elem(e);
 			mesh.repair_element(id);
-			mesh.update_side_flags_from_parent(id);
+			// mesh.update_side_flags_from_parent(id);
 			level.push_back((mesh.elem(id).parent_id == INVALID_INDEX)? 0 : (level[mesh.elem(id).parent_id] + 1)); 
 			edge_element_map_.update(mesh.elem(id));
 			return id;
@@ -652,7 +653,126 @@ namespace mars {
 
 			new_id = add_elem(s);
 			mesh.elem(element_id).children.push_back(new_id);
+
+			bisect_side_tags(element_id, Edge(v1, v2), midpoint);
 			return;
+		}
+
+
+		inline Integer side_num(
+			const Integer element_id,
+			const Simplex<Dim, ManifoldDim-1> &side) const
+		{
+			auto nodes = side.nodes;
+			std::sort(nodes.begin(), nodes.end());
+
+			const auto &e = mesh.elem(element_id);
+
+			Simplex<Dim, ManifoldDim-1> e_side;
+			
+			for(Integer i = 0; i < n_sides(e); ++i) {
+				e.side(i, e_side);
+				std::sort(std::begin(e_side.nodes), std::end(e_side.nodes));
+
+				bool same_side = true;
+				for(Integer k = 0; k < nodes.size(); ++k) {
+					assert(nodes[k] != INVALID_INDEX);
+					assert(e_side.nodes[k] != INVALID_INDEX);
+
+					if(nodes[k] != e_side.nodes[k]) {
+						same_side = false;
+						break;
+					} 
+				}
+
+				if(same_side) {
+					return i;
+				}
+
+			}
+
+			return INVALID_INDEX;
+		}
+
+
+		void bisect_side_tags(
+			const Integer element_id,
+			const Edge &edge,
+			const Integer midpoint_id)
+		{
+			const auto &e = mesh.elem(element_id);
+
+			for(auto c : e.children) {
+				std::fill(mesh.elem(c).side_tags.begin(),
+					mesh.elem(c).side_tags.end(),
+					INVALID_INDEX);
+			}	
+
+			Simplex<Dim, ManifoldDim-1> side;
+			Simplex<Dim, ManifoldDim-1> child_side;
+
+			for(Integer i = 0; i < n_sides(e); ++i) {
+				e.side(i, side);
+				const Integer tag = e.side_tags[i];
+				if(tag == INVALID_INDEX) continue;
+
+				if(has_edge(side, edge[0], edge[1])) {
+					//tag of split sides
+					child_side.nodes[0] = midpoint_id;
+					
+					for(Integer j = 0; j < 2; ++j) {
+						const Integer vj = edge[j];
+						child_side.nodes[1] = vj;
+
+						Integer local_ind = 2;
+						for(auto s : side.nodes) {
+							if(s == edge[0] || s == edge[1]) {
+								continue;
+							}
+							child_side.nodes[local_ind++] = s;
+						}
+
+						bool found_side = false;
+						for(auto c : e.children) {
+							auto sn = side_num(c, child_side);
+
+							if(INVALID_INDEX != sn) {
+								assert(mesh.elem(c).side_tags[sn] == INVALID_INDEX || 
+									mesh.elem(c).side_tags[sn] == tag);
+
+								mesh.elem(c).side_tags[sn] = tag;
+								found_side = true;
+							}
+						}
+
+						assert(found_side);
+					}
+				} else {
+					bool found_side = false;
+
+					for(auto c : e.children) {
+						auto sn = side_num(c, side);
+
+						if(INVALID_INDEX != sn) {
+							assert(mesh.elem(c).side_tags[sn] == INVALID_INDEX || 
+								mesh.elem(c).side_tags[sn] == tag);
+
+							mesh.elem(c).side_tags[sn] = tag;
+							found_side = true;
+						}
+					}
+
+					assert(found_side);
+				}
+			}
+
+			// if(mesh.is_boundary(element_id)) {
+			// std::cout << "===============================\n";
+			// print_boundary_tags(mesh.elem(element_id));
+			// print_boundary_tags(mesh.elem(e.children[0]));
+			// print_boundary_tags(mesh.elem(e.children[1]));
+			// std::cout << "===============================\n";
+			// }
 		}
 
 		bool refine_element_recursive(
@@ -707,13 +827,13 @@ namespace mars {
 
 			while(!visited_all_incidents) {
 				visited_all_incidents = true;
-				
+
 				for(auto i : incidents) {
 					if(!mesh.is_active(i)) continue;
-					
+
 					assert(has_edge(mesh.elem(i), edge.nodes[0], edge.nodes[1]));
 					all_done = false;
-					
+
 					const bool can_refine = edge_select_->can_refine(mesh, i);
 					if(can_refine) {
 						if(refine_element_recursive(i, edge, level[i])) {
@@ -730,7 +850,7 @@ namespace mars {
 				}
 
 				const auto &next_incidents = edge_element_map_.elements(edge);
-				
+
 				if(next_incidents.size() > incidents.size()) {
 					incidents = next_incidents;
 					visited_all_incidents = false;
@@ -815,11 +935,11 @@ namespace mars {
 			return edge_element_map_;
 		}
 
-	 	EdgeElementMap &edge_element_map()
+		EdgeElementMap &edge_element_map()
 		{
 			return edge_element_map_;
 		}
-		
+
 		void set_verbose(const bool val)
 		{
 			verbose = val;
