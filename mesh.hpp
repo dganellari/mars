@@ -549,6 +549,48 @@ namespace mars {
 			return ret;
 		}
 
+
+		void clean_up()
+		{
+			std::vector< Simplex<Dim, ManifoldDim> > elements;
+			std::vector<Integer> tags;
+			
+			elements.reserve(n_active_elements());
+			tags.reserve(elements.capacity());
+
+			for(Integer i = 0; i < n_elements(); ++i) {
+				if(!is_active(i)) continue;
+
+				assert(elem(i).children.empty());
+				
+				elements.push_back(elem(i));
+				elements.back().id        = elements.size() - 1;
+				elements.back().parent_id = INVALID_INDEX;
+				
+				if(!tags_.empty()) {
+					tags.push_back(tags_[i]);
+				}
+			}
+
+			elements_ = std::move(elements);
+			tags_  	  = std::move(tags);
+
+			dual_graph_.clear();
+			active_.resize(n_elements());
+			std::fill(active_.begin(), active_.end(), true);
+
+			update_dual_graph();
+		}
+
+		void clear()
+		{
+			elements_.clear();
+			points_.clear();
+			tags_.clear();
+			dual_graph_.clear();
+			active_.clear();
+		}
+
 		inline Integer root(const Integer id) const
 		{	
 			if(id == INVALID_INDEX) return INVALID_INDEX;

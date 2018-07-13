@@ -469,6 +469,7 @@ void test_incomplete_2D()
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
 		test_incomplete(mesh);
+		mesh.clean_up();
 		q.compute();
 	}
 
@@ -496,6 +497,7 @@ void test_incomplete_3D()
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
 		test_incomplete(mesh);
+		mesh.clean_up();
 		q.compute();
 	}
 
@@ -515,34 +517,44 @@ void test_incomplete_4D()
 	q.compute();
 	mark_boundary(mesh);
 
+	//uniform refinement
+	test_incomplete(mesh, true);
+	mesh.clean_up();
 
-	Bisection<4, 4> b(mesh);
-	b.uniform_refine(2);
-
-	Integer n_tests = 4;
+	Integer n_tests = 7;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "-----------------\n";
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
 		test_incomplete(mesh);
+		mesh.clean_up();
 		q.compute();
 		std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 		std::cout << "-----------------\n";
+
+		//HACK
+		std::string path = "m4";
+		write_mesh(path, mesh);
+		mesh.clear();
+		read_mesh(path + ".MFEM", mesh);
+		mark_boundary(mesh);
 	}
+
+	print_boundary_points(mesh);
 
 	q.save_csv("glob_long_edge", "4D.csv", true);
 	q.save_report("4D.svg");
 
-	std::ofstream m_os("big_mesh.MFEM");
-	export_mesh(mesh, m_os);
-	m_os.close();
+	// std::ofstream m_os("big_mesh4.MFEM");
+	// export_mesh(mesh, m_os);
+	// m_os.close();
 
-	std::ofstream os("bad_mesh.MFEM");
-	export_elems_with_bad_tags(mesh, os);
-	os.close();
+	// std::ofstream os("bad_mesh.MFEM");
+	// export_elems_with_bad_tags(mesh, os);
+	// os.close();
 
-	std::ofstream os_p("bad_mesh_p.MFEM");
-	export_elems_with_bad_tags(mesh, os_p, true, true);
-	os_p.close();
+	// std::ofstream os_p("bad_mesh_p.MFEM");
+	// export_elems_with_bad_tags(mesh, os_p, true, true);
+	// os_p.close();
 }
 
 void test_incomplete_5D()
@@ -673,15 +685,12 @@ int main(const int argc, const char *argv[])
 	// test_partition_2D();
 	// test_partition_3D();
 	// test_partition_4D();
-	// test_incomplete_2D();
-	// test_incomplete_3D();
-	// test_incomplete_4D();
-	test_incomplete_5D();
-	test_incomplete_6D();
+	test_incomplete_2D();
+	test_incomplete_3D();
+	test_incomplete_4D();
+	// test_incomplete_5D();
+	// test_incomplete_6D();
 	// test_incomplete_bad_4D();
-
-	// Combinations<5, 4>::print_all();
-
 	return EXIT_SUCCESS;
 }
 

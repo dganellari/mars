@@ -167,6 +167,11 @@ namespace mars {
 			os << "\n";
 		}
 
+		void clear()
+		{
+			dual_graph_.clear();
+		}
+
 	private:
 		std::vector<std::array<Integer, ManifoldDim+1>> dual_graph_;
 	};

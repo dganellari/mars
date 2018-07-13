@@ -824,7 +824,7 @@ namespace mars {
 		void refine(const std::vector<Integer> &elements)
 		{
 			std::vector<Integer> sorted_elements = elements;
-			std::sort(sorted_elements.begin(), sorted_elements.end());
+			// std::sort(sorted_elements.begin(), sorted_elements.end());
 
 			if(flags.empty()) {
 				flags.resize(mesh.n_elements(), NONE);

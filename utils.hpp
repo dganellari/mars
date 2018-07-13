@@ -244,6 +244,42 @@ namespace mars {
 	}
 
 	template<Integer Dim, Integer ManifoldDim>
+	void print_boundary_points(
+		const Mesh<Dim, ManifoldDim> &mesh,
+		std::ostream &os = std::cout
+		const bool not_on_unit_cube = false)
+	{
+		std::vector<bool> is_boundary(mesh.n_nodes(), false);
+
+		for(Integer i = 0; i < mesh.n_elements(); ++i) {
+			Simplex<Dim, ManifoldDim-1> side;
+			auto &e   = mesh.elem(i);
+			auto &adj = mesh.dual_graph().adj(i);
+
+			for(Integer k = 0; k < n_sides(e); ++k) {
+				if(adj[k] == INVALID_INDEX) {
+					e.side(k, side);
+
+					if(not_on_unit_cube) {
+
+					} else {
+						for(auto n : side.nodes) {
+							is_boundary[n] = true;
+						}
+					}
+				}
+			}
+		}
+
+		for(Integer i = 0; i < mesh.n_nodes(); ++i) {
+			if(is_boundary[i]) {
+				os << "[" << i << "] " << mesh.point(i);
+			}
+		}
+	}
+
+
+	template<Integer Dim, Integer ManifoldDim>
 	void print_boundary_info(
 		const Mesh<Dim, ManifoldDim> &mesh, 
 		const Integer i,
