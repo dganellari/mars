@@ -237,7 +237,7 @@ namespace mars {
 			const Map &map,
 			const bool recursive = true,
 			const bool use_tollerance = true)
-		: map(map), recursive_(recursive), use_tollerance_(use_tollerance)
+		: map(map), recursive_(recursive), use_tollerance_(use_tollerance)//, use_trick_(true)
 		{}
 
 		void reorder_edge(
@@ -266,6 +266,23 @@ namespace mars {
 			return true;
 		}
 
+		class EdgeDesc {
+		public:
+			EdgeDesc(const Edge &edge, const Integer edge_num) 
+			: edge(edge), edge_num(edge_num)
+			{
+				assert(edge.is_valid());
+			}
+
+			inline bool operator<(const EdgeDesc &other) const
+			{
+				return edge < other.edge;
+			}
+
+			Edge edge;
+			Integer edge_num;
+		};
+
 		Integer select(
 			const Mesh<Dim, ManifoldDim> &mesh,
 			const Integer element_id) const override
@@ -273,7 +290,7 @@ namespace mars {
 			assert(can_refine(mesh, element_id));
 
 			const auto &e = mesh.elem(element_id);
-			std::vector< std::pair<Edge, Integer> > edge_pairs;
+			std::vector<EdgeDesc> edge_pairs;
 			edge_pairs.reserve(n_edges(e));
 
 			for(Integer i = 0; i < n_edges(e); ++i) {
@@ -282,20 +299,27 @@ namespace mars {
 				edge_pairs.emplace_back(Edge(map.global(v1), map.global(v2)), i);
 			}
 
-			std::sort(edge_pairs.begin(), edge_pairs.end());
+			std::sort(edge_pairs.begin(), edge_pairs.end(), 
+				[](const EdgeDesc &e1, const EdgeDesc &e2) -> bool {
+					return e2 < e1;
+			});
 
 			Integer edge_num = 0;
 			Real len = 0;
 
 			for(auto &ep : edge_pairs) {
-				const Integer v1 = map.local(ep.first.nodes[0]);
-				const Integer v2 = map.local(ep.first.nodes[1]);
+				const Integer v1 = map.local(ep.edge[0]);
+				const Integer v2 = map.local(ep.edge[1]);
 
 				Real len_i = (mesh.point(v1) - mesh.point(v2)).norm();
+				
+				// if(use_trick_) {
+				// 	len_i += ( len_i / ( ep.first[0] + ep.first[1] ) );
+				// }
 
 				if(len_i > len) {
 					len = len_i;
-					edge_num = ep.second;
+					edge_num = ep.edge_num;
 				}
 			}
 
@@ -329,6 +353,7 @@ namespace mars {
 		const Map &map;
 		bool recursive_;
 		bool use_tollerance_;
+		// bool use_trick_;
 	};
 
 

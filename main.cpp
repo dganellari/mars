@@ -129,6 +129,7 @@ void test_bisection_4D()
 	std::cout << "======================================\n";
 	Mesh<4, 4> mesh;
 	read_mesh("../data/cube4d_24.MFEM", mesh);
+	mesh.renumber_nodes();
 	
 	Quality<4, 4> q(mesh);
 	q.compute();
@@ -468,7 +469,6 @@ void test_incomplete_2D()
 	q.compute();
 	mark_boundary(mesh);
 
-
 	Bisection<2, 2> b(mesh);
 	b.uniform_refine(2);
 
@@ -490,23 +490,22 @@ void test_incomplete_3D()
 	std::cout << "======================================\n";
 	Mesh<3, 3> mesh(true);
 	read_mesh("../data/cube_6.MFEM", mesh);
-	// read_mesh("../data/square_3_def.MFEM", mesh);
+	mesh.renumber_nodes();
 
 	Quality<3, 3> q(mesh);
 	q.compute();
 	mark_boundary(mesh);
 
-
+	Integer n_serial_ref = 10;
 	Bisection<3, 3> b(mesh);
-	b.uniform_refine(2);
+	b.uniform_refine(n_serial_ref);
 
-	Integer n_tests = 15;
+	Integer n_tests = 20 - n_serial_ref;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
 		test_incomplete(mesh);
 		mesh.clean_up();
 		q.compute();
-
 		std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 	}
 
@@ -520,15 +519,15 @@ void test_incomplete_4D()
 	std::cout << "======================================\n";
 	Mesh<4, 4> mesh(true);
 	read_mesh("../data/cube4d_24.MFEM", mesh);
-	// read_mesh("../data/square_4_def.MFEM", mesh);
+	mesh.renumber_nodes();
 
 	Quality<4, 4> q(mesh);
 	q.compute();
 	mark_boundary(mesh);
 
-	//uniform refinement
-	test_incomplete(mesh, true);
-	test_incomplete(mesh, true);
+	//serial uniform refinement
+	Bisection<4, 4> b(mesh);
+	b.uniform_refine(2);
 	mesh.clean_up();
 
 	Integer n_tests = 10;
@@ -536,18 +535,14 @@ void test_incomplete_4D()
 		std::cout << "-----------------\n";
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
 		test_incomplete(mesh);
-		if(i < n_tests - 1) { mesh.clean_up(); }
+		
+		if(i < n_tests - 1) { 
+			mesh.clean_up();
+		}
 		
 		q.compute();
 		std::cout << "n_active_elements: " << mesh.n_active_elements() << "/" << mesh.n_elements() << std::endl;
 		std::cout << "-----------------\n";
-
-		//HACK
-		// std::string path = "m4_" + std::to_string(i);
-		// write_mesh(path, mesh);
-		// mesh.clear();
-		// read_mesh(path + ".MFEM", mesh);
-		// mark_boundary(mesh);
 	}
 
 	q.save_csv("glob_long_edge", "4D.csv", true);
@@ -572,10 +567,7 @@ void test_incomplete_5D()
 	std::cout << "======================================\n";
 	Mesh<5, 5> mesh(true);
 	read_mesh("../data/hexateron_1.MFEM", mesh);
-
-	for(Integer i = 0; i < mesh.n_nodes(); ++i) {
-		mesh.point(i) *= 3.;
-	}
+	mesh.renumber_nodes();
 
 	Quality<5, 5> q(mesh);
 	q.compute();
@@ -609,10 +601,7 @@ void test_incomplete_6D()
 	std::cout << "======================================\n";
 	Mesh<6, 6> mesh(true);
 	read_mesh("../data/uniform_polypeton_1.MFEM", mesh);
-
-	for(Integer i = 0; i < mesh.n_nodes(); ++i) {
-		mesh.point(i) *= 3.;
-	}
+	mesh.renumber_nodes();
 
 	Quality<6, 6> q(mesh);
 	q.compute();
@@ -647,6 +636,7 @@ void test_incomplete_bad_4D()
 	Mesh<4, 4> mesh(true);
 	// read_mesh("../data/bad_mesh_p_wn.MFEM", mesh);
 	read_mesh("../data/big_mesh_2.MFEM", mesh);
+	mesh.renumber_nodes();
 
 	Quality<4, 4> q(mesh);
 	q.compute();
@@ -695,10 +685,10 @@ int main(const int argc, const char *argv[])
 	// test_partition_3D();
 	// test_partition_4D();
 	// test_incomplete_2D();
-	// test_incomplete_3D();
+	test_incomplete_3D();
 	// test_incomplete_4D();
-	test_incomplete_5D();
-	test_incomplete_6D();
+	// test_incomplete_5D();
+	// test_incomplete_6D();
 	// test_incomplete_bad_4D();
 	// run_tests();
 	return EXIT_SUCCESS;

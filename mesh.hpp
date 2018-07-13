@@ -550,6 +550,82 @@ namespace mars {
 			return ret;
 		}
 
+		void renumber_nodes()
+		{
+			assert(n_elements() == n_active_elements());
+
+			Integer edge_index = 0;
+			EdgeNodeMap enm;
+			for(Integer i = 0; i < n_elements(); ++i) {
+				const auto &e = elem(i);
+
+				for(Integer k = 0; k < n_edges(e); ++k) {
+					Integer v1, v2;
+					e.edge(k, v1, v2);
+
+					Integer edge_id = enm.get(v1, v2);
+					
+					if(edge_id == INVALID_INDEX) {
+						enm.update(v1, v2, edge_index++);
+					}
+				}
+			}
+
+			std::vector< std::pair<Real, Integer> > weight(
+				n_nodes(),
+				std::pair<Real, Integer>(0, INVALID_INDEX)
+			);
+
+			std::vector<Integer> hits(n_nodes(), 0);
+
+			for(auto en : enm) {
+				Integer v1 = en.first[0];
+				Integer v2 = en.first[1];
+
+				Real d = (point(v1) - point(v2)).norm();
+				
+				weight[v1].first += d;
+				weight[v1].second = v1;
+
+				weight[v2].first += d;
+				weight[v2].second = v2;
+
+				++hits[v1];
+				++hits[v2];
+			}	
+
+			for(std::size_t i = 0; i < weight.size(); ++i) {
+				weight[i].first /= hits[i];
+			}
+
+			std::sort(std::begin(weight), std::end(weight));
+			std::reverse(std::begin(weight), std::end(weight));
+
+			std::vector<Integer> new_index(n_nodes(), INVALID_INDEX);
+
+			for(std::size_t i = 0; i < weight.size(); ++i) {
+				new_index[weight[i].second] = i;
+			}
+
+			{
+				std::vector<Vector<Real, Dim>> points(n_nodes());
+
+				for(std::size_t i = 0; i < weight.size(); ++i) {
+					points[i] = points_[weight[i].second];
+				}
+
+				points_ = std::move(points);
+			}
+
+			for(Integer i = 0; i < n_elements(); ++i) {
+				auto &e = elem(i);
+
+				for(Integer k = 0; k < e.nodes.size(); ++k) {
+					e.nodes[k] = new_index[e.nodes[k]];
+				}
+			}
+		}
+
 
 		void clean_up()
 		{

@@ -42,6 +42,17 @@ namespace mars {
 			}
 		}
 
+
+		inline std::map<Edge, Integer>::const_iterator begin() const
+		{
+			return mapping_.begin();
+		}
+
+		inline std::map<Edge, Integer>::const_iterator end() const
+		{
+			return mapping_.end();
+		}
+
 		std::map<Edge, Integer> mapping_;
 	};
 }
