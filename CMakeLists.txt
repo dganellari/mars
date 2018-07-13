@@ -16,11 +16,13 @@ list(APPEND MARS_HEADERS
 	red_green_refinement.hpp
 	simplex.hpp
 	static_math.hpp
+	test.hpp
 	vector.hpp
 	)
 
 list(APPEND MARS_SOURCES
 	simplex.cpp
+	test.cpp
 	)
 
 set(CMAKE_CXX_DEBUG "-g")

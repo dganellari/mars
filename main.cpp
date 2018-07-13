@@ -14,6 +14,7 @@
 #include "mesh_partition.hpp"
 #include "par_bisection.hpp"
 #include "benchmark.hpp"
+#include "test.hpp"
 
 void test_bisection_2D()
 {	
@@ -172,7 +173,8 @@ namespace mars {
 	template<Integer Dim, Integer ManifoldDim>
 	void test_incomplete(Mesh<Dim, ManifoldDim> &mesh, const bool use_uniform_refinement = false)
 	{
-		typedef mars::GloballyUniqueLongestEdgeSelect<Dim, ManifoldDim> ES;
+		// typedef mars::GloballyUniqueLongestEdgeSelect<Dim, ManifoldDim> ES;
+		typedef mars::GlobalNewestVertexEdgeSelect<Dim, ManifoldDim> ES;
 
 		// Integer each_node = 1;
 		// Integer each_element = 10;
@@ -247,7 +249,12 @@ namespace mars {
 		}
 
 		write_mesh("m2.eps", mesh);
-		print_boundary_info(mesh, true);
+
+		print_boundary_info(mesh, true, true);
+		
+		if(ManifoldDim <= 4) {
+			print_boundary_points(mesh, std::cout, true);
+		}
 	}
 
 
@@ -493,12 +500,14 @@ void test_incomplete_3D()
 	Bisection<3, 3> b(mesh);
 	b.uniform_refine(2);
 
-	Integer n_tests = 4;
+	Integer n_tests = 15;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
 		test_incomplete(mesh);
 		mesh.clean_up();
 		q.compute();
+
+		std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 	}
 
 	q.save_csv("glob_long_edge", "3D.csv", true);
@@ -519,27 +528,27 @@ void test_incomplete_4D()
 
 	//uniform refinement
 	test_incomplete(mesh, true);
+	test_incomplete(mesh, true);
 	mesh.clean_up();
 
-	Integer n_tests = 7;
+	Integer n_tests = 10;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "-----------------\n";
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
 		test_incomplete(mesh);
-		mesh.clean_up();
+		if(i < n_tests - 1) { mesh.clean_up(); }
+		
 		q.compute();
-		std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+		std::cout << "n_active_elements: " << mesh.n_active_elements() << "/" << mesh.n_elements() << std::endl;
 		std::cout << "-----------------\n";
 
 		//HACK
-		std::string path = "m4";
-		write_mesh(path, mesh);
-		mesh.clear();
-		read_mesh(path + ".MFEM", mesh);
-		mark_boundary(mesh);
+		// std::string path = "m4_" + std::to_string(i);
+		// write_mesh(path, mesh);
+		// mesh.clear();
+		// read_mesh(path + ".MFEM", mesh);
+		// mark_boundary(mesh);
 	}
-
-	print_boundary_points(mesh);
 
 	q.save_csv("glob_long_edge", "4D.csv", true);
 	q.save_report("4D.svg");
@@ -548,13 +557,13 @@ void test_incomplete_4D()
 	// export_mesh(mesh, m_os);
 	// m_os.close();
 
-	// std::ofstream os("bad_mesh.MFEM");
-	// export_elems_with_bad_tags(mesh, os);
-	// os.close();
+	std::ofstream os("bad_mesh.MFEM");
+	export_elems_with_bad_tags(mesh, os);
+	os.close();
 
-	// std::ofstream os_p("bad_mesh_p.MFEM");
-	// export_elems_with_bad_tags(mesh, os_p, true, true);
-	// os_p.close();
+	std::ofstream os_p("bad_mesh_p.MFEM");
+	export_elems_with_bad_tags(mesh, os_p, true);
+	os_p.close();
 }
 
 void test_incomplete_5D()
@@ -573,9 +582,9 @@ void test_incomplete_5D()
 	mark_boundary(mesh);
 
 	Bisection<5, 5> b(mesh);
-	b.uniform_refine(1);
+	b.uniform_refine(2);
 
-	Integer n_tests = 8;
+	Integer n_tests = 5;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "-----------------\n";
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
@@ -610,9 +619,9 @@ void test_incomplete_6D()
 	mark_boundary(mesh);
 
 	Bisection<6, 6> b(mesh);
-	b.uniform_refine(1);
+	b.uniform_refine(2);
 
-	Integer n_tests = 7;
+	Integer n_tests = 5;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "-----------------\n";
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
@@ -648,7 +657,7 @@ void test_incomplete_bad_4D()
 	Bisection<4, 4> b(mesh);
 	// b.uniform_refine(2);
 
-	Integer n_tests = 1;
+	Integer n_tests = 4;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "-----------------\n";
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
@@ -685,12 +694,13 @@ int main(const int argc, const char *argv[])
 	// test_partition_2D();
 	// test_partition_3D();
 	// test_partition_4D();
-	test_incomplete_2D();
-	test_incomplete_3D();
-	test_incomplete_4D();
-	// test_incomplete_5D();
-	// test_incomplete_6D();
+	// test_incomplete_2D();
+	// test_incomplete_3D();
+	// test_incomplete_4D();
+	test_incomplete_5D();
+	test_incomplete_6D();
 	// test_incomplete_bad_4D();
+	// run_tests();
 	return EXIT_SUCCESS;
 }
 

@@ -155,6 +155,7 @@ namespace mars {
 			if(sorted_elements_) {
 				auto &e = elem(element_id);
 				std::sort(e.nodes.begin(), e.nodes.end());
+				// return;
 			}
 
 			auto &e = elem(element_id);
@@ -287,7 +288,7 @@ namespace mars {
 					const Real u_area = mars::unsigned_volume(side, points_);
 					const Real area   = sign * u_area;
 
-					J.describe(os);
+					// J.describe(os);
 					os << area << " == " << u_area << std::endl;
 				}
 			}
@@ -688,7 +689,7 @@ namespace mars {
 		return true;
 	}
 
-	bool mesh_hyper_cube(
+	inline bool mesh_hyper_cube(
 		const std::array<Integer, 4> &dims,
 		const Vector<Real, 4> &lobo,
 		const Vector<Real, 4> &upbo,

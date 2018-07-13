@@ -332,6 +332,92 @@ namespace mars {
 	};
 
 
+	template<Integer Dim, Integer ManifoldDim>
+	class GlobalNewestVertexEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
+	public:
+		GlobalNewestVertexEdgeSelect(
+			const Map &map,
+			const bool recursive = true,
+			const bool use_tollerance = true)
+		: map(map), recursive_(recursive), use_tollerance_(use_tollerance)
+		{}
+
+		void reorder_edge(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Integer element_id,
+			Integer &v1,
+			Integer &v2) const override
+		{
+			if(map.global(v2) < map.global(v1)) {
+				std::swap(v1, v2);
+			}
+		}
+
+		bool can_refine(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Integer element_id) const override
+		{
+			for(auto n : mesh.elem(element_id).nodes) {
+				assert(n != INVALID_INDEX);
+
+				if(map.global(n) == INVALID_INDEX) return false;
+
+				assert(map.local(map.global(n)) != INVALID_INDEX);
+			}
+
+			return true;
+		}
+
+		Integer select(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Integer element_id) const override
+		{
+			assert(can_refine(mesh, element_id));
+
+			const auto &e = mesh.elem(element_id);
+			std::vector< std::pair<Edge, Integer> > edge_pairs;
+			edge_pairs.reserve(n_edges(e));
+
+			for(Integer i = 0; i < n_edges(e); ++i) {
+				Integer v1, v2;
+				e.edge(i, v1, v2);
+				edge_pairs.emplace_back(Edge(map.global(v1), map.global(v2)), i);
+			}
+
+			std::sort(edge_pairs.begin(), edge_pairs.end());
+			return edge_pairs[0].second;
+		}
+
+		virtual Integer select(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Edge &neighbor_edge,
+			const Integer element_id) const override
+		{
+			return select(mesh, element_id);
+		}
+
+		void set_recursive(const bool recursive)
+		{
+			recursive_ = recursive;
+		}
+
+		bool is_recursive() const override
+		{
+			return recursive_;
+		}
+
+		virtual std::string name() const override
+		{
+			return "GlobalNewestVertexEdgeSelect";
+		}
+
+	private:
+		const Map &map;
+		bool recursive_;
+		bool use_tollerance_;
+	};
+
+
 
 	template<Integer Dim, Integer ManifoldDim>
 	class NewestVertexEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {

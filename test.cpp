@@ -289,8 +289,51 @@ namespace mars {
 		std::cout << n4 << std::endl;
 	}
 
+	void test_det()
+	{
+		static const Integer N = 6;
+		Matrix<Real, N, N> mat;
+		
+		for(Integer i = 0; i < N; ++i) {
+			mat(i, i) = 1.;
+		}
+
+		Real d = det(mat);
+		assert(abs(d - 1.) < 1e-16);
+
+		//////////////////////////////////////////////////////
+
+		Matrix<Real, 5, 5> magic5({
+			17,   24,    1,    8,   15,
+			23,    5,    7,   14,   16,
+			 4,    6,   13,   20,   22,
+			10,   12,   19,   21,    3,
+			11,   18,   25,    2,    9
+		});
+
+		Real det_magic5 = det(magic5);
+		assert(abs(det_magic5 - 5069999.999999999) < 1e-8);
+
+		//////////////////////////////////////////////////////
+
+		Matrix<Real, 6, 6> magic6({
+			35 + 1,    1,    6,   26,   19,   24,
+			 3,   32 + 1,    7,   21,   23,   25,
+			31,    9,    2 + 1,   22,   27,   20,
+			 8,   28,   33,   17 + 1,   10,   15,
+			30,    5,   34,   12,   14 + 1,   16,
+			 4,   36,   29,   13,   18,   11  + 1
+		});
+
+		Real det_magic6 = det(magic6);
+		assert(abs(det_magic6 -  7745920.00000) < 1e-6);
+
+		//////////////////////////////////////////////////////
+	}
+
 	void run_tests()
 	{
+		test_det();
 		// test_midpoint_index();
 		// test_red_refinement_interpolator();
 		// test_red_refinement();

@@ -15,6 +15,7 @@ namespace mars {
 
 	    Matrix(std::initializer_list<T> values)
 	    {
+	    	assert(values.size() == Rows*Cols);
 	        std::copy(std::begin(values), std::end(values), std::begin(this->values));
 	    }
 	    
@@ -116,14 +117,16 @@ namespace mars {
 	}
 
 	template<typename T, Integer N>
-	inline T det(const Matrix<T, N, N> &m)
+	inline T det_aux(const Matrix<T, N, N> &m)
 	{
+		static_assert(N < 7, "max size is 6");
+
 		std::array<Integer, N> nnz;
 		std::fill(std::begin(nnz), std::end(nnz), 0);
 
 		for(Integer i = 0; i < N; ++i) {
 			for(Integer j = 0; j < N; ++j) {
-				nnz[i] += m(i, j) != 0;
+				nnz[i] += m(i, j) != 0.;
 			}
 		}
 
@@ -133,21 +136,29 @@ namespace mars {
 				row = i;
 			}
 		}
+		
+		assert(row < N);
 
 		if(nnz[row] == 0) return 0.;
 
 		Integer ret = 0.;
-			
 		Matrix<T, N-1, N-1> mij;
 		for(Integer j = 0; j < N; ++j) {
-			auto coff = m(row, j);
+			const Real coff = m(row, j);
 			if(coff == 0.) continue;
 
+			const Real sign = (j % 2) == 0? 1 : -1;
 			minor(row, j, m, mij);
-			ret += coff * det(mij);
+			ret += sign * coff * det(mij);
 		}
 
-		return 1.;
+		return ret;
+	}
+
+	template<typename T, Integer N>
+	inline T det(const Matrix<T, N, N> &m)
+	{
+		return det_aux(m);
 	}
 
 	template<typename T, Integer Rows, Integer Cols>

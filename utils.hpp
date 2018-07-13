@@ -197,9 +197,11 @@ namespace mars {
 		os << "elements\n" << elems.size() << "\n";
 
 		for(auto e_id : elems) {
-			os << "-1 " << e_id << " ";
-
 			const auto &e = mesh.elem(e_id);
+
+			os << mesh.tags()[e_id] << " " << e_id << " ";
+
+			
 			for(auto n : e.nodes) {
 				auto it = global_to_local.find(n);
 				assert(it != global_to_local.end());
@@ -225,6 +227,50 @@ namespace mars {
 
 			os << "\n";
 		}
+
+
+		os << "\nboundary\n" << (elems.size() * (ManifoldDim + 1)) << "\n";
+		
+		Simplex<Dim, ManifoldDim-1> side;
+		
+		for(auto e_id : elems) {
+			const auto &e = mesh.elem(e_id);
+			const auto &adj = mesh.dual_graph().adj(e_id);
+
+			for(Integer i = 0; i < n_sides(e); ++i) {
+				if(adj[i] != INVALID_INDEX) {
+					os << 0 << " ";
+				} else {
+					os << e.side_tags[i] << " ";
+				}
+
+				e.side(i, side);
+				std::sort(side.nodes.begin(), side.nodes.end());
+
+				for(Integer j = 0; j < side.nodes.size(); ++j) {
+					auto it = global_to_local.find(side.nodes[j]);
+					assert(it != global_to_local.end());
+					os << " " << it->second;
+				}
+
+				os << "\n";
+			}
+
+			os << "\n";
+		}
+
+		// os << "sidesets\n" << elems.size() << "\n";
+
+		// for(auto e_id : elems) {
+		// 	const auto &e = mesh.elem(e_id);
+
+		// 	os << e.side_tags[0];
+		// 	for(Integer i = 1; i < e.side_tags.size(); ++i) {
+		// 		os << " " << e.side_tags[i];
+		// 	}
+
+		// 	os << "\n";
+		// }
 	}
 
 	template<Integer Dim, Integer ManifoldDim>
@@ -246,12 +292,15 @@ namespace mars {
 	template<Integer Dim, Integer ManifoldDim>
 	void print_boundary_points(
 		const Mesh<Dim, ManifoldDim> &mesh,
-		std::ostream &os = std::cout
+		std::ostream &os = std::cout,
 		const bool not_on_unit_cube = false)
 	{
 		std::vector<bool> is_boundary(mesh.n_nodes(), false);
+		std::vector<Integer> side_tags(mesh.n_nodes(), INVALID_INDEX);
 
 		for(Integer i = 0; i < mesh.n_elements(); ++i) {
+			if(!mesh.is_active(i)) continue;
+
 			Simplex<Dim, ManifoldDim-1> side;
 			auto &e   = mesh.elem(i);
 			auto &adj = mesh.dual_graph().adj(i);
@@ -261,10 +310,29 @@ namespace mars {
 					e.side(k, side);
 
 					if(not_on_unit_cube) {
+						for(auto n : side.nodes) {
+							auto p = mesh.point(n);
+
+							bool is_cube_boundary = false;
+							
+							for(Integer j = 0; j < Dim; ++j) {
+								if(std::abs(p[j]-1.) < 1e-12 ||
+								   std::abs(p[j])    < 1e-12) {
+									is_cube_boundary = true;
+									break;
+								}	
+							}
+
+							if(!is_cube_boundary) {
+								is_boundary[n] = true;
+								side_tags[n] = std::max(side_tags[n], e.side_tags[k]);
+							}
+						}
 
 					} else {
 						for(auto n : side.nodes) {
 							is_boundary[n] = true;
+							side_tags[n] = std::max(side_tags[n], e.side_tags[k]);
 						}
 					}
 				}
@@ -273,7 +341,13 @@ namespace mars {
 
 		for(Integer i = 0; i < mesh.n_nodes(); ++i) {
 			if(is_boundary[i]) {
-				os << "[" << i << "] " << mesh.point(i);
+				os << "[" << i << "] ";
+				if(side_tags[i] == INVALID_INDEX) {
+					os << "x";
+				} else {
+					os << side_tags[i];
+				}
+				os << " -> " << mesh.point(i);
 			}
 		}
 	}
