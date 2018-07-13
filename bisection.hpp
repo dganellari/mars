@@ -46,6 +46,14 @@ namespace mars {
 		{
 		}
 
+		virtual void edge_refined(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const EdgeElementMap &eem,
+			const Edge &edge)
+		{
+			//
+		}
+
 
 		virtual bool is_recursive() const
 		{
@@ -76,7 +84,7 @@ namespace mars {
 				Integer v1, v2;
 				e.edge(i, v1, v2);
 
-				Real len_i = (mesh.point(v1) - mesh.point(v2)).norm();
+				Real len_i = (mesh.point(v1) - mesh.point(v2)).squared_norm();
 
 				if(len_i > len) {
 					len = len_i;
@@ -108,7 +116,7 @@ namespace mars {
 				Integer v1, v2;
 				e.edge(i, v1, v2);
 
-				const Real dist = (mesh.point(v1) - mesh.point(v2)).norm();
+				const Real dist = (mesh.point(v1) - mesh.point(v2)).squared_norm();
 
 				if(dist > len) {
 					len = dist;
@@ -190,7 +198,7 @@ namespace mars {
 				const Integer v1 = ep.first.nodes[0];
 				const Integer v2 = ep.first.nodes[1];
 
-				Real len_i = (mesh.point(v1) - mesh.point(v2)).norm();
+				Real len_i = (mesh.point(v1) - mesh.point(v2)).squared_norm();
 
 				if(len_i > len) {
 					len = len_i;
@@ -301,7 +309,7 @@ namespace mars {
 
 			std::sort(edge_pairs.begin(), edge_pairs.end(), 
 				[](const EdgeDesc &e1, const EdgeDesc &e2) -> bool {
-					return e2 < e1;
+					return e1 < e2;
 			});
 
 			Integer edge_num = 0;
@@ -311,7 +319,7 @@ namespace mars {
 				const Integer v1 = map.local(ep.edge[0]);
 				const Integer v2 = map.local(ep.edge[1]);
 
-				Real len_i = (mesh.point(v1) - mesh.point(v2)).norm();
+				Real len_i = (mesh.point(v1) - mesh.point(v2)).squared_norm();
 				
 				// if(use_trick_) {
 				// 	len_i += ( len_i / ( ep.first[0] + ep.first[1] ) );

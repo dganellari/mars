@@ -520,6 +520,7 @@ void test_incomplete_4D()
 	Mesh<4, 4> mesh(true);
 	read_mesh("../data/cube4d_24.MFEM", mesh);
 	mesh.renumber_nodes();
+	// mesh.scale(10.);
 
 	Quality<4, 4> q(mesh);
 	q.compute();
@@ -527,7 +528,7 @@ void test_incomplete_4D()
 
 	//serial uniform refinement
 	Bisection<4, 4> b(mesh);
-	b.uniform_refine(2);
+	b.uniform_refine(4);
 	mesh.clean_up();
 
 	Integer n_tests = 10;
@@ -685,8 +686,8 @@ int main(const int argc, const char *argv[])
 	// test_partition_3D();
 	// test_partition_4D();
 	// test_incomplete_2D();
-	test_incomplete_3D();
-	// test_incomplete_4D();
+	// test_incomplete_3D();
+	test_incomplete_4D();
 	// test_incomplete_5D();
 	// test_incomplete_6D();
 	// test_incomplete_bad_4D();

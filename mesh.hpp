@@ -680,6 +680,14 @@ namespace mars {
 			return current_id;
 		}
 
+
+		void scale(const Real factor)
+		{
+			for(auto &p : points_) {
+				p *= factor;
+			}
+		}
+
 		std::vector<Integer> &tags() { return tags_; }
 		const std::vector<Integer> &tags() const { return tags_; }
 

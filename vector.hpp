@@ -136,7 +136,7 @@ namespace mars {
 	        return os;
 	    }
 
-	    inline T norm() const
+	    inline T squared_norm() const
 	    {
 	        T sqn = (*this)(0) * (*this)(0);
 	        for(Integer i = 1; i < Dim; ++i)
@@ -144,7 +144,12 @@ namespace mars {
 	            sqn += (*this)(i) * (*this)(i);
 	        }
 
-	        return std::sqrt(sqn);
+	        return sqn;
+	    }
+
+	    inline T norm() const
+	    {
+	        return std::sqrt(squared_norm());
 	    }
 
 	    Vector &normalize() {

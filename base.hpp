@@ -6,8 +6,8 @@
  */
 namespace mars {
     using Real    = double;
-    using Integer = int;
-    static const int INVALID_INDEX = -1;
+    using Integer = long;
+    static const long INVALID_INDEX = -1;
 }
 
 #endif //MARS_BASE_HPP
