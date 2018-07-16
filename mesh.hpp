@@ -723,6 +723,11 @@ namespace mars {
 			for(auto e : elems) {
 				to_remove[e] = true;
 				min_elem_index = std::min(e, min_elem_index);
+
+				Integer parent_id = elem(e).parent_id;
+				if(parent_id != INVALID_INDEX) {
+					elem(parent_id).children.clear();
+				}
 			}
 
 			bool is_contiguous = true;
@@ -759,6 +764,26 @@ namespace mars {
 
 			dual_graph_.clear();
 			update_dual_graph();
+		}
+
+		bool is_conforming() const
+		{
+			for(Integer i = 0; i < n_elements(); ++i) {
+				if(!is_active(i)) continue;
+				
+				auto &e   = elem(i);
+				auto &adj = dual_graph().adj(i);
+
+				for(Integer k = 0; k < n_sides(e); ++k) {
+					if(adj[k] == INVALID_INDEX) {
+						if(e.side_tags[k] == INVALID_INDEX) {
+							return false;
+						}
+					}
+				}
+			}
+
+			return true;
 		}
 
 	private:

@@ -70,10 +70,12 @@ void test_bisection_2D()
 
 
 	b.tracking_begin();
-	b.uniform_refine(1);
+	b.uniform_refine(2);
 	b.tracking_end();
+	
 	write_mesh("mesh2_before.eps", mesh, 10., PLOT_NUMERIC_TAG);
 	
+	//use tracking information
 	b.undo();
 	write_mesh("mesh2_after.eps", mesh, 10., PLOT_NUMERIC_TAG);
 }
@@ -85,26 +87,24 @@ void test_bisection_3D()
 	Mesh<3, 3> mesh;
 	read_mesh("../data/cube_6.MFEM", mesh, true);
 	mesh.renumber_nodes();
-	mesh.reorder_nodes(true);
+	mesh.reorder_nodes();
+
+	mesh.update_dual_graph();
+	mark_boundary(mesh);
+
+	Bisection<3, 3> b(mesh);
+	b.uniform_refine(2); b.clear();
+	print_boundary_points(mesh, std::cout, true);
+	
+	mesh.clean_up();
+	mesh.update_dual_graph();
 
 	Quality<3, 3> q(mesh);
 	q.compute();
 
-	Bisection<3, 3> b(mesh);
-	b.uniform_refine(2); b.clear();
-
-	
-	mesh.clean_up();
-	// mesh.reorder_nodes(true);
-	mesh.update_dual_graph();
-
-	mark_boundary(mesh);
-
 	std::cout << "n_boundary_sides: " << mesh.n_boundary_sides() << std::endl;
 	std::cout << "volume: " << mesh.volume() << std::endl;
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
-
-	// mesh.describe(std::cout);
 
 	// auto edge_select = std::make_shared<NewestVertexEdgeSelect<3, 3>>();
 	auto edge_select = std::make_shared<LongestEdgeSelect<3, 3>>(true);
@@ -198,12 +198,11 @@ void test_bisection_4D()
 
 namespace mars {
 	
-	template<Integer Dim, Integer ManifoldDim>
-	void test_incomplete(Mesh<Dim, ManifoldDim> &mesh, const bool use_uniform_refinement = false)
+	template<class GlobalEdgeSelect, Integer Dim, Integer ManifoldDim>
+	bool test_incomplete(
+		Mesh<Dim, ManifoldDim> &mesh,
+		const bool use_uniform_refinement = false)
 	{
-		// typedef mars::GloballyUniqueLongestEdgeSelect<Dim, ManifoldDim> ES;
-		typedef mars::GlobalNewestVertexEdgeSelect<Dim, ManifoldDim> ES;
-
 		// Integer each_node = 1;
 		// Integer each_element = 10;
 		Integer each_element = 11;
@@ -212,7 +211,7 @@ namespace mars {
 		Map map_incomplete(0, 1);
 		map_incomplete.resize(mesh.n_nodes(), 0);
 		
-		auto edge_select_incomplete = std::make_shared<ES>(map_incomplete);
+		auto edge_select_incomplete = std::make_shared<GlobalEdgeSelect>(map_incomplete);
 
 		if(bypass_incomplete) {
 			for(Integer i = 0; i < mesh.n_nodes(); ++i) {
@@ -237,6 +236,8 @@ namespace mars {
 		Bisection<Dim, ManifoldDim> b(mesh);
 		b.set_edge_select(edge_select_incomplete);
 
+		b.tracking_begin();
+
 		if(use_uniform_refinement) {
 			b.uniform_refine(1);
 		} else {
@@ -258,7 +259,7 @@ namespace mars {
 		///////////////////////////////////////////////////
 		
 		Map map(0, 1);
-		auto edge_select = std::make_shared<ES>(map);
+		auto edge_select = std::make_shared<GlobalEdgeSelect>(map);
 
 		Integer max_iter = 20;
 		for(Integer i = 0; i < max_iter; ++i) {
@@ -283,6 +284,15 @@ namespace mars {
 		if(ManifoldDim <= 4) {
 			print_boundary_points(mesh, std::cout, true);
 		}
+
+		b.tracking_end();
+		if(!mesh.is_conforming()) {
+			b.undo(); 
+			std::cerr << "[Warning] encountered non-conforming mesh undoing refinement" << std::endl;
+			return false;
+		}
+
+		return true;
 	}
 
 
@@ -487,6 +497,10 @@ void run_benchmarks()
 void test_incomplete_2D()
 {
 	using namespace mars;
+
+	using NVES = mars::GlobalNewestVertexEdgeSelect<2, 2>;
+	using LEES = mars::GloballyUniqueLongestEdgeSelect<2, 2>;
+
 	std::cout << "======================================\n";
 	Mesh<2, 2> mesh;
 	read_mesh("../data/square_2.MFEM", mesh);
@@ -502,7 +516,7 @@ void test_incomplete_2D()
 	Integer n_tests = 4;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
-		test_incomplete(mesh);
+		test_incomplete<NVES>(mesh);
 		mesh.clean_up();
 		q.compute();
 	}
@@ -514,6 +528,10 @@ void test_incomplete_2D()
 void test_incomplete_3D()
 {
 	using namespace mars;
+	
+	using NVES = mars::GlobalNewestVertexEdgeSelect<3, 3>;
+	using LEES = mars::GloballyUniqueLongestEdgeSelect<3, 3>;
+
 	std::cout << "======================================\n";
 	Mesh<3, 3> mesh(true);
 	read_mesh("../data/cube_6.MFEM", mesh);
@@ -530,7 +548,7 @@ void test_incomplete_3D()
 	Integer n_tests = 20 - n_serial_ref;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
-		test_incomplete(mesh);
+		test_incomplete<LEES>(mesh);
 		mesh.clean_up();
 		q.compute();
 		std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
@@ -543,6 +561,10 @@ void test_incomplete_3D()
 void test_incomplete_4D()
 {
 	using namespace mars;
+	
+	using NVES = mars::GlobalNewestVertexEdgeSelect<4, 4>;
+	using LEES = mars::GloballyUniqueLongestEdgeSelect<4, 4>;
+
 	std::cout << "======================================\n";
 	Mesh<4, 4> mesh(true);
 	read_mesh("../data/cube4d_24.MFEM", mesh);
@@ -558,11 +580,18 @@ void test_incomplete_4D()
 	b.uniform_refine(2);
 	mesh.clean_up();
 
-	Integer n_tests = 8;
+	Integer n_tests = 10;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "-----------------\n";
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
-		test_incomplete(mesh);
+		
+		if(!test_incomplete<LEES>(mesh)) {
+			std::cout << "using NVES" << std::endl;
+			if(!test_incomplete<NVES>(mesh)) {
+				assert(false);
+				std::cout << "NVES failed" << std::endl;
+			}
+		}
 		
 		if(i < n_tests - 1) { 
 			mesh.clean_up();
@@ -592,6 +621,9 @@ void test_incomplete_4D()
 void test_incomplete_5D()
 {
 	using namespace mars;
+	using NVES = mars::GlobalNewestVertexEdgeSelect<5, 5>;
+	using LEES = mars::GloballyUniqueLongestEdgeSelect<5, 5>;
+
 	std::cout << "======================================\n";
 	Mesh<5, 5> mesh(true);
 	read_mesh("../data/hexateron_1.MFEM", mesh);
@@ -608,7 +640,7 @@ void test_incomplete_5D()
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "-----------------\n";
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
-		test_incomplete(mesh, true);
+		test_incomplete<NVES>(mesh, true);
 		q.compute();
 		std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 		std::cout << "-----------------\n";
@@ -626,6 +658,9 @@ void test_incomplete_5D()
 void test_incomplete_6D()
 {
 	using namespace mars;
+	using NVES = mars::GlobalNewestVertexEdgeSelect<6, 6>;
+	using LEES = mars::GloballyUniqueLongestEdgeSelect<6, 6>;
+
 	std::cout << "======================================\n";
 	Mesh<6, 6> mesh(true);
 	read_mesh("../data/uniform_polypeton_1.MFEM", mesh);
@@ -642,7 +677,7 @@ void test_incomplete_6D()
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "-----------------\n";
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
-		test_incomplete(mesh, true);
+		test_incomplete<NVES>(mesh, true);
 		q.compute();
 		std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 		std::cout << "-----------------\n";
@@ -660,6 +695,9 @@ void test_incomplete_6D()
 void test_incomplete_bad_4D()
 {
 	using namespace mars;
+	using NVES = mars::GlobalNewestVertexEdgeSelect<4, 4>;
+	using LEES = mars::GloballyUniqueLongestEdgeSelect<4, 4>;
+
 	std::cout << "======================================\n";
 	Mesh<4, 4> mesh(true);
 	// read_mesh("../data/bad_mesh_p_wn.MFEM", mesh);
@@ -679,7 +717,7 @@ void test_incomplete_bad_4D()
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "-----------------\n";
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
-		test_incomplete(mesh, true);
+		test_incomplete<LEES>(mesh, true);
 		q.compute();
 		std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 		std::cout << "-----------------\n";
@@ -704,7 +742,7 @@ void test_incomplete_bad_4D()
 int main(const int argc, const char *argv[])
 {
 	using namespace mars;
-	test_bisection_2D();
+	// test_bisection_2D();
 	// test_bisection_3D();
 	// test_bisection_4D();
 
@@ -714,7 +752,7 @@ int main(const int argc, const char *argv[])
 	// test_partition_4D();
 	// test_incomplete_2D();
 	// test_incomplete_3D();
-	// test_incomplete_4D();
+	test_incomplete_4D();
 	// test_incomplete_5D();
 	// test_incomplete_6D();
 	// test_incomplete_bad_4D();
