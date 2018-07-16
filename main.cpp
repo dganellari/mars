@@ -15,6 +15,7 @@
 #include "par_bisection.hpp"
 #include "benchmark.hpp"
 #include "test.hpp"
+#include "ranked_edge.hpp"
 
 void test_bisection_2D()
 {	
@@ -197,46 +198,41 @@ void test_bisection_4D()
 }
 
 namespace mars {
-	
+
+
 	template<class GlobalEdgeSelect, Integer Dim, Integer ManifoldDim>
 	bool test_incomplete(
 		Mesh<Dim, ManifoldDim> &mesh,
+		Map &map,
+		const std::shared_ptr<GlobalEdgeSelect> &edge_select,
 		const bool use_uniform_refinement = false)
 	{
-		// Integer each_node = 1;
-		// Integer each_element = 10;
 		Integer each_element = 11;
 		bool bypass_incomplete = false;
 
-		Map map_incomplete(0, 1);
-		map_incomplete.resize(mesh.n_nodes(), 0);
-		
-		auto edge_select_incomplete = std::make_shared<GlobalEdgeSelect>(map_incomplete);
-
 		if(bypass_incomplete) {
-			for(Integer i = 0; i < mesh.n_nodes(); ++i) {
-				map_incomplete.set_global(i, i);
-			}
-
+			map.resize(mesh.n_nodes(), 0);
+			map.identity();
 		} else {
-	 		Integer element_index = 0;
+			Integer element_index = 0;
 			for(Integer i = 0; i < mesh.n_elements(); ++i) {
 				if(!mesh.is_active(i)) continue;
 
 				if(((element_index++ % each_element) == 0) && 
-					!edge_select_incomplete->can_refine(mesh, i)) {
+					!edge_select->can_refine(mesh, i)) {
 					//repair global index
 					for(auto n : mesh.elem(i).nodes) {
-						map_incomplete.set_global(n, n);
+						map.set_global(n, n);
 					}
 				}
 			}
 		}
 
 		Bisection<Dim, ManifoldDim> b(mesh);
-		b.set_edge_select(edge_select_incomplete);
-
+		b.set_edge_select(edge_select);
 		b.tracking_begin();
+
+		edge_select->update(mesh);
 
 		if(use_uniform_refinement) {
 			b.uniform_refine(1);
@@ -249,7 +245,7 @@ namespace mars {
 				center,
 				0.25,
 				elements
-			);
+				);
 
 			b.refine(elements);
 		}
@@ -257,20 +253,19 @@ namespace mars {
 		write_mesh("m2_inc.eps", mesh);
 
 		///////////////////////////////////////////////////
-		
-		Map map(0, 1);
-		auto edge_select = std::make_shared<GlobalEdgeSelect>(map);
 
 		Integer max_iter = 20;
 		for(Integer i = 0; i < max_iter; ++i) {
 			std::cout << "iter: " << (i + 1) << "/" << max_iter << std::endl;
 			map.resize(mesh.n_nodes(), 0);
-			for(Integer i = 0; i < mesh.n_nodes(); ++i) {
-				map.set_global(i, i);
-			}
+			map.identity();
 
-			b.set_edge_select(edge_select);
 			b.set_fail_if_not_refine(i == max_iter -1);
+
+			edge_select->update(mesh);
+			// edge_select->describe(std::cout);
+
+			std::cout << "n_nodes " << mesh.n_nodes() << std::endl;
 
 			if(b.refine_incomplete()) {
 				break;
@@ -293,6 +288,105 @@ namespace mars {
 		}
 
 		return true;
+	}
+
+	template<class GlobalEdgeSelect, Integer Dim, Integer ManifoldDim>
+	bool test_incomplete(
+		Mesh<Dim, ManifoldDim> &mesh,
+		const bool use_uniform_refinement = false)
+	{
+		Map map(0, 1);
+		map.resize(mesh.n_nodes(), 0);
+		auto edge_select = std::make_shared<GlobalEdgeSelect>(map);
+		return test_incomplete(mesh, map, edge_select, use_uniform_refinement);
+	}
+
+	template<Integer Dim, Integer ManifoldDim>
+	bool test_incomplete_with_edge_rank(
+		Mesh<Dim, ManifoldDim> &mesh,
+		const Integer n_tests,
+		const bool use_uniform_refinement = false,
+		const bool online_update = true)
+	{
+		Map map(0, 1);
+		map.resize(mesh.n_nodes(), 0);
+		map.identity();
+
+		Quality<Dim, ManifoldDim> q(mesh);
+		q.compute();
+
+		auto edge_select = std::make_shared<RankedEdgeSelect<Dim, ManifoldDim>>(map, online_update);
+		
+		for(Integer i = 0; i < n_tests; ++i) {
+			std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
+			const bool ok = test_incomplete(mesh, map, edge_select, use_uniform_refinement);
+			if(!ok) {
+				assert(false);
+				return false;
+			}
+			
+			mesh.clean_up();
+			q.compute();
+			std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+		}
+
+		q.save_csv("edge_rank", std::to_string(ManifoldDim) + "D_er.csv", true);
+		q.save_report(std::to_string(ManifoldDim) + "D_er.svg");
+		return true;
+	}
+
+
+	template<Integer Dim, Integer ManifoldDim>
+	void test_incomplete_ND(
+		Mesh<Dim, ManifoldDim> &mesh,
+		const Integer n_tests,
+		const bool use_edge_rank)
+	{
+		using NVES = mars::GlobalNewestVertexEdgeSelect<Dim, ManifoldDim>;
+		using LEES = mars::GloballyUniqueLongestEdgeSelect<Dim, ManifoldDim>;
+
+		std::cout << "======================================\n";
+		mesh.renumber_nodes();
+		mark_boundary(mesh);
+
+		Integer n_serial_ref = 3;
+		Bisection<Dim, ManifoldDim> b(mesh);
+		b.uniform_refine(n_serial_ref);
+
+		if(use_edge_rank) {
+			test_incomplete_with_edge_rank(mesh, n_tests, false);
+		} else {
+			Quality<Dim, ManifoldDim> q(mesh);
+			q.compute();
+
+			for(Integer i = 0; i < n_tests; ++i) {
+				std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
+				
+				if(!test_incomplete<LEES>(mesh)) {
+					std::cout << "using edge_rank" << std::endl;
+					if(!test_incomplete_with_edge_rank(mesh, 1, false, false)) {
+						assert(false);
+						std::cout << "edge_rank failed" << std::endl;
+					}
+
+					// std::cout << "using NVES" << std::endl;
+					// if(!test_incomplete<NVES>(mesh, true)) {
+					// 	assert(false);
+					// 	std::cout << "NVES failed" << std::endl;
+					// }
+				}
+
+				// if(i < n_tests - 1) { 
+				mesh.clean_up();
+				// }
+
+				std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+				q.compute();
+			}
+
+			q.save_csv("ref", std::to_string(ManifoldDim) + "D.csv", true);
+			q.save_report(std::to_string(ManifoldDim) + "D.svg");
+		}
 	}
 
 
@@ -326,14 +420,14 @@ namespace mars {
 			} else {
 				for(Integer k = 0; k < parts.size(); ++k) {
 					// if(k % 2 == 1) {
-						Vector<Real, Dim> center;
-						center.set(0.5);
-						mark_hypersphere_for_refinement(
-							parts[k]->get_mesh(),
-							center,
-							0.25,
-							elements[k]
-							);
+					Vector<Real, Dim> center;
+					center.set(0.5);
+					mark_hypersphere_for_refinement(
+						parts[k]->get_mesh(),
+						center,
+						0.25,
+						elements[k]
+						);
 					// }
 				}
 				
@@ -498,124 +592,28 @@ void test_incomplete_2D()
 {
 	using namespace mars;
 
-	using NVES = mars::GlobalNewestVertexEdgeSelect<2, 2>;
-	using LEES = mars::GloballyUniqueLongestEdgeSelect<2, 2>;
-
-	std::cout << "======================================\n";
-	Mesh<2, 2> mesh;
+	Mesh<2, 2> mesh(true);
 	read_mesh("../data/square_2.MFEM", mesh);
 	// read_mesh("../data/square_2_def.MFEM", mesh);
-
-	Quality<2, 2> q(mesh);
-	q.compute();
-	mark_boundary(mesh);
-
-	Bisection<2, 2> b(mesh);
-	b.uniform_refine(2);
-
-	Integer n_tests = 4;
-	for(Integer i = 0; i < n_tests; ++i) {
-		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
-		test_incomplete<NVES>(mesh);
-		mesh.clean_up();
-		q.compute();
-	}
-
-	q.save_csv("glob_long_edge", "2D.csv", true);
-	q.save_report("2D.svg");
+	test_incomplete_ND(mesh, 10, true);
 }
 
 void test_incomplete_3D()
 {
 	using namespace mars;
-	
-	using NVES = mars::GlobalNewestVertexEdgeSelect<3, 3>;
-	using LEES = mars::GloballyUniqueLongestEdgeSelect<3, 3>;
 
-	std::cout << "======================================\n";
 	Mesh<3, 3> mesh(true);
 	read_mesh("../data/cube_6.MFEM", mesh);
-	mesh.renumber_nodes();
-
-	Quality<3, 3> q(mesh);
-	q.compute();
-	mark_boundary(mesh);
-
-	Integer n_serial_ref = 10;
-	Bisection<3, 3> b(mesh);
-	b.uniform_refine(n_serial_ref);
-
-	Integer n_tests = 20 - n_serial_ref;
-	for(Integer i = 0; i < n_tests; ++i) {
-		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
-		test_incomplete<LEES>(mesh);
-		mesh.clean_up();
-		q.compute();
-		std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
-	}
-
-	q.save_csv("glob_long_edge", "3D.csv", true);
-	q.save_report("3D.svg");
+	test_incomplete_ND(mesh, 8, true);
 }
 
 void test_incomplete_4D()
 {
 	using namespace mars;
 	
-	using NVES = mars::GlobalNewestVertexEdgeSelect<4, 4>;
-	using LEES = mars::GloballyUniqueLongestEdgeSelect<4, 4>;
-
-	std::cout << "======================================\n";
 	Mesh<4, 4> mesh(true);
 	read_mesh("../data/cube4d_24.MFEM", mesh);
-	mesh.renumber_nodes();
-	// mesh.scale(10.);
-
-	Quality<4, 4> q(mesh);
-	q.compute();
-	mark_boundary(mesh);
-
-	//serial uniform refinement
-	Bisection<4, 4> b(mesh);
-	b.uniform_refine(2);
-	mesh.clean_up();
-
-	Integer n_tests = 10;
-	for(Integer i = 0; i < n_tests; ++i) {
-		std::cout << "-----------------\n";
-		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
-		
-		if(!test_incomplete<LEES>(mesh)) {
-			std::cout << "using NVES" << std::endl;
-			if(!test_incomplete<NVES>(mesh)) {
-				assert(false);
-				std::cout << "NVES failed" << std::endl;
-			}
-		}
-		
-		if(i < n_tests - 1) { 
-			mesh.clean_up();
-		}
-		
-		q.compute();
-		std::cout << "n_active_elements: " << mesh.n_active_elements() << "/" << mesh.n_elements() << std::endl;
-		std::cout << "-----------------\n";
-	}
-
-	q.save_csv("glob_long_edge", "4D.csv", true);
-	q.save_report("4D.svg");
-
-	// std::ofstream m_os("big_mesh4.MFEM");
-	// export_mesh(mesh, m_os);
-	// m_os.close();
-
-	std::ofstream os("bad_mesh.MFEM");
-	export_elems_with_bad_tags(mesh, os);
-	os.close();
-
-	std::ofstream os_p("bad_mesh_p.MFEM");
-	export_elems_with_bad_tags(mesh, os_p, true);
-	os_p.close();
+	test_incomplete_ND(mesh, 10, false);
 }
 
 void test_incomplete_5D()

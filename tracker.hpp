@@ -56,6 +56,7 @@ namespace mars {
 			}
 
 			mesh.remove_elements(elements_to_remove);
+			--current_iterate_;
 		}
 
 		void end_iterate()

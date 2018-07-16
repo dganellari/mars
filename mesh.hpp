@@ -59,6 +59,11 @@ namespace mars {
 			return id >= 0 && id < n_elements();
 		}
 
+		inline bool is_node_valid(const Integer id) const
+		{
+			return id >= 0 && id < n_nodes();
+		}
+
 		inline bool is_child(
 			const Integer parent_id,
 			const Integer child_id) const

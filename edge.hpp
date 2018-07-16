@@ -31,6 +31,16 @@ namespace mars {
 			return nodes[i];
 		}
 
+
+		inline bool has_node(const Integer v) const
+		{
+			for(auto n : nodes) {
+				if(v == n) return true;
+			}
+
+			return false;
+		}
+
 		Side()
 		{
 			std::fill(nodes.begin(), nodes.end(), INVALID_INDEX);

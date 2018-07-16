@@ -61,11 +61,23 @@ namespace mars {
 			//
 		}
 
+		virtual void update(const Mesh<Dim, ManifoldDim> &mesh) {}
+
+		virtual void element_refined(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Integer element_id,
+			const Edge &edge,
+			const Integer local_midpoint_id)
+		{
+			//do smth
+		}
 
 		virtual bool is_recursive() const
 		{
 			return false;
 		}
+
+		virtual void describe(std::ostream &os) const {}
 
 		virtual std::string name() const = 0;
 	};
@@ -834,7 +846,16 @@ namespace mars {
 			mesh.elem(element_id).children.push_back(new_id);
 
 			bisect_side_tags(element_id, Edge(v1, v2), midpoint);
+			
 			tracker_.element_refined(element_id);
+
+			edge_select_->element_refined(
+				mesh,
+				element_id,
+				Edge(v1, v2),
+				midpoint
+			);
+
 			return;
 		}
 

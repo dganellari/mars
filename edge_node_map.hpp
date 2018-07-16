@@ -18,6 +18,12 @@ namespace mars {
 			mapping_[Edge(an_edge_node, another_edge_node)] = midpoint_node;
 		}
 
+		inline void update(const Edge &edge, const Integer midpoint_node)
+		{
+			assert(edge.is_valid());
+			mapping_[edge] = midpoint_node;
+		}
+
 		inline Integer get(
 			const Integer an_edge_node,
 			const Integer another_edge_node) const
@@ -57,6 +63,18 @@ namespace mars {
 		{
 			mapping_.clear();
 		}
+
+		inline Integer size() const
+		{
+			return mapping_.size();
+		}
+
+		inline bool empty() const
+		{
+			return mapping_.empty();
+		}
+
+		std::map<Edge, Integer> &mapping() { return mapping_; }
 
 		std::map<Edge, Integer> mapping_;
 	};

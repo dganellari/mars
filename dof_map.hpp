@@ -414,6 +414,16 @@ namespace mars {
 			return true;
 		}
 
+		void identity()
+		{
+			assert(!global_id_.empty());
+
+			Integer n_nodes = global_id_.size();
+			for(Integer i = 0; i < n_nodes; ++i) {
+				set_global(i, i);
+			}
+		}
+
 	private:
 		Integer partition_id_;
 		Integer n_partitions_;
