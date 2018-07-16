@@ -174,8 +174,10 @@ namespace mars {
 
         void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
         {
-            v1 = nodes[edge_num];
-            v2 = nodes[edge_num == 2? 0 : (edge_num + 1)];
+            std::array<Integer, 2> vs;
+            Combinations<3, 2>::choose(edge_num, nodes, vs);
+            v1 = vs[0];
+            v2 = vs[1];
         }
         
         void side(const Integer &side_num,
@@ -295,107 +297,107 @@ namespace mars {
         }
     };
     
-    // template<Integer Dim>
-    // class Simplex<Dim, 4> {
-    // public:
-    //     std::array<Integer, 5> nodes;
-    //     std::array<Integer, 5> side_tags;
+    template<Integer Dim>
+    class Simplex<Dim, 4> {
+    public:
+        std::array<Integer, 5> nodes;
+        std::array<Integer, 5> side_tags;
 
-    //     Integer id = INVALID_INDEX;
-    //     Integer parent_id = INVALID_INDEX;
+        Integer id = INVALID_INDEX;
+        Integer parent_id = INVALID_INDEX;
 
-    //     std::vector<Integer> children;
+        std::vector<Integer> children;
         
         
-    //     inline static std::vector<Vector<Real, Dim>> &ref()
-    //     {
-    //         static std::vector<Vector<Real, Dim>> ref_;
-    //         if(ref_.empty()) {
-    //             ref_.resize(5);
-    //             ref_[0] = Vector<Real, Dim>().zero();
+        inline static std::vector<Vector<Real, Dim>> &ref()
+        {
+            static std::vector<Vector<Real, Dim>> ref_;
+            if(ref_.empty()) {
+                ref_.resize(5);
+                ref_[0] = Vector<Real, Dim>().zero();
                 
-    //             ref_[1] = Vector<Real, Dim>().zero();
-    //             ref_[1](0) = 1.;
+                ref_[1] = Vector<Real, Dim>().zero();
+                ref_[1](0) = 1.;
                 
-    //             ref_[2] = Vector<Real, Dim>().zero();
-    //             ref_[2](1) = 1.;
+                ref_[2] = Vector<Real, Dim>().zero();
+                ref_[2](1) = 1.;
                 
-    //             ref_[3] = Vector<Real, Dim>().zero();
-    //             ref_[3](2) = 1.;
+                ref_[3] = Vector<Real, Dim>().zero();
+                ref_[3](2) = 1.;
                 
-    //             ref_[4] = Vector<Real, Dim>().zero();
-    //             ref_[4](3) = 1.;
-    //         }
+                ref_[4] = Vector<Real, Dim>().zero();
+                ref_[4](3) = 1.;
+            }
             
-    //         return ref_;
-    //     }
+            return ref_;
+        }
 
-    //     void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
-    //     {
-    //         std::array<Integer, 2> vs;
-    //         Combinations<5, 2>::choose(edge_num, nodes, vs);
-    //         v1 = vs[0];
-    //         v2 = vs[1];
-    //     }
+        void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
+        {
+            std::array<Integer, 2> vs;
+            Combinations<5, 2>::choose(edge_num, nodes, vs);
+            v1 = vs[0];
+            v2 = vs[1];
+        }
         
-    //     void side(const Integer &side_num,
-    //               Simplex<Dim, 3> &side) const
-    //     {
-    //         // Combinations<5, 4>::choose(side_num, nodes, side.nodes);
-    //         switch(side_num)
-    //         {
-    //             case 0:
-    //             {
-    //                 side.nodes[0] = nodes[0];
-    //                 side.nodes[1] = nodes[1];
-    //                 side.nodes[2] = nodes[2];
-    //                 side.nodes[3] = nodes[3];
-    //                 break;
-    //             }
+        void side(const Integer &side_num,
+                  Simplex<Dim, 3> &side) const
+        {
+            // Combinations<5, 4>::choose(side_num, nodes, side.nodes);
+            switch(side_num)
+            {
+                case 0:
+                {
+                    side.nodes[0] = nodes[0];
+                    side.nodes[1] = nodes[1];
+                    side.nodes[2] = nodes[2];
+                    side.nodes[3] = nodes[3];
+                    break;
+                }
                     
-    //             case 1:
-    //             {
-    //                 side.nodes[0] = nodes[0];
-    //                 side.nodes[1] = nodes[1];
-    //                 side.nodes[2] = nodes[3];
-    //                 side.nodes[3] = nodes[4];
-    //                 break;
-    //             }
+                case 1:
+                {
+                    side.nodes[0] = nodes[0];
+                    side.nodes[1] = nodes[1];
+                    side.nodes[2] = nodes[3];
+                    side.nodes[3] = nodes[4];
+                    break;
+                }
                     
-    //             case 2:
-    //             {
-    //                 side.nodes[0] = nodes[0];
-    //                 side.nodes[1] = nodes[3];
-    //                 side.nodes[2] = nodes[2];
-    //                 side.nodes[3] = nodes[4];
-    //                 break;
-    //             }
+                case 2:
+                {
+                    side.nodes[0] = nodes[0];
+                    side.nodes[1] = nodes[3];
+                    side.nodes[2] = nodes[2];
+                    side.nodes[3] = nodes[4];
+                    break;
+                }
                     
-    //             case 3:
-    //             {
-    //                 side.nodes[0] = nodes[0];
-    //                 side.nodes[1] = nodes[1];
-    //                 side.nodes[2] = nodes[4];
-    //                 side.nodes[3] = nodes[2];
-    //                 break;
-    //             }
+                case 3:
+                {
+                    side.nodes[0] = nodes[0];
+                    side.nodes[1] = nodes[1];
+                    side.nodes[2] = nodes[4];
+                    side.nodes[3] = nodes[2];
+                    break;
+                }
                     
-    //             case 4:
-    //             {
-    //                 side.nodes[0] = nodes[4];
-    //                 side.nodes[1] = nodes[1];
-    //                 side.nodes[2] = nodes[3];
-    //                 side.nodes[3] = nodes[2];
-    //                 break;
-    //             }
+                case 4:
+                {
+                    side.nodes[0] = nodes[4];
+                    side.nodes[1] = nodes[1];
+                    side.nodes[2] = nodes[3];
+                    side.nodes[3] = nodes[2];
+                    break;
+                }
                     
-    //             default: {
-    //                 assert(false);
-    //                 break;
-    //             }
-    //         }
-    //     }
-    // };
+                default: {
+                    assert(false);
+                    break;
+                }
+            }
+        }
+    };
     
     template<Integer ManifoldDim>
     class NSubSimplices {

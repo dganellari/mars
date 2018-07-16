@@ -2,6 +2,8 @@
 #define MARS_BISECTION_HPP
 
 #include "dof_map.hpp"
+#include "tracker.hpp"
+
 #include <iostream>
 
 namespace mars {
@@ -29,6 +31,11 @@ namespace mars {
 		{
 			//first edge selected
 			return 0;
+		}
+
+		virtual bool repair_element()
+		{
+			return true;
 		}
 
 		virtual bool can_refine(
@@ -366,6 +373,71 @@ namespace mars {
 
 
 	template<Integer Dim, Integer ManifoldDim>
+	class ImplicitOrderEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
+	public:
+		ImplicitOrderEdgeSelect()
+		{}
+
+		virtual bool repair_element() override
+		{
+			return false;
+		}
+
+		void reorder_edge(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Integer element_id,
+			Integer &v1,
+			Integer &v2) const override
+		{
+			const auto &e = mesh.elem(element_id);
+
+			Integer l1 = e.nodes[n_nodes(e) - 2];
+			Integer l2 = e.nodes[n_nodes(e) - 1];
+
+			if(l1 != v1) {
+				std::swap(v1, v2);
+			}
+
+			assert(v1 == l1);
+			assert(v2 == l2);
+		}
+
+		Integer select(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Integer element_id) const override
+		{
+			const auto &e = mesh.elem(element_id);
+			Integer edge_num, v1, v2;
+
+			edge_num = n_edges(mesh.elem(element_id)) - 1;
+			e.edge(edge_num, v1, v2);
+
+			assert(v1 == e.nodes[n_nodes(e) - 2]);
+			assert(v2 == e.nodes[n_nodes(e) - 1]);
+			return edge_num;
+		}
+
+		virtual Integer select(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Edge &neighbor_edge,
+			const Integer element_id) const override
+		{
+			return select(mesh, element_id);
+		}
+
+		bool is_recursive() const override
+		{
+			return true;
+		}
+
+
+		virtual std::string name() const override
+		{
+			return "ImplicitOrderEdgeSelect";
+		}
+	};
+
+	template<Integer Dim, Integer ManifoldDim>
 	class GlobalNewestVertexEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
 	public:
 		GlobalNewestVertexEdgeSelect(
@@ -620,8 +692,10 @@ namespace mars {
 	class Bisection {
 	public:
 		Bisection(Mesh<Dim, ManifoldDim> &mesh)
-		: mesh(mesh), edge_select_(std::make_shared<LongestEdgeSelect<Dim, ManifoldDim>>()),
-		verbose(false), fail_if_not_refine(false)
+		: mesh(mesh),
+		  edge_select_(std::make_shared<LongestEdgeSelect<Dim, ManifoldDim>>()),
+		  verbose(false),
+		  fail_if_not_refine(false)
 		{}
 
 		void set_fail_if_not_refine(const bool val) {
@@ -637,8 +711,11 @@ namespace mars {
 		{
 			flags.push_back(NONE);
 			Integer id = mesh.add_elem(e);
-			mesh.repair_element(id);
-			// mesh.update_side_flags_from_parent(id);
+			
+			if(edge_select_->repair_element()) {
+				mesh.repair_element(id);
+			}
+
 			level.push_back((mesh.elem(id).parent_id == INVALID_INDEX)? 0 : (level[mesh.elem(id).parent_id] + 1)); 
 			edge_element_map_.update(mesh.elem(id));
 			return id;
@@ -669,6 +746,52 @@ namespace mars {
 			bisect_element(element_id, v1, v2);
 		}
 
+		// void bisect_element(
+		// 	const Integer element_id,
+		// 	const Integer v1,
+		// 	const Integer v2)
+		// {
+		// 	mesh.elem(element_id).children.clear();
+		// 	mesh.set_active(element_id, false);
+
+		// 	Simplex<Dim, ManifoldDim> s;
+		// 	s.parent_id = element_id;
+			
+		// 	if(verbose) {
+		// 		std::cout << "bisect(" << v1 << ", " << v2 << ") for " << element_id << std::endl;
+		// 	}
+
+		// 	auto midpoint = edge_node_map_.get(v1, v2);
+
+		// 	if(midpoint == INVALID_INDEX) {
+		// 		// midpoint = mesh.add_point(0.5 * (mesh.point(v1) + mesh.point(v2)));
+		// 		midpoint = mesh.add_point((mesh.point(v1) + mesh.point(v2))/2.);
+		// 		edge_node_map_.update(v1, v2, midpoint);
+		// 	}
+
+		// 	std::array<Integer, ManifoldDim-1> opposite_nodes;
+		// 	other_nodes(mesh.elem(element_id).nodes, v1, v2, opposite_nodes);
+
+		// 	for(Integer i = 0; i < ManifoldDim-1; ++i) {
+		// 		s.nodes[2+i] = opposite_nodes[i];
+		// 	}
+
+		// 	s.nodes[0] = v1;
+		// 	s.nodes[1] = midpoint;
+
+		// 	Integer new_id = add_elem(s);
+		// 	mesh.elem(element_id).children.push_back(new_id);
+
+		// 	s.nodes[0] = v2;
+		// 	s.nodes[1] = midpoint;
+
+		// 	new_id = add_elem(s);
+		// 	mesh.elem(element_id).children.push_back(new_id);
+
+		// 	bisect_side_tags(element_id, Edge(v1, v2), midpoint);
+		// 	return;
+		// }
+
 		void bisect_element(
 			const Integer element_id,
 			const Integer v1,
@@ -687,7 +810,6 @@ namespace mars {
 			auto midpoint = edge_node_map_.get(v1, v2);
 
 			if(midpoint == INVALID_INDEX) {
-				// midpoint = mesh.add_point(0.5 * (mesh.point(v1) + mesh.point(v2)));
 				midpoint = mesh.add_point((mesh.point(v1) + mesh.point(v2))/2.);
 				edge_node_map_.update(v1, v2, midpoint);
 			}
@@ -696,22 +818,23 @@ namespace mars {
 			other_nodes(mesh.elem(element_id).nodes, v1, v2, opposite_nodes);
 
 			for(Integer i = 0; i < ManifoldDim-1; ++i) {
-				s.nodes[2+i] = opposite_nodes[i];
+				s.nodes[2 + i] = opposite_nodes[i];
 			}
 
-			s.nodes[0] = v1;
-			s.nodes[1] = midpoint;
+			s.nodes[0] = midpoint;
+			s.nodes[1] = v1;
 
 			Integer new_id = add_elem(s);
 			mesh.elem(element_id).children.push_back(new_id);
 
-			s.nodes[0] = v2;
-			s.nodes[1] = midpoint;
-
+			s.nodes[0] = midpoint;
+			s.nodes[1] = v2;
+			
 			new_id = add_elem(s);
 			mesh.elem(element_id).children.push_back(new_id);
 
 			bisect_side_tags(element_id, Edge(v1, v2), midpoint);
+			tracker_.element_refined(element_id);
 			return;
 		}
 
@@ -1043,6 +1166,30 @@ namespace mars {
 			return incomplete_elements_.empty() && incomplete_edges_.empty();
 		}
 
+		void clear()
+		{
+			flags.clear();
+			level.clear();
+			side_flags.clear();
+			edge_node_map_.clear();
+			edge_element_map_.clear();
+		}
+
+		void tracking_begin()
+		{
+			tracker_.begin_iterate();
+		}
+
+		void tracking_end()
+		{
+			tracker_.end_iterate();
+		}
+
+		void undo()
+		{
+			tracker_.undo_last_iterate(mesh);
+		}
+
 	private:
 		Mesh<Dim, ManifoldDim> &mesh;
 		std::vector<Integer> flags;
@@ -1060,6 +1207,7 @@ namespace mars {
 		std::vector<Edge>    incomplete_edges_;
 		std::vector<Integer> incomplete_elements_;
 		bool fail_if_not_refine;
+		Tracker tracker_;
 	};
 }
 

@@ -139,6 +139,11 @@ namespace mars {
 			return mapping_.empty();
 		}
 
+		void clear()
+		{
+			mapping_.clear();
+		}
+
 		std::map<Side<N>, std::shared_ptr<ElementVector> > mapping_;
 	};
 

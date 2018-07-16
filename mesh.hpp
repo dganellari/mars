@@ -626,6 +626,24 @@ namespace mars {
 			}
 		}
 
+		void reorder_nodes(const bool descending_order = true)
+		{
+
+			if(descending_order) {
+				for(Integer i = 0; i < n_elements(); ++i) {
+					std::sort(elem(i).nodes.begin(), elem(i).nodes.end(), [](const Integer v1, const Integer v2) -> bool {
+						return v2 < v1;
+					});
+				}
+			} else {
+				for(Integer i = 0; i < n_elements(); ++i) {
+					std::sort(elem(i).nodes.begin(), elem(i).nodes.end(), [](const Integer v1, const Integer v2) -> bool {
+						return v1 < v2;
+					});
+				}
+			}
+		}
+
 
 		void clean_up()
 		{
@@ -694,6 +712,54 @@ namespace mars {
 		Mesh(const bool sorted_elements = false)
 		: sorted_elements_(sorted_elements)
 		{}
+
+		void remove_elements(const std::vector<Integer> &elems)
+		{
+			Integer n_elems = n_elements();
+			std::vector<bool> to_remove(n_elems, false);
+
+			Integer min_elem_index = n_elems;
+			
+			for(auto e : elems) {
+				to_remove[e] = true;
+				min_elem_index = std::min(e, min_elem_index);
+			}
+
+			bool is_contiguous = true;
+			for(Integer i = min_elem_index + 1; i < n_elems; ++i) {
+				if(to_remove[i] != to_remove[i-1]) {
+					is_contiguous = false;
+					assert(false);
+				}
+
+				assert(to_remove[i]);
+			}
+
+			assert(is_contiguous);
+
+			std::vector<bool> is_node_referenced(n_nodes(), false);
+			
+			Integer max_node_index = 0;
+			for(Integer i = 0; i < n_elems; ++i) {
+				if(to_remove[i]) continue;
+
+				for(auto n : elem(i).nodes) {
+					is_node_referenced[n] = true;
+					max_node_index = std::max(n, max_node_index);
+				}
+			}
+
+
+			elements_.resize(min_elem_index);
+			active_.resize(elements_.size());
+			tags_.resize(elements_.size());
+
+			//assume contiguous for runtime efficiency
+			points_.resize(max_node_index + 1);
+
+			dual_graph_.clear();
+			update_dual_graph();
+		}
 
 	private:
 		std::vector< Simplex<Dim, ManifoldDim> > elements_;

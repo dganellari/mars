@@ -24,21 +24,26 @@ void test_bisection_2D()
 	read_mesh("../data/square_2.MFEM", mesh);
 	// read_mesh("../data/square_2_def.MFEM", mesh);
 
+	Bisection<2, 2> b(mesh);
+	b.uniform_refine(3);
+	b.clear();
+
+	mesh.clean_up();
+	mesh.reorder_nodes();
+
 	Quality<2, 2> q(mesh);
 	q.compute();
+
+	mesh.update_dual_graph();
 	mark_boundary(mesh);
 
-
-	Bisection<2, 2> b(mesh);
-	b.uniform_refine(1);
-	auto edge_select = std::make_shared<NewestVertexEdgeSelect<2, 2>>();
-	// auto edge_select = std::make_shared<LongestEdgeSelect<2, 2>>();
-	// auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<2, 2>>();
+	auto edge_select = std::make_shared<ImplicitOrderEdgeSelect<2, 2>>();
 	b.set_edge_select(edge_select);
+	b.uniform_refine(1);
 
-	write_mesh("mesh_2_bisect_0.eps", mesh, 10., PLOT_ID);
+	// write_mesh("mesh_2_bisect_0.eps", mesh, 10., PLOT_ID);
 
-	Integer n_levels = 14;
+	Integer n_levels = 1;
 	for(Integer i = 0; i < n_levels; ++i) {
 		std::vector<mars::Integer> elements;
 		
@@ -54,7 +59,7 @@ void test_bisection_2D()
 		b.refine(elements);
 		q.compute();
 
-		write_mesh("mesh_2_bisect_" + std::to_string(i+1) + ".eps", mesh, 10., PLOT_NUMERIC_TAG);
+		// write_mesh("mesh_2_bisect_" + std::to_string(i+1) + ".eps", mesh, 10., PLOT_NUMERIC_TAG);
 
 		mesh.update_dual_graph();
 		print_boundary_info(mesh, true);
@@ -62,6 +67,15 @@ void test_bisection_2D()
 
 	// q.report.normalize_data_points();
 	q.save_report("quality2.svg");
+
+
+	b.tracking_begin();
+	b.uniform_refine(1);
+	b.tracking_end();
+	write_mesh("mesh2_before.eps", mesh, 10., PLOT_NUMERIC_TAG);
+	
+	b.undo();
+	write_mesh("mesh2_after.eps", mesh, 10., PLOT_NUMERIC_TAG);
 }
 
 void test_bisection_3D()
@@ -70,25 +84,38 @@ void test_bisection_3D()
 	std::cout << "======================================\n";
 	Mesh<3, 3> mesh;
 	read_mesh("../data/cube_6.MFEM", mesh, true);
+	mesh.renumber_nodes();
+	mesh.reorder_nodes(true);
 
 	Quality<3, 3> q(mesh);
 	q.compute();
 
-	mark_boundary(mesh);
-	// print_boundary_info(mesh);
+	Bisection<3, 3> b(mesh);
+	b.uniform_refine(2); b.clear();
 
-	std::cout << mesh.n_boundary_sides() << std::endl;
+	
+	mesh.clean_up();
+	// mesh.reorder_nodes(true);
+	mesh.update_dual_graph();
+
+	mark_boundary(mesh);
+
+	std::cout << "n_boundary_sides: " << mesh.n_boundary_sides() << std::endl;
 	std::cout << "volume: " << mesh.volume() << std::endl;
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 
-	Bisection<3, 3> b(mesh);
-	b.uniform_refine(8);
-	// auto edge_select = std::make_shared<NewestVertexEdgeSelect<3, 3>>();
-	// auto edge_select = std::make_shared<LongestEdgeSelect<3, 3>>(true);
+	// mesh.describe(std::cout);
 
-	auto edge_select = std::make_shared<UniqueLongestEdgeSelect<3, 3>>(true);	
+	// auto edge_select = std::make_shared<NewestVertexEdgeSelect<3, 3>>();
+	auto edge_select = std::make_shared<LongestEdgeSelect<3, 3>>(true);
+
+	// auto edge_select = std::make_shared<ImplicitOrderEdgeSelect<3, 3>>();
+	// auto edge_select = std::make_shared<UniqueLongestEdgeSelect<3, 3>>(true);	
 	// auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<3, 3>>();
 	b.set_edge_select(edge_select);
+	b.uniform_refine(1);
+
+	// mesh.describe(std::cout);
 
 	Integer n_levels = 10;
 	for(Integer i = 0; i < n_levels; ++i) {
@@ -528,10 +555,10 @@ void test_incomplete_4D()
 
 	//serial uniform refinement
 	Bisection<4, 4> b(mesh);
-	b.uniform_refine(4);
+	b.uniform_refine(2);
 	mesh.clean_up();
 
-	Integer n_tests = 10;
+	Integer n_tests = 8;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "-----------------\n";
 		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
@@ -677,7 +704,7 @@ void test_incomplete_bad_4D()
 int main(const int argc, const char *argv[])
 {
 	using namespace mars;
-	// test_bisection_2D();
+	test_bisection_2D();
 	// test_bisection_3D();
 	// test_bisection_4D();
 
@@ -687,12 +714,10 @@ int main(const int argc, const char *argv[])
 	// test_partition_4D();
 	// test_incomplete_2D();
 	// test_incomplete_3D();
-	test_incomplete_4D();
+	// test_incomplete_4D();
 	// test_incomplete_5D();
 	// test_incomplete_6D();
 	// test_incomplete_bad_4D();
 	// run_tests();
 	return EXIT_SUCCESS;
 }
-
-

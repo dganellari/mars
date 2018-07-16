@@ -53,6 +53,11 @@ namespace mars {
 			return mapping_.end();
 		}
 
+		void clear()
+		{
+			mapping_.clear();
+		}
+
 		std::map<Edge, Integer> mapping_;
 	};
 }
