@@ -17,6 +17,7 @@
 #include "test.hpp"
 #include "ranked_edge.hpp"
 #include "oldest_edge.hpp"
+#include "longest_edge.hpp"
 
 
 void test_bisection_2D()
@@ -333,6 +334,8 @@ namespace mars {
 			std::cout << "n_active_elements: " << mesh.n_active_elements() << "/" << mesh.n_elements() << std::endl;
 		}
 
+		// edge_select->describe(std::cout);
+
 		q.save_csv("edge_rank", std::to_string(ManifoldDim) + "D_er.csv", true);
 		q.save_report(std::to_string(ManifoldDim) + "D_er.svg");
 		return true;
@@ -357,7 +360,7 @@ namespace mars {
 		b.uniform_refine(n_serial_ref);
 
 		if(use_edge_rank) {
-			test_incomplete_with_edge_rank(mesh, n_tests, false);
+			test_incomplete_with_edge_rank(mesh, n_tests, false, true);
 		} else {
 			Quality<Dim, ManifoldDim> q(mesh);
 			q.compute();
@@ -367,7 +370,7 @@ namespace mars {
 				
 				if(!test_incomplete<LEES>(mesh)) {
 					std::cout << "using edge_rank" << std::endl;
-					if(!test_incomplete_with_edge_rank(mesh, 1, false, false)) {
+					if(!test_incomplete_with_edge_rank(mesh, 1, false, true)) {
 						assert(false);
 						std::cout << "edge_rank failed" << std::endl;
 					}
@@ -607,7 +610,8 @@ void test_incomplete_3D()
 
 	Mesh<3, 3> mesh(true);
 	read_mesh("../data/cube_6.MFEM", mesh);
-	test_incomplete_ND(mesh, 8, true);
+	// test_incomplete_ND(mesh, 10, false);
+	test_incomplete_ND(mesh, 10, true);
 }
 
 void test_incomplete_4D()
@@ -616,7 +620,7 @@ void test_incomplete_4D()
 	
 	Mesh<4, 4> mesh(true);
 	read_mesh("../data/cube4d_24.MFEM", mesh);
-	test_incomplete_ND(mesh, 8, true);
+	test_incomplete_ND(mesh, 4, true);
 }
 
 void test_incomplete_5D()
@@ -751,9 +755,9 @@ int main(const int argc, const char *argv[])
 	// test_partition_2D();
 	// test_partition_3D();
 	// test_partition_4D();
-	test_incomplete_2D();
+	// test_incomplete_2D();
 	test_incomplete_3D();
-	test_incomplete_4D();
+	// test_incomplete_4D();
 	// test_incomplete_5D();
 	// test_incomplete_6D();
 	// test_incomplete_bad_4D();

@@ -1,7 +1,8 @@
 #ifndef MARS_OLDEST_EDGE_HPP
 #define MARS_OLDEST_EDGE_HPP
 
-#include "bisection.hpp"
+#include "edge_select.hpp"
+#include "node_rank.hpp"
 
 namespace mars {
 
@@ -34,8 +35,10 @@ namespace mars {
 			Integer edge_num;
 		};
 
-		OldestEdgeSelect(const Map &map)
-		: map(map)
+		OldestEdgeSelect(
+			const Map &map,
+			const std::shared_ptr<NodeRank> &node_rank = std::make_shared<NodeRank>())
+		: map(map), node_rank_(node_rank)
 		{}
 
 		bool can_refine(
@@ -53,8 +56,6 @@ namespace mars {
 				assert(n != INVALID_INDEX);
 
 				assert(mesh.is_node_valid(n));
-				assert(n < node_rank_.size());
-				assert(node_rank_[n] != INVALID_INDEX);
 
 				if(map.global(n) == INVALID_INDEX) {
 					return false;
@@ -133,18 +134,12 @@ namespace mars {
 
 		inline Integer rank(const Edge &local_edge) const
 		{
-			assert(local_edge.is_valid());
-			assert(local_edge[0] < node_rank_.size());
-			assert(local_edge[1] < node_rank_.size());
-			assert(node_rank_[local_edge[0]] != INVALID_INDEX);
-			assert(node_rank_[local_edge[1]] != INVALID_INDEX);
-
-			return node_rank_[local_edge[0]] + node_rank_[local_edge[1]];
+			return node_rank_->rank(local_edge);
 		}
 
 		void update(const Mesh<Dim, ManifoldDim> &mesh) override
 		{
-			init(mesh);
+			node_rank_->init(mesh);
 		}
 
 		void element_refined(
@@ -158,29 +153,17 @@ namespace mars {
 
 		void describe(std::ostream &os) const override
 		{
-			for(auto nr : node_rank_) {
-				os << nr << "\n";
-			}
+			node_rank_->describe(os);
 		}
 
 	private:
-		void init(const Mesh<Dim, ManifoldDim> &mesh)
-		{
-			node_rank_.reserve(mesh.n_nodes() * 2);
-			node_rank_.resize(mesh.n_nodes(), 1);
-		}
-
 		void set_rank(const Integer &node_id, const Integer rank)
 		{
-			if(node_rank_.size() <= node_id) {
-				node_rank_.resize(node_id + 1, INVALID_INDEX);
-			}
-
-			node_rank_[node_id] = rank;
+			node_rank_->set_rank(node_id, rank);
 		}
 
 		const Map &map;
-		std::vector<Integer> node_rank_;
+		std::shared_ptr<NodeRank> node_rank_;
 	};
 
 }

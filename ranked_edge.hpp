@@ -1,7 +1,7 @@
 #ifndef MARS_RANKED_EDGE_HPP
 #define MARS_RANKED_EDGE_HPP
 
-#include "bisection.hpp"
+#include "edge_select.hpp"
 
 namespace mars {
 
