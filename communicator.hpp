@@ -508,6 +508,36 @@ namespace mars {
 		
 		// bool unstructured_all_gather(ByteOutputStream &send_buffer, std::vector<ByteInputBuffer> &recv_buffer, const bool blocking);
 	};
+
+	template<class Fun>
+	void serial_apply(
+		const Communicator &comm,
+		Fun fun)
+	{
+		for(Integer i = 0; i < comm.size(); ++i) {
+			comm.barrier();
+			if(i == comm.rank()) {
+				fun();
+			}
+		} 
+
+		comm.barrier();
+	}
+
+
+	template<class Fun>
+	void root_apply(
+		const Communicator &comm,
+		Fun fun)
+	{
+		comm.barrier();
+		
+		if(comm.is_root()) {
+			fun();
+		}
+		
+		comm.barrier();
+	}
 }
 
 #endif //MARS_COMMUNICATOR_H

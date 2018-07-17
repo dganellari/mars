@@ -12,6 +12,7 @@
 #include "quality.hpp"
 #include "utils.hpp"
 #include "mesh_partition.hpp"
+#include "partitioned_bisection.hpp"
 #include "par_bisection.hpp"
 #include "benchmark.hpp"
 #include "test.hpp"
@@ -401,7 +402,7 @@ namespace mars {
 		std::vector<std::shared_ptr<MeshPartition<Dim, ManifoldDim>>> &parts,
 		const bool uniform_refine = false)
 	{
-		ParBisection<Dim, ManifoldDim> b(parts);
+		PartitionedBisection<Dim, ManifoldDim> b(parts);
 		// auto edge_select = std::make_shared<NewestVertexEdgeSelect<Dim, ManifoldDim>>();
 		// auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<Dim, ManifoldDim>>(true, false);
 		// auto edge_select = std::make_shared<LongestEdgeSelect<Dim, ManifoldDim>>(true, true);
@@ -748,15 +749,25 @@ void par_mesh_test()
 {
 	using namespace mars;
 
+	Mesh<2, 2> serial_mesh(true);
+	read_mesh("../data/square_2.MFEM", serial_mesh);
+
+	std::vector<Integer> partitioning = {0, 1};
+
 	Communicator world;
 	ParMesh<2, 2> mesh(world);
+	mesh.init(serial_mesh, partitioning);
+
+	mesh.describe(std::cout);
 
 	mesh.synchronize();
 }
 
-int main(const int argc, const char *argv[])
+int main(int argc, char *argv[])
 {
 	using namespace mars;
+
+	MPI_Init(&argc, &argv);
 	// test_bisection_2D();
 	// test_bisection_3D();
 	// test_bisection_4D();
@@ -767,10 +778,11 @@ int main(const int argc, const char *argv[])
 	// test_partition_4D();
 	// test_incomplete_2D();
 	// test_incomplete_3D();
-	test_incomplete_4D();
+	// test_incomplete_4D();
 	// test_incomplete_5D();
 	// test_incomplete_6D();
 	// test_incomplete_bad_4D();
 	// run_tests();
-	return EXIT_SUCCESS;
+	par_mesh_test();
+	return MPI_Finalize();
 }

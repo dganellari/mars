@@ -71,16 +71,9 @@ namespace mars {
 			e.side_tags[side_num] = partition_id_to_tag(adj_partition);
 		}
 
+		void reserve_elements(const Integer n_elems) {}
 
-		void reserve_elements(const Integer n_elems)
-		{
-
-		}
-
-		void reserve_nodes(const Integer n_nodes)
-		{
-			
-		}
+		void reserve_nodes(const Integer n_nodes) {}
 
 		inline Integer n_active_elements() const
 		{
@@ -102,29 +95,37 @@ namespace mars {
 			return mesh_.n_elements();
 		}
 
+		inline Integer n_local_nodes() const
+		{
+			return mesh_.n_nodes();
+		}	
+
 		ParMesh(const Communicator &comm)
 		: comm_(comm),
 		  node_map_(comm.rank(), comm.size()),
 		  elem_map_(comm.rank(), comm.size()),
+		  is_interfaced_(comm.size(), false),
 		  n_active_elements_(0), n_nodes_(0)
 		{}
 
 		void init(
-			const Mesh &mesh,
+			Mesh &serial_mesh,
 			const std::vector<Integer> &partitioning)
 		{
-			std::vector<Integer> node_partitioning(mesh.n_nodes(), INVALID_INDEX);
-			std::vector<std::set<Integer>> shared_nodes(mesh.n_nodes());
+			serial_mesh.update_dual_graph();
 
-			for(Integer i = 0; i < mesh.n_elements(); ++i) {
-				if(!mesh.is_active(i)) continue;
+			std::vector<Integer> node_partitioning(serial_mesh.n_nodes(), INVALID_INDEX);
+			std::vector<std::set<Integer>> shared_nodes(serial_mesh.n_nodes());
+
+			for(Integer i = 0; i < serial_mesh.n_elements(); ++i) {
+				if(!serial_mesh.is_active(i)) continue;
 				const Integer partition_id = partitioning[i];
-				const auto &e = mesh.elem(i);
+				const auto &e = serial_mesh.elem(i);
 
 				if(partition_id == comm_.rank()) {
-					const Integer local_element_id = this->add_elem(e);
+					const Integer local_element_id = this->add_elem(e, e.id, comm_.rank());
 
-					const auto &adj = mesh.dual_graph().adj(i);
+					const auto &adj = serial_mesh.dual_graph().adj(i);
 					for(Integer f = 0; f < adj.size(); ++f) {
 						if(adj[f] == INVALID_INDEX) continue;
 
@@ -134,11 +135,13 @@ namespace mars {
 							this->mark_partition_boundary(
 								local_element_id, f, adj_partition_id
 							);
+
+							is_interfaced_[adj_partition_id] = true;
 						}
 					}
 				}
 
-				for(Integer k = 0; k < n_nodes(e); ++k) {
+				for(Integer k = 0; k < mars::n_nodes(e); ++k) {
 					if(node_partitioning[e.nodes[k]] == INVALID_INDEX) {
 						node_partitioning[e.nodes[k]] = partition_id;
 					}
@@ -147,7 +150,7 @@ namespace mars {
 				}
 			}
 
-			this->add_and_index_nodes(mesh, node_partitioning);
+			this->add_and_index_nodes(serial_mesh, node_partitioning);
 
 			for(Integer i = 0; i < this->n_local_nodes(); ++i) {
 				const auto global_n = this->node_map().global(i);
@@ -157,8 +160,8 @@ namespace mars {
 				}
 			}
 
-			n_active_elements_ = mesh.n_elements();
-			n_nodes_           = mesh.n_nodes();
+			this->n_active_elements_ = serial_mesh.n_elements();
+			this->n_nodes_           = serial_mesh.n_nodes();
 		}
 
 		void synchronize()
@@ -166,6 +169,26 @@ namespace mars {
 			std::vector<Integer> offsets;
 			node_map().pack_for_global(offsets, true);
 			comm_.all_reduce(&offsets[0], offsets.size(), MPIMax());
+			node_map().unpack_for_global(offsets);
+
+			elem_map().pack_for_global(offsets, true);
+			comm_.all_reduce(&offsets[0], offsets.size(), MPIMax());
+			elem_map().unpack_for_global(offsets);
+
+			std::array<Integer, 2> buff = { 
+				mesh_.n_active_elements(), 
+				node_map().n_owned()
+			};
+
+			comm_.all_reduce(&buff[0], buff.size(), MPISum());
+
+			n_active_elements_ = buff[0];
+			n_nodes_           = buff[1];
+		}
+
+		void clean_up()
+		{
+			//IMPLEMENT ME
 		}
 
 		inline const Map &node_map() const
@@ -186,6 +209,18 @@ namespace mars {
 		inline Map &elem_map()
 		{
 			return elem_map_;
+		}
+
+		void describe(std::ostream &os) const
+		{
+			serial_apply(comm_, [this, &os]() {
+				os << "===================\n";
+				os << "mesh " << comm_ << "\n";
+				mesh_.describe(os);
+				node_map_.describe(os);
+				elem_map_.describe(os);
+				os << "===================" << std::endl;
+			});
 		}
 
 	private:
@@ -209,6 +244,7 @@ namespace mars {
 		Mesh mesh_;
 		Map node_map_;
 		Map elem_map_;
+		std::vector<bool> is_interfaced_;
 
 		//global size descriptors
 		Integer n_active_elements_;
@@ -216,10 +252,11 @@ namespace mars {
 
 
 
+	//aux stuff	
 	private:
 
 		void add_and_index_nodes(
-			const Mesh &parent_mesh, 
+			const Mesh &serial_mesh, 
 			const std::vector<Integer> &node_partitioning)
 		{
 
@@ -230,14 +267,14 @@ namespace mars {
 			for(Integer i = 0; i < mesh_.n_elements(); ++i) {
 				assert(mesh_.is_active(i));
 				auto &e = mesh_.elem(i);
-				const auto &parent_e = parent_mesh.elem(elem_map_.global(i));
+				const auto &parent_e = serial_mesh.elem(elem_map_.global(i));
 
 				for(Integer k = 0; k < parent_e.nodes.size(); ++k) {
 					const Integer n = parent_e.nodes[k];
 					Integer local_n = INVALID_INDEX;
 
 					if(visited[n] == INVALID_INDEX) {
-						local_n = mesh_.add_point(parent_mesh.point(n));
+						local_n = mesh_.add_point(serial_mesh.point(n));
 						// global_node_id_.push_back(n);
 						// node_partition_id_.push_back(node_partitioning[n]);
 						// global_to_local_node_[n] = local_n;
