@@ -718,6 +718,29 @@ namespace mars {
 		: sorted_elements_(sorted_elements)
 		{}
 
+
+		void collect_sides(
+			const Integer tag,
+			std::vector<Simplex<Dim, ManifoldDim-1>> &sides,
+			const bool active_only = true)
+		{
+			sides.clear();
+			sides.reserve(n_elements());
+
+			for(Integer i = 0; i < n_elements(); ++i) {
+				if(active_only && !is_active(i)) continue;
+
+				const auto &e = elem(i);
+
+				for(Integer k = 0; k < n_sides(e); ++k) {
+					if(e.side_tags[k] == tag) {
+						sides.emplace_back();
+						e.side(k, sides.back());
+					}
+				}
+			}
+		}
+
 		void remove_elements(const std::vector<Integer> &elems)
 		{
 			Integer n_elems = n_elements();

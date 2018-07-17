@@ -18,6 +18,7 @@ namespace mars {
 		using ptr = std::shared_ptr<T>;
 		using B = Bisection<Dim, ManifoldDim>;
 		using P = MeshPartition<Dim, ManifoldDim>;
+		using ES = EdgeSelect<Dim, ManifoldDim>;
 
 		ParBisection(std::vector<ptr<P>> &parts)
 		: parts(parts)
@@ -33,13 +34,23 @@ namespace mars {
 			}
 		}
 
-		void set_edge_select(const std::shared_ptr<EdgeSelect<Dim, ManifoldDim>> &edge_select)
+		void set_edge_select(const std::shared_ptr<ES> &edge_select)
 		{
 			for(auto &b : bisection) {
 				b->set_edge_select(edge_select);
 			}
 		}
 
+		void set_edge_select(const std::vector<std::shared_ptr<ES>> &edge_select)
+		{
+			assert(bisection.size() == edge_select.size());
+				
+			auto n = edge_select.size();
+
+			for(std::size_t i = 0; i < n; ++i) {
+				bisection[i]->set_edge_select(edge_select[i]);
+			}
+		}
 
 		//1) (parallel)
 		void refine_elements(std::vector<std::vector<mars::Integer>> &elements)

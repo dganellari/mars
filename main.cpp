@@ -18,7 +18,7 @@
 #include "ranked_edge.hpp"
 #include "oldest_edge.hpp"
 #include "longest_edge.hpp"
-
+#include "par_mesh.hpp"
 
 void test_bisection_2D()
 {	
@@ -619,7 +619,8 @@ void test_incomplete_4D()
 	
 	Mesh<4, 4> mesh(true);
 	read_mesh("../data/cube4d_24.MFEM", mesh);
-	test_incomplete_ND(mesh, 8, false);
+	// test_incomplete_ND(mesh, 8, false);
+	test_incomplete_ND(mesh, 8, true);
 }
 
 void test_incomplete_5D()
@@ -741,6 +742,16 @@ void test_incomplete_bad_4D()
 	std::ofstream os_p("bad_mesh_p.MFEM");
 	export_elems_with_bad_tags(mesh, os_p, true);
 	os_p.close();
+}
+
+void par_mesh_test()
+{
+	using namespace mars;
+
+	Communicator world;
+	ParMesh<2, 2> mesh(world);
+
+	mesh.synchronize();
 }
 
 int main(const int argc, const char *argv[])

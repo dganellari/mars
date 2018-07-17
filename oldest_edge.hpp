@@ -11,14 +11,29 @@ namespace mars {
 	public:
 		class EdgeDesc {
 		public:
-			EdgeDesc(const Edge &edge, const Integer rank, const Integer edge_num) 
-			: edge(edge), rank(rank), edge_num(edge_num)
+			EdgeDesc(
+				const Edge &edge,
+				// const Real &len,
+				const Integer rank,
+				const Integer edge_num) 
+			: edge(edge), 
+			  // len(len),
+			  rank(rank),
+			  edge_num(edge_num)
 			{
 				// assert(edge.is_valid());
 			}
 
 			inline bool operator<(const EdgeDesc &other) const
 			{
+				// if(len > other.len) {
+				// 	return true;
+				// }
+
+				// if(other.len > len) {
+				// 	return false;
+				// }
+
 				if(rank < other.rank) {
 					return true;
 				}
@@ -31,6 +46,7 @@ namespace mars {
 			}
 
 			Edge edge;
+			// Real len;
 			Integer rank;
 			Integer edge_num;
 		};
@@ -107,6 +123,7 @@ namespace mars {
 				
 				ranked_edges.emplace_back(
 					Edge(map.global(v1), map.global(v2)),
+					// (mesh.point(v1) - mesh.point(v2)).squared_norm(),
 					r,
 					i
 				);
