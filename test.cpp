@@ -103,8 +103,9 @@ namespace mars {
 	void test_mesh(mars::Mesh<Dim, ManifoldDim> &mesh)
 	{
 		using namespace mars;
+		using MeshD = mars::Mesh<Dim, ManifoldDim>;
 
-		RedGreenRefinement<Dim, ManifoldDim> rgr(mesh);
+		RedGreenRefinement<MeshD> rgr(mesh);
 
 		static const Integer n_refinements = 1;
 		mesh.build_dual_graph();
@@ -132,10 +133,10 @@ namespace mars {
 	{	
 		using namespace mars;
 		std::cout << "======================================\n";
-		Mesh<2, 2> mesh;
+		Mesh2 mesh;
 		read_mesh("../data/square_2.MFEM", mesh);
 
-		RedGreenRefinement<2, 2> rgr(mesh);
+		RedGreenRefinement<Mesh2> rgr(mesh);
 		
 		test_mesh(mesh);
 		write_mesh("mesh_2.eps", mesh, 10., PLOT_ID);
@@ -171,10 +172,10 @@ namespace mars {
 		using namespace mars;
 
 		std::cout << "======================================\n";
-		Mesh<3, 3> mesh;
+		Mesh3 mesh;
 		read_mesh("../data/cube_6.MFEM", mesh, true);
 		// test_mesh(mesh);
-		RedGreenRefinement<3, 3> rgr(mesh);
+		RedGreenRefinement<Mesh3> rgr(mesh);
 		rgr.red_refine({0, 2});
 		// mesh.describe(std::cout);
 		write_element("elem_3.eps", rgr, 0, 10, INVALID_INDEX);
@@ -192,12 +193,12 @@ namespace mars {
 	{	
 		using namespace mars;
 		std::cout << "======================================\n";
-		Mesh<4, 4> mesh;
+		Mesh4 mesh;
 		read_mesh("../data/pentatope_1.MFEM", mesh);
 		// read_mesh("../data/cube4d_24.MFEM", mesh);
 		// test_mesh(mesh);
 
-		RedGreenRefinement<4, 4> rgr(mesh);
+		RedGreenRefinement<Mesh4> rgr(mesh);
 		rgr.red_refine({0});
 		// mesh.describe(std::cout);
 		// mesh.describe_dual_graph(std::cout);

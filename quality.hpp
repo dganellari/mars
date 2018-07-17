@@ -5,9 +5,12 @@
 namespace mars {
 
 	//from https://www.sciencedirect.com/science/article/pii/0168874X94900337
-	template<Integer Dim, Integer ManifoldDim>
+	template<class Mesh>
 	class Quality {
 	public:
+		static const Integer Dim 		 = Mesh::Dim;
+		static const Integer ManifoldDim = Mesh::ManifoldDim;
+
 		class Utils {
 		public:
 			static Real surface_area(
@@ -130,7 +133,7 @@ namespace mars {
 		public:
 			virtual ~Metric() {}
 			
-			virtual void init(const Mesh<Dim, ManifoldDim> &m)
+			virtual void init(const Mesh &m)
 			{
 				q_.resize(m.n_elements());
 			}
@@ -149,7 +152,7 @@ namespace mars {
 			virtual std::string name() const = 0;
 			// virtual Real optimum() const = 0;
 
-			virtual void finalize(const Mesh<Dim, ManifoldDim> &m)
+			virtual void finalize(const Mesh &m)
 			{
 				q_avg = 0;
 				q_min = std::numeric_limits<Real>::max();
@@ -437,7 +440,7 @@ namespace mars {
 
 		};
 
-		Quality(const Mesh<Dim, ManifoldDim> &mesh)
+		Quality(const Mesh &mesh)
 		: mesh(mesh)
 		{
 			init();
@@ -507,7 +510,7 @@ namespace mars {
 			return report.save(path);
 		}
 
-		const Mesh<Dim, ManifoldDim> &mesh;
+		const Mesh &mesh;
 		std::vector< std::shared_ptr<Metric> > measures;
 		Report report;
 

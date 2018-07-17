@@ -23,13 +23,13 @@ namespace mars {
 	template<Integer Dim, Integer ManifoldDim>
 	class Mesh;
 
-	template<Integer Dim, Integer ManifoldDim>
+	template<class Mesh>
 	class MeshPartition;
 
 	template<class Mesh>
 	class VTKMeshWriter;
 
-	template<Integer Dim, Integer ManifoldDim>
+	template<class Mesh>
 	class RedGreenRefinement;
 
 	class RGB {
@@ -120,14 +120,14 @@ namespace mars {
 
 
 
-	template<Integer Dim, Integer ManifoldDim>
+	template<class Mesh>
 	bool export_parts(
 		const std::string &path,
-		const std::vector<std::shared_ptr<MeshPartition<Dim, ManifoldDim>>> &parts)
+		const std::vector<std::shared_ptr<Mesh>> &parts)
 	{
 		bool ok = true;
 		for(const auto &p : parts) {
-			VTKMeshWriter<Mesh<Dim, ManifoldDim>> w;
+			VTKMeshWriter<Mesh> w;
 			ok &= w.write(path + std::to_string(p->partition_id()) + ".vtu", p->get_mesh());
 		}
 
@@ -137,7 +137,7 @@ namespace mars {
 	template<Integer Dim>
 	bool write_mesh_partitions(
 		const std::string &path,
-		const std::vector<std::shared_ptr<MeshPartition<Dim, 3>>> &parts,
+		const std::vector<std::shared_ptr<MeshPartition<Mesh<Dim, 3>>>> &parts,
 		const PlotFun plot_fun)
 	{
 		bool ok = true;
@@ -148,15 +148,6 @@ namespace mars {
 
 		return ok;
 	}
-
-
-
-
-
-
-
-
-
 
 
 #ifdef WITH_MOONOLITH
@@ -1159,7 +1150,7 @@ bool write_element_with_subsurfaces(
 	template<Integer Dim>
 	bool write_mesh_partitions(
 		const std::string &path,
-		const std::vector<std::shared_ptr<MeshPartition<Dim, 2>>> &parts,
+		const std::vector<std::shared_ptr<MeshPartition<Mesh<Dim, 2>>>> &parts,
 		const PlotFun plot_fun)
 	{
 		bool ok = true;
@@ -1183,10 +1174,10 @@ bool write_element_with_subsurfaces(
 		return false;
 	}
 
-		template<Integer Dim, Integer ManifoldDim>
+	template<class Mesh>
 	bool write_element(
 		const std::string &path,
-		const RedGreenRefinement<Dim, ManifoldDim> &rgr,
+		const RedGreenRefinement<Mesh> &rgr,
 		const Integer element_id,
 		const Real scale_factor,
 		const Integer child_num)

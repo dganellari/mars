@@ -14,7 +14,9 @@ namespace mars {
 	public:
 
 		template<Integer Dim, Integer ManifoldDim>
-		void build_edge_interface(Bisection<Dim, ManifoldDim> &Bisection)
+		void build_edge_interface(
+			ParMesh<Dim, ManifoldDim> &mesh,
+			Bisection<Dim, ManifoldDim> &bisection)
 		{
 
 		}
@@ -53,7 +55,6 @@ namespace mars {
 
 		}
 
-
 		template<Integer Dim, Integer ManifoldDim>
 		void collect_splits_to_local_edges(
 			ParMesh<Dim, ManifoldDim> &mesh,
@@ -66,8 +67,6 @@ namespace mars {
 		{
 			return false;
 		}
-
-
 
 		ParEdgeSplitPool(const Communicator &comm)
 		: comm_(comm)

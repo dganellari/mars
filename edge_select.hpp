@@ -11,12 +11,15 @@ namespace mars {
 	template<Integer Dim, Integer ManifoldDim>
 	class Mesh;
 
-	template<Integer Dim, Integer ManifoldDim>
+	template<class Mesh>
 	class EdgeSelect {
 	public:
+		static const Integer Dim = Mesh::Dim;
+		static const Integer ManifoldDim = Mesh::ManifoldDim;
+
 		virtual ~EdgeSelect() {}
 		virtual Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id) const
 		{
 			//first edge selected
@@ -24,7 +27,7 @@ namespace mars {
 		}
 
 		virtual Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Edge &neighbor_edge,
 			const Integer element_id) const
 		{
@@ -38,14 +41,14 @@ namespace mars {
 		}
 
 		virtual bool can_refine(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id) const
 		{
 			return true;
 		}
 
 		virtual void reorder_edge(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id,
 			Integer &v1,
 			Integer &v2) const
@@ -53,17 +56,17 @@ namespace mars {
 		}
 
 		virtual void edge_refined(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const EdgeElementMap &eem,
 			const Edge &edge)
 		{
 			//
 		}
 
-		virtual void update(const Mesh<Dim, ManifoldDim> &mesh) {}
+		virtual void update(const Mesh &mesh) {}
 
 		virtual void element_refined(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id,
 			const Edge &edge,
 			const Integer local_midpoint_id)

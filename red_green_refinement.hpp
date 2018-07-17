@@ -23,9 +23,12 @@ namespace mars {
 		BISECTION = 7
 	};
 
-	template<Integer Dim, Integer ManifoldDim>
+	template<class Mesh>
 	class RedGreenRefinement {
 	public:
+		static const Integer Dim = Mesh::Dim;
+		static const Integer ManifoldDim = Mesh::ManifoldDim;
+
 		class Refinement {
 		public:
 			class Trigger {
@@ -46,7 +49,7 @@ namespace mars {
 			std::vector<Trigger> triggers;
 		};
 
-		RedGreenRefinement(Mesh<Dim, ManifoldDim> &mesh)
+		RedGreenRefinement(Mesh &mesh)
 		: mesh(mesh)
 		{}
 
@@ -550,12 +553,12 @@ namespace mars {
 			return refinement_flag_[element_id];
 		}
 
-		inline Mesh<Dim, ManifoldDim> &get_mesh()
+		inline Mesh &get_mesh()
 		{
 			return mesh;
 		}
 
-		inline const Mesh<Dim, ManifoldDim> &get_mesh() const
+		inline const Mesh &get_mesh() const
 		{
 			return mesh;
 		}
@@ -573,7 +576,7 @@ namespace mars {
 			return mesh.add_elem(elem);
 		}
 
-		Mesh<Dim, ManifoldDim> &mesh;
+		Mesh &mesh;
 
 		//refinement
 		std::vector<Integer> refinement_flag_;

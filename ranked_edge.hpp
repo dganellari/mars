@@ -5,8 +5,8 @@
 
 namespace mars {
 
-	template<Integer Dim, Integer ManifoldDim>
-	class RankedEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
+	template<class Mesh>
+	class RankedEdgeSelect final : public EdgeSelect<Mesh> {
 	public:
 		class EdgeDesc {
 		public:
@@ -39,7 +39,7 @@ namespace mars {
 		{}
 
 		void reorder_edge(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id,
 			Integer &v1,
 			Integer &v2) const override
@@ -50,7 +50,7 @@ namespace mars {
 		}
 
 		bool can_refine(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id) const override
 		{
 
@@ -77,7 +77,7 @@ namespace mars {
 		}
 
 		Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id) const override
 		{
 			assert(can_refine(mesh, element_id));
@@ -105,7 +105,7 @@ namespace mars {
 		}
 
 		virtual Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Edge &neighbor_edge,
 			const Integer element_id) const override
 		{
@@ -124,7 +124,7 @@ namespace mars {
 
 		//update ranking of children
 		void element_refined(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id,
 			const Edge &edge,
 			const Integer local_midpoint_id) override
@@ -180,7 +180,7 @@ namespace mars {
 		}
 
 		bool element_is_ranked(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id) const
 		{
 			const auto &e = mesh.elem(element_id);
@@ -202,7 +202,7 @@ namespace mars {
 			return r;
 		}
 
-		void update(const Mesh<Dim, ManifoldDim> &mesh) override
+		void update(const Mesh &mesh) override
 		{
 			if(online_update) {
 				if(edge_rank_.empty()) {
@@ -216,7 +216,7 @@ namespace mars {
 		}
 
 
-		bool is_valid(const Mesh<Dim, ManifoldDim> &mesh)
+		bool is_valid(const Mesh &mesh)
 		{
 			for(Integer i = 0; i < mesh.n_elements(); ++i) {
 				if(!mesh.is_active(i)) continue;
@@ -240,7 +240,7 @@ namespace mars {
 
 	private:
 
-		void init_uniform_ranking(const Mesh<Dim, ManifoldDim> &mesh)
+		void init_uniform_ranking(const Mesh &mesh)
 		{
 			Integer v1, v2;
 			for(Integer i = 0; i < mesh.n_elements(); ++i) {
@@ -259,7 +259,7 @@ namespace mars {
 			assert(is_valid(mesh));
 		}
 
-		void init_local_ranking(const Mesh<Dim, ManifoldDim> &mesh)
+		void init_local_ranking(const Mesh &mesh)
 		{
 			edge_rank_.clear();
 			std::map<Edge, Integer> edge_rank_count;
@@ -308,7 +308,7 @@ namespace mars {
 			assert(is_valid(mesh));
 		}
 
-		void init_ranking(const Mesh<Dim, ManifoldDim> &mesh)
+		void init_ranking(const Mesh &mesh)
 		{
 			edge_rank_.clear();
 

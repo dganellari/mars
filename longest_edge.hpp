@@ -5,15 +5,15 @@
 #include "node_rank.hpp"
 
 namespace mars {
-	template<Integer Dim, Integer ManifoldDim>
-	class LongestEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
+	template<class Mesh>
+	class LongestEdgeSelect final : public EdgeSelect<Mesh> {
 	public:
 		LongestEdgeSelect(const bool recursive = true, const bool use_tollerance = true)
 		: recursive_(recursive), use_tollerance_(use_tollerance)
 		{}
 
 		Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id) const override
 		{
 			const auto &e = mesh.elem(element_id);
@@ -37,7 +37,7 @@ namespace mars {
 		}
 
 		virtual Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Edge &neighbor_edge,
 			const Integer element_id) const override
 		{
@@ -97,15 +97,15 @@ namespace mars {
 		bool use_tollerance_;
 	};
 
-	template<Integer Dim, Integer ManifoldDim>
-	class UniqueLongestEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
+	template<class Mesh>
+	class UniqueLongestEdgeSelect final : public EdgeSelect<Mesh> {
 	public:
 		UniqueLongestEdgeSelect(const bool recursive = true, const bool use_tollerance = true)
 		: recursive_(recursive), use_tollerance_(use_tollerance)
 		{}
 
 		void reorder_edge(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id,
 			Integer &v1,
 			Integer &v2) const override
@@ -116,7 +116,7 @@ namespace mars {
 		}
 
 		Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id) const override
 		{
 			const auto &e = mesh.elem(element_id);
@@ -150,7 +150,7 @@ namespace mars {
 		}
 
 		virtual Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Edge &neighbor_edge,
 			const Integer element_id) const override
 		{
@@ -178,8 +178,8 @@ namespace mars {
 	};
 
 
-	template<Integer Dim, Integer ManifoldDim>
-	class GloballyUniqueLongestEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
+	template<class Mesh>
+	class GloballyUniqueLongestEdgeSelect final : public EdgeSelect<Mesh> {
 	public:
 		GloballyUniqueLongestEdgeSelect(
 			const Map &map,
@@ -189,7 +189,7 @@ namespace mars {
 		{}
 
 		void reorder_edge(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id,
 			Integer &v1,
 			Integer &v2) const override
@@ -200,7 +200,7 @@ namespace mars {
 		}
 
 		bool can_refine(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id) const override
 		{
 			for(auto n : mesh.elem(element_id).nodes) {
@@ -232,7 +232,7 @@ namespace mars {
 		};
 
 		Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id) const override
 		{
 			assert(can_refine(mesh, element_id));
@@ -304,7 +304,7 @@ namespace mars {
 		// };
 
 		// Integer select(
-		// 	const Mesh<Dim, ManifoldDim> &mesh,
+		// 	const Mesh &mesh,
 		// 	const Integer element_id) const override
 		// {
 		// 	assert(can_refine(mesh, element_id));
@@ -328,7 +328,7 @@ namespace mars {
 		// }
 
 		virtual Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Edge &neighbor_edge,
 			const Integer element_id) const override
 		{
@@ -351,7 +351,7 @@ namespace mars {
 		}
 
 		void element_refined(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id,
 			const Edge &edge,
 			const Integer local_midpoint_id) override
@@ -366,7 +366,7 @@ namespace mars {
 			node_rank_ = node_rank;
 		}
 
-		void update(const Mesh<Dim, ManifoldDim> &mesh) override
+		void update(const Mesh &mesh) override
 		{
 			if(node_rank_) {
 				node_rank_->init(mesh);

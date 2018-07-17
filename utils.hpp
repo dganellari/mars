@@ -14,7 +14,7 @@
 
 namespace mars {
 
-	template<Integer Dim, Integer ManifoldDim>
+	template<class Mesh>
 	class MeshPartition;
 
 
@@ -425,12 +425,12 @@ namespace mars {
 		}
 	}
 
-	template<Integer Dim, Integer ManifoldDim>
+	template<class Mesh>
 	void parition_mesh(
-		Mesh<Dim, ManifoldDim> &mesh,
+		Mesh &mesh,
 		const Integer n_partitions,
 		const std::vector<Integer> &partitioning,
-		std::vector<std::shared_ptr<MeshPartition<Dim, ManifoldDim>>> &parts)
+		std::vector<std::shared_ptr<MeshPartition<Mesh>>> &parts)
 	{
 		assert(partitioning.size() == mesh.n_elements());
 
@@ -440,7 +440,7 @@ namespace mars {
 		parts.resize(n_partitions);
 
 		for(Integer i = 0; i < n_partitions; ++i) {
-			parts[i] = std::make_shared< MeshPartition<Dim, ManifoldDim> >(i, n_partitions);
+			parts[i] = std::make_shared< MeshPartition<Mesh> >(i, n_partitions);
 		}
 
 		std::vector<Integer> node_partitioning(mesh.n_nodes(), INVALID_INDEX);

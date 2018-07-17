@@ -7,9 +7,14 @@
 
 namespace mars {
 
-	template<Integer Dim, Integer ManifoldDim>
+	template<class Mesh>
 	class MeshPartition {
 	public:
+		static const Integer Dim = Mesh::Dim;
+		static const Integer ManifoldDim = Mesh::ManifoldDim;
+
+		using Elem = typename Mesh::Elem;
+
 		MeshPartition(
 			const Integer partition_id,
 			const Integer n_partitions)
@@ -33,7 +38,7 @@ namespace mars {
 			e.side_tags[side_num] = partition_id_to_tag(adj_partition);
 		}
 
-		Integer add_and_index_elem(const Simplex<Dim, ManifoldDim> &element)
+		Integer add_and_index_elem(const Elem &element)
 		{
 			const Integer local_element_id = mesh.add_elem(element);
 			// assert(local_element_id == global_elem_id_.size());
@@ -43,14 +48,14 @@ namespace mars {
 			return local_element_id;
 		}
 
-		Simplex<Dim, ManifoldDim> &global_elem(const Integer element_id)
+		Elem &global_elem(const Integer element_id)
 		{
 			auto index = elem_map_.local(element_id);
 			assert(index != INVALID_INDEX);
 			return mesh.elem(index);
 		}
 
-		const Simplex<Dim, ManifoldDim> &global_elem(const Integer element_id) const
+		const Elem &global_elem(const Integer element_id) const
 		{
 			auto index = elem_map_.local(element_id);
 			assert(index != INVALID_INDEX);
@@ -136,7 +141,7 @@ namespace mars {
 		}
 
 		void add_and_index_nodes(
-			const Mesh<Dim, ManifoldDim> &parent_mesh, 
+			const Mesh &parent_mesh, 
 			const std::vector<Integer> &node_partitioning,
 			std::vector<Integer> &visited)
 		{
@@ -184,12 +189,12 @@ namespace mars {
 			mesh.update_dual_graph();
 		}
 
-		const Mesh<Dim, ManifoldDim> &get_mesh() const
+		const Mesh &get_mesh() const
 		{
 			return mesh;
 		}
 
-		Mesh<Dim, ManifoldDim> &get_mesh()
+		Mesh &get_mesh()
 		{
 			return mesh;
 		}
@@ -578,7 +583,7 @@ namespace mars {
 			return -(tag + 2);
 		}
 
-		Mesh<Dim, ManifoldDim> mesh;		
+		Mesh mesh;		
 		Map node_map_;
 		Map elem_map_;
 

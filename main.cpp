@@ -25,24 +25,24 @@ void test_bisection_2D()
 {	
 	using namespace mars;
 	std::cout << "======================================\n";
-	Mesh<2, 2> mesh;
+	Mesh2 mesh;
 	read_mesh("../data/square_2.MFEM", mesh);
 	// read_mesh("../data/square_2_def.MFEM", mesh);
 
-	Bisection<2, 2> b(mesh);
+	Bisection<Mesh2> b(mesh);
 	b.uniform_refine(3);
 	b.clear();
 
 	mesh.clean_up();
 	mesh.reorder_nodes();
 
-	Quality<2, 2> q(mesh);
+	Quality<Mesh2> q(mesh);
 	q.compute();
 
 	mesh.update_dual_graph();
 	mark_boundary(mesh);
 
-	auto edge_select = std::make_shared<ImplicitOrderEdgeSelect<2, 2>>();
+	auto edge_select = std::make_shared<ImplicitOrderEdgeSelect<Mesh2>>();
 	b.set_edge_select(edge_select);
 	b.uniform_refine(1);
 
@@ -89,7 +89,7 @@ void test_bisection_3D()
 {	
 	using namespace mars;
 	std::cout << "======================================\n";
-	Mesh<3, 3> mesh;
+	Mesh3 mesh;
 	read_mesh("../data/cube_6.MFEM", mesh, true);
 	mesh.renumber_nodes();
 	mesh.reorder_nodes();
@@ -97,14 +97,14 @@ void test_bisection_3D()
 	mesh.update_dual_graph();
 	mark_boundary(mesh);
 
-	Bisection<3, 3> b(mesh);
+	Bisection<Mesh3> b(mesh);
 	b.uniform_refine(2); b.clear();
 	print_boundary_points(mesh, std::cout, true);
 	
 	mesh.clean_up();
 	mesh.update_dual_graph();
 
-	Quality<3, 3> q(mesh);
+	Quality<Mesh3> q(mesh);
 	q.compute();
 
 	std::cout << "n_boundary_sides: " << mesh.n_boundary_sides() << std::endl;
@@ -112,7 +112,7 @@ void test_bisection_3D()
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 
 	// auto edge_select = std::make_shared<NewestVertexEdgeSelect<3, 3>>();
-	auto edge_select = std::make_shared<LongestEdgeSelect<3, 3>>(true);
+	auto edge_select = std::make_shared<LongestEdgeSelect<Mesh3>>(true);
 
 	// auto edge_select = std::make_shared<ImplicitOrderEdgeSelect<3, 3>>();
 	// auto edge_select = std::make_shared<UniqueLongestEdgeSelect<3, 3>>(true);	
@@ -142,7 +142,7 @@ void test_bisection_3D()
 		print_boundary_info(mesh, true);
 	}
 
-	VTKMeshWriter<Mesh<3, 3>> w;
+	VTKMeshWriter<Mesh3> w;
 	w.write("mesh_bisect_refined.vtu", mesh);
 
 	std::cout << "volume: " << mesh.volume() << std::endl;
@@ -159,17 +159,17 @@ void test_bisection_4D()
 {	
 	using namespace mars;
 	std::cout << "======================================\n";
-	Mesh<4, 4> mesh;
+	Mesh4 mesh;
 	read_mesh("../data/cube4d_24.MFEM", mesh);
 	mesh.renumber_nodes();
 	
-	Quality<4, 4> q(mesh);
+	Quality<Mesh4> q(mesh);
 	q.compute();
 	mark_boundary(mesh);
 
 	std::cout << "volume: " << mesh.volume() << std::endl;
-	Bisection<4, 4> b(mesh);
-	b.set_edge_select(std::make_shared<UniqueLongestEdgeSelect<4, 4>>());
+	Bisection<Mesh4> b(mesh);
+	b.set_edge_select(std::make_shared<UniqueLongestEdgeSelect<Mesh4>>());
 	b.uniform_refine(1);
 	print_boundary_info(mesh, true);
 
@@ -211,6 +211,8 @@ namespace mars {
 		const std::shared_ptr<GlobalEdgeSelect> &edge_select,
 		const bool use_uniform_refinement = false)
 	{
+		using MeshD = mars::Mesh<Dim, ManifoldDim>;
+
 		Integer each_element = 11;
 		bool bypass_incomplete = true;
 
@@ -232,7 +234,7 @@ namespace mars {
 			}
 		}
 
-		Bisection<Dim, ManifoldDim> b(mesh);
+		Bisection<MeshD> b(mesh);
 		b.set_edge_select(edge_select);
 		b.tracking_begin();
 
@@ -313,15 +315,17 @@ namespace mars {
 		const bool online_update = true,
 		const std::shared_ptr<NodeRank> &node_rank = std::make_shared<NodeRank>())
 	{
+		using MeshD = mars::Mesh<Dim, ManifoldDim>;
+
 		Map map(0, 1);
 		map.resize(mesh.n_nodes(), 0);
 		map.identity();
 
-		Quality<Dim, ManifoldDim> q(mesh);
+		Quality<MeshD> q(mesh);
 		q.compute();
 
-		// auto edge_select = std::make_shared<RankedEdgeSelect<Dim, ManifoldDim>>(map, online_update);
-		auto edge_select = std::make_shared<OldestEdgeSelect<Dim, ManifoldDim>>(map, node_rank);
+		// auto edge_select = std::make_shared<RankedEdgeSelect<MeshD>>(map, online_update);
+		auto edge_select = std::make_shared<OldestEdgeSelect<MeshD>>(map, node_rank);
 		
 		for(Integer i = 0; i < n_tests; ++i) {
 			std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
@@ -350,15 +354,16 @@ namespace mars {
 		const Integer n_tests,
 		const bool use_edge_rank)
 	{
-		using NVES = mars::GlobalNewestVertexEdgeSelect<Dim, ManifoldDim>;
-		using LEES = mars::GloballyUniqueLongestEdgeSelect<Dim, ManifoldDim>;
+		using MeshD = mars::Mesh<Dim, ManifoldDim>;
+		using NVES = mars::GlobalNewestVertexEdgeSelect<MeshD>;
+		using LEES = mars::GloballyUniqueLongestEdgeSelect<MeshD>;
 
 		std::cout << "======================================\n";
 		mesh.renumber_nodes();
 		mark_boundary(mesh);
 
 		Integer n_serial_ref = 3;
-		Bisection<Dim, ManifoldDim> b(mesh);
+		Bisection<MeshD> b(mesh);
 		b.uniform_refine(n_serial_ref);
 
 		Map map(0, 1);
@@ -371,7 +376,7 @@ namespace mars {
 		if(use_edge_rank) {
 			test_incomplete_with_edge_rank(mesh, n_tests, false, true);
 		} else {
-			Quality<Dim, ManifoldDim> q(mesh);
+			Quality<MeshD> q(mesh);
 			q.compute();
 
 			for(Integer i = 0; i < n_tests; ++i) {
@@ -396,26 +401,21 @@ namespace mars {
 	}
 
 
-	template<Integer Dim, Integer ManifoldDim>
+	template<class Mesh>
 	void test_bisection(
 		const Integer n_levels,
-		std::vector<std::shared_ptr<MeshPartition<Dim, ManifoldDim>>> &parts,
+		std::vector<std::shared_ptr<MeshPartition<Mesh>>> &parts,
 		const bool uniform_refine = false)
 	{
-		PartitionedBisection<Dim, ManifoldDim> b(parts);
-		// auto edge_select = std::make_shared<NewestVertexEdgeSelect<Dim, ManifoldDim>>();
-		// auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<Dim, ManifoldDim>>(true, false);
-		// auto edge_select = std::make_shared<LongestEdgeSelect<Dim, ManifoldDim>>(true, true);
-		auto edge_select = std::make_shared<UniqueLongestEdgeSelect<Dim, ManifoldDim>>();
+		static const Integer Dim = Mesh::Dim;
+		using Point = typename Mesh::Point;
+
+		PartitionedBisection<Mesh> b(parts);
+		auto edge_select = std::make_shared<UniqueLongestEdgeSelect<Mesh>>();
 		edge_select->set_recursive(true);
-		// edge_select->set_recursive(false);
 		b.set_edge_select(edge_select);
 		std::vector<std::vector<mars::Integer>> elements(parts.size());
 
-		// for(Integer k = 0; k < parts.size(); ++k) {
-		// 	parts[k]->node_map().describe(std::cout);
-		// }
-		
 		for(Integer i = 0; i < n_levels; ++i) {
 			std::cout << "xxxxxxxxxxxxxxxxxxxxxx\n";
 			std::cout << "level " << (i+1) << "/" << n_levels << std::endl;
@@ -454,12 +454,12 @@ void test_partition_2D()
 {
 	using namespace mars;
 	std::cout << "======================================\n";
-	Mesh<2, 2> mesh;
+	Mesh2 mesh;
 	// read_mesh("../data/square_2.MFEM", mesh);
 	read_mesh("../data/square_2_def.MFEM", mesh);
 	mark_boundary(mesh);
 
-	Bisection<2, 2> b(mesh);
+	Bisection<Mesh2> b(mesh);
 	b.uniform_refine(3);
 
 	std::vector<Integer> partitioning(mesh.n_elements());
@@ -469,7 +469,7 @@ void test_partition_2D()
 		partitioning[i] = i % n_parts;
 	}
 
-	std::vector<std::shared_ptr<MeshPartition<2, 2>>> parts;
+	std::vector<std::shared_ptr<MeshPartition<Mesh2>>> parts;
 	parition_mesh(mesh, n_parts, partitioning, parts);
 
 	write_mesh_partitions(
@@ -494,15 +494,17 @@ void test_partition_2D()
 void test_partition_3D()
 {
 	using namespace mars;
+	using Mesh = mars::Mesh<3, 3>;
+
 	std::cout << "======================================\n";
-	Mesh<3, 3> mesh;
+	Mesh mesh;
 	// read_mesh("../data/square_2.MFEM", mesh);
 	read_mesh("../data/cube_6.MFEM", mesh, true);
 	mark_boundary(mesh);
 
-	Bisection<3, 3> b(mesh);
+	Bisection<Mesh> b(mesh);
 	b.uniform_refine(1);
-	b.set_edge_select(std::make_shared<UniqueLongestEdgeSelect<3, 3>>());
+	b.set_edge_select(std::make_shared<UniqueLongestEdgeSelect<Mesh>>());
 
 	std::vector<Integer> partitioning(mesh.n_elements(), 0);
 
@@ -514,7 +516,7 @@ void test_partition_3D()
 		}
 	}
 
-	std::vector<std::shared_ptr<MeshPartition<3, 3>>> parts;
+	std::vector<std::shared_ptr<MeshPartition<Mesh>>> parts;
 	parition_mesh(mesh, n_parts, partitioning, parts);
 
 	write_mesh_partitions(
@@ -541,12 +543,14 @@ void test_partition_3D()
 void test_partition_4D()
 {
 	using namespace mars;
+	using Mesh = mars::Mesh<4, 4>;
+
 	std::cout << "======================================\n";
-	Mesh<4, 4> mesh;
+	Mesh mesh;
 	read_mesh("../data/cube4d_24.MFEM", mesh);
 	mark_boundary(mesh);
 
-	Bisection<4, 4> b(mesh);
+	Bisection<Mesh> b(mesh);
 	b.uniform_refine(1);
 
 	std::vector<Integer> partitioning(mesh.n_elements());
@@ -559,7 +563,7 @@ void test_partition_4D()
 		}
 	}
 
-	std::vector<std::shared_ptr<MeshPartition<4, 4>>> parts;
+	std::vector<std::shared_ptr<MeshPartition<Mesh>>> parts;
 	parition_mesh(mesh, n_parts, partitioning, parts);
 
 	test_bisection(3, parts, false);
@@ -575,20 +579,20 @@ void run_benchmarks()
 {	
 	using namespace mars;
 
-	Benchmark<2, 2> b2;
-	Mesh<2, 2> m2;
+	Benchmark<Mesh2> b2;
+	Mesh2 m2;
 	read_mesh("../data/square_2_def.MFEM", m2);
 
 	b2.run(14, m2, "b2");
 
-	Benchmark<3, 3> b3;
-	Mesh<3, 3> m3;
+	Benchmark<Mesh3> b3;
+	Mesh3 m3;
 	read_mesh("../data/cube_6.MFEM", m3);
 
 	b3.run(15, m3, "b3");
 
-	Benchmark<4, 4> b4;
-	Mesh<4, 4> m4;
+	Benchmark<Mesh4> b4;
+	Mesh4 m4;
 	read_mesh("../data/cube4d_24.MFEM", m4);
 
 	b4.run(6, m4, "b4");
@@ -598,7 +602,7 @@ void test_incomplete_2D()
 {
 	using namespace mars;
 
-	Mesh<2, 2> mesh(true);
+	Mesh2 mesh(true);
 	read_mesh("../data/square_2.MFEM", mesh);
 	// read_mesh("../data/square_2_def.MFEM", mesh);
 	test_incomplete_ND(mesh, 8, true);
@@ -608,7 +612,7 @@ void test_incomplete_3D()
 {
 	using namespace mars;
 
-	Mesh<3, 3> mesh(true);
+	Mesh3 mesh(true);
 	read_mesh("../data/cube_6.MFEM", mesh);
 	// test_incomplete_ND(mesh, 10, false);
 	test_incomplete_ND(mesh, 10, true);
@@ -618,7 +622,7 @@ void test_incomplete_4D()
 {
 	using namespace mars;
 	
-	Mesh<4, 4> mesh(true);
+	Mesh4 mesh(true);
 	read_mesh("../data/cube4d_24.MFEM", mesh);
 	// test_incomplete_ND(mesh, 8, false);
 	test_incomplete_ND(mesh, 8, true);
@@ -627,19 +631,21 @@ void test_incomplete_4D()
 void test_incomplete_5D()
 {
 	using namespace mars;
-	using NVES = mars::GlobalNewestVertexEdgeSelect<5, 5>;
-	using LEES = mars::GloballyUniqueLongestEdgeSelect<5, 5>;
+	using Mesh = mars::Mesh5;
+	using NVES = mars::GlobalNewestVertexEdgeSelect<Mesh>;
+	using LEES = mars::GloballyUniqueLongestEdgeSelect<Mesh>;
+	
 
 	std::cout << "======================================\n";
-	Mesh<5, 5> mesh(true);
+	Mesh mesh(true);
 	read_mesh("../data/hexateron_1.MFEM", mesh);
 	mesh.renumber_nodes();
 
-	Quality<5, 5> q(mesh);
+	Quality<Mesh> q(mesh);
 	q.compute();
 	mark_boundary(mesh);
 
-	Bisection<5, 5> b(mesh);
+	Bisection<Mesh> b(mesh);
 	b.uniform_refine(2);
 
 	Integer n_tests = 5;
@@ -664,19 +670,21 @@ void test_incomplete_5D()
 void test_incomplete_6D()
 {
 	using namespace mars;
-	using NVES = mars::GlobalNewestVertexEdgeSelect<6, 6>;
-	using LEES = mars::GloballyUniqueLongestEdgeSelect<6, 6>;
+	using Mesh = mars::Mesh6;
+	using NVES = mars::GlobalNewestVertexEdgeSelect<Mesh6>;
+	using LEES = mars::GloballyUniqueLongestEdgeSelect<Mesh6>;
+	
 
 	std::cout << "======================================\n";
-	Mesh<6, 6> mesh(true);
+	Mesh mesh(true);
 	read_mesh("../data/uniform_polypeton_1.MFEM", mesh);
 	mesh.renumber_nodes();
 
-	Quality<6, 6> q(mesh);
+	Quality<Mesh> q(mesh);
 	q.compute();
 	mark_boundary(mesh);
 
-	Bisection<6, 6> b(mesh);
+	Bisection<Mesh> b(mesh);
 	b.uniform_refine(2);
 
 	Integer n_tests = 5;
@@ -701,22 +709,23 @@ void test_incomplete_6D()
 void test_incomplete_bad_4D()
 {
 	using namespace mars;
-	using NVES = mars::GlobalNewestVertexEdgeSelect<4, 4>;
-	using LEES = mars::GloballyUniqueLongestEdgeSelect<4, 4>;
+	using Mesh = mars::Mesh4;
+	using NVES = mars::GlobalNewestVertexEdgeSelect<Mesh>;
+	using LEES = mars::GloballyUniqueLongestEdgeSelect<Mesh>;
 
 	std::cout << "======================================\n";
-	Mesh<4, 4> mesh(true);
+	Mesh mesh(true);
 	// read_mesh("../data/bad_mesh_p_wn.MFEM", mesh);
 	read_mesh("../data/big_mesh_2.MFEM", mesh);
 	mesh.renumber_nodes();
 
-	Quality<4, 4> q(mesh);
+	Quality<Mesh> q(mesh);
 	q.compute();
 	mark_boundary(mesh);
 
 	// mesh.describe(std::cout);
 
-	Bisection<4, 4> b(mesh);
+	Bisection<Mesh> b(mesh);
 	// b.uniform_refine(2);
 
 	Integer n_tests = 4;
@@ -749,18 +758,20 @@ void par_mesh_test()
 {
 	using namespace mars;
 
-	Mesh<2, 2> serial_mesh(true);
+	using Mesh    = mars::Mesh2;
+	using ParMesh = mars::ParMesh<2, 2>;
+
+	Mesh serial_mesh(true);
 	read_mesh("../data/square_2.MFEM", serial_mesh);
 
 	std::vector<Integer> partitioning = {0, 1};
 
 	Communicator world;
-	ParMesh<2, 2> mesh(world);
+	ParMesh mesh(world);
 	mesh.init(serial_mesh, partitioning);
 
-	mesh.describe(std::cout);
-
-	mesh.synchronize();
+	// ParBisection<2, 2> b(mesh);
+	// b.uniform_refine(2);
 }
 
 int main(int argc, char *argv[])
@@ -777,7 +788,7 @@ int main(int argc, char *argv[])
 	// test_partition_3D();
 	// test_partition_4D();
 	// test_incomplete_2D();
-	// test_incomplete_3D();
+	test_incomplete_3D();
 	// test_incomplete_4D();
 	// test_incomplete_5D();
 	// test_incomplete_6D();

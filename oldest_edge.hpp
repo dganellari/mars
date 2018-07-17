@@ -6,8 +6,8 @@
 
 namespace mars {
 
-	template<Integer Dim, Integer ManifoldDim>
-	class OldestEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
+	template<class Mesh>
+	class OldestEdgeSelect final : public EdgeSelect<Mesh> {
 	public:
 		class EdgeDesc {
 		public:
@@ -60,7 +60,7 @@ namespace mars {
 		}
 
 		bool can_refine(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id) const override
 		{
 			assert(mesh.is_valid(element_id));
@@ -86,7 +86,7 @@ namespace mars {
 		}
 
 		bool is_oldest_edge_uniquelly_ranked(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id) const
 		{
 			const auto &e = mesh.elem(element_id);
@@ -106,7 +106,7 @@ namespace mars {
 		}
 
 		Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id) const override
 		{
 			assert(can_refine(mesh, element_id));
@@ -134,7 +134,7 @@ namespace mars {
 		}
 
 		virtual Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Edge &neighbor_edge,
 			const Integer element_id) const override
 		{
@@ -156,13 +156,13 @@ namespace mars {
 			return node_rank_->rank(local_edge);
 		}
 
-		void update(const Mesh<Dim, ManifoldDim> &mesh) override
+		void update(const Mesh &mesh) override
 		{
 			node_rank_->init(mesh);
 		}
 
 		void element_refined(
-			const Mesh<Dim, ManifoldDim> &mesh,
+			const Mesh &mesh,
 			const Integer element_id,
 			const Edge &edge,
 			const Integer local_midpoint_id) override

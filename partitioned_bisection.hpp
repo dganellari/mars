@@ -5,20 +5,17 @@ namespace mars {
 	template<Integer Dim, Integer ManifoldDim>
 	class Mesh;
 
-	template<Integer Dim, Integer ManifoldDim>
+	template<class Mesh>
 	class Bisection;
 
-	template<Integer Dim, Integer ManifoldDim>
-	class Mesh;
-
-	template<Integer Dim, Integer ManifoldDim>
+	template<class Mesh>
 	class PartitionedBisection {
 	public:
 		template<typename T>
 		using ptr = std::shared_ptr<T>;
-		using B = Bisection<Dim, ManifoldDim>;
-		using P = MeshPartition<Dim, ManifoldDim>;
-		using ES = EdgeSelect<Dim, ManifoldDim>;
+		using B = Bisection<Mesh>;
+		using P = MeshPartition<Mesh>;
+		using ES = EdgeSelect<Mesh>;
 
 		PartitionedBisection(std::vector<ptr<P>> &parts)
 		: parts(parts)

@@ -247,10 +247,10 @@ namespace mars {
 			return true;
 		}
 
-		template<Integer Dim, Integer ManifoldDim>
+		template<class Mesh>
 		void set_midpoint_ids_to(
 			const EdgeNodeMap &enm,
-			MeshPartition<Dim, ManifoldDim> &part)
+			MeshPartition<Mesh> &part)
 		{
 			assert(check_consistent());
 			if(splits_.empty()) return;
@@ -303,9 +303,9 @@ namespace mars {
 			assert(edge_to_split_map.size() == splits_.size());
 		}
 
-		template<Integer Dim, Integer ManifoldDim>
+		template<class Mesh>
 		void collect_splits_to_apply(
-			const MeshPartition<Dim, ManifoldDim> &part,
+			const MeshPartition<Mesh> &part,
 			std::vector<EdgeSplit> &local_splits)
 		{
 			assert(edge_to_split_map.size() == splits_.size());
@@ -319,9 +319,9 @@ namespace mars {
 			}
 		}
 
-		template<Integer Dim, Integer ManifoldDim>
+		template<class Mesh>
 		void collect_splits_to_local_edges(
-			const MeshPartition<Dim, ManifoldDim> &part,
+			const MeshPartition<Mesh> &part,
 			std::vector<Edge> &local_splits)
 		{
 			local_splits.clear();
@@ -398,10 +398,10 @@ namespace mars {
 			os << ";;;;;;;;;;;;;;;;;;;;;;;;;;;\n";
 		}
 
-		template<Integer Dim, Integer ManifoldDim>
+		template<class Mesh>
 		void build_edge_interface(
-			const std::vector< ptr< Bisection<Dim, ManifoldDim> > > &b,
-			const std::vector< ptr< MeshPartition<Dim, ManifoldDim> > > &parts)
+			const std::vector< ptr< Bisection<Mesh> > > &b,
+			const std::vector< ptr< MeshPartition<Mesh> > > &parts)
 		{
 			// edge_interface_.clear();
 
@@ -459,10 +459,10 @@ namespace mars {
 			}
 		}
 
-		template<Integer Dim, Integer ManifoldDim>
+		template<class Mesh>
 		void update_midpoint_parts(
 			const EdgeNodeMap &enm,
-			MeshPartition<Dim, ManifoldDim> &p
+			MeshPartition<Mesh> &p
 			)
 		{
 			for(const auto &ei : edge_interface_) {

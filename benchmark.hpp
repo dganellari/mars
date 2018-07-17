@@ -1,32 +1,38 @@
 #ifndef MARS_BENCHMARK_HPP
 #define MARS_BENCHMARK_HPP
 
+#include "newest_vertex.hpp"
+#include "longest_edge.hpp"
+
 namespace mars {
-	template<Integer Dim, Integer ManifoldDim>
+	template<class Mesh>
 	class Benchmark {
 	public:
-		typedef std::shared_ptr<EdgeSelect<Dim, ManifoldDim>> EdgeSelectPtr;
+		using EdgeSelectPtr = std::shared_ptr<EdgeSelect<Mesh>>;
+		
+		static const Integer Dim 		 = Mesh::Dim;
+		static const Integer ManifoldDim = Mesh::ManifoldDim;
 
 		void run(
 			const Integer n_levels,
-			const Mesh<Dim, ManifoldDim> &mesh_in,
+			const Mesh &mesh_in,
 			const std::string &output_path)
 		{
 			std::vector<EdgeSelectPtr> edge_selects;
 
 			//recursive 
-			edge_selects.push_back(std::make_shared<LongestEdgeSelect<Dim, ManifoldDim>>());
-			edge_selects.push_back(std::make_shared<NewestVertexEdgeSelect<Dim, ManifoldDim>>());
-			edge_selects.push_back(std::make_shared<NewestVertexAndLongestEdgeSelect<Dim, ManifoldDim>>());
+			edge_selects.push_back(std::make_shared<LongestEdgeSelect<Mesh>>());
+			edge_selects.push_back(std::make_shared<NewestVertexEdgeSelect<Mesh>>());
+			edge_selects.push_back(std::make_shared<NewestVertexAndLongestEdgeSelect<Mesh>>());
 
 			//non-recursive
-			// edge_selects.push_back(std::make_shared<LongestEdgeSelect<Dim, ManifoldDim>>(false));
-			// edge_selects.push_back(std::make_shared<NewestVertexEdgeSelect<Dim, ManifoldDim>>(false));
-			// edge_selects.push_back(std::make_shared<NewestVertexAndLongestEdgeSelect<Dim, ManifoldDim>>(false));
+			// edge_selects.push_back(std::make_shared<LongestEdgeSelect<Mesh>>(false));
+			// edge_selects.push_back(std::make_shared<NewestVertexEdgeSelect<Mesh>>(false));
+			// edge_selects.push_back(std::make_shared<NewestVertexAndLongestEdgeSelect<Mesh>>(false));
 
 			//refine once for creating nice intial set-up for newest vertex algorithm
 			auto mesh = mesh_in;
-			Bisection<Dim, ManifoldDim> b(mesh);
+			Bisection<Mesh> b(mesh);
 			b.uniform_refine(1);
 
 			Integer exp_num = 0;
@@ -38,7 +44,7 @@ namespace mars {
 		void run_benchmark(
 			const Integer n_levels,
 			const EdgeSelectPtr &edge_select,
-			const Mesh<Dim, ManifoldDim> &mesh_in,
+			const Mesh &mesh_in,
 			const std::string &output_path,
 			const Integer exp_num
 			)
@@ -49,7 +55,7 @@ namespace mars {
 			//copy mesh
 			auto mesh = mesh_in;
 
-			Quality<Dim, ManifoldDim> q(mesh);
+			Quality<Mesh> q(mesh);
 			q.compute();
 
 			mark_boundary(mesh);
@@ -58,7 +64,7 @@ namespace mars {
 			std::cout << "volume: " << mesh.volume() << std::endl;
 			std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 
-			Bisection<Dim, ManifoldDim> b(mesh);
+			Bisection<Mesh> b(mesh);
 			b.set_edge_select(edge_select);
 			b.uniform_refine(2);
 

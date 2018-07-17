@@ -1,0 +1,29 @@
+git clone https://zulianp@bitbucket.org/zulianp/mars.git
+
+# Needed info from MFEM
+- Global index (for relating different instances of the same node on different processes)
+- Ownership (which process owns the node)
+- Which elements are marked for refinement
+
+ # Returned info 
+- New elements (in full new mesh)
+- New nodes with global indices and ownership
+
+# Interpolator (together)
+- Mesh linear interpolator
+
+# example code
+
+Mesh * m = original_mesh;
+## Outside solution loop
+SMBisection bisection(m);
+
+	## inside solution loop
+
+	### Option 2
+	bisection.refine(elems) // Array with the global (convert to local) indices of the elements to refine
+
+	m = bisection.get_mesh();
+
+
+

@@ -24,6 +24,10 @@ namespace mars {
 		static const Integer Dim = Dim_;
 		static const Integer ManifoldDim = ManifoldDim_;
 
+		using Elem     = mars::Simplex<Dim, ManifoldDim>;
+		using SideElem = mars::Simplex<Dim, ManifoldDim-1>; 
+		using Point    = mars::Vector<Real, Dim>;
+
 		void reserve(
 			const std::size_t n_elements,
 			const std::size_t n_points)
@@ -33,14 +37,14 @@ namespace mars {
 			points_.reserve(n_points);
 		}
 
-		inline Simplex<Dim, ManifoldDim> &elem(const Integer id)
+		inline Elem &elem(const Integer id)
 		{
 			assert(id >= 0);
 			assert(id < n_elements());
 			return elements_[id];
 		}
 
-		inline const Simplex<Dim, ManifoldDim> &elem(const Integer id) const
+		inline const Elem &elem(const Integer id) const
 		{
 			assert(id >= 0);
 			assert(id < n_elements());
@@ -81,32 +85,32 @@ namespace mars {
 			active_[id] = val;
 		}
 
-		inline Integer add_point(const Vector<Real, Dim> &point)
+		inline Integer add_point(const Point &point)
 		{
 			points_.push_back(point);
 			return points_.size() - 1;
 		}
 
-		inline Vector<Real, Dim> &point(const Integer i)
+		inline Point &point(const Integer i)
 		{
 			assert(i >= 0);
 			assert(i < points_.size());
 			return points_[i];
 		}
 		
-		inline const Vector<Real, Dim> &point(const Integer i) const
+		inline const Point &point(const Integer i) const
 		{
 			assert(i >= 0);
 			assert(i < points_.size());
 			return points_[i];
 		}
 
-		const std::vector<Vector<Real, Dim>> &points() const
+		const std::vector<Point> &points() const
 		{
 			return points_;
 		}
 
-		inline Integer add_elem(const Simplex<Dim, ManifoldDim> &elem)
+		inline Integer add_elem(const Elem &elem)
 		{
 			auto id = elements_.size();
 			elements_.push_back(elem);
@@ -129,7 +133,7 @@ namespace mars {
 			return e.id;
 		}
 
-		inline void points(const Integer id, std::vector<Vector<Real, Dim>> &pts) const
+		inline void points(const Integer id, std::vector<Point> &pts) const
 		{
 			assert(id >= 0);
 			assert(id < n_elements());
@@ -613,7 +617,7 @@ namespace mars {
 			}
 
 			{
-				std::vector<Vector<Real, Dim>> points(n_nodes());
+				std::vector<Point> points(n_nodes());
 
 				for(std::size_t i = 0; i < weight.size(); ++i) {
 					points[i] = points_[weight[i].second];
@@ -652,7 +656,7 @@ namespace mars {
 
 		void clean_up()
 		{
-			std::vector< Simplex<Dim, ManifoldDim> > elements;
+			std::vector< Elem > elements;
 			std::vector<Integer> tags;
 			
 			elements.reserve(n_active_elements());
@@ -815,8 +819,8 @@ namespace mars {
 		}
 
 	private:
-		std::vector< Simplex<Dim, ManifoldDim> > elements_;
-		std::vector< Vector<Real, Dim> > points_;
+		std::vector<Elem> elements_;
+		std::vector<Point> points_;
 		std::vector<Integer> tags_;
 		DualGraph<ManifoldDim> dual_graph_;
 		std::vector<bool> active_;
@@ -901,6 +905,12 @@ namespace mars {
 
 		return false;
 	}
+
+	using Mesh2 = mars::Mesh<2, 2>;
+	using Mesh3 = mars::Mesh<3, 3>;
+	using Mesh4 = mars::Mesh<4, 4>;
+	using Mesh5 = mars::Mesh<5, 5>;
+	using Mesh6 = mars::Mesh<6, 6>;
 }
 
 #endif //MARS_MESH_HPP

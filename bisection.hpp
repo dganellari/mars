@@ -5,333 +5,23 @@
 #include "tracker.hpp"
 #include "edge_select.hpp"
 #include "longest_edge.hpp"
-
 #include <iostream>
 
 namespace mars {
 
-	template<Integer Dim, Integer ManifoldDim>
-	class ImplicitOrderEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
-	public:
-		ImplicitOrderEdgeSelect()
-		{}
-
-		virtual bool repair_element() override
-		{
-			return false;
-		}
-
-		void reorder_edge(
-			const Mesh<Dim, ManifoldDim> &mesh,
-			const Integer element_id,
-			Integer &v1,
-			Integer &v2) const override
-		{
-			const auto &e = mesh.elem(element_id);
-
-			Integer l1 = e.nodes[n_nodes(e) - 2];
-			Integer l2 = e.nodes[n_nodes(e) - 1];
-
-			if(l1 != v1) {
-				std::swap(v1, v2);
-			}
-
-			assert(v1 == l1);
-			assert(v2 == l2);
-		}
-
-		Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
-			const Integer element_id) const override
-		{
-			const auto &e = mesh.elem(element_id);
-			Integer edge_num, v1, v2;
-
-			edge_num = n_edges(mesh.elem(element_id)) - 1;
-			e.edge(edge_num, v1, v2);
-
-			assert(v1 == e.nodes[n_nodes(e) - 2]);
-			assert(v2 == e.nodes[n_nodes(e) - 1]);
-			return edge_num;
-		}
-
-		virtual Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
-			const Edge &neighbor_edge,
-			const Integer element_id) const override
-		{
-			return select(mesh, element_id);
-		}
-
-		bool is_recursive() const override
-		{
-			return true;
-		}
-
-
-		virtual std::string name() const override
-		{
-			return "ImplicitOrderEdgeSelect";
-		}
-	};
-
-	template<Integer Dim, Integer ManifoldDim>
-	class GlobalNewestVertexEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
-	public:
-		GlobalNewestVertexEdgeSelect(
-			const Map &map,
-			const bool recursive = true,
-			const bool use_tollerance = true)
-		: map(map), recursive_(recursive), use_tollerance_(use_tollerance)
-		{}
-
-		void reorder_edge(
-			const Mesh<Dim, ManifoldDim> &mesh,
-			const Integer element_id,
-			Integer &v1,
-			Integer &v2) const override
-		{
-			if(map.global(v2) < map.global(v1)) {
-				std::swap(v1, v2);
-			}
-		}
-
-		bool can_refine(
-			const Mesh<Dim, ManifoldDim> &mesh,
-			const Integer element_id) const override
-		{
-			for(auto n : mesh.elem(element_id).nodes) {
-				assert(n != INVALID_INDEX);
-
-				if(map.global(n) == INVALID_INDEX) return false;
-
-				assert(map.local(map.global(n)) != INVALID_INDEX);
-			}
-
-			return true;
-		}
-
-		Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
-			const Integer element_id) const override
-		{
-			assert(can_refine(mesh, element_id));
-
-			const auto &e = mesh.elem(element_id);
-			std::vector< std::pair<Edge, Integer> > edge_pairs;
-			edge_pairs.reserve(n_edges(e));
-
-			for(Integer i = 0; i < n_edges(e); ++i) {
-				Integer v1, v2;
-				e.edge(i, v1, v2);
-				edge_pairs.emplace_back(Edge(map.global(v1), map.global(v2)), i);
-			}
-
-			std::sort(edge_pairs.begin(), edge_pairs.end());
-			return edge_pairs[0].second;
-		}
-
-		virtual Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
-			const Edge &neighbor_edge,
-			const Integer element_id) const override
-		{
-			return select(mesh, element_id);
-		}
-
-		void set_recursive(const bool recursive)
-		{
-			recursive_ = recursive;
-		}
-
-		bool is_recursive() const override
-		{
-			return recursive_;
-		}
-
-		virtual std::string name() const override
-		{
-			return "GlobalNewestVertexEdgeSelect";
-		}
-
-	private:
-		const Map &map;
-		bool recursive_;
-		bool use_tollerance_;
-	};
-
-
-
-	template<Integer Dim, Integer ManifoldDim>
-	class NewestVertexEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
-	public:
-		NewestVertexEdgeSelect(const bool recursive = true)
-		: recursive_(recursive)
-		{}
-
-		Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
-			const Integer element_id) const override
-		{
-			const auto &e = mesh.elem(element_id);
-			Integer edge_num = 0;
-
-			auto node_ids = e.nodes;
-			std::sort(node_ids.begin(), node_ids.end());
-			Edge edge(node_ids[0], node_ids[1]);
-
-			for(Integer i = 0; i < n_edges(e); ++i) {
-				Integer v1, v2;
-				e.edge(i, v1, v2);
-				
-				if(Edge(v1, v2) == edge) {
-					return i;
-				}
-			}
-
-			assert(false);
-			return edge_num;
-		}
-
-		virtual Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
-			const Edge &neighbor_edge,
-			const Integer element_id) const override
-		{	
-			(void) neighbor_edge;
-			return select(mesh, element_id);
-		}
-
-		void set_recursive(const bool recursive)
-		{
-			recursive_ = recursive;
-		}
-
-		bool is_recursive() const override
-		{
-			return recursive_;
-		}
-
-		virtual std::string name() const override
-		{
-			return "NewestVertex";
-		}
-
-	private:
-		bool recursive_;
-	};
-
-
-	template<Integer Dim, Integer ManifoldDim>
-	class NewestVertexAndLongestEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
-	public:
-		NewestVertexAndLongestEdgeSelect(const bool recursive = true, const bool use_tollerance = true)
-		: recursive_(recursive), use_tollerance_(use_tollerance)
-		{}
-
-		Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
-			const Integer element_id) const override
-		{
-			const auto &e = mesh.elem(element_id);
-			Integer edge_num = 0;
-			Real len = 0;
-
-			auto node_ids = e.nodes;
-			std::sort(node_ids.begin(), node_ids.end());
-			const Integer vertex_to_skip = node_ids.back();
-
-			for(Integer i = 0; i < n_edges(e); ++i) {
-				Integer v1, v2;
-				e.edge(i, v1, v2);
-
-				if(v1 == vertex_to_skip || v2 == vertex_to_skip) continue;
-
-				Real len_i = (mesh.point(v1) - mesh.point(v2)).norm();
-
-				if(len_i > len) {
-					len = len_i;
-					edge_num = i;
-				}
-			}
-
-			return edge_num;
-		}
-
-		virtual Integer select(
-			const Mesh<Dim, ManifoldDim> &mesh,
-			const Edge &neighbor_edge,
-			const Integer element_id) const override
-		{	
-			if(!use_tollerance_) {
-				return select(mesh, element_id);
-			}
-
-			const auto &e = mesh.elem(element_id);
-
-			Real len = 0.;
-			Real neigh_len = 0.;
-			Integer edge_num = 0;
-
-			Integer neigh_edge_num = INVALID_INDEX;
-
-			auto node_ids = e.nodes;
-			std::sort(node_ids.begin(), node_ids.end());
-			const Integer vertex_to_skip = node_ids.back();
-
-			for(Integer i = 0; i < n_edges(e); ++i) {
-				Integer v1, v2;
-				e.edge(i, v1, v2);
-
-				if(v1 == vertex_to_skip || v2 == vertex_to_skip) continue;
-
-				const Real dist = (mesh.point(v1) - mesh.point(v2)).norm();
-
-				if(dist > len) {
-					len = dist;
-					edge_num = i;
-				}
-				
-				if(Edge(v1, v2) == neighbor_edge) {
-					neigh_len 	   = dist;
-					neigh_edge_num = i;
-				}
-			}
-
-			if(neigh_len/len >= (0.99)) {
-				edge_num = neigh_edge_num;
-			}
-
-			return edge_num;
-		}
-
-		void set_recursive(const bool recursive)
-		{
-			recursive_ = recursive;
-		}
-
-		bool is_recursive() const override
-		{
-			return recursive_;
-		}
-
-		virtual std::string name() const override
-		{
-			return "NewestVertexAndLongestEdge";
-		}
-
-	private:
-		bool recursive_;
-		bool use_tollerance_;
-	};
-	
-
-	template<Integer Dim, Integer ManifoldDim>
+	template<class Mesh_>
 	class Bisection {
 	public:
-		Bisection(Mesh<Dim, ManifoldDim> &mesh)
+		using Mesh     = Mesh_;
+		using Elem     = typename Mesh::Elem;
+		using SideElem = typename Mesh::SideElem;
+
+		static const Integer Dim 		 = Mesh_::Dim;
+		static const Integer ManifoldDim = Mesh_::ManifoldDim;
+
+		Bisection(Mesh &mesh)
 		: mesh(mesh),
-		  edge_select_(std::make_shared<LongestEdgeSelect<Dim, ManifoldDim>>()),
+		  edge_select_(std::make_shared<LongestEdgeSelect<Mesh>>()),
 		  verbose(false),
 		  fail_if_not_refine(false)
 		{}
@@ -340,17 +30,17 @@ namespace mars {
 			fail_if_not_refine = val;
 		}
 
-		void set_edge_select(const std::shared_ptr<EdgeSelect<Dim, ManifoldDim>> &edge_select)
+		void set_edge_select(const std::shared_ptr<EdgeSelect<Mesh>> &edge_select)
 		{
 			edge_select_ = edge_select;
 		}
 
-		std::shared_ptr<EdgeSelect<Dim, ManifoldDim>> edge_select()
+		std::shared_ptr<EdgeSelect<Mesh>> edge_select()
 		{
 			return edge_select_;
 		}
 
-		Integer add_elem(const Simplex<Dim, ManifoldDim> &e)
+		Integer add_elem(const Elem &e)
 		{
 			flags.push_back(NONE);
 			Integer id = mesh.add_elem(e);
@@ -397,7 +87,7 @@ namespace mars {
 		// 	mesh.elem(element_id).children.clear();
 		// 	mesh.set_active(element_id, false);
 
-		// 	Simplex<Dim, ManifoldDim> s;
+		// 	Elem s;
 		// 	s.parent_id = element_id;
 			
 		// 	if(verbose) {
@@ -443,7 +133,7 @@ namespace mars {
 			mesh.elem(element_id).children.clear();
 			mesh.set_active(element_id, false);
 
-			Simplex<Dim, ManifoldDim> s;
+			Elem s;
 			s.parent_id = element_id;
 			
 			if(verbose) {
@@ -492,14 +182,14 @@ namespace mars {
 
 		inline Integer side_num(
 			const Integer element_id,
-			const Simplex<Dim, ManifoldDim-1> &side) const
+			const SideElem &side) const
 		{
 			auto nodes = side.nodes;
 			std::sort(nodes.begin(), nodes.end());
 
 			const auto &e = mesh.elem(element_id);
 
-			Simplex<Dim, ManifoldDim-1> e_side;
+			SideElem e_side;
 			
 			for(Integer i = 0; i < n_sides(e); ++i) {
 				e.side(i, e_side);
@@ -538,8 +228,8 @@ namespace mars {
 					INVALID_INDEX);
 			}	
 
-			Simplex<Dim, ManifoldDim-1> side;
-			Simplex<Dim, ManifoldDim-1> child_side;
+			SideElem side;
+			SideElem child_side;
 
 			for(Integer i = 0; i < n_sides(e); ++i) {
 				e.side(i, side);
@@ -764,12 +454,12 @@ namespace mars {
 			verbose = val;
 		}
 
-		const Mesh<Dim, ManifoldDim> &get_mesh() const
+		const Mesh &get_mesh() const
 		{
 			return mesh;
 		}
 
-		Mesh<Dim, ManifoldDim> &get_mesh()
+		Mesh &get_mesh()
 		{
 			return mesh;
 		}
@@ -843,13 +533,13 @@ namespace mars {
 		}
 
 	private:
-		Mesh<Dim, ManifoldDim> &mesh;
+		Mesh &mesh;
 		std::vector<Integer> flags;
 		std::vector<Integer> level;
 		std::vector<std::array<Integer, ManifoldDim+1> > side_flags;
 		EdgeNodeMap edge_node_map_;
 		EdgeElementMap edge_element_map_;
-		std::shared_ptr<EdgeSelect<Dim, ManifoldDim>> edge_select_;
+		std::shared_ptr<EdgeSelect<Mesh>> edge_select_;
 		bool verbose;
 
 
