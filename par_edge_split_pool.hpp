@@ -4,7 +4,7 @@
 #include "communicator.hpp"
 
 namespace mars {
-	template<Integer Dim, Integer ManifoldDim>
+	template<class Mesh>
 	class Bisection;
 
 	template<Integer Dim, Integer ManifoldDim>
@@ -13,10 +13,10 @@ namespace mars {
 	class ParEdgeSplitPool {
 	public:
 
-		template<Integer Dim, Integer ManifoldDim>
+		template<class ParMesh>
 		void build_edge_interface(
-			ParMesh<Dim, ManifoldDim> &mesh,
-			Bisection<Dim, ManifoldDim> &bisection)
+			ParMesh &mesh,
+			Bisection<typename ParMesh::Mesh> &bisection)
 		{
 
 		}
@@ -24,24 +24,26 @@ namespace mars {
 		void synchronize() {}
 
 		template<Integer Dim, Integer ManifoldDim>
-		void update_midpoint_parts(EdgeNodeMap &edge_node_map, ParMesh<Dim, ManifoldDim> &mesh)
+		void update_midpoint_parts(
+			const EdgeNodeMap &edge_node_map,
+			ParMesh<Dim, ManifoldDim> &mesh)
 		{
 
 		}
 
 		template<Integer Dim, Integer ManifoldDim>
 		void update(
-			ParMesh<Dim, ManifoldDim> &mesh,
-			EdgeElementMap &edge_elem_map,
-			EdgeNodeMap &edge_node_map,
-			std::vector<Edge> &bisected_edges)
+			const ParMesh<Dim, ManifoldDim> &mesh,
+			const EdgeElementMap &edge_elem_map,
+			const EdgeNodeMap &edge_node_map,
+			const std::vector<Edge> &bisected_edges)
 		{
 
 		}
 
 		template<Integer Dim, Integer ManifoldDim>
 		void write_to_mesh(
-			EdgeNodeMap &edge_node_map,
+			const EdgeNodeMap &edge_node_map,
 			ParMesh<Dim, ManifoldDim> &mesh)
 		{
 
@@ -49,15 +51,15 @@ namespace mars {
 
 		template<Integer Dim, Integer ManifoldDim>
 		void read_from_mesh(
-			EdgeNodeMap &edge_node_map,
-			ParMesh<Dim, ManifoldDim> &mesh)
+			const EdgeNodeMap &edge_node_map,
+			const ParMesh<Dim, ManifoldDim> &mesh)
 		{
 
 		}
 
 		template<Integer Dim, Integer ManifoldDim>
 		void collect_splits_to_local_edges(
-			ParMesh<Dim, ManifoldDim> &mesh,
+			const ParMesh<Dim, ManifoldDim> &mesh,
 			std::vector<Edge> &splits)
 		{
 

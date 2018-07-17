@@ -770,8 +770,8 @@ void par_mesh_test()
 	ParMesh mesh(world);
 	mesh.init(serial_mesh, partitioning);
 
-	// ParBisection<2, 2> b(mesh);
-	// b.uniform_refine(2);
+	ParBisection<ParMesh> b(mesh);
+	b.uniform_refine(2);
 }
 
 int main(int argc, char *argv[])
@@ -788,7 +788,7 @@ int main(int argc, char *argv[])
 	// test_partition_3D();
 	// test_partition_4D();
 	// test_incomplete_2D();
-	test_incomplete_3D();
+	// test_incomplete_3D();
 	// test_incomplete_4D();
 	// test_incomplete_5D();
 	// test_incomplete_6D();

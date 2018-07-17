@@ -223,6 +223,26 @@ namespace mars {
 			});
 		}
 
+		Mesh &get_serial_mesh()
+		{
+			return mesh_;
+		}
+
+		const Mesh &get_serial_mesh() const
+		{
+			return mesh_;
+		}
+
+		inline Communicator &comm()
+		{
+			return comm_;
+		}
+
+		inline const Communicator &comm() const
+		{
+			return comm_;
+		}
+
 	private:
 
 		static bool is_partition_tag(const Integer tag)
