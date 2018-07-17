@@ -353,6 +353,59 @@ namespace mars {
 			return edge_num;
 		}
 
+		// class EdgeDesc {
+		// public:
+		// 	EdgeDesc(
+		// 		const Edge &edge,
+		// 		const Real len,
+		// 		const Integer edge_num) 
+		// 	: edge(edge), len(len), edge_num(edge_num)
+		// 	{
+		// 		assert(edge.is_valid());
+		// 	}
+
+		// 	inline bool operator<(const EdgeDesc &other) const
+		// 	{
+		// 		if(len < other.len) {
+		// 			return true;
+		// 		}
+
+		// 		if(other.len < len) {
+		// 			return false;
+		// 		}
+
+		// 		return edge < other.edge;
+		// 	}
+
+		// 	Edge edge;
+		// 	Real len;
+		// 	Integer edge_num;
+		// };
+
+		// Integer select(
+		// 	const Mesh<Dim, ManifoldDim> &mesh,
+		// 	const Integer element_id) const override
+		// {
+		// 	assert(can_refine(mesh, element_id));
+
+		// 	const auto &e = mesh.elem(element_id);
+		// 	std::vector<EdgeDesc> edge_pairs;
+		// 	edge_pairs.reserve(n_edges(e));
+
+		// 	for(Integer i = 0; i < n_edges(e); ++i) {
+		// 		Integer v1, v2;
+		// 		e.edge(i, v1, v2);
+		// 		edge_pairs.emplace_back(
+		// 			Edge(map.global(v1), map.global(v2)),
+		// 			(mesh.point(v1) - mesh.point(v2)).squared_norm(),
+		// 		    i
+		// 		);
+		// 	}
+
+		// 	std::sort(edge_pairs.begin(), edge_pairs.end());
+		// 	return edge_pairs.back().edge_num;
+		// }
+
 		virtual Integer select(
 			const Mesh<Dim, ManifoldDim> &mesh,
 			const Edge &neighbor_edge,

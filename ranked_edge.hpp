@@ -97,7 +97,7 @@ namespace mars {
 					Edge(map.global(v1), map.global(v2)),
 					r,
 					i
-					);
+				);
 			}
 
 			std::sort(ranked_edges.begin(), ranked_edges.end());

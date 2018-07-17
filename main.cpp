@@ -16,6 +16,8 @@
 #include "benchmark.hpp"
 #include "test.hpp"
 #include "ranked_edge.hpp"
+#include "oldest_edge.hpp"
+
 
 void test_bisection_2D()
 {	
@@ -208,7 +210,7 @@ namespace mars {
 		const bool use_uniform_refinement = false)
 	{
 		Integer each_element = 11;
-		bool bypass_incomplete = false;
+		bool bypass_incomplete = true;
 
 		if(bypass_incomplete) {
 			map.resize(mesh.n_nodes(), 0);
@@ -315,7 +317,8 @@ namespace mars {
 		Quality<Dim, ManifoldDim> q(mesh);
 		q.compute();
 
-		auto edge_select = std::make_shared<RankedEdgeSelect<Dim, ManifoldDim>>(map, online_update);
+		// auto edge_select = std::make_shared<RankedEdgeSelect<Dim, ManifoldDim>>(map, online_update);
+		auto edge_select = std::make_shared<OldestEdgeSelect<Dim, ManifoldDim>>(map);
 		
 		for(Integer i = 0; i < n_tests; ++i) {
 			std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
@@ -327,7 +330,7 @@ namespace mars {
 			
 			mesh.clean_up();
 			q.compute();
-			std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+			std::cout << "n_active_elements: " << mesh.n_active_elements() << "/" << mesh.n_elements() << std::endl;
 		}
 
 		q.save_csv("edge_rank", std::to_string(ManifoldDim) + "D_er.csv", true);
@@ -380,7 +383,7 @@ namespace mars {
 				mesh.clean_up();
 				// }
 
-				std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+				std::cout << "n_active_elements: " << mesh.n_active_elements() << "/" << mesh.n_elements() << std::endl;
 				q.compute();
 			}
 
@@ -595,7 +598,7 @@ void test_incomplete_2D()
 	Mesh<2, 2> mesh(true);
 	read_mesh("../data/square_2.MFEM", mesh);
 	// read_mesh("../data/square_2_def.MFEM", mesh);
-	test_incomplete_ND(mesh, 10, true);
+	test_incomplete_ND(mesh, 8, true);
 }
 
 void test_incomplete_3D()
@@ -613,7 +616,7 @@ void test_incomplete_4D()
 	
 	Mesh<4, 4> mesh(true);
 	read_mesh("../data/cube4d_24.MFEM", mesh);
-	test_incomplete_ND(mesh, 10, false);
+	test_incomplete_ND(mesh, 8, true);
 }
 
 void test_incomplete_5D()
@@ -748,8 +751,8 @@ int main(const int argc, const char *argv[])
 	// test_partition_2D();
 	// test_partition_3D();
 	// test_partition_4D();
-	// test_incomplete_2D();
-	// test_incomplete_3D();
+	test_incomplete_2D();
+	test_incomplete_3D();
 	test_incomplete_4D();
 	// test_incomplete_5D();
 	// test_incomplete_6D();
