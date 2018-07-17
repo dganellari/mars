@@ -758,20 +758,38 @@ void par_mesh_test()
 {
 	using namespace mars;
 
-	using Mesh    = mars::Mesh2;
-	using ParMesh = mars::ParMesh<2, 2>;
+	using ParMesh2 = mars::ParMesh<2, 2>;
 
-	Mesh serial_mesh(true);
+	Mesh2 serial_mesh(true);
 	read_mesh("../data/square_2.MFEM", serial_mesh);
 
 	std::vector<Integer> partitioning = {0, 1};
 
 	Communicator world;
-	ParMesh mesh(world);
+	ParMesh2 mesh(world);
 	mesh.init(serial_mesh, partitioning);
 
-	ParBisection<ParMesh> b(mesh);
-	b.uniform_refine(2);
+	std::vector<Line2> sides;
+	mesh.collect_interface_sides(world.rank() == 0? 1 : 0, sides);
+
+	serial_apply(world, [&](){
+		std::cout << "sides" << world << std::endl;
+		for(const auto &s : sides) {
+			for(const auto &n : s.nodes) {
+				std::cout << n << " ";
+			}
+
+			std::cout << std::endl;
+		}
+	});
+
+
+
+	// ParBisection<ParMesh> b(mesh);
+	// b.uniform_refine(1);
+
+
+
 }
 
 int main(int argc, char *argv[])

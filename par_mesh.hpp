@@ -102,6 +102,7 @@ namespace mars {
 
 		ParMesh(const Communicator &comm)
 		: comm_(comm),
+		  mesh_(true),
 		  node_map_(comm.rank(), comm.size()),
 		  elem_map_(comm.rank(), comm.size()),
 		  is_interfaced_(comm.size(), false),
@@ -184,6 +185,28 @@ namespace mars {
 
 			n_active_elements_ = buff[0];
 			n_nodes_           = buff[1];
+		}
+
+		void collect_interface_sides(
+			const Integer rank,
+			std::vector<SideElem> &sides,
+			const bool global_indexing = true,
+			const bool active_only = true)
+		{
+			mesh_.collect_sides(
+				partition_id_to_tag(rank),
+				sides,
+				active_only
+			);
+
+			if(global_indexing) {
+				for(auto &s : sides) {
+
+					for(auto &n : s.nodes) {
+						n = node_map().global(n);
+					}
+				}
+			}
 		}
 
 		void clean_up()
