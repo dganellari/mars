@@ -39,7 +39,9 @@ namespace mars {
 			const Map &map,
 			const std::shared_ptr<NodeRank> &node_rank = std::make_shared<NodeRank>())
 		: map(map), node_rank_(node_rank)
-		{}
+		{
+			// node_rank->describe(std::cout);
+		}
 
 		bool can_refine(
 			const Mesh<Dim, ManifoldDim> &mesh,

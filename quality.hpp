@@ -348,6 +348,7 @@ namespace mars {
 
 			bool save(const std::string &path) const
 			{
+#ifdef WITH_MOONOLITH
 				using namespace moonolith;
 
 				const Integer n_data = x.size();
@@ -429,7 +430,11 @@ namespace mars {
 				plot(axis, legend, &data[0], n_data, canvas, opts);
 
 				return canvas.write(path);
+#else
+				return false;
+#endif //WITH_MOONOLITH
 			}
+
 		};
 
 		Quality(const Mesh<Dim, ManifoldDim> &mesh)

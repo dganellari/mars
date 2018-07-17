@@ -3,6 +3,7 @@
 
 #include "base.hpp"
 
+#ifdef WITH_MOONOLITH
 
 namespace moonolith {
 	using Integer = mars::Integer;
@@ -14,6 +15,9 @@ namespace moonolith {
 #include "moonolith_eps_canvas.hpp"
 #include "moonolith_plotter.hpp"
 #include "moonolith_func_to_color.hpp"
+
+#endif //WITH_MOONOLITH
+
 
 namespace mars {
 	template<Integer Dim, Integer ManifoldDim>
@@ -62,11 +66,11 @@ namespace mars {
 
 		PlotOpts()
 		: plot_fun(PLOT_ID),
-		  scale_factor(10.),
-		  node_size(2.),
-		  uniform(0.),
-		  active_only(true),
-		  show_id(true)
+		scale_factor(10.),
+		node_size(2.),
+		uniform(0.),
+		active_only(true),
+		show_id(true)
 		{}
 	};
 
@@ -99,6 +103,64 @@ namespace mars {
 			}
 		}
 	}
+	
+
+
+	template<Integer Dim>
+	bool write_mesh(
+		const std::string &path,
+		const Mesh<Dim, 3> &mesh
+		)
+	{
+		VTKMeshWriter<Mesh<Dim, 3>> w;
+		return w.write(path + ".vtu", mesh);
+	}
+
+
+
+
+
+	template<Integer Dim, Integer ManifoldDim>
+	bool export_parts(
+		const std::string &path,
+		const std::vector<std::shared_ptr<MeshPartition<Dim, ManifoldDim>>> &parts)
+	{
+		bool ok = true;
+		for(const auto &p : parts) {
+			VTKMeshWriter<Mesh<Dim, ManifoldDim>> w;
+			ok &= w.write(path + std::to_string(p->partition_id()) + ".vtu", p->get_mesh());
+		}
+
+		return ok;
+	}
+
+	template<Integer Dim>
+	bool write_mesh_partitions(
+		const std::string &path,
+		const std::vector<std::shared_ptr<MeshPartition<Dim, 3>>> &parts,
+		const PlotFun plot_fun)
+	{
+		bool ok = true;
+		for(const auto &p : parts) {
+			VTKMeshWriter<Mesh<Dim, 3>> w;
+			ok &= w.write(path + std::to_string(p->partition_id()) + ".vtu", p->get_mesh());
+		}
+
+		return ok;
+	}
+
+
+
+
+
+
+
+
+
+
+
+#ifdef WITH_MOONOLITH
+
 	template<Integer Dim, Integer ManifoldDim>
 	void mesh_color(
 		const Mesh<Dim, ManifoldDim> &mesh,
@@ -126,7 +188,7 @@ namespace mars {
 			}
 		} 
 
-	
+
 		for(std::size_t i = 0, k = 0; i < mesh.n_elements(); ++i) {
 			if(mesh.is_active(i) || !active_only) {
 				switch(plot_fun) {
@@ -208,279 +270,6 @@ namespace mars {
 			}
 		}
 	}
-
-	template<class Canvas, Integer Dim>
-	void draw_mesh(
-		Canvas &canvas,
-		const Mesh<Dim, 2> &mesh,
-		const PlotOpts &opts)
-	{
-
-		moonolith::Mesh m;
-		m.dim = Dim;
-
-		m.points.resize(mesh.n_nodes() * Dim);
-		m.el_index.resize(mesh.n_active_elements() * 3);
-
-		for(Integer i = 0; i < mesh.n_nodes(); ++i) {
-			for(Integer d = 0; d < Dim; ++d) {
-				m.points[i * Dim + d] = mesh.point(i)(d) * opts.scale_factor;
-			}
-		}
-
-		m.elem_type.resize(mesh.n_active_elements());
-		std::fill(m.elem_type.begin(), m.elem_type.end(), moonolith::ElemType::TRI3);
-		m.uniform_elem_type = moonolith::ElemType::TRI3;
-		m.has_uniform_elem_type = true;
-
-		m.el_ptr.resize(m.elem_type.size() + 1);
-
-		m.el_ptr[0] = 0;
-		for(std::size_t i = 1; i < m.el_ptr.size(); ++i) {
-			m.el_ptr[i] = m.el_ptr[i - 1] + 3;
-		}
-
-		Integer k = 0;
-		for(std::size_t i = 0; i < mesh.n_elements(); ++i) {
-			if(mesh.is_active(i)) {
-				for(Integer j = 0; j < 3; ++j) {
-					m.el_index[k * 3 + j] = mesh.elem(i).nodes[j];
-				}
-
-				k++;
-			}
-		}
-
-		canvas.set_line_width(0.1/mesh.n_active_elements());
-
-		std::vector<Real> hsv;
-		mesh_color(mesh, opts, hsv);
-
-		canvas.fill_mesh(m, hsv);
-		canvas.set_color(0,0,0);
-		canvas.stroke_mesh(m);
-
-		for(std::size_t i = 0, k = 0; i < mesh.n_elements(); ++i) {
-			if(mesh.is_active(i)) {
-				for(auto n : mesh.elem(i).nodes) {
-					auto p = mesh.point(n);
-
-					auto n_id = n;
-
-					if(!opts.node_id.empty()) {
-						n_id = opts.node_id[n]; 
-					}
-
-					if(n_id == INVALID_INDEX) {
-						canvas.set_color(1., 0., 0.);
-						canvas.stroke_circle(p(0)*opts.scale_factor, p(1)*opts.scale_factor, opts.node_size);
-					} else {
-						if(opts.show_id) {
-							canvas.set_color(0., 0., 0.);
-							canvas.stroke_circle(p(0)*opts.scale_factor, p(1)*opts.scale_factor, opts.node_size);
-
-							canvas.set_color(1., 1., 1.);
-							canvas.fill_circle(p(0)*opts.scale_factor, p(1)*opts.scale_factor, opts.node_size);
-						}
-					}
-					
-
-					canvas.update_box(p(0)*opts.scale_factor + opts.scale_factor/10., p(1)*opts.scale_factor + opts.scale_factor/10.);
-					canvas.update_box(p(0)*opts.scale_factor - opts.scale_factor/10., p(1)*opts.scale_factor - opts.scale_factor/10.);
-				}
-			}
-		}
-
-		if(opts.show_id) {
-			canvas.set_color(0., 0., 0.);
-			
-			for(std::size_t i = 0, k = 0; i < mesh.n_elements(); ++i) {
-				if(mesh.is_active(i)) {
-					auto b = barycenter(mesh.elem(i), mesh.points());
-					auto e_id = i;
-
-					if(!opts.element_id.empty()) {
-						e_id = opts.element_id[i]; 
-					}
-
-					canvas.draw_text(b(0)*opts.scale_factor, b(1)*opts.scale_factor, opts.node_size, "Courier", std::to_string(e_id), true);
-
-					for(auto n : mesh.elem(i).nodes) {
-						auto p = mesh.point(n);
-
-						auto n_id = n;
-
-						if(!opts.node_id.empty()) {
-							n_id = opts.node_id[n]; 
-						}
-
-						if(n_id != INVALID_INDEX) {
-							canvas.draw_text(p(0)*opts.scale_factor, p(1)*opts.scale_factor, opts.node_size, "Courier", std::to_string(n_id), true);
-						}
-					}
-				}
-			}
-		}
-	}
-
-	template<Integer Dim>
-	bool write_mesh(
-		const std::string &path,
-		const Mesh<Dim, 3> &mesh
-	)
-	{
-		VTKMeshWriter<Mesh<Dim, 3>> w;
-		return w.write(path + ".vtu", mesh);
-	}
-
-
-
-	template<Integer Dim>
-	bool write_mesh(
-		const std::string &path,
-		const Mesh<Dim, 2> &mesh,
-		const Real scale_factor = 10.,
-		const PlotFun plot_fun = PLOT_ROOT)
-	{
-		moonolith::EPSCanvas canvas;
-		PlotOpts opts;
-		opts.scale_factor = scale_factor;
-		opts.plot_fun = plot_fun;
-		opts.node_size = 1./std::sqrt(mesh.n_active_elements());
-
-		draw_mesh(canvas, mesh, opts);
-		return canvas.write(path);
-	}
-
-	template<Integer Dim, Integer ManifoldDim>
-	bool export_parts(
-		const std::string &path,
-		const std::vector<std::shared_ptr<MeshPartition<Dim, ManifoldDim>>> &parts)
-	{
-		bool ok = true;
-		for(const auto &p : parts) {
-			VTKMeshWriter<Mesh<Dim, ManifoldDim>> w;
-			ok &= w.write(path + std::to_string(p->partition_id()) + ".vtu", p->get_mesh());
-		}
-
-		return ok;
-	}
-
-	template<Integer Dim>
-	bool write_mesh_partitions(
-		const std::string &path,
-		const std::vector<std::shared_ptr<MeshPartition<Dim, 3>>> &parts,
-		const PlotFun plot_fun)
-	{
-		bool ok = true;
-		for(const auto &p : parts) {
-			VTKMeshWriter<Mesh<Dim, 3>> w;
-			ok &= w.write(path + std::to_string(p->partition_id()) + ".vtu", p->get_mesh());
-		}
-
-		return ok;
-	}
-
-
-	template<Integer Dim>
-	bool write_mesh_partitions(
-		const std::string &path,
-		const std::vector<std::shared_ptr<MeshPartition<Dim, 2>>> &parts,
-		const PlotFun plot_fun)
-	{
-		moonolith::EPSCanvas canvas;
-
-		Integer n_elements = 0;
-		for(const auto &p : parts) {
-			n_elements += p->get_mesh().n_elements();
-		}
-
-		PlotOpts opts;
-		// opts.scale_factor = scale_factor;
-		opts.plot_fun = plot_fun;
-		opts.node_size = 1./std::sqrt(n_elements);
-
-		if(n_elements > 400) {
-			opts.show_id = false;
-		}
-
-		for(const auto &p : parts) {
-			opts.node_id    = p->node_map().global_id();
-			opts.element_id = p->elem_map().global_id();
-			opts.uniform = Real(p->partition_id() + 1)/parts.size();
-			draw_mesh(canvas, p->get_mesh(), opts);
-		}
-		return canvas.write(path);
-	}
-
-
-	template<class Canvas, Integer Dim, Integer ManifoldDim, class NodeVector>
-	void draw_element_subsurface(
-		const Mesh<Dim, ManifoldDim> &m,
-		const Integer element_id,
-		const NodeVector &sub_surface_nodes,
-		const Real cx,
-		const Real cy,
-		const Real scale_factor,
-		const RGB &rgb,
-		Canvas &canvas,
-		const bool sort_nodes = true)
-	{
-
-		std::cout << "rgb: " << rgb.r << " " << rgb.g << " " << rgb.b << std::endl;
-
-		auto e = m.elem(element_id);
-		if(sort_nodes) {
-			std::sort(e.nodes.begin(), e.nodes.end());
-		}
-
-		const Real node_size = 0.5;
-		const Real line_width_e = 0.2;
-		std::vector<Real> xy(sub_surface_nodes.size()*2);
-		std::vector<Integer> node_ids(sub_surface_nodes.size(), INVALID_INDEX);
-
-		const Real dAngle = 2.*M_PI/n_nodes(e);
-
-		Integer index = 0;
-		for(Integer k = 0; k < n_nodes(e); ++k) {
-			if(std::find(
-				sub_surface_nodes.begin(),
-				sub_surface_nodes.end(),
-				e.nodes[k]) != sub_surface_nodes.end()
-				) {
-				xy[index * 2]     = cx + std::cos(dAngle * k) * scale_factor;
-			xy[index * 2 + 1] = cy + std::sin(dAngle * k) * scale_factor;
-			node_ids[index] = e.nodes[k];
-			++index;
-		}
-	}
-
-	canvas.set_line_width(line_width_e);
-	canvas.set_color(rgb.r, rgb.g, rgb.b);
-	canvas.set_dashing(1./(2. + 2*rand()/double(RAND_MAX)));
-	canvas.stroke_polygon(&xy[0], sub_surface_nodes.size());
-	canvas.clear_dashing();
-
-	for(Integer k = 0; k < sub_surface_nodes.size(); ++k) {
-		canvas.set_color(0., 0., 0.);
-		canvas.stroke_circle(xy[k*2], xy[k*2+1], node_size*2.);
-		canvas.set_color(1., 1., 1.);
-		canvas.fill_circle(xy[k*2], xy[k*2+1], node_size*1.94);
-	}
-
-	canvas.set_color(0., 0., 0.);
-	for(Integer k = 0; k < sub_surface_nodes.size(); ++k) {
-		canvas.draw_text(xy[k*2], xy[k*2+1], 1, "Courier", std::to_string(node_ids[k]), true);
-	}
-
-		// auto b = barycenter(e);
-
-	if(e.id != INVALID_INDEX) {
-		canvas.set_color(rgb.r, rgb.g, rgb.b);
-		canvas.draw_text(cx, cy - scale_factor * 1.2, 1.5, "Courier", std::to_string(e.id), true);
-	}
-}
-
 
 	template<class Canvas, Integer Dim, Integer ManifoldDim>
 void draw_element_side(
@@ -807,20 +596,253 @@ bool write_element(
 	const Integer element_id,
 	const Real scale_factor,
 	const Integer child_num)
-	{
+{
 
-		return write_element(
-			path,
-			rgr.get_mesh(),
-			rgr.edge_node_map(),
-			element_id,
-			scale_factor,
-			child_num);
+	return write_element(
+		path,
+		rgr.get_mesh(),
+		rgr.edge_node_map(),
+		element_id,
+		scale_factor,
+		child_num);
+}
+
+
+	template<class Canvas, Integer Dim>
+void draw_mesh(
+	Canvas &canvas,
+	const Mesh<Dim, 2> &mesh,
+	const PlotOpts &opts)
+{
+
+	moonolith::Mesh m;
+	m.dim = Dim;
+
+	m.points.resize(mesh.n_nodes() * Dim);
+	m.el_index.resize(mesh.n_active_elements() * 3);
+
+	for(Integer i = 0; i < mesh.n_nodes(); ++i) {
+		for(Integer d = 0; d < Dim; ++d) {
+			m.points[i * Dim + d] = mesh.point(i)(d) * opts.scale_factor;
+		}
+	}
+
+	m.elem_type.resize(mesh.n_active_elements());
+	std::fill(m.elem_type.begin(), m.elem_type.end(), moonolith::ElemType::TRI3);
+	m.uniform_elem_type = moonolith::ElemType::TRI3;
+	m.has_uniform_elem_type = true;
+
+	m.el_ptr.resize(m.elem_type.size() + 1);
+
+	m.el_ptr[0] = 0;
+	for(std::size_t i = 1; i < m.el_ptr.size(); ++i) {
+		m.el_ptr[i] = m.el_ptr[i - 1] + 3;
+	}
+
+	Integer k = 0;
+	for(std::size_t i = 0; i < mesh.n_elements(); ++i) {
+		if(mesh.is_active(i)) {
+			for(Integer j = 0; j < 3; ++j) {
+				m.el_index[k * 3 + j] = mesh.elem(i).nodes[j];
+			}
+
+			k++;
+		}
+	}
+
+	canvas.set_line_width(0.1/mesh.n_active_elements());
+
+	std::vector<Real> hsv;
+	mesh_color(mesh, opts, hsv);
+
+	canvas.fill_mesh(m, hsv);
+	canvas.set_color(0,0,0);
+	canvas.stroke_mesh(m);
+
+	for(std::size_t i = 0, k = 0; i < mesh.n_elements(); ++i) {
+		if(mesh.is_active(i)) {
+			for(auto n : mesh.elem(i).nodes) {
+				auto p = mesh.point(n);
+
+				auto n_id = n;
+
+				if(!opts.node_id.empty()) {
+					n_id = opts.node_id[n]; 
+				}
+
+				if(n_id == INVALID_INDEX) {
+					canvas.set_color(1., 0., 0.);
+					canvas.stroke_circle(p(0)*opts.scale_factor, p(1)*opts.scale_factor, opts.node_size);
+				} else {
+					if(opts.show_id) {
+						canvas.set_color(0., 0., 0.);
+						canvas.stroke_circle(p(0)*opts.scale_factor, p(1)*opts.scale_factor, opts.node_size);
+
+						canvas.set_color(1., 1., 1.);
+						canvas.fill_circle(p(0)*opts.scale_factor, p(1)*opts.scale_factor, opts.node_size);
+					}
+				}
+
+
+				canvas.update_box(p(0)*opts.scale_factor + opts.scale_factor/10., p(1)*opts.scale_factor + opts.scale_factor/10.);
+				canvas.update_box(p(0)*opts.scale_factor - opts.scale_factor/10., p(1)*opts.scale_factor - opts.scale_factor/10.);
+			}
+		}
+	}
+
+	if(opts.show_id) {
+		canvas.set_color(0., 0., 0.);
+
+		for(std::size_t i = 0, k = 0; i < mesh.n_elements(); ++i) {
+			if(mesh.is_active(i)) {
+				auto b = barycenter(mesh.elem(i), mesh.points());
+				auto e_id = i;
+
+				if(!opts.element_id.empty()) {
+					e_id = opts.element_id[i]; 
+				}
+
+				canvas.draw_text(b(0)*opts.scale_factor, b(1)*opts.scale_factor, opts.node_size, "Courier", std::to_string(e_id), true);
+
+				for(auto n : mesh.elem(i).nodes) {
+					auto p = mesh.point(n);
+
+					auto n_id = n;
+
+					if(!opts.node_id.empty()) {
+						n_id = opts.node_id[n]; 
+					}
+
+					if(n_id != INVALID_INDEX) {
+						canvas.draw_text(p(0)*opts.scale_factor, p(1)*opts.scale_factor, opts.node_size, "Courier", std::to_string(n_id), true);
+					}
+				}
+			}
+		}
+	}
+}
+
+	template<Integer Dim>
+	bool write_mesh(
+		const std::string &path,
+		const Mesh<Dim, 2> &mesh,
+		const Real scale_factor = 10.,
+		const PlotFun plot_fun = PLOT_ROOT)
+	{
+		moonolith::EPSCanvas canvas;
+		PlotOpts opts;
+		opts.scale_factor = scale_factor;
+		opts.plot_fun = plot_fun;
+		opts.node_size = 1./std::sqrt(mesh.n_active_elements());
+
+		draw_mesh(canvas, mesh, opts);
+		return canvas.write(path);
 	}
 
 
+	template<Integer Dim>
+	bool write_mesh_partitions(
+		const std::string &path,
+		const std::vector<std::shared_ptr<MeshPartition<Dim, 2>>> &parts,
+		const PlotFun plot_fun)
+	{
+		moonolith::EPSCanvas canvas;
 
-	template<Integer Dim, Integer ManifoldDim>
+		Integer n_elements = 0;
+		for(const auto &p : parts) {
+			n_elements += p->get_mesh().n_elements();
+		}
+
+		PlotOpts opts;
+		// opts.scale_factor = scale_factor;
+		opts.plot_fun = plot_fun;
+		opts.node_size = 1./std::sqrt(n_elements);
+
+		if(n_elements > 400) {
+			opts.show_id = false;
+		}
+
+		for(const auto &p : parts) {
+			opts.node_id    = p->node_map().global_id();
+			opts.element_id = p->elem_map().global_id();
+			opts.uniform = Real(p->partition_id() + 1)/parts.size();
+			draw_mesh(canvas, p->get_mesh(), opts);
+		}
+		return canvas.write(path);
+	}
+
+
+	template<class Canvas, Integer Dim, Integer ManifoldDim, class NodeVector>
+	void draw_element_subsurface(
+		const Mesh<Dim, ManifoldDim> &m,
+		const Integer element_id,
+		const NodeVector &sub_surface_nodes,
+		const Real cx,
+		const Real cy,
+		const Real scale_factor,
+		const RGB &rgb,
+		Canvas &canvas,
+		const bool sort_nodes = true)
+	{
+
+		std::cout << "rgb: " << rgb.r << " " << rgb.g << " " << rgb.b << std::endl;
+
+		auto e = m.elem(element_id);
+		if(sort_nodes) {
+			std::sort(e.nodes.begin(), e.nodes.end());
+		}
+
+		const Real node_size = 0.5;
+		const Real line_width_e = 0.2;
+		std::vector<Real> xy(sub_surface_nodes.size()*2);
+		std::vector<Integer> node_ids(sub_surface_nodes.size(), INVALID_INDEX);
+
+		const Real dAngle = 2.*M_PI/n_nodes(e);
+
+		Integer index = 0;
+		for(Integer k = 0; k < n_nodes(e); ++k) {
+			if(std::find(
+				sub_surface_nodes.begin(),
+				sub_surface_nodes.end(),
+				e.nodes[k]) != sub_surface_nodes.end()
+				) {
+				xy[index * 2]     = cx + std::cos(dAngle * k) * scale_factor;
+			xy[index * 2 + 1] = cy + std::sin(dAngle * k) * scale_factor;
+			node_ids[index] = e.nodes[k];
+			++index;
+		}
+	}
+
+	canvas.set_line_width(line_width_e);
+	canvas.set_color(rgb.r, rgb.g, rgb.b);
+	canvas.set_dashing(1./(2. + 2*rand()/double(RAND_MAX)));
+	canvas.stroke_polygon(&xy[0], sub_surface_nodes.size());
+	canvas.clear_dashing();
+
+	for(Integer k = 0; k < sub_surface_nodes.size(); ++k) {
+		canvas.set_color(0., 0., 0.);
+		canvas.stroke_circle(xy[k*2], xy[k*2+1], node_size*2.);
+		canvas.set_color(1., 1., 1.);
+		canvas.fill_circle(xy[k*2], xy[k*2+1], node_size*1.94);
+	}
+
+	canvas.set_color(0., 0., 0.);
+	for(Integer k = 0; k < sub_surface_nodes.size(); ++k) {
+		canvas.draw_text(xy[k*2], xy[k*2+1], 1, "Courier", std::to_string(node_ids[k]), true);
+	}
+
+		// auto b = barycenter(e);
+
+	if(e.id != INVALID_INDEX) {
+		canvas.set_color(rgb.r, rgb.g, rgb.b);
+		canvas.draw_text(cx, cy - scale_factor * 1.2, 1.5, "Courier", std::to_string(e.id), true);
+	}
+}
+
+
+
+
+		template<Integer Dim, Integer ManifoldDim>
 bool write_element_with_sides(
 	const std::string &path,
 	const Mesh<Dim, ManifoldDim> &m,
@@ -831,10 +853,10 @@ bool write_element_with_sides(
 {
 	const auto &e = m.elem(element_id);
 	auto sorted_nodes = e.nodes;
-		// std::sort(sorted_nodes.begin(), sorted_nodes.end());
+			// std::sort(sorted_nodes.begin(), sorted_nodes.end());
 
-		// MultilevelElementMap<ManifoldDim, 2> mlem;
-		// mlem.update(rgr.get_mesh());
+			// MultilevelElementMap<ManifoldDim, 2> mlem;
+			// mlem.update(rgr.get_mesh());
 
 	std::vector<Real> hsv;
 
@@ -868,7 +890,7 @@ bool write_element_with_sides(
 
 	Simplex<Dim, ManifoldDim-1> side;
 
-		// for(Integer sub_manifold = ManifoldDim; sub_manifold >= 2; --sub_manifold) {
+			// for(Integer sub_manifold = ManifoldDim; sub_manifold >= 2; --sub_manifold) {
 	if(side_num != INVALID_INDEX) {
 		const auto &adj = m.dual_graph().adj(element_id);
 		const auto a = adj[side_num];
@@ -998,7 +1020,7 @@ bool write_element_with_sides(
 				}
 			}
 		}
-			// }
+				// }
 	}
 
 
@@ -1025,10 +1047,10 @@ bool write_element_with_subsurfaces(
 	const Integer element_id,
 	const Real scale_factor)
 {
-	// const auto &m = rgr.get_mesh();
+		// const auto &m = rgr.get_mesh();
 	const auto &e = m.elem(element_id);
 	auto sorted_nodes = e.nodes;
-		// std::sort(sorted_nodes.begin(), sorted_nodes.end());
+			// std::sort(sorted_nodes.begin(), sorted_nodes.end());
 
 	MultilevelElementMap<ManifoldDim, 2> mlem;
 	mlem.update(m);
@@ -1062,12 +1084,12 @@ bool write_element_with_subsurfaces(
 	Integer n_circle = 1;
 	for(Integer sub_manifold = ManifoldDim; sub_manifold >= 2; --sub_manifold, ++n_circle) {
 		std::vector<Integer> neigs;
-		
+
 		mlem.adj(
 			sub_manifold,
 			e,
 			neigs
-		);
+			);
 
 		if(neigs.empty()) continue;
 
@@ -1080,15 +1102,15 @@ bool write_element_with_subsurfaces(
 			const auto &e_neigh = m.elem(a);
 
 			auto rgb = RGB(hsv[a*3], hsv[a*3 + 1], hsv[a*3 + 2]);
-				
+
 			Integer k = s;
-			// Integer k = 0;
-			// for(; k < ManifoldDim + 1; ++k) {
-			// 	auto en = sorted_nodes[k];
-			// 	if(std::find(e_neigh.nodes.begin(), e_neigh.nodes.end(), en) == e_neigh.nodes.end()) {
-			// 		break;
-			// 	}
-			// }
+				// Integer k = 0;
+				// for(; k < ManifoldDim + 1; ++k) {
+				// 	auto en = sorted_nodes[k];
+				// 	if(std::find(e_neigh.nodes.begin(), e_neigh.nodes.end(), en) == e_neigh.nodes.end()) {
+				// 		break;
+				// 	}
+				// }
 
 			const auto a_cx = cx + cos(k * dNeighAngle + M_PI) * 2.5 * scale_factor * n_circle;
 			const auto a_cy = cy + sin(k * dNeighAngle + M_PI) * 2.5 * scale_factor * n_circle;
@@ -1120,6 +1142,85 @@ bool write_element_with_subsurfaces(
 
 	return canvas.write(path);
 }
+
+#else
+
+	template<Integer Dim>
+	bool write_mesh(
+		const std::string &path,
+		const Mesh<Dim, 2> &mesh,
+		const Real scale_factor = 10.,
+		const PlotFun plot_fun = PLOT_ROOT)
+	{
+		VTKMeshWriter<Mesh<Dim, 2>> w;
+		return w.write(path + ".vtu", mesh);
+	}
+
+	template<Integer Dim>
+	bool write_mesh_partitions(
+		const std::string &path,
+		const std::vector<std::shared_ptr<MeshPartition<Dim, 2>>> &parts,
+		const PlotFun plot_fun)
+	{
+		bool ok = true;
+		for(const auto &p : parts) {
+			VTKMeshWriter<Mesh<Dim, 2>> w;
+			ok &= w.write(path + std::to_string(p->partition_id()) + ".vtu", p->get_mesh());
+		}
+
+		return ok;
+	}
+
+		template<Integer Dim, Integer ManifoldDim>
+	bool write_element(
+		const std::string &path,
+		const Mesh<Dim, ManifoldDim> &m,
+		const EdgeNodeMap &en_map,
+		const Integer element_id,
+		const Real scale_factor,
+		const Integer child_num)
+	{
+		return false;
+	}
+
+		template<Integer Dim, Integer ManifoldDim>
+	bool write_element(
+		const std::string &path,
+		const RedGreenRefinement<Dim, ManifoldDim> &rgr,
+		const Integer element_id,
+		const Real scale_factor,
+		const Integer child_num)
+	{
+		return false;
+	}
+
+			template<Integer Dim, Integer ManifoldDim>
+	bool write_element_with_sides(
+		const std::string &path,
+		const Mesh<Dim, ManifoldDim> &m,
+		const Integer element_id,
+		const Real scale_factor,
+		const Integer side_num,
+		const bool skip_invalid_adj_sides = true)
+	{
+		return false;
+	}
+
+
+		template<Integer Dim, Integer ManifoldDim>
+	bool write_element_with_subsurfaces(
+		const std::string &path,
+		const Mesh<Dim, ManifoldDim> &m,
+		const Integer element_id,
+		const Real scale_factor)
+	{
+
+		return false;
+	}
+
+
+#endif //WITH_MOONOLITH
+
 }
 
 #endif //MARS_VISUALIZATION_HPP

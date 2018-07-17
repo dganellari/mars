@@ -30,7 +30,7 @@ set(CMAKE_CXX_DEBUG "-g")
 add_executable(mars_exec main.cpp ${MARS_HEADERS} ${MARS_SOURCES})
 target_compile_features(mars_exec PUBLIC cxx_std_11)
 
-
+add_definitions("-DWITH_MOONOLITH")
 set(MOONOLITH_DIR "$ENV{INSTALL_DIR}/moon")
 target_include_directories(mars_exec PUBLIC ${MOONOLITH_DIR}/include)
 target_link_libraries(mars_exec 
