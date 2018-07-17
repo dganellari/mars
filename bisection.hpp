@@ -345,6 +345,11 @@ namespace mars {
 			edge_select_ = edge_select;
 		}
 
+		std::shared_ptr<EdgeSelect<Dim, ManifoldDim>> edge_select()
+		{
+			return edge_select_;
+		}
+
 		Integer add_elem(const Simplex<Dim, ManifoldDim> &e)
 		{
 			flags.push_back(NONE);

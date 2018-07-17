@@ -2,6 +2,7 @@
 #define MARS_LONGEST_EDGE_SELECT_HPP
 
 #include "edge_select.hpp"
+#include "node_rank.hpp"
 
 namespace mars {
 	template<Integer Dim, Integer ManifoldDim>
@@ -95,8 +96,6 @@ namespace mars {
 		bool recursive_;
 		bool use_tollerance_;
 	};
-
-
 
 	template<Integer Dim, Integer ManifoldDim>
 	class UniqueLongestEdgeSelect final : public EdgeSelect<Dim, ManifoldDim> {
@@ -351,11 +350,34 @@ namespace mars {
 			return "GloballyUniqueLongestEdgeSelect";
 		}
 
+		void element_refined(
+			const Mesh<Dim, ManifoldDim> &mesh,
+			const Integer element_id,
+			const Edge &edge,
+			const Integer local_midpoint_id) override
+		{
+			if(node_rank_) {
+				node_rank_->set_rank_to_midpoint(edge, local_midpoint_id);
+			}
+		}
+
+		void set_node_rank(const std::shared_ptr<NodeRank> &node_rank)
+		{
+			node_rank_ = node_rank;
+		}
+
+		void update(const Mesh<Dim, ManifoldDim> &mesh) override
+		{
+			if(node_rank_) {
+				node_rank_->init(mesh);
+			}
+		}
+
 	private:
 		const Map &map;
 		bool recursive_;
 		bool use_tollerance_;
-		// bool use_trick_;
+		std::shared_ptr<NodeRank> node_rank_;
 	};
 }
 

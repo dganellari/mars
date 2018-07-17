@@ -309,7 +309,8 @@ namespace mars {
 		Mesh<Dim, ManifoldDim> &mesh,
 		const Integer n_tests,
 		const bool use_uniform_refinement = false,
-		const bool online_update = true)
+		const bool online_update = true,
+		const std::shared_ptr<NodeRank> &node_rank = std::make_shared<NodeRank>())
 	{
 		Map map(0, 1);
 		map.resize(mesh.n_nodes(), 0);
@@ -319,7 +320,7 @@ namespace mars {
 		q.compute();
 
 		// auto edge_select = std::make_shared<RankedEdgeSelect<Dim, ManifoldDim>>(map, online_update);
-		auto edge_select = std::make_shared<OldestEdgeSelect<Dim, ManifoldDim>>(map);
+		auto edge_select = std::make_shared<OldestEdgeSelect<Dim, ManifoldDim>>(map, node_rank);
 		
 		for(Integer i = 0; i < n_tests; ++i) {
 			std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
@@ -359,6 +360,13 @@ namespace mars {
 		Bisection<Dim, ManifoldDim> b(mesh);
 		b.uniform_refine(n_serial_ref);
 
+		Map map(0, 1);
+		map.resize(mesh.n_nodes(), 0);
+
+		auto edge_select = std::make_shared<LEES>(map);
+		auto node_rank   = std::make_shared<NodeRank>();
+		edge_select->set_node_rank(node_rank);
+
 		if(use_edge_rank) {
 			test_incomplete_with_edge_rank(mesh, n_tests, false, true);
 		} else {
@@ -368,24 +376,15 @@ namespace mars {
 			for(Integer i = 0; i < n_tests; ++i) {
 				std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
 				
-				if(!test_incomplete<LEES>(mesh)) {
+				if(!test_incomplete<LEES>(mesh, map, edge_select, false)) {
 					std::cout << "using edge_rank" << std::endl;
-					if(!test_incomplete_with_edge_rank(mesh, 1, false, true)) {
+					if(!test_incomplete_with_edge_rank(mesh, 1, false, true, node_rank)) {
 						assert(false);
 						std::cout << "edge_rank failed" << std::endl;
 					}
-
-					// std::cout << "using NVES" << std::endl;
-					// if(!test_incomplete<NVES>(mesh, true)) {
-					// 	assert(false);
-					// 	std::cout << "NVES failed" << std::endl;
-					// }
 				}
 
-				// if(i < n_tests - 1) { 
 				mesh.clean_up();
-				// }
-
 				std::cout << "n_active_elements: " << mesh.n_active_elements() << "/" << mesh.n_elements() << std::endl;
 				q.compute();
 			}
@@ -620,7 +619,7 @@ void test_incomplete_4D()
 	
 	Mesh<4, 4> mesh(true);
 	read_mesh("../data/cube4d_24.MFEM", mesh);
-	test_incomplete_ND(mesh, 4, true);
+	test_incomplete_ND(mesh, 8, false);
 }
 
 void test_incomplete_5D()
@@ -756,8 +755,8 @@ int main(const int argc, const char *argv[])
 	// test_partition_3D();
 	// test_partition_4D();
 	// test_incomplete_2D();
-	test_incomplete_3D();
-	// test_incomplete_4D();
+	// test_incomplete_3D();
+	test_incomplete_4D();
 	// test_incomplete_5D();
 	// test_incomplete_6D();
 	// test_incomplete_bad_4D();
