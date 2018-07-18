@@ -1,7 +1,7 @@
 #ifndef MARS_VISUALIZATION_HPP
 #define MARS_VISUALIZATION_HPP
 
-#include "base.hpp"
+#include "mars_base.hpp"
 
 #ifdef WITH_MOONOLITH
 
@@ -9,12 +9,12 @@ namespace moonolith {
 	using Integer = mars::Integer;
 }
 
-#include "moonolith_config.hpp"
-#include "moonolith_mesh.hpp"
-// #include "moonolith_svg_canvas.hpp"
-#include "moonolith_eps_canvas.hpp"
-#include "moonolith_plotter.hpp"
-#include "moonolith_func_to_color.hpp"
+#include "mars_moonolith_config.hpp"
+#include "mars_moonolith_mesh.hpp"
+// #include "mars_moonolith_svg_canvas.hpp"
+#include "mars_moonolith_eps_canvas.hpp"
+#include "mars_moonolith_plotter.hpp"
+#include "mars_moonolith_func_to_color.hpp"
 
 #endif //WITH_MOONOLITH
 

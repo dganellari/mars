@@ -1,8 +1,8 @@
 #ifndef GEOM_VTK_WRITER_H
 #define GEOM_VTK_WRITER_H
 
-#include "base.hpp"
-#include "mesh.hpp"
+#include "mars_base.hpp"
+#include "mars_mesh.hpp"
 
 #include <cassert>
 

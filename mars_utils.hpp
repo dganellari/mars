@@ -5,12 +5,12 @@
 #include <cstdlib>
 #include <iostream>
 #include <cassert>
-#include "simplex.hpp"
-#include "lagrange_element.hpp"
-#include "mesh.hpp"
-#include "bisection.hpp"
-#include "vtk_writer.hpp"
-#include "quality.hpp"
+#include "mars_simplex.hpp"
+#include "mars_lagrange_element.hpp"
+#include "mars_mesh.hpp"
+#include "mars_bisection.hpp"
+#include "mars_vtk_writer.hpp"
+#include "mars_quality.hpp"
 
 namespace mars {
 

@@ -1,7 +1,7 @@
 #ifndef MARS_EDGE_HPP
 #define MARS_EDGE_HPP
 
-#include "base.hpp"
+#include "mars_base.hpp"
 #include <array>
 #include <vector>
 #include <algorithm>

@@ -2,7 +2,7 @@
 #define LAGRANGE_ELEMENT_HPP
 
 #include <vector>
-#include "vector.hpp"
+#include "mars_vector.hpp"
 
 namespace mars {
 	template<class Element>

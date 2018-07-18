@@ -1,13 +1,13 @@
 #ifndef MARS_MESH_HPP
 #define MARS_MESH_HPP
 
-#include "simplex.hpp"
-#include "edge_element_map.hpp"
-#include "edge_node_map.hpp"
-#include "dual_graph.hpp"
-#include "red_green_refinement.hpp"
+#include "mars_simplex.hpp"
+#include "mars_edge_element_map.hpp"
+#include "mars_edge_node_map.hpp"
+#include "mars_dual_graph.hpp"
+#include "mars_red_green_refinement.hpp"
 
-#include "visualization.hpp"
+#include "mars_visualization.hpp"
 
 #include <vector>
 #include <array>

@@ -1,8 +1,10 @@
 #ifndef MARS_BENCHMARK_HPP
 #define MARS_BENCHMARK_HPP
 
-#include "newest_vertex.hpp"
-#include "longest_edge.hpp"
+#include "mars_newest_vertex.hpp"
+#include "mars_longest_edge.hpp"
+#include "mars_bisection.hpp"
+#include "mars_quality.hpp"
 
 namespace mars {
 	template<class Mesh>

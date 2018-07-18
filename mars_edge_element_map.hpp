@@ -1,7 +1,8 @@
 #ifndef MARS_EDGE_ELEMENT_MAP_HPP
 #define MARS_EDGE_ELEMENT_MAP_HPP
 
-#include "edge.hpp"
+#include "mars_edge.hpp"
+#include "mars_static_math.hpp"
 
 #include <map>
 #include <vector>
@@ -9,9 +10,14 @@
 #include <cassert>
 #include <set>
 
+
+
 namespace mars {
 	template<Integer Dim, Integer ManifoldDim>
 	class Mesh;
+
+	template<Integer Dim, Integer ManifoldDim>
+	class Simplex;
 
 	template<Integer N>
 	class SubManifoldElementMap {

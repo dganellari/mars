@@ -1,7 +1,7 @@
 #ifndef MARS_COMMUNICATOR_H
 #define MARS_COMMUNICATOR_H
 
-#include "base.hpp"
+#include "mars_base.hpp"
 
 #ifdef WITH_MPI
 

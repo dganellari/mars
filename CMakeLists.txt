@@ -7,56 +7,56 @@ project(mars)
 # set(CMAKE_CXX_COMPILER ${MPI_CXX_COMPILER})
 # set(CMAKE_CXX_COMPILER_DEBUG ${MPI_CXX_COMPILER})
 
-add_definitions("-DWITH_MPI")
-set(CMAKE_CXX_COMPILER mpicc)
-set(CMAKE_CXX_COMPILER_DEBUG mpicxx)
-set(MPI_LIBRARIES "-L/opt/local/lib/mpich-mp/ -lmpi -lmpicxx")
+# add_definitions("-DWITH_MPI")
+# set(CMAKE_CXX_COMPILER mpicc)
+# set(CMAKE_CXX_COMPILER_DEBUG mpicxx)
+# set(MPI_LIBRARIES "-L/opt/local/lib/mpich-mp/ -lmpi -lmpicxx")
 
 
 
 list(APPEND MARS_HEADERS 
-	base.hpp
-	benchmark.hpp
-	bisection.hpp
-	communicator.hpp
-	dof_map.hpp
-	dual_graph.hpp
-	edge.hpp
-	edge_element_map.hpp
-	edge_node_map.hpp
-	edge_select.hpp
-	edge_split.hpp
-	edge_split_pool.hpp
-	lagrange_element.hpp
-	longest_edge.hpp
 	mars.hpp
-	matrix.hpp
-	mesh.hpp
-	mesh_partition.hpp
-	newest_vertex.hpp
-	node_rank.hpp
-	oldest_edge.hpp
-	par_bisection.hpp
-	par_edge_split_pool.hpp
-	par_mesh.hpp
-	partitioned_bisection.hpp
-	quality.hpp
-	ranked_edge.hpp
-	red_green_refinement.hpp
-	simplex.hpp
-	static_math.hpp
-	test.hpp
-	tracker.hpp
-	utils.hpp
-	vector.hpp
-	visualization.hpp
-	vtk_writer.hpp
+	mars_base.hpp
+	mars_benchmark.hpp
+	mars_bisection.hpp
+	mars_communicator.hpp
+	mars_dof_map.hpp
+	mars_dual_graph.hpp
+	mars_edge.hpp
+	mars_edge_element_map.hpp
+	mars_edge_node_map.hpp
+	mars_edge_select.hpp
+	mars_edge_split.hpp
+	mars_edge_split_pool.hpp
+	mars_lagrange_element.hpp
+	mars_longest_edge.hpp
+	mars_matrix.hpp
+	mars_mesh.hpp
+	mars_mesh_partition.hpp
+	mars_newest_vertex.hpp
+	mars_node_rank.hpp
+	mars_oldest_edge.hpp
+	mars_par_bisection.hpp
+	mars_par_edge_split_pool.hpp
+	mars_par_mesh.hpp
+	mars_partitioned_bisection.hpp
+	mars_quality.hpp
+	mars_ranked_edge.hpp
+	mars_red_green_refinement.hpp
+	mars_simplex.hpp
+	mars_static_math.hpp
+	mars_test.hpp
+	mars_tracker.hpp
+	mars_utils.hpp
+	mars_vector.hpp
+	mars_visualization.hpp
+	mars_vtk_writer.hpp
 	)
 
 list(APPEND MARS_SOURCES
-	simplex.cpp
-	test.cpp
-	communicator.cpp
+	mars_communicator.cpp
+	mars_simplex.cpp
+	mars_test.cpp
 	)
 
 set(CMAKE_CXX_DEBUG "-g")

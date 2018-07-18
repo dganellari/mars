@@ -1,7 +1,7 @@
 #ifndef MARS_EDGE_NODE_MAP_HPP
 #define MARS_EDGE_NODE_MAP_HPP
 
-#include "edge.hpp"
+#include "mars_edge.hpp"
 
 #include <map>
 #include <vector>

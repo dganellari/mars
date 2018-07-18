@@ -1,8 +1,8 @@
 #ifndef MARS_EDGE_SPLIT_HPP
 #define MARS_EDGE_SPLIT_HPP
 
-#include "base.hpp"
-#include "edge.hpp"
+#include "mars_base.hpp"
+#include "mars_edge.hpp"
 
 #include <ostream>
 

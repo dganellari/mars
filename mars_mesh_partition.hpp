@@ -1,9 +1,9 @@
 #ifndef MARS_MESH_PARTITION_HPP
 #define MARS_MESH_PARTITION_HPP
 
-#include "edge_split.hpp"
-#include "edge_split_pool.hpp"
-#include "dof_map.hpp"
+#include "mars_edge_split.hpp"
+#include "mars_edge_split_pool.hpp"
+#include "mars_dof_map.hpp"
 
 namespace mars {
 

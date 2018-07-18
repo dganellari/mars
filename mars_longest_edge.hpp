@@ -1,8 +1,8 @@
 #ifndef MARS_LONGEST_EDGE_SELECT_HPP
 #define MARS_LONGEST_EDGE_SELECT_HPP
 
-#include "edge_select.hpp"
-#include "node_rank.hpp"
+#include "mars_edge_select.hpp"
+#include "mars_node_rank.hpp"
 
 namespace mars {
 	template<class Mesh>

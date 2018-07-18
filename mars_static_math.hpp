@@ -1,7 +1,7 @@
 #ifndef MARS_STATIC_MATH_HPP
 #define MARS_STATIC_MATH_HPP
 
-#include "base.hpp"
+#include "mars_base.hpp"
 #include <iostream>
 #include <vector>
 

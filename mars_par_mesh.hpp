@@ -1,8 +1,8 @@
 #ifndef PAR_MESH_HPP
 #define PAR_MESH_HPP
 
-#include "mesh.hpp"
-#include "communicator.hpp"
+#include "mars_mesh.hpp"
+#include "mars_communicator.hpp"
 
 namespace mars {
 

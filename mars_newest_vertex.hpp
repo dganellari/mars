@@ -1,7 +1,8 @@
 #ifndef MARS_NEWEST_VERTEX_HPP
 #define MARS_NEWEST_VERTEX_HPP
 
-#include "edge_select.hpp"
+#include "mars_edge_select.hpp"
+#include "mars_dof_map.hpp"
 
 namespace mars {
 

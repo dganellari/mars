@@ -1,8 +1,9 @@
 #ifndef MARS_EDGE_SELECT_HPP
 #define MARS_EDGE_SELECT_HPP
 
-#include "base.hpp"
-#include "edge.hpp"
+#include "mars_base.hpp"
+#include "mars_edge.hpp"
+#include "mars_edge_element_map.hpp"
 
 #include <ostream>
 

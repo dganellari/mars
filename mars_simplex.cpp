@@ -1,4 +1,4 @@
-#include "simplex.hpp"
+#include "mars_simplex.hpp"
 
 namespace mars {
 	template class Simplex<1, 0>;

@@ -1,10 +1,10 @@
 #ifndef MARS_SIMPLEX_HPP
 #define MARS_SIMPLEX_HPP
 
-#include "base.hpp"
-#include "vector.hpp"
-#include "matrix.hpp"
-#include "static_math.hpp"
+#include "mars_base.hpp"
+#include "mars_vector.hpp"
+#include "mars_matrix.hpp"
+#include "mars_static_math.hpp"
 
 #include <array>
 #include <vector>

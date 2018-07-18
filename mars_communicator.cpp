@@ -1,9 +1,9 @@
 
-#include "base.hpp"
+#include "mars_base.hpp"
 
 #ifdef WITH_MPI
 
-#include "communicator.hpp"
+#include "mars_communicator.hpp"
 #include <iostream>
 
 #define MARS_MPI_CATCH_ERROR(expr)  { int ret = (expr); if(MPI_SUCCESS != ret)  std::cerr << "[" << world_rank() << "][Error] mpi error " << mpi_error_2_string(ret) << " code: " << ret << "(" << __FILE__ << ":" << __LINE__ << ")" << std::endl; }

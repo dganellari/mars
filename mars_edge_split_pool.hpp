@@ -1,9 +1,9 @@
 #ifndef MARS_EDGE_SPLIT_POOL_HPP
 #define MARS_EDGE_SPLIT_POOL_HPP
 
-#include "edge.hpp"
-#include "edge_split.hpp"
-#include "dof_map.hpp"
+#include "mars_edge.hpp"
+#include "mars_edge_split.hpp"
+#include "mars_dof_map.hpp"
 
 namespace mars {
 	class EdgeSplitPool {

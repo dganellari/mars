@@ -1,7 +1,7 @@
 #ifndef MARS_PAR_EDGE_SPLIT_POOL_HPP
 #define MARS_PAR_EDGE_SPLIT_POOL_HPP
 
-#include "communicator.hpp"
+#include "mars_communicator.hpp"
 #include <sstream>
 #include <string>
 #include <iomanip>

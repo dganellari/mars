@@ -1,8 +1,9 @@
 #ifndef MARS_OLDEST_EDGE_HPP
 #define MARS_OLDEST_EDGE_HPP
 
-#include "edge_select.hpp"
-#include "node_rank.hpp"
+#include "mars_edge_select.hpp"
+#include "mars_node_rank.hpp"
+#include "mars_dof_map.hpp"
 
 namespace mars {
 
