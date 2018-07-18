@@ -16,19 +16,41 @@ set(MPI_LIBRARIES "-L/opt/local/lib/mpich-mp/ -lmpi -lmpicxx")
 
 list(APPEND MARS_HEADERS 
 	base.hpp
+	benchmark.hpp
 	bisection.hpp
+	communicator.hpp
+	dof_map.hpp
 	dual_graph.hpp
 	edge.hpp
 	edge_element_map.hpp
 	edge_node_map.hpp
+	edge_select.hpp
+	edge_split.hpp
+	edge_split_pool.hpp
 	lagrange_element.hpp
+	longest_edge.hpp
+	mars.hpp
 	matrix.hpp
 	mesh.hpp
+	mesh_partition.hpp
+	newest_vertex.hpp
+	node_rank.hpp
+	oldest_edge.hpp
+	par_bisection.hpp
+	par_edge_split_pool.hpp
+	par_mesh.hpp
+	partitioned_bisection.hpp
+	quality.hpp
+	ranked_edge.hpp
 	red_green_refinement.hpp
 	simplex.hpp
 	static_math.hpp
 	test.hpp
+	tracker.hpp
+	utils.hpp
 	vector.hpp
+	visualization.hpp
+	vtk_writer.hpp
 	)
 
 list(APPEND MARS_SOURCES
