@@ -765,7 +765,7 @@ void par_mesh_test()
 
 	std::vector<Integer> partitioning = {0, 1};
 
-	Communicator world;
+	Communicator world; world.set_verbose(true);
 	ParMesh2 mesh(world);
 	mesh.init(serial_mesh, partitioning);
 
@@ -783,7 +783,10 @@ void par_mesh_test()
 		}
 	});
 
+	ParEdgeSplitPool pesp(world);
 
+	Bisection<Mesh2> dummy(mesh.get_serial_mesh());
+	pesp.build_edge_interface(mesh, dummy);
 
 	// ParBisection<ParMesh> b(mesh);
 	// b.uniform_refine(1);

@@ -121,7 +121,8 @@ namespace mars {
 		num_procs_(other.num_procs_),
 		send_reqs_(other.send_reqs_),
 		recv_reqs_(other.recv_reqs_),
-		destination_ranks_(other.destination_ranks_) //FIXME it is a bit dangerous
+		destination_ranks_(other.destination_ranks_), //FIXME it is a bit dangerous
+		verbose_(other.verbose_) 
 		{ }
 		
 		~Communicator() {}

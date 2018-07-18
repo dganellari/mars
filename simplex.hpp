@@ -66,6 +66,83 @@ namespace mars {
             Combinations<ManifoldDim+1, ManifoldDim>::choose(side_num, nodes, side.nodes);
         }
     };
+
+    template<Integer Dim, Integer ManifoldDim, class OutputStream>
+    void write(
+        const Simplex<Dim, ManifoldDim> &simplex,
+        OutputStream &os)
+    {
+        for(auto n : simplex.nodes) {
+            os << n;
+        }
+
+        for(auto s : simplex.side_tags) {
+            os << s;
+        }
+
+        os << simplex.id;
+        os << simplex.parent_id;
+
+        for(auto c : simplex.children) {
+            os << c;
+        }
+    }
+
+    template<Integer Dim, Integer ManifoldDim, class InputStream>
+    void read(
+        Simplex<Dim, ManifoldDim> &simplex,
+        InputStream &os)
+    {
+        for(auto &n : simplex.nodes) {
+            os >> n;
+        }
+
+        for(auto &s : simplex.side_tags) {
+            os >> s;
+        }
+
+        os >> simplex.id;
+        os >> simplex.parent_id;
+
+        for(auto &c : simplex.children) {
+            os >> c;
+        }
+    }
+
+
+    template<Integer Dim, class OutputStream>
+    void write(
+        const Simplex<Dim, 1> &simplex,
+        OutputStream &os)
+    {
+        for(auto n : simplex.nodes) {
+            os << n;
+        }
+
+        for(auto s : simplex.side_tags) {
+            os << s;
+        }
+
+        os << simplex.id;
+        os << simplex.parent_id;
+    }
+
+    template<Integer Dim, class InputStream>
+    void read(
+        Simplex<Dim, 1> &simplex,
+        InputStream &os)
+    {
+        for(auto &n : simplex.nodes) {
+            os >> n;
+        }
+
+        for(auto &s : simplex.side_tags) {
+            os >> s;
+        }
+
+        os >> simplex.id;
+        os >> simplex.parent_id;
+    }
     
     template<Integer Dim>
     using Node        = Simplex<Dim, 0>;

@@ -73,7 +73,7 @@ namespace mars {
 	}
 
 	Communicator::Communicator(const MPI_Comm mpi_comm)
-	: mpi_comm_(mpi_comm), rank_(0), num_procs_(0), send_reqs_(), recv_reqs_(), destination_ranks_()
+	: mpi_comm_(mpi_comm), rank_(0), num_procs_(0), send_reqs_(), recv_reqs_(), destination_ranks_(), verbose_(false)
 	{
 		MARS_MPI_CATCH_ERROR( MPI_Comm_rank(mpi_comm_, &rank_) );
 		MARS_MPI_CATCH_ERROR( MPI_Comm_size(mpi_comm_, &num_procs_) );
@@ -82,7 +82,7 @@ namespace mars {
 	}
 
 	Communicator::Communicator()
-	: mpi_comm_(MPI_COMM_WORLD), rank_(0), num_procs_(0), send_reqs_(), recv_reqs_(), destination_ranks_()
+	: mpi_comm_(MPI_COMM_WORLD), rank_(0), num_procs_(0), send_reqs_(), recv_reqs_(), destination_ranks_(), verbose_(false)
 	{
 		MARS_MPI_CATCH_ERROR( MPI_Comm_rank(mpi_comm_, &rank_) );
 		MARS_MPI_CATCH_ERROR( MPI_Comm_size(mpi_comm_, &num_procs_) );

@@ -12,7 +12,7 @@ set(CMAKE_CXX_COMPILER mpicc)
 set(CMAKE_CXX_COMPILER_DEBUG mpicxx)
 set(MPI_LIBRARIES "-L/opt/local/lib/mpich-mp/ -lmpi -lmpicxx")
 
-include_directories(.)
+
 
 list(APPEND MARS_HEADERS 
 	base.hpp
@@ -39,9 +39,23 @@ list(APPEND MARS_SOURCES
 
 set(CMAKE_CXX_DEBUG "-g")
 
+add_library(mars STATIC ${MARS_HEADERS} ${MARS_SOURCES})
+target_link_libraries(mars ${MPI_LIBRARIES})
+target_compile_features(mars PUBLIC cxx_std_11)
+target_include_directories(mars PUBLIC .)
+
 add_executable(mars_exec main.cpp ${MARS_HEADERS} ${MARS_SOURCES})
+target_link_libraries(mars_exec mars)
 target_compile_features(mars_exec PUBLIC cxx_std_11)
-target_link_libraries(mars_exec ${MPI_LIBRARIES})
+
+
+install(TARGETS mars mars_exec
+	RUNTIME DESTINATION bin 
+	LIBRARY DESTINATION lib 
+	ARCHIVE DESTINATION lib 
+)
+
+install(FILES ${MARS_HEADERS} DESTINATION include)
 
 # add_definitions("-DWITH_MOONOLITH")
 # set(MOONOLITH_DIR "$ENV{INSTALL_DIR}/moon")

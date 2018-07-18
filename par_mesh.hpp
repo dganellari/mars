@@ -163,6 +163,21 @@ namespace mars {
 
 			this->n_active_elements_ = serial_mesh.n_elements();
 			this->n_nodes_           = serial_mesh.n_nodes();
+
+			n_interfaced_ = 0;
+			for(auto ii : is_interfaced_) {
+				n_interfaced_ += ii;
+			}
+		}
+
+		inline bool is_interfaced(const Integer rank) const
+		{
+			return is_interfaced_[rank];
+		}
+
+		inline Integer n_interfaced()
+		{
+			return n_interfaced_;
 		}
 
 		void synchronize()
@@ -288,6 +303,7 @@ namespace mars {
 		Map node_map_;
 		Map elem_map_;
 		std::vector<bool> is_interfaced_;
+		Integer n_interfaced_;
 
 		//global size descriptors
 		Integer n_active_elements_;
