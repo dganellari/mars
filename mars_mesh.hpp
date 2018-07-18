@@ -247,6 +247,11 @@ namespace mars {
 			return false;
 		}
 
+		bool is_boundary(const Integer id, const Integer side_num) const {
+			const auto &adj = dual_graph_.adj(id);
+			return adj[side_num] == INVALID_INDEX;
+		}
+
 		bool is_interface(const Integer id) const {
 			const auto &adj = dual_graph_.adj(id);
 

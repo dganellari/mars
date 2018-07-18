@@ -1,3 +1,13 @@
+Questions about CoarseFineTransformations
+- What the tr number means?
+- What old_redges is?
+- Do we need to fill the 3rd order information inherited from Densor with stuff?
+- GetPointMatrix what is the shift doing?
+
+
+
+
+
 git clone https://zulianp@bitbucket.org/zulianp/mars.git
 
 # Needed info from MFEM
