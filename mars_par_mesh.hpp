@@ -282,13 +282,19 @@ namespace mars {
 			}
 		}
 
+		template<std::size_t N>
+		void make_local(std::array<Integer, N> &nodes) const
+		{
+			for(auto &n : nodes) {
+				n = node_map().local(n);
+			}
+		}
+
 		void exchange_interface_sides(std::vector<std::vector<SideElem>> &sides)
 		{
 			using OutputStream = std::ostringstream;
 			using InputStream  = std::istringstream;
 			using BufferObject = std::string;
-
-			using SideElem = typename ParMesh::SideElem;
 		
 			std::vector<OutputStream> output(comm_.size());
 			std::vector<BufferObject> send_buff(comm_.size());
@@ -310,19 +316,11 @@ namespace mars {
 					Integer n_sides = local_sides.size();
 					write(n_sides, output[r]);
 
-					// std::cout << comm_ << " sending " << n_sides << " sides" << std::endl;
-
 					for(auto &s : local_sides) {
 						write(s, output[r]);
-
-						// for(auto n : s.nodes) {
-						// 	std::cout << n << " ";
-						// }
 					}
 				}
 			}
-
-			// comm_.barrier();
 
 			//create output buffers
 			for(Integer r = 0; r < comm_.size(); ++r) {
@@ -351,16 +349,9 @@ namespace mars {
 
 				sides[rank].resize(n_sides);
 
-
-				// std::cout << comm_ << " received " << n_sides << " sides" << std::endl;
-
 				for(Integer k = 0; k < n_sides; ++k) {
 					auto &s = sides[rank][k];
 					read(s, is);
-
-					// for(auto n : s.nodes) {
-					// 	std::cout << n << " ";
-					// }
 				}
 			}
 

@@ -507,6 +507,21 @@ namespace mars {
 		}
 
 		inline static std::ostream &logger();
+
+
+		inline bool reduce_or(const bool val) const
+		{
+			int i_val = val;
+			all_reduce(&i_val, 1, MPIMax());
+			return i_val;
+		}
+
+		inline bool reduce_and(const bool val) const
+		{
+			int i_val = val;
+			all_reduce(&i_val, 1, MPIMin());
+			return i_val;
+		}
 		
 		// bool unstructured_all_gather(ByteOutputStream &send_buffer, std::vector<ByteInputBuffer> &recv_buffer, const bool blocking);
 	};

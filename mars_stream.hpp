@@ -3,6 +3,7 @@
 
 #include <ostream>
 #include <istream>
+#include <set>
 
 namespace mars {
 
@@ -34,6 +35,56 @@ namespace mars {
 		static_assert(std::is_trivial<T>::value, "implement write for your type");
 		os.write((const char *)val, n*sizeof(T));
 	}
+
+
+	template<typename T>
+	inline void read(std::set<T> &val, std::istream &is)
+	{
+		std::size_t n;
+		read(n, is);
+
+		for(std::size_t i = 0; i < n; ++i) {
+			T v;
+			read(v, is);
+			val.insert(v);
+		}
+	}
+
+	template<typename T>
+	inline void write(const std::set<T> &val, std::ostream &os)
+	{
+		std::size_t n = val.size();
+		write(n, os);
+
+		for(const auto &v : val) {
+			write(v, os);
+		}
+	}
+
+
+	template<typename T>
+	inline void read(std::vector<T> &val, std::istream &is)
+	{
+		std::size_t n;
+		read(n, is);
+		val.resize(n);
+
+		for(std::size_t i = 0; i < n; ++i) {
+			read(val[i], is);
+		}
+	}
+
+	template<typename T>
+	inline void write(const std::vector<T> &val, std::ostream &os)
+	{
+		std::size_t n = val.size();
+		write(n, os);
+
+		for(const auto &v : val) {
+			write(v, os);
+		}
+	}
+
 }
 
 #endif //MARS_STREAM_HPP

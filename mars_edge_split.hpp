@@ -53,6 +53,28 @@ namespace mars {
 
 		}
 	};
+
+	template<class OutputStream>
+	void write(
+	    const EdgeSplit &edge_split,
+	    OutputStream &os)
+	{
+	    write(edge_split.edge, os);
+	    write(edge_split.midpoint, os);
+	    write(edge_split.owner, os);
+	    write(edge_split.partitions, os);
+	}
+
+	template<class InputStream>
+	void read(
+	    EdgeSplit &edge_split,
+	    InputStream &is)
+	{
+	    read(edge_split.edge, is);
+	    read(edge_split.midpoint, is);
+	    read(edge_split.owner, is);
+	    read(edge_split.partitions, is);
+	}
 }
 
 #endif //MARS_EDGE_SPLIT_HPP

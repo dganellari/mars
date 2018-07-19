@@ -771,21 +771,21 @@ void par_mesh_test()
 
 	std::vector<Integer> partitioning = {0, 1};
 
-	Communicator world; world.set_verbose(true);
+	Communicator world; //world.set_verbose(true);
 	ParMesh2 mesh(world);
 	mesh.init(serial_mesh, partitioning);
 
 	assert(mesh.is_conforming());
 
-	// ParEdgeSplitPool pesp(world);
+	ParEdgeSplitPool pesp(world);
 
-	// Bisection<Mesh2> dummy(mesh.get_serial_mesh());
-	// pesp.build_edge_interface(mesh, dummy);
+	Bisection<Mesh2> dummy(mesh.get_serial_mesh());
+	pesp.build_edge_interface(mesh, dummy);
 
+	pesp.describe(std::cout);
 
-
-	// ParBisection<ParMesh> b(mesh);
-	// b.uniform_refine(1);
+	ParBisection<ParMesh2> b(mesh);
+	b.uniform_refine(1);
 
 #endif //WITH_MPI
 }

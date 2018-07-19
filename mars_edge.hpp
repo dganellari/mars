@@ -133,6 +133,37 @@ namespace mars {
 		: Side({a_node, another_node})
 		{}
 	};
+
+	template<Integer N>
+	void write(
+	    const Side<N> &side,
+	    std::ostream &os)
+	{
+	    write(&side.nodes[0], side.nodes.size(), os);
+	}
+
+	template<Integer N>
+	void read(
+	    Side<N> &side,
+	    std::istream &is)
+	{
+	    read(&side.nodes[0], side.nodes.size(), is);
+	}
+
+	inline void write(
+	    const Edge &edge,
+	    std::ostream &os)
+	{
+	    write(static_cast<const Side<2> &>(edge), os);
+	}
+
+	inline void read(
+	    Edge &edge,
+	    std::istream &is)
+	{
+	    read(static_cast<Side<2> &>(edge), is);
+	}
+	
 }
 
 #endif //MARS_EDGE_HPP
