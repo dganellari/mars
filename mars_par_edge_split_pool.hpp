@@ -24,73 +24,10 @@ namespace mars {
 			ParMesh &mesh,
 			Bisection<typename ParMesh::Mesh> &bisection)
 		{
-			using SideElem = typename ParMesh::SideElem;
-		
-			std::vector<OutputStream> output(comm_.size());
-			std::vector<BufferObject> send_buff(comm_.size());
-			std::vector<BufferObject> recv_buff(comm_.size());
 
-			std::vector<std::vector<SideElem>> sides(comm_.size());
-
-			std::vector<SideElem> local_sides;
-			for(Integer r = 0; r < comm_.size(); ++r) {
-				if(mesh.is_interfaced(r)) {
-					mesh.collect_interface_sides(
-						r,
-						local_sides,
-						true,
-						true
-					);
-
-					Integer n_sides = local_sides.size();
-					output[r] << n_sides;
-
-					for(auto &s : local_sides) {
-						write(s, output[r]);
-					}
-				}
-			}
-
-			//TODO write additional info
-
-			//create output buffers
-			for(Integer r = 0; r < comm_.size(); ++r) {
-				if(mesh.is_interfaced(r)) {
-					//FIXME
-					send_buff[r] = output[r].str();
-					comm_.i_send(&send_buff[r][0], send_buff[r].size(), r, r);
-				}
-			}
-
-			Integer n_interfaced = mesh.n_interfaced();
-
-			for(Integer i = 0; i < n_interfaced; ++i) {
-				Integer rank, size;
-				while ( !comm_.i_probe_any<byte>( &rank, &size ) ) {}
-				recv_buff[rank].resize(size);
-				comm_.i_recv(&recv_buff[rank][0], size, rank, comm_.rank());
-			}
-
-			for(Integer i = 0; i < n_interfaced; ++i) {
-				Integer rank, index;
-				while ( !comm_.test_recv_any( &rank, &index ) ) {}
-
-				Integer n_sides = 0;
-				InputStream is(recv_buff[rank]);
-				is >> n_sides;
-
-				sides[rank].resize(n_sides);
-
-				for(Integer k = 0; k < n_sides; ++k) {
-					read(sides[rank][k], is);
-				}
-			}
-
-			//TODO read additional info
-
-			//wait that all sends have been accomplished
-			comm_.wait_all();
 		}
+
+		
 
 		void synchronize() {}
 

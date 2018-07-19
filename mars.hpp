@@ -4,7 +4,7 @@
 #include "mars_base.hpp"
 #include "mars_benchmark.hpp"
 #include "mars_bisection.hpp"
-// #include "mars_communicator.hpp"
+
 #include "mars_dof_map.hpp"
 #include "mars_dual_graph.hpp"
 #include "mars_edge.hpp"
@@ -21,9 +21,6 @@
 #include "mars_newest_vertex.hpp"
 #include "mars_node_rank.hpp"
 #include "mars_oldest_edge.hpp"
-// #include "mars_par_bisection.hpp"
-// #include "mars_par_edge_split_pool.hpp"
-// #include "mars_par_mesh.hpp"
 #include "mars_partitioned_bisection.hpp"
 #include "mars_quality.hpp"
 #include "mars_ranked_edge.hpp"
@@ -36,5 +33,12 @@
 #include "mars_vector.hpp"
 #include "mars_visualization.hpp"
 #include "mars_vtk_writer.hpp"
+
+#ifdef WITH_MPI
+#include "mars_communicator.hpp"
+#include "mars_par_bisection.hpp"
+#include "mars_par_edge_split_pool.hpp"
+#include "mars_par_mesh.hpp"
+#endif //WITH_MPI
 
 #endif //MARS_HPP

@@ -224,6 +224,150 @@ namespace mars {
 			}
 		}
 
+		bool is_conforming()
+		{
+			int ret = mesh_.is_conforming();
+			comm_.all_reduce(&ret, 1, MPIMax());
+
+			if(!ret) return false;
+
+			std::vector<std::vector<SideElem>> sides;
+			exchange_interface_sides(sides);
+
+			SideElem side;
+			std::set<Side<ManifoldDim>> local_sides;
+			
+			for(Integer i = 0; i < mesh_.n_elements(); ++i) {
+				if(!mesh_.is_active(i)) continue;
+
+				const auto &e = mesh_.elem(i);
+
+				for(Integer k = 0; k < n_sides(e); ++k) {
+					if(mesh_.is_boundary(i, k) && is_interface(i, k)) {
+						e.side(k, side);
+						make_global(side.nodes);
+						local_sides.insert(Side<ManifoldDim>(side.nodes));
+					}
+				}
+			}
+
+			for(Integer r = 0; r < comm_.size(); ++r) {
+				if(r == comm_.rank()) continue;
+
+				for(const auto &s : sides[r]) {
+					auto it = local_sides.find(Side<ManifoldDim>(s.nodes));
+					
+					if(it == local_sides.end()) {
+						ret = false;
+						std::cerr << comm_;
+						std::cerr << "[Error] missing side ";
+						for(auto n : s.nodes) {
+							std::cerr << n << " ";
+						}
+
+						std::cerr << std::endl;
+					}
+				}
+			}
+
+			comm_.all_reduce(&ret, 1, MPIMax());
+			return ret;
+		}
+
+		template<std::size_t N>
+		void make_global(std::array<Integer, N> &nodes) const
+		{
+			for(auto &n : nodes) {
+				n = node_map().global(n);
+			}
+		}
+
+		void exchange_interface_sides(std::vector<std::vector<SideElem>> &sides)
+		{
+			using OutputStream = std::ostringstream;
+			using InputStream  = std::istringstream;
+			using BufferObject = std::string;
+
+			using SideElem = typename ParMesh::SideElem;
+		
+			std::vector<OutputStream> output(comm_.size());
+			std::vector<BufferObject> send_buff(comm_.size());
+			std::vector<BufferObject> recv_buff(comm_.size());
+
+			sides.clear();
+			sides.resize(comm_.size());
+
+			std::vector<SideElem> local_sides;
+			for(Integer r = 0; r < comm_.size(); ++r) {
+				if(this->is_interfaced(r)) {
+					this->collect_interface_sides(
+						r,
+						local_sides,
+						true,
+						true
+					);
+
+					Integer n_sides = local_sides.size();
+					write(n_sides, output[r]);
+
+					// std::cout << comm_ << " sending " << n_sides << " sides" << std::endl;
+
+					for(auto &s : local_sides) {
+						write(s, output[r]);
+
+						// for(auto n : s.nodes) {
+						// 	std::cout << n << " ";
+						// }
+					}
+				}
+			}
+
+			// comm_.barrier();
+
+			//create output buffers
+			for(Integer r = 0; r < comm_.size(); ++r) {
+				if(this->is_interfaced(r)) {
+					send_buff[r] = output[r].str();
+					comm_.i_send(&send_buff[r][0], send_buff[r].size(), r, r);
+				}
+			}
+
+			Integer n_interfaced = this->n_interfaced();
+
+			for(Integer i = 0; i < n_interfaced; ++i) {
+				Integer rank, size;
+				while ( !comm_.i_probe_any<byte>( &rank, &size ) ) {}
+				recv_buff[rank].resize(size);
+				comm_.i_recv(&recv_buff[rank][0], size, rank, comm_.rank());
+			}
+
+			for(Integer i = 0; i < n_interfaced; ++i) {
+				Integer rank, index;
+				while ( !comm_.test_recv_any( &rank, &index ) ) {}
+
+				Integer n_sides = 0;
+				InputStream is(recv_buff[rank]);
+				read(n_sides, is);
+
+				sides[rank].resize(n_sides);
+
+
+				// std::cout << comm_ << " received " << n_sides << " sides" << std::endl;
+
+				for(Integer k = 0; k < n_sides; ++k) {
+					auto &s = sides[rank][k];
+					read(s, is);
+
+					// for(auto n : s.nodes) {
+					// 	std::cout << n << " ";
+					// }
+				}
+			}
+
+			//wait that all sends have been accomplished
+			comm_.wait_all();
+		}
+
 		void clean_up()
 		{
 			//IMPLEMENT ME
@@ -282,6 +426,12 @@ namespace mars {
 		}
 
 	private:
+
+		bool is_interface(const Integer element_id, const Integer side_num) const
+		{
+			return is_partition_tag(mesh_.elem(element_id).side_tags[side_num]);
+		}
+
 
 		static bool is_partition_tag(const Integer tag)
 		{

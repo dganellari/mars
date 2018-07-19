@@ -5,6 +5,7 @@
 #include "mars_vector.hpp"
 #include "mars_matrix.hpp"
 #include "mars_static_math.hpp"
+#include "mars_stream.hpp"
 
 #include <array>
 #include <vector>
@@ -72,76 +73,52 @@ namespace mars {
         const Simplex<Dim, ManifoldDim> &simplex,
         OutputStream &os)
     {
-        for(auto n : simplex.nodes) {
-            os << n;
-        }
+        write(&simplex.nodes[0], simplex.nodes.size(), os);
+        write(&simplex.side_tags[0], simplex.side_tags.size(), os);
+        write(simplex.id, os);
+        write(simplex.parent_id, os);
 
-        for(auto s : simplex.side_tags) {
-            os << s;
-        }
-
-        os << simplex.id;
-        os << simplex.parent_id;
-
-        for(auto c : simplex.children) {
-            os << c;
-        }
+        Integer n_children = simplex.children.size();
+        write(n_children, os);
+        write(&simplex.children[0], simplex.children.size(), os);
     }
 
     template<Integer Dim, Integer ManifoldDim, class InputStream>
     void read(
         Simplex<Dim, ManifoldDim> &simplex,
-        InputStream &os)
+        InputStream &is)
     {
-        for(auto &n : simplex.nodes) {
-            os >> n;
-        }
+        read(&simplex.nodes[0], simplex.nodes.size(), is);
+        read(&simplex.side_tags[0], simplex.side_tags.size(), is);
+        read(simplex.id, is);
+        read(simplex.parent_id, is);
 
-        for(auto &s : simplex.side_tags) {
-            os >> s;
-        }
-
-        os >> simplex.id;
-        os >> simplex.parent_id;
-
-        for(auto &c : simplex.children) {
-            os >> c;
-        }
+        Integer n_children;
+        read(n_children, is);
+        simplex.children.resize(n_children);
+        read(&simplex.children[0], simplex.children.size(), is);
     }
-
 
     template<Integer Dim, class OutputStream>
     void write(
         const Simplex<Dim, 1> &simplex,
         OutputStream &os)
     {
-        for(auto n : simplex.nodes) {
-            os << n;
-        }
-
-        for(auto s : simplex.side_tags) {
-            os << s;
-        }
-
-        os << simplex.id;
-        os << simplex.parent_id;
+        write(&simplex.nodes[0], simplex.nodes.size(), os);
+        write(&simplex.side_tags[0], simplex.side_tags.size(), os);
+        write(simplex.id, os);
+        write(simplex.parent_id, os);
     }
 
     template<Integer Dim, class InputStream>
     void read(
         Simplex<Dim, 1> &simplex,
-        InputStream &os)
+        InputStream &is)
     {
-        for(auto &n : simplex.nodes) {
-            os >> n;
-        }
-
-        for(auto &s : simplex.side_tags) {
-            os >> s;
-        }
-
-        os >> simplex.id;
-        os >> simplex.parent_id;
+        read(&simplex.nodes[0], simplex.nodes.size(), is);
+        read(&simplex.side_tags[0], simplex.side_tags.size(), is);
+        read(simplex.id, is);
+        read(simplex.parent_id, is);
     }
     
     template<Integer Dim>

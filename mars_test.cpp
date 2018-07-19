@@ -332,6 +332,21 @@ namespace mars {
 		//////////////////////////////////////////////////////
 	}
 
+	void stream_write_read()
+	{
+		std::ostringstream oss;
+		std::istringstream iss;
+
+		Integer num = 10;
+		Integer read_num = 0;
+
+		write(num, oss);
+		iss.str(oss.str());
+		read(read_num, iss);
+
+		assert(num == read_num);
+	}
+
 	void run_tests()
 	{
 		test_det();

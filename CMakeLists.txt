@@ -7,10 +7,10 @@ project(mars)
 # set(CMAKE_CXX_COMPILER ${MPI_CXX_COMPILER})
 # set(CMAKE_CXX_COMPILER_DEBUG ${MPI_CXX_COMPILER})
 
-# add_definitions("-DWITH_MPI")
-# set(CMAKE_CXX_COMPILER mpicc)
-# set(CMAKE_CXX_COMPILER_DEBUG mpicxx)
-# set(MPI_LIBRARIES "-L/opt/local/lib/mpich-mp/ -lmpi -lmpicxx")
+add_definitions("-DWITH_MPI")
+set(CMAKE_CXX_COMPILER mpicc)
+set(CMAKE_CXX_COMPILER_DEBUG mpicxx)
+set(MPI_LIBRARIES "-L/opt/local/lib/mpich-mp/ -lmpi -lmpicxx")
 
 
 

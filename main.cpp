@@ -13,13 +13,17 @@
 #include "mars_utils.hpp"
 #include "mars_mesh_partition.hpp"
 #include "mars_partitioned_bisection.hpp"
-// #include "mars_par_bisection.hpp"
+
 #include "mars_benchmark.hpp"
 #include "mars_test.hpp"
 #include "mars_ranked_edge.hpp"
 #include "mars_oldest_edge.hpp"
 #include "mars_longest_edge.hpp"
-// #include "mars_par_mesh.hpp"
+
+#ifdef WITH_MPI
+#include "mars_par_bisection.hpp"
+#include "mars_par_mesh.hpp"
+#endif //WITH_MPI
 
 void test_bisection_2D()
 {	
@@ -754,52 +758,45 @@ void test_incomplete_bad_4D()
 	os_p.close();
 }
 
-// void par_mesh_test()
-// {
-// 	using namespace mars;
+void par_mesh_test()
+{
+#ifdef WITH_MPI
+	using namespace mars;
 
-// 	using ParMesh2 = mars::ParMesh<2, 2>;
+	using ParMesh2 = mars::ParMesh<2, 2>;
 
-// 	Mesh2 serial_mesh(true);
-// 	read_mesh("../data/square_2.MFEM", serial_mesh);
+	Mesh2 serial_mesh(true);
+	read_mesh("../data/square_2.MFEM", serial_mesh);
+	mark_boundary(serial_mesh);
 
-// 	std::vector<Integer> partitioning = {0, 1};
+	std::vector<Integer> partitioning = {0, 1};
 
-// 	Communicator world; world.set_verbose(true);
-// 	ParMesh2 mesh(world);
-// 	mesh.init(serial_mesh, partitioning);
+	Communicator world; world.set_verbose(true);
+	ParMesh2 mesh(world);
+	mesh.init(serial_mesh, partitioning);
 
-// 	std::vector<Line2> sides;
-// 	mesh.collect_interface_sides(world.rank() == 0? 1 : 0, sides);
+	assert(mesh.is_conforming());
 
-// 	serial_apply(world, [&](){
-// 		std::cout << "sides" << world << std::endl;
-// 		for(const auto &s : sides) {
-// 			for(const auto &n : s.nodes) {
-// 				std::cout << n << " ";
-// 			}
+	// ParEdgeSplitPool pesp(world);
 
-// 			std::cout << std::endl;
-// 		}
-// 	});
-
-// 	ParEdgeSplitPool pesp(world);
-
-// 	Bisection<Mesh2> dummy(mesh.get_serial_mesh());
-// 	pesp.build_edge_interface(mesh, dummy);
-
-// 	// ParBisection<ParMesh> b(mesh);
-// 	// b.uniform_refine(1);
+	// Bisection<Mesh2> dummy(mesh.get_serial_mesh());
+	// pesp.build_edge_interface(mesh, dummy);
 
 
 
-// }
+	// ParBisection<ParMesh> b(mesh);
+	// b.uniform_refine(1);
+
+#endif //WITH_MPI
+}
 
 int main(int argc, char *argv[])
 {
 	using namespace mars;
 
-	// MPI_Init(&argc, &argv);
+#ifdef WITH_MPI
+	MPI_Init(&argc, &argv);
+#endif //WITH_MPI
 	// test_bisection_2D();
 	// test_bisection_3D();
 	// test_bisection_4D();
@@ -815,7 +812,11 @@ int main(int argc, char *argv[])
 	// test_incomplete_6D();
 	// test_incomplete_bad_4D();
 	// run_tests();
-	// par_mesh_test();
-	// return MPI_Finalize();
+
+#ifdef WITH_MPI
+	par_mesh_test();
+	return MPI_Finalize();
+#else
 	return 0;
+#endif //WITH_MPI
 }
