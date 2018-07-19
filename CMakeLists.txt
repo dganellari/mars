@@ -7,15 +7,15 @@ project(mars)
 # set(CMAKE_CXX_COMPILER ${MPI_CXX_COMPILER})
 # set(CMAKE_CXX_COMPILER_DEBUG ${MPI_CXX_COMPILER})
 
-add_definitions("-DWITH_MPI")
-set(CMAKE_CXX_COMPILER mpicc)
-set(CMAKE_CXX_COMPILER_DEBUG mpicxx)
-set(MPI_LIBRARIES "-L/opt/local/lib/mpich-mp/ -lmpi -lmpicxx")
+# add_definitions("-DWITH_MPI")
+# set(CMAKE_CXX_COMPILER mpicc)
+# set(CMAKE_CXX_COMPILER_DEBUG mpicxx)
+# set(MPI_LIBRARIES "-L/opt/local/lib/mpich-mp/ -lmpi -lmpicxx")
 
 
 
-list(APPEND MARS_HEADERS 
-	mars.hpp
+list(APPEND MARS_HEADERS
+	mars.hpp 
 	mars_base.hpp
 	mars_benchmark.hpp
 	mars_bisection.hpp
@@ -45,6 +45,7 @@ list(APPEND MARS_HEADERS
 	mars_red_green_refinement.hpp
 	mars_simplex.hpp
 	mars_static_math.hpp
+	mars_stream.hpp
 	mars_test.hpp
 	mars_tracker.hpp
 	mars_utils.hpp
@@ -75,7 +76,7 @@ install(TARGETS mars mars_exec
 	RUNTIME DESTINATION bin 
 	LIBRARY DESTINATION lib 
 	ARCHIVE DESTINATION lib 
-)
+	)
 
 install(FILES ${MARS_HEADERS} DESTINATION include)
 

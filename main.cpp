@@ -777,13 +777,6 @@ void par_mesh_test()
 
 	assert(mesh.is_conforming());
 
-	ParEdgeSplitPool pesp(world);
-
-	Bisection<Mesh2> dummy(mesh.get_serial_mesh());
-	pesp.build_edge_interface(mesh, dummy);
-
-	pesp.describe(std::cout);
-
 	ParBisection<ParMesh2> b(mesh);
 	b.uniform_refine(1);
 

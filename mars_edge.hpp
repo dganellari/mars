@@ -2,6 +2,8 @@
 #define MARS_EDGE_HPP
 
 #include "mars_base.hpp"
+#include "mars_stream.hpp"
+
 #include <array>
 #include <vector>
 #include <algorithm>
