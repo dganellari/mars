@@ -67,8 +67,6 @@ target_include_directories(mars PUBLIC .)
 
 add_executable(mars_exec main.cpp ${MARS_HEADERS} ${MARS_SOURCES})
 target_link_libraries(mars_exec mars)
-target_compile_features(mars_exec PUBLIC cxx_std_11)
-
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/mars_config.hpp.in ${CMAKE_BINARY_DIR}/mars_config.hpp)
 include_directories(${CMAKE_BINARY_DIR})

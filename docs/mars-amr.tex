@@ -1,22 +1,89 @@
+%add the next in child files %!TEX root = mars-amr.tex
+
 \documentclass{article}
 \usepackage[utf8]{inputenc}
 \usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{tikz}
+\usepackage{mathptmx} 
+\usepackage{listings}
+\usepackage{xcolor} 
+\usepackage{tikz} % To generate the plot from csv
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.12} 
+\usepackage{pgfplotstable}
+\usetikzlibrary{backgrounds}
+% \usepackage[percent]{overpic}
+
+\usepackage{draftwatermark}
+\SetWatermarkText{DRAFT}
+\SetWatermarkScale{1}
+
+\definecolor{avgcolor}{rgb}{0,1.,0.5}
+\definecolor{maxcolor}{rgb}{1,0.5,0}
+\definecolor{mincolor}{rgb}{0,0.5,1}
+
+% % set the default code style
+% \lstset{
+%     frame=tb, % draw a frame at the top and bottom of the code block
+%     tabsize=4, % tab space width
+%     showstringspaces=false, % don't mark spaces in strings
+%     numbers=left, % display line numbers on the left
+%     % commentstyle=\color{green}, % comment color
+%     % keywordstyle=\color{blue}, % keyword color
+%     % stringstyle=\color{red} % string color
+% }
+
+
+\definecolor{cppred}{rgb}{0.6,0,0} % for strings
+\definecolor{cppping}{rgb}{1,0.7,0.7} % for numbers
+\definecolor{cppgreen}{rgb}{0.25,0.5,0.35} % comments
+\definecolor{cpppurple}{rgb}{0.5,0,0.35} % keywords
+\definecolor{cppdocblue}{rgb}{0.25,0.35,0.75} % cppdoc
+
+\newcommand{\todo}[1]{{\color{cppdocblue} #1 }} 
+
+
+
+\lstset
+{
+	language=C++, 
+	basicstyle=\scriptsize\ttfamily,
+	numberstyle=\tiny\color{cpppink},
+	keywordstyle=\color{cpppurple}\bfseries,
+	stringstyle=\color{cppred},
+	commentstyle=\color{cppgreen},
+}
+
+\newcommand{\cppdouble}{{\color{cpppurple} double}}
+\newcommand{\cppint}{{\color{cpppurple} int}}
+\newcommand{\cppif}{{\color{cpppurple} if}}
+\newcommand{\cppwhile}{{\color{cpppurple} while}}
+\newcommand{\cppelse}{{\color{cpppurple} else}}
+
+\title{MARS: Adaptive Simplicial Mesh Refinement}
+% \author{Patrick Zulian}
 \begin{document}
+\maketitle
 
-\section{Bisection algorithm for simplical meshes}
-\label{sec:title}
+\section{Introduction}
+MARS is a $N$-dimensional mesh (tested up to 6D) refinement C++ library. Currently the refinement algorithms are only available for serial run-times, but an MPI-based parallel implementation is in development.
 
-\begin{itemize}
-	\item Serial algorithm
-	\item Longest edge splitting with propagation front
-	% \item Local refinement propagation so that the levels of refinement of the one-ring
-	% neighbors it differs at most one.
-	\item For 2D meshes with triangles isosceles the number of congruence classes is 1. 
-	\item The algorithm works directly for 3D and 4D.
-\end{itemize}
+\section{Edge bisection algorithm}
+\label{sec:bisection}
 
-\begin{figure}[htbp]
-	\centering
+The general refinement strategy implemented in this library is based on recursive edge bisection. The algorithm consists of the following steps:
+
+\begin{enumerate}
+	\item Mark elements for refinement.
+	\item For each marked element select the edge to bisect.
+	\item Refine the element by bisect the edge and mark the incident elements for refinement.
+	\item Go back to 2 and repeat until the mesh is conforming.
+\end{enumerate}
+
+Figure~\ref{fig:two_dim} shows consecutive refinement steps on a 2D mesh, and Figure~\ref{fig:sphere} shows the final mesh for a hyper-spherical refinement pattern for both 2D and 3D meshes.
+
+\begin{figure} \centering \footnotesize
 	\parbox{0.5\linewidth}{
 	\includegraphics[width=0.32\linewidth]{figures/mesh_2_bisect_1} \hfill
 	\includegraphics[width=0.32\linewidth]{figures/mesh_2_bisect_2} \hfill
@@ -32,67 +99,55 @@
 	\label{fig:two_dim}
 \end{figure}
 
-\begin{figure}[htbp]
-	\centering
+\begin{figure} \centering \footnotesize
 	\includegraphics[width=0.40\linewidth]{figures/2d_sphere} \hfill
 	\includegraphics[width=0.40\linewidth]{figures/3d_sphere} 
 	\caption{Result for sphere refinement pattern. Left: 2D. Right: 3D.}
 	\label{fig:sphere}
 \end{figure}
 
-\section{Quality for recursive longest-edge}
+\section{Edge selection}
 
-\begin{figure}[htbp]
-	\centering
-	\includegraphics[width=0.48\linewidth]{figures/quality3} \hfill
-	\includegraphics[width=0.48\linewidth]{figures/quality4} 
-	\caption{Quality of the elements for several iterations of the adaptive refinement shown in Figure~\ref{fig:sphere}. The $x$ axis represent the total number of elements in the mesh. The $y$ axis the quality criterion (lower is better).
-	 Left: 3D. Right: 4D.}
-	\label{fig:quality}
-\end{figure}
+We have implemented the following strategies:
 
-\begin{figure}[htbp]
-	\centering
-	\includegraphics[width=0.8\linewidth]{figures/quality_metrics}
-	\caption{Quality metics. We used ``Alpha'' and ``Tau''. }
-	\label{fig:metrics}
-\end{figure}
+\begin{itemize}
+	\item Recursive longest-edge bisection.
+	\item Newest vertex bisection.
+\end{itemize}
 
+\section{Recursive edge selection}
 
+When refining an element $S$ incident to an edge $e_1$ that has been selected for refinement, we first select the appropriate edge $e_2$ (which does not have to respect $e_1 = e_2$).
+For the algorithm to terminate we have to finally select $e_1$ from one of the descendants of $S$.
+Figure~\ref{fig:recur} shows the difference between non-recursive and recursive edge selection.
 
-\clearpage
-
-\section{Newest-vertex with longest edge for $D>2$}
-
-Without a recurisve closure of the refined edge the overall element quality degrades very fast.
-
-\begin{figure}[htbp]
-	\centering
-	\includegraphics[width=0.48\linewidth]{figures/non-recursive} \hfill
-	\includegraphics[width=0.48\linewidth]{figures/recursive}
+\begin{figure} \centering \footnotesize
+	\includegraphics[width=0.45\linewidth]{figures/non-recursive} \hfill
+	\includegraphics[width=0.45\linewidth]{figures/recursive}
 	\caption{Non-recursive vs. recursive (3D).}
-	\label{fig:metrics_r}
-\end{figure}
-
-\section{Quality of newest vertex with longest edge.}
-
-While the longest-edge criterion is superior, the hybrid approach (newest vertex + longest edge) 
-stays in the same order of magnitude for the degrading element quality. 
-With further experiments it appears that the hybrid approach does not consistently generates conforming meshes.
-
-\begin{figure}[htbp]
-	\centering
-	\includegraphics[width=0.48\linewidth]{figures/NewestVertex_Recursive} \hfill
-	\includegraphics[width=0.48\linewidth]{figures/NewestVertex_and_LongestEdge_Recursive} 
-
-	\caption{Quality of the elements for several iterations of the adaptive refinement shown in Figure~\ref{fig:sphere}. The $x$ axis represent the total number of elements in the 4D mesh. The $y$ axis the quality criterion (lower is better). The influence of longest edge shows on both the better quality and the larger number of elements generated.}
-	\label{fig:quality_nv}
+	\label{fig:recur}
 \end{figure}
 
 
-\clearpage
 
-\section{Parallelization}
+\section{Quality}
+
+For measuring the condition of an element $S$ we use the following metrics:
+\begin{align*}
+	\alpha(S) &= \frac{\left( \sum_{i=1}^{D+1} \text{vol}(\text{side}_i(S))/(D+1)  \right)}{\text{vol}(S)} \\
+	\tau(S) &= \frac{\max_{i=1}^{D+1} \text{vol}(\text{side}_i(S))}{\min_{i=1}^{D+1} \text{vol}(\text{side}_i(S))}
+\end{align*}
+
+
+Longest-edge bisection is known to generate stable and high quality refinements as shown includegraphics Figure~\ref{fig:quality2}, Figure~\ref{fig:quality3}, and Figure~\ref{fig:quality4}. 
+
+%While the longest-edge criterion is superior, the hybrid approach (newest vertex + longest edge) stays in the same order of magnitude for the degrading element quality. With further experiments it appears that the hybrid approach does not consistently generates conforming meshes.
+
+\input{charts/quality2D}
+\input{charts/quality3D}
+\input{charts/quality4D}
+
+\section{Parallelization (work in progress)}
 
 Le $E$ be an element with vertex indices $I(E) = \{v_1, v_2, ... v_{D+1} \}$.
 
@@ -118,42 +173,45 @@ This implies that set $E$ can be split only once without requiring synchronizati
 \end{enumerate}
 
 
-\begin{figure}[htbp]
-	\centering
+\begin{figure} \centering \footnotesize
 	\includegraphics[width=0.48\linewidth]{figures/partial} \hfill
 	\includegraphics[width=0.48\linewidth]{figures/complete} 
-
 	\caption{Two steps of the parallel algorithm. Left: refinement of marked elements. Right: completion of the compatibility chain.}
 	\label{fig:par_algo}
 \end{figure}
 
+\section{Implementation}
+MARS is developed using object oriented design and meta-programming. All the important classes are parametrized with compilation time dimensions. With {\tt Dim} we define the coordinate space dimension, and with {\tt ManifoldDim}, with  {\tt ManifoldDim} $\leq$ {\tt Dim}, we define the dimension of the manifold. 
+
+Here are the main classes
+
+\begin{itemize}
+	\item {\tt template<Integer Dim, Integer ManifoldDim> class Mesh}. The {\tt Mesh} class stores the element and point information, and can construct side and boundary information on the fly.
+	\item {\tt template<Integer Dim, Integer ManifoldDim> class Simplex}. The {\tt Simplex} class represent any type of elements supported by the library. For instance a {\tt Simplex<3, 3>} is a tetrahedron volume element, and {\tt Simplex<3, 2>} is a triangle surface element.
+	\item {\tt template<class Mesh> class Bisection}. The {\tt Bisection} class
+	allows to refine the mesh both uniformly and adaptively.
+\end{itemize}
+
+Here is an example work-flow:
+
+\begin{lstlisting}[language=C++, caption={Example refinement code}]
+using namespace mars;
+
+Mesh4 mesh;
+read_mesh("path_to_4D_mesh.MFEM", mesh);
+mesh.renumber_nodes();
+
+Bisection<Mesh4> b(mesh);
+b.set_edge_select(std::make_shared<LongestEdgeSelect<Mesh4>>());
+
+//uniform refinement
+b.uniform_refine(1);
+
+//adaptive refinement
+b.refine({marked_el_1, marked_el_2, ...});
+\end{lstlisting}
 
 
-\clearpage
-
-% The parallel algorithm in 2D works by refinining independently the subdomains, then conforming the 
-% interfacing edges (see Figure~\ref{fig:par_refinement}). 
-
-
-%For D $>2$ this does not work since the faces might have been split diffrently because of the compatibility chain (recursive step).
-
-% In higher dimensions the only local refinement strategy that seems to work well is newest-vertex bisection. 
-
-% \begin{itemize}
-% 	\item The inpendent set strategy
-% 	\item \url{http://www.csc.kth.se/~jjan/transfer/bisect_0509.pdf}
-% 	\item Coarsen and correct faces on the interfaces as in 
-% \end{itemize}
-
-
-
-% \begin{figure}[htbp]
-% 	\centering
-% 	\includegraphics[width=0.48\linewidth]{figures/partitioning_with_one_part_without_refinement} \hfill
-% 	\includegraphics[width=0.48\linewidth]{figures/longest_edge}
-% 	\caption{Partitioning with one part without refinement. Color represent partitions.}
-% 	\label{fig:par_refinement}
-% \end{figure}
 
 
 

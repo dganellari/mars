@@ -599,7 +599,7 @@ void run_benchmarks()
 	Mesh4 m4;
 	read_mesh("../data/cube4d_24.MFEM", m4);
 
-	b4.run(6, m4, "b4");
+	b4.run(10, m4, "b4");
 }
 
 void test_incomplete_2D()
@@ -794,7 +794,7 @@ int main(int argc, char *argv[])
 	// test_bisection_3D();
 	// test_bisection_4D();
 
-	// run_benchmarks();
+	run_benchmarks();
 	// test_partition_2D();
 	// test_partition_3D();
 	// test_partition_4D();
@@ -807,7 +807,7 @@ int main(int argc, char *argv[])
 	// run_tests();
 
 #ifdef WITH_MPI
-	par_mesh_test();
+	// par_mesh_test();
 	return MPI_Finalize();
 #else
 	return 0;

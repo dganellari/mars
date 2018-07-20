@@ -1,0 +1,82 @@
+%!TEX root = ../mars-amr.tex
+
+\begin{figure} \centering \footnotesize
+\hfill
+\begin{tikzpicture}[tight background]% , show background rectangle]
+    \begin{semilogxaxis}[
+        height=0.48\linewidth,
+        % width=\pgfplotswidth,
+        width=0.48\linewidth,
+        yticklabel style={align=right,inner sep=0pt,xshift=-0.3em},
+        %
+        scaled ticks=false,
+        legend entries={$\alpha_\text{max}$,$\alpha_\text{avg}$,$\alpha_\text{min}$},
+        legend style={at={(1,0.9)},anchor=north east,fill=none,draw=none,legend cell align=left}
+    ]
+    %
+    \addplot[
+        color=maxcolor,
+        mark=*,
+        mark size=1pt,
+    ]
+    table[x=ne,y=alpha max,col sep=comma] {charts/quality4.csv}; 
+    %
+    \addplot[
+        color=avgcolor,
+        mark=*,
+        mark size=1pt,
+        %skip coords between index={0}{1},
+    ]
+    table[x=ne,y=alpha avg,col sep=comma] {charts/quality4.csv}; 
+    %
+    \addplot[
+        color=mincolor,
+        mark=*,
+        mark size=1pt,
+    ]
+    table[x=ne,y=alpha min,col sep=comma] {charts/quality4.csv}; 
+
+    \end{semilogxaxis}
+\end{tikzpicture} \hfill
+%
+\begin{tikzpicture}[tight background]% , show background rectangle]
+    \begin{semilogxaxis}[
+        height=0.48\linewidth,
+        % width=\pgfplotswidth,
+        width=0.48\linewidth,
+        yticklabel style={align=right,inner sep=0pt,xshift=-0.3em},
+        %
+        scaled ticks=false,
+        legend entries={$\tau_\text{max}$,$\tau_\text{avg}$,$\tau_\text{min}$},
+        legend style={at={(1,0.9)},anchor=north east,fill=none,draw=none,legend cell align=left}
+    ]
+    %
+    \addplot[
+        color=maxcolor,
+        mark=*,
+        mark size=1pt,
+    ]
+    table[x=ne,y=tau max,col sep=comma] {charts/quality4.csv}; 
+    %
+    \addplot[
+        color=avgcolor,
+        mark=*,
+        mark size=1pt,
+        %skip coords between index={0}{1},
+    ]
+    table[x=ne,y=tau avg,col sep=comma] {charts/quality4.csv}; 
+    %
+    \addplot[
+        color=mincolor,
+        mark=*,
+        mark size=1pt,
+    ]
+    table[x=ne,y=tau min,col sep=comma] {charts/quality4.csv}; 
+
+    \end{semilogxaxis}
+\end{tikzpicture} \hfill
+%
+\caption{Quality of recursive longest edge refinement (lower is better). The $x$-axis represents the number of elements in the mesh (4D), and the $y$-axis the quality metric.
+Left $\alpha$, Right $\tau$.}
+\label{fig:quality4}
+\end{figure}

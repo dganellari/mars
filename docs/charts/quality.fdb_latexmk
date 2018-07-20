@@ -1,0 +1,9 @@
+# Fdb version 3
+["pdflatex"] 1532106881 "quality.tex" "quality.pdf" "quality" 1532106881
+  "/opt/local/etc/texmf/texmf.cnf" 1529945545 31467 9fc8172c4fe5e78272dfdda115cb8477 ""
+  "/opt/local/var/db/texmf/web2c/pdftex/pdflatex.fmt" 1529946855 3601156 3339228316565fb94860e7f92d91c0a8 ""
+  "quality.aux" 1532106776 8 a94a2480d3289e625eea47cd1b285758 ""
+  "quality.tex" 1532106881 1020 b0a348692bfd61737407fc141e814f10 ""
+  (generated)
+  "quality.pdf"
+  "quality.log"

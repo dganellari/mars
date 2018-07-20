@@ -1,0 +1,5 @@
+PWD /Users/zulianp/Desktop/code/mars/docs/charts
+INPUT /opt/local/etc/texmf/texmf.cnf
+INPUT /opt/local/var/db/texmf/web2c/pdftex/pdflatex.fmt
+INPUT quality.tex
+OUTPUT quality.log
