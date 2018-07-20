@@ -2,6 +2,7 @@
 #define MARS_BASE_HPP
 
 #include "mars_config.hpp"
+#include <cassert>
 
 /**
  * M.A.R.S Mesh Adaptive Refinement for Simplical meshes

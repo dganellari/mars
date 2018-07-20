@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.8.1)
+cmake_minimum_required(VERSION 2.8.12)
 
 project(mars)
 
@@ -6,11 +6,11 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 find_package(MPIExtended)
 
-if(MPI_FOUND)
-	set(CMAKE_CXX_COMPILER ${MPI_CXX_COMPILER})
-	set(CMAKE_CXX_COMPILER_DEBUG ${MPI_CXX_COMPILER})
-	set(WITH_MPI ON)
-endif()
+#if(MPI_FOUND)
+#	set(CMAKE_CXX_COMPILER ${MPI_CXX_COMPILER})
+#	set(CMAKE_CXX_COMPILER_DEBUG ${MPI_CXX_COMPILER})
+#	set(WITH_MPI ON)
+#endif()
 
 list(APPEND MARS_HEADERS
 	mars.hpp 
@@ -62,7 +62,8 @@ set(CMAKE_CXX_DEBUG "-g")
 
 add_library(mars STATIC ${MARS_HEADERS} ${MARS_SOURCES})
 target_link_libraries(mars ${MPI_LIBRARIES})
-target_compile_features(mars PUBLIC cxx_std_11)
+#target_compile_features(mars PUBLIC cxx_std_11)
+add_definitions("-std=c++11")
 target_include_directories(mars PUBLIC .)
 
 add_executable(mars_exec main.cpp ${MARS_HEADERS} ${MARS_SOURCES})

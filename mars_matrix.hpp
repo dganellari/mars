@@ -90,7 +90,7 @@ namespace mars {
 	};
 
 	template<typename T, Integer N>
-	inline void minor(
+	inline void m_minor(
 		const Integer cof_i,
 		const Integer cof_j,
 		const Matrix<T, N, N> &mat,
@@ -148,7 +148,7 @@ namespace mars {
 			if(coff == 0.) continue;
 
 			const Real sign = (j % 2) == 0? 1 : -1;
-			minor(row, j, m, mij);
+			m_minor(row, j, m, mij);
 			ret += sign * coff * det(mij);
 		}
 

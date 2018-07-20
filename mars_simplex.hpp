@@ -791,7 +791,7 @@ namespace mars {
         static_assert(Dim >= ManifoldDim, "simplex must be embedded in R^Dim");
         
         Matrix<Real, ManifoldDim, Dim> m;
-        Matrix<Real, ManifoldDim, Dim-1> minor;
+        Matrix<Real, ManifoldDim, Dim-1> m_minor;
         m.zero();
         
         auto x0 = points[simplex.nodes[0]];
@@ -809,13 +809,13 @@ namespace mars {
                 Integer k = 0;
                 for(Integer j = 0; j < Dim; ++j) {
                     if(j == d) { continue; }
-                    minor(i, k) = m(i, j);
+                    m_minor(i, k) = m(i, j);
                     k++;
                 }
             }
             
-            auto det_minor = det(minor);
-            ret[d] = ((d & 1) == 0 ? 1. : -1.) * det_minor;
+            auto det_m_minor = det(m_minor);
+            ret[d] = ((d & 1) == 0 ? 1. : -1.) * det_m_minor;
         }
         
         if(apply_normalization) {
