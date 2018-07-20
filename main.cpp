@@ -599,7 +599,7 @@ void run_benchmarks()
 	Mesh4 m4;
 	read_mesh("../data/cube4d_24.MFEM", m4);
 
-	b4.run(10, m4, "b4");
+	b4.run(9, m4, "b4");
 }
 
 void test_incomplete_2D()

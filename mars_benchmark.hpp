@@ -25,7 +25,7 @@ namespace mars {
 			//recursive 
 			edge_selects.push_back(std::make_shared<LongestEdgeSelect<Mesh>>());
 			edge_selects.push_back(std::make_shared<NewestVertexEdgeSelect<Mesh>>());
-			edge_selects.push_back(std::make_shared<NewestVertexAndLongestEdgeSelect<Mesh>>());
+			// edge_selects.push_back(std::make_shared<NewestVertexAndLongestEdgeSelect<Mesh>>());
 
 			//non-recursive
 			// edge_selects.push_back(std::make_shared<LongestEdgeSelect<Mesh>>(false));
