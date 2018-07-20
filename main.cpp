@@ -777,8 +777,8 @@ void par_mesh_test()
 
 	assert(mesh.is_conforming());
 
-	ParBisection<ParMesh2> b(mesh);
-	b.uniform_refine(1);
+	// ParBisection<ParMesh2> b(mesh);
+	// b.uniform_refine(1);
 
 #endif //WITH_MPI
 }

@@ -2,17 +2,15 @@ cmake_minimum_required(VERSION 3.8.1)
 
 project(mars)
 
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-# find_package(MPI REQUIRED)
-# set(CMAKE_CXX_COMPILER ${MPI_CXX_COMPILER})
-# set(CMAKE_CXX_COMPILER_DEBUG ${MPI_CXX_COMPILER})
+find_package(MPIExtended)
 
-# add_definitions("-DWITH_MPI")
-# set(CMAKE_CXX_COMPILER mpicc)
-# set(CMAKE_CXX_COMPILER_DEBUG mpicxx)
-# set(MPI_LIBRARIES "-L/opt/local/lib/mpich-mp/ -lmpi -lmpicxx")
-
-
+if(MPI_FOUND)
+	set(CMAKE_CXX_COMPILER ${MPI_CXX_COMPILER})
+	set(CMAKE_CXX_COMPILER_DEBUG ${MPI_CXX_COMPILER})
+	set(WITH_MPI ON)
+endif()
 
 list(APPEND MARS_HEADERS
 	mars.hpp 
@@ -72,6 +70,9 @@ target_link_libraries(mars_exec mars)
 target_compile_features(mars_exec PUBLIC cxx_std_11)
 
 
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/mars_config.hpp.in ${CMAKE_BINARY_DIR}/mars_config.hpp)
+include_directories(${CMAKE_BINARY_DIR})
+
 install(TARGETS mars mars_exec
 	RUNTIME DESTINATION bin 
 	LIBRARY DESTINATION lib 
@@ -79,6 +80,9 @@ install(TARGETS mars mars_exec
 	)
 
 install(FILES ${MARS_HEADERS} DESTINATION include)
+install(FILES ${CMAKE_BINARY_DIR}/mars_config.hpp DESTINATION include)
+
+
 
 # add_definitions("-DWITH_MOONOLITH")
 # set(MOONOLITH_DIR "$ENV{INSTALL_DIR}/moon")
