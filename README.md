@@ -1,5 +1,5 @@
 # M.A.R.S #
-## Mesh Adaptive Refinement for Simplical meshes ##
+## Mesh Adaptive Refinement for Simplical Complexes ##
 
 Compiling M.A.R.S
 
