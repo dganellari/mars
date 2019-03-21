@@ -71,7 +71,7 @@ namespace mars {
 				return;
 			}
 
-			std::vector< std::vector< Integer> > node_2_element(n_nodes);
+			std::vector< std::vector<Integer> > node_2_element(n_nodes);
 			dual_graph_.resize(n_elements);
 
 			for(Integer i = 0; i < n_elements; ++i) {

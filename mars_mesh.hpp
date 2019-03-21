@@ -289,7 +289,7 @@ namespace mars {
 
 			if(print_sides) {
 				Simplex<Dim, ManifoldDim-1> side;
-				Matrix<Real, Dim, Dim-1> J;
+				Matrix<Real, Dim, ManifoldDim-1> J;
 
 				os << "sides:\n";
 				for(Integer k = 0; k < n_sides(e); ++k) {
