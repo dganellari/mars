@@ -234,6 +234,13 @@ namespace mars {
             return 1;
         }
 
+        void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
+        {
+            assert(edge_num == 0);
+            v1 = nodes[0];
+            v1 = nodes[1];
+        }
+
         inline Integer n_nodes() const override { return nodes.size(); }
         inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
     };
