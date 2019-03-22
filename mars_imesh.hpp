@@ -21,12 +21,12 @@ namespace mars {
 
 		//for the moment it just returns the simplex type (e.g. 2 for triangles)
 		virtual Integer type() const = 0;
-
-		inline friend Integer n_nodes(const IElem &elem)
-		{
-			return elem.n_nodes();
-		}
 	};
+
+	inline Integer n_nodes(const IElem &elem)
+	{
+		return elem.n_nodes();
+	}
 
 	template<Integer Dim_>
 	class IMesh {
