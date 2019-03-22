@@ -6,6 +6,7 @@
 #include "mars_matrix.hpp"
 #include "mars_static_math.hpp"
 #include "mars_stream.hpp"
+#include "mars_imesh.hpp"
 
 #include <array>
 #include <vector>
@@ -18,12 +19,13 @@
 #include <algorithm>
 
 namespace mars {
-    
+
+
     // template<Integer Dim, Integer ManifoldDim>
     // class Simplex {};
 
     template<Integer Dim, Integer ManifoldDim>
-    class Simplex {
+    class Simplex : public IElem {
     public:
         std::array<Integer, ManifoldDim+1> nodes;
         std::array<Integer, ManifoldDim+1> side_tags;
@@ -32,6 +34,16 @@ namespace mars {
         Integer parent_id = INVALID_INDEX;
 
         std::vector<Integer> children;
+
+        inline void get_nodes(std::vector<Integer> &nodes_copy) const override
+        {
+            nodes_copy.resize(nodes.size());
+            std::copy(std::begin(nodes), std::end(nodes), std::begin(nodes_copy));
+        }
+
+        inline Integer type() const override {
+            return ManifoldDim;
+        }
         
         inline static std::vector<Vector<Real, Dim>> &ref()
         {
@@ -162,7 +174,7 @@ namespace mars {
     using Vector4r     = Vector<Real, 4>;
     
     template<Integer Dim>
-    class Simplex<Dim, 0> {
+    class Simplex<Dim, 0> : public IElem {
     public:
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
@@ -171,6 +183,16 @@ namespace mars {
         {
             static std::vector<Vector<Real, Dim>> ref_(1, Vector<Real, Dim>().zero());
             return ref_;
+        }
+
+        inline void get_nodes(std::vector<Integer> &nodes_copy) const override
+        {
+            nodes_copy.resize(1);
+            nodes_copy[0] = id;
+        }
+
+        inline Integer type() const override {
+            return 0;
         }
     };
     
@@ -197,7 +219,7 @@ namespace mars {
     };
     
     template<Integer Dim>
-    class Simplex<Dim, 2> {
+    class Simplex<Dim, 2> : public IElem {
     public:
         std::array<Integer, 3> nodes;
         std::array<Integer, 3> side_tags;
@@ -262,10 +284,21 @@ namespace mars {
             
             return ref_;
         }
+
+
+        inline void get_nodes(std::vector<Integer> &nodes_copy) const override
+        {
+            nodes_copy.resize(nodes.size());
+            std::copy(std::begin(nodes), std::end(nodes), std::begin(nodes_copy));
+        }
+
+        Integer type() const override {
+            return 2;
+        }
     };
     
     template<Integer Dim>
-    class Simplex<Dim, 3> {
+    class Simplex<Dim, 3> : public IElem {
     public:
         std::array<Integer, 4> nodes;
         std::array<Integer, 4> side_tags;
@@ -349,10 +382,20 @@ namespace mars {
             
             return ref_;
         }
+
+        inline void get_nodes(std::vector<Integer> &nodes_copy) const override
+        {
+            nodes_copy.resize(nodes.size());
+            std::copy(std::begin(nodes), std::end(nodes), std::begin(nodes_copy));
+        }
+
+        inline Integer type() const override {
+            return 3;
+        }
     };
     
     template<Integer Dim>
-    class Simplex<Dim, 4> {
+    class Simplex<Dim, 4> : public IElem {
     public:
         std::array<Integer, 5> nodes;
         std::array<Integer, 5> side_tags;
@@ -450,6 +493,16 @@ namespace mars {
                     break;
                 }
             }
+        }
+
+        inline void get_nodes(std::vector<Integer> &nodes_copy) const override
+        {
+            nodes_copy.resize(nodes.size());
+            std::copy(std::begin(nodes), std::end(nodes), std::begin(nodes_copy));
+        }
+
+        inline Integer type() const override {
+            return 4;
         }
     };
     

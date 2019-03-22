@@ -8,6 +8,7 @@
 #include "mars_red_green_refinement.hpp"
 
 #include "mars_visualization.hpp"
+#include "mars_imesh.hpp"
 
 #include <vector>
 #include <array>
@@ -19,7 +20,7 @@
 namespace mars {
 
 	template<Integer Dim_, Integer ManifoldDim_ = Dim_>
-	class Mesh {
+	class Mesh : public IMesh<Dim_> {
 	public:
 		static const Integer Dim = Dim_;
 		static const Integer ManifoldDim = ManifoldDim_;
@@ -37,21 +38,21 @@ namespace mars {
 			points_.reserve(n_points);
 		}
 
-		inline Elem &elem(const Integer id)
+		inline Elem &elem(const Integer id) override
 		{
 			assert(id >= 0);
 			assert(id < n_elements());
 			return elements_[id];
 		}
 
-		inline const Elem &elem(const Integer id) const
+		inline const Elem &elem(const Integer id) const override
 		{
 			assert(id >= 0);
 			assert(id < n_elements());
 			return elements_[id];
 		}
 
-		inline bool is_active(const Integer id) const
+		inline bool is_active(const Integer id) const override
 		{
 			assert(id >= 0);
 			assert(id < n_elements());
@@ -85,20 +86,20 @@ namespace mars {
 			active_[id] = val;
 		}
 
-		inline Integer add_point(const Point &point)
+		inline Integer add_point(const Point &point) override
 		{
 			points_.push_back(point);
 			return points_.size() - 1;
 		}
 
-		inline Point &point(const Integer i)
+		inline Point &point(const Integer i) override
 		{
 			assert(i >= 0);
 			assert(i < points_.size());
 			return points_[i];
 		}
 		
-		inline const Point &point(const Integer i) const
+		inline const Point &point(const Integer i) const override
 		{
 			assert(i >= 0);
 			assert(i < points_.size());
@@ -120,6 +121,30 @@ namespace mars {
 			return elements_.back().id;
 		}
 
+		inline Integer add_elem(const IElem &elem) override
+		{
+			assert(elem.type() == ManifoldDim);
+
+			const Elem * elem_ptr = dynamic_cast<const Elem *>(&elem);
+			if(elem_ptr) {
+				return add_elem(*elem_ptr);
+			}
+
+			// fallback for other types of elements
+			Elem elem_copy;
+
+			std::vector<Integer> e_nodes;
+			elem.get_nodes(e_nodes);
+
+			assert(e_nodes.size() == ManifoldDim + 1);
+
+			for(std::size_t i = 0; i < mars::n_nodes(elem_copy); ++i) {
+				elem_copy.nodes[i] = e_nodes[i];
+			}
+
+			return add_elem(elem_copy);
+		}
+
 		template<std::size_t NNodes>
 		Integer add_elem(const std::array<Integer, NNodes> &nodes)
 		{
@@ -133,7 +158,7 @@ namespace mars {
 			return e.id;
 		}
 
-		inline void points(const Integer id, std::vector<Point> &pts) const
+		inline void points(const Integer id, std::vector<Point> &pts) const override
 		{
 			assert(id >= 0);
 			assert(id < n_elements());
@@ -360,17 +385,17 @@ namespace mars {
 			}
 		}
 
-		inline Integer n_nodes() const
+		inline Integer n_nodes() const override
 		{
 			return points_.size();
 		}
 
-		inline Integer n_elements() const
+		inline Integer n_elements() const override
 		{
 			return elements_.size();
 		}
 
-		inline Integer n_active_elements() const
+		inline Integer n_active_elements() const override
 		{
 			Integer ret = 0;
 			for(auto a : active_) {

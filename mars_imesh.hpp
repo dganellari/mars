@@ -1,13 +1,7 @@
 #ifndef MARS_I_MESH_HPP
 #define MARS_I_MESH_HPP
 
-#include "mars_simplex.hpp"
-#include "mars_edge_element_map.hpp"
-#include "mars_edge_node_map.hpp"
-#include "mars_dual_graph.hpp"
-#include "mars_red_green_refinement.hpp"
-
-#include "mars_visualization.hpp"
+#include "mars_vector.hpp"
 
 #include <vector>
 #include <array>
@@ -21,7 +15,9 @@ namespace mars {
 	class IElem {
 	public:
 		virtual ~IElem() {}
-		virtual void nodes(std::vector<Integer> &nodes) const = 0;
+		virtual void get_nodes(std::vector<Integer> &nodes) const = 0;
+
+		//for the moment it just returns the simplex type (e.g. 2 for triangles)
 		virtual Integer type() const = 0;
 	};
 
