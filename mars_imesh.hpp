@@ -16,6 +16,8 @@ namespace mars {
 	public:
 		virtual ~IElem() {}
 		virtual void get_nodes(std::vector<Integer> &nodes) const = 0;
+		virtual Integer n_nodes() const = 0;
+		virtual Integer node(const Integer idx) const = 0;
 
 		//for the moment it just returns the simplex type (e.g. 2 for triangles)
 		virtual Integer type() const = 0;

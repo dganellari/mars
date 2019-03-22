@@ -41,6 +41,9 @@ namespace mars {
             std::copy(std::begin(nodes), std::end(nodes), std::begin(nodes_copy));
         }
 
+        inline Integer n_nodes() const override { return nodes.size(); }
+        inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
+
         inline Integer type() const override {
             return ManifoldDim;
         }
@@ -194,10 +197,13 @@ namespace mars {
         inline Integer type() const override {
             return 0;
         }
+
+        inline Integer n_nodes() const override { return 1; }
+        inline Integer node(const Integer idx) const override { assert(idx  == 0); return id; }
     };
     
     template<Integer Dim>
-    class Simplex<Dim, 1> {
+    class Simplex<Dim, 1> : public IElem {
     public:
         std::array<Integer, 2> nodes;
         std::array<Integer, 2> side_tags;
@@ -216,6 +222,20 @@ namespace mars {
             }
             return ref_;
         }
+
+        inline void get_nodes(std::vector<Integer> &nodes_copy) const override
+        {
+            nodes_copy.resize(2);
+            nodes_copy[0] = nodes[0];
+            nodes_copy[1] = nodes[1];
+        }
+
+        inline Integer type() const override {
+            return 1;
+        }
+
+        inline Integer n_nodes() const override { return nodes.size(); }
+        inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
     };
     
     template<Integer Dim>
@@ -295,6 +315,9 @@ namespace mars {
         Integer type() const override {
             return 2;
         }
+
+        inline Integer n_nodes() const override { return nodes.size(); }
+        inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
     };
     
     template<Integer Dim>
@@ -392,6 +415,9 @@ namespace mars {
         inline Integer type() const override {
             return 3;
         }
+
+        inline Integer n_nodes() const override { return nodes.size(); }
+        inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
     };
     
     template<Integer Dim>
@@ -504,6 +530,9 @@ namespace mars {
         inline Integer type() const override {
             return 4;
         }
+
+        inline Integer n_nodes() const override { return nodes.size(); }
+        inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
     };
     
     template<Integer ManifoldDim>
