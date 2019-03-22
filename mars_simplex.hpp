@@ -242,7 +242,7 @@ namespace mars {
         }
 
         void side(const Integer &side_num,
-                  Simplex<Dim, 1> &side) const
+                  Simplex<Dim, 0> &side) const
         {
             side.id = nodes[side_num];
         }
