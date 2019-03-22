@@ -241,6 +241,12 @@ namespace mars {
             v1 = nodes[1];
         }
 
+        void side(const Integer &side_num,
+                  Simplex<Dim, 1> &side) const
+        {
+            side.id = nodes[side_num];
+        }
+
         inline Integer n_nodes() const override { return nodes.size(); }
         inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
     };
