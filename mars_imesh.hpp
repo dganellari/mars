@@ -46,6 +46,8 @@ namespace mars {
 		virtual Point &point(const Integer i) = 0;		
 		virtual const Point &point(const Integer i) const = 0;
 		virtual Integer add_elem(const IElem &elem) = 0;
+
+		virtual Integer type() const = 0;
 	};
 
 }

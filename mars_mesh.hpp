@@ -848,6 +848,11 @@ namespace mars {
 			return true;
 		}
 
+		inline Integer type() const override
+		{
+			return ManifoldDim;
+		}
+
 	private:
 		std::vector<Elem> elements_;
 		std::vector<Point> points_;
