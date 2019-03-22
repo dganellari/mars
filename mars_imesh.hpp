@@ -33,6 +33,7 @@ namespace mars {
 	public:
 		static const Integer Dim = Dim_;
 		using Point = mars::Vector<Real, Dim>;
+		using Elem  = mars::IElem;
 
 		virtual ~IMesh() {}
 		virtual void points(const Integer id, std::vector<Point> &pts) const = 0;
