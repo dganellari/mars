@@ -31,7 +31,7 @@ namespace mars {
 
 		void reserve(
 			const std::size_t n_elements,
-			const std::size_t n_points)
+			const std::size_t n_points) override
 		{
 			elements_.reserve(n_elements);
 			active_.reserve(n_elements);
@@ -119,6 +119,18 @@ namespace mars {
 			active_.push_back(true);
 			assert(elements_.back().id == id);
 			return elements_.back().id;
+		}
+
+		inline Integer add_elem(const std::vector<Integer> &nodes) override
+		{
+			Elem elem;
+			assert(nodes.size() == mars::n_nodes(elem));
+
+			for(Integer i = 0; i < mars::n_nodes(elem); ++i) {
+				elem.nodes[i] = nodes[i];
+			}
+			
+			return add_elem(elem);
 		}
 
 		inline Integer add_elem(const IElem &elem) override
