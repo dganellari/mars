@@ -884,6 +884,7 @@ namespace mars {
         const std::vector<Vector<Real, 1>> &points,
         const bool apply_normalization = true)
     {
+        std::cerr << "[Warning] hardcoded surface normal" << std::endl;
         Vector<Real, 2> v{0., 1.};
         return v;
     }

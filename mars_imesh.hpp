@@ -48,6 +48,7 @@ namespace mars {
 		virtual const Point &point(const Integer i) const = 0;
 		virtual Integer add_elem(const IElem &elem) = 0;
 		virtual Integer add_elem(const std::vector<Integer> &nodes) = 0;
+		virtual const std::vector<Point> &points() const = 0;
 
 		virtual Integer type() const = 0;
 		virtual void reserve(
