@@ -879,15 +879,15 @@ namespace mars {
     }
 
     
-    inline Vector<Real, 2> normal(
-        const Simplex<1, 1>      &simplex,
-        const std::vector<Vector<Real, 1>> &points,
-        const bool apply_normalization = true)
-    {
-        std::cerr << "[Warning] hardcoded surface normal" << std::endl;
-        Vector<Real, 2> v{0., 1.};
-        return v;
-    }
+    // inline Vector<Real, 2> normal(
+    //     const Simplex<1, 1>      &simplex,
+    //     const std::vector<Vector<Real, 1>> &points,
+    //     const bool apply_normalization = true)
+    // {
+    //     std::cerr << "[Warning] hardcoded surface normal" << std::endl;
+    //     Vector<Real, 2> v{0., 1.};
+    //     return v;
+    // }
 
     
     template<Integer Dim, Integer ManifoldDim>

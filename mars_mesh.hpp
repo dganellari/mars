@@ -106,7 +106,7 @@ namespace mars {
 			return points_[i];
 		}
 
-		const std::vector<Point> &points() const override
+		const std::vector<Point> &points() const //override
 		{
 			return points_;
 		}
