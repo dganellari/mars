@@ -26,6 +26,7 @@ list(APPEND MARS_HEADERS
 	mars_edge_select.hpp
 	mars_edge_split.hpp
 	mars_edge_split_pool.hpp
+	mars_entity.hpp
 	mars_lagrange_element.hpp
 	mars_longest_edge.hpp
 	mars_matrix.hpp
