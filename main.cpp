@@ -801,9 +801,10 @@ int main(int argc, char *argv[])
 	// test_bisection_3D();
 	// test_bisection_4D();
 
-    constexpr Integer ManifoldDim=3;
+    constexpr Integer ManifoldDim=4;
 	mars::Mesh<ManifoldDim, ManifoldDim> mesh;
-	read_mesh("../data/cube_6.MFEM", mesh);
+	read_mesh("../data/pentatope_1.MFEM", mesh);
+	//read_mesh("../data/cube_6.MFEM", mesh);
 	//read_mesh("../data/square_2_def.MFEM", mesh);
     
     
@@ -875,127 +876,21 @@ const Integer n_elements = mesh.n_elements();
             std::cout<<std::endl;
             }
             
-    // loop on all the elements
-    for(Integer index_elem1=0;index_elem1<nelements;index_elem1++)
-    {
-  //   const auto &e1 = elem(index_elem1);
-//     auto adj_elem=dual_graph.adj(index_elem1);
-//     // loop on all the faces
-//     for(int face_iter=0;face_iter<ManifoldDim+1;++face_iter)
-//     {
-//      // loop on all the neighbour elements
-//      for(int index_elemesh=0;index_elemesh<adj_elem.size();++index_elemesh)
-//     // add face, otherwise leave it
-//     if(adj_elem[face_iter]>index_elem)
-//     cout<<" dual_graph="<<adj[jj]<<endl;
-//     }
-     }
-    
-    
-    std::vector<std::array<Integer, ManifoldDim> > faces;
-    std::array<Integer, ManifoldDim> tmp;
-    Integer face_e1[ManifoldDim];
-    Integer face_e2[ManifoldDim];
-    
-    
-   // cout<<" n_elements ="<<n_elements<<endl;
-    // loop on all the elements
-    for(Integer elem_iter = 0; elem_iter < n_elements; ++elem_iter) {
-    
-    const auto &el1 = mesh.elem(elem_iter);
-    const auto &el_nodes1=el1.nodes;
-    std::vector<Integer> el_neighs;
-    // find all the elements touching the element=elem_iter
-    for(Integer ii=0;ii<el_nodes1.size();ii++)
-       for(Integer jj=0;jj<node_2_element[el_nodes1[ii]].size();jj++)
-       {el_neighs.push_back(node_2_element[el_nodes1[ii]][jj]);
-       } 
-   //     for(int ii=0;ii<el_neighs.size();ii++)
-   //    cout<<"before elem="<<elem_iter<< " el_neighs="<< el_neighs[ii] <<endl;
 
-     
-    el_neighs.erase(std::remove_if(el_neighs.begin(), el_neighs.end(), [elem_iter](int index_tmp) { return index_tmp>elem_iter; }), el_neighs.end());       
-    // sort and make unique the neighborhood elements
-    std::sort( el_neighs.begin(), el_neighs.end() );
-    el_neighs.erase( std::unique( el_neighs.begin(), el_neighs.end() ), el_neighs.end() );
-    // remove elem_iter from the neigborhood elements
-    el_neighs.erase(std::remove(el_neighs.begin(), el_neighs.end(), elem_iter), el_neighs.end());
-    
-    //for(int ii=0;ii<el_neighs.size();ii++)
-    //   cout<<"after elem="<<elem_iter<< " el_neighs="<< el_neighs[ii] <<endl;
-       
-    // loop on all the faces of the actual element e1
-    for(Integer iter_face_e1=0;iter_face_e1<ManifoldDim+1;iter_face_e1++)
-    {     
-     Combinations<ManifoldDim + 1, ManifoldDim>::generate(iter_face_e1,face_e1);
-     std::array<Integer, ManifoldDim> face_nodes1;
-     
-     //cout<<" elem="<<elem_iter<<", f1="<<iter_face_e1<<endl;
-     // build the face nodes of iter_face_e1
-     for(int nn=0;nn<ManifoldDim;nn++)
-         {face_nodes1[nn]=el_nodes1[face_e1[nn]];
-        // cout<<face_nodes1[nn]<<" ";
-         }
-     cout<<endl;   
-     std::sort(std::begin(face_nodes1), std::end(face_nodes1)); 
-     
-     bool found_face=false; 
-     
-    
-       // loop on all the neighborhood elements
-       for(Integer elem_iter2 = 0; elem_iter2 < el_neighs.size(); ++elem_iter2) 
-    	{	
-    	const auto &el2 = mesh.elem(el_neighs[elem_iter2]);
-        const auto &el_nodes2=el2.nodes;
-        
-        // loop on all the faces of the element e2
-    	for(Integer iter_face_e2=0;iter_face_e2<ManifoldDim+1;iter_face_e2++)
-    	    {
-            Combinations<ManifoldDim + 1, ManifoldDim>::generate(iter_face_e2,face_e2);
-            std::array<Integer, ManifoldDim> face_nodes2;
-
-            for(int nn=0;nn<ManifoldDim;nn++)
-                face_nodes2[nn]=el_nodes2[face_e2[nn]];   
-                	    
-   	        std::sort(std::begin(face_nodes2), std::end(face_nodes2));  
-   	        
-   	        if (std::equal(std::begin(face_nodes1), std::end(face_nodes1), std::begin(face_nodes2)))
-   	           {
-   	           found_face=true;
-   	           break;
-   	           }         
-    	    }  
-	        
-	        if(found_face==true)
-	           break;
-	        
-			}
- 	      
- 	   //cout<<" elem1 =="<< elem_iter<<", found_face="<<found_face<<endl;	   
-   	  if(found_face==false)
-	  {
-	     	   std::copy(std::begin(face_nodes1), std::end(face_nodes1), std::begin(tmp));
-   	           faces.push_back( tmp);
-   	        //   cout<<"equal"<<endl;
-	  }
-
-		  
-	cout<<endl;
-	  }
-	  
-	  }
-
-
-	for(Integer ii=0;ii<faces.size();ii++)
-	{
-	for(Integer jj=0;jj<ManifoldDim;jj++)
-	   cout<<faces[ii][jj]<<"  ";
-	cout<<endl;
-	}
 	
+	constexpr Integer EntityDim=3;
+	Entity<ManifoldDim,ManifoldDim,EntityDim>  ens(mesh,node_2_element);	
 		
-		
-		
+    auto entsvalue=ens.value();
+    for(int ii=0;ii<entsvalue.size();ii++)
+    {
+    
+    cout<<endl;
+    for(int jj=0;jj<EntityDim;jj++)
+       cout<<entsvalue[ii][jj]<<" ";
+	}	
+	
+
 	//run_benchmarks();
 	// test_partition_2D();
 	// test_partition_3D();

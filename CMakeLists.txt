@@ -55,6 +55,7 @@ list(APPEND MARS_HEADERS
 
 list(APPEND MARS_SOURCES
 	mars_communicator.cpp
+	mars_entity.cpp
 	mars_simplex.cpp
 	mars_test.cpp
 	)
