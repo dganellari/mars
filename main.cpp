@@ -801,10 +801,10 @@ int main(int argc, char *argv[])
 	// test_bisection_3D();
 	// test_bisection_4D();
 
-    constexpr Integer ManifoldDim=4;
+    constexpr Integer ManifoldDim=3;
 	mars::Mesh<ManifoldDim, ManifoldDim> mesh;
-	read_mesh("../data/pentatope_1.MFEM", mesh);
-	//read_mesh("../data/cube_6.MFEM", mesh);
+	//read_mesh("../data/pentatope_1.MFEM", mesh);
+    read_mesh("../data/cube_6.MFEM", mesh);
 	//read_mesh("../data/square_2_def.MFEM", mesh);
     
     
@@ -878,18 +878,31 @@ const Integer n_elements = mesh.n_elements();
             
 
 	
-	constexpr Integer EntityDim=3;
+	constexpr Integer EntityDim=2;
 	Entity<ManifoldDim,ManifoldDim,EntityDim>  ens(mesh,node_2_element);	
 		
     auto entsvalue=ens.value();
+    auto elem2entity=ens.elem_2_entity();
+    cout<<"entsvalue.size="<<entsvalue.size()<<endl;
+
     for(int ii=0;ii<entsvalue.size();ii++)
     {
     
     cout<<endl;
+    cout<<"entity id="<<ii<<"   ";
     for(int jj=0;jj<EntityDim;jj++)
        cout<<entsvalue[ii][jj]<<" ";
 	}	
-	
+
+cout<<"elem2entity.size="<<elem2entity.size()<<endl;
+    for(int ii=0;ii<elem2entity.size();ii++)
+    {
+    
+    cout<<endl;
+    cout<<"elem2entity id="<<ii<<"   ";
+    for(int jj=0;jj<ens.entity_combinations();jj++)
+       cout<<elem2entity[ii][jj]<<" ";
+	}	
 
 	//run_benchmarks();
 	// test_partition_2D();
