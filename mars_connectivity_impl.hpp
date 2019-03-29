@@ -74,18 +74,10 @@ inline std::vector<Integer> Connectivity<Dim,ManifoldDim,EntityDimFrom,SubEntity
 	
 	    // entity_nodes_from contains the local indexes of the nodes of the entity
 		Combinations<ManifoldDim + 1, EntityDimFrom+1>::generate(iter_entity_from,entity_nodes_from);
-		
-		for(Integer ii=0;ii<ManifoldDim + 1;ii++)
-			std::cout<<" nodes= "<<nodes_from[ii]<<std::endl;
-		
+
 		// now entity_nodes_from contains the global indexes of the nodes of the entity
 		for(Integer nn=0;nn<EntityDimFrom+1;nn++)
 			entity_nodes_from[nn]=nodes_from[entity_nodes_from[nn]];
-		
-		for(Integer nn=0;nn<EntityDimFrom + 1;nn++)
-			std::cout<<" entity_nodes_from= "<<entity_nodes_from[nn]<<std::endl;
-		
-		
 		
 		// loop on all the nodes of the entity with index=index_from
 		for(Integer nn=0;nn<EntityDimFrom + 1;nn++)
@@ -96,12 +88,7 @@ inline std::vector<Integer> Connectivity<Dim,ManifoldDim,EntityDimFrom,SubEntity
 	
 		// define all the neighborhood elements in el_neighs
 		std::sort(el_neighs.begin(),el_neighs.end());
-		el_neighs.erase( std::unique( el_neighs.begin(), el_neighs.end() ), el_neighs.end() );	    
-	
-	
-		for(Integer elem_iter_to=0;elem_iter_to< el_neighs.size();elem_iter_to++)
-			std::cout<<" elem_iter_to="<< elem_iter_to <<std::endl;
-	
+		el_neighs.erase( std::unique( el_neighs.begin(), el_neighs.end() ), el_neighs.end() );	    	
 	
 		// loop on all the surrounding elements
 		for(Integer elem_iter_to=0;elem_iter_to< el_neighs.size();elem_iter_to++)
@@ -124,18 +111,7 @@ inline std::vector<Integer> Connectivity<Dim,ManifoldDim,EntityDimFrom,SubEntity
 						 common_nodes++;
 				 
 				if(common_nodes >= SubEntityDimFrom + 1)
-				   {FromTo.push_back(index_entity_to);
-				   std::cout<<"index_entity_to="<<index_entity_to<<" -------" <<common_nodes<<std::endl;
-				   std::cout<<"entity_nodes_from= ";
-				   for(Integer nn=0;nn<EntityDimFrom + 1;nn++)
-				       std::cout<<entity_nodes_from[nn]<<" ";
-				   std::cout<<std::endl;
-				   std::cout<<"entity_nodes_to= ";
-				   for(Integer nn=0;nn<EntityDimTo + 1;nn++)
-				       std::cout<<entity_nodes_to[nn]<<" ";
-				    std::cout<<std::endl;
-				   }
-				   }
+				   FromTo.push_back(index_entity_to);}
 			}
 		
   		std::sort(FromTo.begin(),FromTo.end());
