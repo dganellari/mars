@@ -25,7 +25,7 @@ namespace mars {
     // class Simplex {};
 
     template<Integer Dim, Integer ManifoldDim>
-    class Simplex : public IElem {
+    class Simplex final : public IElem {
     public:
         std::array<Integer, ManifoldDim+1> nodes;
         std::array<Integer, ManifoldDim+1> side_tags;
@@ -41,6 +41,17 @@ namespace mars {
             nodes_copy.resize(nodes.size());
             std::copy(std::begin(nodes), std::end(nodes), std::begin(nodes_copy));
         }
+
+        inline Integer get_block() const override
+        {
+            return block;
+        }
+
+        inline void set_block(const Integer block_id) override
+        {
+            block = block_id;
+        }
+
 
         inline Integer n_nodes() const override { return nodes.size(); }
         inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
@@ -178,7 +189,7 @@ namespace mars {
     using Vector4r     = Vector<Real, 4>;
     
     template<Integer Dim>
-    class Simplex<Dim, 0> : public IElem {
+    class Simplex<Dim, 0> final : public IElem {
     public:
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
@@ -202,10 +213,21 @@ namespace mars {
 
         inline Integer n_nodes() const override { return 1; }
         inline Integer node(const Integer idx) const override { assert(idx  == 0); return id; }
+
+        inline Integer get_block() const override
+        {
+            return block;
+        }
+
+        inline void set_block(const Integer block_id) override
+        {
+            block = block_id;
+        }
+
     };
     
     template<Integer Dim>
-    class Simplex<Dim, 1> : public IElem {
+    class Simplex<Dim, 1> final : public IElem {
     public:
         std::array<Integer, 2> nodes;
         std::array<Integer, 2> side_tags;
@@ -252,10 +274,21 @@ namespace mars {
 
         inline Integer n_nodes() const override { return nodes.size(); }
         inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
+
+        inline Integer get_block() const override
+        {
+            return block;
+        }
+
+        inline void set_block(const Integer block_id) override
+        {
+            block = block_id;
+        }
+
     };
     
     template<Integer Dim>
-    class Simplex<Dim, 2> : public IElem {
+    class Simplex<Dim, 2> final : public IElem {
     public:
         std::array<Integer, 3> nodes;
         std::array<Integer, 3> side_tags;
@@ -335,10 +368,21 @@ namespace mars {
 
         inline Integer n_nodes() const override { return nodes.size(); }
         inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
+
+        inline Integer get_block() const override
+        {
+            return block;
+        }
+
+        inline void set_block(const Integer block_id) override
+        {
+            block = block_id;
+        }
+
     };
     
     template<Integer Dim>
-    class Simplex<Dim, 3> : public IElem {
+    class Simplex<Dim, 3> final : public IElem {
     public:
         std::array<Integer, 4> nodes;
         std::array<Integer, 4> side_tags;
@@ -436,10 +480,21 @@ namespace mars {
 
         inline Integer n_nodes() const override { return nodes.size(); }
         inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
+
+        inline Integer get_block() const override
+        {
+            return block;
+        }
+
+        inline void set_block(const Integer block_id) override
+        {
+            block = block_id;
+        }
+
     };
     
     template<Integer Dim>
-    class Simplex<Dim, 4> : public IElem {
+    class Simplex<Dim, 4> final : public IElem {
     public:
         std::array<Integer, 5> nodes;
         std::array<Integer, 5> side_tags;
@@ -552,6 +607,17 @@ namespace mars {
 
         inline Integer n_nodes() const override { return nodes.size(); }
         inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
+
+        inline Integer get_block() const override
+        {
+            return block;
+        }
+
+        inline void set_block(const Integer block_id) override
+        {
+            block = block_id;
+        }
+
     };
     
     template<Integer ManifoldDim>

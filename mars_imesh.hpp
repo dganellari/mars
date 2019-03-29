@@ -18,6 +18,8 @@ namespace mars {
 		virtual void get_nodes(std::vector<Integer> &nodes) const = 0;
 		virtual Integer n_nodes() const = 0;
 		virtual Integer node(const Integer idx) const = 0;
+        virtual Integer get_block() const = 0;
+        virtual void set_block(const Integer block_id) = 0;
 
 		//for the moment it just returns the simplex type (e.g. 2 for triangles)
 		virtual Integer type() const = 0;
