@@ -48,18 +48,18 @@ class Connectivity
 public:
 		inline std::vector< std::vector<Integer> > node2elem() const{return node2elem_;};
 
-		inline std::vector<Integer> compute(const Entity<Dim,ManifoldDim,EntityDimFrom> &entity_from,
+	    std::vector<Integer> compute(const Entity<Dim,ManifoldDim,EntityDimFrom> &entity_from,
 											const Integer index_from,
 											const Entity<Dim,ManifoldDim,EntityDimTo>   &entity_to);
 					 
-		Connectivity(const Mesh<Dim,ManifoldDim> mesh,std::vector<std::vector<Integer>> node2elem):
+		Connectivity( Mesh<Dim,ManifoldDim> &mesh,std::vector<std::vector<Integer>> &node2elem):
 				mesh_(mesh),
 				node2elem_(node2elem)
 				{};
 		
 private:
-		std::vector< std::vector<Integer> > node2elem_;
-		Mesh<Dim,ManifoldDim> mesh_;
+		std::vector< std::vector<Integer> > &node2elem_;
+		Mesh<Dim,ManifoldDim> &mesh_;
 };
 
 
