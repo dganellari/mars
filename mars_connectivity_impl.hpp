@@ -54,7 +54,7 @@ inline std::vector<Integer> Connectivity<Dim,ManifoldDim,EntityDimFrom,SubEntity
     assert(ManifoldDim>=EntityDimTo && " the manifold dimension must be greater than the entityto dimension ");
     
     // rule 1)
-    if(SubEntityDimFrom>EntityDimFrom)
+    if(SubEntityDimFrom>EntityDimFrom || SubEntityDimFrom > EntityDimTo)
          return FromTo;
          
     // rule 2)

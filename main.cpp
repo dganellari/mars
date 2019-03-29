@@ -801,10 +801,10 @@ int main(int argc, char *argv[])
 	// test_bisection_3D();
 	// test_bisection_4D();
 
-    constexpr Integer ManifoldDim=3;
+    constexpr Integer ManifoldDim=4;
 	mars::Mesh<ManifoldDim, ManifoldDim> mesh;
-	//read_mesh("../data/pentatope_1.MFEM", mesh);
-    read_mesh("../data/cube_6.MFEM", mesh);
+	read_mesh("../data/pentatope_1.MFEM", mesh);
+    //read_mesh("../data/cube_6.MFEM", mesh);
 	//read_mesh("../data/square_2_def.MFEM", mesh);
     
     
@@ -853,19 +853,19 @@ int main(int argc, char *argv[])
 
 
     
-    NodeToElem3	node2elem3(mesh);
+    NodeToElem4	node2elem3(mesh);
 	auto node2elem=node2elem3.val();
 	
-	
-	EdgeMap3 edge(mesh,node2elem);	
-	TriangleMap3 triangle(mesh,node2elem);	
+	TriangleMap4 edge(mesh,node2elem);
+	//EdgeMap3 edge(mesh,node2elem);	
+	TriangleMap4 triangle(mesh,node2elem);	
 	//EdgeMap3 triangle(mesh,node2elem);	
-	Integer entityE[2];
+	Integer entityE[3];
 	Integer entityT[3];
-	Connectivity<ManifoldDim,ManifoldDim,1,1,2> connE2T(mesh,node2elem);
+	Connectivity<ManifoldDim,ManifoldDim,2,1,2> connE2T(mesh,node2elem);
 		
 		
-	auto connE82T=connE2T.compute(edge,14,triangle);
+	auto connE82T=connE2T.compute(triangle,7,edge);
 
     for(Integer ii=0;ii<connE82T.size();ii++)
        cout<<" connE82T ="<<connE82T[ii]<<endl;
