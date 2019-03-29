@@ -18,6 +18,8 @@ list(APPEND MARS_HEADERS
 	mars_benchmark.hpp
 	mars_bisection.hpp
 	mars_communicator.hpp
+	mars_connectivity.hpp
+	mars_connectivity_impl.hpp
 	mars_dof_map.hpp
 	mars_dual_graph.hpp
 	mars_edge.hpp
@@ -27,6 +29,7 @@ list(APPEND MARS_HEADERS
 	mars_edge_split.hpp
 	mars_edge_split_pool.hpp
 	mars_entity.hpp
+	mars_entity_impl.hpp
 	mars_lagrange_element.hpp
 	mars_longest_edge.hpp
 	mars_matrix.hpp
@@ -55,6 +58,7 @@ list(APPEND MARS_HEADERS
 
 list(APPEND MARS_SOURCES
 	mars_communicator.cpp
+	mars_connectivity.cpp
 	mars_entity.cpp
 	mars_simplex.cpp
 	mars_test.cpp

@@ -22,7 +22,7 @@
 
 
 #include "mars_entity.hpp"
-
+#include "mars_connectivity.hpp"
 
 #ifdef WITH_MPI
 #include "mars_par_bisection.hpp"
@@ -851,58 +851,86 @@ int main(int argc, char *argv[])
     
 
 
-const Integer n_nodes    = mesh.n_nodes();
-const Integer n_elements = mesh.n_elements();
-			
-			std::vector< std::vector<Integer> > node_2_element(n_nodes);
 
-            // loop on all the nodes of all the active elements 
-            // add to node_2_element the corresponding active element
-			for(Integer i = 0; i < n_elements; ++i) {
-				if(!mesh.is_active(i)) continue;
-
-				const auto &e    = mesh.elem(i);
-				// this can be put outside the loop, right?
-				const Integer nn = ManifoldDim + 1;
-				for(Integer k = 0; k < nn; ++k) {
-					node_2_element[e.nodes[k]].push_back(i);
-				}
-			}
-
-            for(Integer ii=0; ii<node_2_element.size();ii++)
-            {std::cout<<"node_2_element("<<ii<<")"<<std::endl;
-            for(Integer jj=0; jj<node_2_element[ii].size();jj++)
-            std::cout<<node_2_element[ii][jj]<<", ";
-            std::cout<<std::endl;
-            }
-            
-
+    
+    NodeToElem3	node2elem3(mesh);
+	auto node2elem=node2elem3.val();
 	
-	constexpr Integer EntityDim=2;
-	Entity<ManifoldDim,ManifoldDim,EntityDim>  ens(mesh,node_2_element);	
+	
+	EdgeMap3 edge(mesh,node2elem);	
+	TriangleMap3 triangle(mesh,node2elem);	
+	//EdgeMap3 triangle(mesh,node2elem);	
+	Integer entityE[2];
+	Integer entityT[3];
+	Connectivity<ManifoldDim,ManifoldDim,1,1,2> connE2T(mesh,node2elem);
 		
-    auto entsvalue=ens.value();
-    auto elem2entity=ens.elem_2_entity();
-    cout<<"entsvalue.size="<<entsvalue.size()<<endl;
+		
+	auto connE82T=connE2T.compute(edge,14,triangle);
 
-    for(int ii=0;ii<entsvalue.size();ii++)
+    for(Integer ii=0;ii<connE82T.size();ii++)
+       cout<<" connE82T ="<<connE82T[ii]<<endl;
+		
+		
+		
+		
+    auto Eentity_2_elem=edge.entity_2_elem();
+    auto Eelem2entity=edge.elem_2_entity();
+		
+    auto Tentity_2_elem=triangle.entity_2_elem();
+    auto Telem2entity=triangle.elem_2_entity();
+    
+    cout<<"triangle_2_elem.size="<<Tentity_2_elem.size()<<endl;
+    for(int ii=0;ii<Tentity_2_elem.size();ii++)
     {
     
     cout<<endl;
-    cout<<"entity id="<<ii<<"   ";
-    for(int jj=0;jj<EntityDim;jj++)
-       cout<<entsvalue[ii][jj]<<" ";
+    for(int jj=0;jj<1;jj++)
+       cout<<Tentity_2_elem[ii][jj]<<" ";
+    cout<<"triangle id="<<ii<<"   ";
+    const auto & elemii=mesh.elem(Tentity_2_elem[ii][0]);
+    Combinations<ManifoldDim + 1, triangle.num_of_points()>::generate(Tentity_2_elem[ii][1],entityT);
+    for(int jj=0;jj<triangle.num_of_points();jj++)
+       cout<<elemii.nodes[entityT[jj]]<<" ";    
 	}	
 
-cout<<"elem2entity.size="<<elem2entity.size()<<endl;
-    for(int ii=0;ii<elem2entity.size();ii++)
+cout<<"triangle2entity.size="<<Telem2entity.size()<<endl;
+    for(int ii=0;ii<Telem2entity.size();ii++)
     {
     
     cout<<endl;
-    cout<<"elem2entity id="<<ii<<"   ";
-    for(int jj=0;jj<ens.entity_combinations();jj++)
-       cout<<elem2entity[ii][jj]<<" ";
+    cout<<"triangle elem2entity id="<<ii<<"   ";
+    for(int jj=0;jj<triangle.entity_combinations();jj++)
+       cout<<Telem2entity[ii][jj]<<" ";
 	}	
+
+
+
+
+    cout<<"edge_2_elem.size="<<Eentity_2_elem.size()<<endl;
+    for(int ii=0;ii<Eentity_2_elem.size();ii++)
+    {
+    
+    cout<<endl;
+    for(int jj=0;jj<1;jj++)
+       cout<<Eentity_2_elem[ii][jj]<<" ";
+    cout<<"--------edge id="<<ii<<"   ";
+    const auto & elemii=mesh.elem(Eentity_2_elem[ii][0]);
+    Combinations<ManifoldDim + 1, edge.num_of_points()>::generate(Eentity_2_elem[ii][1],entityE);
+    for(int jj=0;jj<edge.num_of_points();jj++)
+       cout<<elemii.nodes[entityE[jj]]<<" ";    
+	}	
+
+cout<<"edge2entity.size="<<Eelem2entity.size()<<endl;
+    for(int ii=0;ii<Eelem2entity.size();ii++)
+    {
+    
+    cout<<endl;
+    cout<<"edge elem2entity id="<<ii<<"   ";
+    for(int jj=0;jj<edge.entity_combinations();jj++)
+       cout<<Eelem2entity[ii][jj]<<" ";
+	}	
+
+
 
 	//run_benchmarks();
 	// test_partition_2D();

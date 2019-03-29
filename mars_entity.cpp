@@ -1,6 +1,6 @@
 
 
-#include "mars_entity.hpp"
+#include "mars_entity_impl.hpp"
 
 namespace mars {
 
@@ -30,6 +30,5 @@ template class Entity<5,5,2>;
 template class Entity<5,5,3>;
 template class Entity<5,5,4>;
 template class Entity<5,5,5>;
-
 
 }
