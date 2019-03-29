@@ -32,6 +32,7 @@ namespace mars {
 
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
+        Integer block = INVALID_INDEX;
 
         std::vector<Integer> children;
 
@@ -181,6 +182,7 @@ namespace mars {
     public:
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
+        Integer block = INVALID_INDEX;
         
         inline static std::vector<Vector<Real, Dim>> &ref()
         {
@@ -207,6 +209,7 @@ namespace mars {
     public:
         std::array<Integer, 2> nodes;
         std::array<Integer, 2> side_tags;
+        Integer block = INVALID_INDEX;
 
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
@@ -259,6 +262,7 @@ namespace mars {
 
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
+        Integer block = INVALID_INDEX;
        
         std::vector<Integer> children;
         
@@ -341,6 +345,7 @@ namespace mars {
 
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
+        Integer block = INVALID_INDEX;
 
         std::vector<Integer> children;
 
@@ -441,6 +446,7 @@ namespace mars {
 
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
+        Integer block = INVALID_INDEX;
 
         std::vector<Integer> children;
         

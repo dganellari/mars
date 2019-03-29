@@ -69,6 +69,8 @@ namespace mars {
 			//FIXME?
 			if(p_id == INVALID_INDEX) return;
 
+			 mesh.elem(id).block = mesh.elem(p_id).block;
+
 			//emplace if not there
 			mesh.dual_graph().safe_adj(id);
 

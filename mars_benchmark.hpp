@@ -83,7 +83,7 @@ namespace mars {
 					elements
 					);
 
-				std::cout << "n_marked(" << i << "/" << n_levels << ") : " << elements.size() << std::endl;
+				std::cout << "n_marked(" << (i+1) << "/" << n_levels << ") : " << elements.size() << std::endl;
 
 				b.refine(elements);
 				q.compute();

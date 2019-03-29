@@ -159,12 +159,14 @@ namespace mars {
 
 			Integer new_id = add_elem(s);
 			mesh.elem(element_id).children.push_back(new_id);
+			mesh.elem(new_id).block = mesh.elem(element_id).block;
 
 			s.nodes[0] = midpoint;
 			s.nodes[1] = v2;
 			
 			new_id = add_elem(s);
 			mesh.elem(element_id).children.push_back(new_id);
+			mesh.elem(new_id).block = mesh.elem(element_id).block;
 
 			bisect_side_tags(element_id, Edge(v1, v2), midpoint);
 			
@@ -176,6 +178,8 @@ namespace mars {
 				Edge(v1, v2),
 				midpoint
 			);
+
+
 
 			return;
 		}
