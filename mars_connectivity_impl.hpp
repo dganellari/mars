@@ -225,15 +225,22 @@ void connectivity_example()
 	//EdgeMap3 edge(mesh,node2elem);	
 	TriangleMap4 triangle(mesh,node2elem);	
 	//EdgeMap3 triangle(mesh,node2elem);	
+<<<<<<< HEAD
 	Integer entity_e[3];
 	Integer entity_t[3];
 	Connectivity<ManifoldDim,ManifoldDim,entitydim_from,subentitydim_from,entitydim_to> conn_e2t(mesh,node2elem);
+=======
+	Integer entityE[3];
+	Integer entityT[3];
+	Connectivity<ManifoldDim,ManifoldDim,entitydim_from,subentitydim_from,entitydim_to> connE2T(mesh,node2elem);
+>>>>>>> f5f86965b1b21a3aaa71ea44998a8eee8ac3e5d2
 		
 		
 		
 		
 		
 		
+<<<<<<< HEAD
     const auto &entity_2_elem_e=edge.entity_2_elem();
     const auto &elem2entity_e=edge.elem_2_entity();
 		
@@ -241,33 +248,61 @@ void connectivity_example()
     const auto &elem2entity_t=triangle.elem_2_entity();
     
     cout<<"ENTITY FROM #elems="<<entity_2_elem_t.size()<<endl;
+=======
+    auto Eentity_2_elem=edge.entity_2_elem();
+    auto Eelem2entity=edge.elem_2_entity();
+		
+    auto Tentity_2_elem=triangle.entity_2_elem();
+    auto Telem2entity=triangle.elem_2_entity();
+    
+    cout<<"ENTITY FROM #elems="<<Tentity_2_elem.size()<<endl;
+>>>>>>> f5f86965b1b21a3aaa71ea44998a8eee8ac3e5d2
     cout<<"ENTITY FROM dimension="<<entitydim_from<<endl;
     cout<<"SUBENTITY FROM dimension="<<subentitydim_from<<endl;
     cout<<"ENTITY TO dimension="<<entitydim_to<<endl;
     cout<<"ENTITY FROM of interest id="<<entity_from_index<<endl;
     
+<<<<<<< HEAD
 //     for(int ii=entity_from_index;ii<entity_2_elem_t.size();ii++)
+=======
+//     for(int ii=entity_from_index;ii<Tentity_2_elem.size();ii++)
+>>>>>>> f5f86965b1b21a3aaa71ea44998a8eee8ac3e5d2
 //     {
 // 	
 // 		cout<<endl;
 // 		for(int jj=0;jj<1;jj++)
+<<<<<<< HEAD
 // 		   cout<<entity_2_elem_t[ii][jj]<<" ";
 // 		cout<<"ENTITY FROM id="<<ii<<"   ";
 		const auto & elemii=mesh.elem(entity_2_elem_t[entity_from_index][0]);
 		Combinations<ManifoldDim + 1, triangle.num_of_points()>::generate(entity_2_elem_t[entity_from_index][1],entity_t);
 		for(int jj=0;jj<triangle.num_of_points();jj++)
 		   cout<<elemii.nodes[entity_t[jj]]<<" ";    
+=======
+// 		   cout<<Tentity_2_elem[ii][jj]<<" ";
+// 		cout<<"ENTITY FROM id="<<ii<<"   ";
+		const auto & elemii=mesh.elem(Tentity_2_elem[entity_from_index][0]);
+		Combinations<ManifoldDim + 1, triangle.num_of_points()>::generate(Tentity_2_elem[entity_from_index][1],entityT);
+		for(int jj=0;jj<triangle.num_of_points();jj++)
+		   cout<<elemii.nodes[entityT[jj]]<<" ";    
+>>>>>>> f5f86965b1b21a3aaa71ea44998a8eee8ac3e5d2
 //	}	
 
 
 
 
+<<<<<<< HEAD
     cout<<"ENTITY TO #elems="<<entity_2_elem_e.size()<<endl;
     for(int ii=0;ii<entity_2_elem_e.size();ii++)
+=======
+    cout<<"ENTITY TO #elems="<<Eentity_2_elem.size()<<endl;
+    for(int ii=0;ii<Eentity_2_elem.size();ii++)
+>>>>>>> f5f86965b1b21a3aaa71ea44998a8eee8ac3e5d2
     {
     
 		cout<<endl;
 		for(int jj=0;jj<1;jj++)
+<<<<<<< HEAD
 		   cout<<entity_2_elem_e[ii][jj]<<" ";
 		cout<<"--------ENTITY TO id="<<ii<<"   ";
 		const auto & elemii=mesh.elem(entity_2_elem_e[ii][0]);
@@ -281,6 +316,21 @@ void connectivity_example()
     cout<<endl;
     for(Integer ii=0;ii<connection.size();ii++)
        cout<<" CONNECTIONS: ="<<connection[ii]<<endl;
+=======
+		   cout<<Eentity_2_elem[ii][jj]<<" ";
+		cout<<"--------ENTITY TO id="<<ii<<"   ";
+		const auto & elemii=mesh.elem(Eentity_2_elem[ii][0]);
+		Combinations<ManifoldDim + 1, edge.num_of_points()>::generate(Eentity_2_elem[ii][1],entityE);
+		for(int jj=0;jj<edge.num_of_points();jj++)
+		   cout<<elemii.nodes[entityE[jj]]<<" ";    
+	}	
+
+	auto connE82T=connE2T.compute(triangle,entity_from_index,edge);
+
+    cout<<endl;
+    for(Integer ii=0;ii<connE82T.size();ii++)
+       cout<<" CONNECTIONS: ="<<connE82T[ii]<<endl;
+>>>>>>> f5f86965b1b21a3aaa71ea44998a8eee8ac3e5d2
        
 
 
