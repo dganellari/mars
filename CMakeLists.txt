@@ -15,6 +15,7 @@ find_package(MPIExtended)
 list(APPEND MARS_HEADERS
 	mars.hpp 
 	mars_base.hpp
+	mars_base_entity.hpp
 	mars_benchmark.hpp
 	mars_bisection.hpp
 	mars_communicator.hpp
