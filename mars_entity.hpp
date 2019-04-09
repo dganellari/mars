@@ -53,13 +53,13 @@ public:
 
     inline const Integer entity_nums() const {return entity_nums_; };
 
-    inline std::vector<std::array<Integer,2>> entity_2_elem() const {return entity_2_elem_; };
+    inline const std::vector<std::array<Integer,2>> entity_2_elem() const {return entity_2_elem_; };
     
-    inline std::array<Integer,2> entity_2_elem(Integer index) const {return entity_2_elem_[index]; };
+    inline const std::array<Integer,2> entity_2_elem(Integer index) const {return entity_2_elem_[index]; };
     
-    inline std::vector<std::array<Integer, entity_combinations() > > elem_2_entity() const {return elem_2_entity_; };   
+    inline const std::vector<std::array<Integer, entity_combinations() > > elem_2_entity() const {return elem_2_entity_; };   
     
-    inline std::array<Integer, entity_combinations() > elem_2_entity(Integer index) const {return elem_2_entity_[index]; }; 
+    inline const std::array<Integer, entity_combinations() > elem_2_entity(Integer index) const {return elem_2_entity_[index]; }; 
 
 
 private:

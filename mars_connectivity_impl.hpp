@@ -3,7 +3,6 @@
 
 #include "mars_connectivity.hpp"
 
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////// Written by Gabriele Rovi (April 2019)                                                                                            ////////
 ////// We define the following class:                                                                                                   ////////
@@ -295,28 +294,43 @@ initialize_combinations_value(std::array<Integer, ManifoldDim+1> & combinations_
 
 
 
-/////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////          M-th TUPLE COMPONENT       ////////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+    // template<Integer ManifoldDim>
+    // class entity_combinations {
+    // public:
+    //     static std::array<Integer, ManifoldDim+1> nums;
+    // };
+    
+    // initialize_combinations_value(entity_combinations<ManifoldDim>::nums);
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////// ------------------------------------------TUPLE ITERATOR----------------------------------------//////
+//////                                                                                                 //////
+////// tuple_iterate(tuple, functor, additional_functor_inputs)                                        //////
+////// Given the tuple, on each component M call functor(std::get<M>(tuple),additional_functor_inputs) //////
+////// If no additional_functor_inputs is given, then simply call functor(std::get<M>(tuple))          //////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
 // base case (M==tuple size)
-template<std::size_t K,std::size_t M , typename ...Args>
-typename std::enable_if< M==K,void >::type
-    tuple_component(std::tuple< Args...> const &tuple) 
+template<std::size_t M , typename ...TupleComponentTypes, typename Function, typename...FunctionArgs>
+typename std::enable_if< M==sizeof ...(TupleComponentTypes),void >::type
+    tuple_iterate(std::tuple< TupleComponentTypes...> const &tuple, Function f, FunctionArgs... functionargs ) 
     {
      static_assert(M>=0," the component must be greater than zero ");
-     static_assert(K<sizeof ...(Args)," the component must be inside the tuple ");
-        
     };
 // general case (M<tuple size)
-template<std::size_t K,std::size_t M = 0, typename...Args>
-typename std::enable_if< M<sizeof ...(Args),void >::type
-    tuple_component(std::tuple< Args...> const &tuple) 
+template<std::size_t M = 0, typename...TupleComponentTypes, typename Function, typename...FunctionArgs>
+typename std::enable_if< M<sizeof ...(TupleComponentTypes),void >::type
+    tuple_iterate(std::tuple< TupleComponentTypes...> const &tuple, Function f, FunctionArgs... functionargs ) 
     {
      static_assert(M>=0," the component must be greater than zero ");
-     static_assert(K<sizeof ...(Args)," the component must be inside the tuple ");
+     f(std::get<M>(tuple),functionargs...);
      // iterate to the next 
-     tuple_component<K,M+1,Args...>(tuple);
-        
+     tuple_iterate<M+1>(tuple,f,functionargs...);   
     };
 
 
@@ -327,14 +341,37 @@ typename std::enable_if< M<sizeof ...(Args),void >::type
 
 
 
+ struct entity_print{
+        template<typename T, typename ...Args>
+  void operator()(const T& entity, Args... args)const
+  { 
+    //const auto& entity_dof=entity[];
+    std::cout<<" num  of points = "<<entity.entity_nums()<<std::endl;}
+   };
 
 
+ 
 
 
+  struct entity_do{
+        template<typename T>
+  void operator()(const T& entity, int ii)const
+      {std::cout<<" entity_do  of points = "<<entity.entity_nums()<<std::endl;
+       std::cout<<" entity_do  of points = "<<ii<<std::endl;}
+   }; 
 
 
+  struct entity_try{
+        template<typename T, typename Function>
+  void operator()(const T& entity, Function f)const
+  { 
+    //const auto& entity_dof=entity[];
 
+    std::cout<<" try...  "<<std::endl;
+    f(entity,2);
+}
 
+   }; 
 
 
 
@@ -348,7 +385,7 @@ void connectivity_example()
 {
 
 
-
+ 
 
   // std::array<std::shared_ptr<BaseEntity>,3> entity_vec1;
   //   entity_vec1[0]=std::static_pointer_cast<BaseEntity> (std::make_shared< Entity<ManifoldDim,ManifoldDim,0>>(mesh,node2elem));
@@ -426,13 +463,21 @@ void connectivity_example()
     const auto prova3=std::get<3>(const_entities_tuple);
     std::cout<<" tuple size =" << std::tuple_size<decltype(const_entities_tuple)>::value << std::endl ;
      compute_local_dofmap(const_entities_tuple); 
-
+    
 
 
     std::array<std::vector<bool>, ManifoldDim+1> entity_found;
     std::array<Integer, ManifoldDim+1> combinations_nums;
     initialize_vector_entities<ManifoldDim>(const_entities_tuple,entity_found);
     initialize_combinations_value<ManifoldDim>(combinations_nums);
+
+
+tuple_iterate(const_entities_tuple,entity_print());
+tuple_iterate(const_entities_tuple,entity_do(),4);
+tuple_iterate(const_entities_tuple,entity_try(),entity_do());
+// fare<4,0>(add_and_print(2),const_entities_tuple); 
+// fare<3,3>(add_and_print(1),const_entities_tuple);
+
 
 
     for(Integer entity_dim = 0 ;entity_dim <= ManifoldDim; entity_dim++)
@@ -442,6 +487,7 @@ void connectivity_example()
         for(Integer entity = 0 ;entity < combinations_nums[entity_dim]; entity++)
             {
             std::cout<<combinations_nums[entity_dim]<<" ";
+            //const auto& const_entities_tuple.elem_2_entity[elem_iter];
             //entity_dof= qualcosa dell elemento[entity_dim]; 
             // // if the entity has not been find yet, then define dofs on this entity
             // if(alread_mapped_entity[entity_dim][entity_dof]==false)
