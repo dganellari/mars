@@ -374,12 +374,21 @@ namespace mars {
     	void writePoints(const std::vector<Vector<Real, Dim>> &points, std::ostream &os) {
 
     		os << "<Points>\n";
-    		os << "<DataArray type=\"Float32\" NumberOfComponents=\"" << Dim << "\" format=\"ascii\">\n";
+    		os << "<DataArray type=\"Float32\" NumberOfComponents=\"" << ((Dim <3) ? 3 : Dim) << "\" format=\"ascii\">\n";
     		for (Integer i = 0; i < points.size(); ++i) {
     			for (Integer d = 0; d < Dim; ++d) {
     				os << points[i](d);
     				if (d < Dim - 1) {
     					os << " ";
+    				}else if(Dim == 2){ //padding for paraview vtu format visualisation.
+    					os << " ";
+    					os << 0;
+
+    				}else if(Dim == 1){
+    					os << " ";
+    					os << 0;
+    					os << " ";
+    					os << 0;
     				}
     			}
     			os << "\n";

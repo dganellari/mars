@@ -2,7 +2,7 @@
 #define MARS_TEST_HPP
 
 namespace mars {
-	void run_tests();
+	void run_tests(const int level);
 }
 
 #endif //MARS_TEST_HPP

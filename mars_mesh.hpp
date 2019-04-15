@@ -943,6 +943,81 @@ namespace mars {
 		return true;
 	}
 
+	template<Integer Dim, Integer ManifoldDim>
+		bool write_mesh_MFEM(const std::string &path,const Mesh<Dim, ManifoldDim> &mesh)
+		{
+  			std::ofstream os;
+    		os.open(path.c_str());
+    		if (!os.good()) {
+    			os.close();
+    			return false;
+    		}
+
+			writeHeader(mesh, os);
+			writeElements(mesh, os);
+			writeVertices(mesh, os);
+
+			os.close();
+		//	clear();
+			return true;
+
+		}
+
+	template<Integer Dim, Integer ManifoldDim>
+	void writeHeader(const Mesh<Dim, ManifoldDim> &mesh, std::ostream &os) {
+		Integer dim = mesh.ManifoldDim;
+		os << "MFEM mesh v1.0\n\ndimension\n";
+		os << dim<<"\n\n";
+	}
+
+	template<Integer Dim, Integer ManifoldDim>
+	void writeElements(const Mesh<Dim, ManifoldDim> &mesh, std::ostream &os) {
+		os << "elements\n";
+		os << mesh.n_elements() << "\n";
+
+		for (Integer k = 0; k < mesh.n_elements(); ++k) {
+			if (!mesh.is_active(k))
+				continue;
+
+			if(mesh.tags().size() == mesh.n_elements())
+				os<<mesh.tags()[k]<< " " << mesh.elem(k).type()<<" ";
+			else
+				os<<INVALID_INDEX<< " " << INVALID_INDEX<<" ";
+
+			for (Integer i = 0; i < ManifoldDim + 1; ++i) {
+				const Integer v = mesh.elem(k).nodes[i];
+				os << v;
+				if (i < ManifoldDim) {
+					os << " ";
+				}
+			}
+			os << "\n";
+		}
+		os << "\n";
+	}
+
+	template<Integer Dim, Integer ManifoldDim>
+	void writeVertices(const Mesh<Dim, ManifoldDim> &mesh, std::ostream &os) {
+		Integer dim = mesh.Dim;
+		os << "vertices\n";
+
+		const std::vector<Vector<Real, Dim>> points = mesh.points();
+
+		os << points.size() << "\n";
+		os << dim << "\n";
+
+		for (Integer i = 0; i < points.size(); ++i) {
+			for (Integer d = 0; d < Dim; ++d) {
+				os << points[i](d);
+				if (d < Dim - 1) {
+					os << " ";
+				}
+			}
+			os << "\n";
+		}
+
+	}
+
 	inline bool mesh_hyper_cube(
 		const std::array<Integer, 4> &dims,
 		const Vector<Real, 4> &lobo,
