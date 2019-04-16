@@ -23,6 +23,7 @@
 
 #include "mars_entity.hpp"
 #include "mars_connectivity.hpp"
+#include "mars_examples.hpp"
 
 #ifdef WITH_MPI
 #include "mars_par_bisection.hpp"

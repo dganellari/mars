@@ -16,6 +16,7 @@ list(APPEND MARS_HEADERS
 	mars.hpp 
 	mars_base.hpp
 	mars_base_entity.hpp
+	mars_base_functionspace.hpp
 	mars_benchmark.hpp
 	mars_bisection.hpp
 	mars_communicator.hpp
@@ -31,6 +32,9 @@ list(APPEND MARS_HEADERS
 	mars_edge_split_pool.hpp
 	mars_entity.hpp
 	mars_entity_impl.hpp
+	mars_examples.hpp
+	mars_functionspace.hpp
+	mars_functionspace_dofmap.hpp
 	mars_lagrange_element.hpp
 	mars_longest_edge.hpp
 	mars_matrix.hpp
