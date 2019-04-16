@@ -13,7 +13,7 @@ find_package(MPIExtended)
 #endif()
 
 list(APPEND MARS_HEADERS
-	mars.hpp 
+	mars.hpp
 	mars_base.hpp
 	mars_benchmark.hpp
 	mars_bisection.hpp
@@ -26,6 +26,7 @@ list(APPEND MARS_HEADERS
 	mars_edge_select.hpp
 	mars_edge_split.hpp
 	mars_edge_split_pool.hpp
+	mars_imesh.hpp
 	mars_lagrange_element.hpp
 	mars_longest_edge.hpp
 	mars_matrix.hpp
