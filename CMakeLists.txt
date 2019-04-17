@@ -50,6 +50,7 @@ list(APPEND MARS_HEADERS
 	mars_vector.hpp
 	mars_visualization.hpp
 	mars_vtk_writer.hpp
+	generation/mars_unit_mesh_generation.hpp
 	)
 
 list(APPEND MARS_SOURCES
