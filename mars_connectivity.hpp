@@ -75,12 +75,15 @@ private:
         std::vector<std::vector<Integer>> val_;
 };
 
-
+template<Integer Dim,Integer ManifoldDim=Dim>
+using NodeToElem=mars::Connectivity<Dim,ManifoldDim,0,0,ManifoldDim>;
 
 using NodeToElem1=mars::Connectivity<1,1,0,0,1>;
 using NodeToElem2=mars::Connectivity<2,2,0,0,2>;
 using NodeToElem3=mars::Connectivity<3,3,0,0,3>;
 using NodeToElem4=mars::Connectivity<4,4,0,0,4>;
+
+
 }
 
 #endif

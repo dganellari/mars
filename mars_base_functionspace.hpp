@@ -5,12 +5,12 @@
 
 namespace mars{
 
-template <Integer Dim, Integer ManifoldDim, Integer SpecificSpace, Integer Order, Integer FunctionSpaceDim=1>
+template <Integer Dim, Integer ManifoldDim, Integer SpaceID, Integer Order, Integer FunctionSpaceDim=1>
 class BaseFunctionSpace {
 public:
     static const Integer space_dim=Dim; 
     static const Integer manifold_dim=ManifoldDim;
-    static const Integer specific_space=SpecificSpace;
+    static const Integer id=SpaceID;
     static const Integer order=Order;  
     static const Integer functionspace_dim=FunctionSpaceDim;
 
