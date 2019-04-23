@@ -28,7 +28,7 @@
 #include "mars_par_mesh.hpp"
 #endif //WITH_MPI
 
-void test_mars_mesh_generation(const int x,
+void test_mars_mesh_generation_2D(const int x,
 		const int y, const int z) {
 
 	using namespace mars;
@@ -40,7 +40,22 @@ void test_mars_mesh_generation(const int x,
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
 
 	VTKMeshWriter < Mesh2 > w;
-	w.write("build_cube" + to_string(x) + to_string(y)+".vtu", mesh);
+	w.write("build_cube2D" + to_string(x) + to_string(y)+".vtu", mesh);
+}
+
+void test_mars_mesh_generation_3D(const int x,
+		const int y, const int z) {
+
+	using namespace mars;
+
+	Mesh3 mesh;
+	unit_generation::generate_cube<3, 3>(mesh, x, y, z);
+
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
+
+	VTKMeshWriter < Mesh3 > w;
+	w.write("build_cube3D" + to_string(x) + to_string(y)+".vtu", mesh);
 }
 
 void test_read_write_3D(const std::string filename)
@@ -920,8 +935,8 @@ int main(int argc, char *argv[])
 	//run_tests(level,filename);
 	//test_uniform_bisection_2D(level,filename);
 	test_read_write_3D(filename);
-	test_mars_mesh_generation(180,200,2);
-	test_mars_mesh_generation(9,9,2);
+	test_mars_mesh_generation_2D(9,9,2);
+	test_mars_mesh_generation_3D(1,1,1);
 
 #ifdef WITH_MPI
 	// par_mesh_test();
