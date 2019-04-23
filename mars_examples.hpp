@@ -19,62 +19,115 @@ void connectivity_example()
     constexpr Integer SpaceID=Lagrange;
     constexpr Integer Order=3;
     mars::Mesh<ManifoldDim, ManifoldDim> mesh;
-    read_mesh("../data/pentatope_1.MFEM", mesh);
+    read_mesh("../data/pentatope_2.MFEM", mesh);
     //read_mesh("../data/cube_6.MFEM", mesh);
     //read_mesh("../data/square_2_def.MFEM", mesh);
     
   
     NodeToElem4 node2elem3(mesh);
     auto node2elem=node2elem3.val();
-    std::cout<<" Lagr11 ord1 =" <<Lagrange1_1D::entities_nums<<", "<<Lagrange1_1D::id<< std::endl ;
-    std::cout<<" 11 ord1 =" <<FunctionSpace<1,1,Lagrange,1>::entities_nums<< std::endl ;
-    std::cout<<" 22 ord1 =" <<FunctionSpace<2,2,Lagrange,1>::entities_nums<< std::endl ;
-    std::cout<<" 33 ord1 =" <<FunctionSpace<3,3,Lagrange,1>::entities_nums<< std::endl ;
-    std::cout<<" 44 ord1 =" <<FunctionSpace<4,4,Lagrange,1>::entities_nums<< std::endl ;
+    // std::cout<<" Lagr11 ord1 =" <<Lagrange1_1D::entities_nums<<", "<<Lagrange1_1D::id<< std::endl ;
+    // std::cout<<" 11 ord1 =" <<FunctionSpace<1,1,Lagrange,1>::entities_nums<< std::endl ;
+    // std::cout<<" 22 ord1 =" <<FunctionSpace<2,2,Lagrange,1>::entities_nums<< std::endl ;
+    // std::cout<<" 33 ord1 =" <<FunctionSpace<3,3,Lagrange,1>::entities_nums<< std::endl ;
+    // std::cout<<" 44 ord1 =" <<FunctionSpace<4,4,Lagrange,1>::entities_nums<< std::endl ;
 
-    std::cout<<" 22 ord2 =" <<FunctionSpace<2,2,Lagrange,2>::entities_nums<< ", "<<FunctionSpace<2,2,Lagrange,2>::entity[1]<< std::endl ;
-    std::cout<<" 33 ord2 =" <<FunctionSpace<3,3,Lagrange,2>::entities_nums<< ", "<<FunctionSpace<3,3,Lagrange,2>::entity[1]<< std::endl ;
-    std::cout<<" 44 ord2 =" <<FunctionSpace<4,4,Lagrange,2>::entities_nums<< ", "<<FunctionSpace<4,4,Lagrange,2>::entity[1]<< std::endl ;
-
-
-    std::cout<<" 22 ord3 =" <<FunctionSpace<2,2,Lagrange,3>::entities_nums<< ", "<<FunctionSpace<2,2,Lagrange,3>::entity[2]<< std::endl ;
-    std::cout<<" 33 ord3 =" <<FunctionSpace<3,3,Lagrange,3>::entities_nums<< ", "<<FunctionSpace<3,3,Lagrange,3>::entity[2]<< std::endl ;
-    std::cout<<" 44 ord3 =" <<FunctionSpace<4,4,Lagrange,3>::entities_nums<< ", "<<FunctionSpace<4,4,Lagrange,3>::entity[2]<< std::endl ;
+    // std::cout<<" 22 ord2 =" <<FunctionSpace<2,2,Lagrange,2>::entities_nums<< ", "<<FunctionSpace<2,2,Lagrange,2>::entity[1]<< std::endl ;
+    // std::cout<<" 33 ord2 =" <<FunctionSpace<3,3,Lagrange,2>::entities_nums<< ", "<<FunctionSpace<3,3,Lagrange,2>::entity[1]<< std::endl ;
+    // std::cout<<" 44 ord2 =" <<FunctionSpace<4,4,Lagrange,2>::entities_nums<< ", "<<FunctionSpace<4,4,Lagrange,2>::entity[1]<< std::endl ;
 
 
-
-     std::cout<<" Lagrange1_3D order =" <<FunctionSpace<3,3,Lagrange,1>::order<<", "<<FunctionSpace<3,3,Lagrange,1>::space_dim<< std::endl ;
-     std::cout<<" Lagrange1_2D order =" <<FunctionSpace<2,2,Lagrange,1>::order<<", "<<FunctionSpace<2,2,Lagrange,1>::space_dim<< std::endl ;
-
-     std::cout<<" Lagrange1_1D order =" <<FunctionSpace<1,1,Lagrange,1>::order<<", "<<FunctionSpace<1,1,Lagrange,1>::space_dim<< std::endl ;
-    std::cout<<" Lagrange1_4D order =" <<BaseFunctionSpace<Dim,ManifoldDim,Lagrange,Order>::order<< std::endl ;
-        std::cout<<" Lagrange1_4D order =" <<FunctionSpace<Dim,ManifoldDim,Lagrange,2>::order<< std::endl ;
+    // std::cout<<" 22 ord3 =" <<FunctionSpace<2,2,Lagrange,3>::entities_nums<< ", "<<FunctionSpace<2,2,Lagrange,3>::entity[2]<< std::endl ;
+    // std::cout<<" 33 ord3 =" <<FunctionSpace<3,3,Lagrange,3>::entities_nums<< ", "<<FunctionSpace<3,3,Lagrange,3>::entity[2]<< std::endl ;
+    // std::cout<<" 44 ord3 =" <<FunctionSpace<4,4,Lagrange,3>::entities_nums<< ", "<<FunctionSpace<4,4,Lagrange,3>::entity[2]<< std::endl ;
 
 
-using T = Append<2, Entity<Dim,ManifoldDim,1>, std::tuple<int> >::type; 
-// il problema e' che 
-    Lagrange3_4D mmm;
-    dofmap<Dim,ManifoldDim, Lagrange3_4D,Lagrange3_4D>(mesh);//,Lagrange2_4D,Lagrange3_4D);
+
+    //  std::cout<<" Lagrange1_3D order =" <<FunctionSpace<3,3,Lagrange,1>::order<<", "<<FunctionSpace<3,3,Lagrange,1>::space_dim<< std::endl ;
+    //  std::cout<<" Lagrange1_2D order =" <<FunctionSpace<2,2,Lagrange,1>::order<<", "<<FunctionSpace<2,2,Lagrange,1>::space_dim<< std::endl ;
+
+    //  std::cout<<" Lagrange1_1D order =" <<FunctionSpace<1,1,Lagrange,1>::order<<", "<<FunctionSpace<1,1,Lagrange,1>::space_dim<< std::endl ;
+    // std::cout<<" Lagrange1_4D order =" <<BaseFunctionSpace<Dim,ManifoldDim,Lagrange,Order>::order<< std::endl ;
+    //     std::cout<<" Lagrange1_4D order =" <<FunctionSpace<Dim,ManifoldDim,Lagrange,2>::order<< std::endl ;
+
+   MixedFunctionSpace<Lagrange1_4D,Lagrange2_4D,Lagrange3_4D> mixed_space;
+    
+   // constexpr std::array<std::array<Integer,2>,2> iu=ArrayHolder<Lagrange2_4D::dofs_per_entity, Lagrange2_4D::dofs_per_entity>::data;
+     std::array<std::array<Integer, 5> , 2 > tmp2;
+    ArrOfArr<0,2,5,Lagrange1_4D,Lagrange2_4D>(tmp2);
+    std::cout<<tmp2[0][0]<<" "<<tmp2[0][1]<<" "<<tmp2[0][2]<<" "<<tmp2[0][3]<<" "<<" "<<tmp2[0][4]<<std::endl;
+    std::cout<<tmp2[1][0]<<" "<<tmp2[1][1]<<" "<<tmp2[1][2]<<" "<<tmp2[1][3]<<" "<<" "<<tmp2[1][4]<<std::endl;
+     //std::cout<<"xxx"<<Lagrange2_4D::dofs_per_entity2[1]<<std::endl;
+
+    //constexpr std::array<Integer,2> eic=Lagrange2_4D::dofs_per_entity2;
+    constexpr std::array<Integer, 4> tmp={0,4,23,2};
+   std::cout << mixed_space.entities_nums(0) << std::endl;
+   std::cout << mixed_space.entities_nums(1) << std::endl;
+   std::cout << mixed_space.entities_nums(2) << std::endl;
+
+   std::cout << mixed_space.dofs_per_entity<0>()[0] << std::endl;
+   std::cout << mixed_space.dofs_per_entity<1>()[1] << std::endl;
+   std::cout << mixed_space.dofs_per_entity<2>()[1] << std::endl;
+
+
+//    MixedFunctionSpace<Lagrange1_4D, MixedFunctionSpace<Lagrange1_4D> > mixed_space2;
+   //  std::cout << std::get<0>(kkk)[0] << std::endl;
+   // std::cout << std::get<1>(kkk)[1] << std::endl;
+   // std::cout << std::get<2>(kkk)[1] << std::endl;
+   // // std::cout << mgs.kkk<1>() << std::endl;
+   // std::cout << kkk<2>() << std::endl;
+    // auto ooooo=TupleCreate<Lagrange3_4D,Lagrange3_4D>();//mesh);
+    // auto ooooo1=std::get<1>(cane0);
+     // std::cout<<" --------11---"<< ooooo1::entities_nums<<std::endl;
+   std::array<Integer,Lagrange3_4D::entities_nums> arr3;
+   std::array<Integer,Lagrange2_4D::entities_nums> arr2;
+   FunctionSpaceOffSetDofs<Lagrange3_4D::entities_nums,Lagrange3_4D>(arr3);
+   FunctionSpaceOffSetDofs<Lagrange2_4D::entities_nums,Lagrange2_4D>(arr2);
+
+std::cout<<"Lagrange2_4D"<<std::endl;
+std::cout<<FunctionSpaceDofsPerElem<Lagrange2_4D,0>::value<<std::endl;
+std::cout<<FunctionSpaceDofsPerElem<Lagrange2_4D,1>::value<<std::endl;
+std::cout<<"Lagrange3_4D"<<std::endl;
+std::cout<<FunctionSpaceDofsPerElem<Lagrange3_4D,0>::value<<std::endl;
+std::cout<<FunctionSpaceDofsPerElem<Lagrange3_4D,1>::value<<std::endl;
+std::cout<<FunctionSpaceDofsPerElem<Lagrange3_4D,2>::value<<std::endl;
+
+   // const auto& eee=TupleTemplate<0,Lagrange1_4D,Lagrange2_4D>();
+
+
+   //  const auto eee0=std::get<0>(eee);
+   //  const auto eee1=std::get<1>(eee);
+   // // const auto eee2=std::get<2>(eee);
+   // for(Integer nn=0;nn<eee0.size();nn++)
+   //     std::cout<<"0__________=="<<eee0[nn]  <<std::endl;
+   // for(Integer nn=0;nn<eee1.size();nn++)
+   //      std::cout<<"1__________=="<<eee1[nn]  <<std::endl;
+   // for(Integer nn=0;nn<eee0.size();nn++)
+   //     std::cout<<"2__________=="<<eee2[nn]  <<std::endl;
+
+   
+   for(Integer nn=0;nn<arr2.size();nn++)
+      std::cout<<"hei2=="<<arr2[nn]  <<std::endl;
+   for(Integer nn=0;nn<arr3.size();nn++)
+      std::cout<<"hei3=="<<arr3[nn]  <<std::endl;
+//////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////
+dofmap<Dim,ManifoldDim, Lagrange1_4D,Lagrange3_4D>(mesh);//,Lagrange2_4D,Lagrange3_4D);
+//////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////
+
+
     const auto const_entities_tuple=EntitiesOfFunctionSpace<Dim,ManifoldDim,SpaceID,Order>(mesh,node2elem);
 
    
     const auto node=std::get<0>(const_entities_tuple);
     const auto edge=std::get<1>(const_entities_tuple);
     const auto triangle=std::get<2>(const_entities_tuple);
-    std::cout<<" tuple size =" << std::tuple_size<decltype(const_entities_tuple)>::value << std::endl ;
 
 
-    constexpr const auto & entities_nums=FunctionSpace<Dim,ManifoldDim,SpaceID,Order>::entities_nums;
-    std::array<std::vector<bool>, entities_nums> entity_found;
-    initialize_vector_entities<Dim,ManifoldDim,SpaceID,Order>(const_entities_tuple,entity_found);
-   
-   for(int ii=0;ii<entity_found.size();ii++)
-    {std::cout<<std::endl<<"ii=="<<ii<<std::endl;
-     for(int jj=0;jj<entity_found[ii].size();jj++)
-     {
-        std::cout<<entity_found[ii][jj]<<" ";
-     }
-    }
+
 
 
 
@@ -95,7 +148,7 @@ using T = Append<2, Entity<Dim,ManifoldDim,1>, std::tuple<int> >::type;
     const auto &entity_2_elem_t=triangle.entity_2_elem();
     const auto &elem2entity_t=triangle.elem_2_entity();
     
-    cout<<"ENTITY FROM #elems="<<triangle.entity_nums()<<endl;
+    cout<<"ENTITY FROM #elems="<<triangle.size()<<endl;
     cout<<"ENTITY FROM dimension="<<entitydim_from<<endl;
 
         const auto & elemii=mesh.elem(entity_2_elem_t[entity_from_index][0]);
@@ -112,8 +165,8 @@ using T = Append<2, Entity<Dim,ManifoldDim,1>, std::tuple<int> >::type;
  
 
  
-    cout<<"ENTITY TO #elems="<<edge.entity_nums()<<endl;
-    for(int ii=0;ii<edge.entity_nums();ii++)
+    cout<<"ENTITY TO #elems="<<edge.size()<<endl;
+    for(int ii=0;ii<edge.size();ii++)
     {
     
         cout<<endl;

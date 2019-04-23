@@ -5,7 +5,7 @@
 
 namespace mars{
 
-template <Integer Dim, Integer ManifoldDim, Integer SpaceID, Integer Order, Integer FunctionSpaceDim=1>
+template <Integer Dim, Integer ManifoldDim, Integer SpaceID, Integer Order, Integer FunctionSpaceDim=1,bool ContinuousGalerkin=true>
 class BaseFunctionSpace {
 public:
     static const Integer space_dim=Dim; 
@@ -13,6 +13,7 @@ public:
     static const Integer id=SpaceID;
     static const Integer order=Order;  
     static const Integer functionspace_dim=FunctionSpaceDim;
+    static const bool cg=ContinuousGalerkin;  
 
 };
 

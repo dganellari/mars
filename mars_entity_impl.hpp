@@ -21,14 +21,14 @@ namespace mars {
 
 template<Integer Dim,Integer ManifoldDim,Integer EntityDim>
 Entity<Dim,ManifoldDim,EntityDim>::Entity(const Mesh<Dim,ManifoldDim> mesh,const std::vector< std::vector<Integer> > node_2_element)
-     {init_entity(mesh,node_2_element,entity_2_elem_,elem_2_entity_,entity_nums_); };
+     {init_entity(mesh,node_2_element,entity_2_elem_,elem_2_entity_,size_); };
      
      
 template<Integer Dim,Integer ManifoldDim,Integer EntityDim>
 void Entity<Dim,ManifoldDim,EntityDim>::init_entity(const Mesh<Dim,ManifoldDim> mesh,const std::vector< std::vector<Integer> > node_2_element,
                                     std::vector<std::array<Integer,2>> &entity_2_elem_, 
                                     std::vector<std::array<Integer, entity_combinations() >> &elem_2_entity_,
-                                    Integer &entity_nums_)
+                                    Integer &size_)
  {
  
  
@@ -148,7 +148,7 @@ void Entity<Dim,ManifoldDim,EntityDim>::init_entity(const Mesh<Dim,ManifoldDim> 
              }    
           }  
 
-          entity_nums_=entity_number;  
+          size_=entity_number;  
      };
 
 

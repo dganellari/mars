@@ -7,13 +7,37 @@
 namespace mars{
 
 template <Integer Dim,Integer ManifoldDim, Integer SpaceID,Integer Order>
-class FunctionSpace : public BaseFunctionSpace<Dim,ManifoldDim,Lagrange, Order, 1 >
- {};
+class FunctionSpace : public BaseFunctionSpace<Dim,ManifoldDim,Lagrange, Order, 1, true >
+ {
+    public:
+     static constexpr Integer entity[]={0};
+     static constexpr Integer dofs_per_entity[]={0};
+     static constexpr Integer entities_nums=1;
+ };
+
+template <Integer Dim,Integer ManifoldDim, Integer SpaceID,Integer Order>
+class FunctionSpaceDG : public BaseFunctionSpace<Dim,ManifoldDim,Lagrange, Order, 1, false >
+ {
+    public:
+     static constexpr Integer entity[]={0};
+     static constexpr Integer dofs_per_entity[]={0};
+     static constexpr Integer entities_nums=1;
+ };
+
+template <Integer Dim,Integer ManifoldDim, Integer SpaceID,Integer Order>
+constexpr Integer FunctionSpace<Dim,ManifoldDim,SpaceID,Order>::entities_nums;
+template<Integer Dim, Integer ManifoldDim,Integer SpaceID,Integer Order>
+constexpr Integer FunctionSpace<Dim,ManifoldDim,SpaceID,Order>::dofs_per_entity[];
+template<Integer Dim, Integer ManifoldDim,Integer SpaceID,Integer Order>
+constexpr Integer FunctionSpace<Dim,ManifoldDim,SpaceID,Order>::entity[];
+
 
 
 //this does not work...why?
 template<Integer Dim, Integer ManifoldDim,Integer SpaceID,Integer Order>
 using entities_nums = typename FunctionSpace<Dim,ManifoldDim,SpaceID,Order>::entities_nums;
+
+
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////------------------------------------ ///////////////////////////////
@@ -37,10 +61,11 @@ using Lagrange1_4D=Lagrange1<4>;
 
 
 template<Integer Dim, Integer ManifoldDim>
-class FunctionSpace<Dim,ManifoldDim,Lagrange,1>: public BaseFunctionSpace<Dim,ManifoldDim,Lagrange,1, 1 >
+class FunctionSpace<Dim,ManifoldDim,Lagrange,1>: public BaseFunctionSpace<Dim,ManifoldDim,Lagrange,1, 1 , true >
 {
 public:
      static constexpr Integer entity[]={0};
+     static constexpr Integer dofs_per_entity[]={1};
      static constexpr Integer entities_nums=1;
      
  };
@@ -50,58 +75,65 @@ public:
 ///////////////////////////////------------- DIM == 1 --------------///////////////////////////////
 
 template<>
-class FunctionSpace<1,1,Lagrange,1>: public BaseFunctionSpace<1,1,Lagrange,1, 1 >
+class FunctionSpace<1,1,Lagrange,1>: public BaseFunctionSpace<1,1,Lagrange,1, 1 , true >
 {
 public:
      static constexpr Integer entity[]={0};
+     static constexpr Integer dofs_per_entity[]={1};
      static constexpr Integer entities_nums=1;
  };
 
 constexpr Integer FunctionSpace<1,1,Lagrange,1>::entities_nums;
 constexpr Integer FunctionSpace<1,1,Lagrange,1>::entity[FunctionSpace<1,1,Lagrange,1>::entities_nums];
+constexpr Integer FunctionSpace<1,1,Lagrange,1>::dofs_per_entity[FunctionSpace<1,1,Lagrange,1>::entities_nums];
 
 
 ///////////////////////////////------------- DIM == 2 --------------///////////////////////////////
 
 template<>
-class FunctionSpace<2,2,Lagrange,1>: public BaseFunctionSpace<2,2,Lagrange,1, 1 >
+class FunctionSpace<2,2,Lagrange,1>: public BaseFunctionSpace<2,2,Lagrange,1, 1 , true >
 {
 public:
      static constexpr Integer entity[]={0};
+     static constexpr Integer dofs_per_entity[]={1};
      static constexpr Integer entities_nums=1;
  };
 
 constexpr Integer FunctionSpace<2,2,Lagrange,1>::entities_nums;
 constexpr Integer FunctionSpace<2,2,Lagrange,1>::entity[FunctionSpace<2,2,Lagrange,1>::entities_nums];
+constexpr Integer FunctionSpace<2,2,Lagrange,1>::dofs_per_entity[FunctionSpace<2,2,Lagrange,1>::entities_nums];
 
 
 ///////////////////////////////------------- DIM == 3 --------------///////////////////////////////
 
 template<>
-class FunctionSpace<3,3,Lagrange,1>: public BaseFunctionSpace<3,3,Lagrange,1, 1 >
+class FunctionSpace<3,3,Lagrange,1>: public BaseFunctionSpace<3,3,Lagrange,1, 1 , true >
 {
 public:
      static constexpr Integer entity[]={0};
+     static constexpr Integer dofs_per_entity[]={1};
      static constexpr Integer entities_nums=1;
  };
 
 constexpr Integer FunctionSpace<3,3,Lagrange,1>::entities_nums;
 constexpr Integer FunctionSpace<3,3,Lagrange,1>::entity[FunctionSpace<3,3,Lagrange,1>::entities_nums];
+constexpr Integer FunctionSpace<3,3,Lagrange,1>::dofs_per_entity[FunctionSpace<3,3,Lagrange,1>::entities_nums];
 
 
 // ///////////////////////////////------------- DIM == 4 --------------///////////////////////////////
 
 template<>
-class FunctionSpace<4,4,Lagrange,1>: public BaseFunctionSpace<4,4,Lagrange,1, 1 >
+class FunctionSpace<4,4,Lagrange,1>: public BaseFunctionSpace<4,4,Lagrange,1, 1 , true >
 {
 public:
      static constexpr Integer entity[]={0};
+     static constexpr Integer dofs_per_entity[]={1};
      static constexpr Integer entities_nums=1;
  };
 
 constexpr Integer FunctionSpace<4,4,Lagrange,1>::entities_nums;
 constexpr Integer FunctionSpace<4,4,Lagrange,1>::entity[FunctionSpace<4,4,Lagrange,1>::entities_nums];
-
+constexpr Integer FunctionSpace<4,4,Lagrange,1>::dofs_per_entity[FunctionSpace<4,4,Lagrange,1>::entities_nums];
 
 
 
@@ -117,40 +149,49 @@ using Lagrange2_4D=Lagrange2<4>;
 
 ///////////////////////////////------------- DIM == 2 --------------///////////////////////////////
 template<>
-class FunctionSpace<2,2,Lagrange,2>: public BaseFunctionSpace<2,2,Lagrange, 2, 1 >
+class FunctionSpace<2,2,Lagrange,2>: public BaseFunctionSpace<2,2,Lagrange, 2, 1 , true >
 {
 public:
      static constexpr Integer entity[]={0,1};
+     static constexpr Integer dofs_per_entity[]={1,1};
      static constexpr Integer entities_nums=2;
  };
 
 constexpr Integer FunctionSpace<2,2,Lagrange,2>::entities_nums;
 constexpr Integer FunctionSpace<2,2,Lagrange,2>::entity[FunctionSpace<2,2,Lagrange,2>::entities_nums];
+constexpr Integer FunctionSpace<2,2,Lagrange,2>::dofs_per_entity[FunctionSpace<2,2,Lagrange,2>::entities_nums];
 
 ///////////////////////////////------------- DIM == 3 --------------///////////////////////////////
 template<>
-class FunctionSpace<3,3,Lagrange,2>: public BaseFunctionSpace<3,3,Lagrange, 2, 1 >
+class FunctionSpace<3,3,Lagrange,2>: public BaseFunctionSpace<3,3,Lagrange, 2, 1 , true >
 {
 public:
      static constexpr Integer entity[]={0,1};
+     static constexpr Integer dofs_per_entity[]={1,1};     
      static constexpr Integer entities_nums=2;
  };
 
 constexpr Integer FunctionSpace<3,3,Lagrange,2>::entities_nums;
 constexpr Integer FunctionSpace<3,3,Lagrange,2>::entity[FunctionSpace<3,3,Lagrange,2>::entities_nums];
+constexpr Integer FunctionSpace<3,3,Lagrange,2>::dofs_per_entity[FunctionSpace<3,3,Lagrange,2>::entities_nums];
 
 ///////////////////////////////------------- DIM == 4 --------------///////////////////////////////
 template<>
-class FunctionSpace<4,4,Lagrange,2>: public BaseFunctionSpace<4,4,Lagrange, 2, 1 >
+class FunctionSpace<4,4,Lagrange,2>: public BaseFunctionSpace<4,4,Lagrange, 2, 1 , true >
 {
 public:
      static constexpr Integer entity[]={0,1};
+     static constexpr Integer dofs_per_entity[]={1,1};          
      static constexpr Integer entities_nums=2;
+
+ 
+     //static constexpr std::array<Integer,entities_nums> dofs_per_entity2={1,1};
  };
 
 constexpr Integer FunctionSpace<4,4,Lagrange,2>::entities_nums;
 constexpr Integer FunctionSpace<4,4,Lagrange,2>::entity[FunctionSpace<4,4,Lagrange,2>::entities_nums];
-
+constexpr Integer FunctionSpace<4,4,Lagrange,2>::dofs_per_entity[FunctionSpace<4,4,Lagrange,2>::entities_nums];
+//constexpr std::array<Integer,FunctionSpace<4,4,Lagrange,2>::entities_nums> FunctionSpace<4,4,Lagrange,2>::dofs_per_entity2;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////--------- LAGRANGE SPACE 3 --------- ///////////////////////////////
@@ -165,40 +206,46 @@ using Lagrange3_4D=Lagrange3<4>;
 
 ///////////////////////////////------------- DIM == 2 --------------///////////////////////////////
 template<>
-class FunctionSpace<2,2,Lagrange,3>: public BaseFunctionSpace<2,2,Lagrange, 3, 1 >
+class FunctionSpace<2,2,Lagrange,3>: public BaseFunctionSpace<2,2,Lagrange, 3, 1 , true >
 {
 public:
      static constexpr Integer entity[]={0,1,2};
+     static constexpr Integer dofs_per_entity[]={1,2,1};     
      static constexpr Integer entities_nums=3;
  };
 
 constexpr Integer FunctionSpace<2,2,Lagrange,3>::entities_nums;
 constexpr Integer FunctionSpace<2,2,Lagrange,3>::entity[FunctionSpace<2,2,Lagrange,3>::entities_nums];
+constexpr Integer FunctionSpace<2,2,Lagrange,3>::dofs_per_entity[FunctionSpace<2,2,Lagrange,3>::entities_nums];
 
 ///////////////////////////////------------- DIM == 3 --------------///////////////////////////////
 template<>
-class FunctionSpace<3,3,Lagrange,3>: public BaseFunctionSpace<3,3,Lagrange, 3, 1 >
+class FunctionSpace<3,3,Lagrange,3>: public BaseFunctionSpace<3,3,Lagrange, 3, 1 , true >
 {
 public:
      static constexpr Integer entity[]={0,1,2};
+     static constexpr Integer dofs_per_entity[]={1,2,1};          
      static constexpr Integer entities_nums=3;
  };
 
 constexpr Integer FunctionSpace<3,3,Lagrange,3>::entities_nums;
 constexpr Integer FunctionSpace<3,3,Lagrange,3>::entity[FunctionSpace<3,3,Lagrange,3>::entities_nums];
+constexpr Integer FunctionSpace<3,3,Lagrange,3>::dofs_per_entity[FunctionSpace<3,3,Lagrange,3>::entities_nums];
 
 ///////////////////////////////------------- DIM == 4 --------------///////////////////////////////
 
 template<>
-class FunctionSpace<4,4,Lagrange,3>: public BaseFunctionSpace<4,4,Lagrange, 3, 1 >
+class FunctionSpace<4,4,Lagrange,3>: public BaseFunctionSpace<4,4,Lagrange, 3, 1 , true >
 {
 public:
      static constexpr Integer entity[]={0,1,2};
+     static constexpr Integer dofs_per_entity[]={1,2,1};          
      static constexpr Integer entities_nums=3;
  };
 
 constexpr Integer FunctionSpace<4,4,Lagrange,3>::entities_nums;
 constexpr Integer FunctionSpace<4,4,Lagrange,3>::entity[FunctionSpace<4,4,Lagrange,3>::entities_nums];
+constexpr Integer FunctionSpace<4,4,Lagrange,3>::dofs_per_entity[FunctionSpace<4,4,Lagrange,3>::entities_nums];
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -221,40 +268,46 @@ using RT0_4D=RT0<4>;
 ///////////////////////////////------------- DIM == 2 --------------///////////////////////////////
 
 template<>
-class FunctionSpace<2,2,RaviartThomas,0>: public BaseFunctionSpace<2,2,RaviartThomas,0,1 >
+class FunctionSpace<2,2,RaviartThomas,0>: public BaseFunctionSpace<2,2,RaviartThomas,0,1 , true >
 {
 public:
      static constexpr Integer entity[]={1};
+     static constexpr Integer dofs_per_entity[]={1};
      static constexpr Integer entities_nums=1;};
 
 constexpr Integer FunctionSpace<2,2,RaviartThomas,0>::entities_nums;
 constexpr Integer FunctionSpace<2,2,RaviartThomas,0>::entity[FunctionSpace<2,2,RaviartThomas,0>::entities_nums];
+constexpr Integer FunctionSpace<2,2,RaviartThomas,0>::dofs_per_entity[FunctionSpace<2,2,RaviartThomas,0>::entities_nums];
 
 
 ///////////////////////////////------------- DIM == 3 --------------///////////////////////////////
 
 template<>
-class FunctionSpace<3,3,RaviartThomas,0>: public BaseFunctionSpace<3,3,RaviartThomas,0,1 >
+class FunctionSpace<3,3,RaviartThomas,0>: public BaseFunctionSpace<3,3,RaviartThomas,0,1 , true >
 {
 public:
      static constexpr Integer entity[]={2};
+     static constexpr Integer dofs_per_entity[]={1};
      static constexpr Integer entities_nums=1;};
 
 constexpr Integer FunctionSpace<3,3,RaviartThomas,0>::entities_nums;
 constexpr Integer FunctionSpace<3,3,RaviartThomas,0>::entity[FunctionSpace<3,3,RaviartThomas,0>::entities_nums];
+constexpr Integer FunctionSpace<3,3,RaviartThomas,0>::dofs_per_entity[FunctionSpace<3,3,RaviartThomas,0>::entities_nums];
 
 
 ///////////////////////////////------------- DIM == 4 --------------///////////////////////////////
 
 template<>
-class FunctionSpace<4,4,RaviartThomas,0>: public BaseFunctionSpace<4,4,RaviartThomas,0, 1 >
+class FunctionSpace<4,4,RaviartThomas,0>: public BaseFunctionSpace<4,4,RaviartThomas,0, 1 , true >
 {
 public:
      static constexpr Integer entity[]={3};
+     static constexpr Integer dofs_per_entity[]={1};
      static constexpr Integer entities_nums=1;};
 
 constexpr Integer FunctionSpace<4,4,RaviartThomas,0>::entities_nums;
 constexpr Integer FunctionSpace<4,4,RaviartThomas,0>::entity[FunctionSpace<4,4,RaviartThomas,0>::entities_nums];
+constexpr Integer FunctionSpace<4,4,RaviartThomas,0>::dofs_per_entity[FunctionSpace<4,4,RaviartThomas,0>::entities_nums];
 
 
 
@@ -265,18 +318,18 @@ constexpr Integer FunctionSpace<4,4,RaviartThomas,0>::entity[FunctionSpace<4,4,R
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 template<>
-class FunctionSpace<4,4,GeneralSpace,0>: public BaseFunctionSpace<4,4,GeneralSpace,0, 1 >
+class FunctionSpace<4,4,GeneralSpace,0>: public BaseFunctionSpace<4,4,GeneralSpace,0, 1 , true >
 {
 public:
      static constexpr Integer entity[]={0,1,2,3,4};
+     static constexpr Integer dofs_per_entity[]={1,1,1,1,1};
      static constexpr Integer entities_nums=5;};
 
 constexpr Integer FunctionSpace<4,4,GeneralSpace,0>::entities_nums;
 constexpr Integer FunctionSpace<4,4,GeneralSpace,0>::entity[FunctionSpace<4,4,GeneralSpace,0>::entities_nums];
-
-
-
 }
+
+
 
 
 #endif

@@ -49,9 +49,9 @@ public:
     void init_entity(const Mesh<Dim,ManifoldDim> mesh,const std::vector< std::vector<Integer> > node_2_element, 
                     std::vector<std::array<Integer,2>> & entity_2_elem_, 
                     std::vector<std::array<Integer, entity_combinations() > > &elem_2_entity_,
-                    Integer &entity_nums_); 
+                    Integer &size_); 
 
-    inline const Integer entity_nums() const {return entity_nums_; };
+    inline const Integer size() const {return size_; };
 
     inline const std::vector<std::array<Integer,2>> entity_2_elem() const {return entity_2_elem_; };
     
@@ -68,7 +68,7 @@ private:
     
     std::vector<std::array<Integer, entity_combinations() >> elem_2_entity_;
     
-    Integer entity_nums_;
+    Integer size_;
     };
 
 
