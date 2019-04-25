@@ -27,35 +27,74 @@
 #include "mars_par_bisection.hpp"
 #include "mars_par_mesh.hpp"
 #endif //WITH_MPI
+#include <chrono>
 
-void test_mars_mesh_generation_2D(const int x,
+using namespace std::chrono;
+
+
+mars::Mesh2 test_mars_mesh_generation_2D(const int x,
 		const int y, const int z) {
 
 	using namespace mars;
+
+	high_resolution_clock::time_point t1 = high_resolution_clock::now();
 
 	Mesh2 mesh;
 	unit_generation::generate_cube<2, 2>(mesh, x, y, z);
 
+	high_resolution_clock::time_point t2 = high_resolution_clock::now();
+	auto duration = duration_cast < microseconds > (t2 - t1).count();
+
+	std::cout << "Generation took: "<< duration<<endl;
+
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
+/*
 
 	VTKMeshWriter < Mesh2 > w;
 	w.write("build_cube2D" + to_string(x) + to_string(y)+".vtu", mesh);
+*/
+
+	return mesh;
 }
 
-void test_mars_mesh_generation_3D(const int x,
+mars::Mesh3 test_mars_mesh_generation_3D(const int x,
 		const int y, const int z) {
 
 	using namespace mars;
 
+	high_resolution_clock::time_point t1 = high_resolution_clock::now();
+
 	Mesh3 mesh;
 	unit_generation::generate_cube<3, 3>(mesh, x, y, z);
+
+	high_resolution_clock::time_point t2 = high_resolution_clock::now();
+	auto duration = duration_cast < seconds > (t2 - t1).count();
+
+	cout << "Generation took: "<< duration<<" seconds."<<endl;
+	cout << "n_active_elements: " << mesh.n_active_elements() << endl;
+	cout << "n_nodes: " << mesh.n_nodes() << endl;
+
+	if (x <= 100) {
+		cout<<"Writing vtu file: build_cube3D" + to_string(x) + to_string(y) + ".vtu"<<endl;
+		VTKMeshWriter<Mesh3> w;
+		w.write("build_cube3D" + to_string(x) + to_string(y) + ".vtu", mesh);
+	}
+
+	return mesh;
+}
+
+void test_mars_mesh_generation_3D() {
+
+	using namespace mars;
+
+	Mesh3 mesh = unit_generation::generate_cube();
 
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
 
 	VTKMeshWriter < Mesh3 > w;
-	w.write("build_cube3D" + to_string(x) + to_string(y)+".vtu", mesh);
+	w.write("build_cube3D.vtu", mesh);
 }
 
 void test_read_write_3D(const std::string filename)
@@ -69,6 +108,19 @@ void test_read_write_3D(const std::string filename)
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
 	VTKMeshWriter<Mesh3> w;
 	w.write("read_write.vtu", mesh);
+}
+
+void test_write_3D(const mars::Mesh3 mesh)
+{
+	using namespace mars;
+	std::cout << "======================================\n";
+	/*Mesh3 mesh;
+	read_mesh(filename, mesh, true);*/
+
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
+	VTKMeshWriter<Mesh3> w;
+	w.write("write.vtu", mesh);
 }
 
 void test_uniform_bisection_3D(const int level, const std::string filename)
@@ -101,12 +153,42 @@ void test_uniform_bisection_3D(const int level, const std::string filename)
 						w.write("cube_bisect_"+ std::to_string(mesh.Dim) +".vtu", mesh);
 }
 
-void test_uniform_bisection_2D(const int level, const std::string filename)
+void test_uniform_bisection_3D(const int level, mars::Mesh3 mesh)
 {
 	using namespace mars;
 	std::cout << "======================================\n";
-	Mesh2 mesh;
-	read_mesh(filename, mesh, true);
+	/*Mesh3 mesh;
+	read_mesh(filename, mesh, true);*/
+	mesh.renumber_nodes();
+	mesh.reorder_nodes();
+
+	mesh.update_dual_graph();
+	mark_boundary(mesh);
+
+	Bisection<Mesh3> b(mesh);
+	b.uniform_refine(level); b.clear();
+	print_boundary_points(mesh, std::cout, true);
+
+	mesh.clean_up();
+	mesh.update_dual_graph();
+
+	Quality<Mesh3> q(mesh);
+	q.compute();
+
+	std::cout << "n_boundary_sides: " << mesh.n_boundary_sides() << std::endl;
+	std::cout << "volume: " << mesh.volume() << std::endl;
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes: " << mesh.n_nodes()<< std::endl;
+	VTKMeshWriter<Mesh3> w;
+						w.write("cube_bisect_"+ std::to_string(mesh.Dim) +".vtu", mesh);
+}
+
+void test_uniform_bisection_2D(const int level, mars::Mesh2 mesh)
+{
+	using namespace mars;
+	std::cout << "======================================\n";
+	/*Mesh2 mesh;
+	read_mesh(filename, mesh, true);*/
 	mesh.renumber_nodes();
 	mesh.reorder_nodes();
 
@@ -128,6 +210,36 @@ void test_uniform_bisection_2D(const int level, const std::string filename)
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 	std::cout << "n_nodes: " << mesh.n_nodes()<< std::endl;
 	VTKMeshWriter<Mesh2> w;
+						w.write("cube_bisect_"+ std::to_string(mesh.Dim) +".vtu", mesh);
+}
+
+void test_uniform_bisection_2D(const int level, const std::string filename)
+{
+	using namespace mars;
+	std::cout << "======================================\n";
+	Mesh<3,2> mesh;
+	read_mesh(filename, mesh, true);
+	mesh.renumber_nodes();
+	mesh.reorder_nodes();
+
+	mesh.update_dual_graph();
+	mark_boundary(mesh);
+
+	Bisection<Mesh<3,2>> b(mesh);
+	b.uniform_refine(level); b.clear();
+	print_boundary_points(mesh, std::cout, true);
+
+	mesh.clean_up();
+	mesh.update_dual_graph();
+
+	Quality<Mesh<3,2>> q(mesh);
+	q.compute();
+
+	std::cout << "n_boundary_sides: " << mesh.n_boundary_sides() << std::endl;
+	std::cout << "volume: " << mesh.volume() << std::endl;
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes: " << mesh.n_nodes()<< std::endl;
+	VTKMeshWriter<Mesh<3,2>> w;
 						w.write("cube_bisect_"+ std::to_string(mesh.Dim) +".vtu", mesh);
 }
 
@@ -931,12 +1043,24 @@ int main(int argc, char *argv[])
 				<< "No file name was specified. Setting the default to tetrakis!"
 				<< std::endl;
 
-	test_uniform_bisection_3D(level, filename);
 	//run_tests(level,filename);
 	//test_uniform_bisection_2D(level,filename);
-	test_read_write_3D(filename);
-	test_mars_mesh_generation_2D(9,9,2);
-	test_mars_mesh_generation_3D(1,1,1);
+	//test_read_write_3D(filename);
+
+	//test_mars_mesh_generation_3D(150,150,150);
+	//test_mars_mesh_generation_3D(100,150,150);
+	test_mars_mesh_generation_3D(100,100,100);
+	test_mars_mesh_generation_3D(3,2,4);
+	test_mars_mesh_generation_3D(2,2,2);
+
+	/*Mesh3 m = test_mars_mesh_generation_3D(1,1,1); // needs renumbering and removing extra nodes.
+
+	test_uniform_bisection_3D(level, m);*/
+/*
+Mesh2 m = test_mars_mesh_generation_2D(1,1,1); //works fine
+test_uniform_bisection_2D(level,m);*/
+	//test_mars_mesh_generation_3D();
+
 
 #ifdef WITH_MPI
 	// par_mesh_test();
