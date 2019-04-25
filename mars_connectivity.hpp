@@ -84,6 +84,67 @@ using NodeToElem3=mars::Connectivity<3,3,0,0,3>;
 using NodeToElem4=mars::Connectivity<4,4,0,0,4>;
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename Elem, Integer EntityDim>
+class ElemEntity;
+
+
+template<Integer Dim,Integer ManifoldDim,Integer EntityDim>
+class ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>;
+
+template <typename Elem, Integer EntityDimFrom, Integer SubEntityDimFrom, Integer EntityDimTo>
+class ElemConnectivity;
+
+template <Integer Dim, Integer ManifoldDim, Integer EntityDimFrom, Integer SubEntityDimFrom, Integer EntityDimTo>
+class ElemConnectivity<Simplex<Dim,ManifoldDim>,EntityDimFrom,SubEntityDimFrom,EntityDimTo >
+{
+public:
+        inline std::vector< std::vector<Integer> > node2elem() const{return node2elem_;};
+
+        std::vector<Integer> compute(const ElemEntity<Simplex<Dim,ManifoldDim>,EntityDimFrom> &entity_from,
+                                     const Integer index_from,
+                                     const ElemEntity<Simplex<Dim,ManifoldDim>,EntityDimTo>   &entity_to);
+                     
+        ElemConnectivity( Mesh<Dim,ManifoldDim> &mesh,std::vector<std::vector<Integer>> &node2elem):
+                mesh_(mesh),
+                node2elem_(node2elem)
+                {};
+        
+private:
+        std::vector< std::vector<Integer> > &node2elem_;
+        Mesh<Dim,ManifoldDim> &mesh_;
+};
+
+
+
+template <Integer Dim, Integer ManifoldDim>
+class ElemConnectivity<Simplex<Dim, ManifoldDim>,0,0,ManifoldDim>
+{
+public:
+        inline std::vector< std::vector<Integer> > val() const{return val_;};
+
+        void init(const Mesh<Dim,ManifoldDim> mesh);
+
+        ElemConnectivity(const Mesh<Dim,ManifoldDim> mesh) {init(mesh);};   
+                
+private:
+        std::vector<std::vector<Integer>> val_;
+};
+
+
 }
 
 #endif

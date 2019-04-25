@@ -22,9 +22,12 @@ namespace mars {
     // template<Integer Dim, Integer ManifoldDim>
     // class Simplex {};
 
-    template<Integer Dim, Integer ManifoldDim>
+    template<Integer Dim_, Integer ManifoldDim_>
     class Simplex {
     public:
+        static constexpr Integer Dim = Dim_;
+        static constexpr Integer ManifoldDim = ManifoldDim_;
+
         std::array<Integer, ManifoldDim+1> nodes;
         std::array<Integer, ManifoldDim+1> side_tags;
 
@@ -174,9 +177,11 @@ namespace mars {
         }
     };
     
-    template<Integer Dim>
-    class Simplex<Dim, 1> {
+    template<Integer Dim_>
+    class Simplex<Dim_, 1> {
     public:
+        static constexpr Integer Dim = Dim_;
+        static constexpr Integer ManifoldDim = 1;
         std::array<Integer, 2> nodes;
         std::array<Integer, 2> side_tags;
 
@@ -196,9 +201,11 @@ namespace mars {
         }
     };
     
-    template<Integer Dim>
-    class Simplex<Dim, 2> {
+    template<Integer Dim_>
+    class Simplex<Dim_, 2> {
     public:
+        static constexpr Integer Dim = Dim_;
+        static constexpr Integer ManifoldDim = 2;
         std::array<Integer, 3> nodes;
         std::array<Integer, 3> side_tags;
 
@@ -264,9 +271,11 @@ namespace mars {
         }
     };
     
-    template<Integer Dim>
-    class Simplex<Dim, 3> {
+    template<Integer Dim_>
+    class Simplex<Dim_, 3> {
     public:
+        static constexpr Integer Dim = Dim_;
+        static constexpr Integer ManifoldDim = 3;
         std::array<Integer, 4> nodes;
         std::array<Integer, 4> side_tags;
 
@@ -351,9 +360,12 @@ namespace mars {
         }
     };
     
-    template<Integer Dim>
-    class Simplex<Dim, 4> {
+    template<Integer Dim_>
+    class Simplex<Dim_, 4> {
     public:
+        static constexpr Integer Dim = Dim_;
+        static constexpr Integer ManifoldDim = 4;
+
         std::array<Integer, 5> nodes;
         std::array<Integer, 5> side_tags;
 

@@ -4,6 +4,7 @@
 #include "mars_base.hpp"
 #include "mars_base_entity.hpp"
 #include "mars_mesh.hpp"
+#include "mars_simplex.hpp"
 #include <iostream>
 #include <vector>
 
@@ -104,6 +105,73 @@ using TetrahedronMap4=Entity<4,4,3>;
 
 
 using PentatopeMap4=Entity<4,4,4>;
+
+
+
+
+
+
+
+
+
+
+template<typename Elem, Integer EntityDim>
+class ElemEntity{};
+
+
+template<Integer Dim,Integer ManifoldDim,Integer EntityDim>
+class ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>
+{
+
+public: 
+
+    constexpr static Integer num_of_points_ = EntityDim+1;
+    inline constexpr static Integer entity_combinations()
+    { 
+        return Combinations<ManifoldDim+1,EntityDim+1>::value;
+    }
+
+    inline constexpr static Integer num_of_points()
+    { 
+        return EntityDim+1;
+    }
+            
+    ElemEntity(const Mesh<Dim,ManifoldDim> mesh, const std::vector< std::vector<Integer> >node_2_element); // constructor
+
+    void init_elem_entity(const Mesh<Dim,ManifoldDim> mesh,const std::vector< std::vector<Integer> > node_2_element, 
+                    std::vector<std::array<Integer,2>> & entity_2_elem_, 
+                    std::vector<std::array<Integer, entity_combinations() > > &elem_2_entity_,
+                    Integer &size_); 
+
+    inline const Integer size() const {return size_; };
+
+    inline const std::vector<std::array<Integer,2>> entity_2_elem() const {return entity_2_elem_; };
+    
+    inline const std::array<Integer,2> entity_2_elem(Integer index) const {return entity_2_elem_[index]; };
+    
+    inline const std::vector<std::array<Integer, entity_combinations() > > elem_2_entity() const {return elem_2_entity_; };   
+    
+    inline const std::array<Integer, entity_combinations() > elem_2_entity(Integer index) const {return elem_2_entity_[index]; }; 
+
+
+private:
+    // entity_2_elem is a vector of 2D arrays: first component=1 elem, second component iter
+    std::vector<std::array<Integer,2>> entity_2_elem_; 
+    
+    std::vector<std::array<Integer, entity_combinations() >> elem_2_entity_;
+    
+    Integer size_;
+
+
+};
+
+
+
+
+
+
+
+
      
      
 }

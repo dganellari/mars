@@ -41,6 +41,10 @@ void connectivity_example()
     //read_mesh("../data/square_2_def.MFEM", mesh);
 
      std::cout<<"LagrangeFE="<<LagrangeFE<<std::endl;
+     std::cout<<"ElementFunctionSpace<Dim,ManifoldDim,LagrangeFE,1>::space_dim="<<ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1>::space_dim<<std::endl;
+     std::cout<<"ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1>::continuity="<<ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1>::continuity<<std::endl;
+     std::cout<<"ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1>::n_components="<<ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1>::n_components<<std::endl;
+
      std::cout<<ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,1,1>::space_dim<<" "<<std::endl;
     std::cout<<ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,0,1>::manifold_dim<<" "<<std::endl;
      std::cout<<ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,0,1>::family<<" "<<std::endl;
@@ -48,13 +52,14 @@ void connectivity_example()
     std::cout<<ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,0,1>::n_components<<" "<<std::endl;
     
     
+
     NodeToElem4 node2elem3(mesh);
     auto node2elem=node2elem3.val();
-    dofmap< Dim,ManifoldDim, Lagrange1< Simplex<4,4>>   , Lagrange3< Simplex<4,4> ,1,1> >(mesh);//,Lagrange2_4D,Lagrange3_4D);
-
-
+    dofmap<Lagrange1< Simplex<4,4>>   , Lagrange3< Simplex<4,4> ,1,1> >(mesh);//,Lagrange2_4D,Lagrange3_4D);
+    std::cout<<"points="<<ElemEntity<Simplex<4,4>,1>::num_of_points_<<std::endl;
+    auto edgeprova=ElemEntity<Simplex<4,4>,1>(mesh,node2elem);
     
-    const auto const_entities_tuple=EntitiesOfFunctionSpace<Dim,ManifoldDim,GeneralSpace,0>(mesh,node2elem);
+    const auto const_entities_tuple=EntitiesOfFunctionSpace<Simplex<Dim,ManifoldDim>,GeneralSpace,0>(mesh,node2elem);
     const auto node=std::get<0>(const_entities_tuple);
     const auto edge=std::get<1>(const_entities_tuple);
     const auto triangle=std::get<2>(const_entities_tuple);
@@ -65,8 +70,9 @@ void connectivity_example()
 
     Integer entity_e[3];
     Integer entity_t[3];
-    Connectivity<ManifoldDim,ManifoldDim,entitydim_from,subentitydim_from,entitydim_to> conn_e2t(mesh,node2elem);
-      
+//    Connectivity<ManifoldDim,ManifoldDim,entitydim_from,subentitydim_from,entitydim_to> conn_e2t(mesh,node2elem);
+     ElemConnectivity<Simplex<Dim,ManifoldDim>,entitydim_from,subentitydim_from,entitydim_to> conn_e2t(mesh,node2elem);
+     
         
         
     const auto &entity_2_elem_e=edge.entity_2_elem();
