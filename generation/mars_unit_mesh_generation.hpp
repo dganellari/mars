@@ -21,6 +21,10 @@ const unsigned int hex_side_nodes[hex_n_sides][hex_side_n_nodes] = { //libmesh m
 		{ 4, 5, 6, 7, 16, 17, 18, 19, 25 }  // Side 5
 };
 
+template<Integer Dim, Integer ManifoldDim>
+void remove_extra_nodes_and_renumber(Mesh<Dim, ManifoldDim>& mesh,
+		const vector<bool>& active_nodes);
+
 Integer index(const Integer xDim, const Integer yDim, const Integer i,
 		const Integer j, const Integer k) {
 	//return k+ (2*zDim +1) * (j + i* (2*yDim + 1));
@@ -68,8 +72,8 @@ void add_side(std::vector<Integer>& side, const Integer a,
 	nodes[26] = index(xDim, yDim, i + 1, j + 1, k + 1);
 }
 
-template<Integer Dim, Integer ManifoldDim>
-bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
+template<Integer Dim, Integer ManifoldDim, class Point_>
+bool generate_cube(Mesh<Dim, ManifoldDim,Point_>& mesh, const Integer xDim,
 		const Integer yDim, const Integer zDim) {
 
 	assert(ManifoldDim <= Dim);
@@ -86,7 +90,7 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 
 		for (Integer i = 0; i <= xDim; ++i) {
 			for (Integer j = 0; j <= yDim; ++j) {
-				Vector<Real, Dim> p(
+				Point_ p(
 						{ static_cast<Real>(i) / static_cast<Real>(xDim),
 								static_cast<Real>(j) / static_cast<Real>(yDim),
 								0.0 });
@@ -124,12 +128,15 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 		const int n_elements = xDim * yDim * zDim * 24; //24 tetrahedrons on one hex27
 		const int n_nodes = (2 * xDim + 1) * (2 * yDim + 1) * (2 * zDim + 1);
 
+		vector<bool> active_nodes(n_nodes,false);
+		//active_nodes.reserve(n_nodes);
+
 		mesh.reserve(n_elements, n_nodes);
 
 		for (Integer k = 0; k <= 2 * zDim; ++k) {
 			for (Integer j = 0; j <= 2 * yDim; ++j) {
 				for (Integer i = 0; i <= 2 * xDim; ++i) {
-					Vector<Real, Dim> p(
+					Point_ p(
 							{ static_cast<Real>(i)
 									/ static_cast<Real>(2 * xDim),
 									static_cast<Real>(j)
@@ -138,7 +145,6 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 											/ static_cast<Real>(2 * zDim), });
 
 					mesh.add_point(p);
-
 				}
 			}
 		}
@@ -179,6 +185,12 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 							nodes[3] = hex[26]; // the center of the cube.
 
 							mesh.add_elem(nodes);
+
+							//flag the used nodes for later constant access during removal.
+							mesh.point(side[k]).setActive();
+							mesh.point(side[8]).setActive();
+							mesh.point((k == 3 ? side[0] : side[k + 1])).setActive(); // rotation to catch all combinations.
+							mesh.point(hex[26]).setActive();
 						}
 
 					}
@@ -186,12 +198,28 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 			}
 		}
 
+		remove_extra_nodes_and_renumber(mesh,active_nodes);
+
 		return true;
 	}
 	default:
 		return false;
 	}
 }
+
+template<Integer Dim, Integer ManifoldDim, class Point_>
+void remove_extra_nodes_and_renumber(Mesh<Dim, ManifoldDim,Point_>& mesh,
+		const vector<bool>& active_nodes) {
+
+	for (auto it = mesh.points().begin(); it != mesh.points().end();/* no it++*/)
+
+		if (!(*it).isActive()) {
+			mesh.remove_point(it);
+			cout << "removed: " << (it - mesh.points().begin()) << endl;
+		} else
+			++it;
+}
+
 
 Mesh<3, 3> generate_cube() {
 

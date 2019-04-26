@@ -371,7 +371,7 @@ namespace mars {
 
     	}
 
-    	void writePoints(const std::vector<Vector<Real, Dim>> &points, std::ostream &os) {
+    	void writePoints(const std::vector<typename Mesh::Point> &points, std::ostream &os) {
 
     		os << "<Points>\n";
     		os << "<DataArray type=\"Float32\" NumberOfComponents=\"" << ((Dim <3) ? 3 : Dim) << "\" format=\"ascii\">\n";

@@ -32,6 +32,7 @@
 using namespace std::chrono;
 
 
+/*
 mars::Mesh2 test_mars_mesh_generation_2D(const int x,
 		const int y, const int z) {
 
@@ -49,24 +50,25 @@ mars::Mesh2 test_mars_mesh_generation_2D(const int x,
 
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
-/*
+
 
 	VTKMeshWriter < Mesh2 > w;
 	w.write("build_cube2D" + to_string(x) + to_string(y)+".vtu", mesh);
-*/
+
 
 	return mesh;
 }
+*/
 
-mars::Mesh3 test_mars_mesh_generation_3D(const int x,
+mars::Mesh<3,3,mars::unit_generation::Point<mars::Real,3>> test_mars_mesh_generation_3D(const int x,
 		const int y, const int z) {
 
 	using namespace mars;
 
 	high_resolution_clock::time_point t1 = high_resolution_clock::now();
 
-	Mesh3 mesh;
-	unit_generation::generate_cube<3, 3>(mesh, x, y, z);
+	Mesh<3,3,unit_generation::Point<Real,3>> mesh;
+	unit_generation::generate_cube<3, 3,unit_generation::Point<Real,3>>(mesh, x, y, z);
 
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 	auto duration = duration_cast < seconds > (t2 - t1).count();
@@ -77,10 +79,9 @@ mars::Mesh3 test_mars_mesh_generation_3D(const int x,
 
 	if (x <= 100) {
 		cout<<"Writing vtu file: build_cube3D" + to_string(x) + to_string(y) + ".vtu"<<endl;
-		VTKMeshWriter<Mesh3> w;
+		VTKMeshWriter<Mesh<3,3,unit_generation::Point<Real,3>>> w;
 		w.write("build_cube3D" + to_string(x) + to_string(y) + ".vtu", mesh);
 	}
-
 	return mesh;
 }
 
@@ -603,8 +604,8 @@ namespace mars {
 			q.compute();
 
 			for(Integer i = 0; i < n_tests; ++i) {
-				std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
-				
+				std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl;
+
 				if(!test_incomplete<LEES>(mesh, map, edge_select, false)) {
 					std::cout << "using edge_rank" << std::endl;
 					if(!test_incomplete_with_edge_rank(mesh, 1, false, true, node_rank)) {
@@ -659,7 +660,7 @@ namespace mars {
 						);
 					// }
 				}
-				
+
 				b.refine(elements);
 			}
 
@@ -711,7 +712,7 @@ void test_partition_2D()
 		std::cout << p->partition_id() << " n_active_elements: " << p->get_mesh().n_active_elements() << std::endl;
 		p->get_mesh().update_dual_graph();
 		print_boundary_info(p->get_mesh(), true);
-	}	
+	}
 }
 
 void test_partition_3D()
@@ -799,7 +800,7 @@ void test_partition_4D()
 }
 
 void run_benchmarks(int level)
-{	
+{
 	using namespace mars;
 
 	Benchmark<Mesh2> b2;
@@ -844,7 +845,7 @@ void test_incomplete_3D()
 void test_incomplete_4D()
 {
 	using namespace mars;
-	
+
 	Mesh4 mesh(true);
 	read_mesh("../data/cube4d_24.MFEM", mesh);
 	// test_incomplete_ND(mesh, 8, false);
@@ -857,7 +858,7 @@ void test_incomplete_5D()
 	using Mesh = mars::Mesh5;
 	using NVES = mars::GlobalNewestVertexEdgeSelect<Mesh>;
 	using LEES = mars::GloballyUniqueLongestEdgeSelect<Mesh>;
-	
+
 
 	std::cout << "======================================\n";
 	Mesh mesh(true);
@@ -874,7 +875,7 @@ void test_incomplete_5D()
 	Integer n_tests = 5;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "-----------------\n";
-		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
+		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl;
 		test_incomplete<NVES>(mesh, true);
 		q.compute();
 		std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
@@ -896,7 +897,7 @@ void test_incomplete_6D()
 	using Mesh = mars::Mesh6;
 	using NVES = mars::GlobalNewestVertexEdgeSelect<Mesh6>;
 	using LEES = mars::GloballyUniqueLongestEdgeSelect<Mesh6>;
-	
+
 
 	std::cout << "======================================\n";
 	Mesh mesh(true);
@@ -913,7 +914,7 @@ void test_incomplete_6D()
 	Integer n_tests = 5;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "-----------------\n";
-		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
+		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl;
 		test_incomplete<NVES>(mesh, true);
 		q.compute();
 		std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
@@ -954,7 +955,7 @@ void test_incomplete_bad_4D()
 	Integer n_tests = 4;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "-----------------\n";
-		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
+		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl;
 		test_incomplete<LEES>(mesh, true);
 		q.compute();
 		std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
@@ -1049,8 +1050,8 @@ int main(int argc, char *argv[])
 
 	//test_mars_mesh_generation_3D(150,150,150);
 	//test_mars_mesh_generation_3D(100,150,150);
-	test_mars_mesh_generation_3D(100,100,100);
-	test_mars_mesh_generation_3D(3,2,4);
+	//test_mars_mesh_generation_3D(100,100,100);
+	//test_mars_mesh_generation_3D(150,150,120);
 	test_mars_mesh_generation_3D(2,2,2);
 
 	/*Mesh3 m = test_mars_mesh_generation_3D(1,1,1); // needs renumbering and removing extra nodes.

@@ -1,9 +1,9 @@
 #ifndef MARS_PARTITIONED_BISECTION_HPP
 #define MARS_PARTITIONED_BISECTION_HPP
 
+#include "mars_fwd.hpp"
+
 namespace mars {
-	template<Integer Dim, Integer ManifoldDim>
-	class Mesh;
 
 	template<class Mesh>
 	class Bisection;

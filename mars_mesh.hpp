@@ -9,6 +9,7 @@
 
 #include "mars_visualization.hpp"
 #include "mars_imesh.hpp"
+#include "generation/mars_point.hpp"
 
 #include <vector>
 #include <array>
@@ -19,15 +20,15 @@
 
 namespace mars {
 
-	template<Integer Dim_, Integer ManifoldDim_ = Dim_>
-	class Mesh : public IMesh<Dim_> {
+	template<Integer Dim_, Integer ManifoldDim_, class Point_ >
+	class Mesh : public IMesh<Dim_,Point_> {
 	public:
 		static const Integer Dim = Dim_;
 		static const Integer ManifoldDim = ManifoldDim_;
 
 		using Elem     = mars::Simplex<Dim, ManifoldDim>;
 		using SideElem = mars::Simplex<Dim, ManifoldDim-1>; 
-		using Point    = mars::Vector<Real, Dim>;
+		using Point    = Point_;
 
 		void reserve(
 			const std::size_t n_elements,
@@ -109,6 +110,11 @@ namespace mars {
 		const std::vector<Point> &points() const //override
 		{
 			return points_;
+		}
+
+		template<typename Iter>
+		void remove_point(const Iter pos){
+			points_.erase(pos);
 		}
 
 		inline Integer add_elem(const Elem &elem)

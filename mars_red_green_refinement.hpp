@@ -6,11 +6,9 @@
 #include <algorithm>  
 #include <deque>
 #include <set>
+#include "mars_fwd.hpp"
 
 namespace mars {
-	
-	template<Integer Dim, Integer ManifoldDim>
-	class Mesh;
 
 	enum RefinementFlag {
 		NONE = 0,
