@@ -11,8 +11,8 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////// Written by Gabriele Rovi (April 2019)                                                                                            ////////
 ////// We define the following class:                                                                                                   ////////
-////// Entity<Integer Dim, Integer ManifoldDim, Integer EntityDim>                                                                      ////////
-////// Given a mesh, with elements whose dimension is ManifoldDim, defined in a Dim-dimensional space                                   ////////
+////// ElemEntity<Elem, Integer EntityDim>                                                                                              ////////
+////// Given a mesh, with elements of the kind Elem                                                                                     ////////
 ////// We want to define the entities of dimension 0<=EntityDim<=ManifoldDim                                                            ////////
 ////// The class has two fields:                                                                                                        ////////                                                        
 //////  1) entity_2_elem_: for each entity id, returns a 2-D array A such that:                                                         ////////
@@ -28,91 +28,19 @@ namespace mars {
 
 template<Integer Dim, Integer ManifoldDim>
 class Mesh;
-    
+
+
+template<typename Elem, Integer EntityDim>
+class ElemEntityCombinations;
+
 template<Integer Dim,Integer ManifoldDim,Integer EntityDim>
-class Entity : public BaseEntity{
+class ElemEntityCombinations<Simplex<Dim,ManifoldDim>,EntityDim>
+{
 
 public: 
+static constexpr Integer value=Combinations<ManifoldDim+1,EntityDim+1>::value;
 
-    constexpr static Integer num_of_points_ = EntityDim+1;
-    inline constexpr static Integer entity_combinations()
-    { 
-        return Combinations<ManifoldDim+1,EntityDim+1>::value;
-    }
-
-    inline constexpr static Integer num_of_points()
-    { 
-        return EntityDim+1;
-    }
-            
-    Entity(const Mesh<Dim,ManifoldDim> mesh, const std::vector< std::vector<Integer> >node_2_element); // constructor
-
-    void init_entity(const Mesh<Dim,ManifoldDim> mesh,const std::vector< std::vector<Integer> > node_2_element, 
-                    std::vector<std::array<Integer,2>> & entity_2_elem_, 
-                    std::vector<std::array<Integer, entity_combinations() > > &elem_2_entity_,
-                    Integer &size_); 
-
-    inline const Integer size() const {return size_; };
-
-    inline const std::vector<std::array<Integer,2>> entity_2_elem() const {return entity_2_elem_; };
-    
-    inline const std::array<Integer,2> entity_2_elem(Integer index) const {return entity_2_elem_[index]; };
-    
-    inline const std::vector<std::array<Integer, entity_combinations() > > elem_2_entity() const {return elem_2_entity_; };   
-    
-    inline const std::array<Integer, entity_combinations() > elem_2_entity(Integer index) const {return elem_2_entity_[index]; }; 
-
-
-private:
-    // entity_2_elem is a vector of 2D arrays: first component=1 elem, second component iter
-    std::vector<std::array<Integer,2>> entity_2_elem_; 
-    
-    std::vector<std::array<Integer, entity_combinations() >> elem_2_entity_;
-    
-    Integer size_;
-    };
-
-
-
-
-
-using EdgeMap1=Entity<1,1,1>;
-using EdgeMap2=Entity<2,2,1>;
-using EdgeMap3=Entity<3,3,1>;
-using EdgeMap4=Entity<4,4,1>;
-
-using EdgeMap21=Entity<2,1,1>;
-
-using EdgeMap31=Entity<3,1,1>;
-using EdgeMap32=Entity<3,2,1>;
-
-using EdgeMap41=Entity<4,1,1>;
-using EdgeMap42=Entity<4,2,1>;
-using EdgeMap43=Entity<4,3,1>;
-
-
-using TriangleMap2=Entity<2,2,2>;
-using TriangleMap3=Entity<3,3,2>;
-using TriangleMap4=Entity<4,4,2>;
-
-using TriangleMap22=Entity<2,2,2>;
-using TriangleMap32=Entity<3,2,2>;
-using TriangleMap42=Entity<4,2,2>;
-using TriangleMap43=Entity<4,3,2>;
-
-using TetrahedronMap3=Entity<3,3,3>;
-using TetrahedronMap4=Entity<4,4,3>;
-
-
-using PentatopeMap4=Entity<4,4,4>;
-
-
-
-
-
-
-
-
+};
 
 
 template<typename Elem, Integer EntityDim>
@@ -128,7 +56,8 @@ public:
     constexpr static Integer num_of_points_ = EntityDim+1;
     inline constexpr static Integer entity_combinations()
     { 
-        return Combinations<ManifoldDim+1,EntityDim+1>::value;
+        return ElemEntityCombinations<Simplex<Dim,ManifoldDim>,EntityDim>::value;
+        //Combinations<ManifoldDim+1,EntityDim+1>::value;
     }
 
     inline constexpr static Integer num_of_points()

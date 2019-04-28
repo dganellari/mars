@@ -1,248 +1,151 @@
-#ifndef MARS_FUNCTIONSPACE_HPP
-#define MARS_FUNCTIONSPACE_HPP
+#ifndef MARS_FunctionSpace_HPP
+#define MARS_FunctionSpace_HPP
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////// Written by Gabriele Rovi (April 2019)                                                                             ////////
+////// We define the FunctionSpace class:                                                                                ////////
+////// 1) It takes a mesh and 1 or more FunctionSpaces (Lagrange1<2>, RT0<1>...)                                         ////////                                        
+////// 2) It builds the dofmap: a vector (long n_elements), whose component is the array of all the dofs of the element  ////////
+////// 2) dofmap(space_id,elem_id) returns the dofs of element elem_id corresponding to the space space_id               ////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #include "mars_base.hpp"
-#include "mars_base_functionspace.hpp"
-#include "mars_simplex.hpp"
-
-
+#include "mars_elementfunctionspace.hpp"
+#include "mars_functionspace_dofmap.hpp"
 
 namespace mars{
 
-template <Integer Dim,Integer ManifoldDim, Integer FEFamily,Integer Order,Integer Continuity=Continuous,Integer NComponents=1>
-class FunctionSpace : public BaseFunctionSpace<Dim,ManifoldDim,LagrangeFE, Order, Continuity,1 >
-{};
-
-
-template <typename Elem, Integer FEFamily, Integer Order,Integer Continuity=Continuous, Integer NComponents=1>
-class ElementFunctionSpace: public BaseElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>
-{};
-
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////----------------------------------------------------------------------------/////////////////
-///////////////////////////////---------- LAGRANGE SPACE ----- LAGRANGE SPACE ----- LAGRANGE SPACE --------/////////////////
-///////////////////////////////----------------------------------------------------------------------------/////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////--------- LAGRANGE 1 -------- LAGRANGE 1 -------- LAGRANGE 1 --------/////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-template <Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-class ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,Continuity,NComponents>
-      : public BaseElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,Continuity,NComponents>
-{
-  public: 
-     static constexpr Integer entity[]={0};
-     static constexpr Integer dofs_per_entity[]={1};
-     static constexpr Integer entities_nums=1;  
-};
+// template<typename MeshT, typename BaseFunctionSpace,typename...BaseFunctionSpaces>
+// class FunctionSpace
+// {
+// public:
+// static constexpr Integer Nsubspaces=1+sizeof...(BaseFunctionSpaces);
+// static constexpr Integer Nelem_dofs=DofsPerElemNums< typename MeshT::Elem,BaseFunctionSpace,BaseFunctionSpaces...>::value;
 
-template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,Continuity,NComponents>::entity[];
+// inline const Integer n_subspaces(){return Nsubspaces;};
+// inline const Integer n_elem_dofs(){return Nelem_dofs;};
+// inline const Integer n_elem_dofs(Integer space_id){
+//                             const auto& os=offset_[space_id];
+//                            const auto size=os[os.size()-1]-os[0];
+//                            return size;}
 
-template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,Continuity,NComponents>::dofs_per_entity[];
+// inline const Integer n_dofs(){return n_dofs_;};
+// inline const std::vector<std::array<Integer, Nelem_dofs>> dofmap(){return dofmap_;};
+// inline const std::array<Integer, Nelem_dofs> dofmap(Integer elem_id){return dofmap_[elem_id];};
 
-template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,Continuity,NComponents>::entities_nums;
+// inline const std::vector<Integer> dofmap(Integer space_id,Integer elem_id){
+//             const auto& os=offset_[space_id];
+//             const auto& size=n_elem_dofs(space_id);//os[os.size()-1]-os[0];
+//             std::vector<Integer> output(size);
+//             for(Integer nn=0;nn<size;nn++)
+//                  output[nn]=dofmap_[elem_id][nn+os[0]];
 
-
-
-template<typename Elem,Integer Continuity=Continuous, Integer NComponents=1>
-using Lagrange1=ElementFunctionSpace<Elem,LagrangeFE,1,Continuity,NComponents>;
-
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////--------- LAGRANGE 2 -------- LAGRANGE 2 -------- LAGRANGE 2 --------/////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-template <Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-class ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,2,Continuity,NComponents>
-      : public BaseElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,2,Continuity,NComponents>
-{
-  public: 
-     static constexpr Integer entity[]={0,1};
-     static constexpr Integer dofs_per_entity[]={1,1};
-     static constexpr Integer entities_nums=2;
-};
-
-template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,2,Continuity,NComponents>::entity[];
-
-template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,2,Continuity,NComponents>::dofs_per_entity[];
-
-template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,2,Continuity,NComponents>::entities_nums;
+//             return output;
+//             };
 
 
 
-template<typename Elem,Integer Continuity=Continuous, Integer NComponents=1>
-using Lagrange2=ElementFunctionSpace<Elem,LagrangeFE,2,Continuity,NComponents>;
+// inline const std::array<std::vector<Integer>, Nsubspaces> offset(){return offset_;};
+// inline const std::vector<Integer> offset(Integer space_id){return offset_[space_id];};
+// inline const std::vector<Integer> space_dofs(Integer space_id){return space_dofs_[space_id];};
+// inline void  space_dof(Integer space_id,std::vector<Integer>& spacedofs){spacedofs=space_dofs_[space_id];};
 
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////--------- LAGRANGE 3 -------- LAGRANGE 3 -------- LAGRANGE 3 --------/////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-template <Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-class ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,3,Continuity,NComponents>
-      : public BaseElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,3,Continuity,NComponents>
-{
-  public: 
-     static constexpr Integer entity[]={0,1,2};
-     static constexpr Integer dofs_per_entity[]={1,2,1};     
-     static constexpr Integer entities_nums=3;
-};
 
-template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,3,Continuity,NComponents>::entity[];
+// FunctionSpace(const MeshT& mesh):
+// mesh_(std::make_shared< MeshT >(mesh))
+// {
+// dofmap_fespace<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofmap_,offset_,n_dofs_,space_dofs_);
+// };
 
-template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,3,Continuity,NComponents>::dofs_per_entity[];
+// private:
+// std::shared_ptr< MeshT > mesh_;
+// Integer n_dofs_;
+// std::vector<std::array<Integer, Nelem_dofs>> dofmap_;
+// std::array<std::vector<Integer>, Nsubspaces> offset_;
+// std::array<std::vector<Integer>, Nsubspaces> space_dofs_;
 
-template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,3,Continuity,NComponents>::entities_nums;
+// };
 
 
 
-template<typename Elem,Integer Continuity=Continuous, Integer NComponents=1>
-using Lagrange3=ElementFunctionSpace<Elem,LagrangeFE,3,Continuity,NComponents>;
-
-
-
-
-
-
-
-template<>
-class ElementFunctionSpace<Simplex<4,4>,GeneralSpace,0,1,1>: 
-      public BaseElementFunctionSpace<Simplex<4,4>,GeneralSpace,0,1,1>
+template<typename MeshT, typename BaseFunctionSpace,typename...BaseFunctionSpaces>
+class FunctionSpace
 {
 public:
-     static constexpr Integer entity[]={0,1,2,3,4};
-     static constexpr Integer dofs_per_entity[]={1,1,1,1,1};
-     static constexpr Integer entities_nums=5;
+static constexpr Integer Nsubspaces=1+sizeof...(BaseFunctionSpaces);
+static constexpr Integer Nelem_dofs=DofsPerElemNums< typename MeshT::Elem,BaseFunctionSpace,BaseFunctionSpaces...>::value;
+
+inline const Integer n_subspaces(){return Nsubspaces;};
+inline const Integer n_elem_dofs(){return Nelem_dofs;};
+inline const Integer n_elem_dofs(Integer space_id){
+                            const auto& os=offset_[space_id];
+                           const auto size=os[os.size()-1]-os[0];
+                           return size;}
+
+inline const Integer n_dofs(){return n_dofs_;};
+inline void n_dofs(const Integer& ndofs){ndofs=n_dofs_;};
+
+inline const std::vector<std::array<Integer, Nelem_dofs>> dofmap(){return dofmap_;};
+inline void  dofmap(const std::vector<std::array<Integer, Nelem_dofs>>& dm){dm=dofmap_;};
+
+
+inline const std::array<Integer, Nelem_dofs> dofmap(Integer elem_id){return dofmap_[elem_id];};
+inline void  dofmap(Integer elem_id, const std::array<Integer, Nelem_dofs> & elem_dm){elem_dm=dofmap_[elem_id];};
+
+
+inline const std::vector<Integer> dofmap(Integer space_id,Integer elem_id){
+            const auto& os=offset_[space_id];
+            const auto& size=n_elem_dofs(space_id);
+            std::vector<Integer> output(size);
+            for(Integer nn=0;nn<size;nn++)
+                 output[nn]=dofmap_[elem_id][nn+os[0]];
+            return output;
+            };
+
+inline void dofmap(Integer space_id,Integer elem_id, const std::vector<Integer>& elem_space_dm)
+                 {
+                  const auto& os=offset_[space_id];
+                  const auto& size=n_elem_dofs(space_id);
+                  elem_space_dm.resize(size);
+                  for(Integer nn=0;nn<size;nn++)
+                       elem_space_dm[nn]=dofmap_[elem_id][nn+os[0]];
+                 };
+
+inline const std::array<std::vector<Integer>, Nsubspaces> offset(){return offset_;};
+inline void  offset(const std::array<std::vector<Integer>, Nsubspaces> &os){os=offset_;};
+
+
+inline const std::vector<Integer> offset(Integer space_id){return offset_[space_id];};
+inline void offset(Integer space_id, const std::vector<Integer>& space_os){space_os=offset_[space_id];};
+
+
+inline const std::vector<Integer> space_dofs(Integer space_id){return space_dofs_[space_id];};
+inline void  space_dof(Integer space_id,std::vector<Integer>& spacedofs){spacedofs=space_dofs_[space_id];};
+
+
+FunctionSpace(const MeshT& mesh):
+mesh_(std::make_shared< MeshT >(mesh))
+{
+dofmap_fespace<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofmap_,offset_,n_dofs_,space_dofs_);
 };
 
+private:
+std::shared_ptr< MeshT > mesh_;
+Integer n_dofs_;
+std::vector<std::array<Integer, Nelem_dofs>> dofmap_;
+std::array<std::vector<Integer>, Nsubspaces> offset_;
+std::array<std::vector<Integer>, Nsubspaces> space_dofs_;
 
-constexpr Integer ElementFunctionSpace<Simplex<4,4>,GeneralSpace,0,1,1>::entities_nums;
-constexpr Integer ElementFunctionSpace<Simplex<4,4>,GeneralSpace,0,1,1>::dofs_per_entity[];
-constexpr Integer ElementFunctionSpace<Simplex<4,4>,GeneralSpace,0,1,1>::entity[];
+};
 
-
-
-
-
-
-
-
-// template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-// class FunctionSpace<Dim,ManifoldDim,LagrangeFE,1,Continuity,NComponents>: public BaseFunctionSpace<Dim,ManifoldDim,LagrangeFE,1, Continuity,NComponents >
-// {
-// public:
-//      static constexpr Integer entity[]={0};
-//      static constexpr Integer dofs_per_entity[]={1};
-//      static constexpr Integer entities_nums=1;
-     
-//  };
-
-// template <Integer Dim,Integer ManifoldDim,Integer Continuity, Integer NComponents>
-// constexpr Integer FunctionSpace<Dim,ManifoldDim,LagrangeFE,1,Continuity,NComponents>::entities_nums;
-// template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-// constexpr Integer FunctionSpace<Dim,ManifoldDim,LagrangeFE,1,Continuity,NComponents>::dofs_per_entity[];
-// template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-// constexpr Integer FunctionSpace<Dim,ManifoldDim,LagrangeFE,1,Continuity,NComponents>::entity[];
-
-
-
-
-
-// template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-// class FunctionSpace<Dim,ManifoldDim,LagrangeFE,2,Continuity,NComponents>: public BaseFunctionSpace<Dim,ManifoldDim,LagrangeFE,2, Continuity,NComponents >
-// {
-// public:
-//      static constexpr Integer entity[]={0,1};
-//      static constexpr Integer dofs_per_entity[]={1,1};
-//      static constexpr Integer entities_nums=2;
-     
-//  };
-
-// template <Integer Dim,Integer ManifoldDim,Integer Continuity, Integer NComponents>
-// constexpr Integer FunctionSpace<Dim,ManifoldDim,LagrangeFE,2,Continuity,NComponents>::entities_nums;
-// template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-// constexpr Integer FunctionSpace<Dim,ManifoldDim,LagrangeFE,2,Continuity,NComponents>::dofs_per_entity[];
-// template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-// constexpr Integer FunctionSpace<Dim,ManifoldDim,LagrangeFE,2,Continuity,NComponents>::entity[];
-
-
-
-// template<Integer Dim, Integer ManifoldDim,Integer Continuity>
-// class FunctionSpace<Dim,ManifoldDim,LagrangeFE,3,Continuity>: public BaseFunctionSpace<Dim,ManifoldDim,LagrangeFE,3, Continuity,1 >
-// {
-// public:
-//      static constexpr Integer entity[]={0,1,2};
-//      static constexpr Integer dofs_per_entity[]={1,2,1};     
-//      static constexpr Integer entities_nums=3;
-     
-//  };
-
-// template <Integer Dim,Integer ManifoldDim,Integer Continuity>
-// constexpr Integer FunctionSpace<Dim,ManifoldDim,LagrangeFE,3,Continuity>::entities_nums;
-// template<Integer Dim, Integer ManifoldDim,Integer Continuity>
-// constexpr Integer FunctionSpace<Dim,ManifoldDim,LagrangeFE,3,Continuity>::dofs_per_entity[];
-// template<Integer Dim, Integer ManifoldDim,Integer Continuity>
-// constexpr Integer FunctionSpace<Dim,ManifoldDim,LagrangeFE,3,Continuity>::entity[];
-
-
-
-
-
-// ///////////////////////////////////////////////////////////////////////////////////////////////////
-// ///////////////////////////////------------------------------------ ///////////////////////////////
-// ///////////////////////////////------- RAVIART THOMAS SPACE ------- ///////////////////////////////
-// ///////////////////////////////------------------------------------ /////////////////////////////// 
-// ///////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-// ///////////////////////////////////////////////////////////////////////////////////////////////////
-// ///////////////////////////////--------- RAVIART THOMAS 0 --------- ///////////////////////////////
-// ///////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-
-// template<Integer Dim, Integer ManifoldDim, Integer Continuity>
-// class FunctionSpace<Dim,ManifoldDim,RaviartThomasFE,0,Continuity>: public BaseFunctionSpace<Dim,ManifoldDim,RaviartThomasFE,0 , Continuity,1 >
-// {
-// public:
-//      static constexpr Integer entity[]={ManifoldDim-1};
-//      static constexpr Integer dofs_per_entity[]={1};     
-//      static constexpr Integer entities_nums=1;
-     
-//  };
-
-// template <Integer Dim,Integer ManifoldDim, Integer Continuity>
-// constexpr Integer FunctionSpace<Dim,ManifoldDim,RaviartThomasFE,0, Continuity>::entities_nums;
-// template<Integer Dim, Integer ManifoldDim,  Integer Continuity>
-// constexpr Integer FunctionSpace<Dim,ManifoldDim,RaviartThomasFE,0, Continuity>::dofs_per_entity[];
-// template<Integer Dim, Integer ManifoldDim,  Integer Continuity>
-// constexpr Integer FunctionSpace<Dim,ManifoldDim,RaviartThomasFE,0, Continuity>::entity[];
-
-
-
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////------------------------------------ ///////////////////////////////
-///////////////////////////////----------- GENERAL SPACE ---------- ///////////////////////////////
-///////////////////////////////------------------------------------ /////////////////////////////// 
-///////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 
 }
-
-
 
 
 #endif

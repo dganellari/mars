@@ -1,9 +1,11 @@
 #ifndef MARS_EXAMPLES_HPP
 #define MARS_EXAMPLES_HPP
 
+#include "mars_simplex.hpp"
 #include "mars_connectivity.hpp"
 #include "mars_functionspace_dofmap.hpp"
-#include "mars_simplex.hpp"
+#include "mars_functionspace.hpp"
+
 
 
 
@@ -35,7 +37,9 @@ void connectivity_example()
     constexpr Integer Dim=4;
     constexpr Integer FEFamily=LagrangeFE;
     constexpr Integer Order=3;
-    mars::Mesh<ManifoldDim, ManifoldDim> mesh;
+    using MeshT=mars::Mesh<Dim, ManifoldDim>;
+    MeshT mesh;
+    using Elem = typename MeshT::Elem; 
     read_mesh("../data/pentatope_2.MFEM", mesh);
     //read_mesh("../data/cube_6.MFEM", mesh);
     //read_mesh("../data/square_2_def.MFEM", mesh);
@@ -53,13 +57,71 @@ void connectivity_example()
     
     
 
-    NodeToElem4 node2elem3(mesh);
+    ElemNodeToElem<Simplex<4,4>> node2elem3(mesh);
     auto node2elem=node2elem3.val();
-    dofmap<Lagrange1< Simplex<4,4>>   , Lagrange3< Simplex<4,4> ,1,1> >(mesh);//,Lagrange2_4D,Lagrange3_4D);
-    std::cout<<"points="<<ElemEntity<Simplex<4,4>,1>::num_of_points_<<std::endl;
-    auto edgeprova=ElemEntity<Simplex<4,4>,1>(mesh,node2elem);
+    //auto vec=dofmap<ElemLagrange1<Elem>   , ElemLagrange3<Elem,1,1> >(mesh);
+
+
+
+
+
+    // constexpr auto n_spaces=2;
+    // constexpr auto dofs_per_elem=DofsPerElemNums1<Elem,RT0<1>,Lagrange3<1>>::value;
+    // std::vector<std::array<Integer,dofs_per_elem>> dofmap_vec;
+    // std::array<std::vector<Integer>,n_spaces> offset;
+    // dofmap1<RT0<1>,Lagrange3<1>>(mesh,dofmap_vec,offset);
     
-    const auto const_entities_tuple=EntitiesOfFunctionSpace<Simplex<Dim,ManifoldDim>,GeneralSpace,0>(mesh,node2elem);
+
+    FunctionSpace< MeshT, Lagrange1<1>, Lagrange3<1> > FEspace(mesh);
+
+   std::cout<<"n_dofs="<<FEspace.n_dofs()<< std::endl;
+    std::cout<<std::endl;
+    for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
+    {
+     auto &elem_id=elem_iter;
+     std::cout<<"elem_id="<<elem_id<<", "<<FEspace.dofmap(elem_id).size()<<std::endl;
+     for(Integer nn=0;nn<FEspace.dofmap(elem_id).size();nn++)
+     {
+        std::cout<<FEspace.dofmap(elem_id)[nn]<<" ";
+     }
+     std::cout<<std::endl;
+    } 
+
+for(Integer ss=0;ss<FEspace.n_subspaces();ss++)
+{
+   std::cout<<" dofs of space ="<<ss<<std::endl;
+    auto& space0=FEspace.space_dofs(ss);
+    for(Integer mm=0;mm<FEspace.space_dofs(ss).size();mm++)
+       std::cout<<FEspace.space_dofs(ss)[mm]<<" ";
+   std::cout<<std::endl;
+
+}
+ 
+
+    for(Integer mm=0;mm<FEspace.offset().size();mm++)
+     {
+      std::cout<<" offset space="<<mm<<std::endl;
+      for(Integer nn=0;nn<FEspace.offset()[mm].size();nn++)
+         {
+            std::cout<< FEspace.offset()[mm][nn]<<" ";
+         }
+
+     }
+     std::cout<<std::endl;
+
+
+   std::cout<<"--size="<<FEspace.dofmap(1,0).size()<<std::endl;
+   for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
+    {std::cout<<std::endl;
+      const auto size=FEspace.dofmap(1,elem_iter).size();
+      std::cout<<"size="<<size<<std::endl;
+      for(Integer nn=0;nn<size;nn++)
+          std::cout<<FEspace.dofmap(1,elem_iter)[nn]<<" ";
+      std::cout<<std::endl;
+     }
+
+
+    const auto const_entities_tuple=EntitiesOfFunctionSpace<Elem,GeneralSpace,0>(mesh,node2elem);
     const auto node=std::get<0>(const_entities_tuple);
     const auto edge=std::get<1>(const_entities_tuple);
     const auto triangle=std::get<2>(const_entities_tuple);
@@ -70,8 +132,7 @@ void connectivity_example()
 
     Integer entity_e[3];
     Integer entity_t[3];
-//    Connectivity<ManifoldDim,ManifoldDim,entitydim_from,subentitydim_from,entitydim_to> conn_e2t(mesh,node2elem);
-     ElemConnectivity<Simplex<Dim,ManifoldDim>,entitydim_from,subentitydim_from,entitydim_to> conn_e2t(mesh,node2elem);
+     ElemConnectivity<Elem,entitydim_from,subentitydim_from,entitydim_to> conn_e2t(mesh,node2elem);
      
         
         
