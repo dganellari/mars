@@ -60,15 +60,15 @@ mars::Mesh2 test_mars_mesh_generation_2D(const int x,
 }
 */
 
-mars::Mesh<3,3,mars::unit_generation::Point<mars::Real,3>> test_mars_mesh_generation_3D(const int x,
+mars::Mesh3 test_mars_mesh_generation_3D(const int x,
 		const int y, const int z) {
 
 	using namespace mars;
 
 	high_resolution_clock::time_point t1 = high_resolution_clock::now();
 
-	Mesh<3,3,unit_generation::Point<Real,3>> mesh;
-	unit_generation::generate_cube<3, 3,unit_generation::Point<Real,3>>(mesh, x, y, z);
+	Mesh3 mesh;
+	unit_generation::generate_cube<3, 3>(mesh, x, y, z);
 
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 	auto duration = duration_cast < seconds > (t2 - t1).count();
@@ -79,7 +79,7 @@ mars::Mesh<3,3,mars::unit_generation::Point<mars::Real,3>> test_mars_mesh_genera
 
 	if (x <= 100) {
 		cout<<"Writing vtu file: build_cube3D" + to_string(x) + to_string(y) + ".vtu"<<endl;
-		VTKMeshWriter<Mesh<3,3,unit_generation::Point<Real,3>>> w;
+		VTKMeshWriter<Mesh3> w;
 		w.write("build_cube3D" + to_string(x) + to_string(y) + ".vtu", mesh);
 	}
 	return mesh;
@@ -1048,15 +1048,14 @@ int main(int argc, char *argv[])
 	//test_uniform_bisection_2D(level,filename);
 	//test_read_write_3D(filename);
 
-	//test_mars_mesh_generation_3D(150,150,150);
+	test_mars_mesh_generation_3D(150,150,100);
 	//test_mars_mesh_generation_3D(100,150,150);
 	//test_mars_mesh_generation_3D(100,100,100);
 	//test_mars_mesh_generation_3D(150,150,120);
-	test_mars_mesh_generation_3D(2,2,2);
+	//test_mars_mesh_generation_3D(2,2,2);
 
-	/*Mesh3 m = test_mars_mesh_generation_3D(1,1,1); // needs renumbering and removing extra nodes.
 
-	test_uniform_bisection_3D(level, m);*/
+	//test_uniform_bisection_3D(level, test_mars_mesh_generation_3D(1,1,1));
 /*
 Mesh2 m = test_mars_mesh_generation_2D(1,1,1); //works fine
 test_uniform_bisection_2D(level,m);*/

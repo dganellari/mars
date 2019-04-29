@@ -112,6 +112,11 @@ namespace mars {
 			return points_;
 		}
 
+		void setPoints(std::vector<Point>&& points)
+		{
+			points_ = std::forward<std::vector<Point>>(points);
+		}
+
 		template<typename Iter>
 		void remove_point(const Iter pos){
 			points_.erase(pos);
