@@ -1,7 +1,7 @@
 #pragma once
 
 namespace mars {
-namespace unit_generation {
+namespace generation {
 
 #include "mars_vector.hpp"
 template<typename T, Integer Dim>

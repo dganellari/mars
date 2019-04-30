@@ -1039,6 +1039,7 @@ namespace mars {
 		return false;
 	}
 
+	using Mesh1 = mars::Mesh<1, 1>;
 	using Mesh2 = mars::Mesh<2, 2>;
 	using Mesh3 = mars::Mesh<3, 3>;
 	using Mesh4 = mars::Mesh<4, 4>;
