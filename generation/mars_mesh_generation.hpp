@@ -8,15 +8,15 @@ using namespace std;
 namespace mars {
 namespace generation {
 
-namespace Private{
+namespace Private {
 
 constexpr int hex_n_sides = 6; // 6 faces in total for the hex27.
 constexpr int hex_n_nodes = 27; // 27 nodes for the hex27.
 constexpr int hex_side_n_nodes = 9; // 9 nodes per face for the hex27.
 
 //libmesh method to map the sides and nodes.
-const unsigned int hex_side_nodes[hex_n_sides][hex_side_n_nodes] = {
-		{ 0, 3, 2, 1, 11, 10, 9, 8, 20 }, // Side 0
+const unsigned int hex_side_nodes[hex_n_sides][hex_side_n_nodes] = { { 0, 3, 2,
+		1, 11, 10, 9, 8, 20 }, // Side 0
 		{ 0, 1, 5, 4, 8, 13, 16, 12, 21 }, // Side 1
 		{ 1, 2, 6, 5, 9, 14, 17, 13, 22 }, // Side 2
 		{ 2, 3, 7, 6, 10, 15, 18, 14, 23 }, // Side 3
@@ -25,28 +25,28 @@ const unsigned int hex_side_nodes[hex_n_sides][hex_side_n_nodes] = {
 };
 
 /*
-template<Integer Dim, Integer ManifoldDim, class Point_>
-void remove_extra_nodes(Mesh<Dim, ManifoldDim, Point_>& mesh) {
+ template<Integer Dim, Integer ManifoldDim, class Point_>
+ void remove_extra_nodes(Mesh<Dim, ManifoldDim, Point_>& mesh) {
 
-	for (auto it = mesh.points().begin(); it != mesh.points().end();
-			 no it++){
+ for (auto it = mesh.points().begin(); it != mesh.points().end();
+ no it++){
 
-		if (!(*it).isActive()) {
-			mesh.remove_point(it);
-			//cout << "removed: " << (it - mesh.points().begin()) << endl;
-		} else
-			++it;
-	}
+ if (!(*it).isActive()) {
+ mesh.remove_point(it);
+ //cout << "removed: " << (it - mesh.points().begin()) << endl;
+ } else
+ ++it;
+ }
 
-}
-*/
+ }
+ */
 
 template<Integer Dim, Integer ManifoldDim, class Point_>
 void remove_extra_nodes(Mesh<Dim, ManifoldDim, Point_>& mesh,
 		std::vector<Vector<Real, Dim> >& np, const std::vector<bool>& active) {
 
 	int count = 0;
-	for (unsigned int i=0;i<active.size();++i) {
+	for (unsigned int i = 0; i < active.size(); ++i) {
 		if (active[i]) {
 			np[count] = mesh.point(i);
 			++count;
@@ -64,8 +64,8 @@ Integer index(const Integer xDim, const Integer yDim, const Integer i,
 	return i + (2 * xDim + 1) * (j + k * (2 * yDim + 1));
 }
 
-void add_side(std::vector<Integer>& side, const Integer a,
-		const Integer b, const Integer index) {
+void add_side(std::vector<Integer>& side, const Integer a, const Integer b,
+		const Integer index) {
 
 	if (a != 1 && b != 1) { //add only nodes which are not mid faces or mid edges
 		side.push_back(index);
@@ -74,7 +74,8 @@ void add_side(std::vector<Integer>& side, const Integer a,
 	}
 }
 
- void build_hex27(array<Integer, hex_n_nodes>& nodes,const Integer xDim, const Integer yDim, const int i, const int j, const int k) {
+void build_hex27(array<Integer, hex_n_nodes>& nodes, const Integer xDim,
+		const Integer yDim, const int i, const int j, const int k) {
 
 	nodes[0] = index(xDim, yDim, i, j, k);
 	nodes[1] = index(xDim, yDim, i + 2, j, k);
@@ -104,7 +105,6 @@ void add_side(std::vector<Integer>& side, const Integer a,
 	nodes[25] = index(xDim, yDim, i + 1, j + 1, k + 2);
 	nodes[26] = index(xDim, yDim, i + 1, j + 1, k + 1);
 }
-
 }
 
 template<Integer Dim, Integer ManifoldDim>
@@ -114,29 +114,29 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 	using namespace mars::generation::Private;
 
 	assert(ManifoldDim <= Dim);
-
+	assert(Dim <= 3);
 
 	switch (ManifoldDim) {
 
 	/*case 0: {
 
-		assert(xDim == 0);
-		assert(yDim == 0);
-		assert(zDim == 0);
+	 assert(xDim == 0);
+	 assert(yDim == 0);
+	 assert(zDim == 0);
 
-		mesh.reserve(1, 1);
+	 mesh.reserve(1, 1);
 
-		Vector<Real, Dim> p( { 0.0, 0.0, 0.0 });
+	 Vector<Real, Dim> p( { 0.0, 0.0, 0.0 });
 
-		int index = mesh.add_point(p);
+	 int index = mesh.add_point(p);
 
-		Simplex<Dim, ManifoldDim> e;
-		e.node(index);
+	 Simplex<Dim, ManifoldDim> e;
+	 e.node(index);
 
-		mesh.add_elem(e);
+	 mesh.add_elem(e);
 
-		return true;
-	}*/
+	 return true;
+	 }*/
 
 	case 1: {
 
@@ -228,25 +228,9 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 
 		std::vector<bool> active_nodes(n_nodes);
 
-		mesh.reserve(n_elements, n_nodes);
+		mesh.reserve(n_elements, n_tetra_nodes);
 
-		for (Integer k = 0; k <= 2 * zDim; ++k) {
-			for (Integer j = 0; j <= 2 * yDim; ++j) {
-				for (Integer i = 0; i <= 2 * xDim; ++i) {
-					Vector<Real, Dim> p(
-							{ static_cast<Real>(i)
-									/ static_cast<Real>(2 * xDim),
-									static_cast<Real>(j)
-											/ static_cast<Real>(2 * yDim),
-									static_cast<Real>(k)
-											/ static_cast<Real>(2 * zDim), });
-
-					mesh.add_point(p);
-				}
-			}
-		}
-
-		std::array<Integer,hex_side_n_nodes> side;
+		std::array<Integer, hex_side_n_nodes> side;
 
 		std::vector<Vector<Real, Dim> > new_points;
 		new_points.resize(n_tetra_nodes);
@@ -256,18 +240,21 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 			for (Integer j = 0; j < 2 * yDim; j += 2) {
 				for (Integer i = 0; i < 2 * xDim; i += 2) {
 
-					//build the hex27 element which serves to generalise the idea to many hex27.
-					//without generating the hex27 element first there is no easy way to create the sides when one
-					//only has the mesh with common points for each side. Locally, using local elem indexing it is possible.
-					//for example the generate_cube method below does not use this method by hard coding the element generation as in libmesh,
-					//but instead generates it on the fly. In this case it works to generate one hex27 but it does not generalize.
-					//this is the reason we went for the libmesh method.
+					//build the hex27 element which serves to generalize the idea to many hex27.
+					//without generating the hex27 element first there is no easy way to create the sides.
+					//Locally, using local element indexing it is possible.
 					array<Integer, hex_n_nodes> hex;
 					build_hex27(hex, xDim, yDim, i, j, k);
 
 					//add center of the hex to the new points.
 					int centerHex = n_nodes / 2 + el_id;
-					new_points[centerHex] = mesh.point(hex[26]);
+
+					new_points[centerHex][0] = static_cast<Real>(i + 1)
+							/ static_cast<Real>(2 * xDim);
+					new_points[centerHex][1] = static_cast<Real>(j + 1)
+							/ static_cast<Real>(2 * yDim);
+					new_points[centerHex][2] = static_cast<Real>(k + 1)
+							/ static_cast<Real>(2 * zDim);
 
 					//build tetrahedra elements from the hex27 faces.
 					for (unsigned int i = 0; i < hex_n_sides; ++i) {
@@ -293,10 +280,6 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 							active_nodes[side[8]] = true;
 							active_nodes[(k == 3 ? side[0] : side[k + 1])] =
 									true;
-
-							/*Remove it now by not setting it to try and
-							 add it at the end later in order to keep the
-							 rule of dividing by 2	*/
 							//active_nodes[hex[26]]=true;
 						}
 
@@ -307,29 +290,54 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 			}
 		}
 
-		remove_extra_nodes(mesh, new_points, active_nodes);
+		//first the element indices than points to avoid extra node removal.
+		int count = 0;
+
+		for (Integer k = 0; k <= 2 * zDim; ++k) {
+			for (Integer j = 0; j <= 2 * yDim; ++j) {
+				for (Integer i = 0; i <= 2 * xDim; ++i) {
+
+					if (active_nodes[index(xDim, yDim, i, j, k)]) {
+
+						Vector<Real, Dim> p(
+								{ static_cast<Real>(i)
+										/ static_cast<Real>(2 * xDim),
+										static_cast<Real>(j)
+												/ static_cast<Real>(2 * yDim),
+										static_cast<Real>(k)
+												/ static_cast<Real>(2 * zDim), });
+
+						new_points[count] = p;
+						++count;
+					}
+
+				}
+			}
+		}
+
+		mesh.setPoints(move(new_points));
 
 		return true;
 	}
-	default:
+	default: {
+
 		std::cerr << "Not implemented for other dimensions yet" << std::endl;
 		return false;
 	}
+	}
 }
 
-bool generate_square(Mesh2& mesh, const Integer xDim,
-		const Integer yDim) {
-	return generate_cube(mesh,xDim,yDim,0);
+bool generate_square(Mesh2& mesh, const Integer xDim, const Integer yDim) {
+	return generate_cube(mesh, xDim, yDim, 0);
 }
 
 bool generate_line(Mesh<1, 1>& mesh, const Integer xDim) {
-	return generate_cube(mesh,xDim,0,0);
+	return generate_cube(mesh, xDim, 0, 0);
 }
 
 /*bool generate_point(Mesh<1, 0>& mesh) {
-	return generate_cube(mesh,0,0,0);
-}*/
-
+ return generate_cube(mesh,0,0,0);
+ }*/
 
 Mesh3 generate_unit_cube() {
 
@@ -337,7 +345,7 @@ Mesh3 generate_unit_cube() {
 
 	Mesh3 mesh;
 
-	constexpr Integer xDim = 1, yDim = 1, zDim = 1,Dim = 3;
+	constexpr Integer xDim = 1, yDim = 1, zDim = 1, Dim = 3;
 
 	const int n_elements = xDim * yDim * zDim * 24; //24 tetrahedrons on one hex27
 	const int n_nodes = (2 * xDim + 1) * (2 * yDim + 1) * (2 * zDim + 1);
