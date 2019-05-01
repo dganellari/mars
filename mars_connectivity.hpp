@@ -10,6 +10,8 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////// Written by Gabriele Rovi (April 2019)                                                                                            ////////
 ////// We define the following class:                                                                                                   ////////
+////// Connectivity<typename Elem, Integer EntityDimFrom, Integer SubEntityDimFrom, Integer EntityDimTo>                                ////////
+////// Specialized for the simplex case:                                                                                                ////////
 ////// Connectivity<Integer Dim, Integer ManifoldDim, Integer EntityDimFrom, Integer SubEntityDimFrom, Integer EntityDimTo>             ////////
 ////// Given a mesh, with elements whose dimension is ManifoldDim, defined in a Dim-dimensional space                                   ////////
 ////// We want to define the connectivity between different entities                                                                    ////////
@@ -36,71 +38,8 @@ void connectivity_example();
 template <Integer Dim, Integer ManifoldDim>
 class Mesh;
 
-// template <Integer Dim, Integer ManifoldDim, Integer EntityDim>
-// class Entity;
-
-// template <Integer Dim, Integer ManifoldDim, Integer EntityDimFrom, Integer SubEntityDimFrom, Integer EntityDimTo>
-// class Connectivity
-// {
-// public:
-//         inline std::vector< std::vector<Integer> > node2elem() const{return node2elem_;};
-
-//         std::vector<Integer> compute(const Entity<Dim,ManifoldDim,EntityDimFrom> &entity_from,
-//                                             const Integer index_from,
-//                                             const Entity<Dim,ManifoldDim,EntityDimTo>   &entity_to);
-                     
-//         Connectivity( Mesh<Dim,ManifoldDim> &mesh,std::vector<std::vector<Integer>> &node2elem):
-//                 mesh_(mesh),
-//                 node2elem_(node2elem)
-//                 {};
-        
-// private:
-//         std::vector< std::vector<Integer> > &node2elem_;
-//         Mesh<Dim,ManifoldDim> &mesh_;
-// };
-
-
-
-// template <Integer Dim, Integer ManifoldDim>
-// class Connectivity<Dim, ManifoldDim,0,0,ManifoldDim>
-// {
-// public:
-//         inline std::vector< std::vector<Integer> > val() const{return val_;};
-
-//         void init(const Mesh<Dim,ManifoldDim> mesh);
-
-//         Connectivity(const Mesh<Dim,ManifoldDim> mesh) {init(mesh);};   
-                
-// private:
-//         std::vector<std::vector<Integer>> val_;
-// };
-
-// template<Integer Dim,Integer ManifoldDim=Dim>
-// using NodeToElem=mars::Connectivity<Dim,ManifoldDim,0,0,ManifoldDim>;
-
-// using NodeToElem1=mars::Connectivity<1,1,0,0,1>;
-// using NodeToElem2=mars::Connectivity<2,2,0,0,2>;
-// using NodeToElem3=mars::Connectivity<3,3,0,0,3>;
-// using NodeToElem4=mars::Connectivity<4,4,0,0,4>;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 template<typename Elem, Integer EntityDim>
 class ElemEntity;
-
 
 template<Integer Dim,Integer ManifoldDim,Integer EntityDim>
 class ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>;
@@ -115,17 +54,17 @@ public:
         inline std::vector< std::vector<Integer> > node2elem() const{return node2elem_;};
 
         std::vector<Integer> compute(const ElemEntity<Simplex<Dim,ManifoldDim>,EntityDimFrom> &entity_from,
-                                     const Integer index_from,
+                                     const Integer& index_from,
                                      const ElemEntity<Simplex<Dim,ManifoldDim>,EntityDimTo>   &entity_to);
                      
-        ElemConnectivity( Mesh<Dim,ManifoldDim> &mesh,std::vector<std::vector<Integer>> &node2elem):
+        ElemConnectivity(const Mesh<Dim,ManifoldDim> &mesh,const std::vector<std::vector<Integer>> &node2elem):
                 mesh_(mesh),
                 node2elem_(node2elem)
                 {};
         
 private:
-        std::vector< std::vector<Integer> > &node2elem_;
-        Mesh<Dim,ManifoldDim> &mesh_;
+        const std::vector< std::vector<Integer> > &node2elem_;
+        const Mesh<Dim,ManifoldDim> &mesh_;
 };
 
 
@@ -136,9 +75,9 @@ class ElemConnectivity<Simplex<Dim, ManifoldDim>,0,0,ManifoldDim>
 public:
         inline std::vector< std::vector<Integer> > val() const{return val_;};
 
-        void init(const Mesh<Dim,ManifoldDim> mesh);
+        void init(const Mesh<Dim,ManifoldDim>& mesh);
 
-        ElemConnectivity(const Mesh<Dim,ManifoldDim> mesh) {init(mesh);};   
+        ElemConnectivity(const Mesh<Dim,ManifoldDim>& mesh) {init(mesh);};   
                 
 private:
         std::vector<std::vector<Integer>> val_;
@@ -146,8 +85,7 @@ private:
 
 
 template<typename Elem>
-using ElemNodeToElem=mars::ElemConnectivity<Elem,0,0,Elem::ManifoldDim>;
-
+using NodeToElem=mars::ElemConnectivity<Elem,0,0,Elem::ManifoldDim>;
 
 
 }

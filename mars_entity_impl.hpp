@@ -154,8 +154,8 @@ namespace mars {
 
 
 template<Integer Dim,Integer ManifoldDim,Integer EntityDim>
-ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>::ElemEntity(const Mesh<Dim,ManifoldDim> mesh,
-                                          const std::vector< std::vector<Integer> > node_2_element)
+ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>::ElemEntity(const Mesh<Dim,ManifoldDim>& mesh,
+                                          const std::vector< std::vector<Integer> >& node_2_element)
                                          {init_elem_entity(mesh,node_2_element,entity_2_elem_,elem_2_entity_,size_); };
  
      
@@ -168,7 +168,9 @@ ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>::ElemEntity(const Mesh<Dim,Manifo
 
 
 template<Integer Dim,Integer ManifoldDim,Integer EntityDim>
-void ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>::init_elem_entity(const Mesh<Dim,ManifoldDim> mesh,const std::vector< std::vector<Integer> > node_2_element,
+void ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>::init_elem_entity
+                                   (const Mesh<Dim,ManifoldDim>& mesh,
+                                    const std::vector< std::vector<Integer> >& node_2_element,
                                     std::vector<std::array<Integer,2>> &entity_2_elem_, 
                                     std::vector<std::array<Integer, entity_combinations() >> &elem_2_entity_,
                                     Integer &size_)

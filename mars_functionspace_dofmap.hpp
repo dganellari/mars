@@ -320,7 +320,7 @@ for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
          for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
             {            
              dofmap_vec[elem_id][loc_dof_count]=global_dof_count;
-             space_dofs.push_back(global_dof_count);
+             space_dofs[fs_dim].push_back(global_dof_count);
              loc_dof_count++;
              global_dof_count++;
              }
@@ -433,10 +433,8 @@ class DofsPerElemNums<Elem,FunctionSpace>
 template<Integer MaxSize,typename FunctionSpace,Integer N,Integer AddConst=0>
 typename  std::enable_if< (0<N)&&(N==MaxSize-1), void>::type
 FunctionSpaceOffSetDofs(std::array<Integer , MaxSize> &arr)
-{   
+ {   
     arr[N] = AddConst + FunctionSpaceDofsPerElem<FunctionSpace,N-1>::value;
-   std::cout<<">>>>MaxSize="<<MaxSize<<"FunctionSpace::entities_nums="<<FunctionSpace::entities_nums<<" arr["<<N<<"]="<<arr[N]<<std::endl;
-
  }
 
 template<Integer MaxSize,typename FunctionSpace,Integer N,Integer AddConst=0>
@@ -444,9 +442,7 @@ typename  std::enable_if< (0<N)&&(N<MaxSize-1), void>::type
 FunctionSpaceOffSetDofs(std::array<Integer , MaxSize> &arr)
 {   
     arr[N] = AddConst + FunctionSpaceDofsPerElem<FunctionSpace,N-1>::value;
-    FunctionSpaceOffSetDofs<MaxSize,FunctionSpace,N+1,AddConst>(arr);
-   std::cout<<">>>>MaxSize="<<MaxSize<<"FunctionSpace::entities_nums="<<FunctionSpace::entities_nums<<" arr["<<N<<"]="<<arr[N]<<std::endl;
-    
+    FunctionSpaceOffSetDofs<MaxSize,FunctionSpace,N+1,AddConst>(arr);    
  }
 
 
@@ -457,15 +453,12 @@ FunctionSpaceOffSetDofs(std::array<Integer , MaxSize> &arr)
 {   
     arr[0] = AddConst + 0;
     FunctionSpaceOffSetDofs<MaxSize,FunctionSpace,N+1,AddConst>(arr);
-   std::cout<<">>>>MaxSize="<<MaxSize<<"FunctionSpace::entities_nums="<<FunctionSpace::entities_nums<<" arr["<<N<<"]="<<arr[N]<<std::endl;
-
 }
 template<Integer MaxSize,typename FunctionSpace,Integer N=0,Integer AddConst=0>
 typename  std::enable_if< 0==N && 1==MaxSize, void>::type
 FunctionSpaceOffSetDofs(std::array<Integer , MaxSize> &arr)
 {   
     arr[0] = AddConst + 0;
-   std::cout<<">>>>MaxSize="<<MaxSize<<"FunctionSpace::entities_nums="<<FunctionSpace::entities_nums<<" arr["<<N<<"]="<<arr[N]<<std::endl;
 }
 
 
@@ -507,7 +500,6 @@ OffsetDofs()
     using FS=ElemFunctionSpace<Elem,FunctionSpace>;
     const auto &entities_nums=FS::entities_nums;
     std::array<Integer,entities_nums+1> arr;
-    std::cout<< "FunctionSpaceOffSetDofs: entities_nums+1="<<entities_nums+1<<std::endl;
     FunctionSpaceOffSetDofs<entities_nums+1,FS,0,M>(arr);
     return std::tuple<decltype(arr)>(arr);
 }
@@ -520,7 +512,6 @@ OffsetDofs()
     using FS=ElemFunctionSpace<Elem,FunctionSpace>;
     const auto &entities_nums=FS::entities_nums;
     std::array<Integer,entities_nums+1> arr;
-    std::cout<< "FunctionSpaceOffSetDofs: entities_nums+1="<<entities_nums+1<<std::endl;
 
     FunctionSpaceOffSetDofs<entities_nums+1,FS,0,M>(arr);
     return std::tuple_cat(std::tuple<decltype(arr)>(arr),
@@ -532,6 +523,21 @@ OffsetDofs()
 
 
 
+template<Integer N,Integer M, typename FunctionSpace, typename...FunctionSpaces>
+typename std::enable_if< 0==sizeof...(FunctionSpaces) , void >::type
+function_space_components(std::array<Integer, M> &array)
+{
+ array[N]=FunctionSpace::NComponents;
+};
+
+
+template<Integer N,Integer M, typename FunctionSpace, typename...FunctionSpaces>
+typename std::enable_if< 0<sizeof...(FunctionSpaces) , void >::type
+function_space_components(std::array<Integer, M> &array)
+{
+ array[N]=FunctionSpace::NComponents;
+ function_space_components<N+1,M,FunctionSpaces...>(array);
+};
 
 
 
@@ -548,7 +554,8 @@ void dofmap_fespace(const MeshT& mesh,
              DofMapVecT& dofmap_vec,
              OffSetT& dofs_offset_arr,
              Integer& global_dof_count,
-             std::array<std::vector<Integer>,1+sizeof...(FunctionSpaces)>& space_dofs)//, DofMapT dofmap_vec,OffSetT)
+             const std::array<Integer , 1 + sizeof...(FunctionSpaces)>& space_components,
+             std::array<std::vector<std::vector<Integer>>,1+sizeof...(FunctionSpaces)>& space_dofs)//, DofMapT dofmap_vec,OffSetT)
 {
 
     using     Elem = typename MeshT::Elem; 
@@ -557,7 +564,7 @@ void dofmap_fespace(const MeshT& mesh,
 
     constexpr auto dofs_per_elem=DofsPerElemNums<Elem,FunctionSpace,FunctionSpaces...>::value;
     // compute the connection node to elem (auxiliary tool, often used)
-    ElemNodeToElem<Elem> node_2_elem(mesh);
+    NodeToElem<Elem> node_2_elem(mesh);
     const auto& node2elem=node_2_elem.val();
     const auto& n_elements=mesh.n_elements();
     const auto dofs_offset=OffsetDofs<0,Elem,FunctionSpace,FunctionSpaces...>();
@@ -568,6 +575,10 @@ void dofmap_fespace(const MeshT& mesh,
     dofmap_vec.resize(n_elements);   
     global_dof_count=0;
     // loop on all the elements
+    for(Integer space_id=0;space_id<n_spaces;space_id++)
+        space_dofs[space_id].resize(space_components[space_id]);
+        
+
     for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
     {
      // change it for smarter algorithms   

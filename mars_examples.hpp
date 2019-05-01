@@ -12,25 +12,12 @@
 namespace mars{
 
 
-// template<Integer N>
-// vofamily dimmi()
-// {
-//     std::cout<<"dimmi_"<<N<<std::endl;
-// } 
-
-// template<typename Mesh>
-// vofamily qualcosa()
-// {
-
-//     constexpr Integer dim=Mesh::Dim;
-//     std::cout<<"qualcosa_"<<dim<<std::endl;
-//     dimmi<dim>();
-// } 
-//        qualcosa<mars::Mesh<ManifoldDim, ManifoldDim>>();
-
 using std::cout;
 using std::endl;
-void connectivity_example()
+
+
+
+void functionspaces_example()
 {
 
     constexpr Integer ManifoldDim=4;
@@ -43,56 +30,108 @@ void connectivity_example()
     read_mesh("../data/pentatope_2.MFEM", mesh);
     //read_mesh("../data/cube_6.MFEM", mesh);
     //read_mesh("../data/square_2_def.MFEM", mesh);
+   
 
-     std::cout<<"LagrangeFE="<<LagrangeFE<<std::endl;
-     std::cout<<"ElementFunctionSpace<Dim,ManifoldDim,LagrangeFE,1>::space_dim="<<ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1>::space_dim<<std::endl;
-     std::cout<<"ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1>::continuity="<<ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1>::continuity<<std::endl;
-     std::cout<<"ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1>::n_components="<<ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1>::n_components<<std::endl;
-
-     std::cout<<ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,1,1>::space_dim<<" "<<std::endl;
-    std::cout<<ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,0,1>::manifold_dim<<" "<<std::endl;
-     std::cout<<ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,0,1>::family<<" "<<std::endl;
-    std::cout<<ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,0,1>::order<<" "<<std::endl;
-    std::cout<<ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,0,1>::n_components<<" "<<std::endl;
-    
-    
-
-    ElemNodeToElem<Simplex<4,4>> node2elem3(mesh);
+    NodeToElem<Simplex<4,4>> node2elem3(mesh);
     auto node2elem=node2elem3.val();
     //auto vec=dofmap<ElemLagrange1<Elem>   , ElemLagrange3<Elem,1,1> >(mesh);
 
+    // Primitive minusone(-1);
+    // Primitive zero(0);
+    // Composite first(1); 
+    // Composite second(2); 
+    // Composite third(3);
+    // Composite fifth(5);  
 
+    // first.add(zero);//std::make_shared<decltype(zero)>(zero));
+    // third.add(minusone); 
+    // third.add(zero); 
+    // first.add(third);//std::make_shared<decltype(third)>(third));
+    // second.add(first);
+    // second.traverse(); 
+    // fifth.add(minusone,zero,second,third);
+    // std::cout<<std::endl<<"-----------------------"<<std::endl;
+    // fifth.traverse();
+    // std::cout<<std::endl<<"-----------------------"<<std::endl;
+    // fifth[0]->traverse();
+    // std::cout<<std::endl<<"-----------------------"<<std::endl;
+    // fifth[1]->traverse();
+    // std::cout<<std::endl<<"-----------------------"<<std::endl;
+    // fifth[2]->traverse();
+    // std::cout<<std::endl<<"-----------------------"<<std::endl;
 
+    // auto fourth=second[0];
+    // fourth.traverse(); 
+    // cout<<endl<<" nnn = "<< *nnn<<endl;
+     Leaf a0(3);
+     Leaf a1(1);
+     Leaf a2(2);
+     Tree t1(-10);
+     Tree t2(-20);
+     a0.print();
+     a1.print();
+     a2.print();
+     a2[0].print();
+     t2.add(a0);
+     t2.add(a1);
 
+     t1.add(t2);
+     t1.add(a0);
+     t1.add(a1);
+     t1.add(a2);
+     
+     auto ecco=t1[0][0];
+     ecco.print();
+    // ecco.print();
+    // tree t1;
+    
+    // t1.add(a1);
+    // auto ecc=t1[0];
+    // std::cout<<"-----------------------"<<a1.val()<<"   "<<ecc->val()<<std::endl;
 
-    // constexpr auto n_spaces=2;
+    // a1.print();
+    // auto c1=t1[0];
+    // std::cout<<"MA CI ARRIVO?"<<std::endl;
+    // std::cout<<a1.val()<<" "<<a2.val()<<" "<<t3.val_vec().size()<<" "<<t3.val_vec()[0]->val()<<std::endl;
+    // // constexpr auto n_spaces=2;
     // constexpr auto dofs_per_elem=DofsPerElemNums1<Elem,RT0<1>,Lagrange3<1>>::value;
     // std::vector<std::array<Integer,dofs_per_elem>> dofmap_vec;
     // std::array<std::vector<Integer>,n_spaces> offset;
     // dofmap1<RT0<1>,Lagrange3<1>>(mesh,dofmap_vec,offset);
     
 
-    FunctionSpace< MeshT, Lagrange1<1>, Lagrange3<1> > FEspace(mesh);
+    FunctionSpace< MeshT, Lagrange1<2>, Lagrange2<1> > FEspace(mesh);
+
+    // auto eeh=FunctionSpaceSystem(FEspace);
+
 
    std::cout<<"n_dofs="<<FEspace.n_dofs()<< std::endl;
     std::cout<<std::endl;
     for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
     {
      auto &elem_id=elem_iter;
-     std::cout<<"elem_id="<<elem_id<<", "<<FEspace.dofmap(elem_id).size()<<std::endl;
+     std::cout<<"elem_id="<<elem_id<<", number of dofs=s"<<FEspace.dofmap(elem_id).size()<<std::endl;
      for(Integer nn=0;nn<FEspace.dofmap(elem_id).size();nn++)
      {
         std::cout<<FEspace.dofmap(elem_id)[nn]<<" ";
      }
      std::cout<<std::endl;
     } 
+std::cout<<std::endl;
+for(Integer ss=0;ss<FEspace.n_subspaces();ss++)
+       std::cout<<" components of space["<<ss<<"]=="<<FEspace.components(ss)<<std::endl;
+std::cout<<std::endl;
 
 for(Integer ss=0;ss<FEspace.n_subspaces();ss++)
 {
    std::cout<<" dofs of space ="<<ss<<std::endl;
-    auto& space0=FEspace.space_dofs(ss);
-    for(Integer mm=0;mm<FEspace.space_dofs(ss).size();mm++)
-       std::cout<<FEspace.space_dofs(ss)[mm]<<" ";
+   for(Integer cc=0;cc<FEspace.components(ss);cc++)
+    {std::cout<<" component ="<<cc<<"   "<<std::endl;
+      auto& vec=FEspace.space_dofs(ss,cc);
+      for(Integer mm=0;mm<FEspace.n_dofs(ss,cc);mm++)
+          std::cout<<vec[mm]<<" ";
+      std::cout<<std::endl;
+   }
    std::cout<<std::endl;
 
 }
@@ -120,7 +159,28 @@ for(Integer ss=0;ss<FEspace.n_subspaces();ss++)
       std::cout<<std::endl;
      }
 
+ std::cout<<std::endl;
+ }
 
+
+
+
+
+void connectivity_example5D()
+{
+
+    constexpr Integer ManifoldDim=4;
+    constexpr Integer Dim=4;
+    using MeshT=mars::Mesh<Dim, ManifoldDim>;
+    MeshT mesh;
+    using Elem = typename MeshT::Elem; 
+    read_mesh("../data/pentatope_2.MFEM", mesh);
+    //read_mesh("../data/cube_6.MFEM", mesh);
+    //read_mesh("../data/square_2_def.MFEM", mesh)    
+    
+
+    NodeToElem<Elem> node2elem3(mesh);
+    const auto node2elem=node2elem3.val();
     const auto const_entities_tuple=EntitiesOfFunctionSpace<Elem,GeneralSpace,0>(mesh,node2elem);
     const auto node=std::get<0>(const_entities_tuple);
     const auto edge=std::get<1>(const_entities_tuple);
