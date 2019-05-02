@@ -173,7 +173,7 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 
 		assert(xDim != 0);
 		assert(yDim != 0);
-		assert(yDim == 0);
+		assert(zDim == 0);
 
 		const int n_elements = 2 * xDim * yDim;
 		const int n_nodes = (xDim + 1) * (yDim + 1);
@@ -242,7 +242,7 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 					//build the hex27 element which serves to generalize the idea to many hex27.
 					//without generating the hex27 element first there is no easy way to create the sides.
 					//Locally, using local element indexing it is possible.
-					array<Integer, hex_n_nodes> hex;
+					std::array<Integer, hex_n_nodes> hex;
 					build_hex27(hex, xDim, yDim, i, j, k);
 
 					//add center of the hex to the new points.
@@ -289,7 +289,8 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 			}
 		}
 
-		//first the element indices than points to avoid extra node removal.
+		//first the element indices as above
+		//and then at this moment add the only the needed points to avoid extra node removal.
 		for (Integer k = 0; k <= 2 * zDim; ++k) {
 			for (Integer j = 0; j <= 2 * yDim; ++j) {
 				for (Integer i = 0; i <= 2 * xDim; ++i) {
@@ -332,6 +333,8 @@ bool generate_line(Mesh<1, 1>& mesh, const Integer xDim) {
  return generate_cube(mesh,0,0,0);
  }*/
 
+//different approach which works fine for the unit_cube and would have been faster
+//but unfortunately it does not generalize.
 Mesh3 generate_unit_cube() {
 
 	using namespace mars::generation::Private;
