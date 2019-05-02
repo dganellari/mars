@@ -228,12 +228,10 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 
 		std::vector<bool> active_nodes(n_nodes);
 
-		mesh.reserve(n_elements, n_tetra_nodes);
+		mesh.reserve_elements(n_elements);
+		mesh.resize_points(n_tetra_nodes);
 
 		std::array<Integer, hex_side_n_nodes> side;
-
-		std::vector<Vector<Real, Dim> > new_points;
-		new_points.resize(n_tetra_nodes);
 
 		int el_id = 1;
 		for (Integer k = 0; k < 2 * zDim; k += 2) {
@@ -249,12 +247,15 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 					//add center of the hex to the new points.
 					int centerHex = n_nodes / 2 + el_id;
 
-					new_points[centerHex][0] = static_cast<Real>(i + 1)
-							/ static_cast<Real>(2 * xDim);
-					new_points[centerHex][1] = static_cast<Real>(j + 1)
-							/ static_cast<Real>(2 * yDim);
-					new_points[centerHex][2] = static_cast<Real>(k + 1)
-							/ static_cast<Real>(2 * zDim);
+					Vector<Real, Dim> p(
+							{ static_cast<Real>(i+1)
+									/ static_cast<Real>(2 * xDim),
+									static_cast<Real>(j+1)
+											/ static_cast<Real>(2 * yDim),
+									static_cast<Real>(k+1)
+											/ static_cast<Real>(2 * zDim), });
+
+					mesh.point(centerHex) = p;
 
 					//build tetrahedra elements from the hex27 faces.
 					for (unsigned int i = 0; i < hex_n_sides; ++i) {
@@ -284,38 +285,31 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 						}
 
 					}
-
 					++el_id;
 				}
 			}
 		}
 
 		//first the element indices than points to avoid extra node removal.
-		int count = 0;
-
 		for (Integer k = 0; k <= 2 * zDim; ++k) {
 			for (Integer j = 0; j <= 2 * yDim; ++j) {
 				for (Integer i = 0; i <= 2 * xDim; ++i) {
 
-					if (active_nodes[index(xDim, yDim, i, j, k)]) {
+					Integer in = index(xDim, yDim, i, j, k);
 
-						Vector<Real, Dim> p(
-								{ static_cast<Real>(i)
-										/ static_cast<Real>(2 * xDim),
-										static_cast<Real>(j)
-												/ static_cast<Real>(2 * yDim),
-										static_cast<Real>(k)
-												/ static_cast<Real>(2 * zDim), });
+					if (active_nodes[in]) {
 
-						new_points[count] = p;
-						++count;
+						mesh.point(in / 2)[0] = static_cast<Real>(i)
+												/ static_cast<Real>(2 * xDim);
+						mesh.point(in / 2)[1] = static_cast<Real>(j)
+												/ static_cast<Real>(2 * xDim);
+						mesh.point(in / 2)[2] = static_cast<Real>(k)
+												/ static_cast<Real>(2 * xDim);
 					}
 
 				}
 			}
 		}
-
-		mesh.setPoints(move(new_points));
 
 		return true;
 	}

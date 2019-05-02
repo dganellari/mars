@@ -101,7 +101,7 @@ mars::Mesh3 test_mars_mesh_generation_3D(const int x,
 	cout << "n_nodes: " << mesh.n_nodes() << endl;
 
 	if (z < 100) {
-		cout<<"Writing vtu file: build_cube3D" + to_string(x) + to_string(y) + ".vtu"<<endl;
+		cout<<"Writing vtu file: build_cube" + to_string(x) + to_string(y) + ".vtu"<<endl;
 		VTKMeshWriter<Mesh3> w;
 		w.write("build_cube" + to_string(x) + to_string(y) + ".vtu", mesh);
 	}
@@ -1079,14 +1079,14 @@ int main(int argc, char *argv[])
 	//test_uniform_bisection_2D(level,filename);
 	//test_read_write_3D(filename);
 
-	test_mars_mesh_generation_1D(4);
+	//test_mars_mesh_generation_1D(4);
 
-	//test_mars_mesh_generation_3D(150,150,100);
+	test_mars_mesh_generation_3D(150,150,100);
 	//test_mars_mesh_generation_3D(100,150,150);
-	//test_mars_mesh_generation_3D(100,100,100);
+	test_mars_mesh_generation_3D(100,100,100);
 	//test_mars_mesh_generation_3D(150,150,120);
-	test_mars_mesh_generation_3D(2,5,3);
-	test_uniform_bisection_3D(level, test_mars_mesh_generation_3D(1,1,1));
+	//test_mars_mesh_generation_3D(2,2,2);
+	//test_uniform_bisection_3D(level, test_mars_mesh_generation_3D(1,1,1));
 	/*Mesh2 m = test_mars_mesh_generation_2D(10,8); //works fine
 	test_uniform_bisection_2D(level,m);
 */

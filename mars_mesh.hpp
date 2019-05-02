@@ -39,6 +39,17 @@ namespace mars {
 			points_.reserve(n_points);
 		}
 
+		void reserve_elements(const std::size_t n_elements)
+		{
+			elements_.reserve(n_elements);
+			active_.reserve(n_elements);
+		}
+
+		void resize_points(const std::size_t n_points)
+		{
+			points_.resize(n_points);
+		}
+
 		inline Elem &elem(const Integer id) override
 		{
 			assert(id >= 0);
