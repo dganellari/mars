@@ -50,6 +50,7 @@ list(APPEND MARS_HEADERS
 	mars_vector.hpp
 	mars_visualization.hpp
 	mars_vtk_writer.hpp
+	generation/mars_unit_mesh_generation.hpp
 	)
 
 list(APPEND MARS_SOURCES
@@ -63,7 +64,7 @@ set(CMAKE_CXX_DEBUG "-g")
 add_library(mars STATIC ${MARS_HEADERS} ${MARS_SOURCES})
 target_link_libraries(mars ${MPI_LIBRARIES})
 #target_compile_features(mars PUBLIC cxx_std_11)
-add_definitions("-std=c++11")
+add_definitions("-std=c++11 -g")
 target_include_directories(mars PUBLIC .)
 
 add_executable(mars_exec main.cpp ${MARS_HEADERS} ${MARS_SOURCES})

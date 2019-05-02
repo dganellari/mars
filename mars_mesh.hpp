@@ -9,6 +9,7 @@
 
 #include "mars_visualization.hpp"
 #include "mars_imesh.hpp"
+#include "generation/mars_point.hpp"
 
 #include <vector>
 #include <array>
@@ -19,15 +20,15 @@
 
 namespace mars {
 
-	template<Integer Dim_, Integer ManifoldDim_ = Dim_>
-	class Mesh : public IMesh<Dim_> {
+	template<Integer Dim_, Integer ManifoldDim_, class Point_ >
+	class Mesh : public IMesh<Dim_,Point_> {
 	public:
 		static const Integer Dim = Dim_;
 		static const Integer ManifoldDim = ManifoldDim_;
 
 		using Elem     = mars::Simplex<Dim, ManifoldDim>;
 		using SideElem = mars::Simplex<Dim, ManifoldDim-1>; 
-		using Point    = mars::Vector<Real, Dim>;
+		using Point    = Point_;
 
 		void reserve(
 			const std::size_t n_elements,
@@ -36,6 +37,17 @@ namespace mars {
 			elements_.reserve(n_elements);
 			active_.reserve(n_elements);
 			points_.reserve(n_points);
+		}
+
+		void reserve_elements(const std::size_t n_elements)
+		{
+			elements_.reserve(n_elements);
+			active_.reserve(n_elements);
+		}
+
+		void resize_points(const std::size_t n_points)
+		{
+			points_.resize(n_points);
 		}
 
 		inline Elem &elem(const Integer id) override
@@ -111,6 +123,16 @@ namespace mars {
 			return points_;
 		}
 
+		void setPoints(std::vector<Point>&& points)
+		{
+			points_ = std::forward<std::vector<Point>>(points);
+		}
+
+		template<typename Iter>
+		void remove_point(const Iter pos){
+			points_.erase(pos);
+		}
+
 		inline Integer add_elem(const Elem &elem)
 		{
 			auto id = elements_.size();
@@ -168,6 +190,16 @@ namespace mars {
 			active_.push_back(true);
 			assert(e.id == elements_.size() - 1);
 			return e.id;
+		}
+
+		Elem& add_elem()
+		{
+			elements_.emplace_back();
+			auto &e = elements_.back();
+			e.id = elements_.size() - 1;
+			//e.nodes = nodes;
+			active_.push_back(true);
+			return e;
 		}
 
 		inline void points(const Integer id, std::vector<Point> &pts) const override
@@ -1028,6 +1060,7 @@ namespace mars {
 		return false;
 	}
 
+	using Mesh1 = mars::Mesh<1, 1>;
 	using Mesh2 = mars::Mesh<2, 2>;
 	using Mesh3 = mars::Mesh<3, 3>;
 	using Mesh4 = mars::Mesh<4, 4>;

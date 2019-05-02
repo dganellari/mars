@@ -423,19 +423,21 @@ namespace mars {
 		//test_mfem_mesh_3D();
 		// test_mfem_mesh_4D();
 		// test_mfem_mesh_2D();
-		Mesh3 mesh;
-		read_mesh("../data/cube_6.MFEM", mesh, true);
-		//generate_mesh<3,3>(mesh,1);
+		/*Mesh3 mesh;
+		read_mesh("../data/write/tetrakis.MFEM", mesh, true);
+		generate_mesh<3,3>(mesh,1);
+		VTKMeshWriter<Mesh3> w;
+					w.write("cube_red"+ std::to_string(mesh.Dim) +".vtu", mesh);*/
 
 		Mesh<3,2> tri;
 		read_mesh("../data/square_3.MFEM",tri,true);
-		//generate_mesh(tri,level);
+		generate_mesh(tri,level);
 
-		test_generate_3D(tri);
+		//test_generate_3D(tri);
 
-		write_mesh_MFEM("../data/write/cube_6.MFEM",mesh);
+		//write_mesh_MFEM("../data/write/cube_6.MFEM",mesh);
 
-		test_mfem_mesh_2D();
+		//test_mfem_mesh_2D();
 
 	}
 }
