@@ -192,6 +192,16 @@ namespace mars {
 			return e.id;
 		}
 
+		Elem& add_elem()
+		{
+			elements_.emplace_back();
+			auto &e = elements_.back();
+			e.id = elements_.size() - 1;
+			//e.nodes = nodes;
+			active_.push_back(true);
+			return e;
+		}
+
 		inline void points(const Integer id, std::vector<Point> &pts) const override
 		{
 			assert(id >= 0);

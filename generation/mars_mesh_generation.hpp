@@ -112,6 +112,7 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 		const Integer yDim, const Integer zDim) {
 
 	using namespace mars::generation::Private;
+	using Elem     = mars::Simplex<Dim, ManifoldDim>;
 
 	assert(ManifoldDim <= Dim);
 	assert(Dim <= 3);
@@ -268,14 +269,12 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 						//build 4 tetrahedra out of one face.
 						for (unsigned int k = 0; k < 4; k++) {
 
-							std::array<Integer, ManifoldDim + 1> nodes;
+							auto& e = mesh.add_elem();
 
-							nodes[0] = side[k] / 2;
-							nodes[1] = side[8] / 2; // midface point always the last element.
-							nodes[2] = (k == 3 ? side[0] : side[k + 1]) / 2; // rotation to catch all combinations.
-							nodes[3] = centerHex; // the center of the cube.
-
-							mesh.add_elem(nodes);
+							e.nodes[0] = side[k] / 2;
+							e.nodes[1] = side[8] / 2; // midface point always the last element.
+							e.nodes[2] = (k == 3 ? side[0] : side[k + 1]) / 2; // rotation to catch all combinations.
+							e.nodes[3] = centerHex; // the center of the cube.
 
 							active_nodes[side[k]] = true;
 							active_nodes[side[8]] = true;
