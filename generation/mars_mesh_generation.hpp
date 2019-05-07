@@ -229,6 +229,8 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 
 		std::vector<bool> active_nodes(n_nodes);
 
+		// mesh points need resize because the point vector is getting accessed using the [] operator.
+		//First the center node is added somewhere at the end of the vector and then all the other nodes are added to it.
 		mesh.reserve_elements(n_elements);
 		mesh.resize_points(n_tetra_nodes);
 

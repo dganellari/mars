@@ -64,7 +64,7 @@ set(CMAKE_CXX_DEBUG "-g")
 add_library(mars STATIC ${MARS_HEADERS} ${MARS_SOURCES})
 target_link_libraries(mars ${MPI_LIBRARIES})
 #target_compile_features(mars PUBLIC cxx_std_11)
-add_definitions("-std=c++11 -g")
+add_definitions("-std=c++11")
 target_include_directories(mars PUBLIC .)
 
 add_executable(mars_exec main.cpp ${MARS_HEADERS} ${MARS_SOURCES})
