@@ -9,6 +9,7 @@
 
 #include "mars_visualization.hpp"
 #include "mars_imesh.hpp"
+#include "generation/mars_point.hpp"
 
 #include <vector>
 #include <array>
@@ -19,15 +20,15 @@
 
 namespace mars {
 
-	template<Integer Dim_, Integer ManifoldDim_ = Dim_>
-	class Mesh : public IMesh<Dim_> {
+	template<Integer Dim_, Integer ManifoldDim_, class Point_ >
+	class Mesh : public IMesh<Dim_,Point_> {
 	public:
 		static const Integer Dim = Dim_;
 		static const Integer ManifoldDim = ManifoldDim_;
 
 		using Elem     = mars::Simplex<Dim, ManifoldDim>;
 		using SideElem = mars::Simplex<Dim, ManifoldDim-1>; 
-		using Point    = mars::Vector<Real, Dim>;
+		using Point    = Point_;
 
 		void reserve(
 			const std::size_t n_elements,
@@ -36,6 +37,17 @@ namespace mars {
 			elements_.reserve(n_elements);
 			active_.reserve(n_elements);
 			points_.reserve(n_points);
+		}
+
+		void reserve_elements(const std::size_t n_elements)
+		{
+			elements_.reserve(n_elements);
+			active_.reserve(n_elements);
+		}
+
+		void resize_points(const std::size_t n_points)
+		{
+			points_.resize(n_points);
 		}
 
 		inline Elem &elem(const Integer id) override
@@ -111,6 +123,16 @@ namespace mars {
 			return points_;
 		}
 
+		void setPoints(std::vector<Point>&& points)
+		{
+			points_ = std::forward<std::vector<Point>>(points);
+		}
+
+		template<typename Iter>
+		void remove_point(const Iter pos){
+			points_.erase(pos);
+		}
+
 		inline Integer add_elem(const Elem &elem)
 		{
 			auto id = elements_.size();
@@ -168,6 +190,16 @@ namespace mars {
 			active_.push_back(true);
 			assert(e.id == elements_.size() - 1);
 			return e.id;
+		}
+
+		Elem& add_elem()
+		{
+			elements_.emplace_back();
+			auto &e = elements_.back();
+			e.id = elements_.size() - 1;
+			//e.nodes = nodes;
+			active_.push_back(true);
+			return e;
 		}
 
 		inline void points(const Integer id, std::vector<Point> &pts) const override
@@ -943,6 +975,81 @@ namespace mars {
 		return true;
 	}
 
+	template<Integer Dim, Integer ManifoldDim>
+		bool write_mesh_MFEM(const std::string &path,const Mesh<Dim, ManifoldDim> &mesh)
+		{
+  			std::ofstream os;
+    		os.open(path.c_str());
+    		if (!os.good()) {
+    			os.close();
+    			return false;
+    		}
+
+			writeHeader(mesh, os);
+			writeElements(mesh, os);
+			writeVertices(mesh, os);
+
+			os.close();
+		//	clear();
+			return true;
+
+		}
+
+	template<Integer Dim, Integer ManifoldDim>
+	void writeHeader(const Mesh<Dim, ManifoldDim> &mesh, std::ostream &os) {
+		Integer dim = mesh.ManifoldDim;
+		os << "MFEM mesh v1.0\n\ndimension\n";
+		os << dim<<"\n\n";
+	}
+
+	template<Integer Dim, Integer ManifoldDim>
+	void writeElements(const Mesh<Dim, ManifoldDim> &mesh, std::ostream &os) {
+		os << "elements\n";
+		os << mesh.n_elements() << "\n";
+
+		for (Integer k = 0; k < mesh.n_elements(); ++k) {
+			if (!mesh.is_active(k))
+				continue;
+
+			if(mesh.tags().size() == mesh.n_elements())
+				os<<mesh.tags()[k]<< " " << mesh.elem(k).type()<<" ";
+			else
+				os<<INVALID_INDEX<< " " << INVALID_INDEX<<" ";
+
+			for (Integer i = 0; i < ManifoldDim + 1; ++i) {
+				const Integer v = mesh.elem(k).nodes[i];
+				os << v;
+				if (i < ManifoldDim) {
+					os << " ";
+				}
+			}
+			os << "\n";
+		}
+		os << "\n";
+	}
+
+	template<Integer Dim, Integer ManifoldDim>
+	void writeVertices(const Mesh<Dim, ManifoldDim> &mesh, std::ostream &os) {
+		Integer dim = mesh.Dim;
+		os << "vertices\n";
+
+		const std::vector<Vector<Real, Dim>> points = mesh.points();
+
+		os << points.size() << "\n";
+		os << dim << "\n";
+
+		for (Integer i = 0; i < points.size(); ++i) {
+			for (Integer d = 0; d < Dim; ++d) {
+				os << points[i](d);
+				if (d < Dim - 1) {
+					os << " ";
+				}
+			}
+			os << "\n";
+		}
+
+	}
+
 	inline bool mesh_hyper_cube(
 		const std::array<Integer, 4> &dims,
 		const Vector<Real, 4> &lobo,
@@ -953,6 +1060,7 @@ namespace mars {
 		return false;
 	}
 
+	using Mesh1 = mars::Mesh<1, 1>;
 	using Mesh2 = mars::Mesh<2, 2>;
 	using Mesh3 = mars::Mesh<3, 3>;
 	using Mesh4 = mars::Mesh<4, 4>;

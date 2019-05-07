@@ -4,11 +4,9 @@
 #include <vector>
 #include <array>
 #include <algorithm>  
+#include "mars_fwd.hpp"
 
 namespace mars {
-	
-	template<Integer Dim, Integer ManifoldDim>
-	class Mesh;
 
 	template<Integer ManifoldDim>
 	class DualGraph {
