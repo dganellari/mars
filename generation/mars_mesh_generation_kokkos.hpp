@@ -1,12 +1,17 @@
-#ifndef GENERATION_MARS_MESH_GENERATION_HPP_
-#define GENERATION_MARS_MESH_GENERATION_HPP_
+#ifndef GENERATION_MARS_MESH_GENERATION_KOKKOS_HPP_
+#define GENERATION_MARS_MESH_GENERATION_KOKKOS_HPP_
 
-#include "mars_mesh.hpp"
-#include "mars_memory.hpp"
+#include "mars_mesh_kokkos.hpp"
+#include "mars_fwd_kokkos.hpp"
+#include <Kokkos_Core.hpp>
+#include <functional>
+
 using namespace std;
 
 namespace mars {
 namespace generation {
+
+namespace kokkos{
 
 namespace Private {
 
@@ -108,11 +113,16 @@ void build_hex27(array<Integer, hex_n_nodes>& nodes, const Integer xDim,
 }
 
 template<Integer Dim, Integer ManifoldDim>
-bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
+bool generate_cube(Parallel_Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 		const Integer yDim, const Integer zDim) {
 
 	using namespace mars::generation::Private;
 	using Elem     = mars::Simplex<Dim, ManifoldDim>;
+
+	using namespace Kokkos;
+
+	using ViewVectorType = Kokkos::View<Integer*> ;
+	using ViewMatrixType = Kokkos::View<Integer**> ;
 
 	assert(ManifoldDim <= Dim);
 	assert(Dim <= 3);
@@ -145,31 +155,37 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 		assert(yDim == 0);
 		assert(zDim == 0);
 
+
 		const int n_elements = xDim;
 		const int n_nodes = xDim + 1;
 		mesh.reserve(n_elements, n_nodes);
 
-		for (Integer i = 0; i <= xDim; ++i) {
-			Vector<Real, Dim> p(
-					{ static_cast<Real>(i) / static_cast<Real>(xDim), 0.0, 0.0 });
 
-			mesh.add_point(p);
-		}
+		//for (Integer i = 0; i <= xDim; ++i) {
+		/*parallel_for(n_nodes, [=,&mesh] __device__ __host__(const size_t index){
+			mesh.add_point1(index,xDim);
+		});*/
 
-		for (Integer i = 0; i < xDim; ++i) {
+		parallel_for(n_nodes,
+				std::bind(&Parallel_Mesh<Dim, ManifoldDim>::add_point1, &mesh,
+						std::placeholders::_1, xDim));
+
+
+		/*for (Integer i = 0; i < xDim; ++i) {
 
 			std::array<Integer, ManifoldDim + 1> nodes;
 
 			nodes[0] = i;
 			nodes[1] = i + 1;
 
-			mesh.add_elem(nodes);
-		}
+			mesh.add_elem(nodes,i);
+		}*/
+
 
 		return true;
 	}
 
-	case 2: {
+	/*case 2: {
 
 		assert(xDim != 0);
 		assert(yDim != 0);
@@ -313,26 +329,23 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 			}
 		}
 
-		std::cout<<"mem2: "<<generation::memory::getPhysicalMem()<<std::endl;
-
-
 		return true;
 	}
 	default: {
 
 		std::cerr << "Not implemented for other dimensions yet" << std::endl;
 		return false;
-	}
+	}*/
 	}
 }
 
-bool generate_square(Mesh2& mesh, const Integer xDim, const Integer yDim) {
+/*bool generate_square(Mesh2& mesh, const Integer xDim, const Integer yDim) {
 	return generate_cube(mesh, xDim, yDim, 0);
 }
 
 bool generate_line(Mesh<1, 1>& mesh, const Integer xDim) {
 	return generate_cube(mesh, xDim, 0, 0);
-}
+}*/
 
 /*bool generate_point(Mesh<1, 0>& mesh) {
  return generate_cube(mesh,0,0,0);
@@ -419,6 +432,7 @@ Mesh3 generate_unit_cube() {
 
 }
 
+}
 }
 }
 
