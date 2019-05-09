@@ -13,16 +13,17 @@
 #include "mars_utils.hpp"
 #include "mars_mesh_partition.hpp"
 #include "mars_partitioned_bisection.hpp"
-
 #include "mars_benchmark.hpp"
 #include "mars_test.hpp"
 #include "mars_ranked_edge.hpp"
 #include "mars_oldest_edge.hpp"
 #include "mars_longest_edge.hpp"
-
+#include "generation/mars_memory.hpp"
 #include <err.h>
 
+#include "generation/mars_mesh_kokkos.hpp"
 #include "generation/mars_mesh_generation.hpp"
+#include "generation/mars_mesh_generation_kokkos.hpp"
 
 #ifdef WITH_MPI
 #include "mars_par_bisection.hpp"
@@ -50,8 +51,8 @@ mars::Mesh1 test_mars_mesh_generation_1D(const int x) {
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
 
 
-	VTKMeshWriter < Mesh1 > w;
-	w.write("build_line" + to_string(x) +".vtu", mesh);
+	/*VTKMeshWriter < Mesh1 > w;
+	w.write("build_line" + to_string(x) +".vtu", mesh);*/
 
 
 	return mesh;
@@ -91,6 +92,8 @@ mars::Mesh3 test_mars_mesh_generation_3D(const int x,
 	using namespace mars;
 
 	high_resolution_clock::time_point t1 = high_resolution_clock::now();
+
+	std::cout<<"mem: "<<generation::memory::getPhysicalMem()<<std::endl;
 
 	Mesh3 mesh;
 	generation::generate_cube<3, 3>(mesh, x, y, z);
@@ -1081,20 +1084,34 @@ int main(int argc, char *argv[])
 	//test_uniform_bisection_2D(level,filename);
 	//test_read_write_3D(filename);
 
-	//test_mars_mesh_generation_1D(4);
+	//test_mars_mesh_generation_1D(level);
 
-	test_mars_mesh_generation_2D(6000,6000);
+	//test_mars_mesh_generation_2D(6000,6000);
 
 	//test_mars_mesh_generation_3D(150,150,100);
 	//test_mars_mesh_generation_3D(150,150,150);
-	//test_mars_mesh_generation_3D(100,100,100);
+	//test_mars_mesh_generation_3D(150,150,150);
+
 	//test_mars_mesh_generation_3D(150,150,120);
 	/*test_mars_mesh_generation_3D(2,2,2);
-	test_uniform_bisection_3D(level, test_mars_mesh_generation_3D(1,1,1));
-	*//*Mesh2 m = test_mars_mesh_generation_2D(10,8); //works fine
-	test_uniform_bisection_2D(level,m);
-*/
+	test_uniform_bisection_3D(level, test_mars_mesh_generation_3D(1,1,1));*/
+	/*Mesh2 m = test_mars_mesh_generation_2D(10,8); //works fine
+	test_uniform_bisection_2D(level,m);*/
 	//test_mars_mesh_generation_3D();
+	Kokkos::initialize(argc, argv);
+	{
+		Timer timer;
+
+		generation::Parallel_Mesh<1, 1> mesh;
+		generation::kokkos::generate_cube(mesh, level, 0, 0);
+
+		double time = timer.seconds();
+
+		std::cout<< "Generation took: "<<time<<" seconds."<<std::endl;
+
+	}
+
+	Kokkos::finalize();
 
 
 #ifdef WITH_MPI
