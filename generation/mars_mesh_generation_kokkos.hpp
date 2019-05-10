@@ -117,12 +117,10 @@ bool generate_cube(Parallel_Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 		const Integer yDim, const Integer zDim) {
 
 	using namespace mars::generation::Private;
-	using Elem     = mars::Simplex<Dim, ManifoldDim>;
+	using Elem = mars::Simplex<Dim, ManifoldDim>;
 
 	using namespace Kokkos;
 
-	using ViewVectorType = Kokkos::View<Integer*> ;
-	using ViewMatrixType = Kokkos::View<Integer**> ;
 
 	assert(ManifoldDim <= Dim);
 	assert(Dim <= 3);
@@ -161,26 +159,25 @@ bool generate_cube(Parallel_Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 		mesh.reserve(n_elements, n_nodes);
 
 
-		//for (Integer i = 0; i <= xDim; ++i) {
+		//todo: try lambda equivalent
+
 		/*parallel_for(n_nodes, [=,&mesh] __device__ __host__(const size_t index){
 			mesh.add_point1(index,xDim);
 		});*/
 
+		//:todo try to avoid it by calling mesh.AddPoints and remove the view as a parameter but instead get it from structure directly
+
+		ViewMatrixType<Integer> points = mesh.get_view_points();
+		ViewMatrixType<Integer> elems = mesh.get_view_elems();
+		ViewVectorType<bool> active = mesh.get_view_active();
+
 		parallel_for(n_nodes,
-				std::bind(&Parallel_Mesh<Dim, ManifoldDim>::add_point1, &mesh,
-						std::placeholders::_1, xDim));
+				typename Parallel_Mesh<Dim, ManifoldDim>::AddPoint(points,
+						xDim));
 
-
-		/*for (Integer i = 0; i < xDim; ++i) {
-
-			std::array<Integer, ManifoldDim + 1> nodes;
-
-			nodes[0] = i;
-			nodes[1] = i + 1;
-
-			mesh.add_elem(nodes,i);
-		}*/
-
+		parallel_for(n_elements,
+				typename Parallel_Mesh<Dim, ManifoldDim>::AddElem(elems,
+						active));
 
 		return true;
 	}
@@ -330,12 +327,12 @@ bool generate_cube(Parallel_Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 		}
 
 		return true;
-	}
+	}*/
 	default: {
 
 		std::cerr << "Not implemented for other dimensions yet" << std::endl;
 		return false;
-	}*/
+	}
 	}
 }
 

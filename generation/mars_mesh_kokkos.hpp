@@ -29,6 +29,25 @@ using namespace Kokkos;
 
 namespace generation{
 
+	template<typename T>
+	using ViewVectorType = Kokkos::View<T*> ;
+
+	template<typename T>
+	using ViewMatrixType = Kokkos::View<T**> ;
+
+	//Cuda
+	/*template<typename T>
+	using ViewVectorType = Kokkos::View<T*,Kokkos::LayoutLeft,Kokkos::CudaSpace > ;
+
+	template<typename T>
+	using ViewMatrixType = Kokkos::View<T**,Kokkos::LayoutLeft,Kokkos::CudaSpace > ;*/
+
+	//OpenMP
+	/*template<typename T>
+	using ViewVectorType = Kokkos::View<T*,Kokkos::LayoutRight,Kokkos::OpenMP >;
+
+	template<typename T>
+	using ViewMatrixType = Kokkos::View<T**,Kokkos::LayoutRight,Kokkos::OpenMP >;*/
 
 	template<Integer Dim_, Integer ManifoldDim_, class Point_ >
 	class Parallel_Mesh : public Parallel_IMesh<Dim_,Point_> {
@@ -40,20 +59,18 @@ namespace generation{
 		using SideElem = mars::Simplex<Dim, ManifoldDim-1>; 
 		using Point    = Point_;
 
-		using ViewVectorType = Kokkos::View<Integer*> ;
-		using ViewMatrixType = Kokkos::View<Integer**> ;
 
 
 		void reserve(
 			const std::size_t n_elements,
 			const std::size_t n_points) override
 		{
-			this->elements_size = n_elements;
-			this->points_size = n_points;
+			elements_size = n_elements;
+			points_size = n_points;
 
-			elements_ = ViewMatrixType("elems",n_elements,ManifoldDim+1);
-			active_= ViewVectorType("active_",n_elements);
-			points_ = ViewMatrixType("pts",n_points,Dim);
+			elements_ = ViewMatrixType<Integer>("elems",n_elements,ManifoldDim+1);
+			active_= ViewVectorType<bool>("active_",n_elements);
+			points_ = ViewMatrixType<Integer>("pts",n_points,Dim);
 		}
 
 
@@ -109,21 +126,61 @@ namespace generation{
 
 		inline Integer add_point(const Point &point, const int row) override
 		{
-			for(unsigned int i=0;i<Dim;++i){
-				points_(row,i) = point[i];
+			for (unsigned int i = 0; i < Dim; ++i) {
+				points_(row, i) = point[i];
 			}
 
 			return row;
 
 		}
 
+		//add point functor
+		struct AddPoint {
 
-		inline __device__ __host__ void add_point1(const size_t row,const Integer xDim) {
+			ViewMatrixType<Integer> points;
+			Integer xDim;
+
+			AddPoint(ViewMatrixType<Integer> pts, Integer xdm) :
+					points(pts), xDim(xdm) {
+			}
+
+			KOKKOS_INLINE_FUNCTION
+			void operator()(int row) const {
+
+				for (int i = 0; i < Dim; ++i) {
+					points(row, i) = static_cast<Real>(row)
+							/ static_cast<Real>(xDim);
+				}
+
+			}
+		};
+
+		//add elem functor
+		struct AddElem {
+
+			ViewMatrixType<Integer> elem;
+			ViewVectorType<bool> active;
+
+			AddElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac) : elem(el), active(ac) {}
+
+			KOKKOS_INLINE_FUNCTION
+			void operator()(int row) const {
+
+				for (int i = 0; i < ManifoldDim+1; ++i) {
+					elem(row, i) = row+i;
+				}
+
+				active(row) = true;
+
+			}
+		};
+
+	/*	inline __device__ __host__ void add_point1(const size_t row,const Integer xDim) {
 
 			for (int i = 0; i < Dim; ++i)
 				points_(row, i) = static_cast<Real>(row) / static_cast<Real>(xDim);
 
-		}
+		}*/
 
 		/*inline Point &point(const Integer i) override
 		{
@@ -152,9 +209,24 @@ namespace generation{
 			}
 		}*/
 
-		const ViewMatrixType &points() const //override
+		const ViewMatrixType<Integer> &points() const //override
 		{
 			return points_;
+		}
+
+		ViewMatrixType<Integer> get_view_points() const //override
+		{
+			return points_;
+		}
+
+		ViewMatrixType<Integer> get_view_elems() const //override
+		{
+			return elements_;
+		}
+
+		ViewVectorType<bool> get_view_active() const //override
+		{
+			return active_;
 		}
 
 		/*
@@ -928,9 +1000,9 @@ namespace generation{
 
 	private:
 
-		ViewMatrixType elements_;
-		ViewMatrixType points_;
-		ViewVectorType active_;
+		ViewMatrixType<Integer> elements_;
+		ViewMatrixType<Integer> points_;
+		ViewVectorType<bool> active_;
 		Integer elements_size;
 		Integer points_size;
 
@@ -1099,6 +1171,7 @@ namespace generation{
 	using Mesh4 = mars::Parallel_Mesh<4, 4>;
 	using Mesh5 = mars::Parallel_Mesh<5, 5>;
 	using Mesh6 = mars::Parallel_Mesh<6, 6>;*/
+
 }
 }
 
