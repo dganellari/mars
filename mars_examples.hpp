@@ -5,7 +5,8 @@
 #include "mars_connectivity.hpp"
 #include "mars_functionspace_dofmap.hpp"
 #include "mars_functionspace.hpp"
-
+#include "mars_shape_function.hpp"
+#include "mars_matrix.hpp"
 
 
 
@@ -15,9 +16,379 @@ namespace mars{
 using std::cout;
 using std::endl;
 
+class Cents
+{
+private:
+    double m_cents;
+    std::vector<double> vec;
+public:
+
+    Cents(double cents,int N=0)
+    {m_cents = cents;
+     vec.resize(N);
+     for(Integer n=0;n<N;n++)
+        vec[n]=n;
+    };
+
+    // add Cents + int using a friend function
+    friend Cents operator+(const Cents &c1,const Cents &c2); 
+
+    // add Cents + int using a friend function
+    friend Cents operator+(const Cents &c1, double value);
+ 
+    // add int + Cents using a friend function
+    friend Cents operator+(double value, const Cents &c1);
+ 
+     // add Cents + int using a friend function
+    friend Cents operator*(const Cents &c1,const Cents &c2); 
+
+    // add Cents + int using a friend function
+    friend Cents operator*(const Cents &c1, double value);
+ 
+    // add int + Cents using a friend function
+    friend Cents operator*(double value, const Cents &c1);
 
 
-void functionspaces_example()
+    double getCents()const { return m_cents; }
+};
+
+
+
+
+
+
+// note: this function is not a member function!
+Cents operator+(const Cents &c1,const Cents &c2)
+{
+    // use the Cents constructor and operator+(int, int)
+    // we can access m_cents directly because this is a friend function
+    return Cents(c1.m_cents + c2.m_cents);
+}
+
+// note: this function is not a member function!
+Cents operator+(const Cents &c1, double value)
+{
+    // use the Cents constructor and operator+(int, int)
+    // we can access m_cents directly because this is a friend function
+    return Cents(c1.m_cents + value);
+}
+ 
+// note: this function is not a member function!
+Cents operator+(double value, const Cents &c1)
+{
+    // use the Cents constructor and operator+(int, int)
+    // we can access m_cents directly because this is a friend function
+    return Cents(c1.m_cents + value);
+}
+
+
+// note: this function is not a member function!
+Cents operator*(const Cents &c1,const Cents &c2)
+{
+    // use the Cents constructor and operator+(int, int)
+    // we can access m_cents directly because this is a friend function
+    return Cents(c1.m_cents * c2.m_cents);
+}
+
+// note: this function is not a member function!
+Cents operator*(const Cents &c1, double value)
+{
+    // use the Cents constructor and operator+(int, int)
+    // we can access m_cents directly because this is a friend function
+    return Cents(c1.m_cents * value);
+}
+ 
+// note: this function is not a member function!
+Cents operator*(double value, const Cents &c1)
+{
+    // use the Cents constructor and operator+(int, int)
+    // we can access m_cents directly because this is a friend function
+    return Cents(c1.m_cents * value);
+}
+
+
+
+
+
+
+
+
+// Base Function: f(x) = x
+class Function
+{
+    protected:
+    struct Implementation
+    {
+        virtual ~Implementation() {}
+        virtual double evaluate(double x) const { return x; }
+    };
+
+    public:
+    Function()
+    :   self_(std::make_shared<Implementation>())
+    {}
+
+    double operator () (double x) const { return self_->evaluate(x); }
+
+    protected:
+    Function(std::shared_ptr<Implementation> self)
+    :   self_(self)
+    {}
+
+    private:
+    std::shared_ptr<Implementation> self_;
+};
+
+
+
+class Function2: public Function
+{
+     protected:
+    struct Implementation: Function::Implementation
+    {
+        virtual double evaluate(double x) const override{ cout<<"aaa"<<endl;return 2*x; }
+    };  
+public: 
+    double operator () (double x) const  { return 2*x; };
+};
+
+// Unary Function: u(-f(x))
+class UnaryMinus : public Function
+{
+    protected:
+    struct Implementation : Function::Implementation
+    {
+        Function f;
+
+
+        Implementation(Function f):   
+        f(f)
+        {};
+
+        virtual double evaluate(double x) const override { return -f(x); }
+    };
+
+    public:
+    UnaryMinus(Function f)
+    :   Function(std::make_shared<Implementation>(f))
+    {}
+};
+
+// Binary Function: u(f(x) + g(x))
+class BinaryAdd : public Function
+{
+    protected:
+    struct Implementation : Function::Implementation
+    {
+        Function f;
+        Function g;
+        Implementation(Function f, Function g)
+        :   f(f), g(g)
+        {};
+
+        virtual double evaluate(double x) const override { return f(x) + g(x); }
+    };
+
+    public:
+    BinaryAdd(Function f, Function g)
+    :   Function(std::make_shared<Implementation>(f, g))
+    {}
+};
+
+// Binary Function: u(f(x) * g(x))
+class BinaryMultiply : public Function
+{
+    protected:
+    struct Implementation : Function::Implementation
+    {
+        Function f;
+        Function g;
+        Implementation(Function f, Function g)
+        :   f(f), g(g)
+        {};
+
+        virtual double evaluate(double x) const override { return f(x) * g(x); }
+    };
+
+    public:
+    BinaryMultiply(Function f, Function g)
+    :   Function(std::make_shared<Implementation>(f, g))
+    {}
+};
+
+// Binary Function: u(f(x) * g(x))
+class scalarMultiply : public Function
+{
+    protected:
+    struct Implementation : Function::Implementation
+    {
+        Function f;
+        double alpha_;
+        Implementation(Function f, double alpha):   
+        f(f), 
+        alpha_(alpha)
+        {};
+
+
+        virtual double evaluate(double x) const override { return f(x) * alpha_; }
+    };
+
+    public:
+    scalarMultiply(Function f, double alpha)
+    :   Function(std::make_shared<Implementation>(f, alpha))
+    {}
+
+};
+
+inline scalarMultiply operator * (Function f,double alpha) { return scalarMultiply(f,alpha); }
+inline scalarMultiply operator * (double alpha,Function f) { return scalarMultiply(f,alpha); }
+inline UnaryMinus operator - (Function f) { return UnaryMinus(f); }
+inline BinaryAdd operator + (Function f, Function g) { return BinaryAdd(f, g); }
+inline BinaryMultiply operator * (Function f, Function g) { return BinaryMultiply(f, g); }
+
+
+
+
+void cents_example()
+{
+    Cents c1 = Cents(4) + 6;
+    Cents c2 = 6.0 + Cents(4);
+    Cents c3 = c1 + c2 + 2*(3.4 +c1*0.3);
+ 
+    std::cout << "I have " << c1.getCents() << " cents." << std::endl;
+    std::cout << "I have " << c2.getCents() << " cents." << std::endl;
+    std::cout << "I have " << c3.getCents() << " cents." << std::endl;
+ 
+    Function x;
+    Function2 x2;
+    // Function2 result2 = x2+x;
+    // //Function result1 = x2+x;
+    
+    // std::cout << x2(2)<< '\n';
+    // //std::cout << result1(1) <<"  "<<result1(2) << '\n';
+    // std::cout << result2(1) <<"  "<<result2(2) << '\n';
+
+ using fespace1= ElemFunctionSpace<Simplex<2,2>, Lagrange1<2>>;
+ using fespace2= ElemFunctionSpace<Simplex<2,2>, Lagrange2<2>>;
+ std::cout<<"fespace"<<fespace2::FEFamily<<std::endl;
+ std::cout<<"fespace"<<fespace2::Order<<std::endl;
+ MassIntegrator<fespace2,fespace1>();
+  
+
+
+};
+
+// template<typename TrialFunction, typename TestFunction>
+// void Assembling()
+// {
+// auto trial_fe=TrialFunction::FEFamily;
+// auto test_fe=TestFunction::FEFamily;
+// auto trial_order=TrialFunction::Order;
+// auto test_order=TestFunction::Order;
+// };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void functionspaces_example2D()
+{
+
+    constexpr Integer ManifoldDim=2;
+    constexpr Integer Dim=2;
+    using MeshT=mars::Mesh<Dim, ManifoldDim>;
+    MeshT mesh;
+    using Elem = typename MeshT::Elem; 
+    read_mesh("../data/beam-tri.MFEM", mesh);
+ 
+    NodeToElem<Elem> node2elem3(mesh);
+    auto node2elem=node2elem3.val();
+
+    for(Integer nn=0; nn<node2elem.size();nn++)
+        {std::cout<<"node=="<<nn<<"     ";
+         for(Integer mm=0; mm<node2elem[nn].size();mm++)
+          std::cout<<node2elem[nn][mm]<<" ";
+         std::cout<<std::endl;
+      }
+    ElemEntity<Elem,0> nodes(mesh,node2elem);
+
+    std::cout<<"node 2 elem=="<<std::endl;
+    for(Integer nn=0; nn<nodes.entity_2_elem().size();nn++)
+         std::cout<<nodes.entity_2_elem(nn)[0]<<" ";
+    std::cout<<std::endl;
+    for(Integer nn=0; nn<nodes.elem_2_entity().size();nn++)
+        {
+         std::cout<<"elem="<<nn<< std::endl;
+         for(Integer mm=0; mm<nodes.elem_2_entity(nn).size();mm++)
+            std::cout<<nodes.elem_2_entity(nn)[mm]<<" ";
+        } 
+
+
+
+    FunctionSpace< MeshT, Lagrange2<1>,RT0<1>> FEspace(mesh);
+
+   std::cout<<"n_dofs="<<FEspace.n_dofs()<< std::endl;
+    std::cout<<std::endl;
+    for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
+    {
+     auto &elem_id=elem_iter;
+     std::cout<<std::endl<<" elem =="<<elem_iter<<std::endl;
+     for(Integer nn=0;nn<FEspace.dofmap(elem_id).size();nn++)
+     {
+        std::cout<<FEspace.dofmap(elem_id)[nn]<< "  ";
+     }
+    } 
+std::cout<<std::endl;
+for(Integer ss=0;ss<FEspace.n_subspaces();ss++)
+       std::cout<<"components of space["<<ss<<"]=="<<FEspace.components(ss)<<std::endl;
+std::cout<<std::endl;
+
+for(Integer ss=0;ss<FEspace.n_subspaces();ss++)
+{
+   std::cout<<"dofs of space ="<<ss<<std::endl;
+   for(Integer cc=0;cc<FEspace.components(ss);cc++)
+    {std::cout<<"component ="<<cc<<"   "<<std::endl;
+      auto& vec=FEspace.space_dofs(ss,cc);
+      for(Integer mm=0;mm<FEspace.n_dofs(ss,cc);mm++)
+          std::cout<<vec[mm]<<" ";
+   }
+   std::cout<<std::endl;
+
+}
+ 
+
+    for(Integer mm=0;mm<FEspace.offset().size();mm++)
+     {
+      std::cout<<"offset space="<<mm<<std::endl;
+      for(Integer nn=0;nn<FEspace.offset()[mm].size();nn++)
+         {
+            std::cout<< FEspace.offset()[mm][nn]<<" ";
+         }
+     }
+     std::cout<<std::endl;
+
+
+
+ }
+
+
+
+
+
+
+
+void functionspaces_example5D()
 {
 
     constexpr Integer ManifoldDim=4;
@@ -32,7 +403,7 @@ void functionspaces_example()
     //read_mesh("../data/square_2_def.MFEM", mesh);
    
 
-    NodeToElem<Simplex<4,4>> node2elem3(mesh);
+    NodeToElem<Elem> node2elem3(mesh);
     auto node2elem=node2elem3.val();
     //auto vec=dofmap<ElemLagrange1<Elem>   , ElemLagrange3<Elem,1,1> >(mesh);
 
@@ -119,14 +490,14 @@ void functionspaces_example()
     } 
 std::cout<<std::endl;
 for(Integer ss=0;ss<FEspace.n_subspaces();ss++)
-       std::cout<<" components of space["<<ss<<"]=="<<FEspace.components(ss)<<std::endl;
+       std::cout<<"components of space["<<ss<<"]=="<<FEspace.components(ss)<<std::endl;
 std::cout<<std::endl;
 
 for(Integer ss=0;ss<FEspace.n_subspaces();ss++)
 {
-   std::cout<<" dofs of space ="<<ss<<std::endl;
+   std::cout<<"dofs of space ="<<ss<<std::endl;
    for(Integer cc=0;cc<FEspace.components(ss);cc++)
-    {std::cout<<" component ="<<cc<<"   "<<std::endl;
+    {std::cout<<"component ="<<cc<<"   "<<std::endl;
       auto& vec=FEspace.space_dofs(ss,cc);
       for(Integer mm=0;mm<FEspace.n_dofs(ss,cc);mm++)
           std::cout<<vec[mm]<<" ";
@@ -139,21 +510,19 @@ for(Integer ss=0;ss<FEspace.n_subspaces();ss++)
 
     for(Integer mm=0;mm<FEspace.offset().size();mm++)
      {
-      std::cout<<" offset space="<<mm<<std::endl;
+      std::cout<<"offset space="<<mm<<std::endl;
       for(Integer nn=0;nn<FEspace.offset()[mm].size();nn++)
          {
             std::cout<< FEspace.offset()[mm][nn]<<" ";
          }
-
      }
      std::cout<<std::endl;
 
 
-   std::cout<<"--size="<<FEspace.dofmap(1,0).size()<<std::endl;
    for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
     {std::cout<<std::endl;
       const auto size=FEspace.dofmap(1,elem_iter).size();
-      std::cout<<"size="<<size<<std::endl;
+      std::cout<<"elem_iter="<<elem_iter<<std::endl;
       for(Integer nn=0;nn<size;nn++)
           std::cout<<FEspace.dofmap(1,elem_iter)[nn]<<" ";
       std::cout<<std::endl;

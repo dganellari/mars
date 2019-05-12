@@ -199,7 +199,8 @@ void ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>::init_elem_entity
     // loop on all the elements
     for(Integer elem_iter1 = 0; elem_iter1 < n_elements; ++elem_iter1) 
       {
-    
+        
+
         const auto &el1 = mesh.elem(elem_iter1);
         const auto &el_nodes1=el1.nodes;
         std::vector<Integer> el_neighs;
@@ -215,7 +216,7 @@ void ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>::init_elem_entity
         // sort and make unique the neighborhood elements
         std::sort( el_neighs.begin(), el_neighs.end() );
         el_neighs.erase( std::unique( el_neighs.begin(), el_neighs.end() ), el_neighs.end() );
-    
+        
         // loop on all the entities of the actual element e1
         for(Integer iter_entity_e1=0;iter_entity_e1< entity_combinations();iter_entity_e1++)
         {     
@@ -289,12 +290,107 @@ void ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>::init_elem_entity
                    entity_2_elem_.push_back(tmp);
                    elem_2_entity_[elem_iter1][iter_entity_e1]=entity_number;                   
                    entity_number++;
-                   }      
-             }    
+                   }   
+               }     
           }  
-
           size_=entity_number;  
      };
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////      ENTITY == NODE                                                                            ////////////
+////////////      We consider mesh nodes and we do not renumber them                                        ////////////
+////////////      This is why we need a specialization for nodes                                            ////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+template<Integer Dim,Integer ManifoldDim>
+ElemEntity<Simplex<Dim,ManifoldDim>,0>::ElemEntity(const Mesh<Dim,ManifoldDim>& mesh,
+                                          const std::vector< std::vector<Integer> >& node_2_element)
+                                         {init_elem_entity(mesh,node_2_element,entity_2_elem_,elem_2_entity_,size_); };
+
+
+template<Integer Dim,Integer ManifoldDim>
+void ElemEntity<Simplex<Dim,ManifoldDim>,0>::init_elem_entity
+                                   (const Mesh<Dim,ManifoldDim>& mesh,
+                                    const std::vector< std::vector<Integer> >& node_2_element,
+                                    std::vector<std::array<Integer,2>> &entity_2_elem_, 
+                                    std::vector<std::array<Integer, entity_combinations() >> &elem_2_entity_,
+                                    Integer &size_)
+{
+    static_assert(Dim>=0 , " the space dimension must be non negative ");
+    static_assert(ManifoldDim>=0 , " the manifold dimension must be non negative ");
+    static_assert(Dim>=ManifoldDim , " the space dimension dimension must be greater than or equal to the manifold dimension ");
+    const auto& n_elements = mesh.n_elements();
+    const auto& n_nodes = mesh.n_nodes();
+
+    elem_2_entity_.resize(n_elements);
+    entity_2_elem_.resize(n_nodes);
+    for(Integer elem_iter = 0; elem_iter < n_elements; ++elem_iter) 
+        {
+          auto& nodes=mesh.elem(elem_iter).nodes;
+          elem_2_entity_[elem_iter] = nodes;
+
+          for(Integer node_iter=0;node_iter<elem_2_entity_[elem_iter].size();node_iter++)
+              {
+                entity_2_elem_[nodes[node_iter]][0]=elem_iter;
+                entity_2_elem_[nodes[node_iter]][1]=node_iter;
+              }
+        }
+     size_=n_nodes;
+
+};
+
+
+
+
+
+
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////      ENTITY == ELEM                                                                            ////////////
+////////////      We consider mesh nodes and we do not renumber them                                        ////////////
+////////////      This is why we need a specialization for nodes                                            ////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+template<Integer Dim,Integer ManifoldDim>
+ElemEntity<Simplex<Dim,ManifoldDim>,ManifoldDim>::ElemEntity(const Mesh<Dim,ManifoldDim>& mesh,
+                                          const std::vector< std::vector<Integer> >& node_2_element)
+                                         {init_elem_entity(mesh,node_2_element,entity_2_elem_,elem_2_entity_,size_); };
+
+
+template<Integer Dim,Integer ManifoldDim>
+void ElemEntity<Simplex<Dim,ManifoldDim>,ManifoldDim>::init_elem_entity
+                                   (const Mesh<Dim,ManifoldDim>& mesh,
+                                    const std::vector< std::vector<Integer> >& node_2_element,
+                                    std::vector<std::array<Integer,2>> &entity_2_elem_, 
+                                    std::vector<std::array<Integer, entity_combinations() >> &elem_2_entity_,
+                                    Integer &size_)
+{
+    static_assert(Dim>=0 , " the space dimension must be non negative ");
+    static_assert(ManifoldDim>=0 , " the manifold dimension must be non negative ");
+    static_assert(Dim>=ManifoldDim , " the space dimension dimension must be greater than or equal to the manifold dimension ");
+    const auto& n_elements = mesh.n_elements();
+
+    elem_2_entity_.resize(n_elements);
+    entity_2_elem_.resize(n_elements);
+    for(Integer elem_iter = 0; elem_iter < n_elements; ++elem_iter) 
+        {
+          auto& nodes=mesh.elem(elem_iter).nodes;
+          elem_2_entity_[elem_iter][0] = elem_iter;
+          entity_2_elem_[elem_iter][0]=elem_iter;
+          entity_2_elem_[elem_iter][1]=0;
+
+        }
+     size_=n_elements;
+
+};
+
+
+
 
 
 

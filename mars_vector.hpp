@@ -14,6 +14,8 @@ namespace mars {
 	    std::array<T, Dim> values;
 	    Vector() {}
 
+	    Vector(T t) {values.fill(t);}
+
 	    Vector(std::initializer_list<T> values)
 	    {
 	        std::copy(std::begin(values), std::end(values), std::begin(this->values));
@@ -58,6 +60,16 @@ namespace mars {
 	        
 	        return ret;
 	    }
+
+	    Vector operator=(const Vector &right)
+	    {
+	        for(Integer i = 0; i < Dim; ++i) {
+	            (*this)(i) = right(i);
+	        }
+	        
+	        return *this;
+	    }
+
 
 	    Vector operator+=(const Vector &right)
 	    {
@@ -173,6 +185,18 @@ namespace mars {
 	    	std::fill(begin(values), end(values), value);
 	    	return *this;
 	    }
+
+
+
+	    inline const T sum() 
+	    {
+	        T s=0;
+	        for(Integer i = 0; i < Dim; ++i) {
+	            s+=(*this)(i);
+	        }
+	        return s;
+	    }
+
 	};
 
 	template<typename T, Integer Dim>
@@ -185,6 +209,10 @@ namespace mars {
 
 		return ret;
 	}
+
+
+
+
 }
 
 #endif //MARS_VECTOR_HPP

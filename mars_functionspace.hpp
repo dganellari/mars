@@ -35,7 +35,7 @@ public:
 
       inline const Integer n_subspaces(){return Nsubspaces;};
 
-      inline const Integer components(const Integer& space_id){return space_components_[space_id];};
+      inline const Integer components(const Integer& space_id){return space_infos_[space_id][3];};
 
       inline const Integer n_elem_dofs(){return Nelem_dofs;};
 
@@ -46,7 +46,7 @@ public:
 
       inline const Integer n_elem_dofs(const Integer& space_id,const Integer& component_id){
                                   const auto& size=n_elem_dofs(space_id);
-                                  return (size/space_components_[space_id]);}
+                                  return (size/space_infos_[space_id][3]);}
 
 
       inline const Integer n_dofs(){return n_dofs_;};
@@ -82,7 +82,7 @@ public:
                         const auto& size= n_elem_dofs(space_id);
                         std::vector<Integer> output(size);
                         const auto& comp=components(space_id);
-                        space_components_[space_id];
+                        space_infos_[space_id][3];
                         for(Integer nn=component_id;nn<size;nn=nn+comp)
                              output[nn]=dofmap_[elem_id][nn+os[0]];
                         return output;};
@@ -118,8 +118,8 @@ public:
       FunctionSpace(const MeshT& mesh):
       mesh_(std::make_shared< MeshT >(mesh))
       {
-      function_space_components<0,Nsubspaces,BaseFunctionSpace,BaseFunctionSpaces...>(space_components_);
-      dofmap_fespace<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofmap_,offset_,n_dofs_,space_components_,space_dofs_);     
+      function_space_info<0,Nsubspaces,BaseFunctionSpace,BaseFunctionSpaces...>(space_infos_);
+      dofmap_fespace<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofmap_,offset_,n_dofs_,space_infos_,space_dofs_);     
       };
 
 private:
@@ -128,7 +128,7 @@ private:
       std::vector<std::array<Integer, Nelem_dofs>> dofmap_;
       std::array<std::vector<Integer>, Nsubspaces> offset_;
       std::array<std::vector<std::vector<Integer>>, Nsubspaces> space_dofs_;
-      std::array<Integer,Nsubspaces> space_components_;
+      std::array<std::array<Integer,4>,Nsubspaces> space_infos_;
 };
 
 

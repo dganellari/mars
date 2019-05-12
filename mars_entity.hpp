@@ -96,11 +96,79 @@ private:
 };
 
 
+// ENTITY == NODE 
+template<Integer Dim,Integer ManifoldDim>
+class ElemEntity<Simplex<Dim,ManifoldDim>,0>
+{
+public: 
+
+    constexpr static Integer num_of_points_ = 1;
+    inline constexpr static Integer entity_combinations() {return ManifoldDim+1;}
+    inline constexpr static Integer num_of_points(){return 1;}
+    ElemEntity(const Mesh<Dim,ManifoldDim>& mesh, const std::vector< std::vector<Integer> >& node_2_element); // constructor
+    void init_elem_entity(const Mesh<Dim,ManifoldDim>& mesh,
+                          const std::vector< std::vector<Integer> >& node_2_element, 
+                          std::vector<std::array<Integer,2>> & entity_2_elem_, 
+                          std::vector<std::array<Integer, entity_combinations() > > &elem_2_entity_,
+                          Integer &size_); 
+
+    inline const Integer size() const {return size_; };
+
+    inline const std::vector<std::array<Integer,2>> entity_2_elem() const {return entity_2_elem_; };
+    
+    inline const std::array<Integer,2> entity_2_elem(Integer index) const {return entity_2_elem_[index]; };
+    
+    inline const std::vector<std::array<Integer, entity_combinations() > > elem_2_entity() const {return elem_2_entity_; };   
+    
+    inline const std::array<Integer, entity_combinations() > elem_2_entity(Integer index) const {return elem_2_entity_[index]; }; 
+
+
+private:
+    // entity_2_elem is a vector of 2D arrays: first component=1 elem, second component iter
+    std::vector<std::array<Integer,2>> entity_2_elem_; 
+    
+    std::vector<std::array<Integer, entity_combinations() >> elem_2_entity_;
+    
+    Integer size_;
+};
 
 
 
+ // ENTITY == ELEM 
+template<Integer Dim,Integer ManifoldDim>
+class ElemEntity<Simplex<Dim,ManifoldDim>,ManifoldDim>
+{
+public: 
+
+    constexpr static Integer num_of_points_ = ManifoldDim+1;
+    inline constexpr static Integer entity_combinations() {return 1;}
+    inline constexpr static Integer num_of_points(){return ManifoldDim+1;}
+    ElemEntity(const Mesh<Dim,ManifoldDim>& mesh, const std::vector< std::vector<Integer> >& node_2_element); // constructor
+    void init_elem_entity(const Mesh<Dim,ManifoldDim>& mesh,
+                          const std::vector< std::vector<Integer> >& node_2_element, 
+                          std::vector<std::array<Integer,2>> & entity_2_elem_, 
+                          std::vector<std::array<Integer, entity_combinations() > > &elem_2_entity_,
+                          Integer &size_); 
+
+    inline const Integer size() const {return size_; };
+
+    inline const std::vector<std::array<Integer,2>> entity_2_elem() const {return entity_2_elem_; };
+    
+    inline const std::array<Integer,2> entity_2_elem(Integer index) const {return entity_2_elem_[index]; };
+    
+    inline const std::vector<std::array<Integer, entity_combinations() > > elem_2_entity() const {return elem_2_entity_; };   
+    
+    inline const std::array<Integer, entity_combinations() > elem_2_entity(Integer index) const {return elem_2_entity_[index]; }; 
 
 
+private:
+    // entity_2_elem is a vector of 2D arrays: first component=1 elem, second component iter
+    std::vector<std::array<Integer,2>> entity_2_elem_; 
+    
+    std::vector<std::array<Integer, entity_combinations() >> elem_2_entity_;
+    
+    Integer size_;
+};
 
      
      

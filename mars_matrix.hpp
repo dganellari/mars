@@ -35,7 +35,17 @@ namespace mars {
 	        assert(j < Cols);
 	        return values[i*cols() + j];
 	    }
-	    
+
+	    inline void row(const Integer r, const Vector<T, Cols> &v)
+	    {
+	        assert(r < Rows && " row index must be smaller than number of rows");
+
+	        for(Integer d = 0; d < Cols; ++d) {
+	            (*this)(r,d) = v(d);
+	        }
+	    }
+
+
 	    inline void col(const Integer c, const Vector<T, Rows> &v)
 	    {
 	        assert(c < Cols);
@@ -44,7 +54,25 @@ namespace mars {
 	            (*this)(d, c) = v(d);
 	        }
 	    }
-	        
+
+	    inline void get_row(const Integer r, Vector<T, Cols> &v) const
+	    {
+	        assert(r < Rows && " row index must be smaller than number of rows");
+
+	        for(Integer d = 0; d < Cols; ++d) {
+	            v(d)=(*this)(r,d);
+	        }
+	    }
+
+	    inline void get_col(const Integer c, Vector<T, Rows> &v) const
+	    {
+	        assert(c < Cols);
+
+	        for(Integer d = 0; d < Rows; ++d) {
+	            v(d) = (*this)(d, c);
+	        }
+	    }
+
 	    inline void zero()
 	    {
 	        std::fill(begin(values), end(values), 0.);
@@ -85,6 +113,24 @@ namespace mars {
 
 	    	return ret;
 	    }
+
+	    inline Vector<T, Rows> operator * (const Vector<T, Cols> &other) const
+	    {
+	    	Vector<T, Rows> ret;
+	    	ret.zero();
+
+	    	for(Integer i = 0; i < Rows; ++i) {
+	    		for(Integer j = 0; j < Cols; ++j) {
+	    		    {
+	    				ret[i] += (*this)(i, j) * other(j);
+	    			}
+	    		}
+	    	}
+
+	    	return ret;
+	    }
+
+
 
 	    std::array<T, Rows * Cols> values;
 	};

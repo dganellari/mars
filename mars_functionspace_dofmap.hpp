@@ -26,8 +26,8 @@ FunctionSpaceDofsPerElem
      public: 
      using Elem = typename FunctionSpace::Elem; 
      static_assert(N>0," FunctionSpaceDofsPerElem N >0");
-     static constexpr std::size_t manifold_dim=FunctionSpace::manifold_dim;
-     static constexpr std::size_t n_components=FunctionSpace::n_components;
+     static constexpr std::size_t ManifoldDim=FunctionSpace::ManifoldDim;
+     static constexpr std::size_t n_components=FunctionSpace::NComponents;
      static constexpr std::size_t entity_dim=FunctionSpace::entity[N];
      static constexpr std::size_t dofs_per_entity=FunctionSpace::dofs_per_entity[N];
      static constexpr std::size_t dofs_per_elem=n_components * 
@@ -44,8 +44,8 @@ FunctionSpaceDofsPerElem<FunctionSpace,0>
      public:  
      using Elem = typename FunctionSpace::Elem; 
      static constexpr std::size_t N=0;
-     static constexpr std::size_t manifold_dim=FunctionSpace::manifold_dim;
-     static constexpr std::size_t n_components=FunctionSpace::n_components;
+     static constexpr std::size_t ManifoldDim=FunctionSpace::ManifoldDim;
+     static constexpr std::size_t n_components=FunctionSpace::NComponents;
      static constexpr std::size_t entity_dim=FunctionSpace::entity[N];
      static constexpr std::size_t dofs_per_entity=FunctionSpace::dofs_per_entity[N];
      static constexpr std::size_t value=n_components * 
@@ -158,8 +158,8 @@ template<typename Elem,typename FunctionSpace,typename...FunctionSpaces>
 struct FlagTupleType
 {
      using FS=ElemFunctionSpace<Elem,FunctionSpace>;
-     static constexpr Integer FEFamily=FS::family;
-     static constexpr Integer Order=FS::order; 
+     static constexpr Integer FEFamily=FS::FEFamily;
+     static constexpr Integer Order=FS::Order; 
      static constexpr Integer entities_nums=FS::entities_nums;
      using rest = typename FlagTupleType<Elem,FunctionSpaces...>::type;
      using ens  = typename std::array<std::vector<std::array<Integer,2>>, entities_nums>;
@@ -172,8 +172,8 @@ template<typename Elem,typename FunctionSpace>
 struct FlagTupleType<Elem,FunctionSpace>
 {
  using FS=ElemFunctionSpace<Elem,FunctionSpace>;
- static constexpr Integer FEFamily=FS::family;
- static constexpr Integer Order=FS::order; 
+ static constexpr Integer FEFamily=FS::FEFamily;
+ static constexpr Integer Order=FS::Order; 
  static constexpr Integer entities_nums=FS::entities_nums;
  using ens =  typename std::array<std::vector<std::array<Integer,2>>, entities_nums>;
  using type = typename std::tuple<ens>;
@@ -186,8 +186,8 @@ typename std::enable_if< 0<sizeof...(FunctionSpaces),
 FlagTuple(std::tuple<Args...> tuple)
 {    
       using FS=ElemFunctionSpace<Elem,FunctionSpace>;
-      constexpr Integer FEFamily=FS::family;
-      constexpr Integer Order=FS::order;
+      constexpr Integer FEFamily=FS::FEFamily;
+      constexpr Integer Order=FS::Order;
       static constexpr Integer M=sizeof...(FunctionSpaces);
       static constexpr Integer entities_nums=FS::entities_nums;
       using type = typename std::array<std::vector<std::array<Integer,2>>, entities_nums>;
@@ -205,8 +205,8 @@ template<typename Elem,typename FunctionSpace, typename...FunctionSpaces, typena
 FlagTuple(std::tuple<Args...> tuple)
 {   
       using FS=ElemFunctionSpace<Elem,FunctionSpace>;
-      constexpr Integer FEFamily=FS::family;
-      constexpr Integer Order=FS::order;
+      constexpr Integer FEFamily=FS::FEFamily;
+      constexpr Integer Order=FS::Order;
       static constexpr Integer entities_nums=FS::entities_nums;
       using type = typename std::array<std::vector<std::array<Integer,2>>, entities_nums>;
       type ens;
@@ -222,8 +222,8 @@ template<typename Elem,typename FunctionSpace,typename...FunctionSpaces>
 struct EntitiesOfFunctionSpaceTupleType
 {
      using FS=ElemFunctionSpace<Elem,FunctionSpace>;
-     static constexpr Integer FEFamily=FS::family;
-     static constexpr Integer Order=FS::order; 
+     static constexpr Integer FEFamily=FS::FEFamily;
+     static constexpr Integer Order=FS::Order; 
      static constexpr Integer N=FS::entities_nums-1;
      using rest = typename EntitiesOfFunctionSpaceTupleType<Elem,FunctionSpaces...>::type;
      using ens  = typename EntitiesOfFunctionSpaceType<Elem,FEFamily,Order,N>::type;
@@ -236,8 +236,8 @@ template<typename Elem,typename FunctionSpace>
 struct EntitiesOfFunctionSpaceTupleType<Elem,FunctionSpace>
 {
      using FS=ElemFunctionSpace<Elem,FunctionSpace>;
-     static constexpr Integer FEFamily=FS::family;
-     static constexpr Integer Order=FS::order; 
+     static constexpr Integer FEFamily=FS::FEFamily;
+     static constexpr Integer Order=FS::Order; 
      static constexpr Integer N=FS::entities_nums-1;
      using ens =  typename EntitiesOfFunctionSpaceType<Elem,FEFamily,Order,N>::type ;
      using type = typename std::tuple<ens>;
@@ -251,8 +251,8 @@ EntitiesOfFunctionSpaceTuple(const MeshT& mesh,
                              const std::vector< std::vector<Integer> > &node_2_element)
 {    
       using FS=ElemFunctionSpace<Elem,FunctionSpace>;
-      static constexpr Integer FEFamily=FS::family;
-      static constexpr Integer Order=FS::order;
+      static constexpr Integer FEFamily=FS::FEFamily;
+      static constexpr Integer Order=FS::Order;
       static constexpr Integer N=FS::entities_nums-1;
       using type = typename EntitiesOfFunctionSpaceType<Elem,FEFamily,Order,N>::type;
       return std::tuple_cat(EntitiesOfFunctionSpaceTuple<Elem,FunctionSpaces...>(mesh,node_2_element),
@@ -267,8 +267,8 @@ EntitiesOfFunctionSpaceTuple(const MeshT& mesh,
                              const std::vector< std::vector<Integer> > &node_2_element)
 {   
       using FS=ElemFunctionSpace<Elem,FunctionSpace>;
-      static constexpr Integer FEFamily=FS::family;
-      static constexpr Integer Order=FS::order;
+      static constexpr Integer FEFamily=FS::FEFamily;
+      static constexpr Integer Order=FS::Order;
       static constexpr Integer N=FS::entities_nums-1;
       using type = typename EntitiesOfFunctionSpaceType<Elem,FEFamily,Order,N>::type;
       return std::tuple<type>(EntitiesOfFunctionSpace<Elem,FEFamily,Order>(mesh,node_2_element));
@@ -290,9 +290,9 @@ ElementDofMap_LoopEntities(const std::tuple<Args1...>& entitiestuple,
 {
 
 using Elem = typename FunctionSpace::Elem;
-constexpr auto ManifoldDim=FunctionSpace::manifold_dim;
-constexpr auto continuity=FunctionSpace::continuity;
-constexpr auto n_components=FunctionSpace::n_components;
+constexpr auto ManifoldDim=FunctionSpace::ManifoldDim;
+constexpr auto continuity=FunctionSpace::Continuity;
+constexpr auto n_components=FunctionSpace::NComponents;
 constexpr auto entity_dim=FunctionSpace::entity[N];
 constexpr auto dofs_per_entity=FunctionSpace::dofs_per_entity[N];
 constexpr auto entity_points=entity_dim+1;
@@ -332,7 +332,7 @@ for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
      // given the offset of the entity N, we move to the iter_tmp entity and find in dofmap_vec the already numbered dof
      const auto& elem_id_tmp=flag[entity_id][0];
      const auto& iter_tmp=flag[entity_id][1];
-           auto old_dof=dofmap_vec[elem_id_tmp][dofs_offset[N]+ dofs_per_entity*iter_tmp*FunctionSpace::n_components];
+           auto old_dof=dofmap_vec[elem_id_tmp][dofs_offset[N]+ dofs_per_entity*iter_tmp*FunctionSpace::NComponents];
      
      for(Integer entity_dofs_iter=0;entity_dofs_iter<dofs_per_entity;entity_dofs_iter++)
         for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
@@ -525,18 +525,24 @@ OffsetDofs()
 
 template<Integer N,Integer M, typename FunctionSpace, typename...FunctionSpaces>
 typename std::enable_if< 0==sizeof...(FunctionSpaces) , void >::type
-function_space_components(std::array<Integer, M> &array)
+function_space_info(std::array<std::array<Integer,4>, M> &array)
 {
- array[N]=FunctionSpace::NComponents;
+ array[N][0]=FunctionSpace::FEFamily;
+ array[N][1]=FunctionSpace::Order;
+ array[N][2]=FunctionSpace::Continuity;
+ array[N][3]=FunctionSpace::NComponents;
 };
 
 
 template<Integer N,Integer M, typename FunctionSpace, typename...FunctionSpaces>
 typename std::enable_if< 0<sizeof...(FunctionSpaces) , void >::type
-function_space_components(std::array<Integer, M> &array)
+function_space_info(std::array<std::array<Integer,4>, M> &array)
 {
- array[N]=FunctionSpace::NComponents;
- function_space_components<N+1,M,FunctionSpaces...>(array);
+ array[N][0]=FunctionSpace::FEFamily;
+ array[N][1]=FunctionSpace::Order;
+ array[N][2]=FunctionSpace::Continuity;
+ array[N][3]=FunctionSpace::NComponents;
+ function_space_info<N+1,M,FunctionSpaces...>(array);
 };
 
 
@@ -554,7 +560,8 @@ void dofmap_fespace(const MeshT& mesh,
              DofMapVecT& dofmap_vec,
              OffSetT& dofs_offset_arr,
              Integer& global_dof_count,
-             const std::array<Integer , 1 + sizeof...(FunctionSpaces)>& space_components,
+             //const std::array<Integer , 1 + sizeof...(FunctionSpaces)>& space_components,
+             const std::array<std::array<Integer,4> , 1 + sizeof...(FunctionSpaces)>& space_components,
              std::array<std::vector<std::vector<Integer>>,1+sizeof...(FunctionSpaces)>& space_dofs)//, DofMapT dofmap_vec,OffSetT)
 {
 
@@ -571,12 +578,14 @@ void dofmap_fespace(const MeshT& mesh,
     const auto n_spaces=1+sizeof...(FunctionSpaces); 
           auto entitiestuple=EntitiesOfFunctionSpaceTuple<Elem,FunctionSpace,FunctionSpaces...>(mesh,node2elem);
           auto flagtuples= FlagTuple<Elem,FunctionSpace,FunctionSpaces...>(entitiestuple);
-     //std::vector<std::array<Integer,dofs_per_elem>> dofmap_vec(n_elements);
+
+
     dofmap_vec.resize(n_elements);   
     global_dof_count=0;
     // loop on all the elements
     for(Integer space_id=0;space_id<n_spaces;space_id++)
-        space_dofs[space_id].resize(space_components[space_id]);
+        //space_dofs[space_id].resize(space_components[space_id]);
+        space_dofs[space_id].resize(space_components[space_id][3]);
         
 
     for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
@@ -587,6 +596,7 @@ void dofmap_fespace(const MeshT& mesh,
      // loop on all the function spaces
      ElementDofMap<0,Elem,FunctionSpace,FunctionSpaces...>
                        (entitiestuple,flagtuples,elem_id,dofmap_vec,global_dof_count,loc_dof_count,dofs_offset,space_dofs);
+
     }
 
 tuple2array_dofs_offset<n_spaces-1>(dofs_offset,dofs_offset_arr);

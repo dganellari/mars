@@ -51,6 +51,7 @@ list(APPEND MARS_HEADERS
 	mars_quality.hpp
 	mars_ranked_edge.hpp
 	mars_red_green_refinement.hpp
+	mars_shape_function.hpp
 	mars_simplex.hpp
 	mars_static_math.hpp
 	mars_stream.hpp
