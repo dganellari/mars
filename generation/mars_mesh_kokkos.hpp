@@ -70,7 +70,7 @@ namespace generation{
 
 			elements_ = ViewMatrixType<Integer>("elems",n_elements,ManifoldDim+1);
 			active_= ViewVectorType<bool>("active_",n_elements);
-			points_ = ViewMatrixType<Integer>("pts",n_points,Dim);
+			points_ = ViewMatrixType<Real>("pts",n_points,Dim);
 		}
 
 
@@ -137,16 +137,15 @@ namespace generation{
 		//add point functor
 		struct AddPoint {
 
-			ViewMatrixType<Integer> points;
+			ViewMatrixType<Real> points;
 			Integer xDim;
 
-			AddPoint(ViewMatrixType<Integer> pts, Integer xdm) :
+			AddPoint(ViewMatrixType<Real> pts, Integer xdm) :
 					points(pts), xDim(xdm) {
 			}
 
 			KOKKOS_INLINE_FUNCTION
 			void operator()(int row) const {
-
 				for (int i = 0; i < Dim; ++i) {
 					points(row, i) = static_cast<Real>(row)
 							/ static_cast<Real>(xDim);
@@ -209,12 +208,12 @@ namespace generation{
 			}
 		}*/
 
-		const ViewMatrixType<Integer> &points() const //override
+		const ViewMatrixType<Real> &points() const //override
 		{
 			return points_;
 		}
 
-		ViewMatrixType<Integer> get_view_points() const //override
+		ViewMatrixType<Real> get_view_points() const //override
 		{
 			return points_;
 		}
@@ -1001,7 +1000,7 @@ namespace generation{
 	private:
 
 		ViewMatrixType<Integer> elements_;
-		ViewMatrixType<Integer> points_;
+		ViewMatrixType<Real> points_;
 		ViewVectorType<bool> active_;
 		Integer elements_size;
 		Integer points_size;

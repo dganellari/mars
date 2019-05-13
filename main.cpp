@@ -24,7 +24,7 @@
 #include "generation/mars_mesh_kokkos.hpp"
 #include "generation/mars_mesh_generation.hpp"
 #include "generation/mars_mesh_generation_kokkos.hpp"
-
+#include "generation/mars_utils_kokkos.hpp"
 #ifdef WITH_MPI
 #include "mars_par_bisection.hpp"
 #include "mars_par_mesh.hpp"
@@ -51,8 +51,8 @@ mars::Mesh1 test_mars_mesh_generation_1D(const int x) {
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
 
 
-	/*VTKMeshWriter < Mesh1 > w;
-	w.write("build_line" + to_string(x) +".vtu", mesh);*/
+	VTKMeshWriter < Mesh1 > w;
+	w.write("build_line" + to_string(x) +".vtu", mesh);
 
 
 	return mesh;
@@ -1105,10 +1105,20 @@ int main(int argc, char *argv[])
 		generation::Parallel_Mesh<1, 1> mesh;
 		generation::kokkos::generate_cube(mesh, level, 0, 0);
 
+		//fence();
+
 		double time = timer.seconds();
 
 		std::cout<< "Generation took: "<<time<<" seconds."<<std::endl;
 
+		/*if(level<100){
+
+			Mesh<1,1> sMesh;
+			generation::convertParallelMeshToSerial(sMesh,mesh);
+
+			VTKMeshWriter<Mesh1> w;
+			w.write("build_line_parallel" + to_string(level) + ".vtu", sMesh);
+		}*/
 	}
 
 	Kokkos::finalize();
