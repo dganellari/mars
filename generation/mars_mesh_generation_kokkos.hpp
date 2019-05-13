@@ -167,7 +167,7 @@ bool generate_cube(Parallel_Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 
 		//:todo try to avoid it by calling mesh.AddPoints and remove the view as a parameter but instead get it from structure directly
 
-		ViewMatrixType<Integer> points = mesh.get_view_points();
+		ViewMatrixType<Real> points = mesh.get_view_points();
 		ViewMatrixType<Integer> elems = mesh.get_view_elems();
 		ViewVectorType<bool> active = mesh.get_view_active();
 
@@ -175,9 +175,13 @@ bool generate_cube(Parallel_Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 				typename Parallel_Mesh<Dim, ManifoldDim>::AddPoint(points,
 						xDim));
 
+		Cuda::fence();
+
 		parallel_for(n_elements,
 				typename Parallel_Mesh<Dim, ManifoldDim>::AddElem(elems,
 						active));
+
+		Cuda::fence();
 
 		return true;
 	}
