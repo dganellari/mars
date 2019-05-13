@@ -64,7 +64,6 @@
 #include "mars_base_elementfunctionspace.hpp"
 #include "mars_vector.hpp"
 
-
 namespace mars{
 
 
@@ -444,7 +443,6 @@ class BaseShapeFunction
 
 
 
-
   template<Integer NQPpoints>
   const Vector<Matrix<Real,NQPpoints,ShapeFunctionDim>,Ndofs>
   shape_function(const Matrix<Real,NQPpoints,2>& qp_points)
@@ -551,10 +549,8 @@ public:
   phi(const Vector<Real,2>& point)
        {const auto& xi=point[0];
         const auto& eta=point[1];
-        const Real zeta = 1. - xi - eta;
-        const Matrix<Real,3,2> shapefunction{zeta,xi,eta};
+        const Matrix<Real,3,2> shapefunction{xi,eta-1,xi,eta,1-xi,-eta};
         return shapefunction;};
-
 
  const Real
  grad_phi(const Vector<Real,2>& point)
@@ -596,12 +592,90 @@ Matrix<Real, Rows1*Rows2, Cols1*Cols2 > tensorproduct(const Matrix<T, Rows1, Col
 
 
 
-template <typename TrialFunction,typename TestFunction >
-void MassIntegrator()
+template <typename T>
+T sort_indexes(const T &v) {
+  // initialize original index locations
+  T idx;
+  std::iota(idx.begin(), idx.end(), 0);
+
+  // sort indexes based on comparing values in v
+  std::sort(idx.begin(), idx.end(),
+       [&v](size_t i1, size_t i2) {return v[i1] < v[i2];});
+
+  return idx;
+}
+
+template <typename T>
+T T_sort(const T &v, const T& index) {
+  // initialize original index locations
+  T sortv;
+  for(Integer ii=0;ii<v.size();ii++)
+      sortv[ii]=v[index[ii]];
+  return sortv;
+}
+
+template <typename T>
+T T_sort(const T &v, Integer* index) {
+  // initialize original index locations
+  T sortv;
+  for(Integer ii=0;ii<v.size();ii++)
+      sortv[ii]=v[index[ii]];
+  return sortv;
+}
+
+
+// template <typename T>
+// T sort_indexes(const T &v,const Integer& size) {
+//   // initialize original index locations
+//   T idx(size);
+//   std::iota(idx.begin(), idx.begin()+size, 0);
+
+//   // sort indexes based on comparing values in v
+//   std::sort(idx.begin(), idx.end(),
+//        [&v](size_t i1, size_t i2) {return v[i1] < v[i2];});
+
+//   return idx;
+// }
+
+// template <typename T>
+// std::vector<T> sub_vector(const std::vector<T> &v,const std::vector<Integer>& index) {
+
+
+//   Integer size=index.size();
+//   std::vector<Integer> subvec(size);
+//   for(Integer ii=0;ii<size;ii++)
+//       subvec[ii]=v[index[ii]];
+
+//   return subvec;
+// }
+
+
+template <std::size_t SDim, std::size_t TDim, typename S>
+std::array<S,TDim> sub_vector(const std::array<S,SDim> &v,const std::array<S,TDim>& index) {
+
+  //static_assert(IndexDim<=Dim,"in sub_vector the length of the index vector must be smaller than the one of the vector");
+  std::array<S,TDim> subvec;
+  for(Integer ii=0;ii<TDim;ii++)
+      subvec[ii]=v[index[ii]];
+
+  return subvec;
+}
+
+
+
+
+template <typename TrialFunction,typename TestFunction, typename MeshT >
+void MassIntegrator(const MeshT& mesh)
 {
 
+
+
+
+std::cout<<"massintegrator1"<<std::endl;
 using Elem=typename TrialFunction::Elem;
-    
+const Integer Dim=Elem::Dim;
+const Integer ManifoldDim=Elem::ManifoldDim;    
+using Point    = mars::Vector<Real, Dim>;
 
 constexpr Integer n_trial_dofs=FunctionSpaceDofsPerElem<TrialFunction>::value;
 constexpr Integer n_test_dofs=FunctionSpaceDofsPerElem<TestFunction>::value;
@@ -639,7 +713,7 @@ for(Integer nn1=0;nn1<test_entities_nums;nn1++)
 }
 
 using trialfun=Elem2FunctionSpace<TrialFunction>;
-constexpr Integer QPOrder=5;
+constexpr Integer QPOrder=4;
 GaussPoints<Elem,QPOrder> gauss;
 
 //Matrix<Real,Ndofs*NComponents,Ndofs*NComponents> mass;
@@ -650,15 +724,21 @@ std::cout<<" inheritance"<<std::endl;
 sfall2[0].describe(std::cout);
 sfall2[1].describe(std::cout);
 sfall2[2].describe(std::cout);
+std::cout<<"massintegrator2"<<std::endl;
 
 constexpr Integer ShapeFunctionDim=ShapeFunction<Elem, trialfun>::ShapeFunctionDim;
 constexpr Integer Ndofs=ShapeFunction<Elem, trialfun>::Ndofs;
 constexpr Integer n_qp_points=GaussPoints<Elem,QPOrder>::n_qp_points; 
 constexpr Integer NComponents=ShapeFunction<Elem, trialfun>::NComponents;
-Matrix<Real,NComponents,NComponents> matrix_a{1.0,0.0,0.0,1.0};
-Matrix<Real,NComponents,NComponents> matrix_b{1.0,2.0,2.0,3.0};
+Matrix<Real,NComponents,NComponents> matrix_a{1.0};
+Matrix<Real,NComponents,NComponents> matrix_b{1.0};
+
+
+//Matrix<Real,NComponents,NComponents> matrix_a{1.0,0.0,0.0,1.0};
+//Matrix<Real,NComponents,NComponents> matrix_b{1.0,2.0,2.0,3.0};
 Matrix<Real,Ndofs,Ndofs> mass;
 
+std::cout<<"massintegrator3"<<std::endl;
 
 Vector<decltype(matrix_a),n_qp_points> mata(matrix_a);
 Vector<decltype(matrix_b),n_qp_points> matb(matrix_b);
@@ -699,6 +779,152 @@ qpmat.describe(std::cout);
 std::cout<<"ECCO2"<<std::endl;
 auto mattensor=tensorproduct(mat_mass,qpmat);
 mattensor.describe(std::cout);
+
+
+for(Integer ee=0;ee<mesh.n_elements();ee++)
+{
+Elem elem=mesh.elem(ee);
+std::array<Integer,ManifoldDim+1> nodes=elem.nodes;
+std::vector<Vector<Real,Dim>> points;
+std::vector<Vector<Real,Dim>> facepoints(ManifoldDim);
+std::vector<Vector<Real,Dim>> elempoints(ManifoldDim+1);
+
+Integer facenodes_tmp[ManifoldDim];
+std::array< Integer, ManifoldDim> facenodes;
+
+Integer elemnodes[ManifoldDim+1];
+std::vector<Integer> reordernodes(ManifoldDim+1);
+
+
+
+for(Integer nn=0;nn<ManifoldDim+1 ;nn++)
+  {
+    Integer tmp[1];
+    Combinations<ManifoldDim + 1,1>::generate(nn,tmp);
+    //std::cout<<tmp[0]<<" ";
+    elemnodes[nn]=tmp[0];
+  }
+  std::cout<<std::endl;
+std::reverse(std::begin(elemnodes), std::end(elemnodes));
+for(Integer nn=0;nn<ManifoldDim+1 ;nn++)
+  {
+    //std::cout<<elemnodes[nn]<<" ";
+  }
+ std::cout<<"elem=="<<ee<<std::endl;
+
+for(Integer mm=0;mm<nodes.size();mm++)
+ {points.push_back(mesh.point(nodes[mm]));
+  std::cout<<points[mm];
+ }
+ //std::cout<<std::endl;
+
+
+ 
+
+for(Integer mm=0;mm<nodes.size();mm++)
+   {
+    //std::cout<<nodes[mm]<<" ";
+  }
+    
+
+for(Integer mm=0;mm<ManifoldDim+1;mm++)
+   {
+    Combinations<ManifoldDim + 1,ManifoldDim>::generate(mm,facenodes_tmp);
+
+    std::copy(std::begin(facenodes_tmp), std::end(facenodes_tmp), std::begin(facenodes));
+    // for(Integer nn=0;nn<nodes.size();nn++)
+    //     std::cout<<"nodes="<<nodes[nn]<<std::endl;
+    // for(Integer nn=0;nn<facenodes.size();nn++)
+    //     std::cout<<"facenodes="<<facenodes[nn]<<std::endl;      
+
+    std::array<Integer,ManifoldDim> subvec=sub_vector(nodes,facenodes);
+    auto sorted=sort_indexes(subvec);
+    auto tmp_sort=T_sort(facenodes,&sorted[0]);
+
+
+    // std::cout<<"elemnodes[mm]=="<<elemnodes[mm]<<std::endl;
+    // std::cout<<"subvec: "<<std::endl;
+    // for(Integer nn=0;nn<subvec.size();nn++)
+    //    std::cout<<subvec[nn]<<" ";
+    // std::cout<<"sorted: "<<std::endl;
+    // for(Integer nn=0;nn<sorted.size();nn++)
+    //    std::cout<<sorted[nn]<<" ";
+    // std::cout<<std::endl;
+
+
+    for(Integer nn=0;nn<ManifoldDim;nn++)
+        reordernodes[nn]=tmp_sort[nn];
+    reordernodes[ManifoldDim]=elemnodes[mm];
+    std::cout<<"reordernodes: "<<std::endl;
+    for(Integer nn=0;nn<reordernodes.size();nn++)
+       std::cout<<reordernodes[nn]<<", ";
+
+    //std::cout<<std::endl;
+    //std::cout<<"facepoints: "<<std::endl;
+    for(Integer nn=0;nn<ManifoldDim;nn++)
+    {
+      facepoints[nn]=points[facenodes[nn]];
+      //std::cout<<facepoints[nn]<<std::endl;
+    }
+    for(Integer nn=0;nn<ManifoldDim+1;nn++)
+    {
+      elempoints[nn]=points[reordernodes[nn]];
+      }
+    Triangle2 tri2;
+    tri2.nodes[0] = 0;
+    tri2.nodes[1] = 1;
+    tri2.nodes[2] = 2;
+    std::cout<<std::endl<<"normal "<<std::endl;
+    auto n2 = normal(tri2, elempoints);
+    for(Integer nn=0;nn<ManifoldDim;nn++)
+        std::cout<<n2[nn]<<" ";
+    std::cout<<std::endl;
+          }
+std::cout<<std::endl;
+
+}
+
+
+    Triangle2 tri2;
+    tri2.nodes[0] = 0;
+    tri2.nodes[1] = 1;
+    tri2.nodes[2] = 2;
+
+
+    Tetrahedron4 tet; 
+    tet.nodes[0] = 0;
+    tet.nodes[1] = 1;
+    tet.nodes[2] = 2;
+    tet.nodes[3] = 3;
+
+    std::vector<Vector2r> points2(
+    {
+      
+      
+       { 1., 0. },
+       { 0., 0. },
+       { 0., 1. }
+    });
+
+    std::vector<Vector4r> points4(
+    {
+      { 2., 0., 0., 0. },
+      { 0., 2., 0., 0. },
+      { 0., 0., 2., 0. },
+      { 0., 0., 0., 2. },
+      { 0., 0., 0., 0. }
+      
+      
+      
+      
+    });
+    auto n2 = normal(tri2, points2);
+    auto n4 = normal(tet, points4);
+
+    n2.describe(std::cout);
+    n4.describe(std::cout);
+    std::cout << n4 << std::endl;
+
 };
 
 

@@ -267,12 +267,6 @@ void cents_example()
     // std::cout << x2(2)<< '\n';
     // //std::cout << result1(1) <<"  "<<result1(2) << '\n';
     // std::cout << result2(1) <<"  "<<result2(2) << '\n';
-
- using fespace1= ElemFunctionSpace<Simplex<2,2>, Lagrange1<2>>;
- using fespace2= ElemFunctionSpace<Simplex<2,2>, Lagrange2<2>>;
- std::cout<<"fespace"<<fespace2::FEFamily<<std::endl;
- std::cout<<"fespace"<<fespace2::Order<<std::endl;
- MassIntegrator<fespace2,fespace1>();
   
 
 
@@ -379,6 +373,13 @@ for(Integer ss=0;ss<FEspace.n_subspaces();ss++)
      std::cout<<std::endl;
 
 
+
+ using fespace1= ElemFunctionSpace<Simplex<2,2>, Lagrange1<2>>;
+ using fespace2= ElemFunctionSpace<Simplex<2,2>, Lagrange2<2>>;
+ using fespace3= ElemFunctionSpace<Simplex<2,2>, RT0<1>>;
+ std::cout<<"fespace"<<fespace2::FEFamily<<std::endl;
+ std::cout<<"fespace"<<fespace2::Order<<std::endl;
+ MassIntegrator<fespace3,fespace1>(mesh);
 
  }
 
