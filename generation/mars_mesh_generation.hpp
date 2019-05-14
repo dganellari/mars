@@ -7,7 +7,6 @@ using namespace std;
 
 namespace mars {
 namespace generation {
-
 namespace Private {
 
 constexpr int hex_n_sides = 6; // 6 faces in total for the hex27.
@@ -24,24 +23,22 @@ const unsigned int hex_side_nodes[hex_n_sides][hex_side_n_nodes] = { { 0, 3, 2,
 		{ 4, 5, 6, 7, 16, 17, 18, 19, 25 }  // Side 5
 };
 
-/*
- template<Integer Dim, Integer ManifoldDim, class Point_>
- void remove_extra_nodes(Mesh<Dim, ManifoldDim, Point_>& mesh) {
+/*template<Integer Dim, Integer ManifoldDim, class Point_>
+void remove_extra_nodes(Mesh<Dim, ManifoldDim, Point_>& mesh) {
 
- for (auto it = mesh.points().begin(); it != mesh.points().end();
- no it++){
+for (auto it = mesh.points().begin(); it != mesh.points().end();
+		no it++) {
 
- if (!(*it).isActive()) {
- mesh.remove_point(it);
- //cout << "removed: " << (it - mesh.points().begin()) << endl;
- } else
- ++it;
- }
+	if (!(*it).isActive()) {
+		mesh.remove_point(it);
+	} else
+	++it;
+}
 
- }
- */
+}*/
 
-template<Integer Dim, Integer ManifoldDim, class Point_>
+
+/*template<Integer Dim, Integer ManifoldDim, class Point_>
 void remove_extra_nodes(Mesh<Dim, ManifoldDim, Point_>& mesh,
 		std::vector<Vector<Real, Dim> >& np, const std::vector<bool>& active) {
 
@@ -56,7 +53,7 @@ void remove_extra_nodes(Mesh<Dim, ManifoldDim, Point_>& mesh,
 
 	mesh.setPoints(move(np));
 
-}
+}*/
 
 Integer index(const Integer xDim, const Integer yDim, const Integer i,
 		const Integer j, const Integer k) {
@@ -313,7 +310,7 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 			}
 		}
 
-		std::cout<<"mem2: "<<generation::memory::getPhysicalMem()<<std::endl;
+		//std::cout<<"Used Memory: "<<generation::memory::getPhysicalMem()<<std::endl;
 
 
 		return true;

@@ -18,16 +18,19 @@
 #include <sstream>
 #include <memory>
 #include <algorithm>  
+#include "mars_imesh_kokkos.hpp"
+
+#ifdef WITH_TRILINOS
 
 #include <Kokkos_Core.hpp>
-#include "mars_imesh_kokkos.hpp"
 
 
 namespace mars {
+namespace generation{
+namespace kokkos{
 
 using namespace Kokkos;
 
-namespace generation{
 
 	template<typename T>
 	using ViewVectorType = Kokkos::View<T*> ;
@@ -49,15 +52,15 @@ namespace generation{
 	template<typename T>
 	using ViewMatrixType = Kokkos::View<T**,Kokkos::LayoutRight,Kokkos::OpenMP >;*/
 
-	template<Integer Dim_, Integer ManifoldDim_, class Point_ >
-	class Parallel_Mesh : public Parallel_IMesh<Dim_,Point_> {
+	template<Integer Dim_, Integer ManifoldDim_>
+	class Parallel_Mesh : public Parallel_IMesh<Dim_> {
 	public:
 		static const Integer Dim = Dim_;
 		static const Integer ManifoldDim = ManifoldDim_;
 
 		using Elem     = mars::Simplex<Dim, ManifoldDim>;
 		using SideElem = mars::Simplex<Dim, ManifoldDim-1>; 
-		using Point    = Point_;
+		using Point    = mars::Vector<Real, Dim>;
 
 
 
@@ -146,6 +149,7 @@ namespace generation{
 
 			KOKKOS_INLINE_FUNCTION
 			void operator()(int row) const {
+
 				for (int i = 0; i < Dim; ++i) {
 					points(row, i) = static_cast<Real>(row)
 							/ static_cast<Real>(xDim);
@@ -153,6 +157,11 @@ namespace generation{
 
 			}
 		};
+
+		inline void generate_points(const int n_nodes, const int xDim) {
+
+			parallel_for(n_nodes, AddPoint(points_, xDim));
+		}
 
 		//add elem functor
 		struct AddElem {
@@ -173,6 +182,11 @@ namespace generation{
 
 			}
 		};
+
+		inline void generate_elements(const int n_elements) {
+
+			parallel_for(n_elements, AddElem(elements_, active_));
+		}
 
 	/*	inline __device__ __host__ void add_point1(const size_t row,const Integer xDim) {
 
@@ -1173,5 +1187,6 @@ namespace generation{
 
 }
 }
-
+}
+#endif //WITH_TRILINOS
 #endif //MARS_MESH_HPP

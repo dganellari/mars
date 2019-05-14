@@ -30,11 +30,11 @@ namespace mars {
 		return elem.n_nodes();
 	}
 
-	template<Integer Dim_, class Point_>
+	template<Integer Dim_>
 	class IMesh {
 	public:
 		static const Integer Dim = Dim_;
-		using Point = Point_;
+		using Point = mars::Vector<Real, Dim>;
 		using Elem  = mars::IElem;
 
 		virtual ~IMesh() {}
