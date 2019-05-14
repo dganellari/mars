@@ -67,6 +67,209 @@
 namespace mars{
 
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////// class SignedNormal: for each face f of the element e                             ///////////////////
+////////////// normal[e][f] returns the normal, outward[e][f] returns the sign of the normal    ///////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// returns the sign of val (1,0,-1)
+template <typename T> int sgn(T val) {
+    return (T(0) < val) - (val < T(0));
+}
+// returns the order of the indeces of the sorted v
+template <typename T>
+T argsort(const T &v) {
+  // initialize original index locations
+  T idx;
+  std::iota(idx.begin(), idx.end(), 0);
+  // sort indexes based on comparing values in v
+  std::sort(idx.begin(), idx.end(),
+       [&v](size_t i1, size_t i2) {return v[i1] < v[i2];});
+
+  return idx;
+}
+// returns v, resorted based on index 
+template <typename T, typename S>
+T sort_by_index(const T &v,const S& index) {
+  T sortv;
+  assert(index.size()==v.size() && "sort_by_index: v and index must have the same length, otherwise last elements in v are not initialized");
+  for(Integer ii=0;ii<index.size();ii++)
+      sortv[ii]=v[index[ii]];
+  return sortv;
+}
+// returns the sub array of v of indices = index
+template <typename S,std::size_t SDim, typename T,std::size_t TDim>
+std::array<S,TDim> sub_array(const std::array<S,SDim> &v,const std::array<T,TDim>& index) {
+
+  static_assert(TDim<=SDim,"in sub_array the length of the index vector must be smaller than the one of the vector");
+  std::array<S,TDim> subvec;
+  for(Integer ii=0;ii<TDim;ii++)
+      subvec[ii]=v[index[ii]];
+
+  return subvec;
+}
+
+
+
+
+template<typename Elem>
+class SignedNormal;
+
+
+template<Integer Dim, Integer ManifoldDim>
+class SignedNormal<Simplex<Dim,ManifoldDim>>{
+private:
+      std::vector< Vector< Vector< Real, Dim> , ManifoldDim + 1 > >  normal_;
+      std::vector< Vector<Integer, ManifoldDim + 1 > > outward_;
+public:
+
+      std::vector< Vector< Vector< Real, Dim> , ManifoldDim + 1 > > operator () () const { return normal_; };
+      std::vector< Vector<Integer, ManifoldDim + 1 > > sign() const {return outward_;}; 
+
+      template< typename MeshT>
+      SignedNormal(MeshT mesh)
+      {
+      using Elem=typename MeshT::Elem;
+      static_assert(Dim==ManifoldDim, "SignedNormal: computing internal normals of a mesh makes sense only if Dim==ManifoldDim");   
+      Integer n_elements=mesh.n_elements();
+      Integer facenodes_carray[ManifoldDim];
+      std::array<Integer,ManifoldDim+1> elemnodes_local;
+      std::array<Integer,ManifoldDim+1> elemnodes_global;
+      std::array<Integer,ManifoldDim+1> elemnodes_local_sort;
+
+      std::array< Integer, ManifoldDim> facenodes_local;
+      std::array< Integer, ManifoldDim> facenodes_local_sort;
+      std::array<Integer,ManifoldDim> facenodes_global;
+      std::array<Integer,ManifoldDim> facenodes_global_sort;
+
+      std::array<Vector<Real,Dim>, ManifoldDim+1> points;
+      Vector<Vector<Real,Dim>, ManifoldDim> facepoints;
+      Vector<Vector<Real,Dim>, ManifoldDim+1> elempoints_sort;
+
+      Vector<Real,Dim> facepoint_mean;
+      Vector<Real,Dim> elempoint_mean;
+
+      // we initialize the simplex
+      Simplex<Dim,ManifoldDim> simplex_elem;
+      for(Integer nn=0;nn<ManifoldDim+1;nn++)
+          simplex_elem.nodes[nn]=nn;
+
+      normal_.resize(n_elements);
+      outward_.resize(n_elements);
+
+
+      // elemnodes_local is the array{ManifoldDim,ManifoldDim-1,...,1,0}
+      for(Integer nn=0;nn<ManifoldDim+1 ;nn++)
+          elemnodes_local[nn]=nn;
+      std::reverse(std::begin(elemnodes_local), std::end(elemnodes_local));
+
+      // loop on all the elements
+      for(Integer ee=0;ee<mesh.n_elements();ee++)
+        {
+        Elem elem=mesh.elem(ee);
+        elemnodes_global=elem.nodes;
+        
+        for(Integer mm=0;mm<points.size();mm++)
+            points[mm]=mesh.point(elemnodes_global[mm]);
+         
+        // loop on all the faces of the simplex
+        // for Simplex={0,1,2,3}, the order is: 0-1-2, 0-1-3, 0-2-3, 1-2-3
+        for(Integer mm=0;mm<ManifoldDim+1;mm++)
+           {
+            // facenodes_local is a std::array containing the local nodes of the face mm
+            Combinations<ManifoldDim + 1,ManifoldDim>::generate(mm,facenodes_carray);
+            std::copy(std::begin(facenodes_carray), std::end(facenodes_carray), std::begin(facenodes_local));  
+            // we reorder the local nodes based on the sorting order of the corresponding global nodes
+            facenodes_global=sub_array(elemnodes_global,facenodes_local);
+            facenodes_global_sort=argsort(facenodes_global);
+            facenodes_local_sort=sort_by_index(facenodes_local,facenodes_global_sort);
+
+            // in elemnodes_local_sort we have facenodes_local_sort and the remaining node, elemnodes_local[mm] 
+            for(Integer nn=0;nn<ManifoldDim;nn++)
+                elemnodes_local_sort[nn]=facenodes_local_sort[nn];
+
+            elemnodes_local_sort[ManifoldDim]=elemnodes_local[mm];
+
+            for(Integer nn=0;nn<ManifoldDim+1;nn++)
+               elempoints_sort[nn]=points[elemnodes_local_sort[nn]];
+
+            // we create the face midpoint, the element midpoint and their difference
+            for(Integer nn=0;nn<ManifoldDim;nn++)
+              facepoints[nn]=points[facenodes_local[nn]];
+
+            facepoint_mean = facepoints.Tmean();
+            elempoint_mean=elempoints_sort.Tmean();
+            auto diff=facepoint_mean-elempoint_mean;
+
+            // save the normal and if its outward or inward 
+            auto n = normal(simplex_elem, elempoints_sort);
+            normal_[ee][mm]=n;
+            outward_[ee][mm]=sgn(dot(diff,n));
+              }
+            }
+       };
+
+      template< typename MeshT>
+      void print(MeshT mesh)
+      {  
+        using Elem=typename MeshT::Elem;
+        Vector<Vector<Real,Dim>, ManifoldDim+1> elempoints_sort; 
+        std::array<Integer,ManifoldDim+1> nodes;
+        std::vector<Vector<Real,Dim>> points;
+        Integer facenodes_carray[ManifoldDim];
+        std::array< Integer, ManifoldDim> facenodes_local;
+
+        for(Integer ee=0;ee<normal_.size();ee++)
+        {
+            std::cout<<std::endl<<"ELEMENT ID == "<<ee<<" WITH NODES"<<std::endl;
+            Elem elem=mesh.elem(ee);
+            nodes=elem.nodes;
+            for(Integer mm=0;mm<ManifoldDim+1;mm++)
+               std::cout<< nodes[mm] <<" ";
+            std::cout<<std::endl;
+
+            for(Integer mm=0;mm<ManifoldDim+1;mm++)
+                {
+                  Combinations<ManifoldDim + 1,ManifoldDim>::generate(mm,facenodes_carray);
+                  std::copy(std::begin(facenodes_carray), std::end(facenodes_carray), std::begin(facenodes_local));    
+                  std::cout<<"facenodes_local== "<<std::endl;
+                  for(Integer ii=0;ii<ManifoldDim;ii++)
+                      std::cout<<facenodes_local[ii]<<" ";           
+                  std::cout<<"normal== ";
+                  normal_[ee][mm].describe(std::cout);
+                  std::cout<<"outward/inward(+1/-1)== "<<outward_[ee][mm]<<std::endl;
+                }
+           }
+      };
+
+
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 template<typename TensorType>
@@ -592,74 +795,12 @@ Matrix<Real, Rows1*Rows2, Cols1*Cols2 > tensorproduct(const Matrix<T, Rows1, Col
 
 
 
-template <typename T>
-T sort_indexes(const T &v) {
-  // initialize original index locations
-  T idx;
-  std::iota(idx.begin(), idx.end(), 0);
-
-  // sort indexes based on comparing values in v
-  std::sort(idx.begin(), idx.end(),
-       [&v](size_t i1, size_t i2) {return v[i1] < v[i2];});
-
-  return idx;
-}
-
-template <typename T>
-T T_sort(const T &v, const T& index) {
-  // initialize original index locations
-  T sortv;
-  for(Integer ii=0;ii<v.size();ii++)
-      sortv[ii]=v[index[ii]];
-  return sortv;
-}
-
-template <typename T>
-T T_sort(const T &v, Integer* index) {
-  // initialize original index locations
-  T sortv;
-  for(Integer ii=0;ii<v.size();ii++)
-      sortv[ii]=v[index[ii]];
-  return sortv;
-}
 
 
-// template <typename T>
-// T sort_indexes(const T &v,const Integer& size) {
-//   // initialize original index locations
-//   T idx(size);
-//   std::iota(idx.begin(), idx.begin()+size, 0);
-
-//   // sort indexes based on comparing values in v
-//   std::sort(idx.begin(), idx.end(),
-//        [&v](size_t i1, size_t i2) {return v[i1] < v[i2];});
-
-//   return idx;
-// }
-
-// template <typename T>
-// std::vector<T> sub_vector(const std::vector<T> &v,const std::vector<Integer>& index) {
 
 
-//   Integer size=index.size();
-//   std::vector<Integer> subvec(size);
-//   for(Integer ii=0;ii<size;ii++)
-//       subvec[ii]=v[index[ii]];
-
-//   return subvec;
-// }
 
 
-template <std::size_t SDim, std::size_t TDim, typename S>
-std::array<S,TDim> sub_vector(const std::array<S,SDim> &v,const std::array<S,TDim>& index) {
-
-  //static_assert(IndexDim<=Dim,"in sub_vector the length of the index vector must be smaller than the one of the vector");
-  std::array<S,TDim> subvec;
-  for(Integer ii=0;ii<TDim;ii++)
-      subvec[ii]=v[index[ii]];
-
-  return subvec;
-}
 
 
 
@@ -780,150 +921,52 @@ std::cout<<"ECCO2"<<std::endl;
 auto mattensor=tensorproduct(mat_mass,qpmat);
 mattensor.describe(std::cout);
 
+// auto sn=SignedNormal<ManifoldDim>(mesh);
 
-for(Integer ee=0;ee<mesh.n_elements();ee++)
-{
-Elem elem=mesh.elem(ee);
-std::array<Integer,ManifoldDim+1> nodes=elem.nodes;
-std::vector<Vector<Real,Dim>> points;
-std::vector<Vector<Real,Dim>> facepoints(ManifoldDim);
-std::vector<Vector<Real,Dim>> elempoints(ManifoldDim+1);
-
-Integer facenodes_tmp[ManifoldDim];
-std::array< Integer, ManifoldDim> facenodes;
-
-Integer elemnodes[ManifoldDim+1];
-std::vector<Integer> reordernodes(ManifoldDim+1);
+// sn.print();
 
 
 
-for(Integer nn=0;nn<ManifoldDim+1 ;nn++)
-  {
-    Integer tmp[1];
-    Combinations<ManifoldDim + 1,1>::generate(nn,tmp);
-    //std::cout<<tmp[0]<<" ";
-    elemnodes[nn]=tmp[0];
-  }
-  std::cout<<std::endl;
-std::reverse(std::begin(elemnodes), std::end(elemnodes));
-for(Integer nn=0;nn<ManifoldDim+1 ;nn++)
-  {
-    //std::cout<<elemnodes[nn]<<" ";
-  }
- std::cout<<"elem=="<<ee<<std::endl;
 
-for(Integer mm=0;mm<nodes.size();mm++)
- {points.push_back(mesh.point(nodes[mm]));
-  std::cout<<points[mm];
- }
- //std::cout<<std::endl;
+    // Triangle2 tri2;
+    // tri2.nodes[0] = 0;
+    // tri2.nodes[1] = 1;
+    // tri2.nodes[2] = 2;
 
 
- 
+    // Tetrahedron4 tet; 
+    // tet.nodes[0] = 0;
+    // tet.nodes[1] = 1;
+    // tet.nodes[2] = 2;
+    // tet.nodes[3] = 3;
 
-for(Integer mm=0;mm<nodes.size();mm++)
-   {
-    //std::cout<<nodes[mm]<<" ";
-  }
-    
-
-for(Integer mm=0;mm<ManifoldDim+1;mm++)
-   {
-    Combinations<ManifoldDim + 1,ManifoldDim>::generate(mm,facenodes_tmp);
-
-    std::copy(std::begin(facenodes_tmp), std::end(facenodes_tmp), std::begin(facenodes));
-    // for(Integer nn=0;nn<nodes.size();nn++)
-    //     std::cout<<"nodes="<<nodes[nn]<<std::endl;
-    // for(Integer nn=0;nn<facenodes.size();nn++)
-    //     std::cout<<"facenodes="<<facenodes[nn]<<std::endl;      
-
-    std::array<Integer,ManifoldDim> subvec=sub_vector(nodes,facenodes);
-    auto sorted=sort_indexes(subvec);
-    auto tmp_sort=T_sort(facenodes,&sorted[0]);
-
-
-    // std::cout<<"elemnodes[mm]=="<<elemnodes[mm]<<std::endl;
-    // std::cout<<"subvec: "<<std::endl;
-    // for(Integer nn=0;nn<subvec.size();nn++)
-    //    std::cout<<subvec[nn]<<" ";
-    // std::cout<<"sorted: "<<std::endl;
-    // for(Integer nn=0;nn<sorted.size();nn++)
-    //    std::cout<<sorted[nn]<<" ";
-    // std::cout<<std::endl;
-
-
-    for(Integer nn=0;nn<ManifoldDim;nn++)
-        reordernodes[nn]=tmp_sort[nn];
-    reordernodes[ManifoldDim]=elemnodes[mm];
-    std::cout<<"reordernodes: "<<std::endl;
-    for(Integer nn=0;nn<reordernodes.size();nn++)
-       std::cout<<reordernodes[nn]<<", ";
-
-    //std::cout<<std::endl;
-    //std::cout<<"facepoints: "<<std::endl;
-    for(Integer nn=0;nn<ManifoldDim;nn++)
-    {
-      facepoints[nn]=points[facenodes[nn]];
-      //std::cout<<facepoints[nn]<<std::endl;
-    }
-    for(Integer nn=0;nn<ManifoldDim+1;nn++)
-    {
-      elempoints[nn]=points[reordernodes[nn]];
-      }
-    Triangle2 tri2;
-    tri2.nodes[0] = 0;
-    tri2.nodes[1] = 1;
-    tri2.nodes[2] = 2;
-    std::cout<<std::endl<<"normal "<<std::endl;
-    auto n2 = normal(tri2, elempoints);
-    for(Integer nn=0;nn<ManifoldDim;nn++)
-        std::cout<<n2[nn]<<" ";
-    std::cout<<std::endl;
-          }
-std::cout<<std::endl;
-
-}
-
-
-    Triangle2 tri2;
-    tri2.nodes[0] = 0;
-    tri2.nodes[1] = 1;
-    tri2.nodes[2] = 2;
-
-
-    Tetrahedron4 tet; 
-    tet.nodes[0] = 0;
-    tet.nodes[1] = 1;
-    tet.nodes[2] = 2;
-    tet.nodes[3] = 3;
-
-    std::vector<Vector2r> points2(
-    {
+    // std::vector<Vector2r> points2(
+    // {
       
       
-       { 1., 0. },
-       { 0., 0. },
-       { 0., 1. }
-    });
+    //    { 1., 0. },
+    //    { 0., 0. },
+    //    { 0., 1. }
+    // });
 
-    std::vector<Vector4r> points4(
-    {
-      { 2., 0., 0., 0. },
-      { 0., 2., 0., 0. },
-      { 0., 0., 2., 0. },
-      { 0., 0., 0., 2. },
-      { 0., 0., 0., 0. }
+    // std::vector<Vector4r> points4(
+    // {
+    //   { 2., 0., 0., 0. },
+    //   { 0., 2., 0., 0. },
+    //   { 0., 0., 2., 0. },
+    //   { 0., 0., 0., 2. },
+    //   { 0., 0., 0., 0. }
       
       
       
       
-    });
-    auto n2 = normal(tri2, points2);
-    auto n4 = normal(tet, points4);
+    // });
+    // auto n2 = normal(tri2, points2);
+    // auto n4 = normal(tet, points4);
 
-    n2.describe(std::cout);
-    n4.describe(std::cout);
-    std::cout << n4 << std::endl;
+    // n2.describe(std::cout);
+    // n4.describe(std::cout);
+    // std::cout << n4 << std::endl;
 
 };
 

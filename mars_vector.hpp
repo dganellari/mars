@@ -196,6 +196,17 @@ namespace mars {
 	        }
 	        return s;
 	    }
+        
+        // this works if T is Real, vector, matrix.
+        // It does not for integers, in general (it should return a Real)
+        // this is why we call it Tmean and not mean
+	    inline const T Tmean() 
+	    {
+	        return sum()/Dim;
+ 	    }
+        
+        inline const Integer size() {return Dim;};
+
 
 	};
 
@@ -209,7 +220,6 @@ namespace mars {
 
 		return ret;
 	}
-
 
 
 

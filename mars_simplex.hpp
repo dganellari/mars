@@ -837,6 +837,16 @@ namespace mars {
         return ret;
     }
     
+    template<Integer Dim, Integer ManifoldDim>
+    inline Vector<Real, Dim> normal(Simplex<Dim, ManifoldDim> &simplex,
+                                    const Vector<Vector<Real, Dim>, ManifoldDim+1> &points,
+                                    const bool apply_normalization = true)
+    {
+      std::vector<Vector<Real, Dim>> stdvec_points(ManifoldDim+1);
+      for(Integer ii=0;ii<ManifoldDim+1;ii++)
+          stdvec_points[ii]=points[ii];   
+      return normal(simplex,stdvec_points,apply_normalization);  
+    }
     
     template<Integer ManifoldDim>
     using SimplexInterpolator = Matrix< Real,

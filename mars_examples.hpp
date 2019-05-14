@@ -384,12 +384,47 @@ for(Integer ss=0;ss<FEspace.n_subspaces();ss++)
  }
 
 
+void normals_example3D()
+{
+    constexpr Integer ManifoldDim=3;
+    constexpr Integer Dim=3;   
+    using MeshT=mars::Mesh<Dim, ManifoldDim>;
+    MeshT mesh;
+    using Elem = typename MeshT::Elem;   
+    read_mesh("../data/beam-tet.MFEM", mesh); 
+    auto sn=SignedNormal<Simplex<Dim,ManifoldDim>>(mesh);
+    auto n=sn();
+    auto alpha=sn.sign();
+    sn.print(mesh);
+}
+
+void normals_example4D()
+{
+    constexpr Integer ManifoldDim=4;
+    constexpr Integer Dim=4;   
+    using MeshT=mars::Mesh<Dim, ManifoldDim>;
+    MeshT mesh;
+    using Elem = typename MeshT::Elem;   
+    read_mesh("../data/pentatope_2.MFEM", mesh);
+    auto sn=SignedNormal<Simplex<Dim,ManifoldDim>>(mesh);
+    auto n=sn();
+    auto alpha=sn.sign();
+    for(Integer e=0;e<mesh.n_elements();e++)
+        {
+           std::cout<<"elem=="<<e<<std::endl; 
+           std::cout<<"normals:"<<std::endl; 
+           for(Integer f=0;f<n[e].size();f++)
+               n[e][f].describe(std::cout);
+           std::cout<<"signs:"<<std::endl;
+           std::cout<<alpha[e]<<std::endl; 
+        }    
+    sn.print(mesh);
+
+}
 
 
 
-
-
-void functionspaces_example5D()
+void functionspaces_example4D()
 {
 
     constexpr Integer ManifoldDim=4;
