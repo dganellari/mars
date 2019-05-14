@@ -17,15 +17,26 @@ if (NOT TRILINOS_DIR)
   set(TRILINOS_DIR $ENV{TRILINOS_DIR} CACHE PATH "Directory where Trilinos is installed")
 endif()
 
-FIND_PACKAGE(Trilinos PATHS "${TRILINOS_DIR}/lib/cmake/Trilinos" REQUIRED)
+FIND_PACKAGE(Trilinos PATHS "${TRILINOS_DIR}/lib/cmake/Trilinos" QUIET)
 
 IF(Trilinos_FOUND)
    MESSAGE("\nFound Trilinos!  Here are the details: ")
    MESSAGE("   Trilinos_VERSION = ${Trilinos_VERSION}")
    MESSAGE("   Trilinos_CXX_COMPILER = ${Trilinos_CXX_COMPILER}")
    MESSAGE("   Trilinos_CXX_COMPILER_FLAGS = ${Trilinos_CXX_COMPILER_FLAGS}")
+   
+   set(WITH_TRILINOS ON)
+   
+   find_package(OpenMP)
+if(OPENMP_FOUND)
+ 	SET (CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${OpenMP_Fortran_FLAGS}")
+ 	SET (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+ 	SET (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
+ 	set (CMAKE_CXX_LINK_FLAGS "${CMAKE_CXX_LINK_FLAGS} ${OpenMP_CXX_FLAGS}")
+ endif()
+   
 ELSE()
-  MESSAGE(FATAL_ERROR "Could not find Trilinos!")
+  MESSAGE(WARNING "Could not find Trilinos!")
 ENDIF()
 
 # If you haven't already set the C++ compiler, use the same compiler
@@ -43,15 +54,6 @@ IF(NOT CMAKE_C_COMPILER)
   MESSAGE("Setting C compiler.")
   SET(CMAKE_C_COMPILER ${Trilinos_C_COMPILER})
 ENDIF()
-
-
-find_package(OpenMP)
-if(OPENMP_FOUND)
- 	SET (CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${OpenMP_Fortran_FLAGS}")
- 	SET (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
- 	SET (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
- 	set (CMAKE_CXX_LINK_FLAGS "${CMAKE_CXX_LINK_FLAGS} ${OpenMP_CXX_FLAGS}")
- endif()
  
 
 SET(CMAKE_CXX_COMPILER ${Trilinos_CXX_COMPILER})
@@ -100,7 +102,6 @@ list(APPEND MARS_HEADERS
 	generation/mars_mesh_generation.hpp
     generation/mars_mesh_generation_kokkos.hpp
     generation/mars_mesh_kokkos.hpp
-    generation/mars_fwd_kokkos.hpp
 	)
 
 list(APPEND MARS_SOURCES

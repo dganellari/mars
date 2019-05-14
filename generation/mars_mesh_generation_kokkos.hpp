@@ -1,18 +1,18 @@
 #ifndef GENERATION_MARS_MESH_GENERATION_KOKKOS_HPP_
 #define GENERATION_MARS_MESH_GENERATION_KOKKOS_HPP_
-
+#include <functional>
 #include "mars_mesh_kokkos.hpp"
+
+#ifdef WITH_TRILINOS
+
 #include "mars_fwd_kokkos.hpp"
 #include <Kokkos_Core.hpp>
-#include <functional>
 
 using namespace std;
 
 namespace mars {
 namespace generation {
-
 namespace kokkos{
-
 namespace Private {
 
 constexpr int hex_n_sides = 6; // 6 faces in total for the hex27.
@@ -29,39 +29,6 @@ const unsigned int hex_side_nodes[hex_n_sides][hex_side_n_nodes] = { { 0, 3, 2,
 		{ 4, 5, 6, 7, 16, 17, 18, 19, 25 }  // Side 5
 };
 
-/*
- template<Integer Dim, Integer ManifoldDim, class Point_>
- void remove_extra_nodes(Mesh<Dim, ManifoldDim, Point_>& mesh) {
-
- for (auto it = mesh.points().begin(); it != mesh.points().end();
- no it++){
-
- if (!(*it).isActive()) {
- mesh.remove_point(it);
- //cout << "removed: " << (it - mesh.points().begin()) << endl;
- } else
- ++it;
- }
-
- }
- */
-
-template<Integer Dim, Integer ManifoldDim, class Point_>
-void remove_extra_nodes(Mesh<Dim, ManifoldDim, Point_>& mesh,
-		std::vector<Vector<Real, Dim> >& np, const std::vector<bool>& active) {
-
-	int count = 0;
-	for (unsigned int i = 0; i < active.size(); ++i) {
-		if (active[i]) {
-			np[count] = mesh.point(i);
-			++count;
-		}
-
-	}
-
-	mesh.setPoints(move(np));
-
-}
 
 Integer index(const Integer xDim, const Integer yDim, const Integer i,
 		const Integer j, const Integer k) {
@@ -127,26 +94,6 @@ bool generate_cube(Parallel_Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 
 	switch (ManifoldDim) {
 
-	/*case 0: {
-
-	 assert(xDim == 0);
-	 assert(yDim == 0);
-	 assert(zDim == 0);
-
-	 mesh.reserve(1, 1);
-
-	 Vector<Real, Dim> p( { 0.0, 0.0, 0.0 });
-
-	 int index = mesh.add_point(p);
-
-	 Simplex<Dim, ManifoldDim> e;
-	 e.node(index);
-
-	 mesh.add_elem(e);
-
-	 return true;
-	 }*/
-
 	case 1: {
 
 		assert(xDim != 0);
@@ -159,29 +106,20 @@ bool generate_cube(Parallel_Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 		mesh.reserve(n_elements, n_nodes);
 
 
-		//todo: try lambda equivalent
-
-		/*parallel_for(n_nodes, [=,&mesh] __device__ __host__(const size_t index){
-			mesh.add_point1(index,xDim);
-		});*/
-
-		//:todo try to avoid it by calling mesh.AddPoints and remove the view as a parameter but instead get it from structure directly
-
-		ViewMatrixType<Real> points = mesh.get_view_points();
-		ViewMatrixType<Integer> elems = mesh.get_view_elems();
-		ViewVectorType<bool> active = mesh.get_view_active();
-
-		parallel_for(n_nodes,
-				typename Parallel_Mesh<Dim, ManifoldDim>::AddPoint(points,
+		/*parallel_for(n_nodes,
+				typename Parallel_Mesh<Dim, ManifoldDim>::AddPoint(mesh.get_view_points(),
 						xDim));
 
-		Cuda::fence();
+		//Cuda::fence();
 
 		parallel_for(n_elements,
-				typename Parallel_Mesh<Dim, ManifoldDim>::AddElem(elems,
-						active));
+				typename Parallel_Mesh<Dim, ManifoldDim>::AddElem(mesh.get_view_elems(),
+						mesh.get_view_active()));
 
-		Cuda::fence();
+		Cuda::fence();*/
+
+		mesh.generate_points(n_nodes,xDim);
+		mesh.generate_elements(n_elements);
 
 		return true;
 	}
@@ -340,101 +278,23 @@ bool generate_cube(Parallel_Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 	}
 }
 
+bool generate_line(Parallel_Mesh<1, 1>& mesh, const Integer xDim) {
+	return generate_cube(mesh, xDim, 0, 0);
+}
+
 /*bool generate_square(Mesh2& mesh, const Integer xDim, const Integer yDim) {
 	return generate_cube(mesh, xDim, yDim, 0);
 }
 
-bool generate_line(Mesh<1, 1>& mesh, const Integer xDim) {
-	return generate_cube(mesh, xDim, 0, 0);
-}*/
-
-/*bool generate_point(Mesh<1, 0>& mesh) {
+bool generate_point(Mesh<1, 0>& mesh) {
  return generate_cube(mesh,0,0,0);
- }*/
+ }
+*/
 
-//different approach which works fine for the unit_cube and would have been faster
-//but unfortunately it does not generalize.
-Mesh3 generate_unit_cube() {
-
-	using namespace mars::generation::Private;
-
-	Mesh3 mesh;
-
-	constexpr Integer xDim = 1, yDim = 1, zDim = 1, Dim = 3;
-
-	const int n_elements = xDim * yDim * zDim * 24; //24 tetrahedrons on one hex27
-	const int n_nodes = (2 * xDim + 1) * (2 * yDim + 1) * (2 * zDim + 1);
-	mesh.reserve(n_elements, n_nodes);
-
-	Vector<std::vector<Integer>, hex_n_sides> sides;
-
-	for (Integer k = 0; k <= 2 * zDim; ++k) {
-		for (Integer j = 0; j <= 2 * yDim; ++j) {
-			for (Integer i = 0; i <= 2 * xDim; ++i) {
-				Vector<Real, Dim> p(
-						{ static_cast<Real>(i) / static_cast<Real>(2 * xDim),
-								static_cast<Real>(j)
-										/ static_cast<Real>(2 * yDim),
-								static_cast<Real>(k)
-										/ static_cast<Real>(2 * zDim), });
-
-				mesh.add_point(p);
-
-				Integer ind = index(1, 1, i, j, k);
-
-				//build the faces on the fly
-				if (k == 0)
-					add_side(sides(0), i, j, ind);
-
-				if (k == 2)
-					add_side(sides(1), i, j, ind);
-
-				//if (k == 2 * (zDim - 1))
-				if (j == 0)
-					add_side(sides(2), i, k, ind);
-
-				//if (j == 2 * (yDim - 1))
-				if (j == 2)
-					add_side(sides(3), i, k, ind);
-
-				if (i == 0)
-					add_side(sides(4), j, k, ind);
-
-				//if (i == 2 * (xDim - 1))
-				if (i == 2)
-					add_side(sides(5), j, k, ind);
-
-			}
-		}
-	}
-
-	//build tetrahedra elements from the hex27 faces.
-	for (unsigned int i = 0; i < hex_n_sides; ++i) {
-
-		Integer tmp = sides(i)[2]; //swap places between the last point and the midface point.
-		sides(i)[2] = sides(i)[4];
-		sides(i)[4] = tmp;
-
-		for (unsigned int k = 0; k < 4; k++) {
-
-			std::array<Integer, 4> nodes;
-
-			nodes[0] = sides(i)[k];
-			nodes[1] = sides(i)[4]; // midface point always the last element.
-			nodes[2] = (k == 3 ? sides(i)[0] : sides(i)[k + 1]); // rotation to catch all combinations.
-			nodes[3] = index(yDim, zDim, 1, 1, 1); // the center of the cube.
-
-			mesh.add_elem(nodes);
-		}
-
-	}
-
-	return mesh;
-
-}
 
 }
 }
 }
 
+#endif /* with trilinos */
 #endif /* GENERATION_MARS_MESH_GENERATION_HPP_ */

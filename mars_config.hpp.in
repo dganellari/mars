@@ -2,5 +2,6 @@
 #define MARS_CONFIG_HPP
 
 #cmakedefine WITH_MPI
+#cmakedefine WITH_TRILINOS
 
 #endif //MARS_CONFIG_HPP

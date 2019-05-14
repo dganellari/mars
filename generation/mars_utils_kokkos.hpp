@@ -3,14 +3,19 @@
 
 #include "mars_mesh_kokkos.hpp"
 #include "mars_mesh.hpp"
+
+#ifdef WITH_TRILINOS
+
 #include <Kokkos_Core.hpp>
 
 namespace mars {
 namespace generation {
 
+using namespace kokkos;
+
 template<Integer Dim, Integer ManifoldDim>
-void convertParallelMeshToSerial(Mesh<Dim, ManifoldDim>& mesh,
-		Parallel_Mesh<Dim, ManifoldDim>& pMesh) {
+void convertParallelMeshToSerial(mars::Mesh<Dim, ManifoldDim>& mesh,
+		mars::generation::kokkos::Parallel_Mesh<Dim, ManifoldDim>& pMesh) {
 
 	ViewMatrixType<Integer>::HostMirror h_el = Kokkos::create_mirror_view(
 			pMesh.get_view_elems());
@@ -58,5 +63,5 @@ void convertParallelMeshToSerial(Mesh<Dim, ManifoldDim>& mesh,
 
 }
 }
-
+#endif //WITH_TRILINOS
 #endif /* GENERATION_MARS_UTILS_KOKKOS_HPP_ */
