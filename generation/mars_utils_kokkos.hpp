@@ -4,8 +4,6 @@
 #include "mars_mesh_kokkos.hpp"
 #include "mars_mesh.hpp"
 
-#ifdef WITH_TRILINOS
-
 #include <Kokkos_Core.hpp>
 
 namespace mars {
@@ -24,13 +22,10 @@ void convertParallelMeshToSerial(mars::Mesh<Dim, ManifoldDim>& mesh,
 	ViewVectorType<bool>::HostMirror h_ac = Kokkos::create_mirror_view(
 			pMesh.get_view_active());
 
-	// Deep copy host views to device views.
-	Kokkos::deep_copy(pMesh.get_view_elems(), h_el);
-	Kokkos::deep_copy(pMesh.get_view_points(), h_pt);
-	Kokkos::deep_copy(pMesh.get_view_active(), h_ac);
-
-	/*ViewMatrixType<Integer>::HostMirror h_el= pMesh.get_view_elems();
-	 ViewMatrixType<Integer>::HostMirror h_pt= pMesh.get_view_points();*/
+	// Deep copy device views to host views.
+	Kokkos::deep_copy(h_el,pMesh.get_view_elems());
+	Kokkos::deep_copy(h_pt,pMesh.get_view_points());
+	Kokkos::deep_copy(h_ac,pMesh.get_view_active());
 
 	mesh.reserve(pMesh.n_elements(), pMesh.n_nodes());
 
@@ -63,5 +58,4 @@ void convertParallelMeshToSerial(mars::Mesh<Dim, ManifoldDim>& mesh,
 
 }
 }
-#endif //WITH_TRILINOS
 #endif /* GENERATION_MARS_UTILS_KOKKOS_HPP_ */

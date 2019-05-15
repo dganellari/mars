@@ -12,6 +12,8 @@ find_package(MPIExtended)
 #	set(WITH_MPI ON)
 #endif()
 
+option(MARS_USE_CUDA "Build mars with cuda support" OFF)
+
 if (NOT TRILINOS_DIR)
   message(STATUS "Setting TRILINOS_DIR to $ENV{TRILINOS_DIR}")
   set(TRILINOS_DIR $ENV{TRILINOS_DIR} CACHE PATH "Directory where Trilinos is installed")
@@ -27,38 +29,24 @@ IF(Trilinos_FOUND)
    
    set(WITH_TRILINOS ON)
    
-   find_package(OpenMP)
+FIND_PACKAGE(OpenMP)
+
 if(OPENMP_FOUND)
  	SET (CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${OpenMP_Fortran_FLAGS}")
  	SET (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
  	SET (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
  	set (CMAKE_CXX_LINK_FLAGS "${CMAKE_CXX_LINK_FLAGS} ${OpenMP_CXX_FLAGS}")
  endif()
+ 
+SET(CMAKE_C_COMPILER ${Trilinos_C_COMPILER})
+SET(CMAKE_CXX_COMPILER ${Trilinos_CXX_COMPILER})
    
 ELSE()
   MESSAGE(WARNING "Could not find Trilinos!")
+  IF(MARS_USE_CUDA)
+    MESSAGE(FATAL_ERROR "Could not use CUDA without Trilinos!")
+  ENDIF()
 ENDIF()
-
-# If you haven't already set the C++ compiler, use the same compiler
-# that was used to build Trilinos on your machine.  You do _not_ need
-# to edit this line.
-IF(NOT CMAKE_CXX_COMPILER)
-  MESSAGE("Setting CXX compiler.")
-  SET(CMAKE_CXX_COMPILER ${Trilinos_CXX_COMPILER})
-ENDIF()
-
-# If you haven't already set the C compiler, use the same compiler
-# that was used to build Trilinos on your machine.  You do _not_ 
-# need to edit this line.
-IF(NOT CMAKE_C_COMPILER)
-  MESSAGE("Setting C compiler.")
-  SET(CMAKE_C_COMPILER ${Trilinos_C_COMPILER})
-ENDIF()
- 
-
-SET(CMAKE_CXX_COMPILER ${Trilinos_CXX_COMPILER})
-SET(CMAKE_C_COMPILER ${Trilinos_C_COMPILER})
-SET(CMAKE_Fortran_COMPILER ${Trilinos_Fortran_COMPILER})
 
 list(APPEND MARS_HEADERS
 	mars.hpp 
@@ -100,9 +88,16 @@ list(APPEND MARS_HEADERS
 	mars_vtk_writer.hpp
 	generation/mars_point.hpp
 	generation/mars_mesh_generation.hpp
-    generation/mars_mesh_generation_kokkos.hpp
-    generation/mars_mesh_kokkos.hpp
 	)
+	
+IF(Trilinos_FOUND)
+	list(APPEND MARS_HEADERS
+	    generation/mars_mesh_generation_kokkos.hpp
+	    generation/mars_mesh_kokkos.hpp
+	    generation/mars_test_kokkos.hpp
+	    generation/mars_utils_kokkos.hpp
+)
+ENDIF()
 
 list(APPEND MARS_SOURCES
 	mars_communicator.cpp
@@ -120,8 +115,11 @@ target_include_directories(mars PUBLIC .)
 
 add_executable(mars_exec main.cpp ${MARS_HEADERS} ${MARS_SOURCES})
 target_link_libraries(mars_exec mars)
+
+IF(Trilinos_FOUND)
 target_include_directories(mars_exec PUBLIC ${Trilinos_TPL_INCLUDE_DIRS} ${Trilinos_INCLUDE_DIRS})
 target_link_libraries(mars_exec mars ${Trilinos_LIBRARIES} ${Trilinos_TPL_LIBRARIES})
+ENDIF()
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/mars_config.hpp.in ${CMAKE_BINARY_DIR}/mars_config.hpp)
 include_directories(${CMAKE_BINARY_DIR})
