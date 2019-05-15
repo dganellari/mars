@@ -3,7 +3,6 @@
 #include <functional>
 #include "mars_mesh_kokkos.hpp"
 
-#ifdef WITH_TRILINOS
 
 #include "mars_fwd_kokkos.hpp"
 #include <Kokkos_Core.hpp>
@@ -296,5 +295,4 @@ bool generate_point(Mesh<1, 0>& mesh) {
 }
 }
 
-#endif /* with trilinos */
 #endif /* GENERATION_MARS_MESH_GENERATION_HPP_ */

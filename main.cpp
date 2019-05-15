@@ -24,9 +24,7 @@
 #include "generation/mars_mesh_generation.hpp"
 
 #ifdef WITH_TRILINOS
-#include "generation/mars_mesh_kokkos.hpp"
-#include "generation/mars_mesh_generation_kokkos.hpp"
-#include "generation/mars_utils_kokkos.hpp"
+#include "generation/mars_test_kokkos.hpp"
 #endif //WITH_TRILINOS
 
 #ifdef WITH_MPI
@@ -36,44 +34,6 @@
 #include <chrono>
 
 using namespace std::chrono;
-
-#ifdef WITH_TRILINOS
-
-void test_mars_mesh_generation_kokkos_1D(const int level){
-
-	using namespace mars;
-
-
-	Kokkos::initialize();
-		{
-			Kokkos::Timer timer;
-
-			generation::kokkos::Parallel_Mesh<1, 1> mesh;
-			generation::kokkos::generate_cube(mesh, level, 0, 0);
-
-			//fence();
-
-			double time = timer.seconds();
-
-			std::cout<< "Generation took: "<<time<<" seconds."<<std::endl;
-
-			if(level<100){
-
-				Mesh<1,1> sMesh;
-				generation::convertParallelMeshToSerial(sMesh,mesh);
-
-				std::cout << "n_active_elements: " << sMesh.n_active_elements() << std::endl;
-				std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
-
-				VTKMeshWriter<Mesh1> w;
-				w.write("build_line_parallel" + to_string(level) + ".vtu", sMesh);
-			}
-		}
-
-		Kokkos::finalize();
-}
-
-#endif
 
 mars::Mesh1 test_mars_mesh_generation_1D(const int x) {
 
@@ -87,7 +47,7 @@ mars::Mesh1 test_mars_mesh_generation_1D(const int x) {
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 	auto duration = duration_cast < seconds > (t2 - t1).count();
 
-	std::cout << "Generation took: "<< duration<<endl;
+	std::cout << "Generation took: "<< duration<<" seconds."<<endl;
 
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
@@ -1135,13 +1095,11 @@ int main(int argc, char *argv[])
 	//test_mars_mesh_generation_3D(200,200,200);
 
 	/*test_mars_mesh_generation_3D(2,2,2);
-	test_uniform_bisection_3D(level, test_mars_mesh_generation_3D(1,1,1));
-*/
+	test_uniform_bisection_3D(level, test_mars_mesh_generation_3D(1,1,1));*/
 
 	//parallel with kokkos.
 
 #ifdef WITH_TRILINOS
-
 	test_mars_mesh_generation_kokkos_1D(level);
 #endif
 
@@ -1149,6 +1107,7 @@ int main(int argc, char *argv[])
 	// par_mesh_test();
 	return MPI_Finalize();
 #else
+
 	return 0;
 #endif //WITH_MPI
 }
