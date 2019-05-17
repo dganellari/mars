@@ -23,9 +23,9 @@
 
 #include "generation/mars_mesh_generation.hpp"
 
-#ifdef WITH_TRILINOS
+#ifdef WITH_KOKKOS
 #include "generation/mars_test_kokkos.hpp"
-#endif //WITH_TRILINOS
+#endif //WITH_KOKKOS
 
 #ifdef WITH_MPI
 #include "mars_par_bisection.hpp"
@@ -1099,7 +1099,7 @@ int main(int argc, char *argv[])
 
 	//parallel with kokkos.
 
-#ifdef WITH_TRILINOS
+#ifdef WITH_KOKKOS
 	test_mars_mesh_generation_kokkos_1D(level);
 #endif
 
