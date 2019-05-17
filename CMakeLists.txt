@@ -14,20 +14,20 @@ find_package(MPIExtended)
 
 option(MARS_USE_CUDA "Build mars with cuda support" OFF)
 
-if (NOT TRILINOS_DIR)
-  message(STATUS "Setting TRILINOS_DIR to $ENV{TRILINOS_DIR}")
-  set(TRILINOS_DIR $ENV{TRILINOS_DIR} CACHE PATH "Directory where Trilinos is installed")
+if (NOT KOKKOS_DIR)
+  message(STATUS "Setting KOKKOS_DIR to $ENV{KOKKOS_DIR}")
+  set(KOKKOS_DIR $ENV{KOKKOS_DIR} CACHE PATH "Directory where Kokkos is installed")
 endif()
 
-FIND_PACKAGE(Trilinos PATHS "${TRILINOS_DIR}/lib/cmake/Trilinos" QUIET)
+#FIND_PACKAGE(Trilinos PATHS ${TRILINOS_DIR}/lib/cmake/Trilinos QUIET)
+FIND_PACKAGE(Kokkos HINTS ${KOKKOS_DIR}/lib/cmake/Kokkos QUIET)
 
-IF(Trilinos_FOUND)
-   MESSAGE("\nFound Trilinos!  Here are the details: ")
-   MESSAGE("   Trilinos_VERSION = ${Trilinos_VERSION}")
-   MESSAGE("   Trilinos_CXX_COMPILER = ${Trilinos_CXX_COMPILER}")
-   MESSAGE("   Trilinos_CXX_COMPILER_FLAGS = ${Trilinos_CXX_COMPILER_FLAGS}")
+IF(Kokkos_FOUND)
+   MESSAGE("\nFound Kokkos!  Here are the details: ")
+   MESSAGE("   Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
+   MESSAGE("   Kokkos_CXX_COMPILER_FLAGS = ${Kokkos_CXX_FLAGS}")
    
-   set(WITH_TRILINOS ON)
+   set(WITH_KOKKOS ON)
    
 FIND_PACKAGE(OpenMP)
 
@@ -38,13 +38,13 @@ if(OPENMP_FOUND)
  	set (CMAKE_CXX_LINK_FLAGS "${CMAKE_CXX_LINK_FLAGS} ${OpenMP_CXX_FLAGS}")
  endif()
  
-SET(CMAKE_C_COMPILER ${Trilinos_C_COMPILER})
-SET(CMAKE_CXX_COMPILER ${Trilinos_CXX_COMPILER})
+SET(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
+SET(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
    
 ELSE()
-  MESSAGE(WARNING "Could not find Trilinos!")
+  MESSAGE(WARNING "Could not find Kokkos!")
   IF(MARS_USE_CUDA)
-    MESSAGE(FATAL_ERROR "Could not use CUDA without Trilinos!")
+    MESSAGE(FATAL_ERROR "Could not use CUDA without Kokkos!")
   ENDIF()
 ENDIF()
 
@@ -90,7 +90,7 @@ list(APPEND MARS_HEADERS
 	generation/mars_mesh_generation.hpp
 	)
 	
-IF(Trilinos_FOUND)
+IF(Kokkos_FOUND)
 	list(APPEND MARS_HEADERS
 	    generation/mars_mesh_generation_kokkos.hpp
 	    generation/mars_mesh_kokkos.hpp
@@ -116,9 +116,11 @@ target_include_directories(mars PUBLIC .)
 add_executable(mars_exec main.cpp ${MARS_HEADERS} ${MARS_SOURCES})
 target_link_libraries(mars_exec mars)
 
-IF(Trilinos_FOUND)
-target_include_directories(mars_exec PUBLIC ${Trilinos_TPL_INCLUDE_DIRS} ${Trilinos_INCLUDE_DIRS})
-target_link_libraries(mars_exec mars ${Trilinos_LIBRARIES} ${Trilinos_TPL_LIBRARIES})
+IF(Kokkos_FOUND)
+MESSAGE(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
+
+target_include_directories(mars_exec PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
+target_link_libraries(mars_exec mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES})
 ENDIF()
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/mars_config.hpp.in ${CMAKE_BINARY_DIR}/mars_config.hpp)
