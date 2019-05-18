@@ -2,5 +2,7 @@
 #define MARS_CONFIG_HPP
 
 #cmakedefine WITH_MPI
+#cmakedefine WITH_KOKKOS
+#cmakedefine MARS_USE_CUDA
 
 #endif //MARS_CONFIG_HPP

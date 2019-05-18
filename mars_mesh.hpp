@@ -20,8 +20,8 @@
 
 namespace mars {
 
-	template<Integer Dim_, Integer ManifoldDim_, class Point_ >
-	class Mesh : public IMesh<Dim_,Point_> {
+	template<Integer Dim_, Integer ManifoldDim_>
+	class Mesh : public IMesh<Dim_> {
 	public:
 		static const Integer Dim = Dim_;
 		static const Integer ManifoldDim = ManifoldDim_;
