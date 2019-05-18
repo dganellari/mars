@@ -27,10 +27,6 @@
 #include "generation/mars_test_kokkos.hpp"
 #endif //WITH_KOKKOS
 
-#include <err.h>
-
-#include "generation/mars_mesh_generation.hpp"
-
 #ifdef WITH_MPI
 #include "mars_par_bisection.hpp"
 #include "mars_par_mesh.hpp"
@@ -61,7 +57,7 @@ mars::Mesh1 test_mars_mesh_generation_1D(const int x) {
 		VTKMeshWriter<Mesh1> w;
 		w.write("build_line" + to_string(x) + ".vtu", mesh);
 	}
-	
+
 	return mesh;
 }
 
@@ -85,6 +81,7 @@ mars::Mesh2 test_mars_mesh_generation_2D(const int x,
 
 
 	if (x <= 1000) {
+
 		VTKMeshWriter<Mesh2> w;
 		w.write("build_square" + to_string(x) + to_string(y) + ".vtu", mesh);
 	}
@@ -376,7 +373,6 @@ void test_bisection_3D()
 
 	VTKMeshWriter<Mesh3> w;
 	w.write("cube_bisect_"+ std::to_string(mesh.Dim) +".vtu", mesh);
-
 	// auto edge_select = std::make_shared<NewestVertexEdgeSelect<3, 3>>();
 	auto edge_select = std::make_shared<LongestEdgeSelect<Mesh3>>(true);
 
