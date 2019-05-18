@@ -13,12 +13,19 @@
 #include "mars_utils.hpp"
 #include "mars_mesh_partition.hpp"
 #include "mars_partitioned_bisection.hpp"
-
 #include "mars_benchmark.hpp"
 #include "mars_test.hpp"
 #include "mars_ranked_edge.hpp"
 #include "mars_oldest_edge.hpp"
 #include "mars_longest_edge.hpp"
+#include "generation/mars_memory.hpp"
+#include <err.h>
+
+#include "generation/mars_mesh_generation.hpp"
+
+#ifdef WITH_KOKKOS
+#include "generation/mars_test_kokkos.hpp"
+#endif //WITH_KOKKOS
 
 #include <err.h>
 
@@ -44,16 +51,17 @@ mars::Mesh1 test_mars_mesh_generation_1D(const int x) {
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 	auto duration = duration_cast < seconds > (t2 - t1).count();
 
-	std::cout << "Generation took: "<< duration<<endl;
+	std::cout << "Generation took: "<< duration<<" seconds."<<endl;
 
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
 
 
-	VTKMeshWriter < Mesh1 > w;
-	w.write("build_line" + to_string(x) +".vtu", mesh);
-
-
+	if (x < 100) {
+		VTKMeshWriter<Mesh1> w;
+		w.write("build_line" + to_string(x) + ".vtu", mesh);
+	}
+	
 	return mesh;
 }
 
@@ -76,8 +84,7 @@ mars::Mesh2 test_mars_mesh_generation_2D(const int x,
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
 
 
-	if (x < 1000) {
-
+	if (x <= 1000) {
 		VTKMeshWriter<Mesh2> w;
 		w.write("build_square" + to_string(x) + to_string(y) + ".vtu", mesh);
 	}
@@ -368,7 +375,8 @@ void test_bisection_3D()
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 
 	VTKMeshWriter<Mesh3> w;
-						w.write("cube_bisect_"+ std::to_string(mesh.Dim) +".vtu", mesh);
+	w.write("cube_bisect_"+ std::to_string(mesh.Dim) +".vtu", mesh);
+
 	// auto edge_select = std::make_shared<NewestVertexEdgeSelect<3, 3>>();
 	auto edge_select = std::make_shared<LongestEdgeSelect<Mesh3>>(true);
 
@@ -1078,29 +1086,32 @@ int main(int argc, char *argv[])
 				<< std::endl;
 
 	//run_tests(level,filename);
+
 	//test_uniform_bisection_2D(level,filename);
 	//test_read_write_3D(filename);
 
-	//test_mars_mesh_generation_1D(4);
+	//test_mars_mesh_generation_1D(level);
 
-	test_mars_mesh_generation_2D(6000,6000);
+	//test_mars_mesh_generation_2D(1000,1000);
 
-	//test_mars_mesh_generation_3D(150,150,100);
-	//test_mars_mesh_generation_3D(150,150,150);
 	//test_mars_mesh_generation_3D(100,100,100);
-	//test_mars_mesh_generation_3D(150,150,120);
-	/*test_mars_mesh_generation_3D(2,2,2);
-	test_uniform_bisection_3D(level, test_mars_mesh_generation_3D(1,1,1));
-	*//*Mesh2 m = test_mars_mesh_generation_2D(10,8); //works fine
-	test_uniform_bisection_2D(level,m);
-*/
-	//test_mars_mesh_generation_3D();
+	//test_mars_mesh_generation_3D(150,150,150);
+	//test_mars_mesh_generation_3D(200,200,200);
 
+	/*test_mars_mesh_generation_3D(2,2,2);
+	test_uniform_bisection_3D(level, test_mars_mesh_generation_3D(1,1,1));*/
+
+	//parallel with kokkos.
+
+#ifdef WITH_KOKKOS
+	test_mars_mesh_generation_kokkos_1D(level);
+#endif
 
 #ifdef WITH_MPI
 	// par_mesh_test();
 	return MPI_Finalize();
 #else
+
 	return 0;
 #endif //WITH_MPI
 }
