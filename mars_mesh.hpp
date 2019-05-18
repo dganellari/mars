@@ -9,7 +9,6 @@
 
 #include "mars_visualization.hpp"
 #include "mars_imesh.hpp"
-#include "generation/mars_point.hpp"
 
 #include <vector>
 #include <array>
@@ -28,7 +27,7 @@ namespace mars {
 
 		using Elem     = mars::Simplex<Dim, ManifoldDim>;
 		using SideElem = mars::Simplex<Dim, ManifoldDim-1>; 
-		using Point    = Point_;
+		using Point    = mars::Vector<Real, Dim>;
 
 		void reserve(
 			const std::size_t n_elements,
