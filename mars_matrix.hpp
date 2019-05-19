@@ -19,6 +19,8 @@ namespace mars {
 	        std::copy(std::begin(values), std::end(values), std::begin(this->values));
 	    }
 	    
+	    Matrix(T t) {values.fill(t);}
+
 	    inline constexpr static Integer rows() { return Rows; }
 	    inline constexpr static Integer cols() { return Cols; }
 	    
@@ -45,6 +47,15 @@ namespace mars {
 	        }
 	    }
 
+	    inline void row(const Integer r, const Matrix<T, 1, Cols> &v)
+	    {
+	        assert(r < Rows && " row index must be smaller than number of rows");
+
+	        for(Integer d = 0; d < Cols; ++d) {
+	            (*this)(r,d) = v(1,d);
+	        }
+	    }
+
 
 	    inline void col(const Integer c, const Vector<T, Rows> &v)
 	    {
@@ -63,6 +74,16 @@ namespace mars {
 	            v(d)=(*this)(r,d);
 	        }
 	    }
+
+	    inline void get_row(const Integer r, Matrix<T, 1,Cols> &v) const
+	    {
+	        assert(r < Rows && " row index must be smaller than number of rows");
+
+	        for(Integer d = 0; d < Cols; ++d) {
+	            v(1,d)=(*this)(r,d);
+	        }
+	    }
+
 
 	    inline void get_col(const Integer c, Vector<T, Rows> &v) const
 	    {
@@ -97,6 +118,75 @@ namespace mars {
 	        return os;
 	    }
 
+
+
+
+
+	    inline Matrix<T, Rows,Cols>& operator = (const Matrix<T, Rows,Cols> &m) 
+	    {            
+	    	for(Integer i = 0; i < Rows; ++i) {
+	    		for(Integer j = 0; j < Cols; ++j) {
+	    		    {
+	    			 (*this)(i, j) = m(i,j);
+	    			}
+	    		}
+	    	}
+	    	return *this;
+	    } 
+
+
+	    inline Matrix<T, Rows,Cols>& operator = (const T &value) 
+	    {            
+	    	for(Integer i = 0; i < Rows; ++i) {
+	    		for(Integer j = 0; j < Cols; ++j) {
+	    		    {
+	    			 (*this)(i, j) = value;
+	    			}
+	    		}
+	    	}
+	    	return *this;
+	    } 
+
+ 	    inline Matrix<T, Rows,Cols>& operator /= (const T &alpha) 
+	    {            
+	    	for(Integer i = 0; i < Rows; ++i) {
+	    		for(Integer j = 0; j < Cols; ++j) {
+	    		    {
+	    			 (*this)(i, j) /= alpha;
+	    			}
+	    		}
+	    	}
+	    	return *this;
+	    }       
+
+
+ 	    inline Matrix<T, Rows,Cols>& operator *= (const T &alpha)
+	    {
+            
+	    	for(Integer i = 0; i < Rows; ++i) {
+	    		for(Integer j = 0; j < Cols; ++j) {
+	    		    {
+	    			 (*this)(i, j) *= alpha;
+	    			}
+	    		}
+	    	}
+	    	return *this;
+	    } 
+
+
+ 	    inline Matrix<T, Rows,Cols>& operator += (const Matrix<T, Rows,Cols> &mat)
+	    {        
+	    	for(Integer i = 0; i < Rows; ++i) {
+	    		for(Integer j = 0; j < Cols; ++j) {
+	    		    {
+	    			 (*this)(i, j) += mat(i,j);
+	    			}
+	    		}
+	    	}
+	    	return *this;
+	    } 
+
+
 	    template<Integer OtherCols>
 	    inline Matrix<T, Rows, OtherCols> operator * (const Matrix<T, Cols, OtherCols> &other) const
 	    {
@@ -110,7 +200,6 @@ namespace mars {
 	    			}
 	    		}
 	    	}
-
 	    	return ret;
 	    }
 
@@ -129,6 +218,35 @@ namespace mars {
 
 	    	return ret;
 	    }
+
+	    inline Matrix<T, Rows,Cols> operator * (const Real &alpha) const
+	    {
+	    	Matrix<T, Rows, Cols> ret;
+	    	for(Integer i = 0; i < Rows; ++i) {
+	    		for(Integer j = 0; j < Cols; ++j) {
+	    		    {
+	    				ret(i,j) = (*this)(i, j) * alpha;
+	    			}
+	    		}
+	    	}
+	    	return ret;
+	    }
+
+	    inline Matrix<T, Rows,Cols> operator / (const Real &alpha) const
+	    {
+	    	Matrix<T, Rows, Cols> ret;
+
+	    	for(Integer i = 0; i < Rows; ++i) {
+	    		for(Integer j = 0; j < Cols; ++j) {
+	    		    {
+	    				ret(i,j) = (*this)(i, j) / alpha;
+	    			}
+	    		}
+	    	}
+	    	return ret;
+	    }
+
+
 
 
 
@@ -336,6 +454,72 @@ namespace mars {
 	        
 	    }))));
 	}
+
+
+
+        template<typename T,Integer Rows,Integer Cols>
+		const T contraction(const Matrix<T, Rows,Cols> &A,const Matrix<T, Rows,Cols> &B)
+	    {
+            // result must bbe initializable with zero
+	    	T result=0;
+	    	for(Integer i = 0; i < Rows; ++i) 
+	    		for(Integer j = 0; j < Cols; ++j) 
+	    				result += A(i, j) * B(i,j);
+	    	return result;
+	    }
+
+        template<typename T,Integer Rows,Integer Cols>
+	    inline Matrix<T, Rows,Cols> operator * (const Real &alpha,const Matrix<T,Rows,Cols>& mat)
+	    {
+	    	Matrix<T, Rows, Cols> ret;
+
+	    	for(Integer i = 0; i < Rows; ++i) {
+	    		for(Integer j = 0; j < Cols; ++j) {
+	    		    {
+	    				ret(i,j) = mat(i, j) * alpha;
+	    			}
+	    		}
+	    	}
+
+	    	return ret;
+	    }
+
+        template<typename T>
+        inline Matrix<T, 1,1> inverse(const Matrix<T,1,1>& mat)
+        {
+        	Matrix<T, 1,1> inv{1/mat(1,1)};
+            return inv;
+        }
+
+        template<typename T>
+        inline Matrix<T, 2,2> inverse(const Matrix<T,2,2>& mat)
+        {
+        	Matrix<T, 2,2> inv{mat(1,1), -mat(0,1), -mat(1,0), mat(0,0)};
+        	inv/=det(mat);
+            return inv;
+        }
+
+        template<typename T>
+        inline Matrix<T, 3,3> inverse(const Matrix<T,3,3>& mat)
+        {
+        	Matrix<T,3,3> inv{+(mat(2,2)*mat(1,1)-mat(2,1)*mat(1,2)),  // a00
+        		               -(mat(2,2)*mat(0,1)-mat(2,1)*mat(0,2)),  // a01
+        		               +(mat(1,2)*mat(0,1)-mat(1,1)*mat(0,2)),  // a02
+                               -(mat(2,2)*mat(1,0)-mat(2,0)*mat(1,2)),  // a10 
+                               +(mat(2,2)*mat(0,0)-mat(2,0)*mat(0,2)),  // a11
+                               -(mat(1,2)*mat(0,0)-mat(1,0)*mat(0,2)),  // a12
+							   +(mat(2,1)*mat(1,0)-mat(2,0)*mat(1,1)),  // a20 
+		     				   -(mat(2,1)*mat(0,0)-mat(2,0)*mat(0,1)),  // a21
+		     				   +(mat(1,1)*mat(0,0)-mat(1,0)*mat(0,1))}; // a22
+
+		    inv/=det(mat);
+            return inv;
+        }
+
+
+
+
+
 }
 
 #endif //MARS_MATRIX_HPP

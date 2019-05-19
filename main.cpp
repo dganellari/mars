@@ -802,9 +802,9 @@ int main(int argc, char *argv[])
 	// test_bisection_3D();
 	// test_bisection_4D();
 //cents_example();
-//functionspaces_example2D();
+functionspaces_example2D();
 //normals_example3D();
-normals_example4D();
+//normals_example4D();
 //connectivity_example4D();
 	//run_benchmarks();
 	// test_partition_2D();

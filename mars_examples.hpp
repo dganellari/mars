@@ -374,12 +374,12 @@ for(Integer ss=0;ss<FEspace.n_subspaces();ss++)
 
 
 
- using fespace1= ElemFunctionSpace<Simplex<2,2>, Lagrange1<2>>;
- using fespace2= ElemFunctionSpace<Simplex<2,2>, Lagrange2<2>>;
- using fespace3= ElemFunctionSpace<Simplex<2,2>, RT0<1>>;
+ using fespace1= ElemFunctionSpace<Simplex<2,2>, Lagrange1<3>>;
+ using fespace2= ElemFunctionSpace<Simplex<2,2>, Lagrange2<1>>;
+ using fespace3= ElemFunctionSpace<Simplex<2,2>, RT0<2>>;
  std::cout<<"fespace"<<fespace2::FEFamily<<std::endl;
  std::cout<<"fespace"<<fespace2::Order<<std::endl;
- MassIntegrator<fespace3,fespace1>(mesh);
+ MassIntegrator<4,fespace3,fespace3>(mesh);
 
  }
 

@@ -515,7 +515,7 @@ Matrix<Real,1,2> qp_points_;
 Vector<Real,1> weights_;
 
 public:
-  static constexpr Integer n_qp_points=1;
+  static constexpr Integer NQPpoints=1;
   const Matrix<Real,1,2> qp_points()const {return qp_points_;};
   const Vector<Real,1> weights()const {return weights_;};
 
@@ -536,7 +536,7 @@ private:
   Vector<Real,3> weights_;
 
 public:
-  static constexpr Integer n_qp_points=3;
+  static constexpr Integer NQPpoints=3;
   const Matrix<Real,3,2> qp_points()const {return qp_points_;};
   const Vector<Real,3> weights()const {return weights_;};
   GaussPoints<Simplex<Dim,2>,2>():
@@ -558,7 +558,7 @@ private:
   Vector<Real,4> weights_;
 
 public:
-  static constexpr Integer n_qp_points=4;
+  static constexpr Integer NQPpoints=4;
   const Matrix<Real,4,2> qp_points()const {return qp_points_;};
   const Vector<Real,4> weights()const {return weights_;};
   GaussPoints<Simplex<Dim,2>,3>():
@@ -578,7 +578,7 @@ private:
   Vector<Real,6> weights_;
 
 public:
-  static constexpr Integer n_qp_points=6;
+  static constexpr Integer NQPpoints=6;
   const Matrix<Real,6,2> qp_points()const {return qp_points_;};
   const Vector<Real,6> weights()const {return weights_;};
   GaussPoints<Simplex<Dim,2>,4>():
@@ -606,7 +606,7 @@ private:
   Vector<Real,7> weights_;
 
 public:
-  static constexpr Integer n_qp_points=7;
+  static constexpr Integer NQPpoints=7;
   const Matrix<Real,7,2> qp_points()const {return qp_points_;};
   const Vector<Real,7> weights()const {return weights_;};
   GaussPoints<Simplex<Dim,2>,5>():
@@ -631,40 +631,273 @@ public:
 
 
 
+template<Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents=1>
+class DivPhi;
+
+template<Integer Dim, Integer ManifoldDim,Integer NComponents>
+class DivPhi<Dim,ManifoldDim,1,NComponents>
+{
+public:
+using type = Matrix<Real,1,1>;
+  // this class is for not vector shape function. 
+  // this call is ambiguous for 1D elements. avoid them.
+};
+
+
+template<Integer Dim,Integer NComponents>
+class DivPhi<Dim,Dim,Dim,NComponents>
+{
+  public:
+  using type = Matrix<Real,NComponents,1>;
+  static_assert(Dim>1,"Vector function spaces need to be at least in 2D (use lagrange elements for 1D, they are equivalent)");
+  // this class is for not vector shape function. 
+};
+
+template<Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents>
+using DivPhiType=typename DivPhi<Dim, ManifoldDim, ShapeFunctionDim, NComponents>::type;
 
 
 
 
 
-template<Integer Ndofs_, Integer ManifoldDim, Integer ShapeFunctionDim>
+
+
+
+
+
+template<Integer Ndofs_, Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents=1>
 class BaseShapeFunction
 {public:
   static constexpr Integer Ndofs=Ndofs_;
   virtual ~BaseShapeFunction(){};
+
   virtual const Matrix<Real,Ndofs,ShapeFunctionDim>
-  phi(const Vector<Real,ManifoldDim>&)=0;
+  phi_single_component(const Vector<Real,Dim>& point )=0;
+
+  virtual const Matrix<Real,Ndofs,ShapeFunctionDim>
+  phi_single_component(const Vector<Real,Dim>& point,const std::vector<Vector<Real, Dim>>& elem_points)=0;
+
+
+  virtual const Vector< Matrix<Real,ShapeFunctionDim,Dim>, Ndofs>
+  grad_phi_single_component(const Vector<Real,Dim>& point)=0;
+
+
+  virtual const Vector<DivPhiType<Dim,ManifoldDim,ShapeFunctionDim,NComponents>,Ndofs>
+  div_phi(const Vector<Real,Dim>& qp_point )=0;
+
+  template<Integer NQPpoints>
+  const Vector<Vector<DivPhiType<Dim,ManifoldDim,ShapeFunctionDim,NComponents>, NQPpoints>,Ndofs>
+  div_phiN(const Matrix<Real,NQPpoints,Dim>& qp_points)
+  {
+        Vector<Vector<DivPhiType<Dim,ManifoldDim,ShapeFunctionDim,NComponents>, NQPpoints>,Ndofs> div;
+        Vector<Real,Dim> qp_point;
+        for(Integer qp=0;qp<NQPpoints;qp++)
+        {
+          qp_points.get_row(qp,qp_point);
+          auto ecco=div_phi(qp_point);
+              for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+                  div[n_dof][qp]=ecco[n_dof];
+        }
+
+        return div;};
+
+
+
 
 
 
   template<Integer NQPpoints>
   const Vector<Matrix<Real,NQPpoints,ShapeFunctionDim>,Ndofs>
-  shape_function(const Matrix<Real,NQPpoints,2>& qp_points)
+  reference_shape_function(const Matrix<Real,NQPpoints,Dim>& qp_points)
   {
         Vector<Matrix<Real,NQPpoints,ShapeFunctionDim>,Ndofs> shapefunction;
-        Vector<Real,ManifoldDim> point;
+        Vector<Real,Dim> point;
         for(Integer nn=0;nn<Ndofs;nn++)
           {
             for(Integer qp=0;qp<NQPpoints;qp++)
             {
               qp_points.get_row(qp,point);
-              auto& sf=this->phi(point);
+              auto& sf=this->phi_single_component(point);
               for(Integer dim=0;dim<ShapeFunctionDim;dim++)
               shapefunction[nn](qp,dim)=sf(nn,dim);  
             }            
           }
 
         return shapefunction;};
+
+  template<Integer NQPpoints>
+  const Vector<Vector<Vector<Matrix<Real,NComponents,ShapeFunctionDim>,NQPpoints>,NComponents>,Ndofs>
+  phi(const Matrix<Real,NQPpoints,Dim>& qp_points)
+  {
+   Vector<Vector<Vector<Matrix<Real,NComponents,ShapeFunctionDim>,NQPpoints>,NComponents>,Ndofs> f;
+   Vector<Real,ShapeFunctionDim> row_tmp;
+   Vector<Real,Dim> qp_point;
+
+   for(Integer qp=0;qp<NQPpoints;qp++)
+    {
+    qp_points.get_row(qp,qp_point);
+    auto phi_single=phi_single_component(qp_point);
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      phi_single.get_row(n_dof,row_tmp);
+      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+      {
+        f[n_dof][n_comp][qp].zero();
+        f[n_dof][n_comp][qp].row(n_comp,row_tmp);
+      }
+     }
+    }
+
+   return f;
+  };
+
+
+  template<Integer NQPpoints>
+  const Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPpoints>,NComponents>,Ndofs>
+  grad_phi(const Matrix<Real,NQPpoints,Dim>& qp_points)
+  {
+   Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPpoints>,NComponents>,Ndofs> f;
+   Vector<Real,Dim> qp_point;
+
+   for(Integer qp=0;qp<NQPpoints;qp++)
+    {
+    qp_points.get_row(qp,qp_point);
+    auto grad_phi_single=grad_phi_single_component(qp_point);
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      auto grad_phi=grad_phi_single[n_dof];
+      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+      {
+        f[n_dof][n_comp][qp].zero();
+        for(Integer ii=0;ii<ShapeFunctionDim;ii++)
+          {
+            for(Integer jj=0;jj<Dim;jj++)
+            {
+              f[n_dof][n_comp][qp](n_comp*ShapeFunctionDim+ii,jj)=grad_phi(ii,jj);
+            }
+          }
+      }
+     }
+    }
+
+   return f;
+  };
+
+
+  template<Integer NQPpoints, typename Mapping>
+  const Vector<Vector<Vector<Matrix<Real,NComponents,ShapeFunctionDim>,NQPpoints>,NComponents>,Ndofs>
+  phiN(const Vector<Vector<Vector<Matrix<Real,NComponents,ShapeFunctionDim>,NQPpoints>,NComponents>,Ndofs>& reference_phi,
+       const Mapping& mapping, 
+       const Vector<Real,Ndofs> &alpha=1.0)
+  {
+   Vector<Vector<Vector<Matrix<Real,NComponents,ShapeFunctionDim>,NQPpoints>,NComponents>,Ndofs> result;
+  for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+      {
+        for(Integer qp=0;qp<NQPpoints;qp++)
+        {
+          result[n_dof][n_comp][qp]= alpha[n_dof] * mapping * reference_phi[n_dof][n_comp] [qp];
+        }
+        
+      }
+     }
+    
+
+   return result;
+  };
+
+
+  template<Integer NQPpoints, typename Mapping>
+  const Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPpoints>,NComponents>,Ndofs>
+  grad_phiN(const Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPpoints>,NComponents>,Ndofs>& reference_grad_phi,
+       const Mapping& mapping, 
+       const Vector<Real,Ndofs> &alpha=1.0)
+  {
+   Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPpoints>,NComponents>,Ndofs> result;
+   Vector<Real,Dim> row;
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+      {
+        for(Integer qp=0;qp<NQPpoints;qp++)
+        {
+          reference_grad_phi[n_dof][n_comp][qp].get_row(n_comp,row); 
+          std::cout<<" firs row ="<<std::endl;
+          reference_grad_phi[n_dof][n_comp][qp].describe(std::cout);     
+          row.describe(std::cout);     
+          std::cout<<" mapping ="<<std::endl;
+          mapping.describe(std::cout);    
+          row=alpha[n_dof]*mapping*row;      
+          result[n_dof][n_comp][qp].row(n_comp,row);
+          std::cout<<" result ="<<std::endl;
+          result[n_dof][n_comp][qp].describe(std::cout);        
+        }
+      }
+     }
+   return result;
+  };
+
+
+
+template<Integer NQPpoints, typename Mapping>
+const Vector< Vector< Vector< Matrix<Real,NComponents,ShapeFunctionDim>, NQPpoints>,NComponents>, Ndofs>
+shape_function(const Vector<Matrix<Real,NQPpoints,ShapeFunctionDim>,Ndofs> &reference_shape_function,
+          const Mapping &mapping,
+          const Real& alpha = 1)
+{
+ Vector< Vector< Vector< Matrix<Real,NComponents,ShapeFunctionDim>, NQPpoints>,NComponents>, Ndofs> res;
+ Vector<Real, ShapeFunctionDim> row;
+ Matrix<Real, NComponents,ShapeFunctionDim> shape;
+
+ for(Integer n_dof=0;n_dof<Ndofs; n_dof++)
+  {
+    auto& shape_n_dof = reference_shape_function[n_dof];
+    for(Integer n_comp=0;n_comp<NComponents; n_comp++)
+    {
+
+      for(Integer qp=0;qp<NQPpoints; qp++)
+           {
+            shape.zero();
+            shape_n_dof.get_row(qp,row);
+            shape.row(n_comp,row);
+            //shape.describe(std::cout);
+            auto new_shape=mapping*shape*alpha;
+            //std::cout<<"(n_dof, n_comp, qp)=( "<<n_dof<<", "<<n_comp<<", "<<qp<<" )"<<std::endl;
+            //new_shape.describe(std::cout);
+            res[n_dof][n_comp][qp]= new_shape;
+          }
+    }
+  }
+  return res;
 };
+
+
+
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -681,15 +914,17 @@ class ShapeFunction;
 
 template<Integer NComponents_>
 class ShapeFunction<Simplex<2,2>, Lagrange1<NComponents_> > : 
-public BaseShapeFunction<3,2,1>
+public BaseShapeFunction<3,2,2,1,NComponents_>
 {
 public:
+  static constexpr Integer Dim=2;
+  static constexpr Integer ManifoldDim=2;
   static constexpr Integer ShapeFunctionDim=1;
   static constexpr Integer NComponents=NComponents_;
   static constexpr Integer Ndofs=3;
 
   virtual const Matrix<Real,3,1>
-  phi(const Vector<Real,2>& point)
+  phi_single_component(const Vector<Real,2>& point)
        {const auto& xi=point[0];
         const auto& eta=point[1];
         const Real zeta = 1. - xi - eta;
@@ -697,24 +932,55 @@ public:
         return shapefunction;};
 
 
- const Matrix<Real,3,2> 
- grad_phi(const Vector<Real,2>& point)
-       {const Matrix<Real,3,2> grad{-1,-1,1,0,0,1} ;
-        return grad;};
+  virtual const Matrix<Real,3,1>
+  phi_single_component(const Vector<Real,2>& point,const std::vector<Vector<Real, 2>>& elem_points)
+  {
+    Matrix<Real,3,1> mat;
+    return mat;
+    // do stuff
+  };
+
+
+
+  virtual const Vector<DivPhiType<Dim,ManifoldDim,ShapeFunctionDim,NComponents>,Ndofs>
+  div_phi(const Vector<Real,Dim>& qp_point )
+  {
+    static_assert(NComponents==ManifoldDim, "divergence for non vector shape functions requires: NComponents==ManifoldDim");
+    static_assert(NComponents==Dim, "divergence for non vector shape functions requires: NComponents==Dim");
+  Vector<DivPhiType<Dim,ManifoldDim,ShapeFunctionDim,NComponents>,Ndofs> tryme=1; 
+
+    tryme[0](0,0)=1.0;
+    tryme[1](0,0)=1.0;
+    tryme[2](0,0)=-2.0;
+
+  return tryme;};
+
+
+
+  virtual const Vector< Matrix<Real,ShapeFunctionDim,Dim>, Ndofs>
+  grad_phi_single_component(const Vector<Real,Dim>& point)
+  {
+    Vector< Matrix<Real,ShapeFunctionDim,Dim>, Ndofs> grad{{-1,-1},{1,0},{0,1}};
+    return grad;
+  }
+
 };
 
 
 template<Integer NComponents_>
 class ShapeFunction<Simplex<2,2>, Lagrange2<NComponents_> > : 
-public BaseShapeFunction<6,2,1>
+public BaseShapeFunction<6,2,2,1,NComponents_>
 {
 public:
+  static constexpr Integer Ndofs=6;
+  static constexpr Integer Dim=2;
+  static constexpr Integer ManifoldDim=2;
   static constexpr Integer ShapeFunctionDim=1;
   static constexpr Integer NComponents=NComponents_;
-  static constexpr Integer Ndofs=6;
+  
 
       virtual const Matrix<Real,6,1>
-      phi(const Vector<Real,2>& point) 
+      phi_single_component(const Vector<Real,2>& point) 
       {
           const auto& xi=point[0];
           const auto& eta=point[1];
@@ -728,11 +994,45 @@ public:
           return shape_function;
       };
 
+  virtual const Matrix<Real,6,1>
+  phi_single_component(const Vector<Real,2>& point,const std::vector<Vector<Real, 2>>& elem_points)
+  {
+     Matrix<Real,6,1> shape_function;
+     return shape_function;
+    // do stuff
+  };
 
- const Matrix<Real,3,2> 
- grad_phi(const Vector<Real,2>& point)
-       {const Matrix<Real,3,2> grad{-1,-1,1,0,0,1} ;
-        return grad;};
+  virtual const Vector<DivPhiType<Dim,ManifoldDim,ShapeFunctionDim,NComponents>,Ndofs>
+  div_phi(const Vector<Real,Dim>& qp_point )
+  {
+    Vector<DivPhiType<Dim,ManifoldDim,ShapeFunctionDim,NComponents>,Ndofs> tryme; 
+    tryme[0](0,0)=(4.0+4.0);
+    tryme[1](0,0)=(4.0);
+    tryme[2](0,0)=(4.0);
+    tryme[3](0,0)=(-8.0);
+    tryme[4](0,0)=(4.0);
+    tryme[5](0,0)=(-8.0);
+    return tryme;
+ };
+
+
+
+  virtual const Vector< Matrix<Real,ShapeFunctionDim,Dim>, Ndofs>
+  grad_phi_single_component(const Vector<Real,Dim>& point)
+  {
+   const auto& xi=point[0];
+   const auto& eta=point[1];
+   const Real zeta = 1. - xi - eta;
+   Vector< Matrix<Real,ShapeFunctionDim,Dim>, Ndofs> grad{
+                                     { - 4 * (1 - xi - eta) + 1, - 4 * (1 - xi - eta) + 1},
+                                     { 4 * xi - 1              , 0                       },
+                                     { 0                       , 4 * eta -1              },
+                                     { 4 - 8 * xi - 4 * eta    , - 4 * xi                },
+                                     { 4 * eta                 , 4 * xi                  },
+                                     { -4 * eta                , 4 - 4 * xi - 8 * eta    } };
+  return grad;
+  }
+
 };
 
 
@@ -741,23 +1041,59 @@ public:
 
 template<Integer NComponents_>
 class ShapeFunction<Simplex<2,2>, RT0<NComponents_> > : 
-public BaseShapeFunction<3,2,2>
+public BaseShapeFunction<3,2,2,2,NComponents_>
 {
 public:
+  static constexpr Integer Ndofs=3;
+  static constexpr Integer Dim=2;
+  static constexpr Integer ManifoldDim=2;
   static constexpr Integer ShapeFunctionDim=2;
   static constexpr Integer NComponents=NComponents_;
-  static constexpr Integer Ndofs=3;
+  
 
   virtual const  Matrix<Real,3,2>
-  phi(const Vector<Real,2>& point)
+  phi_single_component(const Vector<Real,2>& point)
        {const auto& xi=point[0];
         const auto& eta=point[1];
-        const Matrix<Real,3,2> shapefunction{xi,eta-1,xi,eta,1-xi,-eta};
+        const Matrix<Real,3,2> shapefunction{xi,eta-1,xi-1,eta,xi,eta};
         return shapefunction;};
 
- const Real
- grad_phi(const Vector<Real,2>& point)
-       {assert("gradient is not defined for RT elements");};
+
+  virtual const Vector<DivPhiType<Dim,ManifoldDim,ShapeFunctionDim,NComponents>,Ndofs>
+  div_phi(const Vector<Real,Dim>& qp_point )
+  {
+   Vector<DivPhiType<Dim,ManifoldDim,ShapeFunctionDim,NComponents>,Ndofs> tryme;
+   for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+   {
+     tryme[0](n_comp,0)=2;
+     tryme[1](n_comp,0)=2;
+     tryme[0](n_comp,0)=2;    
+   }
+   return tryme;
+  };
+
+
+
+  virtual const Matrix<Real,3,2>
+  phi_single_component(const Vector<Real,2>& point,const std::vector<Vector<Real, 2>>& elem_points)
+  {
+
+
+    const Matrix<Real,3,2> shapefunction;
+    return shapefunction;
+    // do stuff
+  };
+
+ virtual const Vector< Matrix<Real,ShapeFunctionDim,Dim>, Ndofs>
+ grad_phi_single_component(const Vector<Real,2>& point)
+       {
+        //static_assert(Dim==ShapeFunctionDim, "Grad(RT): shape function dim and space dim must be the same")
+        Vector< Matrix<Real,ShapeFunctionDim,Dim>, Ndofs> grad{ {1,0, 0,1},{1,0, 0,1},{1,0, 0,1}} ;
+        return grad;
+        assert("gradient is not defined for RT elements");};
+
+
+
 };
 
 
@@ -769,6 +1105,139 @@ public:
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename Elem,Integer FEFamily, Integer Order, Integer Continuity, Integer NComponents=1>
+class MapFromReference;
+
+template<Integer Dim, Integer ManifoldDim,Integer Order,Integer Continuity,Integer NComponents>
+class MapFromReference<Simplex<Dim,ManifoldDim>,LagrangeFE,Order,Continuity,NComponents>
+{
+ private:
+ public:
+
+        Matrix<Real, Dim, ManifoldDim>  map_grad
+        (const Simplex<Dim,ManifoldDim>& simplex,
+         const std::vector<Vector<Real, Dim>> &points)
+         {
+          static_assert(Dim==ManifoldDim,"Dim==ManifoldDim for inverting jacobian");
+          Matrix<Real, Dim, ManifoldDim> J;
+          jacobian(simplex,points,J); 
+          auto inv=  inverse(J);
+          return inv;
+         }
+
+        Real  map
+        (const Simplex<Dim,ManifoldDim>& simplex,
+         const std::vector<Vector<Real, Dim>> &points)
+         {
+          return 1.0;
+         }
+
+
+        template<Integer Ndofs, Integer ShapeFunctionDim>
+        Matrix<Real,Ndofs,ShapeFunctionDim> operator() 
+                        (const Matrix<Real,Ndofs,ShapeFunctionDim> reference_shape_function,
+                         const std::vector<Vector<Real, Dim>> &points,
+                         const Integer& sign_shape_function=1)
+                   {
+                    return reference_shape_function;
+                   }
+
+};
+
+
+template<Integer Dim, Integer ManifoldDim,Integer Order,Integer Continuity,Integer NComponents>
+class MapFromReference<Simplex<Dim,ManifoldDim>,RaviartThomasFE,Order,Continuity,NComponents>
+{
+ private:
+ public:
+        
+        Matrix<Real, Dim, ManifoldDim>  map(const Simplex<Dim,ManifoldDim>& simplex,
+                                            const std::vector<Vector<Real, Dim>> &points)
+         {
+          Matrix<Real, Dim, ManifoldDim> mapping;
+          jacobian(simplex,points,mapping);
+          mapping/=det(mapping);
+          return mapping;
+         }
+
+        Real  map_div(const Simplex<Dim,ManifoldDim>& simplex,
+                      const std::vector<Vector<Real, Dim>> &points)
+         {
+          Real mapping_div;
+          Matrix<Real, Dim, ManifoldDim> J;
+          jacobian(simplex,points,J);
+          mapping_div=1.0/det(J);
+          return mapping_div;
+         }
+
+        inline const Matrix<Real, Dim, ManifoldDim> map(const Matrix<Real, Dim, ManifoldDim>& J)
+         {Matrix<Real, Dim, ManifoldDim> mapping=J;
+          mapping/=det(mapping);
+          return mapping;}
+
+        inline const Real  map_div (const Matrix<Real, Dim, ManifoldDim>& J){return 1.0/det(J);}
+
+
+        template<Integer Ndofs, Integer ShapeFunctionDim>
+        Matrix<Real,Ndofs,ShapeFunctionDim> operator() 
+                        (const Matrix<Real,Ndofs,ShapeFunctionDim> reference_shape_function,
+                         const std::vector<Vector<Real, Dim>> &points,
+                         const Integer& sign_shape_function=1)
+                   {
+                    static_assert(ShapeFunctionDim==ManifoldDim, "MapFromReference:  ShapeFunctionDim must be equal to ManifoldDim");
+
+                    Simplex<Dim,ManifoldDim> simplex;
+                    Matrix<Real,Ndofs,ShapeFunctionDim> result;
+                    // // WHY DO WE NEED TO DO THIS EVERYTIME?
+                    for(Integer ii=0;ii<ManifoldDim+1;ii++)
+                        simplex.nodes[ii]=ii;
+                    auto mapping=map(simplex,points);
+
+                    // jacobian(simplex,points,mapping);
+                    // auto detmapping=det(mapping);
+                    // std::cout<<"J=="<<std::endl;
+                    // mapping.describe(std::cout);
+
+                    // mapping/=(detmapping*sign_shape_function);
+                    // std::cout<<"J/detJ=="<<std::endl;
+                    // mapping.describe(std::cout);
+
+
+                    Vector<Real,ShapeFunctionDim> row;
+                    for(Integer ii=0;ii<Ndofs;ii++)
+                    {
+                      reference_shape_function.get_row(ii,row);
+                      result.row(ii,mapping*row);
+                    }
+                    // std::cout<<"reference_shape_function=="<<std::endl;
+                    // reference_shape_function.describe(std::cout);
+                    // std::cout<<"result=="<<std::endl;
+                    // result.describe(std::cout);
+
+
+                    return result;
+
+//                      //return ;
+                   }
+
+};
 
 
 
@@ -805,121 +1274,228 @@ Matrix<Real, Rows1*Rows2, Cols1*Cols2 > tensorproduct(const Matrix<T, Rows1, Col
 
 
 
-template <typename TrialFunction,typename TestFunction, typename MeshT >
+template <Integer QPOrder, typename TrialFunction,typename TestFunction, typename MeshT >
 void MassIntegrator(const MeshT& mesh)
 {
+using trial_function=Elem2FunctionSpace<TrialFunction>;
+using test_function=Elem2FunctionSpace<TestFunction>;
 
-
-
-
-std::cout<<"massintegrator1"<<std::endl;
 using Elem=typename TrialFunction::Elem;
-const Integer Dim=Elem::Dim;
-const Integer ManifoldDim=Elem::ManifoldDim;    
-using Point    = mars::Vector<Real, Dim>;
+constexpr Integer Dim=Elem::Dim;
+constexpr Integer ManifoldDim=Elem::ManifoldDim;  
 
-constexpr Integer n_trial_dofs=FunctionSpaceDofsPerElem<TrialFunction>::value;
-constexpr Integer n_test_dofs=FunctionSpaceDofsPerElem<TestFunction>::value;
+// trial function infos
+constexpr Integer FEFamily_trial=TrialFunction::FEFamily;
+constexpr Integer Order_trial=TrialFunction::Order;
+constexpr Integer Continuity_trial=TrialFunction::Continuity;
+constexpr Integer NComponents_trial=TrialFunction::NComponents;
+constexpr Integer ShapeFunctionDim_trial=ShapeFunction<Elem, trial_function>::ShapeFunctionDim;
+constexpr Integer Ndofs_trial=ShapeFunction<Elem, trial_function>::Ndofs;
+ShapeFunction<Elem, trial_function> trial;
+
+// test function infos
+constexpr Integer FEFamily_test=TestFunction::FEFamily;
+constexpr Integer Order_test=TestFunction::Order;
+constexpr Integer Continuity_test=TestFunction::Continuity;
+constexpr Integer NComponents_test=TestFunction::NComponents;
+constexpr Integer ShapeFunctionDim_test=ShapeFunction<Elem, test_function>::ShapeFunctionDim;
+constexpr Integer Ndofs_test=ShapeFunction<Elem, test_function>::Ndofs;
+ShapeFunction<Elem, test_function> test;
 
 
-std::array<std::array<Real,n_trial_dofs>,n_test_dofs> matrix;
-
-auto& trial_entities_nums= TrialFunction::entities_nums;  
-auto& trial_dofs_per_entity= TrialFunction::dofs_per_entity;
-auto& test_entities_nums= TestFunction::entities_nums;  
-auto& test_dofs_per_entity= TestFunction::dofs_per_entity;
+MapFromReference<Simplex<Dim,ManifoldDim>,FEFamily_trial,Order_trial,Continuity_trial,NComponents_trial> map_trial;
+MapFromReference<Simplex<Dim,ManifoldDim>,FEFamily_test,Order_test,Continuity_test,NComponents_test> map_test;
 
 
-Integer row=0;
+// quadrature rule
+constexpr Integer NQPpoints=GaussPoints<Elem,QPOrder>::NQPpoints; 
+GaussPoints<Elem,QPOrder> gauss;
+auto qp_points=gauss.qp_points();
+//Matrix<Real,Ndofs*NComponents,Ndofs*NComponents> mass;
+std::vector<Vector<Real,Dim>> points(ManifoldDim+1);
+Simplex<Dim,ManifoldDim> simplex;
+for(Integer ii=0;ii<ManifoldDim+1;ii++)
+   simplex.nodes[ii]=ii;
 
-for(Integer nn1=0;nn1<test_entities_nums;nn1++)
+
+
+//Vector<Matrix<Real,NQPpoints,ShapeFunctionDim_trial>,Ndofs_trial> 
+
+
+auto elemnodes_global=mesh.elem(0).nodes;
+  for(Integer mm=0;mm<points.size();mm++)
+     points[mm]=mesh.point(elemnodes_global[mm]);
+
+auto mapping_trial=map_trial.map(simplex,points);
+//auto mapping_grad_trial=map_trial.map_grad(simplex,points);
+
+// std::cout<<"mapping_grad_trial=="<<std::endl;
+// mapping_grad_trial.describe(std::cout);
+//auto mapping_grad_trial=map_trial.map_grad(simplex,points);
+ Matrix<Real,3,3> matt=1.0;//{1.0,1.0,1.0,0.0,4.0,1.0,0.0,0.0,5.0};
+Vector<Real,3> vec=2.0;
+ std::cout<<"MATT=="<<std::endl;
+ vec.describe(std::cout);
+
+ matt.describe(std::cout);
+// Matrix<Real,3,3>  matt2;
+// matt2=inverse(matt);
+// std::cout<<"matt2*=4=="<<std::endl;
+// matt2*=4;
+// matt2.describe(std::cout);
+// std::cout<<"matt2/=4=="<<std::endl;
+// matt2/=4;
+// matt2.describe(std::cout);
+
+// std::cout<<"matt2+=matt=="<<std::endl;
+// matt2+=matt;
+// matt2.describe(std::cout);
+
+// std::cout<<"matt2=(matt2/4)=="<<std::endl;
+// matt2=(matt2/4);
+// matt2.describe(std::cout);
+
+// std::cout<<"matt2=(matt2*4)=="<<std::endl;
+// matt2=(matt2*4);
+// matt2.describe(std::cout);
+
+
+auto shape_trial=trial.reference_shape_function(qp_points);
+Vector<Real,Dim > row;
+auto reference_trial=trial.phi(qp_points);
+auto grad_reference_trial=trial.grad_phi(qp_points);
+auto element_trial=trial.phiN(reference_trial,mapping_trial);
+auto div_phi_trial=trial.div_phiN(qp_points);
+std::cout<<"div_phi_trial.describe=="<<std::endl;
+
+div_phi_trial.describe(std::cout);
+// auto element_grad_trial=trial.grad_phiN(grad_reference_trial,mapping_grad_trial);
+
+// std::cout<<"shape_trial.describe=="<<std::endl;
+// shape_trial.describe(std::cout);
+// std::cout<<"phi_trial.describe=="<<std::endl;
+// reference_trial.describe(std::cout);
+// std::cout<<"element_trial.describe=="<<std::endl;
+// element_trial.describe(std::cout);
+std::cout<<"grad_reference_trial.describe=="<<std::endl;
+grad_reference_trial.describe(std::cout);
+//Vector<Matrix<Real,NQPpoints,ShapeFunctionDim_test>,Ndofs_test>
+auto shape_test=test.reference_shape_function(qp_points);
+
+// vector for each dof of vector for each qp point of the shape_function (with all components) in qp
+Vector< Vector< Vector< Matrix<Real,NComponents_trial,ShapeFunctionDim_trial>, NQPpoints>,NComponents_trial>, Ndofs_trial> sf_trial;
+//Vector<Matrix<Real,NQPpoints,ShapeFunctionDim_test>,Ndofs_test*NComponents_test> sf_test;
+
+
+
+
+
+   for(Integer nn_trial=0;nn_trial<Ndofs_trial;nn_trial++)
+    for(Integer cc_trial=0;cc_trial<NComponents_trial;cc_trial++)
+       {}//sf_trial[nn_trial][cc_trial]
+
+
+
+for(Integer ee=0;ee<1;ee++)//mesh.n_elements();ee++)
 {
-   // constexpr Integer test_entity_dim=test_dofs_per_entity[nn1];
-   // const auto& n_test_entity=ElemEntityCombinations<Elem,test_entity_dim>::value;
-   // for(Integer mm1=0;mm1<n_test_entity;mm1++)
-   // {
-   //    Integer col=0;
-   //      for(Integer nn2=0;nn2<trial_entities_nums;nn2++)
-   //      {
-   //          const auto& trial_entity_dim=trial_dofs_per_entity[nn2];
-   //          const auto& n_trial_entity=ElemEntityCombinations<Elem,trial_entity_dim>::value;
-   //          for(Integer mm2=0;mm2<n_trial_entity;mm2++)
-   //          {
-   //          // for(Integer pp=0;pp<n_qp_points;pp++)
-   //          //      mass(matrix[dato][col],test,trial, point p);
-   //          col++;
-   //          }
-   //      }  
-   // }
+  Elem elem=mesh.elem(ee);
+  auto elemnodes_global=elem.nodes;
+  for(Integer mm=0;mm<points.size();mm++)
+    {
+     points[mm]=mesh.point(elemnodes_global[mm]);
+     std::cout<<"points="<<std::endl;
+     //points[mm].describe(std::cout);
+    }
+
+  auto mapping_trial=map_trial.map(simplex,points);
+  //std::cout<<"mapping_trial="<<std::endl;
+ // mapping_trial.describe(std::cout);
+
+  
+  auto elemenet_shape_trial=trial.shape_function(shape_trial,mapping_trial);
+  for(Integer ii=0;ii<Ndofs_test;ii++)
+      {
+       auto phi_test=map_test(shape_test[ii],points);
+         for(Integer jj=0;jj<Ndofs_trial;jj++)
+            {
+              auto phi_trial=map_trial(shape_trial[jj],points);
+              //auto& qpvec=QPVecM<NQPpoints,ShapeFunctionDim_trial>::compute( phi_test[ii], phi_trial[jj]);
+            }
+      }
 }
 
-using trialfun=Elem2FunctionSpace<TrialFunction>;
-constexpr Integer QPOrder=4;
-GaussPoints<Elem,QPOrder> gauss;
 
-//Matrix<Real,Ndofs*NComponents,Ndofs*NComponents> mass;
+// std::cout<<" shape_trial"<<std::endl;
+// for(Integer ii=0;ii<shape_trial.size();ii++)
+//      shape_trial[ii].describe(std::cout);
+// std::cout<<" shape_test"<<std::endl;
+// for(Integer ii=0;ii<shape_test.size();ii++)
+//      shape_test[ii].describe(std::cout);
 
-ShapeFunction<Elem, trialfun> shapef;
-auto sfall2=shapef.shape_function(gauss.qp_points());
-std::cout<<" inheritance"<<std::endl;
-sfall2[0].describe(std::cout);
-sfall2[1].describe(std::cout);
-sfall2[2].describe(std::cout);
-std::cout<<"massintegrator2"<<std::endl;
-
-constexpr Integer ShapeFunctionDim=ShapeFunction<Elem, trialfun>::ShapeFunctionDim;
-constexpr Integer Ndofs=ShapeFunction<Elem, trialfun>::Ndofs;
-constexpr Integer n_qp_points=GaussPoints<Elem,QPOrder>::n_qp_points; 
-constexpr Integer NComponents=ShapeFunction<Elem, trialfun>::NComponents;
-Matrix<Real,NComponents,NComponents> matrix_a{1.0};
-Matrix<Real,NComponents,NComponents> matrix_b{1.0};
+std::cout<<"----------------"<<std::endl;
 
 
-//Matrix<Real,NComponents,NComponents> matrix_a{1.0,0.0,0.0,1.0};
-//Matrix<Real,NComponents,NComponents> matrix_b{1.0,2.0,2.0,3.0};
-Matrix<Real,Ndofs,Ndofs> mass;
-
-std::cout<<"massintegrator3"<<std::endl;
-
-Vector<decltype(matrix_a),n_qp_points> mata(matrix_a);
-Vector<decltype(matrix_b),n_qp_points> matb(matrix_b);
-std::cout<<" mata"<<std::endl;
-
-for(Integer qp=0;qp<n_qp_points;qp++)
-    mata[qp].describe(std::cout);
-
-Matrix< Vector<Real,n_qp_points>, NComponents,NComponents> qpmat=QPVecM<n_qp_points,ShapeFunctionDim,NComponents>::compute(mata,mata);
-Matrix<Vector<Real,n_qp_points> ,Ndofs,Ndofs> mat_mass;
+//constexpr Integer NComponents=ShapeFunction<Elem, trialfun>::NComponents;
+// Matrix<Real,NComponents,NComponents> matrix_a{1.0};
+// Matrix<Real,NComponents,NComponents> matrix_b{1.0};
 
 
-// vector, n_qp_points long, whose components are the matrix A evaluated in different qp points
-//Vector< Matrix<Real,NComponents,NComponents> , n_qp_points> matA;
-for(Integer nn=0;nn<Ndofs;nn++)
-   for(Integer mm=0;mm<Ndofs;mm++)
+//Matrix<Real,NComponents_trial,NComponents_trial> matrix_a{1.0};
+//Matrix<Real,NComponents_trial,NComponents_trial> matrix_a{1.0,0.0,0.0,1.0};
+//Matrix<Real,NComponents_trial,NComponents_trial> matrix_b{1.0};
+//Matrix<Real,NComponents_trial,NComponents_trial> matrix_b{1.0,0.0,0.0,1.0};
+
+Matrix<Real,Ndofs_test,Ndofs_trial> mass;
+
+std::cout<<"Ndofs_test,   Ndofs_trial======="<<Ndofs_test<<", "<<Ndofs_trial<<std::endl;
+
+// Vector<decltype(matrix_a),NQPpoints> mata(matrix_a);
+// Vector<decltype(matrix_b),NQPpoints> matb(matrix_b);
+//std::cout<<" mata"<<std::endl;
+
+// for(Integer qp=0;qp<NQPpoints;qp++)
+//     mata[qp].describe(std::cout);
+
+// Matrix< Vector<Real,NQPpoints>, NComponents_trial,NComponents_trial> qpmat=QPVecM<NQPpoints,ShapeFunctionDim_trial,NComponents_trial>::compute(mata,mata);
+Matrix<Vector<Real,NQPpoints> ,Ndofs_test,Ndofs_trial> mat_mass;
+
+
+// vector, NQPpoints long, whose components are the matrix A evaluated in different qp points
+//Vector< Matrix<Real,NComponents,NComponents> , NQPpoints> matA;
+ for(Integer nn_test=0;nn_test<Ndofs_test;nn_test++)
+  for(Integer cc_test=0;cc_test<NComponents_test;cc_test++)
+   for(Integer nn_trial=0;nn_trial<Ndofs_trial;nn_trial++)
+    for(Integer cc_trial=0;cc_trial<NComponents_trial;cc_trial++)
+        {
+        }
+
+for(Integer nn=0;nn<Ndofs_test;nn++)
+   for(Integer mm=0;mm<Ndofs_trial;mm++)
    {
 
     // Quello che voglio fare alla fine e' una combinazione di matrici. Per H1 ad esempio:
     // (A gradu, gradv) + (B u,v) = (weights,  A GradUGradV+BUV)
     // (A divS,B divT)
     // dove BUV e' il vettore 
-    // un elemento e' sempre il prodotto scalare tra wieghts e un'altro vettore lungo n_qp_points
+    // un elemento e' sempre il prodotto scalare tra wieghts e un'altro vettore lungo NQPpoints
     // quindi se ho il prodotto tra due Matrix(n_qppoints,Dim) mat, devo restituire
     // Vector(n_qppoints ) vec, dove vec(qp)=sum( mat1(qp,ii)*mat2(qp,ii))
 
     
-    auto& qpvec=QPVecM<n_qp_points,ShapeFunctionDim>::compute( sfall2[nn], sfall2[mm]);
-    mat_mass(nn,mm)=QPVecV<n_qp_points>::compute(qpvec,gauss.weights());
-    mass(nn,mm)=DotProduct<Vector<Real,n_qp_points>>::compute(qpvec,gauss.weights());
+    auto& qpvec=QPVecM<NQPpoints,ShapeFunctionDim_trial>::compute( shape_test[nn], shape_trial[mm]);
+    std::cout<<" (nn,mm)==("<<nn<<", "<<mm<<")"<<std::endl;
+    mat_mass(nn,mm)=QPVecV<NQPpoints>::compute(qpvec,gauss.weights());
+    //mass(nn,mm)=DotProduct<Vector<Real,NQPpoints>>::compute(qpvec,gauss.weights());
    }
-std::cout<<"mass"<<std::endl;
-mass.describe(std::cout);
-std::cout<<"mat_mass"<<std::endl;
-mat_mass.describe(std::cout);
-std::cout<<"qpmat"<<std::endl;
-qpmat.describe(std::cout);
-std::cout<<"ECCO2"<<std::endl;
-auto mattensor=tensorproduct(mat_mass,qpmat);
-mattensor.describe(std::cout);
+// std::cout<<"mass"<<std::endl;
+// mass.describe(std::cout);
+// std::cout<<"mat_mass"<<std::endl;
+// mat_mass.describe(std::cout);
+// std::cout<<"qpmat"<<std::endl;
+// qpmat.describe(std::cout);
+// std::cout<<"tensor product"<<std::endl;
+// auto mattensor=tensorproduct(mat_mass,qpmat);
+// mattensor.describe(std::cout);
 
 // auto sn=SignedNormal<ManifoldDim>(mesh);
 
