@@ -294,7 +294,9 @@ void cents_example()
 
 
 
-
+class IdentityOperator;
+class DivergenceOperator;
+class GradientOperator;
 
 void functionspaces_example2D()
 {
@@ -375,11 +377,11 @@ for(Integer ss=0;ss<FEspace.n_subspaces();ss++)
 
 
  using fespace1= ElemFunctionSpace<Simplex<2,2>, Lagrange1<3>>;
- using fespace2= ElemFunctionSpace<Simplex<2,2>, Lagrange2<1>>;
- using fespace3= ElemFunctionSpace<Simplex<2,2>, RT0<2>>;
+ using fespace2= ElemFunctionSpace<Simplex<2,2>, Lagrange2<2>>;
+ using fespace3= ElemFunctionSpace<Simplex<2,2>, RT0<3>>;
  std::cout<<"fespace"<<fespace2::FEFamily<<std::endl;
  std::cout<<"fespace"<<fespace2::Order<<std::endl;
- MassIntegrator<4,fespace3,fespace3>(mesh);
+ BilinearFormIntegrator<4,fespace2,fespace3,GradientOperator,IdentityOperator>(mesh);
 
  }
 

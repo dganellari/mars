@@ -124,6 +124,7 @@ namespace mars {
 
 	    inline Matrix<T, Rows,Cols>& operator = (const Matrix<T, Rows,Cols> &m) 
 	    {            
+	       if(this==&m) return *this;
 	    	for(Integer i = 0; i < Rows; ++i) {
 	    		for(Integer j = 0; j < Cols; ++j) {
 	    		    {
@@ -457,16 +458,31 @@ namespace mars {
 
 
 
+
+
         template<typename T,Integer Rows,Integer Cols>
-		const T contraction(const Matrix<T, Rows,Cols> &A,const Matrix<T, Rows,Cols> &B)
+		const Matrix<T,1,1> contraction(const Matrix<T, Rows,Cols> &A,const Matrix<T, Rows,Cols> &B)
 	    {
             // result must bbe initializable with zero
-	    	T result=0;
+	    	Matrix<T,1,1> result=0;
 	    	for(Integer i = 0; i < Rows; ++i) 
 	    		for(Integer j = 0; j < Cols; ++j) 
-	    				result += A(i, j) * B(i,j);
+	    				result(0,0) += A(i, j) * B(i,j);
 	    	return result;
-	    }
+	    };
+
+
+
+  //       template<typename T>
+		// const T contraction(const T &A,const Matrix<T,1,1> &B)
+	 //    {
+	 //    	return A*B(0,0);
+	 //    }
+
+		// const Real contraction(const Matrix<Real,1,1> &A, const Real &B)
+	 //    {
+	 //    	return A(0,0)*B;
+	 //    }
 
         template<typename T,Integer Rows,Integer Cols>
 	    inline Matrix<T, Rows,Cols> operator * (const Real &alpha,const Matrix<T,Rows,Cols>& mat)
