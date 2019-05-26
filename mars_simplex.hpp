@@ -27,7 +27,7 @@ namespace mars {
     public:
         static constexpr Integer Dim = Dim_;
         static constexpr Integer ManifoldDim = ManifoldDim_;
-
+        static constexpr Integer Npoints = ManifoldDim+1;
         std::array<Integer, ManifoldDim+1> nodes;
         std::array<Integer, ManifoldDim+1> side_tags;
 
@@ -182,6 +182,7 @@ namespace mars {
     public:
         static constexpr Integer Dim = Dim_;
         static constexpr Integer ManifoldDim = 1;
+        static constexpr Integer Npoints = ManifoldDim+1;
         std::array<Integer, 2> nodes;
         std::array<Integer, 2> side_tags;
 
@@ -206,6 +207,7 @@ namespace mars {
     public:
         static constexpr Integer Dim = Dim_;
         static constexpr Integer ManifoldDim = 2;
+        static constexpr Integer Npoints = ManifoldDim+1;
         std::array<Integer, 3> nodes;
         std::array<Integer, 3> side_tags;
 
@@ -276,6 +278,7 @@ namespace mars {
     public:
         static constexpr Integer Dim = Dim_;
         static constexpr Integer ManifoldDim = 3;
+        static constexpr Integer Npoints = ManifoldDim+1;
         std::array<Integer, 4> nodes;
         std::array<Integer, 4> side_tags;
 
@@ -365,6 +368,7 @@ namespace mars {
     public:
         static constexpr Integer Dim = Dim_;
         static constexpr Integer ManifoldDim = 4;
+        static constexpr Integer Npoints = ManifoldDim+1;
 
         std::array<Integer, 5> nodes;
         std::array<Integer, 5> side_tags;

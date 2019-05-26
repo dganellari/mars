@@ -161,6 +161,15 @@ namespace mars {
 		}
 	};
 
+
+	template<Integer N,Integer M>
+	class Modulo {
+	public:
+		static const Integer value = N - M* (N/M);
+	};
+
+
+
 	// template<>
 	// class Combinations<3, 2> {
 	// public:

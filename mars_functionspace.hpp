@@ -29,46 +29,48 @@ template<typename MeshT, typename BaseFunctionSpace,typename...BaseFunctionSpace
 class FunctionSpace : public InterfaceFunctionSpace
 {
 public:
+      using Elem= typename MeshT::Elem;
+
       static constexpr Integer Nsubspaces=1+sizeof...(BaseFunctionSpaces);
 
       static constexpr Integer Nelem_dofs=DofsPerElemNums< typename MeshT::Elem,BaseFunctionSpace,BaseFunctionSpaces...>::value;
 
-      inline const Integer n_subspaces(){return Nsubspaces;};
+      inline const Integer n_subspaces()const{return Nsubspaces;};
 
-      inline const Integer components(const Integer& space_id){return space_infos_[space_id][3];};
+      inline const Integer components (const Integer& space_id)const{return space_infos_[space_id][3];};
 
-      inline const Integer n_elem_dofs(){return Nelem_dofs;};
+      inline const Integer n_elem_dofs()const{return Nelem_dofs;};
 
-      inline const Integer n_elem_dofs(const Integer& space_id){
+      inline const Integer n_elem_dofs(const Integer& space_id)const{
                                   const auto& os=offset_[space_id];
                                   const auto size=os[os.size()-1]-os[0];
                                   return size;}
 
-      inline const Integer n_elem_dofs(const Integer& space_id,const Integer& component_id){
+      inline const Integer n_elem_dofs(const Integer& space_id,const Integer& component_id)const{
                                   const auto& size=n_elem_dofs(space_id);
                                   return (size/space_infos_[space_id][3]);}
 
 
-      inline const Integer n_dofs(){return n_dofs_;};
+      inline const Integer n_dofs()const{return n_dofs_;};
 
-      inline const Integer n_dofs(const Integer& space_id,const Integer& component_id)
+      inline const Integer n_dofs(const Integer& space_id,const Integer& component_id)const
                                  {return space_dofs_[space_id][component_id].size(); };
 
 
-      inline const std::vector<std::array<Integer, Nelem_dofs>> dofmap(){return dofmap_;};
+      inline const std::vector<std::array<Integer, Nelem_dofs>> dofmap()const{return dofmap_;};
 
-      inline void  dofmap(const std::vector<std::array<Integer, Nelem_dofs>>& dm){dm=dofmap_;};
+      inline void  dofmap(const std::vector<std::array<Integer, Nelem_dofs>>& dm)const{dm=dofmap_;};
 
 
-      inline const std::array<Integer, Nelem_dofs> dofmap(const Integer& elem_id)
+      inline const std::array<Integer, Nelem_dofs> dofmap(const Integer& elem_id)const
                          {return dofmap_[elem_id];};
 
-      inline void  dofmap(const Integer& elem_id, const std::array<Integer, Nelem_dofs> & elem_dm)
+      inline void  dofmap(const Integer& elem_id, const std::array<Integer, Nelem_dofs> & elem_dm)const
                          {elem_dm=dofmap_[elem_id];};
 
 
       inline const std::vector<Integer> 
-                   dofmap(const Integer& space_id,const Integer& elem_id){
+                   dofmap(const Integer& space_id,const Integer& elem_id)const{
                         const auto& os=offset_[space_id];
                         const auto& size=n_elem_dofs(space_id);
                         std::vector<Integer> output(size);
@@ -77,7 +79,7 @@ public:
                         return output;};
 
       inline const std::vector<Integer> 
-                   dofmap(const Integer& space_id,const Integer& component_id,const Integer& elem_id){
+                   dofmap(const Integer& space_id,const Integer& component_id,const Integer& elem_id)const{
                         const auto& os=offset_[space_id];
                         const auto& size= n_elem_dofs(space_id);
                         std::vector<Integer> output(size);
@@ -88,7 +90,7 @@ public:
                         return output;};
 
 
-      inline void dofmap(const Integer& space_id,const Integer& elem_id, const std::vector<Integer>& elem_space_dm)
+      inline void dofmap(const Integer& space_id,const Integer& elem_id, const std::vector<Integer>& elem_space_dm)const
                        {
                         const auto& os=offset_[space_id];
                         const auto& size=n_elem_dofs(space_id);
@@ -97,23 +99,26 @@ public:
                              elem_space_dm[nn]=dofmap_[elem_id][nn+os[0]];
                        };
 
-      inline const std::array<std::vector<Integer>, Nsubspaces> offset(){return offset_;};
+      inline const std::array<std::vector<Integer>, Nsubspaces> offset() const {return offset_;};
 
-      inline void  offset(const std::array<std::vector<Integer>, Nsubspaces> &os){os=offset_;};
-
-
-      inline const std::vector<Integer> offset(const Integer& space_id){return offset_[space_id];};
-
-      inline void offset(Integer space_id, const std::vector<Integer>& space_os){space_os=offset_[space_id];};
+      inline void  offset(const std::array<std::vector<Integer>, Nsubspaces> &os)const {os=offset_;};
 
 
-      inline const std::vector<Integer>& space_dofs(const Integer& space_id,const Integer& component_id)
+      inline const std::vector<Integer> offset(const Integer& space_id)const{return offset_[space_id];};
+
+      inline void offset(Integer space_id, const std::vector<Integer>& space_os)const {space_os=offset_[space_id];};
+
+
+      inline const std::vector<Integer>& space_dofs(const Integer& space_id,const Integer& component_id) const
                                          {return space_dofs_[space_id][component_id];};
 
-      inline void space_dofs(const Integer& space_id, const Integer& component_id,std::vector<Integer>& spacedofs)
+      inline void space_dofs(const Integer& space_id, const Integer& component_id,std::vector<Integer>& spacedofs)const
                             {spacedofs.resize(n_dofs(space_id,component_id));
                              spacedofs=space_dofs_[space_id][component_id];};
 
+      inline const std::array<std::array<Integer,4>,Nsubspaces> space_info()const{return space_infos_;};
+
+      inline const std::shared_ptr< MeshT > mesh()const {return mesh_;};
 
       FunctionSpace(const MeshT& mesh):
       mesh_(std::make_shared< MeshT >(mesh))

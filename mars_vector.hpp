@@ -61,7 +61,7 @@ namespace mars {
 	        return ret;
 	    }
 
-	    Vector operator=(const Vector &right)
+	    const Vector& operator=(const Vector &right)
 	    {
 	        for(Integer i = 0; i < Dim; ++i) {
 	            (*this)(i) = right(i);
@@ -70,7 +70,16 @@ namespace mars {
 	        return *this;
 	    }
 
-	    Vector operator=(const T &value)
+	    // const Vector operator=(const T &value)
+	    // {
+	    //     for(Integer i = 0; i < Dim; ++i) {
+	    //         (*this)(i) = value;
+	    //     }
+	        
+	    //     return *this;
+	    // }
+	    
+	    const Vector operator=(const T &value) const
 	    {
 	        for(Integer i = 0; i < Dim; ++i) {
 	            (*this)(i) = value;

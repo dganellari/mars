@@ -294,9 +294,6 @@ void cents_example()
 
 
 
-class IdentityOperator;
-class DivergenceOperator;
-class GradientOperator;
 
 void functionspaces_example2D()
 {
@@ -331,8 +328,8 @@ void functionspaces_example2D()
         } 
 
 
-
-    FunctionSpace< MeshT, Lagrange2<1>,RT0<1>> FEspace(mesh);
+    using FSspace= FunctionSpace< MeshT, Lagrange2<1>,RT0<1>>;
+    FSspace FEspace(mesh);
 
    std::cout<<"n_dofs="<<FEspace.n_dofs()<< std::endl;
     std::cout<<std::endl;
@@ -375,13 +372,20 @@ for(Integer ss=0;ss<FEspace.n_subspaces();ss++)
      std::cout<<std::endl;
 
 
-
- using fespace1= ElemFunctionSpace<Simplex<2,2>, Lagrange1<3>>;
+ auto spaceinf=FEspace.space_info();
+ for(Integer mm=0;mm<spaceinf.size();mm++)
+     {
+      std::cout<<"Space=="<<mm<<std::endl;
+      for(Integer nn=0;nn<spaceinf[mm].size();nn++)
+        std::cout<<spaceinf[mm][nn]<<" ";
+      std::cout<<std::endl;
+     }
+ using fespace1= ElemFunctionSpace<Simplex<2,2>, Lagrange1<1>>;
  using fespace2= ElemFunctionSpace<Simplex<2,2>, Lagrange2<2>>;
- using fespace3= ElemFunctionSpace<Simplex<2,2>, RT0<3>>;
+ using fespace3= ElemFunctionSpace<Simplex<2,2>, RT0<1>>;
  std::cout<<"fespace"<<fespace2::FEFamily<<std::endl;
  std::cout<<"fespace"<<fespace2::Order<<std::endl;
- BilinearFormIntegrator<4,fespace2,fespace3,GradientOperator,IdentityOperator>(mesh);
+ BilinearFormIntegrator<4,FSspace,FSspace,GradientOperator,IdentityOperator>(FEspace,FEspace);
 
  }
 
