@@ -31,13 +31,13 @@ namespace mars {
 	}*/
 
 	template<Integer Dim_>
-	class Parallel_IMesh {
+	class ParallelIMesh {
 	public:
 		static const Integer Dim = Dim_;
 		using Point = mars::Vector<Real, Dim>;
 		using Elem  = mars::IElem;
 
-		virtual ~Parallel_IMesh() {}
+		virtual ~ParallelIMesh() {}
 		//virtual void points(const Integer id, std::vector<Point> &pts) const = 0;
 		//virtual IElem &elem(const Integer id) = 0;
 		//virtual const IElem &elem(const Integer id) const = 0;

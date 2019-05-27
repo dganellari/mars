@@ -7,12 +7,10 @@
 #include "mars_fwd_kokkos.hpp"
 #include <Kokkos_Core.hpp>
 
-using namespace std;
-
 namespace mars {
 namespace generation {
 namespace kokkos{
-namespace Private {
+namespace private_ {
 
 constexpr int hex_n_sides = 6; // 6 faces in total for the hex27.
 constexpr int hex_n_nodes = 27; // 27 nodes for the hex27.
@@ -45,7 +43,7 @@ void add_side(std::vector<Integer>& side, const Integer a, const Integer b,
 	}
 }
 
-void build_hex27(array<Integer, hex_n_nodes>& nodes, const Integer xDim,
+void build_hex27(std::array<Integer, hex_n_nodes>& nodes, const Integer xDim,
 		const Integer yDim, const int i, const int j, const int k) {
 
 	nodes[0] = index(xDim, yDim, i, j, k);
@@ -79,10 +77,10 @@ void build_hex27(array<Integer, hex_n_nodes>& nodes, const Integer xDim,
 }
 
 template<Integer Dim, Integer ManifoldDim>
-bool generate_cube(Parallel_Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
+bool generate_cube(ParallelMesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 		const Integer yDim, const Integer zDim) {
 
-	using namespace mars::generation::Private;
+	using namespace mars::generation::private_;
 	using Elem = mars::Simplex<Dim, ManifoldDim>;
 
 	using namespace Kokkos;
@@ -277,7 +275,7 @@ bool generate_cube(Parallel_Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 	}
 }
 
-bool generate_line(Parallel_Mesh<1, 1>& mesh, const Integer xDim) {
+bool generate_line(ParallelMesh<1, 1>& mesh, const Integer xDim) {
 	return generate_cube(mesh, xDim, 0, 0);
 }
 
