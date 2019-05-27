@@ -12,7 +12,7 @@ void test_mars_mesh_generation_kokkos_1D(const int level){
 		{
 			Kokkos::Timer timer;
 
-			generation::kokkos::Parallel_Mesh<1, 1> pMesh;
+			generation::kokkos::ParallelMesh<1, 1> pMesh;
 			generation::kokkos::generate_cube(pMesh, level, 0, 0);
 
 			//fence();
@@ -24,13 +24,13 @@ void test_mars_mesh_generation_kokkos_1D(const int level){
 			if(level<100){
 
 				Mesh<1,1> sMesh;
-				generation::convertParallelMeshToSerial(sMesh,pMesh);
+				generation::convert_parallel_mesh_to_serial(sMesh,pMesh);
 
 				std::cout << "n_active_elements: " << sMesh.n_active_elements() << std::endl;
 				std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
 
 				VTKMeshWriter<Mesh1> w;
-				w.write("build_line_parallel" + to_string(level) + ".vtu", sMesh);
+				w.write("build_line_parallel" + std::to_string(level) + ".vtu", sMesh);
 			}
 		}
 

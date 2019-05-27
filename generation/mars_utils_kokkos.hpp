@@ -9,11 +9,12 @@
 namespace mars {
 namespace generation {
 
-using namespace kokkos;
 
 template<Integer Dim, Integer ManifoldDim>
-void convertParallelMeshToSerial(mars::Mesh<Dim, ManifoldDim>& mesh,
-		mars::generation::kokkos::Parallel_Mesh<Dim, ManifoldDim>& pMesh) {
+void convert_parallel_mesh_to_serial(mars::Mesh<Dim, ManifoldDim>& mesh,
+		mars::generation::kokkos::ParallelMesh<Dim, ManifoldDim>& pMesh) {
+
+	using namespace kokkos;
 
 	ViewMatrixType<Integer>::HostMirror h_el = Kokkos::create_mirror_view(
 			pMesh.get_view_elems());

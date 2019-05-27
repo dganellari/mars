@@ -1,19 +1,20 @@
 #pragma once
 
+#include "mars_vector.hpp"
+
 namespace mars {
 namespace generation {
 
-#include "mars_vector.hpp"
 template<typename T, Integer Dim>
 class Point: public Vector<T,Dim> {
 public:
 
-	bool isActive() const {
-		return active;
+	bool is_active() const {
+		return active_;
 	}
 
-	void setActive() {
-		this->active = true;
+	void set_active() {
+		this->active_ = true;
 	}
 
 	Point() {
@@ -21,11 +22,11 @@ public:
 
 	Point(std::initializer_list<T> values, bool active = false) :
 			Vector<T,Dim>(values) {
-		this->active = active;
+		this->active_ = active;
 	}
 
 private:
-	bool active = false;
+	bool active_ = false;
 
 };
 

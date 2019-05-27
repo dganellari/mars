@@ -3,11 +3,10 @@
 
 #include "mars_mesh.hpp"
 #include "mars_memory.hpp"
-using namespace std;
 
 namespace mars {
 namespace generation {
-namespace Private {
+namespace private_ {
 
 constexpr int hex_n_sides = 6; // 6 faces in total for the hex27.
 constexpr int hex_n_nodes = 27; // 27 nodes for the hex27.
@@ -76,7 +75,7 @@ void add_side(std::vector<Integer>& side, const Integer a, const Integer b,
 	}
 }
 
-void build_hex27(array<Integer, hex_n_nodes>& nodes, const Integer xDim,
+void build_hex27(std::array<Integer, hex_n_nodes>& nodes, const Integer xDim,
 		const Integer yDim, const int i, const int j, const int k) {
 
 	nodes[0] = index(xDim, yDim, i, j, k);
@@ -113,7 +112,7 @@ template<Integer Dim, Integer ManifoldDim>
 bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 		const Integer yDim, const Integer zDim) {
 
-	using namespace mars::generation::Private;
+	using namespace mars::generation::private_;
 	using Elem     = mars::Simplex<Dim, ManifoldDim>;
 
 	assert(ManifoldDim <= Dim);
@@ -315,7 +314,7 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 			}
 		}
 
-		//std::cout<<"Used Memory: "<<generation::memory::getPhysicalMem()<<std::endl;
+		//std::cout<<"Used Memory: "<<generation::memory::get_physical_memory()<<std::endl;
 
 		return true;
 	}
@@ -343,7 +342,7 @@ bool generate_line(Mesh<1, 1>& mesh, const Integer xDim) {
 //but unfortunately it does not generalize.
 Mesh3 generate_unit_cube() {
 
-	using namespace mars::generation::Private;
+	using namespace mars::generation::private_;
 
 	Mesh3 mesh;
 
