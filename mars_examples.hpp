@@ -113,6 +113,357 @@ Cents operator*(double value, const Cents &c1)
 
 
 
+
+
+
+
+// Base Function: f(x) = x
+template<typename T,typename...Parameters>
+class Expression
+{
+    protected:
+    
+    struct Implementation
+    {
+    virtual ~Implementation() {};
+    virtual T evaluate(const Parameters &... params)
+    {// not used
+    T t; return t;};
+    };
+
+    public:
+    Expression()
+    :   self_(std::make_shared<Implementation>())
+    {}
+    
+    T operator () (const Parameters &... params) const { return self_->evaluate(params...); }
+
+    protected:
+    Expression(std::shared_ptr<Implementation> self)
+    :   self_(self)
+    {}
+
+    private:
+    std::shared_ptr<Implementation> self_;
+};
+
+
+
+
+// Unary Function: u(-f(x))
+template<typename T,typename...Parameters>
+class ExpressionUnaryMinus : public Expression<T,Parameters...>
+{
+public:
+
+
+    protected:
+    struct Implementation : Expression<T,Parameters...>::Implementation
+    {
+        Expression<T,Parameters...> f;
+
+
+        Implementation(Expression<T,Parameters...> f1):   
+        f(f1)
+        {};
+
+        virtual T evaluate(const Parameters&... params) override
+        {return (-f(params...)); }
+    };
+
+    public:
+    ExpressionUnaryMinus(Expression<T,Parameters...> f)
+    :   Expression<T,Parameters...>(std::make_shared<Implementation>(f))
+    {}
+};
+
+
+
+
+
+// Binary Function: u(f(x) * g(x))
+template<typename T,typename...Parameters>
+class ExpressionBinaryMultiply :  public Expression<T,Parameters...>
+{
+    protected:
+    struct Implementation : Expression<T,Parameters...>::Implementation
+    {
+        Expression<T,Parameters...> f;
+        Expression<T,Parameters...> g;
+        Implementation(Expression<T,Parameters...> f1, Expression<T,Parameters...> g1)
+        :   f(f1), g(g1)
+        {};
+
+        virtual T evaluate(const Parameters &...params) override { return f(params...) * g(params...); }
+    };
+
+    public:
+    ExpressionBinaryMultiply<T,Parameters...>(Expression<T,Parameters...> f, Expression<T,Parameters...> g)
+    :   Expression<T,Parameters...>(std::make_shared<Implementation>(f, g))
+    {}
+};
+
+
+// Binary Function: u(f(x) + g(x))
+template<typename T,typename...Parameters>
+class ExpressionBinaryAdd : public Expression<T,Parameters...>
+{
+    protected:
+    struct Implementation : Expression<T,Parameters...>::Implementation
+    {
+        Expression<T,Parameters...> f;
+        Expression<T,Parameters...> g;
+        Implementation(Expression<T,Parameters...> f, Expression<T,Parameters...> g)
+        :   f(f), g(g)
+        {};
+
+        virtual T evaluate(const Parameters &...params) override { return f(params...) + g(params...); }
+    };
+
+    public:
+    ExpressionBinaryAdd(Expression<T,Parameters...> f, Expression<T,Parameters...> g)
+    :   Expression<T,Parameters...>(std::make_shared<Implementation>(f, g))
+    {}
+};
+
+
+// Binary Function: u(f(x) * g(x))
+template<typename T,typename...Parameters>
+class ExpressionRightScalarMultiply : public Expression<T,Parameters...>
+{
+    protected:
+    struct Implementation : Expression<T,Parameters...>::Implementation
+    {
+        Expression<T,Parameters...> f;
+        Real alpha_;
+        Implementation(Expression<T,Parameters...> f, const Real& alpha):   
+        f(f), 
+        alpha_(alpha)
+        {};
+
+
+        virtual T evaluate(const Parameters &...params) override { return f(params...) * alpha_; }
+    };
+
+    public:
+    ExpressionRightScalarMultiply(Expression<T,Parameters...> f, const Real& alpha)
+    :   Expression<T,Parameters...>(std::make_shared<Implementation>(f, alpha))
+    {}
+
+};
+
+// Binary Function: u(f(x) * g(x))
+template<typename T,typename...Parameters>
+class ExpressionLeftScalarMultiply : public Expression<T,Parameters...>
+{
+    protected:
+    struct Implementation : Expression<T,Parameters...>::Implementation
+    {
+        Expression<T,Parameters...> f;
+        Real alpha_;
+        Implementation( const Real& alpha, Expression<T,Parameters...> f):   
+        f(f), 
+        alpha_(alpha)
+        {};
+
+
+        virtual T evaluate(const Parameters &...params) override { return f(params...) * alpha_; }
+    };
+
+    public:
+    ExpressionLeftScalarMultiply(const Real& alpha, Expression<T,Parameters...> f)
+    :   Expression<T,Parameters...>(std::make_shared<Implementation>(alpha,f))
+    {}
+
+};
+
+
+template<typename T,typename...Parameters>
+inline ExpressionUnaryMinus<T,Parameters...> operator - 
+(const Expression<T,Parameters...>& f) { return ExpressionUnaryMinus<T,Parameters...>(f); }
+
+template<typename T,typename...Parameters>
+inline ExpressionBinaryMultiply<T,Parameters...> operator * 
+(const Expression<T,Parameters...>& f,const Expression<T,Parameters...>& g) { return ExpressionBinaryMultiply<T,Parameters...>(f,g); }
+
+template<typename T,typename...Parameters>
+inline ExpressionRightScalarMultiply<T,Parameters...> operator *
+(const Expression<T,Parameters...>& f,const Real& alpha) { return ExpressionRightScalarMultiply<T,Parameters...>(f,alpha);}
+
+template<typename T,typename...Parameters>
+inline ExpressionLeftScalarMultiply<T,Parameters...> operator *
+(const Real& alpha, const Expression<T,Parameters...>& f) { return ExpressionLeftScalarMultiply<T,Parameters...>(alpha,f);}
+
+
+template<typename T,typename...Parameters>
+inline ExpressionBinaryAdd<T,Parameters...> operator + 
+(const Expression<T,Parameters...>& f,const Expression<T,Parameters...>& g) { return ExpressionBinaryAdd<T,Parameters...>(f,g); }
+
+
+
+
+
+
+
+template<typename Point>
+class ExpressionMatrix: public Expression<Matrix<Real,3,3>,Point>
+{ 
+
+public:
+    static constexpr Integer Rows=3;
+    static constexpr Integer Cols=3;
+
+     protected:
+    struct Implementation: Expression<Matrix<Real,Rows,Cols>,Point>::Implementation
+    {
+        Expression<Matrix<Real,Rows,Cols>,Point> f;
+        Implementation(Expression<Matrix<Real,Rows,Cols>,Point> f1):   
+        f(f1)
+        {};
+
+        virtual Matrix<Real,3,3> evaluate(const Point& point) override
+        { std::cout<<point<<std::endl;
+          mat_(0,0)=point[0];            mat_(0,1)=point[0]+point[1];        mat_(0,2)=point[0]+point[2];
+          mat_(1,0)=point[1]+point[0];   mat_(1,1)=point[1]+point[1];        mat_(1,2)=point[1]+point[2];
+          mat_(2,0)=point[2]+point[0];   mat_(2,1)=point[2]+point[1];        mat_(2,2)=point[2]+point[2];
+         return mat_; };
+    protected:
+    Matrix<Real,Rows,Cols> mat_;    
+    };  
+public: 
+
+
+
+
+    ExpressionMatrix():Expression<Matrix<Real,Rows,Cols>,Point>(std::make_shared<Implementation>(Expression<Matrix<Real,Rows,Cols>,Point>())){};
+
+    ExpressionMatrix(Expression<Matrix<Real,Rows,Cols>,Point> f)
+    :   Expression<Matrix<Real,Rows,Cols>,Point>(std::make_shared<Implementation>(f))
+    {}
+
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Base Function: f(x) = x
+template<typename T, Integer Rows,Integer Cols,typename Point>
+class FunctionMatrix
+{
+    protected:
+    
+    struct Implementation
+    {
+    virtual ~Implementation() {};
+    virtual Matrix<T,Rows,Cols> evaluate(const Point& point)
+        {mat_=0;
+         return mat_; };
+    protected:
+        Matrix<T,Rows,Cols> mat_;
+    };
+
+    public:
+    FunctionMatrix()
+    :   self_(std::make_shared<Implementation>())
+    {}
+    
+    Matrix<T,Rows,Cols> operator () (const Point& x) const { return self_->evaluate(x); }
+
+    protected:
+    FunctionMatrix(std::shared_ptr<Implementation> self)
+    :   self_(self)
+    {}
+
+    private:
+    std::shared_ptr<Implementation> self_;
+};
+
+
+template<typename Point>
+class FunctionMatrix2: public FunctionMatrix<Real,3,3,Point>
+{ 
+
+public:
+    static constexpr Integer Rows=3;
+    static constexpr Integer Cols=3;
+
+     protected:
+    struct Implementation: FunctionMatrix<Real,3,3,Point>::Implementation
+    {
+        FunctionMatrix<Real,3,3,Point> f;
+        Implementation(FunctionMatrix<Real,3,3,Point> f1):   
+        f(f1)
+        {};
+
+        virtual Matrix<Real,3,3> evaluate(const Point& point) override
+        { std::cout<<point<<std::endl;
+          mat_(0,0)=point[0];            mat_(0,1)=point[0]+point[1];        mat_(0,2)=point[0]+point[2];
+          mat_(1,0)=point[1]+point[0];   mat_(1,1)=point[1]+point[1];        mat_(1,2)=point[1]+point[2];
+          mat_(2,0)=point[2]+point[0];   mat_(2,1)=point[2]+point[1];        mat_(2,2)=point[2]+point[2];
+         return mat_; };
+    protected:
+    Matrix<Real,Rows,Cols> mat_;    
+    };  
+public: 
+
+
+
+    FunctionMatrix2(): FunctionMatrix<Real,Rows,Cols,Point>(std::make_shared<Implementation>(FunctionMatrix<Real,Rows,Cols,Point>())){};
+
+    FunctionMatrix2(FunctionMatrix<Real,Rows,Cols,Point> f)
+    :   FunctionMatrix<Real,Rows,Cols,Point>(std::make_shared<Implementation>(f))
+    {}
+
+};
+
+
+// Unary Function: u(-f(x))
+template<typename T,Integer Rows,Integer Cols, typename Point>
+class UnaryMinusMatrix : public FunctionMatrix<Real,Rows,Cols,Point>
+{
+public:
+
+
+    protected:
+    struct Implementation : FunctionMatrix<Real,Rows,Cols,Point>::Implementation
+    {
+        FunctionMatrix<Real,Rows,Cols,Point> f;
+
+
+        Implementation(FunctionMatrix<Real,Rows,Cols,Point> f1):   
+        f(f1)
+        {};
+
+        virtual Matrix<T,Rows,Cols> evaluate(const Point& point) override
+        {return (-f(point)); }
+    };
+
+    public:
+    UnaryMinusMatrix(FunctionMatrix<Real,Rows,Cols,Point> f)
+    :   FunctionMatrix<Real,Rows,Cols,Point>(std::make_shared<Implementation>(f))
+    {}
+};
+
+
+
+template<typename T, Integer Rows,Integer Cols,typename Point>
+inline UnaryMinusMatrix<T,Rows,Cols,Point> operator - (FunctionMatrix<T,Rows,Cols,Point> f) 
+{ return UnaryMinusMatrix<T,Rows,Cols,Point>(f); }
+
+
+
+
+
 // Base Function: f(x) = x
 class Function
 {
@@ -146,10 +497,20 @@ class Function2: public Function
      protected:
     struct Implementation: Function::Implementation
     {
-        virtual double evaluate(double x) const override{ cout<<"aaa"<<endl;return 2*x; }
+        Function f;
+        Implementation(Function f):   
+        f(f)
+        {};
+        virtual double evaluate(double x) const override{return 3.333*x; }
     };  
 public: 
-    double operator () (double x) const  { return 2*x; };
+    // double operator () (double x) const  { return 2*x; };
+    // Function2(Function f)
+    // :   Function(std::make_shared<Implementation>(f))
+    // {}
+    Function2()  
+    :   Function(std::make_shared<Implementation>(Function()))
+    {};
 };
 
 // Unary Function: u(-f(x))
@@ -262,13 +623,33 @@ void cents_example()
     Function x;
     Function2 x2;
     // Function2 result2 = x2+x;
-    // //Function result1 = x2+x;
-    
+    Function result1 = -x2;
+    // Function2 x3(result1);
+    // Function result2=result1+2*x3;
     // std::cout << x2(2)<< '\n';
-    // //std::cout << result1(1) <<"  "<<result1(2) << '\n';
+     std::cout << "I have " << std::endl;
+    std::cout << result1(1) <<"  "<<result1(2) << '\n';
+    std::cout << "I have " << std::endl;
     // std::cout << result2(1) <<"  "<<result2(2) << '\n';
-  
+    using Point=Vector<Real,3>;
+    // FunctionMatrix<Real,3,3,Point> mm0;
+    FunctionMatrix2<Point> mm;
+    Vector<Real,3> point{4,5,6};
+    auto mm2=-mm;
+    std::cout<<mm(point)<<std::endl;
+    std::cout<<mm2(point)<<std::endl;
 
+    ExpressionMatrix<Point> em;
+    auto emm=-em;
+    auto prod=emm*em;
+    auto summa=emm+em;
+    auto right=emm*3.0;
+    auto half=0.5*emm*3.0+right*prod;
+    std::cout<<"eee---"<<emm(point)<<std::endl;
+    std::cout<<"prod---"<<prod(point)<<std::endl;
+    std::cout<<"sum---"<<summa(point)<<std::endl;
+    std::cout<<"right---"<<right(point)<<std::endl;
+    std::cout<<"half---"<<half(point)<<std::endl;
 
 };
 

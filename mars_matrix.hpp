@@ -187,6 +187,31 @@ namespace mars {
 	    	return *this;
 	    } 
 
+	    inline Matrix<T, Rows, Cols> operator - ()const
+	    {
+	    	Matrix<T, Rows, Cols> result;
+
+	    	for(Integer i = 0; i < Rows; ++i) {
+	    		for(Integer j = 0; j < Cols; ++j) {
+	    				result(i, j) = -(*this)(i, j);
+	    			}
+	    		}
+	    	
+	    	return result;
+	    }
+
+	    inline Matrix<T, Rows, Cols> operator + (const Matrix<T, Rows, Cols> &other)const
+	    {
+	    	Matrix<T, Rows, Cols> ret;
+
+	    	for(Integer i = 0; i < Rows; ++i) {
+	    		for(Integer j = 0; j < Cols; ++j) {
+	    				ret(i, j) = (*this)(i, j) + other(i, j);
+	    			}
+	    		}
+	    	
+	    	return ret;
+	    }
 
 	    template<Integer OtherCols>
 	    inline Matrix<T, Rows, OtherCols> operator * (const Matrix<T, Cols, OtherCols> &other) const
@@ -533,7 +558,19 @@ namespace mars {
         }
 
 
+      template<typename T, Integer Rows1,Integer Cols1,Integer Rows2,Integer Cols2>
+      void assign(Matrix<T, Rows1,Cols1>& mat1, const Matrix<T, Rows2,Cols2>& mat2, Integer II, Integer JJ)
 
+      {
+       static_assert(Rows1>=Rows2," only a smaller matrix can be assigned: Rows1>=Rows2");
+       static_assert(Cols1>=Cols2," only a smaller matrix can be assigned: Cols1>=Cols2");
+       assert(Rows2+II<=Rows1 && " Rows2+II<=Rows1");
+       assert(Cols2+JJ<=Cols1 && " Cols2+JJ<=Cols1");
+       for(Integer i=0; i<Rows2 ;i++)
+        for(Integer j=0; j<Cols2 ;j++)
+           mat1(i+II,j+JJ)=mat2(i,j);
+
+      }
 
 
 }

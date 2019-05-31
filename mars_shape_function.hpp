@@ -249,21 +249,6 @@ public:
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 class Multiply
 {
  public:
@@ -316,6 +301,25 @@ public:
        return result;
  }
 
+ template<typename T,Integer Rows,Integer Cols>
+ Matrix<T,1,Rows> operator()(const Matrix<T, Rows,Cols> &A,const Matrix<T, 1,Cols> &B)
+ {
+       Matrix<T,1,Rows> result=0;
+       for(Integer i = 0; i < Rows; ++i) 
+         for(Integer j = 0; j < Cols; ++j) 
+             result(0,i) += A(i, j) * B(0,j);
+       return result;
+ }
+ template<typename T,Integer Rows,Integer Cols>
+ Matrix<T,Rows,1> operator()(const Matrix<T, Rows,Cols> &A,const Matrix<T, Cols,1> &B)
+ {
+       Matrix<T,Rows,1> result=0;
+       for(Integer i = 0; i < Rows; ++i) 
+         for(Integer j = 0; j < Cols; ++j) 
+             result(i,0) += A(i, j) * B(j,0);
+       return result;
+ }
+
  template<typename T>
  T operator()(const Matrix<T, 1,1> &A,const T &B)
  {
@@ -337,8 +341,7 @@ public:
        return result;
  }
 
- template<typename T>
- T operator()(const T &A,const T &B)
+ Real operator()(const Real &A,const Real &B)
  {
        return A*B;
  }
@@ -385,6 +388,126 @@ public:
 
 
 
+
+
+
+template<typename T,Integer NQPpoints>
+class QPValues
+{
+public:
+  using type=  Vector<T,NQPpoints>;
+  QPValues(const type& v): qpvalues_(v){};
+  inline type operator()()const {return qpvalues_;};
+
+  inline Vector<T,NQPpoints> &operator[](const Integer i)
+      {
+          assert(i < NQPpoints);
+          return qpvalues_[i];
+      }
+
+private:
+  type qpvalues_;
+
+};
+
+template<typename T,Integer NQPpoints,Integer Ncomponents>
+class FQPValues
+{
+public:
+  using type= Vector<Vector<T,NQPpoints>,Ncomponents>;
+
+      FQPValues(): fqpvalues_(){};
+      FQPValues(const type& v): fqpvalues_(v){};
+      
+      inline type operator()(){return fqpvalues_;};
+      inline Vector<T,NQPpoints> operator()(const Integer& i)const{return fqpvalues_[i];};
+      inline void operator()(const Integer& i,const Vector<T,NQPpoints>& u){fqpvalues_[i]=u;};
+
+      // inline void set_value(Integer i,const Vector<T,NQPpoints>& u){fqpvalues_[i]=u;};
+      // inline void get_value(Integer i,const Vector<T,NQPpoints>& u){fqpvalues_[i]=u;};
+      inline type get(){return fqpvalues_;};
+
+      inline FQPValues& operator = (const FQPValues &u)
+      {            
+        (*this).fqpvalues_=u.get();
+        return *this;
+      } 
+
+
+      inline Vector<T,NQPpoints> &operator[](const Integer i)
+      {
+          assert(i < Ncomponents);
+          return fqpvalues_[i];
+      }
+
+
+      template<typename QPValues>
+      FQPValues operator*(const QPValues &qpvalue) const
+      {
+        FQPValues result;
+        (*this).tmp_1_=qpvalue();
+        for(Integer i = 0; i < Ncomponents; ++i) {
+            result(i, (*this).tmp_1_ * (*this)(i) );
+        }
+        
+        return result;
+      };
+
+      FQPValues operator*(const Real &value) const
+      { 
+        return fqpvalues_*value;
+      };
+
+      FQPValues operator+(const FQPValues &fqpvalue) const
+      {
+        FQPValues result;
+        result.fqpvalues_=(*this).fqpvalues_+fqpvalue.fqpvalues_;
+        
+        return result;
+      };
+
+      FQPValues operator-(const FQPValues &fqpvalue) const
+      {
+        FQPValues result;
+        result.fqpvalues_=(*this).fqpvalues_-fqpvalue.fqpvalues_;
+        
+        return result;
+      };
+
+      template<typename QPValues>
+      friend FQPValues operator*(const QPValues &qpvalue, FQPValues& fqpvalue)
+      { 
+        Contraction contract;
+        FQPValues result;
+        const auto& tmp=qpvalue();
+        for(Integer i = 0; i < Ncomponents; ++i) 
+        {
+          for(Integer j = 0; j < NQPpoints; ++j)
+            {
+            result[i][j]= contract(tmp[i],fqpvalue[i][j]);
+            }          
+        }       
+        return result;
+      };
+
+  
+private:
+  type fqpvalues_;
+  Vector<T,NQPpoints> tmp1_;
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
 template<typename Operation>
 class Product{
  public:
@@ -392,16 +515,6 @@ class Product{
  Output operator()(Input1 i1,Input2 i2){return Operation(i1,i2);};
 };
 
-
-// template<>
-// class GeneralProduct<Contraction>
-// {
-// public:
-//  template<typename Input1,typename Input2, typename Output>
-//  Output operator()(Input1 i1,Input2 i2)
-//  {return Contraction(i1,i2);};
-
-// };
 
 
 
@@ -838,8 +951,8 @@ using DivPhiType=typename DivPhi<Dim, ManifoldDim, ShapeFunctionDim, NComponents
 
 
 
-template<typename Operator, Integer Ndofs, Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents=1>
-class BaseShapeFunctionOperator;
+// template<typename Operator, Integer Ndofs, Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents=1>
+// class BaseShapeFunctionOperator;
 
 
 
@@ -848,353 +961,353 @@ class BaseShapeFunctionOperator;
 
 
 
-template<Integer Ndofs, Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents>
-class BaseShapeFunctionOperator<IdentityOperator,Ndofs,Dim,ManifoldDim,ShapeFunctionDim,NComponents>
-{public:
+// template<Integer Ndofs, Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents>
+// class BaseShapeFunctionOperator<IdentityOperator,Ndofs,Dim,ManifoldDim,ShapeFunctionDim,NComponents>
+// {public:
 
-  virtual ~BaseShapeFunctionOperator(){};
+//   virtual ~BaseShapeFunctionOperator(){};
 
-  virtual const Matrix<Real,Ndofs,ShapeFunctionDim>
-  phi_single_component(const Vector<Real,Dim>& point )=0;
+//   virtual const Matrix<Real,Ndofs,ShapeFunctionDim>
+//   phi_single_component(const Vector<Real,Dim>& point )=0;
 
-  template<Integer NQPpoints>
-  const Vector<Vector<Vector<Real,ShapeFunctionDim>,NQPpoints>,Ndofs>
-  phi(const Matrix<Real,NQPpoints,Dim>& qp_points)
-  {
-   Vector<Vector<Vector<Real,ShapeFunctionDim>,NQPpoints>,Ndofs> f;
-   //Vector<Real,ShapeFunctionDim> row_tmp;
-   Vector<Real,Dim> qp_point;
-
-   for(Integer qp=0;qp<NQPpoints;qp++)
-    {
-    qp_points.get_row(qp,qp_point);
-    auto phi_single=phi_single_component(qp_point);
-    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
-     {
-      for(Integer ii=0;ii<ShapeFunctionDim;ii++)
-        f[n_dof][qp][ii]=phi_single(n_dof,ii);     
-     }
-    }
-   return f;
-  };
-
-  template<Integer NQPpoints, typename Mapping>
-  const Vector<Vector<Vector<Matrix<Real,NComponents,ShapeFunctionDim>,NQPpoints>,NComponents>,Ndofs>
-  phiN(const Vector<Vector<Vector<Real,ShapeFunctionDim>,NQPpoints>,Ndofs>& reference_phi,
-       const Mapping& mapping, 
-       const Vector<Real,Ndofs> &alpha=1.0)
-  {
-   Vector<Vector<Vector<Matrix<Real,NComponents,ShapeFunctionDim>,NQPpoints>,NComponents>,Ndofs> result;
-   Vector<Real,ShapeFunctionDim> row;
-  for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
-     {
-      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-      {
-        for(Integer qp=0;qp<NQPpoints;qp++)
-        { 
-          result[n_dof][n_comp][qp].zero();
-          row=alpha[n_dof] * mapping*reference_phi[n_dof][qp];
-          result[n_dof][n_comp][qp].row(n_comp,row);
-        }        
-      }
-     }
-   return result;
-  };
-
-};
-
-
-template<Integer Ndofs, Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents>
-class BaseShapeFunctionOperator<DivergenceOperator,Ndofs,Dim,ManifoldDim,ShapeFunctionDim,NComponents>
-{public:
-
-  virtual ~BaseShapeFunctionOperator(){};
-
-  virtual const Vector<Real,Ndofs>
-  phi_single_component(const Vector<Real,Dim>& qp_point )=0;
-
-
-  template<Integer NQPpoints>
-  const Vector<Vector< Real, NQPpoints>,Ndofs>
-  phi(const Matrix<Real,NQPpoints,Dim>& qp_points)
-  {
-        Vector<Vector< Real, NQPpoints>,Ndofs> div;
-        Vector<Real,Dim> qp_point;
-
-        for(Integer qp=0;qp<NQPpoints;qp++)
-        {
-          qp_points.get_row(qp,qp_point);
-          auto div_phi_single=phi_single_component(qp_point);
-              for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
-                   div[n_dof][qp]=div_phi_single[n_dof];
-        }
-        return div;};
-
-  template<Integer NQPpoints,typename Mapping>
-  const Vector<Vector<Vector< Matrix<Real,NComponents,1>, NQPpoints>,NComponents>,Ndofs>
-  phiN(const Vector<Vector< Real, NQPpoints>,Ndofs>& divphi_reference,
-       const Mapping& mapping,
-       const Vector<Real,Ndofs> &alpha=1.0)
-  {
-        Vector<Vector<Vector< Matrix<Real,NComponents,1>, NQPpoints>,NComponents>,Ndofs> divphi;
-        for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
-         for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-          for(Integer qp=0;qp<NQPpoints;qp++)
-            { divphi[n_dof][n_comp][qp].zero();
-              divphi[n_dof][n_comp][qp](n_comp,0)=alpha[n_dof] * mapping * divphi_reference[n_dof][qp];
-            } 
-    return divphi;};
-
-
-};
-
-
-
-
-
-
-
-template<Integer Ndofs, Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents>
-class BaseShapeFunctionOperator<GradientOperator,Ndofs,Dim,ManifoldDim,ShapeFunctionDim,NComponents>
-{public:
-
-  virtual ~BaseShapeFunctionOperator(){};
-
- virtual const Vector< Matrix<Real,ShapeFunctionDim,Dim>, Ndofs>
- phi_single_component(const Vector<Real,Dim>& point)=0;
-
-  template<Integer NQPpoints>
-  const Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPpoints>,NComponents>,Ndofs>
-  phi(const Matrix<Real,NQPpoints,Dim>& qp_points)
-  {
-   Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPpoints>,NComponents>,Ndofs> f;
-   Vector<Real,Dim> qp_point;
-
-   for(Integer qp=0;qp<NQPpoints;qp++)
-    {
-    qp_points.get_row(qp,qp_point);
-    auto grad_phi_single=phi_single_component(qp_point);
-    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
-     {
-      auto grad_phi=grad_phi_single[n_dof];
-      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-      {
-        f[n_dof][n_comp][qp].zero();
-        for(Integer ii=0;ii<ShapeFunctionDim;ii++)
-          {
-            for(Integer jj=0;jj<Dim;jj++)
-            {
-              f[n_dof][n_comp][qp](n_comp*ShapeFunctionDim+ii,jj)=grad_phi(ii,jj);
-            }
-          }
-      }
-     }
-    }
-
-   return f;
-  };
-
-  template<Integer NQPpoints, typename Mapping>
-  const Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPpoints>,NComponents>,Ndofs>
-  phiN(const Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPpoints>,NComponents>,Ndofs>& reference_grad_phi,
-       const Mapping& mapping, 
-       const Vector<Real,Ndofs> &alpha=1.0)
-  {
-   Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPpoints>,NComponents>,Ndofs> result;
-   Vector<Real,Dim> row;
-    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
-     {
-      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-      {
-        for(Integer qp=0;qp<NQPpoints;qp++)
-        {
-          result[n_dof][n_comp][qp].zero();
-          reference_grad_phi[n_dof][n_comp][qp].get_row(n_comp,row); 
-          // std::cout<<" firs row ="<<std::endl;
-          // reference_grad_phi[n_dof][n_comp][qp].describe(std::cout);     
-          // row.describe(std::cout);     
-          // std::cout<<" mapping ="<<std::endl;
-          // mapping.describe(std::cout);    
-          row=alpha[n_dof]*mapping*row;      
-          result[n_dof][n_comp][qp].row(n_comp,row);
-          // std::cout<<" result ="<<std::endl;
-          // result[n_dof][n_comp][qp].describe(std::cout);        
-        }
-      }
-     }
-   return result;
-  };
-
-
-};
-
-
-
-
-template<typename Operator, typename Elem,typename BaseFunctionSpace>
-class ShapeFunctionOperator;
-
-
-
-template<Integer NComponents_>
-class ShapeFunctionOperator<IdentityOperator,Simplex<2,2>, Lagrange1<NComponents_> > : 
-public BaseShapeFunctionOperator<IdentityOperator,3,2,2,1,NComponents_>
-{
-public:
-  virtual const Matrix<Real,3,1>
-  phi_single_component(const Vector<Real,2>& point)
-       {const auto& xi=point[0];
-        const auto& eta=point[1];
-        const Real zeta = 1. - xi - eta;
-        const Matrix<Real,3,1> shapefunction{zeta,xi,eta};
-        return shapefunction;};
-};
-
-
-// template<Integer NComponents>
-// class ShapeFunctionOperator<DivergenceOperator,Simplex<2,2>, Lagrange1<NComponents> > : 
-// public BaseShapeFunctionOperator<DivergenceOperator,3,2,2,1,NComponents>
-// {
-// public:
-//   virtual const Vector<DivPhiOperator<2,2,1,NComponents>,3>
-//   phi_single_component(const Vector<Real,2>& qp_point )
+//   template<Integer NQPpoints>
+//   Vector<Vector<Vector<Real,ShapeFunctionDim>,NQPpoints>,Ndofs>
+//   phi(const Matrix<Real,NQPpoints,Dim>& qp_points)
 //   {
-//   Vector<DivPhiType<2,2,1,NComponents>,3> tryme; 
+//    Vector<Vector<Vector<Real,ShapeFunctionDim>,NQPpoints>,Ndofs> f;
+//    //Vector<Real,ShapeFunctionDim> row_tmp;
+//    Vector<Real,Dim> qp_point;
 
-//     tryme[0](0,0)=1.0;
-//     tryme[1](0,0)=1.0;
-//     tryme[2](0,0)=-2.0;
+//    for(Integer qp=0;qp<NQPpoints;qp++)
+//     {
+//     qp_points.get_row(qp,qp_point);
+//     auto phi_single=phi_single_component(qp_point);
+//     for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+//      {
+//       for(Integer ii=0;ii<ShapeFunctionDim;ii++)
+//         f[n_dof][qp][ii]=phi_single(n_dof,ii);     
+//      }
+//     }
+//    return f;
+//   };
 
-//   return tryme;};
+//   template<Integer NQPpoints, typename Mapping>
+//   Vector<Vector<Vector<Matrix<Real,NComponents,ShapeFunctionDim>,NQPpoints>,NComponents>,Ndofs>
+//   phiN(const Vector<Vector<Vector<Real,ShapeFunctionDim>,NQPpoints>,Ndofs>& reference_phi,
+//        const Mapping& mapping, 
+//        const Vector<Real,Ndofs> &alpha=1.0)
+//   {
+//    Vector<Vector<Vector<Matrix<Real,NComponents,ShapeFunctionDim>,NQPpoints>,NComponents>,Ndofs> result;
+//    Vector<Real,ShapeFunctionDim> row;
+//   for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+//      {
+//       for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+//       {
+//         for(Integer qp=0;qp<NQPpoints;qp++)
+//         { 
+//           result[n_dof][n_comp][qp].zero();
+//           row=alpha[n_dof] * mapping*reference_phi[n_dof][qp];
+//           result[n_dof][n_comp][qp].row(n_comp,row);
+//         }        
+//       }
+//      }
+//    return result;
+//   };
 
 // };
 
-template<Integer NComponents>
-class ShapeFunctionOperator<GradientOperator,Simplex<2,2>, Lagrange1<NComponents> > : 
-public BaseShapeFunctionOperator<GradientOperator,3,2,2,1,NComponents>
-{
-public:
 
-  virtual const Vector< Matrix<Real,1,2>, 3>
-  phi_single_component(const Vector<Real,2>& point)
-  {
-    Vector< Matrix<Real,1,2>, 3> grad{{-1,-1},{1,0},{0,1}};
-    return grad;
-  }
+// template<Integer Ndofs, Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents>
+// class BaseShapeFunctionOperator<DivergenceOperator,Ndofs,Dim,ManifoldDim,ShapeFunctionDim,NComponents>
+// {public:
 
-};
+//   virtual ~BaseShapeFunctionOperator(){};
+
+//   virtual const Vector<Real,Ndofs>
+//   phi_single_component(const Vector<Real,Dim>& qp_point )=0;
 
 
-
-
-
-
-
-
-
-
-
-
-template<Integer NComponents_>
-class ShapeFunctionOperator<IdentityOperator, Simplex<2,2>, Lagrange2<NComponents_> > : 
-public BaseShapeFunctionOperator<IdentityOperator,6,2,2,1,NComponents_>
-{
-public:
-      virtual const Matrix<Real,6,1>
-      phi_single_component(const Vector<Real,2>& point) 
-      {
-          const auto& xi=point[0];
-          const auto& eta=point[1];
-          const Real zeta = 1. - xi - eta;
-          Matrix<Real,6,1> shape_function{2.*zeta*(zeta-0.5),
-                                        2.*xi*(xi-0.5),
-                                        2.*eta*(eta-0.5),
-                                        4.*zeta*xi,
-                                        4.*xi*eta, 
-                                        4.*eta*zeta };
-          return shape_function;
-      };
-};
-
-// template<Integer NComponents>
-// class ShapeFunctionOperator<DivergenceOperator, Simplex<2,2>, Lagrange2<NComponents> > : 
-// public BaseShapeFunctionOperator<DivergenceOperator,6,2,2,1,NComponents>
-// {
-// public:
-//   virtual const Vector<DivPhiType<2,2,1,NComponents>,6>
-//   phi_single_component(const Vector<Real,2>& qp_point )
+//   template<Integer NQPpoints>
+//   const Vector<Vector< Real, NQPpoints>,Ndofs>
+//   phi(const Matrix<Real,NQPpoints,Dim>& qp_points)
 //   {
-//     //////////////// E' SBAGLIATO, CI VUOLE DIPENDENZA DALLE VARIABILI ////////////////
-//     Vector<DivPhiType<2,2,1,NComponents>,6> tryme; 
-//     tryme[0](0,0)=(4.0+4.0);
-//     tryme[1](0,0)=(4.0);
-//     tryme[2](0,0)=(4.0);
-//     tryme[3](0,0)=(-8.0);
-//     tryme[4](0,0)=(4.0);
-//     tryme[5](0,0)=(-8.0);
-//     return tryme;
-//  };
+//         Vector<Vector< Real, NQPpoints>,Ndofs> div;
+//         Vector<Real,Dim> qp_point;
+
+//         for(Integer qp=0;qp<NQPpoints;qp++)
+//         {
+//           qp_points.get_row(qp,qp_point);
+//           auto div_phi_single=phi_single_component(qp_point);
+//               for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+//                    div[n_dof][qp]=div_phi_single[n_dof];
+//         }
+//         return div;};
+
+//   template<Integer NQPpoints,typename Mapping>
+//   const Vector<Vector<Vector< Matrix<Real,NComponents,1>, NQPpoints>,NComponents>,Ndofs>
+//   phiN(const Vector<Vector< Real, NQPpoints>,Ndofs>& divphi_reference,
+//        const Mapping& mapping,
+//        const Vector<Real,Ndofs> &alpha=1.0)
+//   {
+//         Vector<Vector<Vector< Matrix<Real,NComponents,1>, NQPpoints>,NComponents>,Ndofs> divphi;
+//         for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+//          for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+//           for(Integer qp=0;qp<NQPpoints;qp++)
+//             { divphi[n_dof][n_comp][qp].zero();
+//               divphi[n_dof][n_comp][qp](n_comp,0)=alpha[n_dof] * mapping * divphi_reference[n_dof][qp];
+//             } 
+//     return divphi;};
+
+
 // };
 
 
-template<Integer NComponents>
-class ShapeFunctionOperator<GradientOperator, Simplex<2,2>, Lagrange2<NComponents> > : 
-public BaseShapeFunctionOperator<GradientOperator,6,2,2,1,NComponents>
-{
-public:
-
-  virtual const Vector< Matrix<Real,1,2>, 6>
-  phi_single_component(const Vector<Real,2>& point)
-  {
-   const auto& xi=point[0];
-   const auto& eta=point[1];
-   const Real zeta = 1. - xi - eta;
-   Vector< Matrix<Real,1,2>, 6> grad{
-                                     { - 4 * (1 - xi - eta) + 1, - 4 * (1 - xi - eta) + 1},
-                                     { 4 * xi - 1              , 0                       },
-                                     { 0                       , 4 * eta -1              },
-                                     { 4 - 8 * xi - 4 * eta    , - 4 * xi                },
-                                     { 4 * eta                 , 4 * xi                  },
-                                     { -4 * eta                , 4 - 4 * xi - 8 * eta    } };
-  return grad;
-  }
-
-};
 
 
 
 
 
-template<Integer NComponents_>
-class ShapeFunctionOperator<IdentityOperator, Simplex<2,2>, RT0<NComponents_> > : 
-public BaseShapeFunctionOperator<IdentityOperator,3,2,2,2,NComponents_>
-{
-public:
-  virtual const  Matrix<Real,3,2>
-  phi_single_component(const Vector<Real,2>& point)
-       {const auto& xi=point[0];
-        const auto& eta=point[1];
-        const Matrix<Real,3,2> shapefunction{xi,eta-1,xi-1,eta,xi,eta};
-        return shapefunction;};
-};
+// template<Integer Ndofs, Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents>
+// class BaseShapeFunctionOperator<GradientOperator,Ndofs,Dim,ManifoldDim,ShapeFunctionDim,NComponents>
+// {public:
+
+//   virtual ~BaseShapeFunctionOperator(){};
+
+//  virtual const Vector< Matrix<Real,ShapeFunctionDim,Dim>, Ndofs>
+//  phi_single_component(const Vector<Real,Dim>& point)=0;
+
+//   template<Integer NQPpoints>
+//   const Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPpoints>,NComponents>,Ndofs>
+//   phi(const Matrix<Real,NQPpoints,Dim>& qp_points)
+//   {
+//    Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPpoints>,NComponents>,Ndofs> f;
+//    Vector<Real,Dim> qp_point;
+
+//    for(Integer qp=0;qp<NQPpoints;qp++)
+//     {
+//     qp_points.get_row(qp,qp_point);
+//     auto grad_phi_single=phi_single_component(qp_point);
+//     for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+//      {
+//       auto grad_phi=grad_phi_single[n_dof];
+//       for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+//       {
+//         f[n_dof][n_comp][qp].zero();
+//         for(Integer ii=0;ii<ShapeFunctionDim;ii++)
+//           {
+//             for(Integer jj=0;jj<Dim;jj++)
+//             {
+//               f[n_dof][n_comp][qp](n_comp*ShapeFunctionDim+ii,jj)=grad_phi(ii,jj);
+//             }
+//           }
+//       }
+//      }
+//     }
+
+//    return f;
+//   };
+
+//   template<Integer NQPpoints, typename Mapping>
+//   const Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPpoints>,NComponents>,Ndofs>
+//   phiN(const Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPpoints>,NComponents>,Ndofs>& reference_grad_phi,
+//        const Mapping& mapping, 
+//        const Vector<Real,Ndofs> &alpha=1.0)
+//   {
+//    Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPpoints>,NComponents>,Ndofs> result;
+//    Vector<Real,Dim> row;
+//     for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+//      {
+//       for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+//       {
+//         for(Integer qp=0;qp<NQPpoints;qp++)
+//         {
+//           result[n_dof][n_comp][qp].zero();
+//           reference_grad_phi[n_dof][n_comp][qp].get_row(n_comp,row); 
+//           // std::cout<<" firs row ="<<std::endl;
+//           // reference_grad_phi[n_dof][n_comp][qp].describe(std::cout);     
+//           // row.describe(std::cout);     
+//           // std::cout<<" mapping ="<<std::endl;
+//           // mapping.describe(std::cout);    
+//           row=alpha[n_dof]*mapping*row;      
+//           result[n_dof][n_comp][qp].row(n_comp,row);
+//           // std::cout<<" result ="<<std::endl;
+//           // result[n_dof][n_comp][qp].describe(std::cout);        
+//         }
+//       }
+//      }
+//    return result;
+//   };
 
 
-template<Integer NComponents>
-class ShapeFunctionOperator<DivergenceOperator, Simplex<2,2>, RT0<NComponents> > : 
-public BaseShapeFunctionOperator<DivergenceOperator,3,2,2,2,NComponents>
-{
-public:
+// };
 
-  virtual const Vector<Real,3>
-  phi_single_component(const Vector<Real,2>& qp_point )
-  {
-   Vector<Real,3> tryme;
-     tryme[0]=2;
-     tryme[1]=2;
-     tryme[2]=2;    
-   return tryme;
-  };
-};
+
+
+
+// template<typename Operator, typename Elem,typename BaseFunctionSpace>
+// class ShapeFunctionOperator;
+
+
+
+// template<Integer NComponents_>
+// class ShapeFunctionOperator<IdentityOperator,Simplex<2,2>, Lagrange1<NComponents_> > : 
+// public BaseShapeFunctionOperator<IdentityOperator,3,2,2,1,NComponents_>
+// {
+// public:
+//   virtual const Matrix<Real,3,1>
+//   phi_single_component(const Vector<Real,2>& point)
+//        {const auto& xi=point[0];
+//         const auto& eta=point[1];
+//         const Real zeta = 1. - xi - eta;
+//         const Matrix<Real,3,1> shapefunction{zeta,xi,eta};
+//         return shapefunction;};
+// };
+
+
+// // template<Integer NComponents>
+// // class ShapeFunctionOperator<DivergenceOperator,Simplex<2,2>, Lagrange1<NComponents> > : 
+// // public BaseShapeFunctionOperator<DivergenceOperator,3,2,2,1,NComponents>
+// // {
+// // public:
+// //   virtual const Vector<DivPhiOperator<2,2,1,NComponents>,3>
+// //   phi_single_component(const Vector<Real,2>& qp_point )
+// //   {
+// //   Vector<DivPhiType<2,2,1,NComponents>,3> tryme; 
+
+// //     tryme[0](0,0)=1.0;
+// //     tryme[1](0,0)=1.0;
+// //     tryme[2](0,0)=-2.0;
+
+// //   return tryme;};
+
+// // };
+
+// template<Integer NComponents>
+// class ShapeFunctionOperator<GradientOperator,Simplex<2,2>, Lagrange1<NComponents> > : 
+// public BaseShapeFunctionOperator<GradientOperator,3,2,2,1,NComponents>
+// {
+// public:
+
+//   virtual const Vector< Matrix<Real,1,2>, 3>
+//   phi_single_component(const Vector<Real,2>& point)
+//   {
+//     Vector< Matrix<Real,1,2>, 3> grad{{-1,-1},{1,0},{0,1}};
+//     return grad;
+//   }
+
+// };
+
+
+
+
+
+
+
+
+
+
+
+
+// template<Integer NComponents_>
+// class ShapeFunctionOperator<IdentityOperator, Simplex<2,2>, Lagrange2<NComponents_> > : 
+// public BaseShapeFunctionOperator<IdentityOperator,6,2,2,1,NComponents_>
+// {
+// public:
+//       virtual const Matrix<Real,6,1>
+//       phi_single_component(const Vector<Real,2>& point) 
+//       {
+//           const auto& xi=point[0];
+//           const auto& eta=point[1];
+//           const Real zeta = 1. - xi - eta;
+//           Matrix<Real,6,1> shape_function{2.*zeta*(zeta-0.5),
+//                                         2.*xi*(xi-0.5),
+//                                         2.*eta*(eta-0.5),
+//                                         4.*zeta*xi,
+//                                         4.*xi*eta, 
+//                                         4.*eta*zeta };
+//           return shape_function;
+//       };
+// };
+
+// // template<Integer NComponents>
+// // class ShapeFunctionOperator<DivergenceOperator, Simplex<2,2>, Lagrange2<NComponents> > : 
+// // public BaseShapeFunctionOperator<DivergenceOperator,6,2,2,1,NComponents>
+// // {
+// // public:
+// //   virtual const Vector<DivPhiType<2,2,1,NComponents>,6>
+// //   phi_single_component(const Vector<Real,2>& qp_point )
+// //   {
+// //     //////////////// E' SBAGLIATO, CI VUOLE DIPENDENZA DALLE VARIABILI ////////////////
+// //     Vector<DivPhiType<2,2,1,NComponents>,6> tryme; 
+// //     tryme[0](0,0)=(4.0+4.0);
+// //     tryme[1](0,0)=(4.0);
+// //     tryme[2](0,0)=(4.0);
+// //     tryme[3](0,0)=(-8.0);
+// //     tryme[4](0,0)=(4.0);
+// //     tryme[5](0,0)=(-8.0);
+// //     return tryme;
+// //  };
+// // };
+
+
+// template<Integer NComponents>
+// class ShapeFunctionOperator<GradientOperator, Simplex<2,2>, Lagrange2<NComponents> > : 
+// public BaseShapeFunctionOperator<GradientOperator,6,2,2,1,NComponents>
+// {
+// public:
+
+//   virtual const Vector< Matrix<Real,1,2>, 6>
+//   phi_single_component(const Vector<Real,2>& point)
+//   {
+//    const auto& xi=point[0];
+//    const auto& eta=point[1];
+//    const Real zeta = 1. - xi - eta;
+//    Vector< Matrix<Real,1,2>, 6> grad{
+//                                      { - 4 * (1 - xi - eta) + 1, - 4 * (1 - xi - eta) + 1},
+//                                      { 4 * xi - 1              , 0                       },
+//                                      { 0                       , 4 * eta -1              },
+//                                      { 4 - 8 * xi - 4 * eta    , - 4 * xi                },
+//                                      { 4 * eta                 , 4 * xi                  },
+//                                      { -4 * eta                , 4 - 4 * xi - 8 * eta    } };
+//   return grad;
+//   }
+
+// };
+
+
+
+
+
+// template<Integer NComponents_>
+// class ShapeFunctionOperator<IdentityOperator, Simplex<2,2>, RT0<NComponents_> > : 
+// public BaseShapeFunctionOperator<IdentityOperator,3,2,2,2,NComponents_>
+// {
+// public:
+//   virtual const  Matrix<Real,3,2>
+//   phi_single_component(const Vector<Real,2>& point)
+//        {const auto& xi=point[0];
+//         const auto& eta=point[1];
+//         const Matrix<Real,3,2> shapefunction{xi,eta-1,xi-1,eta,xi,eta};
+//         return shapefunction;};
+// };
+
+
+// template<Integer NComponents>
+// class ShapeFunctionOperator<DivergenceOperator, Simplex<2,2>, RT0<NComponents> > : 
+// public BaseShapeFunctionOperator<DivergenceOperator,3,2,2,2,NComponents>
+// {
+// public:
+
+//   virtual const Vector<Real,3>
+//   phi_single_component(const Vector<Real,2>& qp_point )
+//   {
+//    Vector<Real,3> tryme;
+//      tryme[0]=2;
+//      tryme[1]=2;
+//      tryme[2]=2;    
+//    return tryme;
+//   };
+// };
 
 //  virtual const Vector< Matrix<Real,ShapeFunctionDim,Dim>, Ndofs>
 //  grad_phi_single_component(const Vector<Real,2>& point)
@@ -1321,6 +1434,9 @@ class BaseShapeFunctionOperator2
         f[n_dof][qp][ii]=phi_single(n_dof,ii);     
      }
     }
+   std::cout<<"identity operator"<<std::endl;
+   std::cout<<f<<std::endl;
+   
    return f;
   };
 
@@ -1706,6 +1822,452 @@ class MapFromReference2<Simplex<Dim,ManifoldDim>,BaseFunctionSpace<RaviartThomas
 
 
 
+
+
+
+
+
+
+template<Integer NQPoints, Integer Ndofs, Integer Dim, Integer ManifoldDim, 
+         Integer ShapeFunctionDim1=1, Integer ShapeFunctionDim2=1, Integer NComponents=1>
+class BaseShapeFunctionOperator4
+{ 
+  public:
+  static constexpr Integer Ntot = Ndofs * NComponents ;
+  using FuncType   = Matrix<Real, ShapeFunctionDim1, ShapeFunctionDim2>;
+  using TotFuncType= Matrix<Real, ShapeFunctionDim1 * NComponents, ShapeFunctionDim2>;
+  using GradType   = Matrix<Real, ShapeFunctionDim1 , ShapeFunctionDim2 * Dim >;
+  using TotGradType= Matrix<Real, ShapeFunctionDim1 * NComponents, ShapeFunctionDim2 * Dim >;
+  using DivType = Real;
+  using TotDivType = Matrix<Real,NComponents,1>;
+  using Point = Vector<Real,Dim>;
+  using QP = Matrix<Real,NQPoints,Dim>;
+
+
+  virtual ~BaseShapeFunctionOperator4(){};
+  
+  virtual void
+  value(const IdentityOperator& o,  const Point& point,    Vector<FuncType,Ndofs>& func_ )   =0;
+
+  virtual void
+  value(const GradientOperator&o,   const Point& point,    Vector<GradType,Ndofs>& func_grad_)=0;
+
+  virtual void
+  value(const DivergenceOperator&o, const Point& qp_point, Vector<DivType,Ndofs>& func_div_)  =0;
+
+  FQPValues<FuncType,NQPoints,Ndofs>& reference(const IdentityOperator&o){return reference_func_values_;}
+  FQPValues<GradType,NQPoints,Ndofs>& reference(const GradientOperator&o){return reference_grad_values_;}
+  FQPValues<TotFuncType,NQPoints,Ntot> & function(const IdentityOperator&o){return func_values_;}
+  FQPValues<TotGradType,NQPoints,Ntot>& function(const GradientOperator&o){return grad_values_;}
+
+
+  void operator()(const IdentityOperator&o,const QP & qp_points)
+  {
+   for(Integer qp=0;qp<NQPoints;qp++)
+    {
+    qp_points.get_row(qp,qp_point_);
+    value(o,qp_point_,func_);
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+        reference_func_values_[n_dof][qp]=func_[n_dof];     
+     }
+    }
+  };
+
+
+  template<typename Mapping>
+  void operator()(const IdentityOperator&o,
+                  const Mapping& mapping, 
+                  const Vector<Real,Ndofs> &alpha=1.0)
+  {
+  Integer n_tot,n1;
+  for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+      {
+
+          n_tot=n_dof * NComponents +  n_comp ;
+          n1=n_comp*ShapeFunctionDim1;
+          for(Integer qp=0;qp<NQPoints;qp++)
+          {             
+            func_values_[n_tot][qp].zero();
+            func_tmp_=alpha[n_dof] * mapping * reference_func_values_[n_dof][qp];
+            assign(func_values_[n_tot][qp],func_tmp_,n1,0);
+          }
+                 
+      }
+     }
+  };
+
+  void operator()(const GradientOperator& o, const QP& qp_points)
+  {
+
+   for(Integer qp=0;qp<NQPoints;qp++)
+    {
+    qp_points.get_row(qp,qp_point_);
+    value(o,qp_point_,grad_);
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      reference_grad_values_[n_dof][qp]=grad_[n_dof];           
+     }
+    }
+  };
+
+  template<typename Mapping>
+  void operator()(const GradientOperator& o,
+                  const Mapping& mapping, 
+                  const Vector<Real,Ndofs> &alpha=1.0)
+  {
+    Integer n_tot,n1;
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+      {
+        n_tot=n_dof * NComponents +  n_comp ;
+        n1=n_comp * ShapeFunctionDim1;
+        for(Integer qp=0;qp<NQPoints;qp++)
+        {
+          grad_values_[n_tot][qp].zero();  
+          grad_tmp_=alpha[n_dof]*contract(mapping, reference_grad_values_[n_dof][qp]);
+          assign(grad_values_[n_tot][qp],grad_tmp_,n1,0);    
+        }
+      }
+     }
+  };
+
+  private: 
+  Vector<FuncType,Ndofs> func_;
+  Vector<GradType,Ndofs> grad_;
+  Vector<DivType,Ndofs>  div_;
+  Point qp_point_;
+
+  FQPValues<FuncType,NQPoints,Ndofs> reference_func_values_;
+  FQPValues<GradType,NQPoints,Ndofs> reference_grad_values_;
+
+  FQPValues<TotFuncType,NQPoints,Ntot> func_values_;
+  FQPValues<TotGradType,NQPoints,Ntot> grad_values_;
+  FuncType func_tmp_;
+  GradType grad_tmp_;
+  Contraction contract;
+
+};
+
+
+
+
+template<Integer NQPoints, typename Elem,typename BaseFunctionSpace>
+class ShapeFunctionOperator4;
+
+
+
+template<Integer NQPoints, Integer NComponents>
+class ShapeFunctionOperator4<NQPoints,Simplex<2,2>, Lagrange1<NComponents> > : 
+public BaseShapeFunctionOperator4<NQPoints,3,2,2,1,1,NComponents>
+{
+public:
+  public:
+  static constexpr Integer Ndofs=3;
+  static constexpr Integer Dim=2;
+  static constexpr Integer ManifoldDim=2;
+  static constexpr Integer ShapeFunctionDim1=1;
+  static constexpr Integer ShapeFunctionDim2=1;
+  static constexpr Integer Ntot = Ndofs * NComponents ;
+  using FuncType   = Matrix<Real, ShapeFunctionDim1, ShapeFunctionDim2>;
+  using GradType   = Matrix<Real, ShapeFunctionDim1, ShapeFunctionDim2 * Dim>;
+  using DivType = Real;
+  using Point = Vector<Real,Dim>;
+  using QP = Matrix<Real,NQPoints,Dim>;
+
+
+
+ virtual void value(const IdentityOperator& o, const Point& point, Vector<FuncType,Ndofs>& func )
+       {func[0](0,0)=point[0];
+        func[1](0,0)=point[1];
+        func[2](0,0)=1. - point[0] - point[1];};
+  ;
+
+  virtual void value(const GradientOperator&o, const Point& point, Vector<GradType,Ndofs>& func_grad)
+   {
+    func_grad[0](0,0)=-1;  func_grad[0](0,1)=-1; 
+    func_grad[1](0,0)=+1;  func_grad[1](0,1)= 0; 
+    func_grad[2](0,0)= 0;  func_grad[2](0,1)=+1; 
+  } 
+
+  virtual void value(const DivergenceOperator&o, const Point& qp_point, Vector<DivType,Ndofs>& func_div_)
+  {
+    std::cout<<" Lagrange1 divergence not implemented"<<std::endl;
+  }
+
+
+};
+
+
+
+
+
+
+template<Integer NQPoints, Integer Ndofs, Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents>
+class BaseShapeFunctionOperator3
+{ 
+  public:
+  /// maybe use Matrix<Real,ShapefunctionDim1,ShapeFunctionDim2>
+  using FuncType=Vector<Real,ShapeFunctionDim>;
+  using GradType=Matrix<Real,ShapeFunctionDim*NComponents,Dim>;
+  using DivType=Real;
+  using Point=Vector<Real,Dim>;
+  using QP=Matrix<Real,NQPoints,Dim>;
+  static constexpr Integer Ntot=Ndofs*NComponents;
+
+
+
+
+  public:
+
+
+
+  virtual ~BaseShapeFunctionOperator3(){};
+  
+  virtual void
+  value(const IdentityOperator& o,  const Point& point,    Vector<FuncType,Ndofs>& func_ )   =0;
+
+  virtual void
+  value(const GradientOperator&o,   const Point& point,    Vector<GradType,Ndofs>& func_grad_)=0;
+
+  virtual void
+  value(const DivergenceOperator&o, const Point& qp_point, Vector<DivType,Ndofs>& func_div_)  =0;
+
+
+
+  FQPValues<FuncType,NQPoints,Ndofs>& reference(const IdentityOperator&o){return reference_func_values_;}
+  FQPValues<GradType,NQPoints,Ntot>& reference(const GradientOperator&o){return reference_grad_values_;}
+
+  FQPValues<FuncType,NQPoints,Ntot>& operator()(const IdentityOperator&o){return func_values_;}
+
+  void operator()(const IdentityOperator&o,const QP & qp_points)//,FQPValues<FuncType,NQPoints,Ndofs>& reference_func_values_)
+  {
+   for(Integer qp=0;qp<NQPoints;qp++)
+    {
+    qp_points.get_row(qp,qp_point_);
+    value(o,qp_point_,func_);
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      for(Integer ii=0;ii<ShapeFunctionDim;ii++)
+        reference_func_values_[n_dof][qp][ii]=func_[n_dof][ii];     
+     }
+    }
+  };
+
+
+
+  template<Integer NQPpoints, typename Mapping>
+  void operator()(FQPValues<FuncType,NQPoints,Ntot>& func_values_,
+                  const FQPValues<FuncType,NQPoints,Ndofs>& reference_func_values_,
+                  const IdentityOperator&o,
+                  const Mapping& mapping, 
+                  const Vector<Real,Ndofs> &alpha=1.0)
+  {
+  Integer n_tot;
+  for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+      {
+        for(Integer qp=0;qp<NQPpoints;qp++)
+        { 
+          n_tot=n_dof * NComponents + n_comp;
+          func_values_[n_tot][qp].zero();
+          func_tmp_=alpha[n_dof] * mapping*reference_func_values_[n_dof][qp];
+          func_values_[n_tot][qp].row(n_comp,func_tmp_);
+        }        
+      }
+     }
+  };
+
+
+
+
+
+  template<Integer NQPpoints>
+  void operator()(const GradientOperator& o, const Matrix<Real,NQPpoints,Dim>& qp_points)
+  {
+   Vector<Real,Dim> qp_point;
+
+   for(Integer qp=0;qp<NQPpoints;qp++)
+    {
+    qp_points.get_row(qp,qp_point_);
+    value(o,qp_point_,grad_);
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      reference_grad_values_[n_dof][qp]=grad_[n_dof];           
+     }
+    }
+  };
+
+
+  // template<Integer NQPpoints, typename Mapping>
+  // Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPpoints>,NComponents>,Ndofs>
+  // operator()(const GradientOperator& o,
+  //      const Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPpoints>,NComponents>,Ndofs>& reference_grad_phi,
+  //      const Mapping& mapping, 
+  //      const Vector<Real,Ndofs> &alpha=1.0)
+  // {
+  //  Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPpoints>,NComponents>,Ndofs> result;
+  //  Vector<Real,Dim> row;
+  //   for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+  //    {
+  //     for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+  //     {
+  //       for(Integer qp=0;qp<NQPpoints;qp++)
+  //       {
+  //         result[n_dof][n_comp][qp].zero();
+  //         reference_grad_phi[n_dof][n_comp][qp].get_row(n_comp,row); 
+  //         // std::cout<<" firs row ="<<std::endl;
+  //         // reference_grad_phi[n_dof][n_comp][qp].describe(std::cout);     
+  //         // row.describe(std::cout);     
+  //         // std::cout<<" mapping ="<<std::endl;
+  //         // mapping.describe(std::cout);    
+  //         row=alpha[n_dof]*mapping*row;      
+  //         result[n_dof][n_comp][qp].row(n_comp,row);
+  //         // std::cout<<" result ="<<std::endl;
+  //         // result[n_dof][n_comp][qp].describe(std::cout);        
+  //       }
+  //     }
+  //    }
+  //  return result;
+  // };
+
+  // template<Integer NQPpoints>
+  // Vector<Vector< Real, NQPpoints>,Ndofs>
+  // operator()(const DivergenceOperator&o,const Matrix<Real,NQPpoints,Dim>& qp_points)
+  // {
+  //       Vector<Vector< Real, NQPpoints>,Ndofs> div;
+  //       Vector<Real,Dim> qp_point;
+
+  //       for(Integer qp=0;qp<NQPpoints;qp++)
+  //       {
+  //         qp_points.get_row(qp,qp_point);
+  //         auto div_phi_single=phi_single_component(o,qp_point);
+  //             for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+  //                  div[n_dof][qp]=div_phi_single[n_dof];
+  //       }
+  //       return div;};
+
+  // template<Integer NQPpoints,typename Mapping>
+  // Vector<Vector<Vector< Matrix<Real,NComponents,1>, NQPpoints>,NComponents>,Ndofs>
+  // operator()(const DivergenceOperator&o,
+  //      const Vector<Vector< Real, NQPpoints>,Ndofs>& divphi_reference,
+  //      const Mapping& mapping,
+  //      const Vector<Real,Ndofs> &alpha=1.0)
+  // {
+  //       Vector<Vector<Vector< Matrix<Real,NComponents,1>, NQPpoints>,NComponents>,Ndofs> divphi;
+  //       for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+  //        for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+  //         for(Integer qp=0;qp<NQPpoints;qp++)
+  //           { divphi[n_dof][n_comp][qp].zero();
+  //             divphi[n_dof][n_comp][qp](n_comp,0)=alpha[n_dof] * mapping * divphi_reference[n_dof][qp];
+  //           } 
+  //   return divphi;};
+
+
+  private: 
+  Vector<FuncType,Ndofs> func_;
+  Vector<GradType,Ndofs> grad_;
+  Vector<DivType,Ndofs>  div_;
+  Point qp_point_;
+
+  FQPValues<FuncType,NQPoints,Ndofs> reference_func_values_;
+  FQPValues<GradType,NQPoints,Ndofs> reference_grad_values_;
+
+  FQPValues<FuncType,NQPoints,Ntot> func_values_;
+  FQPValues<GradType,NQPoints,Ntot> grad_values_;
+  FuncType func_tmp_;
+};
+
+
+
+
+
+
+
+
+
+
+
+template<Integer NQPoints, typename Elem,typename BaseFunctionSpace>
+class ShapeFunctionOperator3;
+
+
+
+template<Integer NQPoints, Integer NComponents>
+class ShapeFunctionOperator3<NQPoints,Simplex<2,2>, Lagrange1<NComponents> > : 
+public BaseShapeFunctionOperator3<NQPoints,3,2,2,1,NComponents>
+{
+public:
+  static constexpr Integer Ndofs=3;
+  static constexpr Integer Dim=2;
+  static constexpr Integer ManifoldDim=2;
+  static constexpr Integer ShapeFunctionDim=1;
+  using FuncType=Vector<Real,ShapeFunctionDim>;
+  using GradType=Matrix<Real,ShapeFunctionDim,Dim>;
+  using DivType=Real;
+  using Point=Vector<Real,Dim>;
+  using QP=Matrix<Real,NQPoints,Dim>;
+
+
+
+ virtual void value(const IdentityOperator& o, const Point& point, Vector<FuncType,Ndofs>& func )
+       {func[0][0]=point[0];
+        func[1][0]=point[1];
+        func[2][0]=1. - point[0] - point[1];};
+  ;
+
+  virtual void value(const GradientOperator&o, const Point& point, Vector<GradType,Ndofs>& func_grad)
+   {
+    func_grad[0](0,0)=-1;  func_grad[0](0,1)=-1; 
+    func_grad[1](0,0)=+1;  func_grad[1](0,1)= 0; 
+    func_grad[2](0,0)= 0;  func_grad[2](0,1)=+1; 
+  } 
+
+  virtual void value(const DivergenceOperator&o, const Point& qp_point, Vector<DivType,Ndofs>& func_div_)
+  {
+    std::cout<<" Lagrange1 divergence not implemented"<<std::endl;
+  }
+
+
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 template<typename Operator,typename Elem,Integer FEFamily, Integer NComponents=1>
 class MapFromReference;
 
@@ -1909,15 +2471,37 @@ struct Array {
 
 
 
+template<Integer I,Integer J,Integer M, Integer N>
+constexpr Integer MatrixIndexElem()
+{ static_assert(I<M, " index I >= M in compile time matrix"); 
+  static_assert(J<N, " index J >= N in compile time matrix"); 
+  return (J + I * N);};
 
-template<typename OperatorType,typename ShapeType,typename QPType, Integer Rows,Integer M,Integer N=0>//Integer I, Integer J>//std::tuple_size<OperatorType>::value,Integer N=0>
+template<Integer S,Integer N,Integer Rows>
+class IndexTo;
+
+template<Integer N, Integer Rows>
+class IndexTo<0,N,Rows>
+{ public:
+  static const Integer value=N/Rows;
+};
+
+template<Integer N,Integer Rows>
+class IndexTo<1,N,Rows>
+{ public:
+  static const Integer value=Modulo<N,Rows>::value;
+};
+
+
+
+
+template<Integer S,typename OperatorType,typename ShapeType,typename QPType, Integer Rows,Integer M,Integer N=0>//Integer I, Integer J>//std::tuple_size<OperatorType>::value,Integer N=0>
 struct ReferenceShapeFunctionType
 {  
 
-//////// qui e' matrice, usa index<I,J>
 
       using operatortype=typename std::tuple_element<N,OperatorType>::type;
-      static constexpr Integer shape_index=Modulo<N,Rows>::value;
+      static constexpr Integer shape_index=IndexTo<S,N,Rows>::value;
       operatortype operation;
       using shapetype=typename std::tuple_element<shape_index,ShapeType>::type;
       shapetype shape;
@@ -1925,7 +2509,7 @@ struct ReferenceShapeFunctionType
 
       using singletype=decltype(shape(operation,qp_points));
 
-       using rest = typename ReferenceShapeFunctionType<OperatorType,ShapeType,QPType,Rows,M,N+1>::type;
+       using rest = typename ReferenceShapeFunctionType<S,OperatorType,ShapeType,QPType,Rows,M,N+1>::type;
        using type = decltype(std::tuple_cat(std::declval< std::tuple<singletype> >(), std::declval< rest >() ) );
 
       template<Integer J>
@@ -1933,14 +2517,13 @@ struct ReferenceShapeFunctionType
 
 };
 
-template<typename OperatorType,typename ShapeType,typename QPType, Integer Rows,Integer M>
-struct ReferenceShapeFunctionType<OperatorType,ShapeType,QPType,Rows,M,M-1>
+template<Integer S,typename OperatorType,typename ShapeType,typename QPType, Integer Rows,Integer M>
+struct ReferenceShapeFunctionType<S,OperatorType,ShapeType,QPType,Rows,M,M-1>
 {  
 
-//////// qui e' matrice, usa index<I,J>
       static constexpr Integer N=M-1;
       using operatortype=typename std::tuple_element<N,OperatorType>::type;
-      static constexpr Integer shape_index=Modulo<N,Rows>::value;
+      static constexpr Integer shape_index=IndexTo<S,N,Rows>::value;
       operatortype operation;
       using shapetype=typename std::tuple_element<shape_index,ShapeType>::type;
       shapetype shape;
@@ -1960,33 +2543,36 @@ struct ReferenceShapeFunctionType<OperatorType,ShapeType,QPType,Rows,M,M-1>
 
 
 
-template<typename ReferenceShapeFunctionType,typename Operator,typename Tupleshapetype_trial,typename QPpoints, Integer M,Integer Rows,Integer N=0>//Integer I, Integer J>//std::tuple_size<OperatorType>::value,Integer N=0>
+template<Integer S,typename ReferenceShapeFunctionType,typename Operator,typename Tupleshapetype_trial,typename QPpoints, Integer M,Integer Rows,Integer N=0>//Integer I, Integer J>//std::tuple_size<OperatorType>::value,Integer N=0>
 typename std::enable_if<N==(M-1), void >::type
 ReferenceShapeFunction( ReferenceShapeFunctionType& tuple, const Operator& operators_trial,const Tupleshapetype_trial& tupleshape, const QPpoints& qp_points )
 {  
 
-constexpr Integer index=Modulo<N,Rows>::value;
+constexpr Integer index=IndexTo<S,N,Rows>::value;
 using operatortype=typename std::tuple_element<N,Operator>::type;
 using shapefunctiontype=typename std::tuple_element<index,Tupleshapetype_trial>::type;
 
 shapefunctiontype shape;
 operatortype operation;
+std::cout<<"ReferenceShapeFunction=="<<std::endl;
+std::cout<<shape(operation,qp_points)<<std::endl;
 std::get<N>(tuple)=shape(operation,qp_points);
 };
 
-template<typename ReferenceShapeFunctionType,typename Operator,typename Tupleshapetype_trial,typename QPpoints,Integer M,Integer Rows,Integer N=0>
+template<Integer S,typename ReferenceShapeFunctionType,typename Operator,typename Tupleshapetype_trial,typename QPpoints,Integer M,Integer Rows,Integer N=0>
 typename std::enable_if<N<(M-1), void >::type 
 ReferenceShapeFunction( ReferenceShapeFunctionType& tuple, const Operator& operators_trial,const Tupleshapetype_trial& tupleshape, const QPpoints& qp_points )
 {  
-constexpr Integer index=Modulo<N,Rows>::value;
+constexpr Integer index=IndexTo<S,N,Rows>::value;
 using operatortype=typename std::tuple_element<N,Operator>::type;
 using shapefunctiontype=typename std::tuple_element<index,Tupleshapetype_trial>::type;
 
 shapefunctiontype shape;
 operatortype operation;
 std::get<N>(tuple)=shape(operation,qp_points);
-
-ReferenceShapeFunction<ReferenceShapeFunctionType,Operator,Tupleshapetype_trial,QPpoints,M,Rows,N+1>(tuple,operators_trial,tupleshape,qp_points);
+std::cout<<"ReferenceShapeFunction=="<<std::endl;
+std::cout<<shape(operation,qp_points)<<std::endl;
+ReferenceShapeFunction<S,ReferenceShapeFunctionType,Operator,Tupleshapetype_trial,QPpoints,M,Rows,N+1>(tuple,operators_trial,tupleshape,qp_points);
 };
 
 
@@ -2014,15 +2600,10 @@ void local_matrix(const TrialShapeFunction& trial,const TestShapeFunction& test,
 }
 
 
-template<Integer I,Integer J,Integer M=I+1, Integer N=J+1>
-constexpr Integer Index()
-{ static_assert(I<M, " index I >= M in compile time matrix"); 
-  static_assert(J<N, " index J >= N in compile time matrix"); 
-  return (J + I * N);};
 
 
 
-template<Integer I, Integer J>
+template<Integer I, Integer J,Integer Rows, Integer Cols>
 class space_loop
 { public:
 
@@ -2038,8 +2619,10 @@ class space_loop
                   const Jacobian& jacob, const QPpoints& qp_points)
 
   { 
+    constexpr Integer N=MatrixIndexElem<I,J,Rows,Cols>();
     std::cout<<"-----------------------------(I,J)= "<<I<<", "<<J<<std::endl;
-    constexpr Integer N=Index<I,J>();
+    std::cout<<"-----------------------------N= "<<N<<std::endl;
+    
 
     const auto& operator_trial=std::get<N>(tuple_operator_trial);
     const auto& operator_test =std::get<N>(tuple_operator_test);
@@ -2051,27 +2634,31 @@ class space_loop
     const auto& reference_shape_trial=std::get<N>(tuple_reference_trial);//(operator_trial,qp_points);
     const auto& reference_shape_test =std::get<N>(tuple_reference_test);//(operator_test,qp_points);
 
-    auto trial=shape_trial(operator_trial,qp_points);
-    auto test=shape_test(operator_test,qp_points);
-
+    // auto trial=shape_trial(operator_trial,qp_points);
+    // auto test=shape_test(operator_test,qp_points);
+    // Vector<Real,2> punto{0.0,1.0};
+    // auto ss=shape_trial.phi_single_component(operator_trial,punto);
 
     auto map_trial=std::get<J>(tuple_map_trial);
     auto map_test =std::get<I>(tuple_map_test);
 
-    auto mapping_trial=map_trial(operator_trial,jacob);
-    const auto& mapping_test =map_test(operator_test,jacob);
+    const auto& mapping_trial=map_trial(operator_trial,jacob);
+    const auto& mapping_test =map_test (operator_test,jacob);
 
-    std::cout<<"qp_points= "<<std::endl;
-    qp_points.describe(std::cout);
-    std::cout<<"jacob= "<<std::endl;
-    jacob.describe(std::cout);
-    std::cout<<"reference= "<<std::endl;
-    reference_shape_trial.describe(std::cout);
-    // auto element_trial=shape_trial(operator_trial,reference_shape_trial,mapping_trial);
-    // const auto& element_test =test(operator_test,reference_shape_test,mapping_test);
+    // std::cout<<"shape_trial.phi_single_component= "<<std::endl;
+    // ss.describe(std::cout);
+    // std::cout<<"qp_points= "<<std::endl;
+    // qp_points.describe(std::cout);
+    // std::cout<<"mapping_test= "<<std::endl;
+    // std::cout<<mapping_test<<std::endl;
+    // // mapping_trial.describe(std::cout);
+    // std::cout<<"jacob= "<<std::endl;
+    // jacob.describe(std::cout);
+    // std::cout<<"reference_shape_test= "<<std::endl;
+    // reference_shape_test.describe(std::cout);
+    auto element_trial=shape_trial(operator_trial,reference_shape_trial,mapping_trial);
+    auto element_test =shape_test (operator_test, reference_shape_test, mapping_test);
     // local_matrix(element_trial,element_test,mat,qp_weights,volume );
-
-
   };
 
 };
@@ -2203,9 +2790,10 @@ MatrixLoop       (const TupleShapeTrial& tuple_shape_trial,const TupleShapeTest&
                   const TupleOperatorTrial& tuple_operator_trial, const TupleOperatorTest& tuple_operator_test,
                   const Jacobian& jacob, const QPpoints& qp_points)
 {std::cout<<"(M,N)=("<<M<<", "<<N<<")----(I,J)=("<<I<<", "<<J<<")"<<std::endl; 
- std::cout<<"Modulo="<<Modulo<Index<I,J,M,N>(),N>::value <<std::endl;
- std::cout<<Index<I,J,M,N>()<<std::endl;
- space_loop<I,J>::loop(tuple_shape_trial,tuple_shape_test,
+ std::cout<<"Modulo="<<Modulo<MatrixIndexElem<I,J,M,N>(),N>::value <<std::endl;
+ std::cout<<"Division="<<MatrixIndexElem<I,J,M,N>()/N <<std::endl;
+ std::cout<<MatrixIndexElem<I,J,M,N>()<<std::endl;
+ space_loop<I,J,M,N>::loop(tuple_shape_trial,tuple_shape_test,
                   tuple_reference_trial,tuple_reference_test,
                   tuple_map_trial,tuple_map_test,
                   tuple_operator_trial,tuple_operator_test,
@@ -2227,9 +2815,10 @@ MatrixLoop       (const TupleShapeTrial& tuple_shape_trial,const TupleShapeTest&
                   const TupleOperatorTrial& tuple_operator_trial, const TupleOperatorTest& tuple_operator_test,
                   const Jacobian& jacob, const QPpoints& qp_points)
 {std::cout<<"(M,N)=("<<M<<", "<<N<<")----(I,J)=("<<I<<", "<<J<<")"<<std::endl;
- std::cout<<"Modulo="<<Modulo<Index<I,J,M,N>(),N>::value <<std::endl;
-std::cout<<Index<I,J,M,N>()<<std::endl;
- space_loop<I,J>::loop(tuple_shape_trial,tuple_shape_test,
+ std::cout<<"Modulo="<<Modulo<MatrixIndexElem<I,J,M,N>(),N>::value <<std::endl;
+ std::cout<<"Division="<<MatrixIndexElem<I,J,M,N>()/N <<std::endl;
+std::cout<<MatrixIndexElem<I,J,M,N>()<<std::endl;
+ space_loop<I,J,M,N>::loop(tuple_shape_trial,tuple_shape_test,
                   tuple_reference_trial,tuple_reference_test,
                   tuple_map_trial,tuple_map_test,
                   tuple_operator_trial,tuple_operator_test,
@@ -2258,11 +2847,12 @@ MatrixLoop //(Operator operators_trial,TupleShapeFunction tupleshape, QPPoints q
                   const TupleOperatorTrial& tuple_operator_trial, const TupleOperatorTest& tuple_operator_test,
                   const Jacobian& jacob, const QPpoints& qp_points)
 {     std::cout<<"(M,N)=("<<M<<", "<<N<<")----(I,J)=("<<I<<", "<<J<<")"<<std::endl;
-      std::cout<<"Modulo="<<Modulo<Index<I,J,M,N>(),N>::value <<std::endl;
-      std::cout<<Index<I,J,M,N>()<<std::endl;
+      std::cout<<"Modulo="<<Modulo<MatrixIndexElem<I,J,M,N>(),N>::value <<std::endl;
+      std::cout<<"Division="<<MatrixIndexElem<I,J,M,N>()/N <<std::endl;
+      std::cout<<MatrixIndexElem<I,J,M,N>()<<std::endl;
 
 
- space_loop<I,J>::loop(tuple_shape_trial,tuple_shape_test,
+ space_loop<I,J,M,N>::loop(tuple_shape_trial,tuple_shape_test,
                   tuple_reference_trial,tuple_reference_test,
                   tuple_map_trial,tuple_map_test,
                   tuple_operator_trial,tuple_operator_test,
@@ -2296,12 +2886,87 @@ MatrixLoop //(Operator operators_trial,TupleShapeFunction tupleshape, QPPoints q
 
 
 
+class Mother{
+public:
+  virtual~Mother(){};
+  virtual std::shared_ptr<Mother> operator[](const Integer i)=0;
+  virtual void print()=0;
+};
+
+class Son1: public Mother
+{
+public:
+   Son1(const Integer& i): value(i){};
+  virtual void print(){std::cout<<value<<std::endl;}
+  virtual std::shared_ptr<Mother> operator[](const Integer i)
+  {assert(i==0 && "kids have only 1 component");
+    return NULL;};
+private:
+  Integer  value;
+};
+
+class Son2: public Mother
+{
+ public:
+  Son2():children() {};
+
+  virtual void print(){for(Integer ii=0;ii< children.size();ii++)
+                        children[ii]->print();}
+
+  virtual std::shared_ptr<Mother> operator[](const Integer i){return children[i];};
+
+     void add(const std::shared_ptr<Mother>& kid)
+    {
+        children.push_back(kid);
+    } 
+
+private:
+  std::vector <std::shared_ptr< Mother > > children;
+};
+
+
+
+
 
 
 
 template <Integer QPOrder, typename TrialFunction,typename TestFunction, typename OperatorTrial, typename OperatorTest>//,typename MeshT >
 void BilinearFormIntegrator(const TrialFunction& trialspace,const TestFunction& testspace)
 {
+
+
+
+std::shared_ptr<Son1> son1=std::make_shared<Son1>(1);
+std::shared_ptr<Son1> son2=std::make_shared<Son1>(2);
+std::shared_ptr<Son1> son3=std::make_shared<Son1>(3);
+
+std::shared_ptr<Son1> daughter1=std::make_shared<Son1>(4);
+std::shared_ptr<Son1> daughter2=std::make_shared<Son1>(5);
+
+
+std::shared_ptr<Son2> mom=std::make_shared<Son2>();
+std::shared_ptr<Son2> uncle1=std::make_shared<Son2>();
+std::shared_ptr<Son2> uncle2=std::make_shared<Son2>();
+std::shared_ptr<Son2> grandma=std::make_shared<Son2>();
+
+son1->print();
+son2->print();
+son3->print();
+std::cout<<"mom"<<std::endl;
+mom->add(son1);
+mom->add(son2);
+std::cout<<"uncle1"<<std::endl;
+
+uncle1->add(daughter1);
+uncle1->add(daughter2);
+std::cout<<"grandma"<<std::endl;
+
+grandma->add(mom);
+grandma->add(uncle1);
+
+auto mom1=grandma->operator[](0);
+auto kid1=mom1->operator[](0);
+kid1->print();
 using Elem=typename TrialFunction::Elem;
 constexpr Integer Dim=Elem::Dim;
 constexpr Integer ManifoldDim=Elem::ManifoldDim;  
@@ -2323,13 +2988,13 @@ const auto& qp_weights=gauss.qp_weights();
 
 
  using operator_tuple_trial= VariadicTupleType<GradientOperator,IdentityOperator,IdentityOperator,IdentityOperator>;
- using operator_tuple_type_trial=typename operator_tuple_trial::type;
- operator_tuple_type_trial operators_trial;
- 
+ using operator_tuple_test = VariadicTupleType<GradientOperator,IdentityOperator,IdentityOperator,IdentityOperator>;
 
- using operator_tuple_test= VariadicTupleType<GradientOperator,IdentityOperator,IdentityOperator,IdentityOperator>;
- using operator_tuple_type_test=typename operator_tuple_test::type;
- operator_tuple_type_test operators_test;
+ using operator_tuple_type_trial=typename operator_tuple_trial::type;
+ using operator_tuple_type_test =typename operator_tuple_test::type;
+ 
+ operator_tuple_type_trial operators_trial;
+ operator_tuple_type_test  operators_test;
 
 
   // using vartuple=VariadicTupleType<Lagrange1<2>,Lagrange2<1>,RT0<1>>;
@@ -2338,21 +3003,21 @@ const auto& qp_weights=gauss.qp_weights();
   // std::cout<<"FEFamily="<<vartuple::singletype<2>::FEFamily<<std::endl;
 // std::cout<<"FEFamily="<<VariadicTupleType<RT0<1>,Lagrange2<1>>::type3<1>::FEFamily<<std::endl;;
  // VariadicTupleTPrint<vartuple>::print<0>();
- using Tuplemaptype_trial=typename TupleMapType<Simplex<Dim,ManifoldDim>,Lagrange1<2>,Lagrange2<1>,RT0<1>>::type;
- Tuplemaptype_trial tuplemap_trial;
+ using Tuplemaptype_trial=typename TupleMapType<Simplex<Dim,ManifoldDim>,Lagrange1<2>,Lagrange2<1>>::type;
+ using Tuplemaptype_test =typename TupleMapType<Simplex<Dim,ManifoldDim>,Lagrange1<2>,Lagrange2<1>>::type;
 
- using Tuplemaptype_test=typename TupleMapType<Simplex<Dim,ManifoldDim>,Lagrange1<2>,Lagrange2<1>,RT0<1>>::type;
- Tuplemaptype_test tuplemap_test;
+ Tuplemaptype_trial tuplemap_trial;
+ Tuplemaptype_test  tuplemap_test;
 
  auto map_trial0=std::get<0>(tuplemap_trial);
  auto map_trial1=std::get<1>(tuplemap_trial);
  // auto map_trial2=std::get<2>(tuplemap_trial);
 
- using Tupleshapetype_trial=typename TupleShapeFunctionType<Simplex<Dim,ManifoldDim>,Lagrange1<2>,Lagrange2<1>,RT0<1>>::type;
- Tupleshapetype_trial tupleshape_trial;
+ using Tupleshapetype_trial=typename TupleShapeFunctionType<Simplex<Dim,ManifoldDim>,Lagrange1<2>,Lagrange2<1>>::type;
+ using Tupleshapetype_test =typename TupleShapeFunctionType<Simplex<Dim,ManifoldDim>,Lagrange1<2>,Lagrange2<1>>::type;
 
- using Tupleshapetype_test=typename TupleShapeFunctionType<Simplex<Dim,ManifoldDim>,Lagrange1<2>,Lagrange2<1>,RT0<1>>::type;
- Tupleshapetype_test tupleshape_test;
+ Tupleshapetype_trial tupleshape_trial;
+ Tupleshapetype_test  tupleshape_test;
 
 
  auto trial0=std::get<0>(tupleshape_trial);
@@ -2365,16 +3030,14 @@ auto reference_trial=trial0(grad,qp_points);
 
 Vector<Real, 3 > alpha_trial=1;
 
-operator_tuple_trial::singletype<0> op0;
 
-std::tuple<operator_tuple_trial::singletype<0> > ok;
 
 using QPType=typename GaussPoints<Elem,QPOrder>::qp_points_type;
-using ReferenceShapeTrial = ReferenceShapeFunctionType<operator_tuple_type_trial,Tupleshapetype_trial,QPType,Nsubspaces_trial,NtimesN>;
-using reference_shape_type_trial=typename ReferenceShapeTrial ::type;
+using ReferenceShapeTrial = ReferenceShapeFunctionType<1,operator_tuple_type_trial,Tupleshapetype_trial,QPType,Nsubspaces_trial,NtimesN>;
+using ReferenceShapeTest  = ReferenceShapeFunctionType<0,operator_tuple_type_test, Tupleshapetype_test, QPType,Nsubspaces_test, NtimesN>;
 
-using ReferenceShapeTest = ReferenceShapeFunctionType<operator_tuple_type_test,Tupleshapetype_test,QPType,Nsubspaces_test,NtimesN>;
-using reference_shape_type_test=typename ReferenceShapeTest ::type;
+using reference_shape_type_trial=typename ReferenceShapeTrial::type;
+using reference_shape_type_test =typename ReferenceShapeTest ::type;
 
 
 
@@ -2400,18 +3063,27 @@ using reference_shape_type_test=typename ReferenceShapeTest ::type;
 
 
 reference_shape_type_trial reference_shape_trial;
-ReferenceShapeFunction<reference_shape_type_trial,operator_tuple_type_trial,Tupleshapetype_trial,QPType ,NtimesN,Nsubspaces_trial>(reference_shape_trial,operators_trial,tupleshape_trial,qp_points );
+reference_shape_type_test  reference_shape_test;
 
-reference_shape_type_test reference_shape_test;
-ReferenceShapeFunction<reference_shape_type_test,operator_tuple_type_test,Tupleshapetype_test,QPType ,NtimesN,Nsubspaces_test>(reference_shape_test,operators_test,tupleshape_test,qp_points );
+ReferenceShapeFunction<1,reference_shape_type_trial,operator_tuple_type_trial,Tupleshapetype_trial,QPType, NtimesN, Nsubspaces_trial>(reference_shape_trial,operators_trial,tupleshape_trial,qp_points );
+ReferenceShapeFunction<0,reference_shape_type_test, operator_tuple_type_test, Tupleshapetype_test, QPType, NtimesN, Nsubspaces_test> (reference_shape_test, operators_test, tupleshape_test, qp_points );
 
-std::cout<<"annuovo0"<<std::endl;
+std::cout<<"ReferenceShapetrial0"<<std::endl;
 std::get<0>(reference_shape_trial).describe(std::cout);
-std::cout<<"annuovo1"<<std::endl;
+std::cout<<"ReferenceShapetrial1"<<std::endl;
 std::get<1>(reference_shape_trial).describe(std::cout);
-std::cout<<"annuovo2"<<std::endl;
+std::cout<<"ReferenceShapetrial2"<<std::endl;
 std::get<2>(reference_shape_trial).describe(std::cout);
-std::cout<<"annuovo3"<<std::endl;
+std::cout<<"ReferenceShapetrial3"<<std::endl;
+std::get<3>(reference_shape_trial).describe(std::cout);
+
+std::cout<<"ReferenceShapetest0"<<std::endl;
+std::get<0>(reference_shape_trial).describe(std::cout);
+std::cout<<"ReferenceShapetest1"<<std::endl;
+std::get<1>(reference_shape_trial).describe(std::cout);
+std::cout<<"ReferenceShapetest2"<<std::endl;
+std::get<2>(reference_shape_trial).describe(std::cout);
+std::cout<<"ReferenceShapetest3"<<std::endl;
 std::get<3>(reference_shape_trial).describe(std::cout);
 
 
@@ -2434,7 +3106,6 @@ const auto& mesh=trialspace.mesh();
 // MAP_TRIAL: LO SPAZIO HA LO SPAZIO COSTANTE LUNGO LE COLONNE
 // GLI OPERATORI SONO DIVERSI PER TUTTE LE COMPONENTI
 
-// MatrixLoop<5,4>(operators_trial,tupleshape_trial,qp_points,s); 
 
 
  // using TrialFunction= ElemFunctionSpace<Simplex<2,2>, Lagrange1<1>>;
@@ -2513,16 +3184,13 @@ for(Integer nn=0;nn<points.size();nn++)
   points[nn].describe(std::cout);
 }
 
-constexpr Integer m=4;
-constexpr Integer n=9;
-constexpr Integer nm=n-m*(n/(m+1));
-std::cout<<"nm--"<<nm<<std::endl;
+
 
   jacobian(elem,points,J);
 
 
 
-std::cout<<"BEGIN MATRIX LOOP"<<nm<<std::endl;
+std::cout<<"BEGIN MATRIX LOOP"<<std::endl;
 
 MatrixLoop<2,2>(tupleshape_trial,tupleshape_test,
                 reference_shape_trial,reference_shape_test,
@@ -2530,7 +3198,9 @@ MatrixLoop<2,2>(tupleshape_trial,tupleshape_test,
                 operators_trial,operators_test,
                 J,qp_points);
 
-std::cout<<"END MATRIX LOOP"<<nm<<std::endl;
+std::cout<<"END MATRIX LOOP"<<std::endl;
+
+
 
   // const auto& mapping_trial=map_trial(grad,J);
   // mapping_trial.describe(std::cout);
@@ -2566,21 +3236,45 @@ std::cout<<"END MATRIX LOOP"<<nm<<std::endl;
     // for(Integer mm=0;mm<points.size();mm++)
     //    points[mm]=mesh->point(elemnodes_global[mm]);
     // jacobian(elem,points,J);
+    std::cout<<IndexTo<0,0,2>::value<<std::endl;
+    std::cout<<IndexTo<0,1,2>::value<<std::endl;
+    std::cout<<IndexTo<0,2,2>::value<<std::endl;
+    std::cout<<IndexTo<0,3,2>::value<<std::endl;
+
+    std::cout<<IndexTo<1,0,2>::value<<std::endl;
+    std::cout<<IndexTo<1,1,2>::value<<std::endl;
+    std::cout<<IndexTo<1,2,2>::value<<std::endl;
+    std::cout<<IndexTo<1,3,2>::value<<std::endl;
     volume=unsigned_volume(elem,points);
     const auto& mapping_trial0=map_trial0(grad,J);
     const auto& mapping_trial1=map_trial1(identity,J);
-const auto element_trial0=trial0(grad,std::get<0>(reference_shape_trial),mapping_trial0);
+
+const auto reference_shape_trial0=std::get<0>(reference_shape_trial);
+
+Vector<Vector<Vector<double, 1>, 6>, 3> reference_shape_trial05=std::get<2>(reference_shape_trial);
+const auto& mapping_trial05=map_trial0(identity,J);
+
+const auto element_trial0=trial0(grad,reference_shape_trial0,mapping_trial0);
+const auto element_trial05=trial0(identity,reference_shape_trial05,mapping_trial05);
+
 const auto element_trial1=trial1(identity,std::get<1>(reference_shape_trial),mapping_trial1);
 // const auto element_trial2=trial2(identity,std::get<2>(reference_shape_trial),mapping_trial0);
 // const auto element_trial3=trial3(identity,std::get<3>(reference_shape_trial),mapping_trial0);
-std::cout<<"jacobian="<<std::endl;
-J.describe(std::cout);
-std::cout<<"detJ="<<std::endl;
-std::cout<<det(J)<<std::endl;
-std::cout<<"element_trial0="<<std::endl;
-element_trial0.describe(std::cout);
-std::cout<<"element_trial1="<<std::endl;
-element_trial1.describe(std::cout);
+auto naltro=trial0.phi_single_component(std::get<0>(operators_trial),points[0]);
+// std::cout<<"naltro--"<<nm<<std::endl;
+// std::cout<<naltro<<std::endl;
+// std::cout<<"mapping_trial05--"<<nm<<std::endl;
+// std::cout<<mapping_trial05<<std::endl;
+// std::cout<<"reference_shape_trial05--"<<nm<<std::endl;
+// std::cout<<reference_shape_trial05<<std::endl;
+// std::cout<<"jacobian="<<std::endl;
+// J.describe(std::cout);
+// std::cout<<"detJ="<<std::endl;
+// std::cout<<det(J)<<std::endl;
+// std::cout<<"element_trial0="<<std::endl;
+// element_trial0.describe(std::cout);
+// std::cout<<"element_trial1="<<std::endl;
+// element_trial1.describe(std::cout);
 
 //     const auto& mapping_trial=map_trial(J);
 //     const auto& mapping_test=map_test(J);
@@ -2598,6 +3292,58 @@ element_trial1.describe(std::cout);
 
   }
 
+// ShapeFunctionOperator3<NQPpoints, Elem, Lagrange1<1>> s;
+// s(identity,qp_points);
+// s(grad,qp_points);
+// auto ref_identity=s.reference(identity);
+
+// auto ref_grad=s.reference(grad);
+
+// std::cout<<ref_identity()<<std::endl;
+// std::cout<<ref_grad()<<std::endl;
+
+ShapeFunctionOperator4<NQPpoints, Elem, Lagrange1<4>> s4;
+s4(identity,qp_points);
+s4(grad,qp_points);
+
+const auto& mapping_identity_lagrange1=map_trial0(identity,J);
+const auto& mapping_grad_lagrange1=map_trial0(grad,J);
+s4(identity,mapping_identity_lagrange1);
+s4(grad,mapping_grad_lagrange1);
+std::cout<<s4.function(identity)()<<std::endl;
+std::cout<<s4.function(grad)()<<std::endl;
+
+
+Matrix<Real,5,5> mat1=0;
+Matrix<Real,2,2> mat2{0,1,2,3};
+
+assign(mat1,mat2,2,3);
+std::cout<<mat1<<std::endl;
+// s4(grad,qp_points);
+
+using TTT=Matrix<Real,1,2>;
+using SSS=Matrix<Real,2,2>;
+TTT ttt=1;
+SSS sss=3;
+Vector<TTT,6> initvec=ttt;
+Vector<Vector<TTT,6>,3> initvecvec=initvec;
+FQPValues<TTT,6,3> fqpval(initvecvec);
+QPValues<SSS,6> qpval(sss);
+
+std::cout<<fqpval()<<std::endl;
+std::cout<<qpval()<<std::endl;
+
+FQPValues<TTT,6,3> result=qpval*fqpval+fqpval;
+std::cout<<result()<<std::endl;
+
+// FQPValues<TTT,3,6> result2=qpval*fqpval+fqpval;
+// std::cout<<fqpval()<<std::endl;
+// std::cout<<qpval()<<std::endl;
+// std::cout<<result()<<std::endl;
+// std::cout<<result2()<<std::endl;
+
+
+grandma->print();
 };
 
 
