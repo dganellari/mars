@@ -347,7 +347,7 @@ namespace mars {
 			describe_element(e, os, print_sides);
 		}
 
-		void describe_element(const Simplex<Dim, 0> &e, std::ostream &os, const bool print_sides = false) const
+		void describe_element(const Simplex<Dim, 1> &e, std::ostream &os, const bool print_sides = false) const
 		{
 			const Real vol = mars::volume(e, points_);
 			const auto b   = barycenter(e, points_);
