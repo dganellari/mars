@@ -347,7 +347,22 @@ namespace mars {
 			describe_element(e, os, print_sides);
 		}
 
-		void describe_element(const Elem &e, std::ostream &os, const bool print_sides = false) const
+		void describe_element(const Simplex<Dim, 0> &e, std::ostream &os, const bool print_sides = false) const
+		{
+			const Real vol = mars::volume(e, points_);
+			const auto b   = barycenter(e, points_);
+
+			os << "---------------------------------\n";
+			os << "[" << e.id << "]: vol: " << vol << ", ";
+			for(auto v : e.nodes) {
+				os << " " << v;
+			}
+
+			os << "\n";
+		}
+
+		template<Integer AnyDim>
+		void describe_element(const Simplex<Dim, AnyDim> &e, std::ostream &os, const bool print_sides = false) const
 		{
 			const Real vol = mars::volume(e, points_);
 			const auto b   = barycenter(e, points_);
