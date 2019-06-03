@@ -13,17 +13,273 @@
 #include "mars_utils.hpp"
 #include "mars_mesh_partition.hpp"
 #include "mars_partitioned_bisection.hpp"
-
 #include "mars_benchmark.hpp"
 #include "mars_test.hpp"
 #include "mars_ranked_edge.hpp"
 #include "mars_oldest_edge.hpp"
 #include "mars_longest_edge.hpp"
+#include "generation/mars_memory.hpp"
+#include <err.h>
+
+#include "generation/mars_mesh_generation.hpp"
+
+#ifdef WITH_KOKKOS
+#include "generation/mars_test_kokkos.hpp"
+#endif //WITH_KOKKOS
 
 #ifdef WITH_MPI
 #include "mars_par_bisection.hpp"
 #include "mars_par_mesh.hpp"
 #endif //WITH_MPI
+#include <chrono>
+
+using namespace std::chrono;
+
+mars::Mesh1 test_mars_mesh_generation_1D(const int x) {
+
+	using namespace mars;
+
+	high_resolution_clock::time_point t1 = high_resolution_clock::now();
+
+	Mesh1 mesh;
+	generation::generate_line(mesh, x);
+
+	high_resolution_clock::time_point t2 = high_resolution_clock::now();
+	auto duration = duration_cast < seconds > (t2 - t1).count();
+
+	std::cout << "Generation took: "<< duration<<" seconds."<<std::endl;
+
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
+
+
+	if (x < 100) {
+		VTKMeshWriter<Mesh1> w;
+		w.write("build_line" + std::to_string(x) + ".vtu", mesh);
+	}
+
+	return mesh;
+}
+
+mars::Mesh2 test_mars_mesh_generation_2D(const int x,
+		const int y) {
+
+	using namespace mars;
+
+	high_resolution_clock::time_point t1 = high_resolution_clock::now();
+
+	Mesh2 mesh;
+	generation::generate_square(mesh, x, y);
+
+	high_resolution_clock::time_point t2 = high_resolution_clock::now();
+	auto duration = duration_cast < seconds > (t2 - t1).count();
+
+	std::cout << "Generation took: "<< duration<<std::endl;
+
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
+
+
+	if (x <= 1000) {
+
+		VTKMeshWriter<Mesh2> w;
+		w.write("build_square" + std::to_string(x) + std::to_string(y) + ".vtu", mesh);
+	}
+
+	return mesh;
+}
+
+mars::Mesh3 test_mars_mesh_generation_3D(const int x,
+		const int y, const int z) {
+
+	using namespace mars;
+
+	high_resolution_clock::time_point t1 = high_resolution_clock::now();
+
+	Mesh3 mesh;
+	generation::generate_cube<3, 3>(mesh, x, y, z);
+
+	high_resolution_clock::time_point t2 = high_resolution_clock::now();
+	auto duration = duration_cast < seconds > (t2 - t1).count();
+
+	std::cout << "Generation took: "<< duration<<" seconds."<<std::endl;
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
+
+	if (z < 100) {
+		std::cout<<"Writing vtu file: build_cube" + std::to_string(x) + std::to_string(y) + ".vtu"<<std::endl;
+		VTKMeshWriter<Mesh3> w;
+		w.write("build_cube" + std::to_string(x) + std::to_string(y) + ".vtu", mesh);
+	}
+	return mesh;
+}
+
+void test_mars_mesh_generation_unit_cube() {
+
+	using namespace mars;
+
+	Mesh3 mesh = generation::generate_unit_cube();
+
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
+
+	VTKMeshWriter < Mesh3 > w;
+	w.write("build_unit_cube_tetrakis.vtu", mesh);
+}
+
+void test_read_write_3D(const std::string filename)
+{
+	using namespace mars;
+	std::cout << "======================================\n";
+	Mesh3 mesh;
+	read_mesh(filename, mesh, true);
+
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
+	VTKMeshWriter<Mesh3> w;
+	w.write("read_write.vtu", mesh);
+}
+
+void test_write_3D(const mars::Mesh3 mesh)
+{
+	using namespace mars;
+	std::cout << "======================================\n";
+	/*Mesh3 mesh;
+	read_mesh(filename, mesh, true);*/
+
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
+	VTKMeshWriter<Mesh3> w;
+	w.write("write.vtu", mesh);
+}
+
+void test_uniform_bisection_3D(const int level, const std::string filename)
+{
+	using namespace mars;
+	std::cout << "======================================\n";
+	Mesh3 mesh;
+	read_mesh(filename, mesh, true);
+	mesh.renumber_nodes();
+	mesh.reorder_nodes();
+
+	mesh.update_dual_graph();
+	mark_boundary(mesh);
+
+	Bisection<Mesh3> b(mesh);
+	b.uniform_refine(level); b.clear();
+	print_boundary_points(mesh, std::cout, true);
+
+	mesh.clean_up();
+	mesh.update_dual_graph();
+
+	Quality<Mesh3> q(mesh);
+	q.compute();
+
+	std::cout << "n_boundary_sides: " << mesh.n_boundary_sides() << std::endl;
+	std::cout << "volume: " << mesh.volume() << std::endl;
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes: " << mesh.n_nodes()<< std::endl;
+	VTKMeshWriter<Mesh3> w;
+						w.write("cube_bisect_"+ std::to_string(mesh.Dim) +".vtu", mesh);
+}
+
+void test_uniform_bisection_3D(const int level, mars::Mesh3 mesh)
+{
+	using namespace mars;
+	std::cout << "======================================\n";
+	/*Mesh3 mesh;
+	read_mesh(filename, mesh, true);*/
+
+	mesh.renumber_nodes();
+	mesh.reorder_nodes();
+
+	mesh.update_dual_graph();
+	mark_boundary(mesh);
+
+	high_resolution_clock::time_point t1 = high_resolution_clock::now();
+
+	Bisection<Mesh3> b(mesh);
+	b.uniform_refine(level); b.clear();
+
+	high_resolution_clock::time_point t2 = high_resolution_clock::now();
+	auto duration = duration_cast < seconds > (t2 - t1).count();
+
+	std::cout << "Refinment took: "<< duration<<" seconds."<<std::endl;
+	print_boundary_points(mesh, std::cout, true);
+
+	mesh.clean_up();
+	mesh.update_dual_graph();
+
+	Quality<Mesh3> q(mesh);
+	q.compute();
+
+	std::cout << "n_boundary_sides: " << mesh.n_boundary_sides() << std::endl;
+	std::cout << "volume: " << mesh.volume() << std::endl;
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes: " << mesh.n_nodes()<< std::endl;
+	VTKMeshWriter<Mesh3> w;
+						w.write("cube_bisect_"+ std::to_string(mesh.Dim) +".vtu", mesh);
+}
+
+void test_uniform_bisection_2D(const int level, mars::Mesh2 mesh)
+{
+	using namespace mars;
+	std::cout << "======================================\n";
+	/*Mesh2 mesh;
+	read_mesh(filename, mesh, true);*/
+	mesh.renumber_nodes();
+	mesh.reorder_nodes();
+
+	mesh.update_dual_graph();
+	mark_boundary(mesh);
+
+	Bisection<Mesh2> b(mesh);
+	b.uniform_refine(level); b.clear();
+	print_boundary_points(mesh, std::cout, true);
+
+	mesh.clean_up();
+	mesh.update_dual_graph();
+
+	Quality<Mesh2> q(mesh);
+	q.compute();
+
+	std::cout << "n_boundary_sides: " << mesh.n_boundary_sides() << std::endl;
+	std::cout << "volume: " << mesh.volume() << std::endl;
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes: " << mesh.n_nodes()<< std::endl;
+	VTKMeshWriter<Mesh2> w;
+						w.write("cube_bisect_"+ std::to_string(mesh.Dim) +".vtu", mesh);
+}
+
+void test_uniform_bisection_2D(const int level, const std::string filename)
+{
+	using namespace mars;
+	std::cout << "======================================\n";
+	Mesh<3,2> mesh;
+	read_mesh(filename, mesh, true);
+	mesh.renumber_nodes();
+	mesh.reorder_nodes();
+
+	mesh.update_dual_graph();
+	mark_boundary(mesh);
+
+	Bisection<Mesh<3,2>> b(mesh);
+	b.uniform_refine(level); b.clear();
+	print_boundary_points(mesh, std::cout, true);
+
+	mesh.clean_up();
+	mesh.update_dual_graph();
+
+	Quality<Mesh<3,2>> q(mesh);
+	q.compute();
+
+	std::cout << "n_boundary_sides: " << mesh.n_boundary_sides() << std::endl;
+	std::cout << "volume: " << mesh.volume() << std::endl;
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes: " << mesh.n_nodes()<< std::endl;
+	VTKMeshWriter<Mesh<3,2>> w;
+						w.write("cube_bisect_"+ std::to_string(mesh.Dim) +".vtu", mesh);
+}
 
 void test_bisection_2D()
 {	
@@ -94,7 +350,7 @@ void test_bisection_3D()
 	using namespace mars;
 	std::cout << "======================================\n";
 	Mesh3 mesh;
-	read_mesh("../data/cube_6.MFEM", mesh, true);
+	read_mesh("../data/write/cube.MFEM", mesh, true);
 	mesh.renumber_nodes();
 	mesh.reorder_nodes();
 
@@ -115,18 +371,20 @@ void test_bisection_3D()
 	std::cout << "volume: " << mesh.volume() << std::endl;
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 
+	VTKMeshWriter<Mesh3> w;
+	w.write("cube_bisect_"+ std::to_string(mesh.Dim) +".vtu", mesh);
 	// auto edge_select = std::make_shared<NewestVertexEdgeSelect<3, 3>>();
 	auto edge_select = std::make_shared<LongestEdgeSelect<Mesh3>>(true);
 
 	// auto edge_select = std::make_shared<ImplicitOrderEdgeSelect<3, 3>>();
-	// auto edge_select = std::make_shared<UniqueLongestEdgeSelect<3, 3>>(true);	
+	// auto edge_select = std::make_shared<UniqueLongestEdgeSelect<3, 3>>(true);
 	// auto edge_select = std::make_shared<NewestVertexAndLongestEdgeSelect<3, 3>>();
 	b.set_edge_select(edge_select);
 	b.uniform_refine(1);
 
 	// mesh.describe(std::cout);
 
-	Integer n_levels = 10;
+	Integer n_levels = 1;
 	for(Integer i = 0; i < n_levels; ++i) {
 		std::vector<mars::Integer> elements;
 		
@@ -146,7 +404,6 @@ void test_bisection_3D()
 		print_boundary_info(mesh, true);
 	}
 
-	VTKMeshWriter<Mesh3> w;
 	w.write("mesh_bisect_refined.vtu", mesh);
 
 	std::cout << "volume: " << mesh.volume() << std::endl;
@@ -384,8 +641,8 @@ namespace mars {
 			q.compute();
 
 			for(Integer i = 0; i < n_tests; ++i) {
-				std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
-				
+				std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl;
+
 				if(!test_incomplete<LEES>(mesh, map, edge_select, false)) {
 					std::cout << "using edge_rank" << std::endl;
 					if(!test_incomplete_with_edge_rank(mesh, 1, false, true, node_rank)) {
@@ -440,7 +697,7 @@ namespace mars {
 						);
 					// }
 				}
-				
+
 				b.refine(elements);
 			}
 
@@ -492,7 +749,7 @@ void test_partition_2D()
 		std::cout << p->partition_id() << " n_active_elements: " << p->get_mesh().n_active_elements() << std::endl;
 		p->get_mesh().update_dual_graph();
 		print_boundary_info(p->get_mesh(), true);
-	}	
+	}
 }
 
 void test_partition_3D()
@@ -579,27 +836,27 @@ void test_partition_4D()
 	}
 }
 
-void run_benchmarks()
-{	
+void run_benchmarks(int level)
+{
 	using namespace mars;
 
 	Benchmark<Mesh2> b2;
 	Mesh2 m2;
 	read_mesh("../data/square_2_def.MFEM", m2);
 
-	b2.run(14, m2, "b2");
+	b2.run(level, m2, "b2");
 
 	Benchmark<Mesh3> b3;
 	Mesh3 m3;
 	read_mesh("../data/cube_6.MFEM", m3);
 
-	b3.run(15, m3, "b3");
+	b3.run(level, m3, "b3");
 
-	Benchmark<Mesh4> b4;
+/*	Benchmark<Mesh4> b4;
 	Mesh4 m4;
 	read_mesh("../data/cube4d_24.MFEM", m4);
 
-	b4.run(9, m4, "b4");
+	b4.run(9, m4, "b4");*/
 }
 
 void test_incomplete_2D()
@@ -625,7 +882,7 @@ void test_incomplete_3D()
 void test_incomplete_4D()
 {
 	using namespace mars;
-	
+
 	Mesh4 mesh(true);
 	read_mesh("../data/cube4d_24.MFEM", mesh);
 	// test_incomplete_ND(mesh, 8, false);
@@ -638,7 +895,7 @@ void test_incomplete_5D()
 	using Mesh = mars::Mesh5;
 	using NVES = mars::GlobalNewestVertexEdgeSelect<Mesh>;
 	using LEES = mars::GloballyUniqueLongestEdgeSelect<Mesh>;
-	
+
 
 	std::cout << "======================================\n";
 	Mesh mesh(true);
@@ -655,7 +912,7 @@ void test_incomplete_5D()
 	Integer n_tests = 5;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "-----------------\n";
-		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
+		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl;
 		test_incomplete<NVES>(mesh, true);
 		q.compute();
 		std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
@@ -677,7 +934,7 @@ void test_incomplete_6D()
 	using Mesh = mars::Mesh6;
 	using NVES = mars::GlobalNewestVertexEdgeSelect<Mesh6>;
 	using LEES = mars::GloballyUniqueLongestEdgeSelect<Mesh6>;
-	
+
 
 	std::cout << "======================================\n";
 	Mesh mesh(true);
@@ -694,7 +951,7 @@ void test_incomplete_6D()
 	Integer n_tests = 5;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "-----------------\n";
-		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
+		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl;
 		test_incomplete<NVES>(mesh, true);
 		q.compute();
 		std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
@@ -735,7 +992,7 @@ void test_incomplete_bad_4D()
 	Integer n_tests = 4;
 	for(Integer i = 0; i < n_tests; ++i) {
 		std::cout << "-----------------\n";
-		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
+		std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl;
 		test_incomplete<LEES>(mesh, true);
 		q.compute();
 		std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
@@ -791,10 +1048,10 @@ int main(int argc, char *argv[])
 	MPI_Init(&argc, &argv);
 #endif //WITH_MPI
 	// test_bisection_2D();
-	// test_bisection_3D();
+	 //test_bisection_3D(atoi(argv[1]));
 	// test_bisection_4D();
 
-	run_benchmarks();
+	//run_benchmarks(atoi(argv[1]));
 	// test_partition_2D();
 	// test_partition_3D();
 	// test_partition_4D();
@@ -804,12 +1061,53 @@ int main(int argc, char *argv[])
 	// test_incomplete_5D();
 	// test_incomplete_6D();
 	// test_incomplete_bad_4D();
-	// run_tests();
+
+	int level = 1;
+	std::string filename = "../data/write/tetrakis.MFEM";
+	if (argc > 1) {
+		char *end_ptr = argv[1];
+		level = strtol(argv[1], &end_ptr, 10);
+		if (*end_ptr != '\0' || end_ptr == argv[1])
+			warnx("'%s' could not be (completely) converted to long", argv[1]);
+	} else
+		std::cout
+				<< "No level of refinement was specified. Setting the default to 1!"
+				<< std::endl;
+
+	if (argc > 2) {
+		filename = argv[2];
+	} else
+		std::cout
+				<< "No file name was specified. Setting the default to tetrakis!"
+				<< std::endl;
+
+	//run_tests(level,filename);
+
+	//test_uniform_bisection_2D(level,filename);
+	//test_read_write_3D(filename);
+
+	//test_mars_mesh_generation_1D(level);
+
+	//test_mars_mesh_generation_2D(1000,1000);
+
+	//test_mars_mesh_generation_3D(100,100,100);
+	//test_mars_mesh_generation_3D(150,150,150);
+	//test_mars_mesh_generation_3D(200,200,200);
+
+	//equivalent 3D generation using refinement and libmesh like mesh generation technique.
+	/*test_mars_mesh_generation_3D(2,2,2);
+	test_uniform_bisection_3D(3, test_mars_mesh_generation_3D(1,1,1));*/
+	//parallel with kokkos.
+
+#ifdef WITH_KOKKOS
+	test_mars_mesh_generation_kokkos_1D(level);
+#endif
 
 #ifdef WITH_MPI
 	// par_mesh_test();
 	return MPI_Finalize();
 #else
+
 	return 0;
 #endif //WITH_MPI
 }

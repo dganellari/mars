@@ -4,13 +4,11 @@
 #include "mars_base.hpp"
 #include "mars_edge.hpp"
 #include "mars_edge_element_map.hpp"
+#include "mars_fwd.hpp"
 
 #include <ostream>
 
 namespace mars {
-
-	template<Integer Dim, Integer ManifoldDim>
-	class Mesh;
 
 	template<class Mesh>
 	class EdgeSelect {
