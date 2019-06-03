@@ -46,7 +46,7 @@ using ViewMatrixType = Kokkos::View<T**,KokkosLayout,KokkosSpace>;
 
 
 template<Integer Dim_, Integer ManifoldDim_>
-class Parallel_Mesh: public Parallel_IMesh<Dim_> {
+class ParallelMesh: public ParallelIMesh<Dim_> {
 public:
 	static const Integer Dim = Dim_;
 	static const Integer ManifoldDim = ManifoldDim_;
@@ -57,8 +57,8 @@ public:
 
 	void reserve(const std::size_t n_elements, const std::size_t n_points) override
 	{
-		elements_size = n_elements;
-		points_size = n_points;
+		elements_size_ = n_elements;
+		points_size_ = n_points;
 
 		elements_ = ViewMatrixType<Integer>("elems", n_elements,
 				ManifoldDim + 1);
@@ -531,18 +531,18 @@ public:
 
 	inline Integer n_nodes() const override
 	{
-		return points_size;
+		return points_size_;
 	}
 
 	inline Integer n_elements() const override
 	{
-		return elements_size;
+		return elements_size_;
 	}
 
 	inline Integer n_active_elements() const override
 	{
 		Integer ret = 0;
-		for (Integer i = 0; i < elements_size; ++i) {
+		for (Integer i = 0; i < elements_size_; ++i) {
 			ret += active_(i);
 		}
 
@@ -1002,8 +1002,8 @@ private:
 	ViewMatrixType<Integer> elements_;
 	ViewMatrixType<Real> points_;
 	ViewVectorType<bool> active_;
-	Integer elements_size;
-	Integer points_size;
+	Integer elements_size_;
+	Integer points_size_;
 
 	std::vector<Integer> tags_;
 	DualGraph<ManifoldDim> dual_graph_;

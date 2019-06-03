@@ -9,8 +9,11 @@ namespace mars {
 namespace generation {
 namespace memory {
 
-int parseLine(char* line) {
-	// This assumes that a digit will be found and the line ends in " Kb".
+//values are in KB.
+
+
+int parse_line(char* line) {
+
 	int i = strlen(line);
 	const char* p = line;
 	while (*p < '0' || *p > '9')
@@ -20,14 +23,14 @@ int parseLine(char* line) {
 	return i;
 }
 
-int getVirtualMem() { //Note: this value is in KB!
+int get_virtual_memory() {
 	FILE* file = fopen("/proc/self/status", "r");
 	int result = -1;
 	char line[128];
 
 	while (fgets(line, 128, file) != NULL) {
 		if (strncmp(line, "VmSize:", 7) == 0) {
-			result = parseLine(line);
+			result = parse_line(line);
 			break;
 		}
 	}
@@ -35,14 +38,14 @@ int getVirtualMem() { //Note: this value is in KB!
 	return result;
 }
 
-int getPhysicalMem() { //Note: this value is in KB!
+int get_physical_memory() {
 	FILE* file = fopen("/proc/self/status", "r");
 	int result = -1;
 	char line[128];
 
 	while (fgets(line, 128, file) != NULL) {
 		if (strncmp(line, "VmRSS:", 6) == 0) {
-			result = parseLine(line);
+			result = parse_line(line);
 			break;
 		}
 	}

@@ -47,7 +47,7 @@ mars::Mesh1 test_mars_mesh_generation_1D(const int x) {
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 	auto duration = duration_cast < seconds > (t2 - t1).count();
 
-	std::cout << "Generation took: "<< duration<<" seconds."<<endl;
+	std::cout << "Generation took: "<< duration<<" seconds."<<std::endl;
 
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
@@ -55,7 +55,7 @@ mars::Mesh1 test_mars_mesh_generation_1D(const int x) {
 
 	if (x < 100) {
 		VTKMeshWriter<Mesh1> w;
-		w.write("build_line" + to_string(x) + ".vtu", mesh);
+		w.write("build_line" + std::to_string(x) + ".vtu", mesh);
 	}
 
 	return mesh;
@@ -74,7 +74,7 @@ mars::Mesh2 test_mars_mesh_generation_2D(const int x,
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 	auto duration = duration_cast < seconds > (t2 - t1).count();
 
-	std::cout << "Generation took: "<< duration<<endl;
+	std::cout << "Generation took: "<< duration<<std::endl;
 
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
@@ -83,7 +83,7 @@ mars::Mesh2 test_mars_mesh_generation_2D(const int x,
 	if (x <= 1000) {
 
 		VTKMeshWriter<Mesh2> w;
-		w.write("build_square" + to_string(x) + to_string(y) + ".vtu", mesh);
+		w.write("build_square" + std::to_string(x) + std::to_string(y) + ".vtu", mesh);
 	}
 
 	return mesh;
@@ -102,14 +102,14 @@ mars::Mesh3 test_mars_mesh_generation_3D(const int x,
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 	auto duration = duration_cast < seconds > (t2 - t1).count();
 
-	cout << "Generation took: "<< duration<<" seconds."<<endl;
-	cout << "n_active_elements: " << mesh.n_active_elements() << endl;
-	cout << "n_nodes: " << mesh.n_nodes() << endl;
+	std::cout << "Generation took: "<< duration<<" seconds."<<std::endl;
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
 
 	if (z < 100) {
-		cout<<"Writing vtu file: build_cube" + to_string(x) + to_string(y) + ".vtu"<<endl;
+		std::cout<<"Writing vtu file: build_cube" + std::to_string(x) + std::to_string(y) + ".vtu"<<std::endl;
 		VTKMeshWriter<Mesh3> w;
-		w.write("build_cube" + to_string(x) + to_string(y) + ".vtu", mesh);
+		w.write("build_cube" + std::to_string(x) + std::to_string(y) + ".vtu", mesh);
 	}
 	return mesh;
 }
@@ -204,7 +204,7 @@ void test_uniform_bisection_3D(const int level, mars::Mesh3 mesh)
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 	auto duration = duration_cast < seconds > (t2 - t1).count();
 
-		cout << "Refinment took: "<< duration<<" seconds."<<endl;
+	std::cout << "Refinment took: "<< duration<<" seconds."<<std::endl;
 	print_boundary_points(mesh, std::cout, true);
 
 	mesh.clean_up();
@@ -1094,9 +1094,9 @@ int main(int argc, char *argv[])
 	//test_mars_mesh_generation_3D(150,150,150);
 	//test_mars_mesh_generation_3D(200,200,200);
 
+	//equivalent 3D generation using refinement and libmesh like mesh generation technique.
 	/*test_mars_mesh_generation_3D(2,2,2);
-	test_uniform_bisection_3D(level, test_mars_mesh_generation_3D(1,1,1));*/
-
+	test_uniform_bisection_3D(3, test_mars_mesh_generation_3D(1,1,1));*/
 	//parallel with kokkos.
 
 #ifdef WITH_KOKKOS
