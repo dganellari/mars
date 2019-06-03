@@ -950,17 +950,20 @@ namespace mars {
         return b;
     }
 
-    
-    // inline Vector<Real, 2> normal(
-    //     const Simplex<1, 1>      &simplex,
-    //     const std::vector<Vector<Real, 1>> &points,
-    //     const bool apply_normalization = true)
-    // {
-    //     std::cerr << "[Warning] hardcoded surface normal" << std::endl;
-    //     Vector<Real, 2> v{0., 1.};
-    //     return v;
-    // }
+    inline Vector<Real, 2> normal(const Simplex<2, 1>      &simplex,
+                                  const std::vector<Vector<Real, 2>> &points,
+                                  const bool apply_normalization = true)
+    {
+        Vector<Real, 2> n = points[simplex.nodes[1]] - points[simplex.nodes[0]];
+        
+        if(apply_normalization) {
+            n /= n.norm();
+        }
 
+        std::swap(n[0], n[1]);
+        n[0] = -n[0];
+        return n;
+    }
     
     template<Integer Dim, Integer ManifoldDim>
     inline Vector<Real, Dim> normal(const Simplex<Dim, ManifoldDim>      &simplex,
