@@ -127,6 +127,69 @@ namespace mars {
 
 		// mesh.describe(std::cout, true);
 		// mesh.describe(std::cout, false);
+
+		VTKMeshWriter<MeshD> w;
+		w.write("mesh_red_refined_benchmark.vtu", mesh);
+	}
+
+	template<mars::Integer Dim, mars::Integer ManifoldDim>
+		void generate_mesh(mars::Mesh<Dim, ManifoldDim> &mesh, int level)
+		{
+			using namespace mars;
+			using MeshD = mars::Mesh<Dim, ManifoldDim>;
+
+			RedGreenRefinement<MeshD> rgr(mesh);
+
+			static const Integer n_refinements = 1;
+			mesh.build_dual_graph();
+			Integer nbs = mesh.n_boundary_sides();
+			std::cout << "n_boundary_sides: " << nbs << std::endl;
+			mesh.check_side_ordering();
+			// mesh.describe_dual_graph(std::cout);
+
+			std::cout << "-------------------------" << std::endl;
+
+			// mesh.red_refine_element(0);
+			for(int i=0;i<level;i++)
+				rgr.uniformly_refine(n_refinements);
+			std::cout << "n_elements: " << mesh.n_active_elements() << std::endl;
+			std::cout << "n_nodes:    " << mesh.n_nodes() << std::endl;
+
+			mesh.build_dual_graph();
+			mesh.check_side_ordering();
+			std::cout << "n_boundary_sides: " << mesh.n_boundary_sides()
+					<< " == " << Power<2, (ManifoldDim - 1) * n_refinements>::value * nbs << std::endl;
+
+			// mesh.describe(std::cout, true);
+			// mesh.describe(std::cout, false);
+
+			VTKMeshWriter<MeshD> w;
+			w.write("mesh_red_refined_uniformtest"+ std::to_string(mesh.Dim) +".vtu", mesh);
+		}
+
+	template<mars::Integer Dim, mars::Integer ManifoldDim>
+	static void test_generate_3D(mars::Mesh<Dim, ManifoldDim> &mesh)
+	{
+		using namespace mars;
+
+		std::cout << "======================================\n";
+		using MeshD = mars::Mesh<Dim, ManifoldDim>;
+
+		RedGreenRefinement<MeshD> rgr(mesh);
+		rgr.red_refine({0});
+		// mesh.describe(std::cout);
+		write_element("elem_3.eps", rgr, 0, 10, INVALID_INDEX);
+		write_element_with_sides("elem_sides_3.eps", mesh, 0, 10, INVALID_INDEX);
+
+		write_element_with_subsurfaces(
+		"elem_ss_3.eps",
+		mesh,
+		0,
+		10);
+		std::cout << "======================================\n";
+
+		VTKMeshWriter<MeshD> w;
+		w.write("mesh_red_refined_test"+ std::to_string(mesh.Dim) +".vtu", mesh);
 	}
 
 	static void test_mfem_mesh_2D()
@@ -187,6 +250,9 @@ namespace mars {
 		0,
 		10);
 		std::cout << "======================================\n";
+
+		VTKMeshWriter<Mesh3> w;
+		w.write("mesh_red_refined_benchmark.vtu", mesh);
 	}
 
 	static void test_mfem_mesh_4D()
@@ -202,7 +268,8 @@ namespace mars {
 		rgr.red_refine({0});
 		// mesh.describe(std::cout);
 		// mesh.describe_dual_graph(std::cout);
-		write_element("elem_4.eps", rgr, 0, 10, INVALID_INDEX);
+		write_element("elem_4.eps",
+				rgr, 0, 10, INVALID_INDEX);
 		write_element_with_sides("elem_sides_4.eps", mesh, 6, 10, INVALID_INDEX);
 		std::cout << "======================================\n";
 
@@ -347,14 +414,30 @@ namespace mars {
 		assert(num == read_num);
 	}
 
-	void run_tests()
+	void run_tests(const int level)
 	{
-		test_det();
+		//test_det();
 		// test_midpoint_index();
 		// test_red_refinement_interpolator();
 		// test_red_refinement();
-		// test_mfem_mesh_3D();
+		//test_mfem_mesh_3D();
 		// test_mfem_mesh_4D();
 		// test_mfem_mesh_2D();
+		/*Mesh3 mesh;
+		read_mesh("../data/write/tetrakis.MFEM", mesh, true);
+		generate_mesh<3,3>(mesh,1);
+		VTKMeshWriter<Mesh3> w;
+					w.write("cube_red"+ std::to_string(mesh.Dim) +".vtu", mesh);*/
+
+		Mesh<3,2> tri;
+		read_mesh("../data/square_3.MFEM",tri,true);
+		generate_mesh(tri,level);
+
+		//test_generate_3D(tri);
+
+		//write_mesh_MFEM("../data/write/cube_6.MFEM",mesh);
+
+		//test_mfem_mesh_2D();
+
 	}
 }

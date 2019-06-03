@@ -6,10 +6,9 @@
 #include "mars_communicator.hpp"
 #include "mars_par_edge_split_pool.hpp"
 #include "mars_par_mesh.hpp"
+#include "mars_fwd.hpp"
 
 namespace mars {
-	template<Integer Dim, Integer ManifoldDim>
-	class Mesh;
 
 	template<class Mesh>
 	class Bisection;
