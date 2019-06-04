@@ -40,7 +40,17 @@ namespace mars {
 	    	
 	    	return ret;
 	    }
-	    
+
+	    Vector operator-() const
+	    {
+	        Vector ret;
+	        for(Integer i = 0; i < Dim; ++i) {
+	            ret(i) = -(*this)(i) ;
+	        }
+	        
+	        return ret;
+	    }
+
 	    Vector operator-(const Vector &right) const
 	    {
 	        Vector ret;

@@ -8,9 +8,13 @@
 
 namespace mars {
 
-	template<typename T, Integer Rows, Integer Cols>
+	template<typename T, Integer Rows_, Integer Cols_>
 	class Matrix {
 	public:
+
+		static constexpr Integer Rows=Rows_;
+		static constexpr Integer Cols=Cols_;
+
 		Matrix() {}
 
 	    Matrix(std::initializer_list<T> values)
@@ -207,6 +211,19 @@ namespace mars {
 	    	for(Integer i = 0; i < Rows; ++i) {
 	    		for(Integer j = 0; j < Cols; ++j) {
 	    				ret(i, j) = (*this)(i, j) + other(i, j);
+	    			}
+	    		}
+	    	
+	    	return ret;
+	    }
+
+	    inline Matrix<T, Rows, Cols> operator - (const Matrix<T, Rows, Cols> &other)const
+	    {
+	    	Matrix<T, Rows, Cols> ret;
+
+	    	for(Integer i = 0; i < Rows; ++i) {
+	    		for(Integer j = 0; j < Cols; ++j) {
+	    				ret(i, j) = (*this)(i, j) - other(i, j);
 	    			}
 	    		}
 	    	
