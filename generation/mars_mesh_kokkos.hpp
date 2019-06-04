@@ -150,6 +150,33 @@ public:
 		parallel_for(n_nodes, AddPoint(points_, xDim));
 	}
 
+	//add point functor
+	struct AddPoint_2D {
+
+		ViewMatrixType<Real> points;
+		Integer xDim;
+		Integer yDim;
+
+		AddPoint_2D(ViewMatrixType<Real> pts, Integer xdm, Integer ydm) :
+				points(pts), xDim(xdm), yDim(ydm) {
+		}
+
+		KOKKOS_INLINE_FUNCTION
+		void operator()(int i, int j) const {
+
+			int index = i * (xDim+1) + j;
+			points(index, 0) = static_cast<Real>(i) / static_cast<Real>(xDim);
+			points(index, 1) = static_cast<Real>(j) / static_cast<Real>(yDim);
+
+		}
+	};
+
+	inline void generate_points_2D(const int xDim, const int yDim) {
+
+		parallel_for(MDRangePolicy<Rank<2> >( { 0, 0 }, {xDim +1, yDim +1}),
+				AddPoint_2D(points_, xDim, yDim));
+	}
+
 	//add elem functor
 	struct AddElem {
 
@@ -175,6 +202,50 @@ public:
 	inline void generate_elements(const int n_elements) {
 
 		parallel_for(n_elements, AddElem(elements_, active_));
+	}
+
+	//add elem functor
+	struct AddElem_2D {
+
+		ViewMatrixType<Integer> elem;
+		ViewVectorType<bool> active;
+		Integer xDim;
+		Integer yDim;
+
+		AddElem_2D(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,Integer xdm,Integer ydm) :
+				elem(el), active(ac), xDim(xdm), yDim(ydm) {
+		}
+
+		KOKKOS_INLINE_FUNCTION
+		void operator()(int i, int j) const {
+
+			const int offset = yDim + 1;
+
+			//int index = (i * xDim + j);
+			int index = 2 * (i * xDim + j);
+
+			elem(index, 0) = i * offset + j;
+			elem(index, 1) = (i + 1) * offset + j;
+			elem(index, 2) = (i + 1) * offset + (j + 1); //just to write it more clear
+
+			active(index) = true;
+
+			//index = index + xDim*yDim;
+			index = index + 1; // stride access of 2.
+
+			elem(index, 0) = i * offset + j;
+			elem(index, 1) = (i + 1) * offset + (j + 1);
+			elem(index, 2) = i * offset + (j + 1);
+
+			active(index) = true;
+
+		}
+	};
+
+	inline void generate_elements_2D(const int xDim, const int yDim) {
+
+		parallel_for(MDRangePolicy<Rank<2> >( { 0, 0 }, { xDim, yDim }),
+					AddElem_2D(elements_, active_, xDim,yDim));
 	}
 
 	/*	inline __device__ __host__ void add_point1(const size_t row,const Integer xDim) {

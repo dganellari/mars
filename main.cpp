@@ -1088,9 +1088,12 @@ int main(int argc, char *argv[])
 
 	//test_mars_mesh_generation_1D(level);
 
-	//test_mars_mesh_generation_2D(1000,1000);
+	if(level <100)
+		test_mars_mesh_generation_2D(level,level);
 
-	//test_mars_mesh_generation_3D(100,100,100);
+	/*test_mars_mesh_generation_3D(100,100,100);
+	test_mars_mesh_generation_3D(78,100,80);*/
+
 	//test_mars_mesh_generation_3D(150,150,150);
 	//test_mars_mesh_generation_3D(200,200,200);
 
@@ -1100,7 +1103,19 @@ int main(int argc, char *argv[])
 	//parallel with kokkos.
 
 #ifdef WITH_KOKKOS
-	test_mars_mesh_generation_kokkos_1D(level);
+	Kokkos::initialize(argc,argv);
+	{
+
+		test_mars_mesh_generation_kokkos_2D(level,level);
+
+		/*char *end_p = argv[2];
+		int l= strtol(argv[2], &end_p, 10);
+		test_mars_mesh_generation_kokkos_1D(l);
+*/
+	}
+
+	Kokkos::finalize();
+
 #endif
 
 #ifdef WITH_MPI
