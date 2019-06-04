@@ -102,26 +102,13 @@ bool generate_cube(ParallelMesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 		const int n_nodes = xDim + 1;
 		mesh.reserve(n_elements, n_nodes);
 
-
-		/*parallel_for(n_nodes,
-				typename Parallel_Mesh<Dim, ManifoldDim>::AddPoint(mesh.get_view_points(),
-						xDim));
-
-		//Cuda::fence();
-
-		parallel_for(n_elements,
-				typename Parallel_Mesh<Dim, ManifoldDim>::AddElem(mesh.get_view_elems(),
-						mesh.get_view_active()));
-
-		Cuda::fence();*/
-
 		mesh.generate_points(n_nodes,xDim);
 		mesh.generate_elements(n_elements);
 
 		return true;
 	}
 
-	/*case 2: {
+	case 2: {
 
 		assert(xDim != 0);
 		assert(yDim != 0);
@@ -131,42 +118,15 @@ bool generate_cube(ParallelMesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 		const int n_nodes = (xDim + 1) * (yDim + 1);
 		mesh.reserve(n_elements, n_nodes);
 
-		for (Integer i = 0; i <= xDim; ++i) {
-			for (Integer j = 0; j <= yDim; ++j) {
-				Vector<Real, Dim> p(
-						{ static_cast<Real>(i) / static_cast<Real>(xDim),
-								static_cast<Real>(j) / static_cast<Real>(yDim),
-								0.0 });
+		mesh.generate_points_2D(xDim,yDim);
+		//Kokkos::fence();
+		mesh.generate_elements_2D(xDim,yDim);
+		//Kokkos::fence();
 
-				mesh.add_point(p);
-			}
-		}
-
-		const int offset = yDim + 1;
-
-		for (Integer i = 0; i < xDim; ++i) {
-			for (Integer j = 0; j < yDim; ++j) {
-
-				std::array<Integer, ManifoldDim + 1> nodes;
-
-				nodes[0] = i * offset + j;
-				nodes[1] = (i + 1) * offset + j;
-				nodes[2] = (i + 1) * offset + (j + 1); //just to write it more clear
-
-				mesh.add_elem(nodes);
-
-				nodes[0] = i * offset + j;
-				nodes[1] = (i + 1) * offset + (j + 1);
-				nodes[2] = i * offset + (j + 1);
-
-				mesh.add_elem(nodes);
-
-			}
-		}
 
 		return true;
 	}
-	case 3: { //building the tetra mesh from the hex27 elem
+	/*case 3: { //building the tetra mesh from the hex27 elem
 
 		assert(xDim != 0);
 		assert(yDim != 0);

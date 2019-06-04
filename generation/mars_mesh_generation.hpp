@@ -305,9 +305,9 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 						mesh.point(in / 2)[0] = static_cast<Real>(i)
 												/ static_cast<Real>(2 * xDim);
 						mesh.point(in / 2)[1] = static_cast<Real>(j)
-												/ static_cast<Real>(2 * xDim);
+												/ static_cast<Real>(2 * yDim);
 						mesh.point(in / 2)[2] = static_cast<Real>(k)
-												/ static_cast<Real>(2 * xDim);
+												/ static_cast<Real>(2 * zDim);
 					}
 
 				}
