@@ -17,7 +17,7 @@
 #include <fstream>
 #include <sstream>
 #include <memory>
-#include <algorithm>  
+#include <algorithm>
 
 #include "mars_imesh_kokkos.hpp"
 
@@ -26,8 +26,6 @@
 namespace mars {
 namespace generation {
 namespace kokkos {
-
-using namespace Kokkos;
 
 #ifdef MARS_USE_CUDA
 #define KokkosSpace Kokkos::CudaSpace
@@ -64,6 +62,20 @@ public:
 				ManifoldDim + 1);
 		active_ = ViewVectorType<bool>("active_", n_elements);
 		points_ = ViewMatrixType<Real>("pts", n_points, Dim);
+	}
+
+	void reserve_points(const std::size_t n_points)
+	{
+		points_size_ = n_points;
+		points_ = ViewMatrixType<Real>("pts", n_points, Dim);
+	}
+
+	void reserve_elements(const std::size_t n_elements)
+	{
+		elements_size_ = n_elements;
+		elements_ = ViewMatrixType<Integer>("elems", n_elements,
+				ManifoldDim + 1);
+		active_ = ViewVectorType<bool>("active_", n_elements);
 	}
 
 	/*inline Elem &elem(const Integer id) override
@@ -129,63 +141,81 @@ public:
 
 		ViewMatrixType<Real> points;
 		Integer xDim;
+		Integer yDim;
 
-		AddPoint(ViewMatrixType<Real> pts, Integer xdm) :
-				points(pts), xDim(xdm) {
+		AddPoint(ViewMatrixType<Real> pts, Integer xdm, Integer ydm) :
+				points(pts), xDim(xdm), yDim(ydm) {
 		}
 
 		KOKKOS_INLINE_FUNCTION
-		void operator()(int row) const {
+		void operator()(int i) const {
 
-			for (int i = 0; i < Dim; ++i) {
-				points(row, i) = static_cast<Real>(row)
-						/ static_cast<Real>(xDim);
+			for (int l = 0; l < Dim; ++l) {
+				points(i, l) = static_cast<Real>(i) / static_cast<Real>(xDim);
 			}
 
-		}
-	};
-
-	inline void generate_points(const int n_nodes, const int xDim) {
-
-		parallel_for(n_nodes, AddPoint(points_, xDim));
-	}
-
-	//add point functor
-	struct AddPoint_2D {
-
-		ViewMatrixType<Real> points;
-		Integer xDim;
-		Integer yDim;
-
-		AddPoint_2D(ViewMatrixType<Real> pts, Integer xdm, Integer ydm) :
-				points(pts), xDim(xdm), yDim(ydm) {
 		}
 
 		KOKKOS_INLINE_FUNCTION
 		void operator()(int i, int j) const {
 
-			int index = i * (xDim+1) + j;
+			int index = i * (xDim + 1) + j;
 			points(index, 0) = static_cast<Real>(i) / static_cast<Real>(xDim);
 			points(index, 1) = static_cast<Real>(j) / static_cast<Real>(yDim);
 
 		}
 	};
 
-	inline void generate_points_2D(const int xDim, const int yDim) {
+	inline void generate_points(const int xDim, const int yDim) {
 
-		parallel_for(MDRangePolicy<Rank<2> >( { 0, 0 }, {xDim +1, yDim +1}),
-				AddPoint_2D(points_, xDim, yDim));
+		using namespace Kokkos;
+
+		switch (ManifoldDim_) {
+
+		case 1: {
+
+			assert(xDim != 0);
+			assert(yDim == 0);
+//			assert(zDim == 0);
+
+			const int n_nodes = xDim + 1;
+			reserve_points(n_nodes);
+
+			parallel_for(n_nodes, AddPoint(points_, xDim, yDim));
+			break;
+		}
+
+		case 2: {
+
+			assert(xDim != 0);
+			assert(yDim != 0);
+//			assert(zDim == 0);
+
+			const int n_nodes = (xDim + 1) * (yDim + 1);
+			reserve_points(n_nodes);
+
+			parallel_for(
+					MDRangePolicy<Rank<2> >( { 0, 0 }, { xDim + 1, yDim + 1 }),
+					AddPoint(points_, xDim, yDim));
+			break;
+		}
+		}
+
 	}
+
 
 	//add elem functor
 	struct AddElem {
 
 		ViewMatrixType<Integer> elem;
 		ViewVectorType<bool> active;
+		Integer xDim;
+		Integer yDim;
 
-		AddElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac) :
-				elem(el), active(ac) {
+		AddElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,Integer xdm,Integer ydm) :
+				elem(el), active(ac), xDim(xdm), yDim(ydm) {
 		}
+
 
 		KOKKOS_INLINE_FUNCTION
 		void operator()(int row) const {
@@ -196,24 +226,6 @@ public:
 
 			active(row) = true;
 
-		}
-	};
-
-	inline void generate_elements(const int n_elements) {
-
-		parallel_for(n_elements, AddElem(elements_, active_));
-	}
-
-	//add elem functor
-	struct AddElem_2D {
-
-		ViewMatrixType<Integer> elem;
-		ViewVectorType<bool> active;
-		Integer xDim;
-		Integer yDim;
-
-		AddElem_2D(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,Integer xdm,Integer ydm) :
-				elem(el), active(ac), xDim(xdm), yDim(ydm) {
 		}
 
 		KOKKOS_INLINE_FUNCTION
@@ -238,14 +250,34 @@ public:
 			elem(index, 2) = i * offset + (j + 1);
 
 			active(index) = true;
-
 		}
 	};
 
-	inline void generate_elements_2D(const int xDim, const int yDim) {
+	inline void generate_elements(const int xDim, const int yDim) {
 
-		parallel_for(MDRangePolicy<Rank<2> >( { 0, 0 }, { xDim, yDim }),
-					AddElem_2D(elements_, active_, xDim,yDim));
+		using namespace Kokkos;
+
+		switch (ManifoldDim_) {
+
+		case 1: {
+
+			const int n_elements = xDim;
+			reserve_elements(n_elements);
+
+			parallel_for(n_elements, AddElem(elements_, active_, xDim, yDim));
+			break;
+		}
+
+		case 2: {
+
+			const int n_elements = 2 * xDim * yDim;
+			reserve_elements(n_elements);
+
+			parallel_for(MDRangePolicy<Rank<2> >( { 0, 0 }, { xDim, yDim }),
+					AddElem(elements_, active_, xDim, yDim));
+			break;
+		}
+		}
 	}
 
 	/*	inline __device__ __host__ void add_point1(const size_t row,const Integer xDim) {
