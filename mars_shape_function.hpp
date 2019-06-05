@@ -355,60 +355,95 @@ public:
           assert(i < NQPoints);
           return qpvalues_[i];
       }
-
+  inline const T &operator[](const Integer i)const
+      {
+          assert(i < NQPoints);
+          return qpvalues_[i];
+      }
 private:
   type qpvalues_;
 
 };
 
+
+// template<typename T,Integer NQPoints,Integer Ncomponents>
+// class FQPValuesBase
+// {
+// public:
+
+//       using type= Vector<Vector<T,NQPoints>,Ncomponents>;
+
+//       FQPValuesBase(): fqpvalues_(){};
+//       FQPValuesBase(const type& v): fqpvalues_(v){};
+//       inline type operator()(){return fqpvalues_;};
+//       inline Vector<T,NQPoints> operator()(const Integer& i)const{return fqpvalues_[i];};
+//       inline void operator()(const Integer& i,const Vector<T,NQPoints>& u){fqpvalues_[i]=u;};
+      
+//       inline Vector<T,NQPoints> &operator[](const Integer i)
+//       {
+//           assert(i < Ncomponents);
+//           return fqpvalues_[i];
+//       }
+//       inline const Vector<T,NQPoints> &operator[](const Integer i)const
+//       {
+//           assert(i < Ncomponents);
+//           return fqpvalues_[i];
+//       }
+// protected:
+//       type fqpvalues_;
+//       Vector<T,NQPoints> tmp1_;
+
+// };
+
+
 template<typename T,Integer NQPoints,Integer Ncomponents>
-class FQPValues
+class FQPValues;
+
+
+
+// FQPVALUES REAL
+template<Integer NQPoints,Integer Ncomponents>
+class FQPValues<Real,NQPoints,Ncomponents> //: public FQPValuesBase<Real,NQPoints,Ncomponents>
 {
 public:
+  using T=Real;
   using type= Vector<Vector<T,NQPoints>,Ncomponents>;
-
       FQPValues(): fqpvalues_(){};
       FQPValues(const type& v): fqpvalues_(v){};
-      
-      inline type operator()(){return fqpvalues_;};
+
+      // FQPValues(): FQPValuesBase<T,NQPoints,Ncomponents>(){};
+      // FQPValues(const type& v): FQPValuesBase<T,NQPoints,Ncomponents>(v){};
+      inline type operator()()const{return fqpvalues_;};
       inline Vector<T,NQPoints> operator()(const Integer& i)const{return fqpvalues_[i];};
-      inline void operator()(const Integer& i,const Vector<T,NQPoints>& u){fqpvalues_[i]=u;};
-
-      // inline void set_value(Integer i,const Vector<T,NQPoints>& u){fqpvalues_[i]=u;};
-      // inline void get_value(Integer i,const Vector<T,NQPoints>& u){fqpvalues_[i]=u;};
-      inline type get(){return fqpvalues_;};
-
-      inline FQPValues& operator = (const FQPValues &u)
-      {            
-        (*this).fqpvalues_=u.get();
-        return *this;
-      } 
-
+      inline void operator()(const Integer& i,const Vector<T,NQPoints>& u){fqpvalues_[i]=u;};   
 
       inline Vector<T,NQPoints> &operator[](const Integer i)
       {
           assert(i < Ncomponents);
           return fqpvalues_[i];
       }
+      inline const Vector<T,NQPoints> &operator[](const Integer i)const
+      {
+          assert(i < Ncomponents);
+          return fqpvalues_[i];
+      }
 
+      // equal
+      inline FQPValues& operator = (const FQPValues &u)
+      {            
+        (*this).fqpvalues_=u.get();
+        return *this;
+      } 
 
-      template<typename QPValues>
-      FQPValues operator*(const QPValues &qpvalue) const
+      // unary add
+      FQPValues operator+()
       {
         FQPValues result;
-        (*this).tmp_1_=qpvalue();
-        for(Integer i = 0; i < Ncomponents; ++i) {
-            result(i, (*this).tmp_1_ * (*this)(i) );
-        }
+        result.fqpvalues_=+(*this).fqpvalues_;
         
         return result;
       };
-
-      FQPValues operator*(const Real &value) const
-      { 
-        return fqpvalues_*value;
-      };
-
+      // binary add
       FQPValues operator+(const FQPValues &fqpvalue) const
       {
         FQPValues result;
@@ -417,6 +452,7 @@ public:
         return result;
       };
 
+      // unary minus
       FQPValues operator-()
       {
         FQPValues result;
@@ -424,7 +460,7 @@ public:
         
         return result;
       };
-
+      // binary minus
       FQPValues operator-(const FQPValues &fqpvalue) const
       {
         FQPValues result;
@@ -433,11 +469,27 @@ public:
         return result;
       };
 
-      template<typename QPValues>
-      friend FQPValues operator*(const QPValues &qpvalue, FQPValues& fqpvalue)
+      // right scalar multiply
+      FQPValues operator*(const Real &value) const
       { 
-        Contraction contract;
         FQPValues result;
+        result.fqpvalues_=(*this).fqpvalues_*value;
+        return result;
+      };
+      // left scalar multiply
+      friend FQPValues operator*(const Real &value, const FQPValues& F) 
+      { 
+        FQPValues result;
+        result=value*F;
+        return result;
+      };
+
+      // tensor contraction tensor: Real= contract(M<Rows,Cols>, M<Rows,Cols>),contract(Vec<Rows>, Vec<Rows>),contract(Real,Real)
+      template<typename T>
+      friend FQPValues operator*(const QPValues<T,NQPoints> &qpvalue,const FQPValues<T,NQPoints,Ncomponents>& fqpvalue)
+      { 
+        FQPValues result;
+        Contraction contract;
         const auto& tmp=qpvalue();
         for(Integer i = 0; i < Ncomponents; ++i) 
         {
@@ -448,30 +500,238 @@ public:
         }       
         return result;
       };
-      // template<typename QPValues>
-      // friend FQPValues<Real,NQPoints,Ncomponents> operator*(const QPValues &qpvalue, FQPValues& fqpvalue)
-      // { 
-      //   Contraction contract;
-      //   FQPValues result;
-      //   const auto& tmp=qpvalue();
-      //   for(Integer i = 0; i < Ncomponents; ++i) 
-      //   {
-      //     for(Integer j = 0; j < NQPoints; ++j)
-      //       {
-      //       result[i][j]= contract(tmp[i],fqpvalue[i][j]);
-      //       }          
-      //   }       
-      //   return result;
-      // };
-      
-  
-private:
-  type fqpvalues_;
-  Vector<T,NQPoints> tmp1_;
+protected:
+      type fqpvalues_;
+      Vector<T,NQPoints> tmp1_;
 };
 
+// FQPVALUES VECTOR
+template<Integer Rows,Integer NQPoints,Integer Ncomponents>
+class FQPValues<Vector<Real,Rows>,NQPoints,Ncomponents> //: public FQPValuesBase<Vector<Real,Rows>,NQPoints,Ncomponents>
+{
+public:
+  using T=Vector<Real,Rows>;
+  using type= Vector<Vector<T,NQPoints>,Ncomponents>;
+
+       FQPValues(): fqpvalues_(){};
+      FQPValues(const type& v): fqpvalues_(v){};
+      
+      // FQPValues(): FQPValuesBase<T,NQPoints,Ncomponents>(){};
+      // FQPValues(const type& v): FQPValuesBase<T,NQPoints,Ncomponents>(v){};
+      inline type operator()()const{return fqpvalues_;};
+      inline Vector<T,NQPoints> operator()(const Integer& i)const{return fqpvalues_[i];};
+      inline void operator()(const Integer& i,const Vector<T,NQPoints>& u){fqpvalues_[i]=u;};     
+      inline Vector<T,NQPoints> &operator[](const Integer i)
+      {
+          assert(i < Ncomponents);
+          return fqpvalues_[i];
+      }
+      inline const Vector<T,NQPoints> &operator[](const Integer i)const
+      {
+          assert(i < Ncomponents);
+          return fqpvalues_[i];
+      }
+
+            // equal
+      inline FQPValues& operator = (const FQPValues &u)
+      {            
+        (*this).fqpvalues_=u.get();
+        return *this;
+      } 
+
+      // unary add
+      FQPValues operator+()
+      {
+        FQPValues result;
+        result.fqpvalues_=+(*this).fqpvalues_;
+        
+        return result;
+      };
+      // binary add
+      FQPValues operator+(const FQPValues &fqpvalue) const
+      {
+        FQPValues result;
+        result.fqpvalues_=(*this).fqpvalues_+fqpvalue.fqpvalues_;
+        
+        return result;
+      };
+
+      // unary minus
+      FQPValues operator-()
+      {
+        FQPValues result;
+        result.fqpvalues_=-(*this).fqpvalues_;
+        
+        return result;
+      };
+      // binary minus
+      FQPValues operator-(const FQPValues &fqpvalue) const
+      {
+        FQPValues result;
+        result.fqpvalues_=(*this).fqpvalues_-fqpvalue.fqpvalues_;
+        
+        return result;
+      };
+
+      // right scalar multiply
+      FQPValues operator*(const Real &value) const
+      { 
+        FQPValues result;
+        result.fqpvalues_=(*this).fqpvalues_*value;
+        return result;
+      };
+      // left scalar multiply
+      friend FQPValues operator*(const Real &value, const FQPValues& F) 
+      { 
+        FQPValues result;
+        result=value*F;
+        return result;
+      };
+
+      // matrix times matrix multiply: M<Rows,Cols>= M<Rows,Cols2> * M<Rows2,Cols>
+      template<Integer Rows2,Integer Cols2>
+      friend FQPValues operator*(const QPValues<Matrix<Real,Rows2,Cols2>,NQPoints> &qpvalue,const FQPValues<T,NQPoints,Ncomponents>& fqpvalue)
+      { 
+        assert(Cols2==Rows);
+        FQPValues result;
+        const auto& tmp=qpvalue();
+        for(Integer i = 0; i < Ncomponents; ++i) 
+        {
+          for(Integer j = 0; j < NQPoints; ++j)
+            {
+            result[i][j]= tmp[i]*fqpvalue[i][j];
+            }          
+        }       
+        return result;
+      };
+protected:
+      type fqpvalues_;
+      Vector<T,NQPoints> tmp1_;
+};
+
+// FQPVALUES MATRIX
+template<Integer Rows,Integer Cols,Integer NQPoints,Integer Ncomponents>
+class FQPValues<Matrix<Real,Rows,Cols>,NQPoints,Ncomponents> //: public FQPValuesBase<Matrix<Real,Rows,Cols>,NQPoints,Ncomponents>
+{
+
+public:
+  using T=Matrix<Real,Rows,Cols>;
+  using type= Vector<Vector<T,NQPoints>,Ncomponents>;
+
+       FQPValues(): fqpvalues_(){};
+      FQPValues(const type& v): fqpvalues_(v){};
+      
+      // FQPValues(): FQPValuesBase<T,NQPoints,Ncomponents>(){};
+      // FQPValues(const type& v): FQPValuesBase<T,NQPoints,Ncomponents>(v){};
+      inline type operator()()const{return fqpvalues_;};
+      inline Vector<T,NQPoints> operator()(const Integer& i)const{return fqpvalues_[i];};
+      inline void operator()(const Integer& i,const Vector<T,NQPoints>& u){fqpvalues_[i]=u;};     
+       inline Vector<T,NQPoints> &operator[](const Integer i)
+      {
+          assert(i < Ncomponents);
+          return fqpvalues_[i];
+      }
+      inline const Vector<T,NQPoints> &operator[](const Integer i)const
+      {
+          assert(i < Ncomponents);
+          return fqpvalues_[i];
+      }
+
+           // equal
+      inline FQPValues& operator = (const FQPValues &u)
+      {            
+        (*this).fqpvalues_=u.get();
+        return *this;
+      } 
+
+      // unary add
+      FQPValues operator+()
+      {
+        FQPValues result;
+        result.fqpvalues_=+(*this).fqpvalues_;
+        
+        return result;
+      };
+      // binary add
+      FQPValues operator+(const FQPValues &fqpvalue) const
+      {
+        FQPValues result;
+        result.fqpvalues_=(*this).fqpvalues_+fqpvalue.fqpvalues_;
+        
+        return result;
+      };
+
+      // unary minus
+      FQPValues operator-()
+      {
+        FQPValues result;
+        result.fqpvalues_=-(*this).fqpvalues_;
+        
+        return result;
+      };
+      // binary minus
+      FQPValues operator-(const FQPValues &fqpvalue) const
+      {
+        FQPValues result;
+        result.fqpvalues_=(*this).fqpvalues_-fqpvalue.fqpvalues_;
+        
+        return result;
+      };
+
+      // right scalar multiply
+      FQPValues operator*(const Real &value) const
+      { 
+        FQPValues result;
+        result.fqpvalues_=(*this).fqpvalues_*value;
+        return result;
+      };
+      // left scalar multiply
+      friend FQPValues operator*(const Real &value, const FQPValues& F) 
+      { 
+        FQPValues result;
+        result=F*value;
+        return result;
+      };
+
+      // matrix times matrix multiply: M<Rows,Cols>= M<Rows,Cols2> * M<Rows2,Cols>
+      friend FQPValues operator*(const QPValues<Real,NQPoints> &qpvalue, const FQPValues<Matrix<Real,Rows,Cols>,NQPoints,Ncomponents>& fqpvalue)
+      { 
+        Contraction contract;
+        FQPValues result;
+        const auto& tmp=qpvalue();
+        for(Integer i = 0; i < Ncomponents; ++i) 
+        {
+          for(Integer j = 0; j < NQPoints; ++j)
+            {
+            result[i][j]= tmp[i]*fqpvalue[i][j];
+            }          
+        }       
+        return result;
+      };
 
 
+      // matrix times matrix multiply: M<Rows,Cols>= M<Rows,Cols2> * M<Rows2,Cols>
+      template<Integer Rows2,Integer Cols2>
+      friend FQPValues operator*(const QPValues<Matrix<Real,Rows,Cols2>,NQPoints> &qpvalue, const FQPValues<Matrix<Real,Rows2,Cols>,NQPoints,Ncomponents>& fqpvalue)
+      { 
+        Contraction contract;
+        FQPValues result;
+        const auto& tmp=qpvalue();
+        for(Integer i = 0; i < Ncomponents; ++i) 
+        {
+          for(Integer j = 0; j < NQPoints; ++j)
+            {
+            result[i][j]= tmp[i]*fqpvalue[i][j];
+            }          
+        }       
+        return result;
+      };
+
+protected:
+      type fqpvalues_;
+      Vector<T,NQPoints> tmp1_;
+
+};
 
 
 
@@ -2095,6 +2355,7 @@ class ExpressionT
 {
     protected:
     using FunctionType=typename T::FunctionType;
+    using GradientType=typename T::GradientType;
     struct Implementation
     {
     virtual ~Implementation() {};
@@ -2106,7 +2367,9 @@ class ExpressionT
     virtual FunctionType evaluate(const IdentityOperator& o,const Parameters &... params)
     {FunctionType filler; 
     return filler;};
-    // virtual typename T::GradientType evaluate(const GradientOperator& o,const Parameters &... params){typename T::GradientType filler; return filler;};
+    virtual GradientType evaluate(const GradientOperator& o,const Parameters &... params)
+    {GradientType filler; 
+     return filler;};
     // virtual typename T::DivergenceType evaluate(const DivergenceOperator& o,const Parameters &... params){};
     };
 
@@ -2125,7 +2388,8 @@ class ExpressionT
     FunctionType operator () (const IdentityOperator& o, const Parameters &... params) const 
     { return self_->evaluate(o,params...); }
 
-
+    GradientType operator () (const GradientOperator& o, const Parameters &... params) const 
+    { return self_->evaluate(o,params...); }
     // typename T::GradientType operator () (const GradientOperator& o, const Parameters &... params) const { return self_->evaluate(o,params...); }
     // typename T::DivergenceType operator () (const DivergenceOperator& o, const Parameters &... params) const { return self_->evaluate(o,params...); }
 
@@ -2152,7 +2416,10 @@ public:
         {};
 
         virtual FunctionType evaluate(const IdentityOperator& o,const Parameters&... params) override
-        {return -f(o,params...); }
+        { 
+          return -f(o,params...); 
+        }
+
     };
 
     public:
@@ -2168,6 +2435,43 @@ inline ExpressionUnaryMinusT<T,Parameters...> operator -
 
 
 
+
+// Grad Function: grad(f(x))
+template<typename T,typename...Parameters>
+class GradExpressionT : public ExpressionT<T,Parameters...>
+{
+public:
+    using FunctionType=typename T::GradientType;
+
+    protected:
+    struct Implementation : ExpressionT<T,Parameters...>::Implementation
+    {
+        // using FunctionType=typename T::FunctionType;
+        // using GradientType=typename T::GradientType;
+        ExpressionT<T,Parameters...> f;
+
+
+        Implementation(const ExpressionT<T,Parameters...>& f1):   
+        f(f1)
+        {};
+
+        virtual FunctionType evaluate(const GradientOperator& o, const Parameters&... params) override
+        { const auto& boh=f(o,params...);
+          std::cout<<"grad f(o,params...)"<<boh()<<std::endl;
+          return f(o,params...); 
+        }
+    };
+
+    public:
+    GradExpressionT(const ExpressionT<T,Parameters...>& f)
+    :   ExpressionT<T,Parameters...>(std::make_shared<Implementation>(f))
+    {}
+};
+
+
+template<typename T,typename...Parameters>
+inline GradExpressionT<T,Parameters...> Grad 
+(const ExpressionT<T,Parameters...>& f) { return GradExpressionT<T,Parameters...>(f); }
 
 
 
@@ -2189,8 +2493,8 @@ class ExpressionMatrixFunction: public ExpressionT<QPValues<S,NQPoints>,QP>
         template<typename Point>
         S& value(const Point& point)
         {
-          // s_tmp_(0,0)=point[0]; s_tmp_(0,1)=point[1];
-          // s_tmp_(1,0)=point[1]; s_tmp_(1,1)=point[0]+point[1];
+          s_tmp_(0,0)=point[0]; s_tmp_(0,1)=point[1];
+          s_tmp_(1,0)=point[1]; s_tmp_(1,1)=point[0]+point[1];
           return s_tmp_; 
         }
 
@@ -2313,6 +2617,7 @@ class ExpressionShape: public ExpressionT<ShapeFunctionOperator4< QuadratureRule
     struct Implementation: ExprT::Implementation
     {
         using FunctionType=typename T::FunctionType;
+        using GradientType=typename T::GradientType;
         std::shared_ptr<T> t_ptr;
         std::shared_ptr<Map> map_ptr;
 
@@ -2324,9 +2629,16 @@ class ExpressionShape: public ExpressionT<ShapeFunctionOperator4< QuadratureRule
         virtual FunctionType 
         evaluate(const IdentityOperator& o,const QP& qp_points) override
         { 
-          const auto& mapping=(*map_ptr)(o);
+          // const auto& mapping=(*map_ptr)(o);
           return (*t_ptr).function(o)(); 
-     };
+        };
+        virtual GradientType 
+        evaluate(const GradientOperator& o,const QP& qp_points) override
+        { 
+          // const auto& mapping=(*map_ptr)(o);
+          return (*t_ptr).function(o)(); 
+        };
+
     protected:
         ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace> shape;
     };  
@@ -2369,16 +2681,7 @@ public ExpressionT<ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSp
         {};
 
         virtual FunctionType evaluate(const IdentityOperator& o,const QP &qp_points) override 
-        { 
-
-            std::cout<<"expr_s(qp_points)"<<std::endl;
-            std::cout<<expr_s(o,qp_points)()<<std::endl;
-            std::cout<<"expr_t(qp_points)"<<std::endl;
-            std::cout<<expr_t(qp_points)()<<std::endl;
-
-            return  expr_s(o,qp_points);
-            // return expr_t(qp_points)*expr_s(o,qp_points);
-          }
+        {return expr_t(qp_points)*expr_s(o,qp_points); }
     };
 
     
@@ -3717,7 +4020,7 @@ assign(mat1,mat2,2,3);
 std::cout<<mat1<<std::endl;
 // s4(grad,qp_points);
 
-using TTT=Matrix<Real,1,2>;
+using TTT=Matrix<Real,2,1>;
 using SSS=Matrix<Real,2,2>;
 TTT ttt=1;
 SSS sss=3;
@@ -3729,7 +4032,7 @@ QPValues<SSS,6> qpval(sss);
 std::cout<<fqpval()<<std::endl;
 std::cout<<qpval()<<std::endl;
 
-FQPValues<TTT,6,3> result=qpval*fqpval+fqpval;
+auto result=qpval*fqpval+fqpval;
 std::cout<<result()<<std::endl;
 
 // FQPValues<TTT,3,6> result2=qpval*fqpval+fqpval;
@@ -3746,34 +4049,54 @@ grandma->print();
     using QP=typename GaussPoints<Elem,QPOrder>::qp_points_type;
     using QuadratureRule=GaussPoints<Elem,QPOrder>;
     using BaseFunctionSpace=Lagrange1<2>;
-    ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace> s;
+    using ShapeSpace=ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>;
+    ShapeSpace s;
     map3.init(Operator::id(),J);
+    map3.init(Operator::grad(),J);
     const auto& o=Operator::id();
-    const auto& mapping=map3(o);
+    const auto& o_grad=Operator::grad();
+    // const auto& mapping=map3(o);
     s(qp_points);
-    s(o,mapping);
-
+    s(o,map3(o));
+    s(o_grad,map3(o_grad));
     ExpressionShape<GaussPoints<Elem,QPOrder>, Elem, Lagrange1<2>,QP> a(s,map3);
     ExpressionMatrixFunction<Matrix<Real,2,2>,NQPoints,QP> z0;
 
     ExpressionRealFunction<NQPoints,QP> g0;
 
-    auto m=g0*a;//ExpressionBinaryMultiplyT<ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>,QP>(z0,a);
-    // auto m1=z0(qp_points)*a(Operator::id(),qp_points);
+    auto grada=-Grad(a);
+    auto grada0=grada(Operator::grad(),qp_points);
+    FQPValues<Matrix<Real, 2,1>, 6, 6> pr1;
+    QPValues<Real, 6> pr2;
+    auto fff=pr2*pr1;
+    auto m=g0*(g0*a);//ExpressionBinaryMultiplyT<ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>,QP>(z0,a);
+    auto r=z0*a;
+    auto r0=r(Operator::id(),qp_points);
     auto m0=m(Operator::id(),qp_points);
-    auto a0=a(Operator::id(),qp_points);
-    auto b=-a;
-    auto b0=b(Operator::id(),qp_points);
-    auto e=z0(qp_points);
 
-    //Operator::identity;
-     std::cout<<"so acca"<<std::endl;
-     std::cout<<a0()<<std::endl;
-     std::cout<<" z0=========="<<std::endl;
-     std::cout<<e()<<std::endl;
-     std::cout<<" m0 begin =========="<<std::endl;
+    auto g1=g0(qp_points);
+
+    auto a1=a(Operator::id(),qp_points);
+    auto ga=g1*a1;
+    // auto ga2=g0(qp_points)*a(Operator::id(),qp_points);
+    // auto r0=r(Operator::id(),qp_points);
+    // auto m0=m(Operator::id(),qp_points);
+    // auto a0=a(Operator::id(),qp_points);
+    // auto b=-a;
+    // auto b0=b(Operator::id(),qp_points);
+    // auto e=z0(qp_points);
+
+    // //Operator::identity;
+    //  std::cout<<"so acca"<<std::endl;
+    //  std::cout<<a0()<<std::endl;
+    //  std::cout<<" z0=========="<<std::endl;
+    //  std::cout<<e()<<std::endl;
+     std::cout<<" r begin =========="<<std::endl;
+     std::cout<<r0()<<std::endl;
+     std::cout<<" m begin =========="<<std::endl;
      std::cout<<m0()<<std::endl;
-     std::cout<<" m0 end =========="<<std::endl;
+     std::cout<<" grad(a) begin =========="<<std::endl;
+     std::cout<<grada0()<<std::endl;
 };
 
 
