@@ -19,7 +19,7 @@
 
 namespace mars {
 
-	template<Integer Dim_, Integer ManifoldDim_>
+	template<Integer Dim_, Integer ManifoldDim_, class Implementation_>
 	class Mesh : public IMesh<Dim_> {
 	public:
 		static const Integer Dim = Dim_;
@@ -1065,6 +1065,7 @@ namespace mars {
 	using Mesh4 = mars::Mesh<4, 4>;
 	using Mesh5 = mars::Mesh<5, 5>;
 	using Mesh6 = mars::Mesh<6, 6>;
+
 }
 
 #endif //MARS_MESH_HPP
