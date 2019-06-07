@@ -7,14 +7,10 @@
 #include <Kokkos_Core.hpp>
 
 namespace mars {
-namespace generation {
-
 
 template<Integer Dim, Integer ManifoldDim>
 void convert_parallel_mesh_to_serial(mars::Mesh<Dim, ManifoldDim>& mesh,
-		mars::generation::kokkos::ParallelMesh<Dim, ManifoldDim>& pMesh) {
-
-	using namespace kokkos;
+		mars::Mesh<Dim, ManifoldDim,KokkosImplementation>& pMesh) {
 
 	ViewMatrixType<Integer>::HostMirror h_el = Kokkos::create_mirror_view(
 			pMesh.get_view_elems());
@@ -57,6 +53,5 @@ void convert_parallel_mesh_to_serial(mars::Mesh<Dim, ManifoldDim>& mesh,
 
 }
 
-}
 }
 #endif /* GENERATION_MARS_UTILS_KOKKOS_HPP_ */

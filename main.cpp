@@ -42,7 +42,7 @@ mars::Mesh1 test_mars_mesh_generation_1D(const int x) {
 	high_resolution_clock::time_point t1 = high_resolution_clock::now();
 
 	Mesh1 mesh;
-	generation::generate_line(mesh, x);
+	generate_line(mesh, x);
 
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 	auto duration = duration_cast < seconds > (t2 - t1).count();
@@ -69,7 +69,7 @@ mars::Mesh2 test_mars_mesh_generation_2D(const int x,
 	high_resolution_clock::time_point t1 = high_resolution_clock::now();
 
 	Mesh2 mesh;
-	generation::generate_square(mesh, x, y);
+	generate_square(mesh, x, y);
 
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 	auto duration = duration_cast < seconds > (t2 - t1).count();
@@ -97,7 +97,7 @@ mars::Mesh3 test_mars_mesh_generation_3D(const int x,
 	high_resolution_clock::time_point t1 = high_resolution_clock::now();
 
 	Mesh3 mesh;
-	generation::generate_cube<3, 3>(mesh, x, y, z);
+	generate_cube<3, 3>(mesh, x, y, z);
 
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 	auto duration = duration_cast < seconds > (t2 - t1).count();
@@ -118,7 +118,7 @@ void test_mars_mesh_generation_unit_cube() {
 
 	using namespace mars;
 
-	Mesh3 mesh = generation::generate_unit_cube();
+	Mesh3 mesh = generate_unit_cube();
 
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
@@ -1074,12 +1074,12 @@ int main(int argc, char *argv[])
 				<< "No level of refinement was specified. Setting the default to 1!"
 				<< std::endl;
 
-	if (argc > 2) {
+	/*if (argc > 2) {
 		filename = argv[2];
 	} else
 		std::cout
 				<< "No file name was specified. Setting the default to tetrakis!"
-				<< std::endl;
+				<< std::endl;*/
 
 	//run_tests(level,filename);
 

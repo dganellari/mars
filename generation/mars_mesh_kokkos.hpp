@@ -24,8 +24,6 @@
 #include <Kokkos_Core.hpp>
 
 namespace mars {
-namespace generation {
-namespace kokkos {
 
 #ifdef MARS_USE_CUDA
 #define KokkosSpace Kokkos::CudaSpace
@@ -42,9 +40,10 @@ using ViewVectorType = Kokkos::View<T*,KokkosLayout,KokkosSpace>;
 template<typename T>
 using ViewMatrixType = Kokkos::View<T**,KokkosLayout,KokkosSpace>;
 
+class KokkosImplementation {};
 
 template<Integer Dim_, Integer ManifoldDim_>
-class ParallelMesh: public ParallelIMesh<Dim_> {
+class Mesh<Dim_,ManifoldDim_,KokkosImplementation>: public ParallelIMesh<Dim_> {
 public:
 	static const Integer Dim = Dim_;
 	static const Integer ManifoldDim = ManifoldDim_;
@@ -238,7 +237,7 @@ public:
 
 			elem(index, 0) = i * offset + j;
 			elem(index, 1) = (i + 1) * offset + j;
-			elem(index, 2) = (i + 1) * offset + (j + 1); //just to write it more clear
+			elem(index, 2) = (i + 1) * offset + (j + 1); //just to write it clearer
 
 			active(index) = true;
 
@@ -267,7 +266,6 @@ public:
 			parallel_for(n_elements, AddElem(elements_, active_, xDim, yDim));
 			break;
 		}
-
 		case 2: {
 
 			const int n_elements = 2 * xDim * yDim;
@@ -1266,14 +1264,12 @@ private:
  return false;
  }*/
 
-/*using Mesh1 = mars::Parallel_Mesh<1, 1>;
- using Mesh2 = mars::Parallel_Mesh<2, 2>;
- using Mesh3 = mars::Parallel_Mesh<3, 3>;
- using Mesh4 = mars::Parallel_Mesh<4, 4>;
- using Mesh5 = mars::Parallel_Mesh<5, 5>;
- using Mesh6 = mars::Parallel_Mesh<6, 6>;*/
+using ParallelMesh1 = mars::Mesh<1, 1, KokkosImplementation>;
+using ParallelMesh2 = mars::Mesh<2, 2, KokkosImplementation>;
+using ParallelMesh3 = mars::Mesh<3, 3, KokkosImplementation>;
+using ParallelMesh4 = mars::Mesh<4, 4, KokkosImplementation>;
+using ParallelMesh5 = mars::Mesh<5, 5, KokkosImplementation>;
+using ParallelMesh6 = mars::Mesh<6, 6, KokkosImplementation>;
 
-}
-}
 }
 #endif //MARS_MESH_HPP

@@ -2,10 +2,10 @@
 #define GENERATION_MARS_MESH_GENERATION_HPP_
 
 #include "mars_mesh.hpp"
+#include "mars_mesh_kokkos.hpp"
 #include "mars_memory.hpp"
 
 namespace mars {
-namespace generation {
 namespace private_ {
 
 constexpr int hex_n_sides = 6; // 6 faces in total for the hex27.
@@ -108,11 +108,92 @@ void build_hex27(std::array<Integer, hex_n_nodes>& nodes, const Integer xDim,
 }
 }
 
+//different approach which works fine for the unit_cube and would have been faster
+//but unfortunately it does not generalize.
+Mesh3 generate_unit_cube() {
+
+	using namespace mars::private_;
+
+	Mesh3 mesh;
+
+	constexpr Integer xDim = 1, yDim = 1, zDim = 1, Dim = 3;
+
+	const int n_elements = xDim * yDim * zDim * 24; //24 tetrahedrons on one hex27
+	const int n_nodes = (2 * xDim + 1) * (2 * yDim + 1) * (2 * zDim + 1);
+	mesh.reserve(n_elements, n_nodes);
+
+	Vector<std::vector<Integer>, hex_n_sides> sides;
+
+	for (Integer k = 0; k <= 2 * zDim; ++k) {
+		for (Integer j = 0; j <= 2 * yDim; ++j) {
+			for (Integer i = 0; i <= 2 * xDim; ++i) {
+				Vector<Real, Dim> p(
+						{ static_cast<Real>(i) / static_cast<Real>(2 * xDim),
+								static_cast<Real>(j)
+										/ static_cast<Real>(2 * yDim),
+								static_cast<Real>(k)
+										/ static_cast<Real>(2 * zDim), });
+
+				mesh.add_point(p);
+
+				Integer ind = index(1, 1, i, j, k);
+
+				//build the faces on the fly
+				if (k == 0)
+					add_side(sides(0), i, j, ind);
+
+				if (k == 2)
+					add_side(sides(1), i, j, ind);
+
+				//if (k == 2 * (zDim - 1))
+				if (j == 0)
+					add_side(sides(2), i, k, ind);
+
+				//if (j == 2 * (yDim - 1))
+				if (j == 2)
+					add_side(sides(3), i, k, ind);
+
+				if (i == 0)
+					add_side(sides(4), j, k, ind);
+
+				//if (i == 2 * (xDim - 1))
+				if (i == 2)
+					add_side(sides(5), j, k, ind);
+
+			}
+		}
+	}
+
+	//build tetrahedra elements from the hex27 faces.
+	for (unsigned int i = 0; i < hex_n_sides; ++i) {
+
+		Integer tmp = sides(i)[2]; //swap places between the last point and the midface point.
+		sides(i)[2] = sides(i)[4];
+		sides(i)[4] = tmp;
+
+		for (unsigned int k = 0; k < 4; k++) {
+
+			std::array<Integer, 4> nodes;
+
+			nodes[0] = sides(i)[k];
+			nodes[1] = sides(i)[4]; // midface point always the last element.
+			nodes[2] = (k == 3 ? sides(i)[0] : sides(i)[k + 1]); // rotation to catch all combinations.
+			nodes[3] = index(yDim, zDim, 1, 1, 1); // the center of the cube.
+
+			mesh.add_elem(nodes);
+		}
+
+	}
+
+	return mesh;
+
+}
+
 template<Integer Dim, Integer ManifoldDim>
 bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 		const Integer yDim, const Integer zDim) {
 
-	using namespace mars::generation::private_;
+	using namespace mars::private_;
 	using Elem     = mars::Simplex<Dim, ManifoldDim>;
 
 	assert(ManifoldDim <= Dim);
@@ -200,7 +281,7 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 
 				nodes[0] = i * offset + j;
 				nodes[1] = (i + 1) * offset + j;
-				nodes[2] = (i + 1) * offset + (j + 1); //just to write it more clear
+				nodes[2] = (i + 1) * offset + (j + 1); //just to write it clearer
 
 				mesh.add_elem(nodes);
 
@@ -330,96 +411,36 @@ bool generate_square(Mesh2& mesh, const Integer xDim, const Integer yDim) {
 	return generate_cube(mesh, xDim, yDim, 0);
 }
 
-bool generate_line(Mesh<1, 1>& mesh, const Integer xDim) {
+bool generate_line(Mesh1& mesh, const Integer xDim) {
 	return generate_cube(mesh, xDim, 0, 0);
 }
 
 /*bool generate_point(Mesh<1, 0>& mesh) {
- return generate_cube(mesh,0,0,0);
- }*/
+	return generate_cube(mesh, 0, 0, 0);
+}*/
 
-//different approach which works fine for the unit_cube and would have been faster
-//but unfortunately it does not generalize.
-Mesh3 generate_unit_cube() {
+template<Integer Dim, Integer ManifoldDim, class KokkosImplementation>
+bool generate_cube(Mesh<Dim, ManifoldDim, KokkosImplementation>& mesh, const Integer xDim,
+		const Integer yDim, const Integer zDim) {
 
-	using namespace mars::generation::private_;
+	using Elem = mars::Simplex<Dim, ManifoldDim>;
 
-	Mesh3 mesh;
+	assert(Dim <= 3);
+	assert(ManifoldDim <= Dim);
 
-	constexpr Integer xDim = 1, yDim = 1, zDim = 1, Dim = 3;
+	mesh.generate_points(xDim,yDim);
 
-	const int n_elements = xDim * yDim * zDim * 24; //24 tetrahedrons on one hex27
-	const int n_nodes = (2 * xDim + 1) * (2 * yDim + 1) * (2 * zDim + 1);
-	mesh.reserve(n_elements, n_nodes);
-
-	Vector<std::vector<Integer>, hex_n_sides> sides;
-
-	for (Integer k = 0; k <= 2 * zDim; ++k) {
-		for (Integer j = 0; j <= 2 * yDim; ++j) {
-			for (Integer i = 0; i <= 2 * xDim; ++i) {
-				Vector<Real, Dim> p(
-						{ static_cast<Real>(i) / static_cast<Real>(2 * xDim),
-								static_cast<Real>(j)
-										/ static_cast<Real>(2 * yDim),
-								static_cast<Real>(k)
-										/ static_cast<Real>(2 * zDim), });
-
-				mesh.add_point(p);
-
-				Integer ind = index(1, 1, i, j, k);
-
-				//build the faces on the fly
-				if (k == 0)
-					add_side(sides(0), i, j, ind);
-
-				if (k == 2)
-					add_side(sides(1), i, j, ind);
-
-				//if (k == 2 * (zDim - 1))
-				if (j == 0)
-					add_side(sides(2), i, k, ind);
-
-				//if (j == 2 * (yDim - 1))
-				if (j == 2)
-					add_side(sides(3), i, k, ind);
-
-				if (i == 0)
-					add_side(sides(4), j, k, ind);
-
-				//if (i == 2 * (xDim - 1))
-				if (i == 2)
-					add_side(sides(5), j, k, ind);
-
-			}
-		}
-	}
-
-	//build tetrahedra elements from the hex27 faces.
-	for (unsigned int i = 0; i < hex_n_sides; ++i) {
-
-		Integer tmp = sides(i)[2]; //swap places between the last point and the midface point.
-		sides(i)[2] = sides(i)[4];
-		sides(i)[4] = tmp;
-
-		for (unsigned int k = 0; k < 4; k++) {
-
-			std::array<Integer, 4> nodes;
-
-			nodes[0] = sides(i)[k];
-			nodes[1] = sides(i)[4]; // midface point always the last element.
-			nodes[2] = (k == 3 ? sides(i)[0] : sides(i)[k + 1]); // rotation to catch all combinations.
-			nodes[3] = index(yDim, zDim, 1, 1, 1); // the center of the cube.
-
-			mesh.add_elem(nodes);
-		}
-
-	}
-
-	return mesh;
-
+	mesh.generate_elements(xDim,yDim);
 }
 
+bool generate_square(ParallelMesh2& mesh, const Integer xDim, const Integer yDim) {
+	return generate_cube(mesh, xDim, yDim, 0);
 }
+
+bool generate_line(ParallelMesh1& mesh, const Integer xDim) {
+	return generate_cube(mesh, xDim, 0, 0);
+}
+
 }
 
 #endif /* GENERATION_MARS_MESH_GENERATION_HPP_ */

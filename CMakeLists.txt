@@ -101,7 +101,6 @@ list(APPEND MARS_HEADERS
 	
 IF(Kokkos_FOUND)
 	list(APPEND MARS_HEADERS
-	    generation/mars_mesh_generation_kokkos.hpp
 	    generation/mars_mesh_kokkos.hpp
 	    generation/mars_test_kokkos.hpp
 	    generation/mars_utils_kokkos.hpp

@@ -1,5 +1,4 @@
 #include "generation/mars_mesh_kokkos.hpp"
-#include "generation/mars_mesh_generation_kokkos.hpp"
 #include "generation/mars_utils_kokkos.hpp"
 
 void test_mars_mesh_generation_kokkos_1D(const int level) {
@@ -8,8 +7,8 @@ void test_mars_mesh_generation_kokkos_1D(const int level) {
 
 	Kokkos::Timer timer;
 
-	generation::kokkos::ParallelMesh<1, 1> pMesh;
-	generation::kokkos::generate_cube(pMesh, level, 0, 0);
+	ParallelMesh1 pMesh;
+	generate_cube(pMesh, level, 0, 0);
 
 	Kokkos::fence();
 
@@ -19,8 +18,8 @@ void test_mars_mesh_generation_kokkos_1D(const int level) {
 
 	if (level < 100) {
 
-		Mesh<1, 1> sMesh;
-		generation::convert_parallel_mesh_to_serial(sMesh, pMesh);
+		Mesh1 sMesh;
+		convert_parallel_mesh_to_serial(sMesh, pMesh);
 
 		std::cout << "n_active_elements: " << sMesh.n_active_elements()
 				<< std::endl;
@@ -40,10 +39,10 @@ void test_mars_mesh_generation_kokkos_2D(const int x, const int y) {
 	 {*/
 	Kokkos::Timer timer;
 
-	generation::kokkos::ParallelMesh<2, 2> pMesh;
-	generation::kokkos::generate_cube(pMesh, x, y, 0);
+	ParallelMesh2 pMesh;
+	generate_cube(pMesh, x, y, 0);
 
-	Kokkos::fence();
+	//Kokkos::fence();
 
 	double time = timer.seconds();
 
@@ -51,8 +50,8 @@ void test_mars_mesh_generation_kokkos_2D(const int x, const int y) {
 
 	if (x < 100) {
 
-		Mesh<2, 2> sMesh;
-		generation::convert_parallel_mesh_to_serial(sMesh, pMesh);
+		Mesh2 sMesh;
+		convert_parallel_mesh_to_serial(sMesh, pMesh);
 
 		std::cout << "n_active_elements: " << sMesh.n_active_elements()
 				<< std::endl;
