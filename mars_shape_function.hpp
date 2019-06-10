@@ -2867,10 +2867,10 @@ public ExpressionProva<FQPprova<Derived, S, NQPoints, NComponents,Dim>>
 
 
 
-template<typename QuadratureRule, typename Elem,typename BaseFunctionSpace,typename QP>
+template<typename QuadratureRule, typename Elem,typename BaseFunctionSpace>
 class Shapeprova
 : public ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>, 
-  public FQPprova<Shapeprova<QuadratureRule,  Elem, BaseFunctionSpace,QP>,
+  public FQPprova<Shapeprova<QuadratureRule,  Elem, BaseFunctionSpace>,
   typename ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::TotFuncType,
   ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::NQPoints,
   ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::Ntot,
@@ -2889,51 +2889,16 @@ public:
      {
       value_=sfo_->function(Operator::id())();
       return value_;
-      // vec_mat_[0](0,0)=point[0];vec_mat_[0](0,1)=point[0];
-      // // vec_mat_[0](1,0)=point[0];vec_mat_[0](1,1)=point[0];
-
-      // vec_mat_[1](0,0)=point[1];vec_mat_[1](0,1)=point[1];
-      // // vec_mat_[1](1,0)=point[1];vec_mat_[1](1,1)=point[1];
-      // return vec_mat_;
      }
-
-
-
 
   Shapeprova(const SFO& sfo, const Map& map):
     sfo_(std::make_shared<SFO>(sfo)),
     map_(std::make_shared<Map>(map))
-    {};
+    {}; 
 
-//      protected:
-//     struct Implementation: ExprT::Implementation
-//     {
-//         using FunctionType=typename T::FunctionType;
-//         using GradientType=typename T::GradientType;
-//         std::shared_ptr<T> t_ptr;
-//         std::shared_ptr<Map> map_ptr;
-
-//         Implementation(const T& t,const Map& map):   
-//         t_ptr(std::make_shared<T>(t)),
-//         map_ptr(std::make_shared<Map>(map))
-//         {};
-
-//         virtual FunctionType 
-//         evaluate(const IdentityOperator& o,const QP& qp_points) override
-//         { 
-//           // const auto& mapping=(*map_ptr)(o);
-//           return (*t_ptr).function(o)(); 
-//         };
-//         virtual GradientType 
-//         evaluate(const GradientOperator& o,const QP& qp_points) override
-//         { 
-//           // const auto& mapping=(*map_ptr)(o);
-//           return (*t_ptr).function(o)(); 
-//         };
-
-//     protected:
-//         ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace> shape;
-//     };  
+   std::shared_ptr<SFO> shape()const{return sfo_;};
+   std::shared_ptr<Map> map()const{return map_;};
+   FQPValues<S,NQPoints,Ntot> value()const{return value_;};
 private:
   std::shared_ptr<SFO> sfo_;
   std::shared_ptr<Map> map_;
@@ -2944,8 +2909,41 @@ private:
 
 
 
+template<typename QuadratureRule, typename Elem,typename BaseFunctionSpace>
+class GradientProva
+: public ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>, 
+  public FQPprova<GradientProva<QuadratureRule,  Elem, BaseFunctionSpace>,
+  typename ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::TotGradType,
+  ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::NQPoints,
+  ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::Ntot,
+  ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::Dim>
+{ 
+public:
+  using SFO=ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>;
+  using Map=MapFromReference3<Elem,BaseFunctionSpace>;
+  using S=typename ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>::TotGradType;
+  static constexpr Integer NQPoints=ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::NQPoints;
+  static constexpr Integer Ntot=ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::Ntot;
+  static constexpr Integer  Dim= ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::Dim;
+  using Point = Vector<Real,Dim> ;
 
+  FQPValues<S,NQPoints,Ntot>& apply(const Matrix<Real,NQPoints,Dim> & qp_points)
+     {
+      value_= sp_.shape()->function(Operator::grad())();
+      return value_;
+     }
 
+  GradientProva(const Shapeprova<QuadratureRule,Elem,BaseFunctionSpace>& sp):
+    sp_(sp)
+    {}; 
+private:
+  const Shapeprova<QuadratureRule,Elem,BaseFunctionSpace>& sp_;
+  FQPValues<S,NQPoints,Ntot> value_;
+};
+
+template<typename QuadratureRule, typename Elem,typename BaseFunctionSpace>
+GradientProva<QuadratureRule,Elem,BaseFunctionSpace> GradProva(const Shapeprova<QuadratureRule,Elem,BaseFunctionSpace>& sp)
+{return GradientProva<QuadratureRule,Elem,BaseFunctionSpace>(sp);};
 
 class FQPprova1: public FQPprova<FQPprova1,Matrix<Real,1,2>,6,2,2>,
                  public ExpressionProva<FQPprova1>
@@ -5290,7 +5288,7 @@ std::cout<<"qulo2"<<qulo()<<std::endl;
   FQPprova1 fqpp1;
   QPprova1  qpp1;
   QPprova2  qpp2;
-  Shapeprova<GaussPoints<Elem,QPOrder>, Elem, Lagrange1<1>,QP> sfprova(s,map3);
+  Shapeprova<GaussPoints<Elem,QPOrder>, Elem, Lagrange1<1>> sfprova(s,map3);
 
   std::cout<<"fqpp1"<<std::endl;
   std::cout<<fqpp1.eval(qp_points)<<std::endl;
@@ -5317,6 +5315,10 @@ std::cout<<"qulo2"<<qulo()<<std::endl;
   auto sfprova2= qpp1*sfprova;
   std::cout<<"sfprova2"<<std::endl;
   std::cout<<sfprova2.eval(qp_points)<<std::endl;
+  
+  auto sfprova3=GradProva(sfprova);
+ std::cout<<"sfprova3"<<std::endl;
+  std::cout<<sfprova3.eval(qp_points)<<std::endl;
 
 };
 
