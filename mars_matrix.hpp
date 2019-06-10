@@ -11,10 +11,11 @@ namespace mars {
 	template<typename T, Integer Rows_, Integer Cols_>
 	class Matrix {
 	public:
-
+        
 		static constexpr Integer Rows=Rows_;
 		static constexpr Integer Cols=Cols_;
-
+        using type= Matrix<T,Rows,Cols>;
+        
 		Matrix() {}
 
 	    Matrix(std::initializer_list<T> values)

@@ -471,25 +471,25 @@ void cents_example()
     Point point{0,1,2};
 
 
-    ExpressionMatrix<Point> em;
-    ExpressionVector<Point> vec;
-    auto emm=-em;
-    auto prod=emm*em;
-    auto summa=emm+em;
-    auto right=emm*3.0;
-    auto half=0.5*emm*3.0+right*prod;
-    auto again=emm-em;
-    auto again2=em*vec;
-    auto again3=3*(again2+vec);
-    std::cout<<"eee---"<<emm(point)<<std::endl;
-    std::cout<<"prod---"<<prod(point)<<std::endl;
-    std::cout<<"sum---"<<summa(point)<<std::endl;
-    std::cout<<"right---"<<right(point)<<std::endl;
-    std::cout<<"half---"<<half(point)<<std::endl;
-    std::cout<<"again---"<<again(point)<<std::endl;
-    std::cout<<"vec---"<<vec(point)<<std::endl;
-    std::cout<<"again2---"<<again2(point)<<std::endl;
-    std::cout<<"again3---"<<again3(point)<<std::endl;
+    // ExpressionMatrix<Point> em;
+    // ExpressionVector<Point> vec;
+    // auto emm=-em;
+    // auto prod=emm*em;
+    // auto summa=emm+em;
+    // auto right=emm*3.0;
+    // auto half=0.5*emm*3.0+right*prod;
+    // auto again=emm-em;
+    // auto again2=em*vec;
+    // auto again3=3*(again2+vec);
+    // std::cout<<"eee---"<<emm(point)<<std::endl;
+    // std::cout<<"prod---"<<prod(point)<<std::endl;
+    // std::cout<<"sum---"<<summa(point)<<std::endl;
+    // std::cout<<"right---"<<right(point)<<std::endl;
+    // std::cout<<"half---"<<half(point)<<std::endl;
+    // std::cout<<"again---"<<again(point)<<std::endl;
+    // std::cout<<"vec---"<<vec(point)<<std::endl;
+    // std::cout<<"again2---"<<again2(point)<<std::endl;
+    // std::cout<<"again3---"<<again3(point)<<std::endl;
 
     constexpr Integer ManifoldDim=2;
     constexpr Integer Dim=2;
