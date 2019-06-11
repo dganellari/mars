@@ -9,7 +9,7 @@
 #include "mars_simplex.hpp"
 #include "mars_base_elementfunctionspace.hpp"
 #include "mars_vector.hpp"
-
+#include "mars_fqpexpressions.hpp"
 namespace mars{
 
 
@@ -333,102 +333,134 @@ public:
 
 
 
+template<typename Derived, typename Type>
+class AlgebraicExpression
+{
+public:
+      Derived& derived() { return static_cast<Derived &>(*this); }
+      const Derived& derived()const { return static_cast<const Derived &>(*this); }
+
+      Type & value();
+      const Type & value()const;
+
+      // EQUAL
+      inline Derived& operator = (const Derived &u)
+      {            
+        value()=u.derived().value();
+        return *this;
+      } 
+
+      // BINARY ADD
+      inline Derived operator+(const Derived &other) const
+      {
+        Derived result;
+        result.derived().value()=derived().value()+other.derived().value();
+        return result;
+      };
+
+      // UNARY ADD
+      inline Derived operator+() const
+      {
+         return derived();
+      };
+
+      // BINARY MINUS
+      inline Derived operator-(const Derived &other) const
+      {
+        Derived result;
+        result.derived().value()=derived().value()-other.derived().value();
+        return result;
+      };
+      // UNARY MINUS
+      inline Derived operator-() const
+      {
+        Derived result;
+        result.derived().value()=-derived().value();
+        return result;
+      };
+
+
+      // LEFT SCALAR MULTIPLY
+      friend Derived operator *(const Real &alpha, const Derived& der) 
+      { 
+        Derived result;
+        result.derived().value()=alpha*der.value();
+        return result;
+      };
+
+      // RIGHT SCALAR MULTIPLY
+      friend Derived operator *(const Derived& der,const Real &alpha) 
+      { 
+        Derived result;
+        result.derived().value()=alpha*der.value();
+        return result;
+      };
+
+      // RIGHT SCALAR DIVISION
+      friend Derived operator /(const Derived& der,const Real &alpha) 
+      { 
+        Derived result;
+        result.derived().value()=der.value()/alpha;
+        return result;
+      };
+
+      // RIGHT SCALAR EQUAL DIVISION
+      inline Derived& operator /=(const Real &alpha) 
+      { 
+        (*this).derived().value()=(*this).derived().value()/alpha;
+        return (*this).derived();
+      };
+      // RIGHT SCALAR EQUAL MULTIPLICATION
+      inline Derived& operator *=(const Real &alpha) 
+      { 
+        (*this).derived().value()=(*this).derived().value()*alpha;
+        return (*this).derived();
+      };   
+      // EQUAL ADDITION
+      inline Derived& operator +=(const Derived &other) 
+      { 
+        (*this).derived().value()=(*this).derived().value()+other.derived().value();
+        return (*this).derived();
+      };  
+      // EQUAL SUBTRACTION
+      inline Derived& operator -=(const Derived &other) 
+      { 
+        (*this).derived().value()=(*this).derived().value()-other.derived().value();
+        return (*this).derived();
+      };
+};
 
 template<typename T,Integer NQPoints,Integer NComponents>
 class FQPValues;
 
-
 template<typename T,Integer NQPoints>
-class QPValues
+class QPValues;
+
+
+template<typename Derived, typename type, typename T,Integer NQPoints>
+class QPBase
 {
 public:
+      // using type=  Vector<T,NQPoints>;
+      QPBase(){};
+      QPBase(const type& t):values_(t) {};
+      Derived& derived() { return static_cast<Derived &>(*this); }
+      const Derived& derived()const { return static_cast<const Derived &>(*this); }
 
-
-  using type=  Vector<T,NQPoints>;
-  using FunctionType=  Vector<T,NQPoints>;
-  using GradientType=  Vector<T,NQPoints>;
-  using DivergenceType=  Vector<T,NQPoints>;
-  using CurlType=  Vector<T,NQPoints>;
-  QPValues(): qpvalues_(){};
-  QPValues(const type& v): qpvalues_(v){};
-  inline type operator()()const {return qpvalues_;};
-
-  inline T &operator[](const Integer i)
-      {
-          assert(i < NQPoints);
-          return qpvalues_[i];
-      }
-  inline const T &operator[](const Integer i)const
-      {
-          assert(i < NQPoints);
-          return qpvalues_[i];
-      }
-
-
-
-private:
-  type qpvalues_;
-
-};
-
-
-
-
-template<Integer Rows,Integer Cols,Integer NQPoints>
-class QPValues<Matrix<Real,Rows,Cols>,NQPoints>
-{
-public:
-
-
-  using T= Matrix<Real,Rows,Cols>;
-  using type=  Vector<T,NQPoints>;
-  using FunctionType=  Vector<T,NQPoints>;
-  using GradientType=  Vector<T,NQPoints>;
-  using DivergenceType=  Vector<T,NQPoints>;
-  using CurlType=  Vector<T,NQPoints>;
-  QPValues(): qpvalues_(){};
-  QPValues(const type& v): qpvalues_(v){};
-  inline type operator()()const {return qpvalues_;};
-
-  inline T &operator[](const Integer i)
-      {
-          assert(i < NQPoints);
-          return qpvalues_[i];
-      }
-  inline const T &operator[](const Integer i)const
-      {
-          assert(i < NQPoints);
-          return qpvalues_[i];
-      }
-
-      template<Integer OtherDim, Integer NComponents>
-      FQPValues<Matrix<Real,Rows,OtherDim>,NQPoints,NComponents> operator*( 
-                                 const FQPValues<Matrix<Real,Cols,OtherDim>,NQPoints,NComponents>& fqpvalue)
-      { 
-        FQPValues<Matrix<Real,Rows,OtherDim>,NQPoints,NComponents> result;
-        for(Integer i = 0; i < NComponents; ++i) 
+    inline type& operator()() {return values_;};
+    inline const type& operator()()const {return values_;};
+    inline type& val() {return values_;};
+    inline const type& val()const {return values_;};
+     inline T &operator[](const Integer i)
         {
-          for(Integer j = 0; j < NQPoints; ++j)
-            {
-            result[i][j]= qpvalues_[i]*fqpvalue[i][j];
-            }          
-        }       
-        return result;
-      };
-
-      // tensor contraction tensor: Real= contract(M<Rows,Cols>, M<Rows,Cols>),contract(Vec<Rows>, Vec<Rows>),contract(Real,Real)
-      template<Integer OtherCols>
-      QPValues<Matrix<Real,Rows,OtherCols>,NQPoints> operator*(const QPValues<Matrix<Real,Cols,OtherCols>,NQPoints>& other)
-      { 
-        QPValues<Matrix<Real,Rows,OtherCols>,NQPoints> result;
-        Contraction contract;
-          for(Integer j = 0; j < NQPoints; ++j)
-            {
-            result[j]= contract(qpvalues_[j],other[j]);
-            }               
-        return result;
-      };
-
+            assert(i < NQPoints);
+            return values_[i];
+        }
+    inline const T &operator[](const Integer i)const
+        {
+            assert(i < NQPoints);
+            return values_[i];
+        }
 
       void describe(std::ostream &os) const
       {
@@ -439,50 +471,271 @@ public:
           os << "\n";
       }
 
-      friend std::ostream &operator<<(std::ostream &os, const QPValues &v)
+      friend std::ostream &operator<<(std::ostream &os, const QPValues<T,NQPoints> &v)
       {
           v.describe(os);
           return os;
       }
 
-private:
-  type qpvalues_;
+            // equal
+      inline Derived& operator = (const Derived &u)
+      {            
+        value()=u.derived().value();
+        return *this;
+      } 
 
+      // BINARY ADD
+      inline Derived operator+(const Derived &other) const
+      {
+        Derived result;
+        result.derived().value()=derived().value()+other.derived().value();
+        return result;
+      };
+
+      // UNARY ADD
+      inline Derived operator+() const
+      {
+         return derived();
+      };
+
+      // BINARY MINUS
+      inline Derived operator-(const Derived &other) const
+      {
+        Derived result;
+        result.derived().value()=derived().value()-other.derived().value();
+        return result;
+      };
+      // UNARY MINUS
+      inline Derived operator-() const
+      {
+        Derived result;
+        result.derived().value()=-derived().value();
+        return result;
+      };
+
+
+      // LEFT SCALAR MULTIPLY
+      friend Derived operator *(const Real &alpha, const Derived& der) 
+      { 
+        Derived result;
+        result.derived().value()=alpha*der.value();
+        return result;
+      };
+
+      // RIGHT SCALAR MULTIPLY
+      friend Derived operator *(const Derived& der,const Real &alpha) 
+      { 
+        Derived result;
+        result.derived().value()=alpha*der.value();
+        return result;
+      };
+
+      // RIGHT SCALAR DIVISION
+      friend Derived operator /(const Derived& der,const Real &alpha) 
+      { 
+        Derived result;
+        result.derived().value()=der.value()/alpha;
+        return result;
+      };
+
+      // RIGHT SCALAR EQUAL DIVISION
+      inline Derived& operator /=(const Real &alpha) 
+      { 
+        (*this).derived().value()=(*this).derived().value()/alpha;
+        return (*this).derived();
+      };
+      // RIGHT SCALAR EQUAL MULTIPLICATION
+      inline Derived& operator *=(const Real &alpha) 
+      { 
+        (*this).derived().value()=(*this).derived().value()*alpha;
+        return (*this).derived();
+      };   
+      // EQUAL ADDITION
+      inline Derived& operator +=(const Derived &other) 
+      { 
+        (*this).derived().value()=(*this).derived().value()+other.derived().value();
+        return (*this).derived();
+      };  
+      // EQUAL SUBTRACTION
+      inline Derived& operator -=(const Derived &other) 
+      { 
+        (*this).derived().value()=(*this).derived().value()-other.derived().value();
+        return (*this).derived();
+      };  
+    type& value(){return values_;};
+    const type& value()const{return values_;};
+
+protected:
+  type values_;
 };
 
 
 
-
-
-// template<typename T,Integer NQPoints,Integer NComponents>
-// class FQPValuesBase
+// template<typename T,Integer NQPoints>
+// class QPValuesBase
 // {
 // public:
+//   using type=  Vector<T,NQPoints>;
+//   QPValuesBase(): values_(){};
+//   QPValuesBase(const type& v): values_(v){};
+//   inline type& operator()() {return values_;};
+//   inline const type& operator()()const {return values_;};
+//   inline type& val() {return values_;};
+//   inline const type& val()const {return values_;};
 
-//       using type= Vector<Vector<T,NQPoints>,NComponents>;
+//   inline T &operator[](const Integer i)
+//       {
+//           assert(i < NQPoints);
+//           return values_[i];
+//       }
+//   inline const T &operator[](const Integer i)const
+//       {
+//           assert(i < NQPoints);
+//           return values_[i];
+//       }
 
-//       FQPValuesBase(): fqpvalues_(){};
-//       FQPValuesBase(const type& v): fqpvalues_(v){};
-//       inline type operator()(){return fqpvalues_;};
-//       inline Vector<T,NQPoints> operator()(const Integer& i)const{return fqpvalues_[i];};
-//       inline void operator()(const Integer& i,const Vector<T,NQPoints>& u){fqpvalues_[i]=u;};
-      
-//       inline Vector<T,NQPoints> &operator[](const Integer i)
+//       void describe(std::ostream &os) const
 //       {
-//           assert(i < NComponents);
-//           return fqpvalues_[i];
+//           for(Integer i = 0; i < NQPoints; ++i) {
+//               os << (*this)[i] << " ";
+//           }
+
+//           os << "\n";
 //       }
-//       inline const Vector<T,NQPoints> &operator[](const Integer i)const
+
+//       friend std::ostream &operator<<(std::ostream &os, const QPValues<T,NQPoints> &v)
 //       {
-//           assert(i < NComponents);
-//           return fqpvalues_[i];
+//           v.describe(os);
+//           return os;
 //       }
+
 // protected:
-//       type fqpvalues_;
-//       Vector<T,NQPoints> tmp1_;
+//   type values_;
 
 // };
 
+
+// template<typename T,Integer NQPoints>
+// class QPValues: public QPValuesBase<T,NQPoints>
+// {
+// public:
+//   using type=  Vector<T,NQPoints>;
+//   using Base=QPValuesBase<T,NQPoints>;
+//   QPValues(): QPValuesBase<T,NQPoints>(){};
+//   QPValues(const type& v): QPValuesBase<T,NQPoints>(v){};
+// };
+
+
+
+
+template<Integer Rows,Integer Cols,Integer NQPoints>
+class QPValues<Matrix<Real,Rows,Cols>,NQPoints>: 
+public QPBase< QPValues< Matrix<Real,Rows,Cols>, NQPoints>, 
+                          Vector<Matrix<Real,Rows,Cols>,NQPoints>, 
+                          Matrix<Real,Rows,Cols>, 
+                          NQPoints >
+// public AlgebraicExpression<QPValues<Matrix<Real,Rows,Cols>,NQPoints>,>
+//QPValuesBase<Matrix<Real,Rows,Cols>,NQPoints>
+{
+public:
+
+
+  using T= Matrix<Real,Rows,Cols>;
+  using type=  Vector<T,NQPoints>;
+  using Base=QPBase< QPValues< Matrix<Real,Rows,Cols>, NQPoints>, 
+                                Vector<Matrix<Real,Rows,Cols>,NQPoints>,
+                                Matrix<Real,Rows,Cols>, 
+                                NQPoints >;
+
+  QPValues(): Base(){};
+  QPValues(const type& v): Base(v){};
+
+     // FQP VEC(rows) = QP MAT(rows,cols) * FQP VEC(cols)
+      template<Integer OtherDim, Integer NComponents>
+      FQPValues<Vector<Real,Rows>,NQPoints,NComponents> operator*( 
+                                 const FQPValues<Vector<Real,Cols>,NQPoints,NComponents>& fqpvalue)
+      { 
+        FQPValues<Vector<Real,Rows>,NQPoints,NComponents> result;
+        for(Integer i = 0; i < NComponents; ++i) 
+        {
+          for(Integer j = 0; j < NQPoints; ++j)
+            {
+            result[i][j]= Base::val()[i]*fqpvalue[i][j];
+            }          
+        }       
+        return result;
+      };
+
+      // QP VEC(rows) = QP MAT(rows,cols) * QP VEC(cols)
+      template<Integer OtherCols>
+      QPValues<Vector<Real,Rows>,NQPoints> operator*(const QPValues<Vector<Real,Cols>,NQPoints>& other)
+      { 
+        QPValues<Vector<Real,Rows>,NQPoints> result;
+          for(Integer j = 0; j < NQPoints; ++j)
+            {
+            result[j]= Base::val()[j]*other[j];
+            }               
+        return result;
+      };
+
+      // FQP MAT(rows1,cols2) = QP MAT(rows1,cols1) * FQP MAT(rows2,cols2)
+      template<Integer OtherDim, Integer NComponents>
+      FQPValues<Matrix<Real,Rows,OtherDim>,NQPoints,NComponents> operator*( 
+                                 const FQPValues<Matrix<Real,Cols,OtherDim>,NQPoints,NComponents>& fqpvalue)
+      { 
+        FQPValues<Matrix<Real,Rows,OtherDim>,NQPoints,NComponents> result;
+        for(Integer i = 0; i < NComponents; ++i) 
+        {
+          for(Integer j = 0; j < NQPoints; ++j)
+            {
+            result[i][j]= Base::val()[i]*fqpvalue[i][j];
+            }          
+        }       
+        return result;
+      };
+
+
+      // QP MAT(rows1,cols2) = QP MAT(rows1,cols1) * QP MAT(rows2,cols2)
+      template<Integer OtherCols>
+      QPValues<Matrix<Real,Rows,OtherCols>,NQPoints> operator*(const QPValues<Matrix<Real,Cols,OtherCols>,NQPoints>& other)
+      { 
+        QPValues<Matrix<Real,Rows,OtherCols>,NQPoints> result;
+          for(Integer j = 0; j < NQPoints; ++j)
+            {
+            result[j]= Base::val()[j]*other[j];
+            }               
+        return result;
+      };
+
+      // FQP REAL = QP MAT(rows,cols).contract(FQP MAT(rows,cols))
+      template<Integer NComponents>
+      FQPValues<Real,NQPoints,NComponents> contract( 
+                                 const FQPValues<Matrix<Real,Rows,Cols>,NQPoints,NComponents>& fqpvalue)
+      { 
+        FQPValues<Real,NQPoints,NComponents> result;
+        Contraction contract;
+        for(Integer i = 0; i < NComponents; ++i) 
+        {
+          for(Integer j = 0; j < NQPoints; ++j)
+            {
+            result[i][j]= contract(Base::val()[i],fqpvalue[i][j]);
+            }          
+        }       
+        return result;
+      };
+
+      // FQP REAL = QP MAT(rows,cols).contract(QP MAT(rows,cols))
+      QPValues<Real,NQPoints> contract(const QPValues<Matrix<Real,Rows,Cols>,NQPoints>& other)
+      { 
+        QPValues<Real,NQPoints> result;
+        Contraction contract;
+          for(Integer j = 0; j < NQPoints; ++j)
+            {
+            result[j]= contract(Base::val()[j],other[j]);
+            }               
+        return result;
+      };
+};
 
 
 
@@ -732,7 +985,11 @@ protected:
 
 // FQPVALUES MATRIX
 template<Integer Rows,Integer Cols,Integer NQPoints,Integer NComponents>
-class FQPValues<Matrix<Real,Rows,Cols>,NQPoints,NComponents> //: public FQPValuesBase<Matrix<Real,Rows,Cols>,NQPoints,NComponents>
+class FQPValues<Matrix<Real,Rows,Cols>,NQPoints,NComponents> 
+// QPBase<FQPValues<Matrix<Real,Rows,Cols>,NQPoints,NComponents>,
+//                   Vector<Vector<Matrix<Real,Rows,Cols>,NQPoints>,NComponents>,
+//                   T,NQPoints,NComponents>
+//: public FQPValuesBase<Matrix<Real,Rows,Cols>,NQPoints,NComponents>
 {
 
 public:
@@ -4751,6 +5008,51 @@ struct Derived : Base<Derived>
 
 
 
+
+
+template<typename Derived, typename T>
+class Baseprova
+{
+public:
+
+      Baseprova(const T& t):val_(t) {};
+      Baseprova(){};
+      Derived& derived() { return static_cast<Derived &>(*this); }
+      const Derived& derived()const { return static_cast<const Derived &>(*this); }
+
+      
+      // binary add
+      Derived operator+(const Derived &fqpvalue) const
+      {
+        Derived result;
+        std::cout<<derived().value()<<std::endl;
+        std::cout<<fqpvalue.derived().value()<<std::endl;
+        std::cout<<result.derived().value()<<std::endl;
+        result.derived().value()=derived().value()+fqpvalue.derived().value();
+        
+        return result;
+      };
+    
+    T& value(){return val_;};
+    const T& value()const{return val_;};
+
+    protected:
+     T val_;
+};
+
+template<typename T>
+class Basederived: public Baseprova<Basederived<T>,T>
+{public:
+  using Base=Baseprova<Basederived<T>,T>;
+ Basederived(): Base(){};
+ Basederived(const T& t): Base(t){};
+ void stampami (){std::cout<<"coglione"<<Base::value()<<std::endl;};
+
+};
+
+
+
+
 template <Integer QPOrder, typename TrialFunction,typename TestFunction, typename OperatorTrial, typename OperatorTest>//,typename MeshT >
 void BilinearFormIntegrator(const TrialFunction& trialspace,const TestFunction& testspace)
 {
@@ -5152,6 +5454,7 @@ SSS sss=3;
 Vector<TTT,6> initvec=ttt;
 Vector<Vector<TTT,6>,3> initvecvec=initvec;
 FQPValues<TTT,6,3> fqpval(initvecvec);
+FQPValues<TTT,6,3> fqpval2(initvecvec);
 QPValues<SSS,6> qpval(sss);
 
 std::cout<<fqpval()<<std::endl;
@@ -5320,6 +5623,21 @@ std::cout<<"qulo2"<<qulo()<<std::endl;
  std::cout<<"sfprova3"<<std::endl;
   std::cout<<sfprova3.eval(qp_points)<<std::endl;
 
+
+Matrix<Real,2,2> mat_der1{1,2,3,4};
+Matrix<Real,2,2> mat_der2{5,4,3,2};
+Basederived<Matrix<Real,2,2>> a(mat_der1);
+Basederived<Matrix<Real,2,2>> b(mat_der2);
+auto mat_der=mat_der1+mat_der2;
+auto c=a+b;
+c.stampami();
+auto qpval3=-qpval*3.0+2.5*qpval;
+qpval3+=qpval;
+qpval3/=0.5;
+qpval3-=2*qpval;
+std::cout<<"qpval"<<qpval<<std::endl;
+
+std::cout<<"qpval3"<<qpval3<<std::endl;
 };
 
 

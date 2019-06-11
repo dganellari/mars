@@ -34,6 +34,7 @@ list(APPEND MARS_HEADERS
 	mars_entity_impl.hpp
 	mars_examples.hpp
 	mars_elementfunctionspace.hpp
+	mars_fqpexpressions.hpp
 	mars_functionspace.hpp
 	mars_functionspace_dofmap.hpp
 	mars_lagrange_element.hpp

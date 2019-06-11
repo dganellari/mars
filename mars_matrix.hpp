@@ -153,7 +153,7 @@ namespace mars {
 	    	return *this;
 	    } 
 
- 	    inline Matrix<T, Rows,Cols>& operator /= (const T &alpha) 
+ 	    inline Matrix<T, Rows,Cols>& operator /= (const Real &alpha) 
 	    {            
 	    	for(Integer i = 0; i < Rows; ++i) {
 	    		for(Integer j = 0; j < Cols; ++j) {
@@ -166,7 +166,7 @@ namespace mars {
 	    }       
 
 
- 	    inline Matrix<T, Rows,Cols>& operator *= (const T &alpha)
+ 	    inline Matrix<T, Rows,Cols>& operator *= (const Real &alpha)
 	    {
             
 	    	for(Integer i = 0; i < Rows; ++i) {
@@ -186,6 +186,18 @@ namespace mars {
 	    		for(Integer j = 0; j < Cols; ++j) {
 	    		    {
 	    			 (*this)(i, j) += mat(i,j);
+	    			}
+	    		}
+	    	}
+	    	return *this;
+	    } 
+
+ 	    inline Matrix<T, Rows,Cols>& operator -= (const Matrix<T, Rows,Cols> &mat)
+	    {        
+	    	for(Integer i = 0; i < Rows; ++i) {
+	    		for(Integer j = 0; j < Cols; ++j) {
+	    		    {
+	    			 (*this)(i, j) -= mat(i,j);
 	    			}
 	    		}
 	    	}
