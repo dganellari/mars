@@ -209,40 +209,6 @@ public:
 
 
 
-template<Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents=1>
-class DivPhi;
-
-template<Integer Dim, Integer ManifoldDim,Integer NComponents>
-class DivPhi<Dim,ManifoldDim,1,NComponents>
-{
-public:
-using type = Matrix<Real,1,1>;
-  // this class is for not vector shape function. 
-  // this call is ambiguous for 1D elements. avoid them.
-};
-
-
-template<Integer Dim,Integer NComponents>
-class DivPhi<Dim,Dim,Dim,NComponents>
-{
-  public:
-  using type = Matrix<Real,NComponents,1>;
-  static_assert(Dim>1,"Vector function spaces need to be at least in 2D (use lagrange elements for 1D, they are equivalent)");
-  // this class is for not vector shape function. 
-};
-
-template<Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents>
-using DivPhiType=typename DivPhi<Dim, ManifoldDim, ShapeFunctionDim, NComponents>::type;
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -631,12 +597,12 @@ class MapFromReference2<Simplex<Dim,ManifoldDim>,BaseFunctionSpace<RaviartThomas
 
 
 template<typename Elem,typename BaseFunctionSpace>
-class MapFromReference3;
+class MapFromReference4;
 
 
 
 template<Integer Dim, Integer ManifoldDim, Integer Order, Integer Continuity, Integer NComponents>
-class MapFromReference3<Simplex<Dim,ManifoldDim>,BaseFunctionSpace<LagrangeFE,Order,Continuity,NComponents>>
+class MapFromReference4<Simplex<Dim,ManifoldDim>,BaseFunctionSpace<LagrangeFE,Order,Continuity,NComponents>>
 {
  public:
  using Jacobian=Matrix<Real, Dim, ManifoldDim>;
@@ -657,7 +623,7 @@ class MapFromReference3<Simplex<Dim,ManifoldDim>,BaseFunctionSpace<LagrangeFE,Or
 
 
 template<Integer Dim, Integer ManifoldDim, Integer Order, Integer Continuity, Integer NComponents>
-class MapFromReference3<Simplex<Dim,ManifoldDim>,BaseFunctionSpace<RaviartThomasFE,Order,Continuity,NComponents>>
+class MapFromReference4<Simplex<Dim,ManifoldDim>,BaseFunctionSpace<RaviartThomasFE,Order,Continuity,NComponents>>
 {
 
  public:
@@ -1007,56 +973,9 @@ public:
 
 
 
-template<typename...Inputs>
-class Eval;
 
 
 
-template<typename Left, typename Right>
-class Multiply;
-
-class FQPExpression1;
-
-class QPExpression1;
-
-class QPExpression2;
-
-template<typename Derived>
-class ExpressionProva;
-
-
-
-
-
-// template<typename Derived>
-// class ExpressionProva
-// {public:
-//  Derived& derived() { return static_cast<Derived &>(*this); }};
-
-
-
-template<typename Derived, typename S,Integer NQPoints, Integer NComponents, Integer Dim>
-class FQPExpression:
-public Expression<Derived>
-{
-     public:
-     using Point = Vector<Real,Dim> ;
-     using type= FQPValues < S, NQPoints,NComponents>;
-     using Base=Expression<Derived>;
-     using Base::derived;
-     FQPValues<S,NQPoints,NComponents>& apply(const Matrix<Real,NQPoints,Dim> & qp_points);
-
-
-      inline FQPValues<S,NQPoints,NComponents> eval(const Matrix<Real,NQPoints,Dim> & qp_points)
-      {
-          return derived().apply(qp_points);
-      };
-
-
-    protected:
-      FQPValues<S,NQPoints,NComponents> value_; 
-      Point row_; 
-};
 
 
 
@@ -1078,7 +997,7 @@ class Shapeprova
 { 
 public:
   using SFO=ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>;
-  using Map=MapFromReference3<Elem,BaseFunctionSpace>;
+  using Map=MapFromReference4<Elem,BaseFunctionSpace>;
   using S=typename ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>::TotFuncType;
   static constexpr Integer NQPoints=ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::NQPoints;
   static constexpr Integer Ntot=ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::Ntot;
@@ -1120,7 +1039,7 @@ class GradientExpression
 { 
 public:
   using SFO=ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>;
-  using Map=MapFromReference3<Elem,BaseFunctionSpace>;
+  using Map=MapFromReference4<Elem,BaseFunctionSpace>;
   using S=typename ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>::TotGradType;
   static constexpr Integer NQPoints=ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::NQPoints;
   static constexpr Integer Ntot=ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::Ntot;
@@ -1183,34 +1102,6 @@ class FQPExpression1: public FQPExpression<FQPExpression1,Matrix<Real,1,2>,6,2,2
 };
 
 
-template<typename Derived, typename S,Integer NQPoints, Integer Dim>
-class QPExpression: public Expression<Derived>
-{
-     public:
-     using Base=Expression<Derived>;
-     using Base::derived;
-     using Point = Vector<Real,Dim> ;
-     using type= QPValues < S, NQPoints>;
-      Derived& derived() { return static_cast<Derived &>(*this); }
-      const Derived& derived()const { return static_cast<const Derived &>(*this); }
-      S& apply(const Point& point);
-
-      inline QPValues<S,NQPoints> eval(const Matrix<Real,NQPoints,Dim> & qp_points)
-      {
-       for(Integer qp=0;qp<NQPoints;qp++)
-          {
-            qp_points.get_row(qp,row_);
-            value_[qp]=derived().apply(row_);
-          }
-
-        return value_;
-      };
-
-    protected:
-      QPValues<S,NQPoints> value_; 
-      Point row_; 
-};
-
 class QPExpression1: public QPExpression<QPExpression1,Matrix<Real,3,1>,6,2>
 {
  public: 
@@ -1262,565 +1153,8 @@ class QPExpression3: public QPExpression<QPExpression3,Matrix<Real,2,1>,6,2>
   T mat_;
 };
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////           UNARY PLUS: +QP        //////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-template< typename Derived, typename  T, Integer NQPoints,Integer Dim>
-class UnaryPlus< QPExpression <Derived, T, NQPoints,Dim>>
-: public QPExpression<UnaryPlus< QPExpression <Derived, T, NQPoints,Dim>>,
-                      typename OperatorType<UnaryPlus<typename T::type>>::type,
-                      NQPoints, Dim >
-{
-  public:
-    using Input= QPExpression<Derived,T,NQPoints,Dim>;
-    UnaryPlus(const Input& input): 
-    derived_(input.derived())
-    {};
 
-    template<typename QP>
-    typename OperatorType< UnaryPlus<typename Input::type>>::type  eval(const QP & qp_points)
-    {return +derived_.eval(qp_points);};
 
-  private:
-  Derived derived_;
-};
-
-
-template< typename Derived, typename  T, Integer NQPoints,Integer Dim>
-class UnaryPlus< QPExpression <Derived, T, NQPoints,Dim> >
-operator+(const QPExpression<Derived, T, NQPoints,Dim>& input)
-          {return UnaryPlus<QPExpression <Derived, T, NQPoints,Dim>>(input);}
-
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////          UNARY MINUS: -QP        //////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-template< typename Derived, typename  T, Integer NQPoints,Integer Dim>
-class UnaryMinus< QPExpression <Derived, T, NQPoints,Dim>>
-: public QPExpression<UnaryMinus< QPExpression <Derived, T, NQPoints,Dim>>,
-                      typename OperatorType<UnaryMinus<typename T::type>>::type,
-                      NQPoints, Dim >
-{
-  public:
-    using Input= QPExpression<Derived,T,NQPoints,Dim>;
-    UnaryMinus(const Input& input): 
-    derived_(input.derived())
-    {};
-
-    template<typename QP>
-    typename OperatorType< UnaryMinus<typename Input::type>>::type  eval(const QP & qp_points)
-    {return -derived_.eval(qp_points);};
-
-  private:
-  Derived derived_;
-};
-
-
-template< typename Derived, typename  T, Integer NQPoints,Integer Dim>
-class UnaryMinus< QPExpression <Derived, T, NQPoints,Dim> >
-operator-(const QPExpression<Derived, T, NQPoints,Dim>& input)
-          {return UnaryMinus<QPExpression <Derived, T, NQPoints,Dim>>(input);}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////          ADDITION: QP + QP        /////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer Dim>
-class Addition< QPExpression <DerivedLeft, TLeft, NQPoints,Dim>, 
-                     QPExpression <DerivedRight,TRight,NQPoints, Dim> >
-
-: public QPExpression<Addition<QPExpression <DerivedLeft, TLeft, NQPoints,Dim>,
-                               QPExpression <DerivedRight,TRight,NQPoints,Dim> >,
-                typename OperatorType<Addition<typename TLeft::type,typename TRight::type>>::type,
-                NQPoints, Dim >
-{
-  public:
-    using Left= QPExpression<DerivedLeft, TLeft, NQPoints,Dim>;
-    using Right=QPExpression<DerivedRight,TRight,NQPoints,Dim>;
-    Addition(const Left& left, const Right&right): 
-    left_(left.derived()),
-    right_(right.derived())
-    {};
-
-    template<typename QP>
-    typename OperatorType< Addition<typename Left::type, typename Right::type>>::type  eval(const QP & qp_points)
-    {return left_.eval(qp_points)+right_.eval(qp_points);};
-
-  private:
-  DerivedLeft left_;
-  DerivedRight right_;
-};
-
-
-template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer Dim>
-class Addition< QPExpression<DerivedLeft, TLeft, NQPoints,Dim>, 
-                     QPExpression<DerivedRight,TRight,NQPoints,Dim> >
-operator+(const QPExpression<DerivedLeft, TLeft, NQPoints,Dim>& left, 
-          const QPExpression<DerivedRight,TRight,NQPoints, Dim>&right)
-{return Addition<QPExpression<DerivedLeft, TLeft, NQPoints,Dim>, 
-                      QPExpression<DerivedRight,TRight,NQPoints,Dim> >(left,right);}
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////          SUBTRACTION: QP - QP        /////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer Dim>
-class Subtraction< QPExpression <DerivedLeft, TLeft, NQPoints,Dim>, 
-                     QPExpression <DerivedRight,TRight,NQPoints, Dim> >
-
-: public QPExpression<Subtraction<QPExpression <DerivedLeft, TLeft, NQPoints,Dim>,
-                               QPExpression <DerivedRight,TRight,NQPoints,Dim> >,
-                typename OperatorType<Subtraction<typename TLeft::type,typename TRight::type>>::type,
-                NQPoints, Dim >
-{
-  public:
-    using Left= QPExpression<DerivedLeft, TLeft, NQPoints,Dim>;
-    using Right=QPExpression<DerivedRight,TRight,NQPoints,Dim>;
-    Subtraction(const Left& left, const Right&right): 
-    left_(left.derived()),
-    right_(right.derived())
-    {};
-
-    template<typename QP>
-    typename OperatorType< Subtraction<typename Left::type, typename Right::type>>::type  eval(const QP & qp_points)
-    {return left_.eval(qp_points)-right_.eval(qp_points);};
-
-  private:
-  DerivedLeft left_;
-  DerivedRight right_;
-};
-
-
-template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer Dim>
-class Subtraction< QPExpression<DerivedLeft, TLeft, NQPoints,Dim>, 
-                     QPExpression<DerivedRight,TRight,NQPoints,Dim> >
-operator-(const QPExpression<DerivedLeft, TLeft, NQPoints,Dim>& left, 
-          const QPExpression<DerivedRight,TRight,NQPoints, Dim>&right)
-{return Subtraction<QPExpression<DerivedLeft, TLeft, NQPoints,Dim>, 
-                      QPExpression<DerivedRight,TRight,NQPoints,Dim> >(left,right);}
-
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////         MULTIPLY: QP * REAL       /////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-template< typename DerivedLeft, typename  TLeft, Integer NQPoints,Integer Dim>
-class Multiply< QPExpression <DerivedLeft, TLeft, NQPoints,Dim>, Real >
-
-: public QPExpression<Multiply<QPExpression <DerivedLeft, TLeft, NQPoints,Dim>,Real>,
-                      typename TLeft::type,NQPoints, Dim >
-{
-  public:
-    using Left= QPExpression<DerivedLeft, TLeft, NQPoints,Dim>;
-    using Right=Real;
-    Multiply(const Left& left, const Right&right): 
-    left_(left.derived()),
-    right_(right)
-    {};
-
-    template<typename QP>
-    typename Left::type  eval(const QP & qp_points)
-    {return left_.eval(qp_points)*right_;};
-
-  private:
-  DerivedLeft left_;
-  Real right_;
-};
-
-
-template< typename DerivedLeft, typename  TLeft, Integer NQPoints,Integer Dim>
-class Multiply< QPExpression<DerivedLeft, TLeft, NQPoints,Dim>,Real >
-operator*(const QPExpression<DerivedLeft, TLeft, NQPoints,Dim>& left, const Real&right)
-{return Multiply<QPExpression<DerivedLeft, TLeft, NQPoints,Dim>, Real >(left,right);}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////         MULTIPLY: REAL * QP       /////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-template< typename DerivedRight, typename  Tright, Integer NQPoints,Integer Dim>
-class Multiply<Real, QPExpression <DerivedRight, Tright, NQPoints,Dim> >
-
-: public QPExpression<Multiply<Real,QPExpression <DerivedRight, Tright, NQPoints,Dim>>,
-                      typename Tright::type,NQPoints, Dim >
-{
-  public:
-    using Right= QPExpression<DerivedRight, Tright, NQPoints,Dim>;
-    using Left=Real;
-    Multiply(const Left& left, const Right&right): 
-    right_(right.derived()),
-    left_(left)
-    {};
-
-    template<typename QP>
-    typename Right::type  eval(const QP & qp_points)
-    {return left_*right_.eval(qp_points);};
-
-  private:
-  Real left_;
-  DerivedRight right_;
-};
-
-
-template< typename DerivedRight, typename  Tright, Integer NQPoints,Integer Dim>
-class Multiply< Real,QPExpression<DerivedRight, Tright, NQPoints,Dim> >
-operator*(const Real&left,const QPExpression<DerivedRight, Tright, NQPoints,Dim>& right)
-{return Multiply<Real,QPExpression<DerivedRight, Tright, NQPoints,Dim> >(left,right);}
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////          MULTIPLY: QP * QP        /////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer Dim>
-class Multiply< QPExpression <DerivedLeft, TLeft, NQPoints,Dim>, 
-                     QPExpression <DerivedRight,TRight,NQPoints, Dim> >
-
-: public QPExpression<Multiply<QPExpression <DerivedLeft, TLeft, NQPoints,Dim>,
-                               QPExpression <DerivedRight,TRight,NQPoints,Dim> >,
-                typename OperatorType<Multiply<typename TLeft::type,typename TRight::type>>::type,
-                NQPoints, Dim >
-{
-  public:
-    using Left= QPExpression<DerivedLeft, TLeft, NQPoints,Dim>;
-    using Right=QPExpression<DerivedRight,TRight,NQPoints,Dim>;
-    Multiply(const Left& left, const Right&right): 
-    left_(left.derived()),
-    right_(right.derived())
-    {};
-
-    template<typename QP>
-    typename OperatorType< Multiply<typename Left::type, typename Right::type>>::type  eval(const QP & qp_points)
-    {return left_.eval(qp_points)*right_.eval(qp_points);};
-
-  private:
-  DerivedLeft left_;
-  DerivedRight right_;
-};
-
-
-template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer Dim>
-class Multiply< QPExpression<DerivedLeft, TLeft, NQPoints,Dim>, 
-                     QPExpression<DerivedRight,TRight,NQPoints,Dim> >
-operator*(const QPExpression<DerivedLeft, TLeft, NQPoints,Dim>& left, 
-          const QPExpression<DerivedRight,TRight,NQPoints, Dim>&right)
-{return Multiply<QPExpression<DerivedLeft, TLeft, NQPoints,Dim>, 
-                      QPExpression<DerivedRight,TRight,NQPoints,Dim> >(left,right);}
-
-
-
-
-
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////          UNARY PLUS: +FQP        //////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-template< typename Derived, typename  T, Integer NQPoints,Integer NComponents,Integer Dim>
-class UnaryPlus< FQPExpression <Derived, T, NQPoints,NComponents,Dim>>
-: public FQPExpression<UnaryPlus< FQPExpression <Derived, T, NQPoints,NComponents,Dim>>,
-                      typename OperatorType<UnaryPlus<typename T::type>>::type,
-                      NQPoints,NComponents ,  Dim >
-{
-  public:
-    using Input= FQPExpression<Derived,T,NQPoints,NComponents,Dim>;
-    UnaryPlus(const Input& input): 
-    derived_(input.derived())
-    {};
-
-    template<typename QP>
-    typename OperatorType< UnaryPlus<typename Input::type>>::type  eval(const QP & qp_points)
-    {return +derived_.eval(qp_points);};
-
-  private:
-  Derived derived_;
-};
-
-
-template< typename Derived, typename  T, Integer NQPoints,Integer NComponents, Integer Dim>
-class UnaryPlus< FQPExpression <Derived, T, NQPoints,NComponents,Dim> >
-operator+(const FQPExpression<Derived, T, NQPoints,NComponents,Dim>& input)
-          {return UnaryPlus<FQPExpression <Derived, T, NQPoints,NComponents,Dim>>(input);}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////          UNARY MINUS: +FQP       //////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-template< typename Derived, typename  T, Integer NQPoints,Integer NComponents,Integer Dim>
-class UnaryMinus< FQPExpression <Derived, T, NQPoints,NComponents,Dim>>
-: public FQPExpression<UnaryMinus< FQPExpression <Derived, T, NQPoints,NComponents,Dim>>,
-                      typename OperatorType<UnaryMinus<typename T::type>>::type,
-                      NQPoints,NComponents ,  Dim >
-{
-  public:
-    using Input= FQPExpression<Derived,T,NQPoints,NComponents,Dim>;
-    UnaryMinus(const Input& input): 
-    derived_(input.derived())
-    {};
-
-    template<typename QP>
-    typename OperatorType< UnaryMinus<typename Input::type>>::type  eval(const QP & qp_points)
-    {return -derived_.eval(qp_points);};
-
-  private:
-  Derived derived_;
-};
-
-
-template< typename Derived, typename  T, Integer NQPoints,Integer NComponents, Integer Dim>
-class UnaryMinus< FQPExpression <Derived, T, NQPoints,NComponents,Dim> >
-operator-(const FQPExpression<Derived, T, NQPoints,NComponents,Dim>& input)
-          {return UnaryMinus<FQPExpression <Derived, T, NQPoints,NComponents,Dim>>(input);}
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////         ADDITION: FQP + FQP       /////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer NComponents,Integer Dim>
-class Addition< FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>, 
-                FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim> >
-
-: public FQPExpression<Addition<FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>,
-                               FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim> >,
-                       typename OperatorType<Addition<typename TLeft::type,typename TRight::type>>::type,
-                       NQPoints,NComponents, Dim >
-{
-  public:
-    using Left= FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>;
-    using Right=FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim>;
-    Addition(const Left& left, const Right&right): 
-    left_(left.derived()),
-    right_(right.derived())
-    {};
-
-    template<typename QP>
-    typename OperatorType< Addition<typename Left::type, typename Right::type>>::type  eval(const QP & qp_points)
-    {return left_.eval(qp_points)+right_.eval(qp_points);};
-
-  private:
-  DerivedLeft left_;
-  DerivedRight right_;
-};
-
-
-template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer NComponents,Integer Dim>
-class Addition< FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>, 
-                FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim> >
-operator+(const FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>& left, 
-          const FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim>&right)
-{return Addition<FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>, 
-                 FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim> >(left,right);}
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////       SUBTRACTION: FQP + FQP      /////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer NComponents,Integer Dim>
-class Subtraction< FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>, 
-                   FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim> >
-
-: public FQPExpression<Subtraction<FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>,
-                                   FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim> >,
-                       typename OperatorType<Subtraction<typename TLeft::type,typename TRight::type>>::type,
-                       NQPoints,NComponents, Dim >
-{
-  public:
-    using Left= FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>;
-    using Right=FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim>;
-    Subtraction(const Left& left, const Right&right): 
-    left_(left.derived()),
-    right_(right.derived())
-    {};
-
-    template<typename QP>
-    typename OperatorType< Subtraction<typename Left::type, typename Right::type>>::type  eval(const QP & qp_points)
-    {return left_.eval(qp_points)-right_.eval(qp_points);};
-
-  private:
-  DerivedLeft left_;
-  DerivedRight right_;
-};
-
-
-template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer NComponents,Integer Dim>
-class Subtraction< FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>, 
-                FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim> >
-operator-(const FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>& left, 
-          const FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim>&right)
-{return Subtraction<FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>, 
-                    FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim> >(left,right);}
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////         MULTIPLY: FQP * REAL       /////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-template< typename DerivedLeft, typename  TLeft, Integer NQPoints,Integer NComponents,Integer Dim>
-class Multiply< FQPExpression <DerivedLeft, TLeft, NQPoints,NComponents,Dim>, Real >
-
-: public FQPExpression<Multiply<FQPExpression <DerivedLeft, TLeft, NQPoints,NComponents,Dim>,Real>,
-                       typename TLeft::type,NQPoints,NComponents, Dim >
-{
-  public:
-    using Left= FQPExpression<DerivedLeft, TLeft, NQPoints,NComponents,Dim>;
-    using Right=Real;
-    Multiply(const Left& left, const Right&right): 
-    left_(left.derived()),
-    right_(right)
-    {};
-
-    template<typename QP>
-    typename Left::type  eval(const QP & qp_points)
-    {return left_.eval(qp_points)*right_;};
-
-  private:
-  DerivedLeft left_;
-  Real right_;
-};
-
-
-template< typename DerivedLeft, typename  TLeft, Integer NQPoints,Integer NComponents,Integer Dim>
-class Multiply< FQPExpression <DerivedLeft, TLeft, NQPoints,NComponents,Dim>,Real >
-operator*(const FQPExpression <DerivedLeft, TLeft, NQPoints,NComponents,Dim>& left, const Real&right)
-{return Multiply<FQPExpression <DerivedLeft, TLeft, NQPoints,NComponents,Dim>, Real >(left,right);}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////         MULTIPLY: REAL * FQP       /////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-template< typename DerivedRight, typename  Tright, Integer NQPoints,Integer NComponents,Integer Dim>
-class Multiply<Real, FQPExpression <DerivedRight, Tright, NQPoints,NComponents,Dim> >
-
-: public FQPExpression<Multiply<Real,FQPExpression <DerivedRight, Tright, NQPoints,NComponents,Dim>>,
-                       typename Tright::type,NQPoints,NComponents, Dim >
-{
-  public:
-    using Right=FQPExpression <DerivedRight, Tright, NQPoints,NComponents,Dim>;
-    using Left=Real;
-    Multiply(const Left& left, const Right&right): 
-    right_(right.derived()),
-    left_(left)
-    {};
-
-    template<typename QP>
-    typename Right::type  eval(const QP & qp_points)
-    {return left_*right_.eval(qp_points);};
-
-  private:
-  Real left_;
-  DerivedRight right_;
-};
-
-
-template< typename DerivedRight, typename  Tright, Integer NQPoints,Integer NComponents,Integer Dim>
-class Multiply< Real,FQPExpression <DerivedRight, Tright, NQPoints,NComponents,Dim> >
-operator*(const Real&left,const FQPExpression <DerivedRight, Tright, NQPoints,NComponents,Dim>& right)
-{return Multiply<Real,FQPExpression <DerivedRight, Tright, NQPoints,NComponents,Dim> >(left,right);}
-
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////          MULTIPLY: QP * FQP      //////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer NComponents,Integer Dim>
-class Multiply< QPExpression <DerivedLeft, TLeft, NQPoints,Dim>, 
-                     FQPExpression<DerivedRight,TRight,NQPoints,NComponents, Dim> >
-
-: public FQPExpression<Multiply<QPExpression <DerivedLeft, TLeft, NQPoints,Dim>,
-                              FQPExpression<DerivedRight,TRight,NQPoints,NComponents, Dim> >,
-                typename OperatorType<Multiply<typename TLeft::type,typename TRight::type>>::type,
-                NQPoints, NComponents, Dim >
-{
-  public:
-    using Left=QPExpression <DerivedLeft, TLeft, NQPoints,Dim>;
-    using Right=FQPExpression<DerivedRight,TRight,NQPoints,NComponents, Dim>;
-    Multiply(const Left& left, const Right&right): 
-    left_(left.derived()),
-    right_(right.derived())
-    {};
-
-    template<typename QP>
-    typename OperatorType< Multiply<typename Left::type, typename Right::type>>::type  eval(const QP & qp_points)
-    {return left_.eval(qp_points)*right_.eval(qp_points);};
-
-  private:
-  DerivedLeft left_;
-  DerivedRight right_;
-};
-
-template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer NComponents,Integer Dim>
-class Multiply< QPExpression <DerivedLeft, TLeft, NQPoints,Dim>, 
-                     FQPExpression<DerivedRight,TRight,NQPoints,NComponents, Dim> >
-operator*(const QPExpression <DerivedLeft, TLeft, NQPoints,Dim>& left, 
-          const FQPExpression<DerivedRight,TRight,NQPoints,NComponents, Dim>&right)
-{
-return Multiply<QPExpression <DerivedLeft, TLeft, NQPoints,Dim>, FQPExpression<DerivedRight,TRight,NQPoints,NComponents, Dim> >(left,right);//static_cast<const Left>(u), static_cast<const Right>(v));
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-template<typename Operator,typename Elem,Integer FEFamily, Integer NComponents=1>
-class MapFromReference;
-
-
-
-template<Integer Dim, Integer ManifoldDim,Integer NComponents>
-class MapFromReference<IdentityOperator, Simplex<Dim,ManifoldDim>,LagrangeFE,NComponents>
-{
- private:
- public:
-        inline const Real  operator()(const Matrix<Real, Dim, ManifoldDim>& J){return 1.0;}
-};
-
-template<Integer Dim, Integer ManifoldDim,Integer NComponents>
-class MapFromReference<GradientOperator, Simplex<Dim,ManifoldDim>,LagrangeFE,NComponents>
-{
- private:
- public:
-        inline const Matrix<Real, Dim, ManifoldDim>  operator() (const Matrix<Real, Dim, ManifoldDim>& J)
-         {static_assert(Dim==ManifoldDim,"Dim==ManifoldDim for inverting jacobian");
-          auto inv=  inverse(J);
-          return inv;}
-};
-
-
-
-template<Integer Dim, Integer ManifoldDim,Integer NComponents>
-class MapFromReference<IdentityOperator, Simplex<Dim,ManifoldDim>,RaviartThomasFE,NComponents>
-{
- private:
- public:
-        inline const Matrix<Real, Dim, ManifoldDim> operator()(const Matrix<Real, Dim, ManifoldDim>& J)
-         {Matrix<Real, Dim, ManifoldDim> mapping=J;
-          mapping/=det(mapping);
-          return mapping;}
-
-};
-
-template<Integer Dim, Integer ManifoldDim,Integer NComponents>
-class MapFromReference<DivergenceOperator, Simplex<Dim,ManifoldDim>,RaviartThomasFE,NComponents>
-{
- private:
- public:
-       inline const Real  operator() (const Matrix<Real, Dim, ManifoldDim>& J){return 1.0/det(J);}
-};
 
 
 
@@ -2858,7 +2192,7 @@ std::cout<<result()<<std::endl;
 grandma->print();
 
 
-    MapFromReference3<Elem,Lagrange1<1>> map3;
+    MapFromReference4<Elem,Lagrange1<1>> map3;
     using QP=typename GaussPoints<Elem,QPOrder>::qp_points_type;
     using QuadratureRule=GaussPoints<Elem,QPOrder>;
     using BaseFunctionSpace=Lagrange1<1>;
@@ -2895,7 +2229,7 @@ grandma->print();
   
   std::cout<<"qpp2"<<std::endl;
   std::cout<<qpp2.eval(qp_points)<<std::endl;
-  auto minusqpp2=-qpp2;
+  auto minusqpp2=-qpp2/3.4;
   auto plusqpp2=+qpp2;
   auto sumqqp2 = -qpp2+2*qpp2*2;
   auto minussumqqp2 = -qpp2-qpp2;
@@ -2911,7 +2245,8 @@ grandma->print();
 
 
   auto phitwo=phi+phi;
-  auto phitwominus=phi-phi;
+  auto phitwominus=phi/4.0-phi/2;
+  auto phithree=phitwominus+phitwo;
   std::cout<<"phi"<<std::endl;
   std::cout<<phi.eval(qp_points)<<std::endl;
 
@@ -2920,6 +2255,10 @@ grandma->print();
 
   std::cout<<"phitwominus"<<std::endl;
   std::cout<<phitwominus.eval(qp_points)<<std::endl;
+
+  std::cout<<"phithree"<<std::endl;
+  std::cout<<phithree.eval(qp_points)<<std::endl;
+
 
   auto fqpp3=-qpp2*qpp1*(-fqpp1);
   std::cout<<"fqpp3"<<std::endl;
