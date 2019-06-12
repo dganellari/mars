@@ -49,6 +49,7 @@ list(APPEND MARS_HEADERS
 	mars_par_edge_split_pool.hpp
 	mars_par_mesh.hpp
 	mars_partitioned_bisection.hpp
+	mars_quadrature_rules.hpp
 	mars_quality.hpp
 	mars_ranked_edge.hpp
 	mars_red_green_refinement.hpp

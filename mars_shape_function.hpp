@@ -10,6 +10,9 @@
 #include "mars_base_elementfunctionspace.hpp"
 #include "mars_vector.hpp"
 #include "mars_fqpexpressions.hpp"
+#include "mars_quadrature_rules.hpp"
+
+
 namespace mars{
 
 
@@ -195,1303 +198,12 @@ public:
 
 
 
-class Multiply
-{
- public:
- template<typename T,Integer Rows1,Integer Cols1,Integer Rows2, Integer Cols2>
- Matrix<T, Rows1,Cols2> operator()(const Matrix<T, Rows1,Cols1> &A,const Matrix<T, Rows2,Cols2> &B)
- {
-       static_assert(Cols1==Rows2,"Multiply: matrix dimension must agree, i.e. Cols1==Rows2 ");
-       return A*B;
- }
 
- template<typename T,Integer Rows,Integer Cols>
- Matrix<T, Rows,Cols> operator()(const Matrix<T, Rows,Cols> &A,const T &B)
- {
-       return A*B;
- }
 
- template<typename T,Integer Rows,Integer Cols>
- Matrix<T, Rows,Cols> operator()(const T &A,const Matrix<T, Rows,Cols> &B)
- {
-       return A*B;
- }
 
- template<typename T,Integer Rows,Integer Cols>
- Vector<T,Rows> operator()(const Matrix<T, Rows,Cols> &A,const Vector<T,Cols> &B)
- {
-       return A*B;
- };
 
- template<typename T,Integer Rows,Integer Cols>
- Vector<T,Rows> operator()(const Matrix<T, Rows,Cols> &A,const Matrix<T,Cols,1> &B)
- {
-       Vector<T,Cols> vec;
-       B.get_col(0,vec);
-       return A*vec;
- };
 
-};
 
-class Contraction
-{
-public:
-
- template<typename T,Integer Rows,Integer Cols>
- T operator()(const Matrix<T, Rows,Cols> &A,const Matrix<T, Rows,Cols> &B)
- {
-       T result=0;
-       for(Integer i = 0; i < Rows; ++i) 
-         for(Integer j = 0; j < Cols; ++j) 
-             result += A(i, j) * B(i,j);
-       return result;
- }
-
- template<typename T,Integer Rows,Integer Cols>
- Matrix<T,1,Rows> operator()(const Matrix<T, Rows,Cols> &A,const Matrix<T, 1,Cols> &B)
- {
-       Matrix<T,1,Rows> result=0;
-       for(Integer i = 0; i < Rows; ++i) 
-         for(Integer j = 0; j < Cols; ++j) 
-             result(0,i) += A(i, j) * B(0,j);
-       return result;
- }
- template<typename T,Integer Rows,Integer Cols>
- Matrix<T,Rows,1> operator()(const Matrix<T, Rows,Cols> &A,const Matrix<T, Cols,1> &B)
- {
-       Matrix<T,Rows,1> result=0;
-       for(Integer i = 0; i < Rows; ++i) 
-         for(Integer j = 0; j < Cols; ++j) 
-             result(i,0) += A(i, j) * B(j,0);
-       return result;
- }
-
- template<typename T>
- T operator()(const Matrix<T, 1,1> &A,const T &B)
- {
-       return A(0,0)*B;
- }
-
- template<typename T>
- T operator()(const T &A,const Matrix<T, 1,1> &B)
- {
-       return A*B(0,0);
- }
-
- template<typename T,Integer Dim>
- T operator()(const Vector<T, Dim> &A,const Vector<T, Dim> &B)
- {
-       T result=0;
-       for(Integer i = 0; i < Dim; ++i) 
-             result += A[i] * B[i];
-       return result;
- }
-
- Real operator()(const Real &A,const Real &B)
- {
-       return A*B;
- }
-
- template<typename T,Integer Rows>
- T operator()(const Matrix<T, Rows,1> &A,const Vector<T, Rows> &B)
- {
-       T result=0;
-       for(Integer i = 0; i < Rows; ++i) 
-             result += A(i, 0) * B[i];
-       return result;
- }
-
- template<typename T,Integer Cols>
- T operator()(const Matrix<T, 1,Cols> &A,const Vector<T, Cols> &B)
- {
-       T result=0;
-       for(Integer i = 0; i < Cols; ++i) 
-             result += A(0,i) * B[i];
-       return result;
- }
-
- template<typename T,Integer Rows>
- T operator()(const Vector<T, Rows> &B,const Matrix<T, Rows,1> &A)
- {
-       T result=0;
-       for(Integer i = 0; i < Rows; ++i) 
-             result += A(i, 0) * B[i];
-       return result;
- }
-
- template<typename T,Integer Cols>
- T operator()(const Vector<T, Cols> &B,const Matrix<T, 1,Cols> &A)
- {
-       T result=0;
-       for(Integer i = 0; i < Cols; ++i) 
-             result += A(0,i) * B[i];
-       return result;
- }
-
-};
-
-
-
-
-template<typename Derived, typename Type>
-class AlgebraicExpression
-{
-public:
-      Derived& derived() { return static_cast<Derived &>(*this); }
-      const Derived& derived()const { return static_cast<const Derived &>(*this); }
-
-      Type & value();
-      const Type & value()const;
-
-      // EQUAL
-      inline Derived& operator = (const Derived &u)
-      {            
-        value()=u.derived().value();
-        return *this;
-      } 
-
-      // BINARY ADD
-      inline Derived operator+(const Derived &other) const
-      {
-        Derived result;
-        result.derived().value()=derived().value()+other.derived().value();
-        return result;
-      };
-
-      // UNARY ADD
-      inline Derived operator+() const
-      {
-         return derived();
-      };
-
-      // BINARY MINUS
-      inline Derived operator-(const Derived &other) const
-      {
-        Derived result;
-        result.derived().value()=derived().value()-other.derived().value();
-        return result;
-      };
-      // UNARY MINUS
-      inline Derived operator-() const
-      {
-        Derived result;
-        result.derived().value()=-derived().value();
-        return result;
-      };
-
-
-      // LEFT SCALAR MULTIPLY
-      friend Derived operator *(const Real &alpha, const Derived& der) 
-      { 
-        Derived result;
-        result.derived().value()=alpha*der.value();
-        return result;
-      };
-
-      // RIGHT SCALAR MULTIPLY
-      friend Derived operator *(const Derived& der,const Real &alpha) 
-      { 
-        Derived result;
-        result.derived().value()=alpha*der.value();
-        return result;
-      };
-
-      // RIGHT SCALAR DIVISION
-      friend Derived operator /(const Derived& der,const Real &alpha) 
-      { 
-        Derived result;
-        result.derived().value()=der.value()/alpha;
-        return result;
-      };
-
-      // RIGHT SCALAR EQUAL DIVISION
-      inline Derived& operator /=(const Real &alpha) 
-      { 
-        (*this).derived().value()=(*this).derived().value()/alpha;
-        return (*this).derived();
-      };
-      // RIGHT SCALAR EQUAL MULTIPLICATION
-      inline Derived& operator *=(const Real &alpha) 
-      { 
-        (*this).derived().value()=(*this).derived().value()*alpha;
-        return (*this).derived();
-      };   
-      // EQUAL ADDITION
-      inline Derived& operator +=(const Derived &other) 
-      { 
-        (*this).derived().value()=(*this).derived().value()+other.derived().value();
-        return (*this).derived();
-      };  
-      // EQUAL SUBTRACTION
-      inline Derived& operator -=(const Derived &other) 
-      { 
-        (*this).derived().value()=(*this).derived().value()-other.derived().value();
-        return (*this).derived();
-      };
-};
-
-template<typename T,Integer NQPoints,Integer NComponents>
-class FQPValues;
-
-template<typename T,Integer NQPoints>
-class QPValues;
-
-
-template<typename Derived, typename type, typename T,Integer NQPoints>
-class QPBase
-{
-public:
-      // using type=  Vector<T,NQPoints>;
-      QPBase(){};
-      QPBase(const type& t):values_(t) {};
-      Derived& derived() { return static_cast<Derived &>(*this); }
-      const Derived& derived()const { return static_cast<const Derived &>(*this); }
-
-    inline type& operator()() {return values_;};
-    inline const type& operator()()const {return values_;};
-    inline type& val() {return values_;};
-    inline const type& val()const {return values_;};
-     inline T &operator[](const Integer i)
-        {
-            assert(i < NQPoints);
-            return values_[i];
-        }
-    inline const T &operator[](const Integer i)const
-        {
-            assert(i < NQPoints);
-            return values_[i];
-        }
-
-      void describe(std::ostream &os) const
-      {
-          for(Integer i = 0; i < NQPoints; ++i) {
-              os << (*this)[i] << " ";
-          }
-
-          os << "\n";
-      }
-
-      friend std::ostream &operator<<(std::ostream &os, const QPValues<T,NQPoints> &v)
-      {
-          v.describe(os);
-          return os;
-      }
-
-            // equal
-      inline Derived& operator = (const Derived &u)
-      {            
-        value()=u.derived().value();
-        return *this;
-      } 
-
-      // BINARY ADD
-      inline Derived operator+(const Derived &other) const
-      {
-        Derived result;
-        result.derived().value()=derived().value()+other.derived().value();
-        return result;
-      };
-
-      // UNARY ADD
-      inline Derived operator+() const
-      {
-         return derived();
-      };
-
-      // BINARY MINUS
-      inline Derived operator-(const Derived &other) const
-      {
-        Derived result;
-        result.derived().value()=derived().value()-other.derived().value();
-        return result;
-      };
-      // UNARY MINUS
-      inline Derived operator-() const
-      {
-        Derived result;
-        result.derived().value()=-derived().value();
-        return result;
-      };
-
-
-      // LEFT SCALAR MULTIPLY
-      friend Derived operator *(const Real &alpha, const Derived& der) 
-      { 
-        Derived result;
-        result.derived().value()=alpha*der.value();
-        return result;
-      };
-
-      // RIGHT SCALAR MULTIPLY
-      friend Derived operator *(const Derived& der,const Real &alpha) 
-      { 
-        Derived result;
-        result.derived().value()=alpha*der.value();
-        return result;
-      };
-
-      // RIGHT SCALAR DIVISION
-      friend Derived operator /(const Derived& der,const Real &alpha) 
-      { 
-        Derived result;
-        result.derived().value()=der.value()/alpha;
-        return result;
-      };
-
-      // RIGHT SCALAR EQUAL DIVISION
-      inline Derived& operator /=(const Real &alpha) 
-      { 
-        (*this).derived().value()=(*this).derived().value()/alpha;
-        return (*this).derived();
-      };
-      // RIGHT SCALAR EQUAL MULTIPLICATION
-      inline Derived& operator *=(const Real &alpha) 
-      { 
-        (*this).derived().value()=(*this).derived().value()*alpha;
-        return (*this).derived();
-      };   
-      // EQUAL ADDITION
-      inline Derived& operator +=(const Derived &other) 
-      { 
-        (*this).derived().value()=(*this).derived().value()+other.derived().value();
-        return (*this).derived();
-      };  
-      // EQUAL SUBTRACTION
-      inline Derived& operator -=(const Derived &other) 
-      { 
-        (*this).derived().value()=(*this).derived().value()-other.derived().value();
-        return (*this).derived();
-      };  
-    type& value(){return values_;};
-    const type& value()const{return values_;};
-
-protected:
-  type values_;
-};
-
-
-
-// template<typename T,Integer NQPoints>
-// class QPValuesBase
-// {
-// public:
-//   using type=  Vector<T,NQPoints>;
-//   QPValuesBase(): values_(){};
-//   QPValuesBase(const type& v): values_(v){};
-//   inline type& operator()() {return values_;};
-//   inline const type& operator()()const {return values_;};
-//   inline type& val() {return values_;};
-//   inline const type& val()const {return values_;};
-
-//   inline T &operator[](const Integer i)
-//       {
-//           assert(i < NQPoints);
-//           return values_[i];
-//       }
-//   inline const T &operator[](const Integer i)const
-//       {
-//           assert(i < NQPoints);
-//           return values_[i];
-//       }
-
-//       void describe(std::ostream &os) const
-//       {
-//           for(Integer i = 0; i < NQPoints; ++i) {
-//               os << (*this)[i] << " ";
-//           }
-
-//           os << "\n";
-//       }
-
-//       friend std::ostream &operator<<(std::ostream &os, const QPValues<T,NQPoints> &v)
-//       {
-//           v.describe(os);
-//           return os;
-//       }
-
-// protected:
-//   type values_;
-
-// };
-
-
-// template<typename T,Integer NQPoints>
-// class QPValues: public QPValuesBase<T,NQPoints>
-// {
-// public:
-//   using type=  Vector<T,NQPoints>;
-//   using Base=QPValuesBase<T,NQPoints>;
-//   QPValues(): QPValuesBase<T,NQPoints>(){};
-//   QPValues(const type& v): QPValuesBase<T,NQPoints>(v){};
-// };
-
-
-
-
-template<Integer Rows,Integer Cols,Integer NQPoints>
-class QPValues<Matrix<Real,Rows,Cols>,NQPoints>: 
-public QPBase< QPValues< Matrix<Real,Rows,Cols>, NQPoints>, 
-                          Vector<Matrix<Real,Rows,Cols>,NQPoints>, 
-                          Matrix<Real,Rows,Cols>, 
-                          NQPoints >
-// public AlgebraicExpression<QPValues<Matrix<Real,Rows,Cols>,NQPoints>,>
-//QPValuesBase<Matrix<Real,Rows,Cols>,NQPoints>
-{
-public:
-
-
-  using T= Matrix<Real,Rows,Cols>;
-  using type=  Vector<T,NQPoints>;
-  using Base=QPBase< QPValues< Matrix<Real,Rows,Cols>, NQPoints>, 
-                                Vector<Matrix<Real,Rows,Cols>,NQPoints>,
-                                Matrix<Real,Rows,Cols>, 
-                                NQPoints >;
-
-  QPValues(): Base(){};
-  QPValues(const type& v): Base(v){};
-
-     // FQP VEC(rows) = QP MAT(rows,cols) * FQP VEC(cols)
-      template<Integer OtherDim, Integer NComponents>
-      FQPValues<Vector<Real,Rows>,NQPoints,NComponents> operator*( 
-                                 const FQPValues<Vector<Real,Cols>,NQPoints,NComponents>& fqpvalue)
-      { 
-        FQPValues<Vector<Real,Rows>,NQPoints,NComponents> result;
-        for(Integer i = 0; i < NComponents; ++i) 
-        {
-          for(Integer j = 0; j < NQPoints; ++j)
-            {
-            result[i][j]= Base::val()[i]*fqpvalue[i][j];
-            }          
-        }       
-        return result;
-      };
-
-      // QP VEC(rows) = QP MAT(rows,cols) * QP VEC(cols)
-      template<Integer OtherCols>
-      QPValues<Vector<Real,Rows>,NQPoints> operator*(const QPValues<Vector<Real,Cols>,NQPoints>& other)
-      { 
-        QPValues<Vector<Real,Rows>,NQPoints> result;
-          for(Integer j = 0; j < NQPoints; ++j)
-            {
-            result[j]= Base::val()[j]*other[j];
-            }               
-        return result;
-      };
-
-      // FQP MAT(rows1,cols2) = QP MAT(rows1,cols1) * FQP MAT(rows2,cols2)
-      template<Integer OtherDim, Integer NComponents>
-      FQPValues<Matrix<Real,Rows,OtherDim>,NQPoints,NComponents> operator*( 
-                                 const FQPValues<Matrix<Real,Cols,OtherDim>,NQPoints,NComponents>& fqpvalue)
-      { 
-        FQPValues<Matrix<Real,Rows,OtherDim>,NQPoints,NComponents> result;
-        for(Integer i = 0; i < NComponents; ++i) 
-        {
-          for(Integer j = 0; j < NQPoints; ++j)
-            {
-            result[i][j]= Base::val()[i]*fqpvalue[i][j];
-            }          
-        }       
-        return result;
-      };
-
-
-      // QP MAT(rows1,cols2) = QP MAT(rows1,cols1) * QP MAT(rows2,cols2)
-      template<Integer OtherCols>
-      QPValues<Matrix<Real,Rows,OtherCols>,NQPoints> operator*(const QPValues<Matrix<Real,Cols,OtherCols>,NQPoints>& other)
-      { 
-        QPValues<Matrix<Real,Rows,OtherCols>,NQPoints> result;
-          for(Integer j = 0; j < NQPoints; ++j)
-            {
-            result[j]= Base::val()[j]*other[j];
-            }               
-        return result;
-      };
-
-      // FQP REAL = QP MAT(rows,cols).contract(FQP MAT(rows,cols))
-      template<Integer NComponents>
-      FQPValues<Real,NQPoints,NComponents> contract( 
-                                 const FQPValues<Matrix<Real,Rows,Cols>,NQPoints,NComponents>& fqpvalue)
-      { 
-        FQPValues<Real,NQPoints,NComponents> result;
-        Contraction contract;
-        for(Integer i = 0; i < NComponents; ++i) 
-        {
-          for(Integer j = 0; j < NQPoints; ++j)
-            {
-            result[i][j]= contract(Base::val()[i],fqpvalue[i][j]);
-            }          
-        }       
-        return result;
-      };
-
-      // FQP REAL = QP MAT(rows,cols).contract(QP MAT(rows,cols))
-      QPValues<Real,NQPoints> contract(const QPValues<Matrix<Real,Rows,Cols>,NQPoints>& other)
-      { 
-        QPValues<Real,NQPoints> result;
-        Contraction contract;
-          for(Integer j = 0; j < NQPoints; ++j)
-            {
-            result[j]= contract(Base::val()[j],other[j]);
-            }               
-        return result;
-      };
-};
-
-
-
-
-
-// FQPVALUES REAL
-template<Integer NQPoints,Integer NComponents>
-class FQPValues<Real,NQPoints,NComponents> //: public FQPValuesBase<Real,NQPoints,NComponents>
-{
-public:
-  using T=Real;
-  using type= Vector<Vector<T,NQPoints>,NComponents>;
-      FQPValues(): fqpvalues_(){};
-      FQPValues(const type& v): fqpvalues_(v){};
-
-      // FQPValues(): FQPValuesBase<T,NQPoints,NComponents>(){};
-      // FQPValues(const type& v): FQPValuesBase<T,NQPoints,NComponents>(v){};
-      inline type operator()()const{return fqpvalues_;};
-      inline Vector<T,NQPoints> operator()(const Integer& i)const{return fqpvalues_[i];};
-      inline void operator()(const Integer& i,const Vector<T,NQPoints>& u){fqpvalues_[i]=u;};   
-
-      inline Vector<T,NQPoints> &operator[](const Integer i)
-      {
-          assert(i < NComponents);
-          return fqpvalues_[i];
-      }
-      inline const Vector<T,NQPoints> &operator[](const Integer i)const
-      {
-          assert(i < NComponents);
-          return fqpvalues_[i];
-      }
-
-      // equal
-      inline FQPValues& operator = (const FQPValues &u)
-      {            
-        (*this).fqpvalues_=u();
-        return *this;
-      } 
-
-      // unary add
-      FQPValues operator+()
-      {
-        FQPValues result;
-        result.fqpvalues_=+(*this).fqpvalues_;
-        
-        return result;
-      };
-      // binary add
-      FQPValues operator+(const FQPValues &fqpvalue) const
-      {
-        FQPValues result;
-        result.fqpvalues_=(*this).fqpvalues_+fqpvalue.fqpvalues_;
-        
-        return result;
-      };
-
-      // unary minus
-      FQPValues operator-()
-      {
-        FQPValues result;
-        result.fqpvalues_=-(*this).fqpvalues_;
-        
-        return result;
-      };
-      // binary minus
-      FQPValues operator-(const FQPValues &fqpvalue) const
-      {
-        FQPValues result;
-        result.fqpvalues_=(*this).fqpvalues_-fqpvalue.fqpvalues_;
-        
-        return result;
-      };
-
-      // right scalar multiply
-      FQPValues operator*(const Real &value) const
-      { 
-        FQPValues result;
-        result.fqpvalues_=(*this).fqpvalues_*value;
-        return result;
-      };
-      // left scalar multiply
-      friend FQPValues operator*(const Real &value, const FQPValues& F) 
-      { 
-        FQPValues result;
-        result=value*F;
-        return result;
-      };
-
-      // tensor contraction tensor: Real= contract(M<Rows,Cols>, M<Rows,Cols>),contract(Vec<Rows>, Vec<Rows>),contract(Real,Real)
-      template<typename T>
-      friend FQPValues operator*(const QPValues<T,NQPoints> &qpvalue,const FQPValues<T,NQPoints,NComponents>& fqpvalue)
-      { 
-        FQPValues result;
-        Contraction contract;
-        const auto& tmp=qpvalue();
-        for(Integer i = 0; i < NComponents; ++i) 
-        {
-          for(Integer j = 0; j < NQPoints; ++j)
-            {
-            result[i][j]= contract(tmp[i],fqpvalue[i][j]);
-            }          
-        }       
-        return result;
-      };
-
-      void describe(std::ostream &os) const
-      {
-        for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-          for(Integer qp = 0; qp < NQPoints; ++qp) {
-              os << (*this)[n_comp][qp] << " ";
-          }
-
-          os << "\n";
-      }
-
-      friend std::ostream &operator<<(std::ostream &os, const FQPValues &v)
-      {
-          v.describe(os);
-          return os;
-      }
-
-protected:
-      type fqpvalues_;
-      Vector<T,NQPoints> tmp1_;
-};
-
-// FQPVALUES VECTOR
-template<Integer Rows,Integer NQPoints,Integer NComponents>
-class FQPValues<Vector<Real,Rows>,NQPoints,NComponents> //: public FQPValuesBase<Vector<Real,Rows>,NQPoints,NComponents>
-{
-public:
-  using T=Vector<Real,Rows>;
-  using type= Vector<Vector<T,NQPoints>,NComponents>;
-
-       FQPValues(): fqpvalues_(){};
-      FQPValues(const type& v): fqpvalues_(v){};
-      
-      // FQPValues(): FQPValuesBase<T,NQPoints,NComponents>(){};
-      // FQPValues(const type& v): FQPValuesBase<T,NQPoints,NComponents>(v){};
-      inline type operator()()const{return fqpvalues_;};
-      inline Vector<T,NQPoints> operator()(const Integer& i)const{return fqpvalues_[i];};
-      inline void operator()(const Integer& i,const Vector<T,NQPoints>& u){fqpvalues_[i]=u;};     
-      inline Vector<T,NQPoints> &operator[](const Integer i)
-      {
-          assert(i < NComponents);
-          return fqpvalues_[i];
-      }
-      inline const Vector<T,NQPoints> &operator[](const Integer i)const
-      {
-          assert(i < NComponents);
-          return fqpvalues_[i];
-      }
-
-            // equal
-      inline FQPValues& operator = (const FQPValues &u)
-      {            
-        (*this).fqpvalues_=u();
-        return *this;
-      } 
-
-      // unary add
-      FQPValues operator+()
-      {
-        FQPValues result;
-        result.fqpvalues_=+(*this).fqpvalues_;
-        
-        return result;
-      };
-      // binary add
-      FQPValues operator+(const FQPValues &fqpvalue) const
-      {
-        FQPValues result;
-        result.fqpvalues_=(*this).fqpvalues_+fqpvalue.fqpvalues_;
-        
-        return result;
-      };
-
-      // unary minus
-      FQPValues operator-()
-      {
-        FQPValues result;
-        result.fqpvalues_=-(*this).fqpvalues_;
-        
-        return result;
-      };
-      // binary minus
-      FQPValues operator-(const FQPValues &fqpvalue) const
-      {
-        FQPValues result;
-        result.fqpvalues_=(*this).fqpvalues_-fqpvalue.fqpvalues_;
-        
-        return result;
-      };
-
-      // right scalar multiply
-      FQPValues operator*(const Real &value) const
-      { 
-        FQPValues result;
-        result.fqpvalues_=(*this).fqpvalues_*value;
-        return result;
-      };
-      // left scalar multiply
-      friend FQPValues operator*(const Real &value, const FQPValues& F) 
-      { 
-        FQPValues result;
-        result=value*F;
-        return result;
-      };
-
-      // matrix times matrix multiply: M<Rows,Cols>= M<Rows,Cols2> * M<Rows2,Cols>
-      template<Integer Rows2,Integer Cols2>
-      friend FQPValues operator*(const QPValues<Matrix<Real,Rows2,Cols2>,NQPoints> &qpvalue,const FQPValues<T,NQPoints,NComponents>& fqpvalue)
-      { 
-        assert(Cols2==Rows);
-        FQPValues result;
-        const auto& tmp=qpvalue();
-        for(Integer i = 0; i < NComponents; ++i) 
-        {
-          for(Integer j = 0; j < NQPoints; ++j)
-            {
-            result[i][j]= tmp[i]*fqpvalue[i][j];
-            }          
-        }       
-        return result;
-      };
-
-      void describe(std::ostream &os) const
-      {
-        for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-          for(Integer qp = 0; qp < NQPoints; ++qp) {
-              os << (*this)[n_comp][qp] << " ";
-          }
-
-          os << "\n";
-      }
-
-      friend std::ostream &operator<<(std::ostream &os, const FQPValues &v)
-      {
-          v.describe(os);
-          return os;
-      }
-
-protected:
-      type fqpvalues_;
-      Vector<T,NQPoints> tmp1_;
-};
-
-// FQPVALUES MATRIX
-template<Integer Rows,Integer Cols,Integer NQPoints,Integer NComponents>
-class FQPValues<Matrix<Real,Rows,Cols>,NQPoints,NComponents> 
-// QPBase<FQPValues<Matrix<Real,Rows,Cols>,NQPoints,NComponents>,
-//                   Vector<Vector<Matrix<Real,Rows,Cols>,NQPoints>,NComponents>,
-//                   T,NQPoints,NComponents>
-//: public FQPValuesBase<Matrix<Real,Rows,Cols>,NQPoints,NComponents>
-{
-
-public:
-  using T=Matrix<Real,Rows,Cols>;
-  using type= Vector<Vector<T,NQPoints>,NComponents>;
-
-       FQPValues(): fqpvalues_(){};
-      FQPValues(const type& v): fqpvalues_(v){};
-      
-      // FQPValues(): FQPValuesBase<T,NQPoints,NComponents>(){};
-      // FQPValues(const type& v): FQPValuesBase<T,NQPoints,NComponents>(v){};
-      inline type operator()()const{return fqpvalues_;};
-      inline Vector<T,NQPoints> operator()(const Integer& i)const{return fqpvalues_[i];};
-      inline void operator()(const Integer& i,const Vector<T,NQPoints>& u){fqpvalues_[i]=u;};     
-       inline Vector<T,NQPoints> &operator[](const Integer i)
-      {
-          assert(i < NComponents);
-          return fqpvalues_[i];
-      }
-      inline const Vector<T,NQPoints> &operator[](const Integer i)const
-      {
-          assert(i < NComponents);
-          return fqpvalues_[i];
-      }
-
-           // equal
-      inline FQPValues& operator = (const FQPValues &u)
-      {            
-        (*this).fqpvalues_=u();
-        return *this;
-      } 
-
-      // unary add
-      FQPValues operator+()
-      {
-        FQPValues result;
-        result.fqpvalues_=+(*this).fqpvalues_;
-        
-        return result;
-      };
-      // binary add
-      FQPValues operator+(const FQPValues &fqpvalue) const
-      {
-        FQPValues result;
-        result.fqpvalues_=(*this).fqpvalues_+fqpvalue.fqpvalues_;
-        
-        return result;
-      };
-
-      // unary minus
-      FQPValues operator-()
-      {
-        FQPValues result;
-        result.fqpvalues_=-(*this).fqpvalues_;
-        
-        return result;
-      };
-      // binary minus
-      FQPValues operator-(const FQPValues &fqpvalue) const
-      {
-        FQPValues result;
-        result.fqpvalues_=(*this).fqpvalues_-fqpvalue.fqpvalues_;
-        
-        return result;
-      };
-
-      // right scalar multiply
-      FQPValues operator*(const Real &value) const
-      { 
-        FQPValues result;
-        result.fqpvalues_=(*this).fqpvalues_*value;
-        return result;
-      };
-      // left scalar multiply
-      friend FQPValues operator*(const Real &value, const FQPValues& F) 
-      { 
-        FQPValues result;
-        result=F*value;
-        return result;
-      };
-
-      // matrix times matrix multiply: M<Rows,Cols>= M<Rows,Cols2> * M<Rows2,Cols>
-      friend FQPValues operator*(const QPValues<Real,NQPoints> &qpvalue, const FQPValues<Matrix<Real,Rows,Cols>,NQPoints,NComponents>& fqpvalue)
-      { 
-        Contraction contract;
-        FQPValues result;
-        const auto& tmp=qpvalue();
-        for(Integer i = 0; i < NComponents; ++i) 
-        {
-          for(Integer j = 0; j < NQPoints; ++j)
-            {
-            result[i][j]= tmp[i]*fqpvalue[i][j];
-            }          
-        }       
-        return result;
-      };
-
-      void describe(std::ostream &os) const
-      {
-        for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-          for(Integer qp = 0; qp < NQPoints; ++qp) {
-              os << (*this)[n_comp][qp] << " ";
-          }
-
-          os << "\n";
-      };
-
-      friend std::ostream &operator<<(std::ostream &os, const FQPValues &v)
-      {
-          v.describe(os);
-          return os;
-      };
-
-
-protected:
-      type fqpvalues_;
-      Vector<T,NQPoints> tmp1_;
-
-};
-
-
-
-
-
-
-
-
-
-
-
-
-template<typename Operation>
-class Product{
- public:
- template<typename Input1,typename Input2, typename Output>
- Output operator()(Input1 i1,Input2 i2){return Operation(i1,i2);};
-};
-
-
-
-
-
-
-template<typename TensorType>
-class DotProduct;
-
-
-template<>
-class DotProduct<Real>
-{
-
-};
-
-template<Integer Dim>
-class DotProduct<Vector<Real,Dim>>
-{
-
- public:
- static const Real compute(const Vector<Real,Dim>& v1, const Vector<Real,Dim>& v2, const double& alpha=1)
- {
-  Real result=0.0;
-  for(Integer nn=0;nn<Dim;nn++)
-  {
-   result+=v1[nn]*v2[nn];
-  }
-  return result*alpha;
- };
-};
-
-template<Integer Rows, Integer Cols>
-class DotProduct<Matrix<Real,Rows,Cols>>
-{
-
- public:
-
-
- static const Real compute(const Matrix<Real,Rows,Cols>& m1, const Matrix<Real,Rows,Cols>& m2, const Real& alpha=1)
- {
-  Real result=0.0;
-  for(Integer nn=0;nn<Rows;nn++)
-    {
-      for(Integer mm=0;mm<Cols;mm++)
-      {
-       result+=m1(nn,mm)*m2(nn,mm);
-      }
-    }
-  return result*alpha;
- }
-
-  static const Real compute(const Matrix<Real,Rows,Cols>& m1, const Matrix<Real,Rows,Cols>& m2, const Matrix<Real,Rows,Cols>& m3)
- {
-    Real result=0.0;
-    for(Integer nn=0;nn<Rows;nn++)
-      {
-        for(Integer mm=0;mm<Cols;mm++)
-        {
-         result+=m1(nn,mm)*m2(nn,mm)*m3(nn,mm);
-        }
-      } 
-    return result;
-   }
-};
-
-
-
-
-template<typename TensorType, Integer NComponents=1>
-class QPVector;
-
-
-template<Integer Rows>
-class QPVector<Vector<Real,Rows>,1>
-{
- public:
- // compute (U,V)
- static const Vector<Real,Rows> compute(const Vector<Real,Rows>& U, 
-                                        const Vector<Real,Rows>& V)
- {
-  Vector<Real,Rows> result;
-  for(Integer mm=0;mm<Rows;mm++)
-       result[mm]=U[mm]*V[mm];
-  return result;
- }
-};
-
-
-template<Integer Rows, Integer Cols, Integer NComponents>
-class QPVector<Matrix<Real,Rows,Cols>,NComponents>
-{
-
- public:
-
- // compute (U,V)
- static const Vector<Real,Rows> compute(const Matrix<Real,Rows,Cols>& U, 
-                                        const Matrix<Real,Rows,Cols>& V)
- {
-  Vector<Real,Rows> result;
-
-  for(Integer mm=0;mm<Rows;mm++)
-    {
-      result[mm]=0;
-      for(Integer nn=0;nn<Cols;nn++)
-      {
-       result[mm]+=U(mm,nn)*V(mm,nn);
-      }
-    }
-  return result;
- }
-
-
- // compute (U,V)
- static const Vector<Real,Rows> compute(const Real& alpha, 
-                                        const Matrix<Real,Rows,Cols>& U,         
-                                        const Matrix<Real,Rows,Cols>& V)
- {
-  Vector<Real,Rows> result;
-
-  for(Integer mm=0;mm<Rows;mm++)
-    {
-      result[mm]=0;
-      for(Integer nn=0;nn<Cols;nn++)
-      {
-       result[mm]+=U(mm,nn)*V(mm,nn);
-      }
-      result[mm]*=alpha;
-    }
-  return result;
- }
-
- // compute (A U, V),A=const
- static const Vector<Real,Rows> compute(const Matrix<Real,Cols,Cols>& A, const Matrix<Real,Rows,Cols>& U, 
-                                                                         const Matrix<Real,Rows,Cols>& V)
- {
-  Vector<Real,Rows> result;
-  Vector<Real,Cols> rowU;
-  Vector<Real,Cols> rowV;
-  for(Integer mm=0;mm<Rows;mm++)
-    {
-      result[mm]=0;
-      U.get_row(mm,rowU);
-      V.get_row(mm,rowV);
-      rowU=A*rowU;
-      for(Integer nn=0;nn<Cols;nn++)
-      {
-       result[mm]+=rowU(nn)*rowV(nn);
-      }
-    }
-  return result;
- }
-
- // compute (A U, V),A=const
- static const Vector<Real,Rows> compute(                                 const Matrix<Real,Rows,Cols>& U, 
-                                        const Matrix<Real,Cols,Cols>& B, const Matrix<Real,Rows,Cols>& V)
- {
-  Vector<Real,Rows> result;
-  Vector<Real,Cols> rowU;
-  Vector<Real,Cols> rowV;
-  for(Integer mm=0;mm<Rows;mm++)
-    {
-      result[mm]=0;
-      U.get_row(mm,rowU);
-      V.get_row(mm,rowV);
-      rowV=B*rowV;
-      for(Integer nn=0;nn<Cols;nn++)
-      {
-       result[mm]+=rowU(nn)*rowV(nn);
-      }
-    }
-  return result;
- }
-
- // compute (A U,B V),A=const, B =const
- static const Vector<Real,Rows> compute(const Matrix<Real,Cols,Cols>& A, const Matrix<Real,Rows,Cols>& U, 
-                                        const Matrix<Real,Cols,Cols>& B, const Matrix<Real,Rows,Cols>& V)
- {
-  Vector<Real,Rows> result;
-  Vector<Real,Cols> rowU;
-  Vector<Real,Cols> rowV;
-  for(Integer mm=0;mm<Rows;mm++)
-    {
-      result[mm]=0;
-      U.get_row(mm,rowU);
-      V.get_row(mm,rowV);
-      rowU=A*rowU;
-      rowV=B*rowV;
-      for(Integer nn=0;nn<Cols;nn++)
-      {
-       result[mm]+=rowU(nn)*rowV(nn);
-      }
-    }
-  return result;
- }
-
- // compute (A U,B V),A=const, B =const
-
- static const Matrix< Vector<Real,Rows>, NComponents,NComponents> compute(
-                                        const Vector< Matrix<Real,NComponents,NComponents>,Rows>& A,
-                                        const Vector< Matrix<Real,NComponents,NComponents>,Rows>& B)
- {
-  Matrix< Vector<Real,Rows>, NComponents,NComponents> mat;
-  for(Integer qp=0;qp<Rows;qp++)
-      {
-       auto mat_qp=transpose(A[qp])*B[qp];
-       for(Integer ii=0; ii< NComponents; ii++)
-           for(Integer jj=0; jj< NComponents; jj++)
-              mat(ii,jj)[qp]=mat_qp(ii,jj); 
-      }
-  return mat;
- }
-
-};
-
-
-template<Integer Rows>
-using QPVecV=QPVector<Vector<Real,Rows>,1>;
-
-template<Integer Rows,Integer Cols,Integer NComponents=1>
-using QPVecM=QPVector<Matrix<Real,Rows,Cols>,NComponents>;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-template<typename Elem_,Integer Order_>
-class BaseQuadrature
-{
- using Elem=Elem_;
- static constexpr Integer Order=Order;
-};
-
-template<typename Elem,Integer Order>
-class GaussPoints;
-
-template< Integer Dim >
-class GaussPoints< Simplex<Dim,2> , 1>:BaseQuadrature<Simplex<Dim,2>,1>
-{
-private:
- Matrix<Real,1,2> qp_points_;
- Vector<Real,1> qp_weights_;
-public:
-  using qp_points_type=Matrix<Real,1,2>;
-  static constexpr Integer NQPoints=1;
-  const Matrix<Real,1,2> qp_points()const {return qp_points_;};
-  const Vector<Real,1> qp_weights()const {return qp_weights_;};
-
-  GaussPoints<Simplex<Dim,2>,1>():
-  qp_points_({0.33333333333333, 0.33333333333333}),
-  qp_weights_({1})
-   {}; 
-
-};
-
-
-
-template<Integer Dim>
-class GaussPoints<Simplex<Dim,2>,2>:BaseQuadrature<Simplex<Dim,2>,2>
-{
-private:
-  Matrix<Real,3,2>  qp_points_;
-  Vector<Real,3> qp_weights_;
-public:
-  using qp_points_type=Matrix<Real,3,2>;
-  static constexpr Integer NQPoints=3;
-  const Matrix<Real,3,2> qp_points()const {return qp_points_;};
-  const Vector<Real,3> qp_weights()const {return qp_weights_;};
-  GaussPoints<Simplex<Dim,2>,2>():
-  qp_points_({0.16666666666667, 0.16666666666667,
-              0.16666666666667, 0.66666666666667,
-              0.16666666666667, 0.16666666666667}),
-  qp_weights_({0.33333333333333,0.33333333333333,0.33333333333333})
-  {}
-};
-
-
-
-
-template<Integer Dim>
-class GaussPoints<Simplex<Dim,2>,3>:BaseQuadrature<Simplex<Dim,2>,3>
-{
-private:
-  Matrix<Real,4,2>  qp_points_;
-  Vector<Real,4> qp_weights_;
-public:
-  using qp_points_type=Matrix<Real,4,2>;
-  static constexpr Integer NQPoints=4;
-  const Matrix<Real,4,2> qp_points()const {return qp_points_;};
-  const Vector<Real,4> qp_weights()const {return qp_weights_;};
-  GaussPoints<Simplex<Dim,2>,3>():
-  qp_points_({0.33333333333333, 0.33333333333333,
-              0.20000000000000, 0.20000000000000,
-              0.20000000000000, 0.60000000000000,
-              0.60000000000000, 0.20000000000000}),
-  qp_weights_({ -0.56250000000000,0.52083333333333,0.52083333333333,0.52083333333333})
-  {}
-};
-
-template<Integer Dim>
-class GaussPoints<Simplex<Dim,2>,4>:BaseQuadrature<Simplex<Dim,2>,4>
-{
-private:
-  Matrix<Real,6,2>  qp_points_;
-  Vector<Real,6> qp_weights_;
-public:
-  using qp_points_type=Matrix<Real,6,2>;
-  static constexpr Integer NQPoints=6;
-  const Matrix<Real,6,2> qp_points()const {return qp_points_;};
-  const Vector<Real,6> qp_weights()const {return qp_weights_;};
-  GaussPoints<Simplex<Dim,2>,4>():
-  qp_points_({0.44594849091597, 0.44594849091597,
-              0.44594849091597, 0.10810301816807,
-              0.10810301816807, 0.44594849091597, 
-              0.09157621350977, 0.09157621350977, 
-              0.09157621350977, 0.81684757298046,
-              0.81684757298046, 0.09157621350977} ),
-  qp_weights_({0.22338158967801, 
-            0.22338158967801,
-            0.22338158967801,
-            0.10995174365532,
-            0.10995174365532, 
-            0.10995174365532})
-  {}
-};
-
-
-template<Integer Dim>
-class GaussPoints<Simplex<Dim,2>,5>:BaseQuadrature<Simplex<Dim,2>,5>
-{
-private:
-  Matrix<Real,7,2>  qp_points_;
-  Vector<Real,7> qp_weights_;
-public:
-  using qp_points_type=decltype(qp_points_);
-  static constexpr Integer NQPoints=7;
-  const Matrix<Real,7,2> qp_points()const {return qp_points_;};
-  const Vector<Real,7> qp_weights()const {return qp_weights_;};
-  GaussPoints<Simplex<Dim,2>,5>():
-  qp_points_(   {0.33333333333333, 0.33333333333333, 
-                 0.47014206410511, 0.47014206410511,
-                 0.47014206410511, 0.05971587178977,
-                 0.05971587178977, 0.47014206410511, 
-                 0.10128650732346, 0.10128650732346, 
-                 0.10128650732346, 0.79742698535309, 
-                 0.79742698535309, 0.10128650732346}  ),
-  qp_weights_({0.22500000000000, 
-            0.13239415278851, 
-            0.13239415278851, 
-            0.13239415278851, 
-            0.12593918054483, 
-            0.12593918054483, 
-            0.12593918054483 })
-  {}
-};
 
 
 
@@ -1521,471 +233,6 @@ class DivPhi<Dim,Dim,Dim,NComponents>
 
 template<Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents>
 using DivPhiType=typename DivPhi<Dim, ManifoldDim, ShapeFunctionDim, NComponents>::type;
-
-
-
-
-
-
-
-
-
-
-
-
-// Integer Ndofs, Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents=1>
-// template< typename Elem,typename BaseFunctionSpace>
-// class BaseShapeFunction2;//: public ElemFunctionSpace<Elem,BaseFunctionSpace>;
-
-// template<typename Elem, typename BaseFunctionSpace>
-// class BaseShapeFunction2;
-
-// template<Integer Dim, Integer ManifoldDim, typename BaseFunctionSpace>
-// class BaseShapeFunction2<Simplex<Dim,ManifoldDim>,BaseFunctionSpace>:
-// public ElementFunctionSpace<Simplex<Dim,ManifoldDim>,
-//                             BaseFunctionSpace::FEFamily,BaseFunctionSpace::Order,BaseFunctionSpace::Continuity,BaseFunctionSpace::NComponents>
-// {
-// };
-
-
-// template<Integer Dim, Integer ManifoldDim, Integer Continuity,Integer NComponents>
-// class BaseShapeFunction2<Simplex<Dim,ManifoldDim>>:
-// public ElementFunctionSpace<Simplex<Dim,ManifoldDim>,LagrangeFE,1,Continuity,NComponents>
-// {
-// };
-
-
-
-
-
-
-
-
-
-
-
-// template<typename Operator, Integer Ndofs, Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents=1>
-// class BaseShapeFunctionOperator;
-
-
-
-
-
-
-
-
-// template<Integer Ndofs, Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents>
-// class BaseShapeFunctionOperator<IdentityOperator,Ndofs,Dim,ManifoldDim,ShapeFunctionDim,NComponents>
-// {public:
-
-//   virtual ~BaseShapeFunctionOperator(){};
-
-//   virtual const Matrix<Real,Ndofs,ShapeFunctionDim>
-//   phi_single_component(const Vector<Real,Dim>& point )=0;
-
-//   template<Integer NQPoints>
-//   Vector<Vector<Vector<Real,ShapeFunctionDim>,NQPoints>,Ndofs>
-//   phi(const Matrix<Real,NQPoints,Dim>& qp_points)
-//   {
-//    Vector<Vector<Vector<Real,ShapeFunctionDim>,NQPoints>,Ndofs> f;
-//    //Vector<Real,ShapeFunctionDim> row_tmp;
-//    Vector<Real,Dim> qp_point;
-
-//    for(Integer qp=0;qp<NQPoints;qp++)
-//     {
-//     qp_points.get_row(qp,qp_point);
-//     auto phi_single=phi_single_component(qp_point);
-//     for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
-//      {
-//       for(Integer ii=0;ii<ShapeFunctionDim;ii++)
-//         f[n_dof][qp][ii]=phi_single(n_dof,ii);     
-//      }
-//     }
-//    return f;
-//   };
-
-//   template<Integer NQPoints, typename Mapping>
-//   Vector<Vector<Vector<Matrix<Real,NComponents,ShapeFunctionDim>,NQPoints>,NComponents>,Ndofs>
-//   phiN(const Vector<Vector<Vector<Real,ShapeFunctionDim>,NQPoints>,Ndofs>& reference_phi,
-//        const Mapping& mapping, 
-//        const Vector<Real,Ndofs> &alpha=1.0)
-//   {
-//    Vector<Vector<Vector<Matrix<Real,NComponents,ShapeFunctionDim>,NQPoints>,NComponents>,Ndofs> result;
-//    Vector<Real,ShapeFunctionDim> row;
-//   for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
-//      {
-//       for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-//       {
-//         for(Integer qp=0;qp<NQPoints;qp++)
-//         { 
-//           result[n_dof][n_comp][qp].zero();
-//           row=alpha[n_dof] * mapping*reference_phi[n_dof][qp];
-//           result[n_dof][n_comp][qp].row(n_comp,row);
-//         }        
-//       }
-//      }
-//    return result;
-//   };
-
-// };
-
-
-// template<Integer Ndofs, Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents>
-// class BaseShapeFunctionOperator<DivergenceOperator,Ndofs,Dim,ManifoldDim,ShapeFunctionDim,NComponents>
-// {public:
-
-//   virtual ~BaseShapeFunctionOperator(){};
-
-//   virtual const Vector<Real,Ndofs>
-//   phi_single_component(const Vector<Real,Dim>& qp_point )=0;
-
-
-//   template<Integer NQPoints>
-//   const Vector<Vector< Real, NQPoints>,Ndofs>
-//   phi(const Matrix<Real,NQPoints,Dim>& qp_points)
-//   {
-//         Vector<Vector< Real, NQPoints>,Ndofs> div;
-//         Vector<Real,Dim> qp_point;
-
-//         for(Integer qp=0;qp<NQPoints;qp++)
-//         {
-//           qp_points.get_row(qp,qp_point);
-//           auto div_phi_single=phi_single_component(qp_point);
-//               for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
-//                    div[n_dof][qp]=div_phi_single[n_dof];
-//         }
-//         return div;};
-
-//   template<Integer NQPoints,typename Mapping>
-//   const Vector<Vector<Vector< Matrix<Real,NComponents,1>, NQPoints>,NComponents>,Ndofs>
-//   phiN(const Vector<Vector< Real, NQPoints>,Ndofs>& divphi_reference,
-//        const Mapping& mapping,
-//        const Vector<Real,Ndofs> &alpha=1.0)
-//   {
-//         Vector<Vector<Vector< Matrix<Real,NComponents,1>, NQPoints>,NComponents>,Ndofs> divphi;
-//         for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
-//          for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-//           for(Integer qp=0;qp<NQPoints;qp++)
-//             { divphi[n_dof][n_comp][qp].zero();
-//               divphi[n_dof][n_comp][qp](n_comp,0)=alpha[n_dof] * mapping * divphi_reference[n_dof][qp];
-//             } 
-//     return divphi;};
-
-
-// };
-
-
-
-
-
-
-
-// template<Integer Ndofs, Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents>
-// class BaseShapeFunctionOperator<GradientOperator,Ndofs,Dim,ManifoldDim,ShapeFunctionDim,NComponents>
-// {public:
-
-//   virtual ~BaseShapeFunctionOperator(){};
-
-//  virtual const Vector< Matrix<Real,ShapeFunctionDim,Dim>, Ndofs>
-//  phi_single_component(const Vector<Real,Dim>& point)=0;
-
-//   template<Integer NQPoints>
-//   const Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPoints>,NComponents>,Ndofs>
-//   phi(const Matrix<Real,NQPoints,Dim>& qp_points)
-//   {
-//    Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPoints>,NComponents>,Ndofs> f;
-//    Vector<Real,Dim> qp_point;
-
-//    for(Integer qp=0;qp<NQPoints;qp++)
-//     {
-//     qp_points.get_row(qp,qp_point);
-//     auto grad_phi_single=phi_single_component(qp_point);
-//     for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
-//      {
-//       auto grad_phi=grad_phi_single[n_dof];
-//       for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-//       {
-//         f[n_dof][n_comp][qp].zero();
-//         for(Integer ii=0;ii<ShapeFunctionDim;ii++)
-//           {
-//             for(Integer jj=0;jj<Dim;jj++)
-//             {
-//               f[n_dof][n_comp][qp](n_comp*ShapeFunctionDim+ii,jj)=grad_phi(ii,jj);
-//             }
-//           }
-//       }
-//      }
-//     }
-
-//    return f;
-//   };
-
-//   template<Integer NQPoints, typename Mapping>
-//   const Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPoints>,NComponents>,Ndofs>
-//   phiN(const Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPoints>,NComponents>,Ndofs>& reference_grad_phi,
-//        const Mapping& mapping, 
-//        const Vector<Real,Ndofs> &alpha=1.0)
-//   {
-//    Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPoints>,NComponents>,Ndofs> result;
-//    Vector<Real,Dim> row;
-//     for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
-//      {
-//       for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-//       {
-//         for(Integer qp=0;qp<NQPoints;qp++)
-//         {
-//           result[n_dof][n_comp][qp].zero();
-//           reference_grad_phi[n_dof][n_comp][qp].get_row(n_comp,row); 
-//           // std::cout<<" firs row ="<<std::endl;
-//           // reference_grad_phi[n_dof][n_comp][qp].describe(std::cout);     
-//           // row.describe(std::cout);     
-//           // std::cout<<" mapping ="<<std::endl;
-//           // mapping.describe(std::cout);    
-//           row=alpha[n_dof]*mapping*row;      
-//           result[n_dof][n_comp][qp].row(n_comp,row);
-//           // std::cout<<" result ="<<std::endl;
-//           // result[n_dof][n_comp][qp].describe(std::cout);        
-//         }
-//       }
-//      }
-//    return result;
-//   };
-
-
-// };
-
-
-
-
-// template<typename Operator, typename Elem,typename BaseFunctionSpace>
-// class ShapeFunctionOperator;
-
-
-
-// template<Integer NComponents_>
-// class ShapeFunctionOperator<IdentityOperator,Simplex<2,2>, Lagrange1<NComponents_> > : 
-// public BaseShapeFunctionOperator<IdentityOperator,3,2,2,1,NComponents_>
-// {
-// public:
-//   virtual const Matrix<Real,3,1>
-//   phi_single_component(const Vector<Real,2>& point)
-//        {const auto& xi=point[0];
-//         const auto& eta=point[1];
-//         const Real zeta = 1. - xi - eta;
-//         const Matrix<Real,3,1> shapefunction{zeta,xi,eta};
-//         return shapefunction;};
-// };
-
-
-// // template<Integer NComponents>
-// // class ShapeFunctionOperator<DivergenceOperator,Simplex<2,2>, Lagrange1<NComponents> > : 
-// // public BaseShapeFunctionOperator<DivergenceOperator,3,2,2,1,NComponents>
-// // {
-// // public:
-// //   virtual const Vector<DivPhiOperator<2,2,1,NComponents>,3>
-// //   phi_single_component(const Vector<Real,2>& qp_point )
-// //   {
-// //   Vector<DivPhiType<2,2,1,NComponents>,3> tryme; 
-
-// //     tryme[0](0,0)=1.0;
-// //     tryme[1](0,0)=1.0;
-// //     tryme[2](0,0)=-2.0;
-
-// //   return tryme;};
-
-// // };
-
-// template<Integer NComponents>
-// class ShapeFunctionOperator<GradientOperator,Simplex<2,2>, Lagrange1<NComponents> > : 
-// public BaseShapeFunctionOperator<GradientOperator,3,2,2,1,NComponents>
-// {
-// public:
-
-//   virtual const Vector< Matrix<Real,1,2>, 3>
-//   phi_single_component(const Vector<Real,2>& point)
-//   {
-//     Vector< Matrix<Real,1,2>, 3> grad{{-1,-1},{1,0},{0,1}};
-//     return grad;
-//   }
-
-// };
-
-
-
-
-
-
-
-
-
-
-
-
-// template<Integer NComponents_>
-// class ShapeFunctionOperator<IdentityOperator, Simplex<2,2>, Lagrange2<NComponents_> > : 
-// public BaseShapeFunctionOperator<IdentityOperator,6,2,2,1,NComponents_>
-// {
-// public:
-//       virtual const Matrix<Real,6,1>
-//       phi_single_component(const Vector<Real,2>& point) 
-//       {
-//           const auto& xi=point[0];
-//           const auto& eta=point[1];
-//           const Real zeta = 1. - xi - eta;
-//           Matrix<Real,6,1> shape_function{2.*zeta*(zeta-0.5),
-//                                         2.*xi*(xi-0.5),
-//                                         2.*eta*(eta-0.5),
-//                                         4.*zeta*xi,
-//                                         4.*xi*eta, 
-//                                         4.*eta*zeta };
-//           return shape_function;
-//       };
-// };
-
-// // template<Integer NComponents>
-// // class ShapeFunctionOperator<DivergenceOperator, Simplex<2,2>, Lagrange2<NComponents> > : 
-// // public BaseShapeFunctionOperator<DivergenceOperator,6,2,2,1,NComponents>
-// // {
-// // public:
-// //   virtual const Vector<DivPhiType<2,2,1,NComponents>,6>
-// //   phi_single_component(const Vector<Real,2>& qp_point )
-// //   {
-// //     //////////////// E' SBAGLIATO, CI VUOLE DIPENDENZA DALLE VARIABILI ////////////////
-// //     Vector<DivPhiType<2,2,1,NComponents>,6> tryme; 
-// //     tryme[0](0,0)=(4.0+4.0);
-// //     tryme[1](0,0)=(4.0);
-// //     tryme[2](0,0)=(4.0);
-// //     tryme[3](0,0)=(-8.0);
-// //     tryme[4](0,0)=(4.0);
-// //     tryme[5](0,0)=(-8.0);
-// //     return tryme;
-// //  };
-// // };
-
-
-// template<Integer NComponents>
-// class ShapeFunctionOperator<GradientOperator, Simplex<2,2>, Lagrange2<NComponents> > : 
-// public BaseShapeFunctionOperator<GradientOperator,6,2,2,1,NComponents>
-// {
-// public:
-
-//   virtual const Vector< Matrix<Real,1,2>, 6>
-//   phi_single_component(const Vector<Real,2>& point)
-//   {
-//    const auto& xi=point[0];
-//    const auto& eta=point[1];
-//    const Real zeta = 1. - xi - eta;
-//    Vector< Matrix<Real,1,2>, 6> grad{
-//                                      { - 4 * (1 - xi - eta) + 1, - 4 * (1 - xi - eta) + 1},
-//                                      { 4 * xi - 1              , 0                       },
-//                                      { 0                       , 4 * eta -1              },
-//                                      { 4 - 8 * xi - 4 * eta    , - 4 * xi                },
-//                                      { 4 * eta                 , 4 * xi                  },
-//                                      { -4 * eta                , 4 - 4 * xi - 8 * eta    } };
-//   return grad;
-//   }
-
-// };
-
-
-
-
-
-// template<Integer NComponents_>
-// class ShapeFunctionOperator<IdentityOperator, Simplex<2,2>, RT0<NComponents_> > : 
-// public BaseShapeFunctionOperator<IdentityOperator,3,2,2,2,NComponents_>
-// {
-// public:
-//   virtual const  Matrix<Real,3,2>
-//   phi_single_component(const Vector<Real,2>& point)
-//        {const auto& xi=point[0];
-//         const auto& eta=point[1];
-//         const Matrix<Real,3,2> shapefunction{xi,eta-1,xi-1,eta,xi,eta};
-//         return shapefunction;};
-// };
-
-
-// template<Integer NComponents>
-// class ShapeFunctionOperator<DivergenceOperator, Simplex<2,2>, RT0<NComponents> > : 
-// public BaseShapeFunctionOperator<DivergenceOperator,3,2,2,2,NComponents>
-// {
-// public:
-
-//   virtual const Vector<Real,3>
-//   phi_single_component(const Vector<Real,2>& qp_point )
-//   {
-//    Vector<Real,3> tryme;
-//      tryme[0]=2;
-//      tryme[1]=2;
-//      tryme[2]=2;    
-//    return tryme;
-//   };
-// };
-
-//  virtual const Vector< Matrix<Real,ShapeFunctionDim,Dim>, Ndofs>
-//  grad_phi_single_component(const Vector<Real,2>& point)
-//        {
-//         //static_assert(Dim==ShapeFunctionDim, "Grad(RT): shape function dim and space dim must be the same")
-//         Vector< Matrix<Real,ShapeFunctionDim,Dim>, Ndofs> grad{ {1,0, 0,1},{1,0, 0,1},{1,0, 0,1}} ;
-//         return grad;
-//         assert("gradient is not defined for RT elements");};
-// };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -2745,285 +992,16 @@ public:
 
 
 
-// Base Function: f(x) = x
-template<typename T,typename...Parameters>
-class ExpressionNew
-{
-    protected:
-    using type=typename T::type;
-    using FunctionType=typename T::FunctionType;
-    using GradientType=typename T::GradientType;
 
-    struct Implementation
-    {
-    virtual ~Implementation() {};
 
-    virtual type evaluate(const Parameters &... params)
-    {type filler; 
-    return filler;};
 
-    virtual GradientType evaluate(const GradientOperator&o, const Parameters &... params)
-    {GradientType filler; 
-    return filler;};
-    };
-    
-    protected:
-    std::shared_ptr<Implementation> self_;
 
-    public:
-    ExpressionNew()
-    :   self_(std::make_shared<Implementation>())
-    {}
 
-    ExpressionNew(const std::shared_ptr<Implementation>& self)
-    :   self_(self)
-    {}
 
-    type operator () (const Parameters &... params) const 
-    { std::cout<<"ExpressionNew standard"<<std::endl;
-      return self_->evaluate(params...); }
-    GradientType operator () (const GradientOperator&o,const Parameters &... params) const 
-    { return self_->evaluate(o,params...); }
-    
-};
 
 
-// Unary Function: u(-f(x))
-template<typename T,typename...Parameters>
-class ExpressionUnaryMinusNew : public ExpressionNew<T,Parameters...>
-{
-public:
 
-    using type=typename ExpressionNew<T,Parameters...>::type;
-    protected:
-    struct Implementation : ExpressionNew<T,Parameters...>::Implementation
-    {
-        ExpressionNew<T,Parameters...> f;
 
-        Implementation(const ExpressionNew<T,Parameters...>& f1):   
-        f(f1)
-        {};
-
-        virtual type evaluate(const Parameters&... params) override
-        { 
-
-          auto provo=f(params...);
-          std::cout<<"provo"<<std::endl;
-          std::cout<<provo()<<std::endl;
-          return -f(params...); 
-        }
-    };
-
-    public:
-    ExpressionUnaryMinusNew(const ExpressionNew<T,Parameters...>& f):   
-    ExpressionNew<T,Parameters...>(std::make_shared<Implementation>(f))
-    {}
-};
-template<typename T,typename...Parameters>
-inline ExpressionUnaryMinusNew<T,Parameters...> operator - 
-(const ExpressionNew<T,Parameters...>& f) { return ExpressionUnaryMinusNew<T,Parameters...>(f); }
-
-
-
-
-template<typename QuadratureRule, typename Elem,typename BaseFunctionSpace,typename QP>
-class ExpressionShapeNew: public ExpressionNew<ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>,QP>
-{ 
-public:
-  using T=ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>;
-  using ExprT=ExpressionNew<T,QP>;
-  using Map=MapFromReference3<Elem,BaseFunctionSpace>;
-  using FunctionType=typename T::FunctionType;
-  using GradientType=typename T::GradientType;
-  using type=FunctionType;
-     protected:
-    struct Implementation: ExprT::Implementation
-    {
-        std::shared_ptr<T> t_ptr;
-        std::shared_ptr<Map> map_ptr;
-
-        Implementation(const T& t,const Map& map):   
-        t_ptr(std::make_shared<T>(t)),
-        map_ptr(std::make_shared<Map>(map))
-        {};
-
-        virtual FunctionType 
-        evaluate(const QP& qp_points) override
-        { 
-          return (*t_ptr).function(Operator::id())(); 
-        };
-
-        virtual GradientType 
-        evaluate(const GradientOperator&o, const QP& qp_points) override
-        { 
-          return (*t_ptr).function(o)(); 
-        };
-
-
-    protected:
-        ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace> shape;
-    };  
-public: 
-
-
-
-    ExpressionShapeNew():
-    ExprT
-    (std::make_shared<Implementation>(ExprT()))    
-    {};
-    ExpressionShapeNew(const T& t, const Map& map):
-    ExprT
-    (std::make_shared<Implementation>(t,map))
-    {};
-
-};
-
-
-template<typename QuadratureRule, typename Elem,typename BaseFunctionSpace,typename QP>
-class ExpressionShapeGradientNew: public ExpressionNew<ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>,QP>
-{ 
-public:
-  using T=ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>;
-  using ExprT=ExpressionNew<T,QP>;
-  using Map=MapFromReference3<Elem,BaseFunctionSpace>;
-  using FunctionType=typename T::FunctionType;
-  using GradientType=typename T::GradientType;
-  using type=GradientType;
-     protected:
-    struct Implementation: ExprT::Implementation
-    {
-        std::shared_ptr<T> t_ptr;
-        std::shared_ptr<Map> map_ptr;
-
-        Implementation(const T& t,const Map& map):   
-        t_ptr(std::make_shared<T>(t)),
-        map_ptr(std::make_shared<Map>(map))
-        {};
-
-        // virtual FunctionType 
-        // evaluate(const QP& qp_points) override
-        // { 
-        //   return (*t_ptr).function(Operator::id())(); 
-        // };
-
-        virtual GradientType 
-        evaluate(const GradientOperator&o, const QP& qp_points) override
-        { 
-          return (*t_ptr).function(o)(); 
-        };
-
-
-    protected:
-        ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace> shape;
-    };  
-public: 
-
-
-
-    ExpressionShapeGradientNew():
-    ExprT
-    (std::make_shared<Implementation>(ExprT()))    
-    {};
-    ExpressionShapeGradientNew(const T& t, const Map& map):
-    ExprT
-    (std::make_shared<Implementation>(t,map))
-    {};
-
-};
-
-
-
-
-
-
-// Grad Function: grad(f(x))
-template<typename T,typename...Parameters>
-class GradExpressionNew : public ExpressionNew<T,Parameters...>
-{
-public:
-    using type=typename T::GradientType;
-
-    protected:
-    struct Implementation : ExpressionNew<T,Parameters...>::Implementation
-    {
-        // using FunctionType=typename T::FunctionType;
-        // using GradientType=typename T::GradientType;
-        ExpressionNew<T,Parameters...> f;
-
-
-        Implementation(const ExpressionNew<T,Parameters...>& f1):   
-        f(f1)
-        {};
-
-        virtual type evaluate(const GradientOperator& o, const Parameters&... params) override
-        { 
-          return f(o,params...); 
-        }
-    };
-
- 
-    public:
-    GradExpressionNew(const ExpressionNew<T,Parameters...>& f)
-    :   ExpressionNew<T,Parameters...>(std::make_shared<Implementation>(f))
-    {}
-   type operator () (const Parameters &... params) const 
-    { 
-      std::cout<<"son qua"<<std::endl;
-      auto ee=(*this).self_->evaluate(Operator::grad(),params...);
-      std::cout<<ee()<<std::endl;
-      return (*this).self_->evaluate(Operator::grad(),params...); }
-
-};
-
-
-template<typename T,typename...Parameters>
-inline GradExpressionNew<T,Parameters...> GradNew 
-(const ExpressionNew<T,Parameters...>& f) { return GradExpressionNew<T,Parameters...>(f); }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
- template<class Derived>
-    class OperatorExpression {
-    public:
-
-
-        Derived& derived() { return static_cast<Derived &>(*this); }
-
-        // virtual ~Expression() { }
-
-        ///@return itself as its Derived type
-        inline constexpr const Derived &derived() const { 
-            return static_cast<const Derived &>(*this); 
-        }
-
-        ///@return itself as its Derived type
-        inline operator Derived &() {
-            return derived();
-        }
-
-        ///@return itself as its Derived type
-        inline constexpr  operator const Derived &() const {
-            return derived();
-        }
-
-        ///@return a string with the name of the class
-        virtual std::string getClass() const {
-            return "Expression";
-        }
-    };
 
 
 
@@ -3032,80 +1010,45 @@ inline GradExpressionNew<T,Parameters...> GradNew
 template<typename...Inputs>
 class Eval;
 
-template<typename Left, typename Right>
-class OperatorMultiply; //: OperatorExpression<OperatorMultiply<Left,Right>>
-
 
 
 template<typename Left, typename Right>
-class MultiplyProva;
+class Multiply;
 
-class FQPprova1;
+class FQPExpression1;
 
-class QPprova1;
+class QPExpression1;
 
-class QPprova2;
+class QPExpression2;
 
 template<typename Derived>
 class ExpressionProva;
 
-template<typename Derived, typename S,Integer NQPoints, Integer Dim>
-class QPprova;
-
-template<typename Derived, typename S,Integer NQPoints, Integer NComponents, Integer Dim>
-class FQPprova;
-
-template<typename Operator>
-class OperatorType;
 
 
 
-template<typename Derived>
-class ExpressionProva
-{public:
- Derived& derived() { return static_cast<Derived &>(*this); }};
+
+// template<typename Derived>
+// class ExpressionProva
+// {public:
+//  Derived& derived() { return static_cast<Derived &>(*this); }};
 
 
 
 template<typename Derived, typename S,Integer NQPoints, Integer NComponents, Integer Dim>
-class FQPprova:
-public ExpressionProva<FQPprova<Derived, S, NQPoints, NComponents,Dim>>
-// public OperatorExpression<FQPprova<Derived, S, NQPoints, NComponents, Dim>>
+class FQPExpression:
+public Expression<Derived>
 {
      public:
      using Point = Vector<Real,Dim> ;
      using type= FQPValues < S, NQPoints,NComponents>;
-      Derived& derived() { return static_cast<Derived &>(*this); }
-      const Derived& derived()const { return static_cast<const Derived &>(*this); }
+     using Base=Expression<Derived>;
+     using Base::derived;
+     FQPValues<S,NQPoints,NComponents>& apply(const Matrix<Real,NQPoints,Dim> & qp_points);
 
-      // Vector<S,NComponents> & apply(const Point& point);
-
-      FQPValues<S,NQPoints,NComponents>& apply(const Matrix<Real,NQPoints,Dim> & qp_points);
-      // inline FQPValues<S,NQPoints,NComponents> eval(const Matrix<Real,NQPoints,Dim> & qp_points)
-      // {
-      //  for(Integer qp=0;qp<NQPoints;qp++)
-      //     { 
-      //       qp_points.get_row(qp,row_);
-      //       const auto& row_comp=derived().apply(row_);
-      //       for(Integer n_comp=0; n_comp<NComponents; n_comp++)
-      //           {
-      //             value_[n_comp][qp]=row_comp[n_comp];
-      //           }
-      //     }
-      //     return value_;
-      // };
 
       inline FQPValues<S,NQPoints,NComponents> eval(const Matrix<Real,NQPoints,Dim> & qp_points)
       {
-       // for(Integer qp=0;qp<NQPoints;qp++)
-       //    { 
-       //      qp_points.get_row(qp,row_);
-       //      const auto& row_comp=derived().prova(row_);
-       //      for(Integer n_comp=0; n_comp<NComponents; n_comp++)
-       //          {
-       //            value_[n_comp][qp]=row_comp[n_comp];
-       //          }
-       //    }
           return derived().apply(qp_points);
       };
 
@@ -3127,7 +1070,7 @@ public ExpressionProva<FQPprova<Derived, S, NQPoints, NComponents,Dim>>
 template<typename QuadratureRule, typename Elem,typename BaseFunctionSpace>
 class Shapeprova
 : public ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>, 
-  public FQPprova<Shapeprova<QuadratureRule,  Elem, BaseFunctionSpace>,
+  public FQPExpression<Shapeprova<QuadratureRule,  Elem, BaseFunctionSpace>,
   typename ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::TotFuncType,
   ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::NQPoints,
   ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::Ntot,
@@ -3167,9 +1110,9 @@ private:
 
 
 template<typename QuadratureRule, typename Elem,typename BaseFunctionSpace>
-class GradientProva
+class GradientExpression
 : public ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>, 
-  public FQPprova<GradientProva<QuadratureRule,  Elem, BaseFunctionSpace>,
+  public FQPExpression<GradientExpression<QuadratureRule,  Elem, BaseFunctionSpace>,
   typename ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::TotGradType,
   ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::NQPoints,
   ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::Ntot,
@@ -3190,7 +1133,7 @@ public:
       return value_;
      }
 
-  GradientProva(const Shapeprova<QuadratureRule,Elem,BaseFunctionSpace>& sp):
+  GradientExpression(const Shapeprova<QuadratureRule,Elem,BaseFunctionSpace>& sp):
     sp_(sp)
     {}; 
 private:
@@ -3199,14 +1142,12 @@ private:
 };
 
 template<typename QuadratureRule, typename Elem,typename BaseFunctionSpace>
-GradientProva<QuadratureRule,Elem,BaseFunctionSpace> GradProva(const Shapeprova<QuadratureRule,Elem,BaseFunctionSpace>& sp)
-{return GradientProva<QuadratureRule,Elem,BaseFunctionSpace>(sp);};
+GradientExpression<QuadratureRule,Elem,BaseFunctionSpace> Grad(const Shapeprova<QuadratureRule,Elem,BaseFunctionSpace>& sp)
+{return GradientExpression<QuadratureRule,Elem,BaseFunctionSpace>(sp);};
 
-class FQPprova1: public FQPprova<FQPprova1,Matrix<Real,1,2>,6,2,2>,
-                 public ExpressionProva<FQPprova1>
+class FQPExpression1: public FQPExpression<FQPExpression1,Matrix<Real,1,2>,6,2,2>
 {
- public: 
-     
+ public:   
      static constexpr Integer NQPoints=6;
      static constexpr Integer NComponents=2;
      static constexpr Integer Dim=2;
@@ -3214,13 +1155,6 @@ class FQPprova1: public FQPprova<FQPprova1,Matrix<Real,1,2>,6,2,2>,
      using Point = Vector<Real,Dim> ;
      using T=Matrix<Real,1,2>;
      using S=Vector<T,NComponents>;
-
-     // S& apply(const Point& point)
-     // {
-     //  vec_mat_[0](0,0)=point[0];vec_mat_[0](0,1)=point[0];
-     //  vec_mat_[1](0,0)=point[1];vec_mat_[1](0,1)=point[1];
-     //  return vec_mat_;
-     // }
 
      S& val(const Point& point)
      {
@@ -3250,10 +1184,11 @@ class FQPprova1: public FQPprova<FQPprova1,Matrix<Real,1,2>,6,2,2>,
 
 
 template<typename Derived, typename S,Integer NQPoints, Integer Dim>
-class QPprova: 
-public ExpressionProva<QPprova<Derived, S, NQPoints, Dim>>
+class QPExpression: public Expression<Derived>
 {
      public:
+     using Base=Expression<Derived>;
+     using Base::derived;
      using Point = Vector<Real,Dim> ;
      using type= QPValues < S, NQPoints>;
       Derived& derived() { return static_cast<Derived &>(*this); }
@@ -3276,8 +1211,7 @@ public ExpressionProva<QPprova<Derived, S, NQPoints, Dim>>
       Point row_; 
 };
 
-class QPprova1: public QPprova<QPprova1,Matrix<Real,3,1>,6,2>,
-                public ExpressionProva<QPprova1>
+class QPExpression1: public QPExpression<QPExpression1,Matrix<Real,3,1>,6,2>
 {
  public: 
      static constexpr Integer Dim=2;
@@ -3294,8 +1228,7 @@ class QPprova1: public QPprova<QPprova1,Matrix<Real,3,1>,6,2>,
 };
 
 
-class QPprova2: public QPprova<QPprova2,Matrix<Real,1,3>,6,2>,
-                public ExpressionProva<QPprova2>
+class QPExpression2: public QPExpression<QPExpression2,Matrix<Real,1,3>,6,2>
 {
  public: 
      static constexpr Integer Dim=2;
@@ -3313,955 +1246,379 @@ class QPprova2: public QPprova<QPprova2,Matrix<Real,1,3>,6,2>,
 
 
 
-
-
-
-
-
-template<typename T, Integer RowsLeft,Integer Common,Integer ColsRight>
-class OperatorType< MultiplyProva< Matrix<T, RowsLeft, Common>, Matrix<T, Common, ColsRight> > >
-{ public:
-  using type=Matrix<T, RowsLeft, ColsRight>;
-};
-
-template<typename T, Integer RowsLeft,Integer Common,Integer ColsRight, Integer NQPoints, Integer NComponents>
-class OperatorType< MultiplyProva< QPValues < Matrix<T, RowsLeft, Common>, NQPoints> ,
-                                   FQPValues< Matrix<T, Common, ColsRight>, NQPoints, NComponents> > >
-{ public:
-   using type=FQPValues< Matrix<T, RowsLeft, ColsRight>, NQPoints, NComponents>;
-};
-
-template<typename T, Integer RowsLeft,Integer Common,Integer ColsRight, Integer NQPoints>
-class OperatorType< MultiplyProva< QPValues< Matrix<T, RowsLeft, Common>, NQPoints> ,
-                                   QPValues< Matrix<T, Common, ColsRight>, NQPoints> > >
-{ public:
-   using type=QPValues< Matrix<T, RowsLeft, ColsRight>, NQPoints>;
-};
-
-
-
-template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer NComponents,Integer Dim>
-class OperatorType< MultiplyProva< QPprova < DerivedLeft, TLeft, NQPoints,Dim> ,
-                                   FQPprova< DerivedRight,TRight, NQPoints, NComponents,Dim> > >
-{ public:
-
-
-   using type= FQPValues<typename OperatorType<MultiplyProva<TLeft,TRight>>::type , NQPoints, NComponents>;
-};
-
-template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer Dim>
-class OperatorType< MultiplyProva< QPprova< DerivedLeft, TLeft,  NQPoints,Dim> ,
-                                   QPprova< DerivedRight,TRight, NQPoints,Dim> > >
-{ public:
-
-
-   using type= QPValues<typename OperatorType<MultiplyProva<TLeft,TRight>>::type , NQPoints>;
-};
-// template<typename Derived1, typename Derived2,
-//         typename T,Integer Rows1,Integer Cols1, Integer Rows2,Integer Cols2,
-//         Integer NQPoints, Integer NComponents, Integer Dim>
-// class MultiplyProva<QPprova<Derived1,Matrix<T,Rows1,Cols1>,NQPoints,Dim>,
-//                     FQPprova<Derived2,Matrix<T,Rows2,Cols2>,NQPoints,NComponents,Dim>>
-                    // : 
-                    // public FQPprova<Derived2,Matrix<Real,Rows1,Cols2>,NQPoints,NComponents,Dim>
-
-                    // : 
-                    // public FQPprova<MultiplyProva<QPprova<Derived1,Matrix<T,Rows1,Cols1>,NQPoints,Dim>,
-                    //             FQPprova<Derived2,Matrix<T,Rows2,Cols2>,NQPoints,NComponents,Dim>>,
-                    //             Matrix<Real,Rows1,Cols2>,NQPoints,NComponents,Dim>
-// template<typename Left, typename Right>
-// class MultiplyProva: public ExpressionProva<MultiplyProva<Left,Right>>
-
-// {
-//   public:
-//     MultiplyProva(const Left& left, const Right&right): 
-//     left_(left),
-//     right_(right)
-//     {};
-
-//     template<typename QP>
-//     typename OperatorType<MultiplyProva<Left,Right>>::type eval(const QP & qp_points)
-//     {return left_.eval(qp_points)*right_.eval(qp_points);};
-
-//   private:
-//   Left left_;
-//   Right right_;
-// };
-
-
-// template<typename Left, typename Right>
-// MultiplyProva<Left,Right>
-// operator*(const Left& left, const Right&right)// (ExpressionProva<Left> const& u, ExpressionProva<Right> const& v) 
-// {
-// return MultiplyProva<Left,Right>(left,right);//static_cast<const Left>(u), static_cast<const Right>(v));
-// }
-
-
-template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer Dim>
-class MultiplyProva< QPprova <DerivedLeft, TLeft, NQPoints,Dim>, 
-                     QPprova <DerivedRight,TRight,NQPoints, Dim> >
-
-: public QPprova<MultiplyProva<QPprova <DerivedLeft, TLeft, NQPoints,Dim>,
-                               QPprova <DerivedRight,TRight,NQPoints,Dim> >,
-                typename OperatorType<MultiplyProva<typename TLeft::type,typename TRight::type>>::type,
-                NQPoints, Dim >
-{
-  public:
-    using Left= QPprova<DerivedLeft, TLeft, NQPoints,Dim>;
-    using Right=QPprova<DerivedRight,TRight,NQPoints,Dim>;
-    MultiplyProva(const Left& left, const Right&right): 
-    left_(left.derived()),
-    right_(right.derived())
-    {};
-
-    template<typename QP>
-    typename OperatorType< MultiplyProva<typename Left::type, typename Right::type>>::type  eval(const QP & qp_points)
-    {return left_.eval(qp_points)*right_.eval(qp_points);};
-
-  private:
-  DerivedLeft left_;
-  DerivedRight right_;
-};
-
-
-template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer Dim>
-class MultiplyProva< QPprova<DerivedLeft, TLeft, NQPoints,Dim>, 
-                     QPprova<DerivedRight,TRight,NQPoints,Dim> >
-operator*(const QPprova<DerivedLeft, TLeft, NQPoints,Dim>& left, 
-          const QPprova<DerivedRight,TRight,NQPoints, Dim>&right)
-{
- return MultiplyProva<QPprova<DerivedLeft, TLeft, NQPoints,Dim>, 
-                      QPprova<DerivedRight,TRight,NQPoints,Dim> >(left,right);//static_cast<const Left>(u), static_cast<const Right>(v));
-}
-
-
-
-template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer NComponents,Integer Dim>
-class MultiplyProva< QPprova <DerivedLeft, TLeft, NQPoints,Dim>, 
-                     FQPprova<DerivedRight,TRight,NQPoints,NComponents, Dim> >
-
-: public FQPprova<MultiplyProva<QPprova <DerivedLeft, TLeft, NQPoints,Dim>,
-                              FQPprova<DerivedRight,TRight,NQPoints,NComponents, Dim> >,
-                typename OperatorType<MultiplyProva<typename TLeft::type,typename TRight::type>>::type,
-                NQPoints, NComponents, Dim >
-{
-  public:
-    using Left=QPprova <DerivedLeft, TLeft, NQPoints,Dim>;
-    using Right=FQPprova<DerivedRight,TRight,NQPoints,NComponents, Dim>;
-    MultiplyProva(const Left& left, const Right&right): 
-    left_(left.derived()),
-    right_(right.derived())
-    {};
-
-    template<typename QP>
-    typename OperatorType< MultiplyProva<typename Left::type, typename Right::type>>::type  eval(const QP & qp_points)
-    {return left_.eval(qp_points)*right_.eval(qp_points);};
-
-  private:
-  DerivedLeft left_;
-  DerivedRight right_;
-};
-
-template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer NComponents,Integer Dim>
-class MultiplyProva< QPprova <DerivedLeft, TLeft, NQPoints,Dim>, 
-                     FQPprova<DerivedRight,TRight,NQPoints,NComponents, Dim> >
-operator*(const QPprova <DerivedLeft, TLeft, NQPoints,Dim>& left, 
-          const FQPprova<DerivedRight,TRight,NQPoints,NComponents, Dim>&right)
-{
-return MultiplyProva<QPprova <DerivedLeft, TLeft, NQPoints,Dim>, FQPprova<DerivedRight,TRight,NQPoints,NComponents, Dim> >(left,right);//static_cast<const Left>(u), static_cast<const Right>(v));
-}
-
-// template<typename Derived1, typename Derived2,
-//         typename T,Integer Rows1,Integer Cols1, Integer Rows2,Integer Cols2,
-//         Integer NQPoints, Integer NComponents, Integer Dim>
-// inline MultiplyProva<QPprova<Derived1,Matrix<T,Rows1,Cols1>,NQPoints,Dim>,
-//                      FQPprova<Derived2,Matrix<T,Rows2,Cols2>,NQPoints,NComponents,Dim> > operator *
-// (const QPprova<Derived1,Matrix<T,Rows1,Cols1>,NQPoints,Dim>& left, 
-//  const FQPprova<Derived2,Matrix<T,Rows2,Cols2>,NQPoints,NComponents,Dim> & right) 
-// { return MultiplyProva<QPprova<Derived1,Matrix<T,Rows1,Cols1>,NQPoints,Dim>,
-//                        FQPprova<Derived2,Matrix<T,Rows2,Cols2>,NQPoints,NComponents,Dim> >
-//                        (left,right);};
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-template<typename S,Integer NQPoints, Integer NComponents, Integer Dim>
-class FQPExpression: public OperatorExpression<FQPExpression<S, NQPoints, NComponents, Dim>>
-{
-     public:
-     using Point = Vector<Real,Dim> ;
-
-      virtual ~FQPExpression(){};
-      FQPExpression(){};
-      virtual Vector<S,NComponents> & apply(const Point& point)=0;
-
-      inline FQPValues<S,NQPoints,NComponents>& eval(const Matrix<Real,NQPoints,Dim> & qp_points)
-      {
-       for(Integer qp=0;qp<NQPoints;qp++)
-          { 
-            qp_points.get_row(qp,row_);
-            const auto& row_comp=apply(row_);
-            for(Integer n_comp=0; n_comp<NComponents; n_comp++)
-                {
-                  value_[n_comp][qp]=row_comp[n_comp];
-                }
-          }
-          return value_;
-      };
-
-    protected:
-      FQPValues<S,NQPoints,NComponents> value_; 
-      Point row_; 
-};
-
-template<typename S,Integer NQPoints, Integer Dim>
-class QPExpression: public OperatorExpression<QPExpression<S, NQPoints, Dim>>
-{
-     public:
-     using Point = Vector<Real,Dim> ;
-
-      virtual ~QPExpression(){};
-      QPExpression(){};
-      virtual S& apply(const Point& point)=0;
-
-      inline QPValues<S,NQPoints>& eval(const Matrix<Real,NQPoints,Dim> & qp_points)
-      {
-       for(Integer qp=0;qp<NQPoints;qp++)
-          {
-            qp_points.get_row(qp,row_);
-            value_[qp]=apply(row_);
-          }
-
-        return value_;
-      };
-
-    protected:
-      QPValues<S,NQPoints> value_; 
-      Point row_; 
-};
-
-
-template<typename T,Integer Rows1,Integer Cols1, Integer Rows2,Integer Cols2,Integer NQPoints, Integer NComponents, Integer Dim>
-class OperatorMultiply<QPExpression<Matrix<T,Rows1,Cols1>,NQPoints,Dim>,
-                       FQPExpression<Matrix<T,Rows2,Cols2>,NQPoints,NComponents,Dim>>: 
-                       public FQPExpression<Matrix<T,Rows1,Cols2>,NQPoints,NComponents,Dim>
-{
-  public:
-    using Result=Matrix<T,Rows1,Cols2>;
-    template<typename Left, typename Right>
-    OperatorMultiply(const Left& left, const Right&right): 
-    left_(std::make_shared<Left>(left)),
-    right_(std::make_shared<Right>(right))
-    {};
- 
-    virtual Vector<Matrix<T,Rows1,Cols2>,NComponents> & apply(const Vector<T,Dim>& point)
-    { 
-      return vec_mat_; };
-
-    FQPValues<Result,NQPoints,NComponents> eval(const Matrix<Real,NQPoints,Dim> & qp_points)
-    {
-
-      auto e1=left_->eval(qp_points);
-      std::cout<<"ci arrivo left"<<e1<<std::endl;
-      auto e2=right_->eval(qp_points);
-      std::cout<<"ci arrivo right"<<e2<<std::endl;
-
-     return left_->eval(qp_points)*right_->eval(qp_points);
-    };
-
-  private:
-  std::shared_ptr<QPExpression<Matrix<T,Rows1,Cols1>,NQPoints,Dim>> left_;
-  std::shared_ptr<FQPExpression<Matrix<T,Rows2,Cols2>,NQPoints,NComponents,Dim>> right_;
-  Vector<Matrix<T,Rows1,Cols2>,NComponents> vec_mat_;
-};
-
-
-
-class QP1: public QPExpression<Matrix<Real,3,1>,6,2>
+class QPExpression3: public QPExpression<QPExpression3,Matrix<Real,2,1>,6,2>
 {
  public: 
      static constexpr Integer Dim=2;
+     using T=Matrix<Real,2,1>;
      using Point = Vector<Real,Dim> ;
-     virtual Matrix<Real,3,1>& apply(const Point& point) override
+     T& apply(const Point& point)
      {
       mat_(0,0)=point[0];
       mat_(1,0)=point[1];
-      mat_(2,0)=point[0]+point[1];
       return mat_;
      }
   protected:
-    Matrix<Real,3,1> mat_;
+  T mat_;
 };
 
-
-
-class QP2: public QPExpression<Matrix<Real,3,3>,6,2>
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////           UNARY PLUS: +QP        //////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+template< typename Derived, typename  T, Integer NQPoints,Integer Dim>
+class UnaryPlus< QPExpression <Derived, T, NQPoints,Dim>>
+: public QPExpression<UnaryPlus< QPExpression <Derived, T, NQPoints,Dim>>,
+                      typename OperatorType<UnaryPlus<typename T::type>>::type,
+                      NQPoints, Dim >
 {
- public: 
-     static constexpr Integer Dim=2;
-     using Point = Vector<Real,Dim> ;
-     virtual Matrix<Real,3,3>& apply(const Point& point) override
-     {
-      mat_(0,0)=point[0];mat_(0,1)=point[0];                  mat_(0,2)=point[0];
-      mat_(1,0)=point[1];mat_(1,1)=point[1];                  mat_(1,2)=point[0];
-      mat_(2,0)=point[0]+point[1];mat_(2,1)=point[1]+point[0];mat_(2,2)=point[0];
-      return mat_;
-     }
-  protected:
-    Matrix<Real,3,3> mat_;
-};
-
-
-class FQP1: public FQPExpression<Matrix<Real,1,2>,6,2,2>
-{
- public: 
-     static constexpr Integer Dim=2;
-     using Point = Vector<Real,Dim> ;
-     using S=Vector<Matrix<Real,1,2>,2>;
-     virtual S& apply(const Point& point) override
-     {
-      vec_mat_[0](0,0)=point[0];vec_mat_[0](0,1)=point[0];
-      // vec_mat_[0](1,0)=point[0];vec_mat_[0](1,1)=point[0];
-
-      vec_mat_[1](0,0)=point[1];vec_mat_[1](0,1)=point[1];
-      // vec_mat_[1](1,0)=point[1];vec_mat_[1](1,1)=point[1];
-      return vec_mat_;
-     }
-  protected:
-    S vec_mat_;
-};
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// Base Function: f(x) = x
-template<typename T,typename...Parameters>
-class ExpressionT
-{
-    protected:
-    using FunctionType=typename T::FunctionType;
-    using GradientType=typename T::GradientType;
-    struct Implementation
-    {
-    virtual ~Implementation() {};
-
-    virtual T evaluate(const Parameters &... params)
-    {T filler; 
-    return filler;};
-
-    virtual FunctionType evaluate(const IdentityOperator& o,const Parameters &... params)
-    {FunctionType filler; 
-    return filler;};
-    virtual GradientType evaluate(const GradientOperator& o,const Parameters &... params)
-    {GradientType filler; 
-     return filler;};
-    // virtual typename T::DivergenceType evaluate(const DivergenceOperator& o,const Parameters &... params){};
-    };
-
-    public:
-    ExpressionT()
-    :   self_(std::make_shared<Implementation>())
-    {}
-
-    ExpressionT(const std::shared_ptr<Implementation>& self)
-    :   self_(self)
-    {}
-
-    T operator () (const Parameters &... params) const 
-    { return self_->evaluate(params...); }
-
-    FunctionType operator () (const IdentityOperator& o, const Parameters &... params) const 
-    { return self_->evaluate(o,params...); }
-
-    GradientType operator () (const GradientOperator& o, const Parameters &... params) const 
-    { return self_->evaluate(o,params...); }
-    // typename T::GradientType operator () (const GradientOperator& o, const Parameters &... params) const { return self_->evaluate(o,params...); }
-    // typename T::DivergenceType operator () (const DivergenceOperator& o, const Parameters &... params) const { return self_->evaluate(o,params...); }
-
-    private:
-    std::shared_ptr<Implementation> self_;
-};
-
-// Unary Function: u(-f(x))
-template<typename T,typename...Parameters>
-class ExpressionUnaryMinusT : public ExpressionT<T,Parameters...>
-{
-public:
-
-
-    protected:
-    struct Implementation : ExpressionT<T,Parameters...>::Implementation
-    {
-        using FunctionType=typename T::FunctionType;
-        ExpressionT<T,Parameters...> f;
-
-
-        Implementation(const ExpressionT<T,Parameters...>& f1):   
-        f(f1)
-        {};
-
-        virtual FunctionType evaluate(const IdentityOperator& o,const Parameters&... params) override
-        { 
-          return -f(o,params...); 
-        }
-
-    };
-
-    public:
-    ExpressionUnaryMinusT(const ExpressionT<T,Parameters...>& f)
-    :   ExpressionT<T,Parameters...>(std::make_shared<Implementation>(f))
-    {}
-};
-template<typename T,typename...Parameters>
-inline ExpressionUnaryMinusT<T,Parameters...> operator - 
-(const ExpressionT<T,Parameters...>& f) { return ExpressionUnaryMinusT<T,Parameters...>(f); }
-
-
-
-
-
-
-// Grad Function: grad(f(x))
-template<typename T,typename...Parameters>
-class GradExpressionT : public ExpressionT<T,Parameters...>
-{
-public:
-    using FunctionType=typename T::GradientType;
-
-    protected:
-    struct Implementation : ExpressionT<T,Parameters...>::Implementation
-    {
-        // using FunctionType=typename T::FunctionType;
-        // using GradientType=typename T::GradientType;
-        ExpressionT<T,Parameters...> f;
-
-
-        Implementation(const ExpressionT<T,Parameters...>& f1):   
-        f(f1)
-        {};
-
-        virtual FunctionType evaluate(const GradientOperator& o, const Parameters&... params) override
-        { const auto& boh=f(o,params...);
-          std::cout<<"grad f(o,params...)"<<boh()<<std::endl;
-          return f(o,params...); 
-        }
-    };
-
-    public:
-    GradExpressionT(const ExpressionT<T,Parameters...>& f)
-    :   ExpressionT<T,Parameters...>(std::make_shared<Implementation>(f))
-    {}
-};
-
-
-template<typename T,typename...Parameters>
-inline GradExpressionT<T,Parameters...> Grad 
-(const ExpressionT<T,Parameters...>& f) { return GradExpressionT<T,Parameters...>(f); }
-
-
-
-
-template<typename S,Integer NQPoints,typename QP>
-class ExpressionMatrixFunction: public ExpressionT<QPValues<S,NQPoints>,QP>
-{ 
-  using T=QPValues<S,NQPoints>;
-  using FunctionType=typename T::type;
-  using ExprT=ExpressionT<T,QP>;
-  
-     protected:
-    struct Implementation: ExpressionT<T,QP>::Implementation
-    {
-        Implementation()   
-        {};
-
-
-        template<typename Point>
-        S& value(const Point& point)
-        {
-          s_tmp_(0,0)=point[0]; s_tmp_(0,1)=point[1];
-          s_tmp_(1,0)=point[1]; s_tmp_(1,1)=point[0]+point[1];
-          return s_tmp_; 
-        }
-
-        virtual T 
-        evaluate(const QP& qp_points) override
-        { 
-
-          for(Integer qp=0;qp<NQPoints;qp++)
-            {
-              qp_points.get_row(qp,row);
-              t_tmp_[qp]=value(row);
-
-            }
-          return t_tmp_;
-        };
-    protected:
-      S s_tmp_;
-      T t_tmp_;
-      Vector<Real,QP::Cols> row;
-    };  
-public: 
-
-    ExpressionMatrixFunction():
-    ExprT(std::make_shared<Implementation>())    
+  public:
+    using Input= QPExpression<Derived,T,NQPoints,Dim>;
+    UnaryPlus(const Input& input): 
+    derived_(input.derived())
     {};
 
+    template<typename QP>
+    typename OperatorType< UnaryPlus<typename Input::type>>::type  eval(const QP & qp_points)
+    {return +derived_.eval(qp_points);};
 
-
+  private:
+  Derived derived_;
 };
 
 
-template<Integer NQPoints,typename QP>
-class ExpressionRealFunction: public ExpressionT<QPValues<Real,NQPoints>,QP>
-{ 
-  using S=Real;
-  using T=QPValues<S,NQPoints>;
-  using FunctionType=typename T::type;
-  using ExprT=ExpressionT<T,QP>;
-  
-     protected:
-    struct Implementation: ExpressionT<T,QP>::Implementation
-    {
-        Implementation()   
-        {};
-
-
-        template<typename Point>
-        S& value(const Point& point)
-        {
-          s_tmp_=3.1415*point[0]+1.0*point[1];
-          return s_tmp_; 
-        }
-
-        virtual T 
-        evaluate(const QP& qp_points) override
-        { 
-
-          for(Integer qp=0;qp<NQPoints;qp++)
-            {
-              qp_points.get_row(qp,row);
-              t_tmp_[qp]=value(row);
-
-            }
-          return t_tmp_;
-        };
-    protected:
-      S s_tmp_;
-      T t_tmp_;
-      Vector<Real,QP::Cols> row;
-    };  
-public: 
-
-    ExpressionRealFunction():
-    ExprT(std::make_shared<Implementation>())    
-    {};
+template< typename Derived, typename  T, Integer NQPoints,Integer Dim>
+class UnaryPlus< QPExpression <Derived, T, NQPoints,Dim> >
+operator+(const QPExpression<Derived, T, NQPoints,Dim>& input)
+          {return UnaryPlus<QPExpression <Derived, T, NQPoints,Dim>>(input);}
 
 
 
-};
-
-
-
-// Binary Function: u(f(x) * g(x))
-template<typename T,typename...Parameters>
-class ExpressionBinaryMultiplyT :  public ExpressionT<T,Parameters...>
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////          UNARY MINUS: -QP        //////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+template< typename Derived, typename  T, Integer NQPoints,Integer Dim>
+class UnaryMinus< QPExpression <Derived, T, NQPoints,Dim>>
+: public QPExpression<UnaryMinus< QPExpression <Derived, T, NQPoints,Dim>>,
+                      typename OperatorType<UnaryMinus<typename T::type>>::type,
+                      NQPoints, Dim >
 {
-    protected:
-    struct Implementation : ExpressionT<T,Parameters...>::Implementation
-    {
-        ExpressionT<T,Parameters...> f;
-        ExpressionT<T,Parameters...> g;
-        Implementation(const ExpressionT<T,Parameters...>& f1,const ExpressionT<T,Parameters...>& g1)
-        :   f(f1), g(g1)
-        {};
+  public:
+    using Input= QPExpression<Derived,T,NQPoints,Dim>;
+    UnaryMinus(const Input& input): 
+    derived_(input.derived())
+    {};
 
-        virtual T evaluate(const Parameters &...params) override { return f(params...) * g(params...); }
-    };
+    template<typename QP>
+    typename OperatorType< UnaryMinus<typename Input::type>>::type  eval(const QP & qp_points)
+    {return -derived_.eval(qp_points);};
 
-    public:
-    ExpressionBinaryMultiplyT<T,Parameters...>(const ExpressionT<T,Parameters...>& f,const ExpressionT<T,Parameters...>& g)
-    :   ExpressionT<T,Parameters...>(std::make_shared<Implementation>(f, g))
-    {}
+  private:
+  Derived derived_;
 };
 
 
+template< typename Derived, typename  T, Integer NQPoints,Integer Dim>
+class UnaryMinus< QPExpression <Derived, T, NQPoints,Dim> >
+operator-(const QPExpression<Derived, T, NQPoints,Dim>& input)
+          {return UnaryMinus<QPExpression <Derived, T, NQPoints,Dim>>(input);}
 
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////          ADDITION: QP + QP        /////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer Dim>
+class Addition< QPExpression <DerivedLeft, TLeft, NQPoints,Dim>, 
+                     QPExpression <DerivedRight,TRight,NQPoints, Dim> >
 
-
-
-
-
-
-template<typename QuadratureRule, typename Elem,typename BaseFunctionSpace,typename QP>
-class ExpressionShape: public ExpressionT<ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>,QP>
-{ 
-  using T=ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>;
-  using ExprT=ExpressionT<T,QP>;
-  using Map=MapFromReference3<Elem,BaseFunctionSpace>;
-     protected:
-    struct Implementation: ExprT::Implementation
-    {
-        using FunctionType=typename T::FunctionType;
-        using GradientType=typename T::GradientType;
-        std::shared_ptr<T> t_ptr;
-        std::shared_ptr<Map> map_ptr;
-
-        Implementation(const T& t,const Map& map):   
-        t_ptr(std::make_shared<T>(t)),
-        map_ptr(std::make_shared<Map>(map))
-        {};
-
-        virtual FunctionType 
-        evaluate(const IdentityOperator& o,const QP& qp_points) override
-        { 
-          // const auto& mapping=(*map_ptr)(o);
-          return (*t_ptr).function(o)(); 
-        };
-        virtual GradientType 
-        evaluate(const GradientOperator& o,const QP& qp_points) override
-        { 
-          // const auto& mapping=(*map_ptr)(o);
-          return (*t_ptr).function(o)(); 
-        };
-
-    protected:
-        ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace> shape;
-    };  
-public: 
-
-    ExpressionShape():
-    ExprT
-    (std::make_shared<Implementation>(ExprT()))    
-    {};
-    ExpressionShape(const T& t, const Map& map):
-    ExprT
-    (std::make_shared<Implementation>(t,map))
-    {};
-
-};
-
-
-
-
-
-template<typename QuadratureRule, typename Elem, typename BaseFunctionSpace,typename QP>
-class ExpressionBinaryMultiplyT<ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>,QP>: 
-public ExpressionT<ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>,QP>
+: public QPExpression<Addition<QPExpression <DerivedLeft, TLeft, NQPoints,Dim>,
+                               QPExpression <DerivedRight,TRight,NQPoints,Dim> >,
+                typename OperatorType<Addition<typename TLeft::type,typename TRight::type>>::type,
+                NQPoints, Dim >
 {
+  public:
+    using Left= QPExpression<DerivedLeft, TLeft, NQPoints,Dim>;
+    using Right=QPExpression<DerivedRight,TRight,NQPoints,Dim>;
+    Addition(const Left& left, const Right&right): 
+    left_(left.derived()),
+    right_(right.derived())
+    {};
 
-  using S=ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>;
-  using ExprS=ExpressionT<S,QP>;
-  using FunctionType=typename S::FunctionType;
+    template<typename QP>
+    typename OperatorType< Addition<typename Left::type, typename Right::type>>::type  eval(const QP & qp_points)
+    {return left_.eval(qp_points)+right_.eval(qp_points);};
 
-    protected:
-    template<typename S,Integer NQPoints>
-    struct Implementation: ExprS::Implementation
-    {   
-        // using ExprT=ExpressionT<T,QP>;
-        using ExprT=ExpressionT<QPValues<S,NQPoints>,QP>;
-        ExprT expr_t;
-        ExprS expr_s;
-        Implementation(const ExprT& t,const ExprS& s)
-        :   expr_t(t),expr_s(s)
-        {};
-
-        virtual FunctionType evaluate(const IdentityOperator& o,const QP &qp_points) override 
-        {return expr_t(qp_points)*expr_s(o,qp_points); }
-    };
-
-    
-
-    public:
-    template<typename S,Integer NQPoints>
-    ExpressionBinaryMultiplyT(const ExpressionT<QPValues<S,NQPoints>,QP>& t,const ExprS& s): 
-    ExprS(std::make_shared<Implementation<S,NQPoints>>(t,s)) {};
+  private:
+  DerivedLeft left_;
+  DerivedRight right_;
 };
 
 
-
-template<typename QuadratureRule, typename Elem, typename BaseFunctionSpace,typename QP, typename S, Integer NQPoints>
-inline ExpressionBinaryMultiplyT<ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>,QP> operator *
-(const ExpressionT<QPValues<S,NQPoints>,QP>& t, 
- const ExpressionT<ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>,QP> & s) 
-{ return ExpressionBinaryMultiplyT<ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>,QP>(t,s);};
-
-
-
-// template<Integer NQPoints, Integer Ndofs, Integer Dim, Integer ManifoldDim, Integer ShapeFunctionDim,Integer NComponents>
-// class BaseShapeFunctionOperator3
-// { 
-//   public:
-//   /// maybe use Matrix<Real,ShapefunctionDim1,ShapeFunctionDim2>
-//   using FuncType=Vector<Real,ShapeFunctionDim>;
-//   using GradType=Matrix<Real,ShapeFunctionDim*NComponents,Dim>;
-//   using DivType=Real;
-//   using Point=Vector<Real,Dim>;
-//   using QP=Matrix<Real,NQPoints,Dim>;
-//   static constexpr Integer Ntot=Ndofs*NComponents;
-
-
-
-
-//   public:
-
-
-
-//   virtual ~BaseShapeFunctionOperator3(){};
-  
-//   virtual void
-//   value(const IdentityOperator& o,  const Point& point,    Vector<FuncType,Ndofs>& func_ )   =0;
-
-//   virtual void
-//   value(const GradientOperator&o,   const Point& point,    Vector<GradType,Ndofs>& func_grad_)=0;
-
-//   virtual void
-//   value(const DivergenceOperator&o, const Point& qp_point, Vector<DivType,Ndofs>& func_div_)  =0;
-
-
-
-//   FQPValues<FuncType,NQPoints,Ndofs>& reference(const IdentityOperator&o){return reference_func_values_;}
-//   FQPValues<GradType,NQPoints,Ntot>& reference(const GradientOperator&o){return reference_grad_values_;}
-
-//   FQPValues<FuncType,NQPoints,Ntot>& operator()(const IdentityOperator&o){return func_values_;}
-
-//   void operator()(const IdentityOperator&o,const QP & qp_points)//,FQPValues<FuncType,NQPoints,Ndofs>& reference_func_values_)
-//   {
-//    for(Integer qp=0;qp<NQPoints;qp++)
-//     {
-//     qp_points.get_row(qp,qp_point_);
-//     value(o,qp_point_,func_);
-//     for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
-//      {
-//       for(Integer ii=0;ii<ShapeFunctionDim;ii++)
-//         reference_func_values_[n_dof][qp][ii]=func_[n_dof][ii];     
-//      }
-//     }
-//   };
-
-
-
-//   template<Integer NQPoints, typename Mapping>
-//   void operator()(FQPValues<FuncType,NQPoints,Ntot>& func_values_,
-//                   const FQPValues<FuncType,NQPoints,Ndofs>& reference_func_values_,
-//                   const IdentityOperator&o,
-//                   const Mapping& mapping, 
-//                   const Vector<Real,Ndofs> &alpha=1.0)
-//   {
-//   Integer n_tot;
-//   for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
-//      {
-//       for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-//       {
-//         for(Integer qp=0;qp<NQPoints;qp++)
-//         { 
-//           n_tot=n_dof * NComponents + n_comp;
-//           func_values_[n_tot][qp].zero();
-//           func_tmp_=alpha[n_dof] * mapping*reference_func_values_[n_dof][qp];
-//           func_values_[n_tot][qp].row(n_comp,func_tmp_);
-//         }        
-//       }
-//      }
-//   };
-
-
-
-
-
-//   template<Integer NQPoints>
-//   void operator()(const GradientOperator& o, const Matrix<Real,NQPoints,Dim>& qp_points)
-//   {
-//    Vector<Real,Dim> qp_point;
-
-//    for(Integer qp=0;qp<NQPoints;qp++)
-//     {
-//     qp_points.get_row(qp,qp_point_);
-//     value(o,qp_point_,grad_);
-//     for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
-//      {
-//       reference_grad_values_[n_dof][qp]=grad_[n_dof];           
-//      }
-//     }
-//   };
-
-
-  // template<Integer NQPoints, typename Mapping>
-  // Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPoints>,NComponents>,Ndofs>
-  // operator()(const GradientOperator& o,
-  //      const Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPoints>,NComponents>,Ndofs>& reference_grad_phi,
-  //      const Mapping& mapping, 
-  //      const Vector<Real,Ndofs> &alpha=1.0)
-  // {
-  //  Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPoints>,NComponents>,Ndofs> result;
-  //  Vector<Real,Dim> row;
-  //   for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
-  //    {
-  //     for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-  //     {
-  //       for(Integer qp=0;qp<NQPoints;qp++)
-  //       {
-  //         result[n_dof][n_comp][qp].zero();
-  //         reference_grad_phi[n_dof][n_comp][qp].get_row(n_comp,row); 
-  //         // std::cout<<" firs row ="<<std::endl;
-  //         // reference_grad_phi[n_dof][n_comp][qp].describe(std::cout);     
-  //         // row.describe(std::cout);     
-  //         // std::cout<<" mapping ="<<std::endl;
-  //         // mapping.describe(std::cout);    
-  //         row=alpha[n_dof]*mapping*row;      
-  //         result[n_dof][n_comp][qp].row(n_comp,row);
-  //         // std::cout<<" result ="<<std::endl;
-  //         // result[n_dof][n_comp][qp].describe(std::cout);        
-  //       }
-  //     }
-  //    }
-  //  return result;
-  // };
-
-  // template<Integer NQPoints>
-  // Vector<Vector< Real, NQPoints>,Ndofs>
-  // operator()(const DivergenceOperator&o,const Matrix<Real,NQPoints,Dim>& qp_points)
-  // {
-  //       Vector<Vector< Real, NQPoints>,Ndofs> div;
-  //       Vector<Real,Dim> qp_point;
-
-  //       for(Integer qp=0;qp<NQPoints;qp++)
-  //       {
-  //         qp_points.get_row(qp,qp_point);
-  //         auto div_phi_single=phi_single_component(o,qp_point);
-  //             for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
-  //                  div[n_dof][qp]=div_phi_single[n_dof];
-  //       }
-  //       return div;};
-
-  // template<Integer NQPoints,typename Mapping>
-  // Vector<Vector<Vector< Matrix<Real,NComponents,1>, NQPoints>,NComponents>,Ndofs>
-  // operator()(const DivergenceOperator&o,
-  //      const Vector<Vector< Real, NQPoints>,Ndofs>& divphi_reference,
-  //      const Mapping& mapping,
-  //      const Vector<Real,Ndofs> &alpha=1.0)
-  // {
-  //       Vector<Vector<Vector< Matrix<Real,NComponents,1>, NQPoints>,NComponents>,Ndofs> divphi;
-  //       for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
-  //        for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-  //         for(Integer qp=0;qp<NQPoints;qp++)
-  //           { divphi[n_dof][n_comp][qp].zero();
-  //             divphi[n_dof][n_comp][qp](n_comp,0)=alpha[n_dof] * mapping * divphi_reference[n_dof][qp];
-  //           } 
-  //   return divphi;};
-
-
-//   private: 
-//   Vector<FuncType,Ndofs> func_;
-//   Vector<GradType,Ndofs> grad_;
-//   Vector<DivType,Ndofs>  div_;
-//   Point qp_point_;
-
-//   FQPValues<FuncType,NQPoints,Ndofs> reference_func_values_;
-//   FQPValues<GradType,NQPoints,Ndofs> reference_grad_values_;
-
-//   FQPValues<FuncType,NQPoints,Ntot> func_values_;
-//   FQPValues<GradType,NQPoints,Ntot> grad_values_;
-//   FuncType func_tmp_;
-// };
-
-
-
-
-
-
-
-
-
-
-
-// template<Integer NQPoints, typename Elem,typename BaseFunctionSpace>
-// class ShapeFunctionOperator3;
-
-
-
-// template<Integer NQPoints, Integer NComponents>
-// class ShapeFunctionOperator3<NQPoints,Simplex<2,2>, Lagrange1<NComponents> > : 
-// public BaseShapeFunctionOperator3<NQPoints,3,2,2,1,NComponents>
-// {
-// public:
-//   static constexpr Integer Ndofs=3;
-//   static constexpr Integer Dim=2;
-//   static constexpr Integer ManifoldDim=2;
-//   static constexpr Integer ShapeFunctionDim=1;
-//   using FuncType=Vector<Real,ShapeFunctionDim>;
-//   using GradType=Matrix<Real,ShapeFunctionDim,Dim>;
-//   using DivType=Real;
-//   using Point=Vector<Real,Dim>;
-//   using QP=Matrix<Real,NQPoints,Dim>;
-
-
-
-//  virtual void value(const IdentityOperator& o, const Point& point, Vector<FuncType,Ndofs>& func )
-//        {func[0][0]=point[0];
-//         func[1][0]=point[1];
-//         func[2][0]=1. - point[0] - point[1];};
-//   ;
-
-//   virtual void value(const GradientOperator&o, const Point& point, Vector<GradType,Ndofs>& func_grad)
-//    {
-//     func_grad[0](0,0)=-1;  func_grad[0](0,1)=-1; 
-//     func_grad[1](0,0)=+1;  func_grad[1](0,1)= 0; 
-//     func_grad[2](0,0)= 0;  func_grad[2](0,1)=+1; 
-//   } 
-
-//   virtual void value(const DivergenceOperator&o, const Point& qp_point, Vector<DivType,Ndofs>& func_div_)
-//   {
-//     std::cout<<" Lagrange1 divergence not implemented"<<std::endl;
-//   }
-
-
-// };
-
-
-
-
-
-
-
-
+template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer Dim>
+class Addition< QPExpression<DerivedLeft, TLeft, NQPoints,Dim>, 
+                     QPExpression<DerivedRight,TRight,NQPoints,Dim> >
+operator+(const QPExpression<DerivedLeft, TLeft, NQPoints,Dim>& left, 
+          const QPExpression<DerivedRight,TRight,NQPoints, Dim>&right)
+{return Addition<QPExpression<DerivedLeft, TLeft, NQPoints,Dim>, 
+                      QPExpression<DerivedRight,TRight,NQPoints,Dim> >(left,right);}
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////          SUBTRACTION: QP - QP        /////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer Dim>
+class Subtraction< QPExpression <DerivedLeft, TLeft, NQPoints,Dim>, 
+                     QPExpression <DerivedRight,TRight,NQPoints, Dim> >
+
+: public QPExpression<Subtraction<QPExpression <DerivedLeft, TLeft, NQPoints,Dim>,
+                               QPExpression <DerivedRight,TRight,NQPoints,Dim> >,
+                typename OperatorType<Subtraction<typename TLeft::type,typename TRight::type>>::type,
+                NQPoints, Dim >
+{
+  public:
+    using Left= QPExpression<DerivedLeft, TLeft, NQPoints,Dim>;
+    using Right=QPExpression<DerivedRight,TRight,NQPoints,Dim>;
+    Subtraction(const Left& left, const Right&right): 
+    left_(left.derived()),
+    right_(right.derived())
+    {};
+
+    template<typename QP>
+    typename OperatorType< Subtraction<typename Left::type, typename Right::type>>::type  eval(const QP & qp_points)
+    {return left_.eval(qp_points)-right_.eval(qp_points);};
+
+  private:
+  DerivedLeft left_;
+  DerivedRight right_;
+};
+
+
+template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer Dim>
+class Subtraction< QPExpression<DerivedLeft, TLeft, NQPoints,Dim>, 
+                     QPExpression<DerivedRight,TRight,NQPoints,Dim> >
+operator-(const QPExpression<DerivedLeft, TLeft, NQPoints,Dim>& left, 
+          const QPExpression<DerivedRight,TRight,NQPoints, Dim>&right)
+{return Subtraction<QPExpression<DerivedLeft, TLeft, NQPoints,Dim>, 
+                      QPExpression<DerivedRight,TRight,NQPoints,Dim> >(left,right);}
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////          MULTIPLY: QP * QP        /////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer Dim>
+class Multiply< QPExpression <DerivedLeft, TLeft, NQPoints,Dim>, 
+                     QPExpression <DerivedRight,TRight,NQPoints, Dim> >
+
+: public QPExpression<Multiply<QPExpression <DerivedLeft, TLeft, NQPoints,Dim>,
+                               QPExpression <DerivedRight,TRight,NQPoints,Dim> >,
+                typename OperatorType<Multiply<typename TLeft::type,typename TRight::type>>::type,
+                NQPoints, Dim >
+{
+  public:
+    using Left= QPExpression<DerivedLeft, TLeft, NQPoints,Dim>;
+    using Right=QPExpression<DerivedRight,TRight,NQPoints,Dim>;
+    Multiply(const Left& left, const Right&right): 
+    left_(left.derived()),
+    right_(right.derived())
+    {};
+
+    template<typename QP>
+    typename OperatorType< Multiply<typename Left::type, typename Right::type>>::type  eval(const QP & qp_points)
+    {return left_.eval(qp_points)*right_.eval(qp_points);};
+
+  private:
+  DerivedLeft left_;
+  DerivedRight right_;
+};
+
+
+template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer Dim>
+class Multiply< QPExpression<DerivedLeft, TLeft, NQPoints,Dim>, 
+                     QPExpression<DerivedRight,TRight,NQPoints,Dim> >
+operator*(const QPExpression<DerivedLeft, TLeft, NQPoints,Dim>& left, 
+          const QPExpression<DerivedRight,TRight,NQPoints, Dim>&right)
+{return Multiply<QPExpression<DerivedLeft, TLeft, NQPoints,Dim>, 
+                      QPExpression<DerivedRight,TRight,NQPoints,Dim> >(left,right);}
+
+
+
+
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////          UNARY PLUS: +FQP        //////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+template< typename Derived, typename  T, Integer NQPoints,Integer NComponents,Integer Dim>
+class UnaryPlus< FQPExpression <Derived, T, NQPoints,NComponents,Dim>>
+: public FQPExpression<UnaryPlus< FQPExpression <Derived, T, NQPoints,NComponents,Dim>>,
+                      typename OperatorType<UnaryPlus<typename T::type>>::type,
+                      NQPoints,NComponents ,  Dim >
+{
+  public:
+    using Input= FQPExpression<Derived,T,NQPoints,NComponents,Dim>;
+    UnaryPlus(const Input& input): 
+    derived_(input.derived())
+    {};
+
+    template<typename QP>
+    typename OperatorType< UnaryPlus<typename Input::type>>::type  eval(const QP & qp_points)
+    {return +derived_.eval(qp_points);};
+
+  private:
+  Derived derived_;
+};
+
+
+template< typename Derived, typename  T, Integer NQPoints,Integer NComponents, Integer Dim>
+class UnaryPlus< FQPExpression <Derived, T, NQPoints,NComponents,Dim> >
+operator+(const FQPExpression<Derived, T, NQPoints,NComponents,Dim>& input)
+          {return UnaryPlus<FQPExpression <Derived, T, NQPoints,NComponents,Dim>>(input);}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////          UNARY MINUS: +FQP       //////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+template< typename Derived, typename  T, Integer NQPoints,Integer NComponents,Integer Dim>
+class UnaryMinus< FQPExpression <Derived, T, NQPoints,NComponents,Dim>>
+: public FQPExpression<UnaryMinus< FQPExpression <Derived, T, NQPoints,NComponents,Dim>>,
+                      typename OperatorType<UnaryMinus<typename T::type>>::type,
+                      NQPoints,NComponents ,  Dim >
+{
+  public:
+    using Input= FQPExpression<Derived,T,NQPoints,NComponents,Dim>;
+    UnaryMinus(const Input& input): 
+    derived_(input.derived())
+    {};
+
+    template<typename QP>
+    typename OperatorType< UnaryMinus<typename Input::type>>::type  eval(const QP & qp_points)
+    {return -derived_.eval(qp_points);};
+
+  private:
+  Derived derived_;
+};
+
+
+template< typename Derived, typename  T, Integer NQPoints,Integer NComponents, Integer Dim>
+class UnaryMinus< FQPExpression <Derived, T, NQPoints,NComponents,Dim> >
+operator-(const FQPExpression<Derived, T, NQPoints,NComponents,Dim>& input)
+          {return UnaryMinus<FQPExpression <Derived, T, NQPoints,NComponents,Dim>>(input);}
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////         ADDITION: FQP + FQP       /////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer NComponents,Integer Dim>
+class Addition< FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>, 
+                FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim> >
+
+: public FQPExpression<Addition<FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>,
+                               FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim> >,
+                       typename OperatorType<Addition<typename TLeft::type,typename TRight::type>>::type,
+                       NQPoints,NComponents, Dim >
+{
+  public:
+    using Left= FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>;
+    using Right=FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim>;
+    Addition(const Left& left, const Right&right): 
+    left_(left.derived()),
+    right_(right.derived())
+    {};
+
+    template<typename QP>
+    typename OperatorType< Addition<typename Left::type, typename Right::type>>::type  eval(const QP & qp_points)
+    {return left_.eval(qp_points)+right_.eval(qp_points);};
+
+  private:
+  DerivedLeft left_;
+  DerivedRight right_;
+};
+
+
+template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer NComponents,Integer Dim>
+class Addition< FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>, 
+                FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim> >
+operator+(const FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>& left, 
+          const FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim>&right)
+{return Addition<FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>, 
+                 FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim> >(left,right);}
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////       SUBTRACTION: FQP + FQP      /////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer NComponents,Integer Dim>
+class Subtraction< FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>, 
+                   FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim> >
+
+: public FQPExpression<Subtraction<FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>,
+                                   FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim> >,
+                       typename OperatorType<Subtraction<typename TLeft::type,typename TRight::type>>::type,
+                       NQPoints,NComponents, Dim >
+{
+  public:
+    using Left= FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>;
+    using Right=FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim>;
+    Subtraction(const Left& left, const Right&right): 
+    left_(left.derived()),
+    right_(right.derived())
+    {};
+
+    template<typename QP>
+    typename OperatorType< Subtraction<typename Left::type, typename Right::type>>::type  eval(const QP & qp_points)
+    {return left_.eval(qp_points)-right_.eval(qp_points);};
+
+  private:
+  DerivedLeft left_;
+  DerivedRight right_;
+};
+
+
+template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer NComponents,Integer Dim>
+class Subtraction< FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>, 
+                FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim> >
+operator-(const FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>& left, 
+          const FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim>&right)
+{return Subtraction<FQPExpression <DerivedLeft,  TLeft,  NQPoints, NComponents, Dim>, 
+                    FQPExpression <DerivedRight, TRight, NQPoints, NComponents, Dim> >(left,right);}
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////          MULTIPLY: QP * FQP      //////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer NComponents,Integer Dim>
+class Multiply< QPExpression <DerivedLeft, TLeft, NQPoints,Dim>, 
+                     FQPExpression<DerivedRight,TRight,NQPoints,NComponents, Dim> >
+
+: public FQPExpression<Multiply<QPExpression <DerivedLeft, TLeft, NQPoints,Dim>,
+                              FQPExpression<DerivedRight,TRight,NQPoints,NComponents, Dim> >,
+                typename OperatorType<Multiply<typename TLeft::type,typename TRight::type>>::type,
+                NQPoints, NComponents, Dim >
+{
+  public:
+    using Left=QPExpression <DerivedLeft, TLeft, NQPoints,Dim>;
+    using Right=FQPExpression<DerivedRight,TRight,NQPoints,NComponents, Dim>;
+    Multiply(const Left& left, const Right&right): 
+    left_(left.derived()),
+    right_(right.derived())
+    {};
+
+    template<typename QP>
+    typename OperatorType< Multiply<typename Left::type, typename Right::type>>::type  eval(const QP & qp_points)
+    {return left_.eval(qp_points)*right_.eval(qp_points);};
+
+  private:
+  DerivedLeft left_;
+  DerivedRight right_;
+};
+
+template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename TRight, Integer NQPoints,Integer NComponents,Integer Dim>
+class Multiply< QPExpression <DerivedLeft, TLeft, NQPoints,Dim>, 
+                     FQPExpression<DerivedRight,TRight,NQPoints,NComponents, Dim> >
+operator*(const QPExpression <DerivedLeft, TLeft, NQPoints,Dim>& left, 
+          const FQPExpression<DerivedRight,TRight,NQPoints,NComponents, Dim>&right)
+{
+return Multiply<QPExpression <DerivedLeft, TLeft, NQPoints,Dim>, FQPExpression<DerivedRight,TRight,NQPoints,NComponents, Dim> >(left,right);//static_cast<const Left>(u), static_cast<const Right>(v));
+}
 
 
 
@@ -4346,26 +1703,6 @@ class MapFromReference<DivergenceOperator, Simplex<Dim,ManifoldDim>,RaviartThoma
 
 
 
-template<typename T, Integer Rows1,Integer Cols1,Integer Rows2,Integer Cols2>
-Matrix<Real, Rows1*Rows2, Cols1*Cols2 > tensorproduct(const Matrix<T, Rows1, Cols1>& mat1,const Matrix<T, Rows2, Cols2>& mat2 )
-{
- Matrix<Real, Rows1*Rows2, Cols1*Cols2 > mat;
-
-  for(Integer i1=0;i1<Rows1;i1++)
-  {
-    for(Integer j1=0;j1<Cols1;j1++)
-    {
-      for(Integer i2=0;i2<Rows2;i2++)
-      {
-       for(Integer j2=0;j2<Cols2;j2++)
-        {
-          mat(i1*Rows2+i2 ,j1*Cols2+j2)= DotProduct<T>::compute(mat1(i1,j1),mat2(i2,j2));
-        }
-      }
-    }
-  }
-  return mat;
-}
 
 
 
@@ -4444,7 +1781,6 @@ void localmatrix(const Jacobian& J, const Trial& trial, const Test& test, const 
       for(Integer n_comp_test=0;n_comp_test<NComponents_test;n_comp_test++)
         {const auto& i=n_comp_trial * NComponents_trial+ n_dof_trial;
          const auto& j=n_comp_test * NComponents_test + n_dof_test;
-         //const auto& vec=BilinearFormQPvalues<NQPoints,Multiply,Multiply>(A,element_trial[n_dof_trial][n_comp_trial],B,element_test[n_dof_test][n_comp_test]);
          mat(i,j)=1;//dot(vec,qp_weights)*volume;
         }
 }
@@ -4948,108 +2284,6 @@ private:
 
 
 
-template <class Self>
-struct Base
-{
- Self& self() { return static_cast<Self&>(*this); }
-
-  int algorithm(int x)
-  {
-    self().prologue();
-    if (x > 42)
-      x = self().downsize(x);
-    x = self().crunch(x);
-    self().epilogue();
-    return x;
-  }
-
-  void prologue()
-  {}
-
-  int downsize(int x)
-  { return x % 42; }
-
-  int crunch(int x)
-  { return -x; }
-
-  void epilogue()
-  {}
-
-
-  Real var(const Real& p){var_=p; return var_;};
-protected:
-  Real var_;
-
-
-};
-
-struct Derived : Base<Derived>
-{
-  int algorithm(int x)
-  {
- std::cout << "We're almost done!\n";
-
-    return x;
-  }
-
-  int downsize(int x)
-  {
-    while (x > 42) x /= 2;
-    return x;
-  }
-
-  void epilogue()
-  { std::cout << "We're done!\n"; }
-
-  Real var(const Real& p){var_=p; return var_+1;};
-};
-
-
-
-
-
-
-
-template<typename Derived, typename T>
-class Baseprova
-{
-public:
-
-      Baseprova(const T& t):val_(t) {};
-      Baseprova(){};
-      Derived& derived() { return static_cast<Derived &>(*this); }
-      const Derived& derived()const { return static_cast<const Derived &>(*this); }
-
-      
-      // binary add
-      Derived operator+(const Derived &fqpvalue) const
-      {
-        Derived result;
-        std::cout<<derived().value()<<std::endl;
-        std::cout<<fqpvalue.derived().value()<<std::endl;
-        std::cout<<result.derived().value()<<std::endl;
-        result.derived().value()=derived().value()+fqpvalue.derived().value();
-        
-        return result;
-      };
-    
-    T& value(){return val_;};
-    const T& value()const{return val_;};
-
-    protected:
-     T val_;
-};
-
-template<typename T>
-class Basederived: public Baseprova<Basederived<T>,T>
-{public:
-  using Base=Baseprova<Basederived<T>,T>;
- Basederived(): Base(){};
- Basederived(const T& t): Base(t){};
- void stampami (){std::cout<<"coglione"<<Base::value()<<std::endl;};
-
-};
-
 
 
 
@@ -5105,9 +2339,6 @@ GaussPoints<Elem,QPOrder> gauss;
 const auto& qp_points=gauss.qp_points();
 const auto& qp_weights=gauss.qp_weights();
 
-
- using multiplication_tuple_trial= VariadicTupleType<Contraction,Multiply,Multiply,Contraction>;
- using multiplication_tuple_test= VariadicTupleType<Contraction,Multiply,Multiply,Contraction>;
 
 
  using operator_tuple_trial= VariadicTupleType<GradientOperator,IdentityOperator,IdentityOperator,IdentityOperator>;
@@ -5449,18 +2680,41 @@ std::cout<<mat1<<std::endl;
 
 using TTT=Matrix<Real,2,1>;
 using SSS=Matrix<Real,2,2>;
+using Tvec=Vector<Real,3>;
 TTT ttt=1;
+TTT ttt2=2;
 SSS sss=3;
+Tvec tvec1=4;
+Tvec tvec2=5;
 Vector<TTT,6> initvec=ttt;
+Vector<TTT,6> initvec2=ttt2;
+
+Vector<Tvec,2> init1=tvec1;
+Vector<Tvec,2> init2=tvec2;
+
 Vector<Vector<TTT,6>,3> initvecvec=initvec;
+Vector<Vector<TTT,6>,3> initvecvec2=initvec2;
+
+Vector<Vector<Tvec,2>,3> init_vec=init1;
+Vector<Vector<Tvec,2>,3> init_vec2=init2;
+
+
+FQPValues<Tvec,2,3> fqpvalue1(init_vec);
+FQPValues<Tvec,2,3> fqpvalue2(init_vec2);
+
+
 FQPValues<TTT,6,3> fqpval(initvecvec);
-FQPValues<TTT,6,3> fqpval2(initvecvec);
+FQPValues<TTT,6,3> fqpval2(initvecvec2);
 QPValues<SSS,6> qpval(sss);
 
+std::cout<<"fqpval()"<<std::endl;
 std::cout<<fqpval()<<std::endl;
+std::cout<<"qpval()"<<std::endl;
 std::cout<<qpval()<<std::endl;
 
 auto result=qpval*fqpval+fqpval;
+std::cout<<"result()"<<std::endl;
+
 std::cout<<result()<<std::endl;
 
 // FQPValues<TTT,3,6> result2=qpval*fqpval+fqpval;
@@ -5487,111 +2741,18 @@ grandma->print();
     s(qp_points);
     s(o,map3(o));
     s(o_grad,map3(o_grad));
-    // ExpressionShape<GaussPoints<Elem,QPOrder>, Elem, BaseFunctionSpace,QP> a(s,map3);
-    // ExpressionMatrixFunction<Matrix<Real,2,2>,NQPoints,QP> z0;
-
-    // ExpressionRealFunction<NQPoints,QP> g0;
-
-    // auto grada=-Grad(a);
-    // auto grada0=grada(Operator::grad(),qp_points);
-    // FQPValues<Matrix<Real, 2,1>, 6, 6> pr1;
-    // QPValues<Real, 6> pr2;
-    
-    // QPValues<Matrix<Real, 4,3>, 6> pr3;
-    // FQPValues<Matrix<Real, 3,2>, 6, 6> pr4;
-    // auto fff=pr2*pr1;
-    // auto es=pr3*pr4;
-    // std::cout<<"pr3()"<<std::endl;
-    // std::cout<<pr3()[0]<<std::endl;
-    // std::cout<<"pr4()"<<std::endl;
-    // std::cout<<pr4()[0][0]<<std::endl;
-    // std::cout<<"es"<<std::endl;
-    // std::cout<<es()<<std::endl;
-    // Matrix<Real, 3,1> m3=3;
-    // Matrix<Real, 1,2> m4=4;
-    // auto m5=m3*m4;
-    // std::cout<<"m5="<<m5<<std::endl;
-    // auto m=g0*(g0*a);//ExpressionBinaryMultiplyT<ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>,QP>(z0,a);
-    // auto r=z0*a;
-    // auto r0=r(Operator::id(),qp_points);
-    // auto m0=m(Operator::id(),qp_points);
-
-    // auto g1=g0(qp_points);
-
-    // auto a1=a(Operator::id(),qp_points);
-    // auto ga=g1*a1;
-    // auto ga2=g0(qp_points)*a(Operator::id(),qp_points);
-    // auto r0=r(Operator::id(),qp_points);
-    // auto m0=m(Operator::id(),qp_points);
-    // auto a0=a(Operator::id(),qp_points);
-    // auto b=-a;
-    // auto b0=b(Operator::id(),qp_points);
-    // auto e=z0(qp_points);
-
-    // //Operator::identity;
-    //  std::cout<<"so acca"<<std::endl;
-    //  std::cout<<a0()<<std::endl;
-    //  std::cout<<" z0=========="<<std::endl;
-    //  std::cout<<e()<<std::endl;
-     // std::cout<<" r begin =========="<<std::endl;
-     // std::cout<<r0()<<std::endl;
-     // std::cout<<" m begin =========="<<std::endl;
-     // std::cout<<m0()<<std::endl;
-     // std::cout<<" grad(a) begin =========="<<std::endl;
-     // std::cout<<grada0()<<std::endl;
-
-
-     // ExpressionShapeNew<GaussPoints<Elem,QPOrder>, Elem, Lagrange1<2>,QP> a_new(s,map3);
-     // ExpressionShapeGradientNew<GaussPoints<Elem,QPOrder>, Elem, Lagrange1<2>,QP> a_gradnew(s,map3);
-     // // auto b_new=-a_new;
-     // // auto b_new0=b_new(qp_points);
-     // // auto grada_new=GradNew(a_new);
-     // // auto grada0_new=grada_new(qp_points);
-     // auto gradb_new=-GradNew(a_new);
-     // auto gradb0_new=gradb_new(qp_points);
-     // auto gradc_new=a_gradnew;
-     // auto gradc0_new=gradc_new(qp_points);
-     // std::cout<<" grada0_new begin =========="<<std::endl;
-     // std::cout<<grada0_new()<<std::endl;
-     //  std::cout<<" gradb0_new begin =========="<<std::endl;
-     // std::cout<<gradb0_new()<<std::endl; 
-     //  std::cout<<" gradc_new begin =========="<<std::endl;
-     // std::cout<<gradc0_new()<<std::endl;    
-      // std::cout<<" b_new0() begin =========="<<std::endl;
-     // std::cout<<b_new0()<<std::endl;    
-
-
-
-using QPexpr= QPExpression<Matrix<Real,3,1>,6,2>;
-using FQPexpr= FQPExpression<Matrix<Real,1,2>,6,2,2>;
-using QPexpr2= QPExpression<Matrix<Real,3,3>,6,2>;
-using FQPexpr2= FQPExpression<Matrix<Real,3,2>,6,2,2>;
-
-QP1 qp1;
-// qp1(qp_points);
-// auto qp1val=qp1();
-// std::cout<<"qp1val"<<qp1val()<<std::endl;
-
-QP2 qp2;
-FQP1 fqp1;
-
-
-auto prodqp=OperatorMultiply<QPexpr,FQPexpr>(qp1,fqp1);
-auto prodqp2= OperatorMultiply<QPexpr2,FQPexpr2>(qp2,prodqp);
-auto culo=prodqp.eval(qp_points);
-auto qulo= qp2.eval(qp_points)* prodqp.eval(qp_points);
-std::cout<<"culo"<<culo()<<std::endl;
-auto culo2=prodqp2.eval(qp_points);
-std::cout<<"qulo2"<<qulo()<<std::endl;
+  
 
 
 
 
 
-  FQPprova1 fqpp1;
-  QPprova1  qpp1;
-  QPprova2  qpp2;
-  Shapeprova<GaussPoints<Elem,QPOrder>, Elem, Lagrange1<1>> sfprova(s,map3);
+
+  FQPExpression1 fqpp1;
+  QPExpression1  qpp1;
+  QPExpression2  qpp2;
+  QPExpression3  qpp3;
+  Shapeprova<GaussPoints<Elem,QPOrder>, Elem, Lagrange1<1>> phi(s,map3);
 
   std::cout<<"fqpp1"<<std::endl;
   std::cout<<fqpp1.eval(qp_points)<<std::endl;
@@ -5601,43 +2762,90 @@ std::cout<<"qulo2"<<qulo()<<std::endl;
   std::cout<<"fqpp2"<<std::endl;
   std::cout<<fqpp2.eval(qp_points)<<std::endl;
   
-    std::cout<<"qpp2"<<std::endl;
+  std::cout<<"qpp2"<<std::endl;
   std::cout<<qpp2.eval(qp_points)<<std::endl;
+  auto minusqpp2=-qpp2;
+  auto plusqpp2=+qpp2;
+  auto sumqqp2 = -qpp2+qpp2;
+  auto minussumqqp2 = -qpp2-qpp2;
+  std::cout<<"minusqpp2"<<std::endl;
+  std::cout<<minusqpp2.eval(qp_points)<<std::endl;
+  std::cout<<"plusqpp2"<<std::endl;
+  std::cout<<plusqpp2.eval(qp_points)<<std::endl;
+  std::cout<<"sumqqp2"<<std::endl;
+  std::cout<<sumqqp2.eval(qp_points)<<std::endl;
+  std::cout<<"minussumqqp2"<<std::endl;
+  std::cout<<minussumqqp2.eval(qp_points)<<std::endl;
 
- Derived d;
-  std::cout << d.algorithm(420)<<std::endl;
-    std::cout << d.var(420)<<std::endl;
-  
-  auto fqpp3=qpp2*qpp1*fqpp1;
+
+
+  auto phitwo=phi+phi;
+  auto phitwominus=phi-phi;
+  std::cout<<"phi"<<std::endl;
+  std::cout<<phi.eval(qp_points)<<std::endl;
+
+  std::cout<<"phitwo"<<std::endl;
+  std::cout<<phitwo.eval(qp_points)<<std::endl;
+
+  std::cout<<"phitwominus"<<std::endl;
+  std::cout<<phitwominus.eval(qp_points)<<std::endl;
+
+  auto fqpp3=-qpp2*qpp1*(-fqpp1);
   std::cout<<"fqpp3"<<std::endl;
   std::cout<<fqpp3.eval(qp_points)<<std::endl;
+  auto fqpp3equal=qpp2*qpp1*(fqpp1);
+  std::cout<<"fqpp3equal"<<std::endl;
+  std::cout<<fqpp3equal.eval(qp_points)<<std::endl;
 
-  std::cout<<"sfprova"<<std::endl;
-  std::cout<<sfprova.eval(qp_points)<<std::endl;
 
-  auto sfprova2= qpp1*sfprova;
-  std::cout<<"sfprova2"<<std::endl;
-  std::cout<<sfprova2.eval(qp_points)<<std::endl;
+  std::cout<<"phi"<<std::endl;
+  std::cout<<phi.eval(qp_points)<<std::endl;
+
+  auto phi2= qpp1*phi;
+  std::cout<<"phi2"<<std::endl;
+  std::cout<<phi2.eval(qp_points)<<std::endl;
   
-  auto sfprova3=GradProva(sfprova);
- std::cout<<"sfprova3"<<std::endl;
-  std::cout<<sfprova3.eval(qp_points)<<std::endl;
+  auto phi3=+Grad(phi);
+  std::cout<<"+Grad(phi)"<<std::endl;
+  std::cout<<phi3.eval(qp_points)<<std::endl;
+  auto phi3minus=-Grad(phi);
+  std::cout<<"-Grad(phi)"<<std::endl;
+  std::cout<<phi3minus.eval(qp_points)<<std::endl;
 
 
 Matrix<Real,2,2> mat_der1{1,2,3,4};
 Matrix<Real,2,2> mat_der2{5,4,3,2};
-Basederived<Matrix<Real,2,2>> a(mat_der1);
-Basederived<Matrix<Real,2,2>> b(mat_der2);
-auto mat_der=mat_der1+mat_der2;
-auto c=a+b;
-c.stampami();
+
 auto qpval3=-qpval*3.0+2.5*qpval;
+auto phi4=qpp3*Grad(phi); 
+std::cout<<"qpp3*Grad(phi)"<<phi4.eval(qp_points)<<std::endl;
+
 qpval3+=qpval;
 qpval3/=0.5;
 qpval3-=2*qpval;
 std::cout<<"qpval"<<qpval<<std::endl;
 
 std::cout<<"qpval3"<<qpval3<<std::endl;
+auto fqpval3=fqpval*2-2*fqpval2;
+std::cout<<"fqpval3"<<fqpval3<<std::endl;
+
+auto fqpvalue3=fqpvalue1*2-fqpvalue2/4;
+std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
+ fqpvalue3=-fqpvalue3;
+ std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
+
+ fqpvalue3=+fqpvalue3;
+ std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
+
+ fqpvalue3=2*fqpvalue3;
+ std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
+
+ fqpvalue3=fqpvalue3*2;
+ std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
+
+ fqpvalue3=fqpvalue3/2;
+std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
+
 };
 
 

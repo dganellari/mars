@@ -11,6 +11,8 @@ namespace mars {
 	template<typename T, Integer Dim>
 	class Vector {
 	public:
+		using type=Vector<T,Dim>;
+	    using subtype=T;
 	    std::array<T, Dim> values;
 	    Vector() {}
 

@@ -15,7 +15,7 @@ namespace mars {
 		static constexpr Integer Rows=Rows_;
 		static constexpr Integer Cols=Cols_;
         using type= Matrix<T,Rows,Cols>;
-        
+        using subtype=T;
 		Matrix() {}
 
 	    Matrix(std::initializer_list<T> values)
