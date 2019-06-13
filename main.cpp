@@ -731,7 +731,7 @@ void test_partition_2D()
 	}
 
 	std::vector<std::shared_ptr<MeshPartition<Mesh2>>> parts;
-	parition_mesh(mesh, n_parts, partitioning, parts);
+	partition_mesh(mesh, n_parts, partitioning, parts);
 
 	write_mesh_partitions(
 		"par2_in.eps",
@@ -778,7 +778,7 @@ void test_partition_3D()
 	}
 
 	std::vector<std::shared_ptr<MeshPartition<Mesh>>> parts;
-	parition_mesh(mesh, n_parts, partitioning, parts);
+	partition_mesh(mesh, n_parts, partitioning, parts);
 
 	write_mesh_partitions(
 		"before_par3_",
@@ -825,7 +825,7 @@ void test_partition_4D()
 	}
 
 	std::vector<std::shared_ptr<MeshPartition<Mesh>>> parts;
-	parition_mesh(mesh, n_parts, partitioning, parts);
+	partition_mesh(mesh, n_parts, partitioning, parts);
 
 	test_bisection(3, parts, false);
 
