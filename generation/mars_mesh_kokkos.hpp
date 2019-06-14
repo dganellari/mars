@@ -183,7 +183,6 @@ public:
 			parallel_for(n_nodes, AddPoint(points_, xDim, yDim));
 			break;
 		}
-
 		case 2: {
 
 			assert(xDim != 0);
@@ -211,71 +210,98 @@ public:
 		Integer xDim;
 		Integer yDim;
 
-		AddElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,Integer xdm,Integer ydm) :
+		AddElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
+				Integer xdm, Integer ydm) :
 				elem(el), active(ac), xDim(xdm), yDim(ydm) {
 		}
 
-
 		KOKKOS_INLINE_FUNCTION
-		void operator()(int row) const {
+		void operator()(int index) const {
 
-			for (int i = 0; i < ManifoldDim + 1; ++i) {
-				elem(row, i) = row + i;
+			switch (ManifoldDim_) {
+
+			case 1: {
+
+				for (int i = 0; i < ManifoldDim + 1; ++i) {
+					elem(index, i) = index + i;
+				}
+				active(index) = true;
+
+				break;
 			}
+			case 2: {
 
-			active(row) = true;
+				const int offset = yDim + 1;
 
+				int i = (index / 2) / xDim;
+				int j = (index / 2) % yDim;
+				int add_to_i = index % 2;
+				int add_to_j = (index + 1) % 2;
+
+				elem(index, 0) = i * offset + j;
+				elem(index, 1) = (i + 1) * offset + (j + 1);
+				elem(index, 2) = (i + add_to_i) * offset + (j + add_to_j);
+				active(index) = true;
+
+				break;
+			}
+			default:
+				break;
+			}
 		}
 
-		KOKKOS_INLINE_FUNCTION
-		void operator()(int i, int j) const {
+		//alternative approach with a stride of 2 as opposed to the first totally coalesced case.
+		/*
+		 KOKKOS_INLINE_FUNCTION
+		 void operator()(int i, int j) const {
 
-			const int offset = yDim + 1;
+		 const int offset = yDim + 1;
 
-			//int index = (i * xDim + j);
-			int index = 2 * (i * xDim + j);
+		 int index = 2 * (i * xDim + j);
 
-			elem(index, 0) = i * offset + j;
-			elem(index, 1) = (i + 1) * offset + j;
-			elem(index, 2) = (i + 1) * offset + (j + 1); //just to write it clearer
+		 elem(index, 0) = i * offset + j;
+		 elem(index, 1) = (i + 1) * offset + (j + 1);
+		 elem(index, 2) = i * offset + (j + 1);
 
-			active(index) = true;
+		 active(index) = true;
 
-			//index = index + xDim*yDim;
-			index = index + 1; // stride access of 2.
+		 index = index + 1; // stride access of 2.
 
-			elem(index, 0) = i * offset + j;
-			elem(index, 1) = (i + 1) * offset + (j + 1);
-			elem(index, 2) = i * offset + (j + 1);
+		 elem(index, 0) = i * offset + j;
+		 elem(index, 1) = (i + 1) * offset + (j + 1); //just to write it clearer
+		 elem(index, 2) = (i + 1) * offset + j;
 
-			active(index) = true;
-		}
+		 active(index) = true;
+		 }
+		 */
 	};
+
 
 	inline void generate_elements(const int xDim, const int yDim) {
 
 		using namespace Kokkos;
 
+		int n_elements = 0;
+
 		switch (ManifoldDim_) {
 
 		case 1: {
-
-			const int n_elements = xDim;
+			n_elements = xDim;
 			reserve_elements(n_elements);
 
-			parallel_for(n_elements, AddElem(elements_, active_, xDim, yDim));
 			break;
 		}
 		case 2: {
-
-			const int n_elements = 2 * xDim * yDim;
+			n_elements = 2 * xDim * yDim;
 			reserve_elements(n_elements);
 
-			parallel_for(MDRangePolicy<Rank<2> >( { 0, 0 }, { xDim, yDim }),
-					AddElem(elements_, active_, xDim, yDim));
+			/*parallel_for(MDRangePolicy<Rank<2> >( { 0, 0 }, { xDim, yDim }),
+					AddElem(elements_, active_, xDim, yDim));*/
 			break;
 		}
 		}
+
+		parallel_for(n_elements, AddElem(elements_, active_, xDim, yDim));
 	}
 
 	/*	inline __device__ __host__ void add_point1(const size_t row,const Integer xDim) {
