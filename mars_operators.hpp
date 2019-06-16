@@ -7,23 +7,26 @@ namespace mars {
 ///////////////////////////////////////////////////////////////
 /////////////////////    MAIN OPERATORS    ////////////////////
 ///////////////////////////////////////////////////////////////
-template<typename T>
+
+template<typename...Parameters>
 class UnaryPlus;
 
-template<typename T>
+template<typename...Parameters>
 class UnaryMinus;
 
-template<typename Left, typename Right>
+template<typename...Parameters>
 class Multiply;
 
-template<typename Left, typename Right>
+template<typename...Parameters>
 class Divide;
 
-template<typename Left, typename Right>
+template<typename...Parameters>
 class Subtraction;
 
-template<typename Left, typename Right>
+template<typename...Parameters>
 class Addition;
+
+
 
 template<typename Derived, typename S,Integer NQPoints, Integer Dim>
 class QPprova;
@@ -99,6 +102,12 @@ class OperatorType< Multiply< Matrix<T, RowsLeft, ColsLeft>, Real > >
   using type=Matrix<T, RowsLeft, ColsLeft>;
 };
 
+// type(MATRIX) = type(REAL * MATRIX )
+template<typename T, Integer RowsLeft,Integer ColsLeft>
+class OperatorType< Multiply<Real, Matrix<T, RowsLeft, ColsLeft> > >
+{ public:
+  using type=Matrix<T, RowsLeft, ColsLeft>;
+};
 
 // type(VECTOR) = type(MATRIX * VECTOR)
 template<typename T, Integer RowsLeft,Integer Common>
@@ -134,8 +143,6 @@ template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename T
 class OperatorType< Multiply< QPprova < DerivedLeft, TLeft, NQPoints,Dim> ,
                                    FQPprova< DerivedRight,TRight, NQPoints, NComponents,Dim> > >
 { public:
-
-
    using type= FQPValues<typename OperatorType<Multiply<TLeft,TRight>>::type , NQPoints, NComponents>;
 };
 
@@ -143,8 +150,6 @@ template< typename DerivedLeft,typename DerivedRight, typename  TLeft,typename T
 class OperatorType< Multiply< QPprova< DerivedLeft, TLeft,  NQPoints,Dim> ,
                                    QPprova< DerivedRight,TRight, NQPoints,Dim> > >
 { public:
-
-
    using type= QPValues<typename OperatorType<Multiply<TLeft,TRight>>::type , NQPoints>;
 };
 
@@ -152,7 +157,6 @@ class OperatorType< Multiply< QPprova< DerivedLeft, TLeft,  NQPoints,Dim> ,
 class Contraction
 {
 public:
-
  template<typename T,Integer Rows,Integer Cols>
  T operator()(const Matrix<T, Rows,Cols> &A,const Matrix<T, Rows,Cols> &B)
  {
@@ -245,6 +249,1182 @@ public:
  }
 
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename Derived>
+class Expression2
+{
+public:
+        inline Derived &derived() { return static_cast<Derived &>(*this); }
+        inline constexpr const Derived &derived() const { return static_cast<const Derived &>(*this); }
+        inline operator Derived &() {return derived();}
+        inline constexpr  operator const Derived &() const {return derived();}
+
+         ///@return a string with the name of the class
+        virtual std::string getClass() const {
+            return "Expression of ";
+        }
+};
+
+
+
+template<typename...Parameters>
+class Evaluation;
+
+template<typename...Parameters>
+class UnaryPlus2;
+
+template<typename...Parameters>
+class UnaryMinus2;
+
+template<typename...Parameters>
+class Multiply2;
+
+template<typename...Parameters>
+class Divide2;
+
+template<typename...Parameters>
+class Subtraction2;
+
+template<typename...Parameters>
+class Addition2;
+
+
+
+template<typename T,Integer NQPoints>
+class QPValues;
+
+template<typename T,Integer NQPoints,Integer NComponents>
+class FQPValues;
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////			  MATRIX EXPRESSION ALGEBRAIC OPERATIONS		    ///////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+template<typename T,Integer Rows,Integer Cols>
+class UnaryPlus<Matrix<T,Rows,Cols>,
+                Matrix<T,Rows,Cols> > 
+{    
+ public:       
+ inline static void apply(const Matrix<T,Rows,Cols>& A,
+                                Matrix<T,Rows,Cols>& C)
+	{
+	 for(Integer ii=0;ii<Rows;ii++)
+	 	for(Integer jj=0;jj<Cols;jj++)
+	 	   	   C(ii,jj)=A(ii,jj);
+	};
+};
+
+template<typename T,Integer Rows,Integer Cols>
+class UnaryMinus<Matrix<T,Rows,Cols>,
+                 Matrix<T,Rows,Cols> > 
+{    
+ public:       
+ inline static void apply(const Matrix<T,Rows,Cols>& A,
+                                Matrix<T,Rows,Cols>& C)
+	{
+	 for(Integer ii=0;ii<Rows;ii++)
+	 	for(Integer jj=0;jj<Cols;jj++)
+	 	   	   C(ii,jj)=-A(ii,jj);
+	};
+};
+
+template<typename T,Integer Rows,Integer Cols>
+class Addition<Matrix<T,Rows,Cols>,
+               Matrix<T,Rows,Cols>,
+               Matrix<T,Rows,Cols> > 
+{    
+ public:       
+ inline static void apply(const Matrix<T,Rows,Cols>& A,
+ 	                      const Matrix<T,Rows,Cols>& B, 
+                                Matrix<T,Rows,Cols>& C)
+	{
+	 for(Integer ii=0;ii<Rows;ii++)
+	 	for(Integer jj=0;jj<Cols;jj++)
+	 	   	   C(ii,jj)=A(ii,jj)+B(ii,jj);
+	};
+};
+
+template<typename T,Integer Rows,Integer Cols>
+class Subtraction<Matrix<T,Rows,Cols>,
+               Matrix<T,Rows,Cols>,
+               Matrix<T,Rows,Cols> > 
+{    
+ public:       
+ inline static void apply(const Matrix<T,Rows,Cols>& A,
+ 	                      const Matrix<T,Rows,Cols>& B, 
+                                Matrix<T,Rows,Cols>& C)
+	{
+	 for(Integer ii=0;ii<Rows;ii++)
+	 	for(Integer jj=0;jj<Cols;jj++)
+	 	   	   C(ii,jj)=A(ii,jj)-B(ii,jj);
+	};
+};
+
+
+template<typename T,Integer Rows,Integer CommonDim,Integer Cols>
+class Multiply<Matrix<T,Rows,CommonDim>,
+               Matrix<T,CommonDim,Cols>,
+               Matrix<T,Rows,Cols> > 
+{    
+ public:            
+ inline static void apply(const Matrix<T,Rows,CommonDim>& A,
+ 	                      const Matrix<T,CommonDim,Cols>& B, 
+                                Matrix<T,Rows,Cols>& C)
+	{
+	 for(Integer ii=0;ii<Rows;ii++)
+	 	for(Integer jj=0;jj<Cols;jj++)
+	 	   {
+	 	   	C(ii,jj)=0;
+	 	   	for(Integer cc=0;cc<CommonDim;cc++)
+	 	   	   C(ii,jj)+=A(ii,cc)*B(cc,jj);
+	 	   }
+	};
+};
+
+template<typename T,Integer Rows,Integer Cols>
+class Multiply<Matrix<T,Rows,Cols>,
+               Real,
+               Matrix<T,Rows,Cols> > 
+{    
+ public:            
+ inline static void apply(const Matrix<T,Rows,Cols>& A,
+ 	                      const Real& B, 
+                                Matrix<T,Rows,Cols>& C)
+	{
+	 for(Integer ii=0;ii<Rows;ii++)
+	 	for(Integer jj=0;jj<Cols;jj++)
+	 	   	   C(ii,jj)=A(ii,jj)*B;   
+	};
+};
+
+template<typename T,Integer Rows,Integer Cols>
+class Multiply<Real,
+               Matrix<T,Rows,Cols>,
+               Matrix<T,Rows,Cols> > 
+{    
+ public:            
+ inline static void apply(const Real& A,
+ 	                      const Matrix<T,Rows,Cols>& B,
+                                Matrix<T,Rows,Cols>& C)
+	{
+	 for(Integer ii=0;ii<Rows;ii++)
+	 	for(Integer jj=0;jj<Cols;jj++)
+	 	   	   C(ii,jj)=B(ii,jj)*A;   
+	};
+};
+
+
+template<typename T,Integer Rows,Integer Cols>
+class Divide<Matrix<T,Rows,Cols>,
+             Real,
+             Matrix<T,Rows,Cols> > 
+{    
+ public:            
+ inline static void apply(const Matrix<T,Rows,Cols>& A,
+ 	                      const Real& B, 
+                                Matrix<T,Rows,Cols>& C)
+	{
+	 for(Integer ii=0;ii<Rows;ii++)
+	 	for(Integer jj=0;jj<Cols;jj++)
+	 	   	   C(ii,jj)=A(ii,jj)/B;   
+	};
+};
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////			    QP   EXPRESSION ALGEBRAIC OPERATIONS		    ///////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+template<typename U,Integer NQPoints>
+class UnaryPlus<QPValues<U,NQPoints>,
+                QPValues<U,NQPoints>> 
+{       
+ public:               
+ inline static void apply(const QPValues<U,NQPoints>& A,
+                                QPValues<U,NQPoints>& C)
+	{
+	 for(Integer qp=0;qp<NQPoints;qp++)
+        UnaryPlus<U,U>::apply(A[qp],C[qp]);
+	};
+
+};
+
+template<typename U,Integer NQPoints>
+class UnaryMinus<QPValues<U,NQPoints>,
+                 QPValues<U,NQPoints>> 
+{       
+ public:               
+ inline static void apply(const QPValues<U,NQPoints>& A,
+                                QPValues<U,NQPoints>& C)
+	{
+	 for(Integer qp=0;qp<NQPoints;qp++)
+        UnaryMinus<U,U>::apply(A[qp],C[qp]);
+	};
+
+};
+
+template<typename U,Integer NQPoints>
+class Addition<QPValues<U,NQPoints>,
+               QPValues<U,NQPoints>,
+               QPValues<U,NQPoints> > 
+{       
+ public:               
+ inline static void apply(const QPValues<U,NQPoints>& A,
+ 	                      const QPValues<U,NQPoints>& B, 
+                                QPValues<U,NQPoints>& C)
+	{
+	 for(Integer qp=0;qp<NQPoints;qp++)
+        Addition<U,U,U>::apply(A[qp],B[qp],C[qp]);
+	};
+
+};
+
+template<typename U,Integer NQPoints>
+class Subtraction<QPValues<U,NQPoints>,
+                  QPValues<U,NQPoints>,
+                  QPValues<U,NQPoints> > 
+{       
+ public:               
+ inline static void apply(const QPValues<U,NQPoints>& A,
+ 	                      const QPValues<U,NQPoints>& B, 
+                                QPValues<U,NQPoints>& C)
+	{
+	 for(Integer qp=0;qp<NQPoints;qp++)
+        Subtraction<U,U,U>::apply(A[qp],B[qp],C[qp]);
+	};
+
+};
+
+template<typename U, Integer NQPoints>
+class Multiply<QPValues<U,NQPoints>,
+               Real,
+               QPValues<U,NQPoints> > 
+{       
+ public:               
+
+ inline static void apply(const QPValues<U,NQPoints>& A,
+ 	                      const Real& B, 
+                                QPValues<U,NQPoints>& C)
+	{
+	 for(Integer qp=0;qp<NQPoints;qp++)
+        Multiply<U,Real,U>::apply(A[qp],B,C[qp]);
+	};
+
+};
+
+template<typename U,Integer NQPoints>
+class Multiply<Real,
+               QPValues<U,NQPoints>,
+               QPValues<U,NQPoints> > 
+{       
+ public:               
+
+ inline static void apply(const Real& A,
+ 	                      const QPValues<U,NQPoints>& B, 
+                                QPValues<U,NQPoints>& C)
+	{
+	 for(Integer qp=0;qp<NQPoints;qp++)
+        Multiply<Real,U,U>::apply(A,B[qp],C[qp]);
+	};
+
+};
+
+template<typename U,typename V, Integer NQPoints>
+class Multiply<QPValues<U,NQPoints>,
+               QPValues<V,NQPoints>,
+               QPValues<typename OperatorType<Multiply<U,V>>::type,NQPoints> > 
+{       
+ public:               
+ using W=typename OperatorType<Multiply<U,V>>::type;
+
+ inline static void apply(const QPValues<U,NQPoints>& A,
+ 	                      const QPValues<V,NQPoints>& B, 
+                                QPValues<W,NQPoints>& C)
+	{
+	 for(Integer qp=0;qp<NQPoints;qp++)
+        Multiply<U,V,W>::apply(A[qp],B[qp],C[qp]);
+	};
+
+};
+
+template<typename U, Integer NQPoints>
+class Divide<QPValues<U,NQPoints>,
+               Real,
+               QPValues<U,NQPoints> > 
+{       
+ public:               
+
+ inline static void apply(const QPValues<U,NQPoints>& A,
+ 	                      const Real& B, 
+                                QPValues<U,NQPoints>& C)
+	{
+	 for(Integer qp=0;qp<NQPoints;qp++)
+        Divide<U,Real,U>::apply(A[qp],B,C[qp]);
+	};
+
+};
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////			    FQP   EXPRESSION ALGEBRAIC OPERATIONS		    ///////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+template<typename U, Integer NQPoints,Integer NComponents>
+class UnaryPlus< FQPValues<U,NQPoints,NComponents>,
+                 FQPValues<U,NQPoints,NComponents> > 
+{       
+ public:               
+ inline static void apply(const FQPValues<U,NQPoints,NComponents>& A,
+                                FQPValues<U,NQPoints,NComponents>& C)
+	{
+	 for(Integer qp=0;qp<NQPoints;qp++)
+	 	for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+	 	{
+	 		UnaryPlus<U,U>::apply(A[n_comp][qp],C[n_comp][qp]);
+	 	}
+	};
+
+};
+
+template<typename U, Integer NQPoints,Integer NComponents>
+class UnaryMinus< FQPValues<U,NQPoints,NComponents>,
+                 FQPValues<U,NQPoints,NComponents> > 
+{       
+ public:               
+ inline static void apply(const FQPValues<U,NQPoints,NComponents>& A,
+                                FQPValues<U,NQPoints,NComponents>& C)
+	{
+	 for(Integer qp=0;qp<NQPoints;qp++)
+	 	for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+	 	{
+	 		UnaryMinus<U,U>::apply(A[n_comp][qp],C[n_comp][qp]);
+	 	}
+	};
+
+};
+
+template<typename U, Integer NQPoints,Integer NComponents>
+class Addition< FQPValues<U,NQPoints,NComponents>,
+                FQPValues<U,NQPoints,NComponents>,
+                FQPValues<U,NQPoints,NComponents> > 
+{       
+ public:               
+ inline static void apply(const FQPValues<U,NQPoints,NComponents>& A,
+ 	                      const FQPValues<U,NQPoints,NComponents>& B, 
+                                FQPValues<U,NQPoints,NComponents>& C)
+	{
+	 for(Integer qp=0;qp<NQPoints;qp++)
+	 	for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+	 	{
+	 		Addition<U,U,U>::apply(A[n_comp][qp],B[n_comp][qp],C[n_comp][qp]);
+	 	}
+	};
+
+};
+
+
+template<typename U, Integer NQPoints,Integer NComponents>
+class Subtraction< FQPValues<U,NQPoints,NComponents>,
+                   FQPValues<U,NQPoints,NComponents>,
+                   FQPValues<U,NQPoints,NComponents> > 
+{       
+ public:               
+ inline static void apply(const FQPValues<U,NQPoints,NComponents>& A,
+ 	                      const FQPValues<U,NQPoints,NComponents>& B, 
+                                FQPValues<U,NQPoints,NComponents>& C)
+	{
+	 for(Integer qp=0;qp<NQPoints;qp++)
+	 	for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+	 	{
+	 		Subtraction<U,U,U>::apply(A[n_comp][qp],B[n_comp][qp],C[n_comp][qp]);
+	 	}
+	};
+
+};
+
+
+
+template<typename U,Integer NQPoints,Integer NComponents>
+class Multiply< Real,
+                FQPValues<U,NQPoints,NComponents>,
+                FQPValues<U,NQPoints,NComponents> > 
+{       
+ public:               
+
+ inline static void apply(const Real& A,
+ 	                      const FQPValues<U,NQPoints,NComponents>& B, 
+                                FQPValues<U,NQPoints,NComponents>& C)
+	{
+	 for(Integer qp=0;qp<NQPoints;qp++)
+	 	for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+	 		Multiply<Real,U,U>::apply(A,B[n_comp][qp],C[n_comp][qp]);
+	};
+
+};
+
+
+template<typename U, Integer NQPoints,Integer NComponents>
+class Multiply< FQPValues<U,NQPoints,NComponents>,
+                Real,
+                FQPValues<U,NQPoints,NComponents> > 
+{       
+ public:               
+
+ inline static void apply(const FQPValues <U,NQPoints,NComponents>& A,
+ 	                      const Real& B, 
+                                FQPValues<U,NQPoints,NComponents>& C)
+	{
+	 for(Integer qp=0;qp<NQPoints;qp++)
+	 	for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+	 	{
+	 		Multiply<U,Real,U>::apply(A[n_comp][qp],B,C[n_comp][qp]);
+	 	}
+	};
+
+};
+
+
+template<typename U, Integer NQPoints,Integer NComponents>
+class Divide< FQPValues<U,NQPoints,NComponents>,
+              Real,
+              FQPValues<U,NQPoints,NComponents> > 
+{       
+ public:               
+
+ inline static void apply(const FQPValues <U,NQPoints,NComponents>& A,
+ 	                      const Real& B, 
+                                FQPValues<U,NQPoints,NComponents>& C)
+	{
+	 for(Integer qp=0;qp<NQPoints;qp++)
+	 	for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+	 	{
+	 		Divide<U,Real,U>::apply(A[n_comp][qp],B,C[n_comp][qp]);
+	 	}
+	};
+
+};
+
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////				    QP-FQP    ALGEBRAIC OPERATIONS			    ///////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+template<typename U,typename V, Integer NQPoints,Integer NComponents>
+class Multiply< QPValues<U,NQPoints>,
+                FQPValues<V,NQPoints,NComponents>,
+                FQPValues<typename OperatorType<Multiply<U,V>>::type,NQPoints,NComponents> > 
+{       
+ public:               
+ using W=typename OperatorType<Multiply<U,V>>::type;
+
+ inline static void apply(const QPValues <U,NQPoints>& A,
+ 	                      const FQPValues<V,NQPoints,NComponents>& B, 
+                                FQPValues<W,NQPoints,NComponents>& C)
+	{
+	 for(Integer qp=0;qp<NQPoints;qp++)
+	 	for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+	 	{
+	 		Multiply2<U,V,W>::apply(A[qp],B[n_comp][qp],C[n_comp][qp]);
+	 	}
+	 std::cout<<"qp * fqp C=="<<C<<std::endl;
+	};
+
+};
+
+template<typename U,typename V, Integer NQPoints,Integer NComponents>
+class Multiply< FQPValues<U,NQPoints,NComponents>,
+                QPValues<V,NQPoints>,
+                FQPValues<typename OperatorType<Multiply<U,V>>::type,NQPoints,NComponents> > 
+{       
+ public:               
+ using W=typename OperatorType<Multiply<U,V>>::type;
+
+ inline static void apply(const FQPValues <U,NQPoints,NComponents>& A,
+ 	                      const QPValues<V,NQPoints>& B, 
+                                FQPValues<W,NQPoints,NComponents>& C)
+	{
+	 for(Integer qp=0;qp<NQPoints;qp++)
+	 	for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+	 	{
+	 		Multiply2<U,V,W>::apply(A[qp],B[n_comp][qp],C[n_comp][qp]);
+	 	}
+	};
+
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////// 				ALGEBRAIC EXPRESSION OPERATIONS 			///////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+template< typename Derived>
+class UnaryPlus2< Expression2 <Derived> > 
+: public Expression2< UnaryPlus2< Expression2 <Derived> > >
+{
+  public:
+    UnaryPlus2(const Expression2<Derived>& expr): value_(expr.derived()){};
+    Derived& operator()(){return value_;};
+    const Derived& operator()()const{return value_;};
+  private:
+  Derived value_;
+};
+
+template< typename Derived>
+class UnaryMinus2< Expression2 <Derived> > 
+: public Expression2< UnaryMinus2< Expression2 <Derived> > >
+{
+  public:
+    UnaryMinus2(const Expression2<Derived>& expr): value_(expr.derived()){};
+    Derived& operator()(){return value_;};
+    const Derived& operator()()const{return value_;};
+  private:
+  Derived value_;
+};
+
+
+template< typename DerivedLeft,typename DerivedRight>
+class Addition2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> > 
+: public Expression2< Addition2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> > >
+{
+  public:
+    Addition2(const Expression2<DerivedLeft>& left, const Expression2<DerivedRight>&right)
+    : 
+    left_(left.derived()),
+    right_(right.derived())
+    {};
+    const DerivedLeft& left()const{return left_;};
+    const DerivedRight& right()const{return right_;};
+  private:
+  DerivedLeft left_;
+  DerivedRight right_;
+};
+
+template< typename DerivedLeft,typename DerivedRight>
+class Subtraction2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> > 
+: public Expression2< Subtraction2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> > >
+{
+  public:
+    Subtraction2(const Expression2<DerivedLeft>& left, const Expression2<DerivedRight>&right)
+    : 
+    left_(left.derived()),
+    right_(right.derived())
+    {};
+    const DerivedLeft& left()const{return left_;};
+    const DerivedRight& right()const{return right_;};
+  private:
+  DerivedLeft left_;
+  DerivedRight right_;
+};
+
+template< typename DerivedLeft,typename DerivedRight>
+class Divide2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> > 
+: public Expression2< Divide2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> > >
+{
+  public:
+    Divide2(const Expression2<DerivedLeft>& left, const Expression2<DerivedRight>&right)
+    : 
+    left_(left.derived()),
+    right_(right.derived())
+    {};
+    const DerivedLeft& left()const{return left_;};
+    const DerivedRight& right()const{return right_;};
+  private:
+  DerivedLeft left_;
+  DerivedRight right_;
+};
+
+template< typename DerivedLeft>
+class Divide2< Expression2 <DerivedLeft>, Real > 
+: public Expression2< Divide2< Expression2 <DerivedLeft>, Real > >
+{
+  public:
+    Divide2(const Expression2<DerivedLeft>& left, const Real&right)
+    : 
+    left_(left.derived()),
+    right_(right)
+    {};
+    const DerivedLeft& left()const{return left_;};
+    const Real& right()const{return right_;};
+  private:
+  DerivedLeft left_;
+  Real right_;
+};
+
+
+template< typename DerivedLeft_,typename DerivedRight_>
+class Multiply2< Expression2 <DerivedLeft_>, Expression2 <DerivedRight_> > 
+: public Expression2< Multiply2< Expression2 <DerivedLeft_>, Expression2 <DerivedRight_> > >
+{
+  public:
+  	using DerivedLeft=DerivedLeft_;
+  	using DerivedRight=DerivedRight_;
+
+    Multiply2(const Expression2<DerivedLeft>& left, const Expression2<DerivedRight>&right)
+    : 
+    left_(left.derived()),
+    right_(right.derived())
+    {};
+    const DerivedLeft& left()const{return left_;};
+    const DerivedRight& right()const{return right_;};
+  private:
+  DerivedLeft left_;
+  DerivedRight right_;
+};
+
+
+template< typename DerivedLeft_>
+class Multiply2< Expression2 <DerivedLeft_>, Real > 
+: public Expression2< Multiply2< Expression2 <DerivedLeft_>, Real > >
+{
+  public:
+  	using DerivedLeft=DerivedLeft_;
+  	using DerivedRight=Real;
+    Multiply2(const Expression2<DerivedLeft>& left, const Real&right)
+    : 
+    left_(left.derived()),
+    right_(right)
+    {};
+    const DerivedLeft& left()const{return left_;};
+    const Real& right()const{return right_;};
+
+  private:
+  DerivedLeft left_;
+  Real right_;
+};
+
+template< typename DerivedRight_>
+class Multiply2< Real,Expression2 <DerivedRight_> > 
+: public Expression2< Multiply2<Real, Expression2 <DerivedRight_> > >
+{
+  public:
+  	using DerivedLeft=Real;
+  	using DerivedRight=DerivedRight_;
+    Multiply2(const Real& left, const Expression2 <DerivedRight>&right)
+    : 
+    left_(left),
+    right_(right.derived())
+    {};
+    const Real& left()const{return left_;};
+    const DerivedRight& right()const{return right_;};
+  private:
+  DerivedRight right_;
+  Real left_;
+};
+
+
+template< typename DerivedLeft>
+class Divide2< Expression2 <DerivedLeft>, Real > 
+operator/(const Expression2<DerivedLeft>&left, const Real&right)
+{return Divide2< Expression2 <DerivedLeft>, Real > (left,right);}
+
+
+template< typename DerivedLeft,typename DerivedRight>
+class Multiply2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> >
+operator*(const Expression2<DerivedLeft>&left, const Expression2<DerivedRight>&right)
+{return Multiply2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> >(left,right);}
+
+template< typename DerivedLeft>
+class Multiply2< Expression2 <DerivedLeft>, Real > 
+operator*(const Expression2<DerivedLeft>&left, const Real&right)
+{return Multiply2< Expression2 <DerivedLeft>, Real > (left,right);}
+
+template< typename DerivedRight>
+class Multiply2< Real, Expression2 <DerivedRight> >
+operator*(const Real&left, const Expression2<DerivedRight>&right)
+{return Multiply2< Real, Expression2 <DerivedRight> >(left,right);}
+
+
+
+template< typename Derived>
+class UnaryPlus2< Expression2 <Derived> >
+operator+(const Expression2<Derived>& expr)
+{return UnaryPlus2< Expression2 <Derived> >(expr);}
+
+template< typename Derived>
+class UnaryMinus2< Expression2 <Derived> >
+operator-(const Expression2<Derived>& expr)
+{return UnaryMinus2< Expression2 <Derived> >(expr);}
+
+template< typename DerivedLeft,typename DerivedRight>
+class Addition2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> >
+operator+(const Expression2<DerivedLeft>&left, const Expression2<DerivedRight>&right)
+{return Addition2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> >(left,right);}
+
+template< typename DerivedLeft,typename DerivedRight>
+class Subtraction2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> >
+operator-(const Expression2<DerivedLeft>&left, const Expression2<DerivedRight>&right)
+{return Subtraction2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> >(left,right);}
+
+
+
+
+
+
+
+
+
+
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////// 				ALGEBRAIC EXPRESSION EVALUATIONS 			///////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+
+// template<typename Unary2, typename Derived>
+// class Evaluation< Unary2< Expression2<Derived> > >
+// {   
+//  public:
+//  using type= typename Evaluation< Derived >::type;
+
+//  Evaluation(const Unary2< Expression2<Derived> >& expr):
+//  eval_(expr())
+//  {};
+
+//  type& operator()(){return self_;};
+//  const type& operator()()const{return self_;};
+
+//  template<typename...Parameters>
+//  inline type& apply(const Parameters&...parameters)
+//  {
+//   self_ =eval_.apply(parameters...);
+//   Unary2<type,type>::apply(self_,value_);
+//   return value_;
+//  };
+// private:
+//  type value_;
+//  type self_;
+//  Evaluation< Derived > eval_;
+// };
+
+
+
+template< typename Derived>
+class Evaluation< UnaryPlus2< Expression2<Derived> > >
+{   
+ public:
+ using type= typename Evaluation< Derived >::type;
+
+ Evaluation(const UnaryPlus2< Expression2<Derived> >& expr):
+ eval_(expr())
+ {};
+
+ type& operator()(){return self_;};
+ const type& operator()()const{return self_;};
+
+ template<typename...Parameters>
+ inline type& apply(const Parameters&...parameters)
+ {
+  self_ =eval_.apply(parameters...);
+  UnaryPlus<type,type>::apply(self_,value_);
+  return value_;
+ };
+private:
+ type value_;
+ type self_;
+ Evaluation< Derived > eval_;
+};
+
+
+template< typename Derived>
+class Evaluation< UnaryMinus2< Expression2<Derived> > >
+{   
+ public:
+ using type= typename Evaluation< Derived >::type;
+
+ Evaluation(const UnaryMinus2< Expression2<Derived> >& expr):
+ eval_(expr())
+ {};
+
+ type& operator()(){return self_;};
+ const type& operator()()const{return self_;};
+
+ template<typename...Parameters>
+ inline type& apply(const Parameters&...parameters)
+ {
+  self_ =eval_.apply(parameters...);
+  UnaryMinus<type,type>::apply(self_,value_);
+  return value_;
+ };
+private:
+ type value_;
+ type self_;
+ Evaluation< Derived > eval_;
+};
+
+
+template< typename DerivedLeft,typename DerivedRight>
+class Evaluation< Addition2< Expression2<DerivedLeft> , Expression2<DerivedRight> > >
+{   
+ public:
+ using Left= typename Evaluation< DerivedLeft >::type;
+ using Right=typename Evaluation< DerivedRight >::type;
+ using type= typename OperatorType< Addition< typename Left::type, typename Right::type > >::type; // SBBAGLIATO, il prodotto
+
+ Evaluation(const Addition2< Expression2<DerivedLeft> , Expression2<DerivedRight> >& expr):
+ eval_left_(expr.left()),
+ eval_right_(expr.right())
+ {};
+
+ Left& left(){return left_;};
+ Right& right(){return right_;};
+ const Left& left()const{return left_;};
+ const Right& right()const{return right_;};
+
+ template<typename...Parameters>
+ inline type& apply(const Parameters&...parameters)
+ {
+  left_ =eval_left_.apply(parameters...);
+  right_=eval_right_.apply(parameters...);
+  Addition<Left,Right,type>::apply(left_,right_,value_);
+  return value_;
+ };
+private:
+ Left left_;
+ Right right_;
+ type value_;
+ Evaluation< DerivedLeft > eval_left_;
+ Evaluation< DerivedRight> eval_right_; 
+};
+
+
+
+template< typename DerivedLeft,typename DerivedRight>
+class Evaluation< Subtraction2< Expression2<DerivedLeft> , Expression2<DerivedRight> > >
+{   
+ public:
+ using Left= typename Evaluation< DerivedLeft >::type;
+ using Right=typename Evaluation< DerivedRight >::type;
+ using type= typename OperatorType< Subtraction< typename Left::type, typename Right::type > >::type; // SBBAGLIATO, il prodotto
+
+ Evaluation(const Subtraction2< Expression2<DerivedLeft> , Expression2<DerivedRight> >& expr):
+ eval_left_(expr.left()),
+ eval_right_(expr.right())
+ {};
+
+ Left& left(){return left_;};
+ Right& right(){return right_;};
+ const Left& left()const{return left_;};
+ const Right& right()const{return right_;};
+
+ template<typename...Parameters>
+ inline type& apply(const Parameters&...parameters)
+ {
+  left_ =eval_left_.apply(parameters...);
+  right_=eval_right_.apply(parameters...);
+  Subtraction<Left,Right,type>::apply(left_,right_,value_);
+  return value_;
+ };
+private:
+ Left left_;
+ Right right_;
+ type value_;
+ Evaluation< DerivedLeft > eval_left_;
+ Evaluation< DerivedRight> eval_right_; 
+};
+
+
+template< typename DerivedLeft,typename DerivedRight>
+class Evaluation< Multiply2< Expression2<DerivedLeft> , Expression2<DerivedRight> > >
+{   
+ public:
+ using Left= typename Evaluation< DerivedLeft >::type;
+ using Right=typename Evaluation< DerivedRight >::type;
+ using type= typename OperatorType< Multiply< typename Left::type, typename Right::type > >::type; // SBBAGLIATO, il prodotto
+
+ Evaluation(const Multiply2< Expression2<DerivedLeft> , Expression2<DerivedRight> >& expr):
+ eval_left_(expr.left()),
+ eval_right_(expr.right())
+ {};
+
+ Left& left(){return left_;};
+ Right& right(){return right_;};
+ const Left& left()const{return left_;};
+ const Right& right()const{return right_;};
+
+ template<typename...Parameters>
+ inline type& apply(const Parameters&...parameters)
+ {
+  left_ =eval_left_.apply(parameters...);
+  right_=eval_right_.apply(parameters...);
+  Multiply<Left,Right,type>::apply(left_,right_,value_);
+  return value_;
+ };
+private:
+ Left left_;
+ Right right_;
+ type value_;
+ Evaluation< DerivedLeft > eval_left_;
+ Evaluation< DerivedRight> eval_right_; 
+};
+
+
+
+
+template< typename DerivedLeft>
+class Evaluation< Multiply2< Expression2<DerivedLeft> , Real > >
+{   
+ public:
+ using Left= typename Evaluation< DerivedLeft >::type;
+ using Right=Real;
+ using type= typename OperatorType< Multiply< typename Left::type, Real> >::type; // SBBAGLIATO, il prodotto
+
+ Evaluation(const Multiply2< Expression2<DerivedLeft> , Real >& expr):
+ eval_left_(expr.left()),
+ right_(expr.right())
+ {};
+
+ Left& left(){return left_;};
+ Real& right(){return right_;};
+ const Left& left()const{return left_;};
+ const Real& right()const{return right_;};
+
+ template<typename...Parameters>
+ inline type& apply(const Parameters&...parameters)
+ {
+  left_ =eval_left_.apply(parameters...);
+  Multiply<Left,Right,type>::apply(left_,right_,value_);
+  return value_;
+ };
+private:
+ Left left_;
+ Real right_;
+ type value_;
+ Evaluation< DerivedLeft > eval_left_;
+};
+
+
+template< typename DerivedRight>
+class Evaluation< Multiply2< Real, Expression2<DerivedRight> > >
+{   
+ public:
+ using Left= Real;
+ using Right=typename Evaluation< DerivedRight >::type;
+ using type= typename OperatorType< Multiply< Real, typename Right::type> >::type; 
+
+ Evaluation(const Multiply2< Real, Expression2<DerivedRight> >& expr):
+ left_(expr.left()),
+ eval_right_(expr.right())
+ {};
+
+ Left& left(){return left_;};
+ Real& right(){return right_;};
+ const Left& left()const{return left_;};
+ const Real& right()const{return right_;};
+
+ template<typename...Parameters>
+ inline type& apply(const Parameters&...parameters)
+ {
+  right_ =eval_right_.apply(parameters...);
+  Multiply<Left,Right,type>::apply(left_,right_,value_);
+  return value_;
+ };
+private:
+ Real left_;
+ Right right_;
+ type value_;
+ Evaluation< DerivedRight > eval_right_;
+};
+
+template< typename DerivedLeft>
+class Evaluation< Divide2< Expression2<DerivedLeft> , Real > >
+{   
+ public:
+ using Left= typename Evaluation< DerivedLeft >::type;
+ using Right=Real;
+ using type= typename OperatorType< Divide< typename Left::type, Real> >::type; // SBBAGLIATO, il prodotto
+
+ Evaluation(const Divide2< Expression2<DerivedLeft> , Real >& expr):
+ eval_left_(expr.left()),
+ right_(expr.right())
+ {};
+
+ Left& left(){return left_;};
+ Real& right(){return right_;};
+ const Left& left()const{return left_;};
+ const Real& right()const{return right_;};
+
+ template<typename...Parameters>
+ inline type& apply(const Parameters&...parameters)
+ {
+  left_ =eval_left_.apply(parameters...);
+  Divide<Left,Right,type>::apply(left_,right_,value_);
+  return value_;
+ };
+private:
+ Left left_;
+ Real right_;
+ type value_;
+ Evaluation< DerivedLeft > eval_left_;
+};
+
+
+
+
+
+
+
+template<typename T,Integer NQPoints>
+class Expression2QPValues: 
+public Expression2< Expression2QPValues<T,NQPoints > >
+{
+public:
+        using type=QPValues<T,NQPoints>;
+        Expression2QPValues(){};
+
+        Expression2QPValues(const type& value):value_(value){};
+
+        type& operator()(){return value_;};
+        const type& operator()()const{return value_;};
+protected:
+    type value_;
+
+};
+
+template<typename T,Integer NQPoints>
+class Evaluation<Expression2QPValues<T,NQPoints> >
+{
+ public:
+ using type=QPValues<T,NQPoints>;
+
+ Evaluation(const Expression2QPValues<T,NQPoints>&expr):
+ value_(expr.derived()()){};
+ template<typename...Parameters>
+ inline type& apply(const Parameters&...parameters)
+ {
+   return value_;
+ };
+ private:
+ 	type value_;
+};
+
+
+
+
+
+
+
+
+
+
+template<typename T,Integer Rows,Integer Cols>
+class Expression2Matrix: 
+public Expression2< Expression2Matrix<T,Rows,Cols> >
+{
+public:
+        using type=Matrix<T,Rows,Cols>;
+        Expression2Matrix(){};
+
+        Expression2Matrix(const type& value):value_(value){};
+
+        type& operator()(){return value_;};
+        const type& operator()()const{return value_;};
+protected:
+    type value_;
+
+};
+
+template<typename T,Integer Rows,Integer Cols>
+class Evaluation<Expression2Matrix<T,Rows,Cols> >
+{
+ public:
+ using type=Matrix<T,Rows,Cols>;
+
+ Evaluation(const Expression2Matrix<T,Rows,Cols>&expr):
+ value_(expr.derived()()){};
+ template<typename...Parameters>
+ inline type& apply(const Parameters&...parameters)
+ {
+   return value_;
+ };
+ private:
+ 	type value_;
+};
+
+// template<typename T,Integer Rows,Integer Cols>
+// class Evaluation<Expression2<Expression2Matrix<T,Rows,Cols>> >
+// {
+//  public:
+//  using type=Matrix<T,Rows,Cols>;
+//  template<typename...Inputs>
+//  inline static void apply(const Expression2<Expression2Matrix<T,Rows,Cols>>&expr, type& value)
+//  {
+//    value= expr.derived()();
+//  };
+
+// };
+
+
 }
 
 #endif //MARS_OPERATORS_HPP

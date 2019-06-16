@@ -35,7 +35,14 @@ namespace mars {
 	        assert(j < Cols);
 	        return values[i*cols() + j];
 	    }
-	    
+
+        operator T &() { 
+           // Throw here if size is not 1x1...
+            static_assert(Rows_==1&&Cols_==1,"Matrix<T,Rows,Cols> returns T if and only if Rows=Cols=1");
+           return (*this)( 0, 0 ); 
+        }
+
+
 	    inline const T &operator()(const Integer i, const Integer j) const
 	    {
 	        assert(i < Rows);
@@ -301,7 +308,6 @@ namespace mars {
 	    	}
 	    	return ret;
 	    }
-
 
 
 

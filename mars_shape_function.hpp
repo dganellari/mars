@@ -2276,7 +2276,7 @@ grandma->print();
   std::cout<<phi2.eval(qp_points)<<std::endl;
   
   auto phi3=+2*Grad(phi)*3;
-  std::cout<<"+Grad(phi)"<<std::endl;
+  std::cout<<"+phi3"<<std::endl;
   std::cout<<phi3.eval(qp_points)<<std::endl;
   auto phi3minus=-Grad(phi);
   std::cout<<"-Grad(phi)"<<std::endl;
@@ -2316,6 +2316,41 @@ std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
  fqpvalue3=fqpvalue3/2;
 std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
 
+
+ auto phi3two= phi3.eval(qp_points)*phi3.eval(qp_points);
+ auto integral=Integral<QuadratureRule>(phi3,phi3);
+ std::cout<<"phi3two"<<phi3two<<std::endl;
+ std::cout<<"integral"<<integral.eval(qp_points)<<std::endl;
+
+
+ Matrix<Real,2,2> matrix0=0.5;
+ Matrix<Real,2,3> matrix1=1.;
+ Matrix<Real,3,2> matrix2=2.;
+ Matrix<Real,2,2> matrix3=3;
+ Matrix<Real,2,2> matrix4;
+
+Expression2Matrix<Real,2,2> exprmat0(matrix0);
+Expression2Matrix<Real,2,3> exprmat1(matrix1);
+Expression2Matrix<Real,3,2> exprmat2(matrix2);
+Expression2Matrix<Real,2,2> exprmat3(matrix3);
+auto exprmat=  -exprmat3;//*2-exprmat0*exprmat1*exprmat2 ;// * exprmat1 * exprmat0+(exprmat0-exprmat1)*exprmat0;
+std::cout<<exprmat0()<<std::endl;
+
+Evaluation<decltype(exprmat)> eval(exprmat);
+Matrix<Real,2,2> res =eval.apply();
+std::cout<<res<<std::endl;
+
+Expression2QPValues<SSS,6> qp1(qpval);
+
+auto exprqp=-qp1+2*(qp1+qp1)*qp1/0.5;
+Evaluation<decltype(exprqp)> evalqp(exprqp);
+auto resqp =evalqp.apply();
+std::cout<<resqp<<std::endl;
+
+
+ // auto matrix_mult=Add(matrix3,Mult(matrix1,matrix2));
+ // matrix_mult.eval(matrix4);
+ // std::cout<<"matrix result"<<matrix4<<std::endl;
 };
 
 

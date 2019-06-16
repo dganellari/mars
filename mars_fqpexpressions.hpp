@@ -8,6 +8,7 @@
 
 namespace mars{
 
+
 template<typename Derived>
 class Expression
 {
@@ -205,7 +206,21 @@ protected:
       return result;
       }
 
+// FQPVALUES = FQPVALUES * FQPVALUES
 
+      template< typename Trial, typename Test,Integer NComponentsTrial,Integer NComponentsTest, Integer NQPoints>
+      inline Matrix<Vector<Real,NQPoints>,NComponentsTest,NComponentsTrial>   operator*
+      (const FQPValues<Trial,NQPoints,NComponentsTrial>&trial, 
+       const FQPValues<Test, NQPoints,NComponentsTest> &test)
+      {
+        Matrix<Vector<Real,NQPoints>,NComponentsTest,NComponentsTrial> result;
+        Contraction contract;
+        for(Integer n_comp_test=0;n_comp_test<NComponentsTest;n_comp_test++)
+            for(Integer n_comp_trial=0;n_comp_trial<NComponentsTrial;n_comp_trial++)
+                for(Integer qp=0;qp<NQPoints;qp++)
+                    result(n_comp_test,n_comp_trial)[qp]=contract(trial[n_comp_trial][qp],test[n_comp_test][qp]);
+      return result;
+      }
 
 
 template<typename Derived, typename S,Integer NQPoints, Integer Dim>
@@ -216,11 +231,9 @@ class QPExpression: public Expression<Derived>
      using Base::derived;
      using Point = Vector<Real,Dim> ;
      using type= QPValues < S, NQPoints>;
-      Derived& derived() { return static_cast<Derived &>(*this); }
-      const Derived& derived()const { return static_cast<const Derived &>(*this); }
-      S& apply(const Point& point);
+     S& apply(const Point& point);
 
-      inline QPValues<S,NQPoints> eval(const Matrix<Real,NQPoints,Dim> & qp_points)
+      inline QPValues<S,NQPoints>& eval(const Matrix<Real,NQPoints,Dim> & qp_points)
       {
        for(Integer qp=0;qp<NQPoints;qp++)
           {
@@ -230,6 +243,16 @@ class QPExpression: public Expression<Derived>
 
         return value_;
       };
+       
+      void eval(const Matrix<Real,NQPoints,Dim> & qp_points, QPValues<S,NQPoints>& value_)
+      {
+       for(Integer qp=0;qp<NQPoints;qp++)
+          {
+            qp_points.get_row(qp,row_);
+            value_[qp]=derived().apply(row_);
+          }
+      };
+
 
     protected:
       QPValues<S,NQPoints> value_; 
@@ -247,13 +270,16 @@ public Expression<Derived>
      using Base::derived;
      FQPValues<S,NQPoints,NComponents>& apply(const Matrix<Real,NQPoints,Dim> & qp_points);
 
-
-      inline FQPValues<S,NQPoints,NComponents> eval(const Matrix<Real,NQPoints,Dim> & qp_points)
-      {
-          return derived().apply(qp_points);
+      inline FQPValues<S,NQPoints,NComponents>& eval(const Matrix<Real,NQPoints,Dim> & qp_points)
+      { 
+        value_=derived().apply(qp_points);
+        return value_;
       };
 
-
+      void eval(const Matrix<Real,NQPoints,Dim> & qp_points, FQPValues<S,NQPoints,NComponents> value_)
+      {
+          value_ = derived().apply(qp_points);
+      };
     protected:
       FQPValues<S,NQPoints,NComponents> value_; 
       Point row_; 
@@ -267,30 +293,54 @@ public Expression<Derived>
 
 
 
-template<typename DerivedTrial, typename DerivedTest, typename  T, 
+template<typename QuadratureRule,typename DerivedTrial, typename DerivedTest, typename  T, 
          Integer NQPoints, Integer NComponentsTrial, Integer NComponentsTest, Integer Dim>
-class L2Integral: Expression<L2Integral<DerivedTrial,DerivedTest,T,NQPoints,NComponentsTrial,NComponentsTest,Dim>>
+class L2Product: Expression<L2Product<QuadratureRule,DerivedTrial,DerivedTest,T,NQPoints,NComponentsTrial,NComponentsTest,Dim>>
 {
  public: 
     using Trial=  FQPExpression< DerivedTrial,T, NQPoints, NComponentsTrial,  Dim >;
     using Test =  FQPExpression< DerivedTest, T, NQPoints, NComponentsTest,   Dim >;
-    L2Integral(const Trial& trial, const Test&test): 
+    L2Product(const Trial& trial, const Test&test): 
     trial_(trial.derived()),
     test_(test.derived())
     {};
 
     template<typename QP>
-    Matrix<Real,NComponentsTest,NComponentsTrial>  eval(const QP & qp_points)
+    Matrix<Real,NComponentsTest,NComponentsTrial>&  eval(const QP & qp_points)
     {
     // here you should do sum_qp (qp_weight[qp]*left[n1][qp]*right[n2][qp])
-    return test_.eval(qp_points)*trial_.eval(qp_points);};
+        // FIXME: multiply by volume
+     
+        std::cout<<"qprule.qp_weights()"<<qprule.qp_weights()<<std::endl;
+        std::cout<<"test_.eval(qp_points)*trial_.eval(qp_points)"<<test_.eval(qp_points)*trial_.eval(qp_points)<<std::endl;
+        mat1_=test_.eval(qp_points)*trial_.eval(qp_points);
+        const auto& weights=qprule.qp_weights();
+
+        for(Integer n_comp_test=0; n_comp_test< NComponentsTest; n_comp_test++)
+            for(Integer n_comp_trial=0; n_comp_trial< NComponentsTrial; n_comp_trial++)
+            {
+               mat2_(n_comp_test,n_comp_trial)=contract(weights,mat1_(n_comp_test,n_comp_trial));
+            }
+    return mat2_;//contract(qprule.qp_weights(), test_.eval(qp_points)*trial_.eval(qp_points));
+    };
 
   private:
+  Matrix<Vector<Real,NQPoints>,NComponentsTest,NComponentsTrial> mat1_;
+  Matrix<Real,NComponentsTest,NComponentsTrial> mat2_;
   DerivedTrial trial_;
-  DerivedTest  test_;   
-
+  DerivedTest  test_; 
+  Contraction contract;  
+  QuadratureRule qprule;
 };
 
+template<typename QuadratureRule,typename DerivedTrial, typename DerivedTest, typename  T, 
+         Integer NQPoints, Integer NComponentsTrial, Integer NComponentsTest, Integer Dim>
+L2Product<QuadratureRule,DerivedTrial,DerivedTest,T,NQPoints,NComponentsTrial,NComponentsTest,Dim>
+Integral(const FQPExpression< DerivedTrial,T, NQPoints, NComponentsTrial,  Dim >& trial, 
+         const FQPExpression< DerivedTest, T, NQPoints, NComponentsTest,   Dim >& test)
+{
+    return L2Product<QuadratureRule,DerivedTrial,DerivedTest,T,NQPoints,NComponentsTrial,NComponentsTest,Dim>(trial,test);
+}
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////           UNARY PLUS: +QP        //////////////////////////////////
@@ -303,16 +353,22 @@ class UnaryPlus< QPExpression <Derived, T, NQPoints,Dim>>
 {
   public:
     using Input= QPExpression<Derived,T,NQPoints,Dim>;
+    using ResultType=typename OperatorType< UnaryPlus<typename Input::type>>::type;
     UnaryPlus(const Input& input): 
     derived_(input.derived())
     {};
 
     template<typename QP>
-    typename OperatorType< UnaryPlus<typename Input::type>>::type  eval(const QP & qp_points)
+    ResultType  eval(const QP & qp_points)
     {return +derived_.eval(qp_points);};
+
+    template<typename QP>
+    inline void  eval(const QP & qp_points, ResultType& result_)
+    {result_= +derived_.eval(qp_points);};
 
   private:
   Derived derived_;
+  ResultType result_;
 };
 
 
