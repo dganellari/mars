@@ -432,6 +432,42 @@ namespace mars {
 			return ret;
 		}
 
+		inline Mesh &operator+=(const Mesh &other)
+		{
+			const auto node_offset    = this->n_points();
+			const auto element_offset = this->n_elements();
+
+			const auto n_new_points   = other.n_points();
+			const auto n_new_elements = other.n_elements();
+
+			elements_.reserve(element_offset + n_new_elements);
+			points_.reserve(node_offset + n_new_points);
+			tags_.reserve(element_offset + n_new_elements);
+			active_.reserve(element_offset + n_new_elements);
+
+			for(Integer i = 0; i < n_new_points; ++i) {
+				add_point(other.point(i));
+			}
+			
+			for(Integer i = 0; i < n_new_elements; ++i) {
+				Elem e = other.elem(i);
+				e.parent_id += element_offset;
+
+				for(Integer k = 0; k < mars::n_nodes(e); ++k) {
+					e.nodes[k] += node_offset;
+				}
+
+				for(auto &c : e.children) {
+					c += element_offset;
+				}
+
+				auto id = add_elem(e);
+				active_[id] = other.is_active(i);
+			}
+
+			return *this;
+		}
+
 		bool have_common_sub_surface(
 			const Integer e_index_1,
 			const Integer e_index_2,
