@@ -8,20 +8,6 @@
 namespace mars {
 namespace private_ {
 
-constexpr int hex_n_sides = 6; // 6 faces in total for the hex27.
-constexpr int hex_n_nodes = 27; // 27 nodes for the hex27.
-constexpr int hex_side_n_nodes = 9; // 9 nodes per face for the hex27.
-
-//libmesh method to map the sides and nodes.
-const unsigned int hex_side_nodes[hex_n_sides][hex_side_n_nodes] = { { 0, 3, 2,
-		1, 11, 10, 9, 8, 20 }, // Side 0
-		{ 0, 1, 5, 4, 8, 13, 16, 12, 21 }, // Side 1
-		{ 1, 2, 6, 5, 9, 14, 17, 13, 22 }, // Side 2
-		{ 2, 3, 7, 6, 10, 15, 18, 14, 23 }, // Side 3
-		{ 3, 0, 4, 7, 11, 12, 19, 15, 24 }, // Side 4
-		{ 4, 5, 6, 7, 16, 17, 18, 19, 25 }  // Side 5
-};
-
 /*
  template<Integer Dim, Integer ManifoldDim, class Point_>
  void remove_extra_nodes(Mesh<Dim, ManifoldDim, Point_>& mesh) {
@@ -428,9 +414,9 @@ bool generate_cube(Mesh<Dim, ManifoldDim, KokkosImplementation>& mesh, const Int
 	assert(Dim <= 3);
 	assert(ManifoldDim <= Dim);
 
-	mesh.generate_points(xDim,yDim);
+	mesh.generate_points(xDim,yDim,zDim);
 
-	mesh.generate_elements(xDim,yDim);
+	mesh.generate_elements(xDim,yDim,zDim);
 }
 
 bool generate_square(ParallelMesh2& mesh, const Integer xDim, const Integer yDim) {
