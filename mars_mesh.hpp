@@ -434,10 +434,10 @@ namespace mars {
 
 		inline Mesh &operator+=(const Mesh &other)
 		{
-			const auto node_offset    = this->n_points();
+			const auto node_offset    = this->n_nodes();
 			const auto element_offset = this->n_elements();
 
-			const auto n_new_points   = other.n_points();
+			const auto n_new_points   = other.n_nodes();
 			const auto n_new_elements = other.n_elements();
 
 			elements_.reserve(element_offset + n_new_elements);
