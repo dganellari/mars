@@ -1,5 +1,4 @@
 #include "generation/mars_mesh_kokkos.hpp"
-#include "generation/mars_utils_kokkos.hpp"
 
 void test_mars_mesh_generation_kokkos_1D(const int level) {
 
@@ -66,4 +65,36 @@ void test_mars_mesh_generation_kokkos_2D(const int x, const int y) {
 	/*}
 
 	 Kokkos::finalize();*/
+}
+
+void test_mars_mesh_generation_kokkos_3D(const int x, const int y, const int z) {
+
+	using namespace mars;
+
+	Kokkos::Timer timer;
+
+	ParallelMesh3 pMesh;
+	generate_cube(pMesh, x, y, z);
+
+	//Kokkos::fence();
+
+	double time = timer.seconds();
+
+	std::cout << "Generation 3D kokkos took: " << time << " seconds." << std::endl;
+
+	if (x < 100) {
+
+		Mesh3 sMesh;
+		convert_parallel_mesh_to_serial(sMesh, pMesh);
+
+		std::cout << "n_active_elements: " << sMesh.n_active_elements()
+				<< std::endl;
+		std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
+
+		VTKMeshWriter<Mesh3> w;
+		w.write(
+				"build_cube_parallel" + std::to_string(x) + std::to_string(y)
+						+ ".vtu", sMesh);
+
+	}
 }

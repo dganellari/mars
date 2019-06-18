@@ -20,27 +20,9 @@
 #include <algorithm>
 
 #include "mars_imesh_kokkos.hpp"
-
-#include <Kokkos_Core.hpp>
+#include "generation/mars_utils_kokkos.hpp"
 
 namespace mars {
-
-#ifdef MARS_USE_CUDA
-#define KokkosSpace Kokkos::CudaSpace
-#define KokkosLayout Kokkos::LayoutLeft
-#else
-#define KokkosSpace Kokkos::OpenMP
-#define KokkosLayout Kokkos::LayoutRight
-#endif
-
-
-template<typename T>
-using ViewVectorType = Kokkos::View<T*,KokkosLayout,KokkosSpace>;
-
-template<typename T>
-using ViewMatrixType = Kokkos::View<T**,KokkosLayout,KokkosSpace>;
-
-class KokkosImplementation {};
 
 template<Integer Dim_, Integer ManifoldDim_>
 class Mesh<Dim_,ManifoldDim_,KokkosImplementation>: public ParallelIMesh<Dim_> {
@@ -142,8 +124,16 @@ public:
 		Integer xDim;
 		Integer yDim;
 
+		AddPoint(ViewMatrixType<Real> pts, Integer xdm) :
+				points(pts), xDim(xdm) {
+		}
+
 		AddPoint(ViewMatrixType<Real> pts, Integer xdm, Integer ydm) :
 				points(pts), xDim(xdm), yDim(ydm) {
+		}
+
+		AddPoint(ViewMatrixType<Real> pts, Integer xdm, Integer ydm, Integer zdm) :
+				points(pts), xDim(xdm), yDim(ydm), yDim(zdm) {
 		}
 
 		KOKKOS_INLINE_FUNCTION
@@ -165,7 +155,7 @@ public:
 		}
 	};
 
-	inline void generate_points(const int xDim, const int yDim) {
+	inline void generate_points(const int xDim, const int yDim, const int zDim) {
 
 		using namespace Kokkos;
 
@@ -180,7 +170,7 @@ public:
 			const int n_nodes = xDim + 1;
 			reserve_points(n_nodes);
 
-			parallel_for(n_nodes, AddPoint(points_, xDim, yDim));
+			parallel_for(n_nodes, AddPoint(points_, xDim));
 			break;
 		}
 		case 2: {
@@ -207,12 +197,34 @@ public:
 
 		ViewMatrixType<Integer> elem;
 		ViewVectorType<bool> active;
+
+		ViewMatrixTexture<Integer> hexes;
+		ViewVectorTexture<bool> active_nodes;
+		ViewVectorTexture<Integer> sides;
+
+		ViewMatrixTexture<unsigned int> map_side_nodes;
+
+
 		Integer xDim;
 		Integer yDim;
+		Integer zDim;
+
+		AddElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
+				Integer xdm) :
+				elem(el), active(ac), xDim(xdm) {
+		}
 
 		AddElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
 				Integer xdm, Integer ydm) :
 				elem(el), active(ac), xDim(xdm), yDim(ydm) {
+		}
+		AddElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
+				ViewMatrixTexture<Integer> hxs, ViewVectorTexture<bool> acn,
+				ViewVectorTexture<Integer> sds, ViewMatrixTexture<unsigned int> map, Integer xdm, Integer ydm,
+				Integer zdm) :
+				elem(el), active(ac), hexes(hxs), active_nodes(acn), sides(sds), map_side_nodes(map), xDim(
+						xdm), yDim(ydm), zDim(zdm) {
+
 		}
 
 		KOKKOS_INLINE_FUNCTION
@@ -233,6 +245,7 @@ public:
 
 				const int offset = yDim + 1;
 
+				//extracting i and j from the global index from the parallel for to make it coalesced.
 				int i = (index / 2) / xDim;
 				int j = (index / 2) % yDim;
 				int add_to_i = index % 2;
@@ -274,34 +287,75 @@ public:
 		 active(index) = true;
 		 }
 		 */
+
+		/*Kokkos::View<int*, ScratchSpace> view(100);
+		view(10) = 0;*/
+
+		 KOKKOS_INLINE_FUNCTION
+		 void operator()(int k, int j, int i) const {
+
+			 k*2; j*2; i*2; // to emulate the step +2 for the parallel for.
+
+		 }
 	};
 
 
-	inline void generate_elements(const int xDim, const int yDim) {
+	inline void generate_elements(const int xDim, const int yDim,
+			const int zDim) {
 
 		using namespace Kokkos;
-
-		int n_elements = 0;
 
 		switch (ManifoldDim_) {
 
 		case 1: {
-			n_elements = xDim;
+			const int n_elements = xDim;
 			reserve_elements(n_elements);
+			parallel_for(n_elements, AddElem(elements_, active_, xDim));
 
 			break;
 		}
 		case 2: {
-			n_elements = 2 * xDim * yDim;
+			const int n_elements = 2 * xDim * yDim;
 			reserve_elements(n_elements);
+			parallel_for(n_elements, AddElem(elements_, active_, xDim, yDim));
 
 			/*parallel_for(MDRangePolicy<Rank<2> >( { 0, 0 }, { xDim, yDim }),
-					AddElem(elements_, active_, xDim, yDim));*/
+			 AddElem(elements_, active_, xDim, yDim));*/
+			break;
+		}
+		case 3: {
+			const int n_elements = xDim * yDim * zDim * 24; //24 tetrahedrons on one hex27
+			reserve_elements(n_elements);
+
+			const int n_tetra_nodes = 5 * (xDim * yDim * zDim)
+					+ 2 * (xDim * yDim + xDim * zDim + yDim * zDim)
+					+ (xDim + yDim + zDim) + 1;
+
+			reserve_points(n_tetra_nodes);
+
+			const int n_cube_nodes = (2 * xDim + 1) * (2 * yDim + 1)
+					* (2 * zDim + 1);
+
+			//texture view for random access
+			ViewVectorTexture<Integer> sides("cube_sides", hex_side_n_nodes);
+			ViewVectorTexture<bool> active_nodes("active_nodes", n_cube_nodes);
+			ViewMatrixTexture<Integer> hexes("hexes", xDim * yDim * zDim, hex_n_nodes);
+
+			ViewMatrixTexture<unsigned int> map_side_to_nodes("cube_sides", hex_n_sides, hex_side_n_nodes);
+
+		//	const unsigned int a[2];
+//			unsigned int name[] = {3};
+		//	f(name)
+			copy_matrix_from_host(hex_side_nodes, map_side_to_nodes, hex_n_sides, hex_side_n_nodes);
+
+			parallel_for(MDRangePolicy<Rank<3> >( { 0, 0, 0 }, { zDim, yDim,
+					xDim }),
+					AddElem(elements_, active_, hexes, active_nodes, sides,
+							map_side_to_nodes, xDim, yDim, zDim));
 			break;
 		}
 		}
 
-		parallel_for(n_elements, AddElem(elements_, active_, xDim, yDim));
 	}
 
 	/*	inline __device__ __host__ void add_point1(const size_t row,const Integer xDim) {
