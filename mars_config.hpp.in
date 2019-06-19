@@ -4,5 +4,6 @@
 #cmakedefine WITH_MPI
 #cmakedefine WITH_KOKKOS
 #cmakedefine MARS_USE_CUDA
+#cmakedefine WITH_PAR_MOONOLITH
 
 #endif //MARS_CONFIG_HPP

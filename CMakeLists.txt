@@ -4,6 +4,43 @@ project(mars)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+
+#################################################################################
+#################################################################################
+#################################################################################
+
+
+function(find_project_files rootPath dirPaths headers sources)
+	SET(verbose TRUE)
+
+	SET(theaders ${${headers}})
+	SET(tsources ${${sources}})
+
+	SET(ROOT_PATH ${${rootPath}})
+	SET(DIR_PATHS ${${dirPaths}})
+
+	FOREACH(INCLUDE_PATH ${DIR_PATHS})
+		INCLUDE_DIRECTORIES(${ROOT_PATH}/${INCLUDE_PATH})
+
+		file(GLOB TEMP_HPPSRC "${ROOT_PATH}/${INCLUDE_PATH}/*.cpp" )
+		file(GLOB TEMP_SRC "${ROOT_PATH}/${INCLUDE_PATH}/*.c" )
+		file(GLOB TEMP_HPPDR "${ROOT_PATH}/${INCLUDE_PATH}/*.hpp" )
+		file(GLOB TEMP_HDR "${ROOT_PATH}/${INCLUDE_PATH}/*.h" )
+
+		SOURCE_GROUP(${INCLUDE_PATH} FILES ${TEMP_HPPDR}; ${TEMP_HDR}; ${TEMP_HPPSRC}; ${TEMP_SRC}; ${TEMP_UI})
+
+		SET(tsources ${tsources}; ${TEMP_SRC}; ${TEMP_HPPSRC})
+		SET(theaders ${theaders}; ${TEMP_HDR}; ${TEMP_HPPDR})
+	ENDFOREACH(INCLUDE_PATH)
+
+	SET(${headers} ${theaders} PARENT_SCOPE)
+	SET(${sources} ${tsources} PARENT_SCOPE)
+endfunction()
+
+#################################################################################
+#################################################################################
+#################################################################################
+
 find_package(MPIExtended)
 
 #if(MPI_FOUND)
@@ -144,6 +181,11 @@ IF(Kokkos_FOUND)
 		target_link_libraries(mars_exec mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES} -L${Kokkos_LIBRARY_DIRS})
 	ENDIF()
 ENDIF()
+
+
+add_subdirectory(moonolith_adapter)
+target_link_libraries(mars ${MARS_LIBRARIES})
+
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/mars_config.hpp.in ${CMAKE_BINARY_DIR}/mars_config.hpp)
 include_directories(${CMAKE_BINARY_DIR})

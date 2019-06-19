@@ -12,7 +12,7 @@ namespace memory {
 //values are in KB.
 
 
-int parse_line(char* line) {
+inline int parse_line(char* line) {
 
 	int i = strlen(line);
 	const char* p = line;
@@ -23,7 +23,7 @@ int parse_line(char* line) {
 	return i;
 }
 
-int get_virtual_memory() {
+inline int get_virtual_memory() {
 	FILE* file = fopen("/proc/self/status", "r");
 	int result = -1;
 	char line[128];
@@ -38,7 +38,7 @@ int get_virtual_memory() {
 	return result;
 }
 
-int get_physical_memory() {
+inline int get_physical_memory() {
 	FILE* file = fopen("/proc/self/status", "r");
 	int result = -1;
 	char line[128];
