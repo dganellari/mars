@@ -6,4 +6,10 @@
 #cmakedefine MARS_USE_CUDA
 #cmakedefine WITH_PAR_MOONOLITH
 
+#ifndef WITH_MPI
+#ifdef WITH_PAR_MOONOLITH
+#define WITH_MPI
+#endif //WITH_PAR_MOONOLITH
+#endif //WITH_MPI
+
 #endif //MARS_CONFIG_HPP
