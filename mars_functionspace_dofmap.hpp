@@ -562,7 +562,8 @@ void dofmap_fespace(const MeshT& mesh,
              Integer& global_dof_count,
              //const std::array<Integer , 1 + sizeof...(FunctionSpaces)>& space_components,
              const std::array<std::array<Integer,4> , 1 + sizeof...(FunctionSpaces)>& space_components,
-             std::array<std::vector<std::vector<Integer>>,1+sizeof...(FunctionSpaces)>& space_dofs)//, DofMapT dofmap_vec,OffSetT)
+             std::array<std::vector<std::vector<Integer>>,1+sizeof...(FunctionSpaces)>& space_dofs,
+             const Integer dof_count_start=0)//, DofMapT dofmap_vec,OffSetT)
 {
 
     using     Elem = typename MeshT::Elem; 
@@ -581,7 +582,7 @@ void dofmap_fespace(const MeshT& mesh,
 
 
     dofmap_vec.resize(n_elements);   
-    global_dof_count=0;
+    global_dof_count=dof_count_start;
     // loop on all the elements
     for(Integer space_id=0;space_id<n_spaces;space_id++)
         //space_dofs[space_id].resize(space_components[space_id]);

@@ -87,27 +87,20 @@ class OperatorType< Divide<T, Real > >
   using type=T;
 };
 
-// type(VECTOR) = type(VECTOR * REAL)
-template<typename T,Integer Dim>
-class OperatorType< Multiply< Vector<T, Dim>, Real > >
+// type(T) = type(T * REAL)
+template<typename T>
+class OperatorType< Multiply< T, Real > >
 { public:
-  using type=Vector<T, Dim>;
+  using type=T;
 };
 
-
-// type(MATRIX) = type(MATRIX * REAL)
-template<typename T, Integer RowsLeft,Integer ColsLeft>
-class OperatorType< Multiply< Matrix<T, RowsLeft, ColsLeft>, Real > >
+// type(T) = type(REAL * T)
+template<typename T>
+class OperatorType< Multiply< Real, T > >
 { public:
-  using type=Matrix<T, RowsLeft, ColsLeft>;
+  using type=T;
 };
 
-// type(MATRIX) = type(REAL * MATRIX )
-template<typename T, Integer RowsLeft,Integer ColsLeft>
-class OperatorType< Multiply<Real, Matrix<T, RowsLeft, ColsLeft> > >
-{ public:
-  using type=Matrix<T, RowsLeft, ColsLeft>;
-};
 
 // type(VECTOR) = type(MATRIX * VECTOR)
 template<typename T, Integer RowsLeft,Integer Common>
@@ -765,7 +758,7 @@ class Multiply< QPValues<U,NQPoints>,
 	 for(Integer qp=0;qp<NQPoints;qp++)
 	 	for(Integer n_comp=0;n_comp<NComponents;n_comp++)
 	 	{
-	 		Multiply2<U,V,W>::apply(A[qp],B[n_comp][qp],C[n_comp][qp]);
+	 		Multiply<U,V,W>::apply(A[qp],B[n_comp][qp],C[n_comp][qp]);
 	 	}
 	 std::cout<<"qp * fqp C=="<<C<<std::endl;
 	};
@@ -787,7 +780,7 @@ class Multiply< FQPValues<U,NQPoints,NComponents>,
 	 for(Integer qp=0;qp<NQPoints;qp++)
 	 	for(Integer n_comp=0;n_comp<NComponents;n_comp++)
 	 	{
-	 		Multiply2<U,V,W>::apply(A[qp],B[n_comp][qp],C[n_comp][qp]);
+	 		Multiply<U,V,W>::apply(A[qp],B[n_comp][qp],C[n_comp][qp]);
 	 	}
 	};
 
@@ -1129,7 +1122,9 @@ class Evaluation< Addition2< Expression2<DerivedLeft> , Expression2<DerivedRight
  public:
  using Left= typename Evaluation< DerivedLeft >::type;
  using Right=typename Evaluation< DerivedRight >::type;
- using type= typename OperatorType< Addition< typename Left::type, typename Right::type > >::type; // SBBAGLIATO, il prodotto
+ using type= typename OperatorType< Addition<  Left, Right > >::type; // SBBAGLIATO, il prodotto
+
+ // typename OperatorType< Addition< typename Left::type, typename Right::type > >::type; // SBBAGLIATO, il prodotto
 
  Evaluation(const Addition2< Expression2<DerivedLeft> , Expression2<DerivedRight> >& expr):
  eval_left_(expr.left()),
@@ -1165,7 +1160,8 @@ class Evaluation< Subtraction2< Expression2<DerivedLeft> , Expression2<DerivedRi
  public:
  using Left= typename Evaluation< DerivedLeft >::type;
  using Right=typename Evaluation< DerivedRight >::type;
- using type= typename OperatorType< Subtraction< typename Left::type, typename Right::type > >::type; // SBBAGLIATO, il prodotto
+ using type= typename OperatorType< Subtraction<  Left, Right > >::type;
+ // typename OperatorType< Subtraction< typename Left::type, typename Right::type > >::type; // SBBAGLIATO, il prodotto
 
  Evaluation(const Subtraction2< Expression2<DerivedLeft> , Expression2<DerivedRight> >& expr):
  eval_left_(expr.left()),
@@ -1200,7 +1196,8 @@ class Evaluation< Multiply2< Expression2<DerivedLeft> , Expression2<DerivedRight
  public:
  using Left= typename Evaluation< DerivedLeft >::type;
  using Right=typename Evaluation< DerivedRight >::type;
- using type= typename OperatorType< Multiply< typename Left::type, typename Right::type > >::type; // SBBAGLIATO, il prodotto
+ using type= typename OperatorType< Multiply<  Left, Right > >::type;
+ // typename OperatorType< Multiply< typename Left::type, typename Right::type > >::type; // SBBAGLIATO, il prodotto
 
  Evaluation(const Multiply2< Expression2<DerivedLeft> , Expression2<DerivedRight> >& expr):
  eval_left_(expr.left()),
@@ -1237,7 +1234,8 @@ class Evaluation< Multiply2< Expression2<DerivedLeft> , Real > >
  public:
  using Left= typename Evaluation< DerivedLeft >::type;
  using Right=Real;
- using type= typename OperatorType< Multiply< typename Left::type, Real> >::type; // SBBAGLIATO, il prodotto
+ using type= typename OperatorType< Multiply<  Left, Right > >::type;
+ // typename OperatorType< Multiply< typename Left::type, Real> >::type; // SBBAGLIATO, il prodotto
 
  Evaluation(const Multiply2< Expression2<DerivedLeft> , Real >& expr):
  eval_left_(expr.left()),
@@ -1270,7 +1268,8 @@ class Evaluation< Multiply2< Real, Expression2<DerivedRight> > >
  public:
  using Left= Real;
  using Right=typename Evaluation< DerivedRight >::type;
- using type= typename OperatorType< Multiply< Real, typename Right::type> >::type; 
+ using type= typename OperatorType< Multiply<  Left, Right > >::type;
+ // typename OperatorType< Multiply< Real, typename Right::type> >::type; 
 
  Evaluation(const Multiply2< Real, Expression2<DerivedRight> >& expr):
  left_(expr.left()),
@@ -1302,7 +1301,8 @@ class Evaluation< Divide2< Expression2<DerivedLeft> , Real > >
  public:
  using Left= typename Evaluation< DerivedLeft >::type;
  using Right=Real;
- using type= typename OperatorType< Divide< typename Left::type, Real> >::type; // SBBAGLIATO, il prodotto
+ using type= typename OperatorType< Divide<  Left, Right > >::type;
+ // typename OperatorType< Divide< typename Left::type, Real> >::type; // SBBAGLIATO, il prodotto
 
  Evaluation(const Divide2< Expression2<DerivedLeft> , Real >& expr):
  eval_left_(expr.left()),
@@ -1371,7 +1371,78 @@ class Evaluation<Expression2QPValues<T,NQPoints> >
 
 
 
+template<typename T,Integer NQPoints, Integer NComponents>
+class Expression2FQPValues: 
+public Expression2< Expression2FQPValues<T,NQPoints,NComponents > >
+{
+public:
+        using type=FQPValues<T,NQPoints,NComponents>;
+        Expression2FQPValues(){};
 
+        Expression2FQPValues(const type& value):value_(value){};
+
+        type& operator()(){return value_;};
+        const type& operator()()const{return value_;};
+protected:
+    type value_;
+
+};
+
+template<typename T,Integer NQPoints, Integer NComponents>
+class Evaluation<Expression2FQPValues<T,NQPoints,NComponents> >
+{
+ public:
+ using type=FQPValues<T,NQPoints,NComponents>;
+
+ Evaluation(const Expression2FQPValues<T,NQPoints,NComponents>&expr):
+ value_(expr.derived()()){};
+ template<typename...Parameters>
+ inline type& apply(const Parameters&...parameters)
+ {
+   return value_;
+ };
+ private:
+ 	type value_;
+};
+
+
+
+
+template<typename T,Integer Rows,Integer Cols>
+class Expression2MatrixVar: 
+public Expression2< Expression2MatrixVar<T,Rows,Cols> >
+{
+public:
+        using type=Matrix<T,Rows,Cols>;
+        Expression2MatrixVar(){};
+
+        type& operator()(){return value_;};
+        const type& operator()()const{return value_;};
+protected:
+    type value_;
+
+};
+
+template<typename T,Integer Rows,Integer Cols>
+class Evaluation<Expression2MatrixVar<T,Rows,Cols> >
+{
+ public:
+ using type=Matrix<T,Rows,Cols>;
+
+ Evaluation(const Expression2MatrixVar<T,Rows,Cols>&expr):
+ value_(expr.derived()()){};
+ template<typename QP>
+ inline type& apply(const QP&qp_points)
+ {
+
+   for(Integer ii=0;ii<Rows;ii++)	
+   	  for(Integer jj=0;jj<Cols;jj++)
+   	      value_(ii,jj)	= qp_points(ii,jj);
+   return value_;
+ };
+ private:
+ 	type value_;
+};
 
 
 

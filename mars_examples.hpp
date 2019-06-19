@@ -80,6 +80,104 @@ void cents_example()
 
     IdentityOperator identity;
 
+    using FSspace= FunctionSpace< MeshT, Lagrange2<1>,RT0<1>>;
+    FSspace FEspace(mesh);
+    using FSspace2= FunctionSpace< MeshT, Lagrange2<1>,RT0<2>>;
+    FSspace2 FEspace2(mesh);
+
+
+ using fespace1= ElemFunctionSpace<Simplex<2,2>, Lagrange1<1>>;
+ using fespace2= ElemFunctionSpace<Simplex<2,2>, Lagrange2<2>>;
+ using fespace3= ElemFunctionSpace<Simplex<2,2>, RT0<1>>;
+ std::cout<<"fespace"<<fespace2::FEFamily<<std::endl;
+ std::cout<<"fespace"<<fespace2::Order<<std::endl;
+ BilinearFormIntegrator<4,FSspace,FSspace,GradientOperator,IdentityOperator>(FEspace,FEspace);
+
+// std::shared_ptr<CollectorFunctionSpace> collfes=std::make_shared<CollectorFunctionSpace>(FEspace,FEspace);
+// auto e1=collfes->get(0);
+// const auto dm1=e1->dofmap();
+const auto ee=FEspace.dofmap();
+
+
+
+auto W=MixedFunctionSpace(FEspace,FEspace2);
+auto W1=MixedFunctionSpace(W,FEspace,FEspace2);
+
+std::cout<<FEspace.n_dofs()<<std::endl;
+std::cout<<FEspace2.n_dofs()<<std::endl;
+std::cout<<W.n_dofs()<<std::endl;
+std::cout<<W1.n_dofs()<<std::endl;
+
+auto& dmW =W.dofmap();
+auto& dmW0 =std::get<0>(dmW);
+auto& dmW01=std::get<1>(dmW);
+
+auto& fe2map=FEspace2.dofmap();
+
+auto& dm =W1.dofmap();
+auto& dm0=std::get<0>(dm);
+auto& dm01=std::get<0>(dm0);
+auto& dm02=std::get<1>(dm0);
+auto& dm1=std::get<1>(dm);
+auto& dm2=std::get<2>(dm);
+
+std::cout<<"dmW0"<<std::endl;
+for(Integer ii=0;ii<dmW0.size();ii++)
+{
+   for(Integer jj=0;jj<dmW0[ii].size();jj++)
+      std::cout<<dmW0[ii][jj]<<" ";
+    std::cout<<std::endl;
+}
+
+std::cout<<"fe2map"<<std::endl;
+for(Integer ii=0;ii<fe2map.size();ii++)
+{
+   for(Integer jj=0;jj<fe2map[ii].size();jj++)
+      std::cout<<fe2map[ii][jj]<<" ";
+    std::cout<<std::endl;
+}
+
+std::cout<<"dmW01"<<std::endl;
+for(Integer ii=0;ii<dmW01.size();ii++)
+{
+   for(Integer jj=0;jj<dmW01[ii].size();jj++)
+      std::cout<<dmW01[ii][jj]<<" ";
+    std::cout<<std::endl;
+}
+
+
+std::cout<<"dm01"<<std::endl;
+for(Integer ii=0;ii<dm01.size();ii++)
+{
+   for(Integer jj=0;jj<dm01[ii].size();jj++)
+      std::cout<<dm01[ii][jj]<<" ";
+    std::cout<<std::endl;
+}
+std::cout<<"dm02"<<std::endl;
+
+for(Integer ii=0;ii<dm02.size();ii++)
+{
+   for(Integer jj=0;jj<dm02[ii].size();jj++)
+      std::cout<<dm02[ii][jj]<<" ";
+    std::cout<<std::endl;
+}
+std::cout<<"dm1"<<std::endl;
+
+for(Integer ii=0;ii<dm1.size();ii++)
+{
+   for(Integer jj=0;jj<dm1[ii].size();jj++)
+      std::cout<<dm1[ii][jj]<<" ";
+    std::cout<<std::endl;
+}
+std::cout<<"dm2"<<std::endl;
+for(Integer ii=0;ii<dm2.size();ii++)
+{
+   for(Integer jj=0;jj<dm2[ii].size();jj++)
+      std::cout<<dm2[ii][jj]<<" ";
+    std::cout<<std::endl;
+}
+auto TestW= Test(W);
+
 };
 
 
@@ -132,6 +230,7 @@ void functionspaces_example2D()
     using FSspace= FunctionSpace< MeshT, Lagrange2<1>,RT0<1>>;
     FSspace FEspace(mesh);
 
+   FEspace.set_new_start(4);
    std::cout<<"n_dofs="<<FEspace.n_dofs()<< std::endl;
     std::cout<<std::endl;
     for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
@@ -143,6 +242,32 @@ void functionspaces_example2D()
         std::cout<<FEspace.dofmap(elem_id)[nn]<< "  ";
      }
     } 
+
+   std::cout<<"n_dofs="<<FEspace.n_dofs()<< std::endl;
+    std::cout<<std::endl;
+    for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
+    {
+     auto &elem_id=elem_iter;
+     std::cout<<std::endl<<" elem =="<<elem_iter<<std::endl;
+     for(Integer nn=0;nn<FEspace.dofmap(elem_id).size();nn++)
+     {
+        std::cout<<FEspace.dofmap(elem_id)[nn]<< "  ";
+     }
+    } 
+
+    std::cout<<"dofmap_new_start n_dofs="<<FEspace.n_dofs()<< std::endl;
+    std::cout<<std::endl;
+    for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
+    {
+     auto &elem_id=elem_iter;
+     std::cout<<std::endl<<" elem =="<<elem_iter<<std::endl;
+     for(Integer nn=0;nn<FEspace.dofmap_new_start(elem_id).size();nn++)
+     {
+        std::cout<<FEspace.dofmap_new_start(elem_id)[nn]<< "  ";
+     }
+    } 
+
+
 std::cout<<std::endl;
 for(Integer ss=0;ss<FEspace.n_subspaces();ss++)
        std::cout<<"components of space["<<ss<<"]=="<<FEspace.components(ss)<<std::endl;
@@ -159,16 +284,26 @@ for(Integer ss=0;ss<FEspace.n_subspaces();ss++)
    }
    std::cout<<std::endl;
 
+   std::cout<<"dofs of space ="<<ss<<std::endl;
+   for(Integer cc=0;cc<FEspace.components(ss);cc++)
+    {std::cout<<"component ="<<cc<<"   "<<std::endl;
+      auto& vec=FEspace.space_dofs_new_start(ss,cc);
+      for(Integer mm=0;mm<FEspace.n_dofs(ss,cc);mm++)
+          std::cout<<vec[mm]<<" ";
+   }
+   std::cout<<std::endl;
+
 }
  
 
     for(Integer mm=0;mm<FEspace.offset().size();mm++)
      {
-      std::cout<<"offset space="<<mm<<std::endl;
+      std::cout<<"OFFSET space ="<<mm<<std::endl;
       for(Integer nn=0;nn<FEspace.offset()[mm].size();nn++)
          {
             std::cout<< FEspace.offset()[mm][nn]<<" ";
          }
+       std::cout<<std::endl;
      }
      std::cout<<std::endl;
 
@@ -181,12 +316,6 @@ for(Integer ss=0;ss<FEspace.n_subspaces();ss++)
         std::cout<<spaceinf[mm][nn]<<" ";
       std::cout<<std::endl;
      }
- using fespace1= ElemFunctionSpace<Simplex<2,2>, Lagrange1<1>>;
- using fespace2= ElemFunctionSpace<Simplex<2,2>, Lagrange2<2>>;
- using fespace3= ElemFunctionSpace<Simplex<2,2>, RT0<1>>;
- std::cout<<"fespace"<<fespace2::FEFamily<<std::endl;
- std::cout<<"fespace"<<fespace2::Order<<std::endl;
- BilinearFormIntegrator<4,FSspace,FSspace,GradientOperator,IdentityOperator>(FEspace,FEspace);
 
  }
 

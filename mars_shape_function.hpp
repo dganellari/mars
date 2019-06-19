@@ -946,6 +946,242 @@ public:
 
 
 
+template<typename Operator, typename QuadratureRule, Integer Ndofs, Integer Dim, Integer ManifoldDim, 
+         Integer ShapeFunctionDim1=1, Integer ShapeFunctionDim2=1, Integer NComponents=1>
+class BaseShapeFunctionOperator;
+
+
+
+
+
+template<typename QuadratureRule, Integer Ndofs, Integer Dim, Integer ManifoldDim, 
+         Integer ShapeFunctionDim1, Integer ShapeFunctionDim2, Integer NComponents>
+class BaseShapeFunctionOperator<IdentityOperator, QuadratureRule, Ndofs, Dim, ManifoldDim, 
+                                ShapeFunctionDim1, ShapeFunctionDim2, NComponents>
+
+{ 
+  public:
+  static constexpr Integer NQPoints=QuadratureRule::NQPoints;
+  static constexpr Integer Ntot = Ndofs * NComponents ;
+  using FuncType   = Matrix<Real, ShapeFunctionDim1, ShapeFunctionDim2>;
+  using TotFuncType= Matrix<Real, ShapeFunctionDim1 * NComponents, ShapeFunctionDim2>;
+  using FunctionType= FQPValues<TotFuncType,NQPoints,Ntot>;
+  using type= FunctionType;
+
+
+  using Point = Vector<Real,Dim>;
+  using QP = Matrix<Real,NQPoints,Dim>;
+  
+
+  virtual ~BaseShapeFunctionOperator(){};
+  
+  virtual void
+  value(const IdentityOperator& o,  const Point& point,    Vector<FuncType,Ndofs>& func_ )   =0;
+
+  FQPValues<FuncType,NQPoints,Ndofs>& reference(const IdentityOperator&o){return reference_func_values_;}
+  FunctionType & function(const IdentityOperator&o){return func_values_;}
+
+
+  void operator()(const QP & qp_points,const IdentityOperator&o)
+  {
+   for(Integer qp=0;qp<NQPoints;qp++)
+    {
+    qp_points.get_row(qp,qp_point_);
+    value(o,qp_point_,func_);
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+        reference_func_values_[n_dof][qp]=func_[n_dof];     
+     }
+    }
+  };
+
+
+  template<typename Mapping>
+  void operator()(const IdentityOperator&o,
+                  const Mapping& mapping, 
+                  const Vector<Real,Ndofs> &alpha=1.0)
+  {
+  Integer n_tot,n1;
+  for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+      {
+
+          n_tot=n_dof * NComponents +  n_comp ;
+          n1=n_comp*ShapeFunctionDim1;
+          for(Integer qp=0;qp<NQPoints;qp++)
+          {             
+            func_values_[n_tot][qp].zero();
+            func_tmp_=alpha[n_dof] * mapping * reference_func_values_[n_dof][qp];
+            assign(func_values_[n_tot][qp],func_tmp_,n1,0);
+          }
+                 
+      }
+     }
+  };
+
+
+  BaseShapeFunctionOperator(){};
+
+  private: 
+  Vector<FuncType,Ndofs> func_;
+  Point qp_point_;
+
+  FQPValues<FuncType,NQPoints,Ndofs> reference_func_values_;
+
+  FunctionType func_values_;
+  FuncType func_tmp_;
+  Contraction contract;
+
+};
+
+
+
+
+
+
+
+
+
+
+template<typename QuadratureRule, Integer Ndofs, Integer Dim, Integer ManifoldDim, 
+         Integer ShapeFunctionDim1, Integer ShapeFunctionDim2, Integer NComponents>
+class BaseShapeFunctionOperator<GradientOperator, QuadratureRule, Ndofs, Dim, ManifoldDim, 
+                                ShapeFunctionDim1, ShapeFunctionDim2, NComponents>
+{ 
+  public:
+  static constexpr Integer NQPoints=QuadratureRule::NQPoints;
+  static constexpr Integer Ntot = Ndofs * NComponents ;
+  using GradType   = Matrix<Real, ShapeFunctionDim1 , ShapeFunctionDim2 * Dim >;
+  using TotGradType= Matrix<Real, ShapeFunctionDim1 * NComponents, ShapeFunctionDim2 * Dim >;
+  using GradientType= FQPValues<TotGradType,NQPoints,Ntot>;
+  using type= GradientType;
+
+  using Point = Vector<Real,Dim>;
+  using QP = Matrix<Real,NQPoints,Dim>;
+  
+
+  virtual ~BaseShapeFunctionOperator(){};
+ 
+  virtual void
+  value(const GradientOperator&o,   const Point& point,    Vector<GradType,Ndofs>& func_grad_)=0;
+
+ 
+  FQPValues<GradType,NQPoints,Ndofs>& reference(const GradientOperator&o){return reference_grad_values_;}
+  GradientType& function(const GradientOperator&o){return grad_values_;}
+
+
+  void operator()(const QP & qp_points,const GradientOperator& o)
+  {
+
+   for(Integer qp=0;qp<NQPoints;qp++)
+    {
+    qp_points.get_row(qp,qp_point_);
+    value(o,qp_point_,grad_);
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      reference_grad_values_[n_dof][qp]=grad_[n_dof];           
+     }
+    }
+  };
+
+  template<typename Mapping>
+  void operator()(const GradientOperator& o,
+                  const Mapping& mapping, 
+                  const Vector<Real,Ndofs> &alpha=1.0)
+  {
+    Integer n_tot,n1;
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+      {
+        n_tot=n_dof * NComponents +  n_comp ;
+        n1=n_comp * ShapeFunctionDim1;
+        for(Integer qp=0;qp<NQPoints;qp++)
+        {
+          grad_values_[n_tot][qp].zero();  
+          grad_tmp_=alpha[n_dof]*contract(mapping, reference_grad_values_[n_dof][qp]);
+          assign(grad_values_[n_tot][qp],grad_tmp_,n1,0);    
+        }
+      }
+     }
+  };
+
+  BaseShapeFunctionOperator(){};
+
+  private: 
+  Vector<GradType,Ndofs> grad_;
+  Point qp_point_;
+
+  FQPValues<GradType,NQPoints,Ndofs> reference_grad_values_;
+
+  GradientType grad_values_;
+  GradType grad_tmp_;
+  Contraction contract;
+
+};
+
+
+
+
+
+
+
+
+
+
+
+template<typename QuadratureRule, typename Elem,typename BaseFunctionSpace>
+class ShapeFunctionOperator;
+
+
+
+template<typename QuadratureRule, Integer NComponents>
+class ShapeFunctionOperator<QuadratureRule,Simplex<2,2>, Lagrange1<NComponents> > : 
+public BaseShapeFunctionOperator<IdentityOperator, QuadratureRule,3,2,2,1,1,NComponents>,
+public BaseShapeFunctionOperator<GradientOperator, QuadratureRule,3,2,2,1,1,NComponents>
+{
+public:
+  static constexpr Integer Ndofs=3;
+  static constexpr Integer Dim=2;
+  static constexpr Integer ManifoldDim=2;
+  static constexpr Integer ShapeFunctionDim1=1;
+  static constexpr Integer ShapeFunctionDim2=1;
+  static constexpr Integer Ntot = Ndofs * NComponents ;
+  static constexpr Integer NQPoints=QuadratureRule::NQPoints;
+  using FuncType   = Matrix<Real, ShapeFunctionDim1, ShapeFunctionDim2>;
+  using GradType   = Matrix<Real, ShapeFunctionDim1, ShapeFunctionDim2 * Dim>;
+  using DivType = Real;
+  using Point = Vector<Real,Dim>;
+  using QP = Matrix<Real,NQPoints,Dim>;
+
+  ShapeFunctionOperator(){};
+  ShapeFunctionOperator(const QP & qp_points){(*this)(qp_points);};
+
+ virtual void value(const IdentityOperator& o, const Point& point, Vector<FuncType,Ndofs>& func )
+       {func[0](0,0)=point[0];
+        func[1](0,0)=point[1];
+        func[2](0,0)=1. - point[0] - point[1];};
+  ;
+
+  virtual void value(const GradientOperator&o, const Point& point, Vector<GradType,Ndofs>& func_grad)
+   {
+    func_grad[0](0,0)=-1;  func_grad[0](0,1)=-1; 
+    func_grad[1](0,0)=+1;  func_grad[1](0,1)= 0; 
+    func_grad[2](0,0)= 0;  func_grad[2](0,1)=+1; 
+  } 
+};
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1705,23 +1941,19 @@ MatrixLoop //(Operator operators_trial,TupleShapeFunction tupleshape, QPPoints q
 
 
 
-
-
 class Mother{
 public:
   virtual~Mother(){};
-  virtual std::shared_ptr<Mother> operator[](const Integer i)=0;
+  virtual std::shared_ptr<Mother> get(const Integer i)=0;
   virtual void print()=0;
 };
 
 class Son1: public Mother
 {
 public:
-   Son1(const Integer& i): value(i){};
+  Son1(const Integer& i): value(i){}
   virtual void print(){std::cout<<value<<std::endl;}
-  virtual std::shared_ptr<Mother> operator[](const Integer i)
-  {assert(i==0 && "kids have only 1 component");
-    return NULL;};
+  virtual std::shared_ptr<Mother> get(const Integer i){return std::make_shared<Son1>(*this);}
 private:
   Integer  value;
 };
@@ -1734,7 +1966,7 @@ class Son2: public Mother
   virtual void print(){for(Integer ii=0;ii< children.size();ii++)
                         children[ii]->print();}
 
-  virtual std::shared_ptr<Mother> operator[](const Integer i){return children[i];};
+  virtual std::shared_ptr<Mother> get(const Integer i){ return children[i];};
 
      void add(const std::shared_ptr<Mother>& kid)
     {
@@ -1742,11 +1974,174 @@ class Son2: public Mother
     } 
 
 private:
-  std::vector <std::shared_ptr< Mother > > children;
+  std::vector<std::shared_ptr<Mother>> children;
 };
 
 
 
+template<typename...Args>
+class Tuple
+{
+  public:
+
+  template<Integer N>
+  using type=typename std::tuple_element<N, std::tuple<Args...> >::type ;
+
+
+  Tuple(const Args&...args): tuple_(std::make_tuple(args...)){}
+
+  template<Integer N>
+  const type<N>& 
+  get() const {static_assert(N>=0,"Mars Tuple has only non negative components");
+        static_assert(N<sizeof...(Args),"Mars Tuple exceeds maximum dimension");
+        return std::get<N>(tuple_);}
+
+  template<Integer N>
+  type<N>& 
+  get(){static_assert(N>=0,"Mars Tuple has only non negative components");
+        static_assert(N<sizeof...(Args),"Mars Tuple exceeds maximum dimension");
+        return std::get<N>(tuple_);}
+
+
+
+
+template<Integer N,Integer...M>
+class GetType
+{ public:
+  using type = typename type<N>:: template GetType<M...>::type;};
+
+
+template<Integer N>
+class GetType<N>
+{ public: 
+   using type =type<N>;};
+
+  protected:
+     std::tuple<Args...> tuple_;
+};
+
+
+
+
+
+template<typename...Args>
+Tuple<Args...> TupleOf(const Args&...args){return Tuple<Args...>(args...);};
+
+
+
+
+
+template<typename...Args>
+class MixedSpace
+{
+public:
+using type_dofmap=std::tuple<typename Args::type_dofmap...>;
+
+inline const Integer& n_dofs()const{return n_dofs_;}; 
+
+inline const type_dofmap& dofmap()const{return dofmap_;};
+
+template<typename OtherArg,typename...OtherArgs>
+class tot_subspaces
+{ public: static constexpr Integer value= OtherArg::Nsubspaces+tot_subspaces<OtherArgs...>::value;};
+
+template<typename OtherArg>
+class tot_subspaces<OtherArg>
+{ public:  static constexpr Integer value= OtherArg::Nsubspaces;};
+
+
+template<Integer N>
+typename std::enable_if< 0==N, Integer >::type
+tot_n_dofs()
+{ const auto& tmp=std::get<N>(spaces_);
+  return tmp->n_dofs();}
+
+
+template<Integer N>
+typename std::enable_if< 0<N, Integer >::type
+tot_n_dofs()
+{ 
+static_assert(N>0, " tuple cannot have negative components");
+const auto& tmp=std::get<N>(spaces_);
+return tmp->n_dofs()+tot_n_dofs<N-1>();}
+
+
+
+template<typename OtherArg,typename...OtherArgs>
+struct tuple_type
+{
+      using rest = typename tuple_type<OtherArgs...>::type; 
+      using tuple_ens=std::tuple<OtherArg>;
+      using type = decltype( std::tuple_cat( std::declval< tuple_ens >(), std::declval< rest >() ) );
+};
+
+
+template<typename OtherArg>
+struct tuple_type<OtherArg>
+{
+     using type = typename std::tuple<OtherArg>;
+};
+
+
+template<Integer N,typename OtherArg, typename...OtherArgs>
+typename std::enable_if< 0==sizeof...(OtherArgs),typename tuple_type<OtherArg,OtherArgs...>::type >::type  
+tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
+{ std::cout<<"N=="<<N<<". "<<tot_n_dofs<N-1>()<<std::endl;
+  return std::tuple<OtherArg>(add_costant(otherarg,tot_n_dofs<N-1>()));}
+
+
+template<Integer N,typename OtherArg, typename...OtherArgs>
+typename std::enable_if< 0<N && 0<sizeof...(OtherArgs),typename tuple_type<OtherArg,OtherArgs...>::type >::type  
+tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
+{std::cout<<"N=="<<N<<". "<<tot_n_dofs<N-1>()<<std::endl;
+  return std::tuple_cat(std::tuple<OtherArg>( add_costant(otherarg,tot_n_dofs<N-1>()) ),
+                       tuple_make<N+1,OtherArgs...>(otherargs...));}
+
+template<Integer N,typename OtherArg, typename...OtherArgs>
+typename std::enable_if< 0==N && 0<sizeof...(OtherArgs),typename tuple_type<OtherArg,OtherArgs...>::type >::type  
+tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
+{std::cout<<"N=="<<N<<". "<<0<<std::endl;
+  return std::tuple_cat(std::tuple<OtherArg>( otherarg ),
+                       tuple_make<N+1,OtherArgs...>(otherargs...));}
+
+MixedSpace(const Args&...args):
+spaces_(std::make_tuple(std::make_shared<Args>(args)...)),
+n_dofs_(tot_n_dofs<sizeof...(Args)-1>()),
+dofmap_(tuple_make<0,typename Args::type_dofmap...>(args.dofmap()...))
+{}
+
+static constexpr Integer Nsubspaces=tot_subspaces<Args...>::value;
+private:
+      std::tuple<std::shared_ptr<Args>...> spaces_;
+      Integer n_dofs_;
+      type_dofmap dofmap_;
+      // std::array<std::vector<Integer>, Nsubspaces> offset_;
+      // std::array<std::vector<std::vector<Integer>>, Nsubspaces> space_dofs_;
+      // std::array<std::array<Integer,4>,Nsubspaces> space_infos_;
+
+
+};
+
+template<typename...Args>
+MixedSpace<Args...> MixedFunctionSpace(const Args&...args){return MixedSpace<Args...>(args...);};
+
+
+
+template<typename...Args>
+class TestSpace
+{
+public:
+ TestSpace(const MixedSpace<Args...>& spaces):
+ spaces_(spaces)
+ {}
+
+ private:
+   MixedSpace<Args...> spaces_;
+};
+
+
+template<typename...Args>
+TestSpace<Args...> Test(const MixedSpace<Args...>& spaces){return TestSpace<Args...>(spaces);};
 
 
 
@@ -1758,37 +2153,12 @@ void BilinearFormIntegrator(const TrialFunction& trialspace,const TestFunction& 
 
 
 
-std::shared_ptr<Son1> son1=std::make_shared<Son1>(1);
-std::shared_ptr<Son1> son2=std::make_shared<Son1>(2);
-std::shared_ptr<Son1> son3=std::make_shared<Son1>(3);
-
-std::shared_ptr<Son1> daughter1=std::make_shared<Son1>(4);
-std::shared_ptr<Son1> daughter2=std::make_shared<Son1>(5);
 
 
-std::shared_ptr<Son2> mom=std::make_shared<Son2>();
-std::shared_ptr<Son2> uncle1=std::make_shared<Son2>();
-std::shared_ptr<Son2> uncle2=std::make_shared<Son2>();
-std::shared_ptr<Son2> grandma=std::make_shared<Son2>();
 
-son1->print();
-son2->print();
-son3->print();
-std::cout<<"mom"<<std::endl;
-mom->add(son1);
-mom->add(son2);
-std::cout<<"uncle1"<<std::endl;
 
-uncle1->add(daughter1);
-uncle1->add(daughter2);
-std::cout<<"grandma"<<std::endl;
 
-grandma->add(mom);
-grandma->add(uncle1);
 
-auto mom1=grandma->operator[](0);
-auto kid1=mom1->operator[](0);
-kid1->print();
 using Elem=typename TrialFunction::Elem;
 constexpr Integer Dim=Elem::Dim;
 constexpr Integer ManifoldDim=Elem::ManifoldDim;  
@@ -2151,12 +2521,14 @@ TTT ttt2=2;
 SSS sss=3;
 Tvec tvec1=4;
 Tvec tvec2=5;
+Vector<TTT,2> initvec0=ttt;
 Vector<TTT,6> initvec=ttt;
 Vector<TTT,6> initvec2=ttt2;
 
 Vector<Tvec,2> init1=tvec1;
 Vector<Tvec,2> init2=tvec2;
 
+Vector<Vector<TTT,2>,3> initvecvec0=initvec0;
 Vector<Vector<TTT,6>,3> initvecvec=initvec;
 Vector<Vector<TTT,6>,3> initvecvec2=initvec2;
 
@@ -2168,9 +2540,11 @@ FQPValues<Tvec,2,3> fqpvalue1(init_vec);
 FQPValues<Tvec,2,3> fqpvalue2(init_vec2);
 
 
+FQPValues<TTT,2,3> fqpval0(initvecvec0);
 FQPValues<TTT,6,3> fqpval(initvecvec);
 FQPValues<TTT,6,3> fqpval2(initvecvec2);
 QPValues<SSS,6> qpval(sss);
+QPValues<SSS,2> qpval0(sss);
 
 std::cout<<"fqpval()"<<std::endl;
 std::cout<<fqpval()<<std::endl;
@@ -2189,7 +2563,6 @@ std::cout<<result()<<std::endl;
 // std::cout<<result2()<<std::endl;
 
 
-grandma->print();
 
 
     MapFromReference4<Elem,Lagrange1<1>> map3;
@@ -2333,24 +2706,97 @@ Expression2Matrix<Real,2,2> exprmat0(matrix0);
 Expression2Matrix<Real,2,3> exprmat1(matrix1);
 Expression2Matrix<Real,3,2> exprmat2(matrix2);
 Expression2Matrix<Real,2,2> exprmat3(matrix3);
-auto exprmat=  -exprmat3;//*2-exprmat0*exprmat1*exprmat2 ;// * exprmat1 * exprmat0+(exprmat0-exprmat1)*exprmat0;
+auto exprmat=  -2*exprmat0*exprmat1*exprmat2 ;// * exprmat1 * exprmat0+(exprmat0-exprmat1)*exprmat0;
 std::cout<<exprmat0()<<std::endl;
 
 Evaluation<decltype(exprmat)> eval(exprmat);
 Matrix<Real,2,2> res =eval.apply();
 std::cout<<res<<std::endl;
 
-Expression2QPValues<SSS,6> qp1(qpval);
+Expression2QPValues<SSS,2> qp1(qpval0);
+Expression2FQPValues<TTT,2,3> fqp1(fqpval0);
 
-auto exprqp=-qp1+2*(qp1+qp1)*qp1/0.5;
+auto exprqp=(-qp1+2*qp1)*qp1+2.*qp1/0.5;
 Evaluation<decltype(exprqp)> evalqp(exprqp);
 auto resqp =evalqp.apply();
 std::cout<<resqp<<std::endl;
 
+auto exprfqp=qp1*(-fqp1+2.*fqp1)+2.*fqp1/0.5;
+Evaluation<decltype(exprfqp)> evalfqp(exprfqp);
+auto resfqp =evalfqp.apply();
+std::cout<<resfqp<<std::endl;
 
- // auto matrix_mult=Add(matrix3,Mult(matrix1,matrix2));
- // matrix_mult.eval(matrix4);
- // std::cout<<"matrix result"<<matrix4<<std::endl;
+
+Expression2MatrixVar<Real,2,2> exprmatvar0;
+Expression2MatrixVar<Real,3,2> exprmatvar1;
+auto exprvar= - exprmatvar1 * exprmatvar0;
+
+Evaluation<decltype(exprmatvar1)> evalvar0(exprmatvar1);
+Evaluation<decltype(exprmatvar0)> evalvar1(exprmatvar0);
+Evaluation<decltype(exprvar)> evalvar(exprvar);
+
+auto resvar0 =evalvar0.apply(qp_points);
+auto resvar1 =evalvar1.apply(qp_points);
+auto resvar =evalvar.apply(qp_points);
+std::cout<<resvar0<<std::endl;
+std::cout<<resvar1<<std::endl;
+std::cout<<resvar<<std::endl;
+
+
+ShapeFunctionOperator<GaussPoints<Elem,QPOrder>, Elem, Lagrange1<4>> lagrangesf;
+lagrangesf(qp_points,Operator::id());
+lagrangesf(qp_points,Operator::grad());
+
+
+
+
+
+
+std::shared_ptr<Son1> son1=std::make_shared<Son1>(1);
+std::shared_ptr<Son1> son2=std::make_shared<Son1>(2);
+std::shared_ptr<Son1> son3=std::make_shared<Son1>(3);
+
+std::shared_ptr<Son1> daughter1=std::make_shared<Son1>(4);
+std::shared_ptr<Son1> daughter2=std::make_shared<Son1>(5);
+
+
+std::shared_ptr<Son2> mom=std::make_shared<Son2>();
+std::shared_ptr<Son2> uncle1=std::make_shared<Son2>();
+std::shared_ptr<Son2> uncle2=std::make_shared<Son2>();
+std::shared_ptr<Son2> grandma=std::make_shared<Son2>();
+
+son1->print();
+son2->print();
+son3->print();
+mom->add(son1);
+mom->add(son2);
+
+uncle1->add(daughter1);
+uncle1->add(daughter2);
+
+grandma->add(mom);
+grandma->add(uncle1);
+
+
+auto mom1=grandma->get(0);
+auto kid1=grandma->get(1)->get(1);
+
+std::cout<<"grandma"<<std::endl;
+grandma->print();
+std::cout<<"kid1"<<std::endl;
+kid1->print();
+
+
+Tuple<int, double> tuple_try(1,0.4);
+const auto tuple_try2=TupleOf(1,tuple_try);
+std::cout<<tuple_try.get<0>()<<std::endl;
+std::cout<<tuple_try.get<1>()<<std::endl;
+std::cout<<tuple_try2.get<1>().get<1>()<<std::endl;
+typename decltype(tuple_try2)::type<1> a=tuple_try;
+
+decltype(tuple_try2)::GetType<1,1>::type gg=1;
+std::cout<<gg<<std::endl;
+
 };
 
 
