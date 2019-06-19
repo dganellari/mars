@@ -59,13 +59,13 @@ void remove_extra_nodes(Mesh<Dim, ManifoldDim, Point_>& mesh,
 
 }*/
 
-Integer index(const Integer xDim, const Integer yDim, const Integer i,
+inline Integer index(const Integer xDim, const Integer yDim, const Integer i,
 		const Integer j, const Integer k) {
 	//return k+ (2*zDim +1) * (j + i* (2*yDim + 1));
 	return i + (2 * xDim + 1) * (j + k * (2 * yDim + 1));
 }
 
-void add_side(std::vector<Integer>& side, const Integer a, const Integer b,
+inline void add_side(std::vector<Integer>& side, const Integer a, const Integer b,
 		const Integer index) {
 
 	if (a != 1 && b != 1) { //add only nodes which are not mid faces or mid edges
@@ -75,7 +75,7 @@ void add_side(std::vector<Integer>& side, const Integer a, const Integer b,
 	}
 }
 
-void build_hex27(std::array<Integer, hex_n_nodes>& nodes, const Integer xDim,
+inline void build_hex27(std::array<Integer, hex_n_nodes>& nodes, const Integer xDim,
 		const Integer yDim, const int i, const int j, const int k) {
 
 	nodes[0] = index(xDim, yDim, i, j, k);
@@ -326,11 +326,11 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 	}
 }
 
-bool generate_square(Mesh2& mesh, const Integer xDim, const Integer yDim) {
+inline bool generate_square(Mesh2& mesh, const Integer xDim, const Integer yDim) {
 	return generate_cube(mesh, xDim, yDim, 0);
 }
 
-bool generate_line(Mesh<1, 1>& mesh, const Integer xDim) {
+inline bool generate_line(Mesh<1, 1>& mesh, const Integer xDim) {
 	return generate_cube(mesh, xDim, 0, 0);
 }
 
@@ -340,7 +340,7 @@ bool generate_line(Mesh<1, 1>& mesh, const Integer xDim) {
 
 //different approach which works fine for the unit_cube and would have been faster
 //but unfortunately it does not generalize.
-Mesh3 generate_unit_cube() {
+inline Mesh3 generate_unit_cube() {
 
 	using namespace mars::generation::private_;
 
