@@ -82,7 +82,7 @@ void cents_example()
 
     using FSspace= FunctionSpace< MeshT, Lagrange2<1>,RT0<1>>;
     FSspace FEspace(mesh);
-    using FSspace2= FunctionSpace< MeshT, Lagrange2<1>,RT0<2>>;
+    using FSspace2= FunctionSpace< MeshT, Lagrange2<1>,RT0<1>>;
     FSspace2 FEspace2(mesh);
 
 
@@ -91,7 +91,7 @@ void cents_example()
  using fespace3= ElemFunctionSpace<Simplex<2,2>, RT0<1>>;
  std::cout<<"fespace"<<fespace2::FEFamily<<std::endl;
  std::cout<<"fespace"<<fespace2::Order<<std::endl;
- BilinearFormIntegrator<4,FSspace,FSspace,GradientOperator,IdentityOperator>(FEspace,FEspace);
+ // BilinearFormIntegrator<4,FSspace,FSspace,GradientOperator,IdentityOperator>(FEspace,FEspace);
 
 // std::shared_ptr<CollectorFunctionSpace> collfes=std::make_shared<CollectorFunctionSpace>(FEspace,FEspace);
 // auto e1=collfes->get(0);
@@ -204,6 +204,11 @@ void functionspaces_example2D()
     using Elem = typename MeshT::Elem; 
     read_mesh("../data/beam-tri.MFEM", mesh);
  
+
+
+     
+
+
     NodeToElem<Elem> node2elem3(mesh);
     auto node2elem=node2elem3.val();
 
@@ -215,46 +220,76 @@ void functionspaces_example2D()
       }
     ElemEntity<Elem,0> nodes(mesh,node2elem);
 
+    std::cout<<"node 2 elem size=="<<nodes.entity_2_elem().size()<<std::endl;
     std::cout<<"node 2 elem=="<<std::endl;
     for(Integer nn=0; nn<nodes.entity_2_elem().size();nn++)
          std::cout<<nodes.entity_2_elem(nn)[0]<<" ";
     std::cout<<std::endl;
     for(Integer nn=0; nn<nodes.elem_2_entity().size();nn++)
         {
-         std::cout<<"elem="<<nn<< std::endl;
+         std::cout<<"elem="<<nn<< " made of nodes "<< std::endl;
          for(Integer mm=0; mm<nodes.elem_2_entity(nn).size();mm++)
             std::cout<<nodes.elem_2_entity(nn)[mm]<<" ";
+         std::cout<< std::endl;
         } 
 
 
     using FSspace= FunctionSpace< MeshT, Lagrange2<1>,RT0<1>>;
     FSspace FEspace(mesh);
 
+
+   const auto& P2_ens0=ElemEntity<Elem,ElementFunctionSpace<Elem,LagrangeFE,2>::entity[0]>(mesh,node2elem);
+   const auto& P2_ens1=ElemEntity<Elem,ElementFunctionSpace<Elem,LagrangeFE,2>::entity[1]>(mesh,node2elem);
+
+   auto ens2elem20=P2_ens0.entity_2_elem();
+   auto ens2elem21=P2_ens1.entity_2_elem();
+
+   auto elem2ens20=P2_ens0.elem_2_entity();
+   auto elem2ens21=P2_ens1.elem_2_entity();
+
+   std::cout<<"ens2elem 2 0="<< std::endl;
+   for(Integer nn=0;nn<ens2elem20.size();nn++)
+    {
+        for(Integer mm=0;mm<ens2elem20[nn].size();mm++)
+        std::cout<<ens2elem20[nn][mm]<<" ";
+    std::cout<<std::endl;
+    } 
+   std::cout<<"ens2elem 2 1="<< std::endl;
+   for(Integer nn=0;nn<ens2elem21.size();nn++)
+    {
+        for(Integer mm=0;mm<ens2elem21[nn].size();mm++)
+        std::cout<<ens2elem21[nn][mm]<<" ";
+    std::cout<<std::endl;
+    } 
+   std::cout<<"elem2ens20 2 0="<< std::endl;
+   for(Integer nn=0;nn<elem2ens20.size();nn++)
+    {
+        for(Integer mm=0;mm<elem2ens20[nn].size();mm++)
+        std::cout<<elem2ens20[nn][mm]<<" ";
+    std::cout<<std::endl;
+    } 
+   std::cout<<"elem2ens21 2 1="<< std::endl;
+   for(Integer nn=0;nn<elem2ens21.size();nn++)
+    {
+        for(Integer mm=0;mm<elem2ens21[nn].size();mm++)
+        std::cout<<elem2ens21[nn][mm]<<" ";
+    std::cout<<std::endl;
+    } 
+   
+   std::cout<<"n_dofs="<<FEspace.n_dofs()<< std::endl;
+    std::cout<<std::endl;
+    for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
+    {
+     auto &elem_id=elem_iter;
+     std::cout<<std::endl<<" elem =="<<elem_iter<<std::endl;
+     for(Integer nn=0;nn<FEspace.dofmap(elem_id).size();nn++)
+     {
+        std::cout<<FEspace.dofmap(elem_id)[nn]<< "  ";
+     }
+    } 
+
+
    FEspace.set_new_start(4);
-   std::cout<<"n_dofs="<<FEspace.n_dofs()<< std::endl;
-    std::cout<<std::endl;
-    for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
-    {
-     auto &elem_id=elem_iter;
-     std::cout<<std::endl<<" elem =="<<elem_iter<<std::endl;
-     for(Integer nn=0;nn<FEspace.dofmap(elem_id).size();nn++)
-     {
-        std::cout<<FEspace.dofmap(elem_id)[nn]<< "  ";
-     }
-    } 
-
-   std::cout<<"n_dofs="<<FEspace.n_dofs()<< std::endl;
-    std::cout<<std::endl;
-    for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
-    {
-     auto &elem_id=elem_iter;
-     std::cout<<std::endl<<" elem =="<<elem_iter<<std::endl;
-     for(Integer nn=0;nn<FEspace.dofmap(elem_id).size();nn++)
-     {
-        std::cout<<FEspace.dofmap(elem_id)[nn]<< "  ";
-     }
-    } 
-
     std::cout<<"dofmap_new_start n_dofs="<<FEspace.n_dofs()<< std::endl;
     std::cout<<std::endl;
     for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)

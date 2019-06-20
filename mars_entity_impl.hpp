@@ -236,7 +236,8 @@ void ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>::init_elem_entity
            // loop on all the neighborhood elements
          for(Integer elem_iter2 = 0; elem_iter2 < el_neighs.size(); ++elem_iter2) 
             {   
-            const auto &el2 = mesh.elem(el_neighs[elem_iter2]);
+            const auto &el2_neigh=el_neighs[elem_iter2];
+            const auto &el2 = mesh.elem(el2_neigh);
             const auto &el_nodes2=el2.nodes;
         
             // loop on all the entity of the element e2
@@ -253,7 +254,7 @@ void ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>::init_elem_entity
                 if (std::equal(std::begin(entity_nodes1), std::end(entity_nodes1), std::begin(entity_nodes2)))
                        {
                        // all the entities already computed on elem=elem_iter2
-                       const auto &elem2entity=elem_2_entity_[elem_iter2];
+                       const auto &elem2entity=elem_2_entity_[el2_neigh];
                        // loop on each of these, to find the one that equals iter_entity_e1
                        for(auto i: elem2entity)
                           {
@@ -272,6 +273,23 @@ void ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>::init_elem_entity
                              }
                           }
                        found_entity=true;
+                   if(elem_iter1==5)
+                    {
+                      std::cout<<"found_entity="<<found_entity<<std::endl;
+                      std::cout<<"elem_iter1="<<elem_iter1<<std::endl;
+                      std::cout<<"iter_entity_e1="<<iter_entity_e1<<std::endl;
+                      std::cout<<"elem_2_entity_[elem_iter1][iter_entity_e1]="<<elem_2_entity_[elem_iter1][iter_entity_e1]<<std::endl;
+                      
+                      std::cout<<std::endl<<"elem_iter1="<<elem_iter1<<std::endl;
+                      for(int kk=0;kk<elem_2_entity_[elem_iter1].size();kk++)
+                         std::cout<<elem_2_entity_[elem_iter1][kk]<<" ";
+                       std::cout<<std::endl<<std::endl;
+                      std::cout<<std::endl<<"elem_iter2="<<elem_iter2<<", el_neighs[elem_iter2]=="<<el_neighs[elem_iter2]<<std::endl;
+
+                      for(int kk=0;kk<elem_2_entity_[elem_iter2].size();kk++)
+                         std::cout<<elem_2_entity_[elem_iter2][kk]<<" ";
+                       std::cout<<std::endl<<std::endl;
+                    }
                        break;
                        }         
                 }  
@@ -287,6 +305,13 @@ void ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>::init_elem_entity
                    //entity_.push_back( tmp);
                    tmp[0]=elem_iter1; 
                    tmp[1]=iter_entity_e1;
+                   if(elem_iter1==5)
+                    {
+                      std::cout<<"found_entity="<<found_entity<<std::endl;
+                      std::cout<<"elem_iter1="<<elem_iter1<<std::endl;
+                      std::cout<<"iter_entity_e1="<<iter_entity_e1<<std::endl;
+
+                    }
                    entity_2_elem_.push_back(tmp);
                    elem_2_entity_[elem_iter1][iter_entity_e1]=entity_number;                   
                    entity_number++;
