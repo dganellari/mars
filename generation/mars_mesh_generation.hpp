@@ -6,99 +6,10 @@
 #include "mars_memory.hpp"
 
 namespace mars {
-namespace private_ {
-
-/*
- template<Integer Dim, Integer ManifoldDim, class Point_>
- void remove_extra_nodes(Mesh<Dim, ManifoldDim, Point_>& mesh) {
-
- for (auto it = mesh.points().begin(); it != mesh.points().end();
- no it++){
-
- if (!(*it).isActive()) {
- mesh.remove_point(it);
- //cout << "removed: " << (it - mesh.points().begin()) << endl;
- } else
- ++it;
- }
-
- }
- */
-
-
-
-
-/*template<Integer Dim, Integer ManifoldDim, class Point_>
-void remove_extra_nodes(Mesh<Dim, ManifoldDim, Point_>& mesh,
-		std::vector<Vector<Real, Dim> >& np, const std::vector<bool>& active) {
-
-	int count = 0;
-	for (unsigned int i = 0; i < active.size(); ++i) {
-		if (active[i]) {
-			np[count] = mesh.point(i);
-			++count;
-		}
-
-	}
-
-	mesh.setPoints(move(np));
-
-}*/
-
-Integer index(const Integer xDim, const Integer yDim, const Integer i,
-		const Integer j, const Integer k) {
-	//return k+ (2*zDim +1) * (j + i* (2*yDim + 1));
-	return i + (2 * xDim + 1) * (j + k * (2 * yDim + 1));
-}
-
-void add_side(std::vector<Integer>& side, const Integer a, const Integer b,
-		const Integer index) {
-
-	if (a != 1 && b != 1) { //add only nodes which are not mid faces or mid edges
-		side.push_back(index);
-	} else if (a == 1 && b == 1) { // then add only mid faces
-		side.push_back(index);
-	}
-}
-
-void build_hex27(std::array<Integer, hex_n_nodes>& nodes, const Integer xDim,
-		const Integer yDim, const int i, const int j, const int k) {
-
-	nodes[0] = index(xDim, yDim, i, j, k);
-	nodes[1] = index(xDim, yDim, i + 2, j, k);
-	nodes[2] = index(xDim, yDim, i + 2, j + 2, k);
-	nodes[3] = index(xDim, yDim, i, j + 2, k);
-	nodes[4] = index(xDim, yDim, i, j, k + 2);
-	nodes[5] = index(xDim, yDim, i + 2, j, k + 2);
-	nodes[6] = index(xDim, yDim, i + 2, j + 2, k + 2);
-	nodes[7] = index(xDim, yDim, i, j + 2, k + 2);
-	nodes[8] = index(xDim, yDim, i + 1, j, k);
-	nodes[9] = index(xDim, yDim, i + 2, j + 1, k);
-	nodes[10] = index(xDim, yDim, i + 1, j + 2, k);
-	nodes[11] = index(xDim, yDim, i, j + 1, k);
-	nodes[12] = index(xDim, yDim, i, j, k + 1);
-	nodes[13] = index(xDim, yDim, i + 2, j, k + 1);
-	nodes[14] = index(xDim, yDim, i + 2, j + 2, k + 1);
-	nodes[15] = index(xDim, yDim, i, j + 2, k + 1);
-	nodes[16] = index(xDim, yDim, i + 1, j, k + 2);
-	nodes[17] = index(xDim, yDim, i + 2, j + 1, k + 2);
-	nodes[18] = index(xDim, yDim, i + 1, j + 2, k + 2);
-	nodes[19] = index(xDim, yDim, i, j + 1, k + 2);
-	nodes[20] = index(xDim, yDim, i + 1, j + 1, k);
-	nodes[21] = index(xDim, yDim, i + 1, j, k + 1);
-	nodes[22] = index(xDim, yDim, i + 2, j + 1, k + 1);
-	nodes[23] = index(xDim, yDim, i + 1, j + 2, k + 1);
-	nodes[24] = index(xDim, yDim, i, j + 1, k + 1);
-	nodes[25] = index(xDim, yDim, i + 1, j + 1, k + 2);
-	nodes[26] = index(xDim, yDim, i + 1, j + 1, k + 1);
-}
-}
 
 //different approach which works fine for the unit_cube and would have been faster
 //but unfortunately it does not generalize.
 Mesh3 generate_unit_cube() {
-
-	using namespace mars::private_;
 
 	Mesh3 mesh;
 
@@ -179,7 +90,6 @@ template<Integer Dim, Integer ManifoldDim>
 bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 		const Integer yDim, const Integer zDim) {
 
-	using namespace mars::private_;
 	using Elem     = mars::Simplex<Dim, ManifoldDim>;
 
 	assert(ManifoldDim <= Dim);
@@ -342,7 +252,7 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 							auto& e = mesh.add_elem();
 
 							e.nodes[0] = side[k] / 2;
-							e.nodes[1] = side[8] / 2; // midface point always the last element.
+							e.nodes[1] = side[8] / 2; // mid-face point always the last element.
 							e.nodes[2] = (k == 3 ? side[0] : side[k + 1]) / 2; // rotation to catch all combinations.
 							e.nodes[3] = centerHex; // the center of the cube.
 

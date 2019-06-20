@@ -123,6 +123,7 @@ public:
 		ViewMatrixType<Real> points;
 		Integer xDim;
 		Integer yDim;
+		Integer zDim;
 
 		AddPoint(ViewMatrixType<Real> pts, Integer xdm) :
 				points(pts), xDim(xdm) {
@@ -133,8 +134,9 @@ public:
 		}
 
 		AddPoint(ViewMatrixType<Real> pts, Integer xdm, Integer ydm, Integer zdm) :
-				points(pts), xDim(xdm), yDim(ydm), yDim(zdm) {
+				points(pts), xDim(xdm), yDim(ydm), zDim(zdm) {
 		}
+
 
 		KOKKOS_INLINE_FUNCTION
 		void operator()(int i) const {
@@ -198,12 +200,11 @@ public:
 		ViewMatrixType<Integer> elem;
 		ViewVectorType<bool> active;
 
-		ViewMatrixTexture<Integer> hexes;
+		ViewMatrixTexture<Integer,hex_n_nodes> hexes;
 		ViewVectorTexture<bool> active_nodes;
-		ViewVectorTexture<Integer> sides;
+		ViewMatrixTexture<Integer,hex_side_n_nodes> sides;
 
-		ViewMatrixTexture<unsigned int> map_side_nodes;
-
+		ViewMatrixTextureC<unsigned int,hex_n_sides, hex_side_n_nodes> map_side_nodes;
 
 		Integer xDim;
 		Integer yDim;
@@ -218,13 +219,13 @@ public:
 				Integer xdm, Integer ydm) :
 				elem(el), active(ac), xDim(xdm), yDim(ydm) {
 		}
+
 		AddElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
-				ViewMatrixTexture<Integer> hxs, ViewVectorTexture<bool> acn,
-				ViewVectorTexture<Integer> sds, ViewMatrixTexture<unsigned int> map, Integer xdm, Integer ydm,
+				ViewMatrixTexture<Integer,hex_n_nodes> hxs, ViewVectorTexture<bool> acn,
+				ViewMatrixTexture<Integer,hex_side_n_nodes> sds, ViewMatrixTextureC<unsigned int,hex_n_sides, hex_side_n_nodes> map, Integer xdm, Integer ydm,
 				Integer zdm) :
 				elem(el), active(ac), hexes(hxs), active_nodes(acn), sides(sds), map_side_nodes(map), xDim(
 						xdm), yDim(ydm), zDim(zdm) {
-
 		}
 
 		KOKKOS_INLINE_FUNCTION
@@ -292,11 +293,55 @@ public:
 		view(10) = 0;*/
 
 		 KOKKOS_INLINE_FUNCTION
-		 void operator()(int k, int j, int i) const {
+		void operator()(int k, int j, int i) const {
 
-			 k*2; j*2; i*2; // to emulate the step +2 for the parallel for.
+			Integer cube_index = 2 * yDim * k + xDim * j + i;
 
-		 }
+			//build the hex27 element which serves to generalize the idea to many hex27.
+			//without generating the hex27 element first there is no easy way to create the sides.
+			build_hex27(hexes, cube_index, xDim, yDim, 2 * i, 2 * j, 2 * k);
+
+			const int n_cube_nodes = (2 * xDim + 1) * (2 * yDim + 1)
+					* (2 * zDim + 1);
+
+			//add center of the hex to the new points.
+			int centerHex = n_cube_nodes / 2 + cube_index + 1;
+
+			//build tetrahedra elements from the hex27 faces.
+			for (unsigned int i = 0; i < hex_n_sides; ++i) {
+
+				//use the hex27 element local connectivity to build the tetrahedra connectivity
+				for (unsigned int j = 0; j < hex_side_n_nodes; ++j) {
+					sides(cube_index, j) = hexes(cube_index,
+							map_side_nodes(i, j));
+				}
+
+				//build 4 tetrahedra out of one face.
+				for (unsigned int k = 0; k < 4; k++) {
+
+					const int index = 24 * cube_index + 4 * i + k;
+
+					elem(index, 0) = sides(cube_index, k) / 2;
+					elem(index, 1) = sides(cube_index, 8) / 2; // mid-face point always the last element.
+					elem(index, 2) = (
+							k == 3 ?
+									sides(cube_index, 0) :
+									sides(cube_index, k + 1)) / 2; // rotation to catch all combinations.
+					elem(index, 3) = centerHex; // the center of the cube.
+
+					active(index) = true;
+
+					active_nodes(sides(cube_index, k)) = true;
+					active_nodes(sides(cube_index, 8)) = true;
+					active_nodes(
+							(k == 3 ?
+									sides(cube_index, 0) :
+									sides(cube_index, k + 1))) = true;
+				}
+
+			}
+
+		}
 	};
 
 
@@ -337,16 +382,17 @@ public:
 					* (2 * zDim + 1);
 
 			//texture view for random access
-			ViewVectorTexture<Integer> sides("cube_sides", hex_side_n_nodes);
+			ViewMatrixTexture<Integer, hex_side_n_nodes> sides("cube_sides",
+					xDim * yDim * zDim);
 			ViewVectorTexture<bool> active_nodes("active_nodes", n_cube_nodes);
-			ViewMatrixTexture<Integer> hexes("hexes", xDim * yDim * zDim, hex_n_nodes);
+			ViewMatrixTexture<Integer, hex_n_nodes> hexes("hexes",
+					xDim * yDim * zDim);
 
-			ViewMatrixTexture<unsigned int> map_side_to_nodes("cube_sides", hex_n_sides, hex_side_n_nodes);
+			ViewMatrixTextureC<unsigned int, hex_n_sides, hex_side_n_nodes> map_side_to_nodes(
+					"cube_sides");
 
-		//	const unsigned int a[2];
-//			unsigned int name[] = {3};
-		//	f(name)
-			copy_matrix_from_host(hex_side_nodes, map_side_to_nodes, hex_n_sides, hex_side_n_nodes);
+			copy_matrix_from_host(hex_side_nodes, map_side_to_nodes,
+					hex_n_sides, hex_side_n_nodes);
 
 			parallel_for(MDRangePolicy<Rank<3> >( { 0, 0, 0 }, { zDim, yDim,
 					xDim }),
