@@ -118,6 +118,40 @@ public:
 	}
 
 	//add point functor
+	struct AddCenterHexPoint {
+
+		ViewMatrixType<Real> points;
+		Integer xDim;
+		Integer yDim;
+		Integer zDim;
+
+		AddCenterHexPoint(ViewMatrixType<Real> pts, Integer xdm, Integer ydm,
+				Integer zdm) :
+				points(pts), xDim(xdm), yDim(ydm), zDim(zdm) {
+		}
+
+		KOKKOS_INLINE_FUNCTION
+		void operator()(int z, int y, int x) const {
+
+			Integer cube_index = xDim * yDim * z + xDim * y + x;
+
+			const int n_cube_nodes = (2 * xDim + 1) * (2 * yDim + 1)
+					* (2 * zDim + 1);
+
+			//add center of the hex to the new points.
+			int centerHex = n_cube_nodes / 2 + cube_index + 1;
+
+			points(centerHex, 0) = static_cast<Real>(2 * x + 1)
+					/ static_cast<Real>(2 * xDim);
+			points(centerHex, 1) = static_cast<Real>(2 * y + 1)
+					/ static_cast<Real>(2 * yDim);
+			points(centerHex, 2) = static_cast<Real>(2 * z + 1)
+					/ static_cast<Real>(2 * zDim);
+
+		}
+	};
+
+	//add point functor
 	struct AddPoint {
 
 		ViewMatrixType<Real> points;
@@ -155,6 +189,27 @@ public:
 			points(index, 1) = static_cast<Real>(j) / static_cast<Real>(yDim);
 
 		}
+
+		KOKKOS_INLINE_FUNCTION
+		void operator()(int z, int y, int x) const {
+
+			Integer in = index(xDim, yDim, x, y, z);
+/*
+			 If not center hex point existed then the rule of dividing by two holds.
+			 The multiple of 2 indexes are the ones to be added to the mesh. The others discarded.
+*/
+			if (in % 2 == 0) {
+
+				Integer i = in / 2;
+
+				points(i, 0) = static_cast<Real>(x)
+						/ static_cast<Real>(2 * xDim);
+				points(i, 1) = static_cast<Real>(y)
+						/ static_cast<Real>(2 * yDim);
+				points(i, 2) = static_cast<Real>(z)
+						/ static_cast<Real>(2 * zDim);
+			}
+		}
 	};
 
 	inline void generate_points(const int xDim, const int yDim, const int zDim) {
@@ -189,6 +244,28 @@ public:
 					AddPoint(points_, xDim, yDim));
 			break;
 		}
+		case 3: {
+			assert(xDim != 0);
+			assert(yDim != 0);
+			assert(zDim != 0);
+
+			const int n_tetra_nodes = 5 * (xDim * yDim * zDim)
+					+ 2 * (xDim * yDim + xDim * zDim + yDim * zDim)
+					+ (xDim + yDim + zDim) + 1;
+
+			reserve_points(n_tetra_nodes);
+
+			parallel_for(
+					MDRangePolicy<Rank<3> >( {0, 0, 0}, {zDim, yDim, xDim}),
+					AddCenterHexPoint(points_, xDim, yDim,zDim));
+
+			fence();
+
+			parallel_for(
+					MDRangePolicy<Rank<3> >( { 0, 0, 0 },
+							{ 2 * zDim + 1, 2 * yDim + 1, 2 * xDim + 1 }),
+					AddPoint(points_, xDim, yDim, zDim));
+		}
 		}
 
 	}
@@ -201,7 +278,6 @@ public:
 		ViewVectorType<bool> active;
 
 		ViewMatrixTexture<Integer,hex_n_nodes> hexes;
-		ViewVectorTexture<bool> active_nodes;
 		ViewMatrixTexture<Integer,hex_side_n_nodes> sides;
 
 		ViewMatrixTextureC<unsigned int,hex_n_sides, hex_side_n_nodes> map_side_nodes;
@@ -221,10 +297,9 @@ public:
 		}
 
 		AddElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
-				ViewMatrixTexture<Integer,hex_n_nodes> hxs, ViewVectorTexture<bool> acn,
-				ViewMatrixTexture<Integer,hex_side_n_nodes> sds, ViewMatrixTextureC<unsigned int,hex_n_sides, hex_side_n_nodes> map, Integer xdm, Integer ydm,
+				ViewMatrixTexture<Integer,hex_n_nodes> hxs, ViewMatrixTexture<Integer,hex_side_n_nodes> sds, ViewMatrixTextureC<unsigned int,hex_n_sides, hex_side_n_nodes> map, Integer xdm, Integer ydm,
 				Integer zdm) :
-				elem(el), active(ac), hexes(hxs), active_nodes(acn), sides(sds), map_side_nodes(map), xDim(
+				elem(el), active(ac), hexes(hxs), sides(sds), map_side_nodes(map), xDim(
 						xdm), yDim(ydm), zDim(zdm) {
 		}
 
@@ -293,13 +368,13 @@ public:
 		view(10) = 0;*/
 
 		 KOKKOS_INLINE_FUNCTION
-		void operator()(int k, int j, int i) const {
+		void operator()(int z, int y, int x) const {
 
-			Integer cube_index = 2 * yDim * k + xDim * j + i;
+			Integer cube_index = xDim * yDim * z + xDim * y + x;
 
 			//build the hex27 element which serves to generalize the idea to many hex27.
 			//without generating the hex27 element first there is no easy way to create the sides.
-			build_hex27(hexes, cube_index, xDim, yDim, 2 * i, 2 * j, 2 * k);
+			build_hex27(hexes, cube_index, xDim, yDim, 2 * x, 2 * y, 2 * z);
 
 			const int n_cube_nodes = (2 * xDim + 1) * (2 * yDim + 1)
 					* (2 * zDim + 1);
@@ -330,13 +405,6 @@ public:
 					elem(index, 3) = centerHex; // the center of the cube.
 
 					active(index) = true;
-
-					active_nodes(sides(cube_index, k)) = true;
-					active_nodes(sides(cube_index, 8)) = true;
-					active_nodes(
-							(k == 3 ?
-									sides(cube_index, 0) :
-									sides(cube_index, k + 1))) = true;
 				}
 
 			}
@@ -372,31 +440,21 @@ public:
 			const int n_elements = xDim * yDim * zDim * 24; //24 tetrahedrons on one hex27
 			reserve_elements(n_elements);
 
-			const int n_tetra_nodes = 5 * (xDim * yDim * zDim)
-					+ 2 * (xDim * yDim + xDim * zDim + yDim * zDim)
-					+ (xDim + yDim + zDim) + 1;
-
-			reserve_points(n_tetra_nodes);
-
 			const int n_cube_nodes = (2 * xDim + 1) * (2 * yDim + 1)
 					* (2 * zDim + 1);
 
 			//texture view for random access
-			ViewMatrixTexture<Integer, hex_side_n_nodes> sides("cube_sides",
-					xDim * yDim * zDim);
-			ViewVectorTexture<bool> active_nodes("active_nodes", n_cube_nodes);
-			ViewMatrixTexture<Integer, hex_n_nodes> hexes("hexes",
-					xDim * yDim * zDim);
+			ViewMatrixTexture<Integer, hex_side_n_nodes> sides("cube_sides", xDim * yDim * zDim);
+			ViewMatrixTexture<Integer, hex_n_nodes> hexes("hexes", xDim * yDim * zDim);
 
 			ViewMatrixTextureC<unsigned int, hex_n_sides, hex_side_n_nodes> map_side_to_nodes(
 					"cube_sides");
 
-			copy_matrix_from_host(hex_side_nodes, map_side_to_nodes,
-					hex_n_sides, hex_side_n_nodes);
+			copy_matrix_from_host(hex_side_nodes, map_side_to_nodes, hex_n_sides, hex_side_n_nodes);
 
 			parallel_for(MDRangePolicy<Rank<3> >( { 0, 0, 0 }, { zDim, yDim,
 					xDim }),
-					AddElem(elements_, active_, hexes, active_nodes, sides,
+					AddElem(elements_, active_, hexes, sides,
 							map_side_to_nodes, xDim, yDim, zDim));
 			break;
 		}
