@@ -259,8 +259,6 @@ public:
 					MDRangePolicy<Rank<3> >( {0, 0, 0}, {zDim, yDim, xDim}),
 					AddCenterHexPoint(points_, xDim, yDim,zDim));
 
-			fence();
-
 			parallel_for(
 					MDRangePolicy<Rank<3> >( { 0, 0, 0 },
 							{ 2 * zDim + 1, 2 * yDim + 1, 2 * xDim + 1 }),
@@ -299,8 +297,7 @@ public:
 		AddElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
 				ViewMatrixTexture<Integer,hex_n_nodes> hxs, ViewMatrixTexture<Integer,hex_side_n_nodes> sds, ViewMatrixTextureC<unsigned int,hex_n_sides, hex_side_n_nodes> map, Integer xdm, Integer ydm,
 				Integer zdm) :
-				elem(el), active(ac), hexes(hxs), sides(sds), map_side_nodes(map), xDim(
-						xdm), yDim(ydm), zDim(zdm) {
+				elem(el), active(ac), hexes(hxs), sides(sds), map_side_nodes(map), xDim(xdm), yDim(ydm), zDim(zdm) {
 		}
 
 		KOKKOS_INLINE_FUNCTION
@@ -364,10 +361,7 @@ public:
 		 }
 		 */
 
-		/*Kokkos::View<int*, ScratchSpace> view(100);
-		view(10) = 0;*/
-
-		 KOKKOS_INLINE_FUNCTION
+		KOKKOS_INLINE_FUNCTION
 		void operator()(int z, int y, int x) const {
 
 			Integer cube_index = xDim * yDim * z + xDim * y + x;
@@ -423,6 +417,7 @@ public:
 		case 1: {
 			const int n_elements = xDim;
 			reserve_elements(n_elements);
+
 			parallel_for(n_elements, AddElem(elements_, active_, xDim));
 
 			break;
@@ -430,6 +425,7 @@ public:
 		case 2: {
 			const int n_elements = 2 * xDim * yDim;
 			reserve_elements(n_elements);
+
 			parallel_for(n_elements, AddElem(elements_, active_, xDim, yDim));
 
 			/*parallel_for(MDRangePolicy<Rank<2> >( { 0, 0 }, { xDim, yDim }),
@@ -447,15 +443,16 @@ public:
 			ViewMatrixTexture<Integer, hex_side_n_nodes> sides("cube_sides", xDim * yDim * zDim);
 			ViewMatrixTexture<Integer, hex_n_nodes> hexes("hexes", xDim * yDim * zDim);
 
-			ViewMatrixTextureC<unsigned int, hex_n_sides, hex_side_n_nodes> map_side_to_nodes(
-					"cube_sides");
+			//compile time defined texture view
+			ViewMatrixTextureC<unsigned int, hex_n_sides, hex_side_n_nodes> map_side_to_nodes("cube_sides");
 
+			//copy the map from the host to the device, putting it to the compile time defined view.
 			copy_matrix_from_host(hex_side_nodes, map_side_to_nodes, hex_n_sides, hex_side_n_nodes);
 
 			parallel_for(MDRangePolicy<Rank<3> >( { 0, 0, 0 }, { zDim, yDim,
 					xDim }),
-					AddElem(elements_, active_, hexes, sides,
-							map_side_to_nodes, xDim, yDim, zDim));
+					AddElem(elements_, active_, hexes, sides, map_side_to_nodes,
+							xDim, yDim, zDim));
 			break;
 		}
 		}
