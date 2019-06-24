@@ -6,6 +6,7 @@
 #include "moonolith_mars_mesh_adapter.hpp"
 #include "moonolith_duplicate_intersection_avoidance.hpp"
 #include "moonolith_one_master_one_slave_algorithm.hpp"
+#include "moonolith_single_collection_one_master_one_slave_algorithm.hpp"
 
 #include "moonolith_l2_assembler.hpp"
 #include "moonolith_keast_quadrature_rule.hpp"
