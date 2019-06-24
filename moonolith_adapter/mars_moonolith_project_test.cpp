@@ -267,7 +267,7 @@ namespace mars {
         if(!algo.assemble(master, slave)) {
             assert(false);
         } 
-        assert(moonolith::approxeq(0.5, algo.projection_area(), 1e-5));
+        assert(moonolith::approxeq(0.5, algo.projection_measure(), 1e-5));
 
         slave.set_affine(false);
         
@@ -276,7 +276,7 @@ namespace mars {
             assert(false);
         } 
 
-        assert(moonolith::approxeq(0.5, algo.projection_area(), 1e-5));
+        assert(moonolith::approxeq(0.5, algo.projection_measure(), 1e-5));
         // algo.describe(logger());
     }
 
@@ -321,7 +321,7 @@ namespace mars {
         if(!algo.assemble(master, slave)) {
             assert(false);
         } 
-        assert(moonolith::approxeq(0.5, algo.projection_area(), 1e-5));
+        assert(moonolith::approxeq(0.5, algo.projection_measure(), 1e-5));
 
         slave.set_affine(false);
         
@@ -330,7 +330,7 @@ namespace mars {
             assert(false);
         } 
 
-        assert(moonolith::approxeq(0.5, algo.projection_area(), 1e-5));
+        assert(moonolith::approxeq(0.5, algo.projection_measure(), 1e-5));
         // algo.describe(logger());
     }
 
