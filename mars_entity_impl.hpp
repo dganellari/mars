@@ -273,23 +273,6 @@ void ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>::init_elem_entity
                              }
                           }
                        found_entity=true;
-                   if(elem_iter1==5)
-                    {
-                      std::cout<<"found_entity="<<found_entity<<std::endl;
-                      std::cout<<"elem_iter1="<<elem_iter1<<std::endl;
-                      std::cout<<"iter_entity_e1="<<iter_entity_e1<<std::endl;
-                      std::cout<<"elem_2_entity_[elem_iter1][iter_entity_e1]="<<elem_2_entity_[elem_iter1][iter_entity_e1]<<std::endl;
-                      
-                      std::cout<<std::endl<<"elem_iter1="<<elem_iter1<<std::endl;
-                      for(int kk=0;kk<elem_2_entity_[elem_iter1].size();kk++)
-                         std::cout<<elem_2_entity_[elem_iter1][kk]<<" ";
-                       std::cout<<std::endl<<std::endl;
-                      std::cout<<std::endl<<"elem_iter2="<<elem_iter2<<", el_neighs[elem_iter2]=="<<el_neighs[elem_iter2]<<std::endl;
-
-                      for(int kk=0;kk<elem_2_entity_[elem_iter2].size();kk++)
-                         std::cout<<elem_2_entity_[elem_iter2][kk]<<" ";
-                       std::cout<<std::endl<<std::endl;
-                    }
                        break;
                        }         
                 }  
@@ -305,13 +288,6 @@ void ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>::init_elem_entity
                    //entity_.push_back( tmp);
                    tmp[0]=elem_iter1; 
                    tmp[1]=iter_entity_e1;
-                   if(elem_iter1==5)
-                    {
-                      std::cout<<"found_entity="<<found_entity<<std::endl;
-                      std::cout<<"elem_iter1="<<elem_iter1<<std::endl;
-                      std::cout<<"iter_entity_e1="<<iter_entity_e1<<std::endl;
-
-                    }
                    entity_2_elem_.push_back(tmp);
                    elem_2_entity_[elem_iter1][iter_entity_e1]=entity_number;                   
                    entity_number++;

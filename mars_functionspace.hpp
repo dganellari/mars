@@ -12,7 +12,7 @@
 #include "mars_base.hpp"
 #include "mars_elementfunctionspace.hpp"
 #include "mars_functionspace_dofmap.hpp"
-
+#include "mars_shape_function.hpp"
 namespace mars{
 
 
@@ -64,7 +64,20 @@ class IFunctionSpace
 //   std::vector<std::shared_ptr<IFunctionSpace>> children;
 
 // };
+template <int N, typename... Ts>
+struct get;
 
+template <int N, typename T, typename... Ts>
+struct get<N, std::tuple<T, Ts...>>
+{
+    using type = typename get<N - 1, std::tuple<Ts...>>::type;
+};
+
+template <typename T, typename... Ts>
+struct get<0, std::tuple<T, Ts...>>
+{
+    using type = T;
+};
 
 template<typename...Args>
 std::tuple<Args...> add_costant (const std::tuple<Args...>& t1,const Integer& value);
@@ -124,14 +137,14 @@ public:
 
       static constexpr Integer Nsubspaces=1+sizeof...(BaseFunctionSpaces);
 
-      static constexpr Integer Nelem_dofs=DofsPerElemNums< typename MeshT::Elem,BaseFunctionSpace,BaseFunctionSpaces...>::value;
+      static constexpr Integer Nelem_dofs=DofsPerElemNums<Elem,BaseFunctionSpace,BaseFunctionSpaces...>::value;
 
 
       using type_dofmap=std::vector<std::array<Integer, Nelem_dofs>>;
       using type_offset=std::array<std::vector<Integer>, Nsubspaces>;
       using type_space_dofs=std::array<std::vector<std::vector<Integer>>, Nsubspaces>;
       using type_space_infos=std::array<std::array<Integer,4>,Nsubspaces>;
-
+      using type_base_function_space=std::tuple<BaseFunctionSpace,BaseFunctionSpaces...>;
       inline Integer n_subspaces()const{return Nsubspaces;};
 
       inline const Integer& components (const Integer& space_id)const{return space_infos_[space_id][3];};
@@ -290,6 +303,7 @@ public:
 
       inline void set_dof_count_start(const Integer&value){dof_count_start_=value;};
 
+      
       FunctionSpace(const MeshT& mesh,const Integer dof_count_start=0):
       dof_count_start_(dof_count_start),
       mesh_(std::make_shared< MeshT >(mesh)),
@@ -297,12 +311,23 @@ public:
       {
       function_space_info<0,Nsubspaces,BaseFunctionSpace,BaseFunctionSpaces...>(space_infos_);
       dofmap_fespace<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofmap_,offset_,n_dofs_,space_infos_,space_dofs_);     
-      if(is_dof_count_start_set_==true)
-         set_new_start(dof_count_start);
+      };
+
+      template<typename...QuadratureRules>
+      FunctionSpace(const MeshT& mesh,const Integer dof_count_start=0):
+      dof_count_start_(dof_count_start),
+      mesh_(std::make_shared< MeshT >(mesh)),
+      is_dof_count_start_set_(dof_count_start)
+      {
+      function_space_info<0,Nsubspaces,BaseFunctionSpace,BaseFunctionSpaces...>(space_infos_);
+      dofmap_fespace<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofmap_,offset_,n_dofs_,space_infos_,space_dofs_);     
+      // set_quadrature_rule<0,QuadratureRules...>();
+      // if(is_dof_count_start_set_==true)
+      //    set_new_start(dof_count_start);
       };
 
 private:
-
+   
       std::shared_ptr< MeshT > mesh_;
       Integer dof_count_start_;
       bool is_dof_count_start_set_;
@@ -313,7 +338,314 @@ private:
       type_space_dofs space_dofs_;
       type_space_dofs space_dofs_new_start_;
       type_space_infos space_infos_;
+      type_base_function_space shape_functions_;
 };
+
+
+
+
+template<typename FunctionSpaceType, typename...QuadratureRules>
+class FiniteElementSpace
+{
+ public:
+      using type_base_function_space=typename FunctionSpaceType::type_base_function_space;
+
+
+      template<Integer N,typename QR,typename...QRs>
+      struct tuple_shape_function_type
+      {    
+
+            using BFS=typename get<N, type_base_function_space>::type;
+            using rest = typename tuple_shape_function_type<N+1,QRs...>::type; 
+            using tuple_ens=std::tuple<ShapeFunctionOperator<QR,typename QR::Elem, BFS>>;
+            using type = decltype( std::tuple_cat( std::declval< tuple_ens >(), 
+                                                   std::declval< rest >() ) );
+      };
+
+
+      template<Integer N,typename QR>
+      struct tuple_shape_function_type<N,QR>
+      {
+           using BFS=typename get<N, type_base_function_space>::type;
+           using type = typename std::tuple<ShapeFunctionOperator<QR,typename QR::Elem, BFS>>;
+      };
+
+
+
+
+      template<Integer N=0,typename QR,typename...QRs>
+      typename std::enable_if< 0==sizeof...(QRs),
+                               typename tuple_shape_function_type<N, QR>::type
+                             >::type 
+      set_quadrature_rule()
+      {       
+       using BFS=typename get<N, type_base_function_space>::type;
+       ShapeFunctionOperator<QR,typename QR::Elem,typename get<N, type_base_function_space>::type> shape_function;
+       return std::tuple<decltype(shape_function)> (shape_function);
+      }
+
+      template<Integer N=0,typename QR,typename...QRs>
+      typename std::enable_if< 0<sizeof...(QRs),
+                               typename tuple_shape_function_type<N,QR,QRs...>::type
+                             >::type 
+      set_quadrature_rule()
+      {       
+       using BFS=typename get<N, type_base_function_space>::type;
+       ShapeFunctionOperator<QR,typename QR::Elem, BFS> shape_function;
+       return std::tuple_cat(std::make_tuple(shape_function),set_quadrature_rule<N+1,QRs...>()  );
+      }
+
+
+      FiniteElementSpace(const FunctionSpaceType& fs): 
+      function_space_(std::make_shared<FunctionSpaceType>(fs)),
+      shape_function_(set_quadrature_rule<0,QuadratureRules...>())
+      {
+
+      }
+
+
+      const FunctionSpaceType& function_space()const{return *function_space_;};
+      const std::shared_ptr<FunctionSpaceType>& function_space_ptr()const{return function_space_;};
+
+
+
+ private:
+ std::shared_ptr<FunctionSpaceType> function_space_;
+ typename tuple_shape_function_type<0,QuadratureRules...>::type shape_function_;
+
+};
+
+
+
+
+
+
+template<typename MeshT,typename ...Parameters >
+class FEProva
+{
+  public:
+     using Elem=typename MeshT::Elem;
+     
+
+      template<typename Arg1,typename Arg2,typename...Args>
+      struct tuple_space_and_quadrature_rule_types
+      {    
+       public:
+            using rest1 = typename tuple_space_and_quadrature_rule_types<Args...>::type1; 
+            using rest2 = typename tuple_space_and_quadrature_rule_types<Args...>::type2; 
+
+            using single_type1=std::tuple<Arg1>;
+            using single_type2=std::tuple< typename Arg2:: template rule<Elem> >;
+
+            using type1 = decltype( std::tuple_cat( std::declval< single_type1 >(), 
+                                                    std::declval< rest1 >() ) );
+            using type2 = decltype( std::tuple_cat( std::declval< single_type2 >(), 
+                                                    std::declval< rest2 >() ) );           
+      };
+
+
+      template<typename Arg1,typename Arg2>
+      struct tuple_space_and_quadrature_rule_types<Arg1,Arg2>
+      {
+      public:
+           using type1 = typename std::tuple<Arg1>;
+           using type2 = typename std::tuple< typename Arg2:: template rule<Elem> >;
+      };
+
+      using BaseFunctionSpaces=typename tuple_space_and_quadrature_rule_types<Parameters...>::type1;
+      using QuadratureRules=typename tuple_space_and_quadrature_rule_types<Parameters...>::type2;
+      static constexpr Integer Nsubspaces=std::tuple_size<BaseFunctionSpaces>::value;
+
+
+      template<Integer N,Integer M=0>
+      class ShapeFunctionTupleType
+      {    
+
+      public:
+            using rest = typename ShapeFunctionTupleType<N+1>::type; 
+
+            using BaseFunctionSpace=typename get<N, BaseFunctionSpaces>::type;
+            using QuadratureRule=typename get<N, QuadratureRules>::type;
+
+            using single_type=std::tuple<ShapeFunctionOperator<QuadratureRule,Elem, BaseFunctionSpace>>;
+            using type = decltype( std::tuple_cat( std::declval< single_type >(), 
+                                                   std::declval< rest >() ) );
+      };
+
+
+      template<Integer M>
+      class ShapeFunctionTupleType<Nsubspaces-1,M>
+      {
+       public:
+           static constexpr Integer N=Nsubspaces-1;
+           using BaseFunctionSpace=typename get<N, BaseFunctionSpaces>::type;
+           using QuadratureRule=typename get<N, QuadratureRules>::type;
+           using single_type=std::tuple<ShapeFunctionOperator<QuadratureRule,Elem, BaseFunctionSpace>>;
+           using type = typename std::tuple<ShapeFunctionOperator<QuadratureRule,Elem, BaseFunctionSpace>>;
+      };
+
+      
+     using ShapeFunctionType=typename ShapeFunctionTupleType<0>::type;
+
+
+      template<Integer N=0>
+      typename std::enable_if< N==Nsubspaces-1,typename ShapeFunctionTupleType<N>::type>::type 
+      set_quadrature_rule()
+      {   
+           using BaseFunctionSpace=typename get<N, BaseFunctionSpaces>::type;
+           using QuadratureRule=typename get<N, QuadratureRules>::type;    
+           ShapeFunctionOperator<QuadratureRule,Elem,BaseFunctionSpace> shape_function;
+           return std::tuple<decltype(shape_function)> (shape_function);
+          }
+
+      template<Integer N=0>
+      typename std::enable_if< N<Nsubspaces-1,typename ShapeFunctionTupleType<N>::type>::type 
+      set_quadrature_rule()
+      {       
+           using BaseFunctionSpace=typename get<N, BaseFunctionSpaces>::type;
+           using QuadratureRule=typename get<N, QuadratureRules>::type;    
+           ShapeFunctionOperator<QuadratureRule,Elem,BaseFunctionSpace> shape_function;
+           return std::tuple_cat(std::make_tuple(shape_function),set_quadrature_rule<N+1>()  );
+      }
+
+      FEProva(const MeshT& mesh):
+      shape_functions_(set_quadrature_rule())
+      {}
+
+
+
+      const ShapeFunctionType& shape_functions()const{return shape_functions_;}
+            ShapeFunctionType  shape_functions()     {return shape_functions_;}
+
+  private:
+  ShapeFunctionType shape_functions_;
+
+
+};
+
+
+
+
+
+
+
+
+
+template<typename...Args>
+class MixedSpace
+{
+public:
+using type_dofmap=std::tuple<typename Args::type_dofmap...>;
+
+inline const Integer& n_dofs()const{return n_dofs_;}; 
+
+inline const type_dofmap& dofmap()const{return dofmap_;};
+
+template<typename OtherArg,typename...OtherArgs>
+class tot_subspaces
+{ public: static constexpr Integer value= OtherArg::Nsubspaces+tot_subspaces<OtherArgs...>::value;};
+
+template<typename OtherArg>
+class tot_subspaces<OtherArg>
+{ public:  static constexpr Integer value= OtherArg::Nsubspaces;};
+
+
+template<Integer N>
+typename std::enable_if< 0==N, Integer >::type
+tot_n_dofs()
+{ const auto& tmp=std::get<N>(spaces_);
+  return tmp->n_dofs();}
+
+
+template<Integer N>
+typename std::enable_if< 0<N, Integer >::type
+tot_n_dofs()
+{ 
+static_assert(N>0, " tuple cannot have negative components");
+const auto& tmp=std::get<N>(spaces_);
+return tmp->n_dofs()+tot_n_dofs<N-1>();}
+
+
+
+template<typename OtherArg,typename...OtherArgs>
+struct tuple_type
+{
+      using rest = typename tuple_type<OtherArgs...>::type; 
+      using tuple_ens=std::tuple<OtherArg>;
+      using type = decltype( std::tuple_cat( std::declval< tuple_ens >(), std::declval< rest >() ) );
+};
+
+
+template<typename OtherArg>
+struct tuple_type<OtherArg>
+{
+     using type = typename std::tuple<OtherArg>;
+};
+
+
+template<Integer N,typename OtherArg, typename...OtherArgs>
+typename std::enable_if< 0==sizeof...(OtherArgs),typename tuple_type<OtherArg,OtherArgs...>::type >::type  
+tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
+{ std::cout<<"N=="<<N<<". "<<tot_n_dofs<N-1>()<<std::endl;
+  return std::tuple<OtherArg>(add_costant(otherarg,tot_n_dofs<N-1>()));}
+
+
+template<Integer N,typename OtherArg, typename...OtherArgs>
+typename std::enable_if< 0<N && 0<sizeof...(OtherArgs),typename tuple_type<OtherArg,OtherArgs...>::type >::type  
+tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
+{std::cout<<"N=="<<N<<". "<<tot_n_dofs<N-1>()<<std::endl;
+  return std::tuple_cat(std::tuple<OtherArg>( add_costant(otherarg,tot_n_dofs<N-1>()) ),
+                       tuple_make<N+1,OtherArgs...>(otherargs...));}
+
+template<Integer N,typename OtherArg, typename...OtherArgs>
+typename std::enable_if< 0==N && 0<sizeof...(OtherArgs),typename tuple_type<OtherArg,OtherArgs...>::type >::type  
+tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
+{std::cout<<"N=="<<N<<". "<<0<<std::endl;
+  return std::tuple_cat(std::tuple<OtherArg>( otherarg ),
+                       tuple_make<N+1,OtherArgs...>(otherargs...));}
+
+MixedSpace(const Args&...args):
+spaces_(std::make_tuple(std::make_shared<Args>(args)...)),
+n_dofs_(tot_n_dofs<sizeof...(Args)-1>()),
+dofmap_(tuple_make<0,typename Args::type_dofmap...>(args.dofmap()...))
+{}
+
+static constexpr Integer Nsubspaces=tot_subspaces<Args...>::value;
+private:
+      std::tuple<std::shared_ptr<Args>...> spaces_;
+      Integer n_dofs_;
+      type_dofmap dofmap_;
+
+      // std::array<std::vector<Integer>, Nsubspaces> offset_;
+      // std::array<std::vector<std::vector<Integer>>, Nsubspaces> space_dofs_;
+      // std::array<std::array<Integer,4>,Nsubspaces> space_infos_;
+
+
+};
+
+template<typename...Args>
+MixedSpace<Args...> MixedFunctionSpace(const Args&...args){return MixedSpace<Args...>(args...);};
+
+
+
+template<typename...Args>
+class TestSpace
+{
+public:
+ TestSpace(const MixedSpace<Args...>& spaces):
+ spaces_(spaces)
+ {}
+
+ private:
+   MixedSpace<Args...> spaces_;
+};
+
+
+template<typename...Args>
+TestSpace<Args...> Test(const MixedSpace<Args...>& spaces){return TestSpace<Args...>(spaces);};
+
+
+
 
 
 

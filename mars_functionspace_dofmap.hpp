@@ -97,7 +97,7 @@ typename std::enable_if< 0<N,
 EntitiesOfFunctionSpace(const MeshT& mesh, 
                         const std::vector< std::vector<Integer> >&node_2_element )
 {
-  
+
       using ens=ElemEntity<Elem,ElementFunctionSpace<Elem,FEFamily,Order>::entity[N]>;
       return std::tuple_cat(EntitiesOfFunctionSpace<Elem,FEFamily,Order,N-1>(mesh,node_2_element),
                             std::tuple<ens>(ens(mesh,node_2_element)));
@@ -330,15 +330,6 @@ for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
              space_dofs[fs_dim].push_back(global_dof_count);
              loc_dof_count++;
              global_dof_count++;
-                  if(elem_id<=5 )
-                  {
-                  std::cout<<"elem_id="<<elem_id<<std::endl;
-                  std::cout<<std::endl<<"entity not yet visited N == "<<N<<std::endl;
-                  std::cout<<"global_dof_count="<<global_dof_count<<std::endl;
-                  std::cout<<dofmap_vec[elem_id][loc_dof_count]<<" ";
-
-                  }
-              
              }
     }
     else
@@ -354,25 +345,6 @@ for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
         for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
            {           
             dofmap_vec[elem_id][loc_dof_count]=old_dof;
-                  if(elem_id<=5 )
-                  {
-                  std::cout<<std::endl;
-                  std::cout<<"elem_id="<<elem_id<<std::endl;
-                  std::cout<<std::endl<<"entity already visited N == "<<N<<std::endl;
-                  std::cout<<"global_dof_count="<<global_dof_count<<std::endl;
-                  std::cout<<"entity_id="<<entity_id<<std::endl;
-                  std::cout<<"iter_tmp="<<iter_tmp<<std::endl;
-                  std::cout<<"elem_id_tmp="<<elem_id_tmp<<std::endl;
-                  std::cout<<dofs_offset[N]+ dofs_per_entity*iter_tmp*FunctionSpace::NComponents<<std::endl;
-                  std::cout<<"loc_dof_count="<<loc_dof_count<<std::endl;
-                  std::cout<<"old_dof="<<old_dof<<std::endl;
-                  std::cout<<"elem2entity="<<std::endl;
-                  for(Integer nn=0;nn<elem2entity.size();nn++)
-                      std::cout<<elem2entity[nn]<<" ";
-                  std::cout<<std::endl;
-                  std::cout<<dofmap_vec[elem_id][loc_dof_count]<<" ";
-                  std::cout<<std::endl;
-                  }
             loc_dof_count++;
             old_dof++;
 
@@ -381,13 +353,6 @@ for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
        } 
    }
 
-   if(elem_id<=5 )
-  {
-     std::cout<<"dofmap_vec,elem_id == "<<elem_id<<std::endl;
-    for(Integer nn=0;nn<dofmap_vec[elem_id].size();nn++)
-      std::cout<<dofmap_vec[elem_id][nn]<<" ";
-    std::cout<<" "<<std::endl;
-  }
 }
 
 template<Integer N,typename FunctionSpace, typename Array,typename...Args1,typename T,typename OS, typename SpaceDofs>
@@ -627,20 +592,6 @@ void dofmap_fespace(const MeshT& mesh,
           auto flagtuples= FlagTuple<Elem,FunctionSpace,FunctionSpaces...>(entitiestuple);
 
 
-    const auto m0=std::get<0>(entitiestuple);
-    const auto m00=std::get<0>(m0);
-    // const auto m01=std::get<1>(m0);
-    const auto m1=std::get<1>(entitiestuple);
-
-
-   for(Integer el=0;el<n_elements;el++)
-    {for(Integer nn=0;nn<m00.elem_2_entity(el).size();nn++)
-      std::cout<<m00.elem_2_entity(el)[nn]<<" ";
-     std::cout<<std::endl;
-    }
-
-
-
     dofmap_vec.resize(n_elements);   
     global_dof_count=dof_count_start;
     // loop on all the elements
@@ -657,9 +608,7 @@ void dofmap_fespace(const MeshT& mesh,
      // loop on all the function spaces
      ElementDofMap<0,Elem,FunctionSpace,FunctionSpaces...>
                        (entitiestuple,flagtuples,elem_id,dofmap_vec,global_dof_count,loc_dof_count,dofs_offset,space_dofs);
-    for(Integer nn=0;nn<dofmap_vec[elem_iter].size();nn++)
-       std::cout<<dofmap_vec[elem_iter][nn]<< "  ";
-    std::cout<<std::endl; 
+
     }
 
 tuple2array_dofs_offset<n_spaces-1>(dofs_offset,dofs_offset_arr);

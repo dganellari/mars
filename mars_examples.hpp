@@ -84,14 +84,22 @@ void cents_example()
     FSspace FEspace(mesh);
     using FSspace2= FunctionSpace< MeshT, Lagrange2<1>,RT0<1>>;
     FSspace2 FEspace2(mesh);
+    using FSspace3= FunctionSpace< MeshT, Lagrange1<1>, Lagrange1<1>>;
+    FSspace3 FEspace3(mesh);
 
-
+// auto ecchime=FEspace3.set_quadrature_rule<0,GaussPoints<Elem,2>,GaussPoints<Elem,2>>();
  using fespace1= ElemFunctionSpace<Simplex<2,2>, Lagrange1<1>>;
  using fespace2= ElemFunctionSpace<Simplex<2,2>, Lagrange2<2>>;
  using fespace3= ElemFunctionSpace<Simplex<2,2>, RT0<1>>;
  std::cout<<"fespace"<<fespace2::FEFamily<<std::endl;
  std::cout<<"fespace"<<fespace2::Order<<std::endl;
- // BilinearFormIntegrator<4,FSspace,FSspace,GradientOperator,IdentityOperator>(FEspace,FEspace);
+ BilinearFormIntegrator<4,FSspace,FSspace,GradientOperator,IdentityOperator>(FEspace,FEspace);
+
+ FiniteElementSpace<FSspace3,GaussPoints<Elem,4>,GaussPoints<Elem,4>> FE3(FEspace3);
+
+ using FESpace4=FEProva<MeshT,Lagrange1<1>,GaussQP<4>,Lagrange1<1>,GaussQP<4>>;
+ FESpace4 FE4(mesh);
+
 
 // std::shared_ptr<CollectorFunctionSpace> collfes=std::make_shared<CollectorFunctionSpace>(FEspace,FEspace);
 // auto e1=collfes->get(0);
@@ -99,6 +107,7 @@ void cents_example()
 const auto ee=FEspace.dofmap();
 
 
+// auto Wp=MixedFunctionSpace(FE3,FE3);
 
 auto W=MixedFunctionSpace(FEspace,FEspace2);
 auto W1=MixedFunctionSpace(W,FEspace,FEspace2);

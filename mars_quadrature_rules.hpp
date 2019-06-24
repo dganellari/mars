@@ -8,15 +8,19 @@ namespace mars {
 template<typename Elem_,Integer Order_>
 class BaseQuadrature
 {
+public:
  using Elem=Elem_;
  static constexpr Integer Order=Order;
 };
+
+
+
 
 template<typename Elem,Integer Order>
 class GaussPoints;
 
 template< Integer Dim >
-class GaussPoints< Simplex<Dim,2> , 1>:BaseQuadrature<Simplex<Dim,2>,1>
+class GaussPoints< Simplex<Dim,2> , 1>: public BaseQuadrature<Simplex<Dim,2>,1>
 {
 private:
  Matrix<Real,1,2> qp_points_;
@@ -37,7 +41,7 @@ public:
 
 
 template<Integer Dim>
-class GaussPoints<Simplex<Dim,2>,2>:BaseQuadrature<Simplex<Dim,2>,2>
+class GaussPoints<Simplex<Dim,2>,2>: public BaseQuadrature<Simplex<Dim,2>,2>
 {
 private:
   Matrix<Real,3,2>  qp_points_;
@@ -59,7 +63,7 @@ public:
 
 
 template<Integer Dim>
-class GaussPoints<Simplex<Dim,2>,3>:BaseQuadrature<Simplex<Dim,2>,3>
+class GaussPoints<Simplex<Dim,2>,3>: public BaseQuadrature<Simplex<Dim,2>,3>
 {
 private:
   Matrix<Real,4,2>  qp_points_;
@@ -79,7 +83,7 @@ public:
 };
 
 template<Integer Dim>
-class GaussPoints<Simplex<Dim,2>,4>:BaseQuadrature<Simplex<Dim,2>,4>
+class GaussPoints<Simplex<Dim,2>,4>: public BaseQuadrature<Simplex<Dim,2>,4>
 {
 private:
   Matrix<Real,6,2>  qp_points_;
@@ -107,7 +111,7 @@ public:
 
 
 template<Integer Dim>
-class GaussPoints<Simplex<Dim,2>,5>:BaseQuadrature<Simplex<Dim,2>,5>
+class GaussPoints<Simplex<Dim,2>,5>: public BaseQuadrature<Simplex<Dim,2>,5>
 {
 private:
   Matrix<Real,7,2>  qp_points_;
@@ -134,6 +138,24 @@ public:
             0.12593918054483 })
   {}
 };
+
+
+
+
+
+
+
+
+template<Integer Order>
+class GaussQP
+{
+public:
+  template<typename Elem>
+  using rule=GaussPoints< Elem , Order>;
+};
+
+
+
 }
 
 #endif //MARS_QUADRATURE_RULES_HPP

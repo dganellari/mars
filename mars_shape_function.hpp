@@ -12,7 +12,6 @@
 #include "mars_fqpexpressions.hpp"
 #include "mars_quadrature_rules.hpp"
 
-
 namespace mars{
 
 
@@ -608,9 +607,14 @@ class MapFromReference4<Simplex<Dim,ManifoldDim>,BaseFunctionSpace<LagrangeFE,Or
  using Jacobian=Matrix<Real, Dim, ManifoldDim>;
 
 
-        inline void  init(const IdentityOperator& o,const Jacobian& J){id_=1.0;}
+        inline void  init(const Jacobian& J,const IdentityOperator& o){id_=1.0;}
 
-        inline void  init(const GradientOperator& o, const Jacobian& J){grad_=  inverse(J);}
+        inline void  init(const Jacobian& J,const GradientOperator& o){grad_=  inverse(J);}
+
+        template<typename Operator,typename...Operators>
+        typename std::enable_if<sizeof...(Operators), void>::type
+        init(const Jacobian& J,const Operator&o, const Operators&...operators)
+        {init(J,o);init(J,operators...);}
 
         inline const Real&  operator()(const IdentityOperator& o)const{return id_;}
 
@@ -629,9 +633,9 @@ class MapFromReference4<Simplex<Dim,ManifoldDim>,BaseFunctionSpace<RaviartThomas
  public:
  using Jacobian=Matrix<Real, Dim, ManifoldDim>;
      
-         inline void init(const IdentityOperator&o, const Jacobian& J) {id_=J;id_/=det(id_);}
+         inline void init(const Jacobian& J,const IdentityOperator&o) {id_=J;id_/=det(id_);}
         
-         inline void init(const DivergenceOperator&o, const Jacobian& J){div_= 1.0/det(J);}
+         inline void init(const Jacobian& J,const DivergenceOperator&o){div_= 1.0/det(J);}
 
          inline const Jacobian&  operator()(const IdentityOperator& o)const {return id_;}
 
@@ -982,7 +986,7 @@ class BaseShapeFunctionOperator<IdentityOperator, QuadratureRule, Ndofs, Dim, Ma
   FunctionType & function(const IdentityOperator&o){return func_values_;}
 
 
-  void operator()(const QP & qp_points,const IdentityOperator&o)
+  void init(const QP & qp_points,const IdentityOperator&o)
   {
    for(Integer qp=0;qp<NQPoints;qp++)
     {
@@ -1071,7 +1075,7 @@ class BaseShapeFunctionOperator<GradientOperator, QuadratureRule, Ndofs, Dim, Ma
   GradientType& function(const GradientOperator&o){return grad_values_;}
 
 
-  void operator()(const QP & qp_points,const GradientOperator& o)
+  void init(const QP & qp_points,const GradientOperator& o)
   {
 
    for(Integer qp=0;qp<NQPoints;qp++)
@@ -1142,6 +1146,7 @@ public BaseShapeFunctionOperator<IdentityOperator, QuadratureRule,3,2,2,1,1,NCom
 public BaseShapeFunctionOperator<GradientOperator, QuadratureRule,3,2,2,1,1,NComponents>
 {
 public:
+
   static constexpr Integer Ndofs=3;
   static constexpr Integer Dim=2;
   static constexpr Integer ManifoldDim=2;
@@ -1149,6 +1154,22 @@ public:
   static constexpr Integer ShapeFunctionDim2=1;
   static constexpr Integer Ntot = Ndofs * NComponents ;
   static constexpr Integer NQPoints=QuadratureRule::NQPoints;
+  using Elem=Simplex<2,2>;
+  using BaseFunctionSpace=Lagrange1<NComponents>;
+  template<typename Operator>
+  using Base=BaseShapeFunctionOperator<Operator,QuadratureRule,Ndofs,Dim,ManifoldDim,ShapeFunctionDim1,ShapeFunctionDim2,NComponents>;
+
+
+  using Base<IdentityOperator>::reference;
+  using Base<GradientOperator>::reference;
+  using Base<IdentityOperator>::function;
+  using Base<GradientOperator>::function;
+  using Base<IdentityOperator>::operator();
+  using Base<GradientOperator>::operator();
+
+
+
+
   using FuncType   = Matrix<Real, ShapeFunctionDim1, ShapeFunctionDim2>;
   using GradType   = Matrix<Real, ShapeFunctionDim1, ShapeFunctionDim2 * Dim>;
   using DivType = Real;
@@ -1170,6 +1191,55 @@ public:
     func_grad[1](0,0)=+1;  func_grad[1](0,1)= 0; 
     func_grad[2](0,0)= 0;  func_grad[2](0,1)=+1; 
   } 
+
+  template<typename Operator, typename...Operators>
+  typename std::enable_if< 0==sizeof...(Operators),void >::type
+  init(const QP & qp_points,const Operator&o, const Operators&...operators)
+  {Base<Operator>::init(qp_points,o);}
+
+
+  template<typename Operator, typename...Operators>
+  typename std::enable_if< 0<sizeof...(Operators),void >::type
+  init(const QP & qp_points,const Operator&o, const Operators&...operators)
+  {Base<Operator>::init(qp_points,o);init(qp_points,operators...);}
+
+  // template<typename Jacobian, typename Operator, typename...Operators>
+  // typename std::enable_if<0==sizeof...(Operators),void>::type 
+  // set_map(const Jacobian&J,const Operator& o,const Operators&...operators)
+  // {map.init(J,o);}
+
+  // template<typename Jacobian, typename Operator, typename...Operators>
+  // typename std::enable_if<0<sizeof...(Operators),void>::type 
+  // set_map(const Jacobian&J,const Operator& o,const Operators&...operators)
+  // {map.init(J,o);
+  //  set_map(J,operators...);}
+
+
+  template<typename Jacobian, typename Operator, typename...Operators>
+  typename std::enable_if< 0==sizeof...(Operators),void>::type 
+  operator()(const Jacobian& J, 
+             const Vector<Real,Ndofs> &alpha,
+             const Operator& o
+                  )
+  {
+  map.init(J,o);
+  Base<Operator>::operator()(o,map(o),alpha);
+  };
+
+  template<typename Jacobian, typename Operator, typename...Operators>
+  typename std::enable_if< 0<sizeof...(Operators),void>::type 
+  operator()(const Jacobian& J, 
+             const Vector<Real,Ndofs> &alpha,
+             const Operator& o,
+             const Operators&...operators)
+  {
+  map.init(J,o);
+  Base<Operator>::operator()(o,map(o),alpha);
+  operator()(J,alpha,operators...);
+  };
+
+ private:
+   MapFromReference4<Elem,BaseFunctionSpace> map;
 };
 
 
@@ -2031,117 +2101,12 @@ Tuple<Args...> TupleOf(const Args&...args){return Tuple<Args...>(args...);};
 
 
 
-template<typename...Args>
-class MixedSpace
-{
-public:
-using type_dofmap=std::tuple<typename Args::type_dofmap...>;
-
-inline const Integer& n_dofs()const{return n_dofs_;}; 
-
-inline const type_dofmap& dofmap()const{return dofmap_;};
-
-template<typename OtherArg,typename...OtherArgs>
-class tot_subspaces
-{ public: static constexpr Integer value= OtherArg::Nsubspaces+tot_subspaces<OtherArgs...>::value;};
-
-template<typename OtherArg>
-class tot_subspaces<OtherArg>
-{ public:  static constexpr Integer value= OtherArg::Nsubspaces;};
-
-
-template<Integer N>
-typename std::enable_if< 0==N, Integer >::type
-tot_n_dofs()
-{ const auto& tmp=std::get<N>(spaces_);
-  return tmp->n_dofs();}
-
-
-template<Integer N>
-typename std::enable_if< 0<N, Integer >::type
-tot_n_dofs()
-{ 
-static_assert(N>0, " tuple cannot have negative components");
-const auto& tmp=std::get<N>(spaces_);
-return tmp->n_dofs()+tot_n_dofs<N-1>();}
 
 
 
-template<typename OtherArg,typename...OtherArgs>
-struct tuple_type
-{
-      using rest = typename tuple_type<OtherArgs...>::type; 
-      using tuple_ens=std::tuple<OtherArg>;
-      using type = decltype( std::tuple_cat( std::declval< tuple_ens >(), std::declval< rest >() ) );
-};
-
-
-template<typename OtherArg>
-struct tuple_type<OtherArg>
-{
-     using type = typename std::tuple<OtherArg>;
-};
-
-
-template<Integer N,typename OtherArg, typename...OtherArgs>
-typename std::enable_if< 0==sizeof...(OtherArgs),typename tuple_type<OtherArg,OtherArgs...>::type >::type  
-tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
-{ std::cout<<"N=="<<N<<". "<<tot_n_dofs<N-1>()<<std::endl;
-  return std::tuple<OtherArg>(add_costant(otherarg,tot_n_dofs<N-1>()));}
-
-
-template<Integer N,typename OtherArg, typename...OtherArgs>
-typename std::enable_if< 0<N && 0<sizeof...(OtherArgs),typename tuple_type<OtherArg,OtherArgs...>::type >::type  
-tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
-{std::cout<<"N=="<<N<<". "<<tot_n_dofs<N-1>()<<std::endl;
-  return std::tuple_cat(std::tuple<OtherArg>( add_costant(otherarg,tot_n_dofs<N-1>()) ),
-                       tuple_make<N+1,OtherArgs...>(otherargs...));}
-
-template<Integer N,typename OtherArg, typename...OtherArgs>
-typename std::enable_if< 0==N && 0<sizeof...(OtherArgs),typename tuple_type<OtherArg,OtherArgs...>::type >::type  
-tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
-{std::cout<<"N=="<<N<<". "<<0<<std::endl;
-  return std::tuple_cat(std::tuple<OtherArg>( otherarg ),
-                       tuple_make<N+1,OtherArgs...>(otherargs...));}
-
-MixedSpace(const Args&...args):
-spaces_(std::make_tuple(std::make_shared<Args>(args)...)),
-n_dofs_(tot_n_dofs<sizeof...(Args)-1>()),
-dofmap_(tuple_make<0,typename Args::type_dofmap...>(args.dofmap()...))
-{}
-
-static constexpr Integer Nsubspaces=tot_subspaces<Args...>::value;
-private:
-      std::tuple<std::shared_ptr<Args>...> spaces_;
-      Integer n_dofs_;
-      type_dofmap dofmap_;
-      // std::array<std::vector<Integer>, Nsubspaces> offset_;
-      // std::array<std::vector<std::vector<Integer>>, Nsubspaces> space_dofs_;
-      // std::array<std::array<Integer,4>,Nsubspaces> space_infos_;
-
-
-};
-
-template<typename...Args>
-MixedSpace<Args...> MixedFunctionSpace(const Args&...args){return MixedSpace<Args...>(args...);};
 
 
 
-template<typename...Args>
-class TestSpace
-{
-public:
- TestSpace(const MixedSpace<Args...>& spaces):
- spaces_(spaces)
- {}
-
- private:
-   MixedSpace<Args...> spaces_;
-};
-
-
-template<typename...Args>
-TestSpace<Args...> Test(const MixedSpace<Args...>& spaces){return TestSpace<Args...>(spaces);};
 
 
 
@@ -2571,8 +2536,8 @@ std::cout<<result()<<std::endl;
     using BaseFunctionSpace=Lagrange1<1>;
     using ShapeSpace=ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>;
     ShapeSpace s;
-    map3.init(Operator::id(),J);
-    map3.init(Operator::grad(),J);
+    map3.init(J,Operator::id());
+    map3.init(J,Operator::grad());
     const auto& o=Operator::id();
     const auto& o_grad=Operator::grad();
     // const auto& mapping=map3(o);
@@ -2742,60 +2707,58 @@ std::cout<<resvar0<<std::endl;
 std::cout<<resvar1<<std::endl;
 std::cout<<resvar<<std::endl;
 
-
+auto lagr=ShapeFunctionOperator<GaussPoints<Elem,QPOrder>, Elem, Lagrange1<4>>();
 ShapeFunctionOperator<GaussPoints<Elem,QPOrder>, Elem, Lagrange1<4>> lagrangesf;
-lagrangesf(qp_points,Operator::id());
-lagrangesf(qp_points,Operator::grad());
+lagrangesf.init(qp_points,Operator::id(),Operator::grad());
+lagrangesf(J,Vector<Real,3>(1),Operator::id(),Operator::grad());//,Vector<Real,3>(1.0));
+
+std::cout<<"lagrange_ identity"<<lagrangesf.function(identity)()<<std::endl;
+std::cout<<"lagrange_grad"<<lagrangesf.function(grad)()<<std::endl;
+
+// std::shared_ptr<Son1> son1=std::make_shared<Son1>(1);
+// std::shared_ptr<Son1> son2=std::make_shared<Son1>(2);
+// std::shared_ptr<Son1> son3=std::make_shared<Son1>(3);
+
+// std::shared_ptr<Son1> daughter1=std::make_shared<Son1>(4);
+// std::shared_ptr<Son1> daughter2=std::make_shared<Son1>(5);
 
 
+// std::shared_ptr<Son2> mom=std::make_shared<Son2>();
+// std::shared_ptr<Son2> uncle1=std::make_shared<Son2>();
+// std::shared_ptr<Son2> uncle2=std::make_shared<Son2>();
+// std::shared_ptr<Son2> grandma=std::make_shared<Son2>();
+
+// son1->print();
+// son2->print();
+// son3->print();
+// mom->add(son1);
+// mom->add(son2);
+
+// uncle1->add(daughter1);
+// uncle1->add(daughter2);
+
+// grandma->add(mom);
+// grandma->add(uncle1);
 
 
+// auto mom1=grandma->get(0);
+// auto kid1=grandma->get(1)->get(1);
+
+// std::cout<<"grandma"<<std::endl;
+// grandma->print();
+// std::cout<<"kid1"<<std::endl;
+// kid1->print();
 
 
-std::shared_ptr<Son1> son1=std::make_shared<Son1>(1);
-std::shared_ptr<Son1> son2=std::make_shared<Son1>(2);
-std::shared_ptr<Son1> son3=std::make_shared<Son1>(3);
+// Tuple<int, double> tuple_try(1,0.4);
+// const auto tuple_try2=TupleOf(1,tuple_try);
+// std::cout<<tuple_try.get<0>()<<std::endl;
+// std::cout<<tuple_try.get<1>()<<std::endl;
+// std::cout<<tuple_try2.get<1>().get<1>()<<std::endl;
+// typename decltype(tuple_try2)::type<1> a=tuple_try;
 
-std::shared_ptr<Son1> daughter1=std::make_shared<Son1>(4);
-std::shared_ptr<Son1> daughter2=std::make_shared<Son1>(5);
-
-
-std::shared_ptr<Son2> mom=std::make_shared<Son2>();
-std::shared_ptr<Son2> uncle1=std::make_shared<Son2>();
-std::shared_ptr<Son2> uncle2=std::make_shared<Son2>();
-std::shared_ptr<Son2> grandma=std::make_shared<Son2>();
-
-son1->print();
-son2->print();
-son3->print();
-mom->add(son1);
-mom->add(son2);
-
-uncle1->add(daughter1);
-uncle1->add(daughter2);
-
-grandma->add(mom);
-grandma->add(uncle1);
-
-
-auto mom1=grandma->get(0);
-auto kid1=grandma->get(1)->get(1);
-
-std::cout<<"grandma"<<std::endl;
-grandma->print();
-std::cout<<"kid1"<<std::endl;
-kid1->print();
-
-
-Tuple<int, double> tuple_try(1,0.4);
-const auto tuple_try2=TupleOf(1,tuple_try);
-std::cout<<tuple_try.get<0>()<<std::endl;
-std::cout<<tuple_try.get<1>()<<std::endl;
-std::cout<<tuple_try2.get<1>().get<1>()<<std::endl;
-typename decltype(tuple_try2)::type<1> a=tuple_try;
-
-decltype(tuple_try2)::GetType<1,1>::type gg=1;
-std::cout<<gg<<std::endl;
+// decltype(tuple_try2)::GetType<1,1>::type gg=1;
+// std::cout<<gg<<std::endl;
 
 };
 
