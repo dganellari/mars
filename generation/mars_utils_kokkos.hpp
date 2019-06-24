@@ -156,6 +156,9 @@ void remove_extra_nodes(Mesh<Dim, ManifoldDim, Point_>& mesh,
 
 }*/
 
+
+//TODO: Repeated code. Try to optimize.
+//Maybe using traits and a wrapper for the operator () in kokkos views to have a unified operator []
 KOKKOS_INLINE_FUNCTION
 void build_hex27(ViewMatrixTexture<Integer,hex_n_nodes> nodes, const int cube_index, const Integer xDim,
 		const Integer yDim, const int i, const int j, const int k) {
