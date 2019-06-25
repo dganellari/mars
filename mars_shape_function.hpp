@@ -1176,8 +1176,6 @@ public:
   using Point = Vector<Real,Dim>;
   using QP = Matrix<Real,NQPoints,Dim>;
 
-  ShapeFunctionOperator(){};
-  ShapeFunctionOperator(const QP & qp_points){(*this)(qp_points);};
 
  virtual void value(const IdentityOperator& o, const Point& point, Vector<FuncType,Ndofs>& func )
        {func[0](0,0)=point[0];
@@ -1203,17 +1201,6 @@ public:
   init(const QP & qp_points,const Operator&o, const Operators&...operators)
   {Base<Operator>::init(qp_points,o);init(qp_points,operators...);}
 
-  // template<typename Jacobian, typename Operator, typename...Operators>
-  // typename std::enable_if<0==sizeof...(Operators),void>::type 
-  // set_map(const Jacobian&J,const Operator& o,const Operators&...operators)
-  // {map.init(J,o);}
-
-  // template<typename Jacobian, typename Operator, typename...Operators>
-  // typename std::enable_if<0<sizeof...(Operators),void>::type 
-  // set_map(const Jacobian&J,const Operator& o,const Operators&...operators)
-  // {map.init(J,o);
-  //  set_map(J,operators...);}
-
 
   template<typename Jacobian, typename Operator, typename...Operators>
   typename std::enable_if< 0==sizeof...(Operators),void>::type 
@@ -1237,9 +1224,25 @@ public:
   Base<Operator>::operator()(o,map(o),alpha);
   operator()(J,alpha,operators...);
   };
+ 
+  ShapeFunctionOperator(){};
+
+  ShapeFunctionOperator(const Integer& add_const):
+  range_({add_const,Ntot-1+add_const})
+  {}
+
+  template<typename...Operators>
+  ShapeFunctionOperator(const QP & qp_points, const Integer& add_const=0,const Operators&...operators):
+  range_({add_const,Ntot-1+add_const})
+  {init(qp_points,operators...);};
+
+  const std::array<Integer,2>& range(){return range_;};
+  inline void range(const Integer& add_const){ range_[0]=add_const;range_[1]=add_const+Ntot-1;};
+  inline const Integer& range1(){return range_[1];};
 
  private:
    MapFromReference4<Elem,BaseFunctionSpace> map;
+   std::array<Integer,2> range_;
 };
 
 

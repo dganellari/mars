@@ -78,81 +78,93 @@ void cents_example()
     GaussPoints<Elem,QPOrder> gauss;
     const auto& qp_points=gauss.qp_points();
 
-    IdentityOperator identity;
+Elem elem;
+Matrix<Real, Dim, ManifoldDim> J;
 
-    using FSspace= FunctionSpace< MeshT, Lagrange2<1>,RT0<1>>;
-    FSspace FEspace(mesh);
+constexpr Integer Npoints=Elem::Npoints;
+std::vector<Vector<Real,Dim>> points(Npoints);
+
+for(Integer ii=0;ii<Npoints;ii++)
+   elem.nodes[ii]=ii;
+
+points[0][0]=0;
+points[0][1]=0;
+points[1][0]=2;
+points[1][1]=3;
+points[2][0]=1;
+points[2][1]=4;
+  jacobian(elem,points,J);
+
+    using FSspace1= FunctionSpace< MeshT, Lagrange2<1>,RT0<1>>;
+    FSspace1 FEspace1(mesh);
     using FSspace2= FunctionSpace< MeshT, Lagrange2<1>,RT0<1>>;
     FSspace2 FEspace2(mesh);
-    using FSspace3= FunctionSpace< MeshT, Lagrange1<1>, Lagrange1<1>>;
+    using FSspace3= FunctionSpace< MeshT, Lagrange1<1>, Lagrange1<1>,Lagrange1<1>>;
     FSspace3 FEspace3(mesh);
 
 // auto ecchime=FEspace3.set_quadrature_rule<0,GaussPoints<Elem,2>,GaussPoints<Elem,2>>();
  using fespace1= ElemFunctionSpace<Simplex<2,2>, Lagrange1<1>>;
  using fespace2= ElemFunctionSpace<Simplex<2,2>, Lagrange2<2>>;
  using fespace3= ElemFunctionSpace<Simplex<2,2>, RT0<1>>;
- std::cout<<"fespace"<<fespace2::FEFamily<<std::endl;
- std::cout<<"fespace"<<fespace2::Order<<std::endl;
- BilinearFormIntegrator<4,FSspace,FSspace,GradientOperator,IdentityOperator>(FEspace,FEspace);
-
- FiniteElementSpace<FSspace3,GaussPoints<Elem,4>,GaussPoints<Elem,4>> FE3(FEspace3);
-
- using FESpace4=FEProva<MeshT,Lagrange1<1>,GaussQP<4>,Lagrange1<1>,GaussQP<4>>;
- FESpace4 FE4(mesh);
+ 
+ BilinearFormIntegrator<4,FSspace1,FSspace1,GradientOperator,IdentityOperator>(FEspace1,FEspace1);
 
 
-// std::shared_ptr<CollectorFunctionSpace> collfes=std::make_shared<CollectorFunctionSpace>(FEspace,FEspace);
-// auto e1=collfes->get(0);
-// const auto dm1=e1->dofmap();
-const auto ee=FEspace.dofmap();
+//  using FESpace4=FESpace<MeshT,Lagrange1<2>,GaussQP<4>,Lagrange1<1>,GaussQP<4>,Lagrange1<3>,GaussQP<4>>;
+//  FESpace4 FE4(mesh);
+//   std::cout<<"------------------------------------------------------------"<<std::endl;
+//   std::cout<<"Nelem_dofs==="<<FESpace4::Nelem_dofs<<std::endl;
+//   std::cout<<"------------------------------------------------------------"<<std::endl;
+
+// // std::shared_ptr<CollectorFunctionSpace> collfes=std::make_shared<CollectorFunctionSpace>(FEspace,FEspace);
+// // auto e1=collfes->get(0);
+// // const auto dm1=e1->dofmap();
+// const auto ee=FEspace.dofmap();
 
 
-// auto Wp=MixedFunctionSpace(FE3,FE3);
+// // auto Wp=MixedFunctionSpace(FE3,FE3);
 
-auto W=MixedFunctionSpace(FEspace,FEspace2);
-auto W1=MixedFunctionSpace(W,FEspace,FEspace2);
+auto W=MixedFunctionSpace(FEspace3,FEspace3);
+auto W1=MixedFunctionSpace(W,FEspace3);
 
-std::cout<<FEspace.n_dofs()<<std::endl;
-std::cout<<FEspace2.n_dofs()<<std::endl;
+
+get<0,decltype(W)::type_unique_base_function_space>::type unique;
+
+std::cout<<"TypeToTupleElementPosition=="<<TypeToTupleElementPosition<double,std::tuple<int,char,double,int,double>>::value<<std::endl;
+// auto sf0=W1.shape_functions();
+// auto sf00=std::get<0>(sf0);
+// auto sfsf0=std::get<0>(sf00);
+// auto sfsf00=std::get<0>(sfsf0);
+// auto sfsf01=std::get<1>(sfsf0);
+// auto sfsf02=std::get<2>(sfsf0);
+
+
+
+// sfsf00.init(qp_points,Operator::id(),Operator::grad());
+// std::cout<<"sfsf00="<<sfsf00.reference(Operator::id())<<std::endl;
+// sfsf00(J,Vector<Real,3>(1),Operator::id(),Operator::grad());
+// std::cout<<"sfsf00="<<sfsf00.function(Operator::id())<<std::endl;
+
+
+// std::cout<<"range1="<<sfsf00.range1()<<std::endl;
+// std::cout<<"range1="<<sfsf01.range1()<<std::endl;
+// std::cout<<"range1="<<sfsf02.range()[0]<<std::endl;
+
+
+
+
 std::cout<<W.n_dofs()<<std::endl;
 std::cout<<W1.n_dofs()<<std::endl;
 
-auto& dmW =W.dofmap();
-auto& dmW0 =std::get<0>(dmW);
-auto& dmW01=std::get<1>(dmW);
-
-auto& fe2map=FEspace2.dofmap();
 
 auto& dm =W1.dofmap();
 auto& dm0=std::get<0>(dm);
 auto& dm01=std::get<0>(dm0);
 auto& dm02=std::get<1>(dm0);
 auto& dm1=std::get<1>(dm);
-auto& dm2=std::get<2>(dm);
+// auto& dm2=std::get<2>(dm);
 
-std::cout<<"dmW0"<<std::endl;
-for(Integer ii=0;ii<dmW0.size();ii++)
-{
-   for(Integer jj=0;jj<dmW0[ii].size();jj++)
-      std::cout<<dmW0[ii][jj]<<" ";
-    std::cout<<std::endl;
-}
 
-std::cout<<"fe2map"<<std::endl;
-for(Integer ii=0;ii<fe2map.size();ii++)
-{
-   for(Integer jj=0;jj<fe2map[ii].size();jj++)
-      std::cout<<fe2map[ii][jj]<<" ";
-    std::cout<<std::endl;
-}
-
-std::cout<<"dmW01"<<std::endl;
-for(Integer ii=0;ii<dmW01.size();ii++)
-{
-   for(Integer jj=0;jj<dmW01[ii].size();jj++)
-      std::cout<<dmW01[ii][jj]<<" ";
-    std::cout<<std::endl;
-}
 
 
 std::cout<<"dm01"<<std::endl;
@@ -178,15 +190,24 @@ for(Integer ii=0;ii<dm1.size();ii++)
       std::cout<<dm1[ii][jj]<<" ";
     std::cout<<std::endl;
 }
-std::cout<<"dm2"<<std::endl;
-for(Integer ii=0;ii<dm2.size();ii++)
-{
-   for(Integer jj=0;jj<dm2[ii].size();jj++)
-      std::cout<<dm2[ii][jj]<<" ";
-    std::cout<<std::endl;
-}
+// std::cout<<"dm2"<<std::endl;
+// for(Integer ii=0;ii<dm2.size();ii++)
+// {
+//    for(Integer jj=0;jj<dm2[ii].size();jj++)
+//       std::cout<<dm2[ii][jj]<<" ";
+//     std::cout<<std::endl;
+// }
 auto TestW= Test(W);
 
+TupleCatType< std::tuple<int,float>, std::tuple<int>, std::tuple<char> > test{1,1.0f,2, 'a'};
+
+std::cout<<std::get<3>(test)<<std::endl;
+auto tuplecat=std::tuple_cat(std::tuple<int, char>(1,'a'),std::tuple<int, char,int>(1,'a',2),std::tuple<int>(1));
+    without_duplicates<std::tuple<int, char, char, int, char>> a(1,'a');
+    static_assert(std::is_same<without_duplicates<std::tuple<int, char>>, std::tuple<int, char>>::value, "ok");
+    static_assert(std::is_same<without_duplicates<std::tuple<int, char, int>>, std::tuple<int, char>>::value, "ok");
+    static_assert(std::is_same<without_duplicates<std::tuple<int, int, char>>, std::tuple<int, char>>::value, "ok");
+    static_assert(std::is_same<without_duplicates<std::tuple<int, char, char, int, char>>, std::tuple<int, char>>::value, "ok");
 };
 
 
@@ -298,18 +319,18 @@ void functionspaces_example2D()
     } 
 
 
-   FEspace.set_new_start(4);
-    std::cout<<"dofmap_new_start n_dofs="<<FEspace.n_dofs()<< std::endl;
-    std::cout<<std::endl;
-    for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
-    {
-     auto &elem_id=elem_iter;
-     std::cout<<std::endl<<" elem =="<<elem_iter<<std::endl;
-     for(Integer nn=0;nn<FEspace.dofmap_new_start(elem_id).size();nn++)
-     {
-        std::cout<<FEspace.dofmap_new_start(elem_id)[nn]<< "  ";
-     }
-    } 
+   // FEspace.set_new_start(4);
+   //  std::cout<<"dofmap_new_start n_dofs="<<FEspace.n_dofs()<< std::endl;
+   //  std::cout<<std::endl;
+   //  for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
+   //  {
+   //   auto &elem_id=elem_iter;
+   //   std::cout<<std::endl<<" elem =="<<elem_iter<<std::endl;
+   //   for(Integer nn=0;nn<FEspace.dofmap_new_start(elem_id).size();nn++)
+   //   {
+   //      std::cout<<FEspace.dofmap_new_start(elem_id)[nn]<< "  ";
+   //   }
+   //  } 
 
 
 std::cout<<std::endl;
@@ -328,14 +349,6 @@ for(Integer ss=0;ss<FEspace.n_subspaces();ss++)
    }
    std::cout<<std::endl;
 
-   std::cout<<"dofs of space ="<<ss<<std::endl;
-   for(Integer cc=0;cc<FEspace.components(ss);cc++)
-    {std::cout<<"component ="<<cc<<"   "<<std::endl;
-      auto& vec=FEspace.space_dofs_new_start(ss,cc);
-      for(Integer mm=0;mm<FEspace.n_dofs(ss,cc);mm++)
-          std::cout<<vec[mm]<<" ";
-   }
-   std::cout<<std::endl;
 
 }
  
