@@ -11,6 +11,7 @@
 #include "mars_vector.hpp"
 #include "mars_fqpexpressions.hpp"
 #include "mars_quadrature_rules.hpp"
+#include "mars_operators.hpp"
 
 namespace mars{
 
@@ -1338,7 +1339,7 @@ private:
 
 
 template<typename QuadratureRule, typename Elem,typename BaseFunctionSpace>
-class GradientExpression
+class GradientExpression<QuadratureRule,Elem,BaseFunctionSpace>
 : public ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>, 
   public FQPExpression<GradientExpression<QuadratureRule,  Elem, BaseFunctionSpace>,
   typename ShapeFunctionOperator4<QuadratureRule,  Elem, BaseFunctionSpace>::TotGradType,
@@ -2698,6 +2699,7 @@ std::cout<<resfqp<<std::endl;
 Expression2MatrixVar<Real,2,2> exprmatvar0;
 Expression2MatrixVar<Real,3,2> exprmatvar1;
 auto exprvar= - exprmatvar1 * exprmatvar0;
+auto exprvar2= -2*exprmatvar1*exprmatvar0/4+exprmatvar1*exprmatvar0*exprmatvar0;
 
 Evaluation<decltype(exprmatvar1)> evalvar0(exprmatvar1);
 Evaluation<decltype(exprmatvar0)> evalvar1(exprmatvar0);
@@ -2718,6 +2720,20 @@ lagrangesf(J,Vector<Real,3>(1),Operator::id(),Operator::grad());//,Vector<Real,3
 std::cout<<"lagrange_ identity"<<lagrangesf.function(identity)()<<std::endl;
 std::cout<<"lagrange_grad"<<lagrangesf.function(grad)()<<std::endl;
 
+
+OperatorType<Matrix<Real,2,2>>::type ess;
+std::cout<<"QuadratureOrder="<<QuadratureOrder<decltype(exprvar2)>::value<<std::endl;
+
+
+ShapeFunctionExpression<0,Lagrange1<1>> sfe1; 
+ShapeFunctionExpression<1,RT0<1>> sfe2; 
+auto sfe3=sfe1+sfe2;
+OperatorTupleType<decltype(sfe3)>::type es;
+
+using emptytuple=std::tuple< std::tuple<>, std::tuple<> >;
+
+
+// 
 // std::shared_ptr<Son1> son1=std::make_shared<Son1>(1);
 // std::shared_ptr<Son1> son2=std::make_shared<Son1>(2);
 // std::shared_ptr<Son1> son3=std::make_shared<Son1>(3);

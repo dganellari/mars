@@ -13,6 +13,8 @@
 #include "mars_elementfunctionspace.hpp"
 #include "mars_functionspace_dofmap.hpp"
 #include "mars_shape_function.hpp"
+#include "mars_tuple_utilities.hpp"
+
 namespace mars{
 
 
@@ -64,167 +66,236 @@ class IFunctionSpace
 //   std::vector<std::shared_ptr<IFunctionSpace>> children;
 
 // };
-template <int N, typename... Ts>
-struct get;
+// template <int N, typename... Ts>
+// struct get;
 
-template <int N, typename T, typename... Ts>
-struct get<N, std::tuple<T, Ts...>>
-{
-    using type = typename get<N - 1, std::tuple<Ts...>>::type;
-};
+// template <int N, typename T, typename... Ts>
+// struct get<N, std::tuple<T, Ts...>>
+// {
+//     using type = typename get<N - 1, std::tuple<Ts...>>::type;
+// };
 
-template <typename T, typename... Ts>
-struct get<0, std::tuple<T, Ts...>>
-{
-    using type = T;
-};
+// template <typename T, typename... Ts>
+// struct get<0, std::tuple<T, Ts...>>
+// {
+//     using type = T;
+// };
 
-template<typename...Args>
-std::tuple<Args...> add_costant (const std::tuple<Args...>& t1,const Integer& value);
-
-
-template<std::size_t Nelem_dofs>
-std::vector<std::array<Integer, Nelem_dofs>> add_costant
-(const std::vector<std::array<Integer, Nelem_dofs>>& t1,const Integer& value)
-{
-  std::vector<std::array<Integer, Nelem_dofs>> t2;
-  const auto& t1size=t1.size();
-  t2.resize(t1size);
-
-  std::cout<<"value=="<<value<<std::endl;
-  for(Integer ii=0;ii<t1size;ii++)
-    for(Integer jj=0;jj<t1[ii].size();jj++)
-       t2[ii][jj]=t1[ii][jj]+value;
-  return t2;
-}
-
-template<Integer N,typename...Args>
-typename std::enable_if<sizeof...(Args)==N+1, void>::type
- add_costant_tuple_loop(const std::tuple<Args...>& t1, std::tuple<Args...>& t2,const Integer& value)
-{
-std::get<N>(t2)=add_costant(std::get<N>(t1),value);
-}
-
-template<Integer N,typename...Args>
-typename std::enable_if< N+1<sizeof...(Args), void>::type
- add_costant_tuple_loop(const std::tuple<Args...>& t1, std::tuple<Args...>& t2,const Integer& value)
-{
-  std::get<N>(t2)=add_costant(std::get<N>(t1),value);
-  add_costant_tuple_loop<N+1,Args...>(t1,t2,value);
-}
+// template<typename...Args>
+// std::tuple<Args...> add_costant (const std::tuple<Args...>& t1,const Integer& value);
 
 
-template<typename...Args>
-std::tuple<Args...> add_costant (const std::tuple<Args...>& t1,const Integer& value)
-{
-  std::tuple<Args...> t2=t1;
+// template<std::size_t Nelem_dofs>
+// std::vector<std::array<Integer, Nelem_dofs>> add_costant
+// (const std::vector<std::array<Integer, Nelem_dofs>>& t1,const Integer& value)
+// {
+//   std::vector<std::array<Integer, Nelem_dofs>> t2;
+//   const auto& t1size=t1.size();
+//   t2.resize(t1size);
 
-  add_costant_tuple_loop<0,Args...>(t1,t2,value);
+//   std::cout<<"value=="<<value<<std::endl;
+//   for(Integer ii=0;ii<t1size;ii++)
+//     for(Integer jj=0;jj<t1[ii].size();jj++)
+//        t2[ii][jj]=t1[ii][jj]+value;
+//   return t2;
+// }
 
-  return t2;
-}
-/////////////////// TUPLE UTILITIES///////////////////////////////
+// template<Integer N,typename...Args>
+// typename std::enable_if<sizeof...(Args)==N+1, void>::type
+//  add_costant_tuple_loop(const std::tuple<Args...>& t1, std::tuple<Args...>& t2,const Integer& value)
+// {
+// std::get<N>(t2)=add_costant(std::get<N>(t1),value);
+// }
 
-/////////////////// CAT OF TYPES ///////////////////
-template<typename ... input_t>
-using TupleCatType=
-decltype(std::tuple_cat(
-    std::declval<input_t>()...
-));
-
-
-
-
-/////////////////// REMOVE DUPLICATE TYPES ///////////////////
-
-template <class Haystack, class Needle>
-struct contains;
-
-template <class Car, class... Cdr, class Needle>
-struct contains<std::tuple<Car, Cdr...>, Needle> : contains<std::tuple<Cdr...>, Needle>
-{};
-
-template <class... Cdr, class Needle>
-struct contains<std::tuple<Needle, Cdr...>, Needle> : std::true_type
-{};
-
-template <class Needle>
-struct contains<std::tuple<>, Needle> : std::false_type
-{};
+// template<Integer N,typename...Args>
+// typename std::enable_if< N+1<sizeof...(Args), void>::type
+//  add_costant_tuple_loop(const std::tuple<Args...>& t1, std::tuple<Args...>& t2,const Integer& value)
+// {
+//   std::get<N>(t2)=add_costant(std::get<N>(t1),value);
+//   add_costant_tuple_loop<N+1,Args...>(t1,t2,value);
+// }
 
 
+// template<typename...Args>
+// std::tuple<Args...> add_costant (const std::tuple<Args...>& t1,const Integer& value)
+// {
+//   std::tuple<Args...> t2=t1;
 
-template <class Out, class In>
-struct filter;
+//   add_costant_tuple_loop<0,Args...>(t1,t2,value);
 
-template <class... Out, class InCar, class... InCdr>
-struct filter<std::tuple<Out...>, std::tuple<InCar, InCdr...>>
-{
-  using type = typename std::conditional<
-    contains<std::tuple<Out...>, InCar>::value
-    , typename filter<std::tuple<Out...>, std::tuple<InCdr...>>::type
-    , typename filter<std::tuple<Out..., InCar>, std::tuple<InCdr...>>::type
-  >::type;
-};
+//   return t2;
+// }
+// /////////////////// TUPLE UTILITIES///////////////////////////////
 
-template <class Out>
-struct filter<Out, std::tuple<>>
-{
-  using type = Out;
-};
-
-
-template <class T>
-using without_duplicates = typename filter<std::tuple<>, T>::type;
+// /////////////////// CAT OF TYPES ///////////////////
+// template<typename ... input_t>
+// using TupleCatType=
+// decltype(std::tuple_cat(
+//     std::declval<input_t>()...
+// ));
 
 
 
 
-template <class T, class Tuple>
-struct TypeToTupleElementPosition;
+// /////////////////// REMOVE DUPLICATE TYPES ///////////////////
 
-template <class T, class... Types>
-struct TypeToTupleElementPosition<T, std::tuple<T, Types...>> {
-    static const std::size_t value = 0;
-};
+// template <class Haystack, class Needle>
+// struct contains;
 
-template <class T, class U, class... Types>
-struct TypeToTupleElementPosition<T, std::tuple<U, Types...>> {
-    static const std::size_t value = 1 + TypeToTupleElementPosition<T, std::tuple<Types...>>::value;
-};
+// template <class Car, class... Cdr, class Needle>
+// struct contains<std::tuple<Car, Cdr...>, Needle> : contains<std::tuple<Cdr...>, Needle>
+// {};
 
+// template <class... Cdr, class Needle>
+// struct contains<std::tuple<Needle, Cdr...>, Needle> : std::true_type
+// {};
 
-template <typename = void>
-constexpr std::size_t TupleSizeHelper ()
- { return 0u; }
-
-template <std::size_t I0, std::size_t ... Is>
-constexpr std::size_t TupleSizeHelper ()
- { return I0 + TupleSizeHelper<Is...>(); }
-
-template <typename ... Ts>
-constexpr std::size_t TupleSize (std::tuple<Ts...> const &)
- { return TupleSizeHelper<sizeof(Ts)...>(); }
+// template <class Needle>
+// struct contains<std::tuple<>, Needle> : std::false_type
+// {};
 
 
-// magari fai classe statica e non funzione
-template<Integer N,typename All, typename Unique>
-typename std::enable_if< N==TupleSizeHelper<All>(), void>::type 
-fai_qualcosa_di_sinistra(Integer* value)
-{
- using AllType=typename get<N,All>::type;
- value[N]=TypeToTupleElementPosition<AllType,Unique>::value;
-};
 
-template<Integer N=0,typename All, typename Unique>
-typename std::enable_if< N<TupleSizeHelper<All>(), void>::type 
-fai_qualcosa_di_sinistra(Integer* value)
-{
- using AllType=typename get<N,All>::type;
- value[N]=TypeToTupleElementPosition<AllType,Unique>::value;
- fai_qualcosa_di_sinistra<N+1,All,Unique>(value);
-};
+// template <class Out, class In>
+// struct filter;
 
+// template <class... Out, class InCar, class... InCdr>
+// struct filter<std::tuple<Out...>, std::tuple<InCar, InCdr...>>
+// {
+//   using type = typename std::conditional<
+//     contains<std::tuple<Out...>, InCar>::value
+//     , typename filter<std::tuple<Out...>, std::tuple<InCdr...>>::type
+//     , typename filter<std::tuple<Out..., InCar>, std::tuple<InCdr...>>::type
+//   >::type;
+// };
+
+// template <class Out>
+// struct filter<Out, std::tuple<>>
+// {
+//   using type = Out;
+// };
+
+
+// template <class T>
+// using RemoveDuplicates = typename filter<std::tuple<>, T>::type;
+
+
+
+
+// template <class T, class Tuple>
+// struct TypeToTupleElementPosition;
+
+// template <class T, class... Types>
+// struct TypeToTupleElementPosition<T, std::tuple<T, Types...>> {
+//     static const std::size_t value = 0;
+// };
+
+// template <class T, class U, class... Types>
+// struct TypeToTupleElementPosition<T, std::tuple<U, Types...>> {
+//     static const std::size_t value = 1 + TypeToTupleElementPosition<T, std::tuple<Types...>>::value;
+// };
+
+
+// template <typename = void>
+// constexpr std::size_t TupleSizeHelper ()
+//  { return 0u; }
+
+// template <std::size_t I0, std::size_t ... Is>
+// constexpr std::size_t TupleSizeHelper ()
+//  { return I0 + TupleSizeHelper<Is...>(); }
+
+// template <typename ... Ts>
+// constexpr std::size_t TupleSize (std::tuple<Ts...> const &)
+//  { return TupleSizeHelper<sizeof(Ts)...>(); }
+
+
+// template <typename T,typename ... Types>
+// class TupleTypeSize;
+
+// template <typename T>
+// class TupleTypeSize<std::tuple<T>>
+// {
+// public:
+//  static constexpr std::size_t value = 1;
+// };
+
+// template <typename T,typename ... Types>
+// class TupleTypeSize<std::tuple<T,Types...>>
+// {
+// public:
+//  static constexpr std::size_t value = 1 + TupleTypeSize<std::tuple<Types...>>::value;
+// };
+
+
+
+// // for 
+// template<Integer N,typename All, typename Unique>
+//  class ElementPositiion
+// {public:
+//  static_assert(N>=0, " negative integer");
+//  static_assert(N<TupleTypeSize<All>::value, " exceeding tuple dimension");
+//  using AllType=typename get<N,All>::type;
+//  static constexpr Integer value=TypeToTupleElementPosition<AllType,Unique>::value;
+// };
+
+
+// template<typename...Ts>
+// class TupleRemoveType;
+
+// template<typename T, typename...Ts>
+// class TupleRemoveType<T,std::tuple<Ts...>> 
+// {
+// public:
+// using type= TupleCatType<
+//     typename std::conditional<
+//         std::is_same<T, Ts>::value,
+//         std::tuple<>,
+//         std::tuple<Ts>
+//     >::type...
+// >;
+// };
+
+// template<typename...Ts>
+// class TupleRemovesingleTypeHelper;
+
+
+// template<typename Tremove, typename T>
+// class TupleRemovesingleTypeHelper<Tremove,std::tuple<T> > 
+// {
+// public:
+// static constexpr bool boolval=std::is_same<T, Tremove>::value;
+// using type= typename std::conditional<boolval, std::tuple<>, std::tuple<T> >::type;
+// };
+
+// template<typename Tremove, typename T,typename...Ts>
+// class TupleRemovesingleTypeHelper<Tremove,std::tuple<T,Ts...>> 
+// {
+// public:
+// static constexpr bool boolval=std::is_same<T, Tremove>::value;
+// using single_type= typename std::conditional<boolval, std::tuple<>, std::tuple<T> >::type;
+
+// using type=typename std::conditional<boolval, 
+//                                      // if we have found the type to remvoe, just add all the other ones
+//                                      TupleCatType< std::tuple<Ts...> >,
+//                                      // otherwise add T and check to the next one 
+//                                      TupleCatType<single_type, typename TupleRemovesingleTypeHelper< Tremove,std::tuple<Ts...> >::type >
+//                                     >::type;
+// };
+
+// template<typename Tremove, typename...Ts>
+// using TupleRemovesingleType=typename TupleRemovesingleTypeHelper<Tremove,Ts...>::type;
+
+// template<typename T>
+// constexpr T Max (const T& a,const T& b) 
+// {
+//   return a > b ? a : b;
+// }
+
+// template<typename T>
+// constexpr T Min (const T& a,const T& b) 
+// {
+//   return a < b ? a : b;
+// }
 
 
 template<typename MeshT, typename BaseFunctionSpace,typename...BaseFunctionSpaces>
@@ -246,7 +317,7 @@ public:
       using type_space_dofs=std::array<std::vector<std::vector<Integer>>, Nsubspaces>;
       using type_space_infos=std::array<std::array<Integer,4>,Nsubspaces>;
       using type_base_function_space=std::tuple<BaseFunctionSpace,BaseFunctionSpaces...>;
-      using type_unique_base_function_space=without_duplicates<type_base_function_space>;
+      using type_unique_base_function_space=RemoveDuplicates<type_base_function_space>;
 
       inline Integer n_subspaces()const{return Nsubspaces;};
 
@@ -684,7 +755,9 @@ class MixedSpace: public Expression2<MixedSpace<Args...>>
 {
 public:
 using DofMapType=std::tuple<typename Args::DofMapType...>;
-using type_unique_base_function_space=without_duplicates<TupleCatType<typename Args::type_unique_base_function_space...>>;
+using type_base_function_space=TupleCatType<typename Args::type_base_function_space...>;
+
+using type_unique_base_function_space=RemoveDuplicates<TupleCatType<typename Args::type_unique_base_function_space...>>;
 
 // using ShapeFunctionType=std::tuple<std::shared_ptr<typename Args::ShapeFunctionType>...>;
 // using ShapeFunctionType=std::tuple<typename Args::ShapeFunctionType...>;

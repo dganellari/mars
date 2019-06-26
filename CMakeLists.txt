@@ -60,6 +60,7 @@ list(APPEND MARS_HEADERS
 	mars_stream.hpp
 	mars_test.hpp
 	mars_tracker.hpp
+	mars_tuple_utilities.hpp
 	mars_utils.hpp
 	mars_vector.hpp
 	mars_visualization.hpp

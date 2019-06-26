@@ -1,7 +1,7 @@
 #ifndef MARS_OPERATORS_HPP
 #define MARS_OPERATORS_HPP
 #include "mars_base.hpp"
-
+#include "mars_tuple_utilities.hpp"
 namespace mars {
 
 ///////////////////////////////////////////////////////////////
@@ -40,8 +40,11 @@ class FQPValues;
 template<typename T,Integer NQPoints>
 class QPValues;
 
+template<typename...Parameters>
+class GradientExpression;
 
-
+template<Integer N,typename...Parameters>
+class ShapeFunctionExpression;
 
 template<typename Operator>
 class OperatorType;
@@ -49,10 +52,18 @@ class OperatorType;
 
 // type(T) = type(+T)
 template<typename T>
+class OperatorType
+{ public:
+  using type=T;
+};
+
+// type(T) = type(+T)
+template<typename T>
 class OperatorType< UnaryPlus< T > >
 { public:
   using type=T;
 };
+
 
 
 // type(T) = type(-T)
@@ -1495,6 +1506,273 @@ class Evaluation<Expression2Matrix<T,Rows,Cols> >
 
 // };
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename...T>
+class QuadratureOrder;
+
+
+// order(T) = order(+T)
+template<typename T>
+class QuadratureOrder< UnaryPlus< Expression2<T> > >
+{ public:
+  static constexpr Integer value=QuadratureOrder<T>::value;
+};
+
+
+// order(T) = order(-T)
+template<typename T>
+class QuadratureOrder< UnaryMinus2< Expression2<T> > >
+{ public:
+  static constexpr Integer value=QuadratureOrder<T>::value;
+};
+
+
+
+
+// order(A+B) =max(order(A),order(B))
+template<typename Left, typename Right>
+class QuadratureOrder< Addition2< Expression2<Left>,Expression2<Right> > >
+{ public:
+  // static_assert(std::is_same<Left,Right>::value, " In Addition, Left and Right types must be equal");
+  static constexpr Integer value=Max(QuadratureOrder<Left>::value,QuadratureOrder<Right>::value);
+};
+
+
+// order(A+B) =max(order(A),order(B))
+template<typename Left, typename Right>
+class QuadratureOrder< Subtraction2< Expression2<Left>,Expression2<Right> > >
+{ public:
+  // static_assert(std::is_same<Left,Right>::value, " In Addition, Left and Right types must be equal");
+  static constexpr Integer value=Max(QuadratureOrder<Left>::value,QuadratureOrder<Right>::value);
+};
+
+
+// order(T) = order(T/REAL)
+template<typename T>
+class QuadratureOrder< Divide2<Expression2<T>, Real > >
+{ public:
+  static constexpr Integer value=QuadratureOrder<T>::value;
+};
+
+// order(T) = order(T * REAL)
+template<typename T>
+class QuadratureOrder< Multiply2< Expression2<T>, Real > >
+{ public:
+  static constexpr Integer value=QuadratureOrder<T>::value;
+};
+
+// order(T) = order(REAL * T)
+template<typename T>
+class QuadratureOrder< Multiply2< Real, Expression2<T> > >
+{ public:
+  static constexpr Integer value=QuadratureOrder<T>::value;
+};
+
+
+// order(Left*Right) = order(Left) * order(Right)
+template<typename Left, typename Right>
+class QuadratureOrder< Multiply2< Expression2<Left>, Expression2<Right> > >
+{ public:
+
+  static constexpr Integer value=QuadratureOrder<Left>::value + QuadratureOrder<Right>::value;
+};
+
+
+
+
+
+template<typename T,Integer Rows,Integer Cols>
+class QuadratureOrder<Expression2MatrixVar<T,Rows,Cols> >
+{ public:
+  static constexpr Integer value=2;
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<Integer N,typename...Ts>
+class ShapeFunctionExpression: public Expression2<ShapeFunctionExpression<N,Ts...>>
+{
+public:
+	static constexpr Integer value=N;
+
+};
+
+template<typename...T>
+class OperatorTupleType;
+
+
+// order(T) = order(+T)
+template<typename T>
+class OperatorTupleType< UnaryPlus< Expression2<T> > >
+{ public:
+  using type=typename OperatorTupleType<T>::type;
+};
+
+
+// order(T) = order(-T)
+template<typename T>
+class OperatorTupleType< UnaryMinus2< Expression2<T> > >
+{ public:
+  using type=typename OperatorTupleType<T>::type;
+};
+
+
+
+
+// order(A+B) =max(order(A),order(B))
+template<typename Left, typename Right>
+class OperatorTupleType< Addition2< Expression2<Left>,Expression2<Right> > >
+{ public:
+  using	LeftT=typename OperatorTupleType<Left>::type;
+  using	RightT=typename OperatorTupleType<Right>::type;
+  using type=RemoveDuplicates< TupleCatType< LeftT, RightT> >;
+};
+
+
+// order(A+B) =max(order(A),order(B))
+template<typename Left, typename Right>
+class OperatorTupleType< Subtraction2< Expression2<Left>,Expression2<Right> > >
+{ public:
+  using	LeftT=typename OperatorTupleType<Left>::type;
+  using	RightT=typename OperatorTupleType<Right>::type;
+  using type=RemoveDuplicates< TupleCatType< LeftT, RightT> >;
+};
+
+
+// order(T) = order(T/REAL)
+template<typename T>
+class OperatorTupleType< Divide2<Expression2<T>, Real > >
+{ public:
+  using type=typename OperatorTupleType<T>::type;
+};
+
+// order(T) = order(T * REAL)
+template<typename T>
+class OperatorTupleType< Multiply2< Expression2<T>, Real > >
+{ public:
+  using type=typename OperatorTupleType<T>::type;
+};
+
+// order(T) = order(REAL * T)
+template<typename T>
+class OperatorTupleType< Multiply2< Real, Expression2<T> > >
+{ public:
+  using type=typename OperatorTupleType<T>::type;
+};
+
+
+// order(Left*Right) = order(Left) * order(Right)
+template<typename Left, typename Right>
+class OperatorTupleType< Multiply2< Expression2<Left>, Expression2<Right> > >
+{ public:
+  using	LeftT=typename OperatorTupleType<Left>::type;
+  using	RightT=typename OperatorTupleType<Right>::type;
+  using type=RemoveDuplicates< TupleCatType< LeftT, RightT> >;
+};
+
+
+
+
+template<Integer N,typename...T>
+class OperatorTupleType<ShapeFunctionExpression<N,T...> >
+{ public:
+  using type=std::tuple<IdentityOperator>;
+  static constexpr Integer value=ShapeFunctionExpression<N,T...>::value;
+};
+
+template<typename...T>
+class OperatorTupleType<Expression2QPValues<T...> >
+{ public:
+  using type=std::tuple<>;
+  static constexpr Integer value=-1;
+};
 
 }
 
