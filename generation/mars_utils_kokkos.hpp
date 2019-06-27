@@ -53,7 +53,25 @@ using ViewMatrixTextureC = Kokkos::View<T[XDim_][YDim_],KokkosLayout,KokkosSpace
 template<typename T>
 using ViewVectorTexture = Kokkos::View<T*,KokkosLayout,KokkosSpace,Kokkos::MemoryTraits<Kokkos::RandomAccess>>;
 
-class KokkosImplementation {};
+template<typename T, Integer YDim_>
+struct IndexView {
+	ViewMatrixTexture<T, YDim_> view;
+	int index;
+
+	IndexView(ViewMatrixTexture<T, YDim_> v, int idx) :
+			view(v), index(idx) {
+	}
+
+	KOKKOS_INLINE_FUNCTION
+	T& operator[](int i) {
+		return view(index, i);
+	}
+
+};
+
+class KokkosImplementation {
+	std::string name = "kokkos";
+};
 
 template<Integer Dim, Integer ManifoldDim>
 void convert_parallel_mesh_to_serial(mars::Mesh<Dim, ManifoldDim>& mesh,
@@ -157,42 +175,11 @@ void remove_extra_nodes(Mesh<Dim, ManifoldDim, Point_>& mesh,
 }*/
 
 
-//TODO: Repeated code. Try to optimize.
-//Maybe using traits and a wrapper for the operator () in kokkos views to have a unified operator []
+
+//host and device function used for the serial version as well (without kokkos).
+template<typename T>
 KOKKOS_INLINE_FUNCTION
-void build_hex27(ViewMatrixTexture<Integer,hex_n_nodes> nodes, const int cube_index, const Integer xDim,
-		const Integer yDim, const int i, const int j, const int k) {
-
-	nodes(cube_index,0) = index(xDim, yDim, i, j, k);
-	nodes(cube_index,1) = index(xDim, yDim, i + 2, j, k);
-	nodes(cube_index,2) = index(xDim, yDim, i + 2, j + 2, k);
-	nodes(cube_index,3) = index(xDim, yDim, i, j + 2, k);
-	nodes(cube_index,4) = index(xDim, yDim, i, j, k + 2);
-	nodes(cube_index,5) = index(xDim, yDim, i + 2, j, k + 2);
-	nodes(cube_index,6) = index(xDim, yDim, i + 2, j + 2, k + 2);
-	nodes(cube_index,7) = index(xDim, yDim, i, j + 2, k + 2);
-	nodes(cube_index,8) = index(xDim, yDim, i + 1, j, k);
-	nodes(cube_index,9) = index(xDim, yDim, i + 2, j + 1, k);
-	nodes(cube_index,10) = index(xDim, yDim, i + 1, j + 2, k);
-	nodes(cube_index,11) = index(xDim, yDim, i, j + 1, k);
-	nodes(cube_index,12) = index(xDim, yDim, i, j, k + 1);
-	nodes(cube_index,13) = index(xDim, yDim, i + 2, j, k + 1);
-	nodes(cube_index,14) = index(xDim, yDim, i + 2, j + 2, k + 1);
-	nodes(cube_index,15) = index(xDim, yDim, i, j + 2, k + 1);
-	nodes(cube_index,16) = index(xDim, yDim, i + 1, j, k + 2);
-	nodes(cube_index,17) = index(xDim, yDim, i + 2, j + 1, k + 2);
-	nodes(cube_index,18) = index(xDim, yDim, i + 1, j + 2, k + 2);
-	nodes(cube_index,19) = index(xDim, yDim, i, j + 1, k + 2);
-	nodes(cube_index,20) = index(xDim, yDim, i + 1, j + 1, k);
-	nodes(cube_index,21) = index(xDim, yDim, i + 1, j, k + 1);
-	nodes(cube_index,22) = index(xDim, yDim, i + 2, j + 1, k + 1);
-	nodes(cube_index,23) = index(xDim, yDim, i + 1, j + 2, k + 1);
-	nodes(cube_index,24) = index(xDim, yDim, i, j + 1, k + 1);
-	nodes(cube_index,25) = index(xDim, yDim, i + 1, j + 1, k + 2);
-	nodes(cube_index,26) = index(xDim, yDim, i + 1, j + 1, k + 1);
-}
-
-void build_hex27(std::array<Integer, hex_n_nodes>& nodes, const Integer xDim,
+void build_hex27(T&& nodes, const Integer xDim,
 		const Integer yDim, const int i, const int j, const int k) {
 
 	nodes[0] = index(xDim, yDim, i, j, k);
