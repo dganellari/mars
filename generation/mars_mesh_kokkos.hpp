@@ -368,7 +368,7 @@ public:
 
 			//build the hex27 element which serves to generalize the idea to many hex27.
 			//without generating the hex27 element first there is no easy way to create the sides.
-			build_hex27(hexes, cube_index, xDim, yDim, 2 * x, 2 * y, 2 * z);
+			build_hex27(IndexView<Integer,hex_n_nodes>(hexes, cube_index), xDim, yDim, 2 * x, 2 * y, 2 * z);
 
 			const int n_cube_nodes = (2 * xDim + 1) * (2 * yDim + 1)
 					* (2 * zDim + 1);

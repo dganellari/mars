@@ -91,6 +91,7 @@ void test_mars_mesh_generation_kokkos_3D(const int x, const int y, const int z) 
 				<< std::endl;
 		std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
 
+		std::cout<<"build_cube_parallel" + std::to_string(x) + std::to_string(y) + ".vtu"<<std::endl;
 		VTKMeshWriter<Mesh3> w;
 		w.write(
 				"build_cube_parallel" + std::to_string(x) + std::to_string(y)
