@@ -43,8 +43,11 @@ class QPValues;
 template<typename...Parameters>
 class GradientExpression;
 
-template<Integer N,typename...Parameters>
+template<Integer N,Integer Nmax,typename...Parameters>
 class ShapeFunctionExpression;
+
+template<Integer N,Integer Nmax,typename...Ts>
+class GradientShapeFunctionExpression;
 
 template<typename Operator>
 class OperatorType;
@@ -1676,8 +1679,16 @@ class QuadratureOrder<Expression2MatrixVar<T,Rows,Cols> >
 
 
 
-template<Integer N,typename...Ts>
-class ShapeFunctionExpression: public Expression2<ShapeFunctionExpression<N,Ts...>>
+template<Integer N,Integer Nmax,typename...Ts>
+class ShapeFunctionExpression: public Expression2<ShapeFunctionExpression<N,Nmax,Ts...>>
+{
+public:
+	static constexpr Integer value=N;
+
+};
+
+template<Integer N,Integer Nmax,typename...Ts>
+class GradientShapeFunctionExpression: public Expression2<GradientShapeFunctionExpression<N,Nmax,Ts...>>
 {
 public:
 	static constexpr Integer value=N;
@@ -1712,7 +1723,7 @@ class OperatorTupleType< Addition2< Expression2<Left>,Expression2<Right> > >
 { public:
   using	LeftT=typename OperatorTupleType<Left>::type;
   using	RightT=typename OperatorTupleType<Right>::type;
-  using type=RemoveDuplicates< TupleCatType< LeftT, RightT> >;
+  using type=RemoveTupleOfTupleDuplicates< LeftT, RightT >;
 };
 
 
@@ -1722,7 +1733,7 @@ class OperatorTupleType< Subtraction2< Expression2<Left>,Expression2<Right> > >
 { public:
   using	LeftT=typename OperatorTupleType<Left>::type;
   using	RightT=typename OperatorTupleType<Right>::type;
-  using type=RemoveDuplicates< TupleCatType< LeftT, RightT> >;
+  using type=RemoveTupleOfTupleDuplicates<  LeftT, RightT >;
 };
 
 
@@ -1754,17 +1765,29 @@ class OperatorTupleType< Multiply2< Expression2<Left>, Expression2<Right> > >
 { public:
   using	LeftT=typename OperatorTupleType<Left>::type;
   using	RightT=typename OperatorTupleType<Right>::type;
-  using type=RemoveDuplicates< TupleCatType< LeftT, RightT> >;
+  using type=RemoveTupleOfTupleDuplicates<  LeftT, RightT >;
 };
 
 
 
 
-template<Integer N,typename...T>
-class OperatorTupleType<ShapeFunctionExpression<N,T...> >
+template<Integer N,Integer Nmax,typename...T>
+class OperatorTupleType<ShapeFunctionExpression<N,Nmax,T...> >
 { public:
-  using type=std::tuple<IdentityOperator>;
-  static constexpr Integer value=ShapeFunctionExpression<N,T...>::value;
+  using single_type=std::tuple<std::tuple< IdentityOperator,std::tuple<> >>;
+  static constexpr Integer value=ShapeFunctionExpression<N,Nmax,T...>::value;
+  using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
+  using type=TupleChangeType<value,single_type,emptytuple>;
+
+};
+
+template<Integer N,Integer Nmax,typename...T>
+class OperatorTupleType<GradientShapeFunctionExpression<N,Nmax,T...> >
+{ public:
+  using single_type=std::tuple<std::tuple< GradientOperator,std::tuple<> >>;
+  static constexpr Integer value=ShapeFunctionExpression<N,Nmax,T...>::value;
+  using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
+  using type=TupleChangeType<value,single_type,emptytuple>;
 };
 
 template<typename...T>

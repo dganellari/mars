@@ -177,7 +177,7 @@ class IFunctionSpace
 
 
 // template <class T>
-// using RemoveDuplicates = typename filter<std::tuple<>, T>::type;
+// using RemoveTupleDuplicates = typename filter<std::tuple<>, T>::type;
 
 
 
@@ -317,7 +317,7 @@ public:
       using type_space_dofs=std::array<std::vector<std::vector<Integer>>, Nsubspaces>;
       using type_space_infos=std::array<std::array<Integer,4>,Nsubspaces>;
       using type_base_function_space=std::tuple<BaseFunctionSpace,BaseFunctionSpaces...>;
-      using type_unique_base_function_space=RemoveDuplicates<type_base_function_space>;
+      using type_unique_base_function_space=RemoveTupleDuplicates<type_base_function_space>;
 
       inline Integer n_subspaces()const{return Nsubspaces;};
 
@@ -563,8 +563,8 @@ class FESpace: public Expression2<FESpace<MeshT,Parameters...>>
       public:
             using rest = typename ShapeFunctionTupleType<N+1>::type; 
 
-            using BaseFunctionSpace=typename get<N, BaseFunctionSpaces>::type;
-            using QuadratureRule=typename get<N, QuadratureRules>::type;
+            using BaseFunctionSpace=GetType<N, BaseFunctionSpaces>;
+            using QuadratureRule=GetType<N, QuadratureRules>;
 
             using single_type=std::tuple<ShapeFunctionOperator<QuadratureRule,Elem, BaseFunctionSpace>>;
             using type = decltype( std::tuple_cat( std::declval< single_type >(), 
@@ -577,8 +577,8 @@ class FESpace: public Expression2<FESpace<MeshT,Parameters...>>
       {
        public:
            static constexpr Integer N=Nsubspaces-1;
-           using BaseFunctionSpace=typename get<N, BaseFunctionSpaces>::type;
-           using QuadratureRule=typename get<N, QuadratureRules>::type;
+           using BaseFunctionSpace=GetType<N, BaseFunctionSpaces>;
+           using QuadratureRule=GetType<N, QuadratureRules>;
            using single_type=std::tuple<ShapeFunctionOperator<QuadratureRule,Elem, BaseFunctionSpace>>;
            using type = typename std::tuple<ShapeFunctionOperator<QuadratureRule,Elem, BaseFunctionSpace>>;
       };
@@ -589,8 +589,8 @@ class FESpace: public Expression2<FESpace<MeshT,Parameters...>>
       typename std::enable_if< N==Nsubspaces-1,typename ShapeFunctionTupleType<N>::type>::type 
       set_shape_function(const Integer& value=0)
       {   
-           using BaseFunctionSpace=typename get<N, BaseFunctionSpaces>::type;
-           using QuadratureRule=typename get<N, QuadratureRules>::type;    
+           using BaseFunctionSpace=GetType<N, BaseFunctionSpaces>;
+           using QuadratureRule=GetType<N, QuadratureRules>;    
            ShapeFunctionOperator<QuadratureRule,Elem,BaseFunctionSpace> shape_function(value);
            return std::tuple<decltype(shape_function)> (shape_function);
           }
@@ -599,8 +599,8 @@ class FESpace: public Expression2<FESpace<MeshT,Parameters...>>
       typename std::enable_if< 0<N && N<Nsubspaces-1,typename ShapeFunctionTupleType<N>::type>::type 
       set_shape_function(const Integer& value=0)
       {       
-           using BaseFunctionSpace=typename get<N, BaseFunctionSpaces>::type;
-           using QuadratureRule=typename get<N, QuadratureRules>::type;    
+           using BaseFunctionSpace=GetType<N, BaseFunctionSpaces>;
+           using QuadratureRule=GetType<N, QuadratureRules>;    
            ShapeFunctionOperator<QuadratureRule,Elem,BaseFunctionSpace> shape_function(value);
            const Integer& add_value=shape_function.range1()+1;
            return std::tuple_cat(std::make_tuple(shape_function),set_shape_function<N+1>(add_value)  );
@@ -610,8 +610,8 @@ class FESpace: public Expression2<FESpace<MeshT,Parameters...>>
       typename std::enable_if< N==0,typename ShapeFunctionTupleType<N>::type>::type 
       set_shape_function(const Integer& value=0)
       {       
-           using BaseFunctionSpace=typename get<N, BaseFunctionSpaces>::type;
-           using QuadratureRule=typename get<N, QuadratureRules>::type;  
+           using BaseFunctionSpace=GetType<N, BaseFunctionSpaces>;
+           using QuadratureRule=GetType<N, QuadratureRules>;  
            QuadratureRule qp_rule;
            const auto& qp_points=qp_rule.qp_points();  
            ShapeFunctionOperator<QuadratureRule,Elem,BaseFunctionSpace> shape_function(0);
@@ -757,7 +757,7 @@ public:
 using DofMapType=std::tuple<typename Args::DofMapType...>;
 using type_base_function_space=TupleCatType<typename Args::type_base_function_space...>;
 
-using type_unique_base_function_space=RemoveDuplicates<TupleCatType<typename Args::type_unique_base_function_space...>>;
+using type_unique_base_function_space=RemoveTupleDuplicates<TupleCatType<typename Args::type_unique_base_function_space...>>;
 
 // using ShapeFunctionType=std::tuple<std::shared_ptr<typename Args::ShapeFunctionType>...>;
 // using ShapeFunctionType=std::tuple<typename Args::ShapeFunctionType...>;

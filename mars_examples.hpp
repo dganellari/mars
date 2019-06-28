@@ -129,7 +129,7 @@ auto W1=MixedFunctionSpace(W,FEspace3);
 
 constexpr Integer maximum=Max(0,2) ;
 
-get<0,decltype(W)::type_unique_base_function_space>::type unique;
+GetType<0,decltype(W)::type_unique_base_function_space> unique;
 
 std::cout<<ElementPositiion<0,std::tuple<int,int,double,int>,std::tuple<int,double>>::value<<std::endl;
 std::cout<<ElementPositiion<1,std::tuple<int,int,double,int>,std::tuple<int,double>>::value<<std::endl;
@@ -205,40 +205,10 @@ for(Integer ii=0;ii<dm1.size();ii++)
 // }
 auto TestW= Test(W);
 
-TupleCatType< std::tuple<int,float>, std::tuple<int>, std::tuple<char> > test{1,1.0f,2, 'a'};
-
-std::cout<<std::get<3>(test)<<std::endl;
-auto tuplecat=std::tuple_cat(std::tuple<int, char>(1,'a'),std::tuple<int, char,int>(1,'a',2),std::tuple<int>(1));
-    RemoveDuplicates<std::tuple<int, char, char, int, char>> a(1,'a');
-    static_assert(std::is_same<RemoveDuplicates<std::tuple<int, char>>, std::tuple<int, char>>::value, "ok");
-    static_assert(std::is_same<RemoveDuplicates<std::tuple<int, char, int>>, std::tuple<int, char>>::value, "ok");
-    static_assert(std::is_same<RemoveDuplicates<std::tuple<int, int, char>>, std::tuple<int, char>>::value, "ok");
-    static_assert(std::is_same<RemoveDuplicates<std::tuple<int, char, char, int, char>>, std::tuple<int, char>>::value, "ok");
-
-    
-   TupleRemoveType<int,std::tuple<char, float,int,int> >::type removed('a',2.3);
-   std::cout<<std::get<0>(removed)<<std::endl;
-   std::cout<<std::get<1>(removed)<<std::endl;
-
-   TupleRemovesingleType<int,std::tuple<int,char, int,float,int,int> > removed2('a',2,2.3,1,3);
-   std::cout<<std::tuple_size<decltype(removed2)>::value<<std::endl;
-   std::cout<<std::get<0>(removed2)<<std::endl;
-   std::cout<<std::get<1>(removed2)<<std::endl;
-   std::cout<<std::get<2>(removed2)<<std::endl;
-   std::cout<<std::get<3>(removed2)<<std::endl;
-   std::cout<<std::get<4>(removed2)<<std::endl;
 
 
 
-   SubTupleType<2,4,decltype(removed2)> emk2(4.3,1,4);
-   std::cout<<std::get<0>(emk2)<<std::endl;
-   std::cout<<std::get<1>(emk2)<<std::endl;
-   std::cout<<std::get<2>(emk2)<<std::endl;   
 
-   TupleAddingType<2,float,std::tuple<int,char> > emk3(5,'b',3.1415); 
-   std::cout<<std::get<0>(emk3)<<std::endl;
-   std::cout<<std::get<1>(emk3)<<std::endl;
-   std::cout<<std::get<2>(emk3)<<std::endl;
 };
 
 

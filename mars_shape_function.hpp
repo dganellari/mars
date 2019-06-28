@@ -2725,14 +2725,87 @@ OperatorType<Matrix<Real,2,2>>::type ess;
 std::cout<<"QuadratureOrder="<<QuadratureOrder<decltype(exprvar2)>::value<<std::endl;
 
 
-ShapeFunctionExpression<0,Lagrange1<1>> sfe1; 
-ShapeFunctionExpression<1,RT0<1>> sfe2; 
-auto sfe3=sfe1+sfe2;
-OperatorTupleType<decltype(sfe3)>::type es;
+TupleCatType< std::tuple<int,float>, std::tuple<int>, std::tuple<char> > test{1,1.0f,2, 'a'};
+
+std::cout<<std::get<3>(test)<<std::endl;
+auto tuplecat=std::tuple_cat(std::tuple<int, char>(1,'a'),std::tuple<int, char,int>(1,'a',2),std::tuple<int>(1));
+    RemoveTupleDuplicates<std::tuple<int, char, char, int, char>> a(1,'a');
+    static_assert(std::is_same<RemoveTupleDuplicates<std::tuple<int, char>>, std::tuple<int, char>>::value, "ok");
+    static_assert(std::is_same<RemoveTupleDuplicates<std::tuple<int, char, int>>, std::tuple<int, char>>::value, "ok");
+    static_assert(std::is_same<RemoveTupleDuplicates<std::tuple<int, int, char>>, std::tuple<int, char>>::value, "ok");
+    static_assert(std::is_same<RemoveTupleDuplicates<std::tuple<int, char, char, int, char>>, std::tuple<int, char>>::value, "ok");
+
+    
+   TupleRemoveType<int,std::tuple<char, float,int,int> >::type removed('a',2.3);
+   std::cout<<std::get<0>(removed)<<std::endl;
+   std::cout<<std::get<1>(removed)<<std::endl;
+
+   TupleRemovesingleType<int,std::tuple<int,char, int,float,int,int> > removed2('a',2,2.3,1,3);
+   std::cout<<std::tuple_size<decltype(removed2)>::value<<std::endl;
+   std::cout<<std::get<0>(removed2)<<std::endl;
+   std::cout<<std::get<1>(removed2)<<std::endl;
+   std::cout<<std::get<2>(removed2)<<std::endl;
+   std::cout<<std::get<3>(removed2)<<std::endl;
+   std::cout<<std::get<4>(removed2)<<std::endl;
+
+ShapeFunctionExpression<1,2,Lagrange1<1>> sfe1; 
+GradientShapeFunctionExpression<0,2,RT0<1>> sfe2;
+GradientShapeFunctionExpression<1,2,Lagrange1<1>> sfe3;
+ShapeFunctionExpression<0,2,RT0<2>> sfe4; 
+
+auto sfen=sfe1+sfe2+sfe3+sfe4;
+
+OperatorTupleType<decltype(sfen)>::type ec;
+
+
+// TupleAddingType<4,int,std::tuple<char,float>> ak1(1,2,4,4);
+// TupleChangeType<2,int,std::tuple<char,float>> ak2(1,2,4,4);
 
 using emptytuple=std::tuple< std::tuple<>, std::tuple<> >;
 
 
+   SubTupleType<2,4,decltype(removed2)> emk2(4.3,1,4);
+   std::cout<<std::get<0>(emk2)<<std::endl;
+   std::cout<<std::get<1>(emk2)<<std::endl;
+   std::cout<<std::get<2>(emk2)<<std::endl;   
+   using tupleprova=std::tuple<std::tuple<int,char>, int>;
+   using tupleprova1=GetType<0,tupleprova>;
+   std::tuple<std::tuple<>,std::tuple<> > emk5;
+   TupleAddingType<2,float, tupleprova1> emk3(5,'b',3.1415); 
+   std::cout<<std::get<0>(emk3)<<std::endl;
+   std::cout<<std::get<1>(emk3)<<std::endl;
+   std::cout<<std::get<2>(emk3)<<std::endl;
+    std::cout<<"---sizeof ="<<std::tuple_size<std::tuple< std::tuple<int>,std::tuple<char,int,double,std::tuple<char>>,long>>::value<<std::endl;
+
+    TupleOfTupleCatType<1,std::tuple< std::tuple<int>,std::tuple<double,int> >,
+                                  std::tuple< std::tuple<int>,std::tuple<char,int>> > gt;
+
+
+    RemoveTupleOfTupleDuplicates<std::tuple< std::tuple<int>,std::tuple<double,int> >,
+                                  std::tuple< std::tuple<int>,std::tuple<char,int>> > gt1;//(std::make_tuple(1,1),std::make_tuple(1.,1,'a',2));
+    RemoveTupleOfTupleDuplicates<std::tuple< std::tuple<int>,std::tuple<double,int,int,int> >> gt2;//(std::make_tuple(1,1),std::make_tuple(1.,1,'a',2));
+    
+TupleRemovesingleType<std::tuple<>, std::tuple<int, std::tuple<>>> gt3;
+
+
+using temp=std::tuple<std::tuple<int,double>,std::tuple<>>;
+
+TupleAddingType<10,char,TupleRemovesingleType<std::tuple<>,temp>> eol;
+TupleChangeType<1,char,temp> eol2;
+
+TupleOfTupleChangeType<1,char,std::tuple< std::tuple< std::tuple<int,char>,std::tuple<double,double>  >,  
+                                          std::tuple <std::tuple<> >,
+                                          std::tuple< std::tuple<int,char>,std::tuple<int,char>,std::tuple<int,char> > > > gt4;
+
+using provatmp=std::tuple< std::tuple<int,int  >, std::tuple<int,double  >, std::tuple< int,char > >;
+ 
+// 
+// TupleOfTupleChangeType<1,char,OperatorTupleType<decltype(sfen)>::type>   gt5(gt); 
+
+
+
+    //,
+      //                                        std::tuple<std::tuple<int>,std::tuple<char,int> > >::type gt;
 // 
 // std::shared_ptr<Son1> son1=std::make_shared<Son1>(1);
 // std::shared_ptr<Son1> son2=std::make_shared<Son1>(2);
