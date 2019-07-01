@@ -22,9 +22,7 @@ class GaussPoints;
 template< Integer Dim >
 class GaussPoints< Simplex<Dim,2> , 1>: public BaseQuadrature<Simplex<Dim,2>,1>
 {
-private:
- Matrix<Real,1,2> qp_points_;
- Vector<Real,1> qp_weights_;
+
 public:
   using qp_points_type=Matrix<Real,1,2>;
   static constexpr Integer NQPoints=1;
@@ -36,6 +34,9 @@ public:
   qp_weights_({1})
    {}; 
 
+private:
+ qp_points_type qp_points_;
+ Vector<Real,1> qp_weights_;
 };
 
 
@@ -43,9 +44,7 @@ public:
 template<Integer Dim>
 class GaussPoints<Simplex<Dim,2>,2>: public BaseQuadrature<Simplex<Dim,2>,2>
 {
-private:
-  Matrix<Real,3,2>  qp_points_;
-  Vector<Real,3> qp_weights_;
+
 public:
   using qp_points_type=Matrix<Real,3,2>;
   static constexpr Integer NQPoints=3;
@@ -57,6 +56,9 @@ public:
               0.16666666666667, 0.16666666666667}),
   qp_weights_({0.33333333333333,0.33333333333333,0.33333333333333})
   {}
+private:
+  qp_points_type  qp_points_;
+  Vector<Real,3> qp_weights_;
 };
 
 
@@ -65,9 +67,7 @@ public:
 template<Integer Dim>
 class GaussPoints<Simplex<Dim,2>,3>: public BaseQuadrature<Simplex<Dim,2>,3>
 {
-private:
-  Matrix<Real,4,2>  qp_points_;
-  Vector<Real,4> qp_weights_;
+
 public:
   using qp_points_type=Matrix<Real,4,2>;
   static constexpr Integer NQPoints=4;
@@ -80,14 +80,15 @@ public:
               0.60000000000000, 0.20000000000000}),
   qp_weights_({ -0.56250000000000,0.52083333333333,0.52083333333333,0.52083333333333})
   {}
+private:
+  qp_points_type  qp_points_;
+  Vector<Real,4> qp_weights_;
 };
 
 template<Integer Dim>
 class GaussPoints<Simplex<Dim,2>,4>: public BaseQuadrature<Simplex<Dim,2>,4>
 {
-private:
-  Matrix<Real,6,2>  qp_points_;
-  Vector<Real,6> qp_weights_;
+
 public:
   using qp_points_type=Matrix<Real,6,2>;
   static constexpr Integer NQPoints=6;
@@ -107,17 +108,18 @@ public:
             0.10995174365532, 
             0.10995174365532})
   {}
+
+private:
+  qp_points_type  qp_points_;
+  Vector<Real,6> qp_weights_;
 };
 
 
 template<Integer Dim>
 class GaussPoints<Simplex<Dim,2>,5>: public BaseQuadrature<Simplex<Dim,2>,5>
 {
-private:
-  Matrix<Real,7,2>  qp_points_;
-  Vector<Real,7> qp_weights_;
 public:
-  using qp_points_type=decltype(qp_points_);
+  using qp_points_type=Matrix<Real,7,2>;
   static constexpr Integer NQPoints=7;
   const Matrix<Real,7,2> qp_points()const {return qp_points_;};
   const Vector<Real,7> qp_weights()const {return qp_weights_;};
@@ -137,6 +139,11 @@ public:
             0.12593918054483, 
             0.12593918054483 })
   {}
+
+private:
+  qp_points_type  qp_points_;
+  Vector<Real,7> qp_weights_;
+
 };
 
 

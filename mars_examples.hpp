@@ -99,9 +99,16 @@ points[2][1]=4;
     FSspace1 FEspace1(mesh);
     using FSspace2= FunctionSpace< MeshT, Lagrange2<1>,RT0<1>>;
     FSspace2 FEspace2(mesh);
-    using FSspace3= FunctionSpace< MeshT, Lagrange1<1>, Lagrange1<1>,Lagrange1<1>>;
+    using FSspace3= FunctionSpace< MeshT, Lagrange1<1>, RT0<1>,Lagrange1<1>>;
     FSspace3 FEspace3(mesh);
+    using FSspace4= FunctionSpace< MeshT, Lagrange2<1>, Lagrange3<1>>;
+    FSspace4 FEspace4(mesh);
+    using FSspace5= FunctionSpace< MeshT, Lagrange2<1>, Lagrange3<2>>;
 
+    using FSspace10= FunctionSpace< MeshT, Lagrange1<1>>;
+    FSspace10 FEspace10(mesh);
+      using FSspace11= FunctionSpace< MeshT, RT0<1>>;
+    FSspace11 FEspace11(mesh);
 // auto ecchime=FEspace3.set_quadrature_rule<0,GaussPoints<Elem,2>,GaussPoints<Elem,2>>();
  using fespace1= ElemFunctionSpace<Simplex<2,2>, Lagrange1<1>>;
  using fespace2= ElemFunctionSpace<Simplex<2,2>, Lagrange2<2>>;
@@ -124,12 +131,16 @@ points[2][1]=4;
 
 // // auto Wp=MixedFunctionSpace(FE3,FE3);
 
-auto W=MixedFunctionSpace(FEspace3,FEspace3);
-auto W1=MixedFunctionSpace(W,FEspace3);
+auto W=MixedFunctionSpace(FEspace3,FEspace4);
+auto W1=MixedFunctionSpace(W,FEspace4);
 
 constexpr Integer maximum=Max(0,2) ;
 
-GetType<0,decltype(W)::type_unique_base_function_space> unique;
+typename decltype(W)::type_unique_base_function_space unique0;
+GetType<1,decltype(W)::type_unique_base_function_space> unique1;
+decltype(W1)::type_unique_base_function_space unique2;
+
+
 
 std::cout<<ElementPositiion<0,std::tuple<int,int,double,int>,std::tuple<int,double>>::value<<std::endl;
 std::cout<<ElementPositiion<1,std::tuple<int,int,double,int>,std::tuple<int,double>>::value<<std::endl;
@@ -137,6 +148,56 @@ std::cout<<ElementPositiion<2,std::tuple<int,int,double,int>,std::tuple<int,doub
 std::cout<<ElementPositiion<maximum,std::tuple<int,int,double,int>,std::tuple<int,double>>::value<<std::endl;
 std::cout<<"TypeToTupleElementPosition=="<<TypeToTupleElementPosition<double,std::tuple<int,char,double,int,double>>::value<<std::endl;
 std::cout<<maximum<<std::endl;
+
+constexpr Integer NComponents=2;
+
+using QuadratureRule=GaussPoints<Elem,QPOrder>;
+ShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange1<NComponents>,IdentityOperator,QuadratureRule >  sfod;
+sfod.init_reference();
+sfod.init(J);
+sfod.function();
+std::cout<<"sfod.function()=="<<sfod.function()<<std::endl;
+
+
+
+
+
+
+
+
+auto W3=MixedFunctionSpace(FEspace10,FEspace11);
+
+
+ShapeFunctionExpression<0,2,Lagrange1<1>> sfe1; 
+GradientShapeFunctionExpression<0,2,Lagrange1<1>> sfe2;
+ShapeFunctionExpression<1,2,RT0<1>> sfe3;
+
+
+auto sfen=sfe1+sfe2+sfe3;
+
+using TupleOperatorsAndQuadrature=TupleOfTupleChangeType<1,QuadratureRule,OperatorTupleType<decltype(sfen)>::type>; 
+using TupleSpaces=typename decltype(W3)::type_unique_base_function_space;
+
+using TupleSpace0=GetType<0,TupleSpaces>;
+using Elem0=GetType<0,TupleSpace0>;
+using BaseFunctioSpace0=GetType<1,TupleSpace0>;
+using OperatorsAndQuadrature0=GetType<0,TupleOperatorsAndQuadrature>;
+
+
+using TupleSpace1=GetType<1,TupleSpaces>;
+using Elem1=GetType<0,TupleSpace1>;
+using BaseFunctioSpace1=GetType<1,TupleSpace1>;
+using OperatorsAndQuadrature1=GetType<1,TupleOperatorsAndQuadrature>;
+
+
+
+// TupleOperatorsAndQuadrature e(4);
+// typename TupleShapeFunctionCreate<Elem0,BaseFunctioSpace0,OperatorsAndQuadrature0,TupleTypeSize<OperatorsAndQuadrature0>::value-1>::type ef2(3);
+// typename TupleShapeFunctionCreate<Elem1,BaseFunctioSpace1,OperatorsAndQuadrature1,TupleTypeSize<OperatorsAndQuadrature1>::value-1>::type ef3(3);
+
+typename TupleOfTupleShapeFunctionCreate<TupleSpaces,TupleOperatorsAndQuadrature,TupleTypeSize<TupleOperatorsAndQuadrature>::value-1,0>::type ee(2);
+
+// typename TupleOfTupleShapeFunctionCreate<TupleSpaces,TupleOperatorsAndQuadrature, 1,0>::type e(3);
 // auto sf0=W1.shape_functions();
 // auto sf00=std::get<0>(sf0);
 // auto sfsf0=std::get<0>(sf00);

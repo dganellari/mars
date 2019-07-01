@@ -29,14 +29,14 @@ namespace mars{
 // };
 
 
-class IFunctionSpace
-{
-  public:
-  virtual~IFunctionSpace(){};
-  virtual std::shared_ptr<IFunctionSpace> get(const Integer i)=0;
+// class IFunctionSpace
+// {
+//   public:
+//   virtual~IFunctionSpace(){};
+//   virtual std::shared_ptr<IFunctionSpace> get(const Integer i)=0;
 
-  // virtual const std::vector<std::array<Integer, Nelem_dofs>>& dofmap(){};//return dofmap_;};
-};
+//   // virtual const std::vector<std::array<Integer, Nelem_dofs>>& dofmap(){};//return dofmap_;};
+// };
 
 
 // class CollectorFunctionSpace: public IFunctionSpace
@@ -316,7 +316,7 @@ public:
       using type_offset=std::array<std::vector<Integer>, Nsubspaces>;
       using type_space_dofs=std::array<std::vector<std::vector<Integer>>, Nsubspaces>;
       using type_space_infos=std::array<std::array<Integer,4>,Nsubspaces>;
-      using type_base_function_space=std::tuple<BaseFunctionSpace,BaseFunctionSpaces...>;
+      using type_base_function_space=std::tuple<std::tuple<Elem,BaseFunctionSpace>,std::tuple<Elem,BaseFunctionSpaces>...>;
       using type_unique_base_function_space=RemoveTupleDuplicates<type_base_function_space>;
 
       inline Integer n_subspaces()const{return Nsubspaces;};
@@ -509,238 +509,238 @@ private:
 
 
 
-template<typename MeshT,typename ...Parameters >
-class FESpace: public Expression2<FESpace<MeshT,Parameters...>>
-{
-  public:
-      using Elem=typename MeshT::Elem;
+// template<typename MeshT,typename ...Parameters >
+// class FESpace: public Expression2<FESpace<MeshT,Parameters...>>
+// {
+//   public:
+//       using Elem=typename MeshT::Elem;
    
-      template<typename...>
-      struct unpack;
+//       template<typename...>
+//       struct unpack;
 
-      template<typename Arg1,typename Arg2,typename...Args>
-      struct tuple_space_and_quadrature_rule_types
-      {    
-       public:
-            using rest1 = typename tuple_space_and_quadrature_rule_types<Args...>::type1; 
-            using rest2 = typename tuple_space_and_quadrature_rule_types<Args...>::type2; 
+//       template<typename Arg1,typename Arg2,typename...Args>
+//       struct tuple_space_and_quadrature_rule_types
+//       {    
+//        public:
+//             using rest1 = typename tuple_space_and_quadrature_rule_types<Args...>::type1; 
+//             using rest2 = typename tuple_space_and_quadrature_rule_types<Args...>::type2; 
 
-            using single_type1=std::tuple<Arg1>;
-            using single_type2=std::tuple< typename Arg2:: template rule<Elem> >;
+//             using single_type1=std::tuple<Arg1>;
+//             using single_type2=std::tuple< typename Arg2:: template rule<Elem> >;
 
-            using type1 = decltype( std::tuple_cat( std::declval< single_type1 >(), 
-                                                    std::declval< rest1 >() ) );
-            using type2 = decltype( std::tuple_cat( std::declval< single_type2 >(), 
-                                                    std::declval< rest2 >() ) );           
-      };
+//             using type1 = decltype( std::tuple_cat( std::declval< single_type1 >(), 
+//                                                     std::declval< rest1 >() ) );
+//             using type2 = decltype( std::tuple_cat( std::declval< single_type2 >(), 
+//                                                     std::declval< rest2 >() ) );           
+//       };
 
-      template<typename Arg1,typename Arg2>
-      struct tuple_space_and_quadrature_rule_types<Arg1,Arg2>
-      {
-      public:
-           using type1 = typename std::tuple<Arg1>;
-           using type2 = typename std::tuple< typename Arg2:: template rule<Elem> >;
-      };
+//       template<typename Arg1,typename Arg2>
+//       struct tuple_space_and_quadrature_rule_types<Arg1,Arg2>
+//       {
+//       public:
+//            using type1 = typename std::tuple<Arg1>;
+//            using type2 = typename std::tuple< typename Arg2:: template rule<Elem> >;
+//       };
 
-      using BaseFunctionSpaces=typename tuple_space_and_quadrature_rule_types<Parameters...>::type1;
-      using QuadratureRules=typename tuple_space_and_quadrature_rule_types<Parameters...>::type2;
-      static constexpr Integer Nsubspaces=std::tuple_size<BaseFunctionSpaces>::value;
+//       using BaseFunctionSpaces=typename tuple_space_and_quadrature_rule_types<Parameters...>::type1;
+//       using QuadratureRules=typename tuple_space_and_quadrature_rule_types<Parameters...>::type2;
+//       static constexpr Integer Nsubspaces=std::tuple_size<BaseFunctionSpaces>::value;
 
-      template<typename E,typename ...T>
-      struct unpack<E,std::tuple<T...>>
-      {static constexpr Integer value= DofsPerElemNums<E,T...>::value;};
+//       template<typename E,typename ...T>
+//       struct unpack<E,std::tuple<T...>>
+//       {static constexpr Integer value= DofsPerElemNums<E,T...>::value;};
 
-      static constexpr Integer Nelem_dofs=unpack<Elem,BaseFunctionSpaces>::value;
+//       static constexpr Integer Nelem_dofs=unpack<Elem,BaseFunctionSpaces>::value;
 
-      using DofMapType=std::vector<std::array<Integer, Nelem_dofs>>;
-      using type_offset=std::array<std::vector<Integer>, Nsubspaces>;
-      using type_space_dofs=std::array<std::vector<std::vector<Integer>>, Nsubspaces>;
-      using type_space_infos=std::array<std::array<Integer,4>,Nsubspaces>;
+//       using DofMapType=std::vector<std::array<Integer, Nelem_dofs>>;
+//       using type_offset=std::array<std::vector<Integer>, Nsubspaces>;
+//       using type_space_dofs=std::array<std::vector<std::vector<Integer>>, Nsubspaces>;
+//       using type_space_infos=std::array<std::array<Integer,4>,Nsubspaces>;
 
-      template<Integer N,Integer M=0>
-      class ShapeFunctionTupleType
-      {    
-      public:
-            using rest = typename ShapeFunctionTupleType<N+1>::type; 
+//       template<Integer N,Integer M=0>
+//       class ShapeFunctionTupleType
+//       {    
+//       public:
+//             using rest = typename ShapeFunctionTupleType<N+1>::type; 
 
-            using BaseFunctionSpace=GetType<N, BaseFunctionSpaces>;
-            using QuadratureRule=GetType<N, QuadratureRules>;
+//             using BaseFunctionSpace=GetType<N, BaseFunctionSpaces>;
+//             using QuadratureRule=GetType<N, QuadratureRules>;
 
-            using single_type=std::tuple<ShapeFunctionOperator<QuadratureRule,Elem, BaseFunctionSpace>>;
-            using type = decltype( std::tuple_cat( std::declval< single_type >(), 
-                                                   std::declval< rest >() ) );
-      };
+//             using single_type=std::tuple<ShapeFunctionOperator<QuadratureRule,Elem, BaseFunctionSpace>>;
+//             using type = decltype( std::tuple_cat( std::declval< single_type >(), 
+//                                                    std::declval< rest >() ) );
+//       };
 
 
-      template<Integer M>
-      class ShapeFunctionTupleType<Nsubspaces-1,M>
-      {
-       public:
-           static constexpr Integer N=Nsubspaces-1;
-           using BaseFunctionSpace=GetType<N, BaseFunctionSpaces>;
-           using QuadratureRule=GetType<N, QuadratureRules>;
-           using single_type=std::tuple<ShapeFunctionOperator<QuadratureRule,Elem, BaseFunctionSpace>>;
-           using type = typename std::tuple<ShapeFunctionOperator<QuadratureRule,Elem, BaseFunctionSpace>>;
-      };
+//       template<Integer M>
+//       class ShapeFunctionTupleType<Nsubspaces-1,M>
+//       {
+//        public:
+//            static constexpr Integer N=Nsubspaces-1;
+//            using BaseFunctionSpace=GetType<N, BaseFunctionSpaces>;
+//            using QuadratureRule=GetType<N, QuadratureRules>;
+//            using single_type=std::tuple<ShapeFunctionOperator<QuadratureRule,Elem, BaseFunctionSpace>>;
+//            using type = typename std::tuple<ShapeFunctionOperator<QuadratureRule,Elem, BaseFunctionSpace>>;
+//       };
    
-      using ShapeFunctionType=typename ShapeFunctionTupleType<0>::type;
+//       using ShapeFunctionType=typename ShapeFunctionTupleType<0>::type;
 
-      template<Integer N=0>
-      typename std::enable_if< N==Nsubspaces-1,typename ShapeFunctionTupleType<N>::type>::type 
-      set_shape_function(const Integer& value=0)
-      {   
-           using BaseFunctionSpace=GetType<N, BaseFunctionSpaces>;
-           using QuadratureRule=GetType<N, QuadratureRules>;    
-           ShapeFunctionOperator<QuadratureRule,Elem,BaseFunctionSpace> shape_function(value);
-           return std::tuple<decltype(shape_function)> (shape_function);
-          }
+//       template<Integer N=0>
+//       typename std::enable_if< N==Nsubspaces-1,typename ShapeFunctionTupleType<N>::type>::type 
+//       set_shape_function(const Integer& value=0)
+//       {   
+//            using BaseFunctionSpace=GetType<N, BaseFunctionSpaces>;
+//            using QuadratureRule=GetType<N, QuadratureRules>;    
+//            ShapeFunctionOperator<QuadratureRule,Elem,BaseFunctionSpace> shape_function(value);
+//            return std::tuple<decltype(shape_function)> (shape_function);
+//           }
 
-      template<Integer N=0>
-      typename std::enable_if< 0<N && N<Nsubspaces-1,typename ShapeFunctionTupleType<N>::type>::type 
-      set_shape_function(const Integer& value=0)
-      {       
-           using BaseFunctionSpace=GetType<N, BaseFunctionSpaces>;
-           using QuadratureRule=GetType<N, QuadratureRules>;    
-           ShapeFunctionOperator<QuadratureRule,Elem,BaseFunctionSpace> shape_function(value);
-           const Integer& add_value=shape_function.range1()+1;
-           return std::tuple_cat(std::make_tuple(shape_function),set_shape_function<N+1>(add_value)  );
-      }     
+//       template<Integer N=0>
+//       typename std::enable_if< 0<N && N<Nsubspaces-1,typename ShapeFunctionTupleType<N>::type>::type 
+//       set_shape_function(const Integer& value=0)
+//       {       
+//            using BaseFunctionSpace=GetType<N, BaseFunctionSpaces>;
+//            using QuadratureRule=GetType<N, QuadratureRules>;    
+//            ShapeFunctionOperator<QuadratureRule,Elem,BaseFunctionSpace> shape_function(value);
+//            const Integer& add_value=shape_function.range1()+1;
+//            return std::tuple_cat(std::make_tuple(shape_function),set_shape_function<N+1>(add_value)  );
+//       }     
 
-      template<Integer N=0>
-      typename std::enable_if< N==0,typename ShapeFunctionTupleType<N>::type>::type 
-      set_shape_function(const Integer& value=0)
-      {       
-           using BaseFunctionSpace=GetType<N, BaseFunctionSpaces>;
-           using QuadratureRule=GetType<N, QuadratureRules>;  
-           QuadratureRule qp_rule;
-           const auto& qp_points=qp_rule.qp_points();  
-           ShapeFunctionOperator<QuadratureRule,Elem,BaseFunctionSpace> shape_function(0);
-           const Integer& add_value=shape_function.range1()+1;
-           return std::tuple_cat(std::make_tuple(shape_function),set_shape_function<N+1>(add_value)  );
-      }  
+//       template<Integer N=0>
+//       typename std::enable_if< N==0,typename ShapeFunctionTupleType<N>::type>::type 
+//       set_shape_function(const Integer& value=0)
+//       {       
+//            using BaseFunctionSpace=GetType<N, BaseFunctionSpaces>;
+//            using QuadratureRule=GetType<N, QuadratureRules>;  
+//            QuadratureRule qp_rule;
+//            const auto& qp_points=qp_rule.qp_points();  
+//            ShapeFunctionOperator<QuadratureRule,Elem,BaseFunctionSpace> shape_function(0);
+//            const Integer& add_value=shape_function.range1()+1;
+//            return std::tuple_cat(std::make_tuple(shape_function),set_shape_function<N+1>(add_value)  );
+//       }  
 
 
-      template<typename ...T>
-      struct unpack<std::tuple<T...>>
-      { template<typename DofMap,typename OffSetT,typename SpaceComponents,typename SpaceDofs>
-        inline static void dofmap(const MeshT& mesh,
-                                   DofMap& dofmap_vec,
-                                   OffSetT& dofs_offset_arr,
-                                   Integer& global_dof_count,
-                                   const SpaceComponents& space_components,
-                                   SpaceDofs& space_dofs)
-        {
+//       template<typename ...T>
+//       struct unpack<std::tuple<T...>>
+//       { template<typename DofMap,typename OffSetT,typename SpaceComponents,typename SpaceDofs>
+//         inline static void dofmap(const MeshT& mesh,
+//                                    DofMap& dofmap_vec,
+//                                    OffSetT& dofs_offset_arr,
+//                                    Integer& global_dof_count,
+//                                    const SpaceComponents& space_components,
+//                                    SpaceDofs& space_dofs)
+//         {
 
-          dofmap_fespace<T...>(mesh,dofmap_vec,dofs_offset_arr,global_dof_count,space_components,space_dofs);
-        }
+//           dofmap_fespace<T...>(mesh,dofmap_vec,dofs_offset_arr,global_dof_count,space_components,space_dofs);
+//         }
 
-       };
+//        };
 
-      template<typename ...T>
-      struct unpack2;
+//       template<typename ...T>
+//       struct unpack2;
 
-      template<typename ...T>
-      struct unpack2<std::tuple<T...>>
-      { 
-        inline static void space_infos(type_space_infos& space_infos)
-        {function_space_info<0,Nsubspaces,T...>(space_infos);}
-      };
+//       template<typename ...T>
+//       struct unpack2<std::tuple<T...>>
+//       { 
+//         inline static void space_infos(type_space_infos& space_infos)
+//         {function_space_info<0,Nsubspaces,T...>(space_infos);}
+//       };
 
-      FESpace(const MeshT& mesh):
-      mesh_ptr_(std::make_shared< MeshT >(mesh)),
-      shape_functions_(set_shape_function())
-      {
-        unpack2<BaseFunctionSpaces>::space_infos(space_infos_);
-        unpack<BaseFunctionSpaces>::dofmap(mesh,dofmap_,offset_,n_dofs_,space_infos_,space_dofs_); 
-      };
+//       FESpace(const MeshT& mesh):
+//       mesh_ptr_(std::make_shared< MeshT >(mesh)),
+//       shape_functions_(set_shape_function())
+//       {
+//         unpack2<BaseFunctionSpaces>::space_infos(space_infos_);
+//         unpack<BaseFunctionSpaces>::dofmap(mesh,dofmap_,offset_,n_dofs_,space_infos_,space_dofs_); 
+//       };
      
-      inline const Integer& components (const Integer& space_id)const{return space_infos_[space_id][3];};
+//       inline const Integer& components (const Integer& space_id)const{return space_infos_[space_id][3];};
 
-      inline const Integer& n_elem_dofs()const{return Nelem_dofs;};
+//       inline const Integer& n_elem_dofs()const{return Nelem_dofs;};
 
-      inline Integer n_elem_dofs(const Integer& space_id)const{
-                                  const auto& os=offset_[space_id];
-                                  const auto size=os[os.size()-1]-os[0];
-                                  return size;}
+//       inline Integer n_elem_dofs(const Integer& space_id)const{
+//                                   const auto& os=offset_[space_id];
+//                                   const auto size=os[os.size()-1]-os[0];
+//                                   return size;}
 
-      inline Integer n_elem_dofs(const Integer& space_id,const Integer& component_id)const{
-                                  const auto& size=n_elem_dofs(space_id);
-                                  return (size/space_infos_[space_id][3]);}
+//       inline Integer n_elem_dofs(const Integer& space_id,const Integer& component_id)const{
+//                                   const auto& size=n_elem_dofs(space_id);
+//                                   return (size/space_infos_[space_id][3]);}
 
-      inline const Integer& n_dofs()const{return n_dofs_;};
+//       inline const Integer& n_dofs()const{return n_dofs_;};
 
-      inline const Integer n_dofs(const Integer& space_id,const Integer& component_id)const
-                                 {return space_dofs_[space_id][component_id].size(); };
+//       inline const Integer n_dofs(const Integer& space_id,const Integer& component_id)const
+//                                  {return space_dofs_[space_id][component_id].size(); };
 
-      inline const DofMapType& dofmap()const{return dofmap_;};
+//       inline const DofMapType& dofmap()const{return dofmap_;};
 
-      inline void  dofmap(const DofMapType& dm)const{dm=dofmap_;};
+//       inline void  dofmap(const DofMapType& dm)const{dm=dofmap_;};
 
-      inline const std::array<Integer, Nelem_dofs>& dofmap(const Integer& elem_id)const
-                         {return dofmap_[elem_id];};
+//       inline const std::array<Integer, Nelem_dofs>& dofmap(const Integer& elem_id)const
+//                          {return dofmap_[elem_id];};
 
-      inline void  dofmap(const Integer& elem_id, const std::array<Integer, Nelem_dofs> & elem_dm)const
-                         {elem_dm=dofmap_[elem_id];};
+//       inline void  dofmap(const Integer& elem_id, const std::array<Integer, Nelem_dofs> & elem_dm)const
+//                          {elem_dm=dofmap_[elem_id];};
 
-      inline std::vector<Integer> 
-                   dofmap(const Integer& space_id,const Integer& elem_id)const{
-                        const auto& os=offset_[space_id];
-                        const auto& size=n_elem_dofs(space_id);
-                        std::vector<Integer> output(size);
-                        for(Integer nn=0;nn<size;nn++)
-                             output[nn]=dofmap_[elem_id][nn+os[0]];
-                        return output;};
+//       inline std::vector<Integer> 
+//                    dofmap(const Integer& space_id,const Integer& elem_id)const{
+//                         const auto& os=offset_[space_id];
+//                         const auto& size=n_elem_dofs(space_id);
+//                         std::vector<Integer> output(size);
+//                         for(Integer nn=0;nn<size;nn++)
+//                              output[nn]=dofmap_[elem_id][nn+os[0]];
+//                         return output;};
 
-      inline std::vector<Integer> 
-                   dofmap(const Integer& space_id,const Integer& component_id,const Integer& elem_id)const{
-                        const auto& os=offset_[space_id];
-                        const auto& size= n_elem_dofs(space_id);
-                        std::vector<Integer> output(size);
-                        const auto& comp=components(space_id);
-                        space_infos_[space_id][3];
-                        for(Integer nn=component_id;nn<size;nn=nn+comp)
-                             output[nn]=dofmap_[elem_id][nn+os[0]];
-                        return output;};
+//       inline std::vector<Integer> 
+//                    dofmap(const Integer& space_id,const Integer& component_id,const Integer& elem_id)const{
+//                         const auto& os=offset_[space_id];
+//                         const auto& size= n_elem_dofs(space_id);
+//                         std::vector<Integer> output(size);
+//                         const auto& comp=components(space_id);
+//                         space_infos_[space_id][3];
+//                         for(Integer nn=component_id;nn<size;nn=nn+comp)
+//                              output[nn]=dofmap_[elem_id][nn+os[0]];
+//                         return output;};
 
-      inline void dofmap(const Integer& space_id,const Integer& elem_id, const std::vector<Integer>& elem_space_dm)const
-                       {
-                        const auto& os=offset_[space_id];
-                        const auto& size=n_elem_dofs(space_id);
-                        elem_space_dm.resize(size);
-                        for(Integer nn=0;nn<size;nn++)
-                             elem_space_dm[nn]=dofmap_[elem_id][nn+os[0]];
-                       };
+//       inline void dofmap(const Integer& space_id,const Integer& elem_id, const std::vector<Integer>& elem_space_dm)const
+//                        {
+//                         const auto& os=offset_[space_id];
+//                         const auto& size=n_elem_dofs(space_id);
+//                         elem_space_dm.resize(size);
+//                         for(Integer nn=0;nn<size;nn++)
+//                              elem_space_dm[nn]=dofmap_[elem_id][nn+os[0]];
+//                        };
 
-      inline const std::array<std::vector<Integer>, Nsubspaces>& offset() const {return offset_;};
+//       inline const std::array<std::vector<Integer>, Nsubspaces>& offset() const {return offset_;};
 
-      inline void  offset(const std::array<std::vector<Integer>, Nsubspaces> &os)const {os=offset_;};
+//       inline void  offset(const std::array<std::vector<Integer>, Nsubspaces> &os)const {os=offset_;};
 
-      inline const std::vector<Integer>& offset(const Integer& space_id)const{return offset_[space_id];};
+//       inline const std::vector<Integer>& offset(const Integer& space_id)const{return offset_[space_id];};
 
-      inline void offset(Integer space_id, const std::vector<Integer>& space_os)const {space_os=offset_[space_id];};
+//       inline void offset(Integer space_id, const std::vector<Integer>& space_os)const {space_os=offset_[space_id];};
 
-      inline const std::vector<Integer>& space_dofs(const Integer& space_id,const Integer& component_id) const
-                                         {return space_dofs_[space_id][component_id];};
-      inline void space_dofs(const Integer& space_id, const Integer& component_id,std::vector<Integer>& spacedofs)const
-                            {spacedofs.resize(n_dofs(space_id,component_id));
-                             spacedofs=space_dofs_[space_id][component_id];};
-      inline const type_space_infos& space_info()const{return space_infos_;};
+//       inline const std::vector<Integer>& space_dofs(const Integer& space_id,const Integer& component_id) const
+//                                          {return space_dofs_[space_id][component_id];};
+//       inline void space_dofs(const Integer& space_id, const Integer& component_id,std::vector<Integer>& spacedofs)const
+//                             {spacedofs.resize(n_dofs(space_id,component_id));
+//                              spacedofs=space_dofs_[space_id][component_id];};
+//       inline const type_space_infos& space_info()const{return space_infos_;};
 
-      inline std::shared_ptr< MeshT > mesh()const {return mesh_ptr_;};
+//       inline std::shared_ptr< MeshT > mesh()const {return mesh_ptr_;};
 
-      const ShapeFunctionType& shape_functions()const{return shape_functions_;}
-            ShapeFunctionType  shape_functions()     {return shape_functions_;}
+//       const ShapeFunctionType& shape_functions()const{return shape_functions_;}
+//             ShapeFunctionType  shape_functions()     {return shape_functions_;}
       
-  private:
-      std::shared_ptr<MeshT> mesh_ptr_;
-      ShapeFunctionType shape_functions_;
-      Integer n_dofs_;
-      DofMapType dofmap_;
-      type_offset offset_;
-      type_space_dofs space_dofs_;
-      type_space_infos space_infos_;
+//   private:
+//       std::shared_ptr<MeshT> mesh_ptr_;
+//       ShapeFunctionType shape_functions_;
+//       Integer n_dofs_;
+//       DofMapType dofmap_;
+//       type_offset offset_;
+//       type_space_dofs space_dofs_;
+//       type_space_infos space_infos_;
 
-};
+// };
 
 
 

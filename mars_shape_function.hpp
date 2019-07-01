@@ -665,6 +665,64 @@ class MapFromReference4<Simplex<Dim,ManifoldDim>,BaseFunctionSpace<RaviartThomas
 
 
 
+template<typename Operator,typename Elem,typename BaseFunctionSpace>
+class MapFromReference5;
+
+
+
+template<Integer Dim, Integer ManifoldDim, Integer Order, Integer Continuity, Integer NComponents>
+class MapFromReference5<IdentityOperator, Simplex<Dim,ManifoldDim>,BaseFunctionSpace<LagrangeFE,Order,Continuity,NComponents>>
+{
+ public:
+ using Jacobian=Matrix<Real, Dim, ManifoldDim>;
+        inline void  init(const Jacobian& J){id_=1.0;}
+        inline const Real&  operator()()const{return id_;}
+ private:
+  Real id_;
+};
+
+
+
+
+
+
+template<Integer Dim, Integer ManifoldDim, Integer Order, Integer Continuity, Integer NComponents>
+class MapFromReference5<GradientOperator, Simplex<Dim,ManifoldDim>,BaseFunctionSpace<LagrangeFE,Order,Continuity,NComponents>>
+{
+ public:
+ using Jacobian=Matrix<Real, Dim, ManifoldDim>;
+        inline void  init(const Jacobian& J){grad_=  inverse(J);}
+        inline const Jacobian&  operator() ()const{return grad_;}
+ private:
+  Jacobian grad_; 
+};
+
+
+
+template<Integer Dim, Integer ManifoldDim, Integer Order, Integer Continuity, Integer NComponents>
+class MapFromReference5<IdentityOperator,Simplex<Dim,ManifoldDim>,BaseFunctionSpace<RaviartThomasFE,Order,Continuity,NComponents>>
+{
+ public:
+ using Jacobian=Matrix<Real, Dim, ManifoldDim>;
+     
+         inline void init(const Jacobian& J) {id_=J;id_/=det(id_);}
+         inline const Jacobian&  operator()()const {return id_;}
+ private:
+ Jacobian id_;
+};
+
+template<Integer Dim, Integer ManifoldDim, Integer Order, Integer Continuity, Integer NComponents>
+class MapFromReference5<DivergenceOperator,Simplex<Dim,ManifoldDim>,BaseFunctionSpace<RaviartThomasFE,Order,Continuity,NComponents>>
+{
+ public:
+ using Jacobian=Matrix<Real, Dim, ManifoldDim>;     
+         inline void init(const Jacobian& J){div_= 1.0/det(J);}
+         inline const Real&  operator()()const{return div_;}
+ private:
+ Real div_;
+};
+
+
 
 
 
@@ -1131,11 +1189,6 @@ class BaseShapeFunctionOperator<GradientOperator, QuadratureRule, Ndofs, Dim, Ma
 
 
 
-
-
-
-
-
 template<typename QuadratureRule, typename Elem,typename BaseFunctionSpace>
 class ShapeFunctionOperator;
 
@@ -1246,6 +1299,438 @@ public:
    std::array<Integer,2> range_;
 };
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename Elem,typename BaseFunctionSpace,typename Operator, typename QuadratureRule>
+class BaseShapeFunctionOperatorDependent;
+
+
+
+
+
+template<typename QuadratureRule, typename Elem,typename BaseFunctionSpace>
+class BaseShapeFunctionOperatorDependent<Elem,BaseFunctionSpace,IdentityOperator,QuadratureRule>
+
+{ 
+  public:
+  using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
+  static constexpr Integer Dim=Elem::Dim;
+  static constexpr Integer ManifoldDim=Elem::ManifoldDim;
+  static constexpr Integer NComponents=BaseFunctionSpace::NComponents;
+  static constexpr Integer ShapeFunctionDim1=FunctionSpace::ShapeFunctionDim1;
+  static constexpr Integer ShapeFunctionDim2=FunctionSpace::ShapeFunctionDim2;
+  static constexpr Integer NQPoints=QuadratureRule::NQPoints;
+  static constexpr Integer Ntot=FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,BaseFunctionSpace>>::value;
+  static constexpr Integer Ndofs=Ntot/NComponents;
+  using single_type   = Matrix<Real, ShapeFunctionDim1, ShapeFunctionDim2>;
+  using vector_single_type   = Vector<single_type,Ndofs>;
+  using tot_type= Matrix<Real, ShapeFunctionDim1 * NComponents, ShapeFunctionDim2>;
+  using type= FQPValues<tot_type,NQPoints,Ntot>;
+  using Point = Vector<Real,Dim>;
+  using QP = Matrix<Real,NQPoints,Dim>;
+  using qp_points_type=typename QuadratureRule::qp_points_type;
+  virtual ~BaseShapeFunctionOperatorDependent(){};
+  
+  virtual void
+  value(const Point& point, vector_single_type& func_ )   =0;
+
+  FQPValues<single_type,NQPoints,Ndofs>& reference(){return reference_func_values_;}
+  type & function(){return func_values_;}
+
+  void init_reference()
+  {
+   qp_points_=quadrature_.qp_points();
+   for(Integer qp=0;qp<NQPoints;qp++)
+    {
+    qp_points_.get_row(qp,qp_point_);
+    value(qp_point_,func_);
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+        reference_func_values_[n_dof][qp]=func_[n_dof];     
+     }
+    }
+  };
+
+  template<typename Jacobian>
+  void init(const Jacobian& J, const Vector<Real,Ndofs> &alpha=1.0)
+  {
+  map_.init(J);
+  const auto& mapping=map_();
+  for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+      {
+
+          n_tot_=n_dof * NComponents +  n_comp ;
+          n_=n_comp*ShapeFunctionDim1;
+          for(Integer qp=0;qp<NQPoints;qp++)
+          {             
+            func_values_[n_tot_][qp].zero();
+            func_tmp_=alpha[n_dof] * mapping * reference_func_values_[n_dof][qp];
+            assign(func_values_[n_tot_][qp],func_tmp_,n_,0);
+          }
+                 
+      }
+     }
+  };
+  BaseShapeFunctionOperatorDependent()
+  {};
+
+
+  private: 
+      vector_single_type func_;
+      Point qp_point_;
+      FQPValues<single_type,NQPoints,Ndofs> reference_func_values_;
+      type func_values_;
+      single_type func_tmp_;
+      QuadratureRule quadrature_;
+      qp_points_type qp_points_;
+      MapFromReference5<IdentityOperator,Elem,BaseFunctionSpace> map_;
+      Integer n_tot_,n_;
+};
+
+
+
+
+template<typename QuadratureRule, typename Elem,typename BaseFunctionSpace>
+class BaseShapeFunctionOperatorDependent<Elem,BaseFunctionSpace,GradientOperator,QuadratureRule>
+{ 
+  public:
+  using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
+  static constexpr Integer Dim=Elem::Dim;
+  static constexpr Integer ManifoldDim=Elem::ManifoldDim;
+  static constexpr Integer NComponents=BaseFunctionSpace::NComponents;
+  static constexpr Integer ShapeFunctionDim1=FunctionSpace::ShapeFunctionDim1;
+  static constexpr Integer ShapeFunctionDim2=FunctionSpace::ShapeFunctionDim2;
+  static constexpr Integer NQPoints=QuadratureRule::NQPoints;
+  static constexpr Integer Ntot=FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,BaseFunctionSpace>>::value;
+  static constexpr Integer Ndofs=Ntot/NComponents;
+  using single_type   = Matrix<Real, ShapeFunctionDim1 , ShapeFunctionDim2 * Dim >;
+  using vector_single_type   = Vector<single_type,Ndofs>;
+  using tot_type= Matrix<Real, ShapeFunctionDim1 * NComponents, ShapeFunctionDim2 * Dim >;
+  using type= FQPValues<tot_type,NQPoints,Ntot>;
+  using Point = Vector<Real,Dim>;
+  using QP = Matrix<Real,NQPoints,Dim>;
+  using qp_points_type=typename QuadratureRule::qp_points_type;
+  virtual ~BaseShapeFunctionOperatorDependent(){};
+ 
+  virtual void value(const Point& point,    Vector<single_type,Ndofs>& func_grad_)=0;
+
+ 
+  FQPValues<single_type,NQPoints,Ndofs>& reference(){return reference_grad_values_;}
+  type& function(){return grad_values_;}
+
+
+  void init_reference()
+  {
+   qp_points_=quadrature_.qp_points();
+   for(Integer qp=0;qp<NQPoints;qp++)
+    {
+    qp_points_.get_row(qp,qp_point_);
+    value(qp_point_,grad_);
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      reference_grad_values_[n_dof][qp]=grad_[n_dof];           
+     }
+    }
+  };
+
+  template<typename Mapping>
+  void init(const Mapping& J,const Vector<Real,Ndofs> &alpha=1.0)
+  {
+   map_.init(J);
+   const auto& mapping=map_();
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+      {
+        n_tot_=n_dof * NComponents +  n_comp ;
+        n_=n_comp * ShapeFunctionDim1;
+        for(Integer qp=0;qp<NQPoints;qp++)
+        {
+          grad_values_[n_tot_][qp].zero();  
+          grad_tmp_=alpha[n_dof]*contract(mapping, reference_grad_values_[n_dof][qp]);
+          assign(grad_values_[n_tot_][qp],grad_tmp_,n_,0);    
+        }
+      }
+     }
+  };
+
+  BaseShapeFunctionOperatorDependent(){};
+
+  private: 
+      Vector<single_type,Ndofs> grad_;
+      Point qp_point_;
+      FQPValues<single_type,NQPoints,Ndofs> reference_grad_values_;
+      type grad_values_;
+      single_type grad_tmp_;
+      QuadratureRule quadrature_;
+      qp_points_type qp_points_;
+      Contraction contract;
+      MapFromReference5<GradientOperator,Elem,BaseFunctionSpace> map_;
+      Integer n_tot_,n_;
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename QuadratureRule, typename Elem,typename BaseFunctionSpace>
+class BaseShapeFunctionOperatorDependent<Elem,BaseFunctionSpace,DivergenceOperator,QuadratureRule>
+{ 
+  public:
+  using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
+  static constexpr Integer Dim=Elem::Dim;
+  static constexpr Integer ManifoldDim=Elem::ManifoldDim;
+  static constexpr Integer NComponents=BaseFunctionSpace::NComponents;
+  static constexpr Integer NQPoints=QuadratureRule::NQPoints;
+  static constexpr Integer Ntot=FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,BaseFunctionSpace>>::value;
+  static constexpr Integer Ndofs=Ntot/NComponents;
+  using single_type   = Matrix<Real,1,1>;
+  using vector_single_type   = Vector<single_type,Ndofs>;
+  using tot_type= Matrix<Real, NComponents,1 >;
+  using type= FQPValues<tot_type,NQPoints,Ntot>;
+  using Point = Vector<Real,Dim>;
+  using QP = Matrix<Real,NQPoints,Dim>;
+  using qp_points_type=typename QuadratureRule::qp_points_type;
+  virtual ~BaseShapeFunctionOperatorDependent(){};
+ 
+  virtual void value(const Point& point,    Vector<single_type,Ndofs>& func_div_)=0;
+
+ 
+  FQPValues<single_type,NQPoints,Ndofs>& reference(){return reference_div_values_;}
+  type& function(){return div_values_;}
+
+
+  void init_reference()
+  {
+   qp_points_=quadrature_.qp_points();
+   for(Integer qp=0;qp<NQPoints;qp++)
+    {
+    qp_points_.get_row(qp,qp_point_);
+    value(qp_point_,div_);
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      reference_div_values_[n_dof][qp]=div_[n_dof];           
+     }
+    }
+  };
+
+  template<typename Jacobian>
+  void init(const Jacobian& J,const Vector<Real,Ndofs> &alpha=1.0)
+  {
+   map_.init(J);
+   const auto& mapping=map_();
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     { 
+      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+      {
+        n_tot_=n_dof * NComponents +  n_comp ;
+        n_=n_comp;
+        for(Integer qp=0;qp<NQPoints;qp++)
+        {
+          div_values_[n_tot_][qp].zero();  
+          div_tmp_=alpha[n_dof]*contract(mapping, reference_div_values_[n_dof][qp]);           
+          assign(div_values_[n_tot_][qp],div_tmp_,n_,0);   
+        }
+      }
+     }
+  };
+
+  BaseShapeFunctionOperatorDependent(){};
+
+  private: 
+      Vector<single_type,Ndofs> div_;
+      Point qp_point_;
+      FQPValues<single_type,NQPoints,Ndofs> reference_div_values_;
+      type div_values_;
+      single_type div_tmp_;
+      QuadratureRule quadrature_;
+      qp_points_type qp_points_;
+      Contraction contract;
+      MapFromReference5<DivergenceOperator,Elem,BaseFunctionSpace> map_;
+      Integer n_tot_,n_;
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename Elem,typename BaseFunctionSpace,typename Operator,typename QuadratureRule>
+class ShapeFunctionOperatorDependent;
+
+
+
+template<typename QuadratureRule, Integer NComponents>
+class ShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange1<NComponents>,IdentityOperator,QuadratureRule > : 
+public BaseShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange1<NComponents>,IdentityOperator,QuadratureRule >  
+{
+public:
+  using Base=BaseShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange1<NComponents>,IdentityOperator,QuadratureRule >;
+  using vector_single_type   = typename Base::vector_single_type;
+  using Point = typename Base::Point;
+  
+
+  virtual void value(const Point& point, vector_single_type& func )
+       {func[0](0,0)=point[0];
+        func[1](0,0)=point[1];
+        func[2](0,0)=1. - point[0] - point[1];};
+
+  ShapeFunctionOperatorDependent()
+  {}
+
+
+};
+
+
+
+template<typename QuadratureRule, Integer NComponents>
+class ShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange1<NComponents>,GradientOperator,QuadratureRule > : 
+public BaseShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange1<NComponents>,GradientOperator,QuadratureRule >  
+{
+public:
+  using Base=BaseShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange1<NComponents>,GradientOperator,QuadratureRule >;
+  using vector_single_type   = typename Base::vector_single_type;
+  using Point = typename Base::Point;
+  
+  virtual void value(const Point& point, vector_single_type& func_grad)
+   {
+    func_grad[0](0,0)=-1;  func_grad[0](0,1)=-1; 
+    func_grad[1](0,0)=+1;  func_grad[1](0,1)= 0; 
+    func_grad[2](0,0)= 0;  func_grad[2](0,1)=+1; 
+  } 
+
+  ShapeFunctionOperatorDependent()
+  {}
+
+
+};
+
+
+
+
+template<typename QuadratureRule, Integer NComponents>
+class ShapeFunctionOperatorDependent<Simplex<2,2>, RT0<NComponents>,IdentityOperator,QuadratureRule > : 
+public BaseShapeFunctionOperatorDependent<Simplex<2,2>, RT0<NComponents>,IdentityOperator,QuadratureRule >  
+{
+public:
+  using Base=BaseShapeFunctionOperatorDependent<Simplex<2,2>, RT0<NComponents>,IdentityOperator,QuadratureRule >  ;
+  using vector_single_type   = typename Base::vector_single_type;
+  using Point = typename Base::Point;
+  
+  virtual void value(const Point& point, vector_single_type& func)
+   {
+    const auto& xi=point[0];
+    const auto& eta=point[1];
+    func[0](0,0)=xi;   func[0](1,0)=eta-1;  
+    func[1](0,0)=xi-1; func[1](1,0)=eta;
+    func[2](0,0)=xi;   func[2](1,0)=eta;
+  } 
+
+  ShapeFunctionOperatorDependent()
+  {}
+
+
+};
+
+template<typename QuadratureRule, Integer NComponents>
+class ShapeFunctionOperatorDependent<Simplex<2,2>, RT0<NComponents>,DivergenceOperator,QuadratureRule > : 
+public BaseShapeFunctionOperatorDependent<Simplex<2,2>, RT0<NComponents>,DivergenceOperator,QuadratureRule >  
+{
+public:
+  using Base=BaseShapeFunctionOperatorDependent<Simplex<2,2>, RT0<NComponents>,DivergenceOperator,QuadratureRule>  ;
+  using vector_single_type   = typename Base::vector_single_type;
+  using Point = typename Base::Point;
+  
+  virtual void value(const Point& point, vector_single_type& func)
+   {
+    func[0](0,0)=2;  
+    func[1](0,0)=2;
+    func[2](0,0)=2;
+  } 
+
+  ShapeFunctionOperatorDependent()
+  {}
+};
 
 
 
@@ -2798,59 +3283,55 @@ TupleOfTupleChangeType<1,char,std::tuple< std::tuple< std::tuple<int,char>,std::
                                           std::tuple< std::tuple<int,char>,std::tuple<int,char>,std::tuple<int,char> > > > gt4;
 
 using provatmp=std::tuple< std::tuple<int,int  >, std::tuple<int,double  >, std::tuple< int,char > >;
+
+
+
+
+std::cout<<"type to pos="<<TypeToTupleElementPosition<std::tuple<int,double>, std::tuple< std::tuple<int,int  >, std::tuple<int,double  >,int, std::tuple< int,char >,std::tuple<>>> ::value<<std::endl;
+std::cout<<"  Lagrange1 ShapeFunctionDim1="<<ElemFunctionSpace<Simplex<2,2>, Lagrange1<1>>::ShapeFunctionDim1<<std::endl;
+std::cout<<"  Lagrange1 ShapeFunctionDim2="<<ElemFunctionSpace<Simplex<2,2>, Lagrange1<1>>::ShapeFunctionDim2<<std::endl;
+std::cout<<"  Lagrange2 ShapeFunctionDim1="<<ElemFunctionSpace<Simplex<2,2>, Lagrange2<1>>::ShapeFunctionDim1<<std::endl;
+std::cout<<"  Lagrange2 ShapeFunctionDim2="<<ElemFunctionSpace<Simplex<2,2>, Lagrange2<1>>::ShapeFunctionDim2<<std::endl;
+std::cout<<"  Lagrange3 ShapeFunctionDim1="<<ElemFunctionSpace<Simplex<2,2>, Lagrange3<1>>::ShapeFunctionDim1<<std::endl;
+std::cout<<"  Lagrange3 ShapeFunctionDim2="<<ElemFunctionSpace<Simplex<2,2>, Lagrange3<1>>::ShapeFunctionDim2<<std::endl;
+std::cout<<FunctionSpaceDofsPerElem<ElemFunctionSpace<Simplex<2,2>,Lagrange3<1>>>::value<<std::endl;
+std::cout<<FunctionSpaceDofsPerElem<ElemFunctionSpace<Simplex<3,3>,Lagrange3<1>>>::value<<std::endl;
+std::cout<<FunctionSpaceDofsPerElem<ElemFunctionSpace<Simplex<4,4>,Lagrange3<1>>>::value<<std::endl;
+
+std::cout<<"  RT0 ShapeFunctionDim1="<<ElemFunctionSpace<Simplex<2,2>, RT0<1>>::ShapeFunctionDim1<<std::endl;
+std::cout<<"  RT0 ShapeFunctionDim2="<<ElemFunctionSpace<Simplex<2,2>, RT0<1>>::ShapeFunctionDim2<<std::endl;
+
+
+// 
+TupleOfTupleChangeType<1,char,OperatorTupleType<decltype(sfen)>::type>   gt5; 
+
+
+constexpr Integer NComponents=4;
+ShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange1<NComponents>,IdentityOperator,QuadratureRule >  sfod;
+sfod.init_reference();
+sfod.init(J);
+sfod.function();
+std::cout<<"sfod.function()=="<<sfod.function()<<std::endl;
+
+ShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange1<NComponents>,GradientOperator,QuadratureRule >  sfod_grad;
+sfod_grad.init_reference();
+sfod_grad.init(J);
+sfod_grad.function();
+std::cout<<"sfod_grad.function()=="<<sfod_grad.function()<<std::endl;
+
+
+ShapeFunctionOperatorDependent<Simplex<2,2>, RT0<NComponents>,IdentityOperator,QuadratureRule>  sfod_rt;
+sfod_rt.init_reference();
+sfod_rt.init(J);
+sfod_rt.function();
+std::cout<<"sfod_rt.function()=="<<sfod_rt.function()<<std::endl;
+
+ShapeFunctionOperatorDependent<Simplex<2,2>, RT0<NComponents>,DivergenceOperator,QuadratureRule >  sfod_rt_div;
+sfod_rt_div.init_reference();
+sfod_rt_div.init(J);
+sfod_rt_div.function();
+std::cout<<"sfod_rt_div.function()=="<<sfod_rt_div.function()<<std::endl;
  
-// 
-// TupleOfTupleChangeType<1,char,OperatorTupleType<decltype(sfen)>::type>   gt5(gt); 
-
-
-
-    //,
-      //                                        std::tuple<std::tuple<int>,std::tuple<char,int> > >::type gt;
-// 
-// std::shared_ptr<Son1> son1=std::make_shared<Son1>(1);
-// std::shared_ptr<Son1> son2=std::make_shared<Son1>(2);
-// std::shared_ptr<Son1> son3=std::make_shared<Son1>(3);
-
-// std::shared_ptr<Son1> daughter1=std::make_shared<Son1>(4);
-// std::shared_ptr<Son1> daughter2=std::make_shared<Son1>(5);
-
-
-// std::shared_ptr<Son2> mom=std::make_shared<Son2>();
-// std::shared_ptr<Son2> uncle1=std::make_shared<Son2>();
-// std::shared_ptr<Son2> uncle2=std::make_shared<Son2>();
-// std::shared_ptr<Son2> grandma=std::make_shared<Son2>();
-
-// son1->print();
-// son2->print();
-// son3->print();
-// mom->add(son1);
-// mom->add(son2);
-
-// uncle1->add(daughter1);
-// uncle1->add(daughter2);
-
-// grandma->add(mom);
-// grandma->add(uncle1);
-
-
-// auto mom1=grandma->get(0);
-// auto kid1=grandma->get(1)->get(1);
-
-// std::cout<<"grandma"<<std::endl;
-// grandma->print();
-// std::cout<<"kid1"<<std::endl;
-// kid1->print();
-
-
-// Tuple<int, double> tuple_try(1,0.4);
-// const auto tuple_try2=TupleOf(1,tuple_try);
-// std::cout<<tuple_try.get<0>()<<std::endl;
-// std::cout<<tuple_try.get<1>()<<std::endl;
-// std::cout<<tuple_try2.get<1>().get<1>()<<std::endl;
-// typename decltype(tuple_try2)::type<1> a=tuple_try;
-
-// decltype(tuple_try2)::GetType<1,1>::type gg=1;
-// std::cout<<gg<<std::endl;
 
 };
 
