@@ -10,7 +10,7 @@
  */
 
 #include "mars_visualization.hpp"
-#include "generation/mars_point.hpp"
+#include "mars_point.hpp"
 
 #include <vector>
 #include <array>
@@ -20,7 +20,7 @@
 #include <algorithm>
 
 #include "mars_imesh_kokkos.hpp"
-#include "generation/mars_utils_kokkos.hpp"
+#include "mars_utils_kokkos.hpp"
 
 namespace mars {
 

@@ -3,13 +3,12 @@
 
 #include "mars_mesh.hpp"
 #include "mars_mesh_kokkos.hpp"
-#include "mars_memory.hpp"
 
 namespace mars {
 
 //different approach which works fine for the unit_cube and would have been faster
 //but unfortunately it does not generalize.
-Mesh3 generate_unit_cube() {
+inline Mesh3 generate_unit_cube() {
 
 	Mesh3 mesh;
 
@@ -303,11 +302,11 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 	}
 }
 
-bool generate_square(Mesh2& mesh, const Integer xDim, const Integer yDim) {
+inline bool generate_square(Mesh2& mesh, const Integer xDim, const Integer yDim) {
 	return generate_cube(mesh, xDim, yDim, 0);
 }
 
-bool generate_line(Mesh1& mesh, const Integer xDim) {
+inline bool generate_line(Mesh1& mesh, const Integer xDim) {
 	return generate_cube(mesh, xDim, 0, 0);
 }
 
@@ -329,11 +328,11 @@ bool generate_cube(Mesh<Dim, ManifoldDim, KokkosImplementation>& mesh, const Int
 	mesh.generate_elements(xDim,yDim,zDim);
 }
 
-bool generate_square(ParallelMesh2& mesh, const Integer xDim, const Integer yDim) {
+inline bool generate_square(ParallelMesh2& mesh, const Integer xDim, const Integer yDim) {
 	return generate_cube(mesh, xDim, yDim, 0);
 }
 
-bool generate_line(ParallelMesh1& mesh, const Integer xDim) {
+inline bool generate_line(ParallelMesh1& mesh, const Integer xDim) {
 	return generate_cube(mesh, xDim, 0, 0);
 }
 
