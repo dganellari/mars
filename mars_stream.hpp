@@ -4,6 +4,7 @@
 #include <ostream>
 #include <istream>
 #include <set>
+#include <vector>
 
 namespace mars {
 

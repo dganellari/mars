@@ -1,7 +1,6 @@
 #ifndef GENERATION_MARS_UTILS_KOKKOS_HPP_
 #define GENERATION_MARS_UTILS_KOKKOS_HPP_
 
-#include "mars_mesh_kokkos.hpp"
 #include "mars_mesh.hpp"
 
 #include <Kokkos_Core.hpp>
@@ -147,7 +146,7 @@ Integer index(const Integer xDim, const Integer yDim, const Integer i,
 	return i + (2 * xDim + 1) * (j + k * (2 * yDim + 1));
 }
 
-void add_side(std::vector<Integer>& side, const Integer a, const Integer b,
+inline void add_side(std::vector<Integer>& side, const Integer a, const Integer b,
 		const Integer index) {
 
 	if (a != 1 && b != 1) { //add only nodes which are not mid faces or mid edges
