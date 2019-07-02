@@ -1385,8 +1385,8 @@ class BaseShapeFunctionOperatorDependent<Elem,BaseFunctionSpace,IdentityOperator
   virtual void
   value(const Point& point, vector_single_type& func_ )   =0;
 
-  FQPValues<single_type,NQPoints,Ndofs>& reference(){return reference_func_values_;}
-  type & function(){return func_values_;}
+  const FQPValues<single_type,NQPoints,Ndofs>& reference()const{return reference_func_values_;}
+  const type & function()const{return func_values_;}
 
   void init_reference()
   {
@@ -1468,8 +1468,8 @@ class BaseShapeFunctionOperatorDependent<Elem,BaseFunctionSpace,GradientOperator
   virtual void value(const Point& point,    Vector<single_type,Ndofs>& func_grad_)=0;
 
  
-  FQPValues<single_type,NQPoints,Ndofs>& reference(){return reference_grad_values_;}
-  type& function(){return grad_values_;}
+  const FQPValues<single_type,NQPoints,Ndofs>& reference()const{return reference_grad_values_;}
+  const type& function()const{return grad_values_;}
 
 
   void init_reference()
@@ -1569,8 +1569,8 @@ class BaseShapeFunctionOperatorDependent<Elem,BaseFunctionSpace,DivergenceOperat
   virtual void value(const Point& point,    Vector<single_type,Ndofs>& func_div_)=0;
 
  
-  FQPValues<single_type,NQPoints,Ndofs>& reference(){return reference_div_values_;}
-  type& function(){return div_values_;}
+  const FQPValues<single_type,NQPoints,Ndofs>& reference()const{return reference_div_values_;}
+  const type& function()const {return div_values_;}
 
 
   void init_reference()

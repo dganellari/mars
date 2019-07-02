@@ -178,16 +178,6 @@ auto sfen=sfe1+sfe2+sfe3;
 using TupleOperatorsAndQuadrature=TupleOfTupleChangeType<1,QuadratureRule,OperatorTupleType<decltype(sfen)>::type>; 
 using TupleSpaces=typename decltype(W3)::type_unique_base_function_space;
 
-using TupleSpace0=GetType<0,TupleSpaces>;
-using Elem0=GetType<0,TupleSpace0>;
-using BaseFunctioSpace0=GetType<1,TupleSpace0>;
-using OperatorsAndQuadrature0=GetType<0,TupleOperatorsAndQuadrature>;
-
-
-using TupleSpace1=GetType<1,TupleSpaces>;
-using Elem1=GetType<0,TupleSpace1>;
-using BaseFunctioSpace1=GetType<1,TupleSpace1>;
-using OperatorsAndQuadrature1=GetType<1,TupleOperatorsAndQuadrature>;
 
 
 
@@ -195,8 +185,14 @@ using OperatorsAndQuadrature1=GetType<1,TupleOperatorsAndQuadrature>;
 // typename TupleShapeFunctionCreate<Elem0,BaseFunctioSpace0,OperatorsAndQuadrature0,TupleTypeSize<OperatorsAndQuadrature0>::value-1>::type ef2(3);
 // typename TupleShapeFunctionCreate<Elem1,BaseFunctioSpace1,OperatorsAndQuadrature1,TupleTypeSize<OperatorsAndQuadrature1>::value-1>::type ef3(3);
 
-typename TupleOfTupleShapeFunctionCreate<TupleSpaces,TupleOperatorsAndQuadrature,TupleTypeSize<TupleOperatorsAndQuadrature>::value-1,0>::type ee(2);
+TupleOfTupleShapeFunctionType<TupleSpaces,TupleOperatorsAndQuadrature> ee;
 
+ShapeFunctionAssembly<TupleSpaces,TupleOperatorsAndQuadrature> ee2;
+ee2.init_reference();
+ee2.init(J);
+const auto& ee3=ee2.get<0,1>();
+std::cout<<"examples reference"<<ee3.reference()<<std::endl;
+std::cout<<"examples function"<<ee3.function()<<std::endl;
 // typename TupleOfTupleShapeFunctionCreate<TupleSpaces,TupleOperatorsAndQuadrature, 1,0>::type e(3);
 // auto sf0=W1.shape_functions();
 // auto sf00=std::get<0>(sf0);
