@@ -18,284 +18,38 @@
 namespace mars{
 
 
-// template<Integer Nelem_dofs>
-// class IFunctionSpace
-// {
-//   public:
-//   virtual~IFunctionSpace(){};
-//   virtual std::shared_ptr<IFunctionSpace> get(const Integer i)=0;
-//   template<Integer Nelem_dofs>
-//   virtual const std::vector<std::array<Integer, Nelem_dofs>>& dofmap(){};//return dofmap_;};
-// };
 
+template<Integer N>
+class Number
+{
+public:
+  static constexpr Integer value=N;
+};
 
-// class IFunctionSpace
-// {
-//   public:
-//   virtual~IFunctionSpace(){};
-//   virtual std::shared_ptr<IFunctionSpace> get(const Integer i)=0;
 
-//   // virtual const std::vector<std::array<Integer, Nelem_dofs>>& dofmap(){};//return dofmap_;};
-// };
+template<typename All,typename Unique, Integer Nmax,Integer N>
+class TupleNumberHelper;
 
+template<typename All,typename Unique, Integer Nmax>
+class TupleNumberHelper<All,Unique,Nmax,Nmax>
+{
+  public:
+  using type=std::tuple<Number<ElementPosition<Nmax,All,Unique>::value>>;
+};
 
-// class CollectorFunctionSpace: public IFunctionSpace
-// {
-// public: 
+template<typename All,typename Unique, Integer Nmax,Integer N=0>
+class TupleNumberHelper
+{
+  public:
+  using single_type=std::tuple<Number<ElementPosition<N,All,Unique>::value>>;
+  using type=decltype(std::tuple_cat(std::declval<single_type>(),std::declval<typename TupleNumberHelper<All,Unique,Nmax,N+1>::type>()) );
+};
 
-//     template<typename T,typename...Args>
-//     typename std::enable_if<0==sizeof...(Args), void>::type
-//     add(const T& t,Args...more)
-//     {
-//      children.push_back(std::make_shared<T>(t));
-//     }
+template<typename All,typename Unique>
+using TupleNumber=typename TupleNumberHelper<All,Unique,TupleTypeSize<All>::value-1,0>::type;
+ 
 
-//     template<typename T,typename...Args>
-//     typename std::enable_if<0<sizeof...(Args), void>::type
-//     add(const T& t,Args...more)
-//     {
-//       children.push_back(std::make_shared<T>(t));
-//       add(more...);
-//     }
 
-//     template<typename...Parameters>
-//     CollectorFunctionSpace(const Parameters&...params){add(params...);}
-
-//     virtual std::shared_ptr<IFunctionSpace> get(const Integer i){return children[i];}
-// private:
-//   std::vector<std::shared_ptr<IFunctionSpace>> children;
-
-// };
-// template <int N, typename... Ts>
-// struct get;
-
-// template <int N, typename T, typename... Ts>
-// struct get<N, std::tuple<T, Ts...>>
-// {
-//     using type = typename get<N - 1, std::tuple<Ts...>>::type;
-// };
-
-// template <typename T, typename... Ts>
-// struct get<0, std::tuple<T, Ts...>>
-// {
-//     using type = T;
-// };
-
-// template<typename...Args>
-// std::tuple<Args...> add_costant (const std::tuple<Args...>& t1,const Integer& value);
-
-
-// template<std::size_t Nelem_dofs>
-// std::vector<std::array<Integer, Nelem_dofs>> add_costant
-// (const std::vector<std::array<Integer, Nelem_dofs>>& t1,const Integer& value)
-// {
-//   std::vector<std::array<Integer, Nelem_dofs>> t2;
-//   const auto& t1size=t1.size();
-//   t2.resize(t1size);
-
-//   std::cout<<"value=="<<value<<std::endl;
-//   for(Integer ii=0;ii<t1size;ii++)
-//     for(Integer jj=0;jj<t1[ii].size();jj++)
-//        t2[ii][jj]=t1[ii][jj]+value;
-//   return t2;
-// }
-
-// template<Integer N,typename...Args>
-// typename std::enable_if<sizeof...(Args)==N+1, void>::type
-//  add_costant_tuple_loop(const std::tuple<Args...>& t1, std::tuple<Args...>& t2,const Integer& value)
-// {
-// std::get<N>(t2)=add_costant(std::get<N>(t1),value);
-// }
-
-// template<Integer N,typename...Args>
-// typename std::enable_if< N+1<sizeof...(Args), void>::type
-//  add_costant_tuple_loop(const std::tuple<Args...>& t1, std::tuple<Args...>& t2,const Integer& value)
-// {
-//   std::get<N>(t2)=add_costant(std::get<N>(t1),value);
-//   add_costant_tuple_loop<N+1,Args...>(t1,t2,value);
-// }
-
-
-// template<typename...Args>
-// std::tuple<Args...> add_costant (const std::tuple<Args...>& t1,const Integer& value)
-// {
-//   std::tuple<Args...> t2=t1;
-
-//   add_costant_tuple_loop<0,Args...>(t1,t2,value);
-
-//   return t2;
-// }
-// /////////////////// TUPLE UTILITIES///////////////////////////////
-
-// /////////////////// CAT OF TYPES ///////////////////
-// template<typename ... input_t>
-// using TupleCatType=
-// decltype(std::tuple_cat(
-//     std::declval<input_t>()...
-// ));
-
-
-
-
-// /////////////////// REMOVE DUPLICATE TYPES ///////////////////
-
-// template <class Haystack, class Needle>
-// struct contains;
-
-// template <class Car, class... Cdr, class Needle>
-// struct contains<std::tuple<Car, Cdr...>, Needle> : contains<std::tuple<Cdr...>, Needle>
-// {};
-
-// template <class... Cdr, class Needle>
-// struct contains<std::tuple<Needle, Cdr...>, Needle> : std::true_type
-// {};
-
-// template <class Needle>
-// struct contains<std::tuple<>, Needle> : std::false_type
-// {};
-
-
-
-// template <class Out, class In>
-// struct filter;
-
-// template <class... Out, class InCar, class... InCdr>
-// struct filter<std::tuple<Out...>, std::tuple<InCar, InCdr...>>
-// {
-//   using type = typename std::conditional<
-//     contains<std::tuple<Out...>, InCar>::value
-//     , typename filter<std::tuple<Out...>, std::tuple<InCdr...>>::type
-//     , typename filter<std::tuple<Out..., InCar>, std::tuple<InCdr...>>::type
-//   >::type;
-// };
-
-// template <class Out>
-// struct filter<Out, std::tuple<>>
-// {
-//   using type = Out;
-// };
-
-
-// template <class T>
-// using RemoveTupleDuplicates = typename filter<std::tuple<>, T>::type;
-
-
-
-
-// template <class T, class Tuple>
-// struct TypeToTupleElementPosition;
-
-// template <class T, class... Types>
-// struct TypeToTupleElementPosition<T, std::tuple<T, Types...>> {
-//     static const std::size_t value = 0;
-// };
-
-// template <class T, class U, class... Types>
-// struct TypeToTupleElementPosition<T, std::tuple<U, Types...>> {
-//     static const std::size_t value = 1 + TypeToTupleElementPosition<T, std::tuple<Types...>>::value;
-// };
-
-
-// template <typename = void>
-// constexpr std::size_t TupleSizeHelper ()
-//  { return 0u; }
-
-// template <std::size_t I0, std::size_t ... Is>
-// constexpr std::size_t TupleSizeHelper ()
-//  { return I0 + TupleSizeHelper<Is...>(); }
-
-// template <typename ... Ts>
-// constexpr std::size_t TupleSize (std::tuple<Ts...> const &)
-//  { return TupleSizeHelper<sizeof(Ts)...>(); }
-
-
-// template <typename T,typename ... Types>
-// class TupleTypeSize;
-
-// template <typename T>
-// class TupleTypeSize<std::tuple<T>>
-// {
-// public:
-//  static constexpr std::size_t value = 1;
-// };
-
-// template <typename T,typename ... Types>
-// class TupleTypeSize<std::tuple<T,Types...>>
-// {
-// public:
-//  static constexpr std::size_t value = 1 + TupleTypeSize<std::tuple<Types...>>::value;
-// };
-
-
-
-// // for 
-// template<Integer N,typename All, typename Unique>
-//  class ElementPositiion
-// {public:
-//  static_assert(N>=0, " negative integer");
-//  static_assert(N<TupleTypeSize<All>::value, " exceeding tuple dimension");
-//  using AllType=typename get<N,All>::type;
-//  static constexpr Integer value=TypeToTupleElementPosition<AllType,Unique>::value;
-// };
-
-
-// template<typename...Ts>
-// class TupleRemoveType;
-
-// template<typename T, typename...Ts>
-// class TupleRemoveType<T,std::tuple<Ts...>> 
-// {
-// public:
-// using type= TupleCatType<
-//     typename std::conditional<
-//         std::is_same<T, Ts>::value,
-//         std::tuple<>,
-//         std::tuple<Ts>
-//     >::type...
-// >;
-// };
-
-// template<typename...Ts>
-// class TupleRemovesingleTypeHelper;
-
-
-// template<typename Tremove, typename T>
-// class TupleRemovesingleTypeHelper<Tremove,std::tuple<T> > 
-// {
-// public:
-// static constexpr bool boolval=std::is_same<T, Tremove>::value;
-// using type= typename std::conditional<boolval, std::tuple<>, std::tuple<T> >::type;
-// };
-
-// template<typename Tremove, typename T,typename...Ts>
-// class TupleRemovesingleTypeHelper<Tremove,std::tuple<T,Ts...>> 
-// {
-// public:
-// static constexpr bool boolval=std::is_same<T, Tremove>::value;
-// using single_type= typename std::conditional<boolval, std::tuple<>, std::tuple<T> >::type;
-
-// using type=typename std::conditional<boolval, 
-//                                      // if we have found the type to remvoe, just add all the other ones
-//                                      TupleCatType< std::tuple<Ts...> >,
-//                                      // otherwise add T and check to the next one 
-//                                      TupleCatType<single_type, typename TupleRemovesingleTypeHelper< Tremove,std::tuple<Ts...> >::type >
-//                                     >::type;
-// };
-
-// template<typename Tremove, typename...Ts>
-// using TupleRemovesingleType=typename TupleRemovesingleTypeHelper<Tremove,Ts...>::type;
-
-// template<typename T>
-// constexpr T Max (const T& a,const T& b) 
-// {
-//   return a > b ? a : b;
-// }
-
-// template<typename T>
-// constexpr T Min (const T& a,const T& b) 
-// {
-//   return a < b ? a : b;
-// }
 
 
 template<typename MeshT, typename BaseFunctionSpace,typename...BaseFunctionSpaces>
@@ -318,7 +72,7 @@ public:
       using type_space_infos=std::array<std::array<Integer,4>,Nsubspaces>;
       using type_base_function_space=std::tuple<std::tuple<Elem,BaseFunctionSpace>,std::tuple<Elem,BaseFunctionSpaces>...>;
       using type_unique_base_function_space=RemoveTupleDuplicates<type_base_function_space>;
-
+      using type_tuple_spaces=TupleNumber<type_base_function_space,type_unique_base_function_space>;
       inline Integer n_subspaces()const{return Nsubspaces;};
 
       inline const Integer& components (const Integer& space_id)const{return space_infos_[space_id][3];};
@@ -340,53 +94,17 @@ public:
       inline const Integer n_dofs(const Integer& space_id,const Integer& component_id)const
                                  {return space_dofs_[space_id][component_id].size(); };
 
-
-      // inline void set_new_start(const Integer& new_start)
-      // {
-      //    dof_count_start_=new_start;
-      //    const auto& n_elements=dofmap_.size();
-      //    dofmap_new_start_.resize(n_elements);
-      //    for(Integer elem_id=0;elem_id<n_elements;elem_id++)
-      //      for(Integer nn=0;nn<Nelem_dofs;nn++)
-      //         dofmap_new_start_[elem_id][nn]=dofmap_[elem_id][nn]+dof_count_start_;
-
-      //    for(Integer nn=0;nn<Nsubspaces;nn++)
-      //     {
-      //       const auto& size1=space_dofs_[nn].size();
-      //       space_dofs_new_start_[nn].resize(size1);
-      //       for(Integer ii=0;ii<size1;ii++)
-      //       { 
-      //         const auto& size2=space_dofs_[nn][ii].size();
-      //         space_dofs_new_start_[nn][ii].resize(size2);
-      //         for(Integer jj=0;jj<size2;jj++)
-      //           {
-      //             space_dofs_new_start_[nn][ii][jj]=space_dofs_[nn][ii][jj]+new_start;
-      //           }
-      //       }
-      //     }
-      // }
-
       inline const DofMapType& dofmap()const{return dofmap_;};
 
-      // inline const DofMapType& dofmap_new_start()const{return dofmap_new_start_;};
-
       inline void  dofmap(const DofMapType& dm)const{dm=dofmap_;};
-
-      // inline void  dofmap_new_start(const DofMapType& dm)const{dm=dofmap_new_start_;};
 
 
       inline const std::array<Integer, Nelem_dofs>& dofmap(const Integer& elem_id)const
                          {return dofmap_[elem_id];};
 
-      // inline const std::array<Integer, Nelem_dofs>& dofmap_new_start(const Integer& elem_id)const
-      //                    {return dofmap_new_start_[elem_id];};
-
-
       inline void  dofmap(const Integer& elem_id, const std::array<Integer, Nelem_dofs> & elem_dm)const
                          {elem_dm=dofmap_[elem_id];};
 
-      // inline void  dofmap_new_start(const Integer& elem_id, const std::array<Integer, Nelem_dofs> & elem_dm)const
-      //                    {elem_dm=dofmap_new_start_[elem_id];};
 
       inline std::vector<Integer> 
                    dofmap(const Integer& space_id,const Integer& elem_id)const{
@@ -396,14 +114,6 @@ public:
                         for(Integer nn=0;nn<size;nn++)
                              output[nn]=dofmap_[elem_id][nn+os[0]];
                         return output;};
-
-      // inline std::vector<Integer> dofmap_new_start(const Integer& space_id,const Integer& elem_id)const{
-      //                   const auto& os=offset_[space_id];
-      //                   const auto& size=n_elem_dofs(space_id);
-      //                   std::vector<Integer> output(size);
-      //                   for(Integer nn=0;nn<size;nn++)
-      //                        output[nn]=dofmap_new_start_[elem_id][nn+os[0]];
-      //                   return output;};
 
 
       inline std::vector<Integer> 
@@ -417,15 +127,6 @@ public:
                              output[nn]=dofmap_[elem_id][nn+os[0]];
                         return output;};
 
-      // inline std::vector<Integer> dofmap_new_start(const Integer& space_id,const Integer& component_id,const Integer& elem_id)const{
-      //                   const auto& os=offset_[space_id];
-      //                   const auto& size= n_elem_dofs(space_id);
-      //                   std::vector<Integer> output(size);
-      //                   const auto& comp=components(space_id);
-      //                   space_infos_[space_id][3];
-      //                   for(Integer nn=component_id;nn<size;nn=nn+comp)
-      //                        output[nn]=dofmap_new_start_[elem_id][nn+os[0]];
-      //                   return output;};
 
       inline void dofmap(const Integer& space_id,const Integer& elem_id, const std::vector<Integer>& elem_space_dm)const
                        {
@@ -435,16 +136,6 @@ public:
                         for(Integer nn=0;nn<size;nn++)
                              elem_space_dm[nn]=dofmap_[elem_id][nn+os[0]];
                        };
-
-      // inline void dofmap_new_start(const Integer& space_id,const Integer& elem_id, const std::vector<Integer>& elem_space_dm)const
-      //                  {
-      //                   const auto& os=offset_[space_id];
-      //                   const auto& size=n_elem_dofs(space_id);
-      //                   elem_space_dm.resize(size);
-      //                   for(Integer nn=0;nn<size;nn++)
-      //                        elem_space_dm[nn]=dofmap_new_start_[elem_id][nn+os[0]];
-      //                  };
-
 
       inline const std::array<std::vector<Integer>, Nsubspaces>& offset() const {return offset_;};
 
@@ -460,29 +151,19 @@ public:
                                          {return space_dofs_[space_id][component_id];};
 
 
-      // inline const std::vector<Integer>& space_dofs_new_start(const Integer& space_id,const Integer& component_id) const
-      //                                    {
-      //                                     return space_dofs_new_start_[space_id][component_id];};
-
       inline void space_dofs(const Integer& space_id, const Integer& component_id,std::vector<Integer>& spacedofs)const
                             {spacedofs.resize(n_dofs(space_id,component_id));
                              spacedofs=space_dofs_[space_id][component_id];};
-      // inline void space_dofs_new_start(const Integer& space_id, const Integer& component_id,std::vector<Integer>& spacedofs)const
-      //                       {spacedofs.resize(n_dofs(space_id,component_id));
-      //                        spacedofs=space_dofs_[space_id][component_id]+dof_count_start_;};
 
       inline const type_space_infos& space_info()const{return space_infos_;};
 
       inline std::shared_ptr< MeshT > mesh()const {return mesh_;};
 
-      // inline void set_dof_count_start(const Integer&value){dof_count_start_=value;};
+      inline const type_tuple_spaces& space_avatar()const {return spaces_avatar_;};
 
-      
+       
       FunctionSpace(const MeshT& mesh,const Integer dof_count_start=0):
-      // dof_count_start_(dof_count_start),
       mesh_(std::make_shared< MeshT >(mesh))
-      // ,
-      // is_dof_count_start_set_(dof_count_start)
       {
       function_space_info<0,Nsubspaces,BaseFunctionSpace,BaseFunctionSpaces...>(space_infos_);
       dofmap_fespace<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofmap_,offset_,n_dofs_,space_infos_,space_dofs_);     
@@ -491,16 +172,15 @@ public:
 private:
    
       std::shared_ptr< MeshT > mesh_;
-      // Integer dof_count_start_;
-      // bool is_dof_count_start_set_;
       Integer n_dofs_;
       DofMapType dofmap_;
-      // DofMapType dofmap_new_start_;
       type_offset offset_;
       type_space_dofs space_dofs_;
-      // type_space_dofs space_dofs_new_start_;
       type_space_infos space_infos_;
       type_base_function_space shape_functions_;
+      type_tuple_spaces spaces_avatar_;  
+
+
 };
 
 
@@ -756,9 +436,8 @@ class MixedSpace: public Expression2<MixedSpace<Args...>>
 public:
 using DofMapType=std::tuple<typename Args::DofMapType...>;
 using type_base_function_space=TupleCatType<typename Args::type_base_function_space...>;
-
 using type_unique_base_function_space=RemoveTupleDuplicates<TupleCatType<typename Args::type_unique_base_function_space...>>;
-
+using type_tuple_spaces=TupleNumber<type_base_function_space,type_unique_base_function_space>;
 // using ShapeFunctionType=std::tuple<std::shared_ptr<typename Args::ShapeFunctionType>...>;
 // using ShapeFunctionType=std::tuple<typename Args::ShapeFunctionType...>;
 
@@ -832,12 +511,12 @@ tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
   return std::tuple_cat(std::tuple<OtherArg>( otherarg ),
                        tuple_make<N+1,OtherArgs...>(otherargs...));}
 
+ inline const type_tuple_spaces& space_avatar()const {return spaces_avatar_;};
+
 MixedSpace(const Args&...args):
 spaces_(std::make_tuple(std::make_shared<Args>(args)...)),
 n_dofs_(tot_n_dofs<sizeof...(Args)-1>()),
 dofmap_(tuple_make<0,typename Args::DofMapType...>(args.dofmap()...))
-// shape_functions_(std::make_tuple(std::make_shared<typename Args::ShapeFunctionType>(args.shape_functions())...))
-// shape_functions_(std::make_tuple(args.shape_functions()...))
 {}
 
 static constexpr Integer Nsubspaces=tot_subspaces<Args...>::value;
@@ -845,6 +524,7 @@ private:
       std::tuple<std::shared_ptr<Args>...> spaces_;
       Integer n_dofs_;
       DofMapType dofmap_;
+      type_tuple_spaces spaces_avatar_;  
       // std::tuple<typename Args::ShapeFunctionType... > shape_functions_;
       
 
@@ -860,21 +540,95 @@ MixedSpace<Args...> MixedFunctionSpace(const Args&...args){return MixedSpace<Arg
 
 
 
-template<typename...Args>
-class TestSpace
-{
-public:
- TestSpace(const MixedSpace<Args...>& spaces):
- spaces_(spaces)
- {}
+// template<typename...Args>
+// class TestSpace
+// {
+// public:
+//  TestSpace(const MixedSpace<Args...>& spaces):
+//  spaces_(spaces)
+//  {}
 
- private:
-   MixedSpace<Args...> spaces_;
+//  private:
+//    MixedSpace<Args...> spaces_;
+// };
+
+template<Integer N>
+class Trial
+{
+  static constexpr Integer value=N;
+  static constexpr Integer kind=0;
+  using type=IdentityOperator;
+};
+
+template<Integer N>
+class Test
+{
+  static constexpr Integer value=N;
+  static constexpr Integer kind=1;
+  using type=IdentityOperator;
 };
 
 
-template<typename...Args>
-TestSpace<Args...> Test(const MixedSpace<Args...>& spaces){return TestSpace<Args...>(spaces);};
+template<Integer N,typename...Args >
+Test<GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value> 
+MakeTest(const MixedSpace<Args...>& W){return Test<GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value>();}
+
+template<Integer N,typename...Args >
+Trial<GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value> 
+MakeTrial(const MixedSpace<Args...>& W){return Trial<GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value>();}
+
+
+
+
+// template<Integer N,Integer M>
+// class TrialOrTestHelper;
+
+// template<Integer N>
+// class TrialOrTestHelper<N,0>
+// {public: using type=Trial<N>;};
+
+// template<Integer N>
+// class TrialOrTestHelper<N,1>
+// {public: using type=Test<N>;};
+
+// template<Integer N,Integer M>
+// using TrialOrTest=typename TrialOrTestHelper<N,M>::type;
+
+
+// template<typename Tuple, Integer K, Integer Nmax,Integer N>
+// class TupleTrialOrTestHelper;
+
+// template<typename Tuple, Integer K, Integer Nmax>
+// class TupleTrialOrTestHelper<Tuple,K,Nmax,Nmax>
+// {
+//   public:
+//   using type=std::tuple<TrialOrTest< GetType<Nmax,Tuple>::value , K> >;
+// };
+
+// template<typename Tuple, Integer K, Integer Nmax,Integer N>
+// class TupleTrialOrTestHelper
+// {
+//   public:
+//   using single_type=std::tuple<TrialOrTest< GetType<N,Tuple>::value , K> >;
+//   using type=decltype(std::tuple_cat(std::declval<single_type>(),std::declval<typename TupleTrialOrTestHelper<Tuple,K,Nmax,N+1>::type>()) );
+// };
+
+// template<typename Tuple,Integer K>
+// using TupleTrialOrTest=typename TupleTrialOrTestHelper<Tuple,K,TupleTypeSize<Tuple>::value-1,0> ::type;
+
+
+// template<typename Tuple,Integer K,typename...Args>
+// TupleTrialOrTest<Tuple,K> MakeTest(const MixedSpace<Args...>& spaces)
+// {return TupleTrialOrTest<decltype(W)::type_tuple_spaces,1> ; TestSpace<Args...>(spaces);};
+
+// class Test
+
+
+
+
+
+// template<typename...Args>
+// TestSpace<Args...> MakeTest(const MixedSpace<Args...>& spaces){return TestSpace<Args...>(spaces);};
 
 
 
@@ -889,74 +643,72 @@ TestSpace<Args...> Test(const MixedSpace<Args...>& spaces){return TestSpace<Args
 
 
 
-class Leaf;
+// class Leaf;
 
- class Tree
-{
-public:
-      Tree():
-      leaf_(0)
-      {};
+//  class Tree
+// {
+// public:
+//       Tree():
+//       leaf_(0)
+//       {};
 
-      Tree(Integer i):
-      leaf_(i)
-      {};
-// void print(){
-//   for(Integer nn=0;nn< vec_.size();nn++)
-//       vec_[nn]->print();}
-
-
-//virtual void add(Tree& ifs) {vec_.push_back(std::make_shared<Tree>(ifs));};
-// virtual void add(Tree& ifs) {vec_.push_back(ifs);};
-// void add(Leaf& ifs) {children.push_back(ifs);};
-     void add(const Tree& c)
-    {
-        c.print();
-        children.push_back(std::make_shared<Tree>(c));
-    } 
-
-    //  void add(std::shared_ptr<Leaf> c)
-    // {
-    //     children.push_back(c);
-    // }
+//       Tree(Integer i):
+//       leaf_(i)
+//       {};
+// // void print(){
+// //   for(Integer nn=0;nn< vec_.size();nn++)
+// //       vec_[nn]->print();}
 
 
-// std::shared_ptr<Tree> operator[] (int x) {
-//           return vec_[x];}
-void print()const {
-  for(Integer nn=0;nn<children.size();nn++)
-      {//std::cout<<"----------------TREE == "<<leaf_<<std::endl;
-        children[nn]->print();}
-}
-//void print(){std::cout<<"----------------LEAF == "<<leaf_<<std::endl;}
-Tree& operator[] (int x) {
-          return *children[x];}
-private:
-      std::vector<std::shared_ptr<Tree>> children; 
-      Integer leaf_;
-      //std::vector<Tree> vec_; 
-};
+// //virtual void add(Tree& ifs) {vec_.push_back(std::make_shared<Tree>(ifs));};
+// // virtual void add(Tree& ifs) {vec_.push_back(ifs);};
+// // void add(Leaf& ifs) {children.push_back(ifs);};
+//      void add(const Tree& c)
+//     {
+//         c.print();
+//         children.push_back(std::make_shared<Tree>(c));
+//     } 
+
+//     //  void add(std::shared_ptr<Leaf> c)
+//     // {
+//     //     children.push_back(c);
+//     // }
 
 
-class Leaf : public Tree
-{
-public:
-      Leaf(Integer i):
-      leaf_(i)
-      {children.push_back(std::make_shared<Tree>(Tree(i)));};
-
-      void print(){std::cout<<"----------------LEAF == "<<leaf_<<std::endl;}
-      Integer val(){return leaf_;};
-      Leaf operator[] (int x) {
-                return *this;
-            }
-
-private:
-      Integer leaf_;
-      std::vector<std::shared_ptr<Tree>> children; 
-};
+// // std::shared_ptr<Tree> operator[] (int x) {
+// //           return vec_[x];}
+// void print()const {
+//   for(Integer nn=0;nn<children.size();nn++)
+//       {//std::cout<<"----------------TREE == "<<leaf_<<std::endl;
+//         children[nn]->print();}
+// }
+// //void print(){std::cout<<"----------------LEAF == "<<leaf_<<std::endl;}
+// Tree& operator[] (int x) {
+//           return *children[x];}
+// private:
+//       std::vector<std::shared_ptr<Tree>> children; 
+//       Integer leaf_;
+//       //std::vector<Tree> vec_; 
+// };
 
 
+// class Leaf : public Tree
+// {
+// public:
+//       Leaf(Integer i):
+//       leaf_(i)
+//       {children.push_back(std::make_shared<Tree>(Tree(i)));};
+
+//       void print(){std::cout<<"----------------LEAF == "<<leaf_<<std::endl;}
+//       Integer val(){return leaf_;};
+//       Leaf operator[] (int x) {
+//                 return *this;
+//             }
+
+// private:
+//       Integer leaf_;
+//       std::vector<std::shared_ptr<Tree>> children; 
+// };
 
 
 
@@ -966,119 +718,121 @@ private:
 
 
 
-class Component
-{
-  public:
-    virtual void traverse() = 0;
-    virtual~Component();
-    //virtual Component& operator[] (int x);
+
+
+// class Component
+// {
+//   public:
+//     virtual void traverse() = 0;
+//     virtual~Component();
+//     //virtual Component& operator[] (int x);
       
-};
-class Primitive: public Component
-{
-    int value;
-  public:
-    Primitive(int val)
-    {
-        value = val;
-    }
-    void traverse() override
-    {
-        std::cout << " primitive=="<<value<<" ";
-    }
+// };
+// class Primitive: public Component
+// {
+//     int value;
+//   public:
+//     Primitive(int val)
+//     {
+//         value = val;
+//     }
+//     void traverse() override
+//     {
+//         std::cout << " primitive=="<<value<<" ";
+//     }
 
-   // Component& operator[] (int x) override {
-   //        return *this;
-   //    }
-
-
-};
-
-class Composite: public Component
-{
-    std::vector <std::shared_ptr< Component > > children;
-    int value;
-  public:
-    Composite(int val)
-    {
-        value = val;
-    }
-
-
-     void add(const Component&);
-
-     void add(const Primitive& c)
-    {
-        children.push_back(std::make_shared<Primitive>(c));
-    } 
-
-     void add(const Composite& c)
-    {
-        children.push_back(std::make_shared<Composite>(c));
-    }   
-
-
-    void add(std::shared_ptr<Component> c)
-    {
-        children.push_back(c);
-    }
-
-    //template<typename Type, typename...Types>
-
-     template<typename...Args>
-    typename std::enable_if<0==sizeof...(Args), void>::type
-    add(const Primitive& t,Args...more)
-    {
-     children.push_back(std::make_shared<Primitive>(t));
-    };
-
-    template<typename...Args>
-    typename std::enable_if<0==sizeof...(Args), void>::type
-    add(const Composite& t,Args...more)
-    {
-     children.push_back(std::make_shared<Composite>(t));
-    };
-
-
-    template<typename...Args>
-    typename std::enable_if<0<sizeof...(Args), void>::type
-    add(const Primitive& t,Args...more)
-    {
-      children.push_back(std::make_shared<Primitive>(t));
-      add(more...);
-    };
-
-
-    template<typename...Args>
-    typename std::enable_if<0<sizeof...(Args), void>::type
-    add(const Composite& t,Args...more)
-    {
-      children.push_back(std::make_shared<Composite>(t));
-      add(more...);
-    };
-
-
-
-
-
-
-    void traverse() override
-    {
-        std::cout << " composite=="<< value;
-        for (int i = 0; i < children.size(); i++)
-          children[i]->traverse();
-    }
-
-
-//    // Component& operator[] (int x) {
-//    //        return *children[x];
+//    // Component& operator[] (int x) override {
+//    //        return *this;
 //    //    }
 
-   std::shared_ptr< Component > operator[] (int x) {
-          return children[x];
-      }
 
-};
+// };
+
+// class Composite: public Component
+// {
+//     std::vector <std::shared_ptr< Component > > children;
+//     int value;
+//   public:
+//     Composite(int val)
+//     {
+//         value = val;
+//     }
+
+
+//      void add(const Component&);
+
+//      void add(const Primitive& c)
+//     {
+//         children.push_back(std::make_shared<Primitive>(c));
+//     } 
+
+//      void add(const Composite& c)
+//     {
+//         children.push_back(std::make_shared<Composite>(c));
+//     }   
+
+
+//     void add(std::shared_ptr<Component> c)
+//     {
+//         children.push_back(c);
+//     }
+
+//     //template<typename Type, typename...Types>
+
+//      template<typename...Args>
+//     typename std::enable_if<0==sizeof...(Args), void>::type
+//     add(const Primitive& t,Args...more)
+//     {
+//      children.push_back(std::make_shared<Primitive>(t));
+//     };
+
+//     template<typename...Args>
+//     typename std::enable_if<0==sizeof...(Args), void>::type
+//     add(const Composite& t,Args...more)
+//     {
+//      children.push_back(std::make_shared<Composite>(t));
+//     };
+
+
+//     template<typename...Args>
+//     typename std::enable_if<0<sizeof...(Args), void>::type
+//     add(const Primitive& t,Args...more)
+//     {
+//       children.push_back(std::make_shared<Primitive>(t));
+//       add(more...);
+//     };
+
+
+//     template<typename...Args>
+//     typename std::enable_if<0<sizeof...(Args), void>::type
+//     add(const Composite& t,Args...more)
+//     {
+//       children.push_back(std::make_shared<Composite>(t));
+//       add(more...);
+//     };
+
+
+
+
+
+
+//     void traverse() override
+//     {
+//         std::cout << " composite=="<< value;
+//         for (int i = 0; i < children.size(); i++)
+//           children[i]->traverse();
+//     }
+
+
+// //    // Component& operator[] (int x) {
+// //    //        return *children[x];
+// //    //    }
+
+//    std::shared_ptr< Component > operator[] (int x) {
+//           return children[x];
+//       }
+
+// };
 
 
 

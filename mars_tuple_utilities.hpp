@@ -347,7 +347,7 @@ public:
 
 // for 
 template<Integer N,typename All, typename Unique>
- class ElementPositiion
+ class ElementPosition
 {public:
  static_assert(N>=0, " negative integer");
  static_assert(N<TupleTypeSize<All>::value, " exceeding tuple dimension");

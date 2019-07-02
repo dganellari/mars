@@ -1403,7 +1403,30 @@ class BaseShapeFunctionOperatorDependent<Elem,BaseFunctionSpace,IdentityOperator
   };
 
   template<typename Jacobian>
-  void init(const Jacobian& J, const Vector<Real,Ndofs> &alpha=1.0)
+  void init(const Jacobian& J)
+  {
+  map_.init(J);
+  const auto& mapping=map_();
+  for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+      {
+
+          n_tot_=n_dof * NComponents +  n_comp ;
+          n_=n_comp*ShapeFunctionDim1;
+          for(Integer qp=0;qp<NQPoints;qp++)
+          {             
+            func_values_[n_tot_][qp].zero();
+            func_tmp_= mapping * reference_func_values_[n_dof][qp];
+            assign(func_values_[n_tot_][qp],func_tmp_,n_,0);
+          }
+                 
+      }
+     }
+  };
+
+  template<typename Jacobian>
+  void init(const Jacobian& J, const Vector<Real,Ndofs> &alpha)
   {
   map_.init(J);
   const auto& mapping=map_();
@@ -1487,7 +1510,28 @@ class BaseShapeFunctionOperatorDependent<Elem,BaseFunctionSpace,GradientOperator
   };
 
   template<typename Mapping>
-  void init(const Mapping& J,const Vector<Real,Ndofs> &alpha=1.0)
+  void init(const Mapping& J)
+  {
+   map_.init(J);
+   const auto& mapping=map_();
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+      {
+        n_tot_=n_dof * NComponents +  n_comp ;
+        n_=n_comp * ShapeFunctionDim1;
+        for(Integer qp=0;qp<NQPoints;qp++)
+        {
+          grad_values_[n_tot_][qp].zero();  
+          grad_tmp_= contract(mapping, reference_grad_values_[n_dof][qp]);
+          assign(grad_values_[n_tot_][qp],grad_tmp_,n_,0);    
+        }
+      }
+     }
+  };
+
+  template<typename Mapping>
+  void init(const Mapping& J,const Vector<Real,Ndofs> &alpha)
   {
    map_.init(J);
    const auto& mapping=map_();
@@ -1588,7 +1632,28 @@ class BaseShapeFunctionOperatorDependent<Elem,BaseFunctionSpace,DivergenceOperat
   };
 
   template<typename Jacobian>
-  void init(const Jacobian& J,const Vector<Real,Ndofs> &alpha=1.0)
+  void init(const Jacobian& J)
+  {
+   map_.init(J);
+   const auto& mapping=map_();
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     { 
+      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+      {
+        n_tot_=n_dof * NComponents +  n_comp ;
+        n_=n_comp;
+        for(Integer qp=0;qp<NQPoints;qp++)
+        {
+          div_values_[n_tot_][qp].zero();  
+          div_tmp_= contract(mapping, reference_div_values_[n_dof][qp]);           
+          assign(div_values_[n_tot_][qp],div_tmp_,n_,0);   
+        }
+      }
+     }
+  };
+
+  template<typename Jacobian>
+  void init(const Jacobian& J,const Vector<Real,Ndofs> &alpha)
   {
    map_.init(J);
    const auto& mapping=map_();

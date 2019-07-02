@@ -134,6 +134,7 @@ points[2][1]=4;
 auto W=MixedFunctionSpace(FEspace3,FEspace4);
 auto W1=MixedFunctionSpace(W,FEspace4);
 
+
 constexpr Integer maximum=Max(0,2) ;
 
 typename decltype(W)::type_unique_base_function_space unique0;
@@ -142,10 +143,10 @@ decltype(W1)::type_unique_base_function_space unique2;
 
 
 
-std::cout<<ElementPositiion<0,std::tuple<int,int,double,int>,std::tuple<int,double>>::value<<std::endl;
-std::cout<<ElementPositiion<1,std::tuple<int,int,double,int>,std::tuple<int,double>>::value<<std::endl;
-std::cout<<ElementPositiion<2,std::tuple<int,int,double,int>,std::tuple<int,double>>::value<<std::endl;
-std::cout<<ElementPositiion<maximum,std::tuple<int,int,double,int>,std::tuple<int,double>>::value<<std::endl;
+std::cout<<ElementPosition<0,std::tuple<int,int,double,int>,std::tuple<int,double>>::value<<std::endl;
+std::cout<<ElementPosition<1,std::tuple<int,int,double,int>,std::tuple<int,double>>::value<<std::endl;
+std::cout<<ElementPosition<2,std::tuple<int,int,double,int>,std::tuple<int,double>>::value<<std::endl;
+std::cout<<ElementPosition<maximum,std::tuple<int,int,double,int>,std::tuple<int,double>>::value<<std::endl;
 std::cout<<"TypeToTupleElementPosition=="<<TypeToTupleElementPosition<double,std::tuple<int,char,double,int,double>>::value<<std::endl;
 std::cout<<maximum<<std::endl;
 
@@ -193,6 +194,33 @@ ee2.init(J);
 const auto& ee3=ee2.get<0,1>();
 std::cout<<"examples reference"<<ee3.reference()<<std::endl;
 std::cout<<"examples function"<<ee3.function()<<std::endl;
+using All=std::tuple<int,char,double,int,char>;
+using Unique=std::tuple<int,char,double>;
+std::cout<<"examples value="<<ElementPosition<0,All,Unique>::value<<std::endl;
+std::cout<<"examples value="<<ElementPosition<1,All,Unique>::value<<std::endl;
+std::cout<<"examples value="<<ElementPosition<2,All,Unique>::value<<std::endl;
+std::cout<<"examples value="<<ElementPosition<3,All,Unique>::value<<std::endl;
+std::cout<<"examples value="<<ElementPosition<4,All,Unique>::value<<std::endl;
+
+TupleNumber<All,Unique> tup;
+const auto tup0=std::get<0>(tup);
+std::cout<<"examples value="<<tup0.value<<std::endl;
+auto& mm=W1.space_avatar();
+
+
+// TupleTrialOrTest<decltype(W)::type_tuple_spaces,0> eeee(3);
+// TupleTrialOrTest<decltype(W)::type_tuple_spaces,1> eeee2(3);
+
+auto u =     MakeTrial<0>(W1);
+auto sigma = MakeTrial<1>(W1);
+auto p =     MakeTrial<2>(W1);
+auto r =     MakeTrial<3>(W1);
+
+auto v =   MakeTest<0>(W1);
+auto tau = MakeTest<1>(W1);
+auto q =   MakeTest<2>(W1);
+auto s =   MakeTest<3>(W1);
+
 // typename TupleOfTupleShapeFunctionCreate<TupleSpaces,TupleOperatorsAndQuadrature, 1,0>::type e(3);
 // auto sf0=W1.shape_functions();
 // auto sf00=std::get<0>(sf0);
@@ -260,7 +288,6 @@ for(Integer ii=0;ii<dm1.size();ii++)
 //       std::cout<<dm2[ii][jj]<<" ";
 //     std::cout<<std::endl;
 // }
-auto TestW= Test(W);
 
 
 
@@ -521,25 +548,25 @@ void functionspaces_example4D()
     // auto fourth=second[0];
     // fourth.traverse(); 
     // cout<<endl<<" nnn = "<< *nnn<<endl;
-     Leaf a0(3);
-     Leaf a1(1);
-     Leaf a2(2);
-     Tree t1(-10);
-     Tree t2(-20);
-     a0.print();
-     a1.print();
-     a2.print();
-     a2[0].print();
-     t2.add(a0);
-     t2.add(a1);
+     // Leaf a0(3);
+     // Leaf a1(1);
+     // Leaf a2(2);
+     // Tree t1(-10);
+     // Tree t2(-20);
+     // a0.print();
+     // a1.print();
+     // a2.print();
+     // a2[0].print();
+     // t2.add(a0);
+     // t2.add(a1);
 
-     t1.add(t2);
-     t1.add(a0);
-     t1.add(a1);
-     t1.add(a2);
+     // t1.add(t2);
+     // t1.add(a0);
+     // t1.add(a1);
+     // t1.add(a2);
      
-     auto ecco=t1[0][0];
-     ecco.print();
+     // auto ecco=t1[0][0];
+     // ecco.print();
     // ecco.print();
     // tree t1;
     
