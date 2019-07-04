@@ -293,54 +293,54 @@ public Expression<Derived>
 
 
 
-template<typename QuadratureRule,typename DerivedTrial, typename DerivedTest, typename  T, 
-         Integer NQPoints, Integer NComponentsTrial, Integer NComponentsTest, Integer Dim>
-class L2Product: Expression<L2Product<QuadratureRule,DerivedTrial,DerivedTest,T,NQPoints,NComponentsTrial,NComponentsTest,Dim>>
-{
- public: 
-    using Trial=  FQPExpression< DerivedTrial,T, NQPoints, NComponentsTrial,  Dim >;
-    using Test =  FQPExpression< DerivedTest, T, NQPoints, NComponentsTest,   Dim >;
-    L2Product(const Trial& trial, const Test&test): 
-    trial_(trial.derived()),
-    test_(test.derived())
-    {};
+// template<typename QuadratureRule,typename DerivedTrial, typename DerivedTest, typename  T, 
+//          Integer NQPoints, Integer NComponentsTrial, Integer NComponentsTest, Integer Dim>
+// class L2Product: Expression<L2Product<QuadratureRule,DerivedTrial,DerivedTest,T,NQPoints,NComponentsTrial,NComponentsTest,Dim>>
+// {
+//  public: 
+//     using Trial=  FQPExpression< DerivedTrial,T, NQPoints, NComponentsTrial,  Dim >;
+//     using Test =  FQPExpression< DerivedTest, T, NQPoints, NComponentsTest,   Dim >;
+//     L2Product(const Trial& trial, const Test&test): 
+//     trial_(trial.derived()),
+//     test_(test.derived())
+//     {};
 
-    template<typename QP>
-    Matrix<Real,NComponentsTest,NComponentsTrial>&  eval(const QP & qp_points)
-    {
-    // here you should do sum_qp (qp_weight[qp]*left[n1][qp]*right[n2][qp])
-        // FIXME: multiply by volume
+//     template<typename QP>
+//     Matrix<Real,NComponentsTest,NComponentsTrial>&  eval(const QP & qp_points)
+//     {
+//     // here you should do sum_qp (qp_weight[qp]*left[n1][qp]*right[n2][qp])
+//         // FIXME: multiply by volume
      
-        std::cout<<"qprule.qp_weights()"<<qprule.qp_weights()<<std::endl;
-        std::cout<<"test_.eval(qp_points)*trial_.eval(qp_points)"<<test_.eval(qp_points)*trial_.eval(qp_points)<<std::endl;
-        mat1_=test_.eval(qp_points)*trial_.eval(qp_points);
-        const auto& weights=qprule.qp_weights();
+//         std::cout<<"qprule.qp_weights()"<<qprule.qp_weights()<<std::endl;
+//         std::cout<<"test_.eval(qp_points)*trial_.eval(qp_points)"<<test_.eval(qp_points)*trial_.eval(qp_points)<<std::endl;
+//         mat1_=test_.eval(qp_points)*trial_.eval(qp_points);
+//         const auto& weights=qprule.qp_weights();
 
-        for(Integer n_comp_test=0; n_comp_test< NComponentsTest; n_comp_test++)
-            for(Integer n_comp_trial=0; n_comp_trial< NComponentsTrial; n_comp_trial++)
-            {
-               mat2_(n_comp_test,n_comp_trial)=contract(weights,mat1_(n_comp_test,n_comp_trial));
-            }
-    return mat2_;//contract(qprule.qp_weights(), test_.eval(qp_points)*trial_.eval(qp_points));
-    };
+//         for(Integer n_comp_test=0; n_comp_test< NComponentsTest; n_comp_test++)
+//             for(Integer n_comp_trial=0; n_comp_trial< NComponentsTrial; n_comp_trial++)
+//             {
+//                mat2_(n_comp_test,n_comp_trial)=contract(weights,mat1_(n_comp_test,n_comp_trial));
+//             }
+//     return mat2_;//contract(qprule.qp_weights(), test_.eval(qp_points)*trial_.eval(qp_points));
+//     };
 
-  private:
-  Matrix<Vector<Real,NQPoints>,NComponentsTest,NComponentsTrial> mat1_;
-  Matrix<Real,NComponentsTest,NComponentsTrial> mat2_;
-  DerivedTrial trial_;
-  DerivedTest  test_; 
-  Contraction contract;  
-  QuadratureRule qprule;
-};
+//   private:
+//   Matrix<Vector<Real,NQPoints>,NComponentsTest,NComponentsTrial> mat1_;
+//   Matrix<Real,NComponentsTest,NComponentsTrial> mat2_;
+//   DerivedTrial trial_;
+//   DerivedTest  test_; 
+//   Contraction contract;  
+//   QuadratureRule qprule;
+// };
 
-template<typename QuadratureRule,typename DerivedTrial, typename DerivedTest, typename  T, 
-         Integer NQPoints, Integer NComponentsTrial, Integer NComponentsTest, Integer Dim>
-L2Product<QuadratureRule,DerivedTrial,DerivedTest,T,NQPoints,NComponentsTrial,NComponentsTest,Dim>
-Integral(const FQPExpression< DerivedTrial,T, NQPoints, NComponentsTrial,  Dim >& trial, 
-         const FQPExpression< DerivedTest, T, NQPoints, NComponentsTest,   Dim >& test)
-{
-    return L2Product<QuadratureRule,DerivedTrial,DerivedTest,T,NQPoints,NComponentsTrial,NComponentsTest,Dim>(trial,test);
-}
+// template<typename QuadratureRule,typename DerivedTrial, typename DerivedTest, typename  T, 
+//          Integer NQPoints, Integer NComponentsTrial, Integer NComponentsTest, Integer Dim>
+// L2Product<QuadratureRule,DerivedTrial,DerivedTest,T,NQPoints,NComponentsTrial,NComponentsTest,Dim>
+// Integral(const FQPExpression< DerivedTrial,T, NQPoints, NComponentsTrial,  Dim >& trial, 
+//          const FQPExpression< DerivedTest, T, NQPoints, NComponentsTest,   Dim >& test)
+// {
+//     return L2Product<QuadratureRule,DerivedTrial,DerivedTest,T,NQPoints,NComponentsTrial,NComponentsTest,Dim>(trial,test);
+// }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////           UNARY PLUS: +QP        //////////////////////////////////

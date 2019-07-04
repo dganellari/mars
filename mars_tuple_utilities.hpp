@@ -680,9 +680,14 @@ class ShapeFunctionAssembly
    type tuple_;
 };
 
-// template<typename TupleSpaces,typename TupleOperatorsAndQuadrature, Integer Nspaces>
-// init_reference()
-// sfod_grad.init_reference();
+
+
+
+
+
+
+
+
 
 
 
@@ -701,6 +706,133 @@ constexpr T Min (const T& a,const T& b)
 {
   return a < b ? a : b;
 }
+
+template<typename T>
+constexpr bool Equal (const T& a,const T& b) 
+{
+  return a == b ? 1 : 0;
+}
+
+
+
+
+
+
+
+
+
+
+
+template<Integer Dim>
+class TensorVector
+{};
+
+
+class TensorVector1: public TensorVector<3>
+{
+public:
+  static constexpr Integer Size=5;
+  static constexpr Integer full[]={0,1,3,6,20};
+};
+
+class TensorVector2: public TensorVector<3>
+{
+public:
+  static constexpr Integer Size=8;
+  static constexpr Integer full[]={1,4,6,10,13,15,16,20};
+};
+
+
+constexpr Integer TensorVector1::full[];
+constexpr Integer TensorVector2::full[];
+
+template<typename Vec1, Integer Size1,typename Vec2,Integer Size2, Integer N1,Integer N2>
+typename std::enable_if < (N1<Size1-1)&&(N2<Size2-1), Integer> ::type
+ SupportOverlap();
+
+template<typename Vec1, Integer Size1,typename Vec2,Integer Size2, Integer N1,Integer N2>
+typename std::enable_if < (N1==Size1-1)&&(N2==Size2-1), Integer> ::type
+ SupportOverlap()
+{
+   // std::cout<<"(N1,N2)=("<<N1<<","<<N2<<")-->"<<Vec1::full[N1]<<", "<<Vec2::full[N2]<<"-->"<<Equal(Vec1::full[N1],Vec2::full[N2])<<std::endl;
+   return Equal(Vec1::full[N1],Vec2::full[N2]);
+}
+
+template<typename Vec1, Integer Size1,typename Vec2,Integer Size2, Integer N1,Integer N2>
+typename std::enable_if < (N1==Size1-1)&&(N2<Size2-1), Integer>::type
+ SupportOverlap()
+{
+   // std::cout<<"(N1,N2)=("<<N1<<","<<N2<<")-->"<<Vec1::full[N1]<<", "<<Vec2::full[N2]<<"-->"<<Equal(Vec1::full[N1],Vec2::full[N2])<<std::endl;
+
+   return Equal(Vec1::full[N1],Vec2::full[N2])+SupportOverlap< Vec1, Size1, Vec2, Size2, N1, N2+1>();
+}
+
+template<typename Vec1, Integer Size1,typename Vec2,Integer Size2, Integer N1,Integer N2>
+typename std::enable_if < (N1<Size1-1)&&(N2==Size2-1), Integer>::type
+ SupportOverlap()
+{
+   // std::cout<<"(N1,N2)=("<<N1<<","<<N2<<")-->"<<Vec1::full[N1]<<", "<<Vec2::full[N2]<<"-->"<<Equal(Vec1::full[N1],Vec2::full[N2])<<std::endl;
+
+   return Equal(Vec1::full[N1],Vec2::full[N2])+SupportOverlap< Vec1, Size1, Vec2, Size2, N1+1, 0>();
+}
+
+
+template<typename Vec1, Integer Size1,typename Vec2,Integer Size2, Integer N1,Integer N2>
+typename std::enable_if < (N1<Size1-1)&&(N2<Size2-1), Integer> ::type
+ SupportOverlap()
+{
+   // std::cout<<"(N1,N2)=("<<N1<<","<<N2<<")-->"<<Vec1::full[N1]<<", "<<Vec2::full[N2]<<"-->"<<Equal(Vec1::full[N1],Vec2::full[N2])<<std::endl;
+   return Equal(Vec1::full[N1],Vec2::full[N2])+SupportOverlap< Vec1, Size1, Vec2, Size2, N1, N2+1>();
+}
+
+
+template<typename Vec1,typename Vec2>
+Integer Overlap()
+{return SupportOverlap<Vec1,Vec1::Size,Vec2,Vec2::Size,0,0>();
+}
+
+
+
+
+
+
+
+// // index sequence only
+// template <Integer ...>
+// struct indexSequence
+//  { };
+
+// template <Integer N, Integer ... Next>
+// struct indexSequenceHelper : public indexSequenceHelper<N-1, N-1, Next...>
+//  { };
+
+// template <Integer ... Next>
+// struct indexSequenceHelper<0, Next ... >
+//  { using type = indexSequence<Next ... >; };
+
+// template <Integer N>
+// using makeIndexSequence = typename indexSequenceHelper<N>::type;
+
+
+
+// template<Integer I,indexSequence<Integer... Is>>
+// constexpr Vector<Integer,sizeof...(Is)> MagicFunction(){
+//   return {{ Max(Is,I)... }};
+// }
+
+
+
+// template<Integer I,Integer N>
+// constexpr Vector<Integer,N> MagicFunction2(){
+//   return Vector<Integer,N>();//MagicFunction<I,makeIndexSequence<N>>();
+// }
+
+
+
+
+
+
+
 
 
 }

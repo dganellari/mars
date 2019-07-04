@@ -211,6 +211,7 @@ auto& mm=W1.space_avatar();
 // TupleTrialOrTest<decltype(W)::type_tuple_spaces,0> eeee(3);
 // TupleTrialOrTest<decltype(W)::type_tuple_spaces,1> eeee2(3);
 
+
 auto u =     MakeTrial<0>(W1);
 auto sigma = MakeTrial<1>(W1);
 auto p =     MakeTrial<2>(W1);
@@ -221,6 +222,37 @@ auto tau = MakeTest<1>(W1);
 auto q =   MakeTest<2>(W1);
 auto s =   MakeTest<3>(W1);
 
+constexpr bool bool1[]={true,false,true};
+constexpr bool bool2[]={true,false,true};
+constexpr bool bool3[]={Max(bool1[0],bool2[0])};
+
+auto linearform=Grad(u)*v+ sigma * tau + Curl(q)* Curl(p) + Div(r) * Div(s);
+
+auto l20=L2Inner(mesh,Div(sigma),Div(tau));
+auto l21=L2Inner(mesh,Grad(u),Grad(v));
+auto l22=L2Inner(mesh,Div(sigma)+Grad(u),Div(tau)+Grad(v));
+auto l23=L2Inner(mesh,Grad(u)+u,Grad(v));
+auto l24=L2Inner(mesh,Div(sigma)+u,Div(tau));
+auto l25=L2Inner(mesh,Grad(u)+sigma,Grad(v));
+auto l26=L2Inner(mesh,Grad(u)+sigma,Grad(v)+v);
+auto l27=L2Inner(mesh,Grad(u)+u+sigma+v,Grad(v)+Div(sigma)+v+u+tau);
+
+
+// std::cout<<"tensorvector size="<<SupportOverlap<TensorVector1,1,TensorVector2,1,0,0>()<<std::endl;
+auto s3 =   MakeTest<bool1[0]+bool2[0]>(W1);
+std::cout<<"tensorvector size="<<Overlap<TensorVector1,TensorVector2>()<<std::endl;
+std::cout<<"bbilinear order="<<l20.order<<std::endl;
+std::cout<<"bbilinear order="<<l21.order<<std::endl;
+std::cout<<"bbilinear order="<<l22.order<<std::endl;
+std::cout<<"bbilinear order="<<l23.order<<std::endl;
+std::cout<<"bbilinear order="<<l24.order<<std::endl;
+std::cout<<"bbilinear order="<<l25.order<<std::endl;
+std::cout<<"bbilinear order="<<l26.order<<std::endl;
+std::cout<<"bbilinear order="<<l27.order<<std::endl;
+
+
+// makeIndexSequence<3> eee24;
+// constexpr auto magifunc= MagicFunction2<2,3>();
 // typename TupleOfTupleShapeFunctionCreate<TupleSpaces,TupleOperatorsAndQuadrature, 1,0>::type e(3);
 // auto sf0=W1.shape_functions();
 // auto sf00=std::get<0>(sf0);

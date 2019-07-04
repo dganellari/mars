@@ -1669,9 +1669,32 @@ class QuadratureOrder<Expression2MatrixVar<T,Rows,Cols> >
 
 
 
+template<Integer Order,Integer Continuity, Integer NComponents>
+class QuadratureOrder<IdentityOperator,BaseFunctionSpace<LagrangeFE,Order,Continuity,NComponents> >
+{ public:
+  static constexpr Integer value=Order;
+};
+
+template<Integer Order,Integer Continuity, Integer NComponents>
+class QuadratureOrder<GradientOperator, BaseFunctionSpace<LagrangeFE,Order,Continuity,NComponents> >
+{ public:
+  static constexpr Integer value=Order-1;
+};
+
+
+template<Integer Order,Integer Continuity, Integer NComponents>
+class QuadratureOrder<IdentityOperator, BaseFunctionSpace<RaviartThomasFE,Order,Continuity,NComponents> >
+{ public:
+  static constexpr Integer value=Order+1;
+};
 
 
 
+template<Integer Order,Integer Continuity, Integer NComponents>
+class QuadratureOrder<DivergenceOperator, BaseFunctionSpace<RaviartThomasFE,Order,Continuity,NComponents> >
+{ public:
+  static constexpr Integer value=Order;
+};
 
 
 

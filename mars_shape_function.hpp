@@ -1347,11 +1347,6 @@ public:
 
 
 
-
-
-
-
-
 template<typename Elem,typename BaseFunctionSpace,typename Operator, typename QuadratureRule>
 class BaseShapeFunctionOperatorDependent;
 
@@ -1386,8 +1381,20 @@ class BaseShapeFunctionOperatorDependent<Elem,BaseFunctionSpace,IdentityOperator
   value(const Point& point, vector_single_type& func_ )   =0;
 
   const FQPValues<single_type,NQPoints,Ndofs>& reference()const{return reference_func_values_;}
-  const type & function()const{return func_values_;}
+  const type& function()const{return func_values_;}
 
+
+  template<Integer N=NComponents>
+  typename std::enable_if< (1<N),const type& >::type function ()const {return func_values_;}
+
+  template<Integer N=NComponents>
+  typename std::enable_if< (1==N),const type& >::type function ()const {return component_func_values_;}
+
+  // const type& function()const{return func_values_;}
+
+
+
+  // compute the reference shape function for just one component
   void init_reference()
   {
    qp_points_=quadrature_.qp_points();
@@ -1401,6 +1408,66 @@ class BaseShapeFunctionOperatorDependent<Elem,BaseFunctionSpace,IdentityOperator
      }
     }
   };
+
+
+
+  // compute the actual shape function for just one component
+  template<typename Mapping>
+  void init_component(const Mapping& J)
+  {
+   map_.init(J);
+   const auto& mapping=map_();
+   for(Integer qp=0;qp<NQPoints;qp++)
+    {
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+        {
+          component_func_values_[n_dof][qp]= mapping * reference_func_values_[n_dof][qp];
+        }
+    }
+  }
+
+  template<typename Mapping>
+  void init_component(const Mapping& J, const Vector<Real,Ndofs> &alpha)
+  {
+   map_.init(J);
+   const auto& mapping=map_();
+   for(Integer qp=0;qp<NQPoints;qp++)
+    {
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+        {
+          component_func_values_[n_dof][qp]=alpha[n_dof] * mapping * reference_func_values_[n_dof][qp];
+        }
+    }
+  }
+
+  template<typename Jacobian,Integer N=NComponents>
+  typename std::enable_if< 1==N,void>::type
+  init2(const Jacobian& J)
+  {
+  init_component(J);
+  };
+
+  template<typename Jacobian,Integer N=NComponents>
+  typename std::enable_if< 1<N,void>::type
+  init2(const Jacobian& J)
+  {
+  init_component(J);
+  for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+      {
+          n_tot_=n_dof * NComponents +  n_comp ;
+          n_=n_comp*ShapeFunctionDim1;
+          for(Integer qp=0;qp<NQPoints;qp++)
+          {             
+            func_values_[n_tot_][qp].zero();
+            assign(func_values_[n_tot_][qp],component_func_values_[n_dof][qp],n_,0);
+          }
+                 
+      }
+     }
+  };
+
 
   template<typename Jacobian>
   void init(const Jacobian& J)
@@ -1455,6 +1522,7 @@ class BaseShapeFunctionOperatorDependent<Elem,BaseFunctionSpace,IdentityOperator
       vector_single_type func_;
       Point qp_point_;
       FQPValues<single_type,NQPoints,Ndofs> reference_func_values_;
+      FQPValues<single_type,NQPoints,Ndofs> component_func_values_;
       type func_values_;
       single_type func_tmp_;
       QuadratureRule quadrature_;
@@ -1508,6 +1576,8 @@ class BaseShapeFunctionOperatorDependent<Elem,BaseFunctionSpace,GradientOperator
      }
     }
   };
+
+
 
   template<typename Mapping>
   void init(const Mapping& J)
@@ -1921,7 +1991,7 @@ private:
 };
 
 template<typename QuadratureRule, typename Elem,typename BaseFunctionSpace>
-GradientExpression<QuadratureRule,Elem,BaseFunctionSpace> Grad(const Shapeprova<QuadratureRule,Elem,BaseFunctionSpace>& sp)
+GradientExpression<QuadratureRule,Elem,BaseFunctionSpace> GradProva(const Shapeprova<QuadratureRule,Elem,BaseFunctionSpace>& sp)
 {return GradientExpression<QuadratureRule,Elem,BaseFunctionSpace>(sp);};
 
 class FQPExpression1: public FQPExpression<FQPExpression1,Matrix<Real,1,2>,6,2,2>
@@ -3167,10 +3237,10 @@ std::cout<<result()<<std::endl;
   std::cout<<"phi2"<<std::endl;
   std::cout<<phi2.eval(qp_points)<<std::endl;
   
-  auto phi3=+2*Grad(phi)*3;
+  auto phi3=+2*GradProva(phi)*3;
   std::cout<<"+phi3"<<std::endl;
   std::cout<<phi3.eval(qp_points)<<std::endl;
-  auto phi3minus=-Grad(phi);
+  auto phi3minus=-GradProva(phi);
   std::cout<<"-Grad(phi)"<<std::endl;
   std::cout<<phi3minus.eval(qp_points)<<std::endl;
 
@@ -3179,7 +3249,7 @@ Matrix<Real,2,2> mat_der1{1,2,3,4};
 Matrix<Real,2,2> mat_der2{5,4,3,2};
 
 auto qpval3=-qpval*3.0+2.5*qpval;
-auto phi4=qpp3*Grad(phi); 
+auto phi4=qpp3*GradProva(phi); 
 std::cout<<"qpp3*Grad(phi)"<<phi4.eval(qp_points)<<std::endl;
 
 qpval3+=qpval;
@@ -3210,9 +3280,9 @@ std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
 
 
  auto phi3two= phi3.eval(qp_points)*phi3.eval(qp_points);
- auto integral=Integral<QuadratureRule>(phi3,phi3);
+ // auto integral=Integral<QuadratureRule>(phi3,phi3);
  std::cout<<"phi3two"<<phi3two<<std::endl;
- std::cout<<"integral"<<integral.eval(qp_points)<<std::endl;
+ // std::cout<<"integral"<<integral.eval(qp_points)<<std::endl;
 
 
  Matrix<Real,2,2> matrix0=0.5;
@@ -3308,67 +3378,6 @@ auto sfen=sfe1+sfe2+sfe3+sfe4;
 OperatorTupleType<decltype(sfen)>::type ec;
 
 
-// TupleAddingType<4,int,std::tuple<char,float>> ak1(1,2,4,4);
-// TupleChangeType<2,int,std::tuple<char,float>> ak2(1,2,4,4);
-
-using emptytuple=std::tuple< std::tuple<>, std::tuple<> >;
-
-
-   SubTupleType<2,4,decltype(removed2)> emk2(4.3,1,4);
-   std::cout<<std::get<0>(emk2)<<std::endl;
-   std::cout<<std::get<1>(emk2)<<std::endl;
-   std::cout<<std::get<2>(emk2)<<std::endl;   
-   using tupleprova=std::tuple<std::tuple<int,char>, int>;
-   using tupleprova1=GetType<0,tupleprova>;
-   std::tuple<std::tuple<>,std::tuple<> > emk5;
-   TupleAddingType<2,float, tupleprova1> emk3(5,'b',3.1415); 
-   std::cout<<std::get<0>(emk3)<<std::endl;
-   std::cout<<std::get<1>(emk3)<<std::endl;
-   std::cout<<std::get<2>(emk3)<<std::endl;
-    std::cout<<"---sizeof ="<<std::tuple_size<std::tuple< std::tuple<int>,std::tuple<char,int,double,std::tuple<char>>,long>>::value<<std::endl;
-
-    TupleOfTupleCatType<1,std::tuple< std::tuple<int>,std::tuple<double,int> >,
-                                  std::tuple< std::tuple<int>,std::tuple<char,int>> > gt;
-
-
-    RemoveTupleOfTupleDuplicates<std::tuple< std::tuple<int>,std::tuple<double,int> >,
-                                  std::tuple< std::tuple<int>,std::tuple<char,int>> > gt1;//(std::make_tuple(1,1),std::make_tuple(1.,1,'a',2));
-    RemoveTupleOfTupleDuplicates<std::tuple< std::tuple<int>,std::tuple<double,int,int,int> >> gt2;//(std::make_tuple(1,1),std::make_tuple(1.,1,'a',2));
-    
-TupleRemovesingleType<std::tuple<>, std::tuple<int, std::tuple<>>> gt3;
-
-
-using temp=std::tuple<std::tuple<int,double>,std::tuple<>>;
-
-TupleAddingType<10,char,TupleRemovesingleType<std::tuple<>,temp>> eol;
-TupleChangeType<1,char,temp> eol2;
-
-TupleOfTupleChangeType<1,char,std::tuple< std::tuple< std::tuple<int,char>,std::tuple<double,double>  >,  
-                                          std::tuple <std::tuple<> >,
-                                          std::tuple< std::tuple<int,char>,std::tuple<int,char>,std::tuple<int,char> > > > gt4;
-
-using provatmp=std::tuple< std::tuple<int,int  >, std::tuple<int,double  >, std::tuple< int,char > >;
-
-
-
-
-std::cout<<"type to pos="<<TypeToTupleElementPosition<std::tuple<int,double>, std::tuple< std::tuple<int,int  >, std::tuple<int,double  >,int, std::tuple< int,char >,std::tuple<>>> ::value<<std::endl;
-std::cout<<"  Lagrange1 ShapeFunctionDim1="<<ElemFunctionSpace<Simplex<2,2>, Lagrange1<1>>::ShapeFunctionDim1<<std::endl;
-std::cout<<"  Lagrange1 ShapeFunctionDim2="<<ElemFunctionSpace<Simplex<2,2>, Lagrange1<1>>::ShapeFunctionDim2<<std::endl;
-std::cout<<"  Lagrange2 ShapeFunctionDim1="<<ElemFunctionSpace<Simplex<2,2>, Lagrange2<1>>::ShapeFunctionDim1<<std::endl;
-std::cout<<"  Lagrange2 ShapeFunctionDim2="<<ElemFunctionSpace<Simplex<2,2>, Lagrange2<1>>::ShapeFunctionDim2<<std::endl;
-std::cout<<"  Lagrange3 ShapeFunctionDim1="<<ElemFunctionSpace<Simplex<2,2>, Lagrange3<1>>::ShapeFunctionDim1<<std::endl;
-std::cout<<"  Lagrange3 ShapeFunctionDim2="<<ElemFunctionSpace<Simplex<2,2>, Lagrange3<1>>::ShapeFunctionDim2<<std::endl;
-std::cout<<FunctionSpaceDofsPerElem<ElemFunctionSpace<Simplex<2,2>,Lagrange3<1>>>::value<<std::endl;
-std::cout<<FunctionSpaceDofsPerElem<ElemFunctionSpace<Simplex<3,3>,Lagrange3<1>>>::value<<std::endl;
-std::cout<<FunctionSpaceDofsPerElem<ElemFunctionSpace<Simplex<4,4>,Lagrange3<1>>>::value<<std::endl;
-
-std::cout<<"  RT0 ShapeFunctionDim1="<<ElemFunctionSpace<Simplex<2,2>, RT0<1>>::ShapeFunctionDim1<<std::endl;
-std::cout<<"  RT0 ShapeFunctionDim2="<<ElemFunctionSpace<Simplex<2,2>, RT0<1>>::ShapeFunctionDim2<<std::endl;
-
-
-// 
-TupleOfTupleChangeType<1,char,OperatorTupleType<decltype(sfen)>::type>   gt5; 
 
 
 constexpr Integer NComponents=4;
