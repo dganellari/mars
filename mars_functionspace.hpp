@@ -15,6 +15,7 @@
 #include "mars_shape_function.hpp"
 #include "mars_tuple_utilities.hpp"
 #include "mars_operators.hpp"
+#include "mars_quadrature_rules.hpp"
 namespace mars{
 
 
@@ -552,89 +553,169 @@ MixedSpace<Args...> MixedFunctionSpace(const Args&...args){return MixedSpace<Arg
 //    MixedSpace<Args...> spaces_;
 // };
 
-template<typename BaseFunctionSpace,Integer N, typename OperatorKind=IdentityOperator>
-class Trial: public Expression2<Trial<BaseFunctionSpace,N,OperatorKind>>
+template<typename BaseFunctionSpacesType,Integer N, typename OperatorKind=IdentityOperator>
+class Trial: public Expression2<Trial<BaseFunctionSpacesType,N,OperatorKind>>
 { public:
+  static constexpr Integer Nmax=TupleTypeSize<BaseFunctionSpacesType>::value;
   static constexpr Integer value=N;
   static constexpr Integer kind=0;
   using type=OperatorKind;
 };
 
-template<typename BaseFunctionSpace, Integer N, typename OperatorKind=IdentityOperator>
-class Test: public Expression2<Test<BaseFunctionSpace,N,OperatorKind>>
+template<typename BaseFunctionSpacesType, Integer N, typename OperatorKind=IdentityOperator>
+class Test: public Expression2<Test<BaseFunctionSpacesType,N,OperatorKind>>
 {
 public:
+  static constexpr Integer Nmax=TupleTypeSize<BaseFunctionSpacesType>::value;
   static constexpr Integer value=N;
   static constexpr Integer kind=1;
   using type=OperatorKind;
 };
 
 
+
+template<typename BaseFunctionSpacesType, Integer N,typename OperatorKind>
+class OperatorTupleType<Test<BaseFunctionSpacesType,N,OperatorKind> >
+{ public:
+  using Test=Test<BaseFunctionSpacesType,N,OperatorKind>;
+  static constexpr Integer Nmax= Test::Nmax;
+  using single_type=std::tuple<std::tuple< OperatorKind,std::tuple<> >>;
+  using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
+
+  // using typeLeft=SubTupleType<0,N-1, emptytuple>;
+  // using typeRight=SubTupleType<N+1,Nmax+1, emptytuple>;
+  // using type=TupleCatType<typeLeft,single_type,typeRight>;
+
+
+  using type=TupleChangeType<N,single_type,emptytuple>;
+  // static constexpr Integer kind= Test::kind;
+};
+
+template<typename BaseFunctionSpacesType, Integer N,typename OperatorKind>
+class OperatorTupleType<Trial<BaseFunctionSpacesType,N,OperatorKind> >
+{ public:
+  using Trial=Trial<BaseFunctionSpacesType,N,OperatorKind>;
+  static constexpr Integer Nmax= Trial::Nmax;
+  using single_type=std::tuple<std::tuple< OperatorKind,std::tuple<> >>;
+  using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
+
+  // using typeLeft=SubTupleType<0,N-1, emptytuple>;
+  // using typeRight=SubTupleType<N+1,Nmax+1, emptytuple>;
+  // using type=TupleCatType<typeLeft,single_type,typeRight>;
+
+  using type=TupleChangeType<N,single_type,emptytuple>;
+  // static constexpr Integer kind= Trial::kind;
+};
+
+
+
+
+
+
+
+// template<Integer N,typename...Args >
+// Test<typename MixedSpace<Args...>::type_tuple_spaces,
+//              GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value>
+// MakeTest(const MixedSpace<Args...>& W)
+// {return Test<typename MixedSpace<Args...>::type_tuple_spaces,
+//              GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value>();}
+
+
+// template<Integer N,typename...Args >
+// Trial<          typename MixedSpace<Args...>::type_tuple_spaces,
+//               GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value> 
+// MakeTrial(const MixedSpace<Args...>& W)
+// {return Trial<          typename MixedSpace<Args...>::type_tuple_spaces,
+//               GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value>();}
+
+
+
+
+
+
 template<Integer N,typename...Args >
-Test<GetType<N,typename MixedSpace<Args...>::type_base_function_space>,
-     GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value> 
+Test<typename MixedSpace<Args...>::type_unique_base_function_space,
+             GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value>
 MakeTest(const MixedSpace<Args...>& W)
-{return Test<GetType<N,typename MixedSpace<Args...>::type_base_function_space>,
-             GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value>();}
+{return Test<typename MixedSpace<Args...>::type_unique_base_function_space,
+        GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value>();}
 
 
 template<Integer N,typename...Args >
-Trial<GetType<N,typename MixedSpace<Args...>::type_base_function_space>,
-      GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value> 
+Trial<          typename MixedSpace<Args...>::type_unique_base_function_space,
+              GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value> 
 MakeTrial(const MixedSpace<Args...>& W)
-{return Trial<GetType<N,typename MixedSpace<Args...>::type_base_function_space>,
-              GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value>();}
+{return Trial<typename MixedSpace<Args...>::type_unique_base_function_space,
+        GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value>();}
+
+// template<Integer N,typename...Args >
+// Test<GetType<N,typename MixedSpace<Args...>::type_base_function_space>,
+//      GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value> 
+// MakeTest(const MixedSpace<Args...>& W)
+// {return Test<GetType<N,typename MixedSpace<Args...>::type_base_function_space>,
+//              GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value>();}
+
+
+// template<Integer N,typename...Args >
+// Trial<GetType<N,typename MixedSpace<Args...>::type_base_function_space>,
+//       GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value> 
+// MakeTrial(const MixedSpace<Args...>& W)
+// {return Trial<GetType<N,typename MixedSpace<Args...>::type_base_function_space>,
+//               GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value>();}
 
 
 
-template<typename BaseFunctionSpace,Integer N>
-Trial<BaseFunctionSpace,N,GradientOperator> 
-Grad(const Trial<BaseFunctionSpace,N,IdentityOperator>& W)
-{return Trial<BaseFunctionSpace,N,GradientOperator> ();}
+template<typename BaseFunctionSpacesType,Integer N>
+Trial<BaseFunctionSpacesType,N,GradientOperator> 
+Grad(const Trial<BaseFunctionSpacesType,N,IdentityOperator>& W)
+{return Trial<BaseFunctionSpacesType,N,GradientOperator> ();}
 
-template<typename BaseFunctionSpace,Integer N>
-Test<BaseFunctionSpace,N,GradientOperator> 
-Grad(const Test<BaseFunctionSpace,N,IdentityOperator>& W)
-{return Test<BaseFunctionSpace,N,GradientOperator> ();}
-
-
-template<typename BaseFunctionSpace,Integer N>
-Trial<BaseFunctionSpace,N,DivergenceOperator> 
-Div(const Trial<BaseFunctionSpace,N,IdentityOperator>& W)
-{return Trial<BaseFunctionSpace,N,DivergenceOperator> ();}
-
-template<typename BaseFunctionSpace,Integer N>
-Test<BaseFunctionSpace,N,DivergenceOperator> 
-Div(const Test<BaseFunctionSpace,N,IdentityOperator>& W)
-{return Test<BaseFunctionSpace,N,DivergenceOperator> ();}
+template<typename BaseFunctionSpacesType,Integer N>
+Test<BaseFunctionSpacesType,N,GradientOperator> 
+Grad(const Test<BaseFunctionSpacesType,N,IdentityOperator>& W)
+{return Test<BaseFunctionSpacesType,N,GradientOperator> ();}
 
 
-template<typename BaseFunctionSpace,Integer N>
-Trial<BaseFunctionSpace,N,CurlOperator> 
-Curl(const Trial<BaseFunctionSpace,N,IdentityOperator>& W)
-{return Trial<BaseFunctionSpace,N,CurlOperator> ();}
+template<typename BaseFunctionSpacesType,Integer N>
+Trial<BaseFunctionSpacesType,N,DivergenceOperator> 
+Div(const Trial<BaseFunctionSpacesType,N,IdentityOperator>& W)
+{return Trial<BaseFunctionSpacesType,N,DivergenceOperator> ();}
 
-template<typename BaseFunctionSpace,Integer N>
-Test<BaseFunctionSpace,N,CurlOperator> 
-Curl(const Test<BaseFunctionSpace,N,IdentityOperator>& W)
-{return Test<BaseFunctionSpace,N,CurlOperator> ();}
+template<typename BaseFunctionSpacesType,Integer N>
+Test<BaseFunctionSpacesType,N,DivergenceOperator> 
+Div(const Test<BaseFunctionSpacesType,N,IdentityOperator>& W)
+{return Test<BaseFunctionSpacesType,N,DivergenceOperator> ();}
+
+
+template<typename BaseFunctionSpacesType,Integer N>
+Trial<BaseFunctionSpacesType,N,CurlOperator> 
+Curl(const Trial<BaseFunctionSpacesType,N,IdentityOperator>& W)
+{return Trial<BaseFunctionSpacesType,N,CurlOperator> ();}
+
+template<typename BaseFunctionSpacesType,Integer N>
+Test<BaseFunctionSpacesType,N,CurlOperator> 
+Curl(const Test<BaseFunctionSpacesType,N,IdentityOperator>& W)
+{return Test<BaseFunctionSpacesType,N,CurlOperator> ();}
 
 
 
-template<typename BaseFunctionSpace,Integer N, typename OperatorKind>
-class QuadratureOrder<Test<BaseFunctionSpace,N,OperatorKind> >
+template<typename BaseFunctionSpacesType,Integer N, typename OperatorKind>
+class QuadratureOrder<Test<BaseFunctionSpacesType,N,OperatorKind> >
 { public:
-  using Op=typename Test<BaseFunctionSpace,N,OperatorKind>::type;
-  using Space=GetType<1,BaseFunctionSpace>;
-  static constexpr Integer value=QuadratureOrder<Op,Space>::value;
+
+  using BaseFunctionSpaceAndElement=GetType<N,BaseFunctionSpacesType>;
+  using Op=typename Test<BaseFunctionSpacesType,N,OperatorKind>::type;
+  using BaseFunctionSpace=GetType<1,BaseFunctionSpaceAndElement>;
+  static constexpr Integer value=QuadratureOrder<Op,BaseFunctionSpace>::value;
 };
 
-template<typename BaseFunctionSpace,Integer N, typename OperatorKind>
-class QuadratureOrder<Trial<BaseFunctionSpace,N,OperatorKind> >
+template<typename BaseFunctionSpacesType,Integer N, typename OperatorKind>
+class QuadratureOrder<Trial<BaseFunctionSpacesType,N,OperatorKind> >
 { public:
-  using Op=typename Test<BaseFunctionSpace,N,OperatorKind>::type;
-  using Space=GetType<1,BaseFunctionSpace>;
-  static constexpr Integer value=QuadratureOrder<Op,Space>::value;
+  using BaseFunctionSpaceAndElement=GetType<N,BaseFunctionSpacesType>;
+  using Op=typename Trial<BaseFunctionSpacesType,N,OperatorKind>::type;
+  using BaseFunctionSpace=GetType<1,BaseFunctionSpaceAndElement>;
+  static constexpr Integer value=QuadratureOrder<Op,BaseFunctionSpace>::value;
 };
 
 
@@ -642,27 +723,47 @@ class QuadratureOrder<Trial<BaseFunctionSpace,N,OperatorKind> >
 
 
 
-template<typename MeshT, typename Left,typename Right>
-class L2DotProductIntegral
+template<typename MeshT, typename Left,typename Right,Integer QR=GaussianQuadrature>
+class L2DotProductIntegral: public Expression2<L2DotProductIntegral<MeshT,Left,Right>>
 {  
    public:
-    static constexpr Integer order=QuadratureOrder<Left>::value + QuadratureOrder<Right>::value;
+    using type=Contraction2<Expression2 <Left>, Expression2 <Right> > ;
+    static constexpr Integer Order=QuadratureOrder<type>::value+1; 
     using Elem=typename MeshT::Elem;
-    using QuadratureRule=int;
-
-
+    using QRule=typename QuadratureRule<QR>:: template rule<Elem,Order>;
+    // using tupletype=TupleOfTupleChangeType<1,QRule,typename OperatorTupleType<type>::type>;
+// TupleOfTupleChangeType<1,char,tuple2>
     L2DotProductIntegral(const MeshT& mesh,const Expression2<Left>& left,const Expression2<Right>& right ):
     mesh_(mesh),
     left_(left),
-    right_(right)
+    right_(right),
+    product_(Inner(left,right))
     {}
 
   private:
     MeshT mesh_;
     Left left_;
     Right right_;
+    type product_;
     // return L2Product<QuadratureRule,DerivedTrial,DerivedTest,T,NQPoints,NComponentsTrial,NComponentsTest,Dim>(trial,test);
 };
+
+
+template<typename MeshT, typename Left,typename Right,Integer QR>
+class OperatorTupleType<L2DotProductIntegral<MeshT,Left,Right,QR>>
+{ 
+public:
+  using L2prod=L2DotProductIntegral<MeshT,Left,Right,QR>;
+  using QRule=typename L2prod::QRule;
+  using Operatortuple=typename OperatorTupleType<typename L2prod::type>::type;
+
+  using type=TupleOfTupleChangeType<1,QRule, Operatortuple>;;
+} 
+;                               
+ 
+
+
+
 
 template<typename MeshT, typename Left,typename Right>
 L2DotProductIntegral<MeshT,Left,Right>

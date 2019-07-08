@@ -152,8 +152,8 @@ std::cout<<maximum<<std::endl;
 
 constexpr Integer NComponents=2;
 
-using QuadratureRule=GaussPoints<Elem,QPOrder>;
-ShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange1<NComponents>,IdentityOperator,QuadratureRule >  sfod;
+using QR=GaussPoints<Elem,QPOrder>;
+ShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange1<NComponents>,IdentityOperator,QR >  sfod;
 sfod.init_reference();
 sfod.init(J);
 sfod.function();
@@ -176,12 +176,10 @@ ShapeFunctionExpression<1,2,RT0<1>> sfe3;
 
 auto sfen=sfe1+sfe2+sfe3;
 
-using TupleOperatorsAndQuadrature=TupleOfTupleChangeType<1,QuadratureRule,OperatorTupleType<decltype(sfen)>::type>; 
+using TupleOperatorsAndQuadrature=TupleOfTupleChangeType<1,QR,OperatorTupleType<decltype(sfen)>::type>; 
 using TupleSpaces=typename decltype(W3)::type_unique_base_function_space;
 
-
-
-
+// OperatorTupleType<decltype(sfen)>::type e0(3);
 // TupleOperatorsAndQuadrature e(4);
 // typename TupleShapeFunctionCreate<Elem0,BaseFunctioSpace0,OperatorsAndQuadrature0,TupleTypeSize<OperatorsAndQuadrature0>::value-1>::type ef2(3);
 // typename TupleShapeFunctionCreate<Elem1,BaseFunctioSpace1,OperatorsAndQuadrature1,TupleTypeSize<OperatorsAndQuadrature1>::value-1>::type ef3(3);
@@ -216,11 +214,17 @@ auto u =     MakeTrial<0>(W1);
 auto sigma = MakeTrial<1>(W1);
 auto p =     MakeTrial<2>(W1);
 auto r =     MakeTrial<3>(W1);
+auto rr1 =     MakeTrial<4>(W1);
+auto rr2 =     MakeTrial<5>(W1);
+auto rr3 =     MakeTrial<6>(W1);
 
 auto v =   MakeTest<0>(W1);
 auto tau = MakeTest<1>(W1);
 auto q =   MakeTest<2>(W1);
 auto s =   MakeTest<3>(W1);
+auto ss1 =   MakeTest<4>(W1);
+auto ss2 =   MakeTest<5>(W1);
+auto ss3 =   MakeTest<6>(W1);
 
 constexpr bool bool1[]={true,false,true};
 constexpr bool bool2[]={true,false,true};
@@ -228,9 +232,15 @@ constexpr bool bool3[]={Max(bool1[0],bool2[0])};
 
 auto linearform=Grad(u)*v+ sigma * tau + Curl(q)* Curl(p) + Div(r) * Div(s);
 
-auto l20=L2Inner(mesh,Div(sigma),Div(tau));
+auto l20=L2Inner(mesh,Div(sigma),Div(tau))+L2Inner(mesh,Div(sigma),Div(tau));
 auto l21=L2Inner(mesh,Grad(u),Grad(v));
-auto l22=L2Inner(mesh,Div(sigma)+Grad(u),Div(tau)+Grad(v));
+auto l22=L2Inner(mesh,Div(sigma),Div(tau))+
+         L2Inner(mesh,Grad(u),Grad(v))+
+         L2Inner(mesh,u,Div(tau))+
+         L2Inner(mesh,rr1,q)+
+         L2Inner(mesh,r,s)+
+         L2Inner(mesh,Grad(rr1)+sigma,tau);
+
 auto l23=L2Inner(mesh,Grad(u)+u,Grad(v));
 auto l24=L2Inner(mesh,Div(sigma)+u,Div(tau));
 auto l25=L2Inner(mesh,Grad(u)+sigma,Grad(v));
@@ -241,16 +251,97 @@ auto l27=L2Inner(mesh,Grad(u)+u+sigma+v,Grad(v)+Div(sigma)+v+u+tau);
 // std::cout<<"tensorvector size="<<SupportOverlap<TensorVector1,1,TensorVector2,1,0,0>()<<std::endl;
 auto s3 =   MakeTest<bool1[0]+bool2[0]>(W1);
 std::cout<<"tensorvector size="<<Overlap<TensorVector1,TensorVector2>()<<std::endl;
-std::cout<<"bbilinear order="<<l20.order<<std::endl;
-std::cout<<"bbilinear order="<<l21.order<<std::endl;
-std::cout<<"bbilinear order="<<l22.order<<std::endl;
-std::cout<<"bbilinear order="<<l23.order<<std::endl;
-std::cout<<"bbilinear order="<<l24.order<<std::endl;
-std::cout<<"bbilinear order="<<l25.order<<std::endl;
-std::cout<<"bbilinear order="<<l26.order<<std::endl;
-std::cout<<"bbilinear order="<<l27.order<<std::endl;
+// std::cout<<"bbilinear order="<<l20.Order<<std::endl;
+std::cout<<"bbilinear order="<<l21.Order<<std::endl;
+// std::cout<<"bbilinear order="<<l22.Order<<std::endl;
+std::cout<<"bbilinear order="<<l23.Order<<std::endl;
+std::cout<<"bbilinear order="<<l24.Order<<std::endl;
+std::cout<<"bbilinear order="<<l25.Order<<std::endl;
+std::cout<<"bbilinear order="<<l26.Order<<std::endl;
+std::cout<<"bbilinear order="<<l27.Order<<std::endl;
+std::cout<<"decltype(Grad(u))::Nmax="<<decltype(Grad(u))::Nmax<<std::endl;
+std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(u))::value<<std::endl;
+std::cout<<"decltype(Grad(sigma))::N="<<decltype(Grad(sigma))::value<<std::endl;
+std::cout<<"decltype(Grad(p))::N="<<decltype(Grad(p))::value<<std::endl;
+std::cout<<"decltype(Grad(r))::N="<<decltype(Grad(r))::value<<std::endl;
+std::cout<<"decltype(Grad(rr1))::N="<<decltype(Grad(rr1))::value<<std::endl;
+std::cout<<"decltype(Grad(rr2))::N="<<decltype(Grad(rr2))::value<<std::endl;
+std::cout<<"decltype(Grad(rr3))::N="<<decltype(Grad(rr3))::value<<std::endl;
+std::cout<<" TupleTypeSize< decltype(W1)::type_unique_base_function_space>::value"<< TupleTypeSize< decltype(W1)::type_unique_base_function_space>::value<<std::endl;
+std::cout<<"decltype(Grad(u))::Nmax="<<decltype(Grad(u))::Nmax<<std::endl;
+std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(u))::value<<std::endl;
+std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(sigma))::value<<std::endl;
+std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(p))::Nmax<<std::endl;
+std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(r))::Nmax<<std::endl;
+std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(rr1))::Nmax<<std::endl;
+std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(rr2))::Nmax<<std::endl;
+std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(rr3))::Nmax<<std::endl;
+
+auto prova=Inner(Grad(u)+u*v*v*v*v*Grad(v),u);
+
+ using tp0=typename OperatorTupleType<decltype(l22)>::type;
+
+ using tp1=typename decltype(l21)::type;
+ using tp5=typename decltype(l25)::type;
+ 
+ tp0 fef4;
+ using prova35=std::tuple<std::tuple<GradientOperator,IdentityOperator >,std::tuple<GradientOperator,IdentityOperator >,std::tuple<CurlOperator,DivergenceOperator > >;
+ using prova45=std::tuple<std::tuple<char,GradientOperator >,std::tuple<char,int >,std::tuple<long,int >,std::tuple<IdentityOperator,int >,std::tuple<IdentityOperator,GradientOperator > >;
+ using prova47=std::tuple< std::tuple<char,GradientOperator >>;
+ using prova50=std::tuple<prova35,prova45,prova47>;
+
+ // Tuple2ToTuple1<1,prova35 > ed(Operator::id(),'e');
+ // 
+ using TupleSpaces22=typename decltype(W1)::type_unique_base_function_space;
+ using TupleOperatorsAndQuadrature22= typename OperatorTupleType<decltype(l22)>::type;
+ using prova55=Tuple3ToTuple2<0,TupleOperatorsAndQuadrature22>;
+ prova55 feef(5);
+
+ typename ShapeFunctionAssembly<TupleSpaces22,TupleOperatorsAndQuadrature22>::type fghi;
+
+// using tupleoftuple= OperatorTupleType<decltype(prova)>::type;
+// OperatorTupleType<decltype(prova)>::type e0 (3);
+ 
+ using tuple1=typename decltype(l27)::type;
+ auto okoko=TupleTypeSize<std::tuple<> >::value;
+ using tuple2=typename OperatorTupleType<tuple1>::type;
+ // tuple1 mkce(4);
+ // tuple2 erer(4);
+ using tupleoftuple2=TupleOfTupleChangeType<1,char,tuple2>;
+ std::cout<<"TupleTypeSize="<<TupleTypeSize<tuple2>::value<<std::endl;
+ // tupleoftuple2 fr(4);
+ 
+ // using empty2=decltype(std::tuple_cat(std::declval<std::tuple<>>(),std::declval<std::tuple<>>(),std::declval<std::tuple<>>()));
+ // empty2 cece(4);
+
+ // tuple2 f5(4);
+ // tupleoftuple2 em(4);
+ // OperatorTupleType<tuple1>::type g6(4);
+// decltype(l21)::type g5(5);
+
+  // using emptytuple=TupleOfType<decltype(p)::Nmax,std::tuple<> > ;
+  // static constexpr Integer N=decltype(p)::value;
+  // using single_type=std::tuple<std::tuple< decltype(r)::type,std::tuple<> >>;
+  // using typeLeft=SubTupleType<0,N-1, emptytuple>;
+  // using typeRight=SubTupleType<N+1,decltype(p)::Nmax+1, emptytuple>;
+  // using type=TupleCatType<typeLeft,single_type,typeRight>;
+  // type e1(4);
+  // TupleChangeType<1,std::tuple< decltype(p)::type,std::tuple<> >,std::tuple<int,char,double,long>> a2(Operator::id());
+
+// OperatorTupleType<decltype(u)>::emptytuple a0;
+// OperatorTupleType<decltype(sigma)>::single_type a1; 
 
 
+// using prova1=std::tuple< std::tuple< >,int,std::tuple< >,double,std::tuple< >,std::tuple< >,std::tuple< >,char,std::tuple< > > ;
+
+// SubTupleType<4,8,prova1> a11;
+// using typeLeft=SubTupleType<0,3, prova1>;
+// using typeRight=SubTupleType<5,TupleTypeSize<prova1>::value, prova1>;
+// TupleCatType<typeLeft,std::tuple<char>,typeRight> a12(3);
+// OperatorTupleType<decltype(u)>::type a3(2);
+// OperatorTupleType<decltype(sigma)>::type a4(2);
+// OperatorTupleType<decltype(p)>::type a5(2);
+// OperatorTupleType<decltype(r)>::type a6(2);
 // makeIndexSequence<3> eee24;
 // constexpr auto magifunc= MagicFunction2<2,3>();
 // typename TupleOfTupleShapeFunctionCreate<TupleSpaces,TupleOperatorsAndQuadrature, 1,0>::type e(3);

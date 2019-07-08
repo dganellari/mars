@@ -4,6 +4,10 @@
 
 namespace mars {
 
+
+
+static constexpr Integer GaussianQuadrature = 1;
+
 	
 template<typename Elem_,Integer Order_>
 class BaseQuadrature
@@ -148,9 +152,22 @@ private:
 
 
 
+template<Integer QuadratureRuleType>
+class QuadratureRule
+{
+public:
+  template<typename Elem,Integer Order>
+  using rule=GaussPoints< Elem , Order>;
+};
 
 
-
+template<>
+class QuadratureRule<GaussianQuadrature>
+{
+public:
+  template<typename Elem,Integer Order>
+  using rule=GaussPoints< Elem , Order>;
+};
 
 
 template<Integer Order>

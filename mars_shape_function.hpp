@@ -1799,6 +1799,51 @@ public:
 
 
 template<typename QuadratureRule, Integer NComponents>
+class ShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange2<NComponents>,IdentityOperator,QuadratureRule > : 
+public BaseShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange2<NComponents>,IdentityOperator,QuadratureRule >  
+{
+public:
+  using Base=BaseShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange2<NComponents>,IdentityOperator,QuadratureRule >;
+  using vector_single_type   = typename Base::vector_single_type;
+  using Point = typename Base::Point;
+  
+
+  virtual void value(const Point& point, vector_single_type& func )
+       {
+        const auto& xi=point[0];
+        const auto& eta=point[1];
+        const Real zeta = 1. - xi - eta;
+        func[0](0,0)=2.*zeta*(zeta-0.5);
+        func[1](0,0)=2.*xi*(xi-0.5);
+        func[2](0,0)=2.*eta*(eta-0.5);
+        func[3](0,0)=4.*zeta*xi;
+        func[4](0,0)=4.*xi*eta;
+        func[5](0,0)=4.*eta*zeta;};
+  ShapeFunctionOperatorDependent()
+  {}
+};
+
+
+template<typename QuadratureRule, Integer NComponents>
+class ShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange3<NComponents>,IdentityOperator,QuadratureRule > : 
+public BaseShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange3<NComponents>,IdentityOperator,QuadratureRule >  
+{
+public:
+  using Base=BaseShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange3<NComponents>,IdentityOperator,QuadratureRule >;
+  using vector_single_type   = typename Base::vector_single_type;
+  using Point = typename Base::Point;
+  
+
+  virtual void value(const Point& point, vector_single_type& func )
+       {};
+  ShapeFunctionOperatorDependent()
+  {}
+};
+
+
+
+
+template<typename QuadratureRule, Integer NComponents>
 class ShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange1<NComponents>,GradientOperator,QuadratureRule > : 
 public BaseShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange1<NComponents>,GradientOperator,QuadratureRule >  
 {
@@ -1813,15 +1858,44 @@ public:
     func_grad[1](0,0)=+1;  func_grad[1](0,1)= 0; 
     func_grad[2](0,0)= 0;  func_grad[2](0,1)=+1; 
   } 
-
   ShapeFunctionOperatorDependent()
   {}
-
-
 };
 
 
+template<typename QuadratureRule, Integer NComponents>
+class ShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange2<NComponents>,GradientOperator,QuadratureRule > : 
+public BaseShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange2<NComponents>,GradientOperator,QuadratureRule >  
+{
+public:
+  using Base=BaseShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange2<NComponents>,GradientOperator,QuadratureRule >;
+  using vector_single_type   = typename Base::vector_single_type;
+  using Point = typename Base::Point;
+  
+  virtual void value(const Point& point, vector_single_type& func_grad)
+   {
+   //TODO, FIXME
+   } 
+  ShapeFunctionOperatorDependent()
+  {}
+};
 
+template<typename QuadratureRule, Integer NComponents>
+class ShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange3<NComponents>,GradientOperator,QuadratureRule > : 
+public BaseShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange3<NComponents>,GradientOperator,QuadratureRule >  
+{
+public:
+  using Base=BaseShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange3<NComponents>,GradientOperator,QuadratureRule >;
+  using vector_single_type   = typename Base::vector_single_type;
+  using Point = typename Base::Point;
+  
+  virtual void value(const Point& point, vector_single_type& func_grad)
+   {
+   //TODO, FIXME
+   } 
+  ShapeFunctionOperatorDependent()
+  {}
+};
 
 template<typename QuadratureRule, Integer NComponents>
 class ShapeFunctionOperatorDependent<Simplex<2,2>, RT0<NComponents>,IdentityOperator,QuadratureRule > : 

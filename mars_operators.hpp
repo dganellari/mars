@@ -315,6 +315,9 @@ template<typename...Parameters>
 class Multiply2;
 
 template<typename...Parameters>
+class Contraction2;
+
+template<typename...Parameters>
 class Divide2;
 
 template<typename...Parameters>
@@ -923,6 +926,28 @@ class Divide2< Expression2 <DerivedLeft>, Real >
 
 
 template< typename DerivedLeft_,typename DerivedRight_>
+class Contraction2< Expression2 <DerivedLeft_>, Expression2 <DerivedRight_> > 
+: public Expression2< Contraction2< Expression2 <DerivedLeft_>, Expression2 <DerivedRight_> > >
+{
+  public:
+    using DerivedLeft=DerivedLeft_;
+    using DerivedRight=DerivedRight_;
+
+    Contraction2(const Expression2<DerivedLeft>& left, const Expression2<DerivedRight>&right)
+    : 
+    left_(left.derived()),
+    right_(right.derived())
+    {
+      // static_assert(std::is_same<DerivedLeft,DerivedRight>::value,"in Contraction2, type(Left)==type(Right)");
+    };
+    const DerivedLeft& left()const{return left_;};
+    const DerivedRight& right()const{return right_;};
+  private:
+  DerivedLeft left_;
+  DerivedRight right_;
+};
+
+template< typename DerivedLeft_,typename DerivedRight_>
 class Multiply2< Expression2 <DerivedLeft_>, Expression2 <DerivedRight_> > 
 : public Expression2< Multiply2< Expression2 <DerivedLeft_>, Expression2 <DerivedRight_> > >
 {
@@ -983,6 +1008,15 @@ class Multiply2< Real,Expression2 <DerivedRight_> >
 };
 
 
+
+template< typename DerivedLeft,typename DerivedRight>
+class Contraction2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> >
+Inner(const Expression2<DerivedLeft>&left, const Expression2<DerivedRight>&right)
+{return Contraction2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> >(left,right);}
+
+
+
+
 template< typename DerivedLeft>
 class Divide2< Expression2 <DerivedLeft>, Real > 
 operator/(const Expression2<DerivedLeft>&left, const Real&right)
@@ -1003,6 +1037,7 @@ template< typename DerivedRight>
 class Multiply2< Real, Expression2 <DerivedRight> >
 operator*(const Real&left, const Expression2<DerivedRight>&right)
 {return Multiply2< Real, Expression2 <DerivedRight> >(left,right);}
+
 
 
 
@@ -1657,6 +1692,14 @@ class QuadratureOrder< Multiply2< Expression2<Left>, Expression2<Right> > >
 };
 
 
+// order(Left*Right) = order(Left) * order(Right)
+template<typename Left, typename Right>
+class QuadratureOrder< Contraction2< Expression2<Left>, Expression2<Right> > >
+{ public:
+
+  static constexpr Integer value=QuadratureOrder<Left>::value + QuadratureOrder<Right>::value;
+};
+
 
 
 
@@ -1792,7 +1835,20 @@ class OperatorTupleType< Multiply2< Expression2<Left>, Expression2<Right> > >
 };
 
 
+// order(Left*Right) = order(Left) * order(Right)
+template<typename Left, typename Right>
+class OperatorTupleType< Contraction2< Expression2<Left>, Expression2<Right> > >
+{ public:
+  using LeftT=typename OperatorTupleType<Left>::type;
+  using RightT=typename OperatorTupleType<Right>::type;
+  using type=RemoveTupleOfTupleDuplicates<  LeftT, RightT >;
+};
 
+
+
+
+
+/////////////////////// TO REMOVE /////////////////////////////
 
 template<Integer N,Integer Nmax,typename...T>
 class OperatorTupleType<ShapeFunctionExpression<N,Nmax,T...> >
