@@ -313,6 +313,11 @@ struct TypeToTupleElementPosition<T, std::tuple<U, Types...>> {
 };
 
 
+
+
+
+
+
 template <typename = void>
 constexpr std::size_t TupleSizeHelper ()
  { return 0u; }
@@ -536,17 +541,17 @@ using TupleOfTupleChangeType=typename TupleOfTupleChangeTypeHelper<0,TupleTypeSi
 
 
 
-template<Integer N,Integer Nmax,Integer Nuse, typename Tuple>
+template<Integer N,Integer Nmax, typename Tuple>
 class Tuple2ToTuple1Helper;
 
 
-template<Integer Nmax,Integer Nuse, typename Tuple>
-class Tuple2ToTuple1Helper<Nmax,Nmax,Nuse,Tuple>
+template<Integer Nmax, typename Tuple>
+class Tuple2ToTuple1Helper<Nmax,Nmax,Tuple>
 {
  public:
  using type=std::tuple<
  std::tuple<
- GetType<Nuse,GetType<Nmax,Tuple>>,
+          GetType<0,GetType<Nmax,Tuple>>,
  typename GetType<1,GetType<Nmax,Tuple>>::Elem
  >
  > ;
@@ -554,91 +559,122 @@ class Tuple2ToTuple1Helper<Nmax,Nmax,Nuse,Tuple>
 
 
 
-template<Integer N,Integer Nmax,Integer Nuse, typename Tuple>
+template<Integer N,Integer Nmax, typename Tuple>
 class Tuple2ToTuple1Helper
 {
 public:
 using single_type=std::tuple<
  std::tuple<
- GetType<Nuse,GetType<N,Tuple>>,
- typename GetType<1,GetType<Nmax,Tuple>>::Elem >
+          GetType<0,GetType<N,Tuple>>,
+ typename GetType<1,GetType<N,Tuple>>::Elem >
  >;
-using rest=typename Tuple2ToTuple1Helper<N+1,Nmax,Nuse,Tuple>::type;
+using rest=typename Tuple2ToTuple1Helper<N+1,Nmax,Tuple>::type;
 using type=decltype(std::tuple_cat(std::declval<single_type>(),
                                    std::declval<rest>()));
 };
 
-template<Integer Nuse, typename Tuple>
-using Tuple2ToTuple1=typename Tuple2ToTuple1Helper<0,TupleTypeSize<Tuple>::value-1,Nuse,Tuple>::type;
+template<typename Tuple>
+using Tuple2ToTuple1=typename Tuple2ToTuple1Helper<0,TupleTypeSize<Tuple>::value-1,Tuple>::type;
 
 
 
 
 
-template<Integer N,Integer Nmax,Integer Nuse, typename TupleOfTuple>
-class Tuple3ToTuple2Helper;
+template<Integer N,Integer Nmax, typename TupleOfTuple>
+class TupleOfTupleRemoveQuadratureHelper;
 
 
-template<Integer Nmax,Integer Nuse, typename TupleOfTuple>
-class Tuple3ToTuple2Helper<Nmax,Nmax,Nuse,TupleOfTuple>
+template<Integer Nmax, typename TupleOfTuple>
+class TupleOfTupleRemoveQuadratureHelper<Nmax,Nmax,TupleOfTuple>
 {
  public:
  using T=GetType<Nmax,TupleOfTuple>;
- using type=std::tuple<RemoveTupleDuplicates<Tuple2ToTuple1<Nuse,T>>>;
+ using type=std::tuple<RemoveTupleDuplicates<Tuple2ToTuple1<T>>>;
 };
 
 
 
-template<Integer N,Integer Nmax,Integer Nuse, typename TupleOfTuple>
-class Tuple3ToTuple2Helper
+template<Integer N,Integer Nmax, typename TupleOfTuple>
+class TupleOfTupleRemoveQuadratureHelper
 {
 public:
 using T=GetType<N,TupleOfTuple>;
-using single_type=std::tuple<RemoveTupleDuplicates<Tuple2ToTuple1<Nuse,T>>>;
+using single_type=std::tuple<RemoveTupleDuplicates<Tuple2ToTuple1<T>>>;
 using type=decltype(std::tuple_cat(std::declval<single_type>(),
-                           std::declval<typename Tuple3ToTuple2Helper<N+1,Nmax,Nuse,TupleOfTuple>::type>()));
+                           std::declval<typename TupleOfTupleRemoveQuadratureHelper<N+1,Nmax,TupleOfTuple>::type>()));
 };
 
 
-template<Integer Nuse,typename TupleOfTuple>
-using Tuple3ToTuple2=typename Tuple3ToTuple2Helper<0,TupleTypeSize<TupleOfTuple>::value-1,Nuse,TupleOfTuple>::type;
+template<typename TupleOfTuple>
+using TupleOfTupleRemoveQuadrature=typename TupleOfTupleRemoveQuadratureHelper<0,TupleTypeSize<TupleOfTuple>::value-1,TupleOfTuple>::type;
 
 
 
 
 
 
-// template<typename Operator, typename Elem, typename BaseFunctioSpace>
-// class MapFromReference5<Operator,Elem,BaseFunctionSpace>;
+template<typename Operator, typename Elem, typename BaseFunctioSpace>
+class MapFromReference5;
 
-// template<typename Operator, typename Elem, typename BaseFunctioSpace>
-// class MapOperatorDependent;
+template<typename Tuple, typename  BaseSpace, Integer Nmax,Integer N>
+class MapOperatorTupleHelper;
 
-// template<typename Elem, typename BaseFunctioSpace, typename Tuple, Integer Nmax>
-// class MapOperatorDependent<Elem,BaseFunctioSpace,Tuple,Nmax,Nmax>
-// {
-//  public:
+template<typename Tuple, typename BaseSpace, Integer Nmax>
+class MapOperatorTupleHelper<Tuple,BaseSpace,Nmax,Nmax>
+{
+ public:
 
-//   using Nelem=GetType<Nmax,Tuple>;
-//   using Operator=GetType<0,Nelem>;
-//   using QuadratureRule=GetType<1,Nelem>;
-//   using type=std::tuple< MapFromReference5<Operator,Elem,BaseFunctionSpace> >;
-// };
+  using Nthelem=GetType<Nmax,Tuple>;
+  using Operator=GetType<0,Nthelem>;
+  using Elem=GetType<1,Nthelem>;
+  using type=std::tuple< MapFromReference5<Operator,Elem,BaseSpace> >;
+};
 
-// template<typename Elem, typename BaseFunctioSpace, typename Tuple, Integer Nmax,Integer N=0>
-// class MapOperatorDependent
-// {
-//  public:
-//   using Nelem=GetType<N,Tuple>;
-//   using Operator=GetType<0,Nelem>;
-//   using QuadratureRule=GetType<1,Nelem>;
-//   using single_type=std::tuple< MapFromReference5<Operator,Elem,BaseFunctionSpace> >;
-//   using type=decltype(std::tuple_cat(std::declval<single_type>(),
-//                              std::declval<typename MapOperatorDependent<Elem,BaseFunctioSpace,Tuple,Nmax,N+1>::type>()));
-// };
+template<typename Tuple, typename BaseSpace,Integer Nmax,Integer N=0>
+class MapOperatorTupleHelper
+{
+ public:
+  using Nthelem=GetType<N,Tuple>;
+  using Operator=GetType<0,Nthelem>;
+  using Elem=GetType<1,Nthelem>;
+  using single_type=std::tuple< MapFromReference5<Operator,Elem,BaseSpace> >;
+  using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                             std::declval<typename MapOperatorTupleHelper<Tuple,BaseSpace,Nmax,N+1>::type>()));
+};
 
 
+template<typename Tuple, typename BaseSpace,Integer Nmax>
+using MapOperatorTuple=typename MapOperatorTupleHelper<Tuple,BaseSpace,Nmax,0>::type;
 
+
+template<typename TupleOfTuple, typename TupleSpaces, Integer Nmax,Integer N>
+class MapOperatorTupleOfTupleHelper;
+
+
+template<typename TupleOfTuple,typename TupleSpaces, Integer Nspaces>
+class MapOperatorTupleOfTupleHelper<TupleOfTuple,TupleSpaces, Nspaces, Nspaces>
+{
+public:
+using Tuple=GetType<Nspaces,TupleOfTuple>;
+using BaseSpace=GetType<1,GetType<Nspaces,TupleSpaces>>;
+static constexpr Integer Nmax=TupleTypeSize<Tuple>::value-1;
+using type=std::tuple< MapOperatorTuple< Tuple,BaseSpace,Nmax> > ;
+};
+
+template<typename TupleOfTuple,typename TupleSpaces, Integer Nspaces, Integer N=0>
+class MapOperatorTupleOfTupleHelper
+{
+public:
+using Tuple=GetType<N,TupleOfTuple>;
+using BaseSpace=GetType<1,GetType<N,TupleSpaces>>;
+static constexpr Integer Nmax=TupleTypeSize<Tuple>::value-1;
+using single_type=std::tuple< MapOperatorTuple< Tuple, BaseSpace, Nmax> > ;
+using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                           std::declval<typename MapOperatorTupleOfTupleHelper<TupleOfTuple,TupleSpaces,Nspaces,N+1>::type>()));
+};
+
+template<typename TupleOfTuple,typename TupleSpaces>
+using MapOperatorTupleOfTuple=typename MapOperatorTupleOfTupleHelper<TupleOfTuple,TupleSpaces,TupleTypeSize<TupleSpaces>::value-1,0>::type;
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -827,15 +863,24 @@ constexpr T Min (const T& a,const T& b)
   return a < b ? a : b;
 }
 
-template<typename T>
-constexpr bool Equal (const T& a,const T& b) 
+template<typename T,typename S>
+constexpr bool Equal (const T& a,const S& b) 
 {
   return a == b ? 1 : 0;
 }
 
 
+template<typename T,typename S>
+constexpr bool Greater (const T& a,const S& b) 
+{
+  return a > b ? 1 : 0;
+}
 
-
+template<typename T,typename S>
+constexpr bool Lesser (const T& a,const S& b) 
+{
+  return a < b ? 1 : 0;
+}
 
 
 

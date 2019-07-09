@@ -230,7 +230,6 @@ constexpr bool bool1[]={true,false,true};
 constexpr bool bool2[]={true,false,true};
 constexpr bool bool3[]={Max(bool1[0],bool2[0])};
 
-auto linearform=Grad(u)*v+ sigma * tau + Curl(q)* Curl(p) + Div(r) * Div(s);
 
 auto l20=L2Inner(mesh,Div(sigma),Div(tau))+L2Inner(mesh,Div(sigma),Div(tau));
 auto l21=L2Inner(mesh,Grad(u),Grad(v));
@@ -277,100 +276,62 @@ std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(rr1))::Nmax<<std::endl;
 std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(rr2))::Nmax<<std::endl;
 std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(rr3))::Nmax<<std::endl;
 
-auto prova=Inner(Grad(u)+u*v*v*v*v*Grad(v),u);
 
- using tp0=typename OperatorTupleType<decltype(l22)>::type;
-
- using tp1=typename decltype(l21)::type;
- using tp5=typename decltype(l25)::type;
- 
- tp0 fef4;
- using prova35=std::tuple<std::tuple<GradientOperator,IdentityOperator >,std::tuple<GradientOperator,IdentityOperator >,std::tuple<CurlOperator,DivergenceOperator > >;
- using prova45=std::tuple<std::tuple<char,GradientOperator >,std::tuple<char,int >,std::tuple<long,int >,std::tuple<IdentityOperator,int >,std::tuple<IdentityOperator,GradientOperator > >;
- using prova47=std::tuple< std::tuple<char,GradientOperator >>;
- using prova50=std::tuple<prova35,prova45,prova47>;
-
- // Tuple2ToTuple1<1,prova35 > ed(Operator::id(),'e');
- // 
- using TupleSpaces22=typename decltype(W1)::type_unique_base_function_space;
- using TupleOperatorsAndQuadrature22= typename OperatorTupleType<decltype(l22)>::type;
- using prova55=Tuple3ToTuple2<0,TupleOperatorsAndQuadrature22>;
- prova55 feef(5);
-
- typename ShapeFunctionAssembly<TupleSpaces22,TupleOperatorsAndQuadrature22>::type fghi;
-
-// using tupleoftuple= OperatorTupleType<decltype(prova)>::type;
-// OperatorTupleType<decltype(prova)>::type e0 (3);
- 
- using tuple1=typename decltype(l27)::type;
- auto okoko=TupleTypeSize<std::tuple<> >::value;
- using tuple2=typename OperatorTupleType<tuple1>::type;
- // tuple1 mkce(4);
- // tuple2 erer(4);
- using tupleoftuple2=TupleOfTupleChangeType<1,char,tuple2>;
- std::cout<<"TupleTypeSize="<<TupleTypeSize<tuple2>::value<<std::endl;
- // tupleoftuple2 fr(4);
- 
- // using empty2=decltype(std::tuple_cat(std::declval<std::tuple<>>(),std::declval<std::tuple<>>(),std::declval<std::tuple<>>()));
- // empty2 cece(4);
-
- // tuple2 f5(4);
- // tupleoftuple2 em(4);
- // OperatorTupleType<tuple1>::type g6(4);
-// decltype(l21)::type g5(5);
-
-  // using emptytuple=TupleOfType<decltype(p)::Nmax,std::tuple<> > ;
-  // static constexpr Integer N=decltype(p)::value;
-  // using single_type=std::tuple<std::tuple< decltype(r)::type,std::tuple<> >>;
-  // using typeLeft=SubTupleType<0,N-1, emptytuple>;
-  // using typeRight=SubTupleType<N+1,decltype(p)::Nmax+1, emptytuple>;
-  // using type=TupleCatType<typeLeft,single_type,typeRight>;
-  // type e1(4);
-  // TupleChangeType<1,std::tuple< decltype(p)::type,std::tuple<> >,std::tuple<int,char,double,long>> a2(Operator::id());
-
-// OperatorTupleType<decltype(u)>::emptytuple a0;
-// OperatorTupleType<decltype(sigma)>::single_type a1; 
+ using TupleSpacesW1=typename decltype(W1)::type_unique_base_function_space;
+ using TupleOperatorsAndQuadratureW1= typename OperatorTupleType<decltype(l22)>::type;
+ using TupleOfTupleNoQuadrature=TupleOfTupleRemoveQuadrature<TupleOperatorsAndQuadratureW1>;
+ TupleOfTupleNoQuadrature feef;
 
 
-// using prova1=std::tuple< std::tuple< >,int,std::tuple< >,double,std::tuple< >,std::tuple< >,std::tuple< >,char,std::tuple< > > ;
+ MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,TupleSpacesW1> eeded;
+ typename ShapeFunctionAssembly<TupleSpacesW1,TupleOperatorsAndQuadratureW1>::type fghi;
 
-// SubTupleType<4,8,prova1> a11;
-// using typeLeft=SubTupleType<0,3, prova1>;
-// using typeRight=SubTupleType<5,TupleTypeSize<prova1>::value, prova1>;
-// TupleCatType<typeLeft,std::tuple<char>,typeRight> a12(3);
-// OperatorTupleType<decltype(u)>::type a3(2);
-// OperatorTupleType<decltype(sigma)>::type a4(2);
-// OperatorTupleType<decltype(p)>::type a5(2);
-// OperatorTupleType<decltype(r)>::type a6(2);
-// makeIndexSequence<3> eee24;
-// constexpr auto magifunc= MagicFunction2<2,3>();
-// typename TupleOfTupleShapeFunctionCreate<TupleSpaces,TupleOperatorsAndQuadrature, 1,0>::type e(3);
-// auto sf0=W1.shape_functions();
-// auto sf00=std::get<0>(sf0);
-// auto sfsf0=std::get<0>(sf00);
-// auto sfsf00=std::get<0>(sfsf0);
-// auto sfsf01=std::get<1>(sfsf0);
-// auto sfsf02=std::get<2>(sfsf0);
+ SubTupleType<3,6,std::tuple<int,char, double,std::tuple< >,long,int,char, double,std::tuple< > > >  acca;//(4);
+StaticBooleanMatrix<3,3,One,Zero,One,Zero,One,Zero,Zero,Zero,Zero>::type emo;
+StaticBooleanVector<3,One,Zero,One>::type emoo;
 
+using tp1=std::tuple<Number<3>,Number<0>,Number<2>>;
+using tp2=std::tuple<Number<0>,Number<2>,Number<3>>;
+using tp3=std::tuple< Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1> >;
 
-
-// sfsf00.init(qp_points,Operator::id(),Operator::grad());
-// std::cout<<"sfsf00="<<sfsf00.reference(Operator::id())<<std::endl;
-// sfsf00(J,Vector<Real,3>(1),Operator::id(),Operator::grad());
-// std::cout<<"sfsf00="<<sfsf00.function(Operator::id())<<std::endl;
-
-
-// std::cout<<"range1="<<sfsf00.range1()<<std::endl;
-// std::cout<<"range1="<<sfsf01.range1()<<std::endl;
-// std::cout<<"range1="<<sfsf02.range()[0]<<std::endl;
-
-
-
-
+StaticBooleanContraction<tp1,tp2> ceed;
 std::cout<<W.n_dofs()<<std::endl;
 std::cout<<W1.n_dofs()<<std::endl;
+FindNonZeroNumbers<tp3> ed444;//(4,Operator::id());
+using Nonzero=FindNonZeroNumbers<tp3>;
+std::cout<<" ------------>"<<NumbersToArray<FindNonZeroNumbers<tp3>>::value[0]<<std::endl;
+std::cout<<" ------------>"<<NumbersToArray<FindNonZeroNumbers<tp3>>::value[1]<<std::endl;
+std::cout<<" ------------>"<<NumbersToArray<FindNonZeroNumbers<tp3>>::value[2]<<std::endl;
+std::cout<<" ------------>"<<NumbersToArray<FindNonZeroNumbers<tp3>>::value[3]<<std::endl;
+std::cout<<" ------------>"<<NumbersToArray<FindNonZeroNumbers<tp3>>::value[4]<<std::endl;
+std::cout<<" ------------>"<<NumbersToArray<FindNonZeroNumbers<tp3>>::value[5]<<std::endl;
 
 
+StaticBooleanContractionFindNonZeros<tp1,tp2 > frre;
+Vector<Real,9> v1{1,1,1,0,1,1,0,0,1};
+Vector<Real,9> v2{1,2,3,0,4,5,0,0,9};
+
+
+Real nonzero;
+
+ clock_t begin = clock();
+
+Integer Constant=pow(10,7);
+  for(Integer ii=0;ii<Constant;ii++)
+  {
+   //nonzero=StaticScalarProduct<Nonzero>(v1,v2);
+    // nonzero=0;
+    for(Integer ii=0;ii<9;ii++)
+      nonzero+=v1[ii]*v2[ii];
+  }
+  clock_t end = clock();
+  double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
+
+std::cout<<" elapsed_secs------------>"<<elapsed_secs<<std::endl;
+
+std::cout<<" nonzero------------>"<<nonzero<<std::endl;
+
+StaticBooleanMatrixVectorMultiplication<3,3,tp3,3,tp1> ede;//('a');
 auto& dm =W1.dofmap();
 auto& dm0=std::get<0>(dm);
 auto& dm01=std::get<0>(dm0);

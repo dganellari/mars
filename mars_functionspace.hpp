@@ -16,6 +16,7 @@
 #include "mars_tuple_utilities.hpp"
 #include "mars_operators.hpp"
 #include "mars_quadrature_rules.hpp"
+#include "mars_vector.hpp"
 namespace mars{
 
 
@@ -26,6 +27,245 @@ class Number
 public:
   static constexpr Integer value=N;
 };
+
+using Zero=Number<0>;
+using One=Number<1>;
+
+
+template<Integer M,Integer N>
+class Multiply2< Number<M>, Number<N> >
+{
+public:
+  static constexpr Integer value=M*N;
+  using type=Number<value>;
+};
+
+template<Integer M,Integer N>
+class Addition2< Number<M>, Number<N> >
+{
+public:
+  static constexpr Integer value=M+N;
+  using type=Number<value>;
+};
+
+
+
+
+
+template<typename Vector1, typename Vector2, Integer Nmax, Integer N>
+class StaticBooleanContractionHelper;
+
+template<typename Vector1, typename Vector2, Integer Nmax>
+class StaticBooleanContractionHelper<Vector1,Vector2,Nmax,Nmax>
+{
+ public:
+ static_assert(TupleTypeSize<Vector1>::value==TupleTypeSize<Vector2>::value," Static boolean contraction requires the two vectors to have the same length ");
+ using type = typename Multiply2<GetType<Nmax,Vector1>,GetType<Nmax,Vector2>>::type;
+};
+
+template<typename Vector1, typename Vector2, Integer Nmax,Integer N>
+class StaticBooleanContractionHelper
+{
+ public:
+ static_assert(TupleTypeSize<Vector1>::value==TupleTypeSize<Vector2>::value," Static boolean contraction requires the two vectors to have the same length ");
+ using single_type = typename Multiply2<GetType<N,Vector1>,GetType<N,Vector2>>::type;
+ using type= typename Addition2<single_type, typename StaticBooleanContractionHelper<Vector1,Vector2,Nmax,N+1>::type >::type;
+
+};
+
+
+template<typename Vector1, typename Vector2>
+using StaticBooleanContraction=typename StaticBooleanContractionHelper<Vector1,Vector2,TupleTypeSize<Vector1>::value-1,0>::type;
+
+
+
+
+template <typename TupleOfNumbers,Integer Nmax,Integer N>
+class FindNonZeroNumbersHelper;
+
+template <typename TupleOfNumbers,Integer Nmax>
+class FindNonZeroNumbersHelper<TupleOfNumbers,Nmax,Nmax>
+{
+ public:
+  using number=GetType<Nmax,TupleOfNumbers>;
+  using type =typename std::conditional<std::is_same<number,Number<0>>::value,std::tuple<>,std::tuple<Number<Nmax>> >::type;
+};
+
+
+template <typename TupleOfNumbers,Integer Nmax,Integer N>
+class FindNonZeroNumbersHelper
+{
+ public:
+  using number=GetType<N,TupleOfNumbers>;
+  using single_type =typename std::conditional<std::is_same<number,Number<0>>::value,std::tuple<>,std::tuple<Number<N>> >::type;
+  using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                      std::declval<typename FindNonZeroNumbersHelper<TupleOfNumbers,Nmax,N+1>::type>()));
+};
+
+
+
+template <typename TupleOfNumbers>
+using FindNonZeroNumbers=typename FindNonZeroNumbersHelper<TupleOfNumbers,TupleTypeSize<TupleOfNumbers>::value-1,0>::type;
+
+
+
+template<typename T  >
+class NumbersToArray;
+
+template<Integer...Ns  >
+class NumbersToArray<std::tuple<Number<Ns>...>>
+{
+public:
+  static constexpr Integer value[]={Ns...};
+};
+
+template<Integer...Ns  >
+constexpr Integer NumbersToArray<std::tuple<Number<Ns>...>>::value[];
+
+
+
+template<typename NonZeroNumbers, Integer Nmax,Integer N,typename T, Integer Dim>
+constexpr typename std::enable_if< (std::is_same<NonZeroNumbers,std::tuple<>>::value),T>::type
+StaticScalarProductHelper(const Vector<T,Dim> & v1,const  Vector<T,Dim>& v2 )
+{
+  return 0;
+}
+
+template<typename NonZeroNumbers, Integer Nmax,Integer N,typename T, Integer Dim>
+constexpr typename std::enable_if< (N==Nmax) && !(std::is_same<NonZeroNumbers,std::tuple<>>::value),T>::type
+StaticScalarProductHelper(const Vector<T,Dim> & v1,const  Vector<T,Dim>& v2 )
+{
+  return v1[GetType<N,NonZeroNumbers>::value]*v2[GetType<N,NonZeroNumbers>::value];
+}
+
+
+template<typename NonZeroNumbers, Integer Nmax,Integer N,typename T, Integer Dim>
+constexpr typename std::enable_if< (N<Nmax)&& !(std::is_same<NonZeroNumbers,std::tuple<>>::value),T>::type
+StaticScalarProductHelper(const Vector<T,Dim> & v1,const  Vector<T,Dim>& v2 )
+{
+  return v1[GetType<N,NonZeroNumbers>::value]*v2[GetType<N,NonZeroNumbers>::value]+ 
+         StaticScalarProductHelper<NonZeroNumbers,Nmax,N+1>(v1,v2);
+}
+
+template<typename NonZeroNumbers,typename T, Integer Dim>
+constexpr T StaticScalarProduct(const Vector<T,Dim> & v1,const  Vector<T,Dim>& v2 )
+{
+  return StaticScalarProductHelper<NonZeroNumbers,TupleTypeSize<NonZeroNumbers>::value-1,0,T,Dim>(v1,v2);
+}
+
+
+
+
+
+template <typename Tuple1, typename Tuple2, Integer Nmax, Integer N>
+class StaticBooleanContractionFindNonZerosHelper;
+
+template <typename Tuple1, typename Tuple2, Integer Nmax>
+class StaticBooleanContractionFindNonZerosHelper<Tuple1,Tuple2,Nmax,Nmax>
+{
+  public:  
+    static_assert(TupleTypeSize<Tuple1>::value==TupleTypeSize<Tuple2>::value,"In StaticBooleanContraction tuple1 and tuple2 must have same size ");
+    using type1=GetType<Nmax,Tuple1>;
+    using type2=GetType<Nmax,Tuple2>;
+    using type=typename std::conditional<Greater(type1::value,0)*Greater(type2::value,0), std::tuple<Number<Nmax>>, std::tuple<> >::type;
+
+ 
+};
+
+
+template <typename Tuple1, typename Tuple2, Integer Nmax, Integer N>
+class StaticBooleanContractionFindNonZerosHelper
+{
+  public:
+    static_assert(TupleTypeSize<Tuple1>::value==TupleTypeSize<Tuple2>::value,"In StaticBooleanContraction tuple1 and tuple2 must have same size ");
+    using type1=GetType<N,Tuple1>;
+    using type2=GetType<N,Tuple2>;
+    using single_type=typename std::conditional<Greater(type1::value,0)*Greater(type2::value,0), std::tuple<Number<N>>, std::tuple<> >::type;
+    using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                                       std::declval<typename StaticBooleanContractionFindNonZerosHelper<Tuple1,Tuple2,Nmax,N+1>::type>()));
+};
+
+
+template <typename Tuple1, typename Tuple2>
+using StaticBooleanContractionFindNonZeros=typename StaticBooleanContractionFindNonZerosHelper<Tuple1,Tuple2,TupleTypeSize<Tuple1>::value-1,0>::type;
+
+
+
+
+
+
+template<Integer Rows_,Integer Cols_,typename...Args>
+class StaticBooleanMatrix
+{
+ public:
+  static constexpr Integer Rows=Rows_;
+  static constexpr Integer Cols=Cols_;
+  static_assert(sizeof...(Args)==Rows*Cols,"Wrong boolean input wrt the dimension of the matrix");
+  using type=std::tuple<Args...>;
+};
+
+template<Integer Dim_,typename...Args>//,typename...Args>
+class StaticBooleanVector
+{
+ public:
+  static constexpr Integer Dim=Dim_;
+  using type=std::tuple<Args...>;
+  static_assert(sizeof...(Args)==Dim,"Wrong boolean input wrt the dimension of the vector");
+
+};
+
+
+template<Integer Rows,Integer Cols,typename Tuple1, Integer Dim,typename Tuple2, Integer N>
+class StaticBooleanMatrixVectorMultiplicationHelper;
+
+
+template<Integer Rows,Integer Cols,typename Tuple1, Integer Dim,typename Tuple2>
+class StaticBooleanMatrixVectorMultiplicationHelper<Rows,Cols,Tuple1,Dim,Tuple2,Rows-1>
+{
+public:
+static constexpr Integer N=Rows-1;
+using Row=SubTupleType<N*Cols,(N+1)*Cols-1,Tuple1 >;
+using type=std::tuple< StaticBooleanContraction<Row,Tuple2>   >;
+};
+
+
+template<Integer Rows,Integer Cols,typename Tuple1, Integer Dim,typename Tuple2, Integer N=0>
+class StaticBooleanMatrixVectorMultiplicationHelper
+{
+ public:
+ using Row=SubTupleType<N*Cols,(N+1)*Cols-1,Tuple1 >;
+ using single_type=std::tuple< StaticBooleanContraction<Row,Tuple2>   >;
+ using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                           std::declval<typename StaticBooleanMatrixVectorMultiplicationHelper<Rows,Cols,Tuple1,Dim,Tuple2,N+1>::type>()));
+};
+
+template<Integer Rows,Integer Cols,typename Tuple1, Integer Dim,typename Tuple2>
+using StaticBooleanMatrixVectorMultiplication=typename StaticBooleanMatrixVectorMultiplicationHelper<Rows,Cols,Tuple1,Dim,Tuple2,0>::type;
+
+
+template<Integer Rows,Integer Cols,typename...Args1, Integer Dim,typename...Args2>
+class Multiply2< StaticBooleanMatrix<Rows,Cols,Args1...> , StaticBooleanVector<Dim, Args2... > >
+{
+public:
+  static_assert(Cols==Dim,"static matrix vector multiplication requires Cols==Dim");
+  // using type=typename StaticBooleanVector<Rows,>::type ;
+
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 template<typename All,typename Unique, Integer Nmax,Integer N>
