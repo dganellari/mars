@@ -32,6 +32,60 @@ using Zero=Number<0>;
 using One=Number<1>;
 
 
+
+template<Integer Nmin,Integer Nmax,Integer N>
+class TupleNumberCreateHelper;
+
+template<Integer Nmin,Integer Nmax>
+class TupleNumberCreateHelper<Nmin,Nmax,Nmax>
+{
+public:
+  using type=std::tuple<Number<Nmax>>;
+};
+
+
+template<Integer Nmin,Integer Nmax,Integer N>
+class TupleNumberCreateHelper
+{
+ public:
+  static_assert(Nmin<=Nmax,"  In TupleNumberCreate Nmin<=Nmax");
+  using single_type =std::tuple<Number<N>>;
+  using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                      std::declval<typename TupleNumberCreateHelper<Nmin,Nmax,N+1>::type>()));
+};
+
+
+template<Integer Nmin,Integer Nmax>
+using TupleOfNumbers=typename TupleNumberCreateHelper<Nmin,Nmax,Nmin>::type;
+
+
+
+template<Integer Nmin,Integer Nshift,Integer Nmax,Integer N>
+class TupleShiftedNumberCreateHelper;
+
+template<Integer Nmin,Integer Nshift,Integer Nmax>
+class TupleShiftedNumberCreateHelper<Nmin,Nshift,Nmax,Nmax>
+{
+public:
+  using type=std::tuple<Number<Nmax>>;
+};
+
+
+template<Integer Nmin,Integer Nshift,Integer Nmax,Integer N>
+class TupleShiftedNumberCreateHelper
+{
+ public:
+  static_assert(Nmin<=Nmax,"  In TupleNumberCreate Nmin<=Nmax");
+  using single_type =std::tuple<Number<N>>;
+  using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                      std::declval<typename TupleShiftedNumberCreateHelper<Nmin,Nshift,Nmax,(N+Nshift)>::type>()));
+};
+
+template<Integer Nmin,Integer Nshift,Integer Nmax>
+using TupleOfShiftedNumbers=typename TupleShiftedNumberCreateHelper<Nmin,Nshift,((Nmax-Nmin)/Nshift)*Nshift+Nmin,Nmin>::type;
+
+
+
 template<Integer M,Integer N>
 class Multiply2< Number<M>, Number<N> >
 {
@@ -189,6 +243,334 @@ class StaticBooleanContractionFindNonZerosHelper
 template <typename Tuple1, typename Tuple2>
 using StaticBooleanContractionFindNonZeros=typename StaticBooleanContractionFindNonZerosHelper<Tuple1,Tuple2,TupleTypeSize<Tuple1>::value-1,0>::type;
 
+
+
+
+
+
+template <typename Tuple1, typename C1, typename Tuple2, typename C2, Integer Nmax, Integer N>
+class StaticBooleanContractionFindNonZerosHelper2;
+
+template <typename Tuple1, typename C1, typename Tuple2, typename C2, Integer Nmax>
+class StaticBooleanContractionFindNonZerosHelper2<Tuple1,C1,Tuple2,C2,Nmax,Nmax>
+{
+  public:  
+    static_assert(TupleTypeSize<C1>::value==TupleTypeSize<C2>::value,"In StaticBooleanContraction row and col must have same size ");
+    static constexpr Integer N1=GetType<Nmax,C1>::value;
+    static constexpr Integer N2=GetType<Nmax,C2>::value;
+    using type1=GetType< N1 ,Tuple1>;
+    using type2=GetType< N2 ,Tuple2>;
+    using type=typename std::conditional<Greater(type1::value*type2::value,0), std::tuple<std::tuple<Number<N1> , Number<N2>> >, std::tuple<> >::type;
+};
+
+template <typename Tuple1, typename C1, typename Tuple2, typename C2, Integer Nmax, Integer N>
+class StaticBooleanContractionFindNonZerosHelper2
+{
+  public:
+    static_assert(TupleTypeSize<C1>::value==TupleTypeSize<C2>::value,"In StaticBooleanContraction row and col must have same size ");
+    static constexpr Integer N1=GetType<N,C1>::value;
+    static constexpr Integer N2=GetType<N,C2>::value;
+    using type1=GetType< N1 ,Tuple1>;
+    using type2=GetType< N2 ,Tuple2>;
+    using single_type=typename std::conditional<Greater(type1::value*type2::value,0), std::tuple<std::tuple<Number<N1> , Number<N2>> >, std::tuple<> >::type;
+    using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                                       std::declval<typename StaticBooleanContractionFindNonZerosHelper2<Tuple1,C1,Tuple2,C2,Nmax,N+1>::type>()));
+};
+
+template <typename Tuple1, typename C1, typename Tuple2, typename C2>
+using StaticBooleanContractionFindNonZeros2=typename StaticBooleanContractionFindNonZerosHelper2<Tuple1,C1,Tuple2,C2,TupleTypeSize<C1>::value-1,0>::type;
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename NonZeroNumbers2, Integer Nmax,Integer N,typename T, Integer Rows,Integer Cols>
+constexpr typename std::enable_if< (std::is_same<NonZeroNumbers2,std::tuple<>>::value),T>::type
+StaticScalarProductHelper2(const Matrix<T,Rows,Cols> & m1,const  Matrix<T,Rows,Cols>& m2 )
+{
+  return 0;
+}
+
+template<typename NonZeroNumbers2, Integer Nmax,Integer N,typename T, Integer Rows,Integer Cols>
+constexpr typename std::enable_if< (N==Nmax) && !(std::is_same<NonZeroNumbers2,std::tuple<>>::value),T>::type
+StaticScalarProductHelper2(const Matrix<T,Rows,Cols> & m1,const  Matrix<T,Rows,Cols>& m2 )
+{
+  return m1(GetType<0,GetType<N,NonZeroNumbers2>>::value)*m2(GetType<1,GetType<N,NonZeroNumbers2>>::value);
+}
+
+
+template<typename NonZeroNumbers2, Integer Nmax,Integer N,typename T, Integer Rows,Integer Cols>
+constexpr typename std::enable_if< (N<Nmax)&& !(std::is_same<NonZeroNumbers2,std::tuple<>>::value),T>::type
+StaticScalarProductHelper2(const Matrix<T,Rows,Cols> & m1,const  Matrix<T,Rows,Cols>& m2 )
+{
+  return m1(GetType<0,GetType<N,NonZeroNumbers2>>::value)*m2(GetType<1,GetType<N,NonZeroNumbers2>>::value)+ 
+         StaticScalarProductHelper2<NonZeroNumbers2,Nmax,N+1>(m1,m2);
+}
+
+template<typename NonZeroNumbers2,typename T, Integer Rows,Integer Cols>
+constexpr T StaticScalarProduct2(const Matrix<T,Rows,Cols> & m1,const  Matrix<T,Rows,Cols>& m2 )
+{
+  return StaticScalarProductHelper2<NonZeroNumbers2,TupleTypeSize<NonZeroNumbers2>::value-1,0,T,Rows,Cols>(m1,m2);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template <Integer Rows,Integer Cols,typename Tuple1, Integer Dim, typename Tuple2, Integer Nmax, Integer N>
+class StaticBooleanMatrixVectorMultiplicationFindNonZerosHelper;
+
+template <Integer Rows,Integer Cols,typename Tuple1, Integer Dim, typename Tuple2, Integer Nmax>
+class StaticBooleanMatrixVectorMultiplicationFindNonZerosHelper<Rows,Cols,Tuple1,Dim,Tuple2,Nmax,Nmax>
+{
+  public:  
+    static_assert(TupleTypeSize<Tuple1>::value==Rows*Cols,"In StaticBooleanContraction tuple1 must have length=Rows*Cols");
+    static_assert(TupleTypeSize<Tuple2>::value==Dim,"In StaticBooleanContraction tuple2 must have length=Dim");
+    static_assert(Dim==Cols,"In StaticBooleanContraction Dim must be equal to Cols");
+
+    using type1=SubTupleType<Cols*Nmax,Cols*(Nmax+1)-1,Tuple1>;
+    using type2=Tuple2;
+    using type=std::tuple< StaticBooleanContractionFindNonZeros<type1,type2> >;
+};
+
+
+template <Integer Rows,Integer Cols,typename Tuple1, Integer Dim, typename Tuple2, Integer Nmax, Integer N>
+class StaticBooleanMatrixVectorMultiplicationFindNonZerosHelper
+{
+  public:
+    static_assert(TupleTypeSize<Tuple1>::value==Rows*Cols,"In StaticBooleanContraction tuple1 must have length=Rows*Cols");
+    static_assert(TupleTypeSize<Tuple2>::value==Dim,"In StaticBooleanContraction tuple2 must have length=Dim");
+    static_assert(Dim==Cols,"In StaticBooleanContraction Dim must be equal to Cols");
+
+    using type1=SubTupleType<Cols*N,Cols*(N+1)-1,Tuple1>;
+    using type2=Tuple2;
+    using single_type=std::tuple< StaticBooleanContractionFindNonZeros<type1,type2> >;
+
+    using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                                       std::declval<typename StaticBooleanMatrixVectorMultiplicationFindNonZerosHelper<Rows,Cols,Tuple1,Dim,Tuple2,Nmax,N+1>::type>()));
+};
+
+
+
+template <Integer Rows,Integer Cols,typename Tuple1, Integer Dim, typename Tuple2>
+using StaticBooleanMatrixVectorMultiplicationFindNonZeros=typename StaticBooleanMatrixVectorMultiplicationFindNonZerosHelper<Rows,Cols,Tuple1,Dim,Tuple2,Rows-1,0>::type;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template <Integer Rows1,Integer Cols1,typename Tuple1, Integer Rows2, Integer Cols2, typename Tuple2,Integer N1,Integer N2 >
+class StaticBooleanMatrixMatrixMultiplicationFindNonZerosHelper;
+
+template <Integer Rows1,Integer Cols1,typename Tuple1, Integer Rows2, Integer Cols2, typename Tuple2>
+class StaticBooleanMatrixMatrixMultiplicationFindNonZerosHelper<Rows1,Cols1,Tuple1,Rows2,Cols2,Tuple2,Rows1-1,Cols2-1>
+{
+  public:  
+    static_assert(TupleTypeSize<Tuple1>::value==Rows1*Cols1,"In StaticBooleanContraction tuple1 must have length=Rows1*Cols1");
+    static_assert(TupleTypeSize<Tuple2>::value==Rows2*Cols2,"In StaticBooleanContraction tuple2 must have length=Rows2*Cols2");
+    static_assert(Cols1==Rows2,"In StaticBooleanContraction Cols1==Rows2");
+
+    using R1=TupleOfNumbers<Cols1*(Rows1-1),Cols1*Rows1-1>;
+    using C1=TupleOfShiftedNumbers<Cols2-1,Cols2, Rows2*Cols2-1>;
+
+    using Row=SubTupleType<Cols1*(Rows1-1),Cols1*(Rows1)-1,Tuple1>;
+    using Col=SubTupleShift<Cols2-1,Cols2,Tuple2>;
+    using type=std::tuple< StaticBooleanContractionFindNonZeros<Row,Col> >;
+};
+
+
+template <Integer Rows1,Integer Cols1,typename Tuple1, Integer Rows2, Integer Cols2, typename Tuple2, Integer N1>
+class StaticBooleanMatrixMatrixMultiplicationFindNonZerosHelper<Rows1,Cols1,Tuple1,Rows2,Cols2,Tuple2,N1,Cols2-1>
+{
+  public:
+    static_assert(TupleTypeSize<Tuple1>::value==Rows1*Cols1,"In StaticBooleanContraction tuple1 must have length=Rows1*Cols1");
+    static_assert(TupleTypeSize<Tuple2>::value==Rows2*Cols2,"In StaticBooleanContraction tuple2 must have length=Rows2*Cols2");
+    static_assert(Cols1==Rows2,"In StaticBooleanContraction Cols1==Rows2");
+
+    using R1=TupleOfNumbers<Cols1*N1,Cols1*(N1+1)-1>;
+    using C1=TupleOfShiftedNumbers<Cols2-1,Cols2, Rows2*Cols2-1>;
+
+    using Row=SubTupleType<Cols1*N1,Cols1*(N1+1)-1,Tuple1>;
+    using Col=SubTupleShift<Cols2-1,Cols2,Tuple2>;
+    using single_type=std::tuple< StaticBooleanContractionFindNonZeros<Row,Col> >;
+    using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                                       std::declval<typename StaticBooleanMatrixMatrixMultiplicationFindNonZerosHelper<Rows1,Cols1,Tuple1,Rows2,Cols2,Tuple2,N1+1,0>::type>()));
+};
+
+
+
+template <Integer Rows1,Integer Cols1,typename Tuple1, Integer Rows2, Integer Cols2, typename Tuple2, Integer N1, Integer N2>
+class StaticBooleanMatrixMatrixMultiplicationFindNonZerosHelper
+{
+  public:
+    static_assert(TupleTypeSize<Tuple1>::value==Rows1*Cols1,"In StaticBooleanContraction tuple1 must have length=Rows1*Cols1");
+    static_assert(TupleTypeSize<Tuple2>::value==Rows2*Cols2,"In StaticBooleanContraction tuple2 must have length=Rows2*Cols2");
+    static_assert(Cols1==Rows2,"In StaticBooleanContraction Cols1==Rows2");
+
+    using R1=TupleOfNumbers<Cols1*N1,Cols1*(N1+1)-1>;
+    using C1=TupleOfShiftedNumbers<N2,Cols2, Rows2*Cols2-1>;
+
+    using Row=SubTupleType<Cols1*N1,Cols1*(N1+1)-1,Tuple1>;
+    using Col=SubTupleShift<N2,Rows2,Tuple2>;
+    using single_type=std::tuple< StaticBooleanContractionFindNonZeros<Row,Col> >;
+    using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                                       std::declval<typename StaticBooleanMatrixMatrixMultiplicationFindNonZerosHelper<Rows1,Cols1,Tuple1,Rows2,Cols2,Tuple2,N1,N2+1>::type>()));
+};
+
+
+template <Integer Rows1,Integer Cols1,typename Tuple1, Integer Rows2, Integer Cols2, typename Tuple2>
+using StaticBooleanMatrixMatrixMultiplicationFindNonZeros=typename StaticBooleanMatrixMatrixMultiplicationFindNonZerosHelper<Rows1,Cols1,Tuple1,Rows2,Cols2,Tuple2,0,0>::type;
+
+
+
+
+
+
+
+
+
+
+
+// NonZeroNumbers containts the numbers relative to non-zero elements of the matrix
+
+template<typename NonZeroNumbers, typename NonZeroProducts,Integer N,typename T, Integer Rows,Integer Cols,Integer CommonDim>
+inline void
+StaticMatrixProductHelper(const Matrix<T,Rows,CommonDim> & m1,const  Matrix<T,CommonDim,Cols>& m2, Matrix<T,Rows,Cols> & m3,
+                                Vector<T,Rows>& row, Vector<T,Cols>& col)
+{
+ constexpr Integer Tot=GetType<N,NonZeroNumbers>::value;
+ constexpr Integer J=Modulo<Tot,Rows>::value;
+ constexpr Integer I=Tot/Rows;
+ m1.get_row(I,row);
+ m2.get_col(J,col);
+ m3(I,J)=StaticScalarProduct<GetType<Tot,NonZeroProducts>>(row,col);
+  
+}
+
+
+
+template<typename NonZeroNumbers, typename NonZeroProducts,Integer N,typename T, Integer Rows,Integer Cols,Integer CommonDim>
+inline typename std::enable_if<(N==TupleTypeSize<NonZeroNumbers>::value-1)  , void>::type
+StaticMatrixProductAux(const Matrix<T,Rows,CommonDim> & m1,const  Matrix<T,CommonDim,Cols>& m2, Matrix<T,Rows,Cols> & m3,
+                                Vector<T,Rows>& row, Vector<T,Cols>& col)
+{
+ constexpr Integer Tot=GetType<N,NonZeroNumbers>::value;
+ constexpr Integer J=Modulo<Tot,Rows>::value;
+ constexpr Integer I=Tot/Rows;
+ // std::cout<<"(I,J)=("<<I<<","<<J<<")"<<std::endl;
+  for(Integer kk=0;kk<CommonDim;kk++)
+    m3(I,J)+=m1(I,kk)*m2(kk,J);
+
+  // StaticMatrixProductHelper<NonZeroNumbers,NonZeroProducts,N>(m1,m2,m3,row,col);
+}
+
+template<typename NonZeroNumbers, typename NonZeroProducts,Integer N,typename T, Integer Rows,Integer Cols,Integer CommonDim>
+inline typename std::enable_if<(N<TupleTypeSize<NonZeroNumbers>::value-1)  , void>::type
+StaticMatrixProductAux(const Matrix<T,Rows,CommonDim> & m1,const  Matrix<T,CommonDim,Cols>& m2, Matrix<T,Rows,Cols> & m3,
+                                Vector<T,Rows>& row, Vector<T,Cols>& col)
+{
+  // StaticMatrixProductHelper<NonZeroNumbers,NonZeroProducts,N>(m1,m2,m3,row,col);
+constexpr Integer Tot=GetType<N,NonZeroNumbers>::value;
+ constexpr Integer J=Modulo<Tot,Rows>::value;
+ constexpr Integer I=Tot/Rows;
+ // std::cout<<"(I,J)=("<<I<<","<<J<<")"<<std::endl;
+ m3(I,J)=0;
+  for(Integer kk=0;kk<CommonDim;kk++)
+    m3(I,J)+=m1(I,kk)*m2(kk,J);
+  StaticMatrixProductAux<NonZeroNumbers,NonZeroProducts,N+1>(m1,m2,m3,row,col);
+}
+
+
+
+template<typename NonZeroNumbers, typename NonZeroProducts,typename T, Integer Rows,Integer Cols,Integer CommonDim>
+inline typename std::enable_if<!std::is_same<NonZeroNumbers,std::tuple<>>::value  , void>::type
+StaticMatrixProduct(const Matrix<T,Rows,CommonDim> & m1,const  Matrix<T,CommonDim,Cols>& m2, Matrix<T,Rows,Cols> & m3,
+                                Vector<T,Rows>& row, Vector<T,Cols>& col)
+{
+ 
+ StaticMatrixProductAux<NonZeroNumbers,NonZeroProducts,0>(m1,m2,m3,row,col);
+}
+
+
+template<typename NonZeroNumbers, typename NonZeroProducts,typename T, Integer Rows,Integer Cols,Integer CommonDim>
+inline typename std::enable_if<std::is_same<NonZeroNumbers,std::tuple<>>::value  , void>::type
+ StaticMatrixProduct(const Matrix<T,Rows,CommonDim> & m1,const  Matrix<T,CommonDim,Cols>& m2, Matrix<T,Rows,Cols> & m3,
+                                Vector<T,Rows>& row, Vector<T,Cols>& col)
+{}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template <typename Tuple, Integer Nmax, Integer N>
+class FromFinderToBooleanHelper;
+
+template <typename Tuple, Integer Nmax>
+class FromFinderToBooleanHelper<Tuple,Nmax,Nmax>
+{
+  public:  
+    using type=std::tuple<typename std::conditional< std::is_same< GetType<Nmax,Tuple>, std::tuple<> >::value, Number<0>,Number<1>  >::type>;
+  };
+
+
+template <typename Tuple, Integer Nmax, Integer N>
+class FromFinderToBooleanHelper
+{
+  public:
+    using single_type=std::tuple<typename std::conditional< std::is_same< GetType<N,Tuple>, std::tuple<> >::value, Number<0>,Number<1>  >::type>;
+    using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                                       std::declval<typename FromFinderToBooleanHelper<Tuple,Nmax,N+1>::type>()));
+};
+
+
+template <typename Tuple>
+using FromFinderToBoolean=typename FromFinderToBooleanHelper<Tuple, TupleTypeSize<Tuple>::value-1,0>::type;
 
 
 

@@ -400,6 +400,39 @@ public:
 template<Integer Nmin,Integer Nmax,typename...Ts>
 using SubTupleType=typename SubTupleHelper<0,Nmin,Nmax,Ts... >::type;
 
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///// Find the subtuple starting from Nstart and containing all the elements, shifted of Nshift 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+template<Integer N,Integer Nstart,Integer Nshift,Integer Nmax,typename Tuple>
+class SubTupleShiftHelper;
+
+template<Integer Nstart,Integer Nshift,Integer Nmax,typename Tuple>
+class SubTupleShiftHelper<Nmax,Nstart,Nshift,Nmax,Tuple>
+{
+public:
+ static_assert(Nstart<TupleTypeSize<Tuple>::value," In SubTupleShiftHelper, Nstart exceeds tuple length");
+ static constexpr Integer M=Nstart+Nmax*Nshift;
+ using type=std::tuple< GetType<M,Tuple> >;
+};
+
+template<Integer N,Integer Nstart,Integer Nshift,Integer Nmax,typename Tuple>
+class SubTupleShiftHelper
+{
+public:
+ static constexpr Integer M=Nstart+N*Nshift;
+ static_assert(Nstart<TupleTypeSize<Tuple>::value," In SubTupleShiftHelper, Nstart exceeds tuple length");
+ static_assert(N<Nmax," In SubTupleShiftHelper, M exceeds tuple length");
+ using single_type=std::tuple< GetType<M,Tuple> >;
+ using type=TupleCatType< single_type, typename SubTupleShiftHelper<N+1,Nstart,Nshift,Nmax,Tuple >::type >;
+};
+
+template<Integer Nstart,Integer Nshift,typename Tuple>
+using SubTupleShift=typename SubTupleShiftHelper<0,Nstart,Nshift, (TupleTypeSize<Tuple>::value-1-Nstart)/Nshift,Tuple>::type;
+
+
+
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///// Add Tadd in std::tuple<Ts...> in position N.
 ///// For example, Tadd=float, std::tuple<char,int>:

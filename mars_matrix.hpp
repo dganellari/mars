@@ -28,7 +28,19 @@ namespace mars {
 
 	    inline constexpr static Integer rows() { return Rows; }
 	    inline constexpr static Integer cols() { return Cols; }
-	    
+
+        // access matrix direclty by using I*Col+J index
+	    inline const T &operator()(const Integer i)const
+	    {
+	        assert(i < Rows*Cols);
+	        return values[i];
+	    }
+	    inline T &operator()(const Integer i)
+	    {
+	        assert(i < Rows*Cols);
+	        return values[i];
+	    }
+
 	    inline T &operator()(const Integer i, const Integer j)
 	    {
 	        assert(i < Rows);
@@ -265,6 +277,7 @@ namespace mars {
 	    	}
 	    	return ret;
 	    }
+
 
 	    inline Vector<T, Rows> operator * (const Vector<T, Cols> &other) const
 	    {
