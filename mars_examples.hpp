@@ -200,7 +200,7 @@ std::cout<<"examples value="<<ElementPosition<2,All,Unique>::value<<std::endl;
 std::cout<<"examples value="<<ElementPosition<3,All,Unique>::value<<std::endl;
 std::cout<<"examples value="<<ElementPosition<4,All,Unique>::value<<std::endl;
 
-TupleNumber<All,Unique> tup;
+TupleAllToUniqueMap<All,Unique> tup;
 const auto tup0=std::get<0>(tup);
 std::cout<<"examples value="<<tup0.value<<std::endl;
 auto& mm=W1.space_avatar();
@@ -287,84 +287,60 @@ MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,TupleSpacesW1> eeded;
 typename ShapeFunctionAssembly<TupleSpacesW1,TupleOperatorsAndQuadratureW1>::type fghi;
 
 SubTupleType<3,6,std::tuple<int,char, double,std::tuple< >,long,int,char, double,std::tuple< > > >  acca;//(4);
-StaticBooleanMatrix<3,3,One,Zero,One,Zero,One,Zero,Zero,Zero,Zero>::type emo;
-StaticBooleanVector<3,One,Zero,One>::type emoo;
+
 
 using tp1=std::tuple<Number<0>,Number<1>,Number<0>>;
 using tp2=std::tuple<Number<0>,Number<2>,Number<3>>;
 using tp3=std::tuple< Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1> >;
 using tp4=std::tuple< Number<1>,Number<1>,Number<1>,Number<0>,Number<1>,Number<1>,Number<0>,Number<0>,Number<1>,Number<0>,Number<0>,Number<0> >;
 
-StaticBooleanContraction<tp1,tp2> ceed;
 std::cout<<W.n_dofs()<<std::endl;
 std::cout<<W1.n_dofs()<<std::endl;
-FindNonZeroNumbers<tp3> ed444;//(4,Operator::id());
 
-using Nonzero=FindNonZeroNumbers<tp3>;
-std::cout<<" ------------>"<<NumbersToArray<FindNonZeroNumbers<tp3>>::value[0]<<std::endl;
-std::cout<<" ------------>"<<NumbersToArray<FindNonZeroNumbers<tp3>>::value[1]<<std::endl;
-std::cout<<" ------------>"<<NumbersToArray<FindNonZeroNumbers<tp3>>::value[2]<<std::endl;
-std::cout<<" ------------>"<<NumbersToArray<FindNonZeroNumbers<tp3>>::value[3]<<std::endl;
-std::cout<<" ------------>"<<NumbersToArray<FindNonZeroNumbers<tp3>>::value[4]<<std::endl;
-
-
-StaticBooleanContractionFindNonZeros<tp1,tp2 > frre;
+StaticVectorContractionFindNonZeros<tp1,tp2 > frre;
 Vector<Real,9> v1{1,1,1,0,1,1,0,0,1};
 Vector<Real,9> v2{1,2,3,0,4,5,0,0,9};
 
 
-StaticBooleanMatrixVectorMultiplicationFindNonZeros<3,3,tp3,3,tp1> de;
-FromFinderToBoolean<decltype(de)> e3e33;//(Operator::id(),'a','a','a','a');
-StaticBooleanMatrixMatrixMultiplicationFindNonZeros<4,3,tp4,3,3,tp3> uoi;
-// FromFinderToBoolean<decltype(uoi)> uoi4(4);
-// FindNonZeroNumbers<decltype(uoi4)> defeee;
+
 
 using tp5=std::tuple< Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1> >;
 using tp6=std::tuple< Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1> >;
 using nonzeroproduct=StaticBooleanMatrixMatrixMultiplicationFindNonZeros<3,3,tp5,3,3,tp6>;
-using booleanmatrix=FromFinderToBoolean<nonzeroproduct>;
+using booleanmatrix=TupleOfTupleToBooleanTuple<nonzeroproduct>;
 using findnonzeronumbers=FindNonZeroNumbers<booleanmatrix>;
 Matrix<Real,3,3> mat1{1,2,3,4,5,6,7,8,9};
-Matrix<Real,3,3> mat2{1,0,0,0,1,0,0,0,1};
+Matrix<Real,3,3> mat2{2,3,4,5,6,7,8,9,10};
 Matrix<Real,3,3> mat3{0,0,0,0,0,0,0,0,0};
 Matrix<Real,3,3> mat4{0,0,0,0,0,0,0,0,0};
 
-Vector<Real,3> vec1;
-Vector<Real,3> vec2;
 
-nonzeroproduct defer;
-TupleOfNumbers<4,6> fefe;
-TupleOfShiftedNumbers<2,3,9> frffefefre;
-
-
-tp5 okok5;
-TupleOfNumbers<3,5> okok50;
-tp6 okok6;
-TupleOfShiftedNumbers<2,3,9> okok60;
-
-// StaticBooleanContractionFindNonZeros2<tp5, TupleOfNumbers<3,5>, tp6 , TupleOfShiftedNumbers<2,3,9> > feereoko(5);
-using nonzeronumbers2=StaticBooleanContractionFindNonZeros2<tp5, TupleOfNumbers<3,5>, tp6 , TupleOfShiftedNumbers<2,3,9> >;
-
-
-// const auto&findnon0numbers=NumbersToArray<tp3>::value;
-
-// for(auto i:findnon0numbers)
-//   std::cout<<i<<std::endl;
 
 Real nonzero;
-
- clock_t begin = clock();
-
 Integer Constant=pow(10,7);
 
-StaticMatrixProduct<findnonzeronumbers,nonzeroproduct>(mat1,mat2,mat3,vec1,vec2);
 
-std::cout<<"nonzerooooooo result="<<StaticScalarProduct2<nonzeronumbers2>(mat1,mat2)<<std::endl;
 
+
+ clock_t begin = clock();
   for(Integer ii=0;ii<Constant;ii++)
   {
  
-    nonzero=StaticScalarProduct2<nonzeronumbers2>(mat1,mat2);;
+    // nonzero=StaticScalarProductForMatrixProduct<nonzeronumbers2>(mat1,mat2);;
+
+    StaticMatrixProduct<findnonzeronumbers,nonzeroproduct>(mat1,mat2,mat3);
+    // StaticMatrixProduct<findnonzeronumbers,nonzeroproduct>(mat1,mat3,mat4);
+    // mat3=mat1*mat1*mat2;
+
+        // mat3=0;
+        // for(Integer i = 0; i < 3; ++i) {
+        //   for(Integer j = 0; j < 3; ++j) {
+        //     for(Integer k = 0; k < 3; ++k) {
+        //       mat3(i, k) += mat1(i, j) * mat2(j, k);
+        //     }
+        //   }
+        // }
+
    // nonzero=StaticScalarProduct<Nonzero>(v1,v2);
     // StaticMatrixProduct<findnonzeronumbers,nonzeroproduct>(mat1,mat2,mat3,vec1,vec2);
     //     // nonzero=0;
@@ -386,7 +362,6 @@ std::cout<<" elapsed_secs------------>"<<elapsed_secs<<std::endl;
 
 std::cout<<" nonzero------------>"<<nonzero<<std::endl;
 
-StaticBooleanMatrixVectorMultiplication<3,3,tp3,3,tp1> ede;//('a');
 auto& dm =W1.dofmap();
 auto& dm0=std::get<0>(dm);
 auto& dm01=std::get<0>(dm0);

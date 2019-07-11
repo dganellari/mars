@@ -44,6 +44,7 @@ list(APPEND MARS_HEADERS
 	mars_mesh_partition.hpp
 	mars_newest_vertex.hpp
 	mars_node_rank.hpp
+	mars_number.hpp
 	mars_oldest_edge.hpp
 	mars_operators.hpp
 	mars_par_bisection.hpp
