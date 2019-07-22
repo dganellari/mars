@@ -12,7 +12,7 @@
 #include "mars_fqpexpressions.hpp"
 #include "mars_quadrature_rules.hpp"
 #include "mars_operators.hpp"
-
+#include "mars_referencemap.hpp"
 namespace mars{
 
 
@@ -271,7 +271,7 @@ class BaseShapeFunctionOperator2
   operator()(const IdentityOperator&o,
        const Vector<Vector<Vector<Real,ShapeFunctionDim>,NQPoints>,Ndofs>& reference_phi,
        const Mapping& mapping, 
-       const Vector<Real,Ndofs> &alpha=1.0)
+       const Vector<Real,Ndofs> &alpha)
   {
    Vector<Vector<Vector<Matrix<Real,NComponents,ShapeFunctionDim>,NQPoints>,NComponents>,Ndofs> result;
    Vector<Real,ShapeFunctionDim> row;
@@ -327,7 +327,7 @@ class BaseShapeFunctionOperator2
   operator()(const GradientOperator& o,
        const Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPoints>,NComponents>,Ndofs>& reference_grad_phi,
        const Mapping& mapping, 
-       const Vector<Real,Ndofs> &alpha=1.0)
+       const Vector<Real,Ndofs> &alpha)
   {
    Vector<Vector<Vector<Matrix<Real,ShapeFunctionDim*NComponents,Dim>,NQPoints>,NComponents>,Ndofs> result;
    Vector<Real,Dim> row;
@@ -375,7 +375,7 @@ class BaseShapeFunctionOperator2
   operator()(const DivergenceOperator&o,
        const Vector<Vector< Real, NQPoints>,Ndofs>& divphi_reference,
        const Mapping& mapping,
-       const Vector<Real,Ndofs> &alpha=1.0)
+       const Vector<Real,Ndofs> &alpha)
   {
         Vector<Vector<Vector< Matrix<Real,NComponents,1>, NQPoints>,NComponents>,Ndofs> divphi;
         for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
@@ -524,227 +524,6 @@ public:
 
 
 
-template<typename Elem,typename BaseFunctionSpace>
-class MapFromReference2;
-
-
-
-template<Integer Dim, Integer ManifoldDim, Integer Order, Integer Continuity, Integer NComponents>
-class MapFromReference2<Simplex<Dim,ManifoldDim>,BaseFunctionSpace<LagrangeFE,Order,Continuity,NComponents>>
-{
- private:
- public:
- using Jacobian=Matrix<Real, Dim, ManifoldDim>;
-
-
-        inline const Real  operator()(const IdentityOperator& o,const Jacobian& J){return 1.0;}
-
-        inline const Jacobian  operator() (const GradientOperator& o, const Jacobian& J)
-         {static_assert(Dim==ManifoldDim,"Dim==ManifoldDim for inverting jacobian");
-          auto inv=  inverse(J);
-          return inv;}
-
-        inline const Real  operator()(const IdentityOperator& o,const Jacobian& J, Real& map){map=1.0;}
-
-        inline const Jacobian  operator() (const GradientOperator& o, const Jacobian& J, Jacobian& map)
-         {static_assert(Dim==ManifoldDim,"Dim==ManifoldDim for inverting jacobian");
-          map=  inverse(J);}
-};
-
-
-template<Integer Dim, Integer ManifoldDim, Integer Order, Integer Continuity, Integer NComponents>
-class MapFromReference2<Simplex<Dim,ManifoldDim>,BaseFunctionSpace<RaviartThomasFE,Order,Continuity,NComponents>>
-{
- private:
- public:
- using Jacobian=Matrix<Real, Dim, ManifoldDim>;
- 
-        inline const Jacobian operator()(const IdentityOperator&o, const Matrix<Real, Dim, ManifoldDim>& J)
-         {Jacobian mapping=J;
-          mapping/=det(mapping);
-          return mapping;}
-
-         
-         inline const Real operator()(const DivergenceOperator&o, const Matrix<Real, Dim, ManifoldDim>& J)
-         {return 1.0/det(J);}
-
-
-        
-        inline const Jacobian operator()(const IdentityOperator&o, const Jacobian& J, Jacobian& map)
-         {map=J;
-          map/=det(map);}
-
-         
-         inline const Real operator()(const DivergenceOperator&o, const Jacobian& J,Real& map)
-         {map= 1.0/det(J);}
-
-};
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-template<typename Elem,typename BaseFunctionSpace>
-class MapFromReference4;
-
-
-
-template<Integer Dim, Integer ManifoldDim, Integer Order, Integer Continuity, Integer NComponents>
-class MapFromReference4<Simplex<Dim,ManifoldDim>,BaseFunctionSpace<LagrangeFE,Order,Continuity,NComponents>>
-{
- public:
- using Jacobian=Matrix<Real, Dim, ManifoldDim>;
-
-
-        inline void  init(const Jacobian& J,const IdentityOperator& o){id_=1.0;}
-
-        inline void  init(const Jacobian& J,const GradientOperator& o){grad_=  inverse(J);}
-
-        template<typename Operator,typename...Operators>
-        typename std::enable_if<sizeof...(Operators), void>::type
-        init(const Jacobian& J,const Operator&o, const Operators&...operators)
-        {init(J,o);init(J,operators...);}
-
-        inline const Real&  operator()(const IdentityOperator& o)const{return id_;}
-
-        inline const Jacobian&  operator() (const GradientOperator& o)const{return grad_;}
-
- private:
-  Real id_;
-  Jacobian grad_; 
-};
-
-
-template<Integer Dim, Integer ManifoldDim, Integer Order, Integer Continuity, Integer NComponents>
-class MapFromReference4<Simplex<Dim,ManifoldDim>,BaseFunctionSpace<RaviartThomasFE,Order,Continuity,NComponents>>
-{
-
- public:
- using Jacobian=Matrix<Real, Dim, ManifoldDim>;
-     
-         inline void init(const Jacobian& J,const IdentityOperator&o) {id_=J;id_/=det(id_);}
-        
-         inline void init(const Jacobian& J,const DivergenceOperator&o){div_= 1.0/det(J);}
-
-         inline const Jacobian&  operator()(const IdentityOperator& o)const {return id_;}
-
-         inline const Real&  operator() (const DivergenceOperator& o)const{return div_;}
-
-
- private:
- Jacobian id_;
- Real div_;
-};
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-template<typename Operator,typename Elem,typename BaseFunctionSpace>
-class MapFromReference5;
-
-
-
-template<Integer Dim, Integer ManifoldDim, Integer Order, Integer Continuity, Integer NComponents>
-class MapFromReference5<IdentityOperator, Simplex<Dim,ManifoldDim>,BaseFunctionSpace<LagrangeFE,Order,Continuity,NComponents>>
-{
- public:
- using Jacobian=Matrix<Real, Dim, ManifoldDim>;
-        inline void  init(const Jacobian& J){id_=1.0;}
-        inline const Real&  operator()()const{return id_;}
- private:
-  Real id_;
-};
-
-
-
-
-
-
-template<Integer Dim, Integer ManifoldDim, Integer Order, Integer Continuity, Integer NComponents>
-class MapFromReference5<GradientOperator, Simplex<Dim,ManifoldDim>,BaseFunctionSpace<LagrangeFE,Order,Continuity,NComponents>>
-{
- public:
- using Jacobian=Matrix<Real, Dim, ManifoldDim>;
-        inline void  init(const Jacobian& J){grad_=  inverse(J);}
-        inline const Jacobian&  operator() ()const{return grad_;}
- private:
-  Jacobian grad_; 
-};
-
-
-
-template<Integer Dim, Integer ManifoldDim, Integer Order, Integer Continuity, Integer NComponents>
-class MapFromReference5<IdentityOperator,Simplex<Dim,ManifoldDim>,BaseFunctionSpace<RaviartThomasFE,Order,Continuity,NComponents>>
-{
- public:
- using Jacobian=Matrix<Real, Dim, ManifoldDim>;
-     
-         inline void init(const Jacobian& J) {id_=J;id_/=det(id_);}
-         inline const Jacobian&  operator()()const {return id_;}
- private:
- Jacobian id_;
-};
-
-template<Integer Dim, Integer ManifoldDim, Integer Order, Integer Continuity, Integer NComponents>
-class MapFromReference5<DivergenceOperator,Simplex<Dim,ManifoldDim>,BaseFunctionSpace<RaviartThomasFE,Order,Continuity,NComponents>>
-{
- public:
- using Jacobian=Matrix<Real, Dim, ManifoldDim>;     
-         inline void init(const Jacobian& J){div_= 1.0/det(J);}
-         inline const Real&  operator()()const{return div_;}
- private:
- Real div_;
-};
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -847,7 +626,7 @@ class BaseShapeFunctionOperator4
   template<typename Mapping>
   void operator()(const IdentityOperator&o,
                   const Mapping& mapping, 
-                  const Vector<Real,Ndofs> &alpha=1.0)
+                  const Vector<Real,Ndofs> &alpha)
   {
   Integer n_tot,n1;
   for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
@@ -885,7 +664,7 @@ class BaseShapeFunctionOperator4
   template<typename Mapping>
   void operator()(const GradientOperator& o,
                   const Mapping& mapping, 
-                  const Vector<Real,Ndofs> &alpha=1.0)
+                  const Vector<Real,Ndofs> &alpha)
   {
     Integer n_tot,n1;
     for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
@@ -1062,7 +841,7 @@ class BaseShapeFunctionOperator<IdentityOperator, QuadratureRule, Ndofs, Dim, Ma
   template<typename Mapping>
   void operator()(const IdentityOperator&o,
                   const Mapping& mapping, 
-                  const Vector<Real,Ndofs> &alpha=1.0)
+                  const Vector<Real,Ndofs> &alpha)
   {
   Integer n_tot,n1;
   for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
@@ -1151,7 +930,7 @@ class BaseShapeFunctionOperator<GradientOperator, QuadratureRule, Ndofs, Dim, Ma
   template<typename Mapping>
   void operator()(const GradientOperator& o,
                   const Mapping& mapping, 
-                  const Vector<Real,Ndofs> &alpha=1.0)
+                  const Vector<Real,Ndofs> &alpha)
   {
     Integer n_tot,n1;
     for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
@@ -1397,7 +1176,7 @@ class BaseShapeFunctionOperatorDependent<Elem,BaseFunctionSpace,IdentityOperator
   // compute the reference shape function for just one component
   void init_reference()
   {
-   qp_points_=quadrature_.qp_points();
+   qp_points_=QuadratureRule::qp_points;
    for(Integer qp=0;qp<NQPoints;qp++)
     {
     qp_points_.get_row(qp,qp_point_);
@@ -1527,7 +1306,7 @@ class BaseShapeFunctionOperatorDependent<Elem,BaseFunctionSpace,IdentityOperator
       single_type func_tmp_;
       QuadratureRule quadrature_;
       qp_points_type qp_points_;
-      MapFromReference5<IdentityOperator,Elem,BaseFunctionSpace> map_;
+      MapFromReference5<IdentityOperator,Elem,BaseFunctionSpace::FEFamily> map_;
       Integer n_tot_,n_;
 };
 
@@ -1565,7 +1344,7 @@ class BaseShapeFunctionOperatorDependent<Elem,BaseFunctionSpace,GradientOperator
 
   void init_reference()
   {
-   qp_points_=quadrature_.qp_points();
+   qp_points_=QuadratureRule::qp_points;
    for(Integer qp=0;qp<NQPoints;qp++)
     {
     qp_points_.get_row(qp,qp_point_);
@@ -1632,7 +1411,7 @@ class BaseShapeFunctionOperatorDependent<Elem,BaseFunctionSpace,GradientOperator
       QuadratureRule quadrature_;
       qp_points_type qp_points_;
       Contraction contract;
-      MapFromReference5<GradientOperator,Elem,BaseFunctionSpace> map_;
+      MapFromReference5<GradientOperator,Elem,BaseFunctionSpace::FEFamily> map_;
       Integer n_tot_,n_;
 };
 
@@ -1754,7 +1533,7 @@ class BaseShapeFunctionOperatorDependent<Elem,BaseFunctionSpace,DivergenceOperat
       QuadratureRule quadrature_;
       qp_points_type qp_points_;
       Contraction contract;
-      MapFromReference5<DivergenceOperator,Elem,BaseFunctionSpace> map_;
+      MapFromReference5<DivergenceOperator,Elem,BaseFunctionSpace::FEFamily> map_;
       Integer n_tot_,n_;
 };
 
@@ -1940,6 +1719,294 @@ public:
   ShapeFunctionOperatorDependent()
   {}
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  template<typename Elem,typename Operator,Integer FEFamily,Integer Order,typename Point, typename Func>
+  constexpr void value(const Point& point, Func& func_ );
+
+  template<typename Elem,typename Operator,Integer FEFamily,Integer Order,typename Point, typename Func>
+  constexpr Func& value(const Point& point)
+  {Func func;
+   value<Elem,Operator,FEFamily,Order>(point,func);
+   return func;};
+
+
+
+  template<>
+  void value<Simplex<2,2>, IdentityOperator,LagrangeFE,1>
+       (const Vector<Real,2>& point,Vector<Matrix<Real, 1, 1>,3>& func)
+      {func[0](0,0)=point[0];
+       func[1](0,0)=point[1];
+       func[2](0,0)=1. - point[0] - point[1];};
+
+
+
+template<typename Elem,typename BaseFunctionSpace,typename Operator, typename QuadratureRule>
+class ShapeFunctionDependent;
+
+
+
+
+
+template<typename QuadratureRule, typename Elem,typename BaseFunctionSpace>
+class ShapeFunctionDependent<Elem,BaseFunctionSpace,IdentityOperator,QuadratureRule>
+
+{ 
+  public:
+  using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
+  static constexpr Integer Dim=Elem::Dim;
+  static constexpr Integer ManifoldDim=Elem::ManifoldDim;
+  static constexpr Integer NComponents=BaseFunctionSpace::NComponents;
+  static constexpr Integer ShapeFunctionDim1=FunctionSpace::ShapeFunctionDim1;
+  static constexpr Integer ShapeFunctionDim2=FunctionSpace::ShapeFunctionDim2;
+  static constexpr Integer NQPoints=QuadratureRule::NQPoints;
+  static constexpr Integer Ntot=FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,BaseFunctionSpace>>::value;
+  static constexpr Integer Ndofs=Ntot/NComponents;
+  static constexpr Integer Order=BaseFunctionSpace::Order;
+  static constexpr Integer FEFamily=BaseFunctionSpace::FEFamily;
+  
+  using single_type   = Matrix<Real, ShapeFunctionDim1, ShapeFunctionDim2>;
+  using vector_single_type   = Vector<single_type,Ndofs>;
+  using tot_type= Matrix<Real, ShapeFunctionDim1 * NComponents, ShapeFunctionDim2>;
+  using type= FQPValues<tot_type,NQPoints,Ntot>;
+  using Point = Vector<Real,Dim>;
+  using QP = Matrix<Real,NQPoints,Dim>;
+  using qp_points_type=typename QuadratureRule::qp_points_type;
+  
+
+  const FQPValues<single_type,NQPoints,Ndofs>& reference()const{return reference_func_values_;}
+  const type& function()const{return func_values_;}
+
+
+  template<Integer N=NComponents>
+  typename std::enable_if< (1<N),const type& >::type function ()const {return func_values_;}
+
+  template<Integer N=NComponents>
+  typename std::enable_if< (1==N),const type& >::type function ()const {return component_func_values_;}
+
+  // const type& function()const{return func_values_;}
+
+
+
+  // compute the reference shape function for just one component
+  void init_reference()
+  {
+   qp_points_=QuadratureRule::qp_points;
+   std::cout<<"qp_points_="<<qp_points_<<std::endl;
+   for(Integer qp=0;qp<NQPoints;qp++)
+    {
+    qp_points_.get_row(qp,qp_point_);
+    value<Elem,IdentityOperator,FEFamily,Order>(qp_point_,func_);
+    std::cout<<"func_="<<func_<<std::endl;
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+        reference_func_values_[n_dof][qp]=func_[n_dof];     
+     }
+    }
+  };
+
+
+  // compute the reference shape function for just one component
+  static constexpr FQPValues<single_type,NQPoints,Ndofs> init_reference(const QP&qp_points)
+  {
+   FQPValues<single_type,NQPoints,Ndofs> reference_func_values;
+   vector_single_type func;
+   for(Integer qp=0;qp<NQPoints;qp++)
+    {
+    constexpr auto qp_point=qp_points.get_row(qp);
+    // value<Elem,IdentityOperator,FEFamily,Order>(qp_point,func);
+    // for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+    //  {
+    //     reference_func_values[n_dof][qp]=func[n_dof];     
+    //  }
+    }
+    return reference_func_values;
+  };
+
+
+  // compute the actual shape function for just one component
+  template<typename Mapping>
+  void init_component(const Mapping& J)
+  {
+   map_.init(J);
+   const auto& mapping=map_();
+   for(Integer qp=0;qp<NQPoints;qp++)
+    {
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+        {
+          component_func_values_[n_dof][qp]= mapping * reference_func_values_[n_dof][qp];
+        }
+    }
+  }
+
+  template<typename Mapping>
+  void init_component(const Mapping& J, const Vector<Real,Ndofs> &alpha)
+  {
+   map_.init(J);
+   const auto& mapping=map_();
+   for(Integer qp=0;qp<NQPoints;qp++)
+    {
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+        {
+          component_func_values_[n_dof][qp]=alpha[n_dof] * mapping * reference_func_values_[n_dof][qp];
+        }
+    }
+  }
+
+  template<typename Jacobian,Integer N=NComponents>
+  typename std::enable_if< 1==N,void>::type
+  init2(const Jacobian& J)
+  {
+  init_component(J);
+  };
+
+  template<typename Jacobian,Integer N=NComponents>
+  typename std::enable_if< 1<N,void>::type
+  init2(const Jacobian& J)
+  {
+  init_component(J);
+  for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+      {
+          n_tot_=n_dof * NComponents +  n_comp ;
+          n_=n_comp*ShapeFunctionDim1;
+          for(Integer qp=0;qp<NQPoints;qp++)
+          {             
+            func_values_[n_tot_][qp].zero();
+            assign(func_values_[n_tot_][qp],component_func_values_[n_dof][qp],n_,0);
+          }
+                 
+      }
+     }
+  };
+
+
+  template<typename Jacobian>
+  void init(const Jacobian& J)
+  {
+  map_.init(J);
+  const auto& mapping=map_();
+  for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+      {
+
+          n_tot_=n_dof * NComponents +  n_comp ;
+          n_=n_comp*ShapeFunctionDim1;
+          for(Integer qp=0;qp<NQPoints;qp++)
+          {             
+            func_values_[n_tot_][qp].zero();
+            func_tmp_= mapping * reference_func_values_[n_dof][qp];
+            assign(func_values_[n_tot_][qp],func_tmp_,n_,0);
+          }
+                 
+      }
+     }
+  };
+
+  template<typename Jacobian>
+  void init(const Jacobian& J, const Vector<Real,Ndofs> &alpha)
+  {
+  map_.init(J);
+  const auto& mapping=map_();
+  for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+     {
+      for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+      {
+
+          n_tot_=n_dof * NComponents +  n_comp ;
+          n_=n_comp*ShapeFunctionDim1;
+          for(Integer qp=0;qp<NQPoints;qp++)
+          {             
+            func_values_[n_tot_][qp].zero();
+            func_tmp_=alpha[n_dof] * mapping * reference_func_values_[n_dof][qp];
+            assign(func_values_[n_tot_][qp],func_tmp_,n_,0);
+          }
+                 
+      }
+     }
+  };
+  ShapeFunctionDependent()
+  {init_reference();};
+
+
+  private: 
+      vector_single_type func_;
+      Point qp_point_;
+      FQPValues<single_type,NQPoints,Ndofs> reference_func_values_;
+      FQPValues<single_type,NQPoints,Ndofs> component_func_values_;
+      type func_values_;
+      single_type func_tmp_;
+      QuadratureRule quadrature_;
+      qp_points_type qp_points_;
+      MapFromReference5<IdentityOperator,Elem,BaseFunctionSpace::FEFamily> map_;
+      Integer n_tot_,n_;
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2834,8 +2901,8 @@ constexpr Integer NtimesN=Nsubspaces_trial*Nsubspaces_test;
 // quadrature rule
 constexpr Integer NQPoints=GaussPoints<Elem,QPOrder>::NQPoints; 
 GaussPoints<Elem,QPOrder> gauss;
-const auto& qp_points=gauss.qp_points();
-const auto& qp_weights=gauss.qp_weights();
+const auto& qp_points=GaussPoints<Elem,QPOrder>::qp_points;
+const auto& qp_weights=GaussPoints<Elem,QPOrder>::qp_weights;
 
 
 
@@ -2880,7 +2947,7 @@ IdentityOperator identity;
 auto reference_trial=trial0(grad,qp_points);
 
 
-Vector<Real, 3 > alpha_trial=1;
+Vector<Real, 3 > alpha_trial{1,1,1};
 
 
 
@@ -2986,20 +3053,20 @@ const auto& mesh=trialspace.mesh();
 
 auto sn=SignedNormal<Elem>(*mesh);
 auto normal_sign= sn.sign(); 
-const auto& n_elements=mesh->n_elements();
+// const auto& n_elements=mesh->n_elements();
 
 
 
 
 
-std::vector<Vector<Real,Dim>> points(Npoints);
-Matrix<Real, Dim, ManifoldDim> J;
-Real volume;
-Elem elem;
+// std::vector<Vector<Real,Dim>> points(Npoints);
+// Matrix<Real, Dim, ManifoldDim> J;
+// Real volume;
+// Elem elem;
 
 
-for(Integer ii=0;ii<Npoints;ii++)
-   elem.nodes[ii]=ii;
+// for(Integer ii=0;ii<Npoints;ii++)
+//    elem.nodes[ii]=ii;
 
 
 
@@ -3024,33 +3091,33 @@ for(Integer ii=0;ii<Npoints;ii++)
 //      points[mm]=mesh.point(elemnodes_global[mm]);
 
 // std::cout<<"  points  "<<std::endl;
-points[0][0]=0;
-points[0][1]=0;
-points[1][0]=2;
-points[1][1]=3;
-points[2][0]=1;
-points[2][1]=4;
+// points[0][0]=0;
+// points[0][1]=0;
+// points[1][0]=2;
+// points[1][1]=3;
+// points[2][0]=1;
+// points[2][1]=4;
 
-for(Integer nn=0;nn<points.size();nn++)
-{
-  points[nn].describe(std::cout);
-}
-
-
-
-  jacobian(elem,points,J);
+// for(Integer nn=0;nn<points.size();nn++)
+// {
+//   points[nn].describe(std::cout);
+// }
 
 
 
-std::cout<<"BEGIN MATRIX LOOP"<<std::endl;
+//   jacobian(elem,points,J);
 
-MatrixLoop<2,2>(tupleshape_trial,tupleshape_test,
-                reference_shape_trial,reference_shape_test,
-                tuplemap_trial,tuplemap_test,
-                operators_trial,operators_test,
-                J,qp_points);
 
-std::cout<<"END MATRIX LOOP"<<std::endl;
+
+// std::cout<<"BEGIN MATRIX LOOP"<<std::endl;
+
+// MatrixLoop<2,2>(tupleshape_trial,tupleshape_test,
+//                 reference_shape_trial,reference_shape_test,
+//                 tuplemap_trial,tuplemap_test,
+//                 operators_trial,operators_test,
+//                 J,qp_points);
+
+// std::cout<<"END MATRIX LOOP"<<std::endl;
 
 
 
@@ -3082,67 +3149,67 @@ std::cout<<"END MATRIX LOOP"<<std::endl;
 // std::cout<<"  qp_weights "<<volume<<std::endl;
 // qp_weights.describe(std::cout);
 
-  for(Integer elem_iter=0 ; elem_iter < 1;elem_iter++)//n_elements ; elem_iter++)
-  {
-    // auto elemnodes_global=mesh->elem(elem_iter).nodes;
-    // for(Integer mm=0;mm<points.size();mm++)
-    //    points[mm]=mesh->point(elemnodes_global[mm]);
-    // jacobian(elem,points,J);
-    std::cout<<IndexTo<0,0,2>::value<<std::endl;
-    std::cout<<IndexTo<0,1,2>::value<<std::endl;
-    std::cout<<IndexTo<0,2,2>::value<<std::endl;
-    std::cout<<IndexTo<0,3,2>::value<<std::endl;
+//   for(Integer elem_iter=0 ; elem_iter < 1;elem_iter++)//n_elements ; elem_iter++)
+//   {
+//     // auto elemnodes_global=mesh->elem(elem_iter).nodes;
+//     // for(Integer mm=0;mm<points.size();mm++)
+//     //    points[mm]=mesh->point(elemnodes_global[mm]);
+//     // jacobian(elem,points,J);
+//     std::cout<<IndexTo<0,0,2>::value<<std::endl;
+//     std::cout<<IndexTo<0,1,2>::value<<std::endl;
+//     std::cout<<IndexTo<0,2,2>::value<<std::endl;
+//     std::cout<<IndexTo<0,3,2>::value<<std::endl;
 
-    std::cout<<IndexTo<1,0,2>::value<<std::endl;
-    std::cout<<IndexTo<1,1,2>::value<<std::endl;
-    std::cout<<IndexTo<1,2,2>::value<<std::endl;
-    std::cout<<IndexTo<1,3,2>::value<<std::endl;
-    volume=unsigned_volume(elem,points);
-    const auto& mapping_trial0=map_trial0(grad,J);
-    const auto& mapping_trial1=map_trial1(identity,J);
+//     std::cout<<IndexTo<1,0,2>::value<<std::endl;
+//     std::cout<<IndexTo<1,1,2>::value<<std::endl;
+//     std::cout<<IndexTo<1,2,2>::value<<std::endl;
+//     std::cout<<IndexTo<1,3,2>::value<<std::endl;
+//     volume=unsigned_volume(elem,points);
+//     const auto& mapping_trial0=map_trial0(grad,J);
+//     const auto& mapping_trial1=map_trial1(identity,J);
 
-const auto reference_shape_trial0=std::get<0>(reference_shape_trial);
+// const auto reference_shape_trial0=std::get<0>(reference_shape_trial);
 
-Vector<Vector<Vector<double, 1>, 6>, 3> reference_shape_trial05=std::get<2>(reference_shape_trial);
-const auto& mapping_trial05=map_trial0(identity,J);
+// Vector<Vector<Vector<double, 1>, 6>, 3> reference_shape_trial05=std::get<2>(reference_shape_trial);
+// const auto& mapping_trial05=map_trial0(identity,J);
 
-const auto element_trial0=trial0(grad,reference_shape_trial0,mapping_trial0);
-const auto element_trial05=trial0(identity,reference_shape_trial05,mapping_trial05);
+// const auto element_trial0=trial0(grad,reference_shape_trial0,mapping_trial0);
+// const auto element_trial05=trial0(identity,reference_shape_trial05,mapping_trial05);
 
-const auto element_trial1=trial1(identity,std::get<1>(reference_shape_trial),mapping_trial1);
-// const auto element_trial2=trial2(identity,std::get<2>(reference_shape_trial),mapping_trial0);
-// const auto element_trial3=trial3(identity,std::get<3>(reference_shape_trial),mapping_trial0);
-auto naltro=trial0.phi_single_component(std::get<0>(operators_trial),points[0]);
-// std::cout<<"naltro--"<<nm<<std::endl;
-// std::cout<<naltro<<std::endl;
-// std::cout<<"mapping_trial05--"<<nm<<std::endl;
-// std::cout<<mapping_trial05<<std::endl;
-// std::cout<<"reference_shape_trial05--"<<nm<<std::endl;
-// std::cout<<reference_shape_trial05<<std::endl;
-// std::cout<<"jacobian="<<std::endl;
-// J.describe(std::cout);
-// std::cout<<"detJ="<<std::endl;
-// std::cout<<det(J)<<std::endl;
-// std::cout<<"element_trial0="<<std::endl;
-// element_trial0.describe(std::cout);
-// std::cout<<"element_trial1="<<std::endl;
-// element_trial1.describe(std::cout);
+// const auto element_trial1=trial1(identity,std::get<1>(reference_shape_trial),mapping_trial1);
+// // const auto element_trial2=trial2(identity,std::get<2>(reference_shape_trial),mapping_trial0);
+// // const auto element_trial3=trial3(identity,std::get<3>(reference_shape_trial),mapping_trial0);
+// auto naltro=trial0.phi_single_component(std::get<0>(operators_trial),points[0]);
+// // std::cout<<"naltro--"<<nm<<std::endl;
+// // std::cout<<naltro<<std::endl;
+// // std::cout<<"mapping_trial05--"<<nm<<std::endl;
+// // std::cout<<mapping_trial05<<std::endl;
+// // std::cout<<"reference_shape_trial05--"<<nm<<std::endl;
+// // std::cout<<reference_shape_trial05<<std::endl;
+// // std::cout<<"jacobian="<<std::endl;
+// // J.describe(std::cout);
+// // std::cout<<"detJ="<<std::endl;
+// // std::cout<<det(J)<<std::endl;
+// // std::cout<<"element_trial0="<<std::endl;
+// // element_trial0.describe(std::cout);
+// // std::cout<<"element_trial1="<<std::endl;
+// // element_trial1.describe(std::cout);
 
-//     const auto& mapping_trial=map_trial(J);
-//     const auto& mapping_test=map_test(J);
-//     const auto& element_trial=trial.phiN(reference_trial,mapping_trial,alpha_trial);
-//     const auto& element_test=test.phiN(reference_test,mapping_test,alpha_test);
+// //     const auto& mapping_trial=map_trial(J);
+// //     const auto& mapping_test=map_test(J);
+// //     const auto& element_trial=trial.phiN(reference_trial,mapping_trial,alpha_trial);
+// //     const auto& element_test=test.phiN(reference_test,mapping_test,alpha_test);
 
-//     for(Integer n_dof_trial=0;n_dof_trial<Ndofs_trial;n_dof_trial++)
-//       for(Integer n_comp_trial=0;n_comp_trial<NComponents_trial;n_comp_trial++)
-//        for(Integer n_dof_test=0;n_dof_test<Ndofs_test;n_dof_test++)
-//         for(Integer n_comp_test=0;n_comp_test<NComponents_test;n_comp_test++)
-//           {const auto& i=n_comp_trial * NComponents_trial+ n_dof_trial;
-//            const auto& j=n_comp_test * NComponents_test + n_dof_test;
-//            // mat(i,j)=dot(vec,qp_weights)*volume;
-//           }
+// //     for(Integer n_dof_trial=0;n_dof_trial<Ndofs_trial;n_dof_trial++)
+// //       for(Integer n_comp_trial=0;n_comp_trial<NComponents_trial;n_comp_trial++)
+// //        for(Integer n_dof_test=0;n_dof_test<Ndofs_test;n_dof_test++)
+// //         for(Integer n_comp_test=0;n_comp_test<NComponents_test;n_comp_test++)
+// //           {const auto& i=n_comp_trial * NComponents_trial+ n_dof_trial;
+// //            const auto& j=n_comp_test * NComponents_test + n_dof_test;
+// //            // mat(i,j)=dot(vec,qp_weights)*volume;
+// //           }
 
-  }
+//   }
 
 // ShapeFunctionOperator3<NQPoints, Elem, Lagrange1<1>> s;
 // s(identity,qp_points);
@@ -3152,96 +3219,94 @@ auto naltro=trial0.phi_single_component(std::get<0>(operators_trial),points[0]);
 // auto ref_grad=s.reference(grad);
 
 // std::cout<<ref_identity()<<std::endl;
-// std::cout<<ref_grad()<<std::endl;
+// // std::cout<<ref_grad()<<std::endl;
 
-ShapeFunctionOperator4<GaussPoints<Elem,QPOrder>, Elem, Lagrange1<4>> s4;
-s4(qp_points);
-// s4(qp_points,identity);
-// s4(qp_points,grad);
-// s4(qp_points,identity,identity,grad);
-std::cout<<s4.reference(identity)()<<std::endl;
-const auto& mapping_identity_lagrange1=map_trial0(identity,J);
-const auto& mapping_grad_lagrange1=map_trial0(grad,J);
-// s4(identity,mapping_identity_lagrange1);
-// s4(grad,mapping_grad_lagrange1);
-s4(identity,mapping_identity_lagrange1,grad,mapping_grad_lagrange1);
-std::cout<<s4.function(identity)()<<std::endl;
-std::cout<<s4.function(grad)()<<std::endl;
+// ShapeFunctionOperator4<GaussPoints<Elem,QPOrder>, Elem, Lagrange1<4>> s4;
+// s4(qp_points);
+// // s4(qp_points,identity);
+// // s4(qp_points,grad);
+// // s4(qp_points,identity,identity,grad);
+// std::cout<<s4.reference(identity)()<<std::endl;
+// const auto& mapping_identity_lagrange1=map_trial0(identity,J);
+// const auto& mapping_grad_lagrange1=map_trial0(grad,J);
+// // s4(identity,mapping_identity_lagrange1);
+// // s4(grad,mapping_grad_lagrange1);
+// s4(identity,mapping_identity_lagrange1,grad,mapping_grad_lagrange1);
+// std::cout<<s4.function(identity)()<<std::endl;
+// std::cout<<s4.function(grad)()<<std::endl;
 
 
-Matrix<Real,5,5> mat1=0;
-Matrix<Real,2,2> mat2{0,1,2,3};
+// Matrix<Real,2,2> mat2{0,1,2,3};
 
-assign(mat1,mat2,2,3);
-std::cout<<mat1<<std::endl;
+
 // s4(grad,qp_points);
 
-using TTT=Matrix<Real,2,1>;
-using SSS=Matrix<Real,2,2>;
-using Tvec=Vector<Real,3>;
-TTT ttt=1;
-TTT ttt2=2;
-SSS sss=3;
-Tvec tvec1=4;
-Tvec tvec2=5;
-Vector<TTT,2> initvec0=ttt;
-Vector<TTT,6> initvec=ttt;
-Vector<TTT,6> initvec2=ttt2;
+// using TTT=Matrix<Real,2,1>;
+// using SSS=Matrix<Real,2,2>;
+// using Tvec=Vector<Real,3>;
+// TTT ttt{1,1};
+// TTT ttt2{2,2};
+// SSS sss{3,3,3,3};
+// Tvec tvec1=4;
+// Tvec tvec2=5;
+// Vector<TTT,2> initvec0=ttt;
+// Vector<TTT,6> initvec=ttt;
+// Vector<TTT,6> initvec2=ttt2;
 
-Vector<Tvec,2> init1=tvec1;
-Vector<Tvec,2> init2=tvec2;
+// Vector<Tvec,2> init1=tvec1;
+// Vector<Tvec,2> init2=tvec2;
 
-Vector<Vector<TTT,2>,3> initvecvec0=initvec0;
-Vector<Vector<TTT,6>,3> initvecvec=initvec;
-Vector<Vector<TTT,6>,3> initvecvec2=initvec2;
+// Vector<Vector<TTT,2>,3> initvecvec0=initvec0;
+// Vector<Vector<TTT,6>,3> initvecvec=initvec;
+// Vector<Vector<TTT,6>,3> initvecvec2=initvec2;
 
-Vector<Vector<Tvec,2>,3> init_vec=init1;
-Vector<Vector<Tvec,2>,3> init_vec2=init2;
-
-
-FQPValues<Tvec,2,3> fqpvalue1(init_vec);
-FQPValues<Tvec,2,3> fqpvalue2(init_vec2);
+// Vector<Vector<Tvec,2>,3> init_vec=init1;
+// Vector<Vector<Tvec,2>,3> init_vec2=init2;
 
 
-FQPValues<TTT,2,3> fqpval0(initvecvec0);
-FQPValues<TTT,6,3> fqpval(initvecvec);
-FQPValues<TTT,6,3> fqpval2(initvecvec2);
-QPValues<SSS,6> qpval(sss);
-QPValues<SSS,2> qpval0(sss);
+// FQPValues<Tvec,2,3> fqpvalue1(init_vec);
+// FQPValues<Tvec,2,3> fqpvalue2(init_vec2);
 
-std::cout<<"fqpval()"<<std::endl;
-std::cout<<fqpval()<<std::endl;
-std::cout<<"qpval()"<<std::endl;
-std::cout<<qpval()<<std::endl;
 
-auto result=qpval*fqpval+fqpval;
-std::cout<<"result()"<<std::endl;
+// FQPValues<TTT,2,3> fqpval0(initvecvec0);
+// FQPValues<TTT,6,3> fqpval(initvecvec);
+// FQPValues<TTT,6,3> fqpval2(initvecvec2);
+// QPValues<SSS,6> qpval(sss);
+// QPValues<SSS,2> qpval0(sss);
 
-std::cout<<result()<<std::endl;
-
-// FQPValues<TTT,3,6> result2=qpval*fqpval+fqpval;
+// std::cout<<"fqpval()"<<std::endl;
 // std::cout<<fqpval()<<std::endl;
+// std::cout<<"qpval()"<<std::endl;
 // std::cout<<qpval()<<std::endl;
+
+// auto result=qpval*fqpval+fqpval;
+// std::cout<<"result()"<<std::endl;
+
 // std::cout<<result()<<std::endl;
-// std::cout<<result2()<<std::endl;
+
+// // FQPValues<TTT,3,6> result2=qpval*fqpval+fqpval;
+// // std::cout<<fqpval()<<std::endl;
+// // std::cout<<qpval()<<std::endl;
+// // std::cout<<result()<<std::endl;
+// // std::cout<<result2()<<std::endl;
 
 
 
 
-    MapFromReference4<Elem,Lagrange1<1>> map3;
-    using QP=typename GaussPoints<Elem,QPOrder>::qp_points_type;
-    using QuadratureRule=GaussPoints<Elem,QPOrder>;
-    using BaseFunctionSpace=Lagrange1<1>;
-    using ShapeSpace=ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>;
-    ShapeSpace s;
-    map3.init(J,Operator::id());
-    map3.init(J,Operator::grad());
-    const auto& o=Operator::id();
-    const auto& o_grad=Operator::grad();
-    // const auto& mapping=map3(o);
-    s(qp_points);
-    s(o,map3(o));
-    s(o_grad,map3(o_grad));
+//     MapFromReference4<Elem,Lagrange1<1>> map3;
+//     using QP=typename GaussPoints<Elem,QPOrder>::qp_points_type;
+//     using QuadratureRule=GaussPoints<Elem,QPOrder>;
+//     using BaseFunctionSpace=Lagrange1<1>;
+//     using ShapeSpace=ShapeFunctionOperator4< QuadratureRule,  Elem, BaseFunctionSpace>;
+//     ShapeSpace s;
+//     map3.init(J,Operator::id());
+//     map3.init(J,Operator::grad());
+//     const auto& o=Operator::id();
+//     const auto& o_grad=Operator::grad();
+//     // const auto& mapping=map3(o);
+//     s(qp_points);
+//     s(o,map3(o));
+//     s(o_grad,map3(o_grad));
   
 
 
@@ -3249,236 +3314,236 @@ std::cout<<result()<<std::endl;
 
 
 
-  FQPExpression1 fqpp1;
-  QPExpression1  qpp1;
-  QPExpression2  qpp2;
-  QPExpression3  qpp3;
-  Shapeprova<GaussPoints<Elem,QPOrder>, Elem, Lagrange1<1>> phi(s,map3);
+//   FQPExpression1 fqpp1;
+//   QPExpression1  qpp1;
+//   QPExpression2  qpp2;
+//   QPExpression3  qpp3;
+//   Shapeprova<GaussPoints<Elem,QPOrder>, Elem, Lagrange1<1>> phi(s,map3);
 
-  std::cout<<"fqpp1"<<std::endl;
-  std::cout<<fqpp1.eval(qp_points)<<std::endl;
-  std::cout<<"qpp1"<<std::endl;
-  std::cout<<qpp1.eval(qp_points)<<std::endl;
-  auto fqpp2=qpp1*fqpp1;
-  std::cout<<"fqpp2"<<std::endl;
-  std::cout<<fqpp2.eval(qp_points)<<std::endl;
+//   std::cout<<"fqpp1"<<std::endl;
+//   std::cout<<fqpp1.eval(qp_points)<<std::endl;
+//   std::cout<<"qpp1"<<std::endl;
+//   std::cout<<qpp1.eval(qp_points)<<std::endl;
+//   auto fqpp2=qpp1*fqpp1;
+//   std::cout<<"fqpp2"<<std::endl;
+//   std::cout<<fqpp2.eval(qp_points)<<std::endl;
   
-  std::cout<<"qpp2"<<std::endl;
-  std::cout<<qpp2.eval(qp_points)<<std::endl;
-  auto minusqpp2=-qpp2/3.4;
-  auto plusqpp2=+qpp2;
-  auto sumqqp2 = -qpp2+2*qpp2*2;
-  auto minussumqqp2 = -qpp2-qpp2;
-  std::cout<<"minusqpp2"<<std::endl;
-  std::cout<<minusqpp2.eval(qp_points)<<std::endl;
-  std::cout<<"plusqpp2"<<std::endl;
-  std::cout<<plusqpp2.eval(qp_points)<<std::endl;
-  std::cout<<"sumqqp2"<<std::endl;
-  std::cout<<sumqqp2.eval(qp_points)<<std::endl;
-  std::cout<<"minussumqqp2"<<std::endl;
-  std::cout<<minussumqqp2.eval(qp_points)<<std::endl;
+//   std::cout<<"qpp2"<<std::endl;
+//   std::cout<<qpp2.eval(qp_points)<<std::endl;
+//   auto minusqpp2=-qpp2/3.4;
+//   auto plusqpp2=+qpp2;
+//   auto sumqqp2 = -qpp2+2*qpp2*2;
+//   auto minussumqqp2 = -qpp2-qpp2;
+//   std::cout<<"minusqpp2"<<std::endl;
+//   std::cout<<minusqpp2.eval(qp_points)<<std::endl;
+//   std::cout<<"plusqpp2"<<std::endl;
+//   std::cout<<plusqpp2.eval(qp_points)<<std::endl;
+//   std::cout<<"sumqqp2"<<std::endl;
+//   std::cout<<sumqqp2.eval(qp_points)<<std::endl;
+//   std::cout<<"minussumqqp2"<<std::endl;
+//   std::cout<<minussumqqp2.eval(qp_points)<<std::endl;
 
 
 
-  auto phitwo=phi+phi;
-  auto phitwominus=phi/4.0-phi/2;
-  auto phithree=phitwominus+phitwo;
-  std::cout<<"phi"<<std::endl;
-  std::cout<<phi.eval(qp_points)<<std::endl;
+//   auto phitwo=phi+phi;
+//   auto phitwominus=phi/4.0-phi/2;
+//   auto phithree=phitwominus+phitwo;
+//   std::cout<<"phi"<<std::endl;
+//   std::cout<<phi.eval(qp_points)<<std::endl;
 
-  std::cout<<"phitwo"<<std::endl;
-  std::cout<<phitwo.eval(qp_points)<<std::endl;
+//   std::cout<<"phitwo"<<std::endl;
+//   std::cout<<phitwo.eval(qp_points)<<std::endl;
 
-  std::cout<<"phitwominus"<<std::endl;
-  std::cout<<phitwominus.eval(qp_points)<<std::endl;
+//   std::cout<<"phitwominus"<<std::endl;
+//   std::cout<<phitwominus.eval(qp_points)<<std::endl;
 
-  std::cout<<"phithree"<<std::endl;
-  std::cout<<phithree.eval(qp_points)<<std::endl;
-
-
-  auto fqpp3=-qpp2*qpp1*(-fqpp1);
-  std::cout<<"fqpp3"<<std::endl;
-  std::cout<<fqpp3.eval(qp_points)<<std::endl;
-  auto fqpp3equal=qpp2*qpp1*(fqpp1);
-  std::cout<<"fqpp3equal"<<std::endl;
-  std::cout<<fqpp3equal.eval(qp_points)<<std::endl;
+//   std::cout<<"phithree"<<std::endl;
+//   std::cout<<phithree.eval(qp_points)<<std::endl;
 
 
-  std::cout<<"phi"<<std::endl;
-  std::cout<<phi.eval(qp_points)<<std::endl;
+//   auto fqpp3=-qpp2*qpp1*(-fqpp1);
+//   std::cout<<"fqpp3"<<std::endl;
+//   std::cout<<fqpp3.eval(qp_points)<<std::endl;
+//   auto fqpp3equal=qpp2*qpp1*(fqpp1);
+//   std::cout<<"fqpp3equal"<<std::endl;
+//   std::cout<<fqpp3equal.eval(qp_points)<<std::endl;
 
-  auto phi2= qpp1*phi;
-  std::cout<<"phi2"<<std::endl;
-  std::cout<<phi2.eval(qp_points)<<std::endl;
+
+//   std::cout<<"phi"<<std::endl;
+//   std::cout<<phi.eval(qp_points)<<std::endl;
+
+//   auto phi2= qpp1*phi;
+//   std::cout<<"phi2"<<std::endl;
+//   std::cout<<phi2.eval(qp_points)<<std::endl;
   
-  auto phi3=+2*GradProva(phi)*3;
-  std::cout<<"+phi3"<<std::endl;
-  std::cout<<phi3.eval(qp_points)<<std::endl;
-  auto phi3minus=-GradProva(phi);
-  std::cout<<"-Grad(phi)"<<std::endl;
-  std::cout<<phi3minus.eval(qp_points)<<std::endl;
+//   auto phi3=+2*GradProva(phi)*3;
+//   std::cout<<"+phi3"<<std::endl;
+//   std::cout<<phi3.eval(qp_points)<<std::endl;
+//   auto phi3minus=-GradProva(phi);
+//   std::cout<<"-Grad(phi)"<<std::endl;
+//   std::cout<<phi3minus.eval(qp_points)<<std::endl;
 
 
-Matrix<Real,2,2> mat_der1{1,2,3,4};
-Matrix<Real,2,2> mat_der2{5,4,3,2};
+// Matrix<Real,2,2> mat_der1{1,2,3,4};
+// Matrix<Real,2,2> mat_der2{5,4,3,2};
 
-auto qpval3=-qpval*3.0+2.5*qpval;
-auto phi4=qpp3*GradProva(phi); 
-std::cout<<"qpp3*Grad(phi)"<<phi4.eval(qp_points)<<std::endl;
+// auto qpval3=-qpval*3.0+2.5*qpval;
+// auto phi4=qpp3*GradProva(phi); 
+// std::cout<<"qpp3*Grad(phi)"<<phi4.eval(qp_points)<<std::endl;
 
-qpval3+=qpval;
-qpval3/=0.5;
-qpval3-=2*qpval;
-std::cout<<"qpval"<<qpval<<std::endl;
+// qpval3+=qpval;
+// qpval3/=0.5;
+// qpval3-=2*qpval;
+// std::cout<<"qpval"<<qpval<<std::endl;
 
-std::cout<<"qpval3"<<qpval3<<std::endl;
-auto fqpval3=fqpval*2-2*fqpval2;
-std::cout<<"fqpval3"<<fqpval3<<std::endl;
+// std::cout<<"qpval3"<<qpval3<<std::endl;
+// auto fqpval3=fqpval*2-2*fqpval2;
+// std::cout<<"fqpval3"<<fqpval3<<std::endl;
 
-auto fqpvalue3=fqpvalue1*2-fqpvalue2/4;
-std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
- fqpvalue3=-fqpvalue3;
- std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
+// auto fqpvalue3=fqpvalue1*2-fqpvalue2/4;
+// std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
+//  fqpvalue3=-fqpvalue3;
+//  std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
 
- fqpvalue3=+fqpvalue3;
- std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
+//  fqpvalue3=+fqpvalue3;
+//  std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
 
- fqpvalue3=2*fqpvalue3;
- std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
+//  fqpvalue3=2*fqpvalue3;
+//  std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
 
- fqpvalue3=fqpvalue3*2;
- std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
+//  fqpvalue3=fqpvalue3*2;
+//  std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
 
- fqpvalue3=fqpvalue3/2;
-std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
-
-
- auto phi3two= phi3.eval(qp_points)*phi3.eval(qp_points);
- // auto integral=Integral<QuadratureRule>(phi3,phi3);
- std::cout<<"phi3two"<<phi3two<<std::endl;
- // std::cout<<"integral"<<integral.eval(qp_points)<<std::endl;
+//  fqpvalue3=fqpvalue3/2;
+// std::cout<<"fqpvalue3"<<fqpvalue3<<std::endl;
 
 
- Matrix<Real,2,2> matrix0=0.5;
- Matrix<Real,2,3> matrix1=1.;
- Matrix<Real,3,2> matrix2=2.;
- Matrix<Real,2,2> matrix3=3;
- Matrix<Real,2,2> matrix4;
-
-Expression2Matrix<Real,2,2> exprmat0(matrix0);
-Expression2Matrix<Real,2,3> exprmat1(matrix1);
-Expression2Matrix<Real,3,2> exprmat2(matrix2);
-Expression2Matrix<Real,2,2> exprmat3(matrix3);
-auto exprmat=  -2*exprmat0*exprmat1*exprmat2 ;// * exprmat1 * exprmat0+(exprmat0-exprmat1)*exprmat0;
-std::cout<<exprmat0()<<std::endl;
-
-Evaluation<decltype(exprmat)> eval(exprmat);
-Matrix<Real,2,2> res =eval.apply();
-std::cout<<res<<std::endl;
-
-Expression2QPValues<SSS,2> qp1(qpval0);
-Expression2FQPValues<TTT,2,3> fqp1(fqpval0);
-
-auto exprqp=(-qp1+2*qp1)*qp1+2.*qp1/0.5;
-Evaluation<decltype(exprqp)> evalqp(exprqp);
-auto resqp =evalqp.apply();
-std::cout<<resqp<<std::endl;
-
-auto exprfqp=qp1*(-fqp1+2.*fqp1)+2.*fqp1/0.5;
-Evaluation<decltype(exprfqp)> evalfqp(exprfqp);
-auto resfqp =evalfqp.apply();
-std::cout<<resfqp<<std::endl;
+//  auto phi3two= phi3.eval(qp_points)*phi3.eval(qp_points);
+//  // auto integral=Integral<QuadratureRule>(phi3,phi3);
+//  std::cout<<"phi3two"<<phi3two<<std::endl;
+//  // std::cout<<"integral"<<integral.eval(qp_points)<<std::endl;
 
 
-Expression2MatrixVar<Real,2,2> exprmatvar0;
-Expression2MatrixVar<Real,3,2> exprmatvar1;
-auto exprvar= - exprmatvar1 * exprmatvar0;
-auto exprvar2= -2*exprmatvar1*exprmatvar0/4+exprmatvar1*exprmatvar0*exprmatvar0;
+//  Matrix<Real,2,2> matrix0{0.5,0.5,0.5,0.5};
+//  Matrix<Real,2,3> matrix1{1.,1.,1.,1.,1.,1.};
+//  Matrix<Real,3,2> matrix2{2.,2.,2.,2.,2.,2.};
+//  Matrix<Real,2,2> matrix3{3,3,3,3};
+//  Matrix<Real,2,2> matrix4;
 
-Evaluation<decltype(exprmatvar1)> evalvar0(exprmatvar1);
-Evaluation<decltype(exprmatvar0)> evalvar1(exprmatvar0);
-Evaluation<decltype(exprvar)> evalvar(exprvar);
+// Expression2Matrix<Real,2,2> exprmat0(matrix0);
+// Expression2Matrix<Real,2,3> exprmat1(matrix1);
+// Expression2Matrix<Real,3,2> exprmat2(matrix2);
+// Expression2Matrix<Real,2,2> exprmat3(matrix3);
+// auto exprmat=  -2*exprmat0*exprmat1*exprmat2 ;// * exprmat1 * exprmat0+(exprmat0-exprmat1)*exprmat0;
+// std::cout<<exprmat0()<<std::endl;
 
-auto resvar0 =evalvar0.apply(qp_points);
-auto resvar1 =evalvar1.apply(qp_points);
-auto resvar =evalvar.apply(qp_points);
-std::cout<<resvar0<<std::endl;
-std::cout<<resvar1<<std::endl;
-std::cout<<resvar<<std::endl;
+// Evaluation<decltype(exprmat)> eval(exprmat);
+// Matrix<Real,2,2> res =eval.apply();
+// std::cout<<res<<std::endl;
 
-auto lagr=ShapeFunctionOperator<GaussPoints<Elem,QPOrder>, Elem, Lagrange1<4>>();
-ShapeFunctionOperator<GaussPoints<Elem,QPOrder>, Elem, Lagrange1<4>> lagrangesf;
-lagrangesf.init(qp_points,Operator::id(),Operator::grad());
-lagrangesf(J,Vector<Real,3>(1),Operator::id(),Operator::grad());//,Vector<Real,3>(1.0));
+// Expression2QPValues<SSS,2> qp1(qpval0);
+// Expression2FQPValues<TTT,2,3> fqp1(fqpval0);
 
-std::cout<<"lagrange_ identity"<<lagrangesf.function(identity)()<<std::endl;
-std::cout<<"lagrange_grad"<<lagrangesf.function(grad)()<<std::endl;
+// auto exprqp=(-qp1+2*qp1)*qp1+2.*qp1/0.5;
+// Evaluation<decltype(exprqp)> evalqp(exprqp);
+// auto resqp =evalqp.apply();
+// std::cout<<resqp<<std::endl;
 
-
-OperatorType<Matrix<Real,2,2>>::type ess;
-std::cout<<"QuadratureOrder="<<QuadratureOrder<decltype(exprvar2)>::value<<std::endl;
+// auto exprfqp=qp1*(-fqp1+2.*fqp1)+2.*fqp1/0.5;
+// Evaluation<decltype(exprfqp)> evalfqp(exprfqp);
+// auto resfqp =evalfqp.apply();
+// std::cout<<resfqp<<std::endl;
 
 
-TupleCatType< std::tuple<int,float>, std::tuple<int>, std::tuple<char> > test{1,1.0f,2, 'a'};
+// Expression2MatrixVar<Real,2,2> exprmatvar0;
+// Expression2MatrixVar<Real,3,2> exprmatvar1;
+// auto exprvar= - exprmatvar1 * exprmatvar0;
+// auto exprvar2= -2*exprmatvar1*exprmatvar0/4+exprmatvar1*exprmatvar0*exprmatvar0;
 
-std::cout<<std::get<3>(test)<<std::endl;
-auto tuplecat=std::tuple_cat(std::tuple<int, char>(1,'a'),std::tuple<int, char,int>(1,'a',2),std::tuple<int>(1));
-    RemoveTupleDuplicates<std::tuple<int, char, char, int, char>> a(1,'a');
-    static_assert(std::is_same<RemoveTupleDuplicates<std::tuple<int, char>>, std::tuple<int, char>>::value, "ok");
-    static_assert(std::is_same<RemoveTupleDuplicates<std::tuple<int, char, int>>, std::tuple<int, char>>::value, "ok");
-    static_assert(std::is_same<RemoveTupleDuplicates<std::tuple<int, int, char>>, std::tuple<int, char>>::value, "ok");
-    static_assert(std::is_same<RemoveTupleDuplicates<std::tuple<int, char, char, int, char>>, std::tuple<int, char>>::value, "ok");
+// Evaluation<decltype(exprmatvar1)> evalvar0(exprmatvar1);
+// Evaluation<decltype(exprmatvar0)> evalvar1(exprmatvar0);
+// Evaluation<decltype(exprvar)> evalvar(exprvar);
+
+// auto resvar0 =evalvar0.apply(qp_points);
+// auto resvar1 =evalvar1.apply(qp_points);
+// auto resvar =evalvar.apply(qp_points);
+// std::cout<<resvar0<<std::endl;
+// std::cout<<resvar1<<std::endl;
+// std::cout<<resvar<<std::endl;
+
+// auto lagr=ShapeFunctionOperator<GaussPoints<Elem,QPOrder>, Elem, Lagrange1<4>>();
+// ShapeFunctionOperator<GaussPoints<Elem,QPOrder>, Elem, Lagrange1<4>> lagrangesf;
+// lagrangesf.init(qp_points,Operator::id(),Operator::grad());
+// lagrangesf(J,Vector<Real,3>(1),Operator::id(),Operator::grad());//,Vector<Real,3>(1.0));
+
+// std::cout<<"lagrange_ identity"<<lagrangesf.function(identity)()<<std::endl;
+// std::cout<<"lagrange_grad"<<lagrangesf.function(grad)()<<std::endl;
+
+
+// OperatorType<Matrix<Real,2,2>>::type ess;
+// std::cout<<"QuadratureOrder="<<QuadratureOrder<decltype(exprvar2)>::value<<std::endl;
+
+
+// TupleCatType< std::tuple<int,float>, std::tuple<int>, std::tuple<char> > test{1,1.0f,2, 'a'};
+
+// std::cout<<std::get<3>(test)<<std::endl;
+// auto tuplecat=std::tuple_cat(std::tuple<int, char>(1,'a'),std::tuple<int, char,int>(1,'a',2),std::tuple<int>(1));
+//     RemoveTupleDuplicates<std::tuple<int, char, char, int, char>> a(1,'a');
+//     static_assert(std::is_same<RemoveTupleDuplicates<std::tuple<int, char>>, std::tuple<int, char>>::value, "ok");
+//     static_assert(std::is_same<RemoveTupleDuplicates<std::tuple<int, char, int>>, std::tuple<int, char>>::value, "ok");
+//     static_assert(std::is_same<RemoveTupleDuplicates<std::tuple<int, int, char>>, std::tuple<int, char>>::value, "ok");
+//     static_assert(std::is_same<RemoveTupleDuplicates<std::tuple<int, char, char, int, char>>, std::tuple<int, char>>::value, "ok");
 
     
-   TupleRemoveType<int,std::tuple<char, float,int,int> >::type removed('a',2.3);
-   std::cout<<std::get<0>(removed)<<std::endl;
-   std::cout<<std::get<1>(removed)<<std::endl;
+//    TupleRemoveType<int,std::tuple<char, float,int,int> >::type removed('a',2.3);
+//    std::cout<<std::get<0>(removed)<<std::endl;
+//    std::cout<<std::get<1>(removed)<<std::endl;
 
-   TupleRemovesingleType<int,std::tuple<int,char, int,float,int,int> > removed2('a',2,2.3,1,3);
-   std::cout<<std::tuple_size<decltype(removed2)>::value<<std::endl;
-   std::cout<<std::get<0>(removed2)<<std::endl;
-   std::cout<<std::get<1>(removed2)<<std::endl;
-   std::cout<<std::get<2>(removed2)<<std::endl;
-   std::cout<<std::get<3>(removed2)<<std::endl;
-   std::cout<<std::get<4>(removed2)<<std::endl;
+//    TupleRemovesingleType<int,std::tuple<int,char, int,float,int,int> > removed2('a',2,2.3,1,3);
+//    std::cout<<std::tuple_size<decltype(removed2)>::value<<std::endl;
+//    std::cout<<std::get<0>(removed2)<<std::endl;
+//    std::cout<<std::get<1>(removed2)<<std::endl;
+//    std::cout<<std::get<2>(removed2)<<std::endl;
+//    std::cout<<std::get<3>(removed2)<<std::endl;
+//    std::cout<<std::get<4>(removed2)<<std::endl;
 
-ShapeFunctionExpression<1,2,Lagrange1<1>> sfe1; 
-GradientShapeFunctionExpression<0,2,RT0<1>> sfe2;
-GradientShapeFunctionExpression<1,2,Lagrange1<1>> sfe3;
-ShapeFunctionExpression<0,2,RT0<2>> sfe4; 
+// ShapeFunctionExpression<1,2,Lagrange1<1>> sfe1; 
+// GradientShapeFunctionExpression<0,2,RT0<1>> sfe2;
+// GradientShapeFunctionExpression<1,2,Lagrange1<1>> sfe3;
+// ShapeFunctionExpression<0,2,RT0<2>> sfe4; 
 
-auto sfen=sfe1+sfe2+sfe3+sfe4;
+// auto sfen=sfe1+sfe2+sfe3+sfe4;
 
-OperatorTupleType<decltype(sfen)>::type ec;
-
-
+// OperatorTupleType<decltype(sfen)>::type ec;
 
 
-constexpr Integer NComponents=4;
-ShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange1<NComponents>,IdentityOperator,QuadratureRule >  sfod;
-sfod.init_reference();
-sfod.init(J);
-sfod.function();
-std::cout<<"sfod.function()=="<<sfod.function()<<std::endl;
-
-ShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange1<NComponents>,GradientOperator,QuadratureRule >  sfod_grad;
-sfod_grad.init_reference();
-sfod_grad.init(J);
-sfod_grad.function();
-std::cout<<"sfod_grad.function()=="<<sfod_grad.function()<<std::endl;
 
 
-ShapeFunctionOperatorDependent<Simplex<2,2>, RT0<NComponents>,IdentityOperator,QuadratureRule>  sfod_rt;
-sfod_rt.init_reference();
-sfod_rt.init(J);
-sfod_rt.function();
-std::cout<<"sfod_rt.function()=="<<sfod_rt.function()<<std::endl;
+// constexpr Integer NComponents=4;
+// ShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange1<NComponents>,IdentityOperator,QuadratureRule >  sfod;
+// sfod.init_reference();
+// sfod.init(J);
+// sfod.function();
+// std::cout<<"sfod.function()=="<<sfod.function()<<std::endl;
 
-ShapeFunctionOperatorDependent<Simplex<2,2>, RT0<NComponents>,DivergenceOperator,QuadratureRule >  sfod_rt_div;
-sfod_rt_div.init_reference();
-sfod_rt_div.init(J);
-sfod_rt_div.function();
-std::cout<<"sfod_rt_div.function()=="<<sfod_rt_div.function()<<std::endl;
+// ShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange1<NComponents>,GradientOperator,QuadratureRule >  sfod_grad;
+// sfod_grad.init_reference();
+// sfod_grad.init(J);
+// sfod_grad.function();
+// std::cout<<"sfod_grad.function()=="<<sfod_grad.function()<<std::endl;
+
+
+// ShapeFunctionOperatorDependent<Simplex<2,2>, RT0<NComponents>,IdentityOperator,QuadratureRule>  sfod_rt;
+// sfod_rt.init_reference();
+// sfod_rt.init(J);
+// sfod_rt.function();
+// std::cout<<"sfod_rt.function()=="<<sfod_rt.function()<<std::endl;
+
+// ShapeFunctionOperatorDependent<Simplex<2,2>, RT0<NComponents>,DivergenceOperator,QuadratureRule >  sfod_rt_div;
+// sfod_rt_div.init_reference();
+// sfod_rt_div.init(J);
+// sfod_rt_div.function();
+// std::cout<<"sfod_rt_div.function()=="<<sfod_rt_div.function()<<std::endl;
  
 
 };

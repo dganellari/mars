@@ -138,20 +138,24 @@ public:
 // QPVALUES 
 template<typename T,Integer NQPoints>
 class QPValues: 
-public AlgebraicExpression<QPValues<T,NQPoints>,Vector<T,NQPoints>>
+public AlgebraicExpression<QPValues<T,NQPoints>,Vector<T,NQPoints>>,
+public TensorBase<T, std::make_index_sequence<NQPoints>> 
 {
  public:
- using type=  Vector<T,NQPoints>;
-  inline type& operator()() {return values_;};
-  inline const type& operator()()const {return values_;};
-  inline type& value() {return values_;};
-  inline const type& value()const {return values_;};
+    using MB = TensorBase<T, std::make_index_sequence<NQPoints>>;
+    using MB::MB;
+    using MB::values;
+    using type=  Vector<T,NQPoints>;
+    inline constexpr type& operator()() {return values;};
+    inline constexpr const type& operator()()const {return values;};
+    inline constexpr type& value() {return values;};
+    inline constexpr const type& value()const {return values;};
 
-  QPValues(){};
-  QPValues(const type& t):values_(t) {};
+  // QPValues(){};
+  // QPValues(const type& t):values_(t) {};
 
-protected:
-      type values_;
+// protected:
+//       type values_;
 };
 
 // FQPVALUES 
@@ -161,16 +165,17 @@ AlgebraicExpression<FQPValues<T,NQPoints,NComponents>,
                     Vector<Vector<T,NQPoints>,NComponents>>
 {
 public:
-  using type= Vector<Vector<T,NQPoints>,NComponents>;
-  FQPValues(): values_(){};
-  FQPValues(const type& v): values_(v){};
-
+      using type= Vector<Vector<T,NQPoints>,NComponents>;
+      ~FQPValues() = default;
+      constexpr FQPValues()= default;
+      constexpr FQPValues(const type& v): values_(v){};
       type & value(){return values_;};
       const type & value()const{return values_;};
       inline type operator()()const{return values_;};
       inline Vector<T,NQPoints> operator()(const Integer& i)const{return values_[i];};
       inline void operator()(const Integer& i,const Vector<T,NQPoints>& u){values_[i]=u;};   
 
+      
 protected:
   type values_;
 };

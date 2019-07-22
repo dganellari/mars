@@ -22,31 +22,6 @@ namespace mars{
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
- 
-
-
-
 template<typename MeshT, typename BaseFunctionSpace,typename...BaseFunctionSpaces>
 class FunctionSpace //: public IFunctionSpace
 {

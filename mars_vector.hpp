@@ -1,29 +1,49 @@
 #ifndef MARS_VECTOR_HPP
 #define MARS_VECTOR_HPP
+#include "mars_tensor_base.hpp"
 
-#include <array>
-#include <initializer_list>
-#include <cmath>
-#include <iostream>
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////// Written by Gabriele Rovi (July 2019)                                                                    ////////
+////// We define the Vector class:                                                                             ////////
+////// Vector<typename T, Integer Dim>                                                                         ////////
+////// We want vectors to be eventually constexpr and static. A proper constructor is then needed              ////////
+////// To build it, we must define a VectorBase class from which Vector inherit                                ////////
+////// In this way we can use Vector<T,Dim> as we would normally do, but we can also define:                   ////////
+////// static constexpr Vector<T,Dim> static_mat{T1,T2....};                                                   ////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 namespace mars {
 
-	template<typename T, Integer Dim>
-	class Vector {
+
+	template<typename T, Integer Dim_>
+	class Vector: public TensorBase<T, std::make_index_sequence<Dim_>> 
+	{
 	public:
+		static constexpr Integer Dim=Dim_;
 		using type=Vector<T,Dim>;
 	    using subtype=T;
-	    std::array<T, Dim> values;
-	    Vector() {}
+		using MB = TensorBase<T, std::make_index_sequence<Dim>>;
+		using MB::MB;
+		using MB::values;
 
-	    Vector(T t) {values.fill(t);}
+	    // std::array<T, Dim> values;
+	    // Vector() {}
 
-	    Vector(std::initializer_list<T> values)
-	    {
-	        std::copy(std::begin(values), std::end(values), std::begin(this->values));
-	    }
+     //    ~Vector()=default;
 
-	    friend Vector operator*(const Real &alpha, const Vector &v)
+
+	    // template<typename...Inputs>
+	    // constexpr Vector (const Inputs&...vals)
+     //    : values{{static_cast<T>(vals)...}}
+	    // {static_assert(sizeof...(Inputs)==Dim, " In Vector constructor, number of inputs of lists must be Dim");}
+
+
+	    // Vector(std::initializer_list<T> values)
+	    // {
+	    //     std::copy(std::begin(values), std::end(values), std::begin(this->values));
+	    // }
+
+	    friend constexpr Vector operator*(const Real &alpha, const Vector &v)
 	    {
 	    	Vector ret;
 	    	for(Integer i = 0; i < Dim; ++i) {
@@ -34,7 +54,7 @@ namespace mars {
 	    	return ret;
 	    }
 
-	    friend Vector operator/(const Vector &v, const Real &alpha)
+	    friend constexpr Vector operator/(const Vector &v, const Real &alpha)
 	    {
 	    	Vector ret;
 	    	for(Integer i = 0; i < Dim; ++i) {
@@ -44,7 +64,7 @@ namespace mars {
 	    	return ret;
 	    }
 
-	    Vector operator-() const
+	    constexpr Vector operator-() const
 	    {
 	        Vector ret;
 	        for(Integer i = 0; i < Dim; ++i) {
@@ -54,7 +74,7 @@ namespace mars {
 	        return ret;
 	    }
 
-	    Vector operator-(const Vector &right) const
+	    constexpr Vector operator-(const Vector &right) const
 	    {
 	        Vector ret;
 	        for(Integer i = 0; i < Dim; ++i) {
@@ -64,7 +84,7 @@ namespace mars {
 	        return ret;
 	    }
 	    
-	    Vector operator+(const Vector &right) const
+	    constexpr Vector operator+(const Vector &right) const
 	    {
 	        Vector ret;
 	        for(Integer i = 0; i < Dim; ++i) {
@@ -74,7 +94,7 @@ namespace mars {
 	        return ret;
 	    }
 
-	     Vector& operator=(const Vector &right)
+	     constexpr Vector& operator=(const Vector &right)
 	    {
 	        for(Integer i = 0; i < Dim; ++i) {
 	            (*this)(i) = right(i);
@@ -92,7 +112,7 @@ namespace mars {
 	    //     return *this;
 	    // }
 	    
-	    Vector &operator=(const T &value) const
+	    constexpr Vector &operator=(const T &value) const
 	    {
 	        for(Integer i = 0; i < Dim; ++i) {
 	            (*this)(i) = value;
@@ -101,7 +121,7 @@ namespace mars {
 	        return *this;
 	    }
 
-	    Vector &operator+=(const Vector &right)
+	    constexpr Vector &operator+=(const Vector &right)
 	    {
 	        for(Integer i = 0; i < Dim; ++i) {
 	            (*this)(i) += right(i);
@@ -110,7 +130,7 @@ namespace mars {
 	        return *this;
 	    }
 
-	    Vector &operator-=(const Vector &right)
+	    constexpr Vector &operator-=(const Vector &right)
 	    {
 	        for(Integer i = 0; i < Dim; ++i) {
 	            (*this)(i) -= right(i);
@@ -119,7 +139,7 @@ namespace mars {
 	        return *this;
 	    }
 
-	    Vector &operator*=(const T &right)
+	    constexpr Vector &operator*=(const T &right)
 	    {
 	        for(Integer i = 0; i < Dim; ++i) {
 	            (*this)(i) *= right;
@@ -128,7 +148,7 @@ namespace mars {
 	        return *this;
 	    }
 
-	    Vector &operator/=(const T &right)
+	    constexpr Vector &operator/=(const T &right)
 	    {
 	        for(Integer i = 0; i < Dim; ++i) {
 	            (*this)(i) /= right;
@@ -137,7 +157,7 @@ namespace mars {
 	        return *this;
 	    }
 
-	    Vector operator*(const Vector &right) const
+	    constexpr Vector operator*(const Vector &right) const
 	    {
 	        Vector ret;
 	        for(Integer i = 0; i < Dim; ++i) {
@@ -147,30 +167,34 @@ namespace mars {
 	        return ret;
 	    }
 	    
-	    inline T &operator()(const Integer i)
+	    inline constexpr T &operator()(const Integer i)
 	    {
 	        assert(i < Dim);
 	        return values[i];
 	    }
 	    
-	    inline const T &operator()(const Integer i) const
+	    inline constexpr const T &operator()(const Integer i) const
 	    {
 	        assert(i < Dim);
 	        return values[i];
 	    }
 	    
-	    inline T &operator[](const Integer i)
+	    inline constexpr T &operator[](const Integer i)
 	    {
 	        assert(i < Dim);
 	        return values[i];
 	    }
 	    
-	    inline const T &operator[](const Integer i) const
+	    inline constexpr const T &operator[](const Integer i) const
 	    {
 	        assert(i < Dim);
 	        return values[i];
 	    }
 
+
+	    // constexpr Vector(const T& t) 
+	    // {for(Integer ii=0;ii<Dim;ii++)
+	    // 	 values[ii]=static_cast<T>(t);}
 
 	    void describe(std::ostream &os) const
 	    {
@@ -187,7 +211,7 @@ namespace mars {
 	        return os;
 	    }
 
-	    inline T squared_norm() const
+	    inline constexpr T squared_norm() const
 	    {
 	        T sqn = (*this)(0) * (*this)(0);
 	        for(Integer i = 1; i < Dim; ++i)
@@ -198,12 +222,12 @@ namespace mars {
 	        return sqn;
 	    }
 
-	    inline T norm() const
+	    inline constexpr T norm() const
 	    {
 	        return std::sqrt(squared_norm());
 	    }
 
-	    Vector &normalize() {
+	    constexpr Vector &normalize() {
 	        T len = norm();
 
 	        for(Integer i = 0; i < Dim; ++i) {
@@ -213,13 +237,13 @@ namespace mars {
 	        return *this;
 	    }
 
-	    inline Vector &zero()
+	    inline constexpr Vector &zero()
 	    {
 	        std::fill(begin(values), end(values), 0.);
 	        return *this;
 	    }
 
-	    inline Vector &set(const Real value)
+	    inline constexpr Vector &set(const Real value)
 	    {
 	    	std::fill(begin(values), end(values), value);
 	    	return *this;
@@ -227,10 +251,10 @@ namespace mars {
 
 
 
-	    inline const T sum() 
+	    inline constexpr T sum() const
 	    {
-	        T s=0;
-	        for(Integer i = 0; i < Dim; ++i) {
+	        T s=(*this)(0);
+	        for(Integer i = 1; i < Dim; ++i) {
 	            s+=(*this)(i);
 	        }
 	        return s;
@@ -239,7 +263,7 @@ namespace mars {
         // this works if T is Real, vector, matrix.
         // It does not for integers, in general (it should return a Real)
         // this is why we call it Tmean and not mean
-	    inline const T Tmean() 
+	    inline constexpr const T Tmean() 
 	    {
 	        return sum()/Dim;
  	    }
@@ -250,7 +274,7 @@ namespace mars {
 	};
 
 	template<typename T, Integer Dim>
-	inline T dot(const Vector<T, Dim> &left, const Vector<T, Dim> &right)
+	inline constexpr T dot(const Vector<T, Dim> &left, const Vector<T, Dim> &right)
 	{
 		T ret = 0.;
 		for(Integer d = 0; d < Dim; ++d) {

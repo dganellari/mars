@@ -6,6 +6,20 @@
 #include <vector>
 
 namespace mars {
+
+	//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//////// Number<N>
+	//////// Class used to use Numbers as types and avoid constexpr arrays
+	//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	template<Integer N>
+	class Number
+	{
+	public:
+	  static constexpr Integer value=N;
+	};
+	using Zero=Number<0>;
+	using One=Number<1>;
+
 	template<Integer N>
 	class Factorial {
 	public:
@@ -169,6 +183,9 @@ namespace mars {
 	};
 
 
+	// given an index_sequence<std::size_t Is...>, create the corresponding variadic T...
+	template <typename T, std::size_t>
+	using getTypeSequence = T;
 
 	// template<>
 	// class Combinations<3, 2> {

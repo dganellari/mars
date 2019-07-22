@@ -5,18 +5,6 @@
 
 namespace mars{
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////// Number<N>
-//////// Class used to use Numbers as types and avoid constexpr arrays
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-template<Integer N>
-class Number
-{
-public:
-  static constexpr Integer value=N;
-};
-using Zero=Number<0>;
-using One=Number<1>;
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////// TupleOfNumbers<Nmin,Nmax>
@@ -446,12 +434,11 @@ inline typename std::enable_if<(N==TupleTypeSize<NonZeroNumbers>::value-1)  , vo
 StaticMatrixProductAux(const Matrix<T,Rows,CommonDim> & m1,const  Matrix<T,CommonDim,Cols>& m2, Matrix<T,Rows,Cols> & m3)
 {
  constexpr Integer Tot=GetType<N,NonZeroNumbers>::value;
-
  // constexpr Integer J=Modulo<Tot,Rows>::value;
  // constexpr Integer I=Tot/Rows;
- // m3(I,J)=0;
- //  for(Integer kk=0;kk<CommonDim;kk++)
-    // m3(I,J)+=m1(I,kk)*m2(kk,J);
+  // m3(I,J)=m1(I,0)*m2(0,J);
+  // for(Integer kk=1;kk<CommonDim;kk++)
+  //   m3(I,J)+=m1(I,kk)*m2(kk,J);
 
 m3(Tot)=StaticScalarProductForMatrixProduct<GetType<Tot,NonZeroProducts>>(m1,m2);
 
@@ -461,12 +448,11 @@ template<typename NonZeroNumbers, typename NonZeroProducts,Integer N,typename T,
 inline typename std::enable_if<(N<TupleTypeSize<NonZeroNumbers>::value-1)  , void>::type
 StaticMatrixProductAux(const Matrix<T,Rows,CommonDim> & m1,const  Matrix<T,CommonDim,Cols>& m2, Matrix<T,Rows,Cols> & m3)
 {
-   constexpr Integer Tot=GetType<N,NonZeroNumbers>::value;
-
+ constexpr Integer Tot=GetType<N,NonZeroNumbers>::value;
  // constexpr Integer J=Modulo<Tot,Rows>::value;
  // constexpr Integer I=Tot/Rows;
-  // m3(I,J)=0;
-  // for(Integer kk=0;kk<CommonDim;kk++)
+  // m3(I,J)=m1(I,0)*m2(0,J);
+  // for(Integer kk=1;kk<CommonDim;kk++)
   //   m3(I,J)+=m1(I,kk)*m2(kk,J);
 
    m3(Tot)=StaticScalarProductForMatrixProduct<GetType<Tot,NonZeroProducts>>(m1,m2);
@@ -496,8 +482,39 @@ inline typename std::enable_if<std::is_same<NonZeroNumbers,std::tuple<>>::value 
 
 
 
+template<typename T, Integer Rows,Integer Cols,typename...Ts>
+class StaticMatrix;
 
 
+// StaticMatrix< T,Rows,Cols>: we do not provide any boolean information, so everything is put to One
+template<typename T, Integer Rows,Integer Cols>
+class StaticMatrix< T,Rows,Cols>
+{
+public:
+ using boolean=TupleOfType<Rows*Cols,One>;
+private:
+
+};
+
+
+// StaticMatrix< T,Rows,Cols,std::tuple<Args...>>: we do not provide any boolean information, so everything is put to One
+template<typename T, Integer Rows,Integer Cols,typename...Args>
+class StaticMatrix< T,Rows,Cols,std::tuple<Args...>>: public Matrix<T,Rows,Cols>
+{
+public:
+ using boolean=std::tuple<Args...>;
+};
+
+// StaticMatrix< T,Rows,Cols,Args...>: we provide boolean information, Args=One,Zero,One,One...
+template<typename T, Integer Rows,Integer Cols,typename...Args>
+class StaticMatrix : public Matrix<T,Rows,Cols>
+{
+  public:
+   static_assert(sizeof...(Args)==Rows*Cols,"In StaticMatrix, provide exactly Rows*Cols Zero or One as arguments ");
+   using boolean=std::tuple<Args...>;
+
+
+};
 
 
 // template<Integer M,Integer N>

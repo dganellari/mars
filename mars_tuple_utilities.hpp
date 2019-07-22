@@ -5,9 +5,34 @@
 #define MARS_TUPLE_UTILITIES_HPP
 
 #include "mars_base.hpp"
+#include "mars_static_math.hpp"
 
 namespace mars{
 
+
+
+
+template<typename T,Integer Nmax,Integer N>
+class TupleOfTypeTCreateHelper;
+
+template<typename T,Integer Nmax>
+class TupleOfTypeTCreateHelper<T,Nmax,Nmax>
+{
+public:
+  using type=std::tuple<T>;
+};
+
+template<typename T,Integer Nmax,Integer N>
+class TupleOfTypeTCreateHelper
+{
+ public:
+  static_assert(N<=Nmax,"  In TupleNumberCreate Nmin<=Nmax");
+  using single_type =std::tuple<T>;
+  using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                      std::declval<typename TupleOfTypeTCreateHelper<T,Nmax,N+1>::type>()));
+};
+template<typename T,Integer Size>
+using TupleOfTypeTCreate=typename TupleOfTypeTCreateHelper<T,Size-1,0>::type;
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////// Get the N-th type of the tuple std::tuple<T, Ts...>
@@ -646,38 +671,106 @@ using TupleOfTupleRemoveQuadrature=typename TupleOfTupleRemoveQuadratureHelper<0
 
 
 
-template<typename Operator, typename Elem, typename BaseFunctioSpace>
+
+
+
+
+
+
+
+
+template<typename TupleOfSpaces, Integer Nmax,Integer N>
+class UniqueFEFamiliesHelper;
+
+template<typename TupleOfSpaces, Integer Nmax>
+class UniqueFEFamiliesHelper<TupleOfSpaces,Nmax,Nmax>
+{
+ public:
+
+  using Space=GetType<1,GetType<Nmax,TupleOfSpaces>>;
+  using type=std::tuple< Number<Space::FEFamily> >;
+};
+
+template<typename TupleOfSpaces, Integer Nmax,Integer N=0>
+class UniqueFEFamiliesHelper
+{
+ public:
+  using Space=GetType<1,GetType<N,TupleOfSpaces>>;
+  using single_type=std::tuple< Number<Space::FEFamily> >;
+  using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                             std::declval<typename UniqueFEFamiliesHelper<TupleOfSpaces,Nmax,N+1>::type>()));
+};
+
+
+template<typename TupleOfSpaces>
+using UniqueFEFamilies=RemoveTupleDuplicates<typename UniqueFEFamiliesHelper<TupleOfSpaces,TupleTypeSize<TupleOfSpaces>::value-1,0>::type>;
+
+
+
+
+template<typename TupleOfSpaces, typename TupleFEFamilies,Integer Nmax,Integer N>
+class SpacesToUniqueFEFamiliesHelper;
+
+template<typename TupleOfSpaces, typename TupleFEFamilies,Integer Nmax>
+class SpacesToUniqueFEFamiliesHelper<TupleOfSpaces,TupleFEFamilies,Nmax,Nmax>
+{
+ public:
+  using FamilyNumber=Number<GetType<1,GetType<Nmax,TupleOfSpaces>>::FEFamily>;
+  using PositionNumber=Number<TypeToTupleElementPosition<FamilyNumber,TupleFEFamilies>::value>;
+  using type=std::tuple< PositionNumber >;
+};
+
+template<typename TupleOfSpaces, typename TupleFEFamilies,Integer Nmax,Integer N=0>
+class SpacesToUniqueFEFamiliesHelper
+{
+ public:
+  using FamilyNumber=Number<GetType<1,GetType<N,TupleOfSpaces>>::FEFamily>;
+  using PositionNumber=Number<TypeToTupleElementPosition<FamilyNumber,TupleFEFamilies>::value>;
+  using single_type=std::tuple< PositionNumber  >;
+  using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                             std::declval<typename SpacesToUniqueFEFamiliesHelper<TupleOfSpaces,TupleFEFamilies,Nmax,N+1>::type>()));
+};
+
+
+
+template<typename TupleOfSpaces, typename TupleFEFamilies>
+using SpacesToUniqueFEFamilies=typename SpacesToUniqueFEFamiliesHelper<TupleOfSpaces,TupleFEFamilies,TupleTypeSize<TupleOfSpaces>::value-1,0>::type;
+
+
+
+
+template<typename Operator, typename Elem,Integer FEFamily> //  BaseFunctioSpace>
 class MapFromReference5;
 
-template<typename Tuple, typename  BaseSpace, Integer Nmax,Integer N>
+template<typename Tuple, Integer FEFamily, Integer Nmax,Integer N>
 class MapOperatorTupleHelper;
 
-template<typename Tuple, typename BaseSpace, Integer Nmax>
-class MapOperatorTupleHelper<Tuple,BaseSpace,Nmax,Nmax>
+template<typename Tuple, Integer FEFamily, Integer Nmax>
+class MapOperatorTupleHelper<Tuple,FEFamily,Nmax,Nmax>
 {
  public:
 
   using Nthelem=GetType<Nmax,Tuple>;
   using Operator=GetType<0,Nthelem>;
   using Elem=GetType<1,Nthelem>;
-  using type=std::tuple< MapFromReference5<Operator,Elem,BaseSpace> >;
+  using type=std::tuple< MapFromReference5<Operator,Elem,FEFamily> >;
 };
 
-template<typename Tuple, typename BaseSpace,Integer Nmax,Integer N=0>
+template<typename Tuple, Integer FEFamily,Integer Nmax,Integer N=0>
 class MapOperatorTupleHelper
 {
  public:
   using Nthelem=GetType<N,Tuple>;
   using Operator=GetType<0,Nthelem>;
   using Elem=GetType<1,Nthelem>;
-  using single_type=std::tuple< MapFromReference5<Operator,Elem,BaseSpace> >;
+  using single_type=std::tuple< MapFromReference5<Operator,Elem,FEFamily> >;
   using type=decltype(std::tuple_cat(std::declval<single_type>(),
-                             std::declval<typename MapOperatorTupleHelper<Tuple,BaseSpace,Nmax,N+1>::type>()));
+                             std::declval<typename MapOperatorTupleHelper<Tuple,FEFamily,Nmax,N+1>::type>()));
 };
 
 
-template<typename Tuple, typename BaseSpace,Integer Nmax>
-using MapOperatorTuple=typename MapOperatorTupleHelper<Tuple,BaseSpace,Nmax,0>::type;
+template<typename Tuple, Integer FEFamily,Integer Nmax>
+using MapOperatorTuple=typename MapOperatorTupleHelper<Tuple,FEFamily,Nmax,0>::type;
 
 
 template<typename TupleOfTuple, typename TupleSpaces, Integer Nmax,Integer N>
@@ -689,9 +782,9 @@ class MapOperatorTupleOfTupleHelper<TupleOfTuple,TupleSpaces, Nspaces, Nspaces>
 {
 public:
 using Tuple=GetType<Nspaces,TupleOfTuple>;
-using BaseSpace=GetType<1,GetType<Nspaces,TupleSpaces>>;
+static constexpr Integer FEFamily=GetType<1,GetType<Nspaces,TupleSpaces>>::FEFamily;
 static constexpr Integer Nmax=TupleTypeSize<Tuple>::value-1;
-using type=std::tuple< MapOperatorTuple< Tuple,BaseSpace,Nmax> > ;
+using type=std::tuple< MapOperatorTuple< Tuple,FEFamily,Nmax> > ;
 };
 
 template<typename TupleOfTuple,typename TupleSpaces, Integer Nspaces, Integer N=0>
@@ -699,9 +792,9 @@ class MapOperatorTupleOfTupleHelper
 {
 public:
 using Tuple=GetType<N,TupleOfTuple>;
-using BaseSpace=GetType<1,GetType<N,TupleSpaces>>;
+static constexpr Integer FEFamily=GetType<1,GetType<N,TupleSpaces>>::FEFamily;
 static constexpr Integer Nmax=TupleTypeSize<Tuple>::value-1;
-using single_type=std::tuple< MapOperatorTuple< Tuple, BaseSpace, Nmax> > ;
+using single_type=std::tuple< MapOperatorTuple< Tuple, FEFamily, Nmax> > ;
 using type=decltype(std::tuple_cat(std::declval<single_type>(),
                            std::declval<typename MapOperatorTupleOfTupleHelper<TupleOfTuple,TupleSpaces,Nspaces,N+1>::type>()));
 };
@@ -709,6 +802,20 @@ using type=decltype(std::tuple_cat(std::declval<single_type>(),
 template<typename TupleOfTuple,typename TupleSpaces>
 using MapOperatorTupleOfTuple=typename MapOperatorTupleOfTupleHelper<TupleOfTuple,TupleSpaces,TupleTypeSize<TupleSpaces>::value-1,0>::type;
 
+
+
+
+
+
+
+
+
+
+
+
+auto minchia()
+{int a=1;
+return a;}
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///// Create Tuple (for each function space) of tuples of shape functions related to the pair of pair<operator,quadrature_rule>

@@ -55,11 +55,13 @@ list(APPEND MARS_HEADERS
 	mars_quality.hpp
 	mars_ranked_edge.hpp
 	mars_red_green_refinement.hpp
+	mars_referencemap.hpp
 	mars_shape_function.hpp
 	mars_simplex.hpp
 	mars_static_math.hpp
 	mars_stream.hpp
 	mars_test.hpp
+	mars_tensor_base.hpp
 	mars_tracker.hpp
 	mars_tuple_utilities.hpp
 	mars_utils.hpp
@@ -80,7 +82,7 @@ set(CMAKE_CXX_DEBUG "-g")
 
 add_library(mars STATIC ${MARS_HEADERS} ${MARS_SOURCES})
 target_link_libraries(mars ${MPI_LIBRARIES})
-#target_compile_features(mars PUBLIC cxx_std_11)
+target_compile_features(mars PUBLIC cxx_std_14)
 add_definitions("-std=c++11")
 target_include_directories(mars PUBLIC .)
 

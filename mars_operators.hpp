@@ -177,7 +177,8 @@ public:
  template<typename T,Integer Rows,Integer Cols>
  Matrix<T,1,Rows> operator()(const Matrix<T, Rows,Cols> &A,const Matrix<T, 1,Cols> &B)
  {
-       Matrix<T,1,Rows> result=0;
+       Matrix<T,1,Rows> result;
+       result.zero();
        for(Integer i = 0; i < Rows; ++i) 
          for(Integer j = 0; j < Cols; ++j) 
              result(0,i) += A(i, j) * B(0,j);

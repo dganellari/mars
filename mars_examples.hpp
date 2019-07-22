@@ -56,11 +56,6 @@ using std::endl;
 
 
 
-
-
-
-
-
 void cents_example()
 {
     using Point=Vector<Real,3>;
@@ -76,7 +71,6 @@ void cents_example()
     constexpr Integer NQPoints=GaussPoints<Elem,QPOrder>::NQPoints; 
     using QP=typename GaussPoints<Elem,QPOrder>::qp_points_type;
     GaussPoints<Elem,QPOrder> gauss;
-    const auto& qp_points=gauss.qp_points();
 
 Elem elem;
 Matrix<Real, Dim, ManifoldDim> J;
@@ -205,7 +199,6 @@ const auto tup0=std::get<0>(tup);
 std::cout<<"examples value="<<tup0.value<<std::endl;
 auto& mm=W1.space_avatar();
 
-
 // TupleTrialOrTest<decltype(W)::type_tuple_spaces,0> eeee(3);
 // TupleTrialOrTest<decltype(W)::type_tuple_spaces,1> eeee2(3);
 
@@ -283,38 +276,38 @@ std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(rr3))::Nmax<<std::endl;
  TupleOfTupleNoQuadrature feef;
 
 
+TupleOfTupleNoQuadrature deel;
+TupleSpacesW1 r3r;
 MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,TupleSpacesW1> eeded;
-typename ShapeFunctionAssembly<TupleSpacesW1,TupleOperatorsAndQuadratureW1>::type fghi;
-
-SubTupleType<3,6,std::tuple<int,char, double,std::tuple< >,long,int,char, double,std::tuple< > > >  acca;//(4);
-
-
-using tp1=std::tuple<Number<0>,Number<1>,Number<0>>;
-using tp2=std::tuple<Number<0>,Number<2>,Number<3>>;
-using tp3=std::tuple< Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1> >;
-using tp4=std::tuple< Number<1>,Number<1>,Number<1>,Number<0>,Number<1>,Number<1>,Number<0>,Number<0>,Number<1>,Number<0>,Number<0>,Number<0> >;
-
-std::cout<<W.n_dofs()<<std::endl;
-std::cout<<W1.n_dofs()<<std::endl;
-
-StaticVectorContractionFindNonZeros<tp1,tp2 > frre;
-Vector<Real,9> v1{1,1,1,0,1,1,0,0,1};
-Vector<Real,9> v2{1,2,3,0,4,5,0,0,9};
+TupleOfTupleNoQuadrature frfr;
+UniqueFEFamilies<TupleSpacesW1> ufe;
+SpacesToUniqueFEFamilies<TupleSpacesW1,UniqueFEFamilies<TupleSpacesW1>> mce;
+// typename ShapeFunctionAssembly<TupleSpacesW1,TupleOperatorsAndQuadratureW1>::type fghi(4);
 
 
 
 
-using tp5=std::tuple< Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1> >;
-using tp6=std::tuple< Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1>,Number<1> >;
+std::cout<<"MINCHIA="<<minchia()<<std::endl;
+
+
+
+using tp5=std::tuple< Number<1>,Number<0>,Number<0>,Number<0>,Number<1>,Number<0>,Number<0>,Number<0>,Number<0>>;
+using tp6=std::tuple< Number<1>,Number<0>,Number<0>,Number<0>,Number<1>,Number<0>,Number<0>,Number<0>,Number<0>>;
 using nonzeroproduct=StaticBooleanMatrixMatrixMultiplicationFindNonZeros<3,3,tp5,3,3,tp6>;
 using booleanmatrix=TupleOfTupleToBooleanTuple<nonzeroproduct>;
 using findnonzeronumbers=FindNonZeroNumbers<booleanmatrix>;
 Matrix<Real,3,3> mat1{1,2,3,4,5,6,7,8,9};
 Matrix<Real,3,3> mat2{2,3,4,5,6,7,8,9,10};
-Matrix<Real,3,3> mat3{0,0,0,0,0,0,0,0,0};
-Matrix<Real,3,3> mat4{0,0,0,0,0,0,0,0,0};
+Matrix<Real,3,3> mat3;//{0,0,0,0,0,0,0,0,0};
+Matrix<Real,3,3> mat4;//{0,0,0,0,0,0,0,0,0};
 
 
+constexpr Integer Rows=3;
+constexpr Integer Cols=3;
+
+using boolean1=std::tuple<One,Zero,Zero,One,One,Zero,Zero,Zero,One>;
+StaticMatrix<Real,3,3,boolean1> ede;
+StaticMatrix<Real,3,3> hfe;
 
 Real nonzero;
 Integer Constant=pow(10,7);
@@ -322,15 +315,93 @@ Integer Constant=pow(10,7);
 
 
 
+constexpr std::array<Integer,4> arr{1,2,3,4};
+constexpr Integer b=arr[0];
+
+Matrix<Real,2,2> mat5{2,2,2,2};
+Matrix<Real,2,2> mat7;
+
+constexpr std::array<Real, 4> a6{1,1,1,1};
+static_assert(a6[0]==1,"erfrr");
+
+
+std::cout<<"mat5="<<mat5<<std::endl;
+
+
+ShapeFunctionDependent<Simplex<2,2>,Lagrange1<2>,IdentityOperator,GaussPoints<Elem,3>> sfd;
+
+std::cout<<sfd.reference()<<std::endl;
+
+constexpr const QPValues<int,2> qpc{1,2};
+constexpr const FQPValues<int,1,2> fqpc{{{1},{2}}};
+constexpr const Vector<Vector<Real,1>,2> fqpc2{{1.0},{2.0}};
+// ShapeFunctionDependent<Simplex<2,2>,Lagrange1<2>,IdentityOperator,GaussPoints<Elem,3>> sfd4;
+
+// constexpr auto romolo=ShapeFunctionDependent<Simplex<2,2>,Lagrange1<2>,IdentityOperator,GaussPoints<Elem,3>>::init_reference(GaussPoints<Elem,3>::qp_points);
+
+// Matrix<double,2,2> dynamicmat3{0.1,0.2,0.3,0.4};
+
+// static_assert(staticmat(0,0)==0.1," is not 2");
+// static_assert(staticmat2(0,0)==0.1," is not 2");
+// assert(dynamicmat3(0,0)==0.1 &&" is not 2");
+
+
+// Matrix<Real, 2, 2> jac3{0.1,2,3,5};
+// static constexpr Matrix<Real,1,1> f{0.1};
+// static constexpr Matrix<Matrix<Real,1,1>, 2, 2> jk4{0.1,0.1,0.1,0.1};//,f,f,f};
+
+// Matrix< Vector<Real,5>, 2, 2> jk5{0.1,0.1,0.1,0.1};
+// // Matrix< Matrix<Real,1,1>, 2, 2> jk7{f,f,f,{0.1}};
+
+//  MAtrixProva3< MAtrixProva3<Real,1,1>, 2, 2> jk6{ {0.1},{0.1},{0.1},{0.1} };
+
+
+//  constexpr MAtrixProva3< Real, 2, 2> jac4{1,1,2,3};
+// jacobian(elem,points,jac3);
+
+
+   static constexpr Matrix<double,2,2> staticmat{0.1,0.2,0.3,0.4};
+   Matrix<double,2,2> jac{0.1,0.2,0.3,0.4};
+
+   constexpr int zero=0;
+   constexpr auto staticrow=staticmat.get_row(zero);
+   
+   constexpr auto static00=staticmat(0,0);
+   Matrix<Matrix<double,1,1>, 2, 2> a4{{0.1}, {0.1}, {0.1}, {0.1}};
+   Matrix<Matrix<double,1,1>, 2, 2> b4{0.1, 0.1, 0.1, 0.1};
+
+   static constexpr Vector<int,2> staticvec{1,2};
+   jacobian(elem,points,jac);
+
+   constexpr double somma=staticvec.sum();
+   static_assert(somma==3,"wrong static vector sum");
+   static_assert(QPSimplex1_qp_points(0,1)==0.33333333333333,"wrong static vector sum");
+
+   static_assert(GaussPoints< Simplex<Dim,2> , 1>::qp_points(0,0)==0.33333333333333,"wroeeeeeeeeng static vector sum");
+   static_assert(GaussPoints< Simplex<Dim,2> , 1>::qp_points(0,1)==0.33333333333333,"wroeeeeeeeeng static vector sum");
+std::cout<<"points="<<points[0]<<std::endl;
+std::cout<<"points="<<points[1]<<std::endl;
+std::cout<<"GaussPoints="<<QPSimplex1_qp_points(0,0)<<std::endl;
+std::cout<<"GaussPoints="<<QPSimplex1_qp_points(0,1)<<std::endl;
+std::cout<<"GaussPoints="<<GaussPoints< Simplex<Dim,2> , 1>::qp_points(0,0)<<std::endl;
+std::cout<<"GaussPoints="<<GaussPoints< Simplex<Dim,2> , 1>::qp_points(0,1)<<std::endl;
+// std::cout<<"GaussPoints="<<GaussPoints< Simplex<Dim,2> , 1>::qp_points(0,1)<<std::endl;
+
+constexpr auto mmm=staticmat;
  clock_t begin = clock();
   for(Integer ii=0;ii<Constant;ii++)
   {
- 
-    // nonzero=StaticScalarProductForMatrixProduct<nonzeronumbers2>(mat1,mat2);;
+    //     for(Integer i = 0; i < 3; ++i) {
+    //       for(Integer j = 0; j < 3; ++j) {
+    //           mat1(i, j) = mat1(i, j) /pow(1.0,1.0/ii);
+    //         }
+    //       }
+        
 
-    StaticMatrixProduct<findnonzeronumbers,nonzeroproduct>(mat1,mat2,mat3);
+    // StaticMatrixProduct<findnonzeronumbers,nonzeroproduct>(mat1,mat2,mat3);
     // StaticMatrixProduct<findnonzeronumbers,nonzeroproduct>(mat1,mat3,mat4);
-    // mat3=mat1*mat1*mat2;
+    // mat3=mat1*mat2;
+    
 
         // mat3=0;
         // for(Integer i = 0; i < 3; ++i) {
@@ -340,6 +411,18 @@ Integer Constant=pow(10,7);
         //     }
         //   }
         // }
+
+//         for(Integer i = 0; i < 3; ++i) {
+//           for(Integer j = 0; j < 3; ++j) {
+//             mat3(i, j) = mat1(i, 0) * mat2(0,j);
+//             for(Integer k = 1; k < 1; ++k) {
+//               mat3(i, j) += mat1(i, k) * mat2(k,j);
+//             }
+//           }
+//         }
+
+
+// nonzero+=mat3(0,0)+mat3(0,1)+mat3(0,2)+mat3(1,0)+mat3(1,1)+mat3(1,2)+mat3(2,0)+mat3(2,1)+mat3(2,2);
 
    // nonzero=StaticScalarProduct<Nonzero>(v1,v2);
     // StaticMatrixProduct<findnonzeronumbers,nonzeroproduct>(mat1,mat2,mat3,vec1,vec2);
@@ -356,7 +439,7 @@ Integer Constant=pow(10,7);
   clock_t end = clock();
   double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
 
-std::cout<<mat3<<std::endl;
+std::cout<<"mat==="<<mat3<<std::endl;
 
 std::cout<<" elapsed_secs------------>"<<elapsed_secs<<std::endl;
 
