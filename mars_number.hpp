@@ -61,6 +61,32 @@ class TupleShiftedNumberCreateHelper
 template<Integer Nmin,Integer Nshift,Integer Nmax>
 using TupleOfShiftedNumbers=typename TupleShiftedNumberCreateHelper<Nmin,Nshift,((Nmax-Nmin)/Nshift)*Nshift+Nmin,Nmin>::type;
 
+
+
+template <typename TupleOfNumbers,Integer Nmax,Integer N>
+class MaxNumberInTupleHelper;
+
+template <typename TupleOfNumbers,Integer Nmax>
+class MaxNumberInTupleHelper<TupleOfNumbers,Nmax,Nmax>
+{
+ public:
+  static constexpr Integer value=GetType<Nmax,TupleOfNumbers>::value;
+ };
+
+template <typename TupleOfNumbers,Integer Nmax,Integer N>
+class MaxNumberInTupleHelper
+{
+ public:
+  static constexpr Integer value=Max(GetType<N,TupleOfNumbers>::value, MaxNumberInTupleHelper<TupleOfNumbers,Nmax,N+1>::value);
+ };
+
+template <typename TupleOfNumbers>
+class MaxNumberInTuple
+{
+public:
+ static constexpr Integer value=MaxNumberInTupleHelper<TupleOfNumbers,TupleTypeSize<TupleOfNumbers>::value-1,0 >::value;
+};
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////// FindNonZeroNumbers<TupleOfNumbers>
 //////// Create a tuple of the positions of the TupleOfNumbers which are non zero

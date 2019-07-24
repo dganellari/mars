@@ -186,17 +186,7 @@ ee2.init(J);
 const auto& ee3=ee2.get<0,1>();
 std::cout<<"examples reference"<<ee3.reference()<<std::endl;
 std::cout<<"examples function"<<ee3.function()<<std::endl;
-using All=std::tuple<int,char,double,int,char>;
-using Unique=std::tuple<int,char,double>;
-std::cout<<"examples value="<<ElementPosition<0,All,Unique>::value<<std::endl;
-std::cout<<"examples value="<<ElementPosition<1,All,Unique>::value<<std::endl;
-std::cout<<"examples value="<<ElementPosition<2,All,Unique>::value<<std::endl;
-std::cout<<"examples value="<<ElementPosition<3,All,Unique>::value<<std::endl;
-std::cout<<"examples value="<<ElementPosition<4,All,Unique>::value<<std::endl;
 
-TupleAllToUniqueMap<All,Unique> tup;
-const auto tup0=std::get<0>(tup);
-std::cout<<"examples value="<<tup0.value<<std::endl;
 auto& mm=W1.space_avatar();
 
 // TupleTrialOrTest<decltype(W)::type_tuple_spaces,0> eeee(3);
@@ -224,8 +214,8 @@ constexpr bool bool2[]={true,false,true};
 constexpr bool bool3[]={Max(bool1[0],bool2[0])};
 
 
-auto l20=L2Inner(mesh,Div(sigma),Div(tau))+L2Inner(mesh,Div(sigma),Div(tau));
-auto l21=L2Inner(mesh,Grad(u),Grad(v));
+// auto l20=L2Inner(mesh,Div(sigma),Div(tau))+L2Inner(mesh,Div(sigma),Div(tau));
+// auto l21=L2Inner(mesh,Grad(u),Grad(v));
 auto l22=L2Inner(mesh,Div(sigma),Div(tau))+
          L2Inner(mesh,Grad(u),Grad(v))+
          L2Inner(mesh,u,Div(tau))+
@@ -233,24 +223,24 @@ auto l22=L2Inner(mesh,Div(sigma),Div(tau))+
          L2Inner(mesh,r,s)+
          L2Inner(mesh,Grad(rr1)+sigma,tau);
 
-auto l23=L2Inner(mesh,Grad(u)+u,Grad(v));
-auto l24=L2Inner(mesh,Div(sigma)+u,Div(tau));
-auto l25=L2Inner(mesh,Grad(u)+sigma,Grad(v));
-auto l26=L2Inner(mesh,Grad(u)+sigma,Grad(v)+v);
-auto l27=L2Inner(mesh,Grad(u)+u+sigma+v,Grad(v)+Div(sigma)+v+u+tau);
+// auto l23=L2Inner(mesh,Grad(u)+u,Grad(v));
+// auto l24=L2Inner(mesh,Div(sigma)+u,Div(tau));
+// auto l25=L2Inner(mesh,Grad(u)+sigma,Grad(v));
+// auto l26=L2Inner(mesh,Grad(u)+sigma,Grad(v)+v);
+// auto l27=L2Inner(mesh,Grad(u)+u+sigma+v,Grad(v)+Div(sigma)+v+u+tau);
 
 
 // std::cout<<"tensorvector size="<<SupportOverlap<TensorVector1,1,TensorVector2,1,0,0>()<<std::endl;
 auto s3 =   MakeTest<bool1[0]+bool2[0]>(W1);
 std::cout<<"tensorvector size="<<Overlap<TensorVector1,TensorVector2>()<<std::endl;
 // std::cout<<"bbilinear order="<<l20.Order<<std::endl;
-std::cout<<"bbilinear order="<<l21.Order<<std::endl;
-// std::cout<<"bbilinear order="<<l22.Order<<std::endl;
-std::cout<<"bbilinear order="<<l23.Order<<std::endl;
-std::cout<<"bbilinear order="<<l24.Order<<std::endl;
-std::cout<<"bbilinear order="<<l25.Order<<std::endl;
-std::cout<<"bbilinear order="<<l26.Order<<std::endl;
-std::cout<<"bbilinear order="<<l27.Order<<std::endl;
+// std::cout<<"bbilinear order="<<l21.Order<<std::endl;
+// // std::cout<<"bbilinear order="<<l22.Order<<std::endl;
+// std::cout<<"bbilinear order="<<l23.Order<<std::endl;
+// std::cout<<"bbilinear order="<<l24.Order<<std::endl;
+// std::cout<<"bbilinear order="<<l25.Order<<std::endl;
+// std::cout<<"bbilinear order="<<l26.Order<<std::endl;
+// std::cout<<"bbilinear order="<<l27.Order<<std::endl;
 std::cout<<"decltype(Grad(u))::Nmax="<<decltype(Grad(u))::Nmax<<std::endl;
 std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(u))::value<<std::endl;
 std::cout<<"decltype(Grad(sigma))::N="<<decltype(Grad(sigma))::value<<std::endl;
@@ -278,10 +268,15 @@ std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(rr3))::Nmax<<std::endl;
 
 TupleOfTupleNoQuadrature deel;
 TupleSpacesW1 r3r;
+RemoveTupleDuplicates<TupleSpacesW1> l4feffe;
 MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,TupleSpacesW1> eeded;
 TupleOfTupleNoQuadrature frfr;
-UniqueFEFamilies<TupleSpacesW1> ufe;
-SpacesToUniqueFEFamilies<TupleSpacesW1,UniqueFEFamilies<TupleSpacesW1>> mce;
+TupleSpacesW1 ufe; //Number<10>,Number<11>
+SpacesToUniqueFEFamilies<TupleSpacesW1> mce;
+
+using Unique=SpacesToUniqueFEFamilies<TupleSpacesW1>;
+using Map=MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,TupleSpacesW1>;
+UniqueMap<Unique,Map> ok;
 // typename ShapeFunctionAssembly<TupleSpacesW1,TupleOperatorsAndQuadratureW1>::type fghi(4);
 
 
@@ -313,81 +308,16 @@ Real nonzero;
 Integer Constant=pow(10,7);
 
 
+ShapeFunctionDependent<Simplex<2,2>,RT0<2>,DivergenceOperator,GaussPoints<Elem,3>> sfd;
+std::cout<<"static reference shape function"<<std::endl;
+std::cout<<ShapeFunctionDependent<Simplex<2,2>,RT0<2>,DivergenceOperator,GaussPoints<Elem,2>>::reference_values<<std::endl;
+constexpr const auto ref=ShapeFunctionDependent<Simplex<2,2>,RT0<2>,DivergenceOperator,GaussPoints<Elem,2>>::reference_values;
+
+static_assert(ref[0][0](0,0)==2,"grad non ok");
+static_assert(ref[1][0](0,0)==2,"grad non ok");
+static_assert(ref[2][0](0,0)==2,"grad non ok");
 
 
-constexpr std::array<Integer,4> arr{1,2,3,4};
-constexpr Integer b=arr[0];
-
-Matrix<Real,2,2> mat5{2,2,2,2};
-Matrix<Real,2,2> mat7;
-
-constexpr std::array<Real, 4> a6{1,1,1,1};
-static_assert(a6[0]==1,"erfrr");
-
-
-std::cout<<"mat5="<<mat5<<std::endl;
-
-
-ShapeFunctionDependent<Simplex<2,2>,Lagrange1<2>,IdentityOperator,GaussPoints<Elem,3>> sfd;
-
-std::cout<<sfd.reference()<<std::endl;
-
-constexpr const QPValues<int,2> qpc{1,2};
-constexpr const FQPValues<int,1,2> fqpc{{{1},{2}}};
-constexpr const Vector<Vector<Real,1>,2> fqpc2{{1.0},{2.0}};
-// ShapeFunctionDependent<Simplex<2,2>,Lagrange1<2>,IdentityOperator,GaussPoints<Elem,3>> sfd4;
-
-// constexpr auto romolo=ShapeFunctionDependent<Simplex<2,2>,Lagrange1<2>,IdentityOperator,GaussPoints<Elem,3>>::init_reference(GaussPoints<Elem,3>::qp_points);
-
-// Matrix<double,2,2> dynamicmat3{0.1,0.2,0.3,0.4};
-
-// static_assert(staticmat(0,0)==0.1," is not 2");
-// static_assert(staticmat2(0,0)==0.1," is not 2");
-// assert(dynamicmat3(0,0)==0.1 &&" is not 2");
-
-
-// Matrix<Real, 2, 2> jac3{0.1,2,3,5};
-// static constexpr Matrix<Real,1,1> f{0.1};
-// static constexpr Matrix<Matrix<Real,1,1>, 2, 2> jk4{0.1,0.1,0.1,0.1};//,f,f,f};
-
-// Matrix< Vector<Real,5>, 2, 2> jk5{0.1,0.1,0.1,0.1};
-// // Matrix< Matrix<Real,1,1>, 2, 2> jk7{f,f,f,{0.1}};
-
-//  MAtrixProva3< MAtrixProva3<Real,1,1>, 2, 2> jk6{ {0.1},{0.1},{0.1},{0.1} };
-
-
-//  constexpr MAtrixProva3< Real, 2, 2> jac4{1,1,2,3};
-// jacobian(elem,points,jac3);
-
-
-   static constexpr Matrix<double,2,2> staticmat{0.1,0.2,0.3,0.4};
-   Matrix<double,2,2> jac{0.1,0.2,0.3,0.4};
-
-   constexpr int zero=0;
-   constexpr auto staticrow=staticmat.get_row(zero);
-   
-   constexpr auto static00=staticmat(0,0);
-   Matrix<Matrix<double,1,1>, 2, 2> a4{{0.1}, {0.1}, {0.1}, {0.1}};
-   Matrix<Matrix<double,1,1>, 2, 2> b4{0.1, 0.1, 0.1, 0.1};
-
-   static constexpr Vector<int,2> staticvec{1,2};
-   jacobian(elem,points,jac);
-
-   constexpr double somma=staticvec.sum();
-   static_assert(somma==3,"wrong static vector sum");
-   static_assert(QPSimplex1_qp_points(0,1)==0.33333333333333,"wrong static vector sum");
-
-   static_assert(GaussPoints< Simplex<Dim,2> , 1>::qp_points(0,0)==0.33333333333333,"wroeeeeeeeeng static vector sum");
-   static_assert(GaussPoints< Simplex<Dim,2> , 1>::qp_points(0,1)==0.33333333333333,"wroeeeeeeeeng static vector sum");
-std::cout<<"points="<<points[0]<<std::endl;
-std::cout<<"points="<<points[1]<<std::endl;
-std::cout<<"GaussPoints="<<QPSimplex1_qp_points(0,0)<<std::endl;
-std::cout<<"GaussPoints="<<QPSimplex1_qp_points(0,1)<<std::endl;
-std::cout<<"GaussPoints="<<GaussPoints< Simplex<Dim,2> , 1>::qp_points(0,0)<<std::endl;
-std::cout<<"GaussPoints="<<GaussPoints< Simplex<Dim,2> , 1>::qp_points(0,1)<<std::endl;
-// std::cout<<"GaussPoints="<<GaussPoints< Simplex<Dim,2> , 1>::qp_points(0,1)<<std::endl;
-
-constexpr auto mmm=staticmat;
  clock_t begin = clock();
   for(Integer ii=0;ii<Constant;ii++)
   {

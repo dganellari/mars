@@ -20,6 +20,7 @@ namespace mars {
 	using Zero=Number<0>;
 	using One=Number<1>;
 
+
 	template<Integer N>
 	class Factorial {
 	public:

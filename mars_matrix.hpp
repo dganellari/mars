@@ -29,6 +29,15 @@ namespace mars {
 		inline constexpr static Integer rows() { return Rows; }
 		inline constexpr static Integer cols() { return Cols; }
 
+		inline constexpr std::array<T,Rows*Cols> &operator()()
+		{
+			return values;
+		}
+
+		inline constexpr const std::array<T,Rows*Cols> &operator()()const
+		{
+			return values;
+		}
         // access matrix direclty by using I*Col+J index
 		inline constexpr T &operator()(const Integer i)
 		{
@@ -97,7 +106,7 @@ namespace mars {
 			assert(r < Rows && " row index must be smaller than number of rows");
             Vector<T, Cols> v;
 			for(Integer d = 0; d < Cols; ++d) {
-				v(d)=(*this)(r,d);
+				const_cast<T&>(static_cast<const std::array<T,Cols>& >(v())[d] )=(*this)(r,d);
 			}
 
 			return v;
@@ -166,7 +175,8 @@ namespace mars {
 			for(Integer i = 0; i < Rows; ++i) {
 				for(Integer j = 0; j < Cols; ++j) {
 					{
-						(*this)(i, j) = m(i,j);
+						// (*this)(i, j) = m(i,j);
+						const_cast<T&>(static_cast<const std::array<T,Rows*Cols> &>( (*this)() ) [i*cols()+j]) = m(i,j);
 					}
 				}
 			}
@@ -315,7 +325,9 @@ namespace mars {
 			for(Integer i = 0; i < Rows; ++i) {
 				for(Integer j = 0; j < Cols; ++j) {
 					{
-						ret(i,j) = (*this)(i, j) * alpha;
+					const_cast<T&>(static_cast<const std::array<T,Rows*Cols> &>( ret() ) [i*cols()+j])
+					 = (*this)(i, j) * alpha;
+					// ret(i,j) = (*this)(i, j) * alpha;
 					}
 				}
 			}
@@ -576,7 +588,9 @@ namespace mars {
 			for(Integer i = 0; i < Rows; ++i) {
 				for(Integer j = 0; j < Cols; ++j) {
 					{
-						ret(i,j) = mat(i, j) * alpha;
+						const_cast<T&>(static_cast<const std::array<T,Rows*Cols> &>( ret() ) [i*Cols+j])
+						= mat(i, j) * alpha;
+						// ret(i,j) = mat(i, j) * alpha;
 					}
 				}
 			}

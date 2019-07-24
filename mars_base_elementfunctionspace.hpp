@@ -42,18 +42,18 @@ class ComponentOperator
  {public: static constexpr Integer N=N_;
   ComponentOperator(){}};
 
-class Operator{public:
-               static  IdentityOperator identity_op;
-               static  DivergenceOperator divergence_op;
-               static  GradientOperator gradient_op;
-               static  CurlOperator curl_op; 
-               // static  ComponentOperator component_op; 
-               static  IdentityOperator id(){return identity_op;};
-               static  DivergenceOperator div(){return divergence_op;};
-               static  GradientOperator grad(){return gradient_op;};
-               static  CurlOperator curl(){return curl_op;};
-               // static  ComponentOperator component(){return component_op;};
-           };
+// class Operator{public:
+//                static  IdentityOperator identity_op;
+//                static  DivergenceOperator divergence_op;
+//                static  GradientOperator gradient_op;
+//                static  CurlOperator curl_op; 
+//                // static  ComponentOperator component_op; 
+//                static  IdentityOperator id(){return identity_op;};
+//                static  DivergenceOperator div(){return divergence_op;};
+//                static  GradientOperator grad(){return gradient_op;};
+//                static  CurlOperator curl(){return curl_op;};
+//                // static  ComponentOperator component(){return component_op;};
+//            };
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////----------  BASE  SPACE  ---------- //////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////

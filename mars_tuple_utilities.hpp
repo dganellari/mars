@@ -706,35 +706,107 @@ template<typename TupleOfSpaces>
 using UniqueFEFamilies=RemoveTupleDuplicates<typename UniqueFEFamiliesHelper<TupleOfSpaces,TupleTypeSize<TupleOfSpaces>::value-1,0>::type>;
 
 
+template <typename TupleOfNumbers,Integer Nmax,Integer N>
+class MaxNumberInTupleHelper;
 
-
-template<typename TupleOfSpaces, typename TupleFEFamilies,Integer Nmax,Integer N>
+template<typename TupleOfSpaces,Integer Nmax,Integer N>
 class SpacesToUniqueFEFamiliesHelper;
 
-template<typename TupleOfSpaces, typename TupleFEFamilies,Integer Nmax>
-class SpacesToUniqueFEFamiliesHelper<TupleOfSpaces,TupleFEFamilies,Nmax,Nmax>
+template<typename TupleOfSpaces,Integer Nmax>
+class SpacesToUniqueFEFamiliesHelper<TupleOfSpaces,Nmax,Nmax>
 {
  public:
+  using TupleFEFamilies=UniqueFEFamilies<TupleOfSpaces>;
   using FamilyNumber=Number<GetType<1,GetType<Nmax,TupleOfSpaces>>::FEFamily>;
   using PositionNumber=Number<TypeToTupleElementPosition<FamilyNumber,TupleFEFamilies>::value>;
   using type=std::tuple< PositionNumber >;
 };
 
-template<typename TupleOfSpaces, typename TupleFEFamilies,Integer Nmax,Integer N=0>
+template<typename TupleOfSpaces,Integer Nmax,Integer N=0>
 class SpacesToUniqueFEFamiliesHelper
 {
  public:
+  using TupleFEFamilies=UniqueFEFamilies<TupleOfSpaces>;
   using FamilyNumber=Number<GetType<1,GetType<N,TupleOfSpaces>>::FEFamily>;
   using PositionNumber=Number<TypeToTupleElementPosition<FamilyNumber,TupleFEFamilies>::value>;
   using single_type=std::tuple< PositionNumber  >;
   using type=decltype(std::tuple_cat(std::declval<single_type>(),
-                             std::declval<typename SpacesToUniqueFEFamiliesHelper<TupleOfSpaces,TupleFEFamilies,Nmax,N+1>::type>()));
+                             std::declval<typename SpacesToUniqueFEFamiliesHelper<TupleOfSpaces,Nmax,N+1>::type>()));
 };
 
 
 
-template<typename TupleOfSpaces, typename TupleFEFamilies>
-using SpacesToUniqueFEFamilies=typename SpacesToUniqueFEFamiliesHelper<TupleOfSpaces,TupleFEFamilies,TupleTypeSize<TupleOfSpaces>::value-1,0>::type;
+template<typename TupleOfSpaces>
+using SpacesToUniqueFEFamilies=typename SpacesToUniqueFEFamiliesHelper<TupleOfSpaces,TupleTypeSize<TupleOfSpaces>::value-1,0>::type;
+
+
+
+
+
+
+
+
+template<typename NumberTuple,typename Maps,Integer M, Integer Nmax,Integer N>
+class UniqueMapSingleSpaceHelper;
+
+template<typename NumberTuple,typename Maps,Integer M,Integer Nmax>
+class UniqueMapSingleSpaceHelper<NumberTuple,Maps,M,Nmax,Nmax>
+{
+ public:
+  using type= typename std::conditional< GetType<Nmax,NumberTuple>::value == M , GetType<Nmax,Maps> , std::tuple<>>::type;
+};
+
+template<typename NumberTuple,typename Maps,Integer M,Integer Nmax,Integer N=0>
+class UniqueMapSingleSpaceHelper
+{
+ public:
+  using single_type= typename std::conditional< GetType<N,NumberTuple>::value == M , GetType<N,Maps> , std::tuple<>>::type;
+  using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                             std::declval<typename UniqueMapSingleSpaceHelper<NumberTuple,Maps,M,Nmax,N+1>::type>()));
+};
+
+template<typename NumberTuple,typename Maps,Integer M>
+using UniqueMapSingleSpace=RemoveTupleDuplicates< typename UniqueMapSingleSpaceHelper<NumberTuple,Maps,M,TupleTypeSize<NumberTuple>::value-1,0>::type>;
+
+
+
+
+
+
+
+
+
+
+
+template <typename TupleOfNumbers>
+class MaxNumberInTuple;
+
+template<typename NumberTuple,typename Maps,Integer Nmax,Integer N>
+class UniqueMapHelper;
+
+
+template<typename NumberTuple,typename Maps,Integer Nmax>
+class UniqueMapHelper<NumberTuple,Maps,Nmax,Nmax>
+{
+ public:
+  using type= std::tuple<UniqueMapSingleSpace<NumberTuple,Maps,Nmax>>;
+};
+
+template<typename NumberTuple,typename Maps,Integer Nmax,Integer N=0>
+class UniqueMapHelper
+{
+ public:
+  using single_type= std::tuple<UniqueMapSingleSpace<NumberTuple,Maps,N>>;
+  using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                             std::declval<typename UniqueMapHelper<NumberTuple,Maps,Nmax,N+1>::type>()));
+};
+
+
+
+template<typename NumberTuple,typename Maps>
+using UniqueMap=typename UniqueMapHelper<NumberTuple,Maps,MaxNumberInTuple<NumberTuple>::value,0>::type;
+
+
 
 
 

@@ -13,7 +13,7 @@ template<typename Derived>
 class Expression
 {
 public:
-        inline Derived &derived() { return static_cast<Derived &>(*this); }
+        inline constexpr Derived &derived() { return static_cast<Derived &>(*this); }
         inline constexpr const Derived &derived() const { return static_cast<const Derived &>(*this); }
         inline operator Derived &() {return derived();}
         inline constexpr  operator const Derived &() const {return derived();}
@@ -26,21 +26,21 @@ public:
       using Base=Expression<Derived>;
       using Base::derived;
       using subtype=typename Type::subtype;
-      Type & value();
-      const Type & value()const;
+      constexpr Type & value();
+      constexpr const Type & value()const;
       
-      inline subtype &operator[](const Integer i) {return derived().value()[i];}
-      inline const subtype &operator[](const Integer i)const {return derived().value()[i];}
+      inline constexpr subtype &operator[](const Integer i) {return derived().value()[i];}
+      inline constexpr const subtype &operator[](const Integer i)const {return derived().value()[i];}
 
       // EQUAL
-      inline Derived& operator = (const Derived &u)
+      inline constexpr Derived& operator = (const Derived &u)
       {            
         value()=u.value();
         return *this;
       } 
 
       // BINARY ADD
-      inline Derived operator+(const Derived &other) const
+      inline constexpr Derived operator+(const Derived &other) const
       {
         Derived result;
         result.value()=derived().value()+other.value();
@@ -48,20 +48,20 @@ public:
       };
 
       // UNARY ADD
-      inline Derived operator+() const
+      inline constexpr Derived operator+() const
       {
          return derived();
       };
 
       // BINARY MINUS
-      inline Derived operator-(const Derived &other) const
+      inline constexpr Derived operator-(const Derived &other) const
       {
         Derived result;
         result.value()=derived().value()-other.value();
         return result;
       };
       // UNARY MINUS
-      inline Derived operator-() const
+      inline constexpr Derived operator-() const
       {
         Derived result;
         result.value()=-derived().value();
@@ -70,7 +70,7 @@ public:
 
     
       // LEFT SCALAR MULTIPLY
-      friend Derived operator *(const Real &alpha, const Derived& der) 
+      friend constexpr Derived operator *(const Real &alpha, const Derived& der) 
       { 
         Derived result;
         result.value()=alpha*der.value();
@@ -78,7 +78,7 @@ public:
       };
 
       // RIGHT SCALAR MULTIPLY
-      friend Derived operator *(const Derived& der,const Real &alpha) 
+      friend constexpr Derived operator *(const Derived& der,const Real &alpha) 
       { 
         Derived result;
         result.value()=alpha*der.value();
@@ -86,7 +86,7 @@ public:
       };
 
       // RIGHT SCALAR DIVISION
-      friend Derived operator /(const Derived& der,const Real &alpha) 
+      friend constexpr Derived operator /(const Derived& der,const Real &alpha) 
       { 
         Derived result;
         result.value()=der.value()/alpha;
@@ -94,25 +94,25 @@ public:
       };
 
       // RIGHT SCALAR EQUAL DIVISION
-      inline Derived& operator /=(const Real &alpha) 
+      inline constexpr Derived& operator /=(const Real &alpha) 
       { 
         (*this).derived().value()=(*this).derived().value()/alpha;
         return (*this).derived();
       };
       // RIGHT SCALAR EQUAL MULTIPLICATION
-      inline Derived& operator *=(const Real &alpha) 
+      inline constexpr Derived& operator *=(const Real &alpha) 
       { 
         (*this).derived().value()=(*this).derived().value()*alpha;
         return (*this).derived();
       };   
       // EQUAL ADDITION
-      inline Derived& operator +=(const Derived &other) 
+      inline constexpr Derived& operator +=(const Derived &other) 
       { 
         (*this).derived().value()=(*this).derived().value()+other.value();
         return (*this).derived();
       };  
       // EQUAL SUBTRACTION
-      inline Derived& operator -=(const Derived &other) 
+      inline constexpr Derived& operator -=(const Derived &other) 
       { 
         (*this).derived().value()=(*this).derived().value()-other.value();
         return (*this).derived();
@@ -146,9 +146,9 @@ public TensorBase<T, std::make_index_sequence<NQPoints>>
     using MB::MB;
     using MB::values;
     using type=  Vector<T,NQPoints>;
-    inline constexpr type& operator()() {return values;};
+    inline constexpr       type& operator()()      {return values;};
     inline constexpr const type& operator()()const {return values;};
-    inline constexpr type& value() {return values;};
+    inline constexpr       type& value()      {return values;};
     inline constexpr const type& value()const {return values;};
 
   // QPValues(){};
@@ -169,16 +169,25 @@ public:
       ~FQPValues() = default;
       constexpr FQPValues()= default;
       constexpr FQPValues(const type& v): values_(v){};
-      type & value(){return values_;};
-      const type & value()const{return values_;};
-      inline type operator()()const{return values_;};
-      inline Vector<T,NQPoints> operator()(const Integer& i)const{return values_[i];};
-      inline void operator()(const Integer& i,const Vector<T,NQPoints>& u){values_[i]=u;};   
-
-      
+      constexpr FQPValues (FQPValues const &) = default;
+      constexpr FQPValues (FQPValues &&) = default;
+      constexpr FQPValues & operator= (FQPValues const &) = default;
+      constexpr FQPValues & operator= (FQPValues &&) = default;
+      constexpr       type & value()     {return values_;};
+      constexpr const type & value()const{return values_;};
+      inline constexpr const type operator()()const{return values_;};
+      inline constexpr       type operator()()     {return values_;};
+      inline constexpr const Vector<T,NQPoints> operator()(const Integer i)const{return values_[i];};
+      inline constexpr       Vector<T,NQPoints> operator()(const Integer i)     {return values_[i];};
+      // inline constexpr void operator()(const Integer& i,const Vector<T,NQPoints>& u){values_[i]=u;};         
 protected:
   type values_;
 };
+
+
+
+
+
 
 // QPVALUES = QPVALUES * QPVALUES
 
