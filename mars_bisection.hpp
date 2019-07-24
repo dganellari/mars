@@ -32,6 +32,14 @@ namespace mars {
 			fail_if_not_refine = val;
 		}
 
+		bool get_fail_if_not_refine() {
+			return fail_if_not_refine;
+		}
+
+		std::vector<Integer>& get_incomplete_elements(){
+			return incomplete_elements_;
+		}
+
 		virtual void set_edge_select(const std::shared_ptr<EdgeSelect<Mesh>> &edge_select)
 		{
 			edge_select_ = edge_select;
@@ -41,6 +49,8 @@ namespace mars {
 		{
 			return edge_select_;
 		}
+
+
 
 		Integer add_elem(const Elem &e)
 		{
