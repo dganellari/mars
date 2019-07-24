@@ -62,6 +62,8 @@ list(APPEND MARS_HEADERS
 	mars_base.hpp
 	mars_benchmark.hpp
 	mars_bisection.hpp
+	mars_lepp_bisection.hpp
+	mars_lepp_benchmark.hpp
 	mars_communicator.hpp
 	mars_dof_map.hpp
 	mars_dual_graph.hpp
