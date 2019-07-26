@@ -184,7 +184,7 @@ public:
 		KOKKOS_INLINE_FUNCTION
 		void operator()(int i, int j) const {
 
-			int index = i * (xDim + 1) + j;
+			int index = i * (yDim + 1) + j;
 			points(index, 0) = static_cast<Real>(i) / static_cast<Real>(xDim);
 			points(index, 1) = static_cast<Real>(j) / static_cast<Real>(yDim);
 
@@ -318,10 +318,11 @@ public:
 				const int offset = yDim + 1;
 
 				//extracting i and j from the global index from the parallel for to make it coalesced.
-				int i = (index / 2) / xDim;
+				int i = (index / 2) / yDim;
 				int j = (index / 2) % yDim;
-				int add_to_i = index % 2;
-				int add_to_j = (index + 1) % 2;
+
+				int add_to_i = (index +1) % 2;
+				int add_to_j = index % 2;
 
 				elem(index, 0) = i * offset + j;
 				elem(index, 1) = (i + 1) * offset + (j + 1);

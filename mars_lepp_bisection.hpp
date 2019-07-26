@@ -59,21 +59,24 @@ public:
 
 			Edge edge;
 			Bisection<Mesh>::get_mesh().elem(top).edge(edge_num, edge.nodes[0], edge.nodes[1]);
-			edge.fix_ordering(); //todo: check if needed at all
+			edge.fix_ordering();
 
 			Integer le_nhb = longest_edge_neighbor(top,edge);
 
 			Edge new_edge;
 
+			//If the longest edge of top is not boundary edge (if there exists a longest edge neighbor).
 			if(le_nhb != INVALID_INDEX){
 
+				//get the longest edge of that neighbor.
 				edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), edge, le_nhb);
 
 				Bisection<Mesh>::get_mesh().elem(le_nhb).edge(edge_num, new_edge.nodes[0],	new_edge.nodes[1]);
 				new_edge.fix_ordering();
 			}
 
-			if(le_nhb == INVALID_INDEX || edge == new_edge) { // if top is terminal triangle
+			// if top is terminal triangle (if the longest edge is shared or the longest edge is boundary).
+			if(le_nhb == INVALID_INDEX || edge == new_edge) {
 
 				//bisect top;
 				Bisection<Mesh>::bisect_element(top, edge);
@@ -85,7 +88,6 @@ public:
 				s.pop();
 			}else
 				s.push(le_nhb);
-
 		}
 
 	}
