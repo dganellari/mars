@@ -64,9 +64,15 @@ void cents_example()
     constexpr Integer ManifoldDim=2;
     constexpr Integer Dim=2;
     using MeshT=mars::Mesh<Dim, ManifoldDim>;
+    using MeshT2=mars::Mesh<Dim+1, ManifoldDim+1>;
+    MeshT2 mesh2;
+    read_mesh("../data/beam-tet.MFEM", mesh2);
+
+
     MeshT mesh;
     using Elem = typename MeshT::Elem; 
     read_mesh("../data/beam-tri.MFEM", mesh);
+
     constexpr Integer QPOrder=4;
     constexpr Integer NQPoints=GaussPoints<Elem,QPOrder>::NQPoints; 
     using QP=typename GaussPoints<Elem,QPOrder>::qp_points_type;
@@ -93,9 +99,9 @@ points[2][1]=4;
     FSspace1 FEspace1(mesh);
     using FSspace2= FunctionSpace< MeshT, Lagrange2<1>,RT0<1>>;
     FSspace2 FEspace2(mesh);
-    using FSspace3= FunctionSpace< MeshT, Lagrange1<1>, RT0<1>,Lagrange1<1>>;
+    using FSspace3= FunctionSpace< MeshT, Lagrange1<1>, RT0<1>,Lagrange2<1>>;
     FSspace3 FEspace3(mesh);
-    using FSspace4= FunctionSpace< MeshT, Lagrange2<1>, Lagrange3<1>>;
+    using FSspace4= FunctionSpace< MeshT, Lagrange2<1>, Lagrange1<1>>;
     FSspace4 FEspace4(mesh);
     using FSspace5= FunctionSpace< MeshT, Lagrange2<1>, Lagrange3<2>>;
 
@@ -103,6 +109,10 @@ points[2][1]=4;
     FSspace10 FEspace10(mesh);
       using FSspace11= FunctionSpace< MeshT, RT0<1>>;
     FSspace11 FEspace11(mesh);
+
+   using FSspaceT2= FunctionSpace< MeshT2, Lagrange1<1>>;
+   FSspaceT2 FEspaceT2(mesh2);
+
 // auto ecchime=FEspace3.set_quadrature_rule<0,GaussPoints<Elem,2>,GaussPoints<Elem,2>>();
  using fespace1= ElemFunctionSpace<Simplex<2,2>, Lagrange1<1>>;
  using fespace2= ElemFunctionSpace<Simplex<2,2>, Lagrange2<2>>;
@@ -129,20 +139,12 @@ auto W=MixedFunctionSpace(FEspace3,FEspace4);
 auto W1=MixedFunctionSpace(W,FEspace4);
 
 
-constexpr Integer maximum=Max(0,2) ;
-
-typename decltype(W)::type_unique_base_function_space unique0;
-GetType<1,decltype(W)::type_unique_base_function_space> unique1;
-decltype(W1)::type_unique_base_function_space unique2;
-
 
 
 std::cout<<ElementPosition<0,std::tuple<int,int,double,int>,std::tuple<int,double>>::value<<std::endl;
 std::cout<<ElementPosition<1,std::tuple<int,int,double,int>,std::tuple<int,double>>::value<<std::endl;
 std::cout<<ElementPosition<2,std::tuple<int,int,double,int>,std::tuple<int,double>>::value<<std::endl;
-std::cout<<ElementPosition<maximum,std::tuple<int,int,double,int>,std::tuple<int,double>>::value<<std::endl;
 std::cout<<"TypeToTupleElementPosition=="<<TypeToTupleElementPosition<double,std::tuple<int,char,double,int,double>>::value<<std::endl;
-std::cout<<maximum<<std::endl;
 
 constexpr Integer NComponents=2;
 
@@ -173,21 +175,25 @@ auto sfen=sfe1+sfe2+sfe3;
 using TupleOperatorsAndQuadrature=TupleOfTupleChangeType<1,QR,OperatorTupleType<decltype(sfen)>::type>; 
 using TupleSpaces=typename decltype(W3)::type_unique_base_function_space;
 
+
+TupleSpaces reerree;
+TupleOperatorsAndQuadrature erre;
+
 // OperatorTupleType<decltype(sfen)>::type e0(3);
 // TupleOperatorsAndQuadrature e(4);
 // typename TupleShapeFunctionCreate<Elem0,BaseFunctioSpace0,OperatorsAndQuadrature0,TupleTypeSize<OperatorsAndQuadrature0>::value-1>::type ef2(3);
 // typename TupleShapeFunctionCreate<Elem1,BaseFunctioSpace1,OperatorsAndQuadrature1,TupleTypeSize<OperatorsAndQuadrature1>::value-1>::type ef3(3);
 
-TupleOfTupleShapeFunctionType<TupleSpaces,TupleOperatorsAndQuadrature> ee;
+// TupleOfTupleShapeFunctionType<TupleSpaces,TupleOperatorsAndQuadrature> ee;
 
-ShapeFunctionAssembly<TupleSpaces,TupleOperatorsAndQuadrature> ee2;
-ee2.init_reference();
-ee2.init(J);
-const auto& ee3=ee2.get<0,1>();
-std::cout<<"examples reference"<<ee3.reference()<<std::endl;
-std::cout<<"examples function"<<ee3.function()<<std::endl;
+// ShapeFunctionAssembly<TupleSpaces,TupleOperatorsAndQuadrature> ee2;
+// ee2.init_reference();
+// ee2.init(J);
+// const auto& ee3=ee2.get<0,1>();
+// std::cout<<"examples reference"<<ee3.reference()<<std::endl;
+// std::cout<<"examples function"<<ee3.function()<<std::endl;
 
-auto& mm=W1.space_avatar();
+// auto& mm=W1.space_avatar();
 
 // TupleTrialOrTest<decltype(W)::type_tuple_spaces,0> eeee(3);
 // TupleTrialOrTest<decltype(W)::type_tuple_spaces,1> eeee2(3);
@@ -209,38 +215,56 @@ auto ss1 =   MakeTest<4>(W1);
 auto ss2 =   MakeTest<5>(W1);
 auto ss3 =   MakeTest<6>(W1);
 
-constexpr bool bool1[]={true,false,true};
-constexpr bool bool2[]={true,false,true};
-constexpr bool bool3[]={Max(bool1[0],bool2[0])};
-
-
-// auto l20=L2Inner(mesh,Div(sigma),Div(tau))+L2Inner(mesh,Div(sigma),Div(tau));
-// auto l21=L2Inner(mesh,Grad(u),Grad(v));
-auto l22=L2Inner(mesh,Div(sigma),Div(tau))+
+// bilinear form
+auto l22=L2Inner(mesh,2*Div(sigma),Div(tau))+
          L2Inner(mesh,Grad(u),Grad(v))+
          L2Inner(mesh,u,Div(tau))+
          L2Inner(mesh,rr1,q)+
          L2Inner(mesh,r,s)+
-         L2Inner(mesh,Grad(rr1)+sigma,tau);
-
-// auto l23=L2Inner(mesh,Grad(u)+u,Grad(v));
-// auto l24=L2Inner(mesh,Div(sigma)+u,Div(tau));
-// auto l25=L2Inner(mesh,Grad(u)+sigma,Grad(v));
-// auto l26=L2Inner(mesh,Grad(u)+sigma,Grad(v)+v);
-// auto l27=L2Inner(mesh,Grad(u)+u+sigma+v,Grad(v)+Div(sigma)+v+u+tau);
+         L2Inner(mesh,Grad(rr1)+sigma,tau)+
+         L2Inner(mesh,0*r,s)
+         ;
 
 
-// std::cout<<"tensorvector size="<<SupportOverlap<TensorVector1,1,TensorVector2,1,0,0>()<<std::endl;
-auto s3 =   MakeTest<bool1[0]+bool2[0]>(W1);
-std::cout<<"tensorvector size="<<Overlap<TensorVector1,TensorVector2>()<<std::endl;
-// std::cout<<"bbilinear order="<<l20.Order<<std::endl;
-// std::cout<<"bbilinear order="<<l21.Order<<std::endl;
-// // std::cout<<"bbilinear order="<<l22.Order<<std::endl;
-// std::cout<<"bbilinear order="<<l23.Order<<std::endl;
-// std::cout<<"bbilinear order="<<l24.Order<<std::endl;
-// std::cout<<"bbilinear order="<<l25.Order<<std::endl;
-// std::cout<<"bbilinear order="<<l26.Order<<std::endl;
-// std::cout<<"bbilinear order="<<l27.Order<<std::endl;
+
+Expression2<int> expr2int;
+// IsTestOrTrial<decltype(expr2int)>::type rrrr(5);
+// using type1= typename TypeOfForm<GetType<0,IsTestOrTrial<decltype(expr2int)>::type>,Number<2>>::type;
+
+using type1= typename TypeOfForm<Number<0>,Number<0>>::type;
+using type2= typename TypeOfForm<Number<0>,Number<1>>::type;
+using type3= typename TypeOfForm<Number<1>,Number<0>>::type;
+using type4= typename TypeOfForm<Number<1>,Number<2>>::type;
+using type5= typename TypeOfForm<Number<2>,Number<1>>::type;
+// static_assert(0==L2Inner(mesh,expr2int,expr2int),"0-form");
+// static_assert(1==L2Inner(mesh,expr2int,Div(tau)),"0-form");
+static_assert(2==decltype(L2Inner(mesh,Div(sigma),Div(tau)))::form,"2-form");
+
+
+// using type6= typename TypeOfForm<Number<0>,Number<2>>::type;
+// using type6= typename TypeOfForm<Number<2>,Number<0>>::type;
+// type1 ok1(5);
+// type2 ok2(5);
+// type3 ok3(5);
+// type4 ok4(5);
+// type5 ok5(5);
+
+// static constexpr Integer differenttypes=HowMayTypesDifferentFromType<type1 ,Number<0>>;
+// std::cout<<"---------------"<<differenttypes<<std::endl;
+// static_assert( (differenttypes==0||differenttypes==1), " In L2Inner(A,B) A or B can have: 1) no test nor trial; 2) one test; 3) one trial;");
+// IsTestOrTrial<decltype(s-r)>::type ok2(5);
+
+// IsTestOrTrial<decltype(s+r)>::type ok3(5);
+
+// IsTestOrTrial<decltype(2*r)>::type ok4(5);
+
+// IsTestOrTrial<decltype(r/4)>::type ok5(5);
+
+// IsTestOrTrial<decltype(+r)>::type ok6(5);
+
+// IsTestOrTrial<decltype(-r)>::type ok7(5);
+
+
 std::cout<<"decltype(Grad(u))::Nmax="<<decltype(Grad(u))::Nmax<<std::endl;
 std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(u))::value<<std::endl;
 std::cout<<"decltype(Grad(sigma))::N="<<decltype(Grad(sigma))::value<<std::endl;
@@ -260,13 +284,16 @@ std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(rr2))::Nmax<<std::endl;
 std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(rr3))::Nmax<<std::endl;
 
 
+auto WNew=MixedFunctionSpace(W1,FEspaceT2);
+
  using TupleSpacesW1=typename decltype(W1)::type_unique_base_function_space;
+ using TupleElemsW1=typename decltype(WNew)::type_elems;
+
  using TupleOperatorsAndQuadratureW1= typename OperatorTupleType<decltype(l22)>::type;
  using TupleOfTupleNoQuadrature=TupleOfTupleRemoveQuadrature<TupleOperatorsAndQuadratureW1>;
- TupleOfTupleNoQuadrature feef;
-
-
-TupleOfTupleNoQuadrature deel;
+ TupleSpacesW1 ellll;
+ TupleOfTupleNoQuadrature feef ;
+ TupleOfTupleNoQuadrature deel;
 TupleSpacesW1 r3r;
 RemoveTupleDuplicates<TupleSpacesW1> l4feffe;
 MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,TupleSpacesW1> eeded;
@@ -276,13 +303,49 @@ SpacesToUniqueFEFamilies<TupleSpacesW1> mce;
 
 using Unique=SpacesToUniqueFEFamilies<TupleSpacesW1>;
 using Map=MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,TupleSpacesW1>;
-UniqueMap<Unique,Map> ok;
-// typename ShapeFunctionAssembly<TupleSpacesW1,TupleOperatorsAndQuadratureW1>::type fghi(4);
+using UniqueMapping=UniqueMap<Unique,Map> ;
+UniqueMapping mapping;
 
 
 
+using Space=RT0<2>;
+using Operator=DivergenceOperator;
+using QRule=GaussPoints<Elem,3>;
 
-std::cout<<"MINCHIA="<<minchia()<<std::endl;
+MapFromReference5<Operator,Elem,Space::FEFamily> mapspace;
+ShapeFunctionDependent<Elem,Space,Operator,QRule> sfd;
+sfd.init_map(mapspace);
+std::cout<<"static reference shape function"<<std::endl;
+std::cout<<ShapeFunctionDependent<Elem,Space,Operator,QRule>::reference_values<<std::endl;
+constexpr const auto ref=ShapeFunctionDependent<Elem,Space,Operator,QRule>::reference_values;
+
+
+// static_assert(OperatorToMap<GradientOperator,GetType<0,UniqueMapping>,1,0>::value==0,"frerere");
+
+// TupleOfTupleShapeFunctionType<TupleSpacesW1,TupleOperatorsAndQuadratureW1> ko1;
+SpacesToUniqueFEFamilies<TupleSpacesW1>ko2;
+UniqueMapping ko3;
+
+using TupleOfTupleShapeFunctionW1=TupleOfTupleShapeFunctionType<TupleSpacesW1,TupleOperatorsAndQuadratureW1>;
+using SpacesToUniqueFEFamiliesW1=SpacesToUniqueFEFamilies<TupleSpacesW1>;
+using MapTupleNumbersW1=MapTupleInit<TupleOfTupleShapeFunctionW1,
+                              SpacesToUniqueFEFamiliesW1 , 
+                              UniqueMapping>;
+
+
+SpacesToUniqueFEFamiliesW1 lk;
+MapTupleNumbersW1 kjl;
+TupleOfTupleShapeFunctionW1 stuple;
+init_map< SpacesToUniqueFEFamiliesW1,
+              MapTupleNumbersW1, 
+              TupleTypeSize<MapTupleNumbersW1>::value-1,
+              0>(stuple,mapping);
+// TupleOfTupleShapeFunctionType<TupleSpacesW1,TupleOperatorsAndQuadratureW1> eew1;
+// ShapeFunctionAssembly<TupleSpaces,TupleOperatorsAndQuadrature> ee2;
+
+static_assert(ref[0][0](0,0)==2,"grad non ok");
+static_assert(ref[1][0](0,0)==2,"grad non ok");
+static_assert(ref[2][0](0,0)==2,"grad non ok");
 
 
 
@@ -306,18 +369,6 @@ StaticMatrix<Real,3,3> hfe;
 
 Real nonzero;
 Integer Constant=pow(10,7);
-
-
-ShapeFunctionDependent<Simplex<2,2>,RT0<2>,DivergenceOperator,GaussPoints<Elem,3>> sfd;
-std::cout<<"static reference shape function"<<std::endl;
-std::cout<<ShapeFunctionDependent<Simplex<2,2>,RT0<2>,DivergenceOperator,GaussPoints<Elem,2>>::reference_values<<std::endl;
-constexpr const auto ref=ShapeFunctionDependent<Simplex<2,2>,RT0<2>,DivergenceOperator,GaussPoints<Elem,2>>::reference_values;
-
-static_assert(ref[0][0](0,0)==2,"grad non ok");
-static_assert(ref[1][0](0,0)==2,"grad non ok");
-static_assert(ref[2][0](0,0)==2,"grad non ok");
-
-
  clock_t begin = clock();
   for(Integer ii=0;ii<Constant;ii++)
   {

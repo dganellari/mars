@@ -2,6 +2,9 @@
 #define MARS_QUADRATURE_RULES_HPP
 
 
+
+
+
 namespace mars {
 
 
@@ -24,7 +27,15 @@ public:
 };
 
 
+template<typename Elem,Integer QuadratureRuleType>
+class MaxOrder;
 
+template<Integer Dim>
+class MaxOrder<Simplex<Dim,2>,GaussianQuadrature>
+{
+public:
+  static constexpr Integer value=5;
+};
 
 template<typename Elem,Integer Order>
 class GaussPoints;
@@ -146,6 +157,36 @@ public:
 };
 
 
+template< Integer Dim >
+constexpr  Matrix<Real,1,2> GaussPoints< Simplex<Dim,2> , 1>::qp_points;
+template< Integer Dim >
+constexpr  Vector<Real,1> GaussPoints< Simplex<Dim,2> , 1>::qp_weights;
+
+template< Integer Dim >
+constexpr  Matrix<Real,3,2> GaussPoints< Simplex<Dim,2> , 2>::qp_points;
+template< Integer Dim >
+constexpr  Vector<Real,3> GaussPoints< Simplex<Dim,2> , 2>::qp_weights;
+
+template< Integer Dim >
+constexpr  Matrix<Real,4,2> GaussPoints< Simplex<Dim,2> , 3>::qp_points;
+template< Integer Dim >
+constexpr  Vector<Real,4> GaussPoints< Simplex<Dim,2> , 3>::qp_weights;
+
+template< Integer Dim >
+constexpr  Matrix<Real,6,2> GaussPoints< Simplex<Dim,2> , 4>::qp_points;
+template< Integer Dim >
+constexpr  Vector<Real,6> GaussPoints< Simplex<Dim,2> , 4>::qp_weights;
+
+template< Integer Dim >
+constexpr  Matrix<Real,7,2> GaussPoints< Simplex<Dim,2> , 5>::qp_points;
+template< Integer Dim >
+constexpr  Vector<Real,7> GaussPoints< Simplex<Dim,2> , 5>::qp_weights;
+
+
+
+
+
+
 
 template<Integer QuadratureRuleType>
 class QuadratureRule
@@ -173,30 +214,7 @@ public:
   using rule=GaussPoints< Elem , Order>;
 };
 
-template< Integer Dim >
-constexpr  Matrix<Real,1,2> GaussPoints< Simplex<Dim,2> , 1>::qp_points;
-template< Integer Dim >
-constexpr  Vector<Real,1> GaussPoints< Simplex<Dim,2> , 1>::qp_weights;
 
-template< Integer Dim >
-constexpr  Matrix<Real,3,2> GaussPoints< Simplex<Dim,2> , 2>::qp_points;
-template< Integer Dim >
-constexpr  Vector<Real,3> GaussPoints< Simplex<Dim,2> , 2>::qp_weights;
-
-template< Integer Dim >
-constexpr  Matrix<Real,4,2> GaussPoints< Simplex<Dim,2> , 3>::qp_points;
-template< Integer Dim >
-constexpr  Vector<Real,4> GaussPoints< Simplex<Dim,2> , 3>::qp_weights;
-
-template< Integer Dim >
-constexpr  Matrix<Real,6,2> GaussPoints< Simplex<Dim,2> , 4>::qp_points;
-template< Integer Dim >
-constexpr  Vector<Real,6> GaussPoints< Simplex<Dim,2> , 4>::qp_weights;
-
-template< Integer Dim >
-constexpr  Matrix<Real,7,2> GaussPoints< Simplex<Dim,2> , 5>::qp_points;
-template< Integer Dim >
-constexpr  Vector<Real,7> GaussPoints< Simplex<Dim,2> , 5>::qp_weights;
 }
 
 #endif //MARS_QUADRATURE_RULES_HPP

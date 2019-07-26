@@ -1893,10 +1893,13 @@ public:
 
 
 
-template< typename Elem,typename BaseFunctionSpace, typename Operator, typename QuadratureRule>
+template< typename Elem_,typename BaseFunctionSpace, typename Operator_, typename QuadratureRule>
 class ShapeFunctionDependent 
 { 
   public:
+  using Elem=Elem_;
+  using Operator=Operator_;
+
   using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
   static constexpr Integer Dim=Elem::Dim;
   static constexpr Integer ManifoldDim=Elem::ManifoldDim;
@@ -1910,43 +1913,36 @@ class ShapeFunctionDependent
   static constexpr Integer FEFamily=BaseFunctionSpace::FEFamily;
   
   using SingleType   = typename SingleTypeShapeFunction<FunctionSpace,Operator>::SingleType;// Matrix<Real, ShapeFunctionDim1, ShapeFunctionDim2>;
-  using vector_single_type   = Vector<SingleType,Ndofs>;
+  using VectorSingleType   = Vector<SingleType,Ndofs>;
   using tot_type= typename SingleTypeShapeFunction<FunctionSpace,Operator>::TotType;
   using type= FQPValues<tot_type,NQPoints,Ntot>;
   using Point = Vector<Real,Dim>;
   using QP = Matrix<Real,NQPoints,Dim>;
   using qp_points_type=typename QuadratureRule::qp_points_type;
-
+  using Map=MapFromReference5<Operator,Elem,BaseFunctionSpace::FEFamily>;
+  
   static constexpr 
   FQPValues<SingleType,NQPoints,Ndofs>  
   reference_values{reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(QuadratureRule::qp_points)};
  
 
 
-  template<Integer N=NComponents>
-  typename std::enable_if< (1<N),const type& >::type function ()const {return func_values_;}
+  constexpr void init_map(const Map& map){map_ptr=std::make_shared<Map>(map);}
 
-  template<Integer N=NComponents>
-  typename std::enable_if< (1==N),const type& >::type function ()const {return component_func_values_;}
+  ShapeFunctionDependent(const Map& map):
+  map_ptr(std::make_shared<Map>(map))
+  {}
 
-
-
-  
-
-  ShapeFunctionDependent()
-  {};
+  ShapeFunctionDependent(){}
 
 
   private: 
-      vector_single_type func_;
+      SingleType func_tmp_;
+      VectorSingleType func_;
       Point qp_point_;
       FQPValues<SingleType,NQPoints,Ndofs> component_func_values_;
       type func_values_;
-      SingleType func_tmp_;
-      QuadratureRule quadrature_;
-      qp_points_type qp_points_;
-      MapFromReference5<IdentityOperator,Elem,BaseFunctionSpace::FEFamily> map_;
-      Integer n_tot_,n_;
+      std::shared_ptr<Map> map_ptr;
 };
 
 
@@ -1957,8 +1953,6 @@ constexpr FQPValues<typename ShapeFunctionDependent<Elem,BaseFunctionSpace,Opera
                     ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QuadratureRule>::NQPoints,
                     ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QuadratureRule>::Ndofs> 
 ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QuadratureRule>::reference_values;
-
-
 
 
 

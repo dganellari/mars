@@ -188,6 +188,20 @@ namespace mars {
 	template <typename T, std::size_t>
 	using getTypeSequence = T;
 
+	template<typename T,typename S>
+	class IsSame 
+	{
+	public:
+	  static constexpr bool value=std::is_same<T,S>::value;
+	};
+
+
+	template<typename T,typename S>
+	class IsDifferent
+	{
+	public:
+	  static constexpr bool value=std::conditional<std::is_same<T,S>::value,Number<0>,Number<1>>::type ::value;
+	};
 	// template<>
 	// class Combinations<3, 2> {
 	// public:

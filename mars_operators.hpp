@@ -2,6 +2,8 @@
 #define MARS_OPERATORS_HPP
 #include "mars_base.hpp"
 #include "mars_tuple_utilities.hpp"
+#include "mars_quadrature_rules.hpp"
+
 namespace mars {
 
 ///////////////////////////////////////////////////////////////
@@ -1625,6 +1627,13 @@ class Evaluation<Expression2Matrix<T,Rows,Cols> >
 template<typename...T>
 class QuadratureOrder;
 
+template<typename Elem, Integer QuadratureRuleType,Integer ActualOrder>
+class CheckMaxQuadratureOrder
+{
+public:
+  static constexpr Integer value=Min(MaxOrder<Elem,QuadratureRuleType>::value,ActualOrder);
+};
+
 
 // order(T) = order(+T)
 template<typename T>
@@ -1648,7 +1657,6 @@ class QuadratureOrder< UnaryMinus2< Expression2<T> > >
 template<typename Left, typename Right>
 class QuadratureOrder< Addition2< Expression2<Left>,Expression2<Right> > >
 { public:
-  // static_assert(std::is_same<Left,Right>::value, " In Addition, Left and Right types must be equal");
   static constexpr Integer value=Max(QuadratureOrder<Left>::value,QuadratureOrder<Right>::value);
 };
 
@@ -1657,7 +1665,6 @@ class QuadratureOrder< Addition2< Expression2<Left>,Expression2<Right> > >
 template<typename Left, typename Right>
 class QuadratureOrder< Subtraction2< Expression2<Left>,Expression2<Right> > >
 { public:
-  // static_assert(std::is_same<Left,Right>::value, " In Addition, Left and Right types must be equal");
   static constexpr Integer value=Max(QuadratureOrder<Left>::value,QuadratureOrder<Right>::value);
 };
 
@@ -1704,11 +1711,7 @@ class QuadratureOrder< Contraction2< Expression2<Left>, Expression2<Right> > >
 
 
 
-template<typename T,Integer Rows,Integer Cols>
-class QuadratureOrder<Expression2MatrixVar<T,Rows,Cols> >
-{ public:
-  static constexpr Integer value=2;
-};
+
 
 
 
