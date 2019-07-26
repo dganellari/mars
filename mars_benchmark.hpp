@@ -95,7 +95,7 @@ namespace mars {
 			std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
 
 			auto duration = std::chrono::duration_cast < std::chrono::seconds > (t2 - t1).count();
-			std::cout << "Refinement took: "<< duration<<" seconds."<<std::endl;
+			std::cout << "LE Refinement took: "<< duration<<" seconds."<<std::endl;
 
 			std::cout << "volume: " << mesh.volume() << std::endl;
 			std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;

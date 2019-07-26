@@ -176,13 +176,13 @@ bool generate_cube(Mesh<Dim, ManifoldDim>& mesh, const Integer xDim,
 
 				nodes[0] = i * offset + j;
 				nodes[1] = (i + 1) * offset + (j + 1);
-				nodes[2] = i * offset + (j + 1);
+				nodes[2] = (i + 1) * offset + j;
 
 				mesh.add_elem(nodes);
 
 //				nodes[0] = i * offset + j;
 //				nodes[1] = (i + 1) * offset + (j + 1); //just to write it clearer
-				nodes[2] = (i + 1) * offset + j;
+				nodes[2] = i * offset + (j + 1);
 
 				mesh.add_elem(nodes);
 
