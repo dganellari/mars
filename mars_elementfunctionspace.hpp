@@ -29,21 +29,21 @@ class ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,Continuity,NCo
       : public BaseElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,Continuity,NComponents>
 {
   public: 
-     static constexpr Integer entity[]={0};
-     static constexpr Integer dofs_per_entity[]={1};
-     static constexpr Integer entities_nums=1;  
-     static constexpr Integer ShapeFunctionDim1=1;
-     static constexpr Integer ShapeFunctionDim2=1;
+     static constexpr const std::array<Integer,1> entity={0};
+     static constexpr const std::array<Integer,1> dofs_per_entity={1};
+     // static constexpr Integer entities_nums=entity.size();
+     static constexpr const Integer ShapeFunctionDim1=1;
+     static constexpr const Integer ShapeFunctionDim2=1;
 };
 
 template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,Continuity,NComponents>::entity[];
+constexpr std::array<Integer,1> ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,Continuity,NComponents>::entity;
 
 template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,Continuity,NComponents>::dofs_per_entity[];
+constexpr std::array<Integer,1> ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,Continuity,NComponents>::dofs_per_entity;
 
-template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,Continuity,NComponents>::entities_nums;
+// template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
+// constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,Continuity,NComponents>::entities_nums;
 
 template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
 constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,1,Continuity,NComponents>::ShapeFunctionDim1;
@@ -59,21 +59,21 @@ class ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,2,Continuity,NCo
       : public BaseElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,2,Continuity,NComponents>
 {
   public: 
-     static constexpr Integer entity[]={0,1};
-     static constexpr Integer dofs_per_entity[]={1,1};
-     static constexpr Integer entities_nums=2;
-     static constexpr Integer ShapeFunctionDim1=1;
-     static constexpr Integer ShapeFunctionDim2=1;
+     static constexpr const std::array<Integer,2> entity{0,1};
+     static constexpr const std::array<Integer,2> dofs_per_entity{1,1};
+     // static constexpr Integer entities_nums=entity.size();
+     static constexpr const Integer ShapeFunctionDim1=1;
+     static constexpr const Integer ShapeFunctionDim2=1;
 };
 
 template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,2,Continuity,NComponents>::entity[];
+constexpr std::array<Integer,2> ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,2,Continuity,NComponents>::entity;
 
 template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,2,Continuity,NComponents>::dofs_per_entity[];
+constexpr std::array<Integer,2> ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,2,Continuity,NComponents>::dofs_per_entity;
 
-template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,2,Continuity,NComponents>::entities_nums;
+// template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
+// constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,2,Continuity,NComponents>::entities_nums;
 
 template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
 constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,2,Continuity,NComponents>::ShapeFunctionDim1;
@@ -89,21 +89,21 @@ class ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,3,Continuity,NCo
       : public BaseElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,3,Continuity,NComponents>
 {
   public: 
-     static constexpr Integer entity[]={0,1,2};
-     static constexpr Integer dofs_per_entity[]={1,2,1};     
-     static constexpr Integer entities_nums=3;
-     static constexpr Integer ShapeFunctionDim1=1;
-     static constexpr Integer ShapeFunctionDim2=1;
+     static constexpr const std::array<Integer,3> entity{0,1,2};
+     static constexpr const std::array<Integer,3> dofs_per_entity{1,2,1};     
+     // static constexpr Integer entities_nums=entity.size();
+     static constexpr const Integer ShapeFunctionDim1=1;
+     static constexpr const Integer ShapeFunctionDim2=1;
 };
 
 template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,3,Continuity,NComponents>::entity[];
+constexpr std::array<Integer,3> ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,3,Continuity,NComponents>::entity;
 
 template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,3,Continuity,NComponents>::dofs_per_entity[];
+constexpr std::array<Integer,3> ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,3,Continuity,NComponents>::dofs_per_entity;
 
-template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,3,Continuity,NComponents>::entities_nums;
+// template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
+// constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,3,Continuity,NComponents>::entities_nums;
 
 template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
 constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,3,Continuity,NComponents>::ShapeFunctionDim1;
@@ -124,21 +124,21 @@ class ElementFunctionSpace<Simplex<Dim, ManifoldDim>,RaviartThomasFE,0,Continuit
       : public BaseElementFunctionSpace<Simplex<Dim, ManifoldDim>,RaviartThomasFE,0,Continuity,NComponents>
 {
   public: 
-     static constexpr Integer entity[]={ManifoldDim-1};
-     static constexpr Integer dofs_per_entity[]={1};     
-     static constexpr Integer entities_nums=1; 
-     static constexpr Integer ShapeFunctionDim1=Dim;
-     static constexpr Integer ShapeFunctionDim2=1;
+     static constexpr const std::array<Integer,1> entity={ManifoldDim-1};
+     static constexpr const std::array<Integer,1> dofs_per_entity={1};     
+     // static constexpr Integer entities_nums=entity.size();
+     static constexpr const Integer ShapeFunctionDim1=Dim;
+     static constexpr const Integer ShapeFunctionDim2=1;
 };
 
 template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,RaviartThomasFE,0,Continuity,NComponents>::entity[];
+constexpr std::array<Integer,1> ElementFunctionSpace<Simplex<Dim, ManifoldDim>,RaviartThomasFE,0,Continuity,NComponents>::entity;
 
 template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,RaviartThomasFE,0,Continuity,NComponents>::dofs_per_entity[];
+constexpr std::array<Integer,1> ElementFunctionSpace<Simplex<Dim, ManifoldDim>,RaviartThomasFE,0,Continuity,NComponents>::dofs_per_entity;
 
-template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
-constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,RaviartThomasFE,0,Continuity,NComponents>::entities_nums;
+// template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
+// constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,RaviartThomasFE,0,Continuity,NComponents>::entities_nums;
 
 template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
 constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,RaviartThomasFE,0,Continuity,NComponents>::ShapeFunctionDim1;
@@ -160,15 +160,15 @@ class ElementFunctionSpace<Simplex<4,4>,GeneralSpace,0,1,1>:
       public BaseElementFunctionSpace<Simplex<4,4>,GeneralSpace,0,1,1>
 {
 public:
-     static constexpr Integer entity[]={0,1,2,3,4};
-     static constexpr Integer dofs_per_entity[]={1,1,1,1,1};
-     static constexpr Integer entities_nums=5;
+     static constexpr const std::array<Integer,5> entity={0,1,2,3,4};
+     static constexpr const std::array<Integer,5> dofs_per_entity={1,1,1,1,1};
+     // static constexpr Integer entities_nums=entity.size();
 };
 
 
-constexpr Integer ElementFunctionSpace<Simplex<4,4>,GeneralSpace,0,1,1>::entities_nums;
-constexpr Integer ElementFunctionSpace<Simplex<4,4>,GeneralSpace,0,1,1>::dofs_per_entity[];
-constexpr Integer ElementFunctionSpace<Simplex<4,4>,GeneralSpace,0,1,1>::entity[];
+// constexpr Integer ElementFunctionSpace<Simplex<4,4>,GeneralSpace,0,1,1>::entities_nums;
+constexpr std::array<Integer,5> ElementFunctionSpace<Simplex<4,4>,GeneralSpace,0,1,1>::dofs_per_entity;
+constexpr std::array<Integer,5> ElementFunctionSpace<Simplex<4,4>,GeneralSpace,0,1,1>::entity;
 }
 
 

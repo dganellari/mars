@@ -1066,30 +1066,30 @@ using MapTupleInit=typename MapTupleInitHelper<TupleOfTupleSpaces,SpaceToMap,Tup
 
    template<typename MapTupleNumber,Integer Nmax_aux,Integer N,typename Tuple,typename Map>
    typename std::enable_if< (N>Nmax_aux) ,void>::type 
-   init_map_aux(Tuple& t,const Map& maps){}
+   init_map_aux_aux(Tuple& t,const Map& maps){}
 
    template<typename MapTupleNumber,Integer Nmax_aux,Integer N,typename Tuple,typename Map>
    typename std::enable_if< (N<=Nmax_aux) ,void>::type 
-   init_map_aux(Tuple& t,const Map& maps) 
+   init_map_aux_aux(Tuple& t,const Map& maps) 
    {auto& t_nth=std::get<N>(t); 
     auto& map_nth=std::get<GetType<N,MapTupleNumber>::value>(maps); 
     t_nth.init_map(map_nth);
-    init_map_aux<MapTupleNumber,Nmax_aux,N+1>(t,maps);}
+    init_map_aux_aux<MapTupleNumber,Nmax_aux,N+1>(t,maps);}
 
 
 
    template<typename SpacesToUnique,typename MapTupleNumbersW1,Integer Nmax_aux,Integer N,typename Tuple,typename Map>
    typename std::enable_if< (N>Nmax_aux) ,void>::type 
-   init_map(Tuple& t,const Map& maps){}
+   init_map_aux(Tuple& t,const Map& maps){}
 
    template<typename SpacesToUnique,typename MapTupleNumbersW1,Integer Nmax_aux,Integer N,typename Tuple,typename Map>
    typename std::enable_if< (N<=Nmax_aux) ,void>::type 
-   init_map(Tuple& t,const Map& maps) 
+   init_map_aux(Tuple& t,const Map& maps) 
    {
     auto& t_nth=std::get<N>(t); 
     auto& map_nth=std::get<GetType<N,SpacesToUnique>::value>(maps); 
-    init_map_aux<GetType<N,MapTupleNumbersW1>,TupleTypeSize<decltype(t_nth)>::value-1,0>(t_nth,map_nth);
-    init_map<SpacesToUnique, MapTupleNumbersW1,Nmax_aux,N+1>(t,maps);
+    init_map_aux_aux<GetType<N,MapTupleNumbersW1>,TupleTypeSize<decltype(t_nth)>::value-1,0>(t_nth,map_nth);
+    init_map_aux<SpacesToUnique, MapTupleNumbersW1,Nmax_aux,N+1>(t,maps);
     }
 
 template<typename TupleSpaces,typename TupleOperatorsAndQuadrature,typename UniqueMapping>

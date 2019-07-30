@@ -181,7 +181,7 @@ void ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>::init_elem_entity
     static_assert(Dim>=0 , " the space dimension must be non negative ");
     static_assert(ManifoldDim>=0 , " the manifold dimension must be non negative ");
     static_assert(EntityDim>=0 , " the entity dimension must be non negative ");    
-    static_assert(Dim>=ManifoldDim , " the space dimension dimension must be greater than or equal to the manifold dimension ");
+    static_assert(Dim>=ManifoldDim , " the space dimension must be greater than or equal to the manifold dimension ");
     static_assert(ManifoldDim>=EntityDim , " the manifold dimension must be greater than or equal to the entity dimension ");
 
 

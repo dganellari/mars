@@ -89,24 +89,28 @@ public:
 
       inline std::vector<Integer> 
                    dofmap(const Integer& space_id,const Integer& component_id,const Integer& elem_id)const{
+                        const auto& comp=components(space_id);
                         const auto& os=offset_[space_id];
                         const auto& size= n_elem_dofs(space_id);
-                        std::vector<Integer> output(size);
-                        const auto& comp=components(space_id);
+                        std::vector<Integer> output(size/comp);
                         space_infos_[space_id][3];
+                        Integer mm=0;
                         for(Integer nn=component_id;nn<size;nn=nn+comp)
-                             output[nn]=dofmap_[elem_id][nn+os[0]];
+                             {output[mm]=dofmap_[elem_id][nn+os[0]];mm++;}
                         return output;};
 
 
-      inline void dofmap(const Integer& space_id,const Integer& elem_id, const std::vector<Integer>& elem_space_dm)const
-                       {
+      inline void dofmap(const Integer& space_id,const Integer& component_id,const Integer& elem_id, const std::vector<Integer>& elem_space_dm)const{
+                        const auto& comp=components(space_id);
                         const auto& os=offset_[space_id];
-                        const auto& size=n_elem_dofs(space_id);
-                        elem_space_dm.resize(size);
-                        for(Integer nn=0;nn<size;nn++)
-                             elem_space_dm[nn]=dofmap_[elem_id][nn+os[0]];
-                       };
+                        const auto& size= n_elem_dofs(space_id);
+                        std::vector<Integer> output(size/comp);
+                        space_infos_[space_id][3];
+                        Integer mm=0;
+                        elem_space_dm.resize(size/comp);
+                        for(Integer nn=component_id;nn<size;nn=nn+comp)
+                             {elem_space_dm[mm]=dofmap_[elem_id][nn+os[0]];mm++;}
+                        };
 
       inline const std::array<std::vector<Integer>, Nsubspaces>& offset() const {return offset_;};
 
@@ -266,8 +270,8 @@ class Trial: public Expression2<Trial<BaseFunctionSpacesType,N,OperatorType>>
 { public:
   static constexpr Integer Nmax=TupleTypeSize<BaseFunctionSpacesType>::value;
   static constexpr Integer value=N;
-  static constexpr Integer is_test_or_trial=1;
-  using type=OperatorType;
+  using BaseFunctionSpaces=BaseFunctionSpacesType;
+  using Operator=OperatorType;
 };
 
 template<typename BaseFunctionSpacesType, Integer N, typename OperatorType=IdentityOperator>
@@ -276,8 +280,8 @@ class Test: public Expression2<Test<BaseFunctionSpacesType,N,OperatorType>>
 public:
   static constexpr Integer Nmax=TupleTypeSize<BaseFunctionSpacesType>::value;
   static constexpr Integer value=N;
-  static constexpr Integer is_test_or_trial=0;
-  using type=OperatorType;
+  using BaseFunctionSpaces=BaseFunctionSpacesType;
+  using Operator=OperatorType;
 };
 
 
@@ -305,18 +309,21 @@ public:
 template<typename T>
 class IsTestOrTrial{
 public:
+  using UniqueBaseFunctionSpaces=std::tuple<>;
   using type=std::tuple<Number<0>>;
 };
 
 template<typename BaseFunctionSpacesType,Integer N, typename OperatorType>
 class IsTestOrTrial<Test<BaseFunctionSpacesType,N,OperatorType>>{
 public:
+  using UniqueBaseFunctionSpaces=std::tuple<BaseFunctionSpacesType>;
   using type=std::tuple<Number<1>>;
 };
 
 template<typename BaseFunctionSpacesType,Integer N, typename OperatorType>
 class IsTestOrTrial<Trial<BaseFunctionSpacesType,N,OperatorType>>{
 public:
+  using UniqueBaseFunctionSpaces=std::tuple<BaseFunctionSpacesType>;
   using type=std::tuple<Number<2>>;
 };
 
@@ -329,6 +336,7 @@ template<typename Left, typename Right>
 class IsTestOrTrial< Multiply2<Expression2<Left>,Expression2<Right> > >
 {
 public:
+  using UniqueBaseFunctionSpaces=TupleCatType<typename IsTestOrTrial<Left>::UniqueBaseFunctionSpaces,typename IsTestOrTrial<Right>::UniqueBaseFunctionSpaces >;
   using type=TupleRemoveType<Number<0>,TupleCatType<typename IsTestOrTrial<Left>::type,typename IsTestOrTrial<Right>::type >> ;
   static_assert(TupleTypeSize<type>::value<2," In Multiply<Left,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 };
@@ -337,6 +345,7 @@ template<typename Left>
 class IsTestOrTrial< Multiply2<Expression2<Left>,Real > >
 {
 public:
+  using UniqueBaseFunctionSpaces=typename IsTestOrTrial<Left>::UniqueBaseFunctionSpaces;
   using type=typename IsTestOrTrial<Left>::type;
   static_assert(TupleTypeSize<type>::value<2," In Multiply<Left,Real>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 };
@@ -345,6 +354,7 @@ template<typename Right>
 class IsTestOrTrial< Multiply2<Real,Expression2<Right> > >
 {
 public:
+  using UniqueBaseFunctionSpaces=typename IsTestOrTrial<Right>::UniqueBaseFunctionSpaces;
   using type=typename IsTestOrTrial<Right>::type;
   static_assert(TupleTypeSize<type>::value<2," In Multiply<Real,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 
@@ -355,6 +365,7 @@ template<typename Left>
 class IsTestOrTrial< Divide2<Expression2<Left>,Real > >
 {
 public:
+  using UniqueBaseFunctionSpaces=typename IsTestOrTrial<Left>::UniqueBaseFunctionSpaces;
   using type=typename IsTestOrTrial<Left>::type;
   static_assert(TupleTypeSize<type>::value<2," In Divide<Left,Real>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 };
@@ -364,6 +375,7 @@ template<typename Left, typename Right>
 class IsTestOrTrial< Addition2<Expression2<Left>,Expression2<Right> > >
 {
 public:
+  using UniqueBaseFunctionSpaces=RemoveTupleDuplicates<TupleCatType<typename IsTestOrTrial<Left>::UniqueBaseFunctionSpaces,typename IsTestOrTrial<Right>::UniqueBaseFunctionSpaces >>;
   using type=RemoveTupleDuplicates<TupleRemoveType<Number<0>,TupleCatType<typename IsTestOrTrial<Left>::type,typename IsTestOrTrial<Right>::type >>> ;
   static_assert(TupleTypeSize<type>::value<2," In Addition<Left,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 };
@@ -372,6 +384,7 @@ template<typename Left, typename Right>
 class IsTestOrTrial< Subtraction2<Expression2<Left>,Expression2<Right> > >
 {
 public:
+  using UniqueBaseFunctionSpaces=RemoveTupleDuplicates<TupleCatType<typename IsTestOrTrial<Left>::UniqueBaseFunctionSpaces,typename IsTestOrTrial<Right>::UniqueBaseFunctionSpaces >>;
   using type=RemoveTupleDuplicates<TupleRemoveType<Number<0>,TupleCatType<typename IsTestOrTrial<Left>::type,typename IsTestOrTrial<Right>::type > >>;
   static_assert(TupleTypeSize<type>::value<2," In Subtraction<Left,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 
@@ -383,6 +396,7 @@ template<typename Type>
 class IsTestOrTrial< UnaryPlus2<Expression2<Type>> >
 {
 public:
+  using UniqueBaseFunctionSpaces=typename IsTestOrTrial<Type>::UniqueBaseFunctionSpaces;
   using type=TupleRemoveType<Number<0>,typename IsTestOrTrial<Type>::type>;
   static_assert(TupleTypeSize<type>::value<2," In UnaryPlus<Type>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 
@@ -392,6 +406,7 @@ template<typename Type>
 class IsTestOrTrial< UnaryMinus2<Expression2<Type>> >
 {
 public:
+  using UniqueBaseFunctionSpaces=typename IsTestOrTrial<Type>::UniqueBaseFunctionSpaces;
   using type=TupleRemoveType<Number<0>,typename IsTestOrTrial<Type>::type>;
   static_assert(TupleTypeSize<type>::value<2," In UnaryMinus<Type>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 
@@ -528,18 +543,18 @@ class QuadratureOrder<Test<BaseFunctionSpacesType,N,OperatorKind> >
 { public:
 
   using BaseFunctionSpaceAndElement=GetType<N,BaseFunctionSpacesType>;
-  using Op=typename Test<BaseFunctionSpacesType,N,OperatorKind>::type;
+  using Operator=typename Test<BaseFunctionSpacesType,N,OperatorKind>::Operator;
   using BaseFunctionSpace=GetType<1,BaseFunctionSpaceAndElement>;
-  static constexpr Integer value=QuadratureOrder<Op,BaseFunctionSpace>::value;
+  static constexpr Integer value=QuadratureOrder<Operator,BaseFunctionSpace>::value;
 };
 
 template<typename BaseFunctionSpacesType,Integer N, typename OperatorKind>
 class QuadratureOrder<Trial<BaseFunctionSpacesType,N,OperatorKind> >
 { public:
   using BaseFunctionSpaceAndElement=GetType<N,BaseFunctionSpacesType>;
-  using Op=typename Trial<BaseFunctionSpacesType,N,OperatorKind>::type;
+  using Operator=typename Trial<BaseFunctionSpacesType,N,OperatorKind>::Operator;
   using BaseFunctionSpace=GetType<1,BaseFunctionSpaceAndElement>;
-  static constexpr Integer value=QuadratureOrder<Op,BaseFunctionSpace>::value;
+  static constexpr Integer value=QuadratureOrder<Operator,BaseFunctionSpace>::value;
 };
 
 
@@ -554,8 +569,9 @@ class L2DotProductIntegral: public Expression2<L2DotProductIntegral<MeshT,Left,R
     using Elem=typename MeshT::Elem;
     static constexpr Integer Order=CheckMaxQuadratureOrder<Elem,QR,QuadratureOrder<type>::value+1>::value; 
     using QRule=typename QuadratureRule<QR>:: template rule<Elem,Order>;
-    static constexpr Integer form=TypeOfForm<GetType<0,typename IsTestOrTrial<Left>::type>,
-                                             GetType<0,typename IsTestOrTrial<Right>::type>>::type::value;
+    using form= std::tuple<typename TypeOfForm<GetType<0,typename IsTestOrTrial<Left>::type>,
+                                    GetType<0,typename IsTestOrTrial<Right>::type>>::type >;
+    using UniqueBaseFunctionSpaces=GetType<0,RemoveTupleDuplicates< TupleCatType< typename IsTestOrTrial<Left>::UniqueBaseFunctionSpaces,typename IsTestOrTrial<Right>::UniqueBaseFunctionSpaces >>>;               
     L2DotProductIntegral(const MeshT& mesh,const Expression2<Left>& left,const Expression2<Right>& right ):
     mesh_(mesh),
     left_(left),
@@ -596,6 +612,126 @@ L2Inner(const MeshT& mesh,const Expression2<Left>& left,const Expression2<Right>
 
 
 
+
+
+
+
+
+
+
+
+
+template<typename DerivedLeft, typename MeshT, typename Left,typename Right>
+class Addition2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegral<MeshT,Left,Right>>>
+: public Expression2< Addition2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegral<MeshT,Left,Right>>  > > 
+{
+
+  public:
+  using UniqueBaseFunctionSpaces=RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::UniqueBaseFunctionSpaces,
+                                                  typename DerivedLeft::UniqueBaseFunctionSpaces > >;
+  using form =RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::form,
+                                                  typename DerivedLeft::form  > >;
+    Addition2(const Expression2<DerivedLeft>& left, const Expression2<L2DotProductIntegral<MeshT,Left,Right>>&right)
+    : 
+    left_(left.derived()),
+    right_(right.derived())
+    {};
+    const DerivedLeft & left()const{return left_;};
+    const L2DotProductIntegral<MeshT,Left,Right>& right()const{return right_;};
+  private:
+  DerivedLeft left_;
+  L2DotProductIntegral<MeshT,Left,Right> right_;
+};
+
+
+template<typename DerivedLeft, typename MeshT, typename Left,typename Right>
+class Subtraction2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegral<MeshT,Left,Right>>>
+: public Expression2< Subtraction2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegral<MeshT,Left,Right>>  > > 
+{
+
+  public:
+  using UniqueBaseFunctionSpaces=RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::UniqueBaseFunctionSpaces,
+                                                  typename DerivedLeft::UniqueBaseFunctionSpaces > >;
+  using form =RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::form,
+                                                  typename DerivedLeft::form  > >;
+    Subtraction2(const Expression2<DerivedLeft>& left, const Expression2<L2DotProductIntegral<MeshT,Left,Right>>&right)
+    : 
+    left_(left.derived()),
+    right_(right.derived())
+    {};
+    const DerivedLeft & left()const{return left_;};
+    const L2DotProductIntegral<MeshT,Left,Right>& right()const{return right_;};
+  private:
+  DerivedLeft left_;
+  L2DotProductIntegral<MeshT,Left,Right> right_;
+};
+
+
+// template<typename DerivedLeft, typename MeshT, typename Left,typename Right>
+// class Multiply2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegral<MeshT,Left,Right>>>
+// : public Expression2< Multiply2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegral<MeshT,Left,Right>>  > > 
+// {
+
+//   public:
+//   using L2prod=L2DotProductIntegral<MeshT,Left,Right>;
+//   static_assert(0*GetType<0,typename L2prod::form>::value, "You cannot multiply a L2 inner product: you can only add or subtract two or more inner products");
+//   using UniqueBaseFunctionSpaces=RemoveTupleDuplicates< TupleCatType<typename L2prod::UniqueBaseFunctionSpaces,
+//                                                   typename DerivedLeft::UniqueBaseFunctionSpaces > >;
+//   using form =RemoveTupleDuplicates< TupleCatType<typename L2prod::form,
+//                                                   typename DerivedLeft::form  > >;
+//     Multiply2(const Expression2<DerivedLeft>& left, const Expression2<L2prod>&right)
+//     : 
+//     left_(left.derived()),
+//     right_(right.derived())
+//     {};
+//     const DerivedLeft & left()const{return left_;};
+//     const L2prod& right()const{return right_;};
+//   private:
+//   DerivedLeft left_;
+//   L2prod right_;
+// };
+
+// template<typename DerivedLeft, typename MeshT, typename Left,typename Right>
+// class Multiply2<  Expression2<L2DotProductIntegral<MeshT,Left,Right>>, Expression2<DerivedLeft>>
+// : public Expression2< Multiply2<  Expression2<L2DotProductIntegral<MeshT,Left,Right>> ,Expression2<DerivedLeft> > > 
+// {
+
+//   public:
+//   static_assert(0*L2DotProductIntegral<MeshT,Left,Right>::form::value, "You cannot multiply a L2 inner product: you can only add or subtract two or more inner products");
+//   using UniqueBaseFunctionSpaces=RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::UniqueBaseFunctionSpaces,
+//                                                   typename DerivedLeft::UniqueBaseFunctionSpaces > >;
+//   using form =RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::form,
+//                                                   typename DerivedLeft::form  > >;
+//     Multiply2(const Expression2<L2DotProductIntegral<MeshT,Left,Right>>& left, const Expression2<DerivedLeft>&right)
+//     : 
+//     left_(left.derived()),
+//     right_(right.derived())
+//     {};
+//     const L2DotProductIntegral<MeshT,Left,Right>& left()const{return left_;};
+//     const DerivedLeft & right()const{return right_;};
+//   private:
+//   L2DotProductIntegral<MeshT,Left,Right> left_;
+//   DerivedLeft  right_;
+// };
+
+
+template<typename ConstFormReference>
+void Assembly(const ConstFormReference& form)
+{
+  using Form=typename std::remove_const<typename std::remove_reference<ConstFormReference>::type>::type;
+  using UniqueBaseFunctionSpaces=typename Form::UniqueBaseFunctionSpaces;
+  using TupleOperatorsAndQuadrature= typename OperatorTupleType<Form>::type;
+  using TupleOfTupleNoQuadrature=TupleOfTupleRemoveQuadrature<TupleOperatorsAndQuadrature>;
+  using SpacesToUniqueFEFamilies=SpacesToUniqueFEFamilies<UniqueBaseFunctionSpaces>;
+  using Map=MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,UniqueBaseFunctionSpaces>;
+  using UniqueMapping=UniqueMap<SpacesToUniqueFEFamilies,Map> ;
+  using TupleOfTupleShapeFunction=TupleOfTupleShapeFunctionType<UniqueBaseFunctionSpaces,TupleOperatorsAndQuadrature>;
+  using MapTupleNumbers=MapTupleInit<TupleOfTupleShapeFunction, SpacesToUniqueFEFamilies, UniqueMapping>;
+ 
+  TupleOfTupleShapeFunction stuple;
+  UniqueMapping mapping;
+  init_map_aux< SpacesToUniqueFEFamilies,MapTupleNumbers,TupleTypeSize<MapTupleNumbers>::value-1,0>(stuple,mapping);
+}
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

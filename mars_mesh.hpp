@@ -823,6 +823,34 @@ namespace mars {
 			return true;
 		}
 
+		const std::vector<Integer>& side_tags() const
+		{return side_tags_;}
+
+			void find_side_tags(){
+				if(found_tags_==false)
+				{
+    	// collect all the side tags
+					for(Integer elem_iter=0;elem_iter<n_elements();elem_iter++)
+					{
+						if(!is_active(elem_iter) || !is_boundary(elem_iter)) continue;
+						const auto &elem = this->elem(elem_iter);
+						const auto& side_tags=elem.side_tags;
+						for(auto& i: side_tags)
+						{
+							side_tags_.push_back(i);
+						}
+
+					}
+        // make unique the tags
+					std::sort(side_tags_.begin(), side_tags_.end());  
+					auto last = std::unique(side_tags_.begin(), side_tags_.end());
+					side_tags_.erase(last, side_tags_.end()); 
+        // remove -1 (internal faces) from the side_tags
+					side_tags_.erase(std::remove_if(side_tags_.begin(), side_tags_.end(),[](const int& x) { return x == -1;}), side_tags_.end());
+					found_tags_=true;
+				}
+			}
+
 	private:
 		std::vector<Elem> elements_;
 		std::vector<Point> points_;
@@ -830,6 +858,8 @@ namespace mars {
 		DualGraph<ManifoldDim> dual_graph_;
 		std::vector<bool> active_;
 		bool sorted_elements_;
+		std::vector<Integer> side_tags_;
+		bool found_tags_;
 	};
 
 

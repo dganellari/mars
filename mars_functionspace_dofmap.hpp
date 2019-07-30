@@ -19,7 +19,7 @@ namespace mars{
 /////// FunctionSpaceDofsPerElem:                                                                                     //////////////
 /////// For the given entity of dimension entity[N] of FunctionSpace, returns the corresponding number of dofs        //////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-template<typename FunctionSpace,Integer N=FunctionSpace::entities_nums-1>
+template<typename FunctionSpace,Integer N=FunctionSpace::entity.size()-1>
 class 
 FunctionSpaceDofsPerElem
 {
@@ -76,7 +76,7 @@ struct EntitiesOfFunctionSpaceType<Elem,FEFamily,Order,0>
 
 template<typename Elem,Integer FEFamily, 
          Integer Order, 
-         Integer N=(ElementFunctionSpace<Elem,FEFamily,Order>::entities_nums-1),
+         Integer N=(ElementFunctionSpace<Elem,FEFamily,Order>::entity.size()-1),
          typename MeshT>
 typename std::enable_if<N==0, 
                         typename EntitiesOfFunctionSpaceType<Elem,FEFamily,Order,N>::type>::type 
@@ -90,7 +90,7 @@ EntitiesOfFunctionSpace(const MeshT& mesh,
 
 template<typename Elem,Integer FEFamily, 
          Integer Order, 
-         Integer N=(ElementFunctionSpace<Elem,FEFamily,Order>::entities_nums-1),
+         Integer N=(ElementFunctionSpace<Elem,FEFamily,Order>::entity.size()-1),
          typename MeshT>
 typename std::enable_if< 0<N, 
                          typename EntitiesOfFunctionSpaceType<Elem,FEFamily,Order,N>::type >::type  
@@ -140,14 +140,14 @@ template<typename Elem, Integer FEFamily, Integer Order, Integer M  , typename .
 typename std::enable_if< M==sizeof ...(Args),void >::type
 initialize_flag_tuple_entities(std::tuple< Args...> const &tuple, 
                                std::array<std::vector< std::array<Integer,2> >, 
-                               ElementFunctionSpace<Elem,FEFamily,Order>::entities_nums > & entity_found)
+                               ElementFunctionSpace<Elem,FEFamily,Order>::entity.size() > & entity_found)
     {static_assert(M>=0," the tuple must have non negative length ");};
 
 template<typename Elem, Integer FEFamily, Integer Order, Integer M = 0, typename...Args>
 typename std::enable_if< M<sizeof ...(Args),void >::type
 initialize_flag_tuple_entities(std::tuple< Args...> const &tuple,
                                std::array<std::vector< std::array<Integer,2> >, 
-                               ElementFunctionSpace<Elem,FEFamily,Order>::entities_nums > & entity_found)
+                               ElementFunctionSpace<Elem,FEFamily,Order>::entity.size() > & entity_found)
 {
      static_assert(M>=0," the tuple must have non negative length ");
      Integer entity_length=std::get<M>(tuple).size();
@@ -161,7 +161,7 @@ struct FlagTupleType
      using FS=ElemFunctionSpace<Elem,FunctionSpace>;
      static constexpr Integer FEFamily=FS::FEFamily;
      static constexpr Integer Order=FS::Order; 
-     static constexpr Integer entities_nums=FS::entities_nums;
+     static constexpr Integer entities_nums=FS::entity.size();
      using rest = typename FlagTupleType<Elem,FunctionSpaces...>::type;
      using ens  = typename std::array<std::vector<std::array<Integer,2>>, entities_nums>;
      using type = decltype( std::tuple_cat( std::declval< rest >(), 
@@ -175,7 +175,7 @@ struct FlagTupleType<Elem,FunctionSpace>
  using FS=ElemFunctionSpace<Elem,FunctionSpace>;
  static constexpr Integer FEFamily=FS::FEFamily;
  static constexpr Integer Order=FS::Order; 
- static constexpr Integer entities_nums=FS::entities_nums;
+ static constexpr Integer entities_nums=FS::entity.size();
  using ens =  typename std::array<std::vector<std::array<Integer,2>>, entities_nums>;
  using type = typename std::tuple<ens>;
 };
@@ -190,7 +190,7 @@ FlagTuple(std::tuple<Args...> tuple)
       constexpr Integer FEFamily=FS::FEFamily;
       constexpr Integer Order=FS::Order;
       static constexpr Integer M=sizeof...(FunctionSpaces);
-      static constexpr Integer entities_nums=FS::entities_nums;
+      static constexpr Integer entities_nums=FS::entity.size();
       using type = typename std::array<std::vector<std::array<Integer,2>>, entities_nums>;
       type ens;
 
@@ -208,7 +208,7 @@ FlagTuple(std::tuple<Args...> tuple)
       using FS=ElemFunctionSpace<Elem,FunctionSpace>;
       constexpr Integer FEFamily=FS::FEFamily;
       constexpr Integer Order=FS::Order;
-      static constexpr Integer entities_nums=FS::entities_nums;
+      static constexpr Integer entities_nums=FS::entity.size();
       using type = typename std::array<std::vector<std::array<Integer,2>>, entities_nums>;
       type ens;
       initialize_flag_tuple_entities<Elem,FEFamily,Order>(std::get<0>(tuple),ens);
@@ -225,7 +225,7 @@ struct EntitiesOfFunctionSpaceTupleType
      using FS=ElemFunctionSpace<Elem,FunctionSpace>;
      static constexpr Integer FEFamily=FS::FEFamily;
      static constexpr Integer Order=FS::Order; 
-     static constexpr Integer N=FS::entities_nums-1;
+     static constexpr Integer N=FS::entity.size()-1;
      using rest = typename EntitiesOfFunctionSpaceTupleType<Elem,FunctionSpaces...>::type;
      using ens  = typename EntitiesOfFunctionSpaceType<Elem,FEFamily,Order,N>::type;
      using type = decltype( std::tuple_cat( std::declval< rest >(), 
@@ -239,7 +239,7 @@ struct EntitiesOfFunctionSpaceTupleType<Elem,FunctionSpace>
      using FS=ElemFunctionSpace<Elem,FunctionSpace>;
      static constexpr Integer FEFamily=FS::FEFamily;
      static constexpr Integer Order=FS::Order; 
-     static constexpr Integer N=FS::entities_nums-1;
+     static constexpr Integer N=FS::entity.size()-1;
      using ens =  typename EntitiesOfFunctionSpaceType<Elem,FEFamily,Order,N>::type ;
      using type = typename std::tuple<ens>;
 };
@@ -254,7 +254,7 @@ EntitiesOfFunctionSpaceTuple(const MeshT& mesh,
       using FS=ElemFunctionSpace<Elem,FunctionSpace>;
       static constexpr Integer FEFamily=FS::FEFamily;
       static constexpr Integer Order=FS::Order;
-      static constexpr Integer N=FS::entities_nums-1;
+      static constexpr Integer N=FS::entity.size()-1;
       using type = typename EntitiesOfFunctionSpaceType<Elem,FEFamily,Order,N>::type;
       return std::tuple_cat(EntitiesOfFunctionSpaceTuple<Elem,FunctionSpaces...>(mesh,node_2_element),
                             std::tuple<type>(EntitiesOfFunctionSpace<Elem,FEFamily,Order>(mesh,node_2_element))
@@ -270,7 +270,7 @@ EntitiesOfFunctionSpaceTuple(const MeshT& mesh,
       using FS=ElemFunctionSpace<Elem,FunctionSpace>;
       static constexpr Integer FEFamily=FS::FEFamily;
       static constexpr Integer Order=FS::Order;
-      static constexpr Integer N=FS::entities_nums-1;
+      static constexpr Integer N=FS::entity.size()-1;
       using type = typename EntitiesOfFunctionSpaceType<Elem,FEFamily,Order,N>::type;
       return std::tuple<type>(EntitiesOfFunctionSpace<Elem,FEFamily,Order>(mesh,node_2_element));
 }
@@ -486,7 +486,7 @@ template<typename Elem,typename FunctionSpace,typename...FunctionSpaces>
 struct OffsetDofsType
 {
     using FS=ElemFunctionSpace<Elem,FunctionSpace>;
-    static constexpr Integer entities_nums=FS::entities_nums;
+    static constexpr Integer entities_nums=FS::entity.size();
     using rest = typename OffsetDofsType<Elem, FunctionSpaces...>::type;
     using ens = std::array<Integer,entities_nums+1>;
     using tuple_ens=std::tuple<ens>;
@@ -497,7 +497,7 @@ template<typename Elem,typename FunctionSpace>
 struct OffsetDofsType<Elem,FunctionSpace>
 {
  using FS=ElemFunctionSpace<Elem,FunctionSpace>;
- static constexpr Integer entities_nums=FS::entities_nums;
+ static constexpr Integer entities_nums=FS::entity.size();
  using ens = std::array<Integer,entities_nums+1>;
  using type = typename std::tuple<ens>;
 };
@@ -509,7 +509,7 @@ typename std::enable_if< 0==sizeof...(FunctionSpaces),
 OffsetDofs()
 {   
     using FS=ElemFunctionSpace<Elem,FunctionSpace>;
-    const auto &entities_nums=FS::entities_nums;
+    constexpr const auto entities_nums=FS::entity.size();
     std::array<Integer,entities_nums+1> arr;
     FunctionSpaceOffSetDofs<entities_nums+1,FS,0,M>(arr);
     return std::tuple<decltype(arr)>(arr);
@@ -521,7 +521,7 @@ typename std::enable_if< 0<sizeof...(FunctionSpaces),
 OffsetDofs()
 {
     using FS=ElemFunctionSpace<Elem,FunctionSpace>;
-    const auto &entities_nums=FS::entities_nums;
+    constexpr const auto entities_nums=FS::entity.size();
     std::array<Integer,entities_nums+1> arr;
 
     FunctionSpaceOffSetDofs<entities_nums+1,FS,0,M>(arr);

@@ -7,6 +7,27 @@
 
 namespace mars {
 
+
+
+	constexpr Integer factorial(const Integer N)
+	{
+		assert(N>=-1 && " in factorial(N), N>=-1 ");
+		switch(N)
+		{
+			case -1: return 1;
+			case  0: return 1;
+			case  1: return 1;
+			default: return N*factorial(N-1);
+		}
+	}
+
+	constexpr Integer binomial_coefficient(const Integer N,Integer K)
+	{
+		return factorial(N)/( factorial(K) * factorial(N-K));
+	}
+
+
+
 	//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	//////// Number<N>
 	//////// Class used to use Numbers as types and avoid constexpr arrays
@@ -15,7 +36,7 @@ namespace mars {
 	class Number
 	{
 	public:
-	  static constexpr Integer value=N;
+		static constexpr Integer value=N;
 	};
 	using Zero=Number<0>;
 	using One=Number<1>;
