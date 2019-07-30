@@ -69,7 +69,8 @@ public:
 			if(le_nhb != INVALID_INDEX){
 
 				//get the longest edge of that neighbor.
-				edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), edge, le_nhb);
+				edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), le_nhb);
+//				edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), edge, le_nhb);
 
 				Bisection<Mesh>::get_mesh().elem(le_nhb).edge(edge_num, new_edge.nodes[0],	new_edge.nodes[1]);
 				new_edge.fix_ordering();
@@ -90,6 +91,71 @@ public:
 				s.push(le_nhb);
 		}
 
+	}
+
+
+	std::map compute_lepp(const Integer element_id){
+
+		std::map<Edge, std::vector<Integer>> lepp;//todo: try unordered map
+
+		Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), top);
+		Edge edge;
+		Bisection<Mesh>::get_mesh().elem(top).edge(edge_num, edge.nodes[0], edge.nodes[1]);
+		edge.fix_ordering();
+
+		auto incidents = Bisection<Mesh>::edge_element_map().elements(edge);
+
+		if(is_terminal(element_id, edge, incidents)){
+			lepp[edge] = incidents;
+		}else{
+			for (auto i : incidents) { //todo: maybe add can_refine?
+				if(i != element_id && Bisection<Mesh>::get_mesh().is_active(i))
+					compute_lepp(i);
+			}
+		}
+	}
+
+	bool is_terminal(Integer element_id, Edge edge, std::vector<Integer> incidents){
+
+		for (auto i : incidents) {
+
+			if(i!= element_id){
+
+				Edge new_edge;
+				edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), i);
+				Bisection<Mesh>::get_mesh().elem(i).edge(edge_num, new_edge.nodes[0],	new_edge.nodes[1]);
+				new_edge.fix_ordering();
+
+				if(edge != new_edge){
+					return false;
+				}
+			}
+		}
+
+		return true;
+	}
+
+	void refine_elements(const Integer element_id) {
+
+		if (!Bisection<Mesh>::edge_select()->can_refine(Bisection<Mesh>::get_mesh(), element_id)) {
+			Bisection<Mesh>::get_incomplete_elements().push_back(element_id);
+			assert(!Bisection<Mesh>::get_fail_if_not_refine());
+			return;
+		}
+
+		while (Bisection<Mesh>::get_mesh().is_active(element_id)) {
+
+			std::map<Edge, std::vector<Integer>> terminal_edges = compute_lepp(element_id);
+
+			for (auto const& star : terminal_edges) {
+
+				for(const Integer element: star.second)
+
+					Bisection<Mesh>::bisect_element(element, star.first);
+
+			}
+
+		}
 	}
 
 private:
