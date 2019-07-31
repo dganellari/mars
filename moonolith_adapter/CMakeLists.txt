@@ -12,6 +12,7 @@ if(MOONOLITH_FOUND)
     add_library(mars_moonolith STATIC ${LOCAL_HEADERS} ${LOCAL_SOURCES})
     target_link_libraries(mars_moonolith ${MOONOLITH_LIBRARIES})
     target_include_directories(mars_moonolith PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    target_include_directories(mars_moonolith PUBLIC ${CMAKE_BINARY_DIR})
     target_include_directories(mars_moonolith PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_include_directories(mars_moonolith PUBLIC ${MOONOLITH_INCLUDES})
 

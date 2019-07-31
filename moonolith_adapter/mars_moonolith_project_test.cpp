@@ -230,8 +230,8 @@ namespace mars {
 
     void mars_contact_test()
     {
-        using MasterElem = moonolith::Triangle<double, 1, 3>;
-        using SlaveElem  = moonolith::Quad<double, 1, 3>;
+        using MasterElem = moonolith::Tri3<double,  3>;
+        using SlaveElem  = moonolith::Quad4<double, 3>;
 
         //dummy quad rule
         moonolith::Quadrature2<double> q_rule;
@@ -282,8 +282,8 @@ namespace mars {
 
     void mars_contact_polymorphic_test()
     {
-        using MasterElem = moonolith::Triangle<double, 1, 3>;
-        using SlaveElem  = moonolith::Quad<double, 1, 3>;
+        using MasterElem = moonolith::Tri3<double, 3>;
+        using SlaveElem  = moonolith::Quad4<double, 3>;
 
         using PolymorphicElem = moonolith::Elem<double, 2, 3>;
 

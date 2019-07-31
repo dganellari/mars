@@ -1,7 +1,7 @@
 #ifndef MOONOLITH_MARS_FUNCTION_SPACE_ADAPTER_HPP
 #define MOONOLITH_MARS_FUNCTION_SPACE_ADAPTER_HPP
 
-#include "moonolith_mars_mesh_adapter.hpp"
+#include "mars_moonolith_mesh_adapter.hpp"
 #include "moonolith_function_space.hpp"
 #include "mars_par_mesh.hpp"
 

@@ -185,6 +185,7 @@ ENDIF()
 
 add_subdirectory(moonolith_adapter)
 target_link_libraries(mars ${MARS_LIBRARIES})
+target_include_directories(mars PUBLIC ${CMAKE_BINARY_DIR})
 
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/mars_config.hpp.in ${CMAKE_BINARY_DIR}/mars_config.hpp)
