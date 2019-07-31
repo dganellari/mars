@@ -4,13 +4,14 @@
 #include "mars.hpp"
 #include "moonolith_mesh_adapter.hpp"
 #include "moonolith_polygon.hpp"
+#include "moonolith_polyhedron.hpp"
 #include "moonolith_line.hpp"
 #include "moonolith_check_stream.hpp"
 #include "moonolith_affine_transform.hpp"
 
-#include "moonolith_elem_segment.hpp"
-#include "moonolith_elem_triangle.hpp"
-#include "moonolith_elem_tetrahedron.hpp"
+#include "moonolith_elem_edge2.hpp"
+#include "moonolith_elem_tri3.hpp"
+#include "moonolith_elem_tet4.hpp"
 
 #include <numeric>
 #include <vector>
@@ -542,7 +543,7 @@ namespace mars {
         make(p0, p1, trafo);
     }
 
-    inline void make(const mars::Mesh1 &mesh, const mars::Mesh1::Elem &elem, moonolith::Segment<double, 1, 1> &poly)
+    inline void make(const mars::Mesh1 &mesh, const mars::Mesh1::Elem &elem, moonolith::Edge2<double, 1> &poly)
     {
     	for(Integer i = 0; i < mars::n_nodes(elem); ++i) {
     		const  auto &p = mesh.point(elem.nodes[i]);
@@ -550,7 +551,7 @@ namespace mars {
     	}
     }
 
-    inline void make(const mars::Mesh2 &mesh, const mars::Mesh2::Elem &elem, moonolith::Triangle<double, 1, 2> &poly)
+    inline void make(const mars::Mesh2 &mesh, const mars::Mesh2::Elem &elem, moonolith::Tri3<double, 2> &poly)
     {
     	for(Integer i = 0; i < mars::n_nodes(elem); ++i) {
     		const  auto &p = mesh.point(elem.nodes[i]);
@@ -559,7 +560,7 @@ namespace mars {
     	}
     }
 
-    inline void make(const mars::Mesh3 &mesh, const mars::Mesh3::Elem &elem, moonolith::Tetrahedron<double, 1, 3> &poly)
+    inline void make(const mars::Mesh3 &mesh, const mars::Mesh3::Elem &elem, moonolith::Tet4<double, 3> &poly)
     {
     	for(Integer i = 0; i < mars::n_nodes(elem); ++i) {
     		const  auto &p = mesh.point(elem.nodes[i]);

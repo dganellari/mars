@@ -3,7 +3,6 @@
 
 #include "par_moonolith_config.hpp"
 #include "moonolith_sparse_matrix.hpp"
-#include "moonolith_mars_mesh_adapter.hpp"
 #include "moonolith_duplicate_intersection_avoidance.hpp"
 #include "moonolith_one_master_one_slave_algorithm.hpp"
 #include "moonolith_single_collection_one_master_one_slave_algorithm.hpp"
@@ -11,7 +10,8 @@
 #include "moonolith_l2_assembler.hpp"
 #include "moonolith_keast_quadrature_rule.hpp"
 #include "moonolith_gauss_quadrature_rule.hpp"
-#include "moonolith_mars_function_space_adapter.hpp"
+#include "mars_moonolith_function_space_adapter.hpp"
+#include "mars_moonolith_mesh_adapter.hpp"
 
 #include <vector>
 #include <tuple>
@@ -27,21 +27,21 @@ namespace moonolith {
     template<Integer Dim>
     class MarsMoonolithConverter<mars::Simplex<Dim, 1>> {
     public:
-        using ElemType = moonolith::Segment<double, 1, Dim>;
+        using ElemType = moonolith::Edge2<double, Dim>;
         using QuadratureType = moonolith::Quadrature1<double>;
     };
 
     template<Integer Dim>
     class MarsMoonolithConverter<mars::Simplex<Dim, 2>> {
     public:
-        using ElemType = moonolith::Triangle<double, 1, Dim>;
+        using ElemType = moonolith::Tri3<double, Dim>;
         using QuadratureType = moonolith::Quadrature2<double>;
     };
 
     template<Integer Dim>
     class MarsMoonolithConverter<mars::Simplex<Dim, 3>> {
     public:
-        using ElemType = moonolith::Tetrahedron<double, 1, Dim>;
+        using ElemType = moonolith::Tet4<double, Dim>;
         using QuadratureType = moonolith::Quadrature3<double>;
     };
 
