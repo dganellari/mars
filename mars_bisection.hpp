@@ -337,6 +337,7 @@ namespace mars {
 				return;
 			}
 
+			//const Integer edge_num = edge_select_->stable_select(mesh, element_id);
 			const Integer edge_num = edge_select_->select(mesh, element_id);
 			Edge edge;
 			mesh.elem(element_id).edge(edge_num, edge.nodes[0], edge.nodes[1]);
