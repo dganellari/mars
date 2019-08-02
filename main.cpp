@@ -849,14 +849,17 @@ void run_benchmarks(int level)
 	LeppBenchmark<Mesh2> lb;
 	lb.run(level, m, "lb");*/
 
-	/*Benchmark<Mesh3> b3;
+	Benchmark<Mesh3> b3;
 	Mesh3 m3;
 	read_mesh("../data/cube_6.MFEM", m3);
 
-	b3.run(level, m3, "b3");*/
+	b3.run(level, m3, "b3");
+
+	LeppBenchmark<Mesh3> lb3;
+	lb3.run(level, m3, "lb3");
 
 	/*ParallelMesh2 pMesh;
-	generate_square(pMesh, 3, 8);
+	generate_square(pMesh, 1, 3);
 
 	Mesh2 sMesh;
 	convert_parallel_mesh_to_serial(sMesh, pMesh);
@@ -866,29 +869,26 @@ void run_benchmarks(int level)
 	std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
 
 	VTKMeshWriter<Mesh2> w;
-	w.write(
-			"build_square_parallel.vtu", sMesh);
-*/
+	w.write("build_square_parallel.vtu", sMesh);
 
+	Benchmark<Mesh2> b1;
+	b1.run(level, sMesh, "b1");
 
 	Mesh2 Mesh;
-	generate_square(Mesh, 8, 3);
+	generate_square(Mesh, 1, 3);
 
 	std::cout << "n_active_elements: " << Mesh.n_active_elements() << std::endl;
 	std::cout << "n_nodes: " << Mesh.n_nodes() << std::endl;
 
 	VTKMeshWriter<Mesh2> w2;
-	w2.write(
-			"build_square_serial.vtu", Mesh);
+	w2.write("build_square_serial.vtu", Mesh);
 
 	LeppBenchmark<Mesh2> b2;
-	b2.run(level, Mesh, "b2");
+	b2.run(level, Mesh, "b2");*/
 
-	Benchmark<Mesh2> b1;
-		b1.run(level, Mesh, "b1");
 
 	/*ParallelMesh3 pMesh3;
-	generate_cube(pMesh3, 4, 2,1);
+	generate_cube(pMesh3, 1, 1, 2);
 
 	Mesh3 sMesh3;
 	convert_parallel_mesh_to_serial(sMesh3, pMesh3);
@@ -903,8 +903,10 @@ void run_benchmarks(int level)
 					+ ".vtu", sMesh3);
 
 	Benchmark<Mesh3> b3;
-	b3.run(level, sMesh3, "b3");*/
+	b3.run(level, sMesh3, "b3");
 
+	LeppBenchmark<Mesh3> lb3;
+		lb3.run(level, sMesh3, "lb3");*/
 
 /*	Benchmark<Mesh4> b4;
 	Mesh4 m4;
