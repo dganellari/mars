@@ -21,15 +21,28 @@ namespace mars {
 			Integer edge_num = 0;
 			Real len = 0;
 
+			Integer otherV=0, otherV2=0;
 			for(Integer i = 0; i < n_edges(e); ++i) {
 				Integer v1, v2;
 				e.edge(i, v1, v2);
 
 				Real len_i = (mesh.point(v1) - mesh.point(v2)).squared_norm();
 
+				if (len_i == len) {
+					assert(!(std::min(v1,v2)==otherV && v1+v2==otherV2));
+					if ((std::min(v1, v2)==otherV && v1+v2<otherV2) || std::min(v1, v2)<otherV) {
+						len = len_i;
+						edge_num = i;
+						otherV = std::min(v1,v2);
+						otherV2 = v1+v2;
+					}
+				}
+
 				if(len_i > len) {
 					len = len_i;
 					edge_num = i;
+					otherV = std::min(v1,v2);
+					otherV2 = v1+v2;
 				}
 			}
 
