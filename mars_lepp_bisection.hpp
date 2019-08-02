@@ -96,7 +96,7 @@ public:
 
 	void compute_lepp(std::map<Edge, std::vector<Integer>>& lepp, const Integer element_id, const Integer root){
 
-		Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id);
+		Integer edge_num = Bisection<Mesh>::edge_select()->stable_select(Bisection<Mesh>::get_mesh(), element_id);
 		Edge edge;
 		Bisection<Mesh>::get_mesh().elem(element_id).edge(edge_num, edge.nodes[0], edge.nodes[1]);
 		edge.fix_ordering();
@@ -130,7 +130,7 @@ public:
 			if(i!=root && Bisection<Mesh>::get_mesh().is_active(i) && Bisection<Mesh>::edge_select()->can_refine(Bisection<Mesh>::get_mesh(), i)){
 
 				Edge new_edge;
-				const Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), i);
+				const Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), edge, i);
 				Bisection<Mesh>::get_mesh().elem(i).edge(edge_num, new_edge.nodes[0], new_edge.nodes[1]);
 				new_edge.fix_ordering();
 

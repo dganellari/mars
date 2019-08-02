@@ -34,6 +34,14 @@ namespace mars {
 			return 0;
 		}
 
+		virtual Integer stable_select(
+			const Mesh &mesh,
+			const Integer element_id) const
+		{
+			//first edge selected
+			return 0;
+		}
+
 		virtual bool repair_element()
 		{
 			return true;
