@@ -19,7 +19,11 @@
 #include "mars_ranked_edge.hpp"
 #include "mars_oldest_edge.hpp"
 #include "mars_longest_edge.hpp"
+#include "generation/mars_memory.hpp"
+#include "mars_mesh_reader.hpp"
+#include "mars_mesh_writer.hpp"
 #include <err.h>
+
 
 #include "generation/mars_mesh_generation.hpp"
 
@@ -731,7 +735,7 @@ void test_partition_2D()
 	}
 
 	std::vector<std::shared_ptr<MeshPartition<Mesh2>>> parts;
-	parition_mesh(mesh, n_parts, partitioning, parts);
+	partition_mesh(mesh, n_parts, partitioning, parts);
 
 	write_mesh_partitions(
 		"par2_in.eps",
@@ -778,7 +782,7 @@ void test_partition_3D()
 	}
 
 	std::vector<std::shared_ptr<MeshPartition<Mesh>>> parts;
-	parition_mesh(mesh, n_parts, partitioning, parts);
+	partition_mesh(mesh, n_parts, partitioning, parts);
 
 	write_mesh_partitions(
 		"before_par3_",
@@ -825,7 +829,7 @@ void test_partition_4D()
 	}
 
 	std::vector<std::shared_ptr<MeshPartition<Mesh>>> parts;
-	parition_mesh(mesh, n_parts, partitioning, parts);
+	partition_mesh(mesh, n_parts, partitioning, parts);
 
 	test_bisection(3, parts, false);
 
@@ -1071,6 +1075,35 @@ void test_incomplete_bad_4D()
 	os_p.close();
 }
 
+void read_file()
+{
+	using namespace mars;
+	std::cout << "======================================\n";
+	mars::Mesh<3, 3> mesh;
+	// mars::Mesh<2, 2> mesh;
+	read("../data/test_3D.msh", mesh, true);
+	// read("../data/square_2.MFEM", mesh);
+	// read_msh("../data/test_3D.msh", mesh, true);
+	mesh.describe(std::cout);
+	std::cout << mesh.n_elements() << std::endl; 
+	std::cout << mesh.n_nodes() << std::endl; 
+}
+
+
+void write_file()
+{
+	using namespace mars;
+	std::cout << "======================================\n";
+	mars::Mesh<3, 3> mesh;
+	// mars::Mesh<2, 2> mesh;
+	read("../data/test_3D.msh", mesh, true);
+	// read("../data/square_2.MFEM", mesh, true);
+	mesh.describe(std::cout);
+	write("../data/test_write_tetra3.msh", mesh);
+	// write("../data/test_write_square2.MFEM", mesh); 
+
+}
+
 void par_mesh_test()
 {
 #ifdef WITH_MPI
@@ -1116,6 +1149,8 @@ int main(int argc, char *argv[])
 	// test_incomplete_5D();
 	// test_incomplete_6D();
 	// test_incomplete_bad_4D();
+	// read_file();
+	// write_file(); 
 
 	int level = 1;
 	std::string filename = "../data/write/tetrakis.MFEM";
@@ -1143,6 +1178,12 @@ int main(int argc, char *argv[])
 	//test_uniform_bisection_2D(level,filename);
 	//test_read_write_3D(filename);
 
+
+	// if(level <100){
+
+		test_mars_mesh_generation_2D(level,level);
+		//test_mars_mesh_generation_1D(level);
+	// }
 
 	/*test_mars_mesh_generation_3D(100,100,100);
 	test_mars_mesh_generation_3D(78,100,80);*/
