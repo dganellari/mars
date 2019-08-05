@@ -94,7 +94,7 @@ public:
 	}*/
 
 
-	void compute_lepp(std::map<Edge, std::vector<Integer>>& lepp, const Integer element_id, const Integer root){
+	void compute_lepp(std::map<Edge, std::vector<Integer>>& lepp, const Integer element_id){
 
 		Integer edge_num = Bisection<Mesh>::edge_select()->stable_select(Bisection<Mesh>::get_mesh(), element_id);
 		Edge edge;
@@ -107,27 +107,27 @@ public:
 		 std::vector<Integer> lepp_eq;
 
 
-		if (is_terminal(element_id, edge, incidents,root,lepp_incidents,lepp_eq)) {
+		if (is_terminal(edge, incidents,lepp_incidents,lepp_eq)) {
 
 			lepp[edge] = lepp_eq;
 
 		} else {
 
 			for (auto i : lepp_incidents) {
-				if (i != element_id && Bisection<Mesh>::get_mesh().is_active(i) && i != root)
-					compute_lepp(lepp,i,element_id);
+				compute_lepp(lepp,i);
 			}
 		}
 	}
 
-	bool is_terminal(const Integer element_id, const Edge edge, const std::vector<Integer> incidents, const Integer root,std::vector<Integer>& lepp_inc,std::vector<Integer>& lepp_eq){
+	bool is_terminal(const Edge edge, const std::vector<Integer> incidents,
+			std::vector<Integer>& lepp_inc, std::vector<Integer>& lepp_eq) {
 
 		bool terminal = true; //in case the elements share the longest edge or there is only one incident (itself)
 							 // - meaning the longest edge is on the boundary.
 
 		for (auto i : incidents) {
 
-			if(i!=root && Bisection<Mesh>::get_mesh().is_active(i) && Bisection<Mesh>::edge_select()->can_refine(Bisection<Mesh>::get_mesh(), i)){
+			if(Bisection<Mesh>::get_mesh().is_active(i) && Bisection<Mesh>::edge_select()->can_refine(Bisection<Mesh>::get_mesh(), i)){
 
 				Edge new_edge;
 				const Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), edge, i);
@@ -135,8 +135,7 @@ public:
 				new_edge.fix_ordering();
 
 				if(edge != new_edge){
-					if (i != root)
-						lepp_inc.push_back(i);
+					lepp_inc.push_back(i);
 					terminal= false;
 				}else
 					lepp_eq.push_back(i);
@@ -157,7 +156,7 @@ public:
 		while (Bisection<Mesh>::get_mesh().is_active(element_id)) {
 
 			std::map<Edge, std::vector<Integer>> terminal_edges;
-			compute_lepp(terminal_edges, element_id,INVALID_INDEX);
+			compute_lepp(terminal_edges, element_id);
 
 			for (auto const& star : terminal_edges) {
 
