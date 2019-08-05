@@ -6,13 +6,12 @@
 #include "string.h"
 
 namespace mars {
-namespace generation {
 namespace memory {
 
 //values are in KB.
 
 
-int parse_line(char* line) {
+int read_line(char* line) {
 
 	int i = strlen(line);
 	const char* p = line;
@@ -30,7 +29,7 @@ int get_virtual_memory() {
 
 	while (fgets(line, 128, file) != NULL) {
 		if (strncmp(line, "VmSize:", 7) == 0) {
-			result = parse_line(line);
+			result = read_line(line);
 			break;
 		}
 	}
@@ -45,7 +44,7 @@ int get_physical_memory() {
 
 	while (fgets(line, 128, file) != NULL) {
 		if (strncmp(line, "VmRSS:", 6) == 0) {
-			result = parse_line(line);
+			result = read_line(line);
 			break;
 		}
 	}
@@ -53,7 +52,6 @@ int get_physical_memory() {
 	return result;
 }
 
-}
 }
 }
 
