@@ -4,6 +4,14 @@ project(mars)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING
+      "Choose the type of build, options are: Debug Release
+RelWithDebInfo MinSizeRel."
+      FORCE)
+
+  	message(STATUS "[Status] CMAKE_BUILD_TYPE=Release")
+endif(NOT CMAKE_BUILD_TYPE)
 
 #################################################################################
 #################################################################################
