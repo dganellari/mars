@@ -112,6 +112,7 @@ list(APPEND MARS_HEADERS
 	mars_lagrange_element.hpp
 	mars_longest_edge.hpp
 	mars_matrix.hpp
+	mars_imesh.hpp
 	mars_mesh.hpp
 	mars_mesh_partition.hpp
 	mars_newest_vertex.hpp
@@ -133,13 +134,14 @@ list(APPEND MARS_HEADERS
 	mars_vector.hpp
 	mars_visualization.hpp
 	mars_vtk_writer.hpp
+	mars_fwd.hpp
 	generation/mars_point.hpp
 	generation/mars_mesh_generation.hpp
 	)
 	
 IF(Kokkos_FOUND)
 	list(APPEND MARS_HEADERS
-	    generation/mars_mesh_generation_kokkos.hpp
+		generation/mars_imesh_kokkos.hpp	
 	    generation/mars_mesh_kokkos.hpp
 	    generation/mars_test_kokkos.hpp
 	    generation/mars_utils_kokkos.hpp
