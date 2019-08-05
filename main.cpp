@@ -1094,7 +1094,7 @@ int main(int argc, char *argv[])
 	// test_incomplete_6D();
 	// test_incomplete_bad_4D();
 	// read_file();
-	write_file(); 
+	// write_file(); 
 
 	int level = 1;
 	std::string filename = "../data/write/tetrakis.MFEM";
