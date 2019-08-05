@@ -51,7 +51,7 @@ mars::Mesh1 test_mars_mesh_generation_1D(const int x) {
 	high_resolution_clock::time_point t1 = high_resolution_clock::now();
 
 	Mesh1 mesh;
-	generation::generate_line(mesh, x);
+	generate_line(mesh, x);
 
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 	auto duration = duration_cast < seconds > (t2 - t1).count();
@@ -78,7 +78,7 @@ mars::Mesh2 test_mars_mesh_generation_2D(const int x,
 	high_resolution_clock::time_point t1 = high_resolution_clock::now();
 
 	Mesh2 mesh;
-	generation::generate_square(mesh, x, y);
+	generate_square(mesh, x, y);
 
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 	auto duration = duration_cast < seconds > (t2 - t1).count();
@@ -106,7 +106,7 @@ mars::Mesh3 test_mars_mesh_generation_3D(const int x,
 	high_resolution_clock::time_point t1 = high_resolution_clock::now();
 
 	Mesh3 mesh;
-	generation::generate_cube<3, 3>(mesh, x, y, z);
+	generate_cube<3, 3>(mesh, x, y, z);
 
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 	auto duration = duration_cast < seconds > (t2 - t1).count();
@@ -127,7 +127,7 @@ void test_mars_mesh_generation_unit_cube() {
 
 	using namespace mars;
 
-	Mesh3 mesh = generation::generate_unit_cube();
+	Mesh3 mesh = generate_unit_cube();
 
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
@@ -1105,7 +1105,7 @@ int main(int argc, char *argv[])
 	// test_incomplete_6D();
 	// test_incomplete_bad_4D();
 	// read_file();
-	write_file(); 
+	// write_file(); 
 
 	int level = 1;
 	std::string filename = "../data/write/tetrakis.MFEM";
@@ -1119,23 +1119,28 @@ int main(int argc, char *argv[])
 				<< "No level of refinement was specified. Setting the default to 1!"
 				<< std::endl;
 
-	if (argc > 2) {
+	/*if (argc > 2) {
 		filename = argv[2];
 	} else
 		std::cout
 				<< "No file name was specified. Setting the default to tetrakis!"
-				<< std::endl;
+				<< std::endl;*/
 
 	//run_tests(level,filename);
 
 	//test_uniform_bisection_2D(level,filename);
 	//test_read_write_3D(filename);
 
-	//test_mars_mesh_generation_1D(level);
 
-	//test_mars_mesh_generation_2D(1000,1000);
+	// if(level <100){
 
-	//test_mars_mesh_generation_3D(100,100,100);
+		test_mars_mesh_generation_2D(level,level);
+		//test_mars_mesh_generation_1D(level);
+	// }
+
+	/*test_mars_mesh_generation_3D(100,100,100);
+	test_mars_mesh_generation_3D(78,100,80);*/
+
 	//test_mars_mesh_generation_3D(150,150,150);
 	//test_mars_mesh_generation_3D(200,200,200);
 
@@ -1145,7 +1150,17 @@ int main(int argc, char *argv[])
 	//parallel with kokkos.
 
 #ifdef WITH_KOKKOS
-	test_mars_mesh_generation_kokkos_1D(level);
+	Kokkos::initialize(argc,argv);
+	{
+
+	test_mars_mesh_generation_kokkos_2D(level,level);
+
+
+	//test_mars_mesh_generation_kokkos_1D(level);
+	}
+
+	Kokkos::finalize();
+
 #endif
 
 #ifdef WITH_PAR_MOONOLITH
