@@ -1114,7 +1114,7 @@ boundary_example();
 	// test_incomplete_6D();
 	// test_incomplete_bad_4D();
 	// read_file();
-	write_file(); 
+	// write_file(); 
 
 	int level = 1;
 	std::string filename = "../data/write/tetrakis.MFEM";
@@ -1141,11 +1141,11 @@ boundary_example();
 	//test_read_write_3D(filename);
 
 
-	if(level <100){
+	// if(level <100){
 
 		test_mars_mesh_generation_2D(level,level);
 		//test_mars_mesh_generation_1D(level);
-	}
+	// }
 
 	/*test_mars_mesh_generation_3D(100,100,100);
 	test_mars_mesh_generation_3D(78,100,80);*/
