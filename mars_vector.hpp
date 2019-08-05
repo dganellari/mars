@@ -16,7 +16,7 @@ namespace mars {
 
 	    Vector(std::initializer_list<T> values)
 	    {
-	        std::copy(std::begin(values), std::end(values), std::begin(this->values));
+	        std::copy(std::begin(values), std::begin(values) + Dim, std::begin(this->values));
 	    }
 
 	    friend Vector operator*(const T &factor, const Vector &v)
