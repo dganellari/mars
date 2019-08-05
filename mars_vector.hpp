@@ -26,22 +26,6 @@ namespace mars {
 		using MB::MB;
 		using MB::values;
 
-	    // std::array<T, Dim> values;
-	    // Vector() {}
-
-     //    ~Vector()=default;
-
-
-	    // template<typename...Inputs>
-	    // constexpr Vector (const Inputs&...vals)
-     //    : values{{static_cast<T>(vals)...}}
-	    // {static_assert(sizeof...(Inputs)==Dim, " In Vector constructor, number of inputs of lists must be Dim");}
-
-
-	    // Vector(std::initializer_list<T> values)
-	    // {
-	    //     std::copy(std::begin(values), std::end(values), std::begin(this->values));
-	    // }
 
 	    friend constexpr Vector operator*(const Real &alpha, const Vector &v)
 	    {
@@ -100,20 +84,13 @@ namespace mars {
 	     constexpr Vector& operator=(const Vector &right)
 	    {
 	        for(Integer i = 0; i < Dim; ++i) {
-	            const_cast<T&>(static_cast<const std::array<T,Dim>& >((*this)())[i] )=right(i);
+	            // const_cast<T&>(static_cast<const std::array<T,Dim>& >((*this)())[i] )=right(i);
+	            (*this)()[i]=right(i);
 	        }
 	        
 	        return *this;
 	    }
 
-	    // const Vector operator=(const T &value)
-	    // {
-	    //     for(Integer i = 0; i < Dim; ++i) {
-	    //         (*this)(i) = value;
-	    //     }
-	        
-	    //     return *this;
-	    // }
 	    
 	    constexpr Vector &operator=(const T &value) const
 	    {
@@ -205,9 +182,6 @@ namespace mars {
 	    }
 
 
-	    // constexpr Vector(const T& t) 
-	    // {for(Integer ii=0;ii<Dim;ii++)
-	    // 	 values[ii]=static_cast<T>(t);}
 
 	    void describe(std::ostream &os) const
 	    {
@@ -281,7 +255,7 @@ namespace mars {
 	        return sum()/Dim;
  	    }
         
-        inline const Integer size() {return Dim;};
+        inline constexpr const Integer size()const {return Dim;};
 
 
 	};

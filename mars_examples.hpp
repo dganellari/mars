@@ -22,37 +22,8 @@ namespace mars{
 
 
 
-// template<typename Space, Integer ManifoldDim,Integer N>
-// constexpr std::enable_if_t< (Space::entity[N]>ManifoldDim || N>=Space::entity.size()),Integer>  
-// trace_surf_n_dofs(){return 0;}
 
-// template<typename Space, Integer ManifoldDim,Integer N>
-// constexpr std::enable_if_t< (Space::entity[N]<=ManifoldDim && N<Space::entity.size()),Integer>  
-// class
-// trace_surf_n_dofs()
-// {
-//   return Space::dofs_per_entity[N]*Combinations<ManifoldDim,Space::entity[N]+1>::value
-//   +
-//          trace_surf_n_dofs<Space,ManifoldDim,N+1>();
-// }
-
-
-// works only for simplices
-template <typename Space,Integer ManifoldDim>
-  constexpr Integer trace_surf_n_dofs()
-  { 
-    Integer n_dofs=0;
-    for(Integer ii=0;ii<Space::entity.size();ii++)
-    {
-      if(Space::entity[ii]<=ManifoldDim)
-       n_dofs+=Space::dofs_per_entity[ii]* binomial_coefficient(ManifoldDim,Space::entity[ii]+1);
-   }
-   return n_dofs;
- }
-
-
-
- constexpr Integer dosomething(const Integer& SimplexDim,const Integer& FaceNumber,const Integer& SubEntityDim, const Integer& SubEntityDimNumber)
+ constexpr Integer simplex_face_sub_entities(const Integer& SimplexDim,const Integer& FaceNumber,const Integer& SubEntityDim, const Integer& SubEntityDimNumber)
  {
   switch(SimplexDim)
   {
@@ -71,16 +42,16 @@ template <typename Space,Integer ManifoldDim>
         {
           case 0: return 0;
           case 1: return 1;
-          default: {assert(0 &&"dosomething: invalid sub entity number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
         }
         // face 0, edges
         case 1:
         switch(SubEntityDimNumber)
         {
           case 0: return 0;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }        
-        default: {assert(0 &&"dosomething: invalid SubEntityDim");return -1;};
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
 
        }
    
@@ -93,16 +64,16 @@ template <typename Space,Integer ManifoldDim>
         {
           case 0: return 0;
           case 1: return 2;
-          default: {assert(0 &&"dosomething: invalid sub entity number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
         }
         // face 0, edges
         case 1:
         switch(SubEntityDimNumber)
         {
           case 0: return 1;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }        
-        default: {assert(0 &&"dosomething: invalid SubEntityDim");return -1;};
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
 
        }
     case 2:
@@ -114,19 +85,19 @@ template <typename Space,Integer ManifoldDim>
         {
           case 0: return 1;
           case 1: return 2;
-          default: {assert(0 &&"dosomething: invalid sub entity number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
         }
         // face 0, edges
         case 1:
         switch(SubEntityDimNumber)
         {
           case 0: return 2;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }        
-        default: {assert(0 &&"dosomething: invalid SubEntityDim");return -1;};
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
 
        }
-    default: {assert(0 &&"dosomething: invalid face number");return -1;};
+    default: {assert(0 &&"simplex_face_sub_entities: invalid face number");return -1;};
    }
   // tetrahedrons
   case 3:
@@ -144,7 +115,7 @@ template <typename Space,Integer ManifoldDim>
           case 0: return 0;
           case 1: return 1;
           case 2: return 2;
-          default: {assert(0 &&"dosomething: invalid sub entity number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
         }
         // face 0, edges
         case 1:
@@ -153,16 +124,16 @@ template <typename Space,Integer ManifoldDim>
           case 0: return 0;
           case 1: return 1;
           case 2: return 3;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }  
         // face 0, triangles
         case 2:
         switch(SubEntityDimNumber)
         {
           case 0: return 0;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }         
-        default: {assert(0 &&"dosomething: invalid SubEntityDim");return -1;};
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
        }
    
     case 1:
@@ -175,7 +146,7 @@ template <typename Space,Integer ManifoldDim>
           case 0: return 0;
           case 1: return 1;
           case 2: return 3;
-          default: {assert(0 &&"dosomething: invalid sub entity number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
         }
         // face 1, edges
         case 1:
@@ -184,16 +155,16 @@ template <typename Space,Integer ManifoldDim>
           case 0: return 0;
           case 1: return 2;
           case 2: return 4;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }  
         // face 1, triangles
         case 2:
         switch(SubEntityDimNumber)
         {
           case 0: return 1;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }         
-        default: {assert(0 &&"dosomething: invalid SubEntityDim");return -1;};
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
        }
     case 2:
        switch(SubEntityDim)
@@ -205,7 +176,7 @@ template <typename Space,Integer ManifoldDim>
           case 0: return 0;
           case 1: return 2;
           case 2: return 3;
-          default: {assert(0 &&"dosomething: invalid sub entity number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
         }
         // face 0, edges
         case 1:
@@ -214,16 +185,16 @@ template <typename Space,Integer ManifoldDim>
           case 0: return 1;
           case 1: return 2;
           case 2: return 5;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }  
         // face 0, triangles
         case 2:
         switch(SubEntityDimNumber)
         {
           case 0: return 2;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }         
-        default: {assert(0 &&"dosomething: invalid SubEntityDim");return -1;};
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
        }
     case 3:
         switch(SubEntityDim)
@@ -235,7 +206,7 @@ template <typename Space,Integer ManifoldDim>
           case 0: return 1;
           case 1: return 2;
           case 2: return 3;
-          default: {assert(0 &&"dosomething: invalid sub entity number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
         }
         // face 0, edges
         case 1:
@@ -244,19 +215,19 @@ template <typename Space,Integer ManifoldDim>
           case 0: return 3;
           case 1: return 4;
           case 2: return 5;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }  
         // face 0, triangles
         case 2:
         switch(SubEntityDimNumber)
         {
           case 0: return 3;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }         
-        default: {assert(0 &&"dosomething: invalid SubEntityDim");return -1;};
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
        }
 
-    default: {assert(0 &&"dosomething: invalid face number");return -1;};
+    default: {assert(0 &&"simplex_face_sub_entities: invalid face number");return -1;};
    }
 
   // pentatope
@@ -276,7 +247,7 @@ template <typename Space,Integer ManifoldDim>
           case 1: return 1;
           case 2: return 2;
           case 3: return 3;
-          default: {assert(0 &&"dosomething: invalid sub entity number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
         }
         // face 0, edges
         case 1:
@@ -288,7 +259,7 @@ template <typename Space,Integer ManifoldDim>
           case 3: return 4;
           case 4: return 5;
           case 5: return 7;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }  
         // face 0, triangles
         case 2:
@@ -298,16 +269,16 @@ template <typename Space,Integer ManifoldDim>
           case 1: return 1;
           case 2: return 3;
           case 3: return 6;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }  
         // face 0, tetrahedrons
         case 3:
         switch(SubEntityDimNumber)
         {
           case 0: return 0;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }        
-        default: {assert(0 &&"dosomething: invalid SubEntityDim");return -1;};
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
        }
 
     // face 1
@@ -322,7 +293,7 @@ template <typename Space,Integer ManifoldDim>
           case 1: return 1;
           case 2: return 2;
           case 3: return 4;
-          default: {assert(0 &&"dosomething: invalid sub entity number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
         }
         // face 1, edges
         case 1:
@@ -334,7 +305,7 @@ template <typename Space,Integer ManifoldDim>
           case 3: return 4;
           case 4: return 6;
           case 5: return 8;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }  
         // face 1, triangles
         case 2:
@@ -344,16 +315,16 @@ template <typename Space,Integer ManifoldDim>
           case 1: return 2;
           case 2: return 4;
           case 3: return 7;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }  
         // face 1, tetrahedrons
         case 3:
         switch(SubEntityDimNumber)
         {
           case 0: return 1;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }        
-        default: {assert(0 &&"dosomething: invalid SubEntityDim");return -1;};
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
        }
     // face 2
     case 2:
@@ -367,7 +338,7 @@ template <typename Space,Integer ManifoldDim>
           case 1: return 1;
           case 2: return 3;
           case 3: return 4;
-          default: {assert(0 &&"dosomething: invalid sub entity number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
         }
         // face 2, edges
         case 1:
@@ -379,7 +350,7 @@ template <typename Space,Integer ManifoldDim>
           case 3: return 5;
           case 4: return 6;
           case 5: return 9;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }  
         // face 2, triangles
         case 2:
@@ -389,16 +360,16 @@ template <typename Space,Integer ManifoldDim>
           case 1: return 2;
           case 2: return 5;
           case 3: return 8;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }  
         // face 2, tetrahedrons
         case 3:
         switch(SubEntityDimNumber)
         {
           case 0: return 2;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }        
-        default: {assert(0 &&"dosomething: invalid SubEntityDim");return -1;};
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
        }
 
     // face 3
@@ -413,7 +384,7 @@ template <typename Space,Integer ManifoldDim>
           case 1: return 2;
           case 2: return 3;
           case 3: return 4;
-          default: {assert(0 &&"dosomething: invalid sub entity number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
         }
         // face 3, edges
         case 1:
@@ -425,7 +396,7 @@ template <typename Space,Integer ManifoldDim>
           case 3: return 7;
           case 4: return 8;
           case 5: return 9;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }  
         // face 3, triangles
         case 2:
@@ -435,16 +406,16 @@ template <typename Space,Integer ManifoldDim>
           case 1: return 4;
           case 2: return 5;
           case 3: return 9;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }  
         // face 3, tetrahedrons
         case 3:
         switch(SubEntityDimNumber)
         {
           case 0: return 3;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }        
-        default: {assert(0 &&"dosomething: invalid SubEntityDim");return -1;};
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
        }
 
     // face 4
@@ -459,7 +430,7 @@ template <typename Space,Integer ManifoldDim>
           case 1: return 2;
           case 2: return 3;
           case 3: return 4;
-          default: {assert(0 &&"dosomething: invalid sub entity number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
         }
         // face 4, edges
         case 1:
@@ -471,7 +442,7 @@ template <typename Space,Integer ManifoldDim>
           case 3: return 7;
           case 4: return 8;
           case 5: return 9;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }  
         // face 4, triangles
         case 2:
@@ -481,167 +452,302 @@ template <typename Space,Integer ManifoldDim>
           case 1: return 7;
           case 2: return 8;
           case 3: return 9;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }  
         // face 4, tetrahedrons
         case 3:
         switch(SubEntityDimNumber)
         {
           case 0: return 4;
-          default: {assert(0 &&"dosomething: invalid edge number");return -1;};
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
         }        
-        default: {assert(0 &&"dosomething: invalid SubEntityDim");return -1;};
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
        }
-    default: {assert(0 &&"dosomething: invalid face number");return -1;};
+    default: {assert(0 &&"simplex_face_sub_entities: invalid face number");return -1;};
    }
-  default: {assert(0 &&"dosomething: invalid simplex dimension");return -1;};
+  default: {assert(0 &&"simplex_face_sub_entities: invalid simplex dimension");return -1;};
  }
 }
 
-// constexpr auto pro(const Integer m)
-// {
-//   switch(m)
-//   {
-//     case 0: return std::array<Integer,1>{0};
-//     case 1: return std::array<Integer,2>{0,1};
-//     case default: {assert(0 && "error"); return std::array<Integer,2>{0,1};}
-//   }
 
-// }
+// works only for simplices
+template <typename Space>
+constexpr Integer trace_surf_n_dofs()
+  { 
+    using Elem=typename Space::Elem;
+    Integer n_dofs=0;
+    for(Integer ii=0;ii<Space::entity.size();ii++)
+    {
+      if(Space::entity[ii]<=Elem::ManifoldDim)
+       n_dofs+=Space::dofs_per_entity[ii]* binomial_coefficient(Elem::ManifoldDim,Space::entity[ii]+1);
+   }
+   return n_dofs;
+ }
 
+
+template<typename FunctionSpace>
+constexpr Integer function_space_dofs_per_elem(const Integer Dim,const Integer N)
+{   
+    std::size_t dofs_per_elem=0;
+    if(N>0)
+    dofs_per_elem=FunctionSpace::NComponents * 
+                                     FunctionSpace::dofs_per_entity[N-1]   * 
+                                     binomial_coefficient(Dim+1,FunctionSpace::entity[N-1]+1);  
+
+     switch(N)
+     {
+      case  0: return 0;
+      case  1: return dofs_per_elem;
+      default: return function_space_dofs_per_elem<FunctionSpace>(Dim,N-1)+dofs_per_elem;
+     }
+};
+
+
+template <typename Space>
+constexpr auto trace_dofs(const Integer face)
+{
+
+ 
+ constexpr auto n=trace_surf_n_dofs<Space>();
+ const auto ManifoldDim=Space::ManifoldDim;
+ const auto entity=Space::entity;
+ Vector<Integer, n> dofs;
+ Integer cont=0;
+ Integer dofs_per_entity_cont=0;
+ for(Integer ii=0; ii< Space::entity.size(); ii++)
+ {
+  const auto entityii=Space::entity[ii];
+  if(entity[ii]<=ManifoldDim)
+  {
+    const auto dofs_per_entity=Space::dofs_per_entity[ii];
+    const auto binomial_coeff=binomial_coefficient(ManifoldDim,entity[ii]+1);
+    // loop on the entityes of entityii dim
+    for(Integer jj=0; jj<binomial_coeff; jj++)
+      {
+        // loop on the dofs of the given entity
+        dofs[cont] = dofs_per_entity*simplex_face_sub_entities(ManifoldDim,face,entityii,jj)+function_space_dofs_per_elem<Space>(ManifoldDim,ii);
+        cont++;
+        for(Integer kk=1; kk<dofs_per_entity; kk++)
+          {
+            dofs[cont] = dofs[cont-1]+1;
+            cont++;
+          }
+      }
+  }
+ }
+ return dofs;
+}
+
+
+template <typename Space>
+ constexpr auto trace_dofs()
+ {
+  const auto ManifoldDim=Space::ManifoldDim;
+  constexpr auto n_dofs_per_face=trace_surf_n_dofs<Space>();
+  const auto n_faces=binomial_coefficient(ManifoldDim+1,ManifoldDim);
+  Vector< Vector<Integer, n_dofs_per_face>, n_faces> vec;
+  for(Integer ii=0;ii<n_faces;ii++)
+    vec[ii]=trace_dofs<Space>(ii);
+  return vec;
+}
+
+
+      template<typename Space,typename Operator,typename single_type,
+               Integer NQPoints,Integer Dim>
+       constexpr auto reference_trace_shape_function_init(const Integer face, const Matrix<Real,NQPoints,Dim>&qp_points)
+       {
+        
+        Vector<Real,Dim> qp_point;
+        const auto dofs=trace_dofs<Space>(face);
+        const auto n_dofs=dofs.size();
+        Vector<Vector<single_type,NQPoints>,n_dofs> v;
+        Vector<single_type,n_dofs> func;
+        
+            for(Integer qp=0;qp<NQPoints;qp++)
+            {
+             qp_point=qp_points.get_row(qp);
+             // func=value<Elem,Operator,FEFamily,Order,single_type,Ndofs>(qp_point);
+             value<Space::Elem,Operator,Space::FEFamily,Space::Order>(qp_point,func);
+              for(Integer n_dof = 0; n_dof < n_dofs; ++n_dof) {
+                  const_cast<single_type&>
+                  (static_cast<const std::array<single_type,NQPoints>& >
+                   ((static_cast<const std::array<Vector<single_type,NQPoints>,n_dofs>& >(v())[n_dof] )())[qp])=
+                  static_cast<const std::array<single_type,n_dofs>& >(func())[n_dof];
+              }
+            }
+       return v;
+      };
+
+template<Integer N,Integer K>
+ constexpr void okiemapply(
+            Vector<Integer, K> &data,
+            const Integer index, 
+            const Integer i,
+            Vector<Vector<Integer, K>, binomial_coefficient(N,K)> &combs,
+            Integer &comb_index)
+        {
+            if(index == K) {
+                for(Integer ii=0;ii<data.size();ii++)
+                    combs[comb_index][ii]=data[ii];
+                comb_index++;
+                return;
+            }
+
+            if(i >= N) {
+                return;
+            }
+
+            data[index] = i;
+
+            okiemapply<N,K>(data, index+1, i+1, combs, comb_index);
+            
+            // current is excluded, replace it with next (Note that
+            // i+1 is passed, but index is not changed)
+            okiemapply<N,K>(data, index, i+1, combs, comb_index);
+        }
+
+        template<Integer N,Integer K >
+        constexpr Vector<Vector<Integer, K>, binomial_coefficient(N,K)> okiem()
+        {
+            Vector<Vector<Integer, K>, binomial_coefficient(N,K)> combs;
+            Vector<Integer, K> data;
+            Integer comb_index = 0;
+            okiemapply<N,K>(data, 0, 0, combs, comb_index);
+            return combs;
+        }
 
 
 void boundary_example()
 {
   // triangles, face 0
-  static_assert(dosomething(2,0,0,0)==0,"");
-  static_assert(dosomething(2,0,0,1)==1,"");
-  static_assert(dosomething(2,0,1,0)==0,"");
+  static_assert(simplex_face_sub_entities(2,0,0,0)==0,"");
+  static_assert(simplex_face_sub_entities(2,0,0,1)==1,"");
+  static_assert(simplex_face_sub_entities(2,0,1,0)==0,"");
   // triangles, face 1
-  static_assert(dosomething(2,1,0,0)==0,"");
-  static_assert(dosomething(2,1,0,1)==2,"");
-  static_assert(dosomething(2,1,1,0)==1,"");
+  static_assert(simplex_face_sub_entities(2,1,0,0)==0,"");
+  static_assert(simplex_face_sub_entities(2,1,0,1)==2,"");
+  static_assert(simplex_face_sub_entities(2,1,1,0)==1,"");
   // triangles, face 2
-  static_assert(dosomething(2,2,0,0)==1,"");
-  static_assert(dosomething(2,2,0,1)==2,"");
-  static_assert(dosomething(2,2,1,0)==2,"");
+  static_assert(simplex_face_sub_entities(2,2,0,0)==1,"");
+  static_assert(simplex_face_sub_entities(2,2,0,1)==2,"");
+  static_assert(simplex_face_sub_entities(2,2,1,0)==2,"");
   // tetrahedron, face 0
-  static_assert(dosomething(3,0,0,0)==0,"");
-  static_assert(dosomething(3,0,0,1)==1,"");
-  static_assert(dosomething(3,0,0,2)==2,"");
-  static_assert(dosomething(3,0,1,0)==0,"");
-  static_assert(dosomething(3,0,1,1)==1,"");
-  static_assert(dosomething(3,0,1,2)==3,"");
-  static_assert(dosomething(3,0,2,0)==0,"");
+  static_assert(simplex_face_sub_entities(3,0,0,0)==0,"");
+  static_assert(simplex_face_sub_entities(3,0,0,1)==1,"");
+  static_assert(simplex_face_sub_entities(3,0,0,2)==2,"");
+  static_assert(simplex_face_sub_entities(3,0,1,0)==0,"");
+  static_assert(simplex_face_sub_entities(3,0,1,1)==1,"");
+  static_assert(simplex_face_sub_entities(3,0,1,2)==3,"");
+  static_assert(simplex_face_sub_entities(3,0,2,0)==0,"");
   // tetrahedron, face 1
-  static_assert(dosomething(3,1,0,0)==0,"");
-  static_assert(dosomething(3,1,0,1)==1,"");
-  static_assert(dosomething(3,1,0,2)==3,"");
-  static_assert(dosomething(3,1,1,0)==0,"");
-  static_assert(dosomething(3,1,1,1)==2,"");
-  static_assert(dosomething(3,1,1,2)==4,"");
-  static_assert(dosomething(3,1,2,0)==1,"");
+  static_assert(simplex_face_sub_entities(3,1,0,0)==0,"");
+  static_assert(simplex_face_sub_entities(3,1,0,1)==1,"");
+  static_assert(simplex_face_sub_entities(3,1,0,2)==3,"");
+  static_assert(simplex_face_sub_entities(3,1,1,0)==0,"");
+  static_assert(simplex_face_sub_entities(3,1,1,1)==2,"");
+  static_assert(simplex_face_sub_entities(3,1,1,2)==4,"");
+  static_assert(simplex_face_sub_entities(3,1,2,0)==1,"");
   // tetrahedron, face 2
-  static_assert(dosomething(3,2,0,0)==0,"");
-  static_assert(dosomething(3,2,0,1)==2,"");
-  static_assert(dosomething(3,2,0,2)==3,"");
-  static_assert(dosomething(3,2,1,0)==1,"");
-  static_assert(dosomething(3,2,1,1)==2,"");
-  static_assert(dosomething(3,2,1,2)==5,"");
-  static_assert(dosomething(3,2,2,0)==2,"");
+  static_assert(simplex_face_sub_entities(3,2,0,0)==0,"");
+  static_assert(simplex_face_sub_entities(3,2,0,1)==2,"");
+  static_assert(simplex_face_sub_entities(3,2,0,2)==3,"");
+  static_assert(simplex_face_sub_entities(3,2,1,0)==1,"");
+  static_assert(simplex_face_sub_entities(3,2,1,1)==2,"");
+  static_assert(simplex_face_sub_entities(3,2,1,2)==5,"");
+  static_assert(simplex_face_sub_entities(3,2,2,0)==2,"");
   // tetrahedron, face 3
-  static_assert(dosomething(3,3,0,0)==1,"");
-  static_assert(dosomething(3,3,0,1)==2,"");
-  static_assert(dosomething(3,3,0,2)==3,"");
-  static_assert(dosomething(3,3,1,0)==3,"");
-  static_assert(dosomething(3,3,1,1)==4,"");
-  static_assert(dosomething(3,3,1,2)==5,"");
-  static_assert(dosomething(3,3,2,0)==3,"");
+  static_assert(simplex_face_sub_entities(3,3,0,0)==1,"");
+  static_assert(simplex_face_sub_entities(3,3,0,1)==2,"");
+  static_assert(simplex_face_sub_entities(3,3,0,2)==3,"");
+  static_assert(simplex_face_sub_entities(3,3,1,0)==3,"");
+  static_assert(simplex_face_sub_entities(3,3,1,1)==4,"");
+  static_assert(simplex_face_sub_entities(3,3,1,2)==5,"");
+  static_assert(simplex_face_sub_entities(3,3,2,0)==3,"");
 
   // pentatope, face 0
-  static_assert(dosomething(4,0,0,0)==0,"");
-  static_assert(dosomething(4,0,0,1)==1,"");
-  static_assert(dosomething(4,0,0,2)==2,"");
-  static_assert(dosomething(4,0,0,3)==3,"");
-  static_assert(dosomething(4,0,1,0)==0,"");
-  static_assert(dosomething(4,0,1,1)==1,"");
-  static_assert(dosomething(4,0,1,2)==2,"");
-  static_assert(dosomething(4,0,1,3)==4,"");
-  static_assert(dosomething(4,0,1,4)==5,"");
-  static_assert(dosomething(4,0,1,5)==7,"");
-  static_assert(dosomething(4,0,2,0)==0,"");
-  static_assert(dosomething(4,0,2,1)==1,"");
-  static_assert(dosomething(4,0,2,2)==3,"");
-  static_assert(dosomething(4,0,2,3)==6,"");
-  static_assert(dosomething(4,0,3,0)==0,"");
+  static_assert(simplex_face_sub_entities(4,0,0,0)==0,"");
+  static_assert(simplex_face_sub_entities(4,0,0,1)==1,"");
+  static_assert(simplex_face_sub_entities(4,0,0,2)==2,"");
+  static_assert(simplex_face_sub_entities(4,0,0,3)==3,"");
+  static_assert(simplex_face_sub_entities(4,0,1,0)==0,"");
+  static_assert(simplex_face_sub_entities(4,0,1,1)==1,"");
+  static_assert(simplex_face_sub_entities(4,0,1,2)==2,"");
+  static_assert(simplex_face_sub_entities(4,0,1,3)==4,"");
+  static_assert(simplex_face_sub_entities(4,0,1,4)==5,"");
+  static_assert(simplex_face_sub_entities(4,0,1,5)==7,"");
+  static_assert(simplex_face_sub_entities(4,0,2,0)==0,"");
+  static_assert(simplex_face_sub_entities(4,0,2,1)==1,"");
+  static_assert(simplex_face_sub_entities(4,0,2,2)==3,"");
+  static_assert(simplex_face_sub_entities(4,0,2,3)==6,"");
+  static_assert(simplex_face_sub_entities(4,0,3,0)==0,"");
 
   // pentatope, face 1
-  static_assert(dosomething(4,1,0,0)==0,"");
-  static_assert(dosomething(4,1,0,1)==1,"");
-  static_assert(dosomething(4,1,0,2)==2,"");
-  static_assert(dosomething(4,1,0,3)==4,"");
-  static_assert(dosomething(4,1,1,0)==0,"");
-  static_assert(dosomething(4,1,1,1)==1,"");
-  static_assert(dosomething(4,1,1,2)==3,"");
-  static_assert(dosomething(4,1,1,3)==4,"");
-  static_assert(dosomething(4,1,1,4)==6,"");
-  static_assert(dosomething(4,1,1,5)==8,"");
-  static_assert(dosomething(4,1,2,0)==0,"");
-  static_assert(dosomething(4,1,2,1)==2,"");
-  static_assert(dosomething(4,1,2,2)==4,"");
-  static_assert(dosomething(4,1,2,3)==7,"");
-  static_assert(dosomething(4,1,3,0)==1,"");
+  static_assert(simplex_face_sub_entities(4,1,0,0)==0,"");
+  static_assert(simplex_face_sub_entities(4,1,0,1)==1,"");
+  static_assert(simplex_face_sub_entities(4,1,0,2)==2,"");
+  static_assert(simplex_face_sub_entities(4,1,0,3)==4,"");
+  static_assert(simplex_face_sub_entities(4,1,1,0)==0,"");
+  static_assert(simplex_face_sub_entities(4,1,1,1)==1,"");
+  static_assert(simplex_face_sub_entities(4,1,1,2)==3,"");
+  static_assert(simplex_face_sub_entities(4,1,1,3)==4,"");
+  static_assert(simplex_face_sub_entities(4,1,1,4)==6,"");
+  static_assert(simplex_face_sub_entities(4,1,1,5)==8,"");
+  static_assert(simplex_face_sub_entities(4,1,2,0)==0,"");
+  static_assert(simplex_face_sub_entities(4,1,2,1)==2,"");
+  static_assert(simplex_face_sub_entities(4,1,2,2)==4,"");
+  static_assert(simplex_face_sub_entities(4,1,2,3)==7,"");
+  static_assert(simplex_face_sub_entities(4,1,3,0)==1,"");
 
   // pentatope, face 2
-  static_assert(dosomething(4,2,0,0)==0,"");
-  static_assert(dosomething(4,2,0,1)==1,"");
-  static_assert(dosomething(4,2,0,2)==3,"");
-  static_assert(dosomething(4,2,0,3)==4,"");
-  static_assert(dosomething(4,2,1,0)==0,"");
-  static_assert(dosomething(4,2,1,1)==2,"");
-  static_assert(dosomething(4,2,1,2)==3,"");
-  static_assert(dosomething(4,2,1,3)==5,"");
-  static_assert(dosomething(4,2,1,4)==6,"");
-  static_assert(dosomething(4,2,1,5)==9,"");
-  static_assert(dosomething(4,2,2,0)==1,"");
-  static_assert(dosomething(4,2,2,1)==2,"");
-  static_assert(dosomething(4,2,2,2)==5,"");
-  static_assert(dosomething(4,2,2,3)==8,"");
-  static_assert(dosomething(4,2,3,0)==2,"");
+  static_assert(simplex_face_sub_entities(4,2,0,0)==0,"");
+  static_assert(simplex_face_sub_entities(4,2,0,1)==1,"");
+  static_assert(simplex_face_sub_entities(4,2,0,2)==3,"");
+  static_assert(simplex_face_sub_entities(4,2,0,3)==4,"");
+  static_assert(simplex_face_sub_entities(4,2,1,0)==0,"");
+  static_assert(simplex_face_sub_entities(4,2,1,1)==2,"");
+  static_assert(simplex_face_sub_entities(4,2,1,2)==3,"");
+  static_assert(simplex_face_sub_entities(4,2,1,3)==5,"");
+  static_assert(simplex_face_sub_entities(4,2,1,4)==6,"");
+  static_assert(simplex_face_sub_entities(4,2,1,5)==9,"");
+  static_assert(simplex_face_sub_entities(4,2,2,0)==1,"");
+  static_assert(simplex_face_sub_entities(4,2,2,1)==2,"");
+  static_assert(simplex_face_sub_entities(4,2,2,2)==5,"");
+  static_assert(simplex_face_sub_entities(4,2,2,3)==8,"");
+  static_assert(simplex_face_sub_entities(4,2,3,0)==2,"");
 
   // pentatope, face 3
-  static_assert(dosomething(4,3,0,0)==0,"");
-  static_assert(dosomething(4,3,0,1)==2,"");
-  static_assert(dosomething(4,3,0,2)==3,"");
-  static_assert(dosomething(4,3,0,3)==4,"");
-  static_assert(dosomething(4,3,1,0)==1,"");
-  static_assert(dosomething(4,3,1,1)==2,"");
-  static_assert(dosomething(4,3,1,2)==3,"");
-  static_assert(dosomething(4,3,1,3)==7,"");
-  static_assert(dosomething(4,3,1,4)==8,"");
-  static_assert(dosomething(4,3,1,5)==9,"");
-  static_assert(dosomething(4,3,2,0)==3,"");
-  static_assert(dosomething(4,3,2,1)==4,"");
-  static_assert(dosomething(4,3,2,2)==5,"");
-  static_assert(dosomething(4,3,2,3)==9,"");
-  static_assert(dosomething(4,3,3,0)==3,"");
+  static_assert(simplex_face_sub_entities(4,3,0,0)==0,"");
+  static_assert(simplex_face_sub_entities(4,3,0,1)==2,"");
+  static_assert(simplex_face_sub_entities(4,3,0,2)==3,"");
+  static_assert(simplex_face_sub_entities(4,3,0,3)==4,"");
+  static_assert(simplex_face_sub_entities(4,3,1,0)==1,"");
+  static_assert(simplex_face_sub_entities(4,3,1,1)==2,"");
+  static_assert(simplex_face_sub_entities(4,3,1,2)==3,"");
+  static_assert(simplex_face_sub_entities(4,3,1,3)==7,"");
+  static_assert(simplex_face_sub_entities(4,3,1,4)==8,"");
+  static_assert(simplex_face_sub_entities(4,3,1,5)==9,"");
+  static_assert(simplex_face_sub_entities(4,3,2,0)==3,"");
+  static_assert(simplex_face_sub_entities(4,3,2,1)==4,"");
+  static_assert(simplex_face_sub_entities(4,3,2,2)==5,"");
+  static_assert(simplex_face_sub_entities(4,3,2,3)==9,"");
+  static_assert(simplex_face_sub_entities(4,3,3,0)==3,"");
 
   // pentatope, face 4
-  static_assert(dosomething(4,4,0,0)==1,"");
-  static_assert(dosomething(4,4,0,1)==2,"");
-  static_assert(dosomething(4,4,0,2)==3,"");
-  static_assert(dosomething(4,4,0,3)==4,"");
-  static_assert(dosomething(4,4,1,0)==4,"");
-  static_assert(dosomething(4,4,1,1)==5,"");
-  static_assert(dosomething(4,4,1,2)==6,"");
-  static_assert(dosomething(4,4,1,3)==7,"");
-  static_assert(dosomething(4,4,1,4)==8,"");
-  static_assert(dosomething(4,4,1,5)==9,"");
-  static_assert(dosomething(4,4,2,0)==6,"");
-  static_assert(dosomething(4,4,2,1)==7,"");
-  static_assert(dosomething(4,4,2,2)==8,"");
-  static_assert(dosomething(4,4,2,3)==9,"");
-  static_assert(dosomething(4,4,3,0)==4,"");
+  static_assert(simplex_face_sub_entities(4,4,0,0)==1,"");
+  static_assert(simplex_face_sub_entities(4,4,0,1)==2,"");
+  static_assert(simplex_face_sub_entities(4,4,0,2)==3,"");
+  static_assert(simplex_face_sub_entities(4,4,0,3)==4,"");
+  static_assert(simplex_face_sub_entities(4,4,1,0)==4,"");
+  static_assert(simplex_face_sub_entities(4,4,1,1)==5,"");
+  static_assert(simplex_face_sub_entities(4,4,1,2)==6,"");
+  static_assert(simplex_face_sub_entities(4,4,1,3)==7,"");
+  static_assert(simplex_face_sub_entities(4,4,1,4)==8,"");
+  static_assert(simplex_face_sub_entities(4,4,1,5)==9,"");
+  static_assert(simplex_face_sub_entities(4,4,2,0)==6,"");
+  static_assert(simplex_face_sub_entities(4,4,2,1)==7,"");
+  static_assert(simplex_face_sub_entities(4,4,2,2)==8,"");
+  static_assert(simplex_face_sub_entities(4,4,2,3)==9,"");
+  static_assert(simplex_face_sub_entities(4,4,3,0)==4,"");
 
 std::cout<<"Combinations<3>"<<std::endl;
 Combinations<3,2>::print_all();
@@ -653,8 +759,82 @@ Combinations<5,2>::print_all();
 Combinations<5,3>::print_all();
 Combinations<5,4>::print_all();
 
-    using Space=ElementFunctionSpace<Simplex<2,2>,LagrangeFE,1,1,1>;
-  constexpr const Integer m=trace_surf_n_dofs<Space,2>();
+  using Space=ElementFunctionSpace<Simplex<2,2>,LagrangeFE,3,1,1>;
+  using single_type=Matrix<Real,Space::ShapeFunctionDim1,Space::ShapeFunctionDim2>;
+  // constexpr const Integer m=trace_surf_n_dofs<Space>();
+  constexpr const auto trace9=trace_dofs<Space>(0);
+  constexpr const auto trace8=trace_dofs<Space>(1);
+  constexpr const auto trace7=trace_dofs<Space>(2);
+
+  constexpr const auto trace10=trace_dofs<Space>();
+
+
+  // constexpr auto automa=reference_trace_shape_function_init<Space,IdentityOperator,single_type>(0, GaussPoints<Space::Elem,3>::qp_points_type);
+
+
+
+std::cout<<"-------------------------------------------"<<std::endl;
+     
+  for(int ii=0;ii<trace10.size();ii++)
+     {for(int jj=0;jj<trace10[ii].size();jj++)
+          std::cout<<trace10[ii][jj]<<std::endl;
+          std::cout<<std::endl;
+     } 
+
+
+ Simplex<3,3> simpl3;
+ Simplex<3,2> simpl32;
+
+ constexpr auto reference=Simplex<3,3>::reference;
+ static_assert(reference[0][0]==0,"non ok");
+ Integer vs[3];
+ for(Integer ii=0;ii<4;ii++)
+   {
+    Combinations<3 + 1,3>::generate(ii,vs);
+    for(Integer jj=0;jj<3;jj++)
+      {for(Integer kk=0;kk<3;kk++)
+        std::cout<<reference[vs[jj]][kk]<<" ";
+          std::cout<<std::endl;}
+    std::cout<<std::endl;
+ 
+  }
+
+  constexpr Integer dim=3;
+  constexpr Integer manifolddim=2;
+
+  Simplex<dim,manifolddim> elem32;
+  Matrix<Real, dim,manifolddim> J;
+
+  constexpr Integer Npoints=Simplex<dim,manifolddim>::Npoints;
+  constexpr Vector<Vector<Real,dim>,3> points { {0,0,1},{2,3,4},{1,4,8} };
+
+  for(Integer ii=0;ii<Npoints;ii++)
+   elem32.nodes[ii]=ii;
+
+ // points[0][0]=0;
+ // points[0][1]=0;
+ // points[0][2]=1;
+ // points[1][0]=2;
+ // points[1][1]=3;
+ // points[1][2]=6;
+ // points[2][0]=1;
+ // points[2][1]=4;
+ // points[2][2]=8;
+ // constexpr auto J32=jacobian<3,3,4>();
+ constexpr auto Jkml=okiem<4,3>();
+   std::cout<<"oo oooo  oooooo oo ooo"<<std::endl;
+
+ for(Integer ii=0;ii<Jkml.size();ii++)
+   {
+   for(Integer jj=0;jj<Jkml[ii].size();jj++)
+    std::cout<<Jkml[ii][jj]<<" ";
+  std::cout<<std::endl;
+   }
+
+ // J32=describe(std::cout);
+ 
+
+
   constexpr Integer ManifoldDim=2;
   constexpr Integer Dim=2;
   using MeshT=mars::Mesh<Dim, ManifoldDim>;  
@@ -777,7 +957,7 @@ void assembly_example()
  auto W=MixedFunctionSpace(FEspace3,FEspace4);
  auto W1=MixedFunctionSpace(W,FEspace4);
 
-
+decltype(W1)::ElementFunctionSpacesTupleType lkj;
 
 
  constexpr Integer NComponents=2;
@@ -804,7 +984,7 @@ void assembly_example()
  auto sfen=sfe1+sfe2+sfe3;
 
  using TupleOperatorsAndQuadrature=TupleOfTupleChangeType<1,QR,OperatorTupleType<decltype(sfen)>::type>; 
- using TupleSpaces=typename decltype(W3)::type_unique_base_function_space;
+ using TupleSpaces=typename decltype(W3)::UniqueElementFunctionSpacesTupleType;
 
 
  TupleSpaces reerree;
@@ -849,7 +1029,7 @@ void assembly_example()
  std::cout<<"decltype(Grad(rr1))::N="<<decltype(Grad(rr1))::value<<std::endl;
  std::cout<<"decltype(Grad(rr2))::N="<<decltype(Grad(rr2))::value<<std::endl;
  std::cout<<"decltype(Grad(rr3))::N="<<decltype(Grad(rr3))::value<<std::endl;
- std::cout<<" TupleTypeSize< decltype(W1)::type_unique_base_function_space>::value"<< TupleTypeSize< decltype(W1)::type_unique_base_function_space>::value<<std::endl;
+ std::cout<<" TupleTypeSize< decltype(W1)::UniqueElementFunctionSpacesTupleType>::value"<< TupleTypeSize< decltype(W1)::UniqueElementFunctionSpacesTupleType>::value<<std::endl;
  std::cout<<"decltype(Grad(u))::Nmax="<<decltype(Grad(u))::Nmax<<std::endl;
  std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(u))::value<<std::endl;
  std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(sigma))::value<<std::endl;
@@ -862,9 +1042,9 @@ void assembly_example()
 
  auto WNew=MixedFunctionSpace(W1,FEspaceT2);
 
- decltype(W1)::type_unique_base_function_space kloioee;
- using TupleSpacesW1=typename decltype(W1)::type_unique_base_function_space;
- using TupleElemsW1=typename decltype(WNew)::type_elems;
+ decltype(W1)::UniqueElementFunctionSpacesTupleType kloioee;
+ using TupleSpacesW1=typename decltype(W1)::UniqueElementFunctionSpacesTupleType;
+ using TupleElemsW1=typename decltype(WNew)::ElemsTupleType;
 
  using TupleOperatorsAndQuadratureW1= typename OperatorTupleType<decltype(l22)>::type;
  using TupleOfTupleNoQuadrature=TupleOfTupleRemoveQuadrature<TupleOperatorsAndQuadratureW1>;
@@ -915,8 +1095,7 @@ void assembly_example()
  TupleOfTupleShapeFunctionW1 stuple;
  init_map_aux< SpacesToUniqueFEFamiliesW1,
  MapTupleNumbersW1, 
- TupleTypeSize<MapTupleNumbersW1>::value-1,
- 0>(stuple,mapping);
+ TupleTypeSize<MapTupleNumbersW1>::value-1,0>(stuple,mapping);
 // TupleOfTupleShapeFunctionType<TupleSpacesW1,TupleOperatorsAndQuadratureW1> eew1;
 // ShapeFunctionAssembly<TupleSpaces,TupleOperatorsAndQuadrature> ee2;
 

@@ -106,7 +106,9 @@ namespace mars {
 			assert(r < Rows && " row index must be smaller than number of rows");
             Vector<T, Cols> v;
 			for(Integer d = 0; d < Cols; ++d) {
-				const_cast<T&>(static_cast<const std::array<T,Cols>& >(v())[d] )=(*this)(r,d);
+				// c++14
+				// const_cast<T&>(static_cast<const std::array<T,Cols>& >(v())[d] )=(*this)(r,d);
+                v()[d]=(*this)(r,d);
 			}
 
 			return v;
@@ -175,8 +177,9 @@ namespace mars {
 			for(Integer i = 0; i < Rows; ++i) {
 				for(Integer j = 0; j < Cols; ++j) {
 					{
-						// (*this)(i, j) = m(i,j);
-						const_cast<T&>(static_cast<const std::array<T,Rows*Cols> &>( (*this)() ) [i*cols()+j]) = m(i,j);
+		                // c++14
+						// const_cast<T&>(static_cast<const std::array<T,Rows*Cols> &>( (*this)() ) [i*cols()+j]) = m(i,j);
+						(*this)(i, j) = m(i,j);
 					}
 				}
 			}
@@ -325,9 +328,10 @@ namespace mars {
 			for(Integer i = 0; i < Rows; ++i) {
 				for(Integer j = 0; j < Cols; ++j) {
 					{
-					const_cast<T&>(static_cast<const std::array<T,Rows*Cols> &>( ret() ) [i*cols()+j])
-					 = (*this)(i, j) * alpha;
-					// ret(i,j) = (*this)(i, j) * alpha;
+					// c++14
+					// const_cast<T&>(static_cast<const std::array<T,Rows*Cols> &>( ret() ) [i*cols()+j])
+					//  = (*this)(i, j) * alpha;
+					ret(i,j) = (*this)(i, j) * alpha;
 					}
 				}
 			}
@@ -588,9 +592,10 @@ namespace mars {
 			for(Integer i = 0; i < Rows; ++i) {
 				for(Integer j = 0; j < Cols; ++j) {
 					{
-						const_cast<T&>(static_cast<const std::array<T,Rows*Cols> &>( ret() ) [i*Cols+j])
-						= mat(i, j) * alpha;
-						// ret(i,j) = mat(i, j) * alpha;
+						// c++14
+						// const_cast<T&>(static_cast<const std::array<T,Rows*Cols> &>( ret() ) [i*Cols+j])
+						// = mat(i, j) * alpha;
+						ret(i,j) = mat(i, j) * alpha;
 					}
 				}
 			}

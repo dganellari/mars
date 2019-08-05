@@ -56,6 +56,25 @@ namespace mars {
             return ref_;
         }
 
+
+       
+        inline constexpr static std::array<Vector<Real, Dim>,Npoints> reference_init()
+        {
+
+            std::array<Vector<Real, Dim>,Npoints> ref;
+
+            for(Integer ii=0;ii<Npoints;ii++)
+                for(Integer jj=0;jj<Dim;jj++)
+                   ref[ii](jj)=0;
+
+                for(Integer i = 0; i < ManifoldDim; ++i) {
+                    ref[i+1](i) = 1.;
+                }
+            
+            return ref;
+        }
+        static constexpr std::array<Vector<Real, Dim>,Npoints> reference=reference_init();
+
         void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
         {
             std::array<Integer, 2> vs;
@@ -341,7 +360,30 @@ namespace mars {
             }
         }
         
-        
+        inline constexpr static std::array<Vector<Real, Dim>,Npoints> reference_init()
+        {
+
+            std::array<Vector<Real, Dim>,Npoints> ref;
+            for(Integer ii=0;ii<Npoints;ii++)
+                for(Integer jj=0;jj<Dim;jj++)
+                   ref[ii](jj)=0;
+                // ref[0] = Vector<Real, Dim>().zero();
+                // ref[0] = Vector<Real, Dim>().zero();
+                
+                // ref[1] = Vector<Real, Dim>().zero();
+                ref[1](0) = 1.;
+                
+                // ref[2] = Vector<Real, Dim>().zero();
+                ref[2](1) = 1.;
+                
+                // ref[3] = Vector<Real, Dim>().zero();
+                ref[3](2) = 1.;
+            
+            return ref;
+        }
+
+        static constexpr std::array<Vector<Real, Dim>,Npoints> reference=reference_init();
+
         inline static std::vector<Vector<Real, Dim>> &ref()
         {
             static std::vector<Vector<Real, Dim>> ref_;
@@ -670,7 +712,7 @@ namespace mars {
     }
 
     template<Integer Dim, Integer ManifoldDim>
-    inline void jacobian(const Simplex<Dim, ManifoldDim>  &simplex,
+    inline constexpr void jacobian(const Simplex<Dim, ManifoldDim>  &simplex,
                          const std::vector<Vector<Real, Dim>> &points,
                          Matrix<Real, Dim, ManifoldDim> &J)
     {
@@ -685,6 +727,38 @@ namespace mars {
             J.col(i-1, vi - v0);
         }
     }
+
+    template<Integer Dim, Integer ManifoldDim,Integer Npoints>
+    inline constexpr auto jacobian()
+    {
+        static_assert(Dim >= ManifoldDim, "Dim must be greater or equal ManifoldDim");
+        static_assert(Npoints == ManifoldDim+1, "Npoints must be equal to ManifoldDim+1");
+        Matrix<Real, Dim, ManifoldDim> J;
+        Vector<Vector<Real, Dim>,Npoints> points;
+        // Integer vs[ManifoldDim];
+        // std::array<Integer,ManifoldDim> vs;
+        for(Integer ii=0;ii<Npoints;ii++)
+        {
+            const auto vs=Combinations<Npoints,ManifoldDim>::generate(ii);
+            for(Integer jj=0;jj<ManifoldDim;jj++)
+              for(Integer kk=0;kk<ManifoldDim;kk++)
+                points[jj][kk]=Simplex<Dim,ManifoldDim>::reference[vs[jj]][kk];
+
+              for(Integer ii=0;ii<Npoints;ii++)
+              {
+
+
+                Vector<Real, Dim> v0 = points[0];
+
+                for(Integer i = 1; i < Npoints; ++i) {
+                    const auto &vi = points[i];
+                    J.col(i-1, vi - v0);
+                }
+            }
+            
+        }
+    return J;
+     }
 
     template<Integer Dim, Integer ManifoldDim>
     Real in_sphere_radius(

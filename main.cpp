@@ -803,7 +803,7 @@ int main(int argc, char *argv[])
 	// test_bisection_4D();
 
 functionspaces_example2D();
-// assembly_example();
+assembly_example();
 boundary_example();
 
 

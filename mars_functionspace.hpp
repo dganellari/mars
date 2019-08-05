@@ -23,12 +23,9 @@ namespace mars{
 
 
 template<typename MeshT, typename BaseFunctionSpace,typename...BaseFunctionSpaces>
-class FunctionSpace //: public IFunctionSpace
+class FunctionSpace 
 {
 public:
-
-
-      // virtual std::shared_ptr<IFunctionSpace> get(const Integer i){return std::make_shared<FunctionSpace>(*this);}
 
       using Elem= typename MeshT::Elem;
 
@@ -37,13 +34,13 @@ public:
       static constexpr Integer Nelem_dofs=DofsPerElemNums<Elem,BaseFunctionSpace,BaseFunctionSpaces...>::value;
 
       using DofMapType=std::vector<std::array<Integer, Nelem_dofs>>;
-      using type_offset=std::array<std::vector<Integer>, Nsubspaces>;
-      using type_space_dofs=std::array<std::vector<std::vector<Integer>>, Nsubspaces>;
-      using type_space_infos=std::array<std::array<Integer,4>,Nsubspaces>;
-      using type_base_function_space=std::tuple<std::tuple<Elem,BaseFunctionSpace>,std::tuple<Elem,BaseFunctionSpaces>...>;
-      using type_elems=std::tuple<Elem>;
-      using type_unique_base_function_space=RemoveTupleDuplicates<type_base_function_space>;
-      using type_tuple_spaces=TupleAllToUniqueMap<type_base_function_space,type_unique_base_function_space>;
+      using OffSetType=std::array<std::vector<Integer>, Nsubspaces>;
+      using SpacesDofsArrayType=std::array<std::vector<std::vector<Integer>>, Nsubspaces>;
+      using SpacesInfosArrayType=std::array<std::array<Integer,4>,Nsubspaces>;
+      using ElemsTupleType=std::tuple<Elem>;
+      using ElementFunctionSpacesTupleType=std::tuple<std::tuple<Elem,BaseFunctionSpace>,std::tuple<Elem,BaseFunctionSpaces>...>;
+      using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates<ElementFunctionSpacesTupleType>;
+      using FromElementFunctionSpacesToUniqueNumbersTupleType=TupleAllToUniqueMap<ElementFunctionSpacesTupleType,UniqueElementFunctionSpacesTupleType>;
       inline Integer n_subspaces()const{return Nsubspaces;};
 
       inline const Integer& components (const Integer& space_id)const{return space_infos_[space_id][3];};
@@ -130,12 +127,9 @@ public:
                             {spacedofs.resize(n_dofs(space_id,component_id));
                              spacedofs=space_dofs_[space_id][component_id];};
 
-      inline const type_space_infos& space_info()const{return space_infos_;};
+      inline const SpacesInfosArrayType& space_info()const{return space_infos_;};
 
       inline std::shared_ptr< MeshT > mesh()const {return mesh_;};
-
-      inline const type_tuple_spaces& space_avatar()const {return spaces_avatar_;};
-
        
       FunctionSpace(const MeshT& mesh,const Integer dof_count_start=0):
       mesh_(std::make_shared< MeshT >(mesh))
@@ -149,12 +143,10 @@ private:
       std::shared_ptr< MeshT > mesh_;
       Integer n_dofs_;
       DofMapType dofmap_;
-      type_offset offset_;
-      type_space_dofs space_dofs_;
-      type_space_infos space_infos_;
-      type_base_function_space shape_functions_;
-      type_tuple_spaces spaces_avatar_;  
-
+      OffSetType offset_;
+      SpacesDofsArrayType space_dofs_;
+      SpacesInfosArrayType space_infos_;
+      ElementFunctionSpacesTupleType shape_functions_;
 
 };
 
@@ -162,21 +154,25 @@ private:
 
 
 
+template<typename MeshT, typename BaseFunctionSpace,typename...BaseFunctionSpaces>
+class TraceSpace 
+{
 
+};
 
 
 
 
 
 template<typename...Args>
-class MixedSpace: public Expression2<MixedSpace<Args...>>
+class MixedSpace 
 {
 public:
   using DofMapType=std::tuple<typename Args::DofMapType...>;
-  using type_base_function_space=TupleCatType<typename Args::type_base_function_space...>;
-  using type_unique_base_function_space=RemoveTupleDuplicates<TupleCatType<typename Args::type_unique_base_function_space...>>;
-  using type_elems=RemoveTupleDuplicates<TupleCatType<typename Args::type_elems...>>;
-  using type_tuple_spaces=TupleAllToUniqueMap<type_base_function_space,type_unique_base_function_space>;
+  using ElementFunctionSpacesTupleType=TupleCatType<typename Args::ElementFunctionSpacesTupleType...>;
+  using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates<TupleCatType<typename Args::UniqueElementFunctionSpacesTupleType...>>;
+  using ElemsTupleType=RemoveTupleDuplicates<TupleCatType<typename Args::ElemsTupleType...>>;
+  using FromElementFunctionSpacesToUniqueNumbersTupleType=TupleAllToUniqueMap<ElementFunctionSpacesTupleType,UniqueElementFunctionSpacesTupleType>;
   inline const Integer& n_dofs()const{return n_dofs_;}; 
 
   inline const DofMapType& dofmap()const{return dofmap_;};
@@ -245,8 +241,6 @@ template<Integer N,typename OtherArg, typename...OtherArgs>
      return std::tuple_cat(std::tuple<OtherArg>( otherarg ),
        tuple_make<N+1,OtherArgs...>(otherargs...));}
 
-     inline const type_tuple_spaces& space_avatar()const {return spaces_avatar_;};
-
      MixedSpace(const Args&...args):
      spaces_(std::make_tuple(std::make_shared<Args>(args)...)),
      n_dofs_(tot_n_dofs<sizeof...(Args)-1>()),
@@ -258,7 +252,6 @@ template<Integer N,typename OtherArg, typename...OtherArgs>
     std::tuple<std::shared_ptr<Args>...> spaces_;
     Integer n_dofs_;
     DofMapType dofmap_;
-    type_tuple_spaces spaces_avatar_;  
   };
 
 template<typename...Args>
@@ -489,19 +482,19 @@ class OperatorTupleType<Trial<BaseFunctionSpacesType,N,OperatorType> >
 
 
 template<Integer N,typename...Args >
-Test<typename MixedSpace<Args...>::type_unique_base_function_space,
-             GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value>
+Test<typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType,
+             GetType<N,typename MixedSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType>::value>
 MakeTest(const MixedSpace<Args...>& W)
-{return Test<typename MixedSpace<Args...>::type_unique_base_function_space,
-        GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value>();}
+{return Test<typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType,
+        GetType<N,typename MixedSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType>::value>();}
 
 
 template<Integer N,typename...Args >
-Trial<          typename MixedSpace<Args...>::type_unique_base_function_space,
-              GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value> 
+Trial<          typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType,
+              GetType<N,typename MixedSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType>::value> 
 MakeTrial(const MixedSpace<Args...>& W)
-{return Trial<typename MixedSpace<Args...>::type_unique_base_function_space,
-        GetType<N,typename MixedSpace<Args...>::type_tuple_spaces>::value>();}
+{return Trial<typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType,
+        GetType<N,typename MixedSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType>::value>();}
 
 
 template<typename BaseFunctionSpacesType,Integer N>

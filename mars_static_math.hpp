@@ -1,7 +1,7 @@
 #ifndef MARS_STATIC_MATH_HPP
 #define MARS_STATIC_MATH_HPP
 
-#include "mars_base.hpp"
+#include "mars_base.hpp" 
 #include <iostream>
 #include <vector>
 
@@ -161,6 +161,16 @@ namespace mars {
 		static void generate(const Integer k, Integer comb[ChooseM])
 		{
 			std::copy(instance().combs[k].begin(), instance().combs[k].end(), comb);
+		}
+
+		static constexpr std::array<Integer,ChooseM> generate(const Integer k)
+		{
+   //          std::array<Integer,ChooseM> comb;
+			// // std::copy(instance().combs[k].begin(), instance().combs[k].end(), comb);
+			// const auto combbs_tmp=instance().combs[k];
+			// for(Integer kk=0;kk<combbs_tmp.size();kk++)
+			// 	comb[kk]=combbs_tmp[kk];
+			return instance().combs[k];
 		}
 
 	private:
