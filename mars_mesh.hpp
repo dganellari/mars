@@ -8,6 +8,7 @@
 #include "mars_red_green_refinement.hpp"
 
 #include "mars_visualization.hpp"
+#include "mars_imesh.hpp"
 
 #include <vector>
 #include <array>
@@ -18,8 +19,8 @@
 
 namespace mars {
 
-	template<Integer Dim_, Integer ManifoldDim_ = Dim_>
-	class Mesh {
+	template<Integer Dim_, Integer ManifoldDim_, class Implementation_>
+	class Mesh : public IMesh<Dim_> {
 	public:
 		static const Integer Dim = Dim_;
 		static const Integer ManifoldDim = ManifoldDim_;
@@ -30,28 +31,39 @@ namespace mars {
 
 		void reserve(
 			const std::size_t n_elements,
-			const std::size_t n_points)
+			const std::size_t n_points) override
 		{
 			elements_.reserve(n_elements);
 			active_.reserve(n_elements);
 			points_.reserve(n_points);
 		}
 
-		inline Elem &elem(const Integer id)
+		void reserve_elements(const std::size_t n_elements)
+		{
+			elements_.reserve(n_elements);
+			active_.reserve(n_elements);
+		}
+
+		void resize_points(const std::size_t n_points)
+		{
+			points_.resize(n_points);
+		}
+
+		inline Elem &elem(const Integer id) override
 		{
 			assert(id >= 0);
 			assert(id < n_elements());
 			return elements_[id];
 		}
 
-		inline const Elem &elem(const Integer id) const
+		inline const Elem &elem(const Integer id) const override
 		{
 			assert(id >= 0);
 			assert(id < n_elements());
 			return elements_[id];
 		}
 
-		inline bool is_active(const Integer id) const
+		inline bool is_active(const Integer id) const override
 		{
 			assert(id >= 0);
 			assert(id < n_elements());
@@ -85,29 +97,39 @@ namespace mars {
 			active_[id] = val;
 		}
 
-		inline Integer add_point(const Point &point)
+		inline Integer add_point(const Point &point) override
 		{
 			points_.push_back(point);
 			return points_.size() - 1;
 		}
 
-		inline Point &point(const Integer i)
+		inline Point &point(const Integer i) override
 		{
 			assert(i >= 0);
 			assert(i < points_.size());
 			return points_[i];
 		}
 		
-		inline const Point &point(const Integer i) const
+		inline const Point &point(const Integer i) const override
 		{
 			assert(i >= 0);
 			assert(i < points_.size());
 			return points_[i];
 		}
 
-		const std::vector<Point> &points() const
+		const std::vector<Point> &points() const //override
 		{
 			return points_;
+		}
+
+		void setPoints(std::vector<Point>&& points)
+		{
+			points_ = std::forward<std::vector<Point>>(points);
+		}
+
+		template<typename Iter>
+		void remove_point(const Iter pos){
+			points_.erase(pos);
 		}
 
 		inline Integer add_elem(const Elem &elem)
@@ -118,6 +140,42 @@ namespace mars {
 			active_.push_back(true);
 			assert(elements_.back().id == id);
 			return elements_.back().id;
+		}
+
+		inline Integer add_elem(const std::vector<Integer> &nodes) override
+		{
+			Elem elem;
+			assert(nodes.size() == mars::n_nodes(elem));
+
+			for(Integer i = 0; i < mars::n_nodes(elem); ++i) {
+				elem.nodes[i] = nodes[i];
+			}
+			
+			return add_elem(elem);
+		}
+
+		inline Integer add_elem(const IElem &elem) override
+		{
+			assert(elem.type() == ManifoldDim);
+
+			const Elem * elem_ptr = dynamic_cast<const Elem *>(&elem);
+			if(elem_ptr) {
+				return add_elem(*elem_ptr);
+			}
+
+			// fallback for other types of elements
+			Elem elem_copy;
+
+			std::vector<Integer> e_nodes;
+			elem.get_nodes(e_nodes);
+
+			assert(e_nodes.size() == ManifoldDim + 1);
+
+			for(std::size_t i = 0; i < mars::n_nodes(elem_copy); ++i) {
+				elem_copy.nodes[i] = e_nodes[i];
+			}
+
+			return add_elem(elem_copy);
 		}
 
 		template<std::size_t NNodes>
@@ -133,7 +191,17 @@ namespace mars {
 			return e.id;
 		}
 
-		inline void points(const Integer id, std::vector<Point> &pts) const
+		Elem& add_elem()
+		{
+			elements_.emplace_back();
+			auto &e = elements_.back();
+			e.id = elements_.size() - 1;
+			//e.nodes = nodes;
+			active_.push_back(true);
+			return e;
+		}
+
+		inline void points(const Integer id, std::vector<Point> &pts) const override
 		{
 			assert(id >= 0);
 			assert(id < n_elements());
@@ -276,11 +344,31 @@ namespace mars {
 		void describe_element(const Integer i, std::ostream &os, const bool print_sides = false) const
 		{
 			const auto &e = elem(i);
+			describe_element(e, os, print_sides);
+		}
+
+		void describe_element(const Simplex<Dim, 1> &e, std::ostream &os, const bool print_sides = false) const
+		{
 			const Real vol = mars::volume(e, points_);
 			const auto b   = barycenter(e, points_);
 
 			os << "---------------------------------\n";
-			os << "[" << i << "]: vol: " << vol << ", ";
+			os << "[" << e.id << "]: vol: " << vol << ", ";
+			for(auto v : e.nodes) {
+				os << " " << v;
+			}
+
+			os << "\n";
+		}
+
+		template<Integer AnyDim>
+		void describe_element(const Simplex<Dim, AnyDim> &e, std::ostream &os, const bool print_sides = false) const
+		{
+			const Real vol = mars::volume(e, points_);
+			const auto b   = barycenter(e, points_);
+
+			os << "---------------------------------\n";
+			os << "[" << e.id << "]: vol: " << vol << ", ";
 			for(auto v : e.nodes) {
 				os << " " << v;
 			}
@@ -315,43 +403,7 @@ namespace mars {
 		{
 			for(std::size_t i = 0; i < elements_.size(); ++i) {
 				if(!active_[i]) continue;
-
 				describe_element(i, os, print_sides);
-
-				// const auto &e = elements_[i];
-				// const Real vol = mars::volume(e, points_);
-				// const auto b   = barycenter(e, points_);
-
-				// os << "---------------------------------\n";
-				// os << "[" << i << "]: vol: " << vol << ", ";
-				// for(auto v : e.nodes) {
-				// 	os << " " << v;
-				// }
-
-				// os << "\n";
-
-				// if(print_sides) {
-				// 	Simplex<Dim, ManifoldDim-1> side;
-				// 	Matrix<Real, Dim, Dim-1> J;
-
-				// 	os << "sides:\n";
-				// 	for(Integer k = 0; k < n_sides(e); ++k) {
-				// 		e.side(k, side);
-				// 		os << "==============\n";
-				// 		jacobian(side, points_, J);
-
-				// 		const auto n = normal(side, points_);
-				// 		const auto sign = dot(points_[side.nodes[0]] - b, n) > 0? 1 : -1;
-				// 		const Real u_area = mars::unsigned_volume(side, points_);
-				// 		const Real area   = sign * u_area;
-
-				// 		J.describe(os);
-				// 		os << area << " == " << u_area << std::endl;
-				// 	}
-				// }
-
-				// os << "---------------------------------\n";
-				// os << "\n";
 			}
 
 			for(std::size_t i = 0; i < points_.size(); ++i) {
@@ -360,17 +412,17 @@ namespace mars {
 			}
 		}
 
-		inline Integer n_nodes() const
+		inline Integer n_nodes() const override
 		{
 			return points_.size();
 		}
 
-		inline Integer n_elements() const
+		inline Integer n_elements() const override
 		{
 			return elements_.size();
 		}
 
-		inline Integer n_active_elements() const
+		inline Integer n_active_elements() const override
 		{
 			Integer ret = 0;
 			for(auto a : active_) {
@@ -378,6 +430,42 @@ namespace mars {
 			}
 
 			return ret;
+		}
+
+		inline Mesh &operator+=(const Mesh &other)
+		{
+			const auto node_offset    = this->n_nodes();
+			const auto element_offset = this->n_elements();
+
+			const auto n_new_points   = other.n_nodes();
+			const auto n_new_elements = other.n_elements();
+
+			elements_.reserve(element_offset + n_new_elements);
+			points_.reserve(node_offset + n_new_points);
+			tags_.reserve(element_offset + n_new_elements);
+			active_.reserve(element_offset + n_new_elements);
+
+			for(Integer i = 0; i < n_new_points; ++i) {
+				add_point(other.point(i));
+			}
+			
+			for(Integer i = 0; i < n_new_elements; ++i) {
+				Elem e = other.elem(i);
+				e.parent_id += element_offset;
+
+				for(Integer k = 0; k < mars::n_nodes(e); ++k) {
+					e.nodes[k] += node_offset;
+				}
+
+				for(auto &c : e.children) {
+					c += element_offset;
+				}
+
+				auto id = add_elem(e);
+				active_[id] = other.is_active(i);
+			}
+
+			return *this;
 		}
 
 		bool have_common_sub_surface(
@@ -823,6 +911,7 @@ namespace mars {
 			return true;
 		}
 
+
 		const std::vector<Integer>& side_tags() const
 		{return side_tags_;}
 
@@ -850,6 +939,11 @@ namespace mars {
 					found_tags_=true;
 				}
 			}
+
+		inline Integer type() const override
+		{
+			return ManifoldDim;
+		}
 
 	private:
 		std::vector<Elem> elements_;
@@ -931,6 +1025,81 @@ namespace mars {
 		return true;
 	}
 
+	template<Integer Dim, Integer ManifoldDim>
+		bool write_mesh_MFEM(const std::string &path,const Mesh<Dim, ManifoldDim> &mesh)
+		{
+  			std::ofstream os;
+    		os.open(path.c_str());
+    		if (!os.good()) {
+    			os.close();
+    			return false;
+    		}
+
+			writeHeader(mesh, os);
+			writeElements(mesh, os);
+			writeVertices(mesh, os);
+
+			os.close();
+		//	clear();
+			return true;
+
+		}
+
+	template<Integer Dim, Integer ManifoldDim>
+	void writeHeader(const Mesh<Dim, ManifoldDim> &mesh, std::ostream &os) {
+		Integer dim = mesh.ManifoldDim;
+		os << "MFEM mesh v1.0\n\ndimension\n";
+		os << dim<<"\n\n";
+	}
+
+	template<Integer Dim, Integer ManifoldDim>
+	void writeElements(const Mesh<Dim, ManifoldDim> &mesh, std::ostream &os) {
+		os << "elements\n";
+		os << mesh.n_elements() << "\n";
+
+		for (Integer k = 0; k < mesh.n_elements(); ++k) {
+			if (!mesh.is_active(k))
+				continue;
+
+			if(mesh.tags().size() == mesh.n_elements())
+				os<<mesh.tags()[k]<< " " << mesh.elem(k).type()<<" ";
+			else
+				os<<INVALID_INDEX<< " " << INVALID_INDEX<<" ";
+
+			for (Integer i = 0; i < ManifoldDim + 1; ++i) {
+				const Integer v = mesh.elem(k).nodes[i];
+				os << v;
+				if (i < ManifoldDim) {
+					os << " ";
+				}
+			}
+			os << "\n";
+		}
+		os << "\n";
+	}
+
+	template<Integer Dim, Integer ManifoldDim>
+	void writeVertices(const Mesh<Dim, ManifoldDim> &mesh, std::ostream &os) {
+		Integer dim = mesh.Dim;
+		os << "vertices\n";
+
+		const std::vector<Vector<Real, Dim>> points = mesh.points();
+
+		os << points.size() << "\n";
+		os << dim << "\n";
+
+		for (Integer i = 0; i < points.size(); ++i) {
+			for (Integer d = 0; d < Dim; ++d) {
+				os << points[i](d);
+				if (d < Dim - 1) {
+					os << " ";
+				}
+			}
+			os << "\n";
+		}
+
+	}
+
 	inline bool mesh_hyper_cube(
 		const std::array<Integer, 4> &dims,
 		const Vector<Real, 4> &lobo,
@@ -941,11 +1110,13 @@ namespace mars {
 		return false;
 	}
 
+	using Mesh1 = mars::Mesh<1, 1>;
 	using Mesh2 = mars::Mesh<2, 2>;
 	using Mesh3 = mars::Mesh<3, 3>;
 	using Mesh4 = mars::Mesh<4, 4>;
 	using Mesh5 = mars::Mesh<5, 5>;
 	using Mesh6 = mars::Mesh<6, 6>;
+
 }
 
 #endif //MARS_MESH_HPP

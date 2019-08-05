@@ -6,11 +6,9 @@
 #include <algorithm>  
 #include <deque>
 #include <set>
+#include "mars_fwd.hpp"
 
 namespace mars {
-	
-	template<Integer Dim, Integer ManifoldDim>
-	class Mesh;
 
 	enum RefinementFlag {
 		NONE = 0,
@@ -68,6 +66,8 @@ namespace mars {
 
 			//FIXME?
 			if(p_id == INVALID_INDEX) return;
+
+			 mesh.elem(id).block = mesh.elem(p_id).block;
 
 			//emplace if not there
 			mesh.dual_graph().safe_adj(id);

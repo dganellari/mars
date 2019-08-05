@@ -35,7 +35,7 @@ namespace mars{
 
 void connectivity_example();
 
-template <Integer Dim, Integer ManifoldDim>
+template <Integer Dim, Integer ManifoldDim,class Implementation_>
 class Mesh;
 
 template<typename Elem, Integer EntityDim>

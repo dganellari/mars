@@ -12,8 +12,53 @@ find_package(MPIExtended)
 #	set(WITH_MPI ON)
 #endif()
 
+option(MARS_USE_CUDA "Build mars with cuda support" OFF)
+
+
+if (NOT TRILINOS_DIR)
+  message(STATUS "Setting TRILINOS_DIR to $ENV{TRILINOS_DIR}")
+  set(TRILINOS_DIR $ENV{TRILINOS_DIR} CACHE PATH "Directory where Kokkos is installed")
+endif()
+
+if (NOT KOKKOS_DIR)
+  message(STATUS "Setting KOKKOS_DIR to $ENV{KOKKOS_DIR}")
+  set(KOKKOS_DIR $ENV{KOKKOS_DIR} CACHE PATH "Directory where Kokkos is installed")
+endif()
+
+#FIND_PACKAGE(Trilinos PATHS ${TRILINOS_DIR}/lib/cmake/Trilinos QUIET)
+FIND_PACKAGE(Kokkos HINTS ${KOKKOS_DIR}/lib/CMake/Kokkos ${TRILINOS_DIR}/lib/cmake/Kokkos QUIET)
+
+IF(Kokkos_FOUND)
+   	MESSAGE("\nFound Kokkos!  Here are the details: ")
+   	MESSAGE("   Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
+   	MESSAGE("   Kokkos_C_COMPILER = ${Kokkos_C_COMPILER}")
+   
+   	IF(Kokkos_CXX_COMPILER)
+		SET(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
+		SET(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
+		MESSAGE("Setting CMAKE_CXX_COMPILER to Kokkos_CXX_COMPILER")
+   	ENDIF()
+   
+   	set(WITH_KOKKOS ON)
+   
+	FIND_PACKAGE(OpenMP)
+
+	IF(OPENMP_FOUND)
+	 	SET (CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${OpenMP_Fortran_FLAGS}")
+	 	SET (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+	 	SET (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
+	 	set (CMAKE_CXX_LINK_FLAGS "${CMAKE_CXX_LINK_FLAGS} ${OpenMP_CXX_FLAGS}")
+	ENDIF()
+   
+ELSE()
+  	MESSAGE(WARNING "Could not find Kokkos!")
+  	IF(MARS_USE_CUDA)
+    	MESSAGE(FATAL_ERROR "Could not use CUDA without Kokkos!")
+  	ENDIF()
+ENDIF()
+
 list(APPEND MARS_HEADERS
-	mars.hpp 
+	mars.hpp
 	mars_base.hpp
 	mars_base_entity.hpp
 	mars_base_elementfunctionspace.hpp
@@ -37,9 +82,11 @@ list(APPEND MARS_HEADERS
 	mars_fqpexpressions.hpp
 	mars_functionspace.hpp
 	mars_functionspace_dofmap.hpp
+	mars_imesh.hpp
 	mars_lagrange_element.hpp
 	mars_longest_edge.hpp
 	mars_matrix.hpp
+	mars_imesh.hpp
 	mars_mesh.hpp
 	mars_mesh_partition.hpp
 	mars_newest_vertex.hpp
@@ -68,7 +115,19 @@ list(APPEND MARS_HEADERS
 	mars_vector.hpp
 	mars_visualization.hpp
 	mars_vtk_writer.hpp
+	mars_fwd.hpp
+	generation/mars_point.hpp
+	generation/mars_mesh_generation.hpp
 	)
+	
+IF(Kokkos_FOUND)
+	list(APPEND MARS_HEADERS
+		generation/mars_imesh_kokkos.hpp	
+	    generation/mars_mesh_kokkos.hpp
+	    generation/mars_test_kokkos.hpp
+	    generation/mars_utils_kokkos.hpp
+	)
+ENDIF()
 
 list(APPEND MARS_SOURCES
 	mars_communicator.cpp
@@ -88,6 +147,25 @@ target_include_directories(mars PUBLIC .)
 
 add_executable(mars_exec main.cpp ${MARS_HEADERS} ${MARS_SOURCES})
 target_link_libraries(mars_exec mars)
+
+IF(Kokkos_FOUND)
+	MESSAGE(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
+	MESSAGE(" Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
+	MESSAGE(" Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
+	MESSAGE(" Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
+	
+	IF(MARS_USE_CUDA AND NOT Kokkos_TPL_LIBRARIES MATCHES "cuda")
+		MESSAGE(FATAL_ERROR "Enable Kokkos Cuda or unset MARS_USE_CUDA to continue with OpenMP!")
+	ENDIF()
+	
+	target_include_directories(mars_exec PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
+	
+	IF(Kokkos_CXX_COMPILER)
+		target_link_libraries(mars_exec mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES})
+	ELSE()
+		target_link_libraries(mars_exec mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES} -L${Kokkos_LIBRARY_DIRS})
+	ENDIF()
+ENDIF()
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/mars_config.hpp.in ${CMAKE_BINARY_DIR}/mars_config.hpp)
 include_directories(${CMAKE_BINARY_DIR})

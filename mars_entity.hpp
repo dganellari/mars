@@ -26,7 +26,7 @@
 
 namespace mars {
 
-template<Integer Dim, Integer ManifoldDim>
+template<Integer Dim, Integer ManifoldDim,class Implementation_>
 class Mesh;
 
 

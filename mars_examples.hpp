@@ -579,7 +579,7 @@ template <typename Space>
       };
 
 template<Integer N,Integer K>
- constexpr void okiemapply(
+ constexpr void combinations_generate_aux(
             Vector<Integer, K> &data,
             const Integer index, 
             const Integer i,
@@ -599,20 +599,20 @@ template<Integer N,Integer K>
 
             data[index] = i;
 
-            okiemapply<N,K>(data, index+1, i+1, combs, comb_index);
+            combinations_generate_aux<N,K>(data, index+1, i+1, combs, comb_index);
             
             // current is excluded, replace it with next (Note that
             // i+1 is passed, but index is not changed)
-            okiemapply<N,K>(data, index, i+1, combs, comb_index);
+            combinations_generate_aux<N,K>(data, index, i+1, combs, comb_index);
         }
 
         template<Integer N,Integer K >
-        constexpr Vector<Vector<Integer, K>, binomial_coefficient(N,K)> okiem()
+        constexpr Vector<Vector<Integer, K>, binomial_coefficient(N,K)> combinations_generate()
         {
             Vector<Vector<Integer, K>, binomial_coefficient(N,K)> combs;
             Vector<Integer, K> data;
             Integer comb_index = 0;
-            okiemapply<N,K>(data, 0, 0, combs, comb_index);
+            combinations_generate_aux<N,K>(data, 0, 0, combs, comb_index);
             return combs;
         }
 
@@ -821,7 +821,7 @@ std::cout<<"-------------------------------------------"<<std::endl;
  // points[2][1]=4;
  // points[2][2]=8;
  // constexpr auto J32=jacobian<3,3,4>();
- constexpr auto Jkml=okiem<4,3>();
+ constexpr auto Jkml=combinations_generate<4,3>();
    std::cout<<"oo oooo  oooooo oo ooo"<<std::endl;
 
  for(Integer ii=0;ii<Jkml.size();ii++)

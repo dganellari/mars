@@ -61,6 +61,7 @@ namespace mars {
     	static const int VTK_QUAD = 9;
     	static const int VTK_HEXAHEDRON = 12;
     	static const int VTK_POLYGON = 7;
+    	static const int VTK_LINE = 3;
 
     	// std::vector<VTKDataNode<Matrix> > _pointData;
     	// std::vector<VTKDataNode<Matrix> > _cellData;
@@ -288,24 +289,38 @@ namespace mars {
     		}
     	}
 
-    	inline static int VTKTagPlanar(const Integer nVertices) {
+		inline static int VTKTag(const Integer nVertices) {
 
-    		if (nVertices > 4) {
-    			return VTK_POLYGON;
-    		}
 
-    		switch (nVertices) {
-    			case 3:
-    			return VTK_TRIANGLE;
-    			case 4:
-    			return VTK_QUAD;
-    			default:
-    			std::cerr << "[Error] " << nVertices << " not supported" << std::endl;
-    			assert(
-                            false);//element type not supported. To add it (http://www.vtk.org/VTK/img/file-formats.pdf)
-    			return -1;
-    		}
-    	}
+			switch (nVertices) {
+			case 2:
+				return VTK_LINE;
+			default:
+				std::cerr << "[Error] " << nVertices << " not supported"
+						<< std::endl;
+				assert(false); //element type not supported. To add it (http://www.vtk.org/VTK/img/file-formats.pdf)
+				return -1;
+			}
+		}
+
+		inline static int VTKTagPlanar(const Integer nVertices) {
+
+			if (nVertices > 4) {
+				return VTK_POLYGON;
+			}
+
+			switch (nVertices) {
+			case 3:
+				return VTK_TRIANGLE;
+			case 4:
+				return VTK_QUAD;
+			default:
+				std::cerr << "[Error] " << nVertices << " not supported"
+						<< std::endl;
+				assert(false); //element type not supported. To add it (http://www.vtk.org/VTK/img/file-formats.pdf)
+				return -1;
+			}
+		}
 
     	void writeCells(const Mesh &mesh, std::ostream &os) {
     		const auto n_active_elements = mesh.n_active_elements();
@@ -330,7 +345,10 @@ namespace mars {
     		os << "</DataArray>\n";
             /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     		int minTag, maxTag;
-    		if (ManifoldDim == 2) {
+    		if(ManifoldDim == 1){
+    			minTag = VTKTag(ManifoldDim+1);
+    			maxTag = VTKTag(ManifoldDim+1);
+    		}else if (ManifoldDim == 2) {
     			minTag = VTKTagPlanar(ManifoldDim+1);
     			maxTag = VTKTagPlanar(ManifoldDim+1);
     		} else {
@@ -345,10 +363,11 @@ namespace mars {
     		for (Integer i = 0; i < n_active_elements; ++i) {
     			if (ManifoldDim == 3) {
     				os << VTKTagVolume(ManifoldDim+1) << "\n";
-    			} else {
+    			} else if (ManifoldDim == 2) {
     				os << VTKTagPlanar(ManifoldDim+1) << "\n";
+    			}else
+    				os << VTKTag(ManifoldDim+1) << "\n";
 
-    			}
     		}
 
     		os << "</DataArray>\n";
@@ -371,15 +390,24 @@ namespace mars {
 
     	}
 
-    	void writePoints(const std::vector<Vector<Real, Dim>> &points, std::ostream &os) {
+    	void writePoints(const std::vector<typename Mesh::Point> &points, std::ostream &os) {
 
     		os << "<Points>\n";
-    		os << "<DataArray type=\"Float32\" NumberOfComponents=\"" << Dim << "\" format=\"ascii\">\n";
+    		os << "<DataArray type=\"Float32\" NumberOfComponents=\"" << ((Dim <3) ? 3 : Dim) << "\" format=\"ascii\">\n";
     		for (Integer i = 0; i < points.size(); ++i) {
     			for (Integer d = 0; d < Dim; ++d) {
     				os << points[i](d);
     				if (d < Dim - 1) {
     					os << " ";
+    				}else if(Dim == 2){ //padding for paraview vtu format visualisation.
+    					os << " ";
+    					os << 0;
+
+    				}else if(Dim == 1){
+    					os << " ";
+    					os << 0;
+    					os << " ";
+    					os << 0;
     				}
     			}
     			os << "\n";

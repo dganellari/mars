@@ -10,12 +10,9 @@
 #include <cassert>
 #include <set>
 
-
+#include "mars_fwd.hpp"
 
 namespace mars {
-	template<Integer Dim, Integer ManifoldDim>
-	class Mesh;
-
 	template<Integer Dim, Integer ManifoldDim>
 	class Simplex;
 

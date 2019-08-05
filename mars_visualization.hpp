@@ -2,6 +2,7 @@
 #define MARS_VISUALIZATION_HPP
 
 #include "mars_base.hpp"
+#include "mars_fwd.hpp"
 
 #ifdef WITH_MOONOLITH
 
@@ -20,8 +21,6 @@ namespace moonolith {
 
 
 namespace mars {
-	template<Integer Dim, Integer ManifoldDim>
-	class Mesh;
 
 	template<class Mesh>
 	class MeshPartition;

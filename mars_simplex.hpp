@@ -6,6 +6,7 @@
 #include "mars_matrix.hpp"
 #include "mars_static_math.hpp"
 #include "mars_stream.hpp"
+#include "mars_imesh.hpp"
 
 #include <array>
 #include <vector>
@@ -18,12 +19,14 @@
 #include <algorithm>
 
 namespace mars {
-    
+
+
     // template<Integer Dim, Integer ManifoldDim>
     // class Simplex {};
 
+
     template<Integer Dim_, Integer ManifoldDim_>
-    class Simplex {
+    class Simplex final : public IElem {
     public:
         static constexpr Integer Dim = Dim_;
         static constexpr Integer ManifoldDim = ManifoldDim_;
@@ -33,8 +36,33 @@ namespace mars {
 
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
+        Integer block = INVALID_INDEX;
 
         std::vector<Integer> children;
+
+        inline void get_nodes(std::vector<Integer> &nodes_copy) const override
+        {
+            nodes_copy.resize(nodes.size());
+            std::copy(std::begin(nodes), std::end(nodes), std::begin(nodes_copy));
+        }
+
+        inline Integer get_block() const override
+        {
+            return block;
+        }
+
+        inline void set_block(const Integer block_id) override
+        {
+            block = block_id;
+        }
+
+
+        inline Integer n_nodes() const override { return nodes.size(); }
+        inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
+
+        inline Integer type() const override {
+            return ManifoldDim;
+        }
         
         inline static std::vector<Vector<Real, Dim>> &ref()
         {
@@ -184,26 +212,53 @@ namespace mars {
     using Vector4r     = Vector<Real, 4>;
     
     template<Integer Dim>
-    class Simplex<Dim, 0> {
+    class Simplex<Dim, 0> final : public IElem {
     public:
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
+        Integer block = INVALID_INDEX;
         
         inline static std::vector<Vector<Real, Dim>> &ref()
         {
             static std::vector<Vector<Real, Dim>> ref_(1, Vector<Real, Dim>().zero());
             return ref_;
         }
+
+        inline void get_nodes(std::vector<Integer> &nodes_copy) const override
+        {
+            nodes_copy.resize(1);
+            nodes_copy[0] = id;
+        }
+
+        inline Integer type() const override {
+            return 0;
+        }
+
+        inline Integer n_nodes() const override { return 1; }
+        inline Integer node(const Integer idx) const override { assert(idx  == 0); return id; }
+
+        inline Integer get_block() const override
+        {
+            return block;
+        }
+
+        inline void set_block(const Integer block_id) override
+        {
+            block = block_id;
+        }
+
     };
     
+
     template<Integer Dim_>
-    class Simplex<Dim_, 1> {
+    class Simplex<Dim_, 1> final : public IElem {
     public:
         static constexpr Integer Dim = Dim_;
         static constexpr Integer ManifoldDim = 1;
         static constexpr Integer Npoints = ManifoldDim+1;
         std::array<Integer, 2> nodes;
         std::array<Integer, 2> side_tags;
+        Integer block = INVALID_INDEX;
 
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
@@ -219,10 +274,49 @@ namespace mars {
             }
             return ref_;
         }
+
+        inline void get_nodes(std::vector<Integer> &nodes_copy) const override
+        {
+            nodes_copy.resize(2);
+            nodes_copy[0] = nodes[0];
+            nodes_copy[1] = nodes[1];
+        }
+
+        inline Integer type() const override {
+            return 1;
+        }
+
+        void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
+        {
+            assert(edge_num == 0);
+            v1 = nodes[0];
+            v1 = nodes[1];
+        }
+
+        void side(const Integer &side_num,
+                  Simplex<Dim, 0> &side) const
+        {
+            side.id = nodes[side_num];
+        }
+
+        inline Integer n_nodes() const override { return nodes.size(); }
+        inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
+
+        inline Integer get_block() const override
+        {
+            return block;
+        }
+
+        inline void set_block(const Integer block_id) override
+        {
+            block = block_id;
+        }
+
     };
     
+
     template<Integer Dim_>
-    class Simplex<Dim_, 2> {
+    class Simplex<Dim_, 2> final : public IElem {
     public:
         static constexpr Integer Dim = Dim_;
         static constexpr Integer ManifoldDim = 2;
@@ -232,6 +326,7 @@ namespace mars {
 
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
+        Integer block = INVALID_INDEX;
        
         std::vector<Integer> children;
         
@@ -290,10 +385,36 @@ namespace mars {
             
             return ref_;
         }
+
+
+        inline void get_nodes(std::vector<Integer> &nodes_copy) const override
+        {
+            nodes_copy.resize(nodes.size());
+            std::copy(std::begin(nodes), std::end(nodes), std::begin(nodes_copy));
+        }
+
+        Integer type() const override {
+            return 2;
+        }
+
+        inline Integer n_nodes() const override { return nodes.size(); }
+        inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
+
+        inline Integer get_block() const override
+        {
+            return block;
+        }
+
+        inline void set_block(const Integer block_id) override
+        {
+            block = block_id;
+        }
+
     };
     
+
     template<Integer Dim_>
-    class Simplex<Dim_, 3> {
+    class Simplex<Dim_, 3> final : public IElem {
     public:
         static constexpr Integer Dim = Dim_;
         static constexpr Integer ManifoldDim = 3;
@@ -303,6 +424,7 @@ namespace mars {
 
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
+        Integer block = INVALID_INDEX;
 
         std::vector<Integer> children;
 
@@ -403,10 +525,35 @@ namespace mars {
             
             return ref_;
         }
+
+        inline void get_nodes(std::vector<Integer> &nodes_copy) const override
+        {
+            nodes_copy.resize(nodes.size());
+            std::copy(std::begin(nodes), std::end(nodes), std::begin(nodes_copy));
+        }
+
+        inline Integer type() const override {
+            return 3;
+        }
+
+        inline Integer n_nodes() const override { return nodes.size(); }
+        inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
+
+        inline Integer get_block() const override
+        {
+            return block;
+        }
+
+        inline void set_block(const Integer block_id) override
+        {
+            block = block_id;
+        }
+
     };
     
+
     template<Integer Dim_>
-    class Simplex<Dim_, 4> {
+    class Simplex<Dim_, 4> final : public IElem {
     public:
         static constexpr Integer Dim = Dim_;
         static constexpr Integer ManifoldDim = 4;
@@ -417,6 +564,7 @@ namespace mars {
 
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
+        Integer block = INVALID_INDEX;
 
         std::vector<Integer> children;
         
@@ -509,6 +657,30 @@ namespace mars {
                 }
             }
         }
+
+        inline void get_nodes(std::vector<Integer> &nodes_copy) const override
+        {
+            nodes_copy.resize(nodes.size());
+            std::copy(std::begin(nodes), std::end(nodes), std::begin(nodes_copy));
+        }
+
+        inline Integer type() const override {
+            return 4;
+        }
+
+        inline Integer n_nodes() const override { return nodes.size(); }
+        inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
+
+        inline Integer get_block() const override
+        {
+            return block;
+        }
+
+        inline void set_block(const Integer block_id) override
+        {
+            block = block_id;
+        }
+
     };
     
     template<Integer ManifoldDim>
@@ -871,6 +1043,21 @@ namespace mars {
         
         b /= n_nodes(simplex);
         return b;
+    }
+
+    inline Vector<Real, 2> normal(const Simplex<2, 1>      &simplex,
+                                  const std::vector<Vector<Real, 2>> &points,
+                                  const bool apply_normalization = true)
+    {
+        Vector<Real, 2> n = points[simplex.nodes[1]] - points[simplex.nodes[0]];
+        
+        if(apply_normalization) {
+            n /= n.norm();
+        }
+
+        std::swap(n[0], n[1]);
+        n[0] = -n[0];
+        return n;
     }
     
     template<Integer Dim, Integer ManifoldDim>
