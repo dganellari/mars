@@ -132,11 +132,12 @@ namespace mars {
                 const int n_elements = xDim;
                 const int n_nodes = xDim + 1;
                 mesh.reserve(n_elements, n_nodes);
+
+                Vector<Real, Dim> p;
+                p.zero();
                 
                 for (Integer i = 0; i <= xDim; ++i) {
-                    Vector<Real, Dim> p(
-                                        { static_cast<Real>(i) / static_cast<Real>(xDim) });
-                    
+                    p[0] = static_cast<Real>(i) / static_cast<Real>(xDim);
                     mesh.add_point(p);
                 }
                 
@@ -163,16 +164,14 @@ namespace mars {
                 const int n_nodes = (xDim + 1) * (yDim + 1);
                 mesh.reserve(n_elements, n_nodes);
                 
-                // for (Integer i = 0; i <= xDim; ++i) {
-                //     for (Integer j = 0; j <= yDim; ++j) {
-
+                Vector<Real, Dim> p;
+                p.zero();
 
                 for(Integer i = 0; i <= xDim; ++i) {
                 	for(Integer j = 0; j <= yDim; ++j) {
-
-                        Vector<Real, Dim> p({ static_cast<Real>(i) / static_cast<Real>(xDim),
-                                              static_cast<Real>(j) / static_cast<Real>(yDim)
-                                            });
+                        
+                        p[0] = static_cast<Real>(i) / static_cast<Real>(xDim);
+                        p[1] = static_cast<Real>(j) / static_cast<Real>(yDim);
                         
                         mesh.add_point(p);
                         assert(mesh.n_nodes() <= n_nodes);
@@ -224,6 +223,9 @@ namespace mars {
                 mesh.resize_points(n_tetra_nodes);
                 
                 std::array<Integer, hex_side_n_nodes> side;
+
+                Vector<Real, Dim> p;
+                p.zero();
                 
                 int el_id = 1;
                 for (Integer k = 0; k < 2 * zDim; k += 2) {
@@ -239,13 +241,9 @@ namespace mars {
                             //add center of the hex to the new points.
                             int centerHex = n_nodes / 2 + el_id;
                             
-                            Vector<Real, Dim> p(
-                                                { static_cast<Real>(i+1)
-                                                    / static_cast<Real>(2 * xDim),
-                                                    static_cast<Real>(j+1)
-                                                    / static_cast<Real>(2 * yDim),
-                                                    static_cast<Real>(k+1)
-                                                    / static_cast<Real>(2 * zDim), });
+                            p[0] = static_cast<Real>(i+1) / static_cast<Real>(2 * xDim);
+                            p[1] = static_cast<Real>(j+1) / static_cast<Real>(2 * yDim);
+                            p[2] = static_cast<Real>(k+1) / static_cast<Real>(2 * zDim);
                             
                             mesh.point(centerHex) = p;
                             

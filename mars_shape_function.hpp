@@ -1764,7 +1764,7 @@ public:
   constexpr void value<Simplex<2,2>, IdentityOperator, LagrangeFE, 1>
       (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,3> & func)
       {
-       Vector<Matrix<Real, 1, 1>,3> func2{point[0],point[1],(1. - point[0] - point[1])};
+       Vector<Matrix<Real, 1, 1>,3> func2(point[0],point[1],(1. - point[0] - point[1]));
        func=func2;
       }
 
@@ -1776,12 +1776,12 @@ public:
         const auto& xi=point[0];
         const auto& eta=point[1];
         const Real zeta = 1. - xi - eta;
-        Vector<Matrix<Real, 1, 1>,6> func2{2.*zeta*(zeta-0.5),
+        Vector<Matrix<Real, 1, 1>,6> func2(2.*zeta*(zeta-0.5),
                                            2.*xi*(xi-0.5),
                                            2.*eta*(eta-0.5),
                                            4.*zeta*xi,
                                            4.*xi*eta,
-                                           4.*eta*zeta};         
+                                           4.*eta*zeta);         
         func=func2;
       }
 
@@ -1793,9 +1793,9 @@ public:
         const auto& xi=point[0];
         const auto& eta=point[1];
         const Real zeta = 1. - xi - eta;
-        Vector<Matrix<Real, 1, 2>,3> func2{{-1,-1},
+        Vector<Matrix<Real, 1, 2>,3> func2({-1,-1},
                                            {+1, 0},
-                                           { 0,+1}};     
+                                           { 0,+1});     
         func=func2;
       }
 

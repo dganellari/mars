@@ -20,6 +20,7 @@ namespace mars {
     {
     protected:
         std::array<T, sizeof...(Is)> values{};
+        static const std::size_t Size = sizeof...(Is);
 
     public:
         constexpr TensorBase (getTypeSequence<T, Is> ... vals)
@@ -33,6 +34,12 @@ namespace mars {
         constexpr TensorBase (std::array<T, sizeof...(Is)> && a)
         : values{std::move(a)}
         {}
+
+        // TensorBase(std::initializer_list<T> a)
+        // {
+        //     assert(a.size() == Size);
+        //     std::copy(std::begin(a), std::end(a), std::begin(values));
+        // }
  
         constexpr TensorBase () = default;
 

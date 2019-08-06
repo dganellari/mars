@@ -617,6 +617,61 @@ template<Integer N,Integer K>
         }
 
 
+   template<Integer Dim, Integer ManifoldDim>
+inline constexpr auto jacobian_faces()
+{
+    static_assert(Dim >= ManifoldDim, "Dim must be greater or equal ManifoldDim");
+    // static_assert(Npoints == ManifoldDim+1, "Npoints must be equal to ManifoldDim+1");
+    Vector<Vector<Real, Dim>,ManifoldDim> points;
+    constexpr auto n_faces=ManifoldDim+1;
+    const auto combs=combinations_generate<ManifoldDim+1,ManifoldDim>(); 
+    Matrix<Real, Dim, ManifoldDim-1> J;
+    Vector<Matrix<Real, Dim, ManifoldDim-1>,n_faces> Jmat;
+    // loop on all the faces
+    for(Integer ii=0;ii<n_faces;ii++)
+    {
+        // take the indices of the reference simplex related to the face ii
+        const auto &comb_ii=combs[ii];
+        // fill points with the corresponding reference simplex face 
+        for(Integer jj=0;jj<ManifoldDim;jj++)
+          for(Integer kk=0;kk<ManifoldDim;kk++)
+            points[jj][kk]=Simplex<Dim,ManifoldDim>::reference[comb_ii[jj]][kk];
+        
+        // compute the jacobian of the given face
+        for(Integer ii=0;ii<ManifoldDim;ii++)
+        {
+            Vector<Real, Dim> v0 = points[0];
+            for(Integer i = 1; i < ManifoldDim; ++i) {
+                const auto &vi = points[i];
+                J.col(i-1, vi - v0);
+            }
+        }
+        Jmat[ii]=J;
+
+    }
+    return Jmat;
+}
+
+
+template<typename QuadratureRule>
+inline constexpr auto reference_face_shape_functions()
+{
+  using Elem=typename QuadratureRule::Elem;
+  constexpr Integer Dim=Elem::Dim;
+  constexpr Integer ManifoldDim=Elem::ManifoldDim;
+  const auto Jacobian_faces=jacobian_faces<Dim,ManifoldDim>();
+  constexpr auto n_faces=Jacobian_faces.size();
+  Vector<typename QuadratureRule::qp_points_type, n_faces> qp_points_face;
+
+  for(Integer ii=0;ii<n_faces;ii++)
+     {
+        qp_points_face[ii]=Jacobian_faces[ii]*QuadratureRule::qp_points_type;
+     }
+
+ return qp_points_face;
+}
+
+
 void boundary_example()
 {
   // triangles, face 0
@@ -831,6 +886,12 @@ std::cout<<"-------------------------------------------"<<std::endl;
   std::cout<<std::endl;
    }
 
+ constexpr auto Jkm=jacobian_faces<3,3>();
+ std::cout<<std::endl;
+  for(Integer ii=0;ii<Jkm.size();ii++)
+   {
+    std::cout<<Jkm[ii]<<std::endl;
+   }
  // J32=describe(std::cout);
  
 

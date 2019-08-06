@@ -1091,7 +1091,7 @@ int main(int argc, char *argv[])
 	 //test_bisection_3D(atoi(argv[1]));
 	// test_bisection_4D();
 
-<<<<<<< HEAD
+
 functionspaces_example2D();
 assembly_example();
 boundary_example();
@@ -1101,9 +1101,8 @@ boundary_example();
 //normals_example4D();
 //connectivity_example4D();
 	//run_benchmarks();
-=======
 	//run_benchmarks(atoi(argv[1]));
->>>>>>> 54730948d988c58ae31d70bd31e7624f6231b4dd
+
 	// test_partition_2D();
 	// test_partition_3D();
 	// test_partition_4D();

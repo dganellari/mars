@@ -40,50 +40,50 @@ public:
 template<typename Elem,Integer Order>
 class GaussPoints;
 
-static constexpr  Matrix<Real,1,2> QPSimplex1_qp_points{0.33333333333333, 0.33333333333333};
-static constexpr  Matrix<Real,3,2> QPSimplex2_qp_points{0.16666666666667, 0.16666666666667,
+static constexpr  Matrix<Real,1,2> QPSimplex1_qp_points(0.33333333333333, 0.33333333333333);
+static constexpr  Matrix<Real,3,2> QPSimplex2_qp_points(0.16666666666667, 0.16666666666667,
                                                         0.16666666666667, 0.66666666666667,
-                                                        0.16666666666667, 0.16666666666667};
-static constexpr  Matrix<Real,4,2> QPSimplex3_qp_points{0.33333333333333, 0.33333333333333,
+                                                        0.16666666666667, 0.16666666666667);
+static constexpr  Matrix<Real,4,2> QPSimplex3_qp_points(0.33333333333333, 0.33333333333333,
                                                         0.20000000000000, 0.20000000000000,
                                                         0.20000000000000, 0.60000000000000,
-                                                        0.60000000000000, 0.20000000000000};
-static constexpr  Matrix<Real,6,2> QPSimplex4_qp_points{0.44594849091597, 0.44594849091597,
+                                                        0.60000000000000, 0.20000000000000);
+static constexpr  Matrix<Real,6,2> QPSimplex4_qp_points(0.44594849091597, 0.44594849091597,
                                                         0.44594849091597, 0.10810301816807,
                                                         0.10810301816807, 0.44594849091597, 
                                                         0.09157621350977, 0.09157621350977, 
                                                         0.09157621350977, 0.81684757298046,
-                                                        0.81684757298046, 0.09157621350977};
-static constexpr  Matrix<Real,7,2> QPSimplex5_qp_points{0.33333333333333, 0.33333333333333, 
+                                                        0.81684757298046, 0.09157621350977);
+static constexpr  Matrix<Real,7,2> QPSimplex5_qp_points(0.33333333333333, 0.33333333333333, 
                                                         0.47014206410511, 0.47014206410511,
                                                         0.47014206410511, 0.05971587178977,
                                                         0.05971587178977, 0.47014206410511, 
                                                         0.10128650732346, 0.10128650732346, 
                                                         0.10128650732346, 0.79742698535309, 
-                                                        0.79742698535309, 0.10128650732346};
+                                                        0.79742698535309, 0.10128650732346);
 
 
-static constexpr  Vector<Real,1> QPSimplex1_qp_weights{1};                                                        
-static constexpr  Vector<Real,3> QPSimplex2_qp_weights{0.33333333333333,
+static constexpr  Vector<Real,1> QPSimplex1_qp_weights(1);                                                        
+static constexpr  Vector<Real,3> QPSimplex2_qp_weights(0.33333333333333,
                                                        0.33333333333333,
-                                                       0.33333333333333};
-static constexpr  Vector<Real,4> QPSimplex3_qp_weights{ -0.56250000000000,
+                                                       0.33333333333333);
+static constexpr  Vector<Real,4> QPSimplex3_qp_weights( -0.56250000000000,
                                                         0.52083333333333,
                                                         0.52083333333333,
-                                                        0.52083333333333};
-static constexpr  Vector<Real,6> QPSimplex4_qp_weights {0.22338158967801, 
+                                                        0.52083333333333);
+static constexpr  Vector<Real,6> QPSimplex4_qp_weights (0.22338158967801, 
                                                         0.22338158967801,
                                                         0.22338158967801,
                                                         0.10995174365532,
                                                         0.10995174365532, 
-                                                        0.10995174365532};
-static constexpr  Vector<Real,7> QPSimplex5_qp_weights {0.22500000000000, 
+                                                        0.10995174365532);
+static constexpr  Vector<Real,7> QPSimplex5_qp_weights (0.22500000000000, 
                                                         0.13239415278851, 
                                                         0.13239415278851, 
                                                         0.13239415278851, 
                                                         0.12593918054483, 
                                                         0.12593918054483, 
-                                                        0.12593918054483 };
+                                                        0.12593918054483 );
 
 
 
