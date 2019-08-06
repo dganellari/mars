@@ -78,7 +78,7 @@ mars::Mesh2 test_mars_mesh_generation_2D(const int x,
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 	auto duration = duration_cast < seconds > (t2 - t1).count();
 
-	std::cout << "Generation took: "<< duration<<std::endl;
+	std::cout << "Generation took: "<< duration<<" seconds."<<std::endl;
 
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
@@ -853,17 +853,17 @@ void run_benchmarks(int level)
 	LeppBenchmark<Mesh2> lb;
 	lb.run(level, m, "lb");*/
 
-	Benchmark<Mesh3> b3;
+	/*Benchmark<Mesh3> b3;
 	Mesh3 m3;
 	read_mesh("../data/cube_6.MFEM", m3);
 
 	b3.run(level, m3, "b3");
 
 	LeppBenchmark<Mesh3> lb3;
-	lb3.run(level, m3, "lb3");
+	lb3.run(level, m3, "lb3");*/
 
 	/*ParallelMesh2 pMesh;
-	generate_square(pMesh, 1, 3);
+	generate_square(pMesh, 97, 10);
 
 	Mesh2 sMesh;
 	convert_parallel_mesh_to_serial(sMesh, pMesh);
@@ -876,10 +876,10 @@ void run_benchmarks(int level)
 	w.write("build_square_parallel.vtu", sMesh);
 
 	Benchmark<Mesh2> b1;
-	b1.run(level, sMesh, "b1");
+	//b1.run(level, sMesh, "b1");
 
 	Mesh2 Mesh;
-	generate_square(Mesh, 1, 3);
+	generate_square(Mesh, 97, 10);
 
 	std::cout << "n_active_elements: " << Mesh.n_active_elements() << std::endl;
 	std::cout << "n_nodes: " << Mesh.n_nodes() << std::endl;
@@ -890,8 +890,8 @@ void run_benchmarks(int level)
 	LeppBenchmark<Mesh2> b2;
 	b2.run(level, Mesh, "b2");*/
 
-
-	/*ParallelMesh3 pMesh3;
+/*
+	ParallelMesh3 pMesh3;
 	generate_cube(pMesh3, 1, 1, 2);
 
 	Mesh3 sMesh3;
@@ -910,13 +910,17 @@ void run_benchmarks(int level)
 	b3.run(level, sMesh3, "b3");
 
 	LeppBenchmark<Mesh3> lb3;
-		lb3.run(level, sMesh3, "lb3");*/
+		lb3.run(level, sMesh3, "lb3");
+*/
 
-/*	Benchmark<Mesh4> b4;
+	Benchmark<Mesh4> b4;
 	Mesh4 m4;
 	read_mesh("../data/cube4d_24.MFEM", m4);
 
-	b4.run(9, m4, "b4");*/
+	b4.run(level, m4, "b4");
+
+	LeppBenchmark<Mesh4> lb4;
+	lb4.run(level, m4, "lb4");
 }
 
 void test_incomplete_2D()

@@ -4,8 +4,6 @@
 #include "mars_mesh.hpp"
 #include "mars_globals.hpp"
 
-#include <Kokkos_Core.hpp>
-
 namespace mars {
 
 
