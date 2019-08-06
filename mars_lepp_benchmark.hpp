@@ -91,7 +91,7 @@ namespace mars {
 			std::cout << "volume: " << mesh.volume() << std::endl;
 			std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 
-			if(n_levels <= 20){
+			if(n_levels <= 20 && mesh.ManifoldDim <4){
 				VTKMeshWriter<Mesh> w;
 				w.write("LEPP_" + edge_select->name() + std::to_string(n_levels) + ".vtu", mesh);
 			}
