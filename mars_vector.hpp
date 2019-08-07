@@ -16,6 +16,7 @@ namespace mars {
 
 	    Vector(std::initializer_list<T> values)
 	    {
+	    	assert(values.size() == Dim);
 	        std::copy(std::begin(values), std::begin(values) + Dim, std::begin(this->values));
 	    }
 
