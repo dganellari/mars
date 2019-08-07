@@ -19,6 +19,8 @@ namespace mars {
 		static const Integer Dim 		 = Mesh_::Dim;
 		static const Integer ManifoldDim = Mesh_::ManifoldDim;
 
+		virtual ~Bisection() {}
+
 		Bisection(Mesh &mesh)
 		: mesh(mesh),
 		  edge_select_(std::make_shared<LongestEdgeSelect<Mesh>>()),
@@ -30,7 +32,15 @@ namespace mars {
 			fail_if_not_refine = val;
 		}
 
-		void set_edge_select(const std::shared_ptr<EdgeSelect<Mesh>> &edge_select)
+		bool get_fail_if_not_refine() {
+			return fail_if_not_refine;
+		}
+
+		std::vector<Integer>& get_incomplete_elements(){
+			return incomplete_elements_;
+		}
+
+		virtual void set_edge_select(const std::shared_ptr<EdgeSelect<Mesh>> &edge_select)
 		{
 			edge_select_ = edge_select;
 		}
@@ -39,6 +49,8 @@ namespace mars {
 		{
 			return edge_select_;
 		}
+
+
 
 		Integer add_elem(const Elem &e)
 		{
@@ -317,7 +329,7 @@ namespace mars {
 			return success;
 		}
 
-		void refine_element(const Integer element_id)
+		virtual void refine_element(const Integer element_id)
 		{
 			if(!edge_select_->can_refine(mesh, element_id)) {
 				incomplete_elements_.push_back(element_id);
@@ -325,6 +337,7 @@ namespace mars {
 				return;
 			}
 
+			//const Integer edge_num = edge_select_->stable_select(mesh, element_id);
 			const Integer edge_num = edge_select_->select(mesh, element_id);
 			Edge edge;
 			mesh.elem(element_id).edge(edge_num, edge.nodes[0], edge.nodes[1]);
