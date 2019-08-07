@@ -1534,6 +1534,11 @@ class Evaluation<Expression2Matrix<T,Rows,Cols> >
  	type value_;
 };
 
+template<typename T>
+constexpr auto Eval(const T& t){return Evaluation<Expression2<remove_all_t<decltype(t)>>>(t);}
+
+
+
 // template<typename T,Integer Rows,Integer Cols>
 // class Evaluation<Expression2<Expression2Matrix<T,Rows,Cols>> >
 // {

@@ -87,8 +87,11 @@ using Lagrange3DG=BaseFunctionSpace<LagrangeFE,3,Discontinuous,NComponents>;
 template<Integer NComponents=1>
 using RT0=BaseFunctionSpace<RaviartThomasFE,0,Continuous,NComponents>;
 template<Integer NComponents=1>
+using RT1=BaseFunctionSpace<RaviartThomasFE,1,Continuous,NComponents>;
+template<Integer NComponents=1>
 using RT0DG=BaseFunctionSpace<RaviartThomasFE,0,Discontinuous,NComponents>;
-
+template<Integer NComponents=1>
+using RT1DG=BaseFunctionSpace<RaviartThomasFE,1,Discontinuous,NComponents>;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////------- BASE ELEMENT SPACE -------- //////////////////////////////

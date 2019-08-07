@@ -278,6 +278,67 @@ public:
 };
 
 
+template<typename BaseFunctionSpacesType, Integer N, typename OperatorType>
+class Evaluation<Expression2<Trial<BaseFunctionSpacesType,N,OperatorType>>>
+{
+ public:
+ using type= Trial<BaseFunctionSpacesType,N,OperatorType>;
+ using FunctionSpace=GetType<type::value,typename type::BaseFunctionSpaces>;
+ using Elem=GetType<0,FunctionSpace>;
+ using BaseFunctionSpace=GetType<1,FunctionSpace>;
+ using Operator=typename type::Operator;
+ template<typename ...Ts> 
+ Evaluation(const type& expr):
+ eval_(expr)
+ {};
+ 
+ template<typename QRule, typename ...Ts>
+ constexpr auto apply(const std::tuple<Ts...>& tuple1)
+ {
+  using tuple_type=GetType<type::value,typename std::tuple<Ts...>>;
+  const auto& tuple=std::get<type::value>(tuple1);
+  constexpr Integer M=TypeToTupleElementPosition<ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QRule>,tuple_type>::value;
+  const auto& shape_func=std::get<M>(tuple);
+  return value_;
+ }
+private:
+
+ type eval_;
+ type value_;
+};
+
+template<typename BaseFunctionSpacesType, Integer N, typename OperatorType>
+class Evaluation<Expression2<Test<BaseFunctionSpacesType,N,OperatorType>>>
+{
+ public:
+ using type= Test<BaseFunctionSpacesType,N,OperatorType>;
+ using FunctionSpace=GetType<type::value,typename type::BaseFunctionSpaces>;
+ using Elem=GetType<0,FunctionSpace>;
+ using BaseFunctionSpace=GetType<1,FunctionSpace>;
+ using Operator=typename type::Operator;
+ template<typename ...Ts> 
+ Evaluation(const type& expr):
+ eval_(expr)
+ {};
+ 
+ template<typename QRule,typename ...Ts>
+ constexpr auto apply(const std::tuple<Ts...>& tuple1)
+ {
+  using tuple_type=GetType<type::value,typename std::tuple<Ts...>>;
+  const auto& tuple=std::get<type::value>(tuple1);
+  constexpr Integer M=TypeToTupleElementPosition<ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QRule>,tuple_type>::value;
+  const auto& shape_func=std::get<M>(tuple);
+  return value_;
+ }
+private:
+
+ type eval_;
+ type value_;
+};
+
+
+
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///// We associate Number<2>,Number<1>,Number<0> respectively to a X=Trial/Test/OtherFunction
 ///// We define IsTestOrTrial<X> which is used for each term Left or Right in L2Inner<Left,Right>
@@ -555,7 +616,7 @@ class QuadratureOrder<Trial<BaseFunctionSpacesType,N,OperatorKind> >
 
 
 template<typename MeshT, typename Left,typename Right,Integer QR=GaussianQuadrature>
-class L2DotProductIntegral: public Expression2<L2DotProductIntegral<MeshT,Left,Right>>
+class L2DotProductIntegral: public Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>
 {  
    public:
     using type=Contraction2<Expression2 <Left>, Expression2 <Right> > ;
@@ -565,19 +626,66 @@ class L2DotProductIntegral: public Expression2<L2DotProductIntegral<MeshT,Left,R
     using form= std::tuple<typename TypeOfForm<GetType<0,typename IsTestOrTrial<Left>::type>,
                                     GetType<0,typename IsTestOrTrial<Right>::type>>::type >;
     using UniqueBaseFunctionSpaces=GetType<0,RemoveTupleDuplicates< TupleCatType< typename IsTestOrTrial<Left>::UniqueBaseFunctionSpaces,typename IsTestOrTrial<Right>::UniqueBaseFunctionSpaces >>>;               
-    L2DotProductIntegral(const MeshT& mesh,const Expression2<Left>& left,const Expression2<Right>& right ):
+    L2DotProductIntegral(const MeshT& mesh,const Expression2<Left>& left,const Expression2<Right>& right,const Integer label=-666):
     mesh_(mesh),
     left_(left),
     right_(right),
-    product_(Inner(left,right))
+    product_(Inner(left,right)),
+    label_(label)
     {}
-
+     
+     const Left&  left() const{return left_;};
+     const Right& right()const{return right_;};
   private:
     MeshT mesh_;
     Left left_;
     Right right_;
     type product_;
+    Integer label_;
 };
+
+
+
+
+template<typename MeshT, typename Left,typename Right,Integer QR>
+class Evaluation<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>>
+{
+ public:
+ using type= L2DotProductIntegral<MeshT,Left,Right,QR>;
+ using EvalLeft=Evaluation<Expression2<Left>>;
+ using EvalRight=Evaluation<Expression2<Right>>;
+ Evaluation(){};
+ 
+
+ template<typename ...Ts> 
+ Evaluation(const type& expr):
+ eval_(expr),
+ eval_left_(EvalLeft(eval_.left())),
+ eval_right_(EvalRight(eval_.right()))
+ {};
+ 
+
+ template<typename QRule,typename ...Ts>
+ void apply_aux(const std::tuple<Ts...>& tuple)
+ {
+  eval_left_.template apply<QRule>(tuple);
+  eval_right_.template apply<QRule>(tuple);
+ }
+
+ template<typename ...Ts>
+ void apply(const std::tuple<Ts...>& tuple)
+ {
+  apply_aux<typename type::QRule>(tuple);
+ }
+private:
+
+ type eval_;
+ EvalLeft eval_left_;
+ EvalRight eval_right_;
+ // type value_;
+};
+
+
 
 
 template<typename MeshT, typename Left,typename Right,Integer QR>
@@ -603,6 +711,10 @@ L2Inner(const MeshT& mesh,const Expression2<Left>& left,const Expression2<Right>
 
 
 
+template<typename MeshT, typename Left,typename Right>
+L2DotProductIntegral<MeshT,Left,Right>
+L2Inner(const MeshT& mesh,const Expression2<Left>& left,const Expression2<Right>& right, const Integer label)
+{return L2DotProductIntegral<MeshT,Left,Right>(mesh,left,right,label);}
 
 
 
@@ -723,7 +835,8 @@ void Assembly(const ConstFormReference& form)
  
   TupleOfTupleShapeFunction stuple;
   UniqueMapping mapping;
-  init_map_aux< SpacesToUniqueFEFamilies,MapTupleNumbers,TupleTypeSize<MapTupleNumbers>::value-1,0>(stuple,mapping);
+  init_map< SpacesToUniqueFEFamilies,MapTupleNumbers>(stuple,mapping);
+
 }
 
 

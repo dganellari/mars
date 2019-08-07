@@ -64,30 +64,76 @@ using GetType=typename GetHelper<N,Ts...>::type;
 
 
 
-template <Integer N, Integer M, typename... Ts>
-class GetHelper2;
+// template <Integer N, Integer M, typename... Ts>
+// class GetHelper2;
 
-template <Integer M, typename T, typename... Ts>
-class GetHelper2< 0, M, std::tuple<T,Ts...> >
+// template <Integer M, typename T, typename... Ts>
+// class GetHelper2< 0, M, std::tuple<T,Ts...> >
+// {
+// public:
+//   using type =GetType<M, T >;
+// };
+
+
+// template <Integer N, Integer M, typename T, typename... Ts>
+// class GetHelper2< N, M, std::tuple<T,Ts...> >
+// {
+// public:
+//   using type =typename GetHelper2<N-1,M, std::tuple<Ts...> >::type;
+// };
+
+
+
+// template <Integer N,Integer M, typename... Ts>
+// using GetType2=typename GetHelper2<N,M,Ts...>::type;
+
+
+
+
+template <typename Tuple, Integer N, Integer...Ns >
+class GetHelper3;
+
+template <typename Tuple,Integer N>
+class GetHelper3< Tuple,N>
 {
 public:
-  using type =GetType<M, T >;
+  using type = GetType<N,Tuple>;
 };
 
 
-template <Integer N, Integer M, typename T, typename... Ts>
-class GetHelper2< N, M, std::tuple<T,Ts...> >
+template <typename Tuple,Integer N, Integer...Ns>
+class GetHelper3
 {
 public:
-  using type =typename GetHelper2<N-1,M, std::tuple<Ts...> >::type;
+  using type =typename GetHelper3<GetType<N,Tuple>,Ns...>::type;
 };
 
+template <typename Tuple,Integer N, Integer...Ns>
+using GetType3=typename GetHelper3<Tuple,N,Ns...>::type;
 
 
-template <Integer N,Integer M, typename... Ts>
-using GetType2=typename GetHelper2<N,M,Ts...>::type;
+// template <Integer N,typename Tuple>
+// constexpr auto get(const Tuple& tuple){return std::get<N>(tuple);}
 
 
+// template <Integer...N,Integer M,typename Tuple>
+// constexpr auto get(const Tuple& tuple)
+// {return std::get<M>(std::get<N>(tuple));}
+
+
+
+
+
+template <Integer N,Integer...Ns,typename Tuple>
+constexpr std::enable_if_t<(0==sizeof...(Ns)),GetType<N,Tuple>> 
+get2(const Tuple& tuple)
+{return std::get<N>(tuple);}
+
+
+template <Integer N,Integer...Ns,typename Tuple>
+constexpr std::enable_if_t<(0<sizeof...(Ns)),GetType<N,Tuple>> 
+get2(const Tuple& tuple)
+{return get2<Ns...>(std::get<N>(tuple));}
 
 
 template<typename...Args>
@@ -1092,6 +1138,13 @@ using MapTupleInit=typename MapTupleInitHelper<TupleOfTupleSpaces,SpaceToMap,Tup
     init_map_aux<SpacesToUnique, MapTupleNumbersW1,Nmax_aux,N+1>(t,maps);
     }
 
+   template<typename SpacesToUnique,typename MapTupleNumbers,typename Tuple,typename Map>
+   void init_map(Tuple& t,const Map& maps) 
+   {init_map_aux< SpacesToUnique,MapTupleNumbers,TupleTypeSize<MapTupleNumbers>::value-1,0>(t,maps);}
+
+
+
+
 template<typename TupleSpaces,typename TupleOperatorsAndQuadrature,typename UniqueMapping>
 class MapTuple
 {
@@ -1233,13 +1286,15 @@ class ShapeFunctionAssembly
          type&  get()     {return tuple_;};
 
    template<Integer N,Integer M>
-   const GetType2<N,M,type> & get()const
+   const GetType3<type,N,M> & get()const
    {const auto& tuple_nth=std::get<N>(tuple_);
     return std::get<M>(tuple_nth);};
+
    template<Integer N,Integer M>
-         GetType2<N,M,type>&  get()    
+         GetType3<type,N,M>&  get()    
    { auto& tuple_nth=std::get<N>(tuple_);
     return std::get<M>(tuple_nth);};
+
 
 
 

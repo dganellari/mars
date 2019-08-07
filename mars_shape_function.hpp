@@ -1745,18 +1745,6 @@ public:
 
 
 
-  // template<typename Elem,typename Operator,Integer FEFamily,Integer Order,typename SingleType,Integer Ndofs,typename Point>
-  // constexpr Vector<SingleType,Ndofs> value(const Point& point);
-
-  // template<> 
-  // constexpr Vector<Matrix<Real, 1, 1>,3> 
-  // value<Simplex<2,2>, IdentityOperator, LagrangeFE, 1,Matrix<Real, 1, 1>,3>
-  //     (const Vector<Real,2>& point)
-  //     {Vector<Matrix<Real, 1, 1>,3> func{point[0],point[1],(1. - point[0] - point[1])};
-  //      return func;};
-
-
-
   template<typename Elem,typename Operator,Integer FEFamily,Integer Order,typename Output,typename Point>
   constexpr void value(const Point& point,Output& output);
 
@@ -1764,27 +1752,11 @@ public:
   constexpr void value<Simplex<2,2>, IdentityOperator, LagrangeFE, 1>
       (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,3> & func)
       {
-       Vector<Matrix<Real, 1, 1>,3> func2(point[0],point[1],(1. - point[0] - point[1]));
-       func=func2;
+       Vector<Matrix<Real, 1, 1>,3> func2((1. - point[0] - point[1]), // 1 in (0,0)
+                                           point[0],                  // 1 in (1,0)
+                                           point[1]);                 // 1 in (0,1)
+       func=func2; 
       }
-
-
-  template<> 
-  constexpr void value<Simplex<2,2>, IdentityOperator, LagrangeFE, 2>
-      (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,6> & func)
-      {
-        const auto& xi=point[0];
-        const auto& eta=point[1];
-        const Real zeta = 1. - xi - eta;
-        Vector<Matrix<Real, 1, 1>,6> func2(2.*zeta*(zeta-0.5),
-                                           2.*xi*(xi-0.5),
-                                           2.*eta*(eta-0.5),
-                                           4.*zeta*xi,
-                                           4.*xi*eta,
-                                           4.*eta*zeta);         
-        func=func2;
-      }
-
 
   template<> 
   constexpr void value<Simplex<2,2>, GradientOperator, LagrangeFE, 1>
@@ -1796,6 +1768,23 @@ public:
         Vector<Matrix<Real, 1, 2>,3> func2({-1,-1},
                                            {+1, 0},
                                            { 0,+1});     
+        func=func2;
+      }
+
+
+  template<> 
+  constexpr void value<Simplex<2,2>, IdentityOperator, LagrangeFE, 2>
+      (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,6> & func)
+      {
+        const auto& xi=point[0];
+        const auto& eta=point[1];
+        const Real zeta = 1. - xi - eta;
+        Vector<Matrix<Real, 1, 1>,6> func2(2.*zeta*(zeta-0.5), // 1 in (0,0)
+                                           2.*xi*(xi-0.5),     // 1 in (1,0)
+                                           2.*eta*(eta-0.5),   // 1 in (0,1)
+                                           4.*zeta*xi,         // 1 in (0.5,0)
+                                           4.*eta*zeta,        // 1 in (0,0.5)
+                                           4.*xi*eta);         // 1 in (0.5,0.5)
         func=func2;
       }
 
@@ -1818,6 +1807,47 @@ public:
        func=func2;
      } 
 
+
+
+  template<> 
+      constexpr void value<Simplex<2,2>, IdentityOperator, RaviartThomasFE, 1>
+      (const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,8> & func)
+      {
+       const auto& xi=point[0];
+       const auto& eta=point[1];
+
+       Vector<Matrix<Real, 2, 1>,8> func2{
+        {(1. - xi - eta)*xi,(1. - xi - eta)*(eta-1)},   // 0 in (1,0), (0,1), non-zero normal on edge0
+        {xi*xi,xi*(eta-1)},                             // 0 in (0,0), (0,1), non-zero normal on edge0
+        {(1. - xi - eta)*(xi-1),(1. - xi - eta)*(eta)}, // 0 in (1,0), (0,1), non-zero normal on edge1
+        {eta*(xi-1),eta*eta},                           // 0 in (0,0), (1,0), non-zero normal on edge1
+        {xi*xi,xi*eta},                                 // 0 in (0,0), (0,1), non-zero normal on edge2
+        {eta*xi,eta*eta},                               // 0 in (0,0), (1,0), non-zero normal on edge2
+        {xi*(xi-1),xi*eta},                             // normal 0 on all edges, element-dof
+        {eta*xi,eta*(eta-1)}                            // normal 0 on all edges, element-dof
+        };
+       func=func2;
+      }
+
+
+  template<> 
+     constexpr void value<Simplex<2,2>, DivergenceOperator, RaviartThomasFE, 1>
+     (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,8> & func)
+     {
+       const auto& xi=point[0];
+       const auto& eta=point[1];
+       Vector<Matrix<Real, 1, 1>,8> func2{
+        {3*(1-xi-eta)},
+        {3*xi},
+        {3*(1-xi-eta)},
+        {3*eta},
+        {3*xi},
+        {3*eta},
+        {3*xi},
+        {3*eta}
+      };
+       func=func2;
+     } 
 
 
 
@@ -1921,8 +1951,7 @@ class ShapeFunctionDependent
   using qp_points_type=typename QuadratureRule::qp_points_type;
   using Map=MapFromReference5<Operator,Elem,BaseFunctionSpace::FEFamily>;
   
-  static constexpr 
-  FQPValues<SingleType,NQPoints,Ndofs>  
+  static constexpr FQPValues<SingleType,NQPoints,Ndofs>  
   reference_values{reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(QuadratureRule::qp_points)};
  
 

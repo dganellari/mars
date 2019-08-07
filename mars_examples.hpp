@@ -1077,9 +1077,9 @@ decltype(W1)::ElementFunctionSpacesTupleType lkj;
  L2Inner(mesh,rr1,q)+
  L2Inner(mesh,r,s)+
  L2Inner(mesh,Grad(rr1)+sigma,tau)+
- L2Inner(mesh,r,s)
- ;
+ L2Inner(mesh,r,s);
 
+ 
  decltype(l22)::UniqueBaseFunctionSpaces okokoiooio;
 
  std::cout<<"decltype(Grad(u))::Nmax="<<decltype(Grad(u))::Nmax<<std::endl;
@@ -1123,7 +1123,7 @@ decltype(W1)::ElementFunctionSpacesTupleType lkj;
  using Map=MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,TupleSpacesW1>;
  using UniqueMapping=UniqueMap<Unique,Map> ;
  UniqueMapping mapping;
-
+ init(mapping,J);
 
  Assembly(l22);
  using Space=RT0<2>;
@@ -1136,13 +1136,26 @@ decltype(W1)::ElementFunctionSpacesTupleType lkj;
  std::cout<<"static reference shape function"<<std::endl;
  std::cout<<ShapeFunctionDependent<Elem,Space,Operator,QRule>::reference_values<<std::endl;
  constexpr const auto ref=ShapeFunctionDependent<Elem,Space,Operator,QRule>::reference_values;
+ 
+const auto & ekom=std::get<0>(std::get<0>(mapping));
 
+GetType3<std::tuple< std::tuple<>,std::tuple<std::tuple<int,std::tuple<IdentityOperator>>> >, 1,0,1,0> ok;
+GetType3<std::tuple<IdentityOperator, int >,0> ok4;
 
+// std::cout<<"J"<<std::endl;
+// std::cout<<J<<std::endl;
+// std::cout<<"map 0,0:"<<std::endl;
+// std::cout<<get2<0,0>(mapping)()<<std::endl;
+// std::cout<<"map 0,1:"<<std::endl;
+// std::cout<<get2<0,1>(mapping)()<<std::endl;
+// std::cout<<"map 1,0:"<<std::endl;
+// std::cout<<get2<1,0>(mapping)()<<std::endl;
+// std::cout<<"map 1,1:"<<std::endl;
+// std::cout<<get2<1,1>(mapping)()<<std::endl;
 // static_assert(OperatorToMap<GradientOperator,GetType<0,UniqueMapping>,1,0>::value==0,"frerere");
 
 // TupleOfTupleShapeFunctionType<TupleSpacesW1,TupleOperatorsAndQuadratureW1> ko1;
  SpacesToUniqueFEFamilies<TupleSpacesW1>ko2;
- UniqueMapping ko3;
 
  using TupleOfTupleShapeFunctionW1=TupleOfTupleShapeFunctionType<TupleSpacesW1,TupleOperatorsAndQuadratureW1>;
  using SpacesToUniqueFEFamiliesW1=SpacesToUniqueFEFamilies<TupleSpacesW1>;
@@ -1154,9 +1167,17 @@ decltype(W1)::ElementFunctionSpacesTupleType lkj;
  SpacesToUniqueFEFamiliesW1 lk;
  MapTupleNumbersW1 kjl;
  TupleOfTupleShapeFunctionW1 stuple;
- init_map_aux< SpacesToUniqueFEFamiliesW1,
- MapTupleNumbersW1, 
- TupleTypeSize<MapTupleNumbersW1>::value-1,0>(stuple,mapping);
+
+ 
+ init_map< SpacesToUniqueFEFamiliesW1,MapTupleNumbersW1>(stuple,mapping);
+
+ auto evals=Eval(s);
+ auto l2rs=L2Inner(mesh,r,s);
+ auto eval2=Eval(l2rs);
+
+ eval2.apply(stuple);
+ 
+ // decltype(MakeTest<6>(W1))::BaseFunctionSpaces okll(4);
 // TupleOfTupleShapeFunctionType<TupleSpacesW1,TupleOperatorsAndQuadratureW1> eew1;
 // ShapeFunctionAssembly<TupleSpaces,TupleOperatorsAndQuadrature> ee2;
 

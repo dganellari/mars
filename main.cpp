@@ -1115,17 +1115,17 @@ boundary_example();
 	// read_file();
 	// write_file(); 
 
-	int level = 1;
-	std::string filename = "../data/write/tetrakis.MFEM";
-	if (argc > 1) {
-		char *end_ptr = argv[1];
-		level = strtol(argv[1], &end_ptr, 10);
-		if (*end_ptr != '\0' || end_ptr == argv[1])
-			warnx("'%s' could not be (completely) converted to long", argv[1]);
-	} else
-		std::cout
-				<< "No level of refinement was specified. Setting the default to 1!"
-				<< std::endl;
+	// int level = 1;
+	// std::string filename = "../data/write/tetrakis.MFEM";
+	// if (argc > 1) {
+	// 	char *end_ptr = argv[1];
+	// 	level = strtol(argv[1], &end_ptr, 10);
+	// 	if (*end_ptr != '\0' || end_ptr == argv[1])
+	// 		warnx("'%s' could not be (completely) converted to long", argv[1]);
+	// } else
+	// 	std::cout
+	// 			<< "No level of refinement was specified. Setting the default to 1!"
+	// 			<< std::endl;
 
 	/*if (argc > 2) {
 		filename = argv[2];
@@ -1142,7 +1142,7 @@ boundary_example();
 
 	// if(level <100){
 
-		test_mars_mesh_generation_2D(level,level);
+		// test_mars_mesh_generation_2D(level,level);
 		//test_mars_mesh_generation_1D(level);
 	// }
 

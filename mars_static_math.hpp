@@ -233,6 +233,19 @@ namespace mars {
 	public:
 	  static constexpr bool value=std::conditional<std::is_same<T,S>::value,Number<0>,Number<1>>::type ::value;
 	};
+
+
+	template<class T, class U=typename std::remove_cv<
+	  						  typename std::remove_pointer<
+						      typename std::remove_reference<
+	  						  typename std::remove_extent<T>::type
+														   >::type
+														   >::type
+														   >::type
+							  > struct remove_all : remove_all<U> {};
+	template<class T> struct remove_all<T, T> { typedef T type; };
+    template<class T>
+    using remove_all_t=typename remove_all<T>::type;	  
 	// template<>
 	// class Combinations<3, 2> {
 	// public:
