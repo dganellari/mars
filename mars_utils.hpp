@@ -426,7 +426,7 @@ namespace mars {
 	}
 
 	template<class Mesh>
-	void parition_mesh(
+	void partition_mesh(
 		Mesh &mesh,
 		const Integer n_partitions,
 		const std::vector<Integer> &partitioning,

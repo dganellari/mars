@@ -58,10 +58,12 @@ ELSE()
 ENDIF()
 
 list(APPEND MARS_HEADERS
-	mars.hpp 
+	mars.hpp
 	mars_base.hpp
 	mars_benchmark.hpp
 	mars_bisection.hpp
+	mars_lepp_bisection.hpp
+	mars_lepp_benchmark.hpp
 	mars_communicator.hpp
 	mars_dof_map.hpp
 	mars_dual_graph.hpp
@@ -71,9 +73,11 @@ list(APPEND MARS_HEADERS
 	mars_edge_select.hpp
 	mars_edge_split.hpp
 	mars_edge_split_pool.hpp
+	mars_imesh.hpp
 	mars_lagrange_element.hpp
 	mars_longest_edge.hpp
 	mars_matrix.hpp
+	mars_imesh.hpp
 	mars_mesh.hpp
 	mars_mesh_partition.hpp
 	mars_newest_vertex.hpp
@@ -95,13 +99,14 @@ list(APPEND MARS_HEADERS
 	mars_vector.hpp
 	mars_visualization.hpp
 	mars_vtk_writer.hpp
+	mars_fwd.hpp
 	generation/mars_point.hpp
 	generation/mars_mesh_generation.hpp
 	)
 	
 IF(Kokkos_FOUND)
 	list(APPEND MARS_HEADERS
-	    generation/mars_mesh_generation_kokkos.hpp
+		generation/mars_imesh_kokkos.hpp	
 	    generation/mars_mesh_kokkos.hpp
 	    generation/mars_test_kokkos.hpp
 	    generation/mars_utils_kokkos.hpp

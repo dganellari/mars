@@ -19,7 +19,7 @@
 
 namespace mars {
 
-	template<Integer Dim_, Integer ManifoldDim_>
+	template<Integer Dim_, Integer ManifoldDim_, class Implementation_>
 	class Mesh : public IMesh<Dim_> {
 	public:
 		static const Integer Dim = Dim_;
@@ -344,11 +344,31 @@ namespace mars {
 		void describe_element(const Integer i, std::ostream &os, const bool print_sides = false) const
 		{
 			const auto &e = elem(i);
+			describe_element(e, os, print_sides);
+		}
+
+		void describe_element(const Simplex<Dim, 1> &e, std::ostream &os, const bool print_sides = false) const
+		{
 			const Real vol = mars::volume(e, points_);
 			const auto b   = barycenter(e, points_);
 
 			os << "---------------------------------\n";
-			os << "[" << i << "]: vol: " << vol << ", ";
+			os << "[" << e.id << "]: vol: " << vol << ", ";
+			for(auto v : e.nodes) {
+				os << " " << v;
+			}
+
+			os << "\n";
+		}
+
+		template<Integer AnyDim>
+		void describe_element(const Simplex<Dim, AnyDim> &e, std::ostream &os, const bool print_sides = false) const
+		{
+			const Real vol = mars::volume(e, points_);
+			const auto b   = barycenter(e, points_);
+
+			os << "---------------------------------\n";
+			os << "[" << e.id << "]: vol: " << vol << ", ";
 			for(auto v : e.nodes) {
 				os << " " << v;
 			}
@@ -383,43 +403,7 @@ namespace mars {
 		{
 			for(std::size_t i = 0; i < elements_.size(); ++i) {
 				if(!active_[i]) continue;
-
 				describe_element(i, os, print_sides);
-
-				// const auto &e = elements_[i];
-				// const Real vol = mars::volume(e, points_);
-				// const auto b   = barycenter(e, points_);
-
-				// os << "---------------------------------\n";
-				// os << "[" << i << "]: vol: " << vol << ", ";
-				// for(auto v : e.nodes) {
-				// 	os << " " << v;
-				// }
-
-				// os << "\n";
-
-				// if(print_sides) {
-				// 	Simplex<Dim, ManifoldDim-1> side;
-				// 	Matrix<Real, Dim, Dim-1> J;
-
-				// 	os << "sides:\n";
-				// 	for(Integer k = 0; k < n_sides(e); ++k) {
-				// 		e.side(k, side);
-				// 		os << "==============\n";
-				// 		jacobian(side, points_, J);
-
-				// 		const auto n = normal(side, points_);
-				// 		const auto sign = dot(points_[side.nodes[0]] - b, n) > 0? 1 : -1;
-				// 		const Real u_area = mars::unsigned_volume(side, points_);
-				// 		const Real area   = sign * u_area;
-
-				// 		J.describe(os);
-				// 		os << area << " == " << u_area << std::endl;
-				// 	}
-				// }
-
-				// os << "---------------------------------\n";
-				// os << "\n";
 			}
 
 			for(std::size_t i = 0; i < points_.size(); ++i) {
@@ -446,6 +430,42 @@ namespace mars {
 			}
 
 			return ret;
+		}
+
+		inline Mesh &operator+=(const Mesh &other)
+		{
+			const auto node_offset    = this->n_nodes();
+			const auto element_offset = this->n_elements();
+
+			const auto n_new_points   = other.n_nodes();
+			const auto n_new_elements = other.n_elements();
+
+			elements_.reserve(element_offset + n_new_elements);
+			points_.reserve(node_offset + n_new_points);
+			tags_.reserve(element_offset + n_new_elements);
+			active_.reserve(element_offset + n_new_elements);
+
+			for(Integer i = 0; i < n_new_points; ++i) {
+				add_point(other.point(i));
+			}
+			
+			for(Integer i = 0; i < n_new_elements; ++i) {
+				Elem e = other.elem(i);
+				e.parent_id += element_offset;
+
+				for(Integer k = 0; k < mars::n_nodes(e); ++k) {
+					e.nodes[k] += node_offset;
+				}
+
+				for(auto &c : e.children) {
+					c += element_offset;
+				}
+
+				auto id = add_elem(e);
+				active_[id] = other.is_active(i);
+			}
+
+			return *this;
 		}
 
 		bool have_common_sub_surface(
@@ -1065,6 +1085,7 @@ namespace mars {
 	using Mesh4 = mars::Mesh<4, 4>;
 	using Mesh5 = mars::Mesh<5, 5>;
 	using Mesh6 = mars::Mesh<6, 6>;
+
 }
 
 #endif //MARS_MESH_HPP
