@@ -45,7 +45,7 @@ public:
 		}
 	}
 
-	bool is_terminal(const Edge edge, const std::vector<Integer> &incidents,
+	bool is_terminal(const Edge edge, const std::vector<Integer> incidents,
 			std::vector<Integer>& lepp_inc, std::vector<Integer>& lepp_eq) {
 
 		bool terminal = true; //in case the elements share the longest edge or there is only one incident (itself)
