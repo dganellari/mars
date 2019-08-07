@@ -141,6 +141,8 @@ IF(Kokkos_FOUND)
 	ENDIF()
 	
 	target_include_directories(mars_exec PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
+
+	message(STATUS "Kokkos_INCLUDE_DIRS=${Kokkos_INCLUDE_DIRS}, ${Kokkos_TPL_INCLUDE_DIRS}")
 	
 	IF(Kokkos_CXX_COMPILER)
 		target_link_libraries(mars_exec mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES})

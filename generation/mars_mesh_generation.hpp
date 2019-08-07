@@ -336,6 +336,9 @@ namespace mars {
         mesh.generate_points(xDim,yDim,zDim);
         
         mesh.generate_elements(xDim,yDim,zDim);
+
+        //FIXME missing error handling
+        return true;
     }
     
     
