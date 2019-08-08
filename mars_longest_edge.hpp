@@ -115,6 +115,78 @@ namespace mars {
 			return edge_num;
 		}
 
+		//check always the edges which are equals to the ones
+		Integer select(
+					const Mesh &mesh,
+					const Integer element_id,
+					const EdgeElementMap &edge_element_map) const override
+		{
+			const auto &e = mesh.elem(element_id);
+
+			Integer edge_num = 0;
+			Real len = 0;
+
+			constexpr Integer size = Combinations<Mesh::ManifoldDim + 1, 2>::value;
+			std::array<Integer,size> lengths;
+
+			for(Integer i = 0; i < size; ++i) {
+				Integer v1, v2;
+				e.edge(i, v1, v2);
+
+				Real len_i = (mesh.point(v1) - mesh.point(v2)).squared_norm();
+				lengths[i]=len_i;
+
+				if(len_i > len) {
+					len = len_i;
+					//edge_num = i;
+				}
+			}
+
+
+			Integer min_nr_edges = std::numeric_limits<Integer>::max();
+
+			for(Integer i=0; i<size;++i){
+
+				if(lengths[i] == len){
+
+					Edge edge;
+					mesh.elem(element_id).edge(i, edge.nodes[0], edge.nodes[1]);
+					edge.fix_ordering();
+
+					auto incidents = edge_element_map.elements(edge);
+
+					Integer nr_edges_gt_len=0;
+					for (auto l : incidents) {
+
+						if(mesh.is_active(l)){
+
+							const auto &el = mesh.elem(l);
+							for(Integer k = 0; k < size; ++k) {
+								Integer v1, v2;
+								el.edge(k, v1, v2);
+
+								Real len_in = (mesh.point(v1) - mesh.point(v2)).squared_norm();
+
+								if(len_in > len)
+									++nr_edges_gt_len;
+							}
+						}
+					}
+
+					if(nr_edges_gt_len<min_nr_edges){
+						min_nr_edges=nr_edges_gt_len;
+						edge_num = i;
+					}
+					if (nr_edges_gt_len == min_nr_edges) { //TODO: stable for uniqueness
+						std::cout<<"if (nr_edges_gt_len == min) { : "<<std::endl;
+					}
+				}
+			}
+
+
+			return edge_num;
+		}
+
 		void set_recursive(const bool recursive)
 		{
 			recursive_ = recursive;
