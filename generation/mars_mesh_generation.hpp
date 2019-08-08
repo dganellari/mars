@@ -333,9 +333,14 @@ namespace mars {
         assert(Dim <= 3);
         assert(ManifoldDim <= Dim);
         
-        mesh.generate_points(xDim,yDim,zDim);
+        bool gen_pts = mesh.generate_points(xDim,yDim,zDim);
         
-        mesh.generate_elements(xDim,yDim,zDim);
+        bool gen_elm = mesh.generate_elements(xDim,yDim,zDim);
+
+        if(!gen_pts || !gen_elm)
+            std::cerr << "Not implemented for other dimensions yet" << std::endl;
+
+        return (gen_pts && gen_elm);
     }
     
     

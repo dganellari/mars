@@ -13,6 +13,8 @@ namespace mars {
 template<class Mesh_>
 class LeppBisection: public Bisection<Mesh_> {
 
+	int global =0;
+
 public:
 	using Mesh = Mesh_;
 
@@ -22,18 +24,18 @@ public:
 
 	void compute_lepp(std::map<Edge, std::vector<Integer>>& lepp, const Integer element_id){
 
-		Integer edge_num = Bisection<Mesh>::edge_select()->stable_select(Bisection<Mesh>::get_mesh(), element_id);
+		Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id, Bisection<Mesh>::edge_element_map());
+		//Integer edge_num = Bisection<Mesh>::edge_select()->stable_select(Bisection<Mesh>::get_mesh(), element_id);
 		Edge edge;
 		Bisection<Mesh>::get_mesh().elem(element_id).edge(edge_num, edge.nodes[0], edge.nodes[1]);
 		edge.fix_ordering();
 
-		auto incidents = Bisection<Mesh>::edge_element_map().elements(edge);
-
 		 std::vector<Integer> lepp_incidents;
 		 std::vector<Integer> lepp_eq;
 
+		 ++global;
 
-		if (is_terminal(edge, incidents,lepp_incidents,lepp_eq)) {
+		if (is_terminal(edge, lepp_incidents, lepp_eq)) {
 
 			lepp[edge] = lepp_eq;
 
@@ -43,13 +45,16 @@ public:
 				compute_lepp(lepp,i);
 			}
 		}
+
+
 	}
 
-	bool is_terminal(const Edge edge, const std::vector<Integer> incidents,
-			std::vector<Integer>& lepp_inc, std::vector<Integer>& lepp_eq) {
+	bool is_terminal(const Edge& edge, std::vector<Integer>& lepp_inc, std::vector<Integer>& lepp_eq) {
 
 		bool terminal = true; //in case the elements share the longest edge or there is only one incident (itself)
 							 // - meaning the longest edge is on the boundary.
+
+		auto incidents = Bisection<Mesh>::edge_element_map().elements(edge);
 
 		for (auto i : incidents) {
 
@@ -68,6 +73,10 @@ public:
 			}
 		}
 
+		/*int size = lepp_inc.size() + lepp_eq.size();
+		if (size>2)
+			std::cout<<"size: "<< size<<"incidents: "<<incidents.size()<<std::endl;*/
+
 		return terminal;
 	}
 
@@ -78,6 +87,8 @@ public:
 			assert(!Bisection<Mesh>::get_fail_if_not_refine());
 			return;
 		}
+
+		int count=0, max =0;
 
 		while (Bisection<Mesh>::get_mesh().is_active(element_id)) {
 
@@ -94,7 +105,19 @@ public:
 				}
 			}
 
+			++count;
+
+			/*if(global>50000)
+						 std::cout<<"el: "<<element_id<<" global: "<<global<<std::endl;
+
+			global=0;*/
+
+
 		}
+/*
+		if(count>=15){
+			std::cout<<"el: "<<element_id<<" count: "<<count<<std::endl;
+		}*/
 	}
 
 private:
