@@ -24,8 +24,10 @@ public:
 
 	void compute_lepp(std::map<Edge, std::vector<Integer>>& lepp, const Integer element_id){
 
-		Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id, Bisection<Mesh>::edge_element_map());
-		//Integer edge_num = Bisection<Mesh>::edge_select()->stable_select(Bisection<Mesh>::get_mesh(), element_id);
+		Integer edge_num = Bisection<Mesh>::edge_select()->stable_select(Bisection<Mesh>::get_mesh(), element_id);
+		//Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id);
+		//Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id, Bisection<Mesh>::edge_element_map());
+
 		Edge edge;
 		Bisection<Mesh>::get_mesh().elem(element_id).edge(edge_num, edge.nodes[0], edge.nodes[1]);
 		edge.fix_ordering();
@@ -73,10 +75,6 @@ public:
 			}
 		}
 
-		/*int size = lepp_inc.size() + lepp_eq.size();
-		if (size>2)
-			std::cout<<"size: "<< size<<"incidents: "<<incidents.size()<<std::endl;*/
-
 		return terminal;
 	}
 
@@ -87,8 +85,6 @@ public:
 			assert(!Bisection<Mesh>::get_fail_if_not_refine());
 			return;
 		}
-
-		int count=0, max =0;
 
 		while (Bisection<Mesh>::get_mesh().is_active(element_id)) {
 
@@ -105,19 +101,11 @@ public:
 				}
 			}
 
-			++count;
-
-			/*if(global>50000)
-						 std::cout<<"el: "<<element_id<<" global: "<<global<<std::endl;
-
-			global=0;*/
-
+/*
+			global=0;
+*/
 
 		}
-/*
-		if(count>=15){
-			std::cout<<"el: "<<element_id<<" count: "<<count<<std::endl;
-		}*/
 	}
 
 private:
