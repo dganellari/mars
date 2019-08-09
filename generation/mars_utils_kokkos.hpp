@@ -15,12 +15,25 @@ constexpr std::size_t arraySize(T (&)[N][M]) noexcept
 }
 
 #ifdef MARS_USE_CUDA
-#define KokkosSpace Kokkos::CudaSpace
-#define KokkosLayout Kokkos::LayoutLeft
-#else
-#define KokkosSpace Kokkos::OpenMP
-#define KokkosLayout Kokkos::LayoutRight
-#endif
+	#define KokkosSpace Kokkos::CudaSpace
+	#define KokkosLayout Kokkos::LayoutLeft
+#else //MARS_USE_CUDA
+	#ifdef KOKKOS_ENABLE_OPENMP
+		#define KokkosHostSpace Kokkos::OpenMP
+		#define KokkosSpace Kokkos::OpenMP
+		#define KokkosLayout Kokkos::LayoutRight
+	#else //KOKKOS_ENABLE_OPENMP
+		// #ifdef KOKKOS_ENABLE_THREADS
+		// 	#define KokkosHostSpace Kokkos::Threads
+		// 	#define KokkosSpace Kokkos::Threads
+		// 	#define KokkosLayout Kokkos::LayoutRight
+		// #else //KOKKOS_ENABLE_THREADS
+			#define KokkosHostSpace Kokkos::Serial
+			#define KokkosSpace Kokkos::Serial
+			#define KokkosLayout Kokkos::LayoutRight
+		// #endif //KOKKOS_ENABLE_THREADS
+	#endif //KOKKOS_ENABLE_OPENMP
+#endif //MARS_USE_CUDA
 
 
 template<typename T>
@@ -114,7 +127,7 @@ void copy_matrix_from_host(std::vector<std::vector<T>> hostData,
 	typename ViewMatrixTextureC<T, xDim_, yDim_>::HostMirror h_view = create_mirror_view(
 			map_side_to_nodes);
 
-	parallel_for(MDRangePolicy<Rank<2>, OpenMP>( {0, 0}, {xDim, yDim}),
+	parallel_for(MDRangePolicy<Rank<2>, KokkosHostSpace>( {0, 0}, {xDim, yDim}),
 			KOKKOS_LAMBDA (int i, int j) {
 
 				h_view(i,j) = hostData[i][j];
