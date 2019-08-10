@@ -70,14 +70,14 @@ template <typename TupleOfNumbers,Integer Nmax>
 class MaxNumberInTupleHelper<TupleOfNumbers,Nmax,Nmax>
 {
  public:
-  static constexpr Integer value=GetType<Nmax,TupleOfNumbers>::value;
+  static constexpr Integer value=GetType<TupleOfNumbers,Nmax>::value;
  };
 
 template <typename TupleOfNumbers,Integer Nmax,Integer N>
 class MaxNumberInTupleHelper
 {
  public:
-  static constexpr Integer value=Max(GetType<N,TupleOfNumbers>::value, MaxNumberInTupleHelper<TupleOfNumbers,Nmax,N+1>::value);
+  static constexpr Integer value=Max(GetType<TupleOfNumbers,N>::value, MaxNumberInTupleHelper<TupleOfNumbers,Nmax,N+1>::value);
  };
 
 template <typename TupleOfNumbers>
@@ -101,14 +101,14 @@ template <typename TupleOfNumbers,Integer Nmax>
 class FindNonZeroNumbersHelper<TupleOfNumbers,Nmax,Nmax>
 {
  public:
-  using number=GetType<Nmax,TupleOfNumbers>;
+  using number=GetType<TupleOfNumbers,Nmax>;
   using type =typename std::conditional<std::is_same<number,Number<0>>::value,std::tuple<>,std::tuple<Number<Nmax>> >::type;
 };
 template <typename TupleOfNumbers,Integer Nmax,Integer N>
 class FindNonZeroNumbersHelper
 {
  public:
-  using number=GetType<N,TupleOfNumbers>;
+  using number=GetType<TupleOfNumbers,N>;
   using single_type =typename std::conditional<std::is_same<number,Number<0>>::value,std::tuple<>,std::tuple<Number<N>> >::type;
   using type=decltype(std::tuple_cat(std::declval<single_type>(),
                       std::declval<typename FindNonZeroNumbersHelper<TupleOfNumbers,Nmax,N+1>::type>()));
@@ -138,7 +138,7 @@ constexpr Integer NumbersToArray<std::tuple<Number<Ns>...>>::value[];
 //////// TupleAllToUniqueMap<All,Unique>
 //////// Unique is a subtuple of All, with no repetition
 //////// TupleAllToUniqueMap creates a tuple of Numbers, with the same length as All.
-//////// Each Number<N> defines the corresponding position of GetType<N,All> in Unique
+//////// Each Number<N> defines the corresponding position of GetType<All,N> in Unique
 //////// Example:
 //////// All=std::tuple< A, B, C, D, A, B, E> 
 //////// Unique=std::tuple<A,B,C,D,E>
@@ -178,14 +178,14 @@ template <typename Tuple, Integer Nmax>
 class TupleOfTupleToBooleanTupleHelper<Tuple,Nmax,Nmax>
 {
   public:  
-    using type=std::tuple<typename std::conditional< std::is_same< GetType<Nmax,Tuple>, std::tuple<> >::value, Number<0>,Number<1>  >::type>;
+    using type=std::tuple<typename std::conditional< std::is_same< GetType<Tuple,Nmax>, std::tuple<> >::value, Number<0>,Number<1>  >::type>;
   };
 
 template <typename Tuple, Integer Nmax, Integer N>
 class TupleOfTupleToBooleanTupleHelper
 {
   public:
-    using single_type=std::tuple<typename std::conditional< std::is_same< GetType<N,Tuple>, std::tuple<> >::value, Number<0>,Number<1>  >::type>;
+    using single_type=std::tuple<typename std::conditional< std::is_same< GetType<Tuple,N>, std::tuple<> >::value, Number<0>,Number<1>  >::type>;
     using type=decltype(std::tuple_cat(std::declval<single_type>(),
                                        std::declval<typename TupleOfTupleToBooleanTupleHelper<Tuple,Nmax,N+1>::type>()));
 };
@@ -240,13 +240,13 @@ template<typename NonZeroNumbers, Integer Nmax,Integer N,typename T, Integer Dim
 constexpr typename std::enable_if< (N==Nmax) && !(std::is_same<NonZeroNumbers,std::tuple<>>::value),T>::type
 StaticScalarProductForVectorHelper(const Vector<T,Dim> & v1,const  Vector<T,Dim>& v2 )
 {
-  return v1[GetType<N,NonZeroNumbers>::value]*v2[GetType<N,NonZeroNumbers>::value];
+  return v1[GetType<NonZeroNumbers,N>::value]*v2[GetType<NonZeroNumbers,N>::value];
 }
 template<typename NonZeroNumbers, Integer Nmax,Integer N,typename T, Integer Dim>
 constexpr typename std::enable_if< (N<Nmax)&& !(std::is_same<NonZeroNumbers,std::tuple<>>::value),T>::type
 StaticScalarProductForVectorHelper(const Vector<T,Dim> & v1,const  Vector<T,Dim>& v2 )
 {
-  return v1[GetType<N,NonZeroNumbers>::value]*v2[GetType<N,NonZeroNumbers>::value]+ 
+  return v1[GetType<NonZeroNumbers,N>::value]*v2[GetType<NonZeroNumbers,N>::value]+ 
          StaticScalarProductForVectorHelper<NonZeroNumbers,Nmax,N+1>(v1,v2);
 }
 template<typename NonZeroNumbers,typename T, Integer Dim>
@@ -272,8 +272,8 @@ class StaticVectorContractionFindNonZerosHelper<Tuple1,Tuple2,Nmax,Nmax>
 {
   public:  
     static_assert(TupleTypeSize<Tuple1>::value==TupleTypeSize<Tuple2>::value,"In StaticVectorContractionFindNonZerosHelper tuple1 and tuple2 must have same size ");
-    using type1=GetType<Nmax,Tuple1>;
-    using type2=GetType<Nmax,Tuple2>;
+    using type1=GetType<Tuple1,Nmax>;
+    using type2=GetType<Tuple2,Nmax>;
     using type=typename std::conditional<Greater(type1::value*type2::value,0), std::tuple<Number<Nmax>>, std::tuple<> >::type;
 };
 template <typename Tuple1, typename Tuple2, Integer Nmax, Integer N>
@@ -281,8 +281,8 @@ class StaticVectorContractionFindNonZerosHelper
 {
   public:
     static_assert(TupleTypeSize<Tuple1>::value==TupleTypeSize<Tuple2>::value,"In StaticVectorContractionFindNonZerosHelper tuple1 and tuple2 must have same size ");
-    using type1=GetType<N,Tuple1>;
-    using type2=GetType<N,Tuple2>;
+    using type1=GetType<Tuple1,N>;
+    using type2=GetType<Tuple2,N>;
     using single_type=typename std::conditional<Greater(type1::value*type2::value,0), std::tuple<Number<N>>, std::tuple<> >::type;
     using type=decltype(std::tuple_cat(std::declval<single_type>(),
                                        std::declval<typename StaticVectorContractionFindNonZerosHelper<Tuple1,Tuple2,Nmax,N+1>::type>()));
@@ -312,10 +312,10 @@ class StaticVectorContractionFindNonZerosHelper2<Tuple1,C1,Tuple2,C2,Nmax,Nmax>
 {
   public:  
     static_assert(TupleTypeSize<C1>::value==TupleTypeSize<C2>::value,"In StaticVectorContractionFindNonZerosHelper2 row and col must have same size ");
-    static constexpr Integer N1=GetType<Nmax,C1>::value;
-    static constexpr Integer N2=GetType<Nmax,C2>::value;
-    using type1=GetType< N1 ,Tuple1>;
-    using type2=GetType< N2 ,Tuple2>;
+    static constexpr Integer N1=GetType<C1,Nmax>::value;
+    static constexpr Integer N2=GetType<C2,Nmax>::value;
+    using type1=GetType< Tuple1,N1>;
+    using type2=GetType< Tuple2,N2>;
     using type=typename std::conditional<Greater(type1::value*type2::value,0), std::tuple<std::tuple<Number<N1> , Number<N2>> >, std::tuple<> >::type;
 };
 
@@ -324,10 +324,10 @@ class StaticVectorContractionFindNonZerosHelper2
 {
   public:
     static_assert(TupleTypeSize<C1>::value==TupleTypeSize<C2>::value,"In StaticVectorContractionFindNonZerosHelper2 row and col must have same size ");
-    static constexpr Integer N1=GetType<N,C1>::value;
-    static constexpr Integer N2=GetType<N,C2>::value;
-    using type1=GetType< N1 ,Tuple1>;
-    using type2=GetType< N2 ,Tuple2>;
+    static constexpr Integer N1=GetType<C1,N>::value;
+    static constexpr Integer N2=GetType<C2,N>::value;
+    using type1=GetType< Tuple1,N1>;
+    using type2=GetType< Tuple2,N2>;
     using single_type=typename std::conditional<Greater(type1::value*type2::value,0), std::tuple<std::tuple<Number<N1> , Number<N2>> >, std::tuple<> >::type;
     using type=decltype(std::tuple_cat(std::declval<single_type>(),
                                        std::declval<typename StaticVectorContractionFindNonZerosHelper2<Tuple1,C1,Tuple2,C2,Nmax,N+1>::type>()));
@@ -357,13 +357,13 @@ template<typename NonZeroNumbers2, Integer Nmax,Integer N,typename T, Integer Ro
 constexpr typename std::enable_if< (N==Nmax) && !(std::is_same<NonZeroNumbers2,std::tuple<>>::value),T>::type
 StaticScalarProductForMatrixProductHelper(const Matrix<T,Rows,CommonDim> & m1,const  Matrix<T,CommonDim,Cols>& m2 )
 {
-  return m1(GetType<0,GetType<N,NonZeroNumbers2>>::value)*m2(GetType<1,GetType<N,NonZeroNumbers2>>::value);
+  return m1(GetType<GetType<NonZeroNumbers2,N>,0>::value)*m2(GetType<GetType<NonZeroNumbers2,N>,1>::value);
 }
 template<typename NonZeroNumbers2, Integer Nmax,Integer N,typename T, Integer Rows,Integer CommonDim,Integer Cols>
 constexpr typename std::enable_if< (N<Nmax)&& !(std::is_same<NonZeroNumbers2,std::tuple<>>::value),T>::type
 StaticScalarProductForMatrixProductHelper(const Matrix<T,Rows,CommonDim> & m1,const  Matrix<T,CommonDim,Cols>& m2 )
 {
-  return m1(GetType<0,GetType<N,NonZeroNumbers2>>::value)*m2(GetType<1,GetType<N,NonZeroNumbers2>>::value)+ 
+  return m1(GetType<GetType<NonZeroNumbers2,N>,0>::value)*m2(GetType<GetType<NonZeroNumbers2,N>,1>::value)+ 
          StaticScalarProductForMatrixProductHelper<NonZeroNumbers2,Nmax,N+1>(m1,m2);
 }
 template<typename NonZeroNumbers2,typename T, Integer Rows,Integer CommonDim,Integer Cols>
@@ -459,14 +459,14 @@ template<typename NonZeroNumbers, typename NonZeroProducts,Integer N,typename T,
 inline typename std::enable_if<(N==TupleTypeSize<NonZeroNumbers>::value-1)  , void>::type
 StaticMatrixProductAux(const Matrix<T,Rows,CommonDim> & m1,const  Matrix<T,CommonDim,Cols>& m2, Matrix<T,Rows,Cols> & m3)
 {
- constexpr Integer Tot=GetType<N,NonZeroNumbers>::value;
+ constexpr Integer Tot=GetType<NonZeroNumbers,N>::value;
  // constexpr Integer J=Modulo<Tot,Rows>::value;
  // constexpr Integer I=Tot/Rows;
   // m3(I,J)=m1(I,0)*m2(0,J);
   // for(Integer kk=1;kk<CommonDim;kk++)
   //   m3(I,J)+=m1(I,kk)*m2(kk,J);
 
-m3(Tot)=StaticScalarProductForMatrixProduct<GetType<Tot,NonZeroProducts>>(m1,m2);
+m3(Tot)=StaticScalarProductForMatrixProduct<GetType<NonZeroProducts,Tot>>(m1,m2);
 
 }
 
@@ -474,14 +474,14 @@ template<typename NonZeroNumbers, typename NonZeroProducts,Integer N,typename T,
 inline typename std::enable_if<(N<TupleTypeSize<NonZeroNumbers>::value-1)  , void>::type
 StaticMatrixProductAux(const Matrix<T,Rows,CommonDim> & m1,const  Matrix<T,CommonDim,Cols>& m2, Matrix<T,Rows,Cols> & m3)
 {
- constexpr Integer Tot=GetType<N,NonZeroNumbers>::value;
+ constexpr Integer Tot=GetType<NonZeroNumbers,N>::value;
  // constexpr Integer J=Modulo<Tot,Rows>::value;
  // constexpr Integer I=Tot/Rows;
   // m3(I,J)=m1(I,0)*m2(0,J);
   // for(Integer kk=1;kk<CommonDim;kk++)
   //   m3(I,J)+=m1(I,kk)*m2(kk,J);
 
-   m3(Tot)=StaticScalarProductForMatrixProduct<GetType<Tot,NonZeroProducts>>(m1,m2);
+   m3(Tot)=StaticScalarProductForMatrixProduct<GetType<NonZeroProducts,Tot>>(m1,m2);
 
 
   StaticMatrixProductAux<NonZeroNumbers,NonZeroProducts,N+1>(m1,m2,m3);

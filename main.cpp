@@ -1097,7 +1097,7 @@ assembly_example();
 boundary_example();
 
 
-//normals_example3D();
+// normals_example3D();
 //normals_example4D();
 //connectivity_example4D();
 	//run_benchmarks();

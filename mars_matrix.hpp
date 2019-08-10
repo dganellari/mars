@@ -65,11 +65,11 @@ namespace mars {
 			return values[i*cols() + j];
 		}
 
-		operator T &() { 
-           // Throw here if size is not 1x1...
-			static_assert(Rows_==1&&Cols_==1,"Matrix<T,Rows,Cols> returns T if and only if Rows=Cols=1");
-			return (*this)( 0, 0 ); 
-		}
+		// operator T &() { 
+  //          // Throw here if size is not 1x1...
+		// 	static_assert(Rows_==1&&Cols_==1,"Matrix<T,Rows,Cols> returns T if and only if Rows=Cols=1");
+		// 	return (*this)( 0, 0 ); 
+		// }
 
 
 		inline constexpr void row(const Integer r, const Vector<T, Cols> &v)
@@ -639,7 +639,7 @@ namespace mars {
       template<typename T, Integer Rows1,Integer Cols1,Integer Rows2,Integer Cols2>
 		     	constexpr void assign(Matrix<T, Rows1,Cols1>& mat1, const Matrix<T, Rows2,Cols2>& mat2, Integer II, Integer JJ)
 
-		     				{
+		     				  {
 		     					static_assert(Rows1>=Rows2," only a smaller matrix can be assigned: Rows1>=Rows2");
 		     					static_assert(Cols1>=Cols2," only a smaller matrix can be assigned: Cols1>=Cols2");
 		     					assert(Rows2+II<=Rows1 && " Rows2+II<=Rows1");
@@ -647,10 +647,22 @@ namespace mars {
 		     					for(Integer i=0; i<Rows2 ;i++)
 		     						for(Integer j=0; j<Cols2 ;j++)
 		     							mat1(i+II,j+JJ)=mat2(i,j);
-
 		     					}
 
 
-		     				}
+
+      template<typename T, Integer Rows1,Integer Cols1,Integer Cols2>
+		     	constexpr void assign(Matrix<T, Rows1,Cols1>& mat, const Vector<T, Cols2>& vec, Integer II, Integer JJ)
+
+		     				{
+		     					static_assert(Cols1>=Cols2," only a smaller matrix can be assigned: Cols1>=Cols2");
+		     					assert(Cols2+JJ<=Cols1 && " Cols2+JJ<=Cols1");
+		     						for(Integer j=0; j<Cols2 ;j++)
+		     							mat(II,j+JJ)=vec[j];
+		     					}
+
+
+
+}
 
 #endif //MARS_MATRIX_HPP

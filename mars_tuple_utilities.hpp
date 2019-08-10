@@ -59,57 +59,53 @@ class GetHelper<0, std::tuple<>>
 };
 
 template <Integer N, typename... Ts>
-using GetType=typename GetHelper<N,Ts...>::type;
+using GetTypeAux=typename GetHelper<N,Ts...>::type;
 
 
 
 
-// template <Integer N, Integer M, typename... Ts>
-// class GetHelper2;
+template <Integer N, typename T, typename... Ts>
+class GetHelper<N, const std::tuple<T, Ts...>>
+{   public: 
+    using type = typename GetHelper<N - 1, std::tuple<Ts...>>::type;
+};
 
-// template <Integer M, typename T, typename... Ts>
-// class GetHelper2< 0, M, std::tuple<T,Ts...> >
-// {
-// public:
-//   using type =GetType<M, T >;
-// };
+template <typename T, typename... Ts>
+class GetHelper<0, const std::tuple<T, Ts...>>
+{   public: 
+    using type = T;
+};
 
+template <>
+class GetHelper<0, const std::tuple<>>
+{   public: 
+    using type = std::tuple<>;
+};
 
-// template <Integer N, Integer M, typename T, typename... Ts>
-// class GetHelper2< N, M, std::tuple<T,Ts...> >
-// {
-// public:
-//   using type =typename GetHelper2<N-1,M, std::tuple<Ts...> >::type;
-// };
-
-
-
-// template <Integer N,Integer M, typename... Ts>
-// using GetType2=typename GetHelper2<N,M,Ts...>::type;
-
-
+template <Integer N, typename... Ts>
+using GetTypeAux=typename GetHelper<N,Ts...>::type;
 
 
 template <typename Tuple, Integer N, Integer...Ns >
-class GetHelper3;
+class GetTypeHelper;
 
 template <typename Tuple,Integer N>
-class GetHelper3< Tuple,N>
+class GetTypeHelper< Tuple,N>
 {
 public:
-  using type = GetType<N,Tuple>;
+  using type = GetTypeAux<N,Tuple>;
 };
 
 
 template <typename Tuple,Integer N, Integer...Ns>
-class GetHelper3
+class GetTypeHelper
 {
 public:
-  using type =typename GetHelper3<GetType<N,Tuple>,Ns...>::type;
+  using type =typename GetTypeHelper<GetTypeAux<N,Tuple>,Ns...>::type;
 };
 
 template <typename Tuple,Integer N, Integer...Ns>
-using GetType3=typename GetHelper3<Tuple,N,Ns...>::type;
+using GetType=typename GetTypeHelper<Tuple,N,Ns...>::type;
 
 
 // template <Integer N,typename Tuple>
@@ -124,16 +120,31 @@ using GetType3=typename GetHelper3<Tuple,N,Ns...>::type;
 
 
 
+
 template <Integer N,Integer...Ns,typename Tuple>
-constexpr std::enable_if_t<(0==sizeof...(Ns)),GetType<N,Tuple>> 
-get2(const Tuple& tuple)
+constexpr std::enable_if_t<(0==sizeof...(Ns)),const GetType<Tuple,N>&> 
+tuple_get(const Tuple& tuple)
 {return std::get<N>(tuple);}
 
 
 template <Integer N,Integer...Ns,typename Tuple>
-constexpr std::enable_if_t<(0<sizeof...(Ns)),GetType<N,Tuple>> 
-get2(const Tuple& tuple)
-{return get2<Ns...>(std::get<N>(tuple));}
+constexpr std::enable_if_t<(0<sizeof...(Ns)),const GetType<Tuple,N,Ns...>&> 
+tuple_get(const Tuple& tuple)
+{return tuple_get<Ns...>(std::get<N>(tuple));}
+
+
+
+
+template <Integer N,Integer...Ns,typename Tuple>
+constexpr std::enable_if_t<(0==sizeof...(Ns)), GetType<Tuple,N>&> 
+tuple_get(Tuple& tuple)
+{return std::get<N>(tuple);}
+
+
+template <Integer N,Integer...Ns,typename Tuple>
+constexpr std::enable_if_t<(0<sizeof...(Ns)), GetType<Tuple,N,Ns...>&> 
+tuple_get(Tuple& tuple)
+{return tuple_get<Ns...>(std::get<N>(tuple));}
 
 
 template<typename...Args>
@@ -305,7 +316,7 @@ template<Integer Nmax, typename ... Ts>
 class TupleOfTupleCatTypeHelper<Nmax,Nmax,Ts...>
 {
  public:
- using type= std::tuple<TupleCatType<GetType<Nmax,Ts>...>>;
+ using type= std::tuple<TupleCatType<GetType<Ts,Nmax>...>>;
 };
 
 template<Integer N,Integer Nmax, typename ... Ts>
@@ -313,7 +324,7 @@ class TupleOfTupleCatTypeHelper
 {
 public:
 using type= 
-decltype(std::tuple_cat(std::declval<std::tuple<TupleCatType< GetType<N,Ts>...>>>(),
+decltype(std::tuple_cat(std::declval<std::tuple<TupleCatType< GetType<Ts,N>...>>>(),
                            std::declval<typename TupleOfTupleCatTypeHelper<N+1,Nmax,Ts...>::type>()));
 };
 
@@ -331,7 +342,7 @@ template<Integer Nmax, typename ... Ts>
 class RemoveTupleOfTupleDuplicatesHelper<Nmax,Nmax,Ts...>
 {
  public:
- using type= std::tuple<RemoveTupleDuplicates<TupleCatType<GetType<Nmax,Ts>...>>>;
+ using type= std::tuple<RemoveTupleDuplicates<TupleCatType<GetType<Ts,Nmax>...>>>;
 };
 
 template<Integer N,Integer Nmax, typename ... Ts>
@@ -340,7 +351,7 @@ class RemoveTupleOfTupleDuplicatesHelper
 public:
     //TupleRemovesingleType<std::tuple<>,>
 using type= 
-decltype(std::tuple_cat(std::declval<std::tuple< RemoveTupleDuplicates<TupleCatType< GetType<N,Ts>...>>>>(),
+decltype(std::tuple_cat(std::declval<std::tuple< RemoveTupleDuplicates<TupleCatType< GetType<Ts,N>...>>>>(),
                            std::declval<typename RemoveTupleOfTupleDuplicatesHelper<N+1,Nmax,Ts...>::type>()));
 };
 
@@ -440,7 +451,7 @@ template<Integer N,typename All, typename Unique>
 {public:
  static_assert(N>=0, " negative integer");
  static_assert(N<TupleTypeSize<All>::value, " exceeding tuple dimension");
- using AllType=GetType<N,All>;
+ using AllType=GetType<All,N>;
  static constexpr Integer value=TypeToTupleElementPosition<AllType,Unique>::value;
 };
 
@@ -484,7 +495,7 @@ class SubTupleShiftHelper<Nmax,Nstart,Nshift,Nmax,Tuple>
 public:
  static_assert(Nstart<TupleTypeSize<Tuple>::value," In SubTupleShiftHelper, Nstart exceeds tuple length");
  static constexpr Integer M=Nstart+Nmax*Nshift;
- using type=std::tuple< GetType<M,Tuple> >;
+ using type=std::tuple< GetType<Tuple,M> >;
 };
 
 template<Integer N,Integer Nstart,Integer Nshift,Integer Nmax,typename Tuple>
@@ -494,7 +505,7 @@ public:
  static constexpr Integer M=Nstart+N*Nshift;
  static_assert(Nstart<TupleTypeSize<Tuple>::value," In SubTupleShiftHelper, Nstart exceeds tuple length");
  static_assert(N<Nmax," In SubTupleShiftHelper, M exceeds tuple length");
- using single_type=std::tuple< GetType<M,Tuple> >;
+ using single_type=std::tuple< GetType<Tuple,M> >;
  using type=TupleCatType< single_type, typename SubTupleShiftHelper<N+1,Nstart,Nshift,Nmax,Tuple >::type >;
 };
 
@@ -589,14 +600,14 @@ template<Integer Nmax,typename Tuple,Integer Nchange,typename Tchange>
 class provahelper<Nmax,Nmax,Tuple,Nchange,Tchange>
 {
 public:
-using type=std::tuple<TupleChangeType<Nchange,Tchange,GetType<Nmax,Tuple>>>;
+using type=std::tuple<TupleChangeType<Nchange,Tchange,GetType<Tuple,Nmax>>>;
 };
 
 template<Integer N,Integer Nmax,typename Tuple,Integer Nchange,typename Tchange>
 class provahelper
 {
  public:
- using single_type=std::tuple<TupleChangeType<Nchange,Tchange,GetType<N,Tuple>>>;
+ using single_type=std::tuple<TupleChangeType<Nchange,Tchange,GetType<Tuple,N>>>;
 
  using type=decltype(std::tuple_cat(std::declval<single_type>(),
                            std::declval<typename provahelper<N+1,Nmax,Tuple,Nchange,Tchange>::type>()));
@@ -617,7 +628,7 @@ template<Integer Nmax,Integer Nchange,typename Tchange, typename TupleOfTuple>
 class TupleOfTupleChangeTypeHelper<Nmax,Nmax,Nchange,Tchange,TupleOfTuple>
 {
  public:
- using T=GetType<Nmax,TupleOfTuple>;
+ using T=GetType<TupleOfTuple,Nmax>;
  using type=typename std::conditional< std::is_same< T,std::tuple<> >::value , std::tuple<T>, std::tuple<prova<T,Nchange,Tchange >>>::type;
 };
 
@@ -627,7 +638,7 @@ template<Integer N,Integer Nmax,Integer Nchange,typename Tchange, typename Tuple
 class TupleOfTupleChangeTypeHelper
 {
 public:
-using T=GetType<N,TupleOfTuple>;
+using T=GetType<TupleOfTuple,N>;
 using single_type=typename std::conditional< std::is_same< T,std::tuple<> >::value , std::tuple<T>, std::tuple<prova<T,Nchange,Tchange >>>::type;
 using type=decltype(std::tuple_cat(std::declval<single_type>(),
                            std::declval<typename TupleOfTupleChangeTypeHelper<N+1,Nmax,Nchange,Tchange,TupleOfTuple>::type>()));
@@ -655,8 +666,8 @@ class Tuple2ToTuple1Helper<Nmax,Nmax,Tuple>
  public:
  using type=std::tuple<
  std::tuple<
-          GetType<0,GetType<Nmax,Tuple>>,
- typename GetType<1,GetType<Nmax,Tuple>>::Elem
+          GetType<GetType<Tuple,Nmax>,0>,
+ typename GetType<GetType<Tuple,Nmax>,1>::Elem
  >
  > ;
 };
@@ -669,8 +680,8 @@ class Tuple2ToTuple1Helper
 public:
 using single_type=std::tuple<
  std::tuple<
-          GetType<0,GetType<N,Tuple>>,
- typename GetType<1,GetType<N,Tuple>>::Elem >
+          GetType<GetType<Tuple,N>,0>,
+ typename GetType<GetType<Tuple,N>,1>::Elem >
  >;
 using rest=typename Tuple2ToTuple1Helper<N+1,Nmax,Tuple>::type;
 using type=decltype(std::tuple_cat(std::declval<single_type>(),
@@ -692,7 +703,7 @@ template<Integer Nmax, typename TupleOfTuple>
 class TupleOfTupleRemoveQuadratureHelper<Nmax,Nmax,TupleOfTuple>
 {
  public:
- using T=GetType<Nmax,TupleOfTuple>;
+ using T=GetType<TupleOfTuple,Nmax>;
  using type=std::tuple<RemoveTupleDuplicates<Tuple2ToTuple1<T>>>;
 };
 
@@ -702,7 +713,7 @@ template<Integer N,Integer Nmax, typename TupleOfTuple>
 class TupleOfTupleRemoveQuadratureHelper
 {
 public:
-using T=GetType<N,TupleOfTuple>;
+using T=GetType<TupleOfTuple,N>;
 using single_type=std::tuple<RemoveTupleDuplicates<Tuple2ToTuple1<T>>>;
 using type=decltype(std::tuple_cat(std::declval<single_type>(),
                            std::declval<typename TupleOfTupleRemoveQuadratureHelper<N+1,Nmax,TupleOfTuple>::type>()));
@@ -733,7 +744,7 @@ class UniqueFEFamiliesHelper<TupleOfSpaces,Nmax,Nmax>
 {
  public:
 
-  using Space=GetType<1,GetType<Nmax,TupleOfSpaces>>;
+  using Space=GetType<GetType<TupleOfSpaces,Nmax>,1>;
   using type=std::tuple< Number<Space::FEFamily> >;
 };
 
@@ -741,7 +752,7 @@ template<typename TupleOfSpaces, Integer Nmax,Integer N=0>
 class UniqueFEFamiliesHelper
 {
  public:
-  using Space=GetType<1,GetType<N,TupleOfSpaces>>;
+  using Space=GetType<GetType<TupleOfSpaces,N>,1>;
   using single_type=std::tuple< Number<Space::FEFamily> >;
   using type=decltype(std::tuple_cat(std::declval<single_type>(),
                              std::declval<typename UniqueFEFamiliesHelper<TupleOfSpaces,Nmax,N+1>::type>()));
@@ -763,7 +774,7 @@ class SpacesToUniqueFEFamiliesHelper<TupleOfSpaces,Nmax,Nmax>
 {
  public:
   using TupleFEFamilies=UniqueFEFamilies<TupleOfSpaces>;
-  using FamilyNumber=Number<GetType<1,GetType<Nmax,TupleOfSpaces>>::FEFamily>;
+  using FamilyNumber=Number<GetType<GetType<TupleOfSpaces,Nmax>,1>::FEFamily>;
   using PositionNumber=Number<TypeToTupleElementPosition<FamilyNumber,TupleFEFamilies>::value>;
   using type=std::tuple< PositionNumber >;
 };
@@ -773,7 +784,7 @@ class SpacesToUniqueFEFamiliesHelper
 {
  public:
   using TupleFEFamilies=UniqueFEFamilies<TupleOfSpaces>;
-  using FamilyNumber=Number<GetType<1,GetType<N,TupleOfSpaces>>::FEFamily>;
+  using FamilyNumber=Number<GetType<GetType<TupleOfSpaces,N>,1>::FEFamily>;
   using PositionNumber=Number<TypeToTupleElementPosition<FamilyNumber,TupleFEFamilies>::value>;
   using single_type=std::tuple< PositionNumber  >;
   using type=decltype(std::tuple_cat(std::declval<single_type>(),
@@ -799,14 +810,14 @@ template<typename NumberTuple,typename Maps,Integer M,Integer Nmax>
 class UniqueMapSingleSpaceHelper<NumberTuple,Maps,M,Nmax,Nmax>
 {
  public:
-  using type= typename std::conditional< GetType<Nmax,NumberTuple>::value == M , GetType<Nmax,Maps> , std::tuple<>>::type;
+  using type= typename std::conditional< GetType<NumberTuple,Nmax>::value == M , GetType<Maps,Nmax> , std::tuple<>>::type;
 };
 
 template<typename NumberTuple,typename Maps,Integer M,Integer Nmax,Integer N=0>
 class UniqueMapSingleSpaceHelper
 {
  public:
-  using single_type= typename std::conditional< GetType<N,NumberTuple>::value == M , GetType<N,Maps> , std::tuple<>>::type;
+  using single_type= typename std::conditional< GetType<NumberTuple,N>::value == M , GetType<Maps,N> , std::tuple<>>::type;
   using type=decltype(std::tuple_cat(std::declval<single_type>(),
                              std::declval<typename UniqueMapSingleSpaceHelper<NumberTuple,Maps,M,Nmax,N+1>::type>()));
 };
@@ -828,14 +839,14 @@ template <typename Tuple,typename Type,Integer Nmax>
 class HowMayTypesDifferentFromTypeHelper<Tuple,Type,Nmax,Nmax>
 {
 public:
-  static constexpr Integer value=IsDifferent<Type,GetType<Nmax,Tuple>>::value;
+  static constexpr Integer value=IsDifferent<Type,GetType<Tuple,Nmax>>::value;
 };
 
 template <typename Tuple,typename Type,Integer Nmax,Integer N>
 class HowMayTypesDifferentFromTypeHelper
 {
 public:
-  static constexpr Integer value=IsDifferent<Type,GetType<N,Tuple>>::value+HowMayTypesDifferentFromTypeHelper<Tuple,Type,Nmax,N+1>::value;
+  static constexpr Integer value=IsDifferent<Type,GetType<Tuple,N>>::value+HowMayTypesDifferentFromTypeHelper<Tuple,Type,Nmax,N+1>::value;
 };
 
 template <typename Tuple,typename Type>
@@ -889,9 +900,9 @@ class MapOperatorTupleHelper<Tuple,FEFamily,Nmax,Nmax>
 {
  public:
 
-  using Nthelem=GetType<Nmax,Tuple>;
-  using Operator=GetType<0,Nthelem>;
-  using Elem=GetType<1,Nthelem>;
+  using Nthelem=GetType<Tuple,Nmax>;
+  using Operator=GetType<Nthelem,0>;
+  using Elem=GetType<Nthelem,1>;
   using type=std::tuple< MapFromReference5<Operator,Elem,FEFamily> >;
 };
 
@@ -899,9 +910,9 @@ template<typename Tuple, Integer FEFamily,Integer Nmax,Integer N=0>
 class MapOperatorTupleHelper
 {
  public:
-  using Nthelem=GetType<N,Tuple>;
-  using Operator=GetType<0,Nthelem>;
-  using Elem=GetType<1,Nthelem>;
+  using Nthelem=GetType<Tuple,N>;
+  using Operator=GetType<Nthelem,0>;
+  using Elem=GetType<Nthelem,1>;
   using single_type=std::tuple< MapFromReference5<Operator,Elem,FEFamily> >;
   using type=decltype(std::tuple_cat(std::declval<single_type>(),
                              std::declval<typename MapOperatorTupleHelper<Tuple,FEFamily,Nmax,N+1>::type>()));
@@ -920,8 +931,8 @@ template<typename TupleOfTuple,typename TupleSpaces, Integer Nspaces>
 class MapOperatorTupleOfTupleHelper<TupleOfTuple,TupleSpaces, Nspaces, Nspaces>
 {
 public:
-using Tuple=GetType<Nspaces,TupleOfTuple>;
-static constexpr Integer FEFamily=GetType<1,GetType<Nspaces,TupleSpaces>>::FEFamily;
+using Tuple=GetType<TupleOfTuple,Nspaces>;
+static constexpr Integer FEFamily=GetType<GetType<TupleSpaces,Nspaces>,1>::FEFamily;
 static constexpr Integer Nmax=TupleTypeSize<Tuple>::value-1;
 using type=std::tuple< MapOperatorTuple< Tuple,FEFamily,Nmax> > ;
 };
@@ -930,8 +941,8 @@ template<typename TupleOfTuple,typename TupleSpaces, Integer Nspaces, Integer N=
 class MapOperatorTupleOfTupleHelper
 {
 public:
-using Tuple=GetType<N,TupleOfTuple>;
-static constexpr Integer FEFamily=GetType<1,GetType<N,TupleSpaces>>::FEFamily;
+using Tuple=GetType<TupleOfTuple,N>;
+static constexpr Integer FEFamily=GetType<GetType<TupleSpaces,N>,1>::FEFamily;
 static constexpr Integer Nmax=TupleTypeSize<Tuple>::value-1;
 using single_type=std::tuple< MapOperatorTuple< Tuple, FEFamily, Nmax> > ;
 using type=decltype(std::tuple_cat(std::declval<single_type>(),
@@ -964,9 +975,9 @@ class TupleShapeFunctionCreate<Elem,BaseFunctioSpace,Tuple,Nmax,Nmax>
 {
  public:
 
-  using Nelem=GetType<Nmax,Tuple>;
-  using Operator=GetType<0,Nelem>;
-  using QuadratureRule=GetType<1,Nelem>;
+  using Nelem=GetType<Tuple,Nmax>;
+  using Operator=GetType<Nelem,0>;
+  using QuadratureRule=GetType<Nelem,1>;
   using type=std::tuple< ShapeFunctionDependent<Elem, BaseFunctioSpace,Operator,QuadratureRule > >;
 };
 
@@ -976,9 +987,9 @@ template<typename Elem, typename BaseFunctioSpace, typename Tuple, Integer Nmax,
 class TupleShapeFunctionCreate
 {
  public:
-  using Nelem=GetType<N,Tuple>;
-  using Operator=GetType<0,Nelem>;
-  using QuadratureRule=GetType<1,Nelem>;
+  using Nelem=GetType<Tuple,N>;
+  using Operator=GetType<Nelem,0>;
+  using QuadratureRule=GetType<Nelem,1>;
   using single_type=std::tuple< ShapeFunctionDependent<Elem, BaseFunctioSpace,Operator,QuadratureRule > >;
   using type=decltype(std::tuple_cat(std::declval<single_type>(),
                              std::declval<typename TupleShapeFunctionCreate<Elem,BaseFunctioSpace,Tuple,Nmax,N+1>::type>()));
@@ -994,11 +1005,11 @@ template<typename TupleSpaces,typename TupleOperatorsAndQuadrature, Integer Nspa
 class TupleOfTupleShapeFunctionCreate<TupleSpaces,TupleOperatorsAndQuadrature, Nspaces, Nspaces>
 {
 public:
-using OperatorAndQuadrature=GetType<Nspaces,TupleOperatorsAndQuadrature>;
+using OperatorAndQuadrature=GetType<TupleOperatorsAndQuadrature,Nspaces>;
 static constexpr Integer Nmax=TupleTypeSize<OperatorAndQuadrature>::value-1;
-using Space=GetType<Nspaces,TupleSpaces>;
-using Elem=GetType<0,Space>;
-using FunctionSpace=GetType<1,Space>;
+using Space=GetType<TupleSpaces,Nspaces>;
+using Elem=GetType<Space,0>;
+using FunctionSpace=GetType<Space,1>;
 using type=std::tuple<typename TupleShapeFunctionCreate< Elem,FunctionSpace, OperatorAndQuadrature,Nmax>::type>;
 };
 
@@ -1006,11 +1017,11 @@ template<typename TupleSpaces,typename TupleOperatorsAndQuadrature, Integer Nspa
 class TupleOfTupleShapeFunctionCreate
 {
 public:
-using OperatorAndQuadrature=GetType<N,TupleOperatorsAndQuadrature>;
+using OperatorAndQuadrature=GetType<TupleOperatorsAndQuadrature,N>;
 static constexpr Integer Nmax=TupleTypeSize<OperatorAndQuadrature>::value-1;
-using Space=GetType<N,TupleSpaces>;
-using Elem=GetType<0,Space>;
-using FunctionSpace=GetType<1,Space>;
+using Space=GetType<TupleSpaces,N>;
+using Elem=GetType<Space,0>;
+using FunctionSpace=GetType<Space,1>;
 using single_type=std::tuple<typename TupleShapeFunctionCreate< Elem,FunctionSpace, OperatorAndQuadrature,Nmax>::type>;
 using type=decltype(std::tuple_cat(std::declval<single_type>(),
                            std::declval<typename TupleOfTupleShapeFunctionCreate<TupleSpaces,TupleOperatorsAndQuadrature,Nspaces,N+1>::type>()));
@@ -1037,7 +1048,7 @@ template<typename Operator,typename Tuple,Integer Nmax,Integer N>
 class OperatorToMapHelper
 {
 public:
-  using OperatorMap=typename GetType<N,Tuple>::Operator;
+  using OperatorMap=typename GetType<Tuple,N>::Operator;
   using type =typename std::conditional< std::is_same<OperatorMap,Operator>::value, 
                                          Number<N>, 
                                          typename OperatorToMapHelper<Operator,Tuple,Nmax,N+1>::type 
@@ -1058,7 +1069,7 @@ template<typename TupleSpaces,typename Map, Integer Nmax>
 class MapTupleInit2Helper<TupleSpaces,Map, Nmax, Nmax>
 {
 public:
-      using operator_space=typename GetType<Nmax,TupleSpaces>::Operator;
+      using operator_space=typename GetType<TupleSpaces,Nmax>::Operator;
       using type=std::tuple<OperatorToMap<operator_space,Map>>;
 };
 
@@ -1066,7 +1077,7 @@ template<typename TupleSpaces,typename Map, Integer Nmax, Integer N>
 class MapTupleInit2Helper
 {
 public:
-      using operator_space=typename GetType<N,TupleSpaces>::Operator;
+      using operator_space=typename GetType<TupleSpaces,N>::Operator;
       using single_type=std::tuple<OperatorToMap<operator_space,Map>>;
       using type=decltype(std::tuple_cat(std::declval<single_type>(),
                                  std::declval<typename MapTupleInit2Helper<TupleSpaces,Map,Nmax,N+1>::type>()));
@@ -1085,8 +1096,8 @@ template<typename TupleOfTupleSpaces,typename SpaceToMap,typename TupleOfMaps, I
 class MapTupleInitHelper<TupleOfTupleSpaces,SpaceToMap, TupleOfMaps,Nmax, Nmax>
 {
 public:
-      using TupleSpaces=GetType<Nmax,TupleOfTupleSpaces>;
-      using Maps=GetType< GetType<Nmax,SpaceToMap>::value ,TupleOfMaps>;
+      using TupleSpaces=GetType<TupleOfTupleSpaces,Nmax>;
+      using Maps=GetType< TupleOfMaps, GetType<SpaceToMap,Nmax>::value>;
       using type=std::tuple< MapTupleInit2<TupleSpaces,Maps> >;
 };
 
@@ -1094,8 +1105,8 @@ template<typename TupleOfTupleSpaces,typename SpaceToMap,typename TupleOfMaps, I
 class MapTupleInitHelper
 {
 public:
-      using TupleSpaces=GetType<N,TupleOfTupleSpaces>;
-      using Maps=GetType< GetType<N,SpaceToMap>::value ,TupleOfMaps>;
+      using TupleSpaces=GetType<TupleOfTupleSpaces,N>;
+      using Maps=GetType<TupleOfMaps,GetType<SpaceToMap,N>::value>;
       using single_type=std::tuple< MapTupleInit2<TupleSpaces,Maps> >;
       using type=decltype(std::tuple_cat(std::declval<single_type>(),
                                  std::declval<typename MapTupleInitHelper<TupleOfTupleSpaces,SpaceToMap,TupleOfMaps,Nmax,N+1>::type>()));
@@ -1110,101 +1121,178 @@ using MapTupleInit=typename MapTupleInitHelper<TupleOfTupleSpaces,SpaceToMap,Tup
 
 
 
-   template<typename MapTupleNumber,Integer Nmax_aux,Integer N,typename Tuple,typename Map>
-   typename std::enable_if< (N>Nmax_aux) ,void>::type 
-   init_map_aux_aux(Tuple& t,const Map& maps){}
-
-   template<typename MapTupleNumber,Integer Nmax_aux,Integer N,typename Tuple,typename Map>
-   typename std::enable_if< (N<=Nmax_aux) ,void>::type 
-   init_map_aux_aux(Tuple& t,const Map& maps) 
-   {auto& t_nth=std::get<N>(t); 
-    auto& map_nth=std::get<GetType<N,MapTupleNumber>::value>(maps); 
-    t_nth.init_map(map_nth);
-    init_map_aux_aux<MapTupleNumber,Nmax_aux,N+1>(t,maps);}
 
 
 
-   template<typename SpacesToUnique,typename MapTupleNumbersW1,Integer Nmax_aux,Integer N,typename Tuple,typename Map>
-   typename std::enable_if< (N>Nmax_aux) ,void>::type 
-   init_map_aux(Tuple& t,const Map& maps){}
+  
+  template<typename FunctionSpaces>
+  class ShapeFunctionCoefficient;
 
-   template<typename SpacesToUnique,typename MapTupleNumbersW1,Integer Nmax_aux,Integer N,typename Tuple,typename Map>
-   typename std::enable_if< (N<=Nmax_aux) ,void>::type 
-   init_map_aux(Tuple& t,const Map& maps) 
-   {
-    auto& t_nth=std::get<N>(t); 
-    auto& map_nth=std::get<GetType<N,SpacesToUnique>::value>(maps); 
-    init_map_aux_aux<GetType<N,MapTupleNumbersW1>,TupleTypeSize<decltype(t_nth)>::value-1,0>(t_nth,map_nth);
-    init_map_aux<SpacesToUnique, MapTupleNumbersW1,Nmax_aux,N+1>(t,maps);
-    }
 
-   template<typename SpacesToUnique,typename MapTupleNumbers,typename Tuple,typename Map>
-   void init_map(Tuple& t,const Map& maps) 
-   {init_map_aux< SpacesToUnique,MapTupleNumbers,TupleTypeSize<MapTupleNumbers>::value-1,0>(t,maps);}
+
+  template<typename Elem, Integer FEFamily,Integer Order, Integer Ndofs,typename Shape>
+  void shape_function_init_aux_aux_aux(Shape& shape, const Vector<Real,Ndofs> &alpha);
+
+  template<typename Ele, Integer FEFamily,Integer Order, Integer Ndofs,typename Shape>
+  typename std::enable_if_t< FEFamily==LagrangeFE,void> 
+  shape_function_init_aux_aux_aux(Shape& shape, const Vector<Real,Ndofs> &alpha)
+  {
+    shape.init();
+  }
+
+
+  template<typename Elem, Integer FEFamily,Integer Order, Integer Ndofs,typename Shape>
+  typename std::enable_if_t<FEFamily==RaviartThomasFE,void> 
+  shape_function_init_aux_aux_aux(Shape& shape, const Vector<Real,Ndofs> &alpha)
+  {
+    shape.init(alpha);
+  }
 
 
 
 
-template<typename TupleSpaces,typename TupleOperatorsAndQuadrature,typename UniqueMapping>
-class MapTuple
+  template<Integer Nmax,Integer N,Integer Ndofs,typename Tuple>
+  typename std::enable_if_t<(N>Nmax),void> 
+  shape_function_init_aux_aux(Tuple& tuple, const Vector<Real,Ndofs> &alpha)
+  {}
+
+  template<Integer Nmax,Integer N,Integer Ndofs,typename Tuple>
+  typename std::enable_if_t< (N<=Nmax),void> 
+  shape_function_init_aux_aux(Tuple& tuple, const Vector<Real,Ndofs> &alpha)
+  {
+    shape_function_init_aux_aux<Nmax,N+1>(tuple,alpha);
+    tuple_get<N>(tuple).init(alpha);
+  }
+
+  template<Integer Nmax,Integer N, typename Tuple,typename...Args>
+  typename std::enable_if_t< (N>Nmax),void> 
+  shape_function_init_aux(Tuple& tuple, const ShapeFunctionCoefficient<Args...> &coefficients)
+  {}
+
+  template<Integer Nmax,Integer N, typename Tuple,typename...Args>
+  typename std::enable_if_t<N<=Nmax,void> 
+  shape_function_init_aux(Tuple& tuple, const ShapeFunctionCoefficient<Args...> &coefficients)
+  {
+    constexpr Integer Nmax_aux=TupleTypeSize<GetType<Tuple,N>>::value-1;
+    // shape_function_init_aux_aux<Nmax_aux,0>(tuple_get<N>(tuple),coefficients);
+    shape_function_init_aux<Nmax,N+1>(tuple,coefficients);
+  }
+
+
+
+  template< typename Tuple,typename...Args>
+  constexpr void init(Tuple& tuple, const ShapeFunctionCoefficient<Args...> &coefficients)
+  {
+   constexpr Integer Nmax=TupleTypeSize<Tuple>::value-1;
+
+   // CORREGGI, TOGLI NMAX-1 CAMBIA IN NMAX
+   shape_function_init_aux<Nmax,0>(tuple,coefficients);
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename T,Integer Nmax,Integer N>
+class UniqueElementFEFamilyHelper;
+
+template<typename T,Integer Nmax>
+class UniqueElementFEFamilyHelper<T,Nmax,Nmax>
 {
 public:
-      using TupleOfTupleNoQuadrature=TupleOfTupleRemoveQuadrature<TupleOperatorsAndQuadrature>;
-      using Unique=SpacesToUniqueFEFamilies<TupleSpaces>;
-      using Map=MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,TupleSpaces>;
-      using UniqueMap=UniqueMap<Unique,Map> ;
-      
-      template<Integer Nmax,Integer N,Integer Mmax,Integer M,typename Jacobian>
-      typename std::enable_if<(N>Nmax), void >::type
-      init_aux(const Jacobian& J){}
-
-      template<Integer Nmax,Integer N,Integer Mmax,Integer M,typename Jacobian>
-      typename std::enable_if<(N<=Nmax && M==Mmax), void >::type
-      init_aux(const Jacobian& J)
-      {
-        const auto map_n_m_th=std::get<M>(std::get<N>(tuple_of_maps_));
-        map_n_m_th.init(J);
-        init_aux<Nmax,N+1,0,0> (J);
-      }
-
-      template<Integer Nmax,Integer N,Integer Mmax,Integer M,typename Jacobian>
-      typename std::enable_if<(N<=Nmax && M<Mmax), void >::type
-      init_aux(const Jacobian& J)
-      {
-        const auto map_n_m_th=std::get<M>(std::get<N>(tuple_of_maps_));
-        map_n_m_th.init(J);
-        init_aux<Nmax,N,TupleTypeSize<GetType<N,UniqueMapping>>::value-1,M+1> (J);
-      }
-
-
-      // TODO: IN CASE THE MAP HAS DIFFERENT ELEMENTS, THEN ALSO DIFFERENT JACOBIANS ARE NEEDED
-      template<Integer Dim, Integer ManifoldDim>
-      void init(const Matrix<Real, Dim, ManifoldDim>& J)
-      {init_aux<TupleTypeSize<UniqueMapping>::value-1,0,0,0>(J);}
-
-      UniqueMapping operator()(){return tuple_of_maps_;}
-    private:
-      UniqueMapping tuple_of_maps_;
+  using TN=GetType<T,Nmax>;
+  using type=std::tuple<std::tuple<GetType<TN,0>,Number<GetType<TN,1>::FEFamily>>>;
 };
 
-
-
-template<typename TupleSpaces,typename TupleOperatorsAndQuadrature,typename UniqueMapping>
-class ShapeFunctionTuple
-{
- using TupleOfTupleShapeFunction=TupleOfTupleShapeFunctionType<TupleSpaces,TupleOperatorsAndQuadrature>;
- using SpacesToUniqueSpaces=SpacesToUniqueFEFamilies<TupleSpaces>;
- using MapTupleNumbersW1=MapTupleInit<TupleOfTupleShapeFunction, SpacesToUniqueSpaces , UniqueMapping>;
-};
-
-
-
-template<typename TupleSpaces,typename TupleOperatorsAndQuadrature,typename Maps>
-class ShapeFunctionAssembly
+template<typename T,Integer Nmax,Integer N>
+class UniqueElementFEFamilyHelper
 {
  public:
-   using type=TupleOfTupleShapeFunctionType<TupleSpaces,TupleOperatorsAndQuadrature>;
-   static constexpr Integer Nmax=TupleTypeSize<TupleSpaces>::value-1;
+  using TN=GetType<T,N>;
+  using single_type=std::tuple<std::tuple<GetType<TN,0>,Number<GetType<TN,1>::FEFamily>>>;
+  using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                      std::declval<typename UniqueElementFEFamilyHelper<T,Nmax,N+1>::type>()));
+};
+template<typename T>
+using UniqueElementFEFamily=RemoveTupleDuplicates<typename UniqueElementFEFamilyHelper<T,TupleTypeSize<T>::value-1,0>::type>;
+
+
+
+
+// template<typename TupleSpaces,typename TupleOperatorsAndQuadrature,typename UniqueMapping>
+// class MapTuple
+// {
+// public:
+//       using TupleOfTupleNoQuadrature=TupleOfTupleRemoveQuadrature<TupleOperatorsAndQuadrature>;
+//       using Unique=SpacesToUniqueFEFamilies<TupleSpaces>;
+//       using Map=MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,TupleSpaces>;
+//       using UniqueMap=UniqueMap<Unique,Map> ;
+      
+//       template<Integer Nmax,Integer N,Integer Mmax,Integer M,typename Jacobian>
+//       typename std::enable_if<(N>Nmax), void >::type
+//       init_aux(const Jacobian& J){}
+
+//       template<Integer Nmax,Integer N,Integer Mmax,Integer M,typename Jacobian>
+//       typename std::enable_if<(N<=Nmax && M==Mmax), void >::type
+//       init_aux(const Jacobian& J)
+//       {
+//         const auto map_n_m_th=std::get<M>(std::get<N>(tuple_of_maps_));
+//         map_n_m_th.init(J);
+//         init_aux<Nmax,N+1,0,0> (J);
+//       }
+
+//       template<Integer Nmax,Integer N,Integer Mmax,Integer M,typename Jacobian>
+//       typename std::enable_if<(N<=Nmax && M<Mmax), void >::type
+//       init_aux(const Jacobian& J)
+//       {
+//         const auto map_n_m_th=std::get<M>(std::get<N>(tuple_of_maps_));
+//         map_n_m_th.init(J);
+//         init_aux<Nmax,N,TupleTypeSize<GetType<UniqueMapping,N>>::value-1,M+1> (J);
+//       }
+
+
+//       // TODO: IN CASE THE MAP HAS DIFFERENT ELEMENTS, THEN ALSO DIFFERENT JACOBIANS ARE NEEDED
+//       template<Integer Dim, Integer ManifoldDim>
+//       void init(const Matrix<Real, Dim, ManifoldDim>& J)
+//       {init_aux<TupleTypeSize<UniqueMapping>::value-1,0,0,0>(J);}
+
+//       UniqueMapping operator()(){return tuple_of_maps_;}
+//     private:
+//       UniqueMapping tuple_of_maps_;
+// };
+
+
+
+// template<typename TupleSpaces,typename TupleOperatorsAndQuadrature,typename UniqueMapping>
+// class ShapeFunctionTuple
+// {
+//  using TupleOfTupleShapeFunction=TupleOfTupleShapeFunctionType<TupleSpaces,TupleOperatorsAndQuadrature>;
+//  using SpacesToUniqueSpaces=SpacesToUniqueFEFamilies<TupleSpaces>;
+//  using MapTupleNumbersW1=MapTupleInit<TupleOfTupleShapeFunction, SpacesToUniqueSpaces , UniqueMapping>;
+// };
+
+
+
+// template<typename TupleSpaces,typename TupleOperatorsAndQuadrature,typename Maps>
+// class ShapeFunctionAssembly
+// {
+//  public:
+//    using type=TupleOfTupleShapeFunctionType<TupleSpaces,TupleOperatorsAndQuadrature>;
+//    static constexpr Integer Nmax=TupleTypeSize<TupleSpaces>::value-1;
 
 
 
@@ -1214,93 +1302,93 @@ class ShapeFunctionAssembly
 
 
 
-   ShapeFunctionAssembly(const Maps& maps)
-   {
-    //init_spaces(maps)
-   }
+//    ShapeFunctionAssembly(const Maps& maps)
+//    {
+//     //init_spaces(maps)
+//    }
 
 
 
 
-   // /////////////// reference initialization of shape functions of all spaces, all operators and all quadrature rules used 
+//    // /////////////// reference initialization of shape functions of all spaces, all operators and all quadrature rules used 
 
-   // template<Integer Nmax_aux,Integer N,typename Tuple>
-   // typename std::enable_if< (N>Nmax_aux) ,void>::type 
-   // init_reference_aux_aux(Tuple& t){}
+//    // template<Integer Nmax_aux,Integer N,typename Tuple>
+//    // typename std::enable_if< (N>Nmax_aux) ,void>::type 
+//    // init_reference_aux_aux(Tuple& t){}
 
-   // template<Integer Nmax_aux,Integer N,typename Tuple>
-   // typename std::enable_if< (N<=Nmax_aux) ,void>::type 
-   // init_reference_aux_aux(Tuple& t) 
-   // {auto& t_nth=std::get<N>(t); 
-   //  t_nth.init_reference();
-   //  init_reference_aux_aux<Nmax_aux,N+1,Tuple>(t);}
+//    // template<Integer Nmax_aux,Integer N,typename Tuple>
+//    // typename std::enable_if< (N<=Nmax_aux) ,void>::type 
+//    // init_reference_aux_aux(Tuple& t) 
+//    // {auto& t_nth=std::get<N>(t); 
+//    //  t_nth.init_reference();
+//    //  init_reference_aux_aux<Nmax_aux,N+1,Tuple>(t);}
 
-   // template<Integer N>
-   // typename std::enable_if< (N>Nmax) ,void>::type 
-   // init_reference_aux(){}
+//    // template<Integer N>
+//    // typename std::enable_if< (N>Nmax) ,void>::type 
+//    // init_reference_aux(){}
 
-   // template<Integer N>
-   // typename std::enable_if< (N<=Nmax) ,void>::type 
-   // init_reference_aux() 
-   // {auto& tuple_nth=std::get<N>(tuple_);
-   //  using tuple_nth_type=decltype(tuple_nth);
-   //  init_reference_aux_aux<TupleTypeSize<tuple_nth_type>::value-1,0,tuple_nth_type>(tuple_nth);
-   //  init_reference_aux<N+1>(); }
+//    // template<Integer N>
+//    // typename std::enable_if< (N<=Nmax) ,void>::type 
+//    // init_reference_aux() 
+//    // {auto& tuple_nth=std::get<N>(tuple_);
+//    //  using tuple_nth_type=decltype(tuple_nth);
+//    //  init_reference_aux_aux<TupleTypeSize<tuple_nth_type>::value-1,0,tuple_nth_type>(tuple_nth);
+//    //  init_reference_aux<N+1>(); }
 
-   // void init_reference(){init_reference_aux<0>();}
+//    // void init_reference(){init_reference_aux<0>();}
    
 
 
 
 
-   // template<Integer Nmax_aux,Integer N,typename Tuple,typename Jacobian>
-   // typename std::enable_if< (N>Nmax_aux) ,void>::type 
-   // init_aux_aux(const Jacobian&J,Tuple& t){}
+//    // template<Integer Nmax_aux,Integer N,typename Tuple,typename Jacobian>
+//    // typename std::enable_if< (N>Nmax_aux) ,void>::type 
+//    // init_aux_aux(const Jacobian&J,Tuple& t){}
 
-   // template<Integer Nmax_aux,Integer N,typename Tuple,typename Jacobian>
-   // typename std::enable_if< (N<=Nmax_aux) ,void>::type 
-   // init_aux_aux(const Jacobian&J,Tuple& t) 
-   // {auto& t_nth=std::get<N>(t); 
-   //  t_nth.init(J);
-   //  init_aux_aux<Nmax_aux,N+1,Tuple,Jacobian>(J,t);}
+//    // template<Integer Nmax_aux,Integer N,typename Tuple,typename Jacobian>
+//    // typename std::enable_if< (N<=Nmax_aux) ,void>::type 
+//    // init_aux_aux(const Jacobian&J,Tuple& t) 
+//    // {auto& t_nth=std::get<N>(t); 
+//    //  t_nth.init(J);
+//    //  init_aux_aux<Nmax_aux,N+1,Tuple,Jacobian>(J,t);}
 
-   // template<Integer N,typename Jacobian>
-   // typename std::enable_if< (N>Nmax) ,void>::type 
-   // init_aux(const Jacobian&J){}
+//    // template<Integer N,typename Jacobian>
+//    // typename std::enable_if< (N>Nmax) ,void>::type 
+//    // init_aux(const Jacobian&J){}
 
-   // template<Integer N,typename Jacobian>
-   // typename std::enable_if< (N<=Nmax) ,void>::type 
-   // init_aux(const Jacobian&J) 
-   // {auto& tuple_nth=std::get<N>(tuple_);
-   //  using tuple_nth_type=decltype(tuple_nth);
-   //  init_aux_aux<TupleTypeSize<tuple_nth_type>::value-1,0,tuple_nth_type>(J,tuple_nth);
-   //  init_aux<N+1>(J); }
+//    // template<Integer N,typename Jacobian>
+//    // typename std::enable_if< (N<=Nmax) ,void>::type 
+//    // init_aux(const Jacobian&J) 
+//    // {auto& tuple_nth=std::get<N>(tuple_);
+//    //  using tuple_nth_type=decltype(tuple_nth);
+//    //  init_aux_aux<TupleTypeSize<tuple_nth_type>::value-1,0,tuple_nth_type>(J,tuple_nth);
+//    //  init_aux<N+1>(J); }
 
-   // template<typename Jacobian>
-   // void init(const Jacobian&J){init_aux<0>(J);}
-
-
-
-
-   const type& get()const{return tuple_;};
-         type&  get()     {return tuple_;};
-
-   template<Integer N,Integer M>
-   const GetType3<type,N,M> & get()const
-   {const auto& tuple_nth=std::get<N>(tuple_);
-    return std::get<M>(tuple_nth);};
-
-   template<Integer N,Integer M>
-         GetType3<type,N,M>&  get()    
-   { auto& tuple_nth=std::get<N>(tuple_);
-    return std::get<M>(tuple_nth);};
+//    // template<typename Jacobian>
+//    // void init(const Jacobian&J){init_aux<0>(J);}
 
 
 
 
- private:
-   type tuple_;
-};
+//    const type& get()const{return tuple_;};
+//          type&  get()     {return tuple_;};
+
+//    template<Integer N,Integer M>
+//    const GetType<type,N,M> & get()const
+//    {const auto& tuple_nth=std::get<N>(tuple_);
+//     return std::get<M>(tuple_nth);};
+
+//    template<Integer N,Integer M>
+//          GetType<type,N,M>&  get()    
+//    { auto& tuple_nth=std::get<N>(tuple_);
+//     return std::get<M>(tuple_nth);};
+
+
+
+
+//  private:
+//    type tuple_;
+// };
 
 
 

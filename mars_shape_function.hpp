@@ -13,6 +13,8 @@
 #include "mars_quadrature_rules.hpp"
 #include "mars_operators.hpp"
 #include "mars_referencemap.hpp"
+#include "mars_shape_function_coefficients.hpp"
+
 namespace mars{
 
 
@@ -75,11 +77,13 @@ private:
 public:
 
       std::vector< Vector< Vector< Real, Dim> , ManifoldDim + 1 > > operator () () const { return normal_; };
+      // const Vector< Vector< Real, Dim> , ManifoldDim + 1 >& normal(const Integer elem_id) const {return normal_[elem_id];}; 
       std::vector< Vector<Real, ManifoldDim + 1 > > sign() const {return outward_;}; 
-
+      const Vector<Real, ManifoldDim + 1 >& sign(const Integer elem_id) const {return outward_[elem_id];}; 
+      
       template< typename MeshT>
-      SignedNormal(MeshT mesh)
-      {
+      void init(const MeshT& mesh)
+       {
       using Elem=typename MeshT::Elem;
       static_assert(Dim==ManifoldDim, "SignedNormal: computing internal normals of a mesh makes sense only if Dim==ManifoldDim");   
       Integer n_elements=mesh.n_elements();
@@ -159,6 +163,12 @@ public:
               }
             }
        };
+            
+      SignedNormal(){}
+
+      template< typename MeshT>
+      SignedNormal(const MeshT& mesh)
+      {init(mesh);};
 
       template< typename MeshT>
       void print(const MeshT& mesh)
@@ -1743,42 +1753,47 @@ public:
 
 
 
+template<typename Elem,Integer FEFamily,Integer Order, typename ConstInput, typename ShapeFunctionCoefficient>
+void shape_function_coefficients_init(const ConstInput& mesh_ptr,ShapeFunctionCoefficient& coeff);
 
 
   template<typename Elem,typename Operator,Integer FEFamily,Integer Order,typename Output,typename Point>
-  constexpr void value(const Point& point,Output& output);
+constexpr void value(const Point& point,Output& output);
 
   template<> 
-  constexpr void value<Simplex<2,2>, IdentityOperator, LagrangeFE, 1>
-      (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,3> & func)
-      {
+    constexpr void value<Simplex<2,2>, IdentityOperator, LagrangeFE, 1>
+    (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,3> & func)
+    {
        Vector<Matrix<Real, 1, 1>,3> func2((1. - point[0] - point[1]), // 1 in (0,0)
                                            point[0],                  // 1 in (1,0)
                                            point[1]);                 // 1 in (0,1)
        func=func2; 
-      }
+     }
 
   template<> 
-  constexpr void value<Simplex<2,2>, GradientOperator, LagrangeFE, 1>
-      (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 2>,3> & func)
-      {
-        const auto& xi=point[0];
-        const auto& eta=point[1];
-        const Real zeta = 1. - xi - eta;
-        Vector<Matrix<Real, 1, 2>,3> func2({-1,-1},
-                                           {+1, 0},
-                                           { 0,+1});     
-        func=func2;
-      }
+     constexpr void value<Simplex<2,2>, GradientOperator, LagrangeFE, 1>
+     (const Vector<Real,2>& point, Vector<Vector<Real, 2>,3> & func)
+     {
+      const auto& xi=point[0];
+      const auto& eta=point[1];
+      const Real zeta = 1. - xi - eta;
+      Vector<Vector<Real, 2>,3> func2({-1,-1},
+       {+1, 0},
+       { 0,+1});     
+      func=func2;
+    }
+
+    //shape_function_coefficients_init for: Simplex<2,2>, LagrangeFE, 1
+    // do nothing: lagrange shape functions do not need any coefficient
 
 
   template<> 
-  constexpr void value<Simplex<2,2>, IdentityOperator, LagrangeFE, 2>
-      (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,6> & func)
-      {
-        const auto& xi=point[0];
-        const auto& eta=point[1];
-        const Real zeta = 1. - xi - eta;
+    constexpr void value<Simplex<2,2>, IdentityOperator, LagrangeFE, 2>
+    (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,6> & func)
+    {
+      const auto& xi=point[0];
+      const auto& eta=point[1];
+      const Real zeta = 1. - xi - eta;
         Vector<Matrix<Real, 1, 1>,6> func2(2.*zeta*(zeta-0.5), // 1 in (0,0)
                                            2.*xi*(xi-0.5),     // 1 in (1,0)
                                            2.*eta*(eta-0.5),   // 1 in (0,1)
@@ -1788,6 +1803,8 @@ public:
         func=func2;
       }
 
+    //shape_function_coefficients_init for: Simplex<2,2>, LagrangeFE, 2
+    // do nothing: lagrange shape functions do not need any coefficient
 
   template<> 
       constexpr void value<Simplex<2,2>, IdentityOperator, RaviartThomasFE, 0>
@@ -1797,7 +1814,7 @@ public:
        const auto& eta=point[1];
        Vector<Matrix<Real, 2, 1>,3> func2{{xi,eta-1},{xi-1,eta},{xi,eta}};
        func=func2;
-      }
+     }
 
   template<> 
      constexpr void value<Simplex<2,2>, DivergenceOperator, RaviartThomasFE, 0>
@@ -1808,11 +1825,19 @@ public:
      } 
 
 
+  template<>
+    void shape_function_coefficients_init<Simplex<2,2>, RaviartThomasFE, 0>
+    (const Vector<Real, 3 >& outward,Vector<Real, 3 >& coeff)
+    {
+     coeff[0]=outward[0];
+     coeff[1]=outward[1];
+     coeff[2]=outward[2];
+    }
 
   template<> 
-      constexpr void value<Simplex<2,2>, IdentityOperator, RaviartThomasFE, 1>
-      (const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,8> & func)
-      {
+     constexpr void value<Simplex<2,2>, IdentityOperator, RaviartThomasFE, 1>
+     (const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,8> & func)
+     {
        const auto& xi=point[0];
        const auto& eta=point[1];
 
@@ -1823,55 +1848,67 @@ public:
         {eta*(xi-1),eta*eta},                           // 0 in (0,0), (1,0), non-zero normal on edge1
         {xi*xi,xi*eta},                                 // 0 in (0,0), (0,1), non-zero normal on edge2
         {eta*xi,eta*eta},                               // 0 in (0,0), (1,0), non-zero normal on edge2
-        {xi*(xi-1),xi*eta},                             // normal 0 on all edges, element-dof
-        {eta*xi,eta*(eta-1)}                            // normal 0 on all edges, element-dof
-        };
-       func=func2;
-      }
+        {eta*xi,eta*(eta-1)},                           // normal 0 on all edges, element-dof
+        {xi*(xi-1),xi*eta}                              // normal 0 on all edges, element-dof
+      };
+      func=func2;
+    }
 
 
   template<> 
-     constexpr void value<Simplex<2,2>, DivergenceOperator, RaviartThomasFE, 1>
-     (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,8> & func)
-     {
-       const auto& xi=point[0];
-       const auto& eta=point[1];
-       Vector<Matrix<Real, 1, 1>,8> func2{
-        {3*(1-xi-eta)},
-        {3*xi},
-        {3*(1-xi-eta)},
-        {3*eta},
-        {3*xi},
-        {3*eta},
-        {3*xi},
-        {3*eta}
-      };
-       func=func2;
-     } 
+    constexpr void value<Simplex<2,2>, DivergenceOperator, RaviartThomasFE, 1>
+    (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,8> & func)
+    {
+     const auto& xi=point[0];
+     const auto& eta=point[1];
+     Vector<Matrix<Real, 1, 1>,8> func2{
+      {3*(1-xi-eta)},
+      {3*xi},
+      {3*(1-xi-eta)},
+      {3*eta},
+      {3*xi},
+      {3*eta},
+      {3*eta},
+      {3*xi}
+    };
+    func=func2;
+  } 
 
+  template<>
+    void shape_function_coefficients_init<Simplex<2,2>, RaviartThomasFE, 1>
+    (const Vector<Real, 3 >& outward,Vector<Real, 8 >& coeff)
+    {
+     coeff[0]=outward[0];
+     coeff[1]=outward[0];
+     coeff[2]=outward[1];
+     coeff[3]=outward[1];
+     coeff[4]=outward[2];
+     coeff[5]=outward[2];
+     coeff[6]=outward[0];
+     coeff[7]=outward[1];
+    }
 
-
-      template<typename Elem,typename Operator, Integer FEFamily,Integer Order,typename single_type,Integer Ndofs,
-               Integer NQPoints,Integer Dim>
-       constexpr const Vector<Vector<single_type,NQPoints>,Ndofs> reference_shape_function_init(const Matrix<Real,NQPoints,Dim>&qp_points)
-       {
-        Vector<Vector<single_type,NQPoints>,Ndofs> v;
-        Vector<Real,Dim> qp_point;
-        Vector<single_type,Ndofs> func;
-            for(Integer qp=0;qp<NQPoints;qp++)
-            {
-             qp_point=qp_points.get_row(qp);
+  template<typename Elem,typename Operator, Integer FEFamily,Integer Order,typename single_type,Integer Ndofs,
+  Integer NQPoints,Integer Dim>
+  constexpr const Vector<Vector<single_type,NQPoints>,Ndofs> reference_shape_function_init(const Matrix<Real,NQPoints,Dim>&qp_points)
+  {
+    Vector<Vector<single_type,NQPoints>,Ndofs> v;
+    Vector<Real,Dim> qp_point;
+    Vector<single_type,Ndofs> func;
+    for(Integer qp=0;qp<NQPoints;qp++)
+    {
+     qp_point=qp_points.get_row(qp);
              // func=value<Elem,Operator,FEFamily,Order,single_type,Ndofs>(qp_point);
-             value<Elem,Operator,FEFamily,Order>(qp_point,func);
-              for(Integer n_dof = 0; n_dof < Ndofs; ++n_dof) {
-                  const_cast<single_type&>
-                  (static_cast<const std::array<single_type,NQPoints>& >
-                   ((static_cast<const std::array<Vector<single_type,NQPoints>,Ndofs>& >(v())[n_dof] )())[qp])=
-                  static_cast<const std::array<single_type,Ndofs>& >(func())[n_dof];
-              }
-            }
-       return v;
-      };
+     value<Elem,Operator,FEFamily,Order>(qp_point,func);
+     for(Integer n_dof = 0; n_dof < Ndofs; ++n_dof) {
+      const_cast<single_type&>
+      (static_cast<const std::array<single_type,NQPoints>& >
+       ((static_cast<const std::array<Vector<single_type,NQPoints>,Ndofs>& >(v())[n_dof] )())[qp])=
+      static_cast<const std::array<single_type,Ndofs>& >(func())[n_dof];
+    }
+  }
+  return v;
+ };
 
 
 
@@ -1902,16 +1939,22 @@ public:
   static constexpr Integer ShapeFunctionDim1=FunctionSpace::ShapeFunctionDim1;
   static constexpr Integer ShapeFunctionDim2=FunctionSpace::ShapeFunctionDim2; 
   static constexpr Integer Dim=FunctionSpace::Elem::Dim;
-  using SingleType=Matrix<Real, ShapeFunctionDim1 , ShapeFunctionDim2 * Dim >;
+  using SingleType= typename
+  std::conditional_t<(1==ShapeFunctionDim1 && 1==ShapeFunctionDim2),
+                      Vector<Real, Dim >,
+                      Matrix<Real, ShapeFunctionDim1 , ShapeFunctionDim2 * Dim>
+                  >;
   using TotType= Matrix<Real, ShapeFunctionDim1 * NComponents, ShapeFunctionDim2 * Dim >;
 };
+
+
 template<typename FunctionSpace>
 class SingleTypeShapeFunction<FunctionSpace,DivergenceOperator>
 {
 public:
   static constexpr Integer NComponents=FunctionSpace::NComponents;
   using SingleType=Matrix<Real,1,1>;
-  using TotType= Matrix<Real, NComponents,1 >;
+  using TotType= Matrix<Real, NComponents,1 >;   
 };
 
 
@@ -1954,16 +1997,81 @@ class ShapeFunctionDependent
   static constexpr FQPValues<SingleType,NQPoints,Ndofs>  
   reference_values{reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(QuadratureRule::qp_points)};
  
+  constexpr const type& eval()const{return func_values_;}
 
 
-  constexpr void init_map(const Map& map){map_ptr=std::make_shared<Map>(map);}
+   void init()
+    {
+    const auto& map=(*map_ptr);
+    const auto& mapping=map();
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+       {
+        for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+        {
 
-  ShapeFunctionDependent(const Map& map):
-  map_ptr(std::make_shared<Map>(map))
+            n_tot_=n_dof * NComponents +  n_comp ;
+            n_=n_comp*ShapeFunctionDim1;
+            for(Integer qp=0;qp<NQPoints;qp++)
+            {             
+                func_values_[n_tot_][qp].zero();
+              func_tmp_=  mapping * reference_values[n_dof][qp];
+              // std::cout<<"????????????????????????????????????????????????????????????????????????????"<<std::endl;
+              // std::cout<<"map="<<mapping<<std::endl;
+              // std::cout<<"ref="<<reference_values[n_dof][qp]<<std::endl;
+              // std::cout<<"????????????????????????????????????????????????????????????????????????????"<<std::endl;
+              // std::cout<<"func val="<<func_values_[n_tot_][qp]<<std::endl;
+              // std::cout<<"func tmp"<<func_tmp_<<std::endl;
+
+              assign(func_values_[n_tot_][qp],func_tmp_,n_,0);
+              // std::cout<<"func val dopo="<<func_values_[n_tot_][qp]<<std::endl;
+              // std::cout<<"_______________________"<<std::endl;
+                }
+                   
+        }
+       }
+    }
+
+   void init(const Vector<Real,Ndofs> &alpha)
+    {
+    const auto& map=(*map_ptr);
+    const auto& mapping=map();
+    for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+       {
+        for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+        {
+
+            n_tot_=n_dof * NComponents +  n_comp ;
+            n_=n_comp*ShapeFunctionDim1;
+            for(Integer qp=0;qp<NQPoints;qp++)
+            {             
+              func_values_[n_tot_][qp].zero();
+              func_tmp_=alpha[n_dof] * mapping * reference_values[n_dof][qp];
+              // std::cout<<"????????????????????????????????????????????????????????????????????????????"<<std::endl;
+              // std::cout<<"alpha="<<alpha[n_dof]<<std::endl;
+              // std::cout<<"map="<<mapping<<std::endl;
+              // std::cout<<"ref="<<reference_values[n_dof][qp]<<std::endl;
+              // std::cout<<"????????????????????????????????????????????????????????????????????????????"<<std::endl;
+              // std::cout<<"func val="<<func_values_[n_tot_][qp]<<std::endl;
+              // std::cout<<"func tmp"<<func_tmp_<<std::endl;
+
+              assign(func_values_[n_tot_][qp],func_tmp_,n_,0);
+              // std::cout<<"func val dopo="<<func_values_[n_tot_][qp]<<std::endl;
+              // std::cout<<"_______________________"<<std::endl;
+         }
+                   
+        }
+       }
+    };
+
+    constexpr void init_map(const Map& map){map_ptr=std::make_shared<Map>(map);}
+
+    ShapeFunctionDependent(const Map& map):
+    map_ptr(std::make_shared<Map>(map))
   {}
 
   ShapeFunctionDependent(){}
 
+ const auto& map()const{return (*map_ptr);}
 
   private: 
       SingleType func_tmp_;
@@ -1972,7 +2080,13 @@ class ShapeFunctionDependent
       FQPValues<SingleType,NQPoints,Ndofs> component_func_values_;
       type func_values_;
       std::shared_ptr<Map> map_ptr;
+      Integer n_tot_;
+      Integer n_;  
 };
+
+ 
+
+
 
 
 

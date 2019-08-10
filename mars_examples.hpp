@@ -910,41 +910,42 @@ std::cout<<"-------------------------------------------"<<std::endl;
   Simplex<Dim,ManifoldDim-1> face;
   mesh.update_dual_graph();
   mark_boundary(mesh);
-  for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
-  {
-   auto &elem_id=elem_iter;
-   const auto & elem=mesh.elem(elem_id);
-   std::cout<<std::endl<<" elem =="<<elem_iter<<std::endl;
-     // elem.side();
-   for(Integer  nn=0;nn<3;nn++)
-     {std::cout<<elem.side_tags[nn];
-      if(elem.side_tags[nn]>0)
-       {  elem.side(nn,face);
-        std::cout<<"---boundary: ";
-        for(Integer mm=0;mm<2;mm++)
-          std::cout<<face.nodes[mm]<<" ";
-      }
-      std::cout<<" "<<std::endl;
-    }
-  } 
+  // for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
+  // {
+  //  auto &elem_id=elem_iter;
+  //  const auto & elem=mesh.elem(elem_id);
+  //  std::cout<<std::endl<<" elem =="<<elem_iter<<std::endl;
+  //    // elem.side();
+  //  for(Integer  nn=0;nn<3;nn++)
+  //    {std::cout<<elem.side_tags[nn];
+  //     if(elem.side_tags[nn]>0)
+  //      {  elem.side(nn,face);
+  //       std::cout<<"---boundary: ";
+  //       for(Integer mm=0;mm<2;mm++)
+  //         std::cout<<face.nodes[mm]<<" ";
+  //     }
+  //     std::cout<<" "<<std::endl;
+  //   }
+  // } 
 
-  Integer entity_nodes_from[3]; 
-  for(Integer ii=0;ii<Combinations<4, 3>::value;ii++)
-  {
-    Combinations<4, 3>::generate(ii,entity_nodes_from);
-    std::cout<<"mesh.n_boundary_sides="<<mesh.n_boundary_sides()<<std::endl;
-    for(auto& i: entity_nodes_from)
-      std::cout<<i<<std::endl;
-  }
+  // Integer entity_nodes_from[3]; 
+  // for(Integer ii=0;ii<Combinations<4, 3>::value;ii++)
+  // {
+  //   Combinations<4, 3>::generate(ii,entity_nodes_from);
+  //   std::cout<<"mesh.n_boundary_sides="<<mesh.n_boundary_sides()<<std::endl;
+  //   for(auto& i: entity_nodes_from)
+  //     std::cout<<i<<std::endl;
+  // }
 
 
-  mesh.find_side_tags();
-  const auto& sides=mesh.side_tags();
-  std::cout<<"sides="<<std::endl;
-  for(auto& i: sides)
-    std::cout<<i<<std::endl;
+  // mesh.find_side_tags();
+  // const auto& sides=mesh.side_tags();
+  // std::cout<<"sides="<<std::endl;
+  // for(auto& i: sides)
+  //   std::cout<<i<<std::endl;
 
 }
+
 
 
 
@@ -960,7 +961,7 @@ void assembly_example()
   using MeshT2=mars::Mesh<Dim+1, ManifoldDim+1>;
   MeshT2 mesh2;
   read_mesh("../data/beam-tet.MFEM", mesh2);
-
+ 
 
   MeshT mesh;
   using Elem = typename MeshT::Elem; 
@@ -992,9 +993,9 @@ void assembly_example()
  FSspace1 FEspace1(mesh);
  using FSspace2= FunctionSpace< MeshT, Lagrange2<1>,RT0<1>>;
  FSspace2 FEspace2(mesh);
- using FSspace3= FunctionSpace< MeshT, Lagrange1<1>, RT0<1>,Lagrange2<1>>;
+ using FSspace3= FunctionSpace< MeshT, Lagrange1<1>, RT1<1>,Lagrange2<1>>;
  FSspace3 FEspace3(mesh);
- using FSspace4= FunctionSpace< MeshT, Lagrange2<1>, Lagrange1<1>>;
+ using FSspace4= FunctionSpace< MeshT, Lagrange2<1>,Lagrange1<1>>;
  FSspace4 FEspace4(mesh);
  using FSspace5= FunctionSpace< MeshT, Lagrange2<1>, Lagrange3<2>>;
 
@@ -1079,8 +1080,11 @@ decltype(W1)::ElementFunctionSpacesTupleType lkj;
  L2Inner(mesh,Grad(rr1)+sigma,tau)+
  L2Inner(mesh,r,s);
 
- 
- decltype(l22)::UniqueBaseFunctionSpaces okokoiooio;
+ using Coefficient=ShapeFunctionCoefficient<decltype(W1)>;
+ Coefficient shape_coefficients;
+ shape_coefficients.init(mesh);
+ shape_coefficients.init(0);
+ std::cout<<"........."<<shape_coefficients.value<1>()<<std::endl;
 
  std::cout<<"decltype(Grad(u))::Nmax="<<decltype(Grad(u))::Nmax<<std::endl;
  std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(u))::value<<std::endl;
@@ -1109,53 +1113,43 @@ decltype(W1)::ElementFunctionSpacesTupleType lkj;
 
  using TupleOperatorsAndQuadratureW1= typename OperatorTupleType<decltype(l22)>::type;
  using TupleOfTupleNoQuadrature=TupleOfTupleRemoveQuadrature<TupleOperatorsAndQuadratureW1>;
- // TupleSpacesW1 ellll;
- // TupleOfTupleNoQuadrature feef ;
- // TupleOfTupleNoQuadrature deel;
- // TupleSpacesW1 r3r;
- // RemoveTupleDuplicates<TupleSpacesW1> l4feffe;
- // MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,TupleSpacesW1> eeded;
- // TupleOfTupleNoQuadrature frfr;
- // TupleSpacesW1 ufe; //Number<10>,Number<11>
- // SpacesToUniqueFEFamilies<TupleSpacesW1> mce;
-
  using Unique=SpacesToUniqueFEFamilies<TupleSpacesW1>;
  using Map=MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,TupleSpacesW1>;
  using UniqueMapping=UniqueMap<Unique,Map> ;
  UniqueMapping mapping;
+ TupleSpacesW1 ll;
+ decltype(W1)::UniqueElementFunctionSpacesTupleType fol;
+ decltype(W1)::FromElementFunctionSpacesToUniqueNumbersTupleType sss;
+ Unique klkl;
  init(mapping,J);
-
  Assembly(l22);
- using Space=RT0<2>;
- using Operator=DivergenceOperator;
+ using Space=Lagrange1<2>;
+ using Operator=GradientOperator;
  using QRule=GaussPoints<Elem,3>;
-
  MapFromReference5<Operator,Elem,Space::FEFamily> mapspace;
  ShapeFunctionDependent<Elem,Space,Operator,QRule> sfd;
  sfd.init_map(mapspace);
+ Vector<Real,3>alpha{1,-1,1};
+ sfd.init(alpha);
  std::cout<<"static reference shape function"<<std::endl;
  std::cout<<ShapeFunctionDependent<Elem,Space,Operator,QRule>::reference_values<<std::endl;
  constexpr const auto ref=ShapeFunctionDependent<Elem,Space,Operator,QRule>::reference_values;
  
-const auto & ekom=std::get<0>(std::get<0>(mapping));
-
-GetType3<std::tuple< std::tuple<>,std::tuple<std::tuple<int,std::tuple<IdentityOperator>>> >, 1,0,1,0> ok;
-GetType3<std::tuple<IdentityOperator, int >,0> ok4;
-
-// std::cout<<"J"<<std::endl;
-// std::cout<<J<<std::endl;
-// std::cout<<"map 0,0:"<<std::endl;
-// std::cout<<get2<0,0>(mapping)()<<std::endl;
-// std::cout<<"map 0,1:"<<std::endl;
-// std::cout<<get2<0,1>(mapping)()<<std::endl;
-// std::cout<<"map 1,0:"<<std::endl;
-// std::cout<<get2<1,0>(mapping)()<<std::endl;
-// std::cout<<"map 1,1:"<<std::endl;
-// std::cout<<get2<1,1>(mapping)()<<std::endl;
+std::cout<<"J"<<std::endl;
+std::cout<<J<<std::endl;
+std::cout<<"map 0,0:"<<std::endl;
+std::cout<<tuple_get<0,0>(mapping)()<<std::endl;
+std::cout<<"map 0,1:"<<std::endl;
+std::cout<<tuple_get<0,1>(mapping)()<<std::endl;
+std::cout<<"map 1,0:"<<std::endl;
+std::cout<<tuple_get<1,0>(mapping)()<<std::endl;
+std::cout<<"map 1,1:"<<std::endl;
+std::cout<<tuple_get<1,1>(mapping)()<<std::endl;
 // static_assert(OperatorToMap<GradientOperator,GetType<0,UniqueMapping>,1,0>::value==0,"frerere");
 
 // TupleOfTupleShapeFunctionType<TupleSpacesW1,TupleOperatorsAndQuadratureW1> ko1;
  SpacesToUniqueFEFamilies<TupleSpacesW1>ko2;
+
 
  using TupleOfTupleShapeFunctionW1=TupleOfTupleShapeFunctionType<TupleSpacesW1,TupleOperatorsAndQuadratureW1>;
  using SpacesToUniqueFEFamiliesW1=SpacesToUniqueFEFamilies<TupleSpacesW1>;
@@ -1168,22 +1162,48 @@ GetType3<std::tuple<IdentityOperator, int >,0> ok4;
  MapTupleNumbersW1 kjl;
  TupleOfTupleShapeFunctionW1 stuple;
 
- 
+ auto referencemaps=reference_maps(l22);
+ referencemaps.init(J);
+ auto shapefunctions=shape_functions(l22);
+ shapefunctions.init_map(mapping);
  init_map< SpacesToUniqueFEFamiliesW1,MapTupleNumbersW1>(stuple,mapping);
-
+ decltype(shape_coefficients) lgy;
+ decltype(stuple) kstuple;
+ init(stuple,shape_coefficients);
  auto evals=Eval(s);
  auto l2rs=L2Inner(mesh,r,s);
  auto eval2=Eval(l2rs);
 
+
+std::cout<<"--------J"<<std::endl;
+std::cout<<J<<std::endl;
+std::cout<<"--------map 0,0:"<<std::endl;
+std::cout<<referencemaps.get<0,0>()<<std::endl;
+std::cout<<"--------map 0,1:"<<std::endl;
+std::cout<<referencemaps.get<0,1>()<<std::endl;
+std::cout<<"--------map 1,0:"<<std::endl;
+std::cout<<referencemaps.get<1,0>()<<std::endl;
+std::cout<<"--------map 1,1:"<<std::endl;
+std::cout<<referencemaps.get<1,1>()<<std::endl;
+
  eval2.apply(stuple);
- 
+ std::cout<<"tuple00.eval()[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[["<<std::endl;
+ auto tuple00=shapefunctions.get<0,0>();
+ std::cout<<tuple00.map()()<<std::endl;
+ tuple00.init(alpha);
+ std::cout<<tuple00.reference_values()<<std::endl;
+ std::cout<<tuple00.eval()<<std::endl;
+
+ SignedNormal<Elem> sn;
+ sn.init(mesh);
+ // std::cout<<tuple00.eval()<<std::endl;
  // decltype(MakeTest<6>(W1))::BaseFunctionSpaces okll(4);
 // TupleOfTupleShapeFunctionType<TupleSpacesW1,TupleOperatorsAndQuadratureW1> eew1;
 // ShapeFunctionAssembly<TupleSpaces,TupleOperatorsAndQuadrature> ee2;
 
- static_assert(ref[0][0](0,0)==2,"grad non ok");
- static_assert(ref[1][0](0,0)==2,"grad non ok");
- static_assert(ref[2][0](0,0)==2,"grad non ok");
+ // static_assert(ref[0][0](0,0)==2,"grad non ok");
+ // static_assert(ref[1][0](0,0)==2,"grad non ok");
+ // static_assert(ref[2][0](0,0)==2,"grad non ok");
 
 
 
