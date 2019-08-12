@@ -13,7 +13,7 @@ namespace mars {
 template<class Mesh_>
 class LeppBisection: public Bisection<Mesh_> {
 
-	int global =0;
+	//int global =0;
 
 public:
 	using Mesh = Mesh_;
@@ -32,31 +32,19 @@ public:
 		Bisection<Mesh>::get_mesh().elem(element_id).edge(edge_num, edge.nodes[0], edge.nodes[1]);
 		edge.fix_ordering();
 
-		 std::vector<Integer> lepp_incidents;
-		 std::vector<Integer> lepp_eq;
+		auto incidents = Bisection<Mesh>::edge_element_map().elements(edge);
 
-		 ++global;
+		if (is_terminal(edge, lepp, incidents)) {
 
-		if (is_terminal(edge, lepp_incidents, lepp_eq)) {
+			lepp[edge] = incidents;
 
-			lepp[edge] = lepp_eq;
-
-		} else {
-
-			for (auto i : lepp_incidents) {
-				compute_lepp(lepp,i);
-			}
 		}
-
-
 	}
 
-	bool is_terminal(const Edge& edge, std::vector<Integer>& lepp_inc, std::vector<Integer>& lepp_eq) {
+	bool is_terminal(const Edge& edge, std::map<Edge, std::vector<Integer>>& lepp, const std::vector<Integer>& incidents) {
 
 		bool terminal = true; //in case the elements share the longest edge or there is only one incident (itself)
 							 // - meaning the longest edge is on the boundary.
-
-		auto incidents = Bisection<Mesh>::edge_element_map().elements(edge);
 
 		for (auto i : incidents) {
 
@@ -68,10 +56,9 @@ public:
 				new_edge.fix_ordering();
 
 				if(edge != new_edge){
-					lepp_inc.push_back(i);
 					terminal= false;
-				}else
-					lepp_eq.push_back(i);
+					compute_lepp(lepp,i);
+				}
 			}
 		}
 
@@ -100,11 +87,6 @@ public:
 						Bisection<Mesh>::bisect_element(element, star.first);
 				}
 			}
-
-/*
-			global=0;
-*/
-
 		}
 	}
 
@@ -119,6 +101,161 @@ private:
 
 };
 
+template<typename T>
+class node {
+
+public:
+	const std::vector<node>& getChildren() const {
+		return children;
+	}
+
+	T getId() const {
+		return id;
+	}
+
+	void setId(T id) {
+		this->id = id;
+	}
+
+	void add_child(const T element_id){
+		children.emplace_back(element_id);
+	}
+
+private:
+	T id;
+	std::vector<node> children;
+};
+
+
+template<>
+class LeppBisection<Mesh3>: public Bisection<Mesh3> {
+
+public:
+	using Mesh = Mesh3;
+
+	LeppBisection(Mesh &mesh) :
+			Bisection<Mesh>(mesh) {
+	}
+
+	Integer longest_edge_neighbor(Integer element_id, Edge edge) {
+
+		auto incidents = Bisection<Mesh>::edge_element_map().elements(edge);
+
+		Integer index = INVALID_INDEX; //in case a boundary longest edge
+
+		for (auto i : incidents) {
+
+			assert(has_edge(Bisection<Mesh>::get_mesh().elem(i), edge.nodes[0], edge.nodes[1]));
+
+			if (!Bisection<Mesh>::get_mesh().is_active(i) || i == element_id)
+				continue;
+
+			if(Bisection<Mesh>::edge_select()->can_refine(Bisection<Mesh>::get_mesh(), i))
+				index = i;
+		}
+
+		return index;
+	}
+
+	void compute_lepp(node<Integer>& n){
+
+		Integer edge_num = Bisection<Mesh>::edge_select()->stable_select(Bisection<Mesh>::get_mesh(), n.getId());
+		//Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id);
+		//Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id, Bisection<Mesh>::edge_element_map());
+
+		Edge edge;
+		Bisection<Mesh>::get_mesh().elem(n.getId()).edge(edge_num, edge.nodes[0], edge.nodes[1]);
+		edge.fix_ordering();
+
+		auto incidents = Bisection<Mesh>::edge_element_map().elements(edge);
+
+		if (is_terminal(edge, n, incidents)) {
+
+			for (const Integer element : incidents) {
+
+				if (Bisection<Mesh>::get_mesh().is_active(element)
+						&& Bisection<Mesh>::edge_select()->can_refine(Bisection<Mesh>::get_mesh(), element))
+					Bisection<Mesh>::bisect_element(element, edge);
+			}
+
+		}
+	}
+
+	bool is_terminal(const Edge& edge, node<Integer>& n, const std::vector<Integer>& incidents) {
+
+		bool terminal = true; //in case the elements share the longest edge or there is only one incident (itself)
+							 // - meaning the longest edge is on the boundary.
+
+		for (auto i : incidents) {
+
+			if(Bisection<Mesh>::get_mesh().is_active(i) && Bisection<Mesh>::edge_select()->can_refine(Bisection<Mesh>::get_mesh(), i)){
+
+				Edge new_edge;
+				const Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), edge, i);
+				Bisection<Mesh>::get_mesh().elem(i).edge(edge_num, new_edge.nodes[0], new_edge.nodes[1]);
+				new_edge.fix_ordering();
+
+				if(edge != new_edge){
+					terminal= false;
+					n.add_child(i);
+				}
+			}
+		}
+
+		return terminal;
+	}
+
+
+	bool is_leaf(const node<Integer>& n){
+
+		for (auto i : n.getChildren()) {
+			if(Bisection<Mesh>::get_mesh().is_active(i)){
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	void depth_first(node<Integer>& n) const {
+
+		if(is_leaf(n)){
+
+			compute_lepp(n);
+		}
+
+		for (auto & child : n.children)
+			depth_first(child);
+	}
+
+	void refine_element(const Integer element_id) {
+
+		if (!Bisection<Mesh>::edge_select()->can_refine(Bisection<Mesh>::get_mesh(), element_id)) {
+			Bisection<Mesh>::get_incomplete_elements().push_back(element_id);
+			assert(!Bisection<Mesh>::get_fail_if_not_refine());
+			return;
+		}
+
+		while (Bisection<Mesh>::get_mesh().is_active(element_id)) {
+
+			node<Integer> lepp_tree;
+			lepp_tree.id = element_id;
+			depth_first(lepp_tree);
+
+		}
+	}
+
+
+private:
+	void set_edge_select(
+			const std::shared_ptr<EdgeSelect<Mesh>> &edge_select) final {
+
+		if(edge_select->name() != "LongestEdge")
+			errx(select_err,"%s %d %s Error: Calling set_edge_select on LeppBisection with %s is not supported!",
+					__FILE__,__LINE__, __func__, edge_select->name().c_str());
+	}
+
+};
 
 template<>
 class LeppBisection<Mesh2>: public Bisection<Mesh2> {
