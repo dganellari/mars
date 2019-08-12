@@ -6,6 +6,7 @@
 #include "mars_base.hpp"
 
 #ifdef WITH_KOKKOS
+#include <Kokkos_Core.hpp>
 #define MARS_INLINE_FUNCTION KOKKOS_INLINE_FUNCTION 
 #else
 #define MARS_INLINE_FUNCTION inline

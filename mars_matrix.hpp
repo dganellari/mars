@@ -1,10 +1,14 @@
 #ifndef MARS_MATRIX_HPP
 #define MARS_MATRIX_HPP 
 
+#include "mars_base.hpp"
+#include "mars_vector.hpp"
+
 #include <array>
 #include <initializer_list>
 #include <cmath>
 #include <iostream>
+#include <cassert>
 
 namespace mars {
 
