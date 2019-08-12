@@ -107,6 +107,8 @@ list(APPEND MARS_HEADERS
 	mars_base.hpp
 	mars_benchmark.hpp
 	mars_bisection.hpp
+	mars_lepp_bisection.hpp
+	mars_lepp_benchmark.hpp
 	mars_communicator.hpp
 	mars_dof_map.hpp
 	mars_dual_graph.hpp
@@ -183,7 +185,10 @@ IF(Kokkos_FOUND)
 		MESSAGE(FATAL_ERROR "Enable Kokkos Cuda or unset MARS_USE_CUDA to continue with OpenMP!")
 	ENDIF()
 	
-	target_include_directories(mars_exec PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
+	target_include_directories(mars PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
+	# target_include_directories(mars_exec PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
+
+	message(STATUS "Kokkos_INCLUDE_DIRS=${Kokkos_INCLUDE_DIRS}, ${Kokkos_TPL_INCLUDE_DIRS}")
 	
 	IF(Kokkos_CXX_COMPILER)
 		target_link_libraries(mars_exec mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES})
