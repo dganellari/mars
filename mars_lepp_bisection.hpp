@@ -102,11 +102,15 @@ private:
 };
 
 template<typename T>
-class node {
+class TreeNode {
 
 public:
-	const std::vector<node>& getChildren() const {
+	std::vector<TreeNode>& getChildren() {
 		return children;
+	}
+
+	const std::vector<TreeNode>& getChildren() const{
+			return children;
 	}
 
 	T getId() const {
@@ -117,13 +121,19 @@ public:
 		this->id = id;
 	}
 
-	void add_child(const T element_id){
-		children.emplace_back(element_id);
+	void add_child(const T element_id) {
+		children.emplace_back(element_id,std::vector<TreeNode>());
+	}
+
+	TreeNode() = default;
+
+	TreeNode(T elem_id, std::vector<TreeNode> elem_children): id(std::move(elem_id)), children(std::move(elem_children)) {
+
 	}
 
 private:
 	T id;
-	std::vector<node> children;
+	std::vector<TreeNode> children;
 };
 
 
@@ -137,27 +147,7 @@ public:
 			Bisection<Mesh>(mesh) {
 	}
 
-	Integer longest_edge_neighbor(Integer element_id, Edge edge) {
-
-		auto incidents = Bisection<Mesh>::edge_element_map().elements(edge);
-
-		Integer index = INVALID_INDEX; //in case a boundary longest edge
-
-		for (auto i : incidents) {
-
-			assert(has_edge(Bisection<Mesh>::get_mesh().elem(i), edge.nodes[0], edge.nodes[1]));
-
-			if (!Bisection<Mesh>::get_mesh().is_active(i) || i == element_id)
-				continue;
-
-			if(Bisection<Mesh>::edge_select()->can_refine(Bisection<Mesh>::get_mesh(), i))
-				index = i;
-		}
-
-		return index;
-	}
-
-	void compute_lepp(node<Integer>& n){
+	void compute_lepp(TreeNode<Integer>& n){
 
 		Integer edge_num = Bisection<Mesh>::edge_select()->stable_select(Bisection<Mesh>::get_mesh(), n.getId());
 		//Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id);
@@ -181,7 +171,7 @@ public:
 		}
 	}
 
-	bool is_terminal(const Edge& edge, node<Integer>& n, const std::vector<Integer>& incidents) {
+	bool is_terminal(const Edge& edge, TreeNode<Integer>& n, const std::vector<Integer>& incidents) {
 
 		bool terminal = true; //in case the elements share the longest edge or there is only one incident (itself)
 							 // - meaning the longest edge is on the boundary.
@@ -206,10 +196,10 @@ public:
 	}
 
 
-	bool is_leaf(const node<Integer>& n){
+	bool is_leaf(const TreeNode<Integer>& n){
 
-		for (auto i : n.getChildren()) {
-			if(Bisection<Mesh>::get_mesh().is_active(i)){
+		for (const auto & i : n.getChildren()) {
+			if(Bisection<Mesh>::get_mesh().is_active(i.getId())){
 				return false;
 			}
 		}
@@ -217,14 +207,13 @@ public:
 		return true;
 	}
 
-	void depth_first(node<Integer>& n) const {
+	void depth_first(TreeNode<Integer>& n){
 
 		if(is_leaf(n)){
-
 			compute_lepp(n);
 		}
 
-		for (auto & child : n.children)
+		for (auto & child : n.getChildren())
 			depth_first(child);
 	}
 
@@ -236,12 +225,12 @@ public:
 			return;
 		}
 
+		TreeNode<Integer> lepp_tree;
+		lepp_tree.setId(element_id);
+
 		while (Bisection<Mesh>::get_mesh().is_active(element_id)) {
 
-			node<Integer> lepp_tree;
-			lepp_tree.id = element_id;
 			depth_first(lepp_tree);
-
 		}
 	}
 
