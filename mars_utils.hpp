@@ -74,6 +74,8 @@ namespace mars {
 			auto &adj = mesh.dual_graph().adj(i);
 
 			for(Integer k = 0; k < n_sides(e); ++k) {
+                    
+
 				if(adj[k] == INVALID_INDEX) {
 					e.side(k, side);
 					auto n = normal(side, mesh.points());
@@ -86,8 +88,11 @@ namespace mars {
 							tag = Dim + (d+1);
 						}
 					}
+                    
 
 					e.side_tags[k] = tag;
+
+
 				}
 			}
 		}

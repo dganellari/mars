@@ -910,23 +910,23 @@ std::cout<<"-------------------------------------------"<<std::endl;
   Simplex<Dim,ManifoldDim-1> face;
   mesh.update_dual_graph();
   mark_boundary(mesh);
-  // for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
-  // {
-  //  auto &elem_id=elem_iter;
-  //  const auto & elem=mesh.elem(elem_id);
-  //  std::cout<<std::endl<<" elem =="<<elem_iter<<std::endl;
-  //    // elem.side();
-  //  for(Integer  nn=0;nn<3;nn++)
-  //    {std::cout<<elem.side_tags[nn];
-  //     if(elem.side_tags[nn]>0)
-  //      {  elem.side(nn,face);
-  //       std::cout<<"---boundary: ";
-  //       for(Integer mm=0;mm<2;mm++)
-  //         std::cout<<face.nodes[mm]<<" ";
-  //     }
-  //     std::cout<<" "<<std::endl;
-  //   }
-  // } 
+  for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
+  {
+   auto &elem_id=elem_iter;
+   const auto & elem=mesh.elem(elem_id);
+   std::cout<<std::endl<<" elem =="<<elem_iter<<std::endl;
+     // elem.side();
+   for(Integer  nn=0;nn<3;nn++)
+     {std::cout<<elem.side_tags[nn];
+      if(elem.side_tags[nn]>0)
+       {  elem.side(nn,face);
+        std::cout<<"---boundary: ";
+        for(Integer mm=0;mm<2;mm++)
+          std::cout<<face.nodes[mm]<<" ";
+      }
+      std::cout<<" "<<std::endl;
+    }
+  } 
 
   // Integer entity_nodes_from[3]; 
   // for(Integer ii=0;ii<Combinations<4, 3>::value;ii++)
@@ -1080,122 +1080,86 @@ decltype(W1)::ElementFunctionSpacesTupleType lkj;
  L2Inner(mesh,Grad(rr1)+sigma,tau)+
  L2Inner(mesh,r,s);
 
- using Coefficient=ShapeFunctionCoefficient<decltype(W1)>;
- Coefficient shape_coefficients;
+ auto shape_coefficients=shape_function_coefficients(l22);
  shape_coefficients.init(mesh);
- shape_coefficients.init(0);
- std::cout<<"........."<<shape_coefficients.value<1>()<<std::endl;
-
- std::cout<<"decltype(Grad(u))::Nmax="<<decltype(Grad(u))::Nmax<<std::endl;
- std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(u))::value<<std::endl;
- std::cout<<"decltype(Grad(sigma))::N="<<decltype(Grad(sigma))::value<<std::endl;
- std::cout<<"decltype(Grad(p))::N="<<decltype(Grad(p))::value<<std::endl;
- std::cout<<"decltype(Grad(r))::N="<<decltype(Grad(r))::value<<std::endl;
- std::cout<<"decltype(Grad(rr1))::N="<<decltype(Grad(rr1))::value<<std::endl;
- std::cout<<"decltype(Grad(rr2))::N="<<decltype(Grad(rr2))::value<<std::endl;
- std::cout<<"decltype(Grad(rr3))::N="<<decltype(Grad(rr3))::value<<std::endl;
- std::cout<<" TupleTypeSize< decltype(W1)::UniqueElementFunctionSpacesTupleType>::value"<< TupleTypeSize< decltype(W1)::UniqueElementFunctionSpacesTupleType>::value<<std::endl;
- std::cout<<"decltype(Grad(u))::Nmax="<<decltype(Grad(u))::Nmax<<std::endl;
- std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(u))::value<<std::endl;
- std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(sigma))::value<<std::endl;
- std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(p))::Nmax<<std::endl;
- std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(r))::Nmax<<std::endl;
- std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(rr1))::Nmax<<std::endl;
- std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(rr2))::Nmax<<std::endl;
- std::cout<<"decltype(Grad(u))::N="<<decltype(Grad(rr3))::Nmax<<std::endl;
-
-
- auto WNew=MixedFunctionSpace(W1,FEspaceT2);
-
- decltype(W1)::UniqueElementFunctionSpacesTupleType kloioee;
- using TupleSpacesW1=typename decltype(W1)::UniqueElementFunctionSpacesTupleType;
- using TupleElemsW1=typename decltype(WNew)::ElemsTupleType;
-
- using TupleOperatorsAndQuadratureW1= typename OperatorTupleType<decltype(l22)>::type;
- using TupleOfTupleNoQuadrature=TupleOfTupleRemoveQuadrature<TupleOperatorsAndQuadratureW1>;
- using Unique=SpacesToUniqueFEFamilies<TupleSpacesW1>;
- using Map=MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,TupleSpacesW1>;
- using UniqueMapping=UniqueMap<Unique,Map> ;
- UniqueMapping mapping;
- TupleSpacesW1 ll;
- decltype(W1)::UniqueElementFunctionSpacesTupleType fol;
- decltype(W1)::FromElementFunctionSpacesToUniqueNumbersTupleType sss;
- Unique klkl;
- init(mapping,J);
- Assembly(l22);
- using Space=Lagrange1<2>;
- using Operator=GradientOperator;
- using QRule=GaussPoints<Elem,3>;
- MapFromReference5<Operator,Elem,Space::FEFamily> mapspace;
- ShapeFunctionDependent<Elem,Space,Operator,QRule> sfd;
- sfd.init_map(mapspace);
- Vector<Real,3>alpha{1,-1,1};
- sfd.init(alpha);
- std::cout<<"static reference shape function"<<std::endl;
- std::cout<<ShapeFunctionDependent<Elem,Space,Operator,QRule>::reference_values<<std::endl;
- constexpr const auto ref=ShapeFunctionDependent<Elem,Space,Operator,QRule>::reference_values;
- 
-std::cout<<"J"<<std::endl;
-std::cout<<J<<std::endl;
-std::cout<<"map 0,0:"<<std::endl;
-std::cout<<tuple_get<0,0>(mapping)()<<std::endl;
-std::cout<<"map 0,1:"<<std::endl;
-std::cout<<tuple_get<0,1>(mapping)()<<std::endl;
-std::cout<<"map 1,0:"<<std::endl;
-std::cout<<tuple_get<1,0>(mapping)()<<std::endl;
-std::cout<<"map 1,1:"<<std::endl;
-std::cout<<tuple_get<1,1>(mapping)()<<std::endl;
-// static_assert(OperatorToMap<GradientOperator,GetType<0,UniqueMapping>,1,0>::value==0,"frerere");
-
-// TupleOfTupleShapeFunctionType<TupleSpacesW1,TupleOperatorsAndQuadratureW1> ko1;
- SpacesToUniqueFEFamilies<TupleSpacesW1>ko2;
-
-
- using TupleOfTupleShapeFunctionW1=TupleOfTupleShapeFunctionType<TupleSpacesW1,TupleOperatorsAndQuadratureW1>;
- using SpacesToUniqueFEFamiliesW1=SpacesToUniqueFEFamilies<TupleSpacesW1>;
- using MapTupleNumbersW1=MapTupleInit<TupleOfTupleShapeFunctionW1,
- SpacesToUniqueFEFamiliesW1 , 
- UniqueMapping>;
-
-
- SpacesToUniqueFEFamiliesW1 lk;
- MapTupleNumbersW1 kjl;
- TupleOfTupleShapeFunctionW1 stuple;
-
  auto referencemaps=reference_maps(l22);
- referencemaps.init(J);
  auto shapefunctions=shape_functions(l22);
- shapefunctions.init_map(mapping);
- init_map< SpacesToUniqueFEFamiliesW1,MapTupleNumbersW1>(stuple,mapping);
- decltype(shape_coefficients) lgy;
- decltype(stuple) kstuple;
- init(stuple,shape_coefficients);
- auto evals=Eval(s);
+
+
+ for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
+ {
+  elem=mesh.elem(elem_iter);
+  // mesh.points(elem_iter,points);
+  jacobian(elem,mesh.points(),J);
+  shape_coefficients.init(elem_iter);
+  referencemaps.init(J);
+  shapefunctions.init_map(referencemaps);
+  shapefunctions.init(shape_coefficients);
+  std::cout<<"elem_iter=="<<elem_iter<<std::endl;
+  for(Integer mm=0;mm<elem.nodes.size();mm++)
+    std::cout<<elem.nodes[mm]<<std::endl;
+  std::cout<<J<<std::endl;
+}
+
+
+  // std::cout<<"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"<<std::endl;
+  // std::cout<<shapefunctions.get<0,0>().reference_values<<std::endl;
+  // std::cout<<shapefunctions.value<0,0>()<<std::endl;
+  // std::cout<<"........."<<std::endl;
+  // std::cout<<shapefunctions.get<0,1>().reference_values<<std::endl;
+  // std::cout<<shapefunctions.value<0,1>()<<std::endl;
+  // std::cout<<"........."<<std::endl;
+  // std::cout<<shapefunctions.get<0,2>().reference_values<<std::endl;
+  // std::cout<<shapefunctions.value<0,2>()<<std::endl;
+  // std::cout<<"........."<<std::endl;
+  // std::cout<<shapefunctions.get<0,3>().reference_values<<std::endl;
+  // std::cout<<shapefunctions.value<0,3>()<<std::endl;
+  // std::cout<<"........."<<std::endl;
+  // std::cout<<"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"<<std::endl;
+  // std::cout<<shapefunctions.get<1,0>().reference_values<<std::endl;
+  // std::cout<<shapefunctions.value<1,0>()<<std::endl;
+  // std::cout<<"........."<<std::endl;
+  // std::cout<<shapefunctions.get<1,1>().reference_values<<std::endl;
+  // std::cout<<shapefunctions.value<1,1>()<<std::endl;
+  // std::cout<<"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"<<std::endl;
+  // std::cout<<shapefunctions.get<2,0>().reference_values<<std::endl;
+  // std::cout<<shapefunctions.value<2,0>()<<std::endl;
+  // std::cout<<"........."<<std::endl;
+  // std::cout<<shapefunctions.get<2,1>().reference_values<<std::endl;
+  // std::cout<<shapefunctions.value<2,1>()<<std::endl;
+
+ // init_map< SpacesToUniqueFEFamiliesW1,MapTupleNumbersW1>(stuple,mapping);
+ // decltype(shape_coefficients) lgy;
+ // decltype(stuple) kstuple;
+ // init(stuple,shape_coefficients);
+// shapefunctions()=4;
+ // auto evals=Eval(s);
  auto l2rs=L2Inner(mesh,r,s);
- auto eval2=Eval(l2rs);
+ auto eval2=Eval(l2rs,shapefunctions);
+ // evals.apply();
+ // eval2.apply(shapefunctions());
 
 
-std::cout<<"--------J"<<std::endl;
-std::cout<<J<<std::endl;
-std::cout<<"--------map 0,0:"<<std::endl;
-std::cout<<referencemaps.get<0,0>()<<std::endl;
-std::cout<<"--------map 0,1:"<<std::endl;
-std::cout<<referencemaps.get<0,1>()<<std::endl;
-std::cout<<"--------map 1,0:"<<std::endl;
-std::cout<<referencemaps.get<1,0>()<<std::endl;
-std::cout<<"--------map 1,1:"<<std::endl;
-std::cout<<referencemaps.get<1,1>()<<std::endl;
+// std::cout<<"--------J"<<std::endl;
+// std::cout<<J<<std::endl;
+// std::cout<<"--------map 0,0:"<<std::endl;
+// std::cout<<referencemaps.get<0,0>()<<std::endl;
+// std::cout<<"--------map 0,1:"<<std::endl;
+// std::cout<<referencemaps.get<0,1>()<<std::endl;
+// std::cout<<"--------map 1,0:"<<std::endl;
+// std::cout<<referencemaps.get<1,0>()<<std::endl;
+// std::cout<<"--------map 1,1:"<<std::endl;
+// std::cout<<referencemaps.get<1,1>()<<std::endl;
 
- eval2.apply(stuple);
- std::cout<<"tuple00.eval()[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[["<<std::endl;
- auto tuple00=shapefunctions.get<0,0>();
- std::cout<<tuple00.map()()<<std::endl;
- tuple00.init(alpha);
- std::cout<<tuple00.reference_values()<<std::endl;
- std::cout<<tuple00.eval()<<std::endl;
+ // std::cout<<"tuple00.eval()[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[["<<std::endl;
+ // auto tuple00=shapefunctions.get<0,0>();
+ // std::cout<<tuple00.map()()<<std::endl;
+ // tuple00.init(alpha);
+ // std::cout<<tuple00.reference_values()<<std::endl;
+ // std::cout<<tuple00.eval()<<std::endl;
 
- SignedNormal<Elem> sn;
- sn.init(mesh);
+ // SignedNormal<Elem> sn;
+ // sn.init(mesh);
  // std::cout<<tuple00.eval()<<std::endl;
  // decltype(MakeTest<6>(W1))::BaseFunctionSpaces okll(4);
 // TupleOfTupleShapeFunctionType<TupleSpacesW1,TupleOperatorsAndQuadratureW1> eew1;
@@ -1528,6 +1492,20 @@ for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
  }
 }
 
+void normals_example2D()
+{
+  constexpr Integer ManifoldDim=2;
+  constexpr Integer Dim=2;   
+  using MeshT=mars::Mesh<Dim, ManifoldDim>;
+  MeshT mesh;
+  using Elem = typename MeshT::Elem;   
+  read_mesh("../data/beam-tri.MFEM", mesh);
+  mark_boundary(mesh);
+  auto sn=SignedNormal<Simplex<Dim,ManifoldDim>>(mesh);
+  auto n=sn();
+  auto alpha=sn.sign();
+  sn.print(mesh);
+}
 
 void normals_example3D()
 {
@@ -1536,11 +1514,66 @@ void normals_example3D()
   using MeshT=mars::Mesh<Dim, ManifoldDim>;
   MeshT mesh;
   using Elem = typename MeshT::Elem;   
-  read_mesh("../data/beam-tet.MFEM", mesh); 
+  read_mesh("../data/tetrahedron_2.MFEM", mesh); 
+  mark_boundary(mesh);
   auto sn=SignedNormal<Simplex<Dim,ManifoldDim>>(mesh);
-  auto n=sn();
-  auto alpha=sn.sign();
+  // auto n=sn();
+  // auto alpha=sn.sign();
   sn.print(mesh);
+}
+
+void simplex_reference_normals_3D()
+{
+  constexpr Integer ManifoldDim=3;
+  constexpr Integer Dim=3;   
+  using MeshT=mars::Mesh<Dim, ManifoldDim>;
+  MeshT mesh;
+  using Elem = typename MeshT::Elem;   
+  read_mesh("../data/tetrahedron_1.MFEM", mesh); 
+  std::array<Vector<Real,Dim>, ManifoldDim+1> points;
+  Vector<Vector<Real,Dim>, ManifoldDim+1> elempoints;
+  Simplex<Dim,ManifoldDim> simplex_elem;
+  for(Integer nn=0;nn<ManifoldDim+1;nn++)
+    simplex_elem.nodes[nn]=nn;
+  for(Integer mm=0;mm<points.size();mm++)
+    points[mm]=mesh.point(mm);
+    
+  elempoints[0]=points[0];
+  elempoints[1]=points[1];
+  elempoints[2]=points[2];
+  elempoints[3]=points[3];
+ auto nn = normal(simplex_elem, elempoints);
+ for(Integer mm=0;mm<nn.size();mm++)
+  std::cout<<nn[mm]<<std::endl;
+  std::cout<<std::endl;
+
+
+  elempoints[0]=points[0];
+  elempoints[1]=points[1];
+  elempoints[2]=points[3];
+  elempoints[3]=points[2];
+ nn = normal(simplex_elem, elempoints);
+ for(Integer mm=0;mm<nn.size();mm++)
+  std::cout<<nn[mm]<<std::endl;
+  std::cout<<std::endl;
+
+  elempoints[0]=points[0];
+  elempoints[1]=points[2];
+  elempoints[2]=points[3];
+  elempoints[3]=points[1];
+ nn = normal(simplex_elem, elempoints);
+ for(Integer mm=0;mm<nn.size();mm++)
+  std::cout<<nn[mm]<<std::endl;
+  std::cout<<std::endl;
+
+  elempoints[0]=points[1];
+  elempoints[1]=points[2];
+  elempoints[2]=points[3];
+  elempoints[3]=points[0];
+ nn = normal(simplex_elem, elempoints);
+ for(Integer mm=0;mm<nn.size();mm++)
+  std::cout<<nn[mm]<<std::endl;
+ std::cout<<std::endl;
 }
 
 void normals_example4D()

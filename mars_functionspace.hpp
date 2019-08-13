@@ -260,63 +260,69 @@ template<typename...Args>
 MixedSpace<Args...> MixedFunctionSpace(const Args&...args){return MixedSpace<Args...>(args...);};
 
 
-template<typename BaseFunctionSpacesType,Integer N, typename OperatorType=IdentityOperator>
-class Trial: public Expression2<Trial<BaseFunctionSpacesType,N,OperatorType>>
+template<typename MixedSpace,Integer N, typename OperatorType=IdentityOperator>
+class Trial: public Expression2<Trial<MixedSpace,N,OperatorType>>
 { public:
-  static constexpr Integer Nmax=TupleTypeSize<BaseFunctionSpacesType>::value;
+  using FunctionSpace=MixedSpace;
+  using UniqueElementFunctionSpacesTupleType=typename MixedSpace::UniqueElementFunctionSpacesTupleType;
+  static constexpr Integer Nmax=TupleTypeSize<UniqueElementFunctionSpacesTupleType>::value;
   static constexpr Integer value=N;
-  using BaseFunctionSpaces=BaseFunctionSpacesType;
   using Operator=OperatorType;
 };
 
-template<typename BaseFunctionSpacesType, Integer N, typename OperatorType=IdentityOperator>
-class Test: public Expression2<Test<BaseFunctionSpacesType,N,OperatorType>>
+template<typename MixedSpace, Integer N, typename OperatorType=IdentityOperator>
+class Test: public Expression2<Test<MixedSpace,N,OperatorType>>
 {
 public:
-  static constexpr Integer Nmax=TupleTypeSize<BaseFunctionSpacesType>::value;
+  using FunctionSpace=MixedSpace;
+  using UniqueElementFunctionSpacesTupleType=typename MixedSpace::UniqueElementFunctionSpacesTupleType;
+  static constexpr Integer Nmax=TupleTypeSize<UniqueElementFunctionSpacesTupleType>::value;
   static constexpr Integer value=N;
-  using BaseFunctionSpaces=BaseFunctionSpacesType;
   using Operator=OperatorType;
 };
 
 
-template<typename BaseFunctionSpacesType, Integer N, typename OperatorType>
-class Evaluation<Expression2<Trial<BaseFunctionSpacesType,N,OperatorType>>>
+template<typename MixedSpace, Integer N, typename OperatorType>
+class Evaluation<Expression2<Trial<MixedSpace,N,OperatorType>>>
 {
  public:
- using type= Trial<BaseFunctionSpacesType,N,OperatorType>;
- using FunctionSpace=GetType<typename type::BaseFunctionSpaces,type::value>;
- using Elem=GetType<FunctionSpace,0>;
- using BaseFunctionSpace=GetType<FunctionSpace,1>;
+ using type= Trial<MixedSpace,N,OperatorType>;
+ using FunctionSpace=typename type::FunctionSpace;
+ using FunctionSpaces=GetType<typename type::UniqueElementFunctionSpacesTupleType,type::value>;
+ using Elem=GetType<FunctionSpaces,0>;
+ using BaseFunctionSpace=GetType<FunctionSpaces,1>;
  using Operator=typename type::Operator;
+ template<typename QRule>
+ using value_type=typename ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QRule>::type;
+
  template<typename ...Ts> 
  Evaluation(const type& expr):
  eval_(expr)
  {};
  
  template<typename QRule, typename ...Ts>
- constexpr auto apply(const std::tuple<Ts...>& tuple1)
+ constexpr void apply(const std::tuple<Ts...>& tuple1,value_type<QRule>& value)
  {
   using tuple_type=GetType<typename std::tuple<Ts...>,type::value>;
   const auto& tuple=std::get<type::value>(tuple1);
   constexpr Integer M=TypeToTupleElementPosition<ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QRule>,tuple_type>::value;
-  const auto& shape_func=std::get<M>(tuple);
-  return value_;
+  value=std::get<M>(tuple);
+  // return value_;
  }
 private:
 
  type eval_;
- type value_;
 };
 
-template<typename BaseFunctionSpacesType, Integer N, typename OperatorType>
-class Evaluation<Expression2<Test<BaseFunctionSpacesType,N,OperatorType>>>
+template<typename MixedSpace, Integer N, typename OperatorType>
+class Evaluation<Expression2<Test<MixedSpace,N,OperatorType>>>
 {
  public:
- using type= Test<BaseFunctionSpacesType,N,OperatorType>;
- using FunctionSpace=GetType<typename type::BaseFunctionSpaces,type::value>;
- using Elem=GetType<FunctionSpace,0>;
- using BaseFunctionSpace=GetType<FunctionSpace,1>;
+ using type= Test<MixedSpace,N,OperatorType>;
+ using FunctionSpace=typename type::FunctionSpace;
+ using FunctionSpaces=GetType<typename type::UniqueElementFunctionSpacesTupleType,type::value>;
+ using Elem=GetType<FunctionSpaces,0>;
+ using BaseFunctionSpace=GetType<FunctionSpaces,1>;
  using Operator=typename type::Operator;
  template<typename ...Ts> 
  Evaluation(const type& expr):
@@ -324,7 +330,7 @@ class Evaluation<Expression2<Test<BaseFunctionSpacesType,N,OperatorType>>>
  {};
  
  template<typename QRule,typename ...Ts>
- constexpr auto apply(const std::tuple<Ts...>& tuple1)
+ constexpr const auto& apply(const std::tuple<Ts...>& tuple1)
  {
   using tuple_type=GetType<typename std::tuple<Ts...>,type::value>;
   const auto& tuple=std::get<type::value>(tuple1);
@@ -365,21 +371,24 @@ private:
 template<typename T>
 class IsTestOrTrial{
 public:
-  using UniqueBaseFunctionSpaces=std::tuple<>;
+  using TupleFunctionSpace=std::tuple<>;
+  using UniqueElementFunctionSpacesTupleType=std::tuple<>;
   using type=std::tuple<Number<0>>;
 };
 
-template<typename BaseFunctionSpacesType,Integer N, typename OperatorType>
-class IsTestOrTrial<Test<BaseFunctionSpacesType,N,OperatorType>>{
+template<typename MixedSpace,Integer N, typename OperatorType>
+class IsTestOrTrial<Test<MixedSpace,N,OperatorType>>{
 public:
-  using UniqueBaseFunctionSpaces=std::tuple<BaseFunctionSpacesType>;
+  using TupleFunctionSpace=std::tuple<MixedSpace>;
+  using UniqueElementFunctionSpacesTupleType=std::tuple<typename MixedSpace::UniqueElementFunctionSpacesTupleType>;
   using type=std::tuple<Number<1>>;
 };
 
-template<typename BaseFunctionSpacesType,Integer N, typename OperatorType>
-class IsTestOrTrial<Trial<BaseFunctionSpacesType,N,OperatorType>>{
+template<typename MixedSpace,Integer N, typename OperatorType>
+class IsTestOrTrial<Trial<MixedSpace,N,OperatorType>>{
 public:
-  using UniqueBaseFunctionSpaces=std::tuple<BaseFunctionSpacesType>;
+  using TupleFunctionSpace=std::tuple<MixedSpace>;
+  using UniqueElementFunctionSpacesTupleType=std::tuple<typename MixedSpace::UniqueElementFunctionSpacesTupleType>;
   using type=std::tuple<Number<2>>;
 };
 
@@ -392,7 +401,11 @@ template<typename Left, typename Right>
 class IsTestOrTrial< Multiply2<Expression2<Left>,Expression2<Right> > >
 {
 public:
-  using UniqueBaseFunctionSpaces=TupleCatType<typename IsTestOrTrial<Left>::UniqueBaseFunctionSpaces,typename IsTestOrTrial<Right>::UniqueBaseFunctionSpaces >;
+  using TupleFunctionSpace=TupleCatType<typename IsTestOrTrial<Left>::TupleFunctionSpace,
+                                        typename IsTestOrTrial<Right>::TupleFunctionSpace >;
+
+  using UniqueElementFunctionSpacesTupleType=TupleCatType<typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType,
+                                                          typename IsTestOrTrial<Right>::UniqueElementFunctionSpacesTupleType >;
   using type=TupleRemoveType<Number<0>,TupleCatType<typename IsTestOrTrial<Left>::type,typename IsTestOrTrial<Right>::type >> ;
   static_assert(TupleTypeSize<type>::value<2," In Multiply<Left,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 };
@@ -401,7 +414,8 @@ template<typename Left>
 class IsTestOrTrial< Multiply2<Expression2<Left>,Real > >
 {
 public:
-  using UniqueBaseFunctionSpaces=typename IsTestOrTrial<Left>::UniqueBaseFunctionSpaces;
+  using TupleFunctionSpace=typename IsTestOrTrial<Left>::TupleFunctionSpace;
+  using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType;
   using type=typename IsTestOrTrial<Left>::type;
   static_assert(TupleTypeSize<type>::value<2," In Multiply<Left,Real>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 };
@@ -410,7 +424,8 @@ template<typename Right>
 class IsTestOrTrial< Multiply2<Real,Expression2<Right> > >
 {
 public:
-  using UniqueBaseFunctionSpaces=typename IsTestOrTrial<Right>::UniqueBaseFunctionSpaces;
+  using TupleFunctionSpace=typename IsTestOrTrial<Right>::TupleFunctionSpace;
+  using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Right>::UniqueElementFunctionSpacesTupleType;
   using type=typename IsTestOrTrial<Right>::type;
   static_assert(TupleTypeSize<type>::value<2," In Multiply<Real,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 
@@ -421,7 +436,8 @@ template<typename Left>
 class IsTestOrTrial< Divide2<Expression2<Left>,Real > >
 {
 public:
-  using UniqueBaseFunctionSpaces=typename IsTestOrTrial<Left>::UniqueBaseFunctionSpaces;
+  using TupleFunctionSpace=typename IsTestOrTrial<Left>::TupleFunctionSpace;
+  using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType;
   using type=typename IsTestOrTrial<Left>::type;
   static_assert(TupleTypeSize<type>::value<2," In Divide<Left,Real>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 };
@@ -431,7 +447,11 @@ template<typename Left, typename Right>
 class IsTestOrTrial< Addition2<Expression2<Left>,Expression2<Right> > >
 {
 public:
-  using UniqueBaseFunctionSpaces=RemoveTupleDuplicates<TupleCatType<typename IsTestOrTrial<Left>::UniqueBaseFunctionSpaces,typename IsTestOrTrial<Right>::UniqueBaseFunctionSpaces >>;
+  using TupleFunctionSpace=TupleCatType<typename IsTestOrTrial<Left>::TupleFunctionSpace,
+                                   typename IsTestOrTrial<Right>::TupleFunctionSpace >;
+
+  using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates<TupleCatType<typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType,
+                                                                                typename IsTestOrTrial<Right>::UniqueElementFunctionSpacesTupleType >>;
   using type=RemoveTupleDuplicates<TupleRemoveType<Number<0>,TupleCatType<typename IsTestOrTrial<Left>::type,typename IsTestOrTrial<Right>::type >>> ;
   static_assert(TupleTypeSize<type>::value<2," In Addition<Left,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 };
@@ -440,7 +460,11 @@ template<typename Left, typename Right>
 class IsTestOrTrial< Subtraction2<Expression2<Left>,Expression2<Right> > >
 {
 public:
-  using UniqueBaseFunctionSpaces=RemoveTupleDuplicates<TupleCatType<typename IsTestOrTrial<Left>::UniqueBaseFunctionSpaces,typename IsTestOrTrial<Right>::UniqueBaseFunctionSpaces >>;
+  using TupleFunctionSpace=TupleCatType<typename IsTestOrTrial<Left>::TupleFunctionSpace,
+                                   typename IsTestOrTrial<Right>::TupleFunctionSpace >;
+
+  using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates<TupleCatType<typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType,
+                                                                                typename IsTestOrTrial<Right>::UniqueElementFunctionSpacesTupleType >>;
   using type=RemoveTupleDuplicates<TupleRemoveType<Number<0>,TupleCatType<typename IsTestOrTrial<Left>::type,typename IsTestOrTrial<Right>::type > >>;
   static_assert(TupleTypeSize<type>::value<2," In Subtraction<Left,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 
@@ -452,7 +476,8 @@ template<typename Type>
 class IsTestOrTrial< UnaryPlus2<Expression2<Type>> >
 {
 public:
-  using UniqueBaseFunctionSpaces=typename IsTestOrTrial<Type>::UniqueBaseFunctionSpaces;
+  using TupleFunctionSpace=typename IsTestOrTrial<Type>::TupleFunctionSpace;
+  using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Type>::UniqueElementFunctionSpacesTupleType;
   using type=TupleRemoveType<Number<0>,typename IsTestOrTrial<Type>::type>;
   static_assert(TupleTypeSize<type>::value<2," In UnaryPlus<Type>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 
@@ -462,7 +487,8 @@ template<typename Type>
 class IsTestOrTrial< UnaryMinus2<Expression2<Type>> >
 {
 public:
-  using UniqueBaseFunctionSpaces=typename IsTestOrTrial<Type>::UniqueBaseFunctionSpaces;
+  using TupleFunctionSpace=typename IsTestOrTrial<Type>::TupleFunctionSpace;
+  using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Type>::UniqueElementFunctionSpacesTupleType;
   using type=TupleRemoveType<Number<0>,typename IsTestOrTrial<Type>::type>;
   static_assert(TupleTypeSize<type>::value<2," In UnaryMinus<Type>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 
@@ -519,20 +545,20 @@ class TypeOfForm<Number<2>,Number<1>>
 
 
 
-template<typename BaseFunctionSpacesType, Integer N,typename OperatorType>
-class OperatorTupleType<Test<BaseFunctionSpacesType,N,OperatorType> >
+template<typename MixedSpace, Integer N,typename OperatorType>
+class OperatorTupleType<Test<MixedSpace,N,OperatorType> >
 { public:
-  using Test=Test<BaseFunctionSpacesType,N,OperatorType>;
+  using Test=Test<MixedSpace,N,OperatorType>;
   static constexpr Integer Nmax= Test::Nmax;
   using single_type=std::tuple<std::tuple< OperatorType,std::tuple<> >>;
   using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
   using type=TupleChangeType<N,single_type,emptytuple>;
 };
 
-template<typename BaseFunctionSpacesType, Integer N,typename OperatorType>
-class OperatorTupleType<Trial<BaseFunctionSpacesType,N,OperatorType> >
+template<typename MixedSpace, Integer N,typename OperatorType>
+class OperatorTupleType<Trial<MixedSpace,N,OperatorType> >
 { public:
-  using Trial=Trial<BaseFunctionSpacesType,N,OperatorType>;
+  using Trial=Trial<MixedSpace,N,OperatorType>;
   static constexpr Integer Nmax= Trial::Nmax;
   using single_type=std::tuple<std::tuple< OperatorType,std::tuple<> >>;
   using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
@@ -545,70 +571,73 @@ class OperatorTupleType<Trial<BaseFunctionSpacesType,N,OperatorType> >
 
 
 template<Integer N,typename...Args >
-Test<typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType,
+Test<        MixedSpace<Args...>,//MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType,
              GetType<typename MixedSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value>
 MakeTest(const MixedSpace<Args...>& W)
-{return Test<typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType,
+{return Test<MixedSpace<Args...>,//typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType
         GetType<typename MixedSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value>();}
 
 
 template<Integer N,typename...Args >
-Trial<          typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType,
+Trial<        MixedSpace<Args...>,//typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType,
               GetType<typename MixedSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value> 
 MakeTrial(const MixedSpace<Args...>& W)
-{return Trial<typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType,
+{return Trial<MixedSpace<Args...>,//typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType
         GetType<typename MixedSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value>();}
 
 
-template<typename BaseFunctionSpacesType,Integer N>
-Trial<BaseFunctionSpacesType,N,GradientOperator> 
-Grad(const Trial<BaseFunctionSpacesType,N,IdentityOperator>& W)
-{return Trial<BaseFunctionSpacesType,N,GradientOperator> ();}
+template<typename MixedSpace,Integer N>
+Trial<MixedSpace,N,GradientOperator> 
+Grad(const Trial<MixedSpace,N,IdentityOperator>& W)
+{return Trial<MixedSpace,N,GradientOperator> ();}
 
-template<typename BaseFunctionSpacesType,Integer N>
-Test<BaseFunctionSpacesType,N,GradientOperator> 
-Grad(const Test<BaseFunctionSpacesType,N,IdentityOperator>& W)
-{return Test<BaseFunctionSpacesType,N,GradientOperator> ();}
-
-
-template<typename BaseFunctionSpacesType,Integer N>
-Trial<BaseFunctionSpacesType,N,DivergenceOperator> 
-Div(const Trial<BaseFunctionSpacesType,N,IdentityOperator>& W)
-{return Trial<BaseFunctionSpacesType,N,DivergenceOperator> ();}
-
-template<typename BaseFunctionSpacesType,Integer N>
-Test<BaseFunctionSpacesType,N,DivergenceOperator> 
-Div(const Test<BaseFunctionSpacesType,N,IdentityOperator>& W)
-{return Test<BaseFunctionSpacesType,N,DivergenceOperator> ();}
+template<typename MixedSpace,Integer N>
+Test<MixedSpace,N,GradientOperator> 
+Grad(const Test<MixedSpace,N,IdentityOperator>& W)
+{return Test<MixedSpace,N,GradientOperator> ();}
 
 
-template<typename BaseFunctionSpacesType,Integer N>
-Trial<BaseFunctionSpacesType,N,CurlOperator> 
-Curl(const Trial<BaseFunctionSpacesType,N,IdentityOperator>& W)
-{return Trial<BaseFunctionSpacesType,N,CurlOperator> ();}
+template<typename MixedSpace,Integer N>
+Trial<MixedSpace,N,DivergenceOperator> 
+Div(const Trial<MixedSpace,N,IdentityOperator>& W)
+{return Trial<MixedSpace,N,DivergenceOperator> ();}
 
-template<typename BaseFunctionSpacesType,Integer N>
-Test<BaseFunctionSpacesType,N,CurlOperator> 
-Curl(const Test<BaseFunctionSpacesType,N,IdentityOperator>& W)
-{return Test<BaseFunctionSpacesType,N,CurlOperator> ();}
+template<typename MixedSpace,Integer N>
+Test<MixedSpace,N,DivergenceOperator> 
+Div(const Test<MixedSpace,N,IdentityOperator>& W)
+{return Test<MixedSpace,N,DivergenceOperator> ();}
+
+
+template<typename MixedSpace,Integer N>
+Trial<MixedSpace,N,CurlOperator> 
+Curl(const Trial<MixedSpace,N,IdentityOperator>& W)
+{return Trial<MixedSpace,N,CurlOperator> ();}
+
+template<typename MixedSpace,Integer N>
+Test<MixedSpace,N,CurlOperator> 
+Curl(const Test<MixedSpace,N,IdentityOperator>& W)
+{return Test<MixedSpace,N,CurlOperator> ();}
 
 
 
-template<typename BaseFunctionSpacesType,Integer N, typename OperatorKind>
-class QuadratureOrder<Test<BaseFunctionSpacesType,N,OperatorKind> >
+template<typename MixedSpace,Integer N, typename OperatorKind>
+class QuadratureOrder<Test<MixedSpace,N,OperatorKind> >
 { public:
-
-  using BaseFunctionSpaceAndElement=GetType<BaseFunctionSpacesType,N>;
-  using Operator=typename Test<BaseFunctionSpacesType,N,OperatorKind>::Operator;
+  using Test=Test<MixedSpace,N,OperatorKind>;
+  using UniqueElementFunctionSpacesTupleType=typename Test::UniqueElementFunctionSpacesTupleType;
+  using BaseFunctionSpaceAndElement=GetType<UniqueElementFunctionSpacesTupleType,N>;
+  using Operator=typename Test::Operator;
   using BaseFunctionSpace=GetType<BaseFunctionSpaceAndElement,1>;
   static constexpr Integer value=QuadratureOrder<Operator,BaseFunctionSpace>::value;
 };
 
-template<typename BaseFunctionSpacesType,Integer N, typename OperatorKind>
-class QuadratureOrder<Trial<BaseFunctionSpacesType,N,OperatorKind> >
+template<typename MixedSpace,Integer N, typename OperatorKind>
+class QuadratureOrder<Trial<MixedSpace,N,OperatorKind> >
 { public:
-  using BaseFunctionSpaceAndElement=GetType<BaseFunctionSpacesType,N>;
-  using Operator=typename Trial<BaseFunctionSpacesType,N,OperatorKind>::Operator;
+  using Trial=Trial<MixedSpace,N,OperatorKind>;
+  using UniqueElementFunctionSpacesTupleType=typename Trial::UniqueElementFunctionSpacesTupleType;
+  using BaseFunctionSpaceAndElement=GetType<UniqueElementFunctionSpacesTupleType,N>;
+  using Operator=typename Trial::Operator;
   using BaseFunctionSpace=GetType<BaseFunctionSpaceAndElement,1>;
   static constexpr Integer value=QuadratureOrder<Operator,BaseFunctionSpace>::value;
 };
@@ -627,7 +656,11 @@ class L2DotProductIntegral: public Expression2<L2DotProductIntegral<MeshT,Left,R
     using QRule=typename QuadratureRule<QR>:: template rule<Elem,Order>;
     using form= std::tuple<typename TypeOfForm<GetType<typename IsTestOrTrial<Left>::type,0>,
                                     GetType<typename IsTestOrTrial<Right>::type,0>>::type >;
-    using UniqueBaseFunctionSpaces=GetType<RemoveTupleDuplicates< TupleCatType< typename IsTestOrTrial<Left>::UniqueBaseFunctionSpaces,typename IsTestOrTrial<Right>::UniqueBaseFunctionSpaces >>,0>;               
+    using UniqueElementFunctionSpacesTupleType=GetType<RemoveTupleDuplicates< TupleCatType< typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType,
+                                                                                            typename IsTestOrTrial<Right>::UniqueElementFunctionSpacesTupleType  >>,0>;               
+    using TupleFunctionSpace=RemoveTupleDuplicates< TupleCatType< typename IsTestOrTrial<Left>::TupleFunctionSpace,
+                                                             typename IsTestOrTrial<Right>::TupleFunctionSpace  >>;               
+    using FunctionSpace=GetType<TupleFunctionSpace,0>;
     L2DotProductIntegral(const MeshT& mesh,const Expression2<Left>& left,const Expression2<Right>& right,const Integer label=-666):
     mesh_(mesh),
     left_(left),
@@ -646,11 +679,11 @@ class L2DotProductIntegral: public Expression2<L2DotProductIntegral<MeshT,Left,R
     Integer label_;
 };
 
+template<typename Form>
+class ShapeFunctions;
 
-
-
-template<typename MeshT, typename Left,typename Right,Integer QR>
-class Evaluation<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>>
+template<typename MeshT, typename Left,typename Right,Integer QR, typename Form>
+class Evaluation<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>, ShapeFunctions<Form>>
 {
  public:
  using type= L2DotProductIntegral<MeshT,Left,Right,QR>;
@@ -659,11 +692,11 @@ class Evaluation<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>>
  Evaluation(){};
  
 
- template<typename ...Ts> 
- Evaluation(const type& expr):
+ Evaluation(const type& expr, ShapeFunctions<Form>& shape_functions):
  eval_(expr),
  eval_left_(EvalLeft(eval_.left())),
- eval_right_(EvalRight(eval_.right()))
+ eval_right_(EvalRight(eval_.right())),
+ shape_functions_(shape_functions)
  {};
  
 
@@ -684,6 +717,7 @@ private:
  type eval_;
  EvalLeft eval_left_;
  EvalRight eval_right_;
+ ShapeFunctions<Form>& shape_functions_;
  // type value_;
 };
 
@@ -734,8 +768,13 @@ class Addition2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegral<M
 {
 
   public:
-  using UniqueBaseFunctionSpaces=RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::UniqueBaseFunctionSpaces,
-                                                  typename DerivedLeft::UniqueBaseFunctionSpaces > >;
+  using TupleFunctionSpace=RemoveTupleDuplicates< TupleCatType< typename L2DotProductIntegral<MeshT,Left,Right>::TupleFunctionSpace,
+                                                           typename DerivedLeft::TupleFunctionSpace  >>;               
+
+  using FunctionSpace=GetType<TupleFunctionSpace,0>;
+
+  using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::UniqueElementFunctionSpacesTupleType,
+                                                                                 typename DerivedLeft::UniqueElementFunctionSpacesTupleType > >;
   using form =RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::form,
                                                   typename DerivedLeft::form  > >;
     Addition2(const Expression2<DerivedLeft>& left, const Expression2<L2DotProductIntegral<MeshT,Left,Right>>&right)
@@ -757,8 +796,13 @@ class Subtraction2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegra
 {
 
   public:
-  using UniqueBaseFunctionSpaces=RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::UniqueBaseFunctionSpaces,
-                                                  typename DerivedLeft::UniqueBaseFunctionSpaces > >;
+  using TupleFunctionSpace=RemoveTupleDuplicates< TupleCatType< typename L2DotProductIntegral<MeshT,Left,Right>::TupleFunctionSpace,
+                                                           typename DerivedLeft::TupleFunctionSpace  >>;               
+
+  using FunctionSpace=GetType<TupleFunctionSpace,0>;
+
+  using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::UniqueElementFunctionSpacesTupleType,
+                                                                                 typename DerivedLeft::UniqueElementFunctionSpacesTupleType > >;
   using form =RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::form,
                                                   typename DerivedLeft::form  > >;
     Subtraction2(const Expression2<DerivedLeft>& left, const Expression2<L2DotProductIntegral<MeshT,Left,Right>>&right)
@@ -774,52 +818,6 @@ class Subtraction2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegra
 };
 
 
-// template<typename DerivedLeft, typename MeshT, typename Left,typename Right>
-// class Multiply2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegral<MeshT,Left,Right>>>
-// : public Expression2< Multiply2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegral<MeshT,Left,Right>>  > > 
-// {
-
-//   public:
-//   using L2prod=L2DotProductIntegral<MeshT,Left,Right>;
-//   static_assert(0*GetType<0,typename L2prod::form>::value, "You cannot multiply a L2 inner product: you can only add or subtract two or more inner products");
-//   using UniqueBaseFunctionSpaces=RemoveTupleDuplicates< TupleCatType<typename L2prod::UniqueBaseFunctionSpaces,
-//                                                   typename DerivedLeft::UniqueBaseFunctionSpaces > >;
-//   using form =RemoveTupleDuplicates< TupleCatType<typename L2prod::form,
-//                                                   typename DerivedLeft::form  > >;
-//     Multiply2(const Expression2<DerivedLeft>& left, const Expression2<L2prod>&right)
-//     : 
-//     left_(left.derived()),
-//     right_(right.derived())
-//     {};
-//     const DerivedLeft & left()const{return left_;};
-//     const L2prod& right()const{return right_;};
-//   private:
-//   DerivedLeft left_;
-//   L2prod right_;
-// };
-
-// template<typename DerivedLeft, typename MeshT, typename Left,typename Right>
-// class Multiply2<  Expression2<L2DotProductIntegral<MeshT,Left,Right>>, Expression2<DerivedLeft>>
-// : public Expression2< Multiply2<  Expression2<L2DotProductIntegral<MeshT,Left,Right>> ,Expression2<DerivedLeft> > > 
-// {
-
-//   public:
-//   static_assert(0*L2DotProductIntegral<MeshT,Left,Right>::form::value, "You cannot multiply a L2 inner product: you can only add or subtract two or more inner products");
-//   using UniqueBaseFunctionSpaces=RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::UniqueBaseFunctionSpaces,
-//                                                   typename DerivedLeft::UniqueBaseFunctionSpaces > >;
-//   using form =RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::form,
-//                                                   typename DerivedLeft::form  > >;
-//     Multiply2(const Expression2<L2DotProductIntegral<MeshT,Left,Right>>& left, const Expression2<DerivedLeft>&right)
-//     : 
-//     left_(left.derived()),
-//     right_(right.derived())
-//     {};
-//     const L2DotProductIntegral<MeshT,Left,Right>& left()const{return left_;};
-//     const DerivedLeft & right()const{return right_;};
-//   private:
-//   L2DotProductIntegral<MeshT,Left,Right> left_;
-//   DerivedLeft  right_;
-// };
 
    template<typename MapTupleNumber,Integer Nmax_aux,Integer N,typename Tuple,typename Map>
    typename std::enable_if< (N>Nmax_aux) ,void>::type 
@@ -861,13 +859,13 @@ template<typename ConstFormReference>
 void Assembly(const ConstFormReference& form)
 {
   using Form=typename std::remove_const<typename std::remove_reference<ConstFormReference>::type>::type;
-  using UniqueBaseFunctionSpaces=typename Form::UniqueBaseFunctionSpaces;
+  using UniqueElementFunctionSpacesTupleType=typename Form::UniqueElementFunctionSpacesTupleType;
   using TupleOperatorsAndQuadrature= typename OperatorTupleType<Form>::type;
   using TupleOfTupleNoQuadrature=TupleOfTupleRemoveQuadrature<TupleOperatorsAndQuadrature>;
-  using SpacesToUniqueFEFamilies=SpacesToUniqueFEFamilies<UniqueBaseFunctionSpaces>;
-  using Map=MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,UniqueBaseFunctionSpaces>;
+  using SpacesToUniqueFEFamilies=SpacesToUniqueFEFamilies<UniqueElementFunctionSpacesTupleType>;
+  using Map=MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,UniqueElementFunctionSpacesTupleType>;
   using UniqueMapping=UniqueMap<SpacesToUniqueFEFamilies,Map> ;
-  using TupleOfTupleShapeFunction=TupleOfTupleShapeFunctionType<UniqueBaseFunctionSpaces,TupleOperatorsAndQuadrature>;
+  using TupleOfTupleShapeFunction=TupleOfTupleShapeFunctionType<UniqueElementFunctionSpacesTupleType,TupleOperatorsAndQuadrature>;
   using MapTupleNumbers=MapTupleInit<TupleOfTupleShapeFunction, SpacesToUniqueFEFamilies, UniqueMapping>;
  
   TupleOfTupleShapeFunction stuple;
@@ -880,22 +878,22 @@ template<typename Form>
 class ShapeFunctions
 {
  public:
-  using UniqueBaseFunctionSpaces=typename Form::UniqueBaseFunctionSpaces;
+  using UniqueElementFunctionSpacesTupleType=typename Form::UniqueElementFunctionSpacesTupleType;
   using TupleOperatorsAndQuadrature= typename OperatorTupleType<Form>::type;
   using TupleOfTupleNoQuadrature=TupleOfTupleRemoveQuadrature<TupleOperatorsAndQuadrature>;
-  using SpacesToUniqueFEFamilies=SpacesToUniqueFEFamilies<UniqueBaseFunctionSpaces>;
-  using Map=MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,UniqueBaseFunctionSpaces>;
+  using SpacesToUniqueFEFamilies=SpacesToUniqueFEFamilies<UniqueElementFunctionSpacesTupleType>;
+  using Map=MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,UniqueElementFunctionSpacesTupleType>;
   using UniqueMapping=UniqueMap<SpacesToUniqueFEFamilies,Map> ;
-  using TupleOfTupleShapeFunction=TupleOfTupleShapeFunctionType<UniqueBaseFunctionSpaces,TupleOperatorsAndQuadrature>;
+  using TupleOfTupleShapeFunction=TupleOfTupleShapeFunctionType<UniqueElementFunctionSpacesTupleType,TupleOperatorsAndQuadrature>;
   using MapTupleNumbers=MapTupleInit<TupleOfTupleShapeFunction, SpacesToUniqueFEFamilies, UniqueMapping>;
  
   
-    template<Integer M,Integer Nmax_aux,Integer N,typename Tuple,typename Map>
-   typename std::enable_if< (N>Nmax_aux) ,void>::type 
+   template<Integer M,Integer Nmax_aux,Integer N,typename Tuple,typename Map>
+   constexpr typename std::enable_if< (N>Nmax_aux) ,void>::type 
    init_map_aux_aux(Tuple& t,const Map& maps){}
 
    template<Integer M,Integer Nmax_aux,Integer N,typename Tuple,typename Map>
-   typename std::enable_if< (N<=Nmax_aux) ,void>::type 
+   constexpr typename std::enable_if< (N<=Nmax_aux) ,void>::type 
    init_map_aux_aux(Tuple& t,const Map& maps) 
    {
     auto& t_nth=std::get<N>(t); 
@@ -907,11 +905,11 @@ class ShapeFunctions
 
 
    template<Integer Nmax_aux,Integer N,typename Map>
-   typename std::enable_if< (N>Nmax_aux) ,void>::type 
+   constexpr typename std::enable_if< (N>Nmax_aux) ,void>::type 
    init_map_aux(const Map& maps){}
 
    template<Integer Nmax_aux,Integer N,typename Map>
-   typename std::enable_if< (N<=Nmax_aux) ,void>::type 
+   constexpr typename std::enable_if< (N<=Nmax_aux) ,void>::type 
    init_map_aux(const Map& maps) 
    {
     auto& t_nth=std::get<N>(tuple); 
@@ -920,15 +918,108 @@ class ShapeFunctions
     init_map_aux<Nmax_aux,N+1>(maps);
     }
 
+
+   constexpr       auto& operator()()      {return tuple;}
+   constexpr const auto& operator()()const {return tuple;}
+
+
    template<typename Map>
-   void init_map(const Map& maps) 
-   {init_map_aux<TupleTypeSize<MapTupleNumbers>::value-1,0>(maps);}
+   constexpr void init_map(const Map& maps) 
+   {init_map_aux<TupleTypeSize<MapTupleNumbers>::value-1,0>(maps());}
 
    template<Integer...Ns>
-   const auto& get()const{return tuple_get<Ns...>(tuple);}
+   constexpr const auto& get()const{return tuple_get<Ns...>(tuple);}
 
    template<Integer...Ns>
          auto& get()     {return tuple_get<Ns...>(tuple);}
+
+   template<Integer...Ns>
+   constexpr const auto& value()const{return tuple_get<Ns...>(tuple).eval();}
+
+   template<Integer...Ns>
+         auto& value()     {return tuple_get<Ns...>(tuple).eval();}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  template<Integer M, typename Elem, Integer FEFamily,Integer Order,typename Shape,typename...Args>
+  constexpr typename std::enable_if_t< FEFamily==LagrangeFE,void> 
+  shape_function_init_aux_aux_aux(Shape& shape, const ShapeFunctionCoefficient<Args...> &coefficients)
+  {
+    shape.init();
+  }
+
+
+  template<Integer M, typename Elem, Integer FEFamily,Integer Order,typename Shape,typename...Args>
+  constexpr typename std::enable_if_t<FEFamily==RaviartThomasFE,void> 
+  shape_function_init_aux_aux_aux(Shape& shape, const ShapeFunctionCoefficient<Args...> &coefficients)
+  {
+    shape.init(tuple_get<M>(coefficients()));
+  }
+
+
+
+
+  template<Integer M, Integer Nmax,Integer N,typename Tuple,typename...Args>
+  constexpr typename std::enable_if_t<(N>Nmax),void> 
+  shape_function_init_aux_aux(Tuple& tuple, const ShapeFunctionCoefficient<Args...> &coefficients)
+  {}
+
+  template<Integer M,Integer Nmax,Integer N,typename Tuple,typename...Args>
+  constexpr typename std::enable_if_t< (N<=Nmax),void> 
+  shape_function_init_aux_aux(Tuple& tuple, const ShapeFunctionCoefficient<Args...> &coefficients)
+  {
+
+    using Shape=GetType<TupleOfTupleShapeFunction,M,N>;
+    using Elem=typename Shape::Elem;
+    constexpr Integer FEFamily=Shape::FEFamily;
+    constexpr Integer Order=Shape::Order;
+    shape_function_init_aux_aux_aux<M,Elem,FEFamily,Order>(tuple_get<N>(tuple),coefficients);
+    shape_function_init_aux_aux<M,Nmax,N+1>(tuple,coefficients);
+  }
+
+  template<Integer Nmax,Integer N,typename...Args>
+  constexpr typename std::enable_if_t< (N>Nmax),void> 
+  shape_function_init_aux(const ShapeFunctionCoefficient<Args...> &coefficients)
+  {}
+
+  template<Integer Nmax,Integer N,typename...Args>
+  constexpr typename std::enable_if_t<N<=Nmax,void> 
+  shape_function_init_aux(const ShapeFunctionCoefficient<Args...> &coefficients)
+  {
+    constexpr Integer Nmax_aux=TupleTypeSize<GetType<TupleOfTupleShapeFunction,N>>::value-1;
+    shape_function_init_aux_aux<N,Nmax_aux,0>(tuple_get<N>(tuple),coefficients);
+    shape_function_init_aux<Nmax,N+1>(coefficients);
+  }
+
+
+
+  template<typename Coefficients>
+  constexpr void init(const Coefficients& shape_coefficients)
+  {
+   constexpr Integer Nmax=TupleTypeSize<TupleOfTupleShapeFunction>::value-1;
+   shape_function_init_aux<Nmax,0>(shape_coefficients);
+   }
+
+
+
+
+
+
 
 
 private:

@@ -360,8 +360,38 @@ namespace mars {
         void side(const Integer &side_num,
                   Simplex<Dim, 1> &side) const
         {
+
             side.nodes[0] = nodes[side_num];
             side.nodes[1] = nodes[side_num == 2? 0 : (side_num + 1)];
+            switch(side_num) {
+                case 0:
+                {
+                    side.nodes[0] = nodes[0];
+                    side.nodes[1] = nodes[1];
+                    break;
+                }
+                    
+                case 1:
+                {
+                    side.nodes[0] = nodes[2];
+                    side.nodes[1] = nodes[0];
+                    break;
+                }
+                    
+                case 2:
+                {
+                    side.nodes[0] = nodes[1];
+                    side.nodes[1] = nodes[2];
+                    break;
+                }
+                     
+                default:
+                {
+                    assert(false);
+                    break;
+                }
+                    
+            }            
         }
 
         Integer vertex_opposite_to_side(const Integer &side_num) const
@@ -449,7 +479,7 @@ namespace mars {
                     break;
                 }
                     
-                case 1:
+                case 2:
                 {
                     side.nodes[0] = nodes[0];
                     side.nodes[1] = nodes[3];
@@ -457,7 +487,7 @@ namespace mars {
                     break;
                 }
                     
-                case 2:
+                case 1:
                 {
                     side.nodes[0] = nodes[0];
                     side.nodes[1] = nodes[1];
@@ -615,7 +645,7 @@ namespace mars {
                     break;
                 }
                     
-                case 1:
+                case 2:
                 {
                     side.nodes[0] = nodes[0];
                     side.nodes[1] = nodes[1];
@@ -624,7 +654,7 @@ namespace mars {
                     break;
                 }
                     
-                case 2:
+                case 3:
                 {
                     side.nodes[0] = nodes[0];
                     side.nodes[1] = nodes[3];
@@ -633,7 +663,7 @@ namespace mars {
                     break;
                 }
                     
-                case 3:
+                case 1:
                 {
                     side.nodes[0] = nodes[0];
                     side.nodes[1] = nodes[1];
@@ -900,37 +930,37 @@ namespace mars {
         }
     }
 
-    template<Integer Dim, Integer ManifoldDim,Integer Npoints>
-    inline constexpr auto jacobian()
-    {
-        static_assert(Dim >= ManifoldDim, "Dim must be greater or equal ManifoldDim");
-        static_assert(Npoints == ManifoldDim+1, "Npoints must be equal to ManifoldDim+1");
-        Matrix<Real, Dim, ManifoldDim> J;
-        Vector<Vector<Real, Dim>,Npoints> points;
-        // Integer vs[ManifoldDim];
-        // std::array<Integer,ManifoldDim> vs;
-        for(Integer ii=0;ii<Npoints;ii++)
-        {
-            const auto vs=Combinations<Npoints,ManifoldDim>::generate(ii);
-            for(Integer jj=0;jj<ManifoldDim;jj++)
-              for(Integer kk=0;kk<ManifoldDim;kk++)
-                points[jj][kk]=Simplex<Dim,ManifoldDim>::reference[vs[jj]][kk];
+    // template<Integer Dim, Integer ManifoldDim,Integer Npoints>
+    // inline constexpr auto jacobian()
+    // {
+    //     static_assert(Dim >= ManifoldDim, "Dim must be greater or equal ManifoldDim");
+    //     static_assert(Npoints == ManifoldDim+1, "Npoints must be equal to ManifoldDim+1");
+    //     Matrix<Real, Dim, ManifoldDim> J;
+    //     Vector<Vector<Real, Dim>,Npoints> points;
+    //     // Integer vs[ManifoldDim];
+    //     // std::array<Integer,ManifoldDim> vs;
+    //     for(Integer ii=0;ii<Npoints;ii++)
+    //     {
+    //         const auto vs=Combinations<Npoints,ManifoldDim>::generate(ii);
+    //         for(Integer jj=0;jj<ManifoldDim;jj++)
+    //           for(Integer kk=0;kk<ManifoldDim;kk++)
+    //             points[jj][kk]=Simplex<Dim,ManifoldDim>::reference[vs[jj]][kk];
 
-              for(Integer ii=0;ii<Npoints;ii++)
-              {
+    //           for(Integer ii=0;ii<Npoints;ii++)
+    //           {
 
 
-                Vector<Real, Dim> v0 = points[0];
+    //             Vector<Real, Dim> v0 = points[0];
 
-                for(Integer i = 1; i < Npoints; ++i) {
-                    const auto &vi = points[i];
-                    J.col(i-1, vi - v0);
-                }
-            }
+    //             for(Integer i = 1; i < Npoints; ++i) {
+    //                 const auto &vi = points[i];
+    //                 J.col(i-1, vi - v0);
+    //             }
+    //         }
             
-        }
-    return J;
-     }
+    //     }
+    // return J;
+    //  }
 
     template<Integer Dim, Integer ManifoldDim>
     Real in_sphere_radius(

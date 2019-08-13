@@ -911,40 +911,40 @@ namespace mars {
 			return true;
 		}
 
+		// const std::vector<Integer>& side_tags() const
+		// {return side_tags_;}
 
-		const std::vector<Integer>& side_tags() const
-		{return side_tags_;}
+		// 	void find_side_tags(){
+		// 		if(found_tags_==false)
+		// 		{
+  //   	// collect all the side tags
+		// 			for(Integer elem_iter=0;elem_iter<n_elements();elem_iter++)
+		// 			{
+		// 				if(!is_active(elem_iter) || !is_boundary(elem_iter)) continue;
+		// 				const auto &elem = this->elem(elem_iter);
+		// 				const auto& side_tags=elem.side_tags;
+		// 				for(auto& i: side_tags)
+		// 				{
+		// 					side_tags_.push_back(i);
+		// 				}
 
-			void find_side_tags(){
-				if(found_tags_==false)
-				{
-    	// collect all the side tags
-					for(Integer elem_iter=0;elem_iter<n_elements();elem_iter++)
-					{
-						if(!is_active(elem_iter) || !is_boundary(elem_iter)) continue;
-						const auto &elem = this->elem(elem_iter);
-						const auto& side_tags=elem.side_tags;
-						for(auto& i: side_tags)
-						{
-							side_tags_.push_back(i);
-						}
-
-					}
-        // make unique the tags
-					std::sort(side_tags_.begin(), side_tags_.end());  
-					auto last = std::unique(side_tags_.begin(), side_tags_.end());
-					side_tags_.erase(last, side_tags_.end()); 
-        // remove -1 (internal faces) from the side_tags
-					side_tags_.erase(std::remove_if(side_tags_.begin(), side_tags_.end(),[](const int& x) { return x == -1;}), side_tags_.end());
-					found_tags_=true;
-				}
-			}
+		// 			}
+  //       // make unique the tags
+		// 			std::sort(side_tags_.begin(), side_tags_.end());  
+		// 			auto last = std::unique(side_tags_.begin(), side_tags_.end());
+		// 			side_tags_.erase(last, side_tags_.end()); 
+  //       // remove -1 (internal faces) from the side_tags
+		// 			side_tags_.erase(std::remove_if(side_tags_.begin(), side_tags_.end(),[](const int& x) { return x == -1;}), side_tags_.end());
+		// 			found_tags_=true;
+		// 		}
+		// 	}
 
 		inline Integer type() const override
 		{
 			return ManifoldDim;
 		}
-
+        const auto& side_nodes()const {return side_nodes_;}
+        	  auto& side_nodes() 	  {return side_nodes_;}
 	private:
 		std::vector<Elem> elements_;
 		std::vector<Point> points_;
@@ -953,7 +953,7 @@ namespace mars {
 		std::vector<bool> active_;
 		bool sorted_elements_;
 		std::vector<Integer> side_tags_;
-		bool found_tags_;
+		std::vector<std::array<Integer,ManifoldDim>> side_nodes_;
 	};
 
 
@@ -969,6 +969,7 @@ namespace mars {
 		int n_elements = -1;
 		int n_nodes = -1;
 		int n_coords = -1;
+		int n_boundary_nodes=-1;
 
 		std::string line;
 		while(is.good()) {
@@ -1017,6 +1018,28 @@ namespace mars {
 				}
 
 			}
+			else if(line == "boundary") {
+				std::getline(is, line);
+				n_boundary_nodes=atoi(line.c_str());
+				mesh.tags().resize(n_boundary_nodes);
+				mesh.side_nodes().resize(n_boundary_nodes);
+				for(Integer i = 0; i < n_boundary_nodes; ++i){
+					assert(is.good());
+					std::getline(is, line);
+					std::stringstream ss(line);
+					int attr, type;
+
+					std::array<Integer, ManifoldDim> boundary_nodes;
+					ss >> attr >> type;
+                    mesh.tags()[i]=attr;
+					for(Integer k = 0; k < ManifoldDim; ++k) {
+						ss >> mesh.side_nodes()[i][k];
+					}
+
+				}
+
+			}
+
 		}
 
 		is.close();

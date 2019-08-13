@@ -156,11 +156,21 @@ public:
             elempoint_mean=elempoints_sort.Tmean();
             auto diff=facepoint_mean-elempoint_mean;
 
-            // save the normal and if its outward or inward 
             auto n = normal(simplex_elem, elempoints_sort);
+            outward_[ee][mm]=sgn(dot(diff,n)); 
+            // save the normal and if its outward or inward 
+            // if the face is on the boundary, then it must be outward  
+            if(elem.side_tags[mm]>=0 && outward_[ee][mm]==-1)
+            {
+            // if the normal ins inward, force it to be outward
+                normal_[ee][mm]=-n;
+                outward_[ee][mm]=1;
+            }
+            else
+            {
             normal_[ee][mm]=n;
-            outward_[ee][mm]=sgn(dot(diff,n));
-              }
+            }
+            }
             }
        };
             
