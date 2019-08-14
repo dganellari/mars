@@ -22,11 +22,11 @@ public:
 			return children;
 	}
 
-	T getId() const {
+	const T get_id() const {
 		return id;
 	}
 
-	void setId(T id) {
+	void set_id(T id) {
 		this->id = id;
 	}
 
@@ -66,12 +66,13 @@ public:
 		}
 
 		TreeNode<Integer> lepp_tree;
-		lepp_tree.setId(element_id);
+		lepp_tree.set_id(element_id);
 
 		while (Bisection<Mesh>::get_mesh().is_active(element_id)) {
 
 			depth_first(lepp_tree);
 		}
+
 	}
 
 
@@ -86,12 +87,12 @@ private:
 
 	void compute_lepp(TreeNode<Integer>& node){
 
-		Integer edge_num = Bisection<Mesh>::edge_select()->stable_select(Bisection<Mesh>::get_mesh(), node.getId());
+		Integer edge_num = Bisection<Mesh>::edge_select()->stable_select(Bisection<Mesh>::get_mesh(), node.get_id());
 		//Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id);
 		//Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id, Bisection<Mesh>::edge_element_map());
 
 		Edge edge;
-		Bisection<Mesh>::get_mesh().elem(node.getId()).edge(edge_num, edge.nodes[0], edge.nodes[1]);
+		Bisection<Mesh>::get_mesh().elem(node.get_id()).edge(edge_num, edge.nodes[0], edge.nodes[1]);
 		edge.fix_ordering();
 
 		auto incidents = Bisection<Mesh>::edge_element_map().elements(edge);
@@ -135,7 +136,7 @@ private:
 	bool is_leaf(const TreeNode<Integer>& node){
 
 		for (const auto & i : node.getChildren()) {
-			if(Bisection<Mesh>::get_mesh().is_active(i.getId())){
+			if(Bisection<Mesh>::get_mesh().is_active(i.get_id())){
 				return false;
 			}
 		}
@@ -149,8 +150,10 @@ private:
 			compute_lepp(node);
 		}
 
-		for (auto & child : node.getChildren())
-			depth_first(child);
+		for (auto & child : node.getChildren()){
+			if(Bisection<Mesh>::get_mesh().is_active(child.get_id())) // cases when the child is added as active but on the way it is bisected and becomes inactive.
+				depth_first(child);
+		}
 	}
 
 };
@@ -262,6 +265,41 @@ public:
 			Bisection<Mesh>(mesh) {
 	}
 
+
+	void refine_element(const Integer element_id) {
+
+		if (!Bisection<Mesh>::edge_select()->can_refine(Bisection<Mesh>::get_mesh(), element_id)) {
+			Bisection<Mesh>::get_incomplete_elements().push_back(element_id);
+			assert(!Bisection<Mesh>::get_fail_if_not_refine());
+			return;
+		}
+
+		while (Bisection<Mesh>::get_mesh().is_active(element_id)) {
+
+			std::map<Edge, std::vector<Integer>> terminal_edges;
+			compute_lepp(terminal_edges, element_id);
+
+			for (auto const& star : terminal_edges) {
+
+				for (const Integer element : star.second) {
+
+					if (Bisection<Mesh>::get_mesh().is_active(element)
+							&& Bisection<Mesh>::edge_select()->can_refine(Bisection<Mesh>::get_mesh(), element))
+						Bisection<Mesh>::bisect_element(element, star.first);
+				}
+			}
+		}
+	}
+
+private:
+	void set_edge_select(
+			const std::shared_ptr<EdgeSelect<Mesh_>> &edge_select) final {
+
+		if(edge_select->name() != "LongestEdge")
+			errx(select_err,"%s %d %s Error: Calling set_edge_select on LeppBisection with %s is not supported!",
+					__FILE__,__LINE__, __func__, edge_select->name().c_str());
+	}
+
 	void compute_lepp(std::map<Edge, std::vector<Integer>>& lepp, const Integer element_id){
 
 		Integer edge_num = Bisection<Mesh>::edge_select()->stable_select(Bisection<Mesh>::get_mesh(), element_id);
@@ -303,40 +341,6 @@ public:
 		}
 
 		return terminal;
-	}
-
-	void refine_element(const Integer element_id) {
-
-		if (!Bisection<Mesh>::edge_select()->can_refine(Bisection<Mesh>::get_mesh(), element_id)) {
-			Bisection<Mesh>::get_incomplete_elements().push_back(element_id);
-			assert(!Bisection<Mesh>::get_fail_if_not_refine());
-			return;
-		}
-
-		while (Bisection<Mesh>::get_mesh().is_active(element_id)) {
-
-			std::map<Edge, std::vector<Integer>> terminal_edges;
-			compute_lepp(terminal_edges, element_id);
-
-			for (auto const& star : terminal_edges) {
-
-				for (const Integer element : star.second) {
-
-					if (Bisection<Mesh>::get_mesh().is_active(element)
-							&& Bisection<Mesh>::edge_select()->can_refine(Bisection<Mesh>::get_mesh(), element))
-						Bisection<Mesh>::bisect_element(element, star.first);
-				}
-			}
-		}
-	}
-
-private:
-	void set_edge_select(
-			const std::shared_ptr<EdgeSelect<Mesh_>> &edge_select) final {
-
-		if(edge_select->name() != "LongestEdge")
-			errx(select_err,"%s %d %s Error: Calling set_edge_select on LeppBisection with %s is not supported!",
-					__FILE__,__LINE__, __func__, edge_select->name().c_str());
 	}
 
 };

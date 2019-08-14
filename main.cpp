@@ -843,8 +843,8 @@ void test_partition_4D()
 void run_benchmarks(int level)
 {
 	using namespace mars;
-
-	/*Benchmark<Mesh2> b;
+/*
+	Benchmark<Mesh2> b;
 	Mesh2 m;
 	read_mesh("../data/square_2_def.MFEM", m);
 
@@ -853,14 +853,14 @@ void run_benchmarks(int level)
 	LeppBenchmark<Mesh2> lb;
 	lb.run(level, m, "lb");*/
 
-	/*Benchmark<Mesh3> b3;
+	Benchmark<Mesh3> b3;
 	Mesh3 m3;
 	read_mesh("../data/cube_6.MFEM", m3);
 
 	b3.run(level, m3, "b3");
 
 	LeppBenchmark<Mesh3> lb3;
-	lb3.run(level, m3, "lb3");*/
+	lb3.run(level, m3, "lb3");
 
 	/*ParallelMesh2 pMesh;
 	generate_square(pMesh, 97, 10);
@@ -890,9 +890,8 @@ void run_benchmarks(int level)
 	LeppBenchmark<Mesh2> b2;
 	b2.run(level, Mesh, "b2");*/
 
-/*
-	ParallelMesh3 pMesh3;
-	generate_cube(pMesh3, 1, 1, 2);
+	/*ParallelMesh3 pMesh3;
+	generate_cube(pMesh3, 4, 2, 3);
 
 	Mesh3 sMesh3;
 	convert_parallel_mesh_to_serial(sMesh3, pMesh3);
@@ -910,17 +909,16 @@ void run_benchmarks(int level)
 	b3.run(level, sMesh3, "b3");
 
 	LeppBenchmark<Mesh3> lb3;
-		lb3.run(level, sMesh3, "lb3");
-*/
+		lb3.run(level, sMesh3, "lb3");*/
 
-	Benchmark<Mesh4> b4;
+/*	Benchmark<Mesh4> b4;
 	Mesh4 m4;
 	read_mesh("../data/cube4d_24.MFEM", m4);
 
 	b4.run(level, m4, "b4");
 
 	LeppBenchmark<Mesh4> lb4;
-	lb4.run(level, m4, "lb4");
+	lb4.run(level, m4, "lb4");*/
 }
 
 void test_incomplete_2D()
@@ -1185,7 +1183,7 @@ int main(int argc, char *argv[])
 
 	// if(level <100){
 
-		test_mars_mesh_generation_2D(level,level);
+		//test_mars_mesh_generation_2D(level,level);
 		//test_mars_mesh_generation_1D(level);
 	// }
 
