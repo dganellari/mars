@@ -1428,8 +1428,18 @@ constexpr bool Lesser (const T& a,const S& b)
   return a < b ? 1 : 0;
 }
 
+template<typename T>
+constexpr T Sum(const T&t)
+{
+  return t;
+}
 
 
+template<typename T,typename...Ts>
+constexpr T Sum(const T&t,const Ts&...ts)
+{
+  return t+Sum(ts...);
+}
 
 
 

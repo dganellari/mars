@@ -1534,6 +1534,10 @@ class Evaluation<Expression2Matrix<T,Rows,Cols> >
  	type value_;
 };
 
+
+template<typename T>
+constexpr auto Eval(const T& t){return Evaluation< Expression2<remove_all_t<decltype(t)>>>();}
+
 // first parameter is an expression, while the others input are utils 
 template<typename T,typename ...Ts>
 constexpr auto Eval(const T& t,const Ts&...ts){return Evaluation< Expression2<remove_all_t<decltype(t)>>,
@@ -1647,7 +1651,7 @@ public:
 
 // order(T) = order(+T)
 template<typename T>
-class QuadratureOrder< UnaryPlus< Expression2<T> > >
+class QuadratureOrder< UnaryPlus2< Expression2<T> > >
 { public:
   static constexpr Integer value=QuadratureOrder<T>::value;
 };
@@ -1781,7 +1785,7 @@ class OperatorTupleType;
 
 // order(T) = order(+T)
 template<typename T>
-class OperatorTupleType< UnaryPlus< Expression2<T> > >
+class OperatorTupleType< UnaryPlus2< Expression2<T> > >
 { public:
   using type=typename OperatorTupleType<T>::type;
 };

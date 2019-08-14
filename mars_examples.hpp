@@ -989,70 +989,14 @@ void assembly_example()
  points[2][1]=4;
  jacobian(elem,points,J);
 
- using FSspace1= FunctionSpace< MeshT, Lagrange2<1>,RT0<1>>;
+
+ using FSspace1= FunctionSpace< MeshT, Lagrange1<1>, RT1<2>,Lagrange2<1>>;
  FSspace1 FEspace1(mesh);
- using FSspace2= FunctionSpace< MeshT, Lagrange2<1>,RT0<1>>;
+ using FSspace2= FunctionSpace< MeshT, Lagrange2<1>,Lagrange1<1>>;
  FSspace2 FEspace2(mesh);
- using FSspace3= FunctionSpace< MeshT, Lagrange1<1>, RT1<1>,Lagrange2<1>>;
- FSspace3 FEspace3(mesh);
- using FSspace4= FunctionSpace< MeshT, Lagrange2<1>,Lagrange1<1>>;
- FSspace4 FEspace4(mesh);
- using FSspace5= FunctionSpace< MeshT, Lagrange2<1>, Lagrange3<2>>;
 
- using FSspace10= FunctionSpace< MeshT, Lagrange1<1>>;
- FSspace10 FEspace10(mesh);
- using FSspace11= FunctionSpace< MeshT, RT0<1>>;
- FSspace11 FEspace11(mesh);
-
- using FSspaceT2= FunctionSpace< MeshT2, Lagrange1<1>>;
- FSspaceT2 FEspaceT2(mesh2);
-
-// auto ecchime=FEspace3.set_quadrature_rule<0,GaussPoints<Elem,2>,GaussPoints<Elem,2>>();
- using fespace1= ElemFunctionSpace<Simplex<2,2>, Lagrange1<1>>;
- using fespace2= ElemFunctionSpace<Simplex<2,2>, Lagrange2<2>>;
- using fespace3= ElemFunctionSpace<Simplex<2,2>, RT0<1>>;
- 
- BilinearFormIntegrator<4,FSspace1,FSspace1,GradientOperator,IdentityOperator>(FEspace1,FEspace1);
-
-
-
- auto W=MixedFunctionSpace(FEspace3,FEspace4);
- auto W1=MixedFunctionSpace(W,FEspace4);
-
-decltype(W1)::ElementFunctionSpacesTupleType lkj;
-
-
- constexpr Integer NComponents=2;
-
- using QR=GaussPoints<Elem,QPOrder>;
- ShapeFunctionOperatorDependent<Simplex<2,2>, Lagrange1<NComponents>,IdentityOperator,QR >  sfod;
- sfod.init_reference();
- sfod.init(J);
- sfod.function();
- std::cout<<"sfod.function()=="<<sfod.function()<<std::endl;
-
-
-
-
-
- auto W3=MixedFunctionSpace(FEspace10,FEspace11);
-
-
- ShapeFunctionExpression<0,2,Lagrange1<1>> sfe1; 
- GradientShapeFunctionExpression<0,2,Lagrange1<1>> sfe2;
- ShapeFunctionExpression<1,2,RT0<1>> sfe3;
-
-
- auto sfen=sfe1+sfe2+sfe3;
-
- using TupleOperatorsAndQuadrature=TupleOfTupleChangeType<1,QR,OperatorTupleType<decltype(sfen)>::type>; 
- using TupleSpaces=typename decltype(W3)::UniqueElementFunctionSpacesTupleType;
-
-
- TupleSpaces reerree;
- TupleOperatorsAndQuadrature erre;
-
-
+ auto W=MixedFunctionSpace(FEspace1,FEspace2);
+ auto W1=MixedFunctionSpace(W,FEspace2);
 
  auto u =     MakeTrial<0>(W1);
  auto sigma = MakeTrial<1>(W1);
@@ -1071,34 +1015,60 @@ decltype(W1)::ElementFunctionSpacesTupleType lkj;
  auto ss3 =   MakeTest<6>(W1);
 
 // bilinear form
- auto l22=L2Inner(mesh,2*Div(sigma),Div(tau))+
- L2Inner(mesh,Grad(u),Grad(v))
- -
- L2Inner(mesh,u,Div(tau))+
+ auto l22=L2Inner(mesh,2*Div(sigma)*0.5,Div(tau))+
+ L2Inner(mesh,+Grad(u),-Grad(v))
+ +
+ L2Inner(mesh,+u,+Div(tau))+
  L2Inner(mesh,rr1,q)+
  L2Inner(mesh,r,s)+
- L2Inner(mesh,Grad(rr1)+sigma,tau)+
+ L2Inner(mesh,Grad(rr1)+sigma/4,tau)+
  L2Inner(mesh,r,s);
 
+
+ auto a=W1.dofmap<0,0>();
+ int b=W1.n_dofs();
+ int c=W1.tot_n_dofs<0>();
+ int d=W1.tot_n_dofs<1>();
+ // std::cout<<"a=="<<a<<std::endl;
+ std::cout<<"b=="<<b<<std::endl;
+ std::cout<<"c=="<<c<<std::endl;
+  std::cout<<"d=="<<c<<std::endl;
+  std::cout<<W1.Nelem_dofs<<std::endl;
+ Matrix<Real,W1.Nelem_dofs,W1.Nelem_dofs> mat_loc;
+ std::cout<<mat_loc<<std::endl;
+
  auto shape_coefficients=shape_function_coefficients(l22);
- shape_coefficients.init(mesh);
  auto referencemaps=reference_maps(l22);
  auto shapefunctions=shape_functions(l22);
+
+
+
+ shape_coefficients.init(mesh);
+
+ auto l22eval=Eval(l22,shapefunctions);
+ l22eval.apply(mat_loc);
 
 
  for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
  {
   elem=mesh.elem(elem_iter);
   // mesh.points(elem_iter,points);
+
   jacobian(elem,mesh.points(),J);
+
   shape_coefficients.init(elem_iter);
+
   referencemaps.init(J);
+
   shapefunctions.init_map(referencemaps);
   shapefunctions.init(shape_coefficients);
-  std::cout<<"elem_iter=="<<elem_iter<<std::endl;
-  for(Integer mm=0;mm<elem.nodes.size();mm++)
-    std::cout<<elem.nodes[mm]<<std::endl;
-  std::cout<<J<<std::endl;
+  shapefunctions.init(referencemaps,shape_coefficients);
+
+
+  // std::cout<<"elem_iter=="<<elem_iter<<std::endl;
+  // for(Integer mm=0;mm<elem.nodes.size();mm++)
+  //   std::cout<<elem.nodes[mm]<<std::endl;
+  // std::cout<<J<<std::endl;
 }
 
 
@@ -1134,10 +1104,9 @@ decltype(W1)::ElementFunctionSpacesTupleType lkj;
  // init(stuple,shape_coefficients);
 // shapefunctions()=4;
  // auto evals=Eval(s);
- auto l2rs=L2Inner(mesh,r,s);
- auto eval2=Eval(l2rs,shapefunctions);
+
  // evals.apply();
- // eval2.apply(shapefunctions());
+ // eval2.apply();
 
 
 // std::cout<<"--------J"<<std::endl;

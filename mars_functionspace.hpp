@@ -175,9 +175,13 @@ public:
   using SpacesToUniqueFEFamily=SpacesToUniqueFEFamilies<UniqueElementFunctionSpacesTupleType>;
   using ElemsTupleType=RemoveTupleDuplicates<TupleCatType<typename Args::ElemsTupleType...>>;
   using FromElementFunctionSpacesToUniqueNumbersTupleType=TupleAllToUniqueMap<ElementFunctionSpacesTupleType,UniqueElementFunctionSpacesTupleType>;
+  static constexpr Integer Nelem_dofs=Sum(Args::Nelem_dofs...);
   inline const Integer& n_dofs()const{return n_dofs_;}; 
 
   inline const DofMapType& dofmap()const{return dofmap_;};
+  
+  template<Integer...Ns>
+  inline constexpr const auto& dofmap()const{return tuple_get<Ns...>(dofmap_);};
 
 
 template<typename OtherArg,typename...OtherArgs>
@@ -282,11 +286,16 @@ public:
 };
 
 
-template<typename MixedSpace, Integer N, typename OperatorType>
-class Evaluation<Expression2<Trial<MixedSpace,N,OperatorType>>>
+
+template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, Integer N, typename OperatorType>
+class Evaluation<Expression2<TestOrTrial<MixedSpace,N,OperatorType>>>
 {
  public:
- using type= Trial<MixedSpace,N,OperatorType>;
+ using type= TestOrTrial<MixedSpace,N,OperatorType>;
+
+ static_assert((IsSame<TestOrTrial<MixedSpace,N,OperatorType>,Test<MixedSpace,N,OperatorType>>::value ||
+                IsSame<TestOrTrial<MixedSpace,N,OperatorType>,Trial<MixedSpace,N,OperatorType>>::value )
+               && "In Evaluation<Expression2<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");
  using FunctionSpace=typename type::FunctionSpace;
  using FunctionSpaces=GetType<typename type::UniqueElementFunctionSpacesTupleType,type::value>;
  using Elem=GetType<FunctionSpaces,0>;
@@ -314,39 +323,230 @@ private:
  type eval_;
 };
 
-template<typename MixedSpace, Integer N, typename OperatorType>
-class Evaluation<Expression2<Test<MixedSpace,N,OperatorType>>>
+
+
+
+
+
+
+
+
+
+
+
+template<typename Derived>
+class Evaluation<Expression2<UnaryPlus2< Expression2<Derived> > > >
 {
  public:
- using type= Test<MixedSpace,N,OperatorType>;
- using FunctionSpace=typename type::FunctionSpace;
- using FunctionSpaces=GetType<typename type::UniqueElementFunctionSpacesTupleType,type::value>;
- using Elem=GetType<FunctionSpaces,0>;
- using BaseFunctionSpace=GetType<FunctionSpaces,1>;
- using Operator=typename type::Operator;
- template<typename ...Ts> 
- Evaluation(const type& expr):
- eval_(expr)
+ using type=UnaryPlus2<Expression2<Derived>>;
+ using Eval=Evaluation<Expression2<Derived>>;
+
+ Evaluation(){};
+ 
+
+ Evaluation(const Expression2<type>& expr):
+ expr_(expr.derived()),
+ eval_(Eval(expr_()))
  {};
  
- template<typename QRule,typename ...Ts>
- constexpr const auto& apply(const std::tuple<Ts...>& tuple1)
+ template<Integer Rows,Integer Cols>
+ void apply(const Matrix<Real,Rows,Cols>& mat)
  {
-  using tuple_type=GetType<typename std::tuple<Ts...>,type::value>;
-  const auto& tuple=std::get<type::value>(tuple1);
-  constexpr Integer M=TypeToTupleElementPosition<ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QRule>,tuple_type>::value;
-  const auto& shape_func=std::get<M>(tuple);
-  return value_;
+  eval_.apply(mat);
  }
 private:
 
- type eval_;
- type value_;
+ type expr_;
+ Eval eval_;
+};
+
+
+template<typename Derived>
+class Evaluation<Expression2<UnaryMinus2< Expression2<Derived> > > >
+{
+ public:
+ using type=UnaryMinus2<Expression2<Derived>>;
+ using Eval=Evaluation<Expression2<Derived>>;
+
+ Evaluation(){};
+ 
+ Evaluation(const Expression2<type>& expr):
+ expr_(expr.derived()),
+ eval_(Eval(expr_()))
+ {};
+ 
+ template<Integer Rows,Integer Cols>
+ void apply(const Matrix<Real,Rows,Cols>& mat)
+ {
+  eval_.apply(mat);
+ }
+private:
+
+ type expr_;
+ Eval eval_;
 };
 
 
 
 
+template<typename DerivedRight,typename DerivedLeft>
+class Evaluation<Expression2<Addition2< Expression2<DerivedLeft>  ,  
+                                        Expression2<DerivedRight>
+                                        >>>
+{
+ public:
+ using type=Addition2<Expression2<DerivedLeft>,Expression2<DerivedRight>>;
+ using EvalLeft=Evaluation<Expression2<DerivedLeft>>;
+ using EvalRight=Evaluation<Expression2<DerivedRight>>;
+
+ Evaluation(){};
+ 
+
+ Evaluation(const Expression2<type>& expr):
+ expr_(expr.derived()),
+ eval_left_(EvalLeft(expr_.left())),
+ eval_right_(EvalRight(expr_.right()))
+{};
+ 
+ template<Integer Rows,Integer Cols>
+ void apply(const Matrix<Real,Rows,Cols>& mat)
+ {
+  eval_left_.apply(mat);
+  eval_right_.apply(mat); 
+ }
+private:
+
+ type expr_;
+ EvalLeft eval_left_;
+ EvalRight eval_right_;
+};
+
+template<typename DerivedRight,typename DerivedLeft>
+class Evaluation<Expression2<Subtraction2< Expression2<DerivedLeft>  ,  
+                                        Expression2<DerivedRight>
+                                        >>>
+{
+ public:
+ using type=Subtraction2<Expression2<DerivedLeft>,Expression2<DerivedRight>>;
+ using EvalLeft=Evaluation<Expression2<DerivedLeft>>;
+ using EvalRight=Evaluation<Expression2<DerivedRight>>;
+
+ Evaluation(){};
+ 
+
+ Evaluation(const Expression2<type>& expr):
+ expr_(expr.derived()),
+ eval_left_(EvalLeft(expr_.left())),
+ eval_right_(EvalRight(expr_.right()))
+{};
+ 
+ template<Integer Rows,Integer Cols>
+ void apply(const Matrix<Real,Rows,Cols>& mat)
+ {
+  eval_left_.apply(mat);
+  eval_right_.apply(mat); 
+ }
+private:
+
+ type expr_;
+ EvalLeft eval_left_;
+ EvalRight eval_right_;
+};
+
+
+template<typename DerivedRight>
+class Evaluation<Expression2<Multiply2< Real, Expression2<DerivedRight> >>>                                     
+{
+ public:
+ using type=Multiply2<Real,Expression2<DerivedRight>>;
+ using EvalRight=Evaluation<Expression2<DerivedRight>>;
+ 
+ Evaluation(){};
+ 
+
+ Evaluation(const Expression2<type>& expr):
+ expr_(expr.derived()),
+ eval_left_(expr_.left()),
+ eval_right_(EvalRight(expr_.right()))
+{};
+ 
+ template<Integer Rows,Integer Cols>
+ void apply(const Matrix<Real,Rows,Cols>& mat)
+ {
+  // eval_left_.apply(mat);
+  // eval_right_.apply(mat); 
+ }
+private:
+
+ type expr_;
+ Real eval_left_;
+ EvalRight eval_right_;
+};
+
+
+
+
+template< typename DerivedLeft>
+class Evaluation<Expression2<Multiply2< Expression2<DerivedLeft>,
+                                        Real
+                                        >>>                                       
+{
+ public:
+ using type=Multiply2<Expression2<DerivedLeft>,Real>;
+ using EvalLeft=Evaluation<Expression2<DerivedLeft>>;
+ 
+ Evaluation(){};
+ 
+
+ Evaluation(const Expression2<type>& expr):
+ expr_(expr.derived()),
+ eval_left_(EvalLeft(expr_.left())),
+ eval_right_(expr_.right())
+{};
+ 
+ template<Integer Rows,Integer Cols>
+ void apply(const Matrix<Real,Rows,Cols>& mat)
+ {
+  // eval_left_.apply(mat);
+  // eval_right_.apply(mat); 
+ }
+private:
+
+ type expr_;
+ EvalLeft eval_left_;
+ Real eval_right_;
+};
+
+template< typename DerivedLeft>
+class Evaluation<Expression2<Divide2< Expression2<DerivedLeft>,
+                                        Real
+                                        >>>                                       
+{
+ public:
+ using type=Divide2<Expression2<DerivedLeft>,Real>;
+ using EvalLeft=Evaluation<Expression2<DerivedLeft>>;
+ 
+ Evaluation(){};
+ 
+
+ Evaluation(const Expression2<type>& expr):
+ expr_(expr.derived()),
+ eval_left_(EvalLeft(expr_.left())),
+ eval_right_(expr_.right())
+{};
+ 
+ template<Integer Rows,Integer Cols>
+ void apply(const Matrix<Real,Rows,Cols>& mat)
+ {
+  // eval_left_.apply(mat);
+  // eval_right_.apply(mat); 
+ }
+private:
+
+ type expr_;
+ EvalLeft eval_left_;
+ Real eval_right_;
+};
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///// We associate Number<2>,Number<1>,Number<0> respectively to a X=Trial/Test/OtherFunction
 ///// We define IsTestOrTrial<X> which is used for each term Left or Right in L2Inner<Left,Right>
@@ -544,28 +744,40 @@ class TypeOfForm<Number<2>,Number<1>>
 };
 
 
+// template<typename MixedSpace, Integer N,typename OperatorType>
+// class OperatorTupleType<Test<MixedSpace,N,OperatorType> >
+// { public:
+//   using Test=Test<MixedSpace,N,OperatorType>;
+//   static constexpr Integer Nmax= Test::Nmax;
+//   using single_type=std::tuple<std::tuple< OperatorType,std::tuple<> >>;
+//   using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
+//   using type=TupleChangeType<N,single_type,emptytuple>;
+// };
 
-template<typename MixedSpace, Integer N,typename OperatorType>
-class OperatorTupleType<Test<MixedSpace,N,OperatorType> >
+// template<typename MixedSpace, Integer N,typename OperatorType>
+// class OperatorTupleType<Trial<MixedSpace,N,OperatorType> >
+// { public:
+//   using Trial=Trial<MixedSpace,N,OperatorType>;
+//   static constexpr Integer Nmax= Trial::Nmax;
+//   using single_type=std::tuple<std::tuple< OperatorType,std::tuple<> >>;
+//   using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
+//   using type=TupleChangeType<N,single_type,emptytuple>;
+// };
+
+
+template<template<class,Integer,class > class TestOrTrial_,typename MixedSpace, Integer N,typename OperatorType>
+class OperatorTupleType<TestOrTrial_<MixedSpace,N,OperatorType> >
 { public:
-  using Test=Test<MixedSpace,N,OperatorType>;
-  static constexpr Integer Nmax= Test::Nmax;
+  using TestOrTrial=TestOrTrial_<MixedSpace,N,OperatorType>;
+  static_assert((IsSame<TestOrTrial,Test<MixedSpace,N,OperatorType>>::value ||
+                IsSame<TestOrTrial,Trial<MixedSpace,N,OperatorType>>::value )
+               && "In Evaluation<Expression2<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");
+
+  static constexpr Integer Nmax= TestOrTrial::Nmax;
   using single_type=std::tuple<std::tuple< OperatorType,std::tuple<> >>;
   using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
   using type=TupleChangeType<N,single_type,emptytuple>;
 };
-
-template<typename MixedSpace, Integer N,typename OperatorType>
-class OperatorTupleType<Trial<MixedSpace,N,OperatorType> >
-{ public:
-  using Trial=Trial<MixedSpace,N,OperatorType>;
-  static constexpr Integer Nmax= Trial::Nmax;
-  using single_type=std::tuple<std::tuple< OperatorType,std::tuple<> >>;
-  using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
-  using type=TupleChangeType<N,single_type,emptytuple>;
-};
-
-
 
 
 
@@ -586,15 +798,15 @@ MakeTrial(const MixedSpace<Args...>& W)
         GetType<typename MixedSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value>();}
 
 
-template<typename MixedSpace,Integer N>
-Trial<MixedSpace,N,GradientOperator> 
-Grad(const Trial<MixedSpace,N,IdentityOperator>& W)
-{return Trial<MixedSpace,N,GradientOperator> ();}
 
-template<typename MixedSpace,Integer N>
-Test<MixedSpace,N,GradientOperator> 
-Grad(const Test<MixedSpace,N,IdentityOperator>& W)
-{return Test<MixedSpace,N,GradientOperator> ();}
+template<template<class,Integer,class>class TestOrTrial, typename MixedSpace,Integer N>
+TestOrTrial<MixedSpace,N,GradientOperator> 
+Grad(const TestOrTrial<MixedSpace,N,IdentityOperator>& W)
+{
+  static_assert((IsSame<TestOrTrial<MixedSpace,N,IdentityOperator>,Test<MixedSpace,N,IdentityOperator>>::value ||
+                 IsSame<TestOrTrial<MixedSpace,N,IdentityOperator>,Trial<MixedSpace,N,IdentityOperator>>::value )
+                 && "In Evaluation<Expression2<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");  
+  return TestOrTrial<MixedSpace,N,GradientOperator> ();}
 
 
 template<typename MixedSpace,Integer N>
@@ -678,49 +890,6 @@ class L2DotProductIntegral: public Expression2<L2DotProductIntegral<MeshT,Left,R
     type product_;
     Integer label_;
 };
-
-template<typename Form>
-class ShapeFunctions;
-
-template<typename MeshT, typename Left,typename Right,Integer QR, typename Form>
-class Evaluation<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>, ShapeFunctions<Form>>
-{
- public:
- using type= L2DotProductIntegral<MeshT,Left,Right,QR>;
- using EvalLeft=Evaluation<Expression2<Left>>;
- using EvalRight=Evaluation<Expression2<Right>>;
- Evaluation(){};
- 
-
- Evaluation(const type& expr, ShapeFunctions<Form>& shape_functions):
- eval_(expr),
- eval_left_(EvalLeft(eval_.left())),
- eval_right_(EvalRight(eval_.right())),
- shape_functions_(shape_functions)
- {};
- 
-
- template<typename QRule,typename ...Ts>
- void apply_aux(const std::tuple<Ts...>& tuple)
- {
-  eval_left_.template apply<QRule>(tuple);
-  eval_right_.template apply<QRule>(tuple);
- }
-
- template<typename ...Ts>
- void apply(const std::tuple<Ts...>& tuple)
- {
-  apply_aux<typename type::QRule>(tuple);
- }
-private:
-
- type eval_;
- EvalLeft eval_left_;
- EvalRight eval_right_;
- ShapeFunctions<Form>& shape_functions_;
- // type value_;
-};
-
 
 
 
@@ -819,60 +988,143 @@ class Subtraction2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegra
 
 
 
-   template<typename MapTupleNumber,Integer Nmax_aux,Integer N,typename Tuple,typename Map>
-   typename std::enable_if< (N>Nmax_aux) ,void>::type 
-   init_map_aux_aux(Tuple& t,const Map& maps){}
-
-   template<typename MapTupleNumber,Integer Nmax_aux,Integer N,typename Tuple,typename Map>
-   typename std::enable_if< (N<=Nmax_aux) ,void>::type 
-   init_map_aux_aux(Tuple& t,const Map& maps) 
-   {auto& t_nth=std::get<N>(t); 
-    auto& map_nth=std::get<GetType<MapTupleNumber,N>::value>(maps); 
-    t_nth.init_map(map_nth);
-    init_map_aux_aux<MapTupleNumber,Nmax_aux,N+1>(t,maps);}
 
 
+template<typename Form>
+class ShapeFunctions;
 
-   template<typename SpacesToUnique,typename MapTupleNumbersW1,Integer Nmax_aux,Integer N,typename Tuple,typename Map>
-   typename std::enable_if< (N>Nmax_aux) ,void>::type 
-   init_map_aux(Tuple& t,const Map& maps){}
-
-   template<typename SpacesToUnique,typename MapTupleNumbersW1,Integer Nmax_aux,Integer N,typename Tuple,typename Map>
-   typename std::enable_if< (N<=Nmax_aux) ,void>::type 
-   init_map_aux(Tuple& t,const Map& maps) 
-   {
-    auto& t_nth=std::get<N>(t); 
-    auto& map_nth=std::get<GetType<SpacesToUnique,N>::value>(maps); 
-    init_map_aux_aux<GetType<MapTupleNumbersW1,N>,TupleTypeSize<decltype(t_nth)>::value-1,0>(t_nth,map_nth);
-    init_map_aux<SpacesToUnique, MapTupleNumbersW1,Nmax_aux,N+1>(t,maps);
-    }
-
-   template<typename SpacesToUnique,typename MapTupleNumbers,typename Tuple,typename Map>
-   void init_map(Tuple& t,const Map& maps) 
-   {init_map_aux< SpacesToUnique,MapTupleNumbers,TupleTypeSize<MapTupleNumbers>::value-1,0>(t,maps);}
-
-
-
-
-
-template<typename ConstFormReference>
-void Assembly(const ConstFormReference& form)
+template<typename MeshT, typename Left,typename Right,Integer QR, typename Form>
+class Evaluation<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>, ShapeFunctions<Form>>
 {
-  using Form=typename std::remove_const<typename std::remove_reference<ConstFormReference>::type>::type;
-  using UniqueElementFunctionSpacesTupleType=typename Form::UniqueElementFunctionSpacesTupleType;
-  using TupleOperatorsAndQuadrature= typename OperatorTupleType<Form>::type;
-  using TupleOfTupleNoQuadrature=TupleOfTupleRemoveQuadrature<TupleOperatorsAndQuadrature>;
-  using SpacesToUniqueFEFamilies=SpacesToUniqueFEFamilies<UniqueElementFunctionSpacesTupleType>;
-  using Map=MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,UniqueElementFunctionSpacesTupleType>;
-  using UniqueMapping=UniqueMap<SpacesToUniqueFEFamilies,Map> ;
-  using TupleOfTupleShapeFunction=TupleOfTupleShapeFunctionType<UniqueElementFunctionSpacesTupleType,TupleOperatorsAndQuadrature>;
-  using MapTupleNumbers=MapTupleInit<TupleOfTupleShapeFunction, SpacesToUniqueFEFamilies, UniqueMapping>;
+ public:
+ using type= L2DotProductIntegral<MeshT,Left,Right,QR>;
+ using EvalLeft=Evaluation<Expression2<Left>>;
+ using EvalRight=Evaluation<Expression2<Right>>;
+ Evaluation(){};
  
-  TupleOfTupleShapeFunction stuple;
-  UniqueMapping mapping;
-  init_map< SpacesToUniqueFEFamilies,MapTupleNumbers>(stuple,mapping);
+ Evaluation(const type& expr, ShapeFunctions<Form>& shape_functions):
+ eval_(expr),
+ eval_left_(EvalLeft(eval_.left())),
+ eval_right_(EvalRight(eval_.right())),
+ shape_functions_(shape_functions)
+ {};
+ 
+ template<typename QRule,typename ...Ts>
+ void apply_aux(const std::tuple<Ts...>& tuple)
+ {
+  eval_left_.template apply<QRule>(tuple);
+  eval_right_.template apply<QRule>(tuple);
+ }
 
-}
+ template<typename ...Ts>
+ void apply(const std::tuple<Ts...>& tuple)
+ {
+  apply_aux<typename type::QRule>(tuple);
+ }
+
+ template<Integer Rows,Integer Cols>
+ void apply(const Matrix<Real,Rows,Cols>& mat)
+ {
+  // eval_left_.apply(mat);
+  // eval_right_.apply(mat); 
+  // apply_aux<typename type::QRule>(tuple);
+ }
+ 
+private:
+ type eval_;
+ EvalLeft eval_left_;
+ EvalRight eval_right_;
+ ShapeFunctions<Form>& shape_functions_;
+};
+
+
+template<typename MeshT, typename Left,typename Right,typename DerivedLeft, typename Form>
+class Evaluation<Expression2<Addition2< Expression2<DerivedLeft>  ,  
+                                        Expression2<L2DotProductIntegral<MeshT,Left,Right>>>>,
+                 ShapeFunctions<Form>>
+{
+ public:
+ using type=Addition2<Expression2<DerivedLeft>,Expression2<L2DotProductIntegral<MeshT,Left,Right>>>;
+ using EvalLeft=Evaluation<Expression2<DerivedLeft>,ShapeFunctions<Form>>;
+ using EvalRight=Evaluation<Expression2<L2DotProductIntegral<MeshT,Left,Right>>,ShapeFunctions<Form>>;
+ Evaluation(){};
+ 
+
+ Evaluation(const Expression2<type>& expr, ShapeFunctions<Form>& shape_functions):
+ expr_(expr.derived()),
+ eval_left_(EvalLeft(expr_.left(),shape_functions)),
+ eval_right_(EvalRight(expr_.right(),shape_functions)),
+ shape_functions_(shape_functions)
+{};
+ 
+ template<Integer Rows,Integer Cols>
+ void apply(const Matrix<Real,Rows,Cols>& mat)
+ {
+  eval_left_.apply(mat);
+  eval_right_.apply(mat); 
+ }
+private:
+
+ type expr_;
+ EvalLeft eval_left_;
+ EvalRight eval_right_;
+ ShapeFunctions<Form>& shape_functions_;
+};
+
+template<typename MeshT, typename Left,typename Right,typename DerivedLeft, typename Form>
+class Evaluation<Expression2<Subtraction2< Expression2<DerivedLeft>  ,  
+                                        Expression2<L2DotProductIntegral<MeshT,Left,Right>>>>,
+                 ShapeFunctions<Form>>{
+ public:
+ using type=Subtraction2<Expression2<DerivedLeft>,Expression2<L2DotProductIntegral<MeshT,Left,Right>>>;
+ using EvalLeft=Evaluation<Expression2<DerivedLeft>,ShapeFunctions<Form>>;
+ using EvalRight=Evaluation<Expression2<L2DotProductIntegral<MeshT,Left,Right>>,ShapeFunctions<Form>>;
+ Evaluation(){};
+ 
+
+ Evaluation(const type& expr, ShapeFunctions<Form>& shape_functions):
+ expr_(expr),
+ eval_left_(EvalLeft(expr_.left(),shape_functions)),
+ eval_right_(EvalRight(expr_.right(),shape_functions)),
+ shape_functions_(shape_functions)
+ {};
+ 
+ template<Integer Rows,Integer Cols>
+ void apply(const Matrix<Real,Rows,Cols>& mat)
+ {
+  eval_left_.apply(mat);
+  eval_right_.apply(mat); 
+ }
+private:
+
+ type expr_;
+ EvalLeft eval_left_;
+ EvalRight eval_right_;
+ ShapeFunctions<Form>& shape_functions_;
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 template<typename Form>
 class ShapeFunctions
@@ -919,40 +1171,12 @@ class ShapeFunctions
     }
 
 
-   constexpr       auto& operator()()      {return tuple;}
-   constexpr const auto& operator()()const {return tuple;}
-
-
-   template<typename Map>
-   constexpr void init_map(const Map& maps) 
+   template<typename ConstFormReference>
+   constexpr void init_map(const ReferenceMaps<ConstFormReference>& maps) 
    {init_map_aux<TupleTypeSize<MapTupleNumbers>::value-1,0>(maps());}
 
-   template<Integer...Ns>
-   constexpr const auto& get()const{return tuple_get<Ns...>(tuple);}
 
-   template<Integer...Ns>
-         auto& get()     {return tuple_get<Ns...>(tuple);}
-
-   template<Integer...Ns>
-   constexpr const auto& value()const{return tuple_get<Ns...>(tuple).eval();}
-
-   template<Integer...Ns>
-         auto& value()     {return tuple_get<Ns...>(tuple).eval();}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+//////////////////////////////////////////////////
 
 
 
@@ -1016,8 +1240,31 @@ class ShapeFunctions
    }
 
 
+  template<typename ConstFormReference, typename Coefficients>
+  constexpr void init(const ReferenceMaps<ConstFormReference>& maps,const Coefficients& shape_coefficients)
+  {
+    init_map(maps);
+    init(shape_coefficients);
+   }
 
 
+
+
+   constexpr       auto& operator()()      {return tuple;}
+   constexpr const auto& operator()()const {return tuple;}
+
+
+   template<Integer...Ns>
+   constexpr const auto& get()const{return tuple_get<Ns...>(tuple);}
+
+   template<Integer...Ns>
+         auto& get()     {return tuple_get<Ns...>(tuple);}
+
+   template<Integer...Ns>
+   constexpr const auto& value()const{return tuple_get<Ns...>(tuple).eval();}
+
+   template<Integer...Ns>
+         auto& value()     {return tuple_get<Ns...>(tuple).eval();}
 
 
 

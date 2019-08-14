@@ -1963,6 +1963,8 @@ class SingleTypeShapeFunction<FunctionSpace,DivergenceOperator>
 {
 public:
   static constexpr Integer NComponents=FunctionSpace::NComponents;
+  static constexpr Integer ShapeFunctionDim1=1;
+  static constexpr Integer ShapeFunctionDim2=1; 
   using SingleType=Matrix<Real,1,1>;
   using TotType= Matrix<Real, NComponents,1 >;   
 };
@@ -1987,15 +1989,13 @@ class ShapeFunctionDependent
   static constexpr Integer Dim=Elem::Dim;
   static constexpr Integer ManifoldDim=Elem::ManifoldDim;
   static constexpr Integer NComponents=BaseFunctionSpace::NComponents;
-  static constexpr Integer ShapeFunctionDim1=FunctionSpace::ShapeFunctionDim1;
-  static constexpr Integer ShapeFunctionDim2=FunctionSpace::ShapeFunctionDim2;
   static constexpr Integer NQPoints=QuadratureRule::NQPoints;
   static constexpr Integer Ntot=FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,BaseFunctionSpace>>::value;
   static constexpr Integer Ndofs=Ntot/NComponents;
   static constexpr Integer Order=BaseFunctionSpace::Order;
   static constexpr Integer FEFamily=BaseFunctionSpace::FEFamily;
   
-  using SingleType   = typename SingleTypeShapeFunction<FunctionSpace,Operator>::SingleType;// Matrix<Real, ShapeFunctionDim1, ShapeFunctionDim2>;
+  using SingleType   = typename SingleTypeShapeFunction<FunctionSpace,Operator>::SingleType;
   using VectorSingleType   = Vector<SingleType,Ndofs>;
   using tot_type= typename SingleTypeShapeFunction<FunctionSpace,Operator>::TotType;
   using type= FQPValues<tot_type,NQPoints,Ntot>;
@@ -2003,7 +2003,10 @@ class ShapeFunctionDependent
   using QP = Matrix<Real,NQPoints,Dim>;
   using qp_points_type=typename QuadratureRule::qp_points_type;
   using Map=MapFromReference5<Operator,Elem,BaseFunctionSpace::FEFamily>;
-  
+
+  static constexpr Integer ShapeFunctionDim1=SingleTypeShapeFunction<FunctionSpace,Operator>::ShapeFunctionDim1;
+  static constexpr Integer ShapeFunctionDim2=SingleTypeShapeFunction<FunctionSpace,Operator>::ShapeFunctionDim2;
+
   static constexpr FQPValues<SingleType,NQPoints,Ndofs>  
   reference_values{reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(QuadratureRule::qp_points)};
  
@@ -2025,17 +2028,8 @@ class ShapeFunctionDependent
             {             
                 func_values_[n_tot_][qp].zero();
               func_tmp_=  mapping * reference_values[n_dof][qp];
-              // std::cout<<"????????????????????????????????????????????????????????????????????????????"<<std::endl;
-              // std::cout<<"map="<<mapping<<std::endl;
-              // std::cout<<"ref="<<reference_values[n_dof][qp]<<std::endl;
-              // std::cout<<"????????????????????????????????????????????????????????????????????????????"<<std::endl;
-              // std::cout<<"func val="<<func_values_[n_tot_][qp]<<std::endl;
-              // std::cout<<"func tmp"<<func_tmp_<<std::endl;
-
               assign(func_values_[n_tot_][qp],func_tmp_,n_,0);
-              // std::cout<<"func val dopo="<<func_values_[n_tot_][qp]<<std::endl;
-              // std::cout<<"_______________________"<<std::endl;
-                }
+             }
                    
         }
        }
@@ -2055,18 +2049,8 @@ class ShapeFunctionDependent
             for(Integer qp=0;qp<NQPoints;qp++)
             {             
               func_values_[n_tot_][qp].zero();
-              func_tmp_=alpha[n_dof] * mapping * reference_values[n_dof][qp];
-              // std::cout<<"????????????????????????????????????????????????????????????????????????????"<<std::endl;
-              // std::cout<<"alpha="<<alpha[n_dof]<<std::endl;
-              // std::cout<<"map="<<mapping<<std::endl;
-              // std::cout<<"ref="<<reference_values[n_dof][qp]<<std::endl;
-              // std::cout<<"????????????????????????????????????????????????????????????????????????????"<<std::endl;
-              // std::cout<<"func val="<<func_values_[n_tot_][qp]<<std::endl;
-              // std::cout<<"func tmp"<<func_tmp_<<std::endl;
-
+              func_tmp_=alpha[n_dof] * mapping * reference_values[n_dof][qp];             
               assign(func_values_[n_tot_][qp],func_tmp_,n_,0);
-              // std::cout<<"func val dopo="<<func_values_[n_tot_][qp]<<std::endl;
-              // std::cout<<"_______________________"<<std::endl;
          }
                    
         }
