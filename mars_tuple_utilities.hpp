@@ -594,29 +594,29 @@ using TupleChangeType=typename TupleChangeTypeHelper< N,Tchange,std::tuple<Ts...
 
 
 template<Integer N,Integer Nmax,typename Tuple,Integer Nchange,typename Tchange>
-class provahelper;
+class TupleChangeNthTypeHelper;
 
 template<Integer Nmax,typename Tuple,Integer Nchange,typename Tchange>
-class provahelper<Nmax,Nmax,Tuple,Nchange,Tchange>
+class TupleChangeNthTypeHelper<Nmax,Nmax,Tuple,Nchange,Tchange>
 {
 public:
 using type=std::tuple<TupleChangeType<Nchange,Tchange,GetType<Tuple,Nmax>>>;
 };
 
 template<Integer N,Integer Nmax,typename Tuple,Integer Nchange,typename Tchange>
-class provahelper
+class TupleChangeNthTypeHelper
 {
  public:
  using single_type=std::tuple<TupleChangeType<Nchange,Tchange,GetType<Tuple,N>>>;
 
  using type=decltype(std::tuple_cat(std::declval<single_type>(),
-                           std::declval<typename provahelper<N+1,Nmax,Tuple,Nchange,Tchange>::type>()));
+                           std::declval<typename TupleChangeNthTypeHelper<N+1,Nmax,Tuple,Nchange,Tchange>::type>()));
 
 
 };
 
 template<typename Tuple,Integer Nchange,typename Tchange>
-using prova=typename provahelper<0,TupleTypeSize<Tuple>::value-1,Tuple,Nchange,Tchange>::type;
+using TupleChangeNthType=typename TupleChangeNthTypeHelper<0,TupleTypeSize<Tuple>::value-1,Tuple,Nchange,Tchange>::type;
 
 
 
@@ -629,7 +629,7 @@ class TupleOfTupleChangeTypeHelper<Nmax,Nmax,Nchange,Tchange,TupleOfTuple>
 {
  public:
  using T=GetType<TupleOfTuple,Nmax>;
- using type=typename std::conditional< std::is_same< T,std::tuple<> >::value , std::tuple<T>, std::tuple<prova<T,Nchange,Tchange >>>::type;
+ using type=typename std::conditional< std::is_same< T,std::tuple<> >::value , std::tuple<T>, std::tuple<TupleChangeNthType<T,Nchange,Tchange >>>::type;
 };
 
 
@@ -639,7 +639,7 @@ class TupleOfTupleChangeTypeHelper
 {
 public:
 using T=GetType<TupleOfTuple,N>;
-using single_type=typename std::conditional< std::is_same< T,std::tuple<> >::value , std::tuple<T>, std::tuple<prova<T,Nchange,Tchange >>>::type;
+using single_type=typename std::conditional< std::is_same< T,std::tuple<> >::value , std::tuple<T>, std::tuple<TupleChangeNthType<T,Nchange,Tchange >>>::type;
 using type=decltype(std::tuple_cat(std::declval<single_type>(),
                            std::declval<typename TupleOfTupleChangeTypeHelper<N+1,Nmax,Nchange,Tchange,TupleOfTuple>::type>()));
 };

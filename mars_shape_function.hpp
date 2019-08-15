@@ -2288,56 +2288,56 @@ ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QuadratureRule>::referenc
 // };
 
 
-class QPExpression1: public QPExpression<QPExpression1,Matrix<Real,3,1>,6,2>
-{
- public: 
-     static constexpr Integer Dim=2;
-     using Point = Vector<Real,Dim> ;
-      Matrix<Real,3,1>& apply(const Point& point)
-     {
-      mat_(0,0)=point[0];
-      mat_(1,0)=point[1];
-      mat_(2,0)=point[0]+point[1];
-      return mat_;
-     }
-  protected:
-    Matrix<Real,3,1> mat_;
-};
+// class QPExpression1: public QPExpression<QPExpression1,Matrix<Real,3,1>,6,2>
+// {
+//  public: 
+//      static constexpr Integer Dim=2;
+//      using Point = Vector<Real,Dim> ;
+//       Matrix<Real,3,1>& apply(const Point& point)
+//      {
+//       mat_(0,0)=point[0];
+//       mat_(1,0)=point[1];
+//       mat_(2,0)=point[0]+point[1];
+//       return mat_;
+//      }
+//   protected:
+//     Matrix<Real,3,1> mat_;
+// };
 
 
-class QPExpression2: public QPExpression<QPExpression2,Matrix<Real,1,3>,6,2>
-{
- public: 
-     static constexpr Integer Dim=2;
-     using Point = Vector<Real,Dim> ;
-      Matrix<Real,1,3>& apply(const Point& point)
-     {
-      mat_(0,0)=point[0];
-      mat_(0,1)=point[1];
-      mat_(0,2)=point[0]+point[1];
-      return mat_;
-     }
-  protected:
-    Matrix<Real,1,3> mat_;
-};
+// class QPExpression2: public QPExpression<QPExpression2,Matrix<Real,1,3>,6,2>
+// {
+//  public: 
+//      static constexpr Integer Dim=2;
+//      using Point = Vector<Real,Dim> ;
+//       Matrix<Real,1,3>& apply(const Point& point)
+//      {
+//       mat_(0,0)=point[0];
+//       mat_(0,1)=point[1];
+//       mat_(0,2)=point[0]+point[1];
+//       return mat_;
+//      }
+//   protected:
+//     Matrix<Real,1,3> mat_;
+// };
 
 
 
-class QPExpression3: public QPExpression<QPExpression3,Matrix<Real,2,1>,6,2>
-{
- public: 
-     static constexpr Integer Dim=2;
-     using T=Matrix<Real,2,1>;
-     using Point = Vector<Real,Dim> ;
-     T& apply(const Point& point)
-     {
-      mat_(0,0)=point[0];
-      mat_(1,0)=point[1];
-      return mat_;
-     }
-  protected:
-  T mat_;
-};
+// class QPExpression3: public QPExpression<QPExpression3,Matrix<Real,2,1>,6,2>
+// {
+//  public: 
+//      static constexpr Integer Dim=2;
+//      using T=Matrix<Real,2,1>;
+//      using Point = Vector<Real,Dim> ;
+//      T& apply(const Point& point)
+//      {
+//       mat_(0,0)=point[0];
+//       mat_(1,0)=point[1];
+//       return mat_;
+//      }
+//   protected:
+//   T mat_;
+// };
 
 
 

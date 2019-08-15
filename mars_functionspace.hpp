@@ -287,14 +287,35 @@ public:
 
 
 
-template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, Integer N, typename OperatorType>
-class Evaluation<Expression2<TestOrTrial<MixedSpace,N,OperatorType>>>
-{
- public:
- using type= TestOrTrial<MixedSpace,N,OperatorType>;
-
+// type(T) = type(REAL * T)
+template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, 
+         Integer N, typename OperatorType,typename QRule>
+class OperatorTypeHelper<TestOrTrial<MixedSpace,N,OperatorType>,QRule >
+{ public:
  static_assert((IsSame<TestOrTrial<MixedSpace,N,OperatorType>,Test<MixedSpace,N,OperatorType>>::value ||
                 IsSame<TestOrTrial<MixedSpace,N,OperatorType>,Trial<MixedSpace,N,OperatorType>>::value )
+               && "In Evaluation<Expression2<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");  
+  using tmptype= TestOrTrial<MixedSpace,N,OperatorType>;
+  using FunctionSpace=typename tmptype::FunctionSpace;
+  using FunctionSpaces=GetType<typename tmptype::UniqueElementFunctionSpacesTupleType,tmptype::value>;
+  using Elem=GetType<FunctionSpaces,0>;
+  using BaseFunctionSpace=GetType<FunctionSpaces,1>;
+  using Operator=typename tmptype::Operator; 
+  using type=typename ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QRule>::type;
+};
+
+
+template<typename Form>
+class ShapeFunctions;
+
+template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, Integer N, typename Operator_,typename...OtherTemplateArguments>
+class Evaluation<Expression2<TestOrTrial<MixedSpace,N,Operator_>>,OtherTemplateArguments...>
+{
+ public:
+ using type= TestOrTrial<MixedSpace,N,Operator_>;
+
+ static_assert((IsSame<TestOrTrial<MixedSpace,N,Operator_>,Test<MixedSpace,N,Operator_>>::value ||
+                IsSame<TestOrTrial<MixedSpace,N,Operator_>,Trial<MixedSpace,N,Operator_>>::value )
                && "In Evaluation<Expression2<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");
  using FunctionSpace=typename type::FunctionSpace;
  using FunctionSpaces=GetType<typename type::UniqueElementFunctionSpacesTupleType,type::value>;
@@ -302,251 +323,29 @@ class Evaluation<Expression2<TestOrTrial<MixedSpace,N,OperatorType>>>
  using BaseFunctionSpace=GetType<FunctionSpaces,1>;
  using Operator=typename type::Operator;
  template<typename QRule>
- using value_type=typename ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QRule>::type;
+ using value_type=OperatorType<type,QRule>;// typename ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QRule>::type;
+
+ Evaluation(){};
 
  template<typename ...Ts> 
  Evaluation(const type& expr):
  eval_(expr)
  {};
  
- template<typename QRule, typename ...Ts>
- constexpr void apply(const std::tuple<Ts...>& tuple1,value_type<QRule>& value)
+ template<typename QRule, typename...Args,typename...OtherTemplateArguments2>
+ constexpr void apply(value_type<QRule>& value,const std::tuple<Args...>& tuple_of_tuple)
  {
-  using tuple_type=GetType<typename std::tuple<Ts...>,type::value>;
-  const auto& tuple=std::get<type::value>(tuple1);
+  using tuple_type=GetType<std::tuple<Args...>,type::value>;
+  const auto& tuple=tuple_get<type::value>(tuple_of_tuple);
   constexpr Integer M=TypeToTupleElementPosition<ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QRule>,tuple_type>::value;
-  value=std::get<M>(tuple);
-  // return value_;
+  value=tuple_get<M>(tuple).eval();
  }
 private:
-
+ 
  type eval_;
 };
 
 
-
-
-
-
-
-
-
-
-
-
-template<typename Derived>
-class Evaluation<Expression2<UnaryPlus2< Expression2<Derived> > > >
-{
- public:
- using type=UnaryPlus2<Expression2<Derived>>;
- using Eval=Evaluation<Expression2<Derived>>;
-
- Evaluation(){};
- 
-
- Evaluation(const Expression2<type>& expr):
- expr_(expr.derived()),
- eval_(Eval(expr_()))
- {};
- 
- template<Integer Rows,Integer Cols>
- void apply(const Matrix<Real,Rows,Cols>& mat)
- {
-  eval_.apply(mat);
- }
-private:
-
- type expr_;
- Eval eval_;
-};
-
-
-template<typename Derived>
-class Evaluation<Expression2<UnaryMinus2< Expression2<Derived> > > >
-{
- public:
- using type=UnaryMinus2<Expression2<Derived>>;
- using Eval=Evaluation<Expression2<Derived>>;
-
- Evaluation(){};
- 
- Evaluation(const Expression2<type>& expr):
- expr_(expr.derived()),
- eval_(Eval(expr_()))
- {};
- 
- template<Integer Rows,Integer Cols>
- void apply(const Matrix<Real,Rows,Cols>& mat)
- {
-  eval_.apply(mat);
- }
-private:
-
- type expr_;
- Eval eval_;
-};
-
-
-
-
-template<typename DerivedRight,typename DerivedLeft>
-class Evaluation<Expression2<Addition2< Expression2<DerivedLeft>  ,  
-                                        Expression2<DerivedRight>
-                                        >>>
-{
- public:
- using type=Addition2<Expression2<DerivedLeft>,Expression2<DerivedRight>>;
- using EvalLeft=Evaluation<Expression2<DerivedLeft>>;
- using EvalRight=Evaluation<Expression2<DerivedRight>>;
-
- Evaluation(){};
- 
-
- Evaluation(const Expression2<type>& expr):
- expr_(expr.derived()),
- eval_left_(EvalLeft(expr_.left())),
- eval_right_(EvalRight(expr_.right()))
-{};
- 
- template<Integer Rows,Integer Cols>
- void apply(const Matrix<Real,Rows,Cols>& mat)
- {
-  eval_left_.apply(mat);
-  eval_right_.apply(mat); 
- }
-private:
-
- type expr_;
- EvalLeft eval_left_;
- EvalRight eval_right_;
-};
-
-template<typename DerivedRight,typename DerivedLeft>
-class Evaluation<Expression2<Subtraction2< Expression2<DerivedLeft>  ,  
-                                        Expression2<DerivedRight>
-                                        >>>
-{
- public:
- using type=Subtraction2<Expression2<DerivedLeft>,Expression2<DerivedRight>>;
- using EvalLeft=Evaluation<Expression2<DerivedLeft>>;
- using EvalRight=Evaluation<Expression2<DerivedRight>>;
-
- Evaluation(){};
- 
-
- Evaluation(const Expression2<type>& expr):
- expr_(expr.derived()),
- eval_left_(EvalLeft(expr_.left())),
- eval_right_(EvalRight(expr_.right()))
-{};
- 
- template<Integer Rows,Integer Cols>
- void apply(const Matrix<Real,Rows,Cols>& mat)
- {
-  eval_left_.apply(mat);
-  eval_right_.apply(mat); 
- }
-private:
-
- type expr_;
- EvalLeft eval_left_;
- EvalRight eval_right_;
-};
-
-
-template<typename DerivedRight>
-class Evaluation<Expression2<Multiply2< Real, Expression2<DerivedRight> >>>                                     
-{
- public:
- using type=Multiply2<Real,Expression2<DerivedRight>>;
- using EvalRight=Evaluation<Expression2<DerivedRight>>;
- 
- Evaluation(){};
- 
-
- Evaluation(const Expression2<type>& expr):
- expr_(expr.derived()),
- eval_left_(expr_.left()),
- eval_right_(EvalRight(expr_.right()))
-{};
- 
- template<Integer Rows,Integer Cols>
- void apply(const Matrix<Real,Rows,Cols>& mat)
- {
-  // eval_left_.apply(mat);
-  // eval_right_.apply(mat); 
- }
-private:
-
- type expr_;
- Real eval_left_;
- EvalRight eval_right_;
-};
-
-
-
-
-template< typename DerivedLeft>
-class Evaluation<Expression2<Multiply2< Expression2<DerivedLeft>,
-                                        Real
-                                        >>>                                       
-{
- public:
- using type=Multiply2<Expression2<DerivedLeft>,Real>;
- using EvalLeft=Evaluation<Expression2<DerivedLeft>>;
- 
- Evaluation(){};
- 
-
- Evaluation(const Expression2<type>& expr):
- expr_(expr.derived()),
- eval_left_(EvalLeft(expr_.left())),
- eval_right_(expr_.right())
-{};
- 
- template<Integer Rows,Integer Cols>
- void apply(const Matrix<Real,Rows,Cols>& mat)
- {
-  // eval_left_.apply(mat);
-  // eval_right_.apply(mat); 
- }
-private:
-
- type expr_;
- EvalLeft eval_left_;
- Real eval_right_;
-};
-
-template< typename DerivedLeft>
-class Evaluation<Expression2<Divide2< Expression2<DerivedLeft>,
-                                        Real
-                                        >>>                                       
-{
- public:
- using type=Divide2<Expression2<DerivedLeft>,Real>;
- using EvalLeft=Evaluation<Expression2<DerivedLeft>>;
- 
- Evaluation(){};
- 
-
- Evaluation(const Expression2<type>& expr):
- expr_(expr.derived()),
- eval_left_(EvalLeft(expr_.left())),
- eval_right_(expr_.right())
-{};
- 
- template<Integer Rows,Integer Cols>
- void apply(const Matrix<Real,Rows,Cols>& mat)
- {
-  // eval_left_.apply(mat);
-  // eval_right_.apply(mat); 
- }
-private:
-
- type expr_;
- EvalLeft eval_left_;
- Real eval_right_;
-};
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///// We associate Number<2>,Number<1>,Number<0> respectively to a X=Trial/Test/OtherFunction
 ///// We define IsTestOrTrial<X> which is used for each term Left or Right in L2Inner<Left,Right>
@@ -990,51 +789,52 @@ class Subtraction2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegra
 
 
 
-template<typename Form>
-class ShapeFunctions;
+
 
 template<typename MeshT, typename Left,typename Right,Integer QR, typename Form>
 class Evaluation<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>, ShapeFunctions<Form>>
 {
  public:
  using type= L2DotProductIntegral<MeshT,Left,Right,QR>;
+ using QRule=typename type ::QRule;
  using EvalLeft=Evaluation<Expression2<Left>>;
  using EvalRight=Evaluation<Expression2<Right>>;
+ 
+
  Evaluation(){};
  
  Evaluation(const type& expr, ShapeFunctions<Form>& shape_functions):
  eval_(expr),
- eval_left_(EvalLeft(eval_.left())),
- eval_right_(EvalRight(eval_.right())),
+ eval_left_(Eval(eval_.left())),
+ eval_right_(Eval(eval_.right())),
  shape_functions_(shape_functions)
  {};
  
- template<typename QRule,typename ...Ts>
- void apply_aux(const std::tuple<Ts...>& tuple)
+ // template<typename QRule>//,typename ...Ts>
+ void apply_aux()
  {
-  eval_left_.template apply<QRule>(tuple);
-  eval_right_.template apply<QRule>(tuple);
+  eval_left_.template apply<QRule>(left_value_,shape_functions_());
+  // std::cout<<"left_value_="<<left_value_<<std::endl;
+  // eval_right_.template apply<QRule>(right_value_,shape_functions_());
+  // std::cout<<"right_value_="<<right_value_<<std::endl;
  }
 
- template<typename ...Ts>
- void apply(const std::tuple<Ts...>& tuple)
- {
-  apply_aux<typename type::QRule>(tuple);
- }
 
  template<Integer Rows,Integer Cols>
  void apply(const Matrix<Real,Rows,Cols>& mat)
  {
   // eval_left_.apply(mat);
   // eval_right_.apply(mat); 
-  // apply_aux<typename type::QRule>(tuple);
+  apply_aux();
  }
- 
+
 private:
  type eval_;
  EvalLeft eval_left_;
  EvalRight eval_right_;
  ShapeFunctions<Form>& shape_functions_;
+ OperatorType<Left,QRule> left_value_;
+ OperatorType<Right,QRule> right_value_;
 };
 
 
@@ -1064,7 +864,6 @@ class Evaluation<Expression2<Addition2< Expression2<DerivedLeft>  ,
   eval_right_.apply(mat); 
  }
 private:
-
  type expr_;
  EvalLeft eval_left_;
  EvalRight eval_right_;

@@ -22,7 +22,6 @@ namespace mars{
 
 
 
-
  constexpr Integer simplex_face_sub_entities(const Integer& SimplexDim,const Integer& FaceNumber,const Integer& SubEntityDim, const Integer& SubEntityDimNumber)
  {
   switch(SimplexDim)
@@ -950,8 +949,14 @@ std::cout<<"-------------------------------------------"<<std::endl;
 
 
 
+
+
+
+
 void assembly_example()
 {
+
+
   using Point=Vector<Real,3>;
   Point point{0,1,2};
 
@@ -990,7 +995,7 @@ void assembly_example()
  jacobian(elem,points,J);
 
 
- using FSspace1= FunctionSpace< MeshT, Lagrange1<1>, RT1<2>,Lagrange2<1>>;
+ using FSspace1= FunctionSpace< MeshT, Lagrange1<1>, RT1<1>,Lagrange2<1>>;
  FSspace1 FEspace1(mesh);
  using FSspace2= FunctionSpace< MeshT, Lagrange2<1>,Lagrange1<1>>;
  FSspace2 FEspace2(mesh);
@@ -1015,15 +1020,20 @@ void assembly_example()
  auto ss3 =   MakeTest<6>(W1);
 
 // bilinear form
- auto l22=L2Inner(mesh,2*Div(sigma)*0.5,Div(tau))+
- L2Inner(mesh,+Grad(u),-Grad(v))
- +
- L2Inner(mesh,+u,+Div(tau))+
- L2Inner(mesh,rr1,q)+
- L2Inner(mesh,r,s)+
- L2Inner(mesh,Grad(rr1)+sigma/4,tau)+
- L2Inner(mesh,r,s);
-
+ auto l22=
+ // L2Inner(mesh,2*Div(sigma)*0.5,Div(tau))+
+ // L2Inner(mesh,+Grad(u),-Grad(v))
+ // +
+ // L2Inner(mesh,+u-Div(sigma),+Div(tau))+
+ // L2Inner(mesh,rr1,q)+
+ // L2Inner(mesh,r,s)+
+ // L2Inner(mesh,Grad(rr1),tau)+
+ // L2Inner(mesh,r,s);
+ // typename OperatorTypeHelper<decltype(u)>::type ok1(1);
+ // OperatorType<decltype(Div(sigma))> ok2(1);
+ 
+ L2Inner(mesh,+Div(sigma),-v)+
+ L2Inner(mesh,2*u/2,s);
 
  auto a=W1.dofmap<0,0>();
  int b=W1.n_dofs();
@@ -1041,13 +1051,32 @@ void assembly_example()
  auto referencemaps=reference_maps(l22);
  auto shapefunctions=shape_functions(l22);
 
+ // auto lrs=L2Inner(mesh,r,s)+L2Inner(mesh,Grad(u),v);
+ // auto evalrs=Eval(lrs,shapefunctions);
 
 
  shape_coefficients.init(mesh);
 
- auto l22eval=Eval(l22,shapefunctions);
- l22eval.apply(mat_loc);
 
+
+
+  elem=mesh.elem(0);
+  // mesh.points(elem_iter,points);
+
+  jacobian(elem,mesh.points(),J);
+
+  shape_coefficients.init(0);
+
+  referencemaps.init(J);
+
+  shapefunctions.init_map(referencemaps);
+  shapefunctions.init(shape_coefficients);
+  shapefunctions.init(referencemaps,shape_coefficients);
+  auto l22eval=Eval(l22,shapefunctions);
+  // OperatorType<decltype(Div(sigma)),GaussPoints<Elem,QPOrder>> ok1=l22;
+  // OperatorType<decltype(u),GaussPoints<Elem,QPOrder>> ok2=l22;
+
+  // l22eval.apply(mat_loc);
 
  for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
  {
