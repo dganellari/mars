@@ -301,6 +301,7 @@ class OperatorTypeHelper<TestOrTrial<MixedSpace,N,OperatorType>,QRule >
   using Elem=GetType<FunctionSpaces,0>;
   using BaseFunctionSpace=GetType<FunctionSpaces,1>;
   using Operator=typename tmptype::Operator; 
+  // TODO FIX ME SUBTYPE AND NOT TYPE CHECK (now in fwpvalues<T,M,N>, tot_type=T)
   using type=typename ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QRule>::type;
 };
 
@@ -322,23 +323,26 @@ class Evaluation<Expression2<TestOrTrial<MixedSpace,N,Operator_>>,OtherTemplateA
  using Elem=GetType<FunctionSpaces,0>;
  using BaseFunctionSpace=GetType<FunctionSpaces,1>;
  using Operator=typename type::Operator;
- template<typename QRule>
- using value_type=OperatorType<type,QRule>;// typename ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QRule>::type;
+ // template<typename QRule>
+ using value_type=OperatorType<type,OtherTemplateArguments...>;// typename ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QRule>::type;
 
  Evaluation(){};
 
- template<typename ...Ts> 
+ // template<typename ...Ts> 
  Evaluation(const type& expr):
  eval_(expr)
  {};
  
- template<typename QRule, typename...Args,typename...OtherTemplateArguments2>
- constexpr void apply(value_type<QRule>& value,const std::tuple<Args...>& tuple_of_tuple)
+ // template<typename QRule, typename...Args,typename...OtherTemplateArguments2>
+ // constexpr void apply(value_type<QRule>& value,const std::tuple<Args...>& tuple_of_tuple)
+  template<typename...Args>
+ constexpr void apply(value_type& value,const std::tuple<Args...>& tuple_of_tuple)
  {
   using tuple_type=GetType<std::tuple<Args...>,type::value>;
   const auto& tuple=tuple_get<type::value>(tuple_of_tuple);
-  constexpr Integer M=TypeToTupleElementPosition<ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QRule>,tuple_type>::value;
+  constexpr Integer M=TypeToTupleElementPosition<ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,OtherTemplateArguments...>,tuple_type>::value;
   value=tuple_get<M>(tuple).eval();
+  std::cout<<"Evaluation TestOrTrial: value="<<value<<std::endl;
  }
 private:
  
@@ -397,7 +401,7 @@ class TupleTypeSize;
 
 
 template<typename Left, typename Right>
-class IsTestOrTrial< Multiply2<Expression2<Left>,Expression2<Right> > >
+class IsTestOrTrial< Multiplication2<Expression2<Left>,Expression2<Right> > >
 {
 public:
   using TupleFunctionSpace=TupleCatType<typename IsTestOrTrial<Left>::TupleFunctionSpace,
@@ -410,7 +414,7 @@ public:
 };
 
 template<typename Left>
-class IsTestOrTrial< Multiply2<Expression2<Left>,Real > >
+class IsTestOrTrial< Multiplication2<Expression2<Left>,Real > >
 {
 public:
   using TupleFunctionSpace=typename IsTestOrTrial<Left>::TupleFunctionSpace;
@@ -420,7 +424,7 @@ public:
 };
 
 template<typename Right>
-class IsTestOrTrial< Multiply2<Real,Expression2<Right> > >
+class IsTestOrTrial< Multiplication2<Real,Expression2<Right> > >
 {
 public:
   using TupleFunctionSpace=typename IsTestOrTrial<Right>::TupleFunctionSpace;
@@ -432,7 +436,7 @@ public:
 
 
 template<typename Left>
-class IsTestOrTrial< Divide2<Expression2<Left>,Real > >
+class IsTestOrTrial< Division2<Expression2<Left>,Real > >
 {
 public:
   using TupleFunctionSpace=typename IsTestOrTrial<Left>::TupleFunctionSpace;
@@ -797,26 +801,27 @@ class Evaluation<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>, ShapeFu
  public:
  using type= L2DotProductIntegral<MeshT,Left,Right,QR>;
  using QRule=typename type ::QRule;
- using EvalLeft=Evaluation<Expression2<Left>>;
- using EvalRight=Evaluation<Expression2<Right>>;
+ using EvalLeft=Evaluation<Expression2<Left>,QRule>;
+ using EvalRight=Evaluation<Expression2<Right>,QRule>;
  
 
  Evaluation(){};
  
  Evaluation(const type& expr, ShapeFunctions<Form>& shape_functions):
  eval_(expr),
- eval_left_(Eval(eval_.left())),
- eval_right_(Eval(eval_.right())),
+ eval_left_(Eval<QRule>(eval_.left())),
+ eval_right_(Eval<QRule>(eval_.right())),
  shape_functions_(shape_functions)
  {};
  
  // template<typename QRule>//,typename ...Ts>
  void apply_aux()
  {
-  eval_left_.template apply<QRule>(left_value_,shape_functions_());
-  // std::cout<<"left_value_="<<left_value_<<std::endl;
-  // eval_right_.template apply<QRule>(right_value_,shape_functions_());
-  // std::cout<<"right_value_="<<right_value_<<std::endl;
+  std::cout<<"L2DotProductIntegral"<<std::endl;
+  eval_left_.apply(left_value_,shape_functions_());
+  std::cout<<"left_value_="<<left_value_<<std::endl;
+  eval_right_.apply(right_value_,shape_functions_());
+  std::cout<<"right_value_="<<right_value_<<std::endl;
  }
 
 

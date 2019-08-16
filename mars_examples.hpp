@@ -1032,8 +1032,8 @@ void assembly_example()
  // typename OperatorTypeHelper<decltype(u)>::type ok1(1);
  // OperatorType<decltype(Div(sigma))> ok2(1);
  
- L2Inner(mesh,+Div(sigma),-v)+
- L2Inner(mesh,2*u/2,s);
+ L2Inner(mesh,+sigma,v)+
+ L2Inner(mesh,-2*u/2,s+s);
 
  auto a=W1.dofmap<0,0>();
  int b=W1.n_dofs();
@@ -1076,7 +1076,7 @@ void assembly_example()
   // OperatorType<decltype(Div(sigma)),GaussPoints<Elem,QPOrder>> ok1=l22;
   // OperatorType<decltype(u),GaussPoints<Elem,QPOrder>> ok2=l22;
 
-  // l22eval.apply(mat_loc);
+  l22eval.apply(mat_loc);
 
  for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
  {

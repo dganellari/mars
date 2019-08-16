@@ -40,13 +40,13 @@ template<typename...Parameters>
 class UnaryMinus2;
 
 template<typename...Parameters>
-class Multiply2;
+class Multiplication2;
 
 template<typename...Parameters>
 class Contraction2;
 
 template<typename...Parameters>
-class Divide2;
+class Division2;
 
 template<typename...Parameters>
 class Subtraction2;
@@ -76,7 +76,7 @@ class OperatorTypeHelper<T,Ts...>
 template<typename T, typename...Ts>
 class OperatorTypeHelper< UnaryPlus2< Expression2< T > >, Ts...>
 { public:
-  using type=typename OperatorTypeHelper<T>::type;
+  using type=typename OperatorTypeHelper<T,Ts...>::type;
 };
 
 
@@ -85,7 +85,7 @@ class OperatorTypeHelper< UnaryPlus2< Expression2< T > >, Ts...>
 template<typename T, typename...Ts>
 class OperatorTypeHelper< UnaryMinus2< Expression2< T > >, Ts...>
 { public:
-  using type=typename OperatorTypeHelper<T>::type;
+  using type=typename OperatorTypeHelper<T,Ts...>::type;
 };
 
 
@@ -93,10 +93,10 @@ class OperatorTypeHelper< UnaryMinus2< Expression2< T > >, Ts...>
 template<typename Left, typename Right, typename...Ts>
 class OperatorTypeHelper< Addition2< Expression2<Left>, Expression2<Right > >, Ts...>
 { public:
-  static_assert(IsSame<typename OperatorTypeHelper<Left>::type,
-                       typename OperatorTypeHelper<Right>::type
-                       >::value, " In Addition, Left and Right types must be equal");
-  using type=typename OperatorTypeHelper<Left>::type;
+  using type1=typename OperatorTypeHelper<Left,Ts...>::type;
+  using type2=typename OperatorTypeHelper<Right,Ts...>::type;
+  static_assert(IsSame<type1,type2>::value, " In Addition, Left and Right types must be equal");
+  using type=typename OperatorTypeHelper<Left,Ts...>::type;
 };
 
 
@@ -108,28 +108,28 @@ class OperatorTypeHelper< Subtraction2< Expression2<Left>, Expression2<Right > >
                        typename OperatorTypeHelper<Right>::type
                       >::value, " In Subtraction, Left and Right types must be equal");
 
-  using type=typename OperatorTypeHelper<Left>::type;
+  using type=typename OperatorTypeHelper<Left,Ts...>::type;
 };
 
 // type(T) = type(T/REAL)
 template<typename T, typename...Ts>
-class OperatorTypeHelper< Divide2< Expression2<T>, Real >, Ts...>
+class OperatorTypeHelper< Division2< Expression2<T>, Real >, Ts...>
 { public:
-  using type=typename OperatorTypeHelper<T>::type;
+  using type=typename OperatorTypeHelper<T,Ts...>::type;
 };
 
 // type(T) = type(T * REAL)
 template<typename T, typename...Ts>
-class OperatorTypeHelper< Multiply2< Expression2<T>, Real  >, Ts...>
+class OperatorTypeHelper< Multiplication2< Expression2<T>, Real  >, Ts...>
 { public:
-  using type=typename OperatorTypeHelper<T>::type;
+  using type=typename OperatorTypeHelper<T,Ts...>::type;
 };
 
 // type(T) = type(REAL * T)
 template<typename T, typename...Ts>
-class OperatorTypeHelper< Multiply2< Real, Expression2<T> >, Ts...>
+class OperatorTypeHelper< Multiplication2< Real, Expression2<T> >, Ts...>
 { public:
-  using type=typename OperatorTypeHelper<T>::type;
+  using type=typename OperatorTypeHelper<T,Ts...>::type;
 };
 
 template<typename...Inputs>
@@ -326,132 +326,119 @@ class FQPValues;
 
 
 template<typename T,Integer Rows,Integer Cols>
-class UnaryPlus2<Matrix<T,Rows,Cols>,
-                Matrix<T,Rows,Cols> > 
+class UnaryPlus2<Matrix<T,Rows,Cols>> 
 {    
  public:       
- inline static void apply(const Matrix<T,Rows,Cols>& A,
-                                Matrix<T,Rows,Cols>& C)
+ inline static void apply(Matrix<T,Rows,Cols>& A)
 	{
 	 for(Integer ii=0;ii<Rows;ii++)
 	 	for(Integer jj=0;jj<Cols;jj++)
-	 	   	   C(ii,jj)=A(ii,jj);
+	 	   	   A(ii,jj)=A(ii,jj);
 	};
 };
 
+
 template<typename T,Integer Rows,Integer Cols>
-class UnaryMinus2<Matrix<T,Rows,Cols>,
-                 Matrix<T,Rows,Cols> > 
+class UnaryMinus2<Matrix<T,Rows,Cols>> 
 {    
  public:       
- inline static void apply(const Matrix<T,Rows,Cols>& A,
-                                Matrix<T,Rows,Cols>& C)
-	{
-	 for(Integer ii=0;ii<Rows;ii++)
-	 	for(Integer jj=0;jj<Cols;jj++)
-	 	   	   C(ii,jj)=-A(ii,jj);
-	};
+ inline static void apply(Matrix<T,Rows,Cols>& A)
+  {
+   for(Integer ii=0;ii<Rows;ii++)
+    for(Integer jj=0;jj<Cols;jj++)
+           A(ii,jj)=-A(ii,jj);
+  };
+};
+
+
+template<typename T,Integer Rows,Integer Cols>
+class Addition2<Matrix<T,Rows,Cols>> 
+{       
+ public:               
+ inline static void apply(      Matrix<T,Rows,Cols>& A,
+                          const Matrix<T,Rows,Cols>& B,
+                          const Matrix<T,Rows,Cols>& C)
+  {
+   for(Integer ii=0;ii<Rows;ii++)
+    for(Integer jj=0;jj<Cols;jj++)
+    {
+     A(ii,jj)=B(ii,jj)+C(ii,jj);
+    }
+  };
 };
 
 template<typename T,Integer Rows,Integer Cols>
-class Addition2<Matrix<T,Rows,Cols>,
-                Matrix<T,Rows,Cols>,
-                Matrix<T,Rows,Cols> > 
-{    
- public:       
- inline static void apply(const Matrix<T,Rows,Cols>& A,
-                          const Matrix<T,Rows,Cols>& B, 
-                                Matrix<T,Rows,Cols>& C)
-	{
-	 for(Integer ii=0;ii<Rows;ii++)
-	 	for(Integer jj=0;jj<Cols;jj++)
-	 	   	   C(ii,jj)=A(ii,jj)+B(ii,jj);
-	};
-};
-
-template<typename T,Integer Rows,Integer Cols>
-class Subtraction2<Matrix<T,Rows,Cols>,
-               Matrix<T,Rows,Cols>,
-               Matrix<T,Rows,Cols> > 
-{    
- public:       
- inline static void apply(const Matrix<T,Rows,Cols>& A,
- 	                        const Matrix<T,Rows,Cols>& B, 
-                                Matrix<T,Rows,Cols>& C)
-	{
-	 for(Integer ii=0;ii<Rows;ii++)
-	 	for(Integer jj=0;jj<Cols;jj++)
-	 	   	   C(ii,jj)=A(ii,jj)-B(ii,jj);
-	};
+class Subtraction2<Matrix<T,Rows,Cols>> 
+{       
+ public:               
+ inline static void apply(      Matrix<T,Rows,Cols>& A,
+                          const Matrix<T,Rows,Cols>& B,
+                          const Matrix<T,Rows,Cols>& C)
+  {
+   for(Integer ii=0;ii<Rows;ii++)
+    for(Integer jj=0;jj<Cols;jj++)
+    {
+     A(ii,jj)=B(ii,jj)-C(ii,jj);
+    }
+  };
 };
 
 
 template<typename T,Integer Rows,Integer CommonDim,Integer Cols>
-class Multiply2<Matrix<T,Rows,CommonDim>,
-               Matrix<T,CommonDim,Cols>,
-               Matrix<T,Rows,Cols> > 
+class Multiplication2<Matrix<T,Rows,CommonDim>,
+                Matrix<T,CommonDim,Cols>,
+                Matrix<T,Rows,Cols> > 
 {    
  public:            
- inline static void apply(const Matrix<T,Rows,CommonDim>& A,
- 	                      const Matrix<T,CommonDim,Cols>& B, 
-                                Matrix<T,Rows,Cols>& C)
+ inline static void apply(      Matrix<T,Rows,Cols>& A,
+                          const Matrix<T,Rows,CommonDim>& B,
+ 	                        const Matrix<T,CommonDim,Cols>& C)
 	{
 	 for(Integer ii=0;ii<Rows;ii++)
 	 	for(Integer jj=0;jj<Cols;jj++)
 	 	   {
-	 	   	C(ii,jj)=A(ii,0)*B(0,jj);
+	 	   	A(ii,jj)=B(ii,0)*C(0,jj);
 	 	   	for(Integer cc=1;cc<CommonDim;cc++)
-	 	   	   C(ii,jj)+=A(ii,cc)*B(cc,jj);
+	 	   	   A(ii,jj)+=B(ii,cc)*C(cc,jj);
 	 	   }
 	};
 };
 
+
 template<typename T,Integer Rows,Integer Cols>
-class Multiply2<Matrix<T,Rows,Cols>,
-                Real,
-                Matrix<T,Rows,Cols> > 
-{    
- public:            
- inline static void apply(const Matrix<T,Rows,Cols>& A,
- 	                      const Real& B, 
-                                Matrix<T,Rows,Cols>& C)
-	{
-	 for(Integer ii=0;ii<Rows;ii++)
-	 	for(Integer jj=0;jj<Cols;jj++)
-	 	   	   C(ii,jj)=A(ii,jj)*B;   
-	};
+class Multiplication2<Real,Matrix<T,Rows,Cols>> 
+{       
+ public:               
+
+ inline static void apply(Matrix<T,Rows,Cols>& A,const Real& alpha)
+  {
+   for(Integer ii=0;ii<Rows;ii++)
+    for(Integer jj=0;jj<Cols;jj++)
+      A(ii,jj)=A(ii,jj)*alpha;
+  };
 };
 
 template<typename T,Integer Rows,Integer Cols>
-class Multiply2<Real,
-                Matrix<T,Rows,Cols>,
-                Matrix<T,Rows,Cols> > 
-{    
- public:            
- inline static void apply(const Real& A,
- 	                      const Matrix<T,Rows,Cols>& B,
-                                Matrix<T,Rows,Cols>& C)
-	{
-	 for(Integer ii=0;ii<Rows;ii++)
-	 	for(Integer jj=0;jj<Cols;jj++)
-	 	   	   C(ii,jj)=B(ii,jj)*A;   
-	};
+class Multiplication2<Matrix<T,Rows,Cols>,Real> 
+{       
+ public:               
+
+ inline static void apply(Matrix<T,Rows,Cols>& A,const Real& alpha)
+  {
+   Multiplication2<Real,Matrix<T,Rows,Cols>>(A,alpha); 
+  };
 };
 
 
 template<typename T,Integer Rows,Integer Cols>
-class Divide2<Matrix<T,Rows,Cols>,
-              Real,
-              Matrix<T,Rows,Cols> > 
+class Division2<Matrix<T,Rows,Cols>,Real> 
 {    
  public:            
- inline static void apply(const Matrix<T,Rows,Cols>& A,
- 	                      const Real& B, 
-                                Matrix<T,Rows,Cols>& C)
+ inline static void apply(Matrix<T,Rows,Cols>& A,const Real& alpha)
 	{
 	 for(Integer ii=0;ii<Rows;ii++)
 	 	for(Integer jj=0;jj<Cols;jj++)
-	 	   	   C(ii,jj)=A(ii,jj)/B;   
+	 	   	   A(ii,jj)=A(ii,jj)/alpha;   
 	};
 };
 
@@ -598,141 +585,119 @@ class Divide2<Matrix<T,Rows,Cols>,
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// template<typename U, Integer NQPoints,Integer NComponents>
-// class UnaryPlus< FQPValues<U,NQPoints,NComponents>,
-//                  FQPValues<U,NQPoints,NComponents> > 
-// {       
-//  public:               
-//  inline static void apply(const FQPValues<U,NQPoints,NComponents>& A,
-//                                 FQPValues<U,NQPoints,NComponents>& C)
-// 	{
-// 	 for(Integer qp=0;qp<NQPoints;qp++)
-// 	 	for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-// 	 	{
-// 	 		UnaryPlus<U,U>::apply(A[n_comp][qp],C[n_comp][qp]);
-// 	 	}
-// 	};
+template<typename U, Integer NQPoints,Integer Ndofs>
+class UnaryPlus2< FQPValues<U,NQPoints,Ndofs>> 
+{       
+ public:               
+ inline static void apply(FQPValues<U,NQPoints,Ndofs>& A)
+  {
+for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+   for(Integer qp=0;qp<NQPoints;qp++)
+    {
+      UnaryPlus2<U>::apply(A[n_dof][qp]);
+    }
+  };
+};
 
-// };
+template<typename U, Integer NQPoints,Integer Ndofs>
+class UnaryMinus2< FQPValues<U,NQPoints,Ndofs>> 
+{       
+ public:               
+ inline static void apply(FQPValues<U,NQPoints,Ndofs>& A)
+	{
+for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+	 for(Integer qp=0;qp<NQPoints;qp++)
+	 	{
+	 		UnaryMinus2<U>::apply(A[n_dof][qp]);
+	 	}
+	};
+};
 
-// template<typename U, Integer NQPoints,Integer NComponents>
-// class UnaryMinus< FQPValues<U,NQPoints,NComponents>,
-//                  FQPValues<U,NQPoints,NComponents> > 
-// {       
-//  public:               
-//  inline static void apply(const FQPValues<U,NQPoints,NComponents>& A,
-//                                 FQPValues<U,NQPoints,NComponents>& C)
-// 	{
-// 	 for(Integer qp=0;qp<NQPoints;qp++)
-// 	 	for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-// 	 	{
-// 	 		UnaryMinus<U,U>::apply(A[n_comp][qp],C[n_comp][qp]);
-// 	 	}
-// 	};
+template<typename U, Integer NQPoints,Integer Ndofs>
+class Addition2< FQPValues<U,NQPoints,Ndofs>> 
+{       
+ public:               
+ inline static void apply(      FQPValues<U,NQPoints,Ndofs>& A,
+                          const FQPValues<U,NQPoints,Ndofs>& B,
+ 	                        const FQPValues<U,NQPoints,Ndofs>& C)
+	{
+  for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+	 for(Integer qp=0;qp<NQPoints;qp++)
+	 	{
+	 		Addition2<U>::apply(A[n_dof][qp],B[n_dof][qp],C[n_dof][qp]);
+	 	}
+	};
+};
 
-// };
+template<typename U, Integer NQPoints,Integer Ndofs>
+class Subtraction2< FQPValues<U,NQPoints,Ndofs>> 
+{       
+ public:               
+ inline static void apply(      FQPValues<U,NQPoints,Ndofs>& A,
+                          const FQPValues<U,NQPoints,Ndofs>& B,
+                          const FQPValues<U,NQPoints,Ndofs>& C)
+  {
+  for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+   for(Integer qp=0;qp<NQPoints;qp++)
+    {
+      Subtraction2<U>::apply(A[n_dof][qp],B[n_dof][qp],C[n_dof][qp]);
+    }
+  };
+};
 
-// template<typename U, Integer NQPoints,Integer NComponents>
-// class Addition< FQPValues<U,NQPoints,NComponents>,
-//                 FQPValues<U,NQPoints,NComponents>,
-//                 FQPValues<U,NQPoints,NComponents> > 
-// {       
-//  public:               
-//  inline static void apply(const FQPValues<U,NQPoints,NComponents>& A,
-//  	                      const FQPValues<U,NQPoints,NComponents>& B, 
-//                                 FQPValues<U,NQPoints,NComponents>& C)
-// 	{
-// 	 for(Integer qp=0;qp<NQPoints;qp++)
-// 	 	for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-// 	 	{
-// 	 		Addition<U,U,U>::apply(A[n_comp][qp],B[n_comp][qp],C[n_comp][qp]);
-// 	 	}
-// 	};
+template<typename U, typename V, typename W, Integer NQPoints,Integer Ndofs>
+class Multiplication2<FQPValues<U,NQPoints,Ndofs>,
+                FQPValues<V,NQPoints,Ndofs>,
+                FQPValues<W,NQPoints,Ndofs> > 
+{       
+ public:               
 
-// };
+ inline static void apply(      FQPValues<U,NQPoints,Ndofs>& A,
+                          const FQPValues<V,NQPoints,Ndofs>& B,
+                          const FQPValues<W,NQPoints,Ndofs>& C)
+  {
+  for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+   for(Integer qp=0;qp<NQPoints;qp++)
+      Multiplication2<U,V,W>::apply(A[n_dof][qp],B[n_dof][qp],C[n_dof][qp]);
+  };
 
+};
 
-// template<typename U, Integer NQPoints,Integer NComponents>
-// class Subtraction< FQPValues<U,NQPoints,NComponents>,
-//                    FQPValues<U,NQPoints,NComponents>,
-//                    FQPValues<U,NQPoints,NComponents> > 
-// {       
-//  public:               
-//  inline static void apply(const FQPValues<U,NQPoints,NComponents>& A,
-//  	                      const FQPValues<U,NQPoints,NComponents>& B, 
-//                                 FQPValues<U,NQPoints,NComponents>& C)
-// 	{
-// 	 for(Integer qp=0;qp<NQPoints;qp++)
-// 	 	for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-// 	 	{
-// 	 		Subtraction<U,U,U>::apply(A[n_comp][qp],B[n_comp][qp],C[n_comp][qp]);
-// 	 	}
-// 	};
-
-// };
-
-
-
-// template<typename U,Integer NQPoints,Integer NComponents>
-// class Multiply< Real,
-//                 FQPValues<U,NQPoints,NComponents>,
-//                 FQPValues<U,NQPoints,NComponents> > 
-// {       
-//  public:               
-
-//  inline static void apply(const Real& A,
-//  	                      const FQPValues<U,NQPoints,NComponents>& B, 
-//                                 FQPValues<U,NQPoints,NComponents>& C)
-// 	{
-// 	 for(Integer qp=0;qp<NQPoints;qp++)
-// 	 	for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-// 	 		Multiply<Real,U,U>::apply(A,B[n_comp][qp],C[n_comp][qp]);
-// 	};
-
-// };
+template<typename U,Integer NQPoints,Integer Ndofs>
+class Multiplication2< Real,FQPValues<U,NQPoints,Ndofs>> 
+{       
+ public:               
+ inline static void apply(FQPValues<U,NQPoints,Ndofs>& A,const Real& alpha)
+	{
+  for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+   for(Integer qp=0;qp<NQPoints;qp++)
+	 		Multiplication2<Real,U>::apply(A[n_dof][qp],alpha);
+	};
+};
 
 
-// template<typename U, Integer NQPoints,Integer NComponents>
-// class Multiply< FQPValues<U,NQPoints,NComponents>,
-//                 Real,
-//                 FQPValues<U,NQPoints,NComponents> > 
-// {       
-//  public:               
+template<typename U,Integer NQPoints,Integer Ndofs>
+class Multiplication2<FQPValues<U,NQPoints,Ndofs>,Real> 
+{       
+ public:               
+ inline static void apply(FQPValues<U,NQPoints,Ndofs>& A,const Real& alpha)
+  {
+    Multiplication2< Real,FQPValues<U,NQPoints,Ndofs>>::apply(A,alpha);
+  };
+};
 
-//  inline static void apply(const FQPValues <U,NQPoints,NComponents>& A,
-//  	                      const Real& B, 
-//                                 FQPValues<U,NQPoints,NComponents>& C)
-// 	{
-// 	 for(Integer qp=0;qp<NQPoints;qp++)
-// 	 	for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-// 	 	{
-// 	 		Multiply<U,Real,U>::apply(A[n_comp][qp],B,C[n_comp][qp]);
-// 	 	}
-// 	};
-
-// };
-
-
-// template<typename U, Integer NQPoints,Integer NComponents>
-// class Divide< FQPValues<U,NQPoints,NComponents>,
-//               Real,
-//               FQPValues<U,NQPoints,NComponents> > 
-// {       
-//  public:               
-
-//  inline static void apply(const FQPValues <U,NQPoints,NComponents>& A,
-//  	                      const Real& B, 
-//                                 FQPValues<U,NQPoints,NComponents>& C)
-// 	{
-// 	 for(Integer qp=0;qp<NQPoints;qp++)
-// 	 	for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-// 	 	{
-// 	 		Divide<U,Real,U>::apply(A[n_comp][qp],B,C[n_comp][qp]);
-// 	 	}
-// 	};
-
-// };
-
+template<typename U,Integer NQPoints,Integer Ndofs>
+class Division2<FQPValues<U,NQPoints,Ndofs>,Real> 
+{       
+ public:               
+ inline static void apply(FQPValues<U,NQPoints,Ndofs>& A,const Real& alpha)
+  {
+  for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+   for(Integer qp=0;qp<NQPoints;qp++)
+    Division2<U,Real>::apply(A[n_dof][qp],alpha);
+    
+  };
+};
 
 
 
@@ -788,20 +753,30 @@ class Divide2<Matrix<T,Rows,Cols>,
 // };
 
 
+template<typename T>
+constexpr void Add2(T& t){UnaryPlus2<T>::apply(t);}
+
+template<typename T>
+constexpr void Minus2(T& t){UnaryMinus2<T>::apply(t);}
+
+template<typename T>
+constexpr void Add(T& a, const T&b, const T&c){Addition2<T>::apply(a,b,c);}
+
+template<typename T>
+constexpr void Subtract(T& a, const T&b, const T&c){Subtraction2<T>::apply(a,b,c);}
+
+template<typename U,typename V,typename W>
+constexpr void Multiply(U& u, const V& v, const W& w){Multiplication2<U,V,W>::apply(u,v,w);}
 
 
+template<typename T>
+constexpr void Multiply(T& a, const Real& alpha){Multiplication2<Real,T>::apply(a,alpha);}
 
+template<typename T>
+constexpr void Multiply(const Real& alpha,T& a){Multiplication2<Real,T>::apply(a,alpha);}
 
-
-
-
-
-
-
-
-
-
-
+template<typename T>
+constexpr void Divide(T& a, const Real& alpha){Division2<T,Real>::apply(a,alpha);}
 
 
 
@@ -875,11 +850,11 @@ class Subtraction2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> >
 };
 
 template< typename DerivedLeft,typename DerivedRight>
-class Divide2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> > 
-: public Expression2< Divide2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> > >
+class Division2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> > 
+: public Expression2< Division2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> > >
 {
   public:
-    Divide2(const Expression2<DerivedLeft>& left, const Expression2<DerivedRight>&right)
+    Division2(const Expression2<DerivedLeft>& left, const Expression2<DerivedRight>&right)
     : 
     left_(left.derived()),
     right_(right.derived())
@@ -892,11 +867,11 @@ class Divide2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> >
 };
 
 template< typename DerivedLeft>
-class Divide2< Expression2 <DerivedLeft>, Real > 
-: public Expression2< Divide2< Expression2 <DerivedLeft>, Real > >
+class Division2< Expression2 <DerivedLeft>, Real > 
+: public Expression2< Division2< Expression2 <DerivedLeft>, Real > >
 {
   public:
-    Divide2(const Expression2<DerivedLeft>& left, const Real&right)
+    Division2(const Expression2<DerivedLeft>& left, const Real&right)
     : 
     left_(left.derived()),
     right_(right)
@@ -932,14 +907,14 @@ class Contraction2< Expression2 <DerivedLeft_>, Expression2 <DerivedRight_> >
 };
 
 template< typename DerivedLeft_,typename DerivedRight_>
-class Multiply2< Expression2 <DerivedLeft_>, Expression2 <DerivedRight_> > 
-: public Expression2< Multiply2< Expression2 <DerivedLeft_>, Expression2 <DerivedRight_> > >
+class Multiplication2< Expression2 <DerivedLeft_>, Expression2 <DerivedRight_> > 
+: public Expression2< Multiplication2< Expression2 <DerivedLeft_>, Expression2 <DerivedRight_> > >
 {
   public:
   	using DerivedLeft=DerivedLeft_;
   	using DerivedRight=DerivedRight_;
 
-    Multiply2(const Expression2<DerivedLeft>& left, const Expression2<DerivedRight>&right)
+    Multiplication2(const Expression2<DerivedLeft>& left, const Expression2<DerivedRight>&right)
     : 
     left_(left.derived()),
     right_(right.derived())
@@ -953,13 +928,13 @@ class Multiply2< Expression2 <DerivedLeft_>, Expression2 <DerivedRight_> >
 
 
 template< typename DerivedLeft_>
-class Multiply2< Expression2 <DerivedLeft_>, Real > 
-: public Expression2< Multiply2< Expression2 <DerivedLeft_>, Real > >
+class Multiplication2< Expression2 <DerivedLeft_>, Real > 
+: public Expression2< Multiplication2< Expression2 <DerivedLeft_>, Real > >
 {
   public:
   	using DerivedLeft=DerivedLeft_;
   	using DerivedRight=Real;
-    Multiply2(const Expression2<DerivedLeft>& left, const Real&right)
+    Multiplication2(const Expression2<DerivedLeft>& left, const Real&right)
     : 
     left_(left.derived()),
     right_(right)
@@ -973,13 +948,13 @@ class Multiply2< Expression2 <DerivedLeft_>, Real >
 };
 
 template< typename DerivedRight_>
-class Multiply2< Real,Expression2 <DerivedRight_> > 
-: public Expression2< Multiply2<Real, Expression2 <DerivedRight_> > >
+class Multiplication2< Real,Expression2 <DerivedRight_> > 
+: public Expression2< Multiplication2<Real, Expression2 <DerivedRight_> > >
 {
   public:
   	using DerivedLeft=Real;
   	using DerivedRight=DerivedRight_;
-    Multiply2(const Real& left, const Expression2 <DerivedRight>&right)
+    Multiplication2(const Real& left, const Expression2 <DerivedRight>&right)
     : 
     left_(left),
     right_(right.derived())
@@ -1002,25 +977,25 @@ Inner(const Expression2<DerivedLeft>&left, const Expression2<DerivedRight>&right
 
 
 template< typename DerivedLeft>
-class Divide2< Expression2 <DerivedLeft>, Real > 
+class Division2< Expression2 <DerivedLeft>, Real > 
 operator/(const Expression2<DerivedLeft>&left, const Real&right)
-{return Divide2< Expression2 <DerivedLeft>, Real > (left,right);}
+{return Division2< Expression2 <DerivedLeft>, Real > (left,right);}
 
 
 template< typename DerivedLeft,typename DerivedRight>
-class Multiply2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> >
+class Multiplication2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> >
 operator*(const Expression2<DerivedLeft>&left, const Expression2<DerivedRight>&right)
-{return Multiply2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> >(left,right);}
+{return Multiplication2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> >(left,right);}
 
 template< typename DerivedLeft>
-class Multiply2< Expression2 <DerivedLeft>, Real > 
+class Multiplication2< Expression2 <DerivedLeft>, Real > 
 operator*(const Expression2<DerivedLeft>&left, const Real&right)
-{return Multiply2< Expression2 <DerivedLeft>, Real > (left,right);}
+{return Multiplication2< Expression2 <DerivedLeft>, Real > (left,right);}
 
 template< typename DerivedRight>
-class Multiply2< Real, Expression2 <DerivedRight> >
+class Multiplication2< Real, Expression2 <DerivedRight> >
 operator*(const Real&left, const Expression2<DerivedRight>&right)
-{return Multiply2< Real, Expression2 <DerivedRight> >(left,right);}
+{return Multiplication2< Real, Expression2 <DerivedRight> >(left,right);}
 
 
 
@@ -1078,12 +1053,14 @@ class Evaluation<Expression2<UnaryPlus2< Expression2<Derived> > >,OtherTemplateA
  eval_(Eval(expr_()))
  {};
  
- template<typename...OtherTemplateArguments2,typename Output,typename...Inputs>
- void apply(Output& output,const Inputs&...inputs)
+ template<typename...Inputs>
+ void apply(subtype& output,const Inputs&...inputs)
  {
-  std::cout<<"ciarrivo"<<std::endl;
+  std::cout<<"evaluation unaryplus"<<std::endl;
   // compute output
-  // eval_.apply(output,inputs...);
+  // eval_.template apply<OtherTemplateArguments2...>(output,inputs...);
+
+  eval_.apply(output,inputs...);
   // apply plus to output (we assume it does not change, so we do not compute)
   // Derived(output);
  }
@@ -1100,7 +1077,7 @@ class Evaluation<Expression2<UnaryMinus2< Expression2<Derived> > >,OtherTemplate
  public:
  using type=UnaryMinus2<Expression2<Derived>>;
  using Eval=Evaluation<Expression2<Derived>,OtherTemplateArguments...>;
-
+ using subtype= OperatorType<type,OtherTemplateArguments...>;
  Evaluation(){};
  
  Evaluation(const Expression2<type>& expr):
@@ -1108,11 +1085,16 @@ class Evaluation<Expression2<UnaryMinus2< Expression2<Derived> > >,OtherTemplate
  eval_(Eval(expr_()))
  {};
  
- template<typename...OtherTemplateArguments2,typename Output,typename...Inputs>
- void apply(Output& output,const Inputs&...inputs)
+ template<typename...Inputs>
+ void apply(subtype& output,const Inputs&...inputs)
  {
+  std::cout<<"evaluation unaryminus"<<std::endl;
+  
   // compute output
-  // eval_.apply(tmp,inputs...);
+    // eval_.template apply<OtherTemplateArguments2...>(output,inputs...);
+  eval_.apply(output,inputs...);
+
+  Minus2(output);
   // apply minus to output
   // Minus(output,tmp);
  }
@@ -1128,14 +1110,14 @@ private:
 
 template<typename DerivedRight,typename DerivedLeft,typename...OtherTemplateArguments>
 class Evaluation<Expression2<Addition2< Expression2<DerivedLeft>  ,  
-                                        Expression2<DerivedRight>
-                                        >>,
+                                        Expression2<DerivedRight>>>,
                  OtherTemplateArguments...>
 {
  public:
  using type=Addition2<Expression2<DerivedLeft>,Expression2<DerivedRight>>;
  using EvalLeft=Evaluation<Expression2<DerivedLeft>,OtherTemplateArguments...>;
  using EvalRight=Evaluation<Expression2<DerivedRight>,OtherTemplateArguments...>;
+ using subtype=OperatorType<type,OtherTemplateArguments...>;
 
  Evaluation(){};
  
@@ -1146,37 +1128,34 @@ class Evaluation<Expression2<Addition2< Expression2<DerivedLeft>  ,
  eval_right_(EvalRight(expr_.right()))
 {};
  
- template<typename...OtherTemplateArguments2,typename Output,typename...Inputs>
- void apply(Output& output,const Inputs&...inputs)
+ template<typename...OtherTemplateArguments2,typename...Inputs>
+ void apply(subtype& output,const Inputs&...inputs)
  {
-  // compute output
-  // eval_left_.apply(output1,inputs...);
-  // eval_right_.apply(output2,inputs...);
-  // // add output2 to output1
-  // Derived(output,output1,output2);
+  std::cout<<"evaluation Addition2"<<std::endl;
 
-
-  // eval_left_.apply(mat);
-  // eval_right_.apply(mat); 
+  eval_left_.apply(left_value_,inputs...);
+  eval_right_.apply(right_value_,inputs...);
+  Add(output,left_value_,right_value_);
  }
 private:
 
  type expr_;
+ subtype left_value_;
+ subtype right_value_;
  EvalLeft eval_left_;
  EvalRight eval_right_;
 };
 
 template<typename DerivedRight,typename DerivedLeft,typename...OtherTemplateArguments>
 class Evaluation<Expression2<Subtraction2< Expression2<DerivedLeft>  ,  
-                                        Expression2<DerivedRight>
-                                        >>,
+                                           Expression2<DerivedRight>>>,
                  OtherTemplateArguments...>
 {
  public:
  using type=Subtraction2<Expression2<DerivedLeft>,Expression2<DerivedRight>>;
  using EvalLeft=Evaluation<Expression2<DerivedLeft>,OtherTemplateArguments...>;
  using EvalRight=Evaluation<Expression2<DerivedRight>,OtherTemplateArguments...>;
-
+ using subtype=OperatorType<type,OtherTemplateArguments...>;
  Evaluation(){};
  
 
@@ -1186,34 +1165,36 @@ class Evaluation<Expression2<Subtraction2< Expression2<DerivedLeft>  ,
  eval_right_(EvalRight(expr_.right()))
 {};
  
- template<typename...OtherTemplateArguments2,typename Output,typename...Inputs>
- void apply(Output& output,const Inputs&...inputs)
+ template<typename...OtherTemplateArguments2,typename...Inputs>
+ void apply(subtype& output,const Inputs&...inputs)
  {
-  // compute output
-  // eval_left_.apply(output1,inputs...);
-  // eval_right_.apply(output2,inputs...);
-  // // subtruct output2 to output1
-  // Derived(output,output1,output2);
+  std::cout<<"evaluation Subtraction2"<<std::endl;
+  eval_left_.apply(left_value_,inputs...);
+  eval_right_.apply(right_value_,inputs...);
+  Subtract(output,left_value_,right_value_);
  }
 private:
 
  type expr_;
+ subtype left_value_;
+ subtype right_value_;
  EvalLeft eval_left_;
  EvalRight eval_right_;
 };
 
 
 template<typename DerivedRight,typename DerivedLeft,typename...OtherTemplateArguments>
-class Evaluation<Expression2<Multiply2< Expression2<DerivedLeft>  ,  
-                                        Expression2<DerivedRight>
-                                        >>,
+class Evaluation<Expression2<Multiplication2< Expression2<DerivedLeft>  ,  
+                                              Expression2<DerivedRight>>>,
                  OtherTemplateArguments...>
 {
  public:
- using type=Multiply2<Expression2<DerivedLeft>,Expression2<DerivedRight>>;
+ using type=Multiplication2<Expression2<DerivedLeft>,Expression2<DerivedRight>>;
  using EvalLeft=Evaluation<Expression2<DerivedLeft>,OtherTemplateArguments...>;
  using EvalRight=Evaluation<Expression2<DerivedRight>,OtherTemplateArguments...>;
-
+ using subtype=OperatorType<type,OtherTemplateArguments...>;
+ using subtypeleft=OperatorType<DerivedLeft,OtherTemplateArguments...>;
+ using subtyperight=OperatorType<DerivedRight,OtherTemplateArguments...>;
  Evaluation(){};
  
 
@@ -1223,29 +1204,31 @@ class Evaluation<Expression2<Multiply2< Expression2<DerivedLeft>  ,
  eval_right_(EvalRight(expr_.right()))
 {};
 
- template<typename...OtherTemplateArguments2,typename Output,typename...Inputs>
- void apply(Output& output,const Inputs&...inputs)
+ template<typename...OtherTemplateArguments2,typename...Inputs>
+ void apply(subtype& output,const Inputs&...inputs)
  {
-  // // compute output
-  // eval_left_.apply(output1,inputs...);
-  // eval_right_.apply(output2,inputs...);
-  // // multiply output1 and output2
-  // Derived(output,output1,output2);
+  std::cout<<"evaluation Multiplication2"<<std::endl;
+  eval_left_.apply(left_value_,inputs...);
+  eval_right_.apply(right_value_,inputs...);
+  Multiply(output,left_value_,right_value_);
  }
 private:
 
  type expr_;
+ subtype output;
+ subtypeleft left_value_;
+ subtyperight right_value_;
  EvalLeft eval_left_;
  EvalRight eval_right_;
 };
 
 template<typename DerivedRight,typename...OtherTemplateArguments>
-class Evaluation<Expression2<Multiply2< Real, Expression2<DerivedRight> >>,OtherTemplateArguments...>                                   
+class Evaluation<Expression2<Multiplication2< Real, Expression2<DerivedRight> >>,OtherTemplateArguments...>                                   
 {
  public:
- using type=Multiply2<Real,Expression2<DerivedRight>>;
+ using type=Multiplication2<Real,Expression2<DerivedRight>>;
  using EvalRight=Evaluation<Expression2<DerivedRight>,OtherTemplateArguments...>;
- 
+ using subtype=OperatorType<type,OtherTemplateArguments...>;
  Evaluation(){};
  
 
@@ -1255,13 +1238,12 @@ class Evaluation<Expression2<Multiply2< Real, Expression2<DerivedRight> >>,Other
  eval_right_(EvalRight(expr_.right()))
 {};
  
- template<typename...OtherTemplateArguments2,typename Output,typename...Inputs>
- void apply(Output& output,const Inputs&...inputs)
+ template<typename...OtherTemplateArguments2,typename...Inputs>
+ void apply(subtype& output,const Inputs&...inputs)
  {
-  // // compute output
-  // eval_right_.apply(output2,inputs...);
-  // // multiply output1 and output2
-  // Derived(output,eval_left_,output2);
+  std::cout<<"evaluation Multiplication2(Real,)"<<std::endl;
+  eval_right_.apply(output,inputs...);
+  Multiply(output,eval_left_);
  }
 private:
 
@@ -1274,12 +1256,13 @@ private:
 
 
 template< typename DerivedLeft,typename...OtherTemplateArguments>
-class Evaluation<Expression2<Multiply2< Expression2<DerivedLeft>,Real>>,
+class Evaluation<Expression2<Multiplication2< Expression2<DerivedLeft>,Real>>,
                  OtherTemplateArguments...>                                       
 {
  public:
- using type=Multiply2<Expression2<DerivedLeft>,Real>;
+ using type=Multiplication2<Expression2<DerivedLeft>,Real>;
  using EvalLeft=Evaluation<Expression2<DerivedLeft>,OtherTemplateArguments...>;
+ using subtype=OperatorType<type,OtherTemplateArguments...>;
  
  Evaluation(){};
  
@@ -1290,28 +1273,28 @@ class Evaluation<Expression2<Multiply2< Expression2<DerivedLeft>,Real>>,
  eval_right_(expr_.right())
 {};
  
- template<typename...OtherTemplateArguments2,typename Output,typename...Inputs>
- void apply(Output& output,const Inputs&...inputs)
+ template<typename...OtherTemplateArguments2,typename...Inputs>
+ void apply(subtype& output,const Inputs&...inputs)
  {
-  // // compute output
-  // eval_left_.apply(output1,inputs...);
-  // // multiply output1 and output2
-  // Derived(output,output1,eval_right_);
+  std::cout<<"evaluation Multiplication2(,Real)"<<std::endl;
+  eval_left_.apply(output,inputs...);
+  Multiply(output,eval_right_);
+
  }
 private:
-
  type expr_;
  EvalLeft eval_left_;
  Real eval_right_;
 };
 
 template< typename DerivedLeft,typename...OtherTemplateArguments>
-class Evaluation<Expression2<Divide2< Expression2<DerivedLeft>, Real> >,
+class Evaluation<Expression2<Division2< Expression2<DerivedLeft>, Real> >,
                  OtherTemplateArguments...>                                       
 {
  public:
- using type=Divide2<Expression2<DerivedLeft>,Real>;
+ using type=Division2<Expression2<DerivedLeft>,Real>;
  using EvalLeft=Evaluation<Expression2<DerivedLeft>,OtherTemplateArguments...>;
+ using subtype=OperatorType<type,OtherTemplateArguments...>;
  
  Evaluation(){};
  
@@ -1322,13 +1305,12 @@ class Evaluation<Expression2<Divide2< Expression2<DerivedLeft>, Real> >,
  eval_right_(expr_.right())
 {};
  
- template<typename...OtherTemplateArguments2,typename Output,typename...Inputs>
- void apply(Output& output,const Inputs&...inputs)
+ template<typename...OtherTemplateArguments2,typename...Inputs>
+ void apply(subtype& output,const Inputs&...inputs)
  {
-  // // compute output
-  // eval_left_.apply(output1,inputs...);
-  // // multiply output1 and output2
-  // Derived(output,output1,eval_right_);
+  std::cout<<"evaluation Division2(,Real)"<<std::endl;
+  eval_left_.apply(output,inputs...);
+  Divide(output,eval_right_);
  }
 
 private:
@@ -1339,20 +1321,20 @@ private:
 };
 
 
+// 
 
 
-
-template<typename T>
-constexpr auto Eval(const T& t){return Evaluation< Expression2<remove_all_t<decltype(t)>>>(t);}
+template<typename...OtherTemplateArguments, typename T>
+constexpr auto Eval(const T& t){return Evaluation< Expression2<remove_all_t<decltype(t)>>,OtherTemplateArguments...>(t);}
 
 // first parameter is an expression, while the others input are utils 
-template<typename T,typename ...Ts>
+template<typename...OtherTemplateArguments,typename T,typename ...Ts>
 constexpr auto Eval(const T& t,const Ts&...ts){return Evaluation< Expression2<remove_all_t<decltype(t)>>,
-                                                                              remove_all_t<decltype(ts)>... >(t,ts...);}
+                                                                              remove_all_t<decltype(ts)>...,OtherTemplateArguments... >(t,ts...);}
 
-template<typename T,typename ...Ts>
+template<typename...OtherTemplateArguments,typename T,typename ...Ts>
 constexpr auto Eval(const T& t, Ts&...ts){return Evaluation< Expression2<remove_all_t<decltype(t)>>,
-                                                                              remove_all_t<decltype(ts)>... >(t,ts...);}
+                                                                              remove_all_t<decltype(ts)>...,OtherTemplateArguments... >(t,ts...);}
 
 
 
@@ -1486,7 +1468,7 @@ constexpr auto Eval(const T& t, Ts&...ts){return Evaluation< Expression2<remove_
 
 
 // template< typename DerivedLeft,typename DerivedRight>
-// class Evaluation< Multiply2< Expression2<DerivedLeft> , Expression2<DerivedRight> > >
+// class Evaluation< Multiplication2< Expression2<DerivedLeft> , Expression2<DerivedRight> > >
 // {   
 //  public:
 //  using Left= typename Evaluation< DerivedLeft >::type;
@@ -1494,7 +1476,7 @@ constexpr auto Eval(const T& t, Ts&...ts){return Evaluation< Expression2<remove_
 //  using type= typename OperatorType< Multiply<  Left, Right > >::type;
 //  // typename OperatorType< Multiply< typename Left::type, typename Right::type > >::type; // SBBAGLIATO, il prodotto
 
-//  Evaluation(const Multiply2< Expression2<DerivedLeft> , Expression2<DerivedRight> >& expr):
+//  Evaluation(const Multiplication2< Expression2<DerivedLeft> , Expression2<DerivedRight> >& expr):
 //  eval_left_(expr.left()),
 //  eval_right_(expr.right())
 //  {};
@@ -1524,7 +1506,7 @@ constexpr auto Eval(const T& t, Ts&...ts){return Evaluation< Expression2<remove_
 
 
 // template< typename DerivedLeft>
-// class Evaluation< Multiply2< Expression2<DerivedLeft> , Real > >
+// class Evaluation< Multiplication2< Expression2<DerivedLeft> , Real > >
 // {   
 //  public:
 //  using Left= typename Evaluation< DerivedLeft >::type;
@@ -1532,7 +1514,7 @@ constexpr auto Eval(const T& t, Ts&...ts){return Evaluation< Expression2<remove_
 //  using type= typename OperatorType< Multiply<  Left, Right > >::type;
 //  // typename OperatorType< Multiply< typename Left::type, Real> >::type; // SBBAGLIATO, il prodotto
 
-//  Evaluation(const Multiply2< Expression2<DerivedLeft> , Real >& expr):
+//  Evaluation(const Multiplication2< Expression2<DerivedLeft> , Real >& expr):
 //  eval_left_(expr.left()),
 //  right_(expr.right())
 //  {};
@@ -1558,7 +1540,7 @@ constexpr auto Eval(const T& t, Ts&...ts){return Evaluation< Expression2<remove_
 
 
 // template< typename DerivedRight>
-// class Evaluation< Multiply2< Real, Expression2<DerivedRight> > >
+// class Evaluation< Multiplication2< Real, Expression2<DerivedRight> > >
 // {   
 //  public:
 //  using Left= Real;
@@ -1566,7 +1548,7 @@ constexpr auto Eval(const T& t, Ts&...ts){return Evaluation< Expression2<remove_
 //  using type= typename OperatorType< Multiply<  Left, Right > >::type;
 //  // typename OperatorType< Multiply< Real, typename Right::type> >::type; 
 
-//  Evaluation(const Multiply2< Real, Expression2<DerivedRight> >& expr):
+//  Evaluation(const Multiplication2< Real, Expression2<DerivedRight> >& expr):
 //  left_(expr.left()),
 //  eval_right_(expr.right())
 //  {};
@@ -1591,7 +1573,7 @@ constexpr auto Eval(const T& t, Ts&...ts){return Evaluation< Expression2<remove_
 // };
 
 // template< typename DerivedLeft>
-// class Evaluation< Divide2< Expression2<DerivedLeft> , Real > >
+// class Evaluation< Division2< Expression2<DerivedLeft> , Real > >
 // {   
 //  public:
 //  using Left= typename Evaluation< DerivedLeft >::type;
@@ -1599,7 +1581,7 @@ constexpr auto Eval(const T& t, Ts&...ts){return Evaluation< Expression2<remove_
 //  using type= typename OperatorType< Divide<  Left, Right > >::type;
 //  // typename OperatorType< Divide< typename Left::type, Real> >::type; // SBBAGLIATO, il prodotto
 
-//  Evaluation(const Divide2< Expression2<DerivedLeft> , Real >& expr):
+//  Evaluation(const Division2< Expression2<DerivedLeft> , Real >& expr):
 //  eval_left_(expr.left()),
 //  right_(expr.right())
 //  {};
@@ -1900,21 +1882,21 @@ class QuadratureOrder< Subtraction2< Expression2<Left>,Expression2<Right> > >
 
 // order(T) = order(T/REAL)
 template<typename T>
-class QuadratureOrder< Divide2<Expression2<T>, Real > >
+class QuadratureOrder< Division2<Expression2<T>, Real > >
 { public:
   static constexpr Integer value=QuadratureOrder<T>::value;
 };
 
 // order(T) = order(T * REAL)
 template<typename T>
-class QuadratureOrder< Multiply2< Expression2<T>, Real > >
+class QuadratureOrder< Multiplication2< Expression2<T>, Real > >
 { public:
   static constexpr Integer value=QuadratureOrder<T>::value;
 };
 
 // order(T) = order(REAL * T)
 template<typename T>
-class QuadratureOrder< Multiply2< Real, Expression2<T> > >
+class QuadratureOrder< Multiplication2< Real, Expression2<T> > >
 { public:
   static constexpr Integer value=QuadratureOrder<T>::value;
 };
@@ -1922,7 +1904,7 @@ class QuadratureOrder< Multiply2< Real, Expression2<T> > >
 
 // order(Left*Right) = order(Left) * order(Right)
 template<typename Left, typename Right>
-class QuadratureOrder< Multiply2< Expression2<Left>, Expression2<Right> > >
+class QuadratureOrder< Multiplication2< Expression2<Left>, Expression2<Right> > >
 { public:
 
   static constexpr Integer value=QuadratureOrder<Left>::value + QuadratureOrder<Right>::value;
@@ -2038,21 +2020,21 @@ class OperatorTupleType< Subtraction2< Expression2<Left>,Expression2<Right> > >
 
 // order(T) = order(T/REAL)
 template<typename T>
-class OperatorTupleType< Divide2<Expression2<T>, Real > >
+class OperatorTupleType< Division2<Expression2<T>, Real > >
 { public:
   using type=typename OperatorTupleType<T>::type;
 };
 
 // order(T) = order(T * REAL)
 template<typename T>
-class OperatorTupleType< Multiply2< Expression2<T>, Real > >
+class OperatorTupleType< Multiplication2< Expression2<T>, Real > >
 { public:
   using type=typename OperatorTupleType<T>::type;
 };
 
 // order(T) = order(REAL * T)
 template<typename T>
-class OperatorTupleType< Multiply2< Real, Expression2<T> > >
+class OperatorTupleType< Multiplication2< Real, Expression2<T> > >
 { public:
   using type=typename OperatorTupleType<T>::type;
 };
@@ -2060,7 +2042,7 @@ class OperatorTupleType< Multiply2< Real, Expression2<T> > >
 
 // order(Left*Right) = order(Left) * order(Right)
 template<typename Left, typename Right>
-class OperatorTupleType< Multiply2< Expression2<Left>, Expression2<Right> > >
+class OperatorTupleType< Multiplication2< Expression2<Left>, Expression2<Right> > >
 { public:
   using	LeftT=typename OperatorTupleType<Left>::type;
   using	RightT=typename OperatorTupleType<Right>::type;

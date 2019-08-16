@@ -544,7 +544,7 @@ class StaticMatrix : public Matrix<T,Rows,Cols>
 
 
 // template<Integer M,Integer N>
-// class Multiply2< Number<M>, Number<N> >
+// class Multiplication2< Number<M>, Number<N> >
 // {
 // public:
 //   static constexpr Integer value=M*N;
@@ -571,7 +571,7 @@ class StaticMatrix : public Matrix<T,Rows,Cols>
 // {
 //  public:
 //  static_assert(TupleTypeSize<Vector1>::value==TupleTypeSize<Vector2>::value," Static boolean contraction requires the two vectors to have the same length ");
-//  using type = typename Multiply2<GetType<Nmax,Vector1>,GetType<Nmax,Vector2>>::type;
+//  using type = typename Multiplication2<GetType<Nmax,Vector1>,GetType<Nmax,Vector2>>::type;
 // };
 
 // template<typename Vector1, typename Vector2, Integer Nmax,Integer N>
@@ -579,7 +579,7 @@ class StaticMatrix : public Matrix<T,Rows,Cols>
 // {
 //  public:
 //  static_assert(TupleTypeSize<Vector1>::value==TupleTypeSize<Vector2>::value," Static boolean contraction requires the two vectors to have the same length ");
-//  using single_type = typename Multiply2<GetType<N,Vector1>,GetType<N,Vector2>>::type;
+//  using single_type = typename Multiplication2<GetType<N,Vector1>,GetType<N,Vector2>>::type;
 //  using type= typename Addition2<single_type, typename StaticBooleanContractionHelper<Vector1,Vector2,Nmax,N+1>::type >::type;
 
 // };
@@ -685,7 +685,7 @@ class StaticMatrix : public Matrix<T,Rows,Cols>
 
 
 // template<Integer Rows,Integer Cols,typename...Args1, Integer Dim,typename...Args2>
-// class Multiply2< StaticBooleanMatrix<Rows,Cols,Args1...> , StaticBooleanVector<Dim, Args2... > >
+// class Multiplication2< StaticBooleanMatrix<Rows,Cols,Args1...> , StaticBooleanVector<Dim, Args2... > >
 // {
 // public:
 //   static_assert(Cols==Dim,"static matrix vector multiplication requires Cols==Dim");
