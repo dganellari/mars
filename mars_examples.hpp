@@ -997,8 +997,18 @@ void assembly_example()
 
  using FSspace1= FunctionSpace< MeshT, Lagrange1<1>, RT1<1>,Lagrange2<1>>;
  FSspace1 FEspace1(mesh);
- using FSspace2= FunctionSpace< MeshT, Lagrange2<1>,Lagrange1<1>>;
+ using FSspace2= FunctionSpace< MeshT, Lagrange2<1>,Lagrange2<1>>;
  FSspace2 FEspace2(mesh);
+
+ using FSspace3= FunctionSpace< MeshT, Lagrange1<1>,Lagrange2<1>>;
+ FSspace3 FEspace3(mesh);
+
+ using FSspace4= FunctionSpace< MeshT, Lagrange1<1>,Lagrange2<1>,Lagrange1<1>>;
+ FSspace4 FEspace4(mesh);
+ using FSspace5= FunctionSpace< MeshT, Lagrange1<1>>;
+ FSspace5 FEspace5(mesh);
+ using FSspace6= FunctionSpace< MeshT, Lagrange1<1>>;
+ FSspace6 FEspace6(mesh);
 
  auto W=MixedFunctionSpace(FEspace1,FEspace2);
  auto W1=MixedFunctionSpace(W,FEspace2);
@@ -1033,50 +1043,91 @@ void assembly_example()
  // OperatorType<decltype(Div(sigma))> ok2(1);
  
  L2Inner(mesh,+sigma,v)+
- L2Inner(mesh,-2*u/2,s+s);
+ L2Inner(mesh,+u,s);
 
- auto a=W1.dofmap<0,0>();
- int b=W1.n_dofs();
- int c=W1.tot_n_dofs<0>();
- int d=W1.tot_n_dofs<1>();
- // std::cout<<"a=="<<a<<std::endl;
- std::cout<<"b=="<<b<<std::endl;
- std::cout<<"c=="<<c<<std::endl;
-  std::cout<<"d=="<<c<<std::endl;
-  std::cout<<W1.Nelem_dofs<<std::endl;
+ //  auto a=W1.dofmap<0,0>();
+ // int b=W1.n_dofs();
+ // int c=W1.tot_n_dofs<0>();
+ // int d=W1.tot_n_dofs<1>();
+ // // std::cout<<"a=="<<a<<std::endl;
+ // std::cout<<"b=="<<b<<std::endl;
+ // std::cout<<"c=="<<c<<std::endl;
+ //  std::cout<<"d=="<<c<<std::endl;
+  // std::cout<<W1.Nelem_dofs<<std::endl;
  Matrix<Real,W1.Nelem_dofs,W1.Nelem_dofs> mat_loc;
  std::cout<<mat_loc<<std::endl;
-
- auto shape_coefficients=shape_function_coefficients(l22);
- auto referencemaps=reference_maps(l22);
- auto shapefunctions=shape_functions(l22);
-
- // auto lrs=L2Inner(mesh,r,s)+L2Inner(mesh,Grad(u),v);
- // auto evalrs=Eval(lrs,shapefunctions);
-
-
- shape_coefficients.init(mesh);
-
-
-
-
   elem=mesh.elem(0);
-  // mesh.points(elem_iter,points);
-
   jacobian(elem,mesh.points(),J);
 
+
+  auto shape_coefficients=shape_function_coefficients(l22);
+  auto referencemaps=reference_maps(l22);
+  auto shapefunctions=shape_functions(l22);
+  shape_coefficients.init(mesh);
   shape_coefficients.init(0);
-
   referencemaps.init(J);
-
   shapefunctions.init_map(referencemaps);
   shapefunctions.init(shape_coefficients);
   shapefunctions.init(referencemaps,shape_coefficients);
-  auto l22eval=Eval(l22,shapefunctions);
-  // OperatorType<decltype(Div(sigma)),GaussPoints<Elem,QPOrder>> ok1=l22;
-  // OperatorType<decltype(u),GaussPoints<Elem,QPOrder>> ok2=l22;
 
-  l22eval.apply(mat_loc);
+
+  auto l22eval=Eval(l22,shapefunctions);
+  // l22eval.apply(mat_loc);
+
+
+
+
+
+ 
+ auto W4=MixedFunctionSpace(FEspace4);
+ // auto W4= MixedFunctionSpace(W3);
+
+ auto u9 =     MakeTrial<0>(W4);
+ auto u8 = MakeTrial<1>(W4);
+ auto u7 = MakeTrial<2>(W4);
+ // auto p9 =     MakeTrial<2>(W4);
+ // auto r9 =     MakeTrial<2>(W4);
+ // auto rr19 =     MakeTrial<4>(W4);
+ // auto rr29 =     MakeTrial<5>(W4);
+ // auto rr39 =     MakeTrial<6>(W4);
+
+ auto v9 =   MakeTest<0>(W4);
+ auto v8 = MakeTest<1>(W4);
+ auto v7 = MakeTest<2>(W4);
+ // auto q9 =   MakeTest<2>(W4);
+ // auto s9 =   MakeTest<2>(W4);
+ // auto ss19 =   MakeTest<4>(W4);
+ // auto ss29 =   MakeTest<5>(W4);
+ // auto ss39 =   MakeTest<6>(W4);
+
+  auto l88= L2Inner(mesh,u7,v7+v8+v9+v+tau);
+  auto l9= L2Inner(mesh,u8+u9,v8+v9)+L2Inner(mesh,u7,v7)+L2Inner(mesh,u9,v9);
+          // +L2Inner(mesh,+u9,s9);
+  auto shape_coefficients9=shape_function_coefficients(l9);
+  auto referencemaps9=reference_maps(l9);
+  auto shapefunctions9=shape_functions(l9);
+  shape_coefficients9.init(mesh);
+  shape_coefficients9.init(0);
+  referencemaps9.init(J);
+  shapefunctions9.init_map(referencemaps9);
+  shapefunctions9.init(shape_coefficients9);
+  shapefunctions9.init(referencemaps9,shape_coefficients9);
+
+
+  auto l9eval=Eval(l9,shapefunctions9);
+  l9eval.apply(mat_loc);
+  // auto l44eval=Eval(l44,shape_coefficients4);
+
+
+
+
+
+ // decltype(u4) kk(5);
+ // decltype(u) kk4(5);
+// decltype(l22eval) mm(4);
+
+
+
 
  for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
  {

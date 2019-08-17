@@ -225,25 +225,34 @@ template<typename OtherArg>
        using type = typename std::tuple<OtherArg>;
      };
 
+template<Integer N,typename OtherArg, typename...OtherArgs>
+     typename std::enable_if< (N==0&&0==sizeof...(OtherArgs)),typename tuple_type<OtherArg,OtherArgs...>::type >::type  
+     tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
+     { 
+      //std::cout<<"N=="<<N<<". "<<tot_n_dofs<N-1>()<<std::endl;
+     return std::tuple<OtherArg>(add_costant(otherarg,0));}
 
 template<Integer N,typename OtherArg, typename...OtherArgs>
-     typename std::enable_if< 0==sizeof...(OtherArgs),typename tuple_type<OtherArg,OtherArgs...>::type >::type  
+     typename std::enable_if< (0<N&&0==sizeof...(OtherArgs)),typename tuple_type<OtherArg,OtherArgs...>::type >::type  
      tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
-     { std::cout<<"N=="<<N<<". "<<tot_n_dofs<N-1>()<<std::endl;
+     { 
+      //std::cout<<"N=="<<N<<". "<<tot_n_dofs<N-1>()<<std::endl;
      return std::tuple<OtherArg>(add_costant(otherarg,tot_n_dofs<N-1>()));}
 
 
 template<Integer N,typename OtherArg, typename...OtherArgs>
      typename std::enable_if< 0<N && 0<sizeof...(OtherArgs),typename tuple_type<OtherArg,OtherArgs...>::type >::type  
      tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
-     {std::cout<<"N=="<<N<<". "<<tot_n_dofs<N-1>()<<std::endl;
+     {
+      //std::cout<<"N=="<<N<<". "<<tot_n_dofs<N-1>()<<std::endl;
      return std::tuple_cat(std::tuple<OtherArg>( add_costant(otherarg,tot_n_dofs<N-1>()) ),
        tuple_make<N+1,OtherArgs...>(otherargs...));}
 
 template<Integer N,typename OtherArg, typename...OtherArgs>
      typename std::enable_if< 0==N && 0<sizeof...(OtherArgs),typename tuple_type<OtherArg,OtherArgs...>::type >::type  
      tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
-     {std::cout<<"N=="<<N<<". "<<0<<std::endl;
+     {
+      //std::cout<<"N=="<<N<<". "<<0<<std::endl;
      return std::tuple_cat(std::tuple<OtherArg>( otherarg ),
        tuple_make<N+1,OtherArgs...>(otherargs...));}
 
@@ -582,6 +591,26 @@ class OperatorTupleType<TestOrTrial_<MixedSpace,N,OperatorType> >
   using type=TupleChangeType<N,single_type,emptytuple>;
 };
 
+template<Integer N,typename...Args >
+Test<        FunctionSpace<Args...>,//MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType,
+             GetType<typename FunctionSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value>
+MakeTest(const FunctionSpace<Args...>& W)
+{return Test<FunctionSpace<Args...>,//typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType
+        GetType<typename FunctionSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value>();}
+
+
+template<Integer N,typename...Args >
+Trial<        FunctionSpace<Args...>,//typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType,
+              GetType<typename FunctionSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value> 
+MakeTrial(const FunctionSpace<Args...>& W)
+{return Trial<FunctionSpace<Args...>,//typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType
+        GetType<typename FunctionSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value>();}
+
+
+
+
+
+
 
 
 
@@ -659,10 +688,12 @@ class QuadratureOrder<Trial<MixedSpace,N,OperatorKind> >
 
 
 
-
-
 template<typename MeshT, typename Left,typename Right,Integer QR=GaussianQuadrature>
-class L2DotProductIntegral: public Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>
+class L2DotProductIntegral;
+
+template<typename MeshT, typename Left,typename Right,Integer QR>
+class L2DotProductIntegral: 
+public Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>
 {  
    public:
     using type=Contraction2<Expression2 <Left>, Expression2 <Right> > ;
@@ -687,7 +718,7 @@ class L2DotProductIntegral: public Expression2<L2DotProductIntegral<MeshT,Left,R
      const Left&  left() const{return left_;};
      const Right& right()const{return right_;};
   private:
-    MeshT mesh_;
+    const MeshT& mesh_;
     Left left_;
     Right right_;
     type product_;
@@ -788,6 +819,132 @@ class Subtraction2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegra
   DerivedLeft left_;
   L2DotProductIntegral<MeshT,Left,Right> right_;
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename MeshT, typename Left2,typename Right2, typename Left>
+constexpr auto
+L2Inner(const MeshT& mesh,const Expression2<Left>& left,const Expression2<Addition2<Expression2<Left2>,Expression2<Right2>>>& right)
+{return Addition2<
+  Expression2<decltype(L2Inner(mesh,left.derived(),right.derived().left()))>,
+  Expression2<decltype(L2Inner(mesh,left.derived(),right.derived().right()))>>
+              (L2Inner(mesh,left.derived(),right.derived().left()),
+               L2Inner(mesh,left.derived(),right.derived().right()) );}
+
+
+
+
+
+template<typename MeshT, typename Left1,typename Right1, typename Right>
+constexpr auto
+L2Inner(const MeshT& mesh,const Expression2<Addition2<Expression2<Left1>,Expression2<Right1>>>& left,const Expression2<Right>& right)
+{return Addition2<
+  Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived()))>,
+  Expression2<decltype(L2Inner(mesh,left.derived().right(),right.derived()))>>
+  (L2Inner(mesh,left.derived().left(),right.derived()),
+   L2Inner(mesh,left.derived().right(),right.derived()) );}
+
+
+
+
+template<typename MeshT, typename Left1,typename Right1,typename Left2, typename Right2>
+constexpr auto
+L2Inner(const MeshT& mesh,const Expression2<Addition2<Expression2<Left1>,Expression2<Right1>>>& left,
+                          const Expression2<Addition2<Expression2<Left2>,Expression2<Right2>>>& right)
+{return 
+Addition2<Expression2<Addition2<Expression2<Addition2<Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived().left()))>,
+                                                      Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived().right()))>
+                                                     >
+                                           >,
+                                Expression2<decltype(L2Inner(mesh,left.derived().right(),right.derived().left()))>
+                                >
+                      >,
+          Expression2<decltype(L2Inner(mesh,left.derived().right(),right.derived().right()))>
+         >
+  (
+Addition2<Expression2<Addition2<Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived().left()))>,
+                                Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived().right()))>
+                                                     >
+                                           >,
+                                Expression2<decltype(L2Inner(mesh,left.derived().right(),right.derived().left()))>
+                                >
+                      
+  (
+    
+    Addition2<Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived().left()))>,
+              Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived().right()))>>
+      (
+       L2Inner(mesh,left.derived().left(),right.derived().left()),
+       L2Inner(mesh,left.derived().left(),right.derived().right())
+      )
+      ,
+      L2Inner(mesh,left.derived().right(),right.derived().left())
+    ),
+    L2Inner(mesh,left.derived().right(),right.derived().right()  )                
+  )
+  ;
+}
+
+
+// template<typename MeshT, typename Left1,typename Right1,typename Left2, typename Right2>
+// Addition2<Expression2<Addition2<Expression2<L2DotProductIntegral<MeshT,Left1,Left2>>,
+//                                 Expression2<L2DotProductIntegral<MeshT,Left1,Right2>>>>,
+//           Expression2<Addition2<Expression2<L2DotProductIntegral<MeshT,Right1,Left2>>,
+//                                 Expression2<L2DotProductIntegral<MeshT,Right1,Right2>>>>>
+// L2Inner(const MeshT& mesh,const Expression2<Addition2<Expression2<Left1>,Expression2<Right1>>>& left,
+//                           const Expression2<Addition2<Expression2<Left2>,Expression2<Right2>>>& right)
+// {return Addition2<Expression2<Addition2<Expression2<L2DotProductIntegral<MeshT,Left1,Left2>>,
+//                                 Expression2<L2DotProductIntegral<MeshT,Left1,Right2>>>>,
+//           Expression2<Addition2<Expression2<L2DotProductIntegral<MeshT,Right1,Left2>>,
+//                                 Expression2<L2DotProductIntegral<MeshT,Right1,Right2>>>>>
+//   (
+//    Addition2<Expression2<L2DotProductIntegral<MeshT,Left1,Left2>>,
+//                                 Expression2<L2DotProductIntegral<MeshT,Left1,Right2>>>
+//    (L2Inner(mesh,left.derived().left(),right.derived().left()),
+//     L2Inner(mesh,left.derived().left(),right.derived().right())), 
+//    Addition2<Expression2<L2DotProductIntegral<MeshT,Right1,Left2>>,
+//              Expression2<L2DotProductIntegral<MeshT,Right1,Right2>> >
+//     (L2Inner(mesh,left.derived().right(),right.derived().left()),
+//     L2Inner(mesh,left.derived().right(),right.derived().right()))
+//     );
+// }
+
+
+
+
+
+template<typename MeshT, typename Left1,typename Right1, typename Right>
+Addition2<Expression2<L2DotProductIntegral<MeshT,Left1,Right>>,
+          Expression2<L2DotProductIntegral<MeshT,Right1,Right>>>
+L2Inner(const MeshT& mesh,const Expression2<Addition2<Expression2<Left1>,Expression2<Right1>>>& left,const Expression2<Right>& right, const Integer& label)
+{return Addition2<
+  Expression2<L2DotProductIntegral<MeshT,Left1,Right>>,
+  Expression2<L2DotProductIntegral<MeshT,Right1,Right>>>(L2Inner(mesh,left.derived().left(),right,label),
+                                                         L2Inner(mesh,left.derived().right(),right,label) );}
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

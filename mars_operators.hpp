@@ -65,6 +65,42 @@ template<typename...Operators>
 class OperatorTypeHelper;
 
 
+
+template<typename Left, typename Right, typename...Ts>
+class IsAddable
+{
+ public:
+ static constexpr bool value=false;
+};
+
+template<typename T, Integer Dim,typename...Ts>
+class IsAddable<Vector<T,Dim>,Vector<T,Dim>,Ts...>
+{
+ public:
+ static constexpr bool value=true;
+};
+
+template<typename T, Integer Rows,Integer Cols,typename...Ts>
+class IsAddable<Matrix<T,Rows,Cols>,Matrix<T,Rows,Cols>,Ts...>
+{
+ public:
+ static constexpr bool value=true;
+}; 
+
+template<typename MeshT, typename Left,typename Right,Integer QR>
+class L2DotProductIntegral;
+
+template<typename MeshT, typename Left1,typename Right1,Integer QR1,typename Left2,typename Right2,Integer QR2,typename...Ts>
+class IsAddable<L2DotProductIntegral<MeshT,Left1,Right1,QR1>,L2DotProductIntegral<MeshT,Left2,Right2,QR2>,Ts... >
+{
+ public:
+ static constexpr bool value=true;
+};
+
+
+
+
+
 // type(T) = type(+T)
 template<typename T, typename...Ts>
 class OperatorTypeHelper<T,Ts...>
@@ -95,7 +131,10 @@ class OperatorTypeHelper< Addition2< Expression2<Left>, Expression2<Right > >, T
 { public:
   using type1=typename OperatorTypeHelper<Left,Ts...>::type;
   using type2=typename OperatorTypeHelper<Right,Ts...>::type;
-  static_assert(IsSame<type1,type2>::value, " In Addition, Left and Right types must be equal");
+  static_assert(IsAddable<typename OperatorTypeHelper<Left>::type,
+                          typename OperatorTypeHelper<Right>::type
+                         >::value, " In Addition, Left and Right types must be equal");
+
   using type=typename OperatorTypeHelper<Left,Ts...>::type;
 };
 
@@ -134,6 +173,47 @@ class OperatorTypeHelper< Multiplication2< Real, Expression2<T> >, Ts...>
 
 template<typename...Inputs>
 using OperatorType=typename OperatorTypeHelper<Inputs...>::type;
+
+
+
+
+
+template<typename...Ts>
+class OperatorTypeHelper< Contraction2< Expression2<Real>, Expression2<Real > >, Ts...>
+{ public:
+  using type=Real;
+};
+
+template<typename T, Integer Dim, typename...Ts>
+class OperatorTypeHelper< Contraction2< Expression2<Vector<T,Dim>>, Expression2<Vector<T,Dim>> >, Ts...>
+{ public:
+  using type=T;
+};
+
+template<typename T, Integer Rows, Integer Cols, typename...Ts>
+class OperatorTypeHelper< Contraction2< Expression2<Matrix<T,Rows,Cols>>, Expression2<Matrix<T,Rows,Cols>> >, Ts...>
+{ public:
+  using type=T;
+};
+
+
+
+template<typename Left, typename Right, typename...Ts>
+class OperatorTypeHelper< Contraction2< Expression2<Left>, Expression2<Right > >, Ts...>
+{ public:
+  using typeleft=typename OperatorTypeHelper<Left,Ts...>::type;
+  using typeright=typename OperatorTypeHelper<Right,Ts...>::type;
+  using type=typename OperatorTypeHelper<Contraction2<typeleft,typeright>,Ts...>::type;
+};
+
+// template<typename Left, typename Right, typename...Ts>
+// class OperatorTypeHelper< Contraction2< Expression2<Addition2<Expression2<Left1>,Expression2<Right1>> >, 
+//                                         Expression2<Addition2<Expression2<Left2>,Expression2<Right2>> > >, Ts...>
+// { public:
+//   using typeleft=typename OperatorTypeHelper<Left,Ts...>::type;
+//   using typeright=typename OperatorTypeHelper<Right,Ts...>::type;
+//   using type=typename OperatorTypeHelper<Contraction2<typeleft,typeright>,Ts...>::type;
+// };
 
 // // type(VECTOR) = type(MATRIX * VECTOR)
 // template<typename T, Integer RowsLeft,Integer Common>
@@ -1322,6 +1402,11 @@ private:
 
 
 // 
+template<typename Form>
+class ShapeFunctions;
+
+template<typename MeshT, typename Left,typename Right,Integer QR, typename Form>
+class Evaluation<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>, ShapeFunctions<Form>>;
 
 
 template<typename...OtherTemplateArguments, typename T>
@@ -1334,7 +1419,7 @@ constexpr auto Eval(const T& t,const Ts&...ts){return Evaluation< Expression2<re
 
 template<typename...OtherTemplateArguments,typename T,typename ...Ts>
 constexpr auto Eval(const T& t, Ts&...ts){return Evaluation< Expression2<remove_all_t<decltype(t)>>,
-                                                                              remove_all_t<decltype(ts)>...,OtherTemplateArguments... >(t,ts...);}
+                                                                         remove_all_t<decltype(ts)>...,OtherTemplateArguments... >(t,ts...);}
 
 
 
