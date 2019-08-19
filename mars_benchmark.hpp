@@ -82,7 +82,7 @@ namespace mars {
 				mark_hypersphere_for_refinement(
 					mesh,
 					center,
-					0.25,
+					0.5,
 					elements
 					);
 
