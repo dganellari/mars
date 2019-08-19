@@ -27,6 +27,8 @@ namespace mars {
 
 			//refine once for creating nice intial set-up for newest vertex algorithm
 			auto mesh = mesh_in;
+
+			//RecursiveLeppBisection<Mesh> b(mesh);
 			LeppBisection<Mesh> b(mesh);
 			b.uniform_refine(1);
 
@@ -57,6 +59,7 @@ namespace mars {
 			std::cout << "volume: " << mesh.volume() << std::endl;
 			std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 
+			//RecursiveLeppBisection<Mesh> b(mesh);
 			LeppBisection<Mesh> b(mesh);
 
 			b.uniform_refine(2);
@@ -72,7 +75,7 @@ namespace mars {
 				mark_hypersphere_for_refinement(
 					mesh,
 					center,
-					0.25,
+					0.5,
 					elements
 					);
 
