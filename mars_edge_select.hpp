@@ -34,6 +34,15 @@ namespace mars {
 			return 0;
 		}
 
+		virtual Integer select(
+			const Mesh &mesh,
+			const Integer element_id,
+			const EdgeElementMap &edge_element_map) const
+		{
+			//first edge selected
+			return 0;
+		}
+
 		virtual Integer stable_select(
 			const Mesh &mesh,
 			const Integer element_id) const
