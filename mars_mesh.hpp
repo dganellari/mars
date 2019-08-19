@@ -22,8 +22,8 @@ namespace mars {
 	template<Integer Dim_, Integer ManifoldDim_, class Implementation_>
 	class Mesh : public IMesh<Dim_> {
 	public:
-		static const Integer Dim = Dim_;
-		static const Integer ManifoldDim = ManifoldDim_;
+		static constexpr Integer Dim = Dim_;
+		static constexpr Integer ManifoldDim = ManifoldDim_;
 
 		using Elem     = mars::Simplex<Dim, ManifoldDim>;
 		using SideElem = mars::Simplex<Dim, ManifoldDim-1>; 
