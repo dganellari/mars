@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 2.8.12)
 
 project(mars)
 
+option(TRY_WITH_MOONOLITH "Use -DTRY_WITH_MOONOLITH=ON for enabling mesh transfer functions." ON)
+
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 if(NOT CMAKE_BUILD_TYPE)
@@ -51,11 +53,11 @@ endfunction()
 
 find_package(MPIExtended)
 
-#if(MPI_FOUND)
-#	set(CMAKE_CXX_COMPILER ${MPI_CXX_COMPILER})
-#	set(CMAKE_CXX_COMPILER_DEBUG ${MPI_CXX_COMPILER})
-#	set(WITH_MPI ON)
-#endif()
+# if(MPI_FOUND)
+# 	set(CMAKE_CXX_COMPILER ${MPI_CXX_COMPILER})
+# 	set(CMAKE_CXX_COMPILER_DEBUG ${MPI_CXX_COMPILER})
+# 	set(WITH_MPI ON)
+# endif()
 
 option(MARS_USE_CUDA "Build mars with cuda support" OFF)
 
@@ -197,11 +199,15 @@ IF(Kokkos_FOUND)
 	ENDIF()
 ENDIF()
 
+if(TRY_WITH_MOONOLITH)
+	add_subdirectory(moonolith_adapter)
+endif()
 
-add_subdirectory(moonolith_adapter)
 target_link_libraries(mars ${MARS_LIBRARIES})
 target_include_directories(mars PUBLIC ${CMAKE_BINARY_DIR})
+target_include_directories(mars PUBLIC ${MARS_INCLUDES})
 
+message(STATUS "${MARS_INCLUDES}")
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/mars_config.hpp.in ${CMAKE_BINARY_DIR}/mars_config.hpp)
 include_directories(${CMAKE_BINARY_DIR})
