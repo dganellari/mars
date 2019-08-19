@@ -31,6 +31,12 @@
 #include "generation/mars_test_kokkos.hpp"
 #endif //WITH_KOKKOS
 
+#ifdef WITH_PAR_MOONOLITH
+#include "mars_moonolith_test.hpp"
+#include <mpi.h>
+#endif //WITH_PAR_MOONOLITH
+
+
 #ifdef WITH_MPI
 #include "mars_par_bisection.hpp"
 #include "mars_par_mesh.hpp"
@@ -1137,7 +1143,12 @@ int main(int argc, char *argv[])
 
 #ifdef WITH_MPI
 	MPI_Init(&argc, &argv);
-#endif //WITH_MPI
+#else
+#ifdef WITH_PAR_MOONOLITH
+	MPI_Init(&argc, &argv);
+#endif
+#endif 
+
 	// test_bisection_2D();
 	 //test_bisection_3D(atoi(argv[1]));
 	// test_bisection_4D();
@@ -1214,6 +1225,11 @@ int main(int argc, char *argv[])
 
 #endif
 
+
+#ifdef WITH_PAR_MOONOLITH
+	run_mars_moonolith_test();
+#endif //WITH_PAR_MOONOLITH
+
 	if (level < 100) {
 		//test_mars_mesh_generation_3D(level , level, level );
 
@@ -1222,12 +1238,14 @@ int main(int argc, char *argv[])
 	}
 
 
-
 #ifdef WITH_MPI
 	// par_mesh_test();
 	return MPI_Finalize();
 #else
-
-	return 0;
+	#ifdef WITH_PAR_MOONOLITH
+		return MPI_Finalize();
+	#else 
+		return 0;
+	#endif
 #endif //WITH_MPI
 }

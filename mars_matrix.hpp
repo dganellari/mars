@@ -20,7 +20,7 @@ namespace mars {
 	    Matrix(std::initializer_list<T> values)
 	    {
 	    	assert(values.size() == Rows*Cols);
-	        std::copy(std::begin(values), std::end(values), std::begin(this->values));
+	        std::copy(std::begin(values), std::begin(values) + (Rows*Cols), std::begin(this->values));
 	    }
 	    
 	    inline constexpr static Integer rows() { return Rows; }
