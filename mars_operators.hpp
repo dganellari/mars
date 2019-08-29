@@ -131,9 +131,9 @@ class OperatorTypeHelper< Addition2< Expression2<Left>, Expression2<Right > >, T
 { public:
   using type1=typename OperatorTypeHelper<Left,Ts...>::type;
   using type2=typename OperatorTypeHelper<Right,Ts...>::type;
-  static_assert(IsAddable<typename OperatorTypeHelper<Left>::type,
-                          typename OperatorTypeHelper<Right>::type
-                         >::value, " In Addition, Left and Right types must be equal");
+  // static_assert(IsAddable<typename OperatorTypeHelper<Left>::type,
+  //                         typename OperatorTypeHelper<Right>::type
+  //                        >::value, " In Addition, Left and Right types must be equal");
 
   using type=typename OperatorTypeHelper<Left,Ts...>::type;
 };
@@ -900,6 +900,8 @@ class Addition2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> >
 : public Expression2< Addition2< Expression2 <DerivedLeft>, Expression2 <DerivedRight> > >
 {
   public:
+    using Left=DerivedLeft;
+    using Right=DerivedRight;
     Addition2(const Expression2<DerivedLeft>& left, const Expression2<DerivedRight>&right)
     : 
     left_(left.derived()),
@@ -1409,18 +1411,46 @@ template<typename MeshT, typename Left,typename Right,Integer QR, typename Form>
 class Evaluation<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>, ShapeFunctions<Form>>;
 
 
-template<typename...OtherTemplateArguments, typename T>
-constexpr auto Eval(const T& t){return Evaluation< Expression2<remove_all_t<decltype(t)>>,OtherTemplateArguments...>(t);}
+// template<typename...OtherTemplateArguments, typename T>
+// constexpr auto Eval(const T& t){return Evaluation< Expression2<remove_all_t<decltype(t)>>,OtherTemplateArguments...>(t);}
 
-// first parameter is an expression, while the others input are utils 
-template<typename...OtherTemplateArguments,typename T,typename ...Ts>
-constexpr auto Eval(const T& t,const Ts&...ts){return Evaluation< Expression2<remove_all_t<decltype(t)>>,
-                                                                              remove_all_t<decltype(ts)>...,OtherTemplateArguments... >(t,ts...);}
+// // first parameter is an expression, while the others input are utils 
+// template<typename...OtherTemplateArguments,typename T,typename ...Ts>
+// constexpr auto Eval(const T& t,const Ts&...ts){return Evaluation< Expression2<remove_all_t<decltype(t)>>,
+//                                                                               remove_all_t<decltype(ts)>...,OtherTemplateArguments... >(t,ts...);}
 
-template<typename...OtherTemplateArguments,typename T,typename ...Ts>
-constexpr auto Eval(const T& t, Ts&...ts){return Evaluation< Expression2<remove_all_t<decltype(t)>>,
-                                                                         remove_all_t<decltype(ts)>...,OtherTemplateArguments... >(t,ts...);}
+// template<typename...OtherTemplateArguments,typename T,typename ...Ts>
+// constexpr auto Eval(const T& t, Ts&...ts){return Evaluation< Expression2<remove_all_t<decltype(t)>>,
+//                                                                          remove_all_t<decltype(ts)>...,OtherTemplateArguments... >(t,ts...);}
 
+
+template<typename Form>
+class GeneralForm;
+
+template<typename Form>
+class ShapeFunctions2;
+
+
+
+
+template<typename Form>
+class Evaluation<Expression2<GeneralForm<Form>>>
+{
+ public:
+
+ Evaluation(const GeneralForm<Form>& generalform,ShapeFunctions2<GeneralForm<Form>>& shapes):
+ generalform_(generalform),
+ shapes_(shapes)
+ {}
+
+ private:
+ const GeneralForm<Form>& generalform_;
+ ShapeFunctions2<GeneralForm<Form>>& shapes_;
+};
+
+template<typename Form>
+constexpr auto Eval(const GeneralForm<Form>& form,ShapeFunctions2<GeneralForm<Form>>& shapes)
+{return Evaluation< Expression2<GeneralForm<Form>>>(form,shapes);}
 
 
 

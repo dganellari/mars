@@ -32,7 +32,7 @@ public:
       static constexpr Integer Nsubspaces=1+sizeof...(BaseFunctionSpaces);
 
       static constexpr Integer Nelem_dofs=DofsPerElemNums<Elem,BaseFunctionSpace,BaseFunctionSpaces...>::value;
-
+      
       using DofMapType=std::vector<std::array<Integer, Nelem_dofs>>;
       using OffSetType=std::array<std::vector<Integer>, Nsubspaces>;
       using SpacesDofsArrayType=std::array<std::vector<std::vector<Integer>>, Nsubspaces>;
@@ -42,6 +42,7 @@ public:
       using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates<ElementFunctionSpacesTupleType>;
       using SpacesToUniqueFEFamily=SpacesToUniqueFEFamilies<UniqueElementFunctionSpacesTupleType>;
       using FromElementFunctionSpacesToUniqueNumbersTupleType=TupleAllToUniqueMap<ElementFunctionSpacesTupleType,UniqueElementFunctionSpacesTupleType>;
+
       inline Integer n_subspaces()const{return Nsubspaces;};
 
       inline const Integer& components (const Integer& space_id)const{return space_infos_[space_id][3];};
@@ -163,12 +164,14 @@ class TraceSpace
 
 
 
-
+template<typename...Args>
+class MixedSpace; 
 
 template<typename...Args>
 class MixedSpace 
 {
 public:
+  using Spaces=std::tuple<Args...>;
   using DofMapType=std::tuple<typename Args::DofMapType...>;
   using ElementFunctionSpacesTupleType=TupleCatType<typename Args::ElementFunctionSpacesTupleType...>;
   using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates<TupleCatType<typename Args::UniqueElementFunctionSpacesTupleType...>>;
@@ -176,6 +179,53 @@ public:
   using ElemsTupleType=RemoveTupleDuplicates<TupleCatType<typename Args::ElemsTupleType...>>;
   using FromElementFunctionSpacesToUniqueNumbersTupleType=TupleAllToUniqueMap<ElementFunctionSpacesTupleType,UniqueElementFunctionSpacesTupleType>;
   static constexpr Integer Nelem_dofs=Sum(Args::Nelem_dofs...);
+
+
+  template<Integer N, typename T,typename...Ts>
+  class FunctionSpacesCount;
+
+  template<Integer N, typename...Ts>
+  class FunctionSpacesCount<N,std::tuple<FunctionSpace<Ts...>>>
+  {
+   public: 
+   using T=FunctionSpace<Ts...>;
+   using type=TupleOfTypeTCreate<Number<N>,T::Nsubspaces>;     
+   static constexpr Integer value= N+1;
+   };
+
+  template<Integer N, typename...Ts>
+  class FunctionSpacesCount<N,std::tuple<MixedSpace<Ts...>>>
+  {
+   public: 
+   using type=typename FunctionSpacesCount<N,typename MixedSpace<Ts...>::Spaces>::type;
+   static constexpr Integer value= FunctionSpacesCount<N,typename MixedSpace<Ts...>::Spaces>::value;
+  };
+
+  template<Integer N, typename ...Ts1, typename...Ts>
+  class FunctionSpacesCount<N,std::tuple<FunctionSpace<Ts1...>,Ts...>>
+  {
+   public: 
+   using T=FunctionSpace<Ts1...>;
+   using singletype=TupleOfTypeTCreate<Number<N>,T::Nsubspaces>;
+   using rest = typename FunctionSpacesCount<N+1,std::tuple<Ts...>>::type;
+   using type=TupleCatType<singletype,rest>; 
+   static constexpr Integer value=FunctionSpacesCount<N+1,std::tuple<Ts...>>::value;
+ };
+
+  template<Integer N, typename ...Ts1, typename...Ts>
+  class FunctionSpacesCount<N,std::tuple<MixedSpace<Ts1...>,Ts...>>
+  {
+   public: 
+   using T=MixedSpace<Ts1...>;
+   using singletype=typename FunctionSpacesCount<N,typename T::Spaces>::type;
+   static constexpr Integer value_tmp= FunctionSpacesCount<N,typename T::Spaces>::value;
+   using rest = typename FunctionSpacesCount<value_tmp,std::tuple<Ts...>>::type;
+   static constexpr Integer value= FunctionSpacesCount<value_tmp,std::tuple<Ts...>>::value;
+   using type=TupleCatType<singletype,rest>;
+  };
+
+  using FromSpacesToFunctionSpaces=typename FunctionSpacesCount<0, Spaces>::type;
+
   inline const Integer& n_dofs()const{return n_dofs_;}; 
 
   inline const DofMapType& dofmap()const{return dofmap_;};
@@ -279,8 +329,10 @@ class Trial: public Expression2<Trial<MixedSpace,N,OperatorType>>
   using FunctionSpace=MixedSpace;
   using UniqueElementFunctionSpacesTupleType=typename MixedSpace::UniqueElementFunctionSpacesTupleType;
   static constexpr Integer Nmax=TupleTypeSize<UniqueElementFunctionSpacesTupleType>::value;
-  static constexpr Integer value=N;
+  static constexpr Integer number=N;//GetType<typename MixedSpace::FromSpacesToFunctionSpaces,N>::value;
+  static constexpr Integer value=GetType<typename MixedSpace::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value;
   using Operator=OperatorType;
+
 };
 
 template<typename MixedSpace, Integer N, typename OperatorType=IdentityOperator>
@@ -290,7 +342,8 @@ public:
   using FunctionSpace=MixedSpace;
   using UniqueElementFunctionSpacesTupleType=typename MixedSpace::UniqueElementFunctionSpacesTupleType;
   static constexpr Integer Nmax=TupleTypeSize<UniqueElementFunctionSpacesTupleType>::value;
-  static constexpr Integer value=N;
+  static constexpr Integer number=N;//GetType<typename MixedSpace::FromSpacesToFunctionSpaces,N>::value;
+  static constexpr Integer value=GetType<typename MixedSpace::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value;
   using Operator=OperatorType;
 };
 
@@ -386,6 +439,8 @@ public:
   using TupleFunctionSpace=std::tuple<>;
   using UniqueElementFunctionSpacesTupleType=std::tuple<>;
   using type=std::tuple<Number<0>>;
+  static constexpr Integer value=-1;
+  static constexpr Integer number=-1;
 };
 
 template<typename MixedSpace,Integer N, typename OperatorType>
@@ -394,6 +449,8 @@ public:
   using TupleFunctionSpace=std::tuple<MixedSpace>;
   using UniqueElementFunctionSpacesTupleType=std::tuple<typename MixedSpace::UniqueElementFunctionSpacesTupleType>;
   using type=std::tuple<Number<1>>;
+  static constexpr Integer value=Test<MixedSpace,N,OperatorType>::value;
+  static constexpr Integer number=Test<MixedSpace,N,OperatorType>::number;
 };
 
 template<typename MixedSpace,Integer N, typename OperatorType>
@@ -402,6 +459,8 @@ public:
   using TupleFunctionSpace=std::tuple<MixedSpace>;
   using UniqueElementFunctionSpacesTupleType=std::tuple<typename MixedSpace::UniqueElementFunctionSpacesTupleType>;
   using type=std::tuple<Number<2>>;
+  static constexpr Integer value=Trial<MixedSpace,N,OperatorType>::value;
+  static constexpr Integer number=Trial<MixedSpace,N,OperatorType>::number;
 };
 
 
@@ -419,6 +478,7 @@ public:
   using UniqueElementFunctionSpacesTupleType=TupleCatType<typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType,
                                                           typename IsTestOrTrial<Right>::UniqueElementFunctionSpacesTupleType >;
   using type=TupleRemoveType<Number<0>,TupleCatType<typename IsTestOrTrial<Left>::type,typename IsTestOrTrial<Right>::type >> ;
+  static constexpr Integer number= Heaviside(IsTestOrTrial<Left>::number)+Heaviside(IsTestOrTrial<Right>::number);
   static_assert(TupleTypeSize<type>::value<2," In Multiply<Left,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 };
 
@@ -429,6 +489,8 @@ public:
   using TupleFunctionSpace=typename IsTestOrTrial<Left>::TupleFunctionSpace;
   using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType;
   using type=typename IsTestOrTrial<Left>::type;
+  static constexpr Integer value= IsTestOrTrial<Left>::value;
+  static constexpr Integer number= Heaviside(IsTestOrTrial<Left>::number);
   static_assert(TupleTypeSize<type>::value<2," In Multiply<Left,Real>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 };
 
@@ -439,6 +501,8 @@ public:
   using TupleFunctionSpace=typename IsTestOrTrial<Right>::TupleFunctionSpace;
   using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Right>::UniqueElementFunctionSpacesTupleType;
   using type=typename IsTestOrTrial<Right>::type;
+  static constexpr Integer value=  IsTestOrTrial<Right>::value;
+  static constexpr Integer number= Heaviside(IsTestOrTrial<Right>::number);
   static_assert(TupleTypeSize<type>::value<2," In Multiply<Real,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 
 };
@@ -451,6 +515,8 @@ public:
   using TupleFunctionSpace=typename IsTestOrTrial<Left>::TupleFunctionSpace;
   using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType;
   using type=typename IsTestOrTrial<Left>::type;
+  static constexpr Integer value= IsTestOrTrial<Left>::value ;
+  static constexpr Integer number= Heaviside(IsTestOrTrial<Left>::number);
   static_assert(TupleTypeSize<type>::value<2," In Divide<Left,Real>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 };
 
@@ -465,6 +531,7 @@ public:
   using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates<TupleCatType<typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType,
                                                                                 typename IsTestOrTrial<Right>::UniqueElementFunctionSpacesTupleType >>;
   using type=RemoveTupleDuplicates<TupleRemoveType<Number<0>,TupleCatType<typename IsTestOrTrial<Left>::type,typename IsTestOrTrial<Right>::type >>> ;
+  static constexpr Integer number= Heaviside(IsTestOrTrial<Left>::number)+Heaviside(IsTestOrTrial<Right>::number);
   static_assert(TupleTypeSize<type>::value<2," In Addition<Left,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 };
 
@@ -478,6 +545,7 @@ public:
   using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates<TupleCatType<typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType,
                                                                                 typename IsTestOrTrial<Right>::UniqueElementFunctionSpacesTupleType >>;
   using type=RemoveTupleDuplicates<TupleRemoveType<Number<0>,TupleCatType<typename IsTestOrTrial<Left>::type,typename IsTestOrTrial<Right>::type > >>;
+  static constexpr Integer number= Heaviside(IsTestOrTrial<Left>::number)+Heaviside(IsTestOrTrial<Right>::number);
   static_assert(TupleTypeSize<type>::value<2," In Subtraction<Left,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 
 };
@@ -492,7 +560,7 @@ public:
   using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Type>::UniqueElementFunctionSpacesTupleType;
   using type=TupleRemoveType<Number<0>,typename IsTestOrTrial<Type>::type>;
   static_assert(TupleTypeSize<type>::value<2," In UnaryPlus<Type>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
-
+  static constexpr Integer number= Heaviside(IsTestOrTrial<Type>::number);
 };
 
 template<typename Type>
@@ -503,7 +571,7 @@ public:
   using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Type>::UniqueElementFunctionSpacesTupleType;
   using type=TupleRemoveType<Number<0>,typename IsTestOrTrial<Type>::type>;
   static_assert(TupleTypeSize<type>::value<2," In UnaryMinus<Type>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
-
+  static constexpr Integer number= Heaviside(IsTestOrTrial<Type>::number);
 };
 
 template<typename Left,typename Right>
@@ -592,19 +660,19 @@ class OperatorTupleType<TestOrTrial_<MixedSpace,N,OperatorType> >
 };
 
 template<Integer N,typename...Args >
-Test<        FunctionSpace<Args...>,//MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType,
-             GetType<typename FunctionSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value>
-MakeTest(const FunctionSpace<Args...>& W)
+auto MakeTest(const FunctionSpace<Args...>& W)
 {return Test<FunctionSpace<Args...>,//typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType
-        GetType<typename FunctionSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value>();}
+        // GetType<typename FunctionSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value
+        N
+        >();}
 
 
 template<Integer N,typename...Args >
-Trial<        FunctionSpace<Args...>,//typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType,
-              GetType<typename FunctionSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value> 
-MakeTrial(const FunctionSpace<Args...>& W)
+auto MakeTrial(const FunctionSpace<Args...>& W)
 {return Trial<FunctionSpace<Args...>,//typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType
-        GetType<typename FunctionSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value>();}
+        // GetType<typename FunctionSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value
+        N
+        >();}
 
 
 
@@ -615,19 +683,19 @@ MakeTrial(const FunctionSpace<Args...>& W)
 
 
 template<Integer N,typename...Args >
-Test<        MixedSpace<Args...>,//MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType,
-             GetType<typename MixedSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value>
-MakeTest(const MixedSpace<Args...>& W)
+auto MakeTest(const MixedSpace<Args...>& W)
 {return Test<MixedSpace<Args...>,//typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType
-        GetType<typename MixedSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value>();}
+        // GetType<typename MixedSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value
+        N
+        >();}
 
 
 template<Integer N,typename...Args >
-Trial<        MixedSpace<Args...>,//typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType,
-              GetType<typename MixedSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value> 
-MakeTrial(const MixedSpace<Args...>& W)
+auto MakeTrial(const MixedSpace<Args...>& W)
 {return Trial<MixedSpace<Args...>,//typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType
-        GetType<typename MixedSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value>();}
+        // GetType<typename MixedSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value
+        N
+        >();}
 
 
 
@@ -664,9 +732,10 @@ Curl(const Test<MixedSpace,N,IdentityOperator>& W)
 
 
 
-template<typename MixedSpace,Integer N, typename OperatorKind>
-class QuadratureOrder<Test<MixedSpace,N,OperatorKind> >
+template<typename MixedSpace,Integer N_, typename OperatorKind>
+class QuadratureOrder<Test<MixedSpace,N_,OperatorKind> >
 { public:
+  static constexpr Integer N=Test<MixedSpace,N_,OperatorKind>::value;
   using Test=Test<MixedSpace,N,OperatorKind>;
   using UniqueElementFunctionSpacesTupleType=typename Test::UniqueElementFunctionSpacesTupleType;
   using BaseFunctionSpaceAndElement=GetType<UniqueElementFunctionSpacesTupleType,N>;
@@ -675,9 +744,10 @@ class QuadratureOrder<Test<MixedSpace,N,OperatorKind> >
   static constexpr Integer value=QuadratureOrder<Operator,BaseFunctionSpace>::value;
 };
 
-template<typename MixedSpace,Integer N, typename OperatorKind>
-class QuadratureOrder<Trial<MixedSpace,N,OperatorKind> >
+template<typename MixedSpace,Integer N_, typename OperatorKind>
+class QuadratureOrder<Trial<MixedSpace,N_,OperatorKind> >
 { public:
+  static constexpr Integer N=Trial<MixedSpace,N_,OperatorKind>::value;
   using Trial=Trial<MixedSpace,N,OperatorKind>;
   using UniqueElementFunctionSpacesTupleType=typename Trial::UniqueElementFunctionSpacesTupleType;
   using BaseFunctionSpaceAndElement=GetType<UniqueElementFunctionSpacesTupleType,N>;
@@ -688,8 +758,367 @@ class QuadratureOrder<Trial<MixedSpace,N,OperatorKind> >
 
 
 
+
+
+
+template<Integer...N>
+class FormTestTrialNumbers;
+
+template<Integer LeftSpaceNumber,Integer RightSpaceNumber>
+class FormTestTrialNumbers<2,2,1,LeftSpaceNumber,RightSpaceNumber>
+{
+public:
+  using type=std::tuple<Number<RightSpaceNumber>,Number<LeftSpaceNumber>>;
+};
+
+template<Integer LeftSpaceNumber,Integer RightSpaceNumber>
+class FormTestTrialNumbers<2,1,2,LeftSpaceNumber,RightSpaceNumber>
+{
+public:
+  using type=std::tuple<Number<LeftSpaceNumber>,Number<RightSpaceNumber>>;
+};
+
+template<Integer LeftSpaceNumber,Integer RightSpaceNumber>
+class FormTestTrialNumbers<1,0,1,LeftSpaceNumber,RightSpaceNumber>
+{
+public:
+  using type=std::tuple<Number<RightSpaceNumber>>;
+};
+
+template<Integer LeftSpaceNumber,Integer RightSpaceNumber>
+class FormTestTrialNumbers<1,1,0,LeftSpaceNumber,RightSpaceNumber>
+{
+public:
+  using type=std::tuple<Number<LeftSpaceNumber>>;
+};
+
 template<typename MeshT, typename Left,typename Right,Integer QR=GaussianQuadrature>
 class L2DotProductIntegral;
+
+
+
+
+
+
+template<typename T, typename TupleOfTuple,Integer M,Integer Nmax,Integer N>
+constexpr std::enable_if_t<(N==Nmax+1),Integer > NthTupleOfTupleTypePositionHelper()
+{return -1;};
+
+template<typename T, typename TupleOfTuple,Integer M,Integer Nmax,Integer N>
+constexpr std::enable_if_t<(N<Nmax+1),Integer > NthTupleOfTupleTypePositionHelper()
+{
+  if(IsSame<T,GetType<TupleOfTuple,N,M> >::value)
+    return N;
+  else 
+    return NthTupleOfTupleTypePositionHelper<T,TupleOfTuple,M,Nmax,N+1>();
+};
+
+template<typename T, typename TupleOfTuple,Integer M>
+constexpr Integer NthTupleOfTupleTypePosition()
+{
+  return NthTupleOfTupleTypePositionHelper<T,TupleOfTuple,M,TupleTypeSize<TupleOfTuple>::value-1,0>();
+}
+
+
+
+
+
+
+
+template<Integer N, Integer Nmax, typename TupleOfTuple1, typename TupleOfTuple2, typename TupleOfTupleOutput>
+class Prova3;
+
+template<typename TupleOfTuple1, typename TupleOfTuple2, typename TupleOfTupleOutput>
+class Prova3<0,0,TupleOfTuple1,TupleOfTuple2,TupleOfTupleOutput>
+{
+public:
+using T=GetType<TupleOfTuple1,0,0>;
+// we check if T is inside in TupleOfTuple2 (position>=0)
+static constexpr Integer position=NthTupleOfTupleTypePosition<T,TupleOfTuple2,0>();
+// if not, the output is enlarged with the n-th subtuple of TupleOfTuple1
+// if it is, then we merge the n-th subtuple of TupleOfTuple1 and the position-th of TupleOfTuple2
+using TupleOfTupleOutputNew=
+                  typename std::conditional<(position==-1),
+                  std::tuple<GetType<TupleOfTuple1,0>>,
+                  std::tuple<std::tuple<GetType<TupleOfTuple1,0,0>>,TupleCatType<GetType<TupleOfTuple1,0,1>,GetType<TupleOfTuple2,0,1> > >  
+                  >::type;
+// if not, TupleOfTuple2 is left the same 
+// if it is, then we removed the added element to the output from tupleoftuple2 
+using TupleOfTuple2New=
+                   typename std::conditional<(position==-1), // do not remove
+                   TupleOfTuple2,
+                   TupleRemoveNthPosition<position,TupleOfTuple2>
+                   >::type;
+
+using type=std::tuple<TupleOfTupleOutputNew>;//TupleOfTupleOutputNew;
+
+};
+
+
+template<Integer Nmax, typename TupleOfTuple1, typename TupleOfTuple2, typename TupleOfTupleOutput>
+class Prova3<Nmax,Nmax,TupleOfTuple1,TupleOfTuple2,TupleOfTupleOutput>
+{
+public:
+using T=GetType<TupleOfTuple1,Nmax,0>;
+// we check if T is inside in TupleOfTuple2 (position>=0)
+static constexpr Integer position=NthTupleOfTupleTypePosition<T,TupleOfTuple2,0>();
+// if not, the output is enlarged with the n-th subtuple of TupleOfTuple1
+// if it is, then we merge the n-th subtuple of TupleOfTuple1 and the position-th of TupleOfTuple2
+using TupleOfTupleOutputNew=
+                  typename std::conditional<(position==-1),
+                  TupleCatType< TupleOfTupleOutput,std::tuple<GetType<TupleOfTuple1,Nmax>>  >,
+                  TupleCatType<TupleOfTupleOutput,
+                  std::tuple<std::tuple<GetType<TupleOfTuple1,Nmax,0>>,TupleCatType<GetType<TupleOfTuple1,Nmax,1>,GetType<TupleOfTuple2,Nmax,1> > >> 
+                  >::type;
+
+// if not, TupleOfTuple2 is left the same 
+// if it is, then we removed the added element to the output from tupleoftuple2 
+using TupleOfTuple2New=
+                   typename std::conditional<(position==-1), // do not remove
+                   TupleOfTuple2,
+                   TupleRemoveNthPosition<position,TupleOfTuple2>
+                   >::type;
+
+using type=TupleOfTupleOutputNew;
+};
+
+
+template< Integer Nmax, typename TupleOfTuple1, typename TupleOfTuple2, typename TupleOfTupleOutput>
+class Prova3<0,Nmax,TupleOfTuple1,TupleOfTuple2,TupleOfTupleOutput>
+{
+public:
+static constexpr Integer N=0;
+using T=GetType<TupleOfTuple1,N,0>;
+// we check if T is inside in TupleOfTuple2 (position>=0)
+static constexpr Integer position=NthTupleOfTupleTypePosition<T,TupleOfTuple2,0>();
+// if not, the output is enlarged with the n-th subtuple of TupleOfTuple1
+// if it is, then we merge the n-th subtuple of TupleOfTuple1 and the position-th of TupleOfTuple2
+using TupleOfTupleOutputNew=
+                  typename std::conditional<(position==-1),
+                  std::tuple<GetType<TupleOfTuple1,0>> ,
+                  std::tuple<std::tuple<GetType<TupleOfTuple1,N,0,0>,TupleCatType<GetType<TupleOfTuple1,N,1>,GetType<TupleOfTuple2,N,1>>>    >
+                  >::type;
+// if not, TupleOfTuple2 is left the same 
+// if it is, then we removed the added element to the output from tupleoftuple2 
+using TupleOfTuple2New=
+                   typename std::conditional<(position==-1), // do not remove
+                   TupleOfTuple2,
+                   TupleRemoveNthPosition<position,TupleOfTuple2>
+                   >::type;
+
+using type=typename Prova3<N+1,Nmax,TupleOfTuple1,TupleOfTuple2New,TupleOfTupleOutputNew>::type;
+};
+
+template<Integer N, Integer Nmax, typename TupleOfTuple1, typename TupleOfTuple2, typename TupleOfTupleOutput>
+class Prova3
+{
+public:
+using T=GetType<TupleOfTuple1,N,0>;
+// we check if T is inside in TupleOfTuple2 (position>=0)
+static constexpr Integer position=NthTupleOfTupleTypePosition<T,TupleOfTuple2,0>();
+// if not, the output is enlarged with the n-th subtuple of TupleOfTuple1
+// if it is, then we merge the n-th subtuple of TupleOfTuple1 and the position-th of TupleOfTuple2
+using TupleOfTupleOutputNew=
+                  typename std::conditional<(position==-1),
+                  TupleCatType< TupleOfTupleOutput,std::tuple<GetType<TupleOfTuple1,N>>  >,
+                  TupleCatType<TupleOfTupleOutput,
+                  std::tuple<std::tuple<GetType<TupleOfTuple1,N,0>>,TupleCatType<GetType<TupleOfTuple1,N,1>,GetType<TupleOfTuple2,N,1> > >> 
+                  >::type;
+
+
+
+// if not, TupleOfTuple2 is left the same 
+// if it is, then we removed the added element to the output from tupleoftuple2 
+using TupleOfTuple2New=
+                   typename std::conditional<(position==-1), // do not remove
+                   TupleOfTuple2,
+                   TupleRemoveNthPosition<position,TupleOfTuple2>
+                   >::type;
+
+using type=typename Prova3<N+1,Nmax,TupleOfTuple1,TupleOfTuple2New,TupleOfTupleOutputNew>::type;
+};
+
+
+template<typename TupleOfTuple1, typename TupleOfTuple2>
+class Prova4
+{
+public:
+  using prova3=Prova3<0,TupleTypeSize<TupleOfTuple1>::value-1,TupleOfTuple1,TupleOfTuple2,std::tuple<std::tuple<>> >;
+  using type= TupleCatType<typename prova3::type,typename prova3::TupleOfTuple2New>;
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename...Ts>
+class Prova6;
+
+template<typename T>
+class Prova6<T, std::tuple<> >
+{
+ public:
+  using type=std::tuple<>;
+};
+
+template<typename T>
+class Prova6<T, std::tuple<>,std::tuple<> >
+{
+ public:
+  using type=std::tuple<>;
+};
+
+template<typename T>
+class Prova6<T, Addition2<Expression2<std::tuple<>>, Expression2<std::tuple<>> > >
+{
+ public:
+  using type=std::tuple<>;
+};
+
+template<typename T, typename MeshT, typename Left,typename Right,Integer QR>
+class Prova6<T, L2DotProductIntegral<MeshT,Left,Right,QR> >
+{
+ public:
+  using L2=L2DotProductIntegral<MeshT,Left,Right,QR>;
+  using type=typename std::conditional<IsSame<T,typename L2::TestTrialNumbers>::value, L2, std::tuple<>>::type;
+};
+
+
+template<typename T, typename MeshT, typename Left,typename Right,Integer QR>
+class Prova6<T, Addition2<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>,Expression2<std::tuple<>> > >
+{
+ public:
+  using L2=L2DotProductIntegral<MeshT,Left,Right,QR>;
+  using type=typename std::conditional<IsSame<T,typename L2::TestTrialNumbers>::value, L2, std::tuple<>>::type;
+
+};
+
+
+template<typename T, typename MeshT, typename Left,typename Right,Integer QR>
+class Prova6<T, Addition2<Expression2<std::tuple<>>, Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>> > >
+{
+ public:
+  using L2=L2DotProductIntegral<MeshT,Left,Right,QR>;
+  using type=typename std::conditional<IsSame<T,typename L2::TestTrialNumbers>::value, L2, std::tuple<>>::type;
+
+};
+
+
+
+
+template<typename T, typename MeshT, typename Left,typename Right,Integer QR>
+class Prova6<T, std::tuple<>, L2DotProductIntegral<MeshT,Left,Right,QR> >
+{
+ public:
+  using L2=L2DotProductIntegral<MeshT,Left,Right,QR>;
+  using type=typename std::conditional<IsSame<T,typename L2::TestTrialNumbers>::value, L2, std::tuple<>>::type;
+};
+
+template<typename T, typename MeshT, typename Left,typename Right,Integer QR>
+class Prova6<T, L2DotProductIntegral<MeshT,Left,Right,QR>, std::tuple<> >
+{
+ public:
+  using L2=L2DotProductIntegral<MeshT,Left,Right,QR>;
+  using type=typename std::conditional<IsSame<T,typename L2::TestTrialNumbers>::value, L2, std::tuple<>>::type;
+};
+
+template<typename T1, typename T2>
+class Prova6< T1, std::tuple<>,Expression2<T2> > 
+{
+public:
+  using type=typename Prova6<Expression2<T2>>::type;
+};
+
+template<typename T1, typename T2>
+class Prova6< T1, Expression2<T2>, std::tuple<> > 
+{
+public:
+  using type=Expression2<T2>;
+};
+
+template<typename T, typename T1, typename T2>
+class Prova6<T, T1, T2 > 
+{
+public:
+  using type=Addition2<Expression2<T1>,Expression2<T2>>;
+};
+
+template<typename...Ts>
+class Prova;
+
+template<typename T,typename MeshT, typename Left,typename Right,Integer QR>
+class Prova<T,L2DotProductIntegral<MeshT,Left,Right,QR> >
+{
+ public:
+  using S=L2DotProductIntegral<MeshT,Left,Right,QR>;
+  using type=typename Prova6<T,S>::type;
+
+};
+
+
+template<typename T, typename MeshT1, typename Left1,typename Right1,Integer QR1,
+                     typename MeshT2, typename Left2,typename Right2,Integer QR2>
+class Prova<T,Addition2<Expression2<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>,
+                        Expression2<L2DotProductIntegral<MeshT2,Left2,Right2,QR2>>>>
+{
+ public:
+  using Left=L2DotProductIntegral<MeshT1,Left1,Right1,QR1>;
+  using Right=L2DotProductIntegral<MeshT2,Left2,Right2,QR2>;
+  // using type=typename Prova6<T, typename Prova6<T,Left>::type, typename Prova6<T,Right>::type>::type;
+  using type=typename Prova6<T, typename Prova6<T,Left>::type, typename Prova6<T,Right>::type>::type;
+
+};
+
+template<typename T,typename MeshT, typename Left1,typename Right1,Integer QR,typename Right>
+class Prova<T, Addition2<Expression2<L2DotProductIntegral<MeshT,Left1,Right1,QR>>,Expression2<Right > > >
+{
+ public:
+  using Left=L2DotProductIntegral<MeshT,Left1,Right1,QR>;
+  using type=typename Prova6<T,
+                             typename Prova6<T,Left>::type,
+                             // typename Prova<T,Right>::type
+                             typename Prova6<T,typename Prova<T,Right>::type>::type
+                             >::type;
+
+};
+
+template<typename T, typename Left,typename MeshT, typename Left1,typename Right1,Integer QR>
+class Prova<T, Addition2<Expression2<Left>,Expression2<L2DotProductIntegral<MeshT,Left1,Right1,QR> > > >
+{
+ public:
+  using Right=L2DotProductIntegral<MeshT,Left1,Right1,QR>;
+  using type=typename Prova6<T,
+                             typename Prova<T,Left>::type,
+                             // typename Prova6<T,Right>::type
+                             typename Prova6<T,typename Prova<T,Right>::type>::type
+                             >::type;
+};
+
+template<typename T, typename Left,typename Right>
+class Prova<T, Addition2<Expression2<Left>,Expression2<Right > > >
+{
+public:
+
+  using type=
+             // typename Prova6<T,typename Prova<T,Right>::type>::type;
+             typename Prova6<T,
+                             typename Prova6<T,typename Prova<T,Left>::type>::type,
+                             typename Prova6<T,typename Prova<T,Right>::type>::type
+                             >::type;
+};
+
+
+
+
+
 
 template<typename MeshT, typename Left,typename Right,Integer QR>
 class L2DotProductIntegral: 
@@ -700,10 +1129,22 @@ public Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>
     using Elem=typename MeshT::Elem;
     static constexpr Integer Order=CheckMaxQuadratureOrder<Elem,QR,QuadratureOrder<type>::value+1>::value; 
     using QRule=typename QuadratureRule<QR>:: template rule<Elem,Order>;
+    using TestOrTrialLeft= IsTestOrTrial<Left>;
+    using TestOrTrialRight= IsTestOrTrial<Right>;
+    static constexpr Integer leftN=TestOrTrialLeft::number;
+    static constexpr Integer rightN=TestOrTrialRight::number;
+
+
+    static constexpr Integer TestOrTrialLeftValue =GetType<typename TestOrTrialLeft::type,0>::value;
+    static constexpr Integer TestOrTrialRightValue =GetType<typename TestOrTrialRight::type,0>::value;
+
     using form= std::tuple<typename TypeOfForm<GetType<typename IsTestOrTrial<Left>::type,0>,
-                                    GetType<typename IsTestOrTrial<Right>::type,0>>::type >;
-    using UniqueElementFunctionSpacesTupleType=GetType<RemoveTupleDuplicates< TupleCatType< typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType,
-                                                                                            typename IsTestOrTrial<Right>::UniqueElementFunctionSpacesTupleType  >>,0>;               
+                                    GetType<typename IsTestOrTrial<Right>::type,0>
+                            >::type >;
+    using TestTrialNumbers=typename FormTestTrialNumbers<GetType<form,0>::value,TestOrTrialLeftValue,TestOrTrialRightValue,leftN,rightN>::type;
+
+    using UniqueElementFunctionSpacesTupleType=GetType<RemoveTupleDuplicates< TupleCatType< typename TestOrTrialLeft::UniqueElementFunctionSpacesTupleType,
+                                                                                            typename TestOrTrialRight::UniqueElementFunctionSpacesTupleType  >>,0>;               
     using TupleFunctionSpace=RemoveTupleDuplicates< TupleCatType< typename IsTestOrTrial<Left>::TupleFunctionSpace,
                                                              typename IsTestOrTrial<Right>::TupleFunctionSpace  >>;               
     using FunctionSpace=GetType<TupleFunctionSpace,0>;
@@ -724,6 +1165,59 @@ public Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>
     type product_;
     Integer label_;
 };
+
+
+
+
+
+
+
+
+
+
+
+// template<typename MeshT, typename Left,typename Left2,typename Right2,Integer QR>
+// class L2DotProductIntegral<MeshT,Left,Addition2<Expression2<Left2>,Expression2<Right2>>,QR> :
+// public Expression2<L2DotProductIntegral<MeshT,Left,Addition2<Expression2<Left2>,Expression2<Right2>>,QR>>
+// {  
+//    public:
+//     using Right=Addition2<Expression2<Left2>,Expression2<Right2>>;
+//     using type=Contraction2<Expression2 <Left>, Expression2 <Right> > ;
+//     using Elem=typename MeshT::Elem;
+//     static constexpr Integer Order=CheckMaxQuadratureOrder<Elem,QR,QuadratureOrder<type>::value+1>::value; 
+//     using QRule=typename QuadratureRule<QR>:: template rule<Elem,Order>;
+//     using form= std::tuple<typename TypeOfForm<GetType<typename IsTestOrTrial<Left>::type,0>,
+//                                     GetType<typename IsTestOrTrial<Right>::type,0>>::type >;
+//     using UniqueElementFunctionSpacesTupleType=GetType<RemoveTupleDuplicates< TupleCatType< typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType,
+//                                                                                             typename IsTestOrTrial<Right>::UniqueElementFunctionSpacesTupleType  >>,0>;               
+//     using TupleFunctionSpace=RemoveTupleDuplicates< TupleCatType< typename IsTestOrTrial<Left>::TupleFunctionSpace,
+//                                                              typename IsTestOrTrial<Right>::TupleFunctionSpace  >>;               
+//     using FunctionSpace=GetType<TupleFunctionSpace,0>;
+    
+//     L2DotProductIntegral(const MeshT& mesh,const Expression2<Left>& left,const Expression2<Right>& right,const Integer label=-666):
+//     mesh_(mesh),
+//     left_(left),
+//     right_(right),
+//     product_(Inner(left,right)),
+//     label_(label)
+//     {}
+       
+
+//        int rimuovimidopo(){std::cout<<"_________________rimuovimidopo";};
+//      const Left&  left() const{return left_;};
+//      const Right& right()const{return right_;};
+//   private:
+//     const MeshT& mesh_;
+//     Left left_;
+//     Right right_;
+//     type product_;
+//     Integer label_;
+// };
+
+
+
+
+
 
 
 
@@ -765,67 +1259,204 @@ L2Inner(const MeshT& mesh,const Expression2<Left>& left,const Expression2<Right>
 
 
 
-template<typename DerivedLeft, typename MeshT, typename Left,typename Right>
-class Addition2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegral<MeshT,Left,Right>>>
-: public Expression2< Addition2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegral<MeshT,Left,Right>>  > > 
+// template<typename DerivedLeft, typename MeshT, typename Left,typename Right>
+// class Addition2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegral<MeshT,Left,Right>>>
+// : public Expression2< Addition2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegral<MeshT,Left,Right>>  > > 
+// {
+
+//   public:
+//   using TupleFunctionSpace=RemoveTupleDuplicates< TupleCatType< typename L2DotProductIntegral<MeshT,Left,Right>::TupleFunctionSpace,
+//                                                            typename DerivedLeft::TupleFunctionSpace  >>;               
+
+//   using FunctionSpace=GetType<TupleFunctionSpace,0>;
+
+//   using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::UniqueElementFunctionSpacesTupleType,
+//                                                                                  typename DerivedLeft::UniqueElementFunctionSpacesTupleType > >;
+//   using form =RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::form,
+//                                                   typename DerivedLeft::form  > >;
+//     Addition2(const Expression2<DerivedLeft>& left, const Expression2<L2DotProductIntegral<MeshT,Left,Right>>&right)
+//     : 
+//     left_(left.derived()),
+//     right_(right.derived())
+//     {};
+//     const DerivedLeft & left()const{return left_;};
+//     const L2DotProductIntegral<MeshT,Left,Right>& right()const{return right_;};
+//   private:
+//   DerivedLeft left_;
+//   L2DotProductIntegral<MeshT,Left,Right> right_;
+// };
+
+
+// template<typename DerivedLeft, typename MeshT, typename Left,typename Right>
+// class Subtraction2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegral<MeshT,Left,Right>>>
+// : public Expression2< Subtraction2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegral<MeshT,Left,Right>>  > > 
+// {
+
+//   public:
+//   using TupleFunctionSpace=RemoveTupleDuplicates< TupleCatType< typename L2DotProductIntegral<MeshT,Left,Right>::TupleFunctionSpace,
+//                                                            typename DerivedLeft::TupleFunctionSpace  >>;               
+
+//   using FunctionSpace=GetType<TupleFunctionSpace,0>;
+
+//   using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::UniqueElementFunctionSpacesTupleType,
+//                                                                                  typename DerivedLeft::UniqueElementFunctionSpacesTupleType > >;
+//   using form =RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::form,
+//                                                   typename DerivedLeft::form  > >;
+//     Subtraction2(const Expression2<DerivedLeft>& left, const Expression2<L2DotProductIntegral<MeshT,Left,Right>>&right)
+//     : 
+//     left_(left.derived()),
+//     right_(right.derived())
+//     {};
+//     const DerivedLeft & left()const{return left_;};
+//     const L2DotProductIntegral<MeshT,Left,Right>& right()const{return right_;};
+//   private:
+//   DerivedLeft left_;
+//   L2DotProductIntegral<MeshT,Left,Right> right_;
+// };
+
+
+
+
+
+
+
+template<typename Form_>
+class GeneralForm
 {
 
   public:
-  using TupleFunctionSpace=RemoveTupleDuplicates< TupleCatType< typename L2DotProductIntegral<MeshT,Left,Right>::TupleFunctionSpace,
-                                                           typename DerivedLeft::TupleFunctionSpace  >>;               
+  using Form=Form_;
 
-  using FunctionSpace=GetType<TupleFunctionSpace,0>;
+  template<typename T,Integer N>
+  class KindType;
 
-  using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::UniqueElementFunctionSpacesTupleType,
-                                                                                 typename DerivedLeft::UniqueElementFunctionSpacesTupleType > >;
-  using form =RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::form,
-                                                  typename DerivedLeft::form  > >;
-    Addition2(const Expression2<DerivedLeft>& left, const Expression2<L2DotProductIntegral<MeshT,Left,Right>>&right)
-    : 
-    left_(left.derived()),
-    right_(right.derived())
-    {};
-    const DerivedLeft & left()const{return left_;};
-    const L2DotProductIntegral<MeshT,Left,Right>& right()const{return right_;};
-  private:
-  DerivedLeft left_;
-  L2DotProductIntegral<MeshT,Left,Right> right_;
-};
-
-
-template<typename DerivedLeft, typename MeshT, typename Left,typename Right>
-class Subtraction2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegral<MeshT,Left,Right>>>
-: public Expression2< Subtraction2< Expression2<DerivedLeft>  ,  Expression2<L2DotProductIntegral<MeshT,Left,Right>>  > > 
-{
-
+  template<typename T>
+  class KindType<T,0>
+  {
   public:
-  using TupleFunctionSpace=RemoveTupleDuplicates< TupleCatType< typename L2DotProductIntegral<MeshT,Left,Right>::TupleFunctionSpace,
-                                                           typename DerivedLeft::TupleFunctionSpace  >>;               
+    using type=typename T::TupleFunctionSpace;
+  };
+
+
+ template<typename T>
+  class KindType<T,1>
+  {
+  public:
+    using type=typename T::UniqueElementFunctionSpacesTupleType;
+  };
+
+
+ template<typename T>
+  class KindType<T,2>
+  {
+  public:
+    using type=typename T::form;
+  };
+
+  template<typename FormTmp, Integer Kind>
+  class ClassHelper;
+
+
+
+  template<typename MeshT, typename Left1,typename Right1, typename Left2,typename Right2, Integer Kind>
+  class ClassHelper<Addition2<Expression2<L2DotProductIntegral<MeshT,Left1,Right1>>,
+                        Expression2<L2DotProductIntegral<MeshT,Left2,Right2>> >,Kind  >
+  {
+  public:
+   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<MeshT,Left1,Right1>,Kind>::type,
+                                                   typename KindType<L2DotProductIntegral<MeshT,Left2,Right2>,Kind>::type >>;
+  };  
+
+  template<typename MeshT, typename Left1,typename Right1, typename Left2,typename Right2, Integer Kind>
+  class ClassHelper<Subtraction2<Expression2<L2DotProductIntegral<MeshT,Left1,Right1>>,
+                        Expression2<L2DotProductIntegral<MeshT,Left2,Right2>> >,Kind  >
+  {
+  public:
+   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<MeshT,Left1,Right1>,Kind>::type,
+                                                   typename KindType<L2DotProductIntegral<MeshT,Left2,Right2>,Kind>::type >>;
+  };  
+
+
+  template<typename MeshT, typename Left1,typename Right1, typename Right, Integer Kind>
+  class ClassHelper<Addition2<Expression2<L2DotProductIntegral<MeshT,Left1,Right1>>,Expression2<Right> >,Kind  >
+  {
+  public:
+   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<MeshT,Left1,Right1>,Kind>::type,
+                                                   typename ClassHelper<Right,Kind>::type >>;
+  };  
+
+  template<typename MeshT, typename Left1,typename Right1, typename Right, Integer Kind>
+  class ClassHelper<Subtraction2<Expression2<L2DotProductIntegral<MeshT,Left1,Right1>>,Expression2<Right> >,Kind  >
+  {
+  public:
+   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<MeshT,Left1,Right1>,Kind>::type,
+                                                   typename ClassHelper<Right,Kind>::type >>;
+  };  
+
+
+  template<typename Left,typename MeshT, typename Left1,typename Right1, Integer Kind>
+  class ClassHelper<Addition2<Expression2<Left>,Expression2<L2DotProductIntegral<MeshT,Left1,Right1>> >,Kind  >
+  {
+  public:
+   using type=RemoveTupleDuplicates< TupleCatType< typename ClassHelper<Left,Kind>::type,
+                                                   typename KindType<L2DotProductIntegral<MeshT,Left1,Right1>,Kind>::type  >>;
+  };   
+
+  template<typename Left,typename MeshT, typename Left1,typename Right1, Integer Kind>
+  class ClassHelper<Subtraction2<Expression2<Left>,Expression2<L2DotProductIntegral<MeshT,Left1,Right1>> >,Kind  >
+  {
+  public:
+   using type=RemoveTupleDuplicates< TupleCatType< typename ClassHelper<Left,Kind>::type,
+                                                   typename KindType<L2DotProductIntegral<MeshT,Left1,Right1>,Kind>::type  >>;
+  } ;  
+
+  template<typename Left,typename Right, Integer Kind>
+  class ClassHelper<Addition2<Expression2<Left>,Expression2<Right> >,Kind >
+  {
+  public:
+   using type=RemoveTupleDuplicates< TupleCatType< typename ClassHelper<Left,Kind>::type,
+                                                   typename ClassHelper<Right,Kind>::type  >>;
+  };   
+
+  template<typename Left,typename Right, Integer Kind>
+  class ClassHelper<Subtraction2<Expression2<Left>,Expression2<Right> >,Kind  >
+  {
+  public:
+   using type=RemoveTupleDuplicates< TupleCatType< typename ClassHelper<Left,Kind>::type,
+                                                   typename ClassHelper<Right,Kind>::type  >>;
+  };   
+
+  template<Integer Kind>
+  using type=typename ClassHelper<Form,Kind>::type;               
+
+  using TupleFunctionSpace=typename ClassHelper<Form,0>::type;      
+
+  using FunctionSpac=GetType<TupleFunctionSpace,0>;  
+
+  using UniqueElementFunctionSpacesTupleType=typename ClassHelper<Form,1>::type;      
+
+  using form=typename ClassHelper<Form,2>::type;      
 
   using FunctionSpace=GetType<TupleFunctionSpace,0>;
 
-  using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::UniqueElementFunctionSpacesTupleType,
-                                                                                 typename DerivedLeft::UniqueElementFunctionSpacesTupleType > >;
-  using form =RemoveTupleDuplicates< TupleCatType<typename L2DotProductIntegral<MeshT,Left,Right>::form,
-                                                  typename DerivedLeft::form  > >;
-    Subtraction2(const Expression2<DerivedLeft>& left, const Expression2<L2DotProductIntegral<MeshT,Left,Right>>&right)
+    GeneralForm(const Form& form)
     : 
-    left_(left.derived()),
-    right_(right.derived())
+    form_(form)
     {};
-    const DerivedLeft & left()const{return left_;};
-    const L2DotProductIntegral<MeshT,Left,Right>& right()const{return right_;};
+
+    const Form& operator()()const{return form_;};
+          Form& operator()()     {return form_;};
+
   private:
-  DerivedLeft left_;
-  L2DotProductIntegral<MeshT,Left,Right> right_;
+  Form form_;
 };
+   
 
 
-
-
-
-
-
+template<typename Form>
+constexpr auto
+general_form(const Form& form)
+{return GeneralForm<Form>(form);}
 
 
 
@@ -859,67 +1490,63 @@ L2Inner(const MeshT& mesh,const Expression2<Addition2<Expression2<Left1>,Express
 
 
 
+// template<typename MeshT, typename Left1,typename Right1,typename Left2, typename Right2>
+// constexpr auto
+// L2Inner(const MeshT& mesh,const Expression2<Addition2<Expression2<Left1>,Expression2<Right1>>>& left,
+//                           const Expression2<Addition2<Expression2<Left2>,Expression2<Right2>>>& right)
+// {return 
+// Addition2<Expression2<Addition2<Expression2<Addition2<Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived().left()))>,
+//                                                       Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived().right()))>
+//                                                      >
+//                                            >,
+//                                 Expression2<decltype(L2Inner(mesh,left.derived().right(),right.derived().left()))>
+//                                 >
+//                       >,
+//           Expression2<decltype(L2Inner(mesh,left.derived().right(),right.derived().right()))>
+//          >
+//   (
+// Addition2<Expression2<Addition2<Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived().left()))>,
+//                                 Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived().right()))>
+//                                                      >
+//                                            >,
+//                                 Expression2<decltype(L2Inner(mesh,left.derived().right(),right.derived().left()))>
+//                                 >
+                      
+//   (
+    
+//     Addition2<Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived().left()))>,
+//               Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived().right()))>>
+//       (
+//        L2Inner(mesh,left.derived().left(),right.derived().left()),
+//        L2Inner(mesh,left.derived().left(),right.derived().right())
+//       )
+//       ,
+//       L2Inner(mesh,left.derived().right(),right.derived().left())
+//     ),
+//     L2Inner(mesh,left.derived().right(),right.derived().right()  )                
+//   )
+//   ;
+// }
+
+
+
+
 template<typename MeshT, typename Left1,typename Right1,typename Left2, typename Right2>
 constexpr auto
 L2Inner(const MeshT& mesh,const Expression2<Addition2<Expression2<Left1>,Expression2<Right1>>>& left,
                           const Expression2<Addition2<Expression2<Left2>,Expression2<Right2>>>& right)
 {return 
-Addition2<Expression2<Addition2<Expression2<Addition2<Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived().left()))>,
-                                                      Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived().right()))>
-                                                     >
-                                           >,
-                                Expression2<decltype(L2Inner(mesh,left.derived().right(),right.derived().left()))>
-                                >
-                      >,
-          Expression2<decltype(L2Inner(mesh,left.derived().right(),right.derived().right()))>
+Addition2<Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived()))>,
+          Expression2<decltype(L2Inner(mesh,left.derived().right(),right.derived()))>
          >
   (
-Addition2<Expression2<Addition2<Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived().left()))>,
-                                Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived().right()))>
-                                                     >
-                                           >,
-                                Expression2<decltype(L2Inner(mesh,left.derived().right(),right.derived().left()))>
-                                >
-                      
-  (
-    
-    Addition2<Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived().left()))>,
-              Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived().right()))>>
-      (
-       L2Inner(mesh,left.derived().left(),right.derived().left()),
-       L2Inner(mesh,left.derived().left(),right.derived().right())
-      )
-      ,
-      L2Inner(mesh,left.derived().right(),right.derived().left())
-    ),
-    L2Inner(mesh,left.derived().right(),right.derived().right()  )                
+    L2Inner(mesh,left.derived().left(),right.derived()),
+    L2Inner(mesh,left.derived().right(),right.derived())                
   )
   ;
 }
 
 
-// template<typename MeshT, typename Left1,typename Right1,typename Left2, typename Right2>
-// Addition2<Expression2<Addition2<Expression2<L2DotProductIntegral<MeshT,Left1,Left2>>,
-//                                 Expression2<L2DotProductIntegral<MeshT,Left1,Right2>>>>,
-//           Expression2<Addition2<Expression2<L2DotProductIntegral<MeshT,Right1,Left2>>,
-//                                 Expression2<L2DotProductIntegral<MeshT,Right1,Right2>>>>>
-// L2Inner(const MeshT& mesh,const Expression2<Addition2<Expression2<Left1>,Expression2<Right1>>>& left,
-//                           const Expression2<Addition2<Expression2<Left2>,Expression2<Right2>>>& right)
-// {return Addition2<Expression2<Addition2<Expression2<L2DotProductIntegral<MeshT,Left1,Left2>>,
-//                                 Expression2<L2DotProductIntegral<MeshT,Left1,Right2>>>>,
-//           Expression2<Addition2<Expression2<L2DotProductIntegral<MeshT,Right1,Left2>>,
-//                                 Expression2<L2DotProductIntegral<MeshT,Right1,Right2>>>>>
-//   (
-//    Addition2<Expression2<L2DotProductIntegral<MeshT,Left1,Left2>>,
-//                                 Expression2<L2DotProductIntegral<MeshT,Left1,Right2>>>
-//    (L2Inner(mesh,left.derived().left(),right.derived().left()),
-//     L2Inner(mesh,left.derived().left(),right.derived().right())), 
-//    Addition2<Expression2<L2DotProductIntegral<MeshT,Right1,Left2>>,
-//              Expression2<L2DotProductIntegral<MeshT,Right1,Right2>> >
-//     (L2Inner(mesh,left.derived().right(),right.derived().left()),
-//     L2Inner(mesh,left.derived().right(),right.derived().right()))
-//     );
-// }
 
 
 
@@ -1241,6 +1868,183 @@ constexpr auto shape_functions(const ConstFormReference& form)
  return ShapeFunctions<Form>();  }
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename GeneralForm_>
+class ShapeFunctions2
+{
+ public:
+  using GeneralForm=GeneralForm_;//typename std::remove_const<typename std::remove_reference<ConstGeneralFormReference>::type>::type;
+  using Form=typename GeneralForm::Form;  
+  using UniqueElementFunctionSpacesTupleType=typename GeneralForm::UniqueElementFunctionSpacesTupleType;
+  using TupleOperatorsAndQuadrature= typename OperatorTupleType<Form>::type;
+  using TupleOfTupleNoQuadrature=TupleOfTupleRemoveQuadrature<TupleOperatorsAndQuadrature>;
+  using SpacesToUniqueFEFamilies=SpacesToUniqueFEFamilies<UniqueElementFunctionSpacesTupleType>;
+  using Map=MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,UniqueElementFunctionSpacesTupleType>;
+  using UniqueMapping=UniqueMap<SpacesToUniqueFEFamilies,Map> ;
+  using TupleOfTupleShapeFunction=TupleOfTupleShapeFunctionType<UniqueElementFunctionSpacesTupleType,TupleOperatorsAndQuadrature>;
+  using MapTupleNumbers=MapTupleInit<TupleOfTupleShapeFunction, SpacesToUniqueFEFamilies, UniqueMapping>;
+ 
+  
+   template<Integer M,Integer Nmax_aux,Integer N,typename Tuple,typename Map>
+   constexpr typename std::enable_if< (N>Nmax_aux) ,void>::type 
+   init_map_aux_aux(Tuple& t,const Map& maps){}
+
+   template<Integer M,Integer Nmax_aux,Integer N,typename Tuple,typename Map>
+   constexpr typename std::enable_if< (N<=Nmax_aux) ,void>::type 
+   init_map_aux_aux(Tuple& t,const Map& maps) 
+   {
+    auto& t_nth=std::get<N>(t); 
+    auto& map_nth=std::get<GetType<MapTupleNumbers,M,N>::value>(maps); 
+    t_nth.init_map(map_nth);
+    init_map_aux_aux<M,Nmax_aux,N+1>(t,maps);
+    }
+
+
+
+   template<Integer Nmax_aux,Integer N,typename Map>
+   constexpr typename std::enable_if< (N>Nmax_aux) ,void>::type 
+   init_map_aux(const Map& maps){}
+
+   template<Integer Nmax_aux,Integer N,typename Map>
+   constexpr typename std::enable_if< (N<=Nmax_aux) ,void>::type 
+   init_map_aux(const Map& maps) 
+   {
+    auto& t_nth=std::get<N>(tuple); 
+    auto& map_nth=std::get<GetType<SpacesToUniqueFEFamilies,N>::value>(maps); 
+    init_map_aux_aux<N,TupleTypeSize<decltype(t_nth)>::value-1,0>(t_nth,map_nth);
+    init_map_aux<Nmax_aux,N+1>(maps);
+    }
+
+
+   template<typename ConstFormReference>
+   constexpr void init_map(const ReferenceMaps2<ConstFormReference>& maps) 
+   {init_map_aux<TupleTypeSize<MapTupleNumbers>::value-1,0>(maps());}
+
+
+//////////////////////////////////////////////////
+
+
+
+  template<Integer M, typename Elem, Integer FEFamily,Integer Order,typename Shape,typename...Args>
+  constexpr typename std::enable_if_t< FEFamily==LagrangeFE,void> 
+  shape_function_init_aux_aux_aux(Shape& shape, const ShapeFunctionCoefficient<Args...> &coefficients)
+  {
+    shape.init();
+  }
+
+
+  template<Integer M, typename Elem, Integer FEFamily,Integer Order,typename Shape,typename...Args>
+  constexpr typename std::enable_if_t<FEFamily==RaviartThomasFE,void> 
+  shape_function_init_aux_aux_aux(Shape& shape, const ShapeFunctionCoefficient<Args...> &coefficients)
+  {
+    shape.init(tuple_get<M>(coefficients()));
+  }
+
+
+
+
+  template<Integer M, Integer Nmax,Integer N,typename Tuple,typename...Args>
+  constexpr typename std::enable_if_t<(N>Nmax),void> 
+  shape_function_init_aux_aux(Tuple& tuple, const ShapeFunctionCoefficient<Args...> &coefficients)
+  {}
+
+  template<Integer M,Integer Nmax,Integer N,typename Tuple,typename...Args>
+  constexpr typename std::enable_if_t< (N<=Nmax),void> 
+  shape_function_init_aux_aux(Tuple& tuple, const ShapeFunctionCoefficient<Args...> &coefficients)
+  {
+
+    using Shape=GetType<TupleOfTupleShapeFunction,M,N>;
+    using Elem=typename Shape::Elem;
+    constexpr Integer FEFamily=Shape::FEFamily;
+    constexpr Integer Order=Shape::Order;
+    shape_function_init_aux_aux_aux<M,Elem,FEFamily,Order>(tuple_get<N>(tuple),coefficients);
+    shape_function_init_aux_aux<M,Nmax,N+1>(tuple,coefficients);
+  }
+
+  template<Integer Nmax,Integer N,typename...Args>
+  constexpr typename std::enable_if_t< (N>Nmax),void> 
+  shape_function_init_aux(const ShapeFunctionCoefficient<Args...> &coefficients)
+  {}
+
+  template<Integer Nmax,Integer N,typename...Args>
+  constexpr typename std::enable_if_t<N<=Nmax,void> 
+  shape_function_init_aux(const ShapeFunctionCoefficient<Args...> &coefficients)
+  {
+    constexpr Integer Nmax_aux=TupleTypeSize<GetType<TupleOfTupleShapeFunction,N>>::value-1;
+    shape_function_init_aux_aux<N,Nmax_aux,0>(tuple_get<N>(tuple),coefficients);
+    shape_function_init_aux<Nmax,N+1>(coefficients);
+  }
+
+
+
+  template<typename Coefficients>
+  constexpr void init(const Coefficients& shape_coefficients)
+  {
+   constexpr Integer Nmax=TupleTypeSize<TupleOfTupleShapeFunction>::value-1;
+   shape_function_init_aux<Nmax,0>(shape_coefficients);
+   }
+
+
+  template<typename ConstFormReference, typename Coefficients>
+  constexpr void init(const ReferenceMaps2<ConstFormReference>& maps,const Coefficients& shape_coefficients)
+  {
+    init_map(maps);
+    init(shape_coefficients);
+   }
+
+
+
+
+   constexpr       auto& operator()()      {return tuple;}
+   constexpr const auto& operator()()const {return tuple;}
+
+
+   template<Integer...Ns>
+   constexpr const auto& get()const{return tuple_get<Ns...>(tuple);}
+
+   template<Integer...Ns>
+         auto& get()     {return tuple_get<Ns...>(tuple);}
+
+   template<Integer...Ns>
+   constexpr const auto& value()const{return tuple_get<Ns...>(tuple).eval();}
+
+   template<Integer...Ns>
+         auto& value()     {return tuple_get<Ns...>(tuple).eval();}
+
+
+
+
+private:
+   TupleOfTupleShapeFunction tuple;
+};
+
+
+template<typename ConstFormReference>
+constexpr auto shape_functions2(const ConstFormReference& form)
+{using Form=typename std::remove_const<typename std::remove_reference<ConstFormReference>::type>::type;
+ return ShapeFunctions2<Form>();  }
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////// For explanation on how and why this works, check:
 //////// https://stackoverflow.com/questions/1005476/how-to-detect-whether-there-is-a-specific-member-variable-in-class

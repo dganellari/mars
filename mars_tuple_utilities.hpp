@@ -76,8 +76,8 @@ class GetHelper<0, const std::tuple<T, Ts...>>
     using type = T;
 };
 
-template <>
-class GetHelper<0, const std::tuple<>>
+template <Integer N>
+class GetHelper<N, const std::tuple<>>
 {   public: 
     using type = std::tuple<>;
 };
@@ -379,26 +379,9 @@ template <size_t I,typename T>  using TupleOfType = typename tuple_n<I,T>::templ
 
 
 
-
-
-template <class T, class Tuple>
-struct TypeToTupleElementPosition;
-
-template <class T, class... Types>
-struct TypeToTupleElementPosition<T, std::tuple<T, Types...>> {
-    static const std::size_t value = 0;
-};
-
-template <class T, class U, class... Types>
-struct TypeToTupleElementPosition<T, std::tuple<U, Types...>> {
-    static const std::size_t value = 1 + TypeToTupleElementPosition<T, std::tuple<Types...>>::value;
-};
-
-
-
-
-
-
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////// TupleTypeSize<Tuple>::value== number of elements of the tuple
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 template <typename = void>
 constexpr std::size_t TupleSizeHelper ()
@@ -444,6 +427,60 @@ class TupleTypeSize<std::tuple<T,Types...>&>
 public:
  static constexpr std::size_t value = TupleTypeSize<std::tuple<T,Types...>>::value;
 };
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////// TypeToTupleElementPosition<T,Tuple>::value==position of T in Tuple. If not present, return the last element
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// template <class T, class Tuple>
+// struct TypeToTupleElementPosition;
+
+// template <class T>
+// struct TypeToTupleElementPosition<T, std::tuple<>> {
+//     static const std::size_t value = 0;
+// };
+
+// template <class T, class... Types>
+// struct TypeToTupleElementPosition<T, std::tuple<T, Types...>> {
+//     static const std::size_t value = 0;
+// };
+
+// template <class T, class U, class... Types>
+// struct TypeToTupleElementPosition<T, std::tuple<U, Types...>> {
+//     static const std::size_t value = 1 + TypeToTupleElementPosition<T, std::tuple<Types...>>::value;
+// };
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////// TypeToTupleElementPosition2<T,Tuple>::value==position of T in Tuple. If not present, return -1
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+template <class T,Integer Nmax, class Tuple>
+struct TypeToTupleElementPositionHelper;
+
+template <class T,Integer Nmax>
+struct TypeToTupleElementPositionHelper<T, Nmax,std::tuple<>> {
+    static const Integer value = -Nmax-1;
+};
+
+template <class T,Integer Nmax, class... Types>
+struct TypeToTupleElementPositionHelper<T, Nmax, std::tuple<T, Types...>> {
+    static const Integer value = 0;
+};
+
+template <class T,Integer Nmax, class U, class... Types>
+struct TypeToTupleElementPositionHelper<T, Nmax, std::tuple<U, Types...>> {
+    static const Integer value = 1 + TypeToTupleElementPositionHelper<T, Nmax, std::tuple<Types...>>::value;
+};
+
+template <class T, class Tuple>
+using TypeToTupleElementPosition=TypeToTupleElementPositionHelper<T,TupleTypeSize<Tuple>::value,Tuple>;
+
+
+
 
 // for 
 template<Integer N,typename All, typename Unique>
@@ -548,6 +585,14 @@ public:
 
 template<Integer N,typename Tadd, typename...Ts>
 using TupleAddingType=typename TupleAddingTypeHelper< N,Tadd,std::tuple<Ts...> >::type;
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///// TupleRemoveNthPosition<N,Tuple> remove the n-th element of the tuple from Tuple
+///// If N>Size(Tuple) or N<0, nothing is removed
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+template<Integer N, typename Tuple>
+using TupleRemoveNthPosition=TupleCatType<SubTupleType<0,N-1,Tuple>,SubTupleType<N+1,TupleTypeSize<Tuple>::value-1,Tuple>>;
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1392,6 +1437,111 @@ using UniqueElementFEFamily=RemoveTupleDuplicates<typename UniqueElementFEFamily
 
 
 
+template<typename ...Ts> 
+class BubbleSortTupleOfPairsNumbersAuxHelper;
+
+template<typename ...Ts> 
+using BubbleSortTupleOfPairsNumbersAux=typename BubbleSortTupleOfPairsNumbersAuxHelper<Ts...>::type;
+
+template<Integer M1, Integer M2, Integer N1, Integer N2>
+class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<Number<M1>,Number<M2>>, 
+                                          std::tuple<Number<N1>,Number<N2>> >
+{
+    public:
+    using T1=std::tuple<Number<M1>,Number<M2>>;
+    using T2=std::tuple<Number<N1>,Number<N2>>;
+    using type=typename std::conditional<(M1<N1)||(M1==N1 && M2<N2),
+                                         std::tuple<T1,T2> ,
+                                         std::tuple<T2,T1>>::type;
+};
+
+template<Integer M1, Integer M2>
+class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple< std::tuple<Number<M1>,Number<M2>>>>
+{
+    public:
+    using type=std::tuple< std::tuple<Number<M1>,Number<M2>>>;
+};
+
+template<Integer M1, Integer M2, Integer N1, Integer N2>
+class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<std::tuple<Number<M1>,Number<M2>>, 
+                                                     std::tuple<Number<N1>,Number<N2>>> >
+{
+    public:
+    using T1=std::tuple<Number<M1>,Number<M2>>;
+    using T2=std::tuple<Number<N1>,Number<N2>>;
+    using type=BubbleSortTupleOfPairsNumbersAux<T1,T2>;
+};
+
+template<typename S, typename T,typename ...Ss> 
+class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<Ss...>, std::tuple<S, T>>
+{
+ 
+ public:
+  using switch_type=BubbleSortTupleOfPairsNumbersAux<T,S>;
+  using type=TupleCatType<std::tuple<Ss...>,switch_type>;
+
+};
+
+template<typename S, typename T,typename ...Ts,typename ...Ss> 
+class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<Ss...>, std::tuple<S, T, Ts ...>>
+{
+ 
+ public:
+  using switch_type=BubbleSortTupleOfPairsNumbersAux<T,S>;
+  using tmp_type=TupleCatType<switch_type,std::tuple<Ts...>>;
+  using T1=TupleCatType<std::tuple<Ss...>,std::tuple<GetType<tmp_type,0>>>;
+  using T2=TupleCatType<std::tuple<GetType<tmp_type,1>>, std::tuple<Ts...>>;
+  using type=BubbleSortTupleOfPairsNumbersAux<T1,T2> ;
+  // static constexpr bool=
+};
+
+
+template<typename S,typename T,typename ...Ts> 
+class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<>, std::tuple<S, T, Ts ...>>
+{
+ 
+ public:
+  using switch_type=BubbleSortTupleOfPairsNumbersAux<S,T>;
+  using tmp_type=TupleCatType<switch_type,std::tuple<Ts...>>;
+  using T1=std::tuple<GetType<tmp_type,0>>;
+  using T2=TupleCatType<std::tuple<GetType<tmp_type,1>>,std::tuple<Ts...>>;
+  using type=BubbleSortTupleOfPairsNumbersAux<T1,T2> ;
+};
+
+
+
+
+template<typename ...Ts> 
+class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<Ts...>>
+{
+ 
+ public:
+  using type=BubbleSortTupleOfPairsNumbersAux< std::tuple<>, std::tuple<Ts...> >;
+  
+};
+
+template<typename Tuple, Integer Nmax, Integer N>
+class BubbleSortTupleOfPairsNumbersHelper;
+
+template<typename Tuple>
+using BubbleSortTupleOfPairsNumbers=typename BubbleSortTupleOfPairsNumbersHelper<Tuple,TupleTypeSize<Tuple>::value-1,0>::type;
+
+
+template<typename Tuple, Integer Nmax>
+class BubbleSortTupleOfPairsNumbersHelper<Tuple,Nmax,Nmax>
+{
+ public:
+  using type=BubbleSortTupleOfPairsNumbersAux<Tuple>;
+
+};
+
+template<typename Tuple, Integer Nmax, Integer N>
+class BubbleSortTupleOfPairsNumbersHelper
+{
+ public:
+  using type=typename BubbleSortTupleOfPairsNumbersHelper<BubbleSortTupleOfPairsNumbersAux<Tuple>,Nmax,N+1>::type;
+
+};
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///// Compile-time Max, Min, Equal, Greater, Lesser
@@ -1442,9 +1592,17 @@ constexpr T Sum(const T&t,const Ts&...ts)
 }
 
 
+template<typename T>
+constexpr T Heaviside (const T& a) 
+{
+  return a > 0 ? a : 0;
+}
 
-
-
+template<typename T>
+constexpr bool IsPositive (const T& a) 
+{
+  return a > 0 ? true : false;
+}
 
 
 

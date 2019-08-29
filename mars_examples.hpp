@@ -1007,30 +1007,30 @@ void assembly_example()
  FSspace4 FEspace4(mesh);
  using FSspace5= FunctionSpace< MeshT, Lagrange1<1>>;
  FSspace5 FEspace5(mesh);
- using FSspace6= FunctionSpace< MeshT, Lagrange1<1>>;
+ using FSspace6= FunctionSpace< MeshT, Lagrange1<1>,Lagrange2<1>>;
  FSspace6 FEspace6(mesh);
 
- auto W=MixedFunctionSpace(FEspace1,FEspace2);
- auto W1=MixedFunctionSpace(W,FEspace2);
+ // auto W=MixedFunctionSpace(FEspace1,FEspace2);
+ // auto W1=MixedFunctionSpace(W,FEspace2);
 
- auto u =     MakeTrial<0>(W1);
- auto sigma = MakeTrial<1>(W1);
- auto p =     MakeTrial<2>(W1);
- auto r =     MakeTrial<3>(W1);
- auto rr1 =     MakeTrial<4>(W1);
- auto rr2 =     MakeTrial<5>(W1);
- auto rr3 =     MakeTrial<6>(W1);
+ // auto u =     MakeTrial<0>(W1);
+ // auto sigma = MakeTrial<1>(W1);
+ // auto p =     MakeTrial<2>(W1);
+ // auto r =     MakeTrial<3>(W1);
+ // auto rr1 =     MakeTrial<4>(W1);
+ // auto rr2 =     MakeTrial<5>(W1);
+ // auto rr3 =     MakeTrial<6>(W1);
 
- auto v =   MakeTest<0>(W1);
- auto tau = MakeTest<1>(W1);
- auto q =   MakeTest<2>(W1);
- auto s =   MakeTest<3>(W1);
- auto ss1 =   MakeTest<4>(W1);
- auto ss2 =   MakeTest<5>(W1);
- auto ss3 =   MakeTest<6>(W1);
+ // auto v =   MakeTest<0>(W1);
+ // auto tau = MakeTest<1>(W1);
+ // auto q =   MakeTest<2>(W1);
+ // auto s =   MakeTest<3>(W1);
+ // auto ss1 =   MakeTest<4>(W1);
+ // auto ss2 =   MakeTest<5>(W1);
+ // auto ss3 =   MakeTest<6>(W1);
 
 // bilinear form
- auto l22=
+ 
  // L2Inner(mesh,2*Div(sigma)*0.5,Div(tau))+
  // L2Inner(mesh,+Grad(u),-Grad(v))
  // +
@@ -1041,9 +1041,9 @@ void assembly_example()
  // L2Inner(mesh,r,s);
  // typename OperatorTypeHelper<decltype(u)>::type ok1(1);
  // OperatorType<decltype(Div(sigma))> ok2(1);
- 
- L2Inner(mesh,+sigma,v)+
- L2Inner(mesh,+u,s);
+ // auto l22=
+ // L2Inner(mesh,+sigma,v)+
+ // L2Inner(mesh,+u,s);
 
  //  auto a=W1.dofmap<0,0>();
  // int b=W1.n_dofs();
@@ -1054,24 +1054,24 @@ void assembly_example()
  // std::cout<<"c=="<<c<<std::endl;
  //  std::cout<<"d=="<<c<<std::endl;
   // std::cout<<W1.Nelem_dofs<<std::endl;
- Matrix<Real,W1.Nelem_dofs,W1.Nelem_dofs> mat_loc;
- std::cout<<mat_loc<<std::endl;
+ // Matrix<Real,W1.Nelem_dofs,W1.Nelem_dofs> mat_loc;
+ // std::cout<<mat_loc<<std::endl;
   elem=mesh.elem(0);
   jacobian(elem,mesh.points(),J);
 
 
-  auto shape_coefficients=shape_function_coefficients(l22);
-  auto referencemaps=reference_maps(l22);
-  auto shapefunctions=shape_functions(l22);
-  shape_coefficients.init(mesh);
-  shape_coefficients.init(0);
-  referencemaps.init(J);
-  shapefunctions.init_map(referencemaps);
-  shapefunctions.init(shape_coefficients);
-  shapefunctions.init(referencemaps,shape_coefficients);
+  // auto shape_coefficients=shape_function_coefficients(l22);
+  // auto referencemaps=reference_maps(l22);
+  // auto shapefunctions=shape_functions(l22);
+  // shape_coefficients.init(mesh);
+  // shape_coefficients.init(0);
+  // referencemaps.init(J);
+  // shapefunctions.init_map(referencemaps);
+  // shapefunctions.init(shape_coefficients);
+  // shapefunctions.init(referencemaps,shape_coefficients);
 
 
-  auto l22eval=Eval(l22,shapefunctions);
+  // auto l22eval=Eval(l22,shapefunctions);
   // l22eval.apply(mat_loc);
 
 
@@ -1079,77 +1079,150 @@ void assembly_example()
 
 
  
- auto W4=MixedFunctionSpace(FEspace4);
- // auto W4= MixedFunctionSpace(W3);
-
- auto u9 =     MakeTrial<0>(W4);
+ auto W4=MixedFunctionSpace(FEspace2,FEspace5);
+ 
+ auto u7 =     MakeTrial<0>(W4);
  auto u8 = MakeTrial<1>(W4);
- auto u7 = MakeTrial<2>(W4);
- // auto p9 =     MakeTrial<2>(W4);
- // auto r9 =     MakeTrial<2>(W4);
- // auto rr19 =     MakeTrial<4>(W4);
- // auto rr29 =     MakeTrial<5>(W4);
- // auto rr39 =     MakeTrial<6>(W4);
+ auto u9 = MakeTrial<2>(W4);
 
- auto v9 =   MakeTest<0>(W4);
+
+ auto v7 =   MakeTest<0>(W4);
  auto v8 = MakeTest<1>(W4);
- auto v7 = MakeTest<2>(W4);
- // auto q9 =   MakeTest<2>(W4);
- // auto s9 =   MakeTest<2>(W4);
- // auto ss19 =   MakeTest<4>(W4);
- // auto ss29 =   MakeTest<5>(W4);
- // auto ss39 =   MakeTest<6>(W4);
+ auto v9 = MakeTest<2>(W4);
 
-  auto l88= L2Inner(mesh,u7,v7+v8+v9+v+tau);
-  auto l9= L2Inner(mesh,u8+u9,v8+v9)+L2Inner(mesh,u7,v7)+L2Inner(mesh,u9,v9);
-          // +L2Inner(mesh,+u9,s9);
-  auto shape_coefficients9=shape_function_coefficients(l9);
-  auto referencemaps9=reference_maps(l9);
-  auto shapefunctions9=shape_functions(l9);
-  shape_coefficients9.init(mesh);
-  shape_coefficients9.init(0);
-  referencemaps9.init(J);
-  shapefunctions9.init_map(referencemaps9);
-  shapefunctions9.init(shape_coefficients9);
-  shapefunctions9.init(referencemaps9,shape_coefficients9);
+ //  auto l88= L2Inner(mesh,u7+u8+u9,v7+v8+v9)+L2Inner(mesh,v9,u8);
+  auto l9= L2Inner(mesh,u7+u8,v7)+L2Inner(mesh,u7,v7)+L2Inner(mesh,u9,v9);
+  
+  // using Tipo=decltype(L2Inner(mesh,u7+u8+u9,v7+v8+v9));
+  // Tipo::Left oooooe(5);
+  // Tipo::Right eey(5);
+  // Prova<typename Tipo::Left>::type kk(5);
+  // Tipo sss(5);
+  // Tipo::Left kk3k(5);
+  // Tipo::Right kk3444k(5);
+  // Tipo::Left::Right klll(5);
+  // Tipo::Right::Right klll3(5);
+  // Prova<typename Tipo::Right::Right>::type lkk(6);
+
+  // Tipo::Right kll444l3(5);
+  // Prova<typename Tipo::Right>::type l44kk(1,std::tuple<>());
+
+  // Prova<typename Tipo::Right>::type lkk2(6);
+  // Expression2<int> exprint;
+  // std::cout<<"--->"<<decltype(L2Inner(mesh,2*u7,2*v7))::leftN<<std::endl;
+  // std::cout<<"--->"<<decltype(L2Inner(mesh,u7,v7))::rightN<<std::endl;
+  // std::cout<<"--->"<<decltype(L2Inner(mesh,u8,v8))::leftN<<std::endl;
+  // std::cout<<"--->"<<decltype(L2Inner(mesh,u8,v8))::rightN<<std::endl;
+  // std::cout<<"--->"<<decltype(L2Inner(mesh,u9,v9))::leftN<<std::endl;
+  // std::cout<<"--->"<<decltype(L2Inner(mesh,u9,v9))::rightN<<std::endl;
+  // std::cout<<"++++--->"<< decltype(v7)::value<<std::endl;
+  // std::cout<<"++++--->"<< decltype(v7)::value<<std::endl;
+  // std::cout<<"++++--->"<< decltype(v8)::value<<std::endl;
+  // std::cout<<"++++--->"<< decltype(v8)::value<<std::endl;
+  // std::cout<<"++++--->"<< decltype(v9)::value<<std::endl;
+  // std::cout<<"++++--->"<< decltype(v9)::value<<std::endl;
+  // std::cout<<"++++--->"<< decltype(v7)::number<<std::endl;
+  // std::cout<<"++++--->"<< decltype(v7)::number<<std::endl;
+  // std::cout<<"++++--->"<< decltype(v8)::number<<std::endl;
+  // std::cout<<"++++--->"<< decltype(v8)::number<<std::endl;
+  // std::cout<<"++++--->"<< decltype(v9)::number<<std::endl;
+  // std::cout<<"++++--->"<< decltype(v9)::number<<std::endl;
+  // // std::cout<<"/////--->"<< decltype(L2Inner(mesh,u8,v7))::minchia<<std::endl;
+  // std::cout<<"/////--->"<< decltype(L2Inner(mesh,u8,v7))::minchia2<<std::endl;
+
+  auto generalform=general_form(l9);
+  // decltype(L2Inner(mesh,v7,u9))::TestTrialNumbers rrr(5);
+
+  // typename OperatorTupleType<decltype(l9)>::type ll(5);
+  // typename decltype(generalform)::TupleFunctionSpace ll1;
+  // typename decltype(generalform)::FunctionSpac ll2;
+  // typename decltype(generalform)::UniqueElementFunctionSpacesTupleType ll3;
 
 
-  auto l9eval=Eval(l9,shapefunctions9);
-  l9eval.apply(mat_loc);
-  // auto l44eval=Eval(l44,shape_coefficients4);
+  // auto referencemaps9=reference_maps(l9);
+  // decltype(referencemaps9)::UniqueElementFunctionSpacesTupleType kkk(5);
+  // auto shape_coefficients9=shape_function_coefficients(l9);
+  // auto referencemaps9=reference_maps(l9);
+  // auto shapefunctions9=shape_functions(l9);
+  // referencemaps9.init(J);
+  // shapefunctions9.init_map(referencemaps9);
+  // shapefunctions9.init(shape_coefficients9);
+  // shapefunctions9.init(referencemaps9,shape_coefficients9);
+  auto shape_coefficients_general=shape_function_coefficients(generalform);
+  auto referencemaps_general=reference_maps2(generalform);
+  auto shapefunctions_general=shape_functions2(generalform);
+
+  shape_coefficients_general.init(mesh);
+  shape_coefficients_general.init(0);
+  referencemaps_general.init(J);
+  shapefunctions_general.init_map(referencemaps_general);
+  shapefunctions_general.init(shape_coefficients_general);
+  shapefunctions_general.init(referencemaps_general,shape_coefficients_general);
+
+  // auto sg=shapefunctions_general();
+  //   decltype(sg) klw(5);
+  using T1=std::tuple<Number<0>,Number<5>>;
+  using T2=std::tuple<Number<0>,Number<4>>;
+  using TT=std::tuple<std::tuple<Number<3>, Number<2> >,
+                      std::tuple<Number<2>, Number<0> >, 
+                      std::tuple<Number<1>, Number<1> >, 
+                      std::tuple<Number<0>, Number<0> > 
+                      >;
+  // BubbleSortTupleOfPairsNumbersHelper<TT>::type::T1 lleee(std::tuple<int>(5));
+  // BubbleSortTupleOfPairsNumbers<TT> lle3ee(std::tuple<int>(5));
+ using ppp=decltype(L2Inner(mesh,u7+u8+u9,v7+v8+v9)+
+                    L2Inner(mesh,Grad(u7)+Grad(u8)+Grad(u9),Grad(v7)+Grad(v8)+Grad(v9)));
+ ppp llll95(6);
+
+ // using pp1=Prova< std::tuple<Number<0>,Number<0>>,ppp::Left>::type;// prl(6);
+
+ // using pp2=Prova< std::tuple<Number<0>,Number<0>>,ppp::Right>::type;// prl2(6);
+ // Prova6<std::tuple<Number<0>,Number<0>>,pp1,pp2>::type ler(6);
+  // Prova6<std::tuple<Number<0>,Number<0>>,pp1>::type vree(6);
+
+ // Prova6<std::tuple<Number<0>,Number<0>>,pp2>::type vee(6);
+
+ Prova< std::tuple<Number<0>,Number<0>>,ppp >::type lllemme1(6);
+ Prova< std::tuple<Number<0>,Number<1>>,ppp >::type lllemme2(6);
+ Prova< std::tuple<Number<0>,Number<2>>,ppp >::type lllemme3(6);
+ Prova< std::tuple<Number<1>,Number<0>>,ppp >::type lllemme4(6);
+ Prova< std::tuple<Number<1>,Number<1>>,ppp >::type lllemme5(6);
+ Prova< std::tuple<Number<1>,Number<2>>,ppp >::type lllemme6(6);
+ Prova< std::tuple<Number<2>,Number<0>>,ppp >::type lllemme7(6);
+ Prova< std::tuple<Number<2>,Number<1>>,ppp >::type lllemme8(6);
+ Prova< std::tuple<Number<2>,Number<2>>,ppp >::type lllemme9(6);
 
 
+  // Prova<decltype(l9)>::type ltrrr(65);
+  auto l9eval=Eval(generalform,shapefunctions_general);
+  // l9eval.apply(mat_loc);
 
 
-
- // decltype(u4) kk(5);
- // decltype(u) kk4(5);
-// decltype(l22eval) mm(4);
+  // typename OperatorTupleType<decltype(l88)>::type sss(5);
+  // typename OperatorTupleType<decltype(generalform)::Form>::type sss4(5);
 
 
+//  for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
+//  {
+//   elem=mesh.elem(elem_iter);
+//   // mesh.points(elem_iter,points);
+
+//   jacobian(elem,mesh.points(),J);
+
+//   shape_coefficients.init(elem_iter);
+
+//   referencemaps.init(J);
+
+//   shapefunctions.init_map(referencemaps);
+//   shapefunctions.init(shape_coefficients);
+//   shapefunctions.init(referencemaps,shape_coefficients);
 
 
- for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
- {
-  elem=mesh.elem(elem_iter);
-  // mesh.points(elem_iter,points);
-
-  jacobian(elem,mesh.points(),J);
-
-  shape_coefficients.init(elem_iter);
-
-  referencemaps.init(J);
-
-  shapefunctions.init_map(referencemaps);
-  shapefunctions.init(shape_coefficients);
-  shapefunctions.init(referencemaps,shape_coefficients);
-
-
-  // std::cout<<"elem_iter=="<<elem_iter<<std::endl;
-  // for(Integer mm=0;mm<elem.nodes.size();mm++)
-  //   std::cout<<elem.nodes[mm]<<std::endl;
-  // std::cout<<J<<std::endl;
-}
+//   // std::cout<<"elem_iter=="<<elem_iter<<std::endl;
+//   // for(Integer mm=0;mm<elem.nodes.size();mm++)
+//   //   std::cout<<elem.nodes[mm]<<std::endl;
+//   // std::cout<<J<<std::endl;
+// }
 
 
   // std::cout<<"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"<<std::endl;
@@ -1297,39 +1370,39 @@ std::cout<<" elapsed_secs------------>"<<elapsed_secs<<std::endl;
 
 std::cout<<" nonzero------------>"<<nonzero<<std::endl;
 
-auto& dm =W1.dofmap();
-auto& dm0=std::get<0>(dm);
-auto& dm01=std::get<0>(dm0);
-auto& dm02=std::get<1>(dm0);
-auto& dm1=std::get<1>(dm);
-// auto& dm2=std::get<2>(dm);
+// auto& dm =W1.dofmap();
+// auto& dm0=std::get<0>(dm);
+// auto& dm01=std::get<0>(dm0);
+// auto& dm02=std::get<1>(dm0);
+// auto& dm1=std::get<1>(dm);
+// // auto& dm2=std::get<2>(dm);
 
 
 
 
-std::cout<<"dm01"<<std::endl;
-for(Integer ii=0;ii<dm01.size();ii++)
-{
- for(Integer jj=0;jj<dm01[ii].size();jj++)
-  std::cout<<dm01[ii][jj]<<" ";
-std::cout<<std::endl;
-}
-std::cout<<"dm02"<<std::endl;
+// std::cout<<"dm01"<<std::endl;
+// for(Integer ii=0;ii<dm01.size();ii++)
+// {
+//  for(Integer jj=0;jj<dm01[ii].size();jj++)
+//   std::cout<<dm01[ii][jj]<<" ";
+// std::cout<<std::endl;
+// }
+// std::cout<<"dm02"<<std::endl;
 
-for(Integer ii=0;ii<dm02.size();ii++)
-{
- for(Integer jj=0;jj<dm02[ii].size();jj++)
-  std::cout<<dm02[ii][jj]<<" ";
-std::cout<<std::endl;
-}
-std::cout<<"dm1"<<std::endl;
+// for(Integer ii=0;ii<dm02.size();ii++)
+// {
+//  for(Integer jj=0;jj<dm02[ii].size();jj++)
+//   std::cout<<dm02[ii][jj]<<" ";
+// std::cout<<std::endl;
+// }
+// std::cout<<"dm1"<<std::endl;
 
-for(Integer ii=0;ii<dm1.size();ii++)
-{
- for(Integer jj=0;jj<dm1[ii].size();jj++)
-  std::cout<<dm1[ii][jj]<<" ";
-std::cout<<std::endl;
-}
+// for(Integer ii=0;ii<dm1.size();ii++)
+// {
+//  for(Integer jj=0;jj<dm1[ii].size();jj++)
+//   std::cout<<dm1[ii][jj]<<" ";
+// std::cout<<std::endl;
+// }
 // std::cout<<"dm2"<<std::endl;
 // for(Integer ii=0;ii<dm2.size();ii++)
 // {
