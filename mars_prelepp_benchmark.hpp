@@ -3,6 +3,7 @@
 
 #include "mars_longest_edge.hpp"
 #include "mars_prelepp_bisection.hpp"
+
 #include "mars_quality.hpp"
 #include <chrono>
 
@@ -28,8 +29,8 @@ namespace mars {
 			//refine once for creating nice intial set-up for newest vertex algorithm
 			auto mesh = mesh_in;
 
-			//RecursiveLeppBisection<Mesh> b(mesh);
-			PrecomputeLeppBisection<Mesh> b(mesh);
+			PrecomputeLeppTreeBisection<Mesh> b(mesh);
+			//PrecomputeLeppBisection<Mesh> b(mesh);
 			b.uniform_refine(1);
 
 			Integer exp_num = 0;
@@ -59,8 +60,8 @@ namespace mars {
 			std::cout << "volume: " << mesh.volume() << std::endl;
 			std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 
-			//RecursiveLeppBisection<Mesh> b(mesh);
-			PrecomputeLeppBisection<Mesh> b(mesh);
+			PrecomputeLeppTreeBisection<Mesh> b(mesh);
+			//PrecomputeLeppBisection<Mesh> b(mesh);
 
 			b.uniform_refine(2);
 
