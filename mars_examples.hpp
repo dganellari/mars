@@ -1054,7 +1054,6 @@ void assembly_example()
  // std::cout<<"c=="<<c<<std::endl;
  //  std::cout<<"d=="<<c<<std::endl;
   // std::cout<<W1.Nelem_dofs<<std::endl;
- // Matrix<Real,W1.Nelem_dofs,W1.Nelem_dofs> mat_loc;
  // std::cout<<mat_loc<<std::endl;
   elem=mesh.elem(0);
   jacobian(elem,mesh.points(),J);
@@ -1079,75 +1078,26 @@ void assembly_example()
 
 
  
- auto W4=MixedFunctionSpace(FEspace2,FEspace5);
- 
+ auto W4=MixedFunctionSpace(FEspace2);
+ Matrix<Real,W4.Nelem_dofs,W4.Nelem_dofs> mat_loc;
+
  auto u7 =     MakeTrial<0>(W4);
  auto u8 = MakeTrial<1>(W4);
- auto u9 = MakeTrial<2>(W4);
+ // auto u9 = MakeTrial<2>(W4);
 
 
  auto v7 =   MakeTest<0>(W4);
  auto v8 = MakeTest<1>(W4);
- auto v9 = MakeTest<2>(W4);
+ // auto v9 = MakeTest<2>(W4);
 
  //  auto l88= L2Inner(mesh,u7+u8+u9,v7+v8+v9)+L2Inner(mesh,v9,u8);
-  auto l9= L2Inner(mesh,u7+u8,v7)+L2Inner(mesh,u7,v7)+L2Inner(mesh,u9,v9);
-  
-  // using Tipo=decltype(L2Inner(mesh,u7+u8+u9,v7+v8+v9));
-  // Tipo::Left oooooe(5);
-  // Tipo::Right eey(5);
-  // Prova<typename Tipo::Left>::type kk(5);
-  // Tipo sss(5);
-  // Tipo::Left kk3k(5);
-  // Tipo::Right kk3444k(5);
-  // Tipo::Left::Right klll(5);
-  // Tipo::Right::Right klll3(5);
-  // Prova<typename Tipo::Right::Right>::type lkk(6);
+  auto l9= //L2Inner(mesh,u7-u8-u9,v7-v8-v9);
+           L2Inner(mesh,u7,v7)+L2Inner(mesh,u8,v8);           
+           // L2Inner(mesh,u7,v7)+L2Inner(mesh,u8,v8)+L2Inner(mesh,u9,v9);
+         
 
-  // Tipo::Right kll444l3(5);
-  // Prova<typename Tipo::Right>::type l44kk(1,std::tuple<>());
-
-  // Prova<typename Tipo::Right>::type lkk2(6);
-  // Expression2<int> exprint;
-  // std::cout<<"--->"<<decltype(L2Inner(mesh,2*u7,2*v7))::leftN<<std::endl;
-  // std::cout<<"--->"<<decltype(L2Inner(mesh,u7,v7))::rightN<<std::endl;
-  // std::cout<<"--->"<<decltype(L2Inner(mesh,u8,v8))::leftN<<std::endl;
-  // std::cout<<"--->"<<decltype(L2Inner(mesh,u8,v8))::rightN<<std::endl;
-  // std::cout<<"--->"<<decltype(L2Inner(mesh,u9,v9))::leftN<<std::endl;
-  // std::cout<<"--->"<<decltype(L2Inner(mesh,u9,v9))::rightN<<std::endl;
-  // std::cout<<"++++--->"<< decltype(v7)::value<<std::endl;
-  // std::cout<<"++++--->"<< decltype(v7)::value<<std::endl;
-  // std::cout<<"++++--->"<< decltype(v8)::value<<std::endl;
-  // std::cout<<"++++--->"<< decltype(v8)::value<<std::endl;
-  // std::cout<<"++++--->"<< decltype(v9)::value<<std::endl;
-  // std::cout<<"++++--->"<< decltype(v9)::value<<std::endl;
-  // std::cout<<"++++--->"<< decltype(v7)::number<<std::endl;
-  // std::cout<<"++++--->"<< decltype(v7)::number<<std::endl;
-  // std::cout<<"++++--->"<< decltype(v8)::number<<std::endl;
-  // std::cout<<"++++--->"<< decltype(v8)::number<<std::endl;
-  // std::cout<<"++++--->"<< decltype(v9)::number<<std::endl;
-  // std::cout<<"++++--->"<< decltype(v9)::number<<std::endl;
-  // // std::cout<<"/////--->"<< decltype(L2Inner(mesh,u8,v7))::minchia<<std::endl;
-  // std::cout<<"/////--->"<< decltype(L2Inner(mesh,u8,v7))::minchia2<<std::endl;
 
   auto generalform=general_form(l9);
-  // decltype(L2Inner(mesh,v7,u9))::TestTrialNumbers rrr(5);
-
-  // typename OperatorTupleType<decltype(l9)>::type ll(5);
-  // typename decltype(generalform)::TupleFunctionSpace ll1;
-  // typename decltype(generalform)::FunctionSpac ll2;
-  // typename decltype(generalform)::UniqueElementFunctionSpacesTupleType ll3;
-
-
-  // auto referencemaps9=reference_maps(l9);
-  // decltype(referencemaps9)::UniqueElementFunctionSpacesTupleType kkk(5);
-  // auto shape_coefficients9=shape_function_coefficients(l9);
-  // auto referencemaps9=reference_maps(l9);
-  // auto shapefunctions9=shape_functions(l9);
-  // referencemaps9.init(J);
-  // shapefunctions9.init_map(referencemaps9);
-  // shapefunctions9.init(shape_coefficients9);
-  // shapefunctions9.init(referencemaps9,shape_coefficients9);
   auto shape_coefficients_general=shape_function_coefficients(generalform);
   auto referencemaps_general=reference_maps2(generalform);
   auto shapefunctions_general=shape_functions2(generalform);
@@ -1159,49 +1109,17 @@ void assembly_example()
   shapefunctions_general.init(shape_coefficients_general);
   shapefunctions_general.init(referencemaps_general,shape_coefficients_general);
 
-  // auto sg=shapefunctions_general();
-  //   decltype(sg) klw(5);
-  using T1=std::tuple<Number<0>,Number<5>>;
-  using T2=std::tuple<Number<0>,Number<4>>;
-  using TT=std::tuple<std::tuple<Number<3>, Number<2> >,
-                      std::tuple<Number<2>, Number<0> >, 
-                      std::tuple<Number<1>, Number<1> >, 
-                      std::tuple<Number<0>, Number<0> > 
-                      >;
-  // BubbleSortTupleOfPairsNumbersHelper<TT>::type::T1 lleee(std::tuple<int>(5));
-  // BubbleSortTupleOfPairsNumbers<TT> lle3ee(std::tuple<int>(5));
- using ppp=decltype(L2Inner(mesh,u7+u8+u9,v7+v8+v9)+
-                    L2Inner(mesh,Grad(u7)+Grad(u8)+Grad(u9),Grad(v7)+Grad(v8)+Grad(v9)));
- ppp llll95(6);
-
- // using pp1=Prova< std::tuple<Number<0>,Number<0>>,ppp::Left>::type;// prl(6);
-
- // using pp2=Prova< std::tuple<Number<0>,Number<0>>,ppp::Right>::type;// prl2(6);
- // Prova6<std::tuple<Number<0>,Number<0>>,pp1,pp2>::type ler(6);
-  // Prova6<std::tuple<Number<0>,Number<0>>,pp1>::type vree(6);
-
- // Prova6<std::tuple<Number<0>,Number<0>>,pp2>::type vee(6);
-
- Prova< std::tuple<Number<0>,Number<0>>,ppp >::type lllemme1(6);
- Prova< std::tuple<Number<0>,Number<1>>,ppp >::type lllemme2(6);
- Prova< std::tuple<Number<0>,Number<2>>,ppp >::type lllemme3(6);
- Prova< std::tuple<Number<1>,Number<0>>,ppp >::type lllemme4(6);
- Prova< std::tuple<Number<1>,Number<1>>,ppp >::type lllemme5(6);
- Prova< std::tuple<Number<1>,Number<2>>,ppp >::type lllemme6(6);
- Prova< std::tuple<Number<2>,Number<0>>,ppp >::type lllemme7(6);
- Prova< std::tuple<Number<2>,Number<1>>,ppp >::type lllemme8(6);
- Prova< std::tuple<Number<2>,Number<2>>,ppp >::type lllemme9(6);
 
 
-  // Prova<decltype(l9)>::type ltrrr(65);
-  auto l9eval=Eval(generalform,shapefunctions_general);
-  // l9eval.apply(mat_loc);
+// auto generaleval=Eval(generalform,shapefunctions_general);
 
-
-  // typename OperatorTupleType<decltype(l88)>::type sss(5);
-  // typename OperatorTupleType<decltype(generalform)::Form>::type sss4(5);
-
-
+// decltype(generaleval)::EvalType rrr(5);
+auto evalprova=Eval(L2Inner(mesh,u7,v7),shapefunctions_general);
+// decltype(evalprova) sss(5);
+// decltype(evalprova)::EvalLeft rrr4(5);
+// decltype(evalprova)::EvalRight rrr5(5);
+// evalprova.apply(mat_loc);
+// generaleval.apply(mat_loc);
 //  for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
 //  {
 //   elem=mesh.elem(elem_iter);

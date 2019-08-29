@@ -1187,6 +1187,42 @@ private:
  Eval eval_;
 };
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//// Specialization for -(-X)=X. The evaluation is simply X.
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+template<typename Derived,typename...OtherTemplateArguments>
+class Evaluation<Expression2<UnaryMinus2< Expression2<UnaryMinus2< Expression2<Derived> >> > >,OtherTemplateArguments... >
+{
+ public:
+ using type=UnaryPlus2<Expression2<Derived>>;
+ using Eval=Evaluation<Expression2<Derived>,OtherTemplateArguments...>;
+ using subtype= OperatorType<type,OtherTemplateArguments...>;
+ Evaluation(){};
+ 
+
+ Evaluation(const Expression2<type>& expr):
+ expr_(expr.derived()),
+ eval_(Eval(expr_()))
+ {};
+ 
+ template<typename...Inputs>
+ void apply(subtype& output,const Inputs&...inputs)
+ {
+  std::cout<<"evaluation unaryplus"<<std::endl;
+  // compute output
+  // eval_.template apply<OtherTemplateArguments2...>(output,inputs...);
+
+  eval_.apply(output,inputs...);
+  // apply plus to output (we assume it does not change, so we do not compute)
+  // Derived(output);
+ }
+private:
+
+ type expr_;
+ Eval eval_;
+};
+
 
 
 
@@ -1205,9 +1241,12 @@ class Evaluation<Expression2<Addition2< Expression2<DerivedLeft>  ,
  
 
  Evaluation(const Expression2<type>& expr):
+ // Evaluation(const Expression2<type>& expr,OtherTemplateArguments&...args):
  expr_(expr.derived()),
  eval_left_(EvalLeft(expr_.left())),
  eval_right_(EvalRight(expr_.right()))
+ // eval_left_(EvalLeft(expr_.left(),args...)),
+ // eval_right_(EvalRight(expr_.right(),args...))
 {};
  
  template<typename...OtherTemplateArguments2,typename...Inputs>
@@ -1411,17 +1450,21 @@ template<typename MeshT, typename Left,typename Right,Integer QR, typename Form>
 class Evaluation<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>, ShapeFunctions<Form>>;
 
 
-// template<typename...OtherTemplateArguments, typename T>
-// constexpr auto Eval(const T& t){return Evaluation< Expression2<remove_all_t<decltype(t)>>,OtherTemplateArguments...>(t);}
+template<typename MeshT, typename Left,typename Right,Integer QR, typename Form,typename...OtherTemplateArguments>
+constexpr auto Eval(const L2DotProductIntegral<MeshT,Left,Right,QR>& t,const OtherTemplateArguments&...ts)
+{return Evaluation< Expression2<remove_all_t<decltype(t)>>,OtherTemplateArguments...>(t,ts...);}
 
-// // first parameter is an expression, while the others input are utils 
-// template<typename...OtherTemplateArguments,typename T,typename ...Ts>
-// constexpr auto Eval(const T& t,const Ts&...ts){return Evaluation< Expression2<remove_all_t<decltype(t)>>,
-//                                                                               remove_all_t<decltype(ts)>...,OtherTemplateArguments... >(t,ts...);}
+template<typename...OtherTemplateArguments, typename T>
+constexpr auto Eval(const T& t){return Evaluation< Expression2<remove_all_t<decltype(t)>>,OtherTemplateArguments...>(t);}
 
-// template<typename...OtherTemplateArguments,typename T,typename ...Ts>
-// constexpr auto Eval(const T& t, Ts&...ts){return Evaluation< Expression2<remove_all_t<decltype(t)>>,
-//                                                                          remove_all_t<decltype(ts)>...,OtherTemplateArguments... >(t,ts...);}
+// first parameter is an expression, while the others input are utils 
+template<typename...OtherTemplateArguments,typename T,typename ...Ts>
+constexpr auto Eval(const T& t,const Ts&...ts){return Evaluation< Expression2<remove_all_t<decltype(t)>>,
+                                                                              remove_all_t<decltype(ts)>...,OtherTemplateArguments... >(t,ts...);}
+
+template<typename...OtherTemplateArguments,typename T,typename ...Ts>
+constexpr auto Eval(const T& t, Ts&...ts){return Evaluation< Expression2<remove_all_t<decltype(t)>>,
+                                                                         remove_all_t<decltype(ts)>...,OtherTemplateArguments... >(t,ts...);}
 
 
 template<typename Form>
@@ -1437,15 +1480,30 @@ template<typename Form>
 class Evaluation<Expression2<GeneralForm<Form>>>
 {
  public:
+ using type= GeneralForm<Form>;
+ using ShapesForm=ShapeFunctions2<GeneralForm<Form>>;
+ using Shapes=typename ShapesForm::TupleOfTupleShapeFunction;
+ using EvalType=Evaluation<Expression2<Form>,ShapesForm>;
 
- Evaluation(const GeneralForm<Form>& generalform,ShapeFunctions2<GeneralForm<Form>>& shapes):
- generalform_(generalform),
- shapes_(shapes)
+ Evaluation(const GeneralForm<Form>& general_form,ShapesForm& shapes):
+ general_form_(general_form),
+ // shapes_(shapes()),
+ eval_form_(Eval(general_form_(),shapes))
  {}
 
+ 
+ template<typename Output>
+ void apply(Output& output)
+ {
+  // il problema qui e' al regola di quadratura che deve essere nota
+  // eval_form_.apply(output);
+ }
+
+
  private:
- const GeneralForm<Form>& generalform_;
- ShapeFunctions2<GeneralForm<Form>>& shapes_;
+ const GeneralForm<Form>& general_form_;
+ EvalType eval_form_;
+ // Shapes& shapes_;
 };
 
 template<typename Form>

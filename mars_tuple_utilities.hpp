@@ -482,6 +482,32 @@ using TypeToTupleElementPosition=TypeToTupleElementPositionHelper<T,TupleTypeSiz
 
 
 
+
+template<typename T, typename TupleOfTuple,Integer M,Integer Nmax,Integer N>
+constexpr std::enable_if_t<(N==Nmax+1),Integer > NthTupleOfTupleTypePositionHelper()
+{return -1;};
+
+template<typename T, typename TupleOfTuple,Integer M,Integer Nmax,Integer N>
+constexpr std::enable_if_t<(N<Nmax+1),Integer > NthTupleOfTupleTypePositionHelper()
+{
+  if(IsSame<T,GetType<TupleOfTuple,N,M> >::value)
+    return N;
+  else 
+    return NthTupleOfTupleTypePositionHelper<T,TupleOfTuple,M,Nmax,N+1>();
+};
+
+template<typename T, typename TupleOfTuple,Integer M>
+constexpr Integer NthTupleOfTupleTypePosition()
+{
+  return NthTupleOfTupleTypePositionHelper<T,TupleOfTuple,M,TupleTypeSize<TupleOfTuple>::value-1,0>();
+}
+
+
+
+
+
+
+
 // for 
 template<Integer N,typename All, typename Unique>
  class ElementPosition

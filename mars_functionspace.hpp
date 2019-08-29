@@ -624,26 +624,6 @@ class TypeOfForm<Number<2>,Number<1>>
 };
 
 
-// template<typename MixedSpace, Integer N,typename OperatorType>
-// class OperatorTupleType<Test<MixedSpace,N,OperatorType> >
-// { public:
-//   using Test=Test<MixedSpace,N,OperatorType>;
-//   static constexpr Integer Nmax= Test::Nmax;
-//   using single_type=std::tuple<std::tuple< OperatorType,std::tuple<> >>;
-//   using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
-//   using type=TupleChangeType<N,single_type,emptytuple>;
-// };
-
-// template<typename MixedSpace, Integer N,typename OperatorType>
-// class OperatorTupleType<Trial<MixedSpace,N,OperatorType> >
-// { public:
-//   using Trial=Trial<MixedSpace,N,OperatorType>;
-//   static constexpr Integer Nmax= Trial::Nmax;
-//   using single_type=std::tuple<std::tuple< OperatorType,std::tuple<> >>;
-//   using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
-//   using type=TupleChangeType<N,single_type,emptytuple>;
-// };
-
 
 template<template<class,Integer,class > class TestOrTrial_,typename MixedSpace, Integer N,typename OperatorType>
 class OperatorTupleType<TestOrTrial_<MixedSpace,N,OperatorType> >
@@ -800,152 +780,10 @@ class L2DotProductIntegral;
 
 
 
-template<typename T, typename TupleOfTuple,Integer M,Integer Nmax,Integer N>
-constexpr std::enable_if_t<(N==Nmax+1),Integer > NthTupleOfTupleTypePositionHelper()
-{return -1;};
-
-template<typename T, typename TupleOfTuple,Integer M,Integer Nmax,Integer N>
-constexpr std::enable_if_t<(N<Nmax+1),Integer > NthTupleOfTupleTypePositionHelper()
-{
-  if(IsSame<T,GetType<TupleOfTuple,N,M> >::value)
-    return N;
-  else 
-    return NthTupleOfTupleTypePositionHelper<T,TupleOfTuple,M,Nmax,N+1>();
-};
-
-template<typename T, typename TupleOfTuple,Integer M>
-constexpr Integer NthTupleOfTupleTypePosition()
-{
-  return NthTupleOfTupleTypePositionHelper<T,TupleOfTuple,M,TupleTypeSize<TupleOfTuple>::value-1,0>();
-}
 
 
 
 
-
-
-
-template<Integer N, Integer Nmax, typename TupleOfTuple1, typename TupleOfTuple2, typename TupleOfTupleOutput>
-class Prova3;
-
-template<typename TupleOfTuple1, typename TupleOfTuple2, typename TupleOfTupleOutput>
-class Prova3<0,0,TupleOfTuple1,TupleOfTuple2,TupleOfTupleOutput>
-{
-public:
-using T=GetType<TupleOfTuple1,0,0>;
-// we check if T is inside in TupleOfTuple2 (position>=0)
-static constexpr Integer position=NthTupleOfTupleTypePosition<T,TupleOfTuple2,0>();
-// if not, the output is enlarged with the n-th subtuple of TupleOfTuple1
-// if it is, then we merge the n-th subtuple of TupleOfTuple1 and the position-th of TupleOfTuple2
-using TupleOfTupleOutputNew=
-                  typename std::conditional<(position==-1),
-                  std::tuple<GetType<TupleOfTuple1,0>>,
-                  std::tuple<std::tuple<GetType<TupleOfTuple1,0,0>>,TupleCatType<GetType<TupleOfTuple1,0,1>,GetType<TupleOfTuple2,0,1> > >  
-                  >::type;
-// if not, TupleOfTuple2 is left the same 
-// if it is, then we removed the added element to the output from tupleoftuple2 
-using TupleOfTuple2New=
-                   typename std::conditional<(position==-1), // do not remove
-                   TupleOfTuple2,
-                   TupleRemoveNthPosition<position,TupleOfTuple2>
-                   >::type;
-
-using type=std::tuple<TupleOfTupleOutputNew>;//TupleOfTupleOutputNew;
-
-};
-
-
-template<Integer Nmax, typename TupleOfTuple1, typename TupleOfTuple2, typename TupleOfTupleOutput>
-class Prova3<Nmax,Nmax,TupleOfTuple1,TupleOfTuple2,TupleOfTupleOutput>
-{
-public:
-using T=GetType<TupleOfTuple1,Nmax,0>;
-// we check if T is inside in TupleOfTuple2 (position>=0)
-static constexpr Integer position=NthTupleOfTupleTypePosition<T,TupleOfTuple2,0>();
-// if not, the output is enlarged with the n-th subtuple of TupleOfTuple1
-// if it is, then we merge the n-th subtuple of TupleOfTuple1 and the position-th of TupleOfTuple2
-using TupleOfTupleOutputNew=
-                  typename std::conditional<(position==-1),
-                  TupleCatType< TupleOfTupleOutput,std::tuple<GetType<TupleOfTuple1,Nmax>>  >,
-                  TupleCatType<TupleOfTupleOutput,
-                  std::tuple<std::tuple<GetType<TupleOfTuple1,Nmax,0>>,TupleCatType<GetType<TupleOfTuple1,Nmax,1>,GetType<TupleOfTuple2,Nmax,1> > >> 
-                  >::type;
-
-// if not, TupleOfTuple2 is left the same 
-// if it is, then we removed the added element to the output from tupleoftuple2 
-using TupleOfTuple2New=
-                   typename std::conditional<(position==-1), // do not remove
-                   TupleOfTuple2,
-                   TupleRemoveNthPosition<position,TupleOfTuple2>
-                   >::type;
-
-using type=TupleOfTupleOutputNew;
-};
-
-
-template< Integer Nmax, typename TupleOfTuple1, typename TupleOfTuple2, typename TupleOfTupleOutput>
-class Prova3<0,Nmax,TupleOfTuple1,TupleOfTuple2,TupleOfTupleOutput>
-{
-public:
-static constexpr Integer N=0;
-using T=GetType<TupleOfTuple1,N,0>;
-// we check if T is inside in TupleOfTuple2 (position>=0)
-static constexpr Integer position=NthTupleOfTupleTypePosition<T,TupleOfTuple2,0>();
-// if not, the output is enlarged with the n-th subtuple of TupleOfTuple1
-// if it is, then we merge the n-th subtuple of TupleOfTuple1 and the position-th of TupleOfTuple2
-using TupleOfTupleOutputNew=
-                  typename std::conditional<(position==-1),
-                  std::tuple<GetType<TupleOfTuple1,0>> ,
-                  std::tuple<std::tuple<GetType<TupleOfTuple1,N,0,0>,TupleCatType<GetType<TupleOfTuple1,N,1>,GetType<TupleOfTuple2,N,1>>>    >
-                  >::type;
-// if not, TupleOfTuple2 is left the same 
-// if it is, then we removed the added element to the output from tupleoftuple2 
-using TupleOfTuple2New=
-                   typename std::conditional<(position==-1), // do not remove
-                   TupleOfTuple2,
-                   TupleRemoveNthPosition<position,TupleOfTuple2>
-                   >::type;
-
-using type=typename Prova3<N+1,Nmax,TupleOfTuple1,TupleOfTuple2New,TupleOfTupleOutputNew>::type;
-};
-
-template<Integer N, Integer Nmax, typename TupleOfTuple1, typename TupleOfTuple2, typename TupleOfTupleOutput>
-class Prova3
-{
-public:
-using T=GetType<TupleOfTuple1,N,0>;
-// we check if T is inside in TupleOfTuple2 (position>=0)
-static constexpr Integer position=NthTupleOfTupleTypePosition<T,TupleOfTuple2,0>();
-// if not, the output is enlarged with the n-th subtuple of TupleOfTuple1
-// if it is, then we merge the n-th subtuple of TupleOfTuple1 and the position-th of TupleOfTuple2
-using TupleOfTupleOutputNew=
-                  typename std::conditional<(position==-1),
-                  TupleCatType< TupleOfTupleOutput,std::tuple<GetType<TupleOfTuple1,N>>  >,
-                  TupleCatType<TupleOfTupleOutput,
-                  std::tuple<std::tuple<GetType<TupleOfTuple1,N,0>>,TupleCatType<GetType<TupleOfTuple1,N,1>,GetType<TupleOfTuple2,N,1> > >> 
-                  >::type;
-
-
-
-// if not, TupleOfTuple2 is left the same 
-// if it is, then we removed the added element to the output from tupleoftuple2 
-using TupleOfTuple2New=
-                   typename std::conditional<(position==-1), // do not remove
-                   TupleOfTuple2,
-                   TupleRemoveNthPosition<position,TupleOfTuple2>
-                   >::type;
-
-using type=typename Prova3<N+1,Nmax,TupleOfTuple1,TupleOfTuple2New,TupleOfTupleOutputNew>::type;
-};
-
-
-template<typename TupleOfTuple1, typename TupleOfTuple2>
-class Prova4
-{
-public:
-  using prova3=Prova3<0,TupleTypeSize<TupleOfTuple1>::value-1,TupleOfTuple1,TupleOfTuple2,std::tuple<std::tuple<>> >;
-  using type= TupleCatType<typename prova3::type,typename prova3::TupleOfTuple2New>;
-};
 
 
 
@@ -960,31 +798,31 @@ public:
 
 
 template<typename...Ts>
-class Prova6;
+class TupleOfTestTrialPairsNumbersAuxAux;
 
 template<typename T>
-class Prova6<T, std::tuple<> >
+class TupleOfTestTrialPairsNumbersAuxAux<T, std::tuple<> >
 {
  public:
   using type=std::tuple<>;
 };
 
 template<typename T>
-class Prova6<T, std::tuple<>,std::tuple<> >
+class TupleOfTestTrialPairsNumbersAuxAux<T, std::tuple<>,std::tuple<> >
 {
  public:
   using type=std::tuple<>;
 };
 
 template<typename T>
-class Prova6<T, Addition2<Expression2<std::tuple<>>, Expression2<std::tuple<>> > >
+class TupleOfTestTrialPairsNumbersAuxAux<T, Addition2<Expression2<std::tuple<>>, Expression2<std::tuple<>> > >
 {
  public:
   using type=std::tuple<>;
 };
 
 template<typename T, typename MeshT, typename Left,typename Right,Integer QR>
-class Prova6<T, L2DotProductIntegral<MeshT,Left,Right,QR> >
+class TupleOfTestTrialPairsNumbersAuxAux<T, L2DotProductIntegral<MeshT,Left,Right,QR> >
 {
  public:
   using L2=L2DotProductIntegral<MeshT,Left,Right,QR>;
@@ -993,7 +831,7 @@ class Prova6<T, L2DotProductIntegral<MeshT,Left,Right,QR> >
 
 
 template<typename T, typename MeshT, typename Left,typename Right,Integer QR>
-class Prova6<T, Addition2<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>,Expression2<std::tuple<>> > >
+class TupleOfTestTrialPairsNumbersAuxAux<T, Addition2<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>,Expression2<std::tuple<>> > >
 {
  public:
   using L2=L2DotProductIntegral<MeshT,Left,Right,QR>;
@@ -1003,7 +841,7 @@ class Prova6<T, Addition2<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>
 
 
 template<typename T, typename MeshT, typename Left,typename Right,Integer QR>
-class Prova6<T, Addition2<Expression2<std::tuple<>>, Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>> > >
+class TupleOfTestTrialPairsNumbersAuxAux<T, Addition2<Expression2<std::tuple<>>, Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>> > >
 {
  public:
   using L2=L2DotProductIntegral<MeshT,Left,Right,QR>;
@@ -1015,7 +853,7 @@ class Prova6<T, Addition2<Expression2<std::tuple<>>, Expression2<L2DotProductInt
 
 
 template<typename T, typename MeshT, typename Left,typename Right,Integer QR>
-class Prova6<T, std::tuple<>, L2DotProductIntegral<MeshT,Left,Right,QR> >
+class TupleOfTestTrialPairsNumbersAuxAux<T, std::tuple<>, L2DotProductIntegral<MeshT,Left,Right,QR> >
 {
  public:
   using L2=L2DotProductIntegral<MeshT,Left,Right,QR>;
@@ -1023,7 +861,7 @@ class Prova6<T, std::tuple<>, L2DotProductIntegral<MeshT,Left,Right,QR> >
 };
 
 template<typename T, typename MeshT, typename Left,typename Right,Integer QR>
-class Prova6<T, L2DotProductIntegral<MeshT,Left,Right,QR>, std::tuple<> >
+class TupleOfTestTrialPairsNumbersAuxAux<T, L2DotProductIntegral<MeshT,Left,Right,QR>, std::tuple<> >
 {
  public:
   using L2=L2DotProductIntegral<MeshT,Left,Right,QR>;
@@ -1031,89 +869,179 @@ class Prova6<T, L2DotProductIntegral<MeshT,Left,Right,QR>, std::tuple<> >
 };
 
 template<typename T1, typename T2>
-class Prova6< T1, std::tuple<>,Expression2<T2> > 
+class TupleOfTestTrialPairsNumbersAuxAux< T1, std::tuple<>,Expression2<T2> > 
 {
 public:
-  using type=typename Prova6<Expression2<T2>>::type;
+  using type=typename TupleOfTestTrialPairsNumbersAuxAux<Expression2<T2>>::type;
 };
 
 template<typename T1, typename T2>
-class Prova6< T1, Expression2<T2>, std::tuple<> > 
+class TupleOfTestTrialPairsNumbersAuxAux< T1, Expression2<T2>, std::tuple<> > 
 {
 public:
   using type=Expression2<T2>;
 };
 
 template<typename T, typename T1, typename T2>
-class Prova6<T, T1, T2 > 
+class TupleOfTestTrialPairsNumbersAuxAux<T, T1, T2 > 
 {
 public:
   using type=Addition2<Expression2<T1>,Expression2<T2>>;
 };
 
 template<typename...Ts>
-class Prova;
+class TupleOfTestTrialPairsNumbersAux;
 
 template<typename T,typename MeshT, typename Left,typename Right,Integer QR>
-class Prova<T,L2DotProductIntegral<MeshT,Left,Right,QR> >
+class TupleOfTestTrialPairsNumbersAux<T,L2DotProductIntegral<MeshT,Left,Right,QR> >
 {
  public:
   using S=L2DotProductIntegral<MeshT,Left,Right,QR>;
-  using type=typename Prova6<T,S>::type;
+  using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,S>::type;
 
 };
 
 
 template<typename T, typename MeshT1, typename Left1,typename Right1,Integer QR1,
                      typename MeshT2, typename Left2,typename Right2,Integer QR2>
-class Prova<T,Addition2<Expression2<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>,
+class TupleOfTestTrialPairsNumbersAux<T,Addition2<Expression2<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>,
                         Expression2<L2DotProductIntegral<MeshT2,Left2,Right2,QR2>>>>
 {
  public:
   using Left=L2DotProductIntegral<MeshT1,Left1,Right1,QR1>;
   using Right=L2DotProductIntegral<MeshT2,Left2,Right2,QR2>;
-  // using type=typename Prova6<T, typename Prova6<T,Left>::type, typename Prova6<T,Right>::type>::type;
-  using type=typename Prova6<T, typename Prova6<T,Left>::type, typename Prova6<T,Right>::type>::type;
+  using type=typename TupleOfTestTrialPairsNumbersAuxAux<T, typename TupleOfTestTrialPairsNumbersAuxAux<T,Left>::type, typename TupleOfTestTrialPairsNumbersAuxAux<T,Right>::type>::type;
 
 };
 
 template<typename T,typename MeshT, typename Left1,typename Right1,Integer QR,typename Right>
-class Prova<T, Addition2<Expression2<L2DotProductIntegral<MeshT,Left1,Right1,QR>>,Expression2<Right > > >
+class TupleOfTestTrialPairsNumbersAux<T, Addition2<Expression2<L2DotProductIntegral<MeshT,Left1,Right1,QR>>,Expression2<Right > > >
 {
  public:
   using Left=L2DotProductIntegral<MeshT,Left1,Right1,QR>;
-  using type=typename Prova6<T,
-                             typename Prova6<T,Left>::type,
-                             // typename Prova<T,Right>::type
-                             typename Prova6<T,typename Prova<T,Right>::type>::type
+  using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,
+                             typename TupleOfTestTrialPairsNumbersAuxAux<T,Left>::type,
+                             typename TupleOfTestTrialPairsNumbersAuxAux<T,typename TupleOfTestTrialPairsNumbersAux<T,Right>::type>::type
                              >::type;
 
 };
 
 template<typename T, typename Left,typename MeshT, typename Left1,typename Right1,Integer QR>
-class Prova<T, Addition2<Expression2<Left>,Expression2<L2DotProductIntegral<MeshT,Left1,Right1,QR> > > >
+class TupleOfTestTrialPairsNumbersAux<T, Addition2<Expression2<Left>,Expression2<L2DotProductIntegral<MeshT,Left1,Right1,QR> > > >
 {
  public:
   using Right=L2DotProductIntegral<MeshT,Left1,Right1,QR>;
-  using type=typename Prova6<T,
-                             typename Prova<T,Left>::type,
-                             // typename Prova6<T,Right>::type
-                             typename Prova6<T,typename Prova<T,Right>::type>::type
+  using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,
+                             typename TupleOfTestTrialPairsNumbersAux<T,Left>::type,
+                             typename TupleOfTestTrialPairsNumbersAuxAux<T,typename TupleOfTestTrialPairsNumbersAux<T,Right>::type>::type
                              >::type;
 };
 
 template<typename T, typename Left,typename Right>
-class Prova<T, Addition2<Expression2<Left>,Expression2<Right > > >
+class TupleOfTestTrialPairsNumbersAux<T, Addition2<Expression2<Left>,Expression2<Right > > >
 {
 public:
 
-  using type=
-             // typename Prova6<T,typename Prova<T,Right>::type>::type;
-             typename Prova6<T,
-                             typename Prova6<T,typename Prova<T,Left>::type>::type,
-                             typename Prova6<T,typename Prova<T,Right>::type>::type
+  using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,
+                             typename TupleOfTestTrialPairsNumbersAuxAux<T,typename TupleOfTestTrialPairsNumbersAux<T,Left>::type>::type,
+                             typename TupleOfTestTrialPairsNumbersAuxAux<T,typename TupleOfTestTrialPairsNumbersAux<T,Right>::type>::type
                              >::type;
 };
+
+
+
+
+
+template<typename...Ts>
+class TupleOfTestTrialPairsNumbers;
+
+template<typename MeshT1, typename Left1,typename Right1,Integer QR1>
+class TupleOfTestTrialPairsNumbers<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>
+{
+ public:
+  using T=L2DotProductIntegral<MeshT1,Left1,Right1,QR1>;
+
+  using type=std::tuple<typename T::TestTrialNumbers>;
+
+};
+
+template<typename MeshT1, typename Left1,typename Right1,Integer QR1,
+         typename MeshT2, typename Left2,typename Right2,Integer QR2>
+class TupleOfTestTrialPairsNumbers<Addition2<Expression2<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>,
+                        Expression2<L2DotProductIntegral<MeshT2,Left2,Right2,QR2>>>>
+{
+ public:
+  using Left=L2DotProductIntegral<MeshT1,Left1,Right1,QR1>;
+  using Right=L2DotProductIntegral<MeshT2,Left2,Right2,QR2>;
+
+  using type=RemoveTupleDuplicates<std::tuple<typename Left::TestTrialNumbers, typename Right::TestTrialNumbers>>;
+
+};
+
+template<typename MeshT, typename Left1,typename Right1,Integer QR,typename Right>
+class TupleOfTestTrialPairsNumbers<Addition2<Expression2<L2DotProductIntegral<MeshT,Left1,Right1,QR>>,Expression2<Right > > >
+{
+ public:
+  using Left=L2DotProductIntegral<MeshT,Left1,Right1,QR>;
+  using type=RemoveTupleDuplicates<TupleCatType<typename TupleOfTestTrialPairsNumbers<Left>::type,typename TupleOfTestTrialPairsNumbers<Right>::type >>;
+
+
+};
+
+template<typename Left,typename MeshT, typename Left1,typename Right1,Integer QR>
+class TupleOfTestTrialPairsNumbers<Addition2<Expression2<Left>,Expression2<L2DotProductIntegral<MeshT,Left1,Right1,QR> > > >
+{
+ public:
+  using Right=L2DotProductIntegral<MeshT,Left1,Right1,QR>;
+  using type=RemoveTupleDuplicates<TupleCatType<typename TupleOfTestTrialPairsNumbers<Left>::type,typename TupleOfTestTrialPairsNumbers<Right>::type >>;
+};
+
+template<typename Left,typename Right>
+class TupleOfTestTrialPairsNumbers<Addition2<Expression2<Left>,Expression2<Right > > >
+{
+public:
+  using type=RemoveTupleDuplicates<TupleCatType<typename TupleOfTestTrialPairsNumbers<Left>::type,typename TupleOfTestTrialPairsNumbers<Right>::type>>;
+
+};
+
+template<typename SingleForm>
+class L2Products
+{
+ public:
+ L2Products(const SingleForm& form):
+ form_(form)
+ {}
+
+ private:
+ SingleForm form_;
+};
+
+template<typename TupleOfPairsNumbers, typename Form,Integer Nmax,Integer N>
+class TupleOfL2ProductsHelper;
+
+template<typename TupleOfPairsNumbers, typename Form,Integer Nmax>
+class TupleOfL2ProductsHelper<TupleOfPairsNumbers,Form,Nmax,Nmax>
+{
+ public:
+ using type=std::tuple<std::tuple<
+                       L2Products<typename TupleOfTestTrialPairsNumbersAux<GetType<TupleOfPairsNumbers,Nmax>,Form>::type>>>;
+};
+
+
+
+template<typename TupleOfPairsNumbers, typename Form,Integer Nmax,Integer N>
+class TupleOfL2ProductsHelper
+{
+ public:
+ using type=TupleCatType<std::tuple<std::tuple<L2Products<typename TupleOfTestTrialPairsNumbersAux<GetType<TupleOfPairsNumbers,N>,Form>::type>>> , 
+                         typename TupleOfL2ProductsHelper<TupleOfPairsNumbers,Form,Nmax,N+1>::type >;
+};
+
+template<typename TupleOfPairsNumbers, typename Form>
+using TupleOfL2Products=typename TupleOfL2ProductsHelper<TupleOfPairsNumbers,Form, TupleTypeSize<TupleOfPairsNumbers>::value-1,0>::type;
+
+
+
 
 
 
@@ -1326,6 +1254,9 @@ class GeneralForm
 
   public:
   using Form=Form_;
+  using TupleOfPairsNumbers=BubbleSortTupleOfPairsNumbers<typename TupleOfTestTrialPairsNumbers<Form>::type>;
+  using L2Products=TupleOfL2Products< TupleOfPairsNumbers, Form >;
+
 
   template<typename T,Integer N>
   class KindType;
@@ -1475,7 +1406,14 @@ L2Inner(const MeshT& mesh,const Expression2<Left>& left,const Expression2<Additi
                L2Inner(mesh,left.derived(),right.derived().right()) );}
 
 
-
+template<typename MeshT, typename Left2,typename Right2, typename Left>
+constexpr auto
+L2Inner(const MeshT& mesh,const Expression2<Left>& left,const Expression2<Subtraction2<Expression2<Left2>,Expression2<Right2>>>& right)
+{return Addition2<
+  Expression2<decltype(L2Inner(mesh,left.derived(),right.derived().left()))>,
+  Expression2<decltype(L2Inner(mesh,-left.derived(),right.derived().right()))>>
+              (L2Inner(mesh,left.derived(),right.derived().left()),
+               L2Inner(mesh,-left.derived(),right.derived().right()) );}
 
 
 template<typename MeshT, typename Left1,typename Right1, typename Right>
@@ -1487,7 +1425,14 @@ L2Inner(const MeshT& mesh,const Expression2<Addition2<Expression2<Left1>,Express
   (L2Inner(mesh,left.derived().left(),right.derived()),
    L2Inner(mesh,left.derived().right(),right.derived()) );}
 
-
+template<typename MeshT, typename Left1,typename Right1, typename Right>
+constexpr auto
+L2Inner(const MeshT& mesh,const Expression2<Subtraction2<Expression2<Left1>,Expression2<Right1>>>& left,const Expression2<Right>& right)
+{return Addition2<
+  Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived()))>,
+  Expression2<decltype(L2Inner(mesh,-left.derived().right(),right.derived()))>>
+  (L2Inner(mesh,left.derived().left(),right.derived()),
+   L2Inner(mesh,-left.derived().right(),right.derived()) );}
 
 
 // template<typename MeshT, typename Left1,typename Right1,typename Left2, typename Right2>
@@ -1546,7 +1491,20 @@ Addition2<Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived(
   ;
 }
 
-
+template<typename MeshT, typename Left1,typename Right1,typename Left2, typename Right2>
+constexpr auto
+L2Inner(const MeshT& mesh,const Expression2<Subtraction2<Expression2<Left1>,Expression2<Right1>>>& left,
+                          const Expression2<Subtraction2<Expression2<Left2>,Expression2<Right2>>>& right)
+{return 
+Addition2<Expression2<decltype(L2Inner(mesh,left.derived().left(),right.derived()))>,
+          Expression2<decltype(L2Inner(mesh,-left.derived().right(),right.derived()))>
+         >
+  (
+    L2Inner(mesh,left.derived().left(),right.derived()),
+    L2Inner(mesh,-left.derived().right(),right.derived())                
+  )
+  ;
+}
 
 
 
@@ -1580,7 +1538,7 @@ L2Inner(const MeshT& mesh,const Expression2<Addition2<Expression2<Left1>,Express
 
 
 template<typename MeshT, typename Left,typename Right,Integer QR, typename Form>
-class Evaluation<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>, ShapeFunctions<Form>>
+class Evaluation<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>, ShapeFunctions2<Form>>
 {
  public:
  using type= L2DotProductIntegral<MeshT,Left,Right,QR>;
@@ -1591,7 +1549,7 @@ class Evaluation<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>, ShapeFu
 
  Evaluation(){};
  
- Evaluation(const type& expr, ShapeFunctions<Form>& shape_functions):
+ Evaluation(const type& expr, ShapeFunctions2<Form>& shape_functions):
  eval_(expr),
  eval_left_(Eval<QRule>(eval_.left())),
  eval_right_(Eval<QRule>(eval_.right())),
@@ -1601,7 +1559,7 @@ class Evaluation<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>, ShapeFu
  // template<typename QRule>//,typename ...Ts>
  void apply_aux()
  {
-  std::cout<<"L2DotProductIntegral"<<std::endl;
+  // std::cout<<"L2DotProductIntegral"<<std::endl;
   eval_left_.apply(left_value_,shape_functions_());
   std::cout<<"left_value_="<<left_value_<<std::endl;
   eval_right_.apply(right_value_,shape_functions_());
@@ -1612,8 +1570,8 @@ class Evaluation<Expression2<L2DotProductIntegral<MeshT,Left,Right,QR>>, ShapeFu
  template<Integer Rows,Integer Cols>
  void apply(const Matrix<Real,Rows,Cols>& mat)
  {
-  // eval_left_.apply(mat);
-  // eval_right_.apply(mat); 
+  // eval_left_.apply(mat,shape_functions_());
+  // eval_right_.apply(mat,shape_functions_()); 
   apply_aux();
  }
 
@@ -1621,7 +1579,7 @@ private:
  type eval_;
  EvalLeft eval_left_;
  EvalRight eval_right_;
- ShapeFunctions<Form>& shape_functions_;
+ ShapeFunctions2<Form>& shape_functions_;
  OperatorType<Left,QRule> left_value_;
  OperatorType<Right,QRule> right_value_;
 };
