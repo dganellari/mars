@@ -1095,12 +1095,10 @@ namespace mars {
                                     const std::vector<Vector<Real, Dim>> &points,
                                     const bool apply_normalization = true)
     {
-        static_assert(Dim >= ManifoldDim, "simplex must be embedded in R^Dim");
-        
+        static_assert(Dim >= ManifoldDim, "simplex must be embedded in R^Dim");    
         Matrix<Real, ManifoldDim, Dim> m;
         Matrix<Real, ManifoldDim, Dim-1> m_minor;
-        m.zero();
-        
+        m.zero();      
         auto x0 = points[simplex.nodes[0]];
         for(Integer i = 0; i < ManifoldDim; ++i) {
             auto xi = points[simplex.nodes[i + 1]];

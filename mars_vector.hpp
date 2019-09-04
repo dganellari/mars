@@ -31,7 +31,7 @@ namespace mars {
 	    {
 	    	Vector ret;
 	    	for(Integer i = 0; i < Dim; ++i) {
-	    	    ret(i) = alpha * v(i);
+	    	    ret[i] = alpha * v[i];
 	    	}
 
 
@@ -263,14 +263,13 @@ namespace mars {
 	template<typename T, Integer Dim>
 	inline constexpr T dot(const Vector<T, Dim> &left, const Vector<T, Dim> &right)
 	{
-		T ret = 0.;
-		for(Integer d = 0; d < Dim; ++d) {
+		T ret = left(0) * right(0);
+		for(Integer d = 1; d < Dim; ++d) {
 			ret += left(d) * right(d);
 		}
 
 		return ret;
 	}
-
 
 
 }

@@ -59,12 +59,14 @@ ENDIF()
 
 list(APPEND MARS_HEADERS
 	mars.hpp
+	mars_array.hpp
 	mars_base.hpp
 	mars_base_entity.hpp
 	mars_base_elementfunctionspace.hpp
 	mars_benchmark.hpp
 	mars_bisection.hpp
 	mars_communicator.hpp
+	mars_compiletime_sqrt.hpp
 	mars_connectivity.hpp
 	mars_connectivity_impl.hpp
 	mars_dof_map.hpp

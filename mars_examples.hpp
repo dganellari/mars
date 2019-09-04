@@ -7,7 +7,7 @@
 #include "mars_functionspace.hpp"
 #include "mars_shape_function.hpp"
 #include "mars_matrix.hpp"
-
+#include "mars_jacobian.hpp"
 
 
 namespace mars{
@@ -966,46 +966,43 @@ void assembly_example()
   using MeshT2=mars::Mesh<Dim+1, ManifoldDim+1>;
   MeshT2 mesh2;
   read_mesh("../data/beam-tet.MFEM", mesh2);
+
  
 
   MeshT mesh;
   using Elem = typename MeshT::Elem; 
-  read_mesh("../data/beam-tri.MFEM", mesh);
+  // read_mesh("../data/beam-tri.MFEM", mesh);
+  read_mesh("../data/triangle_square.MFEM", mesh);
+
 
   constexpr Integer QPOrder=4;
   constexpr Integer NQPoints=GaussPoints<Elem,QPOrder>::NQPoints; 
   using QP=typename GaussPoints<Elem,QPOrder>::qp_points_type;
-  GaussPoints<Elem,QPOrder> gauss;
-
-  Elem elem;
-  Matrix<Real, Dim, ManifoldDim> J;
 
   constexpr Integer Npoints=Elem::Npoints;
   std::vector<Vector<Real,Dim>> points(Npoints);
 
-  for(Integer ii=0;ii<Npoints;ii++)
-   elem.nodes[ii]=ii;
+ //  for(Integer ii=0;ii<Npoints;ii++)
+ //   elem.nodes[ii]=ii;
 
- points[0][0]=0;
- points[0][1]=0;
- points[1][0]=2;
- points[1][1]=3;
- points[2][0]=1;
- points[2][1]=4;
- jacobian(elem,points,J);
+ // points[0][0]=0;
+ // points[0][1]=0;
+ // points[1][0]=2;
+ // points[1][1]=3;
+ // points[2][0]=1;
+ // points[2][1]=4;
+ // jacobian(mesh.elem(0),points,J);
 
 
- using FSspace1= FunctionSpace< MeshT, Lagrange1<1>, RT1<1>,Lagrange2<1>>;
+ using FSspace1= FunctionSpace< MeshT, Lagrange1<1>>;
  FSspace1 FEspace1(mesh);
- using FSspace2= FunctionSpace< MeshT, Lagrange2<1>,Lagrange2<1>>;
+ using FSspace2= FunctionSpace< MeshT, Lagrange2<2>>;
  FSspace2 FEspace2(mesh);
-
  using FSspace3= FunctionSpace< MeshT, Lagrange1<1>,Lagrange2<1>>;
  FSspace3 FEspace3(mesh);
-
  using FSspace4= FunctionSpace< MeshT, Lagrange1<1>,Lagrange2<1>,Lagrange1<1>>;
  FSspace4 FEspace4(mesh);
- using FSspace5= FunctionSpace< MeshT, Lagrange1<1>>;
+ using FSspace5= FunctionSpace< MeshT, Lagrange1<2>>;
  FSspace5 FEspace5(mesh);
  using FSspace6= FunctionSpace< MeshT, Lagrange1<1>,Lagrange2<1>>;
  FSspace6 FEspace6(mesh);
@@ -1055,8 +1052,8 @@ void assembly_example()
  //  std::cout<<"d=="<<c<<std::endl;
   // std::cout<<W1.Nelem_dofs<<std::endl;
  // std::cout<<mat_loc<<std::endl;
-  elem=mesh.elem(0);
-  jacobian(elem,mesh.points(),J);
+  // elem=mesh.elem(0);
+  // jacobian(mesh.elem(0),mesh.points(),J);
 
 
   // auto shape_coefficients=shape_function_coefficients(l22);
@@ -1073,27 +1070,28 @@ void assembly_example()
   // auto l22eval=Eval(l22,shapefunctions);
   // l22eval.apply(mat_loc);
 
-
-
-
-
+ auto W4=MixedFunctionSpace(MixedFunctionSpace(FEspace1,FEspace2),FEspace5);
  
- auto W4=MixedFunctionSpace(FEspace2);
- Matrix<Real,W4.Nelem_dofs,W4.Nelem_dofs> mat_loc;
+ decltype(FEspace2)::DofMapType errreer(6);
+ std::cout<<"-------------"<<decltype(FEspace2)::Nelem_dofs_array<<std::endl;
+ std::cout<<"-------------"<<decltype(W4)::Nelem_dofs_array<<std::endl;
 
  auto u7 =     MakeTrial<0>(W4);
  auto u8 = MakeTrial<1>(W4);
- // auto u9 = MakeTrial<2>(W4);
+ auto u9 = MakeTrial<2>(W4);
 
 
  auto v7 =   MakeTest<0>(W4);
  auto v8 = MakeTest<1>(W4);
- // auto v9 = MakeTest<2>(W4);
+ auto v9 = MakeTest<2>(W4);
+ 
+ OperatorType<decltype(L2Inner(mesh,(u7),(v7))+L2Inner(mesh,Grad(u7),Grad(v7)))> alr2{1,1,1,1,1,1,1,1,1};
 
  //  auto l88= L2Inner(mesh,u7+u8+u9,v7+v8+v9)+L2Inner(mesh,v9,u8);
   auto l9= //L2Inner(mesh,u7-u8-u9,v7-v8-v9);
-           L2Inner(mesh,u7,v7)+L2Inner(mesh,u8,v8);           
-           // L2Inner(mesh,u7,v7)+L2Inner(mesh,u8,v8)+L2Inner(mesh,u9,v9);
+           // L2Inner(mesh,u7,v7)+L2Inner(mesh,u8,v8);           
+           L2Inner(mesh,u7,v7)+L2Inner(mesh,u8,v8)+L2Inner(mesh,u9,v9)+
+           L2Inner(mesh,Grad(u7),Grad(v7));
          
 
 
@@ -1101,20 +1099,44 @@ void assembly_example()
   auto shape_coefficients_general=shape_function_coefficients(generalform);
   auto referencemaps_general=reference_maps2(generalform);
   auto shapefunctions_general=shape_functions2(generalform);
-
+  
+  Jacobian<Elem> J(mesh);
   shape_coefficients_general.init(mesh);
+
+
+  J.init(0);
   shape_coefficients_general.init(0);
   referencemaps_general.init(J);
-  shapefunctions_general.init_map(referencemaps_general);
-  shapefunctions_general.init(shape_coefficients_general);
   shapefunctions_general.init(referencemaps_general,shape_coefficients_general);
 
+ 
+ // decltype(generalform)::L2Products ee34ee(5);
 
+ std::cout<<"unweighted"<<std::endl;
+ std::cout<<ShapeFunctionDependent<Elem,Lagrange1<1>,IdentityOperator,GaussPoints<Elem,QPOrder>>::reference_values<<std::endl;
+ std::cout<<"weights"<<std::endl;
+ std::cout<<GaussPoints<Elem,QPOrder>::qp_weights<<std::endl;
+ std::cout<<"weighted"<<std::endl;
+ std::cout<<ShapeFunctionDependent<Elem,Lagrange1<1>,IdentityOperator,GaussPoints<Elem,QPOrder>>::weighted_reference_values<<std::endl;
+ // auto esm = Eval(L2Inner(mesh,u7,v7)+L2Inner(mesh,Grad(u7),Grad(v7)),shapefunctions_general);
+ auto mmm = Eval(L2Inner(mesh,Grad(u7),Grad(v7))+L2Inner(mesh,(u7),(v7)),shapefunctions_general);
+ Matrix<Real,3,3> mat_loc;
+ mmm.apply(mat_loc,J);
+ std::cout<<"mat_loc="<<mat_loc<<std::endl;
 
+ // auto sss=Eval(generalform);
+// GetType<decltype(L2Inner(mesh,u7,v7))::FunctionSpace,2> rr3r(5);
+// GetType<decltype(W4)::Spaces,1> rr5r(5);
+// decltype(L2Inner(mesh,u7,v7))::TestTrialNumbers a1(1);
+// decltype(L2Inner(mesh,u7,v7))::UniqueElementFunctionSpacesTupleType a2(1);
+// decltype(L2Inner(mesh,u7,v7))::TupleFunctionSpace a3(1);
+// decltype(L2Inner(mesh,u7,v7))::FunctionSpace a4(5);
 // auto generaleval=Eval(generalform,shapefunctions_general);
 
+// decltype(generalform)::FunctionSpace okeeeee44k(5);
 // decltype(generaleval)::EvalType rrr(5);
-auto evalprova=Eval(L2Inner(mesh,u7,v7),shapefunctions_general);
+// auto evalprova=Eval(L2Inner(mesh,u7,v7),shapefunctions_general);
+
 // decltype(evalprova) sss(5);
 // decltype(evalprova)::EvalLeft rrr4(5);
 // decltype(evalprova)::EvalRight rrr5(5);

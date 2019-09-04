@@ -6,6 +6,8 @@
 
 #include "mars_base.hpp"
 #include "mars_static_math.hpp"
+#include "mars_array.hpp"
+#include "mars_compiletime_sqrt.hpp"
 
 namespace mars{
 
@@ -104,8 +106,17 @@ public:
   using type =typename GetTypeHelper<GetTypeAux<N,Tuple>,Ns...>::type;
 };
 
+
+template <typename Tuple>
+class GetTypeHelper<Tuple,-1>
+{
+public:
+  using type =std::tuple<>;
+};
+
 template <typename Tuple,Integer N, Integer...Ns>
 using GetType=typename GetTypeHelper<Tuple,N,Ns...>::type;
+
 
 
 // template <Integer N,typename Tuple>
@@ -1569,6 +1580,69 @@ class BubbleSortTupleOfPairsNumbersHelper
 
 };
 
+
+
+//////////////////////////////////////////////////////////////////////////
+////// Compile-time cat of Vector or Arrays
+//////////////////////////////////////////////////////////////////////////
+
+
+template<Integer... Is> struct seq{};
+template<Integer N, Integer... Is>
+struct gen_seq : gen_seq<N-1, N-1, Is...>{};
+template<Integer... Is>
+struct gen_seq<0, Is...> : seq<Is...>{};
+
+template<typename T, Integer N>
+constexpr Array<T, N> concat(const Array<T, N>& a){
+  return a;
+}
+
+template<typename T, Integer N1, Integer... I1, Integer N2, Integer... I2>
+// Expansion pack
+constexpr Array<T, N1+N2> concat(const Array<T, N1>& a1, const Array<T, N2>& a2, seq<I1...>, seq<I2...>){
+  return { a1[I1]..., a2[I2]... };
+}
+
+template<typename T, Integer N1, Integer N2>
+// Initializer for the recursion
+constexpr Array<T, N1+N2> concat(const Array<T, N1>& a1, const Array<T, N2>& a2){
+  return concat(a1, a2, gen_seq<N1>{}, gen_seq<N2>{});
+}
+
+
+template<typename T, Integer N1, Integer N2, Integer...Ns>
+// Initializer for the recursion
+constexpr Array<T, N1+N2+Ns...> concat(const Array<T, N1>& a1, const Array<T, N2>& a2, const Array<T,Ns>&...vectors){
+  return concat(concat(a1, a2, gen_seq<N1>{}, gen_seq<N2>{}),vectors... ) ;
+}
+
+
+template<typename T, Integer N>
+constexpr Vector<T, N> concat(const Vector<T, N>& a){
+  return a;
+}
+
+template<typename T, Integer N1, Integer... I1, Integer N2, Integer... I2>
+// Expansion pack
+constexpr Vector<T, N1+N2> concat(const Vector<T, N1>& a1, const Vector<T, N2>& a2, seq<I1...>, seq<I2...>){
+  return { a1[I1]..., a2[I2]... };
+}
+
+template<typename T, Integer N1, Integer N2>
+// Initializer for the recursion
+constexpr Vector<T, N1+N2> concat(const Vector<T, N1>& a1, const Vector<T, N2>& a2){
+  return concat(a1, a2, gen_seq<N1>{}, gen_seq<N2>{});
+}
+
+
+template<typename T, Integer N1, Integer N2, Integer...Ns>
+// Initializer for the recursion
+constexpr Vector<T, N1+N2+Ns...> concat(const Vector<T, N1>& a1, const Vector<T, N2>& a2, const Vector<T,Ns>&...vectors){
+  return concat(concat(a1, a2, gen_seq<N1>{}, gen_seq<N2>{}),vectors... ) ;
+}
+
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///// Compile-time Max, Min, Equal, Greater, Lesser
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1578,6 +1652,7 @@ constexpr T Max (const T& a,const T& b)
 {
   return a > b ? a : b;
 }
+
 
 template<typename T>
 constexpr T Min (const T& a,const T& b) 
@@ -1618,10 +1693,32 @@ constexpr T Sum(const T&t,const Ts&...ts)
 }
 
 
+// returns the sign of val (1,0,-1)
+template <typename T> 
+constexpr Integer Sign(const T& val) {
+    return (T(0) < val) - (val < T(0));
+}
+
+// returns the sign of val (1,0,-1)
+template <typename T, Integer Dim> 
+constexpr Array<T,Dim> Sign(const Array<T,Dim>& val) {
+    Array<T,Dim> output;
+    for(Integer ii=0;ii<Dim;ii++)
+       output[ii]=(T(0) < val[ii]) - (val[ii] < T(0));
+    return output;
+}
+
+
 template<typename T>
 constexpr T Heaviside (const T& a) 
 {
   return a > 0 ? a : 0;
+}
+
+template<typename T>
+constexpr bool IsNegative (const T& a) 
+{
+  return a < 0 ? true : false;
 }
 
 template<typename T>
@@ -1631,7 +1728,16 @@ constexpr bool IsPositive (const T& a)
 }
 
 
-
+template<typename T, Integer Dim >
+constexpr bool IsPositive (const Array<T,Dim>& a) 
+{
+  bool output=true;
+  for(Integer ii=0;ii<Dim;ii++)
+      if(IsNegative(a[ii]))
+       {output=false;
+        break;}
+  return output;
+}
 
 
 
