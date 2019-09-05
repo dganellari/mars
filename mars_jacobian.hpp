@@ -110,8 +110,8 @@ class LocalMatrix<true,TestTrialSpaces,L2DotProductIntegral<MeshT,Left,Right,QR>
  public:
  using type= L2DotProductIntegral<MeshT,Left,Right,QR>;
  using QRule=typename type::QRule;
- using EvalLeft=Evaluation<Expression2<Left>,QRule>;
- using EvalRight=Evaluation<Expression2<Right>,QRule>;
+ using EvalLeft=Evaluation<Expression<Left>,QRule>;
+ using EvalRight=Evaluation<Expression<Right>,QRule>;
  using subtype= OperatorType<type,ShapeFunctions2<Form>>;
  
 
@@ -129,11 +129,7 @@ class LocalMatrix<true,TestTrialSpaces,L2DotProductIntegral<MeshT,Left,Right,QR>
 
   for(Integer ii=0;ii<mat.rows();ii++)
     for(Integer jj=0;jj<mat.cols();jj++)
-      {
-        // std::cout<<"left="<<left_value_[ii]<<std::endl;
-        // std::cout<<"right="<<right_value_[jj]<<std::endl;
         mat(ii,jj)=detJ*dotofdots(left_value_[ii],right_value_[jj]);
-      }
     std::cout<<detJ<<std::endl;
     std::cout<<mat<<std::endl;
 
@@ -152,6 +148,158 @@ class LocalMatrix<true,TestTrialSpaces,L2DotProductIntegral<MeshT,Left,Right,QR>
 
 
 
+
+
+template<typename ...Ts>
+class ConstructL2Inner;
+
+
+template<typename MeshT,typename Left1,typename Right1,Integer QR1>
+class ConstructL2Inner<L2DotProductIntegral<MeshT,Left1,Right1,QR1>>
+                                   
+{
+public:
+   using T=L2DotProductIntegral<MeshT,Left1,Right1,QR1>;
+
+   static auto apply(const MeshT& mesh)
+   {
+    return L2Inner(mesh, typename T::Left(), typename T::Right());
+    }
+
+};
+
+
+template<typename MeshT,typename Left1,typename Right1,Integer QR1,
+                        typename Left2,typename Right2,Integer QR2>
+class ConstructL2Inner<Addition<Expression<L2DotProductIntegral<MeshT,Left1,Right1,QR1>>,
+                                Expression<L2DotProductIntegral<MeshT,Left2,Right2,QR2>> > >
+                                   
+{
+public:
+   using Left=L2DotProductIntegral<MeshT,Left1,Right1,QR1>;
+   using Right=L2DotProductIntegral<MeshT,Left2,Right2,QR2>;
+
+   static auto apply(const MeshT& mesh)
+   {
+    auto e1=L2Inner(mesh, typename Left::Left(), typename Left::Right());
+    auto e2=L2Inner(mesh, typename Right::Left(), typename Right::Right());
+   return e1+e2;
+    }
+
+};
+
+
+
+// template<typename MeshT,typename Left,
+//                         typename Left2,typename Right2,Integer QR2>
+// class ConstructL2Inner<Addition<Expression<Left>,
+//                                 Expression<L2DotProductIntegral<MeshT,Left2,Right2,QR2>> > >
+                                   
+// {
+// public:
+//    using Right=L2DotProductIntegral<MeshT,Left2,Right2,QR2>;
+
+//    static auto apply(const MeshT& mesh)
+//    {
+//     auto e1=ConstructL2Inner<Left>::apply(mesh);
+//     auto e2=L2Inner(mesh, typename Right::Left(), typename Right::Right());
+//    return e1+e2;
+//     }
+
+// };
+
+
+
+// template<typename MeshT,typename Left1,typename Right1,Integer QR1,
+//                         typename Right>
+// class ConstructL2Inner<Addition<Expression<L2DotProductIntegral<MeshT,Left1,Right1,QR1>>,
+//                                 Expression<Right> > >
+                                   
+// {
+// public:
+//    using Left=L2DotProductIntegral<MeshT,Left1,Right1,QR1>;
+
+//    static auto apply(const MeshT& mesh)
+//    {
+//     auto e1=L2Inner(mesh, typename Left::Left(), typename Left::Right());
+//     auto e2=ConstructL2Inner<Right>::apply(mesh);
+//    return e1+e2;
+//     }
+
+// };
+
+template<typename Left,typename Right>
+class ConstructL2Inner< Addition<Expression<Left>,Expression<Right>> >                             
+{
+public:
+   template<typename MeshT>
+   static auto apply(const MeshT& mesh)
+   {
+    auto e1=ConstructL2Inner<Left>::apply(mesh);
+    auto e2=ConstructL2Inner<Right>::apply(mesh);
+   return e1+e2;
+    }
+
+};
+
+
+
+template<typename Tuple,Integer Nmax,Integer N, typename ShapeFunctions>
+class OKKAuxHelper;
+
+template<typename Tuple,Integer Nmax, typename ShapeFunctions>
+class OKKAuxHelper<Tuple,Nmax,Nmax,ShapeFunctions>
+{
+ public:
+    using single_type=Evaluation<Expression<GetType<Tuple,Nmax>>,ShapeFunctions>;
+    using type=std::tuple<single_type>;
+};
+
+template<typename Tuple,Integer Nmax,Integer N, typename ShapeFunctions>
+class OKKAuxHelper
+{
+ public:
+    using single_type=Evaluation<Expression<GetType<Tuple,N>>,ShapeFunctions>;
+    using type=TupleCatType<std::tuple<single_type>,typename OKKAuxHelper<Tuple,Nmax,N+1,ShapeFunctions>::type >;
+};
+
+template<typename Tuple,Integer N, typename ShapeFunctions>
+using OKKAux=typename OKKAuxHelper<Tuple,TupleTypeSize<Tuple>::value-1,N,ShapeFunctions>::type;
+
+
+template<typename Tuple,Integer N,typename MeshT, typename ShapeFunctions>
+constexpr std::enable_if_t<(N==TupleTypeSize<Tuple>::value-1), OKKAux<Tuple,N,ShapeFunctions> > 
+OKK(const MeshT& mesh, ShapeFunctions& shape_functions)
+{   
+      using ens0=GetType<Tuple,N>;
+      using ens=Evaluation<Expression<ens0>,ShapeFunctions>;
+      return std::tuple<ens>(Eval(ConstructL2Inner<ens0>::apply(mesh),shape_functions));
+}
+
+template<typename Tuple,Integer N,typename MeshT, typename ShapeFunctions>
+constexpr std::enable_if_t< (N<TupleTypeSize<Tuple>::value-1), OKKAux<Tuple,N,ShapeFunctions>>  
+OKK(const MeshT& mesh, ShapeFunctions& shape_functions)
+{
+      using ens0=GetType<Tuple,N>;
+      using ens=Evaluation<Expression<ens0>,ShapeFunctions>;
+      return std::tuple_cat(std::tuple<ens>(Eval(ConstructL2Inner<ens0>::apply(mesh),shape_functions)),
+                            OKK<Tuple,N+1>(mesh,shape_functions));
+}
+
+
+// template<typename Left,typename Right>
+// class ConstructL2Inner< Subtraction<Expression<Left>,Expression<Right>> >                             
+// {
+// public:
+//    template<typename MeshT>
+//    static auto apply(const MeshT& mesh)
+//    {
+//     auto e1=ConstructL2Inner<Left>::apply(mesh);
+//     auto e2=ConstructL2Inner<Right>::apply(mesh);
+//    return e1-e2;
+//     }
+
+// };
 
 }
 #endif
