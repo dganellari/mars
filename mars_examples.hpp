@@ -994,7 +994,7 @@ void assembly_example()
  // jacobian(mesh.elem(0),points,J);
 
 
- using FSspace1= FunctionSpace< MeshT, Lagrange1<1>>;
+ using FSspace1= FunctionSpace< MeshT, Lagrange1<2>>;
  FSspace1 FEspace1(mesh);
  using FSspace2= FunctionSpace< MeshT, Lagrange2<2>>;
  FSspace2 FEspace2(mesh);
@@ -1085,12 +1085,12 @@ void assembly_example()
  auto v8 = MakeTest<1>(W4);
  auto v9 = MakeTest<2>(W4);
  
- OperatorType<decltype(L2Inner(mesh,(u7),(v7))+L2Inner(mesh,Grad(u7),Grad(v7)))> alr2{1,1,1,1,1,1,1,1,1};
 
  //  auto l88= L2Inner(mesh,u7+u8+u9,v7+v8+v9)+L2Inner(mesh,v9,u8);
   auto l9= //L2Inner(mesh,u7-u8-u9,v7-v8-v9);
            // L2Inner(mesh,u7,v7)+L2Inner(mesh,u8,v8);           
-           L2Inner(mesh,u7,v7)+L2Inner(mesh,Grad(u7),Grad(v7))+L2Inner(mesh,u8,v8)+L2Inner(mesh,u9,v9)
+           L2Inner(u8,v7)+L2Inner(u7,v9)+L2Inner(u7,v7)+
+           L2Inner(Grad(u7),Grad(v7))+L2Inner(u8,v8)+L2Inner(u9,v9)
            ;
            // +
            // L2Inner(mesh,Grad(u7),Grad(v7))+L2Inner(mesh,u7,v8);
@@ -1130,26 +1130,43 @@ void assembly_example()
 
  eval_generalform.apply(J);
 
- using l2mass=decltype(L2Inner(mesh,u9,v9)+L2Inner(mesh,u8,v8)+L2Inner(mesh,u7,v7)+L2Inner(mesh,Grad(u7),Grad(v7)));
- // auto eshg=l2mass(mesh);
- // auto as1=L2Inner(mesh,l2mass::Left::Left(), l2mass::Left::Right());
- // auto as2=L2Inner(mesh,l2mass::Right::Left(),l2mass::Right::Right()) ;
- // auto eshg2=as1+as2;
- auto ecc=ConstructL2Inner<l2mass>::apply(mesh);
+ // using l2mass=decltype(L2Inner(mesh,u9,v9)+L2Inner(mesh,u8,v8)+L2Inner(mesh,u7,v7)+L2Inner(mesh,Grad(u7),Grad(v7)));
+ // // auto eshg=l2mass(mesh);
+ // // auto as1=L2Inner(mesh,l2mass::Left::Left(), l2mass::Left::Right());
+ // // auto as2=L2Inner(mesh,l2mass::Right::Left(),l2mass::Right::Right()) ;
+ // // auto eshg2=as1+as2;
+ // auto ecc=ConstructL2Inner<l2mass>::apply(mesh);
  // decltype(ecc) eekle(5);
- GetType< decltype(eval_generalform)::L2Products,0> ee1(ConstructL2Inner< GetType< decltype(eval_generalform)::L2Products,0>>::apply(mesh));
- GetType< decltype(eval_generalform)::L2Products,1> ee2(ConstructL2Inner< GetType< decltype(eval_generalform)::L2Products,1>>::apply(mesh));
- GetType< decltype(eval_generalform)::L2Products,2> ee3(ConstructL2Inner< GetType< decltype(eval_generalform)::L2Products,2>>::apply(mesh));
+ // GetType< decltype(eval_generalform)::L2Products,0> ee1(ConstructL2Inner< GetType< decltype(eval_generalform)::L2Products,0>>::apply(mesh));
+ // GetType< decltype(eval_generalform)::L2Products,1> ee2(ConstructL2Inner< GetType< decltype(eval_generalform)::L2Products,1>>::apply(mesh));
+ // GetType< decltype(eval_generalform)::L2Products,2> ee3(ConstructL2Inner< GetType< decltype(eval_generalform)::L2Products,2>>::apply(mesh));
 
  // decltype(ee1) sslkre1(5);
  // decltype(ee2) sslkre2(5);
  // decltype(ee3) sslkre3(5);
- auto m1=Eval(ee1,shapefunctions_general);
- auto m2=Eval(ee2,shapefunctions_general);
- auto m3=Eval(ee3,shapefunctions_general);
+ // auto m1=Eval(ee1,shapefunctions_general);
+ // auto m2=Eval(ee2,shapefunctions_general);
+ // auto m3=Eval(ee3,shapefunctions_general);
  // OKKAux<decltype(eval_generalform)::L2Products,0,decltype(shapefunctions_general)> eee(6);
- auto m4=OKK<decltype(eval_generalform)::L2Products,0>(mesh,shapefunctions_general);
- // decltype(m4) ek(4);
+ using L2Products=decltype(eval_generalform)::L2Products;
+ using ShapeFunctions=decltype(shapefunctions_general);
+ // auto m4=EvalOfL2Inners<L2Products>(mesh,shapefunctions_general);
+
+
+// LocalMatrices<decltype(eval_generalform)>::type rrr(6);
+// decltype(eval_generalform)::TupleOfPairsNumbers ee5e(6);
+// std::cout<<abc<<std::endl;
+EvaluationOfL2Inners<decltype(eval_generalform),decltype(shapefunctions_general)> eee(shapefunctions_general);
+
+
+IdentityOperator token;
+eee.apply(token,J);
+// EvalOfL2InnersAux<L2Products,0,ShapeFunctions> ee(5);
+
+
+ // mars::Matrix<double, 6, 6> mat0;
+ // std::get<3>(m4).apply(mat0,J);
+
  // decltype(eval_generalform) eese(6);
  // decltype(m1) sslkre1(5);
  // decltype(m2) sslkre2(5);

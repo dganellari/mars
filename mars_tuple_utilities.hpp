@@ -12,6 +12,17 @@
 namespace mars{
 
 
+class EmptyClass;
+
+template<typename Left,typename Right>
+class ChooseHelper
+{
+ public: 
+  using type=typename std::conditional<IsSame<Left,EmptyClass>::value, Right,Left>::type;
+};
+
+template<typename Left,typename Right>
+using Choose=typename ChooseHelper<Left,Right>::type;
 
 
 template<typename T,Integer Nmax,Integer N>

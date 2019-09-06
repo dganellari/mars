@@ -64,7 +64,9 @@ class QPValues;
 template<typename...Operators>
 class OperatorTypeHelper;
 
-template<typename MeshT, typename Left,typename Right,Integer QR>
+// template<typename MeshT, typename Left,typename Right,Integer QR>
+// class L2DotProductIntegral;
+template<typename Left,typename Right,Integer QR>
 class L2DotProductIntegral;
 
 template<typename Left, typename Right, typename...Ts>
@@ -89,13 +91,18 @@ class IsAddable<Matrix<T,Rows,Cols>,Matrix<T,Rows,Cols>,Ts...>
 }; 
 
 
-template<typename MeshT, typename Left1,typename Right1,Integer QR1,typename Left2,typename Right2,Integer QR2,typename...Ts>
-class IsAddable<L2DotProductIntegral<MeshT,Left1,Right1,QR1>,L2DotProductIntegral<MeshT,Left2,Right2,QR2>,Ts... >
+// template<typename MeshT, typename Left1,typename Right1,Integer QR1,typename Left2,typename Right2,Integer QR2,typename...Ts>
+// class IsAddable<L2DotProductIntegral<MeshT,Left1,Right1,QR1>,L2DotProductIntegral<MeshT,Left2,Right2,QR2>,Ts... >
+// {
+//  public:
+//  static constexpr bool value=true;
+// };
+template<typename Left1,typename Right1,Integer QR1,typename Left2,typename Right2,Integer QR2,typename...Ts>
+class IsAddable<L2DotProductIntegral<Left1,Right1,QR1>,L2DotProductIntegral<Left2,Right2,QR2>,Ts... >
 {
  public:
  static constexpr bool value=true;
 };
-
 
 
 
@@ -1590,13 +1597,19 @@ private:
 template<typename Form>
 class ShapeFunctions;
 
-template<typename MeshT, typename Left,typename Right,Integer QR, typename Form>
-class Evaluation<Expression<L2DotProductIntegral<MeshT,Left,Right,QR>>, ShapeFunctions<Form>>;
+// template<typename MeshT, typename Left,typename Right,Integer QR, typename Form>
+// class Evaluation<Expression<L2DotProductIntegral<MeshT,Left,Right,QR>>, ShapeFunctions<Form>>;
+template<typename Left,typename Right,Integer QR, typename Form>
+class Evaluation<Expression<L2DotProductIntegral<Left,Right,QR>>, ShapeFunctions<Form>>;
 
 
-template<typename MeshT, typename Left,typename Right,Integer QR, typename Form,typename...OtherTemplateArguments>
-constexpr auto Eval(const L2DotProductIntegral<MeshT,Left,Right,QR>& t,const OtherTemplateArguments&...ts)
+// template<typename MeshT, typename Left,typename Right,Integer QR, typename Form,typename...OtherTemplateArguments>
+// constexpr auto Eval(const L2DotProductIntegral<MeshT,Left,Right,QR>& t,const OtherTemplateArguments&...ts)
+// {return Evaluation< Expression<remove_all_t<decltype(t)>>,OtherTemplateArguments...>(t,ts...);}
+template<typename Left,typename Right,Integer QR, typename Form,typename...OtherTemplateArguments>
+constexpr auto Eval(const L2DotProductIntegral<Left,Right,QR>& t,const OtherTemplateArguments&...ts)
 {return Evaluation< Expression<remove_all_t<decltype(t)>>,OtherTemplateArguments...>(t,ts...);}
+
 
 template<typename...OtherTemplateArguments, typename T>
 constexpr auto Eval(const T& t){return Evaluation< Expression<remove_all_t<decltype(t)>>,OtherTemplateArguments...>(t);}
@@ -1665,21 +1678,27 @@ class TupleOfEvals<L2Products,ShapeFunctions2<GeneralForm<Form>>>
   // type tuple_;
 };
 
+
+template<typename EvaluationGeneralForm,typename ShapeFunctions>
+class EvaluationOfL2Inners;
+
 template<typename Form>
 class Evaluation<Expression<GeneralForm<Form>>>
 {
  public:
  using type= GeneralForm<Form>;
+ using TupleFunctionSpace=typename type::TupleFunctionSpace;
  using ShapesForm=ShapeFunctions2<GeneralForm<Form>>;
  using Shapes=typename ShapesForm::TupleOfTupleShapeFunction;
  using TupleOfPairsNumbers=BubbleSortTupleOfPairsNumbers<typename TupleOfTestTrialPairsNumbers<Form>::type>;
  using L2Products=typename TupleOfL2Products< TupleOfPairsNumbers, Form >::type;
  using TupleOfEvals=TupleOfEvals<L2Products,ShapesForm>;
-
+ 
+ using EvaluationOfL2Inners=EvaluationOfL2Inners<Expression<GeneralForm<Form>>,ShapesForm>;
  Evaluation(const GeneralForm<Form>& general_form,ShapesForm& shapesform):
  general_form_(general_form),
- shapesform_(shapesform),
- eval_tuple_(shapesform)
+ shapesform_(shapesform)
+ // eval_tuple_(shapesform)
  // eval_form_(Eval(general_form_(),shapes))
  {}
 
@@ -1689,7 +1708,6 @@ class Evaluation<Expression<GeneralForm<Form>>>
  apply_aux(const Jacobian<Elem>& J)
  {
   std::cout<<"eval general form="<<N<<std::endl;
- 
  }
 
  template<Integer Nmax, Integer N, typename Elem>
@@ -1710,7 +1728,7 @@ class Evaluation<Expression<GeneralForm<Form>>>
  private:
  const GeneralForm<Form>& general_form_;
  ShapesForm& shapesform_;
- TupleOfEvals eval_tuple_;
+ // TupleOfEvals eval_tuple_;
 };
 
 template<typename Form>

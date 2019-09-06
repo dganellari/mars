@@ -169,16 +169,17 @@ class TraceSpace
 template<typename...Args>
 class MixedSpace; 
 
-template<typename...Args>
-class MixedSpace 
+template<typename Arg,typename...Args>
+class MixedSpace<Arg,Args...>
 {
 public:
-  using TupleOfSpaces=TupleCatType<typename Args::TupleOfSpaces...>;
-  using DofMapType=std::tuple<typename Args::DofMapType...>;
-  using ElementFunctionSpacesTupleType=TupleCatType<typename Args::ElementFunctionSpacesTupleType...>;
-  using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates<TupleCatType<typename Args::UniqueElementFunctionSpacesTupleType...>>;
+  using Elem=typename Arg::Elem;
+  using TupleOfSpaces=TupleCatType<typename Arg::TupleOfSpaces,typename Args::TupleOfSpaces...>;
+  using DofMapType=std::tuple<typename Arg::DofMapType,typename Args::DofMapType...>;
+  using ElementFunctionSpacesTupleType=TupleCatType<typename Arg::ElementFunctionSpacesTupleType,typename Args::ElementFunctionSpacesTupleType...>;
+  using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates<TupleCatType<typename Arg::UniqueElementFunctionSpacesTupleType,typename Args::UniqueElementFunctionSpacesTupleType...>>;
   using SpacesToUniqueFEFamily=SpacesToUniqueFEFamilies<UniqueElementFunctionSpacesTupleType>;
-  using ElemsTupleType=RemoveTupleDuplicates<TupleCatType<typename Args::ElemsTupleType...>>;
+  using ElemsTupleType=RemoveTupleDuplicates<TupleCatType<typename Arg::ElemsTupleType,typename Args::ElemsTupleType...>>;
   using FromElementFunctionSpacesToUniqueNumbersTupleType=TupleAllToUniqueMap<ElementFunctionSpacesTupleType,UniqueElementFunctionSpacesTupleType>;
 
 
@@ -303,22 +304,22 @@ template<Integer N,typename OtherArg, typename...OtherArgs>
      return std::tuple_cat(std::tuple<OtherArg>( otherarg ),
        tuple_make<N+1,OtherArgs...>(otherargs...));}
 
-     MixedSpace(const Args&...args):
-     spaces_(std::make_tuple(std::make_shared<Args>(args)...)),
-     n_dofs_(tot_n_dofs<sizeof...(Args)-1>()),
-     dofmap_(tuple_make<0,typename Args::DofMapType...>(args.dofmap()...))
+     MixedSpace(const Arg& arg,const Args&...args):
+     spaces_(std::make_tuple(std::make_shared<Arg>(arg),std::make_shared<Args>(args)...)),
+     n_dofs_(tot_n_dofs<1+sizeof...(Args)-1>()),
+     dofmap_(tuple_make<0,typename Arg::DofMapType,typename Args::DofMapType...>(arg.dofmap(),args.dofmap()...))
      {}
 
      constexpr const auto& spaces(){return spaces_;}
-     static constexpr Integer Nsubspaces=tot_subspaces<Args...>::value;
-     static constexpr Integer Nelem_dofs=Sum(Args::Nelem_dofs...);
-     static constexpr Array<Integer,Nsubspaces> Nelem_dofs_array=concat(Args::Nelem_dofs_array...);
+     static constexpr Integer Nsubspaces=tot_subspaces<Arg,Args...>::value;
+     static constexpr Integer Nelem_dofs=Sum(Arg::Nelem_dofs, Args::Nelem_dofs...);
+     static constexpr Array<Integer,Nsubspaces> Nelem_dofs_array=concat(Arg::Nelem_dofs_array,Args::Nelem_dofs_array...);
       
    private:
-    std::tuple<std::shared_ptr<Args>...> spaces_;
+    std::tuple<std::shared_ptr<Arg>,std::shared_ptr<Args>...> spaces_;
     Integer n_dofs_;
     DofMapType dofmap_;
-  };
+};
 
 template<typename...Args>
 MixedSpace<Args...> MixedFunctionSpace(const Args&...args){return MixedSpace<Args...>(args...);};
@@ -439,6 +440,7 @@ private:
 template<typename T>
 class IsTestOrTrial{
 public:
+  using Elem=EmptyClass;
   using Operator=std::tuple<>;
   using TupleFunctionSpace=std::tuple<>;
   using UniqueElementFunctionSpacesTupleType=std::tuple<>;
@@ -450,6 +452,7 @@ public:
 template<typename MixedSpace,Integer N, typename OperatorType>
 class IsTestOrTrial<Test<MixedSpace,N,OperatorType>>{
 public:
+  using Elem=typename MixedSpace::Elem;
   using Operator=std::tuple<OperatorType>;
   using TupleFunctionSpace=std::tuple<MixedSpace>;
   using UniqueElementFunctionSpacesTupleType=std::tuple<typename MixedSpace::UniqueElementFunctionSpacesTupleType>;
@@ -461,6 +464,7 @@ public:
 template<typename MixedSpace,Integer N, typename OperatorType>
 class IsTestOrTrial<Trial<MixedSpace,N,OperatorType>>{
 public:
+  using Elem=typename MixedSpace::Elem;
   using Operator=std::tuple<OperatorType>;
   using TupleFunctionSpace=std::tuple<MixedSpace>;
   using UniqueElementFunctionSpacesTupleType=std::tuple<typename MixedSpace::UniqueElementFunctionSpacesTupleType>;
@@ -478,6 +482,8 @@ template<typename Left, typename Right>
 class IsTestOrTrial< Multiplication<Expression<Left>,Expression<Right> > >
 {
 public:
+
+  using Elem=Choose<typename IsTestOrTrial<Left>::Elem,typename IsTestOrTrial<Right>::Elem>;
   using Operator=TupleCatType<typename IsTestOrTrial<Left>::Operator,
                               typename IsTestOrTrial<Right>::Operator >;
   using TupleFunctionSpace=TupleCatType<typename IsTestOrTrial<Left>::TupleFunctionSpace,
@@ -494,6 +500,8 @@ template<typename Left>
 class IsTestOrTrial< Multiplication<Expression<Left>,Real > >
 {
 public:
+  using Elem=typename IsTestOrTrial<Left>::Elem;
+
   using Operator=TupleCatType<typename IsTestOrTrial<Left>::Operator>;
 
   using TupleFunctionSpace=typename IsTestOrTrial<Left>::TupleFunctionSpace;
@@ -508,6 +516,7 @@ template<typename Right>
 class IsTestOrTrial< Multiplication<Real,Expression<Right> > >
 {
 public:
+  using Elem=typename IsTestOrTrial<Right>::Elem;
   using Operator=TupleCatType<typename IsTestOrTrial<Right>::Operator >;
 
   using TupleFunctionSpace=typename IsTestOrTrial<Right>::TupleFunctionSpace;
@@ -524,6 +533,8 @@ template<typename Left>
 class IsTestOrTrial< Division<Expression<Left>,Real > >
 {
 public:
+  using Elem=typename IsTestOrTrial<Left>::Elem;
+
   using Operator=TupleCatType<typename IsTestOrTrial<Left>::Operator>;
 
   using TupleFunctionSpace=typename IsTestOrTrial<Left>::TupleFunctionSpace;
@@ -539,6 +550,8 @@ template<typename Left, typename Right>
 class IsTestOrTrial< Addition<Expression<Left>,Expression<Right> > >
 {
 public:
+  using Elem=Choose<typename IsTestOrTrial<Left>::Elem,typename IsTestOrTrial<Right>::Elem>;
+
   using Operator=TupleCatType<typename IsTestOrTrial<Left>::Operator,
                               typename IsTestOrTrial<Right>::Operator >;
 
@@ -556,6 +569,8 @@ template<typename Left, typename Right>
 class IsTestOrTrial< Subtraction<Expression<Left>,Expression<Right> > >
 {
 public:
+  using Elem=Choose<typename IsTestOrTrial<Left>::Elem,typename IsTestOrTrial<Right>::Elem>;
+
   using Operator=TupleCatType<typename IsTestOrTrial<Left>::Operator,
                               typename IsTestOrTrial<Right>::Operator >;
 
@@ -576,6 +591,8 @@ template<typename Type>
 class IsTestOrTrial< UnaryPlus<Expression<Type>> >
 {
 public:
+  using Elem=typename IsTestOrTrial<Type>::Elem;
+
   using Operator=TupleCatType<typename IsTestOrTrial<Type>::Operator>;
   using TupleFunctionSpace=typename IsTestOrTrial<Type>::TupleFunctionSpace;
   using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Type>::UniqueElementFunctionSpacesTupleType;
@@ -588,6 +605,8 @@ template<typename Type>
 class IsTestOrTrial< UnaryMinus<Expression<Type>> >
 {
 public:
+  using Elem=typename IsTestOrTrial<Type>::Elem;
+
   using Operator=TupleCatType<typename IsTestOrTrial<Type>::Operator>;
   using TupleFunctionSpace=typename IsTestOrTrial<Type>::TupleFunctionSpace;
   using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Type>::UniqueElementFunctionSpacesTupleType;
@@ -794,9 +813,10 @@ public:
   using type=std::tuple<Number<LeftSpaceNumber>>;
 };
 
-template<typename MeshT, typename Left,typename Right,Integer QR=GaussianQuadrature>
+// template<typename MeshT, typename Left,typename Right,Integer QR=GaussianQuadrature>
+// class L2DotProductIntegral;
+template<typename Left,typename Right,Integer QR=GaussianQuadrature>
 class L2DotProductIntegral;
-
 
 
 
@@ -831,14 +851,20 @@ class TupleOfTestTrialPairsNumbersAuxAux<T, Expression<std::tuple<>> >
 
 
 
-template<typename T, typename MeshT, typename Left,typename Right,Integer QR>
-class TupleOfTestTrialPairsNumbersAuxAux<T, Expression<L2DotProductIntegral<MeshT,Left,Right,QR>> >
+// template<typename T, typename MeshT, typename Left,typename Right,Integer QR>
+// class TupleOfTestTrialPairsNumbersAuxAux<T, Expression<L2DotProductIntegral<MeshT,Left,Right,QR>> >
+// {
+//  public:
+//   using L2=L2DotProductIntegral<MeshT,Left,Right,QR>;
+//   using type=typename std::conditional<IsSame<T,typename L2::TestTrialNumbers>::value, L2, std::tuple<>>::type;
+// };
+template<typename T, typename Left,typename Right,Integer QR>
+class TupleOfTestTrialPairsNumbersAuxAux<T, Expression<L2DotProductIntegral<Left,Right,QR>> >
 {
  public:
-  using L2=L2DotProductIntegral<MeshT,Left,Right,QR>;
+  using L2=L2DotProductIntegral<Left,Right,QR>;
   using type=typename std::conditional<IsSame<T,typename L2::TestTrialNumbers>::value, L2, std::tuple<>>::type;
 };
-
 
 
 
@@ -866,50 +892,92 @@ class TupleOfTestTrialPairsNumbersAuxAux<T, Expression<Addition<Expression<std::
 };
 
 
-template<typename T, typename MeshT1, typename Left1,typename Right1,Integer QR1,
-                     typename MeshT2, typename Left2,typename Right2,Integer QR2>
-class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>,
-                                                                 Expression<L2DotProductIntegral<MeshT2,Left2,Right2,QR2>>>>>
+// template<typename T, typename MeshT1, typename Left1,typename Right1,Integer QR1,
+//                      typename MeshT2, typename Left2,typename Right2,Integer QR2>
+// class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>,
+//                                                                  Expression<L2DotProductIntegral<MeshT2,Left2,Right2,QR2>>>>>
+// {
+//  public:
+//   using type=Addition<Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>>::type>,
+//                        Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<MeshT2,Left2,Right2,QR2>>>::type>>;
+// };
+template<typename T, typename Left1,typename Right1,Integer QR1,
+                     typename Left2,typename Right2,Integer QR2>
+class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<L2DotProductIntegral<Left1,Right1,QR1>>,
+                                                               Expression<L2DotProductIntegral<Left2,Right2,QR2>>>>>
 {
  public:
-  using type=Addition<Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>>::type>,
-                       Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<MeshT2,Left2,Right2,QR2>>>::type>>;
+  using type=Addition<Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left1,Right1,QR1>>>::type>,
+                       Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left2,Right2,QR2>>>::type>>;
 };
+
 
 
 template<typename...Ts>
 class TupleOfTestTrialPairsNumbersAux;
 
-template<typename T,typename MeshT, typename Left,typename Right,Integer QR>
-class TupleOfTestTrialPairsNumbersAux<T,L2DotProductIntegral<MeshT,Left,Right,QR> >
+// template<typename T,typename MeshT, typename Left,typename Right,Integer QR>
+// class TupleOfTestTrialPairsNumbersAux<T,L2DotProductIntegral<MeshT,Left,Right,QR> >
+// {
+//  public:
+//   using S=L2DotProductIntegral<MeshT,Left,Right,QR>;
+//   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<S>>::type;
+
+// };
+template<typename T,typename Left,typename Right,Integer QR>
+class TupleOfTestTrialPairsNumbersAux<T,L2DotProductIntegral<Left,Right,QR> >
 {
  public:
-  using S=L2DotProductIntegral<MeshT,Left,Right,QR>;
+  using S=L2DotProductIntegral<Left,Right,QR>;
   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<S>>::type;
 
 };
 
-
-template<typename T, typename MeshT1, typename Left1,typename Right1,Integer QR1,
-                     typename MeshT2, typename Left2,typename Right2,Integer QR2>
-class TupleOfTestTrialPairsNumbersAux<T,Addition<Expression<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>,
-                        Expression<L2DotProductIntegral<MeshT2,Left2,Right2,QR2>>>>
+// template<typename T, typename MeshT1, typename Left1,typename Right1,Integer QR1,
+//                      typename MeshT2, typename Left2,typename Right2,Integer QR2>
+// class TupleOfTestTrialPairsNumbersAux<T,Addition<Expression<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>,
+//                         Expression<L2DotProductIntegral<MeshT2,Left2,Right2,QR2>>>>
+// {
+//  public:
+//   using Left=L2DotProductIntegral<MeshT1,Left1,Right1,QR1>;
+//   using Right=L2DotProductIntegral<MeshT2,Left2,Right2,QR2>;
+//   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,
+//                           Expression<Addition<Expression<typename TupleOfTestTrialPairsNumbersAux<T,Left>::type>,
+//                                                 Expression<typename TupleOfTestTrialPairsNumbersAux<T,Right>::type>>>
+//                             >::type;
+// };
+template<typename T, typename Left1,typename Right1,Integer QR1,
+                     typename Left2,typename Right2,Integer QR2>
+class TupleOfTestTrialPairsNumbersAux<T,Addition<Expression<L2DotProductIntegral<Left1,Right1,QR1>>,
+                        Expression<L2DotProductIntegral<Left2,Right2,QR2>>>>
 {
  public:
-  using Left=L2DotProductIntegral<MeshT1,Left1,Right1,QR1>;
-  using Right=L2DotProductIntegral<MeshT2,Left2,Right2,QR2>;
-  // using type=typename TupleOfTestTrialPairsNumbersAuxAux<T, typename TupleOfTestTrialPairsNumbersAuxAux<T,Left>::type, typename TupleOfTestTrialPairsNumbersAuxAux<T,Right>::type>::type;
+  using Left=L2DotProductIntegral<Left1,Right1,QR1>;
+  using Right=L2DotProductIntegral<Left2,Right2,QR2>;
   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,
                           Expression<Addition<Expression<typename TupleOfTestTrialPairsNumbersAux<T,Left>::type>,
                                                 Expression<typename TupleOfTestTrialPairsNumbersAux<T,Right>::type>>>
                             >::type;
 };
 
-template<typename T,typename MeshT, typename Left1,typename Right1,Integer QR,typename Right>
-class TupleOfTestTrialPairsNumbersAux<T, Addition<Expression<L2DotProductIntegral<MeshT,Left1,Right1,QR>>,Expression<Right > > >
+
+// template<typename T,typename MeshT, typename Left1,typename Right1,Integer QR,typename Right>
+// class TupleOfTestTrialPairsNumbersAux<T, Addition<Expression<L2DotProductIntegral<MeshT,Left1,Right1,QR>>,Expression<Right > > >
+// {
+//  public:
+//   using Left=L2DotProductIntegral<MeshT,Left1,Right1,QR>;
+//   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,
+//                           Expression<Addition<Expression<typename TupleOfTestTrialPairsNumbersAux<T,Left>::type>,
+//                                                 Expression<typename TupleOfTestTrialPairsNumbersAux<T,Right>::type>>>
+//                              >::type;
+
+// };
+
+template<typename T,typename Left1,typename Right1,Integer QR,typename Right>
+class TupleOfTestTrialPairsNumbersAux<T, Addition<Expression<L2DotProductIntegral<Left1,Right1,QR>>,Expression<Right > > >
 {
  public:
-  using Left=L2DotProductIntegral<MeshT,Left1,Right1,QR>;
+  using Left=L2DotProductIntegral<Left1,Right1,QR>;
   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,
                           Expression<Addition<Expression<typename TupleOfTestTrialPairsNumbersAux<T,Left>::type>,
                                                 Expression<typename TupleOfTestTrialPairsNumbersAux<T,Right>::type>>>
@@ -917,11 +985,21 @@ class TupleOfTestTrialPairsNumbersAux<T, Addition<Expression<L2DotProductIntegra
 
 };
 
-template<typename T, typename Left,typename MeshT, typename Left1,typename Right1,Integer QR>
-class TupleOfTestTrialPairsNumbersAux<T, Addition<Expression<Left>,Expression<L2DotProductIntegral<MeshT,Left1,Right1,QR> > > >
+// template<typename T, typename Left,typename MeshT, typename Left1,typename Right1,Integer QR>
+// class TupleOfTestTrialPairsNumbersAux<T, Addition<Expression<Left>,Expression<L2DotProductIntegral<MeshT,Left1,Right1,QR> > > >
+// {
+//  public:
+//   using Right=L2DotProductIntegral<MeshT,Left1,Right1,QR>;
+//   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,
+//                              Expression<Addition<Expression<typename TupleOfTestTrialPairsNumbersAux<T,Left>::type>,
+//                                                    Expression<typename TupleOfTestTrialPairsNumbersAux<T,Right>::type>>>
+//                              >::type;
+// };
+template<typename T, typename Left, typename Left1,typename Right1,Integer QR>
+class TupleOfTestTrialPairsNumbersAux<T, Addition<Expression<Left>,Expression<L2DotProductIntegral<Left1,Right1,QR> > > >
 {
  public:
-  using Right=L2DotProductIntegral<MeshT,Left1,Right1,QR>;
+  using Right=L2DotProductIntegral<Left1,Right1,QR>;
   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,
                              Expression<Addition<Expression<typename TupleOfTestTrialPairsNumbersAux<T,Left>::type>,
                                                    Expression<typename TupleOfTestTrialPairsNumbersAux<T,Right>::type>>>
@@ -944,42 +1022,81 @@ public:
 template<typename...Ts>
 class TupleOfTestTrialPairsNumbers;
 
-template<typename MeshT1, typename Left1,typename Right1,Integer QR1>
-class TupleOfTestTrialPairsNumbers<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>
+// template<typename MeshT1, typename Left1,typename Right1,Integer QR1>
+// class TupleOfTestTrialPairsNumbers<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>
+// {
+//  public:
+//   using T=L2DotProductIntegral<MeshT1,Left1,Right1,QR1>;
+
+//   using type=std::tuple<typename T::TestTrialNumbers>;
+
+// };
+
+template<typename Left1,typename Right1,Integer QR1>
+class TupleOfTestTrialPairsNumbers<L2DotProductIntegral<Left1,Right1,QR1>>
 {
  public:
-  using T=L2DotProductIntegral<MeshT1,Left1,Right1,QR1>;
+  using T=L2DotProductIntegral<Left1,Right1,QR1>;
 
   using type=std::tuple<typename T::TestTrialNumbers>;
 
 };
 
-template<typename MeshT1, typename Left1,typename Right1,Integer QR1,
-         typename MeshT2, typename Left2,typename Right2,Integer QR2>
-class TupleOfTestTrialPairsNumbers<Addition<Expression<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>,
-                        Expression<L2DotProductIntegral<MeshT2,Left2,Right2,QR2>>>>
+// template<typename MeshT1, typename Left1,typename Right1,Integer QR1,
+//          typename MeshT2, typename Left2,typename Right2,Integer QR2>
+// class TupleOfTestTrialPairsNumbers<Addition<Expression<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>,
+//                         Expression<L2DotProductIntegral<MeshT2,Left2,Right2,QR2>>>>
+// {
+//  public:
+//   using Left=L2DotProductIntegral<MeshT1,Left1,Right1,QR1>;
+//   using Right=L2DotProductIntegral<MeshT2,Left2,Right2,QR2>;
+
+//   using type=RemoveTupleDuplicates<std::tuple<typename Left::TestTrialNumbers, typename Right::TestTrialNumbers>>;
+
+// };
+
+template<typename Left1,typename Right1,Integer QR1,
+         typename Left2,typename Right2,Integer QR2>
+class TupleOfTestTrialPairsNumbers<Addition<Expression<L2DotProductIntegral<Left1,Right1,QR1>>,
+                        Expression<L2DotProductIntegral<Left2,Right2,QR2>>>>
 {
  public:
-  using Left=L2DotProductIntegral<MeshT1,Left1,Right1,QR1>;
-  using Right=L2DotProductIntegral<MeshT2,Left2,Right2,QR2>;
+  using Left=L2DotProductIntegral<Left1,Right1,QR1>;
+  using Right=L2DotProductIntegral<Left2,Right2,QR2>;
 
   using type=RemoveTupleDuplicates<std::tuple<typename Left::TestTrialNumbers, typename Right::TestTrialNumbers>>;
 
 };
 
-template<typename MeshT, typename Left1,typename Right1,Integer QR,typename Right>
-class TupleOfTestTrialPairsNumbers<Addition<Expression<L2DotProductIntegral<MeshT,Left1,Right1,QR>>,Expression<Right > > >
+// template<typename MeshT, typename Left1,typename Right1,Integer QR,typename Right>
+// class TupleOfTestTrialPairsNumbers<Addition<Expression<L2DotProductIntegral<MeshT,Left1,Right1,QR>>,Expression<Right > > >
+// {
+//  public:
+//   using Left=L2DotProductIntegral<MeshT,Left1,Right1,QR>;
+//   using type=RemoveTupleDuplicates<TupleCatType<typename TupleOfTestTrialPairsNumbers<Left>::type,typename TupleOfTestTrialPairsNumbers<Right>::type >>;
+// };
+
+template<typename Left1,typename Right1,Integer QR,typename Right>
+class TupleOfTestTrialPairsNumbers<Addition<Expression<L2DotProductIntegral<Left1,Right1,QR>>,Expression<Right > > >
 {
  public:
-  using Left=L2DotProductIntegral<MeshT,Left1,Right1,QR>;
+  using Left=L2DotProductIntegral<Left1,Right1,QR>;
   using type=RemoveTupleDuplicates<TupleCatType<typename TupleOfTestTrialPairsNumbers<Left>::type,typename TupleOfTestTrialPairsNumbers<Right>::type >>;
 };
 
-template<typename Left,typename MeshT, typename Left1,typename Right1,Integer QR>
-class TupleOfTestTrialPairsNumbers<Addition<Expression<Left>,Expression<L2DotProductIntegral<MeshT,Left1,Right1,QR> > > >
+// template<typename Left,typename MeshT, typename Left1,typename Right1,Integer QR>
+// class TupleOfTestTrialPairsNumbers<Addition<Expression<Left>,Expression<L2DotProductIntegral<MeshT,Left1,Right1,QR> > > >
+// {
+//  public:
+//   using Right=L2DotProductIntegral<MeshT,Left1,Right1,QR>;
+//   using type=RemoveTupleDuplicates<TupleCatType<typename TupleOfTestTrialPairsNumbers<Left>::type,typename TupleOfTestTrialPairsNumbers<Right>::type >>;
+// };
+
+template<typename Left,typename Left1,typename Right1,Integer QR>
+class TupleOfTestTrialPairsNumbers<Addition<Expression<Left>,Expression<L2DotProductIntegral<Left1,Right1,QR> > > >
 {
  public:
-  using Right=L2DotProductIntegral<MeshT,Left1,Right1,QR>;
+  using Right=L2DotProductIntegral<Left1,Right1,QR>;
   using type=RemoveTupleDuplicates<TupleCatType<typename TupleOfTestTrialPairsNumbers<Left>::type,typename TupleOfTestTrialPairsNumbers<Right>::type >>;
 };
 
@@ -1069,17 +1186,17 @@ class Evaluation<TupleOfL2Products<TupleOfPairsNumbers,Form>>
 
 
 
-template<typename MeshT, typename Left_,typename Right_,Integer QR>
+// template<typename MeshT, typename Left_,typename Right_,Integer QR>
+// class L2DotProductIntegral: 
+// public Expression<L2DotProductIntegral<MeshT,Left_,Right_,QR>>
+template<typename Left_,typename Right_,Integer QR>
 class L2DotProductIntegral: 
-public Expression<L2DotProductIntegral<MeshT,Left_,Right_,QR>>
+public Expression<L2DotProductIntegral<Left_,Right_,QR>>
 {  
    public:
     using Left=Left_;
     using Right=Right_;
     using type=Contraction2<Expression <Left>, Expression <Right> > ;
-    using Elem=typename MeshT::Elem;
-    static constexpr Integer Order=CheckMaxQuadratureOrder<Elem,QR,QuadratureOrder<type>::value+1>::value; 
-    using QRule=typename QuadratureRule<QR>:: template rule<Elem,Order>;
     using TestOrTrialLeft= IsTestOrTrial<Left>;
     using TestOrTrialRight= IsTestOrTrial<Right>;
     using OperatorLeft=typename TestOrTrialLeft::Operator;
@@ -1091,6 +1208,11 @@ public Expression<L2DotProductIntegral<MeshT,Left_,Right_,QR>>
 
     static constexpr Integer TestOrTrialLeftValue =GetType<typename TestOrTrialLeft::type,0>::value;
     static constexpr Integer TestOrTrialRightValue =GetType<typename TestOrTrialRight::type,0>::value;
+
+    using Elem=Choose<typename TestOrTrialLeft::Elem,typename TestOrTrialRight::Elem>;
+    static constexpr Integer Order=CheckMaxQuadratureOrder<Elem,QR,QuadratureOrder<type>::value+1>::value; 
+    using QRule=typename QuadratureRule<QR>:: template rule<Elem,Order>;
+
 
     using form= std::tuple<typename TypeOfForm<GetType<typename IsTestOrTrial<Left>::type,0>,
                                     GetType<typename IsTestOrTrial<Right>::type,0>
@@ -1122,8 +1244,9 @@ public Expression<L2DotProductIntegral<MeshT,Left_,Right_,QR>>
 
    using TestTrialSpaces=typename ClassAux<TupleOfSpaces,TestTrialNumbers>::type;
 
-    L2DotProductIntegral(const MeshT& mesh,const Expression<Left>& left,const Expression<Right>& right,const Integer label=-666):
-    mesh_(mesh),
+    L2DotProductIntegral(const Expression<Left>& left,const Expression<Right>& right,const Integer label=-666):
+    // L2DotProductIntegral(const MeshT& mesh,const Expression<Left>& left,const Expression<Right>& right,const Integer label=-666):
+    // mesh_(mesh),
     left_(left),
     right_(right),
     product_(Inner(left,right)),
@@ -1133,7 +1256,7 @@ public Expression<L2DotProductIntegral<MeshT,Left_,Right_,QR>>
      const Left&  left() const{return left_;};
      const Right& right()const{return right_;};
   private:
-    const MeshT& mesh_;
+    // const MeshT& mesh_;
     Left left_;
     Right right_;
     type product_;
@@ -1152,34 +1275,49 @@ public Expression<L2DotProductIntegral<MeshT,Left_,Right_,QR>>
 
 
 
-template<typename MeshT, typename Left,typename Right,Integer QR>
-class OperatorTupleType<L2DotProductIntegral<MeshT,Left,Right,QR>>
+// template<typename MeshT, typename Left,typename Right,Integer QR>
+// class OperatorTupleType<L2DotProductIntegral<MeshT,Left,Right,QR>>
+// { 
+// public:
+//   using L2prod=L2DotProductIntegral<MeshT,Left,Right,QR>;
+//   using QRule=typename L2prod::QRule;
+//   using Operatortuple=typename OperatorTupleType<typename L2prod::type>::type;
+//   using type=TupleOfTupleChangeType<1,QRule, Operatortuple>;;
+// } 
+// ;                               
+template<typename Left,typename Right,Integer QR>
+class OperatorTupleType<L2DotProductIntegral<Left,Right,QR>>
 { 
 public:
-  using L2prod=L2DotProductIntegral<MeshT,Left,Right,QR>;
+  using L2prod=L2DotProductIntegral<Left,Right,QR>;
   using QRule=typename L2prod::QRule;
   using Operatortuple=typename OperatorTupleType<typename L2prod::type>::type;
   using type=TupleOfTupleChangeType<1,QRule, Operatortuple>;;
 } 
-;                               
- 
+;  
 
 
 
 
-template<typename MeshT, typename Left,typename Right>
-L2DotProductIntegral<MeshT,Left,Right>
-L2Inner(const MeshT& mesh,const Expression<Left>& left,const Expression<Right>& right)
-{return L2DotProductIntegral<MeshT,Left,Right>(mesh,left,right);}
+// template<typename MeshT, typename Left,typename Right>
+// auto
+// L2Inner(const MeshT& mesh,const Expression<Left>& left,const Expression<Right>& right)
+// {return L2DotProductIntegral<MeshT,Left,Right>(mesh,left,right);}
+template<typename Left,typename Right>
+auto
+L2Inner(const Expression<Left>& left,const Expression<Right>& right)
+{return L2DotProductIntegral<Left,Right>(left,right);}
 
 
 
-
-template<typename MeshT, typename Left,typename Right>
-L2DotProductIntegral<MeshT,Left,Right>
-L2Inner(const MeshT& mesh,const Expression<Left>& left,const Expression<Right>& right, const Integer label)
-{return L2DotProductIntegral<MeshT,Left,Right>(mesh,left,right,label);}
-
+// template<typename MeshT, typename Left,typename Right>
+// auto
+// L2Inner(const MeshT& mesh,const Expression<Left>& left,const Expression<Right>& right, const Integer label)
+// {return L2DotProductIntegral<MeshT,Left,Right>(mesh,left,right,label);}
+template<typename Left,typename Right>
+auto
+L2Inner(const Expression<Left>& left,const Expression<Right>& right, const Integer label)
+{return L2DotProductIntegral<Left,Right>(left,right,label);}
 
 
 
@@ -1290,57 +1428,103 @@ class GeneralForm
 
 
 
-  template<typename MeshT, typename Left1,typename Right1, typename Left2,typename Right2, Integer Kind>
-  class ClassHelper<Addition<Expression<L2DotProductIntegral<MeshT,Left1,Right1>>,
-                        Expression<L2DotProductIntegral<MeshT,Left2,Right2>> >,Kind  >
+  // template<typename MeshT, typename Left1,typename Right1, typename Left2,typename Right2, Integer Kind>
+  // class ClassHelper<Addition<Expression<L2DotProductIntegral<MeshT,Left1,Right1>>,
+  //                       Expression<L2DotProductIntegral<MeshT,Left2,Right2>> >,Kind  >
+  // {
+  // public:
+  //  using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<MeshT,Left1,Right1>,Kind>::type,
+  //                                                  typename KindType<L2DotProductIntegral<MeshT,Left2,Right2>,Kind>::type >>;
+  // };  
+  template<typename Left1,typename Right1, typename Left2,typename Right2, Integer Kind>
+  class ClassHelper<Addition<Expression<L2DotProductIntegral<Left1,Right1>>,
+                             Expression<L2DotProductIntegral<Left2,Right2>> >,Kind  >
   {
   public:
-   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<MeshT,Left1,Right1>,Kind>::type,
-                                                   typename KindType<L2DotProductIntegral<MeshT,Left2,Right2>,Kind>::type >>;
-  };  
+   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<Left1,Right1>,Kind>::type,
+                                                   typename KindType<L2DotProductIntegral<Left2,Right2>,Kind>::type >>;
+  }; 
 
-  template<typename MeshT, typename Left1,typename Right1, typename Left2,typename Right2, Integer Kind>
-  class ClassHelper<Subtraction<Expression<L2DotProductIntegral<MeshT,Left1,Right1>>,
-                        Expression<L2DotProductIntegral<MeshT,Left2,Right2>> >,Kind  >
+
+
+  // template<typename MeshT, typename Left1,typename Right1, typename Left2,typename Right2, Integer Kind>
+  // class ClassHelper<Subtraction<Expression<L2DotProductIntegral<MeshT,Left1,Right1>>,
+  //                       Expression<L2DotProductIntegral<MeshT,Left2,Right2>> >,Kind  >
+  // {
+  // public:
+  //  using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<MeshT,Left1,Right1>,Kind>::type,
+  //                                                  typename KindType<L2DotProductIntegral<MeshT,Left2,Right2>,Kind>::type >>;
+  // };  
+  template<typename Left1,typename Right1, typename Left2,typename Right2, Integer Kind>
+  class ClassHelper<Subtraction<Expression<L2DotProductIntegral<Left1,Right1>>,
+                                Expression<L2DotProductIntegral<Left2,Right2>> >,Kind  >
   {
   public:
-   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<MeshT,Left1,Right1>,Kind>::type,
-                                                   typename KindType<L2DotProductIntegral<MeshT,Left2,Right2>,Kind>::type >>;
-  };  
+   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<Left1,Right1>,Kind>::type,
+                                                   typename KindType<L2DotProductIntegral<Left2,Right2>,Kind>::type >>;
+  }; 
 
 
-  template<typename MeshT, typename Left1,typename Right1, typename Right, Integer Kind>
-  class ClassHelper<Addition<Expression<L2DotProductIntegral<MeshT,Left1,Right1>>,Expression<Right> >,Kind  >
+  // template<typename MeshT, typename Left1,typename Right1, typename Right, Integer Kind>
+  // class ClassHelper<Addition<Expression<L2DotProductIntegral<MeshT,Left1,Right1>>,Expression<Right> >,Kind  >
+  // {
+  // public:
+  //  using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<MeshT,Left1,Right1>,Kind>::type,
+  //                                                  typename ClassHelper<Right,Kind>::type >>;
+  // };  
+  template<typename Left1,typename Right1, typename Right, Integer Kind>
+  class ClassHelper<Addition<Expression<L2DotProductIntegral<Left1,Right1>>,Expression<Right> >,Kind  >
   {
   public:
-   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<MeshT,Left1,Right1>,Kind>::type,
+   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<Left1,Right1>,Kind>::type,
                                                    typename ClassHelper<Right,Kind>::type >>;
   };  
 
-  template<typename MeshT, typename Left1,typename Right1, typename Right, Integer Kind>
-  class ClassHelper<Subtraction<Expression<L2DotProductIntegral<MeshT,Left1,Right1>>,Expression<Right> >,Kind  >
+  // template<typename MeshT, typename Left1,typename Right1, typename Right, Integer Kind>
+  // class ClassHelper<Subtraction<Expression<L2DotProductIntegral<MeshT,Left1,Right1>>,Expression<Right> >,Kind  >
+  // {
+  // public:
+  //  using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<MeshT,Left1,Right1>,Kind>::type,
+  //                                                  typename ClassHelper<Right,Kind>::type >>;
+  // };  
+  template<typename Left1,typename Right1, typename Right, Integer Kind>
+  class ClassHelper<Subtraction<Expression<L2DotProductIntegral<Left1,Right1>>,Expression<Right> >,Kind  >
   {
   public:
-   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<MeshT,Left1,Right1>,Kind>::type,
+   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<Left1,Right1>,Kind>::type,
                                                    typename ClassHelper<Right,Kind>::type >>;
   };  
 
-
-  template<typename Left,typename MeshT, typename Left1,typename Right1, Integer Kind>
-  class ClassHelper<Addition<Expression<Left>,Expression<L2DotProductIntegral<MeshT,Left1,Right1>> >,Kind  >
+  // template<typename Left,typename MeshT, typename Left1,typename Right1, Integer Kind>
+  // class ClassHelper<Addition<Expression<Left>,Expression<L2DotProductIntegral<MeshT,Left1,Right1>> >,Kind  >
+  // {
+  // public:
+  //  using type=RemoveTupleDuplicates< TupleCatType< typename ClassHelper<Left,Kind>::type,
+  //                                                  typename KindType<L2DotProductIntegral<MeshT,Left1,Right1>,Kind>::type  >>;
+  // };   
+  template<typename Left,typename Left1,typename Right1, Integer Kind>
+  class ClassHelper<Addition<Expression<Left>,Expression<L2DotProductIntegral<Left1,Right1>> >,Kind  >
   {
   public:
    using type=RemoveTupleDuplicates< TupleCatType< typename ClassHelper<Left,Kind>::type,
-                                                   typename KindType<L2DotProductIntegral<MeshT,Left1,Right1>,Kind>::type  >>;
-  };   
+                                                   typename KindType<L2DotProductIntegral<Left1,Right1>,Kind>::type  >>;
+  }; 
 
-  template<typename Left,typename MeshT, typename Left1,typename Right1, Integer Kind>
-  class ClassHelper<Subtraction<Expression<Left>,Expression<L2DotProductIntegral<MeshT,Left1,Right1>> >,Kind  >
+  // template<typename Left,typename MeshT, typename Left1,typename Right1, Integer Kind>
+  // class ClassHelper<Subtraction<Expression<Left>,Expression<L2DotProductIntegral<MeshT,Left1,Right1>> >,Kind  >
+  // {
+  // public:
+  //  using type=RemoveTupleDuplicates< TupleCatType< typename ClassHelper<Left,Kind>::type,
+  //                                                  typename KindType<L2DotProductIntegral<MeshT,Left1,Right1>,Kind>::type  >>;
+  // } ;  
+
+  template<typename Left,typename Left1,typename Right1, Integer Kind>
+  class ClassHelper<Subtraction<Expression<Left>,Expression<L2DotProductIntegral<Left1,Right1>> >,Kind  >
   {
   public:
    using type=RemoveTupleDuplicates< TupleCatType< typename ClassHelper<Left,Kind>::type,
-                                                   typename KindType<L2DotProductIntegral<MeshT,Left1,Right1>,Kind>::type  >>;
-  } ;  
+                                                   typename KindType<L2DotProductIntegral<Left1,Right1>,Kind>::type  >>;
+  } ; 
 
   template<typename Left,typename Right, Integer Kind>
   class ClassHelper<Addition<Expression<Left>,Expression<Right> >,Kind >
@@ -1396,86 +1580,133 @@ general_form(const Form& form)
 
 template<typename MeshT, typename Left2,typename Right2, typename Left>
 constexpr auto
-L2Inner(const MeshT& mesh,const Expression<Left>& left,const Expression<Addition<Expression<Left2>,Expression<Right2>>>& right)
+// L2Inner(const MeshT& mesh,const Expression<Left>& left,const Expression<Addition<Expression<Left2>,Expression<Right2>>>& right)
+// {return Addition<
+//   Expression<decltype(L2Inner(mesh,left.derived(),right.derived().left()))>,
+//   Expression<decltype(L2Inner(mesh,left.derived(),right.derived().right()))>>
+//               (L2Inner(mesh,left.derived(),right.derived().left()),
+//                L2Inner(mesh,left.derived(),right.derived().right()) );}
+L2Inner(const Expression<Left>& left,const Expression<Addition<Expression<Left2>,Expression<Right2>>>& right)
 {return Addition<
-  Expression<decltype(L2Inner(mesh,left.derived(),right.derived().left()))>,
-  Expression<decltype(L2Inner(mesh,left.derived(),right.derived().right()))>>
-              (L2Inner(mesh,left.derived(),right.derived().left()),
-               L2Inner(mesh,left.derived(),right.derived().right()) );}
-
+  Expression<decltype(L2Inner(left.derived(),right.derived().left()))>,
+  Expression<decltype(L2Inner(left.derived(),right.derived().right()))>>
+              (L2Inner(left.derived(),right.derived().left()),
+               L2Inner(left.derived(),right.derived().right()) );}
 
 template<typename MeshT, typename Left2,typename Right2, typename Left>
 constexpr auto
-L2Inner(const MeshT& mesh,const Expression<Left>& left,const Expression<Subtraction<Expression<Left2>,Expression<Right2>>>& right)
+// L2Inner(const MeshT& mesh,const Expression<Left>& left,const Expression<Subtraction<Expression<Left2>,Expression<Right2>>>& right)
+// {return Addition<
+//   Expression<decltype(L2Inner(mesh,left.derived(),right.derived().left()))>,
+//   Expression<decltype(L2Inner(mesh,-left.derived(),right.derived().right()))>>
+//               (L2Inner(mesh,left.derived(),right.derived().left()),
+//                L2Inner(mesh,-left.derived(),right.derived().right()) );}
+L2Inner(const Expression<Left>& left,const Expression<Subtraction<Expression<Left2>,Expression<Right2>>>& right)
 {return Addition<
-  Expression<decltype(L2Inner(mesh,left.derived(),right.derived().left()))>,
-  Expression<decltype(L2Inner(mesh,-left.derived(),right.derived().right()))>>
-              (L2Inner(mesh,left.derived(),right.derived().left()),
-               L2Inner(mesh,-left.derived(),right.derived().right()) );}
-
-
-template<typename MeshT, typename Left1,typename Right1, typename Right>
-constexpr auto
-L2Inner(const MeshT& mesh,const Expression<Addition<Expression<Left1>,Expression<Right1>>>& left,const Expression<Right>& right)
-{return Addition<
-  Expression<decltype(L2Inner(mesh,left.derived().left(),right.derived()))>,
-  Expression<decltype(L2Inner(mesh,left.derived().right(),right.derived()))>>
-  (L2Inner(mesh,left.derived().left(),right.derived()),
-   L2Inner(mesh,left.derived().right(),right.derived()) );}
+  Expression<decltype(L2Inner(left.derived(),right.derived().left()))>,
+  Expression<decltype(L2Inner(-left.derived(),right.derived().right()))>>
+              (L2Inner(left.derived(),right.derived().left()),
+               L2Inner(-left.derived(),right.derived().right()) );}
 
 template<typename MeshT, typename Left1,typename Right1, typename Right>
 constexpr auto
-L2Inner(const MeshT& mesh,const Expression<Subtraction<Expression<Left1>,Expression<Right1>>>& left,const Expression<Right>& right)
+// L2Inner(const MeshT& mesh,const Expression<Addition<Expression<Left1>,Expression<Right1>>>& left,const Expression<Right>& right)
+// {return Addition<
+//   Expression<decltype(L2Inner(mesh,left.derived().left(),right.derived()))>,
+//   Expression<decltype(L2Inner(mesh,left.derived().right(),right.derived()))>>
+//   (L2Inner(mesh,left.derived().left(),right.derived()),
+//    L2Inner(mesh,left.derived().right(),right.derived()) );}
+L2Inner(const Expression<Addition<Expression<Left1>,Expression<Right1>>>& left,const Expression<Right>& right)
 {return Addition<
-  Expression<decltype(L2Inner(mesh,left.derived().left(),right.derived()))>,
-  Expression<decltype(L2Inner(mesh,-left.derived().right(),right.derived()))>>
-  (L2Inner(mesh,left.derived().left(),right.derived()),
-   L2Inner(mesh,-left.derived().right(),right.derived()) );}
+  Expression<decltype(L2Inner(left.derived().left(),right.derived()))>,
+  Expression<decltype(L2Inner(left.derived().right(),right.derived()))>>
+  (L2Inner(left.derived().left(),right.derived()),
+   L2Inner(left.derived().right(),right.derived()) );}
+
+template<typename MeshT, typename Left1,typename Right1, typename Right>
+constexpr auto
+// L2Inner(const MeshT& mesh,const Expression<Subtraction<Expression<Left1>,Expression<Right1>>>& left,const Expression<Right>& right)
+// {return Addition<
+//   Expression<decltype(L2Inner(mesh,left.derived().left(),right.derived()))>,
+//   Expression<decltype(L2Inner(mesh,-left.derived().right(),right.derived()))>>
+//   (L2Inner(mesh,left.derived().left(),right.derived()),
+//    L2Inner(mesh,-left.derived().right(),right.derived()) );}
+L2Inner(const Expression<Subtraction<Expression<Left1>,Expression<Right1>>>& left,const Expression<Right>& right)
+{return Addition<
+  Expression<decltype(L2Inner(left.derived().left(),right.derived()))>,
+  Expression<decltype(L2Inner(-left.derived().right(),right.derived()))>>
+  (L2Inner(left.derived().left(),right.derived()),
+   L2Inner(-left.derived().right(),right.derived()) );}
+
+
+template<typename MeshT, typename Left1,typename Right1,typename Left2, typename Right2>
+constexpr auto
+// L2Inner(const MeshT& mesh,const Expression<Addition<Expression<Left1>,Expression<Right1>>>& left,
+//                           const Expression<Addition<Expression<Left2>,Expression<Right2>>>& right)
+// {return 
+// Addition<Expression<decltype(L2Inner(mesh,left.derived().left(),right.derived()))>,
+//           Expression<decltype(L2Inner(mesh,left.derived().right(),right.derived()))>
+//          >
+//   (
+//     L2Inner(mesh,left.derived().left(),right.derived()),
+//     L2Inner(mesh,left.derived().right(),right.derived())                
+//   )
+//   ;
+// }
+L2Inner(const Expression<Addition<Expression<Left1>,Expression<Right1>>>& left,
+        const Expression<Addition<Expression<Left2>,Expression<Right2>>>& right)
+{return 
+Addition<Expression<decltype(L2Inner(left.derived().left(),right.derived()))>,
+         Expression<decltype(L2Inner(left.derived().right(),right.derived()))>
+         >
+  (
+    L2Inner(left.derived().left(),right.derived()),
+    L2Inner(left.derived().right(),right.derived())                
+  )
+  ;
+}
+
 
 
 
 template<typename MeshT, typename Left1,typename Right1,typename Left2, typename Right2>
 constexpr auto
-L2Inner(const MeshT& mesh,const Expression<Addition<Expression<Left1>,Expression<Right1>>>& left,
-                          const Expression<Addition<Expression<Left2>,Expression<Right2>>>& right)
+// L2Inner(const MeshT& mesh,const Expression<Subtraction<Expression<Left1>,Expression<Right1>>>& left,
+//                           const Expression<Subtraction<Expression<Left2>,Expression<Right2>>>& right)
+// {return 
+// Addition<Expression<decltype(L2Inner(mesh,left.derived().left(),right.derived()))>,
+//           Expression<decltype(L2Inner(mesh,-left.derived().right(),right.derived()))>
+//          >
+//   (
+//     L2Inner(mesh,left.derived().left(),right.derived()),
+//     L2Inner(mesh,-left.derived().right(),right.derived())                
+//   )
+//   ;
+// }
+L2Inner(const Expression<Subtraction<Expression<Left1>,Expression<Right1>>>& left,
+        const Expression<Subtraction<Expression<Left2>,Expression<Right2>>>& right)
 {return 
-Addition<Expression<decltype(L2Inner(mesh,left.derived().left(),right.derived()))>,
-          Expression<decltype(L2Inner(mesh,left.derived().right(),right.derived()))>
+Addition<Expression<decltype(L2Inner(left.derived().left(),right.derived()))>,
+         Expression<decltype(L2Inner(-left.derived().right(),right.derived()))>
          >
   (
-    L2Inner(mesh,left.derived().left(),right.derived()),
-    L2Inner(mesh,left.derived().right(),right.derived())                
+    L2Inner(left.derived().left(),right.derived()),
+    L2Inner(-left.derived().right(),right.derived())                
   )
   ;
 }
 
-template<typename MeshT, typename Left1,typename Right1,typename Left2, typename Right2>
-constexpr auto
-L2Inner(const MeshT& mesh,const Expression<Subtraction<Expression<Left1>,Expression<Right1>>>& left,
-                          const Expression<Subtraction<Expression<Left2>,Expression<Right2>>>& right)
-{return 
-Addition<Expression<decltype(L2Inner(mesh,left.derived().left(),right.derived()))>,
-          Expression<decltype(L2Inner(mesh,-left.derived().right(),right.derived()))>
-         >
-  (
-    L2Inner(mesh,left.derived().left(),right.derived()),
-    L2Inner(mesh,-left.derived().right(),right.derived())                
-  )
-  ;
-}
 
 
 
-
-
-template<typename MeshT, typename Left1,typename Right1, typename Right>
-Addition<Expression<L2DotProductIntegral<MeshT,Left1,Right>>,
-          Expression<L2DotProductIntegral<MeshT,Right1,Right>>>
-L2Inner(const MeshT& mesh,const Expression<Addition<Expression<Left1>,Expression<Right1>>>& left,const Expression<Right>& right, const Integer& label)
-{return Addition<
-  Expression<L2DotProductIntegral<MeshT,Left1,Right>>,
-  Expression<L2DotProductIntegral<MeshT,Right1,Right>>>(L2Inner(mesh,left.derived().left(),right,label),
-                                                         L2Inner(mesh,left.derived().right(),right,label) );}
+// template<typename MeshT, typename Left1,typename Right1, typename Right>
+// Addition<Expression<L2DotProductIntegral<MeshT,Left1,Right>>,
+//           Expression<L2DotProductIntegral<MeshT,Right1,Right>>>
+// L2Inner(const Expression<Addition<Expression<Left1>,Expression<Right1>>>& left,const Expression<Right>& right, const Integer& label)
+// {return Addition<
+//   Expression<L2DotProductIntegral<MeshT,Left1,Right>>,
+//   Expression<L2DotProductIntegral<MeshT,Right1,Right>>>(L2Inner(left.derived().left(),right,label),
+//                                                          L2Inner(left.derived().right(),right,label) );}
 
 
 
@@ -1488,11 +1719,43 @@ L2Inner(const MeshT& mesh,const Expression<Addition<Expression<Left1>,Expression
 
 
 
-template<typename MeshT, typename Left,typename Right,Integer QR, typename...OtherTemplateArguments>
-class OperatorTypeHelper<L2DotProductIntegral<MeshT,Left,Right,QR>, OtherTemplateArguments...>
+/////////////// GUARDA QUI TODO FIX LA HO COMMENTATA MA BOH
+  // template<typename Left,typename Left1,typename Right1, Integer Kind>
+  // class ClassHelper<Subtraction<Expression<Left>,Expression<L2DotProductIntegral<Left1,Right1>> >,Kind  >
+  // {
+  // public:
+  //  using type=RemoveTupleDuplicates< TupleCatType< typename ClassHelper<Left,Kind>::type,
+  //                                                  typename KindType<L2DotProductIntegral<Left1,Right1>,Kind>::type  >>;
+  // } ; 
+
+
+
+
+
+
+
+
+
+
+// template<typename MeshT, typename Left,typename Right,Integer QR, typename...OtherTemplateArguments>
+// class OperatorTypeHelper<L2DotProductIntegral<MeshT,Left,Right,QR>, OtherTemplateArguments...>
+// { public:
+
+//    using L2=L2DotProductIntegral<MeshT,Left,Right,QR>;
+//    using FunctionSpace=typename L2::FunctionSpace;
+//    using TestTrialNumbers=typename L2::TestTrialNumbers;
+//    static constexpr Integer TestNumber=GetType<TestTrialNumbers,0>::value;
+//    static constexpr Integer TrialNumber=GetType<TestTrialNumbers,1>::value;
+//    static constexpr Integer TestN=FunctionSpace::Nelem_dofs_array[TestNumber];
+//    static constexpr Integer TrialN=FunctionSpace::Nelem_dofs_array[TrialNumber];
+//    using type=Matrix<Real,TestN,TrialN >;//typename ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QRule>::type;
+// };
+
+template<typename Left,typename Right,Integer QR, typename...OtherTemplateArguments>
+class OperatorTypeHelper<L2DotProductIntegral<Left,Right,QR>, OtherTemplateArguments...>
 { public:
 
-   using L2=L2DotProductIntegral<MeshT,Left,Right,QR>;
+   using L2=L2DotProductIntegral<Left,Right,QR>;
    using FunctionSpace=typename L2::FunctionSpace;
    using TestTrialNumbers=typename L2::TestTrialNumbers;
    static constexpr Integer TestNumber=GetType<TestTrialNumbers,0>::value;
@@ -1506,16 +1769,21 @@ class OperatorTypeHelper<L2DotProductIntegral<MeshT,Left,Right,QR>, OtherTemplat
 
 
 
-
-
-template<typename MeshT_, typename Left_,typename Right_,Integer QR, typename Form>
-class Evaluation<Expression<L2DotProductIntegral<MeshT_,Left_,Right_,QR>>, ShapeFunctions2<Form>>
+// template<typename MeshT_, typename Left_,typename Right_,Integer QR, typename Form>
+// class Evaluation<Expression<L2DotProductIntegral<MeshT_,Left_,Right_,QR>>, ShapeFunctions2<Form>>
+// {
+//  public:
+//  using MeshT=MeshT_;
+//  using Left=Left_;
+//  using Right=Right_;
+//  using type= L2DotProductIntegral<MeshT,Left,Right,QR>;
+template<typename Left_,typename Right_,Integer QR, typename Form>
+class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,QR>>, ShapeFunctions2<Form>>
 {
  public:
- using MeshT=MeshT_;
  using Left=Left_;
  using Right=Right_;
- using type= L2DotProductIntegral<MeshT,Left,Right,QR>;
+ using type= L2DotProductIntegral<Left,Right,QR>;
  using QRule=typename type ::QRule;
  using TestTrialSpaces=typename type::TestTrialSpaces;
  using subtype= OperatorType<type,ShapeFunctions2<Form>>;
@@ -1545,15 +1813,37 @@ private:
 };
 
 
-template<typename MeshT, typename Left,typename Right,typename DerivedLeft, typename Form>
+
+
+
+
+
+
+
+
+
+
+// template<typename MeshT, typename Left,typename Right,typename DerivedLeft, typename Form>
+// class Evaluation<Expression<Addition< Expression<DerivedLeft>  ,  
+//                                       Expression<L2DotProductIntegral<MeshT,Left,Right>>>>,
+//                  ShapeFunctions<Form>>
+// {
+//  public:
+//  using type=Addition<Expression<DerivedLeft>,Expression<L2DotProductIntegral<MeshT,Left,Right>>>;
+//  using EvalLeft=Evaluation<Expression<DerivedLeft>,ShapeFunctions<Form>>;
+//  using EvalRight=Evaluation<Expression<L2DotProductIntegral<MeshT,Left,Right>>,ShapeFunctions<Form>>;
+template<typename Left,typename Right,typename DerivedLeft, typename Form>
 class Evaluation<Expression<Addition< Expression<DerivedLeft>  ,  
-                                        Expression<L2DotProductIntegral<MeshT,Left,Right>>>>,
+                                      Expression<L2DotProductIntegral<Left,Right>>>>,
                  ShapeFunctions<Form>>
 {
  public:
- using type=Addition<Expression<DerivedLeft>,Expression<L2DotProductIntegral<MeshT,Left,Right>>>;
+ using type=Addition<Expression<DerivedLeft>,Expression<L2DotProductIntegral<Left,Right>>>;
  using EvalLeft=Evaluation<Expression<DerivedLeft>,ShapeFunctions<Form>>;
- using EvalRight=Evaluation<Expression<L2DotProductIntegral<MeshT,Left,Right>>,ShapeFunctions<Form>>;
+ using EvalRight=Evaluation<Expression<L2DotProductIntegral<Left,Right>>,ShapeFunctions<Form>>;
+ 
+
+
  Evaluation(){};
  
 
@@ -1577,14 +1867,42 @@ private:
  ShapeFunctions<Form>& shape_functions_;
 };
 
-template<typename MeshT, typename Left,typename Right,typename DerivedLeft, typename Form>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// template<typename MeshT, typename Left,typename Right,typename DerivedLeft, typename Form>
+// class Evaluation<Expression<Subtraction< Expression<DerivedLeft>  ,  
+//                                         Expression<L2DotProductIntegral<MeshT,Left,Right>>>>,
+//                  ShapeFunctions<Form>>{
+//  public:
+//  using type=Subtraction<Expression<DerivedLeft>,Expression<L2DotProductIntegral<MeshT,Left,Right>>>;
+//  using EvalLeft=Evaluation<Expression<DerivedLeft>,ShapeFunctions<Form>>;
+//  using EvalRight=Evaluation<Expression<L2DotProductIntegral<MeshT,Left,Right>>,ShapeFunctions<Form>>;
+template<typename Left,typename Right,typename DerivedLeft, typename Form>
 class Evaluation<Expression<Subtraction< Expression<DerivedLeft>  ,  
-                                        Expression<L2DotProductIntegral<MeshT,Left,Right>>>>,
+                                        Expression<L2DotProductIntegral<Left,Right>>>>,
                  ShapeFunctions<Form>>{
  public:
- using type=Subtraction<Expression<DerivedLeft>,Expression<L2DotProductIntegral<MeshT,Left,Right>>>;
+ using type=Subtraction<Expression<DerivedLeft>,Expression<L2DotProductIntegral<Left,Right>>>;
  using EvalLeft=Evaluation<Expression<DerivedLeft>,ShapeFunctions<Form>>;
- using EvalRight=Evaluation<Expression<L2DotProductIntegral<MeshT,Left,Right>>,ShapeFunctions<Form>>;
+ using EvalRight=Evaluation<Expression<L2DotProductIntegral<Left,Right>>,ShapeFunctions<Form>>;
+ 
+ 
+
+
+
+
  Evaluation(){};
  
 
