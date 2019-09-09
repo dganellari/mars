@@ -1076,27 +1076,22 @@ void assembly_example()
  std::cout<<"-------------"<<decltype(FEspace2)::Nelem_dofs_array<<std::endl;
  std::cout<<"-------------"<<decltype(W4)::Nelem_dofs_array<<std::endl;
 
- auto u7 =     MakeTrial<0>(W4);
+ auto u7 = MakeTrial<0>(W4);
  auto u8 = MakeTrial<1>(W4);
  auto u9 = MakeTrial<2>(W4);
 
 
- auto v7 =   MakeTest<0>(W4);
+ auto v7 = MakeTest<0>(W4);
  auto v8 = MakeTest<1>(W4);
  auto v9 = MakeTest<2>(W4);
- 
-
- //  auto l88= L2Inner(mesh,u7+u8+u9,v7+v8+v9)+L2Inner(mesh,v9,u8);
-  auto l9= //L2Inner(mesh,u7-u8-u9,v7-v8-v9);
-           // L2Inner(mesh,u7,v7)+L2Inner(mesh,u8,v8);           
+std::cout<<"qui1"<<std::endl;
+  auto l9= 
            L2Inner(u8,v7)+L2Inner(u7,v9)+L2Inner(u7,v7)+
            L2Inner(Grad(u7),Grad(v7))+L2Inner(u8,v8)+L2Inner(u9,v9)
            ;
-           // +
-           // L2Inner(mesh,Grad(u7),Grad(v7))+L2Inner(mesh,u7,v8);
-         
-
   
+
+
   auto generalform=general_form(l9);
   auto shape_coefficients_general=shape_function_coefficients(generalform);
   auto referencemaps_general=reference_maps2(generalform);
@@ -1111,6 +1106,13 @@ void assembly_example()
   referencemaps_general.init(J);
   shapefunctions_general.init(referencemaps_general,shape_coefficients_general);
 
+
+
+
+  std::cout<<"qui2"<<std::endl;
+  auto esc=get_spaces_ptr(L2Inner(Grad(u7),Grad(v7)));
+  // decltype(esc) eee5l(5);
+  // decltype(generalform)::FunctionSpace eem5(6);
  
  // decltype(generalform)::L2Products ee34ee(5);
 
@@ -1129,6 +1131,7 @@ void assembly_example()
  auto eval_generalform=Eval(generalform,shapefunctions_general);
 
  eval_generalform.apply(J);
+
 
  // using l2mass=decltype(L2Inner(mesh,u9,v9)+L2Inner(mesh,u8,v8)+L2Inner(mesh,u7,v7)+L2Inner(mesh,Grad(u7),Grad(v7)));
  // // auto eshg=l2mass(mesh);

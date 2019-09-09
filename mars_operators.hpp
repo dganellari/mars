@@ -1687,48 +1687,56 @@ class Evaluation<Expression<GeneralForm<Form>>>
 {
  public:
  using type= GeneralForm<Form>;
+ using FunctionSpace= typename type::FunctionSpace;
  using TupleFunctionSpace=typename type::TupleFunctionSpace;
  using ShapesForm=ShapeFunctions2<GeneralForm<Form>>;
  using Shapes=typename ShapesForm::TupleOfTupleShapeFunction;
- using TupleOfPairsNumbers=BubbleSortTupleOfPairsNumbers<typename TupleOfTestTrialPairsNumbers<Form>::type>;
+ using TupleOfPairsNumbers=typename GeneralForm<Form>::TupleOfPairsNumbers;
  using L2Products=typename TupleOfL2Products< TupleOfPairsNumbers, Form >::type;
  using TupleOfEvals=TupleOfEvals<L2Products,ShapesForm>;
  
- using EvaluationOfL2Inners=EvaluationOfL2Inners<Expression<GeneralForm<Form>>,ShapesForm>;
+ using EvaluationOfL2Inners=EvaluationOfL2Inners<Evaluation<Expression<GeneralForm<Form>>>,ShapesForm>;
  Evaluation(const GeneralForm<Form>& general_form,ShapesForm& shapesform):
  general_form_(general_form),
- shapesform_(shapesform)
- // eval_tuple_(shapesform)
+ shapesform_(shapesform),
+ spaces_ptr_(get_spaces_ptr(general_form())),
+ eval_inners_(shapesform)
  // eval_form_(Eval(general_form_(),shapes))
  {}
 
  
- template<Integer Nmax, Integer N, typename Elem>
- constexpr std::enable_if_t<(N==Nmax),void>
- apply_aux(const Jacobian<Elem>& J)
- {
-  std::cout<<"eval general form="<<N<<std::endl;
- }
+ // template<Integer Nmax, Integer N, typename Elem>
+ // constexpr std::enable_if_t<(N==Nmax),void>
+ // apply_aux(const Jacobian<Elem>& J)
+ // {
+ //  std::cout<<"eval general form="<<N<<std::endl;
+ // }
 
- template<Integer Nmax, Integer N, typename Elem>
- constexpr std::enable_if_t<(N<Nmax),void>
- apply_aux(const Jacobian<Elem>& J)
- {
-    std::cout<<"eval general form="<<N<<std::endl;
-    apply_aux<Nmax,N+1>(J);
- }
+ // template<Integer Nmax, Integer N, typename Elem>
+ // constexpr std::enable_if_t<(N<Nmax),void>
+ // apply_aux(const Jacobian<Elem>& J)
+ // {
+ //    std::cout<<"eval general form="<<N<<std::endl;
+ //    apply_aux<Nmax,N+1>(J);
+ // }
+
+
 
  template<typename Elem>
  constexpr void apply(const Jacobian<Elem>& J)
  {
-  apply_aux<TupleTypeSize<Shapes>::value-1,0>(J);
+  int token_mat=1;
+  eval_inners_.apply(token_mat,J);
+  // apply_aux<TupleTypeSize<Shapes>::value-1,0>(J);
  }
 
+ inline auto spaces_ptr()const {return spaces_ptr_;};
 
  private:
  const GeneralForm<Form>& general_form_;
  ShapesForm& shapesform_;
- // TupleOfEvals eval_tuple_;
+ std::shared_ptr<FunctionSpace> spaces_ptr_;
+ EvaluationOfL2Inners eval_inners_;
 };
 
 template<typename Form>

@@ -126,24 +126,24 @@ class LocalMatrix<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Form>
   eval_left_.apply(left_value_,shape_functions);
   eval_right_.apply(right_value_,shape_functions);
 
-  std::cout<<mat<<std::endl;
-  std::cout<<"left_value_"<<std::endl;
-  // std::cout<<left_value_<<std::endl;
-  std::cout<<"right_value_"<<std::endl;
+  // std::cout<<mat<<std::endl;
+  // std::cout<<"left_value_"<<std::endl;
+  // // std::cout<<left_value_<<std::endl;
+  // std::cout<<"right_value_"<<std::endl;
   // std::cout<<right_value_<<std::endl;
   for(Integer ii=0;ii<mat.rows();ii++)
     for(Integer jj=0;jj<mat.cols();jj++)
     {   
 
-        std::cout<<"(ii,jj)=("<<ii<<","<<jj<<")"<<std::endl;
+        // std::cout<<"(ii,jj)=("<<ii<<","<<jj<<")"<<std::endl;
    
 
 
         // left value is trial, right value is test
         mat(ii,jj)=detJ*dotofdots(right_value_[ii],left_value_[jj]);
     }
-    std::cout<<detJ<<std::endl;
-    std::cout<<mat<<std::endl;
+    // std::cout<<detJ<<std::endl;
+    // std::cout<<mat<<std::endl;
 
 
   mat=mat*detJ;
@@ -337,12 +337,12 @@ constexpr auto EvalOfL2Inners(ShapeFunctions& shape_functions)
 
 
 
-template<typename EvaluationGeneralForm >
+template<typename GeneralForm >
 class LocalMatrices
 {
 public:
-    using GeneralForm=typename EvaluationGeneralForm::type;
-    using TupleOfPairsNumbers=typename EvaluationGeneralForm::TupleOfPairsNumbers;
+    // using GeneralForm=typename EvaluationGeneralForm::type;
+    using TupleOfPairsNumbers=typename GeneralForm::TupleOfPairsNumbers;
     static constexpr auto Nelem_dofs_array=GeneralForm::FunctionSpace::Nelem_dofs_array;
 
     template<Integer Nmax, Integer N>
@@ -379,7 +379,7 @@ class EvaluationOfL2Inners
 {
 public: 
     using GeneralForm=typename EvaluationGeneralForm::type;
-    using LocalMatrices=typename LocalMatrices<EvaluationGeneralForm>::type;    
+    using LocalMatrices=typename LocalMatrices<GeneralForm>::type;    
     using L2Products=typename EvaluationGeneralForm::L2Products;
     using EvalOfL2InnersType=EvalOfL2InnersAux<L2Products,0,ShapeFunctions>;
     
@@ -399,7 +399,7 @@ public:
      local_mat.zero();
      auto & eval_N=std::get<N>(eval_inners_);
      eval_N.apply(local_mat,J);
-     std::cout<<local_mat<<std::endl;
+     // std::cout<<local_mat<<std::endl;
     }   
 
  template<Integer Nmax,Integer N,typename Output,typename Jacobian>

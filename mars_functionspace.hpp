@@ -133,10 +133,10 @@ public:
 
       inline const SpacesInfosArrayType& space_info()const{return space_infos_;};
 
-      inline std::shared_ptr< MeshT > mesh()const {return mesh_;};
+      inline auto mesh_ptr()const {return mesh_ptr_;};
        
       FunctionSpace(const MeshT& mesh,const Integer dof_count_start=0):
-      mesh_(std::make_shared< MeshT >(mesh))
+      mesh_ptr_(std::make_shared< MeshT >(mesh))
       {
       function_space_info<0,Nsubspaces,BaseFunctionSpace,BaseFunctionSpaces...>(space_infos_);
       dofmap_fespace<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofmap_,offset_,n_dofs_,space_infos_,space_dofs_);     
@@ -144,7 +144,7 @@ public:
 
 private:
    
-      std::shared_ptr< MeshT > mesh_;
+      std::shared_ptr< MeshT > mesh_ptr_;
       Integer n_dofs_;
       DofMapType dofmap_;
       OffSetType offset_;
@@ -174,6 +174,7 @@ class MixedSpace<Arg,Args...>
 {
 public:
   using Elem=typename Arg::Elem;
+  using MeshT=Mesh<Elem::Dim,Elem::ManifoldDim>;
   using TupleOfSpaces=TupleCatType<typename Arg::TupleOfSpaces,typename Args::TupleOfSpaces...>;
   using DofMapType=std::tuple<typename Arg::DofMapType,typename Args::DofMapType...>;
   using ElementFunctionSpacesTupleType=TupleCatType<typename Arg::ElementFunctionSpacesTupleType,typename Args::ElementFunctionSpacesTupleType...>;
@@ -305,10 +306,13 @@ template<Integer N,typename OtherArg, typename...OtherArgs>
        tuple_make<N+1,OtherArgs...>(otherargs...));}
 
      MixedSpace(const Arg& arg,const Args&...args):
+     mesh_ptr_(arg.mesh_ptr()),
      spaces_(std::make_tuple(std::make_shared<Arg>(arg),std::make_shared<Args>(args)...)),
      n_dofs_(tot_n_dofs<1+sizeof...(Args)-1>()),
      dofmap_(tuple_make<0,typename Arg::DofMapType,typename Args::DofMapType...>(arg.dofmap(),args.dofmap()...))
      {}
+
+     inline auto mesh_ptr()const {return mesh_ptr_;};
 
      constexpr const auto& spaces(){return spaces_;}
      static constexpr Integer Nsubspaces=tot_subspaces<Arg,Args...>::value;
@@ -316,6 +320,7 @@ template<Integer N,typename OtherArg, typename...OtherArgs>
      static constexpr Array<Integer,Nsubspaces> Nelem_dofs_array=concat(Arg::Nelem_dofs_array,Args::Nelem_dofs_array...);
       
    private:
+    std::shared_ptr< MeshT > mesh_ptr_;
     std::tuple<std::shared_ptr<Arg>,std::shared_ptr<Args>...> spaces_;
     Integer n_dofs_;
     DofMapType dofmap_;
@@ -329,12 +334,34 @@ template<typename MixedSpace,Integer N, typename OperatorType=IdentityOperator>
 class Trial: public Expression<Trial<MixedSpace,N,OperatorType>>
 { public:
   using FunctionSpace=MixedSpace;
+  using Elem=typename FunctionSpace::Elem;
+  static constexpr Integer Dim=Elem::Dim;
+  static constexpr Integer ManifoldDim=Elem::ManifoldDim;
+  using MeshT=Mesh<Dim,ManifoldDim>;
   using UniqueElementFunctionSpacesTupleType=typename MixedSpace::UniqueElementFunctionSpacesTupleType;
   static constexpr Integer Nmax=TupleTypeSize<UniqueElementFunctionSpacesTupleType>::value;
-  static constexpr Integer number=N;//GetType<typename MixedSpace::FromSpacesToFunctionSpaces,N>::value;
+  static constexpr Integer number=N;
   static constexpr Integer value=GetType<typename MixedSpace::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value;
   using Operator=OperatorType;
+ 
+  Trial(){}
 
+  // Trial(const MeshT&mesh):
+  // mesh_ptr_(std::make_shared<MeshT>(mesh))
+  // {}
+ 
+  // Trial(const std::shared_ptr<MeshT>&mesh_ptr):
+  // mesh_ptr_(mesh_ptr)
+  // {}
+
+  Trial(const MixedSpace& W):
+  spaces_ptr_(std::make_shared<MixedSpace>(W))
+  {}
+
+  inline auto spaces_ptr()const {return spaces_ptr_;};
+
+  private:
+  std::shared_ptr<MixedSpace> spaces_ptr_;
 };
 
 template<typename MixedSpace, Integer N, typename OperatorType=IdentityOperator>
@@ -342,11 +369,35 @@ class Test: public Expression<Test<MixedSpace,N,OperatorType>>
 {
 public:
   using FunctionSpace=MixedSpace;
+  using Elem=typename FunctionSpace::Elem;
+  static constexpr Integer Dim=Elem::Dim;
+  static constexpr Integer ManifoldDim=Elem::ManifoldDim;
+  using MeshT=Mesh<Dim,ManifoldDim>;
   using UniqueElementFunctionSpacesTupleType=typename MixedSpace::UniqueElementFunctionSpacesTupleType;
   static constexpr Integer Nmax=TupleTypeSize<UniqueElementFunctionSpacesTupleType>::value;
   static constexpr Integer number=N;//GetType<typename MixedSpace::FromSpacesToFunctionSpaces,N>::value;
   static constexpr Integer value=GetType<typename MixedSpace::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value;
   using Operator=OperatorType;
+  
+  Test(){}
+
+  // Test(const MeshT&mesh):
+  // mesh_ptr_(std::make_shared<MeshT>(mesh))
+  // {}
+
+  // Test(const std::shared_ptr<MeshT>&mesh_ptr):
+  // mesh_ptr_(mesh_ptr)
+  // {}
+
+  Test(const MixedSpace& W):
+  spaces_ptr_(std::make_shared<MixedSpace>(W))
+  {}
+
+  inline auto spaces_ptr()const {return spaces_ptr_;};
+
+  private:
+  // std::shared_ptr<MeshT> mesh_ptr_;
+  std::shared_ptr<MixedSpace> spaces_ptr_;
 };
 
 
@@ -682,18 +733,12 @@ class OperatorTupleType<TestOrTrial_<MixedSpace,N,OperatorType> >
 
 template<Integer N,typename...Args >
 auto MakeTest(const FunctionSpace<Args...>& W)
-{return Test<FunctionSpace<Args...>,//typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType
-        // GetType<typename FunctionSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value
-        N
-        >();}
+{return Test<FunctionSpace<Args...>,N>(W);}
 
 
 template<Integer N,typename...Args >
 auto MakeTrial(const FunctionSpace<Args...>& W)
-{return Trial<FunctionSpace<Args...>,//typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType
-        // GetType<typename FunctionSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value
-        N
-        >();}
+{return Trial<FunctionSpace<Args...>,N>(W);}
 
 
 
@@ -705,18 +750,12 @@ auto MakeTrial(const FunctionSpace<Args...>& W)
 
 template<Integer N,typename...Args >
 auto MakeTest(const MixedSpace<Args...>& W)
-{return Test<MixedSpace<Args...>,//typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType
-        // GetType<typename MixedSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value
-        N
-        >();}
+{return Test<MixedSpace<Args...>,N>();}
 
 
 template<Integer N,typename...Args >
 auto MakeTrial(const MixedSpace<Args...>& W)
-{return Trial<MixedSpace<Args...>,//typename MixedSpace<Args...>::UniqueElementFunctionSpacesTupleType
-        // GetType<typename MixedSpace<Args...>::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value
-        N
-        >();}
+{return Trial<MixedSpace<Args...>,N>();}
 
 
 
@@ -1185,6 +1224,101 @@ class Evaluation<TupleOfL2Products<TupleOfPairsNumbers,Form>>
 
 
 
+template<typename Left,typename Right>
+const auto dimmi_spaces (const L2DotProductIntegral<Left,Right>& mmm)
+{
+  return mmm.spaces_ptr();
+}
+
+template<typename Left1,typename Right1,typename Left2,typename Right2>
+const auto dimmi_spaces (const Addition<Expression<L2DotProductIntegral<Left1,Right1>>,
+                                 Expression<L2DotProductIntegral<Left2,Right2>>>& mmm)
+{
+  return mmm.left().spaces_ptr();
+}
+
+template<typename Left1,typename Right1,typename Right>
+const auto dimmi_spaces (const Addition<Expression<L2DotProductIntegral<Left1,Right1>>,Expression<Right>>& mmm)
+{
+  return mmm.left().spaces_ptr();
+}
+
+template<typename Left1,typename Right1,typename Right>
+const auto dimmi_spaces (const Addition<Expression<Right>,Expression<L2DotProductIntegral<Left1,Right1>>>& mmm)
+{
+  return mmm.right().spaces_ptr();
+}
+
+template<typename Left,typename Right>
+const auto dimmi_spaces (const Addition<Expression<Left>,Expression<Right>>& mmm)
+{
+  return dimmi_spaces(mmm.left());
+}
+
+
+
+
+
+
+template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, Integer N, typename OperatorType>
+const auto get_spaces_ptr (const TestOrTrial<MixedSpace,N,OperatorType>& mmm)
+{
+  return mmm.spaces_ptr();
+}
+
+template<typename Left,typename Right >
+const auto get_spaces_ptr (const Multiplication<Expression<Left>,Expression<Right>>& mmm)
+{
+  return get_spaces_ptr(mmm.left());
+}
+
+template<typename Left,typename Right >
+const auto get_spaces_ptr (const Multiplication<Expression<Left>,Real>& mmm)
+{
+  return get_spaces_ptr(mmm.left());
+}
+
+template<typename Left,typename Right >
+const auto get_spaces_ptr (const Multiplication<Real,Expression<Right>>& mmm)
+{
+  return get_spaces_ptr(mmm.right());
+}
+
+template<typename Left,typename Right >
+const auto get_spaces_ptr (const Addition<Expression<Left>,Expression<Right>>& mmm)
+{
+  return get_spaces_ptr(mmm.left());
+}
+
+template<typename Left,typename Right >
+const auto get_spaces_ptr (const Subtraction<Expression<Left>,Expression<Right>>& mmm)
+{
+  return get_spaces_ptr(mmm.left());
+}
+
+
+
+template<typename Type>
+const auto get_spaces_ptr (const UnaryPlus<Expression<Type>>& mmm)
+{
+  return get_spaces_ptr(mmm.derived());
+}
+
+template<typename Type>
+const auto get_spaces_ptr (const UnaryMinus<Expression<Type>>& mmm)
+{
+  return get_spaces_ptr(mmm.derived());
+}
+
+
+
+
+template<typename Left,typename Right>
+const auto get_spaces_ptr (const L2DotProductIntegral<Left,Right>& mmm)
+{
+  return get_spaces_ptr(mmm.left());
+}
+
 
 // template<typename MeshT, typename Left_,typename Right_,Integer QR>
 // class L2DotProductIntegral: 
@@ -1385,8 +1519,7 @@ L2Inner(const Expression<Left>& left,const Expression<Right>& right, const Integ
 
 
 
-
-
+ 
 
 
 template<typename Form_>
@@ -1395,7 +1528,7 @@ class GeneralForm
 
   public:
   using Form=Form_;
-
+  using TupleOfPairsNumbers=BubbleSortTupleOfPairsNumbers<typename TupleOfTestTrialPairsNumbers<Form>::type>;
 
   template<typename T,Integer N>
   class KindType;
