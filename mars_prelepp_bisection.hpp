@@ -300,21 +300,21 @@ private:
 
 	void compute_lepp(const Integer element_id){
 
-		Integer edge_num = Bisection<Mesh>::edge_select()->stable_select(Bisection<Mesh>::get_mesh(), element_id);
+		/*Integer edge_num = Bisection<Mesh>::edge_select()->stable_select(Bisection<Mesh>::get_mesh(), element_id);
 
 		Edge edge;
 		Bisection<Mesh>::get_mesh().elem(element_id).edge(edge_num, edge.nodes[0], edge.nodes[1]);
-		edge.fix_ordering();
+		edge.fix_ordering();*/
 
-		auto incidents = Bisection<Mesh>::edge_element_map().elements(edge);
+		auto incidents = Bisection<Mesh>::edge_element_map().elements(tree.edges[element_id]);
 
-		if (is_terminal(edge,  incidents)) {
+		if (is_terminal(tree.edges[element_id],  incidents)) {
 
 			for (const Integer element : incidents) {
 
 				if (Bisection<Mesh>::get_mesh().is_active(element)
 						&& Bisection<Mesh>::edge_select()->can_refine(Bisection<Mesh>::get_mesh(), element))
-					Bisection<Mesh>::bisect_element(element, edge);
+					Bisection<Mesh>::bisect_element(element, tree.edges[element_id]);
 			}
 		}
 	}
@@ -328,7 +328,18 @@ private:
 
 			if(Bisection<Mesh>::get_mesh().is_active(i) && Bisection<Mesh>::edge_select()->can_refine(Bisection<Mesh>::get_mesh(), i)){
 
-				if(edge != tree.edges[i]){
+				Edge new_edge;
+				const Integer edge_num =
+						Bisection<Mesh>::edge_select()->stable_select(
+								Bisection<Mesh>::get_mesh(), i);
+				//const Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), edge, i);
+				Bisection<Mesh>::get_mesh().elem(i).edge(edge_num,
+						new_edge.nodes[0], new_edge.nodes[1]);
+				new_edge.fix_ordering();
+
+
+			//	if(edge != tree.edges[i]){
+				if(edge != new_edge){
 					terminal= false;
 				}
 			}
