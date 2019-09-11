@@ -14,23 +14,30 @@ constexpr std::size_t arraySize(T (&)[N][M]) noexcept
 	return N;
 }
 
+#ifdef KOKKOS_ENABLE_OPENMP // for the case when cuda is used but for the host copy the openmp could still be used.
+	#define KokkosHostSpace Kokkos::OpenMP
+#else
+	// #ifdef KOKKOS_ENABLE_THREADS
+	// 	#define KokkosHostSpace Kokkos::Threads
+	// #else //KOKKOS_ENABLE_THREADS
+	#define KokkosHostSpace Kokkos::Serial
+	// #endif //KOKKOS_ENABLE_THREADS
+#endif
+
 #ifdef MARS_USE_CUDA
 	#define KokkosSpace Kokkos::CudaSpace
 	#define KokkosLayout Kokkos::LayoutLeft
 #else //MARS_USE_CUDA
 	#ifdef KOKKOS_ENABLE_OPENMP
-		#define KokkosHostSpace Kokkos::OpenMP
 		#define KokkosSpace Kokkos::OpenMP
 		#define KokkosLayout Kokkos::LayoutRight
 	#else //KOKKOS_ENABLE_OPENMP
 		// #ifdef KOKKOS_ENABLE_THREADS
-		// 	#define KokkosHostSpace Kokkos::Threads
 		// 	#define KokkosSpace Kokkos::Threads
 		// 	#define KokkosLayout Kokkos::LayoutRight
 		// #else //KOKKOS_ENABLE_THREADS
-			#define KokkosHostSpace Kokkos::Serial
-			#define KokkosSpace Kokkos::Serial
-			#define KokkosLayout Kokkos::LayoutRight
+		#define KokkosSpace Kokkos::Serial
+		#define KokkosLayout Kokkos::LayoutRight
 		// #endif //KOKKOS_ENABLE_THREADS
 	#endif //KOKKOS_ENABLE_OPENMP
 #endif //MARS_USE_CUDA
@@ -50,6 +57,9 @@ using ViewMatrixTextureC = Kokkos::View<T[XDim_][YDim_],KokkosLayout,KokkosSpace
 
 template<typename T>
 using ViewVectorTexture = Kokkos::View<T*,KokkosLayout,KokkosSpace,Kokkos::MemoryTraits<Kokkos::RandomAccess>>;
+
+template<typename T, Integer XDim_>
+using ViewVectorTypeC = Kokkos::View<T[XDim_],KokkosLayout,KokkosSpace>;
 
 template<typename T, Integer YDim_>
 struct IndexView {
