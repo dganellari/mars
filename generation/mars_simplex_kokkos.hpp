@@ -1,12 +1,10 @@
-#ifndef MARS_SIMPLEX_HPP
-#define MARS_SIMPLEX_HPP
+#ifndef MARS_SIMPLEX_KOKKOS_HPP
+#define MARS_SIMPLEX_KOKKOS_HPP
 
 #include "mars_base.hpp"
-#include "mars_vector.hpp"
 #include "mars_matrix.hpp"
-#include "mars_static_math.hpp"
 #include "mars_stream.hpp"
-#include "mars_imesh.hpp"
+#include "mars_imesh_kokkos.hpp"
 
 #include <array>
 #include <vector>
@@ -18,31 +16,29 @@
 #include <initializer_list>
 #include <algorithm>
 
-#include "mars_fwd.hpp"
+#include "mars_static_math_kokkos.hpp"
+#include "mars_SubView.hpp"
+#include "mars_utils_kokkos.hpp"
 
 namespace mars {
 
-
-    // template<Integer Dim, Integer ManifoldDim>
-    // class Simplex {};
-
-    template<Integer Dim, Integer ManifoldDim, class Implementation_>
-    class Simplex final : public IElem {
+    template<Integer Dim, Integer ManifoldDim>
+    class Simplex<Dim, ManifoldDim, KokkosImplementation> final : public ParallelIElem {
     public:
-        std::array<Integer, ManifoldDim+1> nodes;
-        std::array<Integer, ManifoldDim+1> side_tags;
+        Integer* nodes;
+        Integer* side_tags;
 
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
         Integer block = INVALID_INDEX;
 
-        std::vector<Integer> children;
+        Integer* children;
 
-        inline void get_nodes(std::vector<Integer> &nodes_copy) const override
+        /*inline void get_nodes(std::vector<Integer> &nodes_copy) const override
         {
             nodes_copy.resize(nodes.size());
             std::copy(std::begin(nodes), std::end(nodes), std::begin(nodes_copy));
-        }
+        }*/
 
         inline Integer get_block() const override
         {
@@ -55,8 +51,10 @@ namespace mars {
         }
 
 
-        inline Integer n_nodes() const override { return nodes.size(); }
-        inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
+        inline Integer n_nodes() const override { return ManifoldDim+1; }
+
+
+        inline Integer node(const Integer idx) const override { assert(idx < ManifoldDim+1); return nodes[idx]; }
 
         inline Integer type() const override {
             return ManifoldDim;
@@ -82,22 +80,23 @@ namespace mars {
             return ref_;
         }
 
-        void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
+        MARS_INLINE_FUNCTION
+        void edge(const Integer &edge_num, Integer &v1, Integer &v2, ViewVectorTypeC<Integer, 2> vs) const
         {
-            std::array<Integer, 2> vs;
-            Combinations<ManifoldDim+1, 2>::choose(edge_num, nodes, vs);
+        	Combinations<ManifoldDim+1, 2>::choose(edge_num, nodes, vs);
             v1 = vs[0];
             v2 = vs[1];
         }
-        
+
+        MARS_INLINE_FUNCTION
         void side(const Integer &side_num,
-                  Simplex<Dim, ManifoldDim-1> &side) const
+                  Simplex<Dim, ManifoldDim-1,KokkosImplementation> &side) const
         {
             Combinations<ManifoldDim+1, ManifoldDim>::choose(side_num, nodes, side.nodes);
         }
     };
 
-    template<Integer Dim, Integer ManifoldDim, class OutputStream>
+    /*template<Integer Dim, Integer ManifoldDim, class OutputStream>
     void write(
         const Simplex<Dim, ManifoldDim> &simplex,
         OutputStream &os)
@@ -621,37 +620,39 @@ namespace mars {
         }
 
     };
+    */
+
     
-    template<Integer ManifoldDim>
+    /*template<Integer ManifoldDim>
     class NSubSimplices {
     public:
         static const Integer value = Power<2, ManifoldDim>::value;
-    };
+    };*/
     
     template<Integer Dim, Integer ManifoldDim>
-    inline constexpr static Integer n_nodes(const Simplex<Dim, ManifoldDim> &)
+    inline constexpr static Integer n_nodes(const Simplex<Dim, ManifoldDim, KokkosImplementation> &)
     {
         return ManifoldDim + 1;
     }
     
     template<Integer Dim, Integer ManifoldDim>
-    inline constexpr static Integer n_sides(const Simplex<Dim, ManifoldDim> &)
+    inline constexpr static Integer n_sides(const Simplex<Dim, ManifoldDim, KokkosImplementation> &)
     {
         return ManifoldDim + 1;
     }
     
     template<Integer Dim, Integer ManifoldDim>
-    inline constexpr static Integer n_dims(const Simplex<Dim, ManifoldDim> &)
+    inline constexpr static Integer n_dims(const Simplex<Dim, ManifoldDim ,KokkosImplementation> &)
     {
         return Dim;
     }
 
     template<Integer Dim, Integer ManifoldDim>
-    inline constexpr static Integer n_edges(const Simplex<Dim, ManifoldDim> &)
+    inline constexpr static Integer n_edges(const Simplex<Dim, ManifoldDim ,KokkosImplementation> &)
     {
-        return Combinations<ManifoldDim + 1, 2>::value;
+        return Combinations<ManifoldDim + 1, 2,KokkosImplementation>::value;
     }
-
+/*
     template<Integer Dim, Integer ManifoldDim>
     inline bool has_node(const Simplex<Dim, ManifoldDim> &s, const Integer &node)
     {
@@ -1079,7 +1080,7 @@ namespace mars {
         for(auto &c : children) {
             c.parent_id = parent.id;
         }
-    }
+    }*/
 }
 
 #endif //MARS_SIMPLEX_HPP

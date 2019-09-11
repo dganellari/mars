@@ -3,16 +3,17 @@
 
 #include "mars_edge_select.hpp"
 #include "mars_node_rank.hpp"
+#include "mars_globals.hpp"
 
 namespace mars {
-	template<class Mesh>
+	template<class Mesh, class Implementation_>
 	class LongestEdgeSelect final : public EdgeSelect<Mesh> {
 	public:
 		LongestEdgeSelect(const bool recursive = true, const bool use_tollerance = true)
 		: recursive_(recursive), use_tollerance_(use_tollerance)
 		{}
 
-		Integer select(
+		MARS_INLINE_FUNCTION Integer select(
 			const Mesh &mesh,
 			const Integer element_id) const override
 		{
@@ -77,7 +78,7 @@ namespace mars {
 			return edge_num;
 		}
 
-		Integer stable_select(
+		MARS_INLINE_FUNCTION  Integer stable_select(
 					const Mesh &mesh,
 					const Integer element_id) const override
 		{
