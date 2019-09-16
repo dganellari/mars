@@ -3,6 +3,7 @@
 
 #include "mars_mesh.hpp"
 #include "mars_globals.hpp"
+#include "mars_device_vector.hpp"
 
 namespace mars {
 

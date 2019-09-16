@@ -25,42 +25,47 @@ namespace mars {
     template<Integer Dim, Integer ManifoldDim>
     class Simplex<Dim, ManifoldDim, KokkosImplementation> final : public ParallelIElem {
     public:
-        Integer* nodes;
-        Integer* side_tags;
+        SubView<Integer,ManifoldDim+1> nodes;
+        SubView<Integer,ManifoldDim+1> side_tags;
 
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
         Integer block = INVALID_INDEX;
 
-        Integer* children;
+        SubView<Integer,2> children; //TODO: templatize for the number of children based onthe select algorithm
 
+        MARS_INLINE_FUNCTION Simplex() {}
+
+        MARS_INLINE_FUNCTION Simplex(SubView<Integer,ManifoldDim+1> n) :	nodes(n)
+    	{
+    	}
         /*inline void get_nodes(std::vector<Integer> &nodes_copy) const override
         {
             nodes_copy.resize(nodes.size());
             std::copy(std::begin(nodes), std::end(nodes), std::begin(nodes_copy));
         }*/
 
-        inline Integer get_block() const override
+        MARS_INLINE_FUNCTION Integer get_block() const override
         {
             return block;
         }
 
-        inline void set_block(const Integer block_id) override
+        MARS_INLINE_FUNCTION void set_block(const Integer block_id) override
         {
             block = block_id;
         }
 
 
-        inline Integer n_nodes() const override { return ManifoldDim+1; }
+        MARS_INLINE_FUNCTION Integer n_nodes() const override { return ManifoldDim+1; }
 
 
-        inline Integer node(const Integer idx) const override { assert(idx < ManifoldDim+1); return nodes[idx]; }
+        MARS_INLINE_FUNCTION Integer node(const Integer idx) const override { assert(idx < ManifoldDim+1); return nodes[idx]; }
 
-        inline Integer type() const override {
+        MARS_INLINE_FUNCTION Integer type() const override {
             return ManifoldDim;
         }
         
-        inline static std::vector<Vector<Real, Dim>> &ref()
+        MARS_INLINE_FUNCTION static std::vector<Vector<Real, Dim>> &ref()
         {
             static const Integer N = ManifoldDim + 1;
 
@@ -81,9 +86,11 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        void edge(const Integer &edge_num, Integer &v1, Integer &v2, ViewVectorTypeC<Integer, 2> vs) const
+        void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
         {
-        	Combinations<ManifoldDim+1, 2>::choose(edge_num, nodes, vs);
+        	Integer vs[2];
+        	Combinations<ManifoldDim+1, 2, KokkosImplementation> k;
+        	k.choose(edge_num, nodes, vs);
             v1 = vs[0];
             v2 = vs[1];
         }
@@ -92,7 +99,7 @@ namespace mars {
         void side(const Integer &side_num,
                   Simplex<Dim, ManifoldDim-1,KokkosImplementation> &side) const
         {
-            Combinations<ManifoldDim+1, ManifoldDim>::choose(side_num, nodes, side.nodes);
+            Combinations<ManifoldDim+1, ManifoldDim, KokkosImplementation>::choose(side_num, nodes, side.nodes);
         }
     };
 
@@ -630,25 +637,25 @@ namespace mars {
     };*/
     
     template<Integer Dim, Integer ManifoldDim>
-    inline constexpr static Integer n_nodes(const Simplex<Dim, ManifoldDim, KokkosImplementation> &)
+    MARS_INLINE_FUNCTION constexpr static Integer n_nodes(const Simplex<Dim, ManifoldDim, KokkosImplementation> &)
     {
         return ManifoldDim + 1;
     }
     
     template<Integer Dim, Integer ManifoldDim>
-    inline constexpr static Integer n_sides(const Simplex<Dim, ManifoldDim, KokkosImplementation> &)
+    MARS_INLINE_FUNCTION constexpr static Integer n_sides(const Simplex<Dim, ManifoldDim, KokkosImplementation> &)
     {
         return ManifoldDim + 1;
     }
     
     template<Integer Dim, Integer ManifoldDim>
-    inline constexpr static Integer n_dims(const Simplex<Dim, ManifoldDim ,KokkosImplementation> &)
+    MARS_INLINE_FUNCTION constexpr static Integer n_dims(const Simplex<Dim, ManifoldDim ,KokkosImplementation> &)
     {
         return Dim;
     }
 
     template<Integer Dim, Integer ManifoldDim>
-    inline constexpr static Integer n_edges(const Simplex<Dim, ManifoldDim ,KokkosImplementation> &)
+    MARS_INLINE_FUNCTION constexpr static Integer n_edges(const Simplex<Dim, ManifoldDim ,KokkosImplementation> &)
     {
         return Combinations<ManifoldDim + 1, 2,KokkosImplementation>::value;
     }
