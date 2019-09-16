@@ -14,25 +14,30 @@ namespace mars {
 	public:
 		static const Integer NChooseK = Factorial<N>::value/(Factorial<K>::value * Factorial<N-K>::value);
 		
-		static void apply(ViewMatrixTextureC<Integer,NChooseK,K> combs)
+		static MARS_INLINE_FUNCTION void apply(Integer combs[NChooseK][K])
 		{
-			//std::array<Integer, K> data;
-			Integer comb_index = 0;
-//			apply(data, 0, 0, combs, comb_index);
-			apply(0, 0, combs, comb_index);
+			TempArray<Integer, K> data;
 
+			Integer comb_index = 0;
+			apply(data, 0, 0, combs, comb_index);
 		}
 
 	private:
-		static void apply(
-			//Integer* data, //call this with the shared memory view shared pointer
+		static MARS_INLINE_FUNCTION void apply(
+			TempArray<Integer, K>& data, //call this with the shared memory view shared pointer
 			const Integer index, 
 			const Integer i,
-			ViewMatrixTextureC<Integer,NChooseK,K> combs,
+			Integer combs[NChooseK][K],
 			Integer &comb_index)
 		{
 			if(index == K) {
-				//std::copy(std::begin(data), std::end(data), std::begin(combs(comb_index++)));
+
+				for(Integer j=0; j<K; ++j) {
+					combs[comb_index][j] = data[j];
+				}
+
+				++comb_index;
+				//std::copy(data, data+K, combs[comb_index++]);
 				return;
 			}
 
@@ -40,23 +45,61 @@ namespace mars {
 				return;
 			}
 
-			//data[index] = i;
-			combs(comb_index++)[index] = i;
+			data[index] = i;
 
-			apply(index+1, i+1, combs, comb_index);
+			apply(data, index+1, i+1, combs, comb_index);
 			
 			// current is excluded, replace it with next (Note that
 			// i+1 is passed, but index is not changed)
-			apply(index, i+1, combs, comb_index);
+			apply(data, index, i+1, combs, comb_index);
 		}
 	};
 
+
 	template<Integer N, Integer ChooseM>
+		class Combinations<N,ChooseM, KokkosImplementation> {
+
+		public:
+			static const Integer value = Factorial<N>::value/(Factorial<ChooseM>::value * Factorial<N-ChooseM>::value);
+			Integer combs[value][ChooseM];
+
+			MARS_INLINE_FUNCTION Combinations()
+			{
+				CombinationsAux<N, ChooseM, KokkosImplementation>::apply(combs);
+			}
+
+			template<typename T>
+			MARS_INLINE_FUNCTION void choose(const Integer k, const SubView<Integer,N>& in, T* out) {
+
+				assert(k < value);
+
+				const auto &comb = combs[k];
+
+				for(Integer i = 0; i < ChooseM; ++i) {
+				//	std::cout<<"N: "<< N<< "com: "<<comb[i]<<std::endl;
+					assert(comb[i] < N);
+					assert(comb[i] >= 0);
+
+					out[i] = in[comb[i]];
+				}
+			}
+
+/*
+		private:
+
+
+			MARS_INLINE_FUNCTION  static const Combinations* instance()
+			{
+				static const Combinations* instance_ = new Combinations();
+				return instance_;
+			}*/
+		};
+
+	/*template<Integer N, Integer ChooseM>
 	class Combinations<N,ChooseM, KokkosImplementation> {
 	public:
 		static const Integer value = Factorial<N>::value/(Factorial<ChooseM>::value * Factorial<N-ChooseM>::value);
-		/*std::array<std::array<Integer, ChooseM>, value> combs;*/
-		ViewMatrixTextureC<Integer,value,ChooseM> combs;
+		Integer combs[value][ChooseM];
 
 		static void print_all()
 		{
@@ -70,52 +113,56 @@ namespace mars {
 		}
 
 		template<typename T>
-		static void choose(const Integer k, const T* in, T* out) {
+		 MARS_INLINE_FUNCTION static void choose(const Integer k, const SubView<Integer,N>& in, T* out) {
 			assert(k < value);
-			const auto &comb = instance().combs(k);
+
+			const Combinations* a= instance();
+		//	Integer *comb = a.combs[k];
 
 			for (Integer i = 0; i < ChooseM; ++i) {
-				assert(comb(i) < N);
-				assert(comb(i) >= 0);
-
-				out(i) = in(comb(i));
+				assert(a->combs[k][i] < N);
+				assert(a->combs[k][i] >= 0);
+				out[i] = in[a->combs[k][i]];
+			//	std::cout<<"p: "<<comb[i]<<" - "<<in[comb[i]]<<std::endl;
 			}
+
+
 		}
 
-		/*static void generate(const Integer k, Integer comb[ChooseM])
+		static void generate(const Integer k, Integer comb[ChooseM])
 		{
 			std::copy(instance().combs[k].begin(), instance().combs[k].end(), comb);
-		}*/
+		}
 
 	private:
-		Combinations()
+		MARS_INLINE_FUNCTION Combinations()
 		{
-			CombinationsAux<N, ChooseM>::apply(combs);
+			CombinationsAux<N, ChooseM, KokkosImplementation>::apply(combs);
 		}
 
-		inline static const Combinations &instance()
+		MARS_INLINE_FUNCTION  static const Combinations* instance()
 		{	
-			static const Combinations instance_;
+			static const Combinations* instance_ = new Combinations();
 			return instance_;
 		}
-	};
+	};*/
 
-	template<Integer N>
+/*	template<Integer N>
 	class Combinations<N, 1,KokkosImplementation> {
 	public:
 		static const Integer value = N;
-		/*static void generate(const Integer k, Integer comb[1])
+		static void generate(const Integer k, Integer comb[1])
 		{
 			comb[0] = k;
-		}*/
+		}
 
 		template<typename T>
-		static void choose(const Integer k, const T* in, T* out) {
+		static MARS_INLINE_FUNCTION void choose(const Integer k, const T* in, T* out) {
 
 			assert(k < N);
 			out(0) = in(k);
 		}
-	};
+	};*/
 
 }
 

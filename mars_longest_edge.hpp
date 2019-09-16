@@ -3,7 +3,6 @@
 
 #include "mars_edge_select.hpp"
 #include "mars_node_rank.hpp"
-#include "mars_globals.hpp"
 
 namespace mars {
 	template<class Mesh, class Implementation_>
@@ -13,7 +12,7 @@ namespace mars {
 		: recursive_(recursive), use_tollerance_(use_tollerance)
 		{}
 
-		MARS_INLINE_FUNCTION Integer select(
+		 Integer select(
 			const Mesh &mesh,
 			const Integer element_id) const override
 		{
@@ -25,6 +24,8 @@ namespace mars {
 			for(Integer i = 0; i < n_edges(e); ++i) {
 				Integer v1, v2;
 				e.edge(i, v1, v2);
+
+				std::cout<<"OK:"<<v1<< " - "<<v2<<std::endl;
 
 				Real len_i = (mesh.point(v1) - mesh.point(v2)).squared_norm();
 
@@ -78,7 +79,7 @@ namespace mars {
 			return edge_num;
 		}
 
-		MARS_INLINE_FUNCTION  Integer stable_select(
+		  Integer stable_select(
 					const Mesh &mesh,
 					const Integer element_id) const override
 		{

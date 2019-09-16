@@ -51,7 +51,7 @@ public:
 		active_ = ViewVectorType<bool>("active_", n_elements);
 	}
 
-	inline Elem &elem(const Integer id) override
+	/*inline Elem &elem(const Integer id) override
 	{
 		assert(id >= 0);
 		assert(id < n_elements());
@@ -63,6 +63,22 @@ public:
 		assert(id >= 0);
 		assert(id < n_elements());
 		return simplices_(id);
+	}*/
+
+	inline Elem elem(const Integer id) //override
+	{
+		assert(id >= 0);
+		assert(id < n_elements());
+		Elem e = Elem(SubView<Integer,ManifoldDim+1>(elements_,id));
+		return e;
+	}
+
+	inline const Elem elem(const Integer id) const// override
+	{
+		assert(id >= 0);
+		assert(id < n_elements());
+		Elem e = Elem(SubView<Integer,ManifoldDim+1>(elements_,id));
+		return e;
 	}
 
 	inline bool is_active(const Integer id) const override
@@ -1211,7 +1227,6 @@ public:
 			//build the hex27 element which serves to generalize the idea to many hex27.
 			//without generating the hex27 element first there is no easy way to create the sides.
 			build_hex27(IndexView<Integer,hex_n_nodes>(hexes, cube_index), xDim, yDim, 2 * x, 2 * y, 2 * z);
-
 		}
 	};
 
@@ -1287,7 +1302,7 @@ private:
 	ViewMatrixType<Integer> side_tags_;
 	ViewMatrixType<Integer> children_;
 
-	ViewVectorType<Elem> simplices_;
+	//ViewVectorType<Elem> simplices_;
 
 	ViewVectorType<Integer> tags_;
 	DualGraph<ManifoldDim> dual_graph_;

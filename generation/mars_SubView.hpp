@@ -15,9 +15,9 @@ public:
 	ViewMatrixType<T> view;
 	Integer index;
 
-	SubView() {}
+	MARS_INLINE_FUNCTION SubView() {}
 
-	SubView(ViewMatrixType<T> v, Integer id) :	view(v), index(id)
+	MARS_INLINE_FUNCTION SubView(ViewMatrixType<T> v, Integer id) :	view(v), index(id)
 	{
 	}
 
@@ -98,25 +98,25 @@ public:
 		return ret;
 	}
 
-	inline T &operator()(const Integer i)
+	MARS_INLINE_FUNCTION T &operator()(const Integer i)
 	{
 		assert(i < Dim);
 		return this->view(this->index,i);
 	}
 
-	inline const T &operator()(const Integer i) const
+	MARS_INLINE_FUNCTION const T &operator()(const Integer i) const
 	{
 		assert(i < Dim);
 		return this->view(this->index,i);
 	}
 
-	inline T &operator[](const Integer i)
+	MARS_INLINE_FUNCTION T &operator[](const Integer i)
 	{
 		assert(i < Dim);
 		return this->view(this->index,i);
 	}
 
-	inline const T &operator[](const Integer i) const
+	MARS_INLINE_FUNCTION const T &operator[](const Integer i) const
 	{
 		assert(i < Dim);
 		return this->view(this->index,i);
@@ -138,7 +138,7 @@ public:
 		return os;
 	}
 
-	inline T squared_norm() const
+	MARS_INLINE_FUNCTION T squared_norm() const
 	{
 		T sqn = this->view(this->index,0) * this->view(this->index,0);
 		for(Integer i = 1; i < Dim; ++i)
@@ -149,12 +149,12 @@ public:
 		return sqn;
 	}
 
-	inline T norm() const
+	MARS_INLINE_FUNCTION T norm() const
 	{
 		return std::sqrt(squared_norm());
 	}
 
-	SubView &normalize() {
+	MARS_INLINE_FUNCTION SubView &normalize() {
 		T len = norm();
 
 		for(Integer i = 0; i < Dim; ++i) {
@@ -164,7 +164,7 @@ public:
 		return *this;
 	}
 
-	inline SubView &zero()
+	MARS_INLINE_FUNCTION SubView &zero()
 	{
 		for(Integer i = 0; i < Dim; ++i) {
 			this->view(this->index,i) = 0;
@@ -173,7 +173,7 @@ public:
 		return *this;
 	}
 
-	inline SubView &set(const T value)
+	MARS_INLINE_FUNCTION SubView &set(const T value)
 	{
 		for(Integer i = 0; i < Dim; ++i) {
 			this->view(this->index,i) = value;
@@ -181,10 +181,15 @@ public:
 
 		return *this;
 	}
+
+	MARS_INLINE_FUNCTION Integer size()
+	{
+		return Dim;
+	}
 };
 
 template<typename T, Integer Dim>
-inline T dot(const SubView<T, Dim> &left, const SubView<T, Dim> &right)
+MARS_INLINE_FUNCTION T dot(const SubView<T, Dim> &left, const SubView<T, Dim> &right)
 {
 	T ret = 0.;
 	for(Integer d = 0; d < Dim; ++d) {

@@ -13,18 +13,18 @@ namespace mars {
 
 	class ParallelIElem {
 	public:
-		virtual ~ParallelIElem() {}
+		virtual MARS_INLINE_FUNCTION ~ParallelIElem() {}
 		//virtual void get_nodes(std::vector<Integer> &nodes) const = 0;
-		virtual Integer n_nodes() const = 0;
-		virtual Integer node(const Integer idx) const = 0;
-        virtual Integer get_block() const = 0;
-        virtual void set_block(const Integer block_id) = 0;
+		virtual MARS_INLINE_FUNCTION Integer n_nodes() const = 0;
+		virtual MARS_INLINE_FUNCTION Integer node(const Integer idx) const = 0;
+        virtual MARS_INLINE_FUNCTION Integer get_block() const = 0;
+        virtual MARS_INLINE_FUNCTION void set_block(const Integer block_id) = 0;
 
 		//for the moment it just returns the simplex type (e.g. 2 for triangles)
-		virtual Integer type() const = 0;
+		virtual MARS_INLINE_FUNCTION Integer type() const = 0;
 	};
 
-	inline Integer n_nodes(const ParallelIElem &elem)
+	MARS_INLINE_FUNCTION Integer n_nodes(const ParallelIElem &elem)
 	{
 		return elem.n_nodes();
 	}
@@ -38,8 +38,8 @@ namespace mars {
 
 		virtual ~ParallelIMesh() {}
 		//virtual void points(const Integer id, std::vector<Point> &pts) const = 0;
-		virtual Elem &elem(const Integer id) = 0;
-		virtual const Elem &elem(const Integer id) const = 0;
+//		virtual Elem &elem(const Integer id) = 0;
+//		virtual const Elem &elem(const Integer id) const = 0;
 		virtual bool is_active(const Integer id) const = 0;
 		virtual Integer n_nodes() const = 0;
 		virtual Integer n_elements() const = 0;
@@ -50,6 +50,7 @@ namespace mars {
 		//virtual Integer add_elem(const IElem &elem) = 0;
 		//virtual Integer add_elem(const std::vector<Integer> &nodes, const int row) = 0;
 		// virtual const std::vector<Point> &points() const = 0;
+		//virtual ViewMatrixType<Integer> get_view_elems() const =0;
 
 		virtual Integer type() const = 0;
 		virtual void reserve(

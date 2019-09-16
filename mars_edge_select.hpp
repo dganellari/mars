@@ -5,6 +5,7 @@
 #include "mars_edge.hpp"
 #include "mars_edge_element_map.hpp"
 #include "mars_fwd.hpp"
+#include "mars_globals.hpp"
 
 #include <ostream>
 
