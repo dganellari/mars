@@ -41,7 +41,7 @@ class Jacobian<Simplex<Dim, ManifoldDim>>
 
 
 
-
+    // DOT OF DOTS BETWEEN FQPVALUES AND FQPVALUES (same type)
     template<Integer Dim>
     inline constexpr Real dotofdots(const Vector<Real, Dim> &left, const Vector<Real,Dim> &right)
     {
@@ -61,6 +61,7 @@ class Jacobian<Simplex<Dim, ManifoldDim>>
 
         return result;
     }
+
 
     template<Integer Dim, typename T>
     inline constexpr Real dotofdots(const Vector<T, Dim> &left, const Vector<T, Dim> &right)
@@ -87,48 +88,172 @@ class Jacobian<Simplex<Dim, ManifoldDim>>
         return result;
     }
 
+    // DOT OF DOTS BETWEEN QPVALUES AND FQPVALUES (T and Tensor<T>)
+    template<Integer Dim, typename T>
+    inline constexpr Real dotofdots(const T &left, const Vector<T, Dim> &right)
+    {
+        Real ret = dotofdots(left,right(0));
+        for(Integer d = 1; d < Dim; ++d) {
+            ret += dotofdots(left,right(d));
+        }
+
+        return ret;
+    }
+
+    template<Integer Dim, typename T>
+    inline constexpr Real dotofdots(const Vector<T, Dim> &left, const T &right)
+    {
+        Real ret = dotofdots(left(0),right);
+        for(Integer d = 1; d < Dim; ++d) {
+            ret += dotofdots(left(d),right);
+        }
+
+        return ret;
+    }
+
+    template<typename T, Integer Rows,Integer Cols>
+    inline constexpr Real dotofdots(const T &left, const Matrix<T,Rows,Cols> &right)
+    {
+        Real result = left*right(0,0);
+        
+        for(Integer col = 1; col < Cols; ++col) 
+            result += left*right(0,col);
+        for(Integer col = 0; col < Cols; ++col)
+           for(Integer row = 1; row < Rows; ++row)  
+            result += left*right(row,col);  
+
+        return result;
+    }
+
+    template<typename T, Integer Rows,Integer Cols>
+    inline constexpr Real dotofdots(const Matrix<T, Rows,Cols> &left, const T &right)
+    {
+        Real result = left(0,0)*right;
+        
+        for(Integer col = 1; col < Cols; ++col) 
+            result += left(0,col)*right;
+        for(Integer col = 0; col < Cols; ++col)
+           for(Integer row = 1; row < Rows; ++row)  
+            result += left(row,col)*right;  
+
+        return result;
+    }
+
+
+
 
 
 template<bool PositiveWeights,typename TestTrialSpaces,typename L2,typename Form>
-class LocalMatrix;
+class LocalTensor;
 
 
 
 template<typename TestTrialSpaces, typename Left,typename Right,Integer QR,typename Form>
-class LocalMatrix<false,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Form>
+class LocalTensor<false,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Form>
 // template<typename TestTrialSpaces, typename MeshT, typename Left,typename Right,Integer QR,typename Form>
-// class LocalMatrix<false,TestTrialSpaces,L2DotProductIntegral<MeshT,Left,Right,QR>,Form>
+// class LocalTensor<false,TestTrialSpaces,L2DotProductIntegral<MeshT,Left,Right,QR>,Form>
 {
     static_assert("negative weights not permitted");
 };
 
 
-
-
 // template<typename TestTrialSpaces, typename MeshT, typename Left,typename Right,Integer QR,typename Form>
-// class LocalMatrix<true,TestTrialSpaces,L2DotProductIntegral<MeshT,Left,Right,QR>,Form>
-template<typename TestTrialSpaces, typename Left,typename Right,Integer QR,typename Form>
-class LocalMatrix<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Form>
+// class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<MeshT,Left,Right,QR>,Form>
+template<typename TestTrialSpaces, typename Left,typename Right,Integer QR>
+class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Number<1>>
 {
  public:
- // using type= L2DotProductIntegral<MeshT,Left,Right,QR>;
  using type= L2DotProductIntegral<Left,Right,QR>;
  using QRule=typename type::QRule;
  using EvalLeft=Evaluation<Expression<Left>,QRule>;
  using EvalRight=Evaluation<Expression<Right>,QRule>;
- using subtype= OperatorType<type,ShapeFunctions2<Form>>;
+ using subtype= OperatorType<type,Number<1>>;
  
+ LocalTensor(){}
+
+ LocalTensor(const type& expr)
+ :
+ // eval_left_<QRule>(Eval(expr.left())),
+ // eval_right_<QRule>(Eval(expr.right()))
+ eval_left_(expr.left()),
+ eval_right_(expr.right())
+ {}
 
  template<typename Elem,typename ShapeFunctions>
- void apply(subtype& mat, const Jacobian<Elem>& J, const ShapeFunctions& shape_functions)
+ void apply(subtype& vec, const Jacobian<Elem>& J, const ShapeFunctions& shape_functions)
  {
+
   const auto& detJ=J.get_det();
+  // decltype(eval_left_) eee(6);
   eval_left_.apply(left_value_,shape_functions);
   eval_right_.apply(right_value_,shape_functions);
 
   // std::cout<<mat<<std::endl;
   // std::cout<<"left_value_"<<std::endl;
-  // // std::cout<<left_value_<<std::endl;
+  // std::cout<<left_value_<<std::endl;
+  // std::cout<<"right_value_"<<std::endl;
+  // std::cout<<right_value_<<std::endl;
+  for(Integer ii=0;ii<vec.size();ii++)
+    {   
+
+        // std::cout<<"(ii,jj)=("<<ii<<","<<jj<<")"<<std::endl;
+        // left value is trial, right value is test
+        vec[ii]=detJ*dotofdots(right_value_[ii],left_value_[ii]);
+    }
+    std::cout<<detJ<<std::endl;
+    std::cout<<"vec=="<<vec<<std::endl;
+
+ }
+
+  
+ private:
+ EvalLeft eval_left_;
+ EvalRight eval_right_;
+ OperatorType<Left,QRule> left_value_;
+ OperatorType<Right,QRule> right_value_;
+
+};
+
+
+
+
+
+
+
+// template<typename TestTrialSpaces, typename MeshT, typename Left,typename Right,Integer QR,typename Form>
+// class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<MeshT,Left,Right,QR>,Form>
+template<typename TestTrialSpaces, typename Left,typename Right,Integer QR>
+class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Number<2>>
+{
+ public:
+ using type= L2DotProductIntegral<Left,Right,QR>;
+ using QRule=typename type::QRule;
+ using EvalLeft=Evaluation<Expression<Left>,QRule>;
+ using EvalRight=Evaluation<Expression<Right>,QRule>;
+ using subtype= OperatorType<type,Number<2>>;
+ 
+ LocalTensor(){}
+
+ LocalTensor(const type& expr)
+ :
+ // eval_left_<QRule>(Eval(expr.left())),
+ // eval_right_<QRule>(Eval(expr.right()))
+ eval_left_(expr.left()),
+ eval_right_(expr.right())
+ {}
+
+ template<typename Elem,typename ShapeFunctions>
+ void apply(subtype& mat, const Jacobian<Elem>& J, const ShapeFunctions& shape_functions)
+ {
+
+  const auto& detJ=J.get_det();
+  // decltype(eval_left_) eee(6);
+  eval_left_.apply(left_value_,shape_functions);
+  eval_right_.apply(right_value_,shape_functions);
+
+  // std::cout<<mat<<std::endl;
+  // std::cout<<"left_value_"<<std::endl;
+  // std::cout<<left_value_<<std::endl;
   // std::cout<<"right_value_"<<std::endl;
   // std::cout<<right_value_<<std::endl;
   for(Integer ii=0;ii<mat.rows();ii++)
@@ -136,17 +261,12 @@ class LocalMatrix<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Form>
     {   
 
         // std::cout<<"(ii,jj)=("<<ii<<","<<jj<<")"<<std::endl;
-   
-
-
         // left value is trial, right value is test
         mat(ii,jj)=detJ*dotofdots(right_value_[ii],left_value_[jj]);
     }
-    // std::cout<<detJ<<std::endl;
-    // std::cout<<mat<<std::endl;
+    std::cout<<detJ<<std::endl;
+    std::cout<<"mat="<<mat<<std::endl;
 
-
-  mat=mat*detJ;
  }
 
   
@@ -163,39 +283,60 @@ class LocalMatrix<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Form>
 
 
 template<typename ...Ts>
-class ConstructL2Inner;
+class Constructor;
+
+template<typename T>
+class Constructor< UnaryPlus<Expression<T>> >  ;
+
+template<typename T>
+class Constructor< UnaryMinus<Expression<T>> >  ;
+
+template<typename Left,typename Right>
+class Constructor< Addition<Expression<Left>,Expression<Right>> >  ;
+
+template<typename Left,typename Right>
+class Constructor< Subtraction<Expression<Left>,Expression<Right>> >  ;
+
+template<typename Left,typename Right>
+class Constructor< Multiplication<Expression<Left>,Expression<Right>> >  ;
 
 
-// template<typename MeshT,typename Left1,typename Right1,Integer QR1>
-// class ConstructL2Inner<L2DotProductIntegral<MeshT,Left1,Right1,QR1>>
+
+
+template<typename T>
+class Constructor<T>
                                    
-// {
-// public:
-//    using T=L2DotProductIntegral<MeshT,Left1,Right1,QR1>;
+{
+public:
+   template<typename...Inputs>
+   static auto apply(const Inputs&...inputs)
+   {
+    return T(inputs...);
+    }
 
-//    static auto apply(const MeshT& mesh)
-//    {
-//     return L2Inner(mesh, typename T::Left(), typename T::Right());
-//     }
+};
 
-// };
+
+
+
 template<typename Left1,typename Right1,Integer QR1>
-class ConstructL2Inner<L2DotProductIntegral<Left1,Right1,QR1>>
+class Constructor<L2DotProductIntegral<Left1,Right1,QR1>>
                                    
 {
 public:
    using T=L2DotProductIntegral<Left1,Right1,QR1>;
 
-   static auto apply()
+   template<typename...Inputs>
+   static auto apply(const Inputs&...inputs)
    {
-    return L2Inner(typename T::Left(), typename T::Right());
+    return L2Inner(Constructor<typename T::Left>::apply(inputs...), Constructor<typename T::Right>::apply(inputs...));
     }
 
 };
 
 // template<typename MeshT,typename Left1,typename Right1,Integer QR1,
 //                         typename Left2,typename Right2,Integer QR2>
-// class ConstructL2Inner<Addition<Expression<L2DotProductIntegral<MeshT,Left1,Right1,QR1>>,
+// class Constructor<Addition<Expression<L2DotProductIntegral<MeshT,Left1,Right1,QR1>>,
 //                                 Expression<L2DotProductIntegral<MeshT,Left2,Right2,QR2>> > >
                                    
 // {
@@ -211,52 +352,137 @@ public:
 //     }
 
 // };
-template<typename Left1,typename Right1,Integer QR1,
-         typename Left2,typename Right2,Integer QR2>
-class ConstructL2Inner<Addition<Expression<L2DotProductIntegral<Left1,Right1,QR1>>,
-                                Expression<L2DotProductIntegral<Left2,Right2,QR2>> > >
+// template<typename Left1,typename Right1,Integer QR1,
+//          typename Left2,typename Right2,Integer QR2>
+// class Constructor<Addition<Expression<L2DotProductIntegral<Left1,Right1,QR1>>,
+//                                 Expression<L2DotProductIntegral<Left2,Right2,QR2>> > >
                                    
-{
-public:
-   using Left=L2DotProductIntegral<Left1,Right1,QR1>;
-   using Right=L2DotProductIntegral<Left2,Right2,QR2>;
+// {
+// public:
+//    using Left=L2DotProductIntegral<Left1,Right1,QR1>;
+//    using Right=L2DotProductIntegral<Left2,Right2,QR2>;
 
-   static auto apply()
-   {
-    auto e1=L2Inner(typename Left::Left(), typename Left::Right());
-    auto e2=L2Inner(typename Right::Left(), typename Right::Right());
-   return e1+e2;
-    }
+//    template<typename...Inputs>
+//    static auto apply(const Inputs&...inputs)
+//    {
+//     auto e1=L2Inner(Constructor<typename Left::Left>(inputs...), Constructor<typename Left::Right>(inputs...));
+//     auto e2=L2Inner(Constructor<typename Right::Left>(inputs...), Constructor<typename Right::Right>(inputs...));
+//    return e1+e2;
+//     }
 
-};
+// };
                          
 
 
 // template<typename Left,typename Right>
-// class ConstructL2Inner< Addition<Expression<Left>,Expression<Right>> >                             
+// class Constructor< Addition<Expression<Left>,Expression<Right>> >                             
 // {
 // public:
 //    template<typename MeshT>
 //    static auto apply(const MeshT& mesh)
 //    {
-//     auto e1=ConstructL2Inner<Left>::apply(mesh);
-//     auto e2=ConstructL2Inner<Right>::apply(mesh);
+//     auto e1=Constructor<Left>::apply(mesh);
+//     auto e2=Constructor<Right>::apply(mesh);
 //    return e1+e2;
 //     }
 
 // };
-template<typename Left,typename Right>
-class ConstructL2Inner< Addition<Expression<Left>,Expression<Right>> >                             
+
+template<typename Type>
+class Constructor< UnaryPlus<Expression<Type>> >                             
 {
 public:
-   static auto apply()
+   template<typename...Inputs>
+   static auto apply(const Inputs&...inputs)
    {
-    auto e1=ConstructL2Inner<Left>::apply();
-    auto e2=ConstructL2Inner<Right>::apply();
+    return Constructor<Type>::apply(inputs...);
+   }
+
+};
+
+template<typename Type>
+class Constructor< UnaryMinus<Expression<Type>> >                             
+{
+public:
+   template<typename...Inputs>
+   static auto apply(const Inputs&...inputs)
+   {
+    return Constructor<Type>::apply(inputs...);
+   }
+
+};
+
+template<typename Left,typename Right>
+class Constructor< Addition<Expression<Left>,Expression<Right>> >                             
+{
+public:
+   template<typename...Inputs>
+   static auto apply(const Inputs&...inputs)
+   {
+    auto e1=Constructor<Left>::apply(inputs...);
+    auto e2=Constructor<Right>::apply(inputs...);
    return e1+e2;
     }
 
 };
+
+template<typename Left,typename Right>
+class Constructor< Subtraction<Expression<Left>,Expression<Right>> >                             
+{
+public:
+   template<typename...Inputs>
+   static auto apply(const Inputs&...inputs)
+   {
+    auto e1=Constructor<Left>::apply(inputs...);
+    auto e2=Constructor<Right>::apply(inputs...);
+   return e1-e2;
+    }
+
+};
+
+template<typename Left,typename Right>
+class Constructor< Multiplication<Expression<Left>,Expression<Right>> >                             
+{
+public:
+   template<typename...Inputs>
+   static auto apply(const Inputs&...inputs)
+   {
+    auto e1=Constructor<Left>::apply(inputs...);
+    auto e2=Constructor<Right>::apply(inputs...);
+   return e1*e2;
+    }
+
+};
+
+
+// template<typename T>
+// constexpr auto Construct(const UnaryPlus<Expression<T>>& x )                             
+// {return Construct(x.derived());};
+
+// template<typename T>
+// constexpr auto Construct(const UnaryPlus<Expression<T>>& x )                             
+// {return Construct(x.derived());};
+
+// template<typename T>
+// constexpr auto Construct(const UnaryMinus<Expression<T>>& x )                             
+// {return -Construct(x.derived());};
+
+// template<typename Left,typename Right>
+// constexpr auto Construct(const Subtraction<Expression<Left>,Expression<Right>>& x )                             
+// {return Construct(x.left())-Construct(x.right());};
+
+// template<typename Left,typename Right>
+// constexpr auto Construct(const Addition<Expression<Left>,Expression<Right>>& x )                             
+// {return Construct(x.left())+Construct(x.right());};
+
+// template<typename Left,typename Right>
+// constexpr auto Construct(const Multiplication<Expression<Left>,Expression<Right>>& x )                             
+// {return Construct(x.left())*Construct(x.right());};
+
+
+
+
+
 
 
 template<typename Tuple,Integer Nmax,Integer N, typename ShapeFunctions>
@@ -290,7 +516,7 @@ using EvalOfL2InnersType=EvalOfL2InnersAux<Tuple,0,ShapeFunctions>;
 // {   
 //       using ens0=GetType<Tuple,N>;
 //       using ens=Evaluation<Expression<ens0>,ShapeFunctions>;
-//       return std::tuple<ens>(Eval(ConstructL2Inner<ens0>::apply(mesh),shape_functions));
+//       return std::tuple<ens>(Eval(Constructor<ens0>::apply(mesh),shape_functions));
 // }
 template<typename Tuple,Integer N,typename ShapeFunctions>
 constexpr std::enable_if_t<(N==TupleTypeSize<Tuple>::value-1), EvalOfL2InnersAux<Tuple,N,ShapeFunctions> > 
@@ -298,7 +524,7 @@ EvalOfL2InnersHelper(ShapeFunctions& shape_functions)
 {   
       using ens0=GetType<Tuple,N>;
       using ens=Evaluation<Expression<ens0>,ShapeFunctions>;
-      return std::tuple<ens>(Eval(ConstructL2Inner<ens0>::apply(),shape_functions));
+      return std::tuple<ens>(Eval(Constructor<ens0>::apply(),shape_functions));
 }
 // template<typename Tuple,Integer N,typename MeshT, typename ShapeFunctions>
 // constexpr std::enable_if_t< (N<TupleTypeSize<Tuple>::value-1), EvalOfL2InnersAux<Tuple,N,ShapeFunctions>>  
@@ -306,7 +532,7 @@ EvalOfL2InnersHelper(ShapeFunctions& shape_functions)
 // {
 //       using ens0=GetType<Tuple,N>;
 //       using ens=Evaluation<Expression<ens0>,ShapeFunctions>;
-//       return std::tuple_cat(std::tuple<ens>(Eval(ConstructL2Inner<ens0>::apply(mesh),shape_functions)),
+//       return std::tuple_cat(std::tuple<ens>(Eval(Constructor<ens0>::apply(mesh),shape_functions)),
 //                             EvalOfL2InnersHelper<Tuple,N+1>(mesh,shape_functions));
 // }
 
@@ -316,7 +542,7 @@ EvalOfL2InnersHelper(ShapeFunctions& shape_functions)
 {
       using ens0=GetType<Tuple,N>;
       using ens=Evaluation<Expression<ens0>,ShapeFunctions>;
-      return std::tuple_cat(std::tuple<ens>(Eval(ConstructL2Inner<ens0>::apply(),shape_functions)),
+      return std::tuple_cat(std::tuple<ens>(Eval(Constructor<ens0>::apply(),shape_functions)),
                             EvalOfL2InnersHelper<Tuple,N+1>(shape_functions));
 }
 
@@ -334,11 +560,46 @@ constexpr auto EvalOfL2Inners(ShapeFunctions& shape_functions)
 
 
 
+template<typename GeneralForm, Integer N >
+class LocalTupleOfTensors;
+
+template<typename GeneralForm >
+class LocalTupleOfTensors<GeneralForm,1>
+{
+public:
+    // using GeneralForm=typename EvaluationGeneralForm::type;
+    using TupleOfNumbers=typename GeneralForm::TupleOfPairsNumbers;
+    static constexpr auto Nelem_dofs_array=GeneralForm::FunctionSpace::Nelem_dofs_array;
+
+    template<Integer Nmax, Integer N>
+    class AuxHelper;
+
+    template<Integer Nmax>
+    class AuxHelper<Nmax,Nmax>
+    {
+        public:
+        using Numbers=GetType<TupleOfNumbers,Nmax>;
+        static constexpr Integer Dim=Nelem_dofs_array[GetType<Numbers>::value];
+        using type= std::tuple< Vector<Real,Dim> >;
+    };
+
+    template<Integer Nmax, Integer N>
+    class AuxHelper
+    {
+        public:
+        using Numbers=GetType<TupleOfNumbers,N>;
+        static constexpr Integer Dim=Nelem_dofs_array[GetType<Numbers>::value];
+        using type=TupleCatType< std::tuple< Vector<Real,Dim>>, typename AuxHelper<Nmax,N+1>::type >;
+    };
+
+    using type=typename AuxHelper<TupleTypeSize<TupleOfNumbers>::value-1,0>::type;
+    
+};
 
 
 
 template<typename GeneralForm >
-class LocalMatrices
+class LocalTupleOfTensors<GeneralForm,2>
 {
 public:
     // using GeneralForm=typename EvaluationGeneralForm::type;
@@ -373,22 +634,21 @@ public:
 };
 
 
-
-template<typename EvaluationGeneralForm,typename ShapeFunctions>
-class EvaluationOfL2Inners
+// Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions>
+template<typename Form,typename ShapeFunctions_>//,typename ShapeFunctions>
+class EvaluationOfL2Inners<Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions_>>
 {
 public: 
+    using EvaluationGeneralForm=Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions_>;
     using GeneralForm=typename EvaluationGeneralForm::type;
-    using LocalMatrices=typename LocalMatrices<GeneralForm>::type;    
+    using ShapeFunctions=typename EvaluationGeneralForm::ShapeFunctions;
+    using LocalTupleOfTensors=typename LocalTupleOfTensors<GeneralForm,GetType<typename GeneralForm::form>::value>::type;    
     using L2Products=typename EvaluationGeneralForm::L2Products;
     using EvalOfL2InnersType=EvalOfL2InnersAux<L2Products,0,ShapeFunctions>;
     
-    // template<typename MeshT>
-    // EvaluationOfL2Inners(const MeshT&mesh, ShapeFunctions& shapefunctions):
-    // eval_inners_(EvalOfL2Inners<L2Products>(mesh,shapefunctions))
-    // {}
 
-    EvaluationOfL2Inners(ShapeFunctions& shapefunctions):
+    EvaluationOfL2Inners(ShapeFunctions& shapefunctions)
+    :
     eval_inners_(EvalOfL2Inners<L2Products>(shapefunctions))
     {}
 
@@ -399,7 +659,6 @@ public:
      local_mat.zero();
      auto & eval_N=std::get<N>(eval_inners_);
      eval_N.apply(local_mat,J);
-     // std::cout<<local_mat<<std::endl;
     }   
 
  template<Integer Nmax,Integer N,typename Output,typename Jacobian>
@@ -420,7 +679,7 @@ public:
     {apply_aux<TupleTypeSize<L2Products>::value-1,0>(mat,J);}
 
 private:
-    LocalMatrices mat_tuple_;
+    LocalTupleOfTensors mat_tuple_;
     EvalOfL2InnersType eval_inners_;    
 };
 

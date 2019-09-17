@@ -1003,6 +1003,7 @@ class ShapeFunctionDependent
   using SingleType   = typename SingleTypeShapeFunction<FunctionSpace,Operator>::SingleType;
   using VectorSingleType   = Vector<SingleType,Ndofs>;
   using tot_type= typename SingleTypeShapeFunction<FunctionSpace,Operator>::TotType;
+  using qpvalues_type= QPValues<tot_type,NQPoints>;
   using type= FQPValues<tot_type,NQPoints,Ntot>;
   using Point = Vector<Real,Dim>;
   using QP = Matrix<Real,NQPoints,Dim>;

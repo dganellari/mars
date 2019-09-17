@@ -59,7 +59,7 @@ class MapFromReference5<IdentityOperator,Simplex<Dim,ManifoldDim>,RaviartThomasF
  // using Jacobian=Matrix<Real, Dim, ManifoldDim>;
      
          // inline void init(const Jacobian& J) {id_=J;id_/=det(id_);}
-         inline constexpr void init(const Jacobian<Simplex<Dim,ManifoldDim>> &J){id_=J();id_/=J.det();}
+         inline constexpr void init(const Jacobian<Simplex<Dim,ManifoldDim>> &J){id_=J();id_/=J.get_det();}
 
          inline constexpr const auto&  operator()()const {return id_;}
  private:
@@ -73,7 +73,7 @@ class MapFromReference5<DivergenceOperator,Simplex<Dim,ManifoldDim>,RaviartThoma
  using Operator=DivergenceOperator;
  using Elem=Simplex<Dim,ManifoldDim>;
  // using Jacobian=Matrix<Real, Dim, ManifoldDim>;   
-         inline constexpr void init(const Jacobian<Simplex<Dim,ManifoldDim>> &J){div_= J.det();}
+         inline constexpr void init(const Jacobian<Simplex<Dim,ManifoldDim>> &J){div_= J.get_det();}
          // inline void init(const Jacobian& J){div_= 1.0/det(J);}
          inline constexpr const auto&  operator()()const{return div_;}
  private:
@@ -210,17 +210,20 @@ class MapFromReference5<DivergenceOperator,Simplex<Dim,ManifoldDim>,RaviartThoma
 
 
 
-template<typename ConstGeneralFormReference>
+template<typename GeneralForm,typename...GeneralForms>
 class ReferenceMaps2
 {
 public:
-  using GeneralForm=typename std::remove_const<typename std::remove_reference<ConstGeneralFormReference>::type>::type;
-  using Form=typename GeneralForm::Form;
+  // using GeneralForm=typename std::remove_const<typename std::remove_reference<ConstGeneralFormReference>::type>::type;
+  // using Form=typename GeneralForm::Form;
   using FunctionSpace=typename GeneralForm::FunctionSpace;
+  using Form=MultipleAddition<typename GeneralForm::Form,typename GeneralForms::Form...>;
   using UniqueElementFunctionSpacesTupleType=typename FunctionSpace::UniqueElementFunctionSpacesTupleType;
   using TupleOperatorsAndQuadrature= typename OperatorTupleType<Form>::type;
   using TupleOfTupleNoQuadrature=TupleOfTupleRemoveQuadrature<TupleOperatorsAndQuadrature>;
-  using SpacesToUniqueFEFamilies=SpacesToUniqueFEFamilies<UniqueElementFunctionSpacesTupleType>;
+  // // using SpacesToUniqueFEFamilies=SpacesToUniqueFEFamilies<UniqueElementFunctionSpacesTupleType>;
+  using SpacesToUniqueFEFamilies=SpacesToUniqueFEFamilies2<UniqueElementFunctionSpacesTupleType>;
+
   using Map=MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,UniqueElementFunctionSpacesTupleType>;
   using UniqueMapping=UniqueMap<SpacesToUniqueFEFamilies,Map> ;
 
@@ -287,10 +290,15 @@ private:
 };
 
 
-template<typename ConstFormReference>
-constexpr auto reference_maps2(const ConstFormReference& form)
-{using Form=typename std::remove_const<typename std::remove_reference<ConstFormReference>::type>::type;
- return ReferenceMaps2<Form>();  }
+template<typename ConstFormReference,typename...ConstFormReferences>
+constexpr auto reference_maps2(const ConstFormReference& form,const ConstFormReferences&...forms)
+{
+ // using Form=typename std::remove_const<typename std::remove_reference<ConstFormReference>::type>::type;
+ return ReferenceMaps2<ConstFormReference,ConstFormReferences...>();
+ // typename std::remove_const<typename std::remove_reference<ConstFormReference>::type>::type,
+ //                       typename std::remove_const<typename std::remove_reference<ConstFormReferences>::type>::type...>();  
+
+}
 
 
 }

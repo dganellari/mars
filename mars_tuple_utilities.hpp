@@ -125,7 +125,7 @@ public:
   using type =std::tuple<>;
 };
 
-template <typename Tuple,Integer N, Integer...Ns>
+template <typename Tuple,Integer N=0, Integer...Ns>
 using GetType=typename GetTypeHelper<Tuple,N,Ns...>::type;
 
 
@@ -452,31 +452,9 @@ public:
 
 
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////// TypeToTupleElementPosition<T,Tuple>::value==position of T in Tuple. If not present, return the last element
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-// template <class T, class Tuple>
-// struct TypeToTupleElementPosition;
-
-// template <class T>
-// struct TypeToTupleElementPosition<T, std::tuple<>> {
-//     static const std::size_t value = 0;
-// };
-
-// template <class T, class... Types>
-// struct TypeToTupleElementPosition<T, std::tuple<T, Types...>> {
-//     static const std::size_t value = 0;
-// };
-
-// template <class T, class U, class... Types>
-// struct TypeToTupleElementPosition<T, std::tuple<U, Types...>> {
-//     static const std::size_t value = 1 + TypeToTupleElementPosition<T, std::tuple<Types...>>::value;
-// };
-
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//////// TypeToTupleElementPosition2<T,Tuple>::value==position of T in Tuple. If not present, return -1
+//////// TypeToTupleElementPosition<T,Tuple>::value==position of T in Tuple. If not present, return -1
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -896,6 +874,88 @@ using SpacesToUniqueFEFamilies=typename SpacesToUniqueFEFamiliesHelper<TupleOfSp
 
 
 
+
+
+
+
+
+
+
+
+
+template<typename TupleOfSpaces, Integer Nmax,Integer N>
+class UniqueFEFamiliesHelper2;
+
+template<typename TupleOfSpaces, Integer Nmax>
+class UniqueFEFamiliesHelper2<TupleOfSpaces,Nmax,Nmax>
+{
+ public:
+  using Space=GetType<TupleOfSpaces,Nmax>;
+  using type=std::tuple< Number<Space::FEFamily> >;
+};
+
+template<typename TupleOfSpaces, Integer Nmax,Integer N=0>
+class UniqueFEFamiliesHelper2
+{
+ public:
+  using Space=GetType<TupleOfSpaces,N>;
+  using single_type=std::tuple< Number<Space::FEFamily> >;
+  using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                             std::declval<typename UniqueFEFamiliesHelper2<TupleOfSpaces,Nmax,N+1>::type>()));
+};
+
+
+template<typename TupleOfSpaces>
+using UniqueFEFamilies2=RemoveTupleDuplicates<typename UniqueFEFamiliesHelper2<TupleOfSpaces,TupleTypeSize<TupleOfSpaces>::value-1,0>::type>;
+
+
+
+
+
+
+
+
+template<typename TupleOfSpaces,Integer Nmax,Integer N>
+class SpacesToUniqueFEFamiliesHelper2;
+
+template<typename TupleOfSpaces,Integer Nmax>
+class SpacesToUniqueFEFamiliesHelper2<TupleOfSpaces,Nmax,Nmax>
+{
+ public:
+  using TupleFEFamilies=UniqueFEFamilies2<TupleOfSpaces>;
+  using FamilyNumber=Number<GetType<TupleOfSpaces,Nmax>::FEFamily>;
+  using PositionNumber=Number<TypeToTupleElementPosition<FamilyNumber,TupleFEFamilies>::value>;
+  using type=std::tuple< PositionNumber >;
+};
+
+template<typename TupleOfSpaces,Integer Nmax,Integer N=0>
+class SpacesToUniqueFEFamiliesHelper2
+{
+ public:
+  using TupleFEFamilies=UniqueFEFamilies2<TupleOfSpaces>;
+  using FamilyNumber=Number<GetType<TupleOfSpaces,N>::FEFamily>;
+  using PositionNumber=Number<TypeToTupleElementPosition<FamilyNumber,TupleFEFamilies>::value>;
+  using single_type=std::tuple< PositionNumber  >;
+  using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                             std::declval<typename SpacesToUniqueFEFamiliesHelper2<TupleOfSpaces,Nmax,N+1>::type>()));
+};
+
+
+
+template<typename TupleOfSpaces>
+using SpacesToUniqueFEFamilies2=typename SpacesToUniqueFEFamiliesHelper2<TupleOfSpaces,TupleTypeSize<TupleOfSpaces>::value-1,0>::type;
+
+
+
+
+
+
+
+
+
+
+
+
 template<typename NumberTuple,typename Maps,Integer M, Integer Nmax,Integer N>
 class UniqueMapSingleSpaceHelper;
 
@@ -924,26 +984,26 @@ using UniqueMapSingleSpace=RemoveTupleDuplicates< typename UniqueMapSingleSpaceH
 
 
 
-template <typename Tuple,typename Type,Integer Nmax,Integer N>
-class HowMayTypesDifferentFromTypeHelper;
+// template <typename Tuple,typename Type,Integer Nmax,Integer N>
+// class HowMayTypesDifferentFromTypeHelper;
 
 
-template <typename Tuple,typename Type,Integer Nmax>
-class HowMayTypesDifferentFromTypeHelper<Tuple,Type,Nmax,Nmax>
-{
-public:
-  static constexpr Integer value=IsDifferent<Type,GetType<Tuple,Nmax>>::value;
-};
+// template <typename Tuple,typename Type,Integer Nmax>
+// class HowMayTypesDifferentFromTypeHelper<Tuple,Type,Nmax,Nmax>
+// {
+// public:
+//   static constexpr Integer value=IsDifferent<Type,GetType<Tuple,Nmax>>::value;
+// };
 
-template <typename Tuple,typename Type,Integer Nmax,Integer N>
-class HowMayTypesDifferentFromTypeHelper
-{
-public:
-  static constexpr Integer value=IsDifferent<Type,GetType<Tuple,N>>::value+HowMayTypesDifferentFromTypeHelper<Tuple,Type,Nmax,N+1>::value;
-};
+// template <typename Tuple,typename Type,Integer Nmax,Integer N>
+// class HowMayTypesDifferentFromTypeHelper
+// {
+// public:
+//   static constexpr Integer value=IsDifferent<Type,GetType<Tuple,N>>::value+HowMayTypesDifferentFromTypeHelper<Tuple,Type,Nmax,N+1>::value;
+// };
 
-template <typename Tuple,typename Type>
-static constexpr Integer HowMayTypesDifferentFromType=HowMayTypesDifferentFromTypeHelper<Tuple,Type,TupleTypeSize<Tuple>::value-1,0>::value;
+// template <typename Tuple,typename Type>
+// static constexpr Integer HowMayTypesDifferentFromType=HowMayTypesDifferentFromTypeHelper<Tuple,Type,TupleTypeSize<Tuple>::value-1,0>::value;
 
 
 
@@ -1025,7 +1085,8 @@ class MapOperatorTupleOfTupleHelper<TupleOfTuple,TupleSpaces, Nspaces, Nspaces>
 {
 public:
 using Tuple=GetType<TupleOfTuple,Nspaces>;
-static constexpr Integer FEFamily=GetType<GetType<TupleSpaces,Nspaces>,1>::FEFamily;
+// static constexpr Integer FEFamily=GetType<GetType<TupleSpaces,Nspaces>,1>::FEFamily;
+static constexpr Integer FEFamily=GetType<TupleSpaces,Nspaces>::FEFamily;
 static constexpr Integer Nmax=TupleTypeSize<Tuple>::value-1;
 using type=std::tuple< MapOperatorTuple< Tuple,FEFamily,Nmax> > ;
 };
@@ -1035,7 +1096,8 @@ class MapOperatorTupleOfTupleHelper
 {
 public:
 using Tuple=GetType<TupleOfTuple,N>;
-static constexpr Integer FEFamily=GetType<GetType<TupleSpaces,N>,1>::FEFamily;
+// static constexpr Integer FEFamily=GetType<GetType<TupleSpaces,N>,1>::FEFamily;
+static constexpr Integer FEFamily=GetType<TupleSpaces,N>::FEFamily;
 static constexpr Integer Nmax=TupleTypeSize<Tuple>::value-1;
 using single_type=std::tuple< MapOperatorTuple< Tuple, FEFamily, Nmax> > ;
 using type=decltype(std::tuple_cat(std::declval<single_type>(),
@@ -1124,6 +1186,130 @@ using type=decltype(std::tuple_cat(std::declval<single_type>(),
 
 template<typename TupleSpaces,typename TupleOperatorsAndQuadrature>
 using TupleOfTupleShapeFunctionType=typename TupleOfTupleShapeFunctionCreate<TupleSpaces,TupleOperatorsAndQuadrature,TupleTypeSize<TupleSpaces>::value-1,0>::type;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename Elem, typename BaseFunctioSpace, typename Tuple, Integer Nmax,Integer N>
+class TupleShapeFunctionCreate2;
+
+template<typename Elem, typename BaseFunctioSpace, typename Tuple, Integer Nmax>
+class TupleShapeFunctionCreate2<Elem,BaseFunctioSpace,Tuple,Nmax,Nmax>
+{
+ public:
+
+  using Nelem=GetType<Tuple,Nmax>;
+  using Operator=GetType<Nelem,0>;
+  using QuadratureRule=GetType<Nelem,1>;
+  using type=std::tuple< ShapeFunctionDependent<Elem, BaseFunctioSpace,Operator,QuadratureRule > >;
+};
+
+
+
+template<typename Elem, typename BaseFunctioSpace, typename Tuple, Integer Nmax,Integer N=0>
+class TupleShapeFunctionCreate2
+{
+ public:
+  using Nelem=GetType<Tuple,N>;
+  using Operator=GetType<Nelem,0>;
+  using QuadratureRule=GetType<Nelem,1>;
+  using single_type=std::tuple< ShapeFunctionDependent<Elem, BaseFunctioSpace,Operator,QuadratureRule > >;
+  using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                             std::declval<typename TupleShapeFunctionCreate2<Elem,BaseFunctioSpace,Tuple,Nmax,N+1>::type>()));
+};
+
+
+template<typename TupleSpaces, typename TupleOperatorsAndQuadrature, Integer Nmax,Integer N>
+class TupleOfTupleShapeFunctionCreate2;
+
+
+
+template<typename TupleSpaces,typename TupleOperatorsAndQuadrature, Integer Nspaces>
+class TupleOfTupleShapeFunctionCreate2<TupleSpaces,TupleOperatorsAndQuadrature, Nspaces, Nspaces>
+{
+public:
+using OperatorAndQuadrature=GetType<TupleOperatorsAndQuadrature,Nspaces>;
+static constexpr Integer Nmax=TupleTypeSize<OperatorAndQuadrature>::value-1;
+using Space=GetType<TupleSpaces,Nspaces>;
+using Elem=typename Space::Elem;
+using FunctionSpace=Elem2FunctionSpace<Space>;
+using type=std::tuple<typename TupleShapeFunctionCreate2< Elem,FunctionSpace, OperatorAndQuadrature,Nmax>::type>;
+};
+
+template<typename TupleSpaces,typename TupleOperatorsAndQuadrature, Integer Nspaces, Integer N=0>
+class TupleOfTupleShapeFunctionCreate2
+{
+public:
+using OperatorAndQuadrature=GetType<TupleOperatorsAndQuadrature,N>;
+static constexpr Integer Nmax=TupleTypeSize<OperatorAndQuadrature>::value-1;
+using Space=GetType<TupleSpaces,N>;
+using Elem=typename Space::Elem;
+using FunctionSpace=Elem2FunctionSpace<Space>;
+using single_type=std::tuple<typename TupleShapeFunctionCreate2< Elem,FunctionSpace, OperatorAndQuadrature,Nmax>::type>;
+using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                           std::declval<typename TupleOfTupleShapeFunctionCreate2<TupleSpaces,TupleOperatorsAndQuadrature,Nspaces,N+1>::type>()));
+};
+
+
+
+template<typename TupleSpaces,typename TupleOperatorsAndQuadrature>
+using TupleOfTupleShapeFunctionType2=typename TupleOfTupleShapeFunctionCreate2<TupleSpaces,TupleOperatorsAndQuadrature,TupleTypeSize<TupleSpaces>::value-1,0>::type;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1326,6 +1512,36 @@ using UniqueElementFEFamily=RemoveTupleDuplicates<typename UniqueElementFEFamily
 
 
 
+
+
+
+template<typename T,Integer Nmax,Integer N>
+class UniqueElementFEFamilyHelper2;
+
+template<typename T,Integer Nmax>
+class UniqueElementFEFamilyHelper2<T,Nmax,Nmax>
+{
+public:
+  using TN=GetType<T,Nmax>;
+  using type=std::tuple<std::tuple<typename TN::Elem,Number<TN::FEFamily>>>;
+};
+
+template<typename T,Integer Nmax,Integer N>
+class UniqueElementFEFamilyHelper2
+{
+ public:
+  using TN=GetType<T,N>;
+  using single_type=std::tuple<std::tuple<typename TN::Elem,Number<TN::FEFamily>>>;
+  using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                      std::declval<typename UniqueElementFEFamilyHelper2<T,Nmax,N+1>::type>()));
+};
+template<typename T>
+using UniqueElementFEFamily2=RemoveTupleDuplicates<typename UniqueElementFEFamilyHelper2<T,TupleTypeSize<T>::value-1,0>::type>;
+
+
+
+
+
 // template<typename TupleSpaces,typename TupleOperatorsAndQuadrature,typename UniqueMapping>
 // class MapTuple
 // {
@@ -1491,6 +1707,51 @@ class BubbleSortTupleOfPairsNumbersAuxHelper;
 template<typename ...Ts> 
 using BubbleSortTupleOfPairsNumbersAux=typename BubbleSortTupleOfPairsNumbersAuxHelper<Ts...>::type;
 
+// linear form
+
+template<Integer N>
+class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<std::tuple<Number<N>>> >
+{
+    public:
+    using type=std::tuple<std::tuple<Number<N>>>;
+};
+
+template<Integer M, Integer N>
+class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<Number<M>>, 
+                                             std::tuple<Number<N>> >
+{
+    public:
+    using T1=std::tuple<Number<M>>;
+    using T2=std::tuple<Number<N>>;
+    using type=typename std::conditional<(M<N),
+                                         std::tuple<T1,T2> ,
+                                         std::tuple<T2,T1>>::type;
+};
+
+template<Integer...Ns>
+class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<>,
+                                             std::tuple< std::tuple<Number<Ns>>...>>
+{
+    public:
+    using type=BubbleSortTupleOfPairsNumbersAux<std::tuple< std::tuple<Number<Ns>>...>>;
+};
+
+// template<Integer...Ns>
+// class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<>, 
+//                                              std::tuple<std::tuple<Number<Ns>>...> >
+// {
+//     public:
+//     using type=BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<Number<Ns>>...>;
+// };
+
+// template<Integer...Ns>
+// class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<std::tuple<Number<Ns>>...>,
+//                                              std::tuple<> >
+// {
+//     public:
+//     using type=BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<Number<Ns>>...>;
+// };
+
 template<Integer M1, Integer M2, Integer N1, Integer N2>
 class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<Number<M1>,Number<M2>>, 
                                           std::tuple<Number<N1>,Number<N2>> >
@@ -1540,7 +1801,6 @@ class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<Ss...>, std::tuple<S, T,
   using T1=TupleCatType<std::tuple<Ss...>,std::tuple<GetType<tmp_type,0>>>;
   using T2=TupleCatType<std::tuple<GetType<tmp_type,1>>, std::tuple<Ts...>>;
   using type=BubbleSortTupleOfPairsNumbersAux<T1,T2> ;
-  // static constexpr bool=
 };
 
 
@@ -1587,9 +1847,26 @@ template<typename Tuple, Integer Nmax, Integer N>
 class BubbleSortTupleOfPairsNumbersHelper
 {
  public:
-  using type=typename BubbleSortTupleOfPairsNumbersHelper<BubbleSortTupleOfPairsNumbersAux<Tuple>,Nmax,N+1>::type;
+  using type= typename BubbleSortTupleOfPairsNumbersHelper<BubbleSortTupleOfPairsNumbersAux<Tuple>,Nmax,N+1>::type;
 
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 //////////////////////////////////////////////////////////////////////////

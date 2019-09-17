@@ -104,8 +104,11 @@ template<typename Tuple,Integer Nmax>
 class ShapeFunctionGlobalCoefficientTupleTypeHelper<Tuple,Nmax,Nmax>
 {
 public:
-    using Elem=GetType<Tuple,Nmax,0>;
-    using BaseFunctionSpace=GetType<Tuple,Nmax,1>;
+    // using Elem=GetType<Tuple,Nmax,0>;
+    // using BaseFunctionSpace=GetType<Tuple,Nmax,1>;
+    using Space=GetType<Tuple,Nmax>;
+    using Elem=typename Space::Elem;
+    using BaseFunctionSpace=Elem2FunctionSpace<Space>;
     using type=std::tuple<typename ShapeFunctionCoefficientSingleType<Elem,BaseFunctionSpace::FEFamily>::type>;
 };
 
@@ -113,8 +116,11 @@ template<typename Tuple,Integer Nmax,Integer N>
 class ShapeFunctionGlobalCoefficientTupleTypeHelper
 {
 public:
-    using Elem=GetType<Tuple,N,0>;
-    using BaseFunctionSpace=GetType<Tuple,N,1>;
+    // using Elem=GetType<Tuple,N,0>;
+    // using BaseFunctionSpace=GetType<Tuple,N,1>;
+    using Space=GetType<Tuple,N>;
+    using Elem=typename Space::Elem;
+    using BaseFunctionSpace=Elem2FunctionSpace<Space>;
     using single_type=std::tuple<typename ShapeFunctionCoefficientSingleType<Elem,BaseFunctionSpace::FEFamily>::type>;
     using type=decltype(std::tuple_cat(std::declval<single_type>(),
       std::declval<typename ShapeFunctionGlobalCoefficientTupleTypeHelper<Tuple,Nmax,N+1>::type>()));
@@ -137,8 +143,11 @@ template<typename Tuple,Integer Nmax>
 class ShapeFunctionLocalCoefficientTupleTypeHelper<Tuple,Nmax,Nmax>
 {
 public:
-    using Elem=GetType<Tuple,Nmax,0>;
-    using BaseFunctionSpace=GetType<Tuple,Nmax,1>;
+    // using Elem=GetType<Tuple,Nmax,0>;
+    // using BaseFunctionSpace=GetType<Tuple,Nmax,1>;
+    using Space=GetType<Tuple,Nmax>;
+    using Elem=typename Space::Elem;
+    using BaseFunctionSpace=Elem2FunctionSpace<Space>;
     static constexpr Integer NComponents=BaseFunctionSpace::NComponents;
     static constexpr Integer Ntot=FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,BaseFunctionSpace>>::value;
     static constexpr Integer Ndofs=Ntot/NComponents;
@@ -149,8 +158,11 @@ template<typename Tuple,Integer Nmax,Integer N>
 class ShapeFunctionLocalCoefficientTupleTypeHelper
 {
 public:
-    using Elem=GetType<Tuple,N,0>;
-    using BaseFunctionSpace=GetType<Tuple,N,1>;
+    // using Elem=GetType<Tuple,N,0>;
+    // using BaseFunctionSpace=GetType<Tuple,N,1>;
+    using Space=GetType<Tuple,N>;
+    using Elem=typename Space::Elem;
+    using BaseFunctionSpace=Elem2FunctionSpace<Space>;
     static constexpr Integer NComponents=BaseFunctionSpace::NComponents;
     static constexpr Integer Ntot=FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,BaseFunctionSpace>>::value;
     static constexpr Integer Ndofs=Ntot/NComponents;
@@ -174,7 +186,7 @@ public:
   using FunctionSpace=typename Form::FunctionSpace;
   using UniqueElementFunctionSpacesTupleType=typename FunctionSpace::UniqueElementFunctionSpacesTupleType;  
   using SpacesToUniqueFEFamily=typename FunctionSpace::SpacesToUniqueFEFamily;
-  using GlobalTuple=ShapeFunctionGlobalCoefficientTupleType2<UniqueElementFEFamily<UniqueElementFunctionSpacesTupleType>>;
+  using GlobalTuple=ShapeFunctionGlobalCoefficientTupleType2<UniqueElementFEFamily2<UniqueElementFunctionSpacesTupleType>>;
   using LocalTuple=ShapeFunctionLocalCoefficientTupleType<UniqueElementFunctionSpacesTupleType>; 
   static constexpr Integer Nglobal=TupleTypeSize<GlobalTuple>::value-1;
   static constexpr Integer Nlocal=TupleTypeSize<LocalTuple>::value-1;
@@ -241,8 +253,10 @@ public:
   {
     constexpr Integer N=GetType<SpacesToUniqueFEFamily,M>::value;
     using FunctionSpace=GetType<UniqueElementFunctionSpacesTupleType,N>;
-    using Elem=GetType<FunctionSpace,0>;
-    using BaseFunctionSpace=GetType<FunctionSpace,1>;
+    // using Elem=GetType<FunctionSpace,0>;
+    // using BaseFunctionSpace=GetType<FunctionSpace,1>;
+    using Elem=typename FunctionSpace::Elem;
+    using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpace>;
     constexpr Integer FEFamily=BaseFunctionSpace::FEFamily;
     constexpr Integer Order=BaseFunctionSpace::Order;
     init_aux_aux<Elem,FEFamily,Order>(elem_id,tuple_get<N>(global_tuple_),tuple_get<M>(local_tuple_));

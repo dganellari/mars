@@ -137,16 +137,16 @@ public TensorBase<T, std::make_index_sequence<NQPoints>>
     using MB::MB;
     using MB::values;
     using type=  Vector<T,NQPoints>;
-    inline constexpr       type& operator()()      {return values;};
-    inline constexpr const type& operator()()const {return values;};
-    inline constexpr       type& value()      {return values;};
-    inline constexpr const type& value()const {return values;};
+    inline constexpr       type& operator()()      {return values_;};
+    inline constexpr const type& operator()()const {return values_;};
+    inline constexpr       type& value()      {return values_;};
+    inline constexpr const type& value()const {return values_;};
 
   // QPValues(){};
   // QPValues(const type& t):values_(t) {};
 
-// protected:
-//       type values_;
+protected:
+      type values_;
 };
 
 // FQPVALUES 
@@ -157,6 +157,7 @@ AlgebraicExpression<FQPValues<T,NQPoints,NComponents>,
 {
 public:
       using type= Vector<Vector<T,NQPoints>,NComponents>;
+      using subttype= Vector<T,NQPoints>;
       ~FQPValues() = default;
       constexpr FQPValues()= default;
       constexpr FQPValues(const type& v): values_(v){};

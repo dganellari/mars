@@ -10,6 +10,10 @@
 #include "mars_jacobian.hpp"
 
 
+
+
+#include "mars_function.hpp"
+
 namespace mars{
 
 
@@ -982,19 +986,9 @@ void assembly_example()
   constexpr Integer Npoints=Elem::Npoints;
   std::vector<Vector<Real,Dim>> points(Npoints);
 
- //  for(Integer ii=0;ii<Npoints;ii++)
- //   elem.nodes[ii]=ii;
-
- // points[0][0]=0;
- // points[0][1]=0;
- // points[1][0]=2;
- // points[1][1]=3;
- // points[2][0]=1;
- // points[2][1]=4;
- // jacobian(mesh.elem(0),points,J);
 
 
- using FSspace1= FunctionSpace< MeshT, Lagrange1<2>>;
+ using FSspace1= FunctionSpace< MeshT, Lagrange1<1>>;
  FSspace1 FEspace1(mesh);
  using FSspace2= FunctionSpace< MeshT, Lagrange2<2>>;
  FSspace2 FEspace2(mesh);
@@ -1004,166 +998,312 @@ void assembly_example()
  FSspace4 FEspace4(mesh);
  using FSspace5= FunctionSpace< MeshT, Lagrange1<2>>;
  FSspace5 FEspace5(mesh);
- using FSspace6= FunctionSpace< MeshT, Lagrange1<1>,Lagrange2<1>>;
+ using FSspace6= FunctionSpace< MeshT, Lagrange3<2>>;
  FSspace6 FEspace6(mesh);
-
- // auto W=MixedFunctionSpace(FEspace1,FEspace2);
- // auto W1=MixedFunctionSpace(W,FEspace2);
-
- // auto u =     MakeTrial<0>(W1);
- // auto sigma = MakeTrial<1>(W1);
- // auto p =     MakeTrial<2>(W1);
- // auto r =     MakeTrial<3>(W1);
- // auto rr1 =     MakeTrial<4>(W1);
- // auto rr2 =     MakeTrial<5>(W1);
- // auto rr3 =     MakeTrial<6>(W1);
-
- // auto v =   MakeTest<0>(W1);
- // auto tau = MakeTest<1>(W1);
- // auto q =   MakeTest<2>(W1);
- // auto s =   MakeTest<3>(W1);
- // auto ss1 =   MakeTest<4>(W1);
- // auto ss2 =   MakeTest<5>(W1);
- // auto ss3 =   MakeTest<6>(W1);
-
-// bilinear form
- 
- // L2Inner(mesh,2*Div(sigma)*0.5,Div(tau))+
- // L2Inner(mesh,+Grad(u),-Grad(v))
- // +
- // L2Inner(mesh,+u-Div(sigma),+Div(tau))+
- // L2Inner(mesh,rr1,q)+
- // L2Inner(mesh,r,s)+
- // L2Inner(mesh,Grad(rr1),tau)+
- // L2Inner(mesh,r,s);
- // typename OperatorTypeHelper<decltype(u)>::type ok1(1);
- // OperatorType<decltype(Div(sigma))> ok2(1);
- // auto l22=
- // L2Inner(mesh,+sigma,v)+
- // L2Inner(mesh,+u,s);
-
- //  auto a=W1.dofmap<0,0>();
- // int b=W1.n_dofs();
- // int c=W1.tot_n_dofs<0>();
- // int d=W1.tot_n_dofs<1>();
- // // std::cout<<"a=="<<a<<std::endl;
- // std::cout<<"b=="<<b<<std::endl;
- // std::cout<<"c=="<<c<<std::endl;
- //  std::cout<<"d=="<<c<<std::endl;
-  // std::cout<<W1.Nelem_dofs<<std::endl;
- // std::cout<<mat_loc<<std::endl;
-  // elem=mesh.elem(0);
-  // jacobian(mesh.elem(0),mesh.points(),J);
+ using FSspace7= FunctionSpace< MeshT, Lagrange1<1>,Lagrange2<2>,Lagrange3<3>,Lagrange1<2>,Lagrange2<2> >;
+ FSspace7 FEspace7(mesh);
+ using FSspace8= FunctionSpace< MeshT, RT0<1>,RT1<2>>;
+ FSspace8 FEspace8(mesh);
+ using FSspace9= FunctionSpace< MeshT, RT0<2> >;
+ FSspace9 FEspace9(mesh);
+ using FSspace10= FunctionSpace< MeshT, RT1<2>>;
+ FSspace10 FEspace10(mesh);
 
 
-  // auto shape_coefficients=shape_function_coefficients(l22);
-  // auto referencemaps=reference_maps(l22);
-  // auto shapefunctions=shape_functions(l22);
-  // shape_coefficients.init(mesh);
-  // shape_coefficients.init(0);
-  // referencemaps.init(J);
-  // shapefunctions.init_map(referencemaps);
-  // shapefunctions.init(shape_coefficients);
-  // shapefunctions.init(referencemaps,shape_coefficients);
+ auto W5=MixedFunctionSpace(MixedFunctionSpace(FEspace7,FEspace8),FEspace1);
+
+ using AuxFSspace1= FunctionSpace< MeshT, Lagrange2<1> >;
+ using AuxFSspace2= FunctionSpace< MeshT, Lagrange1<1> >;
+ using AuxFSspace3= FunctionSpace< MeshT, Lagrange1<1> >;
+ AuxFSspace1 AuxFEspace1(mesh);
+ AuxFSspace2 AuxFEspace2(mesh);
+ AuxFSspace3 AuxFEspace3(mesh);
 
 
-  // auto l22eval=Eval(l22,shapefunctions);
-  // l22eval.apply(mat_loc);
-
- auto W4=MixedFunctionSpace(MixedFunctionSpace(FEspace1,FEspace2),FEspace5);
- 
- decltype(FEspace2)::DofMapType errreer(6);
- std::cout<<"-------------"<<decltype(FEspace2)::Nelem_dofs_array<<std::endl;
- std::cout<<"-------------"<<decltype(W4)::Nelem_dofs_array<<std::endl;
-
- auto u7 = MakeTrial<0>(W4);
- auto u8 = MakeTrial<1>(W4);
- auto u9 = MakeTrial<2>(W4);
+ auto Wtrial=MixedFunctionSpace(FEspace1,FEspace3);
+ auto Waux=AuxFunctionSpacesBuild(AuxFEspace1,AuxFEspace2,AuxFEspace3);
+ auto W=FullSpaceBuild(Wtrial,Waux);
 
 
- auto v7 = MakeTest<0>(W4);
- auto v8 = MakeTest<1>(W4);
- auto v9 = MakeTest<2>(W4);
-std::cout<<"qui1"<<std::endl;
-  auto l9= 
-           L2Inner(u8,v7)+L2Inner(u7,v9)+L2Inner(u7,v7)+
-           L2Inner(Grad(u7),Grad(v7))+L2Inner(u8,v8)+L2Inner(u9,v9)
-           ;
-  
+ auto f1 = MakeFunction<0>(W);
+ auto f2 = MakeFunction<1>(W);
+ auto f3 = MakeFunction<2>(W);
+
+ auto u1 = MakeTrial<0>(W);
+ auto u2 = MakeTrial<1>(W);
+ auto u3 = MakeTrial<2>(W);
+
+ auto v1 = MakeTest<0>(W);
+ auto v2 = MakeTest<1>(W);
+ auto v3 = MakeTest<2>(W);
 
 
-  auto generalform=general_form(l9);
-  auto shape_coefficients_general=shape_function_coefficients(generalform);
-  auto referencemaps_general=reference_maps2(generalform);
-  auto shapefunctions_general=shape_functions2(generalform);
-  
   Jacobian<Elem> J(mesh);
-  shape_coefficients_general.init(mesh);
-
-
   J.init(0);
-  shape_coefficients_general.init(0);
-  referencemaps_general.init(J);
-  shapefunctions_general.init(referencemaps_general,shape_coefficients_general);
+
+  auto l6=  L2Inner(f1*Grad(u1),Grad(v1))+L2Inner(f2*Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
+  auto generalform6=general_form(l6);
+  auto shape_coefficients6=shape_function_coefficients(generalform6);
+  auto referencemaps6=reference_maps2(generalform6);
+  auto shapefunctions6=shape_functions2(generalform6);
+
+  shape_coefficients6.init(mesh);
+  referencemaps6.init(J);
+  shapefunctions6.init(referencemaps6,shape_coefficients6);
+  // auto eval_generalform6=Eval(generalform6,shapefunctions6);
+  // eval_generalform6.apply(J);
 
 
 
+  auto l7=  L2Inner(f3,v3);//+L2Inner(f2,v2);
+  auto generalform7=general_form(l7);
+  auto shape_coefficients7=shape_function_coefficients(generalform7);
+  auto referencemaps7=reference_maps2(generalform7);
+  auto shapefunctions7=shape_functions2(generalform7);
+  shape_coefficients7.init(mesh);
+  referencemaps7.init(J);
+  shapefunctions7.init(referencemaps7,shape_coefficients7);
 
-  std::cout<<"qui2"<<std::endl;
-  auto esc=get_spaces_ptr(L2Inner(Grad(u7),Grad(v7)));
-  // decltype(esc) eee5l(5);
-  // decltype(generalform)::FunctionSpace eem5(6);
+  // auto eval_generalform7=Eval(generalform7,shapefunctions7);
  
- // decltype(generalform)::L2Products ee34ee(5);
 
- std::cout<<"unweighted"<<std::endl;
- std::cout<<ShapeFunctionDependent<Elem,Lagrange1<1>,IdentityOperator,GaussPoints<Elem,QPOrder>>::reference_values<<std::endl;
- std::cout<<"weights"<<std::endl;
- std::cout<<GaussPoints<Elem,QPOrder>::qp_weights<<std::endl;
- std::cout<<"weighted"<<std::endl;
- std::cout<<ShapeFunctionDependent<Elem,Lagrange1<1>,IdentityOperator,GaussPoints<Elem,QPOrder>>::weighted_reference_values<<std::endl;
- // auto esm = Eval(L2Inner(mesh,u7,v7)+L2Inner(mesh,Grad(u7),Grad(v7)),shapefunctions_general);
- // auto mmm = Eval(L2Inner(mesh,(u7),(v7)),shapefunctions_general);
- Matrix<Real,3,3> mat_loc;
- // mmm.apply(mat_loc,J);
- std::cout<<"mat_loc="<<mat_loc<<std::endl;
+  auto gen=generalform6()+generalform7();
 
- auto eval_generalform=Eval(generalform,shapefunctions_general);
-
- eval_generalform.apply(J);
+auto referencemaps8=reference_maps2(generalform6,generalform7);  // decltype(gen) eeep5(6);
 
 
- // using l2mass=decltype(L2Inner(mesh,u9,v9)+L2Inner(mesh,u8,v8)+L2Inner(mesh,u7,v7)+L2Inner(mesh,Grad(u7),Grad(v7)));
- // // auto eshg=l2mass(mesh);
- // // auto as1=L2Inner(mesh,l2mass::Left::Left(), l2mass::Left::Right());
- // // auto as2=L2Inner(mesh,l2mass::Right::Left(),l2mass::Right::Right()) ;
- // // auto eshg2=as1+as2;
- // auto ecc=ConstructL2Inner<l2mass>::apply(mesh);
- // decltype(ecc) eekle(5);
- // GetType< decltype(eval_generalform)::L2Products,0> ee1(ConstructL2Inner< GetType< decltype(eval_generalform)::L2Products,0>>::apply(mesh));
- // GetType< decltype(eval_generalform)::L2Products,1> ee2(ConstructL2Inner< GetType< decltype(eval_generalform)::L2Products,1>>::apply(mesh));
- // GetType< decltype(eval_generalform)::L2Products,2> ee3(ConstructL2Inner< GetType< decltype(eval_generalform)::L2Products,2>>::apply(mesh));
 
- // decltype(ee1) sslkre1(5);
- // decltype(ee2) sslkre2(5);
- // decltype(ee3) sslkre3(5);
- // auto m1=Eval(ee1,shapefunctions_general);
- // auto m2=Eval(ee2,shapefunctions_general);
- // auto m3=Eval(ee3,shapefunctions_general);
- // OKKAux<decltype(eval_generalform)::L2Products,0,decltype(shapefunctions_general)> eee(6);
- using L2Products=decltype(eval_generalform)::L2Products;
- using ShapeFunctions=decltype(shapefunctions_general);
- // auto m4=EvalOfL2Inners<L2Products>(mesh,shapefunctions_general);
+  auto shape_coefficients77=shape_function_coefficients(generalform7);
+  auto referencemaps77=reference_maps2(generalform6,generalform7);
+  auto shapefunctions77=shape_functions2(generalform6,generalform7);
 
+  auto eval_generalform6=Eval(generalform6,shapefunctions77);
 
-// LocalMatrices<decltype(eval_generalform)>::type rrr(6);
-// decltype(eval_generalform)::TupleOfPairsNumbers ee5e(6);
-// std::cout<<abc<<std::endl;
-EvaluationOfL2Inners<decltype(eval_generalform),decltype(shapefunctions_general)> eee(shapefunctions_general);
+  using L2Products=decltype(eval_generalform6)::L2Products;
+  using ShapeFunctions=decltype(shapefunctions77);
+  // L2Products kokoi(6);
+  // ShapeFunctions rrr(6);
+  // Evaluation<Expression<GetType<L2Products>>,decltype(shapefunctions6)> rr(56);
+  // EvalOfL2InnersAux< L2Products,0,decltype(shapefunctions77)> ok(5);
+  // auto eval_generalform7=Eval(generalform7,shapefunctions77);
+  eval_generalform6.apply(J);
+  // eval_generalform7.apply(J);
+
+// decltype(referencemaps6)::UniqueMapping eeesa5(6);
+// decltype(referencemaps7)::UniqueMapping eees6a(6);
+// decltype(referencemaps8)::UniqueMapping eee7sa(6);
+  // decltype(generalform6)::UniqueElementFunctionSpacesTupleType ok0(4);
+  
 
 
-IdentityOperator token;
-eee.apply(token,J);
+
+    // using Left=decltype(f3);
+    // using Right=decltype(v3);
+    // using TestOrTrialLeft= IsTestOrTrial<Left>;
+    // using TestOrTrialRight= IsTestOrTrial<Right>;
+    // static constexpr Integer leftN=TestOrTrialLeft::number;
+    // static constexpr Integer rightN=TestOrTrialRight::number;
+    // static constexpr Integer TestOrTrialLeftValue =GetType<typename TestOrTrialLeft::type,0>::value;
+    // static constexpr Integer TestOrTrialRightValue =GetType<typename TestOrTrialRight::type,0>::value;
+
+    // using form= std::tuple<typename TypeOfForm<GetType<typename IsTestOrTrial<Left>::type,0>,
+    //                                            GetType<typename IsTestOrTrial<Right>::type,0>
+    //                         >::type >;
+    // using TestTrialNumbers=typename FormTestTrialNumbers<GetType<form,0>::value,TestOrTrialLeftValue,TestOrTrialRightValue,leftN,rightN>::type;
+    
+    //  Number<GetType<form,0>::value> e3ee(6);
+    // TestTrialNumbers eee(6);
+
+
+  // decltype(L2Inner(f3,v3))::TestTrialNumbers eeee(6);
+  // auto seee=L2Inner(f3,v3);
+
+
+// Evaluation<Expression<decltype(f3*u3)>,GaussPoints<Simplex<2,2>,5>>::subtype okk(6); 
+
+
+//////////////////// HERE
+
+
+
+//  auto W4=MixedFunctionSpace(MixedFunctionSpace(FEspace1,FEspace2),FEspace5);
+ 
+//  auto u7 = MakeTrial<0>(W4);
+//  auto u8 = MakeTrial<1>(W4);
+//  auto u9 = MakeTrial<2>(W4);
+
+
+//  auto v7 = MakeTest<0>(W4);
+//  auto v8 = MakeTest<1>(W4);
+//  auto v9 = MakeTest<2>(W4);
+
+
+//  Function1 func_init;
+//  auto func1=Function<Function1,FSspace1>();
+//  auto func2=Function<Function1,FSspace6>();
+//  auto func3=Function<Function1,FSspace9>();
+//  auto func4=Function<Function1,FSspace10>();
+
+
+//   auto l8=  L2Inner(func1*u7,v7)+L2Inner(func2*u8,v8)+L2Inner(func3*u9,func4*v9);
+
+//   auto generalform8=general_form(l8);
+//   auto shape_coefficients8=shape_function_coefficients(generalform8);
+//   // auto referencemaps8=reference_maps2(generalform8);
+//   // auto shapefunctions8=shape_functions2(generalform8);
+
+// auto dedee=generalform8();
+// // decltype(dedee) oko(6);
+
+
+// using unique=decltype(W5)::UniqueElementFunctionSpacesTupleType;
+
+
+// using prova1=Gabriele1<decltype(l8),unique,TupleTypeSize<unique>::value-1>;
+// using tipo1=typename prova1::type;
+
+// auto ecc=Constructor<tipo1>::apply();
+
+
+// // unique emskl(6);
+// // UniqueElementFunctionSpacesTupleTypeUpdate<decltype(l8),unique>::UniqueElementFunctionSpacesTupleType osk(5);
+// // tipo1 ok(2);
+// // decltype(ecc) ok1          ke90(6);
+// // auto esm=Constructor<decltype(L2Inner(Function<Function1,FSspace10,41>()*u7,func2*v7)) >::apply();
+// // decltype(esm) esm2(4);
+
+// // auto eeee=Function<Function1,FSspace10,41>();
+// // unique ok00(6);
+// // prova1::UniqueElementFunctionSpacesTupleType ok0(0);
+// // decltype(ecc)  ok1(1);
+
+// // std::cout<<ok.left().left().left()::eval(Vector<Real,2>{1,2})<<std::endl;
+// // std::cout<<decltype(generalform8)::Form::Left::Left::Left::value<<std::endl;
+// // std::cout<<decltype(generalform8)::Form::Left::Left::Right::value<<std::endl;
+// // std::cout<<decltype(generalform8)::Form::Left::Right::Left::value<<std::endl;
+// // std::cout<<decltype(generalform8)::Form::Left::Right::Right::value<<std::endl;
+// // std::cout<<decltype(generalform8)::Form::Right::Left::Left::value<<std::endl;
+// // std::cout<<decltype(generalform8)::Form::Right::Left::Right::value<<std::endl;
+// // std::cout<<decltype(generalform8)::Form::Right::Right::Left::value<<std::endl;
+// // std::cout<<decltype(generalform8)::Form::Right::Right::Right::value<<std::endl;
+
+
+// // Number<QuadratureOrder<decltype(func1)>::value> ok6(0);
+// // unique ok0(0);
+// // gabtype::Left ok1(5);
+// // gabtype::Right::Left ok2(5);
+// // gabtype::Right::Right ok3(5);
+// // Gab1::Tuple ok4(5);
+// // Gab1::N ok3(5);
+// //   std::cout<<"l8::Order="<<l8.Order<<std::endl;
+
+//   // decltype(W5)::UniqueElementFunctionSpacesTupleType  ejkhd1(6);
+//   // decltype(W5)::SpacesToUniqueFEFamily  ejkhd2(6);
+//   // decltype(W5)::FromElementFunctionSpacesToUniqueNumbersTupleType ejkhd3(6);
+
+//   // decltype(W5)::UniqueElementFunctionSpacesTupleType2  ejkhd4(6);
+//   // decltype(W5)::SpacesToUniqueFEFamily2  ejkhd5(6);
+//   // decltype(W5)::FromElementFunctionSpacesToUniqueNumbersTupleType2 ejkhd6(6);
+//   auto l9= 
+//            L2Inner(u8,v7)+L2Inner(u7,v9)+L2Inner(u7,v7)+
+//            L2Inner(Grad(u7),Grad(v7))+L2Inner(u8,v8)+L2Inner(u9,v9)
+//            ;
+
+
+//   // decltype(generalform8)::TupleFunctionSpace a1(4);
+//   // decltype(generalform8)::FunctionSpace a2(4);
+//   // decltype(generalform8)::UniqueElementFunctionSpacesTupleType a3(4);
+
+
+//   auto generalform=general_form(l9);
+//   auto shape_coefficients_general=shape_function_coefficients(generalform);
+//   auto referencemaps_general=reference_maps2(generalform);
+//   auto shapefunctions_general=shape_functions2(generalform);
+  
+//   Jacobian<Elem> J(mesh);
+//   shape_coefficients_general.init(mesh);
+
+
+//   J.init(0);
+//   shape_coefficients_general.init(0);
+//   referencemaps_general.init(J);
+//   shapefunctions_general.init(referencemaps_general,shape_coefficients_general);
+
+
+
+
+//   std::cout<<"qui2"<<std::endl;
+//   auto esc=get_spaces_ptr(L2Inner(Grad(u7),Grad(v7)));
+
+//  std::cout<<"unweighted"<<std::endl;
+//  std::cout<<ShapeFunctionDependent<Elem,Lagrange1<1>,IdentityOperator,GaussPoints<Elem,QPOrder>>::reference_values<<std::endl;
+//  std::cout<<"weights"<<std::endl;
+//  std::cout<<GaussPoints<Elem,QPOrder>::qp_weights<<std::endl;
+//  std::cout<<"weighted"<<std::endl;
+//  std::cout<<ShapeFunctionDependent<Elem,Lagrange1<1>,IdentityOperator,GaussPoints<Elem,QPOrder>>::weighted_reference_values<<std::endl;
+//  // auto esm = Eval(L2Inner(mesh,u7,v7)+L2Inner(mesh,Grad(u7),Grad(v7)),shapefunctions_general);
+//  // auto mmm = Eval(L2Inner(mesh,(u7),(v7)),shapefunctions_general);
+//  Matrix<Real,3,3> mat_loc;
+//  // mmm.apply(mat_loc,J);
+//  std::cout<<"mat_loc="<<mat_loc<<std::endl;
+
+//  auto eval_generalform=Eval(generalform,shapefunctions_general);
+
+//  eval_generalform.apply(J);
+//////////////////// HERE
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//  // using l2mass=decltype(L2Inner(mesh,u9,v9)+L2Inner(mesh,u8,v8)+L2Inner(mesh,u7,v7)+L2Inner(mesh,Grad(u7),Grad(v7)));
+//  // // auto eshg=l2mass(mesh);
+//  // // auto as1=L2Inner(mesh,l2mass::Left::Left(), l2mass::Left::Right());
+//  // // auto as2=L2Inner(mesh,l2mass::Right::Left(),l2mass::Right::Right()) ;
+//  // // auto eshg2=as1+as2;
+//  // auto ecc=Constructor<l2mass>::apply(mesh);
+//  // decltype(ecc) eekle(5);
+//  // GetType< decltype(eval_generalform)::L2Products,0> ee1(Constructor< GetType< decltype(eval_generalform)::L2Products,0>>::apply(mesh));
+//  // GetType< decltype(eval_generalform)::L2Products,1> ee2(Constructor< GetType< decltype(eval_generalform)::L2Products,1>>::apply(mesh));
+//  // GetType< decltype(eval_generalform)::L2Products,2> ee3(Constructor< GetType< decltype(eval_generalform)::L2Products,2>>::apply(mesh));
+
+//  // decltype(ee1) sslkre1(5);
+//  // decltype(ee2) sslkre2(5);
+//  // decltype(ee3) sslkre3(5);
+//  // auto m1=Eval(ee1,shapefunctions_general);
+//  // auto m2=Eval(ee2,shapefunctions_general);
+//  // auto m3=Eval(ee3,shapefunctions_general);
+//  // OKKAux<decltype(eval_generalform)::L2Products,0,decltype(shapefunctions_general)> eee(6);
+//  using L2Products=decltype(eval_generalform)::L2Products;
+//  using ShapeFunctions=decltype(shapefunctions_general);
+//  // auto m4=EvalOfL2Inners<L2Products>(mesh,shapefunctions_general);
+
+
+// // LocalMatrices<decltype(eval_generalform)>::type rrr(6);
+// // decltype(eval_generalform)::TupleOfPairsNumbers ee5e(6);
+// // std::cout<<abc<<std::endl;
+// EvaluationOfL2Inners<decltype(eval_generalform),decltype(shapefunctions_general)> eee(shapefunctions_general);
+
+
+// IdentityOperator token;
+// eee.apply(token,J);
 // EvalOfL2InnersAux<L2Products,0,ShapeFunctions> ee(5);
 
 
@@ -1354,7 +1494,7 @@ for(Integer ii=0;ii<Constant;ii++)
 clock_t end = clock();
 double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
 
-std::cout<<"mat==="<<mat3<<std::endl;
+// std::cout<<"mat==="<<mat3<<std::endl;
 
 std::cout<<" elapsed_secs------------>"<<elapsed_secs<<std::endl;
 

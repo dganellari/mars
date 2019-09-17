@@ -82,6 +82,7 @@ list(APPEND MARS_HEADERS
 	mars_examples.hpp
 	mars_elementfunctionspace.hpp
 	mars_fqpexpressions.hpp
+	mars_function.hpp
 	mars_functionspace.hpp
 	mars_functionspace_dofmap.hpp
 	mars_imesh.hpp
