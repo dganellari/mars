@@ -1120,7 +1120,7 @@ using MapOperatorTupleOfTuple=typename MapOperatorTupleOfTupleHelper<TupleOfTupl
 
 
 template<typename Elem, typename BaseFunctioSpace, typename Operator, typename QuadratureRule>
-class ShapeFunctionDependent;
+class ShapeFunction;
 
 template<typename Elem, typename BaseFunctioSpace, typename Tuple, Integer Nmax,Integer N>
 class TupleShapeFunctionCreate;
@@ -1133,7 +1133,7 @@ class TupleShapeFunctionCreate<Elem,BaseFunctioSpace,Tuple,Nmax,Nmax>
   using Nelem=GetType<Tuple,Nmax>;
   using Operator=GetType<Nelem,0>;
   using QuadratureRule=GetType<Nelem,1>;
-  using type=std::tuple< ShapeFunctionDependent<Elem, BaseFunctioSpace,Operator,QuadratureRule > >;
+  using type=std::tuple< ShapeFunction<Elem, BaseFunctioSpace,Operator,QuadratureRule > >;
 };
 
 
@@ -1145,7 +1145,7 @@ class TupleShapeFunctionCreate
   using Nelem=GetType<Tuple,N>;
   using Operator=GetType<Nelem,0>;
   using QuadratureRule=GetType<Nelem,1>;
-  using single_type=std::tuple< ShapeFunctionDependent<Elem, BaseFunctioSpace,Operator,QuadratureRule > >;
+  using single_type=std::tuple< ShapeFunction<Elem, BaseFunctioSpace,Operator,QuadratureRule > >;
   using type=decltype(std::tuple_cat(std::declval<single_type>(),
                              std::declval<typename TupleShapeFunctionCreate<Elem,BaseFunctioSpace,Tuple,Nmax,N+1>::type>()));
 };
@@ -1221,7 +1221,7 @@ class TupleShapeFunctionCreate2<Elem,BaseFunctioSpace,Tuple,Nmax,Nmax>
   using Nelem=GetType<Tuple,Nmax>;
   using Operator=GetType<Nelem,0>;
   using QuadratureRule=GetType<Nelem,1>;
-  using type=std::tuple< ShapeFunctionDependent<Elem, BaseFunctioSpace,Operator,QuadratureRule > >;
+  using type=std::tuple< ShapeFunction<Elem, BaseFunctioSpace,Operator,QuadratureRule > >;
 };
 
 
@@ -1233,7 +1233,7 @@ class TupleShapeFunctionCreate2
   using Nelem=GetType<Tuple,N>;
   using Operator=GetType<Nelem,0>;
   using QuadratureRule=GetType<Nelem,1>;
-  using single_type=std::tuple< ShapeFunctionDependent<Elem, BaseFunctioSpace,Operator,QuadratureRule > >;
+  using single_type=std::tuple< ShapeFunction<Elem, BaseFunctioSpace,Operator,QuadratureRule > >;
   using type=decltype(std::tuple_cat(std::declval<single_type>(),
                              std::declval<typename TupleShapeFunctionCreate2<Elem,BaseFunctioSpace,Tuple,Nmax,N+1>::type>()));
 };

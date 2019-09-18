@@ -74,6 +74,17 @@ class Jacobian<Simplex<Dim, ManifoldDim>>
         return ret;
     }
 
+    template<Integer Dim, typename T>
+    inline constexpr Real dotofdots(const QPValues<T, Dim> &left, const Vector<T, Dim> &right)
+    {
+        Real ret = dotofdots(left[0],right[0]);
+        for(Integer d = 1; d < Dim; ++d) {
+            ret += dotofdots(left[d],right[d]);
+        }
+
+        return ret;
+    }
+
     template<typename T, Integer Rows,Integer Cols>
     inline constexpr Real dotofdots(const Matrix<T, Rows,Cols> &left, const Matrix<T,Rows,Cols> &right)
     {
@@ -179,28 +190,60 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
  eval_right_(expr.right())
  {}
 
- template<typename Elem,typename ShapeFunctions>
- void apply(subtype& vec, const Jacobian<Elem>& J, const ShapeFunctions& shape_functions)
+
+ template<typename Elem, typename T,Integer NQPoints, Integer NComponents>
+ void apply_aux(subtype& vec, const Jacobian<Elem>& J, 
+               const FQPValues<T,NQPoints,NComponents> & fqp_values,
+               const  QPValues<T,NQPoints> & qp_values)
  {
-
   const auto& detJ=J.get_det();
-  // decltype(eval_left_) eee(6);
-  eval_left_.apply(left_value_,shape_functions);
-  eval_right_.apply(right_value_,shape_functions);
-
-  // std::cout<<mat<<std::endl;
-  // std::cout<<"left_value_"<<std::endl;
-  // std::cout<<left_value_<<std::endl;
-  // std::cout<<"right_value_"<<std::endl;
-  // std::cout<<right_value_<<std::endl;
   for(Integer ii=0;ii<vec.size();ii++)
     {   
 
         // std::cout<<"(ii,jj)=("<<ii<<","<<jj<<")"<<std::endl;
         // left value is trial, right value is test
-        vec[ii]=detJ*dotofdots(right_value_[ii],left_value_[ii]);
+      // std::cout<<ii<<std::endl;
+      // std::cout<<"left="<<left_value_.size()<<std::endl;
+      // std::cout<<"right="<<right_value_.size()<<std::endl;
+      // std::cout<<"right[0]="<<right_value_[0].size()<<std::endl;
+
+        vec[ii]=detJ*dotofdots(qp_values,fqp_values[ii]);
     }
-    std::cout<<detJ<<std::endl;
+ }
+
+ template<typename Elem, typename T,Integer NQPoints, Integer NComponents>
+ void apply_aux(subtype& vec, const Jacobian<Elem>& J, 
+               const  QPValues<T,NQPoints> & qp_values,
+               const FQPValues<T,NQPoints,NComponents> & fqp_values)
+ {
+  const auto& detJ=J.get_det();
+  for(Integer ii=0;ii<vec.size();ii++)
+    {   
+
+        // std::cout<<"(ii,jj)=("<<ii<<","<<jj<<")"<<std::endl;
+      //   // left value is trial, right value is test
+      // std::cout<<ii<<std::endl;
+      // std::cout<<"left="<<left_value_.size()<<std::endl;
+      // std::cout<<"right="<<right_value_.size()<<std::endl;
+      // std::cout<<"right[0]="<<right_value_[0].size()<<std::endl;
+
+        vec[ii]=detJ*dotofdots(qp_values,fqp_values[ii]);
+    }
+ }
+
+ template<typename Elem,typename ShapeFunctions>
+ void apply(subtype& vec, const Jacobian<Elem>& J, const ShapeFunctions& shape_functions)
+ {
+
+  eval_left_.apply(left_value_,shape_functions);
+  eval_right_.apply(right_value_,shape_functions);
+  std::cout<<"left_value_"<<std::endl;
+  std::cout<<left_value_<<std::endl;
+  std::cout<<"right_value_"<<std::endl;
+  std::cout<<right_value_<<std::endl;
+
+   apply_aux(vec,J,left_value_,right_value_);
+
     std::cout<<"vec=="<<vec<<std::endl;
 
  }
@@ -251,11 +294,11 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
   eval_left_.apply(left_value_,shape_functions);
   eval_right_.apply(right_value_,shape_functions);
 
-  // std::cout<<mat<<std::endl;
-  // std::cout<<"left_value_"<<std::endl;
-  // std::cout<<left_value_<<std::endl;
-  // std::cout<<"right_value_"<<std::endl;
-  // std::cout<<right_value_<<std::endl;
+  std::cout<<"left_value_"<<std::endl;
+  std::cout<<left_value_<<std::endl;
+  std::cout<<"right_value_"<<std::endl;
+  std::cout<<right_value_<<std::endl;
+  std::cout<<"quiiiiiiiii 111"<<std::endl;
   for(Integer ii=0;ii<mat.rows();ii++)
     for(Integer jj=0;jj<mat.cols();jj++)
     {   
@@ -266,7 +309,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
     }
     std::cout<<detJ<<std::endl;
     std::cout<<"mat="<<mat<<std::endl;
-
+   std::cout<<"quiiiiiiiii 222"<<std::endl;
  }
 
   

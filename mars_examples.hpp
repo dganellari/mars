@@ -988,11 +988,11 @@ void assembly_example()
 
 
 
- using FSspace1= FunctionSpace< MeshT, Lagrange1<1>>;
+ using FSspace1= FunctionSpace< MeshT, Lagrange1<2>>;
  FSspace1 FEspace1(mesh);
  using FSspace2= FunctionSpace< MeshT, Lagrange2<2>>;
  FSspace2 FEspace2(mesh);
- using FSspace3= FunctionSpace< MeshT, Lagrange1<1>,Lagrange2<1>>;
+ using FSspace3= FunctionSpace< MeshT, Lagrange1<2>,Lagrange2<2>>;
  FSspace3 FEspace3(mesh);
  using FSspace4= FunctionSpace< MeshT, Lagrange1<1>,Lagrange2<1>,Lagrange1<1>>;
  FSspace4 FEspace4(mesh);
@@ -1012,7 +1012,7 @@ void assembly_example()
 
  auto W5=MixedFunctionSpace(MixedFunctionSpace(FEspace7,FEspace8),FEspace1);
 
- using AuxFSspace1= FunctionSpace< MeshT, Lagrange2<1> >;
+ using AuxFSspace1= FunctionSpace< MeshT, Lagrange2<2> >;
  using AuxFSspace2= FunctionSpace< MeshT, Lagrange1<1> >;
  using AuxFSspace3= FunctionSpace< MeshT, Lagrange1<1> >;
  AuxFSspace1 AuxFEspace1(mesh);
@@ -1021,13 +1021,13 @@ void assembly_example()
 
 
  auto Wtrial=MixedFunctionSpace(FEspace1,FEspace3);
- auto Waux=AuxFunctionSpacesBuild(AuxFEspace1,AuxFEspace2,AuxFEspace3);
+ auto Waux=AuxFunctionSpacesBuild(AuxFEspace1);//,AuxFEspace2,AuxFEspace3);
  auto W=FullSpaceBuild(Wtrial,Waux);
 
 
  auto f1 = MakeFunction<0>(W);
- auto f2 = MakeFunction<1>(W);
- auto f3 = MakeFunction<2>(W);
+ // auto f2 = MakeFunction<1>(W);
+ // auto f3 = MakeFunction<2>(W);
 
  auto u1 = MakeTrial<0>(W);
  auto u2 = MakeTrial<1>(W);
@@ -1039,55 +1039,66 @@ void assembly_example()
 
 
   Jacobian<Elem> J(mesh);
-  J.init(0);
-
-  auto l6=  L2Inner(f1*Grad(u1),Grad(v1))+L2Inner(f2*Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
+  
+  
+   
+  auto l6=  L2Inner(Grad(u1),Grad(v1));//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
   auto generalform6=general_form(l6);
-  auto shape_coefficients6=shape_function_coefficients(generalform6);
-  auto referencemaps6=reference_maps2(generalform6);
-  auto shapefunctions6=shape_functions2(generalform6);
+  // auto shape_coefficients6=shape_function_coefficients(generalform6);
+  // auto referencemaps6=reference_maps2(generalform6);
+  // auto shapefunctions6=shape_functions2(generalform6);
 
-  shape_coefficients6.init(mesh);
-  referencemaps6.init(J);
-  shapefunctions6.init(referencemaps6,shape_coefficients6);
+  // shape_coefficients6.init(mesh);
+  // referencemaps6.init(J);
+  // shapefunctions6.init(referencemaps6,shape_coefficients6);
   // auto eval_generalform6=Eval(generalform6,shapefunctions6);
   // eval_generalform6.apply(J);
 
 
 
-  auto l7=  L2Inner(f3,v3);//+L2Inner(f2,v2);
+  auto l7=  L2Inner(v3,f1);//+L2Inner(f2,v2);
   auto generalform7=general_form(l7);
-  auto shape_coefficients7=shape_function_coefficients(generalform7);
-  auto referencemaps7=reference_maps2(generalform7);
-  auto shapefunctions7=shape_functions2(generalform7);
-  shape_coefficients7.init(mesh);
-  referencemaps7.init(J);
-  shapefunctions7.init(referencemaps7,shape_coefficients7);
+  // auto shape_coefficients7=shape_function_coefficients(generalform7);
+  // auto referencemaps7=reference_maps2(generalform7);
+
 
   // auto eval_generalform7=Eval(generalform7,shapefunctions7);
  
 
-  auto gen=generalform6()+generalform7();
+  // auto gen=generalform6()+generalform7();
 
-auto referencemaps8=reference_maps2(generalform6,generalform7);  // decltype(gen) eeep5(6);
+// auto referencemaps8=reference_maps2(generalform6,generalform7);  // decltype(gen) eeep5(6);
 
 
 
-  auto shape_coefficients77=shape_function_coefficients(generalform7);
+  auto shape_coefficients77=shape_function_coefficients(generalform6);
   auto referencemaps77=reference_maps2(generalform6,generalform7);
-  auto shapefunctions77=shape_functions2(generalform6,generalform7);
+  auto shapefunctions77=shape_functions2(shape_coefficients77,referencemaps77,generalform6,generalform7);
+  shape_coefficients77.init(mesh);
+  // auto shapefunctions7=shape_functions2(generalform7);
+  
+  // shapefunctions77.init(referencemaps77,shape_coefficients77);
 
   auto eval_generalform6=Eval(generalform6,shapefunctions77);
+  auto eval_generalform7=Eval(generalform7,shapefunctions77);
 
-  using L2Products=decltype(eval_generalform6)::L2Products;
-  using ShapeFunctions=decltype(shapefunctions77);
-  // L2Products kokoi(6);
-  // ShapeFunctions rrr(6);
-  // Evaluation<Expression<GetType<L2Products>>,decltype(shapefunctions6)> rr(56);
-  // EvalOfL2InnersAux< L2Products,0,decltype(shapefunctions77)> ok(5);
-  // auto eval_generalform7=Eval(generalform7,shapefunctions77);
-  eval_generalform6.apply(J);
-  // eval_generalform7.apply(J);
+  J.init(0);
+  referencemaps77.init(J);
+  shape_coefficients77.init(0);
+  shapefunctions77.init();
+
+  // eval_generalform6.apply(J);
+  eval_generalform7.apply(J);
+
+
+  // auto Ku=4*Grad(u1);
+  // auto Kv=4*Grad(v1);
+  // auto esm=L2Inner(Ku,Kv);
+  // auto generalesm=general_form(esm);
+  // auto shape=shape_function_coefficients(generalesm);
+  // auto referencemaps=reference_maps2(generalform6,generalesm);
+  // auto shapefunctions=shape_functions2(generalform6,generalesm);
+
 
 // decltype(referencemaps6)::UniqueMapping eeesa5(6);
 // decltype(referencemaps7)::UniqueMapping eees6a(6);

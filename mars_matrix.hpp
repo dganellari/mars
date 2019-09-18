@@ -14,7 +14,7 @@
 
 namespace mars {
 
-	template<typename T, Integer Rows_, Integer Cols_>
+	template<typename T, Integer Rows_, Integer Cols_,Integer NonZeroRow_=-1>
 	class Matrix: public TensorBase<T, std::make_index_sequence<Rows_*Cols_>> 
 	{
 	public:
@@ -25,7 +25,7 @@ namespace mars {
 		using MB = TensorBase<T, std::make_index_sequence<Rows*Cols>>;
 		using MB::MB;
 		using MB::values;
-
+        static constexpr Integer NonZeroRow=NonZeroRow_;
 		inline constexpr static Integer rows() { return Rows; }
 		inline constexpr static Integer cols() { return Cols; }
 
@@ -660,6 +660,15 @@ namespace mars {
 		     						for(Integer j=0; j<Cols2 ;j++)
 		     							mat(II,j+JJ)=vec[j];
 		     					}
+
+
+
+
+
+
+
+
+
 
 
 

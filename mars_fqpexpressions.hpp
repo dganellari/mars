@@ -141,7 +141,7 @@ public TensorBase<T, std::make_index_sequence<NQPoints>>
     inline constexpr const type& operator()()const {return values_;};
     inline constexpr       type& value()      {return values_;};
     inline constexpr const type& value()const {return values_;};
-
+    inline constexpr Integer size()const{return NQPoints;}
   // QPValues(){};
   // QPValues(const type& t):values_(t) {};
 
@@ -171,6 +171,7 @@ public:
       inline constexpr       type operator()()     {return values_;};
       inline constexpr const Vector<T,NQPoints> operator()(const Integer i)const{return values_[i];};
       inline constexpr       Vector<T,NQPoints> operator()(const Integer i)     {return values_[i];};
+      inline constexpr Integer size()const{return NComponents;}
       // inline constexpr void operator()(const Integer& i,const Vector<T,NQPoints>& u){values_[i]=u;};         
 protected:
   type values_;

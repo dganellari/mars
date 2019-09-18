@@ -563,7 +563,7 @@ class OperatorTypeHelper<TestOrTrial<MixedSpace,N,OperatorType>,QRule >
 
   using Operator=typename tmptype::Operator; 
   // TODO FIX ME SUBTYPE AND NOT TYPE CHECK (now in fwpvalues<T,M,N>, tot_type=T)
-  using type=typename ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QRule>::type;
+  using type=typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::type;
 };
 
 
@@ -577,7 +577,7 @@ class OperatorTypeHelper<Function2<FullSpace,N,OperatorType,FuncType>,QRule >
   using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpaces>;
   using Operator=typename tmptype::Operator; 
   // TODO FIX ME SUBTYPE AND NOT TYPE CHECK (now in fwpvalues<T,M,N>, tot_type=T)
-  using type=typename ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QRule>::qpvalues_type;
+  using type=typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::qpvalues_type;
 };
 
 
@@ -601,7 +601,7 @@ class Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_>>,OtherTemplateAr
  using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpaces>;
  using Operator=typename type::Operator;
  // template<typename QRule>
- using value_type=OperatorType<type,OtherTemplateArguments...>;// typename ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QRule>::type;
+ using value_type=OperatorType<type,OtherTemplateArguments...>;// typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::type;
 
  Evaluation(){};
 
@@ -610,15 +610,16 @@ class Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_>>,OtherTemplateAr
  eval_(expr)
  {};
  
- // template<typename QRule, typename...Args,typename...OtherTemplateArguments2>
- // constexpr void apply(value_type<QRule>& value,const std::tuple<Args...>& tuple_of_tuple)
   template<typename...Args,typename...Inputs>
  constexpr void apply(value_type& value,const std::tuple<Args...>& tuple_of_tuple)
  {
   using tuple_type=GetType<std::tuple<Args...>,type::value>;
   const auto& tuple=tuple_get<type::value>(tuple_of_tuple);
-  constexpr Integer M=TypeToTupleElementPosition<ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,OtherTemplateArguments...>,tuple_type>::value;
+  constexpr Integer M=TypeToTupleElementPosition<ShapeFunction<Elem,BaseFunctionSpace,Operator,OtherTemplateArguments...>,tuple_type>::value;
   value=tuple_get<M>(tuple).eval();
+  // decltype(tuple_get<M>(tuple)) eokeok(6);
+  std::cout<<"value="<<std::endl;
+  std::cout<<value<<std::endl;
  }
 
 
@@ -694,7 +695,7 @@ class Evaluation<Expression<Function2<FullSpace,N,Operator_,FuncType>>,OtherTemp
  {
   using tuple_type=GetType<std::tuple<Args...>,type::value>;
   const auto& tuple=tuple_get<type::value>(tuple_of_tuple);
-  constexpr Integer M=TypeToTupleElementPosition<ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,OtherTemplateArguments...>,tuple_type>::value;
+  constexpr Integer M=TypeToTupleElementPosition<ShapeFunction<Elem,BaseFunctionSpace,Operator,OtherTemplateArguments...>,tuple_type>::value;
   const auto& local_dofs=eval_.local_dofs();
   // FIXME
   const auto& shapes=tuple_get<M>(tuple).eval();
@@ -2601,7 +2602,7 @@ Addition<Expression<decltype(L2Inner(left.derived().left(),right.derived()))>,
 //    static constexpr Integer TrialNumber=GetType<TestTrialNumbers,1>::value;
 //    static constexpr Integer TestN=FunctionSpace::Nelem_dofs_array[TestNumber];
 //    static constexpr Integer TrialN=FunctionSpace::Nelem_dofs_array[TrialNumber];
-//    using type=Matrix<Real,TestN,TrialN >;//typename ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QRule>::type;
+//    using type=Matrix<Real,TestN,TrialN >;//typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::type;
 // };
 
 template<typename Left,typename Right,Integer QR>
@@ -2627,21 +2628,14 @@ class OperatorTypeHelper<L2DotProductIntegral<Left,Right,QR>,Number<2>>
    static constexpr Integer TrialNumber=GetType<TestTrialNumbers,1>::value;
    static constexpr Integer TestN=FunctionSpace::Nelem_dofs_array[TestNumber];
    static constexpr Integer TrialN=FunctionSpace::Nelem_dofs_array[TrialNumber];
-   using type=Matrix<Real,TestN,TrialN >;//typename ShapeFunctionDependent<Elem,BaseFunctionSpace,Operator,QRule>::type;
+   using type=Matrix<Real,TestN,TrialN >;//typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::type;
 };
 
 
 
 
 
-// template<typename MeshT_, typename Left_,typename Right_,Integer QR, typename Form>
-// class Evaluation<Expression<L2DotProductIntegral<MeshT_,Left_,Right_,QR>>, ShapeFunctions2<Form>>
-// {
-//  public:
-//  using MeshT=MeshT_;
-//  using Left=Left_;
-//  using Right=Right_;
-//  using type= L2DotProductIntegral<MeshT,Left,Right,QR>;
+
 template<typename Left_,typename Right_,Integer QR, typename...Forms>
 class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,QR>>, ShapeFunctions2<Forms...>>
 {
@@ -2657,9 +2651,7 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,QR>>, ShapeFunctio
  // Evaluation(){};
  
  Evaluation(const type& expr, ShapeFunctions2<Forms...>& shape_functions):
- // eval_(expr),
  shape_functions_(shape_functions),
- //,
  local_mat_(expr)
  {};
  
@@ -3043,12 +3035,9 @@ class ShapeFunctions2
     }
 
 
-   template<typename ConstFormReference>
-   constexpr void init_map(const ReferenceMaps2<ConstFormReference>& maps) 
+   template<typename...Args>
+   constexpr void init_map(const ReferenceMaps2<Args...>& maps) 
    {init_map_aux<TupleTypeSize<MapTupleNumbers>::value-1,0>(maps());}
-
-
-//////////////////////////////////////////////////
 
 
 
@@ -3112,11 +3101,13 @@ class ShapeFunctions2
    }
 
 
-  template<typename ConstFormReference, typename Coefficients>
-  constexpr void init(const ReferenceMaps2<ConstFormReference>& maps,const Coefficients& shape_coefficients)
+  // template<typename Coefficients>
+  constexpr void init()
+  // const ReferenceMaps2<GeneralForm_,GeneralForms_...>& maps,
+  //                     const Coefficients& shape_coefficients)
   {
-    init_map(maps);
-    init(shape_coefficients);
+    init_map(maps_);
+    init(coeffs_);
    }
 
 
@@ -3139,18 +3130,25 @@ class ShapeFunctions2
          auto& value()     {return tuple_get<Ns...>(tuple).eval();}
 
 
+ ShapeFunctions2(ShapeFunctionCoefficient<GeneralForm_>&coeffs,
+                 ReferenceMaps2<GeneralForm_,GeneralForms_...>& maps):
+ coeffs_(coeffs),
+ maps_(maps)
+ {}
 
 
 private:
+   ShapeFunctionCoefficient<GeneralForm_> & coeffs_;
+   ReferenceMaps2<GeneralForm_,GeneralForms_...> & maps_;
    TupleOfTupleShapeFunction tuple;
 };
 
 
 template<typename Form,typename...Forms>
-constexpr auto shape_functions2(const Form& form,const Forms&...forms)
+constexpr auto shape_functions2(ShapeFunctionCoefficient<Form>&coeffs, ReferenceMaps2<Form,Forms...>&maps,const Form& form,const Forms&...forms)
 {
   //using Form=typename std::remove_const<typename std::remove_reference<ConstFormReference>::type>::type;
- return ShapeFunctions2<Form,Forms...>();  }
+ return ShapeFunctions2<Form,Forms...>(coeffs,maps);  }
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////// For explanation on how and why this works, check:
 //////// https://stackoverflow.com/questions/1005476/how-to-detect-whether-there-is-a-specific-member-variable-in-class
