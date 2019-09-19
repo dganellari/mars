@@ -24,7 +24,7 @@ public:
 
 	using Elem = mars::Simplex<Dim, ManifoldDim,KokkosImplementation>;
 	using SideElem = mars::Simplex<Dim, ManifoldDim-1,KokkosImplementation>;
-	using Point = SubView<Real,Dim>;
+	//using Point = SubView<Real,Dim>;
 
 	void reserve(const std::size_t n_elements, const std::size_t n_points) override
 	{
@@ -65,7 +65,7 @@ public:
 		return simplices_(id);
 	}*/
 
-	inline Elem elem(const Integer id) //override
+	MARS_INLINE_FUNCTION Elem elem(const Integer id) //override
 	{
 		assert(id >= 0);
 		assert(id < n_elements());
@@ -73,7 +73,7 @@ public:
 		return e;
 	}
 
-	inline const Elem elem(const Integer id) const// override
+	MARS_INLINE_FUNCTION const Elem elem(const Integer id) const// override
 	{
 		assert(id >= 0);
 		assert(id < n_elements());
@@ -81,22 +81,22 @@ public:
 		return e;
 	}
 
-	inline bool is_active(const Integer id) const override
+	MARS_INLINE_FUNCTION bool is_active(const Integer id) const override
 	{
 		assert(id >= 0);
 		assert(id < n_elements());
 		return active_(id);
 	}
 
-	inline bool is_valid(const Integer id) const
-	 {
-	 return id >= 0 && id < n_elements();
-	 }
+	MARS_INLINE_FUNCTION bool is_valid(const Integer id) const
+	{
+		return id >= 0 && id < n_elements();
+	}
 
-	 inline bool is_node_valid(const Integer id) const
-	 {
-	 return id >= 0 && id < n_nodes();
-	 }
+	MARS_INLINE_FUNCTION bool is_node_valid(const Integer id) const
+	{
+		return id >= 0 && id < n_nodes();
+	}
 
 	 /* inline bool is_child(
 	 const Integer parent_id,
@@ -109,34 +109,34 @@ public:
 	 }
 */
 
-	inline void set_active(const Integer id, const bool val) {
+	MARS_INLINE_FUNCTION void set_active(const Integer id, const bool val) {
 		assert(id >= 0);
 		assert(id < n_elements());
 		active_(id) = val;
 	}
 
-	inline Integer add_point(const Point &point) override
+	/*inline Integer add_point(const Point &point) override
 	{
 		for (Integer i = 0; i < Dim; ++i) {
-			points_(point.index, i) = point.view(point.index,i);
+			points_(point.pointView.index, i) = point[i];
 		}
 
 		return point.index;
-	}
+	}*/
 
 
-	inline Point point(const Integer i) //override
+	MARS_INLINE_FUNCTION Point<Real,Dim> point(const Integer i) //override
 	{
 		assert(i >= 0);
 		assert(i < points_size_);
-		return Point(points_,i);
+		return Point<Real,Dim>(points_,i);
 	}
 
-	inline const Point point(const Integer i) const override
+	MARS_INLINE_FUNCTION const Point<Real,Dim> point(const Integer i) const override
 	{
 		assert(i >= 0);
 		assert(i < points_size_);
-		return Point(points_,i);
+		return Point<Real,Dim>(points_,i);
 	}
 
 	/*inline void points(const Integer id, std::vector<Point> &pts) const override
@@ -471,17 +471,17 @@ public:
 	 }*/
 
 
-	inline Integer n_nodes() const override
+	MARS_INLINE_FUNCTION Integer n_nodes() const override
 	{
 		return points_size_;
 	}
 
-	inline Integer n_elements() const override
+	 MARS_INLINE_FUNCTION Integer n_elements() const override
 	{
 		return elements_size_;
 	}
 
-	inline Integer n_active_elements() const override
+	 MARS_INLINE_FUNCTION Integer n_active_elements() const override
 	{
 		Integer ret = 0;
 		for (Integer i = 0; i < elements_size_; ++i) {
@@ -934,7 +934,7 @@ public:
 	 return true;
 	 }*/
 
-	inline Integer type() const override
+	 MARS_INLINE_FUNCTION Integer type() const override
 	{
 		return ManifoldDim;
 	}
@@ -1227,6 +1227,7 @@ public:
 			//build the hex27 element which serves to generalize the idea to many hex27.
 			//without generating the hex27 element first there is no easy way to create the sides.
 			build_hex27(IndexView<Integer,hex_n_nodes>(hexes, cube_index), xDim, yDim, 2 * x, 2 * y, 2 * z);
+
 		}
 	};
 
@@ -1291,6 +1292,69 @@ public:
 
 	}
 
+
+	//add elem functor
+		struct RefineMesh {
+
+			Mesh mesh;
+
+			Integer xDim;
+
+			RefineMesh(Mesh m, Integer xdm) :
+					mesh(m), xDim(xdm) {
+			}
+
+			KOKKOS_INLINE_FUNCTION
+			void operator()(int x) const {
+
+				/*TempArray<Integer, 3> a;
+				a(0) = 1;
+				a.zero();*/
+
+				/*	SubView<Integer,ManifoldDim+1> c(mesh.elements_,x);
+
+					Elem ee = Elem(c);
+
+					auto &e = ee;
+				 */
+
+				const auto &e = mesh.elem(x);
+
+				Integer edge_num = 0;
+				Real len = 0;
+
+				for (Integer i = 0; i < n_edges(e); ++i)
+				{
+					Integer v1, v2;
+					e.edge(i, v1, v2);
+
+					printf ("V1 = %i ", v1);
+											printf (" V2 = %i \n", v2);
+					Real len_i = (mesh.point(v1) - mesh.point(v2)).squared_norm();
+
+					if (len_i > len)
+					{
+						len = len_i;
+						edge_num = i;
+					}
+				}
+
+				printf ("edge num = %i\n", edge_num);
+
+			}
+		};
+
+		inline bool refine_mesh(const int xDim)
+		{
+
+			using namespace Kokkos;
+			const int n_elements = xDim;
+
+			parallel_for(n_elements, RefineMesh(*this, xDim));
+
+			return true;
+		}
+
 private:
 
 	ViewMatrixType<Integer> elements_;
@@ -1305,7 +1369,7 @@ private:
 	//ViewVectorType<Elem> simplices_;
 
 	ViewVectorType<Integer> tags_;
-	DualGraph<ManifoldDim> dual_graph_;
+//	DualGraph<ManifoldDim> dual_graph_;
 	bool sorted_elements_;
 };
 

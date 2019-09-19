@@ -15,51 +15,17 @@ public:
 	ViewMatrixType<T> view;
 	Integer index;
 
-	MARS_INLINE_FUNCTION SubView() {}
-
-	MARS_INLINE_FUNCTION SubView(ViewMatrixType<T> v, Integer id) :	view(v), index(id)
+	MARS_INLINE_FUNCTION SubView()
 	{
+
 	}
 
-	friend SubView operator*(const T &factor, const SubView &v)
+	MARS_INLINE_FUNCTION SubView(ViewMatrixType<T> v, Integer id) :
+			view(v), index(id)
 	{
-		SubView ret;
-		for(Integer i = 0; i < Dim; ++i) {
-			ret.view(ret.index,i) = factor * v.view(v.index,i);
-		}
 
-		return ret;
 	}
 
-	friend SubView operator/(const SubView &v, const T &factor)
-	{
-		SubView ret;
-		for(Integer i = 0; i < Dim; ++i) {
-			ret.view(ret.index,i) = v.view(v.index,i)/factor;
-		}
-
-		return ret;
-	}
-
-	SubView operator-(const SubView &right) const
-	{
-		SubView ret;
-		for(Integer i = 0; i < Dim; ++i) {
-			ret.view(ret.index,i) = this->view(this->index,i) - right.view(right.index,i);
-		}
-
-		return ret;
-	}
-
-	SubView operator+(const SubView &right) const
-	{
-		SubView ret;
-		for(Integer i = 0; i < Dim; ++i) {
-			ret.view(ret.index,i) = this->view(this->index,i) + right.view(right.index,i);
-		}
-
-		return ret;
-	}
 
 	SubView operator+=(const SubView &right)
 	{
@@ -86,16 +52,6 @@ public:
 		}
 
 		return *this;
-	}
-
-	SubView operator*(const SubView &right) const
-	{
-		SubView ret;
-		for(Integer i = 0; i < Dim; ++i) {
-			ret.view(ret.index,i) = this->view(this->index,i) * right.view(right.index,i);
-		}
-
-		return ret;
 	}
 
 	MARS_INLINE_FUNCTION T &operator()(const Integer i)
