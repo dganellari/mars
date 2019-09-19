@@ -1753,7 +1753,7 @@ constexpr auto Eval(const T& t, Ts&...ts){return Evaluation< Expression<remove_a
                                                                          remove_all_t<decltype(ts)>...,OtherTemplateArguments... >(t,ts...);}
 
 
-template<typename Form>
+template<typename...Args>
 class GeneralForm;
 
 template<typename Form,typename...Forms>
@@ -1774,28 +1774,28 @@ class TupleOfEvaluationExpressionOfTypesHelper;
 template<typename L2Products,typename Form>
 class TupleOfEvals;
 
-template<typename L2Products,typename Form>
-class TupleOfEvals<L2Products,ShapeFunctions2<GeneralForm<Form>>>
+template<typename L2Products,typename Form,typename FullSpace>
+class TupleOfEvals<L2Products,ShapeFunctions2<GeneralForm<Form,FullSpace>>>
 {
  public:
-  using type=typename TupleOfEvaluationExpressionOfTypesHelper<L2Products,ShapeFunctions2<GeneralForm<Form>>>::type;
+  using type=typename TupleOfEvaluationExpressionOfTypesHelper<L2Products,ShapeFunctions2<GeneralForm<Form,FullSpace>>>::type;
   
 
 
   template<Integer Nmax,Integer N>
   constexpr std::enable_if_t<(Nmax==N),void>
-  construct_aux(ShapeFunctions2<GeneralForm<Form>>& shapes)
+  construct_aux(ShapeFunctions2<GeneralForm<Form,FullSpace>>& shapes)
   {
   }
 
   template<Integer Nmax,Integer N>
   constexpr std::enable_if_t<(Nmax>N),void>
-  construct_aux(ShapeFunctions2<GeneralForm<Form>>& shapes)
+  construct_aux(ShapeFunctions2<GeneralForm<Form,FullSpace>>& shapes)
   {
   }
 
 
-  TupleOfEvals(ShapeFunctions2<GeneralForm<Form>>& shapes):
+  TupleOfEvals(ShapeFunctions2<GeneralForm<Form,FullSpace>>& shapes):
   shapes_(shapes)
   // ,
   // tuple_
@@ -1803,7 +1803,7 @@ class TupleOfEvals<L2Products,ShapeFunctions2<GeneralForm<Form>>>
 
  private:
   // type tuple;
-  ShapeFunctions2<GeneralForm<Form>>& shapes_;
+  ShapeFunctions2<GeneralForm<Form,FullSpace>>& shapes_;
   // type tuple_;
 };
 
@@ -1813,24 +1813,26 @@ class TupleOfEvals<L2Products,ShapeFunctions2<GeneralForm<Form>>>
 template<typename...Ts>
 class EvaluationOfL2Inners;
 
-template<typename Form,typename GeneralForm_, typename...GeneralForms>
-class Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions2<GeneralForm_,GeneralForms...>>
+template<typename Form,typename FullSpace,typename GeneralForm_, typename...GeneralForms>
+class Evaluation<Expression<GeneralForm<Form,FullSpace>>,ShapeFunctions2<GeneralForm_,GeneralForms...>>
 {
  public:
- using type= GeneralForm<Form>;
+ using type= GeneralForm<Form,FullSpace>;
  using FunctionSpace= typename type::FunctionSpace;
  using TupleFunctionSpace=typename type::TupleFunctionSpace;
  using ShapeFunctions=ShapeFunctions2<GeneralForm_,GeneralForms...>;
  using Shapes=typename ShapeFunctions::TupleOfTupleShapeFunction;
- using TupleOfPairsNumbers=typename GeneralForm<Form>::TupleOfPairsNumbers;
+ using TupleOfPairsNumbers=typename GeneralForm<Form,FullSpace>::TupleOfPairsNumbers;
  using L2Products=typename TupleOfL2Products< TupleOfPairsNumbers, Form >::type;
  using TupleOfEvals=TupleOfEvals<L2Products,ShapeFunctions>;
+ using EvaluationOfL2Inners=EvaluationOfL2Inners<Evaluation<Expression<GeneralForm<Form,FullSpace>>,ShapeFunctions>>;
  
- using EvaluationOfL2Inners=EvaluationOfL2Inners<Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions>>;
- Evaluation(const GeneralForm<Form>& general_form,ShapeFunctions& shapesform):
+ const Form& operator()()const{return general_form_();};
+
+ Evaluation(const GeneralForm<Form,FullSpace>& general_form,ShapeFunctions& shapesform):
  general_form_(general_form),
  shapesform_(shapesform),
- eval_inners_(shapesform)
+ eval_inners_(general_form_,shapesform)
  {}
 
  
@@ -1850,7 +1852,7 @@ class Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions2<GeneralForm_,Gene
  // }
 
 
-
+ 
  template<typename Elem>
  constexpr void apply(const Jacobian<Elem>& J)
  {
@@ -1859,18 +1861,19 @@ class Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions2<GeneralForm_,Gene
   // apply_aux<TupleTypeSize<Shapes>::value-1,0>(J);
  }
 
+
  // inline auto spaces_ptr()const {return spaces_ptr_;};
 
  private:
- const GeneralForm<Form>& general_form_;
+ const GeneralForm<Form,FullSpace>& general_form_;
  ShapeFunctions& shapesform_;
  EvaluationOfL2Inners eval_inners_;
 };
 
 
-template<typename Form,typename GeneralForm_, typename...GeneralForms>
-constexpr auto Eval(const GeneralForm<Form>& form, ShapeFunctions2<GeneralForm_,GeneralForms...>& shapes)
-{return Evaluation< Expression<GeneralForm<Form>>,ShapeFunctions2<GeneralForm_,GeneralForms...> >(form,shapes);}
+template<typename Form,typename FullSpace, typename GeneralForm_, typename...GeneralForms>
+constexpr auto Eval(const GeneralForm<Form,FullSpace>& form, ShapeFunctions2<GeneralForm_,GeneralForms...>& shapes)
+{return Evaluation< Expression<GeneralForm<Form,FullSpace>>,ShapeFunctions2<GeneralForm_,GeneralForms...> >(form,shapes);}
 
 
 

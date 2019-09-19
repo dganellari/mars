@@ -1404,7 +1404,7 @@ using MapTupleInit=typename MapTupleInitHelper<TupleOfTupleSpaces,SpaceToMap,Tup
 
 
   
-  template<typename FunctionSpaces>
+  template<typename GeneralForm,typename...GeneralForms>
   class ShapeFunctionCoefficient;
 
 
@@ -1707,8 +1707,7 @@ class BubbleSortTupleOfPairsNumbersAuxHelper;
 template<typename ...Ts> 
 using BubbleSortTupleOfPairsNumbersAux=typename BubbleSortTupleOfPairsNumbersAuxHelper<Ts...>::type;
 
-// linear form
-
+// linear form, main case (only one given number)
 template<Integer N>
 class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<std::tuple<Number<N>>> >
 {
@@ -1716,6 +1715,15 @@ class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<std::tuple<Number<N>>> >
     using type=std::tuple<std::tuple<Number<N>>>;
 };
 
+// bilinear form, main case (only a pairs of given numbers)
+template<Integer M1, Integer M2>
+class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<Number<M1>,Number<M2>>>
+{
+    public:
+    using type=typename std::tuple<std::tuple<Number<M1>,Number<M2>>>;
+};
+
+// linear form, main reordering case
 template<Integer M, Integer N>
 class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<Number<M>>, 
                                              std::tuple<Number<N>> >
@@ -1728,13 +1736,13 @@ class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<Number<M>>,
                                          std::tuple<T2,T1>>::type;
 };
 
-template<Integer...Ns>
-class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<>,
-                                             std::tuple< std::tuple<Number<Ns>>...>>
-{
-    public:
-    using type=BubbleSortTupleOfPairsNumbersAux<std::tuple< std::tuple<Number<Ns>>...>>;
-};
+// template<Integer...Ns>
+// class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<>,
+//                                              std::tuple< std::tuple<Number<Ns>>...>>
+// {
+//     public:
+//     using type=BubbleSortTupleOfPairsNumbersAux<std::tuple< std::tuple<Number<Ns>>...>>;
+// };
 
 // template<Integer...Ns>
 // class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<>, 
@@ -1752,6 +1760,8 @@ class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<>,
 //     using type=BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<Number<Ns>>...>;
 // };
 
+
+
 template<Integer M1, Integer M2, Integer N1, Integer N2>
 class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<Number<M1>,Number<M2>>, 
                                           std::tuple<Number<N1>,Number<N2>> >
@@ -1768,12 +1778,13 @@ template<Integer M1, Integer M2>
 class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple< std::tuple<Number<M1>,Number<M2>>>>
 {
     public:
+
     using type=std::tuple< std::tuple<Number<M1>,Number<M2>>>;
 };
 
 template<Integer M1, Integer M2, Integer N1, Integer N2>
 class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<std::tuple<Number<M1>,Number<M2>>, 
-                                                     std::tuple<Number<N1>,Number<N2>>> >
+                                                        std::tuple<Number<N1>,Number<N2>>> >
 {
     public:
     using T1=std::tuple<Number<M1>,Number<M2>>;
@@ -1804,33 +1815,68 @@ class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<Ss...>, std::tuple<S, T,
 };
 
 
-template<typename S,typename T,typename ...Ts> 
-class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<>, std::tuple<S, T, Ts ...>>
+// template<typename S,typename T,typename ...Ts> 
+// class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<>, std::tuple<S, T, Ts ...>>
+// {
+ 
+//  public:
+//   using switch_type=BubbleSortTupleOfPairsNumbersAux<S,T>;
+//   using tmp_type=TupleCatType<switch_type,std::tuple<Ts...>>;
+//   using T1=std::tuple<GetType<tmp_type,0>>;
+//   using T2=TupleCatType<std::tuple<GetType<tmp_type,1>>,std::tuple<Ts...>>;
+//   using type=BubbleSortTupleOfPairsNumbersAux<T1,T2> ;
+// };
+
+template<typename R,typename S> 
+class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<R, S>>
 {
  
  public:
-  using switch_type=BubbleSortTupleOfPairsNumbersAux<S,T>;
+  using switch_type=BubbleSortTupleOfPairsNumbersAux<R,S>;
+  using type=TupleCatType<switch_type>;
+};
+
+
+template<typename R,typename S,typename ...Ts> 
+class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<R, S, Ts ...>>
+{
+ 
+ public:
+  using switch_type=BubbleSortTupleOfPairsNumbersAux<R,S>;
   using tmp_type=TupleCatType<switch_type,std::tuple<Ts...>>;
   using T1=std::tuple<GetType<tmp_type,0>>;
   using T2=TupleCatType<std::tuple<GetType<tmp_type,1>>,std::tuple<Ts...>>;
   using type=BubbleSortTupleOfPairsNumbersAux<T1,T2> ;
 };
 
-
-
-
-template<typename ...Ts> 
-class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<Ts...>>
-{
+///////////////////////////////////////////////////////////////////////////////////////////////
+///// This is the first function which is called
+///// We insert a void tuple 
+///////////////////////////////////////////////////////////////////////////////////////////////
+// template<typename ...Ts> 
+// class BubbleSortTupleOfPairsNumbersAuxHelper<std::tuple<Ts...>>
+// {
  
- public:
-  using type=BubbleSortTupleOfPairsNumbersAux< std::tuple<>, std::tuple<Ts...> >;
+//  public:
+//   using type=BubbleSortTupleOfPairsNumbersAux< std::tuple<>, std::tuple<Ts...> >;
   
-};
+// };
 
 template<typename Tuple, Integer Nmax, Integer N>
 class BubbleSortTupleOfPairsNumbersHelper;
 
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+///// We have to reorder the X=tuple<x0,x1,x2,x3...>. We 
+///// We Start by  checking each pair:
+///// Y_1=(sort(x0,x1),x2,x3...)=(y0,y1,y2...)
+///// Z_1=(y0,sort(y1,y2),y3...)=(z0,z1,z2...)
+///// Until we get to the end. Then, we only know that if x_0 was the largest, now it is at the end.
+///// But the other elements still have to be reordered. 
+///// So we call BubbleSortTupleOfPairsNumbersHelper Nmax times, where Nmax is the size of the tuple.
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
 template<typename Tuple>
 using BubbleSortTupleOfPairsNumbers=typename BubbleSortTupleOfPairsNumbersHelper<Tuple,TupleTypeSize<Tuple>::value-1,0>::type;
 
@@ -1840,7 +1886,6 @@ class BubbleSortTupleOfPairsNumbersHelper<Tuple,Nmax,Nmax>
 {
  public:
   using type=BubbleSortTupleOfPairsNumbersAux<Tuple>;
-
 };
 
 template<typename Tuple, Integer Nmax, Integer N>

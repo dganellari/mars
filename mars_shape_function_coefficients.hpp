@@ -179,11 +179,12 @@ template<typename Elem,Integer FEFamily,Integer Order, typename ConstInput, type
 void shape_function_coefficients_init(const ConstInput& mesh_ptr,ShapeFunctionCoefficient& coeff);
 
 
-template<typename Form>
+template<typename GeneralForm,typename...GeneralForms>
 class ShapeFunctionCoefficient
 {
 public:
-  using FunctionSpace=typename Form::FunctionSpace;
+  using Form=MultipleAddition<typename GeneralForm::Form,typename GeneralForms::Form...>;
+  using FunctionSpace=typename GeneralForm::FunctionSpace;
   using UniqueElementFunctionSpacesTupleType=typename FunctionSpace::UniqueElementFunctionSpacesTupleType;  
   using SpacesToUniqueFEFamily=typename FunctionSpace::SpacesToUniqueFEFamily;
   using GlobalTuple=ShapeFunctionGlobalCoefficientTupleType2<UniqueElementFEFamily2<UniqueElementFunctionSpacesTupleType>>;
@@ -286,10 +287,9 @@ private:
 };
 
 
-template<typename ConstFormReference>
-constexpr auto shape_function_coefficients(const ConstFormReference& form)
-{using Form=typename std::remove_const<typename std::remove_reference<ConstFormReference>::type>::type;
- return ShapeFunctionCoefficient<Form>();  }
+template<typename ConstFormReference,typename...ConstFormReferences>
+constexpr auto shape_function_coefficients(const ConstFormReference& form,const ConstFormReferences&...forms)
+{return ShapeFunctionCoefficient<ConstFormReference,ConstFormReferences...>() ; }
 
 
 

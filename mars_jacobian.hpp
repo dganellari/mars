@@ -17,26 +17,45 @@ class Jacobian<Simplex<Dim, ManifoldDim>>
 {
   public:
 
+
   Jacobian(const Mesh<Dim,ManifoldDim>&mesh):
+  already_set_(false),
   mesh_ptr_(std::make_shared<Mesh<Dim,ManifoldDim>>(mesh))
   {}
   
   constexpr void init_det(){detJ_=det(J_);}
 
   constexpr void init(const Integer id)
-  {jacobian(mesh_ptr_->elem(id),mesh_ptr_->points(),J_);
-   init_det();}
+   {
+   if(already_set_==false)
+    {
+      points_.resize(ManifoldDim+1);
+      already_set_=true;
+    }
+   const auto& points=mesh_ptr_->points();
+   elem_id_=id;
+   elem_=mesh_ptr_->elem(id);
+   auto n = n_nodes(elem_);
+   points_[0] = points[elem_.nodes[0]];
+   for(Integer i = 1; i < n; ++i) 
+      points_[i] = points[elem_.nodes[i]];
+   jacobian(elem_,points,J_);
+   init_det();
+   }
 
   constexpr auto & operator()()const {return J_;}
-  constexpr auto & get_det()const {return detJ_;}
+  constexpr auto & get_det()   const {return detJ_;}
+  constexpr auto & elem_id()   const {return elem_id_;}
+  constexpr auto & points()    const {return points_;}
 
   private:  
-  Simplex<Dim, ManifoldDim> simplex_;
+  bool already_set_;
+  Integer elem_id_;
+  Simplex<Dim, ManifoldDim> elem_;
+  std::vector<Vector<Real,Dim>> points_;
   Matrix<Real, Dim, ManifoldDim> J_;
   Real detJ_;
   std::shared_ptr<Mesh<Dim,ManifoldDim>> mesh_ptr_;
-
-
 };
 
 
@@ -235,8 +254,10 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
  void apply(subtype& vec, const Jacobian<Elem>& J, const ShapeFunctions& shape_functions)
  {
 
-  eval_left_.apply(left_value_,shape_functions);
-  eval_right_.apply(right_value_,shape_functions);
+  std::cout<<"jacobian tensor left1 "<<std::endl;
+  eval_left_.apply(left_value_,J,shape_functions);
+  std::cout<<"jacobian tensor right1 "<<std::endl;
+  eval_right_.apply(right_value_,J,shape_functions);
   std::cout<<"left_value_"<<std::endl;
   std::cout<<left_value_<<std::endl;
   std::cout<<"right_value_"<<std::endl;
@@ -561,13 +582,13 @@ using EvalOfL2InnersType=EvalOfL2InnersAux<Tuple,0,ShapeFunctions>;
 //       using ens=Evaluation<Expression<ens0>,ShapeFunctions>;
 //       return std::tuple<ens>(Eval(Constructor<ens0>::apply(mesh),shape_functions));
 // }
-template<typename Tuple,Integer N,typename ShapeFunctions>
+template<typename Tuple,Integer N,typename FullSpace,typename ShapeFunctions>
 constexpr std::enable_if_t<(N==TupleTypeSize<Tuple>::value-1), EvalOfL2InnersAux<Tuple,N,ShapeFunctions> > 
-EvalOfL2InnersHelper(ShapeFunctions& shape_functions)
+EvalOfL2InnersHelper(const FullSpace&W,ShapeFunctions& shape_functions)
 {   
       using ens0=GetType<Tuple,N>;
       using ens=Evaluation<Expression<ens0>,ShapeFunctions>;
-      return std::tuple<ens>(Eval(Constructor<ens0>::apply(),shape_functions));
+      return std::tuple<ens>(Eval(Constructor<ens0>::apply(W),shape_functions));
 }
 // template<typename Tuple,Integer N,typename MeshT, typename ShapeFunctions>
 // constexpr std::enable_if_t< (N<TupleTypeSize<Tuple>::value-1), EvalOfL2InnersAux<Tuple,N,ShapeFunctions>>  
@@ -579,14 +600,14 @@ EvalOfL2InnersHelper(ShapeFunctions& shape_functions)
 //                             EvalOfL2InnersHelper<Tuple,N+1>(mesh,shape_functions));
 // }
 
-template<typename Tuple,Integer N,typename ShapeFunctions>
+template<typename Tuple,Integer N,typename FullSpace,typename ShapeFunctions>
 constexpr std::enable_if_t< (N<TupleTypeSize<Tuple>::value-1), EvalOfL2InnersAux<Tuple,N,ShapeFunctions>>  
-EvalOfL2InnersHelper(ShapeFunctions& shape_functions)
+EvalOfL2InnersHelper(const FullSpace&W,ShapeFunctions& shape_functions)
 {
       using ens0=GetType<Tuple,N>;
       using ens=Evaluation<Expression<ens0>,ShapeFunctions>;
-      return std::tuple_cat(std::tuple<ens>(Eval(Constructor<ens0>::apply(),shape_functions)),
-                            EvalOfL2InnersHelper<Tuple,N+1>(shape_functions));
+      return std::tuple_cat(std::tuple<ens>(Eval(Constructor<ens0>::apply(W),shape_functions)),
+                            EvalOfL2InnersHelper<Tuple,N+1>(W,shape_functions));
 }
 
 // template<typename Tuple,typename MeshT, typename ShapeFunctions>
@@ -594,10 +615,10 @@ EvalOfL2InnersHelper(ShapeFunctions& shape_functions)
 // {
 //       return EvalOfL2InnersHelper<Tuple,0>(mesh,shape_functions);
 // }
-template<typename Tuple,typename ShapeFunctions>
-constexpr auto EvalOfL2Inners(ShapeFunctions& shape_functions)
+template<typename Tuple,typename FullSpace,typename ShapeFunctions>
+constexpr auto EvalOfL2Inners(const FullSpace&W,ShapeFunctions& shape_functions)
 {
-      return EvalOfL2InnersHelper<Tuple,0>(shape_functions);
+      return EvalOfL2InnersHelper<Tuple,0>(W,shape_functions);
 }
 
 
@@ -678,11 +699,11 @@ public:
 
 
 // Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions>
-template<typename Form,typename ShapeFunctions_>//,typename ShapeFunctions>
-class EvaluationOfL2Inners<Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions_>>
+template<typename Form,typename FullSpace,typename ShapeFunctions_>//,typename ShapeFunctions>
+class EvaluationOfL2Inners<Evaluation<Expression<GeneralForm<Form,FullSpace>>,ShapeFunctions_>>
 {
 public: 
-    using EvaluationGeneralForm=Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions_>;
+    using EvaluationGeneralForm=Evaluation<Expression<GeneralForm<Form,FullSpace>>,ShapeFunctions_>;
     using GeneralForm=typename EvaluationGeneralForm::type;
     using ShapeFunctions=typename EvaluationGeneralForm::ShapeFunctions;
     using LocalTupleOfTensors=typename LocalTupleOfTensors<GeneralForm,GetType<typename GeneralForm::form>::value>::type;    
@@ -690,18 +711,21 @@ public:
     using EvalOfL2InnersType=EvalOfL2InnersAux<L2Products,0,ShapeFunctions>;
     
 
-    EvaluationOfL2Inners(ShapeFunctions& shapefunctions)
+    EvaluationOfL2Inners(const GeneralForm& form,ShapeFunctions& shapefunctions)
     :
-    eval_inners_(EvalOfL2Inners<L2Products>(shapefunctions))
+    eval_inners_(EvalOfL2Inners<L2Products>(form.space_ptr(),shapefunctions))
     {}
 
  template<Integer N,typename Output,typename Jacobian>
     constexpr void apply_aux_aux(Output& mat,Jacobian&J)
     {
+  std::cout<<"jacobian evalinners1"<<std::endl;
      auto& local_mat=std::get<N>(mat_tuple_);
      local_mat.zero();
      auto & eval_N=std::get<N>(eval_inners_);
      eval_N.apply(local_mat,J);
+  std::cout<<"jacobian evalinners2"<<std::endl;
+
     }   
 
  template<Integer Nmax,Integer N,typename Output,typename Jacobian>

@@ -421,9 +421,38 @@ auto AuxFunctionSpacesBuild(const AuxFunctionSpace<MeshT,Args>&...args){return A
 
 
 
-
-template<typename MixedSpace,typename AuxMixedSpace>
+template<typename ...Spaces>
 class FullSpace;
+
+template<typename...Args>
+class FullSpace<MixedSpace<Args...>>
+{
+public:
+  using FunctionSpace=MixedSpace<Args...>;
+  using Elem=typename FunctionSpace::Elem;
+  using MeshT=Mesh<Elem::Dim,Elem::ManifoldDim>;
+  using TupleOfSpaces=typename FunctionSpace::TupleOfSpaces;
+  using DofMapType=std::tuple<typename FunctionSpace::DofMapType>;
+  using UniqueElementFunctionSpacesTupleType= typename FunctionSpace::UniqueElementFunctionSpacesTupleType;
+  using SpacesToUniqueFEFamily=SpacesToUniqueFEFamilies2<UniqueElementFunctionSpacesTupleType>;
+  using FromElementFunctionSpacesToUniqueNumbersTupleType=
+  TupleAllToUniqueMap<TupleOfSpaces,UniqueElementFunctionSpacesTupleType>;
+  static constexpr Integer TrialSpaceSize=FunctionSpace::Nsubspaces;
+  static constexpr Integer Nsubspaces=FunctionSpace::Nsubspaces;
+  static constexpr Array<Integer,Nsubspaces> Nelem_dofs_array=FunctionSpace::Nelem_dofs_array;
+
+
+  FullSpace(const FunctionSpace& W):
+  space_ptr_(std::make_shared<FunctionSpace>(W))
+  {}
+
+  inline auto space_ptr(){return space_ptr_;}
+
+
+private:
+std::shared_ptr<FunctionSpace> space_ptr_;
+};
+
 
 template<typename...Args,typename...AuxArgs>
 class FullSpace<MixedSpace<Args...>,AuxMixedSpace<AuxArgs...>>
@@ -437,9 +466,6 @@ public:
                                    typename AuxFunctionSpace::TupleOfSpaces>;
   using DofMapType=std::tuple<typename FunctionSpace::DofMapType,
                               typename AuxFunctionSpace::DofMapType>;
-  // using ElementFunctionSpacesTupleType=TupleCatType<typename FunctionSpace::ElementFunctionSpacesTupleType,
-  //                                                   typename AuxFunctionSpace::ElementFunctionSpacesTupleType>;
-
   using UniqueElementFunctionSpacesTupleType= RemoveTupleDuplicates<TupleCatType<
                                      typename FunctionSpace::UniqueElementFunctionSpacesTupleType,
                                      typename AuxFunctionSpace::UniqueElementFunctionSpacesTupleType>>;
@@ -447,9 +473,7 @@ public:
   using FromElementFunctionSpacesToUniqueNumbersTupleType=
   TupleAllToUniqueMap<TupleOfSpaces,UniqueElementFunctionSpacesTupleType>;
   static constexpr Integer TrialSpaceSize=FunctionSpace::Nsubspaces;
-     // constexpr const auto& spaces(){return spaces_;}
-     static constexpr Integer Nsubspaces=FunctionSpace::Nsubspaces + AuxFunctionSpace::Nsubspaces;
-     // static constexpr Integer Nelem_dofs=Sum(Arg::Nelem_dofs, Args::Nelem_dofs...);
+  static constexpr Integer Nsubspaces=FunctionSpace::Nsubspaces + AuxFunctionSpace::Nsubspaces;
   static constexpr Array<Integer,Nsubspaces> Nelem_dofs_array=concat(FunctionSpace::Nelem_dofs_array,
                                                                      AuxFunctionSpace::Nelem_dofs_array);
 
@@ -458,12 +482,19 @@ public:
   space_ptr_(std::make_shared<FunctionSpace>(W1)),
   aux_space_ptr_(std::make_shared<AuxFunctionSpace>(W2))
   {}
+  inline       auto  space_ptr()     {return space_ptr_;}
+  inline const auto& space_ptr()const{return space_ptr_;}
+  inline       auto  aux_space_ptr()     {return aux_space_ptr_;}
+  inline const auto& aux_space_ptr()const{return aux_space_ptr_;}
+
 private:
 std::shared_ptr<FunctionSpace> space_ptr_;
 std::shared_ptr<AuxFunctionSpace> aux_space_ptr_;
-
-
 };
+
+template<typename...Args>
+auto FullSpaceBuild(const MixedSpace<Args...>& W)
+    {return FullSpace<MixedSpace<Args...>>(W);}
 
 template<typename...Args,typename...AuxArgs>
 auto FullSpaceBuild(const MixedSpace<Args...>& W1,const AuxMixedSpace<AuxArgs...>& W2)
@@ -487,7 +518,7 @@ class Trial: public Expression<Trial<MixedSpace,N,OperatorType>>
   static constexpr Integer value=GetType<typename MixedSpace::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value;
   using Operator=OperatorType;
  
-  Trial(){}
+  // Trial(){}
 
   // Trial(const MeshT&mesh):
   // mesh_ptr_(std::make_shared<MeshT>(mesh))
@@ -496,6 +527,9 @@ class Trial: public Expression<Trial<MixedSpace,N,OperatorType>>
   // Trial(const std::shared_ptr<MeshT>&mesh_ptr):
   // mesh_ptr_(mesh_ptr)
   // {}
+  Trial(const std::shared_ptr<MixedSpace>& W_ptr):
+  spaces_ptr_(W_ptr)
+  {}
 
   Trial(const MixedSpace& W):
   spaces_ptr_(std::make_shared<MixedSpace>(W))
@@ -522,7 +556,7 @@ public:
   static constexpr Integer value=GetType<typename MixedSpace::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value;
   using Operator=OperatorType;
   
-  Test(){}
+  // Test(){}
 
   // Test(const MeshT&mesh):
   // mesh_ptr_(std::make_shared<MeshT>(mesh))
@@ -531,6 +565,9 @@ public:
   // Test(const std::shared_ptr<MeshT>&mesh_ptr):
   // mesh_ptr_(mesh_ptr)
   // {}
+  Test(const std::shared_ptr<MixedSpace>& W_ptr):
+  spaces_ptr_(W_ptr)
+  {}
 
   Test(const MixedSpace& W):
   spaces_ptr_(std::make_shared<MixedSpace>(W))
@@ -610,16 +647,13 @@ class Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_>>,OtherTemplateAr
  eval_(expr)
  {};
  
-  template<typename...Args,typename...Inputs>
- constexpr void apply(value_type& value,const std::tuple<Args...>& tuple_of_tuple)
+  template<typename...Args, typename Jacobian, typename...Inputs>
+ constexpr void apply(value_type& value,const Jacobian& J, const std::tuple<Args...>& tuple_of_tuple)
  {
   using tuple_type=GetType<std::tuple<Args...>,type::value>;
   const auto& tuple=tuple_get<type::value>(tuple_of_tuple);
   constexpr Integer M=TypeToTupleElementPosition<ShapeFunction<Elem,BaseFunctionSpace,Operator,OtherTemplateArguments...>,tuple_type>::value;
   value=tuple_get<M>(tuple).eval();
-  // decltype(tuple_get<M>(tuple)) eokeok(6);
-  std::cout<<"value="<<std::endl;
-  std::cout<<value<<std::endl;
  }
 
 
@@ -657,22 +691,16 @@ class Evaluation<Expression<Function2<FullSpace,N,Operator_,FuncType>>,OtherTemp
  {};
 
  template<typename Shapes>
- void compute(value_type& value,const type&eval,const Shapes& shapes )
+ void compute(value_type& value, type&eval,const Jacobian<Elem>&J, const Shapes& shapes )
  {
   using type1=typename Shapes::type; //Vector<Vector<T,NQpoints>,Ndofs>
   using type2=typename Shapes::subtype; //Vector<T,NQpoints>
   using type3=typename Shapes::subtype::subtype; // T 
   
-
-   auto& local_dofs=eval.local_dofs();
-  // decltype(local_dofs) ok1(4);//const mars::Array<double, 3>
-  // decltype(value) ok3(4);//QPValues<mars::Matrix<double, 1, 1>, 7>
-  // decltype(shapes) ok4(4);//FQPValues<mars::Matrix<double, 1, 1>, 7, 3>
-  // typename Shapes::type ok5(6);//Vector<Vector<mars::Matrix<double, 1, 1>, 7L>, 3L>
-  // typename Shapes::subtype ok(6);//Vector<mars::Matrix<double, 1, 1>, 7>
-  // typename Shapes::subtype::subtype ok66=IdentityOperator();
-  
-
+   std::cout<<"pre eval.local_dofs_update(J)"<<std::endl;
+   eval.local_dofs_update(J);
+   std::cout<<"post eval.local_dofs_update(J)"<<std::endl;
+   const auto& local_dofs=eval.local_dofs();
     // loop on qp points
     for(Integer ii=0;ii< type2::Dim;ii++)
     {
@@ -685,21 +713,22 @@ class Evaluation<Expression<Function2<FullSpace,N,Operator_,FuncType>>,OtherTemp
       for(Integer mm=0;mm<type3::Rows;mm++)
         for(Integer nn=0;nn<type3::Cols;nn++)
            value[ii](mm,nn)+=local_dofs[jj]*shapes[jj][ii](mm,nn);
+
     }
 
 
  }
  
- template<typename...Args,typename...Inputs>
- constexpr void apply(value_type& value,const std::tuple<Args...>& tuple_of_tuple)
+ template<typename...Args, typename Jacobian,typename...Inputs>
+ constexpr void apply(value_type& value,const Jacobian& J, const std::tuple<Args...>& tuple_of_tuple)
  {
   using tuple_type=GetType<std::tuple<Args...>,type::value>;
   const auto& tuple=tuple_get<type::value>(tuple_of_tuple);
   constexpr Integer M=TypeToTupleElementPosition<ShapeFunction<Elem,BaseFunctionSpace,Operator,OtherTemplateArguments...>,tuple_type>::value;
-  const auto& local_dofs=eval_.local_dofs();
   // FIXME
   const auto& shapes=tuple_get<M>(tuple).eval();
-  compute(value,eval_,shapes);
+  compute(value,eval_,J,shapes);
+
  }
 
 
@@ -1018,54 +1047,54 @@ auto MakeTrial(const FunctionSpace<Args...>& W)
 
 template<Integer N,typename...Args >
 auto MakeTest(const MixedSpace<Args...>& W)
-{return Test<MixedSpace<Args...>,N>();}
+{return Test<MixedSpace<Args...>,N>(W);}
 
 
 template<Integer N,typename...Args >
 auto MakeTrial(const MixedSpace<Args...>& W)
-{return Trial<MixedSpace<Args...>,N>();}
+{return Trial<MixedSpace<Args...>,N>(W);}
 
 
 template<Integer N,typename...Args >
 auto MakeTest(const FullSpace<Args...>& W)
-{return Test<FullSpace<Args...>,N>();}
+{return Test<FullSpace<Args...>,N>(W);}
 
 
 template<Integer N,typename...Args >
 auto MakeTrial(const FullSpace<Args...>& W)
-{return Trial<FullSpace<Args...>,N>();}
+{return Trial<FullSpace<Args...>,N>(W);}
 
 
 template<template<class,Integer,class>class TestOrTrial, typename MixedSpace,Integer N>
 TestOrTrial<MixedSpace,N,GradientOperator> 
-Grad(const TestOrTrial<MixedSpace,N,IdentityOperator>& W)
+Grad(const TestOrTrial<MixedSpace,N,IdentityOperator>& t)
 {
   static_assert((IsSame<TestOrTrial<MixedSpace,N,IdentityOperator>,Test<MixedSpace,N,IdentityOperator>>::value ||
                  IsSame<TestOrTrial<MixedSpace,N,IdentityOperator>,Trial<MixedSpace,N,IdentityOperator>>::value )
                  && "In Evaluation<Expression<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");  
-  return TestOrTrial<MixedSpace,N,GradientOperator> ();}
+  return TestOrTrial<MixedSpace,N,GradientOperator> (t.spaces_ptr());}
 
 
 template<typename MixedSpace,Integer N>
 Trial<MixedSpace,N,DivergenceOperator> 
-Div(const Trial<MixedSpace,N,IdentityOperator>& W)
-{return Trial<MixedSpace,N,DivergenceOperator> ();}
+Div(const Trial<MixedSpace,N,IdentityOperator>& t)
+{return Trial<MixedSpace,N,DivergenceOperator> (t.spaces_ptr());}
 
 template<typename MixedSpace,Integer N>
 Test<MixedSpace,N,DivergenceOperator> 
-Div(const Test<MixedSpace,N,IdentityOperator>& W)
-{return Test<MixedSpace,N,DivergenceOperator> ();}
+Div(const Test<MixedSpace,N,IdentityOperator>& t)
+{return Test<MixedSpace,N,DivergenceOperator> (t.spaces_ptr());}
 
 
 template<typename MixedSpace,Integer N>
 Trial<MixedSpace,N,CurlOperator> 
-Curl(const Trial<MixedSpace,N,IdentityOperator>& W)
-{return Trial<MixedSpace,N,CurlOperator> ();}
+Curl(const Trial<MixedSpace,N,IdentityOperator>& t)
+{return Trial<MixedSpace,N,CurlOperator> (t.spaces_ptr());}
 
 template<typename MixedSpace,Integer N>
 Test<MixedSpace,N,CurlOperator> 
-Curl(const Test<MixedSpace,N,IdentityOperator>& W)
-{return Test<MixedSpace,N,CurlOperator> ();}
+Curl(const Test<MixedSpace,N,IdentityOperator>& t)
+{return Test<MixedSpace,N,CurlOperator> (t.spaces_ptr());}
 
 
 
@@ -2266,8 +2295,8 @@ L2Inner(const Expression<Left>& left,const Expression<Right>& right, const Integ
  
 
 
-template<typename Form_>
-class GeneralForm
+template<typename Form_, typename FullSpace>
+class GeneralForm<Form_,FullSpace>
 {
 
   public:
@@ -2392,24 +2421,27 @@ class GeneralForm
 
   using TupleOfPairsNumbers=BubbleSortTupleOfPairsNumbers<typename TupleOfTestTrialPairsNumbers<Form>::type>;
 
-    GeneralForm(const Form& form)
+    GeneralForm(const Form& form,const FullSpace& space)
     : 
-    form_(form)
+    form_(form),
+    space_ptr_(std::make_shared<FullSpace>(space))
     {};
 
     const Form& operator()()const{return form_;};
           Form& operator()()     {return form_;};
 
+    const std::shared_ptr<FullSpace>& space_ptr()const{return space_ptr_;};
+          std::shared_ptr<FullSpace>& space_ptr()     {return space_ptr_;};
+
   private:
   Form form_;
+  std::shared_ptr<FullSpace> space_ptr_;
 };
    
 
 
-template<typename Form>
-constexpr auto
-general_form(const Form& form)
-{return GeneralForm<Form>(form);}
+template<typename Form,typename FullSpace>
+constexpr auto general_form(const Form& form,const FullSpace& W){return GeneralForm<Form,FullSpace>(form,W);}
 
 
 
@@ -2658,7 +2690,11 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,QR>>, ShapeFunctio
  template<typename Elem>
  void apply_aux(subtype& mat, const Jacobian<Elem>& J)
  {
+    std::cout<<"functionspace eval l2dotprod1"<<std::endl;
+
   local_mat_.apply(mat,J,shape_functions_());
+      std::cout<<"functionspace eval l2dotprod2"<<std::endl;
+
  }
 
 
@@ -3130,7 +3166,7 @@ class ShapeFunctions2
          auto& value()     {return tuple_get<Ns...>(tuple).eval();}
 
 
- ShapeFunctions2(ShapeFunctionCoefficient<GeneralForm_>&coeffs,
+ ShapeFunctions2(ShapeFunctionCoefficient<GeneralForm_,GeneralForms_...>&coeffs,
                  ReferenceMaps2<GeneralForm_,GeneralForms_...>& maps):
  coeffs_(coeffs),
  maps_(maps)
@@ -3138,14 +3174,14 @@ class ShapeFunctions2
 
 
 private:
-   ShapeFunctionCoefficient<GeneralForm_> & coeffs_;
+   ShapeFunctionCoefficient<GeneralForm_,GeneralForms_...> & coeffs_;
    ReferenceMaps2<GeneralForm_,GeneralForms_...> & maps_;
    TupleOfTupleShapeFunction tuple;
 };
 
 
 template<typename Form,typename...Forms>
-constexpr auto shape_functions2(ShapeFunctionCoefficient<Form>&coeffs, ReferenceMaps2<Form,Forms...>&maps,const Form& form,const Forms&...forms)
+constexpr auto shape_functions2(ShapeFunctionCoefficient<Form,Forms...>&coeffs, ReferenceMaps2<Form,Forms...>&maps,const Form& form,const Forms&...forms)
 {
   //using Form=typename std::remove_const<typename std::remove_reference<ConstFormReference>::type>::type;
  return ShapeFunctions2<Form,Forms...>(coeffs,maps);  }

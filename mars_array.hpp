@@ -35,6 +35,25 @@ namespace mars {
         using MB::MB;
         using MB::values;
 
+        constexpr Array& operator=(const std::vector<T> &right)
+        {
+            for(Integer i = 0; i < Dim; ++i) {
+                // const_cast<T&>(static_cast<const std::array<T,Dim>& >((*this)())[i] )=right(i);
+                (*this)()[i]=right[i];
+            }
+            
+            return *this;
+        } 
+
+        constexpr Array& operator=(const std::array<T,Dim> &right)
+        {
+            for(Integer i = 0; i < Dim; ++i) {
+                // const_cast<T&>(static_cast<const std::array<T,Dim>& >((*this)())[i] )=right(i);
+                (*this)()[i]=right[i];
+            }
+            
+            return *this;
+        } 
 
         constexpr Array& operator=(const Array &right)
         {
