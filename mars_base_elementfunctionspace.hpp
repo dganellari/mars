@@ -27,33 +27,7 @@ constexpr Integer LagrangeFE = -10;
 constexpr Integer RaviartThomasFE = -11;
 constexpr Integer NedelecFE = -12;
 constexpr Integer GeneralSpace = -666;
-////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////---------- OPERATOR IDs ---------- ////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// constexpr Integer IdentityOperator = -100;
-// constexpr Integer DivergenceOperator = -101;
-// constexpr Integer GradientOperator = -102;
-class IdentityOperator  {public: IdentityOperator(){};}; 
-class DivergenceOperator{public: DivergenceOperator(){};};
-class GradientOperator  {public: GradientOperator(){}};
-class CurlOperator  {public: CurlOperator(){}};
-template<Integer N_>
-class ComponentOperator  
- {public: static constexpr Integer N=N_;
-  ComponentOperator(){}};
 
-// class Operator{public:
-//                static  IdentityOperator identity_op;
-//                static  DivergenceOperator divergence_op;
-//                static  GradientOperator gradient_op;
-//                static  CurlOperator curl_op; 
-//                // static  ComponentOperator component_op; 
-//                static  IdentityOperator id(){return identity_op;};
-//                static  DivergenceOperator div(){return divergence_op;};
-//                static  GradientOperator grad(){return gradient_op;};
-//                static  CurlOperator curl(){return curl_op;};
-//                // static  ComponentOperator component(){return component_op;};
-//            };
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////----------  BASE  SPACE  ---------- //////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////

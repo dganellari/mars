@@ -3,27 +3,42 @@
 #include "mars_base.hpp"
 #include "mars_tuple_utilities.hpp"
 #include "mars_quadrature_rules.hpp"
+#include "mars_expression.hpp"
+
 
 namespace mars {
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////---------- OPERATOR IDs ---------- ////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
-///////////////////////////////////////////////////////////////////////////////////////
-/////////////////////    EXPRESSIONS FOR TEMPLATE EXPRESSIONS      ////////////////////
-///////////////////////////////////////////////////////////////////////////////////////
-template<typename Derived>
-class Expression
-{
-public:
-        inline Derived &derived() { return static_cast<Derived &>(*this); }
-        inline constexpr const Derived &derived() const { return static_cast<const Derived &>(*this); }
-        inline operator Derived &() {return derived();}
-        inline constexpr  operator const Derived &() const {return derived();}
+class IdentityOperator: public Expression<IdentityOperator>  
+{public: IdentityOperator(){};}; 
+class DivergenceOperator: public Expression<DivergenceOperator>
+{public: DivergenceOperator(){};};
 
-         ///@return a string with the name of the class
-        virtual std::string getClass() const {
-            return "Expression of ";
-        }
-};
+class GradientOperator : public Expression<GradientOperator> 
+{public: GradientOperator(){}};
+class CurlOperator: public Expression<CurlOperator>  
+{public: CurlOperator(){}};
+template<Integer N_>
+class ComponentOperator: public Expression<ComponentOperator<N_>>  
+ {public: static constexpr Integer N=N_;
+  ComponentOperator(){}};
+
+// class Operator{public:
+//                static  IdentityOperator identity_op;
+//                static  DivergenceOperator divergence_op;
+//                static  GradientOperator gradient_op;
+//                static  CurlOperator curl_op; 
+//                // static  ComponentOperator component_op; 
+//                static  IdentityOperator id(){return identity_op;};
+//                static  DivergenceOperator div(){return divergence_op;};
+//                static  GradientOperator grad(){return gradient_op;};
+//                static  CurlOperator curl(){return curl_op;};
+//                // static  ComponentOperator component(){return component_op;};
+//            };
+
 
 
 ///////////////////////////////////////////////////////////////
@@ -128,6 +143,14 @@ class OperatorTypeHelper< Multiplication< Matrix<T,Rows,CommonDim>,
 {
   public:
   using type=Matrix<T,Rows,Cols>;
+};
+
+template<typename T, typename S, Integer NQPoints, typename...Ts>
+class OperatorTypeHelper< Multiplication< QPValues<T,NQPoints>, 
+                                          QPValues<S,NQPoints> >, Ts...>
+{
+  public:
+  using type=QPValues<typename OperatorTypeHelper<Multiplication<T,S>,Ts...>::type ,NQPoints>;
 };
 
 template<typename T, typename S, Integer NQPoints,Integer NComponents, typename...Ts>
@@ -549,65 +572,89 @@ class Multiplication<Matrix<Real,Rows,CommonDim>,
 
 
 
-template<typename T,Integer Rows,Integer CommonDim,Integer Cols>
-class Multiplication<Matrix<T,Rows,CommonDim>,
-                     Matrix<T,CommonDim,Cols>,
-                     Matrix<T,Rows,Cols> > 
-{    
- public:            
- inline static void apply(      Matrix<T,Rows,Cols>& A,
-                          const Matrix<T,Rows,CommonDim>& B,
- 	                        const Matrix<T,CommonDim,Cols>& C)
-	{
-	 for(Integer ii=0;ii<Rows;ii++)
-	 	for(Integer jj=0;jj<Cols;jj++)
-	 	   {
-	 	   	A(ii,jj)=B(ii,0)*C(0,jj);
-	 	   	for(Integer cc=1;cc<CommonDim;cc++)
-	 	   	   A(ii,jj)+=B(ii,cc)*C(cc,jj);
-	 	   }
-	};
-};
+// template<typename T,Integer Rows,Integer CommonDim,Integer Cols>
+// class Multiplication<Matrix<T,Rows,CommonDim>,
+//                      Matrix<T,CommonDim,Cols>,
+//                      Matrix<T,Rows,Cols> > 
+// {    
+//  public:            
+//  inline static void apply(      Matrix<T,Rows,Cols>& A,
+//                           const Matrix<T,Rows,CommonDim>& B,
+//  	                        const Matrix<T,CommonDim,Cols>& C)
+// 	{
+// 	 for(Integer ii=0;ii<Rows;ii++)
+// 	 	for(Integer jj=0;jj<Cols;jj++)
+// 	 	   {
+// 	 	   	A(ii,jj)=B(ii,0)*C(0,jj);
+// 	 	   	for(Integer cc=1;cc<CommonDim;cc++)
+// 	 	   	   A(ii,jj)+=B(ii,cc)*C(cc,jj);
+// 	 	   }
+// 	};
+// };
 
-template<typename T, typename S,Integer NQPoints,Integer Ndofs>
-class Multiplication<QPValues<T,NQPoints>,
-                     FQPValues<S,NQPoints,Ndofs>,
-                     OperatorType<QPValues<T,NQPoints>,FQPValues<S,NQPoints,Ndofs>>
-                      > 
+template<typename S, typename T,Integer NQPoints>
+class Multiplication<QPValues<S,NQPoints>,
+                     QPValues<T,NQPoints>> 
 {    
  public:            
- inline static void apply(      QPValues<T,NQPoints>& A,
-                          const FQPValues<S,NQPoints,Ndofs>& B,
-                          const OperatorType<QPValues<T,NQPoints>,FQPValues<S,NQPoints,Ndofs>>& C)
+ inline static void apply(      QPValues<OperatorType<Multiplication<S,T>>,NQPoints>& A,
+                          const QPValues<S,NQPoints>& B,
+                          const QPValues<T,NQPoints>& C)
   {
-   for(Integer ii=0;ii<Ndofs;ii++)
-    for(Integer jj=0;jj<NQPoints;jj++)
+    std::cout<<"apply QPValues-QPValues"<<std::endl;
+    for(Integer qp=0;qp<NQPoints;qp++)
        {
-           //FIXME TODO
-           // Multipl
-           // C(ii,jj)+=B(ii,cc)*C(cc,jj);
+        //FIXME TODO
+        Multiply(A[qp],B[qp],C[qp]);
+        std::cout<<"B[qp]"<<B[qp]<<std::endl;
+        std::cout<<"C[qp]"<<C[qp]<<std::endl;
+        std::cout<<"A[qp]"<<A[qp]<<std::endl;
        }
   };
 };
 
-template<typename T, typename S,Integer NQPoints,Integer Ndofs>
-class Multiplication<FQPValues<S,NQPoints,Ndofs>,
-                     QPValues<T,NQPoints>,   
-                     OperatorType<FQPValues<S,NQPoints,Ndofs>,QPValues<T,NQPoints>>
-                      > 
+template<typename S, typename T,Integer NQPoints,Integer Ndofs>
+class Multiplication<QPValues<T,NQPoints>,
+                     FQPValues<S,NQPoints,Ndofs>
+                     >
+                      
 {    
- public:          
- inline static void apply(      FQPValues<S,NQPoints,Ndofs>& A,
-                          const QPValues<T,NQPoints>& B,
-                          const OperatorType<FQPValues<S,NQPoints,Ndofs>,QPValues<T,NQPoints>>& C)
+ public:            
+ inline static void apply(      FQPValues<OperatorType<Multiplication<S,T>>,NQPoints,Ndofs>& A,
+                          const QPValues<S,NQPoints>& B,
+                          const FQPValues<T,NQPoints,Ndofs>& C)
   {
-   for(Integer ii=0;ii<Ndofs;ii++)
-    for(Integer jj=0;jj<NQPoints;jj++)
+   for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+    for(Integer qp=0;qp<NQPoints;qp++)
        {
            //FIXME TODO
+        //FIXME TODO
+        Multiply(A[n_dof][qp],B[qp],C[n_dof][qp]);
+        std::cout<<"B[qp]"<<B[qp]<<std::endl;
+        std::cout<<"C[qp]"<<C[n_dof][qp]<<std::endl;
+        std::cout<<"A[qp]"<<A[n_dof][qp]<<std::endl;
+       }
+  };
+};
 
-           // Multipl
-           // C(ii,jj)+=B(ii,cc)*C(cc,jj);
+template<typename S, typename T,Integer NQPoints,Integer Ndofs>
+class Multiplication<FQPValues<S,NQPoints,Ndofs>,
+                     QPValues<T,NQPoints>> 
+{    
+ public:          
+ inline static void apply(      FQPValues<OperatorType<Multiplication<S,T>>,NQPoints,Ndofs>& A,
+                          const FQPValues<S,NQPoints,Ndofs>& B,
+                          const QPValues<T,NQPoints>& C)
+  {
+   for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+    for(Integer qp=0;qp<NQPoints;qp++)
+       {
+        //FIXME TODO
+        //FIXME TODO
+        Multiply(A[n_dof][qp],B[qp][n_dof],C[qp]);
+        std::cout<<"B[qp]"<<B[qp][n_dof]<<std::endl;
+        std::cout<<"C[qp]"<<C[qp]<<std::endl;
+        std::cout<<"A[qp]"<<A[n_dof][qp]<<std::endl;
        }
   };
 };
@@ -618,12 +665,12 @@ class Multiplication<Real,Matrix<T,Rows,Cols>>
 {       
  public:               
 
- inline static void apply(Matrix<T,Rows,Cols>& A,const Real& alpha)
-  {
-   for(Integer ii=0;ii<Rows;ii++)
-    for(Integer jj=0;jj<Cols;jj++)
-      A(ii,jj)=A(ii,jj)*alpha;
-  };
+ // inline static void apply(Matrix<T,Rows,Cols>& A,const Real& alpha)
+ //  {
+ //   for(Integer ii=0;ii<Rows;ii++)
+ //    for(Integer jj=0;jj<Cols;jj++)
+ //      A(ii,jj)=A(ii,jj)*alpha;
+ //  };
 
  inline static void apply(      Matrix<T,Rows,Cols>& A,
                           const Matrix<T,Rows,Cols>& B,
@@ -641,10 +688,10 @@ class Multiplication<Matrix<T,Rows,Cols>,Real>
 {       
  public:               
 
- inline static void apply(Matrix<T,Rows,Cols>& A,const Real& alpha)
-  {
-   Multiplication<Real,Matrix<T,Rows,Cols>>(A,alpha); 
-  };
+ // inline static void apply(Matrix<T,Rows,Cols>& A,const Real& alpha)
+ //  {
+ //   Multiplication<Real,Matrix<T,Rows,Cols>>(A,alpha); 
+ //  };
 
  inline static void apply(      Matrix<T,Rows,Cols>& A,
                           const Matrix<T,Rows,Cols>& B,
@@ -662,12 +709,14 @@ template<typename T,Integer Rows,Integer Cols>
 class Division<Matrix<T,Rows,Cols>,Real> 
 {    
  public:            
- inline static void apply(Matrix<T,Rows,Cols>& A,const Real& alpha)
-	{
-	 for(Integer ii=0;ii<Rows;ii++)
-	 	for(Integer jj=0;jj<Cols;jj++)
-	 	   	   A(ii,jj)=A(ii,jj)/alpha;   
-	};
+ inline static void apply(      Matrix<T,Rows,Cols>& A,
+                          const Matrix<T,Rows,Cols>& B,
+                          const Real& alpha)
+  {
+   for(Integer ii=0;ii<Rows;ii++)
+    for(Integer jj=0;jj<Cols;jj++)
+      A(ii,jj)=B(ii,jj)/alpha;
+  };
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -996,7 +1045,7 @@ template<typename T>
 constexpr void Subtract(T& a, const T&b, const T&c){Subtraction<T>::apply(a,b,c);}
 
 template<typename U,typename V,typename W>
-constexpr void Multiply(U& u, const V& v, const W& w){Multiplication<U,V,W>::apply(u,v,w);}
+constexpr void Multiply(U& u, const V& v, const W& w){Multiplication<V,W>::apply(u,v,w);}
 
 
 template<typename T>
@@ -1059,6 +1108,8 @@ class Addition< Expression <DerivedLeft>, Expression <DerivedRight> >
     {};
     const Left& left()const{return left_;};
     const Right& right()const{return right_;};
+          auto operator()(){return Addition<Expression<Left>,Expression<Right>>(left_,right_);};
+          auto operator()()const{return Addition<Expression<Left>,Expression<Right>>(left_,right_);};
   private:
   Left left_;
   Right right_;
@@ -1774,28 +1825,28 @@ class TupleOfEvaluationExpressionOfTypesHelper;
 template<typename L2Products,typename Form>
 class TupleOfEvals;
 
-template<typename L2Products,typename Form,typename FullSpace>
-class TupleOfEvals<L2Products,ShapeFunctions2<GeneralForm<Form,FullSpace>>>
+template<typename L2Products,typename Form>
+class TupleOfEvals<L2Products,ShapeFunctions2<GeneralForm<Form>>>
 {
  public:
-  using type=typename TupleOfEvaluationExpressionOfTypesHelper<L2Products,ShapeFunctions2<GeneralForm<Form,FullSpace>>>::type;
+  using type=typename TupleOfEvaluationExpressionOfTypesHelper<L2Products,ShapeFunctions2<GeneralForm<Form>>>::type;
   
 
 
   template<Integer Nmax,Integer N>
   constexpr std::enable_if_t<(Nmax==N),void>
-  construct_aux(ShapeFunctions2<GeneralForm<Form,FullSpace>>& shapes)
+  construct_aux(ShapeFunctions2<GeneralForm<Form>>& shapes)
   {
   }
 
   template<Integer Nmax,Integer N>
   constexpr std::enable_if_t<(Nmax>N),void>
-  construct_aux(ShapeFunctions2<GeneralForm<Form,FullSpace>>& shapes)
+  construct_aux(ShapeFunctions2<GeneralForm<Form>>& shapes)
   {
   }
 
 
-  TupleOfEvals(ShapeFunctions2<GeneralForm<Form,FullSpace>>& shapes):
+  TupleOfEvals(ShapeFunctions2<GeneralForm<Form>>& shapes):
   shapes_(shapes)
   // ,
   // tuple_
@@ -1803,7 +1854,7 @@ class TupleOfEvals<L2Products,ShapeFunctions2<GeneralForm<Form,FullSpace>>>
 
  private:
   // type tuple;
-  ShapeFunctions2<GeneralForm<Form,FullSpace>>& shapes_;
+  ShapeFunctions2<GeneralForm<Form>>& shapes_;
   // type tuple_;
 };
 
@@ -1813,67 +1864,46 @@ class TupleOfEvals<L2Products,ShapeFunctions2<GeneralForm<Form,FullSpace>>>
 template<typename...Ts>
 class EvaluationOfL2Inners;
 
-template<typename Form,typename FullSpace,typename GeneralForm_, typename...GeneralForms>
-class Evaluation<Expression<GeneralForm<Form,FullSpace>>,ShapeFunctions2<GeneralForm_,GeneralForms...>>
+template<typename Form,typename GeneralForm_, typename...GeneralForms>
+class Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions2<GeneralForm_,GeneralForms...>>
 {
  public:
- using type= GeneralForm<Form,FullSpace>;
+ using type= GeneralForm<Form>;
  using FunctionSpace= typename type::FunctionSpace;
  using TupleFunctionSpace=typename type::TupleFunctionSpace;
  using ShapeFunctions=ShapeFunctions2<GeneralForm_,GeneralForms...>;
  using Shapes=typename ShapeFunctions::TupleOfTupleShapeFunction;
- using TupleOfPairsNumbers=typename GeneralForm<Form,FullSpace>::TupleOfPairsNumbers;
+ using TupleOfPairsNumbers=typename GeneralForm<Form>::TupleOfPairsNumbers;
  using L2Products=typename TupleOfL2Products< TupleOfPairsNumbers, Form >::type;
  using TupleOfEvals=TupleOfEvals<L2Products,ShapeFunctions>;
- using EvaluationOfL2Inners=EvaluationOfL2Inners<Evaluation<Expression<GeneralForm<Form,FullSpace>>,ShapeFunctions>>;
- 
+ using EvaluationOfL2Inners=EvaluationOfL2Inners<Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions>>;
  const Form& operator()()const{return general_form_();};
 
- Evaluation(const GeneralForm<Form,FullSpace>& general_form,ShapeFunctions& shapesform):
+ Evaluation(const GeneralForm<Form>& general_form,ShapeFunctions& shapesform):
  general_form_(general_form),
  shapesform_(shapesform),
+ // tuple_eval(faccio<TupleOfPairsNumbers>(general_form_())),
  eval_inners_(general_form_,shapesform)
  {}
-
- 
- // template<Integer Nmax, Integer N, typename Elem>
- // constexpr std::enable_if_t<(N==Nmax),void>
- // apply_aux(const Jacobian<Elem>& J)
- // {
- //  std::cout<<"eval general form="<<N<<std::endl;
- // }
-
- // template<Integer Nmax, Integer N, typename Elem>
- // constexpr std::enable_if_t<(N<Nmax),void>
- // apply_aux(const Jacobian<Elem>& J)
- // {
- //    std::cout<<"eval general form="<<N<<std::endl;
- //    apply_aux<Nmax,N+1>(J);
- // }
-
-
  
  template<typename Elem>
  constexpr void apply(const Jacobian<Elem>& J)
  {
   int token_mat=1;
   eval_inners_.apply(token_mat,J);
-  // apply_aux<TupleTypeSize<Shapes>::value-1,0>(J);
  }
 
-
- // inline auto spaces_ptr()const {return spaces_ptr_;};
-
  private:
- const GeneralForm<Form,FullSpace>& general_form_;
+ const GeneralForm<Form>& general_form_;
  ShapeFunctions& shapesform_;
  EvaluationOfL2Inners eval_inners_;
+ // EvaluationOfL2Inners tuple_eval;
 };
 
 
 template<typename Form,typename FullSpace, typename GeneralForm_, typename...GeneralForms>
-constexpr auto Eval(const GeneralForm<Form,FullSpace>& form, ShapeFunctions2<GeneralForm_,GeneralForms...>& shapes)
-{return Evaluation< Expression<GeneralForm<Form,FullSpace>>,ShapeFunctions2<GeneralForm_,GeneralForms...> >(form,shapes);}
+constexpr auto Eval(const GeneralForm<Form>& form, ShapeFunctions2<GeneralForm_,GeneralForms...>& shapes)
+{return Evaluation< Expression<GeneralForm<Form>>,ShapeFunctions2<GeneralForm_,GeneralForms...> >(form,shapes);}
 
 
 
@@ -2588,7 +2618,6 @@ class OperatorTupleType< Multiplication< Real, Expression<T> > >
 };
 
 
-// order(Left*Right) = order(Left) * order(Right)
 template<typename Left, typename Right>
 class OperatorTupleType< Multiplication< Expression<Left>, Expression<Right> > >
 { public:

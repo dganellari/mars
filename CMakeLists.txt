@@ -80,6 +80,7 @@ list(APPEND MARS_HEADERS
 	mars_entity.hpp
 	mars_entity_impl.hpp
 	mars_examples.hpp
+	mars_expression.hpp
 	mars_elementfunctionspace.hpp
 	mars_fqpexpressions.hpp
 	mars_function.hpp

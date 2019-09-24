@@ -312,8 +312,8 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
 
   const auto& detJ=J.get_det();
   // decltype(eval_left_) eee(6);
-  eval_left_.apply(left_value_,shape_functions);
-  eval_right_.apply(right_value_,shape_functions);
+  eval_left_.apply(left_value_,J,shape_functions);
+  eval_right_.apply(right_value_,J,shape_functions);
 
   std::cout<<"left_value_"<<std::endl;
   std::cout<<left_value_<<std::endl;
@@ -519,29 +519,6 @@ public:
 };
 
 
-// template<typename T>
-// constexpr auto Construct(const UnaryPlus<Expression<T>>& x )                             
-// {return Construct(x.derived());};
-
-// template<typename T>
-// constexpr auto Construct(const UnaryPlus<Expression<T>>& x )                             
-// {return Construct(x.derived());};
-
-// template<typename T>
-// constexpr auto Construct(const UnaryMinus<Expression<T>>& x )                             
-// {return -Construct(x.derived());};
-
-// template<typename Left,typename Right>
-// constexpr auto Construct(const Subtraction<Expression<Left>,Expression<Right>>& x )                             
-// {return Construct(x.left())-Construct(x.right());};
-
-// template<typename Left,typename Right>
-// constexpr auto Construct(const Addition<Expression<Left>,Expression<Right>>& x )                             
-// {return Construct(x.left())+Construct(x.right());};
-
-// template<typename Left,typename Right>
-// constexpr auto Construct(const Multiplication<Expression<Left>,Expression<Right>>& x )                             
-// {return Construct(x.left())*Construct(x.right());};
 
 
 
@@ -574,14 +551,7 @@ using EvalOfL2InnersAux=typename EvalOfL2InnersAuxHelper<Tuple,TupleTypeSize<Tup
 template<typename Tuple, typename ShapeFunctions>
 using EvalOfL2InnersType=EvalOfL2InnersAux<Tuple,0,ShapeFunctions>;
 
-// template<typename Tuple,Integer N,typename MeshT, typename ShapeFunctions>
-// constexpr std::enable_if_t<(N==TupleTypeSize<Tuple>::value-1), EvalOfL2InnersAux<Tuple,N,ShapeFunctions> > 
-// EvalOfL2InnersHelper(const MeshT& mesh, ShapeFunctions& shape_functions)
-// {   
-//       using ens0=GetType<Tuple,N>;
-//       using ens=Evaluation<Expression<ens0>,ShapeFunctions>;
-//       return std::tuple<ens>(Eval(Constructor<ens0>::apply(mesh),shape_functions));
-// }
+
 template<typename Tuple,Integer N,typename FullSpace,typename ShapeFunctions>
 constexpr std::enable_if_t<(N==TupleTypeSize<Tuple>::value-1), EvalOfL2InnersAux<Tuple,N,ShapeFunctions> > 
 EvalOfL2InnersHelper(const FullSpace&W,ShapeFunctions& shape_functions)
@@ -590,15 +560,7 @@ EvalOfL2InnersHelper(const FullSpace&W,ShapeFunctions& shape_functions)
       using ens=Evaluation<Expression<ens0>,ShapeFunctions>;
       return std::tuple<ens>(Eval(Constructor<ens0>::apply(W),shape_functions));
 }
-// template<typename Tuple,Integer N,typename MeshT, typename ShapeFunctions>
-// constexpr std::enable_if_t< (N<TupleTypeSize<Tuple>::value-1), EvalOfL2InnersAux<Tuple,N,ShapeFunctions>>  
-// EvalOfL2InnersHelper(const MeshT& mesh, ShapeFunctions& shape_functions)
-// {
-//       using ens0=GetType<Tuple,N>;
-//       using ens=Evaluation<Expression<ens0>,ShapeFunctions>;
-//       return std::tuple_cat(std::tuple<ens>(Eval(Constructor<ens0>::apply(mesh),shape_functions)),
-//                             EvalOfL2InnersHelper<Tuple,N+1>(mesh,shape_functions));
-// }
+
 
 template<typename Tuple,Integer N,typename FullSpace,typename ShapeFunctions>
 constexpr std::enable_if_t< (N<TupleTypeSize<Tuple>::value-1), EvalOfL2InnersAux<Tuple,N,ShapeFunctions>>  
@@ -610,11 +572,7 @@ EvalOfL2InnersHelper(const FullSpace&W,ShapeFunctions& shape_functions)
                             EvalOfL2InnersHelper<Tuple,N+1>(W,shape_functions));
 }
 
-// template<typename Tuple,typename MeshT, typename ShapeFunctions>
-// constexpr auto EvalOfL2Inners(const MeshT& mesh, ShapeFunctions& shape_functions)
-// {
-//       return EvalOfL2InnersHelper<Tuple,0>(mesh,shape_functions);
-// }
+
 template<typename Tuple,typename FullSpace,typename ShapeFunctions>
 constexpr auto EvalOfL2Inners(const FullSpace&W,ShapeFunctions& shape_functions)
 {
@@ -631,7 +589,6 @@ template<typename GeneralForm >
 class LocalTupleOfTensors<GeneralForm,1>
 {
 public:
-    // using GeneralForm=typename EvaluationGeneralForm::type;
     using TupleOfNumbers=typename GeneralForm::TupleOfPairsNumbers;
     static constexpr auto Nelem_dofs_array=GeneralForm::FunctionSpace::Nelem_dofs_array;
 
@@ -666,7 +623,6 @@ template<typename GeneralForm >
 class LocalTupleOfTensors<GeneralForm,2>
 {
 public:
-    // using GeneralForm=typename EvaluationGeneralForm::type;
     using TupleOfPairsNumbers=typename GeneralForm::TupleOfPairsNumbers;
     static constexpr auto Nelem_dofs_array=GeneralForm::FunctionSpace::Nelem_dofs_array;
 
@@ -698,22 +654,23 @@ public:
 };
 
 
-// Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions>
-template<typename Form,typename FullSpace,typename ShapeFunctions_>//,typename ShapeFunctions>
-class EvaluationOfL2Inners<Evaluation<Expression<GeneralForm<Form,FullSpace>>,ShapeFunctions_>>
+template<typename Form,typename ShapeFunctions_>
+class EvaluationOfL2Inners<Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions_>>
 {
 public: 
-    using EvaluationGeneralForm=Evaluation<Expression<GeneralForm<Form,FullSpace>>,ShapeFunctions_>;
+    using EvaluationGeneralForm=Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions_>;
     using GeneralForm=typename EvaluationGeneralForm::type;
     using ShapeFunctions=typename EvaluationGeneralForm::ShapeFunctions;
     using LocalTupleOfTensors=typename LocalTupleOfTensors<GeneralForm,GetType<typename GeneralForm::form>::value>::type;    
     using L2Products=typename EvaluationGeneralForm::L2Products;
     using EvalOfL2InnersType=EvalOfL2InnersAux<L2Products,0,ShapeFunctions>;
+    using TupleOfPairsNumbers=typename GeneralForm::TupleOfPairsNumbers;
     
 
     EvaluationOfL2Inners(const GeneralForm& form,ShapeFunctions& shapefunctions)
     :
-    eval_inners_(EvalOfL2Inners<L2Products>(form.space_ptr(),shapefunctions))
+    eval_inners_(faccio<TupleOfPairsNumbers>(form(),shapefunctions))
+    // eval_inners_(EvalOfL2Inners<L2Products>(form.space_ptr(),shapefunctions))
     {}
 
  template<Integer N,typename Output,typename Jacobian>

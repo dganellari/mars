@@ -1040,41 +1040,73 @@ void assembly_example()
   Jacobian<Elem> J(mesh);
   
   
-   
-  auto bilinearform= L2Inner(u3,v2)+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)
-                    +L2Inner(u2,v2)+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)
-                    +L2Inner(u1,v2)+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
-  auto linearform= L2Inner(f1,v1);//+L2Inner(f2,v2)+L2Inner(f1,v1);//+ L2Inner(f1,v1);
+  constexpr auto alpha=Constant<Scalar1>(2.0);
+  constexpr auto beta=Constant<Scalar1>(3.0);
+  auto bilinearform= 
+                  L2Inner(u3,v3)+ //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
+                    L2Inner(u2,v2) +//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
+                    L2Inner(beta*alpha*u1,v1);//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
+  auto linearform= L2Inner(alpha,v1);//+L2Inner(f2,v2)+L2Inner(f1,v1);//+ L2Inner(f1,v1);
 
-  auto bilinear_form=general_form(bilinearform,W);
-  auto linear_form=general_form(linearform,W);
+auto ecc=GradientOperator()*GradientOperator()+IdentityOperator();
 
-// decltype(bilinear_form)::TupleOfPairsNumbers eeer(6);
-// decltype(linear_form)::TupleOfPairsNumbers eee(6);
 
+
+
+  auto bilinear_form=general_form(bilinearform);
+  auto linear_form=general_form(linearform);
+
+// make_index_sequence_shift<2,3> ok(6);
+// auto emmi=std::tuple<int,int,int,int,int>(10,20,30,40,50);
+
+
+// auto emmi7=tuple_change_element<3>(emmi, 100);
+// auto emmi8=tuple_change_element<0>(emmi, 100);
+// auto emmi9=tuple_change_element<4>(emmi, 100);
+
+// auto mrk=std::tuple<>();
+// auto smsms=std::tuple_cat(mrk,std::make_tuple<int>(5),mrk);
+// auto sm=costruisci1(L2Inner(u3,v1),L2Inner(u3,v2));
+// // auto jf=costruisci(std::tuple<>(),bilinearform);
+// // decltype(sm)f(55);
+
+
+// std::cout<<"5--->"<<tuple_get<0>(emmi5)<<std::endl;
+
+
+// auto eml=tuple_get<2>(std::tuple<std::tuple<>,std::tuple<>,std::tuple<>>());
+// decltype(L2Inner(u3,v2))::TestTrialNumbers eee4(6);
+
+// using emptytuple=TupleOfType<4,std::tuple<> > ;
+// auto es=emptytuple();
+// decltype(es) lklk(6);
   auto shape_coefficients=shape_function_coefficients(bilinear_form,linear_form);
   auto reference_maps=reference_maps2(bilinear_form,linear_form);
   auto shape_functions=shape_functions2(shape_coefficients,reference_maps,bilinear_form,linear_form);
   shape_coefficients.init(mesh);
-  // // // auto shapefunctions7=shape_functions2(linear_form);
-  
-//   // // // shape_functions.init(reference_maps,shape_coefficients);
 
   auto eval_bilinear_form=Eval(bilinear_form,shape_functions);
-  auto eval_linear_form=Eval(linear_form,shape_functions);
+  // using TupleOfPairsNumbers=decltype(bilinear_form)::TupleOfPairsNumbers;
+// auto auto1=faccio<TupleOfPairsNumbers>(bilinearform,shape_functions);
+// decltype(auto1) ok2(6);
+  // decltype(eval_bilinear_form)::EvaluationOfL2Inners::EvalOfL2InnersType ok(6);
+  
+  // auto eval_linear_form=Eval(linear_form,shape_functions);
 
   J.init(0);
   reference_maps.init(J);
   shape_coefficients.init(0);
   shape_functions.init();
 
-  // eval_bilinear_form.apply(J);
+  eval_bilinear_form.apply(J);
+  // eval_linear_form.apply(J);
 
-  constexpr auto mm=Constant<Prova>(1,2.0);
-  std::cout<<mm.eval()<<std::endl;
 
-//   std::cout<<"apply1"<<std::endl;
-  eval_linear_form.apply(J);
+
+
+
+
+
 //   std::cout<<"apply2"<<std::endl;
   // auto Ku=4*Grad(u1);
   // auto Kv=4*Grad(v1);

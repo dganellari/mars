@@ -6,11 +6,58 @@
 
 namespace mars{
 
+class Identity2 
+{
+public:
+    inline static constexpr auto eval()
+    {return Matrix<Real,2,2>{1.0,0.0, 0.0,1.0};}
+};
+
+class Identity3
+{
+public:
+    inline static constexpr auto eval()
+    {return Matrix<Real,3,3>{1.0,0.0,0.0, 0.0,1.0,0.0, 0.0,0.0,1.0};}
+};
+class Identity4
+{
+public:
+    inline static constexpr auto eval()
+    {return Matrix<Real,4,4>{1.0,0.0,0.0,0.0, 0.0,1.0,0.0,0.0, 0.0,0.0,1.0,0.0, 0.0,0.0,0.0,1.0};}
+};
+
+class Eye2 
+{
+public:
+    inline static constexpr Matrix<Real,2,2> eval(const Real alpha)
+    {return Matrix<Real,2,2>{alpha,0.0, 0.0,alpha};}
+};
+
+class Eye3
+{
+public:
+    inline static constexpr auto eval(const Real alpha)
+    {return Matrix<Real,3,3>{alpha,0.0,0.0, 0.0,alpha,0.0, 0.0,0.0,alpha};}
+};
+class Eye4
+{
+public:
+    inline static constexpr auto eval(const Real alpha)
+    {return Matrix<Real,4,4>{alpha,0.0,0.0,0.0, 0.0,alpha,0.0,0.0, 0.0,0.0,alpha,0.0, 0.0,0.0,0.0,alpha};}
+};
+
 class Prova 
 {
 public:
     inline static constexpr Matrix<Real,2,2> eval(const Real alpha,const Real beta)
     {return Matrix<Real,2,2>{alpha,beta,beta,alpha+beta};}
+};
+
+class Scalar1 
+{
+public:
+    inline static constexpr Matrix<Real,1,1> eval(const Real alpha)
+    {return Matrix<Real,1,1>{alpha};}
 };
 
 
@@ -32,25 +79,29 @@ class Function1
 
 
 
-
 template<typename ConstType,typename...Inputs>
 class ConstantTensor;
 
 template<typename ConstType,typename...Inputs>
-class ConstantTensor: ConstType //<ConstType,Inputs...>
+class ConstantTensor: public Expression<ConstantTensor<ConstType,Inputs...>>
 {
  public:
   
   using Output=decltype(ConstType::eval(Inputs()...));
   
   constexpr ConstantTensor(const Inputs&...inputs):
-  tensor_(ConstType::eval(inputs...))
+  tensor_(ConstType::eval(inputs...)),
+  tuple_(std::make_tuple(inputs...))
   {}
+  
+  template<typename...OtherInputs>
+  constexpr ConstantTensor(const OtherInputs&...other_inputs){}
   
   constexpr Output eval()const {return tensor_;};
 
 private:
   Output tensor_;
+  std::tuple<Inputs...> tuple_;
 };
 
 
@@ -65,7 +116,17 @@ constexpr auto Constant(const Inputs&...inputs){return ConstantTensor<ConstType,
 
 
 
+// template<typename Right,typename ConstType,typename...Inputs>
+// class OperatorTupleType< Multiplication< Expression<ConstantTensor<ConstType,Inputs...>>, Expression<Right> > >
+// { public:
+//   using type=typename OperatorTupleType<Right>::type;
+// };
 
+// template<typename Left,typename ConstType,typename...Inputs>
+// class OperatorTupleType< Multiplication<Expression<Left>, Expression<ConstantTensor<ConstType,Inputs...>> > >
+// { public:
+//   using type=typename OperatorTupleType<Left>::type;
+// };
 
 
 
@@ -91,9 +152,7 @@ public:
  using Output=typename FuncType::Output;
     inline static void init(const Jacobian<Elem>& J,Array<Output,Ndofs>& local_dofs)
     {
-      std::cout<<"function function2 dofs points pre"<<std::endl;
       const auto& points=J.points();
-      std::cout<<"function function2 dofs points post"<<std::endl;
       for(Integer ii=0;ii<points.size();ii++)
           std::cout<<points[ii]<<std::endl;
       std::cout<<local_dofs<<std::endl;

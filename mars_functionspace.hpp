@@ -617,6 +617,13 @@ class OperatorTypeHelper<Function2<FullSpace,N,OperatorType,FuncType>,QRule >
   using type=typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::qpvalues_type;
 };
 
+template<typename ConstType,typename...Inputs, typename QRule>
+class OperatorTypeHelper<ConstantTensor<ConstType,Inputs...>,QRule >
+{ public:
+  using tmptype=ConstantTensor<ConstType,Inputs...>;
+  using Output=typename tmptype::Output;
+  using type=QPValues<Output,QRule::NQPoints>;
+};
 
 // template<typename...Forms>
 // class ShapeFunctions;
@@ -735,6 +742,54 @@ class Evaluation<Expression<Function2<FullSpace,N,Operator_,FuncType>>,OtherTemp
 private:
  type eval_;
 };
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename ConstType,typename...Inputs,typename...OtherTemplateArguments>
+class Evaluation<Expression<ConstantTensor<ConstType,Inputs...>>,OtherTemplateArguments...>
+{
+ public:
+ using type=ConstantTensor<ConstType,Inputs...>;
+ using Input=typename type::Output;
+ using value_type=OperatorType<type,OtherTemplateArguments...>;
+
+
+ Evaluation(){};
+
+ Evaluation(const type& expr):
+ eval_(expr)
+ {};
+
+
+
+ 
+ template<typename...Args, typename Jacobian>
+ constexpr void apply(value_type& value,const Jacobian& J, const std::tuple<Args...>& tuple_of_tuple)
+ {
+  // TODO here we copy the static static_value  into value, but it is useless. better to specialize evaluation
+  const auto& input=eval_.eval();
+  for(Integer qp=0;qp<value.size();qp++)
+    for(Integer ii=0;ii<value[qp].rows();ii++)
+      for(Integer jj=0;jj<value[qp].cols();jj++)
+          {value[qp](ii,jj)=input(ii,jj);
+            std::cout<<"input(ii,jj)="<<input(ii,jj)<<std::endl;
+          }
+
+ }
+
+
+private:
+ type eval_;
+};
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///// We associate Number<2>,Number<1>,Number<0> respectively to a X=Trial/Test/OtherFunction
 ///// We define IsTestOrTrial<X> which is used for each term Left or Right in L2Inner<Left,Right>
@@ -759,6 +814,19 @@ private:
 template<typename T>
 class IsTestOrTrial{
 public:
+  // using Elem=EmptyClass;
+  // using Operator=std::tuple<>;
+  // using TupleFunctionSpace=std::tuple<>;
+  // using UniqueElementFunctionSpacesTupleType=std::tuple<>;
+  using type=std::tuple<Number<-1>>;
+  // static constexpr Integer value=-1;
+  // static constexpr Integer number=-1;
+};
+
+
+template<typename ConstType,typename...Inputs>
+class IsTestOrTrial< ConstantTensor<ConstType,Inputs...>>{
+public:
   using Elem=EmptyClass;
   using Operator=std::tuple<>;
   using TupleFunctionSpace=std::tuple<>;
@@ -767,6 +835,10 @@ public:
   static constexpr Integer value=-1;
   static constexpr Integer number=-1;
 };
+template<typename ConstType,typename...Inputs>
+class IsTestOrTrial<const ConstantTensor<ConstType,Inputs...>>
+: public IsTestOrTrial< ConstantTensor<ConstType,Inputs...>>
+{};
 
 
 template<typename FuncType,typename FullSpace, Integer N, typename Operator_>
@@ -811,7 +883,7 @@ class TupleTypeSize;
 
 
 template<typename Left, typename Right>
-class IsTestOrTrial< Multiplication<Expression<Left>,Expression<Right> > >
+class IsTestOrTrial<Multiplication<Expression<Left>,Expression<Right> > >
 {
 public:
 
@@ -823,7 +895,10 @@ public:
 
   using UniqueElementFunctionSpacesTupleType=TupleCatType<typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType,
                                                           typename IsTestOrTrial<Right>::UniqueElementFunctionSpacesTupleType >;
-  using type=TupleRemoveType<Number<0>,TupleCatType<typename IsTestOrTrial<Left>::type,typename IsTestOrTrial<Right>::type >> ;
+  using tmp_type=TupleRemoveType<Number<0>,TupleCatType<typename IsTestOrTrial<Left>::type,typename IsTestOrTrial<Right>::type >> ;
+  using type=typename std::conditional<IsSame<tmp_type,std::tuple<>>::value, 
+                                       std::tuple<Number<0>>,
+                                       tmp_type>::type;   
   static constexpr Integer number= Heaviside(IsTestOrTrial<Left>::number)+Heaviside(IsTestOrTrial<Right>::number);
   static_assert(TupleTypeSize<type>::value<2," In Multiply<Left,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 };
@@ -892,7 +967,10 @@ public:
 
   using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates<TupleCatType<typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType,
                                                                                 typename IsTestOrTrial<Right>::UniqueElementFunctionSpacesTupleType >>;
-  using type=RemoveTupleDuplicates<TupleRemoveType<Number<0>,TupleCatType<typename IsTestOrTrial<Left>::type,typename IsTestOrTrial<Right>::type >>> ;
+  using tmp_type=RemoveTupleDuplicates<TupleRemoveType<Number<0>,TupleCatType<typename IsTestOrTrial<Left>::type,typename IsTestOrTrial<Right>::type >>> ;
+  using type=typename std::conditional<IsSame<tmp_type,std::tuple<>>::value, 
+                                       std::tuple<Number<0>>,
+                                       tmp_type>::type;  
   static constexpr Integer number= Heaviside(IsTestOrTrial<Left>::number)+Heaviside(IsTestOrTrial<Right>::number);
   static_assert(TupleTypeSize<type>::value<2," In Addition<Left,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 };
@@ -911,7 +989,10 @@ public:
 
   using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates<TupleCatType<typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType,
                                                                                 typename IsTestOrTrial<Right>::UniqueElementFunctionSpacesTupleType >>;
-  using type=RemoveTupleDuplicates<TupleRemoveType<Number<0>,TupleCatType<typename IsTestOrTrial<Left>::type,typename IsTestOrTrial<Right>::type > >>;
+  using tmp_type=RemoveTupleDuplicates<TupleRemoveType<Number<0>,TupleCatType<typename IsTestOrTrial<Left>::type,typename IsTestOrTrial<Right>::type > >>;
+  using type=typename std::conditional<IsSame<tmp_type,std::tuple<>>::value, 
+                                       std::tuple<Number<0>>,
+                                       tmp_type>::type;
   static constexpr Integer number= Heaviside(IsTestOrTrial<Left>::number)+Heaviside(IsTestOrTrial<Right>::number);
   static_assert(TupleTypeSize<type>::value<2," In Subtraction<Left,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 
@@ -958,6 +1039,7 @@ public:
   using type=void;
   static_assert(0*Number<N>::value,"L2inner: the form is neither a 0-form(function,function), 1-form(function/test,test/function) or 2-form (test/trial,trial/test), where the function is neither a test nor a trial");
 };
+
 
 
 template<>
@@ -1025,7 +1107,15 @@ class OperatorTupleType<Function2<MixedSpace,N,OperatorType,FuncType> >
 };
 
 
-
+template<typename ConstType, typename...Inputs>
+class OperatorTupleType<ConstantTensor<ConstType,Inputs...> >
+{ public:
+  // using Func=Function2<MixedSpace,N,OperatorType,FuncType>;
+  // static constexpr Integer Nmax= Func::Nmax;
+  // using single_type=std::tuple<std::tuple< OperatorType,std::tuple<> >>;
+  // using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
+  using type=std::tuple<std::tuple<>>;
+};
 
 
 template<Integer N,typename...Args >
@@ -1160,8 +1250,7 @@ public:
   using type=std::tuple<Number<LeftSpaceNumber>>;
 };
 
-// template<typename MeshT, typename Left,typename Right,Integer QR=GaussianQuadrature>
-// class L2DotProductIntegral;
+
 template<typename Left,typename Right,Integer QR=GaussianQuadrature>
 class L2DotProductIntegral;
 
@@ -1455,17 +1544,7 @@ public:
 };
 
 
-// template<typename SingleForm>
-// class L2Products
-// {
-//  public:
-//  L2Products(const SingleForm& form):
-//  form_(form)
-//  {}
 
-//  private:
-//  SingleForm form_;
-// };
 
 template<typename TupleOfPairsNumbers, typename Form,Integer Nmax,Integer N>
 class TupleOfL2ProductsHelper;
@@ -1628,9 +1707,7 @@ class Evaluation<TupleOfL2Products<TupleOfPairsNumbers,Form>>
 // }
 
 
-// template<typename MeshT, typename Left_,typename Right_,Integer QR>
-// class L2DotProductIntegral: 
-// public Expression<L2DotProductIntegral<MeshT,Left_,Right_,QR>>
+
 template<typename Left_,typename Right_,Integer QR>
 class L2DotProductIntegral: 
 public Expression<L2DotProductIntegral<Left_,Right_,QR>>
@@ -1700,8 +1777,6 @@ public Expression<L2DotProductIntegral<Left_,Right_,QR>>
    using TestTrialSpaces=typename ClassAux<TupleOfSpaces,TestTrialNumbers,GetType<form,0>::value>::type;
 
     L2DotProductIntegral(const Expression<Left>& left,const Expression<Right>& right,const Integer label=-666):
-    // L2DotProductIntegral(const MeshT& mesh,const Expression<Left>& left,const Expression<Right>& right,const Integer label=-666):
-    // mesh_(mesh),
     left_(left),
     right_(right),
     product_(Inner(left,right)),
@@ -1710,8 +1785,9 @@ public Expression<L2DotProductIntegral<Left_,Right_,QR>>
      
      const Left&  left() const{return left_;};
      const Right& right()const{return right_;};
+     auto operator()(){return L2DotProductIntegral<Left,Right,QR>(left_,right_);}
+     auto operator()()const{return L2DotProductIntegral<Left,Right,QR>(left_,right_);}
   private:
-    // const MeshT& mesh_;
     Left left_;
     Right right_;
     type product_;
@@ -2182,16 +2258,7 @@ public Expression<L2DotProductIntegral<Left_,Right_,QR>>
 
 
 
-// template<typename MeshT, typename Left,typename Right,Integer QR>
-// class OperatorTupleType<L2DotProductIntegral<MeshT,Left,Right,QR>>
-// { 
-// public:
-//   using L2prod=L2DotProductIntegral<MeshT,Left,Right,QR>;
-//   using QRule=typename L2prod::QRule;
-//   using Operatortuple=typename OperatorTupleType<typename L2prod::type>::type;
-//   using type=TupleOfTupleChangeType<1,QRule, Operatortuple>;;
-// } 
-// ;                               
+                               
 template<typename Left,typename Right,Integer QR>
 class OperatorTupleType<L2DotProductIntegral<Left,Right,QR>>
 { 
@@ -2295,8 +2362,8 @@ L2Inner(const Expression<Left>& left,const Expression<Right>& right, const Integ
  
 
 
-template<typename Form_, typename FullSpace>
-class GeneralForm<Form_,FullSpace>
+template<typename Form_>
+class GeneralForm<Form_>
 {
 
   public:
@@ -2421,27 +2488,32 @@ class GeneralForm<Form_,FullSpace>
 
   using TupleOfPairsNumbers=BubbleSortTupleOfPairsNumbers<typename TupleOfTestTrialPairsNumbers<Form>::type>;
 
-    GeneralForm(const Form& form,const FullSpace& space)
+    GeneralForm(const Form& form)
     : 
-    form_(form),
-    space_ptr_(std::make_shared<FullSpace>(space))
+    form_(form)
     {};
+
+    // GeneralForm(const Form& form,const FullSpace& space)
+    // : 
+    // form_(form),
+    // space_ptr_(std::make_shared<FullSpace>(space))
+    // {};
 
     const Form& operator()()const{return form_;};
           Form& operator()()     {return form_;};
 
-    const std::shared_ptr<FullSpace>& space_ptr()const{return space_ptr_;};
-          std::shared_ptr<FullSpace>& space_ptr()     {return space_ptr_;};
+    // const std::shared_ptr<FullSpace>& space_ptr()const{return space_ptr_;};
+    //       std::shared_ptr<FullSpace>& space_ptr()     {return space_ptr_;};
 
   private:
   Form form_;
-  std::shared_ptr<FullSpace> space_ptr_;
+  // std::shared_ptr<FullSpace> space_ptr_;
 };
    
 
 
-template<typename Form,typename FullSpace>
-constexpr auto general_form(const Form& form,const FullSpace& W){return GeneralForm<Form,FullSpace>(form,W);}
+template<typename Form>
+constexpr auto general_form(const Form& form){return GeneralForm<Form>(form);}
 
 
 

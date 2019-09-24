@@ -169,6 +169,14 @@ tuple_get(Tuple& tuple)
 {return tuple_get<Ns...>(std::get<N>(tuple));}
 
 
+// template <std::size_t N, typename... Ts, typename T>
+// auto change_tuple_element(const std::tuple<Ts...>& tuple,const T& t)
+// {
+//  return std::tuple_cat(sub_tuple<>);
+// }
+
+
+
 template<typename...Args>
 std::tuple<Args...> add_costant (const std::tuple<Args...>& t1,const Integer& value);
 
@@ -1313,6 +1321,55 @@ using TupleOfTupleShapeFunctionType2=typename TupleOfTupleShapeFunctionCreate2<T
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 template<typename Operator,typename Tuple,Integer Nmax,Integer N>
 class OperatorToMapHelper;
 
@@ -1900,8 +1957,222 @@ class BubbleSortTupleOfPairsNumbersHelper
 
 
 
+template <Integer N,std::size_t ... Is>
+constexpr auto index_sequence_shift (std::index_sequence<Is...> const &)
+   -> decltype( std::index_sequence<(Is+N)...>{} );
+
+template <std::size_t N,std::size_t ShiftN>
+using make_index_sequence_shift = decltype(index_sequence_shift<ShiftN>(std::make_index_sequence<N>{}));
 
 
+
+template <typename... T, std::size_t... I>
+auto sub_tuple_aux(const std::tuple<T...>& t, std::index_sequence<I...>)
+-> decltype(std::make_tuple(std::get<I>(t)...))
+{
+  return std::make_tuple(std::get<I>(t)...);
+}
+
+template <std::size_t N_start,std::size_t N_end, typename... Ts>
+std::enable_if_t< (N_start<=N_end && 0<=N_end && 0<=N_start && N_end<sizeof...(Ts) && N_end>=0) , SubTupleType<N_start,N_end,std::tuple<Ts...>>> 
+sub_tuple(const std::tuple<Ts...>& t) 
+{
+  return sub_tuple_aux(t, make_index_sequence_shift<N_end-N_start+1,N_start>());
+}
+
+template <Integer N_start,Integer N_end, typename... Ts>
+std::enable_if_t< (N_start<=N_end && 0<=N_end && 0>N_start && N_end<sizeof...(Ts)&& N_end>=0), SubTupleType<0,N_end,std::tuple<Ts...>>> 
+sub_tuple(const std::tuple<Ts...>& t) 
+{
+  return sub_tuple_aux(t, make_index_sequence_shift<N_end+1,0>());
+}
+
+template <Integer N_start,Integer N_end, typename... Ts>
+std::enable_if_t< (N_start<=N_end && 0<=N_end && 0<=N_start && N_end>=sizeof...(Ts)), SubTupleType<N_start,sizeof...(Ts)-1,std::tuple<Ts...>>> 
+sub_tuple(const std::tuple<Ts...>& t) 
+{
+  return sub_tuple_aux(t, make_index_sequence_shift<sizeof...(Ts)-N_start,N_start>());
+}
+
+template <Integer N_start,Integer N_end, typename... Ts>
+std::enable_if_t< (N_start<=N_end && 0<=N_end  && 0>N_start && N_end>=sizeof...(Ts)), SubTupleType<0,sizeof...(Ts)-1,std::tuple<Ts...>>> 
+sub_tuple(const std::tuple<Ts...>& t) 
+{
+  return sub_tuple_aux(t, make_index_sequence_shift<sizeof...(Ts),0>());
+}
+
+
+template <Integer N_start,Integer N_end, typename... Ts>
+std::enable_if_t< ((N_start<=N_end &&  N_end<0 )||
+                   // (N_start<=N_end && N_start>=sizeof...(Ts)-1)||
+                   (N_start>N_end)), 
+                  std::tuple<>> 
+sub_tuple(const std::tuple<Ts...>& t) 
+{
+  return std::tuple<>();
+}
+
+template <Integer N,typename T, typename... Ts>
+auto tuple_change_element(const std::tuple<Ts...>& tuple,const T& t) 
+{
+  static_assert( (0<=N && N<sizeof...(Ts))&&"In tuple_change_element, N must be between 0 and tuple_size-1");
+  return std::tuple_cat(sub_tuple<0,N-1>(tuple),
+                        std::tuple<T>(t),
+                        sub_tuple<N+1,sizeof...(Ts)-1>(tuple) );
+}
+
+//|| N_start>=sizeof...(Ts))
+
+// template<typename U = T>
+// operator typename std::enable_if<!std::is_class<U>::value, U >::type () const
+// {
+//     return _val;
+// }
+
+// template<typename U = T>
+// operator typename std::enable_if< std::is_class<U>::value, const U&>::type () const
+// {
+//     return _val;
+// }
+
+template<typename...Ts>
+class Addition;
+
+template<typename Derived>
+class Expression;
+
+template<typename...Ts>
+class Evaluation;
+
+template<typename Left,typename Right,Integer QR>
+class L2DotProductIntegral; 
+
+template<typename Form, typename...Forms>
+class ShapeFunctions2;
+
+
+template<typename Left,typename Right,Integer QR, typename...Forms>
+constexpr auto costruisci1(const std::tuple<>& null, 
+                           const L2DotProductIntegral<Left,Right,QR>& l2prod,
+                                 ShapeFunctions2<Forms...>&shape_functions)
+{
+  using L2dot=L2DotProductIntegral<Left,Right,QR>;
+
+  return Evaluation<Expression<L2dot>,ShapeFunctions2<Forms...>>
+        (Eval(L2dot(l2prod.left(),l2prod.right()),shape_functions));
+}
+
+template<typename Left,typename Right,Integer QR, typename...Forms>
+constexpr auto costruisci1(const L2DotProductIntegral<Left,Right,QR>& l2prod,
+                           const std::tuple<>& null,
+                                 ShapeFunctions2<Forms...>&shape_functions)
+{
+  using L2dot=L2DotProductIntegral<Left,Right,QR>;
+
+  return Evaluation<Expression<L2dot>,ShapeFunctions2<Forms...>>
+        (Eval(L2dot(l2prod.left(),l2prod.right()),shape_functions));
+}
+
+template<typename Left1,typename Right1,Integer QR1,
+         typename Left2,typename Right2,Integer QR2, typename...Forms>
+constexpr auto costruisci1(const L2DotProductIntegral<Left1,Right1,QR1>& l2prod1, 
+                           const L2DotProductIntegral<Left2,Right2,QR2>& l2prod2,
+                                 ShapeFunctions2<Forms...>&shape_functions)
+{
+  using L2dot1=L2DotProductIntegral<Left1,Right1,QR1>;
+  using L2dot2=L2DotProductIntegral<Left2,Right2,QR2>;
+
+
+  return Addition<Expression<Evaluation<Expression<L2dot1>,ShapeFunctions2<Forms...> > >,
+                  Expression<Evaluation<Expression<L2dot2>,ShapeFunctions2<Forms...> > > >
+        (Eval(L2dot1(l2prod1.left(),l2prod1.right()),shape_functions),
+         Eval(L2dot2(l2prod2.left(),l2prod2.right()),shape_functions));
+}
+
+template<typename Left, typename Left1,typename Right1,Integer QR1, typename...Forms>
+constexpr auto costruisci1(const Left& left, 
+                           const L2DotProductIntegral<Left1,Right1,QR1>& l2prod,
+                                 ShapeFunctions2<Forms...>&shape_functions)
+{
+  using L2dot1=L2DotProductIntegral<Left1,Right1,QR1>;
+  return Addition<Expression<Left>,
+                  Expression< Evaluation<Expression<L2dot1>,ShapeFunctions2<Forms...> >>>
+        (left(),
+         Eval(L2dot1(l2prod.left(),l2prod.right()),shape_functions));
+}
+
+template<typename Left1,typename Right1,Integer QR1,typename Right, typename...Forms>
+constexpr auto costruisci1(const L2DotProductIntegral<Left1,Right1,QR1>& l2prod,
+                           const Right& right,
+                                 ShapeFunctions2<Forms...>&shape_functions)
+{
+  using L2dot1=L2DotProductIntegral<Left1,Right1,QR1>;
+  return Addition<Expression<Evaluation<Expression<L2dot1>,ShapeFunctions2<Forms...>>>,
+                  Expression<Right>>
+        (Eval(L2dot1(l2prod.left(),l2prod.right()),shape_functions),
+         right());
+}
+
+
+
+
+
+template<typename TupleOfPairsNumbers,typename Tuple, typename Left,typename Right,Integer QR, typename...Forms>
+constexpr auto costruisci(const Tuple& tuple,
+                          const L2DotProductIntegral<Left,Right,QR>& l2prod,
+                                ShapeFunctions2<Forms...>&shape_functions)
+{
+  using L2=L2DotProductIntegral<Left,Right,QR>;
+  using TestTrialNumbers=typename L2::TestTrialNumbers;
+  // Number<TypeToTupleElementPosition<TestTrialNumbers,TupleOfPairsNumbers>::value> okokok(6);
+  auto tuple_nth=std::get<TypeToTupleElementPosition<TestTrialNumbers,TupleOfPairsNumbers>::value>(tuple);
+  auto ecco=costruisci1(tuple_nth,l2prod,shape_functions);
+  std::cout<<"N="<<TypeToTupleElementPosition<TestTrialNumbers,TupleOfPairsNumbers>::value<<std::endl;
+  return tuple_change_element<TypeToTupleElementPosition<TestTrialNumbers,TupleOfPairsNumbers>::value>
+   (tuple, 
+    decltype(ecco)(ecco));
+    // return tuple;
+
+}
+
+template<typename TupleOfPairsNumbers,typename Tuple, typename Left,typename Right, typename...Forms>
+constexpr auto costruisci(const Tuple& tuple,
+                          const Addition<Expression<Left>,Expression<Right>>& addition,
+                                ShapeFunctions2<Forms...>&shape_functions)
+{
+  auto tuple_new=costruisci<TupleOfPairsNumbers>(tuple,addition.left(),shape_functions);
+
+  return costruisci<TupleOfPairsNumbers>(tuple_new,addition.right(),shape_functions);
+}
+
+template<typename TupleOfPairsNumbers, typename Expr, typename...Forms>
+constexpr auto faccio(const Expr& expr,ShapeFunctions2<Forms...>&shape_functions)
+{
+  using emptytuple=TupleOfType<TupleTypeSize<TupleOfPairsNumbers>::value,std::tuple<> > ;
+  std::cout<<"tuplesize1="<<std::tuple_size<TupleOfPairsNumbers>::value<<std::endl;
+  auto tupleN=emptytuple();
+    auto tuple_nth=std::get<2>(tupleN);
+  std::cout<<"tuplesize2="<<std::tuple_size<decltype(tupleN)>::value<<std::endl;
+
+  return costruisci<TupleOfPairsNumbers,emptytuple>(emptytuple(),expr,shape_functions);
+}
+
+
+
+// template<typename Elem,Integer FEFamily, 
+//          Integer Order, 
+//          Integer N=(ElementFunctionSpace<Elem,FEFamily,Order>::entity.size()-1),
+//          typename MeshT>
+// typename std::enable_if< 0<N, 
+//                          typename EntitiesOfFunctionSpaceType<Elem,FEFamily,Order,N>::type >::type  
+// EntitiesOfFunctionSpace(const MeshT& mesh, 
+//                         const std::vector< std::vector<Integer> >&node_2_element )
+// {
+
+//       using ens=ElemEntity<Elem,ElementFunctionSpace<Elem,FEFamily,Order>::entity[N]>;
+//       return std::tuple_cat(EntitiesOfFunctionSpace<Elem,FEFamily,Order,N-1>(mesh,node_2_element),
+//                             std::tuple<ens>(ens(mesh,node_2_element)));
+// }
 
 
 
