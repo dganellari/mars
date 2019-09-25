@@ -1,18 +1,18 @@
 #ifndef MARS_LONGEST_EDGE_SELECT_HPP
 #define MARS_LONGEST_EDGE_SELECT_HPP
 
-#include "mars_edge_select.hpp"
+#include "generation/mars_edge_select_kokkos.hpp"
 #include "mars_node_rank.hpp"
 
 namespace mars {
-	template<class Mesh, class Implementation_>
-	class LongestEdgeSelect final : public EdgeSelect<Mesh> {
+	template<class Mesh>
+	class LongestEdgeSelect final : public ParallelEdgeSelect<Mesh> {
 	public:
-		LongestEdgeSelect(const bool recursive = true, const bool use_tollerance = true)
+		MARS_INLINE_FUNCTION LongestEdgeSelect(const bool recursive = true, const bool use_tollerance = true)
 		: recursive_(recursive), use_tollerance_(use_tollerance)
 		{}
 
-		 Integer select(
+		MARS_INLINE_FUNCTION Integer select(
 			const Mesh &mesh,
 			const Integer element_id) const override
 		{
@@ -25,8 +25,9 @@ namespace mars {
 				Integer v1, v2;
 				e.edge(i, v1, v2);
 
-				std::cout<<"OK:"<<v1<< " - "<<v2<<std::endl;
-
+				/*printf ("V1 = %i ", v1);
+				printf (" V2 = %i \n", v2);
+*/
 				Real len_i = (mesh.point(v1) - mesh.point(v2)).squared_norm();
 
 				if(len_i > len) {
@@ -34,6 +35,9 @@ namespace mars {
 					edge_num = i;
 				}
 			}
+
+			//printf ("edge num = %i\n", edge_num);
+
 
 			return edge_num;
 		}
@@ -210,7 +214,7 @@ namespace mars {
 			recursive_ = recursive;
 		}
 
-		bool is_recursive() const override
+		MARS_INLINE_FUNCTION bool  is_recursive() const override
 		{
 			return recursive_;
 		}

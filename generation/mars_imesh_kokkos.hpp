@@ -25,10 +25,10 @@ namespace mars {
 		virtual MARS_INLINE_FUNCTION Integer type() const = 0;
 	};
 
-	MARS_INLINE_FUNCTION Integer n_nodes(const ParallelIElem &elem)
+	/*MARS_INLINE_FUNCTION Integer n_nodes(const ParallelIElem &elem)
 	{
 		return elem.n_nodes();
-	}
+	}*/
 
 	template<Integer Dim_>
 	class ParallelIMesh {
@@ -36,10 +36,13 @@ namespace mars {
 		static const Integer Dim = Dim_;
 		using Elem  = mars::ParallelIElem;
 
-		virtual ~ParallelIMesh() {}
+		virtual MARS_INLINE_FUNCTION ~ParallelIMesh() {}
 		//virtual void points(const Integer id, std::vector<Point> &pts) const = 0;
-//		virtual Elem &elem(const Integer id) = 0;
-//		virtual const Elem &elem(const Integer id) const = 0;
+		/*virtual Elem &elem(const Integer id) = 0;
+		virtual const Elem &elem(const Integer id) const = 0;
+*/
+		/*virtual MARS_INLINE_FUNCTION Elem elem(const Integer id) = 0;
+		virtual MARS_INLINE_FUNCTION const Elem elem(const Integer id) const = 0;*/
 		virtual MARS_INLINE_FUNCTION bool is_active(const Integer id) const = 0;
 		virtual MARS_INLINE_FUNCTION Integer n_nodes() const = 0;
 		virtual MARS_INLINE_FUNCTION Integer n_elements() const = 0;
