@@ -161,10 +161,11 @@ private:
 
 //optimized using a stack instead of the TreeNode.
 template<>
-class LeppBisection<Mesh2>: public Bisection<Mesh2> {
+class LeppBisection<Mesh2>: public Bisection<Mesh2, LongestEdgeSelect<Mesh2>> {
 
 public:
 	using Mesh = Mesh2;
+	template<class T> using Bisection = Bisection<T, LongestEdgeSelect<T>>;
 
 	LeppBisection(Mesh &mesh) :
 			Bisection<Mesh>(mesh) {
@@ -246,7 +247,7 @@ public:
 
 private:
 	void set_edge_select(
-			const std::shared_ptr<EdgeSelect<Mesh>> &edge_select) final {
+			const std::shared_ptr<LongestEdgeSelect<Mesh>> &edge_select) final {
 
 		if(edge_select->name() != "LongestEdge")
 			errx(select_err,"%s %d %s Error: Calling set_edge_select on LeppBisection with %s is not supported!",

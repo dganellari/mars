@@ -26,6 +26,8 @@ public:
 	using SideElem = mars::Simplex<Dim, ManifoldDim-1,KokkosImplementation>;
 	//using Point = SubView<Real,Dim>;
 
+	MARS_INLINE_FUNCTION Mesh() {}
+
 	void reserve(const std::size_t n_elements, const std::size_t n_points) override
 	{
 		elements_size_ = n_elements;
@@ -65,7 +67,7 @@ public:
 		return simplices_(id);
 	}*/
 
-	MARS_INLINE_FUNCTION Elem elem(const Integer id) //override
+	MARS_INLINE_FUNCTION Elem elem(const Integer id)// override
 	{
 		assert(id >= 0);
 		assert(id < n_elements());
@@ -73,7 +75,7 @@ public:
 		return e;
 	}
 
-	MARS_INLINE_FUNCTION const Elem elem(const Integer id) const// override
+	MARS_INLINE_FUNCTION const Elem elem(const Integer id) const //override
 	{
 		assert(id >= 0);
 		assert(id < n_elements());
@@ -109,7 +111,9 @@ public:
 	 }
 */
 
-	MARS_INLINE_FUNCTION void set_active(const Integer id, const bool val) {
+	MARS_INLINE_FUNCTION
+	void set_active(const Integer id, const bool val)
+	{
 		assert(id >= 0);
 		assert(id < n_elements());
 		active_(id) = val;
@@ -125,18 +129,20 @@ public:
 	}*/
 
 
-	MARS_INLINE_FUNCTION Point<Real,Dim> point(const Integer i) //override
+	MARS_INLINE_FUNCTION
+	Point<Real, Dim> point(const Integer i) override
 	{
 		assert(i >= 0);
 		assert(i < points_size_);
-		return Point<Real,Dim>(points_,i);
+		return Point<Real, Dim>(points_, i);
 	}
 
-	MARS_INLINE_FUNCTION const Point<Real,Dim> point(const Integer i) const override
+	MARS_INLINE_FUNCTION
+	const Point<Real, Dim> point(const Integer i) const override
 	{
 		assert(i >= 0);
 		assert(i < points_size_);
-		return Point<Real,Dim>(points_,i);
+		return Point<Real, Dim>(points_, i);
 	}
 
 	/*inline void points(const Integer id, std::vector<Point> &pts) const override
@@ -471,20 +477,26 @@ public:
 	 }*/
 
 
-	MARS_INLINE_FUNCTION Integer n_nodes() const override
+	MARS_INLINE_FUNCTION
+	Integer n_nodes() const override
 	{
 		return points_size_;
 	}
 
-	 MARS_INLINE_FUNCTION Integer n_elements() const override
+	MARS_INLINE_FUNCTION
+	Integer n_elements() const override
 	{
+		printf("n_elements this: %p\n", this);
+		printf("elements_size %i\n", elements_size_);
 		return elements_size_;
 	}
 
-	 MARS_INLINE_FUNCTION Integer n_active_elements() const override
+	MARS_INLINE_FUNCTION
+	Integer n_active_elements() const override
 	{
 		Integer ret = 0;
-		for (Integer i = 0; i < elements_size_; ++i) {
+		for (Integer i = 0; i < elements_size_; ++i)
+		{
 			ret += active_(i);
 		}
 
@@ -1296,50 +1308,38 @@ public:
 	//add elem functor
 		struct RefineMesh {
 
-			Mesh mesh;
+			Mesh* mesh;
 
 			Integer xDim;
 
-			RefineMesh(Mesh m, Integer xdm) :
-					mesh(m), xDim(xdm) {
+			void init(const Mesh& m){
+
+				Mesh* tmp = (Mesh*) Kokkos::kokkos_malloc(sizeof(Mesh));
+
+				Kokkos::parallel_for("CreateMeshObject", 1, KOKKOS_LAMBDA (const int&){
+					new ((Mesh*)tmp) Mesh(m);
+				});
+
+				mesh = tmp; //otherwise "this" pointer is still a host pointer within the parallel_for.
 			}
+
+			RefineMesh(const Mesh& m, Integer xdm) :
+					xDim(xdm)
+			{
+				init(m);
+			}
+
+			/*~RefineMesh() {
+				Kokkos::kokkos_free(m);
+			}*/
 
 			KOKKOS_INLINE_FUNCTION
 			void operator()(int x) const {
 
-				/*TempArray<Integer, 3> a;
-				a(0) = 1;
-				a.zero();*/
 
-				/*	SubView<Integer,ManifoldDim+1> c(mesh.elements_,x);
+				LongestEdgeSelect<Mesh> es;
+				es.select(*mesh, x);
 
-					Elem ee = Elem(c);
-
-					auto &e = ee;
-				 */
-
-				const auto &e = mesh.elem(x);
-
-				Integer edge_num = 0;
-				Real len = 0;
-
-				for (Integer i = 0; i < n_edges(e); ++i)
-				{
-					Integer v1, v2;
-					e.edge(i, v1, v2);
-
-					printf ("V1 = %i ", v1);
-											printf (" V2 = %i \n", v2);
-					Real len_i = (mesh.point(v1) - mesh.point(v2)).squared_norm();
-
-					if (len_i > len)
-					{
-						len = len_i;
-						edge_num = i;
-					}
-				}
-
-				printf ("edge num = %i\n", edge_num);
 
 			}
 		};
@@ -1350,7 +1350,14 @@ public:
 			using namespace Kokkos;
 			const int n_elements = xDim;
 
-			parallel_for(n_elements, RefineMesh(*this, xDim));
+			RefineMesh ref= RefineMesh(*this, xDim);
+			parallel_for(n_elements, ref);
+
+			const Mesh* tmp = ref.mesh;
+
+			parallel_for("DestroyMeshObject",1, KOKKOS_LAMBDA (const int&) {
+				tmp->~Mesh();
+			});
 
 			return true;
 		}
@@ -1514,7 +1521,7 @@ private:
  os << "\n";
  }
 
- }*/
+ }
 
 /*inline bool mesh_hyper_cube(
  const std::array<Integer, 4> &dims,

@@ -16,11 +16,6 @@ namespace mars{
 
 	template<Integer N, Integer ChooseM, class Implementation_= DefaultImplementation>
 	class Combinations;
-
-	template<class Mesh, class Implementation_= DefaultImplementation>
-	class LongestEdgeSelect;
-
-
 }
 
 
