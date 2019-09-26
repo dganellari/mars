@@ -7,12 +7,13 @@
 
 #ifdef WITH_KOKKOS
 #include <Kokkos_Core.hpp>
+#include <Kokkos_UnorderedMap.hpp>
 #define MARS_INLINE_FUNCTION KOKKOS_INLINE_FUNCTION 
 #else
 #define MARS_INLINE_FUNCTION inline
 #endif
 
-
+#include "generation/mars_device_vector.hpp"
 
 namespace mars {
     constexpr int hex_n_sides = 6; // 6 faces in total for the hex27.
@@ -82,6 +83,45 @@ namespace mars {
             { 3, 0, 4, 7, 11, 12, 19, 15, 24 }, // Side 4
             { 4, 5, 6, 7, 16, 17, 18, 19, 25 }  // Side 5
     };
+
+
+    MARS_INLINE_FUNCTION void swap(Integer* a, Integer* b)
+    {
+        int t = *a;
+        *a = *b;
+        *b = t;
+    }
+
+    template<typename T, Integer N>
+    MARS_INLINE_FUNCTION int find_pivot (TempArray<T,N> &in, int start, int end)
+    {
+        int pivot = in[end]; // pivot
+        int i = (start - 1); // Index of smaller element
+
+        for (int j = start; j <= end - 1; j++)
+        {
+            // If current element is smaller than the pivot
+            if (in[j] < pivot)
+            {
+                i++; // increment index of smaller element
+                swap(&in[i], &in[j]);
+            }
+        }
+        swap(&in[i + 1], &in[end]);
+        return (i + 1);
+    }
+
+    template<typename T, Integer N>
+    MARS_INLINE_FUNCTION void quick_sort(TempArray<T,N> &in, int start, int end)
+    {
+        if (start < end)
+        {
+            int pivot = find_pivot(in, start, end);
+
+            quick_sort(in, start, pivot - 1);
+            quick_sort(in, pivot + 1, end);
+        }
+    }
 
 }
 

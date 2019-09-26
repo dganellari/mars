@@ -1,7 +1,7 @@
 #pragma once
 
 #include "mars_device_vector.hpp"
-#include "mars_SubView.hpp"
+#include "mars_sub_view.hpp"
 
 namespace mars
 {

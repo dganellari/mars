@@ -25,9 +25,6 @@ namespace mars {
 				Integer v1, v2;
 				e.edge(i, v1, v2);
 
-				/*printf ("V1 = %i ", v1);
-				printf (" V2 = %i \n", v2);
-*/
 				Real len_i = (mesh.point(v1) - mesh.point(v2)).squared_norm();
 
 				if(len_i > len) {
@@ -37,7 +34,6 @@ namespace mars {
 			}
 
 			//printf ("edge num = %i\n", edge_num);
-
 
 			return edge_num;
 		}

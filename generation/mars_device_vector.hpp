@@ -4,6 +4,7 @@
 #include <cmath>
 #include <iostream>
 #include "mars_utils_kokkos.hpp"
+#include "mars_device_vector.hpp"
 
 namespace mars {
 
@@ -70,6 +71,17 @@ namespace mars {
 	        
 	        return *this;
 	    }
+
+		MARS_INLINE_FUNCTION
+		TempArray operator=(const TempArray &right)
+		{
+			for (Integer i = 0; i < Dim; ++i)
+			{
+				(*this)(i) = right(i);
+			}
+
+			return *this;
+		}
 
 	    MARS_INLINE_FUNCTION TempArray operator/=(const T &right)
 	    {

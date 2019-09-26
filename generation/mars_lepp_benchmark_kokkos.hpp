@@ -4,9 +4,10 @@
 #include "mars_quality.hpp"
 #include <chrono>
 
-#include "mars_lepp_bisection_kokkos.hpp"
+#include "mars_bisection_kokkos.hpp"
 #include "mars_longest_edge.hpp"
-
+#include "mars_sub_view.hpp"
+#include "mars_utils_kokkos.hpp"
 
 namespace mars {
 	template<class Mesh>
@@ -22,11 +23,31 @@ namespace mars {
 			const Mesh &mesh_in,
 			const std::string &output_path)
 		{
+			using Elem = mars::Simplex<Dim, ManifoldDim,KokkosImplementation>;
+			auto mesh = mesh_in;
 
+			ParallelBisection<Mesh> b(mesh);
+			b.uniform_refine(n_levels);
+			/*ViewMatrixType<Integer> t = mesh_in.get_view_elems();
+			//const auto &e = mesh_in.elem(0);
 
-			auto es = std::make_shared<LongestEdgeSelect<Mesh>>();
+				Elem ee = Elem(SubView<Integer,ManifoldDim+1>(t,0));
 
-			const Integer edge_num = es->select(mesh_in, 0);
+			auto &e = ee;
+
+			for(Integer i = 0; i < n_edges(e); ++i) {
+				Integer v1, v2;
+				e.edge(i, v1, v2);
+
+				Real len_i = (mesh_in.point(v1) - mesh_in.point(v2)).squared_norm();
+
+			}*/
+
+		/*	auto es = std::make_shared<LongestEdgeSelect<Mesh>>();
+			for(int i=0;i< n_levels;i++)
+				const Integer edge_num = es->select(mesh_in, i);*/
+			/*
+			std::cout<<"edge: "<<edge_num<<std::endl;*/
 			//refine once for creating nice intial set-up for newest vertex algorithm
 			/*auto mesh = mesh_in;
 
