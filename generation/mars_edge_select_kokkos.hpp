@@ -2,8 +2,8 @@
 #define MARS_EDGE_SELECT_KOKKOS_HPP
 
 #include "mars_base.hpp"
-#include "mars_edge.hpp"
-#include "mars_edge_element_map.hpp"
+#include "mars_edge_kokkos.hpp"
+#include "mars_edge_element_map_kokkos.hpp"
 #include "mars_fwd.hpp"
 #include "mars_globals.hpp"
 

@@ -3,7 +3,6 @@
 
 #include "mars_mesh.hpp"
 #include "mars_globals.hpp"
-#include "mars_device_vector.hpp"
 
 namespace mars {
 
@@ -61,6 +60,9 @@ using ViewVectorTexture = Kokkos::View<T*,KokkosLayout,KokkosSpace,Kokkos::Memor
 
 template<typename T, Integer XDim_>
 using ViewVectorTypeC = Kokkos::View<T[XDim_],KokkosLayout,KokkosSpace>;
+
+template<typename Key, typename Value>
+using UnorderedMap = Kokkos::UnorderedMap<Key,Value,KokkosSpace>;
 
 template<typename T, Integer YDim_>
 struct IndexView {

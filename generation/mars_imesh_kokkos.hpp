@@ -7,8 +7,8 @@
 #include <sstream>
 #include <memory>
 #include <algorithm>  
-#include "mars_SubView.hpp"
 #include "mars_point.hpp"
+#include "mars_sub_view.hpp"
 
 namespace mars {
 

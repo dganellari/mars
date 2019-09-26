@@ -5,6 +5,7 @@
 #include <iostream>
 #include <vector>
 #include "mars_static_math.hpp"
+#include "mars_sub_view.hpp"
 #include "mars_utils_kokkos.hpp"
 
 namespace mars {

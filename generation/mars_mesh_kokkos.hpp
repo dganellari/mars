@@ -486,8 +486,6 @@ public:
 	MARS_INLINE_FUNCTION
 	Integer n_elements() const override
 	{
-		printf("n_elements this: %p\n", this);
-		printf("elements_size %i\n", elements_size_);
 		return elements_size_;
 	}
 
@@ -1305,7 +1303,6 @@ public:
 	}
 
 
-	//add elem functor
 		struct RefineMesh {
 
 			Mesh* mesh;
