@@ -86,7 +86,7 @@ class KokkosImplementation {
 
 template<Integer Dim, Integer ManifoldDim>
 void convert_parallel_mesh_to_serial(mars::Mesh<Dim, ManifoldDim>& mesh,
-		mars::Mesh<Dim, ManifoldDim,KokkosImplementation>& pMesh) {
+		const mars::Mesh<Dim, ManifoldDim,KokkosImplementation>& pMesh) {
 
 	ViewMatrixType<Integer>::HostMirror h_el = Kokkos::create_mirror_view(
 			pMesh.get_view_elems());
