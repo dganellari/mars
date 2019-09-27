@@ -72,6 +72,7 @@ public:
 		assert(id >= 0);
 		assert(id < n_elements());
 		Elem e = Elem(SubView<Integer,ManifoldDim+1>(elements_,id));
+		e.id = id;
 		return e;
 	}
 
@@ -80,6 +81,7 @@ public:
 		assert(id >= 0);
 		assert(id < n_elements());
 		Elem e = Elem(SubView<Integer,ManifoldDim+1>(elements_,id));
+		e.id = id;
 		return e;
 	}
 

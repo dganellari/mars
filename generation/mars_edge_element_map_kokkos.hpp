@@ -18,7 +18,7 @@ namespace mars {
 	class SubManifoldElementMap<N,KokkosImplementation> {
 	public:
 		//using ElementVector = std::vector<Integer>;
-		using ElementVector = TempArray<Integer,2*N>;
+		using ElementVector = TempArray<Integer,8>;
 
 		virtual ~SubManifoldElementMap() {}
 
@@ -38,9 +38,9 @@ namespace mars {
 				PMesh* tmp = (PMesh*) Kokkos::kokkos_malloc(sizeof(PMesh));
 
 				Kokkos::parallel_for("CreateMeshObject", 1, KOKKOS_LAMBDA (const int&)
-						{
-							new ((PMesh*)tmp) PMesh(m); //same as this.mesh if mesh instead of tmp and this is a host pointer.
-						});
+				{
+					new ((PMesh*)tmp) PMesh(m); //same as this.mesh if mesh instead of tmp and this is a host pointer.
+				});
 
 				mesh = tmp; //otherwise "this" pointer is still a host pointer within the parallel_for.
 			}
@@ -67,21 +67,32 @@ namespace mars {
 						nodes[j] = e.nodes[combinations.combs[i][j]];
 					}
 
-					Side<N, KokkosImplementation> edge(nodes);
 
-					uint32_t index = mapping.find(edge);
+					/*uint32_t index = mapping.find(edge);
 
 					if (!mapping.valid_at(index))
 					{
 						ElementVector vec;
 						//vec.insert(e.id);
-						Kokkos::UnorderedMapInsertResult result= mapping.insert(edge,vec);
+						auto result= mapping.insert(edge,vec);
+						printf("%s", Kokkos::UnorderedMapInsertResult)
 
 					}else
 					{
 						auto &vec = mapping.value_at(index);
 						//vec.insert(e.id);
+					}*/
+
+					auto result= mapping.insert(Side<N, KokkosImplementation>(nodes));
+
+					if(!result.failed()){
+						auto &vec = mapping.value_at(result.index());
+						vec.insert(e.id);
+					}else{
+						 printf("Exceeded UnorderedMap capacity\n");
+						//TODO: handle the case of failure insert. GO to the host for rehash.
 					}
+
 				}
 			}
 
@@ -92,6 +103,9 @@ namespace mars {
 			}
 		};
 
+		void reserve(Integer capacity){
+			mapping_ = UnorderedMap<Side<N,KokkosImplementation>,ElementVector>(capacity);
+		}
 
 		template<Integer Dim, Integer ManifoldDim>
 		void update(const Mesh<Dim, ManifoldDim,KokkosImplementation> &mesh)
@@ -177,23 +191,34 @@ namespace mars {
 			MARS_INLINE_FUNCTION
 			void operator()(int element_id) const
 			{
-				if (mapping.valid_at(element_id))
+				int count = 0;
+				printf("mapping.size(): %i ", mapping.size());
+				for (int element_id = 0; element_id < mapping.capacity();
+						++element_id)
 				{
-					auto key = mapping.key_at(element_id);
-					auto value = mapping.value_at(element_id);
-
-					for (Integer i=0;i< N; ++i)
+					if (mapping.valid_at(element_id))
 					{
-						printf("%i ", key.nodes[i]);
-					}
-					printf("-> ");
+						auto key = mapping.key_at(element_id);
+						auto value = mapping.value_at(element_id);
 
-					for (Integer i=0;i< 2*N; ++i)
-					{
-						printf("%i ", value[i]);
+						for (Integer i = 0; i < N; ++i)
+						{
+							printf("%i ", key.nodes[i]);
+						}
+						printf("-> ");
+
+						for (Integer i = 0; i < value.index; ++i)
+						{
+							printf("%i ", value[i]);
+						}
+						printf("\n");
+						++count;
 					}
-					printf("\n");
+
 				}
+
+				printf("count: %i \n", count);
+
 			}
 		};
 
@@ -202,7 +227,7 @@ namespace mars {
 			os << "-----------------------------------\n";
 			os << "SubManifoldElementMap<" << N  << ">\n";
 
-			Kokkos::parallel_for(mapping_.capacity(), UMapDescribe(mapping_));
+			Kokkos::parallel_for(1, UMapDescribe(mapping_));
 
 			os << "-----------------------------------\n";
 		}

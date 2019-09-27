@@ -4,7 +4,6 @@
 #include <cmath>
 #include <iostream>
 #include "mars_utils_kokkos.hpp"
-#include "mars_device_vector.hpp"
 
 namespace mars {
 
@@ -12,7 +11,15 @@ namespace mars {
 	class TempArray {
 	public:
 	    T  values[Dim];
+	    Integer index=0;
+
 	    TempArray() {}
+
+	    MARS_INLINE_FUNCTION bool insert(const T value){
+			//values[index++] = value;
+	    	Kokkos::atomic_assign(values + index++ ,value);
+//	    	Kokkos::Impl::atomic_store(values + index++ ,value, Kokkos::Impl::memory_order_relaxed);
+	    }
 
 	    MARS_INLINE_FUNCTION friend TempArray operator*(const T &factor, const TempArray &v)
 	    {
@@ -20,7 +27,7 @@ namespace mars {
 	    	for(Integer i = 0; i < Dim; ++i) {
 	    	    ret(i) = factor * v(i);
 	    	}
-	    	
+
 	    	return ret;
 	    }
 
@@ -30,27 +37,27 @@ namespace mars {
 	    	for(Integer i = 0; i < Dim; ++i) {
 	    	    ret(i) = v(i)/factor;
 	    	}
-	    	
+
 	    	return ret;
 	    }
-	    
+
 	    MARS_INLINE_FUNCTION TempArray operator-(const TempArray &right) const
 	    {
 	        TempArray ret;
 	        for(Integer i = 0; i < Dim; ++i) {
 	            ret(i) = (*this)(i) - right(i);
 	        }
-	        
+
 	        return ret;
 	    }
-	    
+
 	    MARS_INLINE_FUNCTION TempArray operator+(const TempArray &right) const
 	    {
 	        TempArray ret;
 	        for(Integer i = 0; i < Dim; ++i) {
 	            ret(i) = (*this)(i) + right(i);
 	        }
-	        
+
 	        return ret;
 	    }
 
@@ -59,7 +66,7 @@ namespace mars {
 	        for(Integer i = 0; i < Dim; ++i) {
 	            (*this)(i) += right(i);
 	        }
-	        
+
 	        return *this;
 	    }
 
@@ -68,7 +75,7 @@ namespace mars {
 	        for(Integer i = 0; i < Dim; ++i) {
 	            (*this)(i) *= right;
 	        }
-	        
+
 	        return *this;
 	    }
 
@@ -88,7 +95,7 @@ namespace mars {
 	        for(Integer i = 0; i < Dim; ++i) {
 	            (*this)(i) /= right;
 	        }
-	        
+
 	        return *this;
 	    }
 
@@ -98,28 +105,28 @@ namespace mars {
 	        for(Integer i = 0; i < Dim; ++i) {
 	            ret(i) = (*this)(i) * right(i);
 	        }
-	        
+
 	        return ret;
 	    }
-	    
+
 	    MARS_INLINE_FUNCTION T &operator()(const Integer i)
 	    {
 	        assert(i < Dim);
 	        return values[i];
 	    }
-	    
+
 	    MARS_INLINE_FUNCTION const T &operator()(const Integer i) const
 	    {
 	        assert(i < Dim);
 	        return values[i];
 	    }
-	    
+
 	    MARS_INLINE_FUNCTION T &operator[](const Integer i)
 	    {
 	        assert(i < Dim);
 	        return values[i];
 	    }
-	    
+
 	    MARS_INLINE_FUNCTION const T &operator[](const Integer i) const
 	    {
 	        assert(i < Dim);

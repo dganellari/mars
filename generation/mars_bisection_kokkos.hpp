@@ -15,7 +15,7 @@ namespace mars {
 		using Mesh     = Mesh_;
 		using Elem     = typename Mesh::Elem;
 		using SideElem = typename Mesh::SideElem;
-		using EdgeElementMap = SubManifoldElementMap<2,KokkosImplementation>;
+		using EdgeElementMap1 = SubManifoldElementMap<2,KokkosImplementation>;
 
 		static const Integer Dim 		 = Mesh_::Dim;
 		static const Integer ManifoldDim = Mesh_::ManifoldDim;
@@ -550,13 +550,55 @@ namespace mars {
 		}*/
 		void uniform_refine(const Integer n_levels)
 		{
+
+			/*Mesh2 sMesh3;
+			read_mesh("../data/square_2_def.MFEM", sMesh3);*/
+
+			Mesh3 sMesh3;
+			convert_parallel_mesh_to_serial<Dim,ManifoldDim>(sMesh3, mesh);
+			sMesh3.update_dual_graph();
+			Kokkos::Timer timer;
+
+			map_.update(sMesh3);
+			double time = timer.seconds();
+			std::cout << "serial kokkos took: " << time << " seconds." << std::endl;
+
+		//	map_.describe(std::cout);
+			std::cout<<"size: "<<map_.mapping_.size()<<std::endl;
+
+			const Integer bound = Combinations<ManifoldDim + 1, ManifoldDim>::value * sMesh3.n_elements();
+
+			//Euler's formula for graphs
+			Integer faces_nr = bound - sMesh3.n_boundary_sides();
+			//Integer edges_nr = sMesh3.n_nodes() + faces_nr - 2;
+			Integer edges_nr = sMesh3.n_nodes() + faces_nr -1 - sMesh3.n_active_elements();
+
+			edge_element_map_.reserve(edges_nr);
+
 			/*if(flags.empty()) {
 				flags.resize(mesh.n_elements(), NONE);
 				level.resize(mesh.n_elements(), 0);*/
-				edge_element_map_.update(mesh);
+			Kokkos::Timer timer1;
+
+			edge_element_map_.update(mesh);
 				/*mesh.update_dual_graph();
 			}*/
-				edge_element_map_.describe(std::cout);
+			Kokkos::fence();
+
+			double time1 = timer1.seconds();
+			std::cout << "paralel kokkos took: " << time1 << " seconds." << std::endl;
+
+
+			//edge_element_map_.describe(std::cout);
+
+			std::cout<<"cap: "<<edge_element_map_.mapping_.capacity()<<std::endl;
+			std::cout<<"size: "<<edge_element_map_.mapping_.size()<<std::endl;
+			std::cout<<"E: "<<edges_nr<< " F: "<< faces_nr <<std::endl;
+			std::cout<<"C: "<<sMesh3.n_elements()<< " V: "<< sMesh3.n_nodes() <<std::endl;
+			std::cout<<"sMesh3.n_boundary_sides(): "<<sMesh3.n_boundary_sides()<< " bound: "<< bound <<std::endl;
+			std::cout<<"ManifoldDim: "<<ManifoldDim<< " bound: "<< bound <<std::endl;
+
+
 			refine_mesh(n_levels);
 
 		/*	mesh.update_dual_graph();
@@ -619,7 +661,9 @@ namespace mars {
 
 	private:
 		Mesh &mesh;
-		EdgeElementMap edge_element_map_;
+		EdgeElementMap1 edge_element_map_;
+		EdgeElementMap map_;
+
 		/*std::vector<Integer> flags;
 		std::vector<Integer> level;
 		std::vector<std::array<Integer, ManifoldDim+1> > side_flags;
