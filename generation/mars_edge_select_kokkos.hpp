@@ -45,7 +45,7 @@ namespace mars {
 			return 0;
 		}
 
-		virtual Integer stable_select(
+		virtual MARS_INLINE_FUNCTION Integer stable_select(
 			const Mesh &mesh,
 			const Integer element_id) const
 		{

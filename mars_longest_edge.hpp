@@ -79,7 +79,7 @@ namespace mars {
 			return edge_num;
 		}
 
-		  Integer stable_select(
+		MARS_INLINE_FUNCTION Integer stable_select(
 					const Mesh &mesh,
 					const Integer element_id) const override
 		{
