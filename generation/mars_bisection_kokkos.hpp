@@ -17,12 +17,14 @@ namespace mars {
 		using SideElem = typename Mesh::SideElem;
 		using EdgeElementMap1 = SubManifoldElementMap<2,KokkosImplementation>;
 
+		using ElementVector = TempArray<Integer,8>;
+
 		static const Integer Dim 		 = Mesh_::Dim;
 		static const Integer ManifoldDim = Mesh_::ManifoldDim;
 
 		virtual ~ParallelBisection() {}
 
-		ParallelBisection(Mesh &mesh)
+		ParallelBisection(Mesh *mesh)
 		: mesh(mesh),
 		  verbose(false),
 		  fail_if_not_refine(false)
@@ -548,6 +550,21 @@ namespace mars {
 		{
 			tracker_.undo_last_iterate(mesh);
 		}*/
+
+		void init(Mesh** m)
+		{
+
+			Mesh* tmp = (Mesh*) Kokkos::kokkos_malloc(sizeof(Mesh));
+			Mesh mCopy = **m;
+			Kokkos::parallel_for("CreateMeshObject", 1, KOKKOS_LAMBDA (const int&)
+			{
+				new ((Mesh*)tmp) Mesh(mCopy); // it only works on a copy since **m is still a host pointer and fails on the device.
+			});
+
+			*m = tmp; //make the mesh pointer a device one so that this init func is not neccessary anymore
+		}
+
+
 		void uniform_refine(const Integer n_levels)
 		{
 
@@ -555,7 +572,7 @@ namespace mars {
 			read_mesh("../data/square_2_def.MFEM", sMesh3);*/
 
 			Mesh3 sMesh3;
-			convert_parallel_mesh_to_serial<Dim,ManifoldDim>(sMesh3, mesh);
+			convert_parallel_mesh_to_serial<Dim,ManifoldDim>(sMesh3, *mesh);
 			sMesh3.update_dual_graph();
 			Kokkos::Timer timer;
 
@@ -563,24 +580,35 @@ namespace mars {
 			double time = timer.seconds();
 			std::cout << "serial kokkos took: " << time << " seconds." << std::endl;
 
-		//	map_.describe(std::cout);
+			map_.describe(std::cout);
 			std::cout<<"size: "<<map_.mapping_.size()<<std::endl;
 
-			const Integer bound = Combinations<ManifoldDim + 1, ManifoldDim>::value * sMesh3.n_elements();
+		    Integer bound = Combinations<ManifoldDim + 1, ManifoldDim>::value * sMesh3.n_elements();
 
 			//Euler's formula for graphs
 			Integer faces_nr = bound - sMesh3.n_boundary_sides();
 			//Integer edges_nr = sMesh3.n_nodes() + faces_nr - 2;
 			Integer edges_nr = sMesh3.n_nodes() + faces_nr -1 - sMesh3.n_active_elements();
 
-			edge_element_map_.reserve(edges_nr);
+            bound = 2 * mesh->n_elements();
 
+
+            const Integer nr_elements = mesh->n_elements();
+
+            init(&mesh);
+            //	careful: now the mesh is a device pointer. Not possible to call on the host for ex. mesh.nr_elements()
+
+
+			edge_element_map_.reserve_map(bound);
+			reserve_tree(nr_elements);
 			/*if(flags.empty()) {
 				flags.resize(mesh.n_elements(), NONE);
 				level.resize(mesh.n_elements(), 0);*/
-			Kokkos::Timer timer1;
 
-			edge_element_map_.update(mesh);
+			std::cout<<"updating"<< std::endl;
+            Kokkos::Timer timer1;
+
+			edge_element_map_.update(mesh, nr_elements);
 				/*mesh.update_dual_graph();
 			}*/
 			Kokkos::fence();
@@ -589,7 +617,10 @@ namespace mars {
 			std::cout << "paralel kokkos took: " << time1 << " seconds." << std::endl;
 
 
-			//edge_element_map_.describe(std::cout);
+			edge_element_map_.describe(std::cout);
+
+			precompute_lepp_incidents(mesh,nr_elements);
+/*
 
 			std::cout<<"cap: "<<edge_element_map_.mapping_.capacity()<<std::endl;
 			std::cout<<"size: "<<edge_element_map_.mapping_.size()<<std::endl;
@@ -597,20 +628,66 @@ namespace mars {
 			std::cout<<"C: "<<sMesh3.n_elements()<< " V: "<< sMesh3.n_nodes() <<std::endl;
 			std::cout<<"sMesh3.n_boundary_sides(): "<<sMesh3.n_boundary_sides()<< " bound: "<< bound <<std::endl;
 			std::cout<<"ManifoldDim: "<<ManifoldDim<< " bound: "<< bound <<std::endl;
+*/
 
 
-			refine_mesh(n_levels);
+			refine_mesh(n_levels,nr_elements);
 
 		/*	mesh.update_dual_graph();
 			mesh.tags() = level;*/
 		}
 
 
+		struct BuildTree
+		{
+			Mesh_* mesh;
+			UnorderedMap<Side<2,KokkosImplementation>,ElementVector> mapping;
+			ViewVectorType<uint32_t> tree;
+
+
+			BuildTree(UnorderedMap<Side<2, KokkosImplementation>, ElementVector> mp,
+					Mesh_* ms, ViewVectorType<uint32_t> tr) :
+				mapping(mp), mesh(ms), tree(tr)
+			{
+			}
+
+			MARS_INLINE_FUNCTION
+			void operator()(int element_id) const
+			{
+				EdgeSelect_ es;
+				Integer edge_num = es.select(*mesh, element_id);
+				//Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id);
+				//Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id, Bisection<Mesh>::edge_element_map());
+
+				Edge edge;
+				mesh->elem(element_id).edge(edge_num, edge.nodes[0], edge.nodes[1]);
+				edge.fix_ordering();
+
+			//	tree(element_id) = mapping_.find(edge);
+
+			}
+		};
+
+		void reserve_tree(Integer size)
+		{
+			tree_ = ViewVectorType<uint32_t>("tree", size);
+		}
+
+		void precompute_lepp_incidents(
+				Mesh_ *mesh,
+				const Integer nr_elements)
+		{
+
+			Kokkos::parallel_for(nr_elements,
+					BuildTree(edge_element_map_.mapping_, mesh, tree_));
+
+		}
+
 	struct RefineMesh
 	{
 		Mesh* mesh;
 
-		void init(const Mesh& m)
+		/*void init(const Mesh& m)
 		{
 
 			Mesh* tmp = (Mesh*) Kokkos::kokkos_malloc(sizeof(Mesh));
@@ -621,17 +698,23 @@ namespace mars {
 					});
 
 			mesh = tmp; //otherwise "this" pointer is still a host pointer within the parallel_for.
-		}
+		}*/
 
-		RefineMesh(const Mesh& m)
+		RefineMesh(Mesh *m) : mesh(m)
 		{
-			init(m);
+			//init(m);
 		}
 
 
 		KOKKOS_INLINE_FUNCTION
 		void operator()(int element_id) const
 		{
+
+			/*while(mesh->is_active(element_id)){
+
+
+			}*/
+
 			if (mesh->is_active(element_id))
 			{
 				EdgeSelect_ es;
@@ -640,16 +723,16 @@ namespace mars {
 		}
 	};
 
-	inline bool refine_mesh(const int levels)
+	inline bool refine_mesh(const Integer levels, const Integer nr_elements)
 	{
 		using namespace Kokkos;
 
 		RefineMesh ref= RefineMesh(mesh);
 
 		//for(Integer l = 0; l < levels; ++l)
-		parallel_for(mesh.n_elements(), ref);
-/*
-		const Mesh* tmp = ref.mesh;
+		parallel_for(nr_elements, ref);
+
+		/*const Mesh* tmp = ref.mesh;
 
 		parallel_for("DestroyMeshObject",1, KOKKOS_LAMBDA (const int&) {
 			tmp->~Mesh();
@@ -660,9 +743,11 @@ namespace mars {
 
 
 	private:
-		Mesh &mesh;
+		Mesh *mesh;
 		EdgeElementMap1 edge_element_map_;
 		EdgeElementMap map_;
+
+		ViewVectorType<uint32_t> tree_;
 
 		/*std::vector<Integer> flags;
 		std::vector<Integer> level;

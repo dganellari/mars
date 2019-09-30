@@ -10,6 +10,8 @@
 #include <set>
 
 #include "mars_edge_kokkos.hpp"
+#include "mars_edge_select_kokkos.hpp"
+#include "mars_longest_edge.hpp"
 #include "mars_fwd.hpp"
 
 namespace mars {
@@ -19,7 +21,7 @@ namespace mars {
 	public:
 		//using ElementVector = std::vector<Integer>;
 		using ElementVector = TempArray<Integer,8>;
-
+		using Edge = Side<N, KokkosImplementation>;
 		virtual ~SubManifoldElementMap() {}
 
 
@@ -32,23 +34,23 @@ namespace mars {
 			UnorderedMap<Side<N,KokkosImplementation>,ElementVector> mapping;
 
 
-			void init(const PMesh& m)
+			/*void init(const PMesh *m)
 			{
 
 				PMesh* tmp = (PMesh*) Kokkos::kokkos_malloc(sizeof(PMesh));
 
 				Kokkos::parallel_for("CreateMeshObject", 1, KOKKOS_LAMBDA (const int&)
 				{
-					new ((PMesh*)tmp) PMesh(m); //same as this.mesh if mesh instead of tmp and this is a host pointer.
+					new ((PMesh*)tmp) PMesh(*m); //same as this.mesh if mesh instead of tmp and this is a host pointer.
 				});
 
 				mesh = tmp; //otherwise "this" pointer is still a host pointer within the parallel_for.
-			}
+			}*/
 
-			UMapUpdate(UnorderedMap<Side<N,KokkosImplementation>, ElementVector> mp,const PMesh& ms) :
-					mapping(mp)
+			UMapUpdate(UnorderedMap<Side<N,KokkosImplementation>, ElementVector> mp, PMesh *ms) :
+					mapping(mp), mesh(ms)
 			{
-				init(ms);
+				//init(ms);
 			}
 
 			MARS_INLINE_FUNCTION
@@ -66,22 +68,6 @@ namespace mars {
 					{
 						nodes[j] = e.nodes[combinations.combs[i][j]];
 					}
-
-
-					/*uint32_t index = mapping.find(edge);
-
-					if (!mapping.valid_at(index))
-					{
-						ElementVector vec;
-						//vec.insert(e.id);
-						auto result= mapping.insert(edge,vec);
-						printf("%s", Kokkos::UnorderedMapInsertResult)
-
-					}else
-					{
-						auto &vec = mapping.value_at(index);
-						//vec.insert(e.id);
-					}*/
 
 					auto result= mapping.insert(Side<N, KokkosImplementation>(nodes));
 
@@ -103,17 +89,22 @@ namespace mars {
 			}
 		};
 
-		void reserve(Integer capacity){
+		void reserve_map(Integer capacity)
+		{
 			mapping_ = UnorderedMap<Side<N,KokkosImplementation>,ElementVector>(capacity);
 		}
 
+
+
 		template<Integer Dim, Integer ManifoldDim>
-		void update(const Mesh<Dim, ManifoldDim,KokkosImplementation> &mesh)
+		void update(Mesh<Dim, ManifoldDim, KokkosImplementation> *mesh,
+				const Integer nr_elements)
 		{
-
-			Kokkos::parallel_for(mesh.n_elements(), UMapUpdate<Dim,ManifoldDim>(mapping_,mesh));
-
+			Kokkos::parallel_for(nr_elements,
+					UMapUpdate<Dim, ManifoldDim>(mapping_, mesh));
 		}
+
+
 
 		/*template<Integer Dim, Integer ManifoldDim>
 		void update_active(const Mesh<Dim, ManifoldDim> &mesh)
@@ -150,6 +141,7 @@ namespace mars {
 			assert(mapping_.value_at(it));
 			return mapping_.value_at(it);
 		}
+
 
 	/*	template<Integer Dim, Integer ManifoldDim>
 		void adj(const Simplex<Dim, ManifoldDim> &e, std::vector<Integer> &res) const
@@ -192,7 +184,7 @@ namespace mars {
 			void operator()(int element_id) const
 			{
 				int count = 0;
-				printf("mapping.size(): %i ", mapping.size());
+				printf("mapping.size(): %i ", mapping.capacity());
 				for (int element_id = 0; element_id < mapping.capacity();
 						++element_id)
 				{

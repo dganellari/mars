@@ -26,7 +26,7 @@ namespace mars {
 			using Elem = mars::Simplex<Dim, ManifoldDim,KokkosImplementation>;
 			auto mesh = mesh_in;
 
-			ParallelBisection<Mesh> b(mesh);
+			ParallelBisection<Mesh> b(&mesh);
 			b.uniform_refine(n_levels);
 			/*ViewMatrixType<Integer> t = mesh_in.get_view_elems();
 			//const auto &e = mesh_in.elem(0);

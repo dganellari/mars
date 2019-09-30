@@ -17,8 +17,9 @@ namespace mars {
 
 	    MARS_INLINE_FUNCTION bool insert(const T value){
 			//values[index++] = value;
-	    	Kokkos::atomic_assign(values + index++ ,value);
-//	    	Kokkos::Impl::atomic_store(values + index++ ,value, Kokkos::Impl::memory_order_relaxed);
+	    	Integer i = Kokkos::atomic_fetch_add(&index, 1);
+	    	values[i] = value;
+	    	//Kokkos::atomic_assign(values + index++ ,value);
 	    }
 
 	    MARS_INLINE_FUNCTION friend TempArray operator*(const T &factor, const TempArray &v)
