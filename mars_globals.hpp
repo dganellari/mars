@@ -92,6 +92,16 @@ namespace mars {
         *b = t;
     }
 
+	template<typename T>
+	MARS_INLINE_FUNCTION const T&
+	min(const T& a, const T& b)
+	{
+		if (b < a)
+			return b;
+
+		return a;
+	}
+
     template<typename T, Integer N>
     MARS_INLINE_FUNCTION int find_pivot (TempArray<T,N> &in, int start, int end)
     {
