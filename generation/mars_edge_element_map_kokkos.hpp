@@ -19,9 +19,9 @@ namespace mars {
 	template<Integer N>
 	class SubManifoldElementMap<N,KokkosImplementation> {
 	public:
-		//using ElementVector = std::vector<Integer>;
+
 		using ElementVector = TempArray<Integer,8>;
-		using Edge = Side<N, KokkosImplementation>;
+
 		virtual ~SubManifoldElementMap() {}
 
 

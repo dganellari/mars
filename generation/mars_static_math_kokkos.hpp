@@ -83,7 +83,6 @@ namespace mars {
 
 			for(Integer i = 0; i < ChooseM; ++i)
 			{
-				//	std::cout<<"N: "<< N<< "com: "<<comb[i]<<std::endl;
 				assert(comb[i] < N);
 				assert(comb[i] >= 0);
 

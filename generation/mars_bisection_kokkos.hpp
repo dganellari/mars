@@ -3,7 +3,6 @@
 
 #include "mars_dof_map.hpp"
 #include "mars_tracker.hpp"
-#include "mars_edge_select.hpp"
 #include "mars_edge_select_kokkos.hpp"
 #include "mars_longest_edge.hpp"
 #include <iostream>
@@ -16,6 +15,8 @@ namespace mars {
 		using Elem     = typename Mesh::Elem;
 		using SideElem = typename Mesh::SideElem;
 		using EdgeElementMap1 = SubManifoldElementMap<2,KokkosImplementation>;
+		using Edge = Side<2, KokkosImplementation>;
+
 
 		using ElementVector = TempArray<Integer,8>;
 
@@ -573,27 +574,35 @@ namespace mars {
 
 			Mesh3 sMesh3;
 			convert_parallel_mesh_to_serial<Dim,ManifoldDim>(sMesh3, *mesh);
-			sMesh3.update_dual_graph();
+
+
 			Kokkos::Timer timer;
 
 			map_.update(sMesh3);
+
 			double time = timer.seconds();
 			std::cout << "serial kokkos took: " << time << " seconds." << std::endl;
 
-			map_.describe(std::cout);
+			//map_.describe(std::cout);
+
+			/*sMesh3.update_dual_graph();
+
+
 			std::cout<<"size: "<<map_.mapping_.size()<<std::endl;
 
-		    Integer bound = Combinations<ManifoldDim + 1, ManifoldDim>::value * sMesh3.n_elements();
+			Integer bound = Combinations<ManifoldDim + 1, ManifoldDim>::value * sMesh3.n_elements();
 
 			//Euler's formula for graphs
 			Integer faces_nr = bound - sMesh3.n_boundary_sides();
 			//Integer edges_nr = sMesh3.n_nodes() + faces_nr - 2;
 			Integer edges_nr = sMesh3.n_nodes() + faces_nr -1 - sMesh3.n_active_elements();
+*/
 
-            bound = 2 * mesh->n_elements();
+			Integer  bound = 2 * mesh->n_elements();
 
 
             const Integer nr_elements = mesh->n_elements();
+
 
             init(&mesh);
             //	careful: now the mesh is a device pointer. Not possible to call on the host for ex. mesh.nr_elements()
@@ -605,22 +614,23 @@ namespace mars {
 				flags.resize(mesh.n_elements(), NONE);
 				level.resize(mesh.n_elements(), 0);*/
 
-			std::cout<<"updating"<< std::endl;
-            Kokkos::Timer timer1;
+
+
+			Kokkos::Timer timer1;
 
 			edge_element_map_.update(mesh, nr_elements);
-				/*mesh.update_dual_graph();
-			}*/
-			Kokkos::fence();
 
 			double time1 = timer1.seconds();
 			std::cout << "paralel kokkos took: " << time1 << " seconds." << std::endl;
 
+			//edge_element_map_.describe(std::cout);
 
-			edge_element_map_.describe(std::cout);
+            precompute_lepp_incidents(mesh,nr_elements);
 
-			precompute_lepp_incidents(mesh,nr_elements);
 /*
+
+
+
 
 			std::cout<<"cap: "<<edge_element_map_.mapping_.capacity()<<std::endl;
 			std::cout<<"size: "<<edge_element_map_.mapping_.size()<<std::endl;
@@ -631,7 +641,7 @@ namespace mars {
 */
 
 
-			refine_mesh(n_levels,nr_elements);
+		//	refine_mesh(n_levels,nr_elements);
 
 		/*	mesh.update_dual_graph();
 			mesh.tags() = level;*/
@@ -655,7 +665,7 @@ namespace mars {
 			void operator()(int element_id) const
 			{
 				EdgeSelect_ es;
-				Integer edge_num = es.select(*mesh, element_id);
+				const Integer edge_num = es.stable_select(*mesh, element_id);
 				//Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id);
 				//Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id, Bisection<Mesh>::edge_element_map());
 
@@ -663,7 +673,9 @@ namespace mars {
 				mesh->elem(element_id).edge(edge_num, edge.nodes[0], edge.nodes[1]);
 				edge.fix_ordering();
 
-			//	tree(element_id) = mapping_.find(edge);
+				tree(element_id) = mapping.find(edge);
+
+				//ElementVector incidents =mapping.value_at(tree(element_id));
 
 			}
 		};
@@ -680,66 +692,135 @@ namespace mars {
 
 			Kokkos::parallel_for(nr_elements,
 					BuildTree(edge_element_map_.mapping_, mesh, tree_));
-
-		}
-
-	struct RefineMesh
-	{
-		Mesh* mesh;
-
-		/*void init(const Mesh& m)
-		{
-
-			Mesh* tmp = (Mesh*) Kokkos::kokkos_malloc(sizeof(Mesh));
-
-			Kokkos::parallel_for("CreateMeshObject", 1, KOKKOS_LAMBDA (const int&)
-					{
-						new ((Mesh*)tmp) Mesh(m); //same as this.mesh if mesh instead of tmp and this is a host pointer.
-					});
-
-			mesh = tmp; //otherwise "this" pointer is still a host pointer within the parallel_for.
-		}*/
-
-		RefineMesh(Mesh *m) : mesh(m)
-		{
-			//init(m);
 		}
 
 
-		KOKKOS_INLINE_FUNCTION
-		void operator()(int element_id) const
+		struct RefineMesh
 		{
+			Mesh_* mesh;
+			UnorderedMap<Side<2,KokkosImplementation>,ElementVector> mapping;
+			ViewVectorType<uint32_t> tree;
 
-			/*while(mesh->is_active(element_id)){
 
-
-			}*/
-
-			if (mesh->is_active(element_id))
+			RefineMesh(UnorderedMap<Side<2, KokkosImplementation>, ElementVector> mp,
+					Mesh_* ms, ViewVectorType<uint32_t> tr) :
+				mapping(mp), mesh(ms), tree(tr)
 			{
-				EdgeSelect_ es;
-				es.select(*mesh, element_id);
 			}
+
+			KOKKOS_INLINE_FUNCTION
+			bool is_terminal(const Edge& edge, const ElementVector& incidents)
+			{
+
+				bool terminal = true; //in case the elements share the longest edge or there is only one incident (itself)
+									  // - meaning the longest edge is on the boundary.
+
+				for (auto i : incidents)
+				{
+
+					if (mesh->is_active(i))
+					{
+
+						Edge new_edge;
+
+						EdgeSelect_ es;
+						const Integer edge_num = es.stable_select(*mesh, i);
+						//const Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), edge, i);
+
+						mesh->elem(i).edge(edge_num, new_edge.nodes[0],
+								new_edge.nodes[1]);
+						new_edge.fix_ordering();
+
+						//	if(edge != tree.edges[i]){
+						if (edge != new_edge)
+						{
+							terminal = false;
+						}
+					}
+				}
+
+				return terminal;
+			}
+
+			KOKKOS_INLINE_FUNCTION
+			void compute_lepp(const Integer element_id){
+
+				/*Integer edge_num = Bisection<Mesh>::edge_select()->stable_select(Bisection<Mesh>::get_mesh(), element_id);
+
+				Edge edge;
+				Bisection<Mesh>::get_mesh().elem(element_id).edge(edge_num, edge.nodes[0], edge.nodes[1]);
+				edge.fix_ordering();*/
+
+				Integer index = tree(element_id);
+
+				if (is_terminal(mapping.key_at[index],  mapping.value_at[index])) {
+
+					for (const Integer element : mapping.value_at[index]) {
+
+						if (mesh->is_active(element))
+						/*	Bisection<Mesh>::bisect_element(element, tree.edges[element_id]);*/
+					}
+				}
+			}
+
+			KOKKOS_INLINE_FUNCTION
+			bool is_leaf(const Integer element_id){
+
+				Integer index = tree(element_id);
+
+				for (const Integer element : mapping.value_at[index]) {
+					if(Bisection<Mesh>::get_mesh().is_active(element) && mapping.key_at[index] != mapping.key_at[tree(element)]){
+						return false;
+					}
+				}
+
+				return true;
+			}
+
+			KOKKOS_INLINE_FUNCTION
+			void depth_first(const Integer node)
+			{
+
+				if (is_leaf(node))
+				{
+					compute_lepp(node);
+				}
+
+				Integer index = tree(node);
+				for (auto & child : mapping.value_at(index))
+				{
+					if (mesh->is_active(child)
+							&& mapping.key_at[index] != mapping.key_at[tree(child)])
+						depth_first(child);
+				}
+			}
+
+			KOKKOS_INLINE_FUNCTION
+			void operator()(int element_id) const
+			{
+
+				if (mesh->is_active(element_id))
+				{
+					depth_first(element_id);
+				}
+			}
+		};
+
+		inline bool refine_mesh(const Integer levels, const Integer nr_elements)
+		{
+			using namespace Kokkos;
+
+			//for(Integer l = 0; l < levels; ++l)
+			parallel_for(nr_elements, RefineMesh(edge_element_map_.mapping_, mesh, tree_));
+
+			/*const Mesh* tmp = ref.mesh;
+
+			parallel_for("DestroyMeshObject",1, KOKKOS_LAMBDA (const int&) {
+				tmp->~Mesh();
+			});*/
+
+			return true;
 		}
-	};
-
-	inline bool refine_mesh(const Integer levels, const Integer nr_elements)
-	{
-		using namespace Kokkos;
-
-		RefineMesh ref= RefineMesh(mesh);
-
-		//for(Integer l = 0; l < levels; ++l)
-		parallel_for(nr_elements, ref);
-
-		/*const Mesh* tmp = ref.mesh;
-
-		parallel_for("DestroyMeshObject",1, KOKKOS_LAMBDA (const int&) {
-			tmp->~Mesh();
-		});*/
-
-		return true;
-	}
 
 
 	private:
