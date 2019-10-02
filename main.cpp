@@ -22,6 +22,8 @@
 #include "generation/mars_memory.hpp"
 #include "mars_mesh_reader.hpp"
 #include "mars_mesh_writer.hpp"
+#include "mars_tet4.hpp"
+#include "mars_gauss_points.hpp"
 #include <err.h>
 
 
@@ -44,6 +46,18 @@
 #include <chrono>
 
 using namespace std::chrono;
+
+
+void test_quadrature()
+{
+	using namespace mars;
+	constexpr QGauss<3, 2> q_gauss;
+	static_assert(q_gauss.sum_weights() == 1.0, "weight must be instantiated at compile time");
+	static_assert(q_gauss.points[0] == .585410196624969, "point must be instantiated at compile time");
+	constexpr Tet4 tet4;
+
+	AssembleMassMatrix<QGauss<3, 2>, Tet4> mm;
+}
 
 mars::Mesh1 test_mars_mesh_generation_1D(const int x) {
 
@@ -1211,6 +1225,7 @@ int main(int argc, char *argv[])
 #ifdef WITH_KOKKOS
 	Kokkos::initialize(argc,argv);
 	{
+		test_quadrature();
 
 		run_benchmarks(level);
 

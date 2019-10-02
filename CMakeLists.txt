@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 2.8.12)
 
 project(mars)
 
-option(TRY_WITH_MOONOLITH "Use -DTRY_WITH_MOONOLITH=ON for enabling mesh transfer functions." ON)
+option(TRY_WITH_MOONOLITH "Use -DTRY_WITH_MOONOLITH=ON for enabling mesh transfer functions." OFF)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
