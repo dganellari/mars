@@ -641,7 +641,7 @@ namespace mars {
 */
 
 
-		//	refine_mesh(n_levels,nr_elements);
+			refine_mesh(n_levels,nr_elements);
 
 		/*	mesh.update_dual_graph();
 			mesh.tags() = level;*/
@@ -674,7 +674,6 @@ namespace mars {
 				edge.fix_ordering();
 
 				tree(element_id) = mapping.find(edge);
-
 				//ElementVector incidents =mapping.value_at(tree(element_id));
 
 			}
@@ -700,34 +699,36 @@ namespace mars {
 			Mesh_* mesh;
 			UnorderedMap<Side<2,KokkosImplementation>,ElementVector> mapping;
 			ViewVectorType<uint32_t> tree;
+			ViewMatrixType<Integer> index_count;
 
 
 			RefineMesh(UnorderedMap<Side<2, KokkosImplementation>, ElementVector> mp,
-					Mesh_* ms, ViewVectorType<uint32_t> tr) :
-				mapping(mp), mesh(ms), tree(tr)
+					Mesh_* ms, ViewVectorType<uint32_t> tr, ViewMatrixType<Integer> ic) :
+				mapping(mp), mesh(ms), tree(tr), index_count(ic)
 			{
 			}
 
 			KOKKOS_INLINE_FUNCTION
-			bool is_terminal(const Edge& edge, const ElementVector& incidents)
+			bool is_terminal(const Edge& edge, const ElementVector& incidents) const
 			{
 
 				bool terminal = true; //in case the elements share the longest edge or there is only one incident (itself)
 									  // - meaning the longest edge is on the boundary.
 
-				for (auto i : incidents)
+				for (auto i = 0; i < incidents.index; ++i)
 				{
 
-					if (mesh->is_active(i))
+					if (mesh->is_active(incidents[i]))
 					{
 
 						Edge new_edge;
 
 						EdgeSelect_ es;
-						const Integer edge_num = es.stable_select(*mesh, i);
+						const Integer edge_num = es.stable_select(*mesh,
+								incidents[i]);
 						//const Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), edge, i);
 
-						mesh->elem(i).edge(edge_num, new_edge.nodes[0],
+						mesh->elem(incidents[i]).edge(edge_num, new_edge.nodes[0],
 								new_edge.nodes[1]);
 						new_edge.fix_ordering();
 
@@ -743,33 +744,44 @@ namespace mars {
 			}
 
 			KOKKOS_INLINE_FUNCTION
-			void compute_lepp(const Integer element_id){
+			void compute_lepp(const Integer element_id, Integer& count1, Integer& count2) const
+			{
 
 				/*Integer edge_num = Bisection<Mesh>::edge_select()->stable_select(Bisection<Mesh>::get_mesh(), element_id);
 
-				Edge edge;
-				Bisection<Mesh>::get_mesh().elem(element_id).edge(edge_num, edge.nodes[0], edge.nodes[1]);
-				edge.fix_ordering();*/
+				 Edge edge;
+				 Bisection<Mesh>::get_mesh().elem(element_id).edge(edge_num, edge.nodes[0], edge.nodes[1]);
+				 edge.fix_ordering();*/
 
 				Integer index = tree(element_id);
 
-				if (is_terminal(mapping.key_at[index],  mapping.value_at[index])) {
-
-					for (const Integer element : mapping.value_at[index]) {
-
+				if (is_terminal(mapping.key_at(index), mapping.value_at(index)))
+				{
+					++count1;
+					//for (auto i = 0; i < mapping.value_at(index).index; ++i)
+					for (auto i = 0; i < mapping.value_at(index).index; ++i)
+					{
+						auto &element = mapping.value_at(index)[i];
 						if (mesh->is_active(element))
-						/*	Bisection<Mesh>::bisect_element(element, tree.edges[element_id]);*/
+							++count2;
 					}
+
 				}
 			}
 
 			KOKKOS_INLINE_FUNCTION
-			bool is_leaf(const Integer element_id){
+			bool is_leaf(const Integer element_id) const
+			{
 
 				Integer index = tree(element_id);
 
-				for (const Integer element : mapping.value_at[index]) {
-					if(Bisection<Mesh>::get_mesh().is_active(element) && mapping.key_at[index] != mapping.key_at[tree(element)]){
+				for (auto i = 0; i < mapping.value_at(index).index; ++i)
+				{
+					const auto &element = mapping.value_at(index)[i];
+					if (mesh->is_active(element)
+							&& mapping.key_at(index)
+									!= mapping.key_at(tree(element)))
+					{
 						return false;
 					}
 				}
@@ -778,46 +790,86 @@ namespace mars {
 			}
 
 			KOKKOS_INLINE_FUNCTION
-			void depth_first(const Integer node)
+			void depth_first(const Integer node, Integer& count1, Integer& count2) const
 			{
 
 				if (is_leaf(node))
 				{
-					compute_lepp(node);
+					compute_lepp(node,count1,count2);
 				}
 
 				Integer index = tree(node);
-				for (auto & child : mapping.value_at(index))
+				for (auto i = 0; i < mapping.value_at(index).index; ++i)
 				{
+					const auto &child = mapping.value_at(index)[i];
 					if (mesh->is_active(child)
-							&& mapping.key_at[index] != mapping.key_at[tree(child)])
-						depth_first(child);
+							&& mapping.key_at(index) != mapping.key_at(tree(child)))
+						depth_first(child, count1, count2);
 				}
 			}
 
 			KOKKOS_INLINE_FUNCTION
-			void operator()(int element_id) const
+			void operator()(const int element_id) const
 			{
 
 				if (mesh->is_active(element_id))
 				{
-					depth_first(element_id);
+					Integer terminal_elem_count=0;
+					Integer terminal_incident_count=0;
+
+					depth_first(element_id,terminal_elem_count,terminal_incident_count);
+
+					index_count(element_id,0) = terminal_elem_count;
+					index_count(element_id,1) = terminal_incident_count;
+
 				}
 			}
 		};
+
 
 		inline bool refine_mesh(const Integer levels, const Integer nr_elements)
 		{
 			using namespace Kokkos;
 
-			//for(Integer l = 0; l < levels; ++l)
-			parallel_for(nr_elements, RefineMesh(edge_element_map_.mapping_, mesh, tree_));
+		ViewMatrixType<Integer> index_count_ = ViewMatrixType<Integer>(
+				"index_count", nr_elements, 2);
 
+			//for(Integer l = 0; l < levels; ++l)
+			parallel_for(nr_elements,
+				RefineMesh(edge_element_map_.mapping_, mesh, tree_,
+						index_count_));
+
+			//paralel scan on the index_count view for both columns at the same time misusing the complex instead.
+			parallel_scan (nr_elements,	KOKKOS_LAMBDA (const int& i,
+						complex<Integer>& upd, const bool& final)
+			{
+				// Load old value in case we update it before accumulating
+				const float val_i0 = index_count_(i,0);
+				const float val_i1 = index_count_(i,1);
+
+				if (final)
+				{
+					index_count_(i,0) = upd.real(); // only update array on final pass
+					index_count_(i,1) = upd.imag();// only update array on final pass1
+				}
+				// For exclusive scan, change the update value after
+				// updating array, like we do here. For inclusive scan,
+				// change the update value before updating array.
+				upd.real() += val_i0;
+				upd.imag() += val_i1;
+
+			});
+
+				parallel_for(nr_elements, KOKKOS_LAMBDA(const int& i)
+				{
+
+					printf(" %li ", index_count_(i,0));
+				});
 			/*const Mesh* tmp = ref.mesh;
 
-			parallel_for("DestroyMeshObject",1, KOKKOS_LAMBDA (const int&) {
-				tmp->~Mesh();
-			});*/
+			 parallel_for("DestroyMeshObject",1, KOKKOS_LAMBDA (const int&) {
+			 tmp->~Mesh();
+			 });*/
 
 			return true;
 		}
