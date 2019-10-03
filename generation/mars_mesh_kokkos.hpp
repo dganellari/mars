@@ -25,6 +25,7 @@ public:
 	using Elem = mars::Simplex<Dim, ManifoldDim,KokkosImplementation>;
 	using SideElem = mars::Simplex<Dim, ManifoldDim-1,KokkosImplementation>;
 	//using Point = SubView<Real,Dim>;
+	using SerialMesh = mars::Mesh<Dim_,ManifoldDim_>;
 
 	MARS_INLINE_FUNCTION Mesh() {}
 
