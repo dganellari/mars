@@ -567,19 +567,17 @@ namespace mars {
 		}
 
 
-		void uniform_refine(const Integer n_levels)
-		{
-
-			Mesh2 sMesh3;
-			read_mesh("../data/square_2_def.MFEM", sMesh3);
+		Integer euler_graph_formula(Mesh *mesh){
 
 			/*Mesh3 sMesh3;
+			read_mesh("../data/write/euler.MFEM", sMesh3);*/
+
+			typename Mesh::SerialMesh sMesh3;
 			convert_parallel_mesh_to_serial<Dim,ManifoldDim>(sMesh3, *mesh);
-*/
 
 			Kokkos::Timer timer;
 
-			//map_.update(sMesh3);
+			map_.update(sMesh3);
 
 			double time = timer.seconds();
 			std::cout << "serial kokkos took: " << time << " seconds." << std::endl;
@@ -589,43 +587,39 @@ namespace mars {
 			sMesh3.update_dual_graph();
 
 
-			std::cout<<"size: "<<map_.mapping_.size()<<std::endl;
-
-			Integer bound = Combinations<2 + 1, 2>::value * sMesh3.n_elements();
+			//nr_faces per eleme counted twicee * nr elements
+			Integer bound = Combinations<ManifoldDim + 1, ManifoldDim>::value * sMesh3.n_elements();
 
 			//Euler's formula for graphs
-			Integer faces_nr = (bound + sMesh3.n_boundary_sides())/2;
+			Integer faces_nr = (bound + sMesh3.n_boundary_sides())/2; //boundary sides counted only once
 			//Integer edges_nr = sMesh3.n_nodes() + faces_nr - 2;
 
 			Integer edges_nr = 0;
 
-			//if(ManifoldDim == 2)
-			edges_nr = sMesh3.n_nodes() + sMesh3.n_elements() + 1 -2; // +1 because also the outer face is counted
-			//else
-				//edges_nr = sMesh3.n_nodes() + faces_nr -1 - sMesh3.n_elements();
+			if(ManifoldDim == 2)
+				edges_nr = sMesh3.n_nodes() + sMesh3.n_elements() + 1 -2; // +1 because also the outer face is counted
+			else
+				edges_nr = sMesh3.n_nodes() + faces_nr -1 - sMesh3.n_elements();
 
-			std::cout<<"edges_nr: " << edges_nr<<std::endl;
-			std::cout<<"faces_nr: " << faces_nr<<std::endl;
-			std::cout<<"bound: " << bound<<std::endl;
-			std::cout<<"sMesh3.n_nodes(): " << sMesh3.n_nodes()<<std::endl;
-						std::cout<<"sMesh3.n_boundary_sides(): " << sMesh3.n_boundary_sides()<<std::endl;
-			 bound = 2 * mesh->n_elements();
+			// edges_nr = 2 * mesh->n_elements();
 
+			return edges_nr;
+		}
 
-            const Integer nr_elements = mesh->n_elements();
+		void uniform_refine(const Integer n_levels)
+		{
+
+			const Integer nr_elements = mesh->n_elements();
+
+			edge_element_map_.reserve_map(euler_graph_formula(mesh));
+			reserve_tree(nr_elements);
+			/*if(flags.empty()) {
+			 flags.resize(mesh.n_elements(), NONE);
+			 level.resize(mesh.n_elements(), 0);*/
 
 
             init(&mesh);
             //	careful: now the mesh is a device pointer. Not possible to call on the host for ex. mesh.nr_elements()
-
-
-			edge_element_map_.reserve_map(bound);
-			reserve_tree(nr_elements);
-			/*if(flags.empty()) {
-				flags.resize(mesh.n_elements(), NONE);
-				level.resize(mesh.n_elements(), 0);*/
-
-
 
 			Kokkos::Timer timer1;
 
@@ -636,20 +630,12 @@ namespace mars {
 
 			//edge_element_map_.describe(std::cout);
 
+			Kokkos::Timer timer2;
+
             precompute_lepp_incidents(mesh,nr_elements);
 
-/*
-
-
-
-
-			std::cout<<"cap: "<<edge_element_map_.mapping_.capacity()<<std::endl;
-			std::cout<<"size: "<<edge_element_map_.mapping_.size()<<std::endl;
-			std::cout<<"E: "<<edges_nr<< " F: "<< faces_nr <<std::endl;
-			std::cout<<"C: "<<sMesh3.n_elements()<< " V: "<< sMesh3.n_nodes() <<std::endl;
-			std::cout<<"sMesh3.n_boundary_sides(): "<<sMesh3.n_boundary_sides()<< " bound: "<< bound <<std::endl;
-			std::cout<<"ManifoldDim: "<<ManifoldDim<< " bound: "<< bound <<std::endl;
-*/
+			double time2 = timer2.seconds();
+			std::cout << "paralel precompute_lepp_incidents took: " << time2 << " seconds." << std::endl;
 
 
 			refine_mesh(n_levels,nr_elements);
@@ -833,7 +819,7 @@ namespace mars {
 		};
 
 
-		/*struct ScatterElem : RefineMesh
+		struct ScatterElem : RefineMesh
 		{
 			//ViewMatrixType<Integer> lepp_elem_index;
 
@@ -843,7 +829,7 @@ namespace mars {
 					UnorderedMap<Side<2, KokkosImplementation>, ElementVector> mp,
 					Mesh_* ms, ViewVectorType<uint32_t> tr,
 					ViewVectorType<Integer> ic,// ViewMatrixType<Integer> lei,
-					ViewMatrixType<Integer> lei) :
+					ViewMatrixType<Integer> lii) :
 					RefineMesh(mp, ms, tr, ic),// lepp_elem_index(lei),
 					lepp_incidents_index(lii)
 			{
@@ -853,19 +839,20 @@ namespace mars {
 			void compute_lepp(const Integer element_id) const
 			{
 
-				Integer index = tree(element_id);
+				Integer index = this->tree(element_id);
 
-				if (is_terminal(mapping.key_at(index), mapping.value_at(index), mesh))
+				if (is_terminal(this->mapping.key_at(index), this->mapping.value_at(index),  this->mesh))
 				{
 				//	lepp_elem_index(index_count(element_id,0)++) = element_id;
 
-					for (auto i = 0; i < mapping.value_at(index).index; ++i)
+					for (auto i = 0; i < this->mapping.value_at(index).index; ++i)
 					{
-						auto &element = mapping.value_at(index)[i];
-						if (mesh->is_active(element))
+						auto &element = this->mapping.value_at(index)[i];
+						if (this->mesh->is_active(element))
 						{
-							lepp_incidents_index(index_count(element_id),0) = mapping.key_at(index);
-							lepp_incidents_index(index_count(element_id)++,1) = element;
+							//lepp_incidents_index(this->index_count(element_id),0) = this->mapping.key_at(index);
+							lepp_incidents_index(this->index_count(element_id),0) = index;
+							lepp_incidents_index(this->index_count(element_id)++,1) = element;
 						}
 					}
 
@@ -877,17 +864,17 @@ namespace mars {
 			void depth_first(const Integer node) const
 			{
 
-				if (is_leaf(node, mesh, tree, mapping))
+				if (is_leaf(node, this->mesh, this->tree, this->mapping))
 				{
 					compute_lepp(node);
 				}
 
-				Integer index = tree(node);
-				for (auto i = 0; i < mapping.value_at(index).index; ++i)
+				Integer index = this->tree(node);
+				for (auto i = 0; i < this->mapping.value_at(index).index; ++i)
 				{
-					const auto &child = mapping.value_at(index)[i];
-					if (mesh->is_active(child)
-							&& mapping.key_at(index) != mapping.key_at(tree(child)))
+					const auto &child = this->mapping.value_at(index)[i];
+					if (this->mesh->is_active(child)
+							&& this->mapping.key_at(index) != this->mapping.key_at(this->tree(child)))
 						depth_first(child);
 				}
 			}
@@ -896,13 +883,13 @@ namespace mars {
 			void operator()(const int element_id) const
 			{
 
-				if (mesh->is_active(element_id))
+				if (this->mesh->is_active(element_id))
 				{
 					depth_first(element_id);
 
 				}
 			}
-		};*/
+		};
 
 		void scan(const Integer start, const Integer end, ViewVectorType<Integer> index_count_)
 		{
@@ -944,55 +931,51 @@ namespace mars {
 			ViewVectorType<Integer> index_count_ = ViewVectorType<Integer>(
 					"index_count", nr_elements + 1); //1 more for the total sum
 
+			Kokkos::Timer timer2;
+
 			//for(Integer l = 0; l < levels; ++l)
 			parallel_for(RangePolicy<>(1 , nr_elements + 1),
 				RefineMesh(edge_element_map_.mapping_, mesh, tree_,
 						index_count_));
 
-			parallel_for(nr_elements +1, KOKKOS_LAMBDA(const int& i)
+			double time2 = timer2.seconds();
+			std::cout << "paralel RefineMesh took: " << time2 << " seconds." << std::endl;
+
+
+		/*	parallel_for(nr_elements +1, KOKKOS_LAMBDA(const int& i)
 			{
 
 				printf(" %li ", index_count_(i));
-			});
+			});*/
+
+			Kokkos::Timer timer;
 
 			scan(1, nr_elements +1, index_count_);
 
-			parallel_for(nr_elements +1, KOKKOS_LAMBDA(const int& i)
-			{
+			double time = timer.seconds();
+			std::cout << "paralel scan took: " << time << " seconds." << std::endl;
 
-				printf(" %li ", index_count_(i));
-			});
-
-
-			/*auto sum_subview = subview (index_count_, nr_elements, ALL());
+			auto sum_subview = subview (index_count_, nr_elements);
 			//printf("%s\n", typeid(sum_subview).name());
 
 			parallel_for(1, KOKKOS_LAMBDA(const int& i)
 			{
-
 				printf("\n %li ", sum_subview(0));
-				printf("\n %li ", sum_subview(1));
 
 			});
 
-			auto h_ac = Kokkos::create_mirror_view(sum_subview);*/
+			auto h_ac = Kokkos::create_mirror_view(sum_subview);
 
 			// Deep copy device view to host view.
-			//deep_copy(h_ac, sum_subview);
+			deep_copy(h_ac, sum_subview);
 
-
-/*
-			Integer lepp_elem_count= sum_subview(0);
-			Integer lepp_incidents_count = sum_subview(1);
-
-			ViewMatrixType<Integer> lepp_elem_index = ViewMatrixType<Integer>(
-					"lepp_elem_index", lepp_elem_count, 2);
+			Integer lepp_incidents_count = h_ac(0);
 
 			ViewMatrixType<Integer> lepp_incident_index = ViewMatrixType<Integer>(
 					"lepp_incidents_index", lepp_incidents_count, 2);
 
-			parallel_for(nr_elements, ScatterElem(index_count_, lepp_elem_index));
-*/
+			parallel_for(nr_elements, ScatterElem(edge_element_map_.mapping_, mesh, tree_,
+					index_count_, lepp_incident_index));
 
 			/*
 			const Mesh* tmp = ref.mesh;
