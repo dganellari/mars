@@ -25,7 +25,7 @@
 #include "mars_tet4.hpp"
 #include "mars_gauss_points.hpp"
 #include <err.h>
-
+#include "mars_affine_transformation.hpp"
 
 #include "generation/mars_mesh_generation.hpp"
 
@@ -53,10 +53,15 @@ void test_quadrature()
 	using namespace mars;
 	constexpr QGauss<3, 2> q_gauss;
 	static_assert(q_gauss.sum_weights() == 1.0, "weight must be instantiated at compile time");
-	static_assert(q_gauss.points[0] == .585410196624969, "point must be instantiated at compile time");
+	static_assert(q_gauss.points[7] ==  1.0, "point must be instantiated at compile time");
 	constexpr Tet4 tet4;
 
 	AssembleMassMatrix<QGauss<3, 2>, Tet4> mm;
+
+	//mm();
+
+	//std::cout<<"ciao"<<q_gauss.points[7]<<std::endl;
+
 }
 
 mars::Mesh1 test_mars_mesh_generation_1D(const int x) {
