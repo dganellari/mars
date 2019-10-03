@@ -28,6 +28,8 @@ namespace mars {
 
 			ParallelBisection<Mesh> b(&mesh);
 			b.uniform_refine(n_levels);
+
+
 			/*ViewMatrixType<Integer> t = mesh_in.get_view_elems();
 			//const auto &e = mesh_in.elem(0);
 
