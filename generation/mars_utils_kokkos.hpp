@@ -61,6 +61,17 @@ using ViewVectorTexture = Kokkos::View<T*,KokkosLayout,KokkosSpace,Kokkos::Memor
 template<typename T, Integer XDim_>
 using ViewVectorTypeC = Kokkos::View<T[XDim_],KokkosLayout,KokkosSpace>;
 
+template<typename T>
+using ViewVectorTypeU = Kokkos::View<T*, KokkosSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+
+template<typename T, class space>
+using ViewObjectU = Kokkos::View<T[1], space, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+/*
+
+template<typename T>
+using ViewObjectUH = Kokkos::View<T[1], KokkosHostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+*/
+
 template<typename Key, typename Value>
 using UnorderedMap = Kokkos::UnorderedMap<Key,Value,KokkosSpace>;
 
