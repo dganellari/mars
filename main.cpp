@@ -15,6 +15,9 @@
 #include "mars_partitioned_bisection.hpp"
 #include "mars_benchmark.hpp"
 #include "mars_lepp_benchmark.hpp"
+#include "mars_prelepp_benchmark.hpp"
+#include "generation/mars_lepp_benchmark_kokkos.hpp"
+
 #include "mars_test.hpp"
 #include "mars_ranked_edge.hpp"
 #include "mars_oldest_edge.hpp"
@@ -28,6 +31,8 @@
 #include "mars_affine_transformation.hpp"
 
 #include "generation/mars_mesh_generation.hpp"
+#include "generation/mars_mesh_kokkos.hpp"
+
 
 #ifdef WITH_KOKKOS
 #include "generation/mars_test_kokkos.hpp"
@@ -48,7 +53,8 @@
 using namespace std::chrono;
 
 
-void test_quadrature()
+
+void test_mass_matrix()
 {
 	using namespace mars;
 	constexpr QGauss<3, 2> q_gauss;
@@ -56,7 +62,89 @@ void test_quadrature()
 	static_assert(q_gauss.points[7] ==  1.0, "point must be instantiated at compile time");
 	constexpr Tet4 tet4;
 
-	AssembleMassMatrix<QGauss<3, 2>, Tet4> mm;
+
+
+	Kokkos::Timer timer;
+
+	ParallelMesh3 pMesh;
+
+	int x = 2;
+
+	int y = 2;
+
+	int z = 2;
+
+	generate_cube(pMesh, x, y, z);
+
+		/*create mesh*/
+	std::cout<<"I am in test_mass_matrix"<<std::endl;
+
+    const auto N_elem = pMesh.n_elements();
+
+    const auto N_nodes = pMesh.n_nodes();
+
+    std::cout<<"I am constructing EdgeElementMap "<< N_elem <<std::endl;
+
+    using EdgeElementMap = SubManifoldElementMap<2,KokkosImplementation>;
+
+    EdgeElementMap edge_element_map_2;
+
+    std::cout<<"I am reserving EdgeElementMap"<<std::endl;
+
+    edge_element_map_2.reserve_map(N_elem*6);
+
+     std::cout<<"I am updating EdgeElementMap"<<std::endl;
+
+    edge_element_map_2.update(&pMesh, N_elem);
+
+     std::cout<<"I am entering kokkos after update"<<std::endl;
+
+    auto unordered_map = edge_element_map_2.mapping_;
+
+    std::cout<<"I am entering kokkos parallel loop"<<std::endl;
+
+    Kokkos::View<Integer*> row_ptr("rwo_ptr", N_nodes+1);
+
+    Kokkos::parallel_for(N_elem, KOKKOS_LAMBDA(const Integer edgeIdx){
+    
+    Integer v1,v2;
+
+    auto edge =  unordered_map.key_at(edgeIdx);
+
+    v1 = edge[0];
+
+    v2 = edge[1];
+
+    printf("edge_idx %d has vertices %d and %d\n", edgeIdx, v1, v2);
+
+
+    });
+
+ 
+    Kokkos::View<double*[4][4]> mass_matrix("mass_matrix", N_elem);
+     
+    AssembleMassMatrix<QGauss<3, 2>, Tet4> mm(pMesh,mass_matrix);
+
+
+
+
+    Kokkos::parallel_for (N_elem, mm);
+
+ 
+
+	//mm();
+
+	std::cout<<"ciao"<<q_gauss.points[7]<<std::endl;
+
+}
+
+void test_quadrature()
+{
+	// using namespace mars;
+	// constexpr QGauss<3, 2> q_gauss;
+	// static_assert(q_gauss.sum_weights() == 1.0, "weight must be instantiated at compile time");
+	// static_assert(q_gauss.points[7] ==  1.0, "point must be instantiated at compile time");
+	// constexpr Tet4 tet4;
 
 	//mm();
 
@@ -194,7 +282,7 @@ void test_uniform_bisection_3D(const int level, const std::string filename)
 	mesh.update_dual_graph();
 	mark_boundary(mesh);
 
-	Bisection<Mesh3> b(mesh);
+	Bisection<Mesh3, LongestEdgeSelect<Mesh3>> b(mesh);
 	b.uniform_refine(level); b.clear();
 	print_boundary_points(mesh, std::cout, true);
 
@@ -227,7 +315,7 @@ void test_uniform_bisection_3D(const int level, mars::Mesh3 mesh)
 
 	high_resolution_clock::time_point t1 = high_resolution_clock::now();
 
-	Bisection<Mesh3> b(mesh);
+	Bisection<Mesh3, LongestEdgeSelect<Mesh3>> b(mesh);
 	b.uniform_refine(level); b.clear();
 
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
@@ -262,7 +350,7 @@ void test_uniform_bisection_2D(const int level, mars::Mesh2 mesh)
 	mesh.update_dual_graph();
 	mark_boundary(mesh);
 
-	Bisection<Mesh2> b(mesh);
+	Bisection<Mesh2, LongestEdgeSelect<Mesh2>> b(mesh);
 	b.uniform_refine(level); b.clear();
 	print_boundary_points(mesh, std::cout, true);
 
@@ -292,7 +380,7 @@ void test_uniform_bisection_2D(const int level, const std::string filename)
 	mesh.update_dual_graph();
 	mark_boundary(mesh);
 
-	Bisection<Mesh<3,2>> b(mesh);
+	Bisection<Mesh<3,2>, LongestEdgeSelect<Mesh<3,2>>> b(mesh);
 	b.uniform_refine(level); b.clear();
 	print_boundary_points(mesh, std::cout, true);
 
@@ -318,9 +406,11 @@ void test_bisection_2D()
 	read_mesh("../data/square_2.MFEM", mesh);
 	// read_mesh("../data/square_2_def.MFEM", mesh);
 
-	Bisection<Mesh2> b(mesh);
-	b.uniform_refine(3);
-	b.clear();
+	{
+		Bisection<Mesh2> b(mesh);
+		b.uniform_refine(3);
+		b.clear();
+	}
 
 	mesh.clean_up();
 	mesh.reorder_nodes();
@@ -331,8 +421,10 @@ void test_bisection_2D()
 	mesh.update_dual_graph();
 	mark_boundary(mesh);
 
-	auto edge_select = std::make_shared<ImplicitOrderEdgeSelect<Mesh2>>();
-	b.set_edge_select(edge_select);
+
+	Bisection<Mesh2, ImplicitOrderEdgeSelect<Mesh2>> b(mesh);
+/*	auto edge_select = std::make_shared<ImplicitOrderEdgeSelect<Mesh2>>();
+	b.set_edge_select(edge_select);*/
 	b.uniform_refine(1);
 
 	// write_mesh("mesh_2_bisect_0.eps", mesh, 10., PLOT_ID);
@@ -386,7 +478,7 @@ void test_bisection_3D()
 	mesh.update_dual_graph();
 	mark_boundary(mesh);
 
-	Bisection<Mesh3> b(mesh);
+	Bisection<Mesh3, LongestEdgeSelect<Mesh3>> b(mesh);
 	b.uniform_refine(2); b.clear();
 	print_boundary_points(mesh, std::cout, true);
 
@@ -458,8 +550,8 @@ void test_bisection_4D()
 	mark_boundary(mesh);
 
 	std::cout << "volume: " << mesh.volume() << std::endl;
-	Bisection<Mesh4> b(mesh);
-	b.set_edge_select(std::make_shared<UniqueLongestEdgeSelect<Mesh4>>());
+	Bisection<Mesh4, UniqueLongestEdgeSelect<Mesh4>> b(mesh);
+	//b.set_edge_select(std::make_shared<UniqueLongestEdgeSelect<Mesh4>>());
 	b.uniform_refine(1);
 	print_boundary_info(mesh, true);
 
@@ -524,7 +616,7 @@ namespace mars {
 			}
 		}
 
-		Bisection<MeshD> b(mesh);
+		Bisection<MeshD, EdgeSelect<MeshD>> b(mesh, edge_select);
 		b.set_edge_select(edge_select);
 		b.tracking_begin();
 
@@ -700,10 +792,12 @@ namespace mars {
 		static const Integer Dim = Mesh::Dim;
 		using Point = typename Mesh::Point;
 
-		PartitionedBisection<Mesh> b(parts);
 		auto edge_select = std::make_shared<UniqueLongestEdgeSelect<Mesh>>();
 		edge_select->set_recursive(true);
-		b.set_edge_select(edge_select);
+
+		PartitionedBisection<Mesh, EdgeSelect<Mesh>> b(parts, edge_select);
+		//b.set_edge_select(edge_select);
+
 		std::vector<std::vector<mars::Integer>> elements(parts.size());
 
 		for(Integer i = 0; i < n_levels; ++i) {
@@ -794,7 +888,7 @@ void test_partition_3D()
 
 	Bisection<Mesh> b(mesh);
 	b.uniform_refine(1);
-	b.set_edge_select(std::make_shared<UniqueLongestEdgeSelect<Mesh>>());
+	//b.set_edge_select(std::make_shared<UniqueLongestEdgeSelect<Mesh>>());
 
 	std::vector<Integer> partitioning(mesh.n_elements(), 0);
 
@@ -868,24 +962,28 @@ void test_partition_4D()
 void run_benchmarks(int level)
 {
 	using namespace mars;
-/*
-	Benchmark<Mesh2> b;
-	Mesh2 m;
+
+	/*Mesh2 m;
 	read_mesh("../data/square_2_def.MFEM", m);
 
-	b.run(level, m, "b");
-
 	LeppBenchmark<Mesh2> lb;
-	lb.run(level, m, "lb");*/
+	lb.run(level, m, "lb");
 
-	Benchmark<Mesh3> b3;
-	Mesh3 m3;
+	PreLeppBenchmark<Mesh2> b;
+	b.run(level, m, "b");
+*/
+
+
+	/*Mesh3 m3;
 	read_mesh("../data/cube_6.MFEM", m3);
-
-	b3.run(level, m3, "b3");
 
 	LeppBenchmark<Mesh3> lb3;
 	lb3.run(level, m3, "lb3");
+
+	PreLeppBenchmark<Mesh3> b3;
+	b3.run(level, m3, "b3");*/
+
+
 
 	/*ParallelMesh2 pMesh;
 	generate_square(pMesh, 97, 10);
@@ -915,10 +1013,10 @@ void run_benchmarks(int level)
 	LeppBenchmark<Mesh2> b2;
 	b2.run(level, Mesh, "b2");*/
 
-	/*ParallelMesh3 pMesh3;
-	generate_cube(pMesh3, 4, 2, 3);
+	ParallelMesh3 pMesh3;
+	generate_cube(pMesh3, level, level,level);
 
-	Mesh3 sMesh3;
+	/*Mesh3 sMesh3;
 	convert_parallel_mesh_to_serial(sMesh3, pMesh3);
 
 	std::cout << "n_active_elements: " << sMesh3.n_active_elements()
@@ -929,13 +1027,19 @@ void run_benchmarks(int level)
 	w3.write(
 			"build_cube_parallel" + std::to_string(1) + std::to_string(1)
 					+ ".vtu", sMesh3);
-
-	Benchmark<Mesh3> b3;
+*/
+/*	PreLeppBenchmark<Mesh3> b3;
 	b3.run(level, sMesh3, "b3");
 
 	LeppBenchmark<Mesh3> lb3;
-		lb3.run(level, sMesh3, "lb3");*/
+	lb3.run(level, sMesh3, "lb3");*/
 
+	/*ParallelLeppBenchmark<ParallelMesh3> b4;
+	b4.run(level, pMesh3, "lb4");*/
+
+	/*ParallelLeppBenchmark<Mesh3> b5;
+	b5.run(level, sMesh3, "b5");
+*/
 /*	Benchmark<Mesh4> b4;
 	Mesh4 m4;
 	read_mesh("../data/cube4d_24.MFEM", m4);
@@ -944,6 +1048,16 @@ void run_benchmarks(int level)
 
 	LeppBenchmark<Mesh4> lb4;
 	lb4.run(level, m4, "lb4");*/
+
+	ParallelLeppBenchmark<ParallelMesh3> b;
+	b.run(level,pMesh3, "pb");
+
+	/*ParallelMesh2 pMesh2;
+	generate_cube(pMesh2, level, level, 0);
+
+	ParallelLeppBenchmark<ParallelMesh2> b;
+	b.run(level, pMesh2, "pb");*/
+
 }
 
 void test_incomplete_2D()
@@ -1230,9 +1344,9 @@ int main(int argc, char *argv[])
 #ifdef WITH_KOKKOS
 	Kokkos::initialize(argc,argv);
 	{
-		test_quadrature();
+		test_mass_matrix();
 
-		run_benchmarks(level);
+		//run_benchmarks(level);
 
 		//test_mars_mesh_generation_kokkos_2D(2,4);
 

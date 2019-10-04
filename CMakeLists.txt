@@ -122,6 +122,7 @@ list(APPEND MARS_HEADERS
 	mars_edge_split_pool.hpp
 	mars_imesh.hpp
 	mars_lagrange_element.hpp
+	mars_globals.hpp
 	mars_longest_edge.hpp
 	mars_matrix.hpp
 	mars_imesh.hpp
@@ -177,6 +178,7 @@ target_include_directories(mars PUBLIC .)
 add_executable(mars_exec main.cpp ${MARS_HEADERS} ${MARS_SOURCES})
 target_link_libraries(mars_exec mars)
 
+
 IF(Kokkos_FOUND)
 	MESSAGE(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
 	MESSAGE(" Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
@@ -188,7 +190,7 @@ IF(Kokkos_FOUND)
 	ENDIF()
 	
 	target_include_directories(mars PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
-	# target_include_directories(mars_exec PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
+
 
 	message(STATUS "Kokkos_INCLUDE_DIRS=${Kokkos_INCLUDE_DIRS}, ${Kokkos_TPL_INCLUDE_DIRS}")
 	
@@ -199,6 +201,7 @@ IF(Kokkos_FOUND)
 	ENDIF()
 ENDIF()
 
+
 if(TRY_WITH_MOONOLITH)
 	add_subdirectory(moonolith_adapter)
 endif()
@@ -208,6 +211,7 @@ target_include_directories(mars PUBLIC ${CMAKE_BINARY_DIR})
 target_include_directories(mars PUBLIC ${MARS_INCLUDES})
 
 message(STATUS "${MARS_INCLUDES}")
+
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/mars_config.hpp.in ${CMAKE_BINARY_DIR}/mars_config.hpp)
 include_directories(${CMAKE_BINARY_DIR})

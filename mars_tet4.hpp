@@ -3,6 +3,7 @@
 
 #include "mars_gauss_points.hpp"
 #include "mars_affine_transformation.hpp"
+#include "generation/mars_mesh_kokkos.hpp"
 namespace mars {
 
   template<typename T, int N_>
@@ -89,48 +90,74 @@ private:
   class RefMassMatrix<QGauss<3, 2>, Tet4> {
   public:
 
-    MARS_INLINE_FUNCTION constexpr RefMassMatrix() {} 
+    static constexpr const Real c = 0.1;
 
-    MARS_INLINE_FUNCTION static void value(Real &val) {
+    MARS_INLINE_FUNCTION constexpr RefMassMatrix()
+    : value{c}
 
-      val=0.1;
-    
+    {}
+
+    MARS_INLINE_FUNCTION constexpr const Real elem_value() const
+    {
+        return value;
     }
+
+
+     Real value;
 
   };
 
   template<class Q, class FE>
   class AssembleMassMatrix {
   public:
-        Simplex<4, 3 /*KokkosImplementation*/> elem;
-        ViewVectorType<bool> active;
-        Kokkos::View<Real> detJ;
-        ViewMatrixType<Integer> element_matrix;
+        ParallelMesh3 pMesh;
+        Kokkos::View<double*[4][4]> element_matrix;
 
         AssembleMassMatrix(
-            const Simplex<4, 3 /*KokkosImplementation*/> &el,
-            ViewVectorType<bool> ac,
-            Kokkos::View<Real> J,
-            ViewMatrixType<Integer> element_matrix) 
-        : elem(el), active(ac), detJ(J), element_matrix(element_matrix) {}
+            ParallelMesh3 pMesh,
+            Kokkos::View<double*[4][4]> element_matrix)
+        : pMesh(pMesh), element_matrix(element_matrix) {}
 
         AssembleMassMatrix() {}
 
 
 
+        MARS_INLINE_FUNCTION void operator()(int index) const
+        {
+           
+              auto e = pMesh.elem(index);
 
-          MARS_INLINE_FUNCTION void operator()(int index) const
-          {
-             
+              constexpr const Q q;
 
-                constexpr const Q q;
+              constexpr const FE phi;
 
-                constexpr const FE phi;
-              
-          }
+              RefMassMatrix<Q, FE> a;
+
+              AffineTransform<3,3> Map;
+
+              Real Jacobian[3*3];
+
+              Real J; 
 
 
 
+
+
+              Map.affine_jacobian(pMesh, e, Jacobian, J);
+
+              std::cout<<"value j"<<J<<std::endl;
+
+              for(int i=0; i<4; i++)
+                  for(int j=0; j<4; j++)
+                    element_matrix(index,i,j) = a.elem_value() * J * phi.measure();
+
+              std::cout<<"outside op"<<std::endl;
+
+            
+        }
+
+
+     
       
 
 

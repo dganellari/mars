@@ -6,10 +6,9 @@
 #include "mars_edge_select.hpp"
 #include "mars_longest_edge.hpp"
 #include <iostream>
-
+#
 namespace mars {
-
-	template<class Mesh_>
+	template<class Mesh_, class EdgeSelect_ = LongestEdgeSelect<Mesh_>>
 	class Bisection {
 	public:
 		using Mesh     = Mesh_;
@@ -21,9 +20,9 @@ namespace mars {
 
 		virtual ~Bisection() {}
 
-		Bisection(Mesh &mesh)
+		Bisection(Mesh &mesh, std::shared_ptr<EdgeSelect_> edge_select=std::make_shared<EdgeSelect_>())
 		: mesh(mesh),
-		  edge_select_(std::make_shared<LongestEdgeSelect<Mesh>>()),
+		  edge_select_(edge_select),
 		  verbose(false),
 		  fail_if_not_refine(false)
 		{}
@@ -40,12 +39,12 @@ namespace mars {
 			return incomplete_elements_;
 		}
 
-		virtual void set_edge_select(const std::shared_ptr<EdgeSelect<Mesh>> &edge_select)
+		virtual void set_edge_select(const std::shared_ptr<EdgeSelect_> &edge_select)
 		{
 			edge_select_ = edge_select;
 		}
 
-		std::shared_ptr<EdgeSelect<Mesh>> edge_select()
+		std::shared_ptr<EdgeSelect_> edge_select()
 		{
 			return edge_select_;
 		}
@@ -556,7 +555,7 @@ namespace mars {
 		std::vector<std::array<Integer, ManifoldDim+1> > side_flags;
 		EdgeNodeMap edge_node_map_;
 		EdgeElementMap edge_element_map_;
-		std::shared_ptr<EdgeSelect<Mesh>> edge_select_;
+		std::shared_ptr<EdgeSelect_> edge_select_;
 		bool verbose;
 
 
