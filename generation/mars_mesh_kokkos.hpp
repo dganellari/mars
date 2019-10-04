@@ -181,6 +181,11 @@ public:
 		return active_;
 	}
 
+	ViewMatrixType<Integer>& get_view_children() //override
+	{
+		return children_;
+	}
+
 	/*
 	 void setPoints(std::vector<Point>&& points)
 	 {

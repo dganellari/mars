@@ -27,7 +27,7 @@ namespace mars {
 		virtual ~ParallelBisection() {}
 
 		ParallelBisection(Mesh *mesh)
-		: mesh(mesh),
+		: host_mesh(mesh),
 		  verbose(false),
 		  fail_if_not_refine(false)
 		{}
@@ -553,17 +553,17 @@ namespace mars {
 			tracker_.undo_last_iterate(mesh);
 		}*/
 
-		void init(Mesh** m)
+		void init()
 		{
-
 			Mesh* tmp = (Mesh*) Kokkos::kokkos_malloc(sizeof(Mesh));
-			Mesh mCopy = **m;
+			Mesh mCopy = *host_mesh;
 			Kokkos::parallel_for("CreateMeshObject", 1, KOKKOS_LAMBDA (const int&)
 			{
-				new ((Mesh*)tmp) Mesh(mCopy); // it only works on a copy since **m is still a host pointer and fails on the device.
+				new ((Mesh*)tmp) Mesh(mCopy); // two local copies for m and tmp since this->m, this->mesh host pointers
+				// it only works on a copy since **m is still a host pointer and fails on the device.
 			});
 
-			*m = tmp; //make the mesh pointer a device one so that this init func is not neccessary anymore
+			mesh = tmp; //make the mesh pointer a device one so that this init func is not neccessary anymore
 		}
 
 
@@ -609,17 +609,16 @@ namespace mars {
 		void uniform_refine(const Integer n_levels)
 		{
 
-			const Integer nr_elements = mesh->n_elements();
+			const Integer nr_elements = host_mesh->n_elements();
 
-			edge_element_map_.reserve_map(euler_graph_formula(mesh));
+			edge_element_map_.reserve_map(euler_graph_formula(host_mesh));
 			reserve_tree(nr_elements);
 			/*if(flags.empty()) {
 			 flags.resize(mesh.n_elements(), NONE);
 			 level.resize(mesh.n_elements(), 0);*/
 
 
-            init(&mesh);
-            //	careful: now the mesh is a device pointer. Not possible to call on the host for ex. mesh.nr_elements()
+            init();
 
 			Kokkos::Timer timer1;
 
@@ -804,15 +803,17 @@ namespace mars {
 			void operator()(const int element_id) const
 			{
 
-				if (mesh->is_active(element_id-1))
+				if (mesh->is_active(element_id))
 				{
 					//Integer terminal_elem_count=0;
 					Integer terminal_incident_count=0;
 
-					depth_first(element_id-1, terminal_incident_count);
+					depth_first(element_id, terminal_incident_count);
 
 					//index_count(element_id,0) = terminal_elem_count;
-					index_count(element_id) = terminal_incident_count;
+					index_count(element_id+1) = terminal_incident_count;
+					//+1 for leaving the first cell 0 and performing an inclusive scan on the rest
+					//to have both exclusive and inclusive and the total on the last cell.
 
 				}
 			}
@@ -838,32 +839,29 @@ namespace mars {
 			KOKKOS_INLINE_FUNCTION
 			void compute_lepp(const Integer element_id) const
 			{
-
 				Integer index = this->tree(element_id);
 
 				if (is_terminal(this->mapping.key_at(index), this->mapping.value_at(index),  this->mesh))
 				{
+					Integer count=0;
 				//	lepp_elem_index(index_count(element_id,0)++) = element_id;
-
 					for (auto i = 0; i < this->mapping.value_at(index).index; ++i)
 					{
 						auto &element = this->mapping.value_at(index)[i];
 						if (this->mesh->is_active(element))
-						{
+						{	//count++;
 							//lepp_incidents_index(this->index_count(element_id),0) = this->mapping.key_at(index);
 							lepp_incidents_index(this->index_count(element_id),0) = index;
 							lepp_incidents_index(this->index_count(element_id)++,1) = element;
+							//printf(" (%li - %li - %li) ",lepp_incidents_index(this->index_count(element_id),0),count, element_id);
 						}
 					}
-
 				}
 			}
-
 
 			KOKKOS_INLINE_FUNCTION
 			void depth_first(const Integer node) const
 			{
-
 				if (is_leaf(node, this->mesh, this->tree, this->mapping))
 				{
 					compute_lepp(node);
@@ -882,11 +880,9 @@ namespace mars {
 			KOKKOS_INLINE_FUNCTION
 			void operator()(const int element_id) const
 			{
-
 				if (this->mesh->is_active(element_id))
 				{
 					depth_first(element_id);
-
 				}
 			}
 		};
@@ -934,7 +930,7 @@ namespace mars {
 			Kokkos::Timer timer2;
 
 			//for(Integer l = 0; l < levels; ++l)
-			parallel_for(RangePolicy<>(1 , nr_elements + 1),
+			parallel_for(nr_elements,
 				RefineMesh(edge_element_map_.mapping_, mesh, tree_,
 						index_count_));
 
@@ -958,12 +954,6 @@ namespace mars {
 			auto sum_subview = subview (index_count_, nr_elements);
 			//printf("%s\n", typeid(sum_subview).name());
 
-			parallel_for(1, KOKKOS_LAMBDA(const int& i)
-			{
-				printf("\n %li ", sum_subview(0));
-
-			});
-
 			auto h_ac = Kokkos::create_mirror_view(sum_subview);
 
 			// Deep copy device view to host view.
@@ -971,11 +961,21 @@ namespace mars {
 
 			Integer lepp_incidents_count = h_ac(0);
 
+			std::cout<<"sum_subview: "<<lepp_incidents_count<<std::endl;
+
 			ViewMatrixType<Integer> lepp_incident_index = ViewMatrixType<Integer>(
 					"lepp_incidents_index", lepp_incidents_count, 2);
 
 			parallel_for(nr_elements, ScatterElem(edge_element_map_.mapping_, mesh, tree_,
 					index_count_, lepp_incident_index));
+
+
+			resize(host_mesh->get_view_children(), host_mesh->get_view_children().extent(0) + lepp_incidents_count	, 2);
+
+			ViewObjectU<Mesh, KokkosSpace> device_view(mesh);
+			ViewObjectU<Mesh, KokkosHostSpace> host_view(host_mesh);
+
+			deep_copy(device_view, host_view);
 
 			/*
 			const Mesh* tmp = ref.mesh;
@@ -990,6 +990,7 @@ namespace mars {
 
 	private:
 		Mesh *mesh;
+		Mesh *host_mesh;
 		EdgeElementMap1 edge_element_map_;
 		EdgeElementMap map_;
 
