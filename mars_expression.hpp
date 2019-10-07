@@ -12,9 +12,9 @@ template<typename Derived>
 class Expression
 {
 public:
-        inline Derived &derived() { return static_cast<Derived &>(*this); }
+        inline constexpr Derived &derived() { return static_cast<Derived &>(*this); }
         inline constexpr const Derived &derived() const { return static_cast<const Derived &>(*this); }
-        inline operator Derived &() {return derived();}
+        inline constexpr operator Derived &() {return derived();}
         inline constexpr  operator const Derived &() const {return derived();}
 
          ///@return a string with the name of the class

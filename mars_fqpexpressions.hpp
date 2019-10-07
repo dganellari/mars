@@ -150,13 +150,21 @@ protected:
 };
 
 // FQPVALUES 
-template<typename T, Integer NQPoints,Integer NComponents>
-class FQPValues: public 
-AlgebraicExpression<FQPValues<T,NQPoints,NComponents>,
-                    Vector<Vector<T,NQPoints>,NComponents>>
+template<typename T, Integer NQPoints_,Integer Ndofs_>
+class FQPValues: 
+public AlgebraicExpression<FQPValues<T,NQPoints_,Ndofs_>,
+                    Vector<Vector<T,NQPoints_>,Ndofs_>>
+                    // ,
+// public TensorBase<Vector<T,NQPoints>, std::make_index_sequence<NComponents>> 
 {
 public:
-      using type= Vector<Vector<T,NQPoints>,NComponents>;
+      // using MB = TensorBase<Vector<T,NQPoints>, std::make_index_sequence<NComponents>> ;
+      // using MB::MB;
+      // using MB::values;
+      static constexpr Integer NQPoints=NQPoints_;
+      static constexpr Integer Ndofs=Ndofs_;
+
+      using type= Vector<Vector<T,NQPoints>,Ndofs>;
       using subttype= Vector<T,NQPoints>;
       ~FQPValues() = default;
       constexpr FQPValues()= default;
@@ -171,7 +179,9 @@ public:
       inline constexpr       type operator()()     {return values_;};
       inline constexpr const Vector<T,NQPoints> operator()(const Integer i)const{return values_[i];};
       inline constexpr       Vector<T,NQPoints> operator()(const Integer i)     {return values_[i];};
-      inline constexpr Integer size()const{return NComponents;}
+      inline constexpr const T& operator()(const Integer i,const Integer j)const{return values_[i][j];};
+      inline constexpr       T& operator()(const Integer i,const Integer j)     {return values_[i][j];};
+      inline constexpr Integer size()const{return Ndofs;}
       // inline constexpr void operator()(const Integer& i,const Vector<T,NQPoints>& u){values_[i]=u;};         
 protected:
   type values_;

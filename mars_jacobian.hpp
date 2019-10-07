@@ -207,7 +207,11 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
  // eval_right_<QRule>(Eval(expr.right()))
  eval_left_(expr.left()),
  eval_right_(expr.right())
- {}
+ {
+  // decltype(eval_left_) qui(5,4,4,5,5,5,5,5);
+  // decltype(eval_right_) qui2(5,4,4,5,5,5,5,5);
+  // std::cout<<"qui"<<std::endl;
+ }
 
 
  template<typename Elem, typename T,Integer NQPoints, Integer NComponents>
@@ -250,14 +254,24 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
     }
  }
 
- template<typename Elem,typename ShapeFunctions>
- void apply(subtype& vec, const Jacobian<Elem>& J, const ShapeFunctions& shape_functions)
+ // template<typename Elem,typename...Args1, typename...Args2, typename...Args3>
+ // void apply(subtype& vec, const Jacobian<Elem>& J, const std::tuple<Args1...>& tuple_shape_functions, const std::tuple<Args2...>&tuple_tensor, const std::tuple<Args3...>&tuple_evals)
+ template<typename Elem,typename...Forms>
+  void apply(subtype& vec, const Jacobian<Elem>& J, ShapeFunctions2<Forms...>& shape_functions)
+
  {
 
-  std::cout<<"jacobian tensor left1 "<<std::endl;
-  eval_left_.apply(left_value_,J,shape_functions);
-  std::cout<<"jacobian tensor right1 "<<std::endl;
-  eval_right_.apply(right_value_,J,shape_functions);
+  // todo fixme
+  // eval_left_.apply(left_value_,J,shape_functions);
+  // eval_right_.apply(right_value_,J,shape_functions);
+
+  // eval_left_.apply(left_value_,J,tuple_shape_functions,tuple_tensor,tuple_evals);
+  // eval_right_.apply(right_value_,J,tuple_shape_functions,tuple_tensor,tuple_evals);
+
+  eval_left_.apply(left_value_,J,shape_functions(),shape_functions.composite_tensor(),shape_functions.composite_shapes());
+  eval_right_.apply(right_value_,J,shape_functions(),shape_functions.composite_tensor(),shape_functions.composite_shapes());
+
+
   std::cout<<"left_value_"<<std::endl;
   std::cout<<left_value_<<std::endl;
   std::cout<<"right_value_"<<std::endl;
@@ -311,15 +325,18 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
  {
 
   const auto& detJ=J.get_det();
-  // decltype(eval_left_) eee(6);
-  eval_left_.apply(left_value_,J,shape_functions);
-  eval_right_.apply(right_value_,J,shape_functions);
+  // todo fixme
+  // eval_left_.apply(left_value_,J,shape_functions);
+  // eval_right_.apply(right_value_,J,shape_functions);
 
+  eval_left_.apply(left_value_,J,shape_functions(),shape_functions.composite_tensor(),shape_functions.composite_shapes());
+  eval_right_.apply(right_value_,J,shape_functions(),shape_functions.composite_tensor(),shape_functions.composite_shapes());
+// shape_functions_.composite_tensor(),shape_functions_.composite_shapes());
   std::cout<<"left_value_"<<std::endl;
-  std::cout<<left_value_<<std::endl;
+  // std::cout<<left_value_<<std::endl;
   std::cout<<"right_value_"<<std::endl;
-  std::cout<<right_value_<<std::endl;
-  std::cout<<"quiiiiiiiii 111"<<std::endl;
+  // std::cout<<right_value_<<std::endl;
+  // std::cout<<"quiiiiiiiii 111"<<std::endl;
   for(Integer ii=0;ii<mat.rows();ii++)
     for(Integer jj=0;jj<mat.cols();jj++)
     {   
@@ -328,9 +345,9 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
         // left value is trial, right value is test
         mat(ii,jj)=detJ*dotofdots(right_value_[ii],left_value_[jj]);
     }
-    std::cout<<detJ<<std::endl;
+    // std::cout<<detJ<<std::endl;
     std::cout<<"mat="<<mat<<std::endl;
-   std::cout<<"quiiiiiiiii 222"<<std::endl;
+   // std::cout<<"quiiiiiiiii 222"<<std::endl;
  }
 
   
@@ -661,6 +678,7 @@ public:
     using EvaluationGeneralForm=Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions_>;
     using GeneralForm=typename EvaluationGeneralForm::type;
     using ShapeFunctions=typename EvaluationGeneralForm::ShapeFunctions;
+    using TupleOfTupleShapeFunction=typename ShapeFunctions::TupleOfTupleShapeFunction;
     using LocalTupleOfTensors=typename LocalTupleOfTensors<GeneralForm,GetType<typename GeneralForm::form>::value>::type;    
     using L2Products=typename EvaluationGeneralForm::L2Products;
     using EvalOfL2InnersType=EvalOfL2InnersAux<L2Products,0,ShapeFunctions>;
@@ -669,19 +687,17 @@ public:
 
     EvaluationOfL2Inners(const GeneralForm& form,ShapeFunctions& shapefunctions)
     :
-    eval_inners_(faccio<TupleOfPairsNumbers>(form(),shapefunctions))
-    // eval_inners_(EvalOfL2Inners<L2Products>(form.space_ptr(),shapefunctions))
+    eval_inners_(build_tuple_of_evals<TupleOfPairsNumbers>(form(),shapefunctions))
     {}
 
  template<Integer N,typename Output,typename Jacobian>
     constexpr void apply_aux_aux(Output& mat,Jacobian&J)
     {
-  std::cout<<"jacobian evalinners1"<<std::endl;
-     auto& local_mat=std::get<N>(mat_tuple_);
+     auto& local_mat=std::get<N>(tensor_tuple_);
      local_mat.zero();
      auto & eval_N=std::get<N>(eval_inners_);
      eval_N.apply(local_mat,J);
-  std::cout<<"jacobian evalinners2"<<std::endl;
+  // std::cout<<"jacobian evalinners2"<<std::endl;
 
     }   
 
@@ -700,10 +716,12 @@ public:
 
  template<typename Output,typename Jacobian>
     void apply(Output& mat,Jacobian&J)
-    {apply_aux<TupleTypeSize<L2Products>::value-1,0>(mat,J);}
+    {
+      apply_aux<TupleTypeSize<L2Products>::value-1,0>(mat,J);
+    }
 
 private:
-    LocalTupleOfTensors mat_tuple_;
+    LocalTupleOfTensors tensor_tuple_;
     EvalOfL2InnersType eval_inners_;    
 };
 

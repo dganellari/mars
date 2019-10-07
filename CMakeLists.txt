@@ -69,6 +69,7 @@ list(APPEND MARS_HEADERS
 	mars_compiletime_sqrt.hpp
 	mars_connectivity.hpp
 	mars_connectivity_impl.hpp
+	mars_constant.hpp
 	mars_dof_map.hpp
 	mars_dual_graph.hpp
 	mars_edge.hpp
@@ -98,10 +99,13 @@ list(APPEND MARS_HEADERS
 	mars_number.hpp
 	mars_oldest_edge.hpp
 	mars_operators.hpp
+	mars_operator_tuple_type.hpp
+	mars_operator_type.hpp
 	mars_par_bisection.hpp
 	mars_par_edge_split_pool.hpp
 	mars_par_mesh.hpp
 	mars_partitioned_bisection.hpp
+	mars_quadrature_order.hpp
 	mars_quadrature_rules.hpp
 	mars_quality.hpp
 	mars_ranked_edge.hpp

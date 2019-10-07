@@ -1042,70 +1042,160 @@ void assembly_example()
   
   constexpr auto alpha=Constant<Scalar1>(2.0);
   constexpr auto beta=Constant<Scalar1>(3.0);
+  constexpr auto gamma=Constant<Scalar1>(3.0);
+  constexpr auto id2=Constant<Identity2>();
+
+  constexpr auto  alpha4=alpha.qp_eval<4>();
+
+auto NewOp1=NewOperator(IdentityOperator()/alpha);
+auto NewOp2=NewOperator(IdentityOperator()*alpha*f1);
+
+// FormOfCompositeOperatorType<decltype(NewOp2(u1))>::type ee(5);
   auto bilinearform= 
-                  L2Inner(u3,v3)+ //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
-                    L2Inner(u2,v2) +//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
-                    L2Inner(beta*alpha*u1,v1);//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
-  auto linearform= L2Inner(alpha,v1);//+L2Inner(f2,v2)+L2Inner(f1,v1);//+ L2Inner(f1,v1);
+                    L2Inner(NewOp2(u3),(v3))+ //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
+                    L2Inner((u2),(v2)) +//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
+                    L2Inner(NewOp1(u1),(v1));//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
+  auto linearform= L2Inner(alpha,NewOp2(v1));//+L2Inner(f2,v2)+L2Inner(f1,v1);//+ L2Inner(f1,v1);
 
-auto ecc=GradientOperator()*GradientOperator()+IdentityOperator();
-
-
+  // auto bilinearform= 
+  //                   L2Inner((u3),(v3))+ //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
+  //                   L2Inner((u2),(v2)) +//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
+  //                   L2Inner(alpha*beta*(u1),(v1));//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
+  // auto linearform= L2Inner(f1,(v1));//+L2Inner(f2,v2)+L2Inner(f1,v1);//+ L2Inner(f1,v1);
 
 
   auto bilinear_form=general_form(bilinearform);
   auto linear_form=general_form(linearform);
 
-// make_index_sequence_shift<2,3> ok(6);
-// auto emmi=std::tuple<int,int,int,int,int>(10,20,30,40,50);
-
-
-// auto emmi7=tuple_change_element<3>(emmi, 100);
-// auto emmi8=tuple_change_element<0>(emmi, 100);
-// auto emmi9=tuple_change_element<4>(emmi, 100);
-
-// auto mrk=std::tuple<>();
-// auto smsms=std::tuple_cat(mrk,std::make_tuple<int>(5),mrk);
-// auto sm=costruisci1(L2Inner(u3,v1),L2Inner(u3,v2));
-// // auto jf=costruisci(std::tuple<>(),bilinearform);
-// // decltype(sm)f(55);
-
-
-// std::cout<<"5--->"<<tuple_get<0>(emmi5)<<std::endl;
-
-
-// auto eml=tuple_get<2>(std::tuple<std::tuple<>,std::tuple<>,std::tuple<>>());
-// decltype(L2Inner(u3,v2))::TestTrialNumbers eee4(6);
-
-// using emptytuple=TupleOfType<4,std::tuple<> > ;
-// auto es=emptytuple();
-// decltype(es) lklk(6);
   auto shape_coefficients=shape_function_coefficients(bilinear_form,linear_form);
   auto reference_maps=reference_maps2(bilinear_form,linear_form);
   auto shape_functions=shape_functions2(shape_coefficients,reference_maps,bilinear_form,linear_form);
   shape_coefficients.init(mesh);
-
-  auto eval_bilinear_form=Eval(bilinear_form,shape_functions);
-  // using TupleOfPairsNumbers=decltype(bilinear_form)::TupleOfPairsNumbers;
-// auto auto1=faccio<TupleOfPairsNumbers>(bilinearform,shape_functions);
-// decltype(auto1) ok2(6);
-  // decltype(eval_bilinear_form)::EvaluationOfL2Inners::EvalOfL2InnersType ok(6);
   
-  // auto eval_linear_form=Eval(linear_form,shape_functions);
+  // decltype(W)::FromElementFunctionSpacesToUniqueNumbersTupleType ee(6);
+  // FromElementFunctionSpacesToFirstSpaceTupleType<decltype(W)::FromElementFunctionSpacesToUniqueNumbersTupleType> ese(6);
+  // decltype(shape_functions)::TupleOfTupleCompositeShapeFunction o444(5);
+  // decltype(bilinear_form)::FunctionSpace s5e(6);
+
+  // TupleOfCompositeTensor<decltype(bilinear_form)::FunctionSpace,decltype(shape_functions)::TupleOfTupleCompositeShapeFunction> edee(4,4,4,444,444,4);
+  // decltype(shape_functions)::TupleOfTupleCompositeShapeFunctionTensor ede4e(4);
+  // decltype(bilinearform) eeee(6);
+  // OperatorAndQuadratureTupleType<decltype(NewOp2(v1))>::type ee(65,4,4,4,4);
+// decltype(reference_maps)::TupleOperatorsAndQuadrature eee(5);
+// decltype(reference_maps)::TupleCompositeOperatorsAndQuadrature ee4e(5);
+// decltype(reference_maps)::TupleOfTupleNoQuadrature ee444e(5);
+// decltype(reference_maps)::SpacesToUniqueFEFamilies ee3334e(5);
+// decltype(reference_maps)::Map ee3rr334e(5);
+// decltype(reference_maps)::UniqueMapping t34e(5);
+
+/////////////////////////////////////
+  ////////// PROBLEMA: SE FAI REMOVEDUPLICATES SUI TENSORI perdi informazioni rispetto che a farlo sull'eva;
+  ///////////// due eval diversi possono avere lo stesso tensore, che ha pero' un valore diverso!!!!!!!!!
+
+
+ // decltype(tup) tup0(4,55,5,5,5,5,5,5,55,555,5);
+ // decltype(tup1) tup11(4,55,5,5,5,5,5,5,55,555,5);
+ // decltype(tup2) tup22(4,55,5,5,5,5,5,5,55,555,5);
+  // decltype(tup3) tup22(4,55,5,5,5,5,5,5,55,555,5);
+  // decltype(tuple_get<0,0,0>(onlycomposite)) okoko(6);
+  // std::cout<<"qui->"<<tuple_get<0,0,0>(onlycomposite).composite_operator().left().eval()<<std::endl;
+   // decltype(shape_functions)::Form e(5);
+     // decltype(shape_functions)::TupleOfTupleShapeFunction e2s3(6,4,44,4,56,7,7);
+
+    // decltype(shape_functions)::TupleOfTupleShapeFunctionCombinations e2s(6,4,44,4,56,7,7);
+  // GetType<decltype(shape_functions)::TupleOfTupleShapeFunctionCombinations,1,0> e2s3(6,4,44,4,56,7,7);
+
+
+  // decltype(NewOp1) ok;
+  // decltype(reference_maps)::TupleCompositeOperatorsAndQuadrature e2s(6);
+  // decltype(reference_maps)::TupleOperatorsAndQuadrature es(6);
+  // decltype(shape_functions)::TupleOfTupleCompositeShapeFunction o3k(5);
+  // decltype(shape_functions)::TupleOfTupleCompositeShapeFunctionTensor kli(6);
+  auto eval_bilinear_form=Eval(bilinear_form,shape_functions);
+  auto eval_linear_form=Eval(linear_form,shape_functions);
 
   J.init(0);
   reference_maps.init(J);
   shape_coefficients.init(0);
-  shape_functions.init();
+  shape_functions.init(J);///////////////<------------------------ problema qui
+
+
+
+ // const auto& tensors=shape_functions.composite_tensor();
+ // std::cout<<"EVALUATION"<<std::endl;
+
+
 
   eval_bilinear_form.apply(J);
+  eval_linear_form.apply(J);
+
+  // J.init(1);
+  // reference_maps.init(J);
+  // shape_coefficients.init(1);
+  // shape_functions.init();
+
+  // eval_bilinear_form.apply(J);
   // eval_linear_form.apply(J);
 
 
+//  auto mm=Evaluation<Expression<decltype(alpha*u1)>, GaussPoints<Simplex<2,2>,3>>((alpha*u1));
+
+
+ // decltype(shape_functions)::TupleOfTupleCompositeShapeFunctionTensor e(6);
+ // decltype(shape_functions)::TupleOfTupleCompositeShapeFunction e4(6);
+
+// FQPValues<Matrix<double, 1L, 2L>, 1L, 3L> hh;
+//  auto ecc=form_of_composite_operator(NewOp1(v1));
+//  auto ecc2=Evaluation<Expression<decltype(ecc)>,GaussPoints<Simplex<2,2>,1>>(ecc);
+//  ecc2.apply(hh,J,shape_functions());
+ 
+//  // OperatorType<decltype(NewOp1(v1)),GaussPoints<Simplex<2,2>,1>> e(6);
+
+//   TupleOfCombinationFunctions<decltype(u1)::Nmax,MultipleAddition<decltype(bilinearform),decltype(linearform)>>::type onlycomposite=build_tuple_of_combination_functions<decltype(u1)::Nmax>(bilinearform,linearform);
 
 
 
 
+
+
+
+
+// FormOfCompositeOperatorType<decltype(NewOp1(v1))>::type ok(1);
+// decltype(shape_functions)::TupleOfTupleCompositeShapeFunction e4ee(6);
+// decltype(shape_functions)::TupleOfTupleCompositeShapeFunctionTensor eee(6);
+
+
+
+// TupleOfCombinationFunctions<decltype(u1)::Nmax,decltype(bilinearform),decltype(linearform)>::type eee(6);
+
+ // decltype(onlycomposite) onle333ycomposite;
+ // decltype(shape_functions()) e(6);
+ // static_assert(IsSame<decltype(onlycomposite),typename TupleOfCombinationFunctions<decltype(u1)::Nmax,MultipleAddition<decltype(bilinearform),decltype(linearform)>>::type>::value && "they are not same");
+
+// Number<decltype(bilinear_form)::FunctionSpace::Nuniquesubspaces > ee(5);
+// Number<decltype(linear_form)::FunctionSpace::Nuniquesubspaces > e4(5);
+
+// Number<decltype(u1)::Nmax> eee(6);
+
+
+
+// decltype(build_tuple_of_combination_functions<decltype(u1)::Nmax>(decltype(bilinearform)(),decltype(linearform)())) ekl(6);
+
+// decltype(shape_functions()) eee(6);
+
+// decltype(u1)::UniqueElementFunctionSpacesTupleType oo(5);
+// Number<decltype(u1)::value> o1(3);
+// Number<decltype(u2)::value>o41(3);
+// Number<decltype(u3)::value>o14(3);
+
+
+
+// std::cout<<hh<<std::endl;
+// OperatorType<Division<FQPValues<Matrix<double,1,2,-1>,1,3>,QPValues<Matrix<double,1,1,-1>,1>>> eee(5);
+// OperatorType<Multiplication<mars::Matrix<double, 1,
+//       2, -1>, mars::Matrix<double, 1, 1, -1> > >  eee(6,5,5,5);
+// decltype(shape_functions()) oo(5);
+// decltype(ecc2) l(5);
 
 //   std::cout<<"apply2"<<std::endl;
   // auto Ku=4*Grad(u1);
@@ -1216,7 +1306,6 @@ auto ecc=GradientOperator()*GradientOperator()+IdentityOperator();
 // // std::cout<<decltype(generalform8)::Form::Right::Right::Right::value<<std::endl;
 
 
-// // Number<QuadratureOrder<decltype(func1)>::value> ok6(0);
 // // unique ok0(0);
 // // gabtype::Left ok1(5);
 // // gabtype::Right::Left ok2(5);

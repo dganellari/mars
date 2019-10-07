@@ -189,7 +189,6 @@ std::vector<std::array<Integer, Nelem_dofs>> add_costant
   const auto& t1size=t1.size();
   t2.resize(t1size);
 
-  std::cout<<"value=="<<value<<std::endl;
   for(Integer ii=0;ii<t1size;ii++)
     for(Integer jj=0;jj<t1[ii].size();jj++)
        t2[ii][jj]=t1[ii][jj]+value;
@@ -436,6 +435,29 @@ public:
  static constexpr std::size_t value = 1;
 };
 
+template <>
+class TupleTypeSize<const std::tuple<>>
+{
+public:
+ static constexpr std::size_t value = 1;
+};
+
+template <>
+class TupleTypeSize<std::tuple<>&>
+{
+public:
+ static constexpr std::size_t value = 1;
+};
+
+template <>
+class TupleTypeSize<const std::tuple<>&>
+{
+public:
+ static constexpr std::size_t value = 1;
+};
+
+
+
 template <typename T>
 class TupleTypeSize<std::tuple<T>>
 {
@@ -458,7 +480,19 @@ public:
  static constexpr std::size_t value = TupleTypeSize<std::tuple<T,Types...>>::value;
 };
 
+template <typename T,typename ... Types>
+class TupleTypeSize<const std::tuple<T,Types...>>
+{
+public:
+ static constexpr std::size_t value = TupleTypeSize<std::tuple<T,Types...>>::value;
+};
 
+template <typename T,typename ... Types>
+class TupleTypeSize<const std::tuple<T,Types...>&>
+{
+public:
+ static constexpr std::size_t value = TupleTypeSize<std::tuple<T,Types...>>::value;
+};
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -486,6 +520,7 @@ struct TypeToTupleElementPositionHelper<T, Nmax, std::tuple<U, Types...>> {
 
 template <class T, class Tuple>
 using TypeToTupleElementPosition=TypeToTupleElementPositionHelper<T,TupleTypeSize<Tuple>::value,Tuple>;
+
 
 
 
@@ -1130,6 +1165,9 @@ using MapOperatorTupleOfTuple=typename MapOperatorTupleOfTupleHelper<TupleOfTupl
 template<typename Elem, typename BaseFunctioSpace, typename Operator, typename QuadratureRule>
 class ShapeFunction;
 
+template<typename Elem, typename BaseFunctioSpace, typename Operator, typename QuadratureRule,Integer M>
+class ShapeFunctionCombinations;
+
 template<typename Elem, typename BaseFunctioSpace, typename Tuple, Integer Nmax,Integer N>
 class TupleShapeFunctionCreate;
 
@@ -1290,6 +1328,106 @@ using TupleOfTupleShapeFunctionType2=typename TupleOfTupleShapeFunctionCreate2<T
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename Elem, typename BaseFunctioSpace, typename Tuple, Integer Nmax,Integer N,Integer M>
+class TupleShapeFunctionCreate3;
+
+template<typename Elem, typename BaseFunctioSpace, typename Tuple, Integer Nmax,Integer M>
+class TupleShapeFunctionCreate3<Elem,BaseFunctioSpace,Tuple,Nmax,Nmax,M>
+{
+ public:
+
+  using Nelem=GetType<Tuple,Nmax>;
+  using Operator=GetType<Nelem,0>;
+  using QuadratureRule=GetType<Nelem,1>;
+  using type=std::tuple<ShapeFunctionCombinations<Elem, BaseFunctioSpace,Operator,QuadratureRule,M> >;
+};
+
+
+
+template<typename Elem, typename BaseFunctioSpace, typename Tuple, Integer Nmax,Integer N,Integer M>
+class TupleShapeFunctionCreate3
+{
+ public:
+  using Nelem=GetType<Tuple,N>;
+  using Operator=GetType<Nelem,0>;
+  using QuadratureRule=GetType<Nelem,1>;
+  using single_type=std::tuple<ShapeFunctionCombinations<Elem, BaseFunctioSpace,Operator,QuadratureRule,M>>;
+  using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                             std::declval<typename TupleShapeFunctionCreate3<Elem,BaseFunctioSpace,Tuple,Nmax,N+1,M>::type>()));
+};
+
+template<Integer N,Integer Nmax,typename...Ts>
+class VoidTupleOrShapeFunctionCombination;
+
+
+template<Integer N,Integer Nmax,typename Space>
+class VoidTupleOrShapeFunctionCombination<N,Nmax,Space,std::tuple<>>
+{
+ public:
+  using type=std::tuple<std::tuple<>>;
+};
+
+template<Integer N,Integer Nmax,typename Space,typename OperatorAndQuadrature>
+class VoidTupleOrShapeFunctionCombination<N,Nmax,Space,OperatorAndQuadrature>
+{
+ public:
+using Elem=typename Space::Elem;
+using FunctionSpace=Elem2FunctionSpace<Space>;
+using type=std::tuple<typename TupleShapeFunctionCreate3< Elem,FunctionSpace, OperatorAndQuadrature,Nmax,0,N>::type>;
+};
+
+
+template<typename TupleSpaces, typename TupleOperatorsAndQuadrature, Integer Nmax,Integer N>
+class TupleOfTupleShapeFunctionCreate3;
+
+template<typename TupleSpaces,typename TupleOperatorsAndQuadrature, Integer Nspaces>
+class TupleOfTupleShapeFunctionCreate3<TupleSpaces,TupleOperatorsAndQuadrature, Nspaces, Nspaces>
+{
+public:
+using OperatorAndQuadrature=GetType<TupleOperatorsAndQuadrature,Nspaces>;
+static constexpr Integer Nmax=TupleTypeSize<OperatorAndQuadrature>::value-1;
+using Space=GetType<TupleSpaces,Nspaces>;
+using type=typename VoidTupleOrShapeFunctionCombination<Nspaces,Nmax,Space,OperatorAndQuadrature>::type; 
+};
+
+template<typename TupleSpaces,typename TupleOperatorsAndQuadrature, Integer Nspaces, Integer N=0>
+class TupleOfTupleShapeFunctionCreate3
+{
+public:
+using OperatorAndQuadrature=GetType<TupleOperatorsAndQuadrature,N>;
+static constexpr Integer Nmax=TupleTypeSize<OperatorAndQuadrature>::value-1;
+using Space=GetType<TupleSpaces,N>;
+using single_type=typename VoidTupleOrShapeFunctionCombination<N,Nmax,Space,OperatorAndQuadrature>::type; 
+
+using type=decltype(std::tuple_cat(std::declval<single_type>(),
+                           std::declval<typename TupleOfTupleShapeFunctionCreate3<TupleSpaces,TupleOperatorsAndQuadrature,Nspaces,N+1>::type>()));
+};
+
+
+
+template<typename TupleSpaces,typename TupleOperatorsAndQuadrature>
+using TupleOfTupleShapeFunctionType3=typename TupleOfTupleShapeFunctionCreate3<TupleSpaces,TupleOperatorsAndQuadrature,TupleTypeSize<TupleSpaces>::value-1,0>::type;
 
 
 
@@ -2021,25 +2159,62 @@ auto tuple_change_element(const std::tuple<Ts...>& tuple,const T& t)
                         sub_tuple<N+1,sizeof...(Ts)-1>(tuple) );
 }
 
-//|| N_start>=sizeof...(Ts))
 
-// template<typename U = T>
-// operator typename std::enable_if<!std::is_class<U>::value, U >::type () const
-// {
-//     return _val;
-// }
+template<typename T, typename Tuple>
+constexpr auto& get_tuple_element_of_type(const Tuple& tuple)
+{
+  // std::cout<< TypeToTupleElementPosition<T,Tuple>::value <<std::endl;
+  return tuple_get< TypeToTupleElementPosition<T,Tuple>::value >(tuple);
+}
 
-// template<typename U = T>
-// operator typename std::enable_if< std::is_class<U>::value, const U&>::type () const
-// {
-//     return _val;
-// }
+
+
+template<Integer N, typename T>
+std::enable_if_t<(N==-1),std::tuple<T>> tuple_cat_unique_aux(const T&t)
+{return std::tuple<T>(t);}
+
+template<Integer N,typename T>
+std::enable_if_t<(N>=0),std::tuple<>> tuple_cat_unique_aux(const T&t)
+{return std::tuple<>();}
+
+template<typename T, typename Tuple>
+constexpr auto tuple_cat_unique( Tuple& tuple, const T&t)
+{
+  return std::tuple_cat(tuple,tuple_cat_unique_aux<TypeToTupleElementPosition<T,Tuple>::value>(t));
+}
+
+template<typename T>
+constexpr auto tuple_cat_unique( std::tuple<> tuple, const T&t)
+{
+  return std::tuple<T>(t);
+}
+
+
+
+template<typename Derived>
+class Expression;
+
+template<typename...Ts>
+class UnaryPlus;
+
+template<typename...Ts>
+class UnaryMinus;
 
 template<typename...Ts>
 class Addition;
 
-template<typename Derived>
-class Expression;
+template<typename...Ts>
+class Subtraction;
+
+template<typename...Ts>
+class Multiplication;
+
+template<typename...Ts>
+class Division;
+
+template<typename...Ts>
+class CompositeOperator;
+
 
 template<typename...Ts>
 class Evaluation;
@@ -2052,7 +2227,7 @@ class ShapeFunctions2;
 
 
 template<typename Left,typename Right,Integer QR, typename...Forms>
-constexpr auto costruisci1(const std::tuple<>& null, 
+constexpr auto build_tuple_of_evals_aux_aux(const std::tuple<>& null, 
                            const L2DotProductIntegral<Left,Right,QR>& l2prod,
                                  ShapeFunctions2<Forms...>&shape_functions)
 {
@@ -2063,7 +2238,7 @@ constexpr auto costruisci1(const std::tuple<>& null,
 }
 
 template<typename Left,typename Right,Integer QR, typename...Forms>
-constexpr auto costruisci1(const L2DotProductIntegral<Left,Right,QR>& l2prod,
+constexpr auto build_tuple_of_evals_aux_aux(const L2DotProductIntegral<Left,Right,QR>& l2prod,
                            const std::tuple<>& null,
                                  ShapeFunctions2<Forms...>&shape_functions)
 {
@@ -2075,7 +2250,7 @@ constexpr auto costruisci1(const L2DotProductIntegral<Left,Right,QR>& l2prod,
 
 template<typename Left1,typename Right1,Integer QR1,
          typename Left2,typename Right2,Integer QR2, typename...Forms>
-constexpr auto costruisci1(const L2DotProductIntegral<Left1,Right1,QR1>& l2prod1, 
+constexpr auto build_tuple_of_evals_aux_aux(const L2DotProductIntegral<Left1,Right1,QR1>& l2prod1, 
                            const L2DotProductIntegral<Left2,Right2,QR2>& l2prod2,
                                  ShapeFunctions2<Forms...>&shape_functions)
 {
@@ -2090,7 +2265,7 @@ constexpr auto costruisci1(const L2DotProductIntegral<Left1,Right1,QR1>& l2prod1
 }
 
 template<typename Left, typename Left1,typename Right1,Integer QR1, typename...Forms>
-constexpr auto costruisci1(const Left& left, 
+constexpr auto build_tuple_of_evals_aux_aux(const Left& left, 
                            const L2DotProductIntegral<Left1,Right1,QR1>& l2prod,
                                  ShapeFunctions2<Forms...>&shape_functions)
 {
@@ -2102,11 +2277,12 @@ constexpr auto costruisci1(const Left& left,
 }
 
 template<typename Left1,typename Right1,Integer QR1,typename Right, typename...Forms>
-constexpr auto costruisci1(const L2DotProductIntegral<Left1,Right1,QR1>& l2prod,
+constexpr auto build_tuple_of_evals_aux_aux(const L2DotProductIntegral<Left1,Right1,QR1>& l2prod,
                            const Right& right,
                                  ShapeFunctions2<Forms...>&shape_functions)
 {
   using L2dot1=L2DotProductIntegral<Left1,Right1,QR1>;
+  std::cout<<"---------"<<l2prod.left().eval()<<std::endl;
   return Addition<Expression<Evaluation<Expression<L2dot1>,ShapeFunctions2<Forms...>>>,
                   Expression<Right>>
         (Eval(L2dot1(l2prod.left(),l2prod.right()),shape_functions),
@@ -2118,66 +2294,579 @@ constexpr auto costruisci1(const L2DotProductIntegral<Left1,Right1,QR1>& l2prod,
 
 
 template<typename TupleOfPairsNumbers,typename Tuple, typename Left,typename Right,Integer QR, typename...Forms>
-constexpr auto costruisci(const Tuple& tuple,
+constexpr auto build_tuple_of_evals_aux(const Tuple& tuple,
                           const L2DotProductIntegral<Left,Right,QR>& l2prod,
                                 ShapeFunctions2<Forms...>&shape_functions)
 {
   using L2=L2DotProductIntegral<Left,Right,QR>;
   using TestTrialNumbers=typename L2::TestTrialNumbers;
-  // Number<TypeToTupleElementPosition<TestTrialNumbers,TupleOfPairsNumbers>::value> okokok(6);
-  auto tuple_nth=std::get<TypeToTupleElementPosition<TestTrialNumbers,TupleOfPairsNumbers>::value>(tuple);
-  auto ecco=costruisci1(tuple_nth,l2prod,shape_functions);
-  std::cout<<"N="<<TypeToTupleElementPosition<TestTrialNumbers,TupleOfPairsNumbers>::value<<std::endl;
+  auto tuple_nth=tuple_get< TypeToTupleElementPosition<TestTrialNumbers,TupleOfPairsNumbers>::value >(tuple);
+  auto new_elem=build_tuple_of_evals_aux_aux(tuple_nth,l2prod,shape_functions);
   return tuple_change_element<TypeToTupleElementPosition<TestTrialNumbers,TupleOfPairsNumbers>::value>
-   (tuple, 
-    decltype(ecco)(ecco));
-    // return tuple;
+   (tuple, decltype(new_elem)(new_elem));
 
 }
 
+
 template<typename TupleOfPairsNumbers,typename Tuple, typename Left,typename Right, typename...Forms>
-constexpr auto costruisci(const Tuple& tuple,
+constexpr auto build_tuple_of_evals_aux(const Tuple& tuple,
                           const Addition<Expression<Left>,Expression<Right>>& addition,
                                 ShapeFunctions2<Forms...>&shape_functions)
 {
-  auto tuple_new=costruisci<TupleOfPairsNumbers>(tuple,addition.left(),shape_functions);
-
-  return costruisci<TupleOfPairsNumbers>(tuple_new,addition.right(),shape_functions);
+  auto tuple_new=build_tuple_of_evals_aux<TupleOfPairsNumbers>(tuple,addition.left(),shape_functions);
+  return build_tuple_of_evals_aux<TupleOfPairsNumbers>(tuple_new,addition.right(),shape_functions);
 }
+
 
 template<typename TupleOfPairsNumbers, typename Expr, typename...Forms>
-constexpr auto faccio(const Expr& expr,ShapeFunctions2<Forms...>&shape_functions)
+constexpr auto build_tuple_of_evals(const Expr& expr,ShapeFunctions2<Forms...>&shape_functions)
 {
   using emptytuple=TupleOfType<TupleTypeSize<TupleOfPairsNumbers>::value,std::tuple<> > ;
-  std::cout<<"tuplesize1="<<std::tuple_size<TupleOfPairsNumbers>::value<<std::endl;
-  auto tupleN=emptytuple();
-    auto tuple_nth=std::get<2>(tupleN);
-  std::cout<<"tuplesize2="<<std::tuple_size<decltype(tupleN)>::value<<std::endl;
-
-  return costruisci<TupleOfPairsNumbers,emptytuple>(emptytuple(),expr,shape_functions);
+  return build_tuple_of_evals_aux<TupleOfPairsNumbers,emptytuple>(emptytuple(),expr,shape_functions);
 }
 
 
 
-// template<typename Elem,Integer FEFamily, 
-//          Integer Order, 
-//          Integer N=(ElementFunctionSpace<Elem,FEFamily,Order>::entity.size()-1),
-//          typename MeshT>
-// typename std::enable_if< 0<N, 
-//                          typename EntitiesOfFunctionSpaceType<Elem,FEFamily,Order,N>::type >::type  
-// EntitiesOfFunctionSpace(const MeshT& mesh, 
-//                         const std::vector< std::vector<Integer> >&node_2_element )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename MixedSpace, Integer N, typename OperatorType>
+class Test;
+
+
+
+template<typename QuadratureRule, typename Tuple,typename Other>
+constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple, const Other& other)
+{
+ return tuple;
+}
+
+
+template<typename QuadratureRule, typename Tuple,
+         template<class,Integer,class > class TestOrTrial_,typename MixedSpace, Integer N, typename Expr>
+constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple, 
+                           const TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Expr>>>& testortrial)
+{
+
+
+ // check if already exists test or trial of the same input with quadrature ruel
+  using TestOrTrial=TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Expr>>>;
+  auto composite_testortrial=
+  //TestOrTrial::value
+  form_of_composite_operator(Test<MixedSpace,N,CompositeOperator<Expression<Expr>>>(testortrial.spaces_ptr(),testortrial.composite_operator()));
+  auto eval_composite=Evaluation<Expression<decltype(composite_testortrial)>,QuadratureRule>(composite_testortrial);
+  auto tuple_nth=tuple_get<TestOrTrial::value>(tuple);
+  // auto composite_operator=testortrial.composite_operator();
+ return tuple_change_element<TestOrTrial::value>(tuple,tuple_cat_unique(tuple_nth,decltype(eval_composite)(eval_composite)));
+}
+
+
+
+
+
+
+
+
+
+
+
+template<typename QuadratureRule, typename Tuple,typename T>
+constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
+                           const UnaryPlus<Expression<T>>& plusexpr)
+{
+  return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,plusexpr.derived());
+}
+
+template<typename QuadratureRule, typename Tuple,typename T>
+constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
+                           const UnaryMinus<Expression<T>>& minusexpr)
+{
+  return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,minusexpr.derived());
+}
+
+
+template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
+constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
+                           const Addition<Expression<Left>,Expression<Right>>& addition)
+{
+  auto tuple_new=build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,addition.left());
+  return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple_new,addition.right());
+}
+
+template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
+constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
+                           const Subtraction<Expression<Left>,Expression<Right>>& subtraction)
+{
+  auto tuple_new=build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,subtraction.left());
+  return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple_new,subtraction.right());
+}
+
+template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
+constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
+                           const Multiplication<Expression<Left>,Expression<Right>>& multiplication)
+{
+  auto tuple_new=build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,multiplication.left());
+  return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple_new,multiplication.right());
+}
+
+template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
+constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
+                           const Division<Expression<Left>,Expression<Right>>& division)
+{
+  auto tuple_new=build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,division.left());
+  return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple_new,division.right());
+}
+
+
+
+
+
+
+
+
+template<typename Tuple, typename Left,typename Right,Integer QR>
+constexpr auto build_tuple_of_combination_functions_aux(const Tuple& tuple,
+                                                        const L2DotProductIntegral<Left,Right,QR>& l2prod)
+{
+  using L2=L2DotProductIntegral<Left,Right,QR>;
+  using QRule=typename L2::QRule;
+  auto tuple_new=build_tuple_of_combination_functions_aux_aux<QRule>(tuple,l2prod.left());
+  return build_tuple_of_combination_functions_aux_aux<QRule>(tuple_new,l2prod.right());
+}
+
+
+template<typename Tuple, typename Left,typename Right>
+constexpr auto build_tuple_of_combination_functions_aux(const Tuple& tuple,
+                          const Addition<Expression<Left>,Expression<Right>>& addition)
+{
+  auto tuple_new=build_tuple_of_combination_functions_aux(tuple,addition.left());
+  return build_tuple_of_combination_functions_aux(tuple_new,addition.right());
+}
+
+
+
+
+
+
+template<typename Tuple,typename Form>
+constexpr auto build_tuple_of_combination_functions_form(const Tuple& tuple,const Form& form)
+{
+  return build_tuple_of_combination_functions_aux(tuple,form);
+}
+
+template<typename Tuple,typename Form,typename...Forms>
+constexpr auto build_tuple_of_combination_functions_form(const Tuple& tuple,const Form& form, const Forms&...forms)
+{
+  auto tuple_new= build_tuple_of_combination_functions_aux(tuple,form);
+  return build_tuple_of_combination_functions_form(tuple_new,forms...);
+}
+
+
+template<Integer Nmax,typename Form,typename...Forms>
+constexpr auto build_tuple_of_combination_functions(const Form& form, const Forms&...forms)
+{
+  using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
+  return build_tuple_of_combination_functions_form(emptytuple(),form,forms...);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename ConstType,typename...Inputs>
+class ConstantTensor;
+
+template<typename FullSpace,Integer N,typename Operator_,typename FuncType>
+class Function;
+
+// template<typename...Ts>
+// class FormOfCompositeOperatorAuxType;
+
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Operator>
+// class FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,Operator>,Expr>
 // {
+// public:
+//   // using type=TestOrTrial<MixedSpace,N,Operator>;
+//   using type=Test<MixedSpace,N,Operator>;
+// };
 
-//       using ens=ElemEntity<Elem,ElementFunctionSpace<Elem,FEFamily,Order>::entity[N]>;
-//       return std::tuple_cat(EntitiesOfFunctionSpace<Elem,FEFamily,Order,N-1>(mesh,node_2_element),
-//                             std::tuple<ens>(ens(mesh,node_2_element)));
-// }
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Operator>
+// class FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,Operator>
+// {
+// public:
+//   // using type=TestOrTrial<MixedSpace,N,Operator>;
+//   using type=Test<MixedSpace,N,Operator>;
+// };
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
+// class FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,ConstantTensor<ConstType,Inputs...>>
+// {
+// public:
+//   using type=ConstantTensor<ConstType,Inputs...>;
+// };
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename FullSpace, Integer M,typename Operator,typename FuncType>
+// class FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,Function<FullSpace,M,Operator,FuncType>>
+// {
+// public:
+//   using type=Function<FullSpace,M,Operator,FuncType>;
+// };
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename T>
+// class FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,UnaryPlus<Expression<T>>>
+// {
+// public:
+//   using TT=typename FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,T>::type;
+//   using type=UnaryPlus<Expression<TT>>;
+// };
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename T>
+// class FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,UnaryMinus<Expression<T>>>
+// {
+// public:
+//   using TT=typename FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,T>::type;
+//   using type=UnaryMinus<Expression<TT>>;
+// };
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+// class FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,Addition<Expression<Left>,Expression<Right>>>
+// {
+// public:
+//   using LeftT=typename FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,Left>::type;
+//   using RightT=typename FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,Right>::type;
+//   using type=Addition<Expression<LeftT>,Expression<RightT>>;
+// };
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+// class FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,Subtraction<Expression<Left>,Expression<Right>>>
+// {
+// public:
+//   using LeftT=typename FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,Left>::type;
+//   using RightT=typename FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,Right>::type;
+//   using type=Subtraction<Expression<LeftT>,Expression<RightT>>;
+// };
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+// class FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,Multiplication<Expression<Left>,Expression<Right>>>
+// {
+// public:
+//   using LeftT=typename FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,Left>::type;
+//   using RightT=typename FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,Right>::type;
+//   using type=Multiplication<Expression<LeftT>,Expression<RightT>>;
+// };
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+// class FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,Division<Expression<Left>,Expression<Right>>>
+// {
+// public:
+//   using LeftT=typename FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,Left>::type;
+//   using RightT=typename FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,Right>::type;
+//   using type=Division<Expression<LeftT>,Expression<RightT>>;
+// };
+
+
+
+
+// template<typename...Ts>
+// class FormOfCompositeOperatorType;
+
+// template<template<class,Integer,class > class TestOrTrial_, typename MixedSpace,Integer N,typename Expr>
+// class FormOfCompositeOperatorType<TestOrTrial_< MixedSpace,N,CompositeOperator<Expression<Expr>> >>
+// {
+// public:
+//   using type=typename FormOfCompositeOperatorAuxType<TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Expr>>>,Expr>::type;
+// };
 
 
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// template<typename ...Ts>
+// class TupleOfCombinationFunctionsAuxAux;
+
+// template<typename QuadratureRule, typename Tuple,typename Other>
+// class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Other>
+// { 
+//  public:
+//  using type=Tuple ;
+//  using type_tensor=Tuple;
+// };
+
+
+
+// template<typename QuadratureRule, typename Tuple,
+//          template<class,Integer,class > class TestOrTrial_,typename MixedSpace, Integer N, typename Expr>
+// class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Expr>>>>
+// {
+//   public:
+//   using Test=Test<MixedSpace,N,CompositeOperator<Expression<Expr>>>;
+//   using CompositeType=typename FormOfCompositeOperatorType<Test>::type;
+//   using EvaluationCompositeType=Evaluation<Expression<CompositeType>,QuadratureRule>;
+//   using TupleNth=GetType<Tuple,Test::value>;
+//   // using ChangeType=RemoveTupleDuplicates< TupleCatType<TupleNth,std::tuple<std::tuple<EvaluationCompositeType>>> >;
+//   using ChangeType=RemoveTupleDuplicates< TupleCatType<TupleNth,std::tuple<EvaluationCompositeType>>>;
+//   using type=TupleChangeType<Test::value, ChangeType, Tuple> ;
+
+//   // using TensorType=OperatorType<Test,QuadratureRule>;
+
+// };
+
+
+
+
+
+// template<typename QuadratureRule, typename Tuple,typename T>
+// class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,UnaryPlus<Expression<T>>>
+// {
+//   public:
+//   using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,T>::type;
+// };
+
+// template<typename QuadratureRule, typename Tuple,typename T>
+// class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,UnaryMinus<Expression<T>>>
+// {
+//   public:
+//   using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,T>::type;
+// };
+
+// template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
+// class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Addition<Expression<Left>,Expression<Right>>>
+// {
+//   public:
+//   using TupleNew=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Left>::type;
+//   using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNew,Right>::type;
+// };
+
+// template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
+// class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Subtraction<Expression<Left>,Expression<Right>>>
+// {
+//   public:
+//   using TupleNew=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Left>::type;
+//   using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNew,Right>::type;
+// };
+
+// template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
+// class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Multiplication<Expression<Left>,Expression<Right>>>
+// {
+//   public:
+//   using TupleNew=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Left>::type;
+//   using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNew,Right>::type;
+// };
+
+
+// template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
+// class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Division<Expression<Left>,Expression<Right>>>
+// {
+//   public:
+//   using TupleNew=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Left>::type;
+//   using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNew,Right>::type;
+// };
+
+
+
+
+// template<typename ...Ts>
+// class TupleOfCombinationFunctionsAux;
+
+
+
+
+// template<typename Tuple, typename Left,typename Right,Integer QR>
+// class TupleOfCombinationFunctionsAux<Tuple,L2DotProductIntegral<Left,Right,QR>>
+// {
+//   public:
+//   using L2=L2DotProductIntegral<Left,Right,QR>;
+//   using QRule=typename L2::QRule;
+//   using TupleNew=typename TupleOfCombinationFunctionsAuxAux<QRule,Tuple,Left>::type;
+//   using type=typename TupleOfCombinationFunctionsAuxAux<QRule,TupleNew,Right>::type;
+// };
+
+
+// template<typename Tuple, typename Left,typename Right>
+// class TupleOfCombinationFunctionsAux<Tuple,Addition<Expression<Left>,Expression<Right>>>
+// {
+//   public:
+//   using TupleNew=typename TupleOfCombinationFunctionsAux<Tuple,Left>::type;
+//   using type=typename TupleOfCombinationFunctionsAux<TupleNew,Right>::type;
+// };
+
+
+
+
+// template<typename ...Ts>
+// class TupleOfCombinationFunctionsForm;
+
+
+// template<typename Tuple,typename Form>
+// class TupleOfCombinationFunctionsForm<Tuple,Form>
+// {
+//   public:
+//   using type=typename TupleOfCombinationFunctionsAux<Tuple,Form>::type;
+// };
+
+// template<typename Tuple,typename Form,typename...Forms>
+// class TupleOfCombinationFunctionsForm<Tuple,Form,Forms...>
+// {
+//   public:
+//   using TupleNew=typename TupleOfCombinationFunctionsAux<Tuple,Form>::type;
+//   using type=typename TupleOfCombinationFunctionsForm<TupleNew,Forms...>::type;
+// };
+
+
+
+// template<Integer Nmax,typename Form,typename...Forms>
+// class TupleOfCombinationFunctions
+// {
+//  public:
+//   using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
+//   using type=typename TupleOfCombinationFunctionsForm<emptytuple,Form,Forms...>::type;
+// };
+
+
+
+
+// template<typename Number1,typename Number2,Integer X>
+// class MaxNumberHelper;
+
+// template<Integer M,Integer N,Integer X>
+// class MaxNumberHelper<Number<M>,Number<N>,X>
+// {
+//  public:
+//   using type=typename std::conditional<(M==N), Number<M>,Number<X>>::type;
+// };
+
+// template<typename Number1,typename Number2, Integer X>
+// using MaxNumber=typename MaxNumberHelper<Number1,Number2,X>::type;
+
+
+template<typename Tuple,typename NewTuple,Integer Nmax, Integer N>
+class FromElementFunctionSpacesToFirstSpaceTupleTypeAux;
+
+
+template<typename Tuple>
+class FromElementFunctionSpacesToFirstSpaceTupleTypeAux<Tuple,std::tuple<>,0,0>
+{
+public:
+  using type=std::tuple<Number<0>>;
+};
+
+
+template<typename Tuple,typename NewTuple,Integer Nmax>
+class FromElementFunctionSpacesToFirstSpaceTupleTypeAux<Tuple,NewTuple,Nmax,Nmax>
+{
+public:
+  static constexpr Integer N1=GetType<NewTuple,TupleTypeSize<NewTuple>::value-1>::value;
+  static constexpr Integer N2=GetType<Tuple,Nmax>::value;
+  using type=typename std::conditional<(N1<N2) , 
+                                           TupleCatType< NewTuple, std::tuple<Number<Nmax>> >,
+                                           NewTuple>::type;
+};
+
+template<typename Tuple,Integer Nmax>
+class FromElementFunctionSpacesToFirstSpaceTupleTypeAux<Tuple,std::tuple<>,Nmax,0>
+{
+public:
+  using NewTuple=std::tuple<Number<0>>;
+  using type=typename FromElementFunctionSpacesToFirstSpaceTupleTypeAux<Tuple,NewTuple,Nmax,1>::type;
+};
+
+
+template<typename Tuple,typename NewTuple_,Integer Nmax, Integer N>
+class FromElementFunctionSpacesToFirstSpaceTupleTypeAux
+{
+public:
+  static constexpr Integer N1=GetType<NewTuple_,TupleTypeSize<NewTuple_>::value-1>::value;
+  static constexpr Integer N2=GetType<Tuple,N>::value;
+  using NewTuple=typename std::conditional<(N1<N2) , 
+                                           TupleCatType< NewTuple_, std::tuple<Number<N>> >,
+                                           NewTuple_>::type;
+  using type=typename FromElementFunctionSpacesToFirstSpaceTupleTypeAux<Tuple,NewTuple,Nmax,N+1>::type;
+};
+
+
+
+
+template<typename Tuple>
+class FromElementFunctionSpacesToFirstSpaceTupleTypeHelper
+{
+public:
+  static constexpr Integer Nmax=TupleTypeSize<Tuple>::value-1;
+  using type=typename FromElementFunctionSpacesToFirstSpaceTupleTypeAux<Tuple,std::tuple<>,Nmax,0>::type;
+};
+
+template<typename Tuple>
+using FromElementFunctionSpacesToFirstSpaceTupleType=typename FromElementFunctionSpacesToFirstSpaceTupleTypeHelper<Tuple>::type;
 
 
 

@@ -525,9 +525,8 @@ public:
 
 
 
-
 template< typename Elem_,typename BaseFunctionSpace, typename Operator_, typename QuadratureRule>
-class ShapeFunction 
+class ShapeFunction: public Expression<ShapeFunction<Elem_,BaseFunctionSpace,Operator_,QuadratureRule>> 
 { 
   public:
   using Elem=Elem_;
@@ -610,9 +609,14 @@ class ShapeFunction
 
     constexpr void init_map(const Map& map){map_ptr=std::make_shared<Map>(map);}
 
-    ShapeFunction(const Map& map):
-    map_ptr(std::make_shared<Map>(map))
+  ShapeFunction(const Map& map):
+  map_ptr(std::make_shared<Map>(map))
   {}
+
+  ShapeFunction(const ShapeFunction& shape):
+  map_ptr(std::make_shared<Map>(shape.map()))
+  {}
+
 
   ShapeFunction(){}
 
@@ -647,6 +651,345 @@ constexpr FQPValues<typename ShapeFunction<Elem,BaseFunctionSpace,Operator,Quadr
                     ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::NQPoints,
                     ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::Ndofs> 
 ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::weighted_reference_values;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename ConstType,typename...Inputs,typename...Ts>
+constexpr auto& composite_shape_function_aux(const ConstantTensor<ConstType,Inputs...>& constant, const std::tuple<Ts...>& tuple_of_shape_functions)
+{
+  // return 1;
+  std::cout<<"constant="<<std::endl;
+  return constant;
+}
+
+template< typename Elem,typename FunctionSpace, typename QuadratureRule,typename Operator,typename...Ts>
+constexpr auto& composite_shape_function_aux(const Operator& op, const std::tuple<Ts...>& tuple_of_shape_functions)
+{
+  using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpace>;
+  std::cout<<"operator pre="<<std::endl;
+  auto& ee= get_tuple_element_of_type<ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>>(tuple_of_shape_functions);
+  std::cout<<"operator post="<<std::endl;
+  return ee;
+}
+
+
+template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename T,typename...Ts>
+constexpr auto composite_shape_function_aux(const UnaryPlus<Expression<T>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
+{
+  return composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.derived(),tuple_of_shape_functions);
+}
+
+template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename T,typename...Ts>
+constexpr auto composite_shape_function_aux(const UnaryMinus<Expression<T>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
+{
+  auto e= composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.derived(),tuple_of_shape_functions);
+  return -e;
+}
+
+
+
+template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename Left,typename Right,typename...Ts>
+constexpr auto composite_shape_function_aux(const Addition<Expression<Left>,Expression<Right>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
+{
+  std::cout<<"add left"<<std::endl;
+  auto left=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.left(),tuple_of_shape_functions);
+   std::cout<<"add right"<<std::endl;
+  auto right=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.right(),tuple_of_shape_functions);
+  std::cout<<"add"<<std::endl;
+  return left+right;
+}
+
+template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename Left,typename Right,typename...Ts>
+constexpr auto composite_shape_function_aux(const Subtraction<Expression<Left>,Expression<Right>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
+{
+  auto left=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.left(),tuple_of_shape_functions);
+  auto right=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.right(),tuple_of_shape_functions);
+  return left-right;
+}
+
+template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename Left,typename Right,typename...Ts>
+constexpr auto composite_shape_function_aux(const Multiplication<Expression<Left>,Expression<Right>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
+{
+  std::cout<<"mult left"<<std::endl;
+  auto left=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.left(),tuple_of_shape_functions);
+  std::cout<<"mult right"<<std::endl;
+  auto right=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.right(),tuple_of_shape_functions);
+
+  return left*right;
+}
+
+template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename Left,typename Right,typename...Ts>
+constexpr auto composite_shape_function_aux(const Division<Expression<Left>,Expression<Right>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
+{
+  auto left=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.left(),tuple_of_shape_functions);
+  auto right=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.right(),tuple_of_shape_functions);
+  
+  return left/right;
+}
+
+
+template<typename QuadratureRule,template<class,Integer,class>class TestOrTrial_,typename MixedSpace,Integer N, typename Expr,typename...Ts>
+constexpr auto composite_shape_function(const TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, const std::tuple<Ts...>& tuple_of_tuple_of_shape_functions)
+{
+  using TestOrTrial=TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Expr>>>;
+  using Elem=typename TestOrTrial::Elem;
+  using BaseFunctionSpace=GetType<typename TestOrTrial::UniqueElementFunctionSpacesTupleType,TestOrTrial::value>;
+  std::cout<<"Test::value="<<TestOrTrial::value<<std::endl;
+  const auto& tuple_nth=tuple_get<TestOrTrial::value>(tuple_of_tuple_of_shape_functions);
+  return composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(t.composite_operator().composite_operator(),tuple_nth);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Operator,typename Expr>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,Operator>& t, 
+                                              const Expr& expr)
+{
+  using T=TestOrTrial<MixedSpace,N,Operator>;
+  using FunctionSpace=typename T::FunctionSpace;
+  using FromElementFunctionSpacesToFirstSpaceTupleType=typename FunctionSpace::FromElementFunctionSpacesToFirstSpaceTupleType;
+  constexpr Integer FirstSpace=GetType<FromElementFunctionSpacesToFirstSpaceTupleType,T::value>::value;  
+  return TestOrTrial<MixedSpace,FirstSpace,Operator>(t.spaces_ptr());
+}
+
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Operator>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+                                              const Operator& op)
+{
+  using T=TestOrTrial<MixedSpace,N,Operator>;
+  using FunctionSpace=typename T::FunctionSpace;
+  using FromElementFunctionSpacesToFirstSpaceTupleType=typename FunctionSpace::FromElementFunctionSpacesToFirstSpaceTupleType;
+  constexpr Integer FirstSpace=GetType<FromElementFunctionSpacesToFirstSpaceTupleType,T::value>::value;  
+  return TestOrTrial<MixedSpace,FirstSpace,Operator>(t.spaces_ptr());
+}
+
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+                                              const ConstantTensor<ConstType,Inputs...>& constant)
+{return constant;}
+
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename FullSpace, Integer M,typename Operator,typename FuncType>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+                                              const Function<FullSpace,M,Operator,FuncType>& func)
+{return func;}
+
+
+
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename T>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+                                              const UnaryPlus<Expression<T>>& expr)
+{
+  auto e=form_of_composite_operator_aux(t,expr.derived());
+  // decltype(expr.derived()) eee(6);
+  return +e;
+}
+
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename T>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+                                              const UnaryMinus<Expression<T>>& expr)
+{
+  auto e=form_of_composite_operator_aux(t,expr.derived());
+  return -e;
+}
+
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+                                              const Addition<Expression<Left>,Expression<Right>>& expr)
+{
+  auto left=form_of_composite_operator_aux(t,expr.left());
+  auto right=form_of_composite_operator_aux(t,expr.right());
+  
+  return left+right;
+}
+
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+                                              const Subtraction<Expression<Left>,Expression<Right>>& expr)
+{
+  auto left=form_of_composite_operator_aux(t,expr.left());
+  auto right=form_of_composite_operator_aux(t,expr.right());
+  
+  return left-right;
+}
+
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+                                              const Multiplication<Expression<Left>,Expression<Right>>& expr)
+{
+  auto left=form_of_composite_operator_aux(t,expr.left());
+  auto right=form_of_composite_operator_aux(t,expr.right());
+  
+  return left*right;
+}
+
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+                                              const Division<Expression<Left>,Expression<Right>>& expr)
+{
+  auto left=form_of_composite_operator_aux(t,expr.left());
+  auto right=form_of_composite_operator_aux(t,expr.right());
+  
+  return left/right;
+}
+
+
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr>
+constexpr auto form_of_composite_operator(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t)
+{
+  return form_of_composite_operator_aux(t,t.composite_operator().composite_operator());
+}
+
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Operator>
+constexpr auto form_of_composite_operator(const TestOrTrial<MixedSpace,N,Operator>& t)
+{
+  return t;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ template< typename Elem_,typename BaseFunctionSpace, typename Operator_, typename QuadratureRule_,Integer N>
+ class ShapeFunctionCombinations;
+
+ template< typename Elem_,typename BaseFunctionSpace_, typename Expr_, typename QuadratureRule_,Integer N>
+ class ShapeFunctionCombinations<Elem_,BaseFunctionSpace_,CompositeOperator<Expression<Expr_>>,QuadratureRule_,N>
+ {
+  public:
+  using Elem=Elem_;
+  using BaseFunctionSpace=BaseFunctionSpace_;
+  using Operator=CompositeOperator<Expression<Expr_>>;
+  using Expr=Expr_;
+  using QuadratureRule=QuadratureRule_;
+  using type=OperatorType<Operator,Elem,BaseFunctionSpace,QuadratureRule>;
+
+ 
+   template<typename...ts>
+  class Operation;
+
+
+
+  
+  // template<typename ConstType,typename...Inputs>
+  // class Operation<ConstantTensor<ConstType,Inputs...> >
+  // {
+  // public:
+  //   using type=ConstantTensor<ConstType,Inputs...>;
+  //   template<typename GeneralForm, typename...GeneralForms>
+  //   constexpr auto apply(const ShapeFunctions2<GeneralForm,GeneralForms...> &shape_functions)
+  //   {
+      
+  //     // return type::qp_eval<ShapeFunctions2<GeneralForm,GeneralForms...>::QuadratureRule::NQPoints>();
+  // };
+
+
+
+  //  template<typename Left, typename Right>
+  // class Operation< Multiplication< Expression<Left>, Expression<Right> > >
+  // {
+  //   template<typename Output>
+  //   void eval(Output output, const Left&left,const Right&right)
+  //   {
+  //             // return get_tuple_element_of_type<>(shape_functions).eval()};
+
+  //   }
+  //   // init_aux(const std::tuple<Ts...> &shape_functions)
+  //   // TypeToTupleElementPosition<ShapeFunction<Elem,BaseFunctionSpace,,QuadratureRule>, >
+  // };
+
+
+
+
+  //  template<typename Left, typename Right>
+  // class Operation< Addition< Expression<Left>, Expression<Right> > >
+  // {
+  //   template<typename Output>
+  //   void eval(Output output, const Left&left,const Right&right)
+  //   {
+        
+  //   }
+  //   // init_aux(const std::tuple<Ts...> &shape_functions)
+  //   // TypeToTupleElementPosition<ShapeFunction<Elem,BaseFunctionSpace,,QuadratureRule>, >
+  // };
+
+
+  template<typename...GeneralForms>
+  void init(const ShapeFunctions2<GeneralForms...> &shape_functions)
+  {
+    using Shapes=ShapeFunctions2<GeneralForms...>;
+    auto shape_nth=tuple_get<N>(shape_functions);
+
+    // TypeToTupleElementPosition<ShapeFunction<Elem,BaseFunctionSpace,,QuadratureRule>, >
+  }
+
+  ShapeFunctionCombinations(const Expr& expr):
+  expr_(expr)
+  {}
+
+
+
+
+
+
+
+
+
+  private:
+   type func_values_;
+   Expr expr_;
+//    template<Elem,BaseFunctionSpace,Operator, typename QuadratureRule>
+// class ShapeFunction 
+
+ };
+
+
+
 
 
 
