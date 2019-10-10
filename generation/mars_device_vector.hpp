@@ -13,11 +13,13 @@ namespace mars {
 	    T  values[Dim];
 	    Integer index=0;
 
+	    MARS_INLINE_FUNCTION
 	    TempArray() {}
 
 	    MARS_INLINE_FUNCTION bool insert(const T value){
 			//values[index++] = value;
 	    	Integer i = Kokkos::atomic_fetch_add(&index, 1);
+	    	assert(i<Dim);
 	    	values[i] = value;
 	    	//Kokkos::atomic_assign(values + index++ ,value);
 	    }
