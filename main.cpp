@@ -1230,6 +1230,10 @@ int main(int argc, char *argv[])
 	Kokkos::initialize(argc,argv);
 	{
 
+#ifdef MARS_USE_CUDA
+		cudaDeviceSetLimit(cudaLimitStackSize, 32768); // set stack to 32KB only for cuda since it is not yet supported in kokkos.
+#endif
+
 		run_benchmarks(level);
 
 		//test_mars_mesh_generation_kokkos_2D(2,4);

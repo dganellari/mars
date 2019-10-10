@@ -492,9 +492,21 @@ public:
 	}
 
 	MARS_INLINE_FUNCTION
+	Integer set_n_nodes(Integer size)
+	{
+		points_size_ = size;
+	}
+
+	MARS_INLINE_FUNCTION
 	Integer n_elements() const override
 	{
 		return elements_size_;
+	}
+
+	MARS_INLINE_FUNCTION
+	Integer set_n_elements(Integer size)
+	{
+		elements_size_ = size;
 	}
 
 	MARS_INLINE_FUNCTION

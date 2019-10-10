@@ -728,7 +728,7 @@ namespace mars {
 		KOKKOS_INLINE_FUNCTION
 		static bool is_leaf(const Integer element_id, Mesh_ *mesh,
 				ViewVectorType<uint32_t> tree,
-				UnorderedMap<Side<2, KokkosImplementation>, ElementVector> mapping)
+				const UnorderedMap<Side<2, KokkosImplementation>, ElementVector>& mapping)
 		{
 
 			Integer index = tree(element_id);
@@ -824,15 +824,17 @@ namespace mars {
 		{
 			//ViewMatrixType<Integer> lepp_elem_index;
 
-			ViewMatrixType<Integer> lepp_incidents_index;
+			//ViewMatrixType<Integer> lepp_incidents_index;
+
+			UnorderedMap<Integer, Integer> lepp_incidents_map;
 
 			ScatterElem(
 					UnorderedMap<Side<2, KokkosImplementation>, ElementVector> mp,
 					Mesh_* ms, ViewVectorType<uint32_t> tr,
 					ViewVectorType<Integer> ic,// ViewMatrixType<Integer> lei,
-					ViewMatrixType<Integer> lii) :
+					UnorderedMap<Integer, Integer> lim) :
 					RefineMesh(mp, ms, tr, ic),// lepp_elem_index(lei),
-					lepp_incidents_index(lii)
+					lepp_incidents_map(lim)
 			{
 			}
 
@@ -849,11 +851,15 @@ namespace mars {
 					{
 						auto &element = this->mapping.value_at(index)[i];
 						if (this->mesh->is_active(element))
-						{	//count++;
-							//lepp_incidents_index(this->index_count(element_id),0) = this->mapping.key_at(index);
+						{
+							/*lepp_incidents_index(this->index_count(element_id),0) = this->mapping.key_at(index);
 							lepp_incidents_index(this->index_count(element_id),0) = index;
 							lepp_incidents_index(this->index_count(element_id)++,1) = element;
-							//printf(" (%li - %li - %li) ",lepp_incidents_index(this->index_count(element_id),0),count, element_id);
+							printf(" (%li - %li - %li) ",lepp_incidents_index(this->index_count(element_id),0),count, element_id);*/
+
+							auto result = lepp_incidents_map.insert(element, index);
+							if (result.failed())
+								printf("Exceeded UnorderedMap capacity\n");
 						}
 					}
 				}
@@ -920,6 +926,24 @@ namespace mars {
 			});
 		}
 
+		void comapct_map_to_view(const UnorderedMap<Integer, Integer>& lepp_incidents_map,
+				ViewMatrixType<Integer> lepp_incident_index)
+		{
+			using namespace Kokkos;
+
+			Integer *index;
+			*index=0;
+
+			parallel_for(lepp_incidents_map.capacity(), KOKKOS_LAMBDA (uint32_t i) {
+			  if( lepp_incidents_map.valid_at(i) ) {
+				Integer k = Kokkos::atomic_fetch_add(index, 1);
+
+				lepp_incident_index(k,0) = lepp_incidents_map.value_at(i);
+				lepp_incident_index(k,1) = lepp_incidents_map.key_at(i);
+			  }
+			});
+		}
+
 		inline bool refine_mesh(const Integer levels, const Integer nr_elements)
 		{
 			using namespace Kokkos;
@@ -963,22 +987,33 @@ namespace mars {
 
 			std::cout<<"sum_subview: "<<lepp_incidents_count<<std::endl;
 
-			ViewMatrixType<Integer> lepp_incident_index = ViewMatrixType<Integer>(
-					"lepp_incidents_index", lepp_incidents_count, 2);
+			UnorderedMap<Integer, Integer> lepp_incidents_map(lepp_incidents_count);
+
 
 			parallel_for(nr_elements, ScatterElem(edge_element_map_.mapping_, mesh, tree_,
-					index_count_, lepp_incident_index));
+					index_count_, lepp_incidents_map));
+
+			host_mesh->set_n_elements(host_mesh->n_elements() + 2 * lepp_incidents_map.size());
 
 
-			resize(host_mesh->get_view_children(), host_mesh->get_view_children().extent(0) + lepp_incidents_count	, 2);
+			resize(host_mesh->get_view_children(),
+			host_mesh->get_view_children().extent(0) + lepp_incidents_count, 2);
 
 			ViewObjectU<Mesh, KokkosSpace> device_view(mesh);
 			ViewObjectU<Mesh, KokkosHostSpace> host_view(host_mesh);
 
 			deep_copy(device_view, host_view);
 
-			/*
-			const Mesh* tmp = ref.mesh;
+			ViewMatrixType<Integer> lepp_incident_index = ViewMatrixType<Integer>(
+							"lepp_incidents_index", lepp_incidents_map.size(), 2);
+
+			//comapct_map_to_view(lepp_incidents_map, lepp_incident_index);
+
+			//start the bisection kernel starting from host_mesh->n_elements() and host_mesh->get_view_children().extent(0) as initial index
+
+
+
+			/*const Mesh* tmp = ref.mesh;
 
 			 parallel_for("DestroyMeshObject",1, KOKKOS_LAMBDA (const int&) {
 			 tmp->~Mesh();

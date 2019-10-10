@@ -14,7 +14,7 @@ namespace mars {
 	class CombinationsAux<N, K, KokkosImplementation>
 	{
 	public:
-		static const Integer NChooseK = Factorial<N>::value / (Factorial<K>::value * Factorial<N - K>::value);
+		static constexpr Integer NChooseK = Factorial<N>::value / (Factorial<K>::value * Factorial<N - K>::value);
 
 		static MARS_INLINE_FUNCTION void apply(Integer combs[NChooseK][K])
 		{

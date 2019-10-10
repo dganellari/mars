@@ -125,12 +125,9 @@ set(CMAKE_CXX_DEBUG "-g")
 add_library(mars STATIC ${MARS_HEADERS} ${MARS_SOURCES})
 target_link_libraries(mars ${MPI_LIBRARIES})
 #target_compile_features(mars PUBLIC cxx_std_11)
+
 add_definitions("-std=c++11")
 target_include_directories(mars PUBLIC .)
-
-add_executable(mars_exec main.cpp ${MARS_HEADERS} ${MARS_SOURCES})
-target_link_libraries(mars_exec mars)
-
 
 IF(Kokkos_FOUND)
 	MESSAGE(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
@@ -147,13 +144,14 @@ IF(Kokkos_FOUND)
 	message(STATUS "Kokkos_INCLUDE_DIRS=${Kokkos_INCLUDE_DIRS}, ${Kokkos_TPL_INCLUDE_DIRS}")
 	
 	IF(Kokkos_CXX_COMPILER)
-		target_link_libraries(mars_exec mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES})
+		target_link_libraries(mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES})
 	ELSE()
-		target_link_libraries(mars_exec mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES} -L${Kokkos_LIBRARY_DIRS})
+		target_link_libraries(mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES} -L${Kokkos_LIBRARY_DIRS})
 	ENDIF()
 ENDIF()
 
-
+add_executable(mars_exec main.cpp)
+target_link_libraries(mars_exec mars)
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/mars_config.hpp.in ${CMAKE_BINARY_DIR}/mars_config.hpp)
 include_directories(${CMAKE_BINARY_DIR})
