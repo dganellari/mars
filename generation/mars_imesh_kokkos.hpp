@@ -53,7 +53,7 @@ namespace mars {
 		//virtual Integer add_elem(const IElem &elem) = 0;
 		//virtual Integer add_elem(const std::vector<Integer> &nodes, const int row) = 0;
 		// virtual const std::vector<Point> &points() const = 0;
-		//virtual ViewMatrixType<Integer> get_view_elems() const =0;
+		//virtual ViewMatrixType<Integer> get_view_elements() const =0;
 
 		virtual MARS_INLINE_FUNCTION Integer type() const = 0;
 		virtual void reserve(

@@ -33,6 +33,7 @@ public:
 	{
 		elements_size_ = n_elements;
 		points_size_ = n_points;
+		children_size_=0;
 
 		elements_ = ViewMatrixType<Integer>("elems", n_elements,
 				ManifoldDim + 1);
@@ -49,9 +50,12 @@ public:
 	void reserve_elements(const std::size_t n_elements)
 	{
 		elements_size_ = n_elements;
+		children_size_=0;
+
 		elements_ = ViewMatrixType<Integer>("elems", n_elements,
 				ManifoldDim + 1);
 		active_ = ViewVectorType<bool>("active_", n_elements);
+
 	}
 
 	/*inline Elem &elem(const Integer id) override
@@ -86,6 +90,24 @@ public:
 		return e;
 	}
 
+	MARS_INLINE_FUNCTION Elem elem(const Integer el_id, const Integer ch_id)// override
+	{
+		assert(el_id >= 0 && ch_id >=0);
+		assert(el_id < n_elements()); // no assert for the children since children nr is not yet updated.
+		Elem e = Elem(SubView<Integer,ManifoldDim+1>(elements_,el_id), SubView<Integer,2>(children_,ch_id));
+		e.id = el_id;
+		return e;
+	}
+
+	MARS_INLINE_FUNCTION const Elem elem(const Integer el_id, const Integer ch_id) const //override
+	{
+		assert(el_id >= 0 && ch_id >=0);
+		assert(el_id < n_elements()); // no assert for the children since children nr is not yet updated.
+		Elem e = Elem(SubView<Integer,ManifoldDim+1>(elements_,el_id), SubView<Integer,2>(children_,ch_id));
+		e.id = el_id;
+		return e;
+	}
+
 	MARS_INLINE_FUNCTION bool is_active(const Integer id) const override
 	{
 		assert(id >= 0);
@@ -115,7 +137,7 @@ public:
 */
 
 	MARS_INLINE_FUNCTION
-	void set_active(const Integer id, const bool val)
+	void set_active(const Integer id, const bool val=true)
 	{
 		assert(id >= 0);
 		assert(id < n_elements());
@@ -171,7 +193,7 @@ public:
 		return points_;
 	}
 
-	ViewMatrixType<Integer> get_view_elems() const //override
+	ViewMatrixType<Integer> get_view_elements() const //override
 	{
 		return elements_;
 	}
@@ -181,9 +203,30 @@ public:
 		return active_;
 	}
 
-	ViewMatrixType<Integer>& get_view_children() //override
+	ViewMatrixType<Integer> get_view_children() const //override
 	{
 		return children_;
+	}
+
+	void resize_points(const Integer size)
+	{
+		resize(points_, points_size_+size, Dim);
+	}
+
+
+	void resize_elements(const Integer size)
+	{
+		resize(elements_, elements_size_+size, ManifoldDim+1);
+	}
+
+	void resize_active(const Integer size)
+	{
+		resize(active_, elements_size_+size);
+	}
+
+	void resize_children(const Integer size)
+	{
+		resize(children_, children_size_+size, 2);
 	}
 
 	/*
@@ -498,9 +541,21 @@ public:
 	}
 
 	MARS_INLINE_FUNCTION
+	Integer set_n_childrens(Integer size)
+	{
+		children_size_ = size;
+	}
+
+	MARS_INLINE_FUNCTION
 	Integer n_elements() const override
 	{
 		return elements_size_;
+	}
+
+	MARS_INLINE_FUNCTION
+	Integer n_childrens() const
+	{
+		return children_size_;
 	}
 
 	MARS_INLINE_FUNCTION
@@ -1389,6 +1444,8 @@ private:
 
 	ViewMatrixType<Integer> side_tags_;
 	ViewMatrixType<Integer> children_;
+
+	Integer children_size_;
 
 	//ViewVectorType<Elem> simplices_;
 

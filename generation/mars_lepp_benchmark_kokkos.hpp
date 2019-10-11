@@ -30,7 +30,7 @@ namespace mars {
 			b.uniform_refine(n_levels);
 
 
-			/*ViewMatrixType<Integer> t = mesh_in.get_view_elems();
+			/*ViewMatrixType<Integer> t = mesh_in.get_view_elements();
 			//const auto &e = mesh_in.elem(0);
 
 				Elem ee = Elem(SubView<Integer,ManifoldDim+1>(t,0));
