@@ -65,6 +65,9 @@ template<typename T>
 using ViewVectorTypeU = Kokkos::View<T*, KokkosSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
 template<typename T, class space>
+using ViewObject = Kokkos::View<T[1], space>;
+
+template<typename T, class space>
 using ViewObjectU = Kokkos::View<T[1], space, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 /*
 
@@ -100,14 +103,14 @@ void convert_parallel_mesh_to_serial(mars::Mesh<Dim, ManifoldDim>& mesh,
 		const mars::Mesh<Dim, ManifoldDim,KokkosImplementation>& pMesh) {
 
 	ViewMatrixType<Integer>::HostMirror h_el = Kokkos::create_mirror_view(
-			pMesh.get_view_elems());
+			pMesh.get_view_elements());
 	ViewMatrixType<Real>::HostMirror h_pt = Kokkos::create_mirror_view(
 			pMesh.get_view_points());
 	ViewVectorType<bool>::HostMirror h_ac = Kokkos::create_mirror_view(
 			pMesh.get_view_active());
 
 	// Deep copy device views to host views.
-	Kokkos::deep_copy(h_el,pMesh.get_view_elems());
+	Kokkos::deep_copy(h_el,pMesh.get_view_elements());
 	Kokkos::deep_copy(h_pt,pMesh.get_view_points());
 	Kokkos::deep_copy(h_ac,pMesh.get_view_active());
 

@@ -26,19 +26,31 @@ namespace mars {
     class Simplex<Dim, ManifoldDim, KokkosImplementation> final : public ParallelIElem {
     public:
         SubView<Integer,ManifoldDim+1> nodes;
+        SubView<Integer,2> children; //TODO: templatize for the number of children based onthe select algorithm
         SubView<Integer,ManifoldDim+1> side_tags;
 
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
         Integer block = INVALID_INDEX;
 
-        SubView<Integer,2> children; //TODO: templatize for the number of children based onthe select algorithm
-
         MARS_INLINE_FUNCTION Simplex() {}
 
-        MARS_INLINE_FUNCTION Simplex(SubView<Integer,ManifoldDim+1> n) :	nodes(n)
-    	{
+        MARS_INLINE_FUNCTION Simplex(SubView<Integer,ManifoldDim+1> n) :
+        	nodes(n)
+        {
     	}
+
+		MARS_INLINE_FUNCTION Simplex(SubView<Integer, ManifoldDim + 1> n,
+			SubView<Integer, 2> ch) :	nodes(n), children(ch)
+		{
+		}
+
+		MARS_INLINE_FUNCTION Simplex(SubView<Integer, ManifoldDim + 1> n,
+			SubView<Integer, 2> ch, SubView<Integer,ManifoldDim+1> st) : nodes(n), children(ch), side_tags(st)
+		{
+		}
+
+
         /*inline void get_nodes(std::vector<Integer> &nodes_copy) const override
         {
             nodes_copy.resize(nodes.size());

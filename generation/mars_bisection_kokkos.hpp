@@ -27,7 +27,8 @@ namespace mars {
 		virtual ~ParallelBisection() {}
 
 		ParallelBisection(Mesh *mesh)
-		: host_mesh(mesh),
+		: mesh(nullptr),
+		  host_mesh(mesh),
 		  verbose(false),
 		  fail_if_not_refine(false)
 		{}
@@ -60,29 +61,17 @@ namespace mars {
 		{
 			flags.push_back(NONE);
 			Integer id = mesh.add_elem(e);
-			
+
 			if(edge_select_->repair_element()) {
 				mesh.repair_element(id);
 			}
 
-			level.push_back((mesh.elem(id).parent_id == INVALID_INDEX)? 0 : (level[mesh.elem(id).parent_id] + 1)); 
+			level.push_back((mesh.elem(id).parent_id == INVALID_INDEX)? 0 : (level[mesh.elem(id).parent_id] + 1));
 			edge_element_map_.update(mesh.elem(id));
 			return id;
 		}
 
-		void other_nodes(
-			const std::array<Integer, ManifoldDim+1> &nodes,
-			const Integer v1, 
-			const Integer v2,
-			std::array<Integer, ManifoldDim-1>  &opposite_nodes) const
-		{
-			Integer i = 0;
-			for(auto n : nodes) {
-				if(n != v1 && n != v2) {
-					opposite_nodes[i++] = n;
-				}
-			}
-		}
+
 
 		void bisect_element(
 			const Integer element_id,
@@ -105,7 +94,7 @@ namespace mars {
 
 		// 	Elem s;
 		// 	s.parent_id = element_id;
-			
+
 		// 	if(verbose) {
 		// 		std::cout << "bisect(" << v1 << ", " << v2 << ") for " << element_id << std::endl;
 		// 	}
@@ -151,7 +140,7 @@ namespace mars {
 
 			Elem s;
 			s.parent_id = element_id;
-			
+
 			if(verbose) {
 				std::cout << "bisect(" << v1 << ", " << v2 << ") for " << element_id << std::endl;
 			}
@@ -179,13 +168,13 @@ namespace mars {
 
 			s.nodes[0] = midpoint;
 			s.nodes[1] = v2;
-			
+
 			new_id = add_elem(s);
 			mesh.elem(element_id).children.push_back(new_id);
 			mesh.elem(new_id).block = mesh.elem(element_id).block;
 
 			bisect_side_tags(element_id, Edge(v1, v2), midpoint);
-			
+
 			tracker_.element_refined(element_id);
 
 			edge_select_->element_refined(
@@ -210,7 +199,7 @@ namespace mars {
 			const auto &e = mesh.elem(element_id);
 
 			SideElem e_side;
-			
+
 			for(Integer i = 0; i < n_sides(e); ++i) {
 				e.side(i, e_side);
 				std::sort(std::begin(e_side.nodes), std::end(e_side.nodes));
@@ -223,7 +212,7 @@ namespace mars {
 					if(nodes[k] != e_side.nodes[k]) {
 						same_side = false;
 						break;
-					} 
+					}
 				}
 
 				if(same_side) {
@@ -246,7 +235,7 @@ namespace mars {
 				std::fill(mesh.elem(c).side_tags.begin(),
 					mesh.elem(c).side_tags.end(),
 					INVALID_INDEX);
-			}	
+			}
 
 			SideElem side;
 			SideElem child_side;
@@ -259,7 +248,7 @@ namespace mars {
 				if(has_edge(side, edge[0], edge[1])) {
 					//tag of split sides
 					child_side.nodes[0] = midpoint_id;
-					
+
 					for(Integer j = 0; j < 2; ++j) {
 						const Integer vj = edge[j];
 						child_side.nodes[1] = vj;
@@ -277,7 +266,7 @@ namespace mars {
 							auto sn = side_num(c, child_side);
 
 							if(INVALID_INDEX != sn) {
-								assert(mesh.elem(c).side_tags[sn] == INVALID_INDEX || 
+								assert(mesh.elem(c).side_tags[sn] == INVALID_INDEX ||
 									mesh.elem(c).side_tags[sn] == tag);
 
 								mesh.elem(c).side_tags[sn] = tag;
@@ -294,7 +283,7 @@ namespace mars {
 						auto sn = side_num(c, side);
 
 						if(INVALID_INDEX != sn) {
-							assert(mesh.elem(c).side_tags[sn] == INVALID_INDEX || 
+							assert(mesh.elem(c).side_tags[sn] == INVALID_INDEX ||
 								mesh.elem(c).side_tags[sn] == tag);
 
 							mesh.elem(c).side_tags[sn] = tag;
@@ -372,7 +361,7 @@ namespace mars {
 							visited_all_incidents = false;
 							has_refined = true;
 							continue;
-						} 
+						}
 
 						assert(!fail_if_not_refine);
 					}
@@ -553,13 +542,16 @@ namespace mars {
 			tracker_.undo_last_iterate(mesh);
 		}*/
 
-		void init()
+		//does ont perform a deep copy of the view containted in the mesh. Just the mesh object.
+		void copy_mesh_to_device()
 		{
 			Mesh* tmp = (Mesh*) Kokkos::kokkos_malloc(sizeof(Mesh));
 			Mesh mCopy = *host_mesh;
+			Mesh* oldDeviceMesh = mesh;
 			Kokkos::parallel_for("CreateMeshObject", 1, KOKKOS_LAMBDA (const int&)
 			{
 				new ((Mesh*)tmp) Mesh(mCopy); // two local copies for m and tmp since this->m, this->mesh host pointers
+				if (oldDeviceMesh) oldDeviceMesh->~Mesh();
 				// it only works on a copy since **m is still a host pointer and fails on the device.
 			});
 
@@ -618,7 +610,7 @@ namespace mars {
 			 level.resize(mesh.n_elements(), 0);*/
 
 
-            init();
+            copy_mesh_to_device();
 
 			Kokkos::Timer timer1;
 
@@ -826,13 +818,13 @@ namespace mars {
 
 			//ViewMatrixType<Integer> lepp_incidents_index;
 
-			UnorderedMap<Integer, Integer> lepp_incidents_map;
+			UnorderedMap<Integer, Edge> lepp_incidents_map;
 
 			ScatterElem(
 					UnorderedMap<Side<2, KokkosImplementation>, ElementVector> mp,
 					Mesh_* ms, ViewVectorType<uint32_t> tr,
 					ViewVectorType<Integer> ic,// ViewMatrixType<Integer> lei,
-					UnorderedMap<Integer, Integer> lim) :
+					UnorderedMap<Integer, Edge> lim) :
 					RefineMesh(mp, ms, tr, ic),// lepp_elem_index(lei),
 					lepp_incidents_map(lim)
 			{
@@ -857,7 +849,7 @@ namespace mars {
 							lepp_incidents_index(this->index_count(element_id)++,1) = element;
 							printf(" (%li - %li - %li) ",lepp_incidents_index(this->index_count(element_id),0),count, element_id);*/
 
-							auto result = lepp_incidents_map.insert(element, index);
+							auto result = lepp_incidents_map.insert(element, this->mapping.key_at(index));
 							if (result.failed())
 								printf("Exceeded UnorderedMap capacity\n");
 						}
@@ -890,6 +882,101 @@ namespace mars {
 				{
 					depth_first(element_id);
 				}
+			}
+		};
+
+
+		struct BisectElem
+		{
+			Mesh_* mesh;
+			ViewMatrixType<Integer> lepp_incident_index;
+			bool verbose;
+
+			Integer elem_start_index;
+			Integer child_start_index;
+
+			BisectElem(Mesh_* ms, ViewMatrixType<Integer> lii, bool v, Integer esi, Integer csi) :
+					mesh(ms), lepp_incident_index(lii), verbose(v), elem_start_index(esi), child_start_index(csi)
+			{
+			}
+
+			KOKKOS_INLINE_FUNCTION
+			void other_nodes(const SubView<Integer, ManifoldDim + 1> &nodes,
+				const Integer v1, const Integer v2,
+				TempArray<Integer, ManifoldDim - 1> &opposite_nodes) const
+			{
+				Integer i = 0;
+				for (Integer j=0;j<   ManifoldDim + 1; ++j)
+				{
+					Integer n = nodes[j];
+					if (n != v1 && n != v2)
+					{
+						opposite_nodes[i++] = n;
+					}
+				}
+			}
+
+			KOKKOS_INLINE_FUNCTION
+			void operator()(const int i) const
+			{
+				Integer element_id = lepp_incident_index(i,0);
+				Integer v1 = lepp_incident_index(i,1);
+				Integer v2 = lepp_incident_index(i,2);
+
+				if (verbose)
+				{
+					printf("bisect(%li , %li) for %li\n", v1, v2, element_id);
+				}
+
+				mesh->set_active(element_id, false);
+				printf("elem: %li - %d\n", element_id, mesh->is_active(element_id));
+
+				/*	auto midpoint = edge_node_map_.get(v1, v2);
+
+				 if(midpoint == INVALID_INDEX) {
+				 midpoint = mesh.add_point((mesh.point(v1) + mesh.point(v2))/2.);
+				 edge_node_map_.update(v1, v2, midpoint);
+				 }*/
+
+				Integer elem_new_id = elem_start_index + 2 * i;
+				Integer childrens_id = child_start_index + i;
+
+				Elem old_el = mesh->elem(element_id, childrens_id);
+
+				TempArray<Integer, ManifoldDim - 1> opposite_nodes;
+				other_nodes(old_el.nodes, v1, v2, opposite_nodes);
+
+
+
+
+				Elem new_el = mesh->elem(elem_new_id);
+				new_el.parent_id = element_id;
+
+				for(Integer i = 0; i < ManifoldDim-1; ++i) {
+					new_el.nodes[2 + i] = opposite_nodes[i];
+				}
+
+				//new_el.nodes[0] = midpoint;
+				new_el.nodes[1] = v1;
+
+				mesh->set_active(elem_new_id);
+				old_el.children(0) = elem_new_id;
+				new_el.block = old_el.block;
+
+
+				new_el = mesh->elem(++elem_new_id);
+				new_el.parent_id = element_id;
+
+				for(Integer i = 0; i < ManifoldDim-1; ++i) {
+					new_el.nodes[2 + i] = opposite_nodes[i];
+				}
+
+				//new_el.nodes[0] = midpoint;
+				new_el.nodes[1] = v2;
+
+				mesh->set_active(elem_new_id);
+				old_el.children(1) = elem_new_id;
+				new_el.block = old_el.block;
 			}
 		};
 
@@ -926,20 +1013,23 @@ namespace mars {
 			});
 		}
 
-		void comapct_map_to_view(const UnorderedMap<Integer, Integer>& lepp_incidents_map,
+		void compact_map_to_view(const UnorderedMap<Integer, Edge>& lepp_incidents_map,
 				ViewMatrixType<Integer> lepp_incident_index)
 		{
 			using namespace Kokkos;
 
-			Integer *index;
-			*index=0;
+			ViewObject<Integer, KokkosSpace> global_index("global_index");
 
-			parallel_for(lepp_incidents_map.capacity(), KOKKOS_LAMBDA (uint32_t i) {
-			  if( lepp_incidents_map.valid_at(i) ) {
-				Integer k = Kokkos::atomic_fetch_add(index, 1);
+			parallel_for(lepp_incidents_map.capacity(), KOKKOS_LAMBDA(uint32_t i)
+			{
+			  if( lepp_incidents_map.valid_at(i) )
+			  {
+				Integer k = Kokkos::atomic_fetch_add(&global_index(0), 1);
 
-				lepp_incident_index(k,0) = lepp_incidents_map.value_at(i);
-				lepp_incident_index(k,1) = lepp_incidents_map.key_at(i);
+				lepp_incident_index(k,0) = lepp_incidents_map.key_at(i);
+				lepp_incident_index(k,1) = lepp_incidents_map.value_at(i).nodes(0);
+				lepp_incident_index(k,2) = lepp_incidents_map.value_at(i).nodes(1);
+
 			  }
 			});
 		}
@@ -987,30 +1077,51 @@ namespace mars {
 
 			std::cout<<"sum_subview: "<<lepp_incidents_count<<std::endl;
 
-			UnorderedMap<Integer, Integer> lepp_incidents_map(lepp_incidents_count);
+			UnorderedMap<Integer, Edge> lepp_incidents_map(lepp_incidents_count);
 
 
 			parallel_for(nr_elements, ScatterElem(edge_element_map_.mapping_, mesh, tree_,
 					index_count_, lepp_incidents_map));
 
-			host_mesh->set_n_elements(host_mesh->n_elements() + 2 * lepp_incidents_map.size());
 
+			Integer lip_size = lepp_incidents_map.size();
 
-			resize(host_mesh->get_view_children(),
-			host_mesh->get_view_children().extent(0) + lepp_incidents_count, 2);
+			Integer elem_start_index = host_mesh->n_elements();
+			Integer child_start_index = host_mesh->n_childrens();
 
-			ViewObjectU<Mesh, KokkosSpace> device_view(mesh);
+			host_mesh->resize_children(lip_size);
+			host_mesh->resize_elements(2 * lip_size);
+			host_mesh->resize_active(2 * lip_size);
+			host_mesh->resize_points(lip_size);
+
+			host_mesh->set_n_elements(host_mesh->n_elements() + 2 * lip_size);
+			host_mesh->set_n_nodes(host_mesh->n_nodes() + lip_size);
+			host_mesh->set_n_childrens(host_mesh->n_childrens() + lip_size);
+
+		/*	ViewObjectU<Mesh, KokkosSpace> device_view(mesh);
 			ViewObjectU<Mesh, KokkosHostSpace> host_view(host_mesh);
 
-			deep_copy(device_view, host_view);
+		//	deep_copy(device_view, host_view);*/
+
+			copy_mesh_to_device(); //only the object. No deep copy of the member views.
 
 			ViewMatrixType<Integer> lepp_incident_index = ViewMatrixType<Integer>(
-							"lepp_incidents_index", lepp_incidents_map.size(), 2);
+							"lepp_incidents_index", lepp_incidents_map.size(), 3);
 
-			//comapct_map_to_view(lepp_incidents_map, lepp_incident_index);
+			compact_map_to_view(lepp_incidents_map, lepp_incident_index);
 
 			//start the bisection kernel starting from host_mesh->n_elements() and host_mesh->get_view_children().extent(0) as initial index
 
+			std::cout<<"Starting bisection"<<std::endl;
+
+			Kokkos::Timer timer1;
+
+			parallel_for(lepp_incidents_map.size(),
+					BisectElem(mesh, lepp_incident_index, verbose, elem_start_index,
+							child_start_index));
+
+			double time1 = timer1.seconds();
+			std::cout << "paralel scan took: " << time1 << " seconds." << std::endl;
 
 
 			/*const Mesh* tmp = ref.mesh;
@@ -1039,7 +1150,7 @@ namespace mars {
 
 
 
-		//tracking the refinement 
+		//tracking the refinement
 		std::vector<Edge> bisected_edges_;
 
 		std::vector<Edge>    incomplete_edges_;
