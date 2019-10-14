@@ -663,12 +663,106 @@ namespace mars {
 
 
 
+      template<Integer Ncomponents, typename T, Integer Rows1,Integer Cols1,Integer Rows2,Integer Cols2>
+	  constexpr std::enable_if_t<(1==Ncomponents),void> 
+	  assign(Matrix<T, Rows1,Cols1>& mat1, const Matrix<T, Rows2,Cols2>& mat2, Integer II, Integer JJ)
+     {
+     	static_assert(Rows1>=Rows2," only a smaller matrix can be assigned: Rows1>=Rows2");
+     	static_assert(Cols1>=Cols2," only a smaller matrix can be assigned: Cols1>=Cols2");
+     	assert(Rows2+II<=Rows1 && " Rows2+II<=Rows1");
+     	assert(Cols2+JJ<=Cols1 && " Cols2+JJ<=Cols1");
+     	for(Integer i=0; i<Rows2 ;i++)
+     		for(Integer j=0; j<Cols2 ;j++)
+     			mat1(i+II,j+JJ)=mat2(i,j);
+	}
+
+      template<Integer Ncomponents, typename T, Integer Rows1,Integer Cols1,Integer Rows2>
+	  constexpr std::enable_if_t<(1<Ncomponents),void> 
+	  assign(Matrix<T, Rows1,Cols1>& mat1, const Matrix<T, Rows2,1>& mat2, Integer II, Integer JJ)
+     {
+     	for(Integer i=0; i<Rows2 ;i++)
+     			mat1(II,i+JJ)=mat2(i,0);
+	}
+
+	template<typename T>
+	class Transposed;
+
+	template<typename T, Integer TransposedRows, Integer TransposedCols,Integer NonZeroRow>
+	class Transposed<Matrix<T,TransposedRows,TransposedCols,NonZeroRow>>
+	// : 
+	// public Matrix<T,TransposedRows,TransposedCols,NonZeroRow>
+	{
+	public:
+		static constexpr Integer Rows=TransposedCols;
+		static constexpr Integer Cols=TransposedRows;
+		using type= Matrix<T,Rows,Cols>;
+		using subtype=T;
+		using MB = TensorBase<T, std::make_index_sequence<Rows*Cols>>;
+		// using MB::MB;
+		// using MB::values;
+
+		constexpr Transposed()
+		//:
+		// mat_(NULL)
+		{}
+
+		// constexpr Transposed(Matrix<T,TransposedRows,TransposedCols,NonZeroRow>& mat):
+		// mat_(mat)
+		// {}
+
+		constexpr Transposed(const Matrix<T,TransposedRows,TransposedCols,NonZeroRow>& mat)
+		:
+		mat_ptr_(std::make_shared<Matrix<T,TransposedRows,TransposedCols,NonZeroRow>>(mat))
+		{}
+
+		inline constexpr const auto& operator()() const
+		{
+		 return *mat_ptr_;
+		}
 
 
+		inline constexpr void operator()(const Matrix<T,TransposedRows,TransposedCols,NonZeroRow>& mat)
+		{
+		 mat_ptr_=std::make_shared<Matrix<T,TransposedRows,TransposedCols,NonZeroRow>>(mat);
+		}
 
+		inline constexpr      T &operator()(const Integer& i, const Integer& j)
+		{
+			assert(i < Rows);
+			assert(j < Cols);
+			return (*mat_ptr_)(j,i);
+		}
 
+		inline constexpr const T &operator()(const Integer i, const Integer j) const
+		{
+			assert(i < Rows);
+			assert(j < Cols);
+			return (*mat_ptr_)(j,i);
+		}
 
+		void describe(std::ostream &os) const
+		{
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					os << (*this)(i, j) << " ";
+				}
+				os << "\n";
+			}
 
+			os << "\n";
+		}
+
+		friend std::ostream &operator<<(std::ostream &os, const Transposed &m)
+		{
+			m.describe(os);
+			return os;
+		}
+
+		
+	private:
+    std::shared_ptr<Matrix<T,TransposedRows,TransposedCols,NonZeroRow>> mat_ptr_;
+
+	};
 
 
 

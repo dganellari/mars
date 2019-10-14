@@ -57,6 +57,8 @@ class Subtraction;
 template<typename...Parameters>
 class Addition;
 
+template<typename T>
+class Transposed;
 
 
 template<typename...T>
@@ -68,6 +70,7 @@ template<typename T>
     class OperatorAndQuadratureTupleType< UnaryPlus< Expression<T> > >
     { public:
       using type=typename OperatorAndQuadratureTupleType<T>::type;
+      using composite_type=typename OperatorAndQuadratureTupleType<T>::composite_type;
   };
 
 
@@ -76,8 +79,8 @@ template<typename T>
   class OperatorAndQuadratureTupleType< UnaryMinus< Expression<T> > >
   { public:
       using type=typename OperatorAndQuadratureTupleType<T>::type;
+      using composite_type=typename OperatorAndQuadratureTupleType<T>::composite_type;
   };
-
 
 
 
@@ -175,6 +178,8 @@ template<typename FuncType, typename MixedSpace, Integer N,typename OperatorType
 template<typename ConstType, typename...Inputs>
   class OperatorAndQuadratureTupleType<ConstantTensor<ConstType,Inputs...> >
   { public:
+      // using type=TupleOfType<3,std::tuple<> > ;
+      // using composite_type=TupleOfType<3,std::tuple<> > ;
       using type=std::tuple<std::tuple<>>;
       using composite_type=std::tuple<std::tuple<>>;
   };
@@ -351,6 +356,16 @@ public:
   using composite_type=TupleOfTupleChangeType<1,QRule, CompositeOperatortuple>;
 } 
 ; 
+
+
+
+// order(T) = order(+T)
+template<typename T>
+    class OperatorAndQuadratureTupleType< Transposed< Expression<T> > >
+    { public:
+      using type=typename OperatorAndQuadratureTupleType<T>::type;
+      using composite_type=typename OperatorAndQuadratureTupleType<T>::composite_type;
+  };
 
 
 

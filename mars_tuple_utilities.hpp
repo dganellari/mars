@@ -65,8 +65,8 @@ class GetHelper<0, std::tuple<T, Ts...>>
     using type = T;
 };
 
-template <>
-class GetHelper<0, std::tuple<>>
+template <Integer N>
+class GetHelper<N, std::tuple<>>
 {   public: 
     using type = std::tuple<>;
 };
@@ -120,6 +120,13 @@ public:
 
 template <typename Tuple>
 class GetTypeHelper<Tuple,-1>
+{
+public:
+  using type =std::tuple<>;
+};
+
+template <Integer N>
+class GetTypeHelper<std::tuple<>,N>
 {
 public:
   using type =std::tuple<>;
@@ -372,16 +379,25 @@ class RemoveTupleOfTupleDuplicatesHelper<Nmax,Nmax,Ts...>
 {
  public:
  using type= std::tuple<RemoveTupleDuplicates<TupleCatType<GetType<Ts,Nmax>...>>>;
+    // using fixme=RemoveTupleDuplicates<TupleCatType< GetType<Ts,Nmax>...>>;
+
+  // using type= std::tuple<std::tuple<int>>;
 };
 
 template<Integer N,Integer Nmax, typename ... Ts>
 class RemoveTupleOfTupleDuplicatesHelper
 {
 public:
-    //TupleRemovesingleType<std::tuple<>,>
+//     //TupleRemovesingleType<std::tuple<>,>
+//   using fixme=RemoveTupleDuplicates<TupleCatType< GetType<Ts,N>...>>;
+
+// using type= 
+// decltype(std::tuple_cat(std::declval<std::tuple<fixme>>(),
+//                            std::declval<typename RemoveTupleOfTupleDuplicatesHelper<N+1,Nmax,Ts...>::type>()));
 using type= 
 decltype(std::tuple_cat(std::declval<std::tuple< RemoveTupleDuplicates<TupleCatType< GetType<Ts,N>...>>>>(),
                            std::declval<typename RemoveTupleOfTupleDuplicatesHelper<N+1,Nmax,Ts...>::type>()));
+
 };
 
 
@@ -1461,8 +1477,24 @@ using TupleOfTupleShapeFunctionType3=typename TupleOfTupleShapeFunctionCreate3<T
 
 
 
+template<typename...Ts>
+class TupleRemoveNumber0Helper;
+
+template<typename...Ts>
+class TupleRemoveNumber0Helper<std::tuple<Ts...>> 
+{
+public:
+using Tuple=std::tuple<Ts...>;
+static constexpr Integer size=TupleTypeSize<Tuple>::value;
+using type= GetType<typename std::conditional<size==1,
+                                             Tuple, 
+                                             TupleRemoveType<Number<0>,Tuple>
+                                            >::type>;
+};
 
 
+template<typename...Ts>
+using TupleRemoveNumber0=typename TupleRemoveNumber0Helper<std::tuple<Ts...>>::type;
 
 
 

@@ -728,8 +728,10 @@ class Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_>>,OtherTemplateAr
   const auto& tuple=tuple_get<type::value>(shape_functions);
     // const auto& tuple=tuple_get<type::value>(shape_functions());
   constexpr Integer M=TypeToTupleElementPosition<ShapeFunction<Elem,BaseFunctionSpace,Operator,OtherTemplateArguments...>,tuple_type>::value;
+    // std::cout<<"befor Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_> "<<value<<std::endl;
+
   Assignment<value_type>::apply(value,tuple_get<M>(tuple).eval());
-  std::cout<<"Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_> "<<value<<std::endl;
+  // std::cout<<"after Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_> "<<value<<std::endl;
 
  }
 
@@ -907,7 +909,9 @@ class Evaluation<Expression<ConstantTensor<ConstType,Inputs...>>,QuadratureRule>
 
  Evaluation(const type& expr):
  eval_(expr)
- {};
+ {
+  std::cout<<"eval constructor="<<expr.template qp_eval<QuadratureRule::NQPoints>()<<std::endl;
+ };
 
 
 
@@ -1018,6 +1022,34 @@ public:
 };
 
 
+template<typename ConstType,typename...Inputs>
+class IsTestOrTrial<Transposed<Expression<ConstantTensor<ConstType,Inputs...>>>>
+{
+public:
+  using Elem=EmptyClass;
+  using Operator=std::tuple<>;
+  using TupleFunctionSpace=std::tuple<>;
+  using UniqueElementFunctionSpacesTupleType=std::tuple<>;
+  using type=std::tuple<Number<0>>;
+  static constexpr Integer value=-1;
+  static constexpr Integer number=-1;
+};
+
+
+
+template<typename FuncType,typename FullSpace, Integer N, typename Operator_>
+class IsTestOrTrial<Transposed<Expression<Function<FullSpace,N,Operator_,FuncType>>>>{
+public:
+  using Elem=typename FullSpace::Elem;
+  using Operator=std::tuple<Operator_>;
+  using TupleFunctionSpace=std::tuple<>;
+  using UniqueElementFunctionSpacesTupleType=std::tuple<>;
+  using type=std::tuple<Number<0>>;
+  static constexpr Integer value=-1;
+  static constexpr Integer number=-1;
+};
+
+
 template <typename T,typename ... Types>
 class TupleTypeSize;
 
@@ -1043,55 +1075,27 @@ public:
   static_assert(TupleTypeSize<type>::value<2," In Multiply<Left,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 };
 
-template<typename Left>
-class IsTestOrTrial< Multiplication<Expression<Left>,Real > >
+
+template<typename Left, typename Right>
+class IsTestOrTrial<Division<Expression<Left>,Expression<Right> > >
 {
 public:
-  using Elem=typename IsTestOrTrial<Left>::Elem;
 
-  using Operator=TupleCatType<typename IsTestOrTrial<Left>::Operator>;
+  using Elem=Choose<typename IsTestOrTrial<Left>::Elem,typename IsTestOrTrial<Right>::Elem>;
+  using Operator=TupleCatType<typename IsTestOrTrial<Left>::Operator,
+                              typename IsTestOrTrial<Right>::Operator >;
+  using TupleFunctionSpace=TupleCatType<typename IsTestOrTrial<Left>::TupleFunctionSpace,
+                                        typename IsTestOrTrial<Right>::TupleFunctionSpace >;
 
-  using TupleFunctionSpace=typename IsTestOrTrial<Left>::TupleFunctionSpace;
-  using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType;
-  using type=typename IsTestOrTrial<Left>::type;
-  static constexpr Integer value= IsTestOrTrial<Left>::value;
-  static constexpr Integer number= Heaviside(IsTestOrTrial<Left>::number);
-  static_assert(TupleTypeSize<type>::value<2," In Multiply<Left,Real>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
+  using UniqueElementFunctionSpacesTupleType=TupleCatType<typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType,
+                                                          typename IsTestOrTrial<Right>::UniqueElementFunctionSpacesTupleType >;
+  using tmp_type=TupleRemoveType<Number<0>,TupleCatType<typename IsTestOrTrial<Left>::type,typename IsTestOrTrial<Right>::type >> ;
+  using type=typename std::conditional<IsSame<tmp_type,std::tuple<>>::value, 
+                                       std::tuple<Number<0>>,
+                                       tmp_type>::type;   
+  static constexpr Integer number= Heaviside(IsTestOrTrial<Left>::number)+Heaviside(IsTestOrTrial<Right>::number);
+  static_assert(TupleTypeSize<type>::value<2," In Multiply<Left,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 };
-
-template<typename Right>
-class IsTestOrTrial< Multiplication<Real,Expression<Right> > >
-{
-public:
-  using Elem=typename IsTestOrTrial<Right>::Elem;
-  using Operator=TupleCatType<typename IsTestOrTrial<Right>::Operator >;
-
-  using TupleFunctionSpace=typename IsTestOrTrial<Right>::TupleFunctionSpace;
-  using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Right>::UniqueElementFunctionSpacesTupleType;
-  using type=typename IsTestOrTrial<Right>::type;
-  static constexpr Integer value=  IsTestOrTrial<Right>::value;
-  static constexpr Integer number= Heaviside(IsTestOrTrial<Right>::number);
-  static_assert(TupleTypeSize<type>::value<2," In Multiply<Real,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
-
-};
-
-
-template<typename Left>
-class IsTestOrTrial< Division<Expression<Left>,Real > >
-{
-public:
-  using Elem=typename IsTestOrTrial<Left>::Elem;
-
-  using Operator=TupleCatType<typename IsTestOrTrial<Left>::Operator>;
-
-  using TupleFunctionSpace=typename IsTestOrTrial<Left>::TupleFunctionSpace;
-  using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType;
-  using type=typename IsTestOrTrial<Left>::type;
-  static constexpr Integer value= IsTestOrTrial<Left>::value ;
-  static constexpr Integer number= Heaviside(IsTestOrTrial<Left>::number);
-  static_assert(TupleTypeSize<type>::value<2," In Divide<Left,Real>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
-};
-
 
 template<typename Left, typename Right>
 class IsTestOrTrial< Addition<Expression<Left>,Expression<Right> > >
@@ -1149,7 +1153,10 @@ public:
   using Operator=TupleCatType<typename IsTestOrTrial<Type>::Operator>;
   using TupleFunctionSpace=typename IsTestOrTrial<Type>::TupleFunctionSpace;
   using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Type>::UniqueElementFunctionSpacesTupleType;
-  using type=TupleRemoveType<Number<0>,typename IsTestOrTrial<Type>::type>;
+  // WE REMOVE THE ZEROS, BUT WE SHOULD NOT REMOVE ALL ZEROS
+  // if it has only one element, do not remove duplicates
+  using type=TupleRemoveNumber0<typename IsTestOrTrial<Type>::type>;
+  // using type=TupleRemoveType<Number<0>,typename IsTestOrTrial<Type>::type>;
   static_assert(TupleTypeSize<type>::value<2," In UnaryPlus<Type>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
   static constexpr Integer number= Heaviside(IsTestOrTrial<Type>::number);
 };
@@ -1163,10 +1170,30 @@ public:
   using Operator=TupleCatType<typename IsTestOrTrial<Type>::Operator>;
   using TupleFunctionSpace=typename IsTestOrTrial<Type>::TupleFunctionSpace;
   using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Type>::UniqueElementFunctionSpacesTupleType;
-  using type=TupleRemoveType<Number<0>,typename IsTestOrTrial<Type>::type>;
+  using type=TupleRemoveNumber0<typename IsTestOrTrial<Type>::type>;
+  // using type=TupleRemoveType<Number<0>,typename IsTestOrTrial<Type>::type>;
   static_assert(TupleTypeSize<type>::value<2," In UnaryMinus<Type>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
   static constexpr Integer number= Heaviside(IsTestOrTrial<Type>::number);
 };
+
+
+template<typename Type>
+class IsTestOrTrial<Transposed<Expression<Type>> >
+{
+public:
+  using Elem=typename IsTestOrTrial<Type>::Elem;
+
+  using Operator=TupleCatType<typename IsTestOrTrial<Type>::Operator>;
+  using TupleFunctionSpace=typename IsTestOrTrial<Type>::TupleFunctionSpace;
+  using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Type>::UniqueElementFunctionSpacesTupleType;
+  using type=typename IsTestOrTrial<Type>::type;
+  static_assert(TupleTypeSize<type>::value<2," In Transposed<Type>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
+  static constexpr Integer number= Heaviside(IsTestOrTrial<Type>::number);
+};
+
+
+
+
 
 template<typename Left,typename Right>
 class TypeOfForm;
@@ -2483,8 +2510,9 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,QR>>, ShapeFunctio
 
   // changed todo fixme
    // local_tensor_.apply(mat,J,shape_functions_());
+  std::cout<<"pre Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
   local_tensor_.apply(mat,J,shape_functions_);//(),shape_functions_.composite_tensor(),shape_functions_.composite_shapes());
-
+  std::cout<<"after Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
  }
 
 
@@ -2622,6 +2650,7 @@ class ShapeFunctions2
   constexpr typename std::enable_if_t< FEFamily==LagrangeFE,void> 
   shape_function_init_aux_aux_aux(Shape& shape, const ShapeFunctionCoefficient<Args...> &coefficients)
   {
+    std::cout<<M<<" "<<FEFamily<<" "<<Order<<std::endl;
     shape.init();
   }
 
@@ -2785,10 +2814,12 @@ class ShapeFunctions2
   {
     // TODO CHECK: SINCE WE HAVE ALREADY HAVE REFERENCES TO MAPS AND COEFFS, do we have to init_map?
     // INIT MAP: takes the corresponding map and compute the shape function in the actual element
+    std::cout<<"init maps"<<std::endl;
     init_map(maps_);
     // init_shape_functions: takes also the coefficients which multiply the actual shape functions
+    std::cout<<"init_shape_functions"<<std::endl;
     init_shape_functions();
-
+    std::cout<<"init_composite_shape_functions"<<std::endl;
     init_composite_shape_functions(J);
    }
 

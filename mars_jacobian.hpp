@@ -60,16 +60,23 @@ class Jacobian<Simplex<Dim, ManifoldDim>>
 
 
 
+    // BILINEAR FORMS
     // DOT OF DOTS BETWEEN FQPVALUES AND FQPVALUES (same type)
     template<Integer Dim>
     inline constexpr Real dotofdots(const Vector<Real, Dim> &left, const Vector<Real,Dim> &right)
     {
+         // std::cout<<"dotofdots const Vector<Real, Dim> &left, const Vector<Real,Dim> &right"<<std::endl;
+
         return dot(left,right);
     }
+    
 
+    // here we get also Tranposed<Matrix<T,Rows,Cols>> because Transposed inherits from Matrix<T,Cols,Rows>
     template<Integer Rows,Integer Cols>
     inline constexpr Real dotofdots(const Matrix<Real, Rows,Cols> &left, const Matrix<Real,Rows,Cols> &right)
     {
+
+      // std::cout<<"dotofdots mat mat"<<std::endl;
         Real result = left(0,0)*right(0,0);
         
         for(Integer col = 1; col < Cols; ++col) 
@@ -78,9 +85,100 @@ class Jacobian<Simplex<Dim, ManifoldDim>>
            for(Integer row = 1; row < Rows; ++row)  
             result += left(row,col)*right(row,col);  
 
+
+         // std::cout<<"dotofdots const Matrix<Real, Rows,Cols> &left, const Matrix<Real,Rows,Cols> &right"<<std::endl;
+         // std::cout<<left<<" "<<right<<std::endl;
+         // std::cout<<left(0,0)<<" "<<right(0,0)<<std::endl;
         return result;
     }
 
+    template<Integer Rows,Integer Cols>
+    inline constexpr Real dotofdots(const Transposed<Matrix<Real,Cols,Rows>> &left, const Matrix<Real,Rows,Cols> &right)
+    {
+            // std::cout<<"dotofdots trans mat mat"<<std::endl;
+            // std::cout<<left.rows()<<" "<<left.cols()<<std::endl;
+            // std::cout<<right.rows()<<" "<<right.cols()<<std::endl;
+
+        Real result = left(0,0)*right(0,0);
+         std::cout<<0<<" "<<0<<std::endl;
+        for(Integer col = 1; col < Cols; ++col) 
+            {
+               // std::cout<<"here1 "<<std::endl;
+               // std::cout<<col<<", "<<0<<std::endl;
+              // result += left(col,0)*right(0,col);
+              result += left(0,col)*right(0,col);
+            }
+        for(Integer col = 0; col < Cols; ++col)
+           for(Integer row = 1; row < Rows; ++row)  
+            {
+                             // std::cout<<"here2 "<<std::endl;
+
+               // std::cout<<col<<", "<<row<<std::endl;
+              // result += left(col,row)*right(row,col);  
+              result += left(row,col)*right(row,col);  
+            }
+
+             
+         // std::cout<<"dotofdots const Matrix<Real, Rows,Cols> &left, const Matrix<Real,Rows,Cols> &right"<<std::endl;
+         // std::cout<<left<<" "<<right<<std::endl;
+         // std::cout<<left(0,0)<<" "<<right(0,0)<<std::endl;
+        return result;
+    }
+
+    template<Integer Rows,Integer Cols>
+    inline constexpr Real dotofdots(const Matrix<Real,Rows,Cols> &left, const Transposed<Matrix<Real,Cols,Rows>> &right)
+    {
+          // std::cout<<"dotofdots mat trans_mat"<<std::endl;
+
+        Real result = left(0,0)*right(0,0);
+        
+        for(Integer col = 1; col < Cols; ++col) 
+            // result += left(0,col)*right(col,0);
+          result += left(0,col)*right(0,col);
+        for(Integer col = 0; col < Cols; ++col)
+           for(Integer row = 1; row < Rows; ++row)  
+            // result += left(row,col)*right(col,row);  
+            result += left(row,col)*right(row,col);  
+
+         // std::cout<<"dotofdots const Matrix<Real, Rows,Cols> &left, const Matrix<Real,Rows,Cols> &right"<<std::endl;
+         // std::cout<<left<<" "<<right<<std::endl;
+         // std::cout<<left(0,0)<<" "<<right(0,0)<<std::endl;
+        return result;
+    }
+
+    // here we get also Tranposed<Matrix<T,Rows,Cols>> because Transposed inherits from Matrix<T,Cols,Rows>
+    template<Integer Rows,Integer Cols>
+    inline constexpr Real dotofdots(const Transposed<Matrix<Real,Cols, Rows>> &left, const Transposed<Matrix<Real,Cols,Rows>> &right)
+    {
+              // std::cout<<"dotofdots trans_mat trans_mat"<<std::endl;
+
+        Real result = left(0,0)*right(0,0);
+        
+        for(Integer col = 1; col < Cols; ++col) 
+            result += left(0,col)*right(0,col);
+        for(Integer col = 0; col < Cols; ++col)
+           for(Integer row = 1; row < Rows; ++row)  
+            result += left(row,col)*right(row,col);  
+
+
+         // std::cout<<"dotofdots const Matrix<Real, Rows,Cols> &left, const Matrix<Real,Rows,Cols> &right"<<std::endl;
+         // std::cout<<left<<" "<<right<<std::endl;
+         // std::cout<<left(0,0)<<" "<<right(0,0)<<std::endl;
+        return result;
+    }
+    // template<Integer Rows,Integer Cols>
+    // inline constexpr Real dotofdots(const Transposed<Matrix<Real, Cols,Rows>> &left, const Matrix<Real,Rows,Cols> &right)
+    // {
+    //     Real result = left(0,0)*right(0,0);
+        
+    //     for(Integer col = 1; col < Cols; ++col) 
+    //         result += left(col,0)*right(0,col);
+    //     for(Integer col = 0; col < Cols; ++col)
+    //        for(Integer row = 1; row < Rows; ++row)  
+    //         result += left(col,row)*right(row,col);  
+
+    //     return result;
+    // }
 
     template<Integer Dim, typename T>
     inline constexpr Real dotofdots(const Vector<T, Dim> &left, const Vector<T, Dim> &right)
@@ -93,14 +191,25 @@ class Jacobian<Simplex<Dim, ManifoldDim>>
         return ret;
     }
 
-    template<Integer Dim, typename T>
-    inline constexpr Real dotofdots(const QPValues<T, Dim> &left, const Vector<T, Dim> &right)
+    template<Integer Dim, typename S, typename T>
+    inline constexpr Real dotofdots(const QPValues<S, Dim> &left, const Vector<T, Dim> &right)
     {
+
+
         Real ret = dotofdots(left[0],right[0]);
+
         for(Integer d = 1; d < Dim; ++d) {
             ret += dotofdots(left[d],right[d]);
         }
+        // using ok1=decltype(left[0]);
+        // using ok2=decltype(right[0]);
+        // QPValues<S, Dim> ok1(1,2);
+        // S ok2(2,2);
+        // Vector<T, Dim> ok3(3,3);
+        // T ok4(4,3);
 
+        // decltype(right[0]) ok2(333.44,5);
+        std::cout<<dotofdots(left[0],right[0])<<std::endl;
         return ret;
     }
 
@@ -122,6 +231,7 @@ class Jacobian<Simplex<Dim, ManifoldDim>>
     template<Integer Dim, typename T>
     inline constexpr Real dotofdots(const T &left, const Vector<T, Dim> &right)
     {
+      std::cout<<" eee"<<std::endl;
         Real ret = dotofdots(left,right(0));
         for(Integer d = 1; d < Dim; ++d) {
             ret += dotofdots(left,right(d));
@@ -214,10 +324,10 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
  }
 
 
- template<typename Elem, typename T,Integer NQPoints, Integer NComponents>
+ template<typename Elem, typename T,typename S, Integer NQPoints, Integer NComponents>
  void apply_aux(subtype& vec, const Jacobian<Elem>& J, 
                const FQPValues<T,NQPoints,NComponents> & fqp_values,
-               const  QPValues<T,NQPoints> & qp_values)
+               const  QPValues<S,NQPoints> & qp_values)
  {
   const auto& detJ=J.get_det();
   for(Integer ii=0;ii<vec.size();ii++)
@@ -226,18 +336,21 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
         // std::cout<<"(ii,jj)=("<<ii<<","<<jj<<")"<<std::endl;
         // left value is trial, right value is test
       // std::cout<<ii<<std::endl;
-      // std::cout<<"left="<<left_value_.size()<<std::endl;
-      // std::cout<<"right="<<right_value_.size()<<std::endl;
-      // std::cout<<"right[0]="<<right_value_[0].size()<<std::endl;
+      // std::cout<<"apply_auxleft  qp="<<qp_values<<std::endl;
+      // std::cout<<"apply_aux right fqp ="<<fqp_values<<std::endl;
+      // // std::cout<<"right[0]="<<right_value_[0].size()<<std::endl;
+      //    std::cout<<"vec.size()="<<vec.size()<<std::endl;
+      //     std::cout<<"before dotofdots="<<qp_values<<std::endl;
+      //    std::cout<<"before dotofdots="<<fqp_values[ii]<<std::endl;
 
         vec[ii]=detJ*dotofdots(qp_values,fqp_values[ii]);
     }
  }
 
- template<typename Elem, typename T,Integer NQPoints, Integer NComponents>
+ template<typename Elem, typename T,typename S, Integer NQPoints, Integer NComponents>
  void apply_aux(subtype& vec, const Jacobian<Elem>& J, 
                const  QPValues<T,NQPoints> & qp_values,
-               const FQPValues<T,NQPoints,NComponents> & fqp_values)
+               const FQPValues<S,NQPoints,NComponents> & fqp_values)
  {
   const auto& detJ=J.get_det();
   for(Integer ii=0;ii<vec.size();ii++)
@@ -249,7 +362,13 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
       // std::cout<<"left="<<left_value_.size()<<std::endl;
       // std::cout<<"right="<<right_value_.size()<<std::endl;
       // std::cout<<"right[0]="<<right_value_[0].size()<<std::endl;
+       // QPValues<T,NQPoints> a91(2);
+       // FQPValues<S,NQPoints,NComponents> ok;
 
+       // auto es=ok[0];
+       // decltype(es) mm(6);
+       std::cout<<"apply_auxleft qp ="<<qp_values<<std::endl;
+      std::cout<<"apply_aux right fqp="<<fqp_values<<std::endl; 
         vec[ii]=detJ*dotofdots(qp_values,fqp_values[ii]);
     }
  }
@@ -260,6 +379,9 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
   void apply(subtype& vec, const Jacobian<Elem>& J, ShapeFunctions2<Forms...>& shape_functions)
 
  {
+  // Left k(6);
+  // OperatorType<Left,QRule> t(6);
+  // std::cout<<"----"<<t<<std::endl;
 
   // todo fixme
   // eval_left_.apply(left_value_,J,shape_functions);
@@ -267,8 +389,10 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
 
   // eval_left_.apply(left_value_,J,tuple_shape_functions,tuple_tensor,tuple_evals);
   // eval_right_.apply(right_value_,J,tuple_shape_functions,tuple_tensor,tuple_evals);
-
+  std::cout<<"before eval_left_"<<std::endl;
+  // EvalLeft ok(6);
   eval_left_.apply(left_value_,J,shape_functions(),shape_functions.composite_tensor(),shape_functions.composite_shapes());
+  std::cout<<"before eval_right_"<<std::endl;
   eval_right_.apply(right_value_,J,shape_functions(),shape_functions.composite_tensor(),shape_functions.composite_shapes());
 
 
@@ -276,7 +400,8 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
   std::cout<<left_value_<<std::endl;
   std::cout<<"right_value_"<<std::endl;
   std::cout<<right_value_<<std::endl;
-
+    std::cout<<"before vec=="<<vec<<std::endl;
+    std::cout<<left_value_<<std::endl;
    apply_aux(vec,J,left_value_,right_value_);
 
     std::cout<<"vec=="<<vec<<std::endl;
@@ -693,11 +818,12 @@ public:
  template<Integer N,typename Output,typename Jacobian>
     constexpr void apply_aux_aux(Output& mat,Jacobian&J)
     {
+    std::cout<<"pre jacobian evalinners2"<<std::endl;
      auto& local_mat=std::get<N>(tensor_tuple_);
      local_mat.zero();
      auto & eval_N=std::get<N>(eval_inners_);
      eval_N.apply(local_mat,J);
-  // std::cout<<"jacobian evalinners2"<<std::endl;
+  std::cout<<"after jacobian evalinners2"<<std::endl;
 
     }   
 

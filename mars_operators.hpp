@@ -90,6 +90,8 @@ class Addition;
 template<typename...Parameters>
 class Assignment;
 
+template<typename...Parameters>
+class Transposition;
 
 template<typename T,Integer NQPoints,Integer NComponents>
 class FQPValues;
@@ -295,11 +297,12 @@ class Assignment<Real>
   };
 };
 
-template<typename T,Integer Dim>
-class Assignment<Vector<T,Dim>> 
+template<typename S,Integer Dim>
+class Assignment<Vector<S,Dim>> 
 {
  public:       
- inline static constexpr void apply(Vector<T,Dim>& A,const Vector<T,Dim>& B)
+ template<typename T>
+ inline static constexpr void apply(Vector<T,Dim>& A,const Vector<S,Dim>& B)
   {
    for(Integer ii=0;ii<Dim;ii++)
            Assignment<T>::apply(A[ii],B[ii]);
@@ -310,30 +313,86 @@ template<typename T,Integer Rows,Integer Cols>
 class Assignment<Matrix<T,Rows,Cols>> 
 {
  public:       
+ 
  inline static constexpr void apply(Matrix<T,Rows,Cols>& A,const Matrix<T,Rows,Cols>& B)
   {
    for(Integer ii=0;ii<Rows;ii++)
     for(Integer jj=0;jj<Cols;jj++)
       Assignment<T>::apply(A(ii,jj),B(ii,jj));
   };
+
+ inline static constexpr void apply(Transposed<Matrix<T,Rows,Cols>>& A,const Matrix<T,Rows,Cols>& B)
+  {
+  // update pointer to the non-transposed matrix of the transposed matrix A with B itself
+    // std::cout<<"Assignment<Transposed<Matrix<T,Rows,Cols>>> "<<B<<std::endl;
+
+       A(B);
+    // std::cout<<A<<std::endl;
+  };
+
+
+
 };
 
-template<typename T,Integer NQPoints>
-class Assignment<QPValues<T,NQPoints>> 
+template<typename T,Integer Rows,Integer Cols>
+class Assignment<Transposed<Matrix<T,Cols,Rows>>> 
 {
  public:       
- inline static constexpr void apply(QPValues<T,NQPoints>& A,const QPValues<T,NQPoints>& B)
+ 
+  inline static constexpr void apply(Matrix<T,Rows,Cols>& A,const Transposed<Matrix<T,Cols,Rows>>& B)
   {
-   for(Integer ii=0;ii<NQPoints;ii++)
-      Assignment<T>::apply(A[ii],B[ii]);
+   for(Integer ii=0;ii<Rows;ii++)
+    for(Integer jj=0;jj<Cols;jj++)
+      Assignment<T>::apply(A(ii,jj),B(jj,ii));
   };
+
+ inline static constexpr void apply(Transposed<Matrix<T,Cols,Rows>>& A,const Transposed<Matrix<T,Cols,Rows>>& B)
+  {
+  // update pointer to the non-transposed matrix of the transposed matrix A 
+  // with the not transposed matrix of B
+   A(B());
+   };
+
+
+};
+
+
+template<typename S,Integer NQPoints>
+class Assignment<QPValues<S,NQPoints>> 
+{
+ public:       
+ template<typename T>
+ inline static constexpr void apply(QPValues<T,NQPoints>& A,const QPValues<S,NQPoints>& B)
+  {
+
+    // T ok1(1);
+    // S ok2(2);
+   for(Integer ii=0;ii<NQPoints;ii++)
+      {
+
+        Assign(A[ii],B[ii]);
+
+        // Assignment<S>::apply(A[ii],B[ii]);
+
+        // Assignment<T>::apply(A[ii],B[ii]);
+        std::cout<<"Assignment<QPValues<T,NQPoints>> "<<A[ii]<<" "<<B[ii]<<std::endl;
+      }
+  };
+
+
+
+
+
+
+
 };
 
 template<typename T,Integer NQPoints,Integer Ndofs>
 class Assignment<FQPValues<T,NQPoints,Ndofs>> 
 {
  public:       
- inline static constexpr void apply(FQPValues<T,NQPoints,Ndofs>& A,const FQPValues<T,NQPoints,Ndofs>& B)
+ template<typename S>
+ inline static constexpr void apply(FQPValues<T,NQPoints,Ndofs>& A,const FQPValues<S,NQPoints,Ndofs>& B)
   {
    for(Integer ii=0;ii<Ndofs;ii++)
     for(Integer jj=0;jj<NQPoints;jj++)
@@ -346,6 +405,7 @@ template<typename T,Integer Rows,Integer Cols>
 class UnaryPlus<Matrix<T,Rows,Cols>> 
 {    
  public:       
+
  inline static void apply(Matrix<T,Rows,Cols>& A,const Matrix<T,Rows,Cols>& B)
 	{
 	 for(Integer ii=0;ii<Rows;ii++)
@@ -355,15 +415,74 @@ class UnaryPlus<Matrix<T,Rows,Cols>>
 };
 
 
+
+
+
+
+template<typename Type>
+class UnaryMinusMatrixAndTransposedAux
+{
+public:
+ using Output=OperatorType<UnaryMinus<Type> >;
+ inline static void apply(Output& A,const Type& B)
+  {
+    // Output oo(5,4,4,4,4);
+    // Type ss(5,4,5,5);
+    std::cout<<"pre UnaryMinusMatrixAndTransposedAux<Transposed"<<std::endl;
+   for(Integer ii=0;ii<Type::Rows;ii++)
+    for(Integer jj=0;jj<Type::Cols;jj++)
+           A(ii,jj)=-B(ii,jj);
+    std::cout<<A<<B<<std::endl;
+    std::cout<<"after UnaryMinusMatrixAndTransposedAux<Transposed"<<std::endl;
+  };
+};
+
+
+
 template<typename T,Integer Rows,Integer Cols>
 class UnaryMinus<Matrix<T,Rows,Cols>> 
 {    
  public:       
  inline static void apply(Matrix<T,Rows,Cols>& A,const Matrix<T,Rows,Cols>& B)
   {
-   for(Integer ii=0;ii<Rows;ii++)
-    for(Integer jj=0;jj<Cols;jj++)
-           A(ii,jj)=-B(ii,jj);
+   UnaryMinusMatrixAndTransposedAux<Matrix<T,Rows,Cols>>::apply(A,B);
+  };
+
+};
+
+template<typename T,Integer Rows,Integer Cols>
+class UnaryMinus<Transposed<Matrix<T,Cols,Rows>>> 
+{    
+ public:       
+using Output=OperatorType<UnaryMinus<Transposed<Matrix<T,Cols,Rows>>>>;
+ inline static void apply(Output& A,const Transposed<Matrix<T,Cols,Rows>>& B)
+  {
+   UnaryMinusMatrixAndTransposedAux<Transposed<Matrix<T,Cols,Rows>>>::apply(A,B);
+   std::cout<<A<<B<<std::endl;
+  };
+
+};
+
+
+
+
+
+
+
+
+
+
+template<typename Left,typename Right>
+class AdditionMatrixAndTransposedAux
+{
+public:
+ using Output=OperatorType<Addition<Left,Right> >;
+ inline static void apply(Output& A,const Left& B,const Right& C)
+  {
+   for(Integer ii=0;ii<Left::Rows;ii++)
+    for(Integer jj=0;jj<Left::Cols;jj++)
+           A(ii,jj)=B(ii,jj)+C(ii,jj);
+    std::cout<<"after AdditionMatrixAndTransposedAux<Transposed"<<std::endl;
   };
 };
 
@@ -372,64 +491,207 @@ template<typename T,Integer Rows,Integer Cols>
 class Addition<Matrix<T,Rows,Cols>,Matrix<T,Rows,Cols>> 
 {       
  public: 
+ using Left=Matrix<T,Rows,Cols>;
+ using Right=Matrix<T,Rows,Cols>;
+ using Output=OperatorType<Addition<Left,Right> >;
 
- inline static void apply(      Matrix<T,Rows,Cols>& A,
-                          const Matrix<T,Rows,Cols>& B)
+ inline static void apply(      Output& A,
+                          const Left& B,
+                          const Right& C)
   {
-   for(Integer ii=0;ii<Rows;ii++)
-    for(Integer jj=0;jj<Cols;jj++)
-    {
-     A(ii,jj)=A(ii,jj)+B(ii,jj);
-    }
-  };
-
- inline static void apply(      Matrix<T,Rows,Cols>& A,
-                          const Matrix<T,Rows,Cols>& B,
-                          const Matrix<T,Rows,Cols>& C)
-  {
-   for(Integer ii=0;ii<Rows;ii++)
-    for(Integer jj=0;jj<Cols;jj++)
-    {
-     A(ii,jj)=B(ii,jj)+C(ii,jj);
-    }
+        AdditionMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
   };
 };
 
 template<typename T,Integer Rows,Integer Cols>
-class Subtraction<Matrix<T,Rows,Cols>,Matrix<T,Rows,Cols>> 
+class Addition<Transposed<Matrix<T,Cols,Rows>>,Matrix<T,Rows,Cols>> 
 {       
- public:     
+ public: 
+ using Left=Transposed<Matrix<T,Cols,Rows>>;
+ using Right=Matrix<T,Rows,Cols>;
+ using Output=OperatorType<Addition<Left,Right> >;
 
- inline static void apply(      Matrix<T,Rows,Cols>& A,
-                          const Matrix<T,Rows,Cols>& B)
+ inline static void apply(      Output& A,
+                          const Left& B,
+                          const Right& C)
   {
-   for(Integer ii=0;ii<Rows;ii++)
-    for(Integer jj=0;jj<Cols;jj++)
-    {
-     A(ii,jj)=A(ii,jj)-B(ii,jj);
-    }
-  };
-
- inline static void apply(      Matrix<T,Rows,Cols>& A,
-                          const Matrix<T,Rows,Cols>& B,
-                          const Matrix<T,Rows,Cols>& C)
-  {
-   for(Integer ii=0;ii<Rows;ii++)
-    for(Integer jj=0;jj<Cols;jj++)
-    {
-     A(ii,jj)=B(ii,jj)-C(ii,jj);
-    }
+        AdditionMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
   };
 };
 
-template<Integer Rows1,Integer Cols1,Integer Rows2,Integer Cols2>
-class Multiplication<Matrix<Real,Rows1,Cols1>,
-                     Matrix<Real,Rows2,Cols2>> 
-{    
- public:      
- using Output=OperatorType<Multiplication<Matrix<Real,Rows1,Cols1>,Matrix<Real,Rows2,Cols2>> >;
- using Left=Matrix<Real,Rows1,Cols1>;
- using Right=Matrix<Real,Rows2,Cols2>;
+
+template<typename T,Integer Rows,Integer Cols>
+class Addition<Matrix<T,Rows,Cols>,Transposed<Matrix<T,Cols,Rows>>> 
+{       
+ public: 
+ using Left=Matrix<T,Rows,Cols>;
+ using Right=Transposed<Matrix<T,Cols,Rows>>;
+ using Output=OperatorType<Addition<Left,Right> >;
+
+
+ inline static void apply(      Output& A,
+                          const Left& B,
+                          const Right& C)
+  {
+        AdditionMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
+  };
+};
+
+template<typename T,Integer Rows,Integer Cols>
+class Addition<Transposed<Matrix<T,Cols,Rows>>,Transposed<Matrix<T,Cols,Rows>>> 
+{       
+ public: 
+ using Left=Transposed<Matrix<T,Cols,Rows>>;
+ using Right=Transposed<Matrix<T,Cols,Rows>>;
+ using Output=OperatorType<Addition<Left,Right> >;
+
+ inline static void apply(      Output& A,
+                          const Left& B,
+                          const Right& C)
+  {
+        AdditionMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
+  };
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename Left,typename Right>
+class SubtractionMatrixAndTransposedAux
+{
+public:
+ using Output=OperatorType<Addition<Left,Right> >;
+ inline static void apply(Output& A,const Left& B,const Right& C)
+  {
+   for(Integer ii=0;ii<Left::Rows;ii++)
+    for(Integer jj=0;jj<Left::Cols;jj++)
+           A(ii,jj)=B(ii,jj)-C(ii,jj);
+    std::cout<<"after SubtractionMatrixAndTransposedAux<Transposed"<<std::endl;
+  };
+};
+
+
+
+
+template<typename T,Integer Rows,Integer Cols>
+class Subtraction<Matrix<T,Rows,Cols>,Matrix<T,Rows,Cols>> 
+{       
+ public: 
+ using Left=Matrix<T,Rows,Cols>;
+ using Right=Matrix<T,Rows,Cols>;
+ using Output=OperatorType<Subtraction<Left,Right> >;
+
+ inline static void apply(      Output& A,
+                          const Left& B,
+                          const Right& C)
+  {
+        SubtractionMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
+  };
+};
+
+template<typename T,Integer Rows,Integer Cols>
+class Subtraction<Transposed<Matrix<T,Cols,Rows>>,Matrix<T,Rows,Cols>> 
+{       
+ public: 
+ using Left=Transposed<Matrix<T,Cols,Rows>>;
+ using Right=Matrix<T,Rows,Cols>;
+ using Output=OperatorType<Subtraction<Left,Right> >;
+
+ inline static void apply(      Output& A,
+                          const Left& B,
+                          const Right& C)
+  {
+        SubtractionMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
+  };
+};
+
+
+template<typename T,Integer Rows,Integer Cols>
+class Subtraction<Matrix<T,Rows,Cols>,Transposed<Matrix<T,Cols,Rows>>> 
+{       
+ public: 
+ using Left=Matrix<T,Rows,Cols>;
+ using Right=Transposed<Matrix<T,Cols,Rows>>;
+ using Output=OperatorType<Subtraction<Left,Right> >;
+
+
+ inline static void apply(      Output& A,
+                          const Left& B,
+                          const Right& C)
+  {
+        SubtractionMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
+  };
+};
+
+template<typename T,Integer Rows,Integer Cols>
+class Subtraction<Transposed<Matrix<T,Cols,Rows>>,Transposed<Matrix<T,Cols,Rows>>> 
+{       
+ public: 
+ using Left=Transposed<Matrix<T,Cols,Rows>>;
+ using Right=Transposed<Matrix<T,Cols,Rows>>;
+ using Output=OperatorType<Subtraction<Left,Right> >;
+
+ inline static void apply(      Output& A,
+                          const Left& B,
+                          const Right& C)
+  {
+        SubtractionMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
+  };
+};
+
+
+
+
+
+
+// template<typename T,Integer Rows,Integer Cols>
+// class Subtraction<Matrix<T,Rows,Cols>,Matrix<T,Rows,Cols>> 
+// {       
+//  public:     
+
+//  // inline static void apply(      Matrix<T,Rows,Cols>& A,
+//  //                          const Matrix<T,Rows,Cols>& B)
+//  //  {
+//  //   for(Integer ii=0;ii<Rows;ii++)
+//  //    for(Integer jj=0;jj<Cols;jj++)
+//  //    {
+//  //     A(ii,jj)=A(ii,jj)-B(ii,jj);
+//  //    }
+//  //  };
+
+//  inline static void apply(      Matrix<T,Rows,Cols>& A,
+//                           const Matrix<T,Rows,Cols>& B,
+//                           const Matrix<T,Rows,Cols>& C)
+//   {
+//    for(Integer ii=0;ii<Rows;ii++)
+//     for(Integer jj=0;jj<Cols;jj++)
+//     {
+//      A(ii,jj)=B(ii,jj)-C(ii,jj);
+//     }
+//   };
+// };
+
+
+
+
+
+template<typename Left, typename Right>
+class MultiplicationMatrixAndTransposedAux
+{
+public:
+ using Output=OperatorType<Multiplication<Left,Right> >;
 
  template<Integer M1,Integer N1,Integer M2, Integer N2>
  class apply_aux
@@ -437,13 +699,11 @@ class Multiplication<Matrix<Real,Rows1,Cols1>,
   public:
   inline constexpr static void apply(Output& A,const Left& B,const Right& C)
   {
-      std::cout<<" multiply "<<B<<std::endl;
-  std::cout<<" multiply Integer M1,Integer N1,Integer M2, Integer N2"<<C<<std::endl;
-   for(Integer ii=0;ii<Rows1;ii++)
-    for(Integer jj=0;jj<Cols2;jj++)
+   for(Integer ii=0;ii<Left::Rows;ii++)
+    for(Integer jj=0;jj<Right::Cols;jj++)
        {
         A(ii,jj)=B(ii,0)*C(0,jj);
-        for(Integer cc=1;cc<Cols1;cc++)
+        for(Integer cc=1;cc<Left::Cols;cc++)
            A(ii,jj)+=B(ii,cc)*C(cc,jj);
        }
   }
@@ -455,10 +715,8 @@ template<Integer M2, Integer N2>
   public:
   inline constexpr static void apply(Output& A,const Left& B,const Right& C)  
    {
-      std::cout<<" multiply "<<B<<std::endl;
-  std::cout<<" multiply 1,1,M2,N2"<<C<<std::endl;
-   for(Integer ii=0;ii<Rows2;ii++)
-    for(Integer jj=0;jj<Cols2;jj++)
+   for(Integer ii=0;ii<Right::Rows;ii++)
+    for(Integer jj=0;jj<Right::Cols;jj++)
         A(ii,jj)=B(0,0)*C(ii,jj);
   };
   
@@ -470,10 +728,8 @@ template<Integer M1, Integer N1>
   public:
   inline constexpr static void apply(Output& A,const Left& B,const Right& C)  
    {
-      std::cout<<" multiply "<<B<<std::endl;
-  std::cout<<" multiply M1,N1,1,1"<<C<<std::endl;
-   for(Integer ii=0;ii<Rows1;ii++)
-    for(Integer jj=0;jj<Cols1;jj++)
+   for(Integer ii=0;ii<Left::Rows;ii++)
+    for(Integer jj=0;jj<Left::Cols;jj++)
         A(ii,jj)=B(ii,jj)*C(0,0);
   };
   
@@ -488,13 +744,129 @@ template<>
   
  };
 
- inline constexpr static void apply(Output& A,const Left& B,const Right& C)
+ inline constexpr static void apply(Output& A,
+                                    const Left& B,
+                                    const Right& C)
   {
-    apply_aux<Rows1,Cols1,Rows2,Cols2>::apply(A,B,C);
+    apply_aux<Left::Rows,Left::Cols,Right::Rows,Right::Cols>::apply(A,B,C);
+  };
+
+};
+
+
+
+
+template<Integer Rows1,Integer Cols1,Integer Rows2,Integer Cols2>
+class Multiplication<Matrix<Real,Rows1,Cols1>,
+                     Matrix<Real,Rows2,Cols2>> 
+{    
+ public:      
+ 
+ using Left=Matrix<Real,Rows1,Cols1>;
+ using Right=Matrix<Real,Rows2,Cols2>;
+ using Output=OperatorType<Multiplication<Left,Right> >;
+
+//  template<Integer M1,Integer N1,Integer M2, Integer N2>
+//  class apply_aux
+//  {
+//   public:
+//   inline constexpr static void apply(Output& A,const Left& B,const Right& C)
+//   {
+//    for(Integer ii=0;ii<Rows1;ii++)
+//     for(Integer jj=0;jj<Cols2;jj++)
+//        {
+//         A(ii,jj)=B(ii,0)*C(0,jj);
+//         for(Integer cc=1;cc<Cols1;cc++)
+//            A(ii,jj)+=B(ii,cc)*C(cc,jj);
+//        }
+//   }
+//  };
+
+// template<Integer M2, Integer N2>
+//  class apply_aux<1,1,M2,N2>
+//  {
+//   public:
+//   inline constexpr static void apply(Output& A,const Left& B,const Right& C)  
+//    {
+//    for(Integer ii=0;ii<Rows2;ii++)
+//     for(Integer jj=0;jj<Cols2;jj++)
+//         A(ii,jj)=B(0,0)*C(ii,jj);
+//   };
+  
+//  };
+
+// template<Integer M1, Integer N1>
+//  class apply_aux<M1,N1,1,1>
+//  {
+//   public:
+//   inline constexpr static void apply(Output& A,const Left& B,const Right& C)  
+//    {
+//    for(Integer ii=0;ii<Rows1;ii++)
+//     for(Integer jj=0;jj<Cols1;jj++)
+//         A(ii,jj)=B(ii,jj)*C(0,0);
+//   };
+  
+//  };
+
+// template<>
+//  class apply_aux<1,1,1,1>
+//  {
+//  public:
+//   inline constexpr static void apply(Output& A,const Left& B,const Right& C)  
+//    {A(0,0)=B(0,0)*C(0,0);};
+  
+//  };
+
+ inline constexpr static void apply(Output& A,
+                                    const Left& B,
+                                    const Right& C)
+  {
+    // apply_aux<Rows1,Cols1,Rows2,Cols2>::apply(A,B,C);
+    MultiplicationMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
+
   };
 
 
 };
+
+template<Integer Rows1,Integer Cols1,Integer Rows2,Integer Cols2>
+class Multiplication<Matrix<Real,Rows1,Cols1>,
+                     Transposed<Matrix<Real,Cols2,Rows2>>> 
+{    
+ public:      
+ 
+ using Left=Matrix<Real,Rows1,Cols1>;
+ using Right=Transposed<Matrix<Real,Cols2,Rows2>>;
+ using Output=OperatorType<Multiplication<Left,Right> >;
+
+inline constexpr static void apply(Output& A,
+                                    const Left& B,
+                                    const Right& C)
+  {
+    MultiplicationMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
+  };
+
+
+};
+
+
+
+
+
+template<typename Left,typename Right>
+class DivisionMatrixAndTransposedAux
+{
+public:
+ using Output=OperatorType<Division<Left,Right> >;
+ inline static void apply(Output& A,const Left& B,const Right& C)
+  {
+   for(Integer ii=0;ii<Left::Rows;ii++)
+    for(Integer jj=0;jj<Left::Cols;jj++)
+           A(ii,jj)=B(ii,jj)/C(0,0);
+  };
+};
+
+
 
 
 template<Integer Rows,Integer Cols>
@@ -503,16 +875,65 @@ class Division<Matrix<Real,Rows,Cols>,
 
 {
   public:
- using Output=OperatorType<Multiplication<Matrix<Real,Rows,Cols>,Matrix<Real,1,1>> >;
- using Left=Matrix<Real,Rows,Cols>;
- using Right=Matrix<Real,1,1>;
+  using Left=Matrix<Real,Rows,Cols>;
+  using Right=Matrix<Real,1,1>;
+  using Output=OperatorType<Multiplication<Left,Right> >;
 
   inline static void apply(Output& A,const Left& B,const Right& C)
   {
-  // TODO FIXME IMPLEMENT HERE
-    for(Integer ii=0;ii<Rows;ii++)
-      for(Integer jj=0;jj<Cols;jj++)
-        A(ii,jj)=B(ii,jj)/C(0,0);
+  DivisionMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
+  }
+};
+
+
+template<Integer Rows,Integer Cols>
+class Division<Transposed<Matrix<Real,Rows,Cols>>,
+               Matrix<Real,1,1>> 
+
+{
+  public:
+  using Left=Transposed<Matrix<Real,Rows,Cols>>;
+  using Right=Matrix<Real,1,1>;
+  using Output=OperatorType<Multiplication<Left,Right> >;
+
+  inline static void apply(Output& A,const Left& B,const Right& C)
+  {
+  DivisionMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
+  }
+};
+
+
+template<Integer Rows,Integer Cols>
+class Division<Matrix<Real,Rows,Cols>,
+               Transposed<Matrix<Real,1,1>>> 
+
+{
+  public:
+  using Left=Matrix<Real,Rows,Cols>;
+  using Right=Transposed<Matrix<Real,1,1>>;
+  using Output=OperatorType<Multiplication<Left,Right> >;
+
+  inline static void apply(Output& A,const Left& B,const Right& C)
+  {
+  DivisionMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
+  }
+};
+
+
+
+template<Integer Rows,Integer Cols>
+class Division<Transposed<Matrix<Real,Rows,Cols>>,
+               Transposed<Matrix<Real,1,1>>> 
+
+{
+  public:
+  using Left=Transposed<Matrix<Real,Rows,Cols>>;
+  using Right=Transposed<Matrix<Real,1,1>>;
+  using Output=OperatorType<Multiplication<Left,Right> >;
+
+  inline static void apply(Output& A,const Left& B,const Right& C)
+  {
+  DivisionMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
   }
 };
 
@@ -531,9 +952,22 @@ class UnaryPlus<QPValues<U,NQPoints>>
                           const QPValues<U,NQPoints>& B)
   {
    for(Integer qp=0;qp<NQPoints;qp++)
-        UnaryPlus<U>::apply(A[qp],B[qp]);
+        {
+          // UnaryPlus<U>::apply(A[qp],B[qp]);
+          Plus(A[qp],B[qp]);
+        }
   };
 };
+
+
+
+
+
+
+
+
+
+
 
 template<typename U,Integer NQPoints>
 class UnaryMinus<QPValues<U,NQPoints>> 
@@ -543,38 +977,48 @@ class UnaryMinus<QPValues<U,NQPoints>>
                           const QPValues<U,NQPoints>& B)
   {
    for(Integer qp=0;qp<NQPoints;qp++)
-        UnaryMinus<U>::apply(A[qp],B[qp]);
+        {
+          // UnaryMinus<U>::apply(A[qp],B[qp]);
+          Minus(A[qp],B[qp]);
+        }
   };
 };
 
 
 
-template<typename U,Integer NQPoints>
+template<typename U,typename V, Integer NQPoints>
 class Addition<QPValues<U,NQPoints>,
-               QPValues<U,NQPoints>> 
+               QPValues<V,NQPoints>> 
 {       
  public:               
- inline static void apply(      QPValues<U,NQPoints>& A,
+ inline static void apply(      QPValues<OperatorType<Addition<U,V>>,NQPoints>& A,
                           const QPValues<U,NQPoints>& B,
-                          const QPValues<U,NQPoints>& C)
+                          const QPValues<V,NQPoints>& C)
   {
    for(Integer qp=0;qp<NQPoints;qp++)
-        Addition<U,U>::apply(A[qp],B[qp],C[qp]);
+    {
+      // Addition<U,V>::apply(A[qp],B[qp],C[qp]);
+      Add(A[qp],B[qp],C[qp]);
+    }    
+    
   };
 
 };
 
-template<typename U,Integer NQPoints>
+template<typename U,typename V, Integer NQPoints>
 class Subtraction<QPValues<U,NQPoints>,
-                  QPValues<U,NQPoints>> 
+                  QPValues<V,NQPoints>> 
 {       
  public:               
- inline static void apply(      QPValues<U,NQPoints>& A,
+ inline static void apply(      QPValues<OperatorType<QPValues<U,NQPoints>>,NQPoints>& A,
                           const QPValues<U,NQPoints>& B,
-                          const QPValues<U,NQPoints>& C)
+                          const QPValues<V,NQPoints>& C)
   {
    for(Integer qp=0;qp<NQPoints;qp++)
-        Subtraction<U,U>::apply(A[qp],B[qp],C[qp]);
+        {
+          // Subtraction<U,V>::apply(A[qp],B[qp],C[qp]);
+          Subtract(A[qp],B[qp],C[qp]);
+        }
   };
 
 };
@@ -589,8 +1033,14 @@ class Multiplication<QPValues<U,NQPoints>,
                           const QPValues<U,NQPoints>& B,
                           const QPValues<V,NQPoints>& C)
   {
+    // OperatorType<Multiplication<U,V>> oo(6,7,8,5);
+    // U ok(1);
+    // V ok2(3);
    for(Integer qp=0;qp<NQPoints;qp++)
-        Multiplication<U,V>::apply(A[qp],B[qp],C[qp]);
+      {
+        // Multiplication<U,V>::apply(A[qp],B[qp],C[qp]);
+        Multiply(A[qp],B[qp],C[qp]);
+      }
   };
 };
 
@@ -605,7 +1055,11 @@ class Division<QPValues<U,NQPoints>,
                           const QPValues<V,NQPoints>& C)
   {
    for(Integer qp=0;qp<NQPoints;qp++)
-        Division<U,V>::apply(A[qp],B[qp],C[qp]);
+        {
+          // Division<U,V>::apply(A[qp],B[qp],C[qp]);
+          Divide(A[qp],B[qp],C[qp]);
+        }
+
   };
 };
 
@@ -625,51 +1079,74 @@ class UnaryPlus< FQPValues<U,NQPoints,Ndofs>>
   {
   for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
      for(Integer qp=0;qp<NQPoints;qp++)
-       {UnaryPlus<U>::apply(A(n_dof,qp),B(n_dof,qp));}
+       {
+        // UnaryPlus<U>::apply(A(n_dof,qp),B(n_dof,qp));
+        Plus(A(n_dof,qp),B(n_dof,qp));
+       }
   };
 };
 
 template<typename U, Integer NQPoints,Integer Ndofs>
-class UnaryMinus< FQPValues<U,NQPoints,Ndofs>> 
+class UnaryMinus<FQPValues<U,NQPoints,Ndofs>> 
 {       
  public:               
- inline static void apply(FQPValues<U,NQPoints,Ndofs>& A,const FQPValues<U,NQPoints,Ndofs>& B)
+ template<typename V>
+ inline static void apply(FQPValues<V,NQPoints,Ndofs>& A,const FQPValues<U,NQPoints,Ndofs>& B)
   {
+    // FQPValues<U,NQPoints,Ndofs> ok1(1);
+    // FQPValues<U,NQPoints,Ndofs> ok2(2);
+ // U ok(1,2,3,4,5,6,7);// transposed 
+ // V ok3(4,5,6); // transposed
+  std::cout<<"__________pre UnaryMinus< FQPValues<U,NQPoints,Ndofs>> "<<std::endl;
   for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
      for(Integer qp=0;qp<NQPoints;qp++)
-       {UnaryMinus<U>::apply(A(n_dof,qp),B(n_dof,qp));}
+       {
+        // UnaryMinus<U>::apply(A(n_dof,qp),B(n_dof,qp));
+        Minus(A(n_dof,qp),B(n_dof,qp));
+        // std::cout<<"B(n_dof,qp)="<<B(n_dof,qp)<<std::endl;
+        // std::cout<<"A(n_dof,qp)="<<A(n_dof,qp)<<std::endl;
+       }
+  std::cout<<"__________after UnaryMinus< FQPValues<U,NQPoints,Ndofs>> "<<std::endl;
+  // std::cout<<B<<std::endl;
+  // std::cout<<A<<std::endl;
   };
 };
 
-template<typename U, Integer NQPoints,Integer Ndofs>
+template<typename U, typename V, Integer NQPoints,Integer Ndofs>
 class Addition< FQPValues<U,NQPoints,Ndofs>,
-                FQPValues<U,NQPoints,Ndofs>> 
+                FQPValues<V,NQPoints,Ndofs>> 
 {       
  public:               
- inline static void apply(      FQPValues<U,NQPoints,Ndofs>& A,
+ inline static void apply(      FQPValues<OperatorType<Addition<U,V>>,NQPoints,Ndofs>& A,
                           const FQPValues<U,NQPoints,Ndofs>& B,
-                          const FQPValues<U,NQPoints,Ndofs>& C)
+                          const FQPValues<V,NQPoints,Ndofs>& C)
   {
   for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
    for(Integer qp=0;qp<NQPoints;qp++)
-    {Addition<U,U>::apply(A(n_dof,qp),B(n_dof,qp),C(n_dof,qp));}
+    {
+      // Addition<U,V>::apply(A(n_dof,qp),B(n_dof,qp),C(n_dof,qp));
+      Add(A(n_dof,qp),B(n_dof,qp),C(n_dof,qp));
+    }
   };
 
 
 };
 
-template<typename U, Integer NQPoints,Integer Ndofs>
+template<typename U, typename V, Integer NQPoints,Integer Ndofs>
 class Subtraction< FQPValues<U,NQPoints,Ndofs>,
-                   FQPValues<U,NQPoints,Ndofs>> 
+                   FQPValues<V,NQPoints,Ndofs>> 
 {       
  public:               
- inline static void apply(      FQPValues<U,NQPoints,Ndofs>& A,
+ inline static void apply(      FQPValues<OperatorType<Subtraction<U,V>>,NQPoints,Ndofs>& A,
                           const FQPValues<U,NQPoints,Ndofs>& B,
-                          const FQPValues<U,NQPoints,Ndofs>& C)
+                          const FQPValues<V,NQPoints,Ndofs>& C)
   {
   for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
    for(Integer qp=0;qp<NQPoints;qp++)
-      {Subtraction<U,U>::apply(A(n_dof,qp),B(n_dof,qp),C(n_dof,qp));}
+      {
+        // Subtraction<U,V>::apply(A(n_dof,qp),B(n_dof,qp),C(n_dof,qp));
+        Subtract(A(n_dof,qp),B(n_dof,qp),C(n_dof,qp));
+      }
   };
 };
 
@@ -678,7 +1155,18 @@ class Subtraction< FQPValues<U,NQPoints,Ndofs>,
 
 
 
-
+// template<template<class...>class Nary, typename...Ts>
+// class UnaryMinus< Nary<Ts...>> 
+// {       
+//  public:              
+//  using type= 
+//  inline static void apply(FQPValues<U,NQPoints,Ndofs>& A,const FQPValues<U,NQPoints,Ndofs>& B)
+//   {
+//   for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+//      for(Integer qp=0;qp<NQPoints;qp++)
+//        {UnaryMinus<U>::apply(A(n_dof,qp),B(n_dof,qp));}
+//   };
+// };
 
 
 
@@ -841,12 +1329,14 @@ class Division<FQPValues<S,NQPoints,Ndofs>,
 
 // };
 
+template<typename S,typename T>
+constexpr void Assign(S& t,const T& constt){Assignment<T>::apply(t,constt);}
 
 template<typename T>
 constexpr void Plus(T& t,const T& constt){UnaryPlus<T>::apply(t,constt);}
 
-template<typename T>
-constexpr void Minus(T& t,const T& constt){UnaryMinus<T>::apply(t,constt);}
+template<typename U,typename V>
+constexpr void Minus(U& t,const V& constt){UnaryMinus<V>::apply(t,constt);}
 
 template<typename U,typename V,typename W>
 constexpr void Add(U& u, const V& v, const W& w){Addition<V,W>::apply(u,v,w);}
@@ -915,6 +1405,7 @@ class Addition< Expression <DerivedLeft>, Expression <DerivedRight> >
     {};
     const constexpr Left& left()const{return left_;};
     const constexpr Right& right()const{return right_;};
+    // todo fixme this is to return the same object 
           auto operator()(){return Addition<Expression<Left>,Expression<Right>>(left_,right_);};
           auto operator()()const{return Addition<Expression<Left>,Expression<Right>>(left_,right_);};
   private:
@@ -1013,18 +1504,6 @@ class Multiplication< Expression <DerivedLeft>, Expression <DerivedRight> >
 
 
 
-// template< typename DerivedLeft>
-// class Multiplication< Expression <DerivedLeft>, Real > 
-// operator*(const Expression<DerivedLeft>&left, const Real&right)
-// {return Multiplication< Expression <DerivedLeft>, Real > (left,right);}
-
-// template< typename DerivedRight>
-// class Multiplication< Real, Expression <DerivedRight> >
-// operator*(const Real&left, const Expression<DerivedRight>&right)
-// {return Multiplication< Real, Expression <DerivedRight> >(left,right);}
-
-
-
 
 template< typename Derived>
 class UnaryPlus< Expression <Derived> >
@@ -1104,7 +1583,10 @@ class Evaluation<Expression<UnaryPlus< Expression<Derived> > >,OtherTemplateArgu
  public:
  using type=UnaryPlus<Expression<Derived>>;
  using Eval=Evaluation<Expression<Derived>,OtherTemplateArguments...>;
- using subtype= OperatorType<type,OtherTemplateArguments...>;
+ // using subtype= OperatorType<type,OtherTemplateArguments...>;
+ using subtype= OperatorType<Derived,OtherTemplateArguments...>;
+ using outputsubtype= OperatorType<type,OtherTemplateArguments...>;
+
  Evaluation(){};
  
 
@@ -1116,9 +1598,13 @@ class Evaluation<Expression<UnaryPlus< Expression<Derived> > >,OtherTemplateArgu
  template<typename...Inputs>
  void apply(subtype& output,const Inputs&...inputs)
  {
+  // subtype ok1(1);
+  // outputsubtype ok2(2);
   // compute output
   // eval_.template apply<OtherTemplateArguments2...>(output,inputs...);
   
+  // subtype ok1;//(1,2,3,8,8,9);
+  // type ok2;//(2,4,5,6,6,7,8);
   eval_.apply(output,inputs...);
   std::cout<<"Evaluation<Expression<UnaryPlus "<<output<<std::endl;
   // apply plus to output (we assume it does not change, so we do not compute)
@@ -1132,12 +1618,15 @@ private:
 
 
 template<typename Derived,typename...OtherTemplateArguments>
-class Evaluation<Expression<UnaryMinus< Expression<Derived> > >,OtherTemplateArguments...>
+class Evaluation<Expression<UnaryMinus<Expression<Derived> > >,OtherTemplateArguments...>
 {
  public:
  using type=UnaryMinus<Expression<Derived>>;
  using Eval=Evaluation<Expression<Derived>,OtherTemplateArguments...>;
- using subtype= OperatorType<type,OtherTemplateArguments...>;
+ using subtype= OperatorType<Derived,OtherTemplateArguments...>;
+ using outputsubtype= OperatorType<type,OtherTemplateArguments...>;
+  // using subtype= OperatorType<type,OtherTemplateArguments...>;
+
  Evaluation(){};
  
  Evaluation(const Expression<type>& expr):
@@ -1146,15 +1635,20 @@ class Evaluation<Expression<UnaryMinus< Expression<Derived> > >,OtherTemplateArg
  {};
  
  template<typename...Inputs>
- void apply(subtype& output,const Inputs&...inputs)
+ void apply(outputsubtype& output,const Inputs&...inputs)
  {
   
   // compute output
+  // outputsubtype eee(6);
+  // subtype oooo(5);
     // eval_.template apply<OtherTemplateArguments2...>(output,inputs...);
+   std::cout<<"pre eval Evaluation<Expression<UnaryMinus "<<std::endl;
   eval_.apply(derived_value_,inputs...);
-
+  std::cout<<"pre MINUS Evaluation<Expression<UnaryMinus "<<std::endl;
   Minus(output,derived_value_);
-  std::cout<<"Evaluation<Expression<UnaryMinus "<<output<<std::endl;
+  std::cout<<"after MINUS Evaluation<Expression<UnaryMinus "<<std::endl;
+  std::cout<<"derived_value_="<<derived_value_<<std::endl;
+  std::cout<<"output="<<output<<std::endl;
   // apply minus to output
   // Minus(output,tmp);
  }
@@ -1170,52 +1664,55 @@ private:
 //// Specialization for -(-X)=X. The evaluation is simply X.
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-template<typename Derived,typename...OtherTemplateArguments>
-class Evaluation<Expression<UnaryMinus< Expression<UnaryMinus< Expression<Derived> >> > >,OtherTemplateArguments... >
-{
- public:
- using type=UnaryPlus<Expression<Derived>>;
- using Eval=Evaluation<Expression<Derived>,OtherTemplateArguments...>;
- using subtype= OperatorType<type,OtherTemplateArguments...>;
- Evaluation(){};
+// template<typename Derived,typename...OtherTemplateArguments>
+// class Evaluation<Expression<UnaryMinus< Expression<UnaryMinus< Expression<Derived> >> > >,OtherTemplateArguments... >
+// {
+//  public:
+//  using type=UnaryPlus<Expression<Derived>>;
+//  using Eval=Evaluation<Expression<Derived>,OtherTemplateArguments...>;
+//  using subtype= OperatorType<type,OtherTemplateArguments...>;
+//  Evaluation(){};
  
 
- Evaluation(const Expression<type>& expr):
- expr_(expr.derived()),
- eval_(Eval(expr_()))
- {};
+//  Evaluation(const Expression<type>& expr):
+//  expr_(expr.derived()),
+//  eval_(Eval(expr_()))
+//  {};
  
- template<typename...Inputs>
- void apply(subtype& output,const Inputs&...inputs)
- {
-  // compute output
-  // eval_.template apply<OtherTemplateArguments2...>(output,inputs...);
+//  template<typename...Inputs>
+//  void apply(subtype& output,const Inputs&...inputs)
+//  {
+//   // compute output
+//   // eval_.template apply<OtherTemplateArguments2...>(output,inputs...);
+//   std::cout<<"pre Evaluation<Expression<UnaryMinus<UnaryMinus "<<output<<std::endl;
+//   eval_.apply(output,inputs...);
+//   std::cout<<"after Evaluation<Expression<UnaryMinus<UnaryMinus "<<output<<std::endl;
+//   // apply plus to output (we assume it does not change, so we do not compute)
+//   // Derived(output);
+//  }
+// private:
 
-  eval_.apply(output,inputs...);
-  std::cout<<"Evaluation<Expression<UnaryMinus<UnaryMinus "<<output<<std::endl;
-  // apply plus to output (we assume it does not change, so we do not compute)
-  // Derived(output);
- }
-private:
-
- type expr_;
- Eval eval_;
-};
+//  type expr_;
+//  Eval eval_;
+// };
 
 
 
 
 template<typename DerivedRight,typename DerivedLeft,typename...OtherTemplateArguments>
 class Evaluation<Expression<Addition< Expression<DerivedLeft>  ,  
-                                        Expression<DerivedRight>>>,
+                                      Expression<DerivedRight>>>,
                  OtherTemplateArguments...>
 {
  public:
  using type=Addition<Expression<DerivedLeft>,Expression<DerivedRight>>;
  using EvalLeft=Evaluation<Expression<DerivedLeft>,OtherTemplateArguments...>;
  using EvalRight=Evaluation<Expression<DerivedRight>,OtherTemplateArguments...>;
- using subtype=OperatorType<type,OtherTemplateArguments...>;
-
+ using subtypeleft=OperatorType<DerivedLeft,OtherTemplateArguments...>;
+ using subtyperight=OperatorType<DerivedRight,OtherTemplateArguments...>;
+ using subtype=OperatorType<Addition<subtypeleft,subtyperight>,OtherTemplateArguments...>;
+ // using subtype=OperatorType<type,OtherTemplateArguments...>;
+ // todo fixmeeeeeeeeeeee fix me FIX ME
  Evaluation(){};
  
 
@@ -1242,15 +1739,21 @@ class Evaluation<Expression<Addition< Expression<DerivedLeft>  ,
   
   eval_left_.apply(left_value_,inputs...);
   eval_right_.apply(right_value_,inputs...);
-  Add(output,left_value_,right_value_);
+
+// type oo(6);  
+  // subtypeleft ok1(1);
+  // subtyperight ok2(3);
+  //  subtype ok4(5);
+Add(output,left_value_,right_value_);
+
   std::cout<<"Evaluation<Expression<Addition "<<output<<std::endl;
 
  }
 private:
 
  type expr_;
- subtype left_value_;
- subtype right_value_;
+ subtypeleft left_value_;
+ subtyperight right_value_;
  EvalLeft eval_left_;
  EvalRight eval_right_;
 };
@@ -1264,7 +1767,11 @@ class Evaluation<Expression<Subtraction< Expression<DerivedLeft>  ,
  using type=Subtraction<Expression<DerivedLeft>,Expression<DerivedRight>>;
  using EvalLeft=Evaluation<Expression<DerivedLeft>,OtherTemplateArguments...>;
  using EvalRight=Evaluation<Expression<DerivedRight>,OtherTemplateArguments...>;
- using subtype=OperatorType<type,OtherTemplateArguments...>;
+ // using subtype=OperatorType<type,OtherTemplateArguments...>;
+ using subtypeleft=OperatorType<DerivedLeft,OtherTemplateArguments...>;
+ using subtyperight=OperatorType<DerivedRight,OtherTemplateArguments...>;
+ using subtype=OperatorType<Subtraction<subtypeleft,subtyperight>,OtherTemplateArguments...>;
+
  Evaluation(){};
  
 
@@ -1286,8 +1793,8 @@ class Evaluation<Expression<Subtraction< Expression<DerivedLeft>  ,
 private:
 
  type expr_;
- subtype left_value_;
- subtype right_value_;
+ subtypeleft left_value_;
+ subtyperight right_value_;
  EvalLeft eval_left_;
  EvalRight eval_right_;
 };
@@ -1675,7 +2182,7 @@ class Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions2<GeneralForm_,Gene
 
 template<typename Form,typename FullSpace, typename GeneralForm_, typename...GeneralForms>
 constexpr auto Eval(const GeneralForm<Form>& form, ShapeFunctions2<GeneralForm_,GeneralForms...>& shapes)
-{return Evaluation< Expression<GeneralForm<Form>>,ShapeFunctions2<GeneralForm_,GeneralForms...> >(form,shapes);}
+{return Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions2<GeneralForm_,GeneralForms...> >(form,shapes);}
 
 
 
@@ -1818,6 +2325,216 @@ private:
 
 template<typename Expr>
 constexpr auto NewOperator(const Expr& expr){return CompositeOperator<Expression<Expr>>(expr);}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename T>
+constexpr auto Transpose(const Expression<T>& t){return Transposed<Expression<T>>(t);}
+
+template<typename T>
+constexpr auto Transpose(const Expression<Transposed<Expression<T>>>& t){return T(t.derived().derived());}
+
+
+// template< typename Left_,typename Right_>
+// class Transposed< Expression<Addition< Expression <Left_>, Expression <Right_> > > >
+// : public Expression< Transposition< Expression<Addition< Expression <Left_>, Expression <Right_> > > > >
+// {
+//  public:
+//     using Left=Transposition<Left_>;
+//     using Right=Transposition<Right_>;
+
+//     Transposition(const Expression< Addition< Expression <Left_>,Expression <Right_> > >& addition)
+//     : 
+//     left_(Transpose(addition.left())),
+//     right_(Transpose(addition.right()))
+//     {};
+
+//     Transposition(const Expression <Left_>& left, const Expression <Right_> & right)
+//     : 
+//     left_(Transpose(left)),
+//     right_(Transpose(right))
+//     {};
+
+
+//     const constexpr Left& left()const{return left_;};
+//     const constexpr Right& right()const{return right_;};
+
+//     auto operator()()
+//     {return Transposition<Expression<Addition<Expression<Left_>,Expression<Right_>>>>(left_,right_);};
+
+//     auto operator()()const
+//     {return Transposition<Expression<Addition<Expression<Left_>,Expression<Right_>>>>(left_,right_);};
+//   private:
+//   Left left_;
+//   Right right_;
+// };
+
+
+
+// template<Integer Rows1,Integer Cols1,Integer Rows2,Integer Cols2>
+// class Multiplication<Transposition<Matrix<Real,Rows1,Cols1>>,
+//                      Matrix<Real,Rows2,Cols2>> 
+// {    
+//  public:      
+//  using Output=OperatorType<Multiplication<Matrix<Real,Rows1,Cols1>,Matrix<Real,Rows2,Cols2>> >;
+//  using Left=Matrix<Real,Rows1,Cols1>;
+//  using Right=Matrix<Real,Rows2,Cols2>;
+
+// };
+
+// template< typename Derived>
+// class UnaryPlus< Expression <Derived> > 
+// : public Expression< UnaryPlus< Expression <Derived> > >
+// {
+//   public:
+//     UnaryPlus(const Expression<Derived>& expr): value_(expr.derived()){};
+//     Derived& operator()(){return value_;};
+//     const constexpr Derived& operator()()const{return value_;};
+//     Derived& derived(){return value_;};
+//     const constexpr Derived& derived()const{return value_;};
+//   private:
+//   Derived value_;
+// };
+
+
+template<typename T>
+class Transposed<Expression<T>>: public Expression<Transposed<Expression<T>>>
+{
+public:
+
+    Transposed(const Expression<T>& expr): value_(expr.derived()){};
+    T& operator()(){return value_;};
+    const constexpr T& operator()()const{return value_;};
+    T& derived(){return value_;};
+    const constexpr T& derived()const{return value_;};
+
+
+  private:
+  T value_;
+};
+
+// template<typename T>
+// class Transposed<Expression<Transposed<Expression<T>>>>: public Expression<Expression<Transposed<Expression<T>>>>
+// {
+// public:
+
+//     Transposed(const Expression<T>& expr): value_(expr.derived()){};
+//     T& operator()(){return value_;};
+//     const constexpr T& operator()()const{return value_;};
+//     T& derived(){return value_;};
+//     const constexpr T& derived()const{return value_;};
+
+
+//   private:
+//   T value_;
+// };
+
+
+template<typename ConstType, typename...Ts, typename QuadratureRule>
+class Evaluation<Expression<Transposed<Expression<ConstantTensor<ConstType,Ts...>>>>,QuadratureRule>
+{
+public:
+ using T=ConstantTensor<ConstType,Ts...>;
+ using Eval=Evaluation<Expression<T>,QuadratureRule>;
+ // // here we must transpose
+ using type=Transposed<Expression<T>>;
+ using subtype_not_transposed= OperatorType<T,QuadratureRule>;
+ using subtype= OperatorType<type,QuadratureRule>;
+ // Evaluation(){};
+  Evaluation(const Expression<type>& expr)
+ :
+ expr_(expr)
+ ,
+ eval_(Eval(expr.derived().derived().derived())),
+ const_(expr.derived().derived().derived())
+ {};
+
+ 
+ template<typename...Inputs>
+ void apply(subtype& output,const Inputs&...inputs)
+ {
+
+  // const_.template qp_eval<QuadratureRule::NQPoints>();
+
+  // eval_.apply(output_tmp_,inputs...);
+  std::cout<<"Evaluation<Expression<Transposed<Expression<ConstantTensor"<<std::endl;
+  std::cout<<QuadratureRule::NQPoints<<std::endl;
+  std::cout<<const_.template qp_eval<QuadratureRule::NQPoints>()<<std::endl;
+  // Assignment<subtype>::apply(output,const_.template qp_eval<QuadratureRule::NQPoints>());
+  Assign(output,const_.template qp_eval<QuadratureRule::NQPoints>());
+
+
+   std::cout<<"output="<<output<<std::endl;
+
+  // Assignment<value_type>::apply(value,const_.template qp_eval<QuadratureRule::NQPoints>());
+ }
+private:
+ subtype_not_transposed output_tmp_;
+ type expr_;
+ Eval eval_;
+ T const_;
+
+};
+
+
+
+template<typename T,typename...OtherTemplateArguments>
+class Evaluation<Expression<Transposed<Expression<T>>>,OtherTemplateArguments...>
+{
+public:
+
+ using Eval=Evaluation<Expression<T>,OtherTemplateArguments...>;
+ // // here we must transpose
+ using type=Transposed<Expression<T>>;
+ using subtype_not_transposed= OperatorType<T,OtherTemplateArguments...>;
+ using subtype= OperatorType<type,OtherTemplateArguments...>;
+ // Evaluation(){};
+  Evaluation(const Expression<type>& expr)
+ :
+ expr_(expr)
+ ,
+ eval_(Eval(expr.derived().derived()))
+ {};
+
+ 
+ template<typename...Inputs>
+ void apply(subtype& output,const Inputs&...inputs)
+ {
+
+  eval_.apply(output_tmp_,inputs...);
+
+  Assignment<subtype>::apply(output,output_tmp_);
+
+ }
+private:
+ subtype_not_transposed output_tmp_;
+ type expr_;
+ Eval eval_;
+
+};
+
+
 
 
 

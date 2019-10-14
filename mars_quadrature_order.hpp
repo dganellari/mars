@@ -55,7 +55,8 @@ class Subtraction;
 template<typename...Parameters>
 class Addition;
 
-
+template<typename T>
+class Transposed;
 
 
 template<typename...T>
@@ -167,6 +168,12 @@ class QuadratureOrder< Contraction2< Expression<Left>, Expression<Right> >,Args.
                                  QuadratureOrder<Right,Args...>::value;
 };
 
+
+template<typename T, typename...Args>
+class QuadratureOrder< Transposed< Expression<T> >,Args... >
+{ public:
+  static constexpr Integer value=QuadratureOrder<T,Args...>::value;
+};
 
 
 template<Integer Order,Integer Continuity, Integer NComponents>

@@ -278,18 +278,22 @@ constexpr void value(const Point& point,Output& output);
 
   template<> 
      constexpr void value<Simplex<2,2>, GradientOperator, LagrangeFE, 1>
-     (const Vector<Real,2>& point, Vector<Vector<Real, 2>,3> & func)
+
+  //   (const Vector<Real,2>& point, Vector<Vector<Real, 2>,3> & func)
+
+     (const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,3> & func)
      {
       const auto& xi=point[0];
       const auto& eta=point[1];
       const Real zeta = 1. - xi - eta;
-      Vector<Vector<Real, 2>,3> func2({-1,-1},
+      Vector<Matrix<Real, 2, 1>,3> func2({-1,-1},
+      // Vector<Vector<Real, 2>,3> func2({-1,-1},
        {+1, 0},
        { 0,+1});     
       func=func2;
     }
-
-    //shape_function_coefficients_init for: Simplex<2,2>, LagrangeFE, 1
+//
+    // shape_function_coefficients_init for: Simplex<2,2>, LagrangeFE, 1
     // do nothing: lagrange shape functions do not need any coefficient
 
 
@@ -314,7 +318,8 @@ constexpr void value(const Point& point,Output& output);
 
   template<> 
       constexpr void value<Simplex<2,2>, GradientOperator, LagrangeFE, 2>
-      (const Vector<Real,2>& point, Vector<Vector<Real, 2>,6> & func)
+      // (const Vector<Real,2>& point, Vector<Vector<Real, 2>,6> & func)
+      (const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,6> & func)
       {
         const auto& xi=point[0];
         const auto& eta=point[1];
@@ -323,7 +328,8 @@ constexpr void value(const Point& point,Output& output);
         const Real deta_deta  = 1.;
         const Real dzeta_dxi  = -1.;
         const Real dzeta_deta = -1.;
-        Vector<Vector<Real, 2>,6> func2(
+        // Vector<Vector<Real, 2>,6> func2(
+        Vector<Matrix<Real, 2, 1>,6> func2(
           {2.*zeta*dzeta_dxi  + 2*dzeta_dxi *(zeta-0.5), 2.*zeta*dzeta_deta + 2*dzeta_deta*(zeta-0.5)}, 
           {2.*xi*dxi_dxi  + 2.*dxi_dxi *(xi-0.5),0},
           {0,2.*eta*deta_deta + 2.*deta_deta*(eta-0.5)}, 
@@ -499,10 +505,17 @@ public:
   static constexpr Integer Dim=FunctionSpace::Elem::Dim;
   using SingleType= typename
   std::conditional_t<(1==ShapeFunctionDim1 && 1==ShapeFunctionDim2),
-                      Vector<Real, Dim >,
+                      Matrix<Real, Dim , 1 >,//Vector<Real, Dim >,
                       Matrix<Real, ShapeFunctionDim1 , ShapeFunctionDim2 * Dim>
                   >;
-  using TotType= Matrix<Real, ShapeFunctionDim1 * NComponents, ShapeFunctionDim2 * Dim >;
+  using TotType=typename
+  std::conditional_t<(1==ShapeFunctionDim1 && 1==ShapeFunctionDim2 && NComponents==1),     
+                      Matrix<Real, Dim , 1 >,//Vector<Real, Dim >,
+                      // Matrix<Real, ShapeFunctionDim1 , ShapeFunctionDim2 * Dim>,
+                       Matrix<Real, ShapeFunctionDim1 * NComponents, ShapeFunctionDim2 * Dim >
+                  >;
+
+                  // Matrix<Real, ShapeFunctionDim1 * NComponents, ShapeFunctionDim2 * Dim >;
 };
 
 
@@ -567,6 +580,18 @@ class ShapeFunction: public Expression<ShapeFunction<Elem_,BaseFunctionSpace,Ope
     {
     const auto& map=(*map_ptr);
     const auto& mapping=map();
+    // decltype(func_values_) ok1(1);
+    // SingleType ok2(2);
+    // std::cout<<"NComponents="<<NComponents<<std::endl;
+    // std::cout<<"NQPoints="<<NQPoints<<std::endl;
+    
+    // std::cout<<"func_values_[0][0]"<<std::endl;
+    // std::cout<<func_values_[0][0]<<std::endl;
+    // std::cout<<"func_values_"<<std::endl;
+
+    // std::cout<<func_values_<<std::endl;
+    // std::cout<<"func_tmp_"<<std::endl;
+    // std::cout<<func_tmp_<<std::endl;
     for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
        {
         for(Integer n_comp=0;n_comp<NComponents;n_comp++)
@@ -576,13 +601,19 @@ class ShapeFunction: public Expression<ShapeFunction<Elem_,BaseFunctionSpace,Ope
             n_=n_comp*ShapeFunctionDim1;
             for(Integer qp=0;qp<NQPoints;qp++)
             {             
-                func_values_[n_tot_][qp].zero();
+              // std::cout<<"n_dof, n_comp, qp"<<std::endl;
+              // std::cout<< n_dof<< ", "<<n_comp<<", "<<qp<<std::endl;
+              func_values_[n_tot_][qp].zero();
               func_tmp_=  mapping * weighted_reference_values[n_dof][qp];
-              assign(func_values_[n_tot_][qp],func_tmp_,n_,0);
+
+              // se ncompontensts >1, allora assegni alla riga
+              assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
              }
                    
         }
        }
+
+       std::cout<<"init end"<<std::endl;
     }
 
    void init(const Vector<Real,Ndofs> &alpha)

@@ -73,9 +73,43 @@ class Function1
     }
 };
 
+class Vec2
+{
+    public: 
+    using type=Vector<Real,2>;
+
+    
+    static constexpr type eval(const Real& x1, const Real& x2)
+    {
+     return type(x1,x2); 
+    }
+};
 
 
 
+class Mat1
+{
+    public: 
+    using type=Matrix<Real,1,2>;
+
+    
+    static constexpr type eval(const Real& x1, const Real& x2)
+    {
+     return type(x1,x2); 
+    }
+};
+
+class Mat2
+{
+    public: 
+    using type=Matrix<Real,2,1>;
+
+    
+    static constexpr type eval(const Real& x1, const Real& x2)
+    {
+     return type(x1,x2); 
+    }
+};
 
 
 
