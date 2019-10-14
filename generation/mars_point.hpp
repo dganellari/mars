@@ -20,10 +20,11 @@ public:
 	MARS_INLINE_FUNCTION Point(SubView<T, Dim> pv) :
 			pointView(pv)
 	{
-		temp_=false;
+		temp_ = false;
 	}
 
-	MARS_INLINE_FUNCTION Point(ViewMatrixType<T> v, Integer id) : Point(SubView<T, Dim>(v,id))
+	MARS_INLINE_FUNCTION Point(ViewMatrixType<T> v, Integer id) :
+			Point(SubView<T, Dim>(v, id))
 	{
 
 	}
@@ -50,7 +51,8 @@ public:
 		return this->pointView[i];
 	}
 
-	MARS_INLINE_FUNCTION Point operator-(const Point &right) const
+	MARS_INLINE_FUNCTION
+	Point operator-(const Point &right) const
 	{
 		Point ret;
 		for (Integer i = 0; i < Dim; ++i)
@@ -61,7 +63,8 @@ public:
 		return ret;
 	}
 
-	MARS_INLINE_FUNCTION Point operator+(const Point &right) const
+	MARS_INLINE_FUNCTION
+	Point operator+(const Point &right) const
 	{
 		Point ret;
 		for (Integer i = 0; i < Dim; ++i)
@@ -73,34 +76,45 @@ public:
 		return ret;
 	}
 
-	MARS_INLINE_FUNCTION Point operator*(const Point &right) const
+	MARS_INLINE_FUNCTION
+	Point operator*(const Point &right) const
 	{
 		Point ret;
 		for (Integer i = 0; i < Dim; ++i)
 		{
 			ret[i] = this->operator[](i) * right[i];
-
 		}
 
 		return ret;
 	}
 
-
-	/*void describe(std::ostream &os) const
+	MARS_INLINE_FUNCTION
+	const Point &operator/(const T divident)
 	{
 		for (Integer i = 0; i < Dim; ++i)
 		{
-			os << this->view(this->index, i) << " ";
+			this->operator[](i) /= divident;
 		}
 
-		os << "\n";
+		return *this;
 	}
 
-	friend std::ostream &operator<<(std::ostream &os, const SubView &v)
-	{
-		v.describe(os);
-		return os;
-	}*/
+	/*
+	 void describe(std::ostream &os) const
+	 {
+	 for (Integer i = 0; i < Dim; ++i)
+	 {
+	 os << this->view(this->index, i) << " ";
+	 }
+
+	 os << "\n";
+	 }
+
+	 friend std::ostream &operator<<(std::ostream &os, const SubView &v)
+	 {
+	 v.describe(os);
+	 return os;
+	 }*/
 
 	MARS_INLINE_FUNCTION
 	T squared_norm() const
@@ -135,14 +149,14 @@ public:
 
 	bool is_temp() const
 	{
-	return temp_;
+		return temp_;
 	}
 
 	void set_temp(bool temp = false)
 	{
-	temp_ = temp;
+		temp_ = temp;
 	}
-	
+
 private:
 	SubView<T, Dim> pointView;
 	TempArray<T, Dim> pointArray;
