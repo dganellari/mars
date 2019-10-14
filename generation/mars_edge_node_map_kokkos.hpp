@@ -1,5 +1,5 @@
-#ifndef MARS_EDGE_NODE_MAP_HPP
-#define MARS_EDGE_NODE_MAP_HPP
+#ifndef MARS_EDGE_NODE_MAP_KOKKOS_HPP
+#define MARS_EDGE_NODE_MAP_KOKKOS_HPP
 
 #include "mars_edge_kokkos.hpp"
 
@@ -9,58 +9,95 @@
 #include <cassert>
 
 namespace mars {
-	class EdgeNodeMap {
 
-		using Edge = Side<2, KokkosImplementation>;
+	template<Integer N>
+	class DeviceEdgeNodeMap {
+
+		using Edge = Side<N, KokkosImplementation>;
 
 	public:
 
-		MARS_INLINE_FUNCTION void update(const Integer an_edge_node,
+		MARS_INLINE_FUNCTION
+		static void update(const Integer an_edge_node,
 			        const Integer another_edge_node,
-			        const Integer midpoint_node)
+			        const Integer midpoint_node, const UnorderedMap<Edge,Integer>& mapping_)
 		{
-			mapping_[Edge(an_edge_node, another_edge_node)] = midpoint_node;
+			//mapping_[Edge(an_edge_node, another_edge_node)] = midpoint_node;
+
+			TempArray<Integer, 2> nodes;
+			nodes[0] = an_edge_node;
+			nodes[1] = another_edge_node;
+
+			auto result= mapping_.insert(Side<N, KokkosImplementation>(nodes));
+
+			if(!result.failed()){
+				mapping_.value_at(result.index()) = midpoint_node;
+			}else{
+				printf("Edge Node Map: Exceeded UnorderedMap capacity\n");
+			}
 		}
 
-		inline void update(const Edge &edge, const Integer midpoint_node)
+		MARS_INLINE_FUNCTION
+		static void update(const Edge &edge, const Integer midpoint_node,
+				const UnorderedMap<Edge, Integer>& mapping_)
 		{
 			assert(edge.is_valid());
-			mapping_[edge] = midpoint_node;
+
+			auto result= mapping_.insert(edge);
+
+			if(!result.failed()){
+				mapping_.value_at(result.index()) = midpoint_node;
+			}else{
+				printf("Edge Node Map: Exceeded UnorderedMap capacity\n");
+			}
+
+			//mapping_[edge] = midpoint_node;
 		}
 
-		inline Integer get(
+		MARS_INLINE_FUNCTION
+		static Integer get(
 			const Integer an_edge_node,
-			const Integer another_edge_node) const
+			const Integer another_edge_node, const UnorderedMap<Edge, Integer>& mapping_)
 		{
-			return get(Edge(an_edge_node, another_edge_node));
+			TempArray<Integer,2> nodes;
+			nodes[0]= an_edge_node;
+			nodes[1] = another_edge_node;
+
+			return get(Side<N, KokkosImplementation>(nodes), mapping_);
 		}
 
-		inline Integer get(const Edge &edge) const
+		MARS_INLINE_FUNCTION
+		static Integer get(const Edge &edge, const UnorderedMap<Edge, Integer>& mapping_)
 		{
 			auto it = mapping_.find(edge);
-			if(it == mapping_.end()) {
+			if(!mapping_.valid_at(it)) {
 				return INVALID_INDEX;
 			}
 
-			return it->second;
+			return mapping_.value_at(it);
 		}
 
-		void describe(std::ostream &os) const
+		void describe(UnorderedMap<Edge,Integer>& mapping_) const
 		{
-			for(const auto &m : mapping_) {
-				os << "(" << m.first.nodes[0] << "," << m.first.nodes[1] << ") -> " << m.second << "\n";
-			}
+			parallel_for(mapping_.capacity(), KOKKOS_LAMBDA (uint32_t i) {
+			  if( mapping_.valid_at(i) ) {
+			    auto key   = mapping_.key_at(i);
+			    auto value = mapping_.value_at(i);
+			    printf("(%li, %li) -> %li\n", key.nodes[0], key.nodes[1], value);
+			  }
+			});
+
 		}
 
 
-		inline std::map<Edge, Integer>::const_iterator begin() const
+		void reserve_map(Integer capacity)
 		{
-			return mapping_.begin();
+			mapping_ = UnorderedMap<Edge,Integer>(capacity);
 		}
 
-		inline std::map<Edge, Integer>::const_iterator end() const
+		void rehash_map(Integer capacity)
 		{
-			return mapping_.end();
+			mapping_.rehash(capacity);
 		}
 
 		void clear()
@@ -68,17 +105,18 @@ namespace mars {
 			mapping_.clear();
 		}
 
-		inline Integer size() const
+		Integer size() const
 		{
 			return mapping_.size();
 		}
 
 		inline bool empty() const
 		{
-			return mapping_.empty();
+			return (mapping_.size() == 0);
 		}
 
-		UnorderedMap<Edge,Integer> mapping_ &mapping() { return mapping_; }
+		MARS_INLINE_FUNCTION
+		UnorderedMap<Edge,Integer> &mapping() { return mapping_; }
 
 		UnorderedMap<Edge,Integer> mapping_;
 

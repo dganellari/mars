@@ -3,7 +3,6 @@
 
 #include "mars_base.hpp"
 #include "mars_edge_kokkos.hpp"
-#include "mars_edge_element_map_kokkos.hpp"
 #include "mars_fwd.hpp"
 #include "mars_globals.hpp"
 

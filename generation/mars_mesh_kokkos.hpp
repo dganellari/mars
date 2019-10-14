@@ -144,15 +144,14 @@ public:
 		active_(id) = val;
 	}
 
-	/*inline Integer add_point(const Point &point) override
+	MARS_INLINE_FUNCTION
+	void add_point(const Point<Real, Dim> &point, const Integer index)
 	{
-		for (Integer i = 0; i < Dim; ++i) {
-			points_(point.pointView.index, i) = point[i];
+		for (Integer i = 0; i < Dim; ++i)
+		{
+			points_(index, i) = point[i];
 		}
-
-		return point.index;
-	}*/
-
+	}
 
 	MARS_INLINE_FUNCTION
 	Point<Real, Dim> point(const Integer i) override
@@ -169,19 +168,6 @@ public:
 		assert(i < points_size_);
 		return Point<Real, Dim>(points_, i);
 	}
-
-	/*inline void points(const Integer id, std::vector<Point> &pts) const override
-	 {
-	 assert(id >= 0);
-	 assert(id < n_elements());
-
-	 auto &e = elements_[id];
-	 pts.resize(ManifoldDim + 1);
-
-	 for (Integer i = 0; i < ManifoldDim + 1; ++i) {
-	 pts[i] = points_(e.nodes[i]);
-	 }
-	 }*/
 
 	const ViewMatrixType<Real> &points() const //override
 	{
@@ -229,27 +215,6 @@ public:
 		resize(children_, children_size_+size, 2);
 	}
 
-	/*
-	 void setPoints(std::vector<Point>&& points)
-	 {
-	 points_ = std::forward<std::vector<Point>>(points);
-	 }
-
-	 template<typename Iter>
-	 void remove_point(const Iter pos){
-	 points_.erase(pos);
-	 }
-
-	 inline Integer add_elem(const Elem &elem)
-	 {
-	 auto id = elements_.size();
-	 elements_.push_back(elem);
-	 elements_.back().id = id;
-	 active_.push_back(true);
-	 assert(elements_.back().id == id);
-	 return elements_.back().id;
-	 }*/
-
 	template<std::size_t NNodes>
 	inline Integer add_elem(const std::array<Integer, NNodes> &nodes,
 			const int row) //override
@@ -265,54 +230,7 @@ public:
 		return row;
 	}
 
-	/*inline Integer add_elem(const IElem &elem) override
-	 {
-	 assert(elem.type() == ManifoldDim);
-
-	 const Elem * elem_ptr = dynamic_cast<const Elem *>(&elem);
-	 if(elem_ptr) {
-	 return add_elem(*elem_ptr);
-	 }
-
-	 // fallback for other types of elements
-	 Elem elem_copy;
-
-	 std::vector<Integer> e_nodes;
-	 elem.get_nodes(e_nodes);
-
-	 assert(e_nodes.size() == ManifoldDim + 1);
-
-	 for(std::size_t i = 0; i < mars::n_nodes(elem_copy); ++i) {
-	 elem_copy.nodes[i] = e_nodes[i];
-	 }
-
-	 return add_elem(elem_copy);
-	 }
-
-	 template<std::size_t NNodes>
-	 Integer add_elem(const std::array<Integer, NNodes> &nodes)
-	 {
-	 static_assert(NNodes == std::size_t(ManifoldDim + 1), "does not have the correct number of nodes");
-	 elements_.emplace_back();
-	 auto &e = elements_.back();
-	 e.id = elements_.size() - 1;
-	 e.nodes = nodes;
-	 active_.push_back(true);
-	 assert(e.id == elements_.size() - 1);
-	 return e.id;
-	 }
-
-	 Elem& add_elem()
-	 {
-	 elements_.emplace_back();
-	 auto &e = elements_.back();
-	 e.id = elements_.size() - 1;
-	 //e.nodes = nodes;
-	 active_.push_back(true);
-	 return e;
-	 }
-
-
+	/*
 	 inline void deactivate_children(const Integer id)
 	 {
 	 assert(id >= 0);

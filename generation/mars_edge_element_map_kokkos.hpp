@@ -20,10 +20,42 @@ namespace mars {
 	class SubManifoldElementMap<N,KokkosImplementation> {
 	public:
 
-		using ElementVector = TempArray<Integer,8>;
+		using ElementVector = TempArray<Integer,20>;
 
 		virtual ~SubManifoldElementMap() {}
 
+		template<typename Elem>
+		MARS_INLINE_FUNCTION
+		static void update_elem(const UnorderedMap<Side<N,KokkosImplementation>,ElementVector>& mapping, const Elem &e)
+		{
+			using Comb = Combinations<Elem::ManifoldDim_ + 1, N, KokkosImplementation>;
+			Comb combinations;
+
+			TempArray<Integer, N> nodes;
+			for (Integer i = 0;
+					i<Comb::value;
+					++i)
+			{
+
+				for (Integer j = 0; j < N; ++j)
+				{
+					nodes[j] = e.nodes[combinations.combs[i][j]];
+				}
+
+				auto result= mapping.insert(Side<N, KokkosImplementation>(nodes));
+
+				if(!result.failed()){
+					auto &vec = mapping.value_at(result.index());
+					vec.insert(e.id);
+					if(result.existing())
+						printf("Existing id %li\n", e.id);
+				}else{
+					 printf("Edge Element Map: Exceeded UnorderedMap capacity\n");
+					//TODO: handle the case of failure insert. GO to the host for rehash.
+				}
+
+			}
+		}
 
 		template<Integer Dim, Integer ManifoldDim>
 		struct UMapUpdate
@@ -54,38 +86,9 @@ namespace mars {
 			}
 
 			MARS_INLINE_FUNCTION
-			void update_elem(const Simplex<Dim, ManifoldDim, KokkosImplementation> &e) const
-			{
-				Combinations<ManifoldDim + 1, N, KokkosImplementation> combinations;
-
-				TempArray<Integer, N> nodes;
-				for (Integer i = 0;
-						i<Combinations < ManifoldDim + 1, N, KokkosImplementation>::value;
-						++i)
-				{
-
-					for (Integer j = 0; j < N; ++j)
-					{
-						nodes[j] = e.nodes[combinations.combs[i][j]];
-					}
-
-					auto result= mapping.insert(Side<N, KokkosImplementation>(nodes));
-
-					if(!result.failed()){
-						auto &vec = mapping.value_at(result.index());
-						vec.insert(e.id);
-					}else{
-						 printf("Exceeded UnorderedMap capacity\n");
-						//TODO: handle the case of failure insert. GO to the host for rehash.
-					}
-
-				}
-			}
-
-			MARS_INLINE_FUNCTION
 			void operator()(int element_id) const
 			{
-				update_elem(mesh->elem(element_id));
+				update_elem(mapping, mesh->elem(element_id));
 			}
 		};
 
@@ -94,7 +97,10 @@ namespace mars {
 			mapping_ = UnorderedMap<Side<N,KokkosImplementation>,ElementVector>(capacity);
 		}
 
-
+		void rehash_map(Integer capacity)
+		{
+			mapping_.rehash(capacity);
+		}
 
 		template<Integer Dim, Integer ManifoldDim>
 		void update(Mesh<Dim, ManifoldDim, KokkosImplementation> *mesh,
@@ -103,8 +109,6 @@ namespace mars {
 			Kokkos::parallel_for(nr_elements,
 					UMapUpdate<Dim, ManifoldDim>(mapping_, mesh));
 		}
-
-
 
 		/*template<Integer Dim, Integer ManifoldDim>
 		void update_active(const Mesh<Dim, ManifoldDim> &mesh)

@@ -25,7 +25,9 @@ namespace mars {
     template<Integer Dim, Integer ManifoldDim>
     class Simplex<Dim, ManifoldDim, KokkosImplementation> final : public ParallelIElem {
     public:
-        SubView<Integer,ManifoldDim+1> nodes;
+    	static constexpr Integer ManifoldDim_ = ManifoldDim;
+
+    	SubView<Integer,ManifoldDim+1> nodes;
         SubView<Integer,2> children; //TODO: templatize for the number of children based onthe select algorithm
         SubView<Integer,ManifoldDim+1> side_tags;
 

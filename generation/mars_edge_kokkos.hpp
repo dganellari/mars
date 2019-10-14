@@ -18,7 +18,7 @@ namespace mars {
 		static_assert(N > 0, "N cannot be zero");
 
 		TempArray<Integer,N> nodes;
-		
+
 		MARS_INLINE_FUNCTION
 		virtual ~Side()
 		{
@@ -68,8 +68,8 @@ namespace mars {
 		MARS_INLINE_FUNCTION
 		bool is_valid() const
 		{
-			for(auto n : nodes) {
-				if(n == INVALID_INDEX) return false;
+			for(Integer j = 0; j < N; ++j) {
+				if(nodes[j] == INVALID_INDEX) return false;
 			}
 
 			for(Integer i = 1; i < N; ++i) {
@@ -78,7 +78,6 @@ namespace mars {
 
 			return true;
 		}
-
 
 		MARS_INLINE_FUNCTION
 		void fix_ordering()
@@ -176,7 +175,7 @@ namespace mars {
 	{
 	    read(static_cast<Side<2> &>(edge), is);
 	}*/
-	
+
 }
 
 #endif //MARS_EDGE_HPP
