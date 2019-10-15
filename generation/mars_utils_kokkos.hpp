@@ -64,8 +64,8 @@ using ViewVectorTypeC = Kokkos::View<T[XDim_],KokkosLayout,KokkosSpace>;
 template<typename T>
 using ViewVectorTypeU = Kokkos::View<T*, KokkosSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
-template<typename T, class space>
-using ViewObject = Kokkos::View<T[1], space>;
+template<typename T>
+using ViewObject = Kokkos::View<T[1], KokkosSpace>;
 
 template<typename T, class space>
 using ViewObjectU = Kokkos::View<T[1], space, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;

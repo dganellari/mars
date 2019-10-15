@@ -30,51 +30,23 @@ namespace mars {
 			b.uniform_refine(n_levels);
 
 
-			/*ViewMatrixType<Integer> t = mesh_in.get_view_elements();
-			//const auto &e = mesh_in.elem(0);
-
-				Elem ee = Elem(SubView<Integer,ManifoldDim+1>(t,0));
-
-			auto &e = ee;
-
-			for(Integer i = 0; i < n_edges(e); ++i) {
-				Integer v1, v2;
-				e.edge(i, v1, v2);
-
-				Real len_i = (mesh_in.point(v1) - mesh_in.point(v2)).squared_norm();
-
-			}*/
-
-		/*	auto es = std::make_shared<LongestEdgeSelect<Mesh>>();
-			for(int i=0;i< n_levels;i++)
-				const Integer edge_num = es->select(mesh_in, i);*/
-			/*
-			std::cout<<"edge: "<<edge_num<<std::endl;*/
-			//refine once for creating nice intial set-up for newest vertex algorithm
-			/*auto mesh = mesh_in;
-
-			ParallelLeppBisection<Mesh> b(mesh);
-			b.uniform_refine(1);
-
 			Integer exp_num = 0;
-			run_benchmark(n_levels, es, mesh, output_path, exp_num++);*/
+			run_benchmark(n_levels,  mesh, output_path, exp_num++);
 		}
 
-		/*	void run_benchmark(
-			const Integer n_levels,
-			const EdgeSelectPtr &edge_select,
-			const Mesh &mesh_in,
-			const std::string &output_path,
-			const Integer exp_num
-			)
+		void run_benchmark(
+		const Integer n_levels,
+		Mesh &mesh,
+		const std::string &output_path,
+		const Integer exp_num
+		)
 		{
 			using namespace mars;
 			std::cout << "======================================\n";
 			
 			//copy mesh
-			auto mesh = mesh_in;
 
-			Quality<Mesh> q(mesh);
+		/*	Quality<Mesh> q(mesh);
 			q.compute();
 
 			mark_boundary(mesh);
@@ -83,7 +55,7 @@ namespace mars {
 			std::cout << "volume: " << mesh.volume() << std::endl;
 			std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 
-			ParallelLeppBisection<Mesh> b(mesh);
+			ParallelBisection<Mesh> b(&mesh);
 			//PrecomputeLeppBisection<Mesh> b(mesh);
 
 			b.uniform_refine(2);
@@ -117,11 +89,19 @@ namespace mars {
 
 			std::cout << "volume: " << mesh.volume() << std::endl;
 			std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+*/
+
+			typename Mesh::SerialMesh sMesh;
+			convert_parallel_mesh_to_serial<Dim, ManifoldDim>(sMesh, mesh);
+			std::cout << "n_active_elements: " << sMesh.n_active_elements() << std::endl;
 
 			if(n_levels <= 20 && mesh.ManifoldDim <4){
-				VTKMeshWriter<Mesh> w;
-				w.write("LEPP_" + edge_select->name() + std::to_string(n_levels) + ".vtu", mesh);
+				VTKMeshWriter<typename Mesh::SerialMesh> w;
+				w.write("Parallel_LEPP_" + std::to_string(n_levels) + ".vtu", sMesh);
 			}
+
+
+/*
 
 			mesh.update_dual_graph();
 			// q.report.normalize_data_points();
@@ -133,9 +113,10 @@ namespace mars {
 
 			q.save_csv(edge_select->name() + suffix, output_path + "/Quality_" + std::to_string(exp_num) + "_" + edge_select->name() + suffix + "_lepp.csv", true); //exp_num == 0
 			q.save_report(output_path + "/Quality_" + edge_select->name() + suffix + "_lepp.svg");
+*/
 
 			std::cout << "======================================\n";
-		}*/
+		}
 	};
 }
 

@@ -10,18 +10,16 @@ namespace mars {
 	template<typename T, Integer Dim>
 	class TempArray {
 	public:
+	    Integer index;
 	    T  values[Dim];
-	    Integer index=0;
 
 	    MARS_INLINE_FUNCTION
-	    TempArray() {}
+	    TempArray() : index(0) {}
 
 	    MARS_INLINE_FUNCTION bool insert(const T value){
-			//values[index++] = value;
 	    	Integer i = Kokkos::atomic_fetch_add(&index, 1);
 	    	assert(i<Dim);
 	    	values[i] = value;
-	    	//Kokkos::atomic_assign(values + index++ ,value);
 	    }
 
 	    MARS_INLINE_FUNCTION friend TempArray operator*(const T &factor, const TempArray &v)
@@ -64,7 +62,7 @@ namespace mars {
 	        return ret;
 	    }
 
-	    MARS_INLINE_FUNCTION TempArray operator+=(const TempArray &right)
+	    MARS_INLINE_FUNCTION TempArray& operator+=(const TempArray &right)
 	    {
 	        for(Integer i = 0; i < Dim; ++i) {
 	            (*this)(i) += right(i);
@@ -73,7 +71,7 @@ namespace mars {
 	        return *this;
 	    }
 
-	    MARS_INLINE_FUNCTION TempArray operator*=(const T &right)
+	    MARS_INLINE_FUNCTION TempArray& operator*=(const T &right)
 	    {
 	        for(Integer i = 0; i < Dim; ++i) {
 	            (*this)(i) *= right;
@@ -83,17 +81,19 @@ namespace mars {
 	    }
 
 		MARS_INLINE_FUNCTION
-		TempArray operator=(const TempArray &right)
+		TempArray& operator=(const TempArray &right)
 		{
 			for (Integer i = 0; i < Dim; ++i)
 			{
 				(*this)(i) = right(i);
 			}
 
+			this->index = right.index;
+
 			return *this;
 		}
 
-	    MARS_INLINE_FUNCTION TempArray operator/=(const T &right)
+	    MARS_INLINE_FUNCTION TempArray& operator/=(const T &right)
 	    {
 	        for(Integer i = 0; i < Dim; ++i) {
 	            (*this)(i) /= right;
