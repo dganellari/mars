@@ -18,40 +18,32 @@ namespace mars {
 	public:
 
 		MARS_INLINE_FUNCTION
-		static void update(const Integer an_edge_node,
-			        const Integer another_edge_node,
-			        const Integer midpoint_node, const UnorderedMap<Edge,Integer>& mapping_)
-		{
-			//mapping_[Edge(an_edge_node, another_edge_node)] = midpoint_node;
-
-			TempArray<Integer, 2> nodes;
-			nodes[0] = an_edge_node;
-			nodes[1] = another_edge_node;
-
-			auto result= mapping_.insert(Side<N, KokkosImplementation>(nodes));
-
-			if(!result.failed()){
-				mapping_.value_at(result.index()) = midpoint_node;
-			}else{
-				printf("Edge Node Map: Exceeded UnorderedMap capacity\n");
-			}
-		}
-
-		MARS_INLINE_FUNCTION
-		static void update(const Edge &edge, const Integer midpoint_node,
-				const UnorderedMap<Edge, Integer>& mapping_)
+		static bool update(const Edge &edge,
+				const UnorderedMap<Edge, Integer>& mapping_,
+				const ViewObject<Integer> node_start_index, Integer& midpoint)
 		{
 			assert(edge.is_valid());
 
-			auto result= mapping_.insert(edge);
+			auto result = mapping_.insert(edge); //to make it atomic and insert only for one thread.
 
-			if(!result.failed()){
-				mapping_.value_at(result.index()) = midpoint_node;
-			}else{
-				printf("Edge Node Map: Exceeded UnorderedMap capacity\n");
+			if (result.success())
+			{
+				midpoint = Kokkos::atomic_fetch_add(&node_start_index(0), 1);
+
+				mapping_.value_at(result.index()) = midpoint;
+				return true;
 			}
-
-			//mapping_[edge] = midpoint_node;
+			else if (result.existing())
+			{
+				midpoint = mapping_.value_at(result.index());
+				return false;
+			}
+			else
+			{
+				printf("Edge Node Map: Exceeded UnorderedMap capacity\n");
+				midpoint = INVALID_INDEX;
+				return false;
+			}
 		}
 
 		MARS_INLINE_FUNCTION
@@ -88,7 +80,6 @@ namespace mars {
 			});
 
 		}
-
 
 		void reserve_map(Integer capacity)
 		{

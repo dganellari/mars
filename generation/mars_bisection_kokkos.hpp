@@ -257,34 +257,34 @@ public:
 		/*Mesh3 sMesh3;
 		read_mesh("../data/write/euler.MFEM", sMesh3);*/
 
-		typename Mesh::SerialMesh sMesh3;
-		convert_parallel_mesh_to_serial<Dim,ManifoldDim>(sMesh3, *mesh);
+		typename Mesh::SerialMesh sMesh;
+		convert_parallel_mesh_to_serial<Dim,ManifoldDim>(sMesh, *mesh);
 
 		Kokkos::Timer timer;
 
-		map_.update(sMesh3);
+		map_.update(sMesh);
 
 		double time = timer.seconds();
 		std::cout << "serial kokkos took: " << time << " seconds." << std::endl;
 
 		//map_.describe(std::cout);
 
-		sMesh3.update_dual_graph();
+		sMesh.update_dual_graph();
 
 
 		//nr_faces per eleme counted twicee * nr elements
-		Integer bound = Combinations<ManifoldDim + 1, ManifoldDim>::value * sMesh3.n_elements();
+		Integer bound = Combinations<ManifoldDim + 1, ManifoldDim>::value * sMesh.n_elements();
 
 		//Euler's formula for graphs
-		Integer faces_nr = (bound + sMesh3.n_boundary_sides())/2; //boundary sides counted only once
+		Integer faces_nr = (bound + sMesh.n_boundary_sides())/2; //boundary sides counted only once
 		//Integer edges_nr = sMesh3.n_nodes() + faces_nr - 2;
 
 		Integer edges_nr = 0;
 
 		if(ManifoldDim == 2)
-			edges_nr = sMesh3.n_nodes() + sMesh3.n_elements() + 1 -2; // +1 because also the outer face is counted
+			edges_nr = sMesh.n_nodes() + sMesh.n_elements() + 1 -2; // +1 because also the outer face is counted
 		else
-			edges_nr = sMesh3.n_nodes() + faces_nr -1 - sMesh3.n_elements();
+			edges_nr = sMesh.n_nodes() + faces_nr -1 - sMesh.n_elements();
 
 		// edges_nr = 2 * mesh->n_elements();
 
@@ -296,8 +296,9 @@ public:
 
 		const Integer nr_elements = host_mesh->n_elements();
 
-		edge_node_map_.reserve_map(euler_graph_formula(host_mesh));
-		edge_element_map_.reserve_map(euler_graph_formula(host_mesh));
+		const Integer capacity = euler_graph_formula(host_mesh);
+		edge_node_map_.reserve_map(capacity);
+		edge_element_map_.reserve_map(capacity);
 		reserve_tree(nr_elements);
 		/*if(flags.empty()) {
 		 flags.resize(mesh.n_elements(), NONE);
@@ -594,11 +595,11 @@ public:
 
 		Integer elem_start_index;
 		Integer child_start_index;
-		Integer node_start_index;
-
+		//Integer node_start_index;
+		ViewObject<Integer> node_start_index;
 
 		BisectElem(Mesh_* ms, ViewMatrixType<Integer> lii,
-				UEMap mp, UNMap nmp, bool v, Integer esi, Integer csi, Integer nsi) :
+				UEMap mp, UNMap nmp, bool v, Integer esi, Integer csi, ViewObject<Integer> nsi) :
 				mesh(ms), lepp_incident_index(lii), edge_element_map(mp), edge_node_map(nmp), verbose(
 						v), elem_start_index(esi), child_start_index(csi), node_start_index(nsi)
 		{
@@ -649,13 +650,11 @@ public:
 
 			mesh->set_active(elem_new_id);
 			ParallelEdgeElementMap::update_elem(edge_element_map, new_el);
-			old_el.children(0) = elem_new_id;
 			new_el.block = old_el.block;
 		}
 
 		MARS_INLINE_FUNCTION
-		void add_node(const Integer nodes_new_id, const Integer v1,
-				const Integer v2) const
+		Integer add_node(const Integer v1,	const Integer v2) const
 		{
 			TempArray<Integer, 2> nodes;
 			nodes[0] = v1;
@@ -663,14 +662,17 @@ public:
 
 			Side<2, KokkosImplementation> edge(nodes);
 
-			auto midpoint = ParallelEdgeNodeMap::get(edge, edge_node_map);
+			Integer midpoint=0;
 
-			if (midpoint == INVALID_INDEX)
+			if (ParallelEdgeNodeMap::update(edge, edge_node_map, node_start_index, midpoint))
 			{
+				assert(midpoint!=INVALID_INDEX);
+
 				mesh->add_point((mesh->point(v1) + mesh->point(v2)) / 2.,
-						nodes_new_id);
-				ParallelEdgeNodeMap::update(edge, nodes_new_id, edge_node_map);
+						midpoint);
 			}
+
+			return midpoint;
 		}
 
 		MARS_INLINE_FUNCTION
@@ -686,11 +688,9 @@ public:
 			}
 
 			mesh->set_active(element_id, false);
-			printf("elem: %li - %d\n", element_id, mesh->is_active(element_id));
+			//printf("elem: %li - %d\n", element_id, mesh->is_active(element_id));
 
-			Integer nodes_new_id = node_start_index + i;
-
-			add_node(nodes_new_id, v1, v2);
+			Integer nodes_new_id = add_node(v1, v2);
 
 			Integer elem_new_id = elem_start_index + 2 * i;
 			Integer childrens_id = child_start_index + i;
@@ -746,7 +746,7 @@ public:
 	{
 		using namespace Kokkos;
 
-		ViewObject<Integer, KokkosSpace> global_index("global_index");
+		ViewObject<Integer> global_index("global_index");
 
 		parallel_for(lepp_incidents_map.capacity(), KOKKOS_LAMBDA(uint32_t i)
 		{
@@ -796,8 +796,6 @@ public:
 
 		Integer lepp_incidents_count = h_ac(0);
 
-		std::cout<<"sum_subview: "<<lepp_incidents_count<<std::endl;
-
 		UnorderedMap<Integer, Edge> lepp_incidents_map(lepp_incidents_count);
 
 
@@ -806,10 +804,19 @@ public:
 
 
 		Integer lip_size = lepp_incidents_map.size();
+		std::cout<<"lip_size: "<<lip_size<<std::endl;
 
 		Integer elem_start_index = host_mesh->n_elements();
 		Integer child_start_index = host_mesh->n_childrens();
-		Integer node_start_index = host_mesh->n_nodes();
+	//	Integer node_start_index = host_mesh->n_nodes();
+
+		ViewObject<Integer> node_start_index= ViewObject<Integer>("node_start_index");
+		//printf("%s\n", typeid(sum_subview).name());
+
+		auto h_aci = Kokkos::create_mirror_view(node_start_index);
+		h_aci(0) =  host_mesh->n_nodes();
+		deep_copy(node_start_index , h_aci);
+
 
 		host_mesh->resize_children(lip_size);
 		host_mesh->resize_elements(2 * lip_size);
@@ -833,7 +840,9 @@ public:
 		std::cout<<"Starting bisection"<<std::endl;
 
 		edge_node_map_.rehash_map(2*host_mesh->n_elements()); //TODO: maybe a modified euler for capacity?
-		//edge_element_map_.rehash_map(host_mesh->n_elements()); //TODO: maybe a modified euler for capacity?
+		//edge_element_map_.describe(std::cout);
+		edge_element_map_.rehash_map(2*host_mesh->n_elements()); //TODO: maybe a modified euler for capacity?
+		//edge_element_map_.describe(std::cout);
 
 		Kokkos::Timer timer1;
 
@@ -845,12 +854,16 @@ public:
 		double time1 = timer1.seconds();
 		std::cout << "paralel bisection took: " << time1 << " seconds." << std::endl;
 
-
 		/*const Mesh* tmp = ref.mesh;
 
 		 parallel_for("DestroyMeshObject",1, KOKKOS_LAMBDA (const int&) {
-		 tmp->~Mesh();
-		 });*/
+		 mesh->~Mesh();
+		 });
+
+		 fence();
+
+		 kokkos_free(mesh);
+		 */
 
 		return true;
 	}

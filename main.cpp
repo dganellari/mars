@@ -903,24 +903,7 @@ void run_benchmarks(int level)
 	LeppBenchmark<Mesh2> b2;
 	b2.run(level, Mesh, "b2");*/
 
-	ParallelMesh3 pMesh3;
-	generate_cube(pMesh3, level, level,level);
-
-	/*Mesh3 sMesh3;
-	convert_parallel_mesh_to_serial(sMesh3, pMesh3);
-
-	std::cout << "n_active_elements: " << sMesh3.n_active_elements()
-			<< std::endl;
-	std::cout << "n_nodes: " << sMesh3.n_nodes() << std::endl;
-
-	VTKMeshWriter<Mesh3> w3;
-	w3.write(
-			"build_cube_parallel" + std::to_string(1) + std::to_string(1)
-					+ ".vtu", sMesh3);
-*/
-/*	PreLeppBenchmark<Mesh3> b3;
-	b3.run(level, sMesh3, "b3");
-
+	/*
 	LeppBenchmark<Mesh3> lb3;
 	lb3.run(level, sMesh3, "lb3");*/
 
@@ -939,8 +922,7 @@ void run_benchmarks(int level)
 	LeppBenchmark<Mesh4> lb4;
 	lb4.run(level, m4, "lb4");*/
 
-	ParallelLeppBenchmark<ParallelMesh3> b;
-	b.run(level,pMesh3, "pb");
+
 
 	/*ParallelMesh2 pMesh2;
 	generate_cube(pMesh2, level, level, 0);
@@ -948,6 +930,30 @@ void run_benchmarks(int level)
 	ParallelLeppBenchmark<ParallelMesh2> b;
 	b.run(level, pMesh2, "pb");*/
 
+
+	/*ParallelMesh2 pMesh2;
+	generate_cube(pMesh2, level, level,0);
+
+	ParallelLeppBenchmark<ParallelMesh2> b;
+	b.run(level,pMesh2, "pb");
+
+	Mesh2 sMesh;
+	convert_parallel_mesh_to_serial(sMesh, pMesh2);
+
+	PreLeppBenchmark<Mesh2> b2;
+	b2.run(level, sMesh, "b2");*/
+
+	ParallelMesh3 pMesh3;
+	generate_cube(pMesh3, level, level,level);
+
+	ParallelLeppBenchmark<ParallelMesh3> b;
+	b.run(level,pMesh3, "pb");
+
+	Mesh3 sMesh3;
+	convert_parallel_mesh_to_serial(sMesh3, pMesh3);
+
+	PreLeppBenchmark<Mesh3> b3;
+	b3.run(level, sMesh3, "b3");
 }
 
 void test_incomplete_2D()

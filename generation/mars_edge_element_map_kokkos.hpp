@@ -47,8 +47,6 @@ namespace mars {
 				if(!result.failed()){
 					auto &vec = mapping.value_at(result.index());
 					vec.insert(e.id);
-					if(result.existing())
-						printf("Existing id %li\n", e.id);
 				}else{
 					 printf("Edge Element Map: Exceeded UnorderedMap capacity\n");
 					//TODO: handle the case of failure insert. GO to the host for rehash.
@@ -199,13 +197,13 @@ namespace mars {
 
 						for (Integer i = 0; i < N; ++i)
 						{
-							printf("%i ", key.nodes[i]);
+							printf("%li ", key.nodes[i]);
 						}
 						printf("-> ");
 
 						for (Integer i = 0; i < value.index; ++i)
 						{
-							printf("%i ", value[i]);
+							printf(" %li ", value[i]);
 						}
 						printf("\n");
 						++count;
