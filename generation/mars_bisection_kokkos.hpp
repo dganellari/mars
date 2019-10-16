@@ -440,7 +440,6 @@ public:
 		ViewVectorType<uint32_t> tree;
 		ViewVectorType<Integer> index_count;
 
-
 		RefineMesh(UnorderedMap<Side<2, KokkosImplementation>, ElementVector> mp,
 				Mesh_* ms, ViewVectorType<uint32_t> tr, ViewVectorType<Integer> ic) :
 			mapping(mp), mesh(ms), tree(tr), index_count(ic)
@@ -456,6 +455,9 @@ public:
 
 			if (is_terminal(mapping.key_at(index), mapping.value_at(index), mesh))
 			{
+				/*no need for atomic: protected by the atomic mechanism of the LEPP for 2 threads ending up in the same path.*/
+				Kokkos::atomic_increment(&index_count(mesh->n_elements()+1));
+
 				for (auto i = 0; i < mapping.value_at(index).index; ++i)
 				{
 					auto &element = mapping.value_at(index)[i];
@@ -766,8 +768,10 @@ public:
 	{
 		using namespace Kokkos;
 
-		ViewVectorType<Integer> index_count_ = ViewVectorType<Integer>(
-				"index_count", nr_elements + 1); //1 more for the total sum
+		/*+2 => 1 more for the incident total sum to make it both inclusive and exclusive
+		 sum scan and 1 more for the node count. to avoid unneccessary deep copies of 1 value*/
+		ViewVectorType<Integer> index_count_ = ViewVectorType<Integer>("index_count",
+				nr_elements + 2);
 
 		Kokkos::Timer timer2;
 
@@ -786,7 +790,9 @@ public:
 		double time = timer.seconds();
 		std::cout << "paralel scan took: " << time << " seconds." << std::endl;
 
-		auto sum_subview = subview (index_count_, nr_elements);
+		printf("nr_elements mesh->n_elements(): %li\n",nr_elements);
+
+		auto sum_subview = subview (index_count_, make_pair(nr_elements, nr_elements+2));
 		//printf("%s\n", typeid(sum_subview).name());
 
 		auto h_ac = Kokkos::create_mirror_view(sum_subview);
@@ -795,6 +801,10 @@ public:
 		deep_copy(h_ac, sum_subview);
 
 		Integer lepp_incidents_count = h_ac(0);
+		printf("lepp_incidents_count: %li\n", lepp_incidents_count);
+
+		Integer lepp_node_count = h_ac(1);
+		printf("lepp_node_count: %li\n", lepp_node_count);
 
 		UnorderedMap<Integer, Edge> lepp_incidents_map(lepp_incidents_count);
 
@@ -808,7 +818,6 @@ public:
 
 		Integer elem_start_index = host_mesh->n_elements();
 		Integer child_start_index = host_mesh->n_childrens();
-	//	Integer node_start_index = host_mesh->n_nodes();
 
 		ViewObject<Integer> node_start_index= ViewObject<Integer>("node_start_index");
 		//printf("%s\n", typeid(sum_subview).name());
@@ -820,13 +829,7 @@ public:
 
 		host_mesh->resize_children(lip_size);
 		host_mesh->resize_elements(2 * lip_size);
-		host_mesh->resize_active(2 * lip_size);
-		host_mesh->resize_points(lip_size);
-
-		host_mesh->set_n_elements(host_mesh->n_elements() + 2 * lip_size);
-		host_mesh->set_n_nodes(host_mesh->n_nodes() + lip_size);
-		host_mesh->set_n_childrens(host_mesh->n_childrens() + lip_size);
-
+		host_mesh->resize_points(lepp_node_count);
 
 		copy_mesh_to_device(); //only the object. No deep copy of the member views.
 
