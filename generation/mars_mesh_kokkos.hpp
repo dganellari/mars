@@ -196,13 +196,16 @@ public:
 
 	void resize_points(const Integer size)
 	{
-		resize(points_, points_size_+size, Dim);
+		points_size_+= size;
+		resize(points_, points_size_, Dim);
 	}
 
 
 	void resize_elements(const Integer size)
 	{
-		resize(elements_, elements_size_+size, ManifoldDim+1);
+		elements_size_+= size;
+		resize(elements_, elements_size_, ManifoldDim+1);
+		resize(active_, elements_size_);
 	}
 
 	void resize_active(const Integer size)
@@ -212,22 +215,8 @@ public:
 
 	void resize_children(const Integer size)
 	{
-		resize(children_, children_size_+size, 2);
-	}
-
-	template<std::size_t NNodes>
-	inline Integer add_elem(const std::array<Integer, NNodes> &nodes,
-			const int row) //override
-			{
-		/*Elem elem;
-		 assert(nodes.size() == mars::n_nodes(elem));*/
-
-		//for(Integer i = 0; i < mars::n_nodes(elem); ++i) {
-		for (int i = 0; i < ManifoldDim + 1; ++i) {
-			elements_(row, i) = nodes[i];
-		}
-
-		return row;
+		children_size_+= size;
+		resize(children_, children_size_, 2);
 	}
 
 	/*
