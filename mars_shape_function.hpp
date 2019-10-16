@@ -532,14 +532,33 @@ public:
 
 
 
-
-
-
+template<typename FunctionSpace, typename Operator>
+class SingleTypeShapeFunction<FunctionSpace,Transposed<Expression<Operator>>>
+{
+public:
+  static constexpr Integer NComponents=FunctionSpace::NComponents;
+  static constexpr Integer ShapeFunctionDim1=FunctionSpace::ShapeFunctionDim1;
+  static constexpr Integer ShapeFunctionDim2=FunctionSpace::ShapeFunctionDim2;
+  using SingleTypeShape=SingleTypeShapeFunction<FunctionSpace,Operator>;
+  using SingleType=Transposed<typename SingleTypeShape::SingleType>;
+  using TotType=Transposed<typename SingleTypeShape::TotType>;
+  // using SingleTypeTmp=typename SingleTypeShape::SingleType;
+  // using TotTypeTmp=typename SingleTypeShape::TotType;
+  // using SingleType=Matrix<Real,SingleTypeTmp::Cols,SingleTypeTmp::Rows>;
+  // using TotType=std::conditional_t<TotTypeTmp::Cols==TotTypeTmp::Rows,
+  //                                  TotTypeTmp,
+  //                                  Matrix<Real,TotTypeTmp::Cols*NComponents,TotTypeTmp::Rows/NComponents>>;
+  
+};
 
 
 
 template< typename Elem_,typename BaseFunctionSpace, typename Operator_, typename QuadratureRule>
-class ShapeFunction: public Expression<ShapeFunction<Elem_,BaseFunctionSpace,Operator_,QuadratureRule>> 
+class ShapeFunction;
+
+template< typename Elem_,typename BaseFunctionSpace, typename Operator_, typename QuadratureRule>
+class ShapeFunction
+: public Expression<ShapeFunction<Elem_,BaseFunctionSpace,Operator_,QuadratureRule>> 
 { 
   public:
   using Elem=Elem_;
@@ -601,10 +620,9 @@ class ShapeFunction: public Expression<ShapeFunction<Elem_,BaseFunctionSpace,Ope
             n_=n_comp*ShapeFunctionDim1;
             for(Integer qp=0;qp<NQPoints;qp++)
             {             
-              // std::cout<<"n_dof, n_comp, qp"<<std::endl;
-              // std::cout<< n_dof<< ", "<<n_comp<<", "<<qp<<std::endl;
               func_values_[n_tot_][qp].zero();
-              func_tmp_=  mapping * weighted_reference_values[n_dof][qp];
+              // func_tmp_=  mapping * weighted_reference_values[n_dof][qp];
+              func_tmp_=  mapping * reference_values[n_dof][qp];
 
               // se ncompontensts >1, allora assegni alla riga
               assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
@@ -630,7 +648,8 @@ class ShapeFunction: public Expression<ShapeFunction<Elem_,BaseFunctionSpace,Ope
             for(Integer qp=0;qp<NQPoints;qp++)
             {             
               func_values_[n_tot_][qp].zero();
-              func_tmp_=alpha[n_dof] * mapping * weighted_reference_values[n_dof][qp];             
+              // func_tmp_=alpha[n_dof] * mapping * weighted_reference_values[n_dof][qp];    
+              func_tmp_=alpha[n_dof] * mapping * reference_values[n_dof][qp];             
               assign(func_values_[n_tot_][qp],func_tmp_,n_,0);
          }
                    
@@ -670,7 +689,6 @@ class ShapeFunction: public Expression<ShapeFunction<Elem_,BaseFunctionSpace,Ope
 
 
 
-
 template<typename Elem,typename BaseFunctionSpace,typename Operator, typename QuadratureRule>
 constexpr FQPValues<typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::SingleType,
                     ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::NQPoints,
@@ -682,6 +700,100 @@ constexpr FQPValues<typename ShapeFunction<Elem,BaseFunctionSpace,Operator,Quadr
                     ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::NQPoints,
                     ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::Ndofs> 
 ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::weighted_reference_values;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template< typename Elem_,typename BaseFunctionSpace, typename Operator_, typename QuadratureRule>
+class ShapeFunction<Elem_,BaseFunctionSpace,Transposed<Expression<Operator_>>,QuadratureRule>
+: public Expression<ShapeFunction<Elem_,BaseFunctionSpace,Transposed<Expression<Operator_>>,QuadratureRule>> 
+{ 
+  public:
+  using NotTransposedShape=ShapeFunction<Elem_,BaseFunctionSpace,Operator_,QuadratureRule>;
+  using Elem=Elem_;
+  using Operator=Transposed<Expression<Operator_>>;
+
+  using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
+  static constexpr Integer Dim=Elem::Dim;
+  static constexpr Integer ManifoldDim=Elem::ManifoldDim;
+  static constexpr Integer NComponents=BaseFunctionSpace::NComponents;
+  static constexpr Integer NQPoints=QuadratureRule::NQPoints;
+  static constexpr Integer Ntot=FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,BaseFunctionSpace>>::value;
+  static constexpr Integer Ndofs=Ntot/NComponents;
+  static constexpr Integer Order=BaseFunctionSpace::Order;
+  static constexpr Integer FEFamily=BaseFunctionSpace::FEFamily;
+  
+  using SingleType   = Transposed<typename SingleTypeShapeFunction<FunctionSpace,Operator_>::SingleType>;
+  using VectorSingleType   = Vector<SingleType,Ndofs>;
+  using tot_type= typename SingleTypeShapeFunction<FunctionSpace,Operator>::TotType;
+  using qpvalues_type= QPValues<tot_type,NQPoints>;
+  using type= FQPValues<tot_type,NQPoints,Ntot>;
+  using Point = Vector<Real,Dim>;
+  using QP = Matrix<Real,NQPoints,Dim>;
+  using qp_points_type=typename QuadratureRule::qp_points_type;
+  using Map=MapFromReference5<Operator,Elem,BaseFunctionSpace::FEFamily>;
+
+ //  static constexpr Integer ShapeFunctionDim1=SingleTypeShapeFunction<FunctionSpace,Operator>::ShapeFunctionDim1;
+ //  static constexpr Integer ShapeFunctionDim2=SingleTypeShapeFunction<FunctionSpace,Operator>::ShapeFunctionDim2;
+
+ //  static constexpr FQPValues<SingleType,NQPoints,Ndofs>  
+ //  reference_values{reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(QuadratureRule::qp_points)};
+ //  static constexpr FQPValues<SingleType,NQPoints,Ndofs>
+ //  weighted_reference_values{  weighted_reference_shape_function_init(reference_values,QuadratureRule::qp_sqrt_abs_weights)};
+
+  constexpr const auto& eval()const{return not_transposed_shape_.eval();}
+
+  constexpr void init()
+  {
+    not_transposed_shape_.init();
+  }
+
+  constexpr void init(const Vector<Real,Ndofs> &alpha)
+  {
+    // here we must transposed todo fixme
+    not_transposed_shape_.init(alpha);
+  }
+  constexpr void init_map(const Map& map){not_transposed_shape_.init_map(map());} 
+
+  ShapeFunction(const Map& map):
+  not_transposed_shape_(ShapeFunction<Elem_,BaseFunctionSpace,Operator_,QuadratureRule> (map)),
+  map_ptr(std::make_shared<Map>(map))
+  {}
+
+  ShapeFunction(const ShapeFunction& shape):
+  not_transposed_shape_(ShapeFunction<Elem_,BaseFunctionSpace,Operator_,QuadratureRule> (shape.map())),
+  map_ptr(std::make_shared<Map>(shape.map()))
+  {}
+
+
+  ShapeFunction(){}
+
+ // const auto& map()const{return (*map_ptr);}
+
+  private: 
+ NotTransposedShape not_transposed_shape_;
+ //      SingleType func_tmp_;
+ //      VectorSingleType func_;
+ //      Point qp_point_;
+ //      FQPValues<SingleType,NQPoints,Ndofs> component_func_values_;
+ //      type func_values_;
+ std::shared_ptr<Map> map_ptr;
+ // FQPValues<Transposed<SingleType>,NQPoints,Ndofs>
+ //      Integer n_tot_;
+ //      Integer n_;  
+};
+
 
 
 
@@ -822,15 +934,44 @@ constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,Com
   return TestOrTrial<MixedSpace,FirstSpace,Operator>(t.spaces_ptr());
 }
 
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Operator>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+                                              const Transposed<Expression<Operator>>& expr)
+{
+  auto e=form_of_composite_operator_aux(t,expr.derived());
+  // decltype(expr.derived()) eee(6);
+  return Transpose(e);
+
+  // using T=TestOrTrial<MixedSpace,N,Operator>;
+  // using FunctionSpace=typename T::FunctionSpace;
+  // using FromElementFunctionSpacesToFirstSpaceTupleType=typename FunctionSpace::FromElementFunctionSpacesToFirstSpaceTupleType;
+  // constexpr Integer FirstSpace=GetType<FromElementFunctionSpacesToFirstSpaceTupleType,T::value>::value;  
+  // return Transpose(TestOrTrial<MixedSpace,FirstSpace,Operator>(t.spaces_ptr()));
+}
+
 template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
 constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
                                               const ConstantTensor<ConstType,Inputs...>& constant)
 {return constant;}
 
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+                                              const Transposed<Expression<ConstantTensor<ConstType,Inputs...>>>& transposed_constant)
+{
+  return transposed_constant;
+}
+
+
+
 template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename FullSpace, Integer M,typename Operator,typename FuncType>
 constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
                                               const Function<FullSpace,M,Operator,FuncType>& func)
 {return func;}
+
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename FullSpace, Integer M,typename Operator,typename FuncType>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+                                              const Transposed<Expression<Function<FullSpace,M,Operator,FuncType>>>& transposed_func)
+{return transposed_func;}
 
 
 
@@ -926,98 +1067,6 @@ constexpr auto form_of_composite_operator(const TestOrTrial<MixedSpace,N,Operato
 
 
 
- template< typename Elem_,typename BaseFunctionSpace, typename Operator_, typename QuadratureRule_,Integer N>
- class ShapeFunctionCombinations;
-
- template< typename Elem_,typename BaseFunctionSpace_, typename Expr_, typename QuadratureRule_,Integer N>
- class ShapeFunctionCombinations<Elem_,BaseFunctionSpace_,CompositeOperator<Expression<Expr_>>,QuadratureRule_,N>
- {
-  public:
-  using Elem=Elem_;
-  using BaseFunctionSpace=BaseFunctionSpace_;
-  using Operator=CompositeOperator<Expression<Expr_>>;
-  using Expr=Expr_;
-  using QuadratureRule=QuadratureRule_;
-  using type=OperatorType<Operator,Elem,BaseFunctionSpace,QuadratureRule>;
-
- 
-   template<typename...ts>
-  class Operation;
-
-
-
-  
-  // template<typename ConstType,typename...Inputs>
-  // class Operation<ConstantTensor<ConstType,Inputs...> >
-  // {
-  // public:
-  //   using type=ConstantTensor<ConstType,Inputs...>;
-  //   template<typename GeneralForm, typename...GeneralForms>
-  //   constexpr auto apply(const ShapeFunctions2<GeneralForm,GeneralForms...> &shape_functions)
-  //   {
-      
-  //     // return type::qp_eval<ShapeFunctions2<GeneralForm,GeneralForms...>::QuadratureRule::NQPoints>();
-  // };
-
-
-
-  //  template<typename Left, typename Right>
-  // class Operation< Multiplication< Expression<Left>, Expression<Right> > >
-  // {
-  //   template<typename Output>
-  //   void eval(Output output, const Left&left,const Right&right)
-  //   {
-  //             // return get_tuple_element_of_type<>(shape_functions).eval()};
-
-  //   }
-  //   // init_aux(const std::tuple<Ts...> &shape_functions)
-  //   // TypeToTupleElementPosition<ShapeFunction<Elem,BaseFunctionSpace,,QuadratureRule>, >
-  // };
-
-
-
-
-  //  template<typename Left, typename Right>
-  // class Operation< Addition< Expression<Left>, Expression<Right> > >
-  // {
-  //   template<typename Output>
-  //   void eval(Output output, const Left&left,const Right&right)
-  //   {
-        
-  //   }
-  //   // init_aux(const std::tuple<Ts...> &shape_functions)
-  //   // TypeToTupleElementPosition<ShapeFunction<Elem,BaseFunctionSpace,,QuadratureRule>, >
-  // };
-
-
-  template<typename...GeneralForms>
-  void init(const ShapeFunctions2<GeneralForms...> &shape_functions)
-  {
-    using Shapes=ShapeFunctions2<GeneralForms...>;
-    auto shape_nth=tuple_get<N>(shape_functions);
-
-    // TypeToTupleElementPosition<ShapeFunction<Elem,BaseFunctionSpace,,QuadratureRule>, >
-  }
-
-  ShapeFunctionCombinations(const Expr& expr):
-  expr_(expr)
-  {}
-
-
-
-
-
-
-
-
-
-  private:
-   type func_values_;
-   Expr expr_;
-//    template<Elem,BaseFunctionSpace,Operator, typename QuadratureRule>
-// class ShapeFunction 
-
- };
 
 
 

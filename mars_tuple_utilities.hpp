@@ -14,6 +14,113 @@ namespace mars{
 
 class EmptyClass;
 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///// Compile-time Max, Min, Equal, Greater, Lesser
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+template<typename T>
+constexpr T Max (const T& a,const T& b) 
+{
+  return a > b ? a : b;
+}
+
+template<typename T,typename...Ts>
+constexpr T Max(const T&t,const Ts&...ts)
+{
+  return Max(t,Max(ts...));
+}
+
+
+
+
+
+template<typename T>
+constexpr T Min (const T& a,const T& b) 
+{
+  return a < b ? a : b;
+}
+
+template<typename T,typename S>
+constexpr bool Equal (const T& a,const S& b) 
+{
+  return a == b ? 1 : 0;
+}
+
+
+template<typename T,typename S>
+constexpr bool Greater (const T& a,const S& b) 
+{
+  return a > b ? 1 : 0;
+}
+
+template<typename T,typename S>
+constexpr bool Lesser (const T& a,const S& b) 
+{
+  return a < b ? 1 : 0;
+}
+
+template<typename T>
+constexpr T Sum(const T&t)
+{
+  return t;
+}
+
+
+template<typename T,typename...Ts>
+constexpr T Sum(const T&t,const Ts&...ts)
+{
+  return t+Sum(ts...);
+}
+
+
+// returns the sign of val (1,0,-1)
+template <typename T> 
+constexpr Integer Sign(const T& val) {
+    return (T(0) < val) - (val < T(0));
+}
+
+// returns the sign of val (1,0,-1)
+template <typename T, Integer Dim> 
+constexpr Array<T,Dim> Sign(const Array<T,Dim>& val) {
+    Array<T,Dim> output;
+    for(Integer ii=0;ii<Dim;ii++)
+       output[ii]=(T(0) < val[ii]) - (val[ii] < T(0));
+    return output;
+}
+
+
+template<typename T>
+constexpr T Heaviside (const T& a) 
+{
+  return a > 0 ? a : 0;
+}
+
+template<typename T>
+constexpr bool IsNegative (const T& a) 
+{
+  return a < 0 ? true : false;
+}
+
+template<typename T>
+constexpr bool IsPositive (const T& a) 
+{
+  return a > 0 ? true : false;
+}
+
+
+template<typename T, Integer Dim >
+constexpr bool IsPositive (const Array<T,Dim>& a) 
+{
+  bool output=true;
+  for(Integer ii=0;ii<Dim;ii++)
+      if(IsNegative(a[ii]))
+       {output=false;
+        break;}
+  return output;
+}
+
+
+
 template<typename Left,typename Right>
 class ChooseHelper
 {
@@ -402,7 +509,9 @@ decltype(std::tuple_cat(std::declval<std::tuple< RemoveTupleDuplicates<TupleCatT
 
 
 template<typename T,typename ... Ts>
-using RemoveTupleOfTupleDuplicates=typename RemoveTupleOfTupleDuplicatesHelper<0,std::tuple_size<T>::value-1,T,Ts ... >::type;
+using RemoveTupleOfTupleDuplicates=typename RemoveTupleOfTupleDuplicatesHelper<0,Max(std::tuple_size<T>::value,std::tuple_size<Ts>::value...)-1,T,Ts ... >::type;
+// template<typename T,typename ... Ts>
+// using RemoveTupleOfTupleDuplicates=typename RemoveTupleOfTupleDuplicatesHelper<0,std::tuple_size<T>::value-1,T,Ts ... >::type;
 
 
 
@@ -2423,17 +2532,15 @@ template<typename QuadratureRule, typename Tuple,
 constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple, 
                            const TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Expr>>>& testortrial)
 {
-
-
  // check if already exists test or trial of the same input with quadrature ruel
   using TestOrTrial=TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Expr>>>;
   auto composite_testortrial=
-  //TestOrTrial::value
-  form_of_composite_operator(Test<MixedSpace,N,CompositeOperator<Expression<Expr>>>(testortrial.spaces_ptr(),testortrial.composite_operator()));
+       form_of_composite_operator(Test<MixedSpace,N,CompositeOperator<Expression<Expr>>>(testortrial.spaces_ptr(),testortrial.composite_operator()));
   auto eval_composite=Evaluation<Expression<decltype(composite_testortrial)>,QuadratureRule>(composite_testortrial);
   auto tuple_nth=tuple_get<TestOrTrial::value>(tuple);
-  // auto composite_operator=testortrial.composite_operator();
- return tuple_change_element<TestOrTrial::value>(tuple,tuple_cat_unique(tuple_nth,decltype(eval_composite)(eval_composite)));
+  
+  // decltype(composite_testortrial) eee(5);
+  return tuple_change_element<TestOrTrial::value>(tuple,tuple_cat_unique(tuple_nth,decltype(eval_composite)(eval_composite)));
 }
 
 
@@ -2967,101 +3074,6 @@ constexpr Vector<T, N1+N2+Ns...> concat(const Vector<T, N1>& a1, const Vector<T,
 }
 
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///// Compile-time Max, Min, Equal, Greater, Lesser
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-template<typename T>
-constexpr T Max (const T& a,const T& b) 
-{
-  return a > b ? a : b;
-}
-
-
-template<typename T>
-constexpr T Min (const T& a,const T& b) 
-{
-  return a < b ? a : b;
-}
-
-template<typename T,typename S>
-constexpr bool Equal (const T& a,const S& b) 
-{
-  return a == b ? 1 : 0;
-}
-
-
-template<typename T,typename S>
-constexpr bool Greater (const T& a,const S& b) 
-{
-  return a > b ? 1 : 0;
-}
-
-template<typename T,typename S>
-constexpr bool Lesser (const T& a,const S& b) 
-{
-  return a < b ? 1 : 0;
-}
-
-template<typename T>
-constexpr T Sum(const T&t)
-{
-  return t;
-}
-
-
-template<typename T,typename...Ts>
-constexpr T Sum(const T&t,const Ts&...ts)
-{
-  return t+Sum(ts...);
-}
-
-
-// returns the sign of val (1,0,-1)
-template <typename T> 
-constexpr Integer Sign(const T& val) {
-    return (T(0) < val) - (val < T(0));
-}
-
-// returns the sign of val (1,0,-1)
-template <typename T, Integer Dim> 
-constexpr Array<T,Dim> Sign(const Array<T,Dim>& val) {
-    Array<T,Dim> output;
-    for(Integer ii=0;ii<Dim;ii++)
-       output[ii]=(T(0) < val[ii]) - (val[ii] < T(0));
-    return output;
-}
-
-
-template<typename T>
-constexpr T Heaviside (const T& a) 
-{
-  return a > 0 ? a : 0;
-}
-
-template<typename T>
-constexpr bool IsNegative (const T& a) 
-{
-  return a < 0 ? true : false;
-}
-
-template<typename T>
-constexpr bool IsPositive (const T& a) 
-{
-  return a > 0 ? true : false;
-}
-
-
-template<typename T, Integer Dim >
-constexpr bool IsPositive (const Array<T,Dim>& a) 
-{
-  bool output=true;
-  for(Integer ii=0;ii<Dim;ii++)
-      if(IsNegative(a[ii]))
-       {output=false;
-        break;}
-  return output;
-}
 
 
 

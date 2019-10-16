@@ -966,6 +966,14 @@ class OperatorTypeHelper<Transposed<Expression<Nnary<Tss...>>>,Ts...>
   using type=typename OperatorTypeHelper<Transposed<type_tmp>,Ts...>::type;
 };
 
+template<typename T, typename...Ts>
+class OperatorTypeHelper<Transposed<Expression<T>>,Ts...>
+{ public:
+  using type_tmp=typename OperatorTypeHelper<Expression<T>,Ts...>::type;
+  using type=typename OperatorTypeHelper<Transposed<type_tmp>,Ts...>::type;
+};
+
+
 // template<template<class > class Unary, typename T, typename...Ts>
 // class OperatorTypeHelper<Unary<Transposed<T>>,Ts...>
 // { public:
@@ -973,11 +981,44 @@ class OperatorTypeHelper<Transposed<Expression<Nnary<Tss...>>>,Ts...>
 // };
 
 template<typename T, typename...Ts>//template<class > class Unary, 
+class OperatorTypeHelper<UnaryPlus<Expression<Transposed<Expression<T>>>>,Ts...>
+{ public:
+  using type_tmp=typename OperatorTypeHelper<UnaryPlus<Expression<T>>,Ts...>::type;
+  using type=typename OperatorTypeHelper<UnaryPlus<Transposed<type_tmp>>,Ts...>::type;
+};
+template<typename T, typename...Ts>//template<class > class Unary, 
 class OperatorTypeHelper<UnaryMinus<Expression<Transposed<Expression<T>>>>,Ts...>
 { public:
   using type_tmp=typename OperatorTypeHelper<UnaryMinus<Expression<T>>,Ts...>::type;
   using type=typename OperatorTypeHelper<UnaryPlus<Transposed<type_tmp>>,Ts...>::type;
 };
+
+template<typename Left,typename Right, typename...Ts>
+class OperatorTypeHelper<Transposed<Expression<Addition<Expression<Left>,Expression<Right>>>>,Ts...>
+{ public:
+  using type_tmp=typename OperatorTypeHelper<Addition<Expression<Left>,Expression<Right>>,Ts...>::type;
+  using type=typename OperatorTypeHelper<Transposed<type_tmp>,Ts...>::type;
+};
+template<typename Left,typename Right, typename...Ts>
+class OperatorTypeHelper<Transposed<Expression<Subtraction<Expression<Left>,Expression<Right>>>>,Ts...>
+{ public:
+  using type_tmp=typename OperatorTypeHelper<Subtraction<Expression<Left>,Expression<Right>>,Ts...>::type;
+  using type=typename OperatorTypeHelper<Transposed<type_tmp>,Ts...>::type;
+};
+template<typename Left,typename Right, typename...Ts>
+class OperatorTypeHelper<Transposed<Expression<Multiplication<Expression<Left>,Expression<Right>>>>,Ts...>
+{ public:
+  using type_tmp=typename OperatorTypeHelper<Multiplication<Expression<Left>,Expression<Right>>,Ts...>::type;
+  using type=typename OperatorTypeHelper<Transposed<type_tmp>,Ts...>::type;
+};
+template<typename Left,typename Right, typename...Ts>
+class OperatorTypeHelper<Transposed<Expression<Division<Expression<Left>,Expression<Right>>>>,Ts...>
+{ public:
+  using type_tmp=typename OperatorTypeHelper<Division<Expression<Left>,Expression<Right>>,Ts...>::type;
+  using type=typename OperatorTypeHelper<Transposed<type_tmp>,Ts...>::type;
+};
+
+
 
 
 // template<template<class,class> class Binary, typename Left,typename Right, typename...Ts>
@@ -1305,12 +1346,50 @@ class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< 
   using type=typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::qpvalues_type;
 };
 
+template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, 
+         Integer N, typename FuncType,Integer M,typename OperatorType,typename FullSpace,typename QRule>
+class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Transposed<Expression< Function<FullSpace,M,OperatorType,FuncType> > >>>>,QRule >
+{ public:
+  using tmptype=Function<FullSpace,M,OperatorType,FuncType>;
+  using FunctionSpace=typename tmptype::FunctionSpace;
+  using FunctionSpaces=GetType<typename tmptype::UniqueElementFunctionSpacesTupleType,tmptype::value>;
+  using Elem=typename FunctionSpaces::Elem;
+  using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpaces>;
+  using Operator=typename tmptype::Operator; 
+  using typetmp=typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::qpvalues_type;
+  using type=typename OperatorTypeHelper<Transposed<typetmp>,QRule>::type;
+};
+
 
 template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, 
          Integer N, typename ConstType,typename...Inputs,typename QRule>
 class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< ConstantTensor<ConstType,Inputs...> >>>,QRule >
 { public:
   using type=typename OperatorTypeHelper<ConstantTensor<ConstType,Inputs...>,QRule>::type;
+};
+
+template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, 
+         Integer N, typename ConstType,typename...Inputs,typename QRule>
+class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Transposed<Expression< ConstantTensor<ConstType,Inputs...> >>>>>,QRule >
+{ public:
+  using typetmp=typename OperatorTypeHelper<ConstantTensor<ConstType,Inputs...>,QRule>::type;
+  using type=typename OperatorTypeHelper<Transposed<typetmp>,QRule>::type;
+
+};
+
+
+
+template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, 
+         Integer N, typename T,typename QRule>
+class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< Transposed<Expression<T>> >>>,QRule >
+{ public:
+  using Operator=CompositeOperator<Expression<Transposed<Expression<T>>>>;
+  using tmptype= TestOrTrial<MixedSpace,N,Operator>;
+ static_assert((IsSame<tmptype,Test<MixedSpace,N,Operator>>::value ||
+                IsSame<tmptype,Trial<MixedSpace,N,Operator>>::value )
+               && "In Evaluation<Expression<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");  
+  // TODO FIX ME SUBTYPE AND NOT TYPE CHECK (now in fwpvalues<T,M,N>, tot_type=T)
+  using type=typename OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<T>>>>::type;
 };
 
 
@@ -1561,7 +1640,14 @@ public:
 };
 
 
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename T>
+class FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,Transposed<Expression<T>>>
+{
+public:
+  using TT=typename FormOfCompositeOperatorAuxType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>,T>::type;
+  using type=Transposed<Expression<TT>>;
 
+};
 
 template<typename...Ts>
 class FormOfCompositeOperatorType;
@@ -1710,18 +1796,14 @@ class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,TestOrT
   using EvaluationCompositeType=Evaluation<Expression<CompositeType>,QuadratureRule>;
   using TupleNth=GetType<Tuple,Test::value>;
 
-
   static constexpr Integer IsAlreadyThere=IsPositive(TypeToTupleElementPosition<EvaluationCompositeType,TupleNth>::value);
 
   using ChangeType=typename std::conditional<IsAlreadyThere,TupleNth,TupleCatType<TupleNth,std::tuple<EvaluationCompositeType>>>::type;
-  // RemoveTupleDuplicates< TupleCatType<TupleNth,std::tuple<EvaluationCompositeType>>>;
-  using type=TupleChangeType<Test::value, ChangeType, Tuple> ;
+  using type= TupleChangeType<Test::value, ChangeType, Tuple> ;
 
   using TensorType=OperatorType<Test,QuadratureRule>;
   using TupleTensorNth=GetType<TupleTensor,Test::value>;
   using ChangeTensorType=typename std::conditional<IsAlreadyThere,TupleTensor,TupleCatType<TupleTensorNth,std::tuple<TensorType>>>::type;
-  
-  // RemoveTupleDuplicates< TupleCatType<TupleNth,std::tuple<TensorType>>>;
   using type_tensor=TupleChangeType<Test::value, ChangeTensorType, TupleTensor> ;
 
 };
@@ -1736,8 +1818,6 @@ class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,UnaryPl
   public:
   using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,T>::type;
   using type_tensor=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,T>::type_tensor;
-  // using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,T>::type;
-  // using type_tensor=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleTensor,T>::type_tensor;
 };
 
 template<typename QuadratureRule, typename Tuple,typename TupleTensor,typename T>
@@ -1746,9 +1826,6 @@ class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,UnaryMi
   public:
   using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,T>::type;
   using type_tensor=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,T>::type_tensor;
-
-  // using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,T>::type;
-  // using type_tensor=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,T>::type_tensor;
 };
 
 template<typename QuadratureRule, typename Tuple,typename TupleTensor,typename Left,typename Right>
@@ -1759,20 +1836,12 @@ class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,Additio
   using TupleNewTensor=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,Left>::type_tensor;
   using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNew,TupleNewTensor,Right>::type;
   using type_tensor=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNew,TupleNewTensor,Right>::type_tensor;
-
-  // using TupleNewTensor=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Left>::type_tensor;
-  // using type_tensor=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNewTensor,Right>::type_tensor;
-
 };
 
 template<typename QuadratureRule, typename Tuple,typename TupleTensor,typename Left,typename Right>
 class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,Subtraction<Expression<Left>,Expression<Right>>>
 {
   public:
-  // using TupleNew=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Left>::type;
-  // using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNew,Right>::type;
-  // using TupleNewTensor=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Left>::type_tensor;
-  // using type_tensor=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNewTensor,Right>::type_tensor;
   using TupleNew=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,Left>::type;
   using TupleNewTensor=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,Left>::type_tensor;
   using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNew,TupleNewTensor,Right>::type;
@@ -1784,10 +1853,6 @@ template<typename QuadratureRule, typename Tuple,typename TupleTensor,typename L
 class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,Multiplication<Expression<Left>,Expression<Right>>>
 {
   public:
-  // using TupleNew=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Left>::type;
-  // using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNew,Right>::type;
-  // using TupleNewTensor=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Left>::type_tensor;
-  // using type_tensor=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNewTensor,Right>::type_tensor;
   using TupleNew=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,Left>::type;
   using TupleNewTensor=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,Left>::type_tensor;
   using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNew,TupleNewTensor,Right>::type;
@@ -1800,10 +1865,6 @@ template<typename QuadratureRule, typename Tuple,typename TupleTensor,typename L
 class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,Division<Expression<Left>,Expression<Right>>>
 {
   public:
-  // using TupleNew=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,Left>::type;
-  // using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNew,TupleTensor,Right>::type;
-  // using TupleNewTensor=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Left>::type_tensor;
-  // using type_tensor=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNewTensor,Right>::type_tensor;
   using TupleNew=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,Left>::type;
   using TupleNewTensor=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,Left>::type_tensor;
   using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNew,TupleNewTensor,Right>::type;
@@ -1826,10 +1887,6 @@ class TupleOfCombinationFunctionsAux<Tuple,TupleTensor,L2DotProductIntegral<Left
   public:
   using L2=L2DotProductIntegral<Left,Right,QR>;
   using QRule=typename L2::QRule;
-  // using TupleNew=typename TupleOfCombinationFunctionsAuxAux<QRule,Tuple,Left>::type;
-  // using type=typename TupleOfCombinationFunctionsAuxAux<QRule,TupleNew,Right>::type;
-  // using TupleNewTensor=typename TupleOfCombinationFunctionsAuxAux<QRule,Tuple,Left>::type_tensor;
-  // using type_tensor=typename TupleOfCombinationFunctionsAuxAux<QRule,TupleNewTensor,Right>::type_tensor;
   using TupleNew=typename TupleOfCombinationFunctionsAuxAux<QRule,Tuple,TupleTensor,Left>::type;
   using TupleNewTensor=typename TupleOfCombinationFunctionsAuxAux<QRule,Tuple,TupleTensor,Left>::type_tensor;
   using type=typename TupleOfCombinationFunctionsAuxAux<QRule,TupleNew,TupleNewTensor,Right>::type;
@@ -1841,10 +1898,6 @@ template<typename Tuple, typename TupleTensor,typename Left,typename Right>
 class TupleOfCombinationFunctionsAux<Tuple,TupleTensor,Addition<Expression<Left>,Expression<Right>>>
 {
   public:
-  // using TupleNew=typename TupleOfCombinationFunctionsAux<Tuple,Left>::type;
-  // using type=typename TupleOfCombinationFunctionsAux<TupleNew,Right>::type;
-  // using TupleNewTensor=typename TupleOfCombinationFunctionsAux<Tuple,Left>::type_tensor;
-  // using type_tensor=typename TupleOfCombinationFunctionsAux<TupleNewTensor,Right>::type_tensor;
   using TupleNew=typename TupleOfCombinationFunctionsAux<Tuple,TupleTensor,Left>::type;
   using TupleNewTensor=typename TupleOfCombinationFunctionsAux<Tuple,TupleTensor,Left>::type_tensor;
   using type=typename TupleOfCombinationFunctionsAux<TupleNew,TupleNewTensor,Right>::type;
@@ -1862,8 +1915,6 @@ template<typename Tuple,typename TupleTensor,typename Form>
 class TupleOfCombinationFunctionsForm<Tuple,TupleTensor,Form>
 {
   public:
-  // using type=typename TupleOfCombinationFunctionsAux<Tuple,Form>::type;
-  // using type_tensor=typename TupleOfCombinationFunctionsAux<Tuple,Form>::type_tensor;
   using type=typename TupleOfCombinationFunctionsAux<Tuple,TupleTensor,Form>::type;
   using type_tensor=typename TupleOfCombinationFunctionsAux<Tuple,TupleTensor,Form>::type_tensor;
 };
@@ -1876,10 +1927,6 @@ class TupleOfCombinationFunctionsForm<Tuple,TupleTensor,Form,Forms...>
   using TupleTensorNew=typename TupleOfCombinationFunctionsAux<Tuple,TupleTensor,Form>::type_tensor;
   using type=typename TupleOfCombinationFunctionsForm<TupleNew,TupleTensorNew,Forms...>::type;
   using type_tensor=typename TupleOfCombinationFunctionsForm<TupleNew,TupleTensorNew,Forms...>::type_tensor;
-
-
-  // using TupleNewTensor=typename TupleOfCombinationFunctionsAux<Tuple,Form>::type_tensor;
-  // using type_tensor=typename TupleOfCombinationFunctionsForm<TupleNewTensor,Forms...>::type_tensor;
 };
 
 

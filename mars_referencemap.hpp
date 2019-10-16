@@ -23,6 +23,7 @@ class MapFromReference5<IdentityOperator, Simplex<Dim,ManifoldDim>,LagrangeFE>
  public:
  using Operator=IdentityOperator;
  using Elem=Simplex<Dim,ManifoldDim>;
+ // using type=Real;
         inline constexpr void  init(const Jacobian<Simplex<Dim,ManifoldDim>>& J){id_=1.0;}
         inline constexpr const auto&  operator()()const{return id_;}
  private:
@@ -40,6 +41,7 @@ class MapFromReference5<GradientOperator, Simplex<Dim,ManifoldDim>,LagrangeFE>
  public:
  using Operator=GradientOperator;
  using Elem=Simplex<Dim,ManifoldDim>;
+ // using type=Matrix<Real, Dim, ManifoldDim>;
         inline constexpr void  init(const Jacobian<Simplex<Dim,ManifoldDim>>& J){grad_=  inverse(J());}
         inline constexpr const auto&  operator() ()const{return grad_;}
  private:
@@ -54,6 +56,7 @@ class MapFromReference5<IdentityOperator,Simplex<Dim,ManifoldDim>,RaviartThomasF
  public:
  using Operator=IdentityOperator;
  using Elem=Simplex<Dim,ManifoldDim>;
+ // using type=Matrix<Real, Dim, ManifoldDim>;
          inline constexpr void init(const Jacobian<Simplex<Dim,ManifoldDim>> &J){id_=J();id_/=J.get_det();}
          inline constexpr const auto&  operator()()const {return id_;}
  private:
@@ -66,6 +69,7 @@ class MapFromReference5<DivergenceOperator,Simplex<Dim,ManifoldDim>,RaviartThoma
  public:
  using Operator=DivergenceOperator;
  using Elem=Simplex<Dim,ManifoldDim>;
+ // using type=Real;
          inline constexpr void init(const Jacobian<Simplex<Dim,ManifoldDim>> &J){div_= J.get_det();}
          inline constexpr const auto&  operator()()const{return div_;}
  private:
@@ -77,7 +81,18 @@ class MapFromReference5<DivergenceOperator,Simplex<Dim,ManifoldDim>,RaviartThoma
 
 
 
-
+template<typename T, typename Elem_, Integer FEFamily>
+class MapFromReference5<Transposed<Expression<T>>,Elem_,FEFamily> 
+{
+ public:
+ using Operator=T;
+ using Elem=Elem_;
+ using Map=MapFromReference5<T,Elem_,FEFamily>;
+         inline constexpr void init(const Jacobian<Elem> &J){map_.init(J);}
+         inline constexpr const auto&  operator()()const{return map_;}
+ private:
+ Map map_;
+};
 
 
 

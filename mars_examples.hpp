@@ -901,7 +901,7 @@ std::cout<<"-------------------------------------------"<<std::endl;
 
   constexpr Integer ManifoldDim=2;
   constexpr Integer Dim=2;
-  using MeshT=mars::Mesh<Dim, ManifoldDim>;  
+  using MeshT=Mesh<Dim, ManifoldDim>;  
   MeshT mesh;
   using Elem = typename MeshT::Elem; 
   read_mesh("../data/beam-tri.MFEM", mesh);
@@ -966,8 +966,8 @@ void assembly_example()
 
   constexpr Integer ManifoldDim=2;
   constexpr Integer Dim=2;
-  using MeshT=mars::Mesh<Dim, ManifoldDim>;
-  using MeshT2=mars::Mesh<Dim+1, ManifoldDim+1>;
+  using MeshT=Mesh<Dim, ManifoldDim>;
+  using MeshT2=Mesh<Dim+1, ManifoldDim+1>;
   MeshT2 mesh2;
   read_mesh("../data/beam-tet.MFEM", mesh2);
 
@@ -1039,7 +1039,7 @@ void assembly_example()
 
   Jacobian<Elem> J(mesh);
   
-  
+  constexpr auto C=Constant<Scalar1>(0.5);
   constexpr auto alpha=Constant<Scalar1>(2.0);
   constexpr auto beta=Constant<Scalar1>(3.0);
   constexpr auto gamma=Constant<Scalar1>(3.0);
@@ -1053,14 +1053,15 @@ void assembly_example()
 
 auto NewOp1=NewOperator(IdentityOperator()/alpha);
 auto NewOp2=NewOperator(IdentityOperator()*alpha*f1);
-
+auto Epsilon=NewOperator(Transpose(Transpose(alpha)+f1*alpha-Transpose(Transpose(f1)/Transpose(alpha)))*(GradientOperator()+Transpose(GradientOperator())));
+//Transpose(Transpose(alpha)+alpha)
 // FormOfCompositeOperatorType<decltype(NewOp2(u1))>::type ee(5);
   auto bilinearform= 
-                    L2Inner((u3),(v3))+ //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
+                    L2Inner(f1*(u3),(v3))+ //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
                     L2Inner((u2),(v2)) +//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
                     L2Inner((u1),(v1));//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
   // auto linearform= L2Inner(Transpose(alpha*f1),Transpose(f1*alpha*NewOp2(v1)));//+L2Inner(f2,v2)+L2Inner(f1,v1);//+ L2Inner(f1,v1);
-  auto linearform= L2Inner((Grad(v1)),id2);//Transpose(Transpose((matrix1)+Transpose(matrix2))));//Transpose(-f1*(matrix1+matrix1)*Transpose(alpha*matrix1-matrix1)));//+L2Inner(f2,v2)+L2Inner(f1,v1);//+ L2Inner(f1,v1);
+  auto linearform= L2Inner(Epsilon(v1),id2);//Transpose(Transpose((matrix1)+Transpose(matrix2))));//Transpose(-f1*(matrix1+matrix1)*Transpose(alpha*matrix1-matrix1)));//+L2Inner(f2,v2)+L2Inner(f1,v1);//+ L2Inner(f1,v1);
   
 
 
@@ -1092,17 +1093,69 @@ auto NewOp2=NewOperator(IdentityOperator()*alpha*f1);
   shape_functions.init(J);///////////////<------------------------ problema qui
 
 
-
-  // eval_bilinear_form.apply(J);
+  std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
+  std::cout<<"------_______-----BEFORE EVALUATION-----_______--------"<<std::endl;
+  eval_bilinear_form.apply(J);
   eval_linear_form.apply(J);
 
 
+// OperatorAndQuadratureTupleType<decltype(bilinearform)::Left>::type e2e(5);
+
+// OperatorAndQuadratureTupleType<decltype(linearform)::Left>::type ee(5);
+
+// Vector<Vector<Matrix<Real,1,2>,1>,1> vecme({{6,7}});
+// FQPValues<Matrix<Real,1,2>,1,1> fqp(vecme);
+// FQPValues<Transposed<Matrix<Real,1,2>>,1,1> fqtrans(fqp);
+
+// std::cout<<fqp<<std::endl;
+// std::cout<<fqtrans<<std::endl;
+
+// decltype(shape_functions)::TupleOperatorsAndQuadrature ok0(0);
+// decltype(shape_functions)::TupleCompositeOperatorsAndQuadrature ok03(0);
+// OperatorAndQuadratureTupleType<decltype(linearform)>::type ee(5);
+// OperatorAndQuadratureTupleType<decltype(linearform)>::composite_type e4e(5);
+
+// decltype(reference_maps)::TupleOfTupleNoQuadrature ee(5);
+// decltype(Epsilon) ok(1);
+// decltype(reference_maps)::UniqueElementFunctionSpacesTupleType o2k(1);
+
 // decltype(reference_maps)::Form oo(5);
 // OperatorAndQuadratureTupleType<decltype(reference_maps)::Form::Left>::type o2o(5);
-// decltype(reference_maps)::Form::Right rr(5);
+// decltype(shape_functions)::TupleOfTupleShapeFunction rr4444(5,6,7,8,9,0,8,7,6,4);
+// decltype(shape_functions)::TupleOfTupleCompositeShapeFunction rr4(5,6,7,8,9,0,8,7,6,4);
+// decltype(shape_functions)::TupleOfTupleCompositeShapeFunctionTensor rr(5,6,7,8,9,0,8,7,6,4);
   // OperatorAndQuadratureTupleType<decltype(reference_maps)::Form::Right>::L2prod::type ee(5,4);
 // OperatorAndQuadratureTupleType<OperatorAndQuadratureTupleType<decltype(reference_maps)::Form::Right>::L2prod::type>::type o24o(5,4);
 
+
+// OperatorType<Transposed<Expression<Test<FullSpace<MixedSpace<FunctionSpace<Mesh<2, 2, DefaultImplementation>,
+//       BaseFunctionSpace<-10, 1, 1, 2>>, FunctionSpace<Mesh<2, 2, DefaultImplementation>, BaseFunctionSpace<-10, 1, 1, 1>, BaseFunctionSpace<-10, 2, 1, 1> > >,
+//       AuxMixedSpace<FunctionSpace<Mesh<2, 2, DefaultImplementation>, BaseFunctionSpace<-10, 1, 1, 1>> > >, 0,
+      
+//       Addition<Expression<Transposed<Expression<ConstantTensor<Scalar1, double> > > >, 
+//                Expression<Function<FullSpace<MixedSpace<FunctionSpace<Mesh<2, 2,DefaultImplementation>, BaseFunctionSpace<-10, 1, 1, 2>>, FunctionSpace<Mesh<2, 2, DefaultImplementation>, BaseFunctionSpace<-10, 1, 1, 1>, BaseFunctionSpace<-10, 2, 1, 1> > >,
+//                                              AuxMixedSpace<FunctionSpace<Mesh<2, 2, DefaultImplementation>, BaseFunctionSpace<-10, 1, 1, 1>> > >, 
+//                                    3, IdentityOperator, Function1> > > > > > ,
+//       GaussPoints<Simplex<2, 2>, 3> > ok3(4);
+
+// OperatorType<Transposed<Expression<Test<FullSpace<MixedSpace<FunctionSpace<Mesh<2, 2, DefaultImplementation>,
+//       BaseFunctionSpace<-10, 1, 1, 2>>, FunctionSpace<Mesh<2, 2, DefaultImplementation>, BaseFunctionSpace<-10, 1, 1, 1>, BaseFunctionSpace<-10, 2, 1, 1> > >,
+//       AuxMixedSpace<FunctionSpace<Mesh<2, 2, DefaultImplementation>, BaseFunctionSpace<-10, 1, 1, 1>> > >, 0,
+//       Addition<Expression<Transposed<Expression<ConstantTensor<Scalar1, double> > > >, Expression<Function<FullSpace<MixedSpace<FunctionSpace<Mesh<2, 2,
+//       DefaultImplementation>, BaseFunctionSpace<-10, 1, 1, 2>>, FunctionSpace<Mesh<2, 2, DefaultImplementation>, BaseFunctionSpace<-10, 1, 1, 1>, BaseFunctionSpace<-10, 2, 1, 1> > >,
+//       AuxMixedSpace<FunctionSpace<Mesh<2, 2, DefaultImplementation>, BaseFunctionSpace<-10, 1, 1, 1>> > >, 3, IdentityOperator, Function1> > > > > > ,
+//       GaussPoints<Simplex<2, 2>, 3> > ok3(4);
+
+
+// OperatorType<Multiplication<Expression<Transposed<Expression<Test<FullSpace<MixedSpace<FunctionSpace<Mesh<2, 2, DefaultImplementation>,
+//       BaseFunctionSpace<-10, 1, 1, 2>>, FunctionSpace<Mesh<2, 2, DefaultImplementation>, BaseFunctionSpace<-10, 1, 1, 1>, BaseFunctionSpace<-10, 2, 1, 1> > >,
+//       AuxMixedSpace<FunctionSpace<Mesh<2, 2, DefaultImplementation>, BaseFunctionSpace<-10, 1, 1, 1>> > >, 0,
+//       Addition<Expression<Transposed<Expression<ConstantTensor<Scalar1, double> > > >, Expression<Function<FullSpace<MixedSpace<FunctionSpace<Mesh<2, 2,
+//       DefaultImplementation>, BaseFunctionSpace<-10, 1, 1, 2>>, FunctionSpace<Mesh<2, 2, DefaultImplementation>, BaseFunctionSpace<-10, 1, 1, 1>, BaseFunctionSpace<-10, 2, 1, 1> > >,
+//       AuxMixedSpace<FunctionSpace<Mesh<2, 2, DefaultImplementation>, BaseFunctionSpace<-10, 1, 1, 1>> > >, 3, IdentityOperator, Function1> > > > > > >,
+//       Expression<Test<FullSpace<MixedSpace<FunctionSpace<Mesh<2, 2, DefaultImplementation>, BaseFunctionSpace<-10, 1, 1, 2>>, FunctionSpace<Mesh<2, 2,
+//       DefaultImplementation>, BaseFunctionSpace<-10, 1, 1, 1>, BaseFunctionSpace<-10, 2, 1, 1> > >, AuxMixedSpace<FunctionSpace<Mesh<2, 2, DefaultImplementation>,
+//       BaseFunctionSpace<-10, 1, 1, 1>> > >, 0, IdentityOperator> > >, GaussPoints<Simplex<2, 2>, 3> > ok(1);
 // //   // auto ctx = CreateContext(bilinear_form, linear_form);
 
 // //   //  for(i--)
@@ -1236,8 +1289,8 @@ auto NewOp2=NewOperator(IdentityOperator()*alpha*f1);
 
 // std::cout<<hh<<std::endl;
 // OperatorType<Division<FQPValues<Matrix<double,1,2,-1>,1,3>,QPValues<Matrix<double,1,1,-1>,1>>> eee(5);
-// OperatorType<Multiplication<mars::Matrix<double, 1,
-//       2, -1>, mars::Matrix<double, 1, 1, -1> > >  eee(6,5,5,5);
+// OperatorType<Multiplication<Matrix<double, 1,
+//       2, -1>, Matrix<double, 1, 1, -1> > >  eee(6,5,5,5);
 // decltype(shape_functions()) oo(5);
 // decltype(ecc2) l(5);
 
@@ -1468,7 +1521,7 @@ auto NewOp2=NewOperator(IdentityOperator()*alpha*f1);
 // EvalOfL2InnersAux<L2Products,0,ShapeFunctions> ee(5);
 
 
- // mars::Matrix<double, 6, 6> mat0;
+ // Matrix<double, 6, 6> mat0;
  // std::get<3>(m4).apply(mat0,J);
 
  // decltype(eval_generalform) eese(6);
@@ -1727,7 +1780,7 @@ void functionspaces_example2D()
 
   constexpr Integer ManifoldDim=2;
   constexpr Integer Dim=2;
-  using MeshT=mars::Mesh<Dim, ManifoldDim>;
+  using MeshT=Mesh<Dim, ManifoldDim>;
   MeshT mesh;
   using Elem = typename MeshT::Elem; 
   read_mesh("../data/beam-tri.MFEM", mesh);
@@ -1909,7 +1962,7 @@ void normals_example2D()
 {
   constexpr Integer ManifoldDim=2;
   constexpr Integer Dim=2;   
-  using MeshT=mars::Mesh<Dim, ManifoldDim>;
+  using MeshT=Mesh<Dim, ManifoldDim>;
   MeshT mesh;
   using Elem = typename MeshT::Elem;   
   read_mesh("../data/beam-tri.MFEM", mesh);
@@ -1924,7 +1977,7 @@ void normals_example3D()
 {
   constexpr Integer ManifoldDim=3;
   constexpr Integer Dim=3;   
-  using MeshT=mars::Mesh<Dim, ManifoldDim>;
+  using MeshT=Mesh<Dim, ManifoldDim>;
   MeshT mesh;
   using Elem = typename MeshT::Elem;   
   read_mesh("../data/tetrahedron_2.MFEM", mesh); 
@@ -1939,7 +1992,7 @@ void simplex_reference_normals_3D()
 {
   constexpr Integer ManifoldDim=3;
   constexpr Integer Dim=3;   
-  using MeshT=mars::Mesh<Dim, ManifoldDim>;
+  using MeshT=Mesh<Dim, ManifoldDim>;
   MeshT mesh;
   using Elem = typename MeshT::Elem;   
   read_mesh("../data/tetrahedron_1.MFEM", mesh); 
@@ -1993,7 +2046,7 @@ void normals_example4D()
 {
   constexpr Integer ManifoldDim=4;
   constexpr Integer Dim=4;   
-  using MeshT=mars::Mesh<Dim, ManifoldDim>;
+  using MeshT=Mesh<Dim, ManifoldDim>;
   MeshT mesh;
   using Elem = typename MeshT::Elem;   
   read_mesh("../data/pentatope_2.MFEM", mesh);
@@ -2022,7 +2075,7 @@ void functionspaces_example4D()
   constexpr Integer Dim=4;
   constexpr Integer FEFamily=LagrangeFE;
   constexpr Integer Order=3;
-  using MeshT=mars::Mesh<Dim, ManifoldDim>;
+  using MeshT=Mesh<Dim, ManifoldDim>;
   MeshT mesh;
   using Elem = typename MeshT::Elem; 
   read_mesh("../data/pentatope_2.MFEM", mesh);
@@ -2167,7 +2220,7 @@ void connectivity_example5D()
 
   constexpr Integer ManifoldDim=4;
   constexpr Integer Dim=4;
-  using MeshT=mars::Mesh<Dim, ManifoldDim>;
+  using MeshT=Mesh<Dim, ManifoldDim>;
   MeshT mesh;
   using Elem = typename MeshT::Elem; 
   read_mesh("../data/pentatope_2.MFEM", mesh);

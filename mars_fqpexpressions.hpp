@@ -188,7 +188,50 @@ protected:
 };
 
 
+template<typename T, Integer NQPoints_,Integer Ndofs_>
+class FQPValues<Transposed<T>,NQPoints_,Ndofs_>: 
+public AlgebraicExpression<FQPValues<Transposed<T>,NQPoints_,Ndofs_>,
+                    Vector<Vector<Transposed<T>,NQPoints_>,Ndofs_>>
+{
+public:
 
+      static constexpr Integer NQPoints=NQPoints_;
+      static constexpr Integer Ndofs=Ndofs_;
+
+      using type= Vector<Vector<Transposed<T>,NQPoints>,Ndofs>;
+      using subttype= Vector<Transposed<T>,NQPoints>;
+
+
+
+
+      constexpr       type & value()     {return values_;};
+      constexpr const type & value()const{return values_;};
+      inline constexpr const type operator()()const{return values_;};
+      inline constexpr       type operator()()     {return values_;};
+      inline constexpr const subttype operator()(const Integer i)const{return values_[i];};
+      inline constexpr       subttype operator()(const Integer i)     {return values_[i];};
+      inline constexpr const Transposed<T>& operator()(const Integer i,const Integer j)const{return values_[i][j];};
+      inline constexpr       Transposed<T>& operator()(const Integer i,const Integer j)     {return values_[i][j];};
+
+
+
+      ~FQPValues() = default;
+      constexpr FQPValues()= default;
+      constexpr FQPValues(const FQPValues<T,NQPoints_,Ndofs_>& v)
+      {
+        for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+          for(Integer qp=0;qp<NQPoints;qp++)
+              values_[n_dof][qp](v(n_dof,qp));
+      };
+      constexpr FQPValues (FQPValues const &) = default;
+      constexpr FQPValues (FQPValues &&) = default;
+      constexpr FQPValues & operator= (FQPValues const &) = default;
+      constexpr FQPValues & operator= (FQPValues &&) = default;
+      inline constexpr Integer size()const{return Ndofs;}
+      // inline constexpr void operator()(const Integer& i,const Vector<T,NQPoints>& u){values_[i]=u;};         
+protected:
+  type values_;
+};
 
 
 

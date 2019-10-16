@@ -730,7 +730,16 @@ class Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_>>,OtherTemplateAr
   constexpr Integer M=TypeToTupleElementPosition<ShapeFunction<Elem,BaseFunctionSpace,Operator,OtherTemplateArguments...>,tuple_type>::value;
     // std::cout<<"befor Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_> "<<value<<std::endl;
 
-  Assignment<value_type>::apply(value,tuple_get<M>(tuple).eval());
+ // Number<M> e5e(5);
+
+ //  tuple_type ok(1);
+ //  decltype(tuple) ee(3);
+  Assign(value,tuple_get<M>(tuple).eval());
+
+
+
+
+  // Assignment<value_type>::apply(value,tuple_get<M>(tuple).eval());
   // std::cout<<"after Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_> "<<value<<std::endl;
 
  }
@@ -786,6 +795,8 @@ class Evaluation<Expression<TestOrTrial<MixedSpace,N,CompositeOperator<Expressio
 
  auto& single_tensor=tuple_get<type::value,M >(tuple_tensor);
  Assignment<ValueType>::apply(value,single_tensor);
+   std::cout<<"single_tensor= "<<single_tensor<<std::endl;
+
   std::cout<<"Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_> "<<value<<std::endl;
 
 
@@ -873,8 +884,17 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
   // const auto& tuple=tuple_get<type::value>(tuple_of_tuple);
   constexpr Integer M=TypeToTupleElementPosition<ShapeFunction<Elem,BaseFunctionSpace,Operator,OtherTemplateArguments...>,tuple_type>::value;
   // FIXME
+
+
   const auto& shapes=tuple_get<M>(tuple).eval();
   compute(value,eval_,J,shapes);
+
+  // decltype(tuple) oo(5);
+  // Number<M> owo(5);
+  // ShapeFunction<Elem,BaseFunctionSpace,Operator,OtherTemplateArguments...> rra(6);
+  // tuple_type ee(5);
+  // TupleOfTupleShapeFunction r5(6);
+  // std::tuple<Args...> kj(6);
   std::cout<<"Evaluation<Expression<Function "<<value<<std::endl;
 
 
@@ -909,9 +929,7 @@ class Evaluation<Expression<ConstantTensor<ConstType,Inputs...>>,QuadratureRule>
 
  Evaluation(const type& expr):
  eval_(expr)
- {
-  std::cout<<"eval constructor="<<expr.template qp_eval<QuadratureRule::NQPoints>()<<std::endl;
- };
+ { };
 
 
 
@@ -2804,6 +2822,7 @@ class ShapeFunctions2
   //template<typename Coefficients>
   constexpr void init_composite_shape_functions(const Jacobian<Elem> &J)
   {
+    std::cout<<"init_composite_shape_functions"<<std::endl;
    constexpr Integer Nmax=TupleTypeSize<TupleOfTupleCompositeShapeFunction>::value-1;
    init_composite_shape_functions_aux<Nmax,0>(J);
    }
@@ -2853,7 +2872,8 @@ class ShapeFunctions2
                  ReferenceMaps2<GeneralForm_,GeneralForms_...>& maps,
                  const GeneralForm_& form,const GeneralForms_&...forms):
  coeffs_(coeffs),
- maps_(maps),
+ maps_(maps)
+ ,
  tuple_composite_(build_tuple_of_combination_functions<GeneralForm::FunctionSpace::Nuniquesubspaces>(form(),forms()...))
  { }
 

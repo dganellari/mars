@@ -116,8 +116,8 @@ class QuadratureOrder<Trial<MixedSpace,N_,OperatorKind>,Args...>
 
 
 // order(T) = order(+T)
-template<typename T>
-class QuadratureOrder< UnaryPlus< Expression<T> > >
+template<typename T, typename...Args>
+class QuadratureOrder< UnaryPlus< Expression<T> >,Args... >
 { public:
   static constexpr Integer value=QuadratureOrder<T>::value;
 };
