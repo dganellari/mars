@@ -30,12 +30,22 @@ namespace mars {
 			{
 				midpoint = Kokkos::atomic_fetch_add(&node_start_index(0), 1);
 
+				//Kokkos::volatile_store(&mapping_.value_at(result.index()), &midpoint);
+
 				mapping_.value_at(result.index()) = midpoint;
+
+				//Kokkos::memory_fence();
+
 				return true;
 			}
 			else if (result.existing())
 			{
-				midpoint = mapping_.value_at(result.index());
+				// wait until the other thread writes the midpoint to map and the value is visible.
+				while (midpoint == 0)
+				{
+					//volatile needed  otherwise since value_at is const it assumes that it should not read it again.
+					midpoint = Kokkos::volatile_load(&mapping_.value_at(result.index()));
+				}
 				return false;
 			}
 			else
