@@ -46,7 +46,7 @@ namespace mars {
 		virtual MARS_INLINE_FUNCTION bool is_active(const Integer id) const = 0;
 		virtual MARS_INLINE_FUNCTION Integer n_nodes() const = 0;
 		virtual MARS_INLINE_FUNCTION Integer n_elements() const = 0;
-		virtual MARS_INLINE_FUNCTION Integer n_active_elements() const = 0;
+		//virtual MARS_INLINE_FUNCTION Integer n_active_elements() const = 0;
 		//virtual Integer add_point(const Point<Real,Dim> &point) = 0;
 		virtual MARS_INLINE_FUNCTION Point<Real,Dim> point(const Integer i) = 0;
 		virtual MARS_INLINE_FUNCTION const Point<Real,Dim> point(const Integer i) const = 0;
