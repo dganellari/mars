@@ -1054,14 +1054,17 @@ void assembly_example()
 auto NewOp1=NewOperator(IdentityOperator()/alpha);
 auto NewOp2=NewOperator(IdentityOperator()*alpha*f1);
 auto Epsilon=NewOperator(Transpose(Transpose(alpha)+f1*alpha-Transpose(Transpose(f1)/Transpose(alpha)))*(GradientOperator()+Transpose(GradientOperator())));
+// auto Epsilon=NewOperator((GradientOperator()));//+Transpose(GradientOperator())));//+Transpose(GradientOperator())));
+
 //Transpose(Transpose(alpha)+alpha)
+// Transpose(Transpose(alpha)+f1*alpha-Transpose(Transpose(f1)/Transpose(alpha)))*
 // FormOfCompositeOperatorType<decltype(NewOp2(u1))>::type ee(5);
   auto bilinearform= 
                     L2Inner(f1*(u3),(v3))+ //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
                     L2Inner((u2),(v2)) +//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
-                    L2Inner((u1),(v1));//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
+                    L2Inner(Transpose(u1),Transpose(v1));//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
   // auto linearform= L2Inner(Transpose(alpha*f1),Transpose(f1*alpha*NewOp2(v1)));//+L2Inner(f2,v2)+L2Inner(f1,v1);//+ L2Inner(f1,v1);
-  auto linearform= L2Inner(Epsilon(v1),id2);//Transpose(Transpose((matrix1)+Transpose(matrix2))));//Transpose(-f1*(matrix1+matrix1)*Transpose(alpha*matrix1-matrix1)));//+L2Inner(f2,v2)+L2Inner(f1,v1);//+ L2Inner(f1,v1);
+  auto linearform= L2Inner((Transpose(Epsilon(v1))-Transpose(alpha-Transpose(f1))*(Epsilon(v1))),Transpose(id2));//Transpose(Transpose((matrix1)+Transpose(matrix2))));//Transpose(-f1*(matrix1+matrix1)*Transpose(alpha*matrix1-matrix1)));//+L2Inner(f2,v2)+L2Inner(f1,v1);//+ L2Inner(f1,v1);
   
 
 
@@ -1093,12 +1096,13 @@ auto Epsilon=NewOperator(Transpose(Transpose(alpha)+f1*alpha-Transpose(Transpose
   shape_functions.init(J);///////////////<------------------------ problema qui
 
 
-  std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
-  std::cout<<"------_______-----BEFORE EVALUATION-----_______--------"<<std::endl;
-  eval_bilinear_form.apply(J);
+  // std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
+  // std::cout<<"------_______-----BEFORE EVALUATION-----_______--------"<<std::endl;
+  // // eval_bilinear_form.apply(J);
   eval_linear_form.apply(J);
 
-
+// auto oks=Eval(decltype(linearform)(linearform.left(),linearform.right()),shape_functions);
+// local_tensor_
 // OperatorAndQuadratureTupleType<decltype(bilinearform)::Left>::type e2e(5);
 
 // OperatorAndQuadratureTupleType<decltype(linearform)::Left>::type ee(5);
@@ -1110,19 +1114,21 @@ auto Epsilon=NewOperator(Transpose(Transpose(alpha)+f1*alpha-Transpose(Transpose
 // std::cout<<fqp<<std::endl;
 // std::cout<<fqtrans<<std::endl;
 
-// decltype(shape_functions)::TupleOperatorsAndQuadrature ok0(0);
+// OperatorType<decltype(Transpose(Epsilon(v1))), GaussPoints<Simplex<2, 2>, 1> > aa;
 // decltype(shape_functions)::TupleCompositeOperatorsAndQuadrature ok03(0);
 // OperatorAndQuadratureTupleType<decltype(linearform)>::type ee(5);
 // OperatorAndQuadratureTupleType<decltype(linearform)>::composite_type e4e(5);
 
-// decltype(reference_maps)::TupleOfTupleNoQuadrature ee(5);
+// decltype(eval_linear_form)::type::Form ee(5);
 // decltype(Epsilon) ok(1);
 // decltype(reference_maps)::UniqueElementFunctionSpacesTupleType o2k(1);
 
-// decltype(reference_maps)::Form oo(5);
+// decltype(shape_functions)::Form oo(5);
 // OperatorAndQuadratureTupleType<decltype(reference_maps)::Form::Left>::type o2o(5);
 // decltype(shape_functions)::TupleOfTupleShapeFunction rr4444(5,6,7,8,9,0,8,7,6,4);
-// decltype(shape_functions)::TupleOfTupleCompositeShapeFunction rr4(5,6,7,8,9,0,8,7,6,4);
+// decltype(shape_functions)::TupleCompositeOperatorsAndQuadrature rr4(5,6,7,8,9,0,8,7,6,4);
+// decltype(shape_functions)::TupleOfTupleShapeFunction rr334(5,6,7,8,9,0,8,7,6,4);
+// decltype(shape_functions)::TupleOfTupleCompositeShapeFunction e2s(6,4,44,4,56,7,7);
 // decltype(shape_functions)::TupleOfTupleCompositeShapeFunctionTensor rr(5,6,7,8,9,0,8,7,6,4);
   // OperatorAndQuadratureTupleType<decltype(reference_maps)::Form::Right>::L2prod::type ee(5,4);
 // OperatorAndQuadratureTupleType<OperatorAndQuadratureTupleType<decltype(reference_maps)::Form::Right>::L2prod::type>::type o24o(5,4);
@@ -1192,7 +1198,6 @@ auto Epsilon=NewOperator(Transpose(Transpose(alpha)+f1*alpha-Transpose(Transpose
 //    // decltype(shape_functions)::Form e(5);
 //      // decltype(shape_functions)::TupleOfTupleShapeFunction e2s3(6,4,44,4,56,7,7);
 
-//     // decltype(shape_functions)::TupleOfTupleShapeFunctionCombinations e2s(6,4,44,4,56,7,7);
 //   // GetType<decltype(shape_functions)::TupleOfTupleShapeFunctionCombinations,1,0> e2s3(6,4,44,4,56,7,7);
 
 

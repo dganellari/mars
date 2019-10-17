@@ -794,9 +794,14 @@ class Evaluation<Expression<TestOrTrial<MixedSpace,N,CompositeOperator<Expressio
  constexpr Integer M=TypeToTupleElementPosition<single_type,tuple_type>::value;
 
  auto& single_tensor=tuple_get<type::value,M >(tuple_tensor);
- Assignment<ValueType>::apply(value,single_tensor);
-   std::cout<<"single_tensor= "<<single_tensor<<std::endl;
+ Assign(value,single_tensor);
 
+
+ // Assignment<ValueType>::apply(value,single_tensor);
+   // std::cout<<"single_tensor= "<<single_tensor<<std::endl;
+
+  // single_type ok1(1);
+  // TupleOfTupleCompositeShapeFunctionEval ok2(3);
   std::cout<<"Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_> "<<value<<std::endl;
 
 
@@ -806,6 +811,82 @@ private:
  
  type eval_;
 };
+
+
+
+
+
+
+
+
+
+
+
+
+// template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, Integer N, typename Expr,typename...OtherTemplateArguments>
+// class Evaluation<Expression<Transposed<Expression<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>>>>,OtherTemplateArguments...>
+// {
+//  public:
+//  using Operator=CompositeOperator<Expression<Expr>>;
+//  using type=Transposed<Expression<TestOrTrial<MixedSpace,N,Operator>>>;
+
+//  // static_assert((IsSame<type,Test<MixedSpace,N,Operator>>::value ||
+//  //                IsSame<type,Trial<MixedSpace,N,Operator>>::value )
+//  //               && "In Evaluation<Expression<TestOrTrial<MixedSpace,N,Composite<Operator>>>>,TestOrTrial=Test or Trial ");
+//  // using FunctionSpace=typename type::FunctionSpace;
+//  // using FunctionSpaces=GetType<typename type::UniqueElementFunctionSpacesTupleType,type::value>;
+//  // using Elem=typename FunctionSpaces::Elem;
+//  // using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpaces>;
+//  // // using value_type=OperatorType<type,OtherTemplateArguments...>;
+
+//  // Evaluation(){};
+
+//  Evaluation(const type& expr)
+//  :
+//  eval_(expr)
+//  {};
+ 
+// //  //  template<typename ValueType,typename...Forms, typename Jacobian, typename...Inputs>
+// //  // constexpr void apply(ValueType& value,const Jacobian& J, const ShapeFunctions2<Forms...>& shape_functions)
+// //   template<typename ValueType, typename Jacobian, typename...Args1,typename...Args2,typename...Args3>
+// //  constexpr void apply(ValueType& value,const Jacobian& J, const std::tuple<Args1...>& tuple_shape_functions,const std::tuple<Args2...>&tuple_tensor,const std::tuple<Args3...>&tuple_composite_shapes)
+
+// //  {
+// //  using single_type=Evaluation<Expression<typename FormOfCompositeOperatorType<type>::type >,OtherTemplateArguments...>;
+
+// //  using TupleOfTupleCompositeShapeFunctionEval=std::tuple<Args3...>;
+// //  using tuple_type=GetType<TupleOfTupleCompositeShapeFunctionEval,type::value>;
+// //  // using single_type=Evaluation<Expression<typename FormOfCompositeOperatorType<type>::type >,OtherTemplateArguments...>;
+// //  // const auto& tuple=tuple_get<type::value>(tuple_tensor);
+// //  constexpr Integer M=TypeToTupleElementPosition<single_type,tuple_type>::value;
+
+// //  auto& single_tensor=tuple_get<type::value,M >(tuple_tensor);
+// //  Assignment<ValueType>::apply(value,single_tensor);
+// //    std::cout<<"single_tensor= "<<single_tensor<<std::endl;
+
+// //   std::cout<<"Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_> "<<value<<std::endl;
+
+
+// //   }
+
+// private:
+ 
+//  type eval_;
+// };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2518,7 +2599,8 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,QR>>, ShapeFunctio
  static constexpr bool PositiveWeights= IsPositive(QRule::qp_weights);
  
  Evaluation(const type& expr, ShapeFunctions2<Forms...>& shape_functions):
- shape_functions_(shape_functions),
+ shape_functions_(shape_functions)
+ ,
  local_tensor_(expr)
  {};
  
@@ -2619,8 +2701,8 @@ class ShapeFunctions2
   using TupleOfTupleShapeFunction=TupleOfTupleShapeFunctionType2<UniqueElementFunctionSpacesTupleType,TupleOperatorsAndQuadrature>;
   
   using TupleCompositeOperatorsAndQuadrature= typename OperatorAndQuadratureTupleType<Form>::composite_type;
-  using TupleOfTupleShapeFunctionCombinations=TupleOfTupleShapeFunctionType3<UniqueElementFunctionSpacesTupleType,
-                                                                             TupleCompositeOperatorsAndQuadrature>;
+  // using TupleOfTupleShapeFunctionCombinations=TupleOfTupleShapeFunctionType3<UniqueElementFunctionSpacesTupleType,
+  //                                                                            TupleCompositeOperatorsAndQuadrature>;
 
   using MapTupleNumbers=MapTupleInit<TupleOfTupleShapeFunction, SpacesToUniqueFEFamilies, UniqueMapping>;
   
@@ -2781,10 +2863,15 @@ class ShapeFunctions2
     auto& tensor=tuple_get<N>(tuple_tensor);
     // decltype(composite) a1(1);
     // decltype(tensor) a2(1);
+    // decltype(tuple_tensor)d344(5);
+        // TupleOfTupleCompositeShapeFunction ee4e(6);
+
+    // TupleOfTupleCompositeShapeFunctionTensor eee(6);
     // Number<N> ee3(5);
     // Number<Nmax> ee(5);
     std::cout<<"aux aux Nmax,N="<<Nmax<<", "<<N<<std::endl;
 
+    // todo fixme scommentami
     composite.apply(tensor,J,tuple);
     init_composite_shape_functions_aux_aux<Nmax,N+1>(tuple_tensor,J,tuple_composite);
   }

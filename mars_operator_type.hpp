@@ -1333,6 +1333,8 @@ class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< 
   using type=typename OperatorTypeHelper<TestOrTrial<MixedSpace,N,T>,QRule>::type;
 };
 
+
+
 template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, 
          Integer N, typename FuncType,Integer M,typename OperatorType,typename FullSpace,typename QRule>
 class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< Function<FullSpace,M,OperatorType,FuncType> >>>,QRule >
@@ -1481,6 +1483,21 @@ class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< 
   using type=typename OperatorTypeHelper<Division<Expression<TestOrTrialLeft>,Expression<TestOrTrialRight>>,QRule>::type;//typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::type;
 };
 
+
+
+template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, 
+         Integer N, typename T,typename QRule>
+class OperatorTypeHelper<Transposed<Expression<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< T >>>>>,QRule >
+{ public:
+  using Operator=CompositeOperator<Expression<UnaryPlus<Expression<T>>>>;
+  using tmptype= TestOrTrial<MixedSpace,N,Operator>;
+  static_assert((IsSame<tmptype,Test<MixedSpace,N,Operator>>::value ||
+                 IsSame<tmptype,Trial<MixedSpace,N,Operator>>::value )
+                && "In Evaluation<Expression<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");  
+  // TODO FIX ME SUBTYPE AND NOT TYPE CHECK (now in fwpvalues<T,M,N>, tot_type=T)
+  using typetmp=typename OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<T>>>,QRule>::type;
+  using type=typename OperatorTypeHelper<Transposed<typetmp>,QRule>::type;
+};
 
 
 template<typename Left,typename Right,Integer QR>
@@ -1796,14 +1813,15 @@ class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,TestOrT
   using EvaluationCompositeType=Evaluation<Expression<CompositeType>,QuadratureRule>;
   using TupleNth=GetType<Tuple,Test::value>;
 
-  static constexpr Integer IsAlreadyThere=IsPositive(TypeToTupleElementPosition<EvaluationCompositeType,TupleNth>::value);
+  static constexpr Integer IsNotAlreadyThere=IsNegative(TypeToTupleElementPosition<EvaluationCompositeType,TupleNth>::value);
 
-  using ChangeType=typename std::conditional<IsAlreadyThere,TupleNth,TupleCatType<TupleNth,std::tuple<EvaluationCompositeType>>>::type;
+  using ChangeType=typename std::conditional<IsNotAlreadyThere,TupleCatType<TupleNth,std::tuple<EvaluationCompositeType>>,TupleNth>::type;
+
   using type= TupleChangeType<Test::value, ChangeType, Tuple> ;
 
   using TensorType=OperatorType<Test,QuadratureRule>;
   using TupleTensorNth=GetType<TupleTensor,Test::value>;
-  using ChangeTensorType=typename std::conditional<IsAlreadyThere,TupleTensor,TupleCatType<TupleTensorNth,std::tuple<TensorType>>>::type;
+  using ChangeTensorType=typename std::conditional<IsNotAlreadyThere,TupleCatType<TupleTensorNth,std::tuple<TensorType>>,TupleTensorNth>::type;
   using type_tensor=TupleChangeType<Test::value, ChangeTensorType, TupleTensor> ;
 
 };
@@ -1872,7 +1890,13 @@ class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,Divisio
 
 };
 
-
+template<typename QuadratureRule, typename Tuple,typename TupleTensor,typename T>
+class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,Transposed<Expression<T>>>
+{
+  public:
+  using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,T>::type;
+  using type_tensor=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,T>::type_tensor;
+};
 
 
 template<typename ...Ts>

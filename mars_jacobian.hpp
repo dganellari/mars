@@ -313,14 +313,10 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
 
  LocalTensor(const type& expr)
  :
- // eval_left_<QRule>(Eval(expr.left())),
- // eval_right_<QRule>(Eval(expr.right()))
  eval_left_(expr.left()),
  eval_right_(expr.right())
  {
-  // decltype(eval_left_) qui(5,4,4,5,5,5,5,5);
-  // decltype(eval_right_) qui2(5,4,4,5,5,5,5,5);
-  // std::cout<<"qui"<<std::endl;
+  // Left ooo(5,6,7,5);
  }
 
 
@@ -332,17 +328,6 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
   const auto& detJ=J.get_det();
   for(Integer ii=0;ii<vec.size();ii++)
     {   
-
-        // std::cout<<"(ii,jj)=("<<ii<<","<<jj<<")"<<std::endl;
-        // left value is trial, right value is test
-      // std::cout<<ii<<std::endl;
-      // std::cout<<"apply_auxleft  qp="<<qp_values<<std::endl;
-      // std::cout<<"apply_aux right fqp ="<<fqp_values<<std::endl;
-      // // std::cout<<"right[0]="<<right_value_[0].size()<<std::endl;
-      //    std::cout<<"vec.size()="<<vec.size()<<std::endl;
-      //     std::cout<<"before dotofdots="<<qp_values<<std::endl;
-      //    std::cout<<"before dotofdots="<<fqp_values[ii]<<std::endl;
-
         vec[ii]=detJ*dotofdots(qp_values,fqp_values[ii]);
     }
  }
@@ -355,57 +340,17 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
   const auto& detJ=J.get_det();
   for(Integer ii=0;ii<vec.size();ii++)
     {   
-
-        // std::cout<<"(ii,jj)=("<<ii<<","<<jj<<")"<<std::endl;
-      //   // left value is trial, right value is test
-      // std::cout<<ii<<std::endl;
-      // std::cout<<"left="<<left_value_.size()<<std::endl;
-      // std::cout<<"right="<<right_value_.size()<<std::endl;
-      // std::cout<<"right[0]="<<right_value_[0].size()<<std::endl;
-       // QPValues<T,NQPoints> a91(2);
-       // FQPValues<S,NQPoints,NComponents> ok;
-
-       // auto es=ok[0];
-       // decltype(es) mm(6);
-       std::cout<<"apply_auxleft qp ="<<qp_values<<std::endl;
-      std::cout<<"apply_aux right fqp="<<fqp_values<<std::endl; 
         vec[ii]=detJ*dotofdots(qp_values,fqp_values[ii]);
     }
  }
 
- // template<typename Elem,typename...Args1, typename...Args2, typename...Args3>
- // void apply(subtype& vec, const Jacobian<Elem>& J, const std::tuple<Args1...>& tuple_shape_functions, const std::tuple<Args2...>&tuple_tensor, const std::tuple<Args3...>&tuple_evals)
  template<typename Elem,typename...Forms>
   void apply(subtype& vec, const Jacobian<Elem>& J, ShapeFunctions2<Forms...>& shape_functions)
 
  {
-  // Left k(6);
-  // OperatorType<Left,QRule> t(6);
-  // std::cout<<"----"<<t<<std::endl;
-
-  // todo fixme
-  // eval_left_.apply(left_value_,J,shape_functions);
-  // eval_right_.apply(right_value_,J,shape_functions);
-
-  // eval_left_.apply(left_value_,J,tuple_shape_functions,tuple_tensor,tuple_evals);
-  // eval_right_.apply(right_value_,J,tuple_shape_functions,tuple_tensor,tuple_evals);
-  std::cout<<"before eval_left_"<<std::endl;
-  // EvalLeft ok(6);
   eval_left_.apply(left_value_,J,shape_functions(),shape_functions.composite_tensor(),shape_functions.composite_shapes());
-  std::cout<<"before eval_right_"<<std::endl;
   eval_right_.apply(right_value_,J,shape_functions(),shape_functions.composite_tensor(),shape_functions.composite_shapes());
-
-
-  std::cout<<"left_value_"<<std::endl;
-  std::cout<<left_value_<<std::endl;
-  std::cout<<"right_value_"<<std::endl;
-  std::cout<<right_value_<<std::endl;
-    std::cout<<"before vec=="<<vec<<std::endl;
-    std::cout<<left_value_<<std::endl;
-   apply_aux(vec,J,left_value_,right_value_);
-
-    std::cout<<"vec=="<<vec<<std::endl;
-
+  apply_aux(vec,J,left_value_,right_value_);
  }
 
   

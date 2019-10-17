@@ -2046,12 +2046,6 @@ private:
 // template<typename...Forms>
 // class ShapeFunctions;
 
-// // template<typename MeshT, typename Left,typename Right,Integer QR, typename Form>
-// // class Evaluation<Expression<L2DotProductIntegral<MeshT,Left,Right,QR>>, ShapeFunctions<Form>>;
-// template<typename Left,typename Right,Integer QR, typename Form>
-// class Evaluation<Expression<L2DotProductIntegral<Left,Right,QR>>, ShapeFunctions<Form>>;
-
-
 // template<typename MeshT, typename Left,typename Right,Integer QR, typename Form,typename...OtherTemplateArguments>
 // constexpr auto Eval(const L2DotProductIntegral<MeshT,Left,Right,QR>& t,const OtherTemplateArguments&...ts)
 // {return Evaluation< Expression<remove_all_t<decltype(t)>>,OtherTemplateArguments...>(t,ts...);}
@@ -2148,7 +2142,8 @@ class Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions2<GeneralForm_,Gene
  using EvaluationOfL2Inners=EvaluationOfL2Inners<Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions>>;
  const Form& operator()()const{return general_form_();};
 
- Evaluation(const GeneralForm<Form>& general_form,ShapeFunctions& shapesform):
+ Evaluation(const GeneralForm<Form>& general_form,ShapeFunctions& shapesform)
+ :
  general_form_(general_form)
  ,
  shapesform_(shapesform)
@@ -2414,6 +2409,8 @@ class Transposed<Expression<T>>: public Expression<Transposed<Expression<T>>>
 public:
 
     Transposed(const Expression<T>& expr): value_(expr.derived()){};
+    Transposed(const Expression<Transposed<Expression<T>>>& expr): value_(expr.derived().derived().derived()){};
+
     T& operator()(){return value_;};
     const constexpr T& operator()()const{return value_;};
     T& derived(){return value_;};
@@ -2505,17 +2502,19 @@ public:
  expr_(expr)
  ,
  eval_(Eval(expr.derived().derived()))
- {};
+ {
+};
 
  
  template<typename...Inputs>
  void apply(subtype& output,const Inputs&...inputs)
  {
-
+std::cout<<"transposed"<<std::endl;
   eval_.apply(output_tmp_,inputs...);
 
   // Assignment<subtype>::apply(output,output_tmp_);
   Assign(output,output_tmp_);
+std::cout<<output<<std::endl;
 
  }
 private:

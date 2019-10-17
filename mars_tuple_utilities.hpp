@@ -2380,8 +2380,8 @@ constexpr auto build_tuple_of_evals_aux_aux(const std::tuple<>& null,
 
 template<typename Left,typename Right,Integer QR, typename...Forms>
 constexpr auto build_tuple_of_evals_aux_aux(const L2DotProductIntegral<Left,Right,QR>& l2prod,
-                           const std::tuple<>& null,
-                                 ShapeFunctions2<Forms...>&shape_functions)
+                                            const std::tuple<>& null,
+                                                  ShapeFunctions2<Forms...>&shape_functions)
 {
   using L2dot=L2DotProductIntegral<Left,Right,QR>;
 
@@ -2601,7 +2601,12 @@ constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
 }
 
 
-
+template<typename QuadratureRule, typename Tuple,typename T>
+constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
+                           const Transposed<Expression<T>>& transposed_expr)
+{
+  return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,transposed_expr.derived());
+}
 
 
 
@@ -2790,147 +2795,6 @@ class Function;
 
 
 
-
-// template<typename ...Ts>
-// class TupleOfCombinationFunctionsAuxAux;
-
-// template<typename QuadratureRule, typename Tuple,typename Other>
-// class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Other>
-// { 
-//  public:
-//  using type=Tuple ;
-//  using type_tensor=Tuple;
-// };
-
-
-
-// template<typename QuadratureRule, typename Tuple,
-//          template<class,Integer,class > class TestOrTrial_,typename MixedSpace, Integer N, typename Expr>
-// class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Expr>>>>
-// {
-//   public:
-//   using Test=Test<MixedSpace,N,CompositeOperator<Expression<Expr>>>;
-//   using CompositeType=typename FormOfCompositeOperatorType<Test>::type;
-//   using EvaluationCompositeType=Evaluation<Expression<CompositeType>,QuadratureRule>;
-//   using TupleNth=GetType<Tuple,Test::value>;
-//   // using ChangeType=RemoveTupleDuplicates< TupleCatType<TupleNth,std::tuple<std::tuple<EvaluationCompositeType>>> >;
-//   using ChangeType=RemoveTupleDuplicates< TupleCatType<TupleNth,std::tuple<EvaluationCompositeType>>>;
-//   using type=TupleChangeType<Test::value, ChangeType, Tuple> ;
-
-//   // using TensorType=OperatorType<Test,QuadratureRule>;
-
-// };
-
-
-
-
-
-// template<typename QuadratureRule, typename Tuple,typename T>
-// class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,UnaryPlus<Expression<T>>>
-// {
-//   public:
-//   using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,T>::type;
-// };
-
-// template<typename QuadratureRule, typename Tuple,typename T>
-// class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,UnaryMinus<Expression<T>>>
-// {
-//   public:
-//   using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,T>::type;
-// };
-
-// template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
-// class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Addition<Expression<Left>,Expression<Right>>>
-// {
-//   public:
-//   using TupleNew=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Left>::type;
-//   using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNew,Right>::type;
-// };
-
-// template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
-// class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Subtraction<Expression<Left>,Expression<Right>>>
-// {
-//   public:
-//   using TupleNew=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Left>::type;
-//   using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNew,Right>::type;
-// };
-
-// template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
-// class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Multiplication<Expression<Left>,Expression<Right>>>
-// {
-//   public:
-//   using TupleNew=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Left>::type;
-//   using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNew,Right>::type;
-// };
-
-
-// template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
-// class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Division<Expression<Left>,Expression<Right>>>
-// {
-//   public:
-//   using TupleNew=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,Left>::type;
-//   using type=typename TupleOfCombinationFunctionsAuxAux<QuadratureRule,TupleNew,Right>::type;
-// };
-
-
-
-
-// template<typename ...Ts>
-// class TupleOfCombinationFunctionsAux;
-
-
-
-
-// template<typename Tuple, typename Left,typename Right,Integer QR>
-// class TupleOfCombinationFunctionsAux<Tuple,L2DotProductIntegral<Left,Right,QR>>
-// {
-//   public:
-//   using L2=L2DotProductIntegral<Left,Right,QR>;
-//   using QRule=typename L2::QRule;
-//   using TupleNew=typename TupleOfCombinationFunctionsAuxAux<QRule,Tuple,Left>::type;
-//   using type=typename TupleOfCombinationFunctionsAuxAux<QRule,TupleNew,Right>::type;
-// };
-
-
-// template<typename Tuple, typename Left,typename Right>
-// class TupleOfCombinationFunctionsAux<Tuple,Addition<Expression<Left>,Expression<Right>>>
-// {
-//   public:
-//   using TupleNew=typename TupleOfCombinationFunctionsAux<Tuple,Left>::type;
-//   using type=typename TupleOfCombinationFunctionsAux<TupleNew,Right>::type;
-// };
-
-
-
-
-// template<typename ...Ts>
-// class TupleOfCombinationFunctionsForm;
-
-
-// template<typename Tuple,typename Form>
-// class TupleOfCombinationFunctionsForm<Tuple,Form>
-// {
-//   public:
-//   using type=typename TupleOfCombinationFunctionsAux<Tuple,Form>::type;
-// };
-
-// template<typename Tuple,typename Form,typename...Forms>
-// class TupleOfCombinationFunctionsForm<Tuple,Form,Forms...>
-// {
-//   public:
-//   using TupleNew=typename TupleOfCombinationFunctionsAux<Tuple,Form>::type;
-//   using type=typename TupleOfCombinationFunctionsForm<TupleNew,Forms...>::type;
-// };
-
-
-
-// template<Integer Nmax,typename Form,typename...Forms>
-// class TupleOfCombinationFunctions
-// {
-//  public:
-//   using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
-//   using type=typename TupleOfCombinationFunctionsForm<emptytuple,Form,Forms...>::type;
-// };
 
 
 
