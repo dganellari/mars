@@ -184,6 +184,7 @@ public:
 		return elements_;
 	}
 
+	MARS_INLINE_FUNCTION
 	ViewVectorType<bool> get_view_active() const //override
 	{
 		return active_;
@@ -471,8 +472,7 @@ public:
 		elements_size_ = size;
 	}
 
-	MARS_INLINE_FUNCTION
-	Integer n_active_elements() const override
+	/*Integer n_active_elements() const override
 	{
 		Integer ret = 0;
 		for (Integer i = 0; i < elements_size_; ++i)
@@ -481,6 +481,23 @@ public:
 		}
 
 		return ret;
+	}*/
+
+	inline bool n_active_elements(const Integer N)
+	{
+		using namespace Kokkos;
+
+		ViewVectorType<bool> active_ = get_view_active();
+
+		double result;
+		parallel_reduce("Loop1", N, KOKKOS_LAMBDA (const int& i, double& lsum )
+		{
+			lsum += active_(i);
+		},result);
+
+		printf("Result: %i %lf\n", N, result);
+
+		return result>0;
 	}
 
 	/*bool have_common_sub_surface(
