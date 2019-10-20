@@ -934,103 +934,157 @@ constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,Com
   return TestOrTrial<MixedSpace,FirstSpace,Operator>(t.spaces_ptr());
 }
 
-template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Operator>
-constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-                                              const Transposed<Expression<Operator>>& expr)
-{
-  auto e=form_of_composite_operator_aux(t,expr.derived());
-  // decltype(expr.derived()) eee(6);
-  return Transpose(e);
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Operator>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const Transposed<Expression<Operator>>& expr)
+// {
+//   auto e=form_of_composite_operator_aux(t,expr.derived());
+//   // decltype(expr.derived()) eee(6);
+//   return Transpose(e);
 
-  // using T=TestOrTrial<MixedSpace,N,Operator>;
-  // using FunctionSpace=typename T::FunctionSpace;
-  // using FromElementFunctionSpacesToFirstSpaceTupleType=typename FunctionSpace::FromElementFunctionSpacesToFirstSpaceTupleType;
-  // constexpr Integer FirstSpace=GetType<FromElementFunctionSpacesToFirstSpaceTupleType,T::value>::value;  
-  // return Transpose(TestOrTrial<MixedSpace,FirstSpace,Operator>(t.spaces_ptr()));
-}
+//   // using T=TestOrTrial<MixedSpace,N,Operator>;
+//   // using FunctionSpace=typename T::FunctionSpace;
+//   // using FromElementFunctionSpacesToFirstSpaceTupleType=typename FunctionSpace::FromElementFunctionSpacesToFirstSpaceTupleType;
+//   // constexpr Integer FirstSpace=GetType<FromElementFunctionSpacesToFirstSpaceTupleType,T::value>::value;  
+//   // return Transpose(TestOrTrial<MixedSpace,FirstSpace,Operator>(t.spaces_ptr()));
+// }
 
 template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
 constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
                                               const ConstantTensor<ConstType,Inputs...>& constant)
 {return constant;}
 
-template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const Transposed<Expression<ConstantTensor<ConstType,Inputs...>>>& transposed_constant)
+// {
+//   return transposed_constant;
+// }
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const TraceOperator<Expression<ConstantTensor<ConstType,Inputs...>>>& trace_constant)
+// {
+//   return trace_constant;
+// }
+
+
+template<template<class,Integer,class > class TestOrTrial, template<class>class Unary,
+         typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
 constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-                                              const Transposed<Expression<ConstantTensor<ConstType,Inputs...>>>& transposed_constant)
+                                              const Unary<Expression<ConstantTensor<ConstType,Inputs...>>>& unary_operator_applied_to_constant)
 {
-  return transposed_constant;
+  return unary_operator_applied_to_constant;
 }
-
-
 
 template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename FullSpace, Integer M,typename Operator,typename FuncType>
 constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
                                               const Function<FullSpace,M,Operator,FuncType>& func)
 {return func;}
 
-template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename FullSpace, Integer M,typename Operator,typename FuncType>
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename FullSpace, Integer M,typename Operator,typename FuncType>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const Transposed<Expression<Function<FullSpace,M,Operator,FuncType>>>& transposed_func)
+// {return transposed_func;}
+
+
+template<template<class,Integer,class > class TestOrTrial, template<class>class Unary,
+         typename MixedSpace,Integer N,typename Expr,typename FullSpace, Integer M,typename Operator,typename FuncType>
 constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-                                              const Transposed<Expression<Function<FullSpace,M,Operator,FuncType>>>& transposed_func)
-{return transposed_func;}
+                                              const Unary<Expression<Function<FullSpace,M,Operator,FuncType>>>& unary_operator_applied_to_func)
+{return unary_operator_applied_to_func;}
 
 
 
-template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename T>
+
+
+
+
+
+
+
+
+
+template<template<class,Integer,class > class TestOrTrial, template<class>class Unary,
+         typename MixedSpace,Integer N,typename Expr,typename T>
 constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-                                              const UnaryPlus<Expression<T>>& expr)
+                                              const Unary<Expression<T>>& expr)
 {
   auto e=form_of_composite_operator_aux(t,expr.derived());
   // decltype(expr.derived()) eee(6);
-  return +e;
+  return Unary<Expression<decltype(e)>>(e);
 }
 
-template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename T>
-constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-                                              const UnaryMinus<Expression<T>>& expr)
-{
-  auto e=form_of_composite_operator_aux(t,expr.derived());
-  return -e;
-}
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename T>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const UnaryPlus<Expression<T>>& expr)
+// {
+//   auto e=form_of_composite_operator_aux(t,expr.derived());
+//   // decltype(expr.derived()) eee(6);
+//   return +e;
+// }
 
-template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
-constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-                                              const Addition<Expression<Left>,Expression<Right>>& expr)
-{
-  auto left=form_of_composite_operator_aux(t,expr.left());
-  auto right=form_of_composite_operator_aux(t,expr.right());
-  
-  return left+right;
-}
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename T>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const UnaryMinus<Expression<T>>& expr)
+// {
+//   auto e=form_of_composite_operator_aux(t,expr.derived());
+//   return -e;
+// }
 
-template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
-constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-                                              const Subtraction<Expression<Left>,Expression<Right>>& expr)
-{
-  auto left=form_of_composite_operator_aux(t,expr.left());
-  auto right=form_of_composite_operator_aux(t,expr.right());
-  
-  return left-right;
-}
 
-template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+
+template<template<class,Integer,class > class TestOrTrial, template<class,class>class Binary,
+         typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
 constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-                                              const Multiplication<Expression<Left>,Expression<Right>>& expr)
+                                              const Binary<Expression<Left>,Expression<Right>>& expr)
 {
   auto left=form_of_composite_operator_aux(t,expr.left());
   auto right=form_of_composite_operator_aux(t,expr.right());
   
-  return left*right;
+  return Binary<Expression<decltype(left)>,Expression<decltype(right)>>(left,right);
 }
 
-template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
-constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-                                              const Division<Expression<Left>,Expression<Right>>& expr)
-{
-  auto left=form_of_composite_operator_aux(t,expr.left());
-  auto right=form_of_composite_operator_aux(t,expr.right());
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const Addition<Expression<Left>,Expression<Right>>& expr)
+// {
+//   auto left=form_of_composite_operator_aux(t,expr.left());
+//   auto right=form_of_composite_operator_aux(t,expr.right());
   
-  return left/right;
-}
+//   return left+right;
+// }
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const Subtraction<Expression<Left>,Expression<Right>>& expr)
+// {
+//   auto left=form_of_composite_operator_aux(t,expr.left());
+//   auto right=form_of_composite_operator_aux(t,expr.right());
+  
+//   return left-right;
+// }
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const Multiplication<Expression<Left>,Expression<Right>>& expr)
+// {
+//   auto left=form_of_composite_operator_aux(t,expr.left());
+//   auto right=form_of_composite_operator_aux(t,expr.right());
+  
+//   return left*right;
+// }
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const Division<Expression<Left>,Expression<Right>>& expr)
+// {
+//   auto left=form_of_composite_operator_aux(t,expr.left());
+//   auto right=form_of_composite_operator_aux(t,expr.right());
+  
+//   return left/right;
+// }
 
 
 template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr>

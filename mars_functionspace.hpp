@@ -26,6 +26,7 @@ namespace mars{
 
 
 
+
 template<typename MeshT, typename BaseFunctionSpace,typename...BaseFunctionSpaces>
 class FunctionSpace 
 {
@@ -740,7 +741,7 @@ class Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_>>,OtherTemplateAr
 
 
   // Assignment<value_type>::apply(value,tuple_get<M>(tuple).eval());
-  // std::cout<<"after Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_> "<<value<<std::endl;
+  std::cout<<"after Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_> "<<value<<std::endl;
 
  }
 
@@ -1153,6 +1154,43 @@ template <typename T,typename ... Types>
 class TupleTypeSize;
 
 
+template<template<class>class UnaryOperator, typename Type>
+class IsTestOrTrial< UnaryOperator<Expression<Type>> >
+{
+public:
+  using Elem=typename IsTestOrTrial<Type>::Elem;
+
+  using Operator=TupleCatType<typename IsTestOrTrial<Type>::Operator>;
+  using TupleFunctionSpace=typename IsTestOrTrial<Type>::TupleFunctionSpace;
+  using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Type>::UniqueElementFunctionSpacesTupleType;
+  // WE REMOVE THE ZEROS, BUT WE SHOULD NOT REMOVE ALL ZEROS
+  // if it has only one element, do not remove duplicates
+  using type=TupleRemoveNumber0<typename IsTestOrTrial<Type>::type>;
+  // using type=TupleRemoveType<Number<0>,typename IsTestOrTrial<Type>::type>;
+  static_assert(TupleTypeSize<type>::value<2," In UnaryOperator<Type>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
+  static constexpr Integer number= Heaviside(IsTestOrTrial<Type>::number);
+};
+
+
+template<typename Type>
+class IsTestOrTrial< TraceOperator<Expression<Type>> >
+{
+public:
+  using Elem=typename IsTestOrTrial<Type>::Elem;
+
+  using Operator=TupleCatType<typename IsTestOrTrial<Type>::Operator>;
+  using TupleFunctionSpace=typename IsTestOrTrial<Type>::TupleFunctionSpace;
+  using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Type>::UniqueElementFunctionSpacesTupleType;
+  // WE REMOVE THE ZEROS, BUT WE SHOULD NOT REMOVE ALL ZEROS
+  // if it has only one element, do not remove duplicates
+  using type=TupleRemoveNumber0<typename IsTestOrTrial<Type>::type>;
+  // using type=TupleRemoveType<Number<0>,typename IsTestOrTrial<Type>::type>;
+  static_assert(TupleTypeSize<type>::value<2," In UnaryOperator<Type>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
+  static constexpr Integer number= Heaviside(IsTestOrTrial<Type>::number);
+};
+
+
+
 template<typename Left, typename Right>
 class IsTestOrTrial<Multiplication<Expression<Left>,Expression<Right> > >
 {
@@ -1479,7 +1517,7 @@ public:
 
 
 
-template<typename...Ts>
+template<typename T1,typename T2>
 class TupleOfTestTrialPairsNumbersAuxAux;
 
 template<typename T>
@@ -1549,6 +1587,55 @@ class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<L2DotP
  public:
   using type=Addition<Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left1,Right1,QR1>>>::type>,
                        Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left2,Right2,QR2>>>::type>>;
+};
+
+
+template<typename T, typename Left1,typename Right1,Integer QR1,
+                     typename Right2>
+class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<L2DotProductIntegral<Left1,Right1,QR1>>,
+                                                               Expression<Right2>>>>
+{
+ public:
+  using type=Addition<Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left1,Right1,QR1>>>::type>,
+                       Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Right2>>::type>>;
+};
+template<typename T, typename Left1,typename Right1,Integer QR1>
+class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<L2DotProductIntegral<Left1,Right1,QR1>>,
+                                                               Expression<std::tuple<>>>>>
+{
+ public:
+  using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left1,Right1,QR1>>>::type;
+                       
+};
+
+
+
+template<typename T, typename Left1,
+                     typename Left2,typename Right2,Integer QR2>
+class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<Left1>,
+                                                               Expression<L2DotProductIntegral<Left2,Right2,QR2>>>>>
+{
+ public:
+  using type=Addition<Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Left1>>::type>,
+                       Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left2,Right2,QR2>>>::type>>;
+};
+
+template<typename T, typename Left2,typename Right2,Integer QR2>
+class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<std::tuple<>>,
+                                                               Expression<L2DotProductIntegral<Left2,Right2,QR2>>>>>
+{
+ public:
+  using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left2,Right2,QR2>>>::type;
+};
+
+
+template<typename T, typename Left,typename Right>
+class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<Left>,
+                                                               Expression<Right> >>>
+{
+ public:
+  using type=Addition<Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Left>>::type>,
+                      Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Right>>::type>>;
 };
 
 
@@ -1642,7 +1729,7 @@ class TupleOfTestTrialPairsNumbersAux<T, Addition<Expression<Left>,Expression<L2
   using Right=L2DotProductIntegral<Left1,Right1,QR>;
   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,
                              Expression<Addition<Expression<typename TupleOfTestTrialPairsNumbersAux<T,Left>::type>,
-                                                   Expression<typename TupleOfTestTrialPairsNumbersAux<T,Right>::type>>>
+                                                 Expression<typename TupleOfTestTrialPairsNumbersAux<T,Right>::type>>>
                              >::type;
 };
 
@@ -1992,8 +2079,17 @@ public Expression<L2DotProductIntegral<Left_,Right_,QR>>
     {}
      
 
+    L2DotProductIntegral(const Expression<L2DotProductIntegral<Left,Right,QR>>& l2prod,const Integer label=-666)
+    :
+    left_(l2prod.derived().left()),
+    right_(l2prod.derived().right()),
+    product_(Inner(left_,right_)),
+    label_(label)
+    {}
+
+
      auto operator()(){return L2DotProductIntegral<Left,Right,QR>(left_,right_);}
-     auto operator()()const{return L2DotProductIntegral<Left,Right,QR>(left_,right_);}
+     const auto operator()()const{return L2DotProductIntegral<Left,Right,QR>(left_,right_);}
   private:
     Left left_;
     Right right_;
@@ -2155,25 +2251,190 @@ public Expression<L2DotProductIntegral<Left_,Right_,QR>>
 
 
 
-// template<typename MeshT, typename Left,typename Right>
-// auto
-// L2Inner(const MeshT& mesh,const Expression<Left>& left,const Expression<Right>& right)
-// {return L2DotProductIntegral<MeshT,Left,Right>(mesh,left,right);}
+
 template<typename Left,typename Right>
 auto
 L2Inner(const Expression<Left>& left,const Expression<Right>& right)
 {return L2DotProductIntegral<Left,Right>(left,right);}
 
-
-
-// template<typename MeshT, typename Left,typename Right>
+// template<typename Left,typename Right>
 // auto
-// L2Inner(const MeshT& mesh,const Expression<Left>& left,const Expression<Right>& right, const Integer label)
-// {return L2DotProductIntegral<MeshT,Left,Right>(mesh,left,right,label);}
+// L2Inner(const Expression<Left>& left,const Expression<Right>& right, const Integer label)
+// {return L2DotProductIntegral<Left,Right>(left,right,label);}
+
+
 template<typename Left,typename Right>
-auto
-L2Inner(const Expression<Left>& left,const Expression<Right>& right, const Integer label)
-{return L2DotProductIntegral<Left,Right>(left,right,label);}
+constexpr auto
+L2Inner(const Expression<UnaryMinus<Expression<Left>>>& left,const Expression<UnaryMinus<Expression<Right>>>& right)
+{return L2DotProductIntegral<Left,Right>(left.derived().derived(),right.derived().derived());}
+
+template<typename Left,typename Right>
+constexpr auto
+L2Inner(const Expression<UnaryMinus<Expression<UnaryMinus<Expression<Left>>> >>& left,const Expression<Right>& right)
+{return L2DotProductIntegral<Left,Right>(left.derived().derived().derived(),right);}
+
+
+template<typename Left,typename Right>
+constexpr auto
+L2Inner(const Expression<Left>& left,const  Expression<UnaryMinus<Expression<UnaryMinus<Expression<Right>>> >>& right)
+{return L2DotProductIntegral<Left,Right>(left,right.derived().derived().derived());}
+
+
+
+
+template<typename Left2,typename Right2, typename Left>
+constexpr auto
+L2Inner(const Expression<Left>& left,const Expression<Addition<Expression<Left2>,Expression<Right2>>>& right)
+{return 
+  Addition<
+  Expression<decltype(L2Inner(left.derived(),right.derived().left()))>,
+  Expression<decltype(L2Inner(left.derived(),right.derived().right()))>>
+              (L2Inner(left.derived(),right.derived().left()),
+               L2Inner(left.derived(),right.derived().right()) );}
+
+template<typename Left2,typename Right2, typename Left>
+constexpr auto
+L2Inner(const Expression<Left>& left,const Expression<Subtraction<Expression<Left2>,Expression<Right2>>>& right)
+{return Addition<
+  Expression<decltype(L2Inner(left.derived(),right.derived().left()))>,
+  Expression<decltype(L2Inner(-left.derived(),right.derived().right()))>>
+              (L2Inner(left.derived(),right.derived().left()),
+               L2Inner(-left.derived(),right.derived().right()) );}
+
+
+
+
+
+
+
+template<typename Left1,typename Right1, typename Right>
+constexpr auto
+L2Inner(const Expression<Addition<Expression<Left1>,Expression<Right1>>>& left,const Expression<Right>& right)
+{return Addition<
+  Expression<decltype(L2Inner(left.derived().left(),right.derived()))>,
+  Expression<decltype(L2Inner(left.derived().right(),right.derived()))>>
+  (L2Inner(left.derived().left(),right.derived()),
+   L2Inner(left.derived().right(),right.derived()) );}
+
+template<typename Left1,typename Right1, typename Right>
+constexpr auto
+L2Inner(const Expression<Subtraction<Expression<Left1>,Expression<Right1>>>& left,const Expression<Right>& right)
+{return Addition<
+  Expression<decltype(L2Inner(left.derived().left(),right.derived()))>,
+  Expression<decltype(L2Inner(-left.derived().right(),right.derived()))>>
+  (L2Inner(left.derived().left(),right.derived()),
+   L2Inner(-left.derived().right(),right.derived()) );}
+
+
+template<typename Left1,typename Right1,typename Left2, typename Right2>
+constexpr auto
+L2Inner(const Expression<Addition<Expression<Left1>,Expression<Right1>>>& left,
+        const Expression<Addition<Expression<Left2>,Expression<Right2>>>& right)
+{return 
+Addition<Expression<decltype(L2Inner(left.derived().left(),right.derived()))>,
+         Expression<decltype(L2Inner(left.derived().right(),right.derived()))>
+         >
+  (
+    L2Inner(left.derived().left(),right.derived()),
+    L2Inner(left.derived().right(),right.derived())                
+  )
+  ;
+}
+
+
+template<typename Left1,typename Right1,typename Left2, typename Right2>
+constexpr auto
+L2Inner(const Expression<Addition<Expression<Left1>,Expression<Right1>>>& left,
+        const Expression<Subtraction<Expression<Left2>,Expression<Right2>>>& right)
+{return 
+Addition<Expression<decltype(L2Inner(left.derived().left(),right.derived()))>,
+         Expression<decltype(L2Inner(left.derived().right(),right.derived()))>
+         >
+  (
+    L2Inner(left.derived().left(),right.derived()),
+    L2Inner(left.derived().right(),right.derived())                
+  )
+  ;
+}
+
+template<typename Left1,typename Right1,typename Left2, typename Right2>
+constexpr auto
+L2Inner(const Expression<Subtraction<Expression<Left1>,Expression<Right1>>>& left,
+        const Expression<Subtraction<Expression<Left2>,Expression<Right2>>>& right)
+{return 
+Addition<Expression<decltype(L2Inner(left.derived().left(),right.derived()))>,
+         Expression<decltype(L2Inner(-left.derived().right(),right.derived()))>
+         >
+  (
+    L2Inner(left.derived().left(),right.derived()),
+    L2Inner(-left.derived().right(),right.derived())                
+  )
+  ;
+}
+
+
+template<typename Left1,typename Right1,typename Left2, typename Right2>
+constexpr auto
+L2Inner(const Expression<Subtraction<Expression<Left1>,Expression<Right1>>>& left,
+        const Expression<Addition<Expression<Left2>,Expression<Right2>>>& right)
+{return 
+Addition<Expression<decltype(L2Inner(left.derived().left(),right.derived()))>,
+         Expression<decltype(L2Inner(-left.derived().right(),right.derived()))>
+         >
+  (
+    L2Inner(left.derived().left(),right.derived()),
+    L2Inner(-left.derived().right(),right.derived())                
+  )
+  ;
+}
+
+
+
+
+
+// // template<typename Left1,typename Right1, typename Right>
+// // Addition<Expression<L2DotProductIntegral<MeshT,Left1,Right>>,
+// //           Expression<L2DotProductIntegral<MeshT,Right1,Right>>>
+// // L2Inner(const Expression<Addition<Expression<Left1>,Expression<Right1>>>& left,const Expression<Right>& right, const Integer& label)
+// // {return Addition<
+// //   Expression<L2DotProductIntegral<MeshT,Left1,Right>>,
+// //   Expression<L2DotProductIntegral<MeshT,Right1,Right>>>(L2Inner(left.derived().left(),right,label),
+// //                                                         L2Inner(left.derived().right(),right,label) );}
+
+
+
+
+
+
+
+
+
+
+
+
+/////////////// GUARDA QUI TODO FIX LA HO COMMENTATA MA BOH
+  // template<typename Left,typename Left1,typename Right1, Integer Kind>
+  // class ClassHelper<Subtraction<Expression<Left>,Expression<L2DotProductIntegral<Left1,Right1>> >,Kind  >
+  // {
+  // public:
+  //  using type=RemoveTupleDuplicates< TupleCatType< typename ClassHelper<Left,Kind>::type,
+  //                                                  typename KindType<L2DotProductIntegral<Left1,Right1>,Kind>::type  >>;
+  // } ; 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2418,155 +2679,6 @@ constexpr auto general_form(const Form& form){return GeneralForm<Form>(form);}
 
 
 
-template<typename MeshT, typename Left2,typename Right2, typename Left>
-constexpr auto
-// L2Inner(const MeshT& mesh,const Expression<Left>& left,const Expression<Addition<Expression<Left2>,Expression<Right2>>>& right)
-// {return Addition<
-//   Expression<decltype(L2Inner(mesh,left.derived(),right.derived().left()))>,
-//   Expression<decltype(L2Inner(mesh,left.derived(),right.derived().right()))>>
-//               (L2Inner(mesh,left.derived(),right.derived().left()),
-//                L2Inner(mesh,left.derived(),right.derived().right()) );}
-L2Inner(const Expression<Left>& left,const Expression<Addition<Expression<Left2>,Expression<Right2>>>& right)
-{return Addition<
-  Expression<decltype(L2Inner(left.derived(),right.derived().left()))>,
-  Expression<decltype(L2Inner(left.derived(),right.derived().right()))>>
-              (L2Inner(left.derived(),right.derived().left()),
-               L2Inner(left.derived(),right.derived().right()) );}
-
-template<typename MeshT, typename Left2,typename Right2, typename Left>
-constexpr auto
-// L2Inner(const MeshT& mesh,const Expression<Left>& left,const Expression<Subtraction<Expression<Left2>,Expression<Right2>>>& right)
-// {return Addition<
-//   Expression<decltype(L2Inner(mesh,left.derived(),right.derived().left()))>,
-//   Expression<decltype(L2Inner(mesh,-left.derived(),right.derived().right()))>>
-//               (L2Inner(mesh,left.derived(),right.derived().left()),
-//                L2Inner(mesh,-left.derived(),right.derived().right()) );}
-L2Inner(const Expression<Left>& left,const Expression<Subtraction<Expression<Left2>,Expression<Right2>>>& right)
-{return Addition<
-  Expression<decltype(L2Inner(left.derived(),right.derived().left()))>,
-  Expression<decltype(L2Inner(-left.derived(),right.derived().right()))>>
-              (L2Inner(left.derived(),right.derived().left()),
-               L2Inner(-left.derived(),right.derived().right()) );}
-
-template<typename MeshT, typename Left1,typename Right1, typename Right>
-constexpr auto
-// L2Inner(const MeshT& mesh,const Expression<Addition<Expression<Left1>,Expression<Right1>>>& left,const Expression<Right>& right)
-// {return Addition<
-//   Expression<decltype(L2Inner(mesh,left.derived().left(),right.derived()))>,
-//   Expression<decltype(L2Inner(mesh,left.derived().right(),right.derived()))>>
-//   (L2Inner(mesh,left.derived().left(),right.derived()),
-//    L2Inner(mesh,left.derived().right(),right.derived()) );}
-L2Inner(const Expression<Addition<Expression<Left1>,Expression<Right1>>>& left,const Expression<Right>& right)
-{return Addition<
-  Expression<decltype(L2Inner(left.derived().left(),right.derived()))>,
-  Expression<decltype(L2Inner(left.derived().right(),right.derived()))>>
-  (L2Inner(left.derived().left(),right.derived()),
-   L2Inner(left.derived().right(),right.derived()) );}
-
-template<typename MeshT, typename Left1,typename Right1, typename Right>
-constexpr auto
-// L2Inner(const MeshT& mesh,const Expression<Subtraction<Expression<Left1>,Expression<Right1>>>& left,const Expression<Right>& right)
-// {return Addition<
-//   Expression<decltype(L2Inner(mesh,left.derived().left(),right.derived()))>,
-//   Expression<decltype(L2Inner(mesh,-left.derived().right(),right.derived()))>>
-//   (L2Inner(mesh,left.derived().left(),right.derived()),
-//    L2Inner(mesh,-left.derived().right(),right.derived()) );}
-L2Inner(const Expression<Subtraction<Expression<Left1>,Expression<Right1>>>& left,const Expression<Right>& right)
-{return Addition<
-  Expression<decltype(L2Inner(left.derived().left(),right.derived()))>,
-  Expression<decltype(L2Inner(-left.derived().right(),right.derived()))>>
-  (L2Inner(left.derived().left(),right.derived()),
-   L2Inner(-left.derived().right(),right.derived()) );}
-
-
-template<typename MeshT, typename Left1,typename Right1,typename Left2, typename Right2>
-constexpr auto
-// L2Inner(const MeshT& mesh,const Expression<Addition<Expression<Left1>,Expression<Right1>>>& left,
-//                           const Expression<Addition<Expression<Left2>,Expression<Right2>>>& right)
-// {return 
-// Addition<Expression<decltype(L2Inner(mesh,left.derived().left(),right.derived()))>,
-//           Expression<decltype(L2Inner(mesh,left.derived().right(),right.derived()))>
-//          >
-//   (
-//     L2Inner(mesh,left.derived().left(),right.derived()),
-//     L2Inner(mesh,left.derived().right(),right.derived())                
-//   )
-//   ;
-// }
-L2Inner(const Expression<Addition<Expression<Left1>,Expression<Right1>>>& left,
-        const Expression<Addition<Expression<Left2>,Expression<Right2>>>& right)
-{return 
-Addition<Expression<decltype(L2Inner(left.derived().left(),right.derived()))>,
-         Expression<decltype(L2Inner(left.derived().right(),right.derived()))>
-         >
-  (
-    L2Inner(left.derived().left(),right.derived()),
-    L2Inner(left.derived().right(),right.derived())                
-  )
-  ;
-}
-
-
-
-
-template<typename MeshT, typename Left1,typename Right1,typename Left2, typename Right2>
-constexpr auto
-// L2Inner(const MeshT& mesh,const Expression<Subtraction<Expression<Left1>,Expression<Right1>>>& left,
-//                           const Expression<Subtraction<Expression<Left2>,Expression<Right2>>>& right)
-// {return 
-// Addition<Expression<decltype(L2Inner(mesh,left.derived().left(),right.derived()))>,
-//           Expression<decltype(L2Inner(mesh,-left.derived().right(),right.derived()))>
-//          >
-//   (
-//     L2Inner(mesh,left.derived().left(),right.derived()),
-//     L2Inner(mesh,-left.derived().right(),right.derived())                
-//   )
-//   ;
-// }
-L2Inner(const Expression<Subtraction<Expression<Left1>,Expression<Right1>>>& left,
-        const Expression<Subtraction<Expression<Left2>,Expression<Right2>>>& right)
-{return 
-Addition<Expression<decltype(L2Inner(left.derived().left(),right.derived()))>,
-         Expression<decltype(L2Inner(-left.derived().right(),right.derived()))>
-         >
-  (
-    L2Inner(left.derived().left(),right.derived()),
-    L2Inner(-left.derived().right(),right.derived())                
-  )
-  ;
-}
-
-
-
-
-// template<typename MeshT, typename Left1,typename Right1, typename Right>
-// Addition<Expression<L2DotProductIntegral<MeshT,Left1,Right>>,
-//           Expression<L2DotProductIntegral<MeshT,Right1,Right>>>
-// L2Inner(const Expression<Addition<Expression<Left1>,Expression<Right1>>>& left,const Expression<Right>& right, const Integer& label)
-// {return Addition<
-//   Expression<L2DotProductIntegral<MeshT,Left1,Right>>,
-//   Expression<L2DotProductIntegral<MeshT,Right1,Right>>>(L2Inner(left.derived().left(),right,label),
-//                                                          L2Inner(left.derived().right(),right,label) );}
-
-
-
-
-
-
-
-
-
-
-
-
-/////////////// GUARDA QUI TODO FIX LA HO COMMENTATA MA BOH
-  // template<typename Left,typename Left1,typename Right1, Integer Kind>
-  // class ClassHelper<Subtraction<Expression<Left>,Expression<L2DotProductIntegral<Left1,Right1>> >,Kind  >
-  // {
-  // public:
-  //  using type=RemoveTupleDuplicates< TupleCatType< typename ClassHelper<Left,Kind>::type,
-  //                                                  typename KindType<L2DotProductIntegral<Left1,Right1>,Kind>::type  >>;
-  // } ; 
 
 
 
@@ -2599,6 +2711,8 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,QR>>, ShapeFunctio
  static constexpr bool PositiveWeights= IsPositive(QRule::qp_weights);
  
  Evaluation(const type& expr, ShapeFunctions2<Forms...>& shape_functions):
+ expr_(expr.left(),expr.right())
+ ,
  shape_functions_(shape_functions)
  ,
  local_tensor_(expr)
@@ -2622,8 +2736,13 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,QR>>, ShapeFunctio
 
  auto operator()(){return local_tensor_;}
 
+       auto  expression(){return expr_;}
+ const auto& expression()const{return expr_;}
+
+
 
 private:
+ type expr_;
  ShapeFunctions2<Forms...>& shape_functions_;
  LocalTensor<PositiveWeights,TestTrialSpaces,type,GetType<typename type::form>> local_tensor_;
 };

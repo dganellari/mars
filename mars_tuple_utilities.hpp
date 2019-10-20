@@ -1878,66 +1878,6 @@ using UniqueElementFEFamily2=RemoveTupleDuplicates<typename UniqueElementFEFamil
 
 
 
-// template<typename TupleSpaces,typename TupleOperatorsAndQuadrature,typename UniqueMapping>
-// class MapTuple
-// {
-// public:
-//       using TupleOfTupleNoQuadrature=TupleOfTupleRemoveQuadrature<TupleOperatorsAndQuadrature>;
-//       using Unique=SpacesToUniqueFEFamilies<TupleSpaces>;
-//       using Map=MapOperatorTupleOfTuple<TupleOfTupleNoQuadrature,TupleSpaces>;
-//       using UniqueMap=UniqueMap<Unique,Map> ;
-      
-//       template<Integer Nmax,Integer N,Integer Mmax,Integer M,typename Jacobian>
-//       typename std::enable_if<(N>Nmax), void >::type
-//       init_aux(const Jacobian& J){}
-
-//       template<Integer Nmax,Integer N,Integer Mmax,Integer M,typename Jacobian>
-//       typename std::enable_if<(N<=Nmax && M==Mmax), void >::type
-//       init_aux(const Jacobian& J)
-//       {
-//         const auto map_n_m_th=std::get<M>(std::get<N>(tuple_of_maps_));
-//         map_n_m_th.init(J);
-//         init_aux<Nmax,N+1,0,0> (J);
-//       }
-
-//       template<Integer Nmax,Integer N,Integer Mmax,Integer M,typename Jacobian>
-//       typename std::enable_if<(N<=Nmax && M<Mmax), void >::type
-//       init_aux(const Jacobian& J)
-//       {
-//         const auto map_n_m_th=std::get<M>(std::get<N>(tuple_of_maps_));
-//         map_n_m_th.init(J);
-//         init_aux<Nmax,N,TupleTypeSize<GetType<UniqueMapping,N>>::value-1,M+1> (J);
-//       }
-
-
-//       // TODO: IN CASE THE MAP HAS DIFFERENT ELEMENTS, THEN ALSO DIFFERENT JACOBIANS ARE NEEDED
-//       template<Integer Dim, Integer ManifoldDim>
-//       void init(const Matrix<Real, Dim, ManifoldDim>& J)
-//       {init_aux<TupleTypeSize<UniqueMapping>::value-1,0,0,0>(J);}
-
-//       UniqueMapping operator()(){return tuple_of_maps_;}
-//     private:
-//       UniqueMapping tuple_of_maps_;
-// };
-
-
-
-// template<typename TupleSpaces,typename TupleOperatorsAndQuadrature,typename UniqueMapping>
-// class ShapeFunctionTuple
-// {
-//  using TupleOfTupleShapeFunction=TupleOfTupleShapeFunctionType<TupleSpaces,TupleOperatorsAndQuadrature>;
-//  using SpacesToUniqueSpaces=SpacesToUniqueFEFamilies<TupleSpaces>;
-//  using MapTupleNumbersW1=MapTupleInit<TupleOfTupleShapeFunction, SpacesToUniqueSpaces , UniqueMapping>;
-// };
-
-
-
-// template<typename TupleSpaces,typename TupleOperatorsAndQuadrature,typename Maps>
-// class ShapeFunctionAssembly
-// {
-//  public:
-//    using type=TupleOfTupleShapeFunctionType<TupleSpaces,TupleOperatorsAndQuadrature>;
-//    static constexpr Integer Nmax=TupleTypeSize<TupleSpaces>::value-1;
 
 
 
@@ -1946,94 +1886,6 @@ using UniqueElementFEFamily2=RemoveTupleDuplicates<typename UniqueElementFEFamil
 
 
 
-
-//    ShapeFunctionAssembly(const Maps& maps)
-//    {
-//     //init_spaces(maps)
-//    }
-
-
-
-
-//    // /////////////// reference initialization of shape functions of all spaces, all operators and all quadrature rules used 
-
-//    // template<Integer Nmax_aux,Integer N,typename Tuple>
-//    // typename std::enable_if< (N>Nmax_aux) ,void>::type 
-//    // init_reference_aux_aux(Tuple& t){}
-
-//    // template<Integer Nmax_aux,Integer N,typename Tuple>
-//    // typename std::enable_if< (N<=Nmax_aux) ,void>::type 
-//    // init_reference_aux_aux(Tuple& t) 
-//    // {auto& t_nth=std::get<N>(t); 
-//    //  t_nth.init_reference();
-//    //  init_reference_aux_aux<Nmax_aux,N+1,Tuple>(t);}
-
-//    // template<Integer N>
-//    // typename std::enable_if< (N>Nmax) ,void>::type 
-//    // init_reference_aux(){}
-
-//    // template<Integer N>
-//    // typename std::enable_if< (N<=Nmax) ,void>::type 
-//    // init_reference_aux() 
-//    // {auto& tuple_nth=std::get<N>(tuple_);
-//    //  using tuple_nth_type=decltype(tuple_nth);
-//    //  init_reference_aux_aux<TupleTypeSize<tuple_nth_type>::value-1,0,tuple_nth_type>(tuple_nth);
-//    //  init_reference_aux<N+1>(); }
-
-//    // void init_reference(){init_reference_aux<0>();}
-   
-
-
-
-
-//    // template<Integer Nmax_aux,Integer N,typename Tuple,typename Jacobian>
-//    // typename std::enable_if< (N>Nmax_aux) ,void>::type 
-//    // init_aux_aux(const Jacobian&J,Tuple& t){}
-
-//    // template<Integer Nmax_aux,Integer N,typename Tuple,typename Jacobian>
-//    // typename std::enable_if< (N<=Nmax_aux) ,void>::type 
-//    // init_aux_aux(const Jacobian&J,Tuple& t) 
-//    // {auto& t_nth=std::get<N>(t); 
-//    //  t_nth.init(J);
-//    //  init_aux_aux<Nmax_aux,N+1,Tuple,Jacobian>(J,t);}
-
-//    // template<Integer N,typename Jacobian>
-//    // typename std::enable_if< (N>Nmax) ,void>::type 
-//    // init_aux(const Jacobian&J){}
-
-//    // template<Integer N,typename Jacobian>
-//    // typename std::enable_if< (N<=Nmax) ,void>::type 
-//    // init_aux(const Jacobian&J) 
-//    // {auto& tuple_nth=std::get<N>(tuple_);
-//    //  using tuple_nth_type=decltype(tuple_nth);
-//    //  init_aux_aux<TupleTypeSize<tuple_nth_type>::value-1,0,tuple_nth_type>(J,tuple_nth);
-//    //  init_aux<N+1>(J); }
-
-//    // template<typename Jacobian>
-//    // void init(const Jacobian&J){init_aux<0>(J);}
-
-
-
-
-//    const type& get()const{return tuple_;};
-//          type&  get()     {return tuple_;};
-
-//    template<Integer N,Integer M>
-//    const GetType<type,N,M> & get()const
-//    {const auto& tuple_nth=std::get<N>(tuple_);
-//     return std::get<M>(tuple_nth);};
-
-//    template<Integer N,Integer M>
-//          GetType<type,N,M>&  get()    
-//    { auto& tuple_nth=std::get<N>(tuple_);
-//     return std::get<M>(tuple_nth);};
-
-
-
-
-//  private:
-//    type tuple_;
-// };
 
 
 
@@ -2335,29 +2187,29 @@ constexpr auto tuple_cat_unique( std::tuple<> tuple, const T&t)
 template<typename Derived>
 class Expression;
 
-template<typename...Ts>
+template<typename T>
 class UnaryPlus;
 
-template<typename...Ts>
+template<typename T>
 class UnaryMinus;
 
-template<typename...Ts>
+template<typename Left,typename Right>
 class Addition;
 
-template<typename...Ts>
+template<typename Left,typename Right>
 class Subtraction;
 
-template<typename...Ts>
+template<typename Left,typename Right>
 class Multiplication;
 
-template<typename...Ts>
+template<typename Left,typename Right>
 class Division;
 
-template<typename...Ts>
+template<typename...Parameters>
 class CompositeOperator;
 
 
-template<typename...Ts>
+template<typename...Parameters>
 class Evaluation;
 
 template<typename Left,typename Right,Integer QR>
@@ -2375,7 +2227,8 @@ constexpr auto build_tuple_of_evals_aux_aux(const std::tuple<>& null,
   using L2dot=L2DotProductIntegral<Left,Right,QR>;
 
   return Evaluation<Expression<L2dot>,ShapeFunctions2<Forms...>>
-        (Eval(L2dot(l2prod.left(),l2prod.right()),shape_functions));
+        // (Eval(L2dot(l2prod.left(),l2prod.right()),shape_functions));
+        (Eval(l2prod,shape_functions));
 }
 
 template<typename Left,typename Right,Integer QR, typename...Forms>
@@ -2386,7 +2239,9 @@ constexpr auto build_tuple_of_evals_aux_aux(const L2DotProductIntegral<Left,Righ
   using L2dot=L2DotProductIntegral<Left,Right,QR>;
 
   return Evaluation<Expression<L2dot>,ShapeFunctions2<Forms...>>
-        (Eval(L2dot(l2prod.left(),l2prod.right()),shape_functions));
+//         (Eval(L2dot(l2prod.left(),l2prod.right()),shape_functions));
+  (Eval(l2prod,shape_functions));
+
 }
 
 template<typename Left1,typename Right1,Integer QR1,
@@ -2395,14 +2250,15 @@ constexpr auto build_tuple_of_evals_aux_aux(const L2DotProductIntegral<Left1,Rig
                            const L2DotProductIntegral<Left2,Right2,QR2>& l2prod2,
                                  ShapeFunctions2<Forms...>&shape_functions)
 {
-  using L2dot1=L2DotProductIntegral<Left1,Right1,QR1>;
-  using L2dot2=L2DotProductIntegral<Left2,Right2,QR2>;
+  // using L2dot1=L2DotProductIntegral<Left1,Right1,QR1>;
+  // using L2dot2=L2DotProductIntegral<Left2,Right2,QR2>;
 
 
-  return Addition<Expression<Evaluation<Expression<L2dot1>,ShapeFunctions2<Forms...> > >,
-                  Expression<Evaluation<Expression<L2dot2>,ShapeFunctions2<Forms...> > > >
-        (Eval(L2dot1(l2prod1.left(),l2prod1.right()),shape_functions),
-         Eval(L2dot2(l2prod2.left(),l2prod2.right()),shape_functions));
+  return Eval(l2prod1+l2prod2,shape_functions);
+        // Addition<Expression<Evaluation<Expression<L2dot1>,ShapeFunctions2<Forms...> > >,
+        //           Expression<Evaluation<Expression<L2dot2>,ShapeFunctions2<Forms...> > > >
+        // (Eval(L2dot1(l2prod1.left(),l2prod1.right()),shape_functions),
+        //  Eval(L2dot2(l2prod2.left(),l2prod2.right()),shape_functions));
 }
 
 template<typename Left, typename Left1,typename Right1,Integer QR1, typename...Forms>
@@ -2411,24 +2267,27 @@ constexpr auto build_tuple_of_evals_aux_aux(const Left& left,
                                  ShapeFunctions2<Forms...>&shape_functions)
 {
   using L2dot1=L2DotProductIntegral<Left1,Right1,QR1>;
-  return Addition<Expression<Left>,
-                  Expression< Evaluation<Expression<L2dot1>,ShapeFunctions2<Forms...> >>>
-        (left(),
-         Eval(L2dot1(l2prod.left(),l2prod.right()),shape_functions));
+  // return Addition<Expression<Left>,
+  //                 Expression< Evaluation<Expression<L2dot1>,ShapeFunctions2<Forms...> >>>
+  //       (left,
+  //        Eval(L2dot1(l2prod.left(),l2prod.right()),shape_functions));
+  const auto& left_=left.expression();
+  return Eval(left_+l2prod,shape_functions);
 }
 
-template<typename Left1,typename Right1,Integer QR1,typename Right, typename...Forms>
-constexpr auto build_tuple_of_evals_aux_aux(const L2DotProductIntegral<Left1,Right1,QR1>& l2prod,
-                           const Right& right,
-                                 ShapeFunctions2<Forms...>&shape_functions)
-{
-  using L2dot1=L2DotProductIntegral<Left1,Right1,QR1>;
-  std::cout<<"---------"<<l2prod.left().eval()<<std::endl;
-  return Addition<Expression<Evaluation<Expression<L2dot1>,ShapeFunctions2<Forms...>>>,
-                  Expression<Right>>
-        (Eval(L2dot1(l2prod.left(),l2prod.right()),shape_functions),
-         right());
-}
+// template<typename Left1,typename Right1,Integer QR1,typename Right, typename...Forms>
+// constexpr auto build_tuple_of_evals_aux_aux(const L2DotProductIntegral<Left1,Right1,QR1>& l2prod,
+//                            const Right& right,
+//                                  ShapeFunctions2<Forms...>&shape_functions)
+// {
+//   using L2dot1=L2DotProductIntegral<Left1,Right1,QR1>;
+//   std::cout<<"---------"<<l2prod.left().eval()<<std::endl;
+//   return Addition<Expression<Evaluation<Expression<L2dot1>,ShapeFunctions2<Forms...>>>,
+//                   Expression<Right>>
+//         (Eval(L2dot1(l2prod.left(),l2prod.right()),shape_functions),
+//          right());
+// }
+
 
 
 
@@ -2443,9 +2302,9 @@ constexpr auto build_tuple_of_evals_aux(const Tuple& tuple,
   using TestTrialNumbers=typename L2::TestTrialNumbers;
   auto tuple_nth=tuple_get< TypeToTupleElementPosition<TestTrialNumbers,TupleOfPairsNumbers>::value >(tuple);
   auto new_elem=build_tuple_of_evals_aux_aux(tuple_nth,l2prod,shape_functions);
+  // todo fixme tuple add std::tuple_cat
   return tuple_change_element<TypeToTupleElementPosition<TestTrialNumbers,TupleOfPairsNumbers>::value>
    (tuple, decltype(new_elem)(new_elem));
-
 }
 
 

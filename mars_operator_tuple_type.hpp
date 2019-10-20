@@ -36,33 +36,53 @@ template<typename Left,typename Right,Integer QR>
 class L2DotProductIntegral;
 
 
-template<typename...Parameters>
+template<typename T>
 class UnaryPlus;
 
-template<typename...Parameters>
+template<typename T>
 class UnaryMinus;
 
-template<typename...Parameters>
+template<typename Left,typename Right>
 class Multiplication;
 
-template<typename...Parameters>
+template<typename Left,typename Right>
 class Contraction2;
 
-template<typename...Parameters>
+template<typename Left,typename Right>
 class Division;
 
-template<typename...Parameters>
+template<typename Left,typename Right>
 class Subtraction;
 
-template<typename...Parameters>
+template<typename Left,typename Right>
 class Addition;
 
 template<typename T>
 class Transposed;
 
+template<typename T>
+class TraceOf;
 
-template<typename...T>
-    class OperatorAndQuadratureTupleType;
+template<typename T>
+class OperatorAndQuadratureTupleType;
+
+
+// // order(T) = order(+T)
+// template<typename T>
+//     class OperatorAndQuadratureTupleType< TraceOf< Expression<T> > >
+//     { public:
+//       using type=typename OperatorAndQuadratureTupleType<T>::type;
+//       using composite_type=typename OperatorAndQuadratureTupleType<T>::composite_type;
+//   };
+
+
+// order(T) = order(+T)
+template<template<class>class Unary, typename T>
+    class OperatorAndQuadratureTupleType< Unary< Expression<T> > >
+    { public:
+      using type=typename OperatorAndQuadratureTupleType<T>::type;
+      using composite_type=typename OperatorAndQuadratureTupleType<T>::composite_type;
+  };
 
 
 // order(T) = order(+T)
@@ -228,6 +248,26 @@ template<template<class,Integer,class > class TestOrTrial_,typename MixedSpace, 
       using composite_type=emptytuple;
   };
 
+
+template<template<class> class UnaryOperator,template<class,Integer,class > class TestOrTrial_,
+         typename MixedSpace, Integer N,typename Type>
+  class OperatorAndQuadratureTupleType<TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<UnaryOperator< Expression<Type>> > > > >
+  { public:
+      using TestOrTrial=TestOrTrial_<MixedSpace,N,CompositeOperator<Expression< UnaryOperator< Expression<Type>> > > >;
+      static_assert((IsSame<TestOrTrial,Test<MixedSpace,N,CompositeOperator< Expression<UnaryOperator< Expression<Type>> > > > >::value ||
+        IsSame<TestOrTrial,Trial<MixedSpace,N,CompositeOperator< Expression<UnaryOperator< Expression<Type>> > > > >::value )
+      && "In Evaluation<Expression<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");
+
+      using TestOrTrialType=TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Type>>>;
+      using type=typename OperatorAndQuadratureTupleType<TestOrTrialType>::type;
+      static constexpr Integer Nmax= TestOrTrial::Nmax;
+      using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
+      using single_composite_type=std::tuple<std::tuple< CompositeOperator<Expression< UnaryOperator< Expression<Type>> > >,std::tuple<> >>;
+      using composite_type=TupleChangeType<TestOrTrial::value,single_composite_type,emptytuple>;
+
+  };
+
+
 template<template<class,Integer,class > class TestOrTrial_,typename MixedSpace, Integer N,typename Type>
   class OperatorAndQuadratureTupleType<TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<UnaryPlus< Expression<Type>> > > > >
   { public:
@@ -383,14 +423,13 @@ template<typename T>
   };
 
 
-// order(T) = order(+T)
-template<typename T>
-    class OperatorAndQuadratureTupleType< Transposed< Expression<T> > >
-    { public:
-      using type=typename OperatorAndQuadratureTupleType<T>::type;
-      using composite_type=typename OperatorAndQuadratureTupleType<T>::composite_type;
-  };
-
+// // order(T) = order(+T)
+// template<typename T>
+//     class OperatorAndQuadratureTupleType< Transposed< Expression<T> > >
+//     { public:
+//       using type=typename OperatorAndQuadratureTupleType<T>::type;
+//       using composite_type=typename OperatorAndQuadratureTupleType<T>::composite_type;
+//   };
 
 
 

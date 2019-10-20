@@ -81,8 +81,8 @@ class MapFromReference5<DivergenceOperator,Simplex<Dim,ManifoldDim>,RaviartThoma
 
 
 
-template<typename T, typename Elem_, Integer FEFamily>
-class MapFromReference5<Transposed<Expression<T>>,Elem_,FEFamily> 
+template<template<class>class Unary,typename T, typename Elem_, Integer FEFamily>
+class MapFromReference5<Unary<Expression<T>>,Elem_,FEFamily> 
 {
  public:
  using Operator=T;
@@ -94,7 +94,18 @@ class MapFromReference5<Transposed<Expression<T>>,Elem_,FEFamily>
  Map map_;
 };
 
-
+// template<typename T, typename Elem_, Integer FEFamily>
+// class MapFromReference5<TraceOperator<Expression<T>>,Elem_,FEFamily> 
+// {
+//  public:
+//  using Operator=T;
+//  using Elem=Elem_;
+//  using Map=MapFromReference5<T,Elem_,FEFamily>;
+//          inline constexpr void init(const Jacobian<Elem> &J){map_.init(J);}
+//          inline constexpr const auto&  operator()()const{return map_;}
+//  private:
+//  Map map_;
+// };
 
 
 
