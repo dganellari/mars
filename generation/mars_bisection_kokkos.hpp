@@ -743,6 +743,40 @@ public:
 		});
 	}
 
+	void exclusive_scan(const Integer start, const Integer end, ViewVectorType<Integer> index_count_)
+	{
+		using namespace Kokkos;
+
+		//paralel scan on the index_count view for both columns at the same time misusing the complex instead.
+	/*	parallel_scan (RangePolicy<>(1 , nr_elements +1 ),	KOKKOS_LAMBDA (const int& i,
+					complex<Integer>& upd, const bool& final)
+		{*/
+		parallel_scan (RangePolicy<>(start , end ),	KOKKOS_LAMBDA (const int& i,
+					Integer& upd, const bool& final)
+		{
+			// Load old value in case we update it before accumulating
+			const float val_i = index_count_(i);
+
+			/*upd.real() += val_i0;
+			upd.imag() += val_i1*/;
+
+			if (final)
+			{
+				/*index_count_(i,0) = upd.real(); // only update array on final pass
+				index_count_(i,1) = upd.imag();// only update array on final pass1*/
+				index_count_(i) = upd;
+			}
+			// For exclusive scan, change the update value after
+			// updating array, like we do here. For inclusive scan,
+			// change the update value before updating array.
+			/*upd.real() += val_i0;
+			upd.imag() += val_i1;*/
+
+			upd += val_i;
+
+		});
+	}
+
 	inline void free_mesh(){
 
 		/*const Mesh* tmp = ref.mesh;
@@ -757,10 +791,12 @@ public:
 		 */
 	}
 
-	void compact_map_to_view(const UnorderedMap<Integer, Edge>& lepp_incidents_map,
+	/*void compact_map_to_view(const UnorderedMap<Integer, Edge>& lepp_incidents_map,
 			ViewMatrixType<Integer> lepp_incident_index)
 	{
 		using namespace Kokkos;
+
+		Timer timer;
 
 		ViewObject<Integer> global_index("global_index");
 
@@ -776,6 +812,51 @@ public:
 
 		  }
 		});
+
+		double time = timer.seconds();
+		std::cout << "compact_map_to_view took: " << time << " seconds." << std::endl;
+
+	}*/
+
+
+	void compact_map_to_view(const UnorderedMap<Integer, Edge>& lepp_incidents_map,
+			ViewMatrixType<Integer> lepp_incident_index)
+	{
+		using namespace Kokkos;
+
+		Timer timer;
+
+		//ViewObject<Integer> global_index("global_index");
+
+		const Integer capacity = lepp_incidents_map.capacity();
+
+		ViewVectorType<Integer> indices = ViewVectorType<Integer>("indices", capacity);
+
+		parallel_for(capacity, KOKKOS_LAMBDA(uint32_t i)
+		{
+
+			  indices[i] = lepp_incidents_map.valid_at(i);
+
+		});
+
+		exclusive_scan(0, capacity, indices);
+
+		parallel_for(capacity, KOKKOS_LAMBDA(uint32_t i)
+		{
+			if(lepp_incidents_map.valid_at(i))
+			{
+				Integer k = indices(i);
+
+				lepp_incident_index(k,0) = lepp_incidents_map.key_at(i);
+				lepp_incident_index(k,1) = lepp_incidents_map.value_at(i).nodes(0);
+				lepp_incident_index(k,2) = lepp_incidents_map.value_at(i).nodes(1);
+
+			}
+		});
+
+		double time = timer.seconds();
+		std::cout << "compact_map_to_view took: " << time << " seconds." << std::endl;
+
 	}
 
 	inline ViewVectorType<Integer>::HostMirror count_lepp(
@@ -798,14 +879,18 @@ public:
 		double time2 = timer2.seconds();
 		std::cout << "Scan took: " << time2 << " seconds." << std::endl;
 
+		Timer timer3;
 		auto sum_subview = subview (index_count_, make_pair(nr_elements, nr_elements+2));
 		auto h_ac = create_mirror_view(sum_subview);
 
 		// Deep copy device view to host view.
 		deep_copy(h_ac, sum_subview);
 
-		printf("lepp_incidents_count: %li\n", h_ac(0));
-		printf("lepp_node_count: %li\n", h_ac(1));
+		double time3 = timer3.seconds();
+		std::cout << "Deep copy subview took: " << time3 << " seconds." << std::endl;
+
+		//printf("lepp_incidents_count: %li\n", h_ac(0));
+		//printf("lepp_node_count: %li\n", h_ac(1));
 
 		return h_ac;
 	}
@@ -851,9 +936,16 @@ public:
 	{
 		using namespace Kokkos;
 
+		Timer timer;
+
 		auto h_aci = create_mirror_view(node_start_index);
 		h_aci(0) = host_mesh->n_nodes();
 		deep_copy(node_start_index, h_aci);
+
+		double time = timer.seconds();
+		std::cout << "copy_to_device took: " << time << " seconds." << std::endl;
+
+
 	}
 
 	inline void refine_mesh(const Integer levels, const Integer nr_elements)
@@ -861,6 +953,7 @@ public:
 		using namespace Kokkos;
 
 		Timer timer;
+
 		Integer it_count =0;
 		while(host_mesh->n_active_elements(nr_elements)){
 
@@ -874,9 +967,9 @@ public:
 
 			ViewObject<Integer> node_start_index= ViewObject<Integer>("node_start_index");
 			copy_to_device(node_start_index);
+
 			Integer elem_start_index = host_mesh->n_elements();
 			Integer child_start_index = host_mesh->n_childrens();
-
 
 			UnorderedMap<Integer, Edge> lepp_incidents_map(h_ac(0));
 
@@ -888,8 +981,6 @@ public:
 
 			compact_map_to_view(lepp_incidents_map, lepp_incident_index);
 
-			std::cout<<"Starting bisection"<<std::endl;
-
 			Timer timer1;
 
 			parallel_for(lip_size,
@@ -898,7 +989,7 @@ public:
 							child_start_index, node_start_index));
 
 			double time1 = timer1.seconds();
-			std::cout << "paralel bisection took: " << time1 << " seconds." << std::endl;
+			std::cout << "Bisection took: " << time1 << " seconds." << std::endl;
 
 		}
 

@@ -487,6 +487,8 @@ public:
 	{
 		using namespace Kokkos;
 
+		Timer timer;
+
 		ViewVectorType<bool> active_ = get_view_active();
 
 		double result;
@@ -494,6 +496,9 @@ public:
 		{
 			lsum += active_(i);
 		},result);
+
+		double time = timer.seconds();
+		std::cout << "Reduction took: " << time << " seconds." << std::endl;
 
 		printf("Result: %i %lf\n", N, result);
 
