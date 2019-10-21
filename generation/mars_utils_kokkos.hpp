@@ -140,7 +140,51 @@ void convert_parallel_mesh_to_serial(mars::Mesh<Dim, ManifoldDim>& mesh,
 		if (!h_ac(i))
 			mesh.set_active(i, false);
 	}
+}
 
+template<Integer Dim, Integer ManifoldDim>
+void convert_serial_mesh_to_parallel(
+		mars::Mesh<Dim, ManifoldDim, KokkosImplementation>& pMesh,
+		const mars::Mesh<Dim, ManifoldDim>& mesh)
+{
+
+	pMesh.reserve(mesh.n_elements(), mesh.n_nodes());
+
+	ViewMatrixType<Integer>::HostMirror h_el = Kokkos::create_mirror_view(
+			pMesh.get_view_elements());
+	ViewMatrixType<Real>::HostMirror h_pt = Kokkos::create_mirror_view(
+			pMesh.get_view_points());
+	ViewVectorType<bool>::HostMirror h_ac = Kokkos::create_mirror_view(
+			pMesh.get_view_active());
+
+	for (Integer i = 0; i < mesh.n_nodes(); ++i)
+	{
+		for (Integer j = 0; j < Dim; ++j)
+		{
+			h_pt(i, j) = mesh.point(i)[j];
+		}
+	}
+
+	std::cout<<" nr: "<<mesh.n_elements()<<std::endl;
+
+	for (Integer i = 0; i < mesh.n_elements(); ++i)
+	{
+
+		for (Integer j = 0; j < ManifoldDim + 1; ++j)
+		{
+			h_el(i, j) = mesh.elem(i).nodes[j];
+			std::cout<<" : "<<h_el(i,j);
+		}
+
+		std::cout<<std::endl;
+
+		h_ac(i) = mesh.is_active(i);
+	}
+
+	// Deep copy host views to device views.
+	Kokkos::deep_copy(pMesh.get_view_elements(), h_el);
+	Kokkos::deep_copy(pMesh.get_view_points(), h_pt);
+	Kokkos::deep_copy(pMesh.get_view_active(), h_ac);
 }
 
 //copy matrix from host data to the host mirror view and then deep copy to the device texture view.
