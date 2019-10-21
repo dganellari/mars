@@ -326,9 +326,13 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
                const  QPValues<S,NQPoints> & qp_values)
  {
   const auto& detJ=J.get_det();
-  for(Integer ii=0;ii<vec.size();ii++)
+  // for(Integer ii=0;ii<vec.size();ii++)
+    // {   
+    //     vec[ii]=detJ*dotofdots(qp_values,fqp_values[ii]);
+    // }
+  for(Integer ii=0;ii<vec.rows();ii++)
     {   
-        vec[ii]=detJ*dotofdots(qp_values,fqp_values[ii]);
+        vec(ii,0)=detJ*dotofdots(qp_values,fqp_values[ii]);
     }
  }
 
@@ -338,9 +342,13 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
                const FQPValues<S,NQPoints,NComponents> & fqp_values)
  {
   const auto& detJ=J.get_det();
-  for(Integer ii=0;ii<vec.size();ii++)
+  // for(Integer ii=0;ii<vec.size();ii++)
+    // {   
+    //     vec[ii]=detJ*dotofdots(qp_values,fqp_values[ii]);
+    // }
+  for(Integer ii=0;ii<vec.rows();ii++)
     {   
-        vec[ii]=detJ*dotofdots(qp_values,fqp_values[ii]);
+        vec(ii,0)=detJ*dotofdots(qp_values,fqp_values[ii]);
     }
  }
 
@@ -693,7 +701,8 @@ public:
         public:
         using Numbers=GetType<TupleOfNumbers,Nmax>;
         static constexpr Integer Dim=Nelem_dofs_array[GetType<Numbers>::value];
-        using type= std::tuple< Vector<Real,Dim> >;
+        // using type= std::tuple< Vector<Real,Dim> >;
+        using type= std::tuple< Matrix<Real,Dim,1> >;
     };
 
     template<Integer Nmax, Integer N>
@@ -702,7 +711,8 @@ public:
         public:
         using Numbers=GetType<TupleOfNumbers,N>;
         static constexpr Integer Dim=Nelem_dofs_array[GetType<Numbers>::value];
-        using type=TupleCatType< std::tuple< Vector<Real,Dim>>, typename AuxHelper<Nmax,N+1>::type >;
+        // using type=TupleCatType< std::tuple< Vector<Real,Dim>>, typename AuxHelper<Nmax,N+1>::type >;
+        using type=TupleCatType< std::tuple< Matrix<Real,Dim,1>>, typename AuxHelper<Nmax,N+1>::type >;
     };
 
     using type=typename AuxHelper<TupleTypeSize<TupleOfNumbers>::value-1,0>::type;

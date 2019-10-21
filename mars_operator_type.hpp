@@ -1553,8 +1553,9 @@ class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< 
    public:
    static constexpr Integer TestNumber=GetType<TestTrialNumbers>::value;
    static constexpr Integer TestN=FunctionSpace::Nelem_dofs_array[TestNumber];
-   using type=Vector<Real,TestN >;
-   // using type=Matrix<Real,TestN,1>;
+   //todo fixme
+   // using type=Vector<Real,TestN >;
+   using type=Matrix<Real,TestN,1>;
    };
 
    template<typename FunctionSpace,typename TestTrialNumbers>

@@ -91,6 +91,7 @@ list(APPEND MARS_HEADERS
 	mars_lagrange_element.hpp
 	mars_longest_edge.hpp
 	mars_matrix.hpp
+	mars_matrix_static_assert.hpp
 	mars_imesh.hpp
 	mars_mesh.hpp
 	mars_mesh_partition.hpp
@@ -98,6 +99,13 @@ list(APPEND MARS_HEADERS
 	mars_node_rank.hpp
 	mars_number.hpp
 	mars_oldest_edge.hpp
+	mars_operator_addition.hpp
+	mars_operator_apply.hpp
+	mars_operator_assignment.hpp
+	mars_operator_subtraction.hpp
+	mars_operator_trace.hpp
+	mars_operator_transposed.hpp
+	mars_operator_unary_plus.hpp
 	mars_operators.hpp
 	mars_operator_tuple_type.hpp
 	mars_operator_type.hpp

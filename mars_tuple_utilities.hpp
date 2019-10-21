@@ -9,6 +9,7 @@
 #include "mars_array.hpp"
 #include "mars_compiletime_sqrt.hpp"
 
+
 namespace mars{
 
 
@@ -2372,7 +2373,8 @@ constexpr auto build_tuple_of_evals(const Expr& expr,ShapeFunctions2<Forms...>&s
 
 
 
-
+// template<typename T>
+// class Transposed;
 
 template<typename MixedSpace, Integer N, typename OperatorType>
 class Test;
@@ -2410,62 +2412,76 @@ constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
 
 
 
-
-
-template<typename QuadratureRule, typename Tuple,typename T>
+template<template<class>class Unary, typename QuadratureRule, typename Tuple,typename T>
 constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
-                           const UnaryPlus<Expression<T>>& plusexpr)
+                           const Unary<Expression<T>>& unary)
 {
-  return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,plusexpr.derived());
+  return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,unary.derived());
 }
 
-template<typename QuadratureRule, typename Tuple,typename T>
-constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
-                           const UnaryMinus<Expression<T>>& minusexpr)
-{
-  return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,minusexpr.derived());
-}
+// template<typename QuadratureRule, typename Tuple,typename T>
+// constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
+//                            const UnaryPlus<Expression<T>>& plusexpr)
+// {
+//   return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,plusexpr.derived());
+// }
+
+// template<typename QuadratureRule, typename Tuple,typename T>
+// constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
+//                            const UnaryMinus<Expression<T>>& minusexpr)
+// {
+//   return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,minusexpr.derived());
+// }
 
 
-template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
+template<template<class,class>class Binary, typename QuadratureRule, typename Tuple,typename Left,typename Right>
 constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
-                           const Addition<Expression<Left>,Expression<Right>>& addition)
+                           const Binary<Expression<Left>,Expression<Right>>& binary)
 {
-  auto tuple_new=build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,addition.left());
-  return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple_new,addition.right());
-}
-
-template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
-constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
-                           const Subtraction<Expression<Left>,Expression<Right>>& subtraction)
-{
-  auto tuple_new=build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,subtraction.left());
-  return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple_new,subtraction.right());
-}
-
-template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
-constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
-                           const Multiplication<Expression<Left>,Expression<Right>>& multiplication)
-{
-  auto tuple_new=build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,multiplication.left());
-  return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple_new,multiplication.right());
-}
-
-template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
-constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
-                           const Division<Expression<Left>,Expression<Right>>& division)
-{
-  auto tuple_new=build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,division.left());
-  return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple_new,division.right());
+  auto tuple_new=build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,binary.left());
+  return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple_new,binary.right());
 }
 
 
-template<typename QuadratureRule, typename Tuple,typename T>
-constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
-                           const Transposed<Expression<T>>& transposed_expr)
-{
-  return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,transposed_expr.derived());
-}
+// template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
+// constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
+//                            const Addition<Expression<Left>,Expression<Right>>& addition)
+// {
+//   auto tuple_new=build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,addition.left());
+//   return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple_new,addition.right());
+// }
+
+// template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
+// constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
+//                            const Subtraction<Expression<Left>,Expression<Right>>& subtraction)
+// {
+//   auto tuple_new=build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,subtraction.left());
+//   return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple_new,subtraction.right());
+// }
+
+// template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
+// constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
+//                            const Multiplication<Expression<Left>,Expression<Right>>& multiplication)
+// {
+//   auto tuple_new=build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,multiplication.left());
+//   return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple_new,multiplication.right());
+// }
+
+// template<typename QuadratureRule, typename Tuple,typename Left,typename Right>
+// constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
+//                            const Division<Expression<Left>,Expression<Right>>& division)
+// {
+//   auto tuple_new=build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,division.left());
+//   return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple_new,division.right());
+// }
+
+
+// template<typename QuadratureRule, typename Tuple,typename T>
+// constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
+//                            const Transposed<Expression<T>>& transposed_expr)
+// {
+//   return build_tuple_of_combination_functions_aux_aux<QuadratureRule>(tuple,transposed_expr.derived());
+// }
 
 
 

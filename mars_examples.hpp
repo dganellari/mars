@@ -1058,11 +1058,11 @@ auto NewOp2=NewOperator(IdentityOperator()*alpha*f1);
 // auto Epsilon=NewOperator(+(-GradientOperator()));
 auto Epsilon=NewOperator(Trace(f1)*Trace(C)*(-GradientOperator()-GradientOperator())/Trace(Transpose(f1)-Trace(Transpose(C))));
 ///Trace(Transpose(Transpose(Trace(f1)))));
-// auto Epsilon=NewOperator((GradientOperator()));//+Transpose(GradientOperator())));//+Transpose(GradientOperator())));
+// auto Epsilon=NewOperator((GradientOperator()+Transpose(GradientOperator())));//+Transpose(GradientOperator())));
 
   auto bilinearform= L2Inner(Transpose(Transpose(u3)),-Transpose(v3))+
-                    L2Inner(-Transpose(-u3),(v3+v2))+ //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
-                    L2Inner(Trace(f1)*(+Transpose(u2)),+(-Transpose(v2))) +//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
+                    L2Inner(-Transpose(-u3),(v3))+ //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
+                    L2Inner(Trace(f1)*(+Transpose(u2)),(Transpose(v2))) +//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
                     L2Inner(Epsilon(u1),Grad(v1));//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
   auto linearform=
                   //L2Inner(Grad(v1),+Transpose(id2));//Transpose(Transpose((matrix1)+Transpose(matrix2))));//Transpose(-f1*(matrix1+matrix1)*Transpose(alpha*matrix1-matrix1)));//+L2Inner(f2,v2)+L2Inner(f1,v1);//+ L2Inner(f1,v1);
@@ -1073,7 +1073,7 @@ auto Epsilon=NewOperator(Trace(f1)*Trace(C)*(-GradientOperator()-GradientOperato
                   // L2Inner((-C-Transpose(C))*(-v2),Transpose(-f1))+
                   // L2Inner((-Transpose(C)-Transpose(C))*v2,C)+
                   // L2Inner((-Transpose(C)-(C))*v2,f1/C)+
-                  L2Inner(id2,Epsilon(v1));
+                  L2Inner(Trace(id2)*id2,(Epsilon(v1)));
 
   // // auto bilinearform= 
   //                   L2Inner((u3),(v3))+ //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
@@ -1103,7 +1103,7 @@ auto Epsilon=NewOperator(Trace(f1)*Trace(C)*(-GradientOperator()-GradientOperato
 
   std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
   std::cout<<"------_______-----BEFORE EVALUATION-----_______--------"<<std::endl;
-  // eval_bilinear_form.apply(J);
+  eval_bilinear_form.apply(J);
   eval_linear_form.apply(J);
 
 
