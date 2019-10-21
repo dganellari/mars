@@ -252,7 +252,8 @@ public:
 	}
 
 
-	Integer euler_graph_formula(Mesh *mesh){
+	Integer euler_graph_formula(Mesh *mesh)
+	{
 
 		/*Mesh3 sMesh3;
 		read_mesh("../data/write/euler.MFEM", sMesh3);*/
@@ -439,24 +440,33 @@ public:
 		UnorderedMap<Side<2,KokkosImplementation>,ElementVector> mapping;
 		ViewVectorType<uint32_t> tree;
 		ViewVectorType<Integer> index_count;
+		ViewVectorType<Integer> pt_count;
 
-		RefineMesh(UnorderedMap<Side<2, KokkosImplementation>, ElementVector> mp,
-				Mesh_* ms, ViewVectorType<uint32_t> tr, ViewVectorType<Integer> ic) :
-			mapping(mp), mesh(ms), tree(tr), index_count(ic)
+		RefineMesh(
+				UnorderedMap<Side<2, KokkosImplementation>, ElementVector> mp,
+				Mesh_* ms, ViewVectorType<uint32_t> tr,
+				ViewVectorType<Integer> ic, ViewVectorType<Integer> pc) :
+				mapping(mp), mesh(ms), tree(tr), index_count(ic), pt_count(pc)
+		{
+		}
+
+		RefineMesh(
+				UnorderedMap<Side<2, KokkosImplementation>, ElementVector> mp,
+				Mesh_* ms, ViewVectorType<uint32_t> tr) :
+				mapping(mp), mesh(ms), tree(tr)
 		{
 		}
 
 
 		MARS_INLINE_FUNCTION
-		void compute_lepp(const Integer element_id, Integer& count) const
+		void compute_lepp(const Integer element_id, Integer& count, Integer& pt_count) const
 		{
 
 			Integer index = tree(element_id);
 
 			if (is_terminal(mapping.key_at(index), mapping.value_at(index), mesh))
 			{
-				/*no need for atomic: protected by the atomic mechanism of the LEPP for 2 threads ending up in the same path.*/
-				Kokkos::atomic_increment(&index_count(mesh->n_elements()+1));
+				++pt_count;
 
 				for (auto i = 0; i < mapping.value_at(index).index; ++i)
 				{
@@ -470,12 +480,12 @@ public:
 
 
 		MARS_INLINE_FUNCTION
-		void depth_first(const Integer node, Integer& count) const
+		void depth_first(const Integer node, Integer& count, Integer& pt_count) const
 		{
 
 			if (is_leaf(node, mesh, tree, mapping))
 			{
-				compute_lepp(node,count);
+				compute_lepp(node, count, pt_count);
 			}
 
 			Integer index = tree(node);
@@ -484,7 +494,7 @@ public:
 				const auto &child = mapping.value_at(index)[i];
 				if (mesh->is_active(child)
 						&& mapping.key_at(index) != mapping.key_at(tree(child)))
-					depth_first(child, count);
+					depth_first(child, count, pt_count);
 			}
 		}
 
@@ -496,11 +506,12 @@ public:
 			{
 				//Integer terminal_elem_count=0;
 				Integer terminal_incident_count=0;
+				Integer terminal_pt_count=0;
 
-				depth_first(element_id, terminal_incident_count);
+				depth_first(element_id, terminal_incident_count, terminal_pt_count);
 
-				//index_count(element_id,0) = terminal_elem_count;
 				index_count(element_id+1) = terminal_incident_count;
+				pt_count(element_id+1) = terminal_pt_count;
 				//+1 for leaving the first cell 0 and performing an inclusive scan on the rest
 				//to have both exclusive and inclusive and the total on the last cell.
 
@@ -520,9 +531,8 @@ public:
 		ScatterElem(
 				UnorderedMap<Side<2, KokkosImplementation>, ElementVector> mp,
 				Mesh_* ms, ViewVectorType<uint32_t> tr,
-				ViewVectorType<Integer> ic,// ViewMatrixType<Integer> lei,
 				UnorderedMap<Integer, Edge> lim) :
-				RefineMesh(mp, ms, tr, ic),// lepp_elem_index(lei),
+				RefineMesh(mp, ms, tr),// lepp_elem_index(lei),
 				lepp_incidents_map(lim)
 		{
 		}
@@ -710,7 +720,9 @@ public:
 		}
 	};
 
-	void scan(const Integer start, const Integer end, ViewVectorType<Integer> index_count_)
+	void scan_index_pt(const Integer start, const Integer end,
+			ViewVectorType<Integer> index_count_,
+			ViewVectorType<Integer> pt_count_)
 	{
 		using namespace Kokkos;
 
@@ -719,20 +731,23 @@ public:
 					complex<Integer>& upd, const bool& final)
 		{*/
 		parallel_scan (RangePolicy<>(start , end ),	KOKKOS_LAMBDA (const int& i,
-					Integer& upd, const bool& final)
+					complex<Integer>& upd, const bool& final)
 		{
 			// Load old value in case we update it before accumulating
 			const float val_i = index_count_(i);
+			const float val_ip = pt_count_(i);
 
-			upd += val_i;
-			/*upd.real() += val_i0;
-			upd.imag() += val_i1*/;
+			/*upd += val_i;
+			upd_ip += val_ip;*/
+			upd.real() += val_i;
+			upd.imag() += val_ip;
 
 			if (final)
 			{
-				/*index_count_(i,0) = upd.real(); // only update array on final pass
-				index_count_(i,1) = upd.imag();// only update array on final pass1*/
-				index_count_(i) = upd;
+				index_count_(i) = upd.real(); // only update array on final pass
+				pt_count_(i) = upd.imag();
+				/*index_count_(i,0) = upd;
+				index_count_(i,1) = upd_ip;*/
 			}
 			// For exclusive scan, change the update value after
 			// updating array, like we do here. For inclusive scan,
@@ -859,51 +874,64 @@ public:
 
 	}
 
-	inline ViewVectorType<Integer>::HostMirror count_lepp(
-		ViewVectorType<Integer> index_count_, const Integer nr_elements)
+	inline std::array<Integer, 2> count_lepp(
+		ViewVectorType<Integer> index_count_, ViewVectorType<Integer> pt_count_,
+		const Integer nr_elements)
 	{
 		using namespace Kokkos;
 
 		Timer timer1;
 
+		std::array<Integer, 2> res;
+
 		parallel_for(nr_elements,
-				RefineMesh(edge_element_map_.mapping_, mesh, tree_, index_count_));
+				RefineMesh(edge_element_map_.mapping_, mesh, tree_, index_count_,
+						pt_count_));
 
 		double time1 = timer1.seconds();
 		std::cout << "Count took: " << time1 << " seconds." << std::endl;
 
 		Timer timer2;
 
-		scan(1, nr_elements + 1, index_count_);
+		scan_index_pt(1, nr_elements + 1, index_count_, pt_count_);
 
 		double time2 = timer2.seconds();
 		std::cout << "Scan took: " << time2 << " seconds." << std::endl;
 
 		Timer timer3;
-		auto sum_subview = subview (index_count_, make_pair(nr_elements, nr_elements+2));
-		auto h_ac = create_mirror_view(sum_subview);
+		auto index_subview = subview(index_count_, nr_elements);
+		auto h_iac = create_mirror_view(index_subview);
 
 		// Deep copy device view to host view.
-		deep_copy(h_ac, sum_subview);
+		deep_copy(h_iac, index_subview);
+
+		auto pt_subview = subview(pt_count_, nr_elements);
+		auto h_pac = create_mirror_view(pt_subview);
+
+		// Deep copy device view to host view.
+		deep_copy(h_pac, pt_subview);
+
+		res[0] = h_iac(0);
+		res[1] = h_pac(0);
 
 		double time3 = timer3.seconds();
 		std::cout << "Deep copy subview took: " << time3 << " seconds." << std::endl;
 
-		//printf("lepp_incidents_count: %li\n", h_ac(0));
-		//printf("lepp_node_count: %li\n", h_ac(1));
+		printf("lepp_incidents_count: %li\n", h_iac(0));
+		printf("lepp_node_count: %li\n", h_pac(0));
 
-		return h_ac;
+		return res;
 	}
 
 	Integer allocate_and_fill(const Integer nr_elements,
-		UnorderedMap<Integer, Edge>& lepp_incidents_map,
-		ViewVectorType<Integer> index_count_, const Integer points_count)
+		UnorderedMap<Integer, Edge>& lepp_incidents_map, const Integer points_count)
 	{
 		using namespace Kokkos;
 		Timer timer;
 
-		parallel_for(nr_elements, ScatterElem(edge_element_map_.mapping_, mesh, tree_,
-				index_count_, lepp_incidents_map));
+		parallel_for(nr_elements,
+				ScatterElem(edge_element_map_.mapping_, mesh, tree_,
+						lepp_incidents_map));
 
 		double time = timer.seconds();
 		std::cout << "Scatter/Fill took: " << time << " seconds." << std::endl;
@@ -954,30 +982,34 @@ public:
 
 		Timer timer;
 
-		Integer it_count =0;
-		while(host_mesh->n_active_elements(nr_elements)){
+		Integer it_count = 0;
+		while (host_mesh->n_active_elements(nr_elements))
+		{
 
 			++it_count;
-			/*+2 => 1 more for the incident total sum to make it both inclusive and exclusive
-			 sum scan and 1 more for the node count. to avoid unneccessary deep copies of 1 value*/
-			ViewVectorType<Integer> index_count_ = ViewVectorType<Integer>("index_count",
-					nr_elements + 2);
+			/*+1 for the incident total sum for both inclusive and exclusive sum scan at the same result*/
+			ViewVectorType<Integer> index_count_ = ViewVectorType<Integer>(
+					"index_count", nr_elements + 1);
 
-			auto h_ac = count_lepp(index_count_, nr_elements);
+			ViewVectorType<Integer> pt_count_ = ViewVectorType<Integer>("pt_count",
+					nr_elements + 1); //TODO: try to use the results of the index_count avoiding the uniqueness of the map since the atomic lepp should avoid it.
 
-			ViewObject<Integer> node_start_index= ViewObject<Integer>("node_start_index");
+			auto h_ac = count_lepp(index_count_, pt_count_, nr_elements);
+
+			ViewObject<Integer> node_start_index = ViewObject<Integer>(
+					"node_start_index");
 			copy_to_device(node_start_index);
 
 			Integer elem_start_index = host_mesh->n_elements();
 			Integer child_start_index = host_mesh->n_childrens();
 
-			UnorderedMap<Integer, Edge> lepp_incidents_map(h_ac(0));
+			UnorderedMap<Integer, Edge> lepp_incidents_map(h_ac[0]);
 
 			const Integer lip_size = allocate_and_fill(nr_elements, lepp_incidents_map,
-					index_count_, h_ac(1));
+					h_ac[1]);
 
 			ViewMatrixType<Integer> lepp_incident_index = ViewMatrixType<Integer>(
-							"lepp_incidents_index", lip_size, 3);
+					"lepp_incidents_index", lip_size, 3);
 
 			compact_map_to_view(lepp_incidents_map, lepp_incident_index);
 
@@ -994,7 +1026,8 @@ public:
 		}
 
 		double time = timer.seconds();
-		std::cout << "Refine Mesh took: " << time << " seconds. In " <<it_count<< " iterations."<<std::endl;
+		std::cout << "Refine Mesh took: " << time << " seconds. In " << it_count
+				<< " iterations." << std::endl;
 		//free_mesh();
 	}
 
