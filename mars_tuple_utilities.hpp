@@ -2379,6 +2379,15 @@ constexpr auto build_tuple_of_evals(const Expr& expr,ShapeFunctions2<Forms...>&s
 template<typename MixedSpace, Integer N, typename OperatorType>
 class Test;
 
+template<typename MixedSpace, Integer N, typename OperatorType>
+class Trial;
+
+template<typename ConstType, typename...Inputs>
+class ConstantTensor;
+
+template<typename FullSpace, Integer M,typename Operator,typename FuncType>
+class Function;
+
 
 
 template<typename QuadratureRule, typename Tuple,typename Other>
@@ -2387,6 +2396,29 @@ constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple, 
  return tuple;
 }
 
+// template<typename QuadratureRule, typename Tuple,typename ConstType,typename...Inputs>
+// constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple, const ConstantTensor<ConstType,Inputs...>& other)
+// {
+//  return tuple;
+// }
+
+
+// template<typename QuadratureRule, typename Tuple,typename FullSpace, Integer M,typename Operator,typename FuncType>
+// constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple, const Function<FullSpace,M,Operator,FuncType>& other)
+// {
+//  return tuple;
+// }
+
+// template<typename QuadratureRule, typename Tuple,typename MixedSpace, Integer N, typename Operator>
+// constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple, const Trial<MixedSpace,N,Operator>& other)
+// {
+//  return tuple;
+// }
+// template<typename QuadratureRule, typename Tuple,typename MixedSpace, Integer N, typename Operator>
+// constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple, const Test<MixedSpace,N,Operator>& other)
+// {
+//  return tuple;
+// }
 
 template<typename QuadratureRule, typename Tuple,
          template<class,Integer,class > class TestOrTrial_,typename MixedSpace, Integer N, typename Expr>
@@ -2412,7 +2444,7 @@ constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
 
 
 
-template<template<class>class Unary, typename QuadratureRule, typename Tuple,typename T>
+template<typename QuadratureRule, template<class>class Unary, typename Tuple,typename T>
 constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
                            const Unary<Expression<T>>& unary)
 {
@@ -2434,7 +2466,7 @@ constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
 // }
 
 
-template<template<class,class>class Binary, typename QuadratureRule, typename Tuple,typename Left,typename Right>
+template<typename QuadratureRule, template<class,class>class Binary, typename Tuple,typename Left,typename Right>
 constexpr auto build_tuple_of_combination_functions_aux_aux(const Tuple& tuple,
                            const Binary<Expression<Left>,Expression<Right>>& binary)
 {
@@ -2507,6 +2539,13 @@ constexpr auto build_tuple_of_combination_functions_aux(const Tuple& tuple,
 }
 
 
+// template<template<class,class>class AdditionOrSubtraction,typename Tuple, typename Left,typename Right>
+// constexpr auto build_tuple_of_combination_functions_aux(const Tuple& tuple,
+//                           const AdditionOrSubtraction<Expression<Left>,Expression<Right>>& addition)
+// {
+//   auto tuple_new=build_tuple_of_combination_functions_aux(tuple,addition.left());
+//   return build_tuple_of_combination_functions_aux(tuple_new,addition.right());
+// }
 
 
 

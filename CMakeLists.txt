@@ -83,6 +83,9 @@ list(APPEND MARS_HEADERS
 	mars_examples.hpp
 	mars_expression.hpp
 	mars_elementfunctionspace.hpp
+	mars_evaluation_unary.hpp
+	mars_evaluation_binary.hpp
+	mars_evaluation.hpp
 	mars_fqpexpressions.hpp
 	mars_function.hpp
 	mars_functionspace.hpp
@@ -102,6 +105,9 @@ list(APPEND MARS_HEADERS
 	mars_operator_addition.hpp
 	mars_operator_apply.hpp
 	mars_operator_assignment.hpp
+	# mars_operator_contraction.hpp
+	mars_operator_division.hpp
+	mars_operator_multiplication.hpp
 	mars_operator_subtraction.hpp
 	mars_operator_trace.hpp
 	mars_operator_transposed.hpp

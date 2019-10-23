@@ -193,6 +193,9 @@ public:
   static constexpr Integer Nlocal=TupleTypeSize<LocalTuple>::value-1;
 
   // Initialize the global shape function coefficients tuple with the mesh
+  // RT elements have different coefficients for different order, 
+  // but all of them are based on the face "orientation" of the element
+  // so we distinguihs between global coefficient and the local ones
   template<Integer Dim, Integer ManifoldDim, typename T>
   typename std::enable_if_t< IsSame<T,std::tuple<>>::value, void >
   init_aux_aux(const Mesh<Dim,ManifoldDim>& mesh, T& t)
@@ -240,6 +243,7 @@ public:
   init_aux_aux(const Integer elem_id,const S& s, T& t)
   {
     shape_function_coefficients_init<Elem,FEFamily,Order>(s.sign(elem_id),t);
+
   }
 
 
@@ -253,15 +257,19 @@ public:
   init_aux(const Integer elem_id)
   {
     constexpr Integer N=GetType<SpacesToUniqueFEFamily,M>::value;
-    using FunctionSpace=GetType<UniqueElementFunctionSpacesTupleType,N>;
+    using FunctionSpace=GetType<UniqueElementFunctionSpacesTupleType,M>;
     // using Elem=GetType<FunctionSpace,0>;
     // using BaseFunctionSpace=GetType<FunctionSpace,1>;
     using Elem=typename FunctionSpace::Elem;
     using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpace>;
     constexpr Integer FEFamily=BaseFunctionSpace::FEFamily;
     constexpr Integer Order=BaseFunctionSpace::Order;
+    // std::cout<<"local, global=="<<M<<", "<<N<<std::endl;
+    // std::cout<<"FEFamily=="<<FEFamily<<std::endl;
+
     init_aux_aux<Elem,FEFamily,Order>(elem_id,tuple_get<N>(global_tuple_),tuple_get<M>(local_tuple_));
     init_aux<M+1>(elem_id);
+
   }
 
   void init(const Integer elem_id)

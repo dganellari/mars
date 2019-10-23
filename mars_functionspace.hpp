@@ -14,6 +14,7 @@
 #include "mars_functionspace_dofmap.hpp"
 #include "mars_shape_function.hpp"
 #include "mars_tuple_utilities.hpp"
+#include "mars_evaluation.hpp"
 #include "mars_operators.hpp"
 #include "mars_quadrature_rules.hpp"
 #include "mars_vector.hpp"
@@ -824,59 +825,7 @@ private:
 
 
 
-// template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, Integer N, typename Expr,typename...OtherTemplateArguments>
-// class Evaluation<Expression<Transposed<Expression<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>>>>,OtherTemplateArguments...>
-// {
-//  public:
-//  using Operator=CompositeOperator<Expression<Expr>>;
-//  using type=Transposed<Expression<TestOrTrial<MixedSpace,N,Operator>>>;
-
-//  // static_assert((IsSame<type,Test<MixedSpace,N,Operator>>::value ||
-//  //                IsSame<type,Trial<MixedSpace,N,Operator>>::value )
-//  //               && "In Evaluation<Expression<TestOrTrial<MixedSpace,N,Composite<Operator>>>>,TestOrTrial=Test or Trial ");
-//  // using FunctionSpace=typename type::FunctionSpace;
-//  // using FunctionSpaces=GetType<typename type::UniqueElementFunctionSpacesTupleType,type::value>;
-//  // using Elem=typename FunctionSpaces::Elem;
-//  // using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpaces>;
-//  // // using value_type=OperatorType<type,OtherTemplateArguments...>;
-
-//  // Evaluation(){};
-
-//  Evaluation(const type& expr)
-//  :
-//  eval_(expr)
-//  {};
  
-// //  //  template<typename ValueType,typename...Forms, typename Jacobian, typename...Inputs>
-// //  // constexpr void apply(ValueType& value,const Jacobian& J, const ShapeFunctions2<Forms...>& shape_functions)
-// //   template<typename ValueType, typename Jacobian, typename...Args1,typename...Args2,typename...Args3>
-// //  constexpr void apply(ValueType& value,const Jacobian& J, const std::tuple<Args1...>& tuple_shape_functions,const std::tuple<Args2...>&tuple_tensor,const std::tuple<Args3...>&tuple_composite_shapes)
-
-// //  {
-// //  using single_type=Evaluation<Expression<typename FormOfCompositeOperatorType<type>::type >,OtherTemplateArguments...>;
-
-// //  using TupleOfTupleCompositeShapeFunctionEval=std::tuple<Args3...>;
-// //  using tuple_type=GetType<TupleOfTupleCompositeShapeFunctionEval,type::value>;
-// //  // using single_type=Evaluation<Expression<typename FormOfCompositeOperatorType<type>::type >,OtherTemplateArguments...>;
-// //  // const auto& tuple=tuple_get<type::value>(tuple_tensor);
-// //  constexpr Integer M=TypeToTupleElementPosition<single_type,tuple_type>::value;
-
-// //  auto& single_tensor=tuple_get<type::value,M >(tuple_tensor);
-// //  Assignment<ValueType>::apply(value,single_tensor);
-// //    std::cout<<"single_tensor= "<<single_tensor<<std::endl;
-
-// //   std::cout<<"Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_> "<<value<<std::endl;
-
-
-// //   }
-
-// private:
- 
-//  type eval_;
-// };
-
-
-
 
 
 
@@ -1056,16 +1005,19 @@ private:
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 template<typename T>
-class IsTestOrTrial{
-public:
-  // using Elem=EmptyClass;
-  // using Operator=std::tuple<>;
-  // using TupleFunctionSpace=std::tuple<>;
-  // using UniqueElementFunctionSpacesTupleType=std::tuple<>;
-  using type=std::tuple<Number<-1>>;
-  // static constexpr Integer value=-1;
-  // static constexpr Integer number=-1;
-};
+class IsTestOrTrial;
+
+// template<typename T>
+// class IsTestOrTrial{
+// public:
+//   // using Elem=EmptyClass;
+//   // using Operator=std::tuple<>;
+//   // using TupleFunctionSpace=std::tuple<>;
+//   // using UniqueElementFunctionSpacesTupleType=std::tuple<>;
+//   using type=std::tuple<Number<-1>>;
+//   // static constexpr Integer value=-1;
+//   // static constexpr Integer number=-1;
+// };
 
 
 template<typename ConstType,typename...Inputs>
@@ -1121,41 +1073,14 @@ public:
   static constexpr Integer number=Trial<MixedSpace,N,OperatorType>::number;
 };
 
-
-template<typename ConstType,typename...Inputs>
-class IsTestOrTrial<Transposed<Expression<ConstantTensor<ConstType,Inputs...>>>>
-{
-public:
-  using Elem=EmptyClass;
-  using Operator=std::tuple<>;
-  using TupleFunctionSpace=std::tuple<>;
-  using UniqueElementFunctionSpacesTupleType=std::tuple<>;
-  using type=std::tuple<Number<0>>;
-  static constexpr Integer value=-1;
-  static constexpr Integer number=-1;
-};
-
-
-
-template<typename FuncType,typename FullSpace, Integer N, typename Operator_>
-class IsTestOrTrial<Transposed<Expression<Function<FullSpace,N,Operator_,FuncType>>>>{
-public:
-  using Elem=typename FullSpace::Elem;
-  using Operator=std::tuple<Operator_>;
-  using TupleFunctionSpace=std::tuple<>;
-  using UniqueElementFunctionSpacesTupleType=std::tuple<>;
-  using type=std::tuple<Number<0>>;
-  static constexpr Integer value=-1;
-  static constexpr Integer number=-1;
-};
-
-
 template <typename T,typename ... Types>
 class TupleTypeSize;
 
 
-template<template<class>class UnaryOperator, typename Type>
-class IsTestOrTrial< UnaryOperator<Expression<Type>> >
+
+
+template<template<class>class Unary, typename Type>
+class IsTestOrTrial< Unary<Expression<Type>> >
 {
 public:
   using Elem=typename IsTestOrTrial<Type>::Elem;
@@ -1167,32 +1092,13 @@ public:
   // if it has only one element, do not remove duplicates
   using type=TupleRemoveNumber0<typename IsTestOrTrial<Type>::type>;
   // using type=TupleRemoveType<Number<0>,typename IsTestOrTrial<Type>::type>;
-  static_assert(TupleTypeSize<type>::value<2," In UnaryOperator<Type>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
+  static_assert(TupleTypeSize<type>::value<2," In Unary<Type>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
   static constexpr Integer number= Heaviside(IsTestOrTrial<Type>::number);
 };
 
 
-template<typename Type>
-class IsTestOrTrial< TraceOperator<Expression<Type>> >
-{
-public:
-  using Elem=typename IsTestOrTrial<Type>::Elem;
-
-  using Operator=TupleCatType<typename IsTestOrTrial<Type>::Operator>;
-  using TupleFunctionSpace=typename IsTestOrTrial<Type>::TupleFunctionSpace;
-  using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Type>::UniqueElementFunctionSpacesTupleType;
-  // WE REMOVE THE ZEROS, BUT WE SHOULD NOT REMOVE ALL ZEROS
-  // if it has only one element, do not remove duplicates
-  using type=TupleRemoveNumber0<typename IsTestOrTrial<Type>::type>;
-  // using type=TupleRemoveType<Number<0>,typename IsTestOrTrial<Type>::type>;
-  static_assert(TupleTypeSize<type>::value<2," In UnaryOperator<Type>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
-  static constexpr Integer number= Heaviside(IsTestOrTrial<Type>::number);
-};
-
-
-
-template<typename Left, typename Right>
-class IsTestOrTrial<Multiplication<Expression<Left>,Expression<Right> > >
+template<template<class,class>class Binary, typename Left, typename Right>
+class IsTestOrTrial<Binary<Expression<Left>,Expression<Right> > >
 {
 public:
 
@@ -1209,124 +1115,11 @@ public:
                                        std::tuple<Number<0>>,
                                        tmp_type>::type;   
   static constexpr Integer number= Heaviside(IsTestOrTrial<Left>::number)+Heaviside(IsTestOrTrial<Right>::number);
-  static_assert(TupleTypeSize<type>::value<2," In Multiply<Left,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
-};
-
-
-template<typename Left, typename Right>
-class IsTestOrTrial<Division<Expression<Left>,Expression<Right> > >
-{
-public:
-
-  using Elem=Choose<typename IsTestOrTrial<Left>::Elem,typename IsTestOrTrial<Right>::Elem>;
-  using Operator=TupleCatType<typename IsTestOrTrial<Left>::Operator,
-                              typename IsTestOrTrial<Right>::Operator >;
-  using TupleFunctionSpace=TupleCatType<typename IsTestOrTrial<Left>::TupleFunctionSpace,
-                                        typename IsTestOrTrial<Right>::TupleFunctionSpace >;
-
-  using UniqueElementFunctionSpacesTupleType=TupleCatType<typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType,
-                                                          typename IsTestOrTrial<Right>::UniqueElementFunctionSpacesTupleType >;
-  using tmp_type=TupleRemoveType<Number<0>,TupleCatType<typename IsTestOrTrial<Left>::type,typename IsTestOrTrial<Right>::type >> ;
-  using type=typename std::conditional<IsSame<tmp_type,std::tuple<>>::value, 
-                                       std::tuple<Number<0>>,
-                                       tmp_type>::type;   
-  static constexpr Integer number= Heaviside(IsTestOrTrial<Left>::number)+Heaviside(IsTestOrTrial<Right>::number);
-  static_assert(TupleTypeSize<type>::value<2," In Multiply<Left,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
-};
-
-template<typename Left, typename Right>
-class IsTestOrTrial< Addition<Expression<Left>,Expression<Right> > >
-{
-public:
-  using Elem=Choose<typename IsTestOrTrial<Left>::Elem,typename IsTestOrTrial<Right>::Elem>;
-
-  using Operator=TupleCatType<typename IsTestOrTrial<Left>::Operator,
-                              typename IsTestOrTrial<Right>::Operator >;
-
-  using TupleFunctionSpace=TupleCatType<typename IsTestOrTrial<Left>::TupleFunctionSpace,
-                                   typename IsTestOrTrial<Right>::TupleFunctionSpace >;
-
-  using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates<TupleCatType<typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType,
-                                                                                typename IsTestOrTrial<Right>::UniqueElementFunctionSpacesTupleType >>;
-  using tmp_type=RemoveTupleDuplicates<TupleRemoveType<Number<0>,TupleCatType<typename IsTestOrTrial<Left>::type,typename IsTestOrTrial<Right>::type >>> ;
-  using type=typename std::conditional<IsSame<tmp_type,std::tuple<>>::value, 
-                                       std::tuple<Number<0>>,
-                                       tmp_type>::type;  
-  static constexpr Integer number= Heaviside(IsTestOrTrial<Left>::number)+Heaviside(IsTestOrTrial<Right>::number);
-  static_assert(TupleTypeSize<type>::value<2," In Addition<Left,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
-};
-
-template<typename Left, typename Right>
-class IsTestOrTrial< Subtraction<Expression<Left>,Expression<Right> > >
-{
-public:
-  using Elem=Choose<typename IsTestOrTrial<Left>::Elem,typename IsTestOrTrial<Right>::Elem>;
-
-  using Operator=TupleCatType<typename IsTestOrTrial<Left>::Operator,
-                              typename IsTestOrTrial<Right>::Operator >;
-
-  using TupleFunctionSpace=TupleCatType<typename IsTestOrTrial<Left>::TupleFunctionSpace,
-                                   typename IsTestOrTrial<Right>::TupleFunctionSpace >;
-
-  using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates<TupleCatType<typename IsTestOrTrial<Left>::UniqueElementFunctionSpacesTupleType,
-                                                                                typename IsTestOrTrial<Right>::UniqueElementFunctionSpacesTupleType >>;
-  using tmp_type=RemoveTupleDuplicates<TupleRemoveType<Number<0>,TupleCatType<typename IsTestOrTrial<Left>::type,typename IsTestOrTrial<Right>::type > >>;
-  using type=typename std::conditional<IsSame<tmp_type,std::tuple<>>::value, 
-                                       std::tuple<Number<0>>,
-                                       tmp_type>::type;
-  static constexpr Integer number= Heaviside(IsTestOrTrial<Left>::number)+Heaviside(IsTestOrTrial<Right>::number);
-  static_assert(TupleTypeSize<type>::value<2," In Subtraction<Left,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
-
+  static_assert(TupleTypeSize<type>::value<2," In Binary<Left,Right>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
 };
 
 
 
-template<typename Type>
-class IsTestOrTrial< UnaryPlus<Expression<Type>> >
-{
-public:
-  using Elem=typename IsTestOrTrial<Type>::Elem;
-
-  using Operator=TupleCatType<typename IsTestOrTrial<Type>::Operator>;
-  using TupleFunctionSpace=typename IsTestOrTrial<Type>::TupleFunctionSpace;
-  using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Type>::UniqueElementFunctionSpacesTupleType;
-  // WE REMOVE THE ZEROS, BUT WE SHOULD NOT REMOVE ALL ZEROS
-  // if it has only one element, do not remove duplicates
-  using type=TupleRemoveNumber0<typename IsTestOrTrial<Type>::type>;
-  // using type=TupleRemoveType<Number<0>,typename IsTestOrTrial<Type>::type>;
-  static_assert(TupleTypeSize<type>::value<2," In UnaryPlus<Type>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
-  static constexpr Integer number= Heaviside(IsTestOrTrial<Type>::number);
-};
-
-template<typename Type>
-class IsTestOrTrial< UnaryMinus<Expression<Type>> >
-{
-public:
-  using Elem=typename IsTestOrTrial<Type>::Elem;
-
-  using Operator=TupleCatType<typename IsTestOrTrial<Type>::Operator>;
-  using TupleFunctionSpace=typename IsTestOrTrial<Type>::TupleFunctionSpace;
-  using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Type>::UniqueElementFunctionSpacesTupleType;
-  using type=TupleRemoveNumber0<typename IsTestOrTrial<Type>::type>;
-  // using type=TupleRemoveType<Number<0>,typename IsTestOrTrial<Type>::type>;
-  static_assert(TupleTypeSize<type>::value<2," In UnaryMinus<Type>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
-  static constexpr Integer number= Heaviside(IsTestOrTrial<Type>::number);
-};
-
-
-template<typename Type>
-class IsTestOrTrial<Transposed<Expression<Type>> >
-{
-public:
-  using Elem=typename IsTestOrTrial<Type>::Elem;
-
-  using Operator=TupleCatType<typename IsTestOrTrial<Type>::Operator>;
-  using TupleFunctionSpace=typename IsTestOrTrial<Type>::TupleFunctionSpace;
-  using UniqueElementFunctionSpacesTupleType=typename IsTestOrTrial<Type>::UniqueElementFunctionSpacesTupleType;
-  using type=typename IsTestOrTrial<Type>::type;
-  static_assert(TupleTypeSize<type>::value<2," In Transposed<Type>, cannot have more than one test/more than one trial/one ore more trials and one or more tests");
-  static constexpr Integer number= Heaviside(IsTestOrTrial<Type>::number);
-};
 
 
 
@@ -2006,7 +1799,7 @@ public Expression<L2DotProductIntegral<Left_,Right_,QR>>
    public:
     using Left=Left_;
     using Right=Right_;
-    using type=Contraction2<Expression <Left>, Expression <Right> > ;
+    using type=InnerProduct<Expression <Left>, Expression <Right> > ;
     using TestOrTrialLeft= IsTestOrTrial<Left>;
     using TestOrTrialRight= IsTestOrTrial<Right>;
     using OperatorLeft=typename TestOrTrialLeft::Operator;
@@ -2279,6 +2072,21 @@ constexpr auto
 L2Inner(const Expression<Left>& left,const  Expression<UnaryMinus<Expression<UnaryMinus<Expression<Right>>> >>& right)
 {return L2DotProductIntegral<Left,Right>(left,right.derived().derived().derived());}
 
+template<typename Left,typename Right>
+constexpr auto
+L2Inner(const Expression<UnaryMinus<Expression<Left>>>& left,const  Expression<UnaryMinus<Expression<UnaryMinus<Expression<Right>>> >>& right)
+{return L2DotProductIntegral<UnaryMinus<Expression<Left>>,Right>(left.derived(),right.derived().derived().derived());}
+
+template<typename Left,typename Right>
+constexpr auto
+L2Inner(const Expression<UnaryMinus<Expression<UnaryMinus<Expression<Left>>> >>& left,const Expression<UnaryMinus<Expression<Right>>>& right)
+{return L2DotProductIntegral<Left,UnaryMinus<Expression<Right>>>(left.derived().derived().derived(),right.derived());}
+
+template<typename Left,typename Right>
+constexpr auto
+L2Inner(const Expression<UnaryMinus<Expression<UnaryMinus<Expression<Left>>>>>& left,const Expression<UnaryMinus<Expression<UnaryMinus<Expression<Right>>> >>& right)
+{return L2DotProductIntegral<Left,Right>(left.derived().derived().derived(),right.derived().derived().derived());}
+
 
 
 
@@ -2388,6 +2196,149 @@ Addition<Expression<decltype(L2Inner(left.derived().left(),right.derived()))>,
   ;
 }
 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////  + L2DotProductIntegral
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+template< typename Left,typename Right, Integer QR>
+class L2DotProductIntegral<Left,Right,QR >
+operator+(const Expression<L2DotProductIntegral<Left,Right,QR>>&l2prod)
+{return L2Inner(l2prod.derived().left(),l2prod.derived().right());}
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////  - L2DotProductIntegral
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+template< typename Left,typename Right, Integer QR>
+class L2DotProductIntegral<UnaryMinus<Expression<Left>>,Right,QR >
+operator-(const Expression<L2DotProductIntegral<Left,Right,QR>>&l2prod)
+{return L2Inner(-l2prod.derived().left(),l2prod.derived().right());}
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////  Exr - L2DotProductIntegral
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+template< typename Left1,typename Left2,typename Right2, Integer QR>
+class Addition< Expression <Left1>, 
+                Expression<L2DotProductIntegral<UnaryMinus<Expression<Left2>>,Right2,QR>> >
+operator-(const Expression<Left1>&left, 
+          const Expression<L2DotProductIntegral<Left2,Right2,QR>>&right)
+{return left+L2Inner(-right.derived().left(),right.derived().right());}
+
+
+
+
+template< typename Left1,typename Left2,typename Right2, Integer QR>
+class Addition< Expression <Left1>, 
+                Expression<L2DotProductIntegral<Left2,Right2,QR>> >
+operator-(const Expression<Left1>&left, 
+          const Expression<L2DotProductIntegral<UnaryMinus<Expression<Left2>>,Right2,QR>>&right)
+{return left+L2Inner(right.derived().left().derived(),right.derived().right());}
+
+
+
+template< typename Left1,typename Left2,typename Right2, Integer QR2>
+class Addition< Expression<Left1>, 
+                Expression<L2DotProductIntegral<Left2,Right2,QR2>> >
+operator-(const Expression<Left1>&left, 
+          const Expression<L2DotProductIntegral<Left2,UnaryMinus<Expression<Right2>>,QR2>>&right)
+{return left+L2Inner(right.derived().left(),right.derived().right().derived());}
+
+
+
+
+template< typename Left1,typename Left2,typename Right2, Integer QR2>
+class Addition< Expression<Left1>, 
+                Expression<L2DotProductIntegral<UnaryMinus<Expression<Left2>>,Right2,QR2>> >
+operator-(const Expression<Left1>&left, 
+          const Expression<L2DotProductIntegral<UnaryMinus<Expression<Left2>>,UnaryMinus<Expression<Right2>>,QR2>>&right)
+{return left+L2Inner(right.derived().left(),right.derived().right().derived());}
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////  L2DotProductIntegral - Exr
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// template< typename Left1,typename Right1, Integer QR, typename Right2>
+// class Addition< Expression<L2DotProductIntegral<Left1,Right1,QR>>, Expression<UnaryMinus<Expression<Right2>>> >
+// operator-(const Expression<L2DotProductIntegral<Left1,Right1,QR>>&left, 
+//           const Expression<Right2>&right)
+// {return Addition<Expression<L2DotProductIntegral<UnaryMinus<Expression<Left1>>,Right1,QR>>,
+//                  Expression <UnaryMinus<Expression<Right2>>> >
+//                  (left,-right);}
+
+// //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// //////  L2DotProductIntegral - L2DotProductIntegral
+// //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// template< typename Left1,typename Right1, Integer QR1, typename Left2,typename Right2, Integer QR2>
+// class Addition< Expression<L2DotProductIntegral<Left1,Right1,QR1>>, 
+//                 Expression<L2DotProductIntegral<UnaryMinus<Expression<Left2>>,Right2,QR2>> >
+// operator-(const Expression<L2DotProductIntegral<Left1,Right1,QR1>>&left, 
+//           const Expression<L2DotProductIntegral<Left2,Right2,QR2>>&right)
+// {return left+L2Inner(-right.derived().left(),right.derived().right());}
+//   // return Addition<Expression<L2DotProductIntegral<Left1,Right1,QR1>>,
+//   //                Expression<L2DotProductIntegral<UnaryMinus<Expression<Left2>>,Right2,QR2>> >
+//   //                (left,L2Inner(-right.derived().left(),right.derived().right()));}
+
+
+
+
+
+// template< typename Left1,typename Right1, Integer QR1, typename Left2,typename Right2, Integer QR2>
+// class Addition< Expression<L2DotProductIntegral<Left1,Right1,QR1>>, 
+//                 Expression<L2DotProductIntegral<Left2,Right2,QR2>> >
+// operator-(const Expression<L2DotProductIntegral<Left1,Right1,QR1>>&left, 
+//           const Expression<L2DotProductIntegral<UnaryMinus<Expression<Left2>>,Right2,QR2>>&right)
+// {
+// return left+L2Inner(right.derived().left().derived(),right.derived().right());
+//   // return Addition<Expression<L2DotProductIntegral<Left1,Right1,QR1>>,
+//   //                Expression<L2DotProductIntegral<Left2,Right2,QR2>> >
+//   //                (left,L2Inner(right.derived().left().derived(),right.derived().right()));
+//                }
+
+// template< typename Left1,typename Left2,typename Right2, Integer QR2>
+// class Addition< Expression<Left1>, 
+//                 Expression<L2DotProductIntegral<Left2,Right2,QR2>> >
+// operator-(const Expression<Left1>&left, 
+//           const Expression<L2DotProductIntegral<Left2,UnaryMinus<Expression<Right2>>,QR2>>&right)
+// {return left+L2Inner(right.derived().left(),right.derived().right().derived());
+//   // Addition<Expression<L2DotProductIntegral<Left1,Right1,QR1>>,
+//   //                Expression<L2DotProductIntegral<Left2,Right2,QR2>> >
+//   //                (left,L2Inner(right.derived().left().derived(),right.derived().right()));
+//                }
+
+
+// template< typename Left1,typename Left2,typename Right2, Integer QR2>
+// class Addition< Expression<Left1>, 
+//                 Expression<L2DotProductIntegral<UnaryMinus<Expression<Left2>>,Right2,QR2>> >
+// operator-(const Expression<Left1>&left, 
+//           const Expression<L2DotProductIntegral<UnaryMinus<Expression<Left2>>,UnaryMinus<Expression<Right2>>,QR2>>&right)
+// {return left+L2Inner(right.derived().left(),right.derived().right().derived());
+//   // Addition<Expression<L2DotProductIntegral<Left1,Right1,QR1>>,
+//   //                Expression<L2DotProductIntegral<Left2,Right2,QR2>> >
+//   //                (left,L2Inner(right.derived().left().derived(),right.derived().right()));
+//                }
+
+
+
+
+
+
+//   Addition<Expression<Left1>,
+//                  Expression<L2DotProductIntegral<UnaryMinus<Expression<Left2>>,Right2,QR2>> >
+//                  (left,L2Inner(right.derived().left().derived(),right.derived().right().derived()));}
+
+
+
+// template< typename Left1,typename Right1, Integer QR1, typename Left2,typename Right2, Integer QR2>
+// class Addition< Expression<L2DotProductIntegral<Left1,Right1,QR1>>, 
+//                 Expression<L2DotProductIntegral<Left2,Right2,QR2>> >
+// operator-(const Expression<L2DotProductIntegral<UnaryMinus<Expression<Left1>>,Right1,QR1>>&left, 
+//           const Expression<L2DotProductIntegral<Left2,Right2,QR2>>&right)
+// {return Addition<Expression<L2DotProductIntegral<Left1,Right1,QR1>>,
+//                  Expression<L2DotProductIntegral<Left2,Right2,QR2>> >
+//                  (left,L2Inner(right.derived().left(),right.derived().right().derived()));}
 
 
 
@@ -2725,6 +2676,8 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,QR>>, ShapeFunctio
   // changed todo fixme
    // local_tensor_.apply(mat,J,shape_functions_());
   std::cout<<"pre Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
+  
+
   local_tensor_.apply(mat,J,shape_functions_);//(),shape_functions_.composite_tensor(),shape_functions_.composite_shapes());
   std::cout<<"after Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
  }

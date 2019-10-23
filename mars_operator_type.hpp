@@ -1,6 +1,7 @@
 #ifndef MARS_OPERATOR_TYPE_HPP
 #define MARS_OPERATOR_TYPE_HPP
 #include "mars_base.hpp"
+#include "mars_matrix_static_assert.hpp"
 
 namespace mars {
 
@@ -53,7 +54,7 @@ template<typename Left,typename Right>
 class Multiplication;
 
 template<typename Left,typename Right>
-class Contraction2;
+class InnerProduct;
 
 template<typename Left,typename Right>
 class Division;
@@ -96,6 +97,7 @@ class OperatorTypeHelper<Transposed<Matrix<Real,Rows,Cols>>,Ts...>
 { public:
   using type=Transposed<Matrix<Real,Rows,Cols>>;
 };
+
 
 
 
@@ -146,7 +148,7 @@ class OperatorTypeHelper<UnaryPlus< Transposed< Matrix<T,Cols,Rows> > >, Ts...>
 
 
 template<typename T, Integer Rows, Integer Cols,typename...Ts>
-class OperatorTypeHelper<UnaryMinus< Matrix<T,Cols,Rows> >, Ts...>
+class OperatorTypeHelper<UnaryMinus< Matrix<T,Rows,Cols> >, Ts...>
 { public:
   using type=Matrix<T,Rows,Cols>;
 };
@@ -220,45 +222,11 @@ class OperatorTypeHelper< Addition<  Matrix<T,Rows,Cols>, Matrix<T,Rows,Cols> >,
   using type=Matrix<T,Rows,Cols>;
 };
 
-
-// template<typename T, Integer Rows, Integer Cols, Integer NQPoints, typename...Ts>
-// class OperatorTypeHelper< Addition< QPValues< Matrix<T,Rows,Cols>,NQPoints>, QPValues<Matrix<T,Rows,Cols>,NQPoints> >, Ts...>
-// { public:
-//   using type=QPValues<Matrix<T,Rows,Cols>,NQPoints>;
-// };
-
-// template<typename T, Integer Rows, Integer Cols, Integer NQPoints, Integer Ndofs, typename...Ts>
-// class OperatorTypeHelper< Addition< FQPValues< Matrix<T,Rows,Cols>,NQPoints,Ndofs>, FQPValues<Matrix<T,Rows,Cols>,NQPoints,Ndofs> >, Ts...>
-// { public:
-//   using type=FQPValues<Matrix<T,Rows,Cols>,NQPoints,Ndofs>;
-// };
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////                                             A + Transpose(B)                                  /////////
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
 template<typename T, Integer Rows, Integer Cols, typename...Ts>
 class OperatorTypeHelper< Addition<  Matrix<T,Rows,Cols>, Transposed< Matrix<T,Cols,Rows> > >, Ts...>
 { public:
   using type=Matrix<T,Rows,Cols>;
 };
-
-// template<typename T, Integer Rows, Integer Cols, Integer NQPoints, typename...Ts>
-// class OperatorTypeHelper< Addition< QPValues< Matrix<T,Rows,Cols>,NQPoints>, QPValues<Transposed< Matrix<T,Cols,Rows> >,NQPoints> >, Ts...>
-// { public:
-//   using type=QPValues<Matrix<T,Rows,Cols>,NQPoints>;
-// };
-
-// template<typename T, Integer Rows, Integer Cols, Integer NQPoints, Integer Ndofs, typename...Ts>
-// class OperatorTypeHelper< Addition< FQPValues< Matrix<T,Rows,Cols>,NQPoints,Ndofs>, FQPValues<Transposed< Matrix<T,Cols,Rows> >,NQPoints,Ndofs> >, Ts...>
-// { public:
-//   using type=FQPValues<Matrix<T,Rows,Cols>,NQPoints,Ndofs>;
-// };
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////                                       Transpose(A) + B                                        /////////
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 template<typename T, Integer Rows, Integer Cols, typename...Ts>
 class OperatorTypeHelper< Addition< Transposed< Matrix<T,Cols,Rows> >, Matrix<T,Rows,Cols> >, Ts...>
@@ -266,50 +234,47 @@ class OperatorTypeHelper< Addition< Transposed< Matrix<T,Cols,Rows> >, Matrix<T,
   using type=Matrix<T,Rows,Cols>;
 };
 
-// template<typename T, Integer Rows, Integer Cols, Integer NQPoints, typename...Ts>
-// class OperatorTypeHelper< Addition< QPValues<Transposed<Matrix<T,Cols,Rows>>,NQPoints>, QPValues<Matrix<T,Rows,Cols>,NQPoints> >, Ts...>
-// { public:
-//   using type=QPValues<Matrix<T,Rows,Cols>,NQPoints>;
-// };
-
-// template<typename T, Integer Rows, Integer Cols,Integer NQPoints, Integer Ndofs, typename...Ts>
-// class OperatorTypeHelper< Addition< FQPValues<Transposed<Matrix<T,Cols,Rows>>,NQPoints,Ndofs> , FQPValues<Matrix<T,Rows,Cols>,NQPoints,Ndofs> >, Ts...>
-// { public:
-//   using type=FQPValues<Matrix<T,Rows,Cols>,NQPoints,Ndofs>;
-// };
-
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////                                Transpose(A) + Transpose(B)                                    /////////
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 template<typename T, Integer Rows, Integer Cols, typename...Ts>
 class OperatorTypeHelper< Addition< Transposed< Matrix<T,Cols,Rows> >, Transposed< Matrix<T,Cols,Rows> > >, Ts...>
 { public:
   using type=Matrix<T,Rows,Cols>;
 };
 
-// template<typename T, Integer Rows, Integer Cols, Integer NQPoints, typename...Ts>
-// class OperatorTypeHelper< Addition< QPValues<Transposed< Matrix<T,Cols,Rows> >,NQPoints>, QPValues< Transposed< Matrix<T,Cols,Rows> >,NQPoints> >, Ts...>
+
+
+
+
+
+
+
+// template<typename Left, typename Right, typename...Ts>
+// class OperatorTypeHelper< InnerProduct<Left, Right>, Ts...>
 // { public:
-//   using type=QPValues<Matrix<T,Rows,Cols>,NQPoints>;
+//   static_assert(StaticAssertMatrixOrTransposed<Left,Right>::value && "InnerProduct allows:mat+mat;");
+//   using type=Matrix<Real,1,1>;
 // };
 
-// template<typename T, Integer Rows, Integer Cols, Integer NQPoints, Integer Ndofs, typename...Ts>
-// class OperatorTypeHelper< Addition< FQPValues<Transposed< Matrix<T,Cols,Rows> >,NQPoints,Ndofs> , FQPValues<Transposed< Matrix<T,Cols,Rows> >,NQPoints,Ndofs> >, Ts...>
-// { public:
-//   using type=FQPValues<Matrix<T,Rows,Cols>,NQPoints,Ndofs>;
-// };
 
-
-
-
-
-
-
-
-
-
+template<typename T, Integer Rows, Integer Cols, typename...Ts>
+class OperatorTypeHelper< InnerProduct<  Matrix<T,Rows,Cols>, Matrix<T,Rows,Cols> >, Ts...>
+{ public:
+  using type=Matrix<T,1,1>;
+};
+template<typename T, Integer Rows, Integer Cols, typename...Ts>
+class OperatorTypeHelper< InnerProduct<  Matrix<T,Rows,Cols>, Transposed< Matrix<T,Cols,Rows> > >, Ts...>
+{ public:
+  using type=Matrix<T,1,1>;
+};
+template<typename T, Integer Rows, Integer Cols, typename...Ts>
+class OperatorTypeHelper< InnerProduct< Transposed< Matrix<T,Cols,Rows> >, Matrix<T,Rows,Cols> >, Ts...>
+{ public:
+  using type=Matrix<T,1,1>;
+};
+template<typename T, Integer Rows, Integer Cols, typename...Ts>
+class OperatorTypeHelper< InnerProduct< Transposed< Matrix<T,Cols,Rows> >, Transposed< Matrix<T,Cols,Rows> > >, Ts...>
+{ public:
+  using type=Matrix<T,1,1>;
+};
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////// Subtraction for Matrix, QPValues, FQPValues and their transposes combinations               /////////
@@ -325,45 +290,11 @@ class OperatorTypeHelper< Subtraction<  Matrix<T,Rows,Cols>, Matrix<T,Rows,Cols>
   using type=Matrix<T,Rows,Cols>;
 };
 
-// template<typename T, Integer Rows, Integer Cols, Integer NQPoints, typename...Ts>
-// class OperatorTypeHelper< Subtraction< QPValues< Matrix<T,Rows,Cols>,NQPoints>, QPValues<Matrix<T,Rows,Cols>,NQPoints> >, Ts...>
-// { public:
-//   using type=QPValues<Matrix<T,Rows,Cols>,NQPoints>;
-// };
-
-// template<typename T, Integer Rows, Integer Cols, Integer NQPoints, Integer Ndofs, typename...Ts>
-// class OperatorTypeHelper< Subtraction< FQPValues< Matrix<T,Rows,Cols>,NQPoints,Ndofs>, FQPValues<Matrix<T,Rows,Cols>,NQPoints,Ndofs> >, Ts...>
-// { public:
-//   using type=FQPValues<Matrix<T,Rows,Cols>,NQPoints,Ndofs>;
-// };
-
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////                                             A - Transpose(B)                                  /////////
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 template<typename T, Integer Rows, Integer Cols, typename...Ts>
 class OperatorTypeHelper< Subtraction<  Matrix<T,Rows,Cols>, Transposed< Matrix<T,Cols,Rows> > >, Ts...>
 { public:
   using type=Matrix<T,Rows,Cols>;
 };
-
-// template<typename T, Integer Rows, Integer Cols, Integer NQPoints, typename...Ts>
-// class OperatorTypeHelper< Subtraction< QPValues< Matrix<T,Rows,Cols>,NQPoints>, QPValues<Transposed< Matrix<T,Cols,Rows> >,NQPoints> >, Ts...>
-// { public:
-//   using type=QPValues<Matrix<T,Rows,Cols>,NQPoints>;
-// };
-
-// template<typename T, Integer Rows, Integer Cols, Integer NQPoints, Integer Ndofs, typename...Ts>
-// class OperatorTypeHelper< Subtraction< FQPValues< Matrix<T,Rows,Cols>,NQPoints,Ndofs>, FQPValues<Transposed< Matrix<T,Cols,Rows> >,NQPoints,Ndofs> >, Ts...>
-// { public:
-//   using type=FQPValues<Matrix<T,Rows,Cols>,NQPoints,Ndofs>;
-// };
-
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////                                       Transpose(A) - B                                        /////////
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 template<typename T, Integer Rows, Integer Cols, typename...Ts>
 class OperatorTypeHelper< Subtraction< Transposed< Matrix<T,Cols,Rows> >, Matrix<T,Rows,Cols> >, Ts...>
@@ -371,41 +302,11 @@ class OperatorTypeHelper< Subtraction< Transposed< Matrix<T,Cols,Rows> >, Matrix
   using type=Matrix<T,Rows,Cols>;
 };
 
-// template<typename T, Integer Rows, Integer Cols, Integer NQPoints, typename...Ts>
-// class OperatorTypeHelper< Subtraction< QPValues<Transposed<Matrix<T,Cols,Rows>>,NQPoints>, QPValues<Matrix<T,Rows,Cols>,NQPoints> >, Ts...>
-// { public:
-//   using type=QPValues<Matrix<T,Rows,Cols>,NQPoints>;
-// };
-
-// template<typename T, Integer Rows, Integer Cols,Integer NQPoints, Integer Ndofs, typename...Ts>
-// class OperatorTypeHelper< Subtraction< FQPValues<Transposed<Matrix<T,Cols,Rows>>,NQPoints,Ndofs> , FQPValues<Matrix<T,Rows,Cols>,NQPoints,Ndofs> >, Ts...>
-// { public:
-//   using type=FQPValues<Matrix<T,Rows,Cols>,NQPoints,Ndofs>;
-// };
-
-
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////                                Transpose(A) - Transpose(B)                                    /////////
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 template<typename T, Integer Rows, Integer Cols, typename...Ts>
 class OperatorTypeHelper< Subtraction< Transposed< Matrix<T,Cols,Rows> >, Transposed< Matrix<T,Cols,Rows> > >, Ts...>
 { public:
   using type=Matrix<T,Rows,Cols>;
 };
-
-// template<typename T, Integer Rows, Integer Cols, Integer NQPoints, typename...Ts>
-// class OperatorTypeHelper< Subtraction< QPValues<Transposed< Matrix<T,Cols,Rows> >,NQPoints>, QPValues< Transposed< Matrix<T,Cols,Rows> >,NQPoints> >, Ts...>
-// { public:
-//   using type=QPValues<Matrix<T,Rows,Cols>,NQPoints>;
-// };
-
-// template<typename T, Integer Rows, Integer Cols, Integer NQPoints, Integer Ndofs, typename...Ts>
-// class OperatorTypeHelper< Subtraction< FQPValues<Transposed< Matrix<T,Cols,Rows> >,NQPoints,Ndofs> , FQPValues<Transposed< Matrix<T,Cols,Rows> >,NQPoints,Ndofs> >, Ts...>
-// { public:
-//   using type=FQPValues<Matrix<T,Rows,Cols>,NQPoints,Ndofs>;
-// };
 
 
 
@@ -491,28 +392,6 @@ class OperatorTypeHelper<Division<Matrix<Real,Rows,Cols>,
   using type=Matrix<Real,Rows,Cols>;
 };
 
-// template<Integer Rows,Integer Cols, Integer NQPoints, typename...Ts>
-// class OperatorTypeHelper<Division<QPValues< Matrix<Real,Rows,Cols>, NQPoints>, 
-//                                   QPValues< Matrix<Real,1,1>, NQPoints> >, Ts...>
-// {
-//   public:
-//   using type=QPValues<Matrix<Real,Rows,Cols>,NQPoints>;
-// };
-
-// template<Integer Rows,Integer Cols, Integer NQPoints, Integer Ndofs, typename...Ts>
-// class OperatorTypeHelper<Division<FQPValues< Matrix<Real,Rows,Cols>, NQPoints, Ndofs>, 
-//                                   FQPValues< Matrix<Real,1,1>, NQPoints, Ndofs> >, Ts...>
-// {
-//   public:
-//   using type=FQPValues<Matrix<Real,Rows,Cols>,NQPoints,Ndofs>;
-// };
-
-
-
-
-
-
-
 
 
 template<Integer Rows,Integer Cols, typename...Ts>
@@ -524,28 +403,6 @@ class OperatorTypeHelper<Division<Transposed<Matrix<Real,Cols,Rows>>,
 };
 
 
-// template<Integer Rows,Integer Cols, Integer NQPoints, typename...Ts>
-// class OperatorTypeHelper<Division<QPValues< Transposed<Matrix<Real,Cols,Rows>>, NQPoints>, 
-//                                   QPValues< Matrix<Real,1,1>, NQPoints> >, Ts...>
-// {
-//   public:
-//   using type=QPValues<Matrix<Real,Rows,Cols>,NQPoints>;
-// };
-
-// template<Integer Rows,Integer Cols, Integer NQPoints, Integer Ndofs, typename...Ts>
-// class OperatorTypeHelper<Division<FQPValues< Transposed<Matrix<Real,Cols,Rows>>, NQPoints, Ndofs>, 
-//                                   FQPValues< Matrix<Real,1,1>, NQPoints, Ndofs> >, Ts...>
-// {
-//   public:
-//   using type=FQPValues<Matrix<Real,Rows,Cols>,NQPoints,Ndofs>;
-// };
-
-
-
-
-
-
-
 
 template<Integer Rows,Integer Cols, typename...Ts>
 class OperatorTypeHelper<Division<Matrix<Real,Rows,Cols>, 
@@ -554,33 +411,6 @@ class OperatorTypeHelper<Division<Matrix<Real,Rows,Cols>,
   public:
   using type=Matrix<Real,Rows,Cols>;
 };
-
-// template<Integer Rows,Integer Cols, Integer NQPoints, typename...Ts>
-// class OperatorTypeHelper<Division<QPValues< Matrix<Real,Rows,Cols>, NQPoints>, 
-//                                   QPValues< Transposed<Matrix<Real,1,1>>, NQPoints> >, Ts...>
-// {
-//   public:
-//   using type=QPValues<Matrix<Real,Rows,Cols>,NQPoints>;
-// };
-
-// template<Integer Rows,Integer Cols, Integer NQPoints, Integer Ndofs, typename...Ts>
-// class OperatorTypeHelper<Division<FQPValues< Matrix<Real,Rows,Cols>, NQPoints, Ndofs>, 
-//                                   FQPValues< Transposed<Matrix<Real,1,1>>, NQPoints, Ndofs> >, Ts...>
-// {
-//   public:
-//   using type=FQPValues<Matrix<Real,Rows,Cols>,NQPoints,Ndofs>;
-// };
-
-
-
-
-
-
-
-
-
-
-
 
 
 template<Integer Rows,Integer Cols, typename...Ts>
@@ -591,71 +421,9 @@ class OperatorTypeHelper<Division<Transposed<Matrix<Real,Cols,Rows>>,
   using type=Matrix<Real,Rows,Cols>;
 };
 
-// template<Integer Rows,Integer Cols, Integer NQPoints, typename...Ts>
-// class OperatorTypeHelper<Division<QPValues< Transposed<Matrix<Real,Cols,Rows>>, NQPoints>, 
-//                                   QPValues< Transposed<Matrix<Real,1,1>>, NQPoints> >, Ts...>
-// {
-//   public:
-//   using type=QPValues<Matrix<Real,Rows,Cols>,NQPoints>;
-// };
-
-// template<Integer Rows,Integer Cols, Integer NQPoints, Integer Ndofs, typename...Ts>
-// class OperatorTypeHelper<Division<FQPValues< Transposed<Matrix<Real,Cols,Rows>>, NQPoints, Ndofs>, 
-//                                   FQPValues< Transposed<Matrix<Real,1,1>>, NQPoints, Ndofs> >, Ts...>
-// {
-//   public:
-//   using type=FQPValues<Matrix<Real,Rows,Cols>,NQPoints,Ndofs>;
-// };
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// template<typename T, Integer NQPoints, typename...Ts>
-// class OperatorTypeHelper< UnaryPlus< QPValues<T,NQPoints>>, Ts...>
-// {
-//   public:
-//   using type=QPValues<typename OperatorTypeHelper<UnaryPlus<T>,Ts...>::type ,NQPoints>;
-
-// };
-
-
-// template<typename T, Integer NQPoints, Integer Ndofs, typename...Ts>
-// class OperatorTypeHelper< UnaryPlus< FQPValues<T,NQPoints,Ndofs>>, Ts...>
-// {
-//   public:
-//   using type=FQPValues<typename OperatorTypeHelper<UnaryPlus<T>,Ts...>::type ,NQPoints,Ndofs>;
-
-// };
-
-
-// template<typename T, Integer NQPoints, typename...Ts>
-// class OperatorTypeHelper< UnaryMinus< QPValues<T,NQPoints>>, Ts...>
-// {
-//   public:
-//   using type=QPValues<typename OperatorTypeHelper<UnaryMinus<T>,Ts...>::type ,NQPoints>;
-// };
-
-// template<typename T, Integer NQPoints, Integer Ndofs, typename...Ts>
-// class OperatorTypeHelper< UnaryMinus< FQPValues<T,NQPoints,Ndofs>>, Ts...>
-// {
-//   public:
-//   using type=FQPValues<typename OperatorTypeHelper<UnaryMinus<T>,Ts...>::type ,NQPoints,Ndofs>;
-// };
 
 
 
@@ -873,36 +641,36 @@ class OperatorTypeHelper<Transposed<Transposed<T>>,Ts...>
 
 
 
-template<typename ConstType, typename...Inputs, typename...Ts>
-class OperatorTypeHelper<Transposed<Expression<ConstantTensor<ConstType,Inputs...>>>,Ts...>
-{ public:
-  using type_tmp=typename OperatorTypeHelper<ConstantTensor<ConstType,Inputs...>,Ts...>::type;
-  using type=typename OperatorTypeHelper<Transposed<type_tmp>,Ts...>::type;
-};
+// template<typename ConstType, typename...Inputs, typename...Ts>
+// class OperatorTypeHelper<Transposed<Expression<ConstantTensor<ConstType,Inputs...>>>,Ts...>
+// { public:
+//   using type_tmp=typename OperatorTypeHelper<ConstantTensor<ConstType,Inputs...>,Ts...>::type;
+//   using type=typename OperatorTypeHelper<Transposed<type_tmp>,Ts...>::type;
+// };
 
-template<typename FuncType,Integer N,typename OperatorType,typename FullSpace, typename...Ts>
-class OperatorTypeHelper<Transposed<Expression<Function<FullSpace,N,OperatorType,FuncType>>>,Ts...>
-{ public:
-  using type_tmp=typename OperatorTypeHelper<Function<FullSpace,N,OperatorType,FuncType>,Ts...>::type;
-  using type=typename OperatorTypeHelper<Transposed<type_tmp>,Ts...>::type;
-};
+// template<typename FuncType,Integer N,typename OperatorType,typename FullSpace, typename...Ts>
+// class OperatorTypeHelper<Transposed<Expression<Function<FullSpace,N,OperatorType,FuncType>>>,Ts...>
+// { public:
+//   using type_tmp=typename OperatorTypeHelper<Function<FullSpace,N,OperatorType,FuncType>,Ts...>::type;
+//   using type=typename OperatorTypeHelper<Transposed<type_tmp>,Ts...>::type;
+// };
 
-template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, 
-         Integer N, typename OperatorType,typename QRule>
-class OperatorTypeHelper<Transposed<Expression<TestOrTrial<MixedSpace,N,OperatorType>>>,QRule >
-{ public:
- static_assert((IsSame<TestOrTrial<MixedSpace,N,OperatorType>,Test<MixedSpace,N,OperatorType>>::value ||
-                IsSame<TestOrTrial<MixedSpace,N,OperatorType>,Trial<MixedSpace,N,OperatorType>>::value )
-               && "In OperatorTypeHelper<Transposed<TestOrTrial>>,TestOrTrial=Test or Trial ");  
-  using tmptype= TestOrTrial<MixedSpace,N,OperatorType>;
-  using FunctionSpace=typename tmptype::FunctionSpace;
-  using FunctionSpaces=GetType<typename tmptype::UniqueElementFunctionSpacesTupleType,tmptype::value>;
-  using Elem=typename FunctionSpaces::Elem;
-  using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpaces>;
-  using Operator=typename tmptype::Operator; 
-  // TODO FIX ME SUBTYPE AND NOT TYPE CHECK (now in fwpvalues<T,M,N>, tot_type=T)
-  using type=typename OperatorTypeHelper<Transposed<typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::type>,QRule>::type;
-};
+// template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, 
+//          Integer N, typename OperatorType,typename QRule>
+// class OperatorTypeHelper<Transposed<Expression<TestOrTrial<MixedSpace,N,OperatorType>>>,QRule >
+// { public:
+//  static_assert((IsSame<TestOrTrial<MixedSpace,N,OperatorType>,Test<MixedSpace,N,OperatorType>>::value ||
+//                 IsSame<TestOrTrial<MixedSpace,N,OperatorType>,Trial<MixedSpace,N,OperatorType>>::value )
+//                && "In OperatorTypeHelper<Transposed<TestOrTrial>>,TestOrTrial=Test or Trial ");  
+//   using tmptype= TestOrTrial<MixedSpace,N,OperatorType>;
+//   using FunctionSpace=typename tmptype::FunctionSpace;
+//   using FunctionSpaces=GetType<typename tmptype::UniqueElementFunctionSpacesTupleType,tmptype::value>;
+//   using Elem=typename FunctionSpaces::Elem;
+//   using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpaces>;
+//   using Operator=typename tmptype::Operator; 
+//   // TODO FIX ME SUBTYPE AND NOT TYPE CHECK (now in fwpvalues<T,M,N>, tot_type=T)
+//   using type=typename OperatorTypeHelper<Transposed<typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::type>,QRule>::type;
+// };
 
 
 
@@ -1040,59 +808,37 @@ class OperatorTypeHelper< CompositeOperator<Expression< Unary< Expression< T > >
 };
 
 
- template<typename T, typename Elem,typename BaseFunctionSpace, typename QuadratureRule_>
-class OperatorTypeHelper< CompositeOperator<Expression< UnaryPlus< Expression< T > > > >,
-                          Elem,
-                          BaseFunctionSpace,
-                          QuadratureRule_>
-{ public:
+//  template<typename T, typename Elem,typename BaseFunctionSpace, typename QuadratureRule_>
+// class OperatorTypeHelper< CompositeOperator<Expression< UnaryPlus< Expression< T > > > >,
+//                           Elem,
+//                           BaseFunctionSpace,
+//                           QuadratureRule_>
+// { public:
 
-  using type= typename OperatorTypeHelper<CompositeOperator<Expression<T>>,
-                                              Elem,
-                                              BaseFunctionSpace,
-                                              QuadratureRule_
-                                              >::type;
-};
+//   using type= typename OperatorTypeHelper<CompositeOperator<Expression<T>>,
+//                                               Elem,
+//                                               BaseFunctionSpace,
+//                                               QuadratureRule_
+//                                               >::type;
+// };
 
- template<typename T, typename Elem,typename BaseFunctionSpace, typename QuadratureRule_>
-class OperatorTypeHelper< CompositeOperator<Expression< UnaryMinus< Expression< T > > > >,
-                          Elem,
-                          BaseFunctionSpace,
-                          QuadratureRule_>
-{ public:
+//  template<typename T, typename Elem,typename BaseFunctionSpace, typename QuadratureRule_>
+// class OperatorTypeHelper< CompositeOperator<Expression< UnaryMinus< Expression< T > > > >,
+//                           Elem,
+//                           BaseFunctionSpace,
+//                           QuadratureRule_>
+// { public:
 
-  using type= typename OperatorTypeHelper<CompositeOperator<Expression<T>>,
-                                              Elem,
-                                              BaseFunctionSpace,
-                                              QuadratureRule_
-                                              >::type;
-};
-
-
+//   using type= typename OperatorTypeHelper<CompositeOperator<Expression<T>>,
+//                                               Elem,
+//                                               BaseFunctionSpace,
+//                                               QuadratureRule_
+//                                               >::type;
+// };
 
 
- template<typename Left, typename Right, typename Elem,typename BaseFunctionSpace, typename QuadratureRule_>
-class OperatorTypeHelper< CompositeOperator<Expression< Division< Expression< Left >,Expression< Right > > > >,
-                          Elem,
-                          BaseFunctionSpace,
-                          QuadratureRule_>
-{ public:
-  using typeLeft= typename OperatorTypeHelper<CompositeOperator<Expression<Left>>,
-                                              Elem,
-                                              BaseFunctionSpace,
-                                              QuadratureRule_
-                                              >::type;
-  using typeRight= typename OperatorTypeHelper<CompositeOperator<Expression<Right>>,
-                                              Elem,
-                                              BaseFunctionSpace,
-                                              QuadratureRule_
-                                              >::type;
-  using type=typename OperatorTypeHelper< Division<Expression<typeLeft>,Expression<typeRight>>
-                                        >::type;
-};
-
- template<typename Left, typename Right, typename Elem,typename BaseFunctionSpace, typename QuadratureRule_>
-class OperatorTypeHelper< CompositeOperator<Expression< Multiplication< Expression< Left >,Expression< Right > > > >,
+ template<template<class,class>class Binary,typename Left, typename Right, typename Elem,typename BaseFunctionSpace, typename QuadratureRule_>
+class OperatorTypeHelper< CompositeOperator<Expression< Binary< Expression< Left >,Expression< Right > > > >,
                           Elem,
                           BaseFunctionSpace,
                           QuadratureRule_>
@@ -1107,81 +853,121 @@ class OperatorTypeHelper< CompositeOperator<Expression< Multiplication< Expressi
                                               BaseFunctionSpace,
                                               QuadratureRule_
                                               >::type;
-  using type=typename OperatorTypeHelper< Multiplication<Expression<typeLeft>,Expression<typeRight>>
+  using type=typename OperatorTypeHelper< Binary<Expression<typeLeft>,Expression<typeRight>>
                                         >::type;
 };
 
+//  template<typename Left, typename Right, typename Elem,typename BaseFunctionSpace, typename QuadratureRule_>
+// class OperatorTypeHelper< CompositeOperator<Expression< Division< Expression< Left >,Expression< Right > > > >,
+//                           Elem,
+//                           BaseFunctionSpace,
+//                           QuadratureRule_>
+// { public:
+//   using typeLeft= typename OperatorTypeHelper<CompositeOperator<Expression<Left>>,
+//                                               Elem,
+//                                               BaseFunctionSpace,
+//                                               QuadratureRule_
+//                                               >::type;
+//   using typeRight= typename OperatorTypeHelper<CompositeOperator<Expression<Right>>,
+//                                               Elem,
+//                                               BaseFunctionSpace,
+//                                               QuadratureRule_
+//                                               >::type;
+//   using type=typename OperatorTypeHelper< Division<Expression<typeLeft>,Expression<typeRight>>
+//                                         >::type;
+// };
 
- template<typename Left, typename Right, typename Elem,typename BaseFunctionSpace, typename QuadratureRule_>
-class OperatorTypeHelper< CompositeOperator<Expression< Addition< Expression< Left >,Expression< Right > > > >,
-                          Elem,
-                          BaseFunctionSpace,
-                          QuadratureRule_>
-{ public:
-  using typeLeft= typename OperatorTypeHelper<CompositeOperator<Expression<Left>>,
-                                              Elem,
-                                              BaseFunctionSpace,
-                                              QuadratureRule_
-                                              >::type;
-  using typeRight= typename OperatorTypeHelper<CompositeOperator<Expression<Right>>,
-                                              Elem,
-                                              BaseFunctionSpace,
-                                              QuadratureRule_
-                                              >::type;
-  using type=typename OperatorTypeHelper< Addition<Expression<typeLeft>,Expression<typeRight>>
-                                        >::type;
-};
-
- template<typename Left, typename Right, typename Elem,typename BaseFunctionSpace, typename QuadratureRule_>
-class OperatorTypeHelper< CompositeOperator<Expression< Subtraction< Expression< Left >,Expression< Right > > > >,
-                          Elem,
-                          BaseFunctionSpace,
-                          QuadratureRule_>
-{ public:
-  using typeLeft= typename OperatorTypeHelper<CompositeOperator<Expression<Left>>,
-                                              Elem,
-                                              BaseFunctionSpace,
-                                              QuadratureRule_
-                                              >::type;
-  using typeRight= typename OperatorTypeHelper<CompositeOperator<Expression<Right>>,
-                                              Elem,
-                                              BaseFunctionSpace,
-                                              QuadratureRule_
-                                              >::type;
-  using type=typename OperatorTypeHelper< Subtraction<Expression<typeLeft>,Expression<typeRight>>
-                                        >::type;
-};
-
+//  template<typename Left, typename Right, typename Elem,typename BaseFunctionSpace, typename QuadratureRule_>
+// class OperatorTypeHelper< CompositeOperator<Expression< Multiplication< Expression< Left >,Expression< Right > > > >,
+//                           Elem,
+//                           BaseFunctionSpace,
+//                           QuadratureRule_>
+// { public:
+//   using typeLeft= typename OperatorTypeHelper<CompositeOperator<Expression<Left>>,
+//                                               Elem,
+//                                               BaseFunctionSpace,
+//                                               QuadratureRule_
+//                                               >::type;
+//   using typeRight= typename OperatorTypeHelper<CompositeOperator<Expression<Right>>,
+//                                               Elem,
+//                                               BaseFunctionSpace,
+//                                               QuadratureRule_
+//                                               >::type;
+//   using type=typename OperatorTypeHelper< Multiplication<Expression<typeLeft>,Expression<typeRight>>
+//                                         >::type;
+// };
 
 
+//  template<typename Left, typename Right, typename Elem,typename BaseFunctionSpace, typename QuadratureRule_>
+// class OperatorTypeHelper< CompositeOperator<Expression< Addition< Expression< Left >,Expression< Right > > > >,
+//                           Elem,
+//                           BaseFunctionSpace,
+//                           QuadratureRule_>
+// { public:
+//   using typeLeft= typename OperatorTypeHelper<CompositeOperator<Expression<Left>>,
+//                                               Elem,
+//                                               BaseFunctionSpace,
+//                                               QuadratureRule_
+//                                               >::type;
+//   using typeRight= typename OperatorTypeHelper<CompositeOperator<Expression<Right>>,
+//                                               Elem,
+//                                               BaseFunctionSpace,
+//                                               QuadratureRule_
+//                                               >::type;
+//   using type=typename OperatorTypeHelper< Addition<Expression<typeLeft>,Expression<typeRight>>
+//                                         >::type;
+// };
 
-template<typename...Ts>
-class OperatorTypeHelper< Contraction2< Expression<Real>, Expression<Real > >, Ts...>
-{ public:
-  using type=Real;
-};
+//  template<typename Left, typename Right, typename Elem,typename BaseFunctionSpace, typename QuadratureRule_>
+// class OperatorTypeHelper< CompositeOperator<Expression< Subtraction< Expression< Left >,Expression< Right > > > >,
+//                           Elem,
+//                           BaseFunctionSpace,
+//                           QuadratureRule_>
+// { public:
+//   using typeLeft= typename OperatorTypeHelper<CompositeOperator<Expression<Left>>,
+//                                               Elem,
+//                                               BaseFunctionSpace,
+//                                               QuadratureRule_
+//                                               >::type;
+//   using typeRight= typename OperatorTypeHelper<CompositeOperator<Expression<Right>>,
+//                                               Elem,
+//                                               BaseFunctionSpace,
+//                                               QuadratureRule_
+//                                               >::type;
+//   using type=typename OperatorTypeHelper< Subtraction<Expression<typeLeft>,Expression<typeRight>>
+//                                         >::type;
+// };
 
-template<typename T, Integer Dim, typename...Ts>
-class OperatorTypeHelper< Contraction2< Expression<Vector<T,Dim>>, Expression<Vector<T,Dim>> >, Ts...>
-{ public:
-  using type=T;
-};
-
-template<typename T, Integer Rows, Integer Cols, typename...Ts>
-class OperatorTypeHelper< Contraction2< Expression<Matrix<T,Rows,Cols>>, Expression<Matrix<T,Rows,Cols>> >, Ts...>
-{ public:
-  using type=T;
-};
 
 
 
-template<typename Left, typename Right, typename...Ts>
-class OperatorTypeHelper< Contraction2< Expression<Left>, Expression<Right > >, Ts...>
-{ public:
-  using typeleft=typename OperatorTypeHelper<Left,Ts...>::type;
-  using typeright=typename OperatorTypeHelper<Right,Ts...>::type;
-  using type=typename OperatorTypeHelper<Contraction2<typeleft,typeright>,Ts...>::type;
-};
+// template<typename...Ts>
+// class OperatorTypeHelper< InnerProduct2< Expression<Real>, Expression<Real > >, Ts...>
+// { public:
+//   using type=Real;
+// };
+
+// template<typename T, Integer Dim, typename...Ts>
+// class OperatorTypeHelper< InnerProduct2< Expression<Vector<T,Dim>>, Expression<Vector<T,Dim>> >, Ts...>
+// { public:
+//   using type=T;
+// };
+
+// template<typename T, Integer Rows, Integer Cols, typename...Ts>
+// class OperatorTypeHelper< InnerProduct2< Expression<Matrix<T,Rows,Cols>>, Expression<Matrix<T,Rows,Cols>> >, Ts...>
+// { public:
+//   using type=T;
+// };
+
+
+
+// template<typename Left, typename Right, typename...Ts>
+// class OperatorTypeHelper< InnerProduct2< Expression<Left>, Expression<Right > >, Ts...>
+// { public:
+//   using typeleft=typename OperatorTypeHelper<Left,Ts...>::type;
+//   using typeright=typename OperatorTypeHelper<Right,Ts...>::type;
+//   using type=typename OperatorTypeHelper<InnerProduct2<typeleft,typeright>,Ts...>::type;
+// };
 
 
 

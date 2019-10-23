@@ -992,7 +992,7 @@ void assembly_example()
  FSspace1 FEspace1(mesh);
  using FSspace2= FunctionSpace< MeshT, Lagrange2<2>>;
  FSspace2 FEspace2(mesh);
- using FSspace3= FunctionSpace< MeshT, Lagrange1<1>,Lagrange2<1>>;
+ using FSspace3= FunctionSpace< MeshT, Lagrange1<1>,RT0<1>>;
  FSspace3 FEspace3(mesh);
  using FSspace4= FunctionSpace< MeshT, Lagrange1<1>,Lagrange2<1>,Lagrange1<1>>;
  FSspace4 FEspace4(mesh);
@@ -1056,14 +1056,22 @@ auto NewOp2=NewOperator(IdentityOperator()*alpha*f1);
 // auto Epsilon=NewOperator((-f1)*(+C)*((+GradientOperator())+(+Transpose(GradientOperator()))));
 // auto Epsilon=NewOperator((-f1)*Trace(C)*(+GradientOperator()+(Transpose(-GradientOperator()))));
 // auto Epsilon=NewOperator(+(-GradientOperator()));
-auto Epsilon=NewOperator(Trace(f1)*Trace(C)*(-GradientOperator()-GradientOperator())/Trace(Transpose(f1)-Trace(Transpose(C))));
-///Trace(Transpose(Transpose(Trace(f1)))));
+// auto Epsilon=NewOperator((+C)*(-C)*(-f1)*(+f1)*(C-f1)*(C+f1)/(C+f1)*Transpose(f1)*(+Trace(+f1))*(-Trace(-C))*(-GradientOperator()-GradientOperator())/Trace(Transpose(f1)-Trace(Transpose(C))));
+// /Trace(Transpose(Transpose(Trace(f1)))));
 // auto Epsilon=NewOperator((GradientOperator()+Transpose(GradientOperator())));//+Transpose(GradientOperator())));
+auto Epsilon=NewOperator((GradientOperator()));//+Transpose(GradientOperator())));
 
-  auto bilinearform= L2Inner(Transpose(Transpose(u3)),-Transpose(v3))+
-                    L2Inner(-Transpose(-u3),(v3))+ //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
-                    L2Inner(Trace(f1)*(+Transpose(u2)),(Transpose(v2))) +//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
-                    L2Inner(Epsilon(u1),Grad(v1));//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
+  auto bilinearform= 
+                    L2Inner(-Transpose(u3),Transpose(-v3))-
+                    L2Inner(-(-u3),-(v3))- //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
+                    L2Inner(Trace(f1)*(+Transpose(u2)),-(Transpose(v2))) -//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
+                    L2Inner(Epsilon(u1),-Grad(v1));//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
+  // auto bilinearform= 
+  //                   +L2Inner(u3,v3)- //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
+  //                   L2Inner(u2,v2) -//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
+  //                   L2Inner(u1,v1);//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
+
+
   auto linearform=
                   //L2Inner(Grad(v1),+Transpose(id2));//Transpose(Transpose((matrix1)+Transpose(matrix2))));//Transpose(-f1*(matrix1+matrix1)*Transpose(alpha*matrix1-matrix1)));//+L2Inner(f2,v2)+L2Inner(f1,v1);//+ L2Inner(f1,v1);
                   // L2Inner((+Transpose(C))*(-v2),-Transpose(f1))+
@@ -1073,7 +1081,8 @@ auto Epsilon=NewOperator(Trace(f1)*Trace(C)*(-GradientOperator()-GradientOperato
                   // L2Inner((-C-Transpose(C))*(-v2),Transpose(-f1))+
                   // L2Inner((-Transpose(C)-Transpose(C))*v2,C)+
                   // L2Inner((-Transpose(C)-(C))*v2,f1/C)+
-                  L2Inner(Trace(id2)*id2,(Epsilon(v1)));
+                  // L2Inner(Inner(gamma,Transpose(gamma)),Trace(Epsilon(v1)));
+  -L2Inner(Inner(gamma,Transpose(gamma))*Epsilon(v1),id2)-L2Inner(-Epsilon(v1),-id2);
 
   // // auto bilinearform= 
   //                   L2Inner((u3),(v3))+ //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
@@ -1092,12 +1101,20 @@ auto Epsilon=NewOperator(Trace(f1)*Trace(C)*(-GradientOperator()-GradientOperato
   auto shape_functions=shape_functions2(shape_coefficients,reference_maps,bilinear_form,linear_form);
   shape_coefficients.init(mesh);
   
+  std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
+  std::cout<<"------_______-----BEFORE FORMs EVALUATION-----_______--------"<<std::endl;
+
   auto eval_bilinear_form=Eval(bilinear_form,shape_functions);
   auto eval_linear_form=Eval(linear_form,shape_functions);
 
   J.init(0);
   reference_maps.init(J);
+  std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
+  std::cout<<"------_______-----BEFORE SHAPE COEFFICIENTS INIT-----_______--------"<<std::endl;
+
   shape_coefficients.init(0);
+  std::cout<<"------_______-----AFTER SHAPE COEFFICIENTS INIT-----_______--------"<<std::endl;
+
   shape_functions.init(J);///////////////<------------------------ problema qui
 
 
@@ -1107,6 +1124,16 @@ auto Epsilon=NewOperator(Trace(f1)*Trace(C)*(-GradientOperator()-GradientOperato
   eval_linear_form.apply(J);
 
 
+
+// decltype(shape_coefficients)::UniqueElementFunctionSpacesTupleType lh(3);
+// decltype(shape_coefficients)::SpacesToUniqueFEFamily  oi(4);
+// decltype(shape_functions)::TupleOfTupleCompositeShapeFunction ee(1);
+// decltype(linear_form()) ee3(1);
+
+ // auto bilinearform2= L2Inner(u1,v1)-L2Inner(u1,v1)-L2Inner(u1,v1);//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
+
+
+ // decltype(bilinearform) ooo(5);
  // auto newform= L2Inner(Epsilon(u1),Epsilon(v1));//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
  // decltype(shape_functions)::TupleOfTupleCompositeShapeFunctionTensor ee(4);
 

@@ -41,7 +41,6 @@ class UnaryMinus< Expression <Derived> >
 {
   public:
     UnaryMinus(const Expression<Derived>& expr): value_(expr.derived()){};
-
     Derived& operator()(){return value_;};
     const constexpr Derived& operator()()const{return value_;};
     Derived& derived(){return value_;};

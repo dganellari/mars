@@ -17,6 +17,7 @@ namespace mars {
 
   template<typename T, Integer TransposedRows, Integer TransposedCols,Integer NonZeroRow>
   class Transposed<Matrix<T,TransposedRows,TransposedCols,NonZeroRow>>
+  : public Matrix<T,TransposedRows,TransposedCols,NonZeroRow>
   {
   public:
     static constexpr Integer Rows=TransposedCols;
@@ -24,17 +25,10 @@ namespace mars {
     using type= Matrix<T,Rows,Cols>;
     using subtype=T;
     using MB = TensorBase<T, std::make_index_sequence<Rows*Cols>>;
-    // using MB::MB;
-    // using MB::values;
+
 
     constexpr Transposed()
-    //:
-    // mat_(NULL)
     {}
-
-    // constexpr Transposed(Matrix<T,TransposedRows,TransposedCols,NonZeroRow>& mat):
-    // mat_(mat)
-    // {}
 
     constexpr Transposed(const Matrix<T,TransposedRows,TransposedCols,NonZeroRow>& mat)
     :
@@ -83,10 +77,14 @@ namespace mars {
       m.describe(os);
       return os;
     }
-
-     inline static constexpr void apply(Transposed<Matrix<T,Rows,Cols>>& A,const Matrix<T,Rows,Cols>& B)
+     inline static constexpr void apply(Transposed<Matrix<T,Cols,Rows>>& A,const Matrix<T,Rows,Cols>& B)
       {
            A(B);
+      };
+
+     inline static constexpr void apply(Transposed<Matrix<T,Cols,Rows>>& A,const Transposed<Matrix<T,Cols,Rows>>& B)
+      {
+           A(B());
       };
     
   private:

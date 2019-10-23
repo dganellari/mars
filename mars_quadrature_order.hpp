@@ -44,7 +44,7 @@ template<typename Left,typename Right>
 class Multiplication;
 
 template<typename Left,typename Right>
-class Contraction2;
+class InnerProduct;
 
 template<typename Left,typename Right>
 class Division;
@@ -163,7 +163,7 @@ class QuadratureOrder< Multiplication< Expression<Left>, Expression<Right> >,Arg
 };
 
 template<typename Left, typename Right, typename...Args>
-class QuadratureOrder< Contraction2< Expression<Left>, Expression<Right> >,Args... >
+class QuadratureOrder< InnerProduct< Expression<Left>, Expression<Right> >,Args... >
 { public:
 
   static constexpr Integer value=QuadratureOrder<Left,Args...>::value + 

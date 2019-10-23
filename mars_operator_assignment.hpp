@@ -9,6 +9,9 @@ namespace mars {
 template<typename T>
 class Assignment;
 
+template<typename S,typename T>
+constexpr void Assign(S& t,const T& constt){Assignment<T>::apply(t,constt);}
+
 
 template<>
 class Assignment<Real> 

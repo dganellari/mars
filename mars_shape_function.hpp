@@ -493,7 +493,18 @@ public:
   static constexpr Integer ShapeFunctionDim1=FunctionSpace::ShapeFunctionDim1;
   static constexpr Integer ShapeFunctionDim2=FunctionSpace::ShapeFunctionDim2;  
   using SingleType=Matrix<Real, ShapeFunctionDim1, ShapeFunctionDim2>;
-  using TotType= Matrix<Real, ShapeFunctionDim1 * NComponents, ShapeFunctionDim2>;
+  // using TotType= Matrix<Real, NComponents, ShapeFunctionDim1>;
+  using TotType=typename
+  std::conditional_t<(ShapeFunctionDim1==1),
+                      Matrix<Real, NComponents*ShapeFunctionDim1, ShapeFunctionDim2>,
+                      std::conditional_t<(ShapeFunctionDim1>1 && ShapeFunctionDim2==1 && NComponents==1),
+                                          Matrix<Real, ShapeFunctionDim1, 1>,//Matrix<Real, NComponents, ShapeFunctionDim1>,
+                                          std::conditional_t<(ShapeFunctionDim1>1 && ShapeFunctionDim2==1 && NComponents>1),
+                                                              Matrix<Real,NComponents, ShapeFunctionDim1>,
+                                                              Matrix<Real,-6,-6,-1>
+                                                            >
+                                        >
+                      >;
 };
 template<typename FunctionSpace>
 class SingleTypeShapeFunction<FunctionSpace,GradientOperator>
@@ -636,6 +647,8 @@ class ShapeFunction
 
    void init(const Vector<Real,Ndofs> &alpha)
     {
+           std::cout<<"init RT elements (coeffs)"<<std::endl;
+
     const auto& map=(*map_ptr);
     const auto& mapping=map();
     for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
@@ -644,17 +657,23 @@ class ShapeFunction
         {
 
             n_tot_=n_dof * NComponents +  n_comp ;
-            n_=n_comp*ShapeFunctionDim1;
+            n_=n_comp;
             for(Integer qp=0;qp<NQPoints;qp++)
             {             
               func_values_[n_tot_][qp].zero();
-              // func_tmp_=alpha[n_dof] * mapping * weighted_reference_values[n_dof][qp];    
-              func_tmp_=alpha[n_dof] * mapping * reference_values[n_dof][qp];             
-              assign(func_values_[n_tot_][qp],func_tmp_,n_,0);
+              // func_tmp_=alpha[n_dof] * mapping * weighted_reference_values[n_dof][qp];  
+              std::cout<< "n_dof, qp, n_tot_, n_comp, n_=("<<n_dof<<", "<<qp<<", "<< n_tot_<<", "<<n_comp<<", "<< n_<<")"<<std::endl; 
+              std::cout<< "func_values_="<<func_values_[n_tot_][qp]<<std::endl; 
+              func_tmp_=alpha[n_dof] * mapping * reference_values[n_dof][qp];    
+              std::cout<< "func_tmp_="<<func_tmp_<<std::endl; 
+              assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
+              std::cout<< "func_values_ after="<<func_values_[n_tot_][qp]<<std::endl; 
          }
                    
         }
        }
+             std::cout<<"init end"<<std::endl;
+
     };
 
     constexpr void init_map(const Map& map){map_ptr=std::make_shared<Map>(map);}

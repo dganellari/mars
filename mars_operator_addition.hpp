@@ -39,25 +39,6 @@ class Addition
   };
 };
 
-template<typename T,Integer Rows,Integer Cols>
-class OperatorApply<Addition< Matrix<T,Rows,Cols>,Matrix<T,Rows,Cols> > >
-{       
- public: 
- using Left=Matrix<T,Rows,Cols>;
- using Right=Matrix<T,Rows,Cols>;
- // using Output=OperatorType<Addition<Left,Right> >;
- template<typename Output>
- inline static void apply(      Output& A,
-                          const Left& B,
-                          const Right& C)
-  {
-
-    for(Integer ii=0;ii<Left::Rows;ii++)
-    for(Integer jj=0;jj<Left::Cols;jj++)
-           A(ii,jj)=B(ii,jj)+C(ii,jj);
-        // AdditionMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
-  };
-};
 
 template< typename DerivedLeft,typename DerivedRight>
 class Addition< Expression <DerivedLeft>, Expression <DerivedRight> > 
