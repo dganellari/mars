@@ -1,6 +1,15 @@
 #ifndef MARS_MATRIX_HPP
 #define MARS_MATRIX_HPP 
+
 #include "mars_tensor_base.hpp"
+#include "mars_base.hpp"
+#include "mars_vector.hpp"
+#include <array>
+#include <initializer_list>
+#include <cmath>
+#include <iostream>
+#include <cassert>
+
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////// Written by Gabriele Rovi (July 2019)                                                                    ////////
@@ -12,12 +21,14 @@
 ////// static constexpr Matrix<T,Rows,Cols> static_mat{T1,T2....};                                             ////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+
 namespace mars {
 
 	template<typename T, Integer Rows_, Integer Cols_,Integer NonZeroRow_=-1>
 	class Matrix: public TensorBase<T, std::make_index_sequence<Rows_*Cols_>> 
 	{
 	public:
+// <<<<<<< HEAD
 		static constexpr Integer Rows=Rows_;
 		static constexpr Integer Cols=Cols_;
 		using type= Matrix<T,Rows,Cols>;
@@ -149,17 +160,17 @@ namespace mars {
 		}
 
 
-		void describe(std::ostream &os) const
-		{
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					os << (*this)(i, j) << " ";
-				}
-				os << "\n";
-			}
+		// void describe(std::ostream &os) const
+		// {
+		// 	for(Integer i = 0; i < Rows; ++i) {
+		// 		for(Integer j = 0; j < Cols; ++j) {
+		// 			os << (*this)(i, j) << " ";
+		// 		}
+		// 		os << "\n";
+		// 	}
 
-			os << "\n";
-		}
+		// 	os << "\n";
+		// }
 
 		friend std::ostream &operator<<(std::ostream &os, const Matrix &m)
 		{
@@ -288,6 +299,65 @@ namespace mars {
 
 			return ret;
 		}
+// =======
+		// Matrix() {}
+
+	    // Matrix(std::initializer_list<T> values)
+	    // {
+	    // 	assert(values.size() == Rows*Cols);
+	    //     std::copy(std::begin(values), std::begin(values) + (Rows*Cols), std::begin(this->values));
+	    // }
+	    
+	    // inline constexpr static Integer rows() { return Rows; }
+	    // inline constexpr static Integer cols() { return Cols; }
+	    
+	    // inline T &operator()(const Integer i, const Integer j)
+	    // {
+	    //     assert(i < Rows);
+	    //     assert(j < Cols);
+	    //     return values[i*cols() + j];
+	    // }
+	    
+	    // inline const T &operator()(const Integer i, const Integer j) const
+	    // {
+	    //     assert(i < Rows);
+	    //     assert(j < Cols);
+	    //     return values[i*cols() + j];
+	    // }
+	    
+	    // inline void col(const Integer c, const Vector<T, Rows> &v)
+	    // {
+	    //     assert(c < Cols);
+
+	    //     for(Integer d = 0; d < Rows; ++d) {
+	    //         (*this)(d, c) = v(d);
+	    //     }
+	    // }
+	        
+	    // inline void zero()
+	    // {
+	    //     std::fill(begin(values), end(values), 0.);
+	    // }
+
+
+	    void describe(std::ostream &os) const
+	    {
+	        for(Integer i = 0; i < Rows; ++i) {
+	            for(Integer j = 0; j < Cols; ++j) {
+	                os << (*this)(i, j) << " ";
+	            }
+	            os << "\n";
+	        }
+
+	        os << "\n";
+	    }
+
+	    // friend std::ostream &operator<<(std::ostream &os, const Matrix &m)
+	    // {
+	    //     m.describe(os);
+	    //     return os;
+	    // }
+// >>>>>>> remotes/origin/master
 
 	    template<Integer OtherCols>
 		inline constexpr Matrix<T, Rows, OtherCols> operator * (const Matrix<T, Cols, OtherCols> &other) const

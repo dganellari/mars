@@ -26,6 +26,14 @@ namespace mars {
 		using MB::MB;
 		using MB::values;
 
+// <<<<<<< HEAD
+// =======
+	    // Vector(std::initializer_list<T> values)
+	    // {
+	    // 	assert(values.size() == Dim);
+	    //     std::copy(std::begin(values), std::begin(values) + Dim, std::begin(this->values));
+	    // }
+// >>>>>>> remotes/origin/master
 
 	    friend constexpr Vector operator*(const Real &alpha, const Vector &v)
 	    {

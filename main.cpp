@@ -14,6 +14,7 @@
 #include "mars_mesh_partition.hpp"
 #include "mars_partitioned_bisection.hpp"
 #include "mars_benchmark.hpp"
+#include "mars_lepp_benchmark.hpp"
 #include "mars_test.hpp"
 #include "mars_ranked_edge.hpp"
 #include "mars_oldest_edge.hpp"
@@ -30,10 +31,14 @@
 #include "generation/mars_test_kokkos.hpp"
 #endif //WITH_KOKKOS
 
-
 #include "mars_entity.hpp"
 #include "mars_connectivity.hpp"
 #include "mars_examples.hpp"
+#ifdef WITH_PAR_MOONOLITH
+#include "mars_moonolith_test.hpp"
+#include <mpi.h>
+#endif //WITH_PAR_MOONOLITH
+
 
 #ifdef WITH_MPI
 #include "mars_par_bisection.hpp"
@@ -82,7 +87,7 @@ mars::Mesh2 test_mars_mesh_generation_2D(const int x,
 	high_resolution_clock::time_point t2 = high_resolution_clock::now();
 	auto duration = duration_cast < seconds > (t2 - t1).count();
 
-	std::cout << "Generation took: "<< duration<<std::endl;
+	std::cout << "Generation took: "<< duration<<" seconds."<<std::endl;
 
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
@@ -114,8 +119,8 @@ mars::Mesh3 test_mars_mesh_generation_3D(const int x,
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
 
-	if (z < 100) {
-		std::cout<<"Writing vtu file: build_cube" + std::to_string(x) + std::to_string(y) + ".vtu"<<std::endl;
+	if (z < 102) {
+		std::cout<<"build_cube" + std::to_string(x) + std::to_string(y) + ".vtu"<<std::endl;
 		VTKMeshWriter<Mesh3> w;
 		w.write("build_cube" + std::to_string(x) + std::to_string(y) + ".vtu", mesh);
 	}
@@ -290,7 +295,7 @@ void test_uniform_bisection_2D(const int level, const std::string filename)
 }
 
 void test_bisection_2D()
-{	
+{
 	using namespace mars;
 	std::cout << "======================================\n";
 	Mesh2 mesh;
@@ -319,7 +324,7 @@ void test_bisection_2D()
 	Integer n_levels = 1;
 	for(Integer i = 0; i < n_levels; ++i) {
 		std::vector<mars::Integer> elements;
-		
+
 		mark_hypersphere_for_refinement(
 			mesh,
 			{0.5, 0.5},
@@ -345,16 +350,16 @@ void test_bisection_2D()
 	b.tracking_begin();
 	b.uniform_refine(2);
 	b.tracking_end();
-	
+
 	write_mesh("mesh2_before.eps", mesh, 10., PLOT_NUMERIC_TAG);
-	
+
 	//use tracking information
 	b.undo();
 	write_mesh("mesh2_after.eps", mesh, 10., PLOT_NUMERIC_TAG);
 }
 
 void test_bisection_3D()
-{	
+{
 	using namespace mars;
 	std::cout << "======================================\n";
 	Mesh3 mesh;
@@ -368,7 +373,7 @@ void test_bisection_3D()
 	Bisection<Mesh3> b(mesh);
 	b.uniform_refine(2); b.clear();
 	print_boundary_points(mesh, std::cout, true);
-	
+
 	mesh.clean_up();
 	mesh.update_dual_graph();
 
@@ -395,7 +400,7 @@ void test_bisection_3D()
 	Integer n_levels = 1;
 	for(Integer i = 0; i < n_levels; ++i) {
 		std::vector<mars::Integer> elements;
-		
+
 		mark_hypersphere_for_refinement(
 			mesh,
 			{0.5, 0.5, 0.5},
@@ -425,13 +430,13 @@ void test_bisection_3D()
 }
 
 void test_bisection_4D()
-{	
+{
 	using namespace mars;
 	std::cout << "======================================\n";
 	Mesh4 mesh;
 	read_mesh("../data/cube4d_24.MFEM", mesh);
 	mesh.renumber_nodes();
-	
+
 	Quality<Mesh4> q(mesh);
 	q.compute();
 	mark_boundary(mesh);
@@ -446,7 +451,7 @@ void test_bisection_4D()
 
 	for(Integer i = 0; i < n_levels; ++i) {
 		std::vector<mars::Integer> elements;
-		
+
 		mark_hypersphere_for_refinement(
 			mesh,
 			{0.5, 0.5, 0.5, 0.5},
@@ -455,14 +460,14 @@ void test_bisection_4D()
 			);
 
 		std::cout << "n_marked(" << (i+1) << "/" << n_levels << ") : " << elements.size() << std::endl;
-		
+
 		b.refine(elements);
 		q.compute();
 
 		mesh.update_dual_graph();
 		print_boundary_info(mesh, true);
 	}
-	
+
 	std::cout << "volume: " << mesh.volume() << std::endl;
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 
@@ -493,7 +498,7 @@ namespace mars {
 			for(Integer i = 0; i < mesh.n_elements(); ++i) {
 				if(!mesh.is_active(i)) continue;
 
-				if(((element_index++ % each_element) == 0) && 
+				if(((element_index++ % each_element) == 0) &&
 					!edge_select->can_refine(mesh, i)) {
 					//repair global index
 					for(auto n : mesh.elem(i).nodes) {
@@ -550,14 +555,14 @@ namespace mars {
 		write_mesh("m2.eps", mesh);
 
 		print_boundary_info(mesh, true, true);
-		
+
 		if(ManifoldDim <= 4) {
 			print_boundary_points(mesh, std::cout, true);
 		}
 
 		b.tracking_end();
 		if(!mesh.is_conforming()) {
-			b.undo(); 
+			b.undo();
 			std::cerr << "[Warning] encountered non-conforming mesh undoing refinement" << std::endl;
 			return false;
 		}
@@ -595,15 +600,15 @@ namespace mars {
 
 		// auto edge_select = std::make_shared<RankedEdgeSelect<MeshD>>(map, online_update);
 		auto edge_select = std::make_shared<OldestEdgeSelect<MeshD>>(map, node_rank);
-		
+
 		for(Integer i = 0; i < n_tests; ++i) {
-			std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl; 
+			std::cout << "test_incomplete : " << (i+1) << "/" << n_tests << std::endl;
 			const bool ok = test_incomplete(mesh, map, edge_select, use_uniform_refinement);
 			if(!ok) {
 				assert(false);
 				return false;
 			}
-			
+
 			mesh.clean_up();
 			q.compute();
 			std::cout << "n_active_elements: " << mesh.n_active_elements() << "/" << mesh.n_elements() << std::endl;
@@ -847,12 +852,15 @@ void test_partition_4D()
 void run_benchmarks(int level)
 {
 	using namespace mars;
+/*
+	Benchmark<Mesh2> b;
+	Mesh2 m;
+	read_mesh("../data/square_2_def.MFEM", m);
 
-	Benchmark<Mesh2> b2;
-	Mesh2 m2;
-	read_mesh("../data/square_2_def.MFEM", m2);
+	b.run(level, m, "b");
 
-	b2.run(level, m2, "b2");
+	LeppBenchmark<Mesh2> lb;
+	lb.run(level, m, "lb");*/
 
 	Benchmark<Mesh3> b3;
 	Mesh3 m3;
@@ -860,11 +868,66 @@ void run_benchmarks(int level)
 
 	b3.run(level, m3, "b3");
 
+	LeppBenchmark<Mesh3> lb3;
+	lb3.run(level, m3, "lb3");
+
+	/*ParallelMesh2 pMesh;
+	generate_square(pMesh, 97, 10);
+
+	Mesh2 sMesh;
+	convert_parallel_mesh_to_serial(sMesh, pMesh);
+
+	std::cout << "n_active_elements: " << sMesh.n_active_elements()
+			<< std::endl;
+	std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
+
+	VTKMeshWriter<Mesh2> w;
+	w.write("build_square_parallel.vtu", sMesh);
+
+	Benchmark<Mesh2> b1;
+	//b1.run(level, sMesh, "b1");
+
+	Mesh2 Mesh;
+	generate_square(Mesh, 97, 10);
+
+	std::cout << "n_active_elements: " << Mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes: " << Mesh.n_nodes() << std::endl;
+
+	VTKMeshWriter<Mesh2> w2;
+	w2.write("build_square_serial.vtu", Mesh);
+
+	LeppBenchmark<Mesh2> b2;
+	b2.run(level, Mesh, "b2");*/
+
+	/*ParallelMesh3 pMesh3;
+	generate_cube(pMesh3, 4, 2, 3);
+
+	Mesh3 sMesh3;
+	convert_parallel_mesh_to_serial(sMesh3, pMesh3);
+
+	std::cout << "n_active_elements: " << sMesh3.n_active_elements()
+			<< std::endl;
+	std::cout << "n_nodes: " << sMesh3.n_nodes() << std::endl;
+
+	VTKMeshWriter<Mesh3> w3;
+	w3.write(
+			"build_cube_parallel" + std::to_string(1) + std::to_string(1)
+					+ ".vtu", sMesh3);
+
+	Benchmark<Mesh3> b3;
+	b3.run(level, sMesh3, "b3");
+
+	LeppBenchmark<Mesh3> lb3;
+		lb3.run(level, sMesh3, "lb3");*/
+
 /*	Benchmark<Mesh4> b4;
 	Mesh4 m4;
 	read_mesh("../data/cube4d_24.MFEM", m4);
 
-	b4.run(9, m4, "b4");*/
+	b4.run(level, m4, "b4");
+
+	LeppBenchmark<Mesh4> lb4;
+	lb4.run(level, m4, "lb4");*/
 }
 
 void test_incomplete_2D()
@@ -1086,10 +1149,16 @@ int main(int argc, char *argv[])
 
 #ifdef WITH_MPI
 	MPI_Init(&argc, &argv);
-#endif //WITH_MPI
+#else
+#ifdef WITH_PAR_MOONOLITH
+	MPI_Init(&argc, &argv);
+#endif
+#endif 
+
 	// test_bisection_2D();
 	 //test_bisection_3D(atoi(argv[1]));
 	// test_bisection_4D();
+
 
 
 // functionspaces_example2D();
@@ -1105,6 +1174,7 @@ assembly_example();
 
 	//run_benchmarks();
 	//run_benchmarks(atoi(argv[1]));
+
 
 	// test_partition_2D();
 	// test_partition_3D();
@@ -1130,6 +1200,8 @@ assembly_example();
 	// 			<< "No level of refinement was specified. Setting the default to 1!"
 	// 			<< std::endl;
 
+
+
 	/*if (argc > 2) {
 		filename = argv[2];
 	} else
@@ -1146,6 +1218,7 @@ assembly_example();
 	// if(level <100){
 
 		// test_mars_mesh_generation_2D(level,level);
+
 		//test_mars_mesh_generation_1D(level);
 	// }
 
@@ -1156,29 +1229,47 @@ assembly_example();
 	//test_mars_mesh_generation_3D(200,200,200);
 
 	//equivalent 3D generation using refinement and libmesh like mesh generation technique.
-	/*test_mars_mesh_generation_3D(2,2,2);
-	test_uniform_bisection_3D(3, test_mars_mesh_generation_3D(1,1,1));*/
-	//parallel with kokkos.
 
+	/*test_uniform_bisection_3D(3, test_mars_mesh_generation_3D(1,1,1));*/
+	//parallel with kokkos.
 #ifdef WITH_KOKKOS
 	Kokkos::initialize(argc,argv);
 	{
 
-	test_mars_mesh_generation_kokkos_2D(level,level);
+		// run_benchmarks(level);
 
+		//test_mars_mesh_generation_kokkos_2D(2,4);
 
-	//test_mars_mesh_generation_kokkos_1D(level);
+		//test_mars_mesh_generation_kokkos_2D(level + 4,level);
+		//test_mars_mesh_generation_kokkos_3D(level,level,level);
+		//test_mars_mesh_generation_kokkos_1D(level);
 	}
 
 	Kokkos::finalize();
 
 #endif
 
+
+#ifdef WITH_PAR_MOONOLITH
+	run_mars_moonolith_test();
+#endif //WITH_PAR_MOONOLITH
+
+	// if (level < 100) {
+		//test_mars_mesh_generation_3D(level , level, level );
+
+		//test_mars_mesh_generation_2D(level,level);
+		//test_mars_mesh_generation_1D(level);
+	// }
+
+
 #ifdef WITH_MPI
 	// par_mesh_test();
 	return MPI_Finalize();
 #else
-
-	return 0;
+	#ifdef WITH_PAR_MOONOLITH
+		return MPI_Finalize();
+	#else 
+		return 0;
+	#endif
 #endif //WITH_MPI
 }

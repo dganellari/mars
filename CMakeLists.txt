@@ -2,15 +2,62 @@ cmake_minimum_required(VERSION 2.8.12)
 
 project(mars)
 
+option(TRY_WITH_MOONOLITH "Use -DTRY_WITH_MOONOLITH=ON for enabling mesh transfer functions." ON)
+
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING
+      "Choose the type of build, options are: Debug Release
+RelWithDebInfo MinSizeRel."
+      FORCE)
+
+  	message(STATUS "[Status] CMAKE_BUILD_TYPE=Release")
+endif(NOT CMAKE_BUILD_TYPE)
+
+#################################################################################
+#################################################################################
+#################################################################################
+
+
+function(find_project_files rootPath dirPaths headers sources)
+	SET(verbose TRUE)
+
+	SET(theaders ${${headers}})
+	SET(tsources ${${sources}})
+
+	SET(ROOT_PATH ${${rootPath}})
+	SET(DIR_PATHS ${${dirPaths}})
+
+	FOREACH(INCLUDE_PATH ${DIR_PATHS})
+		INCLUDE_DIRECTORIES(${ROOT_PATH}/${INCLUDE_PATH})
+
+		file(GLOB TEMP_HPPSRC "${ROOT_PATH}/${INCLUDE_PATH}/*.cpp" )
+		file(GLOB TEMP_SRC "${ROOT_PATH}/${INCLUDE_PATH}/*.c" )
+		file(GLOB TEMP_HPPDR "${ROOT_PATH}/${INCLUDE_PATH}/*.hpp" )
+		file(GLOB TEMP_HDR "${ROOT_PATH}/${INCLUDE_PATH}/*.h" )
+
+		SOURCE_GROUP(${INCLUDE_PATH} FILES ${TEMP_HPPDR}; ${TEMP_HDR}; ${TEMP_HPPSRC}; ${TEMP_SRC}; ${TEMP_UI})
+
+		SET(tsources ${tsources}; ${TEMP_SRC}; ${TEMP_HPPSRC})
+		SET(theaders ${theaders}; ${TEMP_HDR}; ${TEMP_HPPDR})
+	ENDFOREACH(INCLUDE_PATH)
+
+	SET(${headers} ${theaders} PARENT_SCOPE)
+	SET(${sources} ${tsources} PARENT_SCOPE)
+endfunction()
+
+#################################################################################
+#################################################################################
+#################################################################################
 
 find_package(MPIExtended)
 
-#if(MPI_FOUND)
-#	set(CMAKE_CXX_COMPILER ${MPI_CXX_COMPILER})
-#	set(CMAKE_CXX_COMPILER_DEBUG ${MPI_CXX_COMPILER})
-#	set(WITH_MPI ON)
-#endif()
+# if(MPI_FOUND)
+# 	set(CMAKE_CXX_COMPILER ${MPI_CXX_COMPILER})
+# 	set(CMAKE_CXX_COMPILER_DEBUG ${MPI_CXX_COMPILER})
+# 	set(WITH_MPI ON)
+# endif()
 
 option(MARS_USE_CUDA "Build mars with cuda support" OFF)
 
@@ -65,6 +112,8 @@ list(APPEND MARS_HEADERS
 	mars_base_elementfunctionspace.hpp
 	mars_benchmark.hpp
 	mars_bisection.hpp
+	mars_lepp_bisection.hpp
+	mars_lepp_benchmark.hpp
 	mars_communicator.hpp
 	mars_compiletime_sqrt.hpp
 	mars_connectivity.hpp
@@ -165,7 +214,7 @@ set(CMAKE_CXX_DEBUG "-g")
 add_library(mars STATIC ${MARS_HEADERS} ${MARS_SOURCES})
 target_link_libraries(mars ${MPI_LIBRARIES})
 target_compile_features(mars PUBLIC cxx_std_17)
-add_definitions("-std=c++11")
+add_definitions("-std=c++17")
 target_include_directories(mars PUBLIC .)
 
 add_executable(mars_exec main.cpp ${MARS_HEADERS} ${MARS_SOURCES})
@@ -181,7 +230,10 @@ IF(Kokkos_FOUND)
 		MESSAGE(FATAL_ERROR "Enable Kokkos Cuda or unset MARS_USE_CUDA to continue with OpenMP!")
 	ENDIF()
 	
-	target_include_directories(mars_exec PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
+	target_include_directories(mars PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
+	# target_include_directories(mars_exec PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
+
+	message(STATUS "Kokkos_INCLUDE_DIRS=${Kokkos_INCLUDE_DIRS}, ${Kokkos_TPL_INCLUDE_DIRS}")
 	
 	IF(Kokkos_CXX_COMPILER)
 		target_link_libraries(mars_exec mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES})
@@ -189,6 +241,16 @@ IF(Kokkos_FOUND)
 		target_link_libraries(mars_exec mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES} -L${Kokkos_LIBRARY_DIRS})
 	ENDIF()
 ENDIF()
+
+if(TRY_WITH_MOONOLITH)
+	add_subdirectory(moonolith_adapter)
+endif()
+
+target_link_libraries(mars ${MARS_LIBRARIES})
+target_include_directories(mars PUBLIC ${CMAKE_BINARY_DIR})
+target_include_directories(mars PUBLIC ${MARS_INCLUDES})
+
+message(STATUS "${MARS_INCLUDES}")
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/mars_config.hpp.in ${CMAKE_BINARY_DIR}/mars_config.hpp)
 include_directories(${CMAKE_BINARY_DIR})

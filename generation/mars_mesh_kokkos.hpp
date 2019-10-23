@@ -184,7 +184,7 @@ public:
 		KOKKOS_INLINE_FUNCTION
 		void operator()(int i, int j) const {
 
-			int index = i * (xDim + 1) + j;
+			int index = i * (yDim + 1) + j;
 			points(index, 0) = static_cast<Real>(i) / static_cast<Real>(xDim);
 			points(index, 1) = static_cast<Real>(j) / static_cast<Real>(yDim);
 
@@ -212,7 +212,7 @@ public:
 		}
 	};
 
-	inline void generate_points(const int xDim, const int yDim, const int zDim) {
+	inline bool generate_points(const int xDim, const int yDim, const int zDim) {
 
 		using namespace Kokkos;
 
@@ -228,7 +228,8 @@ public:
 			reserve_points(n_nodes);
 
 			parallel_for(n_nodes, AddPoint(points_, xDim));
-			break;
+
+			return true;
 		}
 		case 2: {
 
@@ -242,7 +243,8 @@ public:
 			parallel_for(
 					MDRangePolicy<Rank<2> >( { 0, 0 }, { xDim + 1, yDim + 1 }),
 					AddPoint(points_, xDim, yDim));
-			break;
+
+			return true;
 		}
 		case 3: {
 			assert(xDim != 0);
@@ -265,6 +267,11 @@ public:
 					MDRangePolicy<Rank<3> >( { 0, 0, 0 },
 							{ 2 * zDim + 1, 2 * yDim + 1, 2 * xDim + 1 }),
 					AddPoint(points_, xDim, yDim, zDim));
+
+			return true;
+		}
+		default: {
+			return false;
 		}
 		}
 
@@ -318,10 +325,11 @@ public:
 				const int offset = yDim + 1;
 
 				//extracting i and j from the global index from the parallel for to make it coalesced.
-				int i = (index / 2) / xDim;
+				int i = (index / 2) / yDim;
 				int j = (index / 2) % yDim;
-				int add_to_i = index % 2;
-				int add_to_j = (index + 1) % 2;
+
+				int add_to_i = (index +1) % 2;
+				int add_to_j = index % 2;
 
 				elem(index, 0) = i * offset + j;
 				elem(index, 1) = (i + 1) * offset + (j + 1);
@@ -400,7 +408,7 @@ public:
 	};
 
 
-	inline void generate_elements(const int xDim, const int yDim,
+	inline bool generate_elements(const int xDim, const int yDim,
 			const int zDim) {
 
 		using namespace Kokkos;
@@ -413,7 +421,7 @@ public:
 
 			parallel_for(n_elements, AddElem(elements_, active_, xDim));
 
-			break;
+			return true;
 		}
 		case 2: {
 			const int n_elements = 2 * xDim * yDim;
@@ -423,7 +431,7 @@ public:
 
 			/*parallel_for(MDRangePolicy<Rank<2> >( { 0, 0 }, { xDim, yDim }),
 			 AddElem(elements_, active_, xDim, yDim));*/
-			break;
+			return true;
 		}
 		case 3: {
 			const int n_elements = xDim * yDim * zDim * 24; //24 tetrahedrons on one hex27
@@ -451,7 +459,10 @@ public:
 
 			parallel_for(n_elements, el);
 
-			break;
+			return true;
+		}
+		default: {
+			return false;
 		}
 		}
 

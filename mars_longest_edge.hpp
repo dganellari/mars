@@ -77,6 +77,132 @@ namespace mars {
 			return edge_num;
 		}
 
+		Integer stable_select(
+					const Mesh &mesh,
+					const Integer element_id) const override
+		{
+			const auto &e = mesh.elem(element_id);
+
+			Integer edge_num = 0;
+			Real len = 0;
+
+			Integer otherV = 0, otherV2 = 0;
+			for (Integer i = 0; i < n_edges(e); ++i) {
+				Integer v1, v2;
+				e.edge(i, v1, v2);
+
+				Real len_i = (mesh.point(v1) - mesh.point(v2)).squared_norm();
+
+				if (len_i == len) {
+					assert(!(std::min(v1, v2) == otherV && v1 + v2 == otherV2));
+					if ((std::min(v1, v2) == otherV && v1 + v2 < otherV2)
+							|| std::min(v1, v2) < otherV) {
+						len = len_i;
+						edge_num = i;
+						otherV = std::min(v1, v2);
+						otherV2 = v1 + v2;
+					}
+				}
+
+				if (len_i > len) {
+					len = len_i;
+					edge_num = i;
+					otherV = std::min(v1, v2);
+					otherV2 = v1 + v2;
+				}
+			}
+
+			return edge_num;
+		}
+
+		//check always the edges which are equals to the longest L
+		//it then selects always the same edge as the stable select with the addition that it does it
+		//only for the path with the smallest number of edges which are larger than L.
+		Integer select(
+					const Mesh &mesh,
+					const Integer element_id,
+					const EdgeElementMap &edge_element_map) const override
+		{
+			const auto &e = mesh.elem(element_id);
+
+			Integer edge_num = 0;
+			Real len = 0;
+
+			constexpr Integer size = Combinations<Mesh::ManifoldDim + 1, 2>::value;
+			std::array<Real,size> lengths;
+
+			Integer otherV, otherV2;
+			for(Integer i = 0; i < size; ++i) {
+				Integer v1, v2;
+				e.edge(i, v1, v2);
+
+				Real len_i = (mesh.point(v1) - mesh.point(v2)).squared_norm();
+				lengths[i]=len_i;
+
+				if(len_i > len) {
+					len = len_i;
+					otherV = std::min(v1, v2);
+					otherV2 = v1 + v2;
+					//edge_num = i;
+				}
+			}
+
+
+			Integer min_nr_edges = std::numeric_limits<Integer>::max();
+			//Integer min_nr_edges = 0;
+			for(Integer i=0; i<size;++i){
+
+				if(lengths[i] == len){
+
+					Integer v1, v2;
+					Edge edge;
+					mesh.elem(element_id).edge(i, edge.nodes[0], edge.nodes[1]);
+					edge.fix_ordering();
+
+					auto incidents = edge_element_map.elements(edge);
+
+					Integer nr_edges_gt_len=0;
+					for (auto l : incidents) {
+
+						if(mesh.is_active(l)){
+
+							const auto &el = mesh.elem(l);
+							for(Integer k = 0; k < size; ++k) {
+								el.edge(k, v1, v2);
+
+								Real len_in = (mesh.point(v1) - mesh.point(v2)).squared_norm();
+
+								if(len_in > len)
+									++nr_edges_gt_len;
+							}
+						}
+					}
+
+
+					if(nr_edges_gt_len<min_nr_edges){
+						min_nr_edges=nr_edges_gt_len;
+						edge_num = i;
+						otherV = edge.nodes[0];
+						otherV2 = edge.nodes[1];
+					}
+					if (nr_edges_gt_len == min_nr_edges) { //TODO: stable for uniqueness
+						v1 = edge.nodes[0];
+						v2 = edge.nodes[1];
+						assert(!(std::min(v1, v2) == otherV && v1 + v2 == otherV2));
+						if ((std::min(v1, v2) == otherV && v1 + v2 < otherV2)
+								|| std::min(v1, v2) < otherV) {
+							edge_num = i;
+							otherV = std::min(v1, v2);
+							otherV2 = v1 + v2;
+						}
+					}
+				}
+			}
+
+
+			return edge_num;
+		}
+
 		void set_recursive(const bool recursive)
 		{
 			recursive_ = recursive;
