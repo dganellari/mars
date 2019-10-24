@@ -5,6 +5,8 @@
 #include "mars_connectivity.hpp"
 #include "mars_functionspace_dofmap.hpp"
 #include "mars_functionspace.hpp"
+#include "mars_shape_functions_collection.hpp"
+
 #include "mars_shape_function.hpp"
 #include "mars_matrix.hpp"
 #include "mars_jacobian.hpp"
@@ -12,7 +14,14 @@
 
 
 
+#include "mars_evaluation.hpp"
+#include "mars_quadrature_order.hpp"
 #include "mars_function.hpp"
+#include "mars_general_form.hpp"
+#include "mars_l2_dot_product_integral.hpp"
+#include "mars_test_function.hpp"
+#include "mars_trial_function.hpp"
+#include "mars_shape_functions_collection.hpp"
 
 namespace mars{
 
@@ -570,7 +579,8 @@ template <typename Space>
             {
              qp_point=qp_points.get_row(qp);
              // func=value<Elem,Operator,FEFamily,Order,single_type,Ndofs>(qp_point);
-             value<Space::Elem,Operator,Space::FEFamily,Space::Order>(qp_point,func);
+             ReferenceShapeFunctionValue<typename Space::Elem,Operator,Space::FEFamily,Space::Order>::apply(qp_point,func);
+             // value<Space::Elem,Operator,Space::FEFamily,Space::Order>(qp_point,func);
               for(Integer n_dof = 0; n_dof < n_dofs; ++n_dof) {
                   const_cast<single_type&>
                   (static_cast<const std::array<single_type,NQPoints>& >
@@ -992,7 +1002,7 @@ void assembly_example()
  FSspace1 FEspace1(mesh);
  using FSspace2= FunctionSpace< MeshT, Lagrange2<2>>;
  FSspace2 FEspace2(mesh);
- using FSspace3= FunctionSpace< MeshT, Lagrange1<1>,RT0<1>>;
+ using FSspace3= FunctionSpace< MeshT, Lagrange1<1>,RT0<2>>;
  FSspace3 FEspace3(mesh);
  using FSspace4= FunctionSpace< MeshT, Lagrange1<1>,Lagrange2<1>,Lagrange1<1>>;
  FSspace4 FEspace4(mesh);
@@ -1054,17 +1064,18 @@ void assembly_example()
 auto NewOp1=NewOperator(IdentityOperator()/alpha);
 auto NewOp2=NewOperator(IdentityOperator()*alpha*f1);
 // auto Epsilon=NewOperator((-f1)*(+C)*((+GradientOperator())+(+Transpose(GradientOperator()))));
-// auto Epsilon=NewOperator((-f1)*Trace(C)*(+GradientOperator()+(Transpose(-GradientOperator()))));
+// auto Epsilon=NewOperator((-f1)*MatTrace(C)*(+GradientOperator()+(Transpose(-GradientOperator()))));
 // auto Epsilon=NewOperator(+(-GradientOperator()));
-// auto Epsilon=NewOperator((+C)*(-C)*(-f1)*(+f1)*(C-f1)*(C+f1)/(C+f1)*Transpose(f1)*(+Trace(+f1))*(-Trace(-C))*(-GradientOperator()-GradientOperator())/Trace(Transpose(f1)-Trace(Transpose(C))));
-// /Trace(Transpose(Transpose(Trace(f1)))));
+auto Epsilon=NewOperator((+C)*(-C)*(-f1)*(+f1)*(C-f1)*(C+f1)/(C+f1)*Transpose(f1)*(+MatTrace(+f1))*(-MatTrace(-C))*(-GradientOperator()-GradientOperator())/MatTrace(Transpose(f1)-MatTrace(Transpose(C))));
+// /MatTrace(Transpose(Transpose(MatTrace(f1)))));
 // auto Epsilon=NewOperator((GradientOperator()+Transpose(GradientOperator())));//+Transpose(GradientOperator())));
-auto Epsilon=NewOperator((GradientOperator()));//+Transpose(GradientOperator())));
+// auto Epsilon=NewOperator((GradientOperator()));//+Transpose(GradientOperator())));
 
   auto bilinearform= 
+                    L2Inner((u1),(v1))-
                     L2Inner(-Transpose(u3),Transpose(-v3))-
                     L2Inner(-(-u3),-(v3))- //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
-                    L2Inner(Trace(f1)*(+Transpose(u2)),-(Transpose(v2))) -//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
+                    L2Inner(MatTrace(f1)*(+Transpose(u2)),-(Transpose(v2))) -//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
                     L2Inner(Epsilon(u1),-Grad(v1));//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
   // auto bilinearform= 
   //                   +L2Inner(u3,v3)- //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
@@ -1081,8 +1092,9 @@ auto Epsilon=NewOperator((GradientOperator()));//+Transpose(GradientOperator()))
                   // L2Inner((-C-Transpose(C))*(-v2),Transpose(-f1))+
                   // L2Inner((-Transpose(C)-Transpose(C))*v2,C)+
                   // L2Inner((-Transpose(C)-(C))*v2,f1/C)+
-                  // L2Inner(Inner(gamma,Transpose(gamma)),Trace(Epsilon(v1)));
-  -L2Inner(Inner(gamma,Transpose(gamma))*Epsilon(v1),id2)-L2Inner(-Epsilon(v1),-id2);
+                  // L2Inner(Inner(gamma,Transpose(gamma)),MatTrace(Epsilon(v1)));
+  -L2Inner(Inner(gamma,Transpose(gamma))*Epsilon(v1),id2)-L2Inner(-Epsilon(v1),-id2)+
+  L2Inner(id2,v3);
 
   // // auto bilinearform= 
   //                   L2Inner((u3),(v3))+ //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
@@ -1098,14 +1110,14 @@ auto Epsilon=NewOperator((GradientOperator()));//+Transpose(GradientOperator()))
 
   auto shape_coefficients=shape_function_coefficients(bilinear_form,linear_form);
   auto reference_maps=reference_maps2(bilinear_form,linear_form);
-  auto shape_functions=shape_functions2(shape_coefficients,reference_maps,bilinear_form,linear_form);
+  auto shapefunctions=shape_functions(shape_coefficients,reference_maps,bilinear_form,linear_form);
   shape_coefficients.init(mesh);
   
   std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
   std::cout<<"------_______-----BEFORE FORMs EVALUATION-----_______--------"<<std::endl;
 
-  auto eval_bilinear_form=Eval(bilinear_form,shape_functions);
-  auto eval_linear_form=Eval(linear_form,shape_functions);
+  auto eval_bilinear_form=Eval(bilinear_form,shapefunctions);
+  auto eval_linear_form=Eval(linear_form,shapefunctions);
 
   J.init(0);
   reference_maps.init(J);
@@ -1115,7 +1127,7 @@ auto Epsilon=NewOperator((GradientOperator()));//+Transpose(GradientOperator()))
   shape_coefficients.init(0);
   std::cout<<"------_______-----AFTER SHAPE COEFFICIENTS INIT-----_______--------"<<std::endl;
 
-  shape_functions.init(J);///////////////<------------------------ problema qui
+  shapefunctions.init(J);///////////////<------------------------ problema qui
 
 
   std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;

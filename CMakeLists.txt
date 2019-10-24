@@ -7,12 +7,12 @@ option(TRY_WITH_MOONOLITH "Use -DTRY_WITH_MOONOLITH=ON for enabling mesh transfe
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE "Release" CACHE STRING
+  set(CMAKE_BUILD_TYPE "Debug" CACHE STRING
       "Choose the type of build, options are: Debug Release
 RelWithDebInfo MinSizeRel."
       FORCE)
 
-  	message(STATUS "[Status] CMAKE_BUILD_TYPE=Release")
+  	message(STATUS "[Status] CMAKE_BUILD_TYPE=Debug")
 endif(NOT CMAKE_BUILD_TYPE)
 
 #################################################################################
@@ -132,6 +132,11 @@ list(APPEND MARS_HEADERS
 	mars_examples.hpp
 	mars_expression.hpp
 	mars_elementfunctionspace.hpp
+	mars_evaluation_constant.hpp
+	mars_evaluation_function.hpp
+	mars_evaluation_general_form.hpp
+	mars_evaluation_l2_dot_product_integral.hpp
+	mars_evaluation_test_or_trial.hpp
 	mars_evaluation_unary.hpp
 	mars_evaluation_binary.hpp
 	mars_evaluation.hpp
@@ -139,7 +144,9 @@ list(APPEND MARS_HEADERS
 	mars_function.hpp
 	mars_functionspace.hpp
 	mars_functionspace_dofmap.hpp
+	mars_general_form.hpp
 	mars_imesh.hpp
+	mars_l2_dot_product_integral_utils.hpp 
 	mars_lagrange_element.hpp
 	mars_longest_edge.hpp
 	mars_matrix.hpp
@@ -154,7 +161,7 @@ list(APPEND MARS_HEADERS
 	mars_operator_addition.hpp
 	mars_operator_apply.hpp
 	mars_operator_assignment.hpp
-	# mars_operator_contraction.hpp
+	mars_operator_composite.hpp
 	mars_operator_division.hpp
 	mars_operator_multiplication.hpp
 	mars_operator_subtraction.hpp
@@ -176,10 +183,12 @@ list(APPEND MARS_HEADERS
 	mars_referencemap.hpp
 	mars_shape_function.hpp
 	mars_shape_function_coefficients.hpp
+	mars_shape_functions_collection.hpp
 	mars_simplex.hpp
 	mars_static_math.hpp
 	mars_stream.hpp
 	mars_test.hpp
+	mars_test_function.hpp
 	mars_tensor_base.hpp
 	mars_tracker.hpp
 	mars_tuple_utilities.hpp

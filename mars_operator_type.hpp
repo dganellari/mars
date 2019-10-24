@@ -42,7 +42,7 @@ template<typename T>
 class Transposed;
 
 template<typename T>
-class TraceOperator;
+class MatTraceOperator;
 
 template<typename T>
 class UnaryPlus;
@@ -102,13 +102,13 @@ class OperatorTypeHelper<Transposed<Matrix<Real,Rows,Cols>>,Ts...>
 
 
 template<Integer Dim, typename...Ts>
-class OperatorTypeHelper<TraceOperator<Matrix<Real,Dim,Dim>>,Ts...>
+class OperatorTypeHelper<MatTraceOperator<Matrix<Real,Dim,Dim>>,Ts...>
 { public:
   using type=Matrix<Real,1,1>;
 };
 
 template<Integer Dim, typename...Ts>
-class OperatorTypeHelper<TraceOperator<Transposed<Matrix<Real,Dim,Dim>>>,Ts...>
+class OperatorTypeHelper<MatTraceOperator<Transposed<Matrix<Real,Dim,Dim>>>,Ts...>
 { public:
   using type=Matrix<Real,1,1>;
 };
@@ -1117,10 +1117,10 @@ class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< 
 
 // template<template<class,Integer,class > class TestOrTrial,
 //          typename MixedSpace, Integer N, typename ConstType,typename...Inputs,typename QRule>
-// class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<TraceOperator<Expression< ConstantTensor<ConstType,Inputs...> > >>>>,QRule >
+// class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<MatTraceOperator<Expression< ConstantTensor<ConstType,Inputs...> > >>>>,QRule >
 // { public:
 //   using typetmp=OperatorType<ConstantTensor<ConstType,Inputs...>,QRule>;
-//   using type=OperatorType<TraceOperator<typetmp>,QRule>;//OperatorType<TraceOperator<typetmp>,QRule>;
+//   using type=OperatorType<MatTraceOperator<typetmp>,QRule>;//OperatorType<MatTraceOperator<typetmp>,QRule>;
 // };
 
 

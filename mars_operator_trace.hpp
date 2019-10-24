@@ -6,7 +6,7 @@
 namespace mars {
 
 // template<typename T,Integer Rows,Integer Cols>
-// class TraceOperator<Matrix<T,Rows,Cols>> 
+// class MatTraceOperator<Matrix<T,Rows,Cols>> 
 // {    
 //  public:     
  
@@ -14,7 +14,7 @@ namespace mars {
 //  inline static void apply(Output& A,const Matrix<T,Rows,Cols>& B)
 //   {
 //     static_assert(Rows==Cols && "trace operator can only be applied to square matrices");
-//     std::cout<<"TraceOperator<Matrix<T,Rows,Cols>> "<<std::endl;
+//     std::cout<<"MatTraceOperator<Matrix<T,Rows,Cols>> "<<std::endl;
 //    A(0,0)=B(0,0);
 //    for(Integer ii=1;ii<Rows;ii++)
 //     A(0,0)+=B(ii,ii);
@@ -24,7 +24,7 @@ namespace mars {
 // };
 
 // template<typename T,Integer Rows,Integer Cols>
-// class TraceOperator<Transposed<Matrix<T,Rows,Cols>>> 
+// class MatTraceOperator<Transposed<Matrix<T,Rows,Cols>>> 
 // {    
 //  public:     
  
@@ -32,7 +32,7 @@ namespace mars {
 //  inline static void apply(Output& A,const Transposed<Matrix<T,Rows,Cols>>& B)
 //   {
 //     static_assert(Rows==Cols && "trace operator can only be applied to square matrices");
-//     std::cout<<"TraceOperator<Transposed<Matrix<T,Rows,Cols>> "<<std::endl;
+//     std::cout<<"MatTraceOperator<Transposed<Matrix<T,Rows,Cols>> "<<std::endl;
 //    A(0,0)=B(0,0);
 //    for(Integer ii=1;ii<Rows;ii++)
 //     A(0,0)+=B(ii,ii);
@@ -49,7 +49,7 @@ namespace mars {
 
 
 template<typename T>
-class TraceOperator
+class MatTraceOperator
 {    
  public:     
   static_assert(StaticAssertMatrixOrTransposed<T>::value && "UnaryMinus allows:mat+mat;");
@@ -57,13 +57,13 @@ class TraceOperator
  template<typename Output>
  inline static void apply(Output& A,const T& B)
   {
-    std::cout<<"pre TraceOperator"<<std::endl;
+    std::cout<<"pre MatTraceOperator"<<std::endl;
     static_assert(T::Rows==T::Cols && "trace operator can only be applied to square matrices");
-    std::cout<<"TraceOperator<Transposed<Matrix<T,Rows,Cols>> "<<std::endl;
+    std::cout<<"MatTraceOperator<Transposed<Matrix<T,Rows,Cols>> "<<std::endl;
    A(0,0)=B(0,0);
    for(Integer ii=1;ii<T::Rows;ii++)
     A(0,0)+=B(ii,ii);
-    std::cout<<"after TraceOperator"<<std::endl;
+    std::cout<<"after MatTraceOperator"<<std::endl;
   };
 
 
@@ -79,7 +79,7 @@ class TraceOperator
 
 
 // template<typename U,Integer NQPoints>
-// class TraceOperator<QPValues<U,NQPoints>> 
+// class MatTraceOperator<QPValues<U,NQPoints>> 
 // {       
 //  public:               
 //  template<typename V>
@@ -88,8 +88,8 @@ class TraceOperator
 //   {
 //    for(Integer qp=0;qp<NQPoints;qp++)
 //         {
-//           std::cout<<"pre traceoperator QPValues"<<std::endl;
-//           TraceOperator<U>::apply(A[qp],B[qp]);
+//           std::cout<<"pre MatTraceOperator QPValues"<<std::endl;
+//           MatTraceOperator<U>::apply(A[qp],B[qp]);
 //         }
 //   };
 // };
@@ -102,7 +102,7 @@ class TraceOperator
 
 
 // template<typename U, Integer NQPoints,Integer Ndofs>
-// class TraceOperator<FQPValues<U,NQPoints,Ndofs>> 
+// class MatTraceOperator<FQPValues<U,NQPoints,Ndofs>> 
 // {       
 //  public:               
 //  template<typename V>
@@ -111,29 +111,29 @@ class TraceOperator
 //   for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
 //      for(Integer qp=0;qp<NQPoints;qp++)
 //        {
-//         TraceOperator<U>::apply(A(n_dof,qp),B(n_dof,qp));
+//         MatTraceOperator<U>::apply(A(n_dof,qp),B(n_dof,qp));
 //        }
 //   };
 // };
 
 
 template<typename U,typename V>
-constexpr void Trace(U& t,const V& constt){TraceOperator<V>::apply(t,constt);}
+constexpr void MatTrace(U& t,const V& constt){MatTraceOperator<V>::apply(t,constt);}
 
 template<typename T>
-constexpr auto Trace(const Expression<T>& t){return TraceOperator<Expression<T>>(t);}
+constexpr auto MatTrace(const Expression<T>& t){return MatTraceOperator<Expression<T>>(t);}
 
 template<typename T>
-constexpr auto Trace(const Expression<TraceOperator<Expression<T>>>& t){return T(t.derived().derived());}
+constexpr auto MatTrace(const Expression<MatTraceOperator<Expression<T>>>& t){return T(t.derived().derived());}
 
 
 template<typename T>
-class TraceOperator<Expression<T>>: public Expression<TraceOperator<Expression<T>>>
+class MatTraceOperator<Expression<T>>: public Expression<MatTraceOperator<Expression<T>>>
 {
 public:
 
-    TraceOperator(const Expression<T>& expr): value_(expr.derived()){};
-    TraceOperator(const Expression<TraceOperator<Expression<T>>>& expr): value_(expr.derived().derived().derived()){};
+    MatTraceOperator(const Expression<T>& expr): value_(expr.derived()){};
+    MatTraceOperator(const Expression<MatTraceOperator<Expression<T>>>& expr): value_(expr.derived().derived().derived()){};
 
     T& operator()(){return value_;};
     const constexpr T& operator()()const{return value_;};

@@ -9,6 +9,19 @@ namespace mars {
 template<typename...Parameters>
 class Evaluation;
 
+template<typename...OtherTemplateArguments, typename T>
+constexpr auto Eval(const T& t){return Evaluation< Expression<remove_all_t<decltype(t)>>,OtherTemplateArguments...>(t);}
+
+// first parameter is an expression, while the others input are utils 
+template<typename...OtherTemplateArguments,typename T,typename ...Ts>
+constexpr auto Eval(const T& t,const Ts&...ts){return Evaluation< Expression<remove_all_t<decltype(t)>>,
+                                                                              remove_all_t<decltype(ts)>...,OtherTemplateArguments... >(t,ts...);}
+
+template<typename...OtherTemplateArguments,typename T,typename ...Ts>
+constexpr auto Eval(const T& t, Ts&...ts){return Evaluation< Expression<remove_all_t<decltype(t)>>,
+                                                                         remove_all_t<decltype(ts)>...,OtherTemplateArguments... >(t,ts...);}
+
+
 
 template<template<class,class>class Binary, typename DerivedRight,typename DerivedLeft,typename...OtherTemplateArguments>
 class Evaluation<Expression<Binary< Expression<DerivedLeft>  ,  

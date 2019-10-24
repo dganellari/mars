@@ -1,8 +1,3 @@
-
-
-
-
-
 #ifndef MARS_SHAPE_FUNCTION_HPP
 #define MARS_SHAPE_FUNCTION_HPP
 
@@ -257,49 +252,135 @@ public:
 
 
 
+template<typename Elem,typename Operator,Integer FEFamily,Integer Order>
+class ReferenceShapeFunctionValue;
+
+template<typename Elem,Integer FEFamily,Integer Order>
+class SingleShapeFunctionCoefficient;
 
 
-template<typename Elem,Integer FEFamily,Integer Order, typename ConstInput, typename ShapeFunctionCoefficient>
-void shape_function_coefficients_init(const ConstInput& mesh_ptr,ShapeFunctionCoefficient& coeff);
+
+template<Integer Dim,Integer ManifoldDim>
+class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 0>
+{
+ public: 
+constexpr inline static void 
+apply(const Vector<Real,ManifoldDim>& point, Vector<Matrix<Real, 1, 1>,1> & func)
+{
+    Vector<Matrix<Real, 1, 1>,1> func2(1);       
+    func=func2;
+}
+};
 
 
-template<typename Elem,typename Operator,Integer FEFamily,Integer Order,typename Output,typename Point>
-constexpr void value(const Point& point,Output& output);
+template<Integer Dim>
+class ReferenceShapeFunctionValue<Simplex<Dim,1>, IdentityOperator, LagrangeFE, 1>
+{
+ public: 
+constexpr inline static void 
+apply(const Vector<Real,1>& point, Vector<Matrix<Real, 1, 1>,2> & func)
+{
+    Vector<Matrix<Real, 1, 1>,2> func2((1. - point[0]), // 1 in (0)
+                                       point[0]);       // 1 in (1)
+    func=func2;
+}
+};
 
-template<>
-constexpr void value<Simplex<2,2>, IdentityOperator, LagrangeFE, 1>
- (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,3> & func)
+template<Integer Dim>
+class ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 1>
+{
+ public: 
+constexpr inline static void 
+apply(const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,3> & func)
 {
     Vector<Matrix<Real, 1, 1>,3> func2((1. - point[0] - point[1]), // 1 in (0,0)
                                        point[0],                  // 1 in (1,0)
                                        point[1]);                 // 1 in (0,1)
     func=func2;
 }
+};
 
-template<>
-constexpr void value<Simplex<2,2>, GradientOperator, LagrangeFE, 1>
 
-//   (const Vector<Real,2>& point, Vector<Vector<Real, 2>,3> & func)
+// template<typename Elem,typename Operator,Integer FEFamily,Integer Order,typename Output,typename Point>
+// constexpr void value(const Point& point,Output& output);
 
- (const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,3> & func)
+// template<Integer Dim>
+// constexpr void value<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 1>
+//  (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,3> & func)
+// {
+//     Vector<Matrix<Real, 1, 1>,3> func2((1. - point[0] - point[1]), // 1 in (0,0)
+//                                        point[0],                  // 1 in (1,0)
+//                                        point[1]);                 // 1 in (0,1)
+//     func=func2;
+// }
+
+
+
+template<Integer Dim>
+class ReferenceShapeFunctionValue<Simplex<Dim,2>, GradientOperator, LagrangeFE, 1>
 {
-    const auto& xi=point[0];
-    const auto& eta=point[1];
-    const Real zeta = 1. - xi - eta;
-    Vector<Matrix<Real, 2, 1>,3> func2({-1,-1},
-                                       // Vector<Vector<Real, 2>,3> func2({-1,-1},
-                                       {+1, 0},
-                                       { 0,+1});
-    func=func2;
-}
-//
-// shape_function_coefficients_init for: Simplex<2,2>, LagrangeFE, 1
-// do nothing: lagrange shape functions do not need any coefficient
+ public: 
+ constexpr inline static void 
+ apply(const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,3> & func)
+  {
+      const auto& xi=point[0];
+      const auto& eta=point[1];
+      const Real zeta = 1. - xi - eta;
+      Vector<Matrix<Real, 2, 1>,3> func2({-1,-1},
+                                         // Vector<Vector<Real, 2>,3> func2({-1,-1},
+                                         {+1, 0},
+                                         { 0,+1});
+      func=func2;
+  }
+};
+
+// template<Integer Dim>
+// constexpr void value<Simplex<Dim,2>, GradientOperator, LagrangeFE, 1>
+// (const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,3> & func)
+// {
+//     const auto& xi=point[0];
+//     const auto& eta=point[1];
+//     const Real zeta = 1. - xi - eta;
+//     Vector<Matrix<Real, 2, 1>,3> func2({-1,-1},
+//                                        // Vector<Vector<Real, 2>,3> func2({-1,-1},
+//                                        {+1, 0},
+//                                        { 0,+1});
+//     func=func2;
+// }
+template<Integer Dim>
+class ReferenceShapeFunctionValue<Simplex<Dim,2>, TraceOperator, LagrangeFE, 1>
+{
+ public: 
+constexpr inline static void 
+apply(const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,2> & func)
+  {
+      ReferenceShapeFunctionValue<Simplex<Dim,1>, IdentityOperator, LagrangeFE, 1>::value(point,func);
+  }
+};
 
 
-template<>
-constexpr void value<Simplex<2,2>, IdentityOperator, LagrangeFE, 2>
- (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,6> & func)
+
+
+
+
+
+
+// template<Integer Dim>
+// constexpr void value<Simplex<Dim,2>, TraceOperator, LagrangeFE, 1>
+//  (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,2> & func)
+// {
+//     value<Simplex<2,1>, TraceOperator, LagrangeFE, 1>(point,func);
+// }
+
+
+
+
+template<Integer Dim>
+class ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 2>
+{
+ public:
+constexpr inline static void 
+apply(const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,6> & func)
 {
     const auto& xi=point[0];
     const auto& eta=point[1];
@@ -312,14 +393,31 @@ constexpr void value<Simplex<2,2>, IdentityOperator, LagrangeFE, 2>
                                        4.*xi*eta);         // 1 in (0.5,0.5)
     func=func2;
 }
+};
 
 
+// template<Integer Dim>
+// constexpr void value<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 2>
+//  (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,6> & func)
+// {
+//     const auto& xi=point[0];
+//     const auto& eta=point[1];
+//     const Real zeta = 1. - xi - eta;
+//     Vector<Matrix<Real, 1, 1>,6> func2(2.*zeta*(zeta-0.5), // 1 in (0,0)
+//                                        2.*xi*(xi-0.5),     // 1 in (1,0)
+//                                        2.*eta*(eta-0.5),   // 1 in (0,1)
+//                                        4.*zeta*xi,         // 1 in (0.5,0)
+//                                        4.*eta*zeta,        // 1 in (0,0.5)
+//                                        4.*xi*eta);         // 1 in (0.5,0.5)
+//     func=func2;
+// }
 
-
-template<>
-constexpr void value<Simplex<2,2>, GradientOperator, LagrangeFE, 2>
-// (const Vector<Real,2>& point, Vector<Vector<Real, 2>,6> & func)
- (const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,6> & func)
+template<Integer Dim>
+class ReferenceShapeFunctionValue<Simplex<Dim,2>, GradientOperator, LagrangeFE, 2>
+{
+public:
+constexpr inline static void 
+apply(const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,6> & func)
 {
     const auto& xi=point[0];
     const auto& eta=point[1];
@@ -338,18 +436,45 @@ constexpr void value<Simplex<2,2>, GradientOperator, LagrangeFE, 2>
                                        {4.*eta*dzeta_dxi,4.*eta*dzeta_deta + 4.*deta_deta*zeta});
     
     func=func2;
-}
+  }
+};
 
 
 
 
 
-//shape_function_coefficients_init for: Simplex<2,2>, LagrangeFE, 2
-// do nothing: lagrange shape functions do not need any coefficient
+// template<Integer Dim>
+// constexpr void value<Simplex<Dim,2>, GradientOperator, LagrangeFE, 2>
+// // (const Vector<Real,2>& point, Vector<Vector<Real, 2>,6> & func)
+//  (const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,6> & func)
+// {
+//     const auto& xi=point[0];
+//     const auto& eta=point[1];
+//     const Real zeta = 1. - xi - eta;
+//     const Real dxi_dxi    = 1.;
+//     const Real deta_deta  = 1.;
+//     const Real dzeta_dxi  = -1.;
+//     const Real dzeta_deta = -1.;
+//     // Vector<Vector<Real, 2>,6> func2(
+//     Vector<Matrix<Real, 2, 1>,6> func2(
+//                                        {2.*zeta*dzeta_dxi  + 2*dzeta_dxi *(zeta-0.5), 2.*zeta*dzeta_deta + 2*dzeta_deta*(zeta-0.5)},
+//                                        {2.*xi*dxi_dxi  + 2.*dxi_dxi *(xi-0.5),0},
+//                                        {0,2.*eta*deta_deta + 2.*deta_deta*(eta-0.5)},
+//                                        {4.*zeta*dxi_dxi+4.*dzeta_dxi*xi,4.*dzeta_deta*xi},
+//                                        {4.*dxi_dxi*eta,4.*xi*deta_deta},
+//                                        {4.*eta*dzeta_dxi,4.*eta*dzeta_deta + 4.*deta_deta*zeta});
+    
+//     func=func2;
+// }
 
-template<>
-constexpr void value<Simplex<2,2>, IdentityOperator, RaviartThomasFE, 0>
- (const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,3> & func)
+
+
+template<Integer Dim>
+class ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 0>
+{
+public:
+ constexpr inline static void 
+ apply(const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,3> & func)
 {
     const auto& xi=point[0];
     const auto& eta=point[1];
@@ -357,27 +482,49 @@ constexpr void value<Simplex<2,2>, IdentityOperator, RaviartThomasFE, 0>
     func=func2;
 }
 
-template<>
-constexpr void value<Simplex<2,2>, DivergenceOperator, RaviartThomasFE, 0>
- (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,3> & func)
+};
+
+//shape_function_coefficients_init for: Simplex<2,2>, LagrangeFE, 2
+// do nothing: lagrange shape functions do not need any coefficient
+
+// template<Integer Dim>
+// constexpr void value<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 0>
+//  (const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,3> & func)
+// {
+//     const auto& xi=point[0];
+//     const auto& eta=point[1];
+//     Vector<Matrix<Real, 2, 1>,3> func2{{xi,eta-1},{xi-1,eta},{xi,eta}};
+//     func=func2;
+// }
+
+template<Integer Dim>
+class ReferenceShapeFunctionValue<Simplex<Dim,2>, DivergenceOperator, RaviartThomasFE, 0>
+{
+public:
+constexpr inline static void 
+apply(const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,3> & func)
 {
     Vector<Matrix<Real, 1, 1>,3> func2{{2},{2},{2}};
     func=func2;
 }
+};
 
 
-template<>
-void shape_function_coefficients_init<Simplex<2,2>, RaviartThomasFE, 0>
- (const Vector<Real, 3 >& outward,Vector<Real, 3 >& coeff)
+
+// template<Integer Dim>
+// constexpr void value<Simplex<Dim,2>, DivergenceOperator, RaviartThomasFE, 0>
+//  (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,3> & func)
+// {
+//     Vector<Matrix<Real, 1, 1>,3> func2{{2},{2},{2}};
+//     func=func2;
+// }
+
+template<Integer Dim>
+class ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 1>
 {
-    coeff[0]=outward[0];
-    coeff[1]=outward[1];
-    coeff[2]=outward[2];
-}
-
-template<>
-constexpr void value<Simplex<2,2>, IdentityOperator, RaviartThomasFE, 1>
- (const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,8> & func)
+public:
+constexpr inline static void 
+apply (const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,8> & func)
 {
     const auto& xi=point[0];
     const auto& eta=point[1];
@@ -394,11 +541,33 @@ constexpr void value<Simplex<2,2>, IdentityOperator, RaviartThomasFE, 1>
     };
     func=func2;
 }
+};
+// template<Integer Dim>
+// constexpr void value<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 1>
+//  (const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,8> & func)
+// {
+//     const auto& xi=point[0];
+//     const auto& eta=point[1];
+    
+//     Vector<Matrix<Real, 2, 1>,8> func2{
+//         {(1. - xi - eta)*xi,(1. - xi - eta)*(eta-1)},   // 0 in (1,0), (0,1), non-zero normal on edge0
+//         {xi*xi,xi*(eta-1)},                             // 0 in (0,0), (0,1), non-zero normal on edge0
+//         {(1. - xi - eta)*(xi-1),(1. - xi - eta)*(eta)}, // 0 in (1,0), (0,1), non-zero normal on edge1
+//         {eta*(xi-1),eta*eta},                           // 0 in (0,0), (1,0), non-zero normal on edge1
+//         {xi*xi,xi*eta},                                 // 0 in (0,0), (0,1), non-zero normal on edge2
+//         {eta*xi,eta*eta},                               // 0 in (0,0), (1,0), non-zero normal on edge2
+//         {eta*xi,eta*(eta-1)},                           // normal 0 on all edges, element-dof
+//         {xi*(xi-1),xi*eta}                              // normal 0 on all edges, element-dof
+//     };
+//     func=func2;
+// }
 
-
-template<>
-constexpr void value<Simplex<2,2>, DivergenceOperator, RaviartThomasFE, 1>
- (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,8> & func)
+template<Integer Dim>
+class ReferenceShapeFunctionValue<Simplex<Dim,2>, DivergenceOperator, RaviartThomasFE, 1>
+{
+public:
+constexpr inline static void 
+apply(const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,8> & func)
 {
     const auto& xi=point[0];
     const auto& eta=point[1];
@@ -414,6 +583,94 @@ constexpr void value<Simplex<2,2>, DivergenceOperator, RaviartThomasFE, 1>
     };
     func=func2;
 }
+};
+
+
+// template<Integer Dim>
+// constexpr void value<Simplex<Dim,2>, DivergenceOperator, RaviartThomasFE, 1>
+//  (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,8> & func)
+// {
+//     const auto& xi=point[0];
+//     const auto& eta=point[1];
+//     Vector<Matrix<Real, 1, 1>,8> func2{
+//         {3*(1-xi-eta)},
+//         {3*xi},
+//         {3*(1-xi-eta)},
+//         {3*eta},
+//         {3*xi},
+//         {3*eta},
+//         {3*eta},
+//         {3*xi}
+//     };
+//     func=func2;
+// }
+
+
+
+
+
+
+
+
+template<typename Elem,Integer FEFamily,Integer Order, typename ConstInput, typename ShapeFunctionCoefficient>
+void shape_function_coefficients_init(const ConstInput& mesh_ptr,ShapeFunctionCoefficient& coeff);
+
+
+
+
+
+
+
+
+
+
+
+template<Integer Dim>
+class SingleShapeFunctionCoefficient<Simplex<Dim,2>, RaviartThomasFE, 0>
+{
+ public: 
+constexpr inline static  void 
+apply(const Vector<Real, 3 >& outward,Vector<Real, 3 >& coeff)
+{
+    coeff[0]=outward[0];
+    coeff[1]=outward[1];
+    coeff[2]=outward[2];
+}
+};
+
+
+template<Integer Dim>
+class SingleShapeFunctionCoefficient<Simplex<Dim,2>, RaviartThomasFE, 1>
+{
+ public: 
+constexpr inline static  void  
+apply (const Vector<Real, 3 >& outward,Vector<Real, 8 >& coeff)
+{
+    coeff[0]=outward[0];
+    coeff[1]=outward[0];
+    coeff[2]=outward[1];
+    coeff[3]=outward[1];
+    coeff[4]=outward[2];
+    coeff[5]=outward[2];
+    coeff[6]=outward[0];
+    coeff[7]=outward[1];
+}
+};
+
+
+
+template<>
+void shape_function_coefficients_init<Simplex<2,2>, RaviartThomasFE, 0>
+ (const Vector<Real, 3 >& outward,Vector<Real, 3 >& coeff)
+{
+    coeff[0]=outward[0];
+    coeff[1]=outward[1];
+    coeff[2]=outward[2];
+}
+
+
+
+
 
 template<>
 void shape_function_coefficients_init<Simplex<2,2>, RaviartThomasFE, 1>
@@ -440,7 +697,8 @@ constexpr const Vector<Vector<single_type,NQPoints>,Ndofs> reference_shape_funct
     {
         qp_point=qp_points.get_row(qp);
         // func=value<Elem,Operator,FEFamily,Order,single_type,Ndofs>(qp_point);
-        value<Elem,Operator,FEFamily,Order>(qp_point,func);
+        ReferenceShapeFunctionValue<Elem,Operator,FEFamily,Order>::apply(qp_point,func);
+        // value<Elem,Operator,FEFamily,Order>(qp_point,func);
         for(Integer n_dof = 0; n_dof < Ndofs; ++n_dof) {
             const_cast<single_type&>
             (static_cast<const std::array<single_type,NQPoints>& >
@@ -593,7 +851,7 @@ public:
     using Point = Vector<Real,Dim>;
     using QP = Matrix<Real,NQPoints,Dim>;
     using qp_points_type=typename QuadratureRule::qp_points_type;
-    using Map=MapFromReference5<Operator,Elem,BaseFunctionSpace::FEFamily>;
+    using Map=MapFromReference<Operator,Elem,BaseFunctionSpace::FEFamily>;
     
     static constexpr Integer ShapeFunctionDim1=SingleTypeShapeFunction<FunctionSpace,Operator>::ShapeFunctionDim1;
     static constexpr Integer ShapeFunctionDim2=SingleTypeShapeFunction<FunctionSpace,Operator>::ShapeFunctionDim2;
@@ -761,7 +1019,7 @@ public:
     using Point = Vector<Real,Dim>;
     using QP = Matrix<Real,NQPoints,Dim>;
     using qp_points_type=typename QuadratureRule::qp_points_type;
-    using Map=MapFromReference5<Operator,Elem,BaseFunctionSpace::FEFamily>;
+    using Map=MapFromReference<Operator,Elem,BaseFunctionSpace::FEFamily>;
     
     //  static constexpr Integer ShapeFunctionDim1=SingleTypeShapeFunction<FunctionSpace,Operator>::ShapeFunctionDim1;
     //  static constexpr Integer ShapeFunctionDim2=SingleTypeShapeFunction<FunctionSpace,Operator>::ShapeFunctionDim2;
@@ -835,93 +1093,90 @@ private:
 
 
 
-template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename ConstType,typename...Inputs,typename...Ts>
-constexpr auto& composite_shape_function_aux(const ConstantTensor<ConstType,Inputs...>& constant, const std::tuple<Ts...>& tuple_of_shape_functions)
-{
-    // return 1;
-    std::cout<<"constant="<<std::endl;
-    return constant;
-}
+// template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename ConstType,typename...Inputs,typename...Ts>
+// constexpr auto& composite_shape_function_aux(const ConstantTensor<ConstType,Inputs...>& constant, const std::tuple<Ts...>& tuple_of_shape_functions)
+// {
+//     // return 1;
+//     std::cout<<"constant="<<std::endl;
+//     return constant;
+// }
 
-template< typename Elem,typename FunctionSpace, typename QuadratureRule,typename Operator,typename...Ts>
-constexpr auto& composite_shape_function_aux(const Operator& op, const std::tuple<Ts...>& tuple_of_shape_functions)
-{
-    using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpace>;
-    std::cout<<"operator pre="<<std::endl;
-    auto& ee= get_tuple_element_of_type<ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>>(tuple_of_shape_functions);
-    std::cout<<"operator post="<<std::endl;
-    return ee;
-}
-
-
-template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename T,typename...Ts>
-constexpr auto composite_shape_function_aux(const UnaryPlus<Expression<T>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
-{
-    return composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.derived(),tuple_of_shape_functions);
-}
-
-template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename T,typename...Ts>
-constexpr auto composite_shape_function_aux(const UnaryMinus<Expression<T>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
-{
-    auto e= composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.derived(),tuple_of_shape_functions);
-    return -e;
-}
+// template< typename Elem,typename FunctionSpace, typename QuadratureRule,typename Operator,typename...Ts>
+// constexpr auto& composite_shape_function_aux(const Operator& op, const std::tuple<Ts...>& tuple_of_shape_functions)
+// {
+//     using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpace>;
+//     std::cout<<"operator pre="<<std::endl;
+//     auto& ee= get_tuple_element_of_type<ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>>(tuple_of_shape_functions);
+//     std::cout<<"operator post="<<std::endl;
+//     return ee;
+// }
 
 
+// template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename T,typename...Ts>
+// constexpr auto composite_shape_function_aux(const UnaryPlus<Expression<T>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
+// {
+//     return composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.derived(),tuple_of_shape_functions);
+// }
 
-template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename Left,typename Right,typename...Ts>
-constexpr auto composite_shape_function_aux(const Addition<Expression<Left>,Expression<Right>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
-{
-    std::cout<<"add left"<<std::endl;
-    auto left=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.left(),tuple_of_shape_functions);
-    std::cout<<"add right"<<std::endl;
-    auto right=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.right(),tuple_of_shape_functions);
-    std::cout<<"add"<<std::endl;
-    return left+right;
-}
+// template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename T,typename...Ts>
+// constexpr auto composite_shape_function_aux(const UnaryMinus<Expression<T>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
+// {
+//     auto e= composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.derived(),tuple_of_shape_functions);
+//     return -e;
+// }
 
-template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename Left,typename Right,typename...Ts>
-constexpr auto composite_shape_function_aux(const Subtraction<Expression<Left>,Expression<Right>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
-{
-    auto left=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.left(),tuple_of_shape_functions);
-    auto right=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.right(),tuple_of_shape_functions);
-    return left-right;
-}
 
-template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename Left,typename Right,typename...Ts>
-constexpr auto composite_shape_function_aux(const Multiplication<Expression<Left>,Expression<Right>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
-{
-    std::cout<<"mult left"<<std::endl;
-    auto left=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.left(),tuple_of_shape_functions);
-    std::cout<<"mult right"<<std::endl;
-    auto right=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.right(),tuple_of_shape_functions);
+
+// template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename Left,typename Right,typename...Ts>
+// constexpr auto composite_shape_function_aux(const Addition<Expression<Left>,Expression<Right>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
+// {
+//     std::cout<<"add left"<<std::endl;
+//     auto left=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.left(),tuple_of_shape_functions);
+//     std::cout<<"add right"<<std::endl;
+//     auto right=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.right(),tuple_of_shape_functions);
+//     std::cout<<"add"<<std::endl;
+//     return left+right;
+// }
+
+// template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename Left,typename Right,typename...Ts>
+// constexpr auto composite_shape_function_aux(const Subtraction<Expression<Left>,Expression<Right>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
+// {
+//     auto left=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.left(),tuple_of_shape_functions);
+//     auto right=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.right(),tuple_of_shape_functions);
+//     return left-right;
+// }
+
+// template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename Left,typename Right,typename...Ts>
+// constexpr auto composite_shape_function_aux(const Multiplication<Expression<Left>,Expression<Right>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
+// {
+//     std::cout<<"mult left"<<std::endl;
+//     auto left=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.left(),tuple_of_shape_functions);
+//     std::cout<<"mult right"<<std::endl;
+//     auto right=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.right(),tuple_of_shape_functions);
     
-    return left*right;
-}
+//     return left*right;
+// }
 
-template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename Left,typename Right,typename...Ts>
-constexpr auto composite_shape_function_aux(const Division<Expression<Left>,Expression<Right>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
-{
-    auto left=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.left(),tuple_of_shape_functions);
-    auto right=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.right(),tuple_of_shape_functions);
+// template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename Left,typename Right,typename...Ts>
+// constexpr auto composite_shape_function_aux(const Division<Expression<Left>,Expression<Right>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
+// {
+//     auto left=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.left(),tuple_of_shape_functions);
+//     auto right=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.right(),tuple_of_shape_functions);
     
-    return left/right;
-}
+//     return left/right;
+// }
 
 
-template<typename QuadratureRule,template<class,Integer,class>class TestOrTrial_,typename MixedSpace,Integer N, typename Expr,typename...Ts>
-constexpr auto composite_shape_function(const TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, const std::tuple<Ts...>& tuple_of_tuple_of_shape_functions)
-{
-    using TestOrTrial=TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Expr>>>;
-    using Elem=typename TestOrTrial::Elem;
-    using BaseFunctionSpace=GetType<typename TestOrTrial::UniqueElementFunctionSpacesTupleType,TestOrTrial::value>;
-    std::cout<<"Test::value="<<TestOrTrial::value<<std::endl;
-    const auto& tuple_nth=tuple_get<TestOrTrial::value>(tuple_of_tuple_of_shape_functions);
-    return composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(t.composite_operator().composite_operator(),tuple_nth);
-}
-
-
-
+// template<typename QuadratureRule,template<class,Integer,class>class TestOrTrial_,typename MixedSpace,Integer N, typename Expr,typename...Ts>
+// constexpr auto composite_shape_function(const TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, const std::tuple<Ts...>& tuple_of_tuple_of_shape_functions)
+// {
+//     using TestOrTrial=TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Expr>>>;
+//     using Elem=typename TestOrTrial::Elem;
+//     using BaseFunctionSpace=GetType<typename TestOrTrial::UniqueElementFunctionSpacesTupleType,TestOrTrial::value>;
+//     std::cout<<"Test::value="<<TestOrTrial::value<<std::endl;
+//     const auto& tuple_nth=tuple_get<TestOrTrial::value>(tuple_of_tuple_of_shape_functions);
+//     return composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(t.composite_operator().composite_operator(),tuple_nth);
+// }
 
 
 
@@ -931,192 +1186,195 @@ constexpr auto composite_shape_function(const TestOrTrial_<MixedSpace,N,Composit
 
 
 
-template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Operator,typename Expr>
-constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,Operator>& t, 
-                                              const Expr& expr)
-{
-    using T=TestOrTrial<MixedSpace,N,Operator>;
-    using FunctionSpace=typename T::FunctionSpace;
-    using FromElementFunctionSpacesToFirstSpaceTupleType=typename FunctionSpace::FromElementFunctionSpacesToFirstSpaceTupleType;
-    constexpr Integer FirstSpace=GetType<FromElementFunctionSpacesToFirstSpaceTupleType,T::value>::value;
-    return TestOrTrial<MixedSpace,FirstSpace,Operator>(t.spaces_ptr());
-}
 
-template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Operator>
-constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-                                              const Operator& op)
-{
-    using T=TestOrTrial<MixedSpace,N,Operator>;
-    using FunctionSpace=typename T::FunctionSpace;
-    using FromElementFunctionSpacesToFirstSpaceTupleType=typename FunctionSpace::FromElementFunctionSpacesToFirstSpaceTupleType;
-    constexpr Integer FirstSpace=GetType<FromElementFunctionSpacesToFirstSpaceTupleType,T::value>::value;
-    return TestOrTrial<MixedSpace,FirstSpace,Operator>(t.spaces_ptr());
-}
+
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Operator,typename Expr>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,Operator>& t, 
+//                                               const Expr& expr)
+// {
+//     using T=TestOrTrial<MixedSpace,N,Operator>;
+//     using FunctionSpace=typename T::FunctionSpace;
+//     using FromElementFunctionSpacesToFirstSpaceTupleType=typename FunctionSpace::FromElementFunctionSpacesToFirstSpaceTupleType;
+//     constexpr Integer FirstSpace=GetType<FromElementFunctionSpacesToFirstSpaceTupleType,T::value>::value;
+//     return TestOrTrial<MixedSpace,FirstSpace,Operator>(t.spaces_ptr());
+// }
 
 // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Operator>
 // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-//                                               const Transposed<Expression<Operator>>& expr)
+//                                               const Operator& op)
 // {
-//   auto e=form_of_composite_operator_aux(t,expr.derived());
-//   // decltype(expr.derived()) eee(6);
-//   return Transpose(e);
-
-//   // using T=TestOrTrial<MixedSpace,N,Operator>;
-//   // using FunctionSpace=typename T::FunctionSpace;
-//   // using FromElementFunctionSpacesToFirstSpaceTupleType=typename FunctionSpace::FromElementFunctionSpacesToFirstSpaceTupleType;
-//   // constexpr Integer FirstSpace=GetType<FromElementFunctionSpacesToFirstSpaceTupleType,T::value>::value;  
-//   // return Transpose(TestOrTrial<MixedSpace,FirstSpace,Operator>(t.spaces_ptr()));
+//     using T=TestOrTrial<MixedSpace,N,Operator>;
+//     using FunctionSpace=typename T::FunctionSpace;
+//     using FromElementFunctionSpacesToFirstSpaceTupleType=typename FunctionSpace::FromElementFunctionSpacesToFirstSpaceTupleType;
+//     constexpr Integer FirstSpace=GetType<FromElementFunctionSpacesToFirstSpaceTupleType,T::value>::value;
+//     return TestOrTrial<MixedSpace,FirstSpace,Operator>(t.spaces_ptr());
 // }
 
-template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
-constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-                                              const ConstantTensor<ConstType,Inputs...>& constant)
-{return constant;}
+// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Operator>
+// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+// //                                               const Transposed<Expression<Operator>>& expr)
+// // {
+// //   auto e=form_of_composite_operator_aux(t,expr.derived());
+// //   // decltype(expr.derived()) eee(6);
+// //   return Transpose(e);
+
+// //   // using T=TestOrTrial<MixedSpace,N,Operator>;
+// //   // using FunctionSpace=typename T::FunctionSpace;
+// //   // using FromElementFunctionSpacesToFirstSpaceTupleType=typename FunctionSpace::FromElementFunctionSpacesToFirstSpaceTupleType;
+// //   // constexpr Integer FirstSpace=GetType<FromElementFunctionSpacesToFirstSpaceTupleType,T::value>::value;  
+// //   // return Transpose(TestOrTrial<MixedSpace,FirstSpace,Operator>(t.spaces_ptr()));
+// // }
 
 // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
 // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-//                                               const Transposed<Expression<ConstantTensor<ConstType,Inputs...>>>& transposed_constant)
-// {
-//   return transposed_constant;
-// }
+//                                               const ConstantTensor<ConstType,Inputs...>& constant)
+// {return constant;}
 
-// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
+// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
+// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+// //                                               const Transposed<Expression<ConstantTensor<ConstType,Inputs...>>>& transposed_constant)
+// // {
+// //   return transposed_constant;
+// // }
+
+// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
+// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+// //                                               const TraceOperator<Expression<ConstantTensor<ConstType,Inputs...>>>& trace_constant)
+// // {
+// //   return trace_constant;
+// // }
+
+
+// template<template<class,Integer,class > class TestOrTrial, template<class>class Unary,
+// typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
 // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-//                                               const TraceOperator<Expression<ConstantTensor<ConstType,Inputs...>>>& trace_constant)
+//                                               const Unary<Expression<ConstantTensor<ConstType,Inputs...>>>& unary_operator_applied_to_constant)
 // {
-//   return trace_constant;
+//     return unary_operator_applied_to_constant;
 // }
-
-
-template<template<class,Integer,class > class TestOrTrial, template<class>class Unary,
-typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
-constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-                                              const Unary<Expression<ConstantTensor<ConstType,Inputs...>>>& unary_operator_applied_to_constant)
-{
-    return unary_operator_applied_to_constant;
-}
-
-template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename FullSpace, Integer M,typename Operator,typename FuncType>
-constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-                                              const Function<FullSpace,M,Operator,FuncType>& func)
-{return func;}
 
 // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename FullSpace, Integer M,typename Operator,typename FuncType>
 // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-//                                               const Transposed<Expression<Function<FullSpace,M,Operator,FuncType>>>& transposed_func)
-// {return transposed_func;}
+//                                               const Function<FullSpace,M,Operator,FuncType>& func)
+// {return func;}
+
+// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename FullSpace, Integer M,typename Operator,typename FuncType>
+// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+// //                                               const Transposed<Expression<Function<FullSpace,M,Operator,FuncType>>>& transposed_func)
+// // {return transposed_func;}
 
 
-template<template<class,Integer,class > class TestOrTrial, template<class>class Unary,
-typename MixedSpace,Integer N,typename Expr,typename FullSpace, Integer M,typename Operator,typename FuncType>
-constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-                                              const Unary<Expression<Function<FullSpace,M,Operator,FuncType>>>& unary_operator_applied_to_func)
-{return unary_operator_applied_to_func;}
-
-
-
-
-
-
-
-
-
-
-
-
-template<template<class,Integer,class > class TestOrTrial, template<class>class Unary,
-typename MixedSpace,Integer N,typename Expr,typename T>
-constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-                                              const Unary<Expression<T>>& expr)
-{
-    auto e=form_of_composite_operator_aux(t,expr.derived());
-    // decltype(expr.derived()) eee(6);
-    return Unary<Expression<decltype(e)>>(e);
-}
-
-// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename T>
+// template<template<class,Integer,class > class TestOrTrial, template<class>class Unary,
+// typename MixedSpace,Integer N,typename Expr,typename FullSpace, Integer M,typename Operator,typename FuncType>
 // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-//                                               const UnaryPlus<Expression<T>>& expr)
+//                                               const Unary<Expression<Function<FullSpace,M,Operator,FuncType>>>& unary_operator_applied_to_func)
+// {return unary_operator_applied_to_func;}
+
+
+
+
+
+
+
+
+
+
+
+
+// template<template<class,Integer,class > class TestOrTrial, template<class>class Unary,
+// typename MixedSpace,Integer N,typename Expr,typename T>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const Unary<Expression<T>>& expr)
 // {
-//   auto e=form_of_composite_operator_aux(t,expr.derived());
-//   // decltype(expr.derived()) eee(6);
-//   return +e;
+//     auto e=form_of_composite_operator_aux(t,expr.derived());
+//     // decltype(expr.derived()) eee(6);
+//     return Unary<Expression<decltype(e)>>(e);
 // }
 
-// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename T>
+// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename T>
+// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+// //                                               const UnaryPlus<Expression<T>>& expr)
+// // {
+// //   auto e=form_of_composite_operator_aux(t,expr.derived());
+// //   // decltype(expr.derived()) eee(6);
+// //   return +e;
+// // }
+
+// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename T>
+// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+// //                                               const UnaryMinus<Expression<T>>& expr)
+// // {
+// //   auto e=form_of_composite_operator_aux(t,expr.derived());
+// //   return -e;
+// // }
+
+
+
+// template<template<class,Integer,class > class TestOrTrial, template<class,class>class Binary,
+// typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
 // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-//                                               const UnaryMinus<Expression<T>>& expr)
+//                                               const Binary<Expression<Left>,Expression<Right>>& expr)
 // {
-//   auto e=form_of_composite_operator_aux(t,expr.derived());
-//   return -e;
-// }
-
-
-
-template<template<class,Integer,class > class TestOrTrial, template<class,class>class Binary,
-typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
-constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-                                              const Binary<Expression<Left>,Expression<Right>>& expr)
-{
-    auto left=form_of_composite_operator_aux(t,expr.left());
-    auto right=form_of_composite_operator_aux(t,expr.right());
+//     auto left=form_of_composite_operator_aux(t,expr.left());
+//     auto right=form_of_composite_operator_aux(t,expr.right());
     
-    return Binary<Expression<decltype(left)>,Expression<decltype(right)>>(left,right);
-}
-
-
-// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
-// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-//                                               const Addition<Expression<Left>,Expression<Right>>& expr)
-// {
-//   auto left=form_of_composite_operator_aux(t,expr.left());
-//   auto right=form_of_composite_operator_aux(t,expr.right());
-
-//   return left+right;
-// }
-
-// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
-// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-//                                               const Subtraction<Expression<Left>,Expression<Right>>& expr)
-// {
-//   auto left=form_of_composite_operator_aux(t,expr.left());
-//   auto right=form_of_composite_operator_aux(t,expr.right());
-
-//   return left-right;
-// }
-
-// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
-// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-//                                               const Multiplication<Expression<Left>,Expression<Right>>& expr)
-// {
-//   auto left=form_of_composite_operator_aux(t,expr.left());
-//   auto right=form_of_composite_operator_aux(t,expr.right());
-
-//   return left*right;
-// }
-
-// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
-// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-//                                               const Division<Expression<Left>,Expression<Right>>& expr)
-// {
-//   auto left=form_of_composite_operator_aux(t,expr.left());
-//   auto right=form_of_composite_operator_aux(t,expr.right());
-
-//   return left/right;
+//     return Binary<Expression<decltype(left)>,Expression<decltype(right)>>(left,right);
 // }
 
 
-template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr>
-constexpr auto form_of_composite_operator(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t)
-{
-    return form_of_composite_operator_aux(t,t.composite_operator().composite_operator());
-}
+// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+// //                                               const Addition<Expression<Left>,Expression<Right>>& expr)
+// // {
+// //   auto left=form_of_composite_operator_aux(t,expr.left());
+// //   auto right=form_of_composite_operator_aux(t,expr.right());
 
-template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Operator>
-constexpr auto form_of_composite_operator(const TestOrTrial<MixedSpace,N,Operator>& t)
-{
-    return t;
-}
+// //   return left+right;
+// // }
+
+// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+// //                                               const Subtraction<Expression<Left>,Expression<Right>>& expr)
+// // {
+// //   auto left=form_of_composite_operator_aux(t,expr.left());
+// //   auto right=form_of_composite_operator_aux(t,expr.right());
+
+// //   return left-right;
+// // }
+
+// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+// //                                               const Multiplication<Expression<Left>,Expression<Right>>& expr)
+// // {
+// //   auto left=form_of_composite_operator_aux(t,expr.left());
+// //   auto right=form_of_composite_operator_aux(t,expr.right());
+
+// //   return left*right;
+// // }
+
+// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+// //                                               const Division<Expression<Left>,Expression<Right>>& expr)
+// // {
+// //   auto left=form_of_composite_operator_aux(t,expr.left());
+// //   auto right=form_of_composite_operator_aux(t,expr.right());
+
+// //   return left/right;
+// // }
+
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr>
+// constexpr auto form_of_composite_operator(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t)
+// {
+//     return form_of_composite_operator_aux(t,t.composite_operator().composite_operator());
+// }
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Operator>
+// constexpr auto form_of_composite_operator(const TestOrTrial<MixedSpace,N,Operator>& t)
+// {
+//     return t;
+// }
 
 
 

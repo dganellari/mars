@@ -7,6 +7,8 @@
 #include "mars_shape_function.hpp"
 namespace mars{
 
+template<typename Elem,Integer FEFamily,Integer Order>
+class SingleShapeFunctionCoefficient;
 
 template<typename Elem>
 class SignedNormal;
@@ -242,8 +244,8 @@ public:
   typename std::enable_if_t< IsDifferent<T,std::tuple<>>::value, void >
   init_aux_aux(const Integer elem_id,const S& s, T& t)
   {
-    shape_function_coefficients_init<Elem,FEFamily,Order>(s.sign(elem_id),t);
-
+    // shape_function_coefficients_init<Elem,FEFamily,Order>(s.sign(elem_id),t);
+    SingleShapeFunctionCoefficient<Elem,FEFamily,Order>::apply(s.sign(elem_id),t);
   }
 
 

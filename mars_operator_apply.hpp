@@ -31,7 +31,7 @@ class OperatorApply<Addition< Matrix<T,Rows,Cols>,Matrix<T,Rows,Cols> > >
     for(Integer jj=0;jj<Left::Cols;jj++)
            A(ii,jj)=B(ii,jj)+C(ii,jj);
         // AdditionMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
-  };
+  }
 };
 
 // template<typename T,Integer Rows,Integer Cols>

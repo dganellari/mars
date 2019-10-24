@@ -34,6 +34,13 @@
 #include "mars_entity.hpp"
 #include "mars_connectivity.hpp"
 #include "mars_examples.hpp"
+#include <Kokkos_Crs.hpp>
+// #include <Kokkos_MultiVector.hpp>
+// #include <Kokkos_DefaultNode.hpp>
+// typedef Kokkos::DefaultNode::DefaultNodeType                 KokkosNode;
+// typedef KokkosExamples::DummySparseKernel<Node>         KokkosSparseOps;
+// typedef Kokkos::CrsMatrix< float,int,KokkosNode,KokkosSparseOps>     FloatMat;
+
 #ifdef WITH_PAR_MOONOLITH
 #include "mars_moonolith_test.hpp"
 #include <mpi.h>
@@ -1162,7 +1169,7 @@ int main(int argc, char *argv[])
 
 
 // functionspaces_example2D();
-assembly_example();
+// assembly_example();
 // boundary_example();
 
 // simplex_reference_normals_3D();
@@ -1236,6 +1243,10 @@ assembly_example();
 	Kokkos::initialize(argc,argv);
 	{
 
+Integer M=4;
+Integer N=4;
+Kokkos::View<Real **[3][4]> aaa("aaa",M,N);
+assembly_example();
 		// run_benchmarks(level);
 
 		//test_mars_mesh_generation_kokkos_2D(2,4);

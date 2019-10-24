@@ -1212,7 +1212,7 @@ using UniqueMap=typename UniqueMapHelper<NumberTuple,Maps,MaxNumberInTuple<Numbe
 
 
 template<typename Operator, typename Elem,Integer FEFamily> //  BaseFunctioSpace>
-class MapFromReference5;
+class MapFromReference;
 
 template<typename Tuple, Integer FEFamily, Integer Nmax,Integer N>
 class MapOperatorTupleHelper;
@@ -1225,7 +1225,7 @@ class MapOperatorTupleHelper<Tuple,FEFamily,Nmax,Nmax>
   using Nthelem=GetType<Tuple,Nmax>;
   using Operator=GetType<Nthelem,0>;
   using Elem=GetType<Nthelem,1>;
-  using type=std::tuple< MapFromReference5<Operator,Elem,FEFamily> >;
+  using type=std::tuple< MapFromReference<Operator,Elem,FEFamily> >;
 };
 
 template<typename Tuple, Integer FEFamily,Integer Nmax,Integer N=0>
@@ -1235,7 +1235,7 @@ class MapOperatorTupleHelper
   using Nthelem=GetType<Tuple,N>;
   using Operator=GetType<Nthelem,0>;
   using Elem=GetType<Nthelem,1>;
-  using single_type=std::tuple< MapFromReference5<Operator,Elem,FEFamily> >;
+  using single_type=std::tuple< MapFromReference<Operator,Elem,FEFamily> >;
   using type=decltype(std::tuple_cat(std::declval<single_type>(),
                              std::declval<typename MapOperatorTupleHelper<Tuple,FEFamily,Nmax,N+1>::type>()));
 };
@@ -2217,17 +2217,17 @@ template<typename Left,typename Right,Integer QR>
 class L2DotProductIntegral; 
 
 template<typename Form, typename...Forms>
-class ShapeFunctions2;
+class ShapeFunctionsCollection;
 
 
 template<typename Left,typename Right,Integer QR, typename...Forms>
 constexpr auto build_tuple_of_evals_aux_aux(const std::tuple<>& null, 
                            const L2DotProductIntegral<Left,Right,QR>& l2prod,
-                                 ShapeFunctions2<Forms...>&shape_functions)
+                                 ShapeFunctionsCollection<Forms...>&shape_functions)
 {
   using L2dot=L2DotProductIntegral<Left,Right,QR>;
 
-  return Evaluation<Expression<L2dot>,ShapeFunctions2<Forms...>>
+  return Evaluation<Expression<L2dot>,ShapeFunctionsCollection<Forms...>>
         // (Eval(L2dot(l2prod.left(),l2prod.right()),shape_functions));
         (Eval(l2prod,shape_functions));
 }
@@ -2235,11 +2235,11 @@ constexpr auto build_tuple_of_evals_aux_aux(const std::tuple<>& null,
 template<typename Left,typename Right,Integer QR, typename...Forms>
 constexpr auto build_tuple_of_evals_aux_aux(const L2DotProductIntegral<Left,Right,QR>& l2prod,
                                             const std::tuple<>& null,
-                                                  ShapeFunctions2<Forms...>&shape_functions)
+                                                  ShapeFunctionsCollection<Forms...>&shape_functions)
 {
   using L2dot=L2DotProductIntegral<Left,Right,QR>;
 
-  return Evaluation<Expression<L2dot>,ShapeFunctions2<Forms...>>
+  return Evaluation<Expression<L2dot>,ShapeFunctionsCollection<Forms...>>
 //         (Eval(L2dot(l2prod.left(),l2prod.right()),shape_functions));
   (Eval(l2prod,shape_functions));
 
@@ -2249,15 +2249,15 @@ template<typename Left1,typename Right1,Integer QR1,
          typename Left2,typename Right2,Integer QR2, typename...Forms>
 constexpr auto build_tuple_of_evals_aux_aux(const L2DotProductIntegral<Left1,Right1,QR1>& l2prod1, 
                            const L2DotProductIntegral<Left2,Right2,QR2>& l2prod2,
-                                 ShapeFunctions2<Forms...>&shape_functions)
+                                 ShapeFunctionsCollection<Forms...>&shape_functions)
 {
   // using L2dot1=L2DotProductIntegral<Left1,Right1,QR1>;
   // using L2dot2=L2DotProductIntegral<Left2,Right2,QR2>;
 
 
   return Eval(l2prod1+l2prod2,shape_functions);
-        // Addition<Expression<Evaluation<Expression<L2dot1>,ShapeFunctions2<Forms...> > >,
-        //           Expression<Evaluation<Expression<L2dot2>,ShapeFunctions2<Forms...> > > >
+        // Addition<Expression<Evaluation<Expression<L2dot1>,ShapeFunctionsCollection<Forms...> > >,
+        //           Expression<Evaluation<Expression<L2dot2>,ShapeFunctionsCollection<Forms...> > > >
         // (Eval(L2dot1(l2prod1.left(),l2prod1.right()),shape_functions),
         //  Eval(L2dot2(l2prod2.left(),l2prod2.right()),shape_functions));
 }
@@ -2265,11 +2265,11 @@ constexpr auto build_tuple_of_evals_aux_aux(const L2DotProductIntegral<Left1,Rig
 template<typename Left, typename Left1,typename Right1,Integer QR1, typename...Forms>
 constexpr auto build_tuple_of_evals_aux_aux(const Left& left, 
                            const L2DotProductIntegral<Left1,Right1,QR1>& l2prod,
-                                 ShapeFunctions2<Forms...>&shape_functions)
+                                 ShapeFunctionsCollection<Forms...>&shape_functions)
 {
   using L2dot1=L2DotProductIntegral<Left1,Right1,QR1>;
   // return Addition<Expression<Left>,
-  //                 Expression< Evaluation<Expression<L2dot1>,ShapeFunctions2<Forms...> >>>
+  //                 Expression< Evaluation<Expression<L2dot1>,ShapeFunctionsCollection<Forms...> >>>
   //       (left,
   //        Eval(L2dot1(l2prod.left(),l2prod.right()),shape_functions));
   const auto& left_=left.expression();
@@ -2279,11 +2279,11 @@ constexpr auto build_tuple_of_evals_aux_aux(const Left& left,
 // template<typename Left1,typename Right1,Integer QR1,typename Right, typename...Forms>
 // constexpr auto build_tuple_of_evals_aux_aux(const L2DotProductIntegral<Left1,Right1,QR1>& l2prod,
 //                            const Right& right,
-//                                  ShapeFunctions2<Forms...>&shape_functions)
+//                                  ShapeFunctionsCollection<Forms...>&shape_functions)
 // {
 //   using L2dot1=L2DotProductIntegral<Left1,Right1,QR1>;
 //   std::cout<<"---------"<<l2prod.left().eval()<<std::endl;
-//   return Addition<Expression<Evaluation<Expression<L2dot1>,ShapeFunctions2<Forms...>>>,
+//   return Addition<Expression<Evaluation<Expression<L2dot1>,ShapeFunctionsCollection<Forms...>>>,
 //                   Expression<Right>>
 //         (Eval(L2dot1(l2prod.left(),l2prod.right()),shape_functions),
 //          right());
@@ -2297,7 +2297,7 @@ constexpr auto build_tuple_of_evals_aux_aux(const Left& left,
 template<typename TupleOfPairsNumbers,typename Tuple, typename Left,typename Right,Integer QR, typename...Forms>
 constexpr auto build_tuple_of_evals_aux(const Tuple& tuple,
                           const L2DotProductIntegral<Left,Right,QR>& l2prod,
-                                ShapeFunctions2<Forms...>&shape_functions)
+                                ShapeFunctionsCollection<Forms...>&shape_functions)
 {
   using L2=L2DotProductIntegral<Left,Right,QR>;
   using TestTrialNumbers=typename L2::TestTrialNumbers;
@@ -2312,7 +2312,7 @@ constexpr auto build_tuple_of_evals_aux(const Tuple& tuple,
 template<typename TupleOfPairsNumbers,typename Tuple, typename Left,typename Right, typename...Forms>
 constexpr auto build_tuple_of_evals_aux(const Tuple& tuple,
                           const Addition<Expression<Left>,Expression<Right>>& addition,
-                                ShapeFunctions2<Forms...>&shape_functions)
+                                ShapeFunctionsCollection<Forms...>&shape_functions)
 {
   auto tuple_new=build_tuple_of_evals_aux<TupleOfPairsNumbers>(tuple,addition.left(),shape_functions);
   return build_tuple_of_evals_aux<TupleOfPairsNumbers>(tuple_new,addition.right(),shape_functions);
@@ -2320,7 +2320,7 @@ constexpr auto build_tuple_of_evals_aux(const Tuple& tuple,
 
 
 template<typename TupleOfPairsNumbers, typename Expr, typename...Forms>
-constexpr auto build_tuple_of_evals(const Expr& expr,ShapeFunctions2<Forms...>&shape_functions)
+constexpr auto build_tuple_of_evals(const Expr& expr,ShapeFunctionsCollection<Forms...>&shape_functions)
 {
   using emptytuple=TupleOfType<TupleTypeSize<TupleOfPairsNumbers>::value,std::tuple<> > ;
   return build_tuple_of_evals_aux<TupleOfPairsNumbers,emptytuple>(emptytuple(),expr,shape_functions);
@@ -2387,6 +2387,202 @@ class ConstantTensor;
 
 template<typename FullSpace, Integer M,typename Operator,typename FuncType>
 class Function;
+
+
+
+
+
+
+
+
+
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Operator,typename Expr>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,Operator>& t, 
+                                              const Expr& expr)
+{
+    using T=TestOrTrial<MixedSpace,N,Operator>;
+    using FunctionSpace=typename T::FunctionSpace;
+    using FromElementFunctionSpacesToFirstSpaceTupleType=typename FunctionSpace::FromElementFunctionSpacesToFirstSpaceTupleType;
+    constexpr Integer FirstSpace=GetType<FromElementFunctionSpacesToFirstSpaceTupleType,T::value>::value;
+    return TestOrTrial<MixedSpace,FirstSpace,Operator>(t.spaces_ptr());
+}
+
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Operator>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+                                              const Operator& op)
+{
+    using T=TestOrTrial<MixedSpace,N,Operator>;
+    using FunctionSpace=typename T::FunctionSpace;
+    using FromElementFunctionSpacesToFirstSpaceTupleType=typename FunctionSpace::FromElementFunctionSpacesToFirstSpaceTupleType;
+    constexpr Integer FirstSpace=GetType<FromElementFunctionSpacesToFirstSpaceTupleType,T::value>::value;
+    return TestOrTrial<MixedSpace,FirstSpace,Operator>(t.spaces_ptr());
+}
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Operator>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const Transposed<Expression<Operator>>& expr)
+// {
+//   auto e=form_of_composite_operator_aux(t,expr.derived());
+//   // decltype(expr.derived()) eee(6);
+//   return Transpose(e);
+
+//   // using T=TestOrTrial<MixedSpace,N,Operator>;
+//   // using FunctionSpace=typename T::FunctionSpace;
+//   // using FromElementFunctionSpacesToFirstSpaceTupleType=typename FunctionSpace::FromElementFunctionSpacesToFirstSpaceTupleType;
+//   // constexpr Integer FirstSpace=GetType<FromElementFunctionSpacesToFirstSpaceTupleType,T::value>::value;  
+//   // return Transpose(TestOrTrial<MixedSpace,FirstSpace,Operator>(t.spaces_ptr()));
+// }
+
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+                                              const ConstantTensor<ConstType,Inputs...>& constant)
+{return constant;}
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const Transposed<Expression<ConstantTensor<ConstType,Inputs...>>>& transposed_constant)
+// {
+//   return transposed_constant;
+// }
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const TraceOperator<Expression<ConstantTensor<ConstType,Inputs...>>>& trace_constant)
+// {
+//   return trace_constant;
+// }
+
+
+template<template<class,Integer,class > class TestOrTrial, template<class>class Unary,
+typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+                                              const Unary<Expression<ConstantTensor<ConstType,Inputs...>>>& unary_operator_applied_to_constant)
+{
+    return unary_operator_applied_to_constant;
+}
+
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename FullSpace, Integer M,typename Operator,typename FuncType>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+                                              const Function<FullSpace,M,Operator,FuncType>& func)
+{return func;}
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename FullSpace, Integer M,typename Operator,typename FuncType>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const Transposed<Expression<Function<FullSpace,M,Operator,FuncType>>>& transposed_func)
+// {return transposed_func;}
+
+
+template<template<class,Integer,class > class TestOrTrial, template<class>class Unary,
+typename MixedSpace,Integer N,typename Expr,typename FullSpace, Integer M,typename Operator,typename FuncType>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+                                              const Unary<Expression<Function<FullSpace,M,Operator,FuncType>>>& unary_operator_applied_to_func)
+{return unary_operator_applied_to_func;}
+
+
+
+
+
+
+
+
+
+
+
+
+template<template<class,Integer,class > class TestOrTrial, template<class>class Unary,
+typename MixedSpace,Integer N,typename Expr,typename T>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+                                              const Unary<Expression<T>>& expr)
+{
+    auto e=form_of_composite_operator_aux(t,expr.derived());
+    // decltype(expr.derived()) eee(6);
+    return Unary<Expression<decltype(e)>>(e);
+}
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename T>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const UnaryPlus<Expression<T>>& expr)
+// {
+//   auto e=form_of_composite_operator_aux(t,expr.derived());
+//   // decltype(expr.derived()) eee(6);
+//   return +e;
+// }
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename T>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const UnaryMinus<Expression<T>>& expr)
+// {
+//   auto e=form_of_composite_operator_aux(t,expr.derived());
+//   return -e;
+// }
+
+
+
+template<template<class,Integer,class > class TestOrTrial, template<class,class>class Binary,
+typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+                                              const Binary<Expression<Left>,Expression<Right>>& expr)
+{
+    auto left=form_of_composite_operator_aux(t,expr.left());
+    auto right=form_of_composite_operator_aux(t,expr.right());
+    
+    return Binary<Expression<decltype(left)>,Expression<decltype(right)>>(left,right);
+}
+
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const Addition<Expression<Left>,Expression<Right>>& expr)
+// {
+//   auto left=form_of_composite_operator_aux(t,expr.left());
+//   auto right=form_of_composite_operator_aux(t,expr.right());
+
+//   return left+right;
+// }
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const Subtraction<Expression<Left>,Expression<Right>>& expr)
+// {
+//   auto left=form_of_composite_operator_aux(t,expr.left());
+//   auto right=form_of_composite_operator_aux(t,expr.right());
+
+//   return left-right;
+// }
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const Multiplication<Expression<Left>,Expression<Right>>& expr)
+// {
+//   auto left=form_of_composite_operator_aux(t,expr.left());
+//   auto right=form_of_composite_operator_aux(t,expr.right());
+
+//   return left*right;
+// }
+
+// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
+// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
+//                                               const Division<Expression<Left>,Expression<Right>>& expr)
+// {
+//   auto left=form_of_composite_operator_aux(t,expr.left());
+//   auto right=form_of_composite_operator_aux(t,expr.right());
+
+//   return left/right;
+// }
+
+
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr>
+constexpr auto form_of_composite_operator(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t)
+{
+    return form_of_composite_operator_aux(t,t.composite_operator().composite_operator());
+}
+
+template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Operator>
+constexpr auto form_of_composite_operator(const TestOrTrial<MixedSpace,N,Operator>& t)
+{
+    return t;
+}
+
 
 
 

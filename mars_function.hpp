@@ -10,7 +10,8 @@ namespace mars{
 template<typename FullSpace,Integer N,typename Operator_=IdentityOperator,typename FuncType=EmptyClass>
 class Function;
 
-
+template<typename Elem>
+class Jacobian;
 
 
 

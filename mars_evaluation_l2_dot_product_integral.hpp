@@ -1,0 +1,71 @@
+
+#ifndef MARS_EVALUATION_L2_DOT_PRODUCT_INTEGRAL_HPP
+#define MARS_EVALUATION_L2_DOT_PRODUCT_INTEGRAL_HPP
+#include "mars_l2_dot_product_integral.hpp"
+namespace mars {
+
+
+
+
+
+
+template<typename Left_,typename Right_,Integer QR, typename...Forms>
+class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,QR>>, ShapeFunctionsCollection<Forms...>>
+{
+ public:
+ using Left=Left_;
+ using Right=Right_;
+ using type= L2DotProductIntegral<Left,Right,QR>;
+ using QRule=typename type ::QRule;
+ using TestTrialSpaces=typename type::TestTrialSpaces;
+ using subtype= OperatorType<type,GetType<typename type::form>>;
+ static constexpr bool PositiveWeights= IsPositive(QRule::qp_weights);
+ 
+ Evaluation(const type& expr, ShapeFunctionsCollection<Forms...>& shape_functions):
+ expr_(expr.left(),expr.right())
+ ,
+ shape_functions_(shape_functions)
+ ,
+ local_tensor_(expr)
+ {};
+ 
+ template<typename Elem>
+ void apply_aux(subtype& mat, const Jacobian<Elem>& J)
+ {
+
+  // changed todo fixme
+   // local_tensor_.apply(mat,J,shape_functions_());
+  std::cout<<"pre Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
+  
+
+  local_tensor_.apply(mat,J,shape_functions_);//(),shape_functions_.composite_tensor(),shape_functions_.composite_shapes());
+  std::cout<<"after Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
+ }
+
+
+ template<typename...Inputs>
+ void apply(subtype& mat, const Inputs&...inputs)
+ {apply_aux(mat,inputs...);}
+
+ auto operator()(){return local_tensor_;}
+
+       auto  expression(){return expr_;}
+ const auto& expression()const{return expr_;}
+
+
+
+private:
+ type expr_;
+ ShapeFunctionsCollection<Forms...>& shape_functions_;
+ LocalTensor<PositiveWeights,TestTrialSpaces,type,GetType<typename type::form>> local_tensor_;
+};
+
+
+template<typename Left,typename Right,Integer QR, typename Form,typename...OtherTemplateArguments>
+constexpr auto Eval(const L2DotProductIntegral<Left,Right,QR>& t,const OtherTemplateArguments&...ts)
+{return Evaluation< Expression<remove_all_t<decltype(t)>>,OtherTemplateArguments...>(t,ts...);}
+
+
+
+}
+#endif

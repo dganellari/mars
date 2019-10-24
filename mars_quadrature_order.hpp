@@ -3,7 +3,7 @@
 
 // #include "mars_constant.hpp"
 #include "mars_base.hpp"
-
+#include "mars_operators.hpp"
 
 namespace mars{
 
@@ -14,6 +14,8 @@ class GradientOperator;
 class DivergenceOperator;
 
 class CurlOperator;
+
+class TraceOperator;
 
 template<typename...Ts>
 class CompositeOperator;
@@ -55,11 +57,11 @@ class Subtraction;
 template<typename Left,typename Right>
 class Addition;
 
-template<typename T>
-class Transposed;
+// template<typename T>
+// class Transposed;
 
-template<typename T>
-class TraceOperator;
+// template<typename T>
+// class MatTraceOperator;
 
 template<typename...T>
 class QuadratureOrder;
@@ -116,6 +118,11 @@ class QuadratureOrder<Trial<MixedSpace,N_,OperatorKind>,Args...>
   static constexpr Integer value=QuadratureOrder<Operator,BaseFunctionSpace>::value;
 };
 
+template<template<class>class Unary,typename T, typename...Args>
+class QuadratureOrder< Unary< Expression<T> >,Args... >
+{ public:
+  static constexpr Integer value=QuadratureOrder<T,Args...>::value;
+};
 
 // order(T) = order(+T)
 template<typename T, typename...Args>
@@ -171,21 +178,27 @@ class QuadratureOrder< InnerProduct< Expression<Left>, Expression<Right> >,Args.
 };
 
 
-template<typename T, typename...Args>
-class QuadratureOrder< Transposed< Expression<T> >,Args... >
-{ public:
-  static constexpr Integer value=QuadratureOrder<T,Args...>::value;
-};
+// template<typename T, typename...Args>
+// class QuadratureOrder< Transposed< Expression<T> >,Args... >
+// { public:
+//   static constexpr Integer value=QuadratureOrder<T,Args...>::value;
+// };
 
-template<typename T, typename...Args>
-class QuadratureOrder< TraceOperator< Expression<T> >,Args... >
-{ public:
-  static constexpr Integer value=QuadratureOrder<T,Args...>::value;
-};
+// template<typename T, typename...Args>
+// class QuadratureOrder< TraceOperator< Expression<T> >,Args... >
+// { public:
+//   static constexpr Integer value=QuadratureOrder<T,Args...>::value;
+// };
 
 
 template<Integer Order,Integer Continuity, Integer NComponents>
 class QuadratureOrder<IdentityOperator,BaseFunctionSpace<LagrangeFE,Order,Continuity,NComponents> >
+{ public:
+  static constexpr Integer value=Order;
+};
+
+template<Integer Order,Integer Continuity, Integer NComponents>
+class QuadratureOrder<TraceOperator, BaseFunctionSpace<LagrangeFE,Order,Continuity,NComponents> >
 { public:
   static constexpr Integer value=Order;
 };
@@ -203,6 +216,11 @@ class QuadratureOrder<IdentityOperator, BaseFunctionSpace<RaviartThomasFE,Order,
   static constexpr Integer value=Order+1;
 };
 
+template<Integer Order,Integer Continuity, Integer NComponents>
+class QuadratureOrder<TraceOperator, BaseFunctionSpace<RaviartThomasFE,Order,Continuity,NComponents> >
+{ public:
+  static constexpr Integer value=Order;
+};
 
 
 template<Integer Order,Integer Continuity, Integer NComponents>

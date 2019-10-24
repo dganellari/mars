@@ -1,8 +1,7 @@
 #ifndef MARS_JACOBIAN_HPP
 #define MARS_JACOBIAN_HPP
 #include "mars_simplex.hpp"
-
-
+#include "mars_general_form.hpp"
 
 namespace mars{
 
@@ -353,7 +352,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Numbe
  }
 
  template<typename Elem,typename...Forms>
-  void apply(subtype& vec, const Jacobian<Elem>& J, ShapeFunctions2<Forms...>& shape_functions)
+  void apply(subtype& vec, const Jacobian<Elem>& J, ShapeFunctionsCollection<Forms...>& shape_functions)
 
  {
   eval_left_.apply(left_value_,J,shape_functions(),shape_functions.composite_tensor(),shape_functions.composite_shapes());
@@ -755,6 +754,8 @@ public:
     
 };
 
+template<typename...Ts>
+class EvaluationOfL2Inners;
 
 template<typename Form,typename ShapeFunctions_>
 class EvaluationOfL2Inners<Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions_>>

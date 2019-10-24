@@ -62,5 +62,26 @@ class Addition< Expression <DerivedLeft>, Expression <DerivedRight> >
   Right right_;
 };
 
+
+template<typename T, typename...Ts>
+class MultipleAdditionHelper;
+
+template<typename T, typename...Ts>
+using MultipleAddition=typename MultipleAdditionHelper<T,Ts...>::type;
+
+template<typename T>
+class MultipleAdditionHelper<T>
+{
+  public:
+    using type=T;
+};
+
+template<typename T, typename...Ts>
+class MultipleAdditionHelper
+{
+  public:
+    using type=Addition<Expression<T>,Expression<typename MultipleAdditionHelper<Ts...>::type>>;
+};
+
 }
 #endif
