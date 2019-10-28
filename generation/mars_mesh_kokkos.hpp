@@ -492,13 +492,38 @@ public:
 		ViewVectorType<bool> active_ = get_view_active();
 
 		double result;
-		parallel_reduce("Loop1", N, KOKKOS_LAMBDA (const int& i, double& lsum )
+		parallel_reduce("Active_all", N, KOKKOS_LAMBDA (const int& i, double& lsum )
 		{
 			lsum += active_(i);
 		},result);
 
 		double time = timer.seconds();
-		std::cout << "Reduction took: " << time << " seconds." << std::endl;
+		std::cout << "Active_all Reduction took: " << time << " seconds." << std::endl;
+
+		printf("Result: %i %lf\n", N, result);
+
+		return result>0;
+	}
+
+
+	inline bool n_active_elements(const ViewVectorType<Integer> elements)
+	{
+		using namespace Kokkos;
+
+		Timer timer;
+
+		ViewVectorType<bool> active_ = get_view_active();
+
+		Integer N = elements.extent(0);
+
+		double result;
+		parallel_reduce("Active_elem", N, KOKKOS_LAMBDA (const int& i, double& lsum )
+		{
+			lsum += active_(elements(i));
+		},result);
+
+		double time = timer.seconds();
+		std::cout << "Active_elements Reduction took: " << time << " seconds." << std::endl;
 
 		printf("Result: %i %lf\n", N, result);
 
