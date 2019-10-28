@@ -20,7 +20,7 @@ namespace mars {
 	class SubManifoldElementMap<N,KokkosImplementation> {
 	public:
 
-		using ElementVector = TempArray<Integer,20>;
+		using ElementVector = TempArray<Integer,40>;
 
 		virtual ~SubManifoldElementMap() {}
 
