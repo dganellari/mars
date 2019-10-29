@@ -1,11 +1,9 @@
 #ifndef GENERATION_MARS_UTILS_KOKKOS_HPP_
 #define GENERATION_MARS_UTILS_KOKKOS_HPP_
 
-#include "mars_mesh.hpp"
 #include "mars_globals.hpp"
 
 namespace mars {
-
 
 //return size of an array as a compile-time constant.
 template<typename T, std::size_t N, std::size_t M>
@@ -220,129 +218,17 @@ void remove_extra_nodes(Mesh<Dim, ManifoldDim, Point_>& mesh,
 
 }*/
 
-template<class Mesh_>
-struct Hypersphere
-{
-	static constexpr Integer Dim = Mesh_::Dim;
-	static constexpr Integer ManifoldDim = Mesh_::ManifoldDim;
-
-	Mesh_* mesh;
-	ViewVectorTypeC<Integer, Dim> center;
-	Real radius;
-
-	ViewVectorType<Integer> count;
-
-	Hypersphere(Mesh_* ms, ViewVectorTypeC<Integer, Dim> c, Real rd,
-			ViewVectorType<Integer> pc) :
-			mesh(ms), center(c), radius(rd), count(pc)
-	{
-	}
-
-	Hypersphere(Mesh_* ms, ViewVectorTypeC<Integer, Dim> c, Real rd) :
-				mesh(ms), center(c), radius(rd)
-	{
-	}
-
-
-	MARS_INLINE_FUNCTION
-	void operator()(const int element_id) const
-	{
-		Integer hyper_count=0;
-
-		bool inside = false;
-		bool outside = false;
-
-		if (mesh->is_active(element_id)) //TODO: remove if by compacting on active elems.
-		{
-			auto e = mesh->elem(element_id);
-
-			for(Integer i=0; i<ManifoldDim+1; ++i){
-
-				auto dir = mesh->point(e.nodes[i]);
-				auto d = dir.norm();
-
-				if(d < radius) {
-					inside = true;
-				} else if(d > radius) {
-					outside = true;
-				} else if(std::abs(d) < 1e-16) {
-					inside = true;
-					outside = true;
-					break;
-				}
-			}
-
-			if(inside && outside) {
-				++hyper_count;
-			}
-		}
-
-		count(element_id+1) = hyper_count;
-		//+1 for leaving the first cell 0 and performing an inclusive scan on the rest
-		//to have both exclusive and inclusive and the total on the last cell.
-	}
-};
-
-
-template<class Mesh_>
-struct ScatterHypersphere : Hypersphere<Mesh_>
-{
-	static constexpr Integer Dim = Mesh_::Dim;
-	static constexpr Integer ManifoldDim = Mesh_::ManifoldDim;
-
-	ViewVectorType<Integer> elements;
-	ViewVectorType<Integer> scan;
-
-	ScatterHypersphere(Mesh_* ms, ViewVectorTypeC<Integer, Dim> c, Real rd,
-			ViewVectorType<Integer> sc, ViewVectorType<Integer> elems) :
-			Hypersphere<Mesh_>(ms, c, rd), scan(sc), elements(elems)
-	{
-	}
-
-	MARS_INLINE_FUNCTION
-	void operator()(const int element_id) const
-	{
-		bool inside = false;
-		bool outside = false;
-
-		if (mesh->is_active(element_id)) //TODO: remove if by compacting on active elems.
-		{
-			auto e = mesh->elem(element_id);
-
-			for(Integer i=0; i<ManifoldDim+1; ++i){
-
-				auto dir = mesh->point(e.nodes[i]);
-				auto d = dir.norm();
-
-				if(d < radius) {
-					inside = true;
-				} else if(d > radius) {
-					outside = true;
-				} else if(std::abs(d) < 1e-16) {
-					inside = true;
-					outside = true;
-					break;
-				}
-			}
-
-			if(inside && outside) {
-				elements(scan(element_id)) = element_id;
-			}
-		}
-	}
-};
-
-
+template<typename T>
 void inclusive_scan(const Integer start, const Integer end,
-			ViewVectorType<Integer> in_)
+			ViewVectorType<T> in_)
 {
 	using namespace Kokkos;
 
 	parallel_scan (RangePolicy<>(start , end ),	KOKKOS_LAMBDA (const int& i,
-				Integer& upd, const bool& final)
+				T& upd, const bool& final)
 	{
 		// Load old value in case we update it before accumulating
-		const float val_i = in_(i);
+		const T val_i = in_(i);
 
 		upd += val_i;
 
@@ -353,16 +239,17 @@ void inclusive_scan(const Integer start, const Integer end,
 	});
 }
 
+template<typename T>
 void inclusive_scan(const Integer start, const Integer end,
-			const ViewVectorType<Integer> in_, ViewVectorType<Integer> out_))
+			const ViewVectorType<T> in_, ViewVectorType<T> out_)
 {
 	using namespace Kokkos;
 
 	parallel_scan (RangePolicy<>(start , end ),	KOKKOS_LAMBDA (const int& i,
-				Integer& upd, const bool& final)
+				T& upd, const bool& final)
 	{
 		// Load old value in case we update it before accumulating
-		const float val_i = in_(i);
+		const T val_i = in_(i);
 
 		upd += val_i;
 
@@ -373,16 +260,17 @@ void inclusive_scan(const Integer start, const Integer end,
 	});
 }
 
+template<typename T, typename U>
 void incl_excl_scan(const Integer start, const Integer end,
-			const ViewVectorType<Integer> in_, ViewVectorType<Integer> out_))
+			const ViewVectorType<U> in_, ViewVectorType<T> out_)
 {
 	using namespace Kokkos;
 
 	parallel_scan (RangePolicy<>(start , end ),	KOKKOS_LAMBDA (const int& i,
-				Integer& upd, const bool& final)
+				T& upd, const bool& final)
 	{
 		// Load old value in case we update it before accumulating
-		const float val_i = in_(i);
+		const T val_i = in_(i);
 
 		upd += val_i;
 
@@ -393,15 +281,56 @@ void incl_excl_scan(const Integer start, const Integer end,
 	});
 }
 
-void exclusive_scan(const Integer start, const Integer end,
-			ViewVectorType<Integer> in_)
+template<typename T>
+void complex_inclusive_scan(const Integer start, const Integer end,
+			ViewVectorType<T> index_count_,
+			ViewVectorType<T> pt_count_)
 {
 	using namespace Kokkos;
+
+	//paralel scan on the index_count view for both columns at the same time misusing the complex instead.
+/*	parallel_scan (RangePolicy<>(1 , nr_elements +1 ),	KOKKOS_LAMBDA (const int& i,
+				complex<Integer>& upd, const bool& final)
+	{*/
 	parallel_scan (RangePolicy<>(start , end ),	KOKKOS_LAMBDA (const int& i,
-				Integer& upd, const bool& final)
+				complex<T>& upd, const bool& final)
 	{
 		// Load old value in case we update it before accumulating
-		const float val_i = in_(i);
+		const T val_i = index_count_(i);
+		const T val_ip = pt_count_(i);
+
+		/*upd += val_i;
+		upd_ip += val_ip;*/
+		upd.real() += val_i;
+		upd.imag() += val_ip;
+
+		if (final)
+		{
+			index_count_(i) = upd.real(); // only update array on final pass
+			pt_count_(i) = upd.imag();
+			/*index_count_(i,0) = upd;
+			index_count_(i,1) = upd_ip;*/
+		}
+		// For exclusive scan, change the update value after
+		// updating array, like we do here. For inclusive scan,
+		// change the update value before updating array.
+		/*upd.real() += val_i0;
+		upd.imag() += val_i1;*/
+
+	});
+}
+
+template<typename T>
+void exclusive_scan(const Integer start, const Integer end,
+			ViewVectorType<T> in_)
+{
+	using namespace Kokkos;
+
+	parallel_scan (RangePolicy<>(start , end ),	KOKKOS_LAMBDA (const int& i,
+				T& upd, const bool& final)
+	{
+		// Load old value in case we update it before accumulating
+		const T val_i = in_(i);
 
 		if (final)
 		{
@@ -411,97 +340,6 @@ void exclusive_scan(const Integer start, const Integer end,
 		upd += val_i;
 
 	});
-}
-
-template<class Mesh_>
-ViewVectorType<Integer> mark_hypersphere_for_refinement(const Mesh_* mesh,
-ViewVectorTypeC<Integer, Mesh_::Dim> center, Real radius, const Integer nr_elements)
-{
-	using namespace Kokkos;
-
-	Timer timer1;
-
-	ViewVectorType<Integer> count_ = ViewVectorType<Integer>("count_hypers",
-		nr_elements + 1);
-
-	parallel_for(nr_elements,
-			Hypersphere(mesh, center, radius, count_));
-
-	double time1 = timer1.seconds();
-	std::cout << "Hypersphere Count took: " << time1 << " seconds." << std::endl;
-
-
-	Timer timer2;
-
-	inclusive_scan(1, nr_elements + 1, count_);
-
-	double time2 = timer2.seconds();
-	std::cout << "Inclusive_scan took: " << time2 << " seconds." << std::endl;
-
-	auto index_subview = subview(count_, nr_elements);
-	auto h_ic = create_mirror_view(index_subview);
-
-	// Deep copy device view to host view.
-	deep_copy(h_ic, index_subview);
-
-	ViewVectorType<Integer> elements = ViewVectorType<Integer>("hyper_elements",
-		h_ic(0));
-
-	Timer timer3;
-
-	parallel_for(nr_elements,
-		ScatterHypersphere(mesh, center, radius, count_, elements));
-
-	double time3 = timer3.seconds();
-	std::cout << "ScatterHypersphere took: " << time3 << " seconds." << std::endl;
-
-	fence();
-
-	return elements;
-}
-
-//mesh is a device pointer and can not be used here for getting the nr_elements.
-template<class Mesh_>
-ViewVectorType<Integer> mark_active(const Mesh_* mesh, const Integer nr_elements)
-{
-	using namespace Kokkos;
-
-
-	Timer timer2;
-
-	ViewVectorType<Integer> scan = ViewVectorType<Integer>("count_hypers",
-		nr_elements + 1);
-
-	incl_excl_scan(0, nr_elements, mesh->get_view_active(), scan);
-
-	double time2 = timer2.seconds();
-	std::cout << "Inclusive_scan took: " << time2 << " seconds." << std::endl;
-
-	auto index_subview = subview(scan, nr_elements);
-	auto h_ic = create_mirror_view(index_subview);
-
-	// Deep copy device view to host view.
-	deep_copy(h_ic, index_subview);
-
-	Timer timer3;
-
-	ViewVectorType<Integer> elements = ViewVectorType<Integer>("hyper_elements",
-		h_ic(0));
-
-	parallel_for(nr_elements, KOKKOS_LAMBDA(const Integer element_id){
-
-		if (mesh->is_active(element_id))
-		{
-			elements(scan(element_id)) = element_id;
-		}
-	});
-
-	double time3 = timer3.seconds();
-	std::cout << "ScatterHypersphere took: " << time3 << " seconds." << std::endl;
-
-	fence();
-
-	return elements;
 }
 
 }
