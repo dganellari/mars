@@ -102,6 +102,16 @@ namespace mars {
 		return a;
 	}
 
+	template<typename T>
+	MARS_INLINE_FUNCTION const T&
+	abs(const T& a)
+	{
+		if (a<0)
+			return -a;
+
+		return a;
+	}
+
     template<typename T, Integer N>
     MARS_INLINE_FUNCTION int find_pivot (TempArray<T,N> &in, int start, int end)
     {

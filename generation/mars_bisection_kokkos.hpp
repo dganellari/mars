@@ -44,6 +44,13 @@ public:
 		return fail_if_not_refine;
 	}
 
+	Mesh *get_mesh() const{
+		return mesh;
+	}
+
+	Mesh *get_host_mesh() const{
+		return host_mesh;
+	}
 	/*
 
 	inline Integer side_num(
@@ -475,8 +482,8 @@ public:
 				depth_first(element_id, terminal_incident_count, terminal_pt_count);
 			}
 
-			index_count(element_id+1) = terminal_incident_count;
-			pt_count(element_id+1) = terminal_pt_count;
+			index_count(i+1) = terminal_incident_count;
+			pt_count(i+1) = terminal_pt_count;
 			//+1 for leaving the first cell 0 and performing an inclusive scan on the rest
 			//to have both exclusive and inclusive and the total on the last cell.
 		}
@@ -547,7 +554,7 @@ public:
 		MARS_INLINE_FUNCTION
 		void operator()(const int i) const
 		{
-			Integer element_id = elements(i);
+			Integer element_id = this->elements(i);
 
 			if (this->mesh->is_active(element_id))
 			{
@@ -686,77 +693,7 @@ public:
 		}
 	};
 
-	void scan_index_pt(const Integer start, const Integer end,
-			ViewVectorType<Integer> index_count_,
-			ViewVectorType<Integer> pt_count_)
-	{
-		using namespace Kokkos;
 
-		//paralel scan on the index_count view for both columns at the same time misusing the complex instead.
-	/*	parallel_scan (RangePolicy<>(1 , nr_elements +1 ),	KOKKOS_LAMBDA (const int& i,
-					complex<Integer>& upd, const bool& final)
-		{*/
-		parallel_scan (RangePolicy<>(start , end ),	KOKKOS_LAMBDA (const int& i,
-					complex<Integer>& upd, const bool& final)
-		{
-			// Load old value in case we update it before accumulating
-			const float val_i = index_count_(i);
-			const float val_ip = pt_count_(i);
-
-			/*upd += val_i;
-			upd_ip += val_ip;*/
-			upd.real() += val_i;
-			upd.imag() += val_ip;
-
-			if (final)
-			{
-				index_count_(i) = upd.real(); // only update array on final pass
-				pt_count_(i) = upd.imag();
-				/*index_count_(i,0) = upd;
-				index_count_(i,1) = upd_ip;*/
-			}
-			// For exclusive scan, change the update value after
-			// updating array, like we do here. For inclusive scan,
-			// change the update value before updating array.
-			/*upd.real() += val_i0;
-			upd.imag() += val_i1;*/
-
-		});
-	}
-
-	void exclusive_scan(const Integer start, const Integer end, ViewVectorType<Integer> index_count_)
-	{
-		using namespace Kokkos;
-
-		//paralel scan on the index_count view for both columns at the same time misusing the complex instead.
-	/*	parallel_scan (RangePolicy<>(1 , nr_elements +1 ),	KOKKOS_LAMBDA (const int& i,
-					complex<Integer>& upd, const bool& final)
-		{*/
-		parallel_scan (RangePolicy<>(start , end ),	KOKKOS_LAMBDA (const int& i,
-					Integer& upd, const bool& final)
-		{
-			// Load old value in case we update it before accumulating
-			const float val_i = index_count_(i);
-
-			/*upd.real() += val_i0;
-			upd.imag() += val_i1*/;
-
-			if (final)
-			{
-				/*index_count_(i,0) = upd.real(); // only update array on final pass
-				index_count_(i,1) = upd.imag();// only update array on final pass1*/
-				index_count_(i) = upd;
-			}
-			// For exclusive scan, change the update value after
-			// updating array, like we do here. For inclusive scan,
-			// change the update value before updating array.
-			/*upd.real() += val_i0;
-			upd.imag() += val_i1;*/
-
-			upd += val_i;
-
-		});
-	}
 
 	inline void free_mesh(){
 
@@ -849,6 +786,7 @@ public:
 		std::array<Integer, 2> res;
 
 		Integer nr_elements = elements.extent(0);
+		std::cout << "Nr_elements: " << nr_elements << std::endl;
 
 		/*+1 for the incident total sum for both inclusive and exclusive sum scan at the same result*/
 		ViewVectorType<Integer> index_count_ = ViewVectorType<Integer>(
@@ -866,7 +804,7 @@ public:
 
 		Timer timer2;
 
-		scan_index_pt(1, nr_elements + 1, index_count_, pt_count_);
+		complex_inclusive_scan(1, nr_elements + 1, index_count_, pt_count_);
 
 		double time2 = timer2.seconds();
 		std::cout << "Scan took: " << time2 << " seconds." << std::endl;
@@ -1040,12 +978,6 @@ public:
 	inline void refine_elements(const ViewVectorType<Integer> elements)
 	{
 		using namespace Kokkos;
-		Integer nr_elements = elements.extent(0);
-
-		std::cout << "Nr_elements: " << nr_elements << std::endl;
-
-		//get the old n_elements for the old mesh. Inside the loop would be wrong(would get the incremental mesh)
-		//mesh_start_index = host_mesh->n_elements();
 
 		Timer timer_refine;
 
@@ -1103,8 +1035,6 @@ public:
 		double time = timer_refine.seconds();
 				std::cout << "Refine Mesh took: " << time << " seconds. In " << it_count
 						<< " iterations." << std::endl;
-
-
 	}
 
 	void refine(const ViewVectorType<Integer> elements)
@@ -1128,7 +1058,6 @@ public:
 		std::cout << "parallel kokkos took: " << _update << " seconds." << std::endl;
 
 		//edge_element_map_.describe(std::cout);
-
 
 		/*always use the initial nr_elements not the update one within the function.
 		because this is the number of elements to be checked if refined or not*/
@@ -1161,12 +1090,11 @@ public:
 
 		//edge_element_map_.describe(std::cout);
 
-		ViewVectorType<Integer> elements = mark_active(mesh, host_mesh->n_elements());
-
-		/*always use the initial nr_elements not the update one within the function.
-		because this is the number of elements to be checked if refined or not*/
-		for (Integer i = 0; i < n_levels; ++i)
+		for (Integer i = 0; i < n_levels; ++i){
+			ViewVectorType<Integer> elements = mark_active(mesh,
+					host_mesh->get_view_active(), host_mesh->n_elements());
 			refine_elements(elements);
+		}
 
 	/*	mesh.update_dual_graph();
 		mesh.tags() = level;*/
