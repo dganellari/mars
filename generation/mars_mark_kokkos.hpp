@@ -44,7 +44,6 @@ struct Hypersphere
 			for(Integer i=0; i<ManifoldDim+1; ++i){
 
 				Point<Real, Dim> pt_center(center);
-
 				auto dir = mesh->point(e.nodes[i]) - pt_center;
 				auto d = dir.norm();
 
@@ -222,8 +221,8 @@ void fill_view(ViewVectorTypeC<T, Dim> point, const T value)
 
 	typename ViewVectorTypeC<T, Dim>::HostMirror h_pt = create_mirror_view(point);
 
-	for (Integer i = 0; i < Dim; ++i)
-	h_pt(i) = value;
+	for (Integer i=0; i<Dim; ++i)
+		h_pt(i) = value;
 
 	deep_copy(point, h_pt);
 }

@@ -16,8 +16,8 @@ namespace mars {
 	public:
 		using EdgeSelectPtr = std::shared_ptr<EdgeSelect<Mesh>>;
 
-		static const Integer Dim 		 = Mesh::Dim;
-		static const Integer ManifoldDim = Mesh::ManifoldDim;
+		static constexpr Integer Dim 		 = Mesh::Dim;
+		static constexpr Integer ManifoldDim = Mesh::ManifoldDim;
 
 		void run(
 			const Integer n_levels,
@@ -61,11 +61,13 @@ namespace mars {
 
 			Timer timer;
 
-			ViewVectorTypeC<Real, Dim> center;
+			ViewVectorTypeC<Real, Dim> center("center");
 			fill_view(center, 0.5);
 
 			for (Integer i = 0; i < n_levels; ++i)
 			{
+				std::cout << "======================================\n";
+
 				ViewVectorType<Integer> elements = mark_hypersphere_for_refinement<Mesh>(
 						b.get_mesh(), center, 0.5, b.get_host_mesh()->n_elements());
 
