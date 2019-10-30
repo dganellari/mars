@@ -29,10 +29,11 @@ public:
 
 	}
 
-	MARS_INLINE_FUNCTION Point(ViewVectorTypeC<T,Dim> v)
+	MARS_INLINE_FUNCTION Point(ViewVectorTypeC<T, Dim> v)
 	{
-		for(Integer i=0;i <Dim; ++i)
+		for(Integer i=0; i<Dim; ++i){
 			pointArray[i] = v(i);
+		}
 	}
 
 	MARS_INLINE_FUNCTION
