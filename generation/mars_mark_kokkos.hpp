@@ -124,7 +124,8 @@ struct ScatterHypersphere : Hypersphere<Mesh_>
 
 template<class Mesh_>
 ViewVectorType<Integer> mark_hypersphere_for_refinement(Mesh_* mesh,
-const ViewVectorTypeC<Real, Mesh_::Dim> center, const Real radius, const Integer nr_elements)
+		const ViewVectorTypeC<Real, Mesh_::Dim> center, const Real radius,
+		const Integer nr_elements)
 {
 	using namespace Kokkos;
 
@@ -171,20 +172,23 @@ const ViewVectorTypeC<Real, Mesh_::Dim> center, const Real radius, const Integer
 
 //mesh is a device pointer and can not be used here for getting the nr_elements.
 template<class Mesh_>
-ViewVectorType<Integer> mark_active(const Mesh_* mesh, const ViewVectorType<bool> active, const Integer nr_elements)
+ViewVectorType<Integer> mark_active(const Mesh_* mesh,
+		const ViewVectorType<bool> active, const Integer nr_elements)
 {
 	using namespace Kokkos;
 
 
-	Timer timer2;
+//	Timer timer2;
 
 	ViewVectorType<Integer> scan = ViewVectorType<Integer>("count_hypers",
 		nr_elements + 1);
 
 	incl_excl_scan(0, nr_elements, active, scan);
 
+/*
 	double time2 = timer2.seconds();
 	std::cout << "Inclusive_scan took: " << time2 << " seconds." << std::endl;
+*/
 
 	auto index_subview = subview(scan, nr_elements);
 	auto h_ic = create_mirror_view(index_subview);
@@ -207,12 +211,64 @@ ViewVectorType<Integer> mark_active(const Mesh_* mesh, const ViewVectorType<bool
 	});
 
 	double time3 = timer3.seconds();
-	std::cout << "ScatterHypersphere took: " << time3 << " seconds." << std::endl;
+	std::cout << "Mark_active took: " << time3 << " seconds." << std::endl;
 
 	fence();
 
 	return elements;
 }
+
+template<class Mesh_>
+bool compact(const Mesh_* mesh, ViewVectorType<Integer>& elements)
+{
+	using namespace Kokkos;
+
+	Timer timer3;
+
+	const Integer nr_elements = elements.extent(0);
+	//printf("scanI nr_elements: %li\n", nr_elements);
+
+	ViewVectorType<bool> predicate("predicate", nr_elements);
+
+	//build predicate
+	parallel_for(nr_elements, KOKKOS_LAMBDA(const Integer i){
+
+		if (mesh->is_active(elements(i)))
+		{
+			predicate(i) = true;
+		}
+	});
+
+	ViewVectorType<Integer> scan = ViewVectorType<Integer>("count_hypers",
+		nr_elements + 1);
+	//scan the predicate for getting the addresses for compaction
+	incl_excl_scan(0, nr_elements, predicate, scan);
+
+	auto index_subview = subview(scan, nr_elements);
+	auto h_ic = create_mirror_view(index_subview);
+
+	// Deep copy device view to host view.
+	deep_copy(h_ic, index_subview);
+	std::cout << "Scan for compact count (new nr_elements): " << h_ic(0)<< std::endl;
+
+	ViewVectorType<Integer> el = ViewVectorType<Integer>("hyper_elements", h_ic(0));
+	//compact using the addresses in scan
+	parallel_for(nr_elements, KOKKOS_LAMBDA(const Integer i){
+
+		if (predicate(i))
+		{
+			el(scan(i)) = elements(i);
+		}
+	});
+
+	elements = el;
+
+	double time3 = timer3.seconds();
+	std::cout << "compact elements took: " << time3 << " seconds." << std::endl;
+
+	return elements.extent(0) > 0;
+}
+
 
 template<typename T, Integer Dim>
 void fill_view(ViewVectorTypeC<T, Dim> point, const T value)

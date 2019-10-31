@@ -975,13 +975,14 @@ public:
 
 
 
-	inline void refine_elements(const ViewVectorType<Integer> elements)
+	inline void refine_elements(ViewVectorType<Integer>& elements)
 	{
 		using namespace Kokkos;
 
 		Timer timer_refine;
 
 		Integer it_count = 0;
+		//while (compact(mesh, elements)) // a bit faster due to compaction (reduced branching)
 		while (host_mesh->n_active_elements(elements))
 		{
 			++it_count;
@@ -1037,7 +1038,7 @@ public:
 						<< " iterations." << std::endl;
 	}
 
-	void refine(const ViewVectorType<Integer> elements)
+	void refine(ViewVectorType<Integer>& elements)
 	{
 
 		const Integer capacity = euler_graph_formula(host_mesh);
@@ -1090,11 +1091,18 @@ public:
 
 		//edge_element_map_.describe(std::cout);
 
+		Kokkos::Timer timer_refine;
+
+
 		for (Integer i = 0; i < n_levels; ++i){
 			ViewVectorType<Integer> elements = mark_active(mesh,
 					host_mesh->get_view_active(), host_mesh->n_elements());
 			refine_elements(elements);
 		}
+
+		double time = timer_refine.seconds();
+		std::cout << "parallel Uniform LEPP took: " << time << " seconds." << std::endl;
+
 
 	/*	mesh.update_dual_graph();
 		mesh.tags() = level;*/

@@ -527,7 +527,7 @@ public:
 
 		printf("Result: %i %lf\n", N, result);
 
-		return result>0;
+		return result > 0;
 	}
 
 	/*bool have_common_sub_surface(
