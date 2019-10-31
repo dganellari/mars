@@ -28,7 +28,7 @@ namespace mars {
 			auto mesh = mesh_in;
 
 			ParallelBisection<Mesh> b(&mesh);
-			b.uniform_refine(1);
+			b.uniform_refine(n_levels);
 
 
 			Integer exp_num = 0;
@@ -55,7 +55,7 @@ namespace mars {
 			std::cout << mesh.n_boundary_sides() << std::endl;
 			std::cout << "volume: " << mesh.volume() << std::endl; */
 
-			ParallelBisection<Mesh> b(&mesh);
+		/*	ParallelBisection<Mesh> b(&mesh);
 
 			b.uniform_refine(2);
 
@@ -82,7 +82,7 @@ namespace mars {
 
 			double time = timer.seconds();
 			std::cout << "Parallel Lepp Refinement took: " << time << " seconds." << std::endl;
-
+*/
 			typename Mesh::SerialMesh sMesh;
 			convert_parallel_mesh_to_serial<Dim, ManifoldDim>(sMesh, mesh);
 			//std::cout << "volume: " << sMesh.volume() << std::endl;
