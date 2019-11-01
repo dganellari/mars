@@ -20,7 +20,14 @@ namespace mars {
 	class SubManifoldElementMap<N,KokkosImplementation> {
 	public:
 
-		using ElementVector = TempArray<Integer,40>;
+/*
+		Based on Rivara the smallest angle remaining is 27.89 degrees
+		which means 360 / 27.89 = 12.9. The max number of incidents is then 13.
+		Adding here un upper limit considering that incative elements might be
+		still be present in the list then it will be 2* 13= 26.
+		The allocation is done using 32 as a grace alloc. for special cases.
+*/
+		using ElementVector = TempArray<Integer,32>;
 
 		virtual ~SubManifoldElementMap() {}
 
@@ -86,7 +93,11 @@ namespace mars {
 			MARS_INLINE_FUNCTION
 			void operator()(int element_id) const
 			{
-				update_elem(mapping, mesh->elem(element_id));
+				if(mesh->is_active(element_id))
+				{
+					update_elem(mapping, mesh->elem(element_id));
+				}
+
 			}
 		};
 
@@ -121,9 +132,9 @@ namespace mars {
 
 		template<Integer Dim, Integer ManifoldDim>
 		void build(const Mesh<Dim, ManifoldDim> &mesh)
-		{	
+		{
 			mapping_.clear();
-			
+
 			auto ne = mesh.n_elements();
 			for(Integer i = 0; i < ne; ++i) {
 				update(mesh.elem(i));
@@ -161,7 +172,7 @@ namespace mars {
 				}
 
 				const ElementVector &els = elements(Side<N>(nodes));
-					
+
 				for(auto el : els) {
 					temp.insert(el);
 				}

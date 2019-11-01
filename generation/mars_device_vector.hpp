@@ -17,9 +17,18 @@ namespace mars {
 	    TempArray() : index(0) {}
 
 	    MARS_INLINE_FUNCTION bool insert(const T value){
-	    	Integer i = Kokkos::atomic_fetch_add(&index, 1);
-	    	assert(i<Dim);
-	    	values[i] = value;
+			Integer i = Kokkos::atomic_fetch_add(&index, 1);
+			/*the limit dim is only 26 (hard coded in mars_ede_element_map)
+			 so in some special case it may try to add more and it will fail
+			 If for the special case the user may need more the source code should be changed.*/
+			//assert(i < Dim);
+			if (i >= Dim)
+			{
+				printf(
+						"Reached the memory limit of 13 incidents that an edge can have based on the LEPP from Rivara. Exiting kernel...\n");
+				exit(1);
+			}
+			values[i] = value;
 	    }
 
 	    MARS_INLINE_FUNCTION friend TempArray operator*(const T &factor, const TempArray &v)
