@@ -21,8 +21,7 @@ public:
 	using ParallelEdgeNodeMap = DeviceEdgeNodeMap<2>;
 	using Edge = Side<2, KokkosImplementation>;
 
-
-	using ElementVector = TempArray<Integer,40>;
+	using ElementVector = SubManifoldElementMap<2, KokkosImplementation>::ElementVector;
 
 	static const Integer Dim 		 = Mesh_::Dim;
 	static const Integer ManifoldDim = Mesh_::ManifoldDim;
@@ -781,7 +780,6 @@ public:
 	{
 		using namespace Kokkos;
 
-		Timer timer1;
 
 		std::array<Integer, 2> res;
 
@@ -794,6 +792,8 @@ public:
 
 		ViewVectorType<Integer> pt_count_ = ViewVectorType<Integer>("pt_count",
 				nr_elements + 1); //TODO: try to use the results of the index_count avoiding the uniqueness of the map since the atomic lepp should avoid it.
+
+		Timer timer1;
 
 		parallel_for(nr_elements,
 				RefineMesh(edge_element_map_.mapping_, mesh, elements, tree_,
@@ -828,8 +828,8 @@ public:
 		double time3 = timer3.seconds();
 		std::cout << "Deep copy subview took: " << time3 << " seconds." << std::endl;
 
-		printf("lepp_incidents_count: %li\n", h_iac(0));
-		printf("lepp_node_count: %li\n", h_pac(0));
+	/*	printf("lepp_incidents_count: %li\n", h_iac(0));
+		printf("lepp_node_count: %li\n", h_pac(0));*/
 
 		return res;
 	}
@@ -860,12 +860,19 @@ public:
 		host_mesh->resize_elements(2 * lip_size);
 		host_mesh->resize_points(points_count);
 
-		edge_node_map_.rehash_map(2 * host_mesh->n_elements()); //TODO: maybe a modified euler for capacity?
-			//edge_element_map_.describe(std::cout);
-		edge_element_map_.rehash_map(2 * host_mesh->n_elements()); //TODO: maybe a modified euler for capacity?
-			//edge_element_map_.describe(std::cout);
-
 		copy_mesh_to_device(); //only the object. No deep copy of the member views.
+
+		edge_node_map_.rehash_map(2 * host_mesh->n_elements()); //TODO: maybe a modified euler for capacity?
+
+		Timer timer2;
+
+		//edge_element_map_.rehash_map(2 * host_mesh->n_elements());
+		edge_element_map_.reserve_map(2 * host_mesh->n_elements()); //TODO: maybe a modified euler for capacity?
+		edge_element_map_.update(mesh, host_mesh->n_elements());
+		//edge_element_map_.describe(std::cout);
+
+		double time2 = timer2.seconds();
+		std::cout << "edge_element_map_.update took: " << time2 << " seconds." << std::endl;
 
 		double time1 = timer1.seconds();
 		std::cout << "Resize/rehash took: " << time1 << " seconds." << std::endl;
@@ -982,20 +989,17 @@ public:
 		Timer timer_refine;
 
 		Integer it_count = 0;
-		//while (compact(mesh, elements)) // a bit faster due to compaction (reduced branching)
-		while (host_mesh->n_active_elements(elements))
+		while (compact(mesh, elements)) // a bit faster due to compaction (reduced branching)
+		//while (host_mesh->n_active_elements(elements))
 		{
 			++it_count;
 
 			Kokkos::Timer timer_precomp;
 
 			//Only for the reserve tree the modified nr_elements should be used.
-			//For the others the original mesh nr_elements should be used.
+			//For the others the element set nr_elements should be used.
 			reserve_tree(host_mesh->n_elements());
 			precompute_lepp_incidents(mesh, host_mesh->n_elements());
-
-			//TODO: Using the same nr_elements within the while loop it calls the kernel
-			// also for inactive elements which is not good. Compaction?
 
 			double time_precomp = timer_precomp.seconds();
 			std::cout << "paralel precompute_lepp_incidents took: " << time_precomp
@@ -1067,7 +1071,6 @@ public:
 	/*	mesh.update_dual_graph();
 		mesh.tags() = level;*/
 	}
-
 
 	void uniform_refine(const Integer n_levels)
 	{
