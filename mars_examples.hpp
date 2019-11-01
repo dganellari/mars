@@ -35,654 +35,670 @@ namespace mars{
 
 
 
- constexpr Integer simplex_face_sub_entities(const Integer& SimplexDim,const Integer& FaceNumber,const Integer& SubEntityDim, const Integer& SubEntityDimNumber)
- {
-  switch(SimplexDim)
-  {
-   // triangles
-   case 2:
-   // triangle faces (edges)
-   switch(FaceNumber)
-   {
-    // face 0
-    case 0:
-       switch(SubEntityDim)
-       {
-        // face 0, nodes
-        case 0:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 0;
-          case 1: return 1;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
-        }
-        // face 0, edges
-        case 1:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 0;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }        
-        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+//  constexpr Integer simplex_face_sub_entities(const Integer& SimplexDim,const Integer& FaceNumber,const Integer& SubEntityDim, const Integer& SubEntityDimNumber)
+//  {
+//   switch(SimplexDim)
+//   {
+//    // triangles
+//    case 2:
+//    // triangle faces (edges)
+//    switch(FaceNumber)
+//    {
+//     // face 0
+//     case 0:
+//        switch(SubEntityDim)
+//        {
+//         // face 0, nodes
+//         case 0:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 0;
+//           case 1: return 1;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+//         }
+//         // face 0, edges
+//         case 1:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 0;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }        
+//         default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
 
-       }
+//        }
    
-    case 1:
-       switch(SubEntityDim)
-       {
-        // face 0, nodes
-        case 0:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 0;
-          case 1: return 2;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
-        }
-        // face 0, edges
-        case 1:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 1;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }        
-        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+//     case 1:
+//        switch(SubEntityDim)
+//        {
+//         // face 0, nodes
+//         case 0:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 0;
+//           case 1: return 2;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+//         }
+//         // face 0, edges
+//         case 1:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 1;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }        
+//         default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
 
-       }
-    case 2:
-       switch(SubEntityDim)
-       {
-        // face 0, nodes
-        case 0:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 1;
-          case 1: return 2;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
-        }
-        // face 0, edges
-        case 1:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 2;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }        
-        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+//        }
+//     case 2:
+//        switch(SubEntityDim)
+//        {
+//         // face 2, nodes
+//         case 0:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 1;
+//           case 1: return 2;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+//         }
+//         // face 2, edges
+//         case 1:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 2;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }        
+//         default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
 
-       }
-    default: {assert(0 &&"simplex_face_sub_entities: invalid face number");return -1;};
-   }
-  // tetrahedrons
-  case 3:
-  // tetrahedrons faces (triangles)
-   switch(FaceNumber)
-   {
-    // face 0
-    case 0:
-       switch(SubEntityDim)
-       {
-        // face 0, nodes
-        case 0:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 0;
-          case 1: return 1;
-          case 2: return 2;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
-        }
-        // face 0, edges
-        case 1:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 0;
-          case 1: return 1;
-          case 2: return 3;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }  
-        // face 0, triangles
-        case 2:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 0;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }         
-        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
-       }
+//        }
+//     default: {assert(0 &&"simplex_face_sub_entities: invalid face number");return -1;};
+//    }
+//   // tetrahedrons
+//   case 3:
+//   // tetrahedrons faces (triangles)
+//    switch(FaceNumber)
+//    {
+//     // face 0
+//     case 0:
+//        switch(SubEntityDim)
+//        {
+//         // face 0, nodes
+//         case 0:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 0;
+//           case 1: return 1;
+//           case 2: return 2;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+//         }
+//         // face 0, edges
+//         case 1:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 0;
+//           case 1: return 1;
+//           case 2: return 3;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }  
+//         // face 0, triangles
+//         case 2:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 0;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }         
+//         default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+//        }
    
-    case 1:
-       switch(SubEntityDim)
-       {
-        // face 1, nodes
-        case 0:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 0;
-          case 1: return 1;
-          case 2: return 3;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
-        }
-        // face 1, edges
-        case 1:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 0;
-          case 1: return 2;
-          case 2: return 4;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }  
-        // face 1, triangles
-        case 2:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 1;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }         
-        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
-       }
-    case 2:
-       switch(SubEntityDim)
-       {
-        // face 0, nodes
-        case 0:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 0;
-          case 1: return 2;
-          case 2: return 3;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
-        }
-        // face 0, edges
-        case 1:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 1;
-          case 1: return 2;
-          case 2: return 5;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }  
-        // face 0, triangles
-        case 2:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 2;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }         
-        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
-       }
-    case 3:
-        switch(SubEntityDim)
-       {
-        // face 0, nodes
-        case 0:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 1;
-          case 1: return 2;
-          case 2: return 3;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
-        }
-        // face 0, edges
-        case 1:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 3;
-          case 1: return 4;
-          case 2: return 5;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }  
-        // face 0, triangles
-        case 2:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 3;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }         
-        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
-       }
+//     case 1:
+//        switch(SubEntityDim)
+//        {
+//         // face 1, nodes
+//         case 0:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 0;
+//           case 1: return 1;
+//           case 2: return 3;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+//         }
+//         // face 1, edges
+//         case 1:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 0;
+//           case 1: return 2;
+//           case 2: return 4;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }  
+//         // face 1, triangles
+//         case 2:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 1;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }         
+//         default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+//        }
+//     case 2:
+//        switch(SubEntityDim)
+//        {
+//         // face 0, nodes
+//         case 0:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 0;
+//           case 1: return 2;
+//           case 2: return 3;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+//         }
+//         // face 0, edges
+//         case 1:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 1;
+//           case 1: return 2;
+//           case 2: return 5;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }  
+//         // face 0, triangles
+//         case 2:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 2;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }         
+//         default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+//        }
+//     case 3:
+//         switch(SubEntityDim)
+//        {
+//         // face 0, nodes
+//         case 0:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 1;
+//           case 1: return 2;
+//           case 2: return 3;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+//         }
+//         // face 0, edges
+//         case 1:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 3;
+//           case 1: return 4;
+//           case 2: return 5;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }  
+//         // face 0, triangles
+//         case 2:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 3;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }         
+//         default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+//        }
 
-    default: {assert(0 &&"simplex_face_sub_entities: invalid face number");return -1;};
-   }
+//     default: {assert(0 &&"simplex_face_sub_entities: invalid face number");return -1;};
+//    }
 
-  // pentatope
-  case 4:
-  // tetrahedrons faces (tetrahedrons)
-   switch(FaceNumber)
-   {
-    // face 0
-    case 0:
-       switch(SubEntityDim)
-       {
-        // face 0, nodes
-        case 0:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 0;
-          case 1: return 1;
-          case 2: return 2;
-          case 3: return 3;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
-        }
-        // face 0, edges
-        case 1:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 0;
-          case 1: return 1;
-          case 2: return 2;
-          case 3: return 4;
-          case 4: return 5;
-          case 5: return 7;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }  
-        // face 0, triangles
-        case 2:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 0;
-          case 1: return 1;
-          case 2: return 3;
-          case 3: return 6;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }  
-        // face 0, tetrahedrons
-        case 3:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 0;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }        
-        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
-       }
+//   // pentatope
+//   case 4:
+//   // tetrahedrons faces (tetrahedrons)
+//    switch(FaceNumber)
+//    {
+//     // face 0
+//     case 0:
+//        switch(SubEntityDim)
+//        {
+//         // face 0, nodes
+//         case 0:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 0;
+//           case 1: return 1;
+//           case 2: return 2;
+//           case 3: return 3;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+//         }
+//         // face 0, edges
+//         case 1:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 0;
+//           case 1: return 1;
+//           case 2: return 2;
+//           case 3: return 4;
+//           case 4: return 5;
+//           case 5: return 7;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }  
+//         // face 0, triangles
+//         case 2:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 0;
+//           case 1: return 1;
+//           case 2: return 3;
+//           case 3: return 6;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }  
+//         // face 0, tetrahedrons
+//         case 3:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 0;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }        
+//         default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+//        }
 
-    // face 1
-    case 1:
-       switch(SubEntityDim)
-       {
-        // face 1, edges
-        case 0:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 0;
-          case 1: return 1;
-          case 2: return 2;
-          case 3: return 4;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
-        }
-        // face 1, edges
-        case 1:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 0;
-          case 1: return 1;
-          case 2: return 3;
-          case 3: return 4;
-          case 4: return 6;
-          case 5: return 8;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }  
-        // face 1, triangles
-        case 2:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 0;
-          case 1: return 2;
-          case 2: return 4;
-          case 3: return 7;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }  
-        // face 1, tetrahedrons
-        case 3:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 1;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }        
-        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
-       }
-    // face 2
-    case 2:
-       switch(SubEntityDim)
-       {
-        // face 2, nodes
-        case 0:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 0;
-          case 1: return 1;
-          case 2: return 3;
-          case 3: return 4;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
-        }
-        // face 2, edges
-        case 1:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 0;
-          case 1: return 2;
-          case 2: return 3;
-          case 3: return 5;
-          case 4: return 6;
-          case 5: return 9;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }  
-        // face 2, triangles
-        case 2:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 1;
-          case 1: return 2;
-          case 2: return 5;
-          case 3: return 8;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }  
-        // face 2, tetrahedrons
-        case 3:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 2;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }        
-        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
-       }
+//     // face 1
+//     case 1:
+//        switch(SubEntityDim)
+//        {
+//         // face 1, edges
+//         case 0:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 0;
+//           case 1: return 1;
+//           case 2: return 2;
+//           case 3: return 4;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+//         }
+//         // face 1, edges
+//         case 1:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 0;
+//           case 1: return 1;
+//           case 2: return 3;
+//           case 3: return 4;
+//           case 4: return 6;
+//           case 5: return 8;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }  
+//         // face 1, triangles
+//         case 2:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 0;
+//           case 1: return 2;
+//           case 2: return 4;
+//           case 3: return 7;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }  
+//         // face 1, tetrahedrons
+//         case 3:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 1;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }        
+//         default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+//        }
+//     // face 2
+//     case 2:
+//        switch(SubEntityDim)
+//        {
+//         // face 2, nodes
+//         case 0:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 0;
+//           case 1: return 1;
+//           case 2: return 3;
+//           case 3: return 4;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+//         }
+//         // face 2, edges
+//         case 1:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 0;
+//           case 1: return 2;
+//           case 2: return 3;
+//           case 3: return 5;
+//           case 4: return 6;
+//           case 5: return 9;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }  
+//         // face 2, triangles
+//         case 2:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 1;
+//           case 1: return 2;
+//           case 2: return 5;
+//           case 3: return 8;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }  
+//         // face 2, tetrahedrons
+//         case 3:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 2;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }        
+//         default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+//        }
 
-    // face 3
-    case 3:
-       switch(SubEntityDim)
-       {
-        // face 3, nodes
-        case 0:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 0;
-          case 1: return 2;
-          case 2: return 3;
-          case 3: return 4;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
-        }
-        // face 3, edges
-        case 1:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 1;
-          case 1: return 2;
-          case 2: return 3;
-          case 3: return 7;
-          case 4: return 8;
-          case 5: return 9;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }  
-        // face 3, triangles
-        case 2:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 3;
-          case 1: return 4;
-          case 2: return 5;
-          case 3: return 9;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }  
-        // face 3, tetrahedrons
-        case 3:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 3;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }        
-        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
-       }
+//     // face 3
+//     case 3:
+//        switch(SubEntityDim)
+//        {
+//         // face 3, nodes
+//         case 0:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 0;
+//           case 1: return 2;
+//           case 2: return 3;
+//           case 3: return 4;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+//         }
+//         // face 3, edges
+//         case 1:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 1;
+//           case 1: return 2;
+//           case 2: return 3;
+//           case 3: return 7;
+//           case 4: return 8;
+//           case 5: return 9;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }  
+//         // face 3, triangles
+//         case 2:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 3;
+//           case 1: return 4;
+//           case 2: return 5;
+//           case 3: return 9;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }  
+//         // face 3, tetrahedrons
+//         case 3:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 3;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }        
+//         default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+//        }
 
-    // face 4
-    case 4:
-       switch(SubEntityDim)
-       {
-        // face 4, nodes
-        case 0:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 1;
-          case 1: return 2;
-          case 2: return 3;
-          case 3: return 4;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
-        }
-        // face 4, edges
-        case 1:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 4;
-          case 1: return 5;
-          case 2: return 6;
-          case 3: return 7;
-          case 4: return 8;
-          case 5: return 9;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }  
-        // face 4, triangles
-        case 2:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 6;
-          case 1: return 7;
-          case 2: return 8;
-          case 3: return 9;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }  
-        // face 4, tetrahedrons
-        case 3:
-        switch(SubEntityDimNumber)
-        {
-          case 0: return 4;
-          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
-        }        
-        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
-       }
-    default: {assert(0 &&"simplex_face_sub_entities: invalid face number");return -1;};
-   }
-  default: {assert(0 &&"simplex_face_sub_entities: invalid simplex dimension");return -1;};
- }
-}
-
-
-// works only for simplices
-template <typename Space>
-constexpr Integer trace_surf_n_dofs()
-  { 
-    using Elem=typename Space::Elem;
-    Integer n_dofs=0;
-    for(Integer ii=0;ii<Space::entity.size();ii++)
-    {
-      if(Space::entity[ii]<=Elem::ManifoldDim)
-       n_dofs+=Space::dofs_per_entity[ii]* binomial_coefficient(Elem::ManifoldDim,Space::entity[ii]+1);
-   }
-   return n_dofs;
- }
+//     // face 4
+//     case 4:
+//        switch(SubEntityDim)
+//        {
+//         // face 4, nodes
+//         case 0:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 1;
+//           case 1: return 2;
+//           case 2: return 3;
+//           case 3: return 4;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+//         }
+//         // face 4, edges
+//         case 1:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 4;
+//           case 1: return 5;
+//           case 2: return 6;
+//           case 3: return 7;
+//           case 4: return 8;
+//           case 5: return 9;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }  
+//         // face 4, triangles
+//         case 2:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 6;
+//           case 1: return 7;
+//           case 2: return 8;
+//           case 3: return 9;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }  
+//         // face 4, tetrahedrons
+//         case 3:
+//         switch(SubEntityDimNumber)
+//         {
+//           case 0: return 4;
+//           default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+//         }        
+//         default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+//        }
+//     default: {assert(0 &&"simplex_face_sub_entities: invalid face number");return -1;};
+//    }
+//   default: {assert(0 &&"simplex_face_sub_entities: invalid simplex dimension");return -1;};
+//  }
+// }
 
 
-template<typename FunctionSpace>
-constexpr Integer function_space_dofs_per_elem(const Integer Dim,const Integer N)
-{   
-    std::size_t dofs_per_elem=0;
-    if(N>0)
-    dofs_per_elem=FunctionSpace::NComponents * 
-                                     FunctionSpace::dofs_per_entity[N-1]   * 
-                                     binomial_coefficient(Dim+1,FunctionSpace::entity[N-1]+1);  
-
-     switch(N)
-     {
-      case  0: return 0;
-      case  1: return dofs_per_elem;
-      default: return function_space_dofs_per_elem<FunctionSpace>(Dim,N-1)+dofs_per_elem;
-     }
-};
+// // works only for simplices
+// template <typename Space>
+// constexpr Integer trace_surf_n_dofs()
+//   { 
+//     using Elem=typename Space::Elem;
+//     Integer n_dofs=0;
+//     for(Integer ii=0;ii<Space::entity.size();ii++)
+//     {
+//       if(Space::entity[ii]<=Elem::ManifoldDim)
+//        n_dofs+=Space::dofs_per_entity[ii]* binomial_coefficient(Elem::ManifoldDim,Space::entity[ii]+1);
+//    }
+//    return n_dofs*Space::NComponents;
+//  }
 
 
-template <typename Space>
-constexpr auto trace_dofs(const Integer face)
-{
+// template<typename FunctionSpace>
+// constexpr Integer function_space_dofs_per_elem(const Integer Dim,const Integer N)
+// {   
+//     std::size_t dofs_per_elem=0;
+//     if(N>0)
+//     dofs_per_elem=FunctionSpace::NComponents * 
+//                                      FunctionSpace::dofs_per_entity[N-1]   * 
+//                                      binomial_coefficient(Dim+1,FunctionSpace::entity[N-1]+1);  
+
+//      switch(N)
+//      {
+//       case  -1: return 0;
+//       case  0: return 0;
+//       case  1: return dofs_per_elem;
+//       default: return function_space_dofs_per_elem<FunctionSpace>(Dim,N-1)+dofs_per_elem;
+//      }
+// };
+
+
+// template <typename Space>
+// constexpr auto trace_dofs(const Integer face)
+// {
 
  
- constexpr auto n=trace_surf_n_dofs<Space>();
- const auto ManifoldDim=Space::ManifoldDim;
- const auto entity=Space::entity;
- Vector<Integer, n> dofs;
- Integer cont=0;
- Integer dofs_per_entity_cont=0;
- for(Integer ii=0; ii< Space::entity.size(); ii++)
- {
-  const auto entityii=Space::entity[ii];
-  if(entity[ii]<=ManifoldDim)
-  {
-    const auto dofs_per_entity=Space::dofs_per_entity[ii];
-    const auto binomial_coeff=binomial_coefficient(ManifoldDim,entity[ii]+1);
-    // loop on the entityes of entityii dim
-    for(Integer jj=0; jj<binomial_coeff; jj++)
-      {
-        // loop on the dofs of the given entity
-        dofs[cont] = dofs_per_entity*simplex_face_sub_entities(ManifoldDim,face,entityii,jj)+function_space_dofs_per_elem<Space>(ManifoldDim,ii);
-        cont++;
-        for(Integer kk=1; kk<dofs_per_entity; kk++)
-          {
-            dofs[cont] = dofs[cont-1]+1;
-            cont++;
-          }
-      }
-  }
- }
- return dofs;
-}
+//  constexpr auto n=trace_surf_n_dofs<Space>();
+//  const auto ManifoldDim=Space::ManifoldDim;
+//  const auto NComponents=Space::NComponents;
+//  const auto entity=Space::entity;
+//  const auto dofs_per_entity= Space::dofs_per_entity;
+
+//  Array<Integer, n> dofs;
+//  Integer cont=0;
+//  Integer dofs_per_entity_cont=0;
+//  // loop on all the kind of dofs-entities
+//  for(Integer ii=0; ii< entity.size(); ii++)
+//  {
+//   const auto entityii=entity[ii];
+//   // consider the ii-th dof-entity only if it smaller than the dimension of the manifolddim
+//   // TODO FIXME IT SHOULD BE entity[ii]<ManifoldDim
+//   if(entity[ii]<ManifoldDim)
+//   {
+//     const auto dofs_per_entityii=dofs_per_entity[ii];
+//     const auto binomial_coeff=binomial_coefficient(ManifoldDim,entity[ii]+1);
+//     // loop on the entityes of entityii dim
+//     for(Integer jj=0; jj<binomial_coeff; jj++)
+//       {
+//         // loop on the dofs of the given entity
+//         dofs[cont] = NComponents*dofs_per_entityii*simplex_face_sub_entities(ManifoldDim,face,entityii,jj)+function_space_dofs_per_elem<Space>(ManifoldDim,ii);
+//         cont++;
+//         for(Integer ss=1;ss<NComponents;ss++)
+//         { 
+//           dofs[cont] = dofs[cont-1]+1;
+//           cont++;
+//         }
+
+//         for(Integer kk=1; kk<dofs_per_entityii; kk++)
+//           {
+//                for(Integer ss=0;ss<NComponents;ss++)
+//                 { 
+//                   dofs[cont] = dofs[cont-1]+1;
+//                   cont++;
+//                 }
+//           }
+//       }
+//   }
+//  }
+//  return dofs;
+// }
 
 
-template <typename Space>
- constexpr auto trace_dofs()
- {
-  const auto ManifoldDim=Space::ManifoldDim;
-  constexpr auto n_dofs_per_face=trace_surf_n_dofs<Space>();
-  const auto n_faces=binomial_coefficient(ManifoldDim+1,ManifoldDim);
-  Vector< Vector<Integer, n_dofs_per_face>, n_faces> vec;
-  for(Integer ii=0;ii<n_faces;ii++)
-    vec[ii]=trace_dofs<Space>(ii);
-  return vec;
-}
+// template <typename Space>
+//  constexpr auto trace_dofs()
+//  {
+//   const auto ManifoldDim=Space::ManifoldDim;
+//   constexpr auto n_dofs_per_face=trace_surf_n_dofs<Space>();
+//   const auto n_faces=binomial_coefficient(ManifoldDim+1,ManifoldDim);
+//   Array< Array<Integer, n_dofs_per_face>, n_faces> vec;
+//   for(Integer ii=0;ii<n_faces;ii++)
+//     vec[ii]=trace_dofs<Space>(ii);
+//   return vec;
+// }
 
 
-      template<typename Space,typename Operator,typename single_type,
-               Integer NQPoints,Integer Dim>
-       constexpr auto reference_trace_shape_function_init(const Integer face, const Matrix<Real,NQPoints,Dim>&qp_points)
-       {
+//       template<typename Space,typename Operator,typename single_type,
+//                Integer NQPoints,Integer Dim>
+//        constexpr auto reference_trace_shape_function_init(const Integer face, const Matrix<Real,NQPoints,Dim>&qp_points)
+//        {
         
-        Vector<Real,Dim> qp_point;
-        const auto dofs=trace_dofs<Space>(face);
-        const auto n_dofs=dofs.size();
-        Vector<Vector<single_type,NQPoints>,n_dofs> v;
-        Vector<single_type,n_dofs> func;
+//         Array<Real,Dim> qp_point;
+//         const auto dofs=trace_dofs<Space>(face);
+//         const auto n_dofs=dofs.size();
+//         Array<Array<single_type,NQPoints>,n_dofs> v;
+//         Array<single_type,n_dofs> func;
         
-            for(Integer qp=0;qp<NQPoints;qp++)
-            {
-             qp_point=qp_points.get_row(qp);
-             // func=value<Elem,Operator,FEFamily,Order,single_type,Ndofs>(qp_point);
-             ReferenceShapeFunctionValue<typename Space::Elem,Operator,Space::FEFamily,Space::Order>::apply(qp_point,func);
-             // value<Space::Elem,Operator,Space::FEFamily,Space::Order>(qp_point,func);
-              for(Integer n_dof = 0; n_dof < n_dofs; ++n_dof) {
-                  const_cast<single_type&>
-                  (static_cast<const std::array<single_type,NQPoints>& >
-                   ((static_cast<const std::array<Vector<single_type,NQPoints>,n_dofs>& >(v())[n_dof] )())[qp])=
-                  static_cast<const std::array<single_type,n_dofs>& >(func())[n_dof];
-              }
-            }
-       return v;
-      };
+//             for(Integer qp=0;qp<NQPoints;qp++)
+//             {
+//              qp_point=qp_points.get_row(qp);
+//              // func=value<Elem,Operator,FEFamily,Order,single_type,Ndofs>(qp_point);
+//              ReferenceShapeFunctionValue<typename Space::Elem,Operator,Space::FEFamily,Space::Order>::apply(qp_point,func);
+//              // value<Space::Elem,Operator,Space::FEFamily,Space::Order>(qp_point,func);
+//               for(Integer n_dof = 0; n_dof < n_dofs; ++n_dof) {
+//                   const_cast<single_type&>
+//                   (static_cast<const std::array<single_type,NQPoints>& >
+//                    ((static_cast<const std::array<Array<single_type,NQPoints>,n_dofs>& >(v())[n_dof] )())[qp])=
+//                   static_cast<const std::array<single_type,n_dofs>& >(func())[n_dof];
+//               }
+//             }
+//        return v;
+//       };
 
-template<Integer N,Integer K>
- constexpr void combinations_generate_aux(
-            Vector<Integer, K> &data,
-            const Integer index, 
-            const Integer i,
-            Vector<Vector<Integer, K>, binomial_coefficient(N,K)> &combs,
-            Integer &comb_index)
-        {
-            if(index == K) {
-                for(Integer ii=0;ii<data.size();ii++)
-                    combs[comb_index][ii]=data[ii];
-                comb_index++;
-                return;
-            }
+// template<Integer N,Integer K>
+//  constexpr void combinations_generate_aux(
+//             Array<Integer, K> &data,
+//             const Integer index, 
+//             const Integer i,
+//             Array<Array<Integer, K>, binomial_coefficient(N,K)> &combs,
+//             Integer &comb_index)
+//         {
+//             if(index == K) {
+//                 for(Integer ii=0;ii<data.size();ii++)
+//                     combs[comb_index][ii]=data[ii];
+//                 comb_index++;
+//                 return;
+//             }
 
-            if(i >= N) {
-                return;
-            }
+//             if(i >= N) {
+//                 return;
+//             }
 
-            data[index] = i;
+//             data[index] = i;
 
-            combinations_generate_aux<N,K>(data, index+1, i+1, combs, comb_index);
+//             combinations_generate_aux<N,K>(data, index+1, i+1, combs, comb_index);
             
-            // current is excluded, replace it with next (Note that
-            // i+1 is passed, but index is not changed)
-            combinations_generate_aux<N,K>(data, index, i+1, combs, comb_index);
-        }
+//             // current is excluded, replace it with next (Note that
+//             // i+1 is passed, but index is not changed)
+//             combinations_generate_aux<N,K>(data, index, i+1, combs, comb_index);
+//         }
 
-        template<Integer N,Integer K >
-        constexpr Vector<Vector<Integer, K>, binomial_coefficient(N,K)> combinations_generate()
-        {
-            Vector<Vector<Integer, K>, binomial_coefficient(N,K)> combs;
-            Vector<Integer, K> data;
-            Integer comb_index = 0;
-            combinations_generate_aux<N,K>(data, 0, 0, combs, comb_index);
-            return combs;
-        }
+//         template<Integer N,Integer K >
+//         constexpr Array<Array<Integer, K>, binomial_coefficient(N,K)> combinations_generate()
+//         {
+//             Array<Array<Integer, K>, binomial_coefficient(N,K)> combs;
+//             Array<Integer, K> data;
+//             Integer comb_index = 0;
+//             combinations_generate_aux<N,K>(data, 0, 0, combs, comb_index);
+//             return combs;
+//         }
 
 
-   template<Integer Dim, Integer ManifoldDim>
-inline constexpr auto jacobian_faces()
-{
-    static_assert(Dim >= ManifoldDim, "Dim must be greater or equal ManifoldDim");
-    // static_assert(Npoints == ManifoldDim+1, "Npoints must be equal to ManifoldDim+1");
-    Vector<Vector<Real, Dim>,ManifoldDim> points;
-    constexpr auto n_faces=ManifoldDim+1;
-    const auto combs=combinations_generate<ManifoldDim+1,ManifoldDim>(); 
-    Matrix<Real, Dim, ManifoldDim-1> J;
-    Vector<Matrix<Real, Dim, ManifoldDim-1>,n_faces> Jmat;
-    // loop on all the faces
-    for(Integer ii=0;ii<n_faces;ii++)
-    {
-        // take the indices of the reference simplex related to the face ii
-        const auto &comb_ii=combs[ii];
-        // fill points with the corresponding reference simplex face 
-        for(Integer jj=0;jj<ManifoldDim;jj++)
-          for(Integer kk=0;kk<ManifoldDim;kk++)
-            points[jj][kk]=Simplex<Dim,ManifoldDim>::reference[comb_ii[jj]][kk];
+//    template<Integer Dim, Integer ManifoldDim>
+// inline constexpr auto jacobian_faces()
+// {
+//     static_assert(Dim >= ManifoldDim, "Dim must be greater or equal ManifoldDim");
+//     // static_assert(Npoints == ManifoldDim+1, "Npoints must be equal to ManifoldDim+1");
+//     Array<Vector<Real, Dim>,ManifoldDim> points;
+//     constexpr auto n_faces=ManifoldDim+1;
+//     const auto combs=combinations_generate<ManifoldDim+1,ManifoldDim>(); 
+//     Matrix<Real, Dim, ManifoldDim-1> J;
+//     Vector<Matrix<Real, Dim, ManifoldDim-1>,n_faces> Jmat;
+//     // loop on all the faces
+//     for(Integer ii=0;ii<n_faces;ii++)
+//     {
+//         // take the indices of the reference simplex related to the face ii
+//         const auto &comb_ii=combs[ii];
+//         // fill points with the corresponding reference simplex face 
+//         for(Integer jj=0;jj<ManifoldDim;jj++)
+//           for(Integer kk=0;kk<ManifoldDim;kk++)
+//             points[jj][kk]=Simplex<Dim,ManifoldDim>::reference[comb_ii[jj]][kk];
         
-        // compute the jacobian of the given face
-        for(Integer ii=0;ii<ManifoldDim;ii++)
-        {
-            Vector<Real, Dim> v0 = points[0];
-            for(Integer i = 1; i < ManifoldDim; ++i) {
-                const auto &vi = points[i];
-                J.col(i-1, vi - v0);
-            }
-        }
-        Jmat[ii]=J;
+//         // compute the jacobian of the given face
+//         for(Integer ii=0;ii<ManifoldDim;ii++)
+//         {
+//             Vector<Real, Dim> v0 = points[0];
+//             for(Integer i = 1; i < ManifoldDim; ++i) {
+//                 const auto &vi = points[i];
+//                 J.col(i-1, vi - v0);
+//             }
+//         }
+//         Jmat[ii]=J;
 
-    }
-    return Jmat;
-}
+//     }
+//     return Jmat;
+// }
 
 
-template<typename QuadratureRule>
-inline constexpr auto reference_face_shape_functions()
-{
-  using Elem=typename QuadratureRule::Elem;
-  constexpr Integer Dim=Elem::Dim;
-  constexpr Integer ManifoldDim=Elem::ManifoldDim;
-  const auto Jacobian_faces=jacobian_faces<Dim,ManifoldDim>();
-  constexpr auto n_faces=Jacobian_faces.size();
-  Vector<typename QuadratureRule::qp_points_type, n_faces> qp_points_face;
+// template<typename QuadratureRule>
+// inline constexpr auto reference_face_shape_functions()
+// {
+//   using Elem=typename QuadratureRule::Elem;
+//   constexpr Integer Dim=Elem::Dim;
+//   constexpr Integer ManifoldDim=Elem::ManifoldDim;
+//   const auto Jacobian_faces=jacobian_faces<Dim,ManifoldDim>();
+//   constexpr auto n_faces=Jacobian_faces.size();
+//   Vector<typename QuadratureRule::qp_points_type, n_faces> qp_points_face;
 
-  for(Integer ii=0;ii<n_faces;ii++)
-     {
-        qp_points_face[ii]=Jacobian_faces[ii]*QuadratureRule::qp_points_type;
-     }
+//   for(Integer ii=0;ii<n_faces;ii++)
+//      {
+//         qp_points_face[ii]=Jacobian_faces[ii]*QuadratureRule::qp_points_type;
+//      }
 
- return qp_points_face;
-}
+//  return qp_points_face;
+// }
 
 
 void boundary_example()
@@ -827,25 +843,123 @@ Combinations<5,2>::print_all();
 Combinations<5,3>::print_all();
 Combinations<5,4>::print_all();
 
-  using Space=ElementFunctionSpace<Simplex<2,2>,LagrangeFE,3,1,1>;
-  using single_type=Matrix<Real,Space::ShapeFunctionDim1,Space::ShapeFunctionDim2>;
-  // constexpr const Integer m=trace_surf_n_dofs<Space>();
-  constexpr const auto trace9=trace_dofs<Space>(0);
-  constexpr const auto trace8=trace_dofs<Space>(1);
-  constexpr const auto trace7=trace_dofs<Space>(2);
 
-  constexpr const auto trace10=trace_dofs<Space>();
+
+
+  using Space2=ElementFunctionSpace<Simplex<2,2>,LagrangeFE,1,1,1>;
+  constexpr const auto trace2=trace_dofs<Space2>();
+
+  using Space3=ElementFunctionSpace<Simplex<2,2>,LagrangeFE,2,1,1>;
+  constexpr const auto trace3=trace_dofs<Space3>();
+
+  using Space4=ElementFunctionSpace<Simplex<2,2>,LagrangeFE,3,1,1>;
+  constexpr const auto trace4=trace_dofs<Space4>();
+
+
+  using Space5=ElementFunctionSpace<Simplex<2,2>,RaviartThomasFE,0,1,1>;
+  constexpr const auto trace5=trace_dofs<Space5>();
+
+
+  using Space6=ElementFunctionSpace<Simplex<2,2>,RaviartThomasFE,1,1,1>;
+  constexpr const auto trace6=trace_dofs<Space6>();
+
+
+
+
+
+  using Space7=ElementFunctionSpace<Simplex<2,2>,LagrangeFE,1,1,2>;
+  constexpr const auto trace7=trace_dofs<Space7>();
+
+  using Space8=ElementFunctionSpace<Simplex<2,2>,LagrangeFE,2,1,2>;
+  constexpr const auto trace8=trace_dofs<Space8>();
+
+  using Space9=ElementFunctionSpace<Simplex<2,2>,LagrangeFE,3,1,2>;
+  constexpr const auto trace9=trace_dofs<Space9>();
+
+
+  using Space10=ElementFunctionSpace<Simplex<2,2>,RaviartThomasFE,0,1,2>;
+  constexpr const auto trace10=trace_dofs<Space10>();
+
+
+  using Space11=ElementFunctionSpace<Simplex<2,2>,RaviartThomasFE,1,1,2>;
+  constexpr const auto trace11=trace_dofs<Space11>();
 
 
   // constexpr auto automa=reference_trace_shape_function_init<Space,IdentityOperator,single_type>(0, GaussPoints<Space::Elem,3>::qp_points_type);
+std::cout<<"Simplex<2,2>,LagrangeFE,Order=1,Continuity=1,Ncomponents=1>"<<std::endl;
+     
+  for(int ii=0;ii<trace2.size();ii++)
+     {for(int jj=0;jj<trace2[ii].size();jj++)
+          std::cout<<trace2[ii][jj]<<std::endl;
+          std::cout<<std::endl;
+     } 
+std::cout<<"Simplex<2,2>,LagrangeFE,Order=2,Continuity=1,Ncomponents=1"<<std::endl;
+     
+  for(int ii=0;ii<trace3.size();ii++)
+     {for(int jj=0;jj<trace3[ii].size();jj++)
+          std::cout<<trace3[ii][jj]<<std::endl;
+          std::cout<<std::endl;
+     } 
+std::cout<<"Simplex<2,2>,LagrangeFE,Order=3,Continuity=1,Ncomponents=1"<<std::endl;
+
+     
+  for(int ii=0;ii<trace4.size();ii++)
+     {for(int jj=0;jj<trace4[ii].size();jj++)
+          std::cout<<trace4[ii][jj]<<std::endl;
+          std::cout<<std::endl;
+     } 
+
+std::cout<<"Simplex<2,2>,RaviartThomasFE,Order=0,Continuity=1,Ncomponents=1"<<std::endl;
+     
+  for(int ii=0;ii<trace5.size();ii++)
+     {for(int jj=0;jj<trace5[ii].size();jj++)
+          std::cout<<trace5[ii][jj]<<std::endl;
+          std::cout<<std::endl;
+     } 
+
+std::cout<<"Simplex<2,2>,RaviartThomasFE,Order=1,Continuity=1,Ncomponents=1"<<std::endl;
+     
+  for(int ii=0;ii<trace6.size();ii++)
+     {for(int jj=0;jj<trace6[ii].size();jj++)
+          std::cout<<trace6[ii][jj]<<std::endl;
+          std::cout<<std::endl;
+     } 
+
+std::cout<<"Simplex<2,2>,LagrangeFE,Order=1,Continuity=1,Ncomponents=2>"<<std::endl;
+     
+  for(int ii=0;ii<trace7.size();ii++)
+     {for(int jj=0;jj<trace7[ii].size();jj++)
+          std::cout<<trace7[ii][jj]<<std::endl;
+          std::cout<<std::endl;
+     } 
+std::cout<<"Simplex<2,2>,LagrangeFE,Order=2,Continuity=1,Ncomponents=2>"<<std::endl;
+     
+  for(int ii=0;ii<trace8.size();ii++)
+     {for(int jj=0;jj<trace8[ii].size();jj++)
+          std::cout<<trace8[ii][jj]<<std::endl;
+          std::cout<<std::endl;
+     } 
+std::cout<<"Simplex<2,2>,LagrangeFE,Order=3,Continuity=1,Ncomponents=2>"<<std::endl;
+     
+  for(int ii=0;ii<trace9.size();ii++)
+     {for(int jj=0;jj<trace9[ii].size();jj++)
+          std::cout<<trace9[ii][jj]<<std::endl;
+          std::cout<<std::endl;
+     } 
 
 
-
-std::cout<<"-------------------------------------------"<<std::endl;
+std::cout<<"Simplex<2,2>,RaviartThomasFE,Order=0,Continuity=1,Ncomponents=2>"<<std::endl;
      
   for(int ii=0;ii<trace10.size();ii++)
      {for(int jj=0;jj<trace10[ii].size();jj++)
           std::cout<<trace10[ii][jj]<<std::endl;
+          std::cout<<std::endl;
+     } 
+std::cout<<"Simplex<2,2>,RaviartThomasFE,Order=1,Continuity=1,Ncomponents=2>"<<std::endl;
+
+  for(int ii=0;ii<trace11.size();ii++)
+     {for(int jj=0;jj<trace11[ii].size();jj++)
+          std::cout<<trace11[ii][jj]<<std::endl;
           std::cout<<std::endl;
      } 
 
@@ -1002,7 +1116,7 @@ void assembly_example()
  FSspace1 FEspace1(mesh);
  using FSspace2= FunctionSpace< MeshT, Lagrange2<2>>;
  FSspace2 FEspace2(mesh);
- using FSspace3= FunctionSpace< MeshT, Lagrange1<1>,RT0<2>>;
+ using FSspace3= FunctionSpace< MeshT, Lagrange1<1>,RT1<2>>;
  FSspace3 FEspace3(mesh);
  using FSspace4= FunctionSpace< MeshT, Lagrange1<1>,Lagrange2<1>,Lagrange1<1>>;
  FSspace4 FEspace4(mesh);
@@ -1047,7 +1161,7 @@ void assembly_example()
  auto v3 = MakeTest<2>(W);
 
 
-  Jacobian<Elem> J(mesh);
+  FiniteElem<Elem> J(mesh);
   
   constexpr auto C=Constant<Scalar1>(0.5);
   constexpr auto alpha=Constant<Scalar1>(2.0);
@@ -1067,20 +1181,42 @@ auto NewOp2=NewOperator(IdentityOperator()*alpha*f1);
 // auto Epsilon=NewOperator((-f1)*MatTrace(C)*(+GradientOperator()+(Transpose(-GradientOperator()))));
 // auto Epsilon=NewOperator(+(-GradientOperator()));
 auto Epsilon=NewOperator((+C)*(-C)*(-f1)*(+f1)*(C-f1)*(C+f1)/(C+f1)*Transpose(f1)*(+MatTrace(+f1))*(-MatTrace(-C))*(-GradientOperator()-GradientOperator())/MatTrace(Transpose(f1)-MatTrace(Transpose(C))));
+auto NewTrace=NewOperator(C*TraceOperator());
+
 // /MatTrace(Transpose(Transpose(MatTrace(f1)))));
 // auto Epsilon=NewOperator((GradientOperator()+Transpose(GradientOperator())));//+Transpose(GradientOperator())));
 // auto Epsilon=NewOperator((GradientOperator()));//+Transpose(GradientOperator())));
 
-  auto bilinearform= 
-                    L2Inner((u1),(v1))-
-                    L2Inner(-Transpose(u3),Transpose(-v3))-
-                    L2Inner(-(-u3),-(v3))- //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
-                    L2Inner(MatTrace(f1)*(+Transpose(u2)),-(Transpose(v2))) -//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
-                    L2Inner(Epsilon(u1),-Grad(v1));//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
+  auto bilinearform=
+                    surface_integral(NewTrace(u3),NewTrace(v3))-
+                    surface_integral(NewTrace(u2),NewTrace(v2))-
+                    surface_integral(NewTrace(u1),NewTrace(v1))-
+                    surface_integral(NewTrace(u3),NewTrace(v3))-
+                    // surface_integral(Trace(u3),Trace(v3))-
+                    // L2Inner(-(-u3),-(v3))-
+                    // surface_integral(Trace(u3),Trace(v3))-
+                    // L2Inner(-(-u3),-(v3))-
+                    // surface_integral(Trace(u3),Trace(v3))-
+                    // surface_integral(Trace(u3),Trace(v3))-
+                    // L2Inner(-(-u3),-(v3))-
+                    // surface_integral(Trace(u3),Trace(v3))-
+                    // surface_integral(Trace(u3),Trace(v3))-
+                    // L2Inner(Transpose(u3),Transpose(v3))-
+                    // L2Inner(-Transpose(u3),Transpose(-v3))-
+                    // L2Inner(-(-u3),-(v3))- //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
+                    // L2Inner(MatTrace(f1)*(+Transpose(u2)),-(Transpose(v2))) -//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
+                    // surface_integral(Trace(u3),Trace(v3))-
+                    // L2Inner(-(-u3),-(v3))-
+                    // surface_integral(Trace(u3),Trace(v3))-
+                    // L2Inner(-(-u3),-(v3))-
+                    // surface_integral(Trace(u3),Trace(v3))-
+                    // L2Inner(Epsilon(u1),-Grad(v1));//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
   // auto bilinearform= 
-  //                   +L2Inner(u3,v3)- //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
-  //                   L2Inner(u2,v2) -//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
-  //                   L2Inner(u1,v1);//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
+                    L2Inner(u3,v3)- //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
+                    L2Inner(u2,v2) -//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
+                    L2Inner(u1,v1)+
+                    L2Inner(Grad(u1),Grad(v1))
+                    ;//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
 
 
   auto linearform=
@@ -1093,7 +1229,8 @@ auto Epsilon=NewOperator((+C)*(-C)*(-f1)*(+f1)*(C-f1)*(C+f1)/(C+f1)*Transpose(f1
                   // L2Inner((-Transpose(C)-Transpose(C))*v2,C)+
                   // L2Inner((-Transpose(C)-(C))*v2,f1/C)+
                   // L2Inner(Inner(gamma,Transpose(gamma)),MatTrace(Epsilon(v1)));
-  -L2Inner(Inner(gamma,Transpose(gamma))*Epsilon(v1),id2)-L2Inner(-Epsilon(v1),-id2)+
+  // -L2Inner(Inner(gamma,Transpose(gamma))*Epsilon(v1),id2)-L2Inner(-Epsilon(v1),-id2)+
+  // L2Inner(id2,v3)-
   L2Inner(id2,v3);
 
   // // auto bilinearform= 
@@ -1120,7 +1257,9 @@ auto Epsilon=NewOperator((+C)*(-C)*(-f1)*(+f1)*(C-f1)*(C+f1)/(C+f1)*Transpose(f1
   auto eval_linear_form=Eval(linear_form,shapefunctions);
 
   J.init(0);
+  J.init_boundary(0);
   reference_maps.init(J);
+  reference_maps.init_boundary(J);
   std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
   std::cout<<"------_______-----BEFORE SHAPE COEFFICIENTS INIT-----_______--------"<<std::endl;
 
@@ -1128,17 +1267,110 @@ auto Epsilon=NewOperator((+C)*(-C)*(-f1)*(+f1)*(C-f1)*(C+f1)/(C+f1)*Transpose(f1
   std::cout<<"------_______-----AFTER SHAPE COEFFICIENTS INIT-----_______--------"<<std::endl;
 
   shapefunctions.init(J);///////////////<------------------------ problema qui
-
+  shapefunctions.init_boundary(J);
 
   std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
-  std::cout<<"------_______-----BEFORE EVALUATION-----_______--------"<<std::endl;
+  std::cout<<"------_______-----BEGIN EVALUATION-----_______--------"<<std::endl;
   eval_bilinear_form.apply(J);
+  eval_bilinear_form.apply_boundary(J);
   eval_linear_form.apply(J);
+  eval_linear_form.apply_boundary(J);
+
+  std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
+  std::cout<<"------_______-----END EVALUATION-----_______--------"<<std::endl;
+
+// decltype(eval_linear_form)::EvaluationOfL2InnersVolume::L2Products a4k(6);
+
+// decltype(eval_bilinear_form)::EvaluationOfL2InnersSurface::EvalOfL2InnersType a444k(6);
+
+// decltype(eval_linear_form)::EvaluationOfL2InnersSurface::EvalOfL2InnersType a44k(6);
+// decltype(eval_bilinear_form)::ShapeFunctions escho(6);
+// decltype(shapefunctions)::UniqueElementFunctionSpacesTupleType kk(5);
+// decltype(shapefunctions)::TupleOfTupleShapeFunctionSurface k3k4(5,4,54,6,7,8);
+// decltype(shapefunctions)::SpacesToUniqueFEFamilies k3444k4(5,4,54,6,7,8);
+// decltype(shapefunctions)::UniqueMapping k3eeeek4(5,4,54,6,7,8);
+// decltype(shapefunctions)::TupleOfTupleCompositeShapeFunctionSurface kk2(5);
+// decltype(shapefunctions)::SurfaceForm k3k(5);
+// Number<decltype(shapefunctions)::GeneralForm::FunctionSpace::Nuniquesubspaces> kjn(5);
+// decltype(surface_integral(NewTrace(u2),NewTrace(v2)))::QRule oki(6);
+// Number<QuadratureOrder<decltype(NewTrace(u2))>::value> ok4i5(6);
+// decltype(NewTrace(u2)) mio(5);
+
+// decltype(shapefunctions.surface_tuple()) jk(5);
+// decltype(shapefunctions.composite_shapes_surface()) j4k(5);
+// auto em=surface_integral(NewTrace(u3),NewTrace(v3));
+// using GeneralForm=decltype(eval_bilinear_form);
+// TupleOfL2Products2<1,typename GeneralForm::TupleOfPairsNumbers, typename GeneralForm::type::Form >::type ok(5);
+// auto escom=
+// L2Inner((u1),(v1))-
+// surface_integral(Trace(u3),Trace(v3))
+// -
+// L2Inner((u1),(v1))+
+// surface_integral(Trace(u1),Trace(v1))-
+// surface_integral(Trace(u3),Trace(v3))-
+// L2Inner((u3),(v3))
+// -
+// L2Inner((u2),(v2))
+// -
+// surface_integral(Trace(u3),Trace(v3))-
+// surface_integral(Trace(u3),Trace(v3))-
+// L2Inner((u1),(v1))-
+// surface_integral(Trace(u3),Trace(v3))-
+// surface_integral(Trace(u3),Trace(v3))-
+// L2Inner((u1),(v1))+
+// L2Inner((u1),(v1))-
+// surface_integral(Trace(u1),Trace(v1))-
+// L2Inner((u1),(v1));
+
+// auto ooo=ExtractForm<1>(escom);//VolumeForm<-1>(VolumeForm<-1>(bilinearform));
+// decltype(ooo) klib(5);
+  // OperatorType<ExtractFormType<1,decltype(bilinearform)>> ee(65);
+// decltype(escom) ee(6);
+ // auto bilinearform2=surface_integral(Trace(u3),Trace(v3));
+  //  // std::vector<Vector<Real,2>> points;
+  //  const auto & elem=mesh.elem(0);
+  //  Simplex<2,1> simplex_side;
+  
+  // mesh.points(0,points);
+  // elem.side(0,simplex_side);
+  // std::cout<<"side volume="<<unsigned_volume(simplex_side,points)<<std::endl;
+  // elem.side(1,simplex_side);
+  // std::cout<<"side volume="<<unsigned_volume(simplex_side,points)<<std::endl;
+  // elem.side(2,simplex_side);
+  // std::cout<<"side volume="<<unsigned_volume(simplex_side,points)<<std::endl;
+  // for (int ii=0;ii<points.size();ii++)
+  // std::cout<<"points="<<points[ii]<<std::endl;
+
+// ElemToSubElemHelper<Simplex<3,3>,2>::type ok(1);
+// decltype(shapefunctions)::TupleOfTupleShapeFunction oi(1);
+
+// Number<FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,RT1<1>>>::value> kjh(5);
+
+// Number<FunctionSpaceDofsPerSubEntityElem<ElemFunctionSpace<Elem,Lagrange3<1>>,1>::value> kjh(5);
+// decltype(shapefunctions)::SpacesToUniqueFEFamilies ook(3);
+// decltype(reference_maps)::UniqueMappingVolumetric o4i(1);
+// decltype(reference_maps)::UniqueMappingSurface okkl(4);
+// std::cout<<"----"<<tuple_get<0,0>(reference_maps())()<<std::endl;
+// std::cout<<"----"<<tuple_get<1,0>(reference_maps())()<<std::endl;
+// J.init_boundary(0);
+// reference_maps.init_boundary(J);
+// std::cout<<"----"<<tuple_get<1,0>(reference_maps.surface_map())()<<std::endl;
+// J.init_boundary(1);
+// reference_maps.init_boundary(J);
+// std::cout<<"----"<<tuple_get<1,0>(reference_maps.surface_map())()<<std::endl;
+// J.init_boundary(2);
+// reference_maps.init_boundary(J);
+// std::cout<<"----"<<tuple_get<1,0>(reference_maps.surface_map())()<<std::endl;
+// decltype(shapefunctions)::MapTupleNumbers ookll9(5);
+// decltype(shapefunctions)::TupleOperatorsAndQuadrature ee(1);
+// decltype(shapefunctions)::TupleOfTupleCompositeShapeFunction klklk(6);
+// decltype(shapefunctions)::TupleOfTupleCompositeShapeFunction esde(5);
 
 
-
+// decltype(shapefunctions)::MapCollection::UniqueMapping klk3lk(6);
+// decltype(reference_maps)::UniqueMappingSurface ok(6);
 // decltype(shape_coefficients)::UniqueElementFunctionSpacesTupleType lh(3);
-// decltype(shape_coefficients)::SpacesToUniqueFEFamily  oi(4);
+// decltype(shape_coefficients)::SpacesToUniqueFEFamily  o43i(4);
 // decltype(shape_functions)::TupleOfTupleCompositeShapeFunction ee(1);
 // decltype(linear_form()) ee3(1);
 

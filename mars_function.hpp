@@ -11,7 +11,7 @@ template<typename FullSpace,Integer N,typename Operator_=IdentityOperator,typena
 class Function;
 
 template<typename Elem>
-class Jacobian;
+class FiniteElem;
 
 
 
@@ -25,7 +25,7 @@ class QPPointsFunction<FuncType,ElementFunctionSpace<Elem,LagrangeFE,1,NContinui
 public:
  static constexpr Integer Ndofs=DofsPerElemNums<Elem,BaseFunctionSpace<LagrangeFE,1,NContinuity,NComponents>>::value;
  using type=typename FuncType::type;
-    inline static void init(const Jacobian<Elem>& J,Array<type,Ndofs>& local_dofs)
+    inline static void init(const FiniteElem<Elem>& J,Array<type,Ndofs>& local_dofs)
     {
       const auto& points=J.points();
       // for(Integer ii=0;ii<points.size();ii++)
@@ -74,7 +74,7 @@ class Function
   full_space_ptr_(std::make_shared<FullSpace>(AuxW))
   {} 
 
-   void local_dofs_update(const Jacobian<Elem>& J)
+   void local_dofs_update(const FiniteElem<Elem>& J)
     {QPPointsFunction<FunctionType,Space>::init(J,local_dofs_);} 
 
    inline const LocalDofs& local_dofs()const{return local_dofs_;}
@@ -137,7 +137,7 @@ class Function<FullSpace,N,Operator_,EmptyClass>
   inline auto full_space_ptr(){return full_space_ptr_;}
   inline const auto& full_space_ptr()const{return full_space_ptr_;}
   
-   void local_dofs_update(const Jacobian<Elem>& J)
+   void local_dofs_update(const FiniteElem<Elem>& J)
     {
     auto tuple_map=full_space_ptr_->aux_space_ptr()->dofmap();
     auto local_map=tuple_get<FunctionNumber>(full_space_ptr_->aux_space_ptr()->dofmap())[J.elem_id()];

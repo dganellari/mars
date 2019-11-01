@@ -13,7 +13,7 @@
 
 #include "mars_base.hpp"
 #include "mars_elementfunctionspace.hpp"
-
+#include "mars_elem_to_sub_elem.hpp"
 namespace mars{
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////// FunctionSpaceDofsPerElem:                                                                                     //////////////
@@ -52,6 +52,52 @@ FunctionSpaceDofsPerElem<FunctionSpace,0>
                                         dofs_per_entity *
                                         ElemEntityCombinations<Elem,entity_dim>::value;
 };
+
+
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////// FunctionSpaceDofsPerSubEntityElem:                                                                       //////////////
+/////// For the given entity of dimension entity[N] of FunctionSpace, returns the corresponding number of dofs   //////////////
+/////// for a given subentity of the element                                                                     //////////////
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+template<typename FunctionSpace,Integer SubElemDim,Integer N=FunctionSpace::entity.size()-1>
+class 
+FunctionSpaceDofsPerSubEntityElem
+{
+     public: 
+     using Elem = typename FunctionSpace::Elem; 
+     static_assert(N>0," FunctionSpaceDofsPerElem N >0");
+     static constexpr std::size_t ManifoldDim=FunctionSpace::ManifoldDim;
+     static constexpr std::size_t n_components=FunctionSpace::NComponents;
+     static constexpr std::size_t entity_dim=FunctionSpace::entity[N];
+     static constexpr std::size_t dofs_per_entity=FunctionSpace::dofs_per_entity[N];
+     static constexpr std::size_t dofs_per_elem=n_components * 
+                                                dofs_per_entity   * 
+                                                ElemEntityCombinations<typename ElemToSubElemHelper<Elem,SubElemDim>::type,entity_dim>::value;
+     
+     static constexpr std::size_t value=FunctionSpaceDofsPerSubEntityElem<FunctionSpace,SubElemDim,N-1>::value+dofs_per_elem;
+};
+
+template<typename FunctionSpace,Integer SubElemDim>
+class
+FunctionSpaceDofsPerSubEntityElem<FunctionSpace,SubElemDim,0>
+{
+     public:  
+     using Elem = typename FunctionSpace::Elem; 
+     static constexpr std::size_t N=0;
+     static constexpr std::size_t ManifoldDim=FunctionSpace::ManifoldDim;
+     static constexpr std::size_t n_components=FunctionSpace::NComponents;
+     static constexpr std::size_t entity_dim=FunctionSpace::entity[N];
+     static constexpr std::size_t dofs_per_entity=FunctionSpace::dofs_per_entity[N];
+     static constexpr std::size_t value=n_components * 
+                                        dofs_per_entity *
+                                        ElemEntityCombinations<typename ElemToSubElemHelper<Elem,SubElemDim>::type,entity_dim>::value;
+};
+
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////// EntitiesOfFunctionSpaceType:                                                                                  //////////////
 /////// For given FunctionSpaces on a given Elem, returns the entities corresponding to its dofs                      //////////////                                        

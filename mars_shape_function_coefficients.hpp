@@ -3,6 +3,8 @@
 
 #include "mars_base_elementfunctionspace.hpp"
 #include "mars_vector.hpp"
+#include "mars_array.hpp"
+
 #include "mars_tuple_utilities.hpp"
 #include "mars_shape_function.hpp"
 namespace mars{
@@ -153,7 +155,7 @@ public:
     static constexpr Integer NComponents=BaseFunctionSpace::NComponents;
     static constexpr Integer Ntot=FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,BaseFunctionSpace>>::value;
     static constexpr Integer Ndofs=Ntot/NComponents;
-    using type=typename std::conditional<BaseFunctionSpace::FEFamily==LagrangeFE,std::tuple<std::tuple<>>, std::tuple<Vector<Real,Ndofs> > >::type;
+    using type=typename std::conditional<BaseFunctionSpace::FEFamily==LagrangeFE,std::tuple<std::tuple<>>, std::tuple<Array<Real,Ndofs> > >::type;
 };
 
 template<typename Tuple,Integer Nmax,Integer N>
@@ -168,7 +170,7 @@ public:
     static constexpr Integer NComponents=BaseFunctionSpace::NComponents;
     static constexpr Integer Ntot=FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,BaseFunctionSpace>>::value;
     static constexpr Integer Ndofs=Ntot/NComponents;
-    using single_type=typename std::conditional<BaseFunctionSpace::FEFamily==LagrangeFE,std::tuple<std::tuple<>>, std::tuple<Vector<Real,Ndofs> > >::type;
+    using single_type=typename std::conditional<BaseFunctionSpace::FEFamily==LagrangeFE,std::tuple<std::tuple<>>, std::tuple<Array<Real,Ndofs> > >::type;
     using type=decltype(std::tuple_cat(std::declval<single_type>(),
       std::declval<typename ShapeFunctionLocalCoefficientTupleTypeHelper<Tuple,Nmax,N+1>::type>()));
 };

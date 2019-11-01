@@ -45,65 +45,65 @@ class GeneralForm<Form_>
   template<typename FormTmp, Integer Kind>
   class ClassHelper;
 
-  template<typename Left,typename Right, Integer Kind>
-  class ClassHelper<L2DotProductIntegral<Left,Right>,Kind  >
+  template<typename Left,typename Right, bool VolumeIntegral, Integer QR, Integer Kind>
+  class ClassHelper<L2DotProductIntegral<Left,Right,VolumeIntegral,QR>,Kind  >
   {
   public:
-   using type=RemoveTupleDuplicates< typename KindType<L2DotProductIntegral<Left,Right>,Kind>::type>;
+   using type=RemoveTupleDuplicates< typename KindType<L2DotProductIntegral<Left,Right,VolumeIntegral,QR>,Kind>::type>;
   }; 
 
-  template<typename Left1,typename Right1, typename Left2,typename Right2, Integer Kind>
-  class ClassHelper<Addition<Expression<L2DotProductIntegral<Left1,Right1>>,
-                             Expression<L2DotProductIntegral<Left2,Right2>> >,Kind  >
+  template<typename Left1,typename Right1, typename Left2,typename Right2, bool VolumeIntegral1,bool VolumeIntegral2,Integer QR1, Integer QR2, Integer Kind>
+  class ClassHelper<Addition<Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>>,
+                             Expression<L2DotProductIntegral<Left2,Right2,VolumeIntegral2,QR2>> >,Kind  >
   {
   public:
-   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<Left1,Right1>,Kind>::type,
-                                                   typename KindType<L2DotProductIntegral<Left2,Right2>,Kind>::type >>;
+   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>,Kind>::type,
+                                                   typename KindType<L2DotProductIntegral<Left2,Right2,VolumeIntegral2,QR2>,Kind>::type >>;
   }; 
 
 
-  template<typename Left1,typename Right1, typename Left2,typename Right2, Integer Kind>
-  class ClassHelper<Subtraction<Expression<L2DotProductIntegral<Left1,Right1>>,
-                                Expression<L2DotProductIntegral<Left2,Right2>> >,Kind  >
+  template<typename Left1,typename Right1, typename Left2,typename Right2, bool VolumeIntegral1,bool VolumeIntegral2,Integer QR1, Integer QR2, Integer Kind>
+  class ClassHelper<Subtraction<Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>>,
+                                Expression<L2DotProductIntegral<Left2,Right2,VolumeIntegral2,QR2>> >,Kind  >
   {
   public:
-   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<Left1,Right1>,Kind>::type,
-                                                   typename KindType<L2DotProductIntegral<Left2,Right2>,Kind>::type >>;
+   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>,Kind>::type,
+                                                   typename KindType<L2DotProductIntegral<Left2,Right2,VolumeIntegral2,QR2>,Kind>::type >>;
   }; 
  
-  template<typename Left1,typename Right1, typename Right, Integer Kind>
-  class ClassHelper<Addition<Expression<L2DotProductIntegral<Left1,Right1>>,Expression<Right> >,Kind  >
+  template<typename Left1,typename Right1, typename Right, bool VolumeIntegral1,Integer QR1, Integer Kind>
+  class ClassHelper<Addition<Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>>,Expression<Right> >,Kind  >
   {
   public:
-   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<Left1,Right1>,Kind>::type,
+   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>,Kind>::type,
                                                    typename ClassHelper<Right,Kind>::type >>;
   };  
 
  
-  template<typename Left1,typename Right1, typename Right, Integer Kind>
-  class ClassHelper<Subtraction<Expression<L2DotProductIntegral<Left1,Right1>>,Expression<Right> >,Kind  >
+  template<typename Left1,typename Right1, typename Right, bool VolumeIntegral1,Integer QR1, Integer Kind>
+  class ClassHelper<Subtraction<Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>>,Expression<Right> >,Kind  >
   {
   public:
-   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<Left1,Right1>,Kind>::type,
+   using type=RemoveTupleDuplicates< TupleCatType< typename KindType<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>,Kind>::type,
                                                    typename ClassHelper<Right,Kind>::type >>;
   };  
 
   
-  template<typename Left,typename Left1,typename Right1, Integer Kind>
-  class ClassHelper<Addition<Expression<Left>,Expression<L2DotProductIntegral<Left1,Right1>> >,Kind  >
+  template<typename Left,typename Left1,typename Right1, bool VolumeIntegral1,Integer QR1, Integer Kind>
+  class ClassHelper<Addition<Expression<Left>,Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>> >,Kind  >
   {
   public:
    using type=RemoveTupleDuplicates< TupleCatType< typename ClassHelper<Left,Kind>::type,
-                                                   typename KindType<L2DotProductIntegral<Left1,Right1>,Kind>::type  >>;
+                                                   typename KindType<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>,Kind>::type  >>;
   }; 
  
 
-  template<typename Left,typename Left1,typename Right1, Integer Kind>
-  class ClassHelper<Subtraction<Expression<Left>,Expression<L2DotProductIntegral<Left1,Right1>> >,Kind  >
+  template<typename Left,typename Left1,typename Right1, bool VolumeIntegral1,Integer QR1, Integer Kind>
+  class ClassHelper<Subtraction<Expression<Left>,Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>> >,Kind  >
   {
   public:
    using type=RemoveTupleDuplicates< TupleCatType< typename ClassHelper<Left,Kind>::type,
-                                                   typename KindType<L2DotProductIntegral<Left1,Right1>,Kind>::type  >>;
+                                                   typename KindType<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>,Kind>::type  >>;
   } ; 
 
   template<typename Left,typename Right, Integer Kind>

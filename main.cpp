@@ -1170,7 +1170,7 @@ int main(int argc, char *argv[])
 
 // functionspaces_example2D();
 // assembly_example();
-// boundary_example();
+
 
 // simplex_reference_normals_3D();
 
@@ -1247,6 +1247,8 @@ Integer M=4;
 Integer N=4;
 Kokkos::View<Real **[3][4]> aaa("aaa",M,N);
 assembly_example();
+
+// boundary_example();
 		// run_benchmarks(level);
 
 		//test_mars_mesh_generation_kokkos_2D(2,4);

@@ -29,7 +29,21 @@ namespace mars {
 template<Integer Dim, Integer ManifoldDim,class Implementation_>
 class Mesh;
 
+     // specialisation in case we choose non existent combinations 
+    template<Integer N>
+    class Combinations<N,N+1>
+    {
+     public:
+      static const Integer value =0;  
+    };
 
+    template<Integer N>
+    class Combinations<N,N+2>
+    {
+     public:
+      static const Integer value =0;  
+    };
+    
 template<typename Elem, Integer EntityDim>
 class ElemEntityCombinations;
 

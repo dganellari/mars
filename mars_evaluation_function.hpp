@@ -26,7 +26,7 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
  {};
 
  template<typename Shapes>
- void compute(value_type& value, type&eval,const Jacobian<Elem>&J, const Shapes& shapes )
+ void compute(value_type& value, type&eval,const FiniteElem<Elem>&J, const Shapes& shapes )
  {
   using type1=typename Shapes::type; 
   using type2=typename Shapes::subtype;
@@ -51,10 +51,10 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
 
  }
  
- // template<typename...Forms, typename Jacobian,typename...Inputs>
- // constexpr void apply(value_type& value,const Jacobian& J, const typename ShapeFunctions2<Forms...>::TupleOfTupleShapeFunction& shape_functions,const Inputs&...inputs)
- template<typename...Args, typename Jacobian,typename...Inputs>
- constexpr void apply(value_type& value,const Jacobian& J, const std::tuple<Args...>& shape_functions,const Inputs&...inputs)
+ // template<typename...Forms, typename FiniteElem,typename...Inputs>
+ // constexpr void apply(value_type& value,const FiniteElem& J, const typename ShapeFunctions2<Forms...>::TupleOfTupleShapeFunction& shape_functions,const Inputs&...inputs)
+ template<typename...Args, typename FiniteElem,typename...Inputs>
+ constexpr void apply(value_type& value,const FiniteElem& J, const std::tuple<Args...>& shape_functions,const Inputs&...inputs)
 
  {
   using TupleOfTupleShapeFunction=std::tuple<Args...>;

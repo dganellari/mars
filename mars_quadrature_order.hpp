@@ -3,65 +3,11 @@
 
 // #include "mars_constant.hpp"
 #include "mars_base.hpp"
+#include "mars_elem_to_sub_elem.hpp"
 #include "mars_operators.hpp"
 
 namespace mars{
 
-class IdentityOperator;
-
-class GradientOperator;
-
-class DivergenceOperator;
-
-class CurlOperator;
-
-class TraceOperator;
-
-template<typename...Ts>
-class CompositeOperator;
-
-template<typename ConstType,typename...Inputs>
-class ConstantTensor;
-
-template<typename FullSpace,Integer N,typename Operator_,typename FuncType>
-class Function;
-
-
-template<typename MixedSpace, Integer N, typename OperatorType>
-class Test;
-
-template<typename MixedSpace, Integer N, typename OperatorType>
-class Trial;
-
-
-
-
-template<typename T>
-class UnaryPlus;
-
-template<typename T>
-class UnaryMinus;
-
-template<typename Left,typename Right>
-class Multiplication;
-
-template<typename Left,typename Right>
-class InnerProduct;
-
-template<typename Left,typename Right>
-class Division;
-
-template<typename Left,typename Right>
-class Subtraction;
-
-template<typename Left,typename Right>
-class Addition;
-
-// template<typename T>
-// class Transposed;
-
-// template<typename T>
-// class MatTraceOperator;
 
 template<typename...T>
 class QuadratureOrder;
@@ -100,7 +46,6 @@ class QuadratureOrder<Test<MixedSpace,N_,OperatorKind>,Args...>
   using UniqueElementFunctionSpacesTupleType=typename Test::UniqueElementFunctionSpacesTupleType;
   using BaseFunctionSpaceAndElement=GetType<UniqueElementFunctionSpacesTupleType,N>;
   using Operator=typename Test::Operator;
-  // using BaseFunctionSpace=GetType<BaseFunctionSpaceAndElement,1>;
   using BaseFunctionSpace=Elem2FunctionSpace<BaseFunctionSpaceAndElement>;
   static constexpr Integer value=QuadratureOrder<Operator,BaseFunctionSpace>::value;
 };
@@ -113,7 +58,6 @@ class QuadratureOrder<Trial<MixedSpace,N_,OperatorKind>,Args...>
   using UniqueElementFunctionSpacesTupleType=typename Trial::UniqueElementFunctionSpacesTupleType;
   using BaseFunctionSpaceAndElement=GetType<UniqueElementFunctionSpacesTupleType,N>;
   using Operator=typename Trial::Operator;
-  // using BaseFunctionSpace=GetType<BaseFunctionSpaceAndElement,1>;
   using BaseFunctionSpace=Elem2FunctionSpace<BaseFunctionSpaceAndElement>;
   static constexpr Integer value=QuadratureOrder<Operator,BaseFunctionSpace>::value;
 };
@@ -178,18 +122,6 @@ class QuadratureOrder< InnerProduct< Expression<Left>, Expression<Right> >,Args.
 };
 
 
-// template<typename T, typename...Args>
-// class QuadratureOrder< Transposed< Expression<T> >,Args... >
-// { public:
-//   static constexpr Integer value=QuadratureOrder<T,Args...>::value;
-// };
-
-// template<typename T, typename...Args>
-// class QuadratureOrder< TraceOperator< Expression<T> >,Args... >
-// { public:
-//   static constexpr Integer value=QuadratureOrder<T,Args...>::value;
-// };
-
 
 template<Integer Order,Integer Continuity, Integer NComponents>
 class QuadratureOrder<IdentityOperator,BaseFunctionSpace<LagrangeFE,Order,Continuity,NComponents> >
@@ -236,13 +168,6 @@ class QuadratureOrder<DivergenceOperator, BaseFunctionSpace<RaviartThomasFE,Orde
 
 
 
-
-
-
-
-
-
-
 template<template<class>class Unary, typename MixedSpace,Integer N_, typename Expr>
 class QuadratureOrder<Trial<MixedSpace,N_,CompositeOperator<Expression<Unary<Expression<Expr>>>>> >
 { public:
@@ -257,7 +182,7 @@ class QuadratureOrder<Trial<MixedSpace,N_,CompositeOperator<Expression<Binary<Ex
 
   static constexpr Integer value=
   QuadratureOrder<Binary<Expression<Trial<MixedSpace,N_,CompositeOperator<Expression<Left>>>>,
-                         Expression<Trial<MixedSpace,N_,CompositeOperator<Expression<Left>>>>>>::value;
+                         Expression<Trial<MixedSpace,N_,CompositeOperator<Expression<Right>>>>>>::value;
 };
 
 
@@ -276,7 +201,7 @@ class QuadratureOrder<Test<MixedSpace,N_,CompositeOperator<Expression<Binary<Exp
 
   static constexpr Integer value=
   QuadratureOrder<Binary<Expression<Test<MixedSpace,N_,CompositeOperator<Expression<Left>>>>,
-                         Expression<Test<MixedSpace,N_,CompositeOperator<Expression<Left>>>>>>::value;
+                         Expression<Test<MixedSpace,N_,CompositeOperator<Expression<Right>>>>>>::value;
 };
 
 
@@ -306,6 +231,28 @@ class QuadratureOrder<Test<MixedSpace,N_,CompositeOperator<Expression<Expr>>> >
   static constexpr Integer value=QuadratureOrder<Expr,BaseFunctionSpace>::value;
 };
 
+
+
+// /////////////////////////////////////////////////////////////////////////////
+// //// VolumeOrSurfaceElem return the volume/surface Element if true/false ////
+// /////////////////////////////////////////////////////////////////////////////
+
+// template<typename Elem, bool=true>
+// class VolumeOrSurfaceElem;
+
+// template<template<Integer Dim,Integer ManifoldDim>class Elem_,Integer Dim, Integer ManifoldDim>
+// class VolumeOrSurfaceElem<Elem_<Dim,ManifoldDim>,true>
+// {
+//  public:
+//   using type=Elem_<Dim,ManifoldDim>; 
+// };
+
+// template<template<Integer Dim,Integer ManifoldDim>class Elem_,Integer Dim, Integer ManifoldDim>
+// class VolumeOrSurfaceElem<Elem_<Dim,ManifoldDim>,false>
+// {
+//  public:
+//   using type=Elem_<Dim,ManifoldDim-1>; 
+// };
 
 
 

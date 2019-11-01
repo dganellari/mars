@@ -6,9 +6,9 @@
 #include "mars_expression.hpp"
 #include "mars_operator_type.hpp"
 #include "mars_operator_tuple_type.hpp"
-#include "mars_quadrature_order.hpp"
 #include "mars_matrix_static_assert.hpp"
 
+#include "mars_operator_differential.hpp"
 #include "mars_operator_addition.hpp"
 #include "mars_operator_apply.hpp"
 #include "mars_operator_assignment.hpp"
@@ -45,24 +45,24 @@ namespace mars {
 /////////////////////////////////---------- OPERATOR IDs ---------- ////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-class IdentityOperator: public Expression<IdentityOperator>  
-{public: IdentityOperator(){};}; 
-class DivergenceOperator: public Expression<DivergenceOperator>
-{public: DivergenceOperator(){};};
+// class IdentityOperator: public Expression<IdentityOperator>  
+// {public: IdentityOperator(){};}; 
+// class DivergenceOperator: public Expression<DivergenceOperator>
+// {public: DivergenceOperator(){};};
 
-class GradientOperator : public Expression<GradientOperator> 
-{public: GradientOperator(){}};
+// class GradientOperator : public Expression<GradientOperator> 
+// {public: GradientOperator(){}};
 
-class CurlOperator: public Expression<CurlOperator>  
-{public: CurlOperator(){}};
+// class CurlOperator: public Expression<CurlOperator>  
+// {public: CurlOperator(){}};
 
-class TraceOperator: public Expression<TraceOperator>  
-{public: TraceOperator(){}};
+// class TraceOperator: public Expression<TraceOperator>  
+// {public: TraceOperator(){}};
 
-template<Integer N_>
-class ComponentOperator: public Expression<ComponentOperator<N_>>  
- {public: static constexpr Integer N=N_;
-  ComponentOperator(){}};
+// template<Integer N_>
+// class ComponentOperator: public Expression<ComponentOperator<N_>>  
+//  {public: static constexpr Integer N=N_;
+//   ComponentOperator(){}};
 
 
 

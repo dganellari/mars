@@ -3,6 +3,7 @@
 
 #include "mars_simplex.hpp"
 #include "mars_base_elementfunctionspace.hpp"
+#include "mars_array.hpp"
 #include "mars_vector.hpp"
 #include "mars_fqpexpressions.hpp"
 #include "mars_quadrature_rules.hpp"
@@ -67,14 +68,14 @@ class SignedNormal;
 template<Integer Dim, Integer ManifoldDim>
 class SignedNormal<Simplex<Dim,ManifoldDim>>{
 private:
-    std::vector< Vector< Vector< Real, Dim> , ManifoldDim + 1 > >  normal_;
-    std::vector< Vector<Real, ManifoldDim + 1 > > outward_;
+    std::vector< Array< Vector< Real, Dim> , ManifoldDim + 1 > >  normal_;
+    std::vector< Array<Real, ManifoldDim + 1 > > outward_;
 public:
     
-    std::vector< Vector< Vector< Real, Dim> , ManifoldDim + 1 > > operator () () const { return normal_; };
+    std::vector< Array< Vector< Real, Dim> , ManifoldDim + 1 > > operator () () const { return normal_; };
     // const Vector< Vector< Real, Dim> , ManifoldDim + 1 >& normal(const Integer elem_id) const {return normal_[elem_id];};
-    std::vector< Vector<Real, ManifoldDim + 1 > > sign() const {return outward_;};
-    const Vector<Real, ManifoldDim + 1 >& sign(const Integer elem_id) const {return outward_[elem_id];};
+    std::vector< Array<Real, ManifoldDim + 1 > > sign() const {return outward_;};
+    const Array<Real, ManifoldDim + 1 >& sign(const Integer elem_id) const {return outward_[elem_id];};
     
     template< typename MeshT>
     void init(const MeshT& mesh)
@@ -252,6 +253,470 @@ public:
 
 
 
+
+ constexpr Integer simplex_face_sub_entities(const Integer& SimplexDim,const Integer& FaceNumber,const Integer& SubEntityDim, const Integer& SubEntityDimNumber)
+ {
+  switch(SimplexDim)
+  {
+   // triangles
+   case 2:
+   // triangle faces (edges)
+   switch(FaceNumber)
+   {
+    // face 0
+    case 0:
+       switch(SubEntityDim)
+       {
+        // face 0, nodes
+        case 0:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 0;
+          case 1: return 1;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+        }
+        // face 0, edges
+        case 1:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 0;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }        
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+
+       }
+   
+    case 1:
+       switch(SubEntityDim)
+       {
+        // face 0, nodes
+        case 0:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 0;
+          case 1: return 2;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+        }
+        // face 0, edges
+        case 1:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 1;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }        
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+
+       }
+    case 2:
+       switch(SubEntityDim)
+       {
+        // face 2, nodes
+        case 0:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 1;
+          case 1: return 2;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+        }
+        // face 2, edges
+        case 1:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 2;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }        
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+
+       }
+    default: {assert(0 &&"simplex_face_sub_entities: invalid face number");return -1;};
+   }
+  // tetrahedrons
+  case 3:
+  // tetrahedrons faces (triangles)
+   switch(FaceNumber)
+   {
+    // face 0
+    case 0:
+       switch(SubEntityDim)
+       {
+        // face 0, nodes
+        case 0:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 0;
+          case 1: return 1;
+          case 2: return 2;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+        }
+        // face 0, edges
+        case 1:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 0;
+          case 1: return 1;
+          case 2: return 3;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }  
+        // face 0, triangles
+        case 2:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 0;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }         
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+       }
+   
+    case 1:
+       switch(SubEntityDim)
+       {
+        // face 1, nodes
+        case 0:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 0;
+          case 1: return 1;
+          case 2: return 3;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+        }
+        // face 1, edges
+        case 1:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 0;
+          case 1: return 2;
+          case 2: return 4;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }  
+        // face 1, triangles
+        case 2:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 1;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }         
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+       }
+    case 2:
+       switch(SubEntityDim)
+       {
+        // face 0, nodes
+        case 0:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 0;
+          case 1: return 2;
+          case 2: return 3;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+        }
+        // face 0, edges
+        case 1:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 1;
+          case 1: return 2;
+          case 2: return 5;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }  
+        // face 0, triangles
+        case 2:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 2;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }         
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+       }
+    case 3:
+        switch(SubEntityDim)
+       {
+        // face 0, nodes
+        case 0:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 1;
+          case 1: return 2;
+          case 2: return 3;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+        }
+        // face 0, edges
+        case 1:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 3;
+          case 1: return 4;
+          case 2: return 5;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }  
+        // face 0, triangles
+        case 2:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 3;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }         
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+       }
+
+    default: {assert(0 &&"simplex_face_sub_entities: invalid face number");return -1;};
+   }
+
+  // pentatope
+  case 4:
+  // tetrahedrons faces (tetrahedrons)
+   switch(FaceNumber)
+   {
+    // face 0
+    case 0:
+       switch(SubEntityDim)
+       {
+        // face 0, nodes
+        case 0:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 0;
+          case 1: return 1;
+          case 2: return 2;
+          case 3: return 3;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+        }
+        // face 0, edges
+        case 1:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 0;
+          case 1: return 1;
+          case 2: return 2;
+          case 3: return 4;
+          case 4: return 5;
+          case 5: return 7;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }  
+        // face 0, triangles
+        case 2:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 0;
+          case 1: return 1;
+          case 2: return 3;
+          case 3: return 6;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }  
+        // face 0, tetrahedrons
+        case 3:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 0;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }        
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+       }
+
+    // face 1
+    case 1:
+       switch(SubEntityDim)
+       {
+        // face 1, edges
+        case 0:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 0;
+          case 1: return 1;
+          case 2: return 2;
+          case 3: return 4;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+        }
+        // face 1, edges
+        case 1:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 0;
+          case 1: return 1;
+          case 2: return 3;
+          case 3: return 4;
+          case 4: return 6;
+          case 5: return 8;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }  
+        // face 1, triangles
+        case 2:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 0;
+          case 1: return 2;
+          case 2: return 4;
+          case 3: return 7;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }  
+        // face 1, tetrahedrons
+        case 3:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 1;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }        
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+       }
+    // face 2
+    case 2:
+       switch(SubEntityDim)
+       {
+        // face 2, nodes
+        case 0:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 0;
+          case 1: return 1;
+          case 2: return 3;
+          case 3: return 4;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+        }
+        // face 2, edges
+        case 1:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 0;
+          case 1: return 2;
+          case 2: return 3;
+          case 3: return 5;
+          case 4: return 6;
+          case 5: return 9;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }  
+        // face 2, triangles
+        case 2:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 1;
+          case 1: return 2;
+          case 2: return 5;
+          case 3: return 8;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }  
+        // face 2, tetrahedrons
+        case 3:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 2;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }        
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+       }
+
+    // face 3
+    case 3:
+       switch(SubEntityDim)
+       {
+        // face 3, nodes
+        case 0:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 0;
+          case 1: return 2;
+          case 2: return 3;
+          case 3: return 4;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+        }
+        // face 3, edges
+        case 1:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 1;
+          case 1: return 2;
+          case 2: return 3;
+          case 3: return 7;
+          case 4: return 8;
+          case 5: return 9;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }  
+        // face 3, triangles
+        case 2:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 3;
+          case 1: return 4;
+          case 2: return 5;
+          case 3: return 9;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }  
+        // face 3, tetrahedrons
+        case 3:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 3;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }        
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+       }
+
+    // face 4
+    case 4:
+       switch(SubEntityDim)
+       {
+        // face 4, nodes
+        case 0:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 1;
+          case 1: return 2;
+          case 2: return 3;
+          case 3: return 4;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid sub entity number");return -1;};
+        }
+        // face 4, edges
+        case 1:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 4;
+          case 1: return 5;
+          case 2: return 6;
+          case 3: return 7;
+          case 4: return 8;
+          case 5: return 9;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }  
+        // face 4, triangles
+        case 2:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 6;
+          case 1: return 7;
+          case 2: return 8;
+          case 3: return 9;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }  
+        // face 4, tetrahedrons
+        case 3:
+        switch(SubEntityDimNumber)
+        {
+          case 0: return 4;
+          default: {assert(0 &&"simplex_face_sub_entities: invalid edge number");return -1;};
+        }        
+        default: {assert(0 &&"simplex_face_sub_entities: invalid SubEntityDim");return -1;};
+       }
+    default: {assert(0 &&"simplex_face_sub_entities: invalid face number");return -1;};
+   }
+  default: {assert(0 &&"simplex_face_sub_entities: invalid simplex dimension");return -1;};
+ }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 template<typename Elem,typename Operator,Integer FEFamily,Integer Order>
 class ReferenceShapeFunctionValue;
 
@@ -260,12 +725,242 @@ class SingleShapeFunctionCoefficient;
 
 
 
+
+
+
+
+// works only for simplices
+template <typename Space>
+constexpr Integer trace_surf_n_dofs()
+  { 
+    using Elem=typename Space::Elem;
+    Integer n_dofs=0;
+    for(Integer ii=0;ii<Space::entity.size();ii++)
+    {
+      if(Space::entity[ii]<=Elem::ManifoldDim)
+       n_dofs+=Space::dofs_per_entity[ii]* binomial_coefficient(Elem::ManifoldDim,Space::entity[ii]+1);
+   }
+   return n_dofs*Space::NComponents;
+ }
+
+
+template<typename FunctionSpace>
+constexpr Integer function_space_dofs_per_elem(const Integer Dim,const Integer N)
+{   
+    std::size_t dofs_per_elem=0;
+    if(N>0)
+    dofs_per_elem=FunctionSpace::NComponents * 
+                                     FunctionSpace::dofs_per_entity[N-1]   * 
+                                     binomial_coefficient(Dim+1,FunctionSpace::entity[N-1]+1);  
+
+     switch(N)
+     {
+      case  -1: return 0;
+      case  0: return 0;
+      case  1: return dofs_per_elem;
+      default: return function_space_dofs_per_elem<FunctionSpace>(Dim,N-1)+dofs_per_elem;
+     }
+};
+
+
+
+template <typename Space>
+constexpr auto trace_dofs(const Integer face)
+{
+
+ 
+ constexpr auto n=trace_surf_n_dofs<Space>();
+ const auto ManifoldDim=Space::ManifoldDim;
+ const auto NComponents=Space::NComponents;
+ const auto entity=Space::entity;
+ const auto dofs_per_entity= Space::dofs_per_entity;
+
+ Array<Integer, n> dofs;
+ Integer cont=0;
+ Integer dofs_per_entity_cont=0;
+ // loop on all the kind of dofs-entities
+ for(Integer ii=0; ii< entity.size(); ii++)
+ {
+  const auto entityii=entity[ii];
+  // consider the ii-th dof-entity only if it smaller than the dimension of the manifolddim
+  // TODO FIXME IT SHOULD BE entity[ii]<ManifoldDim
+  if(entity[ii]<ManifoldDim)
+  {
+    const auto dofs_per_entityii=dofs_per_entity[ii];
+    const auto binomial_coeff=binomial_coefficient(ManifoldDim,entity[ii]+1);
+    // loop on the entityes of entityii dim
+    for(Integer jj=0; jj<binomial_coeff; jj++)
+      {
+        // loop on the dofs of the given entity
+        dofs[cont] = NComponents*dofs_per_entityii*simplex_face_sub_entities(ManifoldDim,face,entityii,jj)+function_space_dofs_per_elem<Space>(ManifoldDim,ii);
+        cont++;
+        for(Integer ss=1;ss<NComponents;ss++)
+        { 
+          dofs[cont] = dofs[cont-1]+1;
+          cont++;
+        }
+
+        for(Integer kk=1; kk<dofs_per_entityii; kk++)
+          {
+               for(Integer ss=0;ss<NComponents;ss++)
+                { 
+                  dofs[cont] = dofs[cont-1]+1;
+                  cont++;
+                }
+          }
+      }
+  }
+ }
+ return dofs;
+}
+
+
+template <typename Space>
+ constexpr auto trace_dofs()
+ {
+  const auto ManifoldDim=Space::ManifoldDim;
+  constexpr auto n_dofs_per_face=trace_surf_n_dofs<Space>();
+  const auto n_faces=binomial_coefficient(ManifoldDim+1,ManifoldDim);
+  Array< Array<Integer, n_dofs_per_face>, n_faces> vec;
+  for(Integer ii=0;ii<n_faces;ii++)
+    vec[ii]=trace_dofs<Space>(ii);
+  return vec;
+}
+
+
+      template<typename Space,typename Operator,typename single_type,
+               Integer NQPoints,Integer Dim>
+       constexpr auto reference_trace_shape_function_init(const Integer face, const Matrix<Real,NQPoints,Dim>&qp_points)
+       {
+        
+        Array<Real,Dim> qp_point;
+        const auto dofs=trace_dofs<Space>(face);
+        const auto n_dofs=dofs.size();
+        Array<Array<single_type,NQPoints>,n_dofs> v;
+        Array<single_type,n_dofs> func;
+        
+            for(Integer qp=0;qp<NQPoints;qp++)
+            {
+             qp_point=qp_points.get_row(qp);
+             // func=value<Elem,Operator,FEFamily,Order,single_type,Ndofs>(qp_point);
+             ReferenceShapeFunctionValue<typename Space::Elem,Operator,Space::FEFamily,Space::Order>::apply(qp_point,func);
+             // value<Space::Elem,Operator,Space::FEFamily,Space::Order>(qp_point,func);
+              for(Integer n_dof = 0; n_dof < n_dofs; ++n_dof) {
+                  const_cast<single_type&>
+                  (static_cast<const std::array<single_type,NQPoints>& >
+                   ((static_cast<const std::array<Array<single_type,NQPoints>,n_dofs>& >(v())[n_dof] )())[qp])=
+                  static_cast<const std::array<single_type,n_dofs>& >(func())[n_dof];
+              }
+            }
+       return v;
+      };
+
+template<Integer N,Integer K>
+ constexpr void combinations_generate_aux(
+            Array<Integer, K> &data,
+            const Integer index, 
+            const Integer i,
+            Array<Array<Integer, K>, binomial_coefficient(N,K)> &combs,
+            Integer &comb_index)
+        {
+            if(index == K) {
+                for(Integer ii=0;ii<data.size();ii++)
+                    combs[comb_index][ii]=data[ii];
+                comb_index++;
+                return;
+            }
+
+            if(i >= N) {
+                return;
+            }
+
+            data[index] = i;
+
+            combinations_generate_aux<N,K>(data, index+1, i+1, combs, comb_index);
+            
+            // current is excluded, replace it with next (Note that
+            // i+1 is passed, but index is not changed)
+            combinations_generate_aux<N,K>(data, index, i+1, combs, comb_index);
+        }
+
+        template<Integer N,Integer K >
+        constexpr Array<Array<Integer, K>, binomial_coefficient(N,K)> combinations_generate()
+        {
+            Array<Array<Integer, K>, binomial_coefficient(N,K)> combs;
+            Array<Integer, K> data;
+            Integer comb_index = 0;
+            combinations_generate_aux<N,K>(data, 0, 0, combs, comb_index);
+            return combs;
+        }
+
+
+   template<Integer Dim, Integer ManifoldDim>
+inline constexpr auto jacobian_faces()
+{
+    static_assert(Dim >= ManifoldDim, "Dim must be greater or equal ManifoldDim");
+    // static_assert(Npoints == ManifoldDim+1, "Npoints must be equal to ManifoldDim+1");
+    Array<Vector<Real, Dim>,ManifoldDim> points;
+    constexpr auto n_faces=ManifoldDim+1;
+    const auto combs=combinations_generate<ManifoldDim+1,ManifoldDim>(); 
+    Matrix<Real, Dim, ManifoldDim-1> J;
+    Vector<Matrix<Real, Dim, ManifoldDim-1>,n_faces> Jmat;
+    // loop on all the faces
+    for(Integer ii=0;ii<n_faces;ii++)
+    {
+        // take the indices of the reference simplex related to the face ii
+        const auto &comb_ii=combs[ii];
+        // fill points with the corresponding reference simplex face 
+        for(Integer jj=0;jj<ManifoldDim;jj++)
+          for(Integer kk=0;kk<ManifoldDim;kk++)
+            points[jj][kk]=Simplex<Dim,ManifoldDim>::reference[comb_ii[jj]][kk];
+        
+        // compute the jacobian of the given face
+        for(Integer ii=0;ii<ManifoldDim;ii++)
+        {
+            Vector<Real, Dim> v0 = points[0];
+            for(Integer i = 1; i < ManifoldDim; ++i) {
+                const auto &vi = points[i];
+                J.col(i-1, vi - v0);
+            }
+        }
+        Jmat[ii]=J;
+
+    }
+    return Jmat;
+}
+
+
+template<typename QuadratureRule>
+inline constexpr auto reference_face_shape_functions()
+{
+  using Elem=typename QuadratureRule::Elem;
+  constexpr Integer Dim=Elem::Dim;
+  constexpr Integer ManifoldDim=Elem::ManifoldDim;
+  const auto Jacobian_faces=jacobian_faces<Dim,ManifoldDim>();
+  constexpr auto n_faces=Jacobian_faces.size();
+  Vector<typename QuadratureRule::qp_points_type, n_faces> qp_points_face;
+
+  for(Integer ii=0;ii<n_faces;ii++)
+     {
+        qp_points_face[ii]=Jacobian_faces[ii]*QuadratureRule::qp_points_type;
+     }
+
+ return qp_points_face;
+}
+
+
+
+
+
+
+
 template<Integer Dim,Integer ManifoldDim>
 class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 0>
 {
  public: 
+  using Output=Vector<Matrix<Real, 1, 1>,1>;
 constexpr inline static void 
-apply(const Vector<Real,ManifoldDim>& point, Vector<Matrix<Real, 1, 1>,1> & func)
+apply(const Vector<Real,ManifoldDim>& point, Output & func)
 {
     Vector<Matrix<Real, 1, 1>,1> func2(1);       
     func=func2;
@@ -277,8 +972,9 @@ template<Integer Dim>
 class ReferenceShapeFunctionValue<Simplex<Dim,1>, IdentityOperator, LagrangeFE, 1>
 {
  public: 
+  using Output=Vector<Matrix<Real, 1, 1>,2>;
 constexpr inline static void 
-apply(const Vector<Real,1>& point, Vector<Matrix<Real, 1, 1>,2> & func)
+apply(const Vector<Real,1>& point, Output & func)
 {
     Vector<Matrix<Real, 1, 1>,2> func2((1. - point[0]), // 1 in (0)
                                        point[0]);       // 1 in (1)
@@ -290,8 +986,9 @@ template<Integer Dim>
 class ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 1>
 {
  public: 
+  using Output=Vector<Matrix<Real, 1, 1>,3>;
 constexpr inline static void 
-apply(const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,3> & func)
+apply(const Vector<Real,2>& point, Output & func)
 {
     Vector<Matrix<Real, 1, 1>,3> func2((1. - point[0] - point[1]), // 1 in (0,0)
                                        point[0],                  // 1 in (1,0)
@@ -320,8 +1017,9 @@ template<Integer Dim>
 class ReferenceShapeFunctionValue<Simplex<Dim,2>, GradientOperator, LagrangeFE, 1>
 {
  public: 
+  using Output=Vector<Matrix<Real, 2, 1>,3>;
  constexpr inline static void 
- apply(const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,3> & func)
+ apply(const Vector<Real,2>& point, Output & func)
   {
       const auto& xi=point[0];
       const auto& eta=point[1];
@@ -351,10 +1049,11 @@ template<Integer Dim>
 class ReferenceShapeFunctionValue<Simplex<Dim,2>, TraceOperator, LagrangeFE, 1>
 {
  public: 
+  using Output=Vector<Matrix<Real, 1, 1>,2>;
 constexpr inline static void 
-apply(const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,2> & func)
+apply(const Vector<Real,1>& point, Output & func)
   {
-      ReferenceShapeFunctionValue<Simplex<Dim,1>, IdentityOperator, LagrangeFE, 1>::value(point,func);
+      ReferenceShapeFunctionValue<Simplex<Dim,1>, IdentityOperator, LagrangeFE, 1>::apply(point,func);
   }
 };
 
@@ -365,22 +1064,13 @@ apply(const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,2> & func)
 
 
 
-// template<Integer Dim>
-// constexpr void value<Simplex<Dim,2>, TraceOperator, LagrangeFE, 1>
-//  (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,2> & func)
-// {
-//     value<Simplex<2,1>, TraceOperator, LagrangeFE, 1>(point,func);
-// }
-
-
-
-
 template<Integer Dim>
 class ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 2>
 {
  public:
+  using Output=Vector<Matrix<Real, 1, 1>,6>;
 constexpr inline static void 
-apply(const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,6> & func)
+apply(const Vector<Real,2>& point, Output & func)
 {
     const auto& xi=point[0];
     const auto& eta=point[1];
@@ -416,8 +1106,9 @@ template<Integer Dim>
 class ReferenceShapeFunctionValue<Simplex<Dim,2>, GradientOperator, LagrangeFE, 2>
 {
 public:
+  using Output=Vector<Matrix<Real, 2, 1>,6>;
 constexpr inline static void 
-apply(const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,6> & func)
+apply(const Vector<Real,2>& point, Output & func)
 {
     const auto& xi=point[0];
     const auto& eta=point[1];
@@ -473,8 +1164,9 @@ template<Integer Dim>
 class ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 0>
 {
 public:
+  using Output=Vector<Matrix<Real, 2, 1>,3>;
  constexpr inline static void 
- apply(const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,3> & func)
+ apply(const Vector<Real,2>& point, Output & func)
 {
     const auto& xi=point[0];
     const auto& eta=point[1];
@@ -501,8 +1193,9 @@ template<Integer Dim>
 class ReferenceShapeFunctionValue<Simplex<Dim,2>, DivergenceOperator, RaviartThomasFE, 0>
 {
 public:
+  using Output=Vector<Matrix<Real, 1, 1>,3>;
 constexpr inline static void 
-apply(const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,3> & func)
+apply(const Vector<Real,2>& point, Output & func)
 {
     Vector<Matrix<Real, 1, 1>,3> func2{{2},{2},{2}};
     func=func2;
@@ -523,8 +1216,9 @@ template<Integer Dim>
 class ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 1>
 {
 public:
+  using Output=Vector<Matrix<Real, 2, 1>,8>;
 constexpr inline static void 
-apply (const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,8> & func)
+apply (const Vector<Real,2>& point, Output & func)
 {
     const auto& xi=point[0];
     const auto& eta=point[1];
@@ -566,8 +1260,9 @@ template<Integer Dim>
 class ReferenceShapeFunctionValue<Simplex<Dim,2>, DivergenceOperator, RaviartThomasFE, 1>
 {
 public:
+  using Output=Vector<Matrix<Real, 1, 1>,8>;
 constexpr inline static void 
-apply(const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,8> & func)
+apply(const Vector<Real,2>& point, Output & func)
 {
     const auto& xi=point[0];
     const auto& eta=point[1];
@@ -585,6 +1280,18 @@ apply(const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,8> & func)
 }
 };
 
+
+template<Integer Dim,Integer ManifoldDim, Integer Order>
+class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, TraceOperator, RaviartThomasFE, Order>
+{
+ public: 
+  using Output=typename ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim-1>, IdentityOperator, LagrangeFE, Order>::Output;
+constexpr inline static void 
+apply(const Vector<Real,ManifoldDim-1>& point, Output & func)
+  {
+      ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim-1>, IdentityOperator, LagrangeFE, Order>::apply(point,func);
+  }
+};
 
 // template<Integer Dim>
 // constexpr void value<Simplex<Dim,2>, DivergenceOperator, RaviartThomasFE, 1>
@@ -630,7 +1337,7 @@ class SingleShapeFunctionCoefficient<Simplex<Dim,2>, RaviartThomasFE, 0>
 {
  public: 
 constexpr inline static  void 
-apply(const Vector<Real, 3 >& outward,Vector<Real, 3 >& coeff)
+apply(const Array<Real, 3 >& outward,Array<Real, 3 >& coeff)
 {
     coeff[0]=outward[0];
     coeff[1]=outward[1];
@@ -644,7 +1351,7 @@ class SingleShapeFunctionCoefficient<Simplex<Dim,2>, RaviartThomasFE, 1>
 {
  public: 
 constexpr inline static  void  
-apply (const Vector<Real, 3 >& outward,Vector<Real, 8 >& coeff)
+apply (const Array<Real, 3 >& outward,Array<Real, 8 >& coeff)
 {
     coeff[0]=outward[0];
     coeff[1]=outward[0];
@@ -800,6 +1507,17 @@ public:
 };
 
 
+template<typename FunctionSpace>
+class SingleTypeShapeFunction<FunctionSpace,TraceOperator>
+{
+public:
+    static constexpr Integer NComponents=FunctionSpace::NComponents;
+    static constexpr Integer ShapeFunctionDim1=1;
+    static constexpr Integer ShapeFunctionDim2=1;
+    using SingleType=Matrix<Real,1,1>;
+    using TotType= Matrix<Real, NComponents,1 >;
+};
+
 
 template<typename FunctionSpace, typename Operator>
 class SingleTypeShapeFunction<FunctionSpace,Transposed<Expression<Operator>>>
@@ -831,6 +1549,8 @@ class ShapeFunction
 { 
 public:
     using Elem=Elem_;
+    using QuadratureElem=typename QuadratureRule::Elem;
+
     using Operator=Operator_;
     
     using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
@@ -838,7 +1558,12 @@ public:
     static constexpr Integer ManifoldDim=Elem::ManifoldDim;
     static constexpr Integer NComponents=BaseFunctionSpace::NComponents;
     static constexpr Integer NQPoints=QuadratureRule::NQPoints;
-    static constexpr Integer Ntot=FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,BaseFunctionSpace>>::value;
+    // static constexpr Integer Ntot=FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,BaseFunctionSpace>>::value;
+    // if QuadratureElem==Elem, then FunctionSpaceDofsPerSubEntityElem==FunctionSpaceDofsPerElem
+    // if QuadratureElem::ManifoldDim=Elem::ManifoldDim-1, 
+    // then FunctionSpaceDofsPerSubEntityElem counts the total number of dofs on a boundary face
+    // static constexpr Integer Ntot=FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,BaseFunctionSpace>>::value;
+    static constexpr Integer Ntot=FunctionSpaceDofsPerSubEntityElem<ElemFunctionSpace<Elem,BaseFunctionSpace>,QuadratureElem::ManifoldDim>::value;
     static constexpr Integer Ndofs=Ntot/NComponents;
     static constexpr Integer Order=BaseFunctionSpace::Order;
     static constexpr Integer FEFamily=BaseFunctionSpace::FEFamily;
@@ -851,15 +1576,19 @@ public:
     using Point = Vector<Real,Dim>;
     using QP = Matrix<Real,NQPoints,Dim>;
     using qp_points_type=typename QuadratureRule::qp_points_type;
-    using Map=MapFromReference<Operator,Elem,BaseFunctionSpace::FEFamily>;
+    // it can be Elem<dim,manifolddim> for volumetric quadrature rule
+    //           Elem<dim,manifolddim-1> for surface quadrature rule
+    using Map=MapFromReference<Operator,QuadratureElem,BaseFunctionSpace::FEFamily>;
     
     static constexpr Integer ShapeFunctionDim1=SingleTypeShapeFunction<FunctionSpace,Operator>::ShapeFunctionDim1;
     static constexpr Integer ShapeFunctionDim2=SingleTypeShapeFunction<FunctionSpace,Operator>::ShapeFunctionDim2;
     
     static constexpr FQPValues<SingleType,NQPoints,Ndofs>
     reference_values{reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(QuadratureRule::qp_points)};
-    static constexpr FQPValues<SingleType,NQPoints,Ndofs>
-    weighted_reference_values{  weighted_reference_shape_function_init(reference_values,QuadratureRule::qp_sqrt_abs_weights)};
+    
+
+    // static constexpr FQPValues<SingleType,NQPoints,Ndofs>
+    // weighted_reference_values{  weighted_reference_shape_function_init(reference_values,QuadratureRule::qp_sqrt_abs_weights)};
     
     constexpr const type& eval()const{return func_values_;}
     
@@ -903,7 +1632,7 @@ public:
         std::cout<<"init end"<<std::endl;
     }
     
-    void init(const Vector<Real,Ndofs> &alpha)
+    void init(const Array<Real,Ndofs> &alpha)
     {
         std::cout<<"init RT elements (coeffs)"<<std::endl;
         
@@ -972,11 +1701,11 @@ ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::NQPoints,
 ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::Ndofs>
 ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::reference_values;
 
-template<typename Elem,typename BaseFunctionSpace,typename Operator, typename QuadratureRule>
-constexpr FQPValues<typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::SingleType,
-ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::NQPoints,
-ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::Ndofs>
-ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::weighted_reference_values;
+// template<typename Elem,typename BaseFunctionSpace,typename Operator, typename QuadratureRule>
+// constexpr FQPValues<typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::SingleType,
+// ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::NQPoints,
+// ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::Ndofs>
+// ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::weighted_reference_values;
 
 
 
@@ -990,28 +1719,35 @@ ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>::weighted_referenc
 
 
 
-
-
-template< typename Elem_,typename BaseFunctionSpace, typename Operator_, typename QuadratureRule>
-class ShapeFunction<Elem_,BaseFunctionSpace,Transposed<Expression<Operator_>>,QuadratureRule>
-: public Expression<ShapeFunction<Elem_,BaseFunctionSpace,Transposed<Expression<Operator_>>,QuadratureRule>> 
+template< typename Elem_,typename BaseFunctionSpace, typename QuadratureRule>
+class ShapeFunction<Elem_,BaseFunctionSpace,TraceOperator,QuadratureRule>
+: public Expression<ShapeFunction<Elem_,BaseFunctionSpace,TraceOperator,QuadratureRule>> 
 { 
 public:
-    using NotTransposedShape=ShapeFunction<Elem_,BaseFunctionSpace,Operator_,QuadratureRule>;
     using Elem=Elem_;
-    using Operator=Transposed<Expression<Operator_>>;
+    using QuadratureElem=typename QuadratureRule::Elem;
+    
+    using Operator=TraceOperator;
     
     using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
     static constexpr Integer Dim=Elem::Dim;
     static constexpr Integer ManifoldDim=Elem::ManifoldDim;
     static constexpr Integer NComponents=BaseFunctionSpace::NComponents;
     static constexpr Integer NQPoints=QuadratureRule::NQPoints;
-    static constexpr Integer Ntot=FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,BaseFunctionSpace>>::value;
+    // static constexpr Integer Ntot=FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,BaseFunctionSpace>>::value;
+    // if QuadratureElem==Elem, then FunctionSpaceDofsPerSubEntityElem==FunctionSpaceDofsPerElem
+    // if QuadratureElem::ManifoldDim=Elem::ManifoldDim-1, 
+    // then FunctionSpaceDofsPerSubEntityElem counts the total number of dofs on a boundary face
+    // static constexpr Integer Ntot=FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,BaseFunctionSpace>>::value;
+    static constexpr Integer NtotVolume=FunctionSpaceDofsPerSubEntityElem<ElemFunctionSpace<Elem,BaseFunctionSpace>,Elem::ManifoldDim>::value;
+    static constexpr Integer NdofsVolume=NtotVolume/NComponents;
+    static constexpr Integer Ntot=FunctionSpaceDofsPerSubEntityElem<ElemFunctionSpace<Elem,BaseFunctionSpace>,QuadratureElem::ManifoldDim>::value;
     static constexpr Integer Ndofs=Ntot/NComponents;
-    static constexpr Integer Order=BaseFunctionSpace::Order;
     static constexpr Integer FEFamily=BaseFunctionSpace::FEFamily;
-    
-    using SingleType   = Transposed<typename SingleTypeShapeFunction<FunctionSpace,Operator_>::SingleType>;
+    static constexpr Integer Order=BaseFunctionSpace::Order;
+    static constexpr Integer Continuity=BaseFunctionSpace::Continuity;
+    static constexpr auto trace=trace_dofs<FunctionSpace>();
+    using SingleType   = typename SingleTypeShapeFunction<FunctionSpace,Operator>::SingleType;
     using VectorSingleType   = Vector<SingleType,Ndofs>;
     using tot_type= typename SingleTypeShapeFunction<FunctionSpace,Operator>::TotType;
     using qpvalues_type= QPValues<tot_type,NQPoints>;
@@ -1019,56 +1755,121 @@ public:
     using Point = Vector<Real,Dim>;
     using QP = Matrix<Real,NQPoints,Dim>;
     using qp_points_type=typename QuadratureRule::qp_points_type;
-    using Map=MapFromReference<Operator,Elem,BaseFunctionSpace::FEFamily>;
+    // it can be Elem<dim,manifolddim> for volumetric quadrature rule
+    //           Elem<dim,manifolddim-1> for surface quadrature rule
+    using Map=MapFromReference<Operator,QuadratureElem,BaseFunctionSpace::FEFamily>;
     
-    //  static constexpr Integer ShapeFunctionDim1=SingleTypeShapeFunction<FunctionSpace,Operator>::ShapeFunctionDim1;
-    //  static constexpr Integer ShapeFunctionDim2=SingleTypeShapeFunction<FunctionSpace,Operator>::ShapeFunctionDim2;
+    static constexpr Integer ShapeFunctionDim1=SingleTypeShapeFunction<FunctionSpace,Operator>::ShapeFunctionDim1;
+    static constexpr Integer ShapeFunctionDim2=SingleTypeShapeFunction<FunctionSpace,Operator>::ShapeFunctionDim2;
     
-    //  static constexpr FQPValues<SingleType,NQPoints,Ndofs>
-    //  reference_values{reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(QuadratureRule::qp_points)};
-    //  static constexpr FQPValues<SingleType,NQPoints,Ndofs>
-    //  weighted_reference_values{  weighted_reference_shape_function_init(reference_values,QuadratureRule::qp_sqrt_abs_weights)};
+    static constexpr FQPValues<SingleType,NQPoints,Ndofs>
+    reference_values{reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(QuadratureRule::qp_points)};
     
-    constexpr const auto& eval()const{return not_transposed_shape_.eval();}
+
+    // static constexpr FQPValues<SingleType,NQPoints,Ndofs>
+    // weighted_reference_values{  weighted_reference_shape_function_init(reference_values,QuadratureRule::qp_sqrt_abs_weights)};
     
-    constexpr void init()
+    constexpr const type& eval()const{return func_values_;}
+    
+    
+    void init(const Integer face)
     {
-        not_transposed_shape_.init();
+        const auto& map=(*map_ptr);
+        const auto& mapping=map();
+        // decltype(func_values_) ok1(1);
+        // SingleType ok2(2);
+        // std::cout<<"NComponents="<<NComponents<<std::endl;
+        // std::cout<<"NQPoints="<<NQPoints<<std::endl;
+        
+        // std::cout<<"func_values_[0][0]"<<std::endl;
+        // std::cout<<func_values_[0][0]<<std::endl;
+        // std::cout<<"func_values_"<<std::endl;
+        
+        // std::cout<<func_values_<<std::endl;
+        // std::cout<<"func_tmp_"<<std::endl;
+        // std::cout<<func_tmp_<<std::endl;
+        for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+        {
+            for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+            {
+                
+                n_tot_=n_dof * NComponents +  n_comp ;
+                n_=n_comp*ShapeFunctionDim1;
+                for(Integer qp=0;qp<NQPoints;qp++)
+                {
+                    func_values_[n_tot_][qp].zero();
+                    // func_tmp_=  mapping * weighted_reference_values[n_dof][qp];
+                    func_tmp_=  mapping * reference_values[n_dof][qp];
+                    
+                    // se ncompontensts >1, allora assegni alla riga
+                    assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
+                }
+                
+            }
+        }
+        
+        std::cout<<"init end"<<std::endl;
     }
     
-    constexpr void init(const Vector<Real,Ndofs> &alpha)
+    void init(const Array<Real,NdofsVolume> &beta, const Integer face)
     {
-        // here we must transposed todo fixme
-        not_transposed_shape_.init(alpha);
-    }
-    constexpr void init_map(const Map& map){not_transposed_shape_.init_map(map());}
+
+        //face=0
+        // const Integer face=0;
+        auto alpha=subarray(beta,trace[face]);
+        std::cout<<"init RT elements (coeffs)"<<std::endl;
+        
+        const auto& map=(*map_ptr);
+        const auto& mapping=map();
+        for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+        {
+            for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+            {
+                
+                n_tot_=n_dof * NComponents +  n_comp ;
+                n_=n_comp;
+                for(Integer qp=0;qp<NQPoints;qp++)
+                {
+                    func_values_[n_tot_][qp].zero();
+                    // func_tmp_=alpha[n_dof] * mapping * weighted_reference_values[n_dof][qp];
+                    std::cout<< "n_dof, qp, n_tot_, n_comp, n_=("<<n_dof<<", "<<qp<<", "<< n_tot_<<", "<<n_comp<<", "<< n_<<")"<<std::endl;
+                    std::cout<< "func_values_="<<func_values_[n_tot_][qp]<<std::endl;
+                    func_tmp_=alpha[n_dof] * mapping * reference_values[n_dof][qp];
+                    std::cout<< "func_tmp_="<<func_tmp_<<std::endl;
+                    assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
+                    std::cout<< "func_values_ after="<<func_values_[n_tot_][qp]<<std::endl;
+                }
+                
+            }
+        }
+        std::cout<<"init end"<<std::endl;
+        
+    };
+    
+    constexpr void init_map(const Map& map){map_ptr=std::make_shared<Map>(map);}
     
     ShapeFunction(const Map& map):
-    not_transposed_shape_(ShapeFunction<Elem_,BaseFunctionSpace,Operator_,QuadratureRule> (map)),
     map_ptr(std::make_shared<Map>(map))
     {}
     
     ShapeFunction(const ShapeFunction& shape):
-    not_transposed_shape_(ShapeFunction<Elem_,BaseFunctionSpace,Operator_,QuadratureRule> (shape.map())),
     map_ptr(std::make_shared<Map>(shape.map()))
     {}
     
     
     ShapeFunction(){}
     
-    // const auto& map()const{return (*map_ptr);}
+    const auto& map()const{return (*map_ptr);}
     
 private:
-    NotTransposedShape not_transposed_shape_;
-    //      SingleType func_tmp_;
-    //      VectorSingleType func_;
-    //      Point qp_point_;
-    //      FQPValues<SingleType,NQPoints,Ndofs> component_func_values_;
-    //      type func_values_;
+    SingleType func_tmp_;
+    VectorSingleType func_;
+    Point qp_point_;
+    FQPValues<SingleType,NQPoints,Ndofs> component_func_values_;
+    type func_values_;
     std::shared_ptr<Map> map_ptr;
-    // FQPValues<Transposed<SingleType>,NQPoints,Ndofs>
-    //      Integer n_tot_;
-    //      Integer n_;
+    Integer n_tot_;
+    Integer n_;
 };
 
 
@@ -1089,292 +1890,6 @@ private:
 
 
 
-
-
-
-
-// template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename ConstType,typename...Inputs,typename...Ts>
-// constexpr auto& composite_shape_function_aux(const ConstantTensor<ConstType,Inputs...>& constant, const std::tuple<Ts...>& tuple_of_shape_functions)
-// {
-//     // return 1;
-//     std::cout<<"constant="<<std::endl;
-//     return constant;
-// }
-
-// template< typename Elem,typename FunctionSpace, typename QuadratureRule,typename Operator,typename...Ts>
-// constexpr auto& composite_shape_function_aux(const Operator& op, const std::tuple<Ts...>& tuple_of_shape_functions)
-// {
-//     using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpace>;
-//     std::cout<<"operator pre="<<std::endl;
-//     auto& ee= get_tuple_element_of_type<ShapeFunction<Elem,BaseFunctionSpace,Operator,QuadratureRule>>(tuple_of_shape_functions);
-//     std::cout<<"operator post="<<std::endl;
-//     return ee;
-// }
-
-
-// template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename T,typename...Ts>
-// constexpr auto composite_shape_function_aux(const UnaryPlus<Expression<T>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
-// {
-//     return composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.derived(),tuple_of_shape_functions);
-// }
-
-// template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename T,typename...Ts>
-// constexpr auto composite_shape_function_aux(const UnaryMinus<Expression<T>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
-// {
-//     auto e= composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.derived(),tuple_of_shape_functions);
-//     return -e;
-// }
-
-
-
-// template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename Left,typename Right,typename...Ts>
-// constexpr auto composite_shape_function_aux(const Addition<Expression<Left>,Expression<Right>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
-// {
-//     std::cout<<"add left"<<std::endl;
-//     auto left=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.left(),tuple_of_shape_functions);
-//     std::cout<<"add right"<<std::endl;
-//     auto right=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.right(),tuple_of_shape_functions);
-//     std::cout<<"add"<<std::endl;
-//     return left+right;
-// }
-
-// template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename Left,typename Right,typename...Ts>
-// constexpr auto composite_shape_function_aux(const Subtraction<Expression<Left>,Expression<Right>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
-// {
-//     auto left=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.left(),tuple_of_shape_functions);
-//     auto right=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.right(),tuple_of_shape_functions);
-//     return left-right;
-// }
-
-// template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename Left,typename Right,typename...Ts>
-// constexpr auto composite_shape_function_aux(const Multiplication<Expression<Left>,Expression<Right>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
-// {
-//     std::cout<<"mult left"<<std::endl;
-//     auto left=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.left(),tuple_of_shape_functions);
-//     std::cout<<"mult right"<<std::endl;
-//     auto right=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.right(),tuple_of_shape_functions);
-    
-//     return left*right;
-// }
-
-// template< typename Elem,typename BaseFunctionSpace, typename QuadratureRule,typename Left,typename Right,typename...Ts>
-// constexpr auto composite_shape_function_aux(const Division<Expression<Left>,Expression<Right>>& expr, const std::tuple<Ts...>& tuple_of_shape_functions)
-// {
-//     auto left=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.left(),tuple_of_shape_functions);
-//     auto right=composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(expr.right(),tuple_of_shape_functions);
-    
-//     return left/right;
-// }
-
-
-// template<typename QuadratureRule,template<class,Integer,class>class TestOrTrial_,typename MixedSpace,Integer N, typename Expr,typename...Ts>
-// constexpr auto composite_shape_function(const TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, const std::tuple<Ts...>& tuple_of_tuple_of_shape_functions)
-// {
-//     using TestOrTrial=TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Expr>>>;
-//     using Elem=typename TestOrTrial::Elem;
-//     using BaseFunctionSpace=GetType<typename TestOrTrial::UniqueElementFunctionSpacesTupleType,TestOrTrial::value>;
-//     std::cout<<"Test::value="<<TestOrTrial::value<<std::endl;
-//     const auto& tuple_nth=tuple_get<TestOrTrial::value>(tuple_of_tuple_of_shape_functions);
-//     return composite_shape_function_aux<Elem,BaseFunctionSpace,QuadratureRule>(t.composite_operator().composite_operator(),tuple_nth);
-// }
-
-
-
-
-
-
-
-
-
-
-
-
-// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Operator,typename Expr>
-// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,Operator>& t, 
-//                                               const Expr& expr)
-// {
-//     using T=TestOrTrial<MixedSpace,N,Operator>;
-//     using FunctionSpace=typename T::FunctionSpace;
-//     using FromElementFunctionSpacesToFirstSpaceTupleType=typename FunctionSpace::FromElementFunctionSpacesToFirstSpaceTupleType;
-//     constexpr Integer FirstSpace=GetType<FromElementFunctionSpacesToFirstSpaceTupleType,T::value>::value;
-//     return TestOrTrial<MixedSpace,FirstSpace,Operator>(t.spaces_ptr());
-// }
-
-// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Operator>
-// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-//                                               const Operator& op)
-// {
-//     using T=TestOrTrial<MixedSpace,N,Operator>;
-//     using FunctionSpace=typename T::FunctionSpace;
-//     using FromElementFunctionSpacesToFirstSpaceTupleType=typename FunctionSpace::FromElementFunctionSpacesToFirstSpaceTupleType;
-//     constexpr Integer FirstSpace=GetType<FromElementFunctionSpacesToFirstSpaceTupleType,T::value>::value;
-//     return TestOrTrial<MixedSpace,FirstSpace,Operator>(t.spaces_ptr());
-// }
-
-// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Operator>
-// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-// //                                               const Transposed<Expression<Operator>>& expr)
-// // {
-// //   auto e=form_of_composite_operator_aux(t,expr.derived());
-// //   // decltype(expr.derived()) eee(6);
-// //   return Transpose(e);
-
-// //   // using T=TestOrTrial<MixedSpace,N,Operator>;
-// //   // using FunctionSpace=typename T::FunctionSpace;
-// //   // using FromElementFunctionSpacesToFirstSpaceTupleType=typename FunctionSpace::FromElementFunctionSpacesToFirstSpaceTupleType;
-// //   // constexpr Integer FirstSpace=GetType<FromElementFunctionSpacesToFirstSpaceTupleType,T::value>::value;  
-// //   // return Transpose(TestOrTrial<MixedSpace,FirstSpace,Operator>(t.spaces_ptr()));
-// // }
-
-// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
-// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-//                                               const ConstantTensor<ConstType,Inputs...>& constant)
-// {return constant;}
-
-// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
-// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-// //                                               const Transposed<Expression<ConstantTensor<ConstType,Inputs...>>>& transposed_constant)
-// // {
-// //   return transposed_constant;
-// // }
-
-// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
-// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-// //                                               const TraceOperator<Expression<ConstantTensor<ConstType,Inputs...>>>& trace_constant)
-// // {
-// //   return trace_constant;
-// // }
-
-
-// template<template<class,Integer,class > class TestOrTrial, template<class>class Unary,
-// typename MixedSpace,Integer N,typename Expr,typename ConstType,typename...Inputs>
-// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-//                                               const Unary<Expression<ConstantTensor<ConstType,Inputs...>>>& unary_operator_applied_to_constant)
-// {
-//     return unary_operator_applied_to_constant;
-// }
-
-// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename FullSpace, Integer M,typename Operator,typename FuncType>
-// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-//                                               const Function<FullSpace,M,Operator,FuncType>& func)
-// {return func;}
-
-// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename FullSpace, Integer M,typename Operator,typename FuncType>
-// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-// //                                               const Transposed<Expression<Function<FullSpace,M,Operator,FuncType>>>& transposed_func)
-// // {return transposed_func;}
-
-
-// template<template<class,Integer,class > class TestOrTrial, template<class>class Unary,
-// typename MixedSpace,Integer N,typename Expr,typename FullSpace, Integer M,typename Operator,typename FuncType>
-// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-//                                               const Unary<Expression<Function<FullSpace,M,Operator,FuncType>>>& unary_operator_applied_to_func)
-// {return unary_operator_applied_to_func;}
-
-
-
-
-
-
-
-
-
-
-
-
-// template<template<class,Integer,class > class TestOrTrial, template<class>class Unary,
-// typename MixedSpace,Integer N,typename Expr,typename T>
-// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-//                                               const Unary<Expression<T>>& expr)
-// {
-//     auto e=form_of_composite_operator_aux(t,expr.derived());
-//     // decltype(expr.derived()) eee(6);
-//     return Unary<Expression<decltype(e)>>(e);
-// }
-
-// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename T>
-// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-// //                                               const UnaryPlus<Expression<T>>& expr)
-// // {
-// //   auto e=form_of_composite_operator_aux(t,expr.derived());
-// //   // decltype(expr.derived()) eee(6);
-// //   return +e;
-// // }
-
-// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename T>
-// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-// //                                               const UnaryMinus<Expression<T>>& expr)
-// // {
-// //   auto e=form_of_composite_operator_aux(t,expr.derived());
-// //   return -e;
-// // }
-
-
-
-// template<template<class,Integer,class > class TestOrTrial, template<class,class>class Binary,
-// typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
-// constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-//                                               const Binary<Expression<Left>,Expression<Right>>& expr)
-// {
-//     auto left=form_of_composite_operator_aux(t,expr.left());
-//     auto right=form_of_composite_operator_aux(t,expr.right());
-    
-//     return Binary<Expression<decltype(left)>,Expression<decltype(right)>>(left,right);
-// }
-
-
-// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
-// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-// //                                               const Addition<Expression<Left>,Expression<Right>>& expr)
-// // {
-// //   auto left=form_of_composite_operator_aux(t,expr.left());
-// //   auto right=form_of_composite_operator_aux(t,expr.right());
-
-// //   return left+right;
-// // }
-
-// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
-// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-// //                                               const Subtraction<Expression<Left>,Expression<Right>>& expr)
-// // {
-// //   auto left=form_of_composite_operator_aux(t,expr.left());
-// //   auto right=form_of_composite_operator_aux(t,expr.right());
-
-// //   return left-right;
-// // }
-
-// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
-// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-// //                                               const Multiplication<Expression<Left>,Expression<Right>>& expr)
-// // {
-// //   auto left=form_of_composite_operator_aux(t,expr.left());
-// //   auto right=form_of_composite_operator_aux(t,expr.right());
-
-// //   return left*right;
-// // }
-
-// // template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr,typename Left,typename Right>
-// // constexpr auto form_of_composite_operator_aux(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t, 
-// //                                               const Division<Expression<Left>,Expression<Right>>& expr)
-// // {
-// //   auto left=form_of_composite_operator_aux(t,expr.left());
-// //   auto right=form_of_composite_operator_aux(t,expr.right());
-
-// //   return left/right;
-// // }
-
-
-// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Expr>
-// constexpr auto form_of_composite_operator(const TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>& t)
-// {
-//     return form_of_composite_operator_aux(t,t.composite_operator().composite_operator());
-// }
-
-// template<template<class,Integer,class > class TestOrTrial, typename MixedSpace,Integer N,typename Operator>
-// constexpr auto form_of_composite_operator(const TestOrTrial<MixedSpace,N,Operator>& t)
-// {
-//     return t;
-// }
 
 
 

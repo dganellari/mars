@@ -3,7 +3,7 @@
 
 #include "mars_tuple_utilities.hpp"
 #include "mars_base.hpp"
-
+#include "mars_operators.hpp"
 
 namespace mars{
 
@@ -23,34 +23,36 @@ class Test;
 template<typename MixedSpace, Integer N, typename OperatorType>
 class Trial;
 
-template<typename Left,typename Right,Integer QR>
-class L2DotProductIntegral;
+class TraceOperator;
 
-template<typename T>
+// H=-1: both volume and surface integrals
+// H=0: only volume integral
+// H=1: only surface integral
+template<typename T,Integer H=-1>
 class OperatorAndQuadratureTupleType;
 
 
-template<template<class>class Unary, typename T>
-    class OperatorAndQuadratureTupleType< Unary< Expression<T> > >
+template<template<class>class Unary, typename T,Integer H>
+    class OperatorAndQuadratureTupleType< Unary< Expression<T> >, H >
     { public:
-      using type=typename OperatorAndQuadratureTupleType<T>::type;
-      using composite_type=typename OperatorAndQuadratureTupleType<T>::composite_type;
+      using type=typename OperatorAndQuadratureTupleType<T,H>::type;
+      using composite_type=typename OperatorAndQuadratureTupleType<T,H>::composite_type;
   };
 
 
-template<template<class,class>class Binary,typename Left, typename Right>
-  class OperatorAndQuadratureTupleType< Binary< Expression<Left>,Expression<Right> > >
+template<template<class,class>class Binary,typename Left, typename Right,Integer H>
+  class OperatorAndQuadratureTupleType< Binary< Expression<Left>,Expression<Right> >, H >
   { public:
-      using LeftT=typename OperatorAndQuadratureTupleType<Left>::type;
-      using RightT=typename OperatorAndQuadratureTupleType<Right>::type;
+      using LeftT=typename OperatorAndQuadratureTupleType<Left,H>::type;
+      using RightT=typename OperatorAndQuadratureTupleType<Right,H>::type;
       using type=RemoveTupleOfTupleDuplicates< LeftT, RightT >;
-      using CompositeLeftT=typename OperatorAndQuadratureTupleType<Left>::composite_type;
-      using CompositeRightT=typename OperatorAndQuadratureTupleType<Right>::composite_type;
+      using CompositeLeftT=typename OperatorAndQuadratureTupleType<Left,H>::composite_type;
+      using CompositeRightT=typename OperatorAndQuadratureTupleType<Right,H>::composite_type;
       using composite_type=RemoveTupleOfTupleDuplicates<  CompositeLeftT, CompositeRightT >;
   };
 
-template<template<class,Integer,class > class TestOrTrial_,typename MixedSpace, Integer N,typename OperatorType>
-  class OperatorAndQuadratureTupleType<TestOrTrial_<MixedSpace,N,OperatorType> >
+template<template<class,Integer,class > class TestOrTrial_,typename MixedSpace, Integer N,typename OperatorType,Integer H>
+  class OperatorAndQuadratureTupleType<TestOrTrial_<MixedSpace,N,OperatorType>,H >
   { public:
       using TestOrTrial=TestOrTrial_<MixedSpace,N,OperatorType>;
       static_assert((IsSame<TestOrTrial,Test<MixedSpace,N,OperatorType>>::value ||
@@ -65,8 +67,8 @@ template<template<class,Integer,class > class TestOrTrial_,typename MixedSpace, 
   };
 
 
-template<typename FuncType, typename MixedSpace, Integer N,typename OperatorType>
-  class OperatorAndQuadratureTupleType<Function<MixedSpace,N,OperatorType,FuncType> >
+template<typename FuncType, typename MixedSpace, Integer N,typename OperatorType,Integer H>
+  class OperatorAndQuadratureTupleType<Function<MixedSpace,N,OperatorType,FuncType>,H >
   { public:
       using Func=Function<MixedSpace,N,OperatorType,FuncType>;
       static constexpr Integer Nmax= Func::Nmax;
@@ -76,15 +78,47 @@ template<typename FuncType, typename MixedSpace, Integer N,typename OperatorType
       using composite_type=emptytuple;
   };
 
-template<typename ConstType, typename...Inputs>
-  class OperatorAndQuadratureTupleType<ConstantTensor<ConstType,Inputs...> >
+template<typename ConstType, typename...Inputs,Integer H>
+  class OperatorAndQuadratureTupleType<ConstantTensor<ConstType,Inputs...>,H >
   { public:
       using type=std::tuple<std::tuple<>>;
       using composite_type=std::tuple<std::tuple<>>;
   };
 
-template<template<class,Integer,class > class TestOrTrial_,typename MixedSpace, Integer N,typename Expr>
-  class OperatorAndQuadratureTupleType<TestOrTrial_<MixedSpace,N,CompositeOperator<Expression< Expr > > > >
+
+template<template<class,Integer,class > class TestOrTrial_,typename MixedSpace, Integer N>
+  class OperatorAndQuadratureTupleType<TestOrTrial_<MixedSpace,N,CompositeOperator<Expression< TraceOperator > > >,0 >
+  { public:
+      using TestOrTrial=TestOrTrial_<MixedSpace,N,CompositeOperator<Expression< TraceOperator > > >;
+      static_assert((IsSame<TestOrTrial,Test<MixedSpace,N,CompositeOperator< Expression<TraceOperator > > > >::value ||
+        IsSame<TestOrTrial,Trial<MixedSpace,N,CompositeOperator< Expression<TraceOperator > > > >::value )
+      && "In Evaluation<Expression<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");
+      static constexpr Integer Nmax= TestOrTrial::Nmax;
+      using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
+      using type=TupleOfType<Nmax,std::tuple<> > ;
+      using composite_type=type;
+
+  };
+
+
+template<template<class,Integer,class > class TestOrTrial_,typename MixedSpace, Integer N>
+  class OperatorAndQuadratureTupleType<TestOrTrial_<MixedSpace,N,CompositeOperator<Expression< TraceOperator > > >,1 >
+  { public:
+      using TestOrTrial=TestOrTrial_<MixedSpace,N,CompositeOperator<Expression< TraceOperator > > >;
+      static_assert((IsSame<TestOrTrial,Test<MixedSpace,N,CompositeOperator< Expression<TraceOperator > > > >::value ||
+        IsSame<TestOrTrial,Trial<MixedSpace,N,CompositeOperator< Expression<TraceOperator > > > >::value )
+      && "In Evaluation<Expression<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");
+      static constexpr Integer Nmax= TestOrTrial::Nmax;
+      using single_type=std::tuple<std::tuple< TraceOperator,std::tuple<> >>;
+      using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
+      using type=TupleChangeType<TestOrTrial::value,single_type,emptytuple>;
+      using single_composite_type=std::tuple<std::tuple< CompositeOperator<Expression< TraceOperator > >,std::tuple<> >>;
+      using composite_type=TupleChangeType<TestOrTrial::value,single_composite_type,emptytuple>;
+
+  };
+
+template<template<class,Integer,class > class TestOrTrial_,typename MixedSpace, Integer N,typename Expr,Integer H>
+  class OperatorAndQuadratureTupleType<TestOrTrial_<MixedSpace,N,CompositeOperator<Expression< Expr > > >,H >
   { public:
       using TestOrTrial=TestOrTrial_<MixedSpace,N,CompositeOperator<Expression< Expr > > >;
       static_assert((IsSame<TestOrTrial,Test<MixedSpace,N,CompositeOperator< Expression<Expr > > > >::value ||
@@ -100,8 +134,8 @@ template<template<class,Integer,class > class TestOrTrial_,typename MixedSpace, 
   };
 
 
-template<template<class,Integer,class > class TestOrTrial_,typename MixedSpace, Integer N,typename ConstType,typename...Inputs>
-  class OperatorAndQuadratureTupleType<TestOrTrial_<MixedSpace,N,CompositeOperator<Expression< ConstantTensor<ConstType,Inputs...> > > > >
+template<template<class,Integer,class > class TestOrTrial_,typename MixedSpace, Integer N,typename ConstType,typename...Inputs,Integer H>
+  class OperatorAndQuadratureTupleType<TestOrTrial_<MixedSpace,N,CompositeOperator<Expression< ConstantTensor<ConstType,Inputs...> > > >,H >
   { public:
       using TestOrTrial=TestOrTrial_<MixedSpace,N,CompositeOperator<Expression< ConstantTensor<ConstType,Inputs...> > > >;
       static constexpr Integer Nmax= TestOrTrial::Nmax;
@@ -114,8 +148,8 @@ template<template<class,Integer,class > class TestOrTrial_,typename MixedSpace, 
 
 
 template<template<class,Integer,class > class TestOrTrial_,typename MixedSpace, Integer N,
-         typename FullSpace, Integer M,typename Operator_,typename FuncType>
-  class OperatorAndQuadratureTupleType<TestOrTrial_<MixedSpace,N,CompositeOperator<Expression< Function<FullSpace,M,Operator_,FuncType> > > > >
+         typename FullSpace, Integer M,typename Operator_,typename FuncType,Integer H>
+  class OperatorAndQuadratureTupleType<TestOrTrial_<MixedSpace,N,CompositeOperator<Expression< Function<FullSpace,M,Operator_,FuncType> > > >,H >
   { public:
 
       using Func=Function<FullSpace,M,Operator_,FuncType>;
@@ -128,8 +162,8 @@ template<template<class,Integer,class > class TestOrTrial_,typename MixedSpace, 
 
 
 template<template<class> class UnaryOperator,template<class,Integer,class > class TestOrTrial_,
-         typename MixedSpace, Integer N,typename Type>
-  class OperatorAndQuadratureTupleType<TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<UnaryOperator< Expression<Type>> > > > >
+         typename MixedSpace, Integer N,typename Type,Integer H>
+  class OperatorAndQuadratureTupleType<TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<UnaryOperator< Expression<Type>> > > >, H >
   { public:
       using TestOrTrial=TestOrTrial_<MixedSpace,N,CompositeOperator<Expression< UnaryOperator< Expression<Type>> > > >;
       static_assert((IsSame<TestOrTrial,Test<MixedSpace,N,CompositeOperator< Expression<UnaryOperator< Expression<Type>> > > > >::value ||
@@ -137,7 +171,7 @@ template<template<class> class UnaryOperator,template<class,Integer,class > clas
       && "In Evaluation<Expression<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");
 
       using TestOrTrialType=TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Type>>>;
-      using type=typename OperatorAndQuadratureTupleType<TestOrTrialType>::type;
+      using type=typename OperatorAndQuadratureTupleType<TestOrTrialType,H>::type;
       static constexpr Integer Nmax= TestOrTrial::Nmax;
       using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
       using single_composite_type=std::tuple<std::tuple< CompositeOperator<Expression< UnaryOperator< Expression<Type>> > >,std::tuple<> >>;
@@ -146,8 +180,8 @@ template<template<class> class UnaryOperator,template<class,Integer,class > clas
   };
 
 template<template<class,class>class Binary, template<class,Integer,class > class TestOrTrial_,
-         typename MixedSpace, Integer N,typename Left,typename Right>
-  class OperatorAndQuadratureTupleType<TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Binary< Expression<Left>,Expression<Right> > > > > >
+         typename MixedSpace, Integer N,typename Left,typename Right,Integer H>
+  class OperatorAndQuadratureTupleType<TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Binary< Expression<Left>,Expression<Right> > > > >, H >
   { public:
       using TestOrTrial=TestOrTrial_<MixedSpace,N,CompositeOperator<Expression< Binary<Expression<Left>,Expression<Right>> > > >;
       static_assert((IsSame<TestOrTrial,Test<MixedSpace,N,CompositeOperator< Expression<Binary< Expression<Left>,Expression<Right> > > > > >::value ||
@@ -156,8 +190,8 @@ template<template<class,class>class Binary, template<class,Integer,class > class
 
       using TestOrTrialLeft=TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Left>>>;
       using TestOrTrialRight=TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Right>>>;
-      using LeftT=typename OperatorAndQuadratureTupleType<TestOrTrialLeft>::type;
-      using RightT=typename OperatorAndQuadratureTupleType<TestOrTrialRight>::type;
+      using LeftT=typename OperatorAndQuadratureTupleType<TestOrTrialLeft,H>::type;
+      using RightT=typename OperatorAndQuadratureTupleType<TestOrTrialRight,H>::type;
       using type=RemoveTupleOfTupleDuplicates< LeftT, RightT >;
       static constexpr Integer Nmax= TestOrTrial::Nmax;
       using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
@@ -167,18 +201,48 @@ template<template<class,class>class Binary, template<class,Integer,class > class
   };
 
 
-template<typename Left,typename Right,Integer QR>
-class OperatorAndQuadratureTupleType<L2DotProductIntegral<Left,Right,QR>>
+template<typename Left,typename Right, bool VolumeIntegral,Integer QR, Integer H>
+class OperatorAndQuadratureTupleType<L2DotProductIntegral<Left,Right,VolumeIntegral,QR>,H>
 { 
 public:
-  using L2prod=L2DotProductIntegral<Left,Right,QR>;
+  using L2prod=L2DotProductIntegral<Left,Right,VolumeIntegral,QR>;
   using QRule=typename L2prod::QRule;
-  using Operatortuple=typename OperatorAndQuadratureTupleType<typename L2prod::type>::type;
+  using Operatortuple=typename OperatorAndQuadratureTupleType<typename L2prod::type,H>::type;
   using type=TupleOfTupleChangeType<1,QRule, Operatortuple>;
-  using CompositeOperatortuple=typename OperatorAndQuadratureTupleType<typename L2prod::type>::composite_type;
+  using CompositeOperatortuple=typename OperatorAndQuadratureTupleType<typename L2prod::type,H>::composite_type;
   using composite_type=TupleOfTupleChangeType<1,QRule, CompositeOperatortuple>;
 } 
 ; 
+
+
+template<typename Left,typename Right,Integer QR>
+class OperatorAndQuadratureTupleType<L2DotProductIntegral<Left,Right,false,QR>,0>
+{ 
+public:
+  using L2prod=L2DotProductIntegral<Left,Right,false,QR>;
+  using UniqueElementFunctionSpacesTupleType=typename L2prod::UniqueElementFunctionSpacesTupleType;
+  static constexpr Integer Nmax=TupleTypeSize<UniqueElementFunctionSpacesTupleType>::value;
+  using type=TupleOfType<Nmax,std::tuple<> > ;
+  using composite_type=type;  
+} 
+; 
+
+
+
+
+
+template<typename Left,typename Right,Integer QR>
+class OperatorAndQuadratureTupleType<L2DotProductIntegral<Left,Right,true,QR>,1>
+{ 
+public:
+  using L2prod=L2DotProductIntegral<Left,Right,true,QR>;
+  using UniqueElementFunctionSpacesTupleType=typename L2prod::UniqueElementFunctionSpacesTupleType;
+  static constexpr Integer Nmax=TupleTypeSize<UniqueElementFunctionSpacesTupleType>::value;
+  using type=TupleOfType<Nmax,std::tuple<> > ;
+  using composite_type=type;  
+} 
+; 
+
 
 // template<typename T>
 //   class OperatorAndQuadratureTupleType< Transposed< Expression<Transposed<T> >>>

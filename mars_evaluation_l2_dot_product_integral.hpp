@@ -2,6 +2,7 @@
 #ifndef MARS_EVALUATION_L2_DOT_PRODUCT_INTEGRAL_HPP
 #define MARS_EVALUATION_L2_DOT_PRODUCT_INTEGRAL_HPP
 #include "mars_l2_dot_product_integral.hpp"
+#include "mars_evaluation_general_form_utils.hpp"
 namespace mars {
 
 
@@ -9,13 +10,13 @@ namespace mars {
 
 
 
-template<typename Left_,typename Right_,Integer QR, typename...Forms>
-class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,QR>>, ShapeFunctionsCollection<Forms...>>
+template<typename Left_,typename Right_,bool VolumeIntegral, Integer QR, typename...Forms>
+class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>>, ShapeFunctionsCollection<Forms...>>
 {
  public:
  using Left=Left_;
  using Right=Right_;
- using type= L2DotProductIntegral<Left,Right,QR>;
+ using type= L2DotProductIntegral<Left,Right,VolumeIntegral,QR>;
  using QRule=typename type ::QRule;
  using TestTrialSpaces=typename type::TestTrialSpaces;
  using subtype= OperatorType<type,GetType<typename type::form>>;
@@ -30,7 +31,7 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,QR>>, ShapeFunctio
  {};
  
  template<typename Elem>
- void apply_aux(subtype& mat, const Jacobian<Elem>& J)
+ void apply_aux(subtype& mat, const FiniteElem<Elem>& J)
  {
 
   // changed todo fixme
@@ -61,8 +62,8 @@ private:
 };
 
 
-template<typename Left,typename Right,Integer QR, typename Form,typename...OtherTemplateArguments>
-constexpr auto Eval(const L2DotProductIntegral<Left,Right,QR>& t,const OtherTemplateArguments&...ts)
+template<typename Left,typename Right,bool VolumeIntegral,Integer QR, typename Form,typename...OtherTemplateArguments>
+constexpr auto Eval(const L2DotProductIntegral<Left,Right,VolumeIntegral,QR>& t,const OtherTemplateArguments&...ts)
 {return Evaluation< Expression<remove_all_t<decltype(t)>>,OtherTemplateArguments...>(t,ts...);}
 
 

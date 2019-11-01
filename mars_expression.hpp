@@ -24,7 +24,8 @@ public:
 };
 
 
-
+class EmptyExpression: public Expression<EmptyExpression>
+{public: EmptyExpression(){}};
 
 }
 #endif //MARS_EXPRESSIONS_HPP

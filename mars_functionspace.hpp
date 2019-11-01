@@ -723,10 +723,10 @@ auto FullSpaceBuild(const MixedSpace<Args...>& W1,const AuxMixedSpace<AuxArgs...
 //  eval_(expr)
 //  {};
  
-//  //  template<typename...Forms, typename Jacobian, typename...Inputs>
-//  // constexpr void apply(value_type& value,const Jacobian& J, const ShapeFunctionsCollection<Forms...>& shape_functions)
-//  template<typename...Args, typename Jacobian,typename...Inputs>
-//  constexpr void apply(value_type& value,const Jacobian& J, const std::tuple<Args...>& shape_functions,const Inputs&...inputs)
+//  //  template<typename...Forms, typename FiniteElem, typename...Inputs>
+//  // constexpr void apply(value_type& value,const FiniteElem& J, const ShapeFunctionsCollection<Forms...>& shape_functions)
+//  template<typename...Args, typename FiniteElem,typename...Inputs>
+//  constexpr void apply(value_type& value,const FiniteElem& J, const std::tuple<Args...>& shape_functions,const Inputs&...inputs)
 
 //  {
 //   using TupleOfTupleShapeFunction=std::tuple<Args...>;
@@ -785,10 +785,10 @@ auto FullSpaceBuild(const MixedSpace<Args...>& W1,const AuxMixedSpace<AuxArgs...
 //  eval_(expr)
 //  {};
  
-//  //  template<typename ValueType,typename...Forms, typename Jacobian, typename...Inputs>
-//  // constexpr void apply(ValueType& value,const Jacobian& J, const ShapeFunctionsCollection<Forms...>& shape_functions)
-//   template<typename ValueType, typename Jacobian, typename...Args1,typename...Args2,typename...Args3>
-//  constexpr void apply(ValueType& value,const Jacobian& J, const std::tuple<Args1...>& tuple_shape_functions,const std::tuple<Args2...>&tuple_tensor,const std::tuple<Args3...>&tuple_composite_shapes)
+//  //  template<typename ValueType,typename...Forms, typename FiniteElem, typename...Inputs>
+//  // constexpr void apply(ValueType& value,const FiniteElem& J, const ShapeFunctionsCollection<Forms...>& shape_functions)
+//   template<typename ValueType, typename FiniteElem, typename...Args1,typename...Args2,typename...Args3>
+//  constexpr void apply(ValueType& value,const FiniteElem& J, const std::tuple<Args1...>& tuple_shape_functions,const std::tuple<Args2...>&tuple_tensor,const std::tuple<Args3...>&tuple_composite_shapes)
 
 //  {
 //  using single_type=Evaluation<Expression<typename FormOfCompositeOperatorType<type>::type >,OtherTemplateArguments...>;
@@ -876,7 +876,7 @@ auto FullSpaceBuild(const MixedSpace<Args...>& W1,const AuxMixedSpace<AuxArgs...
 //  {};
 
 //  template<typename Shapes>
-//  void compute(value_type& value, type&eval,const Jacobian<Elem>&J, const Shapes& shapes )
+//  void compute(value_type& value, type&eval,const FiniteElem<Elem>&J, const Shapes& shapes )
 //  {
 //   using type1=typename Shapes::type; //Vector<Vector<T,NQpoints>,Ndofs>
 //   using type2=typename Shapes::subtype; //Vector<T,NQpoints>
@@ -904,10 +904,10 @@ auto FullSpaceBuild(const MixedSpace<Args...>& W1,const AuxMixedSpace<AuxArgs...
 
 //  }
  
-//  // template<typename...Forms, typename Jacobian,typename...Inputs>
-//  // constexpr void apply(value_type& value,const Jacobian& J, const typename ShapeFunctionsCollection<Forms...>::TupleOfTupleShapeFunction& shape_functions,const Inputs&...inputs)
-//  template<typename...Args, typename Jacobian,typename...Inputs>
-//  constexpr void apply(value_type& value,const Jacobian& J, const std::tuple<Args...>& shape_functions,const Inputs&...inputs)
+//  // template<typename...Forms, typename FiniteElem,typename...Inputs>
+//  // constexpr void apply(value_type& value,const FiniteElem& J, const typename ShapeFunctionsCollection<Forms...>::TupleOfTupleShapeFunction& shape_functions,const Inputs&...inputs)
+//  template<typename...Args, typename FiniteElem,typename...Inputs>
+//  constexpr void apply(value_type& value,const FiniteElem& J, const std::tuple<Args...>& shape_functions,const Inputs&...inputs)
 
 //  {
 //   using TupleOfTupleShapeFunction=std::tuple<Args...>;
@@ -969,8 +969,8 @@ auto FullSpaceBuild(const MixedSpace<Args...>& W1,const AuxMixedSpace<AuxArgs...
 
 
  
-//  template<typename...Args, typename Jacobian,typename...OtherInputs>
-//  constexpr void apply(value_type& value,const Jacobian& J, const std::tuple<Args...>& tuple_of_tuple,const OtherInputs&...inputs)
+//  template<typename...Args, typename FiniteElem,typename...OtherInputs>
+//  constexpr void apply(value_type& value,const FiniteElem& J, const std::tuple<Args...>& tuple_of_tuple,const OtherInputs&...inputs)
 //  {
 //   // TODO here we copy the static static_value  into value, but it is useless. better to specialize evaluation
 //   // Assign(value,eval_.template eval<QuadratureRule::NQpoints>());
@@ -2609,7 +2609,7 @@ auto FullSpaceBuild(const MixedSpace<Args...>& W1,const AuxMixedSpace<AuxArgs...
 //  {};
  
 //  template<typename Elem>
-//  void apply_aux(subtype& mat, const Jacobian<Elem>& J)
+//  void apply_aux(subtype& mat, const FiniteElem<Elem>& J)
 //  {
 
 //   // changed todo fixme
@@ -2839,27 +2839,27 @@ auto FullSpaceBuild(const MixedSpace<Args...>& W1,const AuxMixedSpace<AuxArgs...
 
 //   template<Integer Nmax,Integer N,typename...Args1,typename...Args2>
 //   constexpr typename std::enable_if_t<(N>Nmax),void> 
-//   init_composite_shape_functions_aux_aux(std::tuple<Args1...>& tuple_tensor,const Jacobian<Elem> &J, std::tuple<Args2...>& tuple_composite)
+//   init_composite_shape_functions_aux_aux(std::tuple<Args1...>& tuple_tensor,const FiniteElem<Elem> &J, std::tuple<Args2...>& tuple_composite)
 //   {
 //     std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
 
 //   }
 
 //   template<Integer Nmax,Integer N,typename...Args1>
-//   constexpr void init_composite_shape_functions_aux_aux(std::tuple<>& tuple_tensor,const Jacobian<Elem> &J, std::tuple<Args1...>& tuple_composite)
+//   constexpr void init_composite_shape_functions_aux_aux(std::tuple<>& tuple_tensor,const FiniteElem<Elem> &J, std::tuple<Args1...>& tuple_composite)
 //   {
 //     std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
 //   }
 
 //   template<Integer Nmax,Integer N,typename...Args1>
-//   constexpr void init_composite_shape_functions_aux_aux(std::tuple<Args1...>& tuple_tensor,const Jacobian<Elem> &J, std::tuple<>& tuple_composite)
+//   constexpr void init_composite_shape_functions_aux_aux(std::tuple<Args1...>& tuple_tensor,const FiniteElem<Elem> &J, std::tuple<>& tuple_composite)
 //   {
 //     std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
 
 //   }
 
 //   template<Integer Nmax,Integer N>
-//   constexpr void init_composite_shape_functions_aux_aux(std::tuple<>& tuple_tensor,const Jacobian<Elem> &J, std::tuple<>& tuple_composite)
+//   constexpr void init_composite_shape_functions_aux_aux(std::tuple<>& tuple_tensor,const FiniteElem<Elem> &J, std::tuple<>& tuple_composite)
 //   {
 //     std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
 
@@ -2867,7 +2867,7 @@ auto FullSpaceBuild(const MixedSpace<Args...>& W1,const AuxMixedSpace<AuxArgs...
 
 //   template<Integer Nmax,Integer N,typename...Args1,typename...Args2>
 //   constexpr typename std::enable_if_t< (N<=Nmax),void> 
-//   init_composite_shape_functions_aux_aux(std::tuple<Args1...>& tuple_tensor,const Jacobian<Elem> &J, std::tuple<Args2...>& tuple_composite)
+//   init_composite_shape_functions_aux_aux(std::tuple<Args1...>& tuple_tensor,const FiniteElem<Elem> &J, std::tuple<Args2...>& tuple_composite)
 //   {
     
 //     auto& composite=tuple_get<N>(tuple_composite);
@@ -2890,12 +2890,12 @@ auto FullSpaceBuild(const MixedSpace<Args...>& W1,const AuxMixedSpace<AuxArgs...
 
 //   template<Integer Nmax,Integer N>
 //   constexpr typename std::enable_if_t< (N>Nmax),void> 
-//   init_composite_shape_functions_aux(const Jacobian<Elem> &J)
+//   init_composite_shape_functions_aux(const FiniteElem<Elem> &J)
 //   {}
 
 //   template<Integer Nmax,Integer N>
 //   constexpr typename std::enable_if_t<N<=Nmax,void> 
-//   init_composite_shape_functions_aux(const Jacobian<Elem> &J)
+//   init_composite_shape_functions_aux(const FiniteElem<Elem> &J)
 //   {
 //     auto& tensor=tuple_get<N>(tuple_tensors_);
 //     const auto& composite=tuple_get<N>(tuple_composite_);
@@ -2918,7 +2918,7 @@ auto FullSpaceBuild(const MixedSpace<Args...>& W1,const AuxMixedSpace<AuxArgs...
 //   }
 
 //   //template<typename Coefficients>
-//   constexpr void init_composite_shape_functions(const Jacobian<Elem> &J)
+//   constexpr void init_composite_shape_functions(const FiniteElem<Elem> &J)
 //   {
 //     std::cout<<"init_composite_shape_functions"<<std::endl;
 //    constexpr Integer Nmax=TupleTypeSize<TupleOfTupleCompositeShapeFunction>::value-1;
@@ -2927,7 +2927,7 @@ auto FullSpaceBuild(const MixedSpace<Args...>& W1,const AuxMixedSpace<AuxArgs...
 
 
 
-//   constexpr void init(const Jacobian<Elem>&J)
+//   constexpr void init(const FiniteElem<Elem>&J)
 //   {
 //     // TODO CHECK: SINCE WE HAVE ALREADY HAVE REFERENCES TO MAPS AND COEFFS, do we have to init_map?
 //     // INIT MAP: takes the corresponding map and compute the shape function in the actual element

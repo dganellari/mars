@@ -127,6 +127,7 @@ list(APPEND MARS_HEADERS
 	mars_edge_select.hpp
 	mars_edge_split.hpp
 	mars_edge_split_pool.hpp
+	mars_elem_to_sub_elem.hpp
 	mars_entity.hpp
 	mars_entity_impl.hpp
 	mars_examples.hpp
@@ -135,6 +136,7 @@ list(APPEND MARS_HEADERS
 	mars_evaluation_constant.hpp
 	mars_evaluation_function.hpp
 	mars_evaluation_general_form.hpp
+	mars_evaluation_general_form_utils.hpp
 	mars_evaluation_l2_dot_product_integral.hpp
 	mars_evaluation_test_or_trial.hpp
 	mars_evaluation_unary.hpp
@@ -162,6 +164,7 @@ list(APPEND MARS_HEADERS
 	mars_operator_apply.hpp
 	mars_operator_assignment.hpp
 	mars_operator_composite.hpp
+	mars_operator_differential.hpp
 	mars_operator_division.hpp
 	mars_operator_multiplication.hpp
 	mars_operator_subtraction.hpp

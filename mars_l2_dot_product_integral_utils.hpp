@@ -12,7 +12,7 @@ namespace mars {
 
 
 template<typename T>
-class IsVolumeOrSurfaceIntegral
+class IsVolumeOrSurfaceIntegralHelper
 {
 public:
   static constexpr bool surface=true;
@@ -20,43 +20,96 @@ public:
 };
 
 template<template<class,Integer,class>class TestOrTrial, typename MixedSpace,Integer N>
-class IsVolumeOrSurfaceIntegral<TestOrTrial<MixedSpace,N,TraceOperator>>{
+class IsVolumeOrSurfaceIntegralHelper<TestOrTrial<MixedSpace,N,TraceOperator>>{
 public:
   static constexpr bool surface=true;
   static constexpr bool volume=false;
 };
 
+// template<template<class,Integer,class>class TestOrTrial, typename MixedSpace,Integer N, typename OperatorType>
+// class IsVolumeOrSurfaceIntegralHelper<TestOrTrial<MixedSpace,N,OperatorType>>{
+// public:
+//   static constexpr bool surface=true;
+//   static constexpr bool volume=true;
+// };
+
 template<template<class,Integer,class>class TestOrTrial, typename MixedSpace,Integer N, typename OperatorType>
-class IsVolumeOrSurfaceIntegral<TestOrTrial<MixedSpace,N,OperatorType>>{
+class IsVolumeOrSurfaceIntegralHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<OperatorType>>>>
+{
 public:
-  static constexpr bool surface=false;
-  static constexpr bool volume=true;
+  using T=TestOrTrial<MixedSpace,N,OperatorType>;
+  static constexpr bool surface=IsVolumeOrSurfaceIntegralHelper<T>::surface;
+  static constexpr bool volume=IsVolumeOrSurfaceIntegralHelper<T>::volume;
+};
+
+
+template<template<class,Integer,class>class TestOrTrial,template<class>class Unary, typename MixedSpace,Integer N, typename OperatorType>
+class IsVolumeOrSurfaceIntegralHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Unary<Expression<OperatorType>>>>> >{
+public:
+  using T=TestOrTrial<MixedSpace,N,CompositeOperator<Expression<OperatorType>>>;
+  static constexpr bool surface=IsVolumeOrSurfaceIntegralHelper<T>::surface;
+  static constexpr bool volume=IsVolumeOrSurfaceIntegralHelper<T>::volume;
+};
+
+template<template<class,Integer,class>class TestOrTrial,template<class,class>class Binary, typename MixedSpace,Integer N, typename Left,typename Right>
+class IsVolumeOrSurfaceIntegralHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Binary<Expression<Left>,Expression<Right>>>>> >{
+public:
+  using LeftT=TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Left>>>;
+  using RightT=TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Right>>>;
+
+  static constexpr bool surface=IsVolumeOrSurfaceIntegralHelper<LeftT>::surface*IsVolumeOrSurfaceIntegralHelper<RightT>::surface;
+  static constexpr bool volume=IsVolumeOrSurfaceIntegralHelper<LeftT>::volume*IsVolumeOrSurfaceIntegralHelper<RightT>::volume;
 };
 
 template<template<class>class Unary, typename Type>
-class IsVolumeOrSurfaceIntegral< Unary<Expression<Type>> >
+class IsVolumeOrSurfaceIntegralHelper< Unary<Expression<Type>> >
 {
 public:
-  static constexpr bool surface=IsVolumeOrSurfaceIntegral<Type>::surface;
-  static constexpr bool volume=IsVolumeOrSurfaceIntegral<Type>::volume;
+  static constexpr bool surface=IsVolumeOrSurfaceIntegralHelper<Type>::surface;
+  static constexpr bool volume=IsVolumeOrSurfaceIntegralHelper<Type>::volume;
 };
 
 
 template<template<class,class>class Binary, typename Left,typename Right>
-class IsVolumeOrSurfaceIntegral< Binary<Expression<Left>,Expression<Right>> >
+class IsVolumeOrSurfaceIntegralHelper< Binary<Expression<Left>,Expression<Right>> >
 {
 public:
-  static constexpr bool surface=IsVolumeOrSurfaceIntegral<Left>::surface*IsVolumeOrSurfaceIntegral<Right>::surface;
-  static constexpr bool volume=IsVolumeOrSurfaceIntegral<Left>::volume*IsVolumeOrSurfaceIntegral<Right>::volume;
+  static constexpr bool surface=IsVolumeOrSurfaceIntegralHelper<Left>::surface*IsVolumeOrSurfaceIntegralHelper<Right>::surface;
+  static constexpr bool volume=IsVolumeOrSurfaceIntegralHelper<Left>::volume*IsVolumeOrSurfaceIntegralHelper<Right>::volume;
 };
 
 
 template<typename Left,typename Right>
-class IsVolumeOrSurfaceIntegral<InnerProduct<Expression <Left>, Expression <Right> >  >
+class IsVolumeOrSurfaceIntegralHelper<InnerProduct<Expression <Left>, Expression <Right> >  >
 {
 public:
-  static constexpr bool surface=IsVolumeOrSurfaceIntegral<Left>::surface*IsVolumeOrSurfaceIntegral<Right>::surface;
-  static constexpr bool volume=IsVolumeOrSurfaceIntegral<Left>::volume*IsVolumeOrSurfaceIntegral<Right>::volume;
+  static constexpr bool surface=IsVolumeOrSurfaceIntegralHelper<Left>::surface*IsVolumeOrSurfaceIntegralHelper<Right>::surface;
+  static constexpr bool volume=IsVolumeOrSurfaceIntegralHelper<Left>::volume*IsVolumeOrSurfaceIntegralHelper<Right>::volume;
+};
+
+
+template<bool VolumeIntegral, typename T>
+class IsVolumeOrSurfaceIntegralAux;
+
+template<typename T>
+class IsVolumeOrSurfaceIntegralAux<true,T>
+{
+public:
+  static constexpr bool value=IsVolumeOrSurfaceIntegralHelper<T>::volume;
+};
+
+template<typename T>
+class IsVolumeOrSurfaceIntegralAux<false,T>
+{
+public:
+  static constexpr bool value=IsVolumeOrSurfaceIntegralHelper<T>::surface;
+};
+
+template<bool VolumeIntegral, typename T>
+class IsVolumeOrSurfaceIntegral
+{
+  public:
+   static constexpr bool value=IsVolumeOrSurfaceIntegralAux<VolumeIntegral,T>::value;
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -391,6 +444,184 @@ public:
 
 
 
+template<Integer H,typename T1>
+class TupleOfTestTrialPairsNumbersAuxAuxAux;
+
+template<Integer H,typename Left,typename Right,Integer QR, bool VolumeIntegral1>
+class TupleOfTestTrialPairsNumbersAuxAuxAux<H,L2DotProductIntegral<Left,Right,VolumeIntegral1,QR>>
+{
+public:
+  using type=EmptyExpression;
+};
+
+
+template<typename Left,typename Right,Integer QR, bool VolumeIntegral1>
+class TupleOfTestTrialPairsNumbersAuxAuxAux<-1,L2DotProductIntegral<Left,Right,VolumeIntegral1,QR>>
+{
+public:
+  using type=L2DotProductIntegral<Left,Right,VolumeIntegral1,QR>;
+};
+
+template<typename Left,typename Right,Integer QR>
+class TupleOfTestTrialPairsNumbersAuxAuxAux<0,L2DotProductIntegral<Left,Right,true,QR>>
+{
+public:
+  using type=L2DotProductIntegral<Left,Right,true,QR>;
+};
+
+template<typename Left,typename Right,Integer QR>
+class TupleOfTestTrialPairsNumbersAuxAuxAux<1,L2DotProductIntegral<Left,Right,false,QR>>
+{
+public:
+  using type=L2DotProductIntegral<Left,Right,false,QR>;
+};
+
+
+
+
+template<Integer H,typename T1,typename T2>
+class TupleOfTestTrialPairsNumbersAuxAux2;
+
+
+template<Integer H,typename T>
+class TupleOfTestTrialPairsNumbersAuxAux2<H, T, Expression<EmptyExpression> >
+{
+ public:
+  using type=EmptyExpression;
+};
+
+
+
+template<Integer H,typename T, typename Left,typename Right,Integer QR, bool VolumeIntegral1>
+class TupleOfTestTrialPairsNumbersAuxAux2<H,T, Expression<L2DotProductIntegral<Left,Right,VolumeIntegral1,QR>> >
+{
+ public:
+  using L2=L2DotProductIntegral<Left,Right,VolumeIntegral1,QR>;
+  using tmptype=typename TupleOfTestTrialPairsNumbersAuxAuxAux<H,L2>::type;
+  using type=typename std::conditional<IsSame<T,typename L2::TestTrialNumbers>::value, tmptype, EmptyExpression>::type;
+};
+
+
+template<Integer H,typename T1, typename T2>
+class TupleOfTestTrialPairsNumbersAuxAux2<H, T1, Expression<Addition<Expression<T2>,Expression<EmptyExpression> > >>
+{
+ public:
+  using type=typename TupleOfTestTrialPairsNumbersAuxAux2<H, T1,Expression<T2>>::type;
+};
+
+
+template<Integer H,typename T1, typename T2>
+class TupleOfTestTrialPairsNumbersAuxAux2<H, T1, Expression<Addition<Expression<EmptyExpression>, Expression<T2> > >>
+{
+ public:
+  using type=typename TupleOfTestTrialPairsNumbersAuxAux2<H, T1,Expression<T2>>::type;
+};
+
+template<Integer H,typename T>
+class TupleOfTestTrialPairsNumbersAuxAux2<H, T, Expression<Addition<Expression<EmptyExpression>, Expression<EmptyExpression> > >>
+{
+ public:
+  using type=EmptyExpression;
+};
+
+
+
+
+template<Integer H,typename T, typename Left,typename Right>
+class TupleOfTestTrialPairsNumbersAuxAux2<H,T,Expression<Addition<Expression<Left>,
+                                                               Expression<Right> >>>
+{
+ public:
+  using type=Addition<Expression<typename TupleOfTestTrialPairsNumbersAuxAux2<H,T,Expression<Left>>::type>,
+                      Expression<typename TupleOfTestTrialPairsNumbersAuxAux2<H,T,Expression<Right>>::type>>;
+};
+
+
+
+template<Integer H,typename...Ts>
+class TupleOfTestTrialPairsNumbersAux2;
+
+template<Integer H,typename T,typename Left,typename Right,Integer QR,bool VolumeIntegral>
+class TupleOfTestTrialPairsNumbersAux2<H,T,L2DotProductIntegral<Left,Right,VolumeIntegral,QR> >
+{
+ public:
+  using S=L2DotProductIntegral<Left,Right,VolumeIntegral,QR>;
+  using type=typename TupleOfTestTrialPairsNumbersAuxAux2<H,T,Expression<S>>::type;
+
+};
+
+template<Integer H,typename T, typename Left1,typename Right1,Integer QR1,bool VolumeIntegral1,
+                     typename Left2,typename Right2,Integer QR2,bool VolumeIntegral2>
+class TupleOfTestTrialPairsNumbersAux2<H,T,Addition<Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>>,
+                                                   Expression<L2DotProductIntegral<Left2,Right2,VolumeIntegral2,QR2>>>>
+{
+ public:
+  using Left=L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>;
+  using Right=L2DotProductIntegral<Left2,Right2,VolumeIntegral2,QR2>;
+  using type=typename TupleOfTestTrialPairsNumbersAuxAux2<H,T,
+                          Expression<Addition<Expression<typename TupleOfTestTrialPairsNumbersAux2<H,T,Left>::type>,
+                                              Expression<typename TupleOfTestTrialPairsNumbersAux2<H,T,Right>::type>>>
+                            >::type;
+};
+
+template<Integer H,typename T,typename Left1,typename Right1,Integer QR1,bool VolumeIntegral1,typename Right>
+class TupleOfTestTrialPairsNumbersAux2<H,T, Addition<Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>>,Expression<Right > > >
+{
+ public:
+  using Left=L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>;
+  using type=typename TupleOfTestTrialPairsNumbersAuxAux2<H,T,
+                          Expression<Addition<Expression<typename TupleOfTestTrialPairsNumbersAux2<H,T,Left>::type>,
+                                                Expression<typename TupleOfTestTrialPairsNumbersAux2<H,T,Right>::type>>>
+                             >::type;
+
+};
+
+template<Integer H, typename T, typename Left, typename Left1,typename Right1,Integer QR1,bool VolumeIntegral1>
+class TupleOfTestTrialPairsNumbersAux2<H, T, Addition<Expression<Left>,Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1> > > >
+{
+ public:
+  using Right=L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>;
+  using type=typename TupleOfTestTrialPairsNumbersAuxAux2<H,T,
+                             Expression<Addition<Expression<typename TupleOfTestTrialPairsNumbersAux2<H,T,Left>::type>,
+                                                 Expression<typename TupleOfTestTrialPairsNumbersAux2<H,T,Right>::type>>>
+                             >::type;
+};
+
+template<Integer H, typename T, typename Left,typename Right>
+class TupleOfTestTrialPairsNumbersAux2<H, T, Addition<Expression<Left>,Expression<Right > > >
+{
+public:
+
+  using type=typename TupleOfTestTrialPairsNumbersAuxAux2<H,T,
+                            Expression<Addition<Expression<typename TupleOfTestTrialPairsNumbersAux2<H, T,Left>::type>,
+                                                Expression<typename TupleOfTestTrialPairsNumbersAux2<H, T,Right>::type>>>
+                             >::type;
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -399,34 +630,26 @@ template<typename T1,typename T2>
 class TupleOfTestTrialPairsNumbersAuxAux;
 
 template<typename T>
-class TupleOfTestTrialPairsNumbersAuxAux<T, Expression<std::tuple<>> >
+class TupleOfTestTrialPairsNumbersAuxAux<T, Expression<EmptyExpression> >
 {
  public:
-  using type=std::tuple<>;
+  using type=EmptyExpression;
 };
 
 
-
-// template<typename T, typename MeshT, typename Left,typename Right,Integer QR>
-// class TupleOfTestTrialPairsNumbersAuxAux<T, Expression<L2DotProductIntegral<MeshT,Left,Right,QR>> >
-// {
-//  public:
-//   using L2=L2DotProductIntegral<MeshT,Left,Right,QR>;
-//   using type=typename std::conditional<IsSame<T,typename L2::TestTrialNumbers>::value, L2, std::tuple<>>::type;
-// };
-template<typename T, typename Left,typename Right,Integer QR>
-class TupleOfTestTrialPairsNumbersAuxAux<T, Expression<L2DotProductIntegral<Left,Right,QR>> >
+template<typename T, typename Left,typename Right,Integer QR, bool VolumeIntegral1>
+class TupleOfTestTrialPairsNumbersAuxAux<T, Expression<L2DotProductIntegral<Left,Right,VolumeIntegral1,QR>> >
 {
  public:
-  using L2=L2DotProductIntegral<Left,Right,QR>;
-  using type=typename std::conditional<IsSame<T,typename L2::TestTrialNumbers>::value, L2, std::tuple<>>::type;
+  using L2=L2DotProductIntegral<Left,Right,VolumeIntegral1,QR>;
+  using type=typename std::conditional<IsSame<T,typename L2::TestTrialNumbers>::value, L2, EmptyExpression>::type;
 };
 
 
 
 
 template<typename T1, typename T2>
-class TupleOfTestTrialPairsNumbersAuxAux<T1, Expression<Addition<Expression<T2>,Expression<std::tuple<>> > >>
+class TupleOfTestTrialPairsNumbersAuxAux<T1, Expression<Addition<Expression<T2>,Expression<EmptyExpression> > >>
 {
  public:
   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T1,Expression<T2>>::type;
@@ -434,77 +657,69 @@ class TupleOfTestTrialPairsNumbersAuxAux<T1, Expression<Addition<Expression<T2>,
 
 
 template<typename T1, typename T2>
-class TupleOfTestTrialPairsNumbersAuxAux<T1, Expression<Addition<Expression<std::tuple<>>, Expression<T2> > >>
+class TupleOfTestTrialPairsNumbersAuxAux<T1, Expression<Addition<Expression<EmptyExpression>, Expression<T2> > >>
 {
  public:
   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T1,Expression<T2>>::type;
 };
 
 template<typename T>
-class TupleOfTestTrialPairsNumbersAuxAux<T, Expression<Addition<Expression<std::tuple<>>, Expression<std::tuple<>> > >>
+class TupleOfTestTrialPairsNumbersAuxAux<T, Expression<Addition<Expression<EmptyExpression>, Expression<EmptyExpression> > >>
 {
  public:
-  using type=std::tuple<>;
+  using type=EmptyExpression;
 };
 
 
-// template<typename T, typename MeshT1, typename Left1,typename Right1,Integer QR1,
-//                      typename MeshT2, typename Left2,typename Right2,Integer QR2>
-// class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>,
-//                                                                  Expression<L2DotProductIntegral<MeshT2,Left2,Right2,QR2>>>>>
+
+// template<typename T, typename Left1,typename Right1,Integer QR1,bool VolumeIntegral1,
+//                      typename Left2,typename Right2,Integer QR2,bool VolumeIntegral2>
+// class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>>,
+//                                                                Expression<L2DotProductIntegral<Left2,Right2,VolumeIntegral2,QR2>>>>>
 // {
 //  public:
-//   using type=Addition<Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>>::type>,
-//                        Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<MeshT2,Left2,Right2,QR2>>>::type>>;
+//   using type=Addition<Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>>>::type>,
+//                        Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left2,Right2,VolumeIntegral2,QR2>>>::type>>;
 // };
-template<typename T, typename Left1,typename Right1,Integer QR1,
-                     typename Left2,typename Right2,Integer QR2>
-class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<L2DotProductIntegral<Left1,Right1,QR1>>,
-                                                               Expression<L2DotProductIntegral<Left2,Right2,QR2>>>>>
-{
- public:
-  using type=Addition<Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left1,Right1,QR1>>>::type>,
-                       Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left2,Right2,QR2>>>::type>>;
-};
 
 
-template<typename T, typename Left1,typename Right1,Integer QR1,
-                     typename Right2>
-class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<L2DotProductIntegral<Left1,Right1,QR1>>,
-                                                               Expression<Right2>>>>
-{
- public:
-  using type=Addition<Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left1,Right1,QR1>>>::type>,
-                       Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Right2>>::type>>;
-};
-template<typename T, typename Left1,typename Right1,Integer QR1>
-class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<L2DotProductIntegral<Left1,Right1,QR1>>,
-                                                               Expression<std::tuple<>>>>>
-{
- public:
-  using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left1,Right1,QR1>>>::type;
+// template<typename T, typename Left1,typename Right1,Integer QR1,bool VolumeIntegral1,
+//                      typename Right2>
+// class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>>,
+//                                                                Expression<Right2>>>>
+// {
+//  public:
+//   using type=Addition<Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>>>::type>,
+//                        Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Right2>>::type>>;
+// };
+// template<typename T, typename Left1,typename Right1,Integer QR1,bool VolumeIntegral1>
+// class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>>,
+//                                                                Expression<EmptyExpression>>>>
+// {
+//  public:
+//   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>>>::type;
                        
-};
+// };
 
 
 
-template<typename T, typename Left1,
-                     typename Left2,typename Right2,Integer QR2>
-class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<Left1>,
-                                                               Expression<L2DotProductIntegral<Left2,Right2,QR2>>>>>
-{
- public:
-  using type=Addition<Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Left1>>::type>,
-                       Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left2,Right2,QR2>>>::type>>;
-};
+// template<typename T, typename Left1,
+//                      typename Left2,typename Right2,Integer QR2,bool VolumeIntegral2>
+// class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<Left1>,
+//                                                                Expression<L2DotProductIntegral<Left2,Right2,VolumeIntegral2,QR2>>>>>
+// {
+//  public:
+//   using type=Addition<Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Left1>>::type>,
+//                        Expression<typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left2,Right2,VolumeIntegral2,QR2>>>::type>>;
+// };
 
-template<typename T, typename Left2,typename Right2,Integer QR2>
-class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<std::tuple<>>,
-                                                               Expression<L2DotProductIntegral<Left2,Right2,QR2>>>>>
-{
- public:
-  using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left2,Right2,QR2>>>::type;
-};
+// template<typename T, typename Left2,typename Right2,Integer QR2,bool VolumeIntegral2>
+// class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<EmptyExpression>,
+//                                                                Expression<L2DotProductIntegral<Left2,Right2,VolumeIntegral2,QR2>>>>>
+// {
+//  public:
+//   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<L2DotProductIntegral<Left2,Right2,VolumeIntegral2,QR2>>>::type;
+// };
 
 
 template<typename T, typename Left,typename Right>
@@ -521,72 +736,34 @@ class TupleOfTestTrialPairsNumbersAuxAux<T,Expression<Addition<Expression<Left>,
 template<typename...Ts>
 class TupleOfTestTrialPairsNumbersAux;
 
-
-
-
-
-// template<typename T,typename MeshT, typename Left,typename Right,Integer QR>
-// class TupleOfTestTrialPairsNumbersAux<T,L2DotProductIntegral<MeshT,Left,Right,QR> >
-// {
-//  public:
-//   using S=L2DotProductIntegral<MeshT,Left,Right,QR>;
-//   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<S>>::type;
-
-// };
-template<typename T,typename Left,typename Right,Integer QR>
-class TupleOfTestTrialPairsNumbersAux<T,L2DotProductIntegral<Left,Right,QR> >
+template<typename T,typename Left,typename Right,Integer QR,bool VolumeIntegral>
+class TupleOfTestTrialPairsNumbersAux<T,L2DotProductIntegral<Left,Right,VolumeIntegral,QR> >
 {
  public:
-  using S=L2DotProductIntegral<Left,Right,QR>;
+  using S=L2DotProductIntegral<Left,Right,VolumeIntegral,QR>;
   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,Expression<S>>::type;
 
 };
 
-// template<typename T, typename MeshT1, typename Left1,typename Right1,Integer QR1,
-//                      typename MeshT2, typename Left2,typename Right2,Integer QR2>
-// class TupleOfTestTrialPairsNumbersAux<T,Addition<Expression<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>,
-//                         Expression<L2DotProductIntegral<MeshT2,Left2,Right2,QR2>>>>
-// {
-//  public:
-//   using Left=L2DotProductIntegral<MeshT1,Left1,Right1,QR1>;
-//   using Right=L2DotProductIntegral<MeshT2,Left2,Right2,QR2>;
-//   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,
-//                           Expression<Addition<Expression<typename TupleOfTestTrialPairsNumbersAux<T,Left>::type>,
-//                                                 Expression<typename TupleOfTestTrialPairsNumbersAux<T,Right>::type>>>
-//                             >::type;
-// };
-template<typename T, typename Left1,typename Right1,Integer QR1,
-                     typename Left2,typename Right2,Integer QR2>
-class TupleOfTestTrialPairsNumbersAux<T,Addition<Expression<L2DotProductIntegral<Left1,Right1,QR1>>,
-                        Expression<L2DotProductIntegral<Left2,Right2,QR2>>>>
+template<typename T, typename Left1,typename Right1,Integer QR1,bool VolumeIntegral1,
+                     typename Left2,typename Right2,Integer QR2,bool VolumeIntegral2>
+class TupleOfTestTrialPairsNumbersAux<T,Addition<Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>>,
+                        Expression<L2DotProductIntegral<Left2,Right2,VolumeIntegral2,QR2>>>>
 {
  public:
-  using Left=L2DotProductIntegral<Left1,Right1,QR1>;
-  using Right=L2DotProductIntegral<Left2,Right2,QR2>;
+  using Left=L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>;
+  using Right=L2DotProductIntegral<Left2,Right2,VolumeIntegral2,QR2>;
   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,
                           Expression<Addition<Expression<typename TupleOfTestTrialPairsNumbersAux<T,Left>::type>,
                                                 Expression<typename TupleOfTestTrialPairsNumbersAux<T,Right>::type>>>
                             >::type;
 };
 
-
-// template<typename T,typename MeshT, typename Left1,typename Right1,Integer QR,typename Right>
-// class TupleOfTestTrialPairsNumbersAux<T, Addition<Expression<L2DotProductIntegral<MeshT,Left1,Right1,QR>>,Expression<Right > > >
-// {
-//  public:
-//   using Left=L2DotProductIntegral<MeshT,Left1,Right1,QR>;
-//   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,
-//                           Expression<Addition<Expression<typename TupleOfTestTrialPairsNumbersAux<T,Left>::type>,
-//                                                 Expression<typename TupleOfTestTrialPairsNumbersAux<T,Right>::type>>>
-//                              >::type;
-
-// };
-
-template<typename T,typename Left1,typename Right1,Integer QR,typename Right>
-class TupleOfTestTrialPairsNumbersAux<T, Addition<Expression<L2DotProductIntegral<Left1,Right1,QR>>,Expression<Right > > >
+template<typename T,typename Left1,typename Right1,Integer QR1,bool VolumeIntegral1,typename Right>
+class TupleOfTestTrialPairsNumbersAux<T, Addition<Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>>,Expression<Right > > >
 {
  public:
-  using Left=L2DotProductIntegral<Left1,Right1,QR>;
+  using Left=L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>;
   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,
                           Expression<Addition<Expression<typename TupleOfTestTrialPairsNumbersAux<T,Left>::type>,
                                                 Expression<typename TupleOfTestTrialPairsNumbersAux<T,Right>::type>>>
@@ -594,21 +771,11 @@ class TupleOfTestTrialPairsNumbersAux<T, Addition<Expression<L2DotProductIntegra
 
 };
 
-// template<typename T, typename Left,typename MeshT, typename Left1,typename Right1,Integer QR>
-// class TupleOfTestTrialPairsNumbersAux<T, Addition<Expression<Left>,Expression<L2DotProductIntegral<MeshT,Left1,Right1,QR> > > >
-// {
-//  public:
-//   using Right=L2DotProductIntegral<MeshT,Left1,Right1,QR>;
-//   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,
-//                              Expression<Addition<Expression<typename TupleOfTestTrialPairsNumbersAux<T,Left>::type>,
-//                                                    Expression<typename TupleOfTestTrialPairsNumbersAux<T,Right>::type>>>
-//                              >::type;
-// };
-template<typename T, typename Left, typename Left1,typename Right1,Integer QR>
-class TupleOfTestTrialPairsNumbersAux<T, Addition<Expression<Left>,Expression<L2DotProductIntegral<Left1,Right1,QR> > > >
+template<typename T, typename Left, typename Left1,typename Right1,Integer QR1,bool VolumeIntegral1>
+class TupleOfTestTrialPairsNumbersAux<T, Addition<Expression<Left>,Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1> > > >
 {
  public:
-  using Right=L2DotProductIntegral<Left1,Right1,QR>;
+  using Right=L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>;
   using type=typename TupleOfTestTrialPairsNumbersAuxAux<T,
                              Expression<Addition<Expression<typename TupleOfTestTrialPairsNumbersAux<T,Left>::type>,
                                                  Expression<typename TupleOfTestTrialPairsNumbersAux<T,Right>::type>>>
@@ -627,85 +794,52 @@ public:
 };
 
 
-
+/////////////////////////////////////////////////////////////////////////////////////////////////
+///// It build the tuple of the pairs test/trial used in the form.
+///// Example: X=[P1,P0], u,v in P1, r,s in P0
+///// L= int u * v - int u* s -int r * v
+///// TupleOfTestTrialPairsNumbers= {(0,0),(0,1),(1,0)}
+///// where (1,1) is missing because there is no int r * s
+/////////////////////////////////////////////////////////////////////////////////////////////////
 template<typename...Ts>
 class TupleOfTestTrialPairsNumbers;
 
-// template<typename MeshT1, typename Left1,typename Right1,Integer QR1>
-// class TupleOfTestTrialPairsNumbers<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>
-// {
-//  public:
-//   using T=L2DotProductIntegral<MeshT1,Left1,Right1,QR1>;
-
-//   using type=std::tuple<typename T::TestTrialNumbers>;
-
-// };
-
-template<typename Left1,typename Right1,Integer QR1>
-class TupleOfTestTrialPairsNumbers<L2DotProductIntegral<Left1,Right1,QR1>>
+template<typename Left1,typename Right1,Integer QR1,bool VolumeIntegral1>
+class TupleOfTestTrialPairsNumbers<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>>
 {
  public:
-  using T=L2DotProductIntegral<Left1,Right1,QR1>;
+  using T=L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>;
 
   using type=std::tuple<typename T::TestTrialNumbers>;
 
 };
 
-// template<typename MeshT1, typename Left1,typename Right1,Integer QR1,
-//          typename MeshT2, typename Left2,typename Right2,Integer QR2>
-// class TupleOfTestTrialPairsNumbers<Addition<Expression<L2DotProductIntegral<MeshT1,Left1,Right1,QR1>>,
-//                         Expression<L2DotProductIntegral<MeshT2,Left2,Right2,QR2>>>>
-// {
-//  public:
-//   using Left=L2DotProductIntegral<MeshT1,Left1,Right1,QR1>;
-//   using Right=L2DotProductIntegral<MeshT2,Left2,Right2,QR2>;
-
-//   using type=RemoveTupleDuplicates<std::tuple<typename Left::TestTrialNumbers, typename Right::TestTrialNumbers>>;
-
-// };
-
-template<typename Left1,typename Right1,Integer QR1,
-         typename Left2,typename Right2,Integer QR2>
-class TupleOfTestTrialPairsNumbers<Addition<Expression<L2DotProductIntegral<Left1,Right1,QR1>>,
-                        Expression<L2DotProductIntegral<Left2,Right2,QR2>>>>
+template<typename Left1,typename Right1,Integer QR1,bool VolumeIntegral1,
+         typename Left2,typename Right2,Integer QR2,bool VolumeIntegral2>
+class TupleOfTestTrialPairsNumbers<Addition<Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>>,
+                        Expression<L2DotProductIntegral<Left2,Right2,VolumeIntegral2,QR2>>>>
 {
  public:
-  using Left=L2DotProductIntegral<Left1,Right1,QR1>;
-  using Right=L2DotProductIntegral<Left2,Right2,QR2>;
+  using Left=L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>;
+  using Right=L2DotProductIntegral<Left2,Right2,VolumeIntegral2,QR2>;
 
   using type=RemoveTupleDuplicates<std::tuple<typename Left::TestTrialNumbers, typename Right::TestTrialNumbers>>;
 
 };
 
-// template<typename MeshT, typename Left1,typename Right1,Integer QR,typename Right>
-// class TupleOfTestTrialPairsNumbers<Addition<Expression<L2DotProductIntegral<MeshT,Left1,Right1,QR>>,Expression<Right > > >
-// {
-//  public:
-//   using Left=L2DotProductIntegral<MeshT,Left1,Right1,QR>;
-//   using type=RemoveTupleDuplicates<TupleCatType<typename TupleOfTestTrialPairsNumbers<Left>::type,typename TupleOfTestTrialPairsNumbers<Right>::type >>;
-// };
-
-template<typename Left1,typename Right1,Integer QR,typename Right>
-class TupleOfTestTrialPairsNumbers<Addition<Expression<L2DotProductIntegral<Left1,Right1,QR>>,Expression<Right > > >
+template<typename Left1,typename Right1,Integer QR1,bool VolumeIntegral1,typename Right>
+class TupleOfTestTrialPairsNumbers<Addition<Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>>,Expression<Right > > >
 {
  public:
-  using Left=L2DotProductIntegral<Left1,Right1,QR>;
+  using Left=L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>;
   using type=RemoveTupleDuplicates<TupleCatType<typename TupleOfTestTrialPairsNumbers<Left>::type,typename TupleOfTestTrialPairsNumbers<Right>::type >>;
 };
 
-// template<typename Left,typename MeshT, typename Left1,typename Right1,Integer QR>
-// class TupleOfTestTrialPairsNumbers<Addition<Expression<Left>,Expression<L2DotProductIntegral<MeshT,Left1,Right1,QR> > > >
-// {
-//  public:
-//   using Right=L2DotProductIntegral<MeshT,Left1,Right1,QR>;
-//   using type=RemoveTupleDuplicates<TupleCatType<typename TupleOfTestTrialPairsNumbers<Left>::type,typename TupleOfTestTrialPairsNumbers<Right>::type >>;
-// };
-
-template<typename Left,typename Left1,typename Right1,Integer QR>
-class TupleOfTestTrialPairsNumbers<Addition<Expression<Left>,Expression<L2DotProductIntegral<Left1,Right1,QR> > > >
+template<typename Left,typename Left1,typename Right1,Integer QR1,bool VolumeIntegral1>
+class TupleOfTestTrialPairsNumbers<Addition<Expression<Left>,Expression<L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1> > > >
 {
  public:
-  using Right=L2DotProductIntegral<Left1,Right1,QR>;
+  using Right=L2DotProductIntegral<Left1,Right1,VolumeIntegral1,QR1>;
   using type=RemoveTupleDuplicates<TupleCatType<typename TupleOfTestTrialPairsNumbers<Left>::type,typename TupleOfTestTrialPairsNumbers<Right>::type >>;
 };
 
@@ -715,7 +849,6 @@ class TupleOfTestTrialPairsNumbers<Addition<Expression<Left>,Expression<Right > 
 public:
   using type=RemoveTupleDuplicates<TupleCatType<typename TupleOfTestTrialPairsNumbers<Left>::type,typename TupleOfTestTrialPairsNumbers<Right>::type>>;
 };
-
 
 
 
@@ -743,12 +876,56 @@ template<typename TupleOfPairsNumbers, typename Form>
 class TupleOfL2Products
 {
 public:
-using type=  typename TupleOfL2ProductsHelper<TupleOfPairsNumbers,Form, TupleTypeSize<TupleOfPairsNumbers>::value-1,0>::type;
+using type=typename TupleOfL2ProductsHelper<TupleOfPairsNumbers,Form,TupleTypeSize<TupleOfPairsNumbers>::value-1,0>::type;
 
 
 };
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<Integer H, typename TupleOfPairsNumbers, typename Form,Integer Nmax,Integer N>
+class TupleOfL2ProductsHelper2;
+
+template<Integer H, typename TupleOfPairsNumbers, typename Form,Integer Nmax>
+class TupleOfL2ProductsHelper2<H,TupleOfPairsNumbers,Form,Nmax,Nmax>
+{
+ public:
+ using type=std::tuple<typename TupleOfTestTrialPairsNumbersAux2<H,GetType<TupleOfPairsNumbers,Nmax>,Form>::type>;
+};
+
+
+
+template<Integer H, typename TupleOfPairsNumbers, typename Form,Integer Nmax,Integer N>
+class TupleOfL2ProductsHelper2
+{
+ public:
+ using type=TupleCatType<std::tuple<typename TupleOfTestTrialPairsNumbersAux2<H,GetType<TupleOfPairsNumbers,N>,Form>::type> , 
+                         typename TupleOfL2ProductsHelper2<H,TupleOfPairsNumbers,Form,Nmax,N+1>::type >;
+};
+
+template<Integer H, typename TupleOfPairsNumbers, typename Form>
+class TupleOfL2Products2
+{
+public:
+using type=typename TupleOfL2ProductsHelper2<H,TupleOfPairsNumbers,Form,TupleTypeSize<TupleOfPairsNumbers>::value-1,0>::type;
+
+
+};
 
 
 

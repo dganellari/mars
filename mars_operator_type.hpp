@@ -2,37 +2,38 @@
 #define MARS_OPERATOR_TYPE_HPP
 #include "mars_base.hpp"
 #include "mars_matrix_static_assert.hpp"
+#include "mars_operators.hpp"
 
 namespace mars {
 
 
 
-class IdentityOperator;
+// class IdentityOperator;
 
-class GradientOperator;
+// class GradientOperator;
 
-class DivergenceOperator;
+// class DivergenceOperator;
 
-class CurlOperator;
+// class CurlOperator;
 
-template<typename...Ts>
-class CompositeOperator;
+// template<typename...Ts>
+// class CompositeOperator;
 
-template<typename ConstType,typename...Inputs>
-class ConstantTensor;
+// template<typename ConstType,typename...Inputs>
+// class ConstantTensor;
 
-template<typename FullSpace,Integer N,typename Operator_,typename FuncType>
-class Function;
-
-
-template<typename MixedSpace, Integer N, typename OperatorType>
-class Test;
-
-template<typename MixedSpace, Integer N, typename OperatorType>
-class Trial;
+// template<typename FullSpace,Integer N,typename Operator_,typename FuncType>
+// class Function;
 
 
-template<typename Left,typename Right,Integer QR>
+// template<typename MixedSpace, Integer N, typename OperatorType>
+// class Test;
+
+// template<typename MixedSpace, Integer N, typename OperatorType>
+// class Trial;
+
+
+template<typename Left,typename Right,bool VolumeIntegral, Integer QR>
 class L2DotProductIntegral;
 
 template<typename Derived>
@@ -44,26 +45,26 @@ class Transposed;
 template<typename T>
 class MatTraceOperator;
 
-template<typename T>
-class UnaryPlus;
+// template<typename T>
+// class UnaryPlus;
 
-template<typename T>
-class UnaryMinus;
+// template<typename T>
+// class UnaryMinus;
 
-template<typename Left,typename Right>
-class Multiplication;
+// template<typename Left,typename Right>
+// class Multiplication;
 
 template<typename Left,typename Right>
 class InnerProduct;
 
-template<typename Left,typename Right>
-class Division;
+// template<typename Left,typename Right>
+// class Division;
 
-template<typename Left,typename Right>
-class Subtraction;
+// template<typename Left,typename Right>
+// class Subtraction;
 
-template<typename Left,typename Right>
-class Addition;
+// template<typename Left,typename Right>
+// class Addition;
 
 
 
@@ -1356,11 +1357,11 @@ class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< 
    };
 
 
-template<typename Left,typename Right,Integer QR, typename...Ts>
-class OperatorTypeHelper<L2DotProductIntegral<Left,Right,QR>,Ts...>
+template<typename Left,typename Right,Integer QR, bool VolumeIntegral, typename...Ts>
+class OperatorTypeHelper<L2DotProductIntegral<Left,Right,VolumeIntegral,QR>,Ts...>
 { public:
  
-   using L2=L2DotProductIntegral<Left,Right,QR>;
+   using L2=L2DotProductIntegral<Left,Right,VolumeIntegral,QR>;
    using FunctionSpace=typename L2::FunctionSpace;
    using TestTrialNumbers=typename L2::TestTrialNumbers;
    using num=GetType<typename L2::form>;
@@ -1498,6 +1499,32 @@ class OperatorTypeHelper< Binary< Expression<Left>, Expression<Right > >, Ts...>
   using type1=typename OperatorTypeHelper<Left,Ts...>::type;
   using type2=typename OperatorTypeHelper<Right,Ts...>::type;
   using type=typename OperatorTypeHelper<Binary<type1,type2>,Ts...>::type;
+};
+
+
+
+template<template<class>class Unary, typename...Ts>
+class OperatorTypeHelper<Unary<Expression<EmptyExpression> >, Ts...>
+{ public:
+  using type=EmptyExpression;
+};
+
+template<template<class,class>class Binary, typename...Ts>
+class OperatorTypeHelper< Binary< Expression<EmptyExpression>, Expression<EmptyExpression > >, Ts...>
+{ public:
+  using type=EmptyExpression;
+};
+
+template<template<class,class>class Binary,typename Left, typename...Ts>
+class OperatorTypeHelper< Binary< Expression<Left>, Expression<EmptyExpression > >, Ts...>
+{ public:
+  using type=typename OperatorTypeHelper<Left,Ts...>::type;
+};
+
+template<template<class,class>class Binary,typename Right, typename...Ts>
+class OperatorTypeHelper< Binary< Expression<EmptyExpression>, Expression<Right > >, Ts...>
+{ public:
+  using type=typename OperatorTypeHelper<Right,Ts...>::type;
 };
 
 
@@ -1935,11 +1962,11 @@ class TupleOfCombinationFunctionsAux;
 
 
 
-template<typename Tuple, typename TupleTensor,typename Left,typename Right,Integer QR>
-class TupleOfCombinationFunctionsAux<Tuple,TupleTensor,L2DotProductIntegral<Left,Right,QR>>
+template<typename Tuple, typename TupleTensor,typename Left,typename Right,Integer QR, bool VolumeIntegral>
+class TupleOfCombinationFunctionsAux<Tuple,TupleTensor,L2DotProductIntegral<Left,Right,VolumeIntegral,QR>>
 {
   public:
-  using L2=L2DotProductIntegral<Left,Right,QR>;
+  using L2=L2DotProductIntegral<Left,Right,VolumeIntegral,QR>;
   using QRule=typename L2::QRule;
   using TupleNew=typename TupleOfCombinationFunctionsAuxAux<QRule,Tuple,TupleTensor,Left>::type;
   using TupleNewTensor=typename TupleOfCombinationFunctionsAuxAux<QRule,Tuple,TupleTensor,Left>::type_tensor;
@@ -1983,6 +2010,19 @@ class TupleOfCombinationFunctionsForm<Tuple,TupleTensor,Form,Forms...>
   using type_tensor=typename TupleOfCombinationFunctionsForm<TupleNew,TupleTensorNew,Forms...>::type_tensor;
 };
 
+
+template<Integer Nmax,typename Form,typename...Forms>
+class TupleOfCombinationFunctions;
+
+
+template<Integer Nmax>
+class TupleOfCombinationFunctions<Nmax,EmptyExpression>
+{
+ public:
+  using emptytuple=TupleOfType<Nmax,std::tuple<> > ;
+  using type=emptytuple;
+  using type_tensor=emptytuple;
+};
 
 
 template<Integer Nmax,typename Form,typename...Forms>
