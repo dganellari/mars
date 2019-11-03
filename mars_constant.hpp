@@ -69,7 +69,7 @@ class Function1
 
     static type eval(const Point& p)
     {
-     return p[0]+p[1]; 
+     return p[0]; 
     }
 };
 

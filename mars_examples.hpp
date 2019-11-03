@@ -1116,7 +1116,7 @@ void assembly_example()
  FSspace1 FEspace1(mesh);
  using FSspace2= FunctionSpace< MeshT, Lagrange2<2>>;
  FSspace2 FEspace2(mesh);
- using FSspace3= FunctionSpace< MeshT, Lagrange1<1>,RT1<2>>;
+ using FSspace3= FunctionSpace< MeshT, Lagrange1<1>,RT1<1>>;
  FSspace3 FEspace3(mesh);
  using FSspace4= FunctionSpace< MeshT, Lagrange1<1>,Lagrange2<1>,Lagrange1<1>>;
  FSspace4 FEspace4(mesh);
@@ -1163,7 +1163,7 @@ void assembly_example()
 
   FiniteElem<Elem> J(mesh);
   
-  constexpr auto C=Constant<Scalar1>(0.5);
+  constexpr auto C=Constant<Scalar1>(1.0);
   constexpr auto alpha=Constant<Scalar1>(2.0);
   constexpr auto beta=Constant<Scalar1>(3.0);
   constexpr auto gamma=Constant<Scalar1>(3.0);
@@ -1181,7 +1181,7 @@ auto NewOp2=NewOperator(IdentityOperator()*alpha*f1);
 // auto Epsilon=NewOperator((-f1)*MatTrace(C)*(+GradientOperator()+(Transpose(-GradientOperator()))));
 // auto Epsilon=NewOperator(+(-GradientOperator()));
 auto Epsilon=NewOperator((+C)*(-C)*(-f1)*(+f1)*(C-f1)*(C+f1)/(C+f1)*Transpose(f1)*(+MatTrace(+f1))*(-MatTrace(-C))*(-GradientOperator()-GradientOperator())/MatTrace(Transpose(f1)-MatTrace(Transpose(C))));
-auto NewTrace=NewOperator(C*TraceOperator());
+auto NewTrace=NewOperator(TraceOperator());
 
 // /MatTrace(Transpose(Transpose(MatTrace(f1)))));
 // auto Epsilon=NewOperator((GradientOperator()+Transpose(GradientOperator())));//+Transpose(GradientOperator())));
@@ -1191,7 +1191,7 @@ auto NewTrace=NewOperator(C*TraceOperator());
                     surface_integral(NewTrace(u3),NewTrace(v3))-
                     surface_integral(NewTrace(u2),NewTrace(v2))-
                     surface_integral(NewTrace(u1),NewTrace(v1))-
-                    surface_integral(NewTrace(u3),NewTrace(v3))-
+                    // surface_integral(NewTrace(u3),NewTrace(v3))-
                     // surface_integral(Trace(u3),Trace(v3))-
                     // L2Inner(-(-u3),-(v3))-
                     // surface_integral(Trace(u3),Trace(v3))-
@@ -1230,8 +1230,10 @@ auto NewTrace=NewOperator(C*TraceOperator());
                   // L2Inner((-Transpose(C)-(C))*v2,f1/C)+
                   // L2Inner(Inner(gamma,Transpose(gamma)),MatTrace(Epsilon(v1)));
   // -L2Inner(Inner(gamma,Transpose(gamma))*Epsilon(v1),id2)-L2Inner(-Epsilon(v1),-id2)+
+  // L2Inner(id2,v3)
   // L2Inner(id2,v3)-
-  L2Inner(id2,v3);
+  surface_integral(NewTrace(v3),Trace(f1))
+  ;
 
   // // auto bilinearform= 
   //                   L2Inner((u3),(v3))+ //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
@@ -1257,9 +1259,7 @@ auto NewTrace=NewOperator(C*TraceOperator());
   auto eval_linear_form=Eval(linear_form,shapefunctions);
 
   J.init(0);
-  J.init_boundary(0);
   reference_maps.init(J);
-  reference_maps.init_boundary(J);
   std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
   std::cout<<"------_______-----BEFORE SHAPE COEFFICIENTS INIT-----_______--------"<<std::endl;
 
@@ -1267,18 +1267,90 @@ auto NewTrace=NewOperator(C*TraceOperator());
   std::cout<<"------_______-----AFTER SHAPE COEFFICIENTS INIT-----_______--------"<<std::endl;
 
   shapefunctions.init(J);///////////////<------------------------ problema qui
-  shapefunctions.init_boundary(J);
+  
+
+
+
 
   std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
   std::cout<<"------_______-----BEGIN EVALUATION-----_______--------"<<std::endl;
-  eval_bilinear_form.apply(J);
-  eval_bilinear_form.apply_boundary(J);
-  eval_linear_form.apply(J);
+  // eval_bilinear_form.apply(J);
+  // eval_bilinear_form.apply_boundary(J);
+  // eval_linear_form.apply(J);
+  J.init_boundary(0);
+  reference_maps.init_boundary(J);
+  shapefunctions.init_boundary(J);
   eval_linear_form.apply_boundary(J);
 
-  std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
-  std::cout<<"------_______-----END EVALUATION-----_______--------"<<std::endl;
+  // J.init_boundary(1);
 
+  // reference_maps.init_boundary(J);
+  // shapefunctions.init_boundary(J);
+  // eval_linear_form.apply_boundary(J);
+
+  // J.init_boundary(2);
+  // reference_maps.init_boundary(J);
+  // shapefunctions.init_boundary(J);
+  // eval_linear_form.apply_boundary(J);
+
+  // J.init_boundary(0);
+  // std::cout<<"side volume="<<std::endl;
+  // std::cout<<J.side_id()<<std::endl;
+  // std::cout<<J.side_volume()<<std::endl;
+  // J.init_boundary(1);
+  // std::cout<<"side volume="<<std::endl;
+  // std::cout<<J.side_id()<<std::endl;
+  // std::cout<<J.side_volume()<<std::endl;
+  // J.init_boundary(2);
+  // std::cout<<"side volume="<<std::endl;
+  // std::cout<<J.side_id()<<std::endl;
+  // std::cout<<J.side_volume()<<std::endl;
+  // std::cout<<shapefunctions.value_surface<1,0>();
+  // decltype(shapefunctions.get_surface<1,0>()) eek(6);
+  
+  // std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
+  // std::cout<<"------_______-----END EVALUATION-----_______--------"<<std::endl;
+
+
+auto dof=W.space_ptr()->dofmap();
+auto dof0=tuple_get<0>(dof);
+auto dof1=tuple_get<1>(dof);
+// auto dof2=tuple_get<2>(dof);
+std::cout<<"dofmap0="<<std::endl;
+for(Integer i=0;i<dof0.size();i++)
+  {for(Integer j=0;j<dof0[i].size();j++)
+     std::cout<<dof0[i][j]<<std::endl;
+     std::cout<<std::endl;
+
+   }
+std::cout<<"dofmap1="<<std::endl;
+
+for(Integer i=0;i<dof1.size();i++)
+  {for(Integer j=0;j<dof1[i].size();j++)
+     std::cout<<dof1[i][j]<<std::endl;
+     std::cout<<std::endl;
+   }
+
+std::cout<<"dofmap100="<<std::endl;
+
+for(Integer i=0;i<W.space_ptr()->dofmap<0>().size();i++)
+  {for(Integer j=0;j<W.space_ptr()->dofmap<0>()[i].size();j++)
+     std::cout<<W.space_ptr()->dofmap<0>()[i][j]<<std::endl;
+     std::cout<<std::endl;
+   }
+
+// std::cout<<"dofmap200="<<std::endl;
+
+// for(Integer i=0;i<W.space_ptr()->dofmap<1,0>().size();i++)
+//   {for(Integer j=0;j<W.space_ptr()->dofmap<1,0>()[i].size();j++)
+//      std::cout<<W.space_ptr()->dofmap<1,0>()[i][j]<<std::endl;
+//      std::cout<<std::endl;
+//    }
+
+
+// for(Integer i=0;i<dof2.size();i++)
+//   for(Integer j=0;j<dof2[i].size();j++)
+//      std::cout<<dof2[i][j]<<std::endl;
 // decltype(eval_linear_form)::EvaluationOfL2InnersVolume::L2Products a4k(6);
 
 // decltype(eval_bilinear_form)::EvaluationOfL2InnersSurface::EvalOfL2InnersType a444k(6);

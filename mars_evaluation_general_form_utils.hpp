@@ -988,7 +988,7 @@ public:
      apply_aux_aux_aux(eval_N,local_mat,J);
      // eval_N.apply(local_mat,J);
 
-  std::cout<<"after jacobian evalinners2"<<std::endl;
+  std::cout<<"after jacobian evalinners2"<<local_mat<<std::endl;
 
     }   
 

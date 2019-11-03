@@ -92,6 +92,10 @@ class Function
   //  }
   //  }
 
+   constexpr auto spaces_ptr(){return full_space_ptr_;}
+   constexpr auto spaces_ptr()const {return full_space_ptr_;}
+
+
 private:
     std::shared_ptr<FullSpace> full_space_ptr_;
     LocalDofs local_dofs_;
@@ -166,6 +170,10 @@ class Function<FullSpace,N,Operator_,EmptyClass>
     copy(global_dofs.begin(),global_dofs.end(),back_inserter(global_dofs));
    }
    }
+
+   constexpr auto spaces_ptr(){return full_space_ptr_;}
+   constexpr auto spaces_ptr()const {return full_space_ptr_;}
+
 private:
     std::shared_ptr<FullSpace> full_space_ptr_;
     LocalDofs local_dofs_;
@@ -178,6 +186,14 @@ private:
 
 template<Integer N,typename FuncType=EmptyClass,typename OperatorType=IdentityOperator,typename FullSpace>
 auto MakeFunction(const FullSpace& AuxW){return Function<FullSpace,N+FullSpace::TrialSpaceSize,OperatorType,FuncType>(AuxW);}
+
+
+template<typename FullSpace,Integer N,typename OperatorType,typename FuncType>
+constexpr auto 
+Trace(const Function<FullSpace,N,OperatorType,FuncType>& t)
+{return Function<FullSpace,N,TraceOperator,FuncType> (t.spaces_ptr());}
+
+
 
 
 }

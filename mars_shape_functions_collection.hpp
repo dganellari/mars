@@ -977,16 +977,30 @@ class ShapeFunctionsCollection
 
 
    template<Integer...Ns>
-   constexpr const auto& get()const{return tuple_get<Ns...>(tuple_volume_);}
+   constexpr const auto& get_volume()const{return tuple_get<Ns...>(tuple_volume_);}
 
    template<Integer...Ns>
-         auto& get()     {return tuple_get<Ns...>(tuple_volume_);}
+         auto& get_volume()     {return tuple_get<Ns...>(tuple_volume_);}
 
    template<Integer...Ns>
-   constexpr const auto& value()const{return tuple_get<Ns...>(tuple_volume_).eval();}
+   constexpr const auto& value_volume()const{return tuple_get<Ns...>(tuple_volume_).eval();}
 
    template<Integer...Ns>
-         auto& value()     {return tuple_get<Ns...>(tuple_volume_).eval();}
+         auto& value_volume()     {return tuple_get<Ns...>(tuple_volume_).eval();}
+
+
+   template<Integer...Ns>
+   constexpr const auto& get_surface()const{return tuple_get<Ns...>(tuple_surface_);}
+
+   template<Integer...Ns>
+         auto& get_surface()     {return tuple_get<Ns...>(tuple_surface_);}
+
+   template<Integer...Ns>
+   constexpr const auto& value_surface()const{return tuple_get<Ns...>(tuple_surface_).eval();}
+
+   template<Integer...Ns>
+         auto& value_surface()     {return tuple_get<Ns...>(tuple_surface_).eval();}
+
 
 
  ShapeFunctionsCollection(ShapeFunctionCoefficient<GeneralForm_,GeneralForms_...>&coeffs,

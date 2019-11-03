@@ -34,66 +34,76 @@ public:
 static constexpr Matrix<Real,1,1> QP1_Simplex1_qp_points(0.5000);
 static constexpr Array<Real,1>    QP1_Simplex1_qp_weights(1.0);
 
-static constexpr Matrix<Real,2,1> QP2_Simplex1_qp_points(7.886751345948129e-01,
-                                                         2.113248654051871e-01);
+static constexpr Matrix<Real,2,1> QP2_Simplex1_qp_points(2.113248654051871e-01,
+                                                         7.886751345948129e-01);
 static constexpr Array<Real,2>   QP2_Simplex1_qp_weights(0.5, 
                                                          0.5);
 
-static constexpr Matrix<Real,3,1> QP3_Simplex1_qp_points(8.872983346207417e-01,
+static constexpr Matrix<Real,3,1> QP3_Simplex1_qp_points(1.127016653792582e-01,
                                                          5.000000000000000e-01,
-                                                         1.127016653792582e-01);
+                                                         8.872983346207417e-01
+);
 static constexpr Array<Real,3>   QP3_Simplex1_qp_weights(2.777777777777772e-01,
                                                          4.444444444444444e-01,  
                                                          2.777777777777772e-01);
 
 
-static constexpr Matrix<Real,4,1> QP4_Simplex1_qp_points(9.305681557970262e-01,
-                                                         6.699905217924281e-01,
+static constexpr Matrix<Real,4,1> QP4_Simplex1_qp_points(
+                                                         6.943184420297371e-02,
                                                          3.300094782075719e-01,
-                                                         6.943184420297371e-02);
-static constexpr Array<Real,4>   QP4_Simplex1_qp_weights(1.739274225687272e-01,
+                                                         6.699905217924281e-01,
+                                                         9.305681557970262e-01);
+
+static constexpr Array<Real,4>   QP4_Simplex1_qp_weights(              
+                                                         1.739274225687272e-01,
                                                          3.260725774312730e-01,
                                                          3.260725774312730e-01,
                                                          1.739274225687272e-01);
 
 
 
-static constexpr Matrix<Real,5,1> QP5_Simplex1_qp_points(9.530899229693319e-01,
-                                                         7.692346550528415e-01,
-                                                         5.000000000000000e-01,
+static constexpr Matrix<Real,5,1> QP5_Simplex1_qp_points(
+                                                         4.691007703066802e-02,
                                                          2.307653449471584e-01,
-                                                         4.691007703066802e-02);
-static constexpr Array<Real,5>   QP5_Simplex1_qp_weights(1.184634425280946e-01,
+                                                         5.000000000000000e-01,
+                                                         7.692346550528415e-01,
+                                                         9.530899229693319e-01);
+
+static constexpr Array<Real,5>   QP5_Simplex1_qp_weights(
+                                                         1.184634425280946e-01,
                                                          2.393143352496831e-01,
                                                          2.844444444444444e-01,
                                                          2.393143352496831e-01,
                                                          1.184634425280946e-01);
 
 
-static constexpr Matrix<Real,6,1> QP6_Simplex1_qp_points(9.662347571015760e-01,
-                                                         8.306046932331322e-01,
-                                                         6.193095930415985e-01,
-                                                         3.806904069584016e-01,
+static constexpr Matrix<Real,6,1> QP6_Simplex1_qp_points(
+                                                         3.376524289842397e-02,
                                                          1.693953067668678e-01,
-                                                         3.376524289842397e-02);
+                                                         3.806904069584016e-01,
+                                                         6.193095930415985e-01,
+                                                         8.306046932331322e-01,
+                                                         9.662347571015760e-01);
 
-static constexpr Array<Real,6>   QP6_Simplex1_qp_weights(8.566224618958525e-02,
+static constexpr Array<Real,6>   QP6_Simplex1_qp_weights(
+                                                         8.566224618958525e-02,
                                                          1.803807865240693e-01,
                                                          2.339569672863455e-01,
                                                          2.339569672863455e-01,
                                                          1.803807865240693e-01,
                                                          8.566224618958525e-02);
 
-
-static constexpr  Matrix<Real,7,1> QP7_Simplex1_qp_points(9.745539561713792e-01,
-                                                         8.707655927996972e-01,
-                                                         7.029225756886985e-01,
-                                                         5.000000000000000e-01,
-                                                         2.970774243113014e-01,
+static constexpr  Matrix<Real,7,1> QP7_Simplex1_qp_points(
+                                                         2.544604382862076e-02,
                                                          1.292344072003028e-01,
-                                                         2.544604382862076e-02);
+                                                         2.970774243113014e-01,
+                                                         5.000000000000000e-01,
+                                                         7.029225756886985e-01,
+                                                         8.707655927996972e-01,
+                                                         9.745539561713792e-01);
 
-static constexpr Array<Real,7>   QP7_Simplex1_qp_weights(6.474248308443482e-02,
+static constexpr Array<Real,7>   QP7_Simplex1_qp_weights(
+                                                         6.474248308443482e-02,
                                                          1.398526957446384e-01,
                                                          1.909150252525595e-01,
                                                          2.089795918367347e-01,
@@ -103,16 +113,21 @@ static constexpr Array<Real,7>   QP7_Simplex1_qp_weights(6.474248308443482e-02,
 
 
 
-static constexpr  Matrix<Real,8,1> QP8_Simplex1_qp_points(9.801449282487682e-01,
-                                                         8.983332387068134e-01,
-                                                         7.627662049581645e-01,
-                                                         5.917173212478249e-01,
-                                                         4.082826787521751e-01,
-                                                         2.372337950418355e-01,
-                                                         1.016667612931866e-01,
-                                                         1.985507175123186e-02);
 
-static constexpr Array<Real,8>   QP8_Simplex1_qp_weights(5.061426814518841e-02,
+static constexpr  Matrix<Real,8,1> QP8_Simplex1_qp_points(
+                                                         1.985507175123186e-02,
+                                                         1.016667612931866e-01,
+                                                         2.372337950418355e-01,
+                                                         4.082826787521751e-01,
+                                                         5.917173212478249e-01,
+                                                         7.627662049581645e-01,
+                                                         8.983332387068134e-01,
+                                                         9.801449282487682e-01);
+
+
+
+static constexpr Array<Real,8>   QP8_Simplex1_qp_weights(
+                                                         5.061426814518841e-02,
                                                          1.111905172266872e-01,
                                                          1.568533229389437e-01,
                                                          1.813418916891811e-01,
@@ -122,39 +137,47 @@ static constexpr Array<Real,8>   QP8_Simplex1_qp_weights(5.061426814518841e-02,
                                                          5.061426814518841e-02);
 
 
-static constexpr  Matrix<Real,9,1> QP9_Simplex1_qp_points(9.840801197538130e-01,
-                                                          9.180155536633179e-01,
-                                                          8.066857163502952e-01,
-                                                          6.621267117019045e-01,
-                                                          5.000000000000000e-01,
-                                                          3.378732882980955e-01,
-                                                          1.933142836497048e-01,
-                                                          8.198444633668212e-02,
-                                                          1.591988024618696e-02);
-
-static constexpr  Array<Real,9>   QP9_Simplex1_qp_weights(4.063719418078732e-02,
-                                                          9.032408034742870e-02,
-                                                          1.303053482014678e-01,
-                                                          1.561735385200015e-01,
-                                                          1.651196775006299e-01,
-                                                          1.561735385200015e-01,
-                                                          1.303053482014678e-01,
-                                                          9.032408034742870e-02,
-                                                          4.063719418078732e-02);
 
 
-static constexpr  Matrix<Real,10,1> QP10_Simplex1_qp_points(9.869532642585859e-01,
-                                                            9.325316833444923e-01,
-                                                            8.397047841495122e-01,
-                                                            7.166976970646236e-01,
-                                                            5.744371694908156e-01,
-                                                            4.255628305091844e-01,
-                                                            2.833023029353764e-01,
-                                                            1.602952158504878e-01,
+static constexpr  Matrix<Real,9,1> QP9_Simplex1_qp_points(
+                                                         1.591988024618696e-02,
+                                                         8.198444633668212e-02,
+                                                         1.933142836497048e-01,
+                                                         3.378732882980955e-01,
+                                                         5.000000000000000e-01,
+                                                         6.621267117019045e-01,
+                                                         8.066857163502952e-01,
+                                                         9.180155536633179e-01,
+                                                         9.840801197538130e-01);
+
+ 
+static constexpr  Array<Real,9>   QP9_Simplex1_qp_weights(
+                                                         4.063719418078732e-02,
+                                                         9.032408034742870e-02,
+                                                         1.303053482014678e-01,
+                                                         1.561735385200015e-01,
+                                                         1.651196775006299e-01,
+                                                         1.561735385200015e-01,
+                                                         1.303053482014678e-01,
+                                                         9.032408034742870e-02,
+                                                         4.063719418078732e-02);
+
+
+static constexpr  Matrix<Real,10,1> QP10_Simplex1_qp_points(
+                                                            1.304673574141413e-02,
                                                             6.746831665550773e-02,
-                                                            1.304673574141413e-02);
+                                                            1.602952158504878e-01,
+                                                            2.833023029353764e-01,
+                                                            4.255628305091844e-01,
+                                                            5.744371694908156e-01,
+                                                            7.166976970646236e-01,
+                                                            8.397047841495122e-01,
+                                                            9.325316833444923e-01,
+                                                            9.869532642585859e-01);
 
-static constexpr   Array<Real,10>  QP10_Simplex1_qp_weights(3.333567215434401e-02,
+
+static constexpr   Array<Real,10>  QP10_Simplex1_qp_weights(
+                                                            3.333567215434401e-02,
                                                             7.472567457529028e-02,
                                                             1.095431812579910e-01,
                                                             1.346333596549981e-01,
@@ -164,6 +187,8 @@ static constexpr   Array<Real,10>  QP10_Simplex1_qp_weights(3.333567215434401e-0
                                                             1.095431812579910e-01,
                                                             7.472567457529028e-02,
                                                             3.333567215434401e-02);
+
+
 
 
 

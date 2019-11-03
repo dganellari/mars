@@ -19,20 +19,66 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
  using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpaces>;
  using Operator=typename type::Operator;
  using value_type=OperatorType<type,OtherTemplateArguments...>;
+ static constexpr auto trace=trace_dofs<FunctionSpaces>();  
+ 
+
  Evaluation(){};
 
  Evaluation(const type& expr):
  eval_(expr)
  {};
 
- template<typename Shapes>
- void compute(value_type& value, type&eval,const FiniteElem<Elem>&J, const Shapes& shapes )
+ template<typename OperatorType, typename Shapes>
+ std::enable_if_t<IsSame<OperatorType,TraceOperator>::value,void> compute
+ (value_type& value, type&eval,const FiniteElem<Elem>&J, const Shapes& shapes )
+ {
+  using type1=typename Shapes::type; 
+  using type2=typename Shapes::subtype;
+  using type3=typename Shapes::subtype::subtype; 
+
+  const Integer face=J.side_id();
+   eval.local_dofs_update(J);
+   const auto& all_local_dofs=eval.local_dofs();
+   auto local_dofs=subarray(all_local_dofs,trace[face]);
+   std::cout<<"local_dofs TraceOperator="<<local_dofs<<std::endl;
+   std::cout<<shapes<<std::endl;
+   std::cout<<"___"<<std::endl;
+    // loop on qp points
+    for(Integer ii=0;ii< type2::Dim;ii++)
+    {
+      for(Integer mm=0;mm<type3::Rows;mm++)
+        for(Integer nn=0;nn<type3::Cols;nn++)
+           {value[ii](mm,nn)=local_dofs[0]*shapes[0][ii](mm,nn);
+            std::cout<<local_dofs[0]<<" "<<shapes[0][ii](mm,nn)<<std::endl;
+           }
+    // loop on dofs
+     for(Integer jj=1;jj< type1::Dim;jj++)
+      // loop on components of subtype (is a matrix)
+      for(Integer mm=0;mm<type3::Rows;mm++)
+        for(Integer nn=0;nn<type3::Cols;nn++)
+           {
+            value[ii](mm,nn)+=local_dofs[jj]*shapes[jj][ii](mm,nn);
+            std::cout<<local_dofs[jj]<<" "<<shapes[jj][ii](mm,nn)<<std::endl;
+          }
+
+    }
+    std::cout<<"___"<<std::endl;
+
+
+ }
+
+
+ template<typename OperatorType, typename Shapes>
+ std::enable_if_t<IsDifferent<OperatorType,TraceOperator>::value,void> compute
+ (value_type& value, type&eval,const FiniteElem<Elem>&J, const Shapes& shapes )
  {
   using type1=typename Shapes::type; 
   using type2=typename Shapes::subtype;
   using type3=typename Shapes::subtype::subtype; 
    eval.local_dofs_update(J);
    const auto& local_dofs=eval.local_dofs();
+   std::cout<<"local_dofs not TraceOperator="<<local_dofs<<std::endl;
+   std::cout<<shapes<<std::endl;
     // loop on qp points
     for(Integer ii=0;ii< type2::Dim;ii++)
     {
@@ -69,7 +115,7 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
 
 
   const auto& shapes=tuple_get<M>(tuple).eval();
-  compute(value,eval_,J,shapes);
+  compute<Operator>(value,eval_,J,shapes);
   std::cout<<"Evaluation<Expression<Function "<<value<<std::endl;
 
 

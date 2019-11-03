@@ -24,7 +24,9 @@ class MapFromReference<IdentityOperator, Simplex<Dim,ManifoldDim>,LagrangeFE>
  using Operator=IdentityOperator;
  using Elem=Simplex<Dim,ManifoldDim>;
  // using type=Real;
-        inline constexpr void  init(const FiniteElem<Simplex<Dim,ManifoldDim>>& FE){id_=1.0;}
+        // if we have functions defined on manifolddim-d, d>0
+        template<Integer ManifoldDim2>
+        inline constexpr void  init(const FiniteElem<Simplex<Dim,ManifoldDim2>>& FE){id_=1.0;}
         inline constexpr const auto&  operator()()const{return id_;}
  private:
   Real id_;
@@ -111,10 +113,10 @@ class MapFromReference<TraceOperator,Simplex<Dim,ManifoldDim>,RaviartThomasFE>
  // todo fixme. check if it is correct to put +1
  // indeed the element is Simplex<Dim,ManifoldDim+1> and we pass FiniteElem<Simplex<Dim,ManifoldDim+1>>
          inline constexpr void init(const FiniteElem<Simplex<Dim,ManifoldDim+1>> &FE)
-         {side_volume_inv_= 1.0/FE.side_volume();}
-         inline constexpr const auto&  operator()()const{return side_volume_inv_;}
+         {flux_inv_= 1.0/((ManifoldDim+1)*FE.volume());}
+         inline constexpr const auto&  operator()()const{std::cout<<"flux_inv_="<<flux_inv_<<std::endl; return flux_inv_;}
  private:
- Real side_volume_inv_;
+ Real flux_inv_;
 };
 
 

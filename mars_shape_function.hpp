@@ -1778,8 +1778,11 @@ public:
         const auto& mapping=map();
         // decltype(func_values_) ok1(1);
         // SingleType ok2(2);
-        // std::cout<<"NComponents="<<NComponents<<std::endl;
-        // std::cout<<"NQPoints="<<NQPoints<<std::endl;
+        // std::cout<<"SHAPE FUNCTION TRACE reference_values="<<std::endl;
+        
+        // std::cout<<QuadratureRule::qp_points<<std::endl;
+        // std::cout<<reference_values<<std::endl;
+        // std::cout<<mapping<<std::endl;
         
         // std::cout<<"func_values_[0][0]"<<std::endl;
         // std::cout<<func_values_[0][0]<<std::endl;
@@ -1803,6 +1806,7 @@ public:
                     
                     // se ncompontensts >1, allora assegni alla riga
                     assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
+                   // std::cout<<"func_tmp_="<<mapping<<" "<<reference_values[n_dof][qp]<<std::endl;
                 }
                 
             }

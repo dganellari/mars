@@ -39,6 +39,7 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
    for(Integer i = 1; i < n; ++i) 
       points_[i] = points[elem_.nodes[i]];
    jacobian(elem_,points,J_);
+   volume_=unsigned_volume(elem_,points_);
    init_det();
    }
 
@@ -55,8 +56,9 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
   constexpr auto & elem_id()   const {return elem_id_;}
   constexpr auto & side_id()   const {return side_id_;}
   constexpr auto & side()   const {return side_;}
-  constexpr auto & side_volume()   const {return side_volume_;}
-  constexpr auto & points()    const {return points_;}
+  constexpr auto & side_volume() const {return side_volume_;}
+  constexpr auto & points() const {return points_;}
+  constexpr auto & volume() const {return volume_;}
 
   private:  
   Simplex<Dim, ManifoldDim-1> side_;
@@ -65,6 +67,7 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
   bool already_set_;
   Integer elem_id_;
   Simplex<Dim, ManifoldDim> elem_;
+  Real volume_;
   std::vector<Vector<Real,Dim>> points_;
   Matrix<Real, Dim, ManifoldDim> J_;
   Real detJ_;
