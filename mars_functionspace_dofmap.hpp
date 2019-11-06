@@ -14,6 +14,7 @@
 #include "mars_base.hpp"
 #include "mars_elementfunctionspace.hpp"
 #include "mars_elem_to_sub_elem.hpp"
+#include "mars_tuple_utilities.hpp"
 namespace mars{
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////// FunctionSpaceDofsPerElem:                                                                                     //////////////
@@ -460,6 +461,238 @@ ElementDofMap(const std::tuple<Args1...>& entitiestuple,
 };
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<Integer N,typename FunctionSpace,typename Array,typename...Args1,unsigned long M,typename OS, typename SpaceDofs>
+typename std::enable_if< -1<N,void>::type
+ElementDofMap_LoopEntities2(const std::tuple<Args1...>& entitiestuple,
+                           Array& flagtuples,
+                           const Integer& elem_id, 
+                           std::vector<std::array<Integer, M>> & dofmap_vec,
+                           Integer& global_dof_count,
+                           Integer& loc_dof_count,
+                           const OS &dofs_offset,
+                           SpaceDofs& space_dofs)
+{
+
+using Elem = typename FunctionSpace::Elem;
+constexpr auto ManifoldDim=FunctionSpace::ManifoldDim;
+constexpr auto continuity=FunctionSpace::Continuity;
+constexpr auto n_components=FunctionSpace::NComponents;
+constexpr auto entity_dim=FunctionSpace::entity[N];
+constexpr auto dofs_per_entity=FunctionSpace::dofs_per_entity[N];
+constexpr auto entity_points=entity_dim+1;
+constexpr auto manifold_points=ManifoldDim+1;
+constexpr auto combinations_nums=ElemEntityCombinations<Elem,entity_dim>::value;
+const     auto& entity=std::get<N>(entitiestuple);
+const     auto& elem2entity=entity.elem_2_entity(elem_id);
+          auto& flag=flagtuples[N];
+
+
+std::cout<<"ElementDofMap_LoopEntities entity_dim="<<entity_dim<<std::endl;
+// move to the entity of dimension entity[N-1]
+ElementDofMap_LoopEntities2<N-1,FunctionSpace>
+             (entitiestuple,flagtuples,elem_id,dofmap_vec,global_dof_count,loc_dof_count,dofs_offset,space_dofs);
+
+
+
+// loop on all the entities of a given entity_dim
+for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
+   { 
+    const auto& entity_id=elem2entity[entity_iter];
+    std::cout<<"entity_iter="<<entity_iter<<std::endl;
+    std::cout<<"entity_id="<<entity_id<<std::endl;
+    std::cout<<"flag[entity_id][0]="<<flag[entity_id][0]<<std::endl;
+
+    // if the entity has not been already visited, then create n_components new dofs
+    if(flag[entity_id][0]==-1 || continuity==Discontinuous)
+    {
+
+  
+      flag[entity_id][0]=elem_id;
+      flag[entity_id][1]=entity_iter;
+      
+      for(Integer entity_dofs_iter=0;entity_dofs_iter<dofs_per_entity;entity_dofs_iter++)
+         for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
+            {            
+             dofmap_vec[elem_id][loc_dof_count]=global_dof_count;
+             space_dofs[fs_dim].push_back(global_dof_count);
+             loc_dof_count++;
+             global_dof_count++;
+             }
+    }
+    else
+    {
+     // if the entity has been already visited, find the element (elem_id_tmp) in which was found 
+     // and the corresponding entity_iter (iter_tmp)
+     // we do not need any offset, because dofmap_vec contains  of the entity N, we move to the iter_tmp entity and find in dofmap_vec the already numbered dof
+     const auto& elem_id_tmp=flag[entity_id][0];
+     const auto& iter_tmp=flag[entity_id][1];
+           auto old_dof=dofmap_vec[elem_id_tmp][dofs_per_entity*iter_tmp*FunctionSpace::NComponents];
+     
+     std::cout<<"elem_id_tmp="<<elem_id_tmp<<std::endl;
+     std::cout<<"old_dof="<<old_dof<<std::endl;
+     std::cout<<"dofs_offset[N]="<<dofs_offset[N]<<std::endl;
+     std::cout<<"dofs_per_entity="<<dofs_per_entity<<std::endl;
+     std::cout<<"iter_tmp="<<iter_tmp<<std::endl;
+     std::cout<<"NComponents="<<FunctionSpace::NComponents<<std::endl;
+     
+     for(Integer entity_dofs_iter=0;entity_dofs_iter<dofs_per_entity;entity_dofs_iter++)
+        for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
+           {           
+            dofmap_vec[elem_id][loc_dof_count]=old_dof;
+            loc_dof_count++;
+            old_dof++;
+
+
+           }
+    } 
+  }
+}
+
+template<Integer N,typename FunctionSpace, typename Array,typename...Args1,unsigned long M,typename OS, typename SpaceDofs>
+typename std::enable_if< -1==N,void>::type
+ElementDofMap_LoopEntities2(const std::tuple<Args1...>& entitiestuple,
+              Array& flagtuples,
+              const Integer& elem_id,
+              std::vector<std::array<Integer, M>> & dofmap_vec,
+              Integer& global_dof_count,
+              Integer &loc_dof_count,
+              const OS &dofs_offset,
+              SpaceDofs& space_dofs  )
+{
+  std::cout<<"ElementDofMap_LoopEntities N="<<N<<std::endl;
+}
+
+
+
+
+template<Integer K=0,typename Elem,typename FunctionSpace,typename...FunctionSpaces, typename...Args1,typename...Args2,typename...Args3,typename OS, typename SpaceDofs>
+typename std::enable_if< 0<sizeof...(FunctionSpaces),void>::type
+ElementDofMap(const std::tuple<Args1...>& entitiestuple,
+                   std::tuple<Args2...>& flagtuples,
+                   const Integer& elem_id,
+                   std::tuple<Args3...>& dofmap_vec,
+                   Integer& global_dof_count,
+                   Integer& loc_dof_count,
+                   OS &dofs_offset,
+                   SpaceDofs& space_dofs   )
+{
+ static constexpr Integer M=sizeof...(FunctionSpaces);
+ const auto m1=std::get<M>(entitiestuple);
+ auto &m2=std::get<M>(flagtuples);
+ static constexpr Integer NN=std::tuple_size<decltype(m1)>::value-1;
+ std::cout<<"ElementDofMap="<<K<<std::endl;
+ loc_dof_count=0;
+ // GetType<std::tuple<Args3...>,K> oo(5,4,5,6);
+ ElementDofMap_LoopEntities2<NN,ElemFunctionSpace<Elem,FunctionSpace>>
+                            (m1,m2,elem_id,tuple_get<K>(dofmap_vec),global_dof_count,loc_dof_count,std::get<K>(dofs_offset),space_dofs[K]);
+ ElementDofMap<K+1,Elem,FunctionSpaces...>(entitiestuple,flagtuples,elem_id,dofmap_vec,global_dof_count,loc_dof_count,dofs_offset,space_dofs);
+
+};
+
+
+
+
+template<Integer K=0,typename Elem,typename FunctionSpace,typename...FunctionSpaces, typename...Args1,typename...Args2,typename...Args3,typename OS, typename SpaceDofs>
+typename std::enable_if< 0==sizeof...(FunctionSpaces),void>::type
+ElementDofMap(const std::tuple<Args1...>& entitiestuple,
+                   std::tuple<Args2...>& flagtuples,
+                   const Integer& elem_id,
+                   std::tuple<Args3...>& dofmap_vec,
+                   Integer& global_dof_count, 
+                   Integer& loc_dof_count,
+                   OS &dofs_offset,
+                   SpaceDofs& space_dofs )
+{
+ const auto m1=std::get<0>(entitiestuple);
+ auto& m2=std::get<0>(flagtuples);
+ static constexpr Integer NN=std::tuple_size<decltype(m1)>::value-1;
+ std::cout<<"ElementDofMap="<<K<<std::endl;
+ loc_dof_count=0;
+
+ ElementDofMap_LoopEntities2<NN,ElemFunctionSpace<Elem,FunctionSpace>>
+                           (m1,m2,elem_id,tuple_get<K>(dofmap_vec),global_dof_count,loc_dof_count,std::get<K>(dofs_offset),space_dofs[K]);
+
+
+};
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////// DofsPerElemNums:                                                                                              //////////////
 /////// For given FunctionSpaces, returns the total number of dofs for the givene element                             //////////////                                        
@@ -606,11 +839,18 @@ function_space_info(std::array<std::array<Integer,4>, M> &array)
 
 
 
+template<Integer N=0, typename...Args>
+std::enable_if_t<(N==sizeof...(Args)),void>
+resize_tuple_of_vector(std::tuple<Args...>& tuple, const Integer size)
+{}
 
-
-
-
-
+template<Integer N=0, typename...Args>
+std::enable_if_t<(N<sizeof...(Args)),void>
+resize_tuple_of_vector(std::tuple<Args...>& tuple, const Integer size)
+{
+ tuple_get<N>(tuple).resize(size);
+ resize_tuple_of_vector<N+1>(tuple,size);
+}
 
 template<typename FunctionSpace, typename...FunctionSpaces, typename MeshT, typename DofMapVecT, typename OffSetT>//, typename DofMapT, typename OffSetT>
 void dofmap_fespace(const MeshT& mesh,
@@ -660,6 +900,67 @@ void dofmap_fespace(const MeshT& mesh,
 tuple2array_dofs_offset<n_spaces-1>(dofs_offset,dofs_offset_arr);
 };
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<typename FunctionSpace, typename...FunctionSpaces, typename MeshT, typename ...Args, typename OffSetT>//, typename DofMapT, typename OffSetT>
+void dofmap_fespace2(const MeshT& mesh,
+             std::tuple<Args...>& dofmap_vec,
+             OffSetT& dofs_offset_arr,
+             Integer& global_dof_count,
+             //const std::array<Integer , 1 + sizeof...(FunctionSpaces)>& space_components,
+             const std::array<std::array<Integer,4> , 1 + sizeof...(FunctionSpaces)>& space_components,
+             std::array<std::vector<std::vector<Integer>>,1+sizeof...(FunctionSpaces)>& space_dofs,
+             const Integer dof_count_start=0)//, DofMapT dofmap_vec,OffSetT)
+{
+
+    using     Elem = typename MeshT::Elem; 
+    constexpr auto Dim=MeshT::Dim;
+    constexpr auto ManifoldDim=MeshT::ManifoldDim;
+
+    constexpr auto dofs_per_elem=DofsPerElemNums<Elem,FunctionSpace,FunctionSpaces...>::value;
+    // compute the connection node to elem (auxiliary tool, often used)
+    NodeToElem<Elem> node_2_elem(mesh);
+    const auto& node2elem=node_2_elem.val();
+    const auto& n_elements=mesh.n_elements();
+    const auto dofs_offset=OffsetDofs<0,Elem,FunctionSpace,FunctionSpaces...>();
+    const auto n_spaces=1+sizeof...(FunctionSpaces); 
+          auto entitiestuple=EntitiesOfFunctionSpaceTuple<Elem,FunctionSpace,FunctionSpaces...>(mesh,node2elem);
+          auto flagtuples= FlagTuple<Elem,FunctionSpace,FunctionSpaces...>(entitiestuple);
+
+
+    resize_tuple_of_vector(dofmap_vec,n_elements);//.resize(n_elements);   
+    global_dof_count=dof_count_start;
+    // loop on all the elements
+    for(Integer space_id=0;space_id<n_spaces;space_id++)
+        //space_dofs[space_id].resize(space_components[space_id]);
+        space_dofs[space_id].resize(space_components[space_id][3]);
+        
+
+    for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
+    {
+     // change it for smarter algorithms   
+     auto &elem_id=elem_iter;
+     Integer loc_dof_count=0;
+     // loop on all the function spaces
+     std::cout<<"dofmap_fespace2"<<std::endl;
+     ElementDofMap<0,Elem,FunctionSpace,FunctionSpaces...>
+                       (entitiestuple,flagtuples,elem_id,dofmap_vec,global_dof_count,loc_dof_count,dofs_offset,space_dofs);
+
+    }
+
+tuple2array_dofs_offset<n_spaces-1>(dofs_offset,dofs_offset_arr);
+};
 
 
 

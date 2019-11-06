@@ -929,5 +929,54 @@ using type=typename TupleOfL2ProductsHelper2<H,TupleOfPairsNumbers,Form,TupleTyp
 
 
 
+
+template<typename FunctionSpace, typename T>
+std::shared_ptr<FunctionSpace> find_spaces_ptr(const T& t)
+{
+  std::cout<<"is null"<<std::endl;
+ return std::shared_ptr<FunctionSpace>(nullptr);
+}
+
+
+template<typename FunctionSpace, template<class,Integer,class>class TestOrTrial_,typename MixedSpace,Integer N,typename OperatorType>
+std::shared_ptr<FunctionSpace> find_spaces_ptr(const TestOrTrial_<MixedSpace,N,OperatorType>& t)
+{
+  std::cout<<"is not null"<<std::endl;
+ return t.spaces_ptr();
+}
+
+
+template<typename FunctionSpace, typename Left, typename Right, bool VolumeIntegral, Integer QR>
+std::shared_ptr<FunctionSpace> find_spaces_ptr(const L2DotProductIntegral<Left,Right,VolumeIntegral,QR>& t)
+{
+ return t.spaces_ptr();
+}
+
+
+template<typename FunctionSpace, template<class>class Unary, typename T>
+std::shared_ptr<FunctionSpace> find_spaces_ptr(const Unary<Expression<T>>& t)
+{
+ return find_spaces_ptr<FunctionSpace>(t.derived());
+}
+
+
+// std::enable_if_t<>
+// find_spaces_ptr_aux(const )
+// {
+
+// }
+template<typename FunctionSpace, template<class,class>class Binary, typename Left,typename Right>
+std::shared_ptr<FunctionSpace> find_spaces_ptr(const Binary<Expression<Left>,Expression<Right>>& t)
+{
+ auto p1=find_spaces_ptr<FunctionSpace>(t.left());
+ auto p2=find_spaces_ptr<FunctionSpace>(t.right());
+ return (p1==nullptr && p2==nullptr) ? nullptr : ((p1 != nullptr) ? p1 : p2);
+ // if(tmp==NULL)
+ //  return find_spaces_ptr(t.right());
+ // else
+ //  return tmp;
+}
+
+
 }
 #endif

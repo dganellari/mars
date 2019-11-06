@@ -30,8 +30,8 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>
  local_tensor_(expr)
  {};
  
- template<typename Elem>
- void apply_aux(subtype& mat, const FiniteElem<Elem>& J)
+ template<typename Elem, typename...DofMaps>
+ void apply_aux(subtype& mat, const FiniteElem<Elem>& J, const DofMaps&...dofmaps)
  {
 
   // changed todo fixme
@@ -39,7 +39,7 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>
   std::cout<<"pre Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
   
 
-  local_tensor_.apply(mat,J,shape_functions_);//(),shape_functions_.composite_tensor(),shape_functions_.composite_shapes());
+  local_tensor_.apply(mat,J,shape_functions_, dofmaps...);//(),shape_functions_.composite_tensor(),shape_functions_.composite_shapes());
   std::cout<<"after Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
  }
 

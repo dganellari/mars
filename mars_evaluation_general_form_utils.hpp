@@ -256,9 +256,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
  :
  eval_left_(expr.left()),
  eval_right_(expr.right())
- {
-  // Left ooo(5,6,7,5);
- }
+ {}
 
 
  template<typename Elem, typename T,typename S, Integer NQPoints, Integer NComponents>
@@ -293,8 +291,8 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
     }
  }
 
- template<typename Elem,typename...Forms>
-  void apply(subtype& vec, const FiniteElem<Elem>& J, ShapeFunctionsCollection<Forms...>& shape_functions)
+ template<typename Elem,typename...Forms, typename...DofMaps>
+  void apply(subtype& vec, const FiniteElem<Elem>& J, ShapeFunctionsCollection<Forms...>& shape_functions, const DofMaps&...dofmaps)
 
  {
   eval_left_.apply(left_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
@@ -341,8 +339,8 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
  eval_right_(expr.right())
  {}
 
- template<typename Elem,typename ShapeFunctions>
- void apply(subtype& mat, const FiniteElem<Elem>& J, const ShapeFunctions& shape_functions)
+ template<typename Elem,typename ShapeFunctions, typename...DofMaps>
+ void apply(subtype& mat, const FiniteElem<Elem>& J, const ShapeFunctions& shape_functions, const DofMaps&...dofmaps)
  {
 
   const auto& detJ=J.get_det();
@@ -446,15 +444,32 @@ using EvalOfL2InnersAux=typename EvalOfL2InnersAuxHelper<Tuple,TupleTypeSize<Tup
 
 
 
-template<typename GeneralForm, Integer N >
+template<Integer H,typename GeneralForm, Integer N >
 class LocalTupleOfTensors;
 
-template<typename GeneralForm >
-class LocalTupleOfTensors<GeneralForm,1>
+// template<Integer H,typename GeneralForm >
+// class ReferenceDofsArray;
+
+// template<typename GeneralForm>
+// class ReferenceDofsArray<0,GeneralForm>
+// {
+// public:
+//   static constexpr auto dofs_array=GeneralForm::FunctionSpace::Nelem_dofs_array;
+// };
+
+// template<typename GeneralForm>
+// class ReferenceDofsArray<1,GeneralForm>
+// {
+// public:
+//   static constexpr auto dofs_array=GeneralForm::FunctionSpace::Nfaces_dofs_array;
+// };
+
+template<Integer H,typename GeneralForm >
+class LocalTupleOfTensors<H,GeneralForm,1>
 {
 public:
     using TupleOfNumbers=typename GeneralForm::TupleOfPairsNumbers;
-    static constexpr auto Nelem_dofs_array=GeneralForm::FunctionSpace::Nelem_dofs_array;
+    static constexpr auto dofs_array=GeneralFormReferenceDofsArray<H,GeneralForm>::dofs_array;//GeneralForm::FunctionSpace::Nelem_dofs_array;
 
     template<Integer Nmax, Integer N>
     class AuxHelper;
@@ -464,7 +479,7 @@ public:
     {
         public:
         using Numbers=GetType<TupleOfNumbers,Nmax>;
-        static constexpr Integer Dim=Nelem_dofs_array[GetType<Numbers>::value];
+        static constexpr Integer Dim=dofs_array[GetType<Numbers>::value];
         // using type= std::tuple< Vector<Real,Dim> >;
         using type= std::tuple< Matrix<Real,Dim,1> >;
     };
@@ -474,7 +489,7 @@ public:
     {
         public:
         using Numbers=GetType<TupleOfNumbers,N>;
-        static constexpr Integer Dim=Nelem_dofs_array[GetType<Numbers>::value];
+        static constexpr Integer Dim=dofs_array[GetType<Numbers>::value];
         // using type=TupleCatType< std::tuple< Vector<Real,Dim>>, typename AuxHelper<Nmax,N+1>::type >;
         using type=TupleCatType< std::tuple< Matrix<Real,Dim,1>>, typename AuxHelper<Nmax,N+1>::type >;
     };
@@ -485,12 +500,12 @@ public:
 
 
 
-template<typename GeneralForm >
-class LocalTupleOfTensors<GeneralForm,2>
+template<Integer H,typename GeneralForm >
+class LocalTupleOfTensors<H,GeneralForm,2>
 {
 public:
     using TupleOfPairsNumbers=typename GeneralForm::TupleOfPairsNumbers;
-    static constexpr auto Nelem_dofs_array=GeneralForm::FunctionSpace::Nelem_dofs_array;
+    static constexpr auto dofs_array=GeneralFormReferenceDofsArray<H,GeneralForm>::dofs_array;//GeneralForm::FunctionSpace::Nelem_dofs_array;
 
     template<Integer Nmax, Integer N>
     class AuxHelper;
@@ -500,8 +515,8 @@ public:
     {
         public:
         using Numbers=GetType<TupleOfPairsNumbers,Nmax>;
-        static constexpr Integer Rows=Nelem_dofs_array[GetType<Numbers,0>::value];
-        static constexpr Integer Cols=Nelem_dofs_array[GetType<Numbers,1>::value];
+        static constexpr Integer Rows=dofs_array[GetType<Numbers,0>::value];
+        static constexpr Integer Cols=dofs_array[GetType<Numbers,1>::value];
         using type= std::tuple< Matrix<Real,Rows,Cols>>;
     };
 
@@ -510,8 +525,8 @@ public:
     {
         public:
         using Numbers=GetType<TupleOfPairsNumbers,N>;
-        static constexpr Integer Rows=Nelem_dofs_array[GetType<Numbers,0>::value];
-        static constexpr Integer Cols=Nelem_dofs_array[GetType<Numbers,1>::value];
+        static constexpr Integer Rows=dofs_array[GetType<Numbers,0>::value];
+        static constexpr Integer Cols=dofs_array[GetType<Numbers,1>::value];
         using type=TupleCatType< std::tuple< Matrix<Real,Rows,Cols>>, typename AuxHelper<Nmax,N+1>::type >;
     };
 
@@ -877,67 +892,6 @@ constexpr auto build_tuple_of_evals2(const Expr& expr,ShapeFunctionsCollection<F
 
 
 
-// template<typename...Ts>
-// class EvaluationOfL2Inners;
-
-// template<typename Form,typename ShapeFunctions_>
-// class EvaluationOfL2Inners<Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions_>>
-// {
-// public: 
-//     using EvaluationGeneralForm=Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions_>;
-//     using GeneralForm=typename EvaluationGeneralForm::type;
-//     using ShapeFunctions=typename EvaluationGeneralForm::ShapeFunctions;
-//     // using TupleOfTupleShapeFunction=typename ShapeFunctions::TupleOfTupleShapeFunctionV;
-//     using LocalTupleOfTensors=typename LocalTupleOfTensors<GeneralForm,GetType<typename GeneralForm::form>::value>::type;    
-//     using L2Products=typename EvaluationGeneralForm::L2Products;
-//     using EvalOfL2InnersType=EvalOfL2InnersAux<L2Products,0,ShapeFunctions>;
-//     using TupleOfPairsNumbers=typename GeneralForm::TupleOfPairsNumbers;
-    
-
-//     EvaluationOfL2Inners(const GeneralForm& form,ShapeFunctions& shapefunctions)
-//     :
-//     // eval_inners_(build_tuple_of_evals<TupleOfPairsNumbers>(form(),shapefunctions))
-//     eval_inners_(build_tuple_of_evals2<0,TupleOfPairsNumbers>(form(),shapefunctions))
-//     {}
-
-//  template<Integer N,typename Output,typename FiniteElem>
-//     constexpr void apply_aux_aux(Output& mat,FiniteElem&J)
-//     {
-//     std::cout<<"pre jacobian evalinners2"<<std::endl;
-//      auto& local_mat=std::get<N>(tensor_tuple_);
-//      local_mat.zero();
-//      auto & eval_N=std::get<N>(eval_inners_);
-//      eval_N.apply(local_mat,J);
-
-//   std::cout<<"after jacobian evalinners2"<<std::endl;
-
-//     }   
-
-//  template<Integer Nmax,Integer N,typename Output,typename FiniteElem>
-//     constexpr std::enable_if_t<(N==Nmax),void> apply_aux(Output& mat,FiniteElem&J)
-//     {
-//      apply_aux_aux<N>(mat,J);
-//     }
-
-//  template<Integer Nmax,Integer N,typename Output,typename FiniteElem>
-//     constexpr std::enable_if_t<(N<Nmax),void> apply_aux(Output& mat,FiniteElem&J)
-//     {
-//      {apply_aux_aux<N>(mat,J);}
-//       apply_aux<Nmax,N+1>(mat,J);
-//      }
-
-//  template<typename Output,typename FiniteElem>
-//     void apply(Output& mat,FiniteElem&J)
-//     {
-//       apply_aux<TupleTypeSize<L2Products>::value-1,0>(mat,J);
-//     }
-
-// private:
-//     LocalTupleOfTensors tensor_tuple_;
-//     EvalOfL2InnersType eval_inners_;    
-// };
-
-
 template<Integer H,typename...Ts>
 class EvaluationOfL2Inners;
 
@@ -952,13 +906,14 @@ class EvaluationOfL2Inners<H, Evaluation<Expression<GeneralForm<Form>>,ShapeFunc
 public: 
     using EvaluationGeneralForm=Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions_>;
     using GeneralForm=typename EvaluationGeneralForm::type;
+    using form =GetType<typename GeneralForm::form>;
     using ShapeFunctions=typename EvaluationGeneralForm::ShapeFunctions;
-    // using TupleOfTupleShapeFunction=typename ShapeFunctions::TupleOfTupleShapeFunctionV;
-    using LocalTupleOfTensors=typename LocalTupleOfTensors<GeneralForm,GetType<typename GeneralForm::form>::value>::type;    
+    using LocalTupleOfTensors=typename LocalTupleOfTensors<H,GeneralForm,GetType<typename GeneralForm::form>::value>::type;    
     using L2Products=typename EvaluationGeneralForm::template L2Products<H>;
     using EvalOfL2InnersType=EvalOfL2InnersAux<L2Products,0,ShapeFunctions>;
     using TupleOfPairsNumbers=typename GeneralForm::TupleOfPairsNumbers;
     
+
 
     EvaluationOfL2Inners(const GeneralForm& form,ShapeFunctions& shapefunctions)
     :
@@ -966,51 +921,154 @@ public:
     {}
 
 
- template<typename Eval,typename Output,typename FiniteElem>
+ template<typename Eval,typename Output,typename FiniteElem,typename ...DofMaps>
     constexpr std::enable_if_t<IsDifferent<Eval,std::tuple<>>::value,void>
-    apply_aux_aux_aux(Eval& eval,Output& local_mat,const FiniteElem&J)
+    apply_aux_aux_aux(Eval& eval,Output& local_mat,const FiniteElem& FE,const DofMaps&...dofmaps)
     {
-     eval.apply(local_mat,J);
+     eval.apply(local_mat,FE,dofmaps...);
     }  
 
- template<typename Eval,typename Output,typename FiniteElem>
+ template<typename Eval,typename Output,typename FiniteElem,typename ...DofMaps>
     constexpr std::enable_if_t<IsSame<Eval,std::tuple<>>::value,void>
-    apply_aux_aux_aux(Eval& eval,Output& local_mat,const FiniteElem&J)
+    apply_aux_aux_aux(Eval& eval,Output& local_mat,const FiniteElem& FE,const DofMaps&...dofmaps)
     {}  
 
- template<Integer N,typename Output,typename FiniteElem>
-    constexpr void apply_aux_aux(Output& mat,FiniteElem&J)
+ template<Integer N,typename Output,typename FiniteElem,typename ...DofMaps>
+    constexpr void apply_aux_aux(Output& mat,FiniteElem& FE,const DofMaps&...dofmaps)
     {
-    std::cout<<"pre jacobian evalinners2"<<std::endl;
      auto& local_mat=std::get<N>(tensor_tuple_);
      local_mat.zero();
+     std::cout<<"pre jacobian evalinners2="<<std::endl;
+     std::cout<<local_mat<<std::endl;
      auto & eval_N=std::get<N>(eval_inners_);
-     apply_aux_aux_aux(eval_N,local_mat,J);
-     // eval_N.apply(local_mat,J);
+     apply_aux_aux_aux(eval_N,local_mat,FE,dofmaps...);
 
-  std::cout<<"after jacobian evalinners2"<<local_mat<<std::endl;
+     //////////////////// mat must be inizialied with local_mat
+     std::cout<<"after jacobian evalinners2="<<std::endl;
+     std::cout<<local_mat<<std::endl;
 
     }   
 
- template<Integer Nmax,Integer N,typename Output,typename FiniteElem>
-    constexpr std::enable_if_t<(N==Nmax),void> apply_aux(Output& mat,FiniteElem&J)
-    {
-     apply_aux_aux<N>(mat,J);
-    }
+ // template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
+ //    constexpr std::enable_if_t<(0>N),void> apply_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+ //    {}
 
- template<Integer Nmax,Integer N,typename Output,typename FiniteElem>
-    constexpr std::enable_if_t<(N<Nmax),void> apply_aux(Output& mat,FiniteElem&J)
+ // linear form -> only test dofmap
+ template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
+    constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==1),void> apply_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
     {
-     {apply_aux_aux<N>(mat,J);}
-      apply_aux<Nmax,N+1>(mat,J);
+      const Integer & elem_id=J.elem_id();
+      using Pairs=GetType<TupleOfPairsNumbers,N>;
+      const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
+      apply_aux_aux<N>(mat,J);//,dofmap_test);
+    }
+ template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
+    constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==1),void> apply_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+    {
+      const Integer & elem_id=J.elem_id();
+      using Pairs=GetType<TupleOfPairsNumbers,N>;
+      const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
+      apply_aux_aux<N>(mat,J);//,dofmap_test);
+      apply_aux<Nmax,N+1>(mat,J,dofmap);
      }
 
- template<typename Output,typename FiniteElem>
-    void apply(Output& mat,FiniteElem&J)
+ // bilinear form   -> test and trial dofmaps
+ template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
+    constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==2),void> apply_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
     {
-      apply_aux<TupleTypeSize<L2Products>::value-1,0>(mat,J);
+      const Integer & elem_id=J.elem_id();
+      using Pairs=GetType<TupleOfPairsNumbers,N>;
+      const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
+      const auto& dofmap_trial= tuple_get<GetType<Pairs,1>::value>(dofmap)[elem_id];
+     // todo fixme
+     // here take the submatrix  of mat(dofmap_test,dofmap_trial)
+     apply_aux_aux<N>(mat,J);//,dofmap_test,dofmap_trial);
     }
 
+ template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
+    constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==2),void> apply_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+    {
+
+      const Integer & elem_id=J.elem_id();
+      using Pairs=GetType<TupleOfPairsNumbers,N>;
+      const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
+      const auto& dofmap_trial= tuple_get<GetType<Pairs,1>::value>(dofmap)[elem_id];
+      // todo fixme
+      // here take the submatrix  of mat(dofmap_test,dofmap_trial)
+      apply_aux_aux<N>(mat,J);//,dofmap_test,dofmap_trial);
+      apply_aux<Nmax,N+1>(mat,J,dofmap);
+     }
+
+ template<typename Output,typename FiniteElem, typename DofMap>
+    void apply(Output& mat,FiniteElem&FE,const DofMap& dofmap )
+    {
+       std::cout<<FE.elem_id()<<std::endl;
+      apply_aux<TupleTypeSize<L2Products>::value-1,0>(mat,FE,dofmap);
+    }
+
+
+
+
+
+
+
+
+
+
+
+// linear form -> only test dofmap
+ template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
+    constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==1),void> apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+    {
+      const Integer & elem_id=J.elem_id();
+      using Pairs=GetType<TupleOfPairsNumbers,N>;
+      const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
+      apply_aux_aux<N>(mat,J,dofmap_test);
+    }
+ template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
+    constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==1),void> apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+    {
+      const Integer & elem_id=J.elem_id();
+      using Pairs=GetType<TupleOfPairsNumbers,N>;
+      const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
+      apply_aux_aux<N>(mat,J,dofmap_test);
+      apply_boundary_aux<Nmax,N+1>(mat,J,dofmap);
+     }
+
+ // bilinear form   -> test and trial dofmaps
+ template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
+    constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==2),void> apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+    {
+      const Integer & elem_id=J.elem_id();
+      using Pairs=GetType<TupleOfPairsNumbers,N>;
+      const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
+      const auto& dofmap_trial= tuple_get<GetType<Pairs,1>::value>(dofmap)[elem_id];
+     // todo fixme
+     // here take the submatrix  of mat(dofmap_test,dofmap_trial)
+     apply_aux_aux<N>(mat,J,dofmap_test,dofmap_trial);
+    }
+
+ template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
+    constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==2),void> apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+    {
+
+      const Integer & elem_id=J.elem_id();
+      using Pairs=GetType<TupleOfPairsNumbers,N>;
+      const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
+      const auto& dofmap_trial= tuple_get<GetType<Pairs,1>::value>(dofmap)[elem_id];
+      // todo fixme
+      // here take the submatrix  of mat(dofmap_test,dofmap_trial)
+      apply_aux_aux<N>(mat,J,dofmap_test,dofmap_trial);
+      apply_boundary_aux<Nmax,N+1>(mat,J,dofmap);
+     }
+
+
+ template<typename Output,typename FiniteElem, typename DofMap>
+    void apply_boundary(Output& mat,FiniteElem&FE,const DofMap& dofmap )
+    {
+       std::cout<<FE.elem_id()<<std::endl;
+      apply_boundary_aux<TupleTypeSize<L2Products>::value-1,0>(mat,FE,dofmap);
+    }
 
 private:
     LocalTupleOfTensors tensor_tuple_;

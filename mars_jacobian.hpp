@@ -300,42 +300,6 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
 
 
 
-// template<bool PositiveWeights,typename TestTrialSpaces,typename L2,typename Form>
-// class LocalTensor;
-
-
-
-// template<typename TestTrialSpaces, typename Left,typename Right,Integer QR,typename Form>
-// class LocalTensor<false,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Form>
-// // template<typename TestTrialSpaces, typename MeshT, typename Left,typename Right,Integer QR,typename Form>
-// // class LocalTensor<false,TestTrialSpaces,L2DotProductIntegral<MeshT,Left,Right,QR>,Form>
-// {
-//     static_assert("negative weights not permitted");
-// };
-
-
-// // template<typename TestTrialSpaces, typename MeshT, typename Left,typename Right,Integer QR,typename Form>
-// // class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<MeshT,Left,Right,QR>,Form>
-// template<typename TestTrialSpaces, typename Left,typename Right,Integer QR>
-// class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Number<1>>
-// {
-//  public:
-//  using type= L2DotProductIntegral<Left,Right,QR>;
-//  using QRule=typename type::QRule;
-//  using EvalLeft=Evaluation<Expression<Left>,QRule>;
-//  using EvalRight=Evaluation<Expression<Right>,QRule>;
-//  using subtype= OperatorType<type,Number<1>>;
- 
-//  LocalTensor(){}
-
-//  LocalTensor(const type& expr)
-//  :
-//  eval_left_(expr.left()),
-//  eval_right_(expr.right())
-//  {
-//   // Left ooo(5,6,7,5);
-//  }
-
 
 //  template<typename Elem, typename T,typename S, Integer NQPoints, Integer NComponents>
 //  void apply_aux(subtype& vec, const FiniteElem<Elem>& J, 
@@ -391,73 +355,6 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
 
 
 
-
-
-
-
-// // template<typename TestTrialSpaces, typename MeshT, typename Left,typename Right,Integer QR,typename Form>
-// // class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<MeshT,Left,Right,QR>,Form>
-// template<typename TestTrialSpaces, typename Left,typename Right,Integer QR>
-// class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,QR>,Number<2>>
-// {
-//  public:
-//  using type= L2DotProductIntegral<Left,Right,QR>;
-//  using QRule=typename type::QRule;
-//  using EvalLeft=Evaluation<Expression<Left>,QRule>;
-//  using EvalRight=Evaluation<Expression<Right>,QRule>;
-//  using subtype= OperatorType<type,Number<2>>;
- 
-//  LocalTensor(){}
-
-//  LocalTensor(const type& expr)
-//  :
-//  // eval_left_<QRule>(Eval(expr.left())),
-//  // eval_right_<QRule>(Eval(expr.right()))
-//  eval_left_(expr.left()),
-//  eval_right_(expr.right())
-//  {}
-
-//  template<typename Elem,typename ShapeFunctions>
-//  void apply(subtype& mat, const FiniteElem<Elem>& J, const ShapeFunctions& shape_functions)
-//  {
-
-//   const auto& detJ=J.get_det();
-//   // todo fixme
-//   // eval_left_.apply(left_value_,J,shape_functions);
-//   // eval_right_.apply(right_value_,J,shape_functions);
-
-//   eval_left_.apply(left_value_,J,shape_functions(),shape_functions.composite_tensor(),shape_functions.composite_shapes());
-//   eval_right_.apply(right_value_,J,shape_functions(),shape_functions.composite_tensor(),shape_functions.composite_shapes());
-// // shape_functions_.composite_tensor(),shape_functions_.composite_shapes());
-//   std::cout<<"left_value_"<<std::endl;
-//   // std::cout<<left_value_<<std::endl;
-//   std::cout<<"right_value_"<<std::endl;
-//   // std::cout<<right_value_<<std::endl;
-//   // std::cout<<"quiiiiiiiii 111"<<std::endl;
-//  // decltype(left_value_[0]) ee(6);
-//  // decltype(right_value_[0]) e4e(6);
-//   for(Integer ii=0;ii<mat.rows();ii++)
-//     for(Integer jj=0;jj<mat.cols();jj++)
-//     {   
-
-//         // std::cout<<"(ii,jj)=("<<ii<<","<<jj<<")"<<std::endl;
-//         // left value is trial, right value is test
-
-//         mat(ii,jj)=detJ*dotofdots(right_value_[ii],left_value_[jj]);
-//     }
-//     // std::cout<<detJ<<std::endl;
-//     std::cout<<"mat="<<mat<<std::endl;
-//    // std::cout<<"quiiiiiiiii 222"<<std::endl;
-//  }
-
-  
-//  private:
-//  EvalLeft eval_left_;
-//  EvalRight eval_right_;
-//  OperatorType<Left,QRule> left_value_;
-//  OperatorType<Right,QRule> right_value_;
-
-// };
 
 
 

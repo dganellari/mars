@@ -67,11 +67,11 @@ class Function
 
   
   Function(const std::shared_ptr<FullSpace>& AuxW_ptr):
-  full_space_ptr_(AuxW_ptr)
+  full_spaces_ptr_(AuxW_ptr)
   {}
   
   Function(const FullSpace& AuxW):
-  full_space_ptr_(std::make_shared<FullSpace>(AuxW))
+  full_spaces_ptr_(std::make_shared<FullSpace>(AuxW))
   {} 
 
    void local_dofs_update(const FiniteElem<Elem>& J)
@@ -92,12 +92,12 @@ class Function
   //  }
   //  }
 
-   constexpr auto spaces_ptr(){return full_space_ptr_;}
-   constexpr auto spaces_ptr()const {return full_space_ptr_;}
+   constexpr auto spaces_ptr(){return full_spaces_ptr_;}
+   constexpr auto spaces_ptr()const {return full_spaces_ptr_;}
 
 
 private:
-    std::shared_ptr<FullSpace> full_space_ptr_;
+    std::shared_ptr<FullSpace> full_spaces_ptr_;
     LocalDofs local_dofs_;
     std::vector<Real> global_dofs_;
 
@@ -131,20 +131,20 @@ class Function<FullSpace,N,Operator_,EmptyClass>
   // Function(){}
 
   Function(const std::shared_ptr<FullSpace>& AuxW_ptr):
-  full_space_ptr_(AuxW_ptr)
+  full_spaces_ptr_(AuxW_ptr)
   {}
   
   Function(const FullSpace& AuxW):
-  full_space_ptr_(std::make_shared<FullSpace>(AuxW))
+  full_spaces_ptr_(std::make_shared<FullSpace>(AuxW))
   {} 
 
-  inline auto full_space_ptr(){return full_space_ptr_;}
-  inline const auto& full_space_ptr()const{return full_space_ptr_;}
+  inline auto full_spaces_ptr(){return full_spaces_ptr_;}
+  inline const auto& full_spaces_ptr()const{return full_spaces_ptr_;}
   
    void local_dofs_update(const FiniteElem<Elem>& J)
     {
-    auto tuple_map=full_space_ptr_->aux_space_ptr()->dofmap();
-    auto local_map=tuple_get<FunctionNumber>(full_space_ptr_->aux_space_ptr()->dofmap())[J.elem_id()];
+    auto tuple_map=full_spaces_ptr_->aux_spaces_ptr()->dofmap();
+    auto local_map=tuple_get<FunctionNumber>(full_spaces_ptr_->aux_spaces_ptr()->dofmap())[J.elem_id()];
      for(int ii=0;ii<local_map.size();ii++)
       local_dofs_[ii]=global_dofs_[local_map[ii]];
     } 
@@ -153,9 +153,9 @@ class Function<FullSpace,N,Operator_,EmptyClass>
 
   // const LocalDofs& local_dofs()const
   // {
-  // const auto aux_space_ptr=full_space_ptr_->aux_space_ptr();
+  // const auto aux_spaces_ptr=full_spaces_ptr_->aux_spaces_ptr();
   // std::cout<<"eeee"<<std::endl;
-  // aux_space_ptr->dofmap();
+  // aux_spaces_ptr->dofmap();
   // std::cout<<"eeee2"<<std::endl;
   // return local_dofs_;
   // }
@@ -171,11 +171,11 @@ class Function<FullSpace,N,Operator_,EmptyClass>
    }
    }
 
-   constexpr auto spaces_ptr(){return full_space_ptr_;}
-   constexpr auto spaces_ptr()const {return full_space_ptr_;}
+   constexpr auto spaces_ptr(){return full_spaces_ptr_;}
+   constexpr auto spaces_ptr()const {return full_spaces_ptr_;}
 
 private:
-    std::shared_ptr<FullSpace> full_space_ptr_;
+    std::shared_ptr<FullSpace> full_spaces_ptr_;
     LocalDofs local_dofs_;
     std::vector<Real> global_dofs_;
 

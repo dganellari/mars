@@ -1330,29 +1330,63 @@ class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< 
 
 
 
+template<Integer H,typename GeneralForm >
+class GeneralFormReferenceDofsArray;
 
-   template<typename T1,typename T2, typename T3>
+template<typename GeneralForm>
+class GeneralFormReferenceDofsArray<0,GeneralForm>
+{
+public:
+  static constexpr auto dofs_array=GeneralForm::FunctionSpace::Nelem_dofs_array;
+};
+
+template<typename GeneralForm>
+class GeneralFormReferenceDofsArray<1,GeneralForm>
+{
+public:
+  static constexpr auto dofs_array=GeneralForm::FunctionSpace::Nfaces_dofs_array;
+};
+
+template<bool VolumeIntegral,typename FunctionSpace >
+class ReferenceDofsArray;
+
+template<typename FunctionSpace>
+class ReferenceDofsArray<true,FunctionSpace>
+{
+public:
+  static constexpr auto dofs_array=FunctionSpace::Nelem_dofs_array;
+};
+
+template<typename FunctionSpace>
+class ReferenceDofsArray<false,FunctionSpace>
+{
+public:
+  static constexpr auto dofs_array=FunctionSpace::Nfaces_dofs_array;
+};
+
+
+   template<bool VolumeIntegral,typename T1,typename T2, typename T3>
    class ClassL2DotProductIntegralAux;
 
-   template<typename FunctionSpace,typename TestTrialNumbers>
-   class ClassL2DotProductIntegralAux<FunctionSpace,TestTrialNumbers,Number<1>>   
+   template<bool VolumeIntegral,typename FunctionSpace,typename TestTrialNumbers>
+   class ClassL2DotProductIntegralAux<VolumeIntegral,FunctionSpace,TestTrialNumbers,Number<1>>   
    {
    public:
    static constexpr Integer TestNumber=GetType<TestTrialNumbers>::value;
-   static constexpr Integer TestN=FunctionSpace::Nelem_dofs_array[TestNumber];
+   static constexpr Integer TestN=ReferenceDofsArray<VolumeIntegral,FunctionSpace>::dofs_array[TestNumber];
    //todo fixme
    // using type=Vector<Real,TestN >;
    using type=Matrix<Real,TestN,1>;
    };
 
-   template<typename FunctionSpace,typename TestTrialNumbers>
-   class ClassL2DotProductIntegralAux<FunctionSpace,TestTrialNumbers,Number<2>>   
+   template<bool VolumeIntegral,typename FunctionSpace,typename TestTrialNumbers>
+   class ClassL2DotProductIntegralAux<VolumeIntegral,FunctionSpace,TestTrialNumbers,Number<2>>   
    {
    public:
    static constexpr Integer TestNumber=GetType<TestTrialNumbers,0>::value;
    static constexpr Integer TrialNumber=GetType<TestTrialNumbers,1>::value;
-   static constexpr Integer TestN=FunctionSpace::Nelem_dofs_array[TestNumber];
-   static constexpr Integer TrialN=FunctionSpace::Nelem_dofs_array[TrialNumber];
+   static constexpr Integer TestN=ReferenceDofsArray<VolumeIntegral,FunctionSpace>::dofs_array[TestNumber];
+   static constexpr Integer TrialN=ReferenceDofsArray<VolumeIntegral,FunctionSpace>::dofs_array[TrialNumber];
    using type=Matrix<Real,TestN,TrialN >;
    };
 
@@ -1365,7 +1399,7 @@ class OperatorTypeHelper<L2DotProductIntegral<Left,Right,VolumeIntegral,QR>,Ts..
    using FunctionSpace=typename L2::FunctionSpace;
    using TestTrialNumbers=typename L2::TestTrialNumbers;
    using num=GetType<typename L2::form>;
-   using type=typename ClassL2DotProductIntegralAux<FunctionSpace,TestTrialNumbers,num>::type;
+   using type=typename ClassL2DotProductIntegralAux<VolumeIntegral,FunctionSpace,TestTrialNumbers,num>::type;
  };
 
 

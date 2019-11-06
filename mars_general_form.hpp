@@ -138,24 +138,28 @@ class GeneralForm<Form_>
 
     GeneralForm(const Form& form)
     : 
-    form_(form)
+    form_(form),
+    spaces_ptr_(find_spaces_ptr<FunctionSpace>(form))
     {};
 
     // GeneralForm(const Form& form,const FullSpace& space)
     // : 
     // form_(form),
-    // space_ptr_(std::make_shared<FullSpace>(space))
+    // spaces_ptr_(std::make_shared<FullSpace>(space))
     // {};
 
     const Form& operator()()const{return form_;};
           Form& operator()()     {return form_;};
 
-    // const std::shared_ptr<FullSpace>& space_ptr()const{return space_ptr_;};
-    //       std::shared_ptr<FullSpace>& space_ptr()     {return space_ptr_;};
+    // const std::shared_ptr<FullSpace>& spaces_ptr()const{return spaces_ptr_;};
+    //       std::shared_ptr<FullSpace>& spaces_ptr()     {return spaces_ptr_;};
 
+    auto spaces_ptr()     {return spaces_ptr_;}
+    auto spaces_ptr()const{return spaces_ptr_;}
+ 
   private:
   Form form_;
-  // std::shared_ptr<FullSpace> space_ptr_;
+  std::shared_ptr<FunctionSpace> spaces_ptr_;
 };
    
 

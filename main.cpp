@@ -1243,9 +1243,23 @@ int main(int argc, char *argv[])
 	Kokkos::initialize(argc,argv);
 	{
 
-Integer M=4;
-Integer N=4;
+Integer M=2;
+Integer N=2;
 Kokkos::View<Real **[3][4]> aaa("aaa",M,N);
+
+// Kokkos::CrsMatrix<Real,4> aaa("aaa",M,N);
+for(int i1=0;i1<M;i1++)
+	for(int i2=0;i2<N;i2++)
+		for(int i3=0;i3<3;i3++)
+			for(int i4=0;i4<4;i4++)
+				aaa(i1,i2,i3,i4)=i1*i2*i3*i4;
+
+for(int i1=0;i1<M;i1++)
+	for(int i2=0;i2<N;i2++)
+		for(int i3=0;i3<3;i3++)
+			for(int i4=0;i4<4;i4++)
+				std::cout<<aaa(i1,i2,i3,i4)<<std::endl;
+
 assembly_example();
 
 // boundary_example();

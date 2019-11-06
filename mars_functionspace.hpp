@@ -38,6 +38,14 @@ public:
       static constexpr Array<Integer,Nsubspaces> Nelem_dofs_array=
       concat(Array<Integer,1>{DofsPerElemNums<Elem,BaseFunctionSpace>::value},Array<Integer,1>{DofsPerElemNums<Elem,BaseFunctionSpaces>::value}...);
       using DofMapType=std::vector<std::array<Integer, Nelem_dofs>>;
+      using DofMapType2=std::tuple<std::vector<std::array<Integer, DofsPerElemNums<Elem,BaseFunctionSpace>::value>>,
+                                   std::vector<std::array<Integer, DofsPerElemNums<Elem,BaseFunctionSpaces>::value>>
+                                  ...>;
+      static constexpr auto faces_dofs_array=std::tuple_cat(std::make_tuple(trace_dofs<ElemFunctionSpace<Elem,BaseFunctionSpace>>()),
+                                                             std::make_tuple(trace_dofs<ElemFunctionSpace<Elem,BaseFunctionSpaces>>())...);
+      static constexpr Array<std::size_t,Nsubspaces> Nfaces_dofs_array{trace_dofs<ElemFunctionSpace<Elem,BaseFunctionSpace>>()[0].size(),trace_dofs<ElemFunctionSpace<Elem,BaseFunctionSpaces>>()[0].size()...};
+
+
       using OffSetType=std::array<std::vector<Integer>, Nsubspaces>;
       using SpacesDofsArrayType=std::array<std::vector<std::vector<Integer>>, Nsubspaces>;
       using SpacesInfosArrayType=std::array<std::array<Integer,4>,Nsubspaces>;
@@ -79,6 +87,8 @@ public:
                                  {return space_dofs_[space_id][component_id].size(); };
 
       inline const DofMapType& dofmap()const{return dofmap_;};
+
+      inline const DofMapType2& dofmap2()const{return dofmap2_;};
 
       inline void  dofmap(const DofMapType& dm)const{dm=dofmap_;};
 
@@ -151,7 +161,8 @@ public:
       mesh_ptr_(std::make_shared< MeshT >(mesh))
       {
       function_space_info<0,Nsubspaces,BaseFunctionSpace,BaseFunctionSpaces...>(space_infos_);
-      dofmap_fespace<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofmap_,offset_,n_dofs_,space_infos_,space_dofs_);     
+      // dofmap_fespace<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofmap_,offset_,n_dofs_,space_infos_,space_dofs_);     
+      dofmap_fespace2<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofmap2_,offset_,n_dofs_,space_infos_,space_dofs_);     
       };
 
 private:
@@ -159,6 +170,7 @@ private:
       std::shared_ptr< MeshT > mesh_ptr_;
       Integer n_dofs_;
       DofMapType dofmap_;
+      DofMapType2 dofmap2_;
       OffSetType offset_;
       SpacesDofsArrayType space_dofs_;
       SpacesInfosArrayType space_infos_;
@@ -170,12 +182,6 @@ private:
 template<typename MeshT, typename BaseFunctionSpace>
 using AuxFunctionSpace=FunctionSpace<MeshT,BaseFunctionSpace>;
 
-
-template<typename MeshT, typename BaseFunctionSpace,typename...BaseFunctionSpaces>
-class TraceSpace 
-{
-
-};
 
 
 
@@ -190,6 +196,7 @@ public:
   using MeshT=Mesh<Elem::Dim,Elem::ManifoldDim>;
   using TupleOfSpaces=TupleCatType<typename Arg::TupleOfSpaces,typename Args::TupleOfSpaces...>;
   using DofMapType=std::tuple<typename Arg::DofMapType,typename Args::DofMapType...>;
+  using DofMapType2=TupleCatType<typename Arg::DofMapType2,typename Args::DofMapType2...>;
   // using ElementFunctionSpacesTupleType=TupleCatType<typename Arg::ElementFunctionSpacesTupleType,typename Args::ElementFunctionSpacesTupleType...>;
   // using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates<TupleCatType<typename Arg::UniqueElementFunctionSpacesTupleType,typename Args::UniqueElementFunctionSpacesTupleType...>>;
   // using SpacesToUniqueFEFamily=SpacesToUniqueFEFamilies<UniqueElementFunctionSpacesTupleType>;
@@ -269,7 +276,9 @@ public:
   template<Integer...Ns>
   inline constexpr const auto& dofmap()const{return tuple_get<Ns...>(dofmap_);};
 
+      inline const DofMapType2& dofmap2()const{return dofmap2_;};
 
+      
 template<typename OtherArg,typename...OtherArgs>
   class tot_subspaces
   { public: static constexpr Integer value= OtherArg::Nsubspaces+tot_subspaces<OtherArgs...>::value;};
@@ -343,7 +352,10 @@ template<Integer N,typename OtherArg, typename...OtherArgs>
      spaces_(std::make_tuple(std::make_shared<Arg>(arg),std::make_shared<Args>(args)...)),
      n_dofs_(tot_n_dofs<1+sizeof...(Args)-1>()),
      dofmap_(tuple_make<0,typename Arg::DofMapType,typename Args::DofMapType...>(arg.dofmap(),args.dofmap()...))
+     ,
+     dofmap2_(std::tuple_cat(arg.dofmap2(),args.dofmap2()...))//tuple_make<0,typename Arg::DofMapType2,typename Args::DofMapType2...>(arg.dofmap2(),args.dofmap2()...))
      {}
+
 
      inline auto mesh_ptr()const {return mesh_ptr_;};
 
@@ -351,12 +363,17 @@ template<Integer N,typename OtherArg, typename...OtherArgs>
      static constexpr Integer Nsubspaces=tot_subspaces<Arg,Args...>::value;
      static constexpr Integer Nelem_dofs=Sum(Arg::Nelem_dofs, Args::Nelem_dofs...);
      static constexpr Array<Integer,Nsubspaces> Nelem_dofs_array=concat(Arg::Nelem_dofs_array,Args::Nelem_dofs_array...);
-      
+
+     static constexpr auto faces_dofs_array=std::tuple_cat(Arg ::faces_dofs_array,
+                                                            Args::faces_dofs_array...);
+     static constexpr auto Nfaces_dofs_array=concat(Arg::Nfaces_dofs_array,Args::Nfaces_dofs_array...);
+     
    private:
     std::shared_ptr< MeshT > mesh_ptr_;
     std::tuple<std::shared_ptr<Arg>,std::shared_ptr<Args>...> spaces_;
     Integer n_dofs_;
     DofMapType dofmap_;
+    DofMapType2 dofmap2_;
 };
 
 template<typename...Args>
@@ -386,6 +403,11 @@ public:
   typename AuxFunctionSpace<MeshT,Args>::TupleOfSpaces...>;
   using DofMapType=std::tuple<typename AuxFunctionSpace<MeshT,Arg>::DofMapType,
   typename AuxFunctionSpace<MeshT,Args>::DofMapType...>;
+
+  using DofMapType2=TupleCatType<typename AuxFunctionSpace<MeshT,Arg>:: DofMapType2,
+                                 typename AuxFunctionSpace<MeshT,Args>::DofMapType2...>;
+
+
   using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates
   <TupleCatType<typename AuxFunctionSpace<MeshT,Arg>::UniqueElementFunctionSpacesTupleType,
   typename AuxFunctionSpace<MeshT,Args>::UniqueElementFunctionSpacesTupleType...>>;
@@ -402,11 +424,15 @@ public:
   spaces_(std::make_tuple(std::make_shared<AuxFunctionSpace<MeshT,Arg>>(arg),
    std::make_shared<AuxFunctionSpace<MeshT,Args>>(args)...)),
   dofmap_(arg.dofmap(),args.dofmap()...)
+  ,
+  dofmap2_(arg.dofmap2(),args.dofmap2()...)
   {}
 
   inline auto mesh_ptr()const {return mesh_ptr_;};
 
   inline const DofMapType& dofmap()const{return dofmap_;};
+
+  inline const DofMapType2& dofmap2()const{return dofmap2_;};
   
      template<Integer...Ns>
   inline constexpr const auto& dofmap()const{return tuple_get<Ns...>(dofmap_);};
@@ -417,11 +443,19 @@ public:
   concat(AuxFunctionSpace<MeshT,Arg>::Nelem_dofs_array,
     AuxFunctionSpace<MeshT,Args>::Nelem_dofs_array...);
 
+  static constexpr auto faces_dofs_array=std::tuple_cat(AuxFunctionSpace<MeshT,Arg>::faces_dofs_array,
+                                                        AuxFunctionSpace<MeshT,Args>::faces_dofs_array...);
+
+  static constexpr auto Nfaces_dofs_array=concat(AuxFunctionSpace<MeshT,Arg>::Nfaces_dofs_array,
+                                                 AuxFunctionSpace<MeshT,Args>::Nfaces_dofs_array...);
+     
+
 private:
   std::shared_ptr< MeshT > mesh_ptr_;
   std::tuple<std::shared_ptr<AuxFunctionSpace<MeshT,Arg>>,
   std::shared_ptr<AuxFunctionSpace<MeshT,Args>>...> spaces_;
   DofMapType dofmap_;
+  DofMapType2 dofmap2_;
 };
 
 template<typename MeshT,typename...Args>
@@ -443,6 +477,9 @@ public:
   using MeshT=Mesh<Elem::Dim,Elem::ManifoldDim>;
   using TupleOfSpaces=typename FunctionSpace::TupleOfSpaces;
   using DofMapType=std::tuple<typename FunctionSpace::DofMapType>;
+
+  using DofMapType2=std::tuple<typename FunctionSpace::DofMapType2>;
+
   using UniqueElementFunctionSpacesTupleType= typename FunctionSpace::UniqueElementFunctionSpacesTupleType;
   using SpacesToUniqueFEFamily=SpacesToUniqueFEFamilies2<UniqueElementFunctionSpacesTupleType>;
   using FromElementFunctionSpacesToUniqueNumbersTupleType=
@@ -455,17 +492,19 @@ public:
   static constexpr Integer TrialSpaceSize=FunctionSpace::Nsubspaces;
   static constexpr Integer Nsubspaces=FunctionSpace::Nsubspaces;
   static constexpr Array<Integer,Nsubspaces> Nelem_dofs_array=FunctionSpace::Nelem_dofs_array;
+  static constexpr auto faces_dofs_array=std::tuple_cat(Args::faces_dofs_array...);
+  static constexpr auto Nfaces_dofs_array=concat(Args::Nfaces_dofs_array...);
 
 
   FullSpace(const FunctionSpace& W):
-  space_ptr_(std::make_shared<FunctionSpace>(W))
+  spaces_ptr_(std::make_shared<FunctionSpace>(W))
   {}
 
-  inline auto space_ptr(){return space_ptr_;}
+  inline auto spaces_ptr(){return spaces_ptr_;}
 
-
+  inline auto& dofmap2()const{return spaces_ptr_->dofmap2();};
 private:
-std::shared_ptr<FunctionSpace> space_ptr_;
+std::shared_ptr<FunctionSpace> spaces_ptr_;
 };
 
 
@@ -481,6 +520,11 @@ public:
                                    typename AuxFunctionSpace::TupleOfSpaces>;
   using DofMapType=std::tuple<typename FunctionSpace::DofMapType,
                               typename AuxFunctionSpace::DofMapType>;
+
+  using DofMapType2=std::tuple<typename FunctionSpace::DofMapType2,
+                              typename AuxFunctionSpace::DofMapType2>;
+
+
   using UniqueElementFunctionSpacesTupleType= RemoveTupleDuplicates<TupleCatType<
                                      typename FunctionSpace::UniqueElementFunctionSpacesTupleType,
                                      typename AuxFunctionSpace::UniqueElementFunctionSpacesTupleType>>;
@@ -498,19 +542,24 @@ public:
   static constexpr Array<Integer,Nsubspaces> Nelem_dofs_array=concat(FunctionSpace::Nelem_dofs_array,
                                                                      AuxFunctionSpace::Nelem_dofs_array);
 
+  static constexpr auto faces_dofs_array=std::tuple_cat(MixedSpace<Args...>::faces_dofs_array,
+                                                        AuxMixedSpace<AuxArgs...>::faces_dofs_array);
+  static constexpr auto Nfaces_dofs_array=concat(MixedSpace<Args...>::Nfaces_dofs_array,
+                                                 AuxMixedSpace<AuxArgs...>::Nfaces_dofs_array);
 
   FullSpace(const FunctionSpace& W1, const AuxFunctionSpace& W2):
-  space_ptr_(std::make_shared<FunctionSpace>(W1)),
-  aux_space_ptr_(std::make_shared<AuxFunctionSpace>(W2))
+  spaces_ptr_(std::make_shared<FunctionSpace>(W1)),
+  aux_spaces_ptr_(std::make_shared<AuxFunctionSpace>(W2))
   {}
-  inline       auto  space_ptr()     {return space_ptr_;}
-  inline const auto& space_ptr()const{return space_ptr_;}
-  inline       auto  aux_space_ptr()     {return aux_space_ptr_;}
-  inline const auto& aux_space_ptr()const{return aux_space_ptr_;}
-
+  inline       auto  spaces_ptr()     {return spaces_ptr_;}
+  inline const auto& spaces_ptr()const{return spaces_ptr_;}
+  inline       auto  aux_spaces_ptr()     {return aux_spaces_ptr_;}
+  inline const auto& aux_spaces_ptr()const{return aux_spaces_ptr_;}
+  
+  inline auto& dofmap2()const{return spaces_ptr_->dofmap2();};
 private:
-std::shared_ptr<FunctionSpace> space_ptr_;
-std::shared_ptr<AuxFunctionSpace> aux_space_ptr_;
+std::shared_ptr<FunctionSpace> spaces_ptr_;
+std::shared_ptr<AuxFunctionSpace> aux_spaces_ptr_;
 };
 
 template<typename...Args>
@@ -2529,18 +2578,18 @@ auto FullSpaceBuild(const MixedSpace<Args...>& W1,const AuxMixedSpace<AuxArgs...
 //     // GeneralForm(const Form& form,const FullSpace& space)
 //     // : 
 //     // form_(form),
-//     // space_ptr_(std::make_shared<FullSpace>(space))
+//     // spaces_ptr_(std::make_shared<FullSpace>(space))
 //     // {};
 
 //     const Form& operator()()const{return form_;};
 //           Form& operator()()     {return form_;};
 
-//     // const std::shared_ptr<FullSpace>& space_ptr()const{return space_ptr_;};
-//     //       std::shared_ptr<FullSpace>& space_ptr()     {return space_ptr_;};
+//     // const std::shared_ptr<FullSpace>& spaces_ptr()const{return spaces_ptr_;};
+//     //       std::shared_ptr<FullSpace>& spaces_ptr()     {return spaces_ptr_;};
 
 //   private:
 //   Form form_;
-//   // std::shared_ptr<FullSpace> space_ptr_;
+//   // std::shared_ptr<FullSpace> spaces_ptr_;
 // };
    
 
@@ -2636,7 +2685,6 @@ auto FullSpaceBuild(const MixedSpace<Args...>& W1,const AuxMixedSpace<AuxArgs...
 // private:
 //  type expr_;
 //  ShapeFunctionsCollection<Forms...>& shape_functions_;
-//  LocalTensor<PositiveWeights,TestTrialSpaces,type,GetType<typename type::form>> local_tensor_;
 // };
 
 

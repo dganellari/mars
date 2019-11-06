@@ -884,7 +884,7 @@ Combinations<5,4>::print_all();
   using Space11=ElementFunctionSpace<Simplex<2,2>,RaviartThomasFE,1,1,2>;
   constexpr const auto trace11=trace_dofs<Space11>();
 
-
+ 
   // constexpr auto automa=reference_trace_shape_function_init<Space,IdentityOperator,single_type>(0, GaussPoints<Space::Elem,3>::qp_points_type);
 std::cout<<"Simplex<2,2>,LagrangeFE,Order=1,Continuity=1,Ncomponents=1>"<<std::endl;
      
@@ -1114,8 +1114,8 @@ void assembly_example()
 
  using FSspace1= FunctionSpace< MeshT, Lagrange1<2>>;
  FSspace1 FEspace1(mesh);
- using FSspace2= FunctionSpace< MeshT, Lagrange2<2>>;
- FSspace2 FEspace2(mesh);
+ // using FSspace2= FunctionSpace< MeshT, Lagrange2<2>>;
+ // FSspace2 FEspace2(mesh);
  using FSspace3= FunctionSpace< MeshT, Lagrange1<1>,RT1<1>>;
  FSspace3 FEspace3(mesh);
  using FSspace4= FunctionSpace< MeshT, Lagrange1<1>,Lagrange2<1>,Lagrange1<1>>;
@@ -1133,7 +1133,6 @@ void assembly_example()
  using FSspace10= FunctionSpace< MeshT, RT1<2>>;
  FSspace10 FEspace10(mesh);
 
-
  // auto W5=MixedFunctionSpace(MixedFunctionSpace(FEspace7,FEspace8),FEspace1);
 
  using AuxFSspace1= FunctionSpace< MeshT, Lagrange1<1> >;
@@ -1147,6 +1146,8 @@ void assembly_example()
  auto Wtrial=MixedFunctionSpace(FEspace1,FEspace3);
  auto Waux=AuxFunctionSpacesBuild(AuxFEspace1);//,AuxFEspace2,AuxFEspace3);
  auto W=FullSpaceBuild(Wtrial,Waux);
+
+
 
  auto f1 = MakeFunction<0,Function1>(W);
  // auto f2 = MakeFunction<1>(W);
@@ -1188,8 +1189,12 @@ auto NewTrace=NewOperator(TraceOperator());
 // auto Epsilon=NewOperator((GradientOperator()));//+Transpose(GradientOperator())));
 
   auto bilinearform=
+                    // surface_integral(NewTrace(u3),NewTrace(v3))-
                     surface_integral(NewTrace(u3),NewTrace(v3))-
+                    // surface_integral(NewTrace(u3),NewTrace(v3))-
                     surface_integral(NewTrace(u2),NewTrace(v2))-
+                    // surface_integral(NewTrace(u1),NewTrace(v1))-
+                    // surface_integral(NewTrace(u1),NewTrace(v1))-
                     surface_integral(NewTrace(u1),NewTrace(v1))-
                     // surface_integral(NewTrace(u3),NewTrace(v3))-
                     // surface_integral(Trace(u3),Trace(v3))-
@@ -1271,13 +1276,40 @@ auto NewTrace=NewOperator(TraceOperator());
 
 
 
-
+  std::cout<<"elem_id="<<J.elem_id()<<std::endl;
   std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
   std::cout<<"------_______-----BEGIN EVALUATION-----_______--------"<<std::endl;
-  // eval_bilinear_form.apply(J);
-  // eval_bilinear_form.apply_boundary(J);
-  // eval_linear_form.apply(J);
+
+  std::cout<<"------_______-----BILINEAR VOLUME-----_______--------"<<std::endl;
+  eval_bilinear_form.apply(J);
+  std::cout<<"------_______-----BILINEAR SURFACE-----_______--------"<<std::endl;
   J.init_boundary(0);
+  reference_maps.init_boundary(J);
+  shapefunctions.init_boundary(J);
+  eval_bilinear_form.apply_boundary(J);
+  std::cout<<"------_______-----LINEAR VOLUME-----_______--------"<<std::endl;
+
+  eval_linear_form.apply(J);
+  J.init_boundary(0);
+  reference_maps.init_boundary(J);
+  shapefunctions.init_boundary(J);
+  std::cout<<"------_______-----LINEAR SURFACE 0-----_______-----_______--------"<<std::endl;
+
+  J.init_boundary(0);
+  reference_maps.init_boundary(J);
+  shapefunctions.init_boundary(J);
+  eval_linear_form.apply_boundary(J);
+
+  std::cout<<"------_______-----LINEAR SURFACE 1-----_______-----_______--------"<<std::endl;
+
+  J.init_boundary(1);
+  reference_maps.init_boundary(J);
+  shapefunctions.init_boundary(J);
+  eval_linear_form.apply_boundary(J);
+
+  std::cout<<"------_______-----LINEAR SURFACE 2-----_______-----_______--------"<<std::endl;
+
+  J.init_boundary(2);
   reference_maps.init_boundary(J);
   shapefunctions.init_boundary(J);
   eval_linear_form.apply_boundary(J);
@@ -1312,49 +1344,140 @@ auto NewTrace=NewOperator(TraceOperator());
   // std::cout<<"------_______-----END EVALUATION-----_______--------"<<std::endl;
 
 
-auto dof=W.space_ptr()->dofmap();
-auto dof0=tuple_get<0>(dof);
-auto dof1=tuple_get<1>(dof);
-// auto dof2=tuple_get<2>(dof);
-std::cout<<"dofmap0="<<std::endl;
-for(Integer i=0;i<dof0.size();i++)
-  {for(Integer j=0;j<dof0[i].size();j++)
-     std::cout<<dof0[i][j]<<std::endl;
-     std::cout<<std::endl;
+// constexpr const auto face_dofs=decltype(W)::faces_dofs_array;
+// constexpr const auto Nface_dofs=decltype(W)::Nfaces_dofs_array;
 
-   }
-std::cout<<"dofmap1="<<std::endl;
+// std::cout<<"faces_dofs_array="<<tuple_get<0>(face_dofs)<<std::endl; 
+// std::cout<<"faces_dofs_array="<<tuple_get<1>(face_dofs)<<std::endl; 
+// std::cout<<"faces_dofs_array="<<tuple_get<2>(face_dofs)<<std::endl; 
+// std::cout<<"faces_dofs_array="<<tuple_get<3>(face_dofs)<<std::endl; 
+// std::cout<<"Nfaces_dofs_array="<<Nface_dofs<<std::endl; 
 
-for(Integer i=0;i<dof1.size();i++)
-  {for(Integer j=0;j<dof1[i].size();j++)
-     std::cout<<dof1[i][j]<<std::endl;
-     std::cout<<std::endl;
-   }
+// constexpr const auto _0dofs=tuple_get<0>(face_dofs)[0].size();
+// static_assert(_0dofs==4 &&"ok");
+// decltype(Wtrial)::DofMapType2 o3o(5,4,5,6,6);
+// decltype(W)::DofMapType2 oo(5,4,5,6,6);
+// auto dof0=tuple_get<0>(dof);
+// auto dof1=tuple_get<1>(dof);
+// // auto dof2=tuple_get<2>(dof);
+// std::cout<<"dofmap0="<<std::endl;
+// for(Integer i=0;i<dof0.size();i++)
+//   {for(Integer j=0;j<dof0[i].size();j++)
+//      std::cout<<dof0[i][j]<<std::endl;
+//      std::cout<<std::endl;
 
-std::cout<<"dofmap100="<<std::endl;
+//    }
+// std::cout<<"dofmap1="<<std::endl;
 
-for(Integer i=0;i<W.space_ptr()->dofmap<0>().size();i++)
-  {for(Integer j=0;j<W.space_ptr()->dofmap<0>()[i].size();j++)
-     std::cout<<W.space_ptr()->dofmap<0>()[i][j]<<std::endl;
-     std::cout<<std::endl;
-   }
-
-// std::cout<<"dofmap200="<<std::endl;
-
-// for(Integer i=0;i<W.space_ptr()->dofmap<1,0>().size();i++)
-//   {for(Integer j=0;j<W.space_ptr()->dofmap<1,0>()[i].size();j++)
-//      std::cout<<W.space_ptr()->dofmap<1,0>()[i][j]<<std::endl;
+// for(Integer i=0;i<dof1.size();i++)
+//   {for(Integer j=0;j<dof1[i].size();j++)
+//      std::cout<<dof1[i][j]<<std::endl;
 //      std::cout<<std::endl;
 //    }
 
 
+
+// auto _dof1=FEspace1.dofmap();
+// auto _dof3=FEspace3.dofmap();
+
+
+
+// for(Integer i=0;i<_dof1.size();i++)
+//   {for(Integer j=0;j<_dof1[i].size();j++)
+//      std::cout<<_dof1[i][j]<<std::endl;
+//      std::cout<<std::endl;
+//    }
+
+// for(Integer i=0;i<_dof3.size();i++)
+//   {for(Integer j=0;j<_dof3[i].size();j++)
+//      std::cout<<_dof3[i][j]<<std::endl;
+//      std::cout<<std::endl;
+//    }
+
+
+// auto dof1_=FEspace1.dofmap2();
+// auto dof3_=FEspace3.dofmap2();
+
+// auto dof1=tuple_get<0>(dof1_);
+// auto dof2=tuple_get<0>(dof3_);
+// auto dof3=tuple_get<1>(dof3_);
+
+
+
+// std::cout<<"dofmap____1="<<std::endl;
+
+// for(Integer i=0;i<dof1.size();i++)
+//   {for(Integer j=0;j<dof1[i].size();j++)
+//      std::cout<<dof1[i][j]<<std::endl;
+//      std::cout<<std::endl;
+//    }
+
+// std::cout<<"dofmap____2="<<std::endl;
+
+// for(Integer i=0;i<dof2.size();i++)
+//   {for(Integer j=0;j<dof2[i].size();j++)
+//      std::cout<<dof2[i][j]<<std::endl;
+//      std::cout<<std::endl;
+//    }
+
+// std::cout<<"dofmap____3="<<std::endl;
+
+// for(Integer i=0;i<dof3.size();i++)
+//   {for(Integer j=0;j<dof3[i].size();j++)
+//      std::cout<<dof3[i][j]<<std::endl;
+//      std::cout<<std::endl;
+//    }
+
+
+//    auto DF2=W.spaces_ptr()->dofmap2();
+
+//    auto d1=tuple_get<0>(DF2);
+//    auto d2=tuple_get<1>(DF2);
+//    auto d3=tuple_get<2>(DF2);
+
+
+
+// std::cout<<"------------------------d1="<<std::endl;
+//    for(Integer i=0;i<d1.size();i++)
+//   {for(Integer j=0;j<d1[i].size();j++)
+//      std::cout<<d1[i][j]<<std::endl;
+//      std::cout<<std::endl;
+//    }
+
+// std::cout<<"------------------------d2="<<std::endl;
+//    for(Integer i=0;i<d2.size();i++)
+//   {for(Integer j=0;j<d2[i].size();j++)
+//      std::cout<<d2[i][j]<<std::endl;
+//      std::cout<<std::endl;
+//    }
+
+// std::cout<<"------------------------d3="<<std::endl;
+//    for(Integer i=0;i<d3.size();i++)
+//   {for(Integer j=0;j<d3[i].size();j++)
+//      std::cout<<d3[i][j]<<std::endl;
+//      std::cout<<std::endl;
+//    }
 // for(Integer i=0;i<dof2.size();i++)
 //   for(Integer j=0;j<dof2[i].size();j++)
 //      std::cout<<dof2[i][j]<<std::endl;
 // decltype(eval_linear_form)::EvaluationOfL2InnersVolume::L2Products a4k(6);
 
-// decltype(eval_bilinear_form)::EvaluationOfL2InnersSurface::EvalOfL2InnersType a444k(6);
+// decltype(bilinear_form)::FunctionSpace a444k(6);
+// auto l2prdo=L2Inner(v1,u1);
+// std::cout<<"kkkk3333="<<std::endl;
+// auto spcptr=find_spaces_ptr<decltype(bilinear_form)::FunctionSpace>(bilinearform);//C-v1+v1*C*C*(-Transpose(f1)));
+// if(spcptr==nullptr)
+//  std::cout<<"nullptr="<<std::endl;
+// else
+// {
+//   auto ecm=spcptr->dofmap2();
 
+//    std::cout<<"kkkk="<<std::endl;
+//    std::cout<<tuple_get<1>(ecm)[0][4]<<std::endl;
+// }
+
+// decltype(eval_linear_form)::TupleOfPairsNumbers mb(5);
+// Number<TupleTypeSize<decltype(eval_bilinear_form)::EvaluationOfL2InnersSurface::L2Products>::value-1> lkkljkkj(6);        
 // decltype(eval_linear_form)::EvaluationOfL2InnersSurface::EvalOfL2InnersType a44k(6);
 // decltype(eval_bilinear_form)::ShapeFunctions escho(6);
 // decltype(shapefunctions)::UniqueElementFunctionSpacesTupleType kk(5);

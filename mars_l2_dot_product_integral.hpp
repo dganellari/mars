@@ -86,7 +86,8 @@ public Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>>
     left_(left.derived()),
     right_(right.derived()),
     product_(Inner(left,right)),
-    label_(label)
+    label_(label),
+    spaces_ptr_(find_spaces_ptr<FunctionSpace>(left_*right_))
     {}
      
 
@@ -95,9 +96,13 @@ public Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>>
     left_(l2prod.derived().left()),
     right_(l2prod.derived().right()),
     product_(Inner(left_,right_)),
-    label_(label)
+    label_(label),
+    spaces_ptr_(find_spaces_ptr<FunctionSpace>(left_*right_))
     {}
 
+     auto spaces_ptr()     {return spaces_ptr_;}
+     auto spaces_ptr()const{return spaces_ptr_;}
+ 
 
      auto operator()(){return L2DotProductIntegral<Left,Right,VolumeIntegral,QR>(left_,right_);}
      const auto operator()()const{return L2DotProductIntegral<Left,Right,VolumeIntegral,QR>(left_,right_);}
@@ -106,6 +111,7 @@ public Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>>
     Right right_;
     type product_;
     Integer label_;
+    std::shared_ptr<FunctionSpace> spaces_ptr_;
 };
 
 

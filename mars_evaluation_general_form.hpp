@@ -96,14 +96,18 @@ class Evaluation<Expression<GeneralForm<Form>>,ShapeFunctionsCollection<GeneralF
  constexpr void apply(const FiniteElem<Elem>& J)
  {
   int token_mat=1;
-  eval_inners_volume_.apply(token_mat,J);
+    if(general_form_.spaces_ptr()==NULL)
+    std::cout<<"nullptr"<<std::endl;
+  else
+    std::cout<<"not nullptr"<<std::endl;
+  eval_inners_volume_.apply(token_mat,J,general_form_.spaces_ptr()->dofmap2());
  }
 
  template<typename Elem>
- constexpr void apply_boundary(const FiniteElem<Elem>& J)
+ constexpr void apply_boundary(const FiniteElem<Elem>& FE )
  {
   int token_mat=1;
-  eval_inners_surface_.apply(token_mat,J);
+  eval_inners_surface_.apply_boundary(token_mat,FE,general_form_.spaces_ptr()->dofmap2());
  }
  private:
  const GeneralForm<Form>& general_form_;
