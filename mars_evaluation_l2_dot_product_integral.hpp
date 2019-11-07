@@ -28,10 +28,14 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>
  shape_functions_(shape_functions)
  ,
  local_tensor_(expr)
+ ,
+ label_(expr.label())
  {};
  
- template<typename Elem, typename...DofMaps>
- void apply_aux(subtype& mat, const FiniteElem<Elem>& J, const DofMaps&...dofmaps)
+
+ template<bool VolumeIntegralAux,typename Elem, typename...DofMaps>
+ std::enable_if_t<(VolumeIntegralAux==true),void>
+  apply_aux(subtype& mat, const FiniteElem<Elem>& J, const DofMaps&...dofmaps)
  {
 
   // changed todo fixme
@@ -43,10 +47,26 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>
   std::cout<<"after Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
  }
 
+ template<bool VolumeIntegralAux,typename Elem, typename...DofMaps>
+ std::enable_if_t<(VolumeIntegralAux==false),void>
+  apply_aux(subtype& mat, const FiniteElem<Elem>& J, const DofMaps&...dofmaps)
+ {
+
+  // changed todo fixme
+   // local_tensor_.apply(mat,J,shape_functions_());
+  std::cout<<"pre Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
+  
+  if(J.side_id()==label_)
+   { 
+    local_tensor_.apply(mat,J,shape_functions_, dofmaps...);//(),shape_functions_.composite_tensor(),shape_functions_.composite_shapes());
+    }
+  std::cout<<"after Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
+ }
+
 
  template<typename...Inputs>
  void apply(subtype& mat, const Inputs&...inputs)
- {apply_aux(mat,inputs...);}
+ {apply_aux<VolumeIntegral>(mat,inputs...);}
 
  auto operator()(){return local_tensor_;}
 
@@ -59,6 +79,7 @@ private:
  type expr_;
  ShapeFunctionsCollection<Forms...>& shape_functions_;
  LocalTensor<PositiveWeights,TestTrialSpaces,type,GetType<typename type::form>> local_tensor_;
+ Integer label_;
 };
 
 

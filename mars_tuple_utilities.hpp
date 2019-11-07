@@ -696,6 +696,26 @@ template<Integer N,typename All, typename Unique>
 template<Integer N,Integer Nmin,Integer Nmax,typename...Ts>
 class SubTupleHelper;
 
+// template<Integer N,Integer Nmin,Integer Nmax>
+// class SubTupleHelper<N,Nmin,Nmax,std::tuple<>>
+// {
+// public:
+//  using type=std::tuple<>;
+// };
+
+// template<Integer N,Integer Nmin,Integer Nmax,typename T,typename...Ts>
+// class SubTupleHelper<N,Nmin,Nmax,std::tuple<T,Ts...>>
+// {
+// public:
+//  using single_type=typename std::conditional< (N<Nmin || N>Nmax), std::tuple<>, std::tuple<T> >::type;
+//  using type=TupleCatType< single_type, typename SubTupleHelper<N+1,Nmin,Nmax,std::tuple<Ts...> >::type >;
+// };
+
+// template<Integer Nmin,Integer Nmax,typename...Ts>
+// using SubTupleType=typename SubTupleHelper<0,Nmin,Nmax,Ts... >::type;
+
+
+
 template<Integer N,Integer Nmin,Integer Nmax>
 class SubTupleHelper<N,Nmin,Nmax,std::tuple<>>
 {
@@ -703,16 +723,48 @@ public:
  using type=std::tuple<>;
 };
 
-template<Integer N,Integer Nmin,Integer Nmax,typename T,typename...Ts>
-class SubTupleHelper<N,Nmin,Nmax,std::tuple<T,Ts...>>
-{
-public:
- using single_type=typename std::conditional< (N<Nmin || N>Nmax), std::tuple<>, std::tuple<T> >::type;
- using type=TupleCatType< single_type, typename SubTupleHelper<N+1,Nmin,Nmax,std::tuple<Ts...> >::type >;
-};
 
 template<Integer Nmin,Integer Nmax,typename...Ts>
-using SubTupleType=typename SubTupleHelper<0,Nmin,Nmax,Ts... >::type;
+class SubTupleHelper<sizeof...(Ts)-1,Nmin,Nmax,std::tuple<Ts...>>
+{
+public:
+ // using single_type=std::conditional_t< (N<Nmin || N>Nmax), std::tuple<>, std::tuple<GetType<std::tuple<Ts...>,N>>> ;
+ static constexpr Integer N=sizeof...(Ts)-1;
+ using type=std::conditional_t< (N<Nmin || N>Nmax),
+                                 std::tuple<>,
+                                 std::tuple<GetType<std::tuple<Ts...>,N>>>;
+};
+
+template<Integer N,Integer Nmin,Integer Nmax,typename...Ts>
+class SubTupleHelper<N,Nmin,Nmax,std::tuple<Ts...>>
+{
+public:
+ // using single_type=std::conditional_t< (N<Nmin || N>Nmax), std::tuple<>, std::tuple<GetType<std::tuple<Ts...>,N>>> ;
+// if N<Nmin, we just move on, without adding types
+// if N>Nmax, we stop, returning an empty tuple
+// otherwise add the component
+using type=
+std::conditional_t<(N<Nmin),
+                   typename SubTupleHelper<N+1,Nmin,Nmax,std::tuple<Ts...> >::type,
+                   std::conditional_t< (N>Nmax),
+                                       std::tuple<>,
+                                       TupleCatType<std::tuple<GetType<std::tuple<Ts...>,N>>, 
+                                                    typename SubTupleHelper<N+1,Nmin,Nmax,std::tuple<Ts...> >::type>
+                                     >
+
+                  >;
+
+
+ // using type=std::conditional_t< (N<Nmin || N>Nmax),
+ //                                 std::tuple<>,
+ //                                 TupleCatType< std::tuple<GetType<std::tuple<Ts...>,N>>, 
+ //                                               typename SubTupleHelper<N+1,Nmin,Nmax,std::tuple<Ts...> >::type >>;
+};
+
+
+
+template<Integer Nmin,Integer Nmax,typename...Ts>
+using SubTupleType=typename SubTupleHelper<0,Nmin,Nmax,std::tuple<Ts...> >::type;
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -786,8 +838,8 @@ using TupleAddingType=typename TupleAddingTypeHelper< N,Tadd,std::tuple<Ts...> >
 ///// If N>Size(Tuple) or N<0, nothing is removed
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-template<Integer N, typename Tuple>
-using TupleRemoveNthPosition=TupleCatType<SubTupleType<0,N-1,Tuple>,SubTupleType<N+1,TupleTypeSize<Tuple>::value-1,Tuple>>;
+template<Integer N, typename...Ts>
+using TupleRemoveNthPosition=TupleCatType<SubTupleType<0,N-1,Ts...>,SubTupleType<N+1,TupleTypeSize<std::tuple<Ts...>>::value-1,Ts...>>;
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -805,12 +857,13 @@ class TupleChangeTypeHelper<N,Tchange,std::tuple<Ts...>>
 {
 public:
  using typeLeft=SubTupleType<0,N-1, Ts...>;//typename std::conditional< (N==0), std::tuple<>, SubTupleType<0,N-1 , Ts... > >::type;
- using typeRight=SubTupleType<N+1,sizeof...(Ts)+2, Ts...>;//typename std::conditional< (N==sizeof...(Ts)+1), std::tuple<>, SubTupleType<N,sizeof...(Ts)+1, Ts...> >::type;
+ using typeRight=SubTupleType<N+1,TupleTypeSize<std::tuple<Ts...>>::value-1, Ts...>;//typename std::conditional< (N==sizeof...(Ts)+1), std::tuple<>, SubTupleType<N,sizeof...(Ts)+1, Ts...> >::type;
+ // using type=Number<TupleTypeSize<std::tuple<Ts...>>::value-1>;//
  using type=TupleCatType<typeLeft,std::tuple<Tchange>,typeRight>;
 };
 
 template<Integer N,typename Tchange, typename...Ts>
-using TupleChangeType=typename TupleChangeTypeHelper< N,Tchange,std::tuple<Ts...> >::type;
+using TupleChangeType=typename TupleChangeTypeHelper< N,Tchange,Ts... >::type;
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2176,28 +2229,32 @@ auto sub_tuple_aux(const std::tuple<T...>& t, std::index_sequence<I...>)
 }
 
 template <std::size_t N_start,std::size_t N_end, typename... Ts>
-std::enable_if_t< (N_start<=N_end && 0<=N_end && 0<=N_start && N_end<sizeof...(Ts) && N_end>=0) , SubTupleType<N_start,N_end,std::tuple<Ts...>>> 
+// std::enable_if_t< (N_start<=N_end && 0<=N_end && 0<=N_start && N_end<sizeof...(Ts) && N_end>=0) , SubTupleType<N_start,N_end,std::tuple<Ts...>>> 
+std::enable_if_t< (N_start<=N_end && 0<=N_end && 0<=N_start && N_end<sizeof...(Ts) && N_end>=0) , SubTupleType<N_start,N_end,Ts...>> 
 sub_tuple(const std::tuple<Ts...>& t) 
 {
   return sub_tuple_aux(t, make_index_sequence_shift<N_end-N_start+1,N_start>());
 }
 
 template <Integer N_start,Integer N_end, typename... Ts>
-std::enable_if_t< (N_start<=N_end && 0<=N_end && 0>N_start && N_end<sizeof...(Ts)&& N_end>=0), SubTupleType<0,N_end,std::tuple<Ts...>>> 
+// std::enable_if_t< (N_start<=N_end && 0<=N_end && 0>N_start && N_end<sizeof...(Ts)&& N_end>=0), SubTupleType<0,N_end,std::tuple<Ts...>>> 
+std::enable_if_t< (N_start<=N_end && 0<=N_end && 0>N_start && N_end<sizeof...(Ts)&& N_end>=0), SubTupleType<0,N_end,Ts...>> 
 sub_tuple(const std::tuple<Ts...>& t) 
 {
   return sub_tuple_aux(t, make_index_sequence_shift<N_end+1,0>());
 }
 
 template <Integer N_start,Integer N_end, typename... Ts>
-std::enable_if_t< (N_start<=N_end && 0<=N_end && 0<=N_start && N_end>=sizeof...(Ts)), SubTupleType<N_start,sizeof...(Ts)-1,std::tuple<Ts...>>> 
+// std::enable_if_t< (N_start<=N_end && 0<=N_end && 0<=N_start && N_end>=sizeof...(Ts)), SubTupleType<N_start,sizeof...(Ts)-1,std::tuple<Ts...>>> 
+std::enable_if_t< (N_start<=N_end && 0<=N_end && 0<=N_start && N_end>=sizeof...(Ts)), SubTupleType<N_start,sizeof...(Ts)-1,Ts...>> 
 sub_tuple(const std::tuple<Ts...>& t) 
 {
   return sub_tuple_aux(t, make_index_sequence_shift<sizeof...(Ts)-N_start,N_start>());
 }
 
 template <Integer N_start,Integer N_end, typename... Ts>
-std::enable_if_t< (N_start<=N_end && 0<=N_end  && 0>N_start && N_end>=sizeof...(Ts)), SubTupleType<0,sizeof...(Ts)-1,std::tuple<Ts...>>> 
+// std::enable_if_t< (N_start<=N_end && 0<=N_end  && 0>N_start && N_end>=sizeof...(Ts)), SubTupleType<0,sizeof...(Ts)-1,std::tuple<Ts...>>> 
+std::enable_if_t< (N_start<=N_end && 0<=N_end  && 0>N_start && N_end>=sizeof...(Ts)), SubTupleType<0,sizeof...(Ts)-1,Ts...>> 
 sub_tuple(const std::tuple<Ts...>& t) 
 {
   return sub_tuple_aux(t, make_index_sequence_shift<sizeof...(Ts),0>());

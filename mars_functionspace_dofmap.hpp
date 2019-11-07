@@ -15,6 +15,7 @@
 #include "mars_elementfunctionspace.hpp"
 #include "mars_elem_to_sub_elem.hpp"
 #include "mars_tuple_utilities.hpp"
+#include "mars_array.hpp"
 namespace mars{
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////// FunctionSpaceDofsPerElem:                                                                                     //////////////
@@ -540,12 +541,12 @@ ElementDofMap(const std::tuple<Args1...>& entitiestuple,
 
 
 
-template<Integer N,typename FunctionSpace,typename Array,typename...Args1,unsigned long M,typename OS, typename SpaceDofs>
+template<Integer N,typename FunctionSpace,typename FlagArray,typename...Args1, long M,typename OS, typename SpaceDofs>
 typename std::enable_if< -1<N,void>::type
 ElementDofMap_LoopEntities2(const std::tuple<Args1...>& entitiestuple,
-                           Array& flagtuples,
+                           FlagArray& flagtuples,
                            const Integer& elem_id, 
-                           std::vector<std::array<Integer, M>> & dofmap_vec,
+                           std::vector<Array<Integer, M>> & dofmap_vec,
                            Integer& global_dof_count,
                            Integer& loc_dof_count,
                            const OS &dofs_offset,
@@ -566,7 +567,7 @@ const     auto& elem2entity=entity.elem_2_entity(elem_id);
           auto& flag=flagtuples[N];
 
 
-std::cout<<"ElementDofMap_LoopEntities entity_dim="<<entity_dim<<std::endl;
+// std::cout<<"ElementDofMap_LoopEntities entity_dim="<<entity_dim<<std::endl;
 // move to the entity of dimension entity[N-1]
 ElementDofMap_LoopEntities2<N-1,FunctionSpace>
              (entitiestuple,flagtuples,elem_id,dofmap_vec,global_dof_count,loc_dof_count,dofs_offset,space_dofs);
@@ -577,9 +578,9 @@ ElementDofMap_LoopEntities2<N-1,FunctionSpace>
 for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
    { 
     const auto& entity_id=elem2entity[entity_iter];
-    std::cout<<"entity_iter="<<entity_iter<<std::endl;
-    std::cout<<"entity_id="<<entity_id<<std::endl;
-    std::cout<<"flag[entity_id][0]="<<flag[entity_id][0]<<std::endl;
+    // std::cout<<"entity_iter="<<entity_iter<<std::endl;
+    // std::cout<<"entity_id="<<entity_id<<std::endl;
+    // std::cout<<"flag[entity_id][0]="<<flag[entity_id][0]<<std::endl;
 
     // if the entity has not been already visited, then create n_components new dofs
     if(flag[entity_id][0]==-1 || continuity==Discontinuous)
@@ -607,12 +608,12 @@ for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
      const auto& iter_tmp=flag[entity_id][1];
            auto old_dof=dofmap_vec[elem_id_tmp][dofs_per_entity*iter_tmp*FunctionSpace::NComponents];
      
-     std::cout<<"elem_id_tmp="<<elem_id_tmp<<std::endl;
-     std::cout<<"old_dof="<<old_dof<<std::endl;
-     std::cout<<"dofs_offset[N]="<<dofs_offset[N]<<std::endl;
-     std::cout<<"dofs_per_entity="<<dofs_per_entity<<std::endl;
-     std::cout<<"iter_tmp="<<iter_tmp<<std::endl;
-     std::cout<<"NComponents="<<FunctionSpace::NComponents<<std::endl;
+     // std::cout<<"elem_id_tmp="<<elem_id_tmp<<std::endl;
+     // std::cout<<"old_dof="<<old_dof<<std::endl;
+     // std::cout<<"dofs_offset[N]="<<dofs_offset[N]<<std::endl;
+     // std::cout<<"dofs_per_entity="<<dofs_per_entity<<std::endl;
+     // std::cout<<"iter_tmp="<<iter_tmp<<std::endl;
+     // std::cout<<"NComponents="<<FunctionSpace::NComponents<<std::endl;
      
      for(Integer entity_dofs_iter=0;entity_dofs_iter<dofs_per_entity;entity_dofs_iter++)
         for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
@@ -627,18 +628,18 @@ for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
   }
 }
 
-template<Integer N,typename FunctionSpace, typename Array,typename...Args1,unsigned long M,typename OS, typename SpaceDofs>
+template<Integer N,typename FunctionSpace, typename FlagArray,typename...Args1, long M,typename OS, typename SpaceDofs>
 typename std::enable_if< -1==N,void>::type
 ElementDofMap_LoopEntities2(const std::tuple<Args1...>& entitiestuple,
-              Array& flagtuples,
+              FlagArray& flagtuples,
               const Integer& elem_id,
-              std::vector<std::array<Integer, M>> & dofmap_vec,
+              std::vector<Array<Integer, M>> & dofmap_vec,
               Integer& global_dof_count,
               Integer &loc_dof_count,
               const OS &dofs_offset,
               SpaceDofs& space_dofs  )
 {
-  std::cout<<"ElementDofMap_LoopEntities N="<<N<<std::endl;
+  // std::cout<<"ElementDofMap_LoopEntities N="<<N<<std::endl;
 }
 
 
@@ -659,7 +660,7 @@ ElementDofMap(const std::tuple<Args1...>& entitiestuple,
  const auto m1=std::get<M>(entitiestuple);
  auto &m2=std::get<M>(flagtuples);
  static constexpr Integer NN=std::tuple_size<decltype(m1)>::value-1;
- std::cout<<"ElementDofMap="<<K<<std::endl;
+ // std::cout<<"ElementDofMap="<<K<<std::endl;
  loc_dof_count=0;
  // GetType<std::tuple<Args3...>,K> oo(5,4,5,6);
  ElementDofMap_LoopEntities2<NN,ElemFunctionSpace<Elem,FunctionSpace>>
@@ -685,7 +686,7 @@ ElementDofMap(const std::tuple<Args1...>& entitiestuple,
  const auto m1=std::get<0>(entitiestuple);
  auto& m2=std::get<0>(flagtuples);
  static constexpr Integer NN=std::tuple_size<decltype(m1)>::value-1;
- std::cout<<"ElementDofMap="<<K<<std::endl;
+ // std::cout<<"ElementDofMap="<<K<<std::endl;
  loc_dof_count=0;
 
  ElementDofMap_LoopEntities2<NN,ElemFunctionSpace<Elem,FunctionSpace>>
@@ -953,7 +954,7 @@ void dofmap_fespace2(const MeshT& mesh,
      auto &elem_id=elem_iter;
      Integer loc_dof_count=0;
      // loop on all the function spaces
-     std::cout<<"dofmap_fespace2"<<std::endl;
+     // std::cout<<"dofmap_fespace2"<<std::endl;
      ElementDofMap<0,Elem,FunctionSpace,FunctionSpaces...>
                        (entitiestuple,flagtuples,elem_id,dofmap_vec,global_dof_count,loc_dof_count,dofs_offset,space_dofs);
 

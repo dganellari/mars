@@ -114,7 +114,7 @@ class MapFromReference<TraceOperator,Simplex<Dim,ManifoldDim>,RaviartThomasFE>
  // indeed the element is Simplex<Dim,ManifoldDim+1> and we pass FiniteElem<Simplex<Dim,ManifoldDim+1>>
          inline constexpr void init(const FiniteElem<Simplex<Dim,ManifoldDim+1>> &FE)
          {flux_inv_= 1.0/((ManifoldDim+1)*FE.volume());}
-         inline constexpr const auto&  operator()()const{std::cout<<"flux_inv_="<<flux_inv_<<std::endl; return flux_inv_;}
+         inline constexpr const auto&  operator()()const{return flux_inv_;}
  private:
  Real flux_inv_;
 };

@@ -38,8 +38,8 @@ public:
       static constexpr Array<Integer,Nsubspaces> Nelem_dofs_array=
       concat(Array<Integer,1>{DofsPerElemNums<Elem,BaseFunctionSpace>::value},Array<Integer,1>{DofsPerElemNums<Elem,BaseFunctionSpaces>::value}...);
       using DofMapType=std::vector<std::array<Integer, Nelem_dofs>>;
-      using DofMapType2=std::tuple<std::vector<std::array<Integer, DofsPerElemNums<Elem,BaseFunctionSpace>::value>>,
-                                   std::vector<std::array<Integer, DofsPerElemNums<Elem,BaseFunctionSpaces>::value>>
+      using DofMapType2=std::tuple<std::vector<Array<Integer, DofsPerElemNums<Elem,BaseFunctionSpace>::value>>,
+                                   std::vector<Array<Integer, DofsPerElemNums<Elem,BaseFunctionSpaces>::value>>
                                   ...>;
       static constexpr auto faces_dofs_array=std::tuple_cat(std::make_tuple(trace_dofs<ElemFunctionSpace<Elem,BaseFunctionSpace>>()),
                                                              std::make_tuple(trace_dofs<ElemFunctionSpace<Elem,BaseFunctionSpaces>>())...);

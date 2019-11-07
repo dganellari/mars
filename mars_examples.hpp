@@ -1101,7 +1101,8 @@ void assembly_example()
   using Elem = typename MeshT::Elem; 
   // read_mesh("../data/beam-tri.MFEM", mesh);
   read_mesh("../data/triangle_square.MFEM", mesh);
-
+  mesh.update_dual_graph();
+  // mark_boundary(mesh);
 
   constexpr Integer QPOrder=4;
   constexpr Integer NQPoints=GaussPoints<Elem,QPOrder>::NQPoints; 
@@ -1112,13 +1113,13 @@ void assembly_example()
 
 
 
- using FSspace1= FunctionSpace< MeshT, Lagrange1<2>>;
+ using FSspace1= FunctionSpace< MeshT, Lagrange1<1>>;
  FSspace1 FEspace1(mesh);
  // using FSspace2= FunctionSpace< MeshT, Lagrange2<2>>;
  // FSspace2 FEspace2(mesh);
  using FSspace3= FunctionSpace< MeshT, Lagrange1<1>,RT1<1>>;
  FSspace3 FEspace3(mesh);
- using FSspace4= FunctionSpace< MeshT, Lagrange1<1>,Lagrange2<1>,Lagrange1<1>>;
+ using FSspace4= FunctionSpace< MeshT, Lagrange1<1>,Lagrange1<1>>;
  FSspace4 FEspace4(mesh);
  using FSspace5= FunctionSpace< MeshT, Lagrange1<2>>;
  FSspace5 FEspace5(mesh);
@@ -1143,7 +1144,7 @@ void assembly_example()
  AuxFSspace3 AuxFEspace3(mesh);
 
 
- auto Wtrial=MixedFunctionSpace(FEspace1,FEspace3);
+ auto Wtrial=MixedFunctionSpace(FEspace1,FEspace4);
  auto Waux=AuxFunctionSpacesBuild(AuxFEspace1);//,AuxFEspace2,AuxFEspace3);
  auto W=FullSpaceBuild(Wtrial,Waux);
 
@@ -1153,13 +1154,13 @@ void assembly_example()
  // auto f2 = MakeFunction<1>(W);
  // auto f3 = MakeFunction<2>(W);
 
- auto u1 = MakeTrial<0>(W);
- auto u2 = MakeTrial<1>(W);
- auto u3 = MakeTrial<2>(W);
+ auto u0 = MakeTrial<0>(W);
+ auto u1 = MakeTrial<1>(W);
+ auto u2 = MakeTrial<2>(W);
 
- auto v1 = MakeTest<0>(W);
- auto v2 = MakeTest<1>(W);
- auto v3 = MakeTest<2>(W);
+ auto v0 = MakeTest<0>(W);
+ auto v1 = MakeTest<1>(W);
+ auto v2 = MakeTest<2>(W);
 
 
   FiniteElem<Elem> J(mesh);
@@ -1189,62 +1190,67 @@ auto NewTrace=NewOperator(TraceOperator());
 // auto Epsilon=NewOperator((GradientOperator()));//+Transpose(GradientOperator())));
 
   auto bilinearform=
-                    // surface_integral(NewTrace(u3),NewTrace(v3))-
-                    surface_integral(NewTrace(u3),NewTrace(v3))-
-                    // surface_integral(NewTrace(u3),NewTrace(v3))-
-                    surface_integral(NewTrace(u2),NewTrace(v2))-
-                    // surface_integral(NewTrace(u1),NewTrace(v1))-
-                    // surface_integral(NewTrace(u1),NewTrace(v1))-
-                    surface_integral(NewTrace(u1),NewTrace(v1))-
-                    // surface_integral(NewTrace(u3),NewTrace(v3))-
-                    // surface_integral(Trace(u3),Trace(v3))-
-                    // L2Inner(-(-u3),-(v3))-
-                    // surface_integral(Trace(u3),Trace(v3))-
-                    // L2Inner(-(-u3),-(v3))-
-                    // surface_integral(Trace(u3),Trace(v3))-
-                    // surface_integral(Trace(u3),Trace(v3))-
-                    // L2Inner(-(-u3),-(v3))-
-                    // surface_integral(Trace(u3),Trace(v3))-
-                    // surface_integral(Trace(u3),Trace(v3))-
-                    // L2Inner(Transpose(u3),Transpose(v3))-
-                    // L2Inner(-Transpose(u3),Transpose(-v3))-
-                    // L2Inner(-(-u3),-(v3))- //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
-                    // L2Inner(MatTrace(f1)*(+Transpose(u2)),-(Transpose(v2))) -//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
-                    // surface_integral(Trace(u3),Trace(v3))-
-                    // L2Inner(-(-u3),-(v3))-
-                    // surface_integral(Trace(u3),Trace(v3))-
-                    // L2Inner(-(-u3),-(v3))-
-                    // surface_integral(Trace(u3),Trace(v3))-
-                    // L2Inner(Epsilon(u1),-Grad(v1));//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
+                    // surface_integral(0,NewTrace(u2),NewTrace(v2))-
+                    // surface_integral(1,NewTrace(u1),NewTrace(v1))-
+                    // surface_integral(0,NewTrace(u0),NewTrace(v0))-
+
+
+                    // surface_integral(NewTrace(u2),NewTrace(v2))-
+                    // surface_integral(Trace(u2),Trace(v2))-
+                    // L2Inner(-(-u2),-(v2))-
+                    // surface_integral(Trace(u2),Trace(v2))-
+                    // L2Inner(-(-u2),-(v2))-
+                    // surface_integral(Trace(u2),Trace(v2))-
+                    // surface_integral(Trace(u2),Trace(v2))-
+                    // L2Inner(-(-u2),-(v2))-
+                    // surface_integral(Trace(u2),Trace(v2))-
+                    // surface_integral(Trace(u2),Trace(v2))-
+                    // L2Inner(Transpose(u2),Transpose(v2))-
+                    // L2Inner(-Transpose(u2),Transpose(-v2))-
+                    // L2Inner(-(-u2),-(v2))- //+ L2Inner(Grad(u2),Grad(v0))+L2Inner(u2,v2)+
+                    // L2Inner(MatTrace(f1)*(+Transpose(u1)),-(Transpose(v1))) -//+ L2Inner(Grad(u1),Grad(v0))+L2Inner(u1,v2)+
+                    // surface_integral(Trace(u2),Trace(v2))-
+                    // L2Inner(-(-u2),-(v2))-
+                    // surface_integral(Trace(u2),Trace(v2))-
+                    // L2Inner(-(-u2),-(v2))-
+                    // surface_integral(Trace(u2),Trace(v2))-
+                    // L2Inner(Epsilon(u0),-Grad(v0));//+ L2Inner(Grad(u0),Grad(v0))+L2Inner(u0,v2);//+L2Inner(Grad(u1),Grad(v1));//+L2Inner(f3*u2,v2);
   // auto bilinearform= 
-                    L2Inner(u3,v3)- //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
-                    L2Inner(u2,v2) -//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
-                    L2Inner(u1,v1)+
-                    L2Inner(Grad(u1),Grad(v1))
-                    ;//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
+                    // L2Inner(u0,v1)+L2Inner(u0,v2)+
+                    L2Inner(u0+u1+u2,v0+v1+v2)-
+                    L2Inner(u0,v0)+L2Inner(u0,v1)+L2Inner(u0,v2)+
+                    L2Inner(u1,v0)+L2Inner(u1,v1)+L2Inner(u1,v2)+
+                    L2Inner(u2,v0)+L2Inner(u2,v1)+L2Inner(u2,v2)+
+                    L2Inner(Grad(u0),Grad(v0))+
+                    L2Inner(Grad(u1),Grad(v1))+
+                    L2Inner(Grad(u2),Grad(v2))
+                    ;//+ L2Inner(Grad(u0),Grad(v0))+L2Inner(u0,v2);//+L2Inner(Grad(u1),Grad(v1));//+L2Inner(f3*u2,v2);
 
 
   auto linearform=
-                  //L2Inner(Grad(v1),+Transpose(id2));//Transpose(Transpose((matrix1)+Transpose(matrix2))));//Transpose(-f1*(matrix1+matrix1)*Transpose(alpha*matrix1-matrix1)));//+L2Inner(f2,v2)+L2Inner(f1,v1);//+ L2Inner(f1,v1);
-                  // L2Inner((+Transpose(C))*(-v2),-Transpose(f1))+
-                  // L2Inner((Transpose(C)+Transpose(C))*v2,C)+
-                  // L2Inner((Transpose(C)+(C))*v2,f1)+
-                  // L2Inner((C+C)*v2,C)+
-                  // L2Inner((-C-Transpose(C))*(-v2),Transpose(-f1))+
-                  // L2Inner((-Transpose(C)-Transpose(C))*v2,C)+
-                  // L2Inner((-Transpose(C)-(C))*v2,f1/C)+
-                  // L2Inner(Inner(gamma,Transpose(gamma)),MatTrace(Epsilon(v1)));
-  // -L2Inner(Inner(gamma,Transpose(gamma))*Epsilon(v1),id2)-L2Inner(-Epsilon(v1),-id2)+
-  // L2Inner(id2,v3)
-  // L2Inner(id2,v3)-
-  surface_integral(NewTrace(v3),Trace(f1))
+                  //L2Inner(Grad(v0),+Transpose(id2));//Transpose(Transpose((matrix1)+Transpose(matrix2))));//Transpose(-f1*(matrix1+matrix1)*Transpose(alpha*matrix1-matrix1)));//+L2Inner(f2,v1)+L2Inner(f1,v0);//+ L2Inner(f1,v0);
+                  // L2Inner((+Transpose(C))*(-v1),-Transpose(f1))+
+                  // L2Inner((Transpose(C)+Transpose(C))*v1,C)+
+                  // L2Inner((Transpose(C)+(C))*v1,f1)+
+                  // L2Inner((C+C)*v1,C)+
+                  // L2Inner((-C-Transpose(C))*(-v1),Transpose(-f1))+
+                  // L2Inner((-Transpose(C)-Transpose(C))*v1,C)+
+                  // L2Inner((-Transpose(C)-(C))*v1,f1/C)+
+                  // L2Inner(Inner(gamma,Transpose(gamma)),MatTrace(Epsilon(v0)));
+  // -L2Inner(Inner(gamma,Transpose(gamma))*Epsilon(v0),id2)-L2Inner(-Epsilon(v0),-id2)+
+  // L2Inner(id2,v2)
+  // L2Inner(id2,v2)-
+  // L2Inner(v2,C)+
+  // L2Inner(v1,C)+
+  L2Inner(v0,C)
+  // surface_integral(0,NewTrace(v2),Trace(f1))
   ;
 
   // // auto bilinearform= 
-  //                   L2Inner((u3),(v3))+ //+ L2Inner(Grad(u3),Grad(v1))+L2Inner(u3,v3)+
-  //                   L2Inner((u2),(v2)) +//+ L2Inner(Grad(u2),Grad(v1))+L2Inner(u2,v3)+
-  //                   L2Inner(alpha*beta*(u1),(v1));//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
-  // auto linearform= L2Inner(f1,(v1));//+L2Inner(f2,v2)+L2Inner(f1,v1);//+ L2Inner(f1,v1);
+  //                   L2Inner((u2),(v2))+ //+ L2Inner(Grad(u2),Grad(v0))+L2Inner(u2,v2)+
+  //                   L2Inner((u1),(v1)) +//+ L2Inner(Grad(u1),Grad(v0))+L2Inner(u1,v2)+
+  //                   L2Inner(alpha*beta*(u0),(v0));//+ L2Inner(Grad(u0),Grad(v0))+L2Inner(u0,v2);//+L2Inner(Grad(u1),Grad(v1));//+L2Inner(f3*u2,v2);
+  // auto linearform= L2Inner(f1,(v0));//+L2Inner(f2,v1)+L2Inner(f1,v0);//+ L2Inner(f1,v0);
 
 
   auto bilinear_form=general_form(bilinearform);
@@ -1257,62 +1263,90 @@ auto NewTrace=NewOperator(TraceOperator());
   auto shapefunctions=shape_functions(shape_coefficients,reference_maps,bilinear_form,linear_form);
   shape_coefficients.init(mesh);
   
+
+
+  auto space_ptr=bilinear_form.spaces_ptr()->spaces_ptr();
+  auto n_dofs=space_ptr->n_dofs();
+  std::vector<std::vector<Real>> A;
+  std::vector<Real> b;
+
+  A.resize(n_dofs,std::vector<Real>(n_dofs));
+  b.resize(n_dofs);
+
   std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
   std::cout<<"------_______-----BEFORE FORMs EVALUATION-----_______--------"<<std::endl;
 
   auto eval_bilinear_form=Eval(bilinear_form,shapefunctions);
   auto eval_linear_form=Eval(linear_form,shapefunctions);
 
-  J.init(0);
-  reference_maps.init(J);
+
   std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
   std::cout<<"------_______-----BEFORE SHAPE COEFFICIENTS INIT-----_______--------"<<std::endl;
 
-  shape_coefficients.init(0);
+  
   std::cout<<"------_______-----AFTER SHAPE COEFFICIENTS INIT-----_______--------"<<std::endl;
 
-  shapefunctions.init(J);///////////////<------------------------ problema qui
-  
+   for(std::size_t el=0;el<1;el++)//mesh.n_elements();el++)
+   {
+      J.init(el);
+      shape_coefficients.init(el);
+      reference_maps.init(J);
+      shapefunctions.init(J);
+      eval_bilinear_form.apply(A,J);
+      eval_linear_form.apply(b,J);
+  std::cout<<"------_______----- SURFACE-----_______--------"<<std::endl;
+      for(std::size_t s=0;s<J.n_side();s++)
+      {
+        J.init_boundary(s);
+        reference_maps.init_boundary(J);
+        shapefunctions.init_boundary(J);
+        // eval_bilinear_form.apply_boundary(A,J);
+        // eval_linear_form.apply_boundary(b,J);
+      }
+   }
 
 
+  // decltype(L2Inner(u0,v0))::TestOrTrialLeftType m1(1);
+  // decltype(L2Inner(u0,v0))::TestOrTrialRightType m2(2);
 
-  std::cout<<"elem_id="<<J.elem_id()<<std::endl;
-  std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
-  std::cout<<"------_______-----BEGIN EVALUATION-----_______--------"<<std::endl;
+  // std::cout<<"elem_id="<<J.elem_id()<<std::endl;
+  // std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
+  // std::cout<<"------_______-----BEGIN EVALUATION-----_______--------"<<std::endl;
 
-  std::cout<<"------_______-----BILINEAR VOLUME-----_______--------"<<std::endl;
-  eval_bilinear_form.apply(J);
-  std::cout<<"------_______-----BILINEAR SURFACE-----_______--------"<<std::endl;
-  J.init_boundary(0);
-  reference_maps.init_boundary(J);
-  shapefunctions.init_boundary(J);
-  eval_bilinear_form.apply_boundary(J);
-  std::cout<<"------_______-----LINEAR VOLUME-----_______--------"<<std::endl;
+  // std::cout<<"------_______-----BILINEAR VOLUME-----_______--------"<<std::endl;
+  // eval_bilinear_form.apply(A,J);
+  // // std::cout<<"------_______-----BILINEAR SURFACE-----_______--------"<<std::endl;
+  // J.init_boundary(0);
+  // reference_maps.init_boundary(J);
+  // shapefunctions.init_boundary(J);
+  // eval_bilinear_form.apply_boundary(A,J);
+  // std::cout<<"------_______-----LINEAR VOLUME-----_______--------"<<std::endl;
 
-  eval_linear_form.apply(J);
-  J.init_boundary(0);
-  reference_maps.init_boundary(J);
-  shapefunctions.init_boundary(J);
-  std::cout<<"------_______-----LINEAR SURFACE 0-----_______-----_______--------"<<std::endl;
+  // eval_linear_form.apply(b,J);
+  // J.init_boundary(0);
+  // reference_maps.init_boundary(J);
+  // shapefunctions.init_boundary(J);
 
-  J.init_boundary(0);
-  reference_maps.init_boundary(J);
-  shapefunctions.init_boundary(J);
-  eval_linear_form.apply_boundary(J);
+  // std::cout<<"------_______-----LINEAR SURFACE 0-----_______-----_______--------"<<std::endl;
 
-  std::cout<<"------_______-----LINEAR SURFACE 1-----_______-----_______--------"<<std::endl;
+  // J.init_boundary(0);
+  // reference_maps.init_boundary(J);
+  // shapefunctions.init_boundary(J);
+  // eval_linear_form.apply_boundary(b,J);
 
-  J.init_boundary(1);
-  reference_maps.init_boundary(J);
-  shapefunctions.init_boundary(J);
-  eval_linear_form.apply_boundary(J);
+  // std::cout<<"------_______-----LINEAR SURFACE 1-----_______-----_______--------"<<std::endl;
 
-  std::cout<<"------_______-----LINEAR SURFACE 2-----_______-----_______--------"<<std::endl;
+  // J.init_boundary(1);
+  // reference_maps.init_boundary(J);
+  // shapefunctions.init_boundary(J);
+  // eval_linear_form.apply_boundary(b,J);
 
-  J.init_boundary(2);
-  reference_maps.init_boundary(J);
-  shapefunctions.init_boundary(J);
-  eval_linear_form.apply_boundary(J);
+  // std::cout<<"------_______-----LINEAR SURFACE 2-----_______-----_______--------"<<std::endl;
+
+  // J.init_boundary(2);
+  // reference_maps.init_boundary(J);
+  // shapefunctions.init_boundary(J);
+  // eval_linear_form.apply_boundary(b,J);
 
   // J.init_boundary(1);
 
@@ -1343,6 +1377,59 @@ auto NewTrace=NewOperator(TraceOperator());
   // std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
   // std::cout<<"------_______-----END EVALUATION-----_______--------"<<std::endl;
 
+
+  std::cout<<"n_dofs()="<<std::endl;
+  std::cout<<space_ptr->n_dofs()<<std::endl;
+  for(Integer ii=0;ii<n_dofs;ii++)
+    {
+      for(Integer jj=0;jj<n_dofs;jj++)
+        std::cout<<A[ii][jj]<<" ";
+      std::cout<<std::endl;
+    }
+
+  for(Integer ii=0;ii<n_dofs;ii++)
+    {
+        std::cout<<b[ii]<<std::endl;
+    }
+  // std::cout<<"tags="<<std::endl;
+
+  // for(int el=0;el<mesh.n_elements();el++)
+  //   {
+  //     // auto side_tags=mesh.elem(el).side_tags;
+  //       for(int j=0;j<mesh.elem(el).side_tags.size();j++)
+  //         {
+  //           // mesh.elem(el).side_tags[j]=j;
+  //         }
+  //       // std::cout<<side_tags[j]<<std::endl;
+  //   }
+  // for(int el=0;el<mesh.n_elements();el++)
+  //   {
+  //     auto side_tags=mesh.elem(el).side_tags;
+  //       for(int j=0;j<mesh.elem(el).side_tags.size();j++)
+  //       std::cout<<side_tags[j]<<std::endl;
+  //   }
+  //   std::cout<<"mesh.side_nodes()="<<std::endl;
+    // std::cout<<mesh.side_nodes()<<std::endl;
+
+
+// decltype(L2Inner(v1,u1))::form mm(5);
+    // using t=std::tuple<std::tuple<>,std::tuple<>,std::tuple<>,std::tuple<>,std::tuple<>,std::tuple<>,std::tuple<>,std::tuple<>,std::tuple<>>;
+    // constexpr Integer HHH=-2;
+    // TupleChangeType<HHH,IdentityOperator,t> oo(4);
+    // SubTupleHelper<0,HHH+1,TupleTypeSize<t>::value-1,t>::type kk(5);
+    // Number<TupleTypeSize<t>::value> lk(5);
+    // using a1=TupleChangeTypeHelper<HHH,IdentityOperator,t>::typeLeft;
+    // using a2=TupleChangeTypeHelper<HHH,IdentityOperator,t>::typeRight;
+    // TupleCatType<a1,std::tuple<IdentityOperator>,a2> ok5(5);
+    // a1 oo66(1);
+    // a2 kk55(3);
+
+    // TupleChangeTypeHelper<HHH,IdentityOperator,t>::typeLeft k1(1);
+    // TupleChangeTypeHelper<HHH,IdentityOperator,t>::typeRight k2(1);
+
+    // TupleChangeType<0,IdentityOperator,std::tuple<std::tuple<>,std::tuple<>,std::tuple<>,std::tuple<>,std::tuple<>,std::tuple<>,std::tuple<>,std::tuple<>>> oo(4);
+
+    // TupleChangeType<1,char,std::tuple<TraceOperator,IdentityOperator,GradientOperator,CurlOperator,DivergenceOperator>> oo(4);
 
 // constexpr const auto face_dofs=decltype(W)::faces_dofs_array;
 // constexpr const auto Nface_dofs=decltype(W)::Nfaces_dofs_array;
@@ -1463,9 +1550,9 @@ auto NewTrace=NewOperator(TraceOperator());
 // decltype(eval_linear_form)::EvaluationOfL2InnersVolume::L2Products a4k(6);
 
 // decltype(bilinear_form)::FunctionSpace a444k(6);
-// auto l2prdo=L2Inner(v1,u1);
+// auto l2prdo=L2Inner(v0,u0);
 // std::cout<<"kkkk3333="<<std::endl;
-// auto spcptr=find_spaces_ptr<decltype(bilinear_form)::FunctionSpace>(bilinearform);//C-v1+v1*C*C*(-Transpose(f1)));
+// auto spcptr=find_spaces_ptr<decltype(bilinear_form)::FunctionSpace>(bilinearform);//C-v0+v0*C*C*(-Transpose(f1)));
 // if(spcptr==nullptr)
 //  std::cout<<"nullptr="<<std::endl;
 // else
@@ -1476,7 +1563,11 @@ auto NewTrace=NewOperator(TraceOperator());
 //    std::cout<<tuple_get<1>(ecm)[0][4]<<std::endl;
 // }
 
-// decltype(eval_linear_form)::TupleOfPairsNumbers mb(5);
+// Number<TupleTypeSize<decltype(bilinear_form)::TupleOfPairsNumbers>::value> mb(5);
+// decltype(bilinear_form)::TupleOfPairsNumbers m3b(5);
+
+// decltype(eval_bilinear_form)::EvaluationOfL2InnersVolume::EvalOfL2InnersType s3k(6);
+// decltype(eval_bilinear_form)::EvaluationOfL2InnersSurface::EvalOfL2InnersType s32k(6);
 // Number<TupleTypeSize<decltype(eval_bilinear_form)::EvaluationOfL2InnersSurface::L2Products>::value-1> lkkljkkj(6);        
 // decltype(eval_linear_form)::EvaluationOfL2InnersSurface::EvalOfL2InnersType a44k(6);
 // decltype(eval_bilinear_form)::ShapeFunctions escho(6);
@@ -1487,41 +1578,41 @@ auto NewTrace=NewOperator(TraceOperator());
 // decltype(shapefunctions)::TupleOfTupleCompositeShapeFunctionSurface kk2(5);
 // decltype(shapefunctions)::SurfaceForm k3k(5);
 // Number<decltype(shapefunctions)::GeneralForm::FunctionSpace::Nuniquesubspaces> kjn(5);
-// decltype(surface_integral(NewTrace(u2),NewTrace(v2)))::QRule oki(6);
-// Number<QuadratureOrder<decltype(NewTrace(u2))>::value> ok4i5(6);
-// decltype(NewTrace(u2)) mio(5);
+// decltype(surface_integral(NewTrace(u1),NewTrace(v1)))::QRule oki(6);
+// Number<QuadratureOrder<decltype(NewTrace(u1))>::value> ok4i5(6);
+// decltype(NewTrace(u1)) mio(5);
 
 // decltype(shapefunctions.surface_tuple()) jk(5);
 // decltype(shapefunctions.composite_shapes_surface()) j4k(5);
-// auto em=surface_integral(NewTrace(u3),NewTrace(v3));
+// auto em=surface_integral(NewTrace(u2),NewTrace(v2));
 // using GeneralForm=decltype(eval_bilinear_form);
 // TupleOfL2Products2<1,typename GeneralForm::TupleOfPairsNumbers, typename GeneralForm::type::Form >::type ok(5);
 // auto escom=
-// L2Inner((u1),(v1))-
-// surface_integral(Trace(u3),Trace(v3))
+// L2Inner((u0),(v0))-
+// surface_integral(Trace(u2),Trace(v2))
 // -
-// L2Inner((u1),(v1))+
-// surface_integral(Trace(u1),Trace(v1))-
-// surface_integral(Trace(u3),Trace(v3))-
-// L2Inner((u3),(v3))
-// -
+// L2Inner((u0),(v0))+
+// surface_integral(Trace(u0),Trace(v0))-
+// surface_integral(Trace(u2),Trace(v2))-
 // L2Inner((u2),(v2))
 // -
-// surface_integral(Trace(u3),Trace(v3))-
-// surface_integral(Trace(u3),Trace(v3))-
-// L2Inner((u1),(v1))-
-// surface_integral(Trace(u3),Trace(v3))-
-// surface_integral(Trace(u3),Trace(v3))-
-// L2Inner((u1),(v1))+
-// L2Inner((u1),(v1))-
-// surface_integral(Trace(u1),Trace(v1))-
-// L2Inner((u1),(v1));
+// L2Inner((u1),(v1))
+// -
+// surface_integral(Trace(u2),Trace(v2))-
+// surface_integral(Trace(u2),Trace(v2))-
+// L2Inner((u0),(v0))-
+// surface_integral(Trace(u2),Trace(v2))-
+// surface_integral(Trace(u2),Trace(v2))-
+// L2Inner((u0),(v0))+
+// L2Inner((u0),(v0))-
+// surface_integral(Trace(u0),Trace(v0))-
+// L2Inner((u0),(v0));
 
 // auto ooo=ExtractForm<1>(escom);//VolumeForm<-1>(VolumeForm<-1>(bilinearform));
 // decltype(ooo) klib(5);
   // OperatorType<ExtractFormType<1,decltype(bilinearform)>> ee(65);
 // decltype(escom) ee(6);
- // auto bilinearform2=surface_integral(Trace(u3),Trace(v3));
+ // auto bilinearform2=surface_integral(Trace(u2),Trace(v2));
   //  // std::vector<Vector<Real,2>> points;
   //  const auto & elem=mesh.elem(0);
   //  Simplex<2,1> simplex_side;
@@ -1569,11 +1660,11 @@ auto NewTrace=NewOperator(TraceOperator());
 // decltype(shape_functions)::TupleOfTupleCompositeShapeFunction ee(1);
 // decltype(linear_form()) ee3(1);
 
- // auto bilinearform2= L2Inner(u1,v1)-L2Inner(u1,v1)-L2Inner(u1,v1);//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
+ // auto bilinearform2= L2Inner(u0,v0)-L2Inner(u0,v0)-L2Inner(u0,v0);//+ L2Inner(Grad(u0),Grad(v0))+L2Inner(u0,v2);//+L2Inner(Grad(u1),Grad(v1));//+L2Inner(f3*u2,v2);
 
 
  // decltype(bilinearform) ooo(5);
- // auto newform= L2Inner(Epsilon(u1),Epsilon(v1));//+ L2Inner(Grad(u1),Grad(v1))+L2Inner(u1,v3);//+L2Inner(Grad(u2),Grad(v2));//+L2Inner(f3*u3,v3);
+ // auto newform= L2Inner(Epsilon(u0),Epsilon(v0));//+ L2Inner(Grad(u0),Grad(v0))+L2Inner(u0,v2);//+L2Inner(Grad(u1),Grad(v1));//+L2Inner(f3*u2,v2);
  // decltype(shape_functions)::TupleOfTupleCompositeShapeFunctionTensor ee(4);
 
 // auto oks=Eval(decltype(linearform)(linearform.left(),linearform.right()),shape_functions);
@@ -1589,32 +1680,32 @@ auto NewTrace=NewOperator(TraceOperator());
 // std::cout<<fqp<<std::endl;
 // std::cout<<fqtrans<<std::endl;
 
-// OperatorType<decltype(Transpose(Epsilon(v1))), GaussPoints<Simplex<2, 2>, 1> > aa;
+// OperatorType<decltype(Transpose(Epsilon(v0))), GaussPoints<Simplex<2, 2>, 1> > aa;
 // decltype(shape_functions)::TupleCompositeOperatorsAndQuadrature ok03(0);
 // OperatorAndQuadratureTupleType<decltype(linearform)>::type ee(5);
 // OperatorAndQuadratureTupleType<decltype(linearform)>::composite_type e4e(5);
 
-// decltype(L2Inner((u3),(v3+v2))) ee1(5);
-// decltype(L2Inner((u3),(v3-v2))) ee2(5);
-// decltype(L2Inner((u3+u2),(v3))) ee3(5);
-// decltype(L2Inner((u3-u2),(v3))) ee4(5);
-// decltype(L2Inner((u3+u2),(v3+v2))) ee5(5);
-// decltype(L2Inner((u3-u2),(v3-v2))) ee6(5);
-// decltype(L2Inner((u3+u2),(v3-v2))) ee7(5);
-// decltype(L2Inner((u3-u2),(v3+v2))) ee8(5);
+// decltype(L2Inner((u2),(v2+v1))) ee1(5);
+// decltype(L2Inner((u2),(v2-v1))) ee2(5);
+// decltype(L2Inner((u2+u1),(v2))) ee3(5);
+// decltype(L2Inner((u2-u1),(v2))) ee4(5);
+// decltype(L2Inner((u2+u1),(v2+v1))) ee5(5);
+// decltype(L2Inner((u2-u1),(v2-v1))) ee6(5);
+// decltype(L2Inner((u2+u1),(v2-v1))) ee7(5);
+// decltype(L2Inner((u2-u1),(v2+v1))) ee8(5);
 
-// decltype(L2Inner((u3-u2-u1),(v3+v2+v1))) ee9(5);
-// decltype(L2Inner((u3-u2-u1),(v3+v2-v1))) ee10(5);
-// decltype(L2Inner((u3-u2-u1),(v3-v2+v1))) ee11(5);
-// decltype(L2Inner((u3-u2-u1),(v3-v2-v1))) ee12(5);
+// decltype(L2Inner((u2-u1-u0),(v2+v1+v0))) ee9(5);
+// decltype(L2Inner((u2-u1-u0),(v2+v1-v0))) ee10(5);
+// decltype(L2Inner((u2-u1-u0),(v2-v1+v0))) ee11(5);
+// decltype(L2Inner((u2-u1-u0),(v2-v1-v0))) ee12(5);
 
 
-// decltype(L2Inner((u3-u2-u1),(v3+v2+v1))) ee13(5);
-// decltype(L2Inner((u3-u2+u1),(v3+v2-v1))) ee14(5);
-// decltype(L2Inner((u3+u2-u1),(v3-v2+v1))) ee15(5);
-// decltype(L2Inner((u3+u2+u1),(v3-v2-v1))) ee16(5);
+// decltype(L2Inner((u2-u1-u0),(v2+v1+v0))) ee13(5);
+// decltype(L2Inner((u2-u1+u0),(v2+v1-v0))) ee14(5);
+// decltype(L2Inner((u2+u1-u0),(v2-v1+v0))) ee15(5);
+// decltype(L2Inner((u2+u1+u0),(v2-v1-v0))) ee16(5);
 
-// decltype(L2Inner((C*u3+C*u2+C*u1),(C*v3-C*v2-C*v1))) ee17(5);
+// decltype(L2Inner((C*u2+C*u1+C*u0),(C*v2-C*v1-C*v0))) ee17(5);
 // decltype(Epsilon) ok(1);
 // decltype(reference_maps)::TupleOperatorsAndQuadrature o2k(1);
 // decltype(reference_maps)::TupleCompositeOperatorsAndQuadrature o24k(1);
@@ -1674,7 +1765,7 @@ auto NewTrace=NewOperator(TraceOperator());
 //   // decltype(shape_functions)::TupleOfTupleCompositeShapeFunctionTensor ede4e(4);
   // decltype(bilinearform) eeee(6);
   // decltype(linearform) eee4e(6);
-//   // OperatorAndQuadratureTupleType<decltype(NewOp2(v1))>::type ee(65,4,4,4,4);
+//   // OperatorAndQuadratureTupleType<decltype(NewOp2(v0))>::type ee(65,4,4,4,4);
 // // decltype(reference_maps)::TupleOperatorsAndQuadrature eee(5);
 // // decltype(reference_maps)::TupleCompositeOperatorsAndQuadrature ee4e(5);
 // // decltype(reference_maps)::TupleOfTupleNoQuadrature ee444e(5);
@@ -1738,55 +1829,55 @@ auto NewTrace=NewOperator(TraceOperator());
   // eval_linear_form.apply(J);
 
 
-//  auto mm=Evaluation<Expression<decltype(alpha*u1)>, GaussPoints<Simplex<2,2>,3>>((alpha*u1));
+//  auto mm=Evaluation<Expression<decltype(alpha*u0)>, GaussPoints<Simplex<2,2>,3>>((alpha*u0));
 
 
  // decltype(shape_functions)::TupleOfTupleCompositeShapeFunctionTensor e(6);
  // decltype(shape_functions)::TupleOfTupleCompositeShapeFunction e4(6);
 
 // FQPValues<Matrix<double, 1L, 2L>, 1L, 3L> hh;
-//  auto ecc=form_of_composite_operator(NewOp1(v1));
+//  auto ecc=form_of_composite_operator(NewOp1(v0));
 //  auto ecc2=Evaluation<Expression<decltype(ecc)>,GaussPoints<Simplex<2,2>,1>>(ecc);
 //  ecc2.apply(hh,J,shape_functions());
  
-//  // OperatorType<decltype(NewOp1(v1)),GaussPoints<Simplex<2,2>,1>> e(6);
+//  // OperatorType<decltype(NewOp1(v0)),GaussPoints<Simplex<2,2>,1>> e(6);
 
-//   TupleOfCombinationFunctions<decltype(u1)::Nmax,MultipleAddition<decltype(bilinearform),decltype(linearform)>>::type onlycomposite=build_tuple_of_combination_functions<decltype(u1)::Nmax>(bilinearform,linearform);
-
-
+//   TupleOfCombinationFunctions<decltype(u0)::Nmax,MultipleAddition<decltype(bilinearform),decltype(linearform)>>::type onlycomposite=build_tuple_of_combination_functions<decltype(u0)::Nmax>(bilinearform,linearform);
 
 
 
 
 
 
-// FormOfCompositeOperatorType<decltype(NewOp1(v1))>::type ok(1);
+
+
+// FormOfCompositeOperatorType<decltype(NewOp1(v0))>::type ok(1);
 // decltype(shape_functions)::TupleOfTupleCompositeShapeFunction e4ee(6);
 // decltype(shape_functions)::TupleOfTupleCompositeShapeFunctionTensor eee(6);
 
 
 
-// TupleOfCombinationFunctions<decltype(u1)::Nmax,decltype(bilinearform),decltype(linearform)>::type eee(6);
+// TupleOfCombinationFunctions<decltype(u0)::Nmax,decltype(bilinearform),decltype(linearform)>::type eee(6);
 
  // decltype(onlycomposite) onle333ycomposite;
  // decltype(shape_functions()) e(6);
- // static_assert(IsSame<decltype(onlycomposite),typename TupleOfCombinationFunctions<decltype(u1)::Nmax,MultipleAddition<decltype(bilinearform),decltype(linearform)>>::type>::value && "they are not same");
+ // static_assert(IsSame<decltype(onlycomposite),typename TupleOfCombinationFunctions<decltype(u0)::Nmax,MultipleAddition<decltype(bilinearform),decltype(linearform)>>::type>::value && "they are not same");
 
 // Number<decltype(bilinear_form)::FunctionSpace::Nuniquesubspaces > ee(5);
 // Number<decltype(linear_form)::FunctionSpace::Nuniquesubspaces > e4(5);
 
-// Number<decltype(u1)::Nmax> eee(6);
+// Number<decltype(u0)::Nmax> eee(6);
 
 
 
-// decltype(build_tuple_of_combination_functions<decltype(u1)::Nmax>(decltype(bilinearform)(),decltype(linearform)())) ekl(6);
+// decltype(build_tuple_of_combination_functions<decltype(u0)::Nmax>(decltype(bilinearform)(),decltype(linearform)())) ekl(6);
 
 // decltype(shape_functions()) eee(6);
 
-// decltype(u1)::UniqueElementFunctionSpacesTupleType oo(5);
-// Number<decltype(u1)::value> o1(3);
-// Number<decltype(u2)::value>o41(3);
-// Number<decltype(u3)::value>o14(3);
+// decltype(u0)::UniqueElementFunctionSpacesTupleType oo(5);
+// Number<decltype(u0)::value> o1(3);
+// Number<decltype(u1)::value>o41(3);
+// Number<decltype(u2)::value>o14(3);
 
 
 
@@ -1798,8 +1889,8 @@ auto NewTrace=NewOperator(TraceOperator());
 // decltype(ecc2) l(5);
 
 //   std::cout<<"apply2"<<std::endl;
-  // auto Ku=4*Grad(u1);
-  // auto Kv=4*Grad(v1);
+  // auto Ku=4*Grad(u0);
+  // auto Kv=4*Grad(v0);
   // auto esm=L2Inner(Ku,Kv);
   // auto generalesm=general_form(esm);
   // auto shape=shape_function_coefficients(generalesm);
@@ -1816,7 +1907,7 @@ auto NewTrace=NewOperator(TraceOperator());
 
 
     // using Left=decltype(f3);
-    // using Right=decltype(v3);
+    // using Right=decltype(v2);
     // using TestOrTrialLeft= IsTestOrTrial<Left>;
     // using TestOrTrialRight= IsTestOrTrial<Right>;
     // static constexpr Integer leftN=TestOrTrialLeft::number;
@@ -1833,11 +1924,11 @@ auto NewTrace=NewOperator(TraceOperator());
     // TestTrialNumbers eee(6);
 
 
-  // decltype(L2Inner(f3,v3))::TestTrialNumbers eeee(6);
-  // auto seee=L2Inner(f3,v3);
+  // decltype(L2Inner(f3,v2))::TestTrialNumbers eeee(6);
+  // auto seee=L2Inner(f3,v2);
 
 
-// Evaluation<Expression<decltype(f3*u3)>,GaussPoints<Simplex<2,2>,5>>::subtype okk(6); 
+// Evaluation<Expression<decltype(f3*u2)>,GaussPoints<Simplex<2,2>,5>>::subtype okk(6); 
 
 
 //////////////////// HERE
@@ -2196,14 +2287,14 @@ for(Integer ii=0;ii<Constant;ii++)
 
 // nonzero+=mat3(0,0)+mat3(0,1)+mat3(0,2)+mat3(1,0)+mat3(1,1)+mat3(1,2)+mat3(2,0)+mat3(2,1)+mat3(2,2);
 
-   // nonzero=StaticScalarProduct<Nonzero>(v1,v2);
+   // nonzero=StaticScalarProduct<Nonzero>(v0,v1);
     // StaticMatrixProduct<findnonzeronumbers,nonzeroproduct>(mat1,mat2,mat3,vec1,vec2);
     //     // nonzero=0;
 
 
               // mat3= mat1 * mat2;
 
-     // nonzero=v1[3]*v2[2]+v1[4]*v2[5]+v1[5]*v2[8];
+     // nonzero=v0[3]*v1[2]+v0[4]*v1[5]+v0[5]*v1[8];
     // nonzero=0;
     // for(Integer ii=0;ii<3;ii++)
     //   nonzero+=mat1(1,ii)*mat2(ii,2);

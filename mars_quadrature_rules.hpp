@@ -390,36 +390,36 @@ static constexpr  Matrix<Real,7,2> QP5_Simplex2_qp_points(0.33333333333333, 0.33
 
 
 static constexpr  Array<Real,1> QP1_Simplex2_qp_weights(1); 
-static constexpr  Array<Real,1> QP1_Simplex2_qp_sqrt_abs_weights(1);                                                        
+// static constexpr  Array<Real,1> QP1_Simplex2_qp_sqrt_abs_weights(1);                                                        
 static constexpr  Array<Real,3> QP2_Simplex2_qp_weights(0.33333333333333,
                                                        0.33333333333333,
                                                        0.33333333333333);
-static constexpr  Array<Real,3> QP2_Simplex2_qp_sqrt_abs_weights(
-                                                       0.577350269189623,
-                                                       0.577350269189623,
-                                                       0.577350269189623);
+// static constexpr  Array<Real,3> QP2_Simplex2_qp_sqrt_abs_weights(
+//                                                        0.577350269189623,
+//                                                        0.577350269189623,
+//                                                        0.577350269189623);
 static constexpr  Array<Real,4> QP3_Simplex2_qp_weights(0.15902069087198858469718450103758,
                                                       0.090979309128011415302815498962418,
                                                       0.15902069087198858469718450103758,
                                                       0.090979309128011415302815498962418);
-static constexpr  Array<Real,4> QP3_Simplex2_qp_sqrt_abs_weights(
-                                                     0.398773984698085,
-                                                     0.301627765843948,
-                                                     0.398773984698085,
-                                                     0.301627765843948);
+// static constexpr  Array<Real,4> QP3_Simplex2_qp_sqrt_abs_weights(
+//                                                      0.398773984698085,
+//                                                      0.301627765843948,
+//                                                      0.398773984698085,
+//                                                      0.301627765843948);
 static constexpr  Array<Real,6> QP4_Simplex2_qp_weights (0.22338158967801, 
                                                         0.22338158967801,
                                                         0.22338158967801,
                                                         0.10995174365532,
                                                         0.10995174365532, 
                                                         0.10995174365532);
-static constexpr  Array<Real,6> QP4_Simplex2_qp_sqrt_abs_weights(
-                                                       0.472632615969328,
-                                                       0.472632615969328,
-                                                       0.472632615969328,
-                                                       0.331589721878287,
-                                                       0.331589721878287,
-                                                       0.331589721878287);
+// static constexpr  Array<Real,6> QP4_Simplex2_qp_sqrt_abs_weights(
+//                                                        0.472632615969328,
+//                                                        0.472632615969328,
+//                                                        0.472632615969328,
+//                                                        0.331589721878287,
+//                                                        0.331589721878287,
+//                                                        0.331589721878287);
 static constexpr  Array<Real,7> QP5_Simplex2_qp_weights (0.22500000000000, 
                                                         0.13239415278851, 
                                                         0.13239415278851, 
@@ -427,14 +427,14 @@ static constexpr  Array<Real,7> QP5_Simplex2_qp_weights (0.22500000000000,
                                                         0.12593918054483, 
                                                         0.12593918054483, 
                                                         0.12593918054483 );
-static constexpr  Array<Real,7> QP5_Simplex2_qp_sqrt_abs_weights(
-                                                       0.474341649025257, 
-                                                       0.363860073089244, 
-                                                       0.363860073089244, 
-                                                       0.363860073089244, 
-                                                       0.354879106943238, 
-                                                       0.354879106943238, 
-                                                       0.354879106943238);
+// static constexpr  Array<Real,7> QP5_Simplex2_qp_sqrt_abs_weights(
+//                                                        0.474341649025257, 
+//                                                        0.363860073089244, 
+//                                                        0.363860073089244, 
+//                                                        0.363860073089244, 
+//                                                        0.354879106943238, 
+//                                                        0.354879106943238, 
+//                                                        0.354879106943238);
 
 
 
@@ -453,7 +453,7 @@ public:
   static constexpr Integer NQPoints=1;
   static constexpr  Matrix<Real,1,2> qp_points=QP1_Simplex2_qp_points;
   static constexpr  Array<Real,1> qp_weights=QP1_Simplex2_qp_weights;
-  static constexpr  Array<Real,1> qp_sqrt_abs_weights=QP1_Simplex2_qp_sqrt_abs_weights;
+  // static constexpr  Array<Real,1> qp_sqrt_abs_weights=QP1_Simplex2_qp_sqrt_abs_weights;
 };
 
 
@@ -466,7 +466,7 @@ public:
   static constexpr Integer NQPoints=3;
   static constexpr  Matrix<Real,3,2> qp_points=QP2_Simplex2_qp_points;
   static constexpr  Array<Real,3> qp_weights=QP2_Simplex2_qp_weights;
-  static constexpr  Array<Real,3> qp_sqrt_abs_weights=QP2_Simplex2_qp_sqrt_abs_weights;
+  // static constexpr  Array<Real,3> qp_sqrt_abs_weights=QP2_Simplex2_qp_sqrt_abs_weights;
 };
 
 
@@ -482,7 +482,7 @@ public:
   static constexpr Integer NQPoints=4;
   static constexpr  Matrix<Real,4,2> qp_points=QP3_Simplex2_qp_points;
   static constexpr  Array<Real,4> qp_weights=QP3_Simplex2_qp_weights;
-  static constexpr  Array<Real,4> qp_sqrt_abs_weights=QP3_Simplex2_qp_sqrt_abs_weights;
+  // static constexpr  Array<Real,4> qp_sqrt_abs_weights=QP3_Simplex2_qp_sqrt_abs_weights;
 };
 
 template<Integer Dim>
@@ -494,7 +494,7 @@ public:
   static constexpr Integer NQPoints=6;
   static constexpr  Matrix<Real,6,2> qp_points=QP4_Simplex2_qp_points;
   static constexpr  Array<Real,6> qp_weights=QP4_Simplex2_qp_weights;
-  static constexpr  Array<Real,6> qp_sqrt_abs_weights=QP4_Simplex2_qp_sqrt_abs_weights;
+  // static constexpr  Array<Real,6> qp_sqrt_abs_weights=QP4_Simplex2_qp_sqrt_abs_weights;
 };
 
 
@@ -506,7 +506,7 @@ public:
   static constexpr Integer NQPoints=7;
   static constexpr  Matrix<Real,7,2> qp_points=QP5_Simplex2_qp_points;
   static constexpr  Array<Real,7> qp_weights=QP5_Simplex2_qp_weights;
-  static constexpr  Array<Real,7> qp_sqrt_abs_weights=QP5_Simplex2_qp_sqrt_abs_weights;
+  // static constexpr  Array<Real,7> qp_sqrt_abs_weights=QP5_Simplex2_qp_sqrt_abs_weights;
 };
 
 

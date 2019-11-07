@@ -34,10 +34,10 @@ public Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>>
     static constexpr Integer Order=CheckMaxQuadratureOrder<QuadratureElem,QR,QuadratureOrder<type>::value+1>::value; 
     using QRule=typename QuadratureRule<QR>:: template rule<QuadratureElem,Order>;
 
+    using TestOrTrialLeftType=GetType<typename TestOrTrialLeft::type>;
+    using TestOrTrialRightType=GetType<typename TestOrTrialRight::type>;
 
-    using form= std::tuple<typename TypeOfForm<GetType<typename IsTestOrTrial<Left>::type,0>,
-                                               GetType<typename IsTestOrTrial<Right>::type,0>
-                            >::type >;
+    using form= std::tuple<typename TypeOfForm<TestOrTrialLeftType,TestOrTrialRightType>::type >;
     using TestTrialNumbers=typename FormTestTrialNumbers<GetType<form,0>::value,TestOrTrialLeftValue,TestOrTrialRightValue,leftN,rightN>::type;
 
     using UniqueElementFunctionSpacesTupleType=GetType<RemoveTupleDuplicates< TupleCatType< typename TestOrTrialLeft::UniqueElementFunctionSpacesTupleType,
@@ -102,6 +102,9 @@ public Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>>
 
      auto spaces_ptr()     {return spaces_ptr_;}
      auto spaces_ptr()const{return spaces_ptr_;}
+
+
+     auto label()const{return label_;}
  
 
      auto operator()(){return L2DotProductIntegral<Left,Right,VolumeIntegral,QR>(left_,right_);}
@@ -130,8 +133,15 @@ L2Inner(const Expression<Left>& left,const Expression<Right>& right)
 
 template<typename Left,typename Right,Integer QR=GaussianQuadrature>
 auto
+surface_integral(const Integer label,const Expression<Left>& left,const Expression<Right>& right)
+{return L2DotProductIntegral<Left,Right,false,QR>(left,right,label);}
+
+template<typename Left,typename Right,Integer QR=GaussianQuadrature>
+auto
 surface_integral(const Expression<Left>& left,const Expression<Right>& right)
-{return L2DotProductIntegral<Left,Right,false,QR>(left,right);}
+{ assert(1&&"Add a label for the surface integral");
+  return L2DotProductIntegral<Left,Right,false,QR>(left,right,-1);}
+
 
 // template<typename Left,typename Right>
 // auto

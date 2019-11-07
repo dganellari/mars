@@ -542,6 +542,49 @@ namespace mars {
 		return false;
 	}
 
+
+
+
+	template<Integer Dim, Integer ManifoldDim>
+	void tag_boundary(Mesh<Dim, ManifoldDim> &mesh)
+	{
+		using namespace mars;
+
+		Simplex<Dim, ManifoldDim-1> side;
+		mesh.update_dual_graph();
+		for(Integer i = 0; i < mesh.n_elements(); ++i) {
+			if(!mesh.is_active(i) || !mesh.is_boundary(i)) continue;
+			auto &e = mesh.elem(i);
+
+			std::fill(e.side_tags.begin(), e.side_tags.end(), INVALID_INDEX);
+
+			auto &adj = mesh.dual_graph().adj(i);
+
+			for(Integer k = 0; k < n_sides(e); ++k) {
+                    
+
+				if(adj[k] == INVALID_INDEX) {
+					e.side(k, side);
+					auto n = normal(side, mesh.points());
+
+					Integer tag = 0;
+					for(Integer d = 0; d < Dim; ++d) {
+						if(std::abs(n(d) - 1.) < 1e-8) {
+							tag = (d+1);
+						} else if(std::abs(n(d) + 1.) < 1e-8) {
+							tag = Dim + (d+1);
+						}
+					}
+                    
+
+					e.side_tags[k] = tag;
+
+
+				}
+			}
+		}
+	}
+
 }
 
 

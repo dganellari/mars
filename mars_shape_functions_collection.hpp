@@ -634,7 +634,7 @@ class ShapeFunctionsCollection
   constexpr typename std::enable_if_t< FEFamily==LagrangeFE,void> 
   shape_function_init_aux_aux_aux(Shape& shape, const ShapeFunctionCoefficient<Args...> &coefficients)
   {
-    std::cout<<M<<" "<<FEFamily<<" "<<Order<<std::endl;
+    // std::cout<<M<<" "<<FEFamily<<" "<<Order<<std::endl;
     tuple_get<N>(shape).init();
   }
 
@@ -712,10 +712,10 @@ class ShapeFunctionsCollection
   constexpr typename std::enable_if_t< FEFamily==LagrangeFE,void> 
   shape_function_init_surface_aux_aux_aux(Shape& shape, const ShapeFunctionCoefficient<Args...> &coefficients,const FiniteElem<Elem> &FE)
   {
-    std::cout<<"M,N= "<<M<<" "<<N<<std::endl;
+    // std::cout<<"M,N= "<<M<<" "<<N<<std::endl;
     // from reference to actual element: use rectangular jacobian!!!
     tuple_get<N>(shape).init(FE.side_id());
-    std::cout<<tuple_get<N>(shape).eval()<<std::endl;
+    // std::cout<<tuple_get<N>(shape).eval()<<std::endl;
   }
 
 
@@ -724,7 +724,7 @@ class ShapeFunctionsCollection
   shape_function_init_surface_aux_aux_aux(Shape& shape, const ShapeFunctionCoefficient<Args...> &coefficients,const FiniteElem<Elem> &FE)
   {
     // std::cout<<" "<<M<<" "<<N<<std::endl;
-    std::cout<<tuple_get<M>(coefficients())<<std::endl;
+    // std::cout<<tuple_get<M>(coefficients())<<std::endl;
     tuple_get<N>(shape).init(tuple_get<M>(coefficients()), FE.side_id());
   }
 
@@ -792,27 +792,27 @@ class ShapeFunctionsCollection
   constexpr typename std::enable_if_t<(N>Nmax),void> 
   init_composite_shape_functions_aux_aux(Tuple& tuple, std::tuple<Args1...>& tuple_tensor,const FiniteElem<Elem> &J, std::tuple<Args2...>& tuple_composite)
   {
-    std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
+    // std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
 
   }
 
   template<Integer Nmax,Integer N,typename Tuple,typename...Args1>
   constexpr void init_composite_shape_functions_aux_aux(Tuple& tuple, std::tuple<>& tuple_tensor,const FiniteElem<Elem> &J, std::tuple<Args1...>& tuple_composite)
   {
-    std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
+    // std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
   }
 
   template<Integer Nmax,Integer N,typename Tuple,typename...Args1>
   constexpr void init_composite_shape_functions_aux_aux(Tuple& tuple, std::tuple<Args1...>& tuple_tensor,const FiniteElem<Elem> &J, std::tuple<>& tuple_composite)
   {
-    std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
+    // std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
 
   }
 
   template<Integer Nmax,Integer N,typename Tuple>
   constexpr void init_composite_shape_functions_aux_aux(Tuple& tuple, std::tuple<>& tuple_tensor,const FiniteElem<Elem> &J, std::tuple<>& tuple_composite)
   {
-    std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
+    // std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
 
   }
 
@@ -831,7 +831,7 @@ class ShapeFunctionsCollection
     // TupleOfTupleCompositeShapeFunctionTensor eee(6);
     // Number<N> ee3(5);
     // Number<Nmax> ee(5);
-    std::cout<<"aux aux Nmax,N="<<Nmax<<", "<<N<<std::endl;
+    // std::cout<<"aux aux Nmax,N="<<Nmax<<", "<<N<<std::endl;
 
     // todo fixme scommentami
     composite.apply(tensor,J,tuple);
@@ -858,7 +858,7 @@ class ShapeFunctionsCollection
 
   constexpr void init_composite_shape_functions_volume(const FiniteElem<Elem> &J)
   {
-    std::cout<<"init_composite_shape_functions"<<std::endl;
+    // std::cout<<"init_composite_shape_functions"<<std::endl;
    constexpr Integer Nmax=TupleTypeSize<TupleOfTupleCompositeShapeFunctionVolumetric>::value-1;
    init_composite_shape_functions_aux<Nmax,0>(tuple_volume_,tuple_tensors_volume_,tuple_composite_volume_,J);
    }
@@ -866,7 +866,7 @@ class ShapeFunctionsCollection
 
   constexpr void init_composite_shape_functions_surface(const FiniteElem<Elem> &J)
   {
-    std::cout<<"init_composite_shape_functions"<<std::endl;
+    // std::cout<<"init_composite_shape_functions"<<std::endl;
    constexpr Integer Nmax=TupleTypeSize<TupleOfTupleCompositeShapeFunctionSurface>::value-1;
    init_composite_shape_functions_aux<Nmax,0>(tuple_surface_,tuple_tensors_surface_,tuple_composite_surface_,J);
    }
@@ -879,7 +879,7 @@ class ShapeFunctionsCollection
   {
     // TODO CHECK: SINCE WE HAVE ALREADY HAVE REFERENCES TO MAPS AND COEFFS, do we have to init_map?
     // INIT MAP: takes the corresponding map and compute the shape function in the actual element
-    std::cout<<"init maps"<<std::endl;
+    // std::cout<<"init maps"<<std::endl;
     init_map_volume<MapTupleNumbersVolumetric>(maps_);
     // init_shape_functions: takes also the coefficients which multiply the actual shape functions
     // std::cout<<"init_shape_functions"<<std::endl;
@@ -892,7 +892,7 @@ class ShapeFunctionsCollection
   {
     // TODO CHECK: SINCE WE HAVE ALREADY HAVE REFERENCES TO MAPS AND COEFFS, do we have to init_map?
     // INIT MAP: takes the corresponding map and compute the shape function in the actual element
-    std::cout<<"init maps"<<std::endl;
+    // std::cout<<"init maps"<<std::endl;
     init_map_surface<MapTupleNumbersSurface>(maps_);
     // init_shape_functions: takes also the coefficients which multiply the actual shape functions
     // std::cout<<"init_shape_functions"<<std::endl;
