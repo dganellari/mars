@@ -25,7 +25,8 @@ namespace mars {
 		which means 360 / 27.89 = 12.9. The max number of incidents is then 13.
 		Adding here un upper limit considering that incative elements might be
 		still be present in the list then it will be 2* 13= 26.
-		The allocation is done using 32 as a grace alloc. for special cases.
+		The allocation is done using 32 as a grace alloc. for special cases
+		or bad quality meshes (very small and very large angles).
 */
 		using ElementVector = TempArray<Integer,32>;
 

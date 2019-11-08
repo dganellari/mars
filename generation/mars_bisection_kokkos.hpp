@@ -407,22 +407,27 @@ public:
 		ViewVectorType<Integer> elements;
 		UnorderedMap<Side<2,KokkosImplementation>,ElementVector> mapping;
 		ViewVectorType<uint32_t> tree;
+		ViewVectorType<bool> lepp_occupied;
 
 		ViewVectorType<Integer> index_count;
 		ViewVectorType<Integer> pt_count;
 
 		RefineMesh(
 				UnorderedMap<Side<2, KokkosImplementation>, ElementVector> mp,
-				Mesh_* ms, ViewVectorType<Integer> elems, ViewVectorType<uint32_t> tr,
+				Mesh_* ms, ViewVectorType<Integer> elems,
+				ViewVectorType<uint32_t> tr, ViewVectorType<bool> lo,
 				ViewVectorType<Integer> ic, ViewVectorType<Integer> pc) :
-				mapping(mp), mesh(ms), elements(elems), tree(tr), index_count(ic), pt_count(pc)
+				mapping(mp), mesh(ms), elements(elems), tree(tr), lepp_occupied(
+						lo), index_count(ic), pt_count(pc)
 		{
 		}
 
 		RefineMesh(
 				UnorderedMap<Side<2, KokkosImplementation>, ElementVector> mp,
-				Mesh_* ms, ViewVectorType<Integer> elems, ViewVectorType<uint32_t> tr) :
-				mapping(mp), mesh(ms), elements(elems), tree(tr)
+				Mesh_* ms, ViewVectorType<Integer> elems,
+				ViewVectorType<uint32_t> tr, ViewVectorType<bool> lo) :
+				mapping(mp), mesh(ms), elements(elems), tree(tr), lepp_occupied(
+						lo)
 		{
 		}
 
@@ -451,6 +456,9 @@ public:
 		MARS_INLINE_FUNCTION
 		void depth_first(const Integer node, Integer& count, Integer& pt_count) const
 		{
+			// Avoids lepp path collisions. If the value is alrady set to 1 the threads returns.
+	/*		if(!Kokkos::atomic_compare_exchange_strong(&lepp_occupied(node), false, true))
+				return;*/
 
 			if (is_leaf(node, mesh, tree, mapping))
 			{
@@ -499,9 +507,10 @@ public:
 
 		ScatterElem(
 				UnorderedMap<Side<2, KokkosImplementation>, ElementVector> mp,
-				Mesh_* ms, ViewVectorType<Integer> elems, ViewVectorType<uint32_t> tr,
+				Mesh_* ms, ViewVectorType<Integer> elems,
+				ViewVectorType<uint32_t> tr, ViewVectorType<bool> lo,
 				UnorderedMap<Integer, Edge> lim) :
-				RefineMesh(mp, ms, elems, tr),// lepp_elem_index(lei),
+				RefineMesh(mp, ms, elems, tr, lo),		// lepp_elem_index(lei),
 				lepp_incidents_map(lim)
 		{
 		}
@@ -535,6 +544,10 @@ public:
 		MARS_INLINE_FUNCTION
 		void depth_first(const Integer node) const
 		{
+			// Avoids lepp path collisions. If the value is alrady set to 1 the threads returns.
+			/*if(!Kokkos::atomic_compare_exchange_strong(&this->lepp_occupied(node), false, true))
+				return;
+*/
 			if (is_leaf(node, this->mesh, this->tree, this->mapping))
 			{
 				compute_lepp(node);
@@ -793,11 +806,15 @@ public:
 		ViewVectorType<Integer> pt_count_ = ViewVectorType<Integer>("pt_count",
 				nr_elements + 1); //TODO: try to use the results of the index_count avoiding the uniqueness of the map since the atomic lepp should avoid it.
 
+
+		ViewVectorType<bool> lepp_occupied = ViewVectorType<bool>(
+				"lepp_occupied_count", host_mesh->n_elements());
+
 		Timer timer1;
 
 		parallel_for(nr_elements,
 				RefineMesh(edge_element_map_.mapping_, mesh, elements, tree_,
-						index_count_, pt_count_));
+						lepp_occupied, index_count_, pt_count_));
 
 		double time1 = timer1.seconds();
 		std::cout << "Count took: " << time1 << " seconds." << std::endl;
@@ -842,9 +859,12 @@ public:
 
 		Integer nr_elements = elements.extent(0);
 
+		ViewVectorType<bool> lepp_occupied = ViewVectorType<bool>(
+						"lepp_occupied_fill", host_mesh->n_elements());
+
 		parallel_for(nr_elements,
 				ScatterElem(edge_element_map_.mapping_, mesh, elements, tree_,
-						lepp_incidents_map));
+						lepp_occupied, lepp_incidents_map));
 
 		double time = timer.seconds();
 		std::cout << "Scatter/Fill took: " << time << " seconds." << std::endl;

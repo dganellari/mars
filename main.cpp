@@ -849,9 +849,12 @@ void test_partition_4D()
 	}
 }
 
-void run_benchmarks(int level)
+void run_benchmarks(int level, int refine_level)
 {
 	using namespace mars;
+
+	std::cout<<"Generation level:"<<level<<std::endl;
+	std::cout<<"Refinement level:"<<refine_level<<std::endl;
 
 	/*Mesh2 m;
 	read_mesh("../data/square_2_def.MFEM", m);
@@ -931,29 +934,43 @@ void run_benchmarks(int level)
 	b.run(level, pMesh2, "pb");*/
 
 
-	/*ParallelMesh2 pMesh2;
-	generate_cube(pMesh2, level, level,0);
+	/*Mesh2 m;
+	read_mesh("../data/square_2_def.MFEM", m);
 
+	ParallelMesh2 pMesh2;
+	convert_serial_mesh_to_parallel(pMesh2, m);
+
+	ParallelLeppBenchmark<ParallelMesh2> pb;
+	pb.run(level,pMesh2, "pb");
+
+	PreLeppBenchmark<Mesh2> b;
+	b.run(level, m, "b");*/
+
+
+
+/*	ParallelMesh2 pMesh2;
+	//generate_cube(pMesh2, level +6, level + 20 , 0);
+	generate_cube(pMesh2, level, level, 0);
 	ParallelLeppBenchmark<ParallelMesh2> b;
-	b.run(level,pMesh2, "pb");
+	b.run(refine_level, pMesh2, "pb");*/
 
-	Mesh2 sMesh;
+	/*Mesh2 sMesh;
 	convert_parallel_mesh_to_serial(sMesh, pMesh2);
 
 	PreLeppBenchmark<Mesh2> b2;
-	b2.run(level, sMesh, "b2");*/
+	b2.run(refine_level, sMesh, "b2");*/
 
 	ParallelMesh3 pMesh3;
-	generate_cube(pMesh3, level, level,level);
+	generate_cube(pMesh3, level + 6, level- 10, level);
 
 	ParallelLeppBenchmark<ParallelMesh3> b;
-	b.run(level,pMesh3, "pb");
+	b.run(refine_level,pMesh3, "pb");
 
-	Mesh3 sMesh3;
+/*	Mesh3 sMesh3;
 	convert_parallel_mesh_to_serial(sMesh3, pMesh3);
 
 	PreLeppBenchmark<Mesh3> b3;
-	b3.run(level, sMesh3, "b3");
+	b3.run(refine_level, sMesh3, "b3");*/
 }
 
 void test_incomplete_2D()
@@ -1190,12 +1207,23 @@ int main(int argc, char *argv[])
 	// write_file(); 
 
 	int level = 1;
+	int refine_level =1;
 	std::string filename = "../data/write/tetrakis.MFEM";
 	if (argc > 1) {
 		char *end_ptr = argv[1];
 		level = strtol(argv[1], &end_ptr, 10);
 		if (*end_ptr != '\0' || end_ptr == argv[1])
 			warnx("'%s' could not be (completely) converted to long", argv[1]);
+
+		if(argc==3)
+		{
+			char *end_ptr = argv[2];
+			refine_level = strtol(argv[2], &end_ptr, 10);
+			if (*end_ptr != '\0' || end_ptr == argv[1])
+				warnx("'%s' could not be (completely) converted to long",
+						argv[1]);
+		}
+
 	} else
 		std::cout
 				<< "No level of refinement was specified. Setting the default to 1!"
@@ -1240,7 +1268,7 @@ int main(int argc, char *argv[])
 		cudaDeviceSetLimit(cudaLimitStackSize, 32768); // set stack to 32KB only for cuda since it is not yet supported in kokkos.
 #endif
 
-		run_benchmarks(level);
+		run_benchmarks(level, refine_level);
 
 		//test_mars_mesh_generation_kokkos_2D(2,4);
 
