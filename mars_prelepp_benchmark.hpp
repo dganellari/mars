@@ -12,7 +12,7 @@ namespace mars {
 	template<class Mesh>
 	class PreLeppBenchmark {
 	public:
-		using EdgeSelectPtr = std::shared_ptr<EdgeSelect<Mesh>>;
+		using EdgeSelectPtr = std::shared_ptr<ParallelEdgeSelect<Mesh>>;
 
 		static const Integer Dim 		 = Mesh::Dim;
 		static const Integer ManifoldDim = Mesh::ManifoldDim;
@@ -110,7 +110,6 @@ namespace mars {
 
 			q.save_csv(edge_select->name() + suffix, output_path + "/Quality_" + std::to_string(exp_num) + "_" + edge_select->name() + suffix + "_lepp.csv", true); //exp_num == 0
 			q.save_report(output_path + "/Quality_" + edge_select->name() + suffix + "_lepp.svg");
-
 			std::cout << "======================================\n";
 		}
 	};

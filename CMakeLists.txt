@@ -123,6 +123,15 @@ list(APPEND MARS_SOURCES
 set(CMAKE_CXX_DEBUG "-g")
 
 add_library(mars STATIC ${MARS_HEADERS} ${MARS_SOURCES})
+target_link_libraries(mars
+  $<$<CONFIG:RelWithDebInfo>:asan>
+  $<$<CONFIG:RelWithDebInfo>:ubsan>
+)
+target_compile_options(mars PUBLIC
+  -Wall -Wextra
+  $<$<CONFIG:RelWithDebInfo>:-fsanitize=address -fsanitize=leak -fsanitize=undefined -fsanitize-address-use-after-scope>
+#  $<$<CONFIG:RelWithDebInfo>:-fsanitize=memory -fsanitize-memory-track-origins>
+)
 target_link_libraries(mars ${MPI_LIBRARIES})
 #target_compile_features(mars PUBLIC cxx_std_11)
 

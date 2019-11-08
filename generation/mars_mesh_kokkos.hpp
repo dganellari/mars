@@ -27,7 +27,13 @@ public:
 	//using Point = SubView<Real,Dim>;
 	using SerialMesh = mars::Mesh<Dim_,ManifoldDim_>;
 
-	MARS_INLINE_FUNCTION Mesh() {}
+	MARS_INLINE_FUNCTION Mesh()
+		: ParallelIMesh<Dim_>()
+		, elements_size_(0)
+		, points_size_(0)
+		, children_size_(0)
+		, sorted_elements_(false)
+	{}
 
 	void reserve(const std::size_t n_elements, const std::size_t n_points) override
 	{
@@ -443,13 +449,13 @@ public:
 	}
 
 	MARS_INLINE_FUNCTION
-	Integer set_n_nodes(Integer size)
+	void set_n_nodes(Integer size)
 	{
 		points_size_ = size;
 	}
 
 	MARS_INLINE_FUNCTION
-	Integer set_n_childrens(Integer size)
+	void set_n_childrens(Integer size)
 	{
 		children_size_ = size;
 	}
@@ -467,7 +473,7 @@ public:
 	}
 
 	MARS_INLINE_FUNCTION
-	Integer set_n_elements(Integer size)
+	void set_n_elements(Integer size)
 	{
 		elements_size_ = size;
 	}
