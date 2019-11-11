@@ -78,7 +78,7 @@ public:
 
 private:
 	void set_edge_select(
-			const std::shared_ptr<EdgeSelect<Mesh>> &edge_select) final {
+			const std::shared_ptr<EdgeSelect<Mesh>> &edge_select) {
 
 		if(edge_select->name() != "LongestEdge")
 			errx(select_err,"%s %d %s Error: Calling set_edge_select on LeppBisection with %s is not supported!",

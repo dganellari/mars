@@ -106,6 +106,21 @@ public:
 		return *this;
 	}
 
+	//just for the purpose of the stable select. Stable on the coordinates comp.
+	MARS_INLINE_FUNCTION
+	bool operator<(const Point &right) const
+	{
+		for (Integer i = 0; i < Dim; ++i)
+		{
+			if(this->operator[](i) < right[i])
+				return true;
+			if(this->operator[](i) > right[i])
+				return false;
+		}
+
+		return false;
+	}
+
 	/*
 	 void describe(std::ostream &os) const
 	 {
