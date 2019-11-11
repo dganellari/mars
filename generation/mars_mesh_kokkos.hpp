@@ -24,7 +24,7 @@ public:
 
 	using Elem = mars::Simplex<Dim, ManifoldDim,KokkosImplementation>;
 	using SideElem = mars::Simplex<Dim, ManifoldDim-1,KokkosImplementation>;
-	//using Point = SubView<Real,Dim>;
+	using Point = mars::Point<Real,Dim>;
 	using SerialMesh = mars::Mesh<Dim_,ManifoldDim_>;
 
 	MARS_INLINE_FUNCTION Mesh()
@@ -151,7 +151,7 @@ public:
 	}
 
 	MARS_INLINE_FUNCTION
-	void add_point(const Point<Real, Dim> &point, const Integer index)
+	void add_point(const Point &point, const Integer index)
 	{
 		for (Integer i = 0; i < Dim; ++i)
 		{
@@ -160,19 +160,19 @@ public:
 	}
 
 	MARS_INLINE_FUNCTION
-	Point<Real, Dim> point(const Integer i) override
+	Point point(const Integer i) override
 	{
 		assert(i >= 0);
 		assert(i < points_size_);
-		return Point<Real, Dim>(points_, i);
+		return Point(points_, i);
 	}
 
 	MARS_INLINE_FUNCTION
-	const Point<Real, Dim> point(const Integer i) const override
+	const Point point(const Integer i) const override
 	{
 		assert(i >= 0);
 		assert(i < points_size_);
-		return Point<Real, Dim>(points_, i);
+		return Point(points_, i);
 	}
 
 	const ViewMatrixType<Real> &points() const //override

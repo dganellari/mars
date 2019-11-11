@@ -11,7 +11,7 @@ namespace mars {
 	template<class Mesh>
 	class LeppBenchmark {
 	public:
-		using EdgeSelectPtr = std::shared_ptr<EdgeSelect<Mesh>>;
+		using EdgeSelectPtr = std::shared_ptr<ParallelEdgeSelect<Mesh>>;
 
 		static const Integer Dim 		 = Mesh::Dim;
 		static const Integer ManifoldDim = Mesh::ManifoldDim;

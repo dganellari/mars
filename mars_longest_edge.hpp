@@ -38,7 +38,7 @@ namespace mars {
 			return edge_num;
 		}
 
-		MARS_INLINE_FUNCTION
+	/*	MARS_INLINE_FUNCTION
 		Integer stable_select(const Mesh &mesh, const Integer element_id) const
 				override
 		{
@@ -74,6 +74,47 @@ namespace mars {
 					edge_num = i;
 					otherV = min(v1, v2);
 					otherV2 = v1 + v2;
+				}
+			}
+
+			return edge_num;
+		}*/
+
+		MARS_INLINE_FUNCTION
+		Integer stable_select(const Mesh &mesh, const Integer element_id) const
+				override
+		{
+
+			using Point = typename Mesh::Point;
+
+			const auto &e = mesh.elem(element_id);
+
+			Integer edge_num = 0;
+			Real len = 0;
+
+			Point smallestPoint;
+			for (Integer i = 0; i < n_edges(e); ++i)
+			{
+				Integer v1, v2;
+				e.edge(i, v1, v2);
+
+				Real len_i = (mesh.point(v1) - mesh.point(v2)).squared_norm();
+
+				if (len_i == len)
+				{
+					Point edgeSmallPoint = min(mesh.point(v1), mesh.point(v2));
+					if (edgeSmallPoint < smallestPoint) {
+						len = len_i;
+						edge_num = i;
+						smallestPoint = edgeSmallPoint;
+					}
+				}
+
+				if (len_i > len)
+				{
+					len = len_i;
+					edge_num = i;
+					smallestPoint = min(mesh.point(v1), mesh.point(v2));
 				}
 			}
 

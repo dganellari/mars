@@ -360,9 +360,8 @@ public:
 				Edge new_edge;
 
 				EdgeSelect_ es;
-				const Integer edge_num = es.stable_select(*mesh,
-						incidents[i]);
-				//const Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), edge, i);
+				const Integer edge_num = es.stable_select(*mesh, incidents[i]);
+				//const Integer edge_num = es.select(*mesh, edge, incidents[i]);
 
 				mesh->elem(incidents[i]).edge(edge_num, new_edge.nodes[0],
 						new_edge.nodes[1]);
@@ -457,8 +456,10 @@ public:
 		void depth_first(const Integer node, Integer& count, Integer& pt_count) const
 		{
 			// Avoids lepp path collisions. If the value is alrady set to 1 the threads returns.
-	/*		if(!Kokkos::atomic_compare_exchange_strong(&lepp_occupied(node), false, true))
-				return;*/
+			if(!Kokkos::atomic_compare_exchange_strong(&lepp_occupied(node), false, true)){
+				//printf("atomic node: %li\n", node);
+				return;
+			}
 
 			if (is_leaf(node, mesh, tree, mapping))
 			{
@@ -534,6 +535,12 @@ public:
 						printf(" (%li - %li - %li) ",lepp_incidents_index(this->index_count(element_id),0),count, element_id);*/
 
 						auto result = lepp_incidents_map.insert(element, this->mapping.key_at(index));
+						/*if (result.existing()){
+							if(this->mapping.key_at(index) == lepp_incidents_map.value_at(result.index())){
+								printf("Existing element in mappp\n");
+
+							}
+						}*/
 						if (result.failed())
 							printf("Exceeded UnorderedMap: lepp_incidents_map capacity\n");
 					}
@@ -545,9 +552,11 @@ public:
 		void depth_first(const Integer node) const
 		{
 			// Avoids lepp path collisions. If the value is alrady set to 1 the threads returns.
-			/*if(!Kokkos::atomic_compare_exchange_strong(&this->lepp_occupied(node), false, true))
+			if(!Kokkos::atomic_compare_exchange_strong(&this->lepp_occupied(node), false, true)){
+				//printf("atomic node: %li\n", node);
 				return;
-*/
+			}
+
 			if (is_leaf(node, this->mesh, this->tree, this->mapping))
 			{
 				compute_lepp(node);
@@ -845,8 +854,8 @@ public:
 		double time3 = timer3.seconds();
 		std::cout << "Deep copy subview took: " << time3 << " seconds." << std::endl;
 
-	/*	printf("lepp_incidents_count: %li\n", h_iac(0));
-		printf("lepp_node_count: %li\n", h_pac(0));*/
+		printf("lepp_incidents_count: %li\n", h_iac(0));
+		printf("lepp_node_count: %li\n", h_pac(0));
 
 		return res;
 	}
@@ -1120,6 +1129,9 @@ public:
 		for (Integer i = 0; i < n_levels; ++i){
 			ViewVectorType<Integer> elements = mark_active(mesh,
 					host_mesh->get_view_active(), host_mesh->n_elements());
+
+			std::cout <<"\nn_marked(" << (i + 1) << "/" << n_levels << ") : "
+									<< elements.extent(0) << std::endl;
 			refine_elements(elements);
 		}
 
