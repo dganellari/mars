@@ -92,7 +92,7 @@ namespace mars {
 
 			if(n_levels <= 20 && mesh.ManifoldDim <4){
 				VTKMeshWriter<typename Mesh::SerialMesh> w;
-				w.write("Parallel_LEPP_" + std::to_string(n_levels) + ".vtu", sMesh);
+				w.write("Parallel_LEPP_" + std::to_string(n_levels) + "_" + std::to_string(mesh.ManifoldDim) +".vtu", sMesh);
 			}
 
 /*

@@ -389,7 +389,6 @@ public:
 		for (auto i = 0; i < mapping.value_at(index).index; ++i)
 		{
 			const auto &element = mapping.value_at(index)[i];
-//			printf("<%li, %li, %ld>\n",element_id, element, mesh->is_active(element));
 			if (mesh->is_active(element)
 					&& mapping.key_at(index) != mapping.key_at(tree(element)))
 			{
@@ -457,7 +456,6 @@ public:
 		{
 			// Avoids lepp path collisions. If the value is alrady set to 1 the threads returns.
 			if(!Kokkos::atomic_compare_exchange_strong(&lepp_occupied(node), false, true)){
-				//printf("atomic node: %li\n", node);
 				return;
 			}
 
@@ -500,10 +498,6 @@ public:
 
 	struct ScatterElem : RefineMesh
 	{
-		//ViewMatrixType<Integer> lepp_elem_index;
-
-		//ViewMatrixType<Integer> lepp_incidents_index;
-
 		UnorderedMap<Integer, Edge> lepp_incidents_map;
 
 		ScatterElem(
@@ -529,18 +523,8 @@ public:
 					auto &element = this->mapping.value_at(index)[i];
 					if (this->mesh->is_active(element))
 					{
-						/*lepp_incidents_index(this->index_count(element_id),0) = this->mapping.key_at(index);
-						lepp_incidents_index(this->index_count(element_id),0) = index;
-						lepp_incidents_index(this->index_count(element_id)++,1) = element;
-						printf(" (%li - %li - %li) ",lepp_incidents_index(this->index_count(element_id),0),count, element_id);*/
-
 						auto result = lepp_incidents_map.insert(element, this->mapping.key_at(index));
-						/*if (result.existing()){
-							if(this->mapping.key_at(index) == lepp_incidents_map.value_at(result.index())){
-								printf("Existing element in mappp\n");
 
-							}
-						}*/
 						if (result.failed())
 							printf("Exceeded UnorderedMap: lepp_incidents_map capacity\n");
 					}
@@ -553,7 +537,6 @@ public:
 		{
 			// Avoids lepp path collisions. If the value is alrady set to 1 the threads returns.
 			if(!Kokkos::atomic_compare_exchange_strong(&this->lepp_occupied(node), false, true)){
-				//printf("atomic node: %li\n", node);
 				return;
 			}
 
@@ -806,7 +789,6 @@ public:
 		std::array<Integer, 2> res;
 
 		Integer nr_elements = elements.extent(0);
-		std::cout << "Nr_elements: " << nr_elements << std::endl;
 
 		/*+1 for the incident total sum for both inclusive and exclusive sum scan at the same result*/
 		ViewVectorType<Integer> index_count_ = ViewVectorType<Integer>(
@@ -815,10 +797,8 @@ public:
 		ViewVectorType<Integer> pt_count_ = ViewVectorType<Integer>("pt_count",
 				nr_elements + 1); //TODO: try to use the results of the index_count avoiding the uniqueness of the map since the atomic lepp should avoid it.
 
-
 		ViewVectorType<bool> lepp_occupied = ViewVectorType<bool>(
-				"lepp_occupied_count", host_mesh->n_elements());
-
+									"lepp_occupied_count", host_mesh->n_elements());
 		Timer timer1;
 
 		parallel_for(nr_elements,
@@ -854,22 +834,22 @@ public:
 		double time3 = timer3.seconds();
 		std::cout << "Deep copy subview took: " << time3 << " seconds." << std::endl;
 
-		printf("lepp_incidents_count: %li\n", h_iac(0));
-		printf("lepp_node_count: %li\n", h_pac(0));
+		/*printf("lepp_incidents_count: %li\n", h_iac(0));
+		printf("lepp_node_count: %li\n", h_pac(0));*/
 
 		return res;
 	}
 
-	Integer allocate_and_fill(const ViewVectorType<Integer> elements,
-		UnorderedMap<Integer, Edge>& lepp_incidents_map, const Integer points_count)
+	Integer fill_lepp(const ViewVectorType<Integer> elements,
+			UnorderedMap<Integer, Edge>& lepp_incidents_map)
 	{
 		using namespace Kokkos;
 		Timer timer;
 
 		Integer nr_elements = elements.extent(0);
 
-		ViewVectorType<bool> lepp_occupied = ViewVectorType<bool>(
-						"lepp_occupied_fill", host_mesh->n_elements());
+		ViewVectorType<bool> lepp_occupied = ViewVectorType<bool>("lepp_occupied_fill",
+				host_mesh->n_elements());
 
 		parallel_for(nr_elements,
 				ScatterElem(edge_element_map_.mapping_, mesh, elements, tree_,
@@ -878,10 +858,16 @@ public:
 		double time = timer.seconds();
 		std::cout << "Scatter/Fill took: " << time << " seconds." << std::endl;
 
-
 		Integer lip_size = lepp_incidents_map.size();
 
-		std::cout<<"lip_size: "<<lip_size<<std::endl;
+		std::cout << "Lip_size: " << lip_size << std::endl;
+
+		return lip_size;
+	}
+
+	void resize_mesh_and_update_map(const Integer lip_size, const Integer points_count)
+	{
+		using namespace Kokkos;
 
 		Timer timer1;
 
@@ -901,12 +887,10 @@ public:
 		//edge_element_map_.describe(std::cout);
 
 		double time2 = timer2.seconds();
-		std::cout << "edge_element_map_.update took: " << time2 << " seconds." << std::endl;
+		//std::cout << "edge_element_map_.update took: " << time2 << " seconds." << std::endl;
 
 		double time1 = timer1.seconds();
 		std::cout << "Resize/rehash took: " << time1 << " seconds." << std::endl;
-
-		return lip_size;
 	}
 
 	inline void copy_to_device(ViewObject<Integer> node_start_index)
@@ -925,92 +909,6 @@ public:
 
 	}
 
-	/*inline void refine_mesh(const Integer n_levels)
-	{
-		using namespace Kokkos;
-
-		Integer mesh_start_index = 0;
-
-		for (Integer i = 0; i < n_levels; ++i)
-		{
-			Integer nr_elements = host_mesh->n_elements();//- mesh_start_index;
-
-			std::cout << "Nr_elements: " << nr_elements << std::endl;
-
-			//get the old n_elements for the old mesh. Inside the loop would be wrong(would get the incremental mesh)
-			mesh_start_index = host_mesh->n_elements();
-
-			Timer timer_refine;
-
-			Integer it_count = 0;
-			while (host_mesh->n_active_elements(nr_elements))
-			{
-				++it_count;
-
-				Kokkos::Timer timer_precomp;
-
-				//Only for the reserve tree the modified nr_elements should be used.
-				//For the others the original mesh nr_elements should be used.
-				reserve_tree(host_mesh->n_elements());
-				precompute_lepp_incidents(mesh, host_mesh->n_elements());
-
-				//TODO: Using the same nr_elements within the while loop it calls the kernel
-				// also for inactive elements which is not good. Compaction?
-
-				double time_precomp = timer_precomp.seconds();
-				std::cout << "paralel precompute_lepp_incidents took: " << time_precomp
-						<< " seconds." << std::endl;
-
-				+1 for the incident total sum for both inclusive and exclusive sum scan at the same result
-				ViewVectorType<Integer> index_count_ = ViewVectorType<Integer>(
-						"index_count", nr_elements + 1);
-
-				ViewVectorType<Integer> pt_count_ = ViewVectorType<Integer>("pt_count",
-						nr_elements + 1); //TODO: try to use the results of the index_count avoiding the uniqueness of the map since the atomic lepp should avoid it.
-
-				auto h_ac = count_lepp(index_count_, pt_count_, nr_elements);
-
-				ViewObject<Integer> node_start_index = ViewObject<Integer>(
-						"node_start_index");
-				copy_to_device(node_start_index);
-
-				Integer elem_start_index = host_mesh->n_elements();
-				Integer child_start_index = host_mesh->n_childrens();
-
-				UnorderedMap<Integer, Edge> lepp_incidents_map = UnorderedMap<Integer, Edge>(h_ac[0]);
-
-				const Integer lip_size = allocate_and_fill(nr_elements,
-						lepp_incidents_map, h_ac[1]);
-
-				ViewMatrixType<Integer> lepp_incident_index = ViewMatrixType<Integer>(
-						"lepp_incidents_index", lip_size, 3);
-
-				compact_map_to_view(lepp_incidents_map, lepp_incident_index);
-
-				Timer timer1;
-
-				parallel_for(lip_size,
-						BisectElem(mesh, lepp_incident_index,
-								edge_element_map_.mapping_, edge_node_map_.mapping_,
-								verbose, elem_start_index, child_start_index,
-								node_start_index));
-
-				double time1 = timer1.seconds();
-				std::cout << "Bisection took: " << time1 << " seconds." << std::endl;
-
-			}
-			//free_mesh();
-
-			double time = timer_refine.seconds();
-					std::cout << "Refine Mesh took: " << time << " seconds. In " << it_count
-							<< " iterations." << std::endl;
-		}
-
-	}
-*/
-
-
-
 	inline void refine_elements(ViewVectorType<Integer>& elements)
 	{
 		using namespace Kokkos;
@@ -1023,18 +921,17 @@ public:
 		{
 			++it_count;
 
-			Kokkos::Timer timer_precomp;
-
 			//Only for the reserve tree the modified nr_elements should be used.
 			//For the others the element set nr_elements should be used.
 			reserve_tree(host_mesh->n_elements());
 			precompute_lepp_incidents(mesh, host_mesh->n_elements());
 
-			double time_precomp = timer_precomp.seconds();
-			std::cout << "paralel precompute_lepp_incidents took: " << time_precomp
-					<< " seconds." << std::endl;
-
 			auto h_ac = count_lepp(elements);
+
+			UnorderedMap<Integer, Edge> lepp_incidents_map = UnorderedMap<
+					Integer, Edge>(h_ac[0]);
+
+			const Integer lip_size = fill_lepp(elements, lepp_incidents_map);
 
 			ViewObject<Integer> node_start_index = ViewObject<Integer>(
 					"node_start_index");
@@ -1043,12 +940,11 @@ public:
 			Integer elem_start_index = host_mesh->n_elements();
 			Integer child_start_index = host_mesh->n_childrens();
 
-			UnorderedMap<Integer, Edge> lepp_incidents_map = UnorderedMap<Integer, Edge>(h_ac[0]);
+			resize_mesh_and_update_map(lip_size, h_ac[1]);
 
-			const Integer lip_size = allocate_and_fill(elements, lepp_incidents_map, h_ac[1]);
-
-			ViewMatrixType<Integer> lepp_incident_index = ViewMatrixType<Integer>(
-					"lepp_incidents_index", lip_size, 3);
+			ViewMatrixType<Integer> lepp_incident_index =
+					ViewMatrixType<Integer>("lepp_incidents_index", lip_size,
+							3);
 
 			compact_map_to_view(lepp_incidents_map, lepp_incident_index);
 
@@ -1061,14 +957,15 @@ public:
 							node_start_index));
 
 			double time1 = timer1.seconds();
-			std::cout << "Bisection took: " << time1 << " seconds." << std::endl;
+			std::cout << "Bisection took: " << time1 << " seconds."
+					<< std::endl;
 
 		}
 		//free_mesh();
 
 		double time = timer_refine.seconds();
-				std::cout << "Refine Mesh took: " << time << " seconds. In " << it_count
-						<< " iterations." << std::endl;
+		std::cout << "Refine Mesh took: " << time << " seconds. In " << it_count
+				<< " iterations." << std::endl;
 	}
 
 	void refine(ViewVectorType<Integer>& elements)
