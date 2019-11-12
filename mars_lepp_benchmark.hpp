@@ -96,7 +96,7 @@ namespace mars {
 
 			if(n_levels <= 20 && mesh.ManifoldDim <4){
 				VTKMeshWriter<Mesh> w;
-				w.write("LEPP_" + edge_select->name() + std::to_string(n_levels) + ".vtu", mesh);
+				w.write("LEPP_" + edge_select->name() + std::to_string(n_levels) + "_" + std::to_string(mesh.ManifoldDim) + ".vtu", mesh);
 			}
 
 			mesh.update_dual_graph();

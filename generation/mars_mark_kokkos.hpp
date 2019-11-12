@@ -51,7 +51,7 @@ struct Hypersphere
 					inside = true;
 				} else if(d > radius) {
 					outside = true;
-				} else if(::abs(d) < 1e-16) {
+				} else if(abs(d) < 1e-16) {
 					inside = true;
 					outside = true;
 					break;
@@ -106,7 +106,7 @@ struct ScatterHypersphere : Hypersphere<Mesh_>
 					inside = true;
 				} else if(d > this->radius) {
 					outside = true;
-				} else if(::abs(d) < 1e-16) {
+				} else if(abs(d) < 1e-16) {
 					inside = true;
 					outside = true;
 					break;
