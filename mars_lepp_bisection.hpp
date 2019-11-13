@@ -118,7 +118,8 @@ private:
 			if(Bisection<Mesh>::get_mesh().is_active(i) && Bisection<Mesh>::edge_select()->can_refine(Bisection<Mesh>::get_mesh(), i)){
 
 				Edge new_edge;
-				const Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), edge, i);
+				const Integer edge_num = Bisection<Mesh>::edge_select()->stable_select(Bisection<Mesh>::get_mesh(), i);
+				//const Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), edge, i);
 				Bisection<Mesh>::get_mesh().elem(i).edge(edge_num, new_edge.nodes[0], new_edge.nodes[1]);
 				new_edge.fix_ordering();
 
@@ -160,10 +161,11 @@ private:
 
 //optimized using a stack instead of the TreeNode.
 template<>
-class LeppBisection<Mesh2>: public Bisection<Mesh2> {
+class LeppBisection<Mesh2>: public Bisection<Mesh2, LongestEdgeSelect<Mesh2>> {
 
 public:
 	using Mesh = Mesh2;
+	template<class T> using Bisection = Bisection<T, LongestEdgeSelect<T>>;
 
 	LeppBisection(Mesh &mesh) :
 			Bisection<Mesh>(mesh) {
@@ -245,7 +247,7 @@ public:
 
 private:
 	void set_edge_select(
-			const std::shared_ptr<EdgeSelect<Mesh>> &edge_select) final {
+			const std::shared_ptr<LongestEdgeSelect<Mesh>> &edge_select) final {
 
 		if(edge_select->name() != "LongestEdge")
 			errx(select_err,"%s %d %s Error: Calling set_edge_select on LeppBisection with %s is not supported!",
@@ -329,6 +331,7 @@ private:
 			if(Bisection<Mesh>::get_mesh().is_active(i) && Bisection<Mesh>::edge_select()->can_refine(Bisection<Mesh>::get_mesh(), i)){
 
 				Edge new_edge;
+//				const Integer edge_num = Bisection<Mesh>::edge_select()->stable_select(Bisection<Mesh>::get_mesh(),  i);
 				const Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), edge, i);
 				Bisection<Mesh>::get_mesh().elem(i).edge(edge_num, new_edge.nodes[0], new_edge.nodes[1]);
 				new_edge.fix_ordering();

@@ -1,5 +1,5 @@
-#ifndef MARS_EDGE_HPP
-#define MARS_EDGE_HPP
+#ifndef MARS_EDGE_KOKKOS_HPP
+#define MARS_EDGE_KOKKOS_HPP
 
 #include "mars_base.hpp"
 #include "mars_stream.hpp"
@@ -8,53 +8,65 @@
 #include <vector>
 #include <algorithm>
 #include <initializer_list>
+#include "mars_utils_kokkos.hpp"
 
 namespace mars {
 
-	template<Integer N, class Implementation_>
-	class Side {
+	template<Integer N>
+	class Side<N, KokkosImplementation> {
 	public:
 		static_assert(N > 0, "N cannot be zero");
 
-		std::array<Integer, N> nodes;
+		TempArray<Integer,N> nodes;
 		
-		virtual ~Side() {}
-
-
-		Integer &operator[](const Integer i) {
-			assert(i >= 0);
-			assert(i < N);
-			return nodes[i];
-		}
-
-		const Integer &operator[](const Integer i) const {
-			assert(i >= 0);
-			assert(i < N);
-			return nodes[i];
-		}
-
-
-		inline bool has_node(const Integer v) const
+		MARS_INLINE_FUNCTION
+		virtual ~Side()
 		{
-			for(auto n : nodes) {
-				if(v == n) return true;
+		}
+
+
+		MARS_INLINE_FUNCTION
+		Integer &operator[](const Integer i)
+		{
+			assert(i >= 0);
+			assert(i < N);
+			return nodes[i];
+		}
+
+		MARS_INLINE_FUNCTION
+		const Integer &operator[](const Integer i) const
+		{
+			assert(i >= 0);
+			assert(i < N);
+			return nodes[i];
+		}
+
+
+		MARS_INLINE_FUNCTION
+		bool has_node(const Integer v) const
+		{
+			for(Integer i=0;i<N;++i)
+			{
+				if(v == nodes[i]) return true;
 			}
 
 			return false;
 		}
 
-		Side()
+		MARS_INLINE_FUNCTION Side()
 		{
-			std::fill(nodes.begin(), nodes.end(), INVALID_INDEX);
+			nodes.set(INVALID_INDEX);
 		}
 
-		Side(const std::array<Integer, N> &in)
-		: nodes(in)
+		MARS_INLINE_FUNCTION
+		Side(const TempArray<Integer,N> &in)
 		{
+			nodes = in;
 			fix_ordering();
 		}
 
-		inline bool is_valid() const
+		MARS_INLINE_FUNCTION
+		bool is_valid() const
 		{
 			for(auto n : nodes) {
 				if(n == INVALID_INDEX) return false;
@@ -67,28 +79,31 @@ namespace mars {
 			return true;
 		}
 
+
+		MARS_INLINE_FUNCTION
 		void fix_ordering()
 		{
-			std::sort(std::begin(nodes), std::end(nodes));
+			quick_sort<Integer,N>(nodes,0,N-1);
 		}
 
-		Side(const std::vector<Integer> &in)
+		/*Side(const std::vector<Integer> &in)
 		{
 			assert(N == in.size());
 
 			std::copy(std::begin(in), std::end(in), std::begin(nodes));
 			std::sort(std::begin(nodes), std::end(nodes));
-		}
+		}*/
 
-		Side(std::initializer_list<Integer> in)
+		/*Side(std::initializer_list<Integer> in)
 		{
 			assert(N == in.size());
 
 			std::copy(std::begin(in), std::end(in), std::begin(nodes));
 			std::sort(std::begin(nodes), std::end(nodes));
-		}
+		}*/
 
-		inline bool operator==(const Side &other) const
+		MARS_INLINE_FUNCTION
+		bool operator==(const Side<N,KokkosImplementation> &other) const
 		{
 			for(Integer i = 0; i < N; ++i) {
 				if(nodes[i] != other.nodes[i]) return false;
@@ -97,12 +112,14 @@ namespace mars {
 			return true;
 		}
 
-		inline bool operator!=(const Side &other) const
+		MARS_INLINE_FUNCTION
+		bool operator!=(const Side<N,KokkosImplementation> &other) const
 		{
 			return !((*this) == other);
 		}
 
-		inline bool operator<(const Side &other) const
+		MARS_INLINE_FUNCTION
+		bool operator<(const Side<N,KokkosImplementation> &other) const
 		{
 			for(Integer i = 0; i < N-1; ++i) {
 				if(nodes[i] < other.nodes[i]) {
@@ -117,26 +134,20 @@ namespace mars {
 			return nodes[N-1] < other.nodes[N-1];
 		}
 
-		void describe(std::ostream &os) const
+		MARS_INLINE_FUNCTION
+		void describe() const
 		{
-			os << "(";
+			printf("(");
+
 			for(Integer i = 0; i < N-1; ++i) {
-				os << nodes[i] << ",";
+				printf("%i,", nodes[i]);
 			}
 
-			os << nodes[N-1] << ")";
+			printf("%i)",nodes[N-1]);
 		}
 	};
 
-	class Edge : public Side<2> {
-	public:
-		Edge() : Side<2>() {}
-		Edge(const Integer a_node, const Integer another_node)
-		: Side({a_node, another_node})
-		{}
-	};
-
-	template<Integer N>
+	/*template<Integer N>
 	void write(
 	    const Side<N> &side,
 	    std::ostream &os)
@@ -164,7 +175,7 @@ namespace mars {
 	    std::istream &is)
 	{
 	    read(static_cast<Side<2> &>(edge), is);
-	}
+	}*/
 	
 }
 

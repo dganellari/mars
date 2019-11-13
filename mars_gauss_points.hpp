@@ -14,25 +14,30 @@ namespace mars{
     template<>
     class QGauss<3, 2> {
     public:
-        static constexpr const Real a = .585410196624969;
-        static constexpr const Real b = .138196601125011;
-        static constexpr const int N = 4;
+        static constexpr const Real a = 0.333333333333;
+        static constexpr const Real b = 1.0;
+        static constexpr const Real c = 0.0;
+        static constexpr const int N = 8;
 
         MARS_INLINE_FUNCTION constexpr QGauss()
         : points{
-            a,b,b,
-            b,a,b,
-            b,b,a,
-            b,b,b
+            c,c,c,
+            b,c,c,
+            c,b,c,
+            c,c,b,
+            a,a,c,
+            a,c,a,
+            a,c,c,
+            a,a,a
         },
         weights{
-            0.25, 0.25, 0.25, 0.25
+            0.025, 0.025, 0.025, 0.025, 0.225, 0.225, 0.225, 0.225
         }
         {}
 
         MARS_INLINE_FUNCTION constexpr Real sum_weights() const
         {
-            return weights[0] + weights[1] + weights[2] + weights[3];
+            return weights[0] + weights[1] + weights[2] + weights[3] +  weights[4] +  weights[5] + weights[6] + weights[7];
         }
 
         MARS_INLINE_FUNCTION constexpr const Real *point(const int i) const
@@ -41,8 +46,8 @@ namespace mars{
         }
 
 
-        Real points[4 * 3];
-        Real weights[4];
+        Real points[8 * 3];
+        Real weights[8];
     };
 
     // class gauss_quadrature_rule{

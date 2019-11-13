@@ -2,7 +2,8 @@
 #define MARS_TET4
 
 #include "mars_gauss_points.hpp"
-
+#include "mars_affine_transformation.hpp"
+#include "generation/mars_mesh_kokkos.hpp"
 namespace mars {
 
   template<typename T, int N_>
@@ -26,12 +27,46 @@ namespace mars {
     MARS_INLINE_FUNCTION constexpr Tet4()
     {}
 
-    MARS_INLINE_FUNCTION static void eval(const Real *p, Array<Real, 4> &ret) {
+
+    MARS_INLINE_FUNCTION constexpr int size() const
+    {
+        return 4;
+    }
+
+   /*evaluation basis function*/
+    MARS_INLINE_FUNCTION static void eval_phi(const Real *p, Array<Real, 4> &ret) {
         ret.values[0] = 1.0 - p[0] - p[1] - p[2];
         ret.values[1] = p[0];
         ret.values[2] = p[1];
         ret.values[3] = p[2];
     }
+
+
+    /*evaluation gradient of basis function*/
+    MARS_INLINE_FUNCTION static void eval_grad(const Real *p, Array<Real, 12> &ret) {
+        
+      //fn 0
+        ret.values[0] = -1.0;
+        ret.values[1] = -1.0;
+        ret.values[2] = -1.0;
+      //fn 1
+        ret.values[3] =  1.0;
+        ret.values[4] =  0.0;
+        ret.values[5] =  0.0;
+      //fn 2
+        ret.values[6] =  0.0;
+        ret.values[7] =  1.0;
+        ret.values[8] =  0.0;
+      //fn 3
+        ret.values[9]  = 0.0;
+        ret.values[10] = 0.0;
+        ret.values[11] = 1.0;
+    }
+
+   MARS_INLINE_FUNCTION Real static measure ()
+   {
+     return 1.0/6;
+   }
 
 private:
     // MARS_INLINE_FUNCTION constexpr Array<Array<Real, 4>, QGauss<3, 2>::N> init(const QGauss<3, 2> &q)
@@ -48,46 +83,93 @@ private:
 
   };
 
-  // template<class Q, class FE>
-  // class RefMassMatrix {};
+  template<class Q, class FE>
+  class RefMassMatrix {};
 
-  // template<>
-  // class RefMassMatrix<QGauss<3, 2>, Tet4> {
-  // public:
+  template<>
+  class RefMassMatrix<QGauss<3, 2>, Tet4> {
+  public:
 
-  //   MARS_INLINE_FUNCTION constexpr RefMassMatrix() {}
+    static constexpr const Real c = 0.1;
+
+    MARS_INLINE_FUNCTION constexpr RefMassMatrix()
+    : value{c}
+
+    {}
+
+    MARS_INLINE_FUNCTION constexpr const Real elem_value() const
+    {
+        return value;
+    }
 
 
-  //   Real vals[4*4];
-  // };
+     Real value;
+
+  };
 
   template<class Q, class FE>
   class AssembleMassMatrix {
   public:
-        ViewMatrixType<Integer> elem;
-        ViewVectorType<bool> active;
-        Kokkos::View<Real> J;
-        ViewMatrixType<Integer> element_matrix;
+        ParallelMesh3 pMesh;
+        Kokkos::View<double*[4][4]> element_matrix;
 
         AssembleMassMatrix(
-            ViewMatrixType<Integer> el,
-            ViewVectorType<bool> ac,
-            Kokkos::View<Real> J,
-            ViewMatrixType<Integer> element_matrix) 
-        : elem(el), active(ac), J(J), element_matrix(element_matrix) {}
+            ParallelMesh3 pMesh,
+            Kokkos::View<double*[4][4]> element_matrix)
+        : pMesh(pMesh), element_matrix(element_matrix) {}
 
         AssembleMassMatrix() {}
 
-        MARS_INLINE_FUNCTION
-        void operator()(int index) const
-        {
-            constexpr const Q q;
-            //read the element points
-            //get J
-            //
 
+
+        MARS_INLINE_FUNCTION void operator()(int index) const
+        {
+           
+              auto e = pMesh.elem(index);
+
+              constexpr const Q q;
+
+              constexpr const FE phi;
+
+              RefMassMatrix<Q, FE> a;
+
+              AffineTransform<3,3> Map;
+
+              Real Jacobian[3*3];
+
+              Real J; 
+
+
+
+
+
+              Map.affine_jacobian(pMesh, e, Jacobian, J);
+
+              std::cout<<"value j"<<J<<std::endl;
+
+              for(int i=0; i<4; i++)
+                  for(int j=0; j<4; j++)
+                    element_matrix(index,i,j) = a.elem_value() * J * phi.measure();
+
+              std::cout<<"outside op"<<std::endl;
+
+            
         }
-  };
+
+
+     
+      
+
+
+            // Kokkos::parallel_for(q.N, KOKKOS_LAMBDA ( int k ){
+
+            // dx[k] = detJ * phi.measure();
+
+            // });         
+ 
+
+ 
+    };
 
 
   /*template<typename Scalar>
@@ -242,5 +324,57 @@ private:
     invJ[7] = -(J21*J00 - J20*J01)*inv_detJ;
     invJ[8] =  (J11*J00 - J10*J01)*inv_detJ;
    }*/
+
+
+
+          // for(std::size_t k = 0; k < n_qp_; ++k) {
+          //     dx_[k] = det_JxM * q.weights[k];
+          // }
+
+         
+
+   
+            //read the element points
+            //get J
+            //
+            // Real vals[4 * 4];
+            
+            // Array<Real, 4> ret; 
+
+            // phi.eval(q.points, ret);
+
+            // for(int i=0; i<phi.size(); i++)
+            // {
+                
+            //   for(int j=0; j<phi.size(); j++)
+            //   {
+
+            //     for(int k=0; k<q.N; k++)
+            //     {               
+            //         std::cout<<"ret.values["<<i<<"]"<<"["<<k<<"]"<<ret.values[i,k]<<std::endl;
+
+            //         vals[i, j] += q.weights[k] * 1.0 * ret.values[i,k] * ret.values[j,k];
+            //     }
+
+            //   }
+            // }
+
+            // std::cout<<vals[0,0]<<std::endl;
+            // std::cout<<vals[0,1]<<std::endl;
+            // std::cout<<vals[0,2]<<std::endl;
+            // std::cout<<vals[0,3]<<std::endl;
+            // std::cout<<vals[1,0]<<std::endl;
+            // std::cout<<vals[1,1]<<std::endl;
+            // std::cout<<vals[1,2]<<std::endl;
+            // std::cout<<vals[1,3]<<std::endl;
+            // std::cout<<vals[2,0]<<std::endl;
+            // std::cout<<vals[2,1]<<std::endl;
+            // std::cout<<vals[2,2]<<std::endl;
+            // std::cout<<vals[2,3]<<std::endl;
+            // std::cout<<vals[3,0]<<std::endl;
+            // std::cout<<vals[3,1]<<std::endl;
+            // std::cout<<vals[3,2]<<std::endl;
+            // std::cout<<vals[3,3]<<std::endl;
+
 }
 #endif

@@ -2,6 +2,7 @@
 #define MARS_STATIC_MATH_HPP
 
 #include "mars_base.hpp"
+#include "mars_fwd.hpp"
 #include <iostream>
 #include <vector>
 
@@ -49,7 +50,7 @@ namespace mars {
 		static const Integer value = 1;
 	};
 
-	template<Integer N, Integer K>
+	template<Integer N, Integer K, class Implementation_>
 	class CombinationsAux {
 	public:
 		static const Integer NChooseK = Factorial<N>::value/(Factorial<K>::value * Factorial<N-K>::value);
@@ -88,7 +89,7 @@ namespace mars {
 		}
 	};
 
-	template<Integer N, Integer ChooseM>
+	template<Integer N, Integer ChooseM, class Implementation_>
 	class Combinations {
 	public:
 		static const Integer value = Factorial<N>::value/(Factorial<ChooseM>::value * Factorial<N-ChooseM>::value);
@@ -141,7 +142,7 @@ namespace mars {
 	};
 
 	template<Integer N>
-	class Combinations<N, 1> {
+	class Combinations<N, 1, class Implementation_> {
 	public:
 		static const Integer value = N;
 		static void generate(const Integer k, Integer comb[1])
