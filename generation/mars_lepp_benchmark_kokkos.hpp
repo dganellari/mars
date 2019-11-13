@@ -59,7 +59,7 @@ namespace mars {
 
 			b.uniform_refine(2);
 
-			Timer timer;
+			Kokkos::Timer timer_refine;
 
 			ViewVectorTypeC<Real, Dim> center("center");
 			fill_view(center, 0.5);
@@ -78,10 +78,9 @@ namespace mars {
 				//q.compute();
 			}
 
-			std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
+			double time = timer_refine.seconds();
+			std::cout << "parallel LEPP Refinement took: " << time << " seconds." << std::endl;
 
-			double time = timer.seconds();
-			std::cout << "Parallel Lepp Refinement took: " << time << " seconds." << std::endl;
 			typename Mesh::SerialMesh sMesh;
 			convert_parallel_mesh_to_serial<Dim, ManifoldDim>(sMesh, mesh);
 

@@ -138,7 +138,7 @@ ViewVectorType<Integer> mark_hypersphere_for_refinement(Mesh_* mesh,
 			Hypersphere<Mesh_>(mesh, center, radius, count_));
 
 	double time1 = timer1.seconds();
-	std::cout << "Hypersphere Count took: " << time1 << " seconds." << std::endl;
+	//std::cout << "Hypersphere Count took: " << time1 << " seconds." << std::endl;
 
 
 	Timer timer2;
@@ -146,7 +146,7 @@ ViewVectorType<Integer> mark_hypersphere_for_refinement(Mesh_* mesh,
 	inclusive_scan(1, nr_elements + 1, count_);
 
 	double time2 = timer2.seconds();
-	std::cout << "Inclusive_scan took: " << time2 << " seconds." << std::endl;
+	//std::cout << "Inclusive_scan took: " << time2 << " seconds." << std::endl;
 
 	auto index_subview = subview(count_, nr_elements);
 	auto h_ic = create_mirror_view(index_subview);
@@ -163,7 +163,7 @@ ViewVectorType<Integer> mark_hypersphere_for_refinement(Mesh_* mesh,
 		ScatterHypersphere<Mesh_>(mesh, center, radius, count_, elements));
 
 	double time3 = timer3.seconds();
-	std::cout << "ScatterHypersphere took: " << time3 << " seconds." << std::endl;
+	//std::cout << "ScatterHypersphere took: " << time3 << " seconds." << std::endl;
 
 	fence();
 
@@ -195,7 +195,7 @@ ViewVectorType<Integer> mark_active(const Mesh_* mesh,
 
 	// Deep copy device view to host view.
 	deep_copy(h_ic, index_subview);
-	std::cout << "Hyper count result: " << h_ic(0)<< std::endl;
+	//std::cout << "Hyper count result: " << h_ic(0)<< std::endl;
 
 	Timer timer3;
 
@@ -211,7 +211,7 @@ ViewVectorType<Integer> mark_active(const Mesh_* mesh,
 	});
 
 	double time3 = timer3.seconds();
-	std::cout << "Mark_active took: " << time3 << " seconds." << std::endl;
+	//std::cout << "Mark_active took: " << time3 << " seconds." << std::endl;
 
 	fence();
 
@@ -249,7 +249,7 @@ bool compact(const Mesh_* mesh, ViewVectorType<Integer>& elements)
 
 	// Deep copy device view to host view.
 	deep_copy(h_ic, index_subview);
-	std::cout << "Scan for compact count (new nr_elements): " << h_ic(0)<< std::endl;
+	//std::cout << "Scan for compact count (new nr_elements): " << h_ic(0)<< std::endl;
 
 	ViewVectorType<Integer> el = ViewVectorType<Integer>("hyper_elements", h_ic(0));
 	//compact using the addresses in scan
@@ -264,7 +264,7 @@ bool compact(const Mesh_* mesh, ViewVectorType<Integer>& elements)
 	elements = el;
 
 	double time3 = timer3.seconds();
-	std::cout << "compact elements took: " << time3 << " seconds." << std::endl;
+	//std::cout << "compact elements took: " << time3 << " seconds." << std::endl;
 
 	return elements.extent(0) > 0;
 }
