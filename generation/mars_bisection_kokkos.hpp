@@ -777,7 +777,7 @@ public:
 		});
 
 		double time = timer.seconds();
-		std::cout << "compact_map_to_view took: " << time << " seconds." << std::endl;
+		//std::cout << "compact_map_to_view took: " << time << " seconds." << std::endl;
 
 	}
 
@@ -806,14 +806,16 @@ public:
 						lepp_occupied, index_count_, pt_count_));
 
 		double time1 = timer1.seconds();
-		std::cout << "Count took: " << time1 << " seconds." << std::endl;
+		if (verbose)
+			std::cout << "Count took: " << time1 << " seconds." << std::endl;
 
 		Timer timer2;
 
 		complex_inclusive_scan(1, nr_elements + 1, index_count_, pt_count_);
 
 		double time2 = timer2.seconds();
-		std::cout << "Scan took: " << time2 << " seconds." << std::endl;
+		if (verbose)
+			std::cout << "Scan took: " << time2 << " seconds." << std::endl;
 
 		Timer timer3;
 		auto index_subview = subview(index_count_, nr_elements);
@@ -832,7 +834,8 @@ public:
 		res[1] = h_pac(0);
 
 		double time3 = timer3.seconds();
-		std::cout << "Deep copy subview took: " << time3 << " seconds." << std::endl;
+		if (verbose)
+			std::cout << "Deep copy subview took: " << time3 << " seconds." << std::endl;
 
 		/*printf("lepp_incidents_count: %li\n", h_iac(0));
 		printf("lepp_node_count: %li\n", h_pac(0));*/
@@ -856,11 +859,13 @@ public:
 						lepp_occupied, lepp_incidents_map));
 
 		double time = timer.seconds();
-		std::cout << "Scatter/Fill took: " << time << " seconds." << std::endl;
+		if (verbose)
+			std::cout << "Scatter/Fill took: " << time << " seconds." << std::endl;
 
 		Integer lip_size = lepp_incidents_map.size();
 
-		std::cout << "Lip_size: " << lip_size << std::endl;
+		if (verbose)
+			std::cout << "Lip_size: " << lip_size << std::endl;
 
 		return lip_size;
 	}
@@ -890,7 +895,8 @@ public:
 		//std::cout << "edge_element_map_.update took: " << time2 << " seconds." << std::endl;
 
 		double time1 = timer1.seconds();
-		std::cout << "Resize/rehash took: " << time1 << " seconds." << std::endl;
+		if (verbose)
+			std::cout << "Resize/rehash took: " << time1 << " seconds." << std::endl;
 	}
 
 	inline void copy_to_device(ViewObject<Integer> node_start_index)
@@ -904,7 +910,8 @@ public:
 		deep_copy(node_start_index, h_aci);
 
 		double time = timer.seconds();
-		std::cout << "copy_to_device took: " << time << " seconds." << std::endl;
+		if (verbose)
+			std::cout << "copy_to_device took: " << time << " seconds." << std::endl;
 
 
 	}
@@ -957,7 +964,8 @@ public:
 							node_start_index));
 
 			double time1 = timer1.seconds();
-			std::cout << "Bisection took: " << time1 << " seconds."
+			if (verbose)
+				std::cout << "Bisection took: " << time1 << " seconds."
 					<< std::endl;
 
 		}
@@ -971,27 +979,30 @@ public:
 	void refine(ViewVectorType<Integer>& elements)
 	{
 
-		const Integer capacity = euler_graph_formula(host_mesh);
-		edge_node_map_.reserve_map(capacity);
-		edge_element_map_.reserve_map(capacity);
+		if (edge_element_map_.empty())
+		{
+			const Integer capacity = euler_graph_formula(host_mesh);
+			edge_node_map_.reserve_map(capacity);
+			edge_element_map_.reserve_map(capacity);
 
-		/*if(flags.empty()) {
-		 flags.resize(mesh.n_elements(), NONE);
-		 level.resize(mesh.n_elements(), 0);*/
+			/*if(flags.empty()) {
+			 flags.resize(mesh.n_elements(), NONE);
+			 level.resize(mesh.n_elements(), 0);
+			 mesh.update_dual_graph();*/
 
-		copy_mesh_to_device();
+			copy_mesh_to_device();
 
-		Kokkos::Timer timer_update;
+			Kokkos::Timer timer_update;
 
-		edge_element_map_.update(mesh, host_mesh->n_elements());
+			edge_element_map_.update(mesh, host_mesh->n_elements());
+			//edge_element_map_.describe(std::cout);
 
-		double _update = timer_update.seconds();
-		std::cout << "parallel kokkos took: " << _update << " seconds." << std::endl;
+			double _update = timer_update.seconds();
+			if (verbose)
+				std::cout << "Initial  edge_element_map_.update took: "
+						<< _update << " seconds." << std::endl;
+		}
 
-		//edge_element_map_.describe(std::cout);
-
-		/*always use the initial nr_elements not the update one within the function.
-		because this is the number of elements to be checked if refined or not*/
 		refine_elements(elements);
 
 	/*	mesh.update_dual_graph();
@@ -1000,30 +1011,35 @@ public:
 
 	void uniform_refine(const Integer n_levels)
 	{
+		if (edge_element_map_.empty())
+		{
 
-		const Integer capacity = euler_graph_formula(host_mesh);
-		edge_node_map_.reserve_map(capacity);
-		edge_element_map_.reserve_map(capacity);
+			const Integer capacity = euler_graph_formula(host_mesh);
+			edge_node_map_.reserve_map(capacity);
+			edge_element_map_.reserve_map(capacity);
 
-		/*if(flags.empty()) {
-		 flags.resize(mesh.n_elements(), NONE);
-		 level.resize(mesh.n_elements(), 0);*/
+			/*if(flags.empty()) {
+			 flags.resize(mesh.n_elements(), NONE);
+			 level.resize(mesh.n_elements(), 0);
+			 mesh.update_dual_graph();
+			 */
 
-		copy_mesh_to_device();
+			copy_mesh_to_device();
 
-		Kokkos::Timer timer_update;
+			Kokkos::Timer timer_update;
 
-		edge_element_map_.update(mesh, host_mesh->n_elements());
+			edge_element_map_.update(mesh, host_mesh->n_elements());
 
-		double _update = timer_update.seconds();
-		std::cout << "parallel kokkos took: " << _update << " seconds." << std::endl;
-
-		//edge_element_map_.describe(std::cout);
+			double _update = timer_update.seconds();
+			if (verbose)
+				std::cout << "Initial  edge_element_map_.update took: "
+						<< _update << " seconds." << std::endl;
+		}
 
 		Kokkos::Timer timer_refine;
 
-
 		for (Integer i = 0; i < n_levels; ++i){
+
 			ViewVectorType<Integer> elements = mark_active(mesh,
 					host_mesh->get_view_active(), host_mesh->n_elements());
 
