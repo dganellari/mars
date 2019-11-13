@@ -2,7 +2,8 @@ cmake_minimum_required(VERSION 2.8.12)
 
 project(mars)
 
-option(TRY_WITH_MOONOLITH "Use -DTRY_WITH_MOONOLITH=ON for enabling mesh transfer functions." ON)
+option(TRY_WITH_MOONOLITH "Use -DTRY_WITH_MOONOLITH=ON for enabling mesh transfer functions." OFF)
+option(TRY_WITH_KOKKOS "Use -DTRY_WITH_KOKKOS=ON for enabling mesh transfer functions." OFF)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
@@ -62,47 +63,50 @@ find_package(MPIExtended)
 option(MARS_USE_CUDA "Build mars with cuda support" OFF)
 
 
-if (NOT TRILINOS_DIR)
-  message(STATUS "Setting TRILINOS_DIR to $ENV{TRILINOS_DIR}")
-  set(TRILINOS_DIR $ENV{TRILINOS_DIR} CACHE PATH "Directory where Kokkos is installed")
-endif()
+if(TRY_WITH_KOKKOS)
+	if (NOT TRILINOS_DIR)
+	  message(STATUS "Setting TRILINOS_DIR to $ENV{TRILINOS_DIR}")
+	  set(TRILINOS_DIR $ENV{TRILINOS_DIR} CACHE PATH "Directory where Kokkos is installed")
+	endif()
 
-if (NOT KOKKOS_DIR)
-  message(STATUS "Setting KOKKOS_DIR to $ENV{KOKKOS_DIR}")
-  set(KOKKOS_DIR $ENV{KOKKOS_DIR} CACHE PATH "Directory where Kokkos is installed")
-endif()
+	if (NOT KOKKOS_DIR)
+	  message(STATUS "Setting KOKKOS_DIR to $ENV{KOKKOS_DIR}")
+	  set(KOKKOS_DIR $ENV{KOKKOS_DIR} CACHE PATH "Directory where Kokkos is installed")
+	endif()
 
-#FIND_PACKAGE(Trilinos PATHS ${TRILINOS_DIR}/lib/cmake/Trilinos QUIET)
-FIND_PACKAGE(Kokkos HINTS ${KOKKOS_DIR}/lib/CMake/Kokkos ${TRILINOS_DIR}/lib/cmake/Kokkos QUIET)
+	#FIND_PACKAGE(Trilinos PATHS ${TRILINOS_DIR}/lib/cmake/Trilinos QUIET)
+	FIND_PACKAGE(Kokkos HINTS ${KOKKOS_DIR}/lib/CMake/Kokkos ${TRILINOS_DIR}/lib/cmake/Kokkos QUIET)
 
-IF(Kokkos_FOUND)
-   	MESSAGE("\nFound Kokkos!  Here are the details: ")
-   	MESSAGE("   Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
-   	MESSAGE("   Kokkos_C_COMPILER = ${Kokkos_C_COMPILER}")
-   
-   	IF(Kokkos_CXX_COMPILER)
-		SET(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
-		SET(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
-		MESSAGE("Setting CMAKE_CXX_COMPILER to Kokkos_CXX_COMPILER")
-   	ENDIF()
-   
-   	set(WITH_KOKKOS ON)
-   
-	FIND_PACKAGE(OpenMP)
+	IF(Kokkos_FOUND)
+	   	MESSAGE("\nFound Kokkos!  Here are the details: ")
+	   	MESSAGE("   Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
+	   	MESSAGE("   Kokkos_C_COMPILER = ${Kokkos_C_COMPILER}")
+	   
+	   	IF(Kokkos_CXX_COMPILER)
+			SET(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
+			SET(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
+			MESSAGE("Setting CMAKE_CXX_COMPILER to Kokkos_CXX_COMPILER")
+	   	ENDIF()
+	   
+	   	set(WITH_KOKKOS ON)
+	   
+		FIND_PACKAGE(OpenMP)
 
-	IF(OPENMP_FOUND)
-	 	SET (CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${OpenMP_Fortran_FLAGS}")
-	 	SET (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-	 	SET (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
-	 	set (CMAKE_CXX_LINK_FLAGS "${CMAKE_CXX_LINK_FLAGS} ${OpenMP_CXX_FLAGS}")
+		IF(OPENMP_FOUND)
+		 	SET (CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${OpenMP_Fortran_FLAGS}")
+		 	SET (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+		 	SET (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
+		 	set (CMAKE_CXX_LINK_FLAGS "${CMAKE_CXX_LINK_FLAGS} ${OpenMP_CXX_FLAGS}")
+		ENDIF()
+	   
+	ELSE()
+	  	MESSAGE(WARNING "Could not find Kokkos!")
+	  	IF(MARS_USE_CUDA)
+	    	MESSAGE(FATAL_ERROR "Could not use CUDA without Kokkos!")
+	  	ENDIF()
 	ENDIF()
-   
-ELSE()
-  	MESSAGE(WARNING "Could not find Kokkos!")
-  	IF(MARS_USE_CUDA)
-    	MESSAGE(FATAL_ERROR "Could not use CUDA without Kokkos!")
-  	ENDIF()
-ENDIF()
+
+endif()
 
 list(APPEND MARS_HEADERS
 	mars.hpp
