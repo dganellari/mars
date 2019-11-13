@@ -109,9 +109,8 @@ list(APPEND MARS_HEADERS
 	mars_base.hpp
 	mars_benchmark.hpp
 	mars_bisection.hpp
-	mars_lepp_bisection.hpp
-	mars_lepp_benchmark.hpp
 	mars_communicator.hpp
+	mars_config.hpp.in
 	mars_dof_map.hpp
 	mars_dual_graph.hpp
 	mars_edge.hpp
@@ -120,13 +119,19 @@ list(APPEND MARS_HEADERS
 	mars_edge_select.hpp
 	mars_edge_split.hpp
 	mars_edge_split_pool.hpp
+	mars_extract_surface.hpp
+	mars_fwd.hpp
+	mars_globals.hpp
 	mars_imesh.hpp
 	mars_lagrange_element.hpp
+	mars_lepp_benchmark.hpp
+	mars_lepp_bisection.hpp
 	mars_longest_edge.hpp
 	mars_matrix.hpp
-	mars_imesh.hpp
 	mars_mesh.hpp
 	mars_mesh_partition.hpp
+	mars_mesh_reader.hpp
+	mars_mesh_writer.hpp
 	mars_newest_vertex.hpp
 	mars_node_rank.hpp
 	mars_oldest_edge.hpp
@@ -146,9 +151,9 @@ list(APPEND MARS_HEADERS
 	mars_vector.hpp
 	mars_visualization.hpp
 	mars_vtk_writer.hpp
-	mars_fwd.hpp
 	generation/mars_point.hpp
 	generation/mars_mesh_generation.hpp
+	generation/mars_memory.hpp
 	)
 	
 IF(Kokkos_FOUND)
