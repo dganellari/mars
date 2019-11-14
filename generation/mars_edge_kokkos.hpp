@@ -65,6 +65,15 @@ namespace mars {
 			fix_ordering();
 		}
 
+		Side(const Integer a_node, const Integer another_node)
+		{
+			static_assert(N==2 && "This constructor can only be used for a 2-side");
+
+			nodes[0] = a_node;
+			nodes[1] = another_node;
+			fix_ordering();
+		}
+
 		MARS_INLINE_FUNCTION
 		bool is_valid() const
 		{
@@ -146,6 +155,16 @@ namespace mars {
 		}
 	};
 
+	/*class ParallelEdge : public Side<2,KokkosImplementation> {
+	public:
+		ParallelEdge() : Side<2, KokkosImplementation>() {}
+		ParallelEdge(const Integer a_node, const Integer another_node)
+		{
+			nodes[0] = a_node;
+			nodes[1] = another_node;
+			fix_ordering();
+		}
+	};*/
 	/*template<Integer N>
 	void write(
 	    const Side<N> &side,

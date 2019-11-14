@@ -28,6 +28,7 @@ namespace mars {
 		using Elem     = mars::Simplex<Dim, ManifoldDim>;
 		using SideElem = mars::Simplex<Dim, ManifoldDim-1>; 
 		using Point    = mars::Vector<Real, Dim>;
+		using Edge 	   = mars::Edge;
 
 		void reserve(
 			const std::size_t n_elements,
