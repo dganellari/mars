@@ -301,11 +301,11 @@ public:
 	struct BuildTree
 	{
 		Mesh_* mesh;
-		UnorderedMap<Side<2,KokkosImplementation>,ElementVector> mapping;
+		UnorderedMap<Edge,ElementVector> mapping;
 		ViewVectorType<uint32_t> tree;
 
 
-		BuildTree(UnorderedMap<Side<2, KokkosImplementation>, ElementVector> mp,
+		BuildTree(UnorderedMap<Edge, ElementVector> mp,
 				Mesh_* ms, ViewVectorType<uint32_t> tr) :
 			mapping(mp), mesh(ms), tree(tr)
 		{
@@ -381,7 +381,7 @@ public:
 	MARS_INLINE_FUNCTION
 	static bool is_leaf(const Integer element_id, Mesh_ *mesh,
 			ViewVectorType<uint32_t> tree,
-			const UnorderedMap<Side<2, KokkosImplementation>, ElementVector>& mapping)
+			const UnorderedMap<Edge, ElementVector>& mapping)
 	{
 
 		Integer index = tree(element_id);
@@ -403,7 +403,7 @@ public:
 	{
 		Mesh_* mesh;
 		ViewVectorType<Integer> elements;
-		UnorderedMap<Side<2,KokkosImplementation>,ElementVector> mapping;
+		UnorderedMap<Edge,ElementVector> mapping;
 		ViewVectorType<uint32_t> tree;
 		ViewVectorType<bool> lepp_occupied;
 
@@ -411,7 +411,7 @@ public:
 		ViewVectorType<Integer> pt_count;
 
 		RefineMesh(
-				UnorderedMap<Side<2, KokkosImplementation>, ElementVector> mp,
+				UnorderedMap<Edge, ElementVector> mp,
 				Mesh_* ms, ViewVectorType<Integer> elems,
 				ViewVectorType<uint32_t> tr, ViewVectorType<bool> lo,
 				ViewVectorType<Integer> ic, ViewVectorType<Integer> pc) :
@@ -421,7 +421,7 @@ public:
 		}
 
 		RefineMesh(
-				UnorderedMap<Side<2, KokkosImplementation>, ElementVector> mp,
+				UnorderedMap<Edge, ElementVector> mp,
 				Mesh_* ms, ViewVectorType<Integer> elems,
 				ViewVectorType<uint32_t> tr, ViewVectorType<bool> lo) :
 				mapping(mp), mesh(ms), elements(elems), tree(tr), lepp_occupied(
@@ -501,7 +501,7 @@ public:
 		UnorderedMap<Integer, Edge> lepp_incidents_map;
 
 		ScatterElem(
-				UnorderedMap<Side<2, KokkosImplementation>, ElementVector> mp,
+				UnorderedMap<Edge, ElementVector> mp,
 				Mesh_* ms, ViewVectorType<Integer> elems,
 				ViewVectorType<uint32_t> tr, ViewVectorType<bool> lo,
 				UnorderedMap<Integer, Edge> lim) :
@@ -573,7 +573,7 @@ public:
 		Mesh_* mesh;
 		ViewMatrixType<Integer> lepp_incident_index;
 		bool verbose;
-		using UEMap = UnorderedMap<Side<2,KokkosImplementation>,ElementVector>;
+		using UEMap = UnorderedMap<Edge,ElementVector>;
 		using UNMap = UnorderedMap<Edge,Integer>;
 
 
@@ -647,7 +647,7 @@ public:
 			nodes[0] = v1;
 			nodes[1] = v2;
 
-			Side<2, KokkosImplementation> edge(nodes);
+			Edge edge(nodes);
 
 			Integer midpoint=0;
 

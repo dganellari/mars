@@ -13,6 +13,8 @@ namespace mars {
 	template<class Mesh>
 	class ParallelEdgeSelect {
 	public:
+		using Edge = typename Mesh::Edge;
+
 		static const Integer Dim = Mesh::Dim;
 		static const Integer ManifoldDim = Mesh::ManifoldDim;
 
@@ -26,7 +28,8 @@ namespace mars {
 			return 0;
 		}
 
-		virtual Integer select(
+
+		virtual MARS_INLINE_FUNCTION Integer select(
 			const Mesh &mesh,
 			const Edge &neighbor_edge,
 			const Integer element_id) const
@@ -35,7 +38,7 @@ namespace mars {
 			return 0;
 		}
 
-		virtual Integer select(
+		virtual MARS_INLINE_FUNCTION Integer select(
 			const Mesh &mesh,
 			const Integer element_id,
 			const EdgeElementMap &edge_element_map) const

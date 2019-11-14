@@ -26,6 +26,7 @@ public:
 	using SideElem = mars::Simplex<Dim, ManifoldDim-1,KokkosImplementation>;
 	using Point = mars::Point<Real,Dim>;
 	using SerialMesh = mars::Mesh<Dim_,ManifoldDim_>;
+	using Edge = mars::Side<2, KokkosImplementation>;
 
 	MARS_INLINE_FUNCTION Mesh()
 		: ParallelIMesh<Dim_>()

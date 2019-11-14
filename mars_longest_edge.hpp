@@ -8,6 +8,8 @@ namespace mars {
 	template<class Mesh>
 	class LongestEdgeSelect final : public ParallelEdgeSelect<Mesh> {
 	public:
+		using Edge = typename Mesh::Edge;
+
 		MARS_INLINE_FUNCTION LongestEdgeSelect(const bool recursive = true, const bool use_tollerance = true)
 		: recursive_(recursive), use_tollerance_(use_tollerance)
 		{}
@@ -38,7 +40,7 @@ namespace mars {
 			return edge_num;
 		}
 
-	/*	MARS_INLINE_FUNCTION
+		MARS_INLINE_FUNCTION
 		Integer stable_select(const Mesh &mesh, const Integer element_id) const
 				override
 		{
@@ -78,9 +80,9 @@ namespace mars {
 			}
 
 			return edge_num;
-		}*/
+		}
 
-		MARS_INLINE_FUNCTION
+		/*MARS_INLINE_FUNCTION
 		Integer stable_select(const Mesh &mesh, const Integer element_id) const
 				override
 		{
@@ -119,8 +121,9 @@ namespace mars {
 			}
 
 			return edge_num;
-		}
+		}*/
 
+		MARS_INLINE_FUNCTION
 		virtual Integer select(
 			const Mesh &mesh,
 			const Edge &neighbor_edge,
@@ -165,6 +168,7 @@ namespace mars {
 		//check always the edges which are equals to the longest L
 		//it then selects always the same edge as the stable select with the addition that it does it
 		//only for the path with the smallest number of edges which are larger than L.
+	/*	MARS_INLINE_FUNCTION
 		Integer select(
 					const Mesh &mesh,
 					const Integer element_id,
@@ -246,9 +250,8 @@ namespace mars {
 				}
 			}
 
-
 			return edge_num;
-		}
+		}*/
 
 		void set_recursive(const bool recursive)
 		{
