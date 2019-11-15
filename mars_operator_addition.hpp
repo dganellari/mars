@@ -13,6 +13,11 @@ class Addition;
 template<typename U,typename V,typename W>
 constexpr void Add(U& u, const V& v, const W& w){Addition<V,W>::apply(u,v,w);}
 
+template<typename V,typename W>
+constexpr void PlusEqual( V& v, const W& w){Addition<V,W>::apply(v,w);}
+
+
+
 template< typename DerivedLeft,typename DerivedRight>
 class Addition< Expression <DerivedLeft>, Expression <DerivedRight> >
 operator+(const Expression<DerivedLeft>&left, const Expression<DerivedRight>&right)
@@ -37,6 +42,20 @@ class Addition
 
         // AdditionMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
   };
+
+ template<typename Output>
+ inline static void apply(      Left& A,
+                          const Right& B)
+  {
+   for(Integer ii=0;ii<Left::Rows;ii++)
+    for(Integer jj=0;jj<Left::Cols;jj++)
+           A(ii,jj)+=B(ii,jj);
+    std::cout<<"after AdditionMatrixAndTransposedAux<Transposed"<<std::endl;
+
+        // AdditionMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
+  };
+
+
 };
 
 

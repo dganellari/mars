@@ -19,7 +19,8 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
  using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpaces>;
  using Operator=typename type::Operator;
  using value_type=OperatorType<type,OtherTemplateArguments...>;
- static constexpr auto trace=trace_dofs<FunctionSpaces>();  
+ static constexpr auto trace=trace_dofs<FunctionSpaces>(); 
+ using trace_type=typename decltype(trace)::value_type; 
  
 
  Evaluation(){};
@@ -39,8 +40,9 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
   const Integer face=J.side_id();
    eval.local_dofs_update(J);
    const auto& all_local_dofs=eval.local_dofs();
-   auto local_dofs=subarray(all_local_dofs,trace[face]);
-   std::cout<<"local_dofs TraceOperator="<<local_dofs<<std::endl;
+   // auto local_dofs=subarray(all_local_dofs,trace[face]);
+   subarray(local_dofs_,all_local_dofs,trace[face]);
+   std::cout<<"local_dofs TraceOperator="<<local_dofs_<<std::endl;
    std::cout<<shapes<<std::endl;
    std::cout<<"___"<<std::endl;
     // loop on qp points
@@ -48,8 +50,8 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
     {
       for(Integer mm=0;mm<type3::Rows;mm++)
         for(Integer nn=0;nn<type3::Cols;nn++)
-           {value[ii](mm,nn)=local_dofs[0]*shapes[0][ii](mm,nn);
-            std::cout<<local_dofs[0]<<" "<<shapes[0][ii](mm,nn)<<std::endl;
+           {value[ii](mm,nn)=local_dofs_[0]*shapes[0][ii](mm,nn);
+            std::cout<<local_dofs_[0]<<" "<<shapes[0][ii](mm,nn)<<std::endl;
            }
     // loop on dofs
      for(Integer jj=1;jj< type1::Dim;jj++)
@@ -57,8 +59,8 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
       for(Integer mm=0;mm<type3::Rows;mm++)
         for(Integer nn=0;nn<type3::Cols;nn++)
            {
-            value[ii](mm,nn)+=local_dofs[jj]*shapes[jj][ii](mm,nn);
-            std::cout<<local_dofs[jj]<<" "<<shapes[jj][ii](mm,nn)<<std::endl;
+            value[ii](mm,nn)+=local_dofs_[jj]*shapes[jj][ii](mm,nn);
+            std::cout<<local_dofs_[jj]<<" "<<shapes[jj][ii](mm,nn)<<std::endl;
           }
 
     }
@@ -124,6 +126,7 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
 
 private:
  type eval_;
+ trace_type local_dofs_;
 };
 
 

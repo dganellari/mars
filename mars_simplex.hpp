@@ -116,6 +116,12 @@ namespace mars {
         {
             Combinations<ManifoldDim+1, ManifoldDim>::choose(side_num, nodes, side.nodes);
         }
+        void side_sorted(const Integer &side_num,
+                  Simplex<Dim, ManifoldDim-1> &side) const
+        {
+            Combinations<ManifoldDim+1, ManifoldDim>::choose(side_num, nodes, side.nodes);
+        }
+
     };
 
     template<Integer Dim, Integer ManifoldDim, class OutputStream>
@@ -299,6 +305,16 @@ namespace mars {
             side.id = nodes[side_num];
         }
 
+        void side_sorted(const Integer &side_num,
+                  Simplex<Dim, 0> &side) const
+        {
+           side.id =nodes[side_num];
+        }
+
+
+
+
+
         inline Integer n_nodes() const override { return nodes.size(); }
         inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
 
@@ -373,6 +389,8 @@ namespace mars {
                     
                 case 1:
                 {
+                    // side.nodes[0] = nodes[0];
+                    // side.nodes[1] = nodes[2];
                     side.nodes[0] = nodes[2];
                     side.nodes[1] = nodes[0];
                     break;
@@ -393,7 +411,12 @@ namespace mars {
                     
             }            
         }
-
+        void side_sorted(const Integer &side_num,
+                  Simplex<Dim, ManifoldDim-1> &side) const
+        {
+            Combinations<ManifoldDim+1, ManifoldDim>::choose(side_num, nodes, side.nodes);
+        }
+        
         Integer vertex_opposite_to_side(const Integer &side_num) const
         {
             Integer opposite = side_num + 2;
@@ -511,7 +534,11 @@ namespace mars {
                     
             }
         }
-        
+        void side_sorted(const Integer &side_num,
+                  Simplex<Dim, ManifoldDim-1> &side) const
+        {
+            Combinations<ManifoldDim+1, ManifoldDim>::choose(side_num, nodes, side.nodes);
+        }        
         inline constexpr static std::array<Vector<Real, Dim>,Npoints> reference_init()
         {
 
@@ -687,7 +714,11 @@ namespace mars {
                 }
             }
         }
-
+        void side_sorted(const Integer &side_num,
+                  Simplex<Dim, ManifoldDim-1> &side) const
+        {
+            Combinations<ManifoldDim+1, ManifoldDim>::choose(side_num, nodes, side.nodes);
+        }
         inline void get_nodes(std::vector<Integer> &nodes_copy) const override
         {
             nodes_copy.resize(nodes.size());
@@ -923,11 +954,14 @@ namespace mars {
         auto n = n_nodes(simplex);
         
         Vector<Real, Dim> v0 = points[simplex.nodes[0]];
-        
+        std::cout<<"v0="<<v0<<std::endl;
         for(Integer i = 1; i < n; ++i) {
             const auto &vi = points[simplex.nodes[i]];
+            std::cout<<"vi="<<vi<<std::endl;
+
+
             J.col(i-1, vi - v0);
-        }
+         }
     }
 
     // template<Integer Dim, Integer ManifoldDim,Integer Npoints>
@@ -1051,7 +1085,7 @@ namespace mars {
         //     return 0.;
         // }
         auto ref_vol = (1./Factorial<ManifoldDim>::value);
-        
+
         if(Dim > ManifoldDim) {
             Matrix<Real, ManifoldDim, ManifoldDim> JtJ = transpose(J) * J;
             return ref_vol * std::sqrt(det(JtJ));
@@ -1059,7 +1093,16 @@ namespace mars {
             return ref_vol * std::abs(det(J));
         }
     }
-    
+ 
+     template<Integer Dim, Integer ManifoldDim>
+    inline Real unsigned_volume(const Simplex<Dim, ManifoldDim>  &simplex,
+                                const Real &detJ)
+    {
+
+     return (std::abs(detJ)/Factorial<ManifoldDim>::value);
+    }
+
+
     template<Integer Dim, Integer ManifoldDim>
     inline Vector<Real, Dim> barycenter(const Simplex<Dim, ManifoldDim>      &simplex,
                                         const std::vector<Vector<Real, Dim>> &points)
@@ -1210,6 +1253,31 @@ namespace mars {
         for(auto &c : children) {
             c.parent_id = parent.id;
         }
+    }
+
+
+
+
+
+    template<Integer Dim, Integer ManifoldDim>
+    inline constexpr void affine_transformation(const Simplex<Dim, ManifoldDim>  &simplex,
+                         const std::vector<Vector<Real, Dim>> &points,
+                         Matrix<Real, Dim, ManifoldDim> &J,
+                         Vector<Real, Dim>& v0)
+    {
+        static_assert(Dim >= ManifoldDim, "Dim must be greater or equal ManifoldDim");
+        
+        auto n = n_nodes(simplex);
+        
+        v0 = points[simplex.nodes[0]];
+        std::cout<<"v0="<<v0<<std::endl;
+        for(Integer i = 1; i < n; ++i) {
+            const auto &vi = points[simplex.nodes[i]];
+            std::cout<<"vi="<<vi<<std::endl;
+
+
+            J.col(i-1, vi - v0);
+         }
     }
 }
 

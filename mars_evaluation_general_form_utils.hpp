@@ -276,13 +276,15 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
  eval_right_(expr.right())
  {}
 
+  
 
  template<typename Elem, typename T,typename S, Integer NQPoints, Integer NComponents>
  void apply_aux(subtype& vec, const FiniteElem<Elem>& J, 
                const FQPValues<T,NQPoints,NComponents> & fqp_values,
                const  QPValues<S,NQPoints> & qp_values)
  {
-  const auto& detJ=J.get_det();
+  const auto& detJ=J.template get_det<VolumeIntegral>();
+  // const auto& detJ=J.get_det();
   const auto& qp_weights=QRule::qp_weights;
   // for(Integer ii=0;ii<vec.size();ii++)
     // {   
@@ -316,7 +318,9 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
                const  QPValues<T,NQPoints> & qp_values,
                const FQPValues<S,NQPoints,NComponents> & fqp_values)
  {
-  const auto& detJ=J.get_det();
+
+  const auto& detJ=J.template get_det<VolumeIntegral>();
+  // const auto& detJ=J.get_det();
   const auto& qp_weights=QRule::qp_weights;
   std::cout<<"qp_weights"<<std::endl;
   std::cout<<qp_weights<<std::endl;
@@ -350,7 +354,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
   eval_left_.apply(left_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
   eval_right_.apply(right_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
   apply_aux(vec,J,left_value_,right_value_);
-  std::cout<<"detJ=="<<J.get_det()<<std::endl;
+  // std::cout<<"detJ=="<<J.get_det()<<std::endl;
   std::cout<<"vec=="<<vec<<std::endl;
  }
 
@@ -397,7 +401,8 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
  apply_aux(subtype& mat, const FiniteElem<Elem>& J, const ShapeFunctions& shape_functions, const DofMaps&...dofmaps)
  {
 
-  const auto& detJ=J.get_det();
+  const auto& detJ=J.template get_det<VolumeIntegral>();
+  // const auto& detJ=J.get_det();
   const auto& qp_weights=QRule::qp_weights;
   // todo fixme
   eval_left_.apply(left_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
@@ -449,7 +454,8 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
  apply_aux(subtype& mat, const FiniteElem<Elem>& J, const ShapeFunctions& shape_functions, const DofMaps&...dofmaps)
  {
 
-  const auto& detJ=J.get_det();
+  const auto& detJ=J.template get_det<VolumeIntegral>();
+  // const auto& detJ=J.get_det();
   const auto& qp_weights=QRule::qp_weights;
   // todo fixme
   eval_left_.apply(left_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
@@ -1073,8 +1079,6 @@ public:
     {
      auto& local_mat=std::get<N>(tensor_tuple_);
      local_mat.zero();
-     std::cout<<"pre jacobian evalinners2="<<std::endl;
-     std::cout<<local_mat<<std::endl;
      auto & eval_N=std::get<N>(eval_inners_);
      apply_aux_aux_aux(eval_N,local_mat,FE,dofmap_test);
 
@@ -1083,7 +1087,7 @@ public:
       mat[dofmap_test[ii]]+=local_mat(ii,0);
      }
      //////////////////// mat must be inizialied with local_mat
-     std::cout<<"after jacobian evalinners2="<<std::endl;
+     std::cout<<"local_mat="<<std::endl;
      std::cout<<local_mat<<std::endl;
     }   
 
@@ -1092,8 +1096,6 @@ public:
     {
      auto& local_mat=std::get<N>(tensor_tuple_);
      local_mat.zero();
-     std::cout<<"pre jacobian evalinners2="<<std::endl;
-     std::cout<<local_mat<<std::endl;
      auto & eval_N=std::get<N>(eval_inners_);
      apply_aux_aux_aux(eval_N,local_mat,FE,dofmap_test,dofmap_trial);
 
@@ -1105,7 +1107,7 @@ public:
      }
      }
      //////////////////// mat must be inizialied with local_mat
-     std::cout<<"after jacobian evalinners2="<<std::endl;
+     std::cout<<"local_mat"<<std::endl;
      std::cout<<local_mat<<std::endl;
     }
 
@@ -1141,7 +1143,7 @@ public:
 
  // linear form -> only test dofmap
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
-    constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==1),void> 
+    constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==1 && IsDifferent<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
     apply_volume_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
     {
       const Integer & elem_id=J.elem_id();
@@ -1153,7 +1155,7 @@ public:
       apply_aux_aux<N>(mat,J,dofmap_test);
     }
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
-    constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==1),void> 
+    constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==1 && IsDifferent<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
     apply_volume_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
     {
       const Integer & elem_id=J.elem_id();
@@ -1168,7 +1170,7 @@ public:
 
  // bilinear form   -> test and trial dofmaps
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
-    constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==2),void> 
+    constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==2 && IsDifferent<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
     apply_volume_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
     {
       const Integer & elem_id=J.elem_id();
@@ -1186,7 +1188,7 @@ public:
     }
 
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
-    constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==2),void> 
+    constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==2 && IsDifferent<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
     apply_volume_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
     {
 
@@ -1236,7 +1238,7 @@ public:
 
 // linear form -> only test dofmap
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
-    constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==1),void> 
+    constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==1 && IsDifferent<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
     apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
     {
       const Integer & elem_id=J.elem_id();
@@ -1248,7 +1250,7 @@ public:
       apply_aux_aux<N>(mat,J,dofmap_test);
     }
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
-    constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==1),void> 
+    constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==1 && IsDifferent<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
     apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
     {
       const Integer & elem_id=J.elem_id();
@@ -1279,7 +1281,8 @@ public:
 
  // bilinear form   -> test and trial dofmaps
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
-    constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==2),void> apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+    constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==2 && IsDifferent<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
+    apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
     {
       const Integer & elem_id=J.elem_id();
       using Pairs=GetType<TupleOfPairsNumbers,N>;
@@ -1296,7 +1299,7 @@ public:
     }
 
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
-    constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==2),void> 
+    constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==2 && IsDifferent<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
     apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
     {
 

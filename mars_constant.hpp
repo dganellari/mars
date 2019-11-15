@@ -61,17 +61,7 @@ public:
 };
 
 
-class Function1
-{
-    public: 
-    using Point=Vector<Real,2>;
-    using type=Real;
 
-    static type eval(const Point& p)
-    {
-     return p[0]; 
-    }
-};
 
 class Vec2
 {

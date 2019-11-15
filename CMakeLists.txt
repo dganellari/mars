@@ -119,6 +119,8 @@ list(APPEND MARS_HEADERS
 	mars_connectivity.hpp
 	mars_connectivity_impl.hpp
 	mars_constant.hpp
+	mars_context.hpp
+	mars_dirichlet_bc.hpp
 	mars_dof_map.hpp
 	mars_dual_graph.hpp
 	mars_edge.hpp

@@ -497,37 +497,16 @@ namespace mars {
 	}
 
 	template<typename T, Integer Rows, Integer Cols>
-	inline constexpr T det(const Matrix<T, Rows, Cols> &m)
+	inline constexpr T det(const Matrix<T, Rows, Cols> &J)
 	{
-		if(Rows > Cols) {
-			Matrix<T, Rows, Rows> m_square;
-			for(Integer i = 0; i < Rows; ++i) {
 
-				for(Integer j = 0; j < Cols; ++j) {
-					m_square(i, j) = m(i, j);
-				}
+		if(Rows != Cols) {
+            Matrix<Real, Cols, Cols> JtJ = transpose(J) * J;
+            return std::sqrt(det(JtJ));
+        } else {
+            return det(J);
+        }
 
-				for(Integer j = Cols; j < Rows; ++j) {
-					m_square(i, j) = i == j;
-				}
-			}
-
-			return det(m_square);
-		} else {
-			Matrix<T, Cols, Cols> m_square;
-
-			for(Integer j = 0; j < Cols; ++j) {
-				for(Integer i = 0; i < Rows; ++i) {
-					m_square(i, j) = m(i, j);
-				}
-
-				for(Integer i = Rows; i < Cols; ++i) {
-					m_square(i, j) = i == j;
-				}
-			}
-
-			return det(m_square);
-		}
 	}
 
 	template<typename T, Integer Rows, Integer Cols>

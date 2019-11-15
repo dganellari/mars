@@ -199,6 +199,16 @@ constexpr auto subarray(const Array<S,Dim1>&v,const Array<T,Dim2>&w)
 
 }
 
+
+template<typename S, typename T,Integer Dim1,Integer Dim2>
+constexpr auto subarray(Array<S,Dim2>&u , const Array<S,Dim1>&v,const Array<T,Dim2>&w)
+{
+
+  assert((Dim1>=Dim2)&&" cannot extract a subarray with components not belonging to the original one");
+  for(Integer ii=0;ii<Dim2;ii++)
+    u[ii]=v[w[ii]];
+
+}
 //     template<Integer N,Integer K>
 // constexpr void combinations_generate_aux(
 //     Array<Integer, K> &data,

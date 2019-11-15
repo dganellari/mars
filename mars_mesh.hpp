@@ -945,6 +945,11 @@ namespace mars {
 		}
         const auto& side_nodes()const {return side_nodes_;}
         	  auto& side_nodes() 	  {return side_nodes_;}
+
+        const auto& side_tags()const {return side_tags_;}
+        	  auto& side_tags() 	  {return side_tags_;}
+        
+        auto& boundary2elem(){return boundary2elem_;}
 	private:
 		std::vector<Elem> elements_;
 		std::vector<Point> points_;
@@ -954,6 +959,7 @@ namespace mars {
 		bool sorted_elements_;
 		std::vector<Integer> side_tags_;
 		std::vector<std::array<Integer,ManifoldDim>> side_nodes_;
+		std::vector<Integer> boundary2elem_;
 	};
 
 
@@ -997,6 +1003,8 @@ namespace mars {
 					}
 
 					mesh.add_elem(nodes);
+					// for(std::size_t h=0;h<mesh.elem(i).side_tags.size();h++)
+					//     mesh.elem(i).side_tags[h]=INVALID_INDEX;
 				}
 			} else if(line == "vertices") {
 				std::getline(is, line);
@@ -1021,7 +1029,7 @@ namespace mars {
 			else if(line == "boundary") {
 				std::getline(is, line);
 				n_boundary_nodes=atoi(line.c_str());
-				mesh.tags().resize(n_boundary_nodes);
+				mesh.side_tags().resize(n_boundary_nodes);
 				mesh.side_nodes().resize(n_boundary_nodes);
 				for(Integer i = 0; i < n_boundary_nodes; ++i){
 					assert(is.good());
@@ -1031,7 +1039,7 @@ namespace mars {
 
 					std::array<Integer, ManifoldDim> boundary_nodes;
 					ss >> attr >> type;
-                    mesh.tags()[i]=attr;
+                    mesh.side_tags()[i]=attr;
 					for(Integer k = 0; k < ManifoldDim; ++k) {
 						ss >> mesh.side_nodes()[i][k];
 					}
@@ -1139,6 +1147,89 @@ namespace mars {
 	using Mesh4 = mars::Mesh<4, 4>;
 	using Mesh5 = mars::Mesh<5, 5>;
 	using Mesh6 = mars::Mesh<6, 6>;
+
+
+
+
+
+
+
+
+
+	template<Integer Dim, Integer ManifoldDim>
+	void assign_tags(Mesh<Dim, ManifoldDim> &mesh)
+	{
+	  using Elem=Simplex<Dim,ManifoldDim>;
+	  using Side=Simplex<Dim,ManifoldDim-1>;
+	  const auto& mesh_side_nodes=mesh.side_nodes();
+	  const auto& n_sides_tot=mesh_side_nodes.size();
+	  const auto& side_tags=mesh.side_tags();
+	  const auto& n_elements=mesh.n_elements();
+            auto& boundary2elem=mesh.boundary2elem();
+      boundary2elem.resize(n_sides_tot);
+
+      Side side;
+
+	  for(int b=0;b<n_sides_tot;b++)
+	  {
+	    auto side_nodes=mesh_side_nodes[b];//std::sort(mesh_side_nodes[b]);
+	    std::sort(std::begin(side_nodes),std::end(side_nodes),std::less<int>());
+	    const auto& side_tag=side_tags[b];
+        bool found=false;
+        bool found_tmp=false;
+        std::cout<<std::endl;
+        std::cout<< "side_nodes="<<std::endl;
+        for(Integer t=0;t<side_nodes.size();t++)
+        	std::cout<<side_nodes[t]<<" ";
+        std::cout<<std::endl;
+
+	    for(Integer e=0;e<n_elements;e++)
+	    {
+	     if(found==true)
+	     	break;
+
+	     auto& elem=mesh.elem(e);
+         // const auto& nodes=elem.nodes;
+         std::cout<< "elem="<<e<<std::endl;
+         auto nsides=n_sides(elem);
+         for(Integer s=0;s<nsides ;s++)
+            {                  
+            	elem.side(s,side);
+                auto s_nodes=side.nodes;
+                std::sort(std::begin(s_nodes),std::end(s_nodes),std::less<int>());
+            	found_tmp=true;
+            	for(Integer t=0;t<s_nodes.size() ;t++)
+            	{
+            		if(s_nodes[t]!=side_nodes[t])
+            			found_tmp=false;
+            		std::cout<< s_nodes[t]<<" ";
+            	}
+                std::cout<<std::endl;
+            	if(found_tmp==true)
+            	{
+            		boundary2elem[b]=e;
+            		elem.side_tags[s]=side_tag;
+            		std::cout<<"found= "<<std::endl;
+		            	for(Integer t=0;t<s_nodes.size() ;t++)
+		            	{
+		                 std::cout<< s_nodes[t]<<" ";
+		            	}
+		                std::cout<< std::endl;
+            		 found=true;
+            		 break;
+            	}
+            	
+            }
+	    }
+
+	  std::cout<<std::endl;
+	  }
+
+	}
+
+
+
+
 
 }
 

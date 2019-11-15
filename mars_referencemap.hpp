@@ -8,6 +8,8 @@
 #include "mars_matrix.hpp"
 #include "mars_operators.hpp"
 #include "mars_jacobian.hpp" 
+#include "mars_general_form.hpp" 
+#include "mars_dirichlet_bc.hpp"
 namespace mars{
 
 
@@ -25,9 +27,15 @@ class MapFromReference<IdentityOperator, Simplex<Dim,ManifoldDim>,LagrangeFE>
  using Elem=Simplex<Dim,ManifoldDim>;
  // using type=Real;
         // if we have functions defined on manifolddim-d, d>0
+        MapFromReference():
+        id_(1.0)
+        {}
         template<Integer ManifoldDim2>
-        inline constexpr void  init(const FiniteElem<Simplex<Dim,ManifoldDim2>>& FE){id_=1.0;}
+        // inline constexpr void  init(const FiniteElem<Simplex<Dim,ManifoldDim2>>& FE){id_=1.0;}
+        inline constexpr void  init(const FiniteElem<Simplex<Dim,ManifoldDim2>>& FE){}
+        
         inline constexpr const auto&  operator()()const{return id_;}
+
  private:
   Real id_;
 };
@@ -40,8 +48,11 @@ class MapFromReference<TraceOperator, Simplex<Dim,ManifoldDim>,LagrangeFE>
  using Elem=Simplex<Dim,ManifoldDim+1>;
  // todo fixme. check if it is correct to put +1
  // indeed the element is Simplex<Dim,ManifoldDim+1> and we pass FiniteElem<Simplex<Dim,ManifoldDim+1>>
-
-        inline constexpr void  init(const FiniteElem<Simplex<Dim,ManifoldDim+1>>& FE){id_=1.0;}
+        MapFromReference():
+        id_(1.0)
+        {}
+        // inline constexpr void  init(const FiniteElem<Simplex<Dim,ManifoldDim+1>>& FE){id_=1.0;}
+        inline constexpr void  init(const FiniteElem<Simplex<Dim,ManifoldDim+1>>& FE){}
         inline constexpr const auto&  operator()()const{return id_;}
  private:
   Real id_;
@@ -112,8 +123,13 @@ class MapFromReference<TraceOperator,Simplex<Dim,ManifoldDim>,RaviartThomasFE>
 
  // todo fixme. check if it is correct to put +1
  // indeed the element is Simplex<Dim,ManifoldDim+1> and we pass FiniteElem<Simplex<Dim,ManifoldDim+1>>
+ // check if this is correct:
+ // do we have to do 1/(d|V|) or 1/|F| where F is associated to the shape
          inline constexpr void init(const FiniteElem<Simplex<Dim,ManifoldDim+1>> &FE)
-         {flux_inv_= 1.0/((ManifoldDim+1)*FE.volume());}
+         {
+          // flux_inv_= 1.0/((ManifoldDim+1)*FE.volume());
+          flux_inv_= 1.0/FE.side_volume();
+        }
          inline constexpr const auto&  operator()()const{return flux_inv_;}
  private:
  Real flux_inv_;
@@ -164,15 +180,16 @@ class MapFromReference<Unary<Expression<T>>,Elem_,FEFamily>
 
 
 
+template<typename...GeneralForms>
+class MapFromReferenceCollection;
 
-
-template<typename GeneralForm,typename...GeneralForms>
-class MapFromReferenceCollection
+template<typename Form_,typename...Forms_>
+class MapFromReferenceCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
 {
 public:
  
-  using FunctionSpace=typename GeneralForm::FunctionSpace;
-  using Form=MultipleAddition<typename GeneralForm::Form,typename GeneralForms::Form...>;
+  using FunctionSpace=typename GeneralForm<Form_>::FunctionSpace;
+  using Form=MultipleAddition<typename GeneralForm<Form_>::Form,typename GeneralForm<Forms_>::Form...>;
   using UniqueElementFunctionSpacesTupleType=typename FunctionSpace::UniqueElementFunctionSpacesTupleType;
   using SpacesToUniqueFEFamilies=SpacesToUniqueFEFamilies2<UniqueElementFunctionSpacesTupleType>;
 
@@ -266,13 +283,17 @@ template<typename ConstFormReference,typename...ConstFormReferences>
 constexpr auto reference_maps2(const ConstFormReference& form,const ConstFormReferences&...forms)
 {
  return MapFromReferenceCollection<ConstFormReference,ConstFormReferences...>();
-
 }
 
 
  // using Form=typename std::remove_const<typename std::remove_reference<ConstFormReference>::type>::type;
  // typename std::remove_const<typename std::remove_reference<ConstFormReference>::type>::type,
  //                       typename std::remove_const<typename std::remove_reference<ConstFormReferences>::type>::type...>();  
+
+
+
+
+
 
 
 }

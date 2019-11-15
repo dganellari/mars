@@ -45,6 +45,7 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>
 
   local_tensor_.apply(mat,J,shape_functions_, dofmaps...);//(),shape_functions_.composite_tensor(),shape_functions_.composite_shapes());
   std::cout<<"after Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
+  std::cout<<mat<<std::endl;
  }
 
  template<bool VolumeIntegralAux,typename Elem, typename...DofMaps>
@@ -54,13 +55,17 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>
 
   // changed todo fixme
    // local_tensor_.apply(mat,J,shape_functions_());
-  std::cout<<"pre Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
+  std::cout<<"L2DotProductIntegral LABEL="<<label_<<std::endl;
+  std::cout<<"side="<<J.side_id()<<std::endl;
+  std::cout<<"tag="<<J.side_tag()<<std::endl;
   
-  if(J.side_id()==label_)
+  if(J.side_tag()==label_)
    { 
+    std::cout<<"VALUTO IL BOUNDARY"<<std::endl;
     local_tensor_.apply(mat,J,shape_functions_, dofmaps...);//(),shape_functions_.composite_tensor(),shape_functions_.composite_shapes());
     }
-  std::cout<<"after Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
+  std::cout<<"after BOUNDAR Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
+  std::cout<<mat<<std::endl;
  }
 
 

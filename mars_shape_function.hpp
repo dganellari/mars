@@ -10,6 +10,7 @@
 #include "mars_operators.hpp"
 #include "mars_referencemap.hpp"
 #include "mars_shape_function_coefficients.hpp"
+#include "mars_tuple_utilities.hpp"
 
 namespace mars{
 
@@ -721,7 +722,7 @@ template<typename Elem,typename Operator,Integer FEFamily,Integer Order>
 class ReferenceShapeFunctionValue;
 
 template<typename Elem,Integer FEFamily,Integer Order>
-class SingleShapeFunctionCoefficient;
+class SingleShapeFunctionCoefficientsCollection;
 
 
 
@@ -816,9 +817,16 @@ constexpr auto trace_dofs(const Integer face)
 
 
 template <typename Space>
- constexpr auto trace_dofs()
+class TraceDofs;
+
+template <typename Elem, Integer FEFamily, Integer Order,Integer Continuity, Integer NComponents>
+class TraceDofs<ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>>
+{
+public:
+  using Space=ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>;
+  static constexpr Integer ManifoldDim=Elem::ManifoldDim;
+  static constexpr auto dofs()
  {
-  const auto ManifoldDim=Space::ManifoldDim;
   constexpr auto n_dofs_per_face=trace_surf_n_dofs<Space>();
   const auto n_faces=binomial_coefficient(ManifoldDim+1,ManifoldDim);
   Array< Array<Integer, n_dofs_per_face>, n_faces> vec;
@@ -826,6 +834,63 @@ template <typename Space>
     vec[ii]=trace_dofs<Space>(ii);
   return vec;
 }
+};
+
+
+template<typename MeshT, typename...BaseFunctionSpaces>
+class TraceDofs<FunctionSpace<MeshT,BaseFunctionSpaces...>>
+{
+ public:
+ using Elem=typename MeshT::Elem;
+
+ static constexpr auto dofs()
+ {
+ return std::tuple_cat(std::make_tuple(TraceDofs<ElemFunctionSpace<Elem,BaseFunctionSpaces>>::dofs())...);
+ } 
+};
+
+
+template<typename ...Args>
+class TraceDofs<FullSpace<MixedSpace<Args...>>>
+{
+ public:
+
+ static constexpr auto dofs_aux=std::tuple_cat(Args::dofs()...);
+
+ static constexpr auto dofs()
+ {
+ return dofs_aux;
+} 
+};
+
+
+template<template<class...> class AuxMixedSpace_,typename ...Args,typename...AuxArgs>
+class TraceDofs<FullSpace<MixedSpace<Args...>,AuxMixedSpace_<AuxArgs...>>>
+{
+ public:
+
+ static constexpr auto dofs_aux=std::tuple_cat(TraceDofs<Args>::dofs()...,TraceDofs<AuxArgs>::dofs()...);
+
+ static constexpr auto dofs()
+ {
+ return dofs_aux;
+} 
+};
+
+
+
+
+// template <typename Space>
+//  constexpr auto trace_dofs()
+//  {
+//   const auto ManifoldDim=Space::ManifoldDim;
+//   constexpr auto n_dofs_per_face=trace_surf_n_dofs<Space>();
+//   const auto n_faces=binomial_coefficient(ManifoldDim+1,ManifoldDim);
+//   Array< Array<Integer, n_dofs_per_face>, n_faces> vec;
+//   for(Integer ii=0;ii<n_faces;ii++)
+//     vec[ii]=trace_dofs<Space>(ii);
+//   return vec;
+// }
 
 
       template<typename Space,typename Operator,typename single_type,
@@ -855,43 +920,43 @@ template <typename Space>
        return v;
       };
 
-template<Integer N,Integer K>
- constexpr void combinations_generate_aux(
-            Array<Integer, K> &data,
-            const Integer index, 
-            const Integer i,
-            Array<Array<Integer, K>, binomial_coefficient(N,K)> &combs,
-            Integer &comb_index)
-        {
-            if(index == K) {
-                for(Integer ii=0;ii<data.size();ii++)
-                    combs[comb_index][ii]=data[ii];
-                comb_index++;
-                return;
-            }
+// template<Integer N,Integer K>
+//  constexpr void combinations_generate_aux(
+//             Array<Integer, K> &data,
+//             const Integer index, 
+//             const Integer i,
+//             Array<Array<Integer, K>, binomial_coefficient(N,K)> &combs,
+//             Integer &comb_index)
+//         {
+//             if(index == K) {
+//                 for(Integer ii=0;ii<data.size();ii++)
+//                     combs[comb_index][ii]=data[ii];
+//                 comb_index++;
+//                 return;
+//             }
 
-            if(i >= N) {
-                return;
-            }
+//             if(i >= N) {
+//                 return;
+//             }
 
-            data[index] = i;
+//             data[index] = i;
 
-            combinations_generate_aux<N,K>(data, index+1, i+1, combs, comb_index);
+//             combinations_generate_aux<N,K>(data, index+1, i+1, combs, comb_index);
             
-            // current is excluded, replace it with next (Note that
-            // i+1 is passed, but index is not changed)
-            combinations_generate_aux<N,K>(data, index, i+1, combs, comb_index);
-        }
+//             // current is excluded, replace it with next (Note that
+//             // i+1 is passed, but index is not changed)
+//             combinations_generate_aux<N,K>(data, index, i+1, combs, comb_index);
+//         }
 
-        template<Integer N,Integer K >
-        constexpr Array<Array<Integer, K>, binomial_coefficient(N,K)> combinations_generate()
-        {
-            Array<Array<Integer, K>, binomial_coefficient(N,K)> combs;
-            Array<Integer, K> data;
-            Integer comb_index = 0;
-            combinations_generate_aux<N,K>(data, 0, 0, combs, comb_index);
-            return combs;
-        }
+//         template<Integer N,Integer K >
+//         constexpr Array<Array<Integer, K>, binomial_coefficient(N,K)> combinations_generate()
+//         {
+//             Array<Array<Integer, K>, binomial_coefficient(N,K)> combs;
+//             Array<Integer, K> data;
+//             Integer comb_index = 0;
+//             combinations_generate_aux<N,K>(data, 0, 0, combs, comb_index);
+//             return combs;
+//         }
 
 
    template<Integer Dim, Integer ManifoldDim>
@@ -952,6 +1017,191 @@ inline constexpr auto reference_face_shape_functions()
 
 
 
+/////////////////////////////////////////////////////////////////////////////
+
+template<typename Elem,typename Operator,Integer FEFamily,Integer Order>
+class DofsPoints;
+
+
+template<typename DofsPoints_>
+class DofsPointsType;
+
+template<typename Elem,typename Operator,Integer FEFamily,Integer Order>
+class DofsPointsType<DofsPoints<Elem,Operator,FEFamily,Order>>
+{
+public:
+  using Dofs=DofsPoints<Elem,Operator,FEFamily,Order>;
+  using type=decltype(Dofs::points);
+  using mapped_type=Vector<Matrix<Real,Elem::ManifoldDim,1> , type::Dim>;
+};
+
+static constexpr Vector<Matrix<Real,1,1>,1> Dofs_Simplex1_Trace_Lagrange0(0.5);
+
+template<Integer Dim>
+class DofsPoints<Simplex<Dim,2>,TraceOperator, LagrangeFE, 0>
+{
+public:
+ static constexpr auto points=Dofs_Simplex1_Trace_Lagrange0;
+ using type=decltype(points);
+};
+
+static constexpr Vector<Matrix<Real,1,1>,2> Dofs_Simplex1_Trace_Lagrange1(0, 1.0);
+
+template<Integer Dim>
+class DofsPoints<Simplex<Dim,2>,TraceOperator, LagrangeFE, 1>
+{
+public:
+ static constexpr auto points=Dofs_Simplex1_Trace_Lagrange1;
+ using type=decltype(points);
+};
+
+static constexpr Vector<Matrix<Real,1,1>,3> Dofs_Simplex1_Trace_Lagrange2(0, 1.0, 0.5);
+
+template<Integer Dim>
+class DofsPoints<Simplex<Dim,2>,TraceOperator, LagrangeFE, 2>
+{
+public:
+ static constexpr auto points=Dofs_Simplex1_Trace_Lagrange2;
+ using type=decltype(points);
+};
+
+static constexpr Vector<Matrix<Real,1,1>,4> Dofs_Simplex1_Trace_Lagrange3(0, 1.0, 1.0/3.0, 2.0/3.0);
+
+template<Integer Dim>
+class DofsPoints<Simplex<Dim,2>,TraceOperator, LagrangeFE, 3>
+{
+public:
+ static constexpr auto points=Dofs_Simplex1_Trace_Lagrange3;
+ using type=decltype(points);
+};
+
+
+
+
+
+static constexpr Vector<Matrix<Real,1,1>,1> Dofs_Simplex1_Trace_RT0(0.5);
+
+template<Integer Dim>
+class DofsPoints<Simplex<Dim,2>,TraceOperator, RaviartThomasFE, 0>
+{
+public:
+ static constexpr auto points=Dofs_Simplex1_Trace_RT0;
+ using type=decltype(points);
+};
+
+
+static constexpr Vector<Matrix<Real,1,1>,2> Dofs_Simplex1_Trace_RT1(0.0,1.0);
+
+template<Integer Dim>
+class DofsPoints<Simplex<Dim,2>,TraceOperator, RaviartThomasFE, 1>
+{
+public:
+ static constexpr auto points=Dofs_Simplex1_Trace_RT1;
+ using type=decltype(points);
+};
+
+
+
+
+
+
+static constexpr Vector<Matrix<Real,2,1>,1> Dofs_Simplex2_Trace_Lagrange0({1.0/3.0, 1.0/3.0});
+
+template<Integer Dim>
+class DofsPoints<Simplex<Dim,3>,TraceOperator, LagrangeFE, 0>
+{
+public:
+ static constexpr auto points=Dofs_Simplex2_Trace_Lagrange0;
+ using type=decltype(points);
+};
+
+
+
+
+static constexpr Vector<Matrix<Real,2,1>,3> Dofs_Simplex2_Trace_Lagrange1({0.0,0.0},
+                                                                        {1.0,0.0},
+                                                                        {0.0,1.0});
+
+template<Integer Dim>
+class DofsPoints<Simplex<Dim,3>,TraceOperator, LagrangeFE, 1>
+{
+public:
+ static constexpr auto points=Dofs_Simplex2_Trace_Lagrange1;
+ using type=decltype(points);
+};
+
+static constexpr Vector<Matrix<Real,2,1>,6> Dofs_Simplex2_Trace_Lagrange2({0.0,0.0},
+                                                                        {1.0,0.0},
+                                                                        {0.0,1.0},
+                                                                        {0.5,0.0},
+                                                                        {0.0,0.5},
+                                                                        {0.5,0.5});
+
+template<Integer Dim>
+class DofsPoints<Simplex<Dim,3>,TraceOperator, LagrangeFE, 2>
+{
+public:
+ static constexpr auto points=Dofs_Simplex2_Trace_Lagrange1;
+ using type=decltype(points);
+};
+
+
+
+static constexpr Vector<Matrix<Real,2,1>,10> Dofs_Simplex2_Trace_Lagrange3({0.0,0.0},
+                                                                         {1.0,0.0},
+                                                                         {0.0,1.0},
+                                                                         {1.0/3.0,0.0},
+                                                                         {2.0/3.0,0.0},
+                                                                         {0.0,1.0/3.0},
+                                                                         {0.0,2.0/3.0},
+                                                                         {2.0/3.0,1.0/3.0},
+                                                                         {1.0/3.0,2.0/3.0},
+                                                                         {1.0/3.0,1.0/3.0});
+
+template<Integer Dim>
+class DofsPoints<Simplex<Dim,3>,TraceOperator, LagrangeFE, 3>
+{
+public:
+ static constexpr auto points=Dofs_Simplex2_Trace_Lagrange3;
+ using type=decltype(points);
+};
+
+
+
+
+
+
+
+
+static constexpr Vector<Matrix<Real,2,1>,1> Dofs_Simplex2_Trace_RT0({1.0/3.0, 1.0/3.0});
+
+template<Integer Dim>
+class DofsPoints<Simplex<Dim,3>,TraceOperator, RaviartThomasFE, 0>
+{
+public:
+ static constexpr auto points=Dofs_Simplex2_Trace_RT0;
+ using type=decltype(points);
+};
+
+
+static constexpr Vector<Matrix<Real,2,1>,3> Dofs_Simplex2_Trace_RT1({0.0,0.0},
+                                                                  {1.0,0.0},
+                                                                  {0.0,1.0});
+
+template<Integer Dim>
+class DofsPoints<Simplex<Dim,3>,TraceOperator, RaviartThomasFE, 1>
+{
+public:
+ static constexpr auto points=Dofs_Simplex2_Trace_RT1;
+ using type=decltype(points);
+};
+
+
+
+
+
+
+
 
 
 template<Integer Dim,Integer ManifoldDim>
@@ -962,7 +1212,7 @@ class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, La
 constexpr inline static void 
 apply(const Vector<Real,ManifoldDim>& point, Output & func)
 {
-    Vector<Matrix<Real, 1, 1>,1> func2(1);       
+    Output func2(1);       
     func=func2;
 }
 };
@@ -976,7 +1226,7 @@ class ReferenceShapeFunctionValue<Simplex<Dim,1>, IdentityOperator, LagrangeFE, 
 constexpr inline static void 
 apply(const Vector<Real,1>& point, Output & func)
 {
-    Vector<Matrix<Real, 1, 1>,2> func2((1. - point[0]), // 1 in (0)
+    Output func2((1. - point[0]), // 1 in (0)
                                        point[0]);       // 1 in (1)
     func=func2;
 }
@@ -990,7 +1240,7 @@ class ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 
 constexpr inline static void 
 apply(const Vector<Real,2>& point, Output & func)
 {
-    Vector<Matrix<Real, 1, 1>,3> func2((1. - point[0] - point[1]), // 1 in (0,0)
+    Output func2((1. - point[0] - point[1]), // 1 in (0,0)
                                        point[0],                  // 1 in (1,0)
                                        point[1]);                 // 1 in (0,1)
     func=func2;
@@ -1024,7 +1274,7 @@ class ReferenceShapeFunctionValue<Simplex<Dim,2>, GradientOperator, LagrangeFE, 
       const auto& xi=point[0];
       const auto& eta=point[1];
       const Real zeta = 1. - xi - eta;
-      Vector<Matrix<Real, 2, 1>,3> func2({-1,-1},
+      Output func2({-1,-1},
                                          // Vector<Vector<Real, 2>,3> func2({-1,-1},
                                          {+1, 0},
                                          { 0,+1});
@@ -1075,7 +1325,7 @@ apply(const Vector<Real,2>& point, Output & func)
     const auto& xi=point[0];
     const auto& eta=point[1];
     const Real zeta = 1. - xi - eta;
-    Vector<Matrix<Real, 1, 1>,6> func2(2.*zeta*(zeta-0.5), // 1 in (0,0)
+    Output func2(2.*zeta*(zeta-0.5), // 1 in (0,0)
                                        2.*xi*(xi-0.5),     // 1 in (1,0)
                                        2.*eta*(eta-0.5),   // 1 in (0,1)
                                        4.*zeta*xi,         // 1 in (0.5,0)
@@ -1118,7 +1368,7 @@ apply(const Vector<Real,2>& point, Output & func)
     const Real dzeta_dxi  = -1.;
     const Real dzeta_deta = -1.;
     // Vector<Vector<Real, 2>,6> func2(
-    Vector<Matrix<Real, 2, 1>,6> func2(
+    Output func2(
                                        {2.*zeta*dzeta_dxi  + 2*dzeta_dxi *(zeta-0.5), 2.*zeta*dzeta_deta + 2*dzeta_deta*(zeta-0.5)},
                                        {2.*xi*dxi_dxi  + 2.*dxi_dxi *(xi-0.5),0},
                                        {0,2.*eta*deta_deta + 2.*deta_deta*(eta-0.5)},
@@ -1170,7 +1420,7 @@ public:
 {
     const auto& xi=point[0];
     const auto& eta=point[1];
-    Vector<Matrix<Real, 2, 1>,3> func2{{xi,eta-1},{xi-1,eta},{xi,eta}};
+    Output func2{{xi,eta-1},{xi-1,eta},{xi,eta}};
     func=func2;
 }
 
@@ -1197,7 +1447,7 @@ public:
 constexpr inline static void 
 apply(const Vector<Real,2>& point, Output & func)
 {
-    Vector<Matrix<Real, 1, 1>,3> func2{{2},{2},{2}};
+    Output func2{{2},{2},{2}};
     func=func2;
 }
 };
@@ -1223,7 +1473,7 @@ apply (const Vector<Real,2>& point, Output & func)
     const auto& xi=point[0];
     const auto& eta=point[1];
     
-    Vector<Matrix<Real, 2, 1>,8> func2{
+    Output func2{
         {(1. - xi - eta)*xi,(1. - xi - eta)*(eta-1)},   // 0 in (1,0), (0,1), non-zero normal on edge0
         {xi*xi,xi*(eta-1)},                             // 0 in (0,0), (0,1), non-zero normal on edge0
         {(1. - xi - eta)*(xi-1),(1. - xi - eta)*(eta)}, // 0 in (1,0), (0,1), non-zero normal on edge1
@@ -1266,7 +1516,7 @@ apply(const Vector<Real,2>& point, Output & func)
 {
     const auto& xi=point[0];
     const auto& eta=point[1];
-    Vector<Matrix<Real, 1, 1>,8> func2{
+    Output func2{
         {3*(1-xi-eta)},
         {3*xi},
         {3*(1-xi-eta)},
@@ -1319,8 +1569,8 @@ apply(const Vector<Real,ManifoldDim-1>& point, Output & func)
 
 
 
-template<typename Elem,Integer FEFamily,Integer Order, typename ConstInput, typename ShapeFunctionCoefficient>
-void shape_function_coefficients_init(const ConstInput& mesh_ptr,ShapeFunctionCoefficient& coeff);
+template<typename Elem,Integer FEFamily,Integer Order, typename ConstInput, typename ShapeFunctionCoefficientsCollection>
+void shape_function_coefficients_init(const ConstInput& mesh_ptr,ShapeFunctionCoefficientsCollection& coeff);
 
 
 
@@ -1333,7 +1583,7 @@ void shape_function_coefficients_init(const ConstInput& mesh_ptr,ShapeFunctionCo
 
 
 template<Integer Dim>
-class SingleShapeFunctionCoefficient<Simplex<Dim,2>, RaviartThomasFE, 0>
+class SingleShapeFunctionCoefficientsCollection<Simplex<Dim,2>, RaviartThomasFE, 0>
 {
  public: 
 constexpr inline static  void 
@@ -1347,7 +1597,7 @@ apply(const Array<Real, 3 >& outward,Array<Real, 3 >& coeff)
 
 
 template<Integer Dim>
-class SingleShapeFunctionCoefficient<Simplex<Dim,2>, RaviartThomasFE, 1>
+class SingleShapeFunctionCoefficientsCollection<Simplex<Dim,2>, RaviartThomasFE, 1>
 {
  public: 
 constexpr inline static  void  
@@ -1629,7 +1879,7 @@ public:
             }
         }
         
-        std::cout<<"init end"<<std::endl;
+        std::cout<<"ShapeFunction non trace end"<<std::endl;
     }
     
     void init(const Array<Real,Ndofs> &alpha)
@@ -1746,7 +1996,7 @@ public:
     static constexpr Integer FEFamily=BaseFunctionSpace::FEFamily;
     static constexpr Integer Order=BaseFunctionSpace::Order;
     static constexpr Integer Continuity=BaseFunctionSpace::Continuity;
-    static constexpr auto trace=trace_dofs<FunctionSpace>();
+    static constexpr auto trace=TraceDofs<FunctionSpace>::dofs();//trace_dofs<FunctionSpace>();
     using SingleType   = typename SingleTypeShapeFunction<FunctionSpace,Operator>::SingleType;
     using VectorSingleType   = Vector<SingleType,Ndofs>;
     using tot_type= typename SingleTypeShapeFunction<FunctionSpace,Operator>::TotType;
@@ -1765,7 +2015,7 @@ public:
     static constexpr FQPValues<SingleType,NQPoints,Ndofs>
     reference_values{reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(QuadratureRule::qp_points)};
     
-
+    using trace_type=typename decltype(trace)::value_type;
     // static constexpr FQPValues<SingleType,NQPoints,Ndofs>
     // weighted_reference_values{  weighted_reference_shape_function_init(reference_values,QuadratureRule::qp_sqrt_abs_weights)};
     
@@ -1812,7 +2062,8 @@ public:
             }
         }
         
-        std::cout<<"init end"<<std::endl;
+     std::cout<<"ShapeFunction  trace end"<<std::endl;
+
     }
     
     void init(const Array<Real,NdofsVolume> &beta, const Integer face)
@@ -1820,7 +2071,9 @@ public:
 
         //face=0
         // const Integer face=0;
-        auto alpha=subarray(beta,trace[face]);
+        // auto alpha=subarray(beta,trace[face]);
+        subarray(alpha_,beta,trace[face]);
+        
         std::cout<<"init RT elements (coeffs)"<<std::endl;
         
         const auto& map=(*map_ptr);
@@ -1838,7 +2091,7 @@ public:
                     // func_tmp_=alpha[n_dof] * mapping * weighted_reference_values[n_dof][qp];
                     std::cout<< "n_dof, qp, n_tot_, n_comp, n_=("<<n_dof<<", "<<qp<<", "<< n_tot_<<", "<<n_comp<<", "<< n_<<")"<<std::endl;
                     std::cout<< "func_values_="<<func_values_[n_tot_][qp]<<std::endl;
-                    func_tmp_=alpha[n_dof] * mapping * reference_values[n_dof][qp];
+                    func_tmp_=alpha_[n_dof] * mapping * reference_values[n_dof][qp];
                     std::cout<< "func_tmp_="<<func_tmp_<<std::endl;
                     assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
                     std::cout<< "func_values_ after="<<func_values_[n_tot_][qp]<<std::endl;
@@ -1874,6 +2127,7 @@ private:
     std::shared_ptr<Map> map_ptr;
     Integer n_tot_;
     Integer n_;
+    trace_type alpha_;
 };
 
 

@@ -933,7 +933,6 @@ using type=typename TupleOfL2ProductsHelper2<H,TupleOfPairsNumbers,Form,TupleTyp
 template<typename FunctionSpace, typename T>
 std::shared_ptr<FunctionSpace> find_spaces_ptr(const T& t)
 {
-  std::cout<<"is null"<<std::endl;
  return std::shared_ptr<FunctionSpace>(nullptr);
 }
 
@@ -941,7 +940,6 @@ std::shared_ptr<FunctionSpace> find_spaces_ptr(const T& t)
 template<typename FunctionSpace, template<class,Integer,class>class TestOrTrial_,typename MixedSpace,Integer N,typename OperatorType>
 std::shared_ptr<FunctionSpace> find_spaces_ptr(const TestOrTrial_<MixedSpace,N,OperatorType>& t)
 {
-  std::cout<<"is not null"<<std::endl;
  return t.spaces_ptr();
 }
 

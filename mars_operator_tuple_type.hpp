@@ -4,7 +4,7 @@
 #include "mars_tuple_utilities.hpp"
 #include "mars_base.hpp"
 #include "mars_operators.hpp"
-
+#include "mars_operator_differential.hpp"
 namespace mars{
 
 
@@ -251,6 +251,63 @@ public:
 //       using type=typename OperatorAndQuadratureTupleType<T>::type;
 //       using composite_type=typename OperatorAndQuadratureTupleType<T>::composite_type;
 //   };
+
+template<typename Tuple,typename DirichletBc,typename...DirichletBCs>
+class DirichletBCMapsHelper;
+
+template<typename Tuple,typename DirichletBC>
+class DirichletBCMapsHelper<Tuple,DirichletBC>
+{
+public:
+ static constexpr Integer map_value=DirichletBC::map_value;
+ static constexpr Integer value=DirichletBC::value;
+ using FunctionSpace=typename DirichletBC::FunctionSpace;
+ using UniqueElementFunctionSpacesTupleType=typename FunctionSpace::UniqueElementFunctionSpacesTupleType;
+ using Elem=typename FunctionSpace::Elem;
+ using TraceElem=TraceOf<Elem>; 
+ static constexpr Integer FEFamily=GetType<UniqueElementFunctionSpacesTupleType,value>::FEFamily;
+ using tmp_type=MapFromReference<TraceOperator,TraceElem, FEFamily>;
+ using type=TupleChangeType<map_value,tmp_type,Tuple>;
+};
+
+//ShapeFunction<Elem,BaseFunctionSpace<-10,1, 1, 1>,TraceOperator,GaussPoints<TraceElem, 1> > >
+
+template<typename Tuple,typename DirichletBC,typename...DirichletBCs>
+class DirichletBCMapsHelper
+{
+public:
+ static constexpr Integer map_value=DirichletBC::map_value;
+ static constexpr Integer value=DirichletBC::value;
+ using FunctionSpace=typename DirichletBC::FunctionSpace;
+ using UniqueElementFunctionSpacesTupleType=typename FunctionSpace::UniqueElementFunctionSpacesTupleType;
+ using Elem=typename FunctionSpace::Elem;
+ using TraceElem=TraceOf<Elem>; 
+ static constexpr Integer FEFamily=GetType<UniqueElementFunctionSpacesTupleType,value>::FEFamily;
+ using tmp_type=MapFromReference<TraceOperator,TraceElem,FEFamily>;
+ using tmp_tuple=TupleChangeType<map_value,tmp_type,Tuple>;
+ using type=typename DirichletBCMapsHelper<tmp_tuple,DirichletBCs...>::type;
+};
+
+template<typename DirichletBC, typename...DirichletBCs>
+class DirichletBCMapsAux
+{
+public:
+ using FunctionSpace=typename DirichletBC::FunctionSpace;
+ using UniqueElementFunctionSpacesTupleType=typename FunctionSpace::UniqueElementFunctionSpacesTupleType;
+ using SpacesToUniqueFEFamilies=SpacesToUniqueFEFamilies2<UniqueElementFunctionSpacesTupleType>;
+ static constexpr Integer Nmax=MaxNumberInTuple<SpacesToUniqueFEFamilies>::value+1;
+ using emptytuple=TupleOfTypeTCreate<std::tuple<>,Nmax>;
+ using type=typename DirichletBCMapsHelper<emptytuple,DirichletBC,DirichletBCs...>::type;
+};
+
+
+
+
+template<typename...DirichletBCs>
+using DirichletBCMapsCollection=typename DirichletBCMapsAux<DirichletBCs...>::type;
+
+
+
 
 
 

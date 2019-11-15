@@ -24,5 +24,19 @@ class ComponentOperator: public Expression<ComponentOperator<N_>>
  {public: static constexpr Integer N=N_;
   ComponentOperator(){}};
 
+ template<typename...Ts>
+ class TraceElemHelper;
+
+ template<template<Integer,Integer> class Elem_,Integer Dim,Integer ManifoldDim>
+ class TraceElemHelper<Elem_<Dim,ManifoldDim>>
+ {
+  public:
+    using type=Elem_<Dim,ManifoldDim-1>;
+ };
+
+ template<class Elem>
+ using TraceOf=typename TraceElemHelper<Elem>::type;
+
+
 }
 #endif

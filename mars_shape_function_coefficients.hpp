@@ -7,32 +7,33 @@
 
 #include "mars_tuple_utilities.hpp"
 #include "mars_shape_function.hpp"
+#include "mars_general_form.hpp"
 namespace mars{
 
 template<typename Elem,Integer FEFamily,Integer Order>
-class SingleShapeFunctionCoefficient;
+class SingleShapeFunctionCoefficientsCollection;
 
 template<typename Elem>
 class SignedNormal;
 
 template<typename Elem,Integer FEFamily>
-class ShapeFunctionCoefficientSingleType;
+class ShapeFunctionCoefficientsCollectionSingleType;
 
 
 template<Integer Dim,Integer ManifoldDim>
-class ShapeFunctionCoefficientSingleType<Simplex<Dim,ManifoldDim>,LagrangeFE>
+class ShapeFunctionCoefficientsCollectionSingleType<Simplex<Dim,ManifoldDim>,LagrangeFE>
 {
  public:
  using type=std::tuple<>;
- ShapeFunctionCoefficientSingleType(){}
+ ShapeFunctionCoefficientsCollectionSingleType(){}
 };
 
 template<Integer Dim,Integer ManifoldDim>
-class ShapeFunctionCoefficientSingleType<Simplex<Dim,ManifoldDim>,RaviartThomasFE>
+class ShapeFunctionCoefficientsCollectionSingleType<Simplex<Dim,ManifoldDim>,RaviartThomasFE>
 {
  public:
  using type=SignedNormal<Simplex<Dim,ManifoldDim>>;
- ShapeFunctionCoefficientSingleType(){}
+ ShapeFunctionCoefficientsCollectionSingleType(){}
 
  void init(const Mesh<Dim,ManifoldDim>& mesh)
  {signed_normal_.init(mesh);}
@@ -62,7 +63,7 @@ class ShapeFunctionGlobalCoefficientTupleTypeHelper2<Tuple,Nmax,Nmax>
 public:
     using Elem=GetType<Tuple,Nmax,0>;
     static constexpr Integer FEFamily=GetType<Tuple,Nmax,1>::value;
-    using type=std::tuple<typename ShapeFunctionCoefficientSingleType<Elem,FEFamily>::type>;
+    using type=std::tuple<typename ShapeFunctionCoefficientsCollectionSingleType<Elem,FEFamily>::type>;
 };
 
 template<typename Tuple,Integer Nmax,Integer N>
@@ -71,7 +72,7 @@ class ShapeFunctionGlobalCoefficientTupleTypeHelper2
 public:
     using Elem=GetType<Tuple,N,0>;
     static constexpr Integer FEFamily=GetType<Tuple,N,1>::value;
-    using single_type=std::tuple<typename ShapeFunctionCoefficientSingleType<Elem,FEFamily>::type>;
+    using single_type=std::tuple<typename ShapeFunctionCoefficientsCollectionSingleType<Elem,FEFamily>::type>;
     using type=decltype(std::tuple_cat(std::declval<single_type>(),
       std::declval<typename ShapeFunctionGlobalCoefficientTupleTypeHelper2<Tuple,Nmax,N+1>::type>()));
 };
@@ -113,7 +114,7 @@ public:
     using Space=GetType<Tuple,Nmax>;
     using Elem=typename Space::Elem;
     using BaseFunctionSpace=Elem2FunctionSpace<Space>;
-    using type=std::tuple<typename ShapeFunctionCoefficientSingleType<Elem,BaseFunctionSpace::FEFamily>::type>;
+    using type=std::tuple<typename ShapeFunctionCoefficientsCollectionSingleType<Elem,BaseFunctionSpace::FEFamily>::type>;
 };
 
 template<typename Tuple,Integer Nmax,Integer N>
@@ -125,7 +126,7 @@ public:
     using Space=GetType<Tuple,N>;
     using Elem=typename Space::Elem;
     using BaseFunctionSpace=Elem2FunctionSpace<Space>;
-    using single_type=std::tuple<typename ShapeFunctionCoefficientSingleType<Elem,BaseFunctionSpace::FEFamily>::type>;
+    using single_type=std::tuple<typename ShapeFunctionCoefficientsCollectionSingleType<Elem,BaseFunctionSpace::FEFamily>::type>;
     using type=decltype(std::tuple_cat(std::declval<single_type>(),
       std::declval<typename ShapeFunctionGlobalCoefficientTupleTypeHelper<Tuple,Nmax,N+1>::type>()));
 };
@@ -179,16 +180,19 @@ template<typename Tuple>
 using ShapeFunctionLocalCoefficientTupleType=typename ShapeFunctionLocalCoefficientTupleTypeHelper<Tuple,TupleTypeSize<Tuple>::value-1,0>::type;
 
 
-template<typename Elem,Integer FEFamily,Integer Order, typename ConstInput, typename ShapeFunctionCoefficient>
-void shape_function_coefficients_init(const ConstInput& mesh_ptr,ShapeFunctionCoefficient& coeff);
+template<typename Elem,Integer FEFamily,Integer Order, typename ConstInput, typename ShapeFunctionCoefficientsCollection>
+void shape_function_coefficients_init(const ConstInput& mesh_ptr,ShapeFunctionCoefficientsCollection& coeff);
 
 
-template<typename GeneralForm,typename...GeneralForms>
-class ShapeFunctionCoefficient
+template<typename GeneralForm,typename ...GeneralForms>
+class ShapeFunctionCoefficientsCollection;
+
+template<typename Form_,typename...Forms_>
+class ShapeFunctionCoefficientsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
 {
 public:
-  using Form=MultipleAddition<typename GeneralForm::Form,typename GeneralForms::Form...>;
-  using FunctionSpace=typename GeneralForm::FunctionSpace;
+  using Form=MultipleAddition<typename GeneralForm<Form_>::Form,typename GeneralForm<Forms_>::Form...>;
+  using FunctionSpace=typename GeneralForm<Form_>::FunctionSpace;
   using UniqueElementFunctionSpacesTupleType=typename FunctionSpace::UniqueElementFunctionSpacesTupleType;  
   using SpacesToUniqueFEFamily=typename FunctionSpace::SpacesToUniqueFEFamily;
   using GlobalTuple=ShapeFunctionGlobalCoefficientTupleType2<UniqueElementFEFamily2<UniqueElementFunctionSpacesTupleType>>;
@@ -247,7 +251,7 @@ public:
   init_aux_aux(const Integer elem_id,const S& s, T& t)
   {
     // shape_function_coefficients_init<Elem,FEFamily,Order>(s.sign(elem_id),t);
-    SingleShapeFunctionCoefficient<Elem,FEFamily,Order>::apply(s.sign(elem_id),t);
+    SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(s.sign(elem_id),t);
   }
 
 
@@ -301,7 +305,7 @@ private:
 
 template<typename ConstFormReference,typename...ConstFormReferences>
 constexpr auto shape_function_coefficients(const ConstFormReference& form,const ConstFormReferences&...forms)
-{return ShapeFunctionCoefficient<ConstFormReference,ConstFormReferences...>() ; }
+{return ShapeFunctionCoefficientsCollection<ConstFormReference,ConstFormReferences...>() ; }
 
 
 

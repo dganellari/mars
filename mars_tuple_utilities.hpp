@@ -121,6 +121,44 @@ constexpr bool IsPositive (const Array<T,Dim>& a)
 }
 
 
+template<Integer N,Integer K>
+ constexpr void combinations_generate_aux(
+            Array<Integer, K> &data,
+            const Integer index, 
+            const Integer i,
+            Array<Array<Integer, K>, binomial_coefficient(N,K)> &combs,
+            Integer &comb_index)
+        {
+            if(index == K) {
+                for(Integer ii=0;ii<data.size();ii++)
+                    combs[comb_index][ii]=data[ii];
+                comb_index++;
+                return;
+            }
+
+            if(i >= N) {
+                return;
+            }
+
+            data[index] = i;
+
+            combinations_generate_aux<N,K>(data, index+1, i+1, combs, comb_index);
+            
+            // current is excluded, replace it with next (Note that
+            // i+1 is passed, but index is not changed)
+            combinations_generate_aux<N,K>(data, index, i+1, combs, comb_index);
+        }
+
+        template<Integer N,Integer K >
+        constexpr Array<Array<Integer, K>, binomial_coefficient(N,K)> combinations_generate()
+        {
+            Array<Array<Integer, K>, binomial_coefficient(N,K)> combs;
+            Array<Integer, K> data;
+            Integer comb_index = 0;
+            combinations_generate_aux<N,K>(data, 0, 0, combs, comb_index);
+            return combs;
+        }
+        
 
 template<typename Left,typename Right>
 class ChooseHelper
@@ -131,6 +169,29 @@ class ChooseHelper
 
 template<typename Left,typename Right>
 using Choose=typename ChooseHelper<Left,Right>::type;
+
+
+template<typename ...Args>
+class TupleOfSubTypesHelper;
+
+
+template<typename ...Args>
+class TupleOfSubTypesHelper<std::tuple<Args...>>
+{
+ public:
+  using type=std::tuple<typename Args::value_type...> ;
+};
+
+template<typename ...Args>
+class TupleOfSubTypesHelper<const std::tuple<Args...>>
+{
+ public:
+  using type=std::tuple<typename Args::value_type...> ;
+};
+template<typename ...Args>
+using TupleOfSubTypes=typename TupleOfSubTypesHelper<std::remove_const<std::tuple<Args...>>>::type;
+
+
 
 
 template<typename T,Integer Nmax,Integer N>
@@ -292,15 +353,14 @@ tuple_get(Tuple& tuple)
 
 
 
-template<typename...Args>
-std::tuple<Args...> add_costant (const std::tuple<Args...>& t1,const Integer& value);
+// template<typename...Args>
+// std::tuple<Args...> add_costant (const std::tuple<Args...>& t1,const Integer& value);
 
 
-template<std::size_t Nelem_dofs>
-std::vector<std::array<Integer, Nelem_dofs>> add_costant
-(const std::vector<std::array<Integer, Nelem_dofs>>& t1,const Integer& value)
+template<Integer Nelem_dofs>
+auto add_costant
+(std::vector<Array<Integer, Nelem_dofs>>& t2,const std::vector<Array<Integer, Nelem_dofs>>& t1,const Integer& value)
 {
-  std::vector<std::array<Integer, Nelem_dofs>> t2;
   const auto& t1size=t1.size();
   t2.resize(t1size);
 
@@ -314,15 +374,16 @@ template<Integer N,typename...Args>
 typename std::enable_if<sizeof...(Args)==N+1, void>::type
  add_costant_tuple_loop(const std::tuple<Args...>& t1, std::tuple<Args...>& t2,const Integer& value)
 {
-std::get<N>(t2)=add_costant(std::get<N>(t1),value);
+  add_costant(std::get<N>(t2),std::get<N>(t1),value);
 }
 
 template<Integer N,typename...Args>
 typename std::enable_if< N+1<sizeof...(Args), void>::type
  add_costant_tuple_loop(const std::tuple<Args...>& t1, std::tuple<Args...>& t2,const Integer& value)
 {
-  std::get<N>(t2)=add_costant(std::get<N>(t1),value);
-  add_costant_tuple_loop<N+1,Args...>(t1,t2,value);
+  add_costant(std::get<N>(t2),std::get<N>(t1),value);
+  add_costant_tuple_loop<N+1>(t1,t2,value);
+
 }
 
 
@@ -330,8 +391,7 @@ template<typename...Args>
 std::tuple<Args...> add_costant (const std::tuple<Args...>& t1,const Integer& value)
 {
   std::tuple<Args...> t2=t1;
-
-  add_costant_tuple_loop<0,Args...>(t1,t2,value);
+  add_costant_tuple_loop<0>(t1,t2,value);
 
   return t2;
 }
@@ -1865,7 +1925,7 @@ using MapTupleInit=typename MapTupleInitHelper<TupleOfTupleSpaces,SpaceToMap,Tup
 
   
   template<typename GeneralForm,typename...GeneralForms>
-  class ShapeFunctionCoefficient;
+  class ShapeFunctionCoefficientsCollection;
 
 
 
@@ -1905,12 +1965,12 @@ using MapTupleInit=typename MapTupleInitHelper<TupleOfTupleSpaces,SpaceToMap,Tup
 
   template<Integer Nmax,Integer N, typename Tuple,typename...Args>
   typename std::enable_if_t< (N>Nmax),void> 
-  shape_function_init_aux(Tuple& tuple, const ShapeFunctionCoefficient<Args...> &coefficients)
+  shape_function_init_aux(Tuple& tuple, const ShapeFunctionCoefficientsCollection<Args...> &coefficients)
   {}
 
   template<Integer Nmax,Integer N, typename Tuple,typename...Args>
   typename std::enable_if_t<N<=Nmax,void> 
-  shape_function_init_aux(Tuple& tuple, const ShapeFunctionCoefficient<Args...> &coefficients)
+  shape_function_init_aux(Tuple& tuple, const ShapeFunctionCoefficientsCollection<Args...> &coefficients)
   {
     constexpr Integer Nmax_aux=TupleTypeSize<GetType<Tuple,N>>::value-1;
     // shape_function_init_aux_aux<Nmax_aux,0>(tuple_get<N>(tuple),coefficients);
@@ -1920,7 +1980,7 @@ using MapTupleInit=typename MapTupleInitHelper<TupleOfTupleSpaces,SpaceToMap,Tup
 
 
   template< typename Tuple,typename...Args>
-  constexpr void init(Tuple& tuple, const ShapeFunctionCoefficient<Args...> &coefficients)
+  constexpr void init(Tuple& tuple, const ShapeFunctionCoefficientsCollection<Args...> &coefficients)
   {
    constexpr Integer Nmax=TupleTypeSize<Tuple>::value-1;
 
@@ -3107,8 +3167,6 @@ public:
 
 template<typename Tuple>
 using FromElementFunctionSpacesToFirstSpaceTupleType=typename FromElementFunctionSpacesToFirstSpaceTupleTypeHelper<Tuple>::type;
-
-
 
 
 

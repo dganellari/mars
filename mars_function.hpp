@@ -6,6 +6,32 @@
 
 namespace mars{
 
+class Function1
+{
+    public: 
+    using Point=Vector<Real,2>;
+    using type=Real;
+    
+
+    static type eval(const Point& p)
+    {
+     return p[0]; 
+    }
+};
+
+
+class Function2
+{
+    public: 
+    using Point=Matrix<Real,2,1>;
+    using type=Real;
+    
+    
+    static type eval(const Point& p)
+    {
+     return p(0,0)+p(1,0); 
+    }
+};
 
 template<typename FullSpace,Integer N,typename Operator_=IdentityOperator,typename FuncType=EmptyClass>
 class Function;
@@ -17,6 +43,7 @@ class FiniteElem;
 
 template<typename FuncType,typename Space>
 class QPPointsFunction;
+
 
 
 template<typename FuncType,typename Elem,Integer NContinuity,Integer NComponents>
@@ -186,6 +213,9 @@ private:
 
 template<Integer N,typename FuncType=EmptyClass,typename OperatorType=IdentityOperator,typename FullSpace>
 auto MakeFunction(const FullSpace& AuxW){return Function<FullSpace,N+FullSpace::TrialSpaceSize,OperatorType,FuncType>(AuxW);}
+
+template<Integer N,typename FuncType,typename OperatorType=IdentityOperator,typename FullSpace>
+auto MakeFunction(const FullSpace& AuxW, const FuncType& func_type){return Function<FullSpace,N+FullSpace::TrialSpaceSize,OperatorType,FuncType>(AuxW);}
 
 
 template<typename FullSpace,Integer N,typename OperatorType,typename FuncType>

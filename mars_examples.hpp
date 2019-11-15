@@ -23,6 +23,15 @@
 #include "mars_trial_function.hpp"
 #include "mars_shape_functions_collection.hpp"
 
+#include "generation/mars_mesh_generation.hpp"
+
+#include "mars_context.hpp"
+
+#include "mars_dirichlet_bc.hpp"
+
+#include "mars_shape_function.hpp"
+
+
 namespace mars{
 
 
@@ -701,6 +710,37 @@ namespace mars{
 // }
 
 
+template<typename Mat,typename Vec>
+void gauss_seidel(Vec& x, const Mat& A, const Vec& b,const Integer max_iter)
+{
+  const int& n=b.size();
+
+  if(x.size()!=n)
+    {
+     x.resize(n);
+     for(std::size_t i=0; i<n;i++)
+        x[i]=0;
+     }
+  Real tmp;
+
+  for(std::size_t it=0;it<max_iter;it++)
+  {
+  for(std::size_t i=0; i<n;i++)
+  { 
+    tmp=b[i];
+    for(std::size_t j=0; j<i;j++)
+    {
+      tmp-=x[j];
+    }
+    for(std::size_t j=i+1; j<n;j++)
+    {
+      tmp-=x[j];
+    }
+    x[i]+=tmp/A[i][i];
+  }
+  }
+
+}
 void boundary_example()
 {
   // triangles, face 0
@@ -847,42 +887,42 @@ Combinations<5,4>::print_all();
 
 
   using Space2=ElementFunctionSpace<Simplex<2,2>,LagrangeFE,1,1,1>;
-  constexpr const auto trace2=trace_dofs<Space2>();
+  constexpr const auto trace2=TraceDofs<Space2>::dofs();
 
   using Space3=ElementFunctionSpace<Simplex<2,2>,LagrangeFE,2,1,1>;
-  constexpr const auto trace3=trace_dofs<Space3>();
+  constexpr const auto trace3=TraceDofs<Space3>::dofs();
 
   using Space4=ElementFunctionSpace<Simplex<2,2>,LagrangeFE,3,1,1>;
-  constexpr const auto trace4=trace_dofs<Space4>();
+  constexpr const auto trace4=TraceDofs<Space4>::dofs();
 
 
   using Space5=ElementFunctionSpace<Simplex<2,2>,RaviartThomasFE,0,1,1>;
-  constexpr const auto trace5=trace_dofs<Space5>();
+  constexpr const auto trace5=TraceDofs<Space5>::dofs();
 
 
   using Space6=ElementFunctionSpace<Simplex<2,2>,RaviartThomasFE,1,1,1>;
-  constexpr const auto trace6=trace_dofs<Space6>();
+  constexpr const auto trace6=TraceDofs<Space6>::dofs();
 
 
 
 
 
   using Space7=ElementFunctionSpace<Simplex<2,2>,LagrangeFE,1,1,2>;
-  constexpr const auto trace7=trace_dofs<Space7>();
+  constexpr const auto trace7=TraceDofs<Space7>::dofs();
 
   using Space8=ElementFunctionSpace<Simplex<2,2>,LagrangeFE,2,1,2>;
-  constexpr const auto trace8=trace_dofs<Space8>();
+  constexpr const auto trace8=TraceDofs<Space8>::dofs();
 
   using Space9=ElementFunctionSpace<Simplex<2,2>,LagrangeFE,3,1,2>;
-  constexpr const auto trace9=trace_dofs<Space9>();
+  constexpr const auto trace9=TraceDofs<Space9>::dofs();
 
 
   using Space10=ElementFunctionSpace<Simplex<2,2>,RaviartThomasFE,0,1,2>;
-  constexpr const auto trace10=trace_dofs<Space10>();
+  constexpr const auto trace10=TraceDofs<Space10>::dofs();
 
 
   using Space11=ElementFunctionSpace<Simplex<2,2>,RaviartThomasFE,1,1,2>;
-  constexpr const auto trace11=trace_dofs<Space11>();
+  constexpr const auto trace11=TraceDofs<Space11>::dofs();
 
  
   // constexpr auto automa=reference_trace_shape_function_init<Space,IdentityOperator,single_type>(0, GaussPoints<Space::Elem,3>::qp_points_type);
@@ -1101,9 +1141,15 @@ void assembly_example()
   using Elem = typename MeshT::Elem; 
   // read_mesh("../data/beam-tri.MFEM", mesh);
   read_mesh("../data/triangle_square.MFEM", mesh);
+  // generate_square(mesh, 2,2);
+    
   mesh.update_dual_graph();
+  mark_boundary(mesh);
+  assign_tags(mesh);
+  // Bisection<MeshT> bisection(mesh);
+  // bisection.uniform_refine(1);
+  // mesh.update_dual_graph();
   // mark_boundary(mesh);
-
   constexpr Integer QPOrder=4;
   constexpr Integer NQPoints=GaussPoints<Elem,QPOrder>::NQPoints; 
   using QP=typename GaussPoints<Elem,QPOrder>::qp_points_type;
@@ -1119,7 +1165,7 @@ void assembly_example()
  // FSspace2 FEspace2(mesh);
  using FSspace3= FunctionSpace< MeshT, Lagrange1<1>,RT1<1>>;
  FSspace3 FEspace3(mesh);
- using FSspace4= FunctionSpace< MeshT, Lagrange1<1>,Lagrange1<1>>;
+ using FSspace4= FunctionSpace< MeshT, RT0<1>>;
  FSspace4 FEspace4(mesh);
  using FSspace5= FunctionSpace< MeshT, Lagrange1<2>>;
  FSspace5 FEspace5(mesh);
@@ -1156,14 +1202,13 @@ void assembly_example()
 
  auto u0 = MakeTrial<0>(W);
  auto u1 = MakeTrial<1>(W);
- auto u2 = MakeTrial<2>(W);
+ // auto u2 = MakeTrial<2>(W);
 
  auto v0 = MakeTest<0>(W);
  auto v1 = MakeTest<1>(W);
- auto v2 = MakeTest<2>(W);
+ // auto v2 = MakeTest<2>(W);
 
-
-  FiniteElem<Elem> J(mesh);
+  FiniteElem<Elem> FE(mesh);
   
   constexpr auto C=Constant<Scalar1>(1.0);
   constexpr auto alpha=Constant<Scalar1>(2.0);
@@ -1217,13 +1262,16 @@ auto NewTrace=NewOperator(TraceOperator());
                     // L2Inner(Epsilon(u0),-Grad(v0));//+ L2Inner(Grad(u0),Grad(v0))+L2Inner(u0,v2);//+L2Inner(Grad(u1),Grad(v1));//+L2Inner(f3*u2,v2);
   // auto bilinearform= 
                     // L2Inner(u0,v1)+L2Inner(u0,v2)+
-                    L2Inner(u0+u1+u2,v0+v1+v2)-
-                    L2Inner(u0,v0)+L2Inner(u0,v1)+L2Inner(u0,v2)+
-                    L2Inner(u1,v0)+L2Inner(u1,v1)+L2Inner(u1,v2)+
-                    L2Inner(u2,v0)+L2Inner(u2,v1)+L2Inner(u2,v2)+
-                    L2Inner(Grad(u0),Grad(v0))+
-                    L2Inner(Grad(u1),Grad(v1))+
-                    L2Inner(Grad(u2),Grad(v2))
+                    // L2Inner(u0+u1,v0+v1)-
+                    // L2Inner(u0,v0)+L2Inner(u0,v1)+ //L2Inner(u0,v2)+
+                    // L2Inner(u1,v0)+L2Inner(u1,v1)+//L2Inner(u1,v2)+
+                    // L2Inner(u2,v0)+L2Inner(u2,v1)+
+                    L2Inner(u0,v0)+
+                    L2Inner(Div(u1),Div(v1))
+                    //     +
+                    // L2Inner(Grad(u0),Grad(v0))+
+                    // L2Inner(Grad(u1),Grad(v1))//+
+                    // L2Inner(Grad(u2),Grad(v2))
                     ;//+ L2Inner(Grad(u0),Grad(v0))+L2Inner(u0,v2);//+L2Inner(Grad(u1),Grad(v1));//+L2Inner(f3*u2,v2);
 
 
@@ -1242,8 +1290,12 @@ auto NewTrace=NewOperator(TraceOperator());
   // L2Inner(id2,v2)-
   // L2Inner(v2,C)+
   // L2Inner(v1,C)+
+  // L2Inner(v0,C)
+  // surface_integral(1,NewTrace(v0),C)
+  // +
+  // surface_integral(20,NewTrace(v0),C)-
+  // surface_integral(30,NewTrace(v0),C)
   L2Inner(v0,C)
-  // surface_integral(0,NewTrace(v2),Trace(f1))
   ;
 
   // // auto bilinearform= 
@@ -1252,6 +1304,7 @@ auto NewTrace=NewOperator(TraceOperator());
   //                   L2Inner(alpha*beta*(u0),(v0));//+ L2Inner(Grad(u0),Grad(v0))+L2Inner(u0,v2);//+L2Inner(Grad(u1),Grad(v1));//+L2Inner(f3*u2,v2);
   // auto linearform= L2Inner(f1,(v0));//+L2Inner(f2,v1)+L2Inner(f1,v0);//+ L2Inner(f1,v0);
 
+  
 
   auto bilinear_form=general_form(bilinearform);
   auto linear_form=general_form(linearform);
@@ -1261,49 +1314,317 @@ auto NewTrace=NewOperator(TraceOperator());
   auto shape_coefficients=shape_function_coefficients(bilinear_form,linear_form);
   auto reference_maps=reference_maps2(bilinear_form,linear_form);
   auto shapefunctions=shape_functions(shape_coefficients,reference_maps,bilinear_form,linear_form);
-  shape_coefficients.init(mesh);
   
 
 
-  auto space_ptr=bilinear_form.spaces_ptr()->spaces_ptr();
-  auto n_dofs=space_ptr->n_dofs();
+  // auto spaces_ptr=bilinear_form.spaces_ptr()->spaces_ptr();
+  // auto n_dofs=spaces_ptr->n_dofs();
   std::vector<std::vector<Real>> A;
   std::vector<Real> b;
 
-  A.resize(n_dofs,std::vector<Real>(n_dofs));
-  b.resize(n_dofs);
+  // A.resize(n_dofs,std::vector<Real>(n_dofs));
+  // b.resize(n_dofs);
 
-  std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
-  std::cout<<"------_______-----BEFORE FORMs EVALUATION-----_______--------"<<std::endl;
+  // std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
+  // std::cout<<"------_______-----BEFORE FORMs EVALUATION-----_______--------"<<std::endl;
 
-  auto eval_bilinear_form=Eval(bilinear_form,shapefunctions);
-  auto eval_linear_form=Eval(linear_form,shapefunctions);
+  // auto eval_bilinear_form=Eval(bilinear_form,shapefunctions);
+  // auto eval_linear_form=Eval(linear_form,shapefunctions);
 
 
-  std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
-  std::cout<<"------_______-----BEFORE SHAPE COEFFICIENTS INIT-----_______--------"<<std::endl;
+  // std::cout<<"------_______-----_______-----_______-----_______------"<<std::endl;
+  // std::cout<<"------_______-----BEFORE SHAPE COEFFICIENTS INIT-----_______--------"<<std::endl;
+  // shape_coefficients.init(mesh);
 
   
-  std::cout<<"------_______-----AFTER SHAPE COEFFICIENTS INIT-----_______--------"<<std::endl;
+  // std::cout<<"------_______-----AFTER SHAPE COEFFICIENTS INIT-----_______--------"<<std::endl;
 
-   for(std::size_t el=0;el<1;el++)//mesh.n_elements();el++)
-   {
-      J.init(el);
-      shape_coefficients.init(el);
-      reference_maps.init(J);
-      shapefunctions.init(J);
-      eval_bilinear_form.apply(A,J);
-      eval_linear_form.apply(b,J);
-  std::cout<<"------_______----- SURFACE-----_______--------"<<std::endl;
-      for(std::size_t s=0;s<J.n_side();s++)
-      {
-        J.init_boundary(s);
-        reference_maps.init_boundary(J);
-        shapefunctions.init_boundary(J);
-        // eval_bilinear_form.apply_boundary(A,J);
-        // eval_linear_form.apply_boundary(b,J);
-      }
-   }
+  //  for(std::size_t el=0;el<1;el++)//mesh.n_elements();el++)
+  //  {
+  //     FE.init(el);
+  //     shape_coefficients.init(el);
+  //     reference_maps.init(FE);
+  //     shapefunctions.init(FE);
+  //     eval_bilinear_form.apply(A,FE);
+  //     eval_linear_form.apply(b,FE);
+  // std::cout<<"------_______----- SURFACE-----_______--------"<<std::endl;
+
+  //     if(FE.is_on_boundary())
+  //     {
+  //       for(std::size_t s=0;s<FE.n_side();s++)
+  //         {
+  //           // controlla, qui passiamo side_id, ma dovremmo avere label
+  //           // dovresti costruire mesh coi label
+
+  //           std::cout<<"------_______----- BEGIN SIDE===="<<s<<std::endl;
+  //           FE.init_boundary(s);
+  //           if(FE.is_side_on_boundary())
+  //           {
+  //             reference_maps.init_boundary(FE);
+  //             shapefunctions.init_boundary(FE);
+  //             std::cout<<"------_______----- BEGIN SIDE EVAL===="<<s<<std::endl;
+  //             eval_bilinear_form.apply_boundary(A,FE);
+  //             eval_linear_form.apply_boundary(b,FE);
+  //             std::cout<<"------_______----- END SIDE EVAL===="<<s<<std::endl;
+  //           }
+  //           std::cout<<"------_______----- END SIDE===="<<s<<std::endl;
+  //         }
+  //   }
+  //  }
+
+  //  std::cout<<surface_integral(1,NewTrace(v0),C).label()<<std::endl;
+  //  std::cout<<surface_integral(2,NewTrace(v0),C).label()<<std::endl;
+  //  std::cout<<surface_integral(3,NewTrace(v0),C).label()<<std::endl;
+  //  std::cout<<surface_integral(4,NewTrace(v0),C).label()<<std::endl;
+
+
+   
+
+   auto bcs1=DirichletBC<0,Function2>(W,1);
+   auto bcs2=DirichletBC<0,Function2>(W,2);
+   auto bcs3=DirichletBC<0,Function2>(W,3);
+   auto bcs4=DirichletBC<0,Function2>(W,4);
+
+
+   // DirichletBCMapsCollection<decltype(bcs0)> kk(5);
+   // DirichletBCMapsCollection<decltype(bcs0),decltype(bcs1),decltype(bcs2)> k3k(5);
+
+   // Number<decltype(bcs0)::map_value> kkk1(5);
+   // Number<decltype(bcs1)::map_value> kkk2(5);
+   // Number<decltype(bcs2)::map_value> kkk3(5);
+
+   // using am=decltype(bcs1)::FunctionSpace::UniqueElementFunctionSpacesTupleType;
+   // using am2=SpacesToUniqueFEFamilies2<am>;
+   // Number<MaxNumberInTuple<am2>::value> klk(5);
+   auto bcs=DirichletBCCollection(bcs1,bcs2,bcs3,bcs4);
+   
+   auto context=create_context(bilinearform,linearform, bcs1,bcs2,bcs3,bcs4);
+
+
+   // for(std::size_t i=0;i<mesh.boundary2elem().size();i++)
+   //  std::cout<<mesh.boundary2elem()[i]<<std::endl;
+
+   // auto bcs_maps=DirichletMapCollection(bcs0,bcs1,bcs2,bcs3);
+
+
+   // FE.init(0);
+   // FE.init_boundary(0);
+   // std::cout<<"__________elem_id="<<FE.elem_id()<<" side_tag="<<FE.side_tag()<<std::endl;
+   // bcs_maps.init(FE);
+   // FE.init_boundary(1);
+   // std::cout<<"__________elem_id="<<FE.elem_id()<<" side_tag="<<FE.side_tag()<<std::endl;
+   // bcs_maps.init(FE);
+   // FE.init_boundary(2);
+   // std::cout<<"__________elem_id="<<FE.elem_id()<<" side_tag="<<FE.side_tag()<<std::endl;
+   // bcs_maps.init(FE);
+  
+   // FE.init(1);
+   // FE.init_boundary(0);
+   // std::cout<<"__________elem_id="<<FE.elem_id()<<" side_tag="<<FE.side_tag()<<std::endl;
+   // bcs_maps.init(FE);
+   // FE.init_boundary(1);
+   // std::cout<<"__________elem_id="<<FE.elem_id()<<" side_tag="<<FE.side_tag()<<std::endl;
+   // bcs_maps.init(FE);
+   // FE.init_boundary(2);
+   // std::cout<<"__________elem_id="<<FE.elem_id()<<" side_tag="<<FE.side_tag()<<std::endl;
+   // bcs_maps.init(FE);
+
+   // Array<std::map<int,int>,2> mmm;
+   // mmm[0].insert(std::pair<int, int>(1, 0));
+   // mmm[0].insert(std::pair<int, int>(2, 0));
+   // mmm[0].insert(std::pair<int, int>(3, 0));
+
+   // std::map<int, int>::iterator itr; 
+   // for (itr = mmm[0].begin(); itr != mmm[0].end(); ++itr) { 
+   //      cout << '\t' << itr->first 
+   //           << '\t' << itr->second << '\n'; 
+   //  }
+
+   // // bcs.assembly(FE);
+   // auto tr=TraceDofs<decltype(W)>::dofs();
+   // std::cout<<tuple_get<0>(tr)<<std::endl;
+   // std::cout<<tuple_get<1>(tr)<<std::endl;
+   // std::cout<<tuple_get<2>(tr)<<std::endl;
+
+
+   // auto dofmap=W.dofmap2();
+   //     auto dm1=tuple_get<0>(dofmap);
+   //     auto dm2=tuple_get<1>(dofmap);
+   //     auto dm3=tuple_get<2>(dofmap);
+   //     std::cout<<std::endl;
+   //    std::cout<<"___--dm1="<<std::endl;
+   //  for(std::size_t i=0;i<dm1.size();i++)
+   //      {
+   //       std::cout<<dm1[i]<<std::endl;
+   //       }     
+   //    std::cout<<"___--dm2="<<std::endl;
+   //  for(std::size_t i=0;i<dm2.size();i++)
+   //      {
+   //       std::cout<<dm2[i]<<std::endl;
+   //       }   
+   //    std::cout<<"___--dm3="<<std::endl;
+   //  for(std::size_t i=0;i<dm3.size();i++)
+   //      {
+   //       std::cout<<dm3[i]<<std::endl;
+   //       }  
+    // std::cout<<std::endl;___--dofmap_trace=
+//    Simplex<6,6> elem6;
+//    Simplex<6,5> elem5;
+
+//             for(Integer i = 0; i < n_nodes(elem6); ++i) {
+//                 elem6.nodes[i] = i;
+//             }
+
+//    elem6.side(0,elem5); 
+//    for(std::size_t i=0;i<elem5.nodes.size();i++)
+//    std::cout<<elem5.nodes[i]<<std::endl;
+//    std::cout<<std::endl;
+//    elem6.side(1,elem5); 
+//    for(std::size_t i=0;i<elem5.nodes.size();i++)
+//    std::cout<<elem5.nodes[i]<<std::endl;
+// std::cout<<std::endl;
+//    elem6.side(2,elem5); 
+//    for(std::size_t i=0;i<elem5.nodes.size();i++)
+//    std::cout<<elem5.nodes[i]<<std::endl;
+// std::cout<<std::endl;
+//    elem6.side(3,elem5); 
+//    for(std::size_t i=0;i<elem5.nodes.size();i++)
+//    std::cout<<elem5.nodes[i]<<std::endl;
+// std::cout<<std::endl;
+//    elem6.side(4,elem5); 
+//    for(std::size_t i=0;i<elem5.nodes.size();i++)
+//    std::cout<<elem5.nodes[i]<<std::endl;
+// std::cout<<std::endl;
+//    elem6.side(5,elem5); 
+//    for(std::size_t i=0;i<elem5.nodes.size();i++)
+//    std::cout<<elem5.nodes[i]<<std::endl;
+// std::cout<<std::endl;
+
+  // auto dofmap=W.dofmap2();
+  //      auto dm1=tuple_get<0>(dofmap);
+  //      auto dm2=tuple_get<1>(dofmap);
+  //      auto dm3=tuple_get<2>(dofmap);
+  //      std::cout<<std::endl;
+  //     std::cout<<"___--dm1="<<std::endl;
+  //   for(std::size_t i=0;i<dm1.size();i++)
+  //       {
+  //        std::cout<<dm1[i]<<std::endl;
+  //        }     
+  //     std::cout<<"___--dm2="<<std::endl;
+  //   for(std::size_t i=0;i<dm2.size();i++)
+  //       {
+  //        std::cout<<dm2[i]<<std::endl;
+  //        }   
+  //     std::cout<<"___--dm3="<<std::endl;
+  //   for(std::size_t i=0;i<dm3.size();i++)
+  //       {
+  //        std::cout<<dm3[i]<<std::endl;
+  //        }  
+  //   std::cout<<std::endl;
+   // decltype(W) kl(5);
+
+   ////////////////////////////////////////////////////////////////////////////////////////////////////
+   ////////////////////////////////////////////////////////////////////////////////////////////////////
+   ////////////////////////////////////////////////////////////////////////////////////////////////////
+   /// RICORDA:
+   /// NON HA SENSO FARE SOMME DI ZERI: QUINDI CONSIDERA BENE GLI INTEGRALI DI SUPERFICIE SE HAI SOMME...
+   /// MA SOPRATUTTO SE NON NE HAI
+   /// IDEALE: DEVI DIRE SE UN ELEMENTO HA SIDES DI BORDO
+
+   // RICORDA CHE SE HAI UN SIDE CON TAG CHE NON E' PRESENTE NEGLI L2PRODUCT (AD ES.DIRICHLET )
+   // E' INUTILE CALCOLARE LE SHAPE FUNCTIONS
+   // QUINDI LE FORMS DOVREBBERO RESTITUIRE I TAGS DEI LORO INTEGRALI...
+
+    // RICORDA CHE GLI INTEGRALI DI BORDO VANNO MOLTIPLICATI PER DET(J) BORDO
+    // MODIFICA EVAK GENERAL UTILS LocalTensor
+   ////////////////////////////////////////////////////////////////////////////////////////////////////
+   ////////////////////////////////////////////////////////////////////////////////////////////////////
+   ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+   context.assembly(A,b);
+  auto n_dofs=W.spaces_ptr()->n_dofs();
+  std::cout<<"n_dofs()="<<std::endl;
+  std::cout<<n_dofs<<std::endl;
+  for(Integer ii=0;ii<n_dofs;ii++)
+    {
+      for(Integer jj=0;jj<n_dofs;jj++)
+        std::cout<<A[ii][jj]<<" ";
+      std::cout<<std::endl;
+    }
+
+  for(Integer ii=0;ii<n_dofs;ii++)
+    {
+        std::cout<<b[ii]<<std::endl;
+    }
+
+   context.apply_bc(A,b);
+
+
+   
+   std::vector<Real> x;
+   Integer max_iter=1000;
+   gauss_seidel(x,A,b,max_iter);
+   for(std::size_t i=0;i<b.size();i++)
+      std::cout<<x[i]<<std::endl;
+
+
+  std::cout<<"n_dofs()="<<n_dofs<<std::endl;
+  for(Integer ii=0;ii<n_dofs;ii++)
+    {
+      for(Integer jj=0;jj<n_dofs;jj++)
+        std::cout<<A[ii][jj]<<" ";
+      std::cout<<std::endl;
+    }
+
+  for(Integer ii=0;ii<n_dofs;ii++)
+    {
+        std::cout<<b[ii]<<std::endl;
+    }
+
+
+  // for(int el=0;el<mesh.side_nodes().size();el++)
+  // {
+  //   std::cout<<"side_nodes_="<<el<<std::endl;
+  //   auto ecm=mesh.side_nodes()[el];
+  //     for(int i=0;i<ecm.size();i++)
+  //     std::cout<<ecm[i]<<" "<<std::endl;
+  // std::cout<<std::endl;
+  // }
+  // for(int el=0;el<mesh.side_tags().size();el++)
+  // {
+  //   std::cout<<"side_tags="<<el<<std::endl;
+  //   auto ecm=mesh.side_tags()[el];
+  //     std::cout<<ecm<<" "<<std::endl;
+  // std::cout<<std::endl;
+  // }
+
+  // for(int el=0;el<mesh.n_elements();el++)
+  // {
+  //   std::cout<<"elem="<<el<<std::endl;
+  //   const auto& nodes=mesh.elem(el).nodes;
+  //   auto side_tags=mesh.elem(el).side_tags;
+  //     for(int i=0;i<side_tags.size();i++)
+  //     std::cout<<mesh.points()[nodes[i]]<<" ";
+  //   std::cout<<std::endl;
+  //     for(int i=0;i<side_tags.size();i++)
+  //     std::cout<<side_tags[i]<<" "<<std::endl;
+  // std::cout<<std::endl;
+  // }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
   // decltype(L2Inner(u0,v0))::TestOrTrialLeftType m1(1);
@@ -1378,19 +1699,7 @@ auto NewTrace=NewOperator(TraceOperator());
   // std::cout<<"------_______-----END EVALUATION-----_______--------"<<std::endl;
 
 
-  std::cout<<"n_dofs()="<<std::endl;
-  std::cout<<space_ptr->n_dofs()<<std::endl;
-  for(Integer ii=0;ii<n_dofs;ii++)
-    {
-      for(Integer jj=0;jj<n_dofs;jj++)
-        std::cout<<A[ii][jj]<<" ";
-      std::cout<<std::endl;
-    }
 
-  for(Integer ii=0;ii<n_dofs;ii++)
-    {
-        std::cout<<b[ii]<<std::endl;
-    }
   // std::cout<<"tags="<<std::endl;
 
   // for(int el=0;el<mesh.n_elements();el++)
@@ -1567,7 +1876,7 @@ auto NewTrace=NewOperator(TraceOperator());
 // decltype(bilinear_form)::TupleOfPairsNumbers m3b(5);
 
 // decltype(eval_bilinear_form)::EvaluationOfL2InnersVolume::EvalOfL2InnersType s3k(6);
-// decltype(eval_bilinear_form)::EvaluationOfL2InnersSurface::EvalOfL2InnersType s32k(6);
+// decltype(eval_linear_form)::EvaluationOfL2InnersSurface::EvalOfL2InnersType s32k(6);
 // Number<TupleTypeSize<decltype(eval_bilinear_form)::EvaluationOfL2InnersSurface::L2Products>::value-1> lkkljkkj(6);        
 // decltype(eval_linear_form)::EvaluationOfL2InnersSurface::EvalOfL2InnersType a44k(6);
 // decltype(eval_bilinear_form)::ShapeFunctions escho(6);
@@ -1768,7 +2077,7 @@ auto NewTrace=NewOperator(TraceOperator());
 //   // OperatorAndQuadratureTupleType<decltype(NewOp2(v0))>::type ee(65,4,4,4,4);
 // // decltype(reference_maps)::TupleOperatorsAndQuadrature eee(5);
 // // decltype(reference_maps)::TupleCompositeOperatorsAndQuadrature ee4e(5);
-// // decltype(reference_maps)::TupleOfTupleNoQuadrature ee444e(5);
+// decltype(reference_maps)::TupleOfTupleNoQuadratureSurface ee444e(5);
 // // decltype(reference_maps)::SpacesToUniqueFEFamilies ee3334e(5);
 // // decltype(reference_maps)::Map ee3rr334e(5);
 // // decltype(reference_maps)::UniqueMapping t34e(5);
@@ -2457,10 +2766,10 @@ for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
 {
  auto &elem_id=elem_iter;
  std::cout<<std::endl<<" elem =="<<elem_iter<<std::endl;
- for(Integer nn=0;nn<FEspace.dofmap(elem_id).size();nn++)
- {
-  std::cout<<FEspace.dofmap(elem_id)[nn]<< "  ";
-}
+//  for(Integer nn=0;nn<FEspace.dofmap(elem_id).size();nn++)
+//  {
+//   std::cout<<FEspace.dofmap(elem_id)[nn]<< "  ";
+// }
 } 
 
 
@@ -2521,34 +2830,38 @@ for(Integer mm=0;mm<spaceinf.size();mm++)
 
 std::cout<<"Whole dofmap=="<<std::endl;
 for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
-  {const auto& dm=FEspace.dofmap(0,elem_iter);
-    for(auto& i:dm)
-     std::cout<<i<<" ";
-   std::cout<<std::endl;
+  {
+   //  const auto& dm=FEspace.dofmap(0,elem_iter);
+   //  for(auto& i:dm)
+   //   std::cout<<i<<" ";
+   // std::cout<<std::endl;
  }
 
  std::cout<<"First Space, first component, dofmap=="<<std::endl;
 
  for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
-  {const auto& dm=FEspace.dofmap(0,0,elem_iter);
-    for(auto& i:dm)
-     std::cout<<i<<" ";
-   std::cout<<std::endl;
+  {
+   //  const auto& dm=FEspace.dofmap(0,0,elem_iter);
+   //  for(auto& i:dm)
+   //   std::cout<<i<<" ";
+   // std::cout<<std::endl;
  }
  std::cout<<"First Space, second component, dofmap=="<<std::endl;
  for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
-  {const auto& dm=FEspace.dofmap(0,1,elem_iter);
-    for(auto& i:dm)
-     std::cout<<i<<" ";
-   std::cout<<std::endl;
+  {
+   //  const auto& dm=FEspace.dofmap(0,1,elem_iter);
+   //  for(auto& i:dm)
+   //   std::cout<<i<<" ";
+   // std::cout<<std::endl;
  }
 
  std::cout<<"Second Space, first component, dofmap=="<<std::endl;
  for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
-  {const auto& dm=FEspace.dofmap(1,0,elem_iter);
-    for(auto& i:dm)
-     std::cout<<i<<" ";
-   std::cout<<std::endl;
+  {
+   //  const auto& dm=FEspace.dofmap(1,0,elem_iter);
+   //  for(auto& i:dm)
+   //   std::cout<<i<<" ";
+   // std::cout<<std::endl;
  }
 }
 
@@ -2755,11 +3068,11 @@ void functionspaces_example4D()
   for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
   {
    auto &elem_id=elem_iter;
-   std::cout<<"elem_id="<<elem_id<<", number of dofs=s"<<FEspace.dofmap(elem_id).size()<<std::endl;
-   for(Integer nn=0;nn<FEspace.dofmap(elem_id).size();nn++)
-   {
-    std::cout<<FEspace.dofmap(elem_id)[nn]<<" ";
-  }
+  //  std::cout<<"elem_id="<<elem_id<<", number of dofs=s"<<FEspace.dofmap(elem_id).size()<<std::endl;
+  //  for(Integer nn=0;nn<FEspace.dofmap(elem_id).size();nn++)
+  //  {
+  //   std::cout<<FEspace.dofmap(elem_id)[nn]<<" ";
+  // }
   std::cout<<std::endl;
 } 
 std::cout<<std::endl;
@@ -2795,11 +3108,11 @@ std::cout<<std::endl;
 
 for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
   {std::cout<<std::endl;
-    const auto size=FEspace.dofmap(1,elem_iter).size();
-    std::cout<<"elem_iter="<<elem_iter<<std::endl;
-    for(Integer nn=0;nn<size;nn++)
-      std::cout<<FEspace.dofmap(1,elem_iter)[nn]<<" ";
-    std::cout<<std::endl;
+    // const auto size=FEspace.dofmap(1,elem_iter).size();
+    // std::cout<<"elem_iter="<<elem_iter<<std::endl;
+    // for(Integer nn=0;nn<size;nn++)
+    //   std::cout<<FEspace.dofmap(1,elem_iter)[nn]<<" ";
+    // std::cout<<std::endl;
   }
 
   std::cout<<std::endl;
