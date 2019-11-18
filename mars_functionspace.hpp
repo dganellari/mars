@@ -558,6 +558,8 @@ public:
   
   inline auto mesh_ptr(){return spaces_ptr_->mesh_ptr();}
 
+  inline auto mesh_ptr()const{return spaces_ptr_->mesh_ptr();}
+
   inline auto spaces_ptr(){return spaces_ptr_;}
 
   inline auto& dofmap2()const{return spaces_ptr_->dofmap2();};
@@ -615,6 +617,7 @@ public:
   inline const auto& aux_spaces_ptr()const{return aux_spaces_ptr_;}
   
   inline auto mesh_ptr(){return spaces_ptr_->mesh_ptr();}
+  inline auto mesh_ptr()const{return spaces_ptr_->mesh_ptr();}
 
   inline auto& dofmap2()const{return spaces_ptr_->dofmap2();};
 private:

@@ -1,6 +1,9 @@
 #ifndef MARS_EXAMPLES_HPP
 #define MARS_EXAMPLES_HPP
 
+
+#include <fstream>
+#include <sstream>
 #include "mars_simplex.hpp"
 #include "mars_connectivity.hpp"
 #include "mars_functionspace_dofmap.hpp"
@@ -713,7 +716,7 @@ namespace mars{
 template<typename Mat,typename Vec>
 void gauss_seidel(Vec& x, const Mat& A, const Vec& b,const Integer max_iter)
 {
-  const int& n=b.size();
+  const int n=b.size();
 
   if(x.size()!=n)
     {
@@ -730,11 +733,11 @@ void gauss_seidel(Vec& x, const Mat& A, const Vec& b,const Integer max_iter)
     tmp=b[i];
     for(std::size_t j=0; j<i;j++)
     {
-      tmp-=x[j];
+      tmp-=A[i][j]*x[j];
     }
     for(std::size_t j=i+1; j<n;j++)
     {
-      tmp-=x[j];
+      tmp-=A[i][j]*x[j];
     }
     x[i]+=tmp/A[i][i];
   }
@@ -1116,6 +1119,347 @@ std::cout<<"Simplex<2,2>,RaviartThomasFE,Order=1,Continuity=1,Ncomponents=2>"<<s
 
 
 
+template<typename Elem,typename Operator,Integer FEFamily,Integer Order,Integer Continuity,Integer NComponents>
+class Variable
+{
+  public:
+  using Points=DofsPoints<Elem,Operator,FEFamily,Order>;
+  static constexpr Integer Npoints=Points::type::Dim;
+  using BaseFunctionSpace=BaseElementFunctionSpace<Elem,FEFamily,Order,Continuity, NComponents>;
+  using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
+  using SingleType   = typename SingleTypeShapeFunction<FunctionSpace,Operator>::SingleType;
+  using TotType = typename SingleTypeShapeFunction<FunctionSpace,Operator>::TotType;
+  static constexpr Integer Ntot=FunctionSpaceDofsPerSubEntityElem<ElemFunctionSpace<Elem,BaseFunctionSpace>,Elem::ManifoldDim>::value;
+  static constexpr Integer Ndofs=Ntot/NComponents;
+  static constexpr auto 
+  reference_values{reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(Points::points)};
+  using Map=MapFromReference<Operator,Elem,FEFamily>;  
+
+
+  // qui devi passare i nodi dell'elemento
+  // l'ouput e' lungo elem:n_nods()*ncomponents
+
+  // EACH COMPONENT IS TREATED SEPARATELY, se vec is the array of dofs related to one component
+  void init(const FiniteElem<Elem>& FE,Array<Real,Ndofs> vec)
+  {
+   
+   map_.init(FE);
+   const auto& map=map_();
+   // we compute u= sum_i u_i Map(phi_i)=Map(sum_i u_i phi_i) for each dof point on the element
+   Integer cont=0;
+   // loop on dof points and evaluate u_0 phi_0 in those points
+   for(std::size_t k=0;k<Npoints ;k++)
+   {
+
+    // for(std::size_t c=0;c<NComponents;c++)
+    // {
+      std::cout<<"pre pre pre output all"<<output_<<std::endl;
+      for(std::size_t i=0;i<Ndofs;i++)
+         for(std::size_t j=0;j<Ndofs;j++)
+            // mat_tmp_[cont](i,j)=vec[0+c]*reference_values[0][k](i,j);
+            {
+                mat_tmp_[k](i,j)=vec[0]*reference_values[0][k](i,j);
+            }
+
+    std::cout<<"pre pre output all"<<output_<<std::endl;
+    for(std::size_t qp=1;qp<Npoints;qp++)
+       for(std::size_t i=0;i<Ndofs;i++)
+        for(std::size_t j=0;j<Ndofs;j++)
+            // mat_tmp_[cont](i,j)+=vec[qp*NComponents+c]*reference_values[qp][k](i,j);
+            {
+                mat_tmp_[k](i,j)+=vec[qp]*reference_values[qp][k](i,j);
+            }
+    
+
+     mat_tmp_[k]=map*mat_tmp_[k];
+     std::cout<<"map_="<<map<<std::endl;
+     std::cout<<"mat_tmp_[k]="<<mat_tmp_[k]<<std::endl;
+     std::cout<<"pre output all"<<output_<<std::endl;
+     for(std::size_t i=0;i<SingleType::Rows;i++)
+        for(std::size_t j=0;j<SingleType::Cols;j++)
+         {
+            output_[cont]=mat_tmp_[k](i,j);
+            std::cout<<"output_["<<cont<<"]="<<output_[cont]<<std::endl;
+            std::cout<<"output_ all"<<output_<<std::endl;
+            cont++;
+         }
+
+    // }
+     std::cout<<"output_"<<output_<<std::endl;
+   }
+
+
+  }
+
+  auto value()const{
+    std::cout<<"output_ size"<<output_.size()<<std::endl;
+    for(Integer i=0;i<output_.size();i++)
+        std::cout<<output_[i]<<std::endl;
+    return output_;}
+
+  private:
+    Map map_;
+    Array<SingleType,Npoints*NComponents> mat_tmp_;
+    Array<Real,Npoints*SingleType::Rows*SingleType::Cols> output_;
+  // std::vector<> 
+  
+};
+
+
+template<typename...Strings>
+auto set_variables_names(const std::string& string,const Strings&...strings)
+{
+
+    return std::vector<std::string>{string,strings...};
+}
+
+template<Integer Dim,typename Elem>
+auto vtk_cell_type(const Elem&elem)
+{
+    // linear triangle
+    if(IsSame<Elem,Simplex<Dim,2>>::value)
+        return 5;
+    // linear tetrahedron
+    if(IsSame<Elem,Simplex<Dim,3>>::value)
+        return 10;
+    // invalid element
+    else
+        return -1;
+}
+
+
+template<Integer N, Integer Nmax,typename Space,typename...Args,typename Solution,typename VariablesNamesVec>
+void print_solutions_aux_aux(std::ostream &os,const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names)
+{
+auto NComponents=Space::NComponents;
+auto Dim=FullSpace<Args...>::Elem::Dim;
+if(NComponents==1)
+os << "SCALARS ";
+else if(NComponents==Dim)
+os << "VECTORS ";
+else
+{
+  os << "ERROR ";  
+}
+os << names[N];
+os << " float";
+os << "\n";
+if(NComponents==1)
+   os << "LOOKUP_TABLE default\n";
+const auto& dofmap=tuple_get<N>(space.spaces_ptr()->dofmap2());
+auto mesh_ptr=space.mesh_ptr();
+// decltype(space.spaces_ptr()->dofmap2()) okl(6);
+std::cout<<"N===="<<N<<std::endl;
+Integer cont;
+auto n_elements=mesh_ptr->n_elements();    
+    for(Integer i=0;i<n_elements;i++)
+    {
+     const auto localdofmap=dofmap[i];
+     std::cout<<"localdofmap="<<localdofmap<<std::endl;
+     cont=0;
+     for(Integer j=0;j<localdofmap.size()/NComponents;j++)
+     {
+      for(Integer c=0;c<NComponents-1;c++)
+          {
+            os << sol[localdofmap[cont]];
+            os <<" "; 
+            cont++;
+          }
+         os << sol[localdofmap[cont]];
+         cont++;  
+         if(Dim==1 && NComponents==1)
+         {
+          os <<" "; 
+          os <<0.0;
+         }  
+         if(Dim==2&& NComponents==2)
+         {
+          os <<" "; 
+          os <<0.0;
+         } 
+         os <<"\n"; 
+      } 
+      // os << "\n"; 
+     }  
+     if(N<Nmax)
+        {os << "\n"; }
+
+
+}
+
+
+template<Integer N, Integer Nmax, typename TupleOfSpaces,typename...Args,typename Solution,typename VariablesNamesVec>
+constexpr std::enable_if_t< (N>Nmax), void>
+print_solutions_aux(std::ostream &os,const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names)
+{}
+
+
+template<Integer N, Integer Nmax, typename TupleOfSpaces,typename...Args,typename Solution,typename VariablesNamesVec>
+constexpr std::enable_if_t< (N<=Nmax), void>
+print_solutions_aux(std::ostream &os,const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names)
+{
+ using Space=GetType<TupleOfSpaces,N>;
+
+ print_solutions_aux_aux<N,Nmax,Space>(os,space,sol,names);
+ print_solutions_aux<N+1,Nmax,TupleOfSpaces>(os,space,sol,names);
+}
+
+template<typename TupleOfSpaces,typename...Args,typename Solution,typename VariablesNamesVec>
+constexpr void print_solutions(std::ostream &os,const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names)
+{
+   print_solutions_aux<0,TupleTypeSize<TupleOfSpaces>::value-1,TupleOfSpaces>(os,space,sol,names);
+}
+
+template<typename...Args,typename Solution,typename VariablesNamesVec>
+void write_wtk(std::ostream &os,const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names) {
+using FullSpace=FullSpace<Args...>;
+using TupleOfSpaces=typename FullSpace::FunctionSpace::TupleOfSpaces;
+using MeshT=typename FullSpace::MeshT;
+using Elem=typename MeshT::Elem;
+
+const auto mesh_ptr=space.mesh_ptr();
+const auto Dim=MeshT::Dim;
+const auto ManifoldDim=MeshT::ManifoldDim;
+os << "# vtk DataFile Version 1.0\n";
+os<<Dim;
+os << "D Unstructured Grid of Linear Triangles\n";
+os << "ASCII\n";
+os << "\n";
+os << "DATASET UNSTRUCTURED_GRID\n";
+os << "POINTS ";
+// auto n_points=mesh_ptr->points().size();
+auto n_elements=mesh_ptr->n_elements();
+auto n_points=n_elements * (mesh_ptr->elem(0).nodes.size());
+const auto& points=mesh_ptr->points();
+os << n_points;
+os << " float\n";
+
+// for(Integer i=0;i<n_points;i++)
+// {
+//     const auto& p=mesh_ptr->point(i);
+//     for(Integer j=0;j<p.size();j++)
+//      {
+//       os << p[j];
+//       os <<" ";
+//      } 
+//      os << "\n "; 
+// }
+for(Integer i=0;i<n_elements;i++)
+{
+    const auto& e=mesh_ptr->elem(i);
+    for(Integer j=0;j<e.nodes.size();j++)
+     {
+      for(Integer k=0;k<Dim-1;k++)
+     {
+      os << points[e.nodes[j]][k];
+      os <<" ";
+     }
+      os << points[e.nodes[j]][Dim-1];
+
+      if(Dim==1)
+      {
+        os <<" ";
+        os << 0.0;
+      }
+
+      if(Dim==2)
+      {
+        os <<" ";
+        os << 0.0;
+      }
+
+      os << "\n"; 
+     } 
+    
+}
+
+
+os << "\n"; 
+os << "CELLS ";
+os << n_elements;
+ os << " "; 
+  os << n_elements * (1 +mesh_ptr->elem(0).nodes.size()); 
+  os << "\n"; 
+
+// for(Integer i=0;i<n_elements;i++)
+// {
+//     const auto& e=mesh_ptr->elem(i);
+//     for(Integer j=0;j<e.nodes.size();j++)
+//      {
+//       os << e.nodes[j];
+//       os <<" ";
+//      } 
+//      os << "\n "; 
+// }
+Integer count=0;
+for(Integer i=0;i<n_elements;i++)
+{
+    const auto& e=mesh_ptr->elem(i);
+    const auto size=e.nodes.size();
+     os << size;
+     os <<" ";   
+
+    for(Integer j=0;j<size-1;j++)
+     {
+      os << count;
+      os <<" ";
+      count++;
+     } 
+      os << count;
+      os << "\n"; 
+      count++;
+}
+
+os << "\n"; 
+os << "CELL_TYPES ";
+os << n_elements;
+os << "\n";
+for(Integer i=0;i<n_elements;i++)
+{
+    const auto& e=mesh_ptr->elem(i);
+    os <<vtk_cell_type<Dim>(e);
+    os << "\n"; 
+}
+os << "\n";
+
+std::cout<<"names.size()--->"<<names.size()<<std::endl;
+os << "POINT_DATA ";
+os << n_points;
+os << "\n";
+
+
+print_solutions<TupleOfSpaces>(os,space,sol,names);
+for(Integer i=0;i<names.size();i++)
+{
+// os << "VECTORS ";
+// os << names[i];
+// os << " float";
+// os << "\n";
+
+    
+    for(Integer i=0;i<n_elements;i++)
+    {
+
+    }
+
+}
+
+
+// std::ofstream file(baseFilename);
+// std::string my_string = "Hello text in file\n";
+// file << my_string;
+
+
+
+//   std::string gridFileName = baseFilename + ".vtk";
+//   std::ofstream outputfile;
+//   outputfile.open(gridFileName);
+
+// std::cin>>"# vtk DataFile Version 1.0 ">>std::endl;
+
+// outputfile.close();
+}
+
 
 
 
@@ -1165,7 +1509,7 @@ void assembly_example()
  // FSspace2 FEspace2(mesh);
  using FSspace3= FunctionSpace< MeshT, Lagrange1<1>,RT1<1>>;
  FSspace3 FEspace3(mesh);
- using FSspace4= FunctionSpace< MeshT, RT0<1>>;
+ using FSspace4= FunctionSpace< MeshT, RT0<2>>;
  FSspace4 FEspace4(mesh);
  using FSspace5= FunctionSpace< MeshT, Lagrange1<2>>;
  FSspace5 FEspace5(mesh);
@@ -1190,7 +1534,7 @@ void assembly_example()
  AuxFSspace3 AuxFEspace3(mesh);
 
 
- auto Wtrial=MixedFunctionSpace(FEspace1,FEspace4);
+ auto Wtrial=MixedFunctionSpace(FEspace4,FEspace1);
  auto Waux=AuxFunctionSpacesBuild(AuxFEspace1);//,AuxFEspace2,AuxFEspace3);
  auto W=FullSpaceBuild(Wtrial,Waux);
 
@@ -1267,7 +1611,7 @@ auto NewTrace=NewOperator(TraceOperator());
                     // L2Inner(u1,v0)+L2Inner(u1,v1)+//L2Inner(u1,v2)+
                     // L2Inner(u2,v0)+L2Inner(u2,v1)+
                     L2Inner(u0,v0)+
-                    L2Inner(Div(u1),Div(v1))
+                    L2Inner((u1),(v1))
                     //     +
                     // L2Inner(Grad(u0),Grad(v0))+
                     // L2Inner(Grad(u1),Grad(v1))//+
@@ -1295,7 +1639,7 @@ auto NewTrace=NewOperator(TraceOperator());
   // +
   // surface_integral(20,NewTrace(v0),C)-
   // surface_integral(30,NewTrace(v0),C)
-  L2Inner(v0,C)
+  L2Inner(v1,C)
   ;
 
   // // auto bilinearform= 
@@ -1380,10 +1724,10 @@ auto NewTrace=NewOperator(TraceOperator());
 
    
 
-   auto bcs1=DirichletBC<0,Function2>(W,1);
-   auto bcs2=DirichletBC<0,Function2>(W,2);
-   auto bcs3=DirichletBC<0,Function2>(W,3);
-   auto bcs4=DirichletBC<0,Function2>(W,4);
+   auto bcs1=DirichletBC<1,Function2>(W,1);
+   auto bcs2=DirichletBC<1,Function2>(W,2);
+   auto bcs3=DirichletBC<1,Function2>(W,3);
+   auto bcs4=DirichletBC<1,Function2>(W,4);
 
 
    // DirichletBCMapsCollection<decltype(bcs0)> kk(5);
@@ -1563,9 +1907,7 @@ auto NewTrace=NewOperator(TraceOperator());
    
    std::vector<Real> x;
    Integer max_iter=1000;
-   gauss_seidel(x,A,b,max_iter);
-   for(std::size_t i=0;i<b.size();i++)
-      std::cout<<x[i]<<std::endl;
+   
 
 
   std::cout<<"n_dofs()="<<n_dofs<<std::endl;
@@ -1581,7 +1923,35 @@ auto NewTrace=NewOperator(TraceOperator());
         std::cout<<b[ii]<<std::endl;
     }
 
+ gauss_seidel(x,A,b,max_iter);
+ std::cout<<"solution="<<n_dofs<<std::endl;
+  for(Integer ii=0;ii<x.size();ii++)
+    {
+        std::cout<<x[ii]<<std::endl;
+    }
 
+   std::string output_file ="output.vtk";
+   auto variables_names=set_variables_names("pressure","velocity");
+   std::ofstream os;
+   os.open(output_file.c_str());
+   write_wtk(os,W,x,variables_names);
+   os.close();
+
+  // Variable<Elem,IdentityOperator,LagrangeFE,1,1,2>::Points::type eee(5);
+  // decltype(Variable<Elem,IdentityOperator,LagrangeFE,1,1,2>::Points::points) okok(6);
+  std::cout<<"----------------"<<std::endl;
+  std::cout<<Variable<Elem,IdentityOperator,RaviartThomasFE,0,1,2>::Points::points<<std::endl;
+   std::cout<<"----------------"<<std::endl;
+  std::cout<<Variable<Elem,IdentityOperator,RaviartThomasFE,0,1,2>::reference_values<<std::endl;
+  std::cout<<"----------------"<<std::endl;
+  Array<Real,3> sol_tmp{1.0,1.0,1.0};
+  Variable<Elem,IdentityOperator,RaviartThomasFE,0,1,2> var;
+  FE.init(0);
+  var.init(FE,sol_tmp);
+  std::cout<<"sol_tmp="<<std::endl;
+  std::cout<<sol_tmp<<std::endl;
+
+  std::cout<<var.value()<<std::endl;
   // for(int el=0;el<mesh.side_nodes().size();el++)
   // {
   //   std::cout<<"side_nodes_="<<el<<std::endl;

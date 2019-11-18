@@ -1045,6 +1045,17 @@ public:
  using type=decltype(points);
 };
 
+template<Integer Dim,typename Operator>
+class DofsPoints<Simplex<Dim,1>,Operator, LagrangeFE, 0>
+{
+public:
+ static constexpr auto points=Dofs_Simplex1_Trace_Lagrange0;
+ using type=decltype(points);
+};
+
+
+
+
 static constexpr Vector<Matrix<Real,1,1>,2> Dofs_Simplex1_Trace_Lagrange1(0, 1.0);
 
 template<Integer Dim>
@@ -1054,6 +1065,20 @@ public:
  static constexpr auto points=Dofs_Simplex1_Trace_Lagrange1;
  using type=decltype(points);
 };
+
+template<Integer Dim,typename Operator>
+class DofsPoints<Simplex<Dim,1>,Operator, LagrangeFE, 1>
+{
+public:
+ static constexpr auto points=Dofs_Simplex1_Trace_Lagrange1;
+ using type=decltype(points);
+};
+
+
+
+
+
+
 
 static constexpr Vector<Matrix<Real,1,1>,3> Dofs_Simplex1_Trace_Lagrange2(0, 1.0, 0.5);
 
@@ -1065,6 +1090,18 @@ public:
  using type=decltype(points);
 };
 
+template<Integer Dim,typename Operator>
+class DofsPoints<Simplex<Dim,1>,Operator, LagrangeFE, 2>
+{
+public:
+ static constexpr auto points=Dofs_Simplex1_Trace_Lagrange2;
+ using type=decltype(points);
+};
+
+
+
+
+
 static constexpr Vector<Matrix<Real,1,1>,4> Dofs_Simplex1_Trace_Lagrange3(0, 1.0, 1.0/3.0, 2.0/3.0);
 
 template<Integer Dim>
@@ -1075,7 +1112,13 @@ public:
  using type=decltype(points);
 };
 
-
+template<Integer Dim,typename Operator>
+class DofsPoints<Simplex<Dim,1>,Operator, LagrangeFE, 3>
+{
+public:
+ static constexpr auto points=Dofs_Simplex1_Trace_Lagrange3;
+ using type=decltype(points);
+};
 
 
 
@@ -1088,6 +1131,9 @@ public:
  static constexpr auto points=Dofs_Simplex1_Trace_RT0;
  using type=decltype(points);
 };
+
+
+
 
 
 static constexpr Vector<Matrix<Real,1,1>,2> Dofs_Simplex1_Trace_RT1(0.0,1.0);
@@ -1105,6 +1151,9 @@ public:
 
 
 
+
+
+
 static constexpr Vector<Matrix<Real,2,1>,1> Dofs_Simplex2_Trace_Lagrange0({1.0/3.0, 1.0/3.0});
 
 template<Integer Dim>
@@ -1114,6 +1163,15 @@ public:
  static constexpr auto points=Dofs_Simplex2_Trace_Lagrange0;
  using type=decltype(points);
 };
+
+template<Integer Dim,typename Operator>
+class DofsPoints<Simplex<Dim,2>,Operator, LagrangeFE, 0>
+{
+public:
+ static constexpr auto points=Dofs_Simplex2_Trace_Lagrange0;
+ using type=decltype(points);
+};
+
 
 
 
@@ -1130,6 +1188,20 @@ public:
  using type=decltype(points);
 };
 
+template<Integer Dim,typename Operator>
+class DofsPoints<Simplex<Dim,2>,Operator, LagrangeFE, 1>
+{
+public:
+ static constexpr auto points=Dofs_Simplex2_Trace_Lagrange1;
+ using type=decltype(points);
+};
+
+
+
+
+
+
+
 static constexpr Vector<Matrix<Real,2,1>,6> Dofs_Simplex2_Trace_Lagrange2({0.0,0.0},
                                                                         {1.0,0.0},
                                                                         {0.0,1.0},
@@ -1144,6 +1216,17 @@ public:
  static constexpr auto points=Dofs_Simplex2_Trace_Lagrange1;
  using type=decltype(points);
 };
+
+
+template<Integer Dim,typename Operator>
+class DofsPoints<Simplex<Dim,2>,Operator, LagrangeFE, 2>
+{
+public:
+ static constexpr auto points=Dofs_Simplex2_Trace_Lagrange1;
+ using type=decltype(points);
+};
+
+
 
 
 
@@ -1166,6 +1249,15 @@ public:
  using type=decltype(points);
 };
 
+template<Integer Dim,typename Operator>
+class DofsPoints<Simplex<Dim,2>,Operator, LagrangeFE, 3>
+{
+public:
+ static constexpr auto points=Dofs_Simplex2_Trace_Lagrange3;
+ using type=decltype(points);
+};
+
+
 
 
 
@@ -1175,6 +1267,11 @@ public:
 
 static constexpr Vector<Matrix<Real,2,1>,1> Dofs_Simplex2_Trace_RT0({1.0/3.0, 1.0/3.0});
 
+static constexpr Vector<Matrix<Real,2,1>,3> Dofs_Simplex2_Operator_RT0({0.5, 0.0},  
+                                                                       {0.0, 0.5},
+                                                                       {0.5, 0.5});
+
+
 template<Integer Dim>
 class DofsPoints<Simplex<Dim,3>,TraceOperator, RaviartThomasFE, 0>
 {
@@ -1183,11 +1280,29 @@ public:
  using type=decltype(points);
 };
 
+template<Integer Dim,typename Operator>
+class DofsPoints<Simplex<Dim,2>,Operator, RaviartThomasFE, 0>
+{
+public:
+ static constexpr auto points=Dofs_Simplex2_Operator_RT0;
+ using type=decltype(points);
+};
+
+
+
 
 static constexpr Vector<Matrix<Real,2,1>,3> Dofs_Simplex2_Trace_RT1({0.0,0.0},
                                                                   {1.0,0.0},
                                                                   {0.0,1.0});
 
+static constexpr Vector<Matrix<Real,2,1>,8> Dofs_Simplex2_Operator_RT1({0.0,0.0},
+                                                                       {1.0,0.0},
+                                                                       {0.0,0.0},
+                                                                       {0.0,1.0},
+                                                                       {1.0,0.0},
+                                                                       {0.0,1.0},
+                                                                       {1.0/3.0, 1.0/3.0},
+                                                                       {1.0/3.0, 1.0/3.0});
 template<Integer Dim>
 class DofsPoints<Simplex<Dim,3>,TraceOperator, RaviartThomasFE, 1>
 {
@@ -1195,6 +1310,18 @@ public:
  static constexpr auto points=Dofs_Simplex2_Trace_RT1;
  using type=decltype(points);
 };
+
+
+template<Integer Dim,typename Operator>
+class DofsPoints<Simplex<Dim,2>,Operator, RaviartThomasFE, 1>
+{
+public:
+ static constexpr auto points=Dofs_Simplex2_Operator_RT1;
+ using type=decltype(points);
+};
+
+
+
 
 
 
@@ -1241,8 +1368,8 @@ constexpr inline static void
 apply(const Vector<Real,2>& point, Output & func)
 {
     Output func2((1. - point[0] - point[1]), // 1 in (0,0)
-                                       point[0],                  // 1 in (1,0)
-                                       point[1]);                 // 1 in (0,1)
+                  point[0],                  // 1 in (1,0)
+                  point[1]);                 // 1 in (0,1)
     func=func2;
 }
 };
@@ -1653,6 +1780,31 @@ constexpr const Vector<Vector<single_type,NQPoints>,Ndofs> reference_shape_funct
     for(Integer qp=0;qp<NQPoints;qp++)
     {
         qp_point=qp_points.get_row(qp);
+        // func=value<Elem,Operator,FEFamily,Order,single_type,Ndofs>(qp_point);
+        ReferenceShapeFunctionValue<Elem,Operator,FEFamily,Order>::apply(qp_point,func);
+        // value<Elem,Operator,FEFamily,Order>(qp_point,func);
+        for(Integer n_dof = 0; n_dof < Ndofs; ++n_dof) {
+            const_cast<single_type&>
+            (static_cast<const std::array<single_type,NQPoints>& >
+             ((static_cast<const std::array<Vector<single_type,NQPoints>,Ndofs>& >(v())[n_dof] )())[qp])=
+            static_cast<const std::array<single_type,Ndofs>& >(func())[n_dof];
+        }
+    }
+    return v;
+};
+
+
+template<typename Elem,typename Operator, Integer FEFamily,Integer Order,typename single_type,Integer Ndofs,
+Integer NQPoints,Integer Dim>
+constexpr const Vector<Vector<single_type,NQPoints>,Ndofs> reference_shape_function_init(const Vector<Matrix<Real,Dim,1>,NQPoints>&qp_points)
+{
+    Vector<Vector<single_type,NQPoints>,Ndofs> v;
+    Vector<Real,Dim> qp_point;
+    Vector<single_type,Ndofs> func;
+    for(Integer qp=0;qp<NQPoints;qp++)
+    {
+        for(std::size_t i=0;i<Dim;i++)
+          qp_point[i]=qp_points[qp](i,0);
         // func=value<Elem,Operator,FEFamily,Order,single_type,Ndofs>(qp_point);
         ReferenceShapeFunctionValue<Elem,Operator,FEFamily,Order>::apply(qp_point,func);
         // value<Elem,Operator,FEFamily,Order>(qp_point,func);

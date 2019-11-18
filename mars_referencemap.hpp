@@ -95,7 +95,7 @@ class MapFromReference<DivergenceOperator,Simplex<Dim,ManifoldDim>,RaviartThomas
  public:
  using Operator=DivergenceOperator;
  using Elem=Simplex<Dim,ManifoldDim>;
-         inline constexpr void init(const FiniteElem<Simplex<Dim,ManifoldDim>> &FE){div_= FE.get_det();}
+         inline constexpr void init(const FiniteElem<Simplex<Dim,ManifoldDim>> &FE){div_= 1.0/FE.get_det();}
          inline constexpr const auto&  operator()()const{return div_;}
  private:
  Real div_;
