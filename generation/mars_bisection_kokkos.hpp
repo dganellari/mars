@@ -50,6 +50,12 @@ public:
 	Mesh *get_host_mesh() const{
 		return host_mesh;
 	}
+
+	void set_verbose(const bool val)
+	{
+		verbose = val;
+	}
+
 	/*
 
 	inline Integer side_num(
@@ -174,10 +180,6 @@ public:
 		return edge_element_map_;
 	}
 
-	void set_verbose(const bool val)
-	{
-		verbose = val;
-	}
 
 	const Mesh &get_mesh() const
 	{
@@ -269,7 +271,6 @@ public:
 
 		Kokkos::Timer timer;
 
-		map_.update(sMesh);
 
 		double time = timer.seconds();
 		std::cout << "serial kokkos took: " << time << " seconds." << std::endl;
@@ -277,7 +278,6 @@ public:
 		//map_.describe(std::cout);
 
 		sMesh.update_dual_graph();
-
 
 		//nr_faces per eleme counted twicee * nr elements
 		Integer bound = Combinations<ManifoldDim + 1, ManifoldDim>::value * sMesh.n_elements();
@@ -669,10 +669,10 @@ public:
 			Integer v1 = lepp_incident_index(i, 1);
 			Integer v2 = lepp_incident_index(i, 2);
 
-			if (verbose)
+			/*if (verbose)
 			{
 				printf("bisect(%li , %li) for %li\n", v1, v2, element_id);
-			}
+			}*/
 
 			mesh->set_active(element_id, false);
 			//printf("elem: %li - %d\n", element_id, mesh->is_active(element_id));
@@ -777,7 +777,7 @@ public:
 		});
 
 		double time = timer.seconds();
-		//std::cout << "compact_map_to_view took: " << time << " seconds." << std::endl;
+		std::cout << "compact_map_to_view took: " << time << " seconds." << std::endl;
 
 	}
 
@@ -882,16 +882,15 @@ public:
 
 		copy_mesh_to_device(); //only the object. No deep copy of the member views.
 
-		edge_node_map_.rehash_map(2 * host_mesh->n_elements()); //TODO: maybe a modified euler for capacity?
 
-		Timer timer2;
+		/*Timer timer2;
 
 		//edge_element_map_.rehash_map(2 * host_mesh->n_elements());
 		edge_element_map_.reserve_map(2 * host_mesh->n_elements()); //TODO: maybe a modified euler for capacity?
 		edge_element_map_.update(mesh, host_mesh->n_elements());
 		//edge_element_map_.describe(std::cout);
 
-		double time2 = timer2.seconds();
+		double time2 = timer2.seconds();*/
 		//std::cout << "edge_element_map_.update took: " << time2 << " seconds." << std::endl;
 
 		double time1 = timer1.seconds();
@@ -928,10 +927,17 @@ public:
 		{
 			++it_count;
 
+			Timer timer;
+
 			//Only for the reserve tree the modified nr_elements should be used.
 			//For the others the element set nr_elements should be used.
 			reserve_tree(host_mesh->n_elements());
 			precompute_lepp_incidents(mesh, host_mesh->n_elements());
+
+			double time = timer.seconds();
+			if (verbose)
+				std::cout << "precompute_lepp_incidents took: " << time << " seconds."
+					<< std::endl;
 
 			auto h_ac = count_lepp(elements);
 
@@ -969,11 +975,27 @@ public:
 					<< std::endl;
 
 		}
-		//free_mesh();
+
 
 		double time = timer_refine.seconds();
 		std::cout << "Refine Mesh took: " << time << " seconds. In " << it_count
 				<< " iterations." << std::endl;
+
+		Timer timer2;
+		edge_node_map_.rehash_map(2 * host_mesh->n_elements()); //TODO: maybe a modified euler for capacity?
+
+		//edge_element_map_.rehash_map(2 * host_mesh->n_elements());
+		edge_element_map_.reserve_map(2 * host_mesh->n_elements()); //TODO: maybe a modified euler for capacity?
+		edge_element_map_.update(mesh, host_mesh->n_elements());
+		//edge_element_map_.describe(std::cout);
+
+		double time2 = timer2.seconds();
+		std::cout << "____________________________________________________________" << std::endl;
+
+		std::cout << "edge_element_map_.update took: " << time2 << " seconds." << std::endl;
+
+		//free_mesh();
+
 	}
 
 	void refine(ViewVectorType<Integer>& elements)
@@ -981,7 +1003,8 @@ public:
 
 		if (edge_element_map_.empty())
 		{
-			const Integer capacity = euler_graph_formula(host_mesh);
+
+			const Integer capacity = 3*euler_graph_formula(host_mesh);
 			edge_node_map_.reserve_map(capacity);
 			edge_element_map_.reserve_map(capacity);
 
@@ -1014,7 +1037,9 @@ public:
 		if (edge_element_map_.empty())
 		{
 
-			const Integer capacity = euler_graph_formula(host_mesh);
+			//const Integer capacity = 3 * host_mesh->n_elements();
+			const Integer capacity = 3*euler_graph_formula(host_mesh);
+
 			edge_node_map_.reserve_map(capacity);
 			edge_element_map_.reserve_map(capacity);
 
@@ -1045,6 +1070,7 @@ public:
 
 			std::cout <<"\nn_marked(" << (i + 1) << "/" << n_levels << ") : "
 									<< elements.extent(0) << std::endl;
+
 			refine_elements(elements);
 		}
 
