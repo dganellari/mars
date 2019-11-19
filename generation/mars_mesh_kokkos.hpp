@@ -490,7 +490,7 @@ public:
 		return ret;
 	}*/
 
-	inline bool n_active_elements(const Integer N)
+	inline Integer n_active_elements(const Integer N)
 	{
 		using namespace Kokkos;
 
@@ -498,7 +498,7 @@ public:
 
 		ViewVectorType<bool> active_ = get_view_active();
 
-		double result;
+		double result=0;
 		parallel_reduce("Active_all", N, KOKKOS_LAMBDA (const int& i, double& lsum )
 		{
 			lsum += active_(i);
@@ -509,11 +509,11 @@ public:
 
 		printf("Result: %i %lf\n", N, result);
 
-		return result>0;
+		return result;
 	}
 
 
-	inline bool n_active_elements(const ViewVectorType<Integer> elements)
+	inline Integer n_active_elements(const ViewVectorType<Integer> elements)
 	{
 		using namespace Kokkos;
 
@@ -523,7 +523,7 @@ public:
 
 		Integer N = elements.extent(0);
 
-		double result;
+		double result=0;
 		parallel_reduce("Active_elem", N, KOKKOS_LAMBDA (const int& i, double& lsum )
 		{
 			lsum += active_(elements(i));
@@ -534,7 +534,7 @@ public:
 
 		printf("Result: %i %lf\n", N, result);
 
-		return result > 0;
+		return result;
 	}
 
 	/*bool have_common_sub_surface(

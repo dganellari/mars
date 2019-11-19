@@ -50,14 +50,12 @@ namespace mars {
 					nodes[j] = e.nodes[combinations.combs[i][j]];
 				}
 
-				auto result= mapping.insert(Side<N, KokkosImplementation>(nodes));
+				//auto result= mapping.insert(Side<N, KokkosImplementation>(nodes));
+				auto result= mapping.find(Side<N, KokkosImplementation>(nodes));
 
-				if(!result.failed()){
-					auto &vec = mapping.value_at(result.index());
+				if(mapping.valid_at(result)){
+					auto &vec = mapping.value_at(result);
 					vec.insert(e.id);
-				}else{
-					 printf("Edge Element Map: Exceeded UnorderedMap capacity\n");
-					//TODO: handle the case of failure insert. GO to the host for rehash.
 				}
 
 			}
@@ -70,7 +68,7 @@ namespace mars {
 
 			PMesh* mesh;
 			UnorderedMap<Side<N,KokkosImplementation>,ElementVector> mapping;
-
+			ViewVectorType<Integer> active_elems;
 
 			/*void init(const PMesh *m)
 			{
@@ -85,15 +83,19 @@ namespace mars {
 				mesh = tmp; //otherwise "this" pointer is still a host pointer within the parallel_for.
 			}*/
 
-			UMapUpdate(UnorderedMap<Side<N,KokkosImplementation>, ElementVector> mp, PMesh *ms) :
-					mapping(mp), mesh(ms)
+			UMapUpdate(
+					UnorderedMap<Side<N, KokkosImplementation>, ElementVector> mp,
+					PMesh *ms, ViewVectorType<Integer> ae) :
+					mapping(mp), mesh(ms), active_elems(ae)
 			{
 				//init(ms);
 			}
 
 			MARS_INLINE_FUNCTION
-			void operator()(int element_id) const
+			void operator()(int i) const
 			{
+				const Integer element_id = active_elems(i);
+
 				if(mesh->is_active(element_id))
 				{
 					update_elem(mapping, mesh->elem(element_id));
@@ -114,10 +116,10 @@ namespace mars {
 
 		template<Integer Dim, Integer ManifoldDim>
 		void update(Mesh<Dim, ManifoldDim, KokkosImplementation> *mesh,
-				const Integer nr_elements)
+				const ViewVectorType<Integer> active_elems)
 		{
-			Kokkos::parallel_for(nr_elements,
-					UMapUpdate<Dim, ManifoldDim>(mapping_, mesh));
+			Kokkos::parallel_for(active_elems.extent(0),
+					UMapUpdate<Dim, ManifoldDim>(mapping_, mesh, active_elems));
 		}
 
 		/*template<Integer Dim, Integer ManifoldDim>
@@ -246,6 +248,11 @@ namespace mars {
 		void clear()
 		{
 			mapping_.clear();
+		}
+
+		Integer capacity()
+		{
+			mapping_.capacity();
 		}
 
 		UnorderedMap<Side<N,KokkosImplementation>,ElementVector> mapping_;
