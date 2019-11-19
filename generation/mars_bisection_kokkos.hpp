@@ -303,17 +303,20 @@ public:
 		Mesh_* mesh;
 		UnorderedMap<Edge,ElementVector> mapping;
 		ViewVectorType<uint32_t> tree;
-
+		ViewVectorType<Integer> active_elems;
 
 		BuildTree(UnorderedMap<Edge, ElementVector> mp,
-				Mesh_* ms, ViewVectorType<uint32_t> tr) :
-			mapping(mp), mesh(ms), tree(tr)
+				Mesh_* ms, ViewVectorType<uint32_t> tr, ViewVectorType<Integer> ae) :
+			mapping(mp), mesh(ms), tree(tr), active_elems(ae)
 		{
 		}
 
 		MARS_INLINE_FUNCTION
-		void operator()(int element_id) const
+		void operator()(int i) const
 		{
+
+			const Integer element_id = active_elems(i);
+
 			EdgeSelect_ es;
 			const Integer edge_num = es.stable_select(*mesh, element_id);
 			//Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id);
@@ -321,11 +324,14 @@ public:
 
 			Edge edge;
 			mesh->elem(element_id).edge(edge_num, edge.nodes[0], edge.nodes[1]);
-			edge.fix_ordering();
+			edge.fix_ordering(); //TODO: check if needed at all.
 
-			tree(element_id) = mapping.find(edge);
-			//ElementVector incidents =mapping.value_at(tree(element_id));
+			auto result = mapping.insert(edge);
 
+			if(!result.failed())
+				tree(element_id) = result.index();
+			else
+				printf("Edge Element Map: Exceeded UnorderedMap capacity\n");
 		}
 	};
 
@@ -336,11 +342,11 @@ public:
 
 	void precompute_lepp_incidents(
 			Mesh_ *mesh,
-			const Integer nr_elements)
+			const ViewVectorType<Integer> active_elems)
 	{
 
-		Kokkos::parallel_for(nr_elements,
-				BuildTree(edge_element_map_.mapping_, mesh, tree_));
+		Kokkos::parallel_for(active_elems.extent(0),
+				BuildTree(edge_element_map_.mapping_, mesh, tree_, active_elems));
 	}
 
 
@@ -925,19 +931,39 @@ public:
 		while (compact(mesh, elements)) // a bit faster due to compaction (reduced branching)
 		//while (host_mesh->n_active_elements(elements))
 		{
-			++it_count;
 
-			Timer timer;
+			ViewVectorType<Integer> active_elems = mark_active(mesh,
+					host_mesh->get_view_active(), host_mesh->n_elements());
+
+			const Integer nr_active_elements = active_elems.extent(0);
+
+			if (verbose)
+				std::cout << "Total Nr. elems: " << host_mesh->n_elements()
+						<< " vs. Active Nr. elems: " << nr_active_elements << std::endl;
 
 			//Only for the reserve tree the modified nr_elements should be used.
 			//For the others the element set nr_elements should be used.
+			Timer timer;
+
 			reserve_tree(host_mesh->n_elements());
-			precompute_lepp_incidents(mesh, host_mesh->n_elements());
+
+			//if (it_count==0 || edge_element_map_.capacity()<nr_active_elements)
+			edge_element_map_.reserve_map(nr_active_elements);
+			/*else
+				edge_element_map_.clear();*/
+
+			precompute_lepp_incidents(mesh, active_elems);
+
+			//if (it_count==0)
+			edge_element_map_.update(mesh, active_elems);
+
 
 			double time = timer.seconds();
 			if (verbose)
 				std::cout << "precompute_lepp_incidents took: " << time << " seconds."
 					<< std::endl;
+
+			++it_count;
 
 			auto h_ac = count_lepp(elements);
 
@@ -973,29 +999,27 @@ public:
 			if (verbose)
 				std::cout << "Bisection took: " << time1 << " seconds."
 					<< std::endl;
+			std::cout << "------------------------------------------------------------" << std::endl;
 
 		}
-
-
-		double time = timer_refine.seconds();
-		std::cout << "Refine Mesh took: " << time << " seconds. In " << it_count
-				<< " iterations." << std::endl;
 
 		Timer timer2;
 		edge_node_map_.rehash_map(2 * host_mesh->n_elements()); //TODO: maybe a modified euler for capacity?
 
 		//edge_element_map_.rehash_map(2 * host_mesh->n_elements());
-		edge_element_map_.reserve_map(2 * host_mesh->n_elements()); //TODO: maybe a modified euler for capacity?
-		edge_element_map_.update(mesh, host_mesh->n_elements());
+
 		//edge_element_map_.describe(std::cout);
 
 		double time2 = timer2.seconds();
 		std::cout << "____________________________________________________________" << std::endl;
 
-		std::cout << "edge_element_map_.update took: " << time2 << " seconds." << std::endl;
+		std::cout << "edge_node_map_.rehash_map took: " << time2 << " seconds." << std::endl;
 
 		//free_mesh();
 
+		double time = timer_refine.seconds();
+		std::cout << "Refine Mesh took: " << time << " seconds. In " << it_count
+				<< " iterations." << std::endl;
 	}
 
 	void refine(ViewVectorType<Integer>& elements)
@@ -1003,18 +1027,19 @@ public:
 
 		if (edge_element_map_.empty())
 		{
+			edge_node_map_.reserve_map(host_mesh->n_elements());
 
-			const Integer capacity = 3*euler_graph_formula(host_mesh);
+	/*		const Integer capacity = euler_graph_formula(host_mesh);
 			edge_node_map_.reserve_map(capacity);
 			edge_element_map_.reserve_map(capacity);
-
+*/
 			/*if(flags.empty()) {
 			 flags.resize(mesh.n_elements(), NONE);
 			 level.resize(mesh.n_elements(), 0);
 			 mesh.update_dual_graph();*/
 
 			copy_mesh_to_device();
-
+/*
 			Kokkos::Timer timer_update;
 
 			edge_element_map_.update(mesh, host_mesh->n_elements());
@@ -1023,7 +1048,7 @@ public:
 			double _update = timer_update.seconds();
 			if (verbose)
 				std::cout << "Initial  edge_element_map_.update took: "
-						<< _update << " seconds." << std::endl;
+						<< _update << " seconds." << std::endl;*/
 		}
 
 		refine_elements(elements);
@@ -1036,12 +1061,12 @@ public:
 	{
 		if (edge_element_map_.empty())
 		{
-
+			edge_node_map_.reserve_map(host_mesh->n_elements());
 			//const Integer capacity = 3 * host_mesh->n_elements();
-			const Integer capacity = 3*euler_graph_formula(host_mesh);
+			/*const Integer capacity = 3*euler_graph_formula(host_mesh);
 
-			edge_node_map_.reserve_map(capacity);
-			edge_element_map_.reserve_map(capacity);
+
+			edge_element_map_.reserve_map(capacity);*/
 
 			/*if(flags.empty()) {
 			 flags.resize(mesh.n_elements(), NONE);
@@ -1051,14 +1076,14 @@ public:
 
 			copy_mesh_to_device();
 
-			Kokkos::Timer timer_update;
+		/*	Kokkos::Timer timer_update;
 
 			edge_element_map_.update(mesh, host_mesh->n_elements());
 
 			double _update = timer_update.seconds();
 			if (verbose)
 				std::cout << "Initial  edge_element_map_.update took: "
-						<< _update << " seconds." << std::endl;
+						<< _update << " seconds." << std::endl;*/
 		}
 
 		Kokkos::Timer timer_refine;

@@ -28,8 +28,8 @@ namespace mars {
 			auto mesh = mesh_in;
 
 			ParallelBisection<Mesh> b(&mesh);
+			b.set_verbose(true);
 			b.uniform_refine(1);
-
 
 			Integer exp_num = 0;
 			run_benchmark(n_levels,  mesh, output_path, exp_num++);
@@ -56,13 +56,15 @@ namespace mars {
 			std::cout << "volume: " << mesh.volume() << std::endl; */
 
 			ParallelBisection<Mesh> b(&mesh);
+			b.set_verbose(true);
 
 			b.uniform_refine(2);
 
-			Kokkos::Timer timer_refine;
 
 			ViewVectorTypeC<Real, Dim> center("center");
 			fill_view(center, 0.5);
+
+			Kokkos::Timer timer_refine;
 
 			for (Integer i = 0; i < n_levels; ++i)
 			{
