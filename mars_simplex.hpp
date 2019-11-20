@@ -379,37 +379,40 @@ namespace mars {
 
             side.nodes[0] = nodes[side_num];
             side.nodes[1] = nodes[side_num == 2? 0 : (side_num + 1)];
-            switch(side_num) {
-                case 0:
-                {
-                    side.nodes[0] = nodes[0];
-                    side.nodes[1] = nodes[1];
-                    break;
-                }
+            std::cout<<"side.nodes with side_num"<<side_num<<std::endl;
+            for(Integer i=0;i<side.nodes.size();i++)
+                std::cout<<side.nodes[i]<<std::endl;
+            // switch(side_num) {
+            //     case 0:
+            //     {
+            //         side.nodes[0] = nodes[0];
+            //         side.nodes[1] = nodes[1];
+            //         break;
+            //     }
                     
-                case 1:
-                {
-                    // side.nodes[0] = nodes[0];
-                    // side.nodes[1] = nodes[2];
-                    side.nodes[0] = nodes[2];
-                    side.nodes[1] = nodes[0];
-                    break;
-                }
+            //     case 1:
+            //     {
+            //         // side.nodes[0] = nodes[0];
+            //         // side.nodes[1] = nodes[2];
+            //         side.nodes[0] = nodes[2];
+            //         side.nodes[1] = nodes[0];
+            //         break;
+            //     }
                     
-                case 2:
-                {
-                    side.nodes[0] = nodes[1];
-                    side.nodes[1] = nodes[2];
-                    break;
-                }
+            //     case 2:
+            //     {
+            //         side.nodes[0] = nodes[1];
+            //         side.nodes[1] = nodes[2];
+            //         break;
+            //     }
                      
-                default:
-                {
-                    assert(false);
-                    break;
-                }
+            //     default:
+            //     {
+            //         assert(false);
+            //         break;
+            //     }
                     
-            }            
+            // }            
         }
         void side_sorted(const Integer &side_num,
                   Simplex<Dim, ManifoldDim-1> &side) const
@@ -954,10 +957,10 @@ namespace mars {
         auto n = n_nodes(simplex);
         
         Vector<Real, Dim> v0 = points[simplex.nodes[0]];
-        std::cout<<"v0="<<v0<<std::endl;
+        // std::cout<<"v0="<<v0<<std::endl;
         for(Integer i = 1; i < n; ++i) {
             const auto &vi = points[simplex.nodes[i]];
-            std::cout<<"vi="<<vi<<std::endl;
+            // std::cout<<"vi="<<vi<<std::endl;
 
 
             J.col(i-1, vi - v0);
@@ -1118,20 +1121,21 @@ namespace mars {
         return b;
     }
 
-    inline Vector<Real, 2> normal(const Simplex<2, 1>      &simplex,
-                                  const std::vector<Vector<Real, 2>> &points,
-                                  const bool apply_normalization = true)
-    {
-        Vector<Real, 2> n = points[simplex.nodes[1]] - points[simplex.nodes[0]];
+    // TODO FIXME 
+    // inline Vector<Real, 2> normal(const Simplex<2, 1>      &simplex,
+    //                               const std::vector<Vector<Real, 2>> &points,
+    //                               const bool apply_normalization = true)
+    // {
+    //     Vector<Real, 2> n = points[simplex.nodes[1]] - points[simplex.nodes[0]];
         
-        if(apply_normalization) {
-            n /= n.norm();
-        }
+    //     if(apply_normalization) {
+    //         n /= n.norm();
+    //     }
 
-        std::swap(n[0], n[1]);
-        n[0] = -n[0];
-        return n;
-    }
+    //     std::swap(n[0], n[1]);
+    //     n[0] = -n[0];
+    //     return n;
+    // }
     
     template<Integer Dim, Integer ManifoldDim>
     inline Vector<Real, Dim> normal(const Simplex<Dim, ManifoldDim>      &simplex,
@@ -1270,10 +1274,10 @@ namespace mars {
         auto n = n_nodes(simplex);
         
         v0 = points[simplex.nodes[0]];
-        std::cout<<"v0="<<v0<<std::endl;
+        // std::cout<<"v0="<<v0<<std::endl;
         for(Integer i = 1; i < n; ++i) {
             const auto &vi = points[simplex.nodes[i]];
-            std::cout<<"vi="<<vi<<std::endl;
+            // std::cout<<"vi="<<vi<<std::endl;
 
 
             J.col(i-1, vi - v0);
