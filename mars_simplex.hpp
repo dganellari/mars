@@ -377,42 +377,45 @@ namespace mars {
                   Simplex<Dim, 1> &side) const
         {
 
-            side.nodes[0] = nodes[side_num];
-            side.nodes[1] = nodes[side_num == 2? 0 : (side_num + 1)];
-            std::cout<<"side.nodes with side_num"<<side_num<<std::endl;
-            for(Integer i=0;i<side.nodes.size();i++)
-                std::cout<<side.nodes[i]<<std::endl;
-            // switch(side_num) {
-            //     case 0:
-            //     {
-            //         side.nodes[0] = nodes[0];
-            //         side.nodes[1] = nodes[1];
-            //         break;
-            //     }
+            // side.nodes[0] = nodes[side_num];
+            // side.nodes[1] = nodes[side_num == 2? 0 : (side_num + 1)];
+
+            // HERE WE CHANGED THE ORDER OF THE FACES:
+            // FACE 0: 0,1
+            // FACE 1: 2,0
+            // FACE 2: 1,2
+            // BUT THE ORDER OF THE NODES TO COMPUTE THE NORMAL IS UNCHANGED
+            switch(side_num) {
+                case 0:
+                {
+                    side.nodes[0] = nodes[0];
+                    side.nodes[1] = nodes[1];
+                    break;
+                }
                     
-            //     case 1:
-            //     {
-            //         // side.nodes[0] = nodes[0];
-            //         // side.nodes[1] = nodes[2];
-            //         side.nodes[0] = nodes[2];
-            //         side.nodes[1] = nodes[0];
-            //         break;
-            //     }
+                case 1:
+                {
+                    // side.nodes[0] = nodes[0];
+                    // side.nodes[1] = nodes[2];
+                    side.nodes[0] = nodes[2];
+                    side.nodes[1] = nodes[0];
+                    break;
+                }
                     
-            //     case 2:
-            //     {
-            //         side.nodes[0] = nodes[1];
-            //         side.nodes[1] = nodes[2];
-            //         break;
-            //     }
+                case 2:
+                {
+                    side.nodes[0] = nodes[1];
+                    side.nodes[1] = nodes[2];
+                    break;
+                }
                      
-            //     default:
-            //     {
-            //         assert(false);
-            //         break;
-            //     }
+                default:
+                {
+                    assert(false);
+                    break;
+                }
                     
-            // }            
+            }            
         }
         void side_sorted(const Integer &side_num,
                   Simplex<Dim, ManifoldDim-1> &side) const
@@ -496,6 +499,13 @@ namespace mars {
                   const Integer &side_num,
                   Simplex<Dim, 2> &side) const
         {
+
+            // HERE WE CHANGED THE ORDER OF THE FACES:
+            // FACE 0: 0,2,1
+            // FACE 1: 0,1,3
+            // FACE 2: 0,3,2
+            // FACE 3: 1,2,3
+            // BUT THE ORDER OF THE NODES TO COMPUTE THE NORMAL IS UNCHANGED
             switch(side_num) {
                 case 0:
                 {
@@ -505,19 +515,25 @@ namespace mars {
                     break;
                 }
                     
-                case 2:
-                {
-                    side.nodes[0] = nodes[0];
-                    side.nodes[1] = nodes[3];
-                    side.nodes[2] = nodes[2];
-                    break;
-                }
-                    
                 case 1:
                 {
+                    // side.nodes[0] = nodes[0];
+                    // side.nodes[1] = nodes[3];
+                    // side.nodes[2] = nodes[2];
                     side.nodes[0] = nodes[0];
                     side.nodes[1] = nodes[1];
                     side.nodes[2] = nodes[3];
+                    break;
+                }
+                    
+                case 2:
+                {
+                    // side.nodes[0] = nodes[0];
+                    // side.nodes[1] = nodes[1];
+                    // side.nodes[2] = nodes[3];
+                    side.nodes[0] = nodes[0];
+                    side.nodes[1] = nodes[3];
+                    side.nodes[2] = nodes[2];
                     break;
                 }
                     
@@ -666,6 +682,14 @@ namespace mars {
             // Combinations<5, 4>::choose(side_num, nodes, side.nodes);
             switch(side_num)
             {
+            // HERE WE CHANGED THE ORDER OF THE FACES:
+            // FACE 0: 0,1,2,3
+            // FACE 1: 0,1,4,2
+            // FACE 2: 0,1,3,4
+            // FACE 3: 0,2,3,4
+            // FACE 4: 4,1,3,2
+            // BUT THE ORDER OF THE NODES TO COMPUTE THE NORMAL IS UNCHANGED
+
                 case 0:
                 {
                     side.nodes[0] = nodes[0];
