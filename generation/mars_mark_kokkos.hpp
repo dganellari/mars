@@ -6,6 +6,40 @@
 namespace mars {
 
 template<class Mesh_>
+MARS_INLINE_FUNCTION
+static bool in_hypersphere(const Mesh_* mesh, const Integer element_id,
+		const ViewVectorTypeC<Real, Mesh_::Dim> center, const Real radius)
+{
+	bool inside = false;
+	bool outside = false;
+
+	if (mesh->is_active(element_id)) //TODO: remove if by compacting on active elems.
+	{
+		auto e = mesh->elem(element_id);
+
+		for(Integer i=0; i<Mesh_::ManifoldDim+1; ++i){
+
+			Point<Real, Mesh_::Dim> pt_center(center);
+			auto dir = mesh->point(e.nodes[i]) - pt_center;
+			auto d = dir.norm();
+
+			if(d < radius) {
+				inside = true;
+			} else if(d > radius) {
+				outside = true;
+			} else if(abs(d) < 1e-16) {
+				inside = true;
+				outside = true;
+				break;
+			}
+		}
+	}
+
+	//return inside && outside;
+	return inside;
+}
+
+template<class Mesh_>
 struct Hypersphere
 {
 	static constexpr Integer Dim = Mesh_::Dim;
@@ -30,43 +64,19 @@ struct Hypersphere
 
 
 	MARS_INLINE_FUNCTION
-	void operator()(const int element_id) const
-	{
-		Integer hyper_count=0;
-
-		bool inside = false;
-		bool outside = false;
-
-		if (mesh->is_active(element_id)) //TODO: remove if by compacting on active elems.
+		void operator()(const int element_id) const
 		{
-			auto e = mesh->elem(element_id);
+			Integer hyper_count=0;
 
-			for(Integer i=0; i<ManifoldDim+1; ++i){
-
-				Point<Real, Dim> pt_center(center);
-				auto dir = mesh->point(e.nodes[i]) - pt_center;
-				auto d = dir.norm();
-
-				if(d < radius) {
-					inside = true;
-				} else if(d > radius) {
-					outside = true;
-				} else if(abs(d) < 1e-16) {
-					inside = true;
-					outside = true;
-					break;
-				}
-			}
-
-			if(inside && outside) {
+			if(in_hypersphere(mesh, element_id, center, radius))
+			{
 				++hyper_count;
 			}
-		}
 
-		count(element_id+1) = hyper_count;
-		//+1 for leaving the first cell 0 and performing an inclusive scan on the rest
-		//to have both exclusive and inclusive and the total on the last cell.
-	}
+			count(element_id+1) = hyper_count;
+			//+1 for leaving the first cell 0 and performing an inclusive scan on the rest
+			//to have both exclusive and inclusive and the total on the last cell.
+		}
 };
 
 
@@ -86,38 +96,14 @@ struct ScatterHypersphere : Hypersphere<Mesh_>
 	}
 
 	MARS_INLINE_FUNCTION
-	void operator()(const int element_id) const
-	{
-		bool inside = false;
-		bool outside = false;
-
-		if (this->mesh->is_active(element_id)) //TODO: remove if by compacting on active elems.
+		void operator()(const int element_id) const
 		{
-			auto e = this->mesh->elem(element_id);
-
-			for(Integer i=0; i<ManifoldDim+1; ++i){
-
-				Point<Real, Dim> pt_center(this->center);
-
-				auto dir = this->mesh->point(e.nodes[i]) - pt_center;
-				auto d = dir.norm();
-
-				if(d < this->radius) {
-					inside = true;
-				} else if(d > this->radius) {
-					outside = true;
-				} else if(abs(d) < 1e-16) {
-					inside = true;
-					outside = true;
-					break;
-				}
-			}
-
-			if(inside && outside) {
+			if (in_hypersphere(this->mesh, element_id, this->center, this->radius))
+			{
 				elements(scan(element_id)) = element_id;
 			}
+
 		}
-	}
 };
 
 
