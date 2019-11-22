@@ -44,7 +44,11 @@ class Context
      n_dofs_=spaces_ptr->n_dofs();
      auto mesh_ptr=spaces_ptr->mesh_ptr();
      FiniteElem<Elem> FE(mesh_ptr);
-     A.resize(n_dofs_,std::vector<Real>(n_dofs_));
+     // A.resize(n_dofs_,std::vector<Real>(n_dofs_));
+
+     A.init(n_dofs_,n_dofs_);
+
+
      b.resize(n_dofs_);   
      constrained_dofs.resize(n_dofs_,false);
      constrained_mat.resize(n_dofs_,0);
@@ -54,7 +58,9 @@ class Context
      shape_coefficients_.init(*mesh_ptr);
        for(std::size_t el=0;el<mesh_ptr->n_elements();el++)
        {
-
+          if(!mesh_ptr->is_active(el)) continue;
+          
+          std::cout<<"------_______----- ELEMENT ID = "<<el<<". -----_______--------"<<std::endl;
           FE.init(el);
           shape_coefficients_.init(el);
           reference_maps_.init(FE);
@@ -110,7 +116,8 @@ class Context
                 std::cout<<"------_______----- END SIDE===="<<s<<std::endl;
               }
            // constrained_dofs
-        }
+         }
+        
        }
 
 
@@ -136,34 +143,35 @@ class Context
       std::cout<<"------APPLY BC -------"<<std::endl;
      for(Integer i=0;i<n_dofs_;++i)
      {
-      std::cout<<"i="<<i<<std::endl;
+      // std::cout<<"i="<<i<<std::endl;
       if(constrained_dofs[i])
       {
-        std::cout<<"constrained"<<std::endl;
+        std::cout<<"constrained = "<< i << std::endl;
         
         b[i]=constrained_vec[i];
 
-        for(Integer j=0;j<i;++j)
-            { 
-              std::cout<<"??????????"<<A[i][j]<<std::endl;
-              A[i][j]=0;
-            }
-        A[i][i]=constrained_mat[i];
+        // for(Integer j=0;j<i;++j)
+        //     { 
+        //       A[i][j]=0;
+        //     }
+        // A[i][i]=constrained_mat[i];
+        A.set_zero_row(i);
+        A.equal(constrained_mat[i],i,i);
 
-        for(Integer j=i+1;j<n_dofs_;++j)
-            A[i][j]=0;
+        // for(Integer j=i+1;j<n_dofs_;++j)
+        //     A[i][j]=0;
       
       }
       else
       {
-        std::cout<<"not constrained"<<std::endl;
-        for(Integer j=0;j<n_dofs_;++j)
-          if(constrained_dofs[j])
-          {
-
-            A[i][j]=0;
-            b[i]-=A[i][j]*constrained_vec[j];
-          }
+        std::cout<<"not constrained = "<< i <<std::endl;
+        A.row_static_condensation(i,constrained_vec,constrained_dofs,b[i]);
+        // for(Integer j=0;j<n_dofs_;++j)
+        //   if(constrained_dofs[j])
+        //   {
+        //     b[i]-=A[i][j]*constrained_vec[j];
+        //     A[i][j]=0;
+        //   }
       }
 
 

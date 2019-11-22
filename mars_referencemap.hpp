@@ -68,7 +68,7 @@ class MapFromReference<GradientOperator, Simplex<Dim,ManifoldDim>,LagrangeFE>
  using Operator=GradientOperator;
  using Elem=Simplex<Dim,ManifoldDim>;
  // using type=Matrix<Real, Dim, ManifoldDim>;
-        inline constexpr void  init(const FiniteElem<Simplex<Dim,ManifoldDim>>& FE){grad_=  inverse(FE());}
+        inline constexpr void  init(const FiniteElem<Simplex<Dim,ManifoldDim>>& FE){grad_=  transpose(inverse(FE()));}
         inline constexpr const auto&  operator() ()const{return grad_;}
  private:
   Matrix<Real, Dim, ManifoldDim> grad_; 

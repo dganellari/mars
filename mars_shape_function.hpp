@@ -79,7 +79,7 @@ public:
     const Array<Real, ManifoldDim + 1 >& sign(const Integer elem_id) const {return outward_[elem_id];};
     
     template< typename MeshT>
-    void init(const MeshT& mesh)
+    void init(MeshT& mesh)
     {
         using Elem=typename MeshT::Elem;
         static_assert(Dim==ManifoldDim, "SignedNormal: computing internal normals of a mesh makes sense only if Dim==ManifoldDim");
@@ -103,6 +103,10 @@ public:
         
         // we initialize the simplex
         Simplex<Dim,ManifoldDim> simplex_elem;
+        Simplex<Dim, ManifoldDim-1> simplex_side;
+
+        mesh.update_dual_graph();
+
         for(Integer nn=0;nn<ManifoldDim+1;nn++)
             simplex_elem.nodes[nn]=nn;
         
@@ -118,64 +122,230 @@ public:
         // loop on all the elements
         for(Integer ee=0;ee<mesh.n_elements();ee++)
         {
-            Elem elem=mesh.elem(ee);
-            elemnodes_global=elem.nodes;
+            if(!mesh.is_active(ee)) continue;
+            auto &e = mesh.elem(ee);
+      
+            auto &adj = mesh.dual_graph().adj(ee);
             
-            for(Integer mm=0;mm<points.size();mm++)
-                points[mm]=mesh.point(elemnodes_global[mm]);
-            
-            // loop on all the faces of the simplex
-            // for Simplex={0,1,2,3}, the order is: 0-1-2, 0-1-3, 0-2-3, 1-2-3
-            for(Integer mm=0;mm<ManifoldDim+1;mm++)
-            {
-                // facenodes_local is a std::array containing the local nodes of the face mm
-                Combinations<ManifoldDim + 1,ManifoldDim>::generate(mm,facenodes_carray);
-                std::copy(std::begin(facenodes_carray), std::end(facenodes_carray), std::begin(facenodes_local));
-                // we reorder the local nodes based on the sorting order of the corresponding global nodes
-                facenodes_global=sub_array(elemnodes_global,facenodes_local);
-                facenodes_global_sort=argsort(facenodes_global);
-                facenodes_local_sort=sort_by_index(facenodes_local,facenodes_global_sort);
+            for(Integer nn=0;nn<ManifoldDim+1;nn++)
+                elempoints_sort[nn]=mesh.points()[e.nodes[nn]];
+
+            elempoint_mean=elempoints_sort.Tmean();
+
+                std::cout<<"--------- first  elempoint_mean"<<std::endl;
+                for(Integer i=0;i<elempoint_mean.size();i++)
+                  std::cout<<elempoint_mean[i]<<" "<<std::endl;
+                std::cout<<std::endl;
+
+
+
+
+
+
+            for(Integer k = 0; k < n_sides(e); ++k) {
+                          
+              // std::cout<<"--------- adj----------- "<<adj[k]<<std::endl;
+                // we use side and not side_sorted because we need normals
+                e.side(k, simplex_side);
+                // const auto& side_nodes=simplex_side.nodes;
+
+                // for(Integer i = 0; i < side_nodes.size(); ++i)
+                //     facepoints[i]=mesh.points()[side_nodes[i]];
+                // facepoint_mean = facepoints.Tmean();
+
+                // auto diff=facepoint_mean-elempoint_mean;
                 
-                // in elemnodes_local_sort we have facenodes_local_sort and the remaining node, elemnodes_local[mm]
-                for(Integer nn=0;nn<ManifoldDim;nn++)
-                    elemnodes_local_sort[nn]=facenodes_local_sort[nn];
+                auto n = normal(simplex_side, mesh.points());
+                // outward_[ee][k]=Sign(dot(diff,n));
+                // e.side(k, simplex_side);
                 
-                elemnodes_local_sort[ManifoldDim]=elemnodes_local[mm];
-                
-                for(Integer nn=0;nn<ManifoldDim+1;nn++)
-                    elempoints_sort[nn]=points[elemnodes_local_sort[nn]];
-                
-                // we create the face midpoint, the element midpoint and their difference
-                for(Integer nn=0;nn<ManifoldDim;nn++)
-                    facepoints[nn]=points[facenodes_local[nn]];
-                
-                facepoint_mean = facepoints.Tmean();
-                elempoint_mean=elempoints_sort.Tmean();
-                auto diff=facepoint_mean-elempoint_mean;
-                
-                auto n = normal(simplex_elem, elempoints_sort);
-                outward_[ee][mm]=Sign(dot(diff,n));
-                // save the normal and if its outward or inward
-                // if the face is on the boundary, then it must be outward
-                if(elem.side_tags[mm]>=0 && outward_[ee][mm]==-1)
+                if(adj[k]>ee && adj[k]!=INVALID_INDEX)
                 {
-                    // if the normal ins inward, force it to be outward
-                    normal_[ee][mm]=-n;
-                    outward_[ee][mm]=1;
+                  normal_[ee][k]=-n;
+                  outward_[ee][k]=-1;
                 }
                 else
                 {
-                    normal_[ee][mm]=n;
+                    normal_[ee][k]=n;
+                    outward_[ee][k]=1;
                 }
+
+
+                // if(outward_[ee][k]==-1)
+                // {
+                //     // if the normal ins inward, force it to be outward
+                //     normal_[ee][k]=-n;
+                //     // outward_[ee][k]=1;
+                // }
+                // else
+                // {
+                //     normal_[ee][k]=n;
+                // }
+                // std::cout<<"nodes=== "<<std::endl;
+
+                // for(Integer i = 0; i < side_nodes.size(); ++i)
+                   // std::cout<<mesh.points()[side_nodes[i]]<<std::endl;
+                // std::cout<<"--------- n----------- "<<std::endl;
+                // std::cout<< n<<std::endl;
+                // std::cout<<"--------- normal_[ee][k]----------- "<<std::endl;
+                // std::cout<< normal_[ee][k] <<std::endl;
+                // std::cout<<"--------- facepoint_mean----------- "<<std::endl;
+                // std::cout<< facepoint_mean <<std::endl;
+
+                // std::cout<<"--------- diff----------- "<<std::endl;
+                // std::cout<< diff <<std::endl;     
+                // std::cout<<"--------- dot(diff,n) ----------- "<<std::endl;
+                // std::cout<<dot(diff,n) <<std::endl;
+                // std::cout<<"--------- sign----------- "<<std::endl;
+                // std::cout<< outward_[ee][k] <<std::endl;              
             }
+
+
+
+
+
+
+            // Elem elem=mesh.elem(ee);
+            // elemnodes_global=elem.nodes;
+            
+            // for(Integer mm=0;mm<points.size();mm++)
+            //     points[mm]=mesh.point(elemnodes_global[mm]);
+
+
+
+
+            // // std::cout<<"--------- first elempoint_mean "<<elempoint_mean<<std::endl;
+            // // loop on all the faces of the simplex
+            // // for Simplex={0,1,2,3}, the order is: 0-1-2, 0-1-3, 0-2-3, 1-2-3
+            // for(Integer mm=0;mm<ManifoldDim+1;mm++)
+            // {
+
+            //     // facenodes_local is a std::array containing the local nodes of the face mm
+            //     Combinations<ManifoldDim + 1,ManifoldDim>::generate(mm,facenodes_carray);
+
+            //     std::copy(std::begin(facenodes_carray), std::end(facenodes_carray), std::begin(facenodes_local));
+
+            //     std::cout<<"facenodes_carray"<<std::endl;
+            //       std::cout<<facenodes_carray<<std::endl;
+            //     std::cout<<std::endl;
+
+
+            //     std::cout<<"facenodes_local"<<std::endl;
+            //     for(Integer i=0;i<facenodes_local.size();i++)
+            //       std::cout<<facenodes_local[i]<<" "<<std::endl;
+            //     std::cout<<std::endl;
+
+
+            //     // we reorder the local nodes based on the sorting order of the corresponding global nodes
+            //     facenodes_global=sub_array(elemnodes_global,facenodes_local);
+            //     facenodes_global_sort=argsort(facenodes_global);
+            //     facenodes_local_sort=sort_by_index(facenodes_local,facenodes_global_sort);
+
+            //     // in elemnodes_local_sort we have facenodes_local_sort and the remaining node, elemnodes_local[mm]
+            //     for(Integer nn=0;nn<ManifoldDim;nn++)
+            //         elemnodes_local_sort[nn]=facenodes_local_sort[nn];
+                
+            //     elemnodes_local_sort[ManifoldDim]=elemnodes_local[mm];
+                
+            //     for(Integer nn=0;nn<ManifoldDim+1;nn++)
+            //         elempoints_sort[nn]=points[elemnodes_local_sort[nn]];
+                
+            //     // we create the face midpoint, the element midpoint and their difference
+            //     for(Integer nn=0;nn<ManifoldDim;nn++)
+            //         facepoints[nn]=points[facenodes_local[nn]];
+
+
+            //     std::cout<<"facenodes_global"<<std::endl;
+            //     for(Integer i=0;i<facenodes_global.size();i++)
+            //       std::cout<<facenodes_global[i]<<" "<<std::endl;
+            //     std::cout<<std::endl;
+
+
+
+            //     std::cout<<"facenodes_global_sort"<<std::endl;
+            //     for(Integer i=0;i<facenodes_global_sort.size();i++)
+            //       std::cout<<facenodes_global_sort[i]<<" "<<std::endl;
+            //     std::cout<<std::endl;
+
+
+            //     std::cout<<"facenodes_local_sort"<<std::endl;
+            //     for(Integer i=0;i<facenodes_local_sort.size();i++)
+            //       std::cout<<facenodes_local_sort[i]<<" "<<std::endl;
+            //     std::cout<<std::endl;
+
+
+
+            //     std::cout<<"elemnodes_local_sort"<<std::endl;
+            //     for(Integer i=0;i<elemnodes_local_sort.size();i++)
+            //       std::cout<<elemnodes_local_sort[i]<<" "<<std::endl;
+            //     std::cout<<std::endl;
+
+            //     std::cout<<"elempoints_sort"<<std::endl;
+            //     for(Integer i=0;i<elempoints_sort.size();i++)
+            //       std::cout<<elempoints_sort[i]<<" "<<std::endl;
+            //     std::cout<<std::endl;
+
+
+            //     std::cout<<"facepoints"<<std::endl;
+            //     for(Integer i=0;i<facepoints.size();i++)
+            //       std::cout<<facepoints[i]<<" "<<std::endl;
+            //     std::cout<<std::endl;
+
+
+
+            //     facepoint_mean = facepoints.Tmean();
+            //     elempoint_mean=elempoints_sort.Tmean();
+            //     auto diff=facepoint_mean-elempoint_mean;
+                
+            //     auto n = normal(simplex_elem, elempoints_sort);
+            //     outward_[ee][mm]=Sign(dot(diff,n));
+
+
+            //     std::cout<<"facepoint_mean"<<std::endl;
+            //     for(Integer i=0;i<facepoint_mean.size();i++)
+            //       std::cout<<facepoint_mean[i]<<" "<<std::endl;
+            //     std::cout<<std::endl;
+
+
+            //     std::cout<<"elempoint_mean"<<std::endl;
+            //     for(Integer i=0;i<elempoint_mean.size();i++)
+            //       std::cout<<elempoint_mean[i]<<" "<<std::endl;
+            //     std::cout<<std::endl;
+
+            //     std::cout<<"diff"<<std::endl;
+            //     for(Integer i=0;i<diff.size();i++)
+            //       std::cout<<diff[i]<<" "<<std::endl;
+            //     std::cout<<std::endl;
+
+            //      std::cout<<"n"<<std::endl;
+            //     for(Integer i=0;i<n.size();i++)
+            //       std::cout<<n[i]<<" "<<std::endl;
+            //     std::cout<<std::endl;
+                
+
+            //     std::cout<<"outward_[ee][mm]"<<std::endl;
+            //     std::cout<<outward_[ee][mm]<<std::endl; 
+            //     // save the normal and if its outward or inward
+            //     // if the face is on the boundary, then it must be outward
+            //     if(elem.side_tags[mm]>=0 && outward_[ee][mm]==-1)
+            //     {
+            //         // if the normal ins inward, force it to be outward
+            //         normal_[ee][mm]=-n;
+            //         outward_[ee][mm]=1;
+            //     }
+            //     else
+            //     {
+            //         normal_[ee][mm]=n;
+            //     }
+            // }
         }
-    };
+    }
     
     SignedNormal(){}
     
     template< typename MeshT>
-    SignedNormal(const MeshT& mesh)
-    {init(mesh);};
+    SignedNormal(MeshT& mesh)
+    {init(mesh);}
     
     template< typename MeshT>
     void print(const MeshT& mesh)
@@ -194,6 +364,8 @@ public:
             nodes=elem.nodes;
             for(Integer mm=0;mm<ManifoldDim+1;mm++)
                 std::cout<< nodes[mm] <<" ";
+            for(Integer mm=0;mm<ManifoldDim+1;mm++)
+                std::cout<< mesh.points()[nodes[mm]] <<" ";
             std::cout<<std::endl;
             
             for(Integer mm=0;mm<ManifoldDim+1;mm++)
@@ -208,7 +380,7 @@ public:
                 std::cout<<"outward/inward(+1/-1)== "<<outward_[ee][mm]<<std::endl;
             }
         }
-    };
+    }
     
     
 };
@@ -855,7 +1027,7 @@ class TraceDofs<FullSpace<MixedSpace<Args...>>>
 {
  public:
 
- static constexpr auto dofs_aux=std::tuple_cat(Args::dofs()...);
+ static constexpr auto dofs_aux=std::tuple_cat(TraceDofs<Args>::dofs()...);
 
  static constexpr auto dofs()
  {
@@ -1018,6 +1190,171 @@ inline constexpr auto reference_face_shape_functions()
 
 
 /////////////////////////////////////////////////////////////////////////////
+
+class MaxElementOrder
+{
+public:
+    static constexpr Integer value=2;
+};
+
+template<typename Tuple>
+class ElementOrder;
+
+template<typename...Spaces>
+class ElementOrder<std::tuple<Spaces...>>
+{
+public: 
+    static constexpr auto value=Min(MaxElementOrder::value,Max(QuadratureOrder<IdentityOperator,Spaces>::value...));
+};
+
+
+template<typename Elem,typename Operator,Integer FEFamily,Integer Order>
+class ElemPoints;
+
+
+static constexpr Vector<Matrix<Real,2,1>,3> LinearTrianglePoints({0.0,0.0},
+                                                                 {1.0,0.0},
+                                                                 {0.0,1.0});
+
+// static constexpr Vector<Integer,3> LinearTriangleOrdering{0,1,2};
+
+static constexpr Vector<Matrix<Real,3,1>,4> LinearTetrahedronPoints({0.0,0.0,0.0},
+                                                                    {1.0,0.0,0.0},
+                                                                    {0.0,1.0,0.0},
+                                                                    {1.0,1.0,1.0});
+
+// static constexpr Vector<Integer,3> LinearTetrahedronOrdering{0,1,2,3};
+
+static constexpr Vector<Matrix<Real,2,1>,6> QuadraticTrianglePoints({0.0,0.0},
+                                                                    {1.0,0.0},
+                                                                    {0.0,1.0},
+                                                                    {0.5,0.0},
+                                                                    {0.5,0.5},
+                                                                    {0.0,0.5});
+
+// static constexpr Vector<Integer,3> QuadraticTriangleOrdering{0,1,2,3,5,4};
+
+static constexpr Vector<Matrix<Real,3,1>,10> QuadraticTetrahedronPoints( {0.0,0.0,0.0},
+                                                                         {1.0,0.0,0.0},
+                                                                         {0.0,1.0,0.0},
+                                                                         {1.0,1.0,1.0},
+                                                                         {0.5,0.0,0.0},
+                                                                         {0.5,0.5,0.0},
+                                                                         {0.0,0.5,0.0},
+                                                                         {0.0,0.0,0.5},
+                                                                         {0.5,0.0,0.5},
+                                                                         {0.0,0.5,0.5});
+
+// static constexpr Vector<Integer,3> QuadraticTetrahedronOrderingg{0,1,2,3,4, 5,4};
+
+template<typename Elem,Integer Order>
+class ElemPoints2;
+
+template<Integer Dim>
+class ElemPoints2<Simplex<Dim,2>,1>
+{
+public:
+  static constexpr auto points=LinearTrianglePoints;
+  using type=decltype(points);
+};
+
+template<Integer Dim>
+class ElemPoints2<Simplex<Dim,2>,2>
+{
+public:
+  static constexpr auto points=QuadraticTrianglePoints;
+  using type=decltype(points);
+};
+
+
+template<Integer Dim>
+class ElemPoints2<Simplex<Dim,3>,1>
+{
+public:
+  static constexpr auto points=LinearTetrahedronPoints;
+  using type=decltype(points);
+};
+
+template<Integer Dim>
+class ElemPoints2<Simplex<Dim,3>,2>
+{
+public:
+  static constexpr auto points=QuadraticTetrahedronPoints;
+  using type=decltype(points);
+};
+
+
+
+
+template<Integer Dim,typename Operator>
+class ElemPoints<Simplex<Dim,2>,Operator,LagrangeFE,1>
+{
+public:
+  static constexpr auto points=LinearTrianglePoints;
+  using type=decltype(points);
+};
+
+template<Integer Dim,typename Operator>
+class ElemPoints<Simplex<Dim,2>,Operator,LagrangeFE,2>
+{
+public:
+  static constexpr auto points=QuadraticTrianglePoints;
+  using type=decltype(points);
+};
+
+
+template<Integer Dim,typename Operator>
+class ElemPoints<Simplex<Dim,3>,Operator,LagrangeFE,1>
+{
+public:
+  static constexpr auto points=LinearTetrahedronPoints;
+  using type=decltype(points);
+};
+
+template<Integer Dim,typename Operator>
+class ElemPoints<Simplex<Dim,3>,Operator,LagrangeFE,2>
+{
+public:
+  static constexpr auto points=QuadraticTetrahedronPoints;
+  using type=decltype(points);
+};
+
+
+
+
+template<Integer Dim,typename Operator>
+class ElemPoints<Simplex<Dim,2>,Operator,RaviartThomasFE,0>
+{
+public:
+  static constexpr auto points=LinearTrianglePoints;
+  using type=decltype(points);
+};
+
+template<Integer Dim,typename Operator>
+class ElemPoints<Simplex<Dim,2>,Operator,RaviartThomasFE,1>
+{
+public:
+  static constexpr auto points=QuadraticTrianglePoints;
+  using type=decltype(points);
+};
+
+
+template<Integer Dim,typename Operator>
+class ElemPoints<Simplex<Dim,3>,Operator,RaviartThomasFE,0>
+{
+public:
+  static constexpr auto points=LinearTetrahedronPoints;
+  using type=decltype(points);
+};
+
+template<Integer Dim,typename Operator>
+class ElemPoints<Simplex<Dim,3>,Operator,RaviartThomasFE,1>
+{
+public:
+  static constexpr auto points=QuadraticTetrahedronPoints;
+  using type=decltype(points);
+};
+
 
 template<typename Elem,typename Operator,Integer FEFamily,Integer Order>
 class DofsPoints;
@@ -1360,6 +1697,22 @@ apply(const Vector<Real,1>& point, Output & func)
 };
 
 template<Integer Dim>
+class ReferenceShapeFunctionValue<Simplex<Dim,1>, IdentityOperator, LagrangeFE, 2>
+{
+ public: 
+  using Output=Vector<Matrix<Real, 1, 1>,3>;
+constexpr inline static void 
+apply(const Vector<Real,1>& point, Output & func)
+{
+    Output func2(2*(0.5-point[0])*(1-point[0]), // 1 in (0.0)
+                 4*(point[0])*(1-point[0]), // 1 in (1.0)
+                 2*(-point[0])*(0.5-point[0]));// 1 in (0.0)
+    func=func2;
+}
+};
+
+
+template<Integer Dim>
 class ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 1>
 {
  public: 
@@ -1434,7 +1787,17 @@ apply(const Vector<Real,1>& point, Output & func)
   }
 };
 
-
+template<Integer Dim>
+class ReferenceShapeFunctionValue<Simplex<Dim,2>, TraceOperator, LagrangeFE, 2>
+{
+ public: 
+  using Output=Vector<Matrix<Real, 1, 1>,3>;
+constexpr inline static void 
+apply(const Vector<Real,1>& point, Output & func)
+  {
+      ReferenceShapeFunctionValue<Simplex<Dim,1>, IdentityOperator, LagrangeFE, 2>::apply(point,func);
+  }
+};
 
 
 
@@ -1455,29 +1818,13 @@ apply(const Vector<Real,2>& point, Output & func)
     Output func2(2.*zeta*(zeta-0.5), // 1 in (0,0)
                                        2.*xi*(xi-0.5),     // 1 in (1,0)
                                        2.*eta*(eta-0.5),   // 1 in (0,1)
-                                       4.*zeta*xi,         // 1 in (0.5,0)
+                                       4.*xi*zeta,         // 1 in (0.5,0)
                                        4.*eta*zeta,        // 1 in (0,0.5)
                                        4.*xi*eta);         // 1 in (0.5,0.5)
     func=func2;
 }
 };
 
-
-// template<Integer Dim>
-// constexpr void value<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 2>
-//  (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,6> & func)
-// {
-//     const auto& xi=point[0];
-//     const auto& eta=point[1];
-//     const Real zeta = 1. - xi - eta;
-//     Vector<Matrix<Real, 1, 1>,6> func2(2.*zeta*(zeta-0.5), // 1 in (0,0)
-//                                        2.*xi*(xi-0.5),     // 1 in (1,0)
-//                                        2.*eta*(eta-0.5),   // 1 in (0,1)
-//                                        4.*zeta*xi,         // 1 in (0.5,0)
-//                                        4.*eta*zeta,        // 1 in (0,0.5)
-//                                        4.*xi*eta);         // 1 in (0.5,0.5)
-//     func=func2;
-// }
 
 template<Integer Dim>
 class ReferenceShapeFunctionValue<Simplex<Dim,2>, GradientOperator, LagrangeFE, 2>
@@ -1499,9 +1846,13 @@ apply(const Vector<Real,2>& point, Output & func)
                                        {2.*zeta*dzeta_dxi  + 2*dzeta_dxi *(zeta-0.5), 2.*zeta*dzeta_deta + 2*dzeta_deta*(zeta-0.5)},
                                        {2.*xi*dxi_dxi  + 2.*dxi_dxi *(xi-0.5),0},
                                        {0,2.*eta*deta_deta + 2.*deta_deta*(eta-0.5)},
-                                       {4.*zeta*dxi_dxi+4.*dzeta_dxi*xi,4.*dzeta_deta*xi},
-                                       {4.*dxi_dxi*eta,4.*xi*deta_deta},
-                                       {4.*eta*dzeta_dxi,4.*eta*dzeta_deta + 4.*deta_deta*zeta});
+                                       {4.*(dxi_dxi * zeta + xi * dzeta_dxi),4. * xi * dzeta_deta},
+                                       {4. * eta * dzeta_dxi,4. * (deta_deta * zeta + eta * dzeta_deta)},
+                                       {4 * eta, 4 * xi}
+                                       // {4.*zeta*dxi_dxi+4.*dzeta_dxi*xi,4.*dzeta_deta*xi},
+                                       // {4.*dxi_dxi*eta,4.*xi*deta_deta},
+                                       // {4.*eta*dzeta_dxi,4.*eta*dzeta_deta + 4.*deta_deta*zeta}
+                                       );
     
     func=func2;
   }
@@ -2037,6 +2388,7 @@ public:
     void init(const Array<Real,Ndofs> &alpha)
     {
         std::cout<<"init RT elements (coeffs)"<<std::endl;
+        std::cout<<alpha<<std::endl;
         
         const auto& map=(*map_ptr);
         const auto& mapping=map();
@@ -2227,6 +2579,7 @@ public:
         subarray(alpha_,beta,trace[face]);
         
         std::cout<<"init RT elements (coeffs)"<<std::endl;
+        std::cout<<beta<<std::endl;
         
         const auto& map=(*map_ptr);
         const auto& mapping=map();

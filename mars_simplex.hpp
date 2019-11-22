@@ -379,7 +379,7 @@ namespace mars {
 
             // side.nodes[0] = nodes[side_num];
             // side.nodes[1] = nodes[side_num == 2? 0 : (side_num + 1)];
-
+            // std::cout<<" side.nodes= "<< side.nodes[0]<<" "<< side.nodes[1]<<std::endl;
             // HERE WE CHANGED THE ORDER OF THE FACES:
             // FACE 0: 0,1
             // FACE 1: 2,0

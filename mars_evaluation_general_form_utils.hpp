@@ -1103,7 +1103,11 @@ public:
      {
      for(std::size_t jj=0;jj<dofmap_trial.size();jj++)
      {
-      mat[dofmap_test[ii]][dofmap_trial[jj]]+=local_mat(ii,jj);
+      // mat[dofmap_test[ii]][dofmap_trial[jj]]+=local_mat(ii,jj);
+      // std::cout<<"plus equal"<<std::endl;
+      // std::cout<<local_mat(ii,jj)<<" "<<dofmap_test[ii]<<" "<<dofmap_trial[jj]<<" "<<" " <<std::endl;
+      mat.plus_equal(local_mat(ii,jj),dofmap_test[ii],dofmap_trial[jj]);
+      // mat[dofmap_test[ii]][dofmap_trial[jj]]+=local_mat(ii,jj);
      }
      }
      //////////////////// mat must be inizialied with local_mat

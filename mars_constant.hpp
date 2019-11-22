@@ -6,40 +6,56 @@
 
 namespace mars{
 
-class Identity2 
+
+template<Integer Dim>
+class Identity; 
+
+template<Integer Dim>
+class Eye; 
+
+template<>
+class Identity<2> 
 {
 public:
     inline static constexpr auto eval()
     {return Matrix<Real,2,2>{1.0,0.0, 0.0,1.0};}
 };
 
-class Identity3
+template<>
+class Identity<3>
 {
 public:
     inline static constexpr auto eval()
     {return Matrix<Real,3,3>{1.0,0.0,0.0, 0.0,1.0,0.0, 0.0,0.0,1.0};}
 };
-class Identity4
+
+template<>
+class Identity<4>
 {
 public:
     inline static constexpr auto eval()
     {return Matrix<Real,4,4>{1.0,0.0,0.0,0.0, 0.0,1.0,0.0,0.0, 0.0,0.0,1.0,0.0, 0.0,0.0,0.0,1.0};}
 };
 
-class Eye2 
+
+template<>
+class Eye<2> 
 {
 public:
     inline static constexpr Matrix<Real,2,2> eval(const Real alpha)
     {return Matrix<Real,2,2>{alpha,0.0, 0.0,alpha};}
 };
 
-class Eye3
+template<>
+class Eye<3>
 {
 public:
     inline static constexpr auto eval(const Real alpha)
     {return Matrix<Real,3,3>{alpha,0.0,0.0, 0.0,alpha,0.0, 0.0,0.0,alpha};}
 };
-class Eye4
+
+template<>
+class Eye<4>
 {
 public:
     inline static constexpr auto eval(const Real alpha)
@@ -53,7 +69,7 @@ public:
     {return Matrix<Real,2,2>{alpha,beta,beta,alpha+beta};}
 };
 
-class Scalar1 
+class Scalar
 {
 public:
     inline static constexpr Matrix<Real,1,1> eval(const Real alpha)
@@ -61,9 +77,11 @@ public:
 };
 
 
+template<Integer Dim>
+class Vec;
 
-
-class Vec2
+template<>
+class Vec<2>
 {
     public: 
     using type=Vector<Real,2>;
@@ -75,6 +93,46 @@ class Vec2
     }
 };
 
+template<>
+class Vec<3>
+{
+    public: 
+    using type=Vector<Real,3>;
+
+    
+    static constexpr type eval(const Real& x1, const Real& x2, const Real& x3)
+    {
+     return type(x1,x2,x3); 
+    }
+};
+
+
+template<>
+class Vec<4>
+{
+    public: 
+    using type=Vector<Real,4>;
+
+    
+    static constexpr type eval(const Real& x1, const Real& x2, const Real& x3, const Real& x4)
+    {
+     return type(x1,x2,x3,x4); 
+    }
+};
+
+
+template<Integer Rows,Integer Cols>
+class Mat
+{
+    public: 
+    using type=Matrix<Real,Rows,Cols>;
+
+    template<typename...Ts>
+    static constexpr type eval(const Ts&...ts)
+    {
+     return type(ts...); 
+    }
+};
 
 
 class Mat1

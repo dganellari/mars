@@ -930,14 +930,18 @@ void dofmap_fespace(const MeshT& mesh,
         space_dofs[space_id].resize(space_components[space_id][3]);
         
 
-    for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
+    for(Integer elem_iter=0;elem_iter<n_elements;elem_iter++)
     {
-     // change it for smarter algorithms   
-     auto &elem_id=elem_iter;
-     Integer loc_dof_count=0;
-     // loop on all the function spaces
-     ElementDofMap<0,Elem,FunctionSpace,FunctionSpaces...>
-                       (entitiestuple,flagtuples,elem_id,dofmap_vec,global_dof_count,loc_dof_count,dofs_offset,space_dofs);
+      if(mesh.is_active(elem_iter))
+      {
+       // change it for smarter algorithms   
+       auto &elem_id=elem_iter;
+       Integer loc_dof_count=0;
+       // loop on all the function spaces
+       ElementDofMap<0,Elem,FunctionSpace,FunctionSpaces...>
+                         (entitiestuple,flagtuples,elem_id,dofmap_vec,global_dof_count,loc_dof_count,dofs_offset,space_dofs);
+
+      }
 
     }
 
@@ -1006,13 +1010,17 @@ void dofmap_fespace2(const MeshT& mesh,
 
     for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
     {
-     // change it for smarter algorithms   
-     auto &elem_id=elem_iter;
-     Integer loc_dof_count=0;
-     // loop on all the function spaces
-     // std::cout<<"dofmap_fespace2"<<std::endl;
-     ElementDofMap<0,Elem,FunctionSpace,FunctionSpaces...>
-                       (entitiestuple,flagtuples,elem_id,dofmap_vec,global_dof_count,loc_dof_count,dofs_offset,space_dofs);
+      if(mesh.is_active(elem_iter))
+      {
+       // change it for smarter algorithms   
+       auto &elem_id=elem_iter;
+       Integer loc_dof_count=0;
+       // loop on all the function spaces
+       // std::cout<<"dofmap_fespace2"<<std::endl;
+       ElementDofMap<0,Elem,FunctionSpace,FunctionSpaces...>
+                         (entitiestuple,flagtuples,elem_id,dofmap_vec,global_dof_count,loc_dof_count,dofs_offset,space_dofs);
+
+      }
 
     }
 

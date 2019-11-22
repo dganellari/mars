@@ -26,12 +26,62 @@ class Function2
     using Point=Matrix<Real,2,1>;
     using type=Real;
     
+    static type eval(const Point& p)
+    {
+     return 0.0;//p(0,0)+p(1,0); 
+    }
+};
+
+
+class Function3
+{
+    public: 
+    using Point=Matrix<Real,2,1>;
+    using type=Real;
     
     static type eval(const Point& p)
     {
-     return p(0,0)+p(1,0); 
+     return -p(0,0)*p(0,0)+p(0,0); 
     }
 };
+
+
+class Function4
+{
+    public: 
+    using Point=Matrix<Real,2,1>;
+    using type=Real;
+    
+    static type eval(const Point& p)
+    {
+     return 1.0; 
+    }
+};
+
+class FunctionZero1D
+{
+    public: 
+    using Point=Matrix<Real,2,1>;
+    using type=Matrix<Real,1,1>;
+    static type eval(const Point& p)
+    {
+     Matrix<Real,1,1> func{0.0};
+     return func; 
+    }
+};
+
+class FunctionZero2D
+{
+    public: 
+    using Point=Matrix<Real,2,1>;
+    using type=Matrix<Real,2,1>;
+    static type eval(const Point& p)
+    {
+     Matrix<Real,2,1> func{0.0,0.0};
+     return func; 
+    }
+};
+
 
 template<typename FullSpace,Integer N,typename Operator_=IdentityOperator,typename FuncType=EmptyClass>
 class Function;

@@ -38,6 +38,7 @@ class DirichletBoundaryCondition
     using SingleFunctionSpace=GetType<UniqueElementFunctionSpacesTupleType,value>;
     static constexpr auto FEFamily= SingleFunctionSpace::FEFamily;
     static constexpr auto Order= SingleFunctionSpace::Order;
+    static constexpr auto NComponents= SingleFunctionSpace::NComponents;
     using PointsType=DofsPoints<Elem,TraceOperator, FEFamily, Order>;
 
     using tipo1= typename DofsPointsType<PointsType>::type;
@@ -275,11 +276,12 @@ public:
     
     if(FE.side_tag()==labels_array_[N])
     {
-    const auto& map=tuple_get<GetType<BCsTuple,N>::map_value>(tuple_map);
+    using BC_N=GetType<BCsTuple,N>;
+    const auto& map=tuple_get<BC_N::map_value>(tuple_map);
     const auto& bc=tuple_get<N>(bcs_tuple_);
-    const auto& dofmap=tuple_get<GetType<BCsTuple,N>::value>(dm)[FE.elem_id()];
-    const auto& tr=tuple_get<GetType<BCsTuple,N>::value>(trace)[FE.side_id()];
-
+    const auto& dofmap=tuple_get<BC_N::value>(dm)[FE.elem_id()];
+    const auto& tr=tuple_get<BC_N::value>(trace)[FE.side_id()];
+    auto NComponents=BC_N::NComponents;
     // todo fixme, definisci dofmap_trace_ come variabile privata
     // const auto& dofmap_trace=subarray(dofmap,tr);
     auto& dofmap_trace=std::get<GetType<BCsTuple,N>::value>(tuple_dofmap_trace_);
@@ -346,24 +348,37 @@ public:
     std::cout<<J<<std::endl;
 
 
+    auto ratio=dofmap_trace.size()/NComponents;
     std::cout<<"___--dofmap_trace="<<std::endl;
-    for(std::size_t i=0;i<dofmap_trace.size();i++)
+    std::cout<<dofmap_trace<<std::endl;
+    // for(std::size_t i=0;i<dofmap_trace.size();i++)
+    for(std::size_t i=0;i<ratio;i++)
         {
-         // auto = J * points;
-         constrained_dofs[dofmap_trace[i]]=true;
-         constrained_mat[dofmap_trace[i]]=1;
-         // todo fixme here u should evaluate  
-         // Vector<Real,2> a(1.0,1);  
-         constrained_vec[dofmap_trace[i]]= bc.eval(points[i])/map();
-         std::cout<<"points[i] -> "<<points[i]<<std::endl;
-         std::cout<<"bc.eval -> "<<bc.eval(points[i])<<std::endl;
-         std::cout<<"dofmap_trace -> "<<dofmap_trace[i]<<std::endl;
+         const auto& rhs_local=bc.eval(points[i]);
+         for(std::size_t comp=0;comp<BC_N::NComponents;comp++)
+         {
+          std::cout<<"i=="<<dofmap_trace[i*NComponents+comp]<<std::endl;
+          constrained_dofs[dofmap_trace[i*NComponents+comp]]=true;
+          constrained_mat[dofmap_trace[i*NComponents+comp]]=1;   
+          constrained_vec[dofmap_trace[i*NComponents+comp]]= rhs_local(comp,0);      
          }
-    std::cout<<"___--rhs="<<std::endl;
 
-    for(std::size_t i=0;i<constrained_vec.size();i++)
+
+         // constrained_dofs[dofmap_trace[i]]=true;
+         // constrained_mat[dofmap_trace[i]]=1;
+         // const auto& rhs_local=bc.eval(points[i]);
+         // for(std::size_t comp=0;comp<BC_N::NComponents;comp++)
+            // constrained_vec[dofmap_trace[i]]= bc.eval(points[i])/map();
+         // constrained_vec[dofmap_trace[i]]= bc.eval(points[i])/map();
+         // std::cout<<"points[i] -> "<<points[i]<<std::endl;
+         // std::cout<<"bc.eval -> "<<rhs_local<<std::endl;
+         // std::cout<<"dofmap_trace -> "<<dofmap_trace[i]<<std::endl;
+         }
+    std::cout<<"___--constrained_dofs="<<std::endl;
+
+    for(std::size_t i=0;i<constrained_dofs.size();i++)
         {
-         std::cout<<constrained_vec[i]<<std::endl;
+         std::cout<<constrained_dofs[i]<<std::endl;
          }
     }
 

@@ -206,25 +206,26 @@ public:
   // so we distinguihs between global coefficient and the local ones
   template<Integer Dim, Integer ManifoldDim, typename T>
   typename std::enable_if_t< IsSame<T,std::tuple<>>::value, void >
-  init_aux_aux(const Mesh<Dim,ManifoldDim>& mesh, T& t)
+  init_aux_aux(Mesh<Dim,ManifoldDim>& mesh, T& t)
   {}
 
   template<Integer Dim, Integer ManifoldDim, typename T>
   typename std::enable_if_t< IsDifferent<T,std::tuple<>>::value, void >
-  init_aux_aux(const Mesh<Dim,ManifoldDim>& mesh, T& t)
+  init_aux_aux(Mesh<Dim,ManifoldDim>& mesh, T& t)
   {
     t.init(mesh);
+
   }
   
 
   template<Integer M, Integer Dim,Integer ManifoldDim>
   typename std::enable_if_t< (M>Nglobal), void >
-  init_aux(const Mesh<Dim,ManifoldDim>& mesh)
+  init_aux(Mesh<Dim,ManifoldDim>& mesh)
   {}
 
   template<Integer M, Integer Dim,Integer ManifoldDim>
   typename std::enable_if_t< (M<=Nglobal), void >
-  init_aux(const Mesh<Dim,ManifoldDim>& mesh)
+  init_aux(Mesh<Dim,ManifoldDim>& mesh)
   {
     init_aux_aux(mesh,tuple_get<M>(global_tuple_));
     init_aux<M+1>(mesh);
@@ -232,7 +233,7 @@ public:
 
 
   template<Integer Dim,Integer ManifoldDim>
-  void init(const Mesh<Dim,ManifoldDim>& mesh)
+  void init(Mesh<Dim,ManifoldDim>& mesh)
   {
    init_aux<0>(mesh);
   }
@@ -283,6 +284,14 @@ public:
   void init(const Integer elem_id)
   {
    init_aux<0>(elem_id);
+
+   // const auto& stampa=tuple_get<0>(global_tuple_).sign();
+   //  std::cout<<".  STAMPA "<<std::endl;
+
+   // for(Integer i=0;i<stampa.size();i++)
+   // {
+   //  std::cout<<stampa[i]<<std::endl;
+   // }
   }
 
   

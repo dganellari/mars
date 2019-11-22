@@ -67,20 +67,20 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
      // side_points_[0] = points_[faces_combs[side_id][0]];
      // for(Integer i = 1; i < ManifoldDim; ++i) 
      //    side_points_[i] = points_[faces_combs[side_id][i]];
-    std::cout<<"side nodes="<<std::endl;
-     for(Integer i = 0; i < side_.nodes.size(); ++i) 
-        std::cout<<side_.nodes[i]<<std::endl;
+    // std::cout<<"side nodes="<<std::endl;
+    //  for(Integer i = 0; i < side_.nodes.size(); ++i) 
+    //     std::cout<<side_.nodes[i]<<std::endl;
 
-    std::cout<<"points_"<<std::endl;
-     for(Integer i = 0; i < points_.size(); ++i) 
-        std::cout<<points_[i]<<std::endl;
+    // std::cout<<"points_"<<std::endl;
+    //  for(Integer i = 0; i < points_.size(); ++i) 
+    //     std::cout<<points_[i]<<std::endl;
 
 
      side_points_[0] = points[side_.nodes[0] ];
      for(Integer i = 1; i < ManifoldDim; ++i) 
         side_points_[i] = points[side_.nodes[i] ];
 
-     std::cout<<"side points="<<std::endl;
+     // std::cout<<"side points="<<std::endl;
      for(Integer i = 0; i < ManifoldDim; ++i) 
         std::cout<<side_points_[i]<<std::endl;
 
@@ -91,10 +91,10 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
       // jacobian(side_,points_,side_J_);
       affine_transformation(side_,points,side_J_,v0_);
 
-      for(Integer k = 0; k < points_.size(); ++k) 
-      std::cout<<"points_="<<points_[k]<<std::endl;
-      std::cout<<"side_J_="<<side_J_<<std::endl;
-      std::cout<<"v0="<<v0_<<std::endl;
+      // for(Integer k = 0; k < points_.size(); ++k) 
+      // std::cout<<"points_="<<points_[k]<<std::endl;
+      // std::cout<<"side_J_="<<side_J_<<std::endl;
+      // std::cout<<"v0="<<v0_<<std::endl;
       // std::cout<<"side_J_="<<std::endl;
       // std::cout<<side_J_ <<std::endl;
 

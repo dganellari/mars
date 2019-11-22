@@ -20,6 +20,13 @@ class EmptyClass;
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 template<typename T>
+constexpr T Max(const T&t)
+{
+  return t;
+}
+
+
+template<typename T>
 constexpr T Max (const T& a,const T& b) 
 {
   return a > b ? a : b;
@@ -33,7 +40,11 @@ constexpr T Max(const T&t,const Ts&...ts)
 
 
 
-
+template<typename T>
+constexpr T Min (const T& a) 
+{
+  return a ;
+}
 
 template<typename T>
 constexpr T Min (const T& a,const T& b) 

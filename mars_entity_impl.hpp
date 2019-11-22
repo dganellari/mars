@@ -199,9 +199,9 @@ void ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>::init_elem_entity
     // loop on all the elements
     for(Integer elem_iter1 = 0; elem_iter1 < n_elements; ++elem_iter1) 
       {
-        
-
-        const auto &el1 = mesh.elem(elem_iter1);
+        if(mesh.is_active(elem_iter1))
+        {
+         const auto &el1 = mesh.elem(elem_iter1);
         const auto &el_nodes1=el1.nodes;
         std::vector<Integer> el_neighs;
         // find all the elements touching the element=elem_iter1
@@ -292,10 +292,11 @@ void ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>::init_elem_entity
                    elem_2_entity_[elem_iter1][iter_entity_e1]=entity_number;                   
                    entity_number++;
                    }   
-               }     
-          }  
-          size_=entity_number;  
-     };
+               }          
+        }    
+       }  
+    size_=entity_number;  
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

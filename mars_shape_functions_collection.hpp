@@ -636,8 +636,11 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
   constexpr typename std::enable_if_t< FEFamily==LagrangeFE,void> 
   shape_function_init_aux_aux_aux(Shape& shape, const ShapeFunctionCoefficientsCollection<Args...> &coefficients)
   {
-    // std::cout<<M<<" "<<FEFamily<<" "<<Order<<std::endl;
+    std::cout<<" M = "<< M<<" FEFamily = "<<FEFamily<<" Order = "<<Order<<std::endl;
     tuple_get<N>(shape).init();
+    std::cout<<" map = "<< tuple_get<N>(shape).map()()<<std::endl;
+    std::cout<<" reference_values = "<< tuple_get<N>(shape).reference_values<<std::endl;
+    std::cout<<tuple_get<N>(shape).eval()<<std::endl;
   }
 
 
@@ -645,7 +648,13 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
   constexpr typename std::enable_if_t<FEFamily==RaviartThomasFE,void> 
   shape_function_init_aux_aux_aux(Shape& shape, const ShapeFunctionCoefficientsCollection<Args...> &coefficients)
   {
+    std::cout<<" M = "<< M<<" FEFamily = "<<FEFamily<<" Order = "<<Order<<std::endl;
     tuple_get<N>(shape).init(tuple_get<M>(coefficients()));
+    std::cout<<" map = "<< tuple_get<N>(shape).map()()<<std::endl;
+    std::cout<<" reference_values = "<< tuple_get<N>(shape).reference_values<<std::endl;
+    std::cout<<tuple_get<N>(shape).eval()<<std::endl;
+    std::cout<<"coefficients="<<std::endl;
+    std::cout<<tuple_get<M>(coefficients())<<std::endl;
   }
 
 

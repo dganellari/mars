@@ -551,6 +551,8 @@ public:
   static constexpr auto faces_dofs_array=std::tuple_cat(Args::faces_dofs_array...);
   static constexpr auto Nfaces_dofs_array=concat(Args::Nfaces_dofs_array...);
 
+ 
+
 
   FullSpace(const FunctionSpace& W):
   spaces_ptr_(std::make_shared<FunctionSpace>(W))
@@ -560,7 +562,10 @@ public:
 
   inline auto mesh_ptr()const{return spaces_ptr_->mesh_ptr();}
 
-  inline auto spaces_ptr(){return spaces_ptr_;}
+  inline       auto  spaces_ptr()     {return spaces_ptr_;}
+  
+  inline const auto& spaces_ptr()const{return spaces_ptr_;}
+
 
   inline auto& dofmap2()const{return spaces_ptr_->dofmap2();};
 private:
