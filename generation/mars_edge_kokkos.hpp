@@ -91,7 +91,7 @@ namespace mars {
 		MARS_INLINE_FUNCTION
 		void fix_ordering()
 		{
-			quick_sort<Integer,N>(nodes,0,N-1);
+			quick_sort(nodes,0,N-1);
 		}
 
 		/*Side(const std::vector<Integer> &in)

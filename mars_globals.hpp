@@ -16,6 +16,7 @@
 #include "generation/mars_device_vector.hpp"
 
 namespace mars {
+
     constexpr int hex_n_sides = 6; // 6 faces in total for the hex27.
     constexpr int hex_n_nodes = 27; // 27 nodes for the hex27.
     constexpr int hex_side_n_nodes = 9; // 9 nodes per face for the hex27.
@@ -23,8 +24,8 @@ namespace mars {
 
     //FIXME not its place here
     inline void add_side(std::vector<Integer>& side, const Integer a, const Integer b,
-            const Integer index) {
-
+            const Integer index)
+    {
         if (a != 1 && b != 1) { //add only nodes which are not mid faces or mid edges
             side.push_back(index);
         } else if (a == 1 && b == 1) { // then add only mid faces
@@ -34,7 +35,8 @@ namespace mars {
 
     MARS_INLINE_FUNCTION
     Integer index(const Integer xDim, const Integer yDim, const Integer i,
-            const Integer j, const Integer k) {
+            const Integer j, const Integer k)
+    {
         //return k+ (2*zDim +1) * (j + i* (2*yDim + 1));
         return i + (2 * xDim + 1) * (j + k * (2 * yDim + 1));
     }
@@ -43,7 +45,8 @@ namespace mars {
     template<typename T>
     MARS_INLINE_FUNCTION
     void build_hex27(T&& nodes, const Integer xDim,
-            const Integer yDim, const int i, const int j, const int k) {
+            const Integer yDim, const int i, const int j, const int k)
+    {
 
         nodes[0] = index(xDim, yDim, i, j, k);
         nodes[1] = index(xDim, yDim, i + 2, j, k);
@@ -85,19 +88,20 @@ namespace mars {
     };
 
 
-    MARS_INLINE_FUNCTION void swap(Integer* a, Integer* b)
-    {
-        int t = *a;
-        *a = *b;
-        *b = t;
-    }
+	MARS_INLINE_FUNCTION
+	void swap(Integer* a, Integer* b)
+	{
+		int t = *a;
+		*a = *b;
+		*b = t;
+	}
 
 	template<typename T>
 	MARS_INLINE_FUNCTION const T&
 	min(const T& a, const T& b)
 	{
 		if (b < a)
-			return b;
+		return b;
 
 		return a;
 	}
@@ -107,44 +111,56 @@ namespace mars {
 	abs(const T& a)
 	{
 		if (a<0)
-			return -a;
+		return -a;
 
 		return a;
 	}
 
-    template<typename T, Integer N>
-    MARS_INLINE_FUNCTION int find_pivot (TempArray<T,N> &in, int start, int end)
-    {
-        int pivot = in[end]; // pivot
-        int i = (start - 1); // Index of smaller element
+	template<typename T, Integer N>
+	MARS_INLINE_FUNCTION
+	int find_pivot (TempArray<T,N> &in, int start, int end)
+	{
+		int pivot = in[end]; // pivot
+		int i = (start - 1);// Index of smaller element
 
-        for (int j = start; j <= end - 1; j++)
-        {
-            // If current element is smaller than the pivot
-            if (in[j] < pivot)
-            {
-                i++; // increment index of smaller element
-                swap(&in[i], &in[j]);
-            }
-        }
-        swap(&in[i + 1], &in[end]);
-        return (i + 1);
-    }
+		for (int j = start; j <= end - 1; j++)
+		{
+			// If current element is smaller than the pivot
+			if (in[j] < pivot)
+			{
+				i++; // increment index of smaller element
+				swap(&in[i], &in[j]);
+			}
+		}
+		swap(&in[i + 1], &in[end]);
+		return (i + 1);
+	}
 
-    template<typename T, Integer N>
-    MARS_INLINE_FUNCTION void quick_sort(TempArray<T,N> &in, int start, int end)
-    {
-        if (start < end)
-        {
-            int pivot = find_pivot(in, start, end);
+	template<typename T, Integer N>
+	MARS_INLINE_FUNCTION
+	void quick_sort(TempArray<T,N> &in, int start, int end)
+	{
+		if (start < end)
+		{
+			int pivot = find_pivot(in, start, end);
 
-            quick_sort(in, start, pivot - 1);
-            quick_sort(in, pivot + 1, end);
-        }
-    }
+			quick_sort(in, start, pivot - 1);
+			quick_sort(in, pivot + 1, end);
+		}
+	}
+
+	template<typename T>
+	MARS_INLINE_FUNCTION
+	void quick_sort(TempArray<T, 2> &in, const int start,
+			const int end)
+	{
+		if (start < end)
+		{
+			if(in[end]<in[start])
+			swap(&in[start], &in[end]);
+		}
+	}
 
 }
-
-
 
 #endif //MARS_GLOBALS_HPP

@@ -28,7 +28,7 @@ namespace mars {
 		The allocation is done using 32 as a grace alloc. for special cases
 		or bad quality meshes (very small and very large angles).
 */
-		using ElementVector = TempArray<Integer,32>;
+		using ElementVector = TempArray<Integer,26>;
 
 		virtual ~SubManifoldElementMap() {}
 
@@ -95,12 +95,7 @@ namespace mars {
 			void operator()(int i) const
 			{
 				const Integer element_id = active_elems(i);
-
-				if(mesh->is_active(element_id))
-				{
-					update_elem(mapping, mesh->elem(element_id));
-				}
-
+				update_elem(mapping, mesh->elem(element_id));
 			}
 		};
 

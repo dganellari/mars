@@ -29,7 +29,7 @@ namespace mars {
 
 			ParallelBisection<Mesh> b(&mesh);
 			b.set_verbose(true);
-			b.uniform_refine(1);
+//			b.uniform_refine(1);
 
 			Integer exp_num = 0;
 			run_benchmark(n_levels,  mesh, output_path, exp_num++);
@@ -46,7 +46,7 @@ namespace mars {
 			using namespace Kokkos;
 
 			std::cout << "======================================\n";
-			
+
 		/*	Quality<Mesh> q(mesh);
 			q.compute();
 
@@ -58,7 +58,7 @@ namespace mars {
 			ParallelBisection<Mesh> b(&mesh);
 			b.set_verbose(true);
 
-			b.uniform_refine(2);
+			b.uniform_refine(1);
 
 
 			ViewVectorTypeC<Real, Dim> center("center");
@@ -90,12 +90,12 @@ namespace mars {
 
 			//std::cout << "volume: " << sMesh.volume() << std::endl;
 			std::cout << "n_active_elements: " << sMesh.n_active_elements() << std::endl;
-
+/*
 			if(n_levels <= 20 && mesh.ManifoldDim <4){
 				VTKMeshWriter<typename Mesh::SerialMesh> w;
 				w.write("Parallel_LEPP_" + std::to_string(n_levels) + "_" + std::to_string(mesh.ManifoldDim) +".vtu", sMesh);
 			}
-
+*/
 /*
 
 			mesh.update_dual_graph();
