@@ -526,6 +526,65 @@ constexpr  Array<Real,7> GaussPoints< Simplex<Dim,2> , 5>::qp_weights;
 
 
 
+
+
+static constexpr Array<Real,1> QP1_Simplex3_qp_weights(1.0/6.0);
+static constexpr  Matrix<Real,1,3> QP1_Simplex3_qp_points(0.25, 0.25, 0.25);
+
+
+static constexpr Array<Real,4> QP2_Simplex3_qp_weights(1.0/24.0,1.0/24.0,1.0/24.0,1.0/24.0);
+static constexpr Real QP2_Simplex2_a=.585410196624969;
+static constexpr Real QP2_Simplex2_b=.138196601125011;
+static constexpr Matrix<Real,4,3> QP2_Simplex3_qp_points(QP2_Simplex2_a,QP2_Simplex2_b,QP2_Simplex2_b,
+                                                         QP2_Simplex2_b,QP2_Simplex2_a,QP2_Simplex2_b,
+                                                         QP2_Simplex2_b,QP2_Simplex2_b,QP2_Simplex2_a,
+                                                         QP2_Simplex2_b,QP2_Simplex2_b,QP2_Simplex2_b);
+
+
+static constexpr Array<Real,5> QP3_Simplex3_qp_weights(-2.0/15.0,0.075,0.075,0.075,0.075);
+static constexpr  Matrix<Real,5,3> QP3_Simplex3_qp_points(0.25,0.25,0.25,
+                                                          0.5,    1.0/6.0,1.0/6.0,
+                                                          1.0/6.0,0.5,    1.0/6.0,
+                                                          1.0/6.0,1.0/6.0,0.5,
+                                                          1.0/6.0,1.0/6.0,1.0/6.0);
+
+
+
+
+template<Integer Dim>
+class GaussPoints<Simplex<Dim,3>,1>: public BaseQuadrature<Simplex<Dim,3>,1>
+{
+public:
+  using qp_points_type=Matrix<Real,1,3>;
+  static constexpr Integer NQPoints=1;
+  static constexpr  Matrix<Real,1,3> qp_points=QP1_Simplex3_qp_points;
+  static constexpr  Array<Real,1> qp_weights=QP1_Simplex3_qp_weights;
+};
+
+template<Integer Dim>
+class GaussPoints<Simplex<Dim,3>,2>: public BaseQuadrature<Simplex<Dim,3>,2>
+{
+public:
+  using qp_points_type=Matrix<Real,4,3>;
+  static constexpr Integer NQPoints=4;
+  static constexpr Matrix<Real,4,3> qp_points=QP2_Simplex3_qp_points;
+  static constexpr  Array<Real,4> qp_weights=QP2_Simplex3_qp_weights;
+};
+
+template<Integer Dim>
+class GaussPoints<Simplex<Dim,3>,3>: public BaseQuadrature<Simplex<Dim,3>,3>
+{
+public:
+  using qp_points_type=Matrix<Real,5,3>;
+  static constexpr Integer NQPoints=5;
+  static constexpr Matrix<Real,5,3> qp_points=QP3_Simplex3_qp_points;
+  static constexpr  Array<Real,5> qp_weights=QP3_Simplex3_qp_weights;
+};
+
+
+
+
+
 template<Integer QuadratureRuleType>
 class QuadratureRule
 {

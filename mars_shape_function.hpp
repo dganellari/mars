@@ -1660,14 +1660,25 @@ public:
 
 
 
+template<Integer ManifoldDim,Integer Order>
+constexpr auto NumberOfLagrangianSimplexDofs()
+{
+    Real N=1;
+
+    // dim is Integer, so divide N by dim: (N/dim) is Real
+    // then (dim+Order) is again integer, but we multiply it by a real
+    // do not do (dim+Order)/dim which is an integer division!
+    for(Integer dim=1;dim<ManifoldDim+1;dim++)
+        N= (dim+Order) * (N/dim);
+    return static_cast<Integer>(N);
+}
 
 
 
 
-
-
-
-
+//////////////////////////////////////////////////////
+////////        SIMPLEX - IDENTITY - P0       ////////
+//////////////////////////////////////////////////////
 template<Integer Dim,Integer ManifoldDim>
 class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 0>
 {
@@ -1676,155 +1687,319 @@ class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, La
 constexpr inline static void 
 apply(const Vector<Real,ManifoldDim>& point, Output & func)
 {
-    Output func2(1);       
+    Output func2((1));       
     func=func2;
 }
 };
 
 
-template<Integer Dim>
-class ReferenceShapeFunctionValue<Simplex<Dim,1>, IdentityOperator, LagrangeFE, 1>
+//////////////////////////////////////////////////////
+////////        SIMPLEX - IDENTITY - P1       ////////
+//////////////////////////////////////////////////////
+
+
+template<Integer Dim,Integer ManifoldDim>
+class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 1>
 {
  public: 
-  using Output=Vector<Matrix<Real, 1, 1>,2>;
+  using Output=Vector<Matrix<Real, 1, 1>,ManifoldDim+1>;
 constexpr inline static void 
-apply(const Vector<Real,1>& point, Output & func)
+apply(const Vector<Real,ManifoldDim>& point, Output & func)
 {
-    Output func2((1. - point[0]), // 1 in (0)
-                                       point[0]);       // 1 in (1)
-    func=func2;
-}
-};
+    func[0](0,0)=1;
+    for(Integer i=0;i<ManifoldDim;i++)
+        func[0](0,0)-=point[i];
 
-template<Integer Dim>
-class ReferenceShapeFunctionValue<Simplex<Dim,1>, IdentityOperator, LagrangeFE, 2>
-{
- public: 
-  using Output=Vector<Matrix<Real, 1, 1>,3>;
-constexpr inline static void 
-apply(const Vector<Real,1>& point, Output & func)
-{
-    Output func2(2*(0.5-point[0])*(1-point[0]), // 1 in (0.0)
-                 4*(point[0])*(1-point[0]), // 1 in (1.0)
-                 2*(-point[0])*(0.5-point[0]));// 1 in (0.0)
-    func=func2;
+    for(Integer i=0;i<ManifoldDim;i++)
+        func[i+1](0,0)=point[i];
+
 }
 };
 
 
-template<Integer Dim>
-class ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 1>
-{
- public: 
-  using Output=Vector<Matrix<Real, 1, 1>,3>;
-constexpr inline static void 
-apply(const Vector<Real,2>& point, Output & func)
-{
-    Output func2((1. - point[0] - point[1]), // 1 in (0,0)
-                  point[0],                  // 1 in (1,0)
-                  point[1]);                 // 1 in (0,1)
-    func=func2;
-}
-};
 
-
-// template<typename Elem,typename Operator,Integer FEFamily,Integer Order,typename Output,typename Point>
-// constexpr void value(const Point& point,Output& output);
 
 // template<Integer Dim>
-// constexpr void value<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 1>
-//  (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,3> & func)
+// class ReferenceShapeFunctionValue<Simplex<Dim,1>, IdentityOperator, LagrangeFE, 1>
 // {
-//     Vector<Matrix<Real, 1, 1>,3> func2((1. - point[0] - point[1]), // 1 in (0,0)
-//                                        point[0],                  // 1 in (1,0)
-//                                        point[1]);                 // 1 in (0,1)
+//  public: 
+//   using Output=Vector<Matrix<Real, 1, 1>,2>;
+// constexpr inline static void 
+// apply(const Vector<Real,1>& point, Output & func)
+// {
+//     Output func2((1. - point[0]), // 1 in (0)
+//                   point[0]);      // 1 in (1)
 //     func=func2;
 // }
+// };
 
 
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 1>
+// {
+//  public: 
+//   using Output=Vector<Matrix<Real, 1, 1>,3>;
+// constexpr inline static void 
+// apply(const Vector<Real,2>& point, Output & func)
+// {
+//     Output func2((1. - point[0] - point[1]), // 1 in (0,0)
+//                   point[0],                  // 1 in (1,0)
+//                   point[1]);                 // 1 in (0,1)
+//     func=func2;
+// }
+// };
 
-template<Integer Dim>
-class ReferenceShapeFunctionValue<Simplex<Dim,2>, GradientOperator, LagrangeFE, 1>
+
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,3>, IdentityOperator, LagrangeFE, 1>
+// {
+//  public: 
+//   using Output=Vector<Matrix<Real, 1, 1>,4>;
+// constexpr inline static void 
+// apply(const Vector<Real,3>& point, Output & func)
+// {
+//     Output func2((1. - point[0] - point[1]- point[2]), // 1 in (0,0,0)
+//                   point[0],                            // 1 in (1,0,0)
+//                   point[1],                            // 1 in (0,1,0)
+//                   point[2]);                           // 1 in (1,1,1)           
+//     func=func2;
+// }
+// };
+
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,4>, IdentityOperator, LagrangeFE, 1>
+// {
+//  public: 
+//   using Output=Vector<Matrix<Real, 1, 1>,5>;
+// constexpr inline static void 
+// apply(const Vector<Real,4>& point, Output & func)
+// {
+//     Output func2((1. - point[0] - point[1]- point[2] - point[3]), // 1 in (0,0,0,0)
+//                   point[0],                                       // 1 in (1,0,0,0)
+//                   point[1],                                       // 1 in (0,1,0,0)
+//                   point[2],                                       // 1 in (0,0,1,0)  
+//                   point[3]);                                      // 1 in (1,1,1,1)       
+//     func=func2;
+// }
+// };
+
+//////////////////////////////////////////////////////
+////////        SIMPLEX - GRADIENT - P1       ////////
+//////////////////////////////////////////////////////
+
+template<Integer Dim,Integer ManifoldDim>
+class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, GradientOperator, LagrangeFE, 1>
 {
  public: 
-  using Output=Vector<Matrix<Real, 2, 1>,3>;
+  using Output=Vector<Matrix<Real, ManifoldDim, 1>,ManifoldDim+1>;
  constexpr inline static void 
- apply(const Vector<Real,2>& point, Output & func)
+ apply(const Vector<Real,ManifoldDim>& point, Output & func)
   {
-      const auto& xi=point[0];
-      const auto& eta=point[1];
-      const Real zeta = 1. - xi - eta;
-      Output func2({-1,-1},
-                                         // Vector<Vector<Real, 2>,3> func2({-1,-1},
-                                         {+1, 0},
-                                         { 0,+1});
-      func=func2;
+
+      for(Integer i=0;i<ManifoldDim;i++)
+        func[0](i,0)=-1;
+
+      for(Integer i=0;i<ManifoldDim;i++)
+        for(Integer j=0;j<ManifoldDim;j++)
+            if(i==j)
+                func[i+1](i,0)=1;
+            else
+                func[i+1](j,0)=0.0;
   }
 };
 
+
 // template<Integer Dim>
-// constexpr void value<Simplex<Dim,2>, GradientOperator, LagrangeFE, 1>
-// (const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,3> & func)
+// class ReferenceShapeFunctionValue<Simplex<Dim,1>, GradientOperator, LagrangeFE, 1>
+// {
+//  public: 
+//   using Output=Vector<Matrix<Real, 1, 1>,2>;
+//  constexpr inline static void 
+//  apply(const Vector<Real,1>& point, Output & func)
+//   {
+//       Output func2({-1},
+//                    {+1});
+//       func=func2;
+//   }
+// };
+
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,2>, GradientOperator, LagrangeFE, 1>
+// {
+//  public: 
+//   using Output=Vector<Matrix<Real, 2, 1>,3>;
+//  constexpr inline static void 
+//  apply(const Vector<Real,2>& point, Output & func)
+//   {
+//       Output func2({-1,-1},
+//                    {+1, 0},
+//                    { 0,+1});
+//       func=func2;
+//   }
+// };
+
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,3>, GradientOperator, LagrangeFE, 1>
+// {
+//  public: 
+//   using Output=Vector<Matrix<Real, 3, 1>,4>;
+//  constexpr inline static void 
+//  apply(const Vector<Real,3>& point, Output & func)
+//   {
+//       Output func2({-1,-1,-1},
+//                    {+1, 0, 0},
+//                    { 0,+1, 0},
+//                    { 0, 0,+1});
+//       func=func2;
+//   }
+// };
+
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,4>, GradientOperator, LagrangeFE, 1>
+// {
+//  public: 
+//   using Output=Vector<Matrix<Real, 4, 1>,5>;
+//  constexpr inline static void 
+//  apply(const Vector<Real,4>& point, Output & func)
+//   {
+//       Output func2({-1,-1,-1,-1},
+//                    {+1, 0, 0, 0},
+//                    { 0,+1, 0, 0},
+//                    { 0, 0,+1, 0},
+//                    { 0, 0, 0,+1});
+//       func=func2;
+//   }
+// };
+
+
+//////////////////////////////////////////////////////
+////////        SIMPLEX - IDENTITY - P2       ////////
+//////////////////////////////////////////////////////
+
+template<Integer Dim,Integer ManifoldDim>
+class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 2>
+{
+ public:
+  static constexpr Integer Ndofs=NumberOfLagrangianSimplexDofs<ManifoldDim,2>();
+  using Output=Vector<Matrix<Real, 1, 1>,Ndofs>;
+constexpr inline static void 
+apply(const Vector<Real,ManifoldDim>& point, Output & func)
+{
+
+    Real xend=1.0;
+    Integer cont=0;
+
+    for(Integer i=0;i<ManifoldDim;i++)
+       xend-=point[i];
+
+    func[0](0,0)=2*xend*(xend-0.5);
+    for(Integer i=0;i<ManifoldDim;i++)
+       func[i+1](0,0)=2*point[i]*(point[i]-0.5);
+
+    for(Integer i=0;i<ManifoldDim;i++)
+       func[ManifoldDim+1+i](0,0)=4*point[i]*xend;
+
+    for(Integer i=0;i<ManifoldDim-1;i++)
+        for(Integer j=i+1;j<ManifoldDim;j++)
+           {
+            func[2*ManifoldDim+1+cont](0,0)=4*point[i]*point[j];
+            cont++;
+           }
+
+}
+};
+
+
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,1>, IdentityOperator, LagrangeFE, 2>
+// {
+//  public: 
+//   using Output=Vector<Matrix<Real, 1, 1>,3>;
+// constexpr inline static void 
+// apply(const Vector<Real,1>& point, Output & func)
+// {
+//     Output func2(2*(0.5-point[0])*(1-point[0]), // 1 in (0.0)
+//                  4*(point[0])*(1-point[0]),     // 1 in (1.0)
+//                  2*(-point[0])*(0.5-point[0])); // 1 in (0.0)
+//     func=func2;
+// }
+// };
+
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 2>
+// {
+//  public:
+//   using Output=Vector<Matrix<Real, 1, 1>,6>;
+// constexpr inline static void 
+// apply(const Vector<Real,2>& point, Output & func)
 // {
 //     const auto& xi=point[0];
 //     const auto& eta=point[1];
 //     const Real zeta = 1. - xi - eta;
-//     Vector<Matrix<Real, 2, 1>,3> func2({-1,-1},
-//                                        // Vector<Vector<Real, 2>,3> func2({-1,-1},
-//                                        {+1, 0},
-//                                        { 0,+1});
+//     Output func2(2.*zeta*(zeta-0.5), // 1 in (0,0)
+//                  2.*xi*(xi-0.5),     // 1 in (1,0)
+//                  2.*eta*(eta-0.5),   // 1 in (0,1)
+//                  4.*xi*zeta,         // 1 in (0.5,0)
+//                  4.*eta*zeta,        // 1 in (0,0.5)
+//                  4.*xi*eta);         // 1 in (0.5,0.5)
 //     func=func2;
 // }
-template<Integer Dim>
-class ReferenceShapeFunctionValue<Simplex<Dim,2>, TraceOperator, LagrangeFE, 1>
-{
- public: 
-  using Output=Vector<Matrix<Real, 1, 1>,2>;
-constexpr inline static void 
-apply(const Vector<Real,1>& point, Output & func)
-  {
-      ReferenceShapeFunctionValue<Simplex<Dim,1>, IdentityOperator, LagrangeFE, 1>::apply(point,func);
-  }
-};
+// };
 
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,3>, IdentityOperator, LagrangeFE, 2>
+// {
+//  public:
+//   using Output=Vector<Matrix<Real, 1, 1>,10>;
+// constexpr inline static void 
+// apply(const Vector<Real,3>& point, Output & func)
+// {
+//     const auto& x0=point[0];
+//     const auto& x1=point[1];
+//     const auto& x2=point[2];
+//     const Real x3 = 1. - x0 - x1 - x2;
+//     Output func2(2.*x3*(x3-0.5),     // 1 in (0,0,0)
+//                  2.*x0*(x0-0.5),     // 1 in (1,0,0)
+//                  2.*x1*(x1-0.5),     // 1 in (0,1,0)
+//                  2.*x2*(x2-0.5),     // 1 in (0,0,1)
+//                  4.*x0*x3,           // 1 in (0.5,0,0)
+//                  4.*x1*x3,           // 1 in (0,0.5,0)
+//                  4.*x2*x3,           // 1 in (0,0,0.5)
+//                  4.*x0*x1,           // 1 in (0,0.5)
+//                  4.*x0*x2,           // 1 in (0,0.5)
+//                  4.*x1*x2);          // 1 in (0.5,0.5)
+//     func=func2;
+// }
+// };
+
+
+
+
+
+
+
+
+
+
+
+//////////////////////////////////////////////////////
+////////        SIMPLEX - GRADIENT - P2       ////////
+//////////////////////////////////////////////////////
 template<Integer Dim>
-class ReferenceShapeFunctionValue<Simplex<Dim,2>, TraceOperator, LagrangeFE, 2>
+class ReferenceShapeFunctionValue<Simplex<Dim,1>, GradientOperator, LagrangeFE, 2>
 {
  public: 
   using Output=Vector<Matrix<Real, 1, 1>,3>;
 constexpr inline static void 
 apply(const Vector<Real,1>& point, Output & func)
-  {
-      ReferenceShapeFunctionValue<Simplex<Dim,1>, IdentityOperator, LagrangeFE, 2>::apply(point,func);
-  }
-};
-
-
-
-
-
-
-template<Integer Dim>
-class ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 2>
 {
- public:
-  using Output=Vector<Matrix<Real, 1, 1>,6>;
-constexpr inline static void 
-apply(const Vector<Real,2>& point, Output & func)
-{
-    const auto& xi=point[0];
-    const auto& eta=point[1];
-    const Real zeta = 1. - xi - eta;
-    Output func2(2.*zeta*(zeta-0.5), // 1 in (0,0)
-                                       2.*xi*(xi-0.5),     // 1 in (1,0)
-                                       2.*eta*(eta-0.5),   // 1 in (0,1)
-                                       4.*xi*zeta,         // 1 in (0.5,0)
-                                       4.*eta*zeta,        // 1 in (0,0.5)
-                                       4.*xi*eta);         // 1 in (0.5,0.5)
+
+    Output func2({4 * point[0] - 3},           
+                 {4 - 8 * point[0]}, 
+                 {4 * point[0] - 1});
     func=func2;
 }
 };
-
 
 template<Integer Dim>
 class ReferenceShapeFunctionValue<Simplex<Dim,2>, GradientOperator, LagrangeFE, 2>
@@ -1841,18 +2016,41 @@ apply(const Vector<Real,2>& point, Output & func)
     const Real deta_deta  = 1.;
     const Real dzeta_dxi  = -1.;
     const Real dzeta_deta = -1.;
-    // Vector<Vector<Real, 2>,6> func2(
-    Output func2(
-                                       {2.*zeta*dzeta_dxi  + 2*dzeta_dxi *(zeta-0.5), 2.*zeta*dzeta_deta + 2*dzeta_deta*(zeta-0.5)},
-                                       {2.*xi*dxi_dxi  + 2.*dxi_dxi *(xi-0.5),0},
-                                       {0,2.*eta*deta_deta + 2.*deta_deta*(eta-0.5)},
-                                       {4.*(dxi_dxi * zeta + xi * dzeta_dxi),4. * xi * dzeta_deta},
-                                       {4. * eta * dzeta_dxi,4. * (deta_deta * zeta + eta * dzeta_deta)},
-                                       {4 * eta, 4 * xi}
-                                       // {4.*zeta*dxi_dxi+4.*dzeta_dxi*xi,4.*dzeta_deta*xi},
-                                       // {4.*dxi_dxi*eta,4.*xi*deta_deta},
-                                       // {4.*eta*dzeta_dxi,4.*eta*dzeta_deta + 4.*deta_deta*zeta}
-                                       );
+    Output func2({2.*zeta*dzeta_dxi  + 2*dzeta_dxi *(zeta-0.5), 2.*zeta*dzeta_deta + 2*dzeta_deta*(zeta-0.5)},
+                 {2.*xi*dxi_dxi  + 2.*dxi_dxi *(xi-0.5),0},
+                 {0,2.*eta*deta_deta + 2.*deta_deta*(eta-0.5)},
+                 {4.*(dxi_dxi * zeta + xi * dzeta_dxi),4. * xi * dzeta_deta},
+                 {4. * eta * dzeta_dxi,4. * (deta_deta * zeta + eta * dzeta_deta)},
+                 {4 * eta, 4 * xi});
+    
+    func=func2;
+  }
+};
+
+
+
+template<Integer Dim>
+class ReferenceShapeFunctionValue<Simplex<Dim,3>, GradientOperator, LagrangeFE, 2>
+{
+public:
+  using Output=Vector<Matrix<Real, 3, 1>,10>;
+constexpr inline static void 
+apply(const Vector<Real,2>& point, Output & func)
+{
+    const auto& x0=point[0];
+    const auto& x1=point[1];
+    const auto& x2=point[1];
+
+    Output func2({4*x0 + 4*x1 + 4*x2 - 3, 4*x0 + 4*x1 + 4*x2 - 3, 4*x0 + 4*x1 + 4*x2 - 3},
+                 {4*x0 - 1,0,0},
+                 {0,4*x1 - 1,0},
+                 {0,0,4*x2 - 1},
+                 {4 - 4*x1 - 4*x2 - 8*x0,-4*x0,-4*x0},
+                 {-4*x1, 4 - 8*x1 - 4*x2 - 4*x0,-4*x1},
+                 {-4*x2,-4*x2, 4 - 4*x1 - 8*x2 - 4*x0},
+                 {4*x1,4*x0,0},
+                 {4*x2,0,4*x0},
+                 {0,4*x2,4*x1});
     
     func=func2;
   }
@@ -1862,95 +2060,326 @@ apply(const Vector<Real,2>& point, Output & func)
 
 
 
-// template<Integer Dim>
-// constexpr void value<Simplex<Dim,2>, GradientOperator, LagrangeFE, 2>
-// // (const Vector<Real,2>& point, Vector<Vector<Real, 2>,6> & func)
-//  (const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,6> & func)
-// {
-//     const auto& xi=point[0];
-//     const auto& eta=point[1];
-//     const Real zeta = 1. - xi - eta;
-//     const Real dxi_dxi    = 1.;
-//     const Real deta_deta  = 1.;
-//     const Real dzeta_dxi  = -1.;
-//     const Real dzeta_deta = -1.;
-//     // Vector<Vector<Real, 2>,6> func2(
-//     Vector<Matrix<Real, 2, 1>,6> func2(
-//                                        {2.*zeta*dzeta_dxi  + 2*dzeta_dxi *(zeta-0.5), 2.*zeta*dzeta_deta + 2*dzeta_deta*(zeta-0.5)},
-//                                        {2.*xi*dxi_dxi  + 2.*dxi_dxi *(xi-0.5),0},
-//                                        {0,2.*eta*deta_deta + 2.*deta_deta*(eta-0.5)},
-//                                        {4.*zeta*dxi_dxi+4.*dzeta_dxi*xi,4.*dzeta_deta*xi},
-//                                        {4.*dxi_dxi*eta,4.*xi*deta_deta},
-//                                        {4.*eta*dzeta_dxi,4.*eta*dzeta_deta + 4.*deta_deta*zeta});
-    
-//     func=func2;
-// }
 
 
 
-template<Integer Dim>
-class ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 0>
+
+
+
+
+//////////////////////////////////////////////////////
+////////        SEGMENT - TRACE - P_n         ////////
+//////////////////////////////////////////////////////
+template<Integer Dim,Integer Order>
+class ReferenceShapeFunctionValue<Simplex<Dim,1>, TraceOperator, LagrangeFE, Order>
 {
-public:
-  using Output=Vector<Matrix<Real, 2, 1>,3>;
- constexpr inline static void 
- apply(const Vector<Real,2>& point, Output & func)
-{
-    const auto& xi=point[0];
-    const auto& eta=point[1];
-    Output func2{{xi,eta-1},{xi-1,eta},{xi,eta}};
-    func=func2;
-}
-
-};
-
-//shape_function_coefficients_init for: Simplex<2,2>, LagrangeFE, 2
-// do nothing: lagrange shape functions do not need any coefficient
-
-// template<Integer Dim>
-// constexpr void value<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 0>
-//  (const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,3> & func)
-// {
-//     const auto& xi=point[0];
-//     const auto& eta=point[1];
-//     Vector<Matrix<Real, 2, 1>,3> func2{{xi,eta-1},{xi-1,eta},{xi,eta}};
-//     func=func2;
-// }
-
-template<Integer Dim>
-class ReferenceShapeFunctionValue<Simplex<Dim,2>, DivergenceOperator, RaviartThomasFE, 0>
-{
-public:
-  using Output=Vector<Matrix<Real, 1, 1>,3>;
+ public: 
+  using Output=Vector<Matrix<Real, 1, 1>,Order>;
 constexpr inline static void 
-apply(const Vector<Real,2>& point, Output & func)
+
+apply(const Vector<Real,0>& point, Output & func)
+// check if Vector<Real,0> or Vector<Real,1>
+// apply(const Vector<Real,1>& point, Output & func)
+  {
+      Output func2{1.0};
+      func=func2;
+  }
+};
+
+//////////////////////////////////////////////////////
+////////        SIMPLEX - TRACE - P1          ////////
+//////////////////////////////////////////////////////
+template<Integer Dim,Integer ManifoldDim,Integer Order>
+class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, TraceOperator, LagrangeFE, Order>
 {
-    Output func2{{2},{2},{2}};
-    func=func2;
+ public: 
+ static constexpr Integer Ndofs=NumberOfLagrangianSimplexDofs<ManifoldDim,ManifoldDim-1>();
+ using Output=Vector<Matrix<Real, 1, 1>,Ndofs>;
+ constexpr inline static void 
+ apply(const Vector<Real,ManifoldDim-1>& point, Output & func)
+  {
+      ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim-1>, IdentityOperator, LagrangeFE, Order>::apply(point,func);
+  }
+};
+
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,2>, TraceOperator, LagrangeFE, 1>
+// {
+//  public: 
+//   using Output=Vector<Matrix<Real, 1, 1>,2>;
+// constexpr inline static void 
+// apply(const Vector<Real,1>& point, Output & func)
+//   {
+//       ReferenceShapeFunctionValue<Simplex<Dim,1>, IdentityOperator, LagrangeFE, 1>::apply(point,func);
+//   }
+// };
+
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,3>, TraceOperator, LagrangeFE, 1>
+// {
+//  public: 
+//   using Output=Vector<Matrix<Real, 1, 1>,3>;
+// constexpr inline static void 
+// apply(const Vector<Real,2>& point, Output & func)
+//   {
+//       ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 1>::apply(point,func);
+//   }
+// };
+
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,4>, TraceOperator, LagrangeFE, 1>
+// {
+//  public: 
+//   using Output=Vector<Matrix<Real, 1, 1>,4>;
+// constexpr inline static void 
+// apply(const Vector<Real,3>& point, Output & func)
+//   {
+//       ReferenceShapeFunctionValue<Simplex<Dim,3>, IdentityOperator, LagrangeFE, 1>::apply(point,func);
+//   }
+// };
+
+
+
+
+
+
+//////////////////////////////////////////////////////
+////////        SIMPLEX - TRACE - P2          ////////
+//////////////////////////////////////////////////////
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,2>, TraceOperator, LagrangeFE, 2>
+// {
+//  public: 
+//   using Output=Vector<Matrix<Real, 1, 1>,3>;
+// constexpr inline static void 
+// apply(const Vector<Real,1>& point, Output & func)
+//   {
+//       ReferenceShapeFunctionValue<Simplex<Dim,1>, IdentityOperator, LagrangeFE, 2>::apply(point,func);
+//   }
+// };
+
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,3>, TraceOperator, LagrangeFE, 2>
+// {
+//  public: 
+//   using Output=Vector<Matrix<Real, 1, 1>,6>;
+// constexpr inline static void 
+// apply(const Vector<Real,2>& point, Output & func)
+//   {
+//       ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 2>::apply(point,func);
+//   }
+// };
+
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,4>, TraceOperator, LagrangeFE, 2>
+// {
+//  public: 
+//   using Output=Vector<Matrix<Real, 1, 1>,10>;
+// constexpr inline static void 
+// apply(const Vector<Real,3>& point, Output & func)
+//   {
+//       ReferenceShapeFunctionValue<Simplex<Dim,3>, IdentityOperator, LagrangeFE, 2>::apply(point,func);
+//   }
+// };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//////////////////////////////////////////////////////////
+////////        SIMPLEX - IDENTITY - RT0          ////////
+//////////////////////////////////////////////////////////
+
+template<Integer ManifoldDim>
+constexpr auto SimplexRT0Identity(const Vector<Real,ManifoldDim>& point)
+{
+    Vector<Matrix<Real, ManifoldDim, 1>,ManifoldDim+1> output;
+    // loop on shape functions
+    for(Integer i=0;i<ManifoldDim+1;i++)
+        // loop on dimension
+        for(Integer j=0;j<ManifoldDim;j++)
+           output[i](j,0)=point[j];
+
+    for(Integer i=0;i<ManifoldDim;i++)
+        // loop on dimension
+        for(Integer j=0;j<ManifoldDim;j++)
+            if(j==ManifoldDim-1-i)
+               output[i](j,0)-=1;   
+ 
+ return output;
+
+}
+// {
+// public:
+//   using Output=Vector<Matrix<Real, 1, 1>,3>;
+// constexpr inline static void 
+// apply(const Vector<Real,2>& point, Output & func)
+// {
+//     Output func2{{2},{2},{2}};
+//     func=func2;
+// }
+// };
+template<Integer Dim,Integer ManifoldDim>
+class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 0>
+{
+public:
+  using Output=Vector<Matrix<Real, ManifoldDim, 1>,ManifoldDim+1>;
+ constexpr inline static void 
+ apply(const Vector<Real,ManifoldDim>& point, Output & func)
+{
+    // const auto& xi=point[0];
+    // const auto& eta=point[1];
+    // Output func2{{xi,eta-1},{xi-1,eta},{xi,eta}};
+    // func=func2;
+    func=SimplexRT0Identity(point);
+}
+
+};
+
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 0>
+// {
+// public:
+//   using Output=Vector<Matrix<Real, 2, 1>,3>;
+//  constexpr inline static void 
+//  apply(const Vector<Real,2>& point, Output & func)
+// {
+//     const auto& xi=point[0];
+//     const auto& eta=point[1];
+//     Output func2{{xi,eta-1},{xi-1,eta},{xi,eta}};
+//     func=func2;
+// }
+
+// };
+
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,3>, IdentityOperator, RaviartThomasFE, 0>
+// {
+// public:
+//   using Output=Vector<Matrix<Real, 3, 1>,4>;
+//  constexpr inline static void 
+//  apply(const Vector<Real,3>& point, Output & func)
+// {
+//     const auto& xi=point[0];
+//     const auto& eta=point[1];
+//     const auto& zeta=point[2];
+//     Output func2{{xi,eta,zeta-1},{xi,eta-1,zeta},{xi-1,eta,zeta}, {xi,eta,zeta}};
+//     func=func2;
+// }
+
+// };
+
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,4>, IdentityOperator, RaviartThomasFE, 0>
+// {
+// public:
+//   using Output=Vector<Matrix<Real, 4, 1>,5>;
+//  constexpr inline static void 
+//  apply(const Vector<Real,3>& point, Output & func)
+// {
+//     const auto& xi=point[0];
+//     const auto& eta=point[1];
+//     const auto& zeta=point[2];
+//     const auto& theta=point[3];
+//     Output func2{{xi,eta,zeta,theta-1},
+//                  {xi,eta,zeta-1,theta},
+//                  {xi,eta-1,zeta,theta},
+//                  {xi-1,eta,zeta,theta}, 
+//                  {xi,eta,zeta,theta}};
+//     func=func2;
+// }
+
+// };
+
+
+
+
+
+////////////////////////////////////////////////////////////
+////////        SIMPLEX - DIVERGENCE - RT0          ////////
+////////////////////////////////////////////////////////////
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,2>, DivergenceOperator, RaviartThomasFE, 0>
+// {
+// public:
+//   using Output=Vector<Matrix<Real, 1, 1>,3>;
+// constexpr inline static void 
+// apply(const Vector<Real,2>& point, Output & func)
+// {
+//     Output func2{{2},{2},{2}};
+//     func=func2;
+// }
+// };
+template<Integer Dim,Integer ManifoldDim>
+class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, DivergenceOperator, RaviartThomasFE, 0>
+{
+public:
+  using Output=Vector<Matrix<Real, 1, 1>,ManifoldDim+1>;
+constexpr inline static void 
+apply(const Vector<Real,ManifoldDim>& point, Output & func)
+{
+    for(Integer i=0;i<ManifoldDim+1;i++)
+        func[i](0,0)=ManifoldDim;
 }
 };
 
-
-
-// template<Integer Dim>
-// constexpr void value<Simplex<Dim,2>, DivergenceOperator, RaviartThomasFE, 0>
-//  (const Vector<Real,2>& point, Vector<Matrix<Real, 1, 1>,3> & func)
-// {
-//     Vector<Matrix<Real, 1, 1>,3> func2{{2},{2},{2}};
-//     func=func2;
-// }
 
 template<Integer Dim>
 class ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 1>
 {
 public:
   using Output=Vector<Matrix<Real, 2, 1>,8>;
+  using OutputRT0=typename ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 0>::Output;
+  using OutputP1=typename ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 1>::Output;
 constexpr inline static void 
 apply (const Vector<Real,2>& point, Output & func)
 {
     const auto& xi=point[0];
     const auto& eta=point[1];
+    OutputRT0 rt0;
+    OutputP1 p1;
+    ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 0>::apply(point,rt0);
+    ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 1>::apply(point,p1);
     
+    const auto& rt0_0x=rt0[0](0,0);
+    const auto& rt0_0y=rt0[0](1,0);
+    const auto& rt0_1x=rt0[1](0,0);
+    const auto& rt0_1y=rt0[1](1,0);
+    const auto& rt0_2x=rt0[2](0,0);
+    const auto& rt0_2y=rt0[2](1,0);
+
+    const auto& p1_0=p1[0](0,0);
+    const auto& p1_1=p1[1](0,0);
+    const auto& p1_2=p1[2](0,0);
+
+    // Output func2{ {rt0_0x * p1_0, rt0_0y * p1_0  },
+    //               {rt0_0x * p1_1, rt0_0y * p1_1  },
+    //               {rt0_1x * p1_0, rt0_1y * p1_2  },
+    //               {rt0_1x * p1_0, rt0_1y * p1_2  },
+    //               {rt0_2x * p1_1, rt0_2y * p1_2  },
+    //               {rt0_2x * p1_1, rt0_2y * p1_2  },
+    //               {rt0_0x * p1_2, rt0_0y * p1_2  },
+    //               {rt0_1x * p1_1, rt0_1y * p1_1  }};
+
+
+
+
+
+
     Output func2{
         {(1. - xi - eta)*xi,(1. - xi - eta)*(eta-1)},   // 0 in (1,0), (0,1), non-zero normal on edge0
         {xi*xi,xi*(eta-1)},                             // 0 in (0,0), (0,1), non-zero normal on edge0
@@ -1964,34 +2393,45 @@ apply (const Vector<Real,2>& point, Output & func)
     func=func2;
 }
 };
-// template<Integer Dim>
-// constexpr void value<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 1>
-//  (const Vector<Real,2>& point, Vector<Matrix<Real, 2, 1>,8> & func)
-// {
-//     const auto& xi=point[0];
-//     const auto& eta=point[1];
-    
-//     Vector<Matrix<Real, 2, 1>,8> func2{
-//         {(1. - xi - eta)*xi,(1. - xi - eta)*(eta-1)},   // 0 in (1,0), (0,1), non-zero normal on edge0
-//         {xi*xi,xi*(eta-1)},                             // 0 in (0,0), (0,1), non-zero normal on edge0
-//         {(1. - xi - eta)*(xi-1),(1. - xi - eta)*(eta)}, // 0 in (1,0), (0,1), non-zero normal on edge1
-//         {eta*(xi-1),eta*eta},                           // 0 in (0,0), (1,0), non-zero normal on edge1
-//         {xi*xi,xi*eta},                                 // 0 in (0,0), (0,1), non-zero normal on edge2
-//         {eta*xi,eta*eta},                               // 0 in (0,0), (1,0), non-zero normal on edge2
-//         {eta*xi,eta*(eta-1)},                           // normal 0 on all edges, element-dof
-//         {xi*(xi-1),xi*eta}                              // normal 0 on all edges, element-dof
-//     };
-//     func=func2;
-// }
 
 template<Integer Dim>
 class ReferenceShapeFunctionValue<Simplex<Dim,2>, DivergenceOperator, RaviartThomasFE, 1>
 {
 public:
   using Output=Vector<Matrix<Real, 1, 1>,8>;
+  // using OutputRT0=typename ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 0>::Output;
+  // using OutputP1=typename ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 1>::Output;
+  // using OutputDivRT0=typename ReferenceShapeFunctionValue<Simplex<Dim,2>, DivergenceOperator, RaviartThomasFE, 0>::Output;
+  // using OutputGradP1=typename ReferenceShapeFunctionValue<Simplex<Dim,2>, GradientOperator, LagrangeFE, 1>::Output;
+
+
 constexpr inline static void 
 apply(const Vector<Real,2>& point, Output & func)
 {
+
+    // OutputRT0 rt0;
+    // OutputP1 p1;
+    // OutputDivRT0 div_rt0;
+    // OutputGradP1 grad_p1;
+
+    // ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 0>::apply(point,rt0);
+    // ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 1>::apply(point,p1);
+
+    // ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 0>::apply(point,div_rt0);
+    // ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 1>::apply(point,grad_p1);
+
+    // const auto& div0=div_rt0[0](0,0);
+    // const auto& div1=div_rt0[1](0,0);
+    // const auto& div2=div_rt0[2](0,0);
+
+    // const auto& grad0_x=grad_p1[0](0,0);
+    // const auto& grad0_y=grad_p1[0](1,0);
+    // const auto& grad1_x=grad_p1[1](0,0);
+    // const auto& grad1_y=grad_p1[1](1,0);
+    // const auto& grad2_x=grad_p1[2](0,0);
+    // const auto& grad2_y=grad_p1[2](1,0);
+
+
     const auto& xi=point[0];
     const auto& eta=point[1];
     Output func2{
@@ -2004,6 +2444,7 @@ apply(const Vector<Real,2>& point, Output & func)
         {3*eta},
         {3*xi}
     };
+
     func=func2;
 }
 };

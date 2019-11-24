@@ -1434,6 +1434,9 @@ class Variable
    // std::cout<<"vec="<<std::endl;
    // std::cout<<vec<<std::endl;
    // loop on dof points and evaluate u_0 phi_0 in those points
+   // if i have RT0 valutato su sei punti...cosa devo fare?
+   // loop esterno sui punti e' ok, ma poi internamente dovrei loopare solo sule shape functions
+
    for(Integer k=0;k<Npoints ;k++)
    {
  
@@ -1442,13 +1445,16 @@ class Variable
          for(Integer j=0;j<Cols;j++)            
             {
                 mat_tmp_[k](i,j)=vec[0+component]*reference_values[0][k](i,j);
+                std::cout<<"k,i,j="<<k<<","<<i<<","<<j<<"="<<mat_tmp_[k](i,j)<<std::endl;
             }
 
     // for(std::size_t qp=1;qp<Npoints;qp++)
     //    for(std::size_t i=0;i<Ndofs;i++)
     //     for(std::size_t j=0;j<Ndofs;j++)
     // std::cout<<"pre pre output_="<<output_<<std::endl;
-    for(Integer qp=1;qp<Npoints;qp++)
+
+    //for(Integer qp=1;qp<NPoints;qp++) TODO FIX CHECK <---------------
+    for(Integer qp=1;qp<NShapes;qp++)
        for(Integer i=0;i<Rows;i++)
         for(Integer j=0;j<Cols;j++)            
             {
@@ -1478,6 +1484,12 @@ class Variable
 
     // }
    }
+   
+   std::cout<<"Npoints="<<Npoints<<std::endl;
+   std::cout<<"NComponents="<<NComponents<<std::endl;
+   std::cout<<"map="<<map<<std::endl;
+   std::cout<<"component="<<component<<std::endl;
+   std::cout<<"vec="<<vec<<std::endl;
    std::cout<<"mat_tmp_="<<mat_tmp_<<std::endl;
    std::cout<<" all output_="<<output_<<std::endl;
    std::cout<<"reference_values="<<reference_values<<std::endl;
@@ -1930,7 +1942,7 @@ void assembly_example()
   mark_boundary(mesh);
   assign_tags(mesh);
   Bisection<MeshT> bisection(mesh);
-  bisection.uniform_refine(0);
+  bisection.uniform_refine(8);
   mesh.update_dual_graph();
   // mark_boundary(mesh);
   constexpr Integer QPOrder=4;
@@ -1946,6 +1958,12 @@ void assembly_example()
  P1 p1(mesh);
  using P2= FunctionSpace< MeshT, Lagrange2<1>>;//,Lagrange1<2>>;
  P2 p2(mesh);
+
+ using RT_0= FunctionSpace< MeshT, RT0<1>>;//,Lagrange1<2>>;
+ RT_0 rt(mesh);
+
+ using LSFEM_Poission= FunctionSpace< MeshT, RT0<1>, Lagrange2<1>>;
+ LSFEM_Poission LSFEM_poission(mesh);
 
  // using FSspace2= FunctionSpace< MeshT, Lagrange2<2>>;
  // FSspace2 FEspace2(mesh);
@@ -1978,10 +1996,12 @@ void assembly_example()
 
  // auto Wtrial=MixedFunctionSpace(FEspace4,FEspace1);
  // auto Wtrial=MixedFunctionSpace(FEspace1);
- auto Wtrial=MixedFunctionSpace(LS_space);
+ // auto Wtrial=MixedFunctionSpace(LS_space);
+ // auto Wtrial=MixedFunctionSpace(LSFEM_poission);
+
  // auto Wtrial=MixedFunctionSpace(p1_2D);
  // auto Wtrial=MixedFunctionSpace(p1);
- // auto Wtrial=MixedFunctionSpace(p2);
+ auto Wtrial=MixedFunctionSpace(p2);
 
  auto Waux=AuxFunctionSpacesBuild(AuxFEspace1);//,AuxFEspace2,AuxFEspace3);
  // auto W=FullSpaceBuild(Wtrial,Waux);
@@ -1994,11 +2014,11 @@ void assembly_example()
  // auto f3 = MakeFunction<2>(W);
 
  auto u0 = MakeTrial<0>(W);
- auto u1 = MakeTrial<1>(W);
+ // auto u1 = MakeTrial<1>(W);
  // auto u2 = MakeTrial<2>(W);
 
  auto v0 = MakeTest<0>(W);
- auto v1 = MakeTest<1>(W);
+ // auto v1 = MakeTest<1>(W);
  // auto v2 = MakeTest<2>(W);
 
   FiniteElem<Elem> FE(mesh);
@@ -2077,22 +2097,31 @@ auto NewTrace=NewOperator(TraceOperator());
                     // L2Inner(Grad(u2),Grad(v2))
                     // ;
 
+  // 2D LSFEM POISSION
+  // auto bilinearform=L2Inner(Div(u0),Div(v0))+
+  //                   L2Inner((u0),(v0))+
+  //                   L2Inner(Grad(u1),Grad(v1))-
+  //                   L2Inner(Grad(u1),(v0))-
+  //                   L2Inner((u0),Grad(v1));
+  //  auto linearform=
+  //                   L2Inner(-Div(v0),C);
+
   // 2D LSFEM ELASTICITY
-  auto bilinearform=L2Inner(Div(u0),Div(v0))+
-                    L2Inner(C_inv(u0),C_inv(v0))+
-                    L2Inner(Eps(u1),Eps(v1))-
-                    L2Inner(Eps(u1),C_inv(v0))-
-                    L2Inner(C_inv(u0),Eps(v1));
-   auto linearform=L2Inner(-Div(v0),matrix2);
+  // auto bilinearform=L2Inner(Div(u0),Div(v0))+
+  //                   L2Inner(C_inv(u0),C_inv(v0))+
+  //                   L2Inner(Eps(u1),Eps(v1))-
+  //                   L2Inner(Eps(u1),C_inv(v0))-
+  //                   L2Inner(C_inv(u0),Eps(v1));
+  //  auto linearform=L2Inner(-Div(v0),matrix2);
 
    // 2D POISSON WITH NEUMANN
    // auto bilinearform=L2Inner(Grad(u0),Grad(v0));
    // auto linearform=L2Inner((v0),matrix2)+surface_integral(Trace(v0),matrix2);
 
-   // auto bilinearform=L2Inner(Grad(u0),Grad(v0));
-   // auto linearform=
-   //                    surface_integral(1,Trace(v0),C)+
-   //                    L2Inner((v0),C);
+   auto bilinearform=L2Inner(Grad(u0),Grad(v0));
+   auto linearform=
+                      surface_integral(1,Trace(v0),C)+
+                      L2Inner((v0),C);
 
   // auto linearform=
                   //L2Inner(Grad(v0),+Transpose(id2));//Transpose(Transpose((matrix1)+Transpose(matrix2))));//Transpose(-f1*(matrix1+matrix1)*Transpose(alpha*matrix1-matrix1)));//+L2Inner(f2,v1)+L2Inner(f1,v0);//+ L2Inner(f1,v0);
@@ -2144,28 +2173,28 @@ auto NewTrace=NewOperator(TraceOperator());
   // A.resize(n_dofs,std::vector<Real>(n_dofs));
   // b.resize(n_dofs);
 
-   auto bcs1=DirichletBC<1,FunctionZero2D>(W,1);
-   auto bcs2=DirichletBC<1,FunctionZero2D>(W,2);
-   auto bcs3=DirichletBC<1,FunctionZero2D>(W,3);
-   auto bcs4=DirichletBC<1,FunctionZero2D>(W,4);
+   // auto bcs1=DirichletBC<1,FunctionZero2D>(W,1);
+   // auto bcs2=DirichletBC<1,FunctionZero2D>(W,2);
+   // auto bcs3=DirichletBC<1,FunctionZero2D>(W,3);
+   // auto bcs4=DirichletBC<1,FunctionZero2D>(W,4);
 
    // auto bcs1=DirichletBC<0,Function2>(W,1);
    // auto bcs2=DirichletBC<0,Function2>(W,2);
    // auto bcs3=DirichletBC<0,Function2>(W,3);
    // auto bcs4=DirichletBC<0,Function2>(W,4);
 
-   // auto bcs1=DirichletBC<0,FunctionZero1D>(W,1);
-   // auto bcs2=DirichletBC<0,FunctionZero1D>(W,2);
-   // auto bcs3=DirichletBC<0,FunctionZero1D>(W,3);
-   // auto bcs4=DirichletBC<0,FunctionZero1D>(W,4);
+   auto bcs1=DirichletBC<0,FunctionZero1D>(W,1);
+   auto bcs2=DirichletBC<0,FunctionZero1D>(W,2);
+   auto bcs3=DirichletBC<0,FunctionZero1D>(W,3);
+   auto bcs4=DirichletBC<0,FunctionZero1D>(W,4);
    
 
    // DirichletBCMapsCollection<decltype(bcs0)> kk(5);
    // DirichletBCMapsCollection<decltype(bcs0),decltype(bcs1),decltype(bcs2)> k3k(5);
 
    
-   // auto context=create_context(bilinearform,linearform,bcs2,bcs3,bcs4);
-   auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4);
+   auto context=create_context(bilinearform,linearform,bcs2,bcs3,bcs4);
+   // auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4);
 
 
    // for(std::size_t i=0;i<mesh.boundary2elem().size();i++)
@@ -2360,9 +2389,9 @@ auto NewTrace=NewOperator(TraceOperator());
    std::string output_file1 ="output1.vtk";
    std::string output_file2 ="output2.vtk";
    // auto variables_names=set_variables_names("velocity","pressure","pressure2");
-   auto variables_names=set_variables_names("stress","disp");
+   // auto variables_names=set_variables_names("stress","disp");
 
-   // auto variables_names=set_variables_names("pressure");//,"pressure","pressure2");
+   auto variables_names=set_variables_names("pressure");//,"pressure","pressure2");
    std::ofstream os;
    os.open(output_file1.c_str());
    write_wtk(os,W,x,variables_names);
@@ -2374,10 +2403,39 @@ auto NewTrace=NewOperator(TraceOperator());
 
 
 
+std::cout<<"dim = 2, order=0"<<std::endl;
+std::cout<<NumberOfLagrangianSimplexDofs<2,0>()<<std::endl;
+std::cout<<"dim = 2, order=1"<<std::endl;
+std::cout<<NumberOfLagrangianSimplexDofs<2,1>()<<std::endl;
+std::cout<<"dim = 2, order=2"<<std::endl;
+std::cout<<NumberOfLagrangianSimplexDofs<2,2>()<<std::endl;
+std::cout<<"dim = 2, order=3"<<std::endl;
+std::cout<<NumberOfLagrangianSimplexDofs<2,3>()<<std::endl;
+std::cout<<"dim = 2, order=4"<<std::endl;
+std::cout<<NumberOfLagrangianSimplexDofs<2,4>()<<std::endl;
 
 
+std::cout<<"dim = 3, order=0"<<std::endl;
+std::cout<<NumberOfLagrangianSimplexDofs<3,0>()<<std::endl;
+std::cout<<"dim = 3, order=1"<<std::endl;
+std::cout<<NumberOfLagrangianSimplexDofs<3,1>()<<std::endl;
+std::cout<<"dim = 3, order=2"<<std::endl;
+std::cout<<NumberOfLagrangianSimplexDofs<3,2>()<<std::endl;
+std::cout<<"dim = 3, order=3"<<std::endl;
+std::cout<<NumberOfLagrangianSimplexDofs<3,3>()<<std::endl;
+std::cout<<"dim = 3, order=4"<<std::endl;
+std::cout<<NumberOfLagrangianSimplexDofs<3,4>()<<std::endl;
 
-
+std::cout<<"dim = 4, order=0"<<std::endl;
+std::cout<<NumberOfLagrangianSimplexDofs<4,0>()<<std::endl;
+std::cout<<"dim = 4, order=1"<<std::endl;
+std::cout<<NumberOfLagrangianSimplexDofs<4,1>()<<std::endl;
+std::cout<<"dim = 4, order=2"<<std::endl;
+std::cout<<NumberOfLagrangianSimplexDofs<4,2>()<<std::endl;
+std::cout<<"dim = 4, order=3"<<std::endl;
+std::cout<<NumberOfLagrangianSimplexDofs<4,3>()<<std::endl;
+std::cout<<"dim = 4, order=4"<<std::endl;
+std::cout<<NumberOfLagrangianSimplexDofs<4,4>()<<std::endl;
   // Variable<Elem,IdentityOperator,LagrangeFE,1,1,2>::Points::type eee(5);
   // decltype(Variable<Elem,IdentityOperator,LagrangeFE,1,1,2>::Points::points) okok(6);
  
