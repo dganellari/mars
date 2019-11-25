@@ -116,6 +116,13 @@ namespace mars {
 		return a;
 	}
 
+	template<typename T>
+	MARS_INLINE_FUNCTION
+	constexpr Integer power(T base, T exp) noexcept
+	{
+		return (exp == 0 ? 1 : base * power(base, exp - 1));
+	}
+
 	template<typename T, Integer N>
 	MARS_INLINE_FUNCTION
 	int find_pivot (TempArray<T,N> &in, int start, int end)

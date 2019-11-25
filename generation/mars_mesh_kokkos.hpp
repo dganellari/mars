@@ -19,8 +19,8 @@ namespace mars {
 template<Integer Dim_, Integer ManifoldDim_>
 class Mesh<Dim_,ManifoldDim_,KokkosImplementation>: public ParallelIMesh<Dim_> {
 public:
-	static const Integer Dim = Dim_;
-	static const Integer ManifoldDim = ManifoldDim_;
+	static constexpr Integer Dim = Dim_;
+	static constexpr Integer ManifoldDim = ManifoldDim_;
 
 	using Elem = mars::Simplex<Dim, ManifoldDim,KokkosImplementation>;
 	using SideElem = mars::Simplex<Dim, ManifoldDim-1,KokkosImplementation>;

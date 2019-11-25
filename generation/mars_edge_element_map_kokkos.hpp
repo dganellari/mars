@@ -16,21 +16,22 @@
 
 namespace mars {
 
-	template<Integer N>
-	class SubManifoldElementMap<N,KokkosImplementation> {
+	template<Integer N, Integer ManifoldDim>
+	class ParallelSubManifoldElementMap {
 	public:
-
 /*
 		Based on Rivara the smallest angle remaining is 27.89 degrees
 		which means 360 / 27.89 = 12.9. The max number of incidents is then 13.
 		Adding here un upper limit considering that incative elements might be
-		still be present in the list then it will be 2* 13= 26.
-		The allocation is done using 32 as a grace alloc. for special cases
-		or bad quality meshes (very small and very large angles).
+		still be present in the list then it will be 2* 13= 26 which generalizes in power(manifoldDim, manifoldDim).
+		This grace allocation is also done for special cases or bad quality meshes (very small and very large angles).
 */
-		using ElementVector = TempArray<Integer,26>;
 
-		virtual ~SubManifoldElementMap() {}
+		static constexpr Integer limit = power(ManifoldDim, ManifoldDim);
+
+		using ElementVector = TempArray<Integer, limit>;
+
+		virtual ~ParallelSubManifoldElementMap() {}
 
 		template<typename Elem>
 		MARS_INLINE_FUNCTION
@@ -61,10 +62,10 @@ namespace mars {
 			}
 		}
 
-		template<Integer Dim, Integer ManifoldDim>
+		template<class Mesh_>
 		struct UMapUpdate
 		{
-			using PMesh = Mesh<Dim, ManifoldDim, KokkosImplementation>;
+			using PMesh = Mesh_;
 
 			PMesh* mesh;
 			UnorderedMap<Side<N,KokkosImplementation>,ElementVector> mapping;
@@ -109,12 +110,12 @@ namespace mars {
 			mapping_.rehash(capacity);
 		}
 
-		template<Integer Dim, Integer ManifoldDim>
-		void update(Mesh<Dim, ManifoldDim, KokkosImplementation> *mesh,
+		template<class Mesh_>
+		void update(Mesh_ *mesh,
 				const ViewVectorType<Integer> active_elems)
 		{
 			Kokkos::parallel_for(active_elems.extent(0),
-					UMapUpdate<Dim, ManifoldDim>(mapping_, mesh, active_elems));
+					UMapUpdate<Mesh_>(mapping_, mesh, active_elems));
 		}
 
 		/*template<Integer Dim, Integer ManifoldDim>

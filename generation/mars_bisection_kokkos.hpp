@@ -17,14 +17,15 @@ public:
 	using Mesh     = Mesh_;
 	using Elem     = typename Mesh::Elem;
 	using SideElem = typename Mesh::SideElem;
-	using ParallelEdgeElementMap = SubManifoldElementMap<2,KokkosImplementation>;
+	//struct Params { static constexpr Integer ManifoldDim=Mesh::ManifoldDim; using Impl=KokkosImplementation; };
+	using ParallelEdgeElementMap = ParallelSubManifoldElementMap<2, Mesh::ManifoldDim>;
 	using ParallelEdgeNodeMap = DeviceEdgeNodeMap<2>;
 	using Edge = Side<2, KokkosImplementation>;
 
-	using ElementVector = SubManifoldElementMap<2, KokkosImplementation>::ElementVector;
+	using ElementVector = typename ParallelEdgeElementMap::ElementVector;
 
-	static const Integer Dim 		 = Mesh_::Dim;
-	static const Integer ManifoldDim = Mesh_::ManifoldDim;
+	static constexpr Integer Dim 		 = Mesh_::Dim;
+	static constexpr Integer ManifoldDim = Mesh_::ManifoldDim;
 
 	virtual ~ParallelBisection() {}
 
@@ -883,7 +884,7 @@ public:
 
 		double time1 = timer1.seconds();
 		if (verbose)
-			std::cout << "Resize/rehash took: " << time1 << " seconds." << std::endl;
+			std::cout << "Resize mesh took: " << time1 << " seconds." << std::endl;
 	}
 
 	inline void copy_to_device(ViewObject<Integer> node_start_index)
@@ -911,11 +912,6 @@ public:
 				host_mesh->get_view_active(), host_mesh->n_elements());
 
 		const Integer nr_active_elements = active_elems.extent(0);
-
-		if (verbose)
-			std::cout << "Total Nr. elems: " << host_mesh->n_elements()
-					<< " vs. Active Nr. elems: " << nr_active_elements
-					<< std::endl;
 
 		Timer timer;
 
