@@ -103,18 +103,17 @@ namespace mars {
         void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
         {
         	Integer vs[2];
-        	Combinations<ManifoldDim+1, 2, KokkosImplementation> k;
-        	k.choose(edge_num, nodes, vs);
+        	ParallelSubManifoldElementMap<2, ManifoldDim>::combinations.choose(edge_num, nodes, vs);
             v1 = vs[0];
             v2 = vs[1];
         }
 
-        MARS_INLINE_FUNCTION
+      /*  MARS_INLINE_FUNCTION
         void side(const Integer &side_num,
                   Simplex<Dim, ManifoldDim-1,KokkosImplementation> &side) const
         {
             Combinations<ManifoldDim+1, ManifoldDim, KokkosImplementation>::choose(side_num, nodes, side.nodes);
-        }
+        }*/
     };
 
     /*template<Integer Dim, Integer ManifoldDim, class OutputStream>
