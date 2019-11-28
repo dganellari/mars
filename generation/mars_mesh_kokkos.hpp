@@ -1202,8 +1202,18 @@ public:
 				int add_to_j = index % 2;
 
 				elem(index, 0) = i * offset + j;
-				elem(index, 1) = (i + 1) * offset + (j + 1);
-				elem(index, 2) = (i + add_to_i) * offset + (j + add_to_j);
+
+				if (add_to_i == 0)
+				{
+					elem(index, 1) = (i + 1) * offset + (j + 1);
+					elem(index, 2) = (i + add_to_i) * offset + (j + add_to_j);
+				}
+				else
+				{
+					elem(index, 1) = (i + add_to_i) * offset + (j + add_to_j);
+					elem(index, 2) = (i + 1) * offset + (j + 1);
+				}
+
 				active(index) = true;
 
 				break;
