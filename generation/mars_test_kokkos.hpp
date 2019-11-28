@@ -61,6 +61,7 @@ void test_mars_mesh_generation_kokkos_2D(const int x, const int y) {
 				"build_square_parallel" + std::to_string(x) + std::to_string(y)
 						+ ".vtu", sMesh);
 
+		sMesh.repair(true);
 	}
 	/*}
 
@@ -96,6 +97,8 @@ void test_mars_mesh_generation_kokkos_3D(const int x, const int y, const int z) 
 		w.write(
 				"build_cube_parallel" + std::to_string(x) + std::to_string(y)
 						+ ".vtu", sMesh);
+
+		sMesh.repair(true);
 
 	}
 }

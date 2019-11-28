@@ -19,6 +19,9 @@ namespace mars {
 	template<Integer N, Integer ManifoldDim>
 	class ParallelSubManifoldElementMap {
 	public:
+
+		using Comb = Combinations<ManifoldDim + 1, N, KokkosImplementation>;
+
 /*
 		Based on Rivara the smallest angle remaining is 27.89 degrees
 		which means 360 / 27.89 = 12.9. The max number of incidents is then 13.
@@ -31,14 +34,15 @@ namespace mars {
 
 		using ElementVector = TempArray<Integer, limit>;
 
-		virtual ~ParallelSubManifoldElementMap() {}
+		ParallelSubManifoldElementMap() {
+			combinations.initialize();
+		}
 
 		template<typename Elem>
 		MARS_INLINE_FUNCTION
-		static void update_elem(const UnorderedMap<Side<N,KokkosImplementation>,ElementVector>& mapping, const Elem &e)
+		static void update_elem(const UnorderedMap<Side<N,KokkosImplementation>,ElementVector>& mapping,
+				const Elem &e, ViewMatrixTextureC<Integer, Comb::value, N> combs)
 		{
-			using Comb = Combinations<Elem::ManifoldDim_ + 1, N, KokkosImplementation>;
-			Comb combinations;
 
 			TempArray<Integer, N> nodes;
 			for (Integer i = 0;
@@ -48,7 +52,7 @@ namespace mars {
 
 				for (Integer j = 0; j < N; ++j)
 				{
-					nodes[j] = e.nodes[combinations.combs[i][j]];
+					nodes[j] = e.nodes[combs(i,j)];
 				}
 
 				//auto result= mapping.insert(Side<N, KokkosImplementation>(nodes));
@@ -58,7 +62,6 @@ namespace mars {
 					auto &vec = mapping.value_at(result);
 					vec.insert(e.id);
 				}
-
 			}
 		}
 
@@ -70,7 +73,7 @@ namespace mars {
 			PMesh* mesh;
 			UnorderedMap<Side<N,KokkosImplementation>,ElementVector> mapping;
 			ViewVectorType<Integer> active_elems;
-
+			ViewMatrixTextureC<Integer, Comb::value, N> combs;
 			/*void init(const PMesh *m)
 			{
 
@@ -86,8 +89,8 @@ namespace mars {
 
 			UMapUpdate(
 					UnorderedMap<Side<N, KokkosImplementation>, ElementVector> mp,
-					PMesh *ms, ViewVectorType<Integer> ae) :
-					mapping(mp), mesh(ms), active_elems(ae)
+					PMesh *ms, ViewVectorType<Integer> ae, ViewMatrixTextureC<Integer, Comb::value, N> cmb) :
+					mapping(mp), mesh(ms), active_elems(ae), combs(cmb)
 			{
 				//init(ms);
 			}
@@ -96,7 +99,7 @@ namespace mars {
 			void operator()(int i) const
 			{
 				const Integer element_id = active_elems(i);
-				update_elem(mapping, mesh->elem(element_id));
+				update_elem(mapping, mesh->elem(element_id), combs);
 			}
 		};
 
@@ -115,7 +118,7 @@ namespace mars {
 				const ViewVectorType<Integer> active_elems)
 		{
 			Kokkos::parallel_for(active_elems.extent(0),
-					UMapUpdate<Mesh_>(mapping_, mesh, active_elems));
+					UMapUpdate<Mesh_>(mapping_, mesh, active_elems, *combinations.combs));
 		}
 
 		/*template<Integer Dim, Integer ManifoldDim>
@@ -252,6 +255,8 @@ namespace mars {
 		}
 
 		UnorderedMap<Side<N,KokkosImplementation>,ElementVector> mapping_;
+		static Comb combinations;
+
 	};
 
 	/*class EdgeElementMap : public SubManifoldElementMap<2> {

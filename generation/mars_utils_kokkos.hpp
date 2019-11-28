@@ -2,6 +2,7 @@
 #define GENERATION_MARS_UTILS_KOKKOS_HPP_
 
 #include "mars_globals.hpp"
+#include "mars_vector.hpp"
 
 namespace mars {
 

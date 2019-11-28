@@ -36,19 +36,23 @@ public:
 	  fail_if_not_refine(false)
 	{}
 
-	void set_fail_if_not_refine(const bool val) {
+	void set_fail_if_not_refine(const bool val)
+	{
 		fail_if_not_refine = val;
 	}
 
-	bool get_fail_if_not_refine() {
+	bool get_fail_if_not_refine()
+	{
 		return fail_if_not_refine;
 	}
 
-	Mesh *get_mesh() const{
+	Mesh *get_mesh() const
+	{
 		return mesh;
 	}
 
-	Mesh *get_host_mesh() const{
+	Mesh *get_host_mesh() const
+	{
 		return host_mesh;
 	}
 
@@ -322,10 +326,9 @@ public:
 			const Integer edge_num = es.stable_select(*mesh, element_id);
 			//Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id);
 			//Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id, Bisection<Mesh>::edge_element_map());
-
 			Edge edge;
 			mesh->elem(element_id).edge(edge_num, edge.nodes[0], edge.nodes[1]);
-			edge.fix_ordering(); //TODO: check if needed at all.
+			edge.fix_ordering();
 
 			auto result = mapping.insert(edge);
 
@@ -572,6 +575,12 @@ public:
 	{
 		Mesh_* mesh;
 		ViewMatrixType<Integer> lepp_incident_index;
+		static constexpr Integer value =
+				Factorial<Mesh_::ManifoldDim + 1>::value
+						/ (Factorial<2>::value
+								* Factorial<Mesh_::ManifoldDim + 1 - 2>::value);
+		ViewMatrixTextureC<Integer, value, 2> combs;
+
 		bool verbose;
 		using UEMap = UnorderedMap<Edge,ElementVector>;
 		using UNMap = UnorderedMap<Edge,Integer>;
@@ -586,9 +595,11 @@ public:
 		ViewObject<Integer> node_start_index;
 
 		BisectElem(Mesh_* ms, ViewMatrixType<Integer> lii,
-				UEMap mp, UNMap nmp, bool v, Integer esi, Integer csi, ViewObject<Integer> nsi) :
-				mesh(ms), lepp_incident_index(lii), edge_element_map(mp), edge_node_map(nmp), verbose(
-						v), elem_start_index(esi), child_start_index(csi), node_start_index(nsi)
+				ViewMatrixTextureC<Integer, value, 2> cmb, UEMap mp, UNMap nmp,
+				bool v, Integer esi, Integer csi, ViewObject<Integer> nsi) :
+				mesh(ms), lepp_incident_index(lii), combs(cmb), edge_element_map(
+						mp), edge_node_map(nmp), verbose(v), elem_start_index(
+						esi), child_start_index(csi), node_start_index(nsi)
 		{
 		}
 
@@ -636,7 +647,7 @@ public:
 			new_el.nodes[1] = v;
 
 			mesh->set_active(elem_new_id);
-			ParallelEdgeElementMap::update_elem(edge_element_map, new_el);
+			ParallelEdgeElementMap::update_elem(edge_element_map, new_el, combs);
 			new_el.block = old_el.block;
 		}
 
@@ -967,7 +978,7 @@ public:
 			Timer timer1;
 
 			parallel_for(lip_size,
-					BisectElem(mesh, lepp_incident_index,
+					BisectElem(mesh, lepp_incident_index, *edge_element_map_.combinations.combs,
 							edge_element_map_.mapping_, edge_node_map_.mapping_,
 							verbose, elem_start_index, child_start_index,
 							node_start_index));
