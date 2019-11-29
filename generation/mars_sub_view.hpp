@@ -20,7 +20,7 @@ public:
 
 	}
 
-	MARS_INLINE_FUNCTION SubView(ViewMatrixType<T> v, Integer id) :
+	MARS_INLINE_FUNCTION SubView(const ViewMatrixType<T> &v, Integer id) :
 			view(v), index(id)
 	{
 
