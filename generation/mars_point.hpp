@@ -23,7 +23,7 @@ public:
 		temp_ = false;
 	}
 
-	MARS_INLINE_FUNCTION Point(ViewMatrixType<T> v, Integer id) :
+	MARS_INLINE_FUNCTION Point(const ViewMatrixType<T>& v, Integer id) :
 			Point(SubView<T, Dim>(v, id))
 	{
 
