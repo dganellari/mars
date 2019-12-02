@@ -344,6 +344,11 @@ public:
 		tree_ = UnorderedMap<Integer,ElementVector>(capacity);
 	}
 
+	void reserve_leppOccupied(Integer size)
+	{
+		lepp_occupied = ViewVectorType<bool>("lepp_occupied_fill", size);
+	}
+
 	/*void precompute_lepp_incidents(
 			Mesh_ *mesh,
 			const ViewVectorType<Integer> active_elems)
@@ -355,7 +360,9 @@ public:
 
 
 	MARS_INLINE_FUNCTION
-	static bool is_terminal(const Integer element_id, const Integer map_index, const Edge& edge, const ElementVector& incidents, Mesh *mesh, UnorderedMap<Integer,ElementVector>& tree)
+	static bool is_terminal(const Integer map_index, const Edge& edge,
+			const ElementVector& incidents, Mesh *mesh,
+			const UnorderedMap<Integer, ElementVector>& tree)
 	{
 
 		bool terminal = true; //in case the elements share the longest edge or there is only one incident (itself)
@@ -363,10 +370,8 @@ public:
 
 		for (auto i = 0; i < incidents.index; ++i)
 		{
-
 			if (mesh->is_active(incidents[i]))
 			{
-
 				Edge new_edge;
 
 				EdgeSelect_ es;
@@ -381,7 +386,10 @@ public:
 				if (edge != new_edge)
 				{
 					terminal = false;
-					tree.insert(incidents[i]);
+					//insert child in tree
+					auto result = tree.insert(incidents[i]);
+					if (result.failed())
+						printf("Exceeded UnorderedMap: lepp_incidents_map capacity\n");
 					tree.value_at(map_index).insert(incidents[i]);
 				}
 			}
@@ -391,9 +399,41 @@ public:
 	}
 
 	MARS_INLINE_FUNCTION
+	static bool is_terminal(const Edge& edge,
+			const ElementVector& incidents, Mesh *mesh)
+	{
+
+		bool terminal = true; //in case the elements share the longest edge or there is only one incident (itself)
+							  // - meaning the longest edge is on the boundary.
+
+		for (auto i = 0; i < incidents.index; ++i)
+		{
+			if (mesh->is_active(incidents[i]))
+			{
+				Edge new_edge;
+
+				EdgeSelect_ es;
+				const Integer edge_num = es.stable_select(*mesh, incidents[i]);
+				//const Integer edge_num = es.select(*mesh, edge, incidents[i]);
+
+				mesh->elem(incidents[i]).edge(edge_num, new_edge.nodes[0],
+						new_edge.nodes[1]);
+				new_edge.fix_ordering();
+
+				//	if(edge != tree.edges[i]){
+				if (edge != new_edge)
+				{
+					terminal = false;
+				}
+			}
+		}
+
+		return terminal;
+	}
+
+	MARS_INLINE_FUNCTION
 	static Integer is_leaf(const Integer element_id, Mesh_ *mesh,
-			UnorderedMap<Integer, ElementVector>& tree,
-			const UnorderedMap<Edge, ElementVector>& mapping)
+			const UnorderedMap<Integer, ElementVector>& tree)
 	{
 
 		Integer index = tree.find(element_id);
@@ -460,7 +500,8 @@ public:
 
 			Integer index = mapping.find(edge);
 
-			if (is_terminal(element_id, map_index, mapping.key_at(index), mapping.value_at(index), mesh))
+			if (is_terminal(map_index, mapping.key_at(index),
+					mapping.value_at(index), mesh, tree))
 			{
 				++pt_count;
 
@@ -482,7 +523,7 @@ public:
 			{
 				return;
 			}
-			Integer index = is_leaf(node, mesh, tree, mapping);
+			Integer index = is_leaf(node, mesh, tree);
 
 			if (index >= 0)
 			{
@@ -491,10 +532,10 @@ public:
 
 			for (auto i = 0; i < tree.value_at(index).index; ++i)
 			{
-				const auto &child = this->tree.value_at(index)[i];
+				const auto &child = tree.value_at(index)[i];
 				if (mesh->is_active(child))
 				{
-					depth_first(child);
+					depth_first(child, count, pt_count);
 				}
 			}
 		}
@@ -525,7 +566,7 @@ public:
 		ScatterElem(
 				UnorderedMap<Edge, ElementVector> mp,
 				Mesh_* ms, ViewVectorType<Integer> elems,
-				ViewVectorType<uint32_t> tr, ViewVectorType<bool> lo,
+				UnorderedMap<Integer,ElementVector> tr, ViewVectorType<bool> lo,
 				UnorderedMap<Integer, Edge> lim) :
 				RefineMesh(mp, ms, elems, tr, lo),		// lepp_elem_index(lei),
 				lepp_incidents_map(lim)
@@ -533,9 +574,19 @@ public:
 		}
 
 		MARS_INLINE_FUNCTION
-		void compute_lepp(const Integer element_id) const
+		void compute_lepp(const Integer element_id, const Integer map_index) const
 		{
-			Integer index = this->tree(element_id);
+			Edge edge;
+
+			EdgeSelect_ es;
+			const Integer edge_num = es.stable_select(*this->mesh, element_id);
+			//const Integer edge_num = es.select(*mesh, edge, incidents[i]);
+
+			this->mesh->elem(element_id).edge(edge_num, edge.nodes[0],
+					edge.nodes[1]);
+			edge.fix_ordering();
+
+			Integer index = this->mapping.find(edge);
 
 			if (is_terminal(this->mapping.key_at(index), this->mapping.value_at(index),  this->mesh))
 			{
@@ -558,37 +609,34 @@ public:
 		void depth_first(const Integer node) const
 		{
 			// Avoids lepp path collisions. If the value is alrady set to 1 the threads returns.
-			if(!Kokkos::atomic_compare_exchange_strong(&this->lepp_occupied(node), false, true)){
-				return;
-			}
-
-			if (is_leaf(node, this->mesh, this->tree, this->mapping))
+		/*	if (!Kokkos::atomic_compare_exchange_strong(&this->lepp_occupied(node), true, false))
 			{
-				compute_lepp(node);
-			}
+				return;
+			}*/
 
+			Integer index = is_leaf(node, this->mesh, this->tree);
 
-			auto index = tree.find(node);
+			if (index >= 0)
+			{
+				compute_lepp(node, index);
+			}else
+			//	std::cout<<"node with index -1: "<< node<<std::endl;
 
-			if(this->tree.valid_at(index)){
-
-				for (auto i = 0; i < this->tree.value_at(index).index; ++i)
+			for (auto i = 0; i < this->tree.value_at(index).index; ++i)
+			{
+				const auto &child = this->tree.value_at(index)[i];
+				if (this->mesh->is_active(child))
 				{
-					const auto &child = this->tree.value_at(index)[i];
-					if (this->mesh->is_active(child))
-					{
-						depth_first(child);
-					}
+					depth_first(child);
 				}
-
 			}
-
 		}
 
 		MARS_INLINE_FUNCTION
 		void operator()(const int i) const
 		{
 			Integer element_id = this->elements(i);
+			//this->tree.insert(element_id);
 			depth_first(element_id);
 		}
 	};
@@ -831,8 +879,10 @@ public:
 		ViewVectorType<Integer> pt_count_ = ViewVectorType<Integer>("pt_count",
 				nr_elements + 1); //TODO: try to use the results of the index_count avoiding the uniqueness of the map since the atomic lepp should avoid it.
 
-		ViewVectorType<bool> lepp_occupied = ViewVectorType<bool>(
-									"lepp_occupied_count", host_mesh->n_elements());
+		/*ViewVectorType<bool> lepp_occupied = ViewVectorType<bool>(
+									"lepp_occupied_count", host_mesh->n_elements());*/
+		lepp_occupied = ViewVectorType<bool>("lepp_occupied", host_mesh->n_elements());
+
 		Timer timer1;
 
 		parallel_for(nr_elements,
@@ -884,9 +934,10 @@ public:
 		Timer timer;
 
 		Integer nr_elements = elements.extent(0);
+		//reserve_tree(nr_elements);
 
-		ViewVectorType<bool> lepp_occupied = ViewVectorType<bool>("lepp_occupied_fill",
-				host_mesh->n_elements());
+		/*ViewVectorType<bool> lepp_occupied = ViewVectorType<bool>("lepp_occupied_fill",
+				host_mesh->n_elements());*/
 
 		parallel_for(nr_elements,
 				ScatterElem(edge_element_map_.mapping_, mesh, elements, tree_,
@@ -949,11 +1000,11 @@ public:
 
 		Timer timer;
 
-		if (it_count == 0)
+		//if (it_count == 0)
 			edge_node_map_.rehash_map(nr_active_elements);
 
-		//reserve_tree(host_mesh->n_elements());
-		edge_element_map_.reserve_map(nr_active_elements);
+		reserve_tree(nr_active_elements);
+		edge_element_map_.reserve_map(3*host_mesh->n_elements());
 		//precompute_lepp_incidents(mesh, active_elems);
 		edge_element_map_.update(mesh, active_elems);
 
@@ -1065,7 +1116,7 @@ private:
 	ParallelEdgeNodeMap edge_node_map_;
 
 	UnorderedMap<Integer,ElementVector> tree_;
-
+	ViewVectorType<bool> lepp_occupied;
 	//ViewVectorType<uint32_t> tree_;
 
 	/*std::vector<Integer> level;
