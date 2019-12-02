@@ -265,6 +265,12 @@ namespace mars {
 			mapping_.capacity();
 		}
 
+		Integer size()
+		{
+			mapping_.size();
+		}
+
+
 		UnorderedMap<Side<N,KokkosImplementation>,ElementVector> mapping_;
 		static Comb combinations;
 
