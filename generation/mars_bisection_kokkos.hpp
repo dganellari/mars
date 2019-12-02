@@ -528,6 +528,8 @@ public:
 			if (index >= 0)
 			{
 				compute_lepp(node, index, count, pt_count);
+			}else {
+				index = tree.find(node);
 			}
 
 			for (auto i = 0; i < tree.value_at(index).index; ++i)
@@ -609,18 +611,21 @@ public:
 		void depth_first(const Integer node) const
 		{
 			// Avoids lepp path collisions. If the value is alrady set to 1 the threads returns.
-		/*	if (!Kokkos::atomic_compare_exchange_strong(&this->lepp_occupied(node), true, false))
+			if (!Kokkos::atomic_compare_exchange_strong(&this->lepp_occupied(node), true, false))
 			{
 				return;
-			}*/
+			}
 
 			Integer index = is_leaf(node, this->mesh, this->tree);
 
 			if (index >= 0)
 			{
 				compute_lepp(node, index);
-			}else
-			//	std::cout<<"node with index -1: "<< node<<std::endl;
+			}
+			else
+			{
+				index = this->tree.find(node);
+			}
 
 			for (auto i = 0; i < this->tree.value_at(index).index; ++i)
 			{
@@ -1000,13 +1005,17 @@ public:
 
 		Timer timer;
 
-		//if (it_count == 0)
+		if (it_count == 0)
+		{
 			edge_node_map_.rehash_map(nr_active_elements);
+			reserve_tree(nr_active_elements);
 
-		reserve_tree(nr_active_elements);
-		edge_element_map_.reserve_map(3*host_mesh->n_elements());
-		//precompute_lepp_incidents(mesh, active_elems);
-		edge_element_map_.update(mesh, active_elems);
+			edge_element_map_.reserve_map(3*host_mesh->n_elements());
+			//precompute_lepp_incidents(mesh, active_elems);
+			edge_element_map_.update(mesh, active_elems);
+		}
+
+
 
 		double time = timer.seconds();
 		if (verbose)
