@@ -29,6 +29,7 @@ namespace mars {
 
 			ParallelBisection<Mesh> b(&mesh);
 			b.set_verbose(true);
+
 //			b.uniform_refine(1);
 
 			Integer exp_num = 0;

@@ -119,7 +119,6 @@ list(APPEND MARS_SOURCES
 	mars_communicator.cpp
 	mars_simplex.cpp
 	mars_test.cpp
-    generation/mars_edge_element_map_kokkos.cpp
 	)
 
 set(CMAKE_CXX_DEBUG "-g")

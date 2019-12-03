@@ -27,6 +27,7 @@ public:
 	using Point = mars::Point<Real,Dim>;
 	using SerialMesh = mars::Mesh<Dim_,ManifoldDim_>;
 	using Edge = mars::Side<2, KokkosImplementation>;
+	using Comb = Combinations<ManifoldDim + 1, 2, KokkosImplementation>;
 
 	MARS_INLINE_FUNCTION Mesh()
 		: ParallelIMesh<Dim_>()
@@ -34,6 +35,7 @@ public:
 		, points_size_(0)
 		, children_size_(0)
 		, sorted_elements_(false)
+		//, combinations(nullptr)
 	{}
 
 	void reserve(const std::size_t n_elements, const std::size_t n_points) override
@@ -83,7 +85,7 @@ public:
 	{
 		assert(id >= 0);
 		assert(id < n_elements());
-		Elem e = Elem(SubView<Integer,ManifoldDim+1>(elements_,id));
+		Elem e = Elem(SubView<Integer,ManifoldDim+1>(elements_,id), combinations);
 		e.id = id;
 		return e;
 	}
@@ -92,10 +94,32 @@ public:
 	{
 		assert(id >= 0);
 		assert(id < n_elements());
-		Elem e = Elem(SubView<Integer,ManifoldDim+1>(elements_,id));
+		Elem e = Elem(SubView<Integer,ManifoldDim+1>(elements_,id), combinations);
 		e.id = id;
 		return e;
 	}
+
+	/*MARS_INLINE_FUNCTION
+	Elem elem(const Integer id,
+			ViewMatrixTextureC<Integer, Comb::value, 2> combs)
+	{
+		assert(id >= 0);
+		assert(id < n_elements());
+		Elem e = Elem(SubView<Integer, ManifoldDim + 1>(elements_, id), combs);
+		e.id = id;
+		return e;
+	}
+
+	MARS_INLINE_FUNCTION
+	const Elem elem(const Integer id,
+			ViewMatrixTextureC<Integer, Comb::value, 2> combs) const
+	{
+		assert(id >= 0);
+		assert(id < n_elements());
+		Elem e = Elem(SubView<Integer, ManifoldDim + 1>(elements_, id), combs);
+		e.id = id;
+		return e;
+	}*/
 
 	MARS_INLINE_FUNCTION Elem elem(const Integer el_id, const Integer ch_id)// override
 	{
@@ -130,6 +154,18 @@ public:
 	MARS_INLINE_FUNCTION bool is_node_valid(const Integer id) const
 	{
 		return id >= 0 && id < n_nodes();
+	}
+
+	MARS_INLINE_FUNCTION
+	const ViewMatrixTextureC<Integer, Comb::value, 2> & combs() const
+	{
+		return combinations;
+	}
+
+	MARS_INLINE_FUNCTION
+	void set_combs(const ViewMatrixTextureC<Integer, Comb::value, 2>& c)
+	{
+		combinations = c;
 	}
 
 	 /* inline bool is_child(
@@ -1406,6 +1442,7 @@ public:
 		}
 
 private:
+	ViewMatrixTextureC<Integer, Comb::value, 2> combinations;
 
 	ViewMatrixType<Integer> elements_;
 	ViewMatrixType<Real> points_;
@@ -1417,8 +1454,6 @@ private:
 	ViewMatrixType<Integer> children_;
 
 	Integer children_size_;
-
-	//ViewVectorType<Elem> simplices_;
 
 	ViewVectorType<Integer> tags_;
 //	DualGraph<ManifoldDim> dual_graph_;

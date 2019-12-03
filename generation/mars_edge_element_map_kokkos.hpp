@@ -34,10 +34,6 @@ namespace mars {
 
 		using ElementVector = TempArray<Integer, limit>;
 
-		ParallelSubManifoldElementMap() {
-			combinations.initialize();
-		}
-
 		template<typename Elem>
 		MARS_INLINE_FUNCTION
 		static void update_elem(const UnorderedMap<Side<N,KokkosImplementation>,ElementVector>& mapping,
@@ -129,7 +125,7 @@ namespace mars {
 				const ViewVectorType<Integer> active_elems)
 		{
 			Kokkos::parallel_for(active_elems.extent(0),
-					UMapUpdate<Mesh_>(mapping_, mesh, active_elems, *combinations.combs));
+					UMapUpdate<Mesh_>(mapping_, mesh, active_elems, Comb::instance().combs));
 		}
 
 		/*template<Integer Dim, Integer ManifoldDim>
@@ -272,8 +268,6 @@ namespace mars {
 
 
 		UnorderedMap<Side<N,KokkosImplementation>,ElementVector> mapping_;
-		static Comb combinations;
-
 	};
 
 	/*class EdgeElementMap : public SubManifoldElementMap<2> {

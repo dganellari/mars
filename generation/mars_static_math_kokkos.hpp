@@ -20,7 +20,7 @@ namespace mars {
 		static MARS_INLINE_FUNCTION void apply(ViewMatrixTextureC<Integer, NChooseK, K> combs)
 		{
 			TempArray<Integer, K> data;
-			//std::cout << "Applying to combs" << std::endl;
+			//printf("Applying to combs\n");
 			Integer comb_index = 0;
 			apply(data, 0, 0, combs, comb_index);
 		}
@@ -40,8 +40,7 @@ namespace mars {
 				{
 					combs(comb_index,j) = data[j];
 				}
-				//std::cout << "Applying to combs with idx=" << comb_index << std::endl;
-
+				//printf("Applying to combs with idx=%li\n", comb_index);
 				++comb_index;
 				return;
 			}
@@ -68,7 +67,7 @@ namespace mars {
 
 	public:
 		static constexpr Integer value = Factorial<N>::value / (Factorial<ChooseM>::value * Factorial<N - ChooseM>::value);
-		ViewMatrixTextureC<Integer, value, ChooseM>* combs;
+		ViewMatrixTextureC<Integer, value, ChooseM> combs;
 
 		struct GenerateComb
 		{
@@ -86,31 +85,40 @@ namespace mars {
 			}
 		};
 
-
-		MARS_INLINE_FUNCTION Combinations()
-		  : combs(nullptr)
-		{}
-
-		MARS_INLINE_FUNCTION
-		void initialize() {
-			combs = new ViewMatrixTextureC<Integer, value, ChooseM>("combinations");
-			Kokkos::parallel_for(1, GenerateComb(*combs));
+		//reinitilize=false should only be used in the destructor of the bisection for deallocation of combs.
+		static Combinations& instance(bool reinitilize=true) {
+			static Combinations instance_;
+			if (instance_.combs.data() == nullptr && reinitilize) {
+				instance_.combs = ViewMatrixTextureC<Integer, value, ChooseM>("combs");
+				Kokkos::parallel_for(1, GenerateComb(instance_.combs));
+			}
+			return instance_;
 		}
 
 		template<typename T>
-		MARS_INLINE_FUNCTION void choose(const Integer k, const SubView<Integer,N>& in, T* out) const
+		MARS_INLINE_FUNCTION
+		static void choose(const Integer k, const SubView<Integer,N>& in, T* out)
 		{
 
 			assert(k < value);
 
 			for(Integer i = 0; i < ChooseM; ++i)
 			{
-				assert(combs->operator()(k,i) < N);
-				assert(combs->operator()(k,i) >= 0);
+				assert(instance().combs(k,i) < N);
+				assert(instance().combs(k,i) >= 0);
 
-				out[i] = in[combs->operator()(k,i)];
+				out[i] = in[instance().combs(k,i)];
 			}
 		}
+
+	private:
+		Combinations()
+		  : combs("combinations")
+		{
+			Kokkos::parallel_for(1, GenerateComb(combs));
+		}
+
+
 
 	};
 
