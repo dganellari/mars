@@ -21,13 +21,26 @@ public:
 	using ParallelEdgeElementMap = ParallelSubManifoldElementMap<2, Mesh::ManifoldDim>;
 	using ParallelEdgeNodeMap = DeviceEdgeNodeMap<2>;
 	using Edge = Side<2, KokkosImplementation>;
+	using Comb = Combinations<Mesh::ManifoldDim + 1, 2, KokkosImplementation>;
+	using CombView = ViewMatrixTextureC<Integer, Comb::value, 2>;
 
 	using ElementVector = typename ParallelEdgeElementMap::ElementVector;
 
 	static constexpr Integer Dim 		 = Mesh_::Dim;
 	static constexpr Integer ManifoldDim = Mesh_::ManifoldDim;
 
-	virtual ~ParallelBisection() {}
+	virtual ~ParallelBisection()
+	{
+		if (verbose)
+			std::cout
+					<< "Calling the ParallelBisection destructor to deallocate the composition singleton!"
+					<< std::endl;
+		//Not possible to call the destructor of the view since it will be called again
+		//Instead an empty view with data()=nullptr is assigned to it to avoid
+		//the deallocation of the static view after the kokkos initialize.
+		//Comb::instance().combs.~View();
+		Comb::instance(false).combs = decltype(Comb::instance().combs)();
+	}
 
 	ParallelBisection(Mesh *mesh)
 	: mesh(nullptr),
@@ -349,87 +362,15 @@ public:
 		lepp_occupied = ViewVectorType<bool>("lepp_occupied_fill", size);
 	}
 
-	/*void precompute_lepp_incidents(
+	void precompute_lepp_incidents(
 			Mesh_ *mesh,
 			const ViewVectorType<Integer> active_elems)
 	{
 
 		Kokkos::parallel_for(active_elems.extent(0),
 				BuildTree(edge_element_map_.mapping_, mesh, tree_, active_elems));
-	}*/
-
-
-	MARS_INLINE_FUNCTION
-	static bool is_terminal(const Integer map_index, const Edge& edge,
-			const ElementVector& incidents, Mesh *mesh,
-			const UnorderedMap<Integer, ElementVector>& tree)
-	{
-
-		bool terminal = true; //in case the elements share the longest edge or there is only one incident (itself)
-							  // - meaning the longest edge is on the boundary.
-
-		for (auto i = 0; i < incidents.index; ++i)
-		{
-			if (mesh->is_active(incidents[i]))
-			{
-				Edge new_edge;
-
-				EdgeSelect_ es;
-				const Integer edge_num = es.stable_select(*mesh, incidents[i]);
-				//const Integer edge_num = es.select(*mesh, edge, incidents[i]);
-
-				mesh->elem(incidents[i]).edge(edge_num, new_edge.nodes[0],
-						new_edge.nodes[1]);
-				new_edge.fix_ordering();
-
-				//	if(edge != tree.edges[i]){
-				if (edge != new_edge)
-				{
-					terminal = false;
-					//insert child in tree
-					auto result = tree.insert(incidents[i]);
-					if (result.failed())
-						printf("Exceeded UnorderedMap: lepp_incidents_map capacity\n");
-					tree.value_at(map_index).insert(incidents[i]);
-				}
-			}
-		}
-
-		return terminal;
 	}
 
-	MARS_INLINE_FUNCTION
-	static bool is_terminal(const Edge& edge,
-			const ElementVector& incidents, Mesh *mesh)
-	{
-
-		bool terminal = true; //in case the elements share the longest edge or there is only one incident (itself)
-							  // - meaning the longest edge is on the boundary.
-
-		for (auto i = 0; i < incidents.index; ++i)
-		{
-			if (mesh->is_active(incidents[i]))
-			{
-				Edge new_edge;
-
-				EdgeSelect_ es;
-				const Integer edge_num = es.stable_select(*mesh, incidents[i]);
-				//const Integer edge_num = es.select(*mesh, edge, incidents[i]);
-
-				mesh->elem(incidents[i]).edge(edge_num, new_edge.nodes[0],
-						new_edge.nodes[1]);
-				new_edge.fix_ordering();
-
-				//	if(edge != tree.edges[i]){
-				if (edge != new_edge)
-				{
-					terminal = false;
-				}
-			}
-		}
-
-		return terminal;
-	}
 
 	MARS_INLINE_FUNCTION
 	static Integer is_leaf(const Integer element_id, Mesh_ *mesh,
@@ -464,28 +405,68 @@ public:
 		ViewVectorType<Integer> index_count;
 		ViewVectorType<Integer> pt_count;
 
-		RefineMesh(
-				UnorderedMap<Edge, ElementVector> mp,
-				Mesh_* ms, ViewVectorType<Integer> elems,
-				UnorderedMap<Integer,ElementVector> tr, ViewVectorType<bool> lo,
-				ViewVectorType<Integer> ic, ViewVectorType<Integer> pc) :
+		CombView combs;
+
+		RefineMesh(UnorderedMap<Edge, ElementVector> mp, Mesh_* ms,
+				ViewVectorType<Integer> elems,
+				UnorderedMap<Integer, ElementVector> tr,
+				ViewVectorType<bool> lo, ViewVectorType<Integer> ic,
+				ViewVectorType<Integer> pc, CombView cmbs) :
 				mapping(mp), mesh(ms), elements(elems), tree(tr), lepp_occupied(
-						lo), index_count(ic), pt_count(pc)
+						lo), index_count(ic), pt_count(pc), combs(cmbs)
 		{
 		}
 
-		RefineMesh(
-				UnorderedMap<Edge, ElementVector> mp,
-				Mesh_* ms, ViewVectorType<Integer> elems,
-				UnorderedMap<Integer,ElementVector> tr, ViewVectorType<bool> lo) :
+		RefineMesh(UnorderedMap<Edge, ElementVector> mp, Mesh_* ms,
+				ViewVectorType<Integer> elems,
+				UnorderedMap<Integer, ElementVector> tr,
+				ViewVectorType<bool> lo, CombView cmbs) :
 				mapping(mp), mesh(ms), elements(elems), tree(tr), lepp_occupied(
-						lo)
+						lo), combs(cmbs)
 		{
 		}
-
 
 		MARS_INLINE_FUNCTION
-		void compute_lepp(const Integer element_id, const Integer map_index, Integer& count, Integer& pt_count) const
+		bool is_terminal(const Integer map_index, const Edge& edge,
+				const ElementVector& incidents) const
+		{
+
+			bool terminal = true; //in case the elements share the longest edge or there is only one incident (itself)
+								  // - meaning the longest edge is on the boundary.
+
+			for (auto i = 0; i < incidents.index; ++i)
+			{
+				if (mesh->is_active(incidents[i]))
+				{
+					Edge new_edge;
+
+					EdgeSelect_ es;
+					const Integer edge_num = es.stable_select(*mesh, incidents[i]);
+					//const Integer edge_num = es.select(*mesh, edge, incidents[i]);
+
+					mesh->elem(incidents[i]).edge(edge_num, new_edge.nodes[0],
+							new_edge.nodes[1]);
+					new_edge.fix_ordering();
+
+					//	if(edge != tree.edges[i]){
+					if (edge != new_edge)
+					{
+						terminal = false;
+						//insert child in tree
+						auto result = tree.insert(incidents[i]);
+						if (result.failed())
+							printf("Exceeded UnorderedMap: lepp_incidents_map capacity\n");
+						tree.value_at(map_index).insert(incidents[i]);
+					}
+				}
+			}
+
+			return terminal;
+		}
+
+		MARS_INLINE_FUNCTION
+		void compute_lepp(const Integer element_id, const Integer map_index,
+				Integer& count, Integer& pt_count) const
 		{
 
 			Edge edge;
@@ -493,7 +474,6 @@ public:
 			EdgeSelect_ es;
 			const Integer edge_num = es.stable_select(*mesh, element_id);
 			//const Integer edge_num = es.select(*mesh, edge, incidents[i]);
-
 			mesh->elem(element_id).edge(edge_num, edge.nodes[0],
 					edge.nodes[1]);
 			edge.fix_ordering();
@@ -501,7 +481,7 @@ public:
 			Integer index = mapping.find(edge);
 
 			if (is_terminal(map_index, mapping.key_at(index),
-					mapping.value_at(index), mesh, tree))
+					mapping.value_at(index)))
 			{
 				++pt_count;
 
@@ -565,14 +545,46 @@ public:
 	{
 		UnorderedMap<Integer, Edge> lepp_incidents_map;
 
-		ScatterElem(
-				UnorderedMap<Edge, ElementVector> mp,
-				Mesh_* ms, ViewVectorType<Integer> elems,
-				UnorderedMap<Integer,ElementVector> tr, ViewVectorType<bool> lo,
+		ScatterElem(UnorderedMap<Edge, ElementVector> mp, Mesh_* ms,
+				ViewVectorType<Integer> elems,
+				UnorderedMap<Integer, ElementVector> tr,
+				ViewVectorType<bool> lo, CombView cmbs,
 				UnorderedMap<Integer, Edge> lim) :
-				RefineMesh(mp, ms, elems, tr, lo),		// lepp_elem_index(lei),
+				RefineMesh(mp, ms, elems, tr, lo, cmbs),// lepp_elem_index(lei),
 				lepp_incidents_map(lim)
 		{
+		}
+
+		MARS_INLINE_FUNCTION
+		bool is_terminal(const Edge& edge, const ElementVector& incidents) const
+		{
+
+			bool terminal = true; //in case the elements share the longest edge or there is only one incident (itself)
+								  // - meaning the longest edge is on the boundary.
+
+			for (auto i = 0; i < incidents.index; ++i)
+			{
+				if (this->mesh->is_active(incidents[i]))
+				{
+					Edge new_edge;
+
+					EdgeSelect_ es;
+					const Integer edge_num = es.stable_select(*this->mesh, incidents[i]);
+					//const Integer edge_num = es.select(*mesh, edge, incidents[i]);
+
+					this->mesh->elem(incidents[i]).edge(edge_num, new_edge.nodes[0],
+							new_edge.nodes[1]);
+					new_edge.fix_ordering();
+
+					//	if(edge != tree.edges[i]){
+					if (edge != new_edge)
+					{
+						terminal = false;
+					}
+				}
+			}
+
+			return terminal;
 		}
 
 		MARS_INLINE_FUNCTION
@@ -590,7 +602,7 @@ public:
 
 			Integer index = this->mapping.find(edge);
 
-			if (is_terminal(this->mapping.key_at(index), this->mapping.value_at(index),  this->mesh))
+			if (is_terminal(this->mapping.key_at(index), this->mapping.value_at(index)))
 			{
 			//	lepp_elem_index(index_count(element_id,0)++) = element_id;
 				for (auto i = 0; i < this->mapping.value_at(index).index; ++i)
@@ -892,7 +904,7 @@ public:
 
 		parallel_for(nr_elements,
 				RefineMesh(edge_element_map_.mapping_, mesh, elements, tree_,
-						lepp_occupied, index_count_, pt_count_));
+						lepp_occupied, index_count_, pt_count_, Comb::instance().combs));
 
 		double time1 = timer1.seconds();
 		if (verbose)
@@ -946,7 +958,7 @@ public:
 
 		parallel_for(nr_elements,
 				ScatterElem(edge_element_map_.mapping_, mesh, elements, tree_,
-						lepp_occupied, lepp_incidents_map));
+						lepp_occupied,  Comb::instance().combs, lepp_incidents_map));
 
 		double time = timer.seconds();
 		if (verbose)
@@ -998,24 +1010,22 @@ public:
 	{
 		using namespace Kokkos;
 
-		ViewVectorType<Integer> active_elems = mark_active(mesh,
-				host_mesh->get_view_active(), host_mesh->n_elements());
-
-		const Integer nr_active_elements = active_elems.extent(0);
-
 		Timer timer;
 
 		if (it_count == 0)
 		{
-			edge_node_map_.rehash_map(nr_active_elements);
+			ViewVectorType<Integer> active_elems = mark_active(mesh,
+			host_mesh->get_view_active(), host_mesh->n_elements());
+
+			const Integer nr_active_elements = active_elems.extent(0);
+
+			edge_node_map_.reserve_map(nr_active_elements);
 			reserve_tree(nr_active_elements);
 
 			edge_element_map_.reserve_map(3*host_mesh->n_elements());
 			//precompute_lepp_incidents(mesh, active_elems);
 			edge_element_map_.update(mesh, active_elems);
 		}
-
-
 
 		double time = timer.seconds();
 		if (verbose)
@@ -1061,7 +1071,7 @@ public:
 			Timer timer1;
 
 			parallel_for(lip_size,
-					BisectElem(mesh, lepp_incident_index, *edge_element_map_.combinations.combs,
+					BisectElem(mesh, lepp_incident_index, Comb::instance().combs,
 							edge_element_map_.mapping_, edge_node_map_.mapping_,
 							verbose, elem_start_index, child_start_index,
 							node_start_index));
@@ -1084,6 +1094,7 @@ public:
 	{
 		if (edge_element_map_.empty())
 		{
+			host_mesh->set_combs(Comb::instance().combs);
 			copy_mesh_to_device();
 		}
 
@@ -1098,6 +1109,7 @@ public:
 
 		if (edge_element_map_.empty())
 		{
+			host_mesh->set_combs(Comb::instance().combs);
 			//const Integer capacity = 3*euler_graph_formula(host_mesh);
 			copy_mesh_to_device();
 		}
