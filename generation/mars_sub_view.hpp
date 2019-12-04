@@ -12,7 +12,7 @@ namespace mars {
 template<typename T, Integer Dim>
 class SubView {
 public:
-	ViewMatrixType<T> view;
+	const ViewMatrixType<T> *view; //to avoid the frequent view constructors calls. Subview is built very often.
 	Integer index;
 
 	MARS_INLINE_FUNCTION SubView()
@@ -20,7 +20,7 @@ public:
 
 	}
 
-	MARS_INLINE_FUNCTION SubView(const ViewMatrixType<T> &v, Integer id) :
+	MARS_INLINE_FUNCTION SubView(const ViewMatrixType<T> *v, Integer id) :
 			view(v), index(id)
 	{
 
@@ -30,7 +30,7 @@ public:
 	SubView operator+=(const SubView &right)
 	{
 		for(Integer i = 0; i < Dim; ++i) {
-			this->view(this->index,i) += right.view(right.index,i);
+		    (*this->view)(this->index,i) += right.view->operator()(right.index,i);
 		}
 
 		return *this;
@@ -39,7 +39,7 @@ public:
 	SubView operator*=(const T &right)
 	{
 		for(Integer i = 0; i < Dim; ++i) {
-			this->view(this->index,i) *= right.view(right.index,i);
+			(*this->view)(this->index,i) *= right;
 		}
 
 		return *this;
@@ -48,7 +48,7 @@ public:
 	SubView operator/=(const T &right)
 	{
 		for(Integer i = 0; i < Dim; ++i) {
-			this->view(this->index,i) /= right.view(right.index,i);
+			(*this->view)(this->index,i) /= right;
 		}
 
 		return *this;
@@ -57,32 +57,32 @@ public:
 	MARS_INLINE_FUNCTION T &operator()(const Integer i)
 	{
 		assert(i < Dim);
-		return this->view(this->index,i);
+		return (*this->view)(this->index,i);
 	}
 
 	MARS_INLINE_FUNCTION const T &operator()(const Integer i) const
 	{
 		assert(i < Dim);
-		return this->view(this->index,i);
+		return (*this->view)(this->index,i);
 	}
 
 	MARS_INLINE_FUNCTION T &operator[](const Integer i)
 	{
 		assert(i < Dim);
-		return this->view(this->index,i);
+		return (*this->view)(this->index,i);
 	}
 
 	MARS_INLINE_FUNCTION const T &operator[](const Integer i) const
 	{
 		assert(i < Dim);
-		return this->view(this->index,i);
+		return (*this->view)(this->index,i);
 	}
 
 
 	void describe(std::ostream &os) const
 	{
 		for(Integer i = 0; i < Dim; ++i) {
-			os << this->view(this->index,i) << " ";
+			os << (*this->view)(this->index,i) << " ";
 		}
 
 		os << "\n";
@@ -96,10 +96,10 @@ public:
 
 	MARS_INLINE_FUNCTION T squared_norm() const
 	{
-		T sqn = this->view(this->index,0) * this->view(this->index,0);
+		T sqn = (*this->view)(this->index,0) * (*this->view)(this->index,0);
 		for(Integer i = 1; i < Dim; ++i)
 		{
-			sqn += this->view(this->index,i) * this->view(this->index,i);
+			sqn += (*this->view)(this->index,i) * (*this->view)(this->index,i);
 		}
 
 		return sqn;
@@ -114,7 +114,7 @@ public:
 		T len = norm();
 
 		for(Integer i = 0; i < Dim; ++i) {
-			this->view(this->index,i) /= len;
+			(*this->view)(this->index,i) /= len;
 		}
 
 		return *this;
@@ -123,7 +123,7 @@ public:
 	MARS_INLINE_FUNCTION SubView &zero()
 	{
 		for(Integer i = 0; i < Dim; ++i) {
-			this->view(this->index,i) = 0;
+			(*this->view)(this->index,i) = 0;
 		}
 
 		return *this;
@@ -132,7 +132,7 @@ public:
 	MARS_INLINE_FUNCTION SubView &set(const T value)
 	{
 		for(Integer i = 0; i < Dim; ++i) {
-			this->view(this->index,i) = value;
+			(*this->view)(this->index,i) = value;
 		}
 
 		return *this;

@@ -160,6 +160,11 @@ namespace mars {
 	        return sqn;
 	    }
 
+	    inline T squared_distance(const Vector& right) const
+		{
+	    	return ((*this) - right).squared_norm();
+		}
+
 	    inline T norm() const
 	    {
 	        return std::sqrt(squared_norm());

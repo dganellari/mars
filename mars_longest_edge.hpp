@@ -28,6 +28,7 @@ namespace mars {
 				e.edge(i, v1, v2);
 
 				Real len_i = (mesh.point(v1) - mesh.point(v2)).squared_norm();
+				//Real len_i = mesh.point(v1).squared_distance(mesh.point(v2));
 
 				if(len_i > len) {
 					len = len_i;
@@ -55,7 +56,8 @@ namespace mars {
 				Integer v1, v2;
 				e.edge(i, v1, v2);
 
-				Real len_i = (mesh.point(v1) - mesh.point(v2)).squared_norm();
+//				Real len_i = (mesh.point(v1) - mesh.point(v2)).squared_norm();
+				Real len_i = mesh.point(v1).squared_distance(mesh.point(v2));
 
 				if (len_i == len)
 				{

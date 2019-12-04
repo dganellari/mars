@@ -122,6 +122,17 @@ public:
 	}
 
 	MARS_INLINE_FUNCTION
+	TempArray& operator/(const T &divident)
+	{
+		for (Integer i = 0; i < Dim; ++i)
+		{
+			(*this)(i) /= divident;
+		}
+
+		return *this;
+	}
+
+	MARS_INLINE_FUNCTION
 	TempArray& operator/=(const T &right)
 	{
 		for (Integer i = 0; i < Dim; ++i)

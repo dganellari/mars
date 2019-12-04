@@ -19,8 +19,7 @@ static bool in_hypersphere(const Mesh_* mesh, const Integer element_id,
 
 		for(Integer i=0; i<Mesh_::ManifoldDim+1; ++i){
 
-			Point<Real, Mesh_::Dim> pt_center(center);
-			auto dir = mesh->point(e.nodes[i]) - pt_center;
+			auto dir = mesh->point(e.nodes[i]) - center;
 			auto d = dir.norm();
 
 			if(d < radius) {
