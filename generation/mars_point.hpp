@@ -14,36 +14,23 @@ public:
 
 	MARS_INLINE_FUNCTION Point()
 	{
-
 	}
 
 	MARS_INLINE_FUNCTION Point(SubView<T, Dim> pv) :
 			pointView(pv)
 	{
-		temp_ = false;
 	}
 
 	MARS_INLINE_FUNCTION Point(const ViewMatrixType<T>& v, Integer id) :
-			Point(SubView<T, Dim>(v, id))
+			Point(SubView<T, Dim>(&v, id))
 	{
-
 	}
 
-	MARS_INLINE_FUNCTION Point(ViewVectorTypeC<T, Dim> v)
-	{
-		for(Integer i=0; i<Dim; ++i){
-			pointArray[i] = v(i);
-		}
-	}
 
 	MARS_INLINE_FUNCTION
 	T &operator[](const Integer i)
 	{
 		assert(i < Dim);
-
-		if (temp_)
-			return this->pointArray[i];
-
 		return this->pointView[i];
 	}
 
@@ -51,17 +38,13 @@ public:
 	const T &operator[](const Integer i) const
 	{
 		assert(i < Dim);
-
-		if (temp_)
-			return this->pointArray[i];
-
 		return this->pointView[i];
 	}
 
 	MARS_INLINE_FUNCTION
-	Point operator-(const Point &right) const
+	TempArray<T,Dim> operator-(const Point &right) const
 	{
-		Point ret;
+		TempArray<T,Dim> ret;
 		for (Integer i = 0; i < Dim; ++i)
 		{
 			ret[i] = this->operator[](i) - right[i];
@@ -71,22 +54,46 @@ public:
 	}
 
 	MARS_INLINE_FUNCTION
-	Point operator+(const Point &right) const
+	TempArray<T,Dim> operator-(const TempArray<T,Dim>  &right) const
 	{
-		Point ret;
+		TempArray<T,Dim> ret;
 		for (Integer i = 0; i < Dim; ++i)
 		{
-			ret[i] = this->operator[](i) + right[i];
-
+			ret[i] = this->operator[](i) - right[i];
 		}
 
 		return ret;
 	}
 
 	MARS_INLINE_FUNCTION
-	Point operator*(const Point &right) const
+	TempArray<T,Dim> operator-(const ViewVectorTypeC<T, Dim>& right) const
 	{
-		Point ret;
+		TempArray<T,Dim> ret;
+		for (Integer i = 0; i < Dim; ++i)
+		{
+			ret[i] = this->operator[](i) - right(i);
+		}
+
+		return ret;
+	}
+
+	MARS_INLINE_FUNCTION
+	TempArray<T,Dim> operator+(const Point &right) const
+	{
+		TempArray<T,Dim> ret;
+		for (Integer i = 0; i < Dim; ++i)
+		{
+			ret[i] = this->operator[](i) + right[i];
+		}
+
+		return ret;
+	}
+
+
+	MARS_INLINE_FUNCTION
+	TempArray<T,Dim> operator*(const Point &right) const
+	{
+		TempArray<T,Dim> ret;
 		for (Integer i = 0; i < Dim; ++i)
 		{
 			ret[i] = this->operator[](i) * right[i];
@@ -106,7 +113,7 @@ public:
 		return *this;
 	}
 
-	//just for the purpose of the stable select. Stable on the coordinates comp.
+	//just for the sake of the stable select. Stable on the coordinates comp.
 	MARS_INLINE_FUNCTION
 	bool operator<(const Point &right) const
 	{
@@ -121,22 +128,37 @@ public:
 		return false;
 	}
 
-	/*
-	 void describe(std::ostream &os) const
-	 {
-	 for (Integer i = 0; i < Dim; ++i)
-	 {
-	 os << this->view(this->index, i) << " ";
-	 }
+	/*MARS_INLINE_FUNCTION
+	T squared_norm(const Point& right) const
+	{
+		T tmp[Dim];
 
-	 os << "\n";
-	 }
+		for (Integer i = 0; i < Dim; ++i)
+		{
+			tmp[i] = this->operator[](i) - right[i];
+		}
 
-	 friend std::ostream &operator<<(std::ostream &os, const SubView &v)
-	 {
-	 v.describe(os);
-	 return os;
-	 }*/
+		T sqn = tmp[0] * tmp[0];
+		for (Integer i = 1; i < Dim; ++i)
+		{
+			sqn += tmp[i] * tmp[i];
+		}
+
+		return sqn;
+	}*/
+
+	MARS_INLINE_FUNCTION
+	T squared_distance(const Point& right) const
+	{
+		T sqn = (this->operator[](0) - right[0])
+				* (this->operator[](0) - right[0]);
+		for (Integer i = 1; i < Dim; ++i)
+		{
+			sqn += (this->operator[](i) - right[i])
+					* (this->operator[](i) - right[i]);
+		}
+		return sqn;
+	}
 
 	MARS_INLINE_FUNCTION
 	T squared_norm() const
@@ -169,21 +191,9 @@ public:
 		return *this;
 	}
 
-	bool is_temp() const
-	{
-		return temp_;
-	}
-
-	void set_temp(bool temp = false)
-	{
-		temp_ = temp;
-	}
 
 private:
 	SubView<T, Dim> pointView;
-	TempArray<T, Dim> pointArray;
-	bool temp_ = true;
-
 };
 
 }

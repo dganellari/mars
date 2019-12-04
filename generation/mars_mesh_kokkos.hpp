@@ -85,7 +85,7 @@ public:
 	{
 		assert(id >= 0);
 		assert(id < n_elements());
-		Elem e = Elem(SubView<Integer,ManifoldDim+1>(elements_,id), combinations);
+		Elem e = Elem(SubView<Integer,ManifoldDim+1>(&elements_,id), combinations);
 		e.id = id;
 		return e;
 	}
@@ -94,7 +94,7 @@ public:
 	{
 		assert(id >= 0);
 		assert(id < n_elements());
-		Elem e = Elem(SubView<Integer,ManifoldDim+1>(elements_,id), combinations);
+		Elem e = Elem(SubView<Integer,ManifoldDim+1>(&elements_,id), combinations);
 		e.id = id;
 		return e;
 	}
@@ -125,7 +125,7 @@ public:
 	{
 		assert(el_id >= 0 && ch_id >=0);
 		assert(el_id < n_elements()); // no assert for the children since children nr is not yet updated.
-		Elem e = Elem(SubView<Integer,ManifoldDim+1>(elements_,el_id), SubView<Integer,2>(children_,ch_id));
+		Elem e = Elem(SubView<Integer,ManifoldDim+1>(&elements_,el_id), SubView<Integer,2>(&children_,ch_id));
 		e.id = el_id;
 		return e;
 	}
@@ -134,7 +134,7 @@ public:
 	{
 		assert(el_id >= 0 && ch_id >=0);
 		assert(el_id < n_elements()); // no assert for the children since children nr is not yet updated.
-		Elem e = Elem(SubView<Integer,ManifoldDim+1>(elements_,el_id), SubView<Integer,2>(children_,ch_id));
+		Elem e = Elem(SubView<Integer,ManifoldDim+1>(&elements_,el_id), SubView<Integer,2>(&children_,ch_id));
 		e.id = el_id;
 		return e;
 	}
@@ -189,6 +189,15 @@ public:
 
 	MARS_INLINE_FUNCTION
 	void add_point(const Point &point, const Integer index)
+	{
+		for (Integer i = 0; i < Dim; ++i)
+		{
+			points_(index, i) = point[i];
+		}
+	}
+
+	MARS_INLINE_FUNCTION
+	void add_point(const TempArray<Real, Dim> &point, const Integer index)
 	{
 		for (Integer i = 0; i < Dim; ++i)
 		{
