@@ -51,24 +51,12 @@ namespace mars {
 					nodes[j] = e.nodes[combs(i,j)];
 				}
 
-				auto result= mapping.insert(Side<N, KokkosImplementation>(nodes));
-				//auto result= mapping.find(Side<N, KokkosImplementation>(nodes));
+				auto result= mapping.find(Side<N, KokkosImplementation>(nodes));
 
-				if(!result.failed())
-				{
-					auto &vec = mapping.value_at(result.index());
-					vec.insert(e.id);
-				}
-				else
-				{
-					printf("Edge Element Map: Exceeded UnorderedMap capacity\n");
-					//TODO: handle the case of failure insert. GO to the host for rehash.
-				}
-
-				/*if(mapping.valid_at(result)){
+				if(mapping.valid_at(result)){
 					auto &vec = mapping.value_at(result);
 					vec.insert(e.id);
-				}*/
+				}
 			}
 		}
 

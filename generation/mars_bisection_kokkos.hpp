@@ -320,12 +320,11 @@ public:
 	{
 		Mesh_* mesh;
 		UnorderedMap<Edge,ElementVector> mapping;
-		ViewVectorType<uint32_t> tree;
 		ViewVectorType<Integer> active_elems;
 
 		BuildTree(UnorderedMap<Edge, ElementVector> mp,
-				Mesh_* ms, ViewVectorType<uint32_t> tr, ViewVectorType<Integer> ae) :
-			mapping(mp), mesh(ms), tree(tr), active_elems(ae)
+				Mesh_* ms, ViewVectorType<Integer> ae) :
+			mapping(mp), mesh(ms), active_elems(ae)
 		{
 		}
 
@@ -345,9 +344,7 @@ public:
 
 			auto result = mapping.insert(edge);
 
-			if(!result.failed())
-				tree(element_id) = result.index();
-			else
+			if(result.failed())
 				printf("Edge Element Map: Exceeded UnorderedMap capacity\n");
 		}
 	};
@@ -368,7 +365,7 @@ public:
 	{
 
 		Kokkos::parallel_for(active_elems.extent(0),
-				BuildTree(edge_element_map_.mapping_, mesh, tree_, active_elems));
+				BuildTree(edge_element_map_.mapping_, mesh, active_elems));
 	}
 
 
@@ -1022,8 +1019,8 @@ public:
 			edge_node_map_.reserve_map(nr_active_elements);
 			reserve_tree(nr_active_elements);
 
-			edge_element_map_.reserve_map(3*host_mesh->n_elements());
-			//precompute_lepp_incidents(mesh, active_elems);
+			edge_element_map_.reserve_map(2*nr_active_elements);
+			precompute_lepp_incidents(mesh, active_elems);
 			edge_element_map_.update(mesh, active_elems);
 		}
 
