@@ -705,6 +705,22 @@ public:
 		}
 
 		MARS_INLINE_FUNCTION
+		void edge_index_in_elem(const SubView<Integer, ManifoldDim + 1> &nodes,
+			const Integer v1, const Integer v2,
+			TempArray<Integer,2> &opposite_nodes) const
+		{
+			Integer i = 0;
+			for (Integer j=0;j<   ManifoldDim + 1; ++j)
+			{
+				Integer n = nodes[j];
+				if (n == v1 || n == v2)
+				{
+					opposite_nodes[i++] = j;
+				}
+			}
+		}
+
+		MARS_INLINE_FUNCTION
 		void update_elem(Integer elem_new_id) const
 		{
 /*
@@ -716,23 +732,24 @@ public:
 
 		MARS_INLINE_FUNCTION
 		void add_new_elem(const Integer elem_new_id, Elem& old_el,
-				const Integer midpoint,const Integer v,
-				const TempArray<Integer, ManifoldDim - 1>& opposite_nodes) const
+				const Integer nodes_new_id, const Integer index) const
 		{
 
 			Elem new_el = mesh->elem(elem_new_id);
 			new_el.parent_id = old_el.id;
 
-			for (Integer i = 0; i < ManifoldDim - 1; ++i)
+			//in order to keep the counterclockwise ordering of the element nodes.
+			for (Integer i = 0; i < ManifoldDim + 1; ++i)
 			{
-				new_el.nodes[2 + i] = opposite_nodes[i];
+				if (i == index)
+					new_el.nodes[i] = nodes_new_id;
+				else
+					new_el.nodes[i] = old_el.nodes[i];
 			}
 
-			new_el.nodes[0] = midpoint;
-			new_el.nodes[1] = v;
-
 			mesh->set_active(elem_new_id);
-			ParallelEdgeElementMap::update_elem(edge_element_map, new_el, combs);
+			ParallelEdgeElementMap::update_elem(edge_element_map, new_el,
+					combs);
 			new_el.block = old_el.block;
 		}
 
@@ -782,13 +799,13 @@ public:
 
 			Elem old_el = mesh->elem(element_id, childrens_id);
 
-			TempArray<Integer, ManifoldDim - 1> opposite_nodes;
-			other_nodes(old_el.nodes, v1, v2, opposite_nodes);
+			TempArray<Integer, 2> edge_indices;
+			edge_index_in_elem(old_el.nodes, v1, v2, edge_indices);
 
-			add_new_elem(elem_new_id, old_el, nodes_new_id, v1, opposite_nodes);
+			add_new_elem(elem_new_id, old_el, nodes_new_id, edge_indices[0]);
 			old_el.children(0) = elem_new_id;
 
-			add_new_elem(++elem_new_id, old_el, nodes_new_id, v2, opposite_nodes);
+			add_new_elem(++elem_new_id, old_el, nodes_new_id, edge_indices[1]);
 			old_el.children(1) = elem_new_id;
 		}
 	};
