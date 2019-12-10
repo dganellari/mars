@@ -43,7 +43,7 @@ public Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>>
     using UniqueElementFunctionSpacesTupleType=GetType<RemoveTupleDuplicates< TupleCatType< typename TestOrTrialLeft::UniqueElementFunctionSpacesTupleType,
                                                                                             typename TestOrTrialRight::UniqueElementFunctionSpacesTupleType  >>,0>;               
     using TupleFunctionSpace=RemoveTupleDuplicates< TupleCatType< typename IsTestOrTrial<Left>::TupleFunctionSpace,
-                                                             typename IsTestOrTrial<Right>::TupleFunctionSpace  >>;               
+                                                                  typename IsTestOrTrial<Right>::TupleFunctionSpace  >>;               
     
     using FunctionSpace=GetType<TupleFunctionSpace,0>;
 
@@ -52,6 +52,13 @@ public Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>>
 
     template<typename TupleOfSpacesAux,typename TestTrialNumbersAux,Integer N>
     class ClassAux;
+
+    template<typename TupleOfSpacesAux,typename TestTrialNumbersAux>
+    class ClassAux<TupleOfSpacesAux,TestTrialNumbersAux,0>
+    {
+    public:
+      using type=std::tuple<Real>;
+    };
 
     template<typename TupleOfSpacesAux,typename TestTrialNumbersAux>
     class ClassAux<TupleOfSpacesAux,TestTrialNumbersAux,1>
@@ -97,7 +104,7 @@ public Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>>
     right_(l2prod.derived().right()),
     product_(Inner(left_,right_)),
     label_(label),
-    spaces_ptr_(find_spaces_ptr<FunctionSpace>(left_*right_))
+    spaces_ptr_(l2prod.spaces_ptr())//find_spaces_ptr<FunctionSpace>(left_*right_))
     {}
 
      auto spaces_ptr()     {return spaces_ptr_;}

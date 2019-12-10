@@ -93,7 +93,7 @@ class Assignment<QPValues<S,NQPoints>>
         // Assignment<S>::apply(A[ii],B[ii]);
 
         // Assignment<T>::apply(A[ii],B[ii]);
-        std::cout<<"Assignment<QPValues<T,NQPoints>> "<<A<<" "<<B<<std::endl;
+        // std::cout<<"Assignment<QPValues<T,NQPoints>> "<<A<<" "<<B<<std::endl;
       // }
   };
 

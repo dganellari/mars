@@ -1369,6 +1369,15 @@ public:
    class ClassL2DotProductIntegralAux;
 
    template<bool VolumeIntegral,typename FunctionSpace,typename TestTrialNumbers>
+   class ClassL2DotProductIntegralAux<VolumeIntegral,FunctionSpace,TestTrialNumbers,Number<0>>   
+   {
+   public:
+   using type=Matrix<Real,1,1>;
+   };
+
+
+
+   template<bool VolumeIntegral,typename FunctionSpace,typename TestTrialNumbers>
    class ClassL2DotProductIntegralAux<VolumeIntegral,FunctionSpace,TestTrialNumbers,Number<1>>   
    {
    public:

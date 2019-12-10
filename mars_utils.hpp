@@ -75,7 +75,7 @@ namespace mars {
 
 			for(Integer k = 0; k < n_sides(e); ++k) {
                     
-
+                std::cout<<"elem="<<i<< "    adj[k]="<<adj[k]<<std::endl;
 				if(adj[k] == INVALID_INDEX) {
 					e.side(k, side);
 					auto n = normal(side, mesh.points());
@@ -88,7 +88,8 @@ namespace mars {
 							tag = Dim + (d+1);
 						}
 					}
-                    
+					std::cout<<"n="<<n<<std::endl;
+                    std::cout<<"k="<<k<<"   tag="<<tag<<std::endl;
 
 					e.side_tags[k] = tag;
 

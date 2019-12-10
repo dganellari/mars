@@ -192,7 +192,11 @@ namespace mars {
 
                         //              nodes[0] = i * offset + j;
                         //              nodes[1] = (i + 1) * offset + (j + 1); //just to write it clearer
-                        nodes[2] = (i + 1) * offset + j;
+                        // BUG TODO FIXME: IF WE TAKE THIS, ELEMENTS ARE NOT COUNTERCLOCkWISE
+                        // nodes[2] = (i + 1) * offset + j;
+
+                        nodes[2] = nodes[1];
+                        nodes[1] = (i + 1) * offset + j;
 
                         mesh.add_elem(nodes);
 

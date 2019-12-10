@@ -38,7 +38,7 @@ class Addition
    for(Integer ii=0;ii<Left::Rows;ii++)
     for(Integer jj=0;jj<Left::Cols;jj++)
            A(ii,jj)=B(ii,jj)+C(ii,jj);
-    std::cout<<"after AdditionMatrixAndTransposedAux<Transposed"<<std::endl;
+    // std::cout<<"after AdditionMatrixAndTransposedAux<Transposed"<<std::endl;
 
         // AdditionMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
   };
@@ -50,7 +50,7 @@ class Addition
    for(Integer ii=0;ii<Left::Rows;ii++)
     for(Integer jj=0;jj<Left::Cols;jj++)
            A(ii,jj)+=B(ii,jj);
-    std::cout<<"after AdditionMatrixAndTransposedAux<Transposed"<<std::endl;
+    // std::cout<<"after AdditionMatrixAndTransposedAux<Transposed"<<std::endl;
 
         // AdditionMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
   };

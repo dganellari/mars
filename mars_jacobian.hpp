@@ -122,6 +122,24 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
 
   constexpr auto & v0()const {return v0_;}
 
+  // constexpr auto Matrix<Real,Dim,1>& transform_point(const Matrix<Real,Dim,1>& Point)const 
+  // {
+
+  //   return v0_;
+  // }
+
+  constexpr void transform_point(Vector<Real,Dim>& mat_transformed_point_, const Matrix<Real,Dim,1>& Point) const
+  {
+    for(Integer i=0; i<Dim;i++)
+     {
+       mat_transformed_point_[i]=v0_[i];
+       for(Integer j=0;j<J_.cols();j++)
+        mat_transformed_point_[i]+=J_(i,j)*Point[j];
+     }  
+
+    // return mat_transformed_point_;
+  }
+
 
 
   constexpr auto get_det()   const {return detJ_;}
@@ -170,6 +188,9 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
   Matrix<Real, Dim, ManifoldDim> J_;
   Real detJ_;
   Real volume_;
+  Matrix<Real,Dim,1> mat_transformed_point_;
+  Vector<Real,Dim> vec_transformed_point_;
+
   
   Integer n_sides_;
   Integer side_id_;
@@ -182,6 +203,8 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
   Real side_volume_;
   Vector<Real, Dim> v0_;
   std::shared_ptr<Mesh<Dim,ManifoldDim>> mesh_ptr_;
+
+
 
 };
 

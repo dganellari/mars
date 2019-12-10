@@ -17,12 +17,12 @@ class UnaryPlus
  template<typename Output>
  inline static void apply(Output& A,const T& B)
   {
-    std::cout<<"pre UnaryPlusMatrixAndTransposedAux<Transposed"<<std::endl;
+    // std::cout<<"pre UnaryPlusMatrixAndTransposedAux<Transposed"<<std::endl;
    for(Integer ii=0;ii<T::Rows;ii++)
     for(Integer jj=0;jj<T::Cols;jj++)
            A(ii,jj)=B(ii,jj);
-    std::cout<<A<<B<<std::endl;
-    std::cout<<"after UnaryPlusMatrixAndTransposedAux<Transposed"<<std::endl;
+    // std::cout<<A<<B<<std::endl;
+    // std::cout<<"after UnaryPlusMatrixAndTransposedAux<Transposed"<<std::endl;
   };
 
 

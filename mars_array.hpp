@@ -293,6 +293,80 @@ constexpr auto subarray(Array<S,Dim>&u , const std::vector<S>&v,const Array<T,Di
 //     return Jmat;
 // }
 
+
+template<Integer N,Integer M>
+constexpr auto cumulative_array
+(const Array<Integer, N>& t1,const Array<Integer, M>& t2)
+{
+   // std::cout<<"cumulative_array "<<std::endl;
+   // std::cout<<"t1 = "<<t1<<std::endl;
+   // std::cout<<"t2 = "<<t2<<std::endl;
+
+   Array<Integer, N+1> t3;
+
+   for(Integer i=0;i<t2[0];i++)
+      {
+       t3[i]= 0;
+      }
+   Integer cont=t2[0];
+   Integer dofs_count=t1[0];
+   for(Integer i=1;i<t2.size();i++)
+      {
+        // std::cout<<" i == "<<i<<std::endl;
+       for(Integer j=0;j<t2[i];j++)
+          {
+           t3[cont]=dofs_count;
+           cont++;}
+        // std::cout<<" dofs_count == "<<dofs_count<<std::endl;
+        // std::cout<<" i == "<<i<<std::endl;
+        // std::cout<<" t3 == "<<t3<<std::endl;
+        // std::cout<<" cont == "<<cont<<std::endl;
+        // std::cout<<" t1[cont] == "<<t1[cont]<<std::endl;
+        dofs_count+=t1[cont-1];
+      }
+  //  t3[0]= 0;
+  // for(Integer ii=0;ii<N;ii++)
+  // { if(t2[ii])
+  //   t3[ii+1]=t3[ii]+t1[ii];
+  //   else
+  //   t3[ii+1]=t3[ii];
+  // }
+  // std::cout<<"t3 = "<<t3<<std::endl;
+  return t3;
+}
+
+template<Integer N,Integer M>
+constexpr auto cumulative_array_and_zero
+(const Array<Integer, N>& t1,const Array<Integer, M>& t2)
+{
+
+  Array<Integer, N+M> t3;
+
+  for(Integer ii=0;ii<N;ii++)
+       t3[ii]=t1[ii];
+
+  for(Integer ii=N-1;ii<N+M+1;ii++)
+       t3[ii+1]=0;
+
+  return t3;
+}
+
+// template<Integer N,Integer M>
+// constexpr auto cumulative_array_and_zero
+// (const Array<Integer, N>& t1,const Array<Integer, M>& t2)
+// {
+//   Array<Integer, N+M+1> t3;
+//   t3[0]= 0;
+//   for(Integer ii=0;ii<N;ii++)
+//        t3[ii+1]=t3[ii]+t1[ii];
+
+//   for(Integer ii=N-1;ii<N+M+1;ii++)
+//        t3[ii+1]=0;
+
+//   return t3;
+// }
+
+
 }
 
 #endif //MARS_Array_HPP

@@ -10,16 +10,35 @@ template<typename...Parameters>
 class Evaluation;
 
 template<typename...OtherTemplateArguments, typename T>
-constexpr auto Eval(const T& t){return Evaluation< Expression<remove_all_t<decltype(t)>>,OtherTemplateArguments...>(t);}
+constexpr auto Eval(const T& t)
+{
+    // std::cout<<" <<<<<<<<<EVAL 1>>>>>>>>>>>> "<<std::endl;
+
+  return Evaluation< Expression<remove_all_t<decltype(t)>>,OtherTemplateArguments...>(t);}
 
 // first parameter is an expression, while the others input are utils 
 template<typename...OtherTemplateArguments,typename T,typename ...Ts>
-constexpr auto Eval(const T& t,const Ts&...ts){return Evaluation< Expression<remove_all_t<decltype(t)>>,
-                                                                              remove_all_t<decltype(ts)>...,OtherTemplateArguments... >(t,ts...);}
+constexpr auto Eval(const T& t,const Ts&...ts)
+{
+      // std::cout<<" <<<<<<<<<EVAL 1>>>>>>>>>>>> "<<std::endl;
+
+  return Evaluation< Expression<remove_all_t<decltype(t)>>,remove_all_t<decltype(ts)>...,OtherTemplateArguments... >(t,ts...);}
 
 template<typename...OtherTemplateArguments,typename T,typename ...Ts>
-constexpr auto Eval(const T& t, Ts&...ts){return Evaluation< Expression<remove_all_t<decltype(t)>>,
-                                                                         remove_all_t<decltype(ts)>...,OtherTemplateArguments... >(t,ts...);}
+constexpr auto Eval(const T& t, Ts&...ts)
+{
+  // std::cout<<" <<<<<<<<<EVAL 1>>>>>>>>>>>> "<<std::endl;
+  return Evaluation< Expression<remove_all_t<decltype(t)>>,remove_all_t<decltype(ts)>...,OtherTemplateArguments... >(t,ts...);}
+
+// template<typename...Ts>
+// class ShapeFunctionsCollection;
+
+// template<typename Form, typename GeneralForm_, typename...GeneralForms>
+// constexpr auto Eval(const GeneralForm<Form>& form, ShapeFunctionsCollection<GeneralForm_,GeneralForms...>& shapes)
+// {
+//     return Evaluation<Expression<GeneralForm<Form>>,ShapeFunctionsCollection<GeneralForm_,GeneralForms...> >(form,shapes);}
+
+
 
 
 
@@ -58,9 +77,9 @@ class Evaluation<Expression<Binary< Expression<DerivedLeft>  ,
   eval_right_.apply(right_value_,inputs...);
   OperatorApply<Binary<subtypeleft,subtyperight>>::apply(output,left_value_,right_value_);
 
-  std::cout<<"left_value= "<<left_value_<<std::endl;
-  std::cout<<"right_value_= "<<right_value_<<std::endl;
-  std::cout<<"Evaluation<Expression<Binary "<<output<<std::endl;
+  // std::cout<<"----------------left_value= "<<left_value_<<std::endl;
+  // std::cout<<"----------------right_value_= "<<right_value_<<std::endl;
+  // std::cout<<"Evaluation<Expression<Binary "<<output<<std::endl;
 
  }
 

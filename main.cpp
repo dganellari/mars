@@ -1248,20 +1248,37 @@ Integer N=2;
 Kokkos::View<Real **[3][4]> aaa("aaa",M,N);
 
 // Kokkos::CrsMatrix<Real,4> aaa("aaa",M,N);
-for(int i1=0;i1<M;i1++)
-	for(int i2=0;i2<N;i2++)
-		for(int i3=0;i3<3;i3++)
-			for(int i4=0;i4<4;i4++)
-				aaa(i1,i2,i3,i4)=i1*i2*i3*i4;
+// for(int i1=0;i1<M;i1++)
+// 	for(int i2=0;i2<N;i2++)
+// 		for(int i3=0;i3<3;i3++)
+// 			for(int i4=0;i4<4;i4++)
+// 				aaa(i1,i2,i3,i4)=i1*i2*i3*i4;
 
-for(int i1=0;i1<M;i1++)
-	for(int i2=0;i2<N;i2++)
-		for(int i3=0;i3<3;i3++)
-			for(int i4=0;i4<4;i4++)
-				std::cout<<aaa(i1,i2,i3,i4)<<std::endl;
+// for(int i1=0;i1<M;i1++)
+// 	for(int i2=0;i2<N;i2++)
+// 		for(int i3=0;i3<3;i3++)
+// 			for(int i4=0;i4<4;i4++)
+// 				std::cout<<aaa(i1,i2,i3,i4)<<std::endl;
 
-assembly_example();
-
+// assembly_example();
+// LSFEM_Poisson3D();
+// LSFEM_Poisson2D_RT0_P1();
+// LSFEM_Poisson2D_RT1_P2();
+// Poisson_Lagrange<2,1>(10);
+// Poisson_Lagrange<2,2>(10);
+// Poisson_Lagrange<3,1>(10);
+// Poisson_Lagrange<3,2>(10);
+//// 2D RT0 P1
+// LSFEM_Poisson<2,0,1>(30);
+//// 2D RT1 P2
+// LSFEM_Poisson<2,1,2>(15);
+//// 3D RT0 P1
+// LSFEM_Poisson<3,0,1>(6);
+//// 3D RT1 P2
+LSFEM_Poisson<3,1,2>(10);
+// std::cout<< FunctionSpaceDofsPerElem<ElemFunctionSpace<Simplex<3,3>,RT1<1>>>::value <<std::endl;
+// Poisson3D_P1(4);
+// Poisson2D_P2();
 // boundary_example();
 		// run_benchmarks(level);
 

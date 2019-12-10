@@ -171,8 +171,8 @@ class IsTestOrTrial<Function<FullSpace,N,Operator_,FuncType>>{
 public:
   using Elem=typename FullSpace::Elem;
   using Operator=std::tuple<Operator_>;
-  using TupleFunctionSpace=std::tuple<>;
-  using UniqueElementFunctionSpacesTupleType=std::tuple<>;
+  using TupleFunctionSpace=std::tuple<FullSpace>;
+  using UniqueElementFunctionSpacesTupleType=std::tuple<typename FullSpace::UniqueElementFunctionSpacesTupleType>;
   using type=std::tuple<Number<0>>;
   static constexpr Integer value=-1;
   static constexpr Integer number=-1;
@@ -426,7 +426,13 @@ public:
   using type=std::tuple<Number<LeftSpaceNumber>>;
 };
 
-
+template<Integer M1,Integer M2, Integer N1,Integer N2>
+class FormTestTrialNumbers<0,M1,M2,N1,N2>
+{
+public:
+  // using type=std::tuple<>;
+  using type=std::tuple<Number<0>>;
+};
 
 
 
@@ -934,6 +940,14 @@ template<typename FunctionSpace, typename T>
 std::shared_ptr<FunctionSpace> find_spaces_ptr(const T& t)
 {
  return std::shared_ptr<FunctionSpace>(nullptr);
+}
+
+
+
+template<typename FunctionSpace, typename FullSpace,Integer N,typename Operator_, typename FuncType>
+std::shared_ptr<FunctionSpace> find_spaces_ptr(const Function<FullSpace,N,Operator_,FuncType>& t)
+{
+ return t.spaces_ptr();
 }
 
 

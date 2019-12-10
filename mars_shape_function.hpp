@@ -27,37 +27,54 @@ namespace mars{
 //     return (T(0) < val) - (val < T(0));
 // }
 // returns the order of the indeces of the sorted v
-template <typename T>
-T argsort(const T &v) {
-    // initialize original index locations
-    T idx;
-    std::iota(idx.begin(), idx.end(), 0);
-    // sort indexes based on comparing values in v
-    std::sort(idx.begin(), idx.end(),
-              [&v](size_t i1, size_t i2) {return v[i1] < v[i2];});
+// template <typename T>
+// T argsort(const T &v) {
+//     // initialize original index locations
+//     T idx;
+//     std::iota(idx.begin(), idx.end(), 0);
+//     // sort indexes based on comparing values in v
+//     std::sort(idx.begin(), idx.end(),
+//               [&v](size_t i1, size_t i2) {return v[i1] < v[i2];});
     
-    return idx;
-}
-// returns v, resorted based on index 
-template <typename T, typename S>
-T sort_by_index(const T &v,const S& index) {
-    T sortv;
-    assert(index.size()==v.size() && "sort_by_index: v and index must have the same length, otherwise last elements in v are not initialized");
-    for(Integer ii=0;ii<index.size();ii++)
-        sortv[ii]=v[index[ii]];
-    return sortv;
-}
-// returns the sub array of v of indices = index
-template <typename S,std::size_t SDim, typename T,std::size_t TDim>
-std::array<S,TDim> sub_array(const std::array<S,SDim> &v,const std::array<T,TDim>& index) {
+//     return idx;
+// }
+
+// // template <typename T>
+// // void argsort(T& idx,const T &v) {
+// //     // initialize original index locations
+// //     std::iota(idx.begin(), idx.end(), 0);
+// //     // sort indexes based on comparing values in v
+// //     std::sort(idx.begin(), idx.end(),
+// //               [&v](size_t i1, size_t i2) {return v[i1] < v[i2];});
     
-    static_assert(TDim<=SDim,"in sub_array the length of the index vector must be smaller than the one of the vector");
-    std::array<S,TDim> subvec;
-    for(Integer ii=0;ii<TDim;ii++)
-        subvec[ii]=v[index[ii]];
+// // }
+// // template <typename T>
+// // T argsort(const T &v) {
+// //     T idx;
+// //     argsort(idx,v);
+// //     return idx;
+// // }
+
+// // returns v, resorted based on index 
+// template <typename T, typename S>
+// T sort_by_index(const T &v,const S& index) {
+//     T sortv;
+//     assert(index.size()==v.size() && "sort_by_index: v and index must have the same length, otherwise last elements in v are not initialized");
+//     for(Integer ii=0;ii<index.size();ii++)
+//         sortv[ii]=v[index[ii]];
+//     return sortv;
+// }
+// // returns the sub array of v of indices = index
+// template <typename S,std::size_t SDim, typename T,std::size_t TDim>
+// std::array<S,TDim> sub_array(const std::array<S,SDim> &v,const std::array<T,TDim>& index) {
     
-    return subvec;
-}
+//     static_assert(TDim<=SDim,"in sub_array the length of the index vector must be smaller than the one of the vector");
+//     std::array<S,TDim> subvec;
+//     for(Integer ii=0;ii<TDim;ii++)
+//         subvec[ii]=v[index[ii]];
+    
+//     return subvec;
+// }
 
 
 
@@ -132,10 +149,10 @@ public:
 
             elempoint_mean=elempoints_sort.Tmean();
 
-                std::cout<<"--------- first  elempoint_mean"<<std::endl;
-                for(Integer i=0;i<elempoint_mean.size();i++)
-                  std::cout<<elempoint_mean[i]<<" "<<std::endl;
-                std::cout<<std::endl;
+                // std::cout<<"--------- first  elempoint_mean"<<std::endl;
+                // for(Integer i=0;i<elempoint_mean.size();i++)
+                //   std::cout<<elempoint_mean[i]<<" "<<std::endl;
+                // std::cout<<std::endl;
 
 
 
@@ -359,25 +376,25 @@ public:
         
         for(Integer ee=0;ee<normal_.size();ee++)
         {
-            std::cout<<std::endl<<"ELEMENT ID == "<<ee<<" WITH NODES"<<std::endl;
+            // std::cout<<std::endl<<"ELEMENT ID == "<<ee<<" WITH NODES"<<std::endl;
             Elem elem=mesh.elem(ee);
             nodes=elem.nodes;
-            for(Integer mm=0;mm<ManifoldDim+1;mm++)
-                std::cout<< nodes[mm] <<" ";
-            for(Integer mm=0;mm<ManifoldDim+1;mm++)
-                std::cout<< mesh.points()[nodes[mm]] <<" ";
-            std::cout<<std::endl;
+            // for(Integer mm=0;mm<ManifoldDim+1;mm++)
+            //     std::cout<< nodes[mm] <<" ";
+            // for(Integer mm=0;mm<ManifoldDim+1;mm++)
+            //     std::cout<< mesh.points()[nodes[mm]] <<" ";
+            // std::cout<<std::endl;
             
             for(Integer mm=0;mm<ManifoldDim+1;mm++)
             {
                 Combinations<ManifoldDim + 1,ManifoldDim>::generate(mm,facenodes_carray);
                 std::copy(std::begin(facenodes_carray), std::end(facenodes_carray), std::begin(facenodes_local));
-                std::cout<<"facenodes_local== "<<std::endl;
-                for(Integer ii=0;ii<ManifoldDim;ii++)
-                    std::cout<<facenodes_local[ii]<<" ";
-                std::cout<<"normal== ";
-                normal_[ee][mm].describe(std::cout);
-                std::cout<<"outward/inward(+1/-1)== "<<outward_[ee][mm]<<std::endl;
+                // std::cout<<"facenodes_local== "<<std::endl;
+                // for(Integer ii=0;ii<ManifoldDim;ii++)
+                //     std::cout<<facenodes_local[ii]<<" ";
+                // std::cout<<"normal== ";
+                // normal_[ee][mm].describe(std::cout);
+                // std::cout<<"outward/inward(+1/-1)== "<<outward_[ee][mm]<<std::endl;
             }
         }
     }
@@ -1221,8 +1238,37 @@ static constexpr Vector<Matrix<Real,2,1>,3> LinearTrianglePoints({0.0,0.0},
 static constexpr Vector<Matrix<Real,3,1>,4> LinearTetrahedronPoints({0.0,0.0,0.0},
                                                                     {1.0,0.0,0.0},
                                                                     {0.0,1.0,0.0},
-                                                                    {1.0,1.0,1.0});
-
+                                                                    {0.0,0.0,1.0});
+template<Integer ManifoldDim>
+class LinearSimplex
+{
+ public:
+ constexpr static auto points()
+ {
+  Matrix<Real,ManifoldDim+1,ManifoldDim+1> mat;
+  for(Integer i=0;i<ManifoldDim+1;i++)
+      {
+       for(Integer j=0;j<ManifoldDim+1;j++)
+          {
+            if(i==j)
+                mat(i,j)=1.0;
+            else
+                mat(i,j)=0.0;
+          }       
+      }
+  return mat;
+ }
+ constexpr static auto barycenter()
+ {
+  Vector<Real,ManifoldDim> vec;
+   for(Integer i=0;i<ManifoldDim;i++)
+      {
+                vec(i)=1.0/(ManifoldDim+1);      
+      } 
+   return vec;
+ }
+ 
+};
 // static constexpr Vector<Integer,3> LinearTetrahedronOrdering{0,1,2,3};
 
 static constexpr Vector<Matrix<Real,2,1>,6> QuadraticTrianglePoints({0.0,0.0},
@@ -1237,7 +1283,7 @@ static constexpr Vector<Matrix<Real,2,1>,6> QuadraticTrianglePoints({0.0,0.0},
 static constexpr Vector<Matrix<Real,3,1>,10> QuadraticTetrahedronPoints( {0.0,0.0,0.0},
                                                                          {1.0,0.0,0.0},
                                                                          {0.0,1.0,0.0},
-                                                                         {1.0,1.0,1.0},
+                                                                         {0.0,0.0,1.0},
                                                                          {0.5,0.0,0.0},
                                                                          {0.5,0.5,0.0},
                                                                          {0.0,0.5,0.0},
@@ -1248,10 +1294,10 @@ static constexpr Vector<Matrix<Real,3,1>,10> QuadraticTetrahedronPoints( {0.0,0.
 // static constexpr Vector<Integer,3> QuadraticTetrahedronOrderingg{0,1,2,3,4, 5,4};
 
 template<typename Elem,Integer Order>
-class ElemPoints2;
+class ElemGeometricPoints;
 
 template<Integer Dim>
-class ElemPoints2<Simplex<Dim,2>,1>
+class ElemGeometricPoints<Simplex<Dim,2>,1>
 {
 public:
   static constexpr auto points=LinearTrianglePoints;
@@ -1259,7 +1305,7 @@ public:
 };
 
 template<Integer Dim>
-class ElemPoints2<Simplex<Dim,2>,2>
+class ElemGeometricPoints<Simplex<Dim,2>,2>
 {
 public:
   static constexpr auto points=QuadraticTrianglePoints;
@@ -1268,7 +1314,7 @@ public:
 
 
 template<Integer Dim>
-class ElemPoints2<Simplex<Dim,3>,1>
+class ElemGeometricPoints<Simplex<Dim,3>,1>
 {
 public:
   static constexpr auto points=LinearTetrahedronPoints;
@@ -1276,7 +1322,7 @@ public:
 };
 
 template<Integer Dim>
-class ElemPoints2<Simplex<Dim,3>,2>
+class ElemGeometricPoints<Simplex<Dim,3>,2>
 {
 public:
   static constexpr auto points=QuadraticTetrahedronPoints;
@@ -1362,6 +1408,104 @@ class DofsPoints;
 
 template<typename DofsPoints_>
 class DofsPointsType;
+
+
+template<Integer EntityDim, typename...Ts>
+class DofsOrdering;
+template<Integer EntityDim, typename...Ts>
+class DofsOrdered;
+
+template<Integer EntityDim,typename Elem,Integer FEFamily,Integer Order,Integer Continuity,Integer NComponents>
+class DofsOrdering<EntityDim,ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>>
+{
+public:
+
+    static constexpr bool must_reorder=false; 
+    template<typename T,typename...Ts>
+    static auto value(const T&t,const Ts&...ts)
+    {
+        // std::cout<<"DofsOrdering GENERAL"<<std::endl;
+
+
+        return t;
+    }
+
+
+};
+
+template<Integer EntityDim,typename Elem,Integer FEFamily,Integer Order,Integer Continuity,Integer NComponents>
+class DofsOrdered<EntityDim,ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>>
+{
+public:
+static constexpr auto entity_points=EntityDim+1;
+
+    
+    template<typename Input>
+    static auto local_dofs(const Input ordered, const Integer local_dof_count)
+    {
+     Integer cont=0;
+     Array<Integer,NComponents*entity_points> result;
+     
+     for(Integer ii=0;ii<entity_points;ii++)
+     {
+        for(Integer cc=0;cc<NComponents;cc++)
+           {result[ordered[ii]*NComponents+cc]=local_dof_count+cont;
+            cont++;}
+
+     }
+
+     return result;
+    }
+};   
+// case 2d triangolo con 6 dofs per faccia
+/// Allora dovrei avere un array che mi contiene
+// n0 n1 n2 n3 n4 n5 ma ordinati in base 
+
+
+template <Integer Dim,Integer ManifoldDim,Integer Continuity, Integer NComponents>
+class DofsOrdering<ManifoldDim-1,ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Continuity,NComponents>>
+{ 
+public:
+ using Elem=Simplex<Dim,ManifoldDim>;
+ using FunctionSpace=ElementFunctionSpace<Elem,RaviartThomasFE,1,Continuity,NComponents>;
+ static constexpr bool must_reorder=true; 
+ static constexpr auto entity_dim=ManifoldDim-1;
+ // static constexpr auto dofs_per_entity=FunctionSpace::dofs_per_entity[N];
+ static constexpr auto entity_points=entity_dim+1;
+ static constexpr auto manifold_points=ManifoldDim+1;
+ static constexpr auto combinations_nums=ElemEntityCombinations<Elem,entity_dim>::value;
+    
+    template<std::size_t N>
+    static auto value(const std::array<Integer,N>&nodes, Integer entity_iter)
+    {
+     Integer local_nodes[entity_points];
+     std::array<Integer,entity_points> face_nodes;
+     Combinations<manifold_points,entity_points>::generate(entity_iter,local_nodes);
+     // std::cout<<"DofsOrdering"<<std::endl;
+
+     for(std::size_t i=0;i<entity_points;i++)
+          {
+            face_nodes[i]=nodes[local_nodes[i]];
+            // std::cout<<face_nodes[i]<<" ";
+          }
+     // std::cout<<std::endl;
+
+     auto ordered_face_nodes=argsort(face_nodes);
+
+     // for(std::size_t i=0;i<ordered_face_nodes.size();i++)
+     //      {
+     //        std::cout<<ordered_face_nodes[i]<<" ";
+     //      }
+     // std::cout<<std::endl;
+
+
+
+
+     return ordered_face_nodes;
+    }
+
+};
+
 
 template<typename Elem,typename Operator,Integer FEFamily,Integer Order>
 class DofsPointsType<DofsPoints<Elem,Operator,FEFamily,Order>>
@@ -1673,9 +1817,58 @@ constexpr auto NumberOfLagrangianSimplexDofs()
     return static_cast<Integer>(N);
 }
 
+template<Integer ManifoldDim >
+constexpr auto NumberOfRaviartThomas0SimplexDofs()
+{
+    return static_cast<Integer>(ManifoldDim+1);
+}
 
+template<Integer Order >
+constexpr auto NumberOfRaviartThomasSimplex2Dofs()
+{
+    return static_cast<Integer>((Order+1)*(Order+3));
+}
 
+template<Integer Order >
+constexpr auto NumberOfRaviartThomasSimplex3Dofs()
+{
+    return static_cast<Integer>(0.5*(Order+1)*(Order+2)*(Order+4));
+}
 
+template<Integer ManifoldDim,Integer Order >
+constexpr auto NumberOfRaviartThomasSimplexDofs()
+{
+    if(Order==0)
+      return NumberOfRaviartThomas0SimplexDofs<ManifoldDim>();
+    else if(ManifoldDim==2)
+      return NumberOfRaviartThomasSimplex2Dofs<Order>();
+    else if(ManifoldDim==3)
+      return NumberOfRaviartThomasSimplex3Dofs<Order>();
+    else
+      return static_cast<Integer>(-1);
+   
+}
+
+template<Integer Dim, Integer ManifoldDim>
+class SimplexRT1Coefficient
+{
+public:
+
+    using OutputRT0=typename ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 0>::Output;
+    static constexpr auto barycenter=LinearSimplex<ManifoldDim>::barycenter();
+    
+    static constexpr auto value()
+    {
+        OutputRT0 rt0barycenter;
+        ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 0>::apply(barycenter,rt0barycenter);
+        Matrix<Real,ManifoldDim,ManifoldDim> mat;
+
+        for(Integer i=0;i<ManifoldDim;i++)
+           for(Integer j=0;j<ManifoldDim;j++)
+               mat(i,j)=rt0barycenter[j](i,0);
+        return mat;
+    }
+};
 //////////////////////////////////////////////////////
 ////////        SIMPLEX - IDENTITY - P0       ////////
 //////////////////////////////////////////////////////
@@ -1985,79 +2178,136 @@ apply(const Vector<Real,ManifoldDim>& point, Output & func)
 //////////////////////////////////////////////////////
 ////////        SIMPLEX - GRADIENT - P2       ////////
 //////////////////////////////////////////////////////
-template<Integer Dim>
-class ReferenceShapeFunctionValue<Simplex<Dim,1>, GradientOperator, LagrangeFE, 2>
-{
- public: 
-  using Output=Vector<Matrix<Real, 1, 1>,3>;
-constexpr inline static void 
-apply(const Vector<Real,1>& point, Output & func)
-{
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,1>, GradientOperator, LagrangeFE, 2>
+// {
+//  public: 
+//   using Output=Vector<Matrix<Real, 1, 1>,3>;
+// constexpr inline static void 
+// apply(const Vector<Real,1>& point, Output & func)
+// {
 
-    Output func2({4 * point[0] - 3},           
-                 {4 - 8 * point[0]}, 
-                 {4 * point[0] - 1});
-    func=func2;
-}
-};
+//     Output func2({4 * point[0] - 3},           
+//                  {4 - 8 * point[0]}, 
+//                  {4 * point[0] - 1});
+//     func=func2;
+// }
+// };
 
-template<Integer Dim>
-class ReferenceShapeFunctionValue<Simplex<Dim,2>, GradientOperator, LagrangeFE, 2>
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,2>, GradientOperator, LagrangeFE, 2>
+// {
+// public:
+//   using Output=Vector<Matrix<Real, 2, 1>,6>;
+// constexpr inline static void 
+// apply(const Vector<Real,2>& point, Output & func)
+// {
+//     const auto& xi=point[0];
+//     const auto& eta=point[1];
+//     const Real zeta = 1. - xi - eta;
+//     const Real dxi_dxi    = 1.;
+//     const Real deta_deta  = 1.;
+//     const Real dzeta_dxi  = -1.;
+//     const Real dzeta_deta = -1.;
+//     Output func2({2.*zeta*dzeta_dxi  + 2*dzeta_dxi *(zeta-0.5), 2.*zeta*dzeta_deta + 2*dzeta_deta*(zeta-0.5)},
+//                  {2.*xi*dxi_dxi  + 2.*dxi_dxi *(xi-0.5),0},
+//                  {0,2.*eta*deta_deta + 2.*deta_deta*(eta-0.5)},
+//                  {4.*(dxi_dxi * zeta + xi * dzeta_dxi),4. * xi * dzeta_deta},
+//                  {4. * eta * dzeta_dxi,4. * (deta_deta * zeta + eta * dzeta_deta)},
+//                  {4 * eta, 4 * xi});
+    
+//     func=func2;
+//   }
+// };
+
+
+
+// template<Integer Dim>
+// class ReferenceShapeFunctionValue<Simplex<Dim,3>, GradientOperator, LagrangeFE, 2>
+// {
+// public:
+//   using Output=Vector<Matrix<Real, 3, 1>,10>;
+// constexpr inline static void 
+// apply(const Vector<Real,3>& point, Output & func)
+// {
+//     const auto& x0=point[0];
+//     const auto& x1=point[1];
+//     const auto& x2=point[1];
+
+//     Output func2({4*x0 + 4*x1 + 4*x2 - 3, 4*x0 + 4*x1 + 4*x2 - 3, 4*x0 + 4*x1 + 4*x2 - 3},
+//                  {4*x0 - 1,0,0},
+//                  {0,4*x1 - 1,0},
+//                  {0,0,4*x2 - 1},
+//                  {4 - 4*x1 - 4*x2 - 8*x0,-4*x0,-4*x0},
+//                  {-4*x1, 4 - 8*x1 - 4*x2 - 4*x0,-4*x1},
+//                  {-4*x2,-4*x2, 4 - 4*x1 - 8*x2 - 4*x0},
+//                  {4*x1,4*x0,0},
+//                  {4*x2,0,4*x0},
+//                  {0,4*x2,4*x1});
+    
+//     func=func2;
+//   }
+// };
+
+
+template<Integer Dim,Integer ManifoldDim>
+class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, GradientOperator, LagrangeFE, 2>
 {
 public:
-  using Output=Vector<Matrix<Real, 2, 1>,6>;
-constexpr inline static void 
-apply(const Vector<Real,2>& point, Output & func)
-{
-    const auto& xi=point[0];
-    const auto& eta=point[1];
-    const Real zeta = 1. - xi - eta;
-    const Real dxi_dxi    = 1.;
-    const Real deta_deta  = 1.;
-    const Real dzeta_dxi  = -1.;
-    const Real dzeta_deta = -1.;
-    Output func2({2.*zeta*dzeta_dxi  + 2*dzeta_dxi *(zeta-0.5), 2.*zeta*dzeta_deta + 2*dzeta_deta*(zeta-0.5)},
-                 {2.*xi*dxi_dxi  + 2.*dxi_dxi *(xi-0.5),0},
-                 {0,2.*eta*deta_deta + 2.*deta_deta*(eta-0.5)},
-                 {4.*(dxi_dxi * zeta + xi * dzeta_dxi),4. * xi * dzeta_deta},
-                 {4. * eta * dzeta_dxi,4. * (deta_deta * zeta + eta * dzeta_deta)},
-                 {4 * eta, 4 * xi});
-    
-    func=func2;
+ static constexpr Integer Ndofs=NumberOfLagrangianSimplexDofs<ManifoldDim,2>();
+ using Output=Vector<Matrix<Real, ManifoldDim, 1>,Ndofs>;
+ constexpr inline static void 
+ apply(const Vector<Real,ManifoldDim>& point, Output & func)
+ {
+   // set all elements to zero
+   for(Integer i=0;i<Ndofs;i++)
+    for(Integer j=0;j<ManifoldDim;j++)
+        func[i](j,0)=0.0;
+
+    Real tmp=-3.0;
+    for(Integer i=0;i<ManifoldDim;i++)
+        tmp+=4.0*point[i];
+
+    // set the 0-row=[4 x0 + 4 x1 + 4 x2...-3,4 x0 + 4 x1 + 4 x2...-3... ]
+    for(Integer j=0;j<ManifoldDim;j++)
+        func[0](j,0)=tmp;
+
+    // set row 1...ManifoldDim
+    for(Integer i=0;i<ManifoldDim;i++)
+        func[i+1](i,0)=4*point[i]-1;    
+
+    tmp=4.0;
+    for(Integer i=0;i<ManifoldDim;i++)
+        tmp-=4*point[i];
+
+    // set row ManifoldDim+1...2*ManifoldDim+1
+    for(Integer i=0;i<ManifoldDim;i++)
+        for(Integer j=0;j<ManifoldDim;j++)
+            func[ManifoldDim+1+i](j,0)=-4*point[i];  
+
+    for(Integer i=0;i<ManifoldDim;i++)
+        func[ManifoldDim+1+i](i,0)=tmp-4*point[i];  
+
+    Integer cont=0;
+    for(Integer i=0;i<ManifoldDim-1;i++)
+        {for(Integer j=i+1;j<ManifoldDim;j++)
+           {
+            for(Integer k=0;k<ManifoldDim;k++)
+            {
+                if(k==j)
+                    func[2*ManifoldDim+1+cont](k,0)=4*point[i];
+                else if(k==i)
+                    func[2*ManifoldDim+1+cont](k,0)=4*point[j];
+                else
+                    func[2*ManifoldDim+1+cont](k,0)=0.0;
+            }
+            cont++;
+           }
+         
+        }
+
   }
 };
-
-
-
-template<Integer Dim>
-class ReferenceShapeFunctionValue<Simplex<Dim,3>, GradientOperator, LagrangeFE, 2>
-{
-public:
-  using Output=Vector<Matrix<Real, 3, 1>,10>;
-constexpr inline static void 
-apply(const Vector<Real,2>& point, Output & func)
-{
-    const auto& x0=point[0];
-    const auto& x1=point[1];
-    const auto& x2=point[1];
-
-    Output func2({4*x0 + 4*x1 + 4*x2 - 3, 4*x0 + 4*x1 + 4*x2 - 3, 4*x0 + 4*x1 + 4*x2 - 3},
-                 {4*x0 - 1,0,0},
-                 {0,4*x1 - 1,0},
-                 {0,0,4*x2 - 1},
-                 {4 - 4*x1 - 4*x2 - 8*x0,-4*x0,-4*x0},
-                 {-4*x1, 4 - 8*x1 - 4*x2 - 4*x0,-4*x1},
-                 {-4*x2,-4*x2, 4 - 4*x1 - 8*x2 - 4*x0},
-                 {4*x1,4*x0,0},
-                 {4*x2,0,4*x0},
-                 {0,4*x2,4*x1});
-    
-    func=func2;
-  }
-};
-
-
-
 
 
 
@@ -2204,40 +2454,15 @@ class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, TraceOperator, Lagra
 ////////        SIMPLEX - IDENTITY - RT0          ////////
 //////////////////////////////////////////////////////////
 
-template<Integer ManifoldDim>
-constexpr auto SimplexRT0Identity(const Vector<Real,ManifoldDim>& point)
-{
-    Vector<Matrix<Real, ManifoldDim, 1>,ManifoldDim+1> output;
-    // loop on shape functions
-    for(Integer i=0;i<ManifoldDim+1;i++)
-        // loop on dimension
-        for(Integer j=0;j<ManifoldDim;j++)
-           output[i](j,0)=point[j];
 
-    for(Integer i=0;i<ManifoldDim;i++)
-        // loop on dimension
-        for(Integer j=0;j<ManifoldDim;j++)
-            if(j==ManifoldDim-1-i)
-               output[i](j,0)-=1;   
- 
- return output;
-
-}
-// {
-// public:
-//   using Output=Vector<Matrix<Real, 1, 1>,3>;
-// constexpr inline static void 
-// apply(const Vector<Real,2>& point, Output & func)
-// {
-//     Output func2{{2},{2},{2}};
-//     func=func2;
-// }
-// };
 template<Integer Dim,Integer ManifoldDim>
 class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 0>
 {
 public:
-  using Output=Vector<Matrix<Real, ManifoldDim, 1>,ManifoldDim+1>;
+ static constexpr Integer Ndofs=NumberOfRaviartThomasSimplexDofs<ManifoldDim,0>();
+ using Output=Vector<Matrix<Real, ManifoldDim, 1>,Ndofs>;
+
+  // using Output=Vector<Matrix<Real, ManifoldDim, 1>,ManifoldDim+1>;
  constexpr inline static void 
  apply(const Vector<Real,ManifoldDim>& point, Output & func)
 {
@@ -2245,7 +2470,19 @@ public:
     // const auto& eta=point[1];
     // Output func2{{xi,eta-1},{xi-1,eta},{xi,eta}};
     // func=func2;
-    func=SimplexRT0Identity(point);
+    // loop on shape functions
+    for(Integer i=0;i<ManifoldDim+1;i++)
+        // loop on dimension
+        for(Integer j=0;j<ManifoldDim;j++)
+           func[i](j,0)=point[j];
+
+    for(Integer i=0;i<ManifoldDim;i++)
+        // loop on dimension
+        for(Integer j=0;j<ManifoldDim;j++)
+            if(j==ManifoldDim-1-i)
+               func[i](j,0)-=1; 
+
+    // func=SimplexRT0Identity(point);
 }
 
 };
@@ -2328,7 +2565,9 @@ template<Integer Dim,Integer ManifoldDim>
 class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, DivergenceOperator, RaviartThomasFE, 0>
 {
 public:
-  using Output=Vector<Matrix<Real, 1, 1>,ManifoldDim+1>;
+ static constexpr Integer Ndofs=NumberOfRaviartThomasSimplexDofs<ManifoldDim,0>();
+ using Output=Vector<Matrix<Real, 1, 1>,Ndofs>;
+  // using Output=Vector<Matrix<Real, 1, 1>,ManifoldDim+1>;
 constexpr inline static void 
 apply(const Vector<Real,ManifoldDim>& point, Output & func)
 {
@@ -2338,33 +2577,97 @@ apply(const Vector<Real,ManifoldDim>& point, Output & func)
 };
 
 
-template<Integer Dim>
-class ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 1>
+template<Integer Dim,Integer ManifoldDim>
+class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 1>
 {
 public:
-  using Output=Vector<Matrix<Real, 2, 1>,8>;
-  using OutputRT0=typename ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 0>::Output;
-  using OutputP1=typename ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 1>::Output;
-constexpr inline static void 
-apply (const Vector<Real,2>& point, Output & func)
-{
-    const auto& xi=point[0];
-    const auto& eta=point[1];
-    OutputRT0 rt0;
-    OutputP1 p1;
-    ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 0>::apply(point,rt0);
-    ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 1>::apply(point,p1);
-    
-    const auto& rt0_0x=rt0[0](0,0);
-    const auto& rt0_0y=rt0[0](1,0);
-    const auto& rt0_1x=rt0[1](0,0);
-    const auto& rt0_1y=rt0[1](1,0);
-    const auto& rt0_2x=rt0[2](0,0);
-    const auto& rt0_2y=rt0[2](1,0);
+  static constexpr Integer Order=1;
+  // static constexpr Integer ManifoldDim=2;
+  static constexpr Integer Ndofs=NumberOfRaviartThomasSimplexDofs<ManifoldDim,1>();
+  static constexpr Integer RT0Ndofs=NumberOfRaviartThomasSimplexDofs<ManifoldDim,0>();
+  static constexpr Integer PnNdofs=NumberOfLagrangianSimplexDofs<ManifoldDim,Order>();
+  using Output=Vector<Matrix<Real, ManifoldDim, 1>,Ndofs>;
+  // using Output=Vector<Matrix<Real, 1, 1>,ManifoldDim+1>;
+  // using Output=Vector<Matrix<Real, 2, 1>,8>;
+  using OutputRT0=typename ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 0>::Output;
+  using OutputP1=typename ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 1>::Output;
+  // static constexpr auto barycenter=LinearSimplex<ManifoldDim>::barycenter();
+  static constexpr auto mat_coeffs=SimplexRT1Coefficient<Dim,ManifoldDim>::value();
 
-    const auto& p1_0=p1[0](0,0);
-    const auto& p1_1=p1[1](0,0);
-    const auto& p1_2=p1[2](0,0);
+constexpr inline static void 
+apply (const Vector<Real,ManifoldDim>& point, Output & func)
+{
+
+
+    OutputRT0 rt0;//, rt0barycenter;
+    OutputP1 p1;
+    ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 0>::apply(point,rt0);
+    ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 1>::apply(point,p1);
+    
+    // // const auto& rt0_0x=rt0[0](0,0);
+    // // const auto& rt0_0y=rt0[0](1,0);
+    // // const auto& rt0_1x=rt0[1](0,0);
+    // // const auto& rt0_1y=rt0[1](1,0);
+    // // const auto& rt0_2x=rt0[2](0,0);
+    // // const auto& rt0_2y=rt0[2](1,0);
+
+    // // const auto& p1_0=p1[0](0,0);
+    // // const auto& p1_1=p1[1](0,0);
+    // // const auto& p1_2=p1[2](0,0);
+
+    Integer cont=0;
+    // loop on RT0 functions
+    for(Integer i=0;i<RT0Ndofs;i++)
+      // loop on dimension
+      for(Integer j=0;j<ManifoldDim;j++)
+        {
+        // loop on dimension
+        for(Integer k=0;k<ManifoldDim;k++)
+           func[cont](k,0)=rt0[i](k); 
+         cont++;
+         }
+    cont=0;
+
+    for(Integer i=0;i<RT0Ndofs;i++)
+      // loop on dimension
+      for(Integer j=0;j<PnNdofs;j++)
+        {
+        // loop on dimension
+        if(j!=ManifoldDim-i)
+        {for(Integer k=0;k<ManifoldDim;k++)
+           func[cont](k,0)=func[cont](k,0)*p1[j](0,0); 
+         cont++;
+         }
+         }
+
+
+
+    // // the i-th column represents the coefficients of the i-th momenta shape function
+    // // auto inv_mat=inverse(mat);
+    for(Integer i=0;i<ManifoldDim;i++)
+        for(Integer j=0;j<ManifoldDim;j++)
+            {
+                func[cont+i](j,0)=0;
+                for(Integer k=0;k<ManifoldDim;k++)
+                   func[cont+i](j,0)+=mat_coeffs(k,i)*rt0[ManifoldDim-k](j,0)*p1[k](0,0);
+            }
+
+
+    // Vector<Real,ManifoldDim> coeff;
+    
+
+    // mat(0,0)=rt0barycenter[0](0,0);
+    // mat(1,0)=rt0barycenter[0](1,0);
+    // mat(0,1)=rt0barycenter[1](0,0);
+    // mat(1,1)=rt0barycenter[1](1,0);
+
+        // for(Integer i=0;i<ManifoldDim;i++)
+    //     // loop on dimension
+    //     for(Integer j=0;j<ManifoldDim;j++)
+    //         if(j==ManifoldDim-1-i)
+    //            func[i](j,0)-=1; 
+
+
 
     // Output func2{ {rt0_0x * p1_0, rt0_0y * p1_0  },
     //               {rt0_0x * p1_1, rt0_0y * p1_1  },
@@ -2380,25 +2683,117 @@ apply (const Vector<Real,2>& point, Output & func)
 
 
 
-    Output func2{
-        {(1. - xi - eta)*xi,(1. - xi - eta)*(eta-1)},   // 0 in (1,0), (0,1), non-zero normal on edge0
-        {xi*xi,xi*(eta-1)},                             // 0 in (0,0), (0,1), non-zero normal on edge0
-        {(1. - xi - eta)*(xi-1),(1. - xi - eta)*(eta)}, // 0 in (1,0), (0,1), non-zero normal on edge1
-        {eta*(xi-1),eta*eta},                           // 0 in (0,0), (1,0), non-zero normal on edge1
-        {xi*xi,xi*eta},                                 // 0 in (0,0), (0,1), non-zero normal on edge2
-        {eta*xi,eta*eta},                               // 0 in (0,0), (1,0), non-zero normal on edge2
-        {eta*xi,eta*(eta-1)},                           // normal 0 on all edges, element-dof
-        {xi*(xi-1),xi*eta}                              // normal 0 on all edges, element-dof
-    };
-    func=func2;
+    // const auto& xi=point[0];
+    // const auto& eta=point[1];
+    // const Real a=0.333333333333333;
+    // const Real b=-0.666666666666666;
+    // func[cont](0,0)=(a*(xi)*(1. - xi - eta) - a*(xi-1)*xi);
+    // func[cont](1,0)=( a*(eta)*(1. - xi - eta) - a*(eta)*xi);
+    // func[cont+1](0,0)=(- (b*(xi)*(1. - xi - eta) - a*(xi-1)*xi));
+    // func[cont+1](1,0)=(- (b*(eta)*(1. - xi - eta) - a*(eta)*xi));
+    // Output func2{
+    //     {(1. - xi - eta)*xi,(1. - xi - eta)*(eta-1)},   // 0 in (1,0), (0,1), non-zero normal on edge0
+    //     {xi*xi,xi*(eta-1)},                             // 0 in (0,0), (0,1), non-zero normal on edge0
+    //     {(1. - xi - eta)*(xi-1),(1. - xi - eta)*(eta)}, // 0 in (1,0), (0,1), non-zero normal on edge1
+    //     {eta*(xi-1),eta*eta},                           // 0 in (0,0), (1,0), non-zero normal on edge1
+    //     {xi*xi,xi*eta},                                 // 0 in (0,0), (0,1), non-zero normal on edge2
+    //     {eta*xi,eta*eta},                               // 0 in (0,0), (1,0), non-zero normal on edge2
+    //     // {eta*xi,eta*(eta-1)},                           // normal 0 on all edges, element-dof
+    //     // {xi*(xi-1),xi*eta}                              // normal 0 on all edges, element-dof,
+    //     { (a*(xi)*(1. - xi - eta) - a*(xi-1)*xi),  ( a*(eta)*(1. - xi - eta) - a*(eta)*xi)},
+    //     {- (b*(xi)*(1. - xi - eta) - a*(xi-1)*xi), - (b*(eta)*(1. - xi - eta) - a*(eta)*xi)}    
+
+    // };
+    // func=func2;
+}
+
+
+
+
+
+
+
+inline static void 
+apply2 (const Vector<Real,ManifoldDim> point)
+{
+    OutputRT0 rt0;
+    OutputP1 p1;
+    Output func;
+    ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 0>::apply(point,rt0);
+    ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 1>::apply(point,p1);
+
+    Integer cont=0;
+    // loop on RT0 functions
+    for(Integer i=0;i<RT0Ndofs;i++)
+      // loop on dimension
+      for(Integer j=0;j<ManifoldDim;j++)
+        {
+        // loop on dimension
+        for(Integer k=0;k<ManifoldDim;k++)
+           func[cont](k,0)=rt0[i](k); 
+         // std::cout<<cont<<"   "<<std::endl;
+         // std::cout<<func[cont]<<std::endl;  
+         cont++;
+         }
+    cont=0;
+
+    for(Integer i=0;i<RT0Ndofs;i++)
+      // loop on dimension
+      for(Integer j=0;j<PnNdofs;j++)
+        {
+        // loop on dimension
+        if(j!=ManifoldDim-i)
+        {for(Integer k=0;k<ManifoldDim;k++)
+           func[cont](k,0)=func[cont](k,0)*p1[j](0,0); 
+         // std::cout<<cont<<"   "<<std::endl;
+         // std::cout<<func[cont]<<std::endl;         
+         cont++;
+         }
+         }
+    // // the i-th column represents the coefficients of the i-th momenta shape function
+    // // auto inv_mat=inverse(mat);
+    for(Integer i=0;i<ManifoldDim;i++)
+        {
+            for(Integer j=0;j<ManifoldDim;j++)
+            {
+                func[cont+i](j,0)=0;
+                for(Integer k=0;k<ManifoldDim;k++)
+                   func[cont+i](j,0)+=mat_coeffs(k,i)*rt0[ManifoldDim-k](j,0)*p1[k](0,0);
+                
+            }
+         // std::cout<<cont+i<<"   "<<std::endl;
+         // std::cout<<func[cont+i]<<std::endl;
+        }
+
 }
 };
 
-template<Integer Dim>
-class ReferenceShapeFunctionValue<Simplex<Dim,2>, DivergenceOperator, RaviartThomasFE, 1>
+
+
+
+
+
+
+template<Integer Dim,Integer ManifoldDim>
+class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, DivergenceOperator, RaviartThomasFE, 1>
 {
 public:
-  using Output=Vector<Matrix<Real, 1, 1>,8>;
+  // static constexpr Integer ManifoldDim=2;
+  static constexpr Integer Ndofs=NumberOfRaviartThomasSimplexDofs<ManifoldDim,1>();
+  static constexpr Integer RT0Ndofs=NumberOfRaviartThomasSimplexDofs<ManifoldDim,0>();
+  static constexpr Integer P1Ndofs=NumberOfLagrangianSimplexDofs<ManifoldDim,1>();
+
+  using OutputRT0=typename ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 0>::Output;
+  using OutputP1=typename ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 1>::Output;
+  using OutputDivRT0=typename ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, DivergenceOperator, RaviartThomasFE, 0>::Output;
+  using OutputGradP1=typename ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, GradientOperator, LagrangeFE, 1>::Output;
+  // static constexpr auto barycenter=LinearSimplex<ManifoldDim>::barycenter();
+  static constexpr auto mat_coeffs=SimplexRT1Coefficient<Dim,ManifoldDim>::value();
+
+
+
+  using Output=Vector<Matrix<Real, 1, 1>,Ndofs>;
+  // using Output=Vector<Matrix<Real, 1, 1>,8>;
   // using OutputRT0=typename ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 0>::Output;
   // using OutputP1=typename ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 1>::Output;
   // using OutputDivRT0=typename ReferenceShapeFunctionValue<Simplex<Dim,2>, DivergenceOperator, RaviartThomasFE, 0>::Output;
@@ -2406,7 +2801,7 @@ public:
 
 
 constexpr inline static void 
-apply(const Vector<Real,2>& point, Output & func)
+apply(const Vector<Real,ManifoldDim>& point, Output & func)
 {
 
     // OutputRT0 rt0;
@@ -2420,33 +2815,152 @@ apply(const Vector<Real,2>& point, Output & func)
     // ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, RaviartThomasFE, 0>::apply(point,div_rt0);
     // ReferenceShapeFunctionValue<Simplex<Dim,2>, IdentityOperator, LagrangeFE, 1>::apply(point,grad_p1);
 
-    // const auto& div0=div_rt0[0](0,0);
-    // const auto& div1=div_rt0[1](0,0);
-    // const auto& div2=div_rt0[2](0,0);
 
-    // const auto& grad0_x=grad_p1[0](0,0);
-    // const auto& grad0_y=grad_p1[0](1,0);
-    // const auto& grad1_x=grad_p1[1](0,0);
-    // const auto& grad1_y=grad_p1[1](1,0);
-    // const auto& grad2_x=grad_p1[2](0,0);
-    // const auto& grad2_y=grad_p1[2](1,0);
+    OutputRT0 rt0;
+    OutputP1 p1;
+    ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 0>::apply(point,rt0);
+    ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 1>::apply(point,p1);
 
 
-    const auto& xi=point[0];
-    const auto& eta=point[1];
-    Output func2{
-        {3*(1-xi-eta)},
-        {3*xi},
-        {3*(1-xi-eta)},
-        {3*eta},
-        {3*xi},
-        {3*eta},
-        {3*eta},
-        {3*xi}
-    };
+    OutputDivRT0 divRT0;
+    OutputGradP1 gradP1;
+    ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, DivergenceOperator, RaviartThomasFE, 0>::apply(point,divRT0);
+    ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, GradientOperator, LagrangeFE, 1>::apply(point,gradP1);
 
-    func=func2;
+
+    Integer cont=0;
+    // loop on RT0 functions
+    for(Integer i=0;i<RT0Ndofs;i++)
+      // loop on dimension
+      for(Integer j=0;j<P1Ndofs;j++)
+        {
+           // loop on dimension
+            if(j!=ManifoldDim-i)
+            {
+               // for(Integer k=0;k<ManifoldDim;k++)
+               func[cont](0,0)=divRT0[i](0,0)*p1[j](0,0); 
+             cont++;
+             }
+         }
+    cont=0;
+    // loop on RT0 functions
+    for(Integer i=0;i<RT0Ndofs;i++)
+      // loop on dimension
+      for(Integer j=0;j<P1Ndofs;j++)
+        {
+           // loop on dimension
+            if(j!=ManifoldDim-i)
+            {
+               for(Integer k=0;k<ManifoldDim;k++)
+               func[cont](0,0)+=rt0[i](k,0)*gradP1[j](k,0); 
+             cont++;
+             }
+         }
+
+
+    for(Integer i=0;i<ManifoldDim;i++)
+            {
+                func[cont+i](0,0)=0;
+                for(Integer k=0;k<ManifoldDim;k++)
+                   func[cont+i](0,0)+=mat_coeffs(k,i)*divRT0[ManifoldDim-k](0,0)*p1[k](0,0);
+
+                for(Integer k=0;k<ManifoldDim;k++)
+                   for(Integer j=0;j<ManifoldDim;j++)
+                   func[cont+i](0,0)+=mat_coeffs(k,i)*rt0[ManifoldDim-k](j,0)*gradP1[k](j,0);
+            }
+
+
+   
+    // const Real a=0.333333333333333;
+    // const Real b=-0.666666666666666;
+    // const auto& xi=point[0];
+    // const auto& eta=point[1];
+
+    // func[cont](0,0)=(a * (1. - xi - eta) - a* xi -a* (2*xi-1) + a*(1. - xi - eta) - a*eta - a * eta );
+    // func[cont+1](0,0)= -  ( b * (1. - xi - eta) - b * xi - a* (2*xi-1) + b*(1. - xi - eta) - b * eta  - a * xi );
+ 
+
+
+   //  Output func2{
+   //      {3*(1-xi-eta)},
+   //      {3*xi},
+   //      {3*(1-xi-eta)},
+   //      {3*eta},
+   //      {3*xi},
+   //      {3*eta},
+   //      {  ( a * (1. - xi - eta) - a* xi -a* (2*xi-1) + a*(1. - xi - eta) - a*eta - a * eta )},
+   //      {-  ( b * (1. - xi - eta) - b * xi - a* (2*xi-1) + b*(1. - xi - eta) - b * eta  - a * xi )}
+   //      // {3*eta},
+   //      // {3*xi}
+   //  };
+
+   //  func=func2;
 }
+
+ inline static void 
+apply2(const Vector<Real,ManifoldDim> point)
+{
+
+    OutputRT0 rt0;
+    OutputP1 p1;
+    Output func;
+    ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 0>::apply(point,rt0);
+    ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 1>::apply(point,p1);
+
+
+    OutputDivRT0 divRT0;
+    OutputGradP1 gradP1;
+    ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, DivergenceOperator, RaviartThomasFE, 0>::apply(point,divRT0);
+    ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, GradientOperator, LagrangeFE, 1>::apply(point,gradP1);
+
+
+    Integer cont=0;
+    // loop on RT0 functions
+    for(Integer i=0;i<RT0Ndofs;i++)
+      // loop on dimension
+      for(Integer j=0;j<P1Ndofs;j++)
+        {
+           // loop on dimension
+            if(j!=ManifoldDim-i)
+            {
+               // for(Integer k=0;k<ManifoldDim;k++)
+               func[cont](0,0)=divRT0[i](0,0)*p1[j](0,0); 
+             // std::cout<<cont<<"   "<<func[cont](0,0)<<std::endl;
+             cont++;
+
+             }
+         }
+    cont=0;
+    // loop on RT0 functions
+    for(Integer i=0;i<RT0Ndofs;i++)
+      // loop on dimension
+      for(Integer j=0;j<P1Ndofs;j++)
+        {
+           // loop on dimension
+            if(j!=ManifoldDim-i)
+            {
+               for(Integer k=0;k<ManifoldDim;k++)
+               func[cont](0,0)+=rt0[i](k,0)*gradP1[j](k,0); 
+             // std::cout<<cont<<"   "<<func[cont](0,0)<<std::endl;
+             cont++;
+             }
+         }
+
+
+    for(Integer i=0;i<ManifoldDim;i++)
+            {
+                func[cont+i](0,0)=0;
+                for(Integer k=0;k<ManifoldDim;k++)
+                   func[cont+i](0,0)+=mat_coeffs(k,i)*divRT0[ManifoldDim-k](0,0)*p1[k](0,0);
+
+                for(Integer k=0;k<ManifoldDim;k++)
+                   for(Integer j=0;j<ManifoldDim;j++)
+                   func[cont+i](0,0)+=mat_coeffs(k,i)*rt0[ManifoldDim-k](j,0)*gradP1[k](j,0);
+               // std::cout<<cont+i<<"   "<<func[cont+i](0,0)<<std::endl;
+            }
+
+}
+
 };
 
 
@@ -2501,16 +3015,17 @@ void shape_function_coefficients_init(const ConstInput& mesh_ptr,ShapeFunctionCo
 
 
 
-template<Integer Dim>
-class SingleShapeFunctionCoefficientsCollection<Simplex<Dim,2>, RaviartThomasFE, 0>
+template<Integer Dim,Integer ManifoldDim>
+class SingleShapeFunctionCoefficientsCollection<Simplex<Dim,ManifoldDim>, RaviartThomasFE, 0>
 {
  public: 
 constexpr inline static  void 
-apply(const Array<Real, 3 >& outward,Array<Real, 3 >& coeff)
+apply(const Array<Real, ManifoldDim+1 >& outward,Array<Real, ManifoldDim+1 >& coeff)
 {
-    coeff[0]=outward[0];
-    coeff[1]=outward[1];
-    coeff[2]=outward[2];
+    for(std::size_t i=0;i<ManifoldDim+1;i++)
+    coeff[i]=outward[i];
+    // coeff[1]=outward[1];
+    // coeff[2]=outward[2];
 }
 };
 
@@ -2533,34 +3048,65 @@ apply (const Array<Real, 3 >& outward,Array<Real, 8 >& coeff)
 }
 };
 
-
-
-template<>
-void shape_function_coefficients_init<Simplex<2,2>, RaviartThomasFE, 0>
- (const Vector<Real, 3 >& outward,Vector<Real, 3 >& coeff)
+template<Integer Dim,Integer ManifoldDim>
+class SingleShapeFunctionCoefficientsCollection<Simplex<Dim,ManifoldDim>, RaviartThomasFE, 1>
 {
-    coeff[0]=outward[0];
-    coeff[1]=outward[1];
-    coeff[2]=outward[2];
-}
+ public: 
+ static constexpr Integer Ndofs=NumberOfRaviartThomasSimplexDofs<ManifoldDim,1>();
+ static constexpr Integer RT0Ndofs=NumberOfRaviartThomasSimplexDofs<ManifoldDim,0>();
+ static constexpr Integer P1Ndofs=NumberOfLagrangianSimplexDofs<ManifoldDim,1>();
 
-
-
-
-
-template<>
-void shape_function_coefficients_init<Simplex<2,2>, RaviartThomasFE, 1>
- (const Vector<Real, 3 >& outward,Vector<Real, 8 >& coeff)
+constexpr inline static  void  
+apply (const Array<Real, ManifoldDim +1 >& outward,Array<Real, Ndofs >& coeff)
 {
-    coeff[0]=outward[0];
-    coeff[1]=outward[0];
-    coeff[2]=outward[1];
-    coeff[3]=outward[1];
-    coeff[4]=outward[2];
-    coeff[5]=outward[2];
-    coeff[6]=outward[0];
-    coeff[7]=outward[1];
+
+    Integer cont=0;
+    for(Integer i=0;i<RT0Ndofs;i++)
+    {
+           for(Integer j=0;j<ManifoldDim;j++)
+            {
+             coeff[cont]=outward[i];
+             cont++;
+            }
+    
+    }
+
+    for(Integer i=0;i<ManifoldDim;i++)
+       {
+        coeff[cont+i]=outward[i];
+        // cont++;
+        }
+
 }
+};
+
+
+// template<>
+// void shape_function_coefficients_init<Simplex<2,2>, RaviartThomasFE, 0>
+//  (const Vector<Real, 3 >& outward,Vector<Real, 3 >& coeff)
+// {
+//     coeff[0]=outward[0];
+//     coeff[1]=outward[1];
+//     coeff[2]=outward[2];
+// }
+
+
+
+
+
+// template<>
+// void shape_function_coefficients_init<Simplex<2,2>, RaviartThomasFE, 1>
+//  (const Vector<Real, 3 >& outward,Vector<Real, 8 >& coeff)
+// {
+//     coeff[0]=outward[0];
+//     coeff[1]=outward[0];
+//     coeff[2]=outward[1];
+//     coeff[3]=outward[1];
+//     coeff[4]=outward[2];
+//     coeff[5]=outward[2];
+//     coeff[6]=outward[0];
+//     coeff[7]=outward[1];
+// }
 
 template<typename Elem,typename Operator, Integer FEFamily,Integer Order,typename single_type,Integer Ndofs,
 Integer NQPoints,Integer Dim>
@@ -2801,8 +3347,10 @@ public:
         // std::cout<<"func_values_"<<std::endl;
         
         // std::cout<<func_values_<<std::endl;
-        // std::cout<<"func_tmp_"<<std::endl;
-        // std::cout<<func_tmp_<<std::endl;
+        // std::cout<<"FEFamily="<<FEFamily<<std::endl;
+        // std::cout<<"Order="<<Order<<std::endl;
+        // std::cout<<"reference_values"<<std::endl;
+        // std::cout<<reference_values<<std::endl;
         for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
         {
             for(Integer n_comp=0;n_comp<NComponents;n_comp++)
@@ -2823,16 +3371,24 @@ public:
             }
         }
         
-        std::cout<<"ShapeFunction non trace end"<<std::endl;
+        // std::cout<<"ShapeFunction non trace end"<<std::endl;
     }
     
     void init(const Array<Real,Ndofs> &alpha)
     {
-        std::cout<<"init RT elements (coeffs)"<<std::endl;
-        std::cout<<alpha<<std::endl;
+        // std::cout<<"init RT elements (coeffs)"<<std::endl;
+        // std::cout<<alpha<<std::endl;
         
         const auto& map=(*map_ptr);
         const auto& mapping=map();
+        // std::cout<<"FEFamily="<<FEFamily<<std::endl;
+        // std::cout<<"Order="<<Order<<std::endl;
+        // std::cout<<"mapping"<<std::endl;
+        // std::cout<<mapping<<std::endl;
+        // std::cout<<"alpha[n_dof]"<<std::endl;
+        // std::cout<<alpha<<std::endl;
+        // std::cout<<"reference_values"<<std::endl;
+        // std::cout<<reference_values<<std::endl;
         for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
         {
             for(Integer n_comp=0;n_comp<NComponents;n_comp++)
@@ -2844,17 +3400,17 @@ public:
                 {
                     func_values_[n_tot_][qp].zero();
                     // func_tmp_=alpha[n_dof] * mapping * weighted_reference_values[n_dof][qp];
-                    std::cout<< "n_dof, qp, n_tot_, n_comp, n_=("<<n_dof<<", "<<qp<<", "<< n_tot_<<", "<<n_comp<<", "<< n_<<")"<<std::endl;
-                    std::cout<< "func_values_="<<func_values_[n_tot_][qp]<<std::endl;
+                    // std::cout<< "n_dof, qp, n_tot_, n_comp, n_=("<<n_dof<<", "<<qp<<", "<< n_tot_<<", "<<n_comp<<", "<< n_<<")"<<std::endl;
+                    // std::cout<< "func_values_="<<func_values_[n_tot_][qp]<<std::endl;
                     func_tmp_=alpha[n_dof] * mapping * reference_values[n_dof][qp];
-                    std::cout<< "func_tmp_="<<func_tmp_<<std::endl;
+                    // std::cout<< "func_tmp_="<<func_tmp_<<std::endl;
                     assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
-                    std::cout<< "func_values_ after="<<func_values_[n_tot_][qp]<<std::endl;
+                    // std::cout<< "func_values_ after="<<func_values_[n_tot_][qp]<<std::endl;
                 }
                 
             }
         }
-        std::cout<<"init end"<<std::endl;
+        // std::cout<<"init end"<<std::endl;
         
     };
     
@@ -3007,7 +3563,7 @@ public:
             }
         }
         
-     std::cout<<"ShapeFunction  trace end"<<std::endl;
+     // std::cout<<"ShapeFunction  trace end"<<std::endl;
 
     }
     
@@ -3019,8 +3575,8 @@ public:
         // auto alpha=subarray(beta,trace[face]);
         subarray(alpha_,beta,trace[face]);
         
-        std::cout<<"init RT elements (coeffs)"<<std::endl;
-        std::cout<<beta<<std::endl;
+        // std::cout<<"init RT elements (coeffs)"<<std::endl;
+        // std::cout<<beta<<std::endl;
         
         const auto& map=(*map_ptr);
         const auto& mapping=map();
@@ -3035,17 +3591,17 @@ public:
                 {
                     func_values_[n_tot_][qp].zero();
                     // func_tmp_=alpha[n_dof] * mapping * weighted_reference_values[n_dof][qp];
-                    std::cout<< "n_dof, qp, n_tot_, n_comp, n_=("<<n_dof<<", "<<qp<<", "<< n_tot_<<", "<<n_comp<<", "<< n_<<")"<<std::endl;
-                    std::cout<< "func_values_="<<func_values_[n_tot_][qp]<<std::endl;
+                    // std::cout<< "n_dof, qp, n_tot_, n_comp, n_=("<<n_dof<<", "<<qp<<", "<< n_tot_<<", "<<n_comp<<", "<< n_<<")"<<std::endl;
+                    // std::cout<< "func_values_="<<func_values_[n_tot_][qp]<<std::endl;
                     func_tmp_=alpha_[n_dof] * mapping * reference_values[n_dof][qp];
-                    std::cout<< "func_tmp_="<<func_tmp_<<std::endl;
+                    // std::cout<< "func_tmp_="<<func_tmp_<<std::endl;
                     assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
-                    std::cout<< "func_values_ after="<<func_values_[n_tot_][qp]<<std::endl;
+                    // std::cout<< "func_values_ after="<<func_values_[n_tot_][qp]<<std::endl;
                 }
                 
             }
         }
-        std::cout<<"init end"<<std::endl;
+        // std::cout<<"init end"<<std::endl;
         
     };
     

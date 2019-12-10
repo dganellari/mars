@@ -147,7 +147,7 @@ public:
   {
     
     // std::cout<<"side_tag="<<FE.side_tag()<<std::endl;
-std::cout<<std::endl<<"inside="<<label2space_[N].count(FE.side_tag());
+// std::cout<<std::endl<<"inside="<<label2space_[N].count(FE.side_tag());
     if(label2space_[N].count(FE.side_tag())) 
       {
         // Maps eeee(56,7,8,9,0);
@@ -229,6 +229,8 @@ public:
     static constexpr Integer Nbcs=sizeof...(BCs)+1;
     using BCsTuple=std::tuple<BC,BCs...>;
     using FunctionSpace=typename BC::FunctionSpace;
+    using DofsDM= typename FunctionSpace::DofsDM;
+    using ElemDofMap= typename DofsDM::ElemDofMap;
     using Elem=typename FunctionSpace::Elem;
     static constexpr auto trace=TraceDofs<FunctionSpace>::dofs();
     using tuple_trace_type=typename TupleOfSubTypesHelper<decltype(trace)>::type;
@@ -270,8 +272,8 @@ public:
                                                 const Maps& tuple_map,
                                                 const DofMap&dm)
     {
-    std::cout<<"side tag= "<<FE.side_tag()<<std::endl;
-    std::cout<<"labels_array = "<<labels_array_[N]<<std::endl;
+    // std::cout<<"side tag= "<<FE.side_tag()<<std::endl;
+    // std::cout<<"labels_array = "<<labels_array_[N]<<std::endl;
     
     
     if(FE.side_tag()==labels_array_[N])
@@ -279,7 +281,12 @@ public:
     using BC_N=GetType<BCsTuple,N>;
     const auto& map=tuple_get<BC_N::map_value>(tuple_map);
     const auto& bc=tuple_get<N>(bcs_tuple_);
-    const auto& dofmap=tuple_get<BC_N::value>(dm)[FE.elem_id()];
+
+    auto& dofmap=tuple_get<BC_N::value>(dofmap_); 
+    dm.template dofmap_get<BC_N::value>(dofmap,FE.elem_id());
+
+
+    // const auto& dofmap=tuple_get<BC_N::value>(dm)[FE.elem_id()];
     const auto& tr=tuple_get<BC_N::value>(trace)[FE.side_id()];
     auto NComponents=BC_N::NComponents;
     // todo fixme, definisci dofmap_trace_ come variabile privata
@@ -292,19 +299,19 @@ public:
 
     subarray(dofmap_trace,dofmap,tr);
 
-    std::cout<<"___--___BC N==="<<N<<std::endl;
-    std::cout<<"___--___map="<<map()<<std::endl;
-    std::cout<<"___--___map_value="<<GetType<BCsTuple,N>::map_value<<std::endl;
+    // std::cout<<"___--___BC N==="<<N<<std::endl;
+    // std::cout<<"___--___map="<<map()<<std::endl;
+    // std::cout<<"___--___map_value="<<GetType<BCsTuple,N>::map_value<<std::endl;
     
-    std::cout<<"dofmap_trace"<<std::endl;
-    std::cout<<dofmap_trace<<std::endl;
-    std::cout<<"___--tr="<<std::endl;
-    std::cout<<tr<<std::endl;
-    std::cout<<"___--dofmap="<<std::endl;
-    for(std::size_t i=0;i<dofmap.size();i++)
-        std::cout<<dofmap[i]<<std::endl;
+    // std::cout<<"dofmap_trace"<<std::endl;
+    // std::cout<<dofmap_trace<<std::endl;
+    // std::cout<<"___--tr="<<std::endl;
+    // std::cout<<tr<<std::endl;
+    // std::cout<<"___--dofmap="<<std::endl;
+    // for(std::size_t i=0;i<dofmap.size();i++)
+    //     std::cout<<dofmap[i]<<std::endl;
 
-    std::cout<<"___--points="<<std::endl;
+    // std::cout<<"___--points="<<std::endl;
     // const auto& points=GetType<BCsTuple,N>::points;
     // std::cout<<points<<std::endl;
 
@@ -334,30 +341,30 @@ public:
         }
     }
 
-    std::cout<<"reference_points"<<std::endl;
-    std::cout<<reference_points<<std::endl;
+    // std::cout<<"reference_points"<<std::endl;
+    // std::cout<<reference_points<<std::endl;
 
-    std::cout<<"points"<<std::endl;
-    std::cout<<points<<std::endl;
+    // std::cout<<"points"<<std::endl;
+    // std::cout<<points<<std::endl;
 
-    std::cout<<"elem points"<<std::endl;
-    for( std::size_t i=0;i<FE.points().size();i++)
-    std::cout<<FE.points()[i]<<std::endl;
+    // std::cout<<"elem points"<<std::endl;
+    // for( std::size_t i=0;i<FE.points().size();i++)
+    // std::cout<<FE.points()[i]<<std::endl;
     
-    std::cout<<"J"<<std::endl;
-    std::cout<<J<<std::endl;
+    // std::cout<<"J"<<std::endl;
+    // std::cout<<J<<std::endl;
 
 
     auto ratio=dofmap_trace.size()/NComponents;
-    std::cout<<"___--dofmap_trace="<<std::endl;
-    std::cout<<dofmap_trace<<std::endl;
+    // std::cout<<"___--dofmap_trace="<<std::endl;
+    // std::cout<<dofmap_trace<<std::endl;
     // for(std::size_t i=0;i<dofmap_trace.size();i++)
     for(std::size_t i=0;i<ratio;i++)
         {
          const auto& rhs_local=bc.eval(points[i]);
          for(std::size_t comp=0;comp<BC_N::NComponents;comp++)
          {
-          std::cout<<"i=="<<dofmap_trace[i*NComponents+comp]<<std::endl;
+          // std::cout<<"i=="<<dofmap_trace[i*NComponents+comp]<<std::endl;
           constrained_dofs[dofmap_trace[i*NComponents+comp]]=true;
           constrained_mat[dofmap_trace[i*NComponents+comp]]=1;   
           constrained_vec[dofmap_trace[i*NComponents+comp]]= rhs_local(comp,0);      
@@ -374,12 +381,12 @@ public:
          // std::cout<<"bc.eval -> "<<rhs_local<<std::endl;
          // std::cout<<"dofmap_trace -> "<<dofmap_trace[i]<<std::endl;
          }
-    std::cout<<"___--constrained_dofs="<<std::endl;
+    // std::cout<<"___--constrained_dofs="<<std::endl;
 
-    for(std::size_t i=0;i<constrained_dofs.size();i++)
-        {
-         std::cout<<constrained_dofs[i]<<std::endl;
-         }
+    // for(std::size_t i=0;i<constrained_dofs.size();i++)
+    //     {
+    //      std::cout<<constrained_dofs[i]<<std::endl;
+    //      }
     }
 
     
@@ -399,7 +406,9 @@ public:
         const auto& mesh_side_nodes=mesh_ptr->side_nodes();
         const auto& boundary2elem=mesh_ptr->boundary2elem();
         const auto& n_sides=mesh_side_nodes.size();
-        const auto& dofmap=spaces_ptr_->dofmap2();
+        // const auto& dofmap=spaces_ptr_->dofmap2();
+
+        const auto& dofmap=spaces_ptr_->dofsdofmap();
 
 
     //    auto dm1=tuple_get<0>(dofmap);
@@ -471,6 +480,7 @@ Elem elem_;
 Maps maps_;
 tuple_trace_type tuple_dofmap_trace_;
 mapped_type tuple_points_;
+ElemDofMap dofmap_;
 };
 
 

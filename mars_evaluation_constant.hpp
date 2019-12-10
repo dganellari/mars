@@ -35,7 +35,7 @@ class Evaluation<Expression<ConstantTensor<ConstType,Inputs...>>,QuadratureRule>
   // value_type oo(4,4,4,44,4,4);
   // decltype(eval_.template qp_eval<QuadratureRule::NQPoints>()) rrr(4,4,4,44,4,4);
   Assignment<value_type>::apply(value,eval_.template qp_eval<QuadratureRule::NQPoints>());
-  std::cout<<"Evaluation<Expression<ConstantTensor "<<value<<std::endl;
+  // std::cout<<"Evaluation<Expression<ConstantTensor "<<value<<std::endl;
 
 
 

@@ -44,27 +44,41 @@ public:
 };
 
 
-template<Integer NComponents=1>
+template<Integer Order,Integer NComponents>
+using Lagrange=BaseFunctionSpace<LagrangeFE,Order,Continuous,NComponents>;
+
+template<Integer NComponents>
 using Lagrange1=BaseFunctionSpace<LagrangeFE,1,Continuous,NComponents>;
-template<Integer NComponents=1>
+template<Integer NComponents>
 using Lagrange2=BaseFunctionSpace<LagrangeFE,2,Continuous,NComponents>;
-template<Integer NComponents=1>
+template<Integer NComponents>
 using Lagrange3=BaseFunctionSpace<LagrangeFE,3,Continuous,NComponents>;
 
-template<Integer NComponents=1>
+
+template<Integer Order,Integer NComponents>
+using LagrangeDG=BaseFunctionSpace<LagrangeFE,Order,Discontinuous,NComponents>;
+
+template<Integer NComponents>
 using Lagrange1DG=BaseFunctionSpace<LagrangeFE,1,Discontinuous,NComponents>;
-template<Integer NComponents=1>
+template<Integer NComponents>
 using Lagrange2DG=BaseFunctionSpace<LagrangeFE,2,Discontinuous,NComponents>;
-template<Integer NComponents=1>
+template<Integer NComponents>
 using Lagrange3DG=BaseFunctionSpace<LagrangeFE,3,Discontinuous,NComponents>;
 
-template<Integer NComponents=1>
+template<Integer Order,Integer NComponents>
+using RT=BaseFunctionSpace<RaviartThomasFE,Order,Continuous,NComponents>;
+
+template<Integer NComponents>
 using RT0=BaseFunctionSpace<RaviartThomasFE,0,Continuous,NComponents>;
-template<Integer NComponents=1>
+template<Integer NComponents>
 using RT1=BaseFunctionSpace<RaviartThomasFE,1,Continuous,NComponents>;
-template<Integer NComponents=1>
+
+template<Integer Order,Integer NComponents>
+using RTDG=BaseFunctionSpace<RaviartThomasFE,Order,Discontinuous,NComponents>;
+
+template<Integer NComponents>
 using RT0DG=BaseFunctionSpace<RaviartThomasFE,0,Discontinuous,NComponents>;
-template<Integer NComponents=1>
+template<Integer NComponents>
 using RT1DG=BaseFunctionSpace<RaviartThomasFE,1,Discontinuous,NComponents>;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

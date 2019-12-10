@@ -24,12 +24,12 @@ class UnaryMinus
  template<typename Output>
  inline static void apply(Output& A,const T& B)
   {
-    std::cout<<"pre UnaryMinus"<<std::endl;
+    // std::cout<<"pre UnaryMinus"<<std::endl;
    for(Integer ii=0;ii<T::Rows;ii++)
     for(Integer jj=0;jj<T::Cols;jj++)
            A(ii,jj)=-B(ii,jj);
-    std::cout<<A<<B<<std::endl;
-    std::cout<<"after UnaryMinus"<<std::endl;
+    // std::cout<<A<<B<<std::endl;
+    // std::cout<<"after UnaryMinus"<<std::endl;
   };
 
 

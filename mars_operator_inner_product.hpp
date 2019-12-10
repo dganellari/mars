@@ -35,7 +35,7 @@ class InnerProduct
    for(Integer ii=1;ii<Left::Rows;ii++)
     for(Integer jj=0;jj<Left::Cols;jj++)
            A(0,0)+=B(ii,jj)*C(ii,jj);
-    std::cout<<"after InnerProduct<Transposed"<<std::endl;
+    // std::cout<<"after InnerProduct<Transposed"<<std::endl;
 
         // AdditionMatrixAndTransposedAux<Left,Right>::apply(A,B,C);
   };

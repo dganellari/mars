@@ -152,7 +152,7 @@ class ElementFunctionSpace<Simplex<Dim, ManifoldDim>,RaviartThomasFE,1,Continuit
 {
   public: 
      static constexpr const std::array<Integer,2> entity={ManifoldDim-1,ManifoldDim};
-     static constexpr const std::array<Integer,2> dofs_per_entity={2,ManifoldDim};     
+     static constexpr const std::array<Integer,2> dofs_per_entity={ManifoldDim,ManifoldDim};     
      static constexpr const Integer ShapeFunctionDim1=Dim;
      static constexpr const Integer ShapeFunctionDim2=1;
 };

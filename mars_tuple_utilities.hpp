@@ -132,6 +132,55 @@ constexpr bool IsPositive (const Array<T,Dim>& a)
 }
 
 
+template <typename T>
+T argsort(const T &v) {
+    // initialize original index locations
+    T idx;
+    std::iota(idx.begin(), idx.end(), 0);
+    // sort indexes based on comparing values in v
+    std::sort(idx.begin(), idx.end(),
+              [&v](size_t i1, size_t i2) {return v[i1] < v[i2];});
+    
+    return idx;
+}
+
+// template <typename T>
+// void argsort(T& idx,const T &v) {
+//     // initialize original index locations
+//     std::iota(idx.begin(), idx.end(), 0);
+//     // sort indexes based on comparing values in v
+//     std::sort(idx.begin(), idx.end(),
+//               [&v](size_t i1, size_t i2) {return v[i1] < v[i2];});
+    
+// }
+// template <typename T>
+// T argsort(const T &v) {
+//     T idx;
+//     argsort(idx,v);
+//     return idx;
+// }
+
+// returns v, resorted based on index 
+template <typename T, typename S>
+T sort_by_index(const T &v,const S& index) {
+    T sortv;
+    assert(index.size()==v.size() && "sort_by_index: v and index must have the same length, otherwise last elements in v are not initialized");
+    for(Integer ii=0;ii<index.size();ii++)
+        sortv[ii]=v[index[ii]];
+    return sortv;
+}
+// returns the sub array of v of indices = index
+template <typename S,std::size_t SDim, typename T,std::size_t TDim>
+std::array<S,TDim> sub_array(const std::array<S,SDim> &v,const std::array<T,TDim>& index) {
+    
+    static_assert(TDim<=SDim,"in sub_array the length of the index vector must be smaller than the one of the vector");
+    std::array<S,TDim> subvec;
+    for(Integer ii=0;ii<TDim;ii++)
+        subvec[ii]=v[index[ii]];
+    
+    return subvec;
+}
+
 template<Integer N,Integer K>
  constexpr void combinations_generate_aux(
             Array<Integer, K> &data,
@@ -2279,7 +2328,12 @@ class BubbleSortTupleOfPairsNumbersHelper
 
 };
 
-
+template<Integer Nmax>
+class BubbleSortTupleOfPairsNumbersHelper<std::tuple<std::tuple<>>,Nmax,Nmax>
+{
+ public:
+  using type=std::tuple<>;
+};
 
 
 
@@ -3214,7 +3268,7 @@ constexpr Array<T, N1+N2> concat(const Array<T, N1>& a1, const Array<T, N2>& a2)
 
 template<typename T, Integer N1, Integer N2, Integer...Ns>
 // Initializer for the recursion
-constexpr Array<T, N1+N2+Ns...> concat(const Array<T, N1>& a1, const Array<T, N2>& a2, const Array<T,Ns>&...vectors){
+constexpr auto concat(const Array<T, N1>& a1, const Array<T, N2>& a2, const Array<T,Ns>&...vectors){
   return concat(concat(a1, a2, gen_seq<N1>{}, gen_seq<N2>{}),vectors... ) ;
 }
 
@@ -3239,7 +3293,7 @@ constexpr Vector<T, N1+N2> concat(const Vector<T, N1>& a1, const Vector<T, N2>& 
 
 template<typename T, Integer N1, Integer N2, Integer...Ns>
 // Initializer for the recursion
-constexpr Vector<T, N1+N2+Ns...> concat(const Vector<T, N1>& a1, const Vector<T, N2>& a2, const Vector<T,Ns>&...vectors){
+constexpr auto concat(const Vector<T, N1>& a1, const Vector<T, N2>& a2, const Vector<T,Ns>&...vectors){
   return concat(concat(a1, a2, gen_seq<N1>{}, gen_seq<N2>{}),vectors... ) ;
 }
 

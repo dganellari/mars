@@ -971,6 +971,8 @@ namespace mars {
 			return false;
 		}
 
+
+
 		int dim = -1;
 		int n_elements = -1;
 		int n_nodes = -1;
@@ -1177,11 +1179,11 @@ namespace mars {
 	    const auto& side_tag=side_tags[b];
         bool found=false;
         bool found_tmp=false;
-        std::cout<<std::endl;
-        std::cout<< "side_nodes="<<std::endl;
-        for(Integer t=0;t<side_nodes.size();t++)
-        	std::cout<<side_nodes[t]<<" ";
-        std::cout<<std::endl;
+        // std::cout<<std::endl;
+        // std::cout<< "side_nodes="<<std::endl;
+        // for(Integer t=0;t<side_nodes.size();t++)
+        // 	std::cout<<side_nodes[t]<<" ";
+        // std::cout<<std::endl;
 
 	    for(Integer e=0;e<n_elements;e++)
 	    {
@@ -1190,7 +1192,7 @@ namespace mars {
 
 	     auto& elem=mesh.elem(e);
          // const auto& nodes=elem.nodes;
-         std::cout<< "elem="<<e<<std::endl;
+         // std::cout<< "elem="<<e<<std::endl;
          auto nsides=n_sides(elem);
          for(Integer s=0;s<nsides ;s++)
             {                  
@@ -1202,19 +1204,19 @@ namespace mars {
             	{
             		if(s_nodes[t]!=side_nodes[t])
             			found_tmp=false;
-            		std::cout<< s_nodes[t]<<" ";
+            		// std::cout<< s_nodes[t]<<" ";
             	}
-                std::cout<<std::endl;
+                // std::cout<<std::endl;
             	if(found_tmp==true)
             	{
             		boundary2elem[b]=e;
             		elem.side_tags[s]=side_tag;
-            		std::cout<<"found= "<<std::endl;
-		            	for(Integer t=0;t<s_nodes.size() ;t++)
-		            	{
-		                 std::cout<< s_nodes[t]<<" ";
-		            	}
-		                std::cout<< std::endl;
+            		// std::cout<<"found= "<<std::endl;
+		            	// for(Integer t=0;t<s_nodes.size() ;t++)
+		            	// {
+		             //     std::cout<< s_nodes[t]<<" ";
+		            	// }
+		             //    std::cout<< std::endl;
             		 found=true;
             		 break;
             	}
@@ -1222,7 +1224,7 @@ namespace mars {
             }
 	    }
 
-	  std::cout<<std::endl;
+	  // std::cout<<std::endl;
 	  }
 
 	}

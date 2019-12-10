@@ -25,12 +25,191 @@ namespace mars{
 
 
 
+template<typename...Ts>
+class SingleSpaceDofsDofMap;
+
+template<typename Elem,typename...BaseFunctionSpaces>
+class SingleSpaceDofsDofMap<Elem,BaseFunctionSpaces...>
+{
+public:
+ static constexpr Integer Nsubspaces=sizeof...(BaseFunctionSpaces);
+ static constexpr auto NsubspacesArray=Array<Integer,1>{Nsubspaces};
+ using ElemDofMap=std::tuple<Array<Integer, DofsPerElemNums<Elem,BaseFunctionSpaces>::value>...>;
+ using DofMap=std::tuple<std::shared_ptr<std::vector<Array<Integer, DofsPerElemNums<Elem,BaseFunctionSpaces>::value>>>...>;
+ using SpacesDofsArray=Array<std::shared_ptr<std::vector<Integer>>, Nsubspaces>;
+ static constexpr auto NLocalDofs=Sum(DofsPerElemNums<Elem,BaseFunctionSpaces>::value...);
+ inline auto& space_dofs() const {return space_dofs_;};
+ inline auto& space_dofs()       {return space_dofs_;};
+ inline auto& dofmap() const {return dofmap_;};
+ inline auto& dofmap()       {return dofmap_;};
+ inline auto& n_dofs()       {return n_dofs_;}
+ inline auto& n_dofs() const {return n_dofs_;}
+
+ private:
+  DofMap dofmap_;
+  SpacesDofsArray space_dofs_;
+  Array<Integer,Nsubspaces> n_dofs_;
+};
+
+
+template<Integer Nsubspaces, typename...Args>
+class DofsDofMap //<Nsubspaces,Args...>
+{
+public:
+   using ElemDofMap=TupleCatType<typename Args::DofsDM::ElemDofMap...>;
+   using DofMap=TupleCatType<typename Args::DofsDM::DofMap...>;
+   using SpacesDofsArray=Array<std::shared_ptr<std::vector<Integer>>, Nsubspaces>;
+   using NdofsArray=Array<Integer, Nsubspaces>;
+   using CumulativeNdofsArray=Array<Integer, Nsubspaces+1>;
+   static constexpr auto NLocalDofs=Sum(Args::DofsDM::NLocalDofs...);
+   static constexpr auto NsubspacesArray=concat(Args::DofsDM::NsubspacesArray...);
+
+   template<typename...DofsDofMaps>
+   DofsDofMap(const DofsDofMaps&...dms):
+   dofmap_(std::tuple_cat(dms.dofmap()...)),
+   space_dofs_(concat(dms.space_dofs()...)),
+   n_dofs_array_(concat(dms.n_dofs()...)),
+   cumulative_dofs_array_(cumulative_array(n_dofs_array_,NsubspacesArray))
+   {}
+
+   inline auto& space_dofs() const {return space_dofs_;};
+   inline auto& space_dofs()       {return space_dofs_;};
+   inline auto& dofmap() const {return dofmap_;};
+   inline auto& dofmap()       {return dofmap_;};
+   inline auto& n_dofs()       {return n_dofs_array_;}
+   inline auto& n_dofs() const {return n_dofs_array_;}
+   inline auto& cumulative_n_dofs()       {return cumulative_dofs_array_;}
+   inline auto& cumulative_n_dofs() const {return cumulative_dofs_array_;}
+
+   // template<Integer N>
+   // auto& dofmap_get(const Integer elem_id)const
+   // {return tuple_get<N>(dofmap_)->operator[](elem_id);}
+
+   template<Integer N>
+   void dofmap_get(GetType<ElemDofMap,N>& elemdm, const Integer elem_id)const
+   {
+    const auto& dm=tuple_get<N>(dofmap_)->operator[](elem_id);
+    const auto& offset=cumulative_dofs_array_[N];
+    
+
+    for(std::size_t i=0;i<elemdm.size();i++)
+        elemdm[i]=dm[i]+offset;
+    }
+
+   template<Integer N>
+   auto dofmap_size() const
+   {return tuple_get<N>(dofmap_)->size();}
+
+
+   auto& space_dofs_get(const Integer N,const Integer id)
+   {return space_dofs_[N]->operator[](id);}
+
+   auto& space_dofs_get(const Integer N,const Integer id)const
+   {return space_dofs_[N]->operator[](id);}
+
+   auto space_dofs_size(const Integer N) const
+   {return space_dofs_[N]->size();}
+
+
+ private:
+   DofMap dofmap_;
+   SpacesDofsArray space_dofs_;
+   ElemDofMap elemdofmap_;
+   NdofsArray n_dofs_array_;
+   CumulativeNdofsArray cumulative_dofs_array_;
+};
+
+
+template<Integer Nsubspaces, typename Arg1, typename Arg2>
+class DofsDofMapFullAndAux //<Nsubspaces,Args...>
+{
+public:
+   using ElemDofMap=TupleCatType<typename Arg1::DofsDM::ElemDofMap, typename Arg2::DofsDM::ElemDofMap>;
+   using DofMap=TupleCatType<typename Arg1::DofsDM::DofMap,typename Arg2::DofsDM::DofMap>;
+   using SpacesDofsArray=Array<std::shared_ptr<std::vector<Integer>>, Nsubspaces>;
+   using NdofsArray=Array<Integer, Nsubspaces>;
+   using CumulativeNdofsArray=Array<Integer, Nsubspaces+1>;
+   static constexpr auto NLocalDofs=Sum(Arg1::DofsDM::NLocalDofs,Arg2::DofsDM::NLocalDofs);
+   static constexpr auto NsubspacesArray=concat(Arg1::DofsDM::NsubspacesArray,Arg2::DofsDM::NsubspacesArray);
+
+   // using ElemDofMap=TupleCatType<typename Args::DofsDM::ElemDofMap...>;
+   // using DofMap=TupleCatType<typename Args::DofsDM::DofMap...>;
+   // using SpacesDofsArray=Array<std::shared_ptr<std::vector<Integer>>, Nsubspaces>;
+   // using NdofsArray=Array<Integer, Nsubspaces>;
+   // using CumulativeNdofsArray=Array<Integer, Nsubspaces+1>;
+   // static constexpr auto NLocalDofs=Sum(Args::DofsDM::NLocalDofs...);
+   // static constexpr auto NsubspacesArray=concat(Args::DofsDM::NsubspacesArray...);
+
+   template<Integer N1, typename...Ts1, Integer N2, typename...Ts2>
+   DofsDofMapFullAndAux(const DofsDofMap<N1,Ts1...>& dm1,const DofsDofMap<N2,Ts2...>& dm2,Integer M):
+   dofmap_(std::tuple_cat(dm1.dofmap(),dm2.dofmap())),
+   space_dofs_(concat(dm1.space_dofs(),dm2.space_dofs())),
+   n_dofs_array_(concat(dm1.n_dofs(),dm2.n_dofs())),
+   // cumulative_dofs_array_(cumulative_array_and_zero(dm1.n_dofs(),dm2.n_dofs()),Arg1::DofsDM::NsubspacesArray)
+   cumulative_dofs_array_(cumulative_array_and_zero(dm1.cumulative_n_dofs(),dm2.n_dofs()))
+   {}
+
+
+   inline auto& space_dofs() const {return space_dofs_;};
+   inline auto& space_dofs()       {return space_dofs_;};
+   inline auto& dofmap() const {return dofmap_;};
+   inline auto& dofmap()       {return dofmap_;};
+   inline auto& n_dofs()       {return n_dofs_array_;}
+   inline auto& n_dofs() const {return n_dofs_array_;}
+   inline auto& cumulative_n_dofs()       {return cumulative_dofs_array_;}
+   inline auto& cumulative_n_dofs() const {return cumulative_dofs_array_;}
+
+
+   template<Integer N>
+   void dofmap_get(GetType<ElemDofMap,N>& elemdm, const Integer elem_id)const
+   {
+    const auto& dm=tuple_get<N>(dofmap_)->operator[](elem_id);
+    const auto& offset=cumulative_dofs_array_[N];
+    
+
+    for(std::size_t i=0;i<elemdm.size();i++)
+        elemdm[i]=dm[i]+offset;
+    }
+
+
+   template<Integer N>
+   auto dofmap_size() const
+   {return tuple_get<N>(dofmap_)->size();}
+
+
+   auto space_dofs_get(const Integer N,const Integer id)
+   {return space_dofs_[N]->operator[](id)+cumulative_dofs_array_[N];}
+
+   auto space_dofs_get(const Integer N,const Integer id)const
+   {return space_dofs_[N]->operator[](id)+cumulative_dofs_array_[N];}
+
+   auto space_dofs_size(const Integer N) const
+   {return space_dofs_[N]->size();}
+
+
+ private:
+   DofMap dofmap_;
+   SpacesDofsArray space_dofs_;
+   ElemDofMap elemdofmap_;
+   NdofsArray n_dofs_array_;
+   CumulativeNdofsArray cumulative_dofs_array_;
+};
+
+
+
+// template<Integer N,Integer Nsubspaces,typename...Args>
+// auto& get(DofsDofMap<Nsubspaces,Args...>& dm,Integer elem_id)
+// {
+//  return dm;
+// }
+
 template<typename MeshT, typename BaseFunctionSpace,typename...BaseFunctionSpaces>
 class FunctionSpace 
 {
 public:
-
+      
       using Elem= typename MeshT::Elem;
+      using DofsDM=SingleSpaceDofsDofMap<Elem,BaseFunctionSpace,BaseFunctionSpaces...>;
       using TupleOfSpaces=std::tuple<ElemFunctionSpace<Elem,BaseFunctionSpace>,ElemFunctionSpace<Elem,BaseFunctionSpaces>... >;
       static constexpr Integer Nsubspaces=1+sizeof...(BaseFunctionSpaces);
 
@@ -41,20 +220,21 @@ public:
       using DofMapType2=std::tuple<std::vector<Array<Integer, DofsPerElemNums<Elem,BaseFunctionSpace>::value>>,
                                    std::vector<Array<Integer, DofsPerElemNums<Elem,BaseFunctionSpaces>::value>>
                                   ...>;
+
+      using DofMapType3=std::tuple<std::shared_ptr<std::vector<Array<Integer, DofsPerElemNums<Elem,BaseFunctionSpace>::value>>>,
+                                   std::shared_ptr<std::vector<Array<Integer, DofsPerElemNums<Elem,BaseFunctionSpaces>::value>>>...>;
+
+
       static constexpr auto faces_dofs_array=std::tuple_cat(std::make_tuple(TraceDofs<ElemFunctionSpace<Elem,BaseFunctionSpace>>::dofs()),
                                                              std::make_tuple(TraceDofs<ElemFunctionSpace<Elem,BaseFunctionSpaces>>::dofs())...);
       static constexpr Array<std::size_t,Nsubspaces> Nfaces_dofs_array{TraceDofs<ElemFunctionSpace<Elem,BaseFunctionSpace>>::dofs()[0].size(),TraceDofs<ElemFunctionSpace<Elem,BaseFunctionSpaces>>::dofs()[0].size()...};
+      using OffSetType=Array<std::vector<Integer>, Nsubspaces>;
+      using SpacesDofsArrayType=Array<std::vector<std::vector<Integer>>, Nsubspaces>;
+      using SpacesDofsArrayType3=Array<std::shared_ptr<std::vector<Integer>>, Nsubspaces>;
 
-
-      using OffSetType=std::array<std::vector<Integer>, Nsubspaces>;
-      using SpacesDofsArrayType=std::array<std::vector<std::vector<Integer>>, Nsubspaces>;
-      using SpacesInfosArrayType=std::array<std::array<Integer,4>,Nsubspaces>;
+      using SpacesInfosArrayType=Array<Array<Integer,4>,Nsubspaces>;
+      using ArrayNdofs=Array<Integer,Nsubspaces>;
       using ElemsTupleType=std::tuple<Elem>;
-      // using ElementFunctionSpacesTupleType=std::tuple<std::tuple<Elem,BaseFunctionSpace>,std::tuple<Elem,BaseFunctionSpaces>...>;
-      // using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates<ElementFunctionSpacesTupleType>;
-      // using SpacesToUniqueFEFamily=SpacesToUniqueFEFamilies<UniqueElementFunctionSpacesTupleType>;
-      // using FromElementFunctionSpacesToUniqueNumbersTupleType=TupleAllToUniqueMap<ElementFunctionSpacesTupleType,UniqueElementFunctionSpacesTupleType>;
-
       using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates<TupleOfSpaces>;
       using SpacesToUniqueFEFamily=SpacesToUniqueFEFamilies2<UniqueElementFunctionSpacesTupleType>;
       using FromElementFunctionSpacesToUniqueNumbersTupleType=
@@ -81,61 +261,35 @@ public:
                                   return (size/space_infos_[space_id][3]);}
 
 
-      inline const Integer& n_dofs()const{return n_dofs_;};
+
+      // inline const Integer& n_dofs()const{return n_dofs_;};
+
+      inline const Integer& n_dofs()const{return dofsdm_.n_dofs()[0];};
+
+      inline const Integer n_dofs(const Integer& space_id)const
+                                 {Integer n=0;
+                                  for(std::size_t i=0;i<space_infos_[space_id][3];i++)
+                                       n+=space_dofs_[space_id][i].size(); 
+                                     return n;
+                                   };
+
+
 
       inline const Integer n_dofs(const Integer& space_id,const Integer& component_id)const
                                  {return space_dofs_[space_id][component_id].size(); };
 
-      // inline const DofMapType& dofmap()const{return dofmap_;};
-
       inline const DofMapType2& dofmap2()const{return dofmap2_;};
 
-      // inline void  dofmap(const DofMapType& dm)const{dm=dofmap_;};
+      inline const auto& dofmap3()const{return dofsdm_.dofmap();};
+
+      inline const auto& space_dofs3()const{return dofsdm_.space_dofs();};
+
+      inline const auto& dofsdofmap()const{return dofsdm_;};
 
 
-      // inline const std::array<Integer, Nelem_dofs>& dofmap(const Integer& elem_id)const
-      //                    {return dofmap_[elem_id];};
-
-      // inline void  dofmap(const Integer& elem_id, const std::array<Integer, Nelem_dofs> & elem_dm)const
-      //                    {elem_dm=dofmap_[elem_id];};
-
-
-      // inline std::vector<Integer> 
-      //              dofmap(const Integer& space_id,const Integer& elem_id)const{
-      //                   const auto& os=offset_[space_id];
-      //                   const auto& size=n_elem_dofs(space_id);
-      //                   std::vector<Integer> output(size);
-      //                   for(Integer nn=0;nn<size;nn++)
-      //                        output[nn]=dofmap_[elem_id][nn+os[0]];
-      //                   return output;};
-
-
-      // inline std::vector<Integer> 
-      //              dofmap(const Integer& space_id,const Integer& component_id,const Integer& elem_id)const{
-      //                   const auto& comp=components(space_id);
-      //                   const auto& os=offset_[space_id];
-      //                   const auto& size= n_elem_dofs(space_id);
-      //                   std::vector<Integer> output(size/comp);
-      //                   space_infos_[space_id][3];
-      //                   Integer mm=0;
-      //                   for(Integer nn=component_id;nn<size;nn=nn+comp)
-      //                        {output[mm]=dofmap_[elem_id][nn+os[0]];mm++;}
-      //                   return output;};
-
-
-      // inline void dofmap(const Integer& space_id,const Integer& component_id,const Integer& elem_id, const std::vector<Integer>& elem_space_dm)const{
-      //                   const auto& comp=components(space_id);
-      //                   const auto& os=offset_[space_id];
-      //                   const auto& size= n_elem_dofs(space_id);
-      //                   std::vector<Integer> output(size/comp);
-      //                   space_infos_[space_id][3];
-      //                   Integer mm=0;
-      //                   elem_space_dm.resize(size/comp);
-      //                   for(Integer nn=component_id;nn<size;nn=nn+comp)
-      //                        {elem_space_dm[mm]=dofmap_[elem_id][nn+os[0]];mm++;}
-      //                   };
-
-      inline const std::array<std::vector<Integer>, Nsubspaces>& offset() const {return offset_;};
+      auto& array_ndofs(){return array_ndofs_;}
+      auto& array_ndofs()const{return array_ndofs_;}
+      inline const Array<std::vector<Integer>, Nsubspaces>& offset() const {return offset_;};
 
       inline void  offset(const std::array<std::vector<Integer>, Nsubspaces> &os)const {os=offset_;};
 
@@ -143,6 +297,11 @@ public:
       inline const std::vector<Integer>& offset(const Integer& space_id)const{return offset_[space_id];};
 
       inline void offset(Integer space_id, const std::vector<Integer>& space_os)const {space_os=offset_[space_id];};
+
+
+      inline const auto& space_dofs() const {return space_dofs_;};
+
+
 
 
       inline const std::vector<Integer>& space_dofs(const Integer& space_id,const Integer& component_id) const
@@ -161,8 +320,13 @@ public:
       mesh_ptr_(std::make_shared< MeshT >(mesh))
       {
       function_space_info<0,Nsubspaces,BaseFunctionSpace,BaseFunctionSpaces...>(space_infos_);
-      // dofmap_fespace<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofmap_,offset_,n_dofs_,space_infos_,space_dofs_);     
-      dofmap_fespace2<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofmap2_,offset_,n_dofs_,space_infos_,space_dofs_);     
+      // dofmap_fespace<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofmap2_,offset_,n_dofs_,space_infos_,space_dofs_,array_ndofs_);     
+      // dofmap_fespace3<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofmap3_,offset_,n_dofs_,space_infos_,space_dofs3_,array_ndofs_);     
+      // dofmap_fespace3<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofsdm_.dofmap(),offset_,n_dofs_,space_infos_,dofsdm_.space_dofs(),array_ndofs_);     
+      dofmap_fespace3<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofsdm_,offset_,array_ndofs_);     
+
+      // for(std::size_t i=0; i<Nsubspaces ;i++)
+      // dofsdm_.n_dofs()[i]=n_dofs_;
       };
 
 private:
@@ -171,9 +335,13 @@ private:
       Integer n_dofs_;
       DofMapType dofmap_;
       DofMapType2 dofmap2_;
+      DofMapType3 dofmap3_;
+      SpacesDofsArrayType3 space_dofs3_;
       OffSetType offset_;
       SpacesDofsArrayType space_dofs_;
       SpacesInfosArrayType space_infos_;
+      ArrayNdofs array_ndofs_;
+      DofsDM dofsdm_;
       // ElementFunctionSpacesTupleType shape_functions_;
 
 };
@@ -197,13 +365,7 @@ public:
   using TupleOfSpaces=TupleCatType<typename Arg::TupleOfSpaces,typename Args::TupleOfSpaces...>;
   using DofMapType=std::tuple<typename Arg::DofMapType,typename Args::DofMapType...>;
   using DofMapType2=TupleCatType<typename Arg::DofMapType2,typename Args::DofMapType2...>;
-  // using ElementFunctionSpacesTupleType=TupleCatType<typename Arg::ElementFunctionSpacesTupleType,typename Args::ElementFunctionSpacesTupleType...>;
-  // using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates<TupleCatType<typename Arg::UniqueElementFunctionSpacesTupleType,typename Args::UniqueElementFunctionSpacesTupleType...>>;
-  // using SpacesToUniqueFEFamily=SpacesToUniqueFEFamilies<UniqueElementFunctionSpacesTupleType>;
-  // using ElemsTupleType=RemoveTupleDuplicates<TupleCatType<typename Arg::ElemsTupleType,typename Args::ElemsTupleType...>>;
-  // using FromElementFunctionSpacesToUniqueNumbersTupleType=TupleAllToUniqueMap<ElementFunctionSpacesTupleType,UniqueElementFunctionSpacesTupleType>;
-
-
+  using DofMapType3=TupleCatType<typename Arg::DofMapType3,typename Args::DofMapType3...>;
 
   using UniqueElementFunctionSpacesTupleType=
   RemoveTupleDuplicates<TupleCatType<typename Arg::UniqueElementFunctionSpacesTupleType,typename Args::UniqueElementFunctionSpacesTupleType...>>;
@@ -214,67 +376,11 @@ public:
         FromElementFunctionSpacesToFirstSpaceTupleType<FromElementFunctionSpacesToUniqueNumbersTupleType>;
 
   static constexpr Integer Nuniquesubspaces=TupleTypeSize<UniqueElementFunctionSpacesTupleType>::value;
-  // using UniqueElementFunctionSpacesTupleType2=
-  // RemoveTupleDuplicates<TupleCatType<typename Arg::UniqueElementFunctionSpacesTupleType2,typename Args::UniqueElementFunctionSpacesTupleType2...>>;
-  // using SpacesToUniqueFEFamily2=SpacesToUniqueFEFamilies2<UniqueElementFunctionSpacesTupleType2>;
-  // using FromElementFunctionSpacesToUniqueNumbersTupleType2=
-  // TupleAllToUniqueMap<TupleOfSpaces,UniqueElementFunctionSpacesTupleType2>;
+  
 
-
-
-
-
- //  template<Integer N, typename T,typename...Ts>
- //  class FunctionSpacesCount;
-
- //  template<Integer N, typename...Ts>
- //  class FunctionSpacesCount<N,std::tuple<FunctionSpace<Ts...>>>
- //  {
- //   public: 
- //   using T=FunctionSpace<Ts...>;
- //   using type=TupleOfTypeTCreate<Number<N>,T::Nsubspaces>;     
- //   static constexpr Integer value= N+1;
- //   };
-
- //  template<Integer N, typename...Ts>
- //  class FunctionSpacesCount<N,std::tuple<MixedSpace<Ts...>>>
- //  {
- //   public: 
- //   using type=typename FunctionSpacesCount<N,typename MixedSpace<Ts...>::Spaces>::type;
- //   static constexpr Integer value= FunctionSpacesCount<N,typename MixedSpace<Ts...>::Spaces>::value;
- //  };
-
- //  template<Integer N, typename ...Ts1, typename...Ts>
- //  class FunctionSpacesCount<N,std::tuple<FunctionSpace<Ts1...>,Ts...>>
- //  {
- //   public: 
- //   using T=FunctionSpace<Ts1...>;
- //   using singletype=TupleOfTypeTCreate<Number<N>,T::Nsubspaces>;
- //   using rest = typename FunctionSpacesCount<N+1,std::tuple<Ts...>>::type;
- //   using type=TupleCatType<singletype,rest>; 
- //   static constexpr Integer value=FunctionSpacesCount<N+1,std::tuple<Ts...>>::value;
- // };
-
- //  template<Integer N, typename ...Ts1, typename...Ts>
- //  class FunctionSpacesCount<N,std::tuple<MixedSpace<Ts1...>,Ts...>>
- //  {
- //   public: 
- //   using T=MixedSpace<Ts1...>;
- //   using singletype=typename FunctionSpacesCount<N,typename T::Spaces>::type;
- //   static constexpr Integer value_tmp= FunctionSpacesCount<N,typename T::Spaces>::value;
- //   using rest = typename FunctionSpacesCount<value_tmp,std::tuple<Ts...>>::type;
- //   static constexpr Integer value= FunctionSpacesCount<value_tmp,std::tuple<Ts...>>::value;
- //   using type=TupleCatType<singletype,rest>;
- //  };
-
-  // using FromSpacesToFunctionSpaces=typename FunctionSpacesCount<0, Spaces>::type;
 
   inline const Integer& n_dofs()const{return n_dofs_;}; 
 
-  // inline const DofMapType& dofmap()const{return dofmap_;};
-  
-  // template<Integer...Ns>
-  // inline constexpr const auto& dofmap()const{return tuple_get<Ns...>(dofmap_);};
 
       inline const DofMapType2& dofmap2()const{return dofmap2_;};
 
@@ -306,8 +412,6 @@ template<Integer N>
 template<typename OtherArg,typename...OtherArgs>
       struct tuple_type2
       {
-        // using rest = typename tuple_type<OtherArgs...>::type; 
-        // using tuple_ens=std::tuple<OtherArg>;
         using type = TupleCatType<OtherArg,OtherArgs...>;
       };
 
@@ -318,75 +422,34 @@ template<typename OtherArg>
        using type = OtherArg;
      };
 
-// template<typename OtherArg,typename...OtherArgs>
-//       struct tuple_type
-//       {
-//         using rest = typename tuple_type<OtherArgs...>::type; 
-//         using tuple_ens=std::tuple<OtherArg>;
-//         using type = decltype( std::tuple_cat( std::declval< tuple_ens >(), std::declval< rest >() ) );
-//       };
 
 
-// template<typename OtherArg>
-//       struct tuple_type<OtherArg>
-//       {
-//        using type = typename std::tuple<OtherArg>;
-//      };
-
-// template<Integer N,typename OtherArg, typename...OtherArgs>
-//      typename std::enable_if< (N==0&&0==sizeof...(OtherArgs)),typename tuple_type<OtherArg,OtherArgs...>::type >::type  
-//      cumulative_tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
-//      { 
-//      return std::tuple<OtherArg>(add_costant(otherarg,0));}
-
-// template<Integer N,typename OtherArg, typename...OtherArgs>
-//      typename std::enable_if< (0<N&&0==sizeof...(OtherArgs)),typename tuple_type<OtherArg,OtherArgs...>::type >::type  
-//      cumulative_tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
-//      { 
-//      return std::tuple<OtherArg>(add_costant(otherarg,tot_n_dofs<N-1>()));}
-
-
-// template<Integer N,typename OtherArg, typename...OtherArgs>
-//      typename std::enable_if< 0<N && 0<sizeof...(OtherArgs),typename tuple_type<OtherArg,OtherArgs...>::type >::type  
-//      cumulative_tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
-//      {
-//      return std::tuple_cat(std::tuple<OtherArg>( add_costant(otherarg,tot_n_dofs<N-1>()) ),
-//        cumulative_tuple_make<N+1,OtherArgs...>(otherargs...));}
-
-// template<Integer N,typename OtherArg, typename...OtherArgs>
-//      typename std::enable_if< 0==N && 0<sizeof...(OtherArgs),typename tuple_type<OtherArg,OtherArgs...>::type >::type  
-//      cumulative_tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
-//      {
-//      return std::tuple_cat(std::tuple<OtherArg>( otherarg ),
-//        cumulative_tuple_make<N+1,OtherArgs...>(otherargs...));}
-
-
-template<Integer N,typename OtherArg, typename...OtherArgs>
+template<Integer N=0,typename OtherArg, typename...OtherArgs>
      typename std::enable_if< (N==0&&0==sizeof...(OtherArgs)),typename tuple_type2<OtherArg,OtherArgs...>::type >::type  
      cumulative_tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
      { 
      return otherarg;//add_costant(otherarg,0);
    }
 
-template<Integer N,typename OtherArg, typename...OtherArgs>
+template<Integer N=0,typename OtherArg, typename...OtherArgs>
      typename std::enable_if< (0<N&&0==sizeof...(OtherArgs)),typename tuple_type2<OtherArg,OtherArgs...>::type >::type  
      cumulative_tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
      { 
-      std::cout<<"addin="<<tot_n_dofs<N-1>()<<std::endl;
+      // std::cout<<"addin="<<tot_n_dofs<N-1>()<<std::endl;
      return // otherarg;//
          add_costant(otherarg,tot_n_dofs<N-1>());
      }
 
-template<Integer N,typename OtherArg, typename...OtherArgs>
+template<Integer N=0,typename OtherArg, typename...OtherArgs>
      typename std::enable_if< 0<N && 0<sizeof...(OtherArgs),typename tuple_type2<OtherArg,OtherArgs...>::type >::type  
      cumulative_tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
      {
-      std::cout<<"addin="<<tot_n_dofs<N-1>()<<std::endl;
+      // std::cout<<"addin="<<tot_n_dofs<N-1>()<<std::endl;
      return std::tuple_cat(add_costant(otherarg,tot_n_dofs<N-1>()) ,
        cumulative_tuple_make<N+1,OtherArgs...>(otherargs...));
    }
 
-template<Integer N,typename OtherArg, typename...OtherArgs>
+template<Integer N=0,typename OtherArg, typename...OtherArgs>
      typename std::enable_if< 0==N && 0<sizeof...(OtherArgs),typename tuple_type2<OtherArg,OtherArgs...>::type >::type  
      cumulative_tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
      {
@@ -395,8 +458,11 @@ template<Integer N,typename OtherArg, typename...OtherArgs>
    }
 
 
+      inline auto& array_ndofs(){return array_ndofs_;}
 
-
+      inline auto& array_ndofs()const{return array_ndofs_;}
+     
+      inline const auto& space_dofs() const {return space_dofs_;};
 
      MixedSpace(const Arg& arg,const Args&...args):
      mesh_ptr_(arg.mesh_ptr()),
@@ -407,9 +473,20 @@ template<Integer N,typename OtherArg, typename...OtherArgs>
 
       // dofmap2_(cumulative_tuple_make<0,Arg,Args...>(0,arg,args...))
 
-     dofmap2_(cumulative_tuple_make<0,typename Arg::DofMapType2,typename Args::DofMapType2...>(arg.dofmap2(),args.dofmap2()...))
+     // dofmap2_(cumulative_tuple_make<0,typename Arg::DofMapType2,typename Args::DofMapType2...>
+     dofmap2_(cumulative_tuple_make(arg.dofmap2(),args.dofmap2()...))
      // ,
      // dofmap2_(std::tuple_cat(arg.dofmap2(),args.dofmap2()...))//cumulative_tuple_make<0,typename Arg::DofMapType2,typename Args::DofMapType2...>(arg.dofmap2(),args.dofmap2()...))
+     ,
+     dofmap3_(std::tuple_cat(arg.dofmap3(),args.dofmap3()...))
+     ,
+     array_ndofs_(concat(arg.array_ndofs(),args.array_ndofs()...))
+     ,
+     space_dofs_(concat(arg.space_dofs(),args.space_dofs()...))
+     ,
+     space_dofs3_(concat(arg.space_dofs3(),args.space_dofs3()...))
+     ,
+     dofsdm_(arg.dofsdofmap(),args.dofsdofmap()...)
      {}
 
 
@@ -423,13 +500,29 @@ template<Integer N,typename OtherArg, typename...OtherArgs>
      static constexpr auto faces_dofs_array=std::tuple_cat(Arg ::faces_dofs_array,
                                                             Args::faces_dofs_array...);
      static constexpr auto Nfaces_dofs_array=concat(Arg::Nfaces_dofs_array,Args::Nfaces_dofs_array...);
-     
+     using SpacesDofsArrayType=Array<std::vector<std::vector<Integer>>, Nsubspaces>;
+     using SpacesDofsArrayType3=Array<std::shared_ptr<std::vector<Integer>>, Nsubspaces>;
+
+     using DofsDM=DofsDofMap<Nsubspaces,Arg,Args...>;
+
+      inline const auto& dofmap3()const{return dofmap3_;};
+
+      inline const auto& space_dofs3()const{return space_dofs3_;};
+
+      inline const auto& dofsdofmap()const{return dofsdm_;};
+
+
    private:
     std::shared_ptr< MeshT > mesh_ptr_;
     std::tuple<std::shared_ptr<Arg>,std::shared_ptr<Args>...> spaces_;
     Integer n_dofs_;
     DofMapType dofmap_;
     DofMapType2 dofmap2_;
+    DofMapType3 dofmap3_;
+    Array<Integer,Nsubspaces> array_ndofs_;
+    SpacesDofsArrayType space_dofs_;
+    SpacesDofsArrayType3 space_dofs3_;
+    DofsDM dofsdm_;
 };
 
 template<typename...Args>
@@ -462,6 +555,8 @@ public:
 
   using DofMapType2=TupleCatType<typename AuxFunctionSpace<MeshT,Arg>:: DofMapType2,
                                  typename AuxFunctionSpace<MeshT,Args>::DofMapType2...>;
+  using DofMapType3=TupleCatType<typename AuxFunctionSpace<MeshT,Arg>:: DofMapType3,
+                                 typename AuxFunctionSpace<MeshT,Args>::DofMapType3...>;
 
 
   using UniqueElementFunctionSpacesTupleType=RemoveTupleDuplicates
@@ -481,7 +576,17 @@ public:
    std::make_shared<AuxFunctionSpace<MeshT,Args>>(args)...)),
   // dofmap_(arg.dofmap(),args.dofmap()...)
   // ,
-  dofmap2_(arg.dofmap2(),args.dofmap2()...)
+  dofmap2_(std::tuple_cat(arg.dofmap2(),args.dofmap2()...))
+  ,
+  array_ndofs_(concat(arg.array_ndofs(),args.array_ndofs()...))
+  ,
+  space_dofs_(concat(arg.space_dofs(),args.space_dofs()...))
+  ,
+  dofmap3_(std::tuple_cat(arg.dofmap3(),args.dofmap3()...))
+  ,
+  space_dofs3_(concat(arg.space_dofs3(),args.space_dofs3()...))
+  ,
+  dofsdm_(arg.dofsdofmap(),args.dofsdofmap()...)
   {}
 
   inline auto mesh_ptr()const {return mesh_ptr_;};
@@ -490,11 +595,24 @@ public:
 
   inline const DofMapType2& dofmap2()const{return dofmap2_;};
   
+  auto& array_ndofs(){return array_ndofs_;}
+  auto& array_ndofs()const{return array_ndofs_;}
   //    template<Integer...Ns>
   // inline constexpr const auto& dofmap()const{return tuple_get<Ns...>(dofmap_);};
   constexpr const auto& spaces(){return spaces_;}
 
+   inline const auto& space_dofs() const {return space_dofs_;};
+   inline const auto& space_dofs3() const {return space_dofs3_;};
+
+
+   inline const auto& dofsdofmap()const{return dofsdm_;};
+
+
   static constexpr Integer Nsubspaces=TupleTypeSize<TupleOfSpaces>::value;
+  using SpacesDofsArrayType=Array<std::vector<std::vector<Integer>>, Nsubspaces>;
+  using SpacesDofsArrayType3=Array<std::shared_ptr<std::vector<Integer>>, Nsubspaces>;
+  using DofsDM=DofsDofMap<Nsubspaces,AuxFunctionSpace<MeshT,Arg>,AuxFunctionSpace<MeshT,Args>...>;
+
   static constexpr Array<Integer,Nsubspaces> Nelem_dofs_array=
   concat(AuxFunctionSpace<MeshT,Arg>::Nelem_dofs_array,
     AuxFunctionSpace<MeshT,Args>::Nelem_dofs_array...);
@@ -512,6 +630,11 @@ private:
   std::shared_ptr<AuxFunctionSpace<MeshT,Args>>...> spaces_;
   DofMapType dofmap_;
   DofMapType2 dofmap2_;
+  DofMapType3 dofmap3_;
+  Array<Integer,Nsubspaces> array_ndofs_;
+  SpacesDofsArrayType space_dofs_;
+  SpacesDofsArrayType3 space_dofs3_;
+  DofsDM dofsdm_;
 };
 
 template<typename MeshT,typename...Args>
@@ -550,14 +673,23 @@ public:
   static constexpr Array<Integer,Nsubspaces> Nelem_dofs_array=FunctionSpace::Nelem_dofs_array;
   static constexpr auto faces_dofs_array=std::tuple_cat(Args::faces_dofs_array...);
   static constexpr auto Nfaces_dofs_array=concat(Args::Nfaces_dofs_array...);
-
- 
+  using SpacesDofsArrayType=Array<std::vector<std::vector<Integer>>, Nsubspaces>;
+  using DofsDM=DofsDofMap<Nsubspaces,MixedSpace<Args...>>;
 
 
   FullSpace(const FunctionSpace& W):
-  spaces_ptr_(std::make_shared<FunctionSpace>(W))
+  spaces_ptr_(std::make_shared<FunctionSpace>(W)),
+  array_ndofs_(W.array_ndofs()),
+  space_dofs_(W.space_dofs()),
+  dofsdm_(W.dofsdofmap())
   {}
-  
+
+  auto& array_ndofs(){return array_ndofs_;}
+
+  auto& array_ndofs()const{return array_ndofs_;}
+
+  inline const auto& space_dofs() const {return space_dofs_;};
+
   inline auto mesh_ptr(){return spaces_ptr_->mesh_ptr();}
 
   inline auto mesh_ptr()const{return spaces_ptr_->mesh_ptr();}
@@ -565,11 +697,18 @@ public:
   inline       auto  spaces_ptr()     {return spaces_ptr_;}
   
   inline const auto& spaces_ptr()const{return spaces_ptr_;}
-
+  
 
   inline auto& dofmap2()const{return spaces_ptr_->dofmap2();};
+  inline auto& dofmap3()const{return spaces_ptr_->dofmap3();};
+  inline const auto& space_dofs3() const {return spaces_ptr_->space_dofs3();};
+
+  inline const auto& dofsdofmap()const{return dofsdm_;};
 private:
 std::shared_ptr<FunctionSpace> spaces_ptr_;
+Array<Integer,Nsubspaces> array_ndofs_;
+SpacesDofsArrayType space_dofs_;
+DofsDM dofsdm_;
 };
 
 
@@ -588,7 +727,8 @@ public:
 
   using DofMapType2=std::tuple<typename FunctionSpace::DofMapType2,
                               typename AuxFunctionSpace::DofMapType2>;
-
+  using DofMapType3=std::tuple<typename FunctionSpace::DofMapType3,
+                              typename AuxFunctionSpace::DofMapType3>;
 
   using UniqueElementFunctionSpacesTupleType= RemoveTupleDuplicates<TupleCatType<
                                      typename FunctionSpace::UniqueElementFunctionSpacesTupleType,
@@ -611,23 +751,46 @@ public:
                                                         AuxMixedSpace<AuxArgs...>::faces_dofs_array);
   static constexpr auto Nfaces_dofs_array=concat(MixedSpace<Args...>::Nfaces_dofs_array,
                                                  AuxMixedSpace<AuxArgs...>::Nfaces_dofs_array);
+  using SpacesDofsArrayType=Array<std::vector<std::vector<Integer>>, Nsubspaces>;
+  using SpacesDofsArrayType3=Array<std::shared_ptr<std::vector<Integer>>, Nsubspaces>;
+  using DofsDM=DofsDofMapFullAndAux<Nsubspaces,MixedSpace<Args...>,AuxMixedSpace<AuxArgs...>>;
 
   FullSpace(const FunctionSpace& W1, const AuxFunctionSpace& W2):
   spaces_ptr_(std::make_shared<FunctionSpace>(W1)),
-  aux_spaces_ptr_(std::make_shared<AuxFunctionSpace>(W2))
+  aux_spaces_ptr_(std::make_shared<AuxFunctionSpace>(W2)),
+  array_ndofs_(concat(W1.array_ndofs(),W2.array_ndofs())),
+  space_dofs_(concat(W1.space_dofs(),W2.space_dofs())),
+  space_dofs3_(concat(W1.space_dofs3(),W2.space_dofs3())),
+  dofsdm_(W1.dofsdofmap(),W2.dofsdofmap(),1)
   {}
+
   inline       auto  spaces_ptr()     {return spaces_ptr_;}
   inline const auto& spaces_ptr()const{return spaces_ptr_;}
   inline       auto  aux_spaces_ptr()     {return aux_spaces_ptr_;}
   inline const auto& aux_spaces_ptr()const{return aux_spaces_ptr_;}
-  
+
+  inline auto& array_ndofs(){return array_ndofs_;}
+
+  inline auto& array_ndofs()const{return array_ndofs_;}
+
+  inline const auto& space_dofs() const {return space_dofs_;};
+
   inline auto mesh_ptr(){return spaces_ptr_->mesh_ptr();}
   inline auto mesh_ptr()const{return spaces_ptr_->mesh_ptr();}
 
-  inline auto& dofmap2()const{return spaces_ptr_->dofmap2();};
+  // inline auto& dofmap2()const{return spaces_ptr_->dofmap2();};
+  // inline auto& dofmap3()const{return spaces_ptr_->dofmap3();};
+  inline auto& space_dofs3() const {return space_dofs3_;};
+  
+  inline       auto& dofsdofmap()     {return dofsdm_;};
+  inline const auto& dofsdofmap()const{return dofsdm_;};
 private:
 std::shared_ptr<FunctionSpace> spaces_ptr_;
 std::shared_ptr<AuxFunctionSpace> aux_spaces_ptr_;
+Array<Integer,Nsubspaces> array_ndofs_;
+SpacesDofsArrayType space_dofs_;
+SpacesDofsArrayType3 space_dofs3_;
+DofsDM dofsdm_;
 };
 
 template<typename...Args>
@@ -640,6 +803,42 @@ auto FullSpaceBuild(const MixedSpace<Args...>& W1,const AuxMixedSpace<AuxArgs...
 
 
 
+
+
+template<Integer N, typename...Args>
+void sub_solution(std::vector<Real>& sub_sol,const std::vector<Real>& sol,const FullSpace<Args...>& W )
+{
+ std::vector<Real> found_vec;
+
+ const auto& array_ndofs=W.array_ndofs();
+ auto n_dofs=array_ndofs[N];
+
+ if(sub_sol.size()!=n_dofs)
+  sub_sol.resize(n_dofs);
+
+ found_vec.resize(n_dofs);
+ 
+ Integer offset=0;
+
+ for(std::size_t i=0;i<N;i++) 
+ {
+  offset+=array_ndofs[i];
+ }
+
+ auto&dofmap=tuple_get<N>(W.dofmap2());
+
+
+ for(std::size_t el=0;el<dofmap.size();el++)
+ {
+  for(std::size_t i=0;i<dofmap[el].size();i++)
+   {
+    const auto index=dofmap[el][i];
+    sub_sol[index] = sol[index];
+   }
+
+ }
+
+}
 }
 
 

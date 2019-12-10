@@ -29,12 +29,12 @@ class Evaluation<Expression<Unary<Expression<Derived> > >,OtherTemplateArguments
  void apply(outputsubtype& output,const Inputs&...inputs)
  {
 
-  std::cout<<"pre eval Evaluation<Expression<UnaryOperator "<<std::endl;
+  // std::cout<<"pre eval Evaluation<Expression<UnaryOperator "<<std::endl;
   eval_.apply(derived_value_,inputs...);
   OperatorApply<Unary<subtype>>::apply(output,derived_value_);
-  std::cout<<"after Unary Evaluation<Expression<UnaryOperator "<<std::endl;
-  std::cout<<"derived_value_="<<derived_value_<<std::endl;
-  std::cout<<"output="<<output<<std::endl;
+  // std::cout<<"after Unary Evaluation<Expression<UnaryOperator "<<std::endl;
+  // std::cout<<"derived_value_="<<derived_value_<<std::endl;
+  // std::cout<<"output="<<output<<std::endl;
  }
        auto  expression()     {return expr_;}
  const auto& expression()const{return expr_;}

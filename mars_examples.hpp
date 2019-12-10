@@ -1218,6 +1218,7 @@ class SparseMatrix
  public:
     SparseMatrix(){}
 
+     
     SparseMatrix(const Integer max_rows,const Integer max_cols):
     max_rows_(max_rows),
     max_cols_(max_cols),
@@ -1227,6 +1228,7 @@ class SparseMatrix
         cols_idx_.resize(max_rows_);
     }
 
+    auto rows(){return max_rows_;}
     void init(const Integer max_rows,const Integer max_cols)
     {
         max_rows_=max_rows;
@@ -1298,12 +1300,24 @@ class SparseMatrix
 
     void print()
     {
-
+        std::cout<<"printing matrix"<<std::endl;
         for(Integer i=0;i<max_rows_;i++)
         {
            const auto& map=cols_idx_[i]; 
              for (auto it=map.begin(); it!=map.end(); ++it)
                  std::cout<<"( " << i<<", "<< it->first << ", " << A_[it->second]<<" )" ;
+             std::cout<<std::endl;
+        }
+    }
+
+    void print_val()
+    {
+        std::cout<<"printing matrix"<<std::endl;
+        for(Integer i=0;i<max_rows_;i++)
+        {
+           const auto& map=cols_idx_[i]; 
+             for (auto it=map.begin(); it!=map.end(); ++it)
+                 std::cout << A_[it->second]<<" " ;
              std::cout<<std::endl;
         }
     }
@@ -1399,7 +1413,7 @@ class Variable
 {
   public:  
   // using Points=ElemPoints<Elem,Operator,FEFamily,Order>;
-  using Points=ElemPoints2<Elem,ElementOrder>;
+  using Points=ElemGeometricPoints<Elem,ElementOrder>;
   static constexpr Integer Npoints=Points::type::Dim;
   using BaseFunctionSpace=BaseElementFunctionSpace<Elem,FEFamily,Order,Continuity, NComponents>;
   using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
@@ -1445,7 +1459,7 @@ class Variable
          for(Integer j=0;j<Cols;j++)            
             {
                 mat_tmp_[k](i,j)=vec[0+component]*reference_values[0][k](i,j);
-                std::cout<<"k,i,j="<<k<<","<<i<<","<<j<<"="<<mat_tmp_[k](i,j)<<std::endl;
+                // std::cout<<"k,i,j="<<k<<","<<i<<","<<j<<"="<<mat_tmp_[k](i,j)<<std::endl;
             }
 
     // for(std::size_t qp=1;qp<Npoints;qp++)
@@ -1485,14 +1499,14 @@ class Variable
     // }
    }
    
-   std::cout<<"Npoints="<<Npoints<<std::endl;
-   std::cout<<"NComponents="<<NComponents<<std::endl;
-   std::cout<<"map="<<map<<std::endl;
-   std::cout<<"component="<<component<<std::endl;
-   std::cout<<"vec="<<vec<<std::endl;
-   std::cout<<"mat_tmp_="<<mat_tmp_<<std::endl;
-   std::cout<<" all output_="<<output_<<std::endl;
-   std::cout<<"reference_values="<<reference_values<<std::endl;
+   // std::cout<<"Npoints="<<Npoints<<std::endl;
+   // std::cout<<"NComponents="<<NComponents<<std::endl;
+   // std::cout<<"map="<<map<<std::endl;
+   // std::cout<<"component="<<component<<std::endl;
+   // std::cout<<"vec="<<vec<<std::endl;
+   // std::cout<<"mat_tmp_="<<mat_tmp_<<std::endl;
+   // std::cout<<" all output_="<<output_<<std::endl;
+   // std::cout<<"reference_values="<<reference_values<<std::endl;
   }
 
   auto& value()const{
@@ -1513,7 +1527,7 @@ class Variable
 
 
 template<typename...Strings>
-auto set_variables_names(const std::string& string,const Strings&...strings)
+auto variables_names(const std::string& string,const Strings&...strings)
 {
 
     return std::vector<std::string>{string,strings...};
@@ -1554,7 +1568,9 @@ constexpr auto Order=Space::Order;
 constexpr auto NComponents=Space::NComponents;
 constexpr auto Continuity=Space::Continuity;
 using Var=Variable<Elem,ElementOrder,IdentityOperator,FEFamily,Order,Continuity,NComponents>;
-constexpr auto Nelem_dofs=FullSpace<Args...>::Nelem_dofs_array[N];
+using FunctionSpace=FullSpace<Args...>;
+using ElemDofMap=GetType<typename FunctionSpace::DofsDM::ElemDofMap,N>;
+constexpr auto Nelem_dofs=FunctionSpace::Nelem_dofs_array[N];
 constexpr auto single_shape_function_components_number=Var::single_shape_function_components_number;
 constexpr auto size=Var::solution_array_size;
 constexpr auto Npoints=Var::Npoints;
@@ -1569,9 +1585,9 @@ Var var;
 std::vector<std::string> sub_scripts{"_x","_y","_z"};
 
 std::vector<std::string> sub_scripts_numbers{"_1","_2","_3","_4","_5","_6","_7","_8","_9","_10"};
-std::cout<<"<<<<<<<<<<<<<<<<<<<<<< >>>>>>>>>>>>>>>>>>>"<<std::endl;
-std::cout<<"Nelem_dofs = "<<Nelem_dofs<<std::endl;
-std::cout<<"size = "<<size<<std::endl;
+// std::cout<<"<<<<<<<<<<<<<<<<<<<<<< >>>>>>>>>>>>>>>>>>>"<<std::endl;
+// std::cout<<"Nelem_dofs = "<<Nelem_dofs<<std::endl;
+// std::cout<<"size = "<<size<<std::endl;
 // size the number of components of the finite element shape function (for 1 component)
 
 
@@ -1596,7 +1612,10 @@ for(Integer comp=0;comp<NComponents;comp++)
     if(single_shape_function_components_number==1)
        os << "LOOKUP_TABLE default\n";
 
-    const auto& dofmap=tuple_get<N>(space.spaces_ptr()->dofmap2());
+    // const auto& dofmap=tuple_get<N>(space.spaces_ptr()->dofmap2());
+    const auto& dofsdofmap=space.spaces_ptr()->dofsdofmap();
+    ElemDofMap localdofmap;
+
     auto mesh_ptr=space.mesh_ptr();
     // decltype(space.spaces_ptr()->dofmap2()) okl(6);
     // std::cout<<"N===="<<N<<std::endl;
@@ -1608,12 +1627,13 @@ for(Integer comp=0;comp<NComponents;comp++)
          if(!mesh_ptr->is_active(i)) continue;
 
          FE.init(i);
-         const auto& localdofmap=dofmap[i];
+         dofsdofmap.template dofmap_get<N>(localdofmap,i);
+         // const auto& localdofmap=dofmap[i];
          subarray(local_sol, sol, localdofmap);
          var.init(FE,local_sol,comp);
          const auto& val=var.value();
-         std::cout<<"ElementOrder="<<ElementOrder<<std::endl;
-         std::cout<<" val = "<<val<<std::endl;
+         // std::cout<<"ElementOrder="<<ElementOrder<<std::endl;
+         // std::cout<<" val = "<<val<<std::endl;
          // std::cout<<"localdofmap="<<localdofmap<<std::endl;
          // std::cout<<"local_sol="<<local_sol<<std::endl;
          // std::cout<<"var.value()="<<var.value()<<std::endl;
@@ -1621,7 +1641,7 @@ for(Integer comp=0;comp<NComponents;comp++)
          // std::cout<<"var.value().size()="<<var.value().size()<<std::endl;
          // std::cout<<"size="<<size<<std::endl;
          cont=0;
-         
+      
          // vector value finite elements (Raviart-Thomas)
          if(single_shape_function_components_number>1)
          {
@@ -1632,7 +1652,7 @@ for(Integer comp=0;comp<NComponents;comp++)
           for(Integer c=0;c<single_shape_function_components_number-1;c++)
               {
                 os << val[cont];//sol[localdofmap[cont]];
-                std::cout<<val[cont]<<" ";
+                // std::cout<<val[cont]<<" ";
                 os <<" "; 
                 cont++;
               }
@@ -1649,7 +1669,7 @@ for(Integer comp=0;comp<NComponents;comp++)
               os <<0.0;
              } 
              os <<"\n"; 
-             std::cout<<std::endl;
+             // std::cout<<std::endl;
           } 
 
          }
@@ -1730,7 +1750,7 @@ using FullSpace=FullSpace<Args...>;
 using TupleOfSpaces=typename FullSpace::FunctionSpace::TupleOfSpaces;
 using MeshT=typename FullSpace::MeshT;
 using Elem=typename MeshT::Elem;
-using ElemPoints=ElemPoints2<Elem,IsIsoparametricOrder<IsIsoparametric,TupleOfSpaces>::value>;
+using ElemPoints=ElemGeometricPoints<Elem,IsIsoparametricOrder<IsIsoparametric,TupleOfSpaces>::value>;
 static constexpr auto Points=ElemPoints::points;
 const auto mesh_ptr=space.mesh_ptr();
 const auto Dim=MeshT::Dim;
@@ -1771,8 +1791,9 @@ for(Integer i=0;i<n_elements;i++)
     {
      const auto point=FE.jac()*Points[j];
      const auto v0=FE.v0();
-     std::cout<<"point="<<point<<std::endl;
-     std::cout<<"v0="<<v0<<std::endl;
+     // std::cout<<"Points="<<Points[j]<<std::endl;
+     // std::cout<<"point="<<point<<std::endl;
+     // std::cout<<"v0="<<v0<<std::endl;
 
      for(Integer k=0;k<Dim-1;k++)
      {
@@ -1798,29 +1819,6 @@ for(Integer i=0;i<n_elements;i++)
        os << "\n"; 
     }
 
-    // for(Integer j=0;j<e.nodes.size();j++)
-    //  {
-    //   for(Integer k=0;k<Dim-1;k++)
-    //  {
-    //   os << points[e.nodes[j]][k];
-    //   os <<" ";
-    //  }
-    //   os << points[e.nodes[j]][Dim-1];
-
-     //  if(Dim==1)
-     //  {
-     //    os <<" ";
-     //    os << 0.0;
-     //  }
-
-     //  if(Dim==2)
-     //  {
-     //    os <<" ";
-     //    os << 0.0;
-     //  }
-
-     //  os << "\n"; 
-     // } 
     
 }
 
@@ -1862,8 +1860,8 @@ os << n_active_elements;
 os << "\n";
 
 auto MaxElement=ElementOrder<TupleOfSpaces>::value;
-std::cout<<"MaxElementOrder<TupleOfSpaces>>:value="<<MaxElement<<std::endl;
-std::cout<<Points<<std::endl;
+// std::cout<<"MaxElementOrder<TupleOfSpaces>>:value="<<MaxElement<<std::endl;
+// std::cout<<Points<<std::endl;
 for(Integer i=0;i<n_elements;i++)
 {
     if(!mesh_ptr->is_active(i)) continue;
@@ -1914,6 +1912,959 @@ void write_wtk_isoparametric(std::ostream &os,const FullSpace<Args...>& space,co
 }
 
 
+
+
+
+
+class ExactPoisson2D
+{
+    public: 
+    // using Point=Matrix<Real,3,1>;
+    using type=Matrix<Real,1,1>;
+    template<typename Point>
+    static auto eval(const Point& p)
+    {
+     type func{2*M_PI*M_PI*sin(M_PI*p[0])*sin(M_PI*p[1])};
+     return func; 
+    }
+};
+
+class ExactPoisson3D
+{
+    public: 
+    // using Point=Matrix<Real,3,1>;
+    using type=Matrix<Real,1,1>;
+    template<typename Point>
+    static auto eval(const Point& p)
+    {
+     type func{3*M_PI*M_PI*sin(M_PI*p[0])*sin(M_PI*p[1])*sin(M_PI*p[2])};
+     return func; 
+    }
+};
+
+template<Integer ManifoldDim>
+class ExactPoisson
+{
+    public: 
+    using type=Matrix<Real,1,1>;
+
+    template<typename Point>
+    static type eval(const Point& p)
+    {
+        if(ManifoldDim==2)
+          return ExactPoisson2D::eval(p); 
+        else if(ManifoldDim==3)
+          return ExactPoisson3D::eval(p); 
+    }
+
+
+};
+
+
+// void Poisson3D_P1(const Integer n)
+// {
+//   constexpr Integer ManifoldDim=3;
+//   constexpr Integer Dim=ManifoldDim;
+//   using MeshT=Mesh<Dim, ManifoldDim>;
+//   MeshT mesh;
+
+//   generate_cube(mesh,n,n,n);
+//   mesh.build_dual_graph();
+//   mark_boundary(mesh);
+
+//  using AuxP_1= FunctionSpace< MeshT, Lagrange1<1>>;
+
+//  AuxP_1 p1(mesh);
+//  auto Wtrial=MixedFunctionSpace(p1);
+//  auto Waux=AuxFunctionSpacesBuild(p1);
+//  auto W=FullSpaceBuild(Wtrial,Waux);
+
+//  auto u0 = MakeTrial<0>(W);
+//  auto v0 = MakeTest<0>(W);
+//  auto f1 = MakeFunction<0,ExactPoisson<ManifoldDim>>(W);
+
+
+//  std::cout<<W.spaces_ptr()->n_dofs()<<std::endl;
+//  constexpr auto C=Constant<Scalar>(1.0);
+
+
+//   // 2D LSFEM POISSION
+//    auto bilinearform=L2Inner(Grad(u0),Grad(v0));
+//    auto linearform=L2Inner((v0),f1);
+//    auto bcs1=DirichletBC<0,FunctionZero<ManifoldDim>>(W,1);
+//    auto bcs2=DirichletBC<0,FunctionZero<ManifoldDim>>(W,2);
+//    auto bcs3=DirichletBC<0,FunctionZero<ManifoldDim>>(W,3);
+//    auto bcs4=DirichletBC<0,FunctionZero<ManifoldDim>>(W,4);
+//    auto bcs5=DirichletBC<0,FunctionZero<ManifoldDim>>(W,5);
+//    auto bcs6=DirichletBC<0,FunctionZero<ManifoldDim>>(W,6);
+
+//    auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4,bcs5,bcs6);
+   
+//    SparseMatrix<Real> A;
+//    std::vector<Real> b;
+
+
+//    context.assembly(A,b);
+//    context.apply_bc(A,b);
+
+
+   
+//    std::vector<Real> x;
+//    Integer max_iter=10000;
+   
+
+//    std::cout<<"START SOLVING"<<std::endl;
+//    gauss_seidel(x,A,b,max_iter);
+//    std::cout<<"END SOLVING"<<std::endl;
+//    std::string output_file1 ="Poisson"+ std::to_string(ManifoldDim) +"D_P1_output.vtk";
+//    auto var_names=variables_names("disp");
+
+//    std::ofstream os;
+//    os.open(output_file1.c_str());
+//    write_wtk(os,W,x,var_names);
+//    os.close();
+// }
+
+
+template<Integer ManifoldDim,Integer Order>
+void Poisson_Lagrange(const Integer n)
+{
+  // constexpr Integer ManifoldDim=2;
+  constexpr Integer Dim=ManifoldDim;
+  using MeshT=Mesh<Dim, ManifoldDim>;
+  MeshT mesh;
+  if(ManifoldDim==2)
+    generate_cube(mesh,n,n,0);
+  else if(ManifoldDim==3)
+    generate_cube(mesh,n,n,n);
+  mesh.build_dual_graph();
+  mark_boundary(mesh);
+
+ using AuxP_1= FunctionSpace< MeshT, Lagrange<Order,1>>;
+
+ AuxP_1 p1(mesh);
+ auto Wtrial=MixedFunctionSpace(p1);
+ auto Waux=AuxFunctionSpacesBuild(p1);
+ auto W=FullSpaceBuild(Wtrial,Waux);
+
+ auto u0 = MakeTrial<0>(W);
+ auto v0 = MakeTest<0>(W);
+ auto f1 = MakeFunction<0,ExactPoisson<ManifoldDim>>(W);
+
+
+ std::cout<<W.spaces_ptr()->n_dofs()<<std::endl;
+ constexpr auto C=Constant<Scalar>(1.0);
+
+
+  // 2D LSFEM POISSION
+   auto bilinearform=L2Inner(Grad(u0),Grad(v0));
+   auto linearform=L2Inner((v0),f1);
+   auto bcs1=DirichletBC<0,FunctionZero<ManifoldDim>>(W,1);
+   auto bcs2=DirichletBC<0,FunctionZero<ManifoldDim>>(W,2);
+   auto bcs3=DirichletBC<0,FunctionZero<ManifoldDim>>(W,3);
+   auto bcs4=DirichletBC<0,FunctionZero<ManifoldDim>>(W,4);
+   auto bcs5=DirichletBC<0,FunctionZero<ManifoldDim>>(W,5);
+   auto bcs6=DirichletBC<0,FunctionZero<ManifoldDim>>(W,6);
+
+   auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4,bcs5,bcs6);
+   
+   SparseMatrix<Real> A;
+   std::vector<Real> b;
+
+
+   context.assembly(A,b);
+   context.apply_bc(A,b);
+
+
+   
+   std::vector<Real> x;
+   Integer max_iter=10000;
+   
+
+   std::cout<<"START SOLVING"<<std::endl;
+   gauss_seidel(x,A,b,max_iter);
+   std::cout<<"END SOLVING"<<std::endl;
+   std::string output_file1 ="Poisson"+ std::to_string(ManifoldDim) +"D_P"+ std::to_string(Order)+"_output.vtk";
+   auto var_names=variables_names("disp");
+
+   std::ofstream os;
+   os.open(output_file1.c_str());
+   write_wtk(os,W,x,var_names);
+   os.close();
+}
+
+
+
+// void Poisson2D_P2()
+// {
+//   constexpr Integer ManifoldDim=2;
+//   constexpr Integer Dim=2;
+//   using MeshT=Mesh<Dim, ManifoldDim>;
+//   MeshT mesh;
+//   generate_square(mesh,20,20);
+//   mesh.build_dual_graph();
+//   mark_boundary(mesh);
+
+//  using AuxP_1= FunctionSpace< MeshT, Lagrange2<1>>;
+
+//  AuxP_1 p1(mesh);
+//  auto Wtrial=MixedFunctionSpace(p1);
+//  auto Waux=AuxFunctionSpacesBuild(p1);
+//  auto W=FullSpaceBuild(Wtrial,Waux);
+
+//  auto u0 = MakeTrial<0>(W);
+//  auto v0 = MakeTest<0>(W);
+//  auto f1 = MakeFunction<0,ExactPoisson2D>(W);
+
+
+//  std::cout<<W.spaces_ptr()->n_dofs()<<std::endl;
+//  constexpr auto C=Constant<Scalar>(1.0);
+
+
+//   // 2D LSFEM POISSION
+//    auto bilinearform=L2Inner(Grad(u0),Grad(v0));
+//    auto linearform=L2Inner((v0),f1);
+//    auto bcs1=DirichletBC<0,FunctionZero2D>(W,1);
+//    auto bcs2=DirichletBC<0,FunctionZero2D>(W,2);
+//    auto bcs3=DirichletBC<0,FunctionZero2D>(W,3);
+//    auto bcs4=DirichletBC<0,FunctionZero2D>(W,4);
+
+//    auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4);
+   
+//    SparseMatrix<Real> A;
+//    std::vector<Real> b;
+
+
+//    context.assembly(A,b);
+//    context.apply_bc(A,b);
+
+
+   
+//    std::vector<Real> x;
+//    Integer max_iter=50000;
+   
+
+//    std::cout<<"START SOLVING"<<std::endl;
+//    gauss_seidel(x,A,b,max_iter);
+//    std::cout<<"END SOLVING"<<std::endl;
+//    std::string output_file1 ="Poisson2D_P2_output.vtk";
+//    auto var_names=variables_names("disp");
+
+//    std::ofstream os;
+//    os.open(output_file1.c_str());
+//    write_wtk(os,W,x,var_names);
+//    os.close();
+// }
+
+template<Integer ManifoldDim,Integer Order1,Integer Order2>
+void LSFEM_Poisson(const Integer n)
+{
+  // constexpr Integer ManifoldDim=2;
+  constexpr Integer Dim=ManifoldDim;
+  using MeshT=Mesh<Dim, ManifoldDim>;
+
+  MeshT mesh;
+  if(ManifoldDim==2)
+    {
+      generate_cube(mesh,n,n,0);
+      mesh.build_dual_graph();
+      mark_boundary(mesh);
+      // read_mesh("../data/triangle.MFEM", mesh);
+      // assign_tags(mesh);
+      // Bisection<MeshT> bisection(mesh);
+      // bisection.uniform_refine(0);
+      // mesh.update_dual_graph();
+    }
+  else if(ManifoldDim==3)
+    {
+      generate_cube(mesh,n,n,n);
+      mesh.build_dual_graph();
+      mark_boundary(mesh);
+       
+      // read_mesh("../data/tetrahedron.MFEM", mesh);
+      // assign_tags(mesh);
+      // Bisection<MeshT> bisection(mesh);
+      // bisection.uniform_refine(0);
+      // mesh.update_dual_graph();
+    }
+
+  // mesh.build_dual_graph();
+  // mark_boundary(mesh);
+
+  using AuxRT_n= FunctionSpace< MeshT, RT<Order1,1>>;
+  using AuxP_n= FunctionSpace< MeshT, Lagrange<Order2,1>>;
+  using LSFEM= FunctionSpace< MeshT, RT<Order1,1>,Lagrange<Order2,1>>;
+
+
+ // AuxRT_n rtn(mesh);
+ AuxP_n pn(mesh);
+ LSFEM lsfem(mesh);
+ auto Wtrial=MixedFunctionSpace(lsfem);
+ // auto Wtrial=MixedFunctionSpace(rtn,pn);
+
+ auto Waux=AuxFunctionSpacesBuild(pn);
+
+ auto W=FullSpaceBuild(Wtrial,Waux);
+
+ 
+
+ auto u0 = MakeTrial<0>(W);
+ auto u1 = MakeTrial<1>(W);
+
+ auto v0 = MakeTest<0>(W);
+ auto v1 = MakeTest<1>(W);
+
+ auto f1 = MakeFunction<0,ExactPoisson<ManifoldDim>>(W);
+
+  std::cout<<W.spaces_ptr()->n_dofs()<<std::endl;
+  
+  // 2D LSFEM POISSION
+  auto bilinearform=L2Inner(Div(u0),Div(v0))+
+                    L2Inner((u0),(v0))+
+                    L2Inner(Grad(u1),Grad(v1))-
+                    L2Inner(Grad(u1),(v0))-
+                    L2Inner((u0),Grad(v1));
+  // auto bilinearform=//L2Inner(Div(u0),Div(v0))+
+  //                   L2Inner((u0),(v0));   
+
+   auto linearform=
+                    L2Inner(-Div(v0),f1);
+
+
+
+
+   auto bcs1=DirichletBC<1,FunctionZero2D>(W,1);
+   auto bcs2=DirichletBC<1,FunctionZero2D>(W,2);
+   auto bcs3=DirichletBC<1,FunctionZero2D>(W,3);
+   auto bcs4=DirichletBC<1,FunctionZero2D>(W,4);
+   auto bcs5=DirichletBC<1,FunctionZero2D>(W,5);
+   auto bcs6=DirichletBC<1,FunctionZero2D>(W,6);
+
+   std::cout<<"CREATE CONTEXT"<<std::endl;
+   auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4,bcs5,bcs6);
+   
+   SparseMatrix<Real> A;
+   std::vector<Real> b;
+
+   std::cout<<"ASSEMBLY"<<std::endl;
+   context.assembly(A,b);
+   // A.print_val();
+   std::cout<<"APPLY BC "<<std::endl;
+   context.apply_bc(A,b);
+
+
+   // A.print_val();
+   std::vector<Real> x;
+   Integer max_iter=10000;
+   
+
+   std::cout<<"START SOLVING"<<std::endl;
+   gauss_seidel(x,A,b,max_iter);
+   std::cout<<"END SOLVING"<<std::endl;
+   std::ofstream os;
+   auto var_names=variables_names("stress","disp");
+   std::string output_file ="LSFEM_Poisson"+ std::to_string(ManifoldDim) +
+                             "D_RT" + std::to_string(Order1)+
+                             "_P" + std::to_string(Order2)+"_output.vtk";
+
+   os.close();
+   os.open(output_file.c_str());
+   write_wtk_isoparametric(os,W,x,var_names);
+
+//    os.close();
+//    // std::cout<<"W ndofs"<<W.spaces_ptr()->n_dofs()<<std::endl;
+//    // std::cout<<"W array_ndofs"<<W.array_ndofs()<<std::endl;
+//    // std::cout<<ShapeFunction<Simplex<Dim,ManifoldDim>,RT1<1> ,IdentityOperator,GaussPoints<Simplex<3,3>,3>>::reference_values()<<std::endl;
+//    // ReferenceShapeFunctionValue<Simplex<3,3>, DivergenceOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {0.25,0.25,0.25});
+//    // ReferenceShapeFunctionValue<Simplex<3,3>, DivergenceOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {0.0,0.0,0.0});
+//    // ReferenceShapeFunctionValue<Simplex<3,3>, DivergenceOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {1.0,0.0,0.0});
+//    // ReferenceShapeFunctionValue<Simplex<3,3>, DivergenceOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {0.0,1.0,0.0});
+//    // ReferenceShapeFunctionValue<Simplex<3,3>, DivergenceOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {0.0,0.0,1.0});
+//    // std::cout<<"Vector<Real,ManifoldDim> {0.25,0.25,0.25}"<<std::endl;
+//    // ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {0.25,0.25,0.25});
+//    // std::cout<<"Vector<Real,ManifoldDim> {0.0,0.0,0.0}"<<std::endl;
+//    // ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {0.0,0.0,0.0});
+//    // std::cout<<"Vector<Real,ManifoldDim> {1.0,0.0,0.0}"<<std::endl;
+//    // ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {1.0,0.0,0.0});
+//    // std::cout<<"Vector<Real,ManifoldDim> {0.0,1.0,0.0}"<<std::endl;
+//    // ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {0.0,1.0,0.0});
+//    // std::cout<<"Vector<Real,ManifoldDim> {0.0,0.0,1.0}"<<std::endl;
+//    // ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {0.0,0.0,1.0});
+
+// auto qp=GaussPoints<Simplex<Dim,3>,3>::qp_points;
+// std::cout<<"point 0 " <<std::endl;
+// ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,3>{qp(0,0),qp(0,1),qp(0,2)});
+// std::cout<<"point 1 " <<std::endl;
+// ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,3>{qp(1,0),qp(1,1),qp(1,2)});
+// std::cout<<"point 2 " <<std::endl;
+
+// ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,3>{qp(2,0),qp(2,1),qp(2,2)});
+// std::cout<<"point 3 " <<std::endl;
+
+// ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,3>{qp(3,0),qp(3,1),qp(3,2)});
+// std::cout<<"point 4 " <<std::endl;
+
+// ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,3>{qp(4,0),qp(4,1),qp(4,2)});
+
+// std::cout<<"nlocaldofs="<<decltype(W)::DofsDM::NLocalDofs<<std::endl;
+// auto &dofsdofmap=W.dofsdofmap();
+
+// for(Integer i=0;i<dofsdofmap.space_dofs().size();i++)
+// {
+//     std::cout<<"===== space="<<i<<std::endl;
+//     for(Integer j=0;j<dofsdofmap.space_dofs_size(i);j++)
+//     {
+//       // for(Integer k=0;k<sd3[i]->operator[](j).size();k++)
+//          std::cout<<dofsdofmap.space_dofs_get(i,j)<<std::endl;
+//     }
+
+// }
+
+//     std::cout<<"-----dofmap of space="<<0<<std::endl;
+// GetType<typename decltype(W)::DofsDM::ElemDofMap> elemdm;
+// for(Integer i=0;i<dofsdofmap.template dofmap_size<0>();i++)
+// {
+//          dofsdofmap.template dofmap_get<0>(elemdm,i);
+//          std::cout<<elemdm<<std::endl;
+// }
+
+
+
+// std::cout<<"-----dofmap of space="<<1<<std::endl;
+
+// for(Integer i=0;i<dofsdofmap.template dofmap_size<1>();i++)
+// {
+//          dofsdofmap.template dofmap_get<1>(elemdm,i);
+//          std::cout<<elemdm<<std::endl;
+// }
+
+// std::cout<<"-----dofmap of space="<<2<<std::endl;
+
+// for(Integer i=0;i<dofsdofmap.template dofmap_size<2>();i++)
+// {
+//          dofsdofmap.template dofmap_get<2>(elemdm,i);
+//          std::cout<<elemdm<<std::endl;
+// }
+// std::cout<<"-----dofmap of space="<<3<<std::endl;
+
+// for(Integer i=0;i<dofsdofmap.template dofmap_size<3>();i++)
+// {
+//          dofsdofmap.template dofmap_get<3>(elemdm,i);
+//          std::cout<<elemdm<<std::endl;
+// }
+std::cout<<" cumulative_n_dofs="<<W.dofsdofmap().cumulative_n_dofs()<<std::endl;
+std::cout<<" n_dofs="<<W.dofsdofmap().n_dofs()<<std::endl;
+std::cout<<" n_dofs="<<W.dofsdofmap().NsubspacesArray<<std::endl;
+
+}
+
+
+
+void LSFEM_Poisson2D_RT0_P1()
+{
+  constexpr Integer ManifoldDim=2;
+  constexpr Integer Dim=2;
+  using MeshT=Mesh<Dim, ManifoldDim>;
+
+  MeshT mesh;
+  generate_square(mesh,20,20);
+  mesh.build_dual_graph();
+  mark_boundary(mesh);
+
+  using AuxRT_n= FunctionSpace< MeshT, RT0<1>>;
+  using AuxP_n= FunctionSpace< MeshT, Lagrange2<1>>;
+
+
+ AuxRT_n rtn(mesh);
+ AuxP_n pn(mesh);
+ auto Wtrial=MixedFunctionSpace(rtn,pn);
+ auto Waux=AuxFunctionSpacesBuild(pn);
+
+ auto W=FullSpaceBuild(Wtrial,Waux);
+
+ 
+
+ auto u0 = MakeTrial<0>(W);
+ auto u1 = MakeTrial<1>(W);
+
+ auto v0 = MakeTest<0>(W);
+ auto v1 = MakeTest<1>(W);
+
+ auto f1 = MakeFunction<0,ExactPoisson2D>(W);
+
+  std::cout<<W.spaces_ptr()->n_dofs()<<std::endl;
+  
+  // 2D LSFEM POISSION
+  auto bilinearform=L2Inner(Div(u0),Div(v0))+
+                    L2Inner((u0),(v0))+
+                    L2Inner(Grad(u1),Grad(v1))-
+                    L2Inner(Grad(u1),(v0))-
+                    L2Inner((u0),Grad(v1));
+   auto linearform=
+                    L2Inner(-Div(v0),f1);
+
+
+
+
+   auto bcs1=DirichletBC<1,FunctionZero2D>(W,1);
+   auto bcs2=DirichletBC<1,FunctionZero2D>(W,2);
+   auto bcs3=DirichletBC<1,FunctionZero2D>(W,3);
+   auto bcs4=DirichletBC<1,FunctionZero2D>(W,4);
+
+   auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4);
+   
+   SparseMatrix<Real> A;
+   std::vector<Real> b;
+
+
+   context.assembly(A,b);
+   context.apply_bc(A,b);
+
+
+   
+   std::vector<Real> x;
+   Integer max_iter=25000;
+   
+
+   std::cout<<"START SOLVING"<<std::endl;
+   gauss_seidel(x,A,b,max_iter);
+   std::cout<<"END SOLVING"<<std::endl;
+   std::string output_file1 ="LSFEM_Poisson2D_RT0_P1_output.vtk";
+   auto var_names=variables_names("stress","disp");
+   std::ofstream os;
+   os.open(output_file1.c_str());
+   write_wtk(os,W,x,var_names);
+   os.close();
+}
+
+
+
+
+
+
+void LSFEM_Poisson2D_RT1_P2()
+{
+  constexpr Integer ManifoldDim=2;
+  constexpr Integer Dim=2;
+  using MeshT=Mesh<Dim, ManifoldDim>;
+
+  MeshT mesh;
+
+  // generate_cube(mesh,4,4,4);
+  // mesh.build_dual_graph();
+  // mark_boundary(mesh);
+
+  generate_square(mesh,15,15);
+  mesh.build_dual_graph();
+  mark_boundary(mesh);
+
+  // read_mesh("../data/triangle.MFEM", mesh);
+  // assign_tags(mesh);
+  // Bisection<MeshT> bisection(mesh);
+  // bisection.uniform_refine(0);
+  // mesh.update_dual_graph();
+
+
+ using AuxRT_n= FunctionSpace< MeshT, RT1<1>>;
+ using AuxP_n= FunctionSpace< MeshT, Lagrange2<1>>;
+ using AuxP_1= FunctionSpace< MeshT, Lagrange2<1>>;
+
+
+
+ // using LSFEM_Poisson= FunctionSpace< MeshT, RT0<1>, Lagrange1<1>>;
+ // LSFEM_Poisson LSFEM_poisson(mesh);
+
+ 
+ 
+
+ AuxRT_n rtn(mesh);
+ AuxP_n pn(mesh);
+ auto Wtrial=MixedFunctionSpace(rtn,pn);
+ auto Waux=AuxFunctionSpacesBuild(pn);
+ auto W=FullSpaceBuild(Wtrial,Waux);
+
+ auto u0 = MakeTrial<0>(W);
+ auto u1 = MakeTrial<1>(W);
+ auto v0 = MakeTest<0>(W);
+ auto v1 = MakeTest<1>(W);
+ auto f1 = MakeFunction<0,ExactPoisson2D>(W);
+
+  // 2D LSFEM POISSION
+  auto bilinearform=L2Inner(Div(u0),Div(v0))+
+                    L2Inner((u0),(v0))+
+                    L2Inner(Grad(u1),Grad(v1))-
+                    L2Inner(Grad(u1),(v0))-
+                    L2Inner((u0),Grad(v1));
+   auto linearform=
+                    L2Inner(-Div(v0),f1);
+
+
+
+
+   auto bcs1=DirichletBC<1,FunctionZero2D>(W,1);
+   auto bcs2=DirichletBC<1,FunctionZero2D>(W,2);
+   auto bcs3=DirichletBC<1,FunctionZero2D>(W,3);
+   auto bcs4=DirichletBC<1,FunctionZero2D>(W,4);
+
+   auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4);
+   
+   SparseMatrix<Real> A;
+   std::vector<Real> b;
+
+
+   context.assembly(A,b);
+   context.apply_bc(A,b);
+
+
+   A.print();
+   std::vector<Real> x;
+   Integer max_iter=1000;
+   
+
+   std::cout<<"START SOLVING"<<std::endl;
+   gauss_seidel(x,A,b,max_iter);
+   std::cout<<"END SOLVING"<<std::endl;
+   std::string output_file1 ="LSFEM_Poisson2D_RT1_P2_output1.vtk";
+   std::string output_file2 ="LSFEM_Poisson2D_RT1_P2_output1.vtk";
+   auto var_names=variables_names("stress","disp");
+
+   std::cout<<"---1"<<std::endl;
+   std::ofstream os;
+   os.open(output_file1.c_str());
+   std::cout<<"---2"<<std::endl;
+   write_wtk(os,W,x,var_names);
+   std::cout<<"---3"<<std::endl;
+
+   os.close();
+   std::cout<<"---4"<<std::endl;
+   os.open(output_file2.c_str());
+   std::cout<<"---5"<<std::endl;
+   write_wtk_isoparametric(os,W,x,var_names);
+   os.close();
+
+// auto &dofsdofmap=W.dofsdofmap();
+
+// for(Integer i=0;i<dofsdofmap.space_dofs().size();i++)
+// {
+//     std::cout<<"===== space="<<i<<std::endl;
+//     for(Integer j=0;j<dofsdofmap.space_dofs_size(i);j++)
+//     {
+//       // for(Integer k=0;k<sd3[i]->operator[](j).size();k++)
+//          std::cout<<dofsdofmap.space_dofs_get(i,j)<<std::endl;
+//     }
+
+// }
+
+//     std::cout<<"-----dofmap of space="<<0<<std::endl;
+// GetType<decltype(W)::DofsDM::ElemDofMap> elemdm;
+// for(Integer i=0;i<dofsdofmap.template dofmap_size<0>();i++)
+// {
+//          dofsdofmap.template dofmap_get<0>(elemdm,i);
+//          std::cout<<elemdm<<std::endl;
+// }
+
+
+}
+
+
+
+
+
+
+
+
+void LSFEM_Poisson3D()
+{
+  constexpr Integer ManifoldDim=3;
+  constexpr Integer Dim=3;
+  using MeshT=Mesh<Dim, ManifoldDim>;
+
+  MeshT mesh;
+
+  generate_cube(mesh,1,1,1);
+  mesh.build_dual_graph();
+  mark_boundary(mesh);
+
+  // read_mesh("../data/triangle.MFEM", mesh);
+  // read_mesh("../data/tetrahedron.MFEM", mesh);
+  // assign_tags(mesh);
+  // Bisection<MeshT> bisection(mesh);
+  // bisection.uniform_refine(0);
+  // mesh.update_dual_graph();
+
+
+ using AuxRT_n= FunctionSpace< MeshT, RT0<1>>;
+ using AuxP_n= FunctionSpace< MeshT, Lagrange2<1>>;
+ using AuxP_1= FunctionSpace< MeshT, Lagrange1<1>>;
+
+
+
+ using LSFEM_Poisson= FunctionSpace< MeshT, RT0<2>, Lagrange2<2>>;
+ LSFEM_Poisson LSFEM_poisson(mesh);
+
+ 
+ 
+
+ AuxRT_n rtn(mesh);
+ AuxP_n pn(mesh);
+ AuxP_1 p1(mesh);
+ auto Wtrial=MixedFunctionSpace(rtn,pn);
+ auto Waux=AuxFunctionSpacesBuild(p1,pn);
+
+ auto W=FullSpaceBuild(Wtrial,Waux);
+
+ 
+
+ auto u0 = MakeTrial<0>(W);
+ auto u1 = MakeTrial<1>(W);
+
+ auto v0 = MakeTest<0>(W);
+ auto v1 = MakeTest<1>(W);
+
+
+
+ // auto sol0 = MakeFunction<0>(W);
+  std::cout<<"pre makefunct SOLVING"<<std::endl;
+ auto sol1 = MakeFunction<0>(W);
+ auto f1 = MakeFunction<1,Function1>(W);
+  std::cout<<"post makefunct SOLVING"<<std::endl;
+
+
+
+ // auto f3 = MakeFunction<2>(W);
+  constexpr auto C=Constant<Scalar>(1.0);
+  constexpr auto Half=Constant<Scalar>(0.5);
+  constexpr auto alpha=Constant<Scalar>(2.0);
+  constexpr auto beta=Constant<Scalar>(3.0);
+  constexpr auto gamma=Constant<Scalar>(3.0);
+  constexpr auto id=Constant<Identity<Dim>>();
+
+  constexpr auto  alpha4=alpha.qp_eval<4>();
+
+  constexpr auto matrix1=Constant<Mat<1,2>>(1.,2.);
+  constexpr auto matrix2=Constant<Mat<2,1>>(1.,1.);
+
+
+  // 2D LSFEM POISSION
+  auto bilinearform=L2Inner(Div(u0),Div(v0))+
+                    L2Inner((u0),(v0))+
+                    L2Inner(Grad(u1),Grad(v1))-
+                    L2Inner(Grad(u1),(v0))-
+                    L2Inner((u0),Grad(v1));
+   auto linearform=
+                    L2Inner(-Div(v0),f1);
+
+
+
+
+   auto bcs1=DirichletBC<1,FunctionZero3D>(W,1);
+   auto bcs2=DirichletBC<1,FunctionZero3D>(W,2);
+   auto bcs3=DirichletBC<1,FunctionZero3D>(W,3);
+   auto bcs4=DirichletBC<1,FunctionZero3D>(W,4);
+   auto bcs5=DirichletBC<1,FunctionZero3D>(W,5);
+   auto bcs6=DirichletBC<1,FunctionZero3D>(W,6);
+
+   auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4,bcs5,bcs6);
+   
+   SparseMatrix<Real> A;
+   std::vector<Real> b;
+
+
+   context.assembly(A,b);
+   context.apply_bc(A,b);
+
+   A.print();
+   
+   std::vector<Real> x;
+   Integer max_iter=10000;
+   
+
+   std::cout<<"START SOLVING"<<std::endl;
+   gauss_seidel(x,A,b,max_iter);
+   std::cout<<"END SOLVING"<<std::endl;
+   std::string output_file1 ="LSFEM_Poisson3D_output1.vtk";
+   std::string output_file2 ="LSFEM_Poisson3D_output2.vtk";
+   auto var_names=variables_names("stress","disp");
+
+   std::cout<<"---1"<<std::endl;
+   std::ofstream os;
+   os.open(output_file1.c_str());
+   std::cout<<"---2"<<std::endl;
+   write_wtk(os,W,x,var_names);
+   std::cout<<"---3"<<std::endl;
+
+   os.close();
+   std::cout<<"---4"<<std::endl;
+   os.open(output_file2.c_str());
+   std::cout<<"---5"<<std::endl;
+   write_wtk_isoparametric(os,W,x,var_names);
+   os.close();
+   // std::cout<<"---6"<<std::endl;
+
+   // auto ee= sol1.self3();
+   // std::cout<<"---6.5"<<std::endl;
+   // std::shared_ptr<std::vector<Real>> egm;
+   // egm=std::make_shared<std::vector<Real>>(x);
+   // std::cout<<"---6.6"<<std::endl;
+   
+   
+   // auto zeroform=L2Inner((sol1),(C));
+   // std::cout<<"---6.7"<<std::endl;
+
+
+
+
+   // std::cout<<"---7"<<std::endl;
+
+
+
+  
+
+   // auto& left=zeroform.left();
+   // auto iddd=(*left.global_dofs_ptr());
+   // std::cout<<"---7.5"<<std::endl;
+    for(Integer i=0;i<sol1.aux_ptr()->vec_ptr()->size();i++)
+    {
+        std::cout<<(*(sol1.aux_ptr()->vec_ptr()))[i]<<std::endl;
+    }
+   // std::cout<<"---8"<<std::endl;
+   // auto context0=create_context(zeroform);
+   // std::cout<<"---9"<<std::endl;
+   // sol1.global_dofs_update(x);
+   // Real int_x=context0.assembly();
+   // std::cout<<"INTEGRAL WITH X="<<int_x<<std::endl;
+   // std::cout<<"---10"<<std::endl;
+
+   //  std::vector<Real> y(100,1.0);
+   //  sol1.global_dofs_update(y);
+   // Real int_y=context0.assembly();
+   // std::cout<<"INTEGRAL WITH Y="<<int_y<<std::endl;
+   // std::cout<<"---11"<<std::endl;
+
+
+   // auto zeroform2=L2Inner(C,C);
+   // auto context1=create_context(zeroform2);
+//   for(int i=0;i<LSFEM_poisson.space_dofs(0,0).size();i++)
+//   std::cout<< LSFEM_poisson.space_dofs(0,0)[i]<<std::endl;
+// for(int i=0;i<LSFEM_poisson.space_dofs(1,0).size();i++)
+//   std::cout<< LSFEM_poisson.space_dofs(1,0)[i]<<std::endl;
+
+// std::cout<< LSFEM_poisson.n_dofs(0,0)<<std::endl;
+// std::cout<< LSFEM_poisson.n_dofs(1,0)<<std::endl;
+
+// std::cout<< LSFEM_poisson.n_dofs(0)<<std::endl;
+// std::cout<< LSFEM_poisson.n_dofs(1)<<std::endl;
+std::cout<< W.array_ndofs()<<std::endl;
+// auto &dm=W.space_dofs();
+// for(Integer i=0;i<dm.size();i++)
+// {
+//     std::cout<<"SPACE="<<i<<std::endl;
+//     for(Integer j=0;j<dm[i].size();j++)
+//     {
+//       for(Integer k=0;k<dm[i][j].size();k++)
+//          std::cout<<dm[i][j][k]<<std::endl;
+//     }
+
+// }
+// std::cout<<"space_info="<<LSFEM_poisson.space_info()<<std::endl;
+
+
+
+auto &dofsdofmap=W.dofsdofmap();
+
+ // auto &dm3=dofsdofmap.dofmap();
+ // auto& dm30=tuple_get<0>(dm3);
+ // auto& dm31=tuple_get<1>(dm3);
+// const auto& sd3=dofsdofmap.space_dofs();
+
+
+for(Integer i=0;i<dofsdofmap.space_dofs().size();i++)
+{
+    std::cout<<"===== space="<<i<<std::endl;
+    for(Integer j=0;j<dofsdofmap.space_dofs_size(i);j++)
+    {
+      // for(Integer k=0;k<sd3[i]->operator[](j).size();k++)
+         std::cout<<dofsdofmap.space_dofs_get(i,j)<<std::endl;
+    }
+
+}
+
+    std::cout<<"-----dofmap of space="<<0<<std::endl;
+
+// for(Integer i=0;i<dofsdofmap.template dofmap_size<0>();i++)
+// {
+//          std::cout<<dofsdofmap.template dofmap_get<0>(i)<<" ";
+//          std::cout<<std::endl;
+// }
+//     std::cout<<"-----dofmap of space="<<1<<std::endl;
+
+// for(Integer i=0;i<dofsdofmap.template dofmap_size<1>();i++)
+// {
+//          std::cout<<dofsdofmap.template dofmap_get<1>(i)<<" ";
+//          std::cout<<std::endl;
+// }
+
+//     std::cout<<"-----dofmap of space="<<2<<std::endl;
+
+// for(Integer i=0;i<dofsdofmap.template dofmap_size<2>();i++)
+// {
+//          std::cout<<dofsdofmap.template dofmap_get<2>(i)<<" ";
+//          std::cout<<std::endl;
+// }
+//     std::cout<<"-----dofmap of space="<<3<<std::endl;
+
+// for(Integer i=0;i<dofsdofmap.template dofmap_size<3>();i++)
+// {
+//          std::cout<<dofsdofmap.template dofmap_get<3>(i)<<" ";
+//          std::cout<<std::endl;
+// }
+
+
+std::cout<<"-----dofmap of space="<<dofsdofmap.n_dofs()<<std::endl;
+std::cout<<"-----dofmap of space="<<dofsdofmap.cumulative_n_dofs()<<std::endl;
+
+
+std::cout<<"===== solution x="<<std::endl;
+for(Integer i=0;i<x.size();i++)
+{
+
+      // for(Integer k=0;k<sd3[i]->operator[](j).size();k++)
+         std::cout<<x[i]<<std::endl;
+    
+}
+  // for(int el=0;el<mesh.n_elements();el++)
+  // {
+  //   std::cout<<"elem="<<el<<std::endl;
+  //   std::cout<<"is active="<<mesh.is_active(el)<<std::endl;
+
+  //   const auto& nodes=mesh.elem(el).nodes;
+  //   auto side_tags=mesh.elem(el).side_tags;
+  //     for(int i=0;i<side_tags.size();i++)
+  //     std::cout<<mesh.points()[nodes[i]]<<" ";
+  //   std::cout<<std::endl;
+  //     for(int i=0;i<side_tags.size();i++)
+  //     std::cout<<side_tags[i]<<" "<<std::endl;
+  // std::cout<<std::endl;
+  // }
+
+  // Vector<Matrix<Real, 3, 1>,10> out;
+  // Vector<Real,3> p;
+  // const auto& points=QuadraticTetrahedronPoints;
+  // for(Integer i=0;i<QuadraticTetrahedronPoints.size();i++)
+  // {
+  //   for(Integer j=0;j<3;j++)
+  //     p[j]=points[i](j,0);
+  // ReferenceShapeFunctionValue<Simplex<3,3>,GradientOperator, LagrangeFE, 2>::apply(p,out);
+  // std::cout<<"p"<<std::endl;
+  // std::cout<<p<<std::endl;
+  // std::cout<<"out"<<std::endl;
+  // std::cout<<out<<std::endl;
+  // }
+
+}
+
+
+
 void assembly_example()
 {
 
@@ -1927,24 +2878,25 @@ void assembly_example()
   using MeshT2=Mesh<Dim+1, ManifoldDim+1>;
   MeshT2 mesh2;
   read_mesh("../data/beam-tet.MFEM", mesh2);
-
+  
  
 
   MeshT mesh;
   using Elem = typename MeshT::Elem; 
   // read_mesh("../data/beam-tri.MFEM", mesh);
-  read_mesh("../data/triangle_square.MFEM", mesh);
+  // read_mesh("../data/triangle_square.MFEM", mesh);
   // read_mesh("../data/triangle.MFEM", mesh);
 
-  // generate_square(mesh, 2,2);
+  generate_square(mesh, 2, 2 );
     
-  mesh.update_dual_graph();
+  mesh.build_dual_graph();
+  // mesh.update_dual_graph();
   mark_boundary(mesh);
-  assign_tags(mesh);
-  Bisection<MeshT> bisection(mesh);
-  bisection.uniform_refine(8);
-  mesh.update_dual_graph();
-  // mark_boundary(mesh);
+  // assign_tags(mesh);
+  // Bisection<MeshT> bisection(mesh);
+  // bisection.uniform_refine(8);
+  // mesh.update_dual_graph();
+
   constexpr Integer QPOrder=4;
   constexpr Integer NQPoints=GaussPoints<Elem,QPOrder>::NQPoints; 
   using QP=typename GaussPoints<Elem,QPOrder>::qp_points_type;
@@ -1962,8 +2914,8 @@ void assembly_example()
  using RT_0= FunctionSpace< MeshT, RT0<1>>;//,Lagrange1<2>>;
  RT_0 rt(mesh);
 
- using LSFEM_Poission= FunctionSpace< MeshT, RT0<1>, Lagrange2<1>>;
- LSFEM_Poission LSFEM_poission(mesh);
+ using LSFEM_Poisson= FunctionSpace< MeshT, RT0<1>, Lagrange2<1>>;
+ LSFEM_Poisson LSFEM_poisson(mesh);
 
  // using FSspace2= FunctionSpace< MeshT, Lagrange2<2>>;
  // FSspace2 FEspace2(mesh);
@@ -1997,11 +2949,11 @@ void assembly_example()
  // auto Wtrial=MixedFunctionSpace(FEspace4,FEspace1);
  // auto Wtrial=MixedFunctionSpace(FEspace1);
  // auto Wtrial=MixedFunctionSpace(LS_space);
- // auto Wtrial=MixedFunctionSpace(LSFEM_poission);
+ auto Wtrial=MixedFunctionSpace(LSFEM_poisson);
 
  // auto Wtrial=MixedFunctionSpace(p1_2D);
  // auto Wtrial=MixedFunctionSpace(p1);
- auto Wtrial=MixedFunctionSpace(p2);
+ // auto Wtrial=MixedFunctionSpace(p2);
 
  auto Waux=AuxFunctionSpacesBuild(AuxFEspace1);//,AuxFEspace2,AuxFEspace3);
  // auto W=FullSpaceBuild(Wtrial,Waux);
@@ -2014,11 +2966,11 @@ void assembly_example()
  // auto f3 = MakeFunction<2>(W);
 
  auto u0 = MakeTrial<0>(W);
- // auto u1 = MakeTrial<1>(W);
+ auto u1 = MakeTrial<1>(W);
  // auto u2 = MakeTrial<2>(W);
 
  auto v0 = MakeTest<0>(W);
- // auto v1 = MakeTest<1>(W);
+ auto v1 = MakeTest<1>(W);
  // auto v2 = MakeTest<2>(W);
 
   FiniteElem<Elem> FE(mesh);
@@ -2098,13 +3050,13 @@ auto NewTrace=NewOperator(TraceOperator());
                     // ;
 
   // 2D LSFEM POISSION
-  // auto bilinearform=L2Inner(Div(u0),Div(v0))+
-  //                   L2Inner((u0),(v0))+
-  //                   L2Inner(Grad(u1),Grad(v1))-
-  //                   L2Inner(Grad(u1),(v0))-
-  //                   L2Inner((u0),Grad(v1));
-  //  auto linearform=
-  //                   L2Inner(-Div(v0),C);
+  auto bilinearform=L2Inner(Div(u0),Div(v0))+
+                    L2Inner((u0),(v0))+
+                    L2Inner(Grad(u1),Grad(v1))-
+                    L2Inner(Grad(u1),(v0))-
+                    L2Inner((u0),Grad(v1));
+   auto linearform=
+                    L2Inner(-Div(v0),C);
 
   // 2D LSFEM ELASTICITY
   // auto bilinearform=L2Inner(Div(u0),Div(v0))+
@@ -2118,10 +3070,10 @@ auto NewTrace=NewOperator(TraceOperator());
    // auto bilinearform=L2Inner(Grad(u0),Grad(v0));
    // auto linearform=L2Inner((v0),matrix2)+surface_integral(Trace(v0),matrix2);
 
-   auto bilinearform=L2Inner(Grad(u0),Grad(v0));
-   auto linearform=
-                      surface_integral(1,Trace(v0),C)+
-                      L2Inner((v0),C);
+   // auto bilinearform=L2Inner(Grad(u0),Grad(v0));
+   // auto linearform=
+   //                    surface_integral(1,Trace(v0),C)+
+   //                    L2Inner((v0),C);
 
   // auto linearform=
                   //L2Inner(Grad(v0),+Transpose(id2));//Transpose(Transpose((matrix1)+Transpose(matrix2))));//Transpose(-f1*(matrix1+matrix1)*Transpose(alpha*matrix1-matrix1)));//+L2Inner(f2,v1)+L2Inner(f1,v0);//+ L2Inner(f1,v0);
@@ -2173,28 +3125,28 @@ auto NewTrace=NewOperator(TraceOperator());
   // A.resize(n_dofs,std::vector<Real>(n_dofs));
   // b.resize(n_dofs);
 
-   // auto bcs1=DirichletBC<1,FunctionZero2D>(W,1);
-   // auto bcs2=DirichletBC<1,FunctionZero2D>(W,2);
-   // auto bcs3=DirichletBC<1,FunctionZero2D>(W,3);
-   // auto bcs4=DirichletBC<1,FunctionZero2D>(W,4);
+   auto bcs1=DirichletBC<1,FunctionZero2D>(W,1);
+   auto bcs2=DirichletBC<1,FunctionZero2D>(W,2);
+   auto bcs3=DirichletBC<1,FunctionZero2D>(W,3);
+   auto bcs4=DirichletBC<0,Function4>(W,4);
 
    // auto bcs1=DirichletBC<0,Function2>(W,1);
    // auto bcs2=DirichletBC<0,Function2>(W,2);
    // auto bcs3=DirichletBC<0,Function2>(W,3);
    // auto bcs4=DirichletBC<0,Function2>(W,4);
 
-   auto bcs1=DirichletBC<0,FunctionZero1D>(W,1);
-   auto bcs2=DirichletBC<0,FunctionZero1D>(W,2);
-   auto bcs3=DirichletBC<0,FunctionZero1D>(W,3);
-   auto bcs4=DirichletBC<0,FunctionZero1D>(W,4);
+   // auto bcs1=DirichletBC<0,FunctionZero1D>(W,1);
+   // auto bcs2=DirichletBC<0,FunctionZero1D>(W,2);
+   // auto bcs3=DirichletBC<0,FunctionZero1D>(W,3);
+   // auto bcs4=DirichletBC<0,FunctionZero1D>(W,4);
    
 
    // DirichletBCMapsCollection<decltype(bcs0)> kk(5);
    // DirichletBCMapsCollection<decltype(bcs0),decltype(bcs1),decltype(bcs2)> k3k(5);
 
    
-   auto context=create_context(bilinearform,linearform,bcs2,bcs3,bcs4);
-   // auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4);
+   // auto context=create_context(bilinearform,linearform,bcs2,bcs3,bcs4);
+   auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4);
 
 
    // for(std::size_t i=0;i<mesh.boundary2elem().size();i++)
@@ -2337,7 +3289,7 @@ auto NewTrace=NewOperator(TraceOperator());
    ////////////////////////////////////////////////////////////////////////////////////////////////////
    ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-   context.assembly(A,b);
+   // context.assembly(A,b);
   auto n_dofs=W.spaces_ptr()->n_dofs();
   std::cout<<"PRE APPLY BC n_dofs()="<<std::endl;
   std::cout<<n_dofs<<std::endl;
@@ -2388,17 +3340,17 @@ auto NewTrace=NewOperator(TraceOperator());
 
    std::string output_file1 ="output1.vtk";
    std::string output_file2 ="output2.vtk";
-   // auto variables_names=set_variables_names("velocity","pressure","pressure2");
-   // auto variables_names=set_variables_names("stress","disp");
+   // auto variables_names=variables_names("velocity","pressure","pressure2");
+   auto var_names=variables_names("stress","disp");
 
-   auto variables_names=set_variables_names("pressure");//,"pressure","pressure2");
+   // auto variables_names=variables_names("pressure");//,"pressure","pressure2");
    std::ofstream os;
    os.open(output_file1.c_str());
-   write_wtk(os,W,x,variables_names);
+   write_wtk(os,W,x,var_names);
 
    os.close();
    os.open(output_file2.c_str());
-   write_wtk_isoparametric(os,W,x,variables_names);
+   write_wtk_isoparametric(os,W,x,var_names);
    os.close();
 
 
@@ -2468,23 +3420,55 @@ std::cout<<NumberOfLagrangianSimplexDofs<4,4>()<<std::endl;
   // std::cout<<std::endl;
   // }
 
-  // for(int el=0;el<mesh.n_elements();el++)
+  for(int el=0;el<mesh.n_elements();el++)
+  {
+    std::cout<<"elem="<<el<<std::endl;
+    std::cout<<"is active="<<mesh.is_active(el)<<std::endl;
+
+    const auto& nodes=mesh.elem(el).nodes;
+    auto side_tags=mesh.elem(el).side_tags;
+      for(int i=0;i<side_tags.size();i++)
+      std::cout<<mesh.points()[nodes[i]]<<" ";
+    std::cout<<std::endl;
+      for(int i=0;i<side_tags.size();i++)
+      std::cout<<side_tags[i]<<" "<<std::endl;
+  std::cout<<std::endl;
+  }
+
+  //  MeshT meshprova;
+  //   generate_square(meshprova,2,2);
+    
+  // for(int el=0;el<meshprova.n_elements();el++)
   // {
   //   std::cout<<"elem="<<el<<std::endl;
-  //   std::cout<<"is active="<<mesh.is_active(el)<<std::endl;
+  //   std::cout<<"is active="<<meshprova.is_active(el)<<std::endl;
 
-  //   const auto& nodes=mesh.elem(el).nodes;
-  //   auto side_tags=mesh.elem(el).side_tags;
+  //   const auto& nodes=meshprova.elem(el).nodes;
+  //   auto side_tags=meshprova.elem(el).side_tags;
   //     for(int i=0;i<side_tags.size();i++)
-  //     std::cout<<mesh.points()[nodes[i]]<<" ";
+  //     std::cout<<meshprova.points()[nodes[i]]<<" ";
   //   std::cout<<std::endl;
   //     for(int i=0;i<side_tags.size();i++)
   //     std::cout<<side_tags[i]<<" "<<std::endl;
   // std::cout<<std::endl;
   // }
+  // meshprova.build_dual_graph();
+  // // mesh.update_dual_graph();
+  // mark_boundary(meshprova);
+  // for(int el=0;el<meshprova.n_elements();el++)
+  // {
+  //   std::cout<<"elem="<<el<<std::endl;
+  //   std::cout<<"is active="<<meshprova.is_active(el)<<std::endl;
 
-
-
+  //   const auto& nodes=meshprova.elem(el).nodes;
+  //   auto side_tags=meshprova.elem(el).side_tags;
+  //     for(int i=0;i<side_tags.size();i++)
+  //     std::cout<<meshprova.points()[nodes[i]]<<" ";
+  //   std::cout<<std::endl;
+  //     for(int i=0;i<side_tags.size();i++)
+  //     std::cout<<side_tags[i]<<" "<<std::endl;
+  // std::cout<<std::endl;
+  // }
 // auto& dm=W.spaces_ptr()->dofmap2();
 // auto& dm0=tuple_get<0>(dm);
 // auto& dm1=tuple_get<1>(dm);

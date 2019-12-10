@@ -636,11 +636,11 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
   constexpr typename std::enable_if_t< FEFamily==LagrangeFE,void> 
   shape_function_init_aux_aux_aux(Shape& shape, const ShapeFunctionCoefficientsCollection<Args...> &coefficients)
   {
-    std::cout<<" M = "<< M<<" FEFamily = "<<FEFamily<<" Order = "<<Order<<std::endl;
+    // std::cout<<" M = "<< M<<" FEFamily = "<<FEFamily<<" Order = "<<Order<<std::endl;
     tuple_get<N>(shape).init();
-    std::cout<<" map = "<< tuple_get<N>(shape).map()()<<std::endl;
-    std::cout<<" reference_values = "<< tuple_get<N>(shape).reference_values<<std::endl;
-    std::cout<<tuple_get<N>(shape).eval()<<std::endl;
+    // std::cout<<" map = "<< tuple_get<N>(shape).map()()<<std::endl;
+    // std::cout<<" reference_values = "<< tuple_get<N>(shape).reference_values<<std::endl;
+    // std::cout<<tuple_get<N>(shape).eval()<<std::endl;
   }
 
 
@@ -648,15 +648,32 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
   constexpr typename std::enable_if_t<FEFamily==RaviartThomasFE,void> 
   shape_function_init_aux_aux_aux(Shape& shape, const ShapeFunctionCoefficientsCollection<Args...> &coefficients)
   {
-    std::cout<<" M = "<< M<<" FEFamily = "<<FEFamily<<" Order = "<<Order<<std::endl;
+    // std::cout<<" M = "<< M<<" FEFamily = "<<FEFamily<<" Order = "<<Order<<std::endl;
     tuple_get<N>(shape).init(tuple_get<M>(coefficients()));
-    std::cout<<" map = "<< tuple_get<N>(shape).map()()<<std::endl;
-    std::cout<<" reference_values = "<< tuple_get<N>(shape).reference_values<<std::endl;
-    std::cout<<tuple_get<N>(shape).eval()<<std::endl;
-    std::cout<<"coefficients="<<std::endl;
-    std::cout<<tuple_get<M>(coefficients())<<std::endl;
+    // std::cout<<" map = "<< tuple_get<N>(shape).map()()<<std::endl;
+    // std::cout<<" reference_values = "<< tuple_get<N>(shape).reference_values<<std::endl;
+    // std::cout<<tuple_get<N>(shape).eval()<<std::endl;
+    // std::cout<<"coefficients="<<std::endl;
+    // std::cout<<tuple_get<M>(coefficients())<<std::endl;
   }
 
+
+
+  template<typename Shape,Integer N,Integer M,typename Tuple,typename...Args>
+  constexpr typename std::enable_if_t< IsSame<Shape,std::tuple<>>::value,void> 
+  shape_function_init_aux_aux_helper(Tuple& tuple, const ShapeFunctionCoefficientsCollection<Args...> &coefficients)
+  {}
+
+
+  template<typename Shape,Integer N,Integer M,typename Tuple,typename...Args>
+  constexpr typename std::enable_if_t< IsDifferent<Shape,std::tuple<>>::value,void> 
+  shape_function_init_aux_aux_helper(Tuple& tuple, const ShapeFunctionCoefficientsCollection<Args...> &coefficients)
+  {
+    using Elem=typename Shape::Elem;
+    constexpr Integer FEFamily=Shape::FEFamily;
+    constexpr Integer Order=Shape::Order;
+    shape_function_init_aux_aux_aux<N,M,Elem,FEFamily,Order>(tuple,coefficients);
+  }
 
 
 
@@ -671,10 +688,11 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
   {
 
     using Shape=GetType<TupleOfTupleShapeFunctionVolumetric,M,N>;
-    using Elem=typename Shape::Elem;
-    constexpr Integer FEFamily=Shape::FEFamily;
-    constexpr Integer Order=Shape::Order;
-    shape_function_init_aux_aux_aux<N,M,Elem,FEFamily,Order>(tuple,coefficients);
+    // using Elem=typename Shape::Elem;
+    // constexpr Integer FEFamily=Shape::FEFamily;
+    // constexpr Integer Order=Shape::Order;
+    // shape_function_init_aux_aux_aux<N,M,Elem,FEFamily,Order>(tuple,coefficients);
+    shape_function_init_aux_aux_helper<Shape,N,M>(tuple,coefficients);
     shape_function_init_aux_aux<M,Nmax,N+1>(tuple,coefficients);
   }
 
