@@ -27,10 +27,10 @@ namespace mars {
 		which means 360 / 27.89 = 12.9. The max number of incidents is then 13.
 		Adding here un upper limit considering that incative elements might be
 		still be present in the list then it will be 2* 13= 26 which generalizes in power(manifoldDim, manifoldDim).
-		This grace allocation is also done for special cases or bad quality meshes (very small and very large angles).
+		This + ManifoldDim grace allocation is also done for special cases or bad quality meshes (very small and very large angles).
 */
 
-		static constexpr Integer limit = power(ManifoldDim, ManifoldDim);
+		static constexpr Integer limit = power(ManifoldDim, ManifoldDim) + ManifoldDim;
 
 		using ElementVector = TempArray<Integer, limit>;
 
@@ -51,11 +51,17 @@ namespace mars {
 					nodes[j] = e.nodes[combs(i,j)];
 				}
 
-				auto result= mapping.find(Side<N, KokkosImplementation>(nodes));
+				auto result= mapping.insert(Side<N, KokkosImplementation>(nodes));
+				//auto result= mapping.find(Side<N, KokkosImplementation>(nodes));
 
-				if(mapping.valid_at(result)){
-					auto &vec = mapping.value_at(result);
+				if(!result.failed())
+				{
+					auto &vec = mapping.value_at(result.index());
 					vec.insert(e.id);
+				}
+				else
+				{
+					printf("Edge Element Map: Exceeded UnorderedMap capacity\n");
 				}
 			}
 		}
