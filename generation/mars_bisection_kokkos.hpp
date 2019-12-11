@@ -316,13 +316,32 @@ public:
 		return edges_nr;
 	}
 
-	struct BuildTree
+	MARS_INLINE_FUNCTION
+	static void insert_longest_edge(const Mesh_* mesh,
+			const UnorderedMap<Edge, ElementVector>& mapping,
+			const Integer element_id)
+	{
+		EdgeSelect_ es;
+		const Integer edge_num = es.stable_select(*mesh, element_id);
+		//Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id);
+		//Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id, Bisection<Mesh>::edge_element_map());
+		Edge edge;
+		mesh->elem(element_id).edge(edge_num, edge.nodes[0], edge.nodes[1]);
+		edge.fix_ordering();
+
+		auto result = mapping.insert(edge);
+
+		if(result.failed())
+			printf("Edge Element Map: Exceeded UnorderedMap capacity\n");
+	}
+
+	struct BuildLEPMap
 	{
 		Mesh_* mesh;
 		UnorderedMap<Edge,ElementVector> mapping;
 		ViewVectorType<Integer> active_elems;
 
-		BuildTree(UnorderedMap<Edge, ElementVector> mp,
+		BuildLEPMap(UnorderedMap<Edge, ElementVector> mp,
 				Mesh_* ms, ViewVectorType<Integer> ae) :
 			mapping(mp), mesh(ms), active_elems(ae)
 		{
@@ -331,21 +350,8 @@ public:
 		MARS_INLINE_FUNCTION
 		void operator()(int i) const
 		{
-
 			const Integer element_id = active_elems(i);
-
-			EdgeSelect_ es;
-			const Integer edge_num = es.stable_select(*mesh, element_id);
-			//Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id);
-			//Integer edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), element_id, Bisection<Mesh>::edge_element_map());
-			Edge edge;
-			mesh->elem(element_id).edge(edge_num, edge.nodes[0], edge.nodes[1]);
-			edge.fix_ordering();
-
-			auto result = mapping.insert(edge);
-
-			if(result.failed())
-				printf("Edge Element Map: Exceeded UnorderedMap capacity\n");
+			insert_longest_edge(mesh, mapping, element_id);
 		}
 	};
 
@@ -365,7 +371,7 @@ public:
 	{
 
 		Kokkos::parallel_for(active_elems.extent(0),
-				BuildTree(edge_element_map_.mapping_, mesh, active_elems));
+				BuildLEPMap(edge_element_map_.mapping_, mesh, active_elems));
 	}
 
 
@@ -750,6 +756,7 @@ public:
 			mesh->set_active(elem_new_id);
 			ParallelEdgeElementMap::update_elem(edge_element_map, new_el,
 					combs);
+
 			new_el.block = old_el.block;
 		}
 
@@ -1035,9 +1042,8 @@ public:
 
 			edge_node_map_.reserve_map(nr_active_elements);
 			reserve_tree(nr_active_elements);
-
-			edge_element_map_.reserve_map(2*nr_active_elements);
-			precompute_lepp_incidents(mesh, active_elems);
+			//const Integer nr_active_elements = euler_graph_formula(host_mesh);
+			edge_element_map_.reserve_map(4*nr_active_elements);
 			edge_element_map_.update(mesh, active_elems);
 		}
 
@@ -1124,7 +1130,6 @@ public:
 		if (edge_element_map_.empty())
 		{
 			host_mesh->set_combs(Comb::instance().combs);
-			//const Integer capacity = 3*euler_graph_formula(host_mesh);
 			copy_mesh_to_device();
 		}
 
