@@ -397,7 +397,7 @@ public:
 		return index;
 	}
 
-	struct RefineMesh
+	struct CountLepp
 	{
 		Mesh_* mesh;
 		ViewVectorType<Integer> elements;
@@ -410,7 +410,7 @@ public:
 
 		CombView combs;
 
-		RefineMesh(UnorderedMap<Edge, ElementVector> mp, Mesh_* ms,
+		CountLepp(UnorderedMap<Edge, ElementVector> mp, Mesh_* ms,
 				ViewVectorType<Integer> elems,
 				UnorderedMap<Integer, ElementVector> tr,
 				ViewVectorType<bool> lo, ViewVectorType<Integer> ic,
@@ -420,7 +420,7 @@ public:
 		{
 		}
 
-		RefineMesh(UnorderedMap<Edge, ElementVector> mp, Mesh_* ms,
+		CountLepp(UnorderedMap<Edge, ElementVector> mp, Mesh_* ms,
 				ViewVectorType<Integer> elems,
 				UnorderedMap<Integer, ElementVector> tr,
 				ViewVectorType<bool> lo, CombView cmbs) :
@@ -544,17 +544,20 @@ public:
 	};
 
 
-	struct ScatterElem : RefineMesh
+	struct ScatterElem : CountLepp
 	{
 		UnorderedMap<Integer, Edge> lepp_incidents_map;
+		UnorderedMap<Integer, bool> lepp_edge_map;
 
 		ScatterElem(UnorderedMap<Edge, ElementVector> mp, Mesh_* ms,
 				ViewVectorType<Integer> elems,
 				UnorderedMap<Integer, ElementVector> tr,
 				ViewVectorType<bool> lo, CombView cmbs,
-				UnorderedMap<Integer, Edge> lim) :
-				RefineMesh(mp, ms, elems, tr, lo, cmbs),// lepp_elem_index(lei),
-				lepp_incidents_map(lim)
+				UnorderedMap<Integer, Edge> lim,
+				UnorderedMap<Integer, bool> lem) :
+				CountLepp(mp, ms, elems, tr, lo, cmbs),// lepp_elem_index(lei),
+				lepp_incidents_map(lim),
+				lepp_edge_map(lem)
 		{
 		}
 
@@ -607,16 +610,22 @@ public:
 
 			if (is_terminal(this->mapping.key_at(index), this->mapping.value_at(index)))
 			{
-			//	lepp_elem_index(index_count(element_id,0)++) = element_id;
+				auto res = lepp_edge_map.insert(index);
+				assert(res.failed());
+
+				/*if (res.failed())
+					printf("Exceeded UnorderedMap: lepp_edge_map capacity\n");*/
+
 				for (auto i = 0; i < this->mapping.value_at(index).index; ++i)
 				{
 					auto &element = this->mapping.value_at(index)[i];
 					if (this->mesh->is_active(element))
 					{
 						auto result = lepp_incidents_map.insert(element, this->mapping.key_at(index));
+						assert(result.failed());
 
-						if (result.failed())
-							printf("Exceeded UnorderedMap: lepp_incidents_map capacity\n");
+						/*if (result.failed())
+							printf("Exceeded UnorderedMap: lepp_incidents_map capacity\n");*/
 					}
 				}
 			}
@@ -726,15 +735,15 @@ public:
 			}
 		}
 
-		MARS_INLINE_FUNCTION
+		/*MARS_INLINE_FUNCTION
 		void update_elem(Integer elem_new_id) const
 		{
-/*
+
 			flags.push_back(NONE);
 			level.push_back(
 				(mesh.elem(id).parent_id == INVALID_INDEX) ?
-					0 : (level[mesh.elem(id).parent_id] + 1));*/
-		}
+					0 : (level[mesh.elem(id).parent_id] + 1));
+		}*/
 
 		MARS_INLINE_FUNCTION
 		void add_new_elem(const Integer elem_new_id, Elem& old_el,
@@ -924,7 +933,7 @@ public:
 		Timer timer1;
 
 		parallel_for(nr_elements,
-				RefineMesh(edge_element_map_.mapping_, mesh, elements, tree_,
+				CountLepp(edge_element_map_.mapping_, mesh, elements, tree_,
 						lepp_occupied, index_count_, pt_count_, Comb::instance().combs));
 
 		double time1 = timer1.seconds();
@@ -965,8 +974,9 @@ public:
 		return res;
 	}
 
-	Integer fill_lepp(const ViewVectorType<Integer> elements,
-			UnorderedMap<Integer, Edge>& lepp_incidents_map)
+	void fill_lepp(const ViewVectorType<Integer> elements,
+			UnorderedMap<Integer, Edge>& lepp_incidents_map,
+			UnorderedMap<Integer, bool>& lepp_edge_map)
 	{
 		using namespace Kokkos;
 		Timer timer;
@@ -979,18 +989,12 @@ public:
 
 		parallel_for(nr_elements,
 				ScatterElem(edge_element_map_.mapping_, mesh, elements, tree_,
-						lepp_occupied,  Comb::instance().combs, lepp_incidents_map));
+						lepp_occupied, Comb::instance().combs,
+						lepp_incidents_map, lepp_edge_map));
 
 		double time = timer.seconds();
 		if (verbose)
 			std::cout << "Scatter/Fill took: " << time << " seconds." << std::endl;
-
-		Integer lip_size = lepp_incidents_map.size();
-
-		if (verbose)
-			std::cout << "Lip_size: " << lip_size << std::endl;
-
-		return lip_size;
 	}
 
 	void resize_mesh_and_update_map(const Integer lip_size, const Integer points_count)
@@ -1071,7 +1075,19 @@ public:
 			UnorderedMap<Integer, Edge> lepp_incidents_map = UnorderedMap<
 					Integer, Edge>(h_ac[0]);
 
-			const Integer lip_size = fill_lepp(elements, lepp_incidents_map);
+			UnorderedMap<Integer, bool> lepp_edge_map = UnorderedMap<
+					Integer, bool>(h_ac[1]);
+
+			fill_lepp(elements, lepp_incidents_map, lepp_edge_map);
+
+			const Integer lip_size = lepp_incidents_map.size();
+			const Integer pt_size = lepp_edge_map.size();
+
+			if (verbose)
+			{
+				std::cout << "Lip_size: " << lip_size << std::endl;
+				std::cout << "Point_size: " << pt_size << std::endl;
+			}
 
 			ViewObject<Integer> node_start_index = ViewObject<Integer>(
 					"node_start_index");
@@ -1080,7 +1096,7 @@ public:
 			Integer elem_start_index = host_mesh->n_elements();
 			Integer child_start_index = host_mesh->n_childrens();
 
-			resize_mesh_and_update_map(lip_size, h_ac[1]);
+			resize_mesh_and_update_map(lip_size, pt_size);
 
 			ViewMatrixType<Integer> lepp_incident_index =
 					ViewMatrixType<Integer>("lepp_incidents_index", lip_size,
