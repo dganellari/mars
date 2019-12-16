@@ -719,23 +719,21 @@ public:
 								* Factorial<Mesh_::ManifoldDim + 1 - 2>::value);
 		ViewMatrixTextureC<Integer, value, 2> combs;
 
-		bool verbose;
 		using UEMap = UnorderedMap<Edge,ElementVector>;
 		using UNMap = UnorderedMap<Edge,Integer>;
-
 
 		UEMap edge_element_map;
 		UNMap edge_node_map;
 
 		Integer elem_start_index;
-		Integer child_start_index;
+		Integer lepp_size;
 
 		BisectElem(Mesh_* ms, ViewMatrixType<Integer> lii,
 				ViewMatrixTextureC<Integer, value, 2> cmb, UEMap mp, UNMap nmp,
-				bool v, Integer esi, Integer csi) :
+				Integer esi, Integer csi) :
 				mesh(ms), lepp_incident_index(lii), combs(cmb), edge_element_map(
-						mp), edge_node_map(nmp), verbose(v), elem_start_index(
-						esi), child_start_index(csi)
+						mp), edge_node_map(nmp), elem_start_index(esi), lepp_size(
+						csi)
 		{
 		}
 
@@ -856,33 +854,55 @@ public:
 			Integer v2 = lepp_incident_index(i, 2);
 
 			/*if (verbose)
-			{
-				printf("bisect(%li , %li) for %li\n", v1, v2, element_id);
-			}*/
-
-			mesh->set_active(element_id, false);
-			//printf("elem: %li - %d\n", element_id, mesh->is_active(element_id));
+			 {
+			 printf("bisect(%li , %li) for %li\n", v1, v2, element_id);
+			 }*/
 
 			Integer nodes_new_id = get_new_node(v1, v2);
 
-			Integer elem_new_id = elem_start_index + 2 * i;
-			Integer childrens_id = child_start_index + i;
-
-			//printf("elem_newid: %li \n", elem_new_id);
-
-			Elem old_el = mesh->elem(element_id, childrens_id);
+			Integer elem_new_id = elem_start_index + 2*i;
+			Elem old_el = mesh->elem(element_id);
 
 			TempArray<Integer, 2> edge_indices;
 			edge_index_in_elem(old_el.nodes, v1, v2, edge_indices);
 
 			add_new_elem(elem_new_id, old_el, nodes_new_id, edge_indices[0]);
-			old_el.children(0) = elem_new_id;
-
 			add_new_elem(++elem_new_id, old_el, nodes_new_id, edge_indices[1]);
-			old_el.children(1) = elem_new_id;
 		}
 	};
 
+
+	struct HandleParentElem
+	{
+		Mesh_* mesh;
+		ViewMatrixType<Integer> lepp_incident_index;
+
+		Integer elem_start_index;
+		Integer child_start_index;
+
+		HandleParentElem(Mesh_* ms, ViewMatrixType<Integer> lii, Integer esi,
+				Integer csi) :
+				mesh(ms), lepp_incident_index(lii), elem_start_index(esi), child_start_index(
+						csi)
+		{
+		}
+
+		MARS_INLINE_FUNCTION
+		void operator()(const int i) const
+		{
+			Integer element_id = lepp_incident_index(i, 0);
+			mesh->set_active(element_id, false);
+
+
+			Integer elem_new_id = elem_start_index + 2 * i;
+			Integer childrens_id = child_start_index + i;
+
+			Elem old_el = mesh->elem(element_id, childrens_id);
+
+			old_el.children(0) = elem_new_id;
+			old_el.children(1) = ++elem_new_id;
+		}
+	};
 
 
 	inline void free_mesh(){
@@ -1002,47 +1022,6 @@ public:
 		std::cout << "compact_map_to_view took: " << time << " seconds." << std::endl;
 	}
 
-	/*void compact_map_to_view1(const UnorderedMap<Integer, Edge>& lepp_incidents_map,
-				ViewMatrixType<Integer> lepp_incident_index)
-		{
-			using namespace Kokkos;
-
-			Timer timer;
-
-			//ViewObject<Integer> global_index("global_index");
-
-			const Integer capacity = lepp_incidents_map.capacity();
-
-			ViewVectorType<Integer> indices = ViewVectorType<Integer>("indices", capacity);
-
-			parallel_for(capacity, KOKKOS_LAMBDA(uint32_t i)
-			{
-				  indices[i] = lepp_incidents_map.valid_at(i);
-			});
-
-			exclusive_scan(0, capacity, indices);
-
-			parallel_for(capacity, KOKKOS_LAMBDA(uint32_t i)
-			{
-				if(lepp_incidents_map.valid_at(i))
-				{
-					Integer k = indices(i);
-
-					lepp_incident_index(k,0) = lepp_incidents_map.key_at(i);
-
-					lepp_incident_index(k,1) = lepp_incidents_map.value_at(i).nodes(0);
-					lepp_incident_index(k,2) = lepp_incidents_map.value_at(i).nodes(1);
-
-					std::cout<<"2k: "<< lepp_incident_index(k,1)<<std::endl;
-					std::cout<<"2k: "<< lepp_incident_index(k,2)<<std::endl;
-
-
-				}
-			});
-
-			double time = timer.seconds();
-			std::cout << "compact_map_to_view took: " << time << " seconds." << std::endl;
-		}*/
 	inline std::array<Integer, 2> count_lepp(const ViewVectorType<Integer> elements)
 	{
 		using namespace Kokkos;
@@ -1207,6 +1186,18 @@ public:
 		compact_map_to_view(lepp_incidents_map, lepp_incident_index);
 		compact_map_to_view(lepp_edge_node_map, lepp_point_index);
 
+
+		Timer timer;
+
+		parallel_for(lip_size,
+				HandleParentElem(mesh, lepp_incident_index, elem_start_index,
+						child_start_index));
+
+		double time = timer.seconds();
+		if (verbose)
+			std::cout << "HandleParentElem took: " << time << " seconds."
+					<< std::endl;
+
 		Timer timer1;
 
 		parallel_for(pt_size,
@@ -1222,13 +1213,15 @@ public:
 
 		parallel_for(lip_size,
 				BisectElem(mesh, lepp_incident_index, Comb::instance().combs,
-						edge_element_map_.mapping_, lepp_edge_node_map, verbose,
-						elem_start_index, child_start_index));
+						edge_element_map_.mapping_, lepp_edge_node_map,
+						elem_start_index, lip_size));
 
 		double time2 = timer2.seconds();
 		if (verbose)
 			std::cout << "BisectElem took: " << time2 << " seconds."
 					<< std::endl;
+
+
 		std::cout << "------------------------------------------------------------" << std::endl;
 
 	}
@@ -1251,8 +1244,8 @@ public:
 			UnorderedMap<Integer, Edge> lepp_incidents_map = UnorderedMap<
 					Integer, Edge>(h_ac[0]);
 
-			UnorderedMap<Edge, Integer> lepp_edge_node_map = UnorderedMap<
-					Edge, Integer>(h_ac[1]);
+			UnorderedMap<Edge, Integer> lepp_edge_node_map = UnorderedMap<Edge,
+					Integer>(h_ac[1]);
 
 			fill_lepp(elements, lepp_incidents_map, lepp_edge_node_map);
 
