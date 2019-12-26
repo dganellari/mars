@@ -81,8 +81,8 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
         side_points_[i] = points[side_.nodes[i] ];
 
      // std::cout<<"side points="<<std::endl;
-     for(Integer i = 0; i < ManifoldDim; ++i) 
-        std::cout<<side_points_[i]<<std::endl;
+     // for(Integer i = 0; i < ManifoldDim; ++i) 
+     //    std::cout<<side_points_[i]<<std::endl;
 
       // std::cout<<"side_id="<<side_id<<std::endl;
       // std::cout<<"side_points_=" <<std::endl;

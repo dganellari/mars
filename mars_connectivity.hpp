@@ -4,6 +4,8 @@
 #include "mars_base.hpp"
 #include "mars_mesh.hpp"
 #include "mars_entity.hpp"
+#include "mars_tracker.hpp"
+#include "mars_bisection.hpp"
 #include <iostream>
 #include <vector>
 
@@ -48,44 +50,70 @@ template <typename Elem, Integer EntityDimFrom, Integer SubEntityDimFrom, Intege
 class ElemConnectivity;
 
 template <Integer Dim, Integer ManifoldDim, Integer EntityDimFrom, Integer SubEntityDimFrom, Integer EntityDimTo>
-class ElemConnectivity<Simplex<Dim,ManifoldDim>,EntityDimFrom,SubEntityDimFrom,EntityDimTo >
+class ElemConnectivity<Mesh<Dim,ManifoldDim>,EntityDimFrom,SubEntityDimFrom,EntityDimTo >
 {
 public:
+    using MeshT=Mesh<Dim,ManifoldDim>;
+    using BisectionT=Bisection<MeshT>;
         inline std::vector< std::vector<Integer> > node2elem() const{return node2elem_;};
 
         std::vector<Integer> compute(const ElemEntity<Simplex<Dim,ManifoldDim>,EntityDimFrom> &entity_from,
                                      const Integer& index_from,
                                      const ElemEntity<Simplex<Dim,ManifoldDim>,EntityDimTo>   &entity_to);
                      
-        ElemConnectivity(const Mesh<Dim,ManifoldDim> &mesh,const std::vector<std::vector<Integer>> &node2elem):
-                mesh_(mesh),
-                node2elem_(node2elem)
+        inline void add_bisection(const BisectionT& bisection){bisection_ptr_=std::make_shared<BisectionT>(bisection);}
+        
+        ElemConnectivity(const Mesh<Dim,ManifoldDim> &mesh,const std::vector<std::vector<Integer>> &node2elem,const Integer level=-1):
+                // mesh_(mesh),
+                mesh_ptr_(std::make_shared<MeshT>(mesh)),
+                node2elem_(node2elem),
+                bisection_ptr_(NULL),
+                level_(level)
                 {};
         
 private:
         const std::vector< std::vector<Integer> > &node2elem_;
-        const Mesh<Dim,ManifoldDim> &mesh_;
+        // const Mesh<Dim,ManifoldDim> &mesh_;
+        std::shared_ptr<MeshT> mesh_ptr_;
+        std::shared_ptr<BisectionT> bisection_ptr_;
+        Integer level_;
 };
 
 
 
 template <Integer Dim, Integer ManifoldDim>
-class ElemConnectivity<Simplex<Dim, ManifoldDim>,0,0,ManifoldDim>
+class ElemConnectivity<Mesh<Dim, ManifoldDim>,0,0,ManifoldDim>
 {
 public:
-        inline std::vector< std::vector<Integer> > val() const{return val_;};
+        using MeshT=Mesh<Dim,ManifoldDim>;
+        using BisectionT=Bisection<MeshT>;
 
-        void init(const Mesh<Dim,ManifoldDim>& mesh);
+        inline const std::vector< std::vector<Integer> >& val() const{return val_;};
+        inline std::vector< std::vector<Integer> >&       val()      {return val_;};
 
-        ElemConnectivity(const Mesh<Dim,ManifoldDim>& mesh) {init(mesh);};   
+        inline void add_bisection(const BisectionT& bisection){bisection_ptr_=std::make_shared<BisectionT>(bisection);}
+
+        void init();
+        
+        ElemConnectivity(const Mesh<Dim,ManifoldDim>& mesh,const Integer level=-1):
+        mesh_ptr_(std::make_shared<MeshT>(mesh)),
+        bisection_ptr_(NULL),
+        level_(level)
+        {
+        if(level_==-1)
+        init();
+        };   
                 
 private:
+        std::shared_ptr<MeshT> mesh_ptr_;
         std::vector<std::vector<Integer>> val_;
+        std::shared_ptr<BisectionT> bisection_ptr_;
+        Integer level_;
 };
 
 
-template<typename Elem>
-using NodeToElem=mars::ElemConnectivity<Elem,0,0,Elem::ManifoldDim>;
+template<typename MeshT>
+using NodeToElem=mars::ElemConnectivity<MeshT,0,0,MeshT::ManifoldDim>;
 
 
 }

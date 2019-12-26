@@ -173,6 +173,8 @@ namespace mars {
 			mesh.elem(element_id).children.push_back(new_id);
 			mesh.elem(new_id).block = mesh.elem(element_id).block;
 
+			tracker_.element_refined(new_id);
+
 			s.nodes[0] = midpoint;
 			s.nodes[1] = v2;
 			
@@ -182,7 +184,8 @@ namespace mars {
 
 			bisect_side_tags(element_id, Edge(v1, v2), midpoint);
 			
-			tracker_.element_refined(element_id);
+			// tracker_.element_refined(element_id);
+			tracker_.element_refined(new_id);
 
 			edge_select_->element_refined(
 				mesh,
@@ -191,8 +194,7 @@ namespace mars {
 				midpoint
 			);
 
-
-
+			tracker_.element_deactivated(element_id);
 			return;
 		}
 
@@ -548,7 +550,8 @@ namespace mars {
 		{
 			tracker_.undo_last_iterate(mesh);
 		}
-
+        
+        auto tracker(){return tracker_;}
 	private:
 		Mesh &mesh;
 		std::vector<Integer> flags;

@@ -37,6 +37,7 @@ public:
  using ElemDofMap=std::tuple<Array<Integer, DofsPerElemNums<Elem,BaseFunctionSpaces>::value>...>;
  using DofMap=std::tuple<std::shared_ptr<std::vector<Array<Integer, DofsPerElemNums<Elem,BaseFunctionSpaces>::value>>>...>;
  using SpacesDofsArray=Array<std::shared_ptr<std::vector<Integer>>, Nsubspaces>;
+ static constexpr auto NLocalDofsArray=Array<Integer,Nsubspaces>{DofsPerElemNums<Elem,BaseFunctionSpaces>::value...};
  static constexpr auto NLocalDofs=Sum(DofsPerElemNums<Elem,BaseFunctionSpaces>::value...);
  inline auto& space_dofs() const {return space_dofs_;};
  inline auto& space_dofs()       {return space_dofs_;};
@@ -44,6 +45,56 @@ public:
  inline auto& dofmap()       {return dofmap_;};
  inline auto& n_dofs()       {return n_dofs_;}
  inline auto& n_dofs() const {return n_dofs_;}
+
+ template<Integer N=0>
+ inline std::enable_if_t<(N>=Nsubspaces),void>
+ init_dofmap_aux(const Integer n_elements){};
+
+
+ template<Integer N=0>
+ inline std::enable_if_t<(N<Nsubspaces),void>
+ init_dofmap_aux(const Integer n_elements)
+ {
+  // we reserve n_elemnts*dofs for single element for each space
+  std::cout<<"begin N=="<<N<<std::endl;
+  std::cout<<n_elements<<" "<< NLocalDofsArray[N]<<std::endl;
+  tuple_get<N>(dofmap_)=std::make_shared<std::vector<Array<Integer,NLocalDofsArray[N]>>>();
+  tuple_get<N>(dofmap_)->reserve(n_elements);
+  space_dofs_[N]=std::make_shared<std::vector<Integer>>();
+  space_dofs_[N]->resize(n_elements*NLocalDofsArray[N]);
+  std::cout<<"end N=="<<N<<" dofmap tuple size="<<tuple_get<N>(dofmap_)->size()<<" spacedofs size="<< space_dofs_[N]->size()<<std::endl;
+  init_dofmap_aux<N+1>(n_elements);};
+
+ inline void  init_dofmap(const Integer n_elements){init_dofmap_aux(n_elements);};
+
+
+
+
+
+
+
+
+
+ // template<Integer N=0>
+ // inline std::enable_if_t<(N>=Nsubspaces),void>
+ // init_dofmap_aux2(const Integer n_elements){};
+
+
+ // template<Integer N=0>
+ // inline std::enable_if_t<(N<Nsubspaces),void>
+ // init_dofmap_aux2(const Integer n_elements)
+ // {
+ //  // we reserve n_elemnts*dofs for single element for each space
+ //  std::cout<<"begin N=="<<N<<std::endl;
+ //  std::cout<<n_elements<<" "<< NLocalDofsArray[N]<<std::endl;
+ //  tuple_get<N>(dofmap_)=std::make_shared<std::vector<Array<Integer,NLocalDofsArray[N]>>>();
+ //  tuple_get<N>(dofmap_)->resize(n_elements);
+ //  space_dofs_[N]=std::make_shared<std::vector<Integer>>();
+ //  space_dofs_[N]->resize(n_elements*NLocalDofsArray[N]);
+ //  std::cout<<"end N=="<<N<<" dofmap tuple size="<<tuple_get<N>(dofmap_)->size()<<" spacedofs size="<< space_dofs_[N]->size()<<std::endl;
+ //  init_dofmap_aux<N+1>(n_elements);};
+
+ // inline void  init_dofmap2(const Integer n_elements){init_dofmap_aux2(n_elements);};
 
  private:
   DofMap dofmap_;
@@ -62,7 +113,9 @@ public:
    using NdofsArray=Array<Integer, Nsubspaces>;
    using CumulativeNdofsArray=Array<Integer, Nsubspaces+1>;
    static constexpr auto NLocalDofs=Sum(Args::DofsDM::NLocalDofs...);
+   // static constexpr Integer Nsubspaces=Sum(Args::DofsDM::Nsubspaces...);
    static constexpr auto NsubspacesArray=concat(Args::DofsDM::NsubspacesArray...);
+   static constexpr auto NLocalDofsArray=concat(Args::DofsDM::NLocalDofsArray...);
 
    template<typename...DofsDofMaps>
    DofsDofMap(const DofsDofMaps&...dms):
@@ -81,9 +134,21 @@ public:
    inline auto& cumulative_n_dofs()       {return cumulative_dofs_array_;}
    inline auto& cumulative_n_dofs() const {return cumulative_dofs_array_;}
 
-   // template<Integer N>
-   // auto& dofmap_get(const Integer elem_id)const
-   // {return tuple_get<N>(dofmap_)->operator[](elem_id);}
+   template<Integer N=0>
+   inline std::enable_if_t<(N>=Nsubspaces),void>
+   init_dofmap_aux(const Integer n_elements){};
+
+
+   template<Integer N=0>
+   inline std::enable_if_t<(N<Nsubspaces),void>
+   init_dofmap_aux(const Integer n_elements)
+   {
+    // we reserve n_elemnts*dofs for single element for each space
+    tuple_get<N>(dofmap_)->reserve(n_elements*NLocalDofsArray[N]);
+    init_dofmap_aux<N+1>(n_elements);};
+
+   inline void  init_dofmap(const Integer n_elements){init_dofmap_aux(n_elements);};
+
 
    template<Integer N>
    void dofmap_get(GetType<ElemDofMap,N>& elemdm, const Integer elem_id)const
@@ -131,6 +196,7 @@ public:
    using CumulativeNdofsArray=Array<Integer, Nsubspaces+1>;
    static constexpr auto NLocalDofs=Sum(Arg1::DofsDM::NLocalDofs,Arg2::DofsDM::NLocalDofs);
    static constexpr auto NsubspacesArray=concat(Arg1::DofsDM::NsubspacesArray,Arg2::DofsDM::NsubspacesArray);
+   static constexpr auto NLocalDofsArray=concat(Arg1::DofsDM::NLocalDofsArray,Arg2::DofsDM::NLocalDofsArray);
 
    // using ElemDofMap=TupleCatType<typename Args::DofsDM::ElemDofMap...>;
    // using DofMap=TupleCatType<typename Args::DofsDM::DofMap...>;
@@ -158,6 +224,23 @@ public:
    inline auto& n_dofs() const {return n_dofs_array_;}
    inline auto& cumulative_n_dofs()       {return cumulative_dofs_array_;}
    inline auto& cumulative_n_dofs() const {return cumulative_dofs_array_;}
+
+   template<Integer N=0>
+   inline std::enable_if_t<(N>=Nsubspaces),void>
+   init_dofmap_aux(const Integer n_elements){};
+
+
+   template<Integer N=0>
+   inline std::enable_if_t<(N<Nsubspaces),void>
+   init_dofmap_aux(const Integer n_elements)
+   {
+    // we reserve n_elemnts*dofs for single element for each space
+    std::cout<<"begin N=="<<N<<std::endl;
+    tuple_get<N>(dofmap_)->reserve(n_elements*NLocalDofsArray[N]);
+    std::cout<<"end N=="<<N<<std::endl;
+    init_dofmap_aux<N+1>(n_elements);};
+
+   inline void  init_dofmap(const Integer n_elements){init_dofmap_aux(n_elements);};
 
 
    template<Integer N>
@@ -203,11 +286,21 @@ public:
 //  return dm;
 // }
 
-template<typename MeshT, typename BaseFunctionSpace,typename...BaseFunctionSpaces>
+template<typename MeshT>
+class ElemEntityCollection;
+
+template<typename MeshT>
+class MeshAndEntity;
+
+template<typename MeshT>
+class ConnectivitySimpliacialMapCollection;
+
+template<typename MeshT_, typename BaseFunctionSpace,typename...BaseFunctionSpaces>
 class FunctionSpace 
 {
 public:
       
+      using MeshT=MeshT_;
       using Elem= typename MeshT::Elem;
       using DofsDM=SingleSpaceDofsDofMap<Elem,BaseFunctionSpace,BaseFunctionSpaces...>;
       using TupleOfSpaces=std::tuple<ElemFunctionSpace<Elem,BaseFunctionSpace>,ElemFunctionSpace<Elem,BaseFunctionSpaces>... >;
@@ -327,7 +420,36 @@ public:
 
       // for(std::size_t i=0; i<Nsubspaces ;i++)
       // dofsdm_.n_dofs()[i]=n_dofs_;
-      };
+      }
+
+      FunctionSpace( MeshAndEntity<MeshT>& mesh_and_entity):
+      mesh_ptr_(mesh_and_entity.mesh_ptr())
+      {
+      function_space_info<0,Nsubspaces,BaseFunctionSpace,BaseFunctionSpaces...>(space_infos_);
+      // dofmap_fespace<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofmap2_,offset_,n_dofs_,space_infos_,space_dofs_,array_ndofs_);     
+      // dofmap_fespace3<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofmap3_,offset_,n_dofs_,space_infos_,space_dofs3_,array_ndofs_);     
+      // dofmap_fespace3<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofsdm_.dofmap(),offset_,n_dofs_,space_infos_,dofsdm_.space_dofs(),array_ndofs_);     
+      dofmap_fespace4<BaseFunctionSpace,BaseFunctionSpaces...>(mesh_and_entity,dofsdm_,offset_,array_ndofs_);     
+
+      // for(std::size_t i=0; i<Nsubspaces ;i++)
+      // dofsdm_.n_dofs()[i]=n_dofs_;
+      }
+
+
+      FunctionSpace( ConnectivitySimpliacialMapCollection<MeshT>& entities):
+      mesh_ptr_(std::make_shared<MeshT>(entities.mesh()))
+      {
+      function_space_info<0,Nsubspaces,BaseFunctionSpace,BaseFunctionSpaces...>(space_infos_);
+      // dofmap_fespace<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofmap2_,offset_,n_dofs_,space_infos_,space_dofs_,array_ndofs_);     
+      // dofmap_fespace3<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofmap3_,offset_,n_dofs_,space_infos_,space_dofs3_,array_ndofs_);     
+      // dofmap_fespace3<BaseFunctionSpace,BaseFunctionSpaces...>(mesh,dofsdm_.dofmap(),offset_,n_dofs_,space_infos_,dofsdm_.space_dofs(),array_ndofs_);     
+      
+      dofmap_fespace5<BaseFunctionSpace,BaseFunctionSpaces...>(entities,dofsdm_,offset_,array_ndofs_);     
+
+      // for(std::size_t i=0; i<Nsubspaces ;i++)
+      // dofsdm_.n_dofs()[i]=n_dofs_;
+      }
+
 
 private:
    
@@ -360,8 +482,9 @@ template<typename Arg,typename...Args>
 class MixedSpace<Arg,Args...>
 {
 public:
+  using MeshT=typename Arg::MeshT;
   using Elem=typename Arg::Elem;
-  using MeshT=Mesh<Elem::Dim,Elem::ManifoldDim>;
+  // using MeshT=Mesh<Elem::Dim,Elem::ManifoldDim>;
   using TupleOfSpaces=TupleCatType<typename Arg::TupleOfSpaces,typename Args::TupleOfSpaces...>;
   using DofMapType=std::tuple<typename Arg::DofMapType,typename Args::DofMapType...>;
   using DofMapType2=TupleCatType<typename Arg::DofMapType2,typename Args::DofMapType2...>;
@@ -543,10 +666,11 @@ MixedSpace<Args...> MixedFunctionSpace(const Args&...args){return MixedSpace<Arg
 template<typename...Args>
 class AuxMixedSpace; 
 
-template<typename MeshT,typename Arg,typename...Args>
-class AuxMixedSpace<AuxFunctionSpace<MeshT,Arg>,AuxFunctionSpace<MeshT,Args>...>
+template<typename MeshT_,typename Arg,typename...Args>
+class AuxMixedSpace<AuxFunctionSpace<MeshT_,Arg>,AuxFunctionSpace<MeshT_,Args>...>
 {
 public:
+  using MeshT=MeshT_;
   using Elem=typename AuxFunctionSpace<MeshT,Arg>::Elem;
   using TupleOfSpaces=TupleCatType<typename AuxFunctionSpace<MeshT,Arg>::TupleOfSpaces,
   typename AuxFunctionSpace<MeshT,Args>::TupleOfSpaces...>;
@@ -651,9 +775,10 @@ template<typename...Args>
 class FullSpace<MixedSpace<Args...>>
 {
 public:
+  using MeshT=typename MixedSpace<Args...>::MeshT;
   using FunctionSpace=MixedSpace<Args...>;
   using Elem=typename FunctionSpace::Elem;
-  using MeshT=Mesh<Elem::Dim,Elem::ManifoldDim>;
+  // using MeshT=Mesh<Elem::Dim,Elem::ManifoldDim>;
   using TupleOfSpaces=typename FunctionSpace::TupleOfSpaces;
   using DofMapType=std::tuple<typename FunctionSpace::DofMapType>;
 
@@ -716,10 +841,11 @@ template<typename...Args,typename...AuxArgs>
 class FullSpace<MixedSpace<Args...>,AuxMixedSpace<AuxArgs...>>
 {
 public:
+  using MeshT=typename MixedSpace<Args...>::MeshT;
   using FunctionSpace=MixedSpace<Args...>;
   using AuxFunctionSpace=AuxMixedSpace<AuxArgs...>;
   using Elem=typename FunctionSpace::Elem;
-  using MeshT=Mesh<Elem::Dim,Elem::ManifoldDim>;
+  // using MeshT=Mesh<Elem::Dim,Elem::ManifoldDim>;
   using TupleOfSpaces=TupleCatType<typename FunctionSpace::TupleOfSpaces,
                                    typename AuxFunctionSpace::TupleOfSpaces>;
   using DofMapType=std::tuple<typename FunctionSpace::DofMapType,

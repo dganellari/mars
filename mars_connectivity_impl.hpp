@@ -28,11 +28,12 @@
 namespace mars{
 template <Integer Dim, Integer ManifoldDim, Integer EntityDimFrom, Integer SubEntityDimFrom, Integer EntityDimTo>
 inline std::vector<Integer> 
-ElemConnectivity<Simplex<Dim, ManifoldDim>,EntityDimFrom,SubEntityDimFrom,EntityDimTo>::compute
+ElemConnectivity<Mesh<Dim, ManifoldDim>,EntityDimFrom,SubEntityDimFrom,EntityDimTo>::compute
                                           (const ElemEntity<Simplex<Dim,ManifoldDim>,EntityDimFrom> &entity_from,
                                            const Integer& index_from,
                                            const ElemEntity<Simplex<Dim,ManifoldDim>,EntityDimTo>   &entity_to)
 {
+
 
 
     std::vector<Integer> fromto;
@@ -46,7 +47,11 @@ ElemConnectivity<Simplex<Dim, ManifoldDim>,EntityDimFrom,SubEntityDimFrom,Entity
     static_assert(ManifoldDim>=SubEntityDimFrom , " the manifold dimension must be greater than or equal to the subentityfrom dimension ");   
     static_assert(EntityDimTo>=0 , " the entityto dimension must be non negative ");
     static_assert(ManifoldDim>=EntityDimTo , " the manifold dimension must be greater than or equal to the entityto dimension ");
-    
+ 
+    // if(bisection_ptr_==nullptr && level_!=-1)
+    //    {
+    //    throw std::invalid_argument("ElemConnectivity ERROR: if we consider levels, then a bisection pointer must be provided");
+    //    }   
     // rule 1)
     if(SubEntityDimFrom>EntityDimFrom || SubEntityDimFrom > EntityDimTo)
          return fromto;
@@ -67,7 +72,7 @@ ElemConnectivity<Simplex<Dim, ManifoldDim>,EntityDimFrom,SubEntityDimFrom,Entity
         std::vector<Integer> el_neighs;
         const auto& elem_index_from=entity_from.entity_2_elem(index_from)[0];
         const auto& iter_entity_from=entity_from.entity_2_elem(index_from)[1];
-        const auto& nodes_from=mesh_.elem(elem_index_from).nodes;
+        const auto& nodes_from=mesh_ptr_->elem(elem_index_from).nodes;
     
         // entity_nodes_from contains the local indexes of the nodes of the entity
         Combinations<ManifoldDim + 1, EntityDimFrom+1>::generate(iter_entity_from,entity_nodes_from);
@@ -93,7 +98,7 @@ ElemConnectivity<Simplex<Dim, ManifoldDim>,EntityDimFrom,SubEntityDimFrom,Entity
         for(Integer elem_iter_to=0;elem_iter_to< el_neighs.size();elem_iter_to++)
            {
             const auto &elem_index_to=el_neighs[elem_iter_to];
-            const auto& nodes_to=mesh_.elem(elem_index_to).nodes;
+            const auto& nodes_to=mesh_ptr_->elem(elem_index_to).nodes;
             // loop on all the entities of dimension EntityDimTo of the element with index=elem_index_to
             for(Integer iter_entity_to=0;iter_entity_to< entity_to.entity_combinations();iter_entity_to++)
                 {
@@ -123,26 +128,57 @@ ElemConnectivity<Simplex<Dim, ManifoldDim>,EntityDimFrom,SubEntityDimFrom,Entity
         }
     };
 
+
+
 template <Integer Dim, Integer ManifoldDim>
-void ElemConnectivity<Simplex<Dim, ManifoldDim>,0,0,ManifoldDim>::init(const Mesh<Dim,ManifoldDim>& mesh)
+void ElemConnectivity<Mesh<Dim, ManifoldDim>,0,0,ManifoldDim>::init()
         {
-            const auto & n_nodes    = mesh.n_nodes();
-            const auto & n_elements = mesh.n_elements();            
+            const auto & n_nodes    = mesh_ptr_->n_nodes();
+            const auto & n_elements = mesh_ptr_->n_elements();            
             val_.resize(n_nodes);
                 // loop on all the nodes of all the active elements 
                 // add to node_2_element the corresponding active element
+                if(bisection_ptr_==nullptr && level_>-1)
+                    {
+                     throw std::invalid_argument("ElemConnectivity ERROR: if we consider levels, then a bisection pointer must be provided");
+                     }
+                else if(level_<0)
+                {
                 for(Integer i = 0; i < n_elements; ++i) 
                    {
-                        if(!mesh.is_active(i)) continue;
+                 
+                        if(!mesh_ptr_->is_active(i)) continue;
 
-                        const auto &e    = mesh.elem(i);
+                        const auto &e    = mesh_ptr_->elem(i);
                         // this can be put outside the loop, right?
                         const auto & nn = ManifoldDim + 1;
                         for(Integer k = 0; k < nn; ++k) 
                             {
                                 val_[e.nodes[k]].push_back(i);
                             }
-                    }       
+                    } 
+                }
+                else
+                {
+                const auto& track=bisection_ptr_->tracker();
+                for(Integer i = 0; i < n_elements; ++i) 
+                   {
+                 
+                     if(elem_belongs_to_level(mesh_ptr_,i,level_,track))
+                        {
+                        const auto &e    = mesh_ptr_->elem(i);
+                        // this can be put outside the loop, right?
+                        const auto & nn = ManifoldDim + 1;
+                        for(Integer k = 0; k < nn; ++k) 
+                            {
+                                val_[e.nodes[k]].push_back(i);
+                            }
+                        }
+
+                    } 
+                }                    
+                
+      
         };
 
 

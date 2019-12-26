@@ -23,7 +23,8 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
     using Maps=MapFromReferenceCollection<Bilinear,Linear>;
     using ShapeFunctions=ShapeFunctionsCollection<Bilinear,Linear>;
     using BCs=DirichletBoundaryConditionCollection<DirichletBCs...>;
-    using Elem= typename Bilinear::FunctionSpace::Elem;
+    using MeshT=typename Bilinear::FunctionSpace::MeshT;
+    using Elem= typename MeshT::Elem;
     static constexpr auto NLocalDofs=Maps::FunctionSpace::DofsDM::NLocalDofs;
 
     Context(const BilinearForm& bilinearform, const LinearForm&linearform, const DirichletBCs&...bcs):
@@ -52,7 +53,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
 
 
-    NodeToElem<Elem> node_2_elem(*mesh_ptr);
+    NodeToElem<MeshT> node_2_elem(*mesh_ptr);
      const auto& node2elem=node_2_elem.val();
      Integer max_cols=0;
      std::cout<<"------_______-----llll"<<std::endl;
@@ -60,10 +61,10 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
      for(Integer i=0;i<node2elem.size();i++)
      {
         const auto & n2e=node2elem[i];
-      std::cout<<n2e.size()<<std::endl;
-      for(Integer j=0;j<n2e.size();j++)
-        std::cout<<n2e[j]<<" "<<std::endl;
-      std::cout<<std::endl;
+      // std::cout<<n2e.size()<<std::endl;
+      // for(Integer j=0;j<n2e.size();j++)
+        // std::cout<<n2e[j]<<" "<<std::endl;
+      // std::cout<<std::endl;
       // if()
       if(max_cols<n2e.size())
       max_cols=n2e.size(); 
@@ -261,7 +262,7 @@ class Context<ZeroForm>
     eval_zero_form_(Eval(zeroform_,shapefunctions_)) 
     {
 
-      std::cout<< "oooooooooooooooo "<<std::endl;
+      // std::cout<< "oooooooooooooooo "<<std::endl;
       // zeroform_.
       // typename Evaluation<Expression<Form>,ShapeFunctions>::template L2Products<0> dee(4,5);
       // typename Evaluation<Expression<Form>,ShapeFunctions>::template L2Products<1> de3e(4,5);
@@ -297,9 +298,9 @@ class Context<ZeroForm>
           shape_coefficients_.init(el);
           reference_maps_.init(FE);
           shapefunctions_.init(FE);
-          std::cout<<"eval_zero_form_ begin "<<std::endl;
+          // std::cout<<"eval_zero_form_ begin "<<std::endl;
           eval_zero_form_.apply(A,FE);
-          std::cout<<"eval_zero_form_ end "<<std::endl;
+          // std::cout<<"eval_zero_form_ end "<<std::endl;
           // std::cout<<"------_______----- SURFACE-----_______--------"<<std::endl;
 
           if(FE.is_on_boundary())

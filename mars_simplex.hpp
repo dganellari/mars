@@ -223,6 +223,8 @@ namespace mars {
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
         Integer block = INVALID_INDEX;
+
+        std::vector<Integer> children;
         
         inline static std::vector<Vector<Real, Dim>> &ref()
         {
@@ -268,6 +270,8 @@ namespace mars {
 
         Integer id = INVALID_INDEX;
         Integer parent_id = INVALID_INDEX;
+
+        std::vector<Integer> children;
         
         inline static std::vector<Vector<Real, Dim>> &ref()
         {

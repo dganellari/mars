@@ -1264,8 +1264,8 @@ Kokkos::View<Real **[3][4]> aaa("aaa",M,N);
 // LSFEM_Poisson3D();
 // LSFEM_Poisson2D_RT0_P1();
 // LSFEM_Poisson2D_RT1_P2();
-// Poisson_Lagrange<2,1>(10);
-// Poisson_Lagrange<2,2>(10);
+// Poisson_Lagrange<2,1>(1);
+Poisson_Lagrange<2,2>(10);
 // Poisson_Lagrange<3,1>(10);
 // Poisson_Lagrange<3,2>(10);
 //// 2D RT0 P1
@@ -1275,7 +1275,10 @@ Kokkos::View<Real **[3][4]> aaa("aaa",M,N);
 //// 3D RT0 P1
 // LSFEM_Poisson<3,0,1>(6);
 //// 3D RT1 P2
-LSFEM_Poisson<3,1,2>(10);
+LSFEM_Poisson<2,1,2>(100);
+std::cout<<"after LSFEM_Poisson"<<std::endl;
+// 
+// LSFEM_Poisson<3,1,2>(10);
 // std::cout<< FunctionSpaceDofsPerElem<ElemFunctionSpace<Simplex<3,3>,RT1<1>>>::value <<std::endl;
 // Poisson3D_P1(4);
 // Poisson2D_P2();

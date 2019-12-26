@@ -132,13 +132,13 @@ namespace mars {
 
 		static void print_all()
 		{
-			for(auto const &c : instance().combs) {
-				for(auto n : c) {
-					std::cout << n << " ";
-				}
+			// for(auto const &c : instance().combs) {
+			// 	for(auto n : c) {
+			// 		// std::cout << n << " ";
+			// 	}
 
-				std::cout << std::endl;
-			}
+			// 	// std::cout << std::endl;
+			// }
 		}
 
 		template<typename T>
