@@ -551,7 +551,8 @@ namespace mars {
 			tracker_.undo_last_iterate(mesh);
 		}
         
-        auto tracker(){return tracker_;}
+        auto& tracker(){return tracker_;}
+        auto& tracker()const{return tracker_;}
 	private:
 		Mesh &mesh;
 		std::vector<Integer> flags;

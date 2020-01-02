@@ -1265,7 +1265,7 @@ Kokkos::View<Real **[3][4]> aaa("aaa",M,N);
 // LSFEM_Poisson2D_RT0_P1();
 // LSFEM_Poisson2D_RT1_P2();
 // Poisson_Lagrange<2,1>(1);
-Poisson_Lagrange<2,2>(10);
+// Poisson_Lagrange<2,2>(10);
 // Poisson_Lagrange<3,1>(10);
 // Poisson_Lagrange<3,2>(10);
 //// 2D RT0 P1

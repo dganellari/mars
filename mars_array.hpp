@@ -298,10 +298,6 @@ template<Integer N,Integer M>
 constexpr auto cumulative_array
 (const Array<Integer, N>& t1,const Array<Integer, M>& t2)
 {
-   // std::cout<<"cumulative_array "<<std::endl;
-   // std::cout<<"t1 = "<<t1<<std::endl;
-   // std::cout<<"t2 = "<<t2<<std::endl;
-
    Array<Integer, N+1> t3;
 
    for(Integer i=0;i<t2[0];i++)
@@ -312,28 +308,59 @@ constexpr auto cumulative_array
    Integer dofs_count=t1[0];
    for(Integer i=1;i<t2.size();i++)
       {
-        // std::cout<<" i == "<<i<<std::endl;
        for(Integer j=0;j<t2[i];j++)
           {
            t3[cont]=dofs_count;
            cont++;}
-        // std::cout<<" dofs_count == "<<dofs_count<<std::endl;
-        // std::cout<<" i == "<<i<<std::endl;
-        // std::cout<<" t3 == "<<t3<<std::endl;
-        // std::cout<<" cont == "<<cont<<std::endl;
-        // std::cout<<" t1[cont] == "<<t1[cont]<<std::endl;
+
         dofs_count+=t1[cont-1];
       }
-  //  t3[0]= 0;
-  // for(Integer ii=0;ii<N;ii++)
-  // { if(t2[ii])
-  //   t3[ii+1]=t3[ii]+t1[ii];
-  //   else
-  //   t3[ii+1]=t3[ii];
-  // }
-  // std::cout<<"t3 = "<<t3<<std::endl;
+
   return t3;
 }
+
+template<Integer N,Integer M>
+auto cumulative_array
+(const Array<std::vector<Integer>, N>& t1,const Array<Integer, M>& t2)
+{
+
+  std::cout<<"qui1"<<std::endl;
+   Array<std::vector<Integer>, N+1> t3;
+   auto levels=t1[0].size();
+   for(Integer i=0;i<t2[0];i++)
+      {
+       t3[i].resize(levels, 0);
+      }
+   std::cout<<"qui2"<<std::endl;
+   Integer cont;
+   std::vector<Integer> dofs_count(levels);
+   cont=t2[0];
+   for(Integer i=0;i<levels;i++)
+   {
+    dofs_count[i]=t1[0][i];
+    
+   }
+  std::cout<<"qui3"<<std::endl;
+   for(Integer i=1;i<t2.size();i++)
+      {
+       for(Integer j=0;j<t2[i];j++)
+          {
+            t3[cont].resize(levels);
+             for(Integer s=0;s<levels;s++)
+                { 
+                  t3[cont][s]=dofs_count[s];
+                  
+                }
+              cont++;
+          }
+        for(Integer s=0;s<levels;s++)
+        dofs_count[s]+=t1[cont-1][s];
+      }
+  std::cout<<"qui4"<<std::endl;
+
+  return t3;
+}
+
 
 template<Integer N,Integer M>
 constexpr auto cumulative_array_and_zero
@@ -351,20 +378,65 @@ constexpr auto cumulative_array_and_zero
   return t3;
 }
 
-// template<Integer N,Integer M>
-// constexpr auto cumulative_array_and_zero
-// (const Array<Integer, N>& t1,const Array<Integer, M>& t2)
-// {
-//   Array<Integer, N+M+1> t3;
-//   t3[0]= 0;
-//   for(Integer ii=0;ii<N;ii++)
-//        t3[ii+1]=t3[ii]+t1[ii];
+template<Integer N,Integer M>
+constexpr auto cumulative_array_and_zero
+(const Array<std::vector<Integer>, N>& t1,const Array<std::vector<Integer>, M>& t2)
+{
 
-//   for(Integer ii=N-1;ii<N+M+1;ii++)
-//        t3[ii+1]=0;
+  Array<std::vector<Integer>, N+M> t3;
 
-//   return t3;
-// }
+
+
+ //  std::cout<<"t1"<<std::endl;
+ //  for(Integer ii=0;ii<t1.size();ii++)
+ //    {
+ //      std::cout<<std::endl;
+ //      for(Integer s=0;s<t1[ii].size();s++)
+ //      std::cout<<t1[ii][s]<<" ";
+ //      std::cout<<std::endl;
+ //   }
+ //  std::cout<<"t2"<<std::endl;
+ //  for(Integer ii=0;ii<t2.size();ii++)
+ //    {
+ //      std::cout<<std::endl;
+ //      for(Integer s=0;s<t2[ii].size();s++)
+ //      std::cout<<t2[ii][s]<<" ";
+ //      std::cout<<std::endl;
+ //   }
+
+
+
+ //  std::cout<<"qui11"<<std::endl;
+ //  auto levels=t2[0].size();
+
+
+
+ //  std::cout<<"qui22"<<std::endl;
+ //  for(Integer ii=0;ii<N+M;ii++)
+ //    {
+ //      std::cout<<"ii="<<ii<<std::endl;
+ //      t3[ii].resize(levels);
+ //   }
+
+
+ //  std::cout<<"qui22"<<std::endl;
+ //  for(Integer ii=0;ii<N;ii++)
+ //    {
+ //      std::cout<<"N="<<N<<std::endl;
+ //      std::cout<<"ii="<<ii<<std::endl;
+ //      std::cout<<"levels="<<levels<<"   "<<t3[ii].size()<<"  "<<t1[ii].size()<<std::endl;
+ //      for(Integer s=0;s<levels;s++)
+ //       t3[ii][s]=t1[ii][s];
+ //   }
+ //  std::cout<<"qui33"<<std::endl;
+ //  for(Integer ii=N-1;ii<N+M+1;ii++)
+ //    {
+ //      for(Integer s=0;s<levels;s++)
+ //       t3[ii+1][s]=0;
+ //   }
+ // std::cout<<"qui44"<<std::endl;
+  return t3;
+}
 
 
 }

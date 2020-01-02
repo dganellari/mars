@@ -58,6 +58,18 @@ static constexpr Integer value=Combinations<ManifoldDim+1,EntityDim+1>::value;
 };
 
 
+template<typename Elem,Integer EntityDim>
+class ElemEntityNPoints;
+
+
+template<Integer Dim,Integer ManifoldDim,Integer EntityDim>
+class ElemEntityNPoints<Simplex<Dim,ManifoldDim>,EntityDim>
+{
+public:
+    static constexpr Integer value=EntityDim+1;
+};
+
+
 template<typename Elem, Integer EntityDim>
 class ElemEntity{};
 
@@ -80,7 +92,7 @@ public:
 
     inline constexpr static Integer num_of_points()
     { 
-        return EntityDim+1;
+        return ElemEntityNPoints<Simplex<Dim,ManifoldDim>,EntityDim>::value;
     }
     ElemEntity(){}
     ElemEntity(const Mesh<Dim,ManifoldDim>& mesh);

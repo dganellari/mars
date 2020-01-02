@@ -44,10 +44,14 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
 
     template<typename SystemMat, typename Rhs>
-    void assembly(SystemMat& A, Rhs& b)
+    void assembly(SystemMat& A, Rhs& b,const Integer level=-1)
     {
      auto spaces_ptr=bilinear_form_.spaces_ptr()->spaces_ptr();
-     n_dofs_=spaces_ptr->n_dofs();
+     // n_dofs_=spaces_ptr->n_dofs();
+     std::cout<<"assembly"<<std::endl;
+     n_dofs_=spaces_ptr->level_n_dofs_array(level);
+      std::cout<<"n_dofs_="<<n_dofs_<<std::endl;
+
      auto mesh_ptr=spaces_ptr->mesh_ptr();
      FiniteElem<Elem> FE(mesh_ptr);
 
@@ -73,6 +77,9 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
      // A.resize(n_dofs_,std::vector<Real>(n_dofs_));
      std::cout<<"------_______----- A init"<<std::endl;
+     std::cout<<"n_dofs_=="<<n_dofs_<<std::endl;
+     std::cout<<"NLocalDofs=="<<NLocalDofs<<std::endl;
+     std::cout<<"max_cols=="<<max_cols<<std::endl;
      // NLocalDofs*max_number of_elements of a node
      A.init(n_dofs_,max_cols*NLocalDofs);
 
