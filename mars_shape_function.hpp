@@ -139,7 +139,7 @@ public:
         // loop on all the elements
         for(Integer ee=0;ee<mesh.n_elements();ee++)
         {
-            if(!mesh.is_active(ee)) continue;
+            // if(!mesh.is_active(ee)) continue;
             auto &e = mesh.elem(ee);
       
             auto &adj = mesh.dual_graph().adj(ee);

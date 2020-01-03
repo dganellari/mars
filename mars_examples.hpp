@@ -1558,7 +1558,7 @@ template<Integer Dim, Integer Order,typename Elem>
 
 
 template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename FiniteElem,typename...Args,typename Solution,typename VariablesNamesVec>
-	void print_solutions_aux_aux(std::ostream &os,FiniteElem& FE,const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names)
+	void print_solutions_aux_aux(std::ostream &os,FiniteElem& FE,const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names,const Integer level=-1)
 	{
 		using Elem=typename Space::Elem;
 		constexpr auto Dim=Elem::Dim;
@@ -1577,6 +1577,9 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 		Array<Real,Nelem_dofs> local_sol;
 		auto m_max=size/Nelem_dofs-1;
 		Var var;
+
+		auto& bisection=space.bisection();
+		auto& tracker=bisection.tracker();
 // FE.init(0);
 // var.init(FE,sol_tmp);
 // std::cout<<"sol_tmp="<<std::endl;
@@ -1624,7 +1627,8 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 			for(Integer i=0;i<n_elements;i++)
 			{
 
-				if(!mesh_ptr->is_active(i)) continue;
+				// if(!mesh_ptr->is_active(i)) continue;
+				if(!elem_belongs_to_level(mesh_ptr,i,level,tracker))continue;
 
 				FE.init(i);
 				dofsdofmap.template dofmap_get<N>(localdofmap,i);
@@ -1713,26 +1717,26 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 
 	template<Integer N, Integer Nmax,typename TupleOfSpaces,Integer ElementOrder,typename FiniteElem,typename...Args,typename Solution,typename VariablesNamesVec>
 	constexpr std::enable_if_t< (N>Nmax), void>
-	print_solutions_aux(std::ostream &os,FiniteElem& FE, const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names)
+	print_solutions_aux(std::ostream &os,FiniteElem& FE, const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names,const Integer level=-1)
 	{}
 
 
 	template<Integer N, Integer Nmax, typename TupleOfSpaces,Integer ElementOrder,typename FiniteElem,typename...Args,typename Solution,typename VariablesNamesVec>
 	constexpr std::enable_if_t< (N<=Nmax), void>
-	print_solutions_aux(std::ostream &os,FiniteElem& FE, const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names)
+	print_solutions_aux(std::ostream &os,FiniteElem& FE, const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names,const Integer level=-1)
 	{
 		using Space=GetType<TupleOfSpaces,N>;
 
-		print_solutions_aux_aux<N,Nmax,Space,ElementOrder>(os,FE,space,sol,names);
-		print_solutions_aux<N+1,Nmax,TupleOfSpaces,ElementOrder>(os,FE,space,sol,names);
+		print_solutions_aux_aux<N,Nmax,Space,ElementOrder>(os,FE,space,sol,names,level);
+		print_solutions_aux<N+1,Nmax,TupleOfSpaces,ElementOrder>(os,FE,space,sol,names,level);
 	}
 
 	template<typename TupleOfSpaces,Integer ElementOrder,typename...Args,typename Solution,typename VariablesNamesVec>
-	constexpr void print_solutions(std::ostream &os,const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names)
+	constexpr void print_solutions(std::ostream &os,const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names,const Integer level=-1)
 	{
 		using Elem=typename FullSpace<Args...>::Elem; 
 		FiniteElem<Elem> FE(space.mesh_ptr());
-		print_solutions_aux<0,TupleTypeSize<TupleOfSpaces>::value-1,TupleOfSpaces,ElementOrder>(os,FE,space,sol,names);
+		print_solutions_aux<0,TupleTypeSize<TupleOfSpaces>::value-1,TupleOfSpaces,ElementOrder>(os,FE,space,sol,names,level);
 	}
 
 
@@ -1745,7 +1749,7 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	}; 
 
 	template<Integer IsIsoparametric,typename...Args,typename Solution,typename VariablesNamesVec>
-	void write_wtk_aux(std::ostream &os,const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names) {
+	void write_wtk_aux(std::ostream &os,const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names,const Integer level=-1) {
 		using FullSpace=FullSpace<Args...>;
 		using TupleOfSpaces=typename FullSpace::FunctionSpace::TupleOfSpaces;
 		using MeshT=typename FullSpace::MeshT;
@@ -1764,12 +1768,15 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 		os << "DATASET UNSTRUCTURED_GRID\n";
 		os << "POINTS ";
 	// auto n_points=mesh_ptr->points().size();
+		auto& bisection=space.bisection();
+		auto& tracker=bisection.tracker();
 		auto n_elements=mesh_ptr->n_elements();
 
 		Integer n_active_elements=0;
 		for(Integer i=0;i<n_elements;i++)
 		{
-			if(!mesh_ptr->is_active(i)) continue;
+			// if(!mesh_ptr->is_active(i)) continue;
+			if(!elem_belongs_to_level(mesh_ptr,i,level,tracker))continue;
 			n_active_elements++;
 		}
 
@@ -1783,7 +1790,8 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	// WRITE ELEMENTS
 	for(Integer i=0;i<n_elements;i++)
 	{
-		if(!mesh_ptr->is_active(i)) continue;
+		// if(!mesh_ptr->is_active(i)) continue;
+		if(!elem_belongs_to_level(mesh_ptr,i,level,tracker))continue;
 
 		const auto& e=mesh_ptr->elem(i);
 		FE.init(i);
@@ -1835,7 +1843,8 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	Integer count=0;
 	for(Integer i=0;i<n_elements;i++)
 	{
-		if(!mesh_ptr->is_active(i)) continue;
+		// if(!mesh_ptr->is_active(i)) continue;
+		if(!elem_belongs_to_level(mesh_ptr,i,level,tracker))continue;
 
 		const auto& e=mesh_ptr->elem(i);
 	    const auto size=n_points_per_elem;//e.nodes.size();
@@ -1864,7 +1873,8 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	// std::cout<<Points<<std::endl;
 	for(Integer i=0;i<n_elements;i++)
 	{
-		if(!mesh_ptr->is_active(i)) continue;
+		// if(!mesh_ptr->is_active(i)) continue;
+		if(!elem_belongs_to_level(mesh_ptr,i,level,tracker))continue;
 
 		const auto& e=mesh_ptr->elem(i);
 		os <<vtk_cell_type<Dim,IsIsoparametricOrder<IsIsoparametric,TupleOfSpaces>::value>(e);
@@ -1878,7 +1888,7 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	os << "\n";
 
 
-	print_solutions<TupleOfSpaces,IsIsoparametricOrder<IsIsoparametric,TupleOfSpaces>::value>(os,space,sol,names);
+	print_solutions<TupleOfSpaces,IsIsoparametricOrder<IsIsoparametric,TupleOfSpaces>::value>(os,space,sol,names,level);
 
 
 
@@ -1900,15 +1910,15 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 
 
 	template<typename...Args,typename Solution,typename VariablesNamesVec>
-	void write_wtk(std::ostream &os,const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names) 
+	void write_wtk(std::ostream &os,const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names,const Integer level=-1) 
 	{
-		write_wtk_aux<0>(os,space,sol,names);
+		write_wtk_aux<0>(os,space,sol,names,level);
 	}
 
 	template<typename...Args,typename Solution,typename VariablesNamesVec>
-	void write_wtk_isoparametric(std::ostream &os,const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names) 
+	void write_wtk_isoparametric(std::ostream &os,const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names,const Integer level=-1) 
 	{
-		write_wtk_aux<1>(os,space,sol,names);
+		write_wtk_aux<1>(os,space,sol,names,level);
 	}
 
 
@@ -3226,7 +3236,7 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	      // bisection.uniform_refine(0);
 	      // mesh.update_dual_graph();
 		}
-
+        Integer n_levels=4;
 	    clock_t begin=clock();
 		clock_t end = clock();
 		double elapsed_secs;
@@ -3244,15 +3254,15 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 
 	    begin=clock();
 		std::cout<<"bisec 1="<<std::endl;
-		bisection.tracking_begin();
-		bisection.uniform_refine(1);
-		bisection.tracking_end();
+		// bisection.tracking_begin();
+		// bisection.uniform_refine(1);
+		// bisection.tracking_end();
 		end=clock();
 		std::cout<<double(end - begin) / CLOCKS_PER_SEC<<std::endl;
 
 		begin=clock();
 		std::cout<<"bisec 2="<<std::endl;
-		for(int i=0;i<8;i++)
+		for(int i=0;i<n_levels;i++)
 		{
 		bisection.tracking_begin();
 		bisection.uniform_refine(1);
@@ -3868,8 +3878,10 @@ LSFEM lsfem(csmc);
 		std::vector<Real> b;
 
 		std::cout<<"ASSEMBLY"<<std::endl;
+		Integer level=2;//bisection.tracker().current_iterate();
 		// Integer level=4;
-		context.assembly(A,b);
+		std::cout<<"level---"<<level<<std::endl;
+		context.assembly(A,b,level);
 	   // A.print_val();
 		std::cout<<"APPLY BC "<<std::endl;
 		context.apply_bc(A,b);
@@ -3891,9 +3903,46 @@ LSFEM lsfem(csmc);
 
 		os.close();
 		os.open(output_file.c_str());
-		write_wtk_isoparametric(os,W,x,var_names);
+		write_wtk_isoparametric(os,W,x,var_names,level);
 
-	   os.close();
+	    os.close();
+
+
+
+
+
+
+
+		SparseMatrix<Real> AL;
+		std::vector<Real> bL;
+
+		level=bisection.tracker().current_iterate()-1;
+
+		context.assembly(AL,bL,level);
+	   // A.print_val();
+		std::cout<<"APPLY BC "<<std::endl;
+		context.apply_bc(AL,bL);
+
+
+	   // A.print_val();
+		std::vector<Real> xL;
+
+
+		std::cout<<"START SOLVING"<<std::endl;
+		gauss_seidel(xL,AL,bL,max_iter);
+		std::cout<<"END SOLVING"<<std::endl;
+		auto var_namesL=variables_names("stress","disp");
+		std::string output_fileL ="LSFEM_PoissonFINE"+ std::to_string(ManifoldDim) +
+		"D_RT" + std::to_string(Order1)+
+		"_P" + std::to_string(Order2)+"_output.vtk";
+
+		os.close();
+		os.open(output_fileL.c_str());
+		write_wtk_isoparametric(os,W,xL,var_namesL,level);
+
+	    os.close();
+
+
 	//    // std::cout<<"W ndofs"<<W.spaces_ptr()->n_dofs()<<std::endl;
 	//    // std::cout<<"W array_ndofs"<<W.array_ndofs()<<std::endl;
 	//    // std::cout<<ShapeFunction<Simplex<Dim,ManifoldDim>,RT1<1> ,IdentityOperator,GaussPoints<Simplex<3,3>,3>>::reference_values()<<std::endl;

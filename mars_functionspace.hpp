@@ -381,6 +381,7 @@ public:
       inline const Integer& n_dofs()const{return dofsdm_.n_dofs()[0];};
 
 
+      inline const auto& level_n_dofs_array()const{return dofsdm_.level_n_dofs_array();}
 
       inline const Integer& level_n_dofs_array(const Integer level)const
       {if(level==-1)
@@ -544,6 +545,9 @@ public:
 
 
   inline const Integer& n_dofs()const{return n_dofs_;}; 
+
+  inline const auto& level_n_dofs_array(){return dofsdm_.level_n_dofs_array();}
+
       inline const Integer& level_n_dofs_array(const Integer level)const
       {std::cout<<"level_n_dofs_array, level=="<<level<<std::endl;
       std::cout<<"dofsdm_.level_n_dofs_array().size()-1=="<<dofsdm_.level_n_dofs_array().size()-1<<std::endl;
