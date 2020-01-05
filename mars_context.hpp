@@ -69,7 +69,20 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
 
 
-     n_dofs_=spaces_ptr->level_n_dofs_array(level_);
+     n_dofs_=0;
+     for(int i=0;i<n_dofs_arr.size();i++)
+     {
+        n_dofs_+=n_dofs_arr[i][level_];
+     }
+
+     auto level_cumultive_n_dofs=spaces_ptr->dofsdofmap().level_cumultive_n_dofs();
+     std::cout<<" level_cumultive_n_dofs =====>>>> "<<std::endl;
+     for(Integer i=0;i<level_cumultive_n_dofs.size();i++)
+        std::cout<<level_cumultive_n_dofs[i]<<" ";
+     std::cout<<std::endl;
+
+     // n_dofs_=spaces_ptr->level_n_dofs_array(level_);
+     n_dofs_=level_cumultive_n_dofs[level_];
      std::cout<<"n_dofs_="<<n_dofs_<<std::endl;
 
      auto mesh_ptr=spaces_ptr->mesh_ptr();
@@ -120,19 +133,19 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
           if(!elem_belongs_to_level(mesh_ptr,el,level_,tracker)) continue;
 
           std::cout<<"------_______----- ELEMENT ID = "<<el<<". -----_______--------"<<std::endl;
-          FE.init(el);
-          std::cout<<"fe jac"<<FE.jac()<<std::endl;
-          std::cout<<"------_______----- qui1 -----_______--------"<<std::endl;
+          FE.init(el,level_);
+          // std::cout<<"fe jac"<<FE.jac()<<std::endl;
+          // std::cout<<"------_______----- qui1 -----_______--------"<<std::endl;
           shape_coefficients_.init(el);
-          std::cout<<"------_______----- qui2 -----_______--------"<<std::endl;
+          // std::cout<<"------_______----- qui2 -----_______--------"<<std::endl;
           reference_maps_.init(FE);
-          std::cout<<"------_______----- qui3 -----_______--------"<<std::endl;
+          // std::cout<<"------_______----- qui3 -----_______--------"<<std::endl;
           shapefunctions_.init(FE);
-          std::cout<<"------_______----- qui4 -----_______--------"<<std::endl;
+          // std::cout<<"------_______----- qui4 -----_______--------"<<std::endl;
           eval_bilinear_form_.apply(A,FE);
-          std::cout<<"------_______----- qui5 -----_______--------"<<std::endl;
+          // std::cout<<"------_______----- qui5 -----_______--------"<<std::endl;
           eval_linear_form_.apply(b,FE);
-          std::cout<<"------_______----- SURFACE-----_______--------"<<std::endl;
+          // std::cout<<"------_______----- SURFACE-----_______--------"<<std::endl;
 
           if(FE.is_on_boundary())
           {
@@ -141,7 +154,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                 // controlla, qui passiamo side_id, ma dovremmo avere label
                 // dovresti costruire mesh coi label
 
-                std::cout<<"------_______----- BEGIN SIDE===="<<s<<std::endl;
+                // std::cout<<"------_______----- BEGIN SIDE===="<<s<<std::endl;
                 FE.init_boundary(s);
                 if(FE.is_side_on_boundary())
                 {
@@ -152,7 +165,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                   eval_linear_form_.apply_boundary(b,FE);
                   // std::cout<<"------_______----- END SIDE EVAL===="<<s<<std::endl;
                 }
-                std::cout<<"------_______----- END SIDE===="<<s<<std::endl;
+                // std::cout<<"------_______----- END SIDE===="<<s<<std::endl;
               }
 
 
@@ -184,19 +197,25 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
          }
         
        }
-      A.print();
+      A.print_val();
 
-       // std::cout<<"------CONSTRAINED DOFS-------"<<std::endl;
-       // for(std::size_t i=0;i<n_dofs_;i++)
-       //    std::cout<<i<<" "<<constrained_dofs[i]<<std::endl;
+       std::cout<<"------RHS -------"<<std::endl;
+       for(std::size_t i=0;i<n_dofs_;i++)
+          std::cout<<b[i]<<std::endl;
 
-       // std::cout<<"------CONSTRAINED MAT-------"<<std::endl;
-       // for(std::size_t i=0;i<n_dofs_;i++)
-       //    std::cout<<i<<" "<<constrained_mat[i]<<std::endl;
 
-       // std::cout<<"------CONSTRAINED VEC-------"<<std::endl;
-       // for(std::size_t i=0;i<n_dofs_;i++)
-       //    std::cout<<i<<" "<<constrained_vec[i]<<std::endl;
+
+       std::cout<<"------CONSTRAINED DOFS-------"<<std::endl;
+       for(std::size_t i=0;i<n_dofs_;i++)
+          std::cout<<i<<" "<<constrained_dofs[i]<<std::endl;
+
+       std::cout<<"------CONSTRAINED MAT-------"<<std::endl;
+       for(std::size_t i=0;i<n_dofs_;i++)
+          std::cout<<i<<" "<<constrained_mat[i]<<std::endl;
+
+       std::cout<<"------CONSTRAINED VEC-------"<<std::endl;
+       for(std::size_t i=0;i<n_dofs_;i++)
+          std::cout<<i<<" "<<constrained_vec[i]<<std::endl;
 
     }
  

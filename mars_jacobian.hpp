@@ -53,7 +53,11 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
    init_det();
    volume_=unsigned_volume(elem_,detJ_);
    }
-
+  constexpr void init(const Integer id, const Integer level)
+   {
+    level_=level;
+    init(id);
+   }
   constexpr void init_boundary(const Integer side_id)
   {
     // init must be called before init the boundary
@@ -142,6 +146,9 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
 
 
 
+   const auto& level()   const {return level_;}
+
+
   constexpr auto get_det()   const {return detJ_;}
 
   constexpr auto get_det_side()   const {return det_side_J_;}
@@ -203,6 +210,8 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
   Real side_volume_;
   Vector<Real, Dim> v0_;
   std::shared_ptr<Mesh<Dim,ManifoldDim>> mesh_ptr_;
+
+  Integer level_;
 
 
 

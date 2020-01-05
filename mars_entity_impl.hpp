@@ -102,7 +102,7 @@ template<Integer Dim,Integer ManifoldDim,Integer EntityDim>
     // loop on all the elements
     for(Integer elem_iter1 = 0; elem_iter1 < n_elements; ++elem_iter1) 
     {
-      if(!elem_belongs_to_level(mesh_ptr_,elem_iter1,level,bisection_ptr_)) continue;
+      // if(!elem_belongs_to_level(mesh_ptr_,elem_iter1,level,bisection_ptr_)) continue;
       // if(mesh.is_active(elem_iter1))
       {
 
@@ -251,7 +251,7 @@ void ElemEntity<Simplex<Dim,ManifoldDim>,0>::init_elem_entity
   entity_2_elem_.resize(n_nodes);
   for(Integer elem_iter = 0; elem_iter < n_elements; ++elem_iter) 
   {
-    if(!elem_belongs_to_level(mesh_ptr_,elem_iter,level,bisection_ptr_)) continue;
+    // if(!elem_belongs_to_level(mesh_ptr_,elem_iter,level,bisection_ptr_)) continue;
     auto& nodes=mesh_ptr_->elem(elem_iter).nodes;
     elem_2_entity_[elem_iter].resize(entity_combinations());
     // elem_2_entity_[elem_iter] = nodes;
@@ -291,7 +291,7 @@ void ElemEntity<Simplex<Dim,ManifoldDim>,0>::init_elem_entity
   for(Integer elem_iter = 0; elem_iter < n_elements; ++elem_iter) 
   {
     // std::cout<<"belongs = "<<elem_belongs_to_level(mesh_ptr_,elem_iter,level,bisection_ptr_)<<std::endl;
-    if(!elem_belongs_to_level(mesh_ptr_,elem_iter,level,bisection_ptr_)) continue;
+    // if(!elem_belongs_to_level(mesh_ptr_,elem_iter,level,bisection_ptr_)) continue;
     // std::cout<<elem_iter<<std::endl;
     // std::cout<<"elem ="<<elem_iter<<" "<<elem_belongs_to_level(mesh_ptr_,elem_iter,level,bisection_ptr_)<<std::endl;
     auto& nodes=mesh.elem(elem_iter).nodes;
@@ -361,7 +361,7 @@ void ElemEntity<Simplex<Dim,ManifoldDim>,ManifoldDim>::init_elem_entity
   for(Integer elem_iter = 0; elem_iter < n_elements; ++elem_iter) 
   {
 
-    if(!elem_belongs_to_level(mesh_ptr_,elem_iter,level,bisection_ptr_)) continue;
+    // if(!elem_belongs_to_level(mesh_ptr_,elem_iter,level,bisection_ptr_)) continue;
     auto& nodes=mesh.elem(elem_iter).nodes;
     elem_2_entity_[elem_iter].resize(entity_combinations());
     elem_2_entity_[elem_iter][0] = elem_iter;

@@ -1393,8 +1393,9 @@ public:
 
       const Integer & elem_id=J.elem_id();
       using Pairs=GetType<TupleOfPairsNumbers,N>;
+      const auto& level=J.level();
       auto dofmap_test=tuple_get<GetType<Pairs,0>::value>(dm_test_); 
-      dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id);
+      dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id,level);
       // std::cout<<"middle 1 apply_aux, N="<<N<<std::endl;
       
       // std::cout<<"apply_aux, N="<<N<<std::endl;
@@ -1415,8 +1416,9 @@ public:
 
       const Integer & elem_id=J.elem_id();
       using Pairs=GetType<TupleOfPairsNumbers,N>;
+      const auto& level=J.level();
       auto dofmap_test=tuple_get<GetType<Pairs,0>::value>(dm_test_); 
-      dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id);
+      dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id,level);
 
       
 
@@ -1441,11 +1443,17 @@ public:
 
       const Integer & elem_id=J.elem_id();
       using Pairs=GetType<TupleOfPairsNumbers,N>;
+      const auto& level=J.level();
       auto dofmap_test=tuple_get<GetType<Pairs,0>::value>(dm_test_); 
       auto dofmap_trial=tuple_get<GetType<Pairs,1>::value>(dm_trial_); 
-      dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id);
-      dofmap.template dofmap_get<GetType<Pairs,1>::value>(dofmap_trial,elem_id);
+      dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id,level);
+      dofmap.template dofmap_get<GetType<Pairs,1>::value>(dofmap_trial,elem_id,level);
 
+      std::cout<<"dofmap_test"<<std::endl;
+      std::cout<<dofmap_test<<std::endl;
+      std::cout<<"dofmap_trial"<<std::endl;
+      std::cout<<dofmap_trial<<std::endl;
+      
       // std::cout<<"middle 2 apply_aux, N="<<N<<", Nmax=="<<Nmax<<std::endl;
 
       // std::cout<<"apply_aux, N="<<N<<std::endl;
@@ -1470,11 +1478,12 @@ public:
     {
       // std::cout<<"pre 2 apply_aux, N="<<N<<std::endl;
       const Integer & elem_id=J.elem_id();
+      const auto& level=J.level();
       using Pairs=GetType<TupleOfPairsNumbers,N>;
-      auto dofmap_test=tuple_get<GetType<Pairs,0>::value>(dm_test_); 
-      auto dofmap_trial=tuple_get<GetType<Pairs,1>::value>(dm_trial_); 
-      dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id);
-      dofmap.template dofmap_get<GetType<Pairs,1>::value>(dofmap_trial,elem_id);
+      auto& dofmap_test=tuple_get<GetType<Pairs,0>::value>(dm_test_); 
+      auto& dofmap_trial=tuple_get<GetType<Pairs,1>::value>(dm_trial_); 
+      dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id,level);
+      dofmap.template dofmap_get<GetType<Pairs,1>::value>(dofmap_trial,elem_id,level);
 
 
 //       tuple_get<GetType<Pairs,1>::value>(dofmap)[elem_id];
@@ -1485,10 +1494,10 @@ public:
       // const auto& dofmap_trial= tuple_get<GetType<Pairs,1>::value>(dofmap)[elem_id];
 
 // std::cout<<"middle 2 apply_aux, N="<<N<<", Nmax=="<<Nmax<<std::endl;
-      // std::cout<<"dofmap_test"<<std::endl;
-      // std::cout<<dofmap_test<<std::endl;
-      // std::cout<<"dofmap_trial"<<std::endl;
-      // std::cout<<dofmap_trial<<std::endl;
+      std::cout<<"dofmap_test"<<std::endl;
+      std::cout<<dofmap_test<<std::endl;
+      std::cout<<"dofmap_trial"<<std::endl;
+      std::cout<<dofmap_trial<<std::endl;
       // todo fixme
       // here take the submatrix  of mat(dofmap_test,dofmap_trial)
 
@@ -1502,9 +1511,9 @@ public:
  template<typename Output,typename FiniteElem, typename DofMap>
     void apply(Output& mat,FiniteElem&FE,const DofMap& dofmap )
     {
-       // std::cout<<"pre apply volume="<<FE.elem_id()<<std::endl;
+       std::cout<<"pre apply volume="<<FE.elem_id()<<std::endl;
       apply_volume_aux<TupleTypeSize<L2Products>::value-1,0>(mat,FE,dofmap);
-       // std::cout<<"after apply volume="<<FE.elem_id()<<std::endl;
+       std::cout<<"after apply volume="<<FE.elem_id()<<std::endl;
     }
 
 
@@ -1569,8 +1578,9 @@ public:
     {
       const Integer & elem_id=J.elem_id();
       using Pairs=GetType<TupleOfPairsNumbers,N>;
+      const auto& level=J.level();
       auto dofmap_test=tuple_get<GetType<Pairs,0>::value>(dm_test_); 
-      dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id);
+      dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id,level);
 
       
       // std::cout<<"apply_boundary_aux, N="<<N<<std::endl;
@@ -1585,8 +1595,9 @@ public:
     {
       const Integer & elem_id=J.elem_id();
       using Pairs=GetType<TupleOfPairsNumbers,N>;
+      const auto& level=J.level();
       auto dofmap_test=tuple_get<GetType<Pairs,0>::value>(dm_test_); 
-      dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id);
+      dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id,level);
 
 
       
@@ -1620,10 +1631,11 @@ public:
     {
       const Integer & elem_id=J.elem_id();
       using Pairs=GetType<TupleOfPairsNumbers,N>;
+      const auto& level=J.level();
       auto dofmap_test=tuple_get<GetType<Pairs,0>::value>(dm_test_); 
       auto dofmap_trial=tuple_get<GetType<Pairs,1>::value>(dm_trial_); 
-      dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id);
-      dofmap.template dofmap_get<GetType<Pairs,1>::value>(dofmap_trial,elem_id);
+      dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id,level);
+      dofmap.template dofmap_get<GetType<Pairs,1>::value>(dofmap_trial,elem_id,level);
 
       // std::cout<<"apply_boundary_aux, N="<<N<<std::endl;
       // std::cout<<"dofmap_test"<<std::endl;
@@ -1645,10 +1657,11 @@ public:
 
       const Integer & elem_id=J.elem_id();
       using Pairs=GetType<TupleOfPairsNumbers,N>;
+      const auto& level=J.level();
       auto dofmap_test=tuple_get<GetType<Pairs,0>::value>(dm_test_); 
       auto dofmap_trial=tuple_get<GetType<Pairs,1>::value>(dm_trial_); 
-      dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id);
-      dofmap.template dofmap_get<GetType<Pairs,1>::value>(dofmap_trial,elem_id);
+      dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id,level);
+      dofmap.template dofmap_get<GetType<Pairs,1>::value>(dofmap_trial,elem_id,level);
 
 
 

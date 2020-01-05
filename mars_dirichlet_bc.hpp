@@ -283,7 +283,8 @@ public:
     const auto& bc=tuple_get<N>(bcs_tuple_);
 
     auto& dofmap=tuple_get<BC_N::value>(dofmap_); 
-    dm.template dofmap_get<BC_N::value>(dofmap,FE.elem_id());
+    const auto& level=FE.level();
+    dm.template dofmap_get<BC_N::value>(dofmap,FE.elem_id(),level);
 
 
     // const auto& dofmap=tuple_get<BC_N::value>(dm)[FE.elem_id()];

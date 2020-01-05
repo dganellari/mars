@@ -78,6 +78,8 @@ namespace mars {
 		}
 
 		auto current_iterate(){return current_iterate_;}
+
+		auto is_tracking()const {return is_tracking_;}
 		
 	private:
 		bool is_tracking_;
@@ -89,37 +91,41 @@ namespace mars {
 	template<typename MeshT>
 	bool elem_belongs_to_level(const MeshT& mesh, const Integer i, const Integer level, const Tracker& track)
 	{
-		return  (track.get_iterate(i)==level || (mesh.elem(i).children.size()==0 && track.get_iterate(i)<=level));
+		// return  (!track.is_tracking()) || (track.get_iterate(i)==level || (mesh.elem(i).children.size()==0 && track.get_iterate(i)<=level));
+		return   (track.get_iterate(i)==level || (mesh.elem(i).children.size()==0 && track.get_iterate(i)<=level));
+
 	}
 
 	template<typename MeshT>
 	bool elem_belongs_to_level(const std::shared_ptr<MeshT> mesh_ptr, const Integer i, const Integer level, const Tracker& track)
 	{
-		return  (track.get_iterate(i)==level || (mesh_ptr->elem(i).children.size()==0 && track.get_iterate(i)<=level));
+		// return  (!track.is_tracking())||(track.get_iterate(i)==level || (mesh_ptr->elem(i).children.size()==0 && track.get_iterate(i)<=level));
+		return (track.get_iterate(i)==level || (mesh_ptr->elem(i).children.size()==0 && track.get_iterate(i)<=level));
+
 	}
 
 
 	template<class MeshT>
 	class Bisection;
 
-	template<typename MeshT>
-	bool elem_belongs_to_level(const std::shared_ptr<MeshT> mesh_ptr, const Integer i, const Integer level, const std::shared_ptr<Bisection<MeshT>>& bisection_ptr)
-	{
-		if(level==-1 )
-		     return mesh_ptr->is_active(i);
-		// otherwise we check if it belongs to the given level l!=-1
-		else return elem_belongs_to_level(mesh_ptr,i,level,bisection_ptr->tracker());
-	}
+	// template<typename MeshT>
+	// bool elem_belongs_to_level(const std::shared_ptr<MeshT> mesh_ptr, const Integer i, const Integer level, const std::shared_ptr<Bisection<MeshT>>& bisection_ptr)
+	// {
+	// 	if(level==-1 )
+	// 	     return mesh_ptr->is_active(i);
+	// 	// otherwise we check if it belongs to the given level l!=-1
+	// 	else return elem_belongs_to_level(mesh_ptr,i,level,bisection_ptr->tracker());
+	// }
 
-	template<typename MeshT>
-	bool elem_belongs_to_level(const MeshT& mesh, const Integer i, const Integer level, const std::shared_ptr<Bisection<MeshT>>& bisection_ptr)
-	{
+	// template<typename MeshT>
+	// bool elem_belongs_to_level(const MeshT& mesh, const Integer i, const Integer level, const std::shared_ptr<Bisection<MeshT>>& bisection_ptr)
+	// {
 
-		if(level==-1 )
-		     return mesh.is_active(i);
-		// otherwise we check if it belongs to the given level l!=-1
-		else return elem_belongs_to_level(mesh,i,level,bisection_ptr->tracker());
-	}
+	// 	if(level==-1 )
+	// 	     return mesh.is_active(i);
+	// 	// otherwise we check if it belongs to the given level l!=-1
+	// 	else return elem_belongs_to_level(mesh,i,level,bisection_ptr->tracker());
+	// }
 
 
 	template<typename MeshT>

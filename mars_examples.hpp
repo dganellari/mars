@@ -1312,12 +1312,26 @@
 
 			void print_val()
 			{
+				Integer cont_cols=0;
+
 				std::cout<<"printing matrix"<<std::endl;
 				for(Integer i=0;i<max_rows_;i++)
-				{
+				{   
+					cont_cols=0;
 					const auto& map=cols_idx_[i]; 
 					for (auto it=map.begin(); it!=map.end(); ++it)
-						std::cout << A_[it->second]<<" " ;
+						{
+						  if(it->first>cont_cols)
+						  {
+						  	for (int s=cont_cols;s<it->first;s++)
+						  		std::cout<<0<<" ";
+						  }
+                          cont_cols=it->first+1;
+					      std::cout << A_[it->second]<<" ";
+					     }
+				for (int s=cont_cols;s<max_rows_;s++)
+					std::cout<<0<<" ";
+
 					std::cout<<std::endl;
 				}
 			}
@@ -1631,7 +1645,7 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 				if(!elem_belongs_to_level(mesh_ptr,i,level,tracker))continue;
 
 				FE.init(i);
-				dofsdofmap.template dofmap_get<N>(localdofmap,i);
+				dofsdofmap.template dofmap_get<N>(localdofmap,i,level);
 // const auto& localdofmap=dofmap[i];
 				subarray(local_sol, sol, localdofmap);
 				var.init(FE,local_sol,comp);
@@ -3220,6 +3234,8 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 			// mark_boundary(mesh);
 	      read_mesh("../data/triangle_square.MFEM", mesh);
 	      assign_tags(mesh);
+
+
 	      // Bisection<MeshT> bisection(mesh);
 	      // bisection.uniform_refine(4);
 	      mesh.update_dual_graph();
@@ -3236,7 +3252,7 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	      // bisection.uniform_refine(0);
 	      // mesh.update_dual_graph();
 		}
-        Integer n_levels=4;
+        Integer n_levels=8;
 	    clock_t begin=clock();
 		clock_t end = clock();
 		double elapsed_secs;
@@ -3275,7 +3291,6 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 		std::cout<<"dual 1="<<std::endl;
 		mesh.update_dual_graph();
 
-	    Integer given_level=1;
 	    auto track=bisection.tracker();
 	   
 	    std::cout<<"___="<<std::endl;
@@ -3525,9 +3540,11 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 // AuxRT_n rtn(mesh);
 // AuxP_n pn(mesh);
 // LSFEM lsfem(mesh);
-AuxRT_n rtn(csmc);
-AuxP_n pn(csmc);
-LSFEM lsfem(csmc);
+AuxRT_n rtn(mesh,bisection,n2em);//csmc);
+AuxP_n pn(mesh,bisection,n2em);//csmc);
+std::cout<<"FIRST PRE UPDATE="<<std::endl;
+// LSFEM lsfem(mesh,bisection,n2em);//csmc);
+std::cout<<"FIRST POST UPDATE="<<std::endl;
 
 	 // // AuxRT_n rtn(mesh);
 		// std::cout<<" p n init  = "<<std::endl;
@@ -3535,8 +3552,8 @@ LSFEM lsfem(csmc);
 		// std::cout<<" lsfem init  = "<<std::endl;
 		// LSFEM lsfem(mesh_and_entity0);
 
-		auto Wtrial=MixedFunctionSpace(lsfem);
-	 // auto Wtrial=MixedFunctionSpace(rtn,pn);
+		// auto Wtrial=MixedFunctionSpace(lsfem);
+	 auto Wtrial=MixedFunctionSpace(rtn,pn);
 
 		auto Waux=AuxFunctionSpacesBuild(pn);
 
@@ -3546,24 +3563,73 @@ LSFEM lsfem(csmc);
 
 	auto &dofsdofmap=W.dofsdofmap();
 
+	std::cout<<"dofsdofmap.level_cumulative_dofs_array()"<<std::endl;
+	auto& h1=dofsdofmap.level_cumulative_dofs_array();
+	for(Integer i=0;i<h1.size();i++)
+	{
+
+		for(Integer j=0;j<h1[i].size();j++)
+			std::cout<<h1[i][j]<<" ";
+		std::cout<<std::endl;
+	}
+
+
+    dofsdofmap.update();
+
+	std::cout<<"dofsdofmap.level_cumulative_dofs_array()"<<std::endl;
+	auto& h2=dofsdofmap.level_cumulative_dofs_array();
+	for(Integer i=0;i<h2.size();i++)
+	{
+
+		for(Integer j=0;j<h2[i].size();j++)
+			std::cout<<h2[i][j]<<" ";
+		std::cout<<std::endl;
+	}
+
+
+
+		begin=clock();
+		std::cout<<"OTHER BISECTION="<<std::endl;
+		// for(int i=n_levels-1;i<n_levels;i++)
+		// {
+		// bisection.tracking_begin();
+		// bisection.uniform_refine(1);
+		// bisection.tracking_end();			
+		// }
+     
+    // auto& m1=lsfem.dofsdofmap().level_n_dofs_array();
+
+    //  for(std::size_t i=0; i<m1.size() ;i++)
+    //   { 
+    //     // loop on the levels
+    //     for(std::size_t j=0;j<n_levels;j++)
+    //        {std::cout<<m1[i][j]<<" ";}
+    //      std::cout<<std::endl;
+    //    }
+
+
+    std::cout<<"PRE UPDATE="<<std::endl;
+    // lsfem.update();
+    std::cout<<"POST UPDATE="<<std::endl;
+
 
 	    std::cout<<"-----dofmap of space="<<0<<std::endl;
 	GetType<typename decltype(W)::DofsDM::ElemDofMap> elemdm0;
-	for(Integer i=0;i<dofsdofmap.template dofmap_size<0>();i++)
-	{
-	         dofsdofmap.template dofmap_get<0>(elemdm0,i);
-	         std::cout<<elemdm0<<std::endl;
-	}
+	// for(Integer i=0;i<dofsdofmap.template dofmap_size<0>();i++)
+	// {
+	//          dofsdofmap.template dofmap_get<0>(elemdm0,i,level);
+	//          std::cout<<elemdm0<<std::endl;
+	// }
 
 
 
-	std::cout<<"-----dofmap of space="<<1<<std::endl;
-	GetType<typename decltype(W)::DofsDM::ElemDofMap,1> elemdm1;
-	for(Integer i=0;i<dofsdofmap.template dofmap_size<1>();i++)
-	{
-	         dofsdofmap.template dofmap_get<1>(elemdm1,i);
-	         std::cout<<elemdm1<<std::endl;
-	}
+	// std::cout<<"-----dofmap of space="<<1<<std::endl;
+	// GetType<typename decltype(W)::DofsDM::ElemDofMap,1> elemdm1;
+	// for(Integer i=0;i<dofsdofmap.template dofmap_size<1>();i++)
+	// {
+	//          dofsdofmap.template dofmap_get<1>(elemdm1,i,level);
+	//          std::cout<<elemdm1<<std::endl;
+	// }
 
 
     auto& spacedofs=dofsdofmap.space_dofs();
@@ -3878,7 +3944,7 @@ LSFEM lsfem(csmc);
 		std::vector<Real> b;
 
 		std::cout<<"ASSEMBLY"<<std::endl;
-		Integer level=2;//bisection.tracker().current_iterate();
+		Integer level=0;//bisection.tracker().current_iterate();
 		// Integer level=4;
 		std::cout<<"level---"<<level<<std::endl;
 		context.assembly(A,b,level);
@@ -3908,9 +3974,18 @@ LSFEM lsfem(csmc);
 	    os.close();
 
 
+	    std::cout<<"x"<<std::endl;
+	    for(int i=0;i<x.size();i++)
+	    	std::cout<<x[i]<<std::endl;
+
+        std::cout<<std::endl;
+	    std::cout<<"----------b"<<std::endl;
+	    for(int i=0;i<b.size();i++)
+	    	std::cout<<b[i]<<std::endl;
 
 
 
+        
 
 
 		SparseMatrix<Real> AL;
@@ -3932,9 +4007,9 @@ LSFEM lsfem(csmc);
 		gauss_seidel(xL,AL,bL,max_iter);
 		std::cout<<"END SOLVING"<<std::endl;
 		auto var_namesL=variables_names("stress","disp");
-		std::string output_fileL ="LSFEM_PoissonFINE"+ std::to_string(ManifoldDim) +
+		std::string output_fileL ="LSFEM_Poisson"+ std::to_string(ManifoldDim) +
 		"D_RT" + std::to_string(Order1)+
-		"_P" + std::to_string(Order2)+"_output.vtk";
+		"_P" + std::to_string(Order2)+"_outputFINE.vtk";
 
 		os.close();
 		os.open(output_fileL.c_str());
@@ -3942,6 +4017,13 @@ LSFEM lsfem(csmc);
 
 	    os.close();
 
+
+	    // std::cout<<"xL"<<std::endl;
+	    // for(int i=0;i<xL.size();i++)
+	    // 	std::cout<<xL[i]<<std::endl;
+	    // std::cout<<"bL"<<std::endl;
+	    // for(int i=0;i<bL.size();i++)
+	    // 	std::cout<<bL[i]<<std::endl;
 
 	//    // std::cout<<"W ndofs"<<W.spaces_ptr()->n_dofs()<<std::endl;
 	//    // std::cout<<"W array_ndofs"<<W.array_ndofs()<<std::endl;

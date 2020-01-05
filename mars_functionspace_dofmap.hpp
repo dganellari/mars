@@ -4045,11 +4045,18 @@ using FlagTuple6=typename FlagTupleType6<Elem,BaseFunctionSpaces...>::type;
 
 
 
-template<typename BaseFunctionSpace, typename...BaseFunctionSpaces, typename MeshT, typename Dofmap, typename OffSetT>//, typename DofMapT, typename OffSetT>
-void dofmap_fespace5( ConnectivitySimpliacialMapCollection<MeshT>& entities,
+template<typename BaseFunctionSpace, typename...BaseFunctionSpaces, typename MeshT, typename Dofmap, typename OffSetT,typename T1,typename T2,typename T3>//, typename DofMapT, typename OffSetT>
+void dofmap_fespace5( 
+             MeshT& mesh,
+             Bisection<MeshT>& bisection,
+             Node2ElemMap<MeshT>& node2elem,
              Dofmap& dofsdm_,
              OffSetT& dofs_offset_arr,
-             Array<std::vector<Integer>,1 + sizeof...(BaseFunctionSpaces)>& level_array_ndofs
+             Integer& n_elements,//Array<std::vector<Integer>,1 + sizeof...(BaseFunctionSpaces)>& level_array_ndofs
+             T1& tuple_map,
+             T2& tuple_parent_map,
+             T3& tuple_map_dofs,
+             bool update=false
              )
 {
 
@@ -4061,10 +4068,10 @@ void dofmap_fespace5( ConnectivitySimpliacialMapCollection<MeshT>& entities,
 
 
     // this shuld be passed from outside
-    FlagTuple6<Elem,BaseFunctionSpace,BaseFunctionSpaces...> flag_entities;
-    auto n_levels=entities.n_levels();
-    auto mesh=entities.mesh();
-    auto& space_dofs=dofsdm_.space_dofs();
+    // FlagTuple6<Elem,BaseFunctionSpace,BaseFunctionSpaces...> flag_entities;
+    // auto n_levels=entities.n_levels();
+    // auto mesh=entities.mesh();
+    // auto& space_dofs=dofsdm_.space_dofs();
     auto& dofmap_vec=dofsdm_.dofmap();
 
 
@@ -4074,8 +4081,8 @@ void dofmap_fespace5( ConnectivitySimpliacialMapCollection<MeshT>& entities,
     // compute the connection node to elem (auxiliary tool, often used)
     clock_t begin = clock();
     
-    auto& entities_collection=entities.tuple_entities();
-    init<  BaseFunctionSpace,BaseFunctionSpaces...>(entities);
+    // auto& entities_collection=entities.tuple_entities();
+    // init<  BaseFunctionSpace,BaseFunctionSpaces...>(entities);
 //     NodeToElem<MeshT> node_2_elem(mesh);
 //     const auto& node2elem=node_2_elem.val();
 //     const auto& n_elements=mesh.n_elements();
@@ -4087,27 +4094,56 @@ void dofmap_fespace5( ConnectivitySimpliacialMapCollection<MeshT>& entities,
     clock_t end = clock();
     double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
     // std::cout<<"dofmap entities tuple elapsed_secs="<<elapsed_secs<<std::endl;
-    // resize_tuple_of_ptr_vector(dofmap_vec,n_elements);   
-    std::vector<Integer> global_dof_count(1,0);
+    // resize_tuple_of_ptr_vector(dofmap_vec,n_elements); 
+
+    auto n_levels= bisection.tracker().current_iterate();
+
+
+    std::vector<Integer> global_dof_count;
+    if(update==false)  
+    {
+    std::cout<<"false"<<std::endl;
+    global_dof_count.push_back(0);
+    } 
+    else
+    {
+      std::cout<<"true"<<std::endl;
+    for(Integer j=0;j<dofsdm_.level_n_dofs_array()[0].size();j++)
+    {
+        global_dof_count.push_back(dofsdm_.level_n_dofs_array()[0][j]);
+        // space_dofs[space_id]->resize(space_components[space_id][3]);
+    } 
+    std::cout<<std::endl;
+    }
     // loop on all the elements
-    // for(Integer space_id=0;space_id<n_spaces;space_id++)
-    // {
-    //     space_dofs[space_id]=std::make_shared<std::vector<Integer>>();
-    //     // space_dofs[space_id]->resize(space_components[space_id][3]);
-    // }
-    // std::cout<<"dofmap_fespace5 1="<<elapsed_secs<<std::endl;
+     for(Integer j=0;j<global_dof_count.size();j++)
+    {
+        std::cout<<global_dof_count[j]<<" ";
+        // space_dofs[space_id]->resize(space_components[space_id][3]);
+    }  
 
 
-
-    for(std::size_t i=0;i<level_array_ndofs.size();i++)
-      {
-        level_array_ndofs[i].resize(n_levels,0);
-      //   for(std::size_t j=0;j<n_levels;j++)
-      // level_array_ndofs[i][j]=0;
-      }
+    // for(std::size_t i=0;i<level_array_ndofs.size();i++)
+    //   {
+    //     level_array_ndofs[i].resize(n_levels,0);
+    //   //   for(std::size_t j=0;j<n_levels;j++)
+    //   // level_array_ndofs[i][j]=0;
+    //   }
     // std::cout<<"dofmap_fespace5 2="<<elapsed_secs<<std::endl;
-    auto& bisection=entities.bisection();
-    auto& node2elem=entities.node2elem();
+    // auto& bisection=entities.bisection();
+
+    
+
+  // for(Integer ll=0;ll<n_levels;ll++)
+  //   {
+  //       if(global_dof_count.size()<ll)
+  //       global_dof_count[ll]=dofsdm_.level_n_dofs_array()[0][j];
+  //       // space_dofs[space_id]->resize(space_components[space_id][3]);
+  //   }
+
+
+
+    // auto& node2elem=entities.node2elem();
     // auto level=entities.level();
     begin = clock();
 
@@ -4115,25 +4151,25 @@ void dofmap_fespace5( ConnectivitySimpliacialMapCollection<MeshT>& entities,
    
 
    std::vector<std::vector<Integer>> elem2dofs;
-   TupleOfTupleMapConstructor<bool,Elem,BaseFunctionSpace,BaseFunctionSpaces...> tuple_parent_map;
-   TupleOfTupleMapConstructor<std::shared_ptr<std::vector<Integer>>,Elem,BaseFunctionSpace,BaseFunctionSpaces...> tuple_map;
-   TupleOfTupleMapConstructor<std::shared_ptr<Integer>,Elem,BaseFunctionSpace,BaseFunctionSpaces...> tuple_map_dofs;
+   // TupleOfTupleMapConstructor<std::shared_ptr<std::vector<Integer>>,Elem,BaseFunctionSpace,BaseFunctionSpaces...> tuple_map;
+   // TupleOfTupleMapConstructor<bool,Elem,BaseFunctionSpace,BaseFunctionSpaces...> tuple_parent_map;
+   // TupleOfTupleMapConstructor<std::shared_ptr<Integer>,Elem,BaseFunctionSpace,BaseFunctionSpaces...> tuple_map_dofs;
 
     std::cout<<"levels="<<n_levels<<std::endl;
     std::cout<<"PRE LEVEL N DOFS ARRAY ="<<std::endl;
     // loop on the spaces
-    for(std::size_t i=0; i<dofsdm_.n_dofs().size() ;i++)
-      { dofsdm_.level_n_dofs_array()[i].resize(n_levels);
-        // loop on the levels
-        for(std::size_t j=0;j<n_levels;j++)
-           {dofsdm_.level_n_dofs_array()[i][j]=global_dof_count[j];
-            std::cout<<dofsdm_.level_n_dofs_array()[i][j]<<" ";}
-         std::cout<<std::endl;
-       }
+    // for(std::size_t i=0; i<dofsdm_.n_dofs().size() ;i++)
+    //   { dofsdm_.level_n_dofs_array()[i].resize(n_levels);
+    //     // loop on the levels
+    //     for(std::size_t j=0;j<n_levels;j++)
+    //        {dofsdm_.level_n_dofs_array()[i][j]=global_dof_count[j];
+    //         std::cout<<dofsdm_.level_n_dofs_array()[i][j]<<" ";}
+    //      std::cout<<std::endl;
+    //    }
     // std::cout<<"dofmap_fespace5 3="<<elapsed_secs<<std::endl;
     // Integer n_levels=bisection.tracker().current_iterate()+1;
     // decltype(flag_entities) ffe(5);
-    for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
+    for(Integer elem_iter=n_elements;elem_iter<mesh.n_elements();elem_iter++)
     {
 
 
@@ -4141,9 +4177,15 @@ void dofmap_fespace5( ConnectivitySimpliacialMapCollection<MeshT>& entities,
        
        // change it for smarter algorithms   
       // std::cout<<" dofmap elem == "<< elem_iter <<std::endl;
+      std::cout<<"elem_iter="<<elem_iter<<std::endl;
+
        auto& elem=mesh.elem(elem_iter);
+       std::cout<<"qui1="<<elem_iter<<std::endl;
        auto &elem_id=elem_iter;
+       
        auto level=bisection.tracker().get_iterate(elem_id);
+       std::cout<<"level="<<level<<std::endl;
+       std::cout<<"0<level && global_dof_count.size()-1<level="<<(0<level && global_dof_count.size()-1<level)<<std::endl;
        
       if(0<level && global_dof_count.size()-1<level)
          global_dof_count.push_back(global_dof_count[global_dof_count.size()-1]);
@@ -4154,6 +4196,7 @@ void dofmap_fespace5( ConnectivitySimpliacialMapCollection<MeshT>& entities,
 
        dofmap.init_elem(dofmap_vec,tuple_map,tuple_parent_map,tuple_map_dofs,
                         global_dof_count,elem,level);
+
        // ElementDofMap5<0,Elem,BaseFunctionSpace,BaseFunctionSpaces...>
        //                   (entities.tuple_entities(),flag_entities,elem,elem_id,dofmap_vec,global_dof_count[level],loc_dof_count,dofs_offset,space_dofs,level_array_ndofs,level);
 
@@ -4161,6 +4204,7 @@ void dofmap_fespace5( ConnectivitySimpliacialMapCollection<MeshT>& entities,
       // }
 
     }
+    n_elements=mesh.n_elements();
     end = clock();
     elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
     // std::cout<<"dofmap tuple elapsed_secs="<<elapsed_secs<<std::endl;
@@ -4177,12 +4221,12 @@ void dofmap_fespace5( ConnectivitySimpliacialMapCollection<MeshT>& entities,
     {for(std::size_t j=0;j<dm[i].size();j++)
     std::cout<< dm[i][j]<<" ";
      std::cout<<std::endl;}
-std::cout<<" level_array_ndofs[i][j]"<<std::endl;
+// std::cout<<" level_array_ndofs[i][j]"<<std::endl;
 
-  for(std::size_t i=0;i<level_array_ndofs.size();i++)
-    {for(std::size_t j=0;j<level_array_ndofs[i].size();j++)
-    std::cout<< level_array_ndofs[i][j]<<" ";
-     std::cout<<std::endl;}
+//   for(std::size_t i=0;i<level_array_ndofs.size();i++)
+//     {for(std::size_t j=0;j<level_array_ndofs[i].size();j++)
+//     std::cout<< level_array_ndofs[i][j]<<" ";
+//      std::cout<<std::endl;}
 
 std::cout<<" global_dof_count"<<std::endl;
 
