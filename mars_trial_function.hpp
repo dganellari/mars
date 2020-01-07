@@ -78,12 +78,28 @@ auto MakeTrial(const FunctionSpace<Args...>& W)
 {return Trial<FunctionSpace<Args...>,N>(W);}
 
 template<Integer N,typename...Args >
+auto MakeTrial(const std::shared_ptr<FunctionSpace<Args...>>& W_ptr)
+{return Trial<FunctionSpace<Args...>,N>(W_ptr);}
+
+
+template<Integer N,typename...Args >
 auto MakeTrial(const MixedSpace<Args...>& W)
 {return Trial<MixedSpace<Args...>,N>(W);}
 
 template<Integer N,typename...Args >
+auto MakeTrial(const std::shared_ptr<MixedSpace<Args...>>& W_ptr)
+{return Trial<MixedSpace<Args...>,N>(W_ptr);}
+
+
+template<Integer N,typename...Args >
 auto MakeTrial(const FullSpace<Args...>& W)
 {return Trial<FullSpace<Args...>,N>(W);}
+
+template<Integer N,typename...Args >
+auto MakeTrial(const std::shared_ptr<FullSpace<Args...>>& W_ptr)
+{return Trial<FullSpace<Args...>,N>(W_ptr);}
+
+
 
 
 template<typename MixedSpace,Integer N>

@@ -2049,7 +2049,7 @@ public:
              IntegerVector& count_n_entity_vec,
              const Elem elem )
    {
-   std::cout<<"___________LEVEL="<<0<<std::endl;
+   // std::cout<<"___________LEVEL="<<0<<std::endl;
 
     // std::cout<< " ElementDofMap_LoopEntities5 N = "<< N <<std::endl;
     using Elem = typename FunctionSpace::Elem;
@@ -4095,8 +4095,11 @@ void dofmap_fespace5(
     double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
     // std::cout<<"dofmap entities tuple elapsed_secs="<<elapsed_secs<<std::endl;
     // resize_tuple_of_ptr_vector(dofmap_vec,n_elements); 
+    
 
-    auto n_levels= bisection.tracker().current_iterate();
+
+    auto& tracker=bisection.tracker();
+    auto n_levels= tracker.current_iterate();
 
 
     std::vector<Integer> global_dof_count;
@@ -4108,11 +4111,22 @@ void dofmap_fespace5(
     else
     {
       std::cout<<"true"<<std::endl;
+    for(Integer i=0;i<dofsdm_.level_n_dofs_array().size();i++)
+    {
+      for(Integer j=0;j<dofsdm_.level_n_dofs_array()[i].size();j++)
+        std::cout<<dofsdm_.level_n_dofs_array()[i][j]<<" ";
+      std::cout<<std::endl;
+        // space_dofs[space_id]->resize(space_components[space_id][3]);
+    } 
+
+    std::cout<<"global_dof_count"<<std::endl;
     for(Integer j=0;j<dofsdm_.level_n_dofs_array()[0].size();j++)
     {
         global_dof_count.push_back(dofsdm_.level_n_dofs_array()[0][j]);
+        std::cout<<global_dof_count[j]<<" ";
         // space_dofs[space_id]->resize(space_components[space_id][3]);
     } 
+
     std::cout<<std::endl;
     }
     // loop on all the elements
@@ -4169,6 +4183,8 @@ void dofmap_fespace5(
     // std::cout<<"dofmap_fespace5 3="<<elapsed_secs<<std::endl;
     // Integer n_levels=bisection.tracker().current_iterate()+1;
     // decltype(flag_entities) ffe(5);
+    Integer level=0;
+    bool has_tracked=tracker.has_tracked();
     for(Integer elem_iter=n_elements;elem_iter<mesh.n_elements();elem_iter++)
     {
 
@@ -4177,22 +4193,23 @@ void dofmap_fespace5(
        
        // change it for smarter algorithms   
       // std::cout<<" dofmap elem == "<< elem_iter <<std::endl;
-      std::cout<<"elem_iter="<<elem_iter<<std::endl;
+      // std::cout<<"elem_iter="<<elem_iter<<std::endl;
 
        auto& elem=mesh.elem(elem_iter);
-       std::cout<<"qui1="<<elem_iter<<std::endl;
+       // std::cout<<"qui1="<<elem_iter<<std::endl;
        auto &elem_id=elem_iter;
-       
-       auto level=bisection.tracker().get_iterate(elem_id);
-       std::cout<<"level="<<level<<std::endl;
-       std::cout<<"0<level && global_dof_count.size()-1<level="<<(0<level && global_dof_count.size()-1<level)<<std::endl;
+       // std::cout<<"has_tracked="<<has_tracked<<std::endl;
+       if(has_tracked)
+          level=tracker.get_iterate(elem_id);
+       // std::cout<<"level="<<level<<std::endl;
+       // std::cout<<"0<level && global_dof_count.size()-1<level="<<(0<level && global_dof_count.size()-1<level)<<std::endl;
        
       if(0<level && global_dof_count.size()-1<level)
          global_dof_count.push_back(global_dof_count[global_dof_count.size()-1]);
 
 
        Integer loc_dof_count=0;
-       std::cout<<"DOFMAPSPACE ELEM ITER="<<elem_iter<<std::endl;
+       // std::cout<<"DOFMAPSPACE ELEM ITER="<<elem_iter<<std::endl;
 
        dofmap.init_elem(dofmap_vec,tuple_map,tuple_parent_map,tuple_map_dofs,
                         global_dof_count,elem,level);
@@ -4209,18 +4226,18 @@ void dofmap_fespace5(
     elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
     // std::cout<<"dofmap tuple elapsed_secs="<<elapsed_secs<<std::endl;
     
-    for(std::size_t i=0; i<dofsdm_.n_dofs().size() ;i++)
-      { dofsdm_.level_n_dofs_array()[i].resize(n_levels);
-        for(std::size_t j=0;j<n_levels;j++)
-      dofsdm_.level_n_dofs_array()[i][j]=global_dof_count[j];
-  }
+  //   for(std::size_t i=0; i<dofsdm_.n_dofs().size() ;i++)
+  //     { dofsdm_.level_n_dofs_array()[i].resize(n_levels);
+  //       for(std::size_t j=0;j<n_levels;j++)
+  //     dofsdm_.level_n_dofs_array()[i][j]=global_dof_count[j];
+  // }
 
 
-  auto dm=(*tuple_get<0>(dofmap_vec));
-  for(std::size_t i=0;i<dm.size();i++)
-    {for(std::size_t j=0;j<dm[i].size();j++)
-    std::cout<< dm[i][j]<<" ";
-     std::cout<<std::endl;}
+  // auto dm=(*tuple_get<0>(dofmap_vec));
+  // for(std::size_t i=0;i<dm.size();i++)
+  //   {for(std::size_t j=0;j<dm[i].size();j++)
+  //   std::cout<< dm[i][j]<<" ";
+  //    std::cout<<std::endl;}
 // std::cout<<" level_array_ndofs[i][j]"<<std::endl;
 
 //   for(std::size_t i=0;i<level_array_ndofs.size();i++)
@@ -4228,24 +4245,26 @@ void dofmap_fespace5(
 //     std::cout<< level_array_ndofs[i][j]<<" ";
 //      std::cout<<std::endl;}
 
-std::cout<<" global_dof_count"<<std::endl;
+// std::cout<<" global_dof_count"<<std::endl;
 
-  for(std::size_t i=0;i<global_dof_count.size();i++)
-    {
-    std::cout<< global_dof_count[i]<<" ";
-     std::cout<<std::endl;}
+//   for(std::size_t i=0;i<global_dof_count.size();i++)
+//     {
+//     std::cout<< global_dof_count[i]<<" ";
+//      std::cout<<std::endl;}
 
-    std::cout<<"AFTER LEVEL N DOFS ARRAY ="<<std::endl;
+    // std::cout<<"AFTER LEVEL N DOFS ARRAY ="<<std::endl;
     // loop on the spaces
     for(std::size_t i=0; i<dofsdm_.n_dofs().size() ;i++)
       { dofsdm_.level_n_dofs_array()[i].resize(n_levels);
         // loop on the levels
         for(std::size_t j=0;j<n_levels;j++)
-           {dofsdm_.level_n_dofs_array()[i][j]=global_dof_count[j];
-            std::cout<<dofsdm_.level_n_dofs_array()[i][j]<<" ";}
-         std::cout<<std::endl;
+           {
+            dofsdm_.level_n_dofs_array()[i][j]=global_dof_count[j];
+            // std::cout<<dofsdm_.level_n_dofs_array()[i][j]<<" ";
+          }
+         // std::cout<<std::endl;
        }
- std::cout<<" after dofmap tuple elapsed_secs="<<elapsed_secs<<std::endl;
+ // std::cout<<" after dofmap tuple elapsed_secs="<<elapsed_secs<<std::endl;
 // tuple2array_dofs_offset<n_spaces-1>(dofs_offset,dofs_offset_arr);
 }
 

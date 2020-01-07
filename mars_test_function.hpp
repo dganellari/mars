@@ -92,12 +92,33 @@ auto MakeTest(const FunctionSpace<Args...>& W)
 {return Test<FunctionSpace<Args...>,N>(W);}
 
 template<Integer N,typename...Args >
+auto MakeTest(const std::shared_ptr<FunctionSpace<Args...>>& W_ptr)
+{return Test<FunctionSpace<Args...>,N>(W_ptr);}
+
+
+
+
+template<Integer N,typename...Args >
 auto MakeTest(const MixedSpace<Args...>& W)
 {return Test<MixedSpace<Args...>,N>(W);}
 
 template<Integer N,typename...Args >
+auto MakeTest(const std::shared_ptr<MixedSpace<Args...>>& W_ptr)
+{return Test<MixedSpace<Args...>,N>(W_ptr);}
+
+
+
+
+template<Integer N,typename...Args >
 auto MakeTest(const FullSpace<Args...>& W)
 {return Test<FullSpace<Args...>,N>(W);}
+
+template<Integer N,typename...Args >
+auto MakeTest(const std::shared_ptr<FullSpace<Args...>>& W_ptr)
+{return Test<FullSpace<Args...>,N>(W_ptr);}
+
+
+
 
 template<typename MixedSpace,Integer N>
 Test<MixedSpace,N,GradientOperator> 

@@ -44,15 +44,29 @@ class DirichletBoundaryCondition
     using tipo1= typename DofsPointsType<PointsType>::type;
     using mapped_type= typename DofsPointsType<PointsType>::mapped_type;
     static constexpr auto points=PointsType::points;
+
     DirichletBoundaryCondition(const FunctionSpace& W, const Integer label)
     :
     spaces_ptr_(std::make_shared<FunctionSpace>(W)),
     label_(label)
     {}
 
+    DirichletBoundaryCondition(const std::shared_ptr<FunctionSpace>& W_ptr, const Integer label)
+    :
+    spaces_ptr_(W_ptr),
+    label_(label)
+    {}
+
     DirichletBoundaryCondition(const FunctionSpace& W, const Func& func, const Integer label)
     :
     spaces_ptr_(std::make_shared<FunctionSpace>(W)),
+    label_(label),
+    func_(func)
+    {}
+
+    DirichletBoundaryCondition(const std::shared_ptr<FunctionSpace>& W_ptr, const Func& func, const Integer label)
+    :
+    spaces_ptr_(W_ptr),
     label_(label),
     func_(func)
     {}
@@ -79,13 +93,23 @@ constexpr auto DirichletBC(const FullSpace& W, const Func& func, const Integer l
 return DirichletBoundaryCondition<FullSpace,N,Func>(W,func,label);
 }
 
+template<Integer N, typename FullSpace, typename Func>
+constexpr auto DirichletBC(const std::shared_ptr<FullSpace>& W_ptr, const Func& func, const Integer label)
+{
+return DirichletBoundaryCondition<FullSpace,N,Func>(W_ptr,func,label);
+}
+
 template< Integer N, typename Func, typename FullSpace>
 constexpr auto DirichletBC(const FullSpace& W,const Integer label)
 {
 return DirichletBoundaryCondition<FullSpace,N,Func>(W,label);
 }
 
-
+template< Integer N, typename Func, typename FullSpace>
+constexpr auto DirichletBC(const std::shared_ptr<FullSpace>& W_ptr,const Integer label)
+{
+return DirichletBoundaryCondition<FullSpace,N,Func>(W_ptr,label);
+}
 
 
 
@@ -242,8 +266,8 @@ public:
     using mapped_type=std::tuple<typename BC::mapped_type,typename BCs::mapped_type... >;
     DirichletBoundaryConditionCollection(const BC& bc,const BCs&...bcs):
     bcs_tuple_(std::make_tuple(bc,bcs...)),
-    spaces_ptr_(bc.spaces_ptr())
-    ,
+    // spaces_ptr_(bc.spaces_ptr())
+    // ,
     labels_array_(bc.label(),bcs.label()...)
     ,
     maps_(bc,bcs...)
@@ -285,7 +309,7 @@ public:
     auto& dofmap=tuple_get<BC_N::value>(dofmap_); 
     const auto& level=FE.level();
     dm.template dofmap_get<BC_N::value>(dofmap,FE.elem_id(),level);
-
+   
 
     // const auto& dofmap=tuple_get<BC_N::value>(dm)[FE.elem_id()];
     const auto& tr=tuple_get<BC_N::value>(trace)[FE.side_id()];
@@ -296,9 +320,15 @@ public:
     // decltype(tuple_dofmap_trace_) mmm(56,7,8,9,8,8,8,8,8);
     // std::remove_reference<decltype(tr)> kmnbvv(5,6,66,66,6);
     // decltype(dofmap_trace) mmm=4;
+    
 
+    
 
     subarray(dofmap_trace,dofmap,tr);
+
+    //  std::cout<<"DirichletBoundaryConditionCollection dofmap="<<dofmap<<std::endl;
+    // std::cout<<"DirichletBoundaryConditionCollection tr="<<tr<<std::endl;
+    // std::cout<<"DirichletBoundaryConditionCollection dofmap_trace="<<dofmap_trace<<std::endl;
 
     // std::cout<<"___--___BC N==="<<N<<std::endl;
     // std::cout<<"___--___map="<<map()<<std::endl;
@@ -395,22 +425,25 @@ public:
     apply_aux<Nmax,N+1>(constrained_dofs,constrained_mat,constrained_vec,FE,tuple_map,dm);
     }
 
-
-    template<typename Elem,typename ConstrainedDofs,typename ConstrainedMatrixVal,typename ConstrainedVecVal>
-    void assembly(
+    
+    template< typename Elem,typename ConstrainedDofs,typename ConstrainedMatrixVal,typename ConstrainedVecVal>
+    void assembly(      std::shared_ptr<FunctionSpace>spaces_ptr_,
                         ConstrainedDofs& constrained_dofs,
                         ConstrainedMatrixVal& constrained_mat,
                         ConstrainedVecVal& constrained_vec,
                   const FiniteElem<Elem>& FE )
     {
-        auto mesh_ptr=spaces_ptr_->mesh_ptr();
-        const auto& mesh_side_nodes=mesh_ptr->side_nodes();
-        const auto& boundary2elem=mesh_ptr->boundary2elem();
+        // auto mesh_ptr=spaces_ptr_->mesh_ptr();
+        // const auto& mesh_side_nodes=mesh_ptr->side_nodes();
+        // const auto& boundary2elem=mesh_ptr->boundary2elem();
+        // const auto& n_sides=mesh_side_nodes.size();
+        // const auto& dofmap=spaces_ptr_->dofsdofmap();
+
+        auto& mesh=spaces_ptr_->mesh();
+        const auto& mesh_side_nodes=mesh.side_nodes();
+        const auto& boundary2elem=mesh.boundary2elem();
         const auto& n_sides=mesh_side_nodes.size();
-        // const auto& dofmap=spaces_ptr_->dofmap2();
-
         const auto& dofmap=spaces_ptr_->dofsdofmap();
-
 
     //    auto dm1=tuple_get<0>(dofmap);
     //    auto dm2=tuple_get<1>(dofmap);
@@ -474,7 +507,7 @@ public:
 
 private:
 BCsTuple bcs_tuple_;
-std::shared_ptr<FunctionSpace> spaces_ptr_;
+// std::shared_ptr<FunctionSpace> spaces_ptr_;
 Array<Integer,Nbcs> labels_array_;
 TraceOf<Elem> side_;
 Elem elem_;

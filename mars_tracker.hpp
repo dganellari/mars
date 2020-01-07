@@ -79,7 +79,9 @@ namespace mars {
 
 		auto current_iterate(){return current_iterate_;}
 
-		auto is_tracking()const {return is_tracking_;}
+		auto has_tracked()const {if(iterates_.size()==0)
+			                       return false;
+			                     else return true;}
 		
 	private:
 		bool is_tracking_;
@@ -91,16 +93,18 @@ namespace mars {
 	template<typename MeshT>
 	bool elem_belongs_to_level(const MeshT& mesh, const Integer i, const Integer level, const Tracker& track)
 	{
-		// return  (!track.is_tracking()) || (track.get_iterate(i)==level || (mesh.elem(i).children.size()==0 && track.get_iterate(i)<=level));
-		return   (track.get_iterate(i)==level || (mesh.elem(i).children.size()==0 && track.get_iterate(i)<=level));
+		return  (!track.has_tracked()) || (track.get_iterate(i)==level || (mesh.elem(i).children.size()==0 && track.get_iterate(i)<=level));
+		// return   (track.get_iterate(i)==level || (mesh.elem(i).children.size()==0 && track.get_iterate(i)<=level));
 
 	}
 
 	template<typename MeshT>
 	bool elem_belongs_to_level(const std::shared_ptr<MeshT> mesh_ptr, const Integer i, const Integer level, const Tracker& track)
 	{
-		// return  (!track.is_tracking())||(track.get_iterate(i)==level || (mesh_ptr->elem(i).children.size()==0 && track.get_iterate(i)<=level));
-		return (track.get_iterate(i)==level || (mesh_ptr->elem(i).children.size()==0 && track.get_iterate(i)<=level));
+
+		std::cout<<"!track.has_tracked()->"<<!track.has_tracked()<<" track.get_iterate(i)==level-> "<<(track.get_iterate(i)==level)<<"children.size()==0 && track.get_iterate(i)<=level)->"<<  (mesh_ptr->elem(i).children.size()==0 && track.get_iterate(i)<=level)<<std::endl;
+		return  (!track.has_tracked())||(track.get_iterate(i)==level || (mesh_ptr->elem(i).children.size()==0 && track.get_iterate(i)<=level));
+		// return (track.get_iterate(i)==level || (mesh_ptr->elem(i).children.size()==0 && track.get_iterate(i)<=level));
 
 	}
 

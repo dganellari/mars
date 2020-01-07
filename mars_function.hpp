@@ -724,8 +724,15 @@ private:
 template<Integer N,typename FuncType=EmptyClass,typename OperatorType=IdentityOperator,typename FullSpace>
 auto MakeFunction(const FullSpace& AuxW){return Function<FullSpace,N+FullSpace::TrialSpaceSize,OperatorType,FuncType>(AuxW);}
 
+template<Integer N,typename FuncType=EmptyClass,typename OperatorType=IdentityOperator,typename FullSpace>
+auto MakeFunction(const std::shared_ptr<FullSpace>& AuxW_ptr){return Function<FullSpace,N+FullSpace::TrialSpaceSize,OperatorType,FuncType>(AuxW_ptr);}
+
+
 template<Integer N,typename FuncType,typename OperatorType=IdentityOperator,typename FullSpace>
 auto MakeFunction(const FullSpace& AuxW, const FuncType& func_type){return Function<FullSpace,N+FullSpace::TrialSpaceSize,OperatorType,FuncType>(AuxW);}
+
+template<Integer N,typename FuncType,typename OperatorType=IdentityOperator,typename FullSpace>
+auto MakeFunction(const std::shared_ptr<FullSpace>& AuxW_ptr, const FuncType& func_type){return Function<FullSpace,N+FullSpace::TrialSpaceSize,OperatorType,FuncType>(AuxW_ptr);}
 
 
 template<typename FullSpace,Integer N,typename FuncType>

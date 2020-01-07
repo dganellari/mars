@@ -1630,22 +1630,31 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 				os << "LOOKUP_TABLE default\n";
 
 // const auto& dofmap=tuple_get<N>(space.spaces_ptr()->dofmap2());
-			const auto& dofsdofmap=space.spaces_ptr()->dofsdofmap();
+			const auto& dofsdofmap=space.dofsdofmap();
 			ElemDofMap localdofmap;
 
-			auto mesh_ptr=space.mesh_ptr();
+			// auto mesh_ptr=space.mesh_ptr();
+			auto& mesh=space.mesh();
+
+
 // decltype(space.spaces_ptr()->dofmap2()) okl(6);
 // std::cout<<"N===="<<N<<std::endl;
 			Integer cont;
-			auto n_elements=mesh_ptr->n_elements();    
+			// auto n_elements=mesh_ptr->n_elements();    
+			auto n_elements=mesh.n_elements();    
+
 			for(Integer i=0;i<n_elements;i++)
 			{
 
 				// if(!mesh_ptr->is_active(i)) continue;
-				if(!elem_belongs_to_level(mesh_ptr,i,level,tracker))continue;
+				// if(!elem_belongs_to_level(mesh_ptr,i,level,tracker))continue;
+				if(!elem_belongs_to_level(mesh,i,level,tracker))continue;
 
-				FE.init(i);
+
+				FE.init(i,level);
 				dofsdofmap.template dofmap_get<N>(localdofmap,i,level);
+                // std::cout<<"elem id=="<<i<<std::endl;
+				// std::cout<<"localdofmap=="<<localdofmap<<std::endl;
 // const auto& localdofmap=dofmap[i];
 				subarray(local_sol, sol, localdofmap);
 				var.init(FE,local_sol,comp);
@@ -1749,7 +1758,8 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	constexpr void print_solutions(std::ostream &os,const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names,const Integer level=-1)
 	{
 		using Elem=typename FullSpace<Args...>::Elem; 
-		FiniteElem<Elem> FE(space.mesh_ptr());
+		// FiniteElem<Elem> FE(space.mesh_ptr());
+		FiniteElem<Elem> FE(space.mesh());
 		print_solutions_aux<0,TupleTypeSize<TupleOfSpaces>::value-1,TupleOfSpaces,ElementOrder>(os,FE,space,sol,names,level);
 	}
 
@@ -1770,10 +1780,12 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 		using Elem=typename MeshT::Elem;
 		using ElemPoints=ElemGeometricPoints<Elem,IsIsoparametricOrder<IsIsoparametric,TupleOfSpaces>::value>;
 		static constexpr auto Points=ElemPoints::points;
-		const auto mesh_ptr=space.mesh_ptr();
+		// const auto mesh_ptr=space.mesh_ptr();
+		const auto& mesh=space.mesh();
 		const auto Dim=MeshT::Dim;
 		const auto ManifoldDim=MeshT::ManifoldDim;
-		FiniteElem<Elem> FE(mesh_ptr);
+		// FiniteElem<Elem> FE(mesh_ptr);
+		FiniteElem<Elem> FE(mesh);
 		os << "# vtk DataFile Version 1.0\n";
 		os<<Dim;
 		os << "D Unstructured Grid of Linear Triangles\n";
@@ -1784,13 +1796,15 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	// auto n_points=mesh_ptr->points().size();
 		auto& bisection=space.bisection();
 		auto& tracker=bisection.tracker();
-		auto n_elements=mesh_ptr->n_elements();
+		// auto n_elements=mesh_ptr->n_elements();
+		auto n_elements=mesh.n_elements();
 
 		Integer n_active_elements=0;
 		for(Integer i=0;i<n_elements;i++)
 		{
 			// if(!mesh_ptr->is_active(i)) continue;
-			if(!elem_belongs_to_level(mesh_ptr,i,level,tracker))continue;
+			// if(!elem_belongs_to_level(mesh_ptr,i,level,tracker))continue;
+			if(!elem_belongs_to_level(mesh,i,level,tracker))continue;
 			n_active_elements++;
 		}
 
@@ -1805,9 +1819,10 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	for(Integer i=0;i<n_elements;i++)
 	{
 		// if(!mesh_ptr->is_active(i)) continue;
-		if(!elem_belongs_to_level(mesh_ptr,i,level,tracker))continue;
-
-		const auto& e=mesh_ptr->elem(i);
+		// if(!elem_belongs_to_level(mesh_ptr,i,level,tracker))continue;
+		// const auto& e=mesh_ptr->elem(i);
+        if(!elem_belongs_to_level(mesh,i,level,tracker))continue;
+		const auto& e=mesh.elem(i);
 		FE.init(i);
 		for(Integer j=0;j<Points.size();j++)
 		{
@@ -1858,9 +1873,11 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	for(Integer i=0;i<n_elements;i++)
 	{
 		// if(!mesh_ptr->is_active(i)) continue;
-		if(!elem_belongs_to_level(mesh_ptr,i,level,tracker))continue;
+		// if(!elem_belongs_to_level(mesh_ptr,i,level,tracker))continue;
+		// const auto& e=mesh_ptr->elem(i);
 
-		const auto& e=mesh_ptr->elem(i);
+		if(!elem_belongs_to_level(mesh,i,level,tracker))continue;
+		const auto& e=mesh.elem(i);		
 	    const auto size=n_points_per_elem;//e.nodes.size();
 
 	    os << size;
@@ -1888,9 +1905,12 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	for(Integer i=0;i<n_elements;i++)
 	{
 		// if(!mesh_ptr->is_active(i)) continue;
-		if(!elem_belongs_to_level(mesh_ptr,i,level,tracker))continue;
+		// if(!elem_belongs_to_level(mesh_ptr,i,level,tracker))continue;
+		// const auto& e=mesh_ptr->elem(i);
 
-		const auto& e=mesh_ptr->elem(i);
+		if(!elem_belongs_to_level(mesh,i,level,tracker))continue;
+		const auto& e=mesh.elem(i);
+
 		os <<vtk_cell_type<Dim,IsIsoparametricOrder<IsIsoparametric,TupleOfSpaces>::value>(e);
 		os << "\n"; 
 	}
@@ -1901,7 +1921,7 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	os << n_points;
 	os << "\n";
 
-
+    std::cout<<"before print_solutions"<<std::endl;
 	print_solutions<TupleOfSpaces,IsIsoparametricOrder<IsIsoparametric,TupleOfSpaces>::value>(os,space,sol,names,level);
 
 
@@ -1935,7 +1955,11 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 		write_wtk_aux<1>(os,space,sol,names,level);
 	}
 
-
+	template<typename...Args,typename Solution,typename VariablesNamesVec>
+	void write_wtk_isoparametric(std::ostream &os,const std::shared_ptr<FullSpace<Args...>>& space,const Solution&sol,const VariablesNamesVec& names,const Integer level=-1) 
+	{
+		write_wtk_aux<1>(os,*space,sol,names,level);
+	}
 
 
 	template<typename Elem, Integer EntityDim>
@@ -3085,7 +3109,67 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 
 
 
+template<typename FunctionSpace>
+class FullFunctionSpaceInterpolation
+{
+public:
 
+	FullFunctionSpaceInterpolation(std::shared_ptr<FunctionSpace> W_ptr):
+	spaces_ptr_(W_ptr)
+	{}
+
+    inline void add_functionspace(std::shared_ptr<FunctionSpace> W_ptr){spaces_ptr_=W_ptr;}
+
+
+
+
+    template<typename MeshT>
+    void find_children(const MeshT& mesh, const Integer el)
+    {
+    	auto& fine_elem=mesh.elem(el);
+      	auto& children=fine_elem.children;
+
+      	for(std::size_t F_el=0;F_el<children.size();F_el++)
+      	{
+      		auto& fine_elem=mesh.elem(children[F_el]);
+            find_children();
+
+      	}
+    }
+
+
+	void init(const Integer C_level, const Integer F_level)
+	{
+      
+      auto &mesh=spaces_ptr_->mesh();
+      auto &bisection=spaces_ptr_->bisection();
+      auto &tracker=bisection.tracker();
+
+
+      for(std::size_t el=0;el<mesh.n_elements();el++)
+      {
+      	// if the elem does not belong to the C_level, continue
+      	if(!elem_belongs_to_level(mesh,el,C_level,tracker))continue;
+        
+        auto& elem=mesh.elem(el);
+        find_children(mesh,el);
+      	// loop recursively on the fine children up to the F_level
+      	// auto& children=elem.children;
+
+      	// for(std::size_t F_el=0;F_el<children.size();F_el++)
+      	// {
+      	// 	auto& fine_elem=mesh.elem(children[F_el]);
+
+
+      	// }
+
+
+      }
+	}
+
+private:
+ std::shared_ptr<FunctionSpace> spaces_ptr_;
+};
 
 
 
@@ -3229,6 +3313,7 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 		MeshT mesh;
 		if(ManifoldDim==2)
 		{
+			std::cout<<"2D lsfem poisson";
 			// generate_cube(mesh,n,n,0);
 			// mesh.build_dual_graph();
 			// mark_boundary(mesh);
@@ -3242,17 +3327,18 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 		}
 		else if(ManifoldDim==3)
 		{
+			std::cout<<"3D lsfem poisson";
 			generate_cube(mesh,n,n,n);
 			mesh.build_dual_graph();
 			mark_boundary(mesh);
 
-	      read_mesh("../data/tetrahedron.MFEM", mesh);
+	      // read_mesh("../data/tetrahedron.MFEM", mesh);
 	      // assign_tags(mesh);
 	      // Bisection<MeshT> bisection(mesh);
 	      // bisection.uniform_refine(0);
 	      // mesh.update_dual_graph();
 		}
-        Integer n_levels=8;
+        Integer n_levels=12;
 	    clock_t begin=clock();
 		clock_t end = clock();
 		double elapsed_secs;
@@ -3261,7 +3347,7 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 
 		
 
-
+        std::cout<<"n2em init="<<std::endl;
 	    Node2ElemMap<MeshT> n2em(mesh);
 	    n2em.init();
 
@@ -3280,9 +3366,9 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 		std::cout<<"bisec 2="<<std::endl;
 		for(int i=0;i<n_levels;i++)
 		{
-		bisection.tracking_begin();
-		bisection.uniform_refine(1);
-		bisection.tracking_end();			
+		// bisection.tracking_begin();
+		// bisection.uniform_refine(1);
+		// bisection.tracking_end();			
 		}
 
 		end=clock();
@@ -3367,12 +3453,12 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	    // std::cout<<is_simplex_inside_simplex(simplex1,simplex2,mesh)<<std::endl;
 
 	    
-	    ConnectivitySimpliacialMap<MeshT,0> csm0(mesh,n2em,bisection);
-	    ConnectivitySimpliacialMap<MeshT,1> csm1(mesh,n2em,bisection);
-	    ConnectivitySimpliacialMap<MeshT,2> csm2(mesh,n2em,bisection);
-	    csm1.init();
-	    csm0.init();
-	    csm2.init();
+	    // ConnectivitySimpliacialMap<MeshT,0> csm0(mesh,n2em,bisection);
+	    // ConnectivitySimpliacialMap<MeshT,1> csm1(mesh,n2em,bisection);
+	    // ConnectivitySimpliacialMap<MeshT,2> csm2(mesh,n2em,bisection);
+	    // csm1.init();
+	    // csm0.init();
+	    // csm2.init();
 	    // std::array<Integer,2> edge{0,1};
 	    
 	    // csm1.describe(std::cout);
@@ -3381,9 +3467,9 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 
 	    // edge[0]=0;edge[1]=2;
 	    // std::cout<<csm.get(simplex3,edge,1)<<std::endl;
-	    csm1.init();
-	    csm0.init();
-	    csm2.init();
+	    // csm1.init();
+	    // csm0.init();
+	    // csm2.init();
 	    // edge[0]=1;edge[1]=4;
 	    // std::cout<<"__________________________________________________"<<std::endl;
 	    // std::cout<<csm.get(simplex3,edge,1)<<std::endl;
@@ -3398,14 +3484,14 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 
 	    // // std::cout<<" entity 0 describe __________________________________________________"<<std::endl;
 	    // // csm0.describe(std::cout);
-	    std::cout<<" entity 0 describe 2 __________________________________________________"<<std::endl;
+	    // std::cout<<" entity 0 describe 2 __________________________________________________"<<std::endl;
 	    // csm0.describe2(std::cout);
 	    // std::cout<<" entity 0 describe 3 __________________________________________________"<<std::endl;
 	    // csm0.describe3(std::cout);
 
 	    // // std::cout<<" entity 1 describe __________________________________________________"<<std::endl;
 	    // // csm1.describe(std::cout);
-	    std::cout<<" entity 1 describe 2 __________________________________________________"<<std::endl;
+	    // std::cout<<" entity 1 describe 2 __________________________________________________"<<std::endl;
 	    // csm1.describe2(std::cout);
 	    // std::cout<<" entity 1 describe 3 __________________________________________________"<<std::endl;
 	    // csm1.describe3(std::cout);
@@ -3413,7 +3499,7 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 
 	    // std::cout<<" entity 2 describe __________________________________________________"<<std::endl;
 	    // csm2.describe(std::cout);
-	    std::cout<<" entity 2 describe 2 __________________________________________________"<<std::endl;
+	    // std::cout<<" entity 2 describe 2 __________________________________________________"<<std::endl;
 	    // csm2.describe2(std::cout);
 	    // std::cout<<" entity 2 describe 3 __________________________________________________"<<std::endl;
 	    // csm2.describe3(std::cout);
@@ -3543,7 +3629,7 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 AuxRT_n rtn(mesh,bisection,n2em);//csmc);
 AuxP_n pn(mesh,bisection,n2em);//csmc);
 std::cout<<"FIRST PRE UPDATE="<<std::endl;
-// LSFEM lsfem(mesh,bisection,n2em);//csmc);
+LSFEM lsfem(mesh,bisection,n2em);//csmc);
 std::cout<<"FIRST POST UPDATE="<<std::endl;
 
 	 // // AuxRT_n rtn(mesh);
@@ -3558,38 +3644,64 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 		auto Waux=AuxFunctionSpacesBuild(pn);
 
 		auto W=FullSpaceBuild(Wtrial,Waux);
+		auto W_ptr=std::make_shared<decltype(W)>(W);
+
+
+		for(int i=0;i<n_levels;i++)
+		{
+		bisection.tracking_begin();
+		bisection.uniform_refine(1);
+		bisection.tracking_end();			
+		}
+ 
 
 
 
-	auto &dofsdofmap=W.dofsdofmap();
+	// auto &dofsdofmap=W.dofsdofmap();
+	// std::cout<<"<<<< UPDATE >>>>"<<std::endl;
+ //    // dofsdofmap.update();
+ //    std::cout<<"PRE UPDATE="<<std::endl;
+ //    W.update();
 
-	std::cout<<"dofsdofmap.level_cumulative_dofs_array()"<<std::endl;
-	auto& h1=dofsdofmap.level_cumulative_dofs_array();
-	for(Integer i=0;i<h1.size();i++)
-	{
-
-		for(Integer j=0;j<h1[i].size();j++)
-			std::cout<<h1[i][j]<<" ";
-		std::cout<<std::endl;
-	}
-
-
-    dofsdofmap.update();
-
-	std::cout<<"dofsdofmap.level_cumulative_dofs_array()"<<std::endl;
-	auto& h2=dofsdofmap.level_cumulative_dofs_array();
-	for(Integer i=0;i<h2.size();i++)
-	{
-
-		for(Integer j=0;j<h2[i].size();j++)
-			std::cout<<h2[i][j]<<" ";
-		std::cout<<std::endl;
-	}
+    
+ //    auto& level_cumultive_n_dofs=dofsdofmap.level_cumultive_n_dofs();
+ //     std::cout<<"level_n_dofs_array="<<std::endl;
+ //     for(int i=0;i<level_cumultive_n_dofs.size();i++)
+ //     {
+ //      // for(int j=0; j<level_n_dofs_array[i].size();j++)
+ //        std::cout<<level_cumultive_n_dofs[i]<<" ";
+ //      std::cout<<std::endl;
+ //     }   
+ //    std::cout<<"POST UPDATE="<<std::endl;
 
 
 
-		begin=clock();
-		std::cout<<"OTHER BISECTION="<<std::endl;
+	// std::cout<<"dofsdofmap.level_cumulative_dofs_array()"<<std::endl;
+	// auto& h1=dofsdofmap.level_cumulative_dofs_array();
+	// for(Integer i=0;i<h1.size();i++)
+	// {
+
+	// 	for(Integer j=0;j<h1[i].size();j++)
+	// 		std::cout<<h1[i][j]<<" ";
+	// 	std::cout<<std::endl;
+	// }
+
+
+
+	// std::cout<<"dofsdofmap.level_cumulative_dofs_array()"<<std::endl;
+	// auto& h2=dofsdofmap.level_cumulative_dofs_array();
+	// for(Integer i=0;i<h2.size();i++)
+	// {
+
+	// 	for(Integer j=0;j<h2[i].size();j++)
+	// 		std::cout<<h2[i][j]<<" ";
+	// 	std::cout<<std::endl;
+	// }
+
+
+
+	// 	begin=clock();
+	// 	std::cout<<"OTHER BISECTION="<<std::endl;
 		// for(int i=n_levels-1;i<n_levels;i++)
 		// {
 		// bisection.tracking_begin();
@@ -3608,13 +3720,11 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
     //    }
 
 
-    std::cout<<"PRE UPDATE="<<std::endl;
-    // lsfem.update();
-    std::cout<<"POST UPDATE="<<std::endl;
 
 
-	    std::cout<<"-----dofmap of space="<<0<<std::endl;
-	GetType<typename decltype(W)::DofsDM::ElemDofMap> elemdm0;
+
+	//     std::cout<<"-----dofmap of space="<<0<<std::endl;
+	// GetType<typename decltype(W)::DofsDM::ElemDofMap> elemdm0;
 	// for(Integer i=0;i<dofsdofmap.template dofmap_size<0>();i++)
 	// {
 	//          dofsdofmap.template dofmap_get<0>(elemdm0,i,level);
@@ -3632,41 +3742,41 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 	// }
 
 
-    auto& spacedofs=dofsdofmap.space_dofs();
-    auto& n_dofs=dofsdofmap.n_dofs();
-    auto& cumulative_n_dofs=dofsdofmap.cumulative_n_dofs();
+ //    auto& spacedofs=dofsdofmap.space_dofs();
+ //    auto& n_dofs=dofsdofmap.n_dofs();
+ //    auto& cumulative_n_dofs=dofsdofmap.cumulative_n_dofs();
 
-    std::cout<<"spacedofs"<<std::endl;
-   	for(Integer i=0;i<spacedofs.size();i++)
-   		{for(Integer j=0;j<spacedofs[i]->size();j++)
-	         std::cout<<(*spacedofs[i])[j]<<" ";
-	std::cout<<std::endl;}
+ //    std::cout<<"spacedofs"<<std::endl;
+ //   	for(Integer i=0;i<spacedofs.size();i++)
+ //   		{for(Integer j=0;j<spacedofs[i]->size();j++)
+	//          std::cout<<(*spacedofs[i])[j]<<" ";
+	// std::cout<<std::endl;}
 
-    std::cout<<"n_dofs"<<std::endl;
-   	for(Integer i=0;i<n_dofs.size();i++)
-	         std::cout<<n_dofs[i]<<" ";
-	std::cout<<std::endl;
+ //    std::cout<<"n_dofs"<<std::endl;
+ //   	for(Integer i=0;i<n_dofs.size();i++)
+	//          std::cout<<n_dofs[i]<<" ";
+	// std::cout<<std::endl;
 
-    std::cout<<"cumulative_n_dofs"<<std::endl;
-   	for(Integer i=0;i<cumulative_n_dofs.size();i++)
-   		{
-	         std::cout<<cumulative_n_dofs[i]<<" ";
-	std::cout<<std::endl;
-        }
-
-
+ //    std::cout<<"cumulative_n_dofs"<<std::endl;
+ //   	for(Integer i=0;i<cumulative_n_dofs.size();i++)
+ //   		{
+	//          std::cout<<cumulative_n_dofs[i]<<" ";
+	// std::cout<<std::endl;
+ //        }
 
 
 
 
-	     std::cout<<"elems "<<std::endl;
-	     for(Integer i=0;i<mesh.n_elements();i++)
-	       {std::cout<<"elem = "<<i<< std::endl;
-	        for(Integer j=0;j<mesh.elem(i).nodes.size();j++)
-	    	std::cout<<mesh.elem(i).nodes[j]<< " ";
-	        std::cout<<std::endl;
-	        // std::cout<<std::endl;
-	    }	
+
+
+	    //  std::cout<<"elems "<<std::endl;
+	    //  for(Integer i=0;i<mesh.n_elements();i++)
+	    //    {std::cout<<"elem = "<<i<< std::endl;
+	    //     for(Integer j=0;j<mesh.elem(i).nodes.size();j++)
+	    // 	std::cout<<mesh.elem(i).nodes[j]<< " ";
+	    //     std::cout<<std::endl;
+	    //     // std::cout<<std::endl;
+	    // }	
 
 
 
@@ -3905,13 +4015,13 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 
 
 
-		auto u0 = MakeTrial<0>(W);
-		auto u1 = MakeTrial<1>(W);
+		auto u0 = MakeTrial<0>(W_ptr);
+		auto u1 = MakeTrial<1>(W_ptr);
 
-		auto v0 = MakeTest<0>(W);
-		auto v1 = MakeTest<1>(W);
+		auto v0 = MakeTest<0>(W_ptr);
+		auto v1 = MakeTest<1>(W_ptr);
 
-		auto f1 = MakeFunction<0,ExactPoisson<ManifoldDim>>(W);
+		auto f1 = MakeFunction<0,ExactPoisson<ManifoldDim>>(W_ptr);
 
 		std::cout<<W.spaces_ptr()->n_dofs()<<std::endl;
 
@@ -3930,15 +4040,49 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 
 
 
-		auto bcs1=DirichletBC<1,FunctionZero2D>(W,1);
-		auto bcs2=DirichletBC<1,FunctionZero2D>(W,2);
-		auto bcs3=DirichletBC<1,FunctionZero2D>(W,3);
-		auto bcs4=DirichletBC<1,FunctionZero2D>(W,4);
-		auto bcs5=DirichletBC<1,FunctionZero2D>(W,5);
-		auto bcs6=DirichletBC<1,FunctionZero2D>(W,6);
+		auto bcs1=DirichletBC<1,FunctionZero2D>(W_ptr,1);
+		auto bcs2=DirichletBC<1,FunctionZero2D>(W_ptr,2);
+		auto bcs3=DirichletBC<1,FunctionZero2D>(W_ptr,3);
+		auto bcs4=DirichletBC<1,FunctionZero2D>(W_ptr,4);
+		auto bcs5=DirichletBC<1,FunctionZero2D>(W_ptr,5);
+		auto bcs6=DirichletBC<1,FunctionZero2D>(W_ptr,6);
+
+
+
+
+
+
+
 
 		std::cout<<"CREATE CONTEXT"<<std::endl;
 		auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4,bcs5,bcs6);
+
+
+
+
+
+    auto &dofsdofmap=W_ptr->dofsdofmap();
+	// auto &dofsdofmap=context.full_spaces_ptr()->dofsdofmap();
+	std::cout<<"<<<< UPDATE >>>>"<<std::endl;
+    // dofsdofmap.update();
+    std::cout<<"PRE UPDATE="<<std::endl;
+    // context.full_spaces_ptr()->update();
+     W_ptr->update();
+    
+    auto& level_cumultive_n_dofs=dofsdofmap.level_cumultive_n_dofs();
+     std::cout<<"level_n_dofs_array="<<std::endl;
+     for(int i=0;i<level_cumultive_n_dofs.size();i++)
+     {
+      // for(int j=0; j<level_n_dofs_array[i].size();j++)
+        std::cout<<level_cumultive_n_dofs[i]<<" ";
+      std::cout<<std::endl;
+     }   
+    std::cout<<"POST UPDATE="<<std::endl;
+
+
+
+
+
 
 		SparseMatrix<Real> A;
 		std::vector<Real> b;
@@ -3955,7 +4099,7 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 
 	   // A.print_val();
 		std::vector<Real> x;
-		Integer max_iter=10000;
+		Integer max_iter=12;
 
 
 		std::cout<<"START SOLVING"<<std::endl;
@@ -3969,19 +4113,20 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 
 		os.close();
 		os.open(output_file.c_str());
-		write_wtk_isoparametric(os,W,x,var_names,level);
+		// write_wtk_isoparametric(os,*context.full_spaces_ptr(),x,var_names,level);
+		write_wtk_isoparametric(os,W_ptr,x,var_names,level);
 
 	    os.close();
 
 
-	    std::cout<<"x"<<std::endl;
-	    for(int i=0;i<x.size();i++)
-	    	std::cout<<x[i]<<std::endl;
+	    // std::cout<<"x"<<std::endl;
+	    // for(int i=0;i<x.size();i++)
+	    // 	std::cout<<x[i]<<std::endl;
 
-        std::cout<<std::endl;
-	    std::cout<<"----------b"<<std::endl;
-	    for(int i=0;i<b.size();i++)
-	    	std::cout<<b[i]<<std::endl;
+     //    std::cout<<std::endl;
+	    // std::cout<<"----------b"<<std::endl;
+	    // for(int i=0;i<b.size();i++)
+	    // 	std::cout<<b[i]<<std::endl;
 
 
 
@@ -4013,7 +4158,8 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 
 		os.close();
 		os.open(output_fileL.c_str());
-		write_wtk_isoparametric(os,W,xL,var_namesL,level);
+		// write_wtk_isoparametric(os,*context.full_spaces_ptr(),xL,var_namesL,level);
+		write_wtk_isoparametric(os,W_ptr,xL,var_namesL,level);
 
 	    os.close();
 
@@ -4024,6 +4170,25 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 	    // std::cout<<"bL"<<std::endl;
 	    // for(int i=0;i<bL.size();i++)
 	    // 	std::cout<<bL[i]<<std::endl;
+
+
+
+
+	auto &dofsdofmap2=W_ptr->dofsdofmap();
+
+
+    
+    auto& level_cumultive_n_dofs2=dofsdofmap2.level_cumultive_n_dofs();
+     std::cout<<"level_n_dofs_array="<<std::endl;
+     for(int i=0;i<level_cumultive_n_dofs2.size();i++)
+     {
+      // for(int j=0; j<level_n_dofs_array[i].size();j++)
+        std::cout<<level_cumultive_n_dofs2[i]<<" ";
+      std::cout<<std::endl;
+     }   
+
+
+
 
 	//    // std::cout<<"W ndofs"<<W.spaces_ptr()->n_dofs()<<std::endl;
 	//    // std::cout<<"W array_ndofs"<<W.array_ndofs()<<std::endl;

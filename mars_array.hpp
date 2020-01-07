@@ -324,40 +324,40 @@ auto cumulative_array
 (const Array<std::vector<Integer>, N>& t1,const Array<Integer, M>& t2)
 {
 
-std::cout<<"N==="<<N<<std::endl;
-  std::cout<<"<<<<<<<t1>>>>>>>>>>>2"<<std::endl;
-   for(Integer i=0;i<t1.size();i++)
-   {
-    for(Integer j=0;j<t1[i].size();j++)
-    std::cout<<t1[i][j]<<" ";
-std::cout<<std::endl;
+// std::cout<<"N==="<<N<<std::endl;
+//   std::cout<<"<<<<<<<t1>>>>>>>>>>>2"<<std::endl;
+//    for(Integer i=0;i<t1.size();i++)
+//    {
+//     for(Integer j=0;j<t1[i].size();j++)
+//     std::cout<<t1[i][j]<<" ";
+// std::cout<<std::endl;
     
-   }
+//    }
 
-  std::cout<<"<<<<<<<t2>>>>>>>>>>>2"<<std::endl;
-   for(Integer i=0;i<t2.size();i++)
-   {
-    std::cout<<t2[i]<<" ";
-   }
-  std::cout<<std::endl;
+  // std::cout<<"<<<<<<<t2>>>>>>>>>>>2"<<std::endl;
+  //  for(Integer i=0;i<t2.size();i++)
+  //  {
+  //   std::cout<<t2[i]<<" ";
+  //  }
+  // std::cout<<std::endl;
 
 
-  std::cout<<"<<<<<<<initialize t3 with zeros>>>>>>>>>>>1"<<std::endl;
+  // std::cout<<"<<<<<<<initialize t3 with zeros>>>>>>>>>>>1"<<std::endl;
   
    auto levels=t1[0].size();
 
    Array<std::vector<Integer>, N+1> t3;
-   std::cout<<"levels="<<levels<<std::endl;
+   // std::cout<<"levels="<<levels<<std::endl;
    for(Integer i=0;i<N+1;i++)
       {
        t3[i].resize(levels, 0);
-       for(Integer j=0;j<levels;j++)
-       std::cout<<t3[i][j]<<" ";
-       std::cout<<std::endl;
+       // for(Integer j=0;j<levels;j++)
+       // std::cout<<t3[i][j]<<" ";
+       // std::cout<<std::endl;
       }
 
 
-  std::cout<<"<<<<<<<cumulative_array>>>>>>>>>>>2"<<std::endl;
+  // std::cout<<"<<<<<<<cumulative_array>>>>>>>>>>>2"<<std::endl;
    Integer cont;
    cont=t2[0];
    std::vector<Integer> dofs_count(levels);
@@ -366,29 +366,29 @@ std::cout<<std::endl;
    {
     // std::cout<<i<<" "<<levels<<std::endl;
     dofs_count[i]=t1[0][i];
-    std::cout<<dofs_count[i]<<" ";
+    // std::cout<<dofs_count[i]<<" ";
     
    }
-   std::cout<<std::endl;
-   std::cout<<"cont="<<cont<<std::endl;
-  std::cout<<"<<<<<<<cumulative_array>>>>>>>>>>>3 t2size="<<t2.size()<<std::endl;
+   // std::cout<<std::endl;
+   // std::cout<<"cont="<<cont<<std::endl;
+  // std::cout<<"<<<<<<<cumulative_array>>>>>>>>>>>3 t2size="<<t2.size()<<std::endl;
    for(Integer i=1;i<M;i++)
       {
         // std::cout<<"t2[i]"<<t2[i]<<std::endl;
 
        for(Integer j=0;j<t2[i];j++)
           {
-            std::cout<<"j="<<j<<std::endl;
+            // std::cout<<"j="<<j<<std::endl;
             // t3[cont].resize(levels,0);
-            std::cout<<"levels="<<levels<<std::endl;
+            // std::cout<<"levels="<<levels<<std::endl;
              for(Integer s=0;s<levels;s++)
                 { 
-                  std::cout<<cont<<" "<<s<<" ";
+                  // std::cout<<cont<<" "<<s<<" ";
                   // std::cout<<"cont="<<cont<<std::endl;
                   // std::cout<<"s="<<s<<std::endl;
                   // std::cout<<"dofs_count[s]="<<dofs_count[s]<<std::endl;
                   t3[cont][s]=dofs_count[s];
-                  std::cout<<t3[cont][s]<<" "<<std::endl;
+                  // std::cout<<t3[cont][s]<<" "<<std::endl;
                   // std::cout<<"t3[cont][s]="<<t3[cont][s]<<std::endl;
 
                           // for(Integer j=0;j<t3[cont].size();j++)
@@ -415,10 +415,10 @@ std::cout<<std::endl;
         for(Integer s=0;s<levels;s++)
         dofs_count[s]+=t1[cont-1][s];
         
-        std::cout<<std::endl;
-        for(Integer s=0;s<levels;s++)
-          std::cout<<t1[cont-1][s]<<" ";
-        std::cout<<std::endl;
+        // std::cout<<std::endl;
+        // for(Integer s=0;s<levels;s++)
+        //   std::cout<<t1[cont-1][s]<<" ";
+        // std::cout<<std::endl;
         // }
 
 
@@ -427,17 +427,17 @@ std::cout<<std::endl;
 
       for(Integer s=0;s<levels;s++)
           t3[cont][s]=dofs_count[s];   
-  std::cout<<"<<<<<<<cumulative_array>>>>>>>>>>>4"<<std::endl;
+  // std::cout<<"<<<<<<<cumulative_array>>>>>>>>>>>4"<<std::endl;
 
 
-  std::cout<<"<<<<<<<t3>>>>>>>>>>>"<<std::endl;
-   for(Integer i=0;i<t3.size();i++)
-   {
-    for(Integer j=0;j<t3[i].size();j++)
-    std::cout<<t3[i][j]<<" ";
-std::cout<<std::endl;
+  // std::cout<<"<<<<<<<t3>>>>>>>>>>>"<<std::endl;
+//    for(Integer i=0;i<t3.size();i++)
+//    {
+//     for(Integer j=0;j<t3[i].size();j++)
+//     std::cout<<t3[i][j]<<" ";
+// std::cout<<std::endl;
     
-   }
+//    }
   return t3;
 }
 
@@ -465,28 +465,28 @@ constexpr auto cumulative_array_and_zero
 
   Array<std::vector<Integer>, N+M> t3;
 
-  std::cout<<"<<<<<<<cumulative_array AND ZERO >>>>>>>>>>>5"<<std::endl;
-  std::cout<<"N+M"<<N+M<<std::endl;
+  // std::cout<<"<<<<<<<cumulative_array AND ZERO >>>>>>>>>>>5"<<std::endl;
+  // std::cout<<"N+M"<<N+M<<std::endl;
   Integer levels=t1[0].size();
-  std::cout<<"t1"<<std::endl;
+  // std::cout<<"t1"<<std::endl;
   for(Integer ii=0;ii<N;ii++)
     {
       t3[ii].resize(levels);
-      std::cout<<ii<<std::endl;
+      // std::cout<<ii<<std::endl;
       for(Integer s=0;s<t1[ii].size();s++)
          t3[ii][s]=t1[ii][s];
-      std::cout<<std::endl;
+      // std::cout<<std::endl;
    }
-  std::cout<<"end"<<std::endl;
+  // std::cout<<"end"<<std::endl;
 
   for(Integer ii=N;ii<N+M;ii++)
     {
       t3[ii].resize(levels);
-      std::cout<<ii<<std::endl;
+      // std::cout<<ii<<std::endl;
       for(Integer s=0;s<levels;s++)
        t3[ii][s]=0;
      }
-std::cout<<"end"<<std::endl;
+// std::cout<<"end"<<std::endl;
 
  //  std::cout<<"t2"<<std::endl;
  //  for(Integer ii=0;ii<t2.size();ii++)

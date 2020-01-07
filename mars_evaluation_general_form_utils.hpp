@@ -1449,10 +1449,10 @@ public:
       dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id,level);
       dofmap.template dofmap_get<GetType<Pairs,1>::value>(dofmap_trial,elem_id,level);
 
-      std::cout<<"dofmap_test"<<std::endl;
-      std::cout<<dofmap_test<<std::endl;
-      std::cout<<"dofmap_trial"<<std::endl;
-      std::cout<<dofmap_trial<<std::endl;
+      // std::cout<<"dofmap_test"<<std::endl;
+      // std::cout<<dofmap_test<<std::endl;
+      // std::cout<<"dofmap_trial"<<std::endl;
+      // std::cout<<dofmap_trial<<std::endl;
       
       // std::cout<<"middle 2 apply_aux, N="<<N<<", Nmax=="<<Nmax<<std::endl;
 
@@ -1494,10 +1494,10 @@ public:
       // const auto& dofmap_trial= tuple_get<GetType<Pairs,1>::value>(dofmap)[elem_id];
 
 // std::cout<<"middle 2 apply_aux, N="<<N<<", Nmax=="<<Nmax<<std::endl;
-      std::cout<<"dofmap_test"<<std::endl;
-      std::cout<<dofmap_test<<std::endl;
-      std::cout<<"dofmap_trial"<<std::endl;
-      std::cout<<dofmap_trial<<std::endl;
+      // std::cout<<"dofmap_test"<<std::endl;
+      // std::cout<<dofmap_test<<std::endl;
+      // std::cout<<"dofmap_trial"<<std::endl;
+      // std::cout<<dofmap_trial<<std::endl;
       // todo fixme
       // here take the submatrix  of mat(dofmap_test,dofmap_trial)
 
@@ -1511,9 +1511,9 @@ public:
  template<typename Output,typename FiniteElem, typename DofMap>
     void apply(Output& mat,FiniteElem&FE,const DofMap& dofmap )
     {
-       std::cout<<"pre apply volume="<<FE.elem_id()<<std::endl;
+       // std::cout<<"pre apply volume="<<FE.elem_id()<<std::endl;
       apply_volume_aux<TupleTypeSize<L2Products>::value-1,0>(mat,FE,dofmap);
-       std::cout<<"after apply volume="<<FE.elem_id()<<std::endl;
+       // std::cout<<"after apply volume="<<FE.elem_id()<<std::endl;
     }
 
 

@@ -36,9 +36,17 @@ public:
  static constexpr auto NsubspacesArray=Array<Integer,1>{Nsubspaces};
  using ElemDofMap=std::tuple<Array<Integer, DofsPerElemNums<Elem,BaseFunctionSpaces>::value>...>;
  using DofMap=std::tuple<std::shared_ptr<std::vector<Array<Integer, DofsPerElemNums<Elem,BaseFunctionSpaces>::value>>>...>;
+ using DofsDofMapTuple=std::tuple<SingleSpaceDofsDofMap&>;
  using SpacesDofsArray=Array<std::shared_ptr<std::vector<Integer>>, Nsubspaces>;
  static constexpr auto NLocalDofsArray=Array<Integer,Nsubspaces>{DofsPerElemNums<Elem,BaseFunctionSpaces>::value...};
  static constexpr auto NLocalDofs=Sum(DofsPerElemNums<Elem,BaseFunctionSpaces>::value...);
+
+
+ SingleSpaceDofsDofMap():
+ is_initialized_(false),
+ dofmapstuple_(*this)
+ {}
+
  inline auto& space_dofs() const {return space_dofs_;};
  inline auto& space_dofs()       {return space_dofs_;};
  inline auto& dofmap() const {return dofmap_;};
@@ -51,7 +59,8 @@ public:
 
  template<Integer N=0>
  inline std::enable_if_t<(N>=Nsubspaces),void>
- init_dofmap_aux(const Integer n_elements){};
+ init_dofmap_aux(const Integer n_elements)
+ {is_initialized_=true;};
 
 
  template<Integer N=0>
@@ -59,20 +68,25 @@ public:
  init_dofmap_aux(const Integer n_elements)
  {
   // we reserve n_elemnts*dofs for single element for each space
-  std::cout<<"begin N=="<<N<<std::endl;
-  std::cout<<n_elements<<" "<< NLocalDofsArray[N]<<std::endl;
-  tuple_get<N>(dofmap_)=std::make_shared<std::vector<Array<Integer,NLocalDofsArray[N]>>>();
+  // std::cout<<"begin N=="<<N<<std::endl;
+  // std::cout<<n_elements<<" "<< NLocalDofsArray[N]<<std::endl;
+  if(!is_initialized_)
+  {
+   tuple_get<N>(dofmap_)=std::make_shared<std::vector<Array<Integer,NLocalDofsArray[N]>>>();
+   space_dofs_[N]=std::make_shared<std::vector<Integer>>();
+   }
   tuple_get<N>(dofmap_)->resize(n_elements);
-  space_dofs_[N]=std::make_shared<std::vector<Integer>>();
   space_dofs_[N]->resize(n_elements*NLocalDofsArray[N]);
-  std::cout<<"end N=="<<N<<" dofmap tuple size="<<tuple_get<N>(dofmap_)->size()<<" spacedofs size="<< space_dofs_[N]->size()<<std::endl;
+  // std::cout<<"end N=="<<N<<" dofmap tuple size="<<tuple_get<N>(dofmap_)->size()<<" spacedofs size="<< space_dofs_[N]->size()<<std::endl;
   init_dofmap_aux<N+1>(n_elements);};
 
  inline void  init_dofmap(const Integer n_elements){init_dofmap_aux(n_elements);};
 
 
 
+ inline auto& dofmapstuple(){return dofmapstuple_;}
 
+ inline auto& dofmapstuple()const{return dofmapstuple_;}
 
 
 
@@ -101,9 +115,11 @@ public:
 
  private:
   DofMap dofmap_;
+  DofsDofMapTuple dofmapstuple_;
   SpacesDofsArray space_dofs_;
   Array<Integer,Nsubspaces> n_dofs_;
   Array<std::vector<Integer>,Nsubspaces> level_n_dofs_array_;
+  bool is_initialized_;
 };
 
 
@@ -112,7 +128,9 @@ class DofsDofMap //<Nsubspaces,Args...>
 {
 public:
    using ElemDofMap=TupleCatType<typename Args::DofsDM::ElemDofMap...>;
-   using DofMap=TupleCatType<typename Args::DofsDM::DofMap...>;
+   // using DofMap=TupleCatType<typename Args::DofsDM::DofMap...>;
+   using DofMap=TupleCatType<typename Args::DofsDM::DofMap&...>;
+   using DofsDofMapTuple=TupleCatType<typename Args::DofsDM::DofsDofMapTuple&...>;
    using SpacesDofsArray=Array<std::shared_ptr<std::vector<Integer>>, Nsubspaces>;
    using NdofsArray=Array<Integer, Nsubspaces>;
    using CumulativeNdofsArray=Array<Integer, Nsubspaces+1>;
@@ -123,6 +141,7 @@ public:
 
    template<typename...DofsDofMaps>
    DofsDofMap(const DofsDofMaps&...dms):
+   dofmapstuple_(std::tuple_cat(dms.dofmapstuple()...)),
    dofmap_(std::tuple_cat(dms.dofmap()...)),
    space_dofs_(concat(dms.space_dofs()...)),
    n_dofs_array_(concat(dms.n_dofs()...)),
@@ -181,7 +200,13 @@ public:
     const auto& dm=tuple_get<N>(dofmap_)->operator[](elem_id);
     const auto& offset=level_cumulative_dofs_array_[N][level];
     
-
+    // std::cout<<"level_cumulative_dofs_array_ done update" <<std::endl;
+    // for(int i=0;i<level_cumulative_dofs_array_.size();i++)
+    //   {
+    //     for(int j=0;j<level_cumulative_dofs_array_[i].size();j++)
+    //     std::cout<<level_cumulative_dofs_array_[i][j]<<" ";
+    //     std::cout<<std::endl;
+    //   }    
     for(std::size_t i=0;i<elemdm.size();i++)
         elemdm[i]=dm[i]+offset;
     }
@@ -200,14 +225,124 @@ public:
    auto space_dofs_size(const Integer N) const
    {return space_dofs_[N]->size();}
 
+
+    template<Integer N=0>
+   std::enable_if_t<N==TupleTypeSize<DofsDofMapTuple>::value,void>
+    level_n_dofs_array_update_aux(Integer cont)
+   {}
+  
+  template<Integer N=0>
+   std::enable_if_t<N<TupleTypeSize<DofsDofMapTuple>::value,void>
+  level_n_dofs_array_update_aux(Integer cont)
+   {
+    // std::cout<<"N=="<<N<<std::endl;
+    auto& level_n_dofs_array=tuple_get<N>(dofmapstuple_).level_n_dofs_array();
+    
+    Integer n_levels_old=level_n_dofs_array_[0].size();
+    Integer n_levels_new=level_n_dofs_array[0].size();
+    for(Integer i=0;i<level_n_dofs_array.size();i++)
+      {
+        level_n_dofs_array_[cont].resize(n_levels_new);
+        // std::cout<<"cont=="<<cont<<"  i=="<<i<<std::endl;
+        for(Integer j=0;j<n_levels_old;j++)
+           {
+            
+            level_n_dofs_array_[cont][j]=level_n_dofs_array[i][j];
+            // std::cout<<level_n_dofs_array_[cont][j]<<" ";
+           }
+
+        for(Integer j=n_levels_old;j<n_levels_new;j++)
+           {
+            level_n_dofs_array_[cont][j]=level_n_dofs_array[i][j];
+            // level_n_dofs_array_[cont].push_back(level_n_dofs_array[i][j]);
+            // std::cout<<level_n_dofs_array_[cont][j]<<" ";
+           }
+
+
+        // std::cout<<std::endl;
+      cont++;
+       }
+   //  std::cout<<"meanwhile first=="<<std::endl;
+   // for(Integer i=0;i<level_n_dofs_array_.size();i++)
+   //    {
+   //      for(Integer j=0;j<level_n_dofs_array_[i].size();j++)
+   //         {
+            
+   //          std::cout<<level_n_dofs_array_[i][j]<<" ";
+   //         }
+   //      std::cout<<std::endl;
+   //     }
+   //    std::cout<<"meanwhile end=="<<std::endl;
+
+    level_n_dofs_array_update_aux<N+1>(cont);
+   }
+
+
+   void level_n_dofs_array_update()
+   {
+    Integer cont=0;
+   //  std::cout<<"level_n_dofs_array_update() PRE RESULT =" <<std::endl;
+   // for(Integer i=0;i<level_n_dofs_array_.size();i++)
+   //    {
+   //      for(Integer j=0;j<level_n_dofs_array_[i].size();j++)
+   //         {
+            
+   //          std::cout<<level_n_dofs_array_[i][j]<<" ";
+   //         }
+   //      std::cout<<std::endl;
+   //     }
+    level_n_dofs_array_update_aux(cont);
+   //  std::cout<<"LEVEL NDOFS ARRAY RESULT =" <<std::endl;
+   // for(Integer i=0;i<level_n_dofs_array_.size();i++)
+   //    {
+   //      for(Integer j=0;j<level_n_dofs_array_[i].size();j++)
+   //         {
+            
+   //          std::cout<<level_n_dofs_array_[i][j]<<" ";
+   //         }
+   //      std::cout<<std::endl;
+   //     }
+   //    std::cout<<"end RESULT =" <<std::endl;
+
+
+
+   }
+
    void update()
    {
+    // std::cout<<"level_n_dofs_array_update update" <<std::endl;
+    level_n_dofs_array_update();
     level_cumulative_dofs_array_=cumulative_array(level_n_dofs_array_,NsubspacesArray);
+    // std::cout<<"level_cumulative_dofs_array_ done update" <<std::endl;
+    // for(int i=0;i<level_cumulative_dofs_array_.size();i++)
+    //   {
+    //     for(int j=0;j<level_cumulative_dofs_array_[i].size();j++)
+    //     std::cout<<level_cumulative_dofs_array_[i][j]<<" ";
+    //     std::cout<<std::endl;
+    //   }
+
+
     level_cumultive_n_dofs_=level_cumulative_dofs_array_[level_cumulative_dofs_array_.size()-1];
+    // std::cout<<"level_cumulative_dofs_array_ update" <<std::endl;
+
+
+    // std::cout<<"level_cumultive_n_dofs_ update" <<std::endl;
+    // for(int i=0;i<level_cumultive_n_dofs_.size();i++)
+    //   {
+    //     // for(int j=0;j<level_cumulative_dofs_array_[i].size();j++)
+    //     std::cout<<level_cumultive_n_dofs_[i]<<" ";
+    //     std::cout<<std::endl;
+    //   }
    }
+
+
+   inline auto& dofmapstuple(){return dofmapstuple_;}
+
+   inline auto& dofmapstuple()const {return dofmapstuple_;}
 
  private:
    DofMap dofmap_;
+   DofsDofMapTuple dofmapstuple_;
    SpacesDofsArray space_dofs_;
    ElemDofMap elemdofmap_;
    NdofsArray n_dofs_array_;
@@ -226,7 +361,8 @@ public:
    using DofsDofMap1=typename Arg1::DofsDM;
    using DofsDofMap2=typename Arg2::DofsDM;
 
-   using DofMap=TupleCatType<typename Arg1::DofsDM::DofMap,typename Arg2::DofsDM::DofMap>;
+   // using DofMap=TupleCatType<typename Arg1::DofsDM::DofMap,typename Arg2::DofsDM::DofMap>;
+   using DofMap=TupleCatType<typename Arg1::DofsDM::DofMap&,typename Arg2::DofsDM::DofMap&>;
    using SpacesDofsArray=Array<std::shared_ptr<std::vector<Integer>>, Nsubspaces>;
    using NdofsArray=Array<Integer, Nsubspaces>;
    using CumulativeNdofsArray=Array<Integer, Nsubspaces+1>;
@@ -282,10 +418,10 @@ public:
    init_dofmap_aux(const Integer n_elements)
    {
     // we reserve n_elemnts*dofs for single element for each space
-    std::cout<<"begin N=="<<N<<std::endl;
+    // std::cout<<"begin N=="<<N<<std::endl;
     // tuple_get<N>(dofmap_)->reserve(n_elements*NLocalDofsArray[N]);
     tuple_get<N>(dofmap_)->resize(n_elements);
-    std::cout<<"end N=="<<N<<std::endl;
+    // std::cout<<"end N=="<<N<<std::endl;
     init_dofmap_aux<N+1>(n_elements);};
 
    inline void  init_dofmap(const Integer n_elements){init_dofmap_aux(n_elements);};
@@ -316,8 +452,54 @@ public:
 
    void update()
    {
+    // std::cout<<"DofsDofMapFullAndAux update" <<std::endl;
+    dm1_.update();
+    // std::cout<<"dm1 done update" <<std::endl;
+    dm2_.update();
+    // std::cout<<"dm2 done update" <<std::endl;
+
+    level_n_dofs_array_=concat(dm1_.level_n_dofs_array(),dm2_.level_n_dofs_array());
+
+
     cumulative_dofs_array_=cumulative_array_and_zero(dm1_.cumulative_n_dofs(),dm2_.n_dofs());
+    level_cumulative_dofs_array_=cumulative_array_and_zero(dm1_.level_cumulative_dofs_array(),dm2_.level_n_dofs_array()),
+
     level_cumultive_n_dofs_=dm1_.level_cumulative_dofs_array()[dm1_.level_cumulative_dofs_array().size()-1];
+
+
+
+    // std::cout<<"dm1_.cumulative_n_dofs() update" <<std::endl;
+    // for(int i=0;i<dm1_.cumulative_n_dofs().size();i++)
+    //   {
+    //     // for(int j=0;j<cumulative_dofs_array_[i].size();j++)
+    //     std::cout<<dm1_.cumulative_n_dofs()[i]<<" ";
+    //     std::cout<<std::endl;
+    //   }
+
+    // std::cout<<"dm2_.n_dofs() update" <<std::endl;
+    // for(int i=0;i<dm2_.n_dofs().size();i++)
+    //   {
+    //     // for(int j=0;j<cumulative_dofs_array_[i].size();j++)
+    //     std::cout<<dm2_.n_dofs()[i]<<" ";
+    //     std::cout<<std::endl;
+    //   }
+
+
+    // std::cout<<"cumulative_dofs_array_ update" <<std::endl;
+    // for(int i=0;i<level_cumulative_dofs_array_.size();i++)
+    //   {
+    //     for(int j=0;j<level_cumulative_dofs_array_[i].size();j++)
+    //     std::cout<<level_cumulative_dofs_array_[i][j]<<" ";
+    //     std::cout<<std::endl;
+    //   }
+    // std::cout<<"level_cumultive_n_dofs_ update" <<std::endl;
+    // for(int i=0;i<level_cumultive_n_dofs_.size();i++)
+    //   {
+    //     // for(int j=0;j<level_cumultive_n_dofs_[i].size();j++)
+    //     std::cout<<level_cumultive_n_dofs_[i]<<" ";
+    //     std::cout<<std::endl;
+    //   }
+
    }
 
 
@@ -374,6 +556,7 @@ public:
       using MeshT=MeshT_;
       using Elem= typename MeshT::Elem;
       using DofsDM=SingleSpaceDofsDofMap<Elem,BaseFunctionSpace,BaseFunctionSpaces...>;
+      using TupleOfReferenceSpaces=std::tuple<FunctionSpace&>;
       using TupleOfSpaces=std::tuple<ElemFunctionSpace<Elem,BaseFunctionSpace>,ElemFunctionSpace<Elem,BaseFunctionSpaces>... >;
       static constexpr Integer Nsubspaces=1+sizeof...(BaseFunctionSpaces);
 
@@ -502,6 +685,11 @@ public:
       inline auto& bisection()      {return bisection_;};
 
       inline auto& bisection()const {return bisection_;};
+
+      inline auto& node2elem()      {return node2elem_;};
+
+      inline auto& node2elem()const {return node2elem_;};
+
        
       // FunctionSpace(const MeshT& mesh,const Integer dof_count_start=0):
       // mesh_ptr_(std::make_shared< MeshT >(mesh))
@@ -536,7 +724,8 @@ public:
       mesh_(mesh),
       bisection_(bisection),
       node2elem_(node2elem),
-      n_elements_(0)
+      n_elements_(0),
+      tuple_reference_spaces_(*this)
 
       {
       function_space_info<0,Nsubspaces,BaseFunctionSpace,BaseFunctionSpaces...>(space_infos_);
@@ -559,9 +748,10 @@ public:
          (mesh_,bisection_,node2elem_,dofsdm_,offset_,n_elements_,
           tuple_map_,tuple_parent_map_,tuple_map_dofs_,true);
 
-      dofsdm_.update();
+      // dofsdm_.update();
       }
-
+      
+      auto& tuple_reference_spaces(){return tuple_reference_spaces_;}
 private:
    
       std::shared_ptr< MeshT > mesh_ptr_;
@@ -574,6 +764,8 @@ private:
       SpacesDofsArrayType space_dofs_;
       SpacesInfosArrayType space_infos_;
       ArrayNdofs array_ndofs_;
+
+      TupleOfReferenceSpaces tuple_reference_spaces_;
       // Array<std::vector<Integer>,Nsubspaces> level_array_ndofs_;
 
       DofsDM dofsdm_;
@@ -609,6 +801,7 @@ public:
   using Elem=typename Arg::Elem;
   // using MeshT=Mesh<Elem::Dim,Elem::ManifoldDim>;
   using TupleOfSpaces=TupleCatType<typename Arg::TupleOfSpaces,typename Args::TupleOfSpaces...>;
+  using TupleOfReferenceSpaces=TupleCatType<typename Arg::TupleOfReferenceSpaces&, typename Args::TupleOfReferenceSpaces&...>;
   using DofMapType=std::tuple<typename Arg::DofMapType,typename Args::DofMapType...>;
   using DofMapType2=TupleCatType<typename Arg::DofMapType2,typename Args::DofMapType2...>;
   using DofMapType3=TupleCatType<typename Arg::DofMapType3,typename Args::DofMapType3...>;
@@ -724,6 +917,7 @@ template<Integer N=0,typename OtherArg, typename...OtherArgs>
       inline const auto& space_dofs() const {return space_dofs_;};
 
      MixedSpace( Arg& arg, Args&...args):
+     tuple_reference_spaces_(std::tuple_cat(arg.tuple_reference_spaces(),args.tuple_reference_spaces()...)),
      mesh_ptr_(arg.mesh_ptr()),
      spaces_(std::make_tuple(std::make_shared<Arg>(arg),std::make_shared<Args>(args)...)),
      n_dofs_(tot_n_dofs<1+sizeof...(Args)-1>()),
@@ -752,6 +946,8 @@ template<Integer N=0,typename OtherArg, typename...OtherArgs>
      mesh_(arg.mesh())
      ,
      bisection_(arg.bisection())
+     ,
+     node2elem_(arg.node2elem())
      {}
 
 
@@ -760,6 +956,10 @@ template<Integer N=0,typename OtherArg, typename...OtherArgs>
      inline auto& mesh()const {return mesh_;};
 
      inline auto& mesh()      {return mesh_;};
+
+     inline auto& node2elem()      {return node2elem_;};
+
+     inline auto& node2elem()const {return node2elem_;};
 
      constexpr const auto& spaces(){return spaces_;}
      static constexpr Integer Nsubspaces=tot_subspaces<Arg,Args...>::value;
@@ -783,6 +983,8 @@ template<Integer N=0,typename OtherArg, typename...OtherArgs>
       inline  auto& dofsdofmap(){return dofsdm_;};
 
       inline auto& bisection()const {return bisection_;};
+
+      inline auto& tuple_reference_spaces(){return tuple_reference_spaces_;}
    private:
     std::shared_ptr< MeshT > mesh_ptr_;
     std::tuple<std::shared_ptr<Arg>,std::shared_ptr<Args>...> spaces_;
@@ -797,6 +999,9 @@ template<Integer N=0,typename OtherArg, typename...OtherArgs>
     DofsDM dofsdm_;
     MeshT& mesh_;
     Bisection<MeshT>& bisection_;
+    Node2ElemMap<MeshT>& node2elem_;
+
+    TupleOfReferenceSpaces tuple_reference_spaces_;
 
 };
 
@@ -824,8 +1029,11 @@ class AuxMixedSpace<AuxFunctionSpace<MeshT_,Arg>,AuxFunctionSpace<MeshT_,Args>..
 public:
   using MeshT=MeshT_;
   using Elem=typename AuxFunctionSpace<MeshT,Arg>::Elem;
+  using TupleOfReferenceSpaces=TupleCatType<typename AuxFunctionSpace<MeshT,Arg>::TupleOfReferenceSpaces,
+                                            typename AuxFunctionSpace<MeshT,Args>::TupleOfReferenceSpaces...>;
+
   using TupleOfSpaces=TupleCatType<typename AuxFunctionSpace<MeshT,Arg>::TupleOfSpaces,
-  typename AuxFunctionSpace<MeshT,Args>::TupleOfSpaces...>;
+                                   typename AuxFunctionSpace<MeshT,Args>::TupleOfSpaces...>;
   using DofMapType=std::tuple<typename AuxFunctionSpace<MeshT,Arg>::DofMapType,
   typename AuxFunctionSpace<MeshT,Args>::DofMapType...>;
 
@@ -847,6 +1055,7 @@ public:
   static constexpr Integer Nuniquesubspaces=TupleTypeSize<UniqueElementFunctionSpacesTupleType>::value;
 
   AuxMixedSpace( AuxFunctionSpace<MeshT,Arg>& arg, AuxFunctionSpace<MeshT,Args>&...args):
+  tuple_reference_spaces_(std::tuple_cat(arg.tuple_reference_spaces(),args.tuple_reference_spaces()...)),
   mesh_ptr_(arg.mesh_ptr()),
   spaces_(std::make_tuple(std::make_shared<AuxFunctionSpace<MeshT,Arg>>(arg),
    std::make_shared<AuxFunctionSpace<MeshT,Args>>(args)...)),
@@ -890,6 +1099,8 @@ public:
 
    inline  auto& dofsdofmap(){return dofsdm_;};
 
+   inline auto& tuple_reference_spaces(){return tuple_reference_spaces_;}
+
 
   static constexpr Integer Nsubspaces=TupleTypeSize<TupleOfSpaces>::value;
   using SpacesDofsArrayType=Array<std::vector<std::vector<Integer>>, Nsubspaces>;
@@ -919,6 +1130,7 @@ private:
   SpacesDofsArrayType space_dofs_;
   SpacesDofsArrayType3 space_dofs3_;
   DofsDM dofsdm_;
+  TupleOfReferenceSpaces tuple_reference_spaces_;
 };
 
 template<typename MeshT,typename...Args>
@@ -938,6 +1150,8 @@ public:
   using MeshT=typename MixedSpace<Args...>::MeshT;
   using FunctionSpace=MixedSpace<Args...>;
   using Elem=typename FunctionSpace::Elem;
+  using TupleOfReferenceSpaces=typename MixedSpace<Args...>::TupleOfReferenceSpaces;
+
   // using MeshT=Mesh<Elem::Dim,Elem::ManifoldDim>;
   using TupleOfSpaces=typename FunctionSpace::TupleOfSpaces;
   using DofMapType=std::tuple<typename FunctionSpace::DofMapType>;
@@ -963,6 +1177,7 @@ public:
 
 
   FullSpace(FunctionSpace& W):
+  tuple_reference_spaces_(W.tuple_reference_spaces()),
   spaces_ptr_(std::make_shared<FunctionSpace>(W)),
   // array_ndofs_(W.array_ndofs()),
   // level_array_ndofs_(W.level_array_ndofs()),
@@ -982,6 +1197,16 @@ public:
   inline auto mesh_ptr(){return spaces_ptr_->mesh_ptr();}
 
   inline auto mesh_ptr()const{return spaces_ptr_->mesh_ptr();}
+
+
+  inline auto& mesh()      {return tuple_get<0>(tuple_reference_spaces_).mesh();};
+
+  inline auto& mesh()const {return tuple_get<0>(tuple_reference_spaces_).mesh();};
+
+  inline auto& node2elem()      {return tuple_get<0>(tuple_reference_spaces_).node2elem();};
+
+  inline auto& node2elem()const {return tuple_get<0>(tuple_reference_spaces_).node2elem();};
+
 
   inline       auto  spaces_ptr()     {return spaces_ptr_;}
   
@@ -1006,6 +1231,7 @@ Array<Integer,Nsubspaces> array_ndofs_;
 SpacesDofsArrayType space_dofs_;
 DofsDM dofsdm_;
 Bisection<MeshT>& bisection_;
+TupleOfReferenceSpaces tuple_reference_spaces_;
 };
 
 
@@ -1018,6 +1244,11 @@ public:
   using AuxFunctionSpace=AuxMixedSpace<AuxArgs...>;
   using Elem=typename FunctionSpace::Elem;
   // using MeshT=Mesh<Elem::Dim,Elem::ManifoldDim>;
+
+  using TupleOfReferenceSpaces=TupleCatType<typename FunctionSpace::TupleOfReferenceSpaces,
+                                            typename AuxFunctionSpace::TupleOfReferenceSpaces>;
+
+
   using TupleOfSpaces=TupleCatType<typename FunctionSpace::TupleOfSpaces,
                                    typename AuxFunctionSpace::TupleOfSpaces>;
   using DofMapType=std::tuple<typename FunctionSpace::DofMapType,
@@ -1054,6 +1285,7 @@ public:
   using DofsDM=DofsDofMapFullAndAux<Nsubspaces,MixedSpace<Args...>,AuxMixedSpace<AuxArgs...>>;
 
   FullSpace(FunctionSpace& W1, AuxFunctionSpace& W2):
+  tuple_reference_spaces_(std::tuple_cat(W1.tuple_reference_spaces(),W2.tuple_reference_spaces())),
   spaces_ptr_(std::make_shared<FunctionSpace>(W1)),
   aux_spaces_ptr_(std::make_shared<AuxFunctionSpace>(W2)),
   // array_ndofs_(concat(W1.array_ndofs(),W2.array_ndofs())),
@@ -1080,6 +1312,14 @@ public:
   inline auto mesh_ptr(){return spaces_ptr_->mesh_ptr();}
   inline auto mesh_ptr()const{return spaces_ptr_->mesh_ptr();}
 
+  inline auto& mesh()      {return tuple_get<0>(tuple_reference_spaces_).mesh();};
+
+  inline auto& mesh()const {return tuple_get<0>(tuple_reference_spaces_).mesh();};
+
+  inline auto& node2elem()      {return tuple_get<0>(tuple_reference_spaces_).node2elem();};
+
+  inline auto& node2elem()const {return tuple_get<0>(tuple_reference_spaces_).node2elem();};
+
   // inline auto& dofmap2()const{return spaces_ptr_->dofmap2();};
   // inline auto& dofmap3()const{return spaces_ptr_->dofmap3();};
   inline auto& space_dofs3() const {return space_dofs3_;};
@@ -1087,6 +1327,45 @@ public:
   inline       auto& dofsdofmap()     {return dofsdm_;};
   inline const auto& dofsdofmap()const{return dofsdm_;};
   inline auto& bisection()const {return bisection_;};
+
+
+
+
+      template<Integer N=0>
+      std::enable_if_t<(N==TupleTypeSize<TupleOfReferenceSpaces>::value),void> 
+      update_aux()
+      {}
+
+      template<Integer N=0>
+      std::enable_if_t<(N<TupleTypeSize<TupleOfReferenceSpaces>::value),void> 
+      update_aux()
+      {
+       std::cout<<"udpate aux N="<<N<<std::endl;
+       auto& space=tuple_get<N>(tuple_reference_spaces_);
+       space.update();
+       update_aux<N+1>();
+      }
+
+
+
+      void update()
+      {
+
+       update_aux();
+       std::cout<<"dofmap_vec udpate aux "<<std::endl;
+       auto& dofmap_vec=dofsdm_.dofmap();
+       // std::cout<<"____________dofmap_vec udpate aux "<<std::endl;
+      //   auto dm=(*tuple_get<0>(dofmap_vec));
+      //   for(std::size_t i=0;i<dm.size();i++)
+      //     {for(std::size_t j=0;j<dm[i].size();j++)
+      //     std::cout<< dm[i][j]<<" ";
+      //      std::cout<<std::endl;}
+      // std::cout<<"________________ "<<std::endl;
+       dofsdm_.update();
+       // std::cout<<"end dofmap_vec udpate aux "<<std::endl;
+      }
+
+
 private:
 std::shared_ptr<FunctionSpace> spaces_ptr_;
 std::shared_ptr<AuxFunctionSpace> aux_spaces_ptr_;
@@ -1096,6 +1375,7 @@ SpacesDofsArrayType space_dofs_;
 SpacesDofsArrayType3 space_dofs3_;
 DofsDM dofsdm_;
 Bisection<MeshT>& bisection_;
+TupleOfReferenceSpaces tuple_reference_spaces_;
 };
 
 template<typename...Args>
