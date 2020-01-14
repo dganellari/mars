@@ -140,7 +140,7 @@ ViewVectorType<Integer> mark_hypersphere_for_refinement(Mesh_* mesh,
 	deep_copy(h_ic, index_subview);
 
 	ViewVectorType<Integer> elements = ViewVectorType<Integer>("hyper_elements",
-		h_ic(0));
+		h_ic());
 
 	Timer timer3;
 
@@ -185,7 +185,7 @@ ViewVectorType<Integer> mark_active(const Mesh_* mesh,
 	Timer timer3;
 
 	ViewVectorType<Integer> elements = ViewVectorType<Integer>("hyper_elements",
-		h_ic(0));
+		h_ic());
 
 	parallel_for(nr_elements, KOKKOS_LAMBDA(const Integer element_id){
 
@@ -236,7 +236,7 @@ bool compact(const Mesh_* mesh, ViewVectorType<Integer>& elements)
 	deep_copy(h_ic, index_subview);
 	//std::cout << "Scan for compact count (new nr_elements): " << h_ic(0)<< std::endl;
 
-	ViewVectorType<Integer> el = ViewVectorType<Integer>("hyper_elements", h_ic(0));
+	ViewVectorType<Integer> el = ViewVectorType<Integer>("hyper_elements", h_ic());
 	//compact using the addresses in scan
 	parallel_for(nr_elements, KOKKOS_LAMBDA(const Integer i){
 

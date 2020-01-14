@@ -2,6 +2,7 @@
 #define MARS_MESH_HPP
 
 #include "mars_simplex.hpp"
+#include "mars_non_simplex.hpp"
 #include "mars_edge_element_map.hpp"
 #include "mars_edge_node_map.hpp"
 #include "mars_dual_graph.hpp"
@@ -19,14 +20,14 @@
 
 namespace mars {
 
-	template<Integer Dim_, Integer ManifoldDim_, class Implementation_>
+	template<Integer Dim_, Integer ManifoldDim_, class Implementation_, class Simplex_>
 	class Mesh : public IMesh<Dim_> {
 	public:
 		static constexpr Integer Dim = Dim_;
 		static constexpr Integer ManifoldDim = ManifoldDim_;
 
-		using Elem     = mars::Simplex<Dim, ManifoldDim>;
-		using SideElem = mars::Simplex<Dim, ManifoldDim-1>; 
+		using Elem     = Simplex_;
+		using SideElem = mars::Simplex<Dim, ManifoldDim-1>;
 		using Point    = mars::Vector<Real, Dim>;
 		using Edge 	   = mars::Edge;
 
@@ -182,7 +183,7 @@ namespace mars {
 		template<std::size_t NNodes>
 		Integer add_elem(const std::array<Integer, NNodes> &nodes)
 		{
-			static_assert(NNodes == std::size_t(ManifoldDim + 1), "does not have the correct number of nodes");
+			//static_assert(NNodes == std::size_t(ManifoldDim + 1), "does not have the correct number of nodes");
 			elements_.emplace_back();
 			auto &e = elements_.back();
 			e.id = elements_.size() - 1;
@@ -1086,6 +1087,9 @@ namespace mars {
 	using Mesh4 = mars::Mesh<4, 4>;
 	using Mesh5 = mars::Mesh<5, 5>;
 	using Mesh6 = mars::Mesh<6, 6>;
+
+	using Quad4_Mesh = mars::Mesh<2, 2, DefaultImplementation, Quad4Elem>;
+	using Hex8_Mesh  = mars::Mesh<3, 3, DefaultImplementation, Hex8Elem>;
 
 }
 
