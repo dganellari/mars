@@ -332,10 +332,10 @@ namespace mars {
     		for (Integer k = 0; k < mesh.n_elements(); ++k) {
     			if(!mesh.is_active(k)) continue;
 
-    			for (Integer i = 0; i < ManifoldDim+1; ++i) {
+    			for (Integer i = 0; i <  mars::n_nodes(mesh.elem(k)); ++i) {
     				const Integer v = mesh.elem(k).nodes[i];
     				os << v;
-    				if (i < ManifoldDim) {
+    				if (i < mars::n_nodes(mesh.elem(k))-1) {
     					os << " ";
     				}
     			}
@@ -376,9 +376,9 @@ namespace mars {
 
     		
     		os << "<DataArray type=\"UInt64\" Name=\"offsets\" format=\"ascii\" RangeMin=\"" << (ManifoldDim+1) <<
-    		"\" RangeMax=\"" << (n_active_elements * (ManifoldDim+1)) << "\">\n";
+    		"\" RangeMax=\"" << (n_active_elements * (mars::n_nodes(mesh.elem(0)))) << "\">\n";
 
-    		for (Integer i = 0, offset = (ManifoldDim+1); i < n_active_elements; ++i, offset += (ManifoldDim+1)) {
+    		for (Integer i = 0, offset = (mars::n_nodes(mesh.elem(0))); i < n_active_elements; ++i, offset += (mars::n_nodes(mesh.elem(0)))) {
     			os << offset << "\n";
     		}
 

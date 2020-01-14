@@ -82,6 +82,7 @@ struct IndexView {
 	ViewMatrixTexture<T, YDim_> view;
 	int index;
 
+	KOKKOS_INLINE_FUNCTION
 	IndexView(ViewMatrixTexture<T, YDim_> v, int idx) :
 			view(v), index(idx) {
 	}

@@ -1073,8 +1073,8 @@ public:
 		// Deep copy device view to host view.
 		deep_copy(h_pac, pt_subview);
 
-		res[0] = h_iac(0);
-		res[1] = h_pac(0);
+		res[0] = h_iac();
+		res[1] = h_pac();
 
 		double time3 = timer3.seconds();
 		if (verbose)

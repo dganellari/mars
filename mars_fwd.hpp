@@ -4,12 +4,16 @@ namespace mars{
 
 	class DefaultImplementation {};
 
-	template<Integer Dim_, Integer Manifold_ = Dim_, class Implementation_ = DefaultImplementation>
-	class Mesh;
-
+	template<Integer Type, class Implementation_ = DefaultImplementation>
+	class NonSimplex;
 
 	template<Integer Dim_, Integer Manifold_ = Dim_, class Implementation_ = DefaultImplementation>
 	class Simplex;
+
+	template<Integer Dim_, Integer Manifold_ = Dim_,
+			class Implementation_ = DefaultImplementation, class Simplex_ = Simplex<
+					Dim_, Manifold_, Implementation_>>
+	class Mesh;
 
 	template<Integer N, Integer K, class Implementation_= DefaultImplementation>
 	class CombinationsAux;
