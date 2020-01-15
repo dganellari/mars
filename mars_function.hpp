@@ -8,6 +8,22 @@
 
 namespace mars{
 
+template<Integer Dim>
+class NormalFunction
+{
+    public: 
+    // using Point=Vector<Real,2>;
+    using type=Matrix<Real,Dim,1>;
+    
+    // template<typename Point>
+    // static type eval(const Point& p)
+    // {
+    //  return (0.5+p[0])*(0.5+p[0])*(0.5+p[0])*(0.5+p[0])*10.0; 
+    // }
+};
+
+
+
 class Function1
 {
     public: 
@@ -145,6 +161,49 @@ class ElementOrder;
 template<typename FuncType,typename Space>
 class QPPointsFunction;
 
+template<Integer Dim,typename Elem,Integer Order,Integer NContinuity,Integer NComponents>
+class QPPointsFunction<NormalFunction<Dim>,ElementFunctionSpace<Elem,LagrangeFE,Order,NContinuity,NComponents>>
+{
+public:
+ static constexpr Integer Ndofs=DofsPerElemNums<Elem,BaseFunctionSpace<LagrangeFE,Order,NContinuity,NComponents>>::value;
+ using FuncType=NormalFunction<Dim>;
+ using type=typename FuncType::type;
+ using Space=ElementFunctionSpace<Elem,LagrangeFE,Order,NContinuity,NComponents>;
+ using ElemPoints=ElemGeometricPoints<Elem,ElementOrder<std::tuple<Space>>::value>;
+ static constexpr auto Points=ElemPoints::points;
+
+    inline static void init(const FiniteElem<Elem>& FE,Array<Real,Ndofs>& local_dofs)
+    {
+    Integer cont_=0;
+    Vector<Real,Dim> point;
+    for(Integer ii=0;ii<Points.size();ii++)
+     {
+      FE.transform_point(point,Points[ii]);
+      auto mesh_ptr=FE.mesh_ptr();
+      auto& signed_normal=mesh_ptr->signed_normal();
+      auto& local_normals=signed_normal.normals(FE.elem_id());
+      // const auto& point=FE.transform_point(Points[ii]);
+      // const auto point_tmp=FE.jac()*Points[ii];
+      // const auto v0=FE.v0();
+      // const auto point=point_tmp+v0;
+      const auto& evaluation=FuncType::eval(point);
+
+      // for(Integer jj=0;jj<evaluation.rows();jj++)
+      //   {
+      //   for(Integer kk=0;kk<evaluation.cols();kk++)
+      //   {
+      //     local_dofs[cont_]=evaluation(kk,jj);  
+      //     cont_++;
+      //   }
+
+      //   }
+
+      }
+
+    }
+
+};
+
 
 
 template<typename FuncType,typename Elem,Integer Order,Integer NContinuity,Integer NComponents>
@@ -183,12 +242,6 @@ public:
 
       }
 
-
-      // const auto& points=FE.points();
-      // for(Integer ii=0;ii<points.size();ii++)
-      //     std::cout<<points[ii]<<std::endl;
-      // for(Integer ii=0;ii<points.size();ii++)
-        // local_dofs[ii]=FuncType::eval(points[ii]);
     }
 
 };
@@ -233,7 +286,7 @@ class Function
   global_dofs_ptr_(std::make_shared<std::vector<Real>>(NULL))
   {} 
 
-   void local_dofs_update(const FiniteElem<Elem>& J)
+   void local_dofs_update(const FiniteElem<Elem>& FE)
     {
 
 
@@ -241,7 +294,7 @@ class Function
 
 
       // TODO FIXME
-      QPPointsFunction<FunctionType,Space>::init(J,local_dofs_);
+      QPPointsFunction<FunctionType,Space>::init(FE,local_dofs_);
 
 
     } 
@@ -433,11 +486,11 @@ class Function<FullSpace,N,IdentityOperator,EmptyClass>
   inline auto full_spaces_ptr(){return full_spaces_ptr_;}
   inline const auto& full_spaces_ptr()const{return full_spaces_ptr_;}
   
-   void local_dofs_update(const FiniteElem<Elem>& J)
+   void local_dofs_update(const FiniteElem<Elem>& FE)
     {
       // std::cout<<"LOCAL DOFS UPDATE 1 "<<std::endl;
       auto local_map=tuple_get<N>(elemdofmap_); 
-      full_spaces_ptr_->dofsdofmap().template dofmap_get<N>(local_map,J.elem_id());
+      full_spaces_ptr_->dofsdofmap().template dofmap_get<N>(local_map,FE.elem_id());
     
     const auto& global_dofs=*(aux_ptr_->vec_ptr());
 
@@ -636,11 +689,12 @@ class Function<FullSpace,N,Operator_,EmptyClass>
   inline auto full_spaces_ptr(){return full_spaces_ptr_;}
   inline const auto& full_spaces_ptr()const{return full_spaces_ptr_;}
   
-   void local_dofs_update(const FiniteElem<Elem>& J)
+   void local_dofs_update(const FiniteElem<Elem>& FE)
     {
       // std::cout<<"local_dofs_update1"<<std::endl;
       auto local_map=tuple_get<N>(elemdofmap_); 
-      full_spaces_ptr_->dofsdofmap().template dofmap_get<N>(local_map,J.elem_id());
+      const auto& level=FE.level();
+      full_spaces_ptr_->dofsdofmap().template dofmap_get<N>(local_map,FE.elem_id(),level);
 
 
     // auto& tuple_map=full_spaces_ptr_->aux_spaces_ptr()->dofmap2();

@@ -22,6 +22,34 @@ namespace mars{
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////--------- LAGRANGE 0 -------- LAGRANGE 0 -------- LAGRANGE 0 --------/////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+template <Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
+class ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,0,Continuity,NComponents>
+      : public BaseElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,0,Continuity,NComponents>
+{
+  public: 
+     static constexpr const std::array<Integer,1> entity={ManifoldDim};
+     static constexpr const std::array<Integer,1> dofs_per_entity={1};
+     static constexpr const Integer ShapeFunctionDim1=1;
+     static constexpr const Integer ShapeFunctionDim2=1;
+};
+
+template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
+constexpr std::array<Integer,1> ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,0,Continuity,NComponents>::entity;
+
+template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
+constexpr std::array<Integer,1> ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,0,Continuity,NComponents>::dofs_per_entity;
+
+template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
+constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,0,Continuity,NComponents>::ShapeFunctionDim1;
+
+template<Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>
+constexpr Integer ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,0,Continuity,NComponents>::ShapeFunctionDim2;
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////--------- LAGRANGE 1 -------- LAGRANGE 1 -------- LAGRANGE 1 --------/////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 template <Integer Dim, Integer ManifoldDim,Integer Continuity, Integer NComponents>

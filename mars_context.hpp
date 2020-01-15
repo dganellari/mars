@@ -30,7 +30,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
     Context(const BilinearForm& bilinearform, const LinearForm&linearform, const DirichletBCs&...bcs):
     bilinear_form_(general_form(bilinearform)),
     linear_form_(general_form(linearform)),
-    shape_coefficients_(shape_function_coefficients(bilinear_form_,linear_form_)),
+    shape_coefficients_(shape_function_coefficients(bilinear_form_.spaces_ptr()->mesh(),bilinear_form_,linear_form_)),
     reference_maps_(reference_maps2(bilinear_form_,linear_form_)),
     shapefunctions_(shape_functions(shape_coefficients_,reference_maps_,bilinear_form_,linear_form_)),
     eval_bilinear_form_(Eval(bilinear_form_,shapefunctions_)),
@@ -41,7 +41,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
       // decltype(linearform.spaces_ptr()) dedeede4(33);
     }
-
+    
 
     auto full_spaces_ptr(){return bilinear_form_.spaces_ptr();}
     template<typename SystemMat, typename Rhs>
@@ -89,29 +89,33 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
      n_dofs_=level_cumultive_n_dofs[level_];
      std::cout<<"n_dofs_="<<n_dofs_<<std::endl;
      auto mesh_ptr=full_spaces_ptr()->mesh_ptr();
-     auto mesh=full_spaces_ptr()->mesh();
+     auto& mesh=full_spaces_ptr()->mesh();
+     
+     auto& n2e=full_spaces_ptr()->node2elem();
+
      // FiniteElem<Elem> FE(mesh_ptr);
      FiniteElem<Elem> FE(mesh);
 
 
      // auto& node_2_elem=full_spaces_ptr()->node2elem();
-    NodeToElem<MeshT> node_2_elem(mesh);
-     const auto& node2elem=node_2_elem.val();
-     Integer max_cols=0;
-     std::cout<<"------_______-----llll"<<std::endl;
-     // std::cout<<node2elem.size()<<std::endl;
-     for(Integer i=0;i<node2elem.size();i++)
-     {
-        const auto & n2e=node2elem[i];
-      // std::cout<<n2e.size()<<std::endl;
-      // for(Integer j=0;j<n2e.size();j++)
-        // std::cout<<n2e[j]<<" "<<std::endl;
-      // std::cout<<std::endl;
-      // if()
-      if(max_cols<n2e.size())
-      max_cols=n2e.size(); 
-     }
-
+    // NodeToElem<MeshT> node_2_elem(mesh);
+     // const auto& node2elem=node_2_elem.val();
+     Integer max_cols=n2e.max_n_nodes();
+     // std::cout<<"------_______-----llll"<<std::endl;
+     // // std::cout<<node2elem.size()<<std::endl;
+     // for(Integer i=0;i<node2elem.size();i++)
+     // {
+     //    const auto & n2e=node2elem[i];
+     //  // std::cout<<n2e.size()<<std::endl;
+     //  // for(Integer j=0;j<n2e.size();j++)
+     //    // std::cout<<n2e[j]<<" "<<std::endl;
+     //  // std::cout<<std::endl;
+     //  // if()
+     //  if(max_cols<n2e.size())
+     //  max_cols=n2e.size(); 
+     // }
+     // std::cout<<" max_cols "<<max_cols<<std::endl;
+     // std::cout<<" max_n_nodes "<<n2e.max_n_nodes()<<std::endl;
      max_cols=min(NLocalDofs*max_cols,n_dofs_);
      
 
@@ -122,7 +126,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
      std::cout<<"NLocalDofs=="<<NLocalDofs<<std::endl;
      std::cout<<"max_cols=="<<max_cols<<std::endl;
      // NLocalDofs*max_number of_elements of a node
-     A.init(n_dofs_,max_cols);
+     A.init(n_dofs_,n_dofs_,max_cols);
 
      std::cout<<"------_______----- b init"<<std::endl;
      b.resize(n_dofs_);   
@@ -136,7 +140,9 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
      std::cout<<"------_______-----qui"<<mesh.n_elements()<<std::endl;
 
      // shape_coefficients_.init(*mesh_ptr);
-     shape_coefficients_.init(mesh);
+     // mesh.init_signed_normal();
+     // auto& signed_normal=mesh.signed_normal();
+     shape_coefficients_.init();
        // for(std::size_t el=0;el<mesh_ptr->n_elements();el++)
        for(std::size_t el=0;el<mesh.n_elements();el++)
        {
@@ -277,6 +283,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
 
  private:
+    SignedNormal<Elem> signed_normal_;
     Bilinear bilinear_form_;
     Linear linear_form_;
     Coefficients shape_coefficients_;

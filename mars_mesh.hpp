@@ -9,6 +9,7 @@
 
 #include "mars_visualization.hpp"
 #include "mars_imesh.hpp"
+#include "mars_signed_normal.hpp"
 
 #include <vector>
 #include <array>
@@ -950,6 +951,15 @@ namespace mars {
         	  auto& side_tags() 	  {return side_tags_;}
         
         auto& boundary2elem(){return boundary2elem_;}
+
+        void init_signed_normal(){signed_normal_.init(*this);}
+
+        auto& signed_normal()
+        {init_signed_normal();return signed_normal_;}
+
+        auto& signed_normal()const 
+        {init_signed_normal();
+         return signed_normal_;}
 	private:
 		std::vector<Elem> elements_;
 		std::vector<Point> points_;
@@ -960,6 +970,7 @@ namespace mars {
 		std::vector<Integer> side_tags_;
 		std::vector<std::array<Integer,ManifoldDim>> side_nodes_;
 		std::vector<Integer> boundary2elem_;
+		SignedNormal<Elem> signed_normal_;
 	};
 
 

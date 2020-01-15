@@ -9,15 +9,18 @@ namespace mars{
 //// Go grom Elem<Dim,ManifoldDim> to Elem<Dim,SubElemDim>               ////
 /////////////////////////////////////////////////////////////////////////////
 template<typename Elem, Integer SubElemDim>
-class ElemToSubElemHelper;
+class ChangeElemDim;
 
 template<template<Integer,Integer>class Elem_,Integer Dim, Integer ManifoldDim,Integer SubElemDim>
-class ElemToSubElemHelper<Elem_<Dim,ManifoldDim>,SubElemDim>
+class ChangeElemDim<Elem_<Dim,ManifoldDim>,SubElemDim>
 {
  public:
-  static_assert(SubElemDim<=ManifoldDim && " In FromElemToSubElem: a SubElemDim dim must be smaller or equal to the entity ManifoldDim");
+  static_assert(SubElemDim<=Dim && " In ChangeElemDim: a SubElemDim dim must be smaller or equal to the entity Dim");
   using type=Elem_<Dim,SubElemDim>; 
 };
+
+template<typename Elem>
+using FromBoundaryToVolumetricElem=typename ChangeElemDim<Elem,Elem::ManifoldDim+1>::type;
 /////////////////////////////////////////////////////////////////////////////
 //// VolumeOrSurfaceElem return the volume/surface Element if true/false ////
 /////////////////////////////////////////////////////////////////////////////

@@ -691,6 +691,8 @@ public:
 };
 
 
+
+
 template<Integer Order>
 class GaussQP
 {
@@ -698,6 +700,40 @@ public:
   template<typename Elem>
   using rule=GaussPoints< Elem , Order>;
 };
+
+
+
+
+template<typename QRule>
+class Boundary2VolumetricQuadratureRule: public BaseQuadrature<FromBoundaryToVolumetricElem<typename QRule::Elem>,QRule::Order>
+{
+public:
+  using qp_points_boundary_type=typename QRule::qp_points_type;
+  using qp_points_type=Matrix<Real,qp_points_boundary_type::Rows,qp_points_boundary_type::Cols+1>;
+  static constexpr Integer NQPoints=QRule::NQPoints;
+  static constexpr qp_points_boundary_type qp_points=QRule::qp_points;
+  static constexpr  Array<Real,NQPoints> qp_weights=QRule::qp_weights;
+};
+
+
+
+
+
+
+
+template<typename Elem_,Integer Ndofs,Integer Dim>
+class UserDefinedQuadratureRule
+{
+public:
+  using Elem=Elem_;
+  using qp_points_type=Matrix<Real,Ndofs,Dim>;
+  static constexpr Integer NQPoints=Ndofs;
+  static constexpr Matrix<Real,Ndofs,Dim> qp_points=zero_mat<Ndofs,Dim>();
+  static constexpr  Array<Real,Ndofs> qp_weights=zero_array<Ndofs>();
+
+};
+
+
 
 
 }

@@ -189,6 +189,7 @@ list(APPEND MARS_HEADERS
 	mars_shape_function.hpp
 	mars_shape_function_coefficients.hpp
 	mars_shape_functions_collection.hpp
+	mars_signed_normal.hpp
 	mars_simplex.hpp
 	mars_static_math.hpp
 	mars_stream.hpp

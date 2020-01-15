@@ -2,6 +2,7 @@
 #define MARS_SIMPLEX_HPP
 
 #include "mars_base.hpp"
+#include "mars_array.hpp"
 #include "mars_vector.hpp"
 #include "mars_matrix.hpp"
 #include "mars_static_math.hpp"
@@ -86,10 +87,10 @@ namespace mars {
 
 
        
-        inline constexpr static std::array<Vector<Real, Dim>,Npoints> reference_init()
+        inline constexpr static Array<Vector<Real, Dim>,Npoints> reference_init()
         {
 
-            std::array<Vector<Real, Dim>,Npoints> ref;
+            Array<Vector<Real, Dim>,Npoints> ref;
 
             for(Integer ii=0;ii<Npoints;ii++)
                 for(Integer jj=0;jj<Dim;jj++)
@@ -101,7 +102,7 @@ namespace mars {
             
             return ref;
         }
-        static constexpr std::array<Vector<Real, Dim>,Npoints> reference=reference_init();
+        static constexpr Array<Vector<Real, Dim>,Npoints> reference=reference_init();
 
         void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
         {
@@ -432,6 +433,22 @@ namespace mars {
             Integer opposite = side_num + 2;
             return nodes[opposite > 2? (opposite - 3) : opposite];
         }
+
+        inline constexpr static Array<Vector<Real, Dim>,Npoints> reference_init()
+        {
+            Array<Vector<Real, Dim>,Npoints> ref;
+            for(Integer ii=0;ii<Npoints;ii++)
+                for(Integer jj=0;jj<Dim;jj++)
+                   ref[ii](jj)=0;
+
+                ref[1](0) = 1.;                
+                ref[2](1) = 1.;
+            
+            return ref;
+        }
+
+        static constexpr Array<Vector<Real, Dim>,Npoints> reference=reference_init();
+
         
         inline static std::vector<Vector<Real, Dim>> &ref()
         {
@@ -561,30 +578,28 @@ namespace mars {
                   Simplex<Dim, ManifoldDim-1> &side) const
         {
             Combinations<ManifoldDim+1, ManifoldDim>::choose(side_num, nodes, side.nodes);
-        }        
-        inline constexpr static std::array<Vector<Real, Dim>,Npoints> reference_init()
+        }     
+
+
+
+        inline constexpr static Array<Vector<Real, Dim>,Npoints> reference_init()
         {
 
-            std::array<Vector<Real, Dim>,Npoints> ref;
+            Array<Vector<Real, Dim>,Npoints> ref;
             for(Integer ii=0;ii<Npoints;ii++)
                 for(Integer jj=0;jj<Dim;jj++)
                    ref[ii](jj)=0;
-                // ref[0] = Vector<Real, Dim>().zero();
-                // ref[0] = Vector<Real, Dim>().zero();
                 
-                // ref[1] = Vector<Real, Dim>().zero();
                 ref[1](0) = 1.;
                 
-                // ref[2] = Vector<Real, Dim>().zero();
                 ref[2](1) = 1.;
                 
-                // ref[3] = Vector<Real, Dim>().zero();
                 ref[3](2) = 1.;
             
             return ref;
         }
 
-        static constexpr std::array<Vector<Real, Dim>,Npoints> reference=reference_init();
+        static constexpr Array<Vector<Real, Dim>,Npoints> reference=reference_init();
 
         inline static std::vector<Vector<Real, Dim>> &ref()
         {
@@ -648,7 +663,30 @@ namespace mars {
 
         std::vector<Integer> children;
         
-        
+ 
+        inline constexpr static Array<Vector<Real, Dim>,Npoints> reference_init()
+        {
+
+            Array<Vector<Real, Dim>,Npoints> ref;
+            for(Integer ii=0;ii<Npoints;ii++)
+                for(Integer jj=0;jj<Dim;jj++)
+                   ref[ii](jj)=0;
+
+                ref[1](0) = 1.;
+                
+                ref[2](1) = 1.;
+                
+                ref[3](2) = 1.;
+
+                ref[4](3) = 1.;
+            
+            return ref;
+        }
+
+        static constexpr Array<Vector<Real, Dim>,Npoints> reference=reference_init();
+
+
+
         inline static std::vector<Vector<Real, Dim>> &ref()
         {
             static std::vector<Vector<Real, Dim>> ref_;

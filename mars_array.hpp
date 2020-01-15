@@ -531,6 +531,35 @@ constexpr auto cumulative_array_and_zero
   return t3;
 }
 
+template<typename NewType, typename Arr>
+class ArrayChangeTypeHelper;
+
+
+template<typename NewType, typename T,Integer Dim>
+class ArrayChangeTypeHelper<NewType, Array<T,Dim>>
+{
+public:
+  using type=Array<NewType,Dim>;
+};
+
+
+template<typename NewType, typename Arr>
+using ArrayChangeType=typename ArrayChangeTypeHelper<NewType, Arr>::type;
+
+
+
+
+  template<Integer Ndofs>
+  constexpr auto zero_array()
+  {
+   Array<Real,Ndofs> arr;
+   for(Integer i=0;i<Ndofs;i++)
+    arr[i]=0;
+  return arr;
+  }
+
+
+
 
 }
 

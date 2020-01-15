@@ -1275,8 +1275,18 @@ Kokkos::View<Real **[3][4]> aaa("aaa",M,N);
 //// 3D RT0 P1
 // LSFEM_Poisson<3,0,1>(6);
 //// 3D RT1 P2
-LSFEM_Poisson<2,1,2>(4);
+
+// LSFEM_Poisson<3,1,2>(1);
+
+// LSFEM_Poisson<2,0,1>(1);
+std::cout<<"after LSFEM_Poisson2D"<<std::endl;
+// LSFEM_Poisson<3,1,2>(1);
+// LSFEM_Poisson<3,0,1>(1);
 std::cout<<"after LSFEM_Poisson"<<std::endl;
+
+
+LSFEM_Poisson<2,1,2>(1);
+std::cout<<"after LSFEM_Poisson2D"<<std::endl;
 // 
 // LSFEM_Poisson<3,1,2>(10);
 // std::cout<< FunctionSpaceDofsPerElem<ElemFunctionSpace<Simplex<3,3>,RT1<1>>>::value <<std::endl;

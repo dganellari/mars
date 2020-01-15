@@ -12,434 +12,10 @@
 #include "mars_shape_function_coefficients.hpp"
 #include "mars_tuple_utilities.hpp"
 
+#include "mars_signed_normal.hpp"
+
+
 namespace mars{
-
-
-
-
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////// class SignedNormal: for each face f of the element e                             ///////////////////
-////////////// normal[e][f] returns the normal, outward[e][f] returns the sign of the normal    ///////////////////
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// returns the sign of val (1,0,-1)
-// template <typename T> int sgn(T val) {
-//     return (T(0) < val) - (val < T(0));
-// }
-// returns the order of the indeces of the sorted v
-// template <typename T>
-// T argsort(const T &v) {
-//     // initialize original index locations
-//     T idx;
-//     std::iota(idx.begin(), idx.end(), 0);
-//     // sort indexes based on comparing values in v
-//     std::sort(idx.begin(), idx.end(),
-//               [&v](size_t i1, size_t i2) {return v[i1] < v[i2];});
-    
-//     return idx;
-// }
-
-// // template <typename T>
-// // void argsort(T& idx,const T &v) {
-// //     // initialize original index locations
-// //     std::iota(idx.begin(), idx.end(), 0);
-// //     // sort indexes based on comparing values in v
-// //     std::sort(idx.begin(), idx.end(),
-// //               [&v](size_t i1, size_t i2) {return v[i1] < v[i2];});
-    
-// // }
-// // template <typename T>
-// // T argsort(const T &v) {
-// //     T idx;
-// //     argsort(idx,v);
-// //     return idx;
-// // }
-
-// // returns v, resorted based on index 
-// template <typename T, typename S>
-// T sort_by_index(const T &v,const S& index) {
-//     T sortv;
-//     assert(index.size()==v.size() && "sort_by_index: v and index must have the same length, otherwise last elements in v are not initialized");
-//     for(Integer ii=0;ii<index.size();ii++)
-//         sortv[ii]=v[index[ii]];
-//     return sortv;
-// }
-// // returns the sub array of v of indices = index
-// template <typename S,std::size_t SDim, typename T,std::size_t TDim>
-// std::array<S,TDim> sub_array(const std::array<S,SDim> &v,const std::array<T,TDim>& index) {
-    
-//     static_assert(TDim<=SDim,"in sub_array the length of the index vector must be smaller than the one of the vector");
-//     std::array<S,TDim> subvec;
-//     for(Integer ii=0;ii<TDim;ii++)
-//         subvec[ii]=v[index[ii]];
-    
-//     return subvec;
-// }
-
-
-
-
-template<typename Elem>
-class SignedNormal;
-
-
-template<Integer Dim, Integer ManifoldDim>
-class SignedNormal<Simplex<Dim,ManifoldDim>>{
-private:
-    std::vector< Array< Vector< Real, Dim> , ManifoldDim + 1 > >  normal_;
-    std::vector< Array<Real, ManifoldDim + 1 > > outward_;
-public:
-    
-    std::vector< Array< Vector< Real, Dim> , ManifoldDim + 1 > > operator () () const { return normal_; };
-    // const Vector< Vector< Real, Dim> , ManifoldDim + 1 >& normal(const Integer elem_id) const {return normal_[elem_id];};
-    std::vector< Array<Real, ManifoldDim + 1 > > sign() const {return outward_;};
-    const Array<Real, ManifoldDim + 1 >& sign(const Integer elem_id) const {return outward_[elem_id];};
-    
-    template< typename MeshT>
-    void init(MeshT& mesh)
-    {
-        using Elem=typename MeshT::Elem;
-        static_assert(Dim==ManifoldDim, "SignedNormal: computing internal normals of a mesh makes sense only if Dim==ManifoldDim");
-        Integer n_elements=mesh.n_elements();
-        Integer facenodes_carray[ManifoldDim];
-        std::array<Integer,ManifoldDim+1> elemnodes_local;
-        std::array<Integer,ManifoldDim+1> elemnodes_global;
-        std::array<Integer,ManifoldDim+1> elemnodes_local_sort;
-        
-        std::array< Integer, ManifoldDim> facenodes_local;
-        std::array< Integer, ManifoldDim> facenodes_local_sort;
-        std::array<Integer,ManifoldDim> facenodes_global;
-        std::array<Integer,ManifoldDim> facenodes_global_sort;
-        
-        std::array<Vector<Real,Dim>, ManifoldDim+1> points;
-        Vector<Vector<Real,Dim>, ManifoldDim> facepoints;
-        Vector<Vector<Real,Dim>, ManifoldDim+1> elempoints_sort;
-        
-        Vector<Real,Dim> facepoint_mean;
-        Vector<Real,Dim> elempoint_mean;
-        
-        // we initialize the simplex
-        Simplex<Dim,ManifoldDim> simplex_elem;
-        Simplex<Dim, ManifoldDim-1> simplex_side;
-
-        mesh.update_dual_graph();
-
-        for(Integer nn=0;nn<ManifoldDim+1;nn++)
-            simplex_elem.nodes[nn]=nn;
-        
-        normal_.resize(n_elements);
-        outward_.resize(n_elements);
-        
-        
-        // elemnodes_local is the array{ManifoldDim,ManifoldDim-1,...,1,0}
-        for(Integer nn=0;nn<ManifoldDim+1 ;nn++)
-            elemnodes_local[nn]=nn;
-        std::reverse(std::begin(elemnodes_local), std::end(elemnodes_local));
-        
-        // loop on all the elements
-        for(Integer ee=0;ee<mesh.n_elements();ee++)
-        {
-            // if(!mesh.is_active(ee)) continue;
-            auto &e = mesh.elem(ee);
-      
-            auto &adj = mesh.dual_graph().adj(ee);
-            
-            for(Integer nn=0;nn<ManifoldDim+1;nn++)
-                elempoints_sort[nn]=mesh.points()[e.nodes[nn]];
-
-            elempoint_mean=elempoints_sort.Tmean();
-
-                // std::cout<<"--------- first  elempoint_mean"<<std::endl;
-                // for(Integer i=0;i<elempoint_mean.size();i++)
-                //   std::cout<<elempoint_mean[i]<<" "<<std::endl;
-                // std::cout<<std::endl;
-
-
-
-
-
-
-            for(Integer k = 0; k < n_sides(e); ++k) {
-                          
-              // std::cout<<"--------- adj----------- "<<adj[k]<<std::endl;
-                // we use side and not side_sorted because we need normals
-                e.side(k, simplex_side);
-                // const auto& side_nodes=simplex_side.nodes;
-
-                // for(Integer i = 0; i < side_nodes.size(); ++i)
-                //     facepoints[i]=mesh.points()[side_nodes[i]];
-                // facepoint_mean = facepoints.Tmean();
-
-                // auto diff=facepoint_mean-elempoint_mean;
-                
-                auto n = normal(simplex_side, mesh.points());
-                // outward_[ee][k]=Sign(dot(diff,n));
-                // e.side(k, simplex_side);
-                
-                if(adj[k]>ee && adj[k]!=INVALID_INDEX)
-                {
-                  normal_[ee][k]=-n;
-                  outward_[ee][k]=-1;
-                }
-                else
-                {
-                    normal_[ee][k]=n;
-                    outward_[ee][k]=1;
-                }
-
-
-                // if(outward_[ee][k]==-1)
-                // {
-                //     // if the normal ins inward, force it to be outward
-                //     normal_[ee][k]=-n;
-                //     // outward_[ee][k]=1;
-                // }
-                // else
-                // {
-                //     normal_[ee][k]=n;
-                // }
-                // std::cout<<"nodes=== "<<std::endl;
-
-                // for(Integer i = 0; i < side_nodes.size(); ++i)
-                   // std::cout<<mesh.points()[side_nodes[i]]<<std::endl;
-                // std::cout<<"--------- n----------- "<<std::endl;
-                // std::cout<< n<<std::endl;
-                // std::cout<<"--------- normal_[ee][k]----------- "<<std::endl;
-                // std::cout<< normal_[ee][k] <<std::endl;
-                // std::cout<<"--------- facepoint_mean----------- "<<std::endl;
-                // std::cout<< facepoint_mean <<std::endl;
-
-                // std::cout<<"--------- diff----------- "<<std::endl;
-                // std::cout<< diff <<std::endl;     
-                // std::cout<<"--------- dot(diff,n) ----------- "<<std::endl;
-                // std::cout<<dot(diff,n) <<std::endl;
-                // std::cout<<"--------- sign----------- "<<std::endl;
-                // std::cout<< outward_[ee][k] <<std::endl;              
-            }
-
-
-
-
-
-
-            // Elem elem=mesh.elem(ee);
-            // elemnodes_global=elem.nodes;
-            
-            // for(Integer mm=0;mm<points.size();mm++)
-            //     points[mm]=mesh.point(elemnodes_global[mm]);
-
-
-
-
-            // // std::cout<<"--------- first elempoint_mean "<<elempoint_mean<<std::endl;
-            // // loop on all the faces of the simplex
-            // // for Simplex={0,1,2,3}, the order is: 0-1-2, 0-1-3, 0-2-3, 1-2-3
-            // for(Integer mm=0;mm<ManifoldDim+1;mm++)
-            // {
-
-            //     // facenodes_local is a std::array containing the local nodes of the face mm
-            //     Combinations<ManifoldDim + 1,ManifoldDim>::generate(mm,facenodes_carray);
-
-            //     std::copy(std::begin(facenodes_carray), std::end(facenodes_carray), std::begin(facenodes_local));
-
-            //     std::cout<<"facenodes_carray"<<std::endl;
-            //       std::cout<<facenodes_carray<<std::endl;
-            //     std::cout<<std::endl;
-
-
-            //     std::cout<<"facenodes_local"<<std::endl;
-            //     for(Integer i=0;i<facenodes_local.size();i++)
-            //       std::cout<<facenodes_local[i]<<" "<<std::endl;
-            //     std::cout<<std::endl;
-
-
-            //     // we reorder the local nodes based on the sorting order of the corresponding global nodes
-            //     facenodes_global=sub_array(elemnodes_global,facenodes_local);
-            //     facenodes_global_sort=argsort(facenodes_global);
-            //     facenodes_local_sort=sort_by_index(facenodes_local,facenodes_global_sort);
-
-            //     // in elemnodes_local_sort we have facenodes_local_sort and the remaining node, elemnodes_local[mm]
-            //     for(Integer nn=0;nn<ManifoldDim;nn++)
-            //         elemnodes_local_sort[nn]=facenodes_local_sort[nn];
-                
-            //     elemnodes_local_sort[ManifoldDim]=elemnodes_local[mm];
-                
-            //     for(Integer nn=0;nn<ManifoldDim+1;nn++)
-            //         elempoints_sort[nn]=points[elemnodes_local_sort[nn]];
-                
-            //     // we create the face midpoint, the element midpoint and their difference
-            //     for(Integer nn=0;nn<ManifoldDim;nn++)
-            //         facepoints[nn]=points[facenodes_local[nn]];
-
-
-            //     std::cout<<"facenodes_global"<<std::endl;
-            //     for(Integer i=0;i<facenodes_global.size();i++)
-            //       std::cout<<facenodes_global[i]<<" "<<std::endl;
-            //     std::cout<<std::endl;
-
-
-
-            //     std::cout<<"facenodes_global_sort"<<std::endl;
-            //     for(Integer i=0;i<facenodes_global_sort.size();i++)
-            //       std::cout<<facenodes_global_sort[i]<<" "<<std::endl;
-            //     std::cout<<std::endl;
-
-
-            //     std::cout<<"facenodes_local_sort"<<std::endl;
-            //     for(Integer i=0;i<facenodes_local_sort.size();i++)
-            //       std::cout<<facenodes_local_sort[i]<<" "<<std::endl;
-            //     std::cout<<std::endl;
-
-
-
-            //     std::cout<<"elemnodes_local_sort"<<std::endl;
-            //     for(Integer i=0;i<elemnodes_local_sort.size();i++)
-            //       std::cout<<elemnodes_local_sort[i]<<" "<<std::endl;
-            //     std::cout<<std::endl;
-
-            //     std::cout<<"elempoints_sort"<<std::endl;
-            //     for(Integer i=0;i<elempoints_sort.size();i++)
-            //       std::cout<<elempoints_sort[i]<<" "<<std::endl;
-            //     std::cout<<std::endl;
-
-
-            //     std::cout<<"facepoints"<<std::endl;
-            //     for(Integer i=0;i<facepoints.size();i++)
-            //       std::cout<<facepoints[i]<<" "<<std::endl;
-            //     std::cout<<std::endl;
-
-
-
-            //     facepoint_mean = facepoints.Tmean();
-            //     elempoint_mean=elempoints_sort.Tmean();
-            //     auto diff=facepoint_mean-elempoint_mean;
-                
-            //     auto n = normal(simplex_elem, elempoints_sort);
-            //     outward_[ee][mm]=Sign(dot(diff,n));
-
-
-            //     std::cout<<"facepoint_mean"<<std::endl;
-            //     for(Integer i=0;i<facepoint_mean.size();i++)
-            //       std::cout<<facepoint_mean[i]<<" "<<std::endl;
-            //     std::cout<<std::endl;
-
-
-            //     std::cout<<"elempoint_mean"<<std::endl;
-            //     for(Integer i=0;i<elempoint_mean.size();i++)
-            //       std::cout<<elempoint_mean[i]<<" "<<std::endl;
-            //     std::cout<<std::endl;
-
-            //     std::cout<<"diff"<<std::endl;
-            //     for(Integer i=0;i<diff.size();i++)
-            //       std::cout<<diff[i]<<" "<<std::endl;
-            //     std::cout<<std::endl;
-
-            //      std::cout<<"n"<<std::endl;
-            //     for(Integer i=0;i<n.size();i++)
-            //       std::cout<<n[i]<<" "<<std::endl;
-            //     std::cout<<std::endl;
-                
-
-            //     std::cout<<"outward_[ee][mm]"<<std::endl;
-            //     std::cout<<outward_[ee][mm]<<std::endl; 
-            //     // save the normal and if its outward or inward
-            //     // if the face is on the boundary, then it must be outward
-            //     if(elem.side_tags[mm]>=0 && outward_[ee][mm]==-1)
-            //     {
-            //         // if the normal ins inward, force it to be outward
-            //         normal_[ee][mm]=-n;
-            //         outward_[ee][mm]=1;
-            //     }
-            //     else
-            //     {
-            //         normal_[ee][mm]=n;
-            //     }
-            // }
-        }
-    }
-    
-    SignedNormal(){}
-    
-    template< typename MeshT>
-    SignedNormal(MeshT& mesh)
-    {init(mesh);}
-    
-    template< typename MeshT>
-    void print(const MeshT& mesh)
-    {
-        using Elem=typename MeshT::Elem;
-        Vector<Vector<Real,Dim>, ManifoldDim+1> elempoints_sort;
-        std::array<Integer,ManifoldDim+1> nodes;
-        std::vector<Vector<Real,Dim>> points;
-        Integer facenodes_carray[ManifoldDim];
-        std::array< Integer, ManifoldDim> facenodes_local;
-        
-        for(Integer ee=0;ee<normal_.size();ee++)
-        {
-            // std::cout<<std::endl<<"ELEMENT ID == "<<ee<<" WITH NODES"<<std::endl;
-            Elem elem=mesh.elem(ee);
-            nodes=elem.nodes;
-            // for(Integer mm=0;mm<ManifoldDim+1;mm++)
-            //     std::cout<< nodes[mm] <<" ";
-            // for(Integer mm=0;mm<ManifoldDim+1;mm++)
-            //     std::cout<< mesh.points()[nodes[mm]] <<" ";
-            // std::cout<<std::endl;
-            
-            for(Integer mm=0;mm<ManifoldDim+1;mm++)
-            {
-                Combinations<ManifoldDim + 1,ManifoldDim>::generate(mm,facenodes_carray);
-                std::copy(std::begin(facenodes_carray), std::end(facenodes_carray), std::begin(facenodes_local));
-                // std::cout<<"facenodes_local== "<<std::endl;
-                // for(Integer ii=0;ii<ManifoldDim;ii++)
-                //     std::cout<<facenodes_local[ii]<<" ";
-                // std::cout<<"normal== ";
-                // normal_[ee][mm].describe(std::cout);
-                // std::cout<<"outward/inward(+1/-1)== "<<outward_[ee][mm]<<std::endl;
-            }
-        }
-    }
-    
-    
-};
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -930,6 +506,11 @@ constexpr Integer trace_surf_n_dofs()
       if(Space::entity[ii]<=Elem::ManifoldDim)
        n_dofs+=Space::dofs_per_entity[ii]* binomial_coefficient(Elem::ManifoldDim,Space::entity[ii]+1);
    }
+   // this happens for L2 functions (constant on elements, but discontinuous)
+   // we still choose to have 1 dof trace
+   if(n_dofs==0)
+    n_dofs=1;
+
    return n_dofs*Space::NComponents;
  }
 
@@ -1270,6 +851,20 @@ class LinearSimplex
  
 };
 // static constexpr Vector<Integer,3> LinearTetrahedronOrdering{0,1,2,3};
+
+template<Integer Dim,Integer Ndofs>
+constexpr auto vecmat2mat(const Vector<Matrix<Real,Dim,1>,Ndofs>& vec)
+{
+ Matrix<Real,Ndofs,Dim> mat;
+ for(Integer i=0;i<Ndofs;i++)
+ {
+  for(Integer j=0;j<Dim;j++)
+    mat(i,j)=vec[i](j,0);
+ }
+ return mat;
+}
+
+
 
 static constexpr Vector<Matrix<Real,2,1>,6> QuadraticTrianglePoints({0.0,0.0},
                                                                     {1.0,0.0},
@@ -2463,6 +2058,22 @@ public:
  using Output=Vector<Matrix<Real, ManifoldDim, 1>,Ndofs>;
 
   // using Output=Vector<Matrix<Real, ManifoldDim, 1>,ManifoldDim+1>;
+
+ template<Integer N>
+ constexpr inline static std::enable_if_t<(N==0),Real> 
+ reference_simplex_volume()
+ {
+ return 1.0;
+ }
+
+
+ template<Integer N>
+ constexpr inline static std::enable_if_t<(N>0),Real> 
+ reference_simplex_volume()
+ {
+ return (1.0/Real(N)) * reference_simplex_volume<N-1>();
+ }
+
  constexpr inline static void 
  apply(const Vector<Real,ManifoldDim>& point, Output & func)
 {
@@ -2471,16 +2082,18 @@ public:
     // Output func2{{xi,eta-1},{xi-1,eta},{xi,eta}};
     // func=func2;
     // loop on shape functions
+    Real one_frac_vol_surface=1.0/reference_simplex_volume<ManifoldDim-1>();
+
     for(Integer i=0;i<ManifoldDim+1;i++)
         // loop on dimension
         for(Integer j=0;j<ManifoldDim;j++)
-           func[i](j,0)=point[j];
+           func[i](j,0)=point[j] * one_frac_vol_surface;
 
     for(Integer i=0;i<ManifoldDim;i++)
         // loop on dimension
         for(Integer j=0;j<ManifoldDim;j++)
             if(j==ManifoldDim-1-i)
-               func[i](j,0)-=1; 
+               func[i](j,0)-=(1 * one_frac_vol_surface); 
 
     // func=SimplexRT0Identity(point);
 }
@@ -3337,25 +2950,11 @@ public:
     {
         const auto& map=(*map_ptr);
         const auto& mapping=map();
-        // decltype(func_values_) ok1(1);
-        // SingleType ok2(2);
-        // std::cout<<"NComponents="<<NComponents<<std::endl;
-        // std::cout<<"NQPoints="<<NQPoints<<std::endl;
-        
-        // std::cout<<"func_values_[0][0]"<<std::endl;
-        // std::cout<<func_values_[0][0]<<std::endl;
-        // std::cout<<"func_values_"<<std::endl;
-        
-        // std::cout<<func_values_<<std::endl;
-        // std::cout<<"FEFamily="<<FEFamily<<std::endl;
-        // std::cout<<"Order="<<Order<<std::endl;
-        // std::cout<<"reference_values"<<std::endl;
-        // std::cout<<reference_values<<std::endl;
+
         for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
         {
             for(Integer n_comp=0;n_comp<NComponents;n_comp++)
             {
-                
                 n_tot_=n_dof * NComponents +  n_comp ;
                 n_=n_comp*ShapeFunctionDim1;
                 for(Integer qp=0;qp<NQPoints;qp++)
@@ -3370,30 +2969,18 @@ public:
                 
             }
         }
-        
-        // std::cout<<"ShapeFunction non trace end"<<std::endl;
     }
     
     void init(const Array<Real,Ndofs> &alpha)
     {
-        // std::cout<<"init RT elements (coeffs)"<<std::endl;
-        // std::cout<<alpha<<std::endl;
-        
+
+        reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(QuadratureRule::qp_points);
         const auto& map=(*map_ptr);
         const auto& mapping=map();
-        // std::cout<<"FEFamily="<<FEFamily<<std::endl;
-        // std::cout<<"Order="<<Order<<std::endl;
-        // std::cout<<"mapping"<<std::endl;
-        // std::cout<<mapping<<std::endl;
-        // std::cout<<"alpha[n_dof]"<<std::endl;
-        // std::cout<<alpha<<std::endl;
-        // std::cout<<"reference_values"<<std::endl;
-        // std::cout<<reference_values<<std::endl;
         for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
         {
             for(Integer n_comp=0;n_comp<NComponents;n_comp++)
             {
-                
                 n_tot_=n_dof * NComponents +  n_comp ;
                 n_=n_comp;
                 for(Integer qp=0;qp<NQPoints;qp++)
@@ -3410,10 +2997,74 @@ public:
                 
             }
         }
-        // std::cout<<"init end"<<std::endl;
         
     };
-    
+
+
+
+    // initialization of shape functions by choosing dynamically the reference quadrature points
+    // the order of the quadrature rule (and so the number of points) is chosen at compile-time
+    void init(const qp_points_type& reference_qp_points)
+    {
+        const auto& map=(*map_ptr);
+        const auto& mapping=map();
+        dynamic_reference_values_=reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(reference_qp_points);
+        // std::cout<<"dynamic_reference_values_"<<std::endl;
+        // std::cout<<dynamic_reference_values_<<std::endl;
+        // std::cout<<"mapping"<<std::endl;
+        // std::cout<<mapping<<std::endl;
+        for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+        {
+            for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+            {
+                n_tot_=n_dof * NComponents +  n_comp ;
+                n_=n_comp*ShapeFunctionDim1;
+                for(Integer qp=0;qp<NQPoints;qp++)
+                {
+                    func_values_[n_tot_][qp].zero();
+                    // func_tmp_=  mapping * weighted_reference_values[n_dof][qp];
+                    func_tmp_=  mapping * dynamic_reference_values_[n_dof][qp];
+                    
+                    // se ncompontensts >1, allora assegni alla riga
+                    assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
+                }
+            }
+        }
+    }
+
+
+    // initialization of shape functions by choosing dynamically the reference quadrature points
+    // the order of the quadrature rule (and so the number of points) is chosen at compile-time
+    void init(const Array<Real,Ndofs> &alpha, const qp_points_type& reference_qp_points)
+    {
+        const auto& map=(*map_ptr);
+        const auto& mapping=map();
+        dynamic_reference_values_=reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(reference_qp_points);
+        // std::cout<<"dynamic_reference_values_"<<std::endl;
+        // std::cout<<dynamic_reference_values_<<std::endl;
+        // std::cout<<"mapping"<<std::endl;
+        // std::cout<<mapping<<std::endl;
+                
+        for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+        {
+            for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+            {
+                n_tot_=n_dof * NComponents +  n_comp ;
+                n_=n_comp*ShapeFunctionDim1;
+                for(Integer qp=0;qp<NQPoints;qp++)
+                {
+                    func_values_[n_tot_][qp].zero();
+                    // func_tmp_=  mapping * weighted_reference_values[n_dof][qp];
+                    func_tmp_=alpha[n_dof] * mapping * dynamic_reference_values_[n_dof][qp];
+                    
+                    // se ncompontensts >1, allora assegni alla riga
+                    assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
+                }
+            }
+        }
+    }
+
+
     constexpr void init_map(const Map& map){map_ptr=std::make_shared<Map>(map);}
     
     ShapeFunction(const Map& map):
@@ -3434,6 +3085,7 @@ private:
     VectorSingleType func_;
     Point qp_point_;
     FQPValues<SingleType,NQPoints,Ndofs> component_func_values_;
+    FQPValues<SingleType,NQPoints,Ndofs> dynamic_reference_values_;
     type func_values_;
     std::shared_ptr<Map> map_ptr;
     Integer n_tot_;
@@ -3516,7 +3168,8 @@ public:
     static constexpr FQPValues<SingleType,NQPoints,Ndofs>
     reference_values{reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(QuadratureRule::qp_points)};
     
-    using trace_type=typename decltype(trace)::value_type;
+    using trace_type_tmp=typename decltype(trace)::value_type;
+    using trace_type=ArrayChangeType<Real,trace_type_tmp>;
     // static constexpr FQPValues<SingleType,NQPoints,Ndofs>
     // weighted_reference_values{  weighted_reference_shape_function_init(reference_values,QuadratureRule::qp_sqrt_abs_weights)};
     
@@ -3573,10 +3226,14 @@ public:
         //face=0
         // const Integer face=0;
         // auto alpha=subarray(beta,trace[face]);
+        // std::cout<<"face"<<face<<std::endl;
+        //   std::cout<<"beta"<<beta<<std::endl;
+        //   std::cout<<"trace[face]"<<trace[face]<<std::endl;
         subarray(alpha_,beta,trace[face]);
         
         // std::cout<<"init RT elements (coeffs)"<<std::endl;
         // std::cout<<beta<<std::endl;
+        //  std::cout<<alpha_<<std::endl;
         
         const auto& map=(*map_ptr);
         const auto& mapping=map();

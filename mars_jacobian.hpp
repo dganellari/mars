@@ -58,12 +58,12 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
     level_=level;
     init(id);
    }
-  constexpr void init_boundary(const Integer side_id)
+  constexpr void init_boundary(const Integer side_id,const bool also_inside=false)
   {
     // init must be called before init the boundary
     side_id_=side_id;
     side_tag_=side_tags_[side_id];
-    if(side_tag_!=INVALID_INDEX)
+    if(side_tag_!=INVALID_INDEX || also_inside)
     {
      const auto& points=mesh_ptr_->points();
      elem_.side_sorted(side_id,side_);
@@ -94,7 +94,13 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
       //   std::cout<<side_points_[ii]<<std::endl;
       // jacobian(side_,points_,side_J_);
       affine_transformation(side_,points,side_J_,v0_);
+      // std::cout<<"init boundary"<<std::endl;
+      // for(Integer k = 0; k < side_.nodes.size(); ++k)
+      // std::cout<<side_.nodes[k]<<" "<<std::endl;
+      // std::cout<<std::endl;
 
+      // std::cout<<"side_J_"<<side_J_<<std::endl;
+      // std::cout<<"v0_"<<v0_<<std::endl;
       // for(Integer k = 0; k < points_.size(); ++k) 
       // std::cout<<"points_="<<points_[k]<<std::endl;
       // std::cout<<"side_J_="<<side_J_<<std::endl;
@@ -117,6 +123,9 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
     }
 
   }
+  constexpr inline void init_inv_jac() {J_inv_=inverse(J_);}
+
+  constexpr auto & inv_jac()const {return J_inv_;}
 
   constexpr auto & operator()()const {return J_;}
   
@@ -126,27 +135,127 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
 
   constexpr auto & v0()const {return v0_;}
 
+  inline auto & mesh_ptr()const {return mesh_ptr_;}
+
   // constexpr auto Matrix<Real,Dim,1>& transform_point(const Matrix<Real,Dim,1>& Point)const 
   // {
 
   //   return v0_;
   // }
 
-  constexpr void transform_point(Vector<Real,Dim>& mat_transformed_point_, const Matrix<Real,Dim,1>& Point) const
+  constexpr void transform_point(Vector<Real,Dim>& vec_transformed_point, const Matrix<Real,Dim,1>& Point) const
   {
     for(Integer i=0; i<Dim;i++)
      {
-       mat_transformed_point_[i]=v0_[i];
+       vec_transformed_point[i]=v0_[i];
        for(Integer j=0;j<J_.cols();j++)
-        mat_transformed_point_[i]+=J_(i,j)*Point[j];
+        vec_transformed_point[i]+=J_(i,j)*Point[j];
      }  
 
     // return mat_transformed_point_;
   }
 
+  constexpr void transform_point(Matrix<Real,1,Dim>& mat_transformed_point, const Matrix<Real,1,Dim>& Point) const
+  {
+    for(Integer i=0; i<Dim;i++)
+     {
+       mat_transformed_point(0,i)=v0_[i];
+       for(Integer j=0;j<J_.cols();j++)
+        mat_transformed_point(0,i)+=J_(i,j)*Point(0,j);
+     }  
+  }
 
 
-   const auto& level()   const {return level_;}
+  constexpr void transform_point(Matrix<Real,Dim,1>& mat_transformed_point, const Matrix<Real,1,Dim>& Point) const
+  {
+    // std::cout<<"v0="<<v0_<<std::endl;
+    // std::cout<<"J_="<<J_<<std::endl;
+
+    for(Integer i=0; i<Dim;i++)
+     {
+       mat_transformed_point[i]=v0_[i];
+       for(Integer j=0;j<J_.cols();j++)
+        mat_transformed_point[i]+=J_(i,j)*Point(0,j);
+     }  
+  }
+
+
+  template<Integer DimAux>
+  constexpr void transform_point(Matrix<Real,DimAux,Dim>& mat_transformed_point, const Matrix<Real,DimAux,Dim>& Point) const
+  {
+    
+    // std::cout<<"transform_point" <<std::endl;
+
+    // std::cout<<"J_" <<std::endl;
+    // std::cout<<J_ <<std::endl;
+
+    // std::cout<<"v0_" <<std::endl;
+    // std::cout<<v0_ <<std::endl;
+
+    // std::cout<<"Point" <<std::endl;
+    // std::cout<<Point <<std::endl;
+
+    for(Integer s=0;s<DimAux;s++)
+    {
+    for(Integer i=0; i<J_.rows();i++)
+     {
+       mat_transformed_point(s,i)=v0_[i];
+       for(Integer j=0;j<Dim;j++)
+        mat_transformed_point(s,i)+=J_(i,j)*Point(s,j);
+     }
+    }
+  
+  }
+
+  template<Integer DimAux,Integer DimFrom>
+  constexpr void side_transform_point(Matrix<Real,DimAux,Dim>& mat_transformed_point, const Matrix<Real,DimAux,DimFrom>& Point) const
+  {
+
+    // std::cout<<"side_J_"<<std::endl;
+    // std::cout<<side_J_<<std::endl;
+    // std::cout<<"Point"<<std::endl;
+    // std::cout<<Point<<std::endl;
+    for(Integer s=0;s<DimAux;s++)
+    {
+      // std::cout<<"s="<<s<<std::endl;
+    for(Integer i=0; i<Dim;i++)
+     {
+       mat_transformed_point(s,i)=v0_[i];
+       for(Integer j=0;j<side_J_.cols();j++)
+        mat_transformed_point(s,i)+=side_J_(i,j)*Point(s,j);
+     }
+    }
+  
+  }
+  
+  template<Integer Rows>
+  inline void points_to_reference_points(Matrix<Real,Rows,Dim>& ref,const Matrix<Real,Rows,Dim>& conf)const
+  {
+ 
+
+    std::cout<<"v0_"<<std::endl;
+    std::cout<<v0_<<std::endl;
+    std::cout<<"J_inv_"<<std::endl;
+    std::cout<<J_inv_<<std::endl;
+   for(Integer i=0;i<Rows;i++)
+    {
+      for(Integer k=0;k<Dim;k++)
+      { 
+        ref(i,k)=J_inv_(k,0)*(conf(i,0)-v0_[0]);
+        for(Integer j=1;j<Dim;j++)
+        {
+                ref(i,k)+=J_inv_(k,j)*(conf(i,j)-v0_[j]);
+        }
+
+      }
+
+
+    }
+  }
+
+
+
+  const auto& level()   const {return level_;}
 
 
   constexpr auto get_det()   const {return detJ_;}
@@ -193,10 +302,11 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
   Simplex<Dim, ManifoldDim> elem_;
   std::vector<Vector<Real,Dim>> points_;
   Matrix<Real, Dim, ManifoldDim> J_;
+  Matrix<Real, Dim, ManifoldDim> J_inv_;
   Real detJ_;
   Real volume_;
-  Matrix<Real,Dim,1> mat_transformed_point_;
-  Vector<Real,Dim> vec_transformed_point_;
+  // Matrix<Real,Dim,1> mat_transformed_point_;
+  // Vector<Real,Dim> vec_transformed_point_;
 
   
   Integer n_sides_;

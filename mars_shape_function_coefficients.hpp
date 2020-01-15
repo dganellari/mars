@@ -193,6 +193,9 @@ class ShapeFunctionCoefficientsCollection<GeneralForm<Form_>,GeneralForm<Forms_>
 public:
   using Form=MultipleAddition<typename GeneralForm<Form_>::Form,typename GeneralForm<Forms_>::Form...>;
   using FunctionSpace=typename GeneralForm<Form_>::FunctionSpace;
+  using MeshT=typename FunctionSpace::MeshT;
+  using Elem=typename FunctionSpace::Elem;
+  using NormalType= typename SignedNormal<Elem>::NormalType;
   using UniqueElementFunctionSpacesTupleType=typename FunctionSpace::UniqueElementFunctionSpacesTupleType;  
   using SpacesToUniqueFEFamily=typename FunctionSpace::SpacesToUniqueFEFamily;
   using GlobalTuple=ShapeFunctionGlobalCoefficientTupleType2<UniqueElementFEFamily2<UniqueElementFunctionSpacesTupleType>>;
@@ -200,46 +203,66 @@ public:
   static constexpr Integer Nglobal=TupleTypeSize<GlobalTuple>::value-1;
   static constexpr Integer Nlocal=TupleTypeSize<LocalTuple>::value-1;
 
+
+  ShapeFunctionCoefficientsCollection(MeshT& mesh):
+  mesh_(mesh)
+  {}
   // Initialize the global shape function coefficients tuple with the mesh
   // RT elements have different coefficients for different order, 
   // but all of them are based on the face "orientation" of the element
   // so we distinguihs between global coefficient and the local ones
-  template<Integer Dim, Integer ManifoldDim, typename T>
-  typename std::enable_if_t< IsSame<T,std::tuple<>>::value, void >
-  init_aux_aux(Mesh<Dim,ManifoldDim>& mesh, T& t)
-  {}
+  // template<Integer Dim, Integer ManifoldDim, typename T>
+  // typename std::enable_if_t< IsSame<T,std::tuple<>>::value, void >
+  // init_aux_aux(Mesh<Dim,ManifoldDim>& mesh, T& t)
+  // {}
 
-  template<Integer Dim, Integer ManifoldDim, typename T>
-  typename std::enable_if_t< IsDifferent<T,std::tuple<>>::value, void >
-  init_aux_aux(Mesh<Dim,ManifoldDim>& mesh, T& t)
-  {
-    t.init(mesh);
-
-  }
+  // template<Integer Dim, Integer ManifoldDim, typename T>
+  // typename std::enable_if_t< IsDifferent<T,std::tuple<>>::value, void >
+  // init_aux_aux(Mesh<Dim,ManifoldDim>& mesh, T& t)
+  // {
+  //   t.init(mesh);
+  // }
   
 
-  template<Integer M, Integer Dim,Integer ManifoldDim>
-  typename std::enable_if_t< (M>Nglobal), void >
-  init_aux(Mesh<Dim,ManifoldDim>& mesh)
-  {}
+  // template<Integer M=0, Integer Dim,Integer ManifoldDim>
+  // typename std::enable_if_t< (M>Nglobal), void >
+  // init_aux(Mesh<Dim,ManifoldDim>& mesh)
+  // {}
 
-  template<Integer M, Integer Dim,Integer ManifoldDim>
-  typename std::enable_if_t< (M<=Nglobal), void >
-  init_aux(Mesh<Dim,ManifoldDim>& mesh)
-  {
-    init_aux_aux(mesh,tuple_get<M>(global_tuple_));
-    init_aux<M+1>(mesh);
-  }
+  // template<Integer M=0, Integer Dim,Integer ManifoldDim>
+  // typename std::enable_if_t< (M<=Nglobal), void >
+  // init_aux(Mesh<Dim,ManifoldDim>& mesh)
+  // {
+  //   init_aux_aux(mesh,tuple_get<M>(global_tuple_));
+  //   init_aux<M+1>(mesh);
+  // }
 
 
-  template<Integer Dim,Integer ManifoldDim>
-  void init(Mesh<Dim,ManifoldDim>& mesh)
-  {
-   init_aux<0>(mesh);
-  }
+  // template<Integer Dim,Integer ManifoldDim>
+  // void init(Mesh<Dim,ManifoldDim>& mesh)
+  // {
+  //  init_aux(mesh);
+  // }
 
 
  
+  template<Integer M=0>
+  typename std::enable_if_t< (M>Nglobal), void >
+  init_aux()
+  {}
+
+  template<Integer M=0>
+  typename std::enable_if_t< (M<=Nglobal), void >
+  init_aux()
+  {
+    mesh_.init_signed_normal();
+    init_aux<M+1>();
+  }
+
+  void init()
+  {
+   init_aux();
+  }
 
   // Initialize the local shape function coefficients tuple with local informations (elem id)
   template<typename Elem,Integer FEFamily,Integer Order,typename S,typename T>
@@ -256,12 +279,12 @@ public:
   }
 
 
-  template<Integer M>
+  template<Integer M=0>
   typename std::enable_if_t< (M>Nlocal), void >
   init_aux(const Integer elem_id)
   {}
 
-  template<Integer M>
+  template<Integer M=0>
   typename std::enable_if_t< (M<=Nlocal), void >
   init_aux(const Integer elem_id)
   {
@@ -275,15 +298,18 @@ public:
     constexpr Integer Order=BaseFunctionSpace::Order;
     // std::cout<<"local, global=="<<M<<", "<<N<<std::endl;
     // std::cout<<"FEFamily=="<<FEFamily<<std::endl;
+    
 
-    init_aux_aux<Elem,FEFamily,Order>(elem_id,tuple_get<N>(global_tuple_),tuple_get<M>(local_tuple_));
+    auto& signed_normal=mesh_.signed_normal();
+    // init_aux_aux<Elem,FEFamily,Order>(elem_id,tuple_get<N>(global_tuple_),tuple_get<M>(local_tuple_));
+    init_aux_aux<Elem,FEFamily,Order>(elem_id,signed_normal,tuple_get<M>(local_tuple_));
     init_aux<M+1>(elem_id);
 
   }
 
   void init(const Integer elem_id)
   {
-   init_aux<0>(elem_id);
+   init_aux(elem_id);
 
    // const auto& stampa=tuple_get<0>(global_tuple_).sign();
    //  std::cout<<".  STAMPA "<<std::endl;
@@ -309,12 +335,14 @@ public:
 private:
     GlobalTuple global_tuple_;
     LocalTuple local_tuple_;
+    NormalType normals_;
+    MeshT& mesh_;
 };
 
 
-template<typename ConstFormReference,typename...ConstFormReferences>
-constexpr auto shape_function_coefficients(const ConstFormReference& form,const ConstFormReferences&...forms)
-{return ShapeFunctionCoefficientsCollection<ConstFormReference,ConstFormReferences...>() ; }
+template<typename MeshT,typename ConstFormReference,typename...ConstFormReferences>
+constexpr auto shape_function_coefficients(MeshT& mesh,const ConstFormReference& form,const ConstFormReferences&...forms)
+{return ShapeFunctionCoefficientsCollection<ConstFormReference,ConstFormReferences...>(mesh) ; }
 
 
 

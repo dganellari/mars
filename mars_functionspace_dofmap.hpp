@@ -80,7 +80,7 @@ FunctionSpaceDofsPerSubEntityElem
      static constexpr std::size_t dofs_per_entity=FunctionSpace::dofs_per_entity[N];
      static constexpr std::size_t dofs_per_elem=n_components * 
                                                 dofs_per_entity   * 
-                                                ElemEntityCombinations<typename ElemToSubElemHelper<Elem,SubElemDim>::type,entity_dim>::value;
+                                                ElemEntityCombinations<typename ChangeElemDim<Elem,SubElemDim>::type,entity_dim>::value;
      
      static constexpr std::size_t value=FunctionSpaceDofsPerSubEntityElem<FunctionSpace,SubElemDim,N-1>::value+dofs_per_elem;
 };
@@ -98,7 +98,7 @@ FunctionSpaceDofsPerSubEntityElem<FunctionSpace,SubElemDim,0>
      static constexpr std::size_t dofs_per_entity=FunctionSpace::dofs_per_entity[N];
      static constexpr std::size_t value=n_components * 
                                         dofs_per_entity *
-                                        ElemEntityCombinations<typename ElemToSubElemHelper<Elem,SubElemDim>::type,entity_dim>::value;
+                                        ElemEntityCombinations<typename ChangeElemDim<Elem,SubElemDim>::type,entity_dim>::value;
 };
 
 
@@ -4169,8 +4169,8 @@ void dofmap_fespace5(
    // TupleOfTupleMapConstructor<bool,Elem,BaseFunctionSpace,BaseFunctionSpaces...> tuple_parent_map;
    // TupleOfTupleMapConstructor<std::shared_ptr<Integer>,Elem,BaseFunctionSpace,BaseFunctionSpaces...> tuple_map_dofs;
 
-    std::cout<<"levels="<<n_levels<<std::endl;
-    std::cout<<"PRE LEVEL N DOFS ARRAY ="<<std::endl;
+    // std::cout<<"levels="<<n_levels<<std::endl;
+    // std::cout<<"PRE LEVEL N DOFS ARRAY ="<<std::endl;
     // loop on the spaces
     // for(std::size_t i=0; i<dofsdm_.n_dofs().size() ;i++)
     //   { dofsdm_.level_n_dofs_array()[i].resize(n_levels);

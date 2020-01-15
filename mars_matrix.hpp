@@ -1580,7 +1580,15 @@ namespace mars {
 	};
 
 
-
+	  template<Integer Rows,Integer Cols>
+	  constexpr auto zero_mat()
+	  {
+	   Matrix<Real,Rows,Cols> mat;
+	   for(Integer i=0;i<Rows;i++)
+	    for(Integer j=0;j<Cols;j++)
+	        mat(i,j)=0;
+	  return mat;
+	  }
 
 
 }

@@ -34,13 +34,13 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
 
  template<typename OperatorType, typename Shapes>
  std::enable_if_t<IsSame<OperatorType,TraceOperator>::value,void> compute
- (value_type& value, type&eval,const FiniteElem<Elem>&J, const Shapes& shapes )
+ (value_type& value, type&eval,const FiniteElem<Elem>&FE, const Shapes& shapes )
  {
   using type1=typename Shapes::type; 
   using type2=typename Shapes::subtype;
   using type3=typename Shapes::subtype::subtype; 
-  const Integer face=J.side_id();
-   eval.local_dofs_update(J);
+  const Integer face=FE.side_id();
+   eval.local_dofs_update(FE);
    const auto& all_local_dofs=eval.local_dofs();
    // auto local_dofs=subarray(all_local_dofs,trace[face]);
    subarray(local_dofs_,all_local_dofs,trace[face]);
@@ -74,7 +74,7 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
 
  template<typename OperatorType, typename Shapes>
  std::enable_if_t<IsDifferent<OperatorType,TraceOperator>::value,void> compute
- (value_type& value, type&eval,const FiniteElem<Elem>&J, const Shapes& shapes )
+ (value_type& value, type&eval,const FiniteElem<Elem>&FE, const Shapes& shapes )
  {
   using type1=typename Shapes::type; 
   using type2=typename Shapes::subtype;
@@ -82,7 +82,7 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
   // std::cout<< " shapes"<<shapes<<std::endl;
   // std::cout<< " value"<<value<<std::endl;
   // std::cout<< " eval function compute 1"<<std::endl;
-   eval.local_dofs_update(J);
+   eval.local_dofs_update(FE);
   // std::cout<< " eval function compute 2"<<std::endl;
    const auto& local_dofs=eval.local_dofs();
   // std::cout<< " eval function compute 3"<<std::endl;
@@ -113,7 +113,7 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
  // template<typename...Forms, typename FiniteElem,typename...Inputs>
  // constexpr void apply(value_type& value,const FiniteElem& J, const typename ShapeFunctions2<Forms...>::TupleOfTupleShapeFunction& shape_functions,const Inputs&...inputs)
  template<typename...Args, typename FiniteElem,typename...Inputs>
- constexpr void apply(value_type& value,const FiniteElem& J, const std::tuple<Args...>& shape_functions,const Inputs&...inputs)
+ constexpr void apply(value_type& value,const FiniteElem& FE, const std::tuple<Args...>& shape_functions,const Inputs&...inputs)
 
  {
   using TupleOfTupleShapeFunction=std::tuple<Args...>;
@@ -130,7 +130,7 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
   // std::cout<< " eval function 3"<<std::endl;
   const auto& shapes=tuple_get<M>(tuple).eval();
   // std::cout<< " eval function 4"<<std::endl;
-  compute<Operator>(value,*eval_ptr_,J,shapes);
+  compute<Operator>(value,*eval_ptr_,FE,shapes);
   // std::cout<< " eval function 5"<<std::endl;
   // std::cout<<"Evaluation<Expression<Function "<<value<<std::endl;
 

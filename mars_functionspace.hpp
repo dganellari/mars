@@ -184,15 +184,15 @@ public:
    inline void  init_dofmap(const Integer n_elements){init_dofmap_aux(n_elements);};
 
 
-   // template<Integer N>
-   // void dofmap_get(GetType<ElemDofMap,N>& elemdm, const Integer elem_id)const
-   // {
-   //  const auto& dm=tuple_get<N>(dofmap_)->operator[](elem_id);
-   //  const auto& offset=cumulative_dofs_array_[N];    
+   template<Integer N>
+   void dofmap_get(GetType<ElemDofMap,N>& elemdm, const Integer elem_id)const
+   {
+    const auto& dm=tuple_get<N>(dofmap_)->operator[](elem_id);
+    const auto& offset=cumulative_dofs_array_[N];    
 
-   //  for(std::size_t i=0;i<elemdm.size();i++)
-   //      elemdm[i]=dm[i]+offset;
-   //  }
+    for(std::size_t i=0;i<elemdm.size();i++)
+        elemdm[i]=dm[i]+offset;
+    }
 
    template<Integer N>
    void dofmap_get(GetType<ElemDofMap,N>& elemdm, const Integer elem_id, const Integer level)const
@@ -427,16 +427,16 @@ public:
    inline void  init_dofmap(const Integer n_elements){init_dofmap_aux(n_elements);};
 
 
-   // template<Integer N>
-   // void dofmap_get(GetType<ElemDofMap,N>& elemdm, const Integer elem_id)const
-   // {
-   //  const auto& dm=tuple_get<N>(dofmap_)->operator[](elem_id);
-   //  const auto& offset=cumulative_dofs_array_[N];
+   template<Integer N>
+   void dofmap_get(GetType<ElemDofMap,N>& elemdm, const Integer elem_id)const
+   {
+    const auto& dm=tuple_get<N>(dofmap_)->operator[](elem_id);
+    const auto& offset=cumulative_dofs_array_[N];
     
 
-   //  for(std::size_t i=0;i<elemdm.size();i++)
-   //      elemdm[i]=dm[i]+offset;
-   //  }
+    for(std::size_t i=0;i<elemdm.size();i++)
+        elemdm[i]=dm[i]+offset;
+    }
 
 
    template<Integer N>
@@ -445,6 +445,18 @@ public:
     const auto& dm=tuple_get<N>(dofmap_)->operator[](elem_id);
     const auto& offset=level_cumulative_dofs_array_[N][level];
     
+    // std::cout<<"dofmap_get,   offset="<<offset<<std::endl;
+    // std::cout<<"dofmap_get,   level="<<level<<std::endl;
+    // std::cout<<"dofmap_get,   N="<<N<<std::endl;
+
+    // for(Integer i=0;i<level_cumulative_dofs_array_.size();i++)
+    // {
+    //   for(Integer j=0;j<level_cumulative_dofs_array_[i].size();j++)
+    //   {
+    //     std::cout<<level_cumulative_dofs_array_[i][j]<<" ";
+    //   }
+    // std::cout<<std::endl;
+    // }
 
     for(std::size_t i=0;i<elemdm.size();i++)
         elemdm[i]=dm[i]+offset;

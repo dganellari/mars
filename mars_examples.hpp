@@ -996,193 +996,193 @@
 				constexpr const auto trace11=TraceDofs<Space11>::dofs();
 
 
-	  // constexpr auto automa=reference_trace_shape_function_init<Space,IdentityOperator,single_type>(0, GaussPoints<Space::Elem,3>::qp_points_type);
-				std::cout<<"Simplex<2,2>,LagrangeFE,Order=1,Continuity=1,Ncomponents=1>"<<std::endl;
+// constexpr auto automa=reference_trace_shape_function_init<Space,IdentityOperator,single_type>(0, GaussPoints<Space::Elem,3>::qp_points_type);
+std::cout<<"Simplex<2,2>,LagrangeFE,Order=1,Continuity=1,Ncomponents=1>"<<std::endl;
 
-				for(int ii=0;ii<trace2.size();ii++)
-					{for(int jj=0;jj<trace2[ii].size();jj++)
-						std::cout<<trace2[ii][jj]<<std::endl;
-						std::cout<<std::endl;
-					} 
-					std::cout<<"Simplex<2,2>,LagrangeFE,Order=2,Continuity=1,Ncomponents=1"<<std::endl;
+for(int ii=0;ii<trace2.size();ii++)
+{for(int jj=0;jj<trace2[ii].size();jj++)
+std::cout<<trace2[ii][jj]<<std::endl;
+std::cout<<std::endl;
+} 
+std::cout<<"Simplex<2,2>,LagrangeFE,Order=2,Continuity=1,Ncomponents=1"<<std::endl;
 
-					for(int ii=0;ii<trace3.size();ii++)
-						{for(int jj=0;jj<trace3[ii].size();jj++)
-							std::cout<<trace3[ii][jj]<<std::endl;
-							std::cout<<std::endl;
-						} 
-						std::cout<<"Simplex<2,2>,LagrangeFE,Order=3,Continuity=1,Ncomponents=1"<<std::endl;
-
-
-						for(int ii=0;ii<trace4.size();ii++)
-							{for(int jj=0;jj<trace4[ii].size();jj++)
-								std::cout<<trace4[ii][jj]<<std::endl;
-								std::cout<<std::endl;
-							} 
-
-							std::cout<<"Simplex<2,2>,RaviartThomasFE,Order=0,Continuity=1,Ncomponents=1"<<std::endl;
-
-							for(int ii=0;ii<trace5.size();ii++)
-								{for(int jj=0;jj<trace5[ii].size();jj++)
-									std::cout<<trace5[ii][jj]<<std::endl;
-									std::cout<<std::endl;
-								} 
-
-								std::cout<<"Simplex<2,2>,RaviartThomasFE,Order=1,Continuity=1,Ncomponents=1"<<std::endl;
-
-								for(int ii=0;ii<trace6.size();ii++)
-									{for(int jj=0;jj<trace6[ii].size();jj++)
-										std::cout<<trace6[ii][jj]<<std::endl;
-										std::cout<<std::endl;
-									} 
-
-									std::cout<<"Simplex<2,2>,LagrangeFE,Order=1,Continuity=1,Ncomponents=2>"<<std::endl;
-
-									for(int ii=0;ii<trace7.size();ii++)
-										{for(int jj=0;jj<trace7[ii].size();jj++)
-											std::cout<<trace7[ii][jj]<<std::endl;
-											std::cout<<std::endl;
-										} 
-										std::cout<<"Simplex<2,2>,LagrangeFE,Order=2,Continuity=1,Ncomponents=2>"<<std::endl;
-
-										for(int ii=0;ii<trace8.size();ii++)
-											{for(int jj=0;jj<trace8[ii].size();jj++)
-												std::cout<<trace8[ii][jj]<<std::endl;
-												std::cout<<std::endl;
-											} 
-											std::cout<<"Simplex<2,2>,LagrangeFE,Order=3,Continuity=1,Ncomponents=2>"<<std::endl;
-
-											for(int ii=0;ii<trace9.size();ii++)
-												{for(int jj=0;jj<trace9[ii].size();jj++)
-													std::cout<<trace9[ii][jj]<<std::endl;
-													std::cout<<std::endl;
-												} 
+for(int ii=0;ii<trace3.size();ii++)
+{for(int jj=0;jj<trace3[ii].size();jj++)
+std::cout<<trace3[ii][jj]<<std::endl;
+std::cout<<std::endl;
+} 
+std::cout<<"Simplex<2,2>,LagrangeFE,Order=3,Continuity=1,Ncomponents=1"<<std::endl;
 
 
-												std::cout<<"Simplex<2,2>,RaviartThomasFE,Order=0,Continuity=1,Ncomponents=2>"<<std::endl;
+for(int ii=0;ii<trace4.size();ii++)
+{for(int jj=0;jj<trace4[ii].size();jj++)
+std::cout<<trace4[ii][jj]<<std::endl;
+std::cout<<std::endl;
+} 
 
-												for(int ii=0;ii<trace10.size();ii++)
-													{for(int jj=0;jj<trace10[ii].size();jj++)
-														std::cout<<trace10[ii][jj]<<std::endl;
-														std::cout<<std::endl;
-													} 
-													std::cout<<"Simplex<2,2>,RaviartThomasFE,Order=1,Continuity=1,Ncomponents=2>"<<std::endl;
+std::cout<<"Simplex<2,2>,RaviartThomasFE,Order=0,Continuity=1,Ncomponents=1"<<std::endl;
 
-													for(int ii=0;ii<trace11.size();ii++)
-														{for(int jj=0;jj<trace11[ii].size();jj++)
-															std::cout<<trace11[ii][jj]<<std::endl;
-															std::cout<<std::endl;
-														} 
+for(int ii=0;ii<trace5.size();ii++)
+{for(int jj=0;jj<trace5[ii].size();jj++)
+std::cout<<trace5[ii][jj]<<std::endl;
+std::cout<<std::endl;
+} 
 
+std::cout<<"Simplex<2,2>,RaviartThomasFE,Order=1,Continuity=1,Ncomponents=1"<<std::endl;
 
-														Simplex<3,3> simpl3;
-														Simplex<3,2> simpl32;
+for(int ii=0;ii<trace6.size();ii++)
+{for(int jj=0;jj<trace6[ii].size();jj++)
+std::cout<<trace6[ii][jj]<<std::endl;
+std::cout<<std::endl;
+} 
 
-														constexpr auto reference=Simplex<3,3>::reference;
-														static_assert(reference[0][0]==0,"non ok");
-														Integer vs[3];
-														for(Integer ii=0;ii<4;ii++)
-														{
-															Combinations<3 + 1,3>::generate(ii,vs);
-															for(Integer jj=0;jj<3;jj++)
-																{for(Integer kk=0;kk<3;kk++)
-																	std::cout<<reference[vs[jj]][kk]<<" ";
-																	std::cout<<std::endl;}
-																	std::cout<<std::endl;
+std::cout<<"Simplex<2,2>,LagrangeFE,Order=1,Continuity=1,Ncomponents=2>"<<std::endl;
 
-																}
+for(int ii=0;ii<trace7.size();ii++)
+{for(int jj=0;jj<trace7[ii].size();jj++)
+std::cout<<trace7[ii][jj]<<std::endl;
+std::cout<<std::endl;
+} 
+std::cout<<"Simplex<2,2>,LagrangeFE,Order=2,Continuity=1,Ncomponents=2>"<<std::endl;
 
-																constexpr Integer dim=3;
-																constexpr Integer manifolddim=2;
+for(int ii=0;ii<trace8.size();ii++)
+{for(int jj=0;jj<trace8[ii].size();jj++)
+std::cout<<trace8[ii][jj]<<std::endl;
+std::cout<<std::endl;
+} 
+std::cout<<"Simplex<2,2>,LagrangeFE,Order=3,Continuity=1,Ncomponents=2>"<<std::endl;
 
-																Simplex<dim,manifolddim> elem32;
-																Matrix<Real, dim,manifolddim> J;
-
-																constexpr Integer Npoints=Simplex<dim,manifolddim>::Npoints;
-																constexpr Vector<Vector<Real,dim>,3> points { {0,0,1},{2,3,4},{1,4,8} };
-
-																for(Integer ii=0;ii<Npoints;ii++)
-																	elem32.nodes[ii]=ii;
-
-	 // points[0][0]=0;
-	 // points[0][1]=0;
-	 // points[0][2]=1;
-	 // points[1][0]=2;
-	 // points[1][1]=3;
-	 // points[1][2]=6;
-	 // points[2][0]=1;
-	 // points[2][1]=4;
-	 // points[2][2]=8;
-	 // constexpr auto J32=jacobian<3,3,4>();
-																constexpr auto Jkml=combinations_generate<4,3>();
-																std::cout<<"oo oooo  oooooo oo ooo"<<std::endl;
-
-																for(Integer ii=0;ii<Jkml.size();ii++)
-																{
-																	for(Integer jj=0;jj<Jkml[ii].size();jj++)
-																		std::cout<<Jkml[ii][jj]<<" ";
-																	std::cout<<std::endl;
-																}
-
-																constexpr auto Jkm=jacobian_faces<3,3>();
-																std::cout<<std::endl;
-																for(Integer ii=0;ii<Jkm.size();ii++)
-																{
-																	std::cout<<Jkm[ii]<<std::endl;
-																}
-	 // J32=describe(std::cout);
+for(int ii=0;ii<trace9.size();ii++)
+{for(int jj=0;jj<trace9[ii].size();jj++)
+std::cout<<trace9[ii][jj]<<std::endl;
+std::cout<<std::endl;
+} 
 
 
+std::cout<<"Simplex<2,2>,RaviartThomasFE,Order=0,Continuity=1,Ncomponents=2>"<<std::endl;
 
-																constexpr Integer ManifoldDim=2;
-																constexpr Integer Dim=2;
-																using MeshT=Mesh<Dim, ManifoldDim>;  
-																MeshT mesh;
-																using Elem = typename MeshT::Elem; 
-																read_mesh("../data/beam-tri.MFEM", mesh);
-																mark_boundary(mesh);
-																Bisection<MeshT> b(mesh);
-																b.uniform_refine(1);
-	    // b.clear();
-																Elem elem;
-																Simplex<Dim,ManifoldDim-1> face;
-																mesh.update_dual_graph();
-																mark_boundary(mesh);
-																for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
-																{
-																	auto &elem_id=elem_iter;
-																	const auto & elem=mesh.elem(elem_id);
-																	std::cout<<std::endl<<" elem =="<<elem_iter<<std::endl;
-	     // elem.side();
-																	for(Integer  nn=0;nn<3;nn++)
-																		{std::cout<<elem.side_tags[nn];
-																			if(elem.side_tags[nn]>0)
-																				{  elem.side(nn,face);
-																					std::cout<<"---boundary: ";
-																					for(Integer mm=0;mm<2;mm++)
-																						std::cout<<face.nodes[mm]<<" ";
-																				}
-																				std::cout<<" "<<std::endl;
-																			}
-																		} 
+for(int ii=0;ii<trace10.size();ii++)
+{for(int jj=0;jj<trace10[ii].size();jj++)
+std::cout<<trace10[ii][jj]<<std::endl;
+std::cout<<std::endl;
+} 
+std::cout<<"Simplex<2,2>,RaviartThomasFE,Order=1,Continuity=1,Ncomponents=2>"<<std::endl;
 
-	  // Integer entity_nodes_from[3]; 
-	  // for(Integer ii=0;ii<Combinations<4, 3>::value;ii++)
-	  // {
-	  //   Combinations<4, 3>::generate(ii,entity_nodes_from);
-	  //   std::cout<<"mesh.n_boundary_sides="<<mesh.n_boundary_sides()<<std::endl;
-	  //   for(auto& i: entity_nodes_from)
-	  //     std::cout<<i<<std::endl;
-	  // }
+for(int ii=0;ii<trace11.size();ii++)
+{for(int jj=0;jj<trace11[ii].size();jj++)
+std::cout<<trace11[ii][jj]<<std::endl;
+std::cout<<std::endl;
+} 
 
 
-	  // mesh.find_side_tags();
-	  // const auto& sides=mesh.side_tags();
-	  // std::cout<<"sides="<<std::endl;
-	  // for(auto& i: sides)
-	  //   std::cout<<i<<std::endl;
+Simplex<3,3> simpl3;
+Simplex<3,2> simpl32;
 
-																	}
+constexpr auto reference=Simplex<3,3>::reference;
+static_assert(reference[0][0]==0,"non ok");
+Integer vs[3];
+for(Integer ii=0;ii<4;ii++)
+{
+Combinations<3 + 1,3>::generate(ii,vs);
+for(Integer jj=0;jj<3;jj++)
+	{for(Integer kk=0;kk<3;kk++)
+		std::cout<<reference[vs[jj]][kk]<<" ";
+		std::cout<<std::endl;}
+		std::cout<<std::endl;
+
+	}
+
+	constexpr Integer dim=3;
+	constexpr Integer manifolddim=2;
+
+	Simplex<dim,manifolddim> elem32;
+	Matrix<Real, dim,manifolddim> J;
+
+	constexpr Integer Npoints=Simplex<dim,manifolddim>::Npoints;
+	constexpr Vector<Vector<Real,dim>,3> points { {0,0,1},{2,3,4},{1,4,8} };
+
+	for(Integer ii=0;ii<Npoints;ii++)
+		elem32.nodes[ii]=ii;
+
+// points[0][0]=0;
+// points[0][1]=0;
+// points[0][2]=1;
+// points[1][0]=2;
+// points[1][1]=3;
+// points[1][2]=6;
+// points[2][0]=1;
+// points[2][1]=4;
+// points[2][2]=8;
+// constexpr auto J32=jacobian<3,3,4>();
+	constexpr auto Jkml=combinations_generate<4,3>();
+	std::cout<<"oo oooo  oooooo oo ooo"<<std::endl;
+
+	for(Integer ii=0;ii<Jkml.size();ii++)
+	{
+		for(Integer jj=0;jj<Jkml[ii].size();jj++)
+			std::cout<<Jkml[ii][jj]<<" ";
+		std::cout<<std::endl;
+	}
+
+	constexpr auto Jkm=jacobian_faces<3,3>();
+	std::cout<<std::endl;
+	for(Integer ii=0;ii<Jkm.size();ii++)
+	{
+		std::cout<<Jkm[ii]<<std::endl;
+	}
+// J32=describe(std::cout);
+
+
+
+	constexpr Integer ManifoldDim=2;
+	constexpr Integer Dim=2;
+	using MeshT=Mesh<Dim, ManifoldDim>;  
+	MeshT mesh;
+	using Elem = typename MeshT::Elem; 
+	read_mesh("../data/beam-tri.MFEM", mesh);
+	mark_boundary(mesh);
+	Bisection<MeshT> b(mesh);
+	b.uniform_refine(1);
+// b.clear();
+	Elem elem;
+	Simplex<Dim,ManifoldDim-1> face;
+	mesh.update_dual_graph();
+	mark_boundary(mesh);
+	for(Integer elem_iter=0;elem_iter<mesh.n_elements();elem_iter++)
+	{
+		auto &elem_id=elem_iter;
+		const auto & elem=mesh.elem(elem_id);
+		std::cout<<std::endl<<" elem =="<<elem_iter<<std::endl;
+// elem.side();
+		for(Integer  nn=0;nn<3;nn++)
+			{std::cout<<elem.side_tags[nn];
+				if(elem.side_tags[nn]>0)
+					{  elem.side(nn,face);
+						std::cout<<"---boundary: ";
+						for(Integer mm=0;mm<2;mm++)
+							std::cout<<face.nodes[mm]<<" ";
+					}
+					std::cout<<" "<<std::endl;
+				}
+			} 
+
+// Integer entity_nodes_from[3]; 
+// for(Integer ii=0;ii<Combinations<4, 3>::value;ii++)
+// {
+//   Combinations<4, 3>::generate(ii,entity_nodes_from);
+//   std::cout<<"mesh.n_boundary_sides="<<mesh.n_boundary_sides()<<std::endl;
+//   for(auto& i: entity_nodes_from)
+//     std::cout<<i<<std::endl;
+// }
+
+
+// mesh.find_side_tags();
+// const auto& sides=mesh.side_tags();
+// std::cout<<"sides="<<std::endl;
+// for(auto& i: sides)
+//   std::cout<<i<<std::endl;
+
+		}
 
 
 
@@ -1212,6 +1212,7 @@
 			std::vector<std::map<Integer,Integer>> cols_idx_; 
 			Integer max_rows_;
 			Integer max_cols_;
+			Integer max_cols_used_;
 			Integer cont_; 
 
 
@@ -1229,12 +1230,18 @@
 			}
 
 			auto rows(){return max_rows_;}
-			void init(const Integer max_rows,const Integer max_cols)
+			void init(const Integer max_rows,const Integer max_cols,const Integer max_cols_used)
 			{
 				max_rows_=max_rows;
 				max_cols_=max_cols;
+				max_cols_used_=max_cols_used;
+				// std::cout<<"SparseMatrix"<<std::endl;
+				// std::cout<<"max_row="<<max_rows<<std::endl;
+				// std::cout<<"max_cols="<<max_cols<<std::endl;
+				// std::cout<<"max_cols_used="<<max_cols_used<<std::endl;
+
 				cont_=0;
-				A_.resize(max_rows_*max_cols);
+				A_.resize(max_rows_*max_cols_used);
 				cols_idx_.resize(max_rows_);
 			}
 
@@ -1289,6 +1296,9 @@
 
 			}
 
+
+
+
 			void set_zero_row(const Integer i)
 			{
 				const auto& map=cols_idx_[i]; 
@@ -1329,7 +1339,7 @@
                           cont_cols=it->first+1;
 					      std::cout << A_[it->second]<<" ";
 					     }
-				for (int s=cont_cols;s<max_rows_;s++)
+				for (int s=cont_cols;s<max_cols_;s++)
 					std::cout<<0<<" ";
 
 					std::cout<<std::endl;
@@ -1341,8 +1351,10 @@
 				T tmp=0;
 				const auto& map=cols_idx_[i]; 
 // std::cout<<" multiply ";
+				// std::cout<<"row="<<i<<std::endl;
 				for (auto it=map.begin(); it!=map.end(); ++it)
 				{
+					// std::cout<<it->first<<" "<<it->second<<std::endl;
 					tmp+=A_[it->second]*b[it->first];
 // std::cout<<it->first<<"  "<<it->second<<"  A="<<A_[it->second]<<"   b="<<b[it->first]<<" "<<std::endl;
 // std::cout<<tmp<<" "<<std::endl;;
@@ -1371,6 +1383,7 @@
 			{
 
 				std::vector<T> result(max_rows_);
+				std::cout<<"multiply="<<std::endl;
 // std::cout<<std::endl<<std::endl;
 				for(Integer i=0;i<max_rows_;i++)
 				{
@@ -1422,153 +1435,266 @@
 
 
 
-	template<typename Elem,Integer ElementOrder, typename Operator,Integer FEFamily,Integer Order,Integer Continuity,Integer NComponents>
-																	class Variable
+template<typename Elem,Integer ElementOrder, typename Operator,Integer FEFamily,Integer Order,Integer Continuity,Integer NComponents>
+class Variable
 {
 public:  
 // using Points=ElemPoints<Elem,Operator,FEFamily,Order>;
-using Points=ElemGeometricPoints<Elem,ElementOrder>;
-static constexpr Integer Npoints=Points::type::Dim;
-using BaseFunctionSpace=BaseElementFunctionSpace<Elem,FEFamily,Order,Continuity, NComponents>;
-using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
-using SingleType   = typename SingleTypeShapeFunction<FunctionSpace,Operator>::SingleType;
-static constexpr Integer Rows=SingleType::Rows;
-static constexpr Integer Cols=SingleType::Cols;
-static constexpr Integer single_shape_function_components_number=Rows*Cols;
-static constexpr Integer solution_array_size=Npoints*Rows*Cols;
-using TotType = typename SingleTypeShapeFunction<FunctionSpace,Operator>::TotType;
-static constexpr Integer Ntot=FunctionSpaceDofsPerSubEntityElem<ElemFunctionSpace<Elem,BaseFunctionSpace>,Elem::ManifoldDim>::value;
-static constexpr Integer Ndofs=Ntot/NComponents;
-static constexpr auto 
-reference_values{reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(Points::points)};
-using Map=MapFromReference<Operator,Elem,FEFamily>;  
-static constexpr auto NShapes=reference_values.size();
+	using Points=ElemGeometricPoints<Elem,ElementOrder>;
+	static constexpr Integer Npoints=Points::type::Dim;
+	using RTnBaseFunctionSpace=BaseFunctionSpace<FEFamily,Order,Continuity, NComponents>;
+	using BaseFunctionSpace=BaseElementFunctionSpace<Elem,FEFamily,Order,Continuity, NComponents>;
+	using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
+
+    static constexpr Integer NDofs=FunctionSpaceDofsPerElem<FunctionSpace>::value;
+    static constexpr Integer ManifoldDim=Elem::ManifoldDim;
+
+
+	using SingleType   = typename SingleTypeShapeFunction<FunctionSpace,Operator>::SingleType;
+	// using Coefficients=ShapeFunctionCoefficientsCollectionSingleType<Elem,FEFamily>;
+	static constexpr Integer Rows=SingleType::Rows;
+	static constexpr Integer Cols=SingleType::Cols;
+	static constexpr Integer single_shape_function_components_number=Rows*Cols;
+	static constexpr Integer solution_array_size=Npoints*Rows*Cols;
+	using TotType = typename SingleTypeShapeFunction<FunctionSpace,Operator>::TotType;
+	static constexpr Integer Ntot=FunctionSpaceDofsPerSubEntityElem<ElemFunctionSpace<Elem,BaseFunctionSpace>,Elem::ManifoldDim>::value;
+	static constexpr Integer Ndofs=Ntot/NComponents;
+	static constexpr auto 
+	reference_values{reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(Points::points)};
+	using Map=MapFromReference<Operator,Elem,FEFamily>;  
+	static constexpr auto NShapes=reference_values.size();
+
+    // using QRule=typename QuadratureRule<GaussianQuadrature>:: template rule<Elem,1>;
+    using QRule=UserDefinedQuadratureRule<Elem,Points::type::Dim,ManifoldDim>;
+    // using QRuleFace=Boundary2VolumetricQuadratureRule<QRuleFaceReference>;
+    using Shape=ShapeFunction<Elem,RTnBaseFunctionSpace,IdentityOperator,QRule>;
+
+    static constexpr auto MatPoints=vecmat2mat(Points::points);
+    // using ShapeFaceValue=typename ShapeFace::type;
+    // using QPpointsFace=typename ShapeFace::qp_points_type;
+
 
 // qui devi passare i nodi dell'elemento
 // l'ouput e' lungo elem:n_nods()*ncomponents
 
 // EACH COMPONENT IS TREATED SEPARATELY, se vec is the array of dofs related to one component
-
-void init(const FiniteElem<Elem>& FE,Array<Real,Ntot> vec,const Integer component)
-{
-
-map_.init(FE);
-const auto& map=map_();
-// std::cout<<"component="<<component<<std::endl;
-// we compute u= sum_i u_i Map(phi_i)=Map(sum_i u_i phi_i) for each dof point on the element
-Integer cont=0;
-// std::cout<<"reference_values="<<std::endl;
-// std::cout<<reference_values<<std::endl;
-// std::cout<<"vec="<<std::endl;
-// std::cout<<vec<<std::endl;
-// loop on dof points and evaluate u_0 phi_0 in those points
-// if i have RT0 valutato su sei punti...cosa devo fare?
-// loop esterno sui punti e' ok, ma poi internamente dovrei loopare solo sule shape functions
-
-for(Integer k=0;k<Npoints ;k++)
-{
-
-// std::cout<<"pre pre pre output_="<<output_<<std::endl;
-for(Integer i=0;i<Rows;i++)
-for(Integer j=0;j<Cols;j++)            
-{
-mat_tmp_[k](i,j)=vec[0+component]*reference_values[0][k](i,j);
-// std::cout<<"k,i,j="<<k<<","<<i<<","<<j<<"="<<mat_tmp_[k](i,j)<<std::endl;
-}
-
-// for(std::size_t qp=1;qp<Npoints;qp++)
-//    for(std::size_t i=0;i<Ndofs;i++)
-//     for(std::size_t j=0;j<Ndofs;j++)
-// std::cout<<"pre pre output_="<<output_<<std::endl;
-
-//for(Integer qp=1;qp<NPoints;qp++) TODO FIX CHECK <---------------
-for(Integer qp=1;qp<NShapes;qp++)
-for(Integer i=0;i<Rows;i++)
-	for(Integer j=0;j<Cols;j++)            
-	{
-// std::cout<<"(qp,i, j)=("<<qp<<", "<<i<<", "<<j<<")"<<std::endl;
-// std::cout<<output_<<std::endl;
-		mat_tmp_[k](i,j)+=vec[qp*NComponents+component]*reference_values[qp][k](i,j);
-// std::cout<<output_<<std::endl;
-	}
-
-
-	mat_tmp_[k]=map*mat_tmp_[k];
-
-
-
-// std::cout<<"map="<<map<<std::endl;
-// for(std::size_t i=0;i<SingleType::Rows;i++)
-// for(std::size_t j=0;j<SingleType::Cols;j++)
-// std::cout<<"pre output_="<<output_<<std::endl;
-	for(Integer i=0;i<SingleType::Rows;i++)
-		for(Integer j=0;j<SingleType::Cols;j++)
+        
+        template<Integer Family>
+		std::enable_if_t<Family==RaviartThomasFE, void> 
+		init_aux(const FiniteElem<Elem>& FE,Array<Real,Ntot> vec,const Integer component)
 		{
-			output_[cont]=mat_tmp_[k](i,j);
-// std::cout<<"output_["<<cont<<"]="<<output_[cont]<<std::endl;
-			cont++;
+
+		map_.init(FE);
+		const auto& map=map_();
+		// std::cout<<"component="<<component<<std::endl;
+		// we compute u= sum_i u_i Map(phi_i)=Map(sum_i u_i phi_i) for each dof point on the element
+		Integer cont=0;
+        auto& mesh_ptr=FE.mesh_ptr();
+        auto& signed_normal=mesh_ptr->signed_normal();
+		SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(FE.elem_id()),coeff_);
+		shape_.init_map(map_);
+
+		shape_.init(coeff_,MatPoints);
+		const auto& shape_eval=shape_.eval();
+		// std::cout<<"reference_values="<<std::endl;
+		// std::cout<<reference_values<<std::endl;
+		// std::cout<<"vec="<<std::endl;
+		// std::cout<<vec<<std::endl;
+		// loop on dof points and evaluate u_0 phi_0 in those points
+		// if i have RT0 valutato su sei punti...cosa devo fare?
+		// loop esterno sui punti e' ok, ma poi internamente dovrei loopare solo sule shape functions
+        
+		for(Integer k=0;k<Npoints ;k++)
+		{
+
+		// std::cout<<"pre pre pre output_="<<output_<<std::endl;
+		for(Integer i=0;i<Rows;i++)
+		for(Integer j=0;j<Cols;j++)            
+		{
+			
+		// mat_tmp_[k](i,j)=vec[0+component]*reference_values[0][k](i,j);
+
+		// mat_tmp_[k](i,j)=vec[0+component]*coeff_[0]*reference_values[0][k](i,j);
+
+		mat_tmp_[k](i,j)=vec[0+component]*shape_eval[0][k](i,j);
+
+
+		// std::cout<<"k,i,j="<<k<<","<<i<<","<<j<<"="<<mat_tmp_[k](i,j)<<std::endl;
 		}
-// std::cout<<"after output_="<<output_<<std::endl;
+       
 
-// }
-	}
+		// for(std::size_t qp=1;qp<Npoints;qp++)
+		//    for(std::size_t i=0;i<Ndofs;i++)
+		//     for(std::size_t j=0;j<Ndofs;j++)
+		// std::cout<<"pre pre output_="<<output_<<std::endl;
 
-// std::cout<<"Npoints="<<Npoints<<std::endl;
-// std::cout<<"NComponents="<<NComponents<<std::endl;
-// std::cout<<"map="<<map<<std::endl;
-// std::cout<<"component="<<component<<std::endl;
-// std::cout<<"vec="<<vec<<std::endl;
-// std::cout<<"mat_tmp_="<<mat_tmp_<<std::endl;
-// std::cout<<" all output_="<<output_<<std::endl;
-// std::cout<<"reference_values="<<reference_values<<std::endl;
-}
+		//for(Integer qp=1;qp<NPoints;qp++) TODO FIX CHECK <---------------
+		for(Integer qp=1;qp<NShapes;qp++)
+		for(Integer i=0;i<Rows;i++)
+			for(Integer j=0;j<Cols;j++)            
+			{
+		// std::cout<<"(qp,i, j)=("<<qp<<", "<<i<<", "<<j<<")"<<std::endl;
+		// std::cout<<output_<<std::endl;
+				// mat_tmp_[k](i,j)+=vec[qp*NComponents+component]*reference_values[qp][k](i,j);
 
-auto& value()const{
-	return output_;}
+				// mat_tmp_[k](i,j)+=vec[qp*NComponents+component]*coeff_[qp]*reference_values[qp][k](i,j);
 
-	auto& operator[](const Integer i)const{
-// auto& operator[](const std::size_t i)const{
-		return output_[i];}
+
+				mat_tmp_[k](i,j)+=vec[qp*NComponents+component]*shape_eval[qp][k](i,j);
+			}
+		if(FE.elem_id()==18 ||FE.elem_id()==19 )
+
+		{
+			std::cout<<"FE.jac()"<<std::endl;
+			std::cout<<FE.jac()<<std::endl;
+			std::cout<<"FE.v0()"<<std::endl;
+			std::cout<<FE.v0()<<std::endl;
+			std::cout<<"coeff_"<<std::endl;
+			std::cout<<coeff_<<std::endl;
+			std::cout<<"reference_values"<<std::endl;
+			std::cout<<reference_values<<std::endl;
+			std::cout<<"vec"<<std::endl;
+			std::cout<<vec<<std::endl;
+			std::cout<<"pre mat_tmp_"<<std::endl;
+			std::cout<<mat_tmp_<<std::endl;
+			std::cout<<"map"<<std::endl;
+			std::cout<<map<<std::endl;
+			std::cout<<"shape_eval"<<std::endl;
+			std::cout<<shape_eval<<std::endl;
+			std::cout<<"MatPoints"<<std::endl;
+			std::cout<<MatPoints<<std::endl;
+			
+			
+		}
+
+			// mat_tmp_[k]=map*mat_tmp_[k];
+
+
+
+
+			for(Integer i=0;i<SingleType::Rows;i++)
+				for(Integer j=0;j<SingleType::Cols;j++)
+				{
+					output_[cont]=mat_tmp_[k](i,j);
+		// std::cout<<"output_["<<cont<<"]="<<output_[cont]<<std::endl;
+					cont++;
+				}
+		// std::cout<<"after output_="<<output_<<std::endl;
+
+		// }
+			}
+
+		if(FE.elem_id()==18 ||FE.elem_id()==19 )
+
+		{
+			std::cout<<"post mat_tmp_"<<std::endl;
+			std::cout<<mat_tmp_<<std::endl;
+			std::cout<<"output_"<<std::endl;
+			std::cout<<output_<<std::endl;
+		}
+		// std::cout<<"Npoints="<<Npoints<<std::endl;
+		// std::cout<<"NComponents="<<NComponents<<std::endl;
+		// std::cout<<"map="<<map<<std::endl;
+		// std::cout<<"component="<<component<<std::endl;
+		// std::cout<<"vec="<<vec<<std::endl;
+		// std::cout<<"mat_tmp_="<<mat_tmp_<<std::endl;
+		// std::cout<<" all output_="<<output_<<std::endl;
+		// std::cout<<"reference_values="<<reference_values<<std::endl;
+		}
+
+        template<Integer Family>
+		std::enable_if_t<Family==LagrangeFE, void> 
+		init_aux(const FiniteElem<Elem>& FE,Array<Real,Ntot> vec,const Integer component)
+		{
+
+		map_.init(FE);
+		const auto& map=map_();
+		Integer cont=0;
+ 
+		for(Integer k=0;k<Npoints ;k++)
+		{
+
+		for(Integer i=0;i<Rows;i++)
+		for(Integer j=0;j<Cols;j++)            
+		{
+		mat_tmp_[k](i,j)=vec[0+component]*reference_values[0][k](i,j);
+		}
+
+
+		for(Integer qp=1;qp<NShapes;qp++)
+		for(Integer i=0;i<Rows;i++)
+			for(Integer j=0;j<Cols;j++)            
+			{
+				mat_tmp_[k](i,j)+=vec[qp*NComponents+component]*reference_values[qp][k](i,j);
+			}
+
+
+			mat_tmp_[k]=map*mat_tmp_[k];
+
+
+			for(Integer i=0;i<SingleType::Rows;i++)
+				for(Integer j=0;j<SingleType::Cols;j++)
+				{
+					output_[cont]=mat_tmp_[k](i,j);
+					cont++;
+				}
+
+			}
+		}
+
+
+        void init(const FiniteElem<Elem>& FE,Array<Real,Ntot> vec,const Integer component)
+        {
+        	init_aux<FEFamily>(FE,vec,component);
+        }
+		auto& value()const{
+			return output_;}
+
+			auto& operator[](const Integer i)const{
+		// auto& operator[](const std::size_t i)const{
+				return output_[i];}
 
 
 	private:
 		Map map_;
 		Array<SingleType,Npoints*NComponents> mat_tmp_;
 		Array<Real,solution_array_size> output_;
+		Array<Real,NDofs> coeff_;
+		Shape shape_;
 // std::vector<> 
 
 	};
 
 
-template<typename...Strings>
-	auto variables_names(const std::string& string,const Strings&...strings)
-	{
+	template<typename...Strings>
+		auto variables_names(const std::string& string,const Strings&...strings)
+		{
 
-		return std::vector<std::string>{string,strings...};
-	}
+			return std::vector<std::string>{string,strings...};
+		}
 
-template<Integer Dim, Integer Order,typename Elem>
-	auto vtk_cell_type(const Elem&elem)
-	{
-// linear triangle
-		if(IsSame<Elem,Simplex<Dim,2>>::value && Order==1)
-			return 5;
-// linear tetrahedron
-		if(IsSame<Elem,Simplex<Dim,3>>::value && Order==1)
-			return 10;
-// linear segment
-		if(IsSame<Elem,Simplex<Dim,1>>::value && Order==2)
-			return 21;
-// quadratic triangle
-		if(IsSame<Elem,Simplex<Dim,2>>::value && Order==2)
-			return 22;
-// quadratic tetrahedron
-		if(IsSame<Elem,Simplex<Dim,3>>::value && Order==2)
-			return 24;
-// invalid element
-		else
-			return -1;
-	}
+	template<Integer Dim, Integer Order,typename Elem>
+		auto vtk_cell_type(const Elem&elem)
+		{
+	// linear triangle
+			if(IsSame<Elem,Simplex<Dim,2>>::value && Order==1)
+				return 5;
+	// linear tetrahedron
+			if(IsSame<Elem,Simplex<Dim,3>>::value && Order==1)
+				return 10;
+	// linear segment
+			if(IsSame<Elem,Simplex<Dim,1>>::value && Order==2)
+				return 21;
+	// quadratic triangle
+			if(IsSame<Elem,Simplex<Dim,2>>::value && Order==2)
+				return 22;
+	// quadratic tetrahedron
+			if(IsSame<Elem,Simplex<Dim,3>>::value && Order==2)
+				return 24;
+	// invalid element
+			else
+				return -1;
+		}
 
 
 template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename FiniteElem,typename...Args,typename Solution,typename VariablesNamesVec>
@@ -1649,7 +1775,7 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 				// if(!mesh_ptr->is_active(i)) continue;
 				// if(!elem_belongs_to_level(mesh_ptr,i,level,tracker))continue;
 				if(!elem_belongs_to_level(mesh,i,level,tracker))continue;
-
+                
 
 				FE.init(i,level);
 				dofsdofmap.template dofmap_get<N>(localdofmap,i,level);
@@ -1657,8 +1783,31 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 				// std::cout<<"localdofmap=="<<localdofmap<<std::endl;
 // const auto& localdofmap=dofmap[i];
 				subarray(local_sol, sol, localdofmap);
+
+				if(FEFamily==RaviartThomasFE && (i==19 || i==18))
+				{
+
+                   std::cout<<"eccomi elem=="<<i<<std::endl;
+
+                   std::cout<<"localdofmap"<<std::endl;
+                   std::cout<<localdofmap<<std::endl;
+                   std::cout<<"local_sol"<<std::endl;
+                   std::cout<<local_sol<<std::endl;
+
+				}
+
 				var.init(FE,local_sol,comp);
 				const auto& val=var.value();
+
+				if(FEFamily==RaviartThomasFE && (i==19 || i==18))
+				{
+
+                   std::cout<<"val"<<std::endl;
+                   std::cout<<val<<std::endl;
+
+
+				}
+
 // std::cout<<"ElementOrder="<<ElementOrder<<std::endl;
 // std::cout<<" val = "<<val<<std::endl;
 // std::cout<<"localdofmap="<<localdofmap<<std::endl;
@@ -1679,6 +1828,7 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 																												for(Integer c=0;c<single_shape_function_components_number-1;c++)
 																												{
 	                os << val[cont];//sol[localdofmap[cont]];
+
 	                // std::cout<<val[cont]<<" ";
 	                os <<" "; 
 	                cont++;
@@ -2167,57 +2317,53 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 
 
 
-	template<typename MeshT_>
-	class MeshAndEntity
-	{
-	 public:
-	 	using MeshT=MeshT_;
-	 	using Elem=typename MeshT::Elem;
-	 	MeshAndEntity(const MeshT& mesh, const Integer level=-1):
-	    mesh_ptr_(std::make_shared<MeshT>(mesh)),
-	    level_(level),
-	    entities_(mesh,level)
-	 	{}
+	// template<typename MeshT_>
+	// class MeshAndEntity
+	// {
+	//  public:
+	//  	using MeshT=MeshT_;
+	//  	using Elem=typename MeshT::Elem;
+	//  	MeshAndEntity(const MeshT& mesh, const Integer level=-1):
+	//     mesh_ptr_(std::make_shared<MeshT>(mesh)),
+	//     level_(level),
+	//     entities_(mesh,level)
+	//  	{}
 
 
-	    inline auto mesh_ptr(){return mesh_ptr_;}
+	//     inline auto mesh_ptr(){return mesh_ptr_;}
 
-	    inline auto level(){return level_;}
+	//     inline auto level(){return level_;}
 
-	    inline auto bisection_ptr() {return entities_.bisection_ptr();}
+	//     inline auto bisection_ptr() {return entities_.bisection_ptr();}
 
-	    inline auto& entities_collection(){return entities_;}
+	//     inline auto& entities_collection(){return entities_;}
 
-	    template<template<class...>class TemplateClass,typename...Args>
-	    inline void init(const TemplateClass<Args...>& W){return entities_.init(W);}
+	//     template<template<class...>class TemplateClass,typename...Args>
+	//     inline void init(const TemplateClass<Args...>& W){return entities_.init(W);}
 
-	    template<typename Elem,typename FunctionSpace, typename...FunctionSpaces>
-	    inline void init(){return entities_.template init<Elem,FunctionSpace,FunctionSpaces...> ();}
+	//     template<typename Elem,typename FunctionSpace, typename...FunctionSpaces>
+	//     inline void init(){return entities_.template init<Elem,FunctionSpace,FunctionSpaces...> ();}
 
-		inline void add_bisection(const Bisection<MeshT>& bisection) {entities_.add_bisection(bisection);}
+	// 	inline void add_bisection(const Bisection<MeshT>& bisection) {entities_.add_bisection(bisection);}
 
 		
 
 
-	 private:
-	 	std::shared_ptr<MeshT> mesh_ptr_;
-	 	Integer level_;
-	 	ElemEntityCollection<MeshT> entities_;
+	//  private:
+	//  	std::shared_ptr<MeshT> mesh_ptr_;
+	//  	Integer level_;
+	//  	ElemEntityCollection<MeshT> entities_;
 	 	
-	};
+	// };
 
 
 
-	template<Integer N,typename MeshT>
-	auto& get_entity(MeshAndEntity<MeshT>& mesh_and_entity){return tuple_get<N>(mesh_and_entity.entities_collection().tuple_entities());}
+	// template<Integer N,typename MeshT>
+	// auto& get_entity(MeshAndEntity<MeshT>& mesh_and_entity){return tuple_get<N>(mesh_and_entity.entities_collection().tuple_entities());}
 
 
-	template<typename Elem, typename...FunctionSpaces,typename MeshT>
-	void init(MeshAndEntity<MeshT>& mesh_and_entity){mesh_and_entity.template init<Elem,FunctionSpaces...>();}
-
-
-
-
+	// template<typename Elem, typename...FunctionSpaces,typename MeshT>
+	// void init(MeshAndEntity<MeshT>& mesh_and_entity){mesh_and_entity.template init<Elem,FunctionSpaces...>();}
 
 
 
@@ -2232,121 +2378,125 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 
 
 
-	template<typename MeshT,Integer EntityDim>
-	class EntitySimplicialMap
-	{
-	 public:
-	 using IntegerVector=std::vector<Integer>;
-	 using Key=std::array<Integer,EntityDim+1>;
-	 using Value=std::shared_ptr<IntegerVector>;
-	 using Map=std::map<Key, Value>;
-	 using MapDof=std::map<Key, std::shared_ptr<Integer>>;
-	 static constexpr Integer Dim=MeshT::Dim;
-	 static constexpr Integer ManifoldDim=MeshT::ManifoldDim;
-	 static constexpr auto entity_combinations= ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>::entity_combinations();
-	 EntitySimplicialMap(const MeshT& mesh):
-	 mesh_ptr_(std::make_shared<MeshT>(mesh))
-	 {}
-
-	 void init()
-	 {
-	  Integer entity[EntityDim+1];
-	  Integer cont=0;
-	  for(std::size_t i=0;i<mesh_ptr_->n_elements();i++)
-		{
-			const auto& nodes=mesh_ptr_->elem(i).nodes;
-
-	          for(Integer iter_entity=0;iter_entity<entity_combinations;iter_entity++)
-	          {
-
-	            Combinations<ManifoldDim + 1, EntityDim+1>::generate(iter_entity,entity);
-
-	            for(int nn=0;nn<EntityDim+1;nn++)
-	              local_nodes_[nn]=nodes[entity[nn]];   
-
-	            std::sort(std::begin(local_nodes_), std::end(local_nodes_)); 
 
 
-	            auto& val=map_[local_nodes_];
-					if(!val) {
-						val = std::make_shared<IntegerVector>();
-					}
-	            auto& val2=entity_[local_nodes_];
-					if(!val2)
-					{
-
-						val2 = std::make_shared<Integer>(cont);
-						// entity_.insert(std::pair<Key,Integer>(local_nodes_,cont));
-						// entity_[local_nodes_]=cont;
-						// std::cout<<" local_nodes_="<<std::endl;
-						// for(int j=0;j<local_nodes_.size();j++)
-						// std::cout<<local_nodes_[j]<<" ";
-					 //    std::cout<<" CONT="<< entity_[local_nodes_]<<std::endl;
-
-						cont++;
-					}
-	            val->push_back(i);
-	            // .insert( std::pair<Key,Value>(local_nodes_,i)); 
-	        // for(std::size_t j=0;j<local_nodes_.size();j++)
-	        	// std::cout<<local_nodes_[j]<<" ";
-	        // std::cout<<std::endl;
-	        }
 
 
-		}
+	// template<typename MeshT,Integer EntityDim>
+	// class EntitySimplicialMap
+	// {
+	//  public:
+	//  using IntegerVector=std::vector<Integer>;
+	//  using Key=std::array<Integer,EntityDim+1>;
+	//  using Value=std::shared_ptr<IntegerVector>;
+	//  using Map=std::map<Key, Value>;
+	//  using MapDof=std::map<Key, std::shared_ptr<Integer>>;
+	//  static constexpr Integer Dim=MeshT::Dim;
+	//  static constexpr Integer ManifoldDim=MeshT::ManifoldDim;
+	//  static constexpr auto entity_combinations= ElemEntity<Simplex<Dim,ManifoldDim>,EntityDim>::entity_combinations();
+	//  EntitySimplicialMap(const MeshT& mesh):
+	//  mesh_ptr_(std::make_shared<MeshT>(mesh))
+	//  {}
 
-	 }
-	 		void describe(std::ostream &os) const
-			{
-				os << "-----------------------------------\n";
+	//  void init()
+	//  {
+	//   Integer entity[EntityDim+1];
+	//   Integer cont=0;
+	//   for(std::size_t i=0;i<mesh_ptr_->n_elements();i++)
+	// 	{
+	// 		const auto& nodes=mesh_ptr_->elem(i).nodes;
 
-				for(const auto &m : map_) {
-					const auto& nodes=m.first;
-					for(const auto n : nodes) {
-						os << n << " ";
-					}
+	//           for(Integer iter_entity=0;iter_entity<entity_combinations;iter_entity++)
+	//           {
 
-					os << "-> ";
+	//             Combinations<ManifoldDim + 1, EntityDim+1>::generate(iter_entity,entity);
 
-					for(const auto n : *m.second) {
-						os << n << " ";
-					}
+	//             for(int nn=0;nn<EntityDim+1;nn++)
+	//               local_nodes_[nn]=nodes[entity[nn]];   
 
-					os << "\n";
-				}
+	//             std::sort(std::begin(local_nodes_), std::end(local_nodes_)); 
 
-				os << "-----------------------------------\n";
-			}
-	 		void describe2(std::ostream &os) const
-			{
-				os << "----------------------------------- entity nums -------------------------\n";
 
-				for(const auto &m : entity_) {
-					const auto& nodes=m.first;
-					os << "NODES= ";
-					for(const auto n : nodes) {
-						os << n << " ";
-					}
+	//             auto& val=map_[local_nodes_];
+	// 				if(!val) {
+	// 					val = std::make_shared<IntegerVector>();
+	// 				}
+	//             auto& val2=entity_[local_nodes_];
+	// 				if(!val2)
+	// 				{
 
-					os << "-> ";
+	// 					val2 = std::make_shared<Integer>(cont);
+	// 					// entity_.insert(std::pair<Key,Integer>(local_nodes_,cont));
+	// 					// entity_[local_nodes_]=cont;
+	// 					// std::cout<<" local_nodes_="<<std::endl;
+	// 					// for(int j=0;j<local_nodes_.size();j++)
+	// 					// std::cout<<local_nodes_[j]<<" ";
+	// 				 //    std::cout<<" CONT="<< entity_[local_nodes_]<<std::endl;
 
-						os << *m.second << " ";
+	// 					cont++;
+	// 				}
+	//             val->push_back(i);
+	//             // .insert( std::pair<Key,Value>(local_nodes_,i)); 
+	//         // for(std::size_t j=0;j<local_nodes_.size();j++)
+	//         	// std::cout<<local_nodes_[j]<<" ";
+	//         // std::cout<<std::endl;
+	//         }
+
+
+	// 	}
+
+	//  }
+	//  		void describe(std::ostream &os) const
+	// 		{
+	// 			os << "-----------------------------------\n";
+
+	// 			for(const auto &m : map_) {
+	// 				const auto& nodes=m.first;
+	// 				for(const auto n : nodes) {
+	// 					os << n << " ";
+	// 				}
+
+	// 				os << "-> ";
+
+	// 				for(const auto n : *m.second) {
+	// 					os << n << " ";
+	// 				}
+
+	// 				os << "\n";
+	// 			}
+
+	// 			os << "-----------------------------------\n";
+	// 		}
+	//  		void describe2(std::ostream &os) const
+	// 		{
+	// 			os << "----------------------------------- entity nums -------------------------\n";
+
+	// 			for(const auto &m : entity_) {
+	// 				const auto& nodes=m.first;
+	// 				os << "NODES= ";
+	// 				for(const auto n : nodes) {
+	// 					os << n << " ";
+	// 				}
+
+	// 				os << "-> ";
+
+	// 					os << *m.second << " ";
 					
 
-					os << "\n";
-				}
+	// 				os << "\n";
+	// 			}
 
-				os << "-----------------------------------\n";
-			}
+	// 			os << "-----------------------------------\n";
+	// 		}
 
-	 private:
-	 	std::shared_ptr<MeshT> mesh_ptr_;
-	 	Map map_;
-	 	std::array<Integer, EntityDim+1> local_nodes_;
-	    MapDof entity_;
+	//  private:
+	//  	std::shared_ptr<MeshT> mesh_ptr_;
+	//  	Map map_;
+	//  	std::array<Integer, EntityDim+1> local_nodes_;
+	//     MapDof entity_;
 
 	  
-	};
+	// };
 
 
 
@@ -2371,7 +2521,27 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	 mesh_(mesh),
 	 last_n_elements_(0)
 	 {}
+     
 
+     Integer max_n_nodes()
+     {
+     	Integer n=0;
+     	Integer n_size;
+     	Integer cont;
+     	for (auto it = map_.begin(); it != map_.end(); it++ )
+			{   
+				auto& second=it->second;
+			    n_size=it->second->size();
+                cont=0;
+			    for(Integer i=0;i<n_size;i++)
+			    	if(mesh_.is_active(second->operator[](i)))
+			    		cont++;
+				if(n<cont)
+					n=cont;
+			}
+	     return n;
+
+     }
 	 inline void add_bisection(const Bisection<MeshT>& bisection) {bisection_ptr_=std::make_shared<BisectionT>(bisection);}
 
 	 auto get(const Integer dof,const Integer level=0 )
@@ -2527,373 +2697,371 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 
 
 
-	template<typename MeshT_,Integer EntityDim>
-	class ConnectivitySimpliacialMap;
+	// template<typename MeshT_,Integer EntityDim>
+	// class ConnectivitySimpliacialMap;
 
-	template<typename MeshT_,Integer EntityDim>
-	class ConnectivitySimpliacialMap
-	{
+	// template<typename MeshT_,Integer EntityDim>
+	// class ConnectivitySimpliacialMap
+	// {
 
-	public:
-	 using MeshT=MeshT_;
-	 using BisectionT=Bisection<MeshT>;
-	 using Elem=typename MeshT::Elem;
-	 static constexpr Integer ManifoldDim=MeshT::ManifoldDim;
-	 static constexpr Integer Dim=MeshT::Dim;
-	 static constexpr auto entity_combinations= ElemEntity<Elem,EntityDim>::entity_combinations();
-	 static constexpr auto Npoints=EntityDim+1;
-	 using IntegerVector=std::vector<Integer>;
-	 using Key=std::array<Integer,Npoints>;
-	 using Value=std::shared_ptr<IntegerVector>;
-	 using Map=std::map<Key, Value>;
-	 using MapDof=std::map<Key,Integer>;
+	// public:
+	//  using MeshT=MeshT_;
+	//  using BisectionT=Bisection<MeshT>;
+	//  using Elem=typename MeshT::Elem;
+	//  static constexpr Integer ManifoldDim=MeshT::ManifoldDim;
+	//  static constexpr Integer Dim=MeshT::Dim;
+	//  static constexpr auto entity_combinations= ElemEntity<Elem,EntityDim>::entity_combinations();
+	//  static constexpr auto Npoints=EntityDim+1;
+	//  using IntegerVector=std::vector<Integer>;
+	//  using Key=std::array<Integer,Npoints>;
+	//  using Value=std::shared_ptr<IntegerVector>;
+	//  using Map=std::map<Key, Value>;
+	//  using MapDof=std::map<Key,Integer>;
 
 	 
-	 ConnectivitySimpliacialMap(MeshT& mesh,Node2ElemMap<MeshT>& node2elem,Bisection<MeshT>& bisection):
-	 mesh_(mesh),
-	 node2elem_(node2elem),
-	 bisection_(bisection),
-	 last_n_elements_(0),
-	 count_n_entity_(0),
-	 init_coarse_level_(false) 
-	 {
-	 	count_n_entity_vec_.resize(1,0);
-	 }
+	//  ConnectivitySimpliacialMap(MeshT& mesh,Node2ElemMap<MeshT>& node2elem,Bisection<MeshT>& bisection):
+	//  mesh_(mesh),
+	//  node2elem_(node2elem),
+	//  bisection_(bisection),
+	//  last_n_elements_(0),
+	//  count_n_entity_(0),
+	//  init_coarse_level_(false) 
+	//  {
+	//  	count_n_entity_vec_.resize(1,0);
+	//  }
 
 
 
 
-	 void init_elem(const Elem elem,const Integer level )
-	 {
+	//  void init_elem(const Elem elem,const Integer level )
+	//  {
 
-	        // std::cout<<"___________LEVEL="<<level<<std::endl;
-	        // std::cout<<"count_n_entity_vec_.size()-1="<<count_n_entity_vec_.size()-1<<std::endl;
-	 		if(count_n_entity_vec_.size()-1<level)
-	 			count_n_entity_vec_.push_back(count_n_entity_vec_[count_n_entity_vec_.size()-1]);
-	 		// std::cout<<"___________count_n_entity_vec_[END]="<<std::endl;
+	//         // std::cout<<"___________LEVEL="<<level<<std::endl;
+	//         // std::cout<<"count_n_entity_vec_.size()-1="<<count_n_entity_vec_.size()-1<<std::endl;
+	//  		if(count_n_entity_vec_.size()-1<level)
+	//  			count_n_entity_vec_.push_back(count_n_entity_vec_[count_n_entity_vec_.size()-1]);
+	//  		// std::cout<<"___________count_n_entity_vec_[END]="<<std::endl;
 
-	 		// for(std::size_t i=0;i<count_n_entity_vec_.size();i++)
-	 			// std::cout<<count_n_entity_vec_[i]<<" ";
-	 		// std::cout<<std::endl;
-	 		Integer cont=0;
-	 		Integer cont1=0;
-	 		Integer cont2=0;
+	//  		// for(std::size_t i=0;i<count_n_entity_vec_.size();i++)
+	//  			// std::cout<<count_n_entity_vec_[i]<<" ";
+	//  		// std::cout<<std::endl;
+	//  		Integer cont=0;
+	//  		Integer cont1=0;
+	//  		Integer cont2=0;
 
-	 	 	const auto& parent_id=elem.parent_id;
-		 	const auto& parent_elem=mesh_.elem(parent_id);
-		 	const auto& parent_nodes=parent_elem.nodes;
-		 	std::array<Integer,Npoints> parent_entity_nodes;
-		 	std::array<Integer,Npoints> child_entity_nodes;
-		 	std::array<Integer,Npoints> entity_used;
-	        bool found_parent_entity;
+	//  	 	const auto& parent_id=elem.parent_id;
+	// 	 	const auto& parent_elem=mesh_.elem(parent_id);
+	// 	 	const auto& parent_nodes=parent_elem.nodes;
+	// 	 	std::array<Integer,Npoints> parent_entity_nodes;
+	// 	 	std::array<Integer,Npoints> child_entity_nodes;
+	// 	 	std::array<Integer,Npoints> entity_used;
+	//         bool found_parent_entity;
 	 	 
-		 	 // find the parent element
-		 	 // loop on all its entities parent_entity of dimension EntityDim
-		 	 // given entity parent_entity:
-		 	 //     loop on all the child elements child_elem
-		 	 //          loop on all the entities child_entity
-		 	 //               if child_entity==parent_entity
-	         //                  do nothing, such entity already exists
-	         //      if no agreement has been found,  cont++
-	         // then we start creating new dofs for the entities on this level
-	         // entities which belong to both coarse and fine level are untouched
-	         // the new ones are created, counting them from n_coarse_entities-cont
-		 	 // we loop on all the entities of dimension EntityDim of the element
-		 	 const auto& child=parent_elem.children;
+	// 	 	 // find the parent element
+	// 	 	 // loop on all its entities parent_entity of dimension EntityDim
+	// 	 	 // given entity parent_entity:
+	// 	 	 //     loop on all the child elements child_elem
+	// 	 	 //          loop on all the entities child_entity
+	// 	 	 //               if child_entity==parent_entity
+	//          //                  do nothing, such entity already exists
+	//          //      if no agreement has been found,  cont++
+	//          // then we start creating new dofs for the entities on this level
+	//          // entities which belong to both coarse and fine level are untouched
+	//          // the new ones are created, counting them from n_coarse_entities-cont
+	// 	 	 // we loop on all the entities of dimension EntityDim of the element
+	// 	 	 const auto& child=parent_elem.children;
 
-	         for(std::size_t parent_entity=0;parent_entity<entity_combinations;parent_entity++)
-	         	{
-				 Combinations<ManifoldDim + 1, EntityDim+1>::generate(parent_entity,entity_);
-	             // std::cout<<std::endl;
-	         	 for(std::size_t i=0;i<Npoints;i++)
-	                	{
-	                		parent_entity_nodes[i]=parent_nodes[entity_[i]];
-	                		// std::cout<<parent_entity_nodes[i]<<" ";
-	                	}
-	             // std::cout<<std::endl;
-	             std::sort(parent_entity_nodes.begin(),parent_entity_nodes.end());
+	//          for(std::size_t parent_entity=0;parent_entity<entity_combinations;parent_entity++)
+	//          	{
+	// 			 Combinations<ManifoldDim + 1, EntityDim+1>::generate(parent_entity,entity_);
+	//              // std::cout<<std::endl;
+	//          	 for(std::size_t i=0;i<Npoints;i++)
+	//                 	{
+	//                 		parent_entity_nodes[i]=parent_nodes[entity_[i]];
+	//                 		// std::cout<<parent_entity_nodes[i]<<" ";
+	//                 	}
+	//              // std::cout<<std::endl;
+	//              std::sort(parent_entity_nodes.begin(),parent_entity_nodes.end());
 	            
 
-	            if(!parent_map_[parent_entity_nodes])
-	            {
-	            	// std::cout<<" entro in !parent_map_"<<std::endl;
-	            found_parent_entity=false;
-	            // loop on all the child elements child_elem          
-			 	for(std::size_t i=0;i<child.size();i++)
-			 	{
-			 	 const auto& child_elem=mesh_.elem(child[i]);
-			 	 const auto& child_id=child_elem.id;
-			 	 const auto& child_nodes=child_elem.nodes;
-	             // loop on all the entities child_entity
-		         for(std::size_t child_entity=0;child_entity<entity_combinations;child_entity++)
-		         	{
-					 Combinations<ManifoldDim + 1, EntityDim+1>::generate(child_entity,entity_);
+	//             if(!parent_map_[parent_entity_nodes])
+	//             {
+	//             	// std::cout<<" entro in !parent_map_"<<std::endl;
+	//             found_parent_entity=false;
+	//             // loop on all the child elements child_elem          
+	// 		 	for(std::size_t i=0;i<child.size();i++)
+	// 		 	{
+	// 		 	 const auto& child_elem=mesh_.elem(child[i]);
+	// 		 	 const auto& child_id=child_elem.id;
+	// 		 	 const auto& child_nodes=child_elem.nodes;
+	//              // loop on all the entities child_entity
+	// 	         for(std::size_t child_entity=0;child_entity<entity_combinations;child_entity++)
+	// 	         	{
+	// 				 Combinations<ManifoldDim + 1, EntityDim+1>::generate(child_entity,entity_);
 
-		         	 for(std::size_t i=0;i<Npoints;i++)
-		                	child_entity_nodes[i]=child_nodes[entity_[i]];
-		             std::sort(child_entity_nodes.begin(),child_entity_nodes.end());
-	                 // parent_map_[parent_entity_nodes]=true;
-		             found_parent_entity=std::equal(child_entity_nodes.begin(),child_entity_nodes.end(),parent_entity_nodes.begin());
+	// 	         	 for(std::size_t i=0;i<Npoints;i++)
+	// 	                	child_entity_nodes[i]=child_nodes[entity_[i]];
+	// 	             std::sort(child_entity_nodes.begin(),child_entity_nodes.end());
+	//                  // parent_map_[parent_entity_nodes]=true;
+	// 	             found_parent_entity=std::equal(child_entity_nodes.begin(),child_entity_nodes.end(),parent_entity_nodes.begin());
 				     
-				     if(found_parent_entity)			     	 
-				     	 goto label;
+	// 			     if(found_parent_entity)			     	 
+	// 			     	 goto label;
 				     	
-				     }
-				  }
-				  label:
-				  if(found_parent_entity)
-				  {
-				  	// parent_map_[parent_entity_nodes]=true;
-				  	// std::cout<<"found_parent_entity="<<found_parent_entity<<std::endl;
-				  	// entity_used[cont1]=map_dof_[parent_entity_nodes];
-				  	// cont1++;
-				  }
-				  else
-				  {
-				     	// std::cout<<"entity_used["<<cont1<<"]="<<map_dof_[parent_entity_nodes]<<std::endl;
-	                    parent_map_[parent_entity_nodes]=true;
-				  	    entity_used[cont]=map_dof_[parent_entity_nodes];
-				  		cont++;
-				  }
-				  {}
-				  }
-		         }
+	// 			     }
+	// 			  }
+	// 			  label:
+	// 			  if(found_parent_entity)
+	// 			  {
+	// 			  	// parent_map_[parent_entity_nodes]=true;
+	// 			  	// std::cout<<"found_parent_entity="<<found_parent_entity<<std::endl;
+	// 			  	// entity_used[cont1]=map_dof_[parent_entity_nodes];
+	// 			  	// cont1++;
+	// 			  }
+	// 			  else
+	// 			  {
+	// 			     	// std::cout<<"entity_used["<<cont1<<"]="<<map_dof_[parent_entity_nodes]<<std::endl;
+	//                     parent_map_[parent_entity_nodes]=true;
+	// 			  	    entity_used[cont]=map_dof_[parent_entity_nodes];
+	// 			  		cont++;
+	// 			  }
+	// 			  {}
+	// 			  }
+	// 	         }
 
 
-	            count_n_entity_vec_[level]=count_n_entity_vec_[level];//-cont;
-	            // loop on all the child elements child_elem          
-			 	for(std::size_t i=0;i<child.size();i++)
-			 	{
-			 	 const auto& child_elem=mesh_.elem(child[i]);
-			 	 const auto& child_id=child_elem.id;
-			 	 const auto& child_nodes=child_elem.nodes;			 		
-			 	 if(elem2dofs_[child_id].size()==0)
-			 	 {
+	//             count_n_entity_vec_[level]=count_n_entity_vec_[level];//-cont;
+	//             // loop on all the child elements child_elem          
+	// 		 	for(std::size_t i=0;i<child.size();i++)
+	// 		 	{
+	// 		 	 const auto& child_elem=mesh_.elem(child[i]);
+	// 		 	 const auto& child_id=child_elem.id;
+	// 		 	 const auto& child_nodes=child_elem.nodes;			 		
+	// 		 	 if(elem2dofs_[child_id].size()==0)
+	// 		 	 {
 
-	             // loop on all the entities child_entity
-		         for(std::size_t child_entity=0;child_entity<entity_combinations;child_entity++)
-		         	{
-					 Combinations<ManifoldDim + 1, EntityDim+1>::generate(child_entity,entity_);
-		         	 for(std::size_t i=0;i<Npoints;i++)
-		                	child_entity_nodes[i]=child_nodes[entity_[i]];
-		             std::sort(child_entity_nodes.begin(),child_entity_nodes.end());
+	//              // loop on all the entities child_entity
+	// 	         for(std::size_t child_entity=0;child_entity<entity_combinations;child_entity++)
+	// 	         	{
+	// 				 Combinations<ManifoldDim + 1, EntityDim+1>::generate(child_entity,entity_);
+	// 	         	 for(std::size_t i=0;i<Npoints;i++)
+	// 	                	child_entity_nodes[i]=child_nodes[entity_[i]];
+	// 	             std::sort(child_entity_nodes.begin(),child_entity_nodes.end());
 	                 
-	                 auto& child_map=map_[child_entity_nodes];
+	//                  auto& child_map=map_[child_entity_nodes];
 
-	                 // if the entity has not been visited yet
-	                 if(!child_map)
-	                 {
-	                 	// create the vector
-	                    child_map=std::make_shared<IntegerVector>();
-	                    auto& child_dof=map_dof_[child_entity_nodes];
-	                    if(cont2<cont)
-	                    {
-	                     child_dof=entity_used[cont2];
-	                     // std::cout<<" cont2<cont "<<child_dof<<std::endl;
-	                     cont2++;	
-	                    }
-	                    else
-	                    {child_dof=count_n_entity_vec_[level];
-	                     // std::cout<<" cont2>=cont "<<child_dof<<std::endl;
+	//                  // if the entity has not been visited yet
+	//                  if(!child_map)
+	//                  {
+	//                  	// create the vector
+	//                     child_map=std::make_shared<IntegerVector>();
+	//                     auto& child_dof=map_dof_[child_entity_nodes];
+	//                     if(cont2<cont)
+	//                     {
+	//                      child_dof=entity_used[cont2];
+	//                      // std::cout<<" cont2<cont "<<child_dof<<std::endl;
+	//                      cont2++;	
+	//                     }
+	//                     else
+	//                     {child_dof=count_n_entity_vec_[level];
+	//                      // std::cout<<" cont2>=cont "<<child_dof<<std::endl;
 
-						 count_n_entity_vec_[level]++;}
-	                 }
-	                 // std::cout<<"count_n_entity_vec_[level]="<<count_n_entity_vec_[level]<<std::endl;
-	                 child_map->push_back(child_id);
-	                 std::cout<<" child_id = "<<child_id<<" with "<<map_dof_[child_entity_nodes]<<std::endl;
-	                 elem2dofs_[child_id].push_back(map_dof_[child_entity_nodes]);
-				  }
-			 	 }
-				}
-		 	 }
-
-
-	 void init_coarse()
-	 {  
-	 	node2elem_.init();
-	 	elem2dofs_.resize(mesh_.n_elements());
-	 	for(std::size_t i=last_n_elements_;i<mesh_.n_elements();i++)
-	 	{
-	 		const auto& elem=mesh_.elem(i);
-	 		if(elem.parent_id==INVALID_INDEX)
-	 		{
-	 		last_n_elements_++;
-			const auto& nodes=mesh_.elem(i).nodes;
-
-	          for(Integer iter_entity=0;iter_entity<entity_combinations;iter_entity++)
-	          {
-	           // std::cout<<" ini coarse = "<<i<<std::endl;
-	            Combinations<ManifoldDim + 1, Npoints>::generate(iter_entity,entity_);
-
-	            for(int nn=0;nn<Npoints;nn++)
-	              local_nodes_[nn]=nodes[entity_[nn]];   
-
-	            std::sort(std::begin(local_nodes_), std::end(local_nodes_)); 
+	// 					 count_n_entity_vec_[level]++;}
+	//                  }
+	//                  // std::cout<<"count_n_entity_vec_[level]="<<count_n_entity_vec_[level]<<std::endl;
+	//                  child_map->push_back(child_id);
+	//                  std::cout<<" child_id = "<<child_id<<" with "<<map_dof_[child_entity_nodes]<<std::endl;
+	//                  elem2dofs_[child_id].push_back(map_dof_[child_entity_nodes]);
+	// 			  }
+	// 		 	 }
+	// 			}
+	// 	 	 }
 
 
-	            auto& val=map_[local_nodes_];
-					if(!val) {
-						val = std::make_shared<IntegerVector>();
-						// parent_map_[local_nodes_]=true;
-					}
-	            auto& val2=map_dof_[local_nodes_];
-					if(!val2)
-					{
+	//  void init_coarse()
+	//  {  
+	//  	node2elem_.init();
+	//  	elem2dofs_.resize(mesh_.n_elements());
+	//  	for(std::size_t i=last_n_elements_;i<mesh_.n_elements();i++)
+	//  	{
+	//  		const auto& elem=mesh_.elem(i);
+	//  		if(elem.parent_id==INVALID_INDEX)
+	//  		{
+	//  		last_n_elements_++;
+	// 		const auto& nodes=mesh_.elem(i).nodes;
 
-						val2 = count_n_entity_;
-						count_n_entity_++;
-					}
-	            val->push_back(i);
-	            // std::cout<<"qui elem2dofs_.size="<<elem2dofs_.size()<<std::endl;
-	             // std::cout<<"elem.parent_id="<<elem.id<<std::endl;
-                elem2dofs_[elem.id].push_back(val2);
-                // std::cout<<" after qui elem2dofs_.size="<<elem2dofs_.size()<<std::endl;
-	          }
-	 		}
-	      }
-	     // std::cout<<"end1 ini coarse = "<<std::endl;
-	     count_n_entity_vec_[0]=count_n_entity_;
-	     // std::cout<<" end2 coarse = "<<std::endl;
-	     // count_levels_=1;
-	     // std::cout<<" end3 coarse = "<<std::endl;
-		}             
+	//           for(Integer iter_entity=0;iter_entity<entity_combinations;iter_entity++)
+	//           {
+	//            // std::cout<<" ini coarse = "<<i<<std::endl;
+	//             Combinations<ManifoldDim + 1, Npoints>::generate(iter_entity,entity_);
 
-	 void init()
-	 {
-	 	node2elem_.init();
-	 	elem2dofs_.reserve(mesh_.n_elements());
+	//             for(int nn=0;nn<Npoints;nn++)
+	//               local_nodes_[nn]=nodes[entity_[nn]];   
 
-        // we initialize the coarse level only the first time
-	 	if(!init_coarse_level_)
-	 	{
-	 		init_coarse();
-	 		init_coarse_level_=true;
-	 	}
+	//             std::sort(std::begin(local_nodes_), std::end(local_nodes_)); 
+
+
+	//             auto& val=map_[local_nodes_];
+	// 				if(!val) {
+	// 					val = std::make_shared<IntegerVector>();
+	// 					// parent_map_[local_nodes_]=true;
+	// 				}
+	//             auto& val2=map_dof_[local_nodes_];
+	// 				if(!val2)
+	// 				{
+
+	// 					val2 = count_n_entity_;
+	// 					count_n_entity_++;
+	// 				}
+	//             val->push_back(i);
+	//             // std::cout<<"qui elem2dofs_.size="<<elem2dofs_.size()<<std::endl;
+	//              // std::cout<<"elem.parent_id="<<elem.id<<std::endl;
+ //                elem2dofs_[elem.id].push_back(val2);
+ //                // std::cout<<" after qui elem2dofs_.size="<<elem2dofs_.size()<<std::endl;
+	//           }
+	//  		}
+	//       }
+	//      // std::cout<<"end1 ini coarse = "<<std::endl;
+	//      count_n_entity_vec_[0]=count_n_entity_;
+	//      // std::cout<<" end2 coarse = "<<std::endl;
+	//      // count_levels_=1;
+	//      // std::cout<<" end3 coarse = "<<std::endl;
+	// 	}             
+
+	//  void init()
+	//  {
+	//  	node2elem_.init();
+	//  	elem2dofs_.reserve(mesh_.n_elements());
+
+ //        // we initialize the coarse level only the first time
+	//  	if(!init_coarse_level_)
+	//  	{
+	//  		init_coarse();
+	//  		init_coarse_level_=true;
+	//  	}
         
-        // std::cout<<"elem2dofs_ with size="<<elem2dofs_.size()<<std::endl;
-        // for(std::size_t i=0;i<elem2dofs_.size();i++)
-        // {
-        // 	std::cout<<std::endl;
-        // 	for(std::size_t j=0;j<elem2dofs_[i].size();j++)
-        // 	std::cout<<elem2dofs_[i][j]<<" ";
-        // std::cout<<std::endl;
-        // }
+ //        // std::cout<<"elem2dofs_ with size="<<elem2dofs_.size()<<std::endl;
+ //        // for(std::size_t i=0;i<elem2dofs_.size();i++)
+ //        // {
+ //        // 	std::cout<<std::endl;
+ //        // 	for(std::size_t j=0;j<elem2dofs_[i].size();j++)
+ //        // 	std::cout<<elem2dofs_[i][j]<<" ";
+ //        // std::cout<<std::endl;
+ //        // }
 
 
 
-	    // we assume the finest elements are added after the coarsest ones  
-	 	const auto& tracker=bisection_.tracker();
-	    Integer level;
-	    // std::cout<<"last_n_elements_="<<last_n_elements_<<std::endl;
-	    // std::cout<<"mesh_.n_elements()="<<mesh_.n_elements()<<std::endl;    
-	 	for(std::size_t i=last_n_elements_;i<mesh_.n_elements();i++)
-	 	   {
+	//     // we assume the finest elements are added after the coarsest ones  
+	//  	const auto& tracker=bisection_.tracker();
+	//     Integer level;
+	//     // std::cout<<"last_n_elements_="<<last_n_elements_<<std::endl;
+	//     // std::cout<<"mesh_.n_elements()="<<mesh_.n_elements()<<std::endl;    
+	//  	for(std::size_t i=last_n_elements_;i<mesh_.n_elements();i++)
+	//  	   {
 	 	   	
-	 	   	level=tracker.get_iterate(i);
-	 	   	// std::cout<<"init elem="<<i <<" of level "<<level<<std::endl;
-	 		init_elem(mesh_.elem(i),tracker.get_iterate(i));
-	 		// std::cout<<count_n_entity_vec_[level]<<std::endl;
-	 		last_n_elements_++;	
-	        }
-	    last_n_elements_=mesh_.n_elements();
+	//  	   	level=tracker.get_iterate(i);
+	//  	   	// std::cout<<"init elem="<<i <<" of level "<<level<<std::endl;
+	//  		init_elem(mesh_.elem(i),tracker.get_iterate(i));
+	//  		// std::cout<<count_n_entity_vec_[level]<<std::endl;
+	//  		last_n_elements_++;	
+	//         }
+	//     last_n_elements_=mesh_.n_elements();
 
 	 	
 
-	  } 
+	//   } 
 
 
-	 		void describe(std::ostream &os) const
-			{
-				os << "-----------------------------------\n";
+	//  		void describe(std::ostream &os) const
+	// 		{
+	// 			os << "-----------------------------------\n";
 
-				for(const auto &m : map_) {
-					const auto& nodes=m.first;
-					for(const auto n : nodes) {
-						os << n << " ";
-					}
+	// 			for(const auto &m : map_) {
+	// 				const auto& nodes=m.first;
+	// 				for(const auto n : nodes) {
+	// 					os << n << " ";
+	// 				}
 
-					os << "-> ";
+	// 				os << "-> ";
 
-					for(const auto n : *m.second) {
-						os << n << " ";
-					}
+	// 				for(const auto n : *m.second) {
+	// 					os << n << " ";
+	// 				}
 
-					os << "\n";
-				}
+	// 				os << "\n";
+	// 			}
 
-				os << "-----------------------------------\n";
-			}
+	// 			os << "-----------------------------------\n";
+	// 		}
 
-	 		void describe2(std::ostream &os) const
-			{
-				os << "-----------------------------------\n";
+	//  		void describe2(std::ostream &os) const
+	// 		{
+	// 			os << "-----------------------------------\n";
 
-				for(const auto &m : map_dof_) {
-					const auto& nodes=m.first;
-					for(const auto n : nodes) {
-						os << n << " ";
-					}
+	// 			for(const auto &m : map_dof_) {
+	// 				const auto& nodes=m.first;
+	// 				for(const auto n : nodes) {
+	// 					os << n << " ";
+	// 				}
 
-					os << "-> ";
+	// 				os << "-> ";
 
-						os << m.second << " ";
+	// 					os << m.second << " ";
 					
 
-					os << "\n";
-				}
+	// 				os << "\n";
+	// 			}
 
-				os << "-----------------------------------\n";
-			}		
+	// 			os << "-----------------------------------\n";
+	// 		}		
 
 
 
-	 		void describe3(std::ostream &os) const
-			{
-				os << "-----------------------------------\n";
+	//  		void describe3(std::ostream &os) const
+	// 		{
+	// 			os << "-----------------------------------\n";
 
-				for(const auto &m : parent_map_) {
-					const auto& nodes=m.first;
-					for(const auto n : nodes) {
-						os << n << " ";
-					}
+	// 			for(const auto &m : parent_map_) {
+	// 				const auto& nodes=m.first;
+	// 				for(const auto n : nodes) {
+	// 					os << n << " ";
+	// 				}
 
-					os << "-> ";
+	// 				os << "-> ";
 
-						os << m.second << " ";
+	// 					os << m.second << " ";
 					
 
-					os << "\n";
-				}
+	// 				os << "\n";
+	// 			}
 
-				os << "-----------------------------------\n";
-			}	
-
-
-
-			auto& elem2dofs(const Integer i)const{return elem2dofs_[i];}
+	// 			os << "-----------------------------------\n";
+	// 		}	
 
 
-	private:
-		MeshT& mesh_;
-		Node2ElemMap<MeshT>& node2elem_;
-		Bisection<MeshT>& bisection_;
-		std::shared_ptr<BisectionT> bisection_ptr_;
-	    Map map_;
-	    MapDof map_dof_;
-	    std::map<Key, bool> parent_map_;
-	    Key local_nodes_;
-	    Integer entity_[Npoints];
-	    Simplex<Dim,EntityDim> simplex_;
-	    Simplex<Dim,EntityDim> simplex_parent_;
-	    Integer last_n_elements_;
-	    Integer count_n_entity_;
-	    IntegerVector count_n_entity_vec_;
-	    // Integer count_levels_;
-	    bool init_coarse_level_;
-	    std::vector<std::vector<Integer>> elem2dofs_;
-	};
+
+	// 		auto& elem2dofs(const Integer i)const{return elem2dofs_[i];}
 
 
+	// private:
+	// 	MeshT& mesh_;
+	// 	Node2ElemMap<MeshT>& node2elem_;
+	// 	Bisection<MeshT>& bisection_;
+	// 	std::shared_ptr<BisectionT> bisection_ptr_;
+	//     Map map_;
+	//     MapDof map_dof_;
+	//     std::map<Key, bool> parent_map_;
+	//     Key local_nodes_;
+	//     Integer entity_[Npoints];
+	//     Simplex<Dim,EntityDim> simplex_;
+	//     Simplex<Dim,EntityDim> simplex_parent_;
+	//     Integer last_n_elements_;
+	//     Integer count_n_entity_;
+	//     IntegerVector count_n_entity_vec_;
+	//     // Integer count_levels_;
+	//     bool init_coarse_level_;
+	//     std::vector<std::vector<Integer>> elem2dofs_;
+	// };
 
 
 
@@ -2911,194 +3079,1145 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 
 
 
-	template<typename Elem, Integer EntityDimMax, Integer EntityDim>
-	 class ConnectivitySimpliacialMapOfMeshTupleTypeHelper;
 
-	template<typename MeshT, Integer EntityDimMax, Integer EntityDim>
-	class ConnectivitySimpliacialMapOfMeshTupleTypeHelper
+
+	// template<typename Elem, Integer EntityDimMax, Integer EntityDim>
+	//  class ConnectivitySimpliacialMapOfMeshTupleTypeHelper;
+
+	// template<typename MeshT, Integer EntityDimMax, Integer EntityDim>
+	// class ConnectivitySimpliacialMapOfMeshTupleTypeHelper
+	// {
+	// public:
+	//      using rest = typename ConnectivitySimpliacialMapOfMeshTupleTypeHelper<MeshT,EntityDimMax,EntityDim+1>::type;
+	//      using ens  = ConnectivitySimpliacialMap<MeshT,EntityDim>;
+	//      using type = decltype( std::tuple_cat( std::declval< std::tuple<ens> >(),std::declval< rest >() ) );
+	// };
+
+
+	// template<typename MeshT, Integer EntityDimMax>
+	// class ConnectivitySimpliacialMapOfMeshTupleTypeHelper<MeshT, EntityDimMax,EntityDimMax>
+	// {
+	// public:
+	//      using ens  = ConnectivitySimpliacialMap<MeshT,EntityDimMax>;
+	//      using type = typename std::tuple<ens>;
+	// };
+
+	// template<typename MeshT>
+	// using ConnectivitySimpliacialMapOfMesh= typename ConnectivitySimpliacialMapOfMeshTupleTypeHelper<MeshT,MeshT::Elem::ManifoldDim,0>::type;
+
+
+
+	// 		template<typename MeshT_>
+	// class ConnectivitySimpliacialMapCollection
+	// {
+	// public:
+	// 	using MeshT=MeshT_;
+	// 	using BisectionT=Bisection<MeshT>;
+	// 	using Elem=typename MeshT::Elem;
+	// 	using EntitiesTuple=ConnectivitySimpliacialMapOfMesh<MeshT>;
+	// 	static constexpr Integer ManifoldDim=Elem::ManifoldDim;
+
+
+	// 		template<Integer N=0>
+	// 	struct ConstructorTupleHelper;
+
+	// 		template<>
+	// 	struct ConstructorTupleHelper<0>
+	// 	{
+	// 		using ens = ConnectivitySimpliacialMap<MeshT,0>;
+	// 		using type = typename std::tuple<ens>;
+	// 	};
+
+	// 		template <Integer N>
+	// 	struct ConstructorTupleHelper
+	// 	{
+	// 		using rest = typename ConstructorTupleHelper<N-1>::type; 
+	// 		using ens = ConnectivitySimpliacialMap<MeshT,N>;
+	// 		using tuple_ens=std::tuple<ens>;
+	// 		using type = decltype( std::tuple_cat(std::declval< rest >() , std::declval< tuple_ens >()) );
+	// 	};
+
+	// 		template<Integer N>
+	// 	using ConstructorTuple=typename ConstructorTupleHelper<N>::type;
+
+
+
+
+	// 		template< Integer N>
+	// 	std::enable_if_t<0==N, ConstructorTuple<N> >
+	// 	construct_tuple(MeshT& mesh,Node2ElemMap<MeshT>& node2elem,Bisection<MeshT>& bisection)
+	// 	{   
+	// 		using type=ConnectivitySimpliacialMap<MeshT,N>;
+	// 		return std::tuple<type>
+	// 		(type(mesh,node2elem,bisection));
+	// 	}
+
+
+	// 		template<Integer N>
+	// 	std::enable_if_t< 0<N, ConstructorTuple<N> >
+	// 	construct_tuple(MeshT& mesh,Node2ElemMap<MeshT>& node2elem,Bisection<MeshT>& bisection)
+	// 	{
+	// 		using type=ConnectivitySimpliacialMap<MeshT,N>;
+	// 		return std::tuple_cat(construct_tuple<N-1>(mesh,node2elem,bisection), 
+	// 			std::tuple<type>(type(mesh,node2elem,bisection)));
+	// 	}
+
+
+
+
+
+
+
+
+	// 	ConnectivitySimpliacialMapCollection(MeshT& mesh,Node2ElemMap<MeshT>& node2elem,Bisection<MeshT>& bisection):
+	// 	mesh_(mesh),
+	// 	node2elem_(node2elem),
+	// 	bisection_(bisection),
+	// 	tuple_entities_(construct_tuple<MeshT::ManifoldDim>(mesh,node2elem,bisection))
+	// 	{}
+
+
+
+	// 		    template<typename FunctionSpace,Integer Nmax,Integer N>
+	// 	std::enable_if_t<(N>Nmax),void>
+	// 	init_aux_aux()
+	// 	{}
+
+	// 		    template<typename FunctionSpace,Integer Nmax,Integer N>
+	// 	std::enable_if_t<(N<=Nmax),void>
+	// 	init_aux_aux()
+	// 	{   
+	// 		auto& ens=tuple_get<FunctionSpace::entity[N]>(tuple_entities_);
+	// 		ens.init();
+	// 		init_aux_aux<FunctionSpace,Nmax,N+1>();
+	// 	}
+
+
+	// 		    template<typename BaseFunctionSpace, typename...BaseFunctionSpaces>
+	// 	std::enable_if_t<(sizeof...(BaseFunctionSpaces)==0),void>
+	// 	init_aux()
+	// 	{
+	// 		using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
+	// 		init_aux_aux<FunctionSpace,FunctionSpace::entity.size()-1,0>();
+	// 	}
+
+	// 		    template<typename BaseFunctionSpace, typename...BaseFunctionSpaces>
+	// 	std::enable_if_t<(sizeof...(BaseFunctionSpaces)>0),void>
+	// 	init_aux()
+	// 	{   
+	// 		using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
+	// 		init_aux_aux<FunctionSpace,FunctionSpace::entity.size()-1,0>();
+	// 		init_aux<BaseFunctionSpaces...>();
+	// 	}
+
+
+	// 		    template<typename BaseFunctionSpace, typename...BaseFunctionSpaces>
+	// 	void init()
+	// 	{   
+	// 		init_aux<BaseFunctionSpace,BaseFunctionSpaces...>();
+	// 	}
+
+
+ //        template<Integer Nmax,Integer N>
+	//  	std::enable_if_t<(N>Nmax),void> describe2_aux(std::ostream &os) const
+	//  	{}
+
+ //        template<Integer Nmax,Integer N>
+	//  	std::enable_if_t<N<=Nmax,void> describe2_aux(std::ostream &os) const
+	// 	{
+	// 		os << "-----------------ENTITY N=="<<N<<"\n";
+	// 		tuple_get<N>(tuple_entities_).describe2(os);
+	// 		describe2_aux<Nmax,N+1>(os);
+	// 	}
+
+	//  	void describe2(std::ostream &os) const
+	// 	{
+ //         describe2_aux<ManifoldDim,0>(os);
+	// 	}	
+
+
+	// 	auto& tuple_entities(){return tuple_entities_;}
+
+	// 	auto& node2elem(){return node2elem_;}
+
+	// 	auto& mesh(){return mesh_;}
+
+	// 	auto& bisection(){return bisection_;}
+
+ //        const auto n_levels(){return bisection_.tracker().current_iterate();}
+	// 	// auto& mesh_ptr(){return std::make_shared<MeshT>(mesh_);}
+
+	// 	// inline auto bisection_ptr(){return bisection_ptr_;}
+	// private:
+	// 	MeshT& mesh_;
+	// 	Node2ElemMap<MeshT>& node2elem_;
+	// 	Bisection<MeshT>& bisection_;
+	// 	// std::shared_ptr<BisectionT> bisection_ptr_;
+
+
+	// 	bool node2elem_update_;
+	// 	EntitiesTuple tuple_entities_;
+	// 	// Array<bool, ManifoldDim+1> is_updated_;
+	// 	Integer level_;
+	// };
+
+
+
+
+
+
+ //    template<typename...BaseFunctionSpaces,typename MeshT>
+ //    void init(ConnectivitySimpliacialMapCollection<MeshT>& c) 
+ //    {c.template init<BaseFunctionSpaces...>();}
+
+
+
+
+template<typename ElemFunctionSpace>
+class LagrangeDofs;
+
+
+template<Integer Dim,Integer ManifoldDim,Integer Order, Integer Continuity, Integer NComponents>
+class LagrangeDofs<ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,Order,Continuity,NComponents>>
+{
+public:
+	using FunctionSpace=ElementFunctionSpace<Simplex<Dim, ManifoldDim>,LagrangeFE,Order,Continuity,NComponents>;
+    static constexpr Integer NDofs=FunctionSpaceDofsPerElem<FunctionSpace>::value;
+	static constexpr auto value()
 	{
-	public:
-	     using rest = typename ConnectivitySimpliacialMapOfMeshTupleTypeHelper<MeshT,EntityDimMax,EntityDim+1>::type;
-	     using ens  = ConnectivitySimpliacialMap<MeshT,EntityDim>;
-	     using type = decltype( std::tuple_cat( std::declval< std::tuple<ens> >(),std::declval< rest >() ) );
-	};
+     const auto& ref=Simplex<Dim,ManifoldDim>::reference_init();
+     Array<Matrix<Real, 1, Dim>,NDofs> dofs;
+     const Integer Mref=ref.size();
+     const Integer Nref=ref[0].size();
+     Integer cont=Mref;
+     for(Integer i=0;i<Mref;i++)
+     	for(Integer j=0;j<Nref;j++)
+        {
+        	dofs[i](0,j)=ref[i][j];
+
+        }
+
+     if(Order==2)
+     {
+     for(Integer i=0;i<Mref;i++)
+     	for(Integer j=i+1;j<Mref;j++)
+     	{
+	     	for(Integer k=0;k<Nref;k++)
+	        {
+	        	dofs[cont](0,k)=0.5*(ref[i][k]+ref[j][k]);
+	        }
+
+	        cont++;
+
+     	}	
+     }
+
+      return dofs;
 
 
-	template<typename MeshT, Integer EntityDimMax>
-	class ConnectivitySimpliacialMapOfMeshTupleTypeHelper<MeshT, EntityDimMax,EntityDimMax>
-	{
-	public:
-	     using ens  = ConnectivitySimpliacialMap<MeshT,EntityDimMax>;
-	     using type = typename std::tuple<ens>;
-	};
 
-	template<typename MeshT>
-	using ConnectivitySimpliacialMapOfMesh= typename ConnectivitySimpliacialMapOfMeshTupleTypeHelper<MeshT,MeshT::Elem::ManifoldDim,0>::type;
+	}
+};
 
+template<typename ElementFunctionSpaceSpace,Integer QR=GaussianQuadrature>
+class Dof;
 
-
-			template<typename MeshT_>
-	class ConnectivitySimpliacialMapCollection
-	{
-	public:
-		using MeshT=MeshT_;
-		using BisectionT=Bisection<MeshT>;
-		using Elem=typename MeshT::Elem;
-		using EntitiesTuple=ConnectivitySimpliacialMapOfMesh<MeshT>;
-		static constexpr Integer ManifoldDim=Elem::ManifoldDim;
-
-
-			template<Integer N=0>
-		struct ConstructorTupleHelper;
-
-			template<>
-		struct ConstructorTupleHelper<0>
-		{
-			using ens = ConnectivitySimpliacialMap<MeshT,0>;
-			using type = typename std::tuple<ens>;
-		};
-
-			template <Integer N>
-		struct ConstructorTupleHelper
-		{
-			using rest = typename ConstructorTupleHelper<N-1>::type; 
-			using ens = ConnectivitySimpliacialMap<MeshT,N>;
-			using tuple_ens=std::tuple<ens>;
-			using type = decltype( std::tuple_cat(std::declval< rest >() , std::declval< tuple_ens >()) );
-		};
-
-			template<Integer N>
-		using ConstructorTuple=typename ConstructorTupleHelper<N>::type;
+template<typename ElementFunctionSpaceSpace,Integer QR=GaussianQuadrature>
+class DofAux;
 
 
 
 
-			template< Integer N>
-		std::enable_if_t<0==N, ConstructorTuple<N> >
-		construct_tuple(MeshT& mesh,Node2ElemMap<MeshT>& node2elem,Bisection<MeshT>& bisection)
-		{   
-			using type=ConnectivitySimpliacialMap<MeshT,N>;
-			return std::tuple<type>
-			(type(mesh,node2elem,bisection));
-		}
+template <Integer Dim,Integer ManifoldDim, Integer Order,Integer Continuity, Integer NComponents_,Integer QR>
+class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,LagrangeFE,Order,Continuity,NComponents_>,QR>
+{
+ public:
+
+    using Elem=Simplex<Dim,ManifoldDim>;
+ 	using QuadratureElem=typename VolumeOrSurfaceElem<Elem,false>::type;
+ 	static constexpr Integer FEFamily=LagrangeFE;
+ 	static constexpr Integer NComponents=1; 
+ 	using BaseFunctionSpace=BaseFunctionSpace<FEFamily,Order,Continuity,NComponents>;
+
+    static constexpr Integer QRuleOrder=QuadratureOrder<IdentityOperator, BaseFunctionSpace>::value;
 
 
-			template<Integer N>
-		std::enable_if_t< 0<N, ConstructorTuple<N> >
-		construct_tuple(MeshT& mesh,Node2ElemMap<MeshT>& node2elem,Bisection<MeshT>& bisection)
-		{
-			using type=ConnectivitySimpliacialMap<MeshT,N>;
-			return std::tuple_cat(construct_tuple<N-1>(mesh,node2elem,bisection), 
-				std::tuple<type>(type(mesh,node2elem,bisection)));
-		}
+    using QRule=typename QuadratureRule<QR>:: template rule<Elem,1>;
+    // using Shape=ShapeFunction<Elem,BaseFunctionSpace,IdentityOperator,QRule>;
+    using Shape=ShapeFunction<Elem,BaseFunctionSpace,IdentityOperator,QRule>;
+    using ShapeValue=typename Shape::type;
 
 
 
 
 
 
+ 	// HA SENSO PER NCOMPONENTS == 1 RIFLETTI PER PIU COMPONENTI
 
 
-		ConnectivitySimpliacialMapCollection(MeshT& mesh,Node2ElemMap<MeshT>& node2elem,Bisection<MeshT>& bisection):
-		mesh_(mesh),
-		node2elem_(node2elem),
-		bisection_(bisection),
-		tuple_entities_(construct_tuple<MeshT::ManifoldDim>(mesh,node2elem,bisection))
-		{}
+ 	using ElementFunctionSpace=ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>;
+ 	static constexpr auto entity=ElementFunctionSpace::entity;
+    using Map=MapFromReference<IdentityOperator,Elem,FEFamily> ;
+    using MapReference=MapFromReference<IdentityOperator,QuadratureElem,FEFamily> ;
+    static constexpr auto Dofs=LagrangeDofs<ElementFunctionSpace>::value();
+    static constexpr auto NDofs=LagrangeDofs<ElementFunctionSpace>::NDofs;
+    
 
 
-
-			    template<typename FunctionSpace,Integer Nmax,Integer N>
-		std::enable_if_t<(N>Nmax),void>
-		init_aux_aux()
-		{}
-
-			    template<typename FunctionSpace,Integer Nmax,Integer N>
-		std::enable_if_t<(N<=Nmax),void>
-		init_aux_aux()
-		{   
-			auto& ens=tuple_get<FunctionSpace::entity[N]>(tuple_entities_);
-			ens.init();
-			init_aux_aux<FunctionSpace,Nmax,N+1>();
-		}
+    template<Integer M,Integer N=0,typename Mat>
+    inline std::enable_if_t<N==NDofs,void>
+    loop_coarse_dof(Mat& mat)
+    {}
 
 
-			    template<typename BaseFunctionSpace, typename...BaseFunctionSpaces>
-		std::enable_if_t<(sizeof...(BaseFunctionSpaces)==0),void>
-		init_aux()
-		{
-			using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
-			init_aux_aux<FunctionSpace,FunctionSpace::entity.size()-1,0>();
-		}
+    template<Integer M,Integer N=0,typename Mat>
+    inline std::enable_if_t<N<NDofs,void>
+    loop_coarse_dof(Mat& mat)
+    {
+     // HA SENSO PER NCOMPONENTS == 1 RIFLETTI PER PIU COMPONENTI
+     // TODO FIXME
+     // auto& value=func_values_[N];
 
-			    template<typename BaseFunctionSpace, typename...BaseFunctionSpaces>
-		std::enable_if_t<(sizeof...(BaseFunctionSpaces)>0),void>
-		init_aux()
-		{   
-			using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
-			init_aux_aux<FunctionSpace,FunctionSpace::entity.size()-1,0>();
-			init_aux<BaseFunctionSpaces...>();
-		}
+     // DofAux<M,N,ElementFunctionSpace,QR>::compute(local_mat_,func_values_);
+     // std::cout<<"loop_coarse_dof =="<<N<<std::endl;
+     // std::cout<<value<<std::endl;
+     mat(M,N)=func_values_[N][0](0,0);
 
-
-			    template<typename BaseFunctionSpace, typename...BaseFunctionSpaces>
-		void init()
-		{   
-			init_aux<BaseFunctionSpace,BaseFunctionSpaces...>();
-		}
-
-
-        template<Integer Nmax,Integer N>
-	 	std::enable_if_t<(N>Nmax),void> describe2_aux(std::ostream &os) const
-	 	{}
-
-        template<Integer Nmax,Integer N>
-	 	std::enable_if_t<N<=Nmax,void> describe2_aux(std::ostream &os) const
-		{
-			os << "-----------------ENTITY N=="<<N<<"\n";
-			tuple_get<N>(tuple_entities_).describe2(os);
-			describe2_aux<Nmax,N+1>(os);
-		}
-
-	 	void describe2(std::ostream &os) const
-		{
-         describe2_aux<ManifoldDim,0>(os);
-		}	
-
-
-		auto& tuple_entities(){return tuple_entities_;}
-
-		auto& node2elem(){return node2elem_;}
-
-		auto& mesh(){return mesh_;}
-
-		auto& bisection(){return bisection_;}
-
-        const auto n_levels(){return bisection_.tracker().current_iterate();}
-		// auto& mesh_ptr(){return std::make_shared<MeshT>(mesh_);}
-
-		// inline auto bisection_ptr(){return bisection_ptr_;}
-	private:
-		MeshT& mesh_;
-		Node2ElemMap<MeshT>& node2elem_;
-		Bisection<MeshT>& bisection_;
-		// std::shared_ptr<BisectionT> bisection_ptr_;
-
-
-		bool node2elem_update_;
-		EntitiesTuple tuple_entities_;
-		// Array<bool, ManifoldDim+1> is_updated_;
-		Integer level_;
-	};
+     // std::cout<<"(M,N) ==("<<M<<", "<<N<<")=>"<<func_values_[N][0](0,0)<<std::endl;
+     // shape_.init();
+     // loop on coarse shape functions
+     loop_coarse_dof<M,N+1>(mat);
+        
+    }
 
 
 
 
 
+    
+    void compute_point_row(FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+    {
+    const auto& J_inv=C_FE.inv_jac();
+    const auto& v0=C_FE.v0();
+    const auto& rows=J_inv.rows();
+    const auto& cols=J_inv.cols();
+    // std::cout<<J_inv<<std::endl;
+    // std::cout<<v0<<std::endl;
+    // std::cout<<rows<<std::endl;
+    // std::cout<<cols<<std::endl;
+    // std::cout<<"transformed_point_col_"<<std::endl;
+    // std::cout<<transformed_point_col_<<std::endl;
 
-    template<typename...BaseFunctionSpaces,typename MeshT>
-    void init(ConnectivitySimpliacialMapCollection<MeshT>& c) 
-    {c.template init<BaseFunctionSpaces...>();}
+    for(Integer i=0;i<rows;i++)
+    	{
+    		// std::cout<<"i="<<i<<std::endl;
+    		transformed_point_row_(0,i)=J_inv(i,0)*(transformed_point_col_[0]-v0[0]);
+    	}
+
+    for(Integer i=0;i<rows;i++)
+    	{
+    		// std::cout<<"i="<<i<<std::endl;
+	    	for(Integer j=1;j<cols;j++)
+	    	{
+	    		// std::cout<<"j="<<j<<std::endl;
+	    		transformed_point_row_(0,i)+=J_inv(i,j)*(transformed_point_col_[j]-v0[j]);
+	    	}
+       	}
+
+    // std::cout<<"transformed_point_row_"<<std::endl;
+    // std::cout<<transformed_point_row_<<std::endl;
+    //  std::cout<<"compute_point_row end"<<std::endl;
+
+     }
+
+
+
+    template<Integer N=0,typename Mat>
+    inline std::enable_if_t<N==NDofs,void>
+    loop_fine_dof(Mat& mat, FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+    {}
+
+    template<Integer N=0,typename Mat>
+    inline std::enable_if_t<N<NDofs,void>
+    loop_fine_dof(Mat& mat, FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+    {
+     // std::cout<<"loop_fine_dof =="<<N<<"    "<<Dofs[N]<<std::endl;
+     // F_FE.init(F_FE.elem_id());
+     F_map_.init(F_FE);
+     F_FE.transform_point(transformed_point_col_,Dofs[N]);
+     // std::cout<<"transformed_point_col_"<<std::endl;
+     // std::cout<<transformed_point_col_<<std::endl;
+     // transformed_point_row_=C_FE_.inv_jac()*transformed_point_col_;
+     compute_point_row(C_FE,F_FE);
+     // std::cout<<"shape init first"<<std::endl;
+
+     shape_.init_map(C_map_);
+     shape_.init(transformed_point_row_);
+     // std::cout<<"shape init end"<<std::endl;
+
+
+
+
+     // std::cout<<"Dofs[N] =="<<std::endl;
+     // std::cout<<Dofs[N]<<std::endl;
+     // std::cout<<"transformed_point_col_ =="<<std::endl;
+     // std::cout<<transformed_point_col_ <<std::endl;
+     // std::cout<<"transformed_point_row_ =="<<std::endl;
+     // std::cout<<transformed_point_row_ <<std::endl;
+     func_values_=shape_.eval();
+     // std::cout<<"func_values_ =="<<std::endl;
+     // std::cout<<func_values_<<std::endl;
+
+     loop_coarse_dof<N>(mat);
+
+
+     loop_fine_dof<N+1>(mat, C_FE,F_FE);
+        
+    }
+
+    // template<typename Mat>
+    // inline void compute(Mat&mat, FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+    // {
+
+    //  // C_FE_.init(C_FE.elem_id());
+    //  C_FE.init_inv_jac();
+    //  C_map_.init(C_FE);
+    //  shape_.init_map(C_reference_map_);
+
+
+
+    //  // loop on coarse shape functions
+    //  // std::cout<<"compute"<<std::endl;
+    //  // std::cout<<"map_"<<C_map_()<<std::endl;
+    //  // std::cout<<"Dofs reference =="<<std::endl;
+    //  // std::cout<<Dofs<<std::endl;
+    //  loop_fine_dof(mat,C_FE,F_FE);
+    //  std::cout<<"local_mat_"<<std::endl;
+    //  std::cout<<local_mat_<<std::endl;
+    // }
+
+
+
+
+
+
+
+
+    template<typename Mat>
+    void compute(Mat& mat, FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+    {
+    	Integer cont=0;
+
+    	C_FE.init_inv_jac();
+    	C_map_.init(C_FE);
+    	// compute_aux<Cont>(mat,cont,C_FE,F_FE);
+    	// compute_face_aux<0>(mat,cont,C_FE,F_FE);
+    	// compute_momentum_aux<0>(mat,cont,C_FE,F_FE);
+
+    	loop_fine_dof(mat,C_FE,F_FE);
+
+
+        std::cout<<"mat"<<std::endl;
+        std::cout<<mat<<std::endl;
+    	// for(Integer i=0;i<ManifoldDim+1;i++)
+    	// 	{F_FE.init_boundary(i,true);
+    	//      compute(mat,cont,C_FE,F_FE);}
+
+
+    	// compute<entity[1]>(mat,C_FE,F_FE);
+    }  
+
+  // template<typename Mat,typename Values>
+  // static void compute(Mat& local_mat, Values& func_values )
+  // {
+  // 	local_mat(M_,N_)=func_values[N_][0](0,0);
+  // }
+
+  private:
+ 	Shape shape_;
+ 	Map C_map_;
+ 	Map F_map_;
+ 	// MapReference C_reference_map_;
+    ShapeValue func_values_;
+    Matrix<Real,1,Dim> transformed_point_row_;
+    Matrix<Real,Dim,1> transformed_point_col_;
+  //   Matrix<Real,NDofs,NDofs> local_mat_;
+};
+
+
+template <Integer Dim,Integer ManifoldDim,Integer Continuity, Integer NComponents_,Integer QR>
+class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,0,Continuity,NComponents_>,QR>
+{
+ public:
+
+    using Elem=Simplex<Dim,ManifoldDim>;
+    static constexpr Integer Order=0;
+ 	using Face=typename VolumeOrSurfaceElem<Elem,false>::type;
+ 	static constexpr Integer FEFamily=RaviartThomasFE;
+ 	static constexpr Integer NComponents=1; 
+ 	using RTnBaseFunctionSpace=BaseFunctionSpace<FEFamily,Order,Continuity,NComponents>;
+ 	using ElementFunctionSpace=ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>;
+ 	static constexpr auto entity=ElementFunctionSpace::entity;
+ 	static constexpr auto dofs_per_entity=ElementFunctionSpace::dofs_per_entity;
+
+    static constexpr Integer NDofs=FunctionSpaceDofsPerElem<ElementFunctionSpace>::value;
+
+    static constexpr Integer NDofsFace= NComponents * dofs_per_entity[0] * ElemEntityCombinations<Elem,entity[0]>::value;
+    static constexpr Integer NDofsMomentum= NComponents * dofs_per_entity[1] * ElemEntityCombinations<Elem,entity[1]>::value;
+
+    // we have to integrate so + 1
+    static constexpr Integer QRuleOrder=1;//QuadratureOrder<IdentityOperator, RTnBaseFunctionSpace>::value+1;
+    
+
+    using Map=MapFromReference<IdentityOperator,Elem,FEFamily> ;
+    using TraceMap=MapFromReference<TraceOperator,Face,FEFamily> ;
+
+    using F_Lagrangian_Map=MapFromReference<IdentityOperator,Elem,LagrangeFE> ;
+
+
+    using QRuleFaceReference=typename QuadratureRule<QR>:: template rule<Face,QRuleOrder>;
+    using QRuleFace=Boundary2VolumetricQuadratureRule<QRuleFaceReference>;
+    using ShapeFace=ShapeFunction<Elem,RTnBaseFunctionSpace,IdentityOperator,QRuleFace>;
+    using ShapeFaceValue=typename ShapeFace::type;
+    using QPpointsFace=typename ShapeFace::qp_points_type;
+
+
+    using ShapeTraceFace=ShapeFunction<Elem,RTnBaseFunctionSpace,TraceOperator,QRuleFaceReference>;
+    using trace_type=typename ShapeTraceFace::trace_type;
+
+    // using QRuleMomentum=typename QuadratureRule<QR>:: template rule<Elem,QRuleOrder>;
+    // using ShapeMomentum=ShapeFunction<Elem,RTnBaseFunctionSpace,IdentityOperator,QRuleMomentum>;
+    // using ShapeMomentumValue=typename ShapeMomentum::type;
+    // using QPpointsMomentum=typename ShapeMomentum::qp_points_type;
+
+    using Coefficients=ShapeFunctionCoefficientsCollectionSingleType<Elem,FEFamily>;
+    // using ShapeLagrangianMomentum=ShapeFunction<Elem,PnBaseFunctionSpace,IdentityOperator,QRuleMomentum>;
+
+  // template<typename Mat,typename Values>
+  // static void compute(Mat& local_mat, Values& func_values )
+  // {
+  // 	local_mat(M,N)=func_values[N][0](0,0);
+  // }
+    template<typename Output, typename Weight, typename ShapeValue,typename Normal>
+    void compute_face_dofs(Output& out, Integer& fine_dof, const Weight& weights,const ShapeValue& shape_value, const Normal& normal, FiniteElem<Elem>& FE)
+    {
+     const auto& NQPoints=ShapeValue::NQPoints;
+     const auto& Ndofs=Output::Rows;
+
+     std::cout<<"compute_face_dofs"<<std::endl;
+     std::cout<<"shape_value"<<std::endl;
+     std::cout<<shape_value<<std::endl; 
+
+     std::cout<<"normal"<<std::endl;
+     std::cout<<normal<<std::endl;
+     std::cout<<"weights"<<std::endl;
+     std::cout<<weights<<std::endl;
+     std::cout<<"FE.get_det_side()"<<std::endl;
+     std::cout<<FE.get_det_side()<<std::endl;
+     for(Integer coarse_dof=0;coarse_dof<NDofs;coarse_dof++)
+     {
+        out(fine_dof,coarse_dof)=0;
+
+     	for(Integer qp=0;qp<NQPoints;qp++)
+     	{
+     		for(Integer i=0;i<ManifoldDim;i++)
+     		{
+     			out(fine_dof,coarse_dof)+= weights[qp]*shape_value[coarse_dof][qp][i]*normal[i];
+     		}
+     	}
+       out(fine_dof,coarse_dof)*=FE.get_det_side();
+
+     }
+     std::cout<<"out"<<std::endl;
+     std::cout<<out<<std::endl;    
+    }
+
+    // face dofs
+    template<Integer EntityDim, typename Mat>
+    std::enable_if_t< (EntityDim==entity[0]), void>
+    compute(Mat& mat, Integer& cont, FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+    {
+     // F_map_.init(F_FE_);
+    	// QPpointsFace frfrfr(5);
+    	// typename QRuleFaceReference::qp_points_type feef(5);
+    	// std::cout<<"compute "<<std::endl;
+    	auto mesh_ptr=F_FE.mesh_ptr();
+    	// std::cout<<"qui1 "<<std::endl;
+    	const auto& signed_normal=mesh_ptr->signed_normal();
+    	// std::cout<<"qui2 "<<std::endl;
+        C_map_.init(C_FE);
+        // std::cout<<"qui3 "<<std::endl;
+        shape_face_.init_map(C_map_);
+        // std::cout<<"qui4 "<<std::endl;
+        // coeffs_.init(*mesh_ptr);
+
+        SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
+        // std::cout<<"qui5 "<<std::endl;
+    	F_FE.side_transform_point(qp_points_face_,QRuleFaceReference::qp_points);
+    	// std::cout<<"qui6 "<<std::endl;
+     // 	std::cout<<"QRuleFaceReference::qp_points"<<std::endl;
+    	// std::cout<<QRuleFaceReference::qp_points<<std::endl;
+    	// std::cout<<"qp_points_face_"<<std::endl;
+    	// std::cout<<qp_points_face_<<std::endl;
+     // transformed_point_row_=C_FE_.inv_jac()*transformed_point_col_;
+        C_FE.points_to_reference_points(reference_qp_points_face_,qp_points_face_);
+        // std::cout<<"qui7 "<<std::endl;
+    	// std::cout<<"reference_qp_points_face_"<<std::endl;
+    	// std::cout<<reference_qp_points_face_<<std::endl;
+        shape_face_.init(coeff_,reference_qp_points_face_);
+        // std::cout<<"shape_face_.eval()"<<std::endl;
+        // std::cout<<shape_face_.eval()<<std::endl;
+        // // Vector<Real,NDofsFace> out; 
+
+        const auto& normal=signed_normal.normals()[F_FE.elem_id()][F_FE.side_id()];
+        
+
+        // std::cout<<"shape_trace_face_.eval()"<<std::endl;
+        // std::cout<<shape_trace_face_.eval()<<std::endl;
+        
+         std::cout<< "F_FE elem id = "<< F_FE.elem_id()<< "    side_id"<<F_FE.side_id() <<std::endl;
+         compute_face_dofs(mat,cont,QRuleFace::qp_weights,shape_face_.eval(), normal, F_FE);
+         cont++;
+
+
+    }
+
+
+	   template<typename Mat1, typename Mat2>
+	   void resize(Mat1& mat1,const Mat2& mat2)
+	   {
+	   	for(Integer i=0;i<NDofs;i++)
+	   		mat1(i,i)=mat1(i,i)/mat2(i,i);
+	   }
+
+
+    template<typename Mat>
+    void compute(Mat& mat, FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+    {
+    	Integer cont=0;
+    	// compute_aux<Cont>(mat,cont,C_FE,F_FE);
+    	// compute_face_aux<0>(mat,cont,C_FE,F_FE);
+    	// compute_momentum_aux<0>(mat,cont,C_FE,F_FE);
+        // std::cout<<"compute first"<<std::endl;
+    	for(Integer i=0;i<ManifoldDim+1;i++)
+    		{F_FE.init_boundary(i,true);
+    	     compute<entity[0]>(mat,cont,C_FE,F_FE);}
+  
+        cont=0;
+        C_FE.init_inv_jac();
+        F_FE.init(C_FE.elem_id());
+     	for(Integer i=0;i<ManifoldDim+1;i++)
+    		{F_FE.init_boundary(i,true);
+    	     compute<entity[0]>(mat_coarse_,cont,C_FE,F_FE);}
+
+
+    	std::cout<<"pre mat"<<std::endl;
+    	std::cout<<mat<<std::endl;
+    	std::cout<<"mat_coarse_"<<std::endl;
+    	std::cout<<mat_coarse_<<std::endl;
+
+        resize(mat,mat_coarse_);
+    	std::cout<<"mat"<<std::endl;
+    	std::cout<<mat<<std::endl;
+
+    	// compute<entity[1]>(mat,C_FE,F_FE);
+    }  
+
+
+private:
+	ShapeFace shape_face_;
+	QPpointsFace qp_points_face_;
+	QPpointsFace reference_qp_points_face_;
+	Map C_map_;
+	TraceMap trace_map_;
+	Map F_map_;
+	// Coefficients coeffs_;
+	Array<Real,NDofs> coeff_;
+	Matrix<Real,NDofs,NDofs> mat_coarse_;
+};
+
+
+
+
+
+
+
+
+
+template <Integer Dim,Integer ManifoldDim,Integer Continuity, Integer NComponents_,Integer QR>
+class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Continuity,NComponents_>,QR>
+{
+ public:
+
+    using Elem=Simplex<Dim,ManifoldDim>;
+    static constexpr Integer Order=1;
+ 	using Face=typename VolumeOrSurfaceElem<Elem,false>::type;
+ 	static constexpr Integer FEFamily=RaviartThomasFE;
+ 	static constexpr Integer NComponents=1; 
+ 	using RTnBaseFunctionSpace=BaseFunctionSpace<FEFamily,Order,Continuity,NComponents>;
+ 	using PnBaseFunctionSpace=BaseFunctionSpace<LagrangeFE,Order,Continuity,NComponents>;
+ 	using ElementFunctionSpace=ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>;
+ 	static constexpr auto entity=ElementFunctionSpace::entity;
+ 	static constexpr auto dofs_per_entity=ElementFunctionSpace::dofs_per_entity;
+
+    static constexpr Integer NDofs=FunctionSpaceDofsPerElem<ElementFunctionSpace>::value;
+
+    static constexpr Integer NDofsFace= NComponents * dofs_per_entity[0] * ElemEntityCombinations<Elem,entity[0]>::value;
+    static constexpr Integer NDofsMomentum= NComponents * dofs_per_entity[1] * ElemEntityCombinations<Elem,entity[1]>::value;
+
+    // we have to integrate so + 1
+    static constexpr Integer QRuleOrder=QuadratureOrder<IdentityOperator, RTnBaseFunctionSpace>::value+1;
+    
+
+    using Map=MapFromReference<IdentityOperator,Elem,FEFamily> ;
+    using TraceMap=MapFromReference<TraceOperator,Face,FEFamily> ;
+
+    using F_Lagrangian_Map=MapFromReference<IdentityOperator,Elem,LagrangeFE> ;
+
+
+    using QRuleFaceReference=typename QuadratureRule<QR>:: template rule<Face,QRuleOrder>;
+    using QRuleFace=Boundary2VolumetricQuadratureRule<QRuleFaceReference>;
+    using ShapeFace=ShapeFunction<Elem,RTnBaseFunctionSpace,IdentityOperator,QRuleFace>;
+    using ShapeFaceValue=typename ShapeFace::type;
+    using QPpointsFace=typename ShapeFace::qp_points_type;
+
+
+    using ShapeTraceFace=ShapeFunction<Elem,RTnBaseFunctionSpace,TraceOperator,QRuleFaceReference>;
+    using trace_type=typename ShapeTraceFace::trace_type;
+
+    using QRuleMomentum=typename QuadratureRule<QR>:: template rule<Elem,QRuleOrder>;
+    using ShapeMomentum=ShapeFunction<Elem,RTnBaseFunctionSpace,IdentityOperator,QRuleMomentum>;
+    using ShapeMomentumValue=typename ShapeMomentum::type;
+    using QPpointsMomentum=typename ShapeMomentum::qp_points_type;
+
+    using Coefficients=ShapeFunctionCoefficientsCollectionSingleType<Elem,FEFamily>;
+    using ShapeLagrangianMomentum=ShapeFunction<Elem,PnBaseFunctionSpace,IdentityOperator,QRuleMomentum>;
+
+  // template<typename Mat,typename Values>
+  // static void compute(Mat& local_mat, Values& func_values )
+  // {
+  // 	local_mat(M,N)=func_values[N][0](0,0);
+  // }
+    template<typename Output, typename Weight, typename ShapeValue,typename ShapeTraceValue,typename Normal>
+    void compute_face_dofs(Output& out, Integer& fine_dof, const Weight& weights,const ShapeValue& shape_value,ShapeTraceValue& shape_trace_value, const Normal& normal, FiniteElem<Elem>& FE)
+    {
+     const auto& NQPoints=ShapeValue::NQPoints;
+     const auto& Ndofs=Output::Rows;
+
+     // std::cout<<"compute_face_dofs"<<std::endl;
+
+
+     // std::cout<<"normal"<<std::endl;
+     // std::cout<<normal<<std::endl;
+   
+     for(Integer coarse_dof=0;coarse_dof<NDofs;coarse_dof++)
+     {
+        out(fine_dof,coarse_dof)=0;
+
+     	for(Integer qp=0;qp<NQPoints;qp++)
+     	{
+     		for(Integer i=0;i<ManifoldDim;i++)
+     		{
+     			out(fine_dof,coarse_dof)+= weights[qp]*shape_value[coarse_dof][qp][i]*normal[i]*shape_trace_value[qp](0,0);
+     		}
+     	}
+       out(fine_dof,coarse_dof)*=FE.get_det_side();
+
+     }
+     // std::cout<<"out"<<std::endl;
+     // std::cout<<out<<std::endl;    
+    }
+
+    template<typename Output, typename Weight, typename ShapeValue, typename ShapeLagrangeValue>
+    void compute_momentum_dofs(Output& out, Integer& fine_dof,  const Weight& weights, ShapeValue& shape_value,const Integer component, ShapeLagrangeValue& shape_lagrange_value,const FiniteElem<Elem>& FE)
+    {
+     const auto& NQPoints=ShapeValue::NQPoints;
+     const auto& Ndofs=Output::Rows;
+     
+
+      // std::cout<<"compute_momentum_dofs"<<std::endl;
+      // std::cout<<"weights"<<std::endl;
+      // std::cout<<weights<<std::endl;
+
+      // std::cout<<"shape_value"<<std::endl;
+      // std::cout<<shape_value<<std::endl;
+
+      // std::cout<<"shape_lagrange_value"<<std::endl;
+      // std::cout<<shape_lagrange_value<<std::endl;
+
+      // std::cout<<"FE.get_det()"<<std::endl;
+      // std::cout<<FE.get_det()<<std::endl;
+
+     for(Integer coarse_dof=0;coarse_dof<Ndofs;coarse_dof++)
+     {
+        out(fine_dof,coarse_dof)=0;
+        // std::cout<<"n_dof="<<n_dof<<std::endl;
+     	for(Integer qp=0;qp<NQPoints;qp++)
+     	{
+     			out(fine_dof,coarse_dof)+= weights[qp]*shape_value[coarse_dof][qp][component]*shape_lagrange_value[qp](0,0);
+     			// std::cout<<out(n_dof,cont)<<" ";
+     	}
+
+       // std::cout<<out(n_dof,cont)<<std::endl;
+       out(fine_dof,coarse_dof)*=FE.get_det();
+
+     }
+     std::cout<<"out"<<std::endl;
+     std::cout<<out<<std::endl;    
+    }
+
+    // face dofs
+    template<Integer EntityDim, typename Mat>
+    std::enable_if_t< (EntityDim==entity[0]), void>
+    compute(Mat& mat, Integer& cont, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+    {
+     // F_map_.init(F_FE_);
+    	// QPpointsFace frfrfr(5);
+    	// typename QRuleFaceReference::qp_points_type feef(5);
+    	// std::cout<<"compute "<<std::endl;
+    	auto mesh_ptr=F_FE.mesh_ptr();
+    	// std::cout<<"qui1 "<<std::endl;
+    	const auto& signed_normal=mesh_ptr->signed_normal();
+    	// std::cout<<"qui2 "<<std::endl;
+        C_map_.init(C_FE);
+        // std::cout<<"qui3 "<<std::endl;
+        shape_face_.init_map(C_map_);
+        // std::cout<<"qui4 "<<std::endl;
+        // coeffs_.init(*mesh_ptr);
+
+        SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
+        // std::cout<<"qui5 "<<std::endl;
+    	F_FE.side_transform_point(qp_points_face_,QRuleFaceReference::qp_points);
+    	// std::cout<<"qui6 "<<std::endl;
+     // 	std::cout<<"QRuleFaceReference::qp_points"<<std::endl;
+    	// std::cout<<QRuleFaceReference::qp_points<<std::endl;
+    	// std::cout<<"qp_points_face_"<<std::endl;
+    	// std::cout<<qp_points_face_<<std::endl;
+     // transformed_point_row_=C_FE_.inv_jac()*transformed_point_col_;
+        C_FE.points_to_reference_points(reference_qp_points_face_,qp_points_face_);
+        // std::cout<<"qui7 "<<std::endl;
+    	// std::cout<<"reference_qp_points_face_"<<std::endl;
+    	// std::cout<<reference_qp_points_face_<<std::endl;
+        shape_face_.init(coeff_,reference_qp_points_face_);
+        // std::cout<<"shape_face_.eval()"<<std::endl;
+        // std::cout<<shape_face_.eval()<<std::endl;
+        // Vector<Real,NDofsFace> out; 
+
+        const auto& normal=signed_normal.normals()[F_FE.elem_id()][F_FE.side_id()];
+        
+        // std::cout<<"qui1"<<std::endl;
+        Integer id=F_FE.side_id();
+        // std::cout<<"qui2"<<std::endl;
+        trace_map_.init(F_FE);
+        // std::cout<<"qui3"<<std::endl;
+        shape_trace_face_.init_map(trace_map_);
+        // std::cout<<"qui4"<<std::endl;
+        shape_trace_face_.init(coeff_,id);
+        // std::cout<<"F_FE.side_id()"<<std::endl;
+        // std::cout<<F_FE.side_id()<<std::endl;
+
+        // std::cout<<"shape_trace_face_.eval()"<<std::endl;
+        // std::cout<<shape_trace_face_.eval()<<std::endl;
+        
+        for(Integer i=0;i<dofs_per_entity[0]; i++)
+        {
+         compute_face_dofs(mat,cont,QRuleFace::qp_weights,shape_face_.eval() ,shape_trace_face_.eval()[i], normal, F_FE);
+         cont++;
+        }
+    	// std::cout<<"mat"<<std::endl;
+    	// std::cout<<mat<<std::endl;
+
+ 
+
+
+     // qp_points_face_
+     // shape_face_.init_map(C_map);
+    }
+
+
+    // momentum dofs
+    template<Integer EntityDim, typename Mat>
+    std::enable_if_t< (EntityDim==entity[1]), void> 
+    compute(Mat& mat, Integer& cont, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+    {
+     // qp_points_momentum_
+     auto mesh_ptr=F_FE.mesh_ptr();
+     const auto& signed_normal=mesh_ptr->signed_normal();
+     C_map_.init(C_FE);
+     F_Pn_map_.init(F_FE);
+     shape_momentum_.init_map(C_map_);
+     shape_lagrange_momentum_.init_map(F_Pn_map_);
+     SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
+     F_FE.transform_point(qp_points_momentum_,QRuleMomentum::qp_points);
+     C_FE.points_to_reference_points(reference_qp_points_momentum_,qp_points_momentum_);
+
+     // std::cout<<"QRuleMomentum::qp_points"<<std::endl;
+     // std::cout<<QRuleMomentum::qp_points<<std::endl;
+     // std::cout<<"qp_points_momentum_"<<std::endl;
+     // std::cout<<qp_points_momentum_<<std::endl;
+     // std::cout<<"reference_qp_points_momentum_"<<std::endl;
+     // std::cout<<reference_qp_points_momentum_<<std::endl;
+
+     shape_momentum_.init(reference_qp_points_momentum_);
+     shape_lagrange_momentum_.init(reference_qp_points_momentum_);
+     
+     int cont2=0;
+     // Vector<Real,NDofsMomentum > out; 
+     for(Integer i=NDofsFace;i<NDofs;i++)
+     {
+     compute_momentum_dofs(mat,cont,QRuleFace::qp_weights,shape_momentum_.eval(),cont2,shape_lagrange_momentum_.eval()[cont2], F_FE);
+     cont++;
+     cont2++;
+
+     }
+
+
+     // std::cout<<"QRuleMomentum::qp_points"<<std::endl;
+     // std::cout<<QRuleMomentum::qp_points<<std::endl;
+
+     // std::cout<<"qp_points_momentum_"<<std::endl;
+     // std::cout<<qp_points_momentum_<<std::endl;
+
+
+
+     // std::cout<<"shape_momentum_.eval()"<<std::endl;
+     // std::cout<<shape_momentum_.eval()<<std::endl;
+     // std::cout<<"shape_lagrange_momentum_.eval()"<<std::endl;
+     // std::cout<<shape_lagrange_momentum_.eval()<<std::endl;
+
+     std::cout<<"mat"<<std::endl;
+     std::cout<<mat<<std::endl;
+    }
+
+    // template<Integer H,typename Mat>
+    // std::enable_if_t<H==NDofs,void> 
+    // compute_aux(Mat& mat, Integer& cont, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+    // {} 
+
+
+    // template<Integer H,typename Mat>
+    // std::enable_if_t<H<NDofs,void> 
+    // compute_aux(Mat& mat, Integer& cont, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+    // {
+    // 	compute<entity[0]>(mat,cont,C_FE,F_FE);
+    // 	compute<entity[1]>(mat,cont,C_FE,F_FE);
+    // 	cont++;
+    // 	compute_aux<H+1>(mat,cont,C_FE,F_FE);
+    // } 
+
+
+    template<typename Mat>
+    void compute(Mat& mat, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+    {
+    	Integer cont=0;
+    	// compute_aux<Cont>(mat,cont,C_FE,F_FE);
+    	// compute_face_aux<0>(mat,cont,C_FE,F_FE);
+    	// compute_momentum_aux<0>(mat,cont,C_FE,F_FE);
+        // std::cout<<"compute first"<<std::endl;
+
+        compute<entity[1]>(mat,cont,C_FE,F_FE);
+
+    	for(Integer i=0;i<ManifoldDim+1;i++)
+    		{F_FE.init_boundary(i,true);
+    	     compute<entity[0]>(mat,cont,C_FE,F_FE);}
+
+    	
+
+
+     std::cout<<"mat"<<std::endl;
+     std::cout<<mat<<std::endl;
+
+    	// compute<entity[1]>(mat,C_FE,F_FE);
+    }  
+
+
+private:
+	ShapeFace shape_face_;
+	ShapeTraceFace shape_trace_face_;
+	ShapeMomentum shape_momentum_;
+	ShapeLagrangianMomentum shape_lagrange_momentum_;
+	QPpointsFace qp_points_face_;
+	QPpointsFace reference_qp_points_face_;
+	QPpointsMomentum qp_points_momentum_;
+	QPpointsMomentum reference_qp_points_momentum_;
+	Map C_map_;
+	TraceMap trace_map_;
+	Map F_map_;
+	F_Lagrangian_Map F_Pn_map_;
+	// Coefficients coeffs_;
+	Array<Real,NDofs> coeff_;
+};
+
+
+
+template <Integer Dim,Integer ManifoldDim, Integer FEFamily, Integer Order,Integer Continuity, Integer NComponents_,Integer QR>
+class Dof<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,FEFamily,Order,Continuity,NComponents_>,QR>
+{
+ public:
+ 	// static constexpr Integer FEFamily=LagrangeFE;
+ 	using Elem=Simplex<Dim,ManifoldDim>;
+
+
+
+ 	// HA SENSO PER NCOMPONENTS == 1 RIFLETTI PER PIU COMPONENTI
+
+ 	static constexpr Integer NComponents=1; 
+
+ 	using BaseFunctionSpace=BaseFunctionSpace<FEFamily,Order,Continuity,NComponents>;
+ 	using ElementFunctionSpace=ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>;
+ 	static constexpr auto entity=ElementFunctionSpace::entity;
+    static constexpr Integer QRuleOrder=QuadratureOrder<IdentityOperator, BaseFunctionSpace>::value;
+    using QRule=typename QuadratureRule<QR>:: template rule<Elem,1>;
+    using Shape=ShapeFunction<Elem,BaseFunctionSpace,IdentityOperator,QRule>;
+    using ShapeValue=typename Shape::type;
+    using Map=MapFromReference<IdentityOperator,Elem,FEFamily> ;
+    static constexpr auto Dofs=LagrangeDofs<ElementFunctionSpace>::value();
+    static constexpr auto NDofs=LagrangeDofs<ElementFunctionSpace>::NDofs;
+    
+    template<typename MeshT>
+    Dof(const MeshT& mesh):
+    C_FE_(mesh),
+    F_FE_(mesh)
+    {}
+
+    template<Integer M,Integer N=0>
+    inline std::enable_if_t<N==NDofs,void>
+    loop_coarse_dof(const Elem& C_elem, const Elem& F_elem)
+    {}
+
+
+    template<Integer M,Integer N=0>
+    inline std::enable_if_t<N<NDofs,void>
+    loop_coarse_dof(const Elem& C_elem, const Elem& F_elem)
+    {
+     // HA SENSO PER NCOMPONENTS == 1 RIFLETTI PER PIU COMPONENTI
+     // TODO FIXME
+     // auto& value=func_values_[N];
+
+     if(FEFamily==LagrangeFE)
+     	local_mat_(M,N)=func_values_[N][0](0,0);
+     // DofAux<M,N,ElementFunctionSpace,QR>::compute(local_mat_,func_values_);
+
+
+
+     // std::cout<<"loop_coarse_dof =="<<N<<std::endl;
+     // std::cout<<value<<std::endl;
+     // local_mat_(M,N)=func_values_[N][0](0,0);
+     // shape_.init();
+     // loop on coarse shape functions
+     loop_coarse_dof<M,N+1>(C_elem,F_elem);
+        
+    }
+
+
+
+
+
+    
+    void compute_point_row()
+    {
+    const auto& J_inv=C_FE_.inv_jac();
+    const auto& v0=C_FE_.v0();
+    const auto& rows=J_inv.rows();
+    const auto& cols=J_inv.cols();
+
+    for(Integer i=0;i<rows;i++)
+    	{
+    		transformed_point_row_(0,i)=J_inv(i,0)*(transformed_point_col_[0]-v0[0]);
+    	}
+
+    for(Integer i=0;i<rows;i++)
+    	{
+	    	for(Integer j=1;j<cols;j++)
+	    	{
+	    		transformed_point_row_(0,i)+=J_inv(i,j)*(transformed_point_col_[j]-v0[j]);
+	    	}
+       	}
+
+     }
+
+
+
+    template<Integer N=0>
+    inline std::enable_if_t<N==NDofs,void>
+    loop_fine_dof(const Elem& C_elem, const Elem& F_elem)
+    {}
+
+    template<Integer N=0>
+    inline std::enable_if_t<N<NDofs,void>
+    loop_fine_dof(const Elem& C_elem, const Elem& F_elem)
+    {
+     // std::cout<<"loop_fine_dof =="<<N<<"    "<<Dofs[N]<<std::endl;
+     F_FE_.init(F_elem.id);
+     F_map_.init(F_FE_);
+     F_FE_.transform_point(transformed_point_col_,Dofs[N]);
+     // transformed_point_row_=C_FE_.inv_jac()*transformed_point_col_;
+     compute_point_row();
+
+     shape_.init(transformed_point_row_);
+     // std::cout<<"Dofs[N] =="<<std::endl;
+     // std::cout<<Dofs[N]<<std::endl;
+     // std::cout<<"transformed_point_col_ =="<<std::endl;
+     // std::cout<<transformed_point_col_ <<std::endl;
+     // std::cout<<"transformed_point_row_ =="<<std::endl;
+     // std::cout<<transformed_point_row_ <<std::endl;
+     func_values_=shape_.eval();
+     // std::cout<<"func_values_ =="<<std::endl;
+     // std::cout<<func_values_<<std::endl;
+     loop_coarse_dof<N>(C_elem,F_elem);
+     // loop on coarse shape functions
+     loop_fine_dof<N+1>(C_elem,F_elem);
+        
+    }
+
+
+    inline void compute(const Elem& C_elem, const Elem& F_elem)
+    {
+
+     C_FE_.init(C_elem.id);
+     C_FE_.init_inv_jac();
+     C_map_.init(C_FE_);
+     shape_.init_map(C_map_);
+
+
+
+
+     // loop on coarse shape functions
+     // std::cout<<"compute"<<std::endl;
+     // std::cout<<"map_"<<C_map_()<<std::endl;
+     // std::cout<<"Dofs reference =="<<std::endl;
+     // std::cout<<Dofs<<std::endl;
+     loop_fine_dof(C_elem,F_elem);
+     std::cout<<"local_mat_"<<std::endl;
+     std::cout<<local_mat_<<std::endl;
+    }
+
+ private:
+ 	Shape shape_;
+ 	Map C_map_;
+ 	Map F_map_;
+    FiniteElem<Elem> C_FE_;
+    FiniteElem<Elem> F_FE_;
+    ShapeValue func_values_;
+    Matrix<Real,1,Dim> transformed_point_row_;
+    Matrix<Real,Dim,1> transformed_point_col_;
+    Matrix<Real,NDofs,NDofs> local_mat_;
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3113,46 +4232,160 @@ template<typename FunctionSpace>
 class FullFunctionSpaceInterpolation
 {
 public:
-
+	using Elem=typename FunctionSpace::Elem;
+	using TupleOfSpaces=typename FunctionSpace::FunctionSpace::TupleOfSpaces;
+	using ElemDofMap=typename FunctionSpace::DofsDM::ElemDofMap;
+    static constexpr Integer  NLocalDofs=FunctionSpace::DofsDM::NLocalDofs;
 	FullFunctionSpaceInterpolation(std::shared_ptr<FunctionSpace> W_ptr):
-	spaces_ptr_(W_ptr)
+	spaces_ptr_(W_ptr),
+	C_FE_(W_ptr->mesh()),
+	F_FE_(W_ptr->mesh())
 	{}
 
     inline void add_functionspace(std::shared_ptr<FunctionSpace> W_ptr){spaces_ptr_=W_ptr;}
 
 
+   template<Integer N=0, Integer Nmax=TupleTypeSize<TupleOfSpaces>::value>
+   inline std::enable_if_t<N==Nmax,void> 
+   space_loop(SparseMatrix<Real>& A, const Integer C_el, const Integer C_level, const Integer F_el,const Integer F_level)
+   {}
 
 
-    template<typename MeshT>
-    void find_children(const MeshT& mesh, const Integer el)
+   template<Integer N=0, Integer Nmax=TupleTypeSize<TupleOfSpaces>::value>
+   inline std::enable_if_t<N<Nmax,void> 
+   space_loop(SparseMatrix<Real>& A, const Integer C_el, const Integer C_level, const Integer F_el,const Integer F_level)
+   {
+     using Space=GetType<TupleOfSpaces,N>;
+     constexpr Integer n_dofs=FunctionSpaceDofsPerElem<Space>::value;
+     constexpr Integer NComponents=Space::NComponents;
+     Matrix<Real,n_dofs,n_dofs> mat;
+   	 DofAux<Space> dof;
+   	 
+
+   	 C_FE_.init(C_el,C_level);
+   	 F_FE_.init(F_el,F_level);
+
+   	 auto& dm_row=tuple_get<N>(elemdofmap_row_);
+   	 auto& dm_col=tuple_get<N>(elemdofmap_col_);
+
+
+   	 auto& dofsdofmap=spaces_ptr_->dofsdofmap();
+   	 
+   	 std::cout<< " Space ==  " << N << std::endl;
+   	 std::cout<< " F_FE_.elem_id() ==  " << F_FE_.elem_id() << std::endl;
+   	 std::cout<< " C_FE_.elem_id() ==  " << C_FE_.elem_id() << std::endl;
+   	 std::cout<< " F_FE_.level() ==  " << F_FE_.level() << std::endl;
+   	 std::cout<< " C_FE_.level() ==  " << C_FE_.level() << std::endl;
+   	 std::cout<< " n_dofs ==  " << n_dofs << std::endl;
+     
+   	 dofsdofmap.template dofmap_get<N>(dm_row,F_FE_.elem_id(),F_FE_.level());
+   	 dofsdofmap.template dofmap_get<N>(dm_col,C_FE_.elem_id(),C_FE_.level());
+     std::cout<< "dm_row" <<std::endl;
+     std::cout<< dm_row <<std::endl;
+     std::cout<< "dm_col" <<std::endl;
+     std::cout<< dm_col <<std::endl;
+
+     F_FE_.init(F_FE_.elem_id(),F_FE_.level());
+     dof.compute(mat,C_FE_,F_FE_);
+
+     for(Integer i=0;i<n_dofs;i++)
+     	for(Integer j=0;j<n_dofs;j++)
+     		for(Integer k=0;k<NComponents;k++)
+     		{
+              std::cout<<dm_row[i*NComponents+k]<<"   "<<dm_col[j*NComponents+k]<<std::endl;
+              A.equal(mat(i,j),dm_row[i*NComponents+k],dm_col[j*NComponents+k]);
+     		}
+     		
+
+     space_loop<N+1,Nmax>(A,C_el,C_level,F_el,F_level);
+   }
+
+    
+    
+    void find_children(SparseMatrix<Real>& A,const Integer C_level,const Integer F_level, const Integer el,const Integer old_el)
     {
+        auto &mesh=spaces_ptr_->mesh();
+        auto &bisection=spaces_ptr_->bisection();
+        auto &tracker=bisection.tracker();
+        std::cout<<"F_level=="<<F_level<<std::endl;
+        std::cout<<"find_children el=="<<el<<std::endl;
     	auto& fine_elem=mesh.elem(el);
       	auto& children=fine_elem.children;
+      	for(std::size_t i=0;i<children.size();i++)
+      		std::cout<<children[i]<<" ";
+      	std::cout<<std::endl;
 
-      	for(std::size_t F_el=0;F_el<children.size();F_el++)
-      	{
-      		auto& fine_elem=mesh.elem(children[F_el]);
-            find_children();
+        if(elem_belongs_to_level(mesh,el,F_level,tracker))
+            {
+            F_FE_.init(el,F_level);
+      		space_loop(A,old_el,C_level,el,F_level);
+            }
+        else
+        	{
+	      	for(std::size_t i=0;i<children.size();i++)
+	      	{
+	            
+	      		if(elem_belongs_to_level(mesh,children[i],F_level,tracker))
+	      		{
+	               
+	      		   space_loop(A,old_el,C_level,children[i],F_level);
+	      		}
+	      		else
+	      		{
+	      			find_children(A,C_level,F_level,children[i],old_el);
+	      		}
 
-      	}
+
+	      	}
+        	}
+
     }
 
 
-	void init(const Integer C_level, const Integer F_level)
+	void init(SparseMatrix<Real> &A,const Integer C_level, const Integer F_level)
 	{
       
+
+      // SparseMatrix<Real> A;
       auto &mesh=spaces_ptr_->mesh();
       auto &bisection=spaces_ptr_->bisection();
       auto &tracker=bisection.tracker();
+      auto& dofsdofmap=spaces_ptr_->dofsdofmap();
+      auto& level_cumultive_n_dofs=dofsdofmap.level_cumultive_n_dofs();
+      auto& level_cumulative_dofs_array=dofsdofmap.level_cumulative_dofs_array();
+      auto& n2e=spaces_ptr_->node2elem();
+      std::cout<<" qui1 "<<std::endl;
+      Integer n_dofs_rows=level_cumultive_n_dofs[F_level];
+      std::cout<<" qui2 "<<std::endl;
+      Integer n_dofs_cols=level_cumultive_n_dofs[C_level];
+      std::cout<<" qui3 ,n_dofs_rows= "<<n_dofs_rows<<std::endl;
+      Integer max_cols=n2e.max_n_nodes();
+      std::cout<<" qui4 , n_dofs_cols ="<<n_dofs_cols<<std::endl;
+      max_cols=min(NLocalDofs*max_cols,n_dofs_rows);
+      std::cout<<" qui5 ,max_cols ="<<max_cols<<std::endl;
+      level_cumultive_n_dofs[C_level];
+      
+      std::cout<<" qui6 "<<std::endl;
+      A.init(n_dofs_rows,n_dofs_cols,max_cols);
+      std::cout<<"n_dofs_rows = "<<n_dofs_rows<<std::endl;
+      std::cout<<"max_cols = "<<max_cols<<std::endl;
 
 
-      for(std::size_t el=0;el<mesh.n_elements();el++)
+      std::cout<<"level_cumulative_dofs_array"<<std::endl;
+      for(Integer i=0;i<level_cumulative_dofs_array.size();i++)
+      	{for(Integer j=0;j<level_cumulative_dofs_array[i].size();j++)
+         std::cout<<level_cumulative_dofs_array[i][j]<<" ";
+         std::cout<<std::endl;}
+      for(std::size_t C_el=0;C_el<mesh.n_elements();C_el++)
       {
+      	// std::cout<<"C_el=="<<C_el<<std::endl;
       	// if the elem does not belong to the C_level, continue
-      	if(!elem_belongs_to_level(mesh,el,C_level,tracker))continue;
+      	if(!elem_belongs_to_level(mesh,C_el,C_level,tracker))continue;
         
-        auto& elem=mesh.elem(el);
-        find_children(mesh,el);
+        C_FE_.init(C_el,C_level);
+        C_FE_.init_inv_jac();
+        // auto& elem=mesh.elem(el);
+        find_children(A,C_level,F_level,C_el,C_el);
       	// loop recursively on the fine children up to the F_level
       	// auto& children=elem.children;
 
@@ -3169,6 +4402,11 @@ public:
 
 private:
  std::shared_ptr<FunctionSpace> spaces_ptr_;
+ FiniteElem<Elem> C_FE_;
+ FiniteElem<Elem> F_FE_;
+ ElemDofMap elemdofmap_row_;
+ ElemDofMap elemdofmap_col_;
+
 };
 
 
@@ -3222,7 +4460,8 @@ private:
 
 	};
 
-
+template<Integer Dim>
+class NormalFunction;
 
 	template<Integer ManifoldDim,Integer Order>
 	void Poisson_Lagrange(const Integer n)
@@ -3310,6 +4549,7 @@ private:
 	  // constexpr Integer ManifoldDim=2;
 		constexpr Integer Dim=ManifoldDim;
 		using MeshT=Mesh<Dim, ManifoldDim>;
+		using Elem=typename MeshT::Elem;
 		MeshT mesh;
 		if(ManifoldDim==2)
 		{
@@ -3338,7 +4578,7 @@ private:
 	      // bisection.uniform_refine(0);
 	      // mesh.update_dual_graph();
 		}
-        Integer n_levels=12;
+        Integer n_levels=1;
 	    clock_t begin=clock();
 		clock_t end = clock();
 		double elapsed_secs;
@@ -3606,12 +4846,13 @@ private:
 
 		using AuxRT_n= FunctionSpace< MeshT, RT<Order1,1>>;
 		using AuxP_n= FunctionSpace< MeshT, Lagrange<Order2,1>>;
+		using AuxP_0= FunctionSpace< MeshT, Lagrange<0,1>>;
 		using LSFEM= FunctionSpace< MeshT, RT<Order1,1>,Lagrange<Order2,1>>;
 
-	    ConnectivitySimpliacialMapCollection<MeshT> csmc(mesh,n2em,bisection);
-	    csmc.template init<RT<Order1,1>,Lagrange<Order2,1>>();
+	    // ConnectivitySimpliacialMapCollection<MeshT> csmc(mesh,n2em,bisection);
+	    // csmc.template init<RT<Order1,1>,Lagrange<Order2,1>>();
 
-	    csmc.describe2(std::cout);
+	    // csmc.describe2(std::cout);
 	 //   std::vector<Integer> list_of_elems;
 	 //    get_elems_of_level(list_of_elems,mesh,given_level,track);
 
@@ -3628,6 +4869,7 @@ private:
 // LSFEM lsfem(mesh);
 AuxRT_n rtn(mesh,bisection,n2em);//csmc);
 AuxP_n pn(mesh,bisection,n2em);//csmc);
+AuxP_0 p0(mesh,bisection,n2em);//csmc);
 std::cout<<"FIRST PRE UPDATE="<<std::endl;
 LSFEM lsfem(mesh,bisection,n2em);//csmc);
 std::cout<<"FIRST POST UPDATE="<<std::endl;
@@ -3639,7 +4881,7 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 		// LSFEM lsfem(mesh_and_entity0);
 
 		// auto Wtrial=MixedFunctionSpace(lsfem);
-	 auto Wtrial=MixedFunctionSpace(rtn,pn);
+	    auto Wtrial=MixedFunctionSpace(rtn,pn);
 
 		auto Waux=AuxFunctionSpacesBuild(pn);
 
@@ -3657,363 +4899,6 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 
 
 
-	// auto &dofsdofmap=W.dofsdofmap();
-	// std::cout<<"<<<< UPDATE >>>>"<<std::endl;
- //    // dofsdofmap.update();
- //    std::cout<<"PRE UPDATE="<<std::endl;
- //    W.update();
-
-    
- //    auto& level_cumultive_n_dofs=dofsdofmap.level_cumultive_n_dofs();
- //     std::cout<<"level_n_dofs_array="<<std::endl;
- //     for(int i=0;i<level_cumultive_n_dofs.size();i++)
- //     {
- //      // for(int j=0; j<level_n_dofs_array[i].size();j++)
- //        std::cout<<level_cumultive_n_dofs[i]<<" ";
- //      std::cout<<std::endl;
- //     }   
- //    std::cout<<"POST UPDATE="<<std::endl;
-
-
-
-	// std::cout<<"dofsdofmap.level_cumulative_dofs_array()"<<std::endl;
-	// auto& h1=dofsdofmap.level_cumulative_dofs_array();
-	// for(Integer i=0;i<h1.size();i++)
-	// {
-
-	// 	for(Integer j=0;j<h1[i].size();j++)
-	// 		std::cout<<h1[i][j]<<" ";
-	// 	std::cout<<std::endl;
-	// }
-
-
-
-	// std::cout<<"dofsdofmap.level_cumulative_dofs_array()"<<std::endl;
-	// auto& h2=dofsdofmap.level_cumulative_dofs_array();
-	// for(Integer i=0;i<h2.size();i++)
-	// {
-
-	// 	for(Integer j=0;j<h2[i].size();j++)
-	// 		std::cout<<h2[i][j]<<" ";
-	// 	std::cout<<std::endl;
-	// }
-
-
-
-	// 	begin=clock();
-	// 	std::cout<<"OTHER BISECTION="<<std::endl;
-		// for(int i=n_levels-1;i<n_levels;i++)
-		// {
-		// bisection.tracking_begin();
-		// bisection.uniform_refine(1);
-		// bisection.tracking_end();			
-		// }
-     
-    // auto& m1=lsfem.dofsdofmap().level_n_dofs_array();
-
-    //  for(std::size_t i=0; i<m1.size() ;i++)
-    //   { 
-    //     // loop on the levels
-    //     for(std::size_t j=0;j<n_levels;j++)
-    //        {std::cout<<m1[i][j]<<" ";}
-    //      std::cout<<std::endl;
-    //    }
-
-
-
-
-
-	//     std::cout<<"-----dofmap of space="<<0<<std::endl;
-	// GetType<typename decltype(W)::DofsDM::ElemDofMap> elemdm0;
-	// for(Integer i=0;i<dofsdofmap.template dofmap_size<0>();i++)
-	// {
-	//          dofsdofmap.template dofmap_get<0>(elemdm0,i,level);
-	//          std::cout<<elemdm0<<std::endl;
-	// }
-
-
-
-	// std::cout<<"-----dofmap of space="<<1<<std::endl;
-	// GetType<typename decltype(W)::DofsDM::ElemDofMap,1> elemdm1;
-	// for(Integer i=0;i<dofsdofmap.template dofmap_size<1>();i++)
-	// {
-	//          dofsdofmap.template dofmap_get<1>(elemdm1,i,level);
-	//          std::cout<<elemdm1<<std::endl;
-	// }
-
-
- //    auto& spacedofs=dofsdofmap.space_dofs();
- //    auto& n_dofs=dofsdofmap.n_dofs();
- //    auto& cumulative_n_dofs=dofsdofmap.cumulative_n_dofs();
-
- //    std::cout<<"spacedofs"<<std::endl;
- //   	for(Integer i=0;i<spacedofs.size();i++)
- //   		{for(Integer j=0;j<spacedofs[i]->size();j++)
-	//          std::cout<<(*spacedofs[i])[j]<<" ";
-	// std::cout<<std::endl;}
-
- //    std::cout<<"n_dofs"<<std::endl;
- //   	for(Integer i=0;i<n_dofs.size();i++)
-	//          std::cout<<n_dofs[i]<<" ";
-	// std::cout<<std::endl;
-
- //    std::cout<<"cumulative_n_dofs"<<std::endl;
- //   	for(Integer i=0;i<cumulative_n_dofs.size();i++)
- //   		{
-	//          std::cout<<cumulative_n_dofs[i]<<" ";
-	// std::cout<<std::endl;
- //        }
-
-
-
-
-
-
-	    //  std::cout<<"elems "<<std::endl;
-	    //  for(Integer i=0;i<mesh.n_elements();i++)
-	    //    {std::cout<<"elem = "<<i<< std::endl;
-	    //     for(Integer j=0;j<mesh.elem(i).nodes.size();j++)
-	    // 	std::cout<<mesh.elem(i).nodes[j]<< " ";
-	    //     std::cout<<std::endl;
-	    //     // std::cout<<std::endl;
-	    // }	
-
-
-
-      // auto arr_lev=W.level_array_ndofs();
-      // auto arr=W.array_ndofs();
-      
-      // std::cout<<"arr_lev"<<std::endl;
-      // for(int i=0;i<arr_lev.size();i++)
-      // {
-      // 	std::cout<<std::endl;
-      // 	for(int j=0;j<arr_lev[i].size();j++)
-      // 		std::cout<<arr_lev[i][j]<<" ";
-      // 	std::cout<<std::endl;
-      // }
-
-      // std::cout<<"arr"<<std::endl;
-      // for(int i=0;i<arr.size();i++)
-      // {
-      // 	std::cout<<std::endl;
-      // 		std::cout<<arr[i]<<" ";
-      // 	std::cout<<std::endl;
-      // }
-
-	 //    init<Simplex<Dim,ManifoldDim>,Lagrange<Order2,1>>(mesh_and_entity0);
-	 //    init<Simplex<Dim,ManifoldDim>,RT<Order1,1>>(mesh_and_entity0);
-
-	    // mesh_and_entity0.init(pn);
-	    // mesh_and_entity0.init(lsfem);
-	    // mesh_and_entity0.init(pn);
-	    // mesh_and_entity0.init(pn);
-	    // mesh_and_entity0.init(lsfem);
-	    // mesh_and_entity0.init(lsfem);
-
-	    // mesh_and_entity1.init(pn);
-	    // mesh_and_entity1.init(lsfem);
-	    // mesh_and_entity1.init(pn);
-	    // mesh_and_entity1.init(pn);
-	    // mesh_and_entity1.init(lsfem);
-	    // mesh_and_entity1.init(lsfem);
-	    // ElemEntityCollection<MeshT> entitycollection0(mesh,0);
-	    // ElemEntityCollection<MeshT> entitycollection1(mesh,1);
-	    // ElemEntityCollection<MeshT> entitycollection2(mesh,2);
-	    // entitycollection0.add_bisection(bisection);
-	    // entitycollection1.add_bisection(bisection);
-	    // entitycollection2.add_bisection(bisection);
-	    // entitycollection0.init(W);
-	    // entitycollection1.init(W);
-	    // entitycollection2.init(W);
-
-	    // std::cout<<"coll0 ---------- "<<std::endl;
-	    // init<0>(entitycollection0);
-	    // init<0>(entitycollection1);
-	    // init<0>(entitycollection2);
-	    // std::cout<<"coll1 ---------- "<<std::endl;
-	    // init<1>(entitycollection0);
-	    // init<1>(entitycollection1);
-	    // init<1>(entitycollection2);
-	    // std::cout<<"coll2 ---------- "<<std::endl;
-	    // init<2>(entitycollection0);
-	    // init<2>(entitycollection1);
-	    // init<2>(entitycollection2);
-
-
-	    // const auto& n2e0=entitycollection0.node2elem();
-	    // std::cout<<"node 2 elems LEVEL 0"<<std::endl;	
-	    // for(Integer i=0;i<n2e0.size();i++)
-	    // 	{for(Integer j=0;j<n2e0[i].size();j++)
-	    // 	std::cout<<n2e0[i][j]<< " ";
-	    //     std::cout<<std::endl;}	
-
-	    // const auto& n2e1=entitycollection1.node2elem();
-	    // std::cout<<"node 2 elems LEVEL 1"<<std::endl;	
-	    // for(Integer i=0;i<n2e1.size();i++)
-	    // 	{for(Integer j=0;j<n2e1[i].size();j++)
-	    // 	std::cout<<n2e1[i][j]<< " ";
-	    //     std::cout<<std::endl;}	
-
-	    // const auto& n2e2=entitycollection2.node2elem();
-	    // std::cout<<"node 2 elems LEVEL 2"<<std::endl;	
-	    // for(Integer i=0;i<n2e2.size();i++)
-	    // 	{for(Integer j=0;j<n2e2[i].size();j++)
-	    // 	std::cout<<n2e2[i][j]<< " ";
-	    //     std::cout<<std::endl;}	
-
-	    //  std::cout<<"node "<<std::endl;
-	    //  for(Integer i=0;i<mesh.points().size();i++)
-	    //    {std::cout<<"node = "<<i<< std::endl;
-	    //     // for(Integer j=0;j<mesh.points()[0].size();j++)
-	    // 	std::cout<<mesh.points()[i]<< std::endl;
-	    //     // std::cout<<std::endl;
-	    // }	   
-
-	    //  std::cout<<"elems "<<std::endl;
-	    //  for(Integer i=0;i<mesh.n_elements();i++)
-	    //    {std::cout<<"elem = "<<i<< std::endl;
-	    //     for(Integer j=0;j<mesh.elem(i).nodes.size();j++)
-	    // 	std::cout<<mesh.elem(i).nodes[j]<< " ";
-	    //     std::cout<<std::endl;
-	    //     // std::cout<<std::endl;
-	    // }		
-	    // std::cout<<"define ens---------- "<<std::endl;
-
-	    // const auto& ens00=get_entity<0>(mesh_and_entity0);
-	    // const auto& ens01=get_entity<1>(mesh_and_entity0);
-	    // const auto& ens02=get_entity<2>(mesh_and_entity0);
-	    // const auto& ens10=get_entity<0>(mesh_and_entity1);
-	    // const auto& ens11=get_entity<1>(mesh_and_entity1);
-	    // const auto& ens12=get_entity<2>(mesh_and_entity1);
-
-
-
-	    // std::cout<<"---------- "<<std::endl;
-	    // const auto e2e00=ens00.elem_2_entity();
-	    // const auto e2e01=ens01.elem_2_entity();
-	    // const auto e2e02=ens02.elem_2_entity();
-	    // std::cout<<"---------- "<<std::endl;
-	    // const auto e2e10=ens10.elem_2_entity();
-	    // const auto e2e11=ens11.elem_2_entity();
-	    // const auto e2e12=ens12.elem_2_entity();
-
-	    //  std::cout<<std::endl;
-	    //  std::cout<<"e2e00 size="<<e2e00.size()<<std::endl;
-	    //  for(Integer i=0;i<e2e00.size();i++)
-	    //    {
-	    //    	if(e2e00[i].size()>0)
-	    //    	{std::cout<<"elem = "<<i<<std::endl;
-	    //     for(Integer j=0;j<e2e00[i].size();j++)
-	    // 	std::cout<<e2e00[i][j]<< " ";
-	    //     std::cout<<std::endl;
-	    // }
-	    //     // std::cout<<std::endl;
-	    // }
-	    //  std::cout<<std::endl;
-	    //  std::cout<<"e2e01 size="<<e2e00.size()<<std::endl;
-	    //  for(Integer i=0;i<e2e01.size();i++)
-	    //    {
-	    //    	if(e2e01[i].size()>0)
-	    //    	{std::cout<<"elem = "<<i<< std::endl;
-	    //     for(Integer j=0;j<e2e01[i].size();j++)
-	    // 	std::cout<<e2e01[i][j]<< " ";
-	    //     std::cout<<std::endl;}
-	    //     // std::cout<<std::endl;
-	    // }
-	    //  std::cout<<std::endl;
-	    //  std::cout<<"e2e02 size="<<e2e02.size()<<std::endl;
-	    //  for(Integer i=0;i<e2e02.size();i++)
-	    //    {
-	    //    	if(e2e02[i].size()>0){
-	    //    	std::cout<<"elem = "<<i<<std::endl;
-	    //     for(Integer j=0;j<e2e02[i].size();j++)
-	    // 	std::cout<<e2e02[i][j]<< " ";
-	    //     std::cout<<std::endl;}
-	    //     // std::cout<<std::endl;
-	    // }
-
-	    //  std::cout<<std::endl;
-	    //  std::cout<<"e2e10 size="<<e2e10.size()<<std::endl;
-	    //  for(Integer i=0;i<e2e10.size();i++)
-	    //    {
-	    //    	if(e2e10[i].size()>0){
-	    //    	std::cout<<"elem = "<<i<< std::endl;
-	    //     for(Integer j=0;j<e2e10[i].size();j++)
-	    // 	std::cout<<e2e10[i][j]<< " ";
-	    //     std::cout<<std::endl;
-	    // }
-	    //     // std::cout<<std::endl;
-	    // }
-	    //  std::cout<<std::endl;
-	    //  std::cout<<"e2e11 size="<<e2e11.size()<<std::endl;
-	    //  for(Integer i=0;i<e2e11.size();i++)
-	    //    {
-	    //     if(e2e11[i].size()>0){
-	    //    	std::cout<<"elem = "<<i<< std::endl;
-	    //     for(Integer j=0;j<e2e11[i].size();j++)
-	    // 	std::cout<<e2e11[i][j]<< " ";
-	    //     std::cout<<std::endl;
-	    // }
-	    //     // std::cout<<std::endl;
-	    // }
-	    //  std::cout<<std::endl;
-	    //  std::cout<<"e2e12 size="<<e2e12.size()<<std::endl;
-	    //  for(Integer i=0;i<e2e02.size();i++)
-	    //    {
-	    //     if(e2e11[i].size()>0){
-	    //    	std::cout<<"elem = "<<i<< std::endl;
-	    //     for(Integer j=0;j<e2e12[i].size();j++)
-	    // 	std::cout<<e2e12[i][j]<< " ";
-	    //     std::cout<<std::endl;
-	    // }
-	    //     // std::cout<<std::endl;
-	    // }
-
-
-	    // std::cout<<"list_of_elems"<<std::endl;	
-	    // for(Integer i=0;i<mesh.n_elements();i++)
-	    // 	std::cout<<"elem="<<i<<" with n child = "<<mesh.elem(i).children.size()<<" parent id = "<< mesh.elem(i).parent_id<< std::endl;	
-
-
-	    // for(Integer i=0;i<mesh.n_elements();i++)
-	    // 	std::cout<<track.get_iterate(i)<<std::endl;	
-
-	 
-
-	// auto &dofsdofmap=W.dofsdofmap();
-
-
-	//     std::cout<<"-----dofmap of space="<<0<<std::endl;
-	// GetType<typename decltype(W)::DofsDM::ElemDofMap> elemdm0;
-	// for(Integer i=0;i<dofsdofmap.template dofmap_size<0>();i++)
-	// {
-	//          dofsdofmap.template dofmap_get<0>(elemdm0,i);
-	//          std::cout<<elemdm0<<std::endl;
-	// }
-
-
-
-	// std::cout<<"-----dofmap of space="<<1<<std::endl;
-	// GetType<typename decltype(W)::DofsDM::ElemDofMap,1> elemdm1;
-	// for(Integer i=0;i<dofsdofmap.template dofmap_size<1>();i++)
-	// {
-	//          dofsdofmap.template dofmap_get<1>(elemdm1,i);
-	//          std::cout<<elemdm1<<std::endl;
-	// }
-
-	// std::cout<<"-----dofmap of space="<<2<<std::endl;
-
-	// for(Integer i=0;i<dofsdofmap.template dofmap_size<2>();i++)
-	// {
-	//          dofsdofmap.template dofmap_get<2>(elemdm,i);
-	//          std::cout<<elemdm<<std::endl;
-	// }
-
-
-
-
-
-
 
 		auto u0 = MakeTrial<0>(W_ptr);
 		auto u1 = MakeTrial<1>(W_ptr);
@@ -4022,7 +4907,9 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 		auto v1 = MakeTest<1>(W_ptr);
 
 		auto f1 = MakeFunction<0,ExactPoisson<ManifoldDim>>(W_ptr);
-
+		// auto normal = MakeFunction<1,NormalFunction<ManifoldDim>>(W_ptr);
+        
+        // auto normal =
 		std::cout<<W.spaces_ptr()->n_dofs()<<std::endl;
 
 	  // 2D LSFEM POISSION
@@ -4030,12 +4917,15 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 		L2Inner((u0),(v0))+
 		L2Inner(Grad(u1),Grad(v1))-
 		L2Inner(Grad(u1),(v0))-
-		L2Inner((u0),Grad(v1));
+		L2Inner((u0),Grad(v1))
+		;
 	  // auto bilinearform=//L2Inner(Div(u0),Div(v0))+
 	  //                   L2Inner((u0),(v0));   
 
 		auto linearform=
-		L2Inner(-Div(v0),f1);
+		L2Inner(-Div(v0),f1)
+		// +surface_integral(0,normal,v0)
+		;
 
 
 
@@ -4047,7 +4937,19 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 		auto bcs5=DirichletBC<1,FunctionZero2D>(W_ptr,5);
 		auto bcs6=DirichletBC<1,FunctionZero2D>(W_ptr,6);
 
+        
+		using P1_2= FunctionSpace< MeshT, Lagrange<1,2>>;
+		P1_2 p12(mesh,bisection,n2em);
+		auto Xtrial=MixedFunctionSpace(p12);
+		auto Xaux=AuxFunctionSpacesBuild(p0);
+		auto X=FullSpaceBuild(Xtrial,Xaux);
+		auto X_ptr=std::make_shared<decltype(X)>(X);
+		auto x0 = MakeTest<0>(X_ptr);
+		auto normal = MakeFunction<0,NormalFunction<ManifoldDim>>(X_ptr);
 
+
+        auto tryform=surface_integral(0,normal,Trace(x0));
+        auto generaltryform=general_form(tryform);
 
 
 
@@ -4061,23 +4963,23 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 
 
 
-    auto &dofsdofmap=W_ptr->dofsdofmap();
-	// auto &dofsdofmap=context.full_spaces_ptr()->dofsdofmap();
-	std::cout<<"<<<< UPDATE >>>>"<<std::endl;
-    // dofsdofmap.update();
-    std::cout<<"PRE UPDATE="<<std::endl;
-    // context.full_spaces_ptr()->update();
-     W_ptr->update();
-    
-    auto& level_cumultive_n_dofs=dofsdofmap.level_cumultive_n_dofs();
-     std::cout<<"level_n_dofs_array="<<std::endl;
-     for(int i=0;i<level_cumultive_n_dofs.size();i++)
-     {
-      // for(int j=0; j<level_n_dofs_array[i].size();j++)
-        std::cout<<level_cumultive_n_dofs[i]<<" ";
-      std::cout<<std::endl;
-     }   
-    std::cout<<"POST UPDATE="<<std::endl;
+	    auto &dofsdofmap=W_ptr->dofsdofmap();
+		// auto &dofsdofmap=context.full_spaces_ptr()->dofsdofmap();
+		std::cout<<"<<<< UPDATE >>>>"<<std::endl;
+	    // dofsdofmap.update();
+	    std::cout<<"PRE UPDATE="<<std::endl;
+	    // context.full_spaces_ptr()->update();
+	     W_ptr->update();
+	    
+	    auto& level_cumultive_n_dofs=dofsdofmap.level_cumultive_n_dofs();
+	     std::cout<<"level_n_dofs_array="<<std::endl;
+	     for(int i=0;i<level_cumultive_n_dofs.size();i++)
+	     {
+	      // for(int j=0; j<level_n_dofs_array[i].size();j++)
+	        std::cout<<level_cumultive_n_dofs[i]<<" ";
+	      std::cout<<std::endl;
+	     }   
+	    std::cout<<"POST UPDATE="<<std::endl;
 
 
 
@@ -4099,12 +5001,23 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 
 	   // A.print_val();
 		std::vector<Real> x;
-		Integer max_iter=12;
+		Integer max_iter=1000;
 
 
 		std::cout<<"START SOLVING"<<std::endl;
 		gauss_seidel(x,A,b,max_iter);
 		std::cout<<"END SOLVING"<<std::endl;
+
+	    std::cout<<"---------------------------x"<<std::endl;
+	    for(int i=0;i<x.size();i++)
+	    	std::cout<<x[i]<<std::endl;
+
+	    ////// MODIFY X BEFORE INTERPOLATIONA
+	    // for(int i=0;i<x.size();i++)
+	    // 	x[i]=1;
+
+
+
 		std::ofstream os;
 		auto var_names=variables_names("stress","disp");
 		std::string output_file ="LSFEM_Poisson"+ std::to_string(ManifoldDim) +
@@ -4119,9 +5032,7 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 	    os.close();
 
 
-	    // std::cout<<"x"<<std::endl;
-	    // for(int i=0;i<x.size();i++)
-	    // 	std::cout<<x[i]<<std::endl;
+
 
      //    std::cout<<std::endl;
 	    // std::cout<<"----------b"<<std::endl;
@@ -4136,9 +5047,9 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 		SparseMatrix<Real> AL;
 		std::vector<Real> bL;
 
-		level=bisection.tracker().current_iterate()-1;
+		Integer levelL=bisection.tracker().current_iterate()-1;
 
-		context.assembly(AL,bL,level);
+		context.assembly(AL,bL,levelL);
 	   // A.print_val();
 		std::cout<<"APPLY BC "<<std::endl;
 		context.apply_bc(AL,bL);
@@ -4159,7 +5070,7 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 		os.close();
 		os.open(output_fileL.c_str());
 		// write_wtk_isoparametric(os,*context.full_spaces_ptr(),xL,var_namesL,level);
-		write_wtk_isoparametric(os,W_ptr,xL,var_namesL,level);
+		write_wtk_isoparametric(os,W_ptr,xL,var_namesL,levelL);
 
 	    os.close();
 
@@ -4174,56 +5085,85 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 
 
 
-	auto &dofsdofmap2=W_ptr->dofsdofmap();
+	     auto &dofsdofmap2=W_ptr->dofsdofmap();
 
 
     
-    auto& level_cumultive_n_dofs2=dofsdofmap2.level_cumultive_n_dofs();
-     std::cout<<"level_n_dofs_array="<<std::endl;
-     for(int i=0;i<level_cumultive_n_dofs2.size();i++)
-     {
-      // for(int j=0; j<level_n_dofs_array[i].size();j++)
-        std::cout<<level_cumultive_n_dofs2[i]<<" ";
-      std::cout<<std::endl;
-     }   
+	     auto& level_cumultive_n_dofs2=dofsdofmap2.level_cumultive_n_dofs();
+	     std::cout<<"level_n_dofs_array="<<std::endl;
+	     for(int i=0;i<level_cumultive_n_dofs2.size();i++)
+	     {
+	      // for(int j=0; j<level_n_dofs_array[i].size();j++)
+	        std::cout<<level_cumultive_n_dofs2[i]<<" ";
+	      std::cout<<std::endl;
+	     }   
+
+	    FullFunctionSpaceInterpolation<decltype(W)> interp(W_ptr);
+	    SparseMatrix<Real> InterpMat;
+	    std::cout<<"level="<<level<<std::endl;
+	    Integer level_finer=level+1;
+	    std::cout<<"level_finer="<<level_finer<<std::endl;
+
+	    interp.init(InterpMat,level,level_finer);
+	    InterpMat.print_val();
+
+
+	    std::cout<<"before x_interp"<<std::endl;
+	    auto x_interp=InterpMat.multiply(x);
+	    
+//     std::vector<Real> x_interp
+// {-6.38588e-16,-0.8112,1.52498e-16,-7.45169e-16,-0.8112,0.4056,3.26509e-16,0.4056,-0.8112,-0.8112,-2.67354e-16,-0.8112,-0.8112,-0.8112,-9.00613e-19,-0.8112,0.4056,1.52498e-16,0.4056,-2.72351e-16,-2.72351e-16,0.4056,0.4056,3.26509e-16,0.4056,-4.35486e-16,-4.35486e-16,0.4056,0,0,0,0,0.5408,0,0,0,0,-0.2704,-0.2704,-0.2704,-0.2704};
+
+
+    	std::cout<<"x_interp"<<std::endl;
+	    for(int i=0;i<x_interp.size();i++)
+	    	std::cout<<x_interp[i]<<std::endl;
+		std::string output_file_interp ="LSFEM_Poisson"+ std::to_string(ManifoldDim) +
+		"D_RT" + std::to_string(Order1)+
+		"_P" + std::to_string(Order2)+"_outputINTERP.vtk";
+
+		os.close();
+		os.open(output_file_interp.c_str());
+		// write_wtk_isoparametric(os,*context.full_spaces_ptr(),xL,var_namesL,level);
+		write_wtk_isoparametric(os,W_ptr,x_interp,var_namesL,level_finer);
+
+	    os.close();
 
 
 
+   //  std::cout<<"LagrangeDofs1="<<std::endl;
+   //  std::cout<<LagrangeDofs<ElemFunctionSpace<Simplex<3,3>,Lagrange1<1>> >::value()<<std::endl;
+   // std::cout<<"LagrangeDofs1="<<std::endl;
 
-	//    // std::cout<<"W ndofs"<<W.spaces_ptr()->n_dofs()<<std::endl;
-	//    // std::cout<<"W array_ndofs"<<W.array_ndofs()<<std::endl;
-	//    // std::cout<<ShapeFunction<Simplex<Dim,ManifoldDim>,RT1<1> ,IdentityOperator,GaussPoints<Simplex<3,3>,3>>::reference_values()<<std::endl;
-	//    // ReferenceShapeFunctionValue<Simplex<3,3>, DivergenceOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {0.25,0.25,0.25});
-	//    // ReferenceShapeFunctionValue<Simplex<3,3>, DivergenceOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {0.0,0.0,0.0});
-	//    // ReferenceShapeFunctionValue<Simplex<3,3>, DivergenceOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {1.0,0.0,0.0});
-	//    // ReferenceShapeFunctionValue<Simplex<3,3>, DivergenceOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {0.0,1.0,0.0});
-	//    // ReferenceShapeFunctionValue<Simplex<3,3>, DivergenceOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {0.0,0.0,1.0});
-	//    // std::cout<<"Vector<Real,ManifoldDim> {0.25,0.25,0.25}"<<std::endl;
-	//    // ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {0.25,0.25,0.25});
-	//    // std::cout<<"Vector<Real,ManifoldDim> {0.0,0.0,0.0}"<<std::endl;
-	//    // ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {0.0,0.0,0.0});
-	//    // std::cout<<"Vector<Real,ManifoldDim> {1.0,0.0,0.0}"<<std::endl;
-	//    // ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {1.0,0.0,0.0});
-	//    // std::cout<<"Vector<Real,ManifoldDim> {0.0,1.0,0.0}"<<std::endl;
-	//    // ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {0.0,1.0,0.0});
-	//    // std::cout<<"Vector<Real,ManifoldDim> {0.0,0.0,1.0}"<<std::endl;
-	//    // ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,ManifoldDim> {0.0,0.0,1.0});
+   //  std::cout<<LagrangeDofs<ElemFunctionSpace<Simplex<4,3>,Lagrange1<1>> >::value()<<std::endl;
+   //  std::cout<<"LagrangeDofs1="<<std::endl;
+   //   std::cout<<LagrangeDofs<ElemFunctionSpace<Simplex<4,4>,Lagrange1<1>> >::value()<<std::endl;
 
-	// auto qp=GaussPoints<Simplex<Dim,3>,3>::qp_points;
-	// std::cout<<"point 0 " <<std::endl;
-	// ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,3>{qp(0,0),qp(0,1),qp(0,2)});
-	// std::cout<<"point 1 " <<std::endl;
-	// ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,3>{qp(1,0),qp(1,1),qp(1,2)});
-	// std::cout<<"point 2 " <<std::endl;
+ 
 
-	// ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,3>{qp(2,0),qp(2,1),qp(2,2)});
-	// std::cout<<"point 3 " <<std::endl;
 
-	// ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,3>{qp(3,0),qp(3,1),qp(3,2)});
-	// std::cout<<"point 4 " <<std::endl;
+   //  std::cout<<"LagrangeDofs2="<<std::endl;
+   //  std::cout<<LagrangeDofs<ElemFunctionSpace<Simplex<3,3>,Lagrange2<1>> >::value()<<std::endl;
+   //  std::cout<<"LagrangeDofs2="<<std::endl;
+   //  std::cout<<LagrangeDofs<ElemFunctionSpace<Simplex<4,3>,Lagrange2<1>> >::value()<<std::endl;
+   //  std::cout<<"LagrangeDofs2="<<std::endl;
+   //  std::cout<<LagrangeDofs<ElemFunctionSpace<Simplex<4,4>,Lagrange2<1>> >::value()<<std::endl;
+   //  Dof<ElemFunctionSpace<Simplex<Dim,ManifoldDim>,Lagrange1<1>>> dof_p1(mesh);
+   //  dof_p1.compute(mesh.elem(0),mesh.elem(mesh.elem(0).children[0]));
+   //  // dofp1.compute(mesh.elem(0),mesh.elem(3));
+   //  // dofp1.compute(mesh.elem(1),mesh.elem(4));
+   //  // dofp1.compute(mesh.elem(1),mesh.elem(5));
 
-	// ReferenceShapeFunctionValue<Simplex<3,3>, IdentityOperator, RaviartThomasFE, 1>::apply2(Vector<Real,3>{qp(4,0),qp(4,1),qp(4,2)});
+   //  DofAux<ElemFunctionSpace<Simplex<Dim,ManifoldDim>,Lagrange1<1>>> dofp1;
+   //  DofAux<ElemFunctionSpace<Simplex<Dim,ManifoldDim>,Lagrange2<1>>> dofp2;
+   //  DofAux<ElemFunctionSpace<Simplex<Dim,ManifoldDim>,RT0<1>>> dofrt0;
+   //  DofAux<ElemFunctionSpace<Simplex<Dim,ManifoldDim>,RT1<1>>> dofrt1;
+   //  FiniteElem<Elem> C_FE(mesh);
+   //  FiniteElem<Elem> F_FE(mesh);
 
+
+
+  
 	// std::cout<<"nlocaldofs="<<decltype(W)::DofsDM::NLocalDofs<<std::endl;
 	// auto &dofsdofmap=W.dofsdofmap();
 
@@ -4238,11 +5178,23 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 
 	// }
 
-	//     std::cout<<"-----dofmap of space="<<0<<std::endl;
+	// for(Integer i=0;i<mesh.n_elements();i++)
+	// {
+	//          auto& elem=mesh.elem(i);
+	//          auto& nodes=elem.nodes;
+	//          std::cout<<"elem == "<< i <<std::endl;
+ //             for(Integer j=0;j<nodes.size();j++)
+	//          std::cout<<mesh.points()[nodes[j]]<<" ";
+	//          std::cout<<std::endl;
+	// }
+
+
+	// std::cout<<"-----dofmap of space="<<0<<std::endl;
 	// GetType<typename decltype(W)::DofsDM::ElemDofMap> elemdm;
 	// for(Integer i=0;i<dofsdofmap.template dofmap_size<0>();i++)
 	// {
 	//          dofsdofmap.template dofmap_get<0>(elemdm,i);
+	//          std::cout<<"elem == "<< i<<std::endl;
 	//          std::cout<<elemdm<<std::endl;
 	// }
 
