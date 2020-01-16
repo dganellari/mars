@@ -158,7 +158,7 @@ namespace mars {
 
 		inline Integer add_elem(const IElem &elem) override
 		{
-			assert(elem.type() == ManifoldDim);
+			assert(elem.type() == ManifoldDim+1);
 
 			const Elem * elem_ptr = dynamic_cast<const Elem *>(&elem);
 			if(elem_ptr) {
@@ -1091,6 +1091,8 @@ namespace mars {
 	using Quad4_Mesh = mars::Mesh<2, 2, DefaultImplementation, Quad4Elem>;
 	using Hex8_Mesh  = mars::Mesh<3, 3, DefaultImplementation, Hex8Elem>;
 
+	template<Integer Type>
+	using NSMesh2 = mars::Mesh<2, 2, DefaultImplementation, NonSimplex<Type>>;
 }
 
 #endif //MARS_MESH_HPP

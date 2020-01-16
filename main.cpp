@@ -117,13 +117,40 @@ mars::Quad4_Mesh test_mars_quad_mesh_generation_2D(const int x,
 
 
 	if (x <= 1000) {
-
 		VTKMeshWriter<Quad4_Mesh> w;
 		w.write("build_quad4" + std::to_string(x) + std::to_string(y) + ".vtu", mesh);
 	}
 
 	return mesh;
 }
+
+mars::Hex8_Mesh test_mars_hex8_mesh_generation_3D(const int x,
+		const int y, const int z) {
+
+	using namespace mars;
+
+	high_resolution_clock::time_point t1 = high_resolution_clock::now();
+
+	Hex8_Mesh mesh;
+	generate_cube(mesh, x, y, z);
+
+	high_resolution_clock::time_point t2 = high_resolution_clock::now();
+	auto duration = duration_cast < seconds > (t2 - t1).count();
+
+	std::cout << "Generation took: "<< duration<<" seconds."<<std::endl;
+
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
+
+
+	if (x <= 1000) {
+		VTKMeshWriter<Hex8_Mesh> w;
+		w.write("build_hex8" + std::to_string(x) + std::to_string(y) + ".vtu", mesh);
+	}
+
+	return mesh;
+}
+
 
 mars::Mesh3 test_mars_mesh_generation_3D(const int x,
 		const int y, const int z) {
@@ -989,8 +1016,9 @@ void run_benchmarks(int level, int refine_level)
 	PreLeppBenchmark<Mesh2> b2;
 	b2.run(refine_level, sMesh, "b2");*/
 	test_mars_quad_mesh_generation_2D(level, refine_level);
-	test_mars_mesh_generation_2D(level,refine_level);
-
+	test_mars_mesh_generation_3D(level,refine_level, level);
+	test_mars_quad_mesh_generation_2D(level, refine_level);
+	test_mars_hex8_mesh_generation_3D(level, refine_level, refine_level);
 	/*ParallelMesh3 pMesh3;
 	generate_cube(pMesh3, level, level, level);
 
