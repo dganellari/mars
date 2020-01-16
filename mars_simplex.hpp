@@ -59,7 +59,7 @@ namespace mars {
         inline Integer node(const Integer idx) const override { assert(idx < nodes.size()); return nodes[idx]; }
 
         inline Integer type() const override {
-            return ManifoldDim;
+            return ManifoldDim+1;
         }
         
         inline static std::vector<Vector<Real, Dim>> &ref()
@@ -258,7 +258,7 @@ namespace mars {
         }
 
         inline Integer type() const override {
-            return 1;
+            return 2;
         }
 
         void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
@@ -365,7 +365,7 @@ namespace mars {
         }
 
         Integer type() const override {
-            return 2;
+            return 3;
         }
 
         inline Integer n_nodes() const override { return nodes.size(); }
@@ -477,7 +477,7 @@ namespace mars {
         }
 
         inline Integer type() const override {
-            return 3;
+            return 4;
         }
 
         inline Integer n_nodes() const override { return nodes.size(); }
@@ -604,7 +604,7 @@ namespace mars {
         }
 
         inline Integer type() const override {
-            return 4;
+            return 5;
         }
 
         inline Integer n_nodes() const override { return nodes.size(); }

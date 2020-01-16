@@ -321,11 +321,14 @@ namespace mars {
     inline bool generate_square(Mesh2& mesh, const Integer xDim, const Integer yDim) {
         return generate_cube(mesh, xDim, yDim, 0);
     }
-    /*bool generate_point(Mesh<1, 0>& mesh) {
-     return generate_cube(mesh, 0, 0, 0);
-     }*/
 
-    //non simplex cube generation.
+	inline Integer elem_index(const Integer i, const Integer j, const Integer k,
+			const Integer xDim, const Integer yDim)
+	{
+		return i + (xDim+1)*(j + k*(yDim+1));
+	}
+
+	//non simplex cube generation.
 	template<Integer Dim, Integer ManifoldDim, Integer Type>
 	bool generate_cube(
 			Mesh<Dim, ManifoldDim, DefaultImplementation, NonSimplex<Type>>& mesh,
@@ -376,12 +379,12 @@ namespace mars {
 				{
 					for (Integer i = 0; i < xDim; ++i)
 					{
-						std::array<Integer, 4> nodes;
+						std::array<Integer, Type> nodes;
 
 						nodes[0] = i + offset * j;
-						nodes[1] = (i + 1) + offset * j;
-						nodes[2] = (i + 1) + offset * (j + 1);
-						nodes[3] = i + offset * (j + 1);
+						nodes[1] = (i+1) + offset * j;
+						nodes[2] = (i+1) + offset * (j+1);
+						nodes[3] = i + offset * (j+1);
 
 						mesh.add_elem(nodes);
 					}
@@ -407,9 +410,52 @@ namespace mars {
 				assert(yDim != 0);
 				assert(zDim != 0);
 
-				const int n_elements = xDim * yDim * zDim * 24; //24 tetrahedrons on one hex27
-				const int n_nodes = (2 * xDim + 1) * (2 * yDim + 1)
-						* (2 * zDim + 1);
+				const int n_elements = xDim * yDim * zDim;
+				const int n_nodes = (xDim + 1) * (yDim + 1)	* (zDim + 1);
+
+				Vector<Real, Dim> p;
+				p.zero();
+
+				for (Integer k = 0; k <= zDim; ++k)
+				{
+					for (Integer j = 0; j <= yDim; ++j)
+					{
+						for (Integer i = 0; i <= xDim; ++i)
+						{
+							p[0] = static_cast<Real>(i) / static_cast<Real>(xDim);
+							p[1] = static_cast<Real>(j) / static_cast<Real>(yDim);
+							p[2] = static_cast<Real>(k) / static_cast<Real>(zDim);
+
+							mesh.add_point(p);
+							assert(mesh.n_nodes() <= n_nodes);
+						}
+					}
+				}
+
+				const int xoffset = xDim + 1;
+				const int yoffset = yDim + 1;
+
+				for (Integer k = 0; k < zDim; ++k)
+				{
+					for (Integer j = 0; j < yDim; ++j)
+					{
+						for (Integer i = 0; i < xDim; ++i)
+						{
+							std::array<Integer, Type> nodes;
+
+							nodes[0] = elem_index(i, j, k, xDim, yDim);
+							nodes[1] = elem_index(i+1, j, k, xDim, yDim);
+							nodes[2] = elem_index(i+1, j+1, k, xDim, yDim);
+							nodes[3] = elem_index(i, j+1, k, xDim, yDim);
+							nodes[4] = elem_index(i, j, k+1, xDim, yDim);
+							nodes[5] = elem_index(i+1, j, k+1, xDim, yDim);
+							nodes[6] = elem_index(i+1, j+1, k+1, xDim, yDim);
+							nodes[7] = elem_index(i, j+1, k+1, xDim, yDim);
+
+							mesh.add_elem(nodes);
+						}
+					}
+				}
 
 				return true;
 			}
@@ -430,8 +476,8 @@ namespace mars {
 	}
 
 
-    template<class Mesh>
-	inline bool generate_square(Mesh& mesh, const Integer xDim, const Integer yDim) {
+    template<Integer Type>
+	inline bool generate_square(NSMesh2<Type>& mesh, const Integer xDim, const Integer yDim) {
 		return generate_cube(mesh, xDim, yDim, 0);
 	}
     
