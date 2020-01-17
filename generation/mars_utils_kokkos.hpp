@@ -98,9 +98,9 @@ class KokkosImplementation {
 	std::string name = "kokkos";
 };
 
-template<Integer Dim, Integer ManifoldDim>
+template<Integer Dim, Integer ManifoldDim, class Simplex_>
 void convert_parallel_mesh_to_serial(mars::Mesh<Dim, ManifoldDim>& mesh,
-		const mars::Mesh<Dim, ManifoldDim,KokkosImplementation>& pMesh) {
+		const mars::Mesh<Dim, ManifoldDim,KokkosImplementation, Simplex_>& pMesh) {
 
 	ViewMatrixType<Integer>::HostMirror h_el = Kokkos::create_mirror_view(
 			pMesh.get_view_elements());
@@ -129,7 +129,7 @@ void convert_parallel_mesh_to_serial(mars::Mesh<Dim, ManifoldDim>& mesh,
 	for (Integer i = 0; i < pMesh.n_elements(); ++i) {
 		auto& e = mesh.add_elem();
 
-		for (Integer j = 0; j < ManifoldDim + 1; ++j) {
+		for (Integer j = 0; j < e.nodes.size(); ++j) {
 			e.nodes[j] = h_el(i, j);
 		}
 	}
