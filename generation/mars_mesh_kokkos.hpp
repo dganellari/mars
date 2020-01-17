@@ -13,16 +13,17 @@
 
 #include "mars_imesh_kokkos.hpp"
 #include "mars_simplex_kokkos.hpp"
+#include "mars_non_simplex_kokkos.hpp"
 
 namespace mars {
 
-template<Integer Dim_, Integer ManifoldDim_>
-class Mesh<Dim_,ManifoldDim_,KokkosImplementation>: public ParallelIMesh<Dim_> {
+template<Integer Dim_, Integer ManifoldDim_, class Simplex_>
+class Mesh<Dim_,ManifoldDim_,KokkosImplementation, Simplex_>: public ParallelIMesh<Dim_> {
 public:
 	static constexpr Integer Dim = Dim_;
 	static constexpr Integer ManifoldDim = ManifoldDim_;
 
-	using Elem = mars::Simplex<Dim, ManifoldDim,KokkosImplementation>;
+	using Elem = Simplex_;
 	using SideElem = mars::Simplex<Dim, ManifoldDim-1,KokkosImplementation>;
 	using Point = mars::Point<Real,Dim>;
 	using SerialMesh = mars::Mesh<Dim_,ManifoldDim_>;
@@ -1189,7 +1190,108 @@ public:
 			return false;
 		}
 		}
+	}
 
+//add point functor
+	struct AddNonSimplexPoint {
+
+		ViewMatrixType<Real> points;
+		Integer xDim;
+		Integer yDim;
+		Integer zDim;
+
+
+		AddNonSimplexPoint(ViewMatrixType<Real> pts, Integer xdm, Integer ydm) :
+				points(pts), xDim(xdm), yDim(ydm) {
+		}
+
+		AddNonSimplexPoint(ViewMatrixType<Real> pts, Integer xdm, Integer ydm, Integer zdm) :
+				points(pts), xDim(xdm), yDim(ydm), zDim(zdm) {
+		}
+
+
+		KOKKOS_INLINE_FUNCTION
+		void operator()(int i, int j) const {
+			int index = i * (yDim + 1) + j;
+			points(index, 0) = static_cast<Real>(i) / static_cast<Real>(xDim);
+			points(index, 1) = static_cast<Real>(j) / static_cast<Real>(yDim);
+		}
+
+		KOKKOS_INLINE_FUNCTION
+		void operator()(int z, int y, int x) const {
+			
+			int i =  (xDim + 1) * (yDim +1) * z + (xDim +1) * y + x;
+
+			points(i, 0) = static_cast<Real>(x)
+					/ static_cast<Real>(xDim);
+			points(i, 1) = static_cast<Real>(y)
+					/ static_cast<Real>(yDim);
+			points(i, 2) = static_cast<Real>(z)
+					/ static_cast<Real>(zDim);
+		}
+	
+	};
+
+inline bool generate_points(const int xDim, const int yDim, const int zDim, Integer type) {
+
+		using namespace Kokkos;
+
+		switch (ManifoldDim_) {
+
+		case 2: {
+
+			switch(type){
+
+			case ElementType::Quad4:{
+
+				assert(xDim != 0);
+				assert(yDim != 0);
+				assert(zDim == 0);
+
+				const int n_nodes = (xDim + 1) * (yDim + 1);
+				reserve_points(n_nodes);
+
+				parallel_for(
+						MDRangePolicy<Rank<2> >( { 0, 0 }, { xDim + 1, yDim + 1 }),
+						AddNonSimplexPoint(points_, xDim, yDim));
+
+				return true;
+			}
+			default: {
+				return false;
+			}
+			}
+		}
+		case 3: {
+
+			switch(type){
+
+			case ElementType::Hex8:{
+
+				assert(xDim != 0);
+				assert(yDim != 0);
+				assert(zDim != 0);
+
+				const int n_nodes = (xDim + 1) * (yDim + 1)	* (zDim + 1);
+
+				reserve_points(n_nodes);
+
+				parallel_for(
+						MDRangePolicy<Rank<3> >( { 0, 0, 0 },
+								{ zDim + 1, yDim + 1, xDim + 1}),
+						AddNonSimplexPoint(points_, xDim, yDim, zDim));
+
+				return true;
+			}
+			default: {
+				return false;
+			}
+			}
+		}
+		default: {
+			return false;
+		}
+		}
 	}
 
 	//add elem functor
@@ -1622,12 +1724,16 @@ private:
  return false;
  }*/
 
-using ParallelMesh1 = mars::Mesh<1, 1, KokkosImplementation>;
-using ParallelMesh2 = mars::Mesh<2, 2, KokkosImplementation>;
-using ParallelMesh3 = mars::Mesh<3, 3, KokkosImplementation>;
-using ParallelMesh4 = mars::Mesh<4, 4, KokkosImplementation>;
-using ParallelMesh5 = mars::Mesh<5, 5, KokkosImplementation>;
-using ParallelMesh6 = mars::Mesh<6, 6, KokkosImplementation>;
+	using ParallelMesh1 = mars::Mesh<1, 1, KokkosImplementation, Simplex<1,1, KokkosImplementation>>;
+	using ParallelMesh2 = mars::Mesh<2, 2, KokkosImplementation, Simplex<2,2, KokkosImplementation>>;
+	using ParallelMesh3 = mars::Mesh<3, 3, KokkosImplementation, Simplex<3,3, KokkosImplementation>>;
+	using ParallelMesh4 = mars::Mesh<4, 4, KokkosImplementation, Simplex<4,4, KokkosImplementation>>;
 
+
+	using ParallelQuad4Mesh = mars::Mesh<2, 2, KokkosImplementation, Quad4PElem>;
+	using ParallelHex8Mesh = mars::Mesh<3, 3, KokkosImplementation, Hex8PElem>;
+
+	template<Integer Type>
+	using ParallelNSMesh2 = mars::Mesh<2, 2, DefaultImplementation, NonSimplex<Type, KokkosImplementation>>;
 }
 #endif //MARS_MESH_HPP
