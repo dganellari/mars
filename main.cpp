@@ -1285,7 +1285,11 @@ std::cout<<"after LSFEM_Poisson2D"<<std::endl;
 std::cout<<"after LSFEM_Poisson"<<std::endl;
 
 
-LSFEM_Poisson<2,1,2>(1);
+LSFEM_Poisson<3,0,1>(1,2,4);
+LSFEM_Poisson<2,0,1>(1,2,4);
+
+LSFEM_Poisson<2,1,2>(1,2,6);
+LSFEM_Poisson<3,1,2>(1,2,6);
 std::cout<<"after LSFEM_Poisson2D"<<std::endl;
 // 
 // LSFEM_Poisson<3,1,2>(10);

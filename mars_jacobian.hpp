@@ -233,10 +233,10 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
   {
  
 
-    std::cout<<"v0_"<<std::endl;
-    std::cout<<v0_<<std::endl;
-    std::cout<<"J_inv_"<<std::endl;
-    std::cout<<J_inv_<<std::endl;
+    // std::cout<<"v0_"<<std::endl;
+    // std::cout<<v0_<<std::endl;
+    // std::cout<<"J_inv_"<<std::endl;
+    // std::cout<<J_inv_<<std::endl;
    for(Integer i=0;i<Rows;i++)
     {
       for(Integer k=0;k<Dim;k++)

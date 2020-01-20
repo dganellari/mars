@@ -1210,10 +1210,11 @@ for(Integer jj=0;jj<3;jj++)
 		private:
 			std::vector<T> A_;
 			std::vector<std::map<Integer,Integer>> cols_idx_; 
+			std::vector<std::map<Integer,Integer>> rows_idx_; 
 			Integer max_rows_;
 			Integer max_cols_;
 			Integer max_cols_used_;
-			Integer cont_; 
+			Integer non_zeros_; 
 
 
 		public:
@@ -1223,10 +1224,11 @@ for(Integer jj=0;jj<3;jj++)
 			SparseMatrix(const Integer max_rows,const Integer max_cols):
 			max_rows_(max_rows),
 			max_cols_(max_cols),
-			cont_(0)
+			non_zeros_(0)
 			{
 				A_.resize(max_rows_*max_cols);
 				cols_idx_.resize(max_rows_);
+				rows_idx_.resize(max_cols_);
 			}
 
 			auto rows(){return max_rows_;}
@@ -1240,30 +1242,53 @@ for(Integer jj=0;jj<3;jj++)
 				// std::cout<<"max_cols="<<max_cols<<std::endl;
 				// std::cout<<"max_cols_used="<<max_cols_used<<std::endl;
 
-				cont_=0;
+				non_zeros_=0;
 				A_.resize(max_rows_*max_cols_used);
 				cols_idx_.resize(max_rows_);
+				rows_idx_.resize(max_cols_);
 			}
 
 			void equal(const T& value,const Integer i, const Integer j)
 			{
+				// std::cout<<"(i,j)==("<<i<<","<<j<<")"<<std::endl;
 				if(cols_idx_[i].count(j))
 				{
+                    
+                    // std::cout<<"already exists in "<< cols_idx_[i].count(j)<<std::endl;
+                    // std::cout<<"previous  "<< A_[cols_idx_[i].at(j)]<<std::endl;
+                    // std::cout<<"new  "<< value<<std::endl;
+
 					A_[cols_idx_[i].at(j)]=value;
-// std::cout<<"already exists in "<< cols_idx_[i].count(j)<<std::endl;
-// for(std::size_t i=0;i<A_.size();i++)
-//   std::cout<<A_[i]<<" ";
-// std::cout<<std::endl;
+
+					
+					// for(std::size_t i=0;i<A_.size();i++)
+					//   std::cout<<A_[i]<<" ";
+					// std::cout<<std::endl;
 				}
 				else
 				{
-					A_[cont_]=value ;
-// std::cout<<"does not already exists"<<std::endl;
-// for(std::size_t i=0;i<A_.size();i++)
-// std::cout<<A_[i]<<" ";
-// std::cout<<std::endl;
-					cols_idx_[i].insert (std::pair<Integer,Integer>(j,cont_) );
-					cont_++ ; 
+					A_[non_zeros_]=value ;
+					// std::cout<<"does not already exists"<<std::endl;
+					// for(std::size_t i=0;i<A_.size();i++)
+					// std::cout<<A_[i]<<" ";
+					// std::cout<<std::endl;
+					cols_idx_[i].insert (std::pair<Integer,Integer>(j,non_zeros_) );
+					rows_idx_[j].insert (std::pair<Integer,Integer>(i,non_zeros_) );
+					non_zeros_++ ; 
+                    
+
+     //                std::cout<<"["<<i<<","<<j<<"]"<<std::endl;
+     //                std::cout<<"cols_idx_"<<std::endl;
+					// for (auto it=cols_idx_[i].begin(); it!=cols_idx_[i].end(); ++it)
+					// 	std::cout<<"( " << i<<", "<< it->first << ", " << A_[it->second]<<" )" ;
+					// std::cout<<std::endl;
+
+					// std::cout<<"rows_idx_"<<std::endl;
+					// for (auto it=rows_idx_[j].begin(); it!=rows_idx_[j].end(); ++it)
+					// 	std::cout<<"( " << i<<", "<< it->first << ", " << A_[it->second]<<" )" ;
+					// std::cout<<std::endl;
+
+
 				}
 
 			}
@@ -1285,13 +1310,14 @@ for(Integer jj=0;jj<3;jj++)
 				else
 				{
 // std::cout<<"does not already exists"<<std::endl;
-					A_[cont_]=value ;
+					A_[non_zeros_]=value ;
 
 // for(std::size_t i=0;i<A_.size();i++)
 //   std::cout<<A_[i]<<" ";
 // std::cout<<std::endl;
-					cols_idx_[i].insert (std::pair<Integer,Integer>(j,cont_) );
-					cont_++ ; 
+					cols_idx_[i].insert (std::pair<Integer,Integer>(j,non_zeros_) );
+					rows_idx_[j].insert (std::pair<Integer,Integer>(i,non_zeros_) );
+					non_zeros_++ ; 
 				}
 
 			}
@@ -1306,7 +1332,15 @@ for(Integer jj=0;jj<3;jj++)
 					A_[it->second]=0;
 			}
 
+			void print_row(const Integer i)
+			{
+				// std::cout<<"printing matrix row "<<i<<std::endl;
 
+					const auto& map=cols_idx_[i]; 
+					for (auto it=map.begin(); it!=map.end(); ++it)
+						std::cout<<"( " << i<<", "<< it->first << ", " << A_[it->second]<<" )" ;
+					std::cout<<std::endl;
+			}
 
 			void print()
 			{
@@ -1320,14 +1354,10 @@ for(Integer jj=0;jj<3;jj++)
 				}
 			}
 
-			void print_val()
+			void print_row_val(const Integer i)
 			{
 				Integer cont_cols=0;
-
-				std::cout<<"printing matrix"<<std::endl;
-				for(Integer i=0;i<max_rows_;i++)
-				{   
-					cont_cols=0;
+				// std::cout<<"printing matrix row "<<i<<std::endl;
 					const auto& map=cols_idx_[i]; 
 					for (auto it=map.begin(); it!=map.end(); ++it)
 						{
@@ -1343,6 +1373,16 @@ for(Integer jj=0;jj<3;jj++)
 					std::cout<<0<<" ";
 
 					std::cout<<std::endl;
+			}
+
+			void print_val()
+			{
+				// Integer cont_cols=0;
+
+				std::cout<<"printing matrix"<<std::endl;
+				for(Integer i=0;i<max_rows_;i++)
+				{   
+					print_row_val(i);
 				}
 			}
 
@@ -1354,12 +1394,29 @@ for(Integer jj=0;jj<3;jj++)
 				// std::cout<<"row="<<i<<std::endl;
 				for (auto it=map.begin(); it!=map.end(); ++it)
 				{
-					// std::cout<<it->first<<" "<<it->second<<std::endl;
+					// std::cout<<"j=="<<it->first<<" A(i,j)="<<A_[it->second]<<" b(j)="<< b[it->first]<< std::endl;
 					tmp+=A_[it->second]*b[it->first];
 // std::cout<<it->first<<"  "<<it->second<<"  A="<<A_[it->second]<<"   b="<<b[it->first]<<" "<<std::endl;
 // std::cout<<tmp<<" "<<std::endl;;
 				}
+                 std::cout<<tmp<<std::endl;
+				return tmp;
+			}
 
+			auto transpose_multiply(const Integer i,std::vector<T>& b)
+			{
+				T tmp=0;
+				const auto& map=rows_idx_[i]; 
+// std::cout<<" multiply ";
+				// std::cout<<"row="<<i<<std::endl;
+				for (auto it=map.begin(); it!=map.end(); ++it)
+				{
+					// std::cout<<"j=="<<it->first<<" A(i,j)="<<A_[it->second]<<" b(j)="<< b[it->first]<< std::endl;
+					tmp+=A_[it->second]*b[it->first];
+// std::cout<<it->first<<"  "<<it->second<<"  A="<<A_[it->second]<<"   b="<<b[it->first]<<" "<<std::endl;
+// std::cout<<tmp<<" "<<std::endl;;
+				}
+                 // std::cout<<tmp<<std::endl;
 				return tmp;
 			}
 
@@ -1383,7 +1440,7 @@ for(Integer jj=0;jj<3;jj++)
 			{
 
 				std::vector<T> result(max_rows_);
-				std::cout<<"multiply="<<std::endl;
+				// std::cout<<"multiply="<<std::endl;
 // std::cout<<std::endl<<std::endl;
 				for(Integer i=0;i<max_rows_;i++)
 				{
@@ -1393,6 +1450,142 @@ for(Integer jj=0;jj<3;jj++)
 // std::cout<<std::endl<<std::endl;
 				return result;
 			}
+
+
+
+			auto multiply(const SparseMatrix& B)
+			{
+
+				SparseMatrix C;
+				std::cout<<"mat mat multiply" <<std::endl;
+
+			    C.set_max_rows(max_rows_);
+
+			    C.set_max_cols(B.max_cols());
+
+			    auto& B_cols_idx=B.cols_idx();
+
+			    auto& B_rows_idx=B.rows_idx();
+
+			    auto B_max_cols=B.max_cols();
+
+				C.cols_idx().resize(C.max_rows());
+				C.rows_idx().resize(C.max_cols());
+
+
+			    std::map<Integer,Integer> intersection;
+                Real tmp;
+                C.non_zeros()=0;
+ 
+				for(Integer i=0;i<max_rows_;i++)
+				{
+					for(Integer j=0;j<B_max_cols;j++)
+					{
+
+
+						if(!intersection.empty())
+						{
+						intersection.clear();
+						}						
+                    std::set_intersection(cols_idx_[i].begin(),cols_idx_[i].end(),
+                    					  B_rows_idx[j].begin(),B_rows_idx[j].end(),
+									      inserter(intersection, intersection.begin()),
+									      [](const std::pair<Integer,Integer>& p1,const std::pair<Integer,Integer>& p2){
+									         return p1.first < p2.first;});
+                    if(!intersection.empty())
+                    {
+                    	tmp=0.0;                    	
+						for (auto it=intersection.begin(); it!=intersection.end(); ++it)
+						{ 
+							tmp+=operator()(i,it->first)*B(it->first,j);
+						}
+                        C().push_back(tmp);
+						C.cols_idx()[i].insert (std::pair<Integer,Integer>(j,C.non_zeros()) );
+						C.rows_idx()[j].insert (std::pair<Integer,Integer>(i,C.non_zeros()) );
+						C.non_zeros()++ ; 
+                    }
+					}
+				}
+				return C;
+			}
+
+
+			auto transpose_and_multiply(std::vector<T>& b)
+			{
+
+				std::vector<T> result(max_cols_);
+				// std::cout<<"multiply="<<std::endl;
+// std::cout<<std::endl<<std::endl;
+				for(Integer i=0;i<max_cols_;i++)
+				{
+					result[i]=transpose_multiply(i,b);
+// std::cout<<std::endl<<result[i]<<std::endl;
+				}
+// std::cout<<std::endl<<std::endl;
+				return result;
+			}
+
+
+			auto transpose_and_multiply(const SparseMatrix& B)
+			{
+
+				SparseMatrix C;
+				std::cout<<"mat transpose and mat multiply" <<std::endl;
+
+			    C.set_max_rows(max_cols_);
+
+			    C.set_max_cols(B.max_cols());
+
+			    auto& B_cols_idx=B.cols_idx();
+
+			    auto& B_rows_idx=B.rows_idx();
+
+			    auto B_max_cols=B.max_cols();
+
+				C.cols_idx().resize(C.max_rows());
+				C.rows_idx().resize(C.max_cols());
+
+
+			    std::map<Integer,Integer> intersection;
+                Real tmp;
+                C.non_zeros()=0;
+ 
+				for(Integer i=0;i<max_cols_;i++)
+				{
+					for(Integer j=0;j<B_max_cols;j++)
+					{
+
+
+					if(!intersection.empty())
+					{
+					intersection.clear();
+					}						
+                    std::set_intersection(rows_idx_[i].begin(),rows_idx_[i].end(),
+                    					  B_rows_idx[j].begin(),B_rows_idx[j].end(),
+									      inserter(intersection, intersection.begin()),
+									      [](const std::pair<Integer,Integer>& p1,const std::pair<Integer,Integer>& p2){
+									         return p1.first < p2.first;});
+                    if(!intersection.empty())
+                    {
+                    	tmp=0.0;                    	
+						for (auto it=intersection.begin(); it!=intersection.end(); ++it)
+						{ 
+							tmp+=operator()(it->first,i)*B(it->first,j);
+						}
+                        C().push_back(tmp);
+						C.cols_idx()[i].insert (std::pair<Integer,Integer>(j,C.non_zeros()) );
+						C.rows_idx()[j].insert (std::pair<Integer,Integer>(i,C.non_zeros()) );
+						C.non_zeros()++ ; 
+                    }
+					}
+				}
+				return C;
+			}
+
+
+
+
+            inline auto& operator()() {return A_;}
 
 			auto&  operator()(const Integer i, const Integer j)
 			{
@@ -1425,6 +1618,28 @@ for(Integer jj=0;jj<3;jj++)
 				}
 			}
 
+
+			inline Integer max_cols_used()const {return max_cols_used_;}
+
+			inline Integer max_rows()const {return max_rows_;}
+
+			inline Integer max_cols()const {return max_cols_;}
+
+			inline void set_max_cols_used(const Integer i) {max_cols_used_=i;}
+
+			inline void set_max_rows(const Integer i) {max_rows_=i;}
+
+			inline void set_max_cols(const Integer i) {max_cols_=i;}
+
+			inline auto& cols_idx()const {return cols_idx_;}
+
+			inline auto& rows_idx()const {return rows_idx_;}
+
+			inline auto& cols_idx() {return cols_idx_;}
+
+			inline auto& rows_idx() {return rows_idx_;}
+
+			inline auto& non_zeros() {return non_zeros_;}
 
 
 
@@ -3604,16 +3819,16 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,0,Con
      const auto& NQPoints=ShapeValue::NQPoints;
      const auto& Ndofs=Output::Rows;
 
-     std::cout<<"compute_face_dofs"<<std::endl;
-     std::cout<<"shape_value"<<std::endl;
-     std::cout<<shape_value<<std::endl; 
+     // std::cout<<"compute_face_dofs"<<std::endl;
+     // std::cout<<"shape_value"<<std::endl;
+     // std::cout<<shape_value<<std::endl; 
 
-     std::cout<<"normal"<<std::endl;
-     std::cout<<normal<<std::endl;
-     std::cout<<"weights"<<std::endl;
-     std::cout<<weights<<std::endl;
-     std::cout<<"FE.get_det_side()"<<std::endl;
-     std::cout<<FE.get_det_side()<<std::endl;
+     // std::cout<<"normal"<<std::endl;
+     // std::cout<<normal<<std::endl;
+     // std::cout<<"weights"<<std::endl;
+     // std::cout<<weights<<std::endl;
+     // std::cout<<"FE.get_det_side()"<<std::endl;
+     // std::cout<<FE.get_det_side()<<std::endl;
      for(Integer coarse_dof=0;coarse_dof<NDofs;coarse_dof++)
      {
         out(fine_dof,coarse_dof)=0;
@@ -3628,8 +3843,8 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,0,Con
        out(fine_dof,coarse_dof)*=FE.get_det_side();
 
      }
-     std::cout<<"out"<<std::endl;
-     std::cout<<out<<std::endl;    
+     // std::cout<<"out"<<std::endl;
+     // std::cout<<out<<std::endl;    
     }
 
     // face dofs
@@ -3675,7 +3890,7 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,0,Con
         // std::cout<<"shape_trace_face_.eval()"<<std::endl;
         // std::cout<<shape_trace_face_.eval()<<std::endl;
         
-         std::cout<< "F_FE elem id = "<< F_FE.elem_id()<< "    side_id"<<F_FE.side_id() <<std::endl;
+         // std::cout<< "F_FE elem id = "<< F_FE.elem_id()<< "    side_id"<<F_FE.side_id() <<std::endl;
          compute_face_dofs(mat,cont,QRuleFace::qp_weights,shape_face_.eval(), normal, F_FE);
          cont++;
 
@@ -3711,10 +3926,10 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,0,Con
     	     compute<entity[0]>(mat_coarse_,cont,C_FE,F_FE);}
 
 
-    	std::cout<<"pre mat"<<std::endl;
-    	std::cout<<mat<<std::endl;
-    	std::cout<<"mat_coarse_"<<std::endl;
-    	std::cout<<mat_coarse_<<std::endl;
+    	// std::cout<<"pre mat"<<std::endl;
+    	// std::cout<<mat<<std::endl;
+    	// std::cout<<"mat_coarse_"<<std::endl;
+    	// std::cout<<mat_coarse_<<std::endl;
 
         resize(mat,mat_coarse_);
     	std::cout<<"mat"<<std::endl;
@@ -3862,8 +4077,8 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Con
        out(fine_dof,coarse_dof)*=FE.get_det();
 
      }
-     std::cout<<"out"<<std::endl;
-     std::cout<<out<<std::endl;    
+     // std::cout<<"out"<<std::endl;
+     // std::cout<<out<<std::endl;    
     }
 
     // face dofs
@@ -4271,19 +4486,19 @@ public:
 
    	 auto& dofsdofmap=spaces_ptr_->dofsdofmap();
    	 
-   	 std::cout<< " Space ==  " << N << std::endl;
-   	 std::cout<< " F_FE_.elem_id() ==  " << F_FE_.elem_id() << std::endl;
-   	 std::cout<< " C_FE_.elem_id() ==  " << C_FE_.elem_id() << std::endl;
-   	 std::cout<< " F_FE_.level() ==  " << F_FE_.level() << std::endl;
-   	 std::cout<< " C_FE_.level() ==  " << C_FE_.level() << std::endl;
-   	 std::cout<< " n_dofs ==  " << n_dofs << std::endl;
+   	 // std::cout<< " Space ==  " << N << std::endl;
+   	 // std::cout<< " F_FE_.elem_id() ==  " << F_FE_.elem_id() << std::endl;
+   	 // std::cout<< " C_FE_.elem_id() ==  " << C_FE_.elem_id() << std::endl;
+   	 // std::cout<< " F_FE_.level() ==  " << F_FE_.level() << std::endl;
+   	 // std::cout<< " C_FE_.level() ==  " << C_FE_.level() << std::endl;
+   	 // std::cout<< " n_dofs ==  " << n_dofs << std::endl;
      
    	 dofsdofmap.template dofmap_get<N>(dm_row,F_FE_.elem_id(),F_FE_.level());
    	 dofsdofmap.template dofmap_get<N>(dm_col,C_FE_.elem_id(),C_FE_.level());
-     std::cout<< "dm_row" <<std::endl;
-     std::cout<< dm_row <<std::endl;
-     std::cout<< "dm_col" <<std::endl;
-     std::cout<< dm_col <<std::endl;
+     // std::cout<< "dm_row" <<std::endl;
+     // std::cout<< dm_row <<std::endl;
+     // std::cout<< "dm_col" <<std::endl;
+     // std::cout<< dm_col <<std::endl;
 
      F_FE_.init(F_FE_.elem_id(),F_FE_.level());
      dof.compute(mat,C_FE_,F_FE_);
@@ -4292,11 +4507,12 @@ public:
      	for(Integer j=0;j<n_dofs;j++)
      		for(Integer k=0;k<NComponents;k++)
      		{
-              std::cout<<dm_row[i*NComponents+k]<<"   "<<dm_col[j*NComponents+k]<<std::endl;
+              // std::cout<<"("<<dm_row[i*NComponents+k]<<", "<<dm_col[j*NComponents+k]<<", "<<mat(i,j)<<")   ";
               A.equal(mat(i,j),dm_row[i*NComponents+k],dm_col[j*NComponents+k]);
+              // A.print_row(dm_row[i*NComponents+k]);
      		}
      		
-
+     // A.print_val();
      space_loop<N+1,Nmax>(A,C_el,C_level,F_el,F_level);
    }
 
@@ -4307,13 +4523,13 @@ public:
         auto &mesh=spaces_ptr_->mesh();
         auto &bisection=spaces_ptr_->bisection();
         auto &tracker=bisection.tracker();
-        std::cout<<"F_level=="<<F_level<<std::endl;
-        std::cout<<"find_children el=="<<el<<std::endl;
+        // std::cout<<"F_level=="<<F_level<<std::endl;
+        // std::cout<<"find_children el=="<<el<<std::endl;
     	auto& fine_elem=mesh.elem(el);
       	auto& children=fine_elem.children;
-      	for(std::size_t i=0;i<children.size();i++)
-      		std::cout<<children[i]<<" ";
-      	std::cout<<std::endl;
+      	// for(std::size_t i=0;i<children.size();i++)
+      	// 	std::cout<<children[i]<<" ";
+      	// std::cout<<std::endl;
 
         if(elem_belongs_to_level(mesh,el,F_level,tracker))
             {
@@ -4354,38 +4570,58 @@ public:
       auto& level_cumultive_n_dofs=dofsdofmap.level_cumultive_n_dofs();
       auto& level_cumulative_dofs_array=dofsdofmap.level_cumulative_dofs_array();
       auto& n2e=spaces_ptr_->node2elem();
-      std::cout<<" qui1 "<<std::endl;
+      // std::cout<<" qui1 "<<std::endl;
       Integer n_dofs_rows=level_cumultive_n_dofs[F_level];
-      std::cout<<" qui2 "<<std::endl;
+      // std::cout<<" qui2 "<<std::endl;
       Integer n_dofs_cols=level_cumultive_n_dofs[C_level];
-      std::cout<<" qui3 ,n_dofs_rows= "<<n_dofs_rows<<std::endl;
+      // std::cout<<" qui3 ,n_dofs_rows= "<<n_dofs_rows<<std::endl;
       Integer max_cols=n2e.max_n_nodes();
-      std::cout<<" qui4 , n_dofs_cols ="<<n_dofs_cols<<std::endl;
+      // std::cout<<" qui4 , n_dofs_cols ="<<n_dofs_cols<<std::endl;
       max_cols=min(NLocalDofs*max_cols,n_dofs_rows);
-      std::cout<<" qui5 ,max_cols ="<<max_cols<<std::endl;
+      // std::cout<<" qui5 ,max_cols ="<<max_cols<<std::endl;
       level_cumultive_n_dofs[C_level];
       
-      std::cout<<" qui6 "<<std::endl;
+      // std::cout<<" qui6 "<<std::endl;
       A.init(n_dofs_rows,n_dofs_cols,max_cols);
-      std::cout<<"n_dofs_rows = "<<n_dofs_rows<<std::endl;
-      std::cout<<"max_cols = "<<max_cols<<std::endl;
+      // std::cout<<"n_dofs_rows = "<<n_dofs_rows<<std::endl;
+      // std::cout<<"max_cols = "<<max_cols<<std::endl;
 
 
-      std::cout<<"level_cumulative_dofs_array"<<std::endl;
-      for(Integer i=0;i<level_cumulative_dofs_array.size();i++)
-      	{for(Integer j=0;j<level_cumulative_dofs_array[i].size();j++)
-         std::cout<<level_cumulative_dofs_array[i][j]<<" ";
-         std::cout<<std::endl;}
+      // std::cout<<"level_cumulative_dofs_array"<<std::endl;
+      // for(Integer i=0;i<level_cumulative_dofs_array.size();i++)
+      // 	{for(Integer j=0;j<level_cumulative_dofs_array[i].size();j++)
+      //    std::cout<<level_cumulative_dofs_array[i][j]<<" ";
+      //    std::cout<<std::endl;}
       for(std::size_t C_el=0;C_el<mesh.n_elements();C_el++)
       {
       	// std::cout<<"C_el=="<<C_el<<std::endl;
       	// if the elem does not belong to the C_level, continue
+
+      	// if(C_el==132)
+      	// {
+      
+       //  std::cout<<"START BUG C_el=="<<C_el<<std::endl;
+       //  std::cout<<"C_level=="<<C_level<<std::endl;
+       //  std::cout<<"track.get_iterate(i)=="<<tracker.get_iterate(C_el)<<std::endl;
+       
       	if(!elem_belongs_to_level(mesh,C_el,C_level,tracker))continue;
-        
+        // std::cout<<"eeeeeevviva C_el=="<<C_el<<std::endl;
         C_FE_.init(C_el,C_level);
         C_FE_.init_inv_jac();
         // auto& elem=mesh.elem(el);
         find_children(A,C_level,F_level,C_el,C_el);
+     	// std::cout<<"END BUG C_el=="<<C_el<<std::endl;
+      	// }
+
+      	// if(!elem_belongs_to_level(mesh,C_el,C_level,tracker))continue;
+       //  std::cout<<"C_el=="<<C_el<<std::endl;
+       //  C_FE_.init(C_el,C_level);
+       //  C_FE_.init_inv_jac();
+       //  find_children(A,C_level,F_level,C_el,C_el);
+
+
+
+
       	// loop recursively on the fine children up to the F_level
       	// auto& children=elem.children;
 
@@ -4409,8 +4645,93 @@ private:
 
 };
 
+template<typename FunctionSpace>
+class FullFunctionSpaceLevelsInterpolation
+{
+public:
+	using FunctionSpaceInterpolation=FullFunctionSpaceInterpolation<FunctionSpace>;
+    FullFunctionSpaceLevelsInterpolation(std::shared_ptr<FunctionSpace> W_ptr):
+	spaces_ptr_(W_ptr)
+	{}
+
+	// levels contain
 
 
+    inline auto& matrices(){return mat_vec_;}
+
+    inline auto& matrix(const Integer i){return mat_vec_[i];}
+
+    inline auto& matrix(const Integer coarse,const Integer fine)
+    {   for(Integer i=0;i<interp_levels_vec_.size();i++)
+    	{
+    	if(interp_levels_vec_[i][0]==coarse && interp_levels_vec_[i][1]==fine)
+    		return mat_vec_[i];
+    	}
+    	std::cout<<"ERROR: not existing coarse-fine levels pair in FullFunctionSpaceLevelsInterpolation"<<std::endl;
+    }
+
+	void init(const std::vector<Integer> levels)
+	{
+        Integer n_levels_=levels.size();
+        mat_vec_.resize(n_levels_-1);
+        interp_levels_vec_.resize(n_levels_-1);
+        levels_.resize(n_levels_);
+
+        for(Integer i=0;i<n_levels_;i++)
+        	levels_[i]=levels[i];
+
+		for(Integer i=0;i<n_levels_-1;i++)
+		{
+			interp_vec_.push_back(FunctionSpaceInterpolation(spaces_ptr_));
+			std::cout << " FullFunctionSpaceLevelsInterpolation " <<i<< std::endl;
+			interp_levels_vec_[i][0]=levels[i+1];
+			interp_levels_vec_[i][1]=levels[i+1];
+			interp_vec_[i].init(mat_vec_[i],levels[i],levels[i+1]);
+
+		}
+	}
+
+    
+    // auto build_single_interp(SparseMatrix<Real>& A_C,const SparseMatrix<Real>& A_F, const Integer level)
+    // {
+     
+    //  A_C
+
+
+    // }
+
+
+
+	void build(const SparseMatrix<Real>& A)
+	{
+
+      std::vector<SparseMatrix<Real>> A_level(n_levels_-1);
+
+
+      for(Integer i=n_levels_-1;i>=0;i--)
+      {
+      	// build_single_interp(A_level[i],A,i);
+      }
+
+
+
+
+
+	}
+
+
+
+
+
+
+private:
+	Integer n_levels_;
+	std::vector<Integer> levels_;
+	std::shared_ptr<FunctionSpace> spaces_ptr_;
+	std::vector<FunctionSpaceInterpolation> interp_vec_;
+	std::vector<SparseMatrix<Real>> mat_vec_;
+	std::vector<Array<Integer,2>> interp_levels_vec_;
+};
 
 
 
@@ -4544,7 +4865,7 @@ class NormalFunction;
 
 
 	template<Integer ManifoldDim,Integer Order1,Integer Order2>
-	void LSFEM_Poisson(const Integer n)
+	void LSFEM_Poisson(const Integer n, const Integer level, const Integer n_levels)
 	{
 	  // constexpr Integer ManifoldDim=2;
 		constexpr Integer Dim=ManifoldDim;
@@ -4578,7 +4899,7 @@ class NormalFunction;
 	      // bisection.uniform_refine(0);
 	      // mesh.update_dual_graph();
 		}
-        Integer n_levels=1;
+        // Integer n_levels=12;
 	    clock_t begin=clock();
 		clock_t end = clock();
 		double elapsed_secs;
@@ -4990,7 +5311,7 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 		std::vector<Real> b;
 
 		std::cout<<"ASSEMBLY"<<std::endl;
-		Integer level=0;//bisection.tracker().current_iterate();
+		// Integer level=2;//bisection.tracker().current_iterate();
 		// Integer level=4;
 		std::cout<<"level---"<<level<<std::endl;
 		context.assembly(A,b,level);
@@ -5009,12 +5330,15 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 		std::cout<<"END SOLVING"<<std::endl;
 
 	    std::cout<<"---------------------------x"<<std::endl;
+	    ////// MODIFY X BEFORE INTERPOLATIONA
+	    // for(int i=0;i<x.size();i++)
+	    	// x[i]=1;
+
+
 	    for(int i=0;i<x.size();i++)
 	    	std::cout<<x[i]<<std::endl;
 
-	    ////// MODIFY X BEFORE INTERPOLATIONA
-	    // for(int i=0;i<x.size();i++)
-	    // 	x[i]=1;
+
 
 
 
@@ -5094,18 +5418,52 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 	     for(int i=0;i<level_cumultive_n_dofs2.size();i++)
 	     {
 	      // for(int j=0; j<level_n_dofs_array[i].size();j++)
-	        std::cout<<level_cumultive_n_dofs2[i]<<" ";
+	      std::cout<<level_cumultive_n_dofs2[i]<<" ";
 	      std::cout<<std::endl;
 	     }   
 
 	    FullFunctionSpaceInterpolation<decltype(W)> interp(W_ptr);
 	    SparseMatrix<Real> InterpMat;
 	    std::cout<<"level="<<level<<std::endl;
-	    Integer level_finer=level+1;
+	    Integer level_finer=n_levels-1;
 	    std::cout<<"level_finer="<<level_finer<<std::endl;
+     
+	    interp.init(InterpMat,n_levels-1,n_levels);
 
-	    interp.init(InterpMat,level,level_finer);
-	    InterpMat.print_val();
+	    FullFunctionSpaceLevelsInterpolation<decltype(W)> levels_interp(W_ptr);
+        
+        std::vector<Integer> levels(n_levels-level);
+
+        for(Integer i=0;i<n_levels-1-level;i++)
+        {
+        	levels[i]=i+level;
+
+        }
+
+	    levels_interp.init(levels);
+
+	    std::vector<std::vector<Real>> x_interp_vec(levels.size()-1);
+
+        std::cout<<"multiply level == "<<0<<std::endl;
+	    x_interp_vec[0]=x;
+
+        for(Integer i=1;i<levels.size()-1;i++)
+        {
+            std::cout<<"multiply level == "<<i<<std::endl;
+        	x_interp_vec[i]=levels_interp.matrix(i-1).multiply(x_interp_vec[i-1]);
+			std::string output_file_interp ="LSFEM_Poisson"+ std::to_string(ManifoldDim) +
+			"D_RT" + std::to_string(Order1)+
+			"_P" + std::to_string(Order2)+"_outputINTERPLEVEL"+ std::to_string(levels[i])+"-"+
+			std::to_string(levels[i+1])+
+			+".vtk";
+			os.close();
+			os.open(output_file_interp.c_str());
+			// write_wtk_isoparametric(os,*context.full_spaces_ptr(),xL,var_namesL,level);
+			write_wtk_isoparametric(os,W_ptr,x_interp_vec[i],var_namesL,levels[i]);
+		    os.close();
+        }
+
+	    // InterpMat.print_val();
 
 
 	    std::cout<<"before x_interp"<<std::endl;
@@ -5113,11 +5471,14 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 	    
 //     std::vector<Real> x_interp
 // {-6.38588e-16,-0.8112,1.52498e-16,-7.45169e-16,-0.8112,0.4056,3.26509e-16,0.4056,-0.8112,-0.8112,-2.67354e-16,-0.8112,-0.8112,-0.8112,-9.00613e-19,-0.8112,0.4056,1.52498e-16,0.4056,-2.72351e-16,-2.72351e-16,0.4056,0.4056,3.26509e-16,0.4056,-4.35486e-16,-4.35486e-16,0.4056,0,0,0,0,0.5408,0,0,0,0,-0.2704,-0.2704,-0.2704,-0.2704};
-
+        // x_interp[181]=0.1933;
 
     	std::cout<<"x_interp"<<std::endl;
 	    for(int i=0;i<x_interp.size();i++)
 	    	std::cout<<x_interp[i]<<std::endl;
+
+
+	    // x_interp[180]=-0.1933;
 		std::string output_file_interp ="LSFEM_Poisson"+ std::to_string(ManifoldDim) +
 		"D_RT" + std::to_string(Order1)+
 		"_P" + std::to_string(Order2)+"_outputINTERP.vtk";
@@ -5128,6 +5489,108 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 		write_wtk_isoparametric(os,W_ptr,x_interp,var_namesL,level_finer);
 
 	    os.close();
+
+
+        std::cout<<"start multiply mat mat"<<std::endl;
+
+ 	    // InterpMat.print_val();
+	    // AL.print_val();
+
+	 //    auto AP=AL.multiply(InterpMat);
+
+	 //    // AP.print_val();
+
+	 //    auto PAP=InterpMat.transpose_and_multiply(AP);
+
+	 //    // PAP.print_val();
+
+
+		// SparseMatrix<Real> AProva;
+		// std::vector<Real> bprova;
+
+		// context.assembly(AProva,bprova,levelL-1);
+	 //   // A.print_val();
+		// std::cout<<"APPLY BC "<<std::endl;
+		// context.apply_bc(PAP,bprova);
+
+
+		// std::vector<Real> xprova;
+
+
+		// std::cout<<"START SOLVING"<<std::endl;
+		// gauss_seidel(xprova,PAP,bprova,max_iter);
+		// std::cout<<"END SOLVING"<<std::endl;
+		// std::string output_fileprova ="LSFEM_Poisson"+ std::to_string(ManifoldDim) +
+		// "D_RT" + std::to_string(Order1)+
+		// "_P" + std::to_string(Order2)+"_outputPROVA.vtk";
+
+		// os.close();
+		// os.open(output_fileprova.c_str());
+		// // write_wtk_isoparametric(os,*context.full_spaces_ptr(),xL,var_namesL,level);
+		// write_wtk_isoparametric(os,W_ptr,xprova,var_names,levelL-1);
+
+	 //    os.close();
+
+
+
+
+	    // SparseMatrix<Real> mat;
+
+	    // mat.init(5,5,5);
+
+	    // mat.equal(10,0,0);
+	    // mat.equal(10,0,3);
+	    // mat.equal(10,0,4);
+
+	    // mat.equal(10,1,0);
+	    // mat.equal(10,1,4);
+
+	    // mat.equal(10,2,0);
+	    // mat.equal(10,2,1);
+	    // mat.equal(10,2,3);
+	    // mat.equal(10,2,4);
+
+	    // mat.equal(10,3,2);
+	    // mat.equal(10,3,3);
+	    // mat.equal(10,3,4);
+
+	    // mat.equal(10,4,0);
+	    // mat.equal(10,4,1);
+	    // mat.equal(10,4,2);
+	    // mat.equal(10,4,3);
+	    // mat.equal(10,4,4);
+
+	    // auto& m1=mat.cols_idx();
+	    // auto& m2=mat.rows_idx();
+
+	    // std::vector<Real> vec6{1.2,2.3,3.4,4.5,5.6};
+
+	    // auto vec7=mat.transpose_and_multiply(vec6);
+
+	    // std::cout<<"vec6"<<std::endl;
+	    // for(Integer i=0;i<vec7.size();i++)
+	    // 	std::cout<<vec6[i]<<std::endl;
+
+	    // std::cout<<"vec7"<<std::endl;
+	    // for(Integer i=0;i<vec7.size();i++)
+	    // 	std::cout<<vec7[i]<<std::endl;
+	    // mat.print_val();
+
+
+
+
+
+
+
+
+
+
+
+
+	    // AP.print_val();
+
+
+
 
 
 
@@ -5165,7 +5628,7 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 
   
 	// std::cout<<"nlocaldofs="<<decltype(W)::DofsDM::NLocalDofs<<std::endl;
-	// auto &dofsdofmap=W.dofsdofmap();
+	// auto &dofsdofmap=W_ptr->dofsdofmap();
 
 	// for(Integer i=0;i<dofsdofmap.space_dofs().size();i++)
 	// {
@@ -5178,28 +5641,163 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 
 	// }
 
-	// for(Integer i=0;i<mesh.n_elements();i++)
-	// {
-	//          auto& elem=mesh.elem(i);
-	//          auto& nodes=elem.nodes;
-	//          std::cout<<"elem == "<< i <<std::endl;
- //             for(Integer j=0;j<nodes.size();j++)
-	//          std::cout<<mesh.points()[nodes[j]]<<" ";
-	//          std::cout<<std::endl;
-	// }
+ 
+// 	for(Integer i=0;i<mesh.n_elements();i++)
+// 	{
+// 	         auto& elem=mesh.elem(i);
+// 	         auto& nodes=elem.nodes;
+// 	         // std::cout<<"elem == "<< i <<std::endl;
+//           //    for(Integer j=0;j<nodes.size();j++)
+// 	         // std::cout<<mesh.points()[nodes[j]]<<" ";
+//           //    for(Integer j=0;j<nodes.size();j++)
+// 	         // std::cout<<nodes[j]<<" ";
+// 	         // std::cout<<std::endl;
+// 	         if(i==132)
+// 	         {
+// 	         	std::cout<<"ELEM 132 with level"<<std::endl;
+// 	            for(Integer j=0;j<nodes.size();j++)
+// 	         std::cout<<nodes[j]<<" ";
+         	
+// 	         	auto & children=mesh.elem(i).children;
+//              for(Integer j=0;j<children.size();j++)
+// 	         std::cout<<children[j]<<" ";	         	
+// 	         }
+// 	}
+
+// auto & children=mesh.elem(132).children;
+// 	// for(Integer i=0;i<mesh.points().size();i++)
+// 	// {
+// 	//          std::cout<<"point == "<< i <<std::endl;
+//  //             for(Integer j=0;j<mesh.points()[i].size();j++)
+// 	//          std::cout<<mesh.points()[i][j]<<" ";
+// 	//          std::cout<<std::endl;
+// 	// }
+
+
+    // auto& bisection=W_ptr->bisection();
+ //    auto& tracker=bisection.tracker();
 
 
 	// std::cout<<"-----dofmap of space="<<0<<std::endl;
 	// GetType<typename decltype(W)::DofsDM::ElemDofMap> elemdm;
+	// Integer cont1=0;
 	// for(Integer i=0;i<dofsdofmap.template dofmap_size<0>();i++)
 	// {
-	//          dofsdofmap.template dofmap_get<0>(elemdm,i);
-	//          std::cout<<"elem == "<< i<<std::endl;
+
+			// dofsdofmap.template dofmap_get<0>(elemdm,i);
+	  //        std::cout<<"dofmap == "<< i<<std::endl;
+	//   //        std::cout<<elemdm<<std::endl;
+	// 	if(!elem_belongs_to_level(mesh,i,level,tracker))
+	// 		{
+	// 			std::cout<<cont1<<std::endl;
+	// 			cont1++;
+	// 		}
+
+
+	// 	if(i==132)
+	// 	{
+
+	//          auto& elem=mesh.elem(i);
+	//          auto& nodes=elem.nodes;
+	// 		dofsdofmap.template dofmap_get<0>(elemdm,i);
+	//          std::cout<<"dofmap == "<< i<<std::endl;
 	//          std::cout<<elemdm<<std::endl;
+	//          std::cout<<"nodes == "<< i<<std::endl;
+ //             for(Integer k=0;k<nodes.size();k++)
+	//          {
+	//          	std::cout<<"nodes[k] "<<nodes[k]<<std::endl;
+	//          	std::cout<<mesh.points()[nodes[k]]<<" ";
+	//          }
+
+
+	// 		for(int j=0;j<children.size();j++)
+	//          {
+	//          auto& elem=mesh.elem(children[j]);
+	//          auto& nodes=elem.nodes;
+
+	//          dofsdofmap.template dofmap_get<0>(elemdm,children[j]);
+	//          std::cout<<"dofmap == "<< children[j]<<std::endl;
+	//          std::cout<<elemdm<<std::endl;
+	//          std::cout<<"nodes == "<< children[j]<<std::endl;
+ //             for(Integer k=0;k<nodes.size();k++)
+	//          {
+	//          	std::cout<<"nodes[k] "<<nodes[k]<<std::endl;
+	//          	std::cout<<mesh.points()[nodes[k]]<<" ";}
+
+	//      }
+	//      break;
+	// 	}
+
+
 	// }
 
+	// std::cout<<"cont1"<<std::endl;
+	// std::cout<<cont1<<std::endl;
+
+ 
+   
+ //    auto& signed_normal= mesh.signed_normal().normals();
+ //    auto& signs= mesh.signed_normal().sign();
 
 
+
+ //    std::cout<<signed_normal[132]<<std::endl;
+ //    std::cout<<signed_normal[308]<<std::endl;
+ //    std::cout<<signed_normal[293]<<std::endl;
+ //    std::cout<<signs[132]<<std::endl;
+ //    std::cout<<signs[308]<<std::endl;
+ //    std::cout<<signs[293]<<std::endl;
+
+
+
+ //    cont1=0;
+ //    Integer found=0;
+ // 	for(Integer i=0;i<mesh.n_elements();i++)
+	// {
+	// 	if(!elem_belongs_to_level(mesh,i,level,tracker)) continue;
+
+	// 	if(i==132)
+	// 		found=cont1;
+	// 	cont1++;
+
+	// }
+
+	// std::cout<<"mesh level "<<level<<" n_elements="<<cont1<<std::endl;
+
+ //    cont1=0;
+ //    Integer found1=0;
+ //    Integer found2=0;
+ // 	for(Integer i=0;i<mesh.n_elements();i++)
+	// {
+	// 	if(!elem_belongs_to_level(mesh,i,level_finer,tracker)) continue;
+
+	// 	if(i==308)
+	// 		found1=cont1;
+	// 	if(i==309)
+	// 		found2=cont1;
+	// 	cont1++;
+
+	// }
+
+	// std::cout<<"mesh level_finer "<<level_finer<<" n_elements="<<cont1<<std::endl;
+
+	// std::cout<<"mesh n_elements = "<< mesh.n_elements()<<std::endl;
+
+
+
+	// std::cout<<"mesh level "<<level<<" found="<<found<<std::endl;
+	// std::cout<<"mesh level_finer "<<level_finer<<" found1="<<found1<<std::endl;
+	// std::cout<<"mesh level_finer "<<level_finer<<" found2="<<found2<<std::endl;
+
+
+	// std::cout<<"-----dofmap of space="<<1<<std::endl;
+	// GetType<typename decltype(W)::DofsDM::ElemDofMap,1> elemdm1;
+	// for(Integer i=0;i<dofsdofmap.template dofmap_size<1>();i++)
+	// {
+	//          dofsdofmap.template dofmap_get<1>(elemdm1,i);
+	//          std::cout<<"elem == "<< i<<std::endl;
+	//          std::cout<<elemdm1<<std::endl;
+	// }
 	// std::cout<<"-----dofmap of space="<<1<<std::endl;
 
 	// for(Integer i=0;i<dofsdofmap.template dofmap_size<1>();i++)
@@ -6619,7 +7217,7 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 	//      std::cout<<dof2[i][j]<<std::endl;
 	// decltype(eval_linear_form)::EvaluationOfL2InnersVolume::L2Products a4k(6);
 
-	// decltype(bilinear_form)::FunctionSpace a444k(6);
+	// decltype(bilinear_form)::FunctionSpace a1324k(6);
 	// auto l2prdo=L2Inner(v0,u0);
 	// std::cout<<"kkkk3333="<<std::endl;
 	// auto spcptr=find_spaces_ptr<decltype(bilinear_form)::FunctionSpace>(bilinearform);//C-v0+v0*C*C*(-Transpose(f1)));

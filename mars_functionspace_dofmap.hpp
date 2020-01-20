@@ -2270,6 +2270,11 @@ public:
     Integer entity_[entity_points];
     Integer global_old_dof;
 
+    // std::cout<<"level="<<level<<std::endl;
+    // std::cout<<"count_n_entity_vec"<<std::endl;
+    // for(Integer i=0; i<count_n_entity_vec.size();i++ )
+    //   std::cout<<count_n_entity_vec[i]<<" ";
+    // std::cout<<std::endl;
 
     auto& global_dof_count=count_n_entity_vec[level];
     auto& elem_id=elem.id;
@@ -2332,7 +2337,7 @@ public:
             for(Integer m=0;m<ordered_dofs.size();m++)
             {
               dofmap_vec[elem_id][ordered_dofs[cont]]=global_dof_count_tmp;
-              // std::cout<<"(*dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
+              // std::cout<<"(dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
               cont++;
               loc_dof_count++;
               global_dof_count_tmp++;
@@ -2348,7 +2353,7 @@ public:
             for(Integer m=0;m<ordered_dofs.size();m++)
             {
               dofmap_vec[elem_id][ordered_dofs[cont]]=global_dof_count;
-              // std::cout<<"(*dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
+              // std::cout<<"(dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
               cont++;
               loc_dof_count++;
               global_dof_count++;
@@ -2396,7 +2401,7 @@ public:
                  for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
                     {            
                      dofmap_vec[elem_id][loc_dof_count]=global_dof_count_tmp;
-                     // std::cout<<"dofmap_vec[elem_id][loc_dof_count]="<<dofmap_vec[elem_id][loc_dof_count]<<std::endl;
+                     // std::cout<<"if loc_dof_count="<<loc_dof_count<<",  global_dof_count_tmp="<<global_dof_count_tmp<<"   dofmap_vec[elem_id][loc_dof_count]="<<dofmap_vec[elem_id][loc_dof_count]<<std::endl;
                      // to add ??
                      // space_dofs->push_back(global_dof_count);
                      loc_dof_count++;
@@ -2412,7 +2417,7 @@ public:
                for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
                   {            
                    dofmap_vec[elem_id][loc_dof_count]=global_dof_count;
-                   // std::cout<<"dofmap_vec[elem_id][loc_dof_count]="<<dofmap_vec[elem_id][loc_dof_count]<<std::endl;
+                   // std::cout<<"else loc_dof_count="<<loc_dof_count<<", global_dof_count="<<global_dof_count<<"   dofmap_vec[elem_id][loc_dof_count]="<<dofmap_vec[elem_id][loc_dof_count]<<std::endl;
                    // to add ??
                    // space_dofs->push_back(global_dof_count);
                    loc_dof_count++;
@@ -2517,6 +2522,7 @@ public:
       //   std::cout<<count_n_entity_vec[i]<<" ";
       // std::cout<<"\n"<<std::endl;
     // loop on spaces
+    // std::cout<<"init_elem3 level = "<<level<<std::endl;
     init_elem_aux3(cont_tot,cont_new,entity_used,dofmap_vec,tuple_map,tuple_parent_map,tuple_map_dof,loc_dof_count,count_n_entity_vec,elem,level);
    }
 
@@ -3101,10 +3107,13 @@ public:
       init_coarse_elem_aux(elem2dofs,map,parent_map,map_dof,local_dof_count,count_n_entity_vec,elem);
     else
       {
-        // std::cout<<"count_n_entity_vec="<<std::endl;
+        // std::cout<<"INIT ELEM count_n_entity_vec="<<std::endl;
+
         // for(int i=0;i<count_n_entity_vec.size();i++)
-          // std::cout<<count_n_entity_vec[i]<<" ";
+        //   std::cout<<count_n_entity_vec[i]<<" ";
         // std::cout<<std::endl;
+        // std::cout<<"level="<<level<<std::endl;
+
         init_elem_aux2(elem2dofs,map,parent_map,map_dof,local_dof_count,count_n_entity_vec,elem,level);
         // init_elem_aux(elem2dofs,map,parent_map,map_dof,local_dof_count,count_n_entity_vec,elem,level);
       // Integer cont3;
@@ -3249,6 +3258,7 @@ template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Ma
   auto& m1=tuple_get<N>(map);
   auto& m2=tuple_get<N>(parent_map);
   auto& m3=tuple_get<N>(map_dof);
+  // std::cout<<"DofMapFESpace level = " << level<<std::endl;
   dofmapfespace.init_elem(m0,m1,m2,m3,count_n_entity_vec,elem,level);
 }
 
@@ -3269,6 +3279,7 @@ template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Ma
   auto& m1=tuple_get<N>(map);
   auto& m2=tuple_get<N>(parent_map);
   auto& m3=tuple_get<N>(map_dof);
+  // std::cout<<"DofMapFESpace level = " << level<<std::endl;
   dofmapfespace.init_elem(m0,m1,m2,m3,count_n_entity_vec,elem,level);
   init_elem_aux<N+1,BFSs...>(elem2dofs,map,parent_map,map_dof,count_n_entity_vec,elem,level);
 }
@@ -3284,7 +3295,8 @@ template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Ma
 {
 
   // QUI DISTINGUO SE E' LEVEL = 0 OPPURE NO
-  
+  std::cout<<"dofmap init elem"<<std::endl;
+  std::cout<<"DofMapFESpace level = " << level<<std::endl;
   init_elem_aux<0,BaseFunctionSpaces...>(elem2dofs,map,parent_map,map_dof,count_n_entity_vec,elem,level);
 
 }
@@ -4105,25 +4117,25 @@ void dofmap_fespace5(
     std::vector<Integer> global_dof_count;
     if(update==false)  
     {
-    std::cout<<"false"<<std::endl;
+    // std::cout<<"false"<<std::endl;
     global_dof_count.push_back(0);
     } 
     else
     {
-      std::cout<<"true"<<std::endl;
-    for(Integer i=0;i<dofsdm_.level_n_dofs_array().size();i++)
-    {
-      for(Integer j=0;j<dofsdm_.level_n_dofs_array()[i].size();j++)
-        std::cout<<dofsdm_.level_n_dofs_array()[i][j]<<" ";
-      std::cout<<std::endl;
-        // space_dofs[space_id]->resize(space_components[space_id][3]);
-    } 
+      // std::cout<<"true"<<std::endl;
+    // for(Integer i=0;i<dofsdm_.level_n_dofs_array().size();i++)
+    // {
+    //   for(Integer j=0;j<dofsdm_.level_n_dofs_array()[i].size();j++)
+    //     std::cout<<dofsdm_.level_n_dofs_array()[i][j]<<" ";
+    //   std::cout<<std::endl;
+    //     // space_dofs[space_id]->resize(space_components[space_id][3]);
+    // } 
 
-    std::cout<<"global_dof_count"<<std::endl;
+    // std::cout<<"global_dof_count"<<std::endl;
     for(Integer j=0;j<dofsdm_.level_n_dofs_array()[0].size();j++)
     {
         global_dof_count.push_back(dofsdm_.level_n_dofs_array()[0][j]);
-        std::cout<<global_dof_count[j]<<" ";
+        // std::cout<<global_dof_count[j]<<" ";
         // space_dofs[space_id]->resize(space_components[space_id][3]);
     } 
 
@@ -4132,7 +4144,7 @@ void dofmap_fespace5(
     // loop on all the elements
      for(Integer j=0;j<global_dof_count.size();j++)
     {
-        std::cout<<global_dof_count[j]<<" ";
+        // std::cout<<global_dof_count[j]<<" ";
         // space_dofs[space_id]->resize(space_components[space_id][3]);
     }  
 
@@ -4207,10 +4219,10 @@ void dofmap_fespace5(
       if(0<level && global_dof_count.size()-1<level)
          global_dof_count.push_back(global_dof_count[global_dof_count.size()-1]);
 
-
+ 
        Integer loc_dof_count=0;
-       // std::cout<<"DOFMAPSPACE ELEM ITER="<<elem_iter<<std::endl;
-
+       // std::cout<<"DOFMAPSPACE5 ELEM ITER="<<elem_iter<<" level=="<<level<<std::endl;
+       if(level>-1)
        dofmap.init_elem(dofmap_vec,tuple_map,tuple_parent_map,tuple_map_dofs,
                         global_dof_count,elem,level);
 

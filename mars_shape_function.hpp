@@ -1473,9 +1473,9 @@ class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, La
  public: 
   using Output=Vector<Matrix<Real, 1, 1>,1>;
 constexpr inline static void 
-apply(const Vector<Real,ManifoldDim>& point, Output & func)
+apply(const Vector<Real,ManifoldDim>& point, Output & func, Real alpha=1.0)
 {
-    Output func2((1));       
+    Output func2((alpha));       
     func=func2;
 }
 };
@@ -1492,14 +1492,14 @@ class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, La
  public: 
   using Output=Vector<Matrix<Real, 1, 1>,ManifoldDim+1>;
 constexpr inline static void 
-apply(const Vector<Real,ManifoldDim>& point, Output & func)
+apply(const Vector<Real,ManifoldDim>& point, Output & func, Real alpha=1.0)
 {
-    func[0](0,0)=1;
+    func[0](0,0)=1 * alpha;
     for(Integer i=0;i<ManifoldDim;i++)
-        func[0](0,0)-=point[i];
+        func[0](0,0)-=point[i] * alpha;
 
     for(Integer i=0;i<ManifoldDim;i++)
-        func[i+1](0,0)=point[i];
+        func[i+1](0,0)=point[i] * alpha;
 
 }
 };
@@ -1581,16 +1581,16 @@ class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, GradientOperator, La
  public: 
   using Output=Vector<Matrix<Real, ManifoldDim, 1>,ManifoldDim+1>;
  constexpr inline static void 
- apply(const Vector<Real,ManifoldDim>& point, Output & func)
+ apply(const Vector<Real,ManifoldDim>& point, Output & func, Real alpha=1.0)
   {
 
       for(Integer i=0;i<ManifoldDim;i++)
-        func[0](i,0)=-1;
+        func[0](i,0)=-1 * alpha;
 
       for(Integer i=0;i<ManifoldDim;i++)
         for(Integer j=0;j<ManifoldDim;j++)
             if(i==j)
-                func[i+1](i,0)=1;
+                func[i+1](i,0)= 1.0 * alpha;
             else
                 func[i+1](j,0)=0.0;
   }
@@ -1671,26 +1671,26 @@ class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, La
   static constexpr Integer Ndofs=NumberOfLagrangianSimplexDofs<ManifoldDim,2>();
   using Output=Vector<Matrix<Real, 1, 1>,Ndofs>;
 constexpr inline static void 
-apply(const Vector<Real,ManifoldDim>& point, Output & func)
+apply(const Vector<Real,ManifoldDim>& point, Output & func, Real alpha=1.0)
 {
 
-    Real xend=1.0;
+    Real xend=1.0 * alpha;
     Integer cont=0;
 
     for(Integer i=0;i<ManifoldDim;i++)
-       xend-=point[i];
+       xend-=point[i] * alpha;
 
-    func[0](0,0)=2*xend*(xend-0.5);
+    func[0](0,0)=2*xend*(xend-0.5) * alpha;
     for(Integer i=0;i<ManifoldDim;i++)
-       func[i+1](0,0)=2*point[i]*(point[i]-0.5);
+       func[i+1](0,0)=2*point[i]*(point[i]-0.5) * alpha;
 
     for(Integer i=0;i<ManifoldDim;i++)
-       func[ManifoldDim+1+i](0,0)=4*point[i]*xend;
+       func[ManifoldDim+1+i](0,0)=4*point[i]*xend * alpha;
 
     for(Integer i=0;i<ManifoldDim-1;i++)
         for(Integer j=i+1;j<ManifoldDim;j++)
            {
-            func[2*ManifoldDim+1+cont](0,0)=4*point[i]*point[j];
+            func[2*ManifoldDim+1+cont](0,0)=4*point[i]*point[j] * alpha;
             cont++;
            }
 
@@ -1852,36 +1852,36 @@ public:
  static constexpr Integer Ndofs=NumberOfLagrangianSimplexDofs<ManifoldDim,2>();
  using Output=Vector<Matrix<Real, ManifoldDim, 1>,Ndofs>;
  constexpr inline static void 
- apply(const Vector<Real,ManifoldDim>& point, Output & func)
+ apply(const Vector<Real,ManifoldDim>& point, Output & func, Real alpha=1.0)
  {
    // set all elements to zero
    for(Integer i=0;i<Ndofs;i++)
     for(Integer j=0;j<ManifoldDim;j++)
         func[i](j,0)=0.0;
 
-    Real tmp=-3.0;
+    Real tmp= (- 3.0) * alpha;
     for(Integer i=0;i<ManifoldDim;i++)
-        tmp+=4.0*point[i];
+        tmp+= (4.0 * point[i]) * alpha;
 
     // set the 0-row=[4 x0 + 4 x1 + 4 x2...-3,4 x0 + 4 x1 + 4 x2...-3... ]
     for(Integer j=0;j<ManifoldDim;j++)
-        func[0](j,0)=tmp;
+        func[0](j,0)= tmp * alpha;
 
     // set row 1...ManifoldDim
     for(Integer i=0;i<ManifoldDim;i++)
-        func[i+1](i,0)=4*point[i]-1;    
+        func[i+1](i,0)=(4*point[i]-1) * alpha;    
 
-    tmp=4.0;
+    tmp=(4.0) * alpha;
     for(Integer i=0;i<ManifoldDim;i++)
-        tmp-=4*point[i];
+        tmp-= (4*point[i]) * alpha;
 
     // set row ManifoldDim+1...2*ManifoldDim+1
     for(Integer i=0;i<ManifoldDim;i++)
         for(Integer j=0;j<ManifoldDim;j++)
-            func[ManifoldDim+1+i](j,0)=-4*point[i];  
+            func[ManifoldDim+1+i](j,0)=(-4*point[i]) * alpha; 
 
     for(Integer i=0;i<ManifoldDim;i++)
-        func[ManifoldDim+1+i](i,0)=tmp-4*point[i];  
+        func[ManifoldDim+1+i](i,0)= (tmp-4*point[i]) * alpha;  
 
     Integer cont=0;
     for(Integer i=0;i<ManifoldDim-1;i++)
@@ -1890,9 +1890,9 @@ public:
             for(Integer k=0;k<ManifoldDim;k++)
             {
                 if(k==j)
-                    func[2*ManifoldDim+1+cont](k,0)=4*point[i];
+                    func[2*ManifoldDim+1+cont](k,0)= (4*point[i]) * alpha;
                 else if(k==i)
-                    func[2*ManifoldDim+1+cont](k,0)=4*point[j];
+                    func[2*ManifoldDim+1+cont](k,0)= (4*point[j]) * alpha;
                 else
                     func[2*ManifoldDim+1+cont](k,0)=0.0;
             }
@@ -1922,11 +1922,11 @@ class ReferenceShapeFunctionValue<Simplex<Dim,1>, TraceOperator, LagrangeFE, Ord
   using Output=Vector<Matrix<Real, 1, 1>,Order>;
 constexpr inline static void 
 
-apply(const Vector<Real,0>& point, Output & func)
+apply(const Vector<Real,0>& point, Output & func, Real alpha=1.0)
 // check if Vector<Real,0> or Vector<Real,1>
 // apply(const Vector<Real,1>& point, Output & func)
   {
-      Output func2{1.0};
+      Output func2{1.0 * alpha};
       func=func2;
   }
 };
@@ -1941,9 +1941,9 @@ class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, TraceOperator, Lagra
  static constexpr Integer Ndofs=NumberOfLagrangianSimplexDofs<ManifoldDim,ManifoldDim-1>();
  using Output=Vector<Matrix<Real, 1, 1>,Ndofs>;
  constexpr inline static void 
- apply(const Vector<Real,ManifoldDim-1>& point, Output & func)
+ apply(const Vector<Real,ManifoldDim-1>& point, Output & func, Real alpha=1.0)
   {
-      ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim-1>, IdentityOperator, LagrangeFE, Order>::apply(point,func);
+      ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim-1>, IdentityOperator, LagrangeFE, Order>::apply(point,func,alpha);
   }
 };
 
@@ -2059,20 +2059,6 @@ public:
 
   // using Output=Vector<Matrix<Real, ManifoldDim, 1>,ManifoldDim+1>;
 
- template<Integer N>
- constexpr inline static std::enable_if_t<(N==0),Real> 
- reference_simplex_volume()
- {
- return 1.0;
- }
-
-
- template<Integer N>
- constexpr inline static std::enable_if_t<(N>0),Real> 
- reference_simplex_volume()
- {
- return (1.0/Real(N)) * reference_simplex_volume<N-1>();
- }
 
  constexpr inline static void 
  apply(const Vector<Real,ManifoldDim>& point, Output & func)
@@ -2184,8 +2170,9 @@ public:
 constexpr inline static void 
 apply(const Vector<Real,ManifoldDim>& point, Output & func)
 {
+    Real one_frac_vol_surface=1.0/reference_simplex_volume<ManifoldDim-1>();
     for(Integer i=0;i<ManifoldDim+1;i++)
-        func[i](0,0)=ManifoldDim;
+        func[i](0,0)=ManifoldDim * one_frac_vol_surface;
 }
 };
 
@@ -2585,7 +2572,8 @@ class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, TraceOperator, Ravia
 constexpr inline static void 
 apply(const Vector<Real,ManifoldDim-1>& point, Output & func)
   {
-      ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim-1>, IdentityOperator, LagrangeFE, Order>::apply(point,func);
+      Real one_frac_vol_surface=1.0/reference_simplex_volume<ManifoldDim-1>();
+      ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim-1>, IdentityOperator, LagrangeFE, Order>::apply(point,func,one_frac_vol_surface);
   }
 };
 

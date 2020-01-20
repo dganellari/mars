@@ -1349,6 +1349,27 @@ namespace mars {
             J.col(i-1, vi - v0);
          }
     }
+
+
+
+
+
+ template<Integer N>
+ constexpr inline static std::enable_if_t<(N==0),Real> 
+ reference_simplex_volume()
+ {
+ return 1.0;
+ }
+
+
+ template<Integer N>
+ constexpr inline static std::enable_if_t<(N>0),Real> 
+ reference_simplex_volume()
+ {
+ return (1.0/Real(N)) * reference_simplex_volume<N-1>();
+ }
+
+
 }
 
 #endif //MARS_SIMPLEX_HPP
