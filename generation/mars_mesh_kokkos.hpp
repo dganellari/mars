@@ -46,7 +46,7 @@ public:
 		children_size_=0;
 
 		elements_ = ViewMatrixType<Integer>("elems", n_elements,
-				ManifoldDim + 1);
+				Elem::ElemType);
 		active_ = ViewVectorType<bool>("active_", n_elements);
 		points_ = ViewMatrixType<Real>("pts", n_points, Dim);
 	}
@@ -63,9 +63,8 @@ public:
 		children_size_=0;
 
 		elements_ = ViewMatrixType<Integer>("elems", n_elements,
-				ManifoldDim + 1);
+				Elem::ElemType);
 		active_ = ViewVectorType<bool>("active_", n_elements);
-
 	}
 
 	/*inline Elem &elem(const Integer id) override
@@ -86,7 +85,7 @@ public:
 	{
 		assert(id >= 0);
 		assert(id < n_elements());
-		Elem e = Elem(SubView<Integer,ManifoldDim+1>(&elements_,id), combinations);
+		Elem e = Elem(SubView<Integer,Elem::ElemType>(&elements_,id), combinations);
 		e.id = id;
 		return e;
 	}
@@ -95,7 +94,7 @@ public:
 	{
 		assert(id >= 0);
 		assert(id < n_elements());
-		Elem e = Elem(SubView<Integer,ManifoldDim+1>(&elements_,id), combinations);
+		Elem e = Elem(SubView<Integer,Elem::ElemType>(&elements_,id), combinations);
 		e.id = id;
 		return e;
 	}
@@ -126,7 +125,7 @@ public:
 	{
 		assert(el_id >= 0 && ch_id >=0);
 		assert(el_id < n_elements()); // no assert for the children since children nr is not yet updated.
-		Elem e = Elem(SubView<Integer,ManifoldDim+1>(&elements_,el_id), SubView<Integer,2>(&children_,ch_id));
+		Elem e = Elem(SubView<Integer,Elem::ElemType>(&elements_,el_id), SubView<Integer,2>(&children_,ch_id));
 		e.id = el_id;
 		return e;
 	}
@@ -135,7 +134,7 @@ public:
 	{
 		assert(el_id >= 0 && ch_id >=0);
 		assert(el_id < n_elements()); // no assert for the children since children nr is not yet updated.
-		Elem e = Elem(SubView<Integer,ManifoldDim+1>(&elements_,el_id), SubView<Integer,2>(&children_,ch_id));
+		Elem e = Elem(SubView<Integer,Elem::ElemType>(&elements_,el_id), SubView<Integer,2>(&children_,ch_id));
 		e.id = el_id;
 		return e;
 	}
@@ -258,7 +257,7 @@ public:
 	void resize_elements(const Integer size)
 	{
 		elements_size_+= size;
-		resize(elements_, elements_size_, ManifoldDim+1);
+		resize(elements_, elements_size_, Elem::ElemType);
 		resize(active_, elements_size_);
 	}
 
@@ -1211,8 +1210,10 @@ public:
 
 
 		KOKKOS_INLINE_FUNCTION
-		void operator()(int i, int j) const {
-			int index = i * (yDim + 1) + j;
+		void operator()(int j, int i) const {
+
+			int index = j * (xDim + 1) + i;
+			
 			points(index, 0) = static_cast<Real>(i) / static_cast<Real>(xDim);
 			points(index, 1) = static_cast<Real>(j) / static_cast<Real>(yDim);
 		}
@@ -1220,13 +1221,13 @@ public:
 		KOKKOS_INLINE_FUNCTION
 		void operator()(int z, int y, int x) const {
 			
-			int i =  (xDim + 1) * (yDim +1) * z + (xDim +1) * y + x;
+			int index =  (xDim + 1) * (yDim +1) * z + (xDim +1) * y + x;
 
-			points(i, 0) = static_cast<Real>(x)
+			points(index, 0) = static_cast<Real>(x)
 					/ static_cast<Real>(xDim);
-			points(i, 1) = static_cast<Real>(y)
+			points(index, 1) = static_cast<Real>(y)
 					/ static_cast<Real>(yDim);
-			points(i, 2) = static_cast<Real>(z)
+			points(index, 2) = static_cast<Real>(z)
 					/ static_cast<Real>(zDim);
 		}
 	
@@ -1252,7 +1253,7 @@ inline bool generate_points(const int xDim, const int yDim, const int zDim, Inte
 				reserve_points(n_nodes);
 
 				parallel_for(
-						MDRangePolicy<Rank<2> >( { 0, 0 }, { xDim + 1, yDim + 1 }),
+						MDRangePolicy<Rank<2> >( { 0, 0 }, { yDim + 1, xDim + 1 }),
 						AddNonSimplexPoint(points_, xDim, yDim));
 
 				return true;
@@ -1495,6 +1496,113 @@ inline bool generate_points(const int xDim, const int yDim, const int zDim, Inte
 
 	}
 
+	//add elem functor
+	struct AddNonSimplexElem {
+
+		ViewMatrixType<Integer> elem;
+		ViewVectorType<bool> active;
+
+		Integer xDim;
+		Integer yDim;
+		Integer zDim;
+
+		AddNonSimplexElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
+				Integer xdm) :
+				elem(el), active(ac), xDim(xdm) {
+		}
+
+		AddNonSimplexElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
+				Integer xdm, Integer ydm) :
+				elem(el), active(ac), xDim(xdm), yDim(ydm) {
+		}
+
+		AddNonSimplexElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
+				Integer xdm, Integer ydm, Integer zdm) :
+				elem(el), active(ac), xDim(xdm), yDim(ydm), zDim(zdm) {
+		}
+
+		KOKKOS_INLINE_FUNCTION
+		void operator()(int j, int i) const {
+
+		const int offset = xDim + 1;
+		int index = j * xDim + i;
+
+		elem(index, 0) = i  + offset * j;
+		elem(index, 1) = (i + 1) + offset * j;
+		elem(index, 2) = (i + 1) + offset * (j + 1);
+		elem(index, 3) = i + offset * (j + 1);
+
+		active(index) = true;
+		}
+		
+		KOKKOS_INLINE_FUNCTION
+		void operator()(int k, int j, int i) const {
+
+			int index =  k * xDim * yDim + j * xDim + i;
+
+			elem(index,0) = elem_index(i, j, k, xDim, yDim);
+			elem(index,1) = elem_index(i+1, j, k, xDim, yDim);
+			elem(index,2) = elem_index(i+1, j+1, k, xDim, yDim);
+			elem(index,3) = elem_index(i, j+1, k, xDim, yDim);
+			elem(index,4) = elem_index(i, j, k+1, xDim, yDim);
+			elem(index,5) = elem_index(i+1, j, k+1, xDim, yDim);
+			elem(index,6) = elem_index(i+1, j+1, k+1, xDim, yDim);
+			elem(index,7) = elem_index(i, j+1, k+1, xDim, yDim);
+
+			active(index) = true;
+		}
+	};
+
+	inline bool generate_elements(const int xDim, const int yDim,
+			 const int zDim, Integer type) {
+
+		using namespace Kokkos;
+
+		switch (ManifoldDim_) {
+
+		case 2: {
+
+			switch(type){
+
+				case ElementType::Quad4:{
+
+				const int n_elements = xDim * yDim;
+				reserve_elements(n_elements);
+
+				parallel_for(MDRangePolicy<Rank<2> >( { 0, 0 }, {yDim, xDim}),
+			 				AddNonSimplexElem(elements_, active_, xDim, yDim));
+							 
+				return true;
+			}
+			default: {
+				return false;
+			}
+			}
+		}
+		case 3: {
+
+			switch(type){
+
+			case ElementType::Hex8:{
+
+				const int n_elements = xDim * yDim * zDim;
+				reserve_elements(n_elements);
+
+				parallel_for(MDRangePolicy<Rank<3> >( { 0, 0, 0 }, {zDim, yDim, xDim}),
+							AddNonSimplexElem(elements_, active_, xDim, yDim, zDim));
+								
+				return true;
+			}
+			default: {
+				return false;
+			}
+			}
+		}
+		default: {
+			return false;
+		}
+		}
+	}
 
 		struct RefineMesh {
 
@@ -1602,10 +1710,10 @@ private:
  std::stringstream ss(line);
  int attr, type;
 
- std::array<Integer, ManifoldDim+1> nodes;
+ std::array<Integer, Elem::ElemType> nodes;
  ss >> attr >> type;
 
- for(Integer k = 0; k < ManifoldDim+1; ++k) {
+ for(Integer k = 0; k < Elem::ElemType; ++k) {
  ss >> nodes[k];
  }
 
