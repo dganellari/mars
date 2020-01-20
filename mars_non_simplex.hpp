@@ -19,6 +19,8 @@ namespace mars
 
 	//	std::vector<Integer> children;
 
+        static constexpr Integer ElemType = Type;
+
 		inline void get_nodes(std::vector<Integer> &nodes_copy) const override
 		{
 			nodes_copy.resize(nodes.size());

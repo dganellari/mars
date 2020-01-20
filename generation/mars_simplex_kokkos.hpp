@@ -26,8 +26,10 @@ namespace mars {
     class Simplex<Dim, ManifoldDim, KokkosImplementation> final : public ParallelIElem {
     public:
     	static constexpr Integer ManifoldDim_ = ManifoldDim;
-
-    	using Comb = Combinations<ManifoldDim + 1, 2, KokkosImplementation>;
+        
+        static constexpr Integer ElemType = ManifoldDim_ + 1;
+    	
+        using Comb = Combinations<ManifoldDim + 1, 2, KokkosImplementation>;
 
 		ViewMatrixTextureC<Integer, Comb::value, 2> combs;
 

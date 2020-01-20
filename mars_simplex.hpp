@@ -29,6 +29,8 @@ namespace mars {
     template<Integer Dim, Integer ManifoldDim, class Implementation_>
     class Simplex final : public IElem {
     public:
+        static constexpr Integer ElemType = ManifoldDim+1;
+
         std::array<Integer, ManifoldDim+1> nodes;
         std::array<Integer, ManifoldDim+1> side_tags;
 

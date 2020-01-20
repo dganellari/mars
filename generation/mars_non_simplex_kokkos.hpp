@@ -21,6 +21,8 @@ namespace mars {
     class NonSimplex<Type, KokkosImplementation> final : public ParallelIElem {
     public:
 
+        static constexpr Integer ElemType = Type;
+
     	SubView<Integer, Type> nodes;
         //SubView<Integer,2> children; //TODO: templatize for the number of children based onthe select algorithm
         SubView<Integer, Type> side_tags;

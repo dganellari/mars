@@ -1,4 +1,4 @@
-#ifndef MARS_GLOBALS_HPP
+	#ifndef MARS_GLOBALS_HPP
 #define MARS_GLOBALS_HPP
 
 #include <vector>
@@ -41,7 +41,14 @@ namespace mars {
         return i + (2 * xDim + 1) * (j + k * (2 * yDim + 1));
     }
 
-    //host and device function used for the serial version as well (without kokkos).
+	KOKKOS_INLINE_FUNCTION
+	Integer elem_index(const Integer i, const Integer j, const Integer k,
+		const Integer xDim, const Integer yDim)
+	{
+		return i + (xDim+1)*(j + k*(yDim+1));
+	}
+
+	//host and device function used for the serial version as well (without kokkos).
     template<typename T>
     MARS_INLINE_FUNCTION
     void build_hex27(T&& nodes, const Integer xDim,

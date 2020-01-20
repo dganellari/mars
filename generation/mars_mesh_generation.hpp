@@ -322,12 +322,6 @@ namespace mars {
         return generate_cube(mesh, xDim, yDim, 0);
     }
 
-	inline Integer elem_index(const Integer i, const Integer j, const Integer k,
-			const Integer xDim, const Integer yDim)
-	{
-		return i + (xDim+1)*(j + k*(yDim+1));
-	}
-
 	//non simplex cube generation.
 	template<Integer Dim, Integer ManifoldDim, Integer Type>
 	bool generate_cube(
@@ -514,7 +508,7 @@ namespace mars {
 
         bool gen_pts = mesh.generate_points(xDim, yDim, zDim, Type);
         
-        bool gen_elm = true; //mesh.generate_elements(xDim, yDim, zDim, Type);
+        bool gen_elm = mesh.generate_elements(xDim, yDim, zDim, Type);
 		
 		if(!gen_pts || !gen_elm)
 			std::cerr << "Not implemented for other dimensions yet" << std::endl;
