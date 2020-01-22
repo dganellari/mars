@@ -239,11 +239,65 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
     }
  
 
+    
+    void build_boundary_info(const Integer level=-1)
+    {
+     auto spaces_ptr=bilinear_form_.spaces_ptr()->spaces_ptr();
+     auto& bisection=spaces_ptr->bisection();
+     auto& tracker=bisection.tracker();
+
+     if(level==-1)
+      level_=tracker.current_iterate()-1;
+     else
+      level_=level;
+
+     auto& level_cumultive_n_dofs=full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
+
+     n_dofs_=level_cumultive_n_dofs[level_];
+
+     auto& mesh=full_spaces_ptr()->mesh();
+
+     FiniteElem<Elem> FE(mesh);
+ 
+ 
+     constrained_dofs.clear();
+     constrained_mat.clear();
+     constrained_vec.clear();
+     constrained_dofs.resize(n_dofs_,false);
+     constrained_mat.resize(n_dofs_,0);
+     constrained_vec.resize(n_dofs_,0);
+
+     shape_coefficients_.init();
+     std::cout<<"BUILD BOUNDARY INFO"<<std::endl;
+       for(std::size_t el=0;el<mesh.n_elements();el++)
+       {
+          if(!elem_belongs_to_level(mesh,el,level_,tracker)) continue;
+
+          FE.init(el,level_);
+
+          if(FE.is_on_boundary())
+          {
+
+            for(std::size_t s=0;s<FE.n_side();s++)
+              {            
+                if(FE.side_tags()[s]!=INVALID_INDEX)
+                {
+                  // std::cout<<"el=="<<el<<" bound=="<<FE.side_tags()[s] <<std::endl;
+                  FE.init_boundary(s);
+                  bcs_.assembly(full_spaces_ptr(),constrained_dofs,constrained_mat,constrained_vec,FE);
+                 }
+              }
+         }      
+       }
+    }
+
+
+
 
     template<typename SystemMat, typename Rhs>
     void apply_bc(SystemMat& A, Rhs& b)
     {
-      std::cout<<"------APPLY BC -------"<<std::endl;
+      // std::cout<<"------APPLY BC -------"<<std::endl;
      for(Integer i=0;i<n_dofs_;++i)
      {
       // std::cout<<"i="<<i<<std::endl;
@@ -278,6 +332,31 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
       }
 
 
+     }
+    }
+
+    template<typename SystemMat>
+    void apply_zero_bc_to_matrix(SystemMat& A)
+    {
+      Real one=1.0;
+      std::cout<<"------APPLY ZERO BC -------"<<std::endl;
+     for(Integer i=0;i<n_dofs_;++i)
+     {
+      // std::cout<<i <<std::endl;
+      if(constrained_dofs[i])
+      {       
+        // std::cout<<"if " <<A.max_rows()<<" "<<A.max_cols()<<std::endl;
+        A.set_zero_row(i);
+         // std::cout<<"before equal"<<std::endl;
+        A.equal(one,i,i);
+         // std::cout<<"after equal " <<std::endl;     
+      }
+      else
+      {
+         // std::cout<<"else" <<std::endl;
+
+        A.row_static_condensation(i,constrained_dofs);
+      }
      }
     }
 

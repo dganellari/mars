@@ -762,6 +762,36 @@
 
 
 
+	template<typename Mat,typename Vec,typename VecVec>
+			void patch_gauss_seidel(Vec& x, const Mat& A, const Vec& b,
+				                    const VecVec& entity2dofs,
+				                    const Integer max_iter,const Real toll)
+			{
+                const int n=b.size();
+				if(x.size()!=n)
+				{
+					x.resize(n);
+					for(std::size_t i=0; i<n;i++)
+						x[i]=0;
+				}
+
+				for(std::size_t it=0;it<max_iter;it++)
+				{
+					for(Integer i=0;i<entity2dofs.size();i++)
+					{
+						auto& e2d=entity2dofs[i];
+
+
+
+					}
+
+
+				}
+
+
+
+
+			}
 
 
 
@@ -1198,7 +1228,244 @@ for(Integer jj=0;jj<3;jj++)
 
 
 
+	template<typename T>
+		class DenseMatrix
+		{
+		public:
+			using Vec=std::vector<Real>;
+			using VecVec=std::vector<std::vector<Real>>;
+			
 
+
+			// inline void init(std::vector<std::vector<Real>>& mat)
+			// {
+			// 	// A_ptr_->clear();
+			// 	A_ptr_=std::make_shared<VecVec>(mat);
+			// 	rows_=mat.size();
+			// 	// we assume all the rows have the same number of columns
+			// 	cols_=mat[0].size();
+
+			// }
+            DenseMatrix(const Integer rows, const Integer cols):
+ 			rows_(rows),
+			cols_(cols)          
+            {vec_.resize(rows*cols);}
+
+			inline void init(const Integer rows, const Integer cols)
+			{
+			  vec_.resize(rows*cols);
+			  rows_=rows;
+			  cols_=cols;
+			}
+
+			inline auto& get(const Integer i, const Integer j)
+			{
+			  return vec_[i*cols_+j];
+			}
+
+			inline auto& get(const Integer i, const Integer j)const 
+			{
+			  return vec_[i*cols_+j];
+			}
+
+			inline auto& operator()(const Integer i, const Integer j)
+			{
+			  std::cout<<"(i,j)"<<i<<","<<j<<std::endl;
+			  return vec_[i*cols_+j];
+			}
+
+			inline auto& operator()(const Integer i, const Integer j)const 
+			{
+			  std::cout<<"(i,j)"<<i<<","<<j<<std::endl;
+			  return vec_[i*cols_+j];
+			}
+			// inline void cholesky_matrix(VecVec& Chol)
+			// {
+			// 	if(Chol.size()==0)
+			// 		Chol.resize(rows_);
+			// 	const auto& A=*A_ptr_;
+			// 	Chol[0].resize(1);
+   //              Chol[0][0]=sqrt(A[0][0]);
+			// 	for(Integer i=1;i<rows_;i++)
+			// 		{
+			// 			Chol[i].resize(i+1);
+			// 			for(Integer j=0;j<i;j++)
+			// 			{
+			// 			  Chol[i][j]=A[i][j];
+			// 			  for(Integer k=0;k<j;k++)
+			// 			  	Chol[i][j]-=Chol[i][k]*Chol[j][k];
+
+			// 			  Chol[i][j]=Chol[i][j]/Chol[j][j];
+			// 			}
+
+			// 			Chol[i][i]=A[i][i];
+			// 			for(Integer k=0;k<i;k++)
+			// 		       Chol[i][i]-=Chol[i][k]*Chol[i][k];
+   //                       Chol[i][i]=sqrt(Chol[i][i]);
+			// 		}
+
+			// }
+
+			inline void cholesky_matrix(DenseMatrix& Chol)
+			{
+
+                Chol(0,0)=sqrt(get(0,0));
+				for(Integer i=1;i<rows_;i++)
+					{
+						for(Integer j=0;j<i;j++)
+						{
+						  Chol(i,j)=get(i,j);
+						  for(Integer k=0;k<j;k++)
+						  	Chol(i,j)-=Chol(i,k)*Chol(j,k);
+
+						  Chol(i,j)=Chol(i,j)/Chol(j,j);
+						}
+
+						Chol(i,i)=get(i,i);
+						for(Integer k=0;k<i;k++)
+					       Chol(i,i)-=Chol(i,k)*Chol(i,k);
+                         Chol(i,i)=sqrt(Chol(i,i));
+					}
+
+			}
+
+
+			inline void transpose_upper_triangular_solve(Vec& x,const VecVec& L,const Vec& b)
+			{
+				x[0]=b[0]/L[0][0];
+
+				for(Integer i=1;i<rows_;i++)
+				{   
+					x[i]=b[i];
+
+					for(Integer k=0;k<i;k++)
+						x[i]-=L[k][i]*x[k];
+
+					x[i]=x[i]/L[i][i];
+				}
+			}
+
+			// inline void transpose_lower_triangular_solve(Vec& x,const VecVec& L,const Vec& b)
+			// {
+   //              Integer n=rows_-1;
+			// 	x[n]=b[n]/L[n][n];
+
+			// 	for(Integer i=n-1;i>=0;i--)
+			// 	{   
+
+			// 		x[i]=b[i];
+
+			// 		for(Integer k=i+1;k<n+1;k++)
+			// 			x[i]-=L[k][i]*x[k];
+
+			// 		x[i]=x[i]/L[i][i];
+			// 		std::cout<<"x[i]="<<x[i]<<std::endl;
+			// 	}
+
+			// }
+			// inline void lower_triangular_solve(Vec& x,const VecVec& L,const Vec& b)
+			// {
+			// 	x[0]=b[0]/L[0][0];
+
+			// 	for(Integer i=1;i<rows_;i++)
+			// 	{   
+			// 		x[i]=b[i];
+
+			// 		for(Integer k=0;k<i;k++)
+			// 			x[i]-=L[i][k]*x[k];
+
+			// 		x[i]=x[i]/L[i][i];
+			// 	}
+			// }
+ 
+ 			inline void transpose_lower_triangular_solve(Vec& x,const DenseMatrix& L,const Vec& b)
+			{
+                Integer n=rows_-1;
+				x[n]=b[n]/L(n,n);
+
+				for(Integer i=n-1;i>=0;i--)
+				{   
+
+					x[i]=b[i];
+
+					for(Integer k=i+1;k<n+1;k++)
+						x[i]-=L(k,i)*x[k];
+
+					x[i]=x[i]/L(i,i);
+					std::cout<<"x[i]="<<x[i]<<std::endl;
+				}
+
+			}
+			inline void lower_triangular_solve(Vec& x,const DenseMatrix& L,const Vec& b)
+			{
+				x[0]=b[0]/L(0,0);
+
+				for(Integer i=1;i<rows_;i++)
+				{   
+					x[i]=b[i];
+
+					for(Integer k=0;k<i;k++)
+						x[i]-=L(i,k)*x[k];
+
+					x[i]=x[i]/L(i,i);
+				}
+			}
+
+ 			inline void upper_triangular_solve(Vec& x,const VecVec& L,const Vec& b)
+			{
+                Integer n=rows_-1;
+				x[n]=b[n]/L[n][n];
+
+				for(Integer i=n-1;i>=0;i--)
+				{   
+					x[i]=b[i];
+
+					for(Integer k=i+1;k<n;k++)
+						x[i]-=L[i][k]*x[k];
+
+					x[i]=x[i]/L[i][i];
+				}
+			}
+			inline void cholesky(std::vector<Real>&x,const std::vector<Real>&b)
+			{
+				// we solve Ax=b as H H' x = b, so H'y=b and H x=y
+				Vec y(rows_);
+				DenseMatrix<T> H(rows_,cols_);
+				cholesky_matrix(H);
+				lower_triangular_solve(y,H,b);
+				for(Integer i=0;i<y.size();i++)
+					std::cout<<y[i]<<std::endl;
+				std::cout<<std::endl;
+				transpose_lower_triangular_solve(x,H,y);
+				// upper_triangular_solve(x,H,y);
+
+
+			}
+
+
+			// inline void cholesky(std::vector<Real>&x,const std::vector<Real>&b)
+			// {
+			// 	// we solve Ax=b as H H' x = b, so H'y=b and H x=y
+			// 	Vec y(rows_);
+			// 	VecVec H;
+			// 	cholesky_matrix(H);
+			// 	lower_triangular_solve(y,H,b);
+			// 	for(Integer i=0;i<y.size();i++)
+			// 		std::cout<<y[i]<<std::endl;
+			// 	std::cout<<std::endl;
+			// 	transpose_lower_triangular_solve(x,H,y);
+			// 	// upper_triangular_solve(x,H,y);
+
+
+			// }
+
+
+		private:
+			// std::shared_ptr<VecVec> A_ptr_;
+			Vec vec_;
+			Integer rows_;
+			Integer cols_;
+		};
 
 
 
@@ -1267,8 +1534,9 @@ for(Integer jj=0;jj<3;jj++)
 				}
 				else
 				{
-					A_[non_zeros_]=value ;
+					
 					// std::cout<<"does not already exists"<<std::endl;
+					A_[non_zeros_]=value ;
 					// for(std::size_t i=0;i<A_.size();i++)
 					// std::cout<<A_[i]<<" ";
 					// std::cout<<std::endl;
@@ -1354,7 +1622,7 @@ for(Integer jj=0;jj<3;jj++)
 				}
 			}
 
-			void print_row_val(const Integer i)
+			void print_row_val(const Integer i)const
 			{
 				Integer cont_cols=0;
 				// std::cout<<"printing matrix row "<<i<<std::endl;
@@ -1375,7 +1643,7 @@ for(Integer jj=0;jj<3;jj++)
 					std::cout<<std::endl;
 			}
 
-			void print_val()
+			void print_val()const
 			{
 				// Integer cont_cols=0;
 
@@ -1386,7 +1654,7 @@ for(Integer jj=0;jj<3;jj++)
 				}
 			}
 
-			auto multiply(const Integer i,std::vector<T>& b)
+			auto multiply(const Integer i,const std::vector<T>& b)const
 			{
 				T tmp=0;
 				const auto& map=cols_idx_[i]; 
@@ -1399,11 +1667,22 @@ for(Integer jj=0;jj<3;jj++)
 // std::cout<<it->first<<"  "<<it->second<<"  A="<<A_[it->second]<<"   b="<<b[it->first]<<" "<<std::endl;
 // std::cout<<tmp<<" "<<std::endl;;
 				}
-                 std::cout<<tmp<<std::endl;
+                 // std::cout<<tmp<<std::endl;
 				return tmp;
 			}
 
-			auto transpose_multiply(const Integer i,std::vector<T>& b)
+			void multiply(std::vector<T>& result,const std::vector<T>& b)const
+			{
+				// std::cout<< " multiply result=A*b"<<std::endl;
+				if(result.size()==0)
+					result.resize(max_rows_);
+				for(Integer i=0;i<max_rows_;i++)
+				{
+					result[i]=multiply(i,b);
+				}
+			}
+
+			auto transpose_multiply(const Integer i,const std::vector<T>& b) const
 			{
 				T tmp=0;
 				const auto& map=rows_idx_[i]; 
@@ -1436,6 +1715,21 @@ for(Integer jj=0;jj<3;jj++)
 				}
 			}
 
+			void row_static_condensation(const Integer i,const std::vector<bool>& constraint)
+			{
+				const auto& map=cols_idx_[i]; 
+// std::cout<<" multiply ";
+				for (auto it=map.begin(); it!=map.end(); ++it)
+				{
+					if(constraint[it->first])
+					{
+						A_[it->second]=0;
+					}
+// std::cout<<it->first<<"  "<<it->second<<"  A="<<A_[it->second]<<"   b="<<b[it->first]<<" "<<std::endl;
+// std::cout<<tmp<<" "<<std::endl;;
+				}
+			}
+
 			auto multiply(std::vector<T>& b)
 			{
 
@@ -1451,13 +1745,28 @@ for(Integer jj=0;jj<3;jj++)
 				return result;
 			}
 
+			void multiply_and_add(std::vector<T>& result,const Real alpha,const std::vector<T>& x,const std::vector<T>& b, const Real beta=1.0 )const
+			{
+                if(result.size()==0)
+				result.resize(max_rows_);
+			// std::cout<<"max rows=="<<max_rows_<<std::endl;
+			// std::cout<<"b.size()=="<<b.size()<<std::endl;
+			// std::cout<<"x.size()=="<<x.size()<<std::endl;
+				for(Integer i=0;i<max_rows_;i++)
+				{
+					result[i]=alpha * multiply(i,x)+ b[i]*beta;
+				}
+				// return result;
+			}
+
+
 
 
 			auto multiply(const SparseMatrix& B)
 			{
 
 				SparseMatrix C;
-				std::cout<<"mat mat multiply" <<std::endl;
+				// std::cout<<"mat mat multiply" <<std::endl;
 
 			    C.set_max_rows(max_rows_);
 
@@ -1512,19 +1821,24 @@ for(Integer jj=0;jj<3;jj++)
 
 			auto transpose_and_multiply(std::vector<T>& b)
 			{
-
 				std::vector<T> result(max_cols_);
-				// std::cout<<"multiply="<<std::endl;
-// std::cout<<std::endl<<std::endl;
 				for(Integer i=0;i<max_cols_;i++)
 				{
 					result[i]=transpose_multiply(i,b);
-// std::cout<<std::endl<<result[i]<<std::endl;
 				}
-// std::cout<<std::endl<<std::endl;
 				return result;
 			}
 
+			auto transpose_and_multiply(std::vector<T>& result,const std::vector<T>& b)const
+			{
+				if(result.size()!=max_cols_)
+					result.resize(max_cols_);
+				for(Integer i=0;i<max_cols_;i++)
+				{
+					result[i]=transpose_multiply(i,b);
+				}
+				return result;
+			}
 
 			auto transpose_and_multiply(const SparseMatrix& B)
 			{
@@ -1565,8 +1879,11 @@ for(Integer jj=0;jj<3;jj++)
 									      inserter(intersection, intersection.begin()),
 									      [](const std::pair<Integer,Integer>& p1,const std::pair<Integer,Integer>& p2){
 									         return p1.first < p2.first;});
+
+                    // std::cout<< "before entering in (i,j)=="<<i<<","<<j<<std::endl;
                     if(!intersection.empty())
                     {
+                    	// std::cout<< "after entering in (i,j)=="<<i<<","<<j<<std::endl;
                     	tmp=0.0;                    	
 						for (auto it=intersection.begin(); it!=intersection.end(); ++it)
 						{ 
@@ -1598,6 +1915,15 @@ for(Integer jj=0;jj<3;jj++)
 				return A_[cols_idx_[i].at(j)];
 			}
 
+			inline auto&  get(const Integer i, const Integer j)
+			{
+				return A_[cols_idx_[i].at(j)];
+			}
+
+			inline auto&  get(const Integer i, const Integer j)const
+			{
+				return A_[cols_idx_[i].at(j)];
+			}
 
 			void row_gauss_seidel(std::vector<T>& x,const std::vector<T>& b)const
 			{
@@ -1616,6 +1942,18 @@ for(Integer jj=0;jj<3;jj++)
 					}
 					x[i]=(tmp)/A_[cols_idx_[i].at(i)];
 				}
+			}
+
+         
+			DenseMatrix<T> get_dense_matrix(std::vector<Integer>& vec)
+			{
+				Integer rows=vec.size();
+				DenseMatrix<T> mat(rows,rows);
+
+				for(Integer i=0;i<rows;i++)
+					for(Integer j=0;j<rows;j++)
+                        mat(i,j)=get(i,j);
+
 			}
 
 
@@ -1757,30 +2095,30 @@ public:
 
 				mat_tmp_[k](i,j)+=vec[qp*NComponents+component]*shape_eval[qp][k](i,j);
 			}
-		if(FE.elem_id()==18 ||FE.elem_id()==19 )
+		// if(FE.elem_id()==18 ||FE.elem_id()==19 )
 
-		{
-			std::cout<<"FE.jac()"<<std::endl;
-			std::cout<<FE.jac()<<std::endl;
-			std::cout<<"FE.v0()"<<std::endl;
-			std::cout<<FE.v0()<<std::endl;
-			std::cout<<"coeff_"<<std::endl;
-			std::cout<<coeff_<<std::endl;
-			std::cout<<"reference_values"<<std::endl;
-			std::cout<<reference_values<<std::endl;
-			std::cout<<"vec"<<std::endl;
-			std::cout<<vec<<std::endl;
-			std::cout<<"pre mat_tmp_"<<std::endl;
-			std::cout<<mat_tmp_<<std::endl;
-			std::cout<<"map"<<std::endl;
-			std::cout<<map<<std::endl;
-			std::cout<<"shape_eval"<<std::endl;
-			std::cout<<shape_eval<<std::endl;
-			std::cout<<"MatPoints"<<std::endl;
-			std::cout<<MatPoints<<std::endl;
+		// {
+		// 	std::cout<<"FE.jac()"<<std::endl;
+		// 	std::cout<<FE.jac()<<std::endl;
+		// 	std::cout<<"FE.v0()"<<std::endl;
+		// 	std::cout<<FE.v0()<<std::endl;
+		// 	std::cout<<"coeff_"<<std::endl;
+		// 	std::cout<<coeff_<<std::endl;
+		// 	std::cout<<"reference_values"<<std::endl;
+		// 	std::cout<<reference_values<<std::endl;
+		// 	std::cout<<"vec"<<std::endl;
+		// 	std::cout<<vec<<std::endl;
+		// 	std::cout<<"pre mat_tmp_"<<std::endl;
+		// 	std::cout<<mat_tmp_<<std::endl;
+		// 	std::cout<<"map"<<std::endl;
+		// 	std::cout<<map<<std::endl;
+		// 	std::cout<<"shape_eval"<<std::endl;
+		// 	std::cout<<shape_eval<<std::endl;
+		// 	std::cout<<"MatPoints"<<std::endl;
+		// 	std::cout<<MatPoints<<std::endl;
 			
 			
-		}
+		// }
 
 			// mat_tmp_[k]=map*mat_tmp_[k];
 
@@ -1799,14 +2137,14 @@ public:
 		// }
 			}
 
-		if(FE.elem_id()==18 ||FE.elem_id()==19 )
+		// if(FE.elem_id()==18 ||FE.elem_id()==19 )
 
-		{
-			std::cout<<"post mat_tmp_"<<std::endl;
-			std::cout<<mat_tmp_<<std::endl;
-			std::cout<<"output_"<<std::endl;
-			std::cout<<output_<<std::endl;
-		}
+		// {
+		// 	// std::cout<<"post mat_tmp_"<<std::endl;
+		// 	// std::cout<<mat_tmp_<<std::endl;
+		// 	// std::cout<<"output_"<<std::endl;
+		// 	// std::cout<<output_<<std::endl;
+		// }
 		// std::cout<<"Npoints="<<Npoints<<std::endl;
 		// std::cout<<"NComponents="<<NComponents<<std::endl;
 		// std::cout<<"map="<<map<<std::endl;
@@ -3732,8 +4070,8 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,LagrangeFE,Order,Cont
     	loop_fine_dof(mat,C_FE,F_FE);
 
 
-        std::cout<<"mat"<<std::endl;
-        std::cout<<mat<<std::endl;
+        // std::cout<<"mat"<<std::endl;
+        // std::cout<<mat<<std::endl;
     	// for(Integer i=0;i<ManifoldDim+1;i++)
     	// 	{F_FE.init_boundary(i,true);
     	//      compute(mat,cont,C_FE,F_FE);}
@@ -3932,8 +4270,8 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,0,Con
     	// std::cout<<mat_coarse_<<std::endl;
 
         resize(mat,mat_coarse_);
-    	std::cout<<"mat"<<std::endl;
-    	std::cout<<mat<<std::endl;
+    	// std::cout<<"mat"<<std::endl;
+    	// std::cout<<mat<<std::endl;
 
     	// compute<entity[1]>(mat,C_FE,F_FE);
     }  
@@ -4200,8 +4538,8 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Con
      // std::cout<<"shape_lagrange_momentum_.eval()"<<std::endl;
      // std::cout<<shape_lagrange_momentum_.eval()<<std::endl;
 
-     std::cout<<"mat"<<std::endl;
-     std::cout<<mat<<std::endl;
+     // std::cout<<"mat"<<std::endl;
+     // std::cout<<mat<<std::endl;
     }
 
     // template<Integer H,typename Mat>
@@ -4239,8 +4577,8 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Con
     	
 
 
-     std::cout<<"mat"<<std::endl;
-     std::cout<<mat<<std::endl;
+     // std::cout<<"mat"<<std::endl;
+     // std::cout<<mat<<std::endl;
 
     	// compute<entity[1]>(mat,C_FE,F_FE);
     }  
@@ -4661,6 +4999,8 @@ public:
 
     inline auto& matrix(const Integer i){return mat_vec_[i];}
 
+    inline auto& matrix(const Integer i)const{return mat_vec_[i];}
+
     inline auto& matrix(const Integer coarse,const Integer fine)
     {   for(Integer i=0;i<interp_levels_vec_.size();i++)
     	{
@@ -4702,23 +5042,6 @@ public:
 
 
 
-	void build(const SparseMatrix<Real>& A)
-	{
-
-      std::vector<SparseMatrix<Real>> A_level(n_levels_-1);
-
-
-      for(Integer i=n_levels_-1;i>=0;i--)
-      {
-      	// build_single_interp(A_level[i],A,i);
-      }
-
-
-
-
-
-	}
-
 
 
 
@@ -4735,6 +5058,137 @@ private:
 
 
 
+
+   void plus_equal(std::vector<Real>& x, const std::vector<Real>& b)
+   {
+   	for(Integer i=0;i<x.size();i++)
+   		x[i]+=b[i];
+   }
+
+
+  Real l2_norm(const std::vector<Real>& vec)
+  {
+  	Real tmp=0.0;
+
+  	for(Integer i=0;i<vec.size();i++)
+  		tmp+=(vec[i]*vec[i]);
+
+    return sqrt(tmp);
+
+  }
+
+
+   template<typename FunctionSpace>
+   inline void vcycle(std::vector<Real>& x,
+   	                     const std::vector<SparseMatrix<Real>>& A_levels,
+   	                     const std::vector<Real>& b,
+   	                     const FullFunctionSpaceLevelsInterpolation<FunctionSpace>& interpolation,
+   	                     const Integer pre_smoothing,
+   	                     const Integer post_smoothing,
+   	                     const Integer level)
+   {
+    std::vector<Real> F_rhs;
+    std::vector<Real> C_rhs;
+    std::vector<Real> C_correction;
+    std::vector<Real> F_correction;
+    // std::cout<<"vcycle level = "<<level <<std::endl;
+
+   	if(level==0)
+   	{
+   		// std::cout<<"vcycle coarse level = "<<level <<std::endl;
+     gauss_seidel(x,A_levels[0],b,10000);
+   	}
+   	else
+   	{
+
+   	//  std::cout<<"vcycle pre smoothing " <<std::endl;
+    // for(Integer i=0;i<x.size();i++)
+   	//  	std::cout<<x[i]<<std::endl;
+   	 gauss_seidel(x,A_levels[level],b,pre_smoothing);
+   	//  std::cout<<"vcycle post pre smoothing " <<std::endl;
+    // for(Integer i=0;i<x.size();i++)
+   	//  	std::cout<<x[i]<<std::endl;
+   	 // std::cout<<"vcycle pre rhs " <<std::endl;
+   	 A_levels[level].multiply_and_add(F_rhs,-1.0,x,b);
+   	 interpolation.matrix(level-1).transpose_and_multiply(C_rhs,F_rhs);
+   	 // std::cout<<"vcycle go from"<<level<<" to "<<level -1<<std::endl;
+   	 // x_interp_vec[i]=interpolation.matrix(i-1).multiply(x_interp_vec[i-1]);
+
+
+     vcycle(C_correction,A_levels,C_rhs,interpolation,pre_smoothing,post_smoothing,level-1);
+     // std::cout<<"vcycle interpolation "<<std::endl;
+
+     interpolation.matrix(level-1).multiply(F_correction,C_correction);
+   	 // std::cout<<"C_correction " <<std::endl;
+     // for(Integer i=0;i<C_correction.size();i++)
+   	 // 	std::cout<<C_correction[i]<<std::endl;
+   	 // std::cout<<"F_correction " <<std::endl;
+     // for(Integer i=0;i<F_correction.size();i++)
+   	 // 	std::cout<<F_correction[i]<<std::endl;
+   	 // std::cout<<"x pre plus_equal  " <<std::endl;
+     // for(Integer i=0;i<x.size();i++)
+   	 // 	std::cout<<x[i]<<std::endl;
+     plus_equal(x,F_correction);
+   	 // std::cout<<"vcycle post plus_equal " <<std::endl;
+     // for(Integer i=0;i<x.size();i++)
+   	 // 	std::cout<<x[i]<<std::endl;
+
+     // std::cout<<"vcycle pre post smoothing "<<std::endl;
+     gauss_seidel(x,A_levels[level],b,post_smoothing);
+   	 // std::cout<<"vcycle post post smoothing " <<std::endl;
+     // for(Integer i=0;i<x.size();i++)
+   	 // 	std::cout<<x[i]<<std::endl;
+   	}
+
+   }
+
+
+
+
+   template<typename FunctionSpace>
+   inline void multigrid(std::vector<Real>& x,
+   	                     const std::vector<SparseMatrix<Real>>& A_levels,
+   	                     const std::vector<Real>& b,
+   	                     const FullFunctionSpaceLevelsInterpolation<FunctionSpace>& interpolation,
+   	                     const Integer pre_smoothing,
+   	                     const Integer post_smoothing,
+   	                     const Integer level,
+   	                     const Integer max_iter,
+   	                     const Real toll)
+   {
+   	std::vector<Real> rhs;
+   	Real norm_rhs;
+   	// std::cout<<"x size"<<x.size()<<std::endl;
+   	// std::cout<<"b size"<<b.size()<<std::endl;
+   	// std::cout<<"A rows"<<A_levels[level].max_rows()<<std::endl;
+   	// std::cout<<"A cols"<<A_levels[level].max_cols()<<std::endl;
+
+   	// std::cout<<"print b in multigrid" <<std::endl;
+    // for(Integer i=0;i<x.size();i++)
+   	//  	std::cout<<b[i]<<std::endl;
+     
+   	for(Integer i=0;i<max_iter;i++)
+   	{
+   	
+     A_levels[level].multiply_and_add(rhs,-1.0,x,b);
+     norm_rhs=l2_norm(rhs);
+     std::cout<<"multigrid iteration == "<< i<<"  pre norm_rhs="<<norm_rhs<<std::endl;
+     // std::cout<<"pre_smoothing, post_smoothing"<< pre_smoothing<<" , "<< post_smoothing<<std::endl;
+   	 vcycle(x,A_levels,b,interpolation,pre_smoothing,post_smoothing,level);
+    // std::cout<<"print x in multigrid" <<std::endl;
+    // for(Integer i=0;i<x.size();i++)
+   	//  	std::cout<<x[i]<<std::endl;
+
+   	 // A_levels[level].print_val();
+
+     A_levels[level].multiply_and_add(rhs,-1.0,x,b);
+     norm_rhs=l2_norm(rhs);
+     std::cout<<"multigrid iteration == "<< i<<"  after norm_rhs="<<norm_rhs<<std::endl;
+     if(norm_rhs<toll)
+     	break;
+   	}
+
+   }
 
 
 	class ExactPoisson2D
@@ -5207,7 +5661,8 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 		auto Waux=AuxFunctionSpacesBuild(pn);
 
 		auto W=FullSpaceBuild(Wtrial,Waux);
-		auto W_ptr=std::make_shared<decltype(W)>(W);
+		using W_type=decltype(W);
+		auto W_ptr=std::make_shared<W_type>(W);
 
 
 		for(int i=0;i<n_levels;i++)
@@ -5422,35 +5877,39 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 	      std::cout<<std::endl;
 	     }   
 
-	    FullFunctionSpaceInterpolation<decltype(W)> interp(W_ptr);
+	    // FullFunctionSpaceInterpolation<decltype(W)> interp(W_ptr);
 	    SparseMatrix<Real> InterpMat;
 	    std::cout<<"level="<<level<<std::endl;
 	    Integer level_finer=n_levels-1;
 	    std::cout<<"level_finer="<<level_finer<<std::endl;
      
-	    interp.init(InterpMat,n_levels-1,n_levels);
+	    // interp.init(InterpMat,n_levels-1,n_levels);
 
-	    FullFunctionSpaceLevelsInterpolation<decltype(W)> levels_interp(W_ptr);
+	    FullFunctionSpaceLevelsInterpolation<W_type> levels_interp(W_ptr);
         
-        std::vector<Integer> levels(n_levels-level);
+        std::vector<Integer> levels(n_levels+1-level);
 
-        for(Integer i=0;i<n_levels-1-level;i++)
+        std::cout<<"n_levels=="<<n_levels <<std::endl;
+        std::cout<<"level=="<<level <<std::endl;
+        std::cout<<"n_levels-level=="<<n_levels-level <<std::endl;
+        for(Integer i=0;i<n_levels+1-level;i++)
         {
         	levels[i]=i+level;
-
+        	std::cout<<"levels[i]=="<<levels[i] <<std::endl;
         }
 
 	    levels_interp.init(levels);
 
-	    std::vector<std::vector<Real>> x_interp_vec(levels.size()-1);
+	    std::vector<std::vector<Real>> x_interp_vec(levels.size());
 
         std::cout<<"multiply level == "<<0<<std::endl;
 	    x_interp_vec[0]=x;
 
-        for(Integer i=1;i<levels.size()-1;i++)
+        for(Integer i=1;i<levels.size();i++)
         {
-            std::cout<<"multiply level == "<<i<<std::endl;
+            std::cout<<"pre ultiply level == "<<i<<std::endl;
         	x_interp_vec[i]=levels_interp.matrix(i-1).multiply(x_interp_vec[i-1]);
+        	std::cout<<"after multiply level == "<<i<<std::endl;
 			std::string output_file_interp ="LSFEM_Poisson"+ std::to_string(ManifoldDim) +
 			"D_RT" + std::to_string(Order1)+
 			"_P" + std::to_string(Order2)+"_outputINTERPLEVEL"+ std::to_string(levels[i])+"-"+
@@ -5467,31 +5926,201 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 
 
 	    std::cout<<"before x_interp"<<std::endl;
-	    auto x_interp=InterpMat.multiply(x);
+	    // auto x_interp=InterpMat.multiply(x);
 	    
 //     std::vector<Real> x_interp
 // {-6.38588e-16,-0.8112,1.52498e-16,-7.45169e-16,-0.8112,0.4056,3.26509e-16,0.4056,-0.8112,-0.8112,-2.67354e-16,-0.8112,-0.8112,-0.8112,-9.00613e-19,-0.8112,0.4056,1.52498e-16,0.4056,-2.72351e-16,-2.72351e-16,0.4056,0.4056,3.26509e-16,0.4056,-4.35486e-16,-4.35486e-16,0.4056,0,0,0,0,0.5408,0,0,0,0,-0.2704,-0.2704,-0.2704,-0.2704};
-        // x_interp[181]=0.1933;
+//         x_interp[181]=0.1933;
 
-    	std::cout<<"x_interp"<<std::endl;
-	    for(int i=0;i<x_interp.size();i++)
-	    	std::cout<<x_interp[i]<<std::endl;
+    	// std::cout<<"x_interp"<<std::endl;
+	    // for(int i=0;i<x_interp.size();i++)
+	    // 	std::cout<<x_interp[i]<<std::endl;
 
 
 	    // x_interp[180]=-0.1933;
-		std::string output_file_interp ="LSFEM_Poisson"+ std::to_string(ManifoldDim) +
+		// std::string output_file_interp ="LSFEM_Poisson"+ std::to_string(ManifoldDim) +
+		// "D_RT" + std::to_string(Order1)+
+		// "_P" + std::to_string(Order2)+"_outputINTERP.vtk";
+
+		// os.close();
+		// os.open(output_file_interp.c_str());
+		// // write_wtk_isoparametric(os,*context.full_spaces_ptr(),xL,var_namesL,level);
+		// write_wtk_isoparametric(os,W_ptr,x_interp,var_namesL,level_finer);
+
+	 //    os.close();
+
+
+        std::cout<<"start multiply mat mat"<<std::endl;
+
+       
+        std::vector<SparseMatrix<Real>> A_levels(levels.size());
+
+
+
+        std::cout<<"i=="<<levels.size()-1<<std::endl;
+        A_levels[levels.size()-1]=AL;
+
+        std::cout<<A_levels[levels.size()-1].max_rows()<<std::endl;
+        std::cout<<A_levels[levels.size()-1].max_cols()<<std::endl;
+
+
+        std::cout<<" LEVEL INTERPS "<<std::endl;
+        std::cout<<" LEVEL INTERPS "<<std::endl;
+
+
+        for(Integer i=0;i<levels.size()-1;i++)
+        {
+        	auto& P=levels_interp.matrix(i);
+        	std::cout<<P.max_rows()<<"  "<<P.max_cols()<<std::endl;
+        }
+
+
+        for(Integer i=levels.size()-2;i>=0;i--)
+        { 
+        	std::cout<<"i=="<<i<<std::endl;
+        	auto& P=levels_interp.matrix(i);
+        	auto AP=A_levels[i+1].multiply(levels_interp.matrix(i));
+        	std::cout<<P.max_rows()<<std::endl;
+        	std::cout<<P.max_cols()<<std::endl;
+        	std::cout<<AP.max_rows()<<std::endl;
+        	std::cout<<AP.max_cols()<<std::endl;
+            A_levels[i]=levels_interp.matrix(i).transpose_and_multiply(AP);
+        	std::cout<<A_levels[i].max_rows()<<std::endl;
+        	std::cout<<A_levels[i].max_cols()<<std::endl;
+            context.build_boundary_info(levels[i]);
+            context.apply_zero_bc_to_matrix(A_levels[i]);
+        }
+
+        for(Integer i=0;i<A_levels.size();i++)
+        {
+        	A_levels[i].print_val();
+        }
+
+        for(Integer i=0;i<A_levels.size()-1;i++)
+        {
+        	levels_interp.matrix(i).print_val();
+        }
+
+        std::vector<Real> solution;
+
+        solution.resize(bL.size());
+
+        for(Integer i=0;i<bL.size();i++)
+        	solution[i]=0.0;
+
+        multigrid(solution,A_levels,bL,levels_interp,3,3,levels.size()-1,100,0.0000000001);
+
+		std::string output_fileMULTIGRID ="LSFEM_Poisson"+ std::to_string(ManifoldDim) +
 		"D_RT" + std::to_string(Order1)+
-		"_P" + std::to_string(Order2)+"_outputINTERP.vtk";
+		"_P" + std::to_string(Order2)+"_outputMULTIGRID.vtk";
 
 		os.close();
-		os.open(output_file_interp.c_str());
-		// write_wtk_isoparametric(os,*context.full_spaces_ptr(),xL,var_namesL,level);
-		write_wtk_isoparametric(os,W_ptr,x_interp,var_namesL,level_finer);
+		os.open(output_fileMULTIGRID.c_str());
+		// write_wtk_isoparametric(os,*context.full_spaces_ptr(),x,var_names,level);
+		write_wtk_isoparametric(os,W_ptr,solution,var_names,levels[levels.size()-1]);
 
 	    os.close();
 
 
-        std::cout<<"start multiply mat mat"<<std::endl;
+
+
+
+
+
+
+
+		using AuxRT1= FunctionSpace< MeshT, RT<0,2>>;
+		using AuxP2= FunctionSpace< MeshT, Lagrange<1,1>>;
+
+		AuxRT1 rt1(mesh,bisection,n2em);//csmc);
+		AuxP2 p2(mesh,bisection,n2em);//csmc);
+
+	    auto Wtrial2try=(MixedFunctionSpace(rt1,p2));
+	    auto Wtrial2=FullSpaceBuild(Wtrial2try);
+	    using W_type2=decltype(Wtrial2);
+	    auto W_ptr2=std::make_shared<W_type2>(Wtrial2);
+
+
+
+	    Entity2Dofs<W_type2,0> entity2dofs(W_ptr2);
+	    entity2dofs.build();
+	    entity2dofs.print();
+
+	    auto& e0=entity2dofs.get(0);
+	    auto& e1=entity2dofs.get(1);
+	      for(Integer i=0;i<e0.size();i++)
+	      {
+	      	for(Integer j=0;j<e0[i].size();j++)
+	          std::cout<<e0[i][j]<<" ";
+	         std::cout<< std::endl;
+	      }              
+	        std::cout<< std::endl;
+	        std::cout<< std::endl;
+	      for(Integer i=0;i<e1.size();i++)
+	      {
+	      	for(Integer j=0;j<e1[i].size();j++)
+	          std::cout<<e1[i][j]<<" ";
+	         std::cout<< std::endl;
+	      }  
+
+         DenseMatrix<Real> densemat(4,4);
+	     std::vector<std::vector<Real>> mat4;
+	     std::vector<std::vector<Real>> mat4_tmp;
+	     std::vector<Real> vec4(4,1);
+	     std::vector<Real> sol4(4);
+
+	     mat4.resize(4);
+	     for(Integer i=0;i<4;i++)
+	     	mat4[i].resize(4);
+
+	     mat4[0][0]=2;
+	     mat4[0][1]=-1;
+	     mat4[0][2]=0;
+	     mat4[0][3]=0;
+
+	     mat4[1][0]=-1;
+	     mat4[1][1]=2;
+	     mat4[1][2]=-1;
+	     mat4[1][3]=0;
+
+	     mat4[2][0]=0;
+	     mat4[2][1]=-1;
+	     mat4[2][2]=2;
+	     mat4[2][3]=-1;
+
+	     mat4[3][0]=0;
+	     mat4[3][1]=0;
+	     mat4[3][2]=-1;
+	     mat4[3][3]=2;
+         std::cout<<"dense mat"<<std::endl;
+         for(Integer i=0;i<4;i++)
+         {
+         	for(Integer j=0;j<4;j++)
+         		std::cout<<mat4[i][j]<<" ";
+         	std::cout<<std::endl;
+
+         }
+         	
+         for(Integer i=0;i<4;i++)
+         {
+         	for(Integer j=0;j<4;j++)
+         		densemat(i,j)=mat4[i][j];
+         }
+
+         std::cout<<"dense mat"<<std::endl;
+
+
+	     // densemat.init(mat4);
+	     // densemat.cholesky_matrix(mat4_tmp);
+
+
+	     std::cout<<"cholesky mat"<<std::endl;
+
+	     densemat.cholesky(sol4,vec4);
+         for(Integer i=0;i<4;i++)
+         std::cout<<sol4[i]<<std::endl;
+
+	     
 
  	    // InterpMat.print_val();
 	    // AL.print_val();
@@ -5684,49 +6313,46 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 	// for(Integer i=0;i<dofsdofmap.template dofmap_size<0>();i++)
 	// {
 
-			// dofsdofmap.template dofmap_get<0>(elemdm,i);
-	  //        std::cout<<"dofmap == "<< i<<std::endl;
+	// 		dofsdofmap.template dofmap_get<0>(elemdm,i);
+	//          std::cout<<"dofmap == "<< i<<std::endl;
 	//   //        std::cout<<elemdm<<std::endl;
-	// 	if(!elem_belongs_to_level(mesh,i,level,tracker))
-	// 		{
-	// 			std::cout<<cont1<<std::endl;
-	// 			cont1++;
-	// 		}
+	// 	if(!elem_belongs_to_level(mesh,i,level,track)) continue;
+			
 
 
-	// 	if(i==132)
-	// 	{
+	// // 	if(i==132)
+	// // 	{
 
 	//          auto& elem=mesh.elem(i);
 	//          auto& nodes=elem.nodes;
-	// 		dofsdofmap.template dofmap_get<0>(elemdm,i);
+	// 	     dofsdofmap.template dofmap_get<0>(elemdm,i);
 	//          std::cout<<"dofmap == "<< i<<std::endl;
 	//          std::cout<<elemdm<<std::endl;
-	//          std::cout<<"nodes == "<< i<<std::endl;
- //             for(Integer k=0;k<nodes.size();k++)
-	//          {
-	//          	std::cout<<"nodes[k] "<<nodes[k]<<std::endl;
-	//          	std::cout<<mesh.points()[nodes[k]]<<" ";
-	//          }
+	// //          std::cout<<"nodes == "<< i<<std::endl;
+ // //             for(Integer k=0;k<nodes.size();k++)
+	// //          {
+	// //          	std::cout<<"nodes[k] "<<nodes[k]<<std::endl;
+	// //          	std::cout<<mesh.points()[nodes[k]]<<" ";
+	// //          }
 
 
-	// 		for(int j=0;j<children.size();j++)
-	//          {
-	//          auto& elem=mesh.elem(children[j]);
-	//          auto& nodes=elem.nodes;
+	// // 		for(int j=0;j<children.size();j++)
+	// //          {
+	// //          auto& elem=mesh.elem(children[j]);
+	// //          auto& nodes=elem.nodes;
 
-	//          dofsdofmap.template dofmap_get<0>(elemdm,children[j]);
-	//          std::cout<<"dofmap == "<< children[j]<<std::endl;
-	//          std::cout<<elemdm<<std::endl;
-	//          std::cout<<"nodes == "<< children[j]<<std::endl;
- //             for(Integer k=0;k<nodes.size();k++)
-	//          {
-	//          	std::cout<<"nodes[k] "<<nodes[k]<<std::endl;
-	//          	std::cout<<mesh.points()[nodes[k]]<<" ";}
+	// //          dofsdofmap.template dofmap_get<0>(elemdm,children[j]);
+	// //          std::cout<<"dofmap == "<< children[j]<<std::endl;
+	// //          std::cout<<elemdm<<std::endl;
+	// //          std::cout<<"nodes == "<< children[j]<<std::endl;
+ // //             for(Integer k=0;k<nodes.size();k++)
+	// //          {
+	// //          	std::cout<<"nodes[k] "<<nodes[k]<<std::endl;
+	// //          	std::cout<<mesh.points()[nodes[k]]<<" ";}
 
-	//      }
-	//      break;
-	// 	}
+	// //      }
+	// //      break;
+	// 	// }
 
 
 	// }
