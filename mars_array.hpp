@@ -188,6 +188,16 @@ namespace mars {
 };
 
 
+template<typename T>
+void subvector(std::vector<T>& u,const std::vector<T>&v,const std::vector<Integer>&w)
+{
+  Integer size=w.size();
+  u.resize(size);
+  for(Integer ii=0;ii<size;ii++)
+    u[ii]=v[w[ii]];
+}
+
+
 template<typename S, typename T,Integer Dim1,Integer Dim2>
 constexpr auto subarray(const Array<S,Dim1>&v,const Array<T,Dim2>&w)
 {

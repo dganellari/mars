@@ -762,36 +762,6 @@
 
 
 
-	template<typename Mat,typename Vec,typename VecVec>
-			void patch_gauss_seidel(Vec& x, const Mat& A, const Vec& b,
-				                    const VecVec& entity2dofs,
-				                    const Integer max_iter,const Real toll)
-			{
-                const int n=b.size();
-				if(x.size()!=n)
-				{
-					x.resize(n);
-					for(std::size_t i=0; i<n;i++)
-						x[i]=0;
-				}
-
-				for(std::size_t it=0;it<max_iter;it++)
-				{
-					for(Integer i=0;i<entity2dofs.size();i++)
-					{
-						auto& e2d=entity2dofs[i];
-
-
-
-					}
-
-
-				}
-
-
-
-
-			}
 
 
 
@@ -1246,12 +1216,22 @@ for(Integer jj=0;jj<3;jj++)
 			// 	cols_=mat[0].size();
 
 			// }
+            DenseMatrix()        
+            {}
+
             DenseMatrix(const Integer rows, const Integer cols):
  			rows_(rows),
 			cols_(cols)          
             {vec_.resize(rows*cols);}
 
 			inline void init(const Integer rows, const Integer cols)
+			{
+			  vec_.resize(rows*cols);
+			  rows_=rows;
+			  cols_=cols;
+			}
+
+			inline void resize(const Integer rows, const Integer cols)
 			{
 			  vec_.resize(rows*cols);
 			  rows_=rows;
@@ -1270,15 +1250,17 @@ for(Integer jj=0;jj<3;jj++)
 
 			inline auto& operator()(const Integer i, const Integer j)
 			{
-			  std::cout<<"(i,j)"<<i<<","<<j<<std::endl;
+			  // std::cout<<"(i,j)"<<i<<","<<j<<std::endl;
 			  return vec_[i*cols_+j];
 			}
 
 			inline auto& operator()(const Integer i, const Integer j)const 
 			{
-			  std::cout<<"(i,j)"<<i<<","<<j<<std::endl;
+			  // std::cout<<"(i,j)"<<i<<","<<j<<std::endl;
 			  return vec_[i*cols_+j];
 			}
+
+
 			// inline void cholesky_matrix(VecVec& Chol)
 			// {
 			// 	if(Chol.size()==0)
@@ -1325,6 +1307,11 @@ for(Integer jj=0;jj<3;jj++)
 						for(Integer k=0;k<i;k++)
 					       Chol(i,i)-=Chol(i,k)*Chol(i,k);
                          Chol(i,i)=sqrt(Chol(i,i));
+
+						for(Integer j=i+1;j<cols_;j++)
+							Chol(i,i)=0;
+						
+
 					}
 
 			}
@@ -1430,13 +1417,20 @@ for(Integer jj=0;jj<3;jj++)
 			{
 				// we solve Ax=b as H H' x = b, so H'y=b and H x=y
 				Vec y(rows_);
-				DenseMatrix<T> H(rows_,cols_);
+				DenseMatrix<Real> H;
+				std::cout<<"rows cols=="<<rows_<<", "<<cols_<<std::endl;
+				H.resize(rows_,cols_);
 				cholesky_matrix(H);
-				lower_triangular_solve(y,H,b);
-				for(Integer i=0;i<y.size();i++)
-					std::cout<<y[i]<<std::endl;
-				std::cout<<std::endl;
-				transpose_lower_triangular_solve(x,H,y);
+				// lower_triangular_solve(y,H,b);
+
+				// for(Integer i=0;i<y.size();i++)
+				// 	std::cout<<y[i]<<std::endl;
+				// std::cout<<std::endl;
+
+				// transpose_lower_triangular_solve(x,H,y);
+
+
+				std::cout<< "after cholesky"<<std::endl;
 				// upper_triangular_solve(x,H,y);
 
 
@@ -1925,6 +1919,14 @@ for(Integer jj=0;jj<3;jj++)
 				return A_[cols_idx_[i].at(j)];
 			}
 
+			inline Real  get_element_or_zero(const Integer i, const Integer j)const
+			{
+				if(cols_idx_[i].count(j))
+					return A_[cols_idx_[i].at(j)];
+			    else
+			    	return 0.0;
+			}
+
 			void row_gauss_seidel(std::vector<T>& x,const std::vector<T>& b)const
 			{
 
@@ -1945,14 +1947,17 @@ for(Integer jj=0;jj<3;jj++)
 			}
 
          
-			DenseMatrix<T> get_dense_matrix(std::vector<Integer>& vec)
+			inline void get_dense_matrix(DenseMatrix<T>& mat, const std::vector<Integer>& vec)const
 			{
 				Integer rows=vec.size();
-				DenseMatrix<T> mat(rows,rows);
+				mat.resize(rows,rows);
 
 				for(Integer i=0;i<rows;i++)
 					for(Integer j=0;j<rows;j++)
-                        mat(i,j)=get(i,j);
+                        {
+                        	std::cout<<"dense matrix i,j = "<<vec[i]<<", "<<vec[j]<<std::endl;
+                        	mat(i,j)=get_element_or_zero(vec[i],vec[j]);
+                        }
 
 			}
 
@@ -1985,6 +1990,48 @@ for(Integer jj=0;jj<3;jj++)
 		};
 
 
+	template<typename Mat,typename Vec,typename VecVec>
+			void patch_gauss_seidel(Vec& x, const Mat& A, const Vec& b,
+				                    const VecVec& entity2dofs,
+				                    const Integer max_iter,const Real toll)
+			{
+                const int n=b.size();
+                DenseMatrix<Real> local_mat;
+                std::vector<Real> local_b;
+                std::vector<Real> local_x;
+
+				if(x.size()!=n)
+				{
+					x.resize(n);
+					for(std::size_t i=0; i<n;i++)
+						x[i]=0;
+				}
+
+				for(std::size_t it=0;it<max_iter;it++)
+				{
+					for(Integer i=0;i<entity2dofs.size();i++)
+					{
+						auto& e2d=entity2dofs[i];
+						local_x.resize(e2d.size());
+						A.get_dense_matrix(local_mat,e2d);
+						subvector(local_b,x,e2d);
+						local_mat.cholesky(local_x,local_b);
+						std::cout<<"end i=="<<i<<std::endl;
+
+
+
+
+					}
+					std::cout<<"end iter=="<<it<<std::endl;
+
+
+				}
+				std::cout<<"after iterations"<<std::endl;
+
+
+
+
+			}
 
 
 
@@ -6042,7 +6089,7 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 
 
 
-	    Entity2Dofs<W_type2,0> entity2dofs(W_ptr2);
+	    Entity2Dofs<W_type,0> entity2dofs(W_ptr);
 	    entity2dofs.build();
 	    entity2dofs.print();
 
@@ -6119,6 +6166,8 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 	     densemat.cholesky(sol4,vec4);
          for(Integer i=0;i<4;i++)
          std::cout<<sol4[i]<<std::endl;
+         A.print_val();
+         patch_gauss_seidel(x,A,b,e0,max_iter,0.000001);
 
 	     
 
