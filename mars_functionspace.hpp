@@ -146,7 +146,7 @@ public:
    space_dofs_(concat(dms.space_dofs()...)),
    n_dofs_array_(concat(dms.n_dofs()...)),
    level_n_dofs_array_(concat(dms.level_n_dofs_array()...)),
-   cumulative_dofs_array_(cumulative_array(n_dofs_array_,NsubspacesArray)),
+   // cumulative_dofs_array_(cumulative_array(n_dofs_array_,NsubspacesArray)),
    level_cumulative_dofs_array_(cumulative_array(level_n_dofs_array_,NsubspacesArray)),
    level_cumultive_n_dofs_(level_cumulative_dofs_array_[level_cumulative_dofs_array_.size()-1])
    {}
@@ -159,8 +159,8 @@ public:
    inline auto& n_dofs() const {return n_dofs_array_;}
    inline auto& level_n_dofs_array()       {return level_n_dofs_array_;}
    inline auto& level_n_dofs_array() const {return level_n_dofs_array_;}
-   inline auto& cumulative_n_dofs()       {return cumulative_dofs_array_;}
-   inline auto& cumulative_n_dofs() const {return cumulative_dofs_array_;}
+   // inline auto& cumulative_n_dofs()       {return cumulative_dofs_array_;}
+   // inline auto& cumulative_n_dofs() const {return cumulative_dofs_array_;}
    inline auto& level_cumultive_n_dofs()       {return level_cumultive_n_dofs_;}
    inline auto& level_cumultive_n_dofs() const {return level_cumultive_n_dofs_;}
    inline auto& level_cumulative_dofs_array()       {return level_cumulative_dofs_array_;}
@@ -184,15 +184,15 @@ public:
    inline void  init_dofmap(const Integer n_elements){init_dofmap_aux(n_elements);};
 
 
-   template<Integer N>
-   void dofmap_get(GetType<ElemDofMap,N>& elemdm, const Integer elem_id)const
-   {
-    const auto& dm=tuple_get<N>(dofmap_)->operator[](elem_id);
-    const auto& offset=cumulative_dofs_array_[N];    
+   // template<Integer N>
+   // void dofmap_get(GetType<ElemDofMap,N>& elemdm, const Integer elem_id)const
+   // {
+   //  const auto& dm=tuple_get<N>(dofmap_)->operator[](elem_id);
+   //  const auto& offset=cumulative_dofs_array_[N];    
 
-    for(std::size_t i=0;i<elemdm.size();i++)
-        elemdm[i]=dm[i]+offset;
-    }
+   //  for(std::size_t i=0;i<elemdm.size();i++)
+   //      elemdm[i]=dm[i]+offset;
+   //  }
 
    template<Integer N>
    void dofmap_get(GetType<ElemDofMap,N>& elemdm, const Integer elem_id, const Integer level)const
@@ -347,7 +347,7 @@ public:
    ElemDofMap elemdofmap_;
    NdofsArray n_dofs_array_;
    Array<std::vector<Integer>, Nsubspaces> level_n_dofs_array_;
-   CumulativeNdofsArray cumulative_dofs_array_;
+   // CumulativeNdofsArray cumulative_dofs_array_;
    Array<std::vector<Integer>, Nsubspaces+1> level_cumulative_dofs_array_;
    std::vector<Integer> level_cumultive_n_dofs_;
 };
@@ -387,7 +387,7 @@ public:
    n_dofs_array_(concat(dm1.n_dofs(),dm2.n_dofs())),
    level_n_dofs_array_(concat(dm1.level_n_dofs_array(),dm2.level_n_dofs_array())),
    // cumulative_dofs_array_(cumulative_array_and_zero(dm1.n_dofs(),dm2.n_dofs()),Arg1::DofsDM::NsubspacesArray)
-   cumulative_dofs_array_(cumulative_array_and_zero(dm1.cumulative_n_dofs(),dm2.n_dofs())),
+   // cumulative_dofs_array_(cumulative_array_and_zero(dm1.cumulative_n_dofs(),dm2.n_dofs())),
    level_cumulative_dofs_array_(cumulative_array_and_zero(dm1.level_cumulative_dofs_array(),dm2.level_n_dofs_array())),
    level_cumultive_n_dofs_(dm1.level_cumulative_dofs_array()[dm1.level_cumulative_dofs_array().size()-1])
    {}
@@ -401,8 +401,8 @@ public:
    inline auto& n_dofs() const {return n_dofs_array_;}
    inline auto& level_n_dofs_array()       {return level_n_dofs_array_;}
    inline auto& level_n_dofs_array() const {return level_n_dofs_array_;}
-   inline auto& cumulative_n_dofs()       {return cumulative_dofs_array_;}
-   inline auto& cumulative_n_dofs() const {return cumulative_dofs_array_;}
+   // inline auto& cumulative_n_dofs()       {return cumulative_dofs_array_;}
+   // inline auto& cumulative_n_dofs() const {return cumulative_dofs_array_;}
    inline auto& level_cumultive_n_dofs()       {return level_cumultive_n_dofs_;}
    inline auto& level_cumultive_n_dofs() const {return level_cumultive_n_dofs_;}   
    inline auto& level_cumulative_dofs_array()       {return level_cumulative_dofs_array_;}
@@ -427,16 +427,16 @@ public:
    inline void  init_dofmap(const Integer n_elements){init_dofmap_aux(n_elements);};
 
 
-   template<Integer N>
-   void dofmap_get(GetType<ElemDofMap,N>& elemdm, const Integer elem_id)const
-   {
-    const auto& dm=tuple_get<N>(dofmap_)->operator[](elem_id);
-    const auto& offset=cumulative_dofs_array_[N];
+   // template<Integer N>
+   // void dofmap_get(GetType<ElemDofMap,N>& elemdm, const Integer elem_id)const
+   // {
+   //  const auto& dm=tuple_get<N>(dofmap_)->operator[](elem_id);
+   //  const auto& offset=cumulative_dofs_array_[N];
     
 
-    for(std::size_t i=0;i<elemdm.size();i++)
-        elemdm[i]=dm[i]+offset;
-    }
+   //  for(std::size_t i=0;i<elemdm.size();i++)
+   //      elemdm[i]=dm[i]+offset;
+   //  }
 
 
    template<Integer N>
@@ -473,7 +473,7 @@ public:
     level_n_dofs_array_=concat(dm1_.level_n_dofs_array(),dm2_.level_n_dofs_array());
 
 
-    cumulative_dofs_array_=cumulative_array_and_zero(dm1_.cumulative_n_dofs(),dm2_.n_dofs());
+    // cumulative_dofs_array_=cumulative_array_and_zero(dm1_.cumulative_n_dofs(),dm2_.n_dofs());
     level_cumulative_dofs_array_=cumulative_array_and_zero(dm1_.level_cumulative_dofs_array(),dm2_.level_n_dofs_array()),
 
     level_cumultive_n_dofs_=dm1_.level_cumulative_dofs_array()[dm1_.level_cumulative_dofs_array().size()-1];
@@ -520,11 +520,11 @@ public:
    {return tuple_get<N>(dofmap_)->size();}
 
 
-   auto space_dofs_get(const Integer N,const Integer id)
-   {return space_dofs_[N]->operator[](id)+cumulative_dofs_array_[N];}
+   // auto space_dofs_get(const Integer N,const Integer id)
+   // {return space_dofs_[N]->operator[](id)+cumulative_dofs_array_[N];}
 
-   auto space_dofs_get(const Integer N,const Integer id)const
-   {return space_dofs_[N]->operator[](id)+cumulative_dofs_array_[N];}
+   // auto space_dofs_get(const Integer N,const Integer id)const
+   // {return space_dofs_[N]->operator[](id)+cumulative_dofs_array_[N];}
 
    auto space_dofs_size(const Integer N) const
    {return space_dofs_[N]->size();}

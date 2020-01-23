@@ -2328,6 +2328,7 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 		std::vector<std::string> sub_scripts{"_x","_y","_z"};
 
 		std::vector<std::string> sub_scripts_numbers{"_1","_2","_3","_4","_5","_6","_7","_8","_9","_10"};
+		std::cout<<"print_solutions_aux_aux="<<std::endl;
 // std::cout<<"<<<<<<<<<<<<<<<<<<<<<< >>>>>>>>>>>>>>>>>>>"<<std::endl;
 // std::cout<<"Nelem_dofs = "<<Nelem_dofs<<std::endl;
 // std::cout<<"size = "<<size<<std::endl;
@@ -2375,38 +2376,28 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 				// if(!mesh_ptr->is_active(i)) continue;
 				// if(!elem_belongs_to_level(mesh_ptr,i,level,tracker))continue;
 				if(!elem_belongs_to_level(mesh,i,level,tracker))continue;
+				std::cout<<"i=="<<i<<" n_elements=="<<n_elements<<std::endl;
                 
 
 				FE.init(i,level);
 				dofsdofmap.template dofmap_get<N>(localdofmap,i,level);
                 // std::cout<<"elem id=="<<i<<std::endl;
-				// std::cout<<"localdofmap=="<<localdofmap<<std::endl;
+				std::cout<<"localdofmap=="<<localdofmap<<std::endl;
+
+				std::cout<<"sol=="<<std::endl;
+				for(Integer k=0;k<sol.size();k++)
+					std::cout<<sol[k]<<std::endl;
+				std::cout<<"local_sol=="<<std::endl;
+				for(Integer k=0;k<local_sol.size();k++)
+					std::cout<<local_sol[k]<<std::endl;
 // const auto& localdofmap=dofmap[i];
 				subarray(local_sol, sol, localdofmap);
 
-				if(FEFamily==RaviartThomasFE && (i==19 || i==18))
-				{
 
-                   std::cout<<"eccomi elem=="<<i<<std::endl;
-
-                   std::cout<<"localdofmap"<<std::endl;
-                   std::cout<<localdofmap<<std::endl;
-                   std::cout<<"local_sol"<<std::endl;
-                   std::cout<<local_sol<<std::endl;
-
-				}
 
 				var.init(FE,local_sol,comp);
 				const auto& val=var.value();
 
-				if(FEFamily==RaviartThomasFE && (i==19 || i==18))
-				{
-
-                   std::cout<<"val"<<std::endl;
-                   std::cout<<val<<std::endl;
-
-
-				}
 
 // std::cout<<"ElementOrder="<<ElementOrder<<std::endl;
 // std::cout<<" val = "<<val<<std::endl;
@@ -2499,6 +2490,7 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	print_solutions_aux(std::ostream &os,FiniteElem& FE, const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names,const Integer level=-1)
 	{
 		using Space=GetType<TupleOfSpaces,N>;
+		std::cout<<"N="<<N <<std::endl;
 
 		print_solutions_aux_aux<N,Nmax,Space,ElementOrder>(os,FE,space,sol,names,level);
 		print_solutions_aux<N+1,Nmax,TupleOfSpaces,ElementOrder>(os,FE,space,sol,names,level);
@@ -2510,6 +2502,7 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 		using Elem=typename FullSpace<Args...>::Elem; 
 		// FiniteElem<Elem> FE(space.mesh_ptr());
 		FiniteElem<Elem> FE(space.mesh());
+
 		print_solutions_aux<0,TupleTypeSize<TupleOfSpaces>::value-1,TupleOfSpaces,ElementOrder>(os,FE,space,sol,names,level);
 	}
 
@@ -5704,10 +5697,14 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 
 		// auto Wtrial=MixedFunctionSpace(lsfem);
 	    auto Wtrial=MixedFunctionSpace(rtn,pn);
+std::cout<<"FIRST POST Wtrial="<<std::endl;
 
 		auto Waux=AuxFunctionSpacesBuild(pn);
+std::cout<<"FIRST POST Waux="<<std::endl;
 
 		auto W=FullSpaceBuild(Wtrial,Waux);
+std::cout<<" POST W="<<std::endl;
+
 		using W_type=decltype(W);
 		auto W_ptr=std::make_shared<W_type>(W);
 
@@ -5853,7 +5850,9 @@ std::cout<<"FIRST POST UPDATE="<<std::endl;
 		os.close();
 		os.open(output_file.c_str());
 		// write_wtk_isoparametric(os,*context.full_spaces_ptr(),x,var_names,level);
+		std::cout<<" write to file START"<<std::endl;
 		write_wtk_isoparametric(os,W_ptr,x,var_names,level);
+		std::cout<<" write to file END"<<std::endl;
 
 	    os.close();
 

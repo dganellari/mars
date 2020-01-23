@@ -187,7 +187,6 @@ namespace mars {
 
 };
 
-
 template<typename T>
 void subvector(std::vector<T>& u,const std::vector<T>&v,const std::vector<Integer>&w)
 {
@@ -196,7 +195,6 @@ void subvector(std::vector<T>& u,const std::vector<T>&v,const std::vector<Intege
   for(Integer ii=0;ii<size;ii++)
     u[ii]=v[w[ii]];
 }
-
 
 template<typename S, typename T,Integer Dim1,Integer Dim2>
 constexpr auto subarray(const Array<S,Dim1>&v,const Array<T,Dim2>&w)
@@ -224,7 +222,7 @@ template<typename S, typename T,Integer Dim>
 constexpr auto subarray(Array<S,Dim>&u , const std::vector<S>&v,const Array<T,Dim>&w)
 {
 
-  assert((v.size()<Dim)&&" cannot extract a subarray with components not belonging to the std::Vector");
+  // assert((v.size()<Dim)&&" cannot extract a subarray with components not belonging to the std::Vector");
   for(Integer ii=0;ii<Dim;ii++)
     u[ii]=v[w[ii]];
 
