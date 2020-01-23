@@ -1416,6 +1416,8 @@ for(Integer jj=0;jj<3;jj++)
 			inline void cholesky(std::vector<Real>&x,const std::vector<Real>&b)
 			{
 				// we solve Ax=b as H H' x = b, so H'y=b and H x=y
+
+				std::cout<< "pre cholesky"<<std::endl;
 				Vec y(rows_);
 				DenseMatrix<Real> H;
 				std::cout<<"rows cols=="<<rows_<<", "<<cols_<<std::endl;
