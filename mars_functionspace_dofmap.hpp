@@ -4301,10 +4301,14 @@ void dofmap_fespace5(
      static constexpr Integer entity_points=ElemEntityNPoints<Elem,EntityDim>::value;
      static constexpr Integer combinations_nums=ElemEntityCombinations<Elem,EntityDim>::value;
      static constexpr auto NLocalDofs=FunctionSpace::DofsDM::NLocalDofs;
-     using Map=std::map<std::array<Integer,entity_points>, std::vector<std::vector<Integer>> >;
+     using ArrEntityPoints=std::array<Integer,entity_points>;
+     using Map=std::map<ArrEntityPoints, std::vector<std::vector<Integer>> >;
+     using MapBoolPtr=std::map<std::array<Integer,entity_points+1>,bool>;
      using Vec=std::vector<Integer>;
      using VecVec=std::vector<Vec>;
      using VecVecVec=std::vector<VecVec>;
+     using SortedVec=std::vector<std::vector<Integer>>;
+     using SortedLevelsVec=std::vector<SortedVec>;
 
 
 
@@ -4327,7 +4331,7 @@ void dofmap_fespace5(
     entity_loop(Integer& cont,Tracker& tracker, DofsDM& dm, const std::array<Integer,entity_points>& entity_nodes1, const Elem& elem, const FiniteElem<Elem>&FE)
     {
 
-      std::cout<<" entity dim=="<<Space::entity[N]<<std::endl;
+      // std::cout<<" entity dim=="<<Space::entity[N]<<std::endl;
 
       constexpr Integer EntityDim2=Space::entity[N];
 
@@ -4349,33 +4353,33 @@ void dofmap_fespace5(
       Integer cont_nodes;
       bool found;
 
-      std::cout<<"nodes="<<std::endl;
+      // std::cout<<"nodes="<<std::endl;
 
-             for(std::size_t i=0;i<nodes.size();i++)
-            {
-              std::cout<<nodes[i]<<" ";
-            }   
-      std::cout<<" "<<std::endl;
+      //        for(std::size_t i=0;i<nodes.size();i++)
+      //       {
+      //         std::cout<<nodes[i]<<" ";
+      //       }   
+      // std::cout<<" "<<std::endl;
 
       for(Integer entity_iter=0;entity_iter<combinations_nums2;entity_iter++)
          { 
           found=false;
-          std::cout<<"entity_iter="<<entity_iter<<std::endl;
+          // std::cout<<"entity_iter="<<entity_iter<<std::endl;
           Combinations<manifold_points, entity_points2>::generate(entity_iter,entity2);
-          for(std::size_t i=0;i<entity_points2;i++)
-            {
-              std::cout<<entity2[i]<<" ";
-            }
+          // for(std::size_t i=0;i<entity_points2;i++)
+          //   {
+          //     std::cout<<entity2[i]<<" ";
+          //   }
 
-          std::cout<<" "<<std::endl;
+          // std::cout<<" "<<std::endl;
 
 
           for(std::size_t i=0;i<entity_points2;i++)
             {
               entity_nodes2[i]=nodes[entity2[i]];
-              std::cout<<entity_nodes2[i]<<" ";
+              // std::cout<<entity_nodes2[i]<<" ";
             }
-          std::cout<<" "<<std::endl;
+          // std::cout<<" "<<std::endl;
 
           std::sort(entity_nodes2.begin(),entity_nodes2.end());
 
@@ -4395,7 +4399,7 @@ void dofmap_fespace5(
             if(cont_nodes==entity_points)
               {
                // add dofmap
-                std::cout<<"found on level "<<level<<std::endl;
+                // std::cout<<"found on level "<<level<<std::endl;
                 found=true;
                 auto& dofs=map_[entity_nodes1];
 
@@ -4411,35 +4415,35 @@ void dofmap_fespace5(
 
                 
                 
-                std::cout<<" entity_nodes1 "<<std::endl;
+                // std::cout<<" entity_nodes1 "<<std::endl;
 
-                for(Integer m=0;m<entity_nodes1.size();m++)
-                {
-                  std::cout<<entity_nodes1[m]<<" ";
-                }
-                std::cout<<" "<<std::endl;
-                std::cout<<"  map_ "<<std::endl;
+                // for(Integer m=0;m<entity_nodes1.size();m++)
+                // {
+                //   std::cout<<entity_nodes1[m]<<" ";
+                // }
+                // std::cout<<" "<<std::endl;
+                // std::cout<<"  map_ "<<std::endl;
 
                 for(Integer m=0;m<Space::dofs_per_entity[N];m++)
                   for(Integer k=0;k<Space::NComponents;k++)
                      {
 
                       dofs[level].push_back(dm[cont]);
-                      std::cout<<dm[cont]<<" ";
+                      // std::cout<<dm[cont]<<" ";
                       cont++;
                       }
-                std::cout<<" "<<std::endl;
+                // std::cout<<" "<<std::endl;
 
                 // std::sort(dofs.begin(),dofs.end());
                 // dofs.erase( std::unique( dofs.begin(), dofs.end() ), dofs.end() );
 
-                std::cout<<"dofs "<<std::endl;
+                // std::cout<<"dofs "<<std::endl;
 
-                for(Integer m=0;m< dofs[level].size();m++)
-                {
-                  std::cout<<dofs[level][m]<<" "<<std::endl;
-                }
-                std::cout<<" "<<std::endl;
+                // for(Integer m=0;m< dofs[level].size();m++)
+                // {
+                //   std::cout<<dofs[level][m]<<" "<<std::endl;
+                // }
+                // std::cout<<" "<<std::endl;
 
               }
           }
@@ -4470,12 +4474,12 @@ void dofmap_fespace5(
     inline std::enable_if_t<(N<Nmax),void> 
     loop_spaces(Tracker& tracker, DofsDM& dm, const std::array<Integer,entity_points>& entity_nodes, const Elem& elem, const FiniteElem<Elem>&FE)
     {
-      std::cout<<" space=="<<N<<std::endl;
+      // std::cout<<" space=="<<N<<std::endl;
       using Space=GetType<TupleOfSpaces,N>;
       constexpr auto entity=Space::entity;
       auto& single_dm=tuple_get<N>(elemdofmap_);
       dm.template dofmap_get<N>(single_dm,FE.elem_id(),FE.level());
-      std::cout<<" single_dm=="<<single_dm<<std::endl;
+      // std::cout<<" single_dm=="<<single_dm<<std::endl;
 
       Integer cont=0;
       entity_loop<Space,entity.size()>(cont,tracker,single_dm,entity_nodes,elem,FE);
@@ -4498,14 +4502,14 @@ void dofmap_fespace5(
 
      FiniteElem<Elem> FE(mesh);
 
-     std::cout<<" Entity2Dofs"<<std::endl;
+     // std::cout<<" Entity2Dofs"<<std::endl;
      for(Integer el=0;el<mesh.n_elements();el++)
      {
           auto& elem=mesh.elem(el);
           const auto& nodes=elem.nodes;
 
 
-          std::cout<<" el=="<<el<<std::endl;
+          // std::cout<<" el=="<<el<<std::endl;
           FE.init(el,tracker.get_iterate(el));
 
           for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
@@ -4584,6 +4588,32 @@ void dofmap_fespace5(
     }
 
 
+    auto& get()
+    {
+
+      auto& mesh=spaces_ptr_->mesh();
+      auto& bisection=spaces_ptr_->bisection();
+      auto& tracker=bisection.tracker();
+      auto& n2e=spaces_ptr_->node2elem();
+
+      Integer n_levels=tracker.current_iterate();
+      if(map_vec_.size()==0)
+        map_vec_.resize(n_levels);
+
+      if(map_vec_.size()<n_levels)
+      {
+        for(Integer i=map_vec_.size();i<n_levels;i++)
+        map_vec_.push_back(VecVec{});
+      }
+
+
+      for(Integer i=0;i<n_levels;i++)
+      {
+        map_vec_[i]=get(i);
+      }
+      return map_vec_;
+
+    }
 
     auto& get(const Integer level)
     {
@@ -4614,16 +4644,294 @@ void dofmap_fespace5(
 
     }
 
+      inline void ordered_entities_aux_aux(const Integer el,Integer& cont_elem,std::vector<bool>& elems_iterate)
+      {
+          auto& mesh=spaces_ptr_->mesh();
+          auto& bisection=spaces_ptr_->bisection();
+          auto& tracker=bisection.tracker();
+          auto& n2e=spaces_ptr_->node2elem();
+          auto& elem=mesh.elem(el);
+          FiniteElem<Elem> FE(mesh);
+          Integer entity_[entity_points];
+          std::array<Integer,entity_points> entity_nodes;
+          std::array<Integer,entity_points+1> entity_nodes_and_level;
+          // // std::pair<std::array<Integer,entity_points>,Integer> pair;
+
+          const auto& nodes=elem.nodes;
+          auto level=tracker.get_iterate(el);
+          FE.init(el,level);
+
+          // std::cout<< "elem="<<el <<std::endl;
+
+          //// iterate on all the entities of the element
+          for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
+             { 
+              // generate the entity_iter entity in entity_;
+              Combinations<manifold_points, entity_points>::generate(entity_iter,entity_);
+              for(std::size_t i=0;i<entity_points;i++)
+                {
+                  entity_nodes[i]=nodes[entity_[i]];
+                  // std::cout<< entity_nodes[i]<<"";
+                }
+
+
+                // std::cout<< std::endl;
+
+              // sort the nodes of found entity
+              std::sort(entity_nodes.begin(),entity_nodes.end());
+
+              for(std::size_t i=0;i<entity_points;i++)
+                {
+                  entity_nodes_and_level[i]=entity_nodes[i];
+                  // std::cout<< entity_nodes[i]<<"";
+                }
+              entity_nodes_and_level[entity_points]=level;
+
+
+
+          //     // here do something for the sorted dofmap
+          //     std::cout<<"pre pair" <<std::endl;
+          //      // pair=std::make_pair(entity_nodes,level);
+          //      std::cout<<"after pre entity_nodes_and_level" <<std::endl;
+          //      for(Integer i=0;i<entity_nodes_and_level.size();i++)
+          //       std::cout<<entity_nodes_and_level[i]<<" ";
+          //     std::cout<<" "<<std::endl;
+          //     std::cout<<"level="<<level<<std::endl;
+          //     // if ( map_bool_.find(entity_nodes_and_level) == map_bool_.end() ) {
+          //     //      std::cout<<"not found="<<std::endl;
+          //     //     } else {
+          //     //      std::cout<<" found="<<std::endl;
+          //     //     }
+
+
+          //        std::cout<<std::endl;
+          //      for(auto it=map_bool_.begin(); it!=map_bool_.end(); ++it)
+          //      {
+          //        for(Integer i=0;i<entity_nodes_and_level.size();i++)
+          //            std::cout<<it->first[i]<<" ";
+          //          std::cout<<std::endl;
+              
+          //      }
+          //      std::cout<<"end pre pair2" <<std::endl;
+          //      auto m=map_bool_[entity_nodes_and_level];
+
+          //      std::cout<<"after pre pair2" <<std::endl;
+
+              if(map_bool_[entity_nodes_and_level])
+              {
+                map_bool_[entity_nodes_and_level]=true;
+                entities_ordered_[level].push_back(map_[entity_nodes][level]);
+
+              }
+            }
+      elems_iterate[el]=true;
+      cont_elem++;
+
+    }
+
+
+
+
+
+
+
+
+
+    inline bool find_next_elem(Integer& next_elem,const Integer&el,std::vector<bool>& elems_iterate)
+    {
+        auto& mesh=spaces_ptr_->mesh();
+        auto& bisection=spaces_ptr_->bisection();
+        auto& tracker=bisection.tracker();
+        auto& n2e=spaces_ptr_->node2elem();
+        auto& elem=mesh.elem(el);
+        auto& nodes=elem.nodes;  
+        auto level=tracker.get_iterate(el);
+        bool found=false;
+        for(Integer n=0;n<nodes.size();n++)
+        {
+          auto node2elems=n2e.get(nodes[n],level);
+          for(Integer l=0;l<node2elems.size();l++)
+          {
+            if(elems_iterate[node2elems[l]]==false)
+             {
+              next_elem=node2elems[l];
+              found=true;
+              goto finish;
+
+             } 
+          }
+        }
+        finish:
+        {}
+        return found;
+    }
+
+    inline void ordered_entities_aux(Integer& next_elem,const Integer el,Integer& cont_elem,std::vector<bool>& elems_iterate)
+    {
+
+
+      // cont_elem++;// REMOVE <-----------------------------
+
+
+
+
+
+
+
+
+
+
+        auto& mesh=spaces_ptr_->mesh();
+        auto& bisection=spaces_ptr_->bisection();
+        auto& tracker=bisection.tracker();
+        auto& n2e=spaces_ptr_->node2elem();
+        auto& elem=mesh.elem(el);
+        auto& nodes=elem.nodes;  
+        auto level=tracker.get_iterate(el);
+
+        next_elem=-1;
+        ordered_entities_aux_aux(el,cont_elem,elems_iterate);
+
+              for(Integer n=0;n<nodes.size();n++)
+              {
+                auto node2elems=n2e.get(nodes[n],level);
+                for(Integer l=0;l<node2elems.size();l++)
+                {
+                  if(elems_iterate[node2elems[l]]==false)
+                   {
+                    ordered_entities_aux_aux(node2elems[l],cont_elem,elems_iterate);
+
+                   } 
+                }
+              }
+              // for(Integer n=0;n<nodes.size();n++)
+              // {
+              //   auto node2elems=n2e.get(nodes[n],level);
+              //   for(Integer l=0;l<node2elems.size();l++)
+              //   {
+              //     if(find_next_elem(next_elem,node2elems[l],elems_iterate))
+              //       goto finish;
+              //   }
+
+                
+              //  }
+      // finish:
+      // {}
+
+
+ 
+    }
+       
+
+
+
+
+    inline void ordered_entities_aux(std::vector<bool>& elems_iterate ,const Integer level, const Integer level_n_elements)
+    {
+      auto& mesh=spaces_ptr_->mesh();
+      auto& bisection=spaces_ptr_->bisection();
+      auto& tracker=bisection.tracker();
+      auto& n2e=spaces_ptr_->node2elem();
+      auto n_levels=tracker.current_iterate();
+      Integer cont_elem=0;
+      Integer next_elem=0;
+      Integer el=0;
+      Integer n_elements=mesh.n_elements();
+
+      // std::vector<bool> elems_iterate(level_n_elements,false);
+
+
+
+
+
+
+
+      
+      // loop on all the elements 
+
+       while(cont_elem<level_n_elements)
+       {
+
+        if(!elem_belongs_to_level(mesh,el,level,tracker))
+          { el++;
+            continue;
+          }
+
+        ordered_entities_aux(next_elem,el,cont_elem,elems_iterate);
+        if(next_elem<0)
+        {
+         for(Integer i=0;i<n_elements;i++)
+          if(elems_iterate[i]==false)
+          {
+            el=i;
+            break;
+          }
+        }
+        else
+        {
+          el=next_elem;
+        }
+
+        // std::cout<<"level="<<level<<", el="<<el<<", next_elem="<<next_elem<<", cont_elem="<<cont_elem<<"/"<<level_n_elements<<std::endl;
+
+
+       }
+      }
+  
+
+    inline auto& ordered_entities()
+    {
+      auto& mesh=spaces_ptr_->mesh();
+      auto& bisection=spaces_ptr_->bisection();
+      auto& tracker=bisection.tracker();
+      auto& n2e=spaces_ptr_->node2elem();
+      auto n_levels=tracker.current_iterate();
+      Integer cont_elem=0;
+      Integer next_elem=0;
+      Integer el=0;
+      Integer n_elements=mesh.n_elements();
+
+      std::vector<Integer> level_n_elements(n_levels);
+      std::vector<bool> elems_iterate(n_elements,false);
+
+
+      if(entities_ordered_.size()<n_levels)
+      {
+        for(Integer i=entities_ordered_.size();i<n_levels;i++)
+          entities_ordered_.push_back(SortedVec{});
+      }
+
+      for(Integer el=0;el<n_elements;el++)
+      {
+        level_n_elements[tracker.get_iterate(el)]++;
+      }
+      
+      for(Integer i=0;i<n_levels;i++)
+      {
+        // std::cout<<"level=="<<i<<std::endl;
+        ordered_entities_aux(elems_iterate,i,level_n_elements[i]);
+      }
+
+      return entities_ordered_;
+      
+
+    }
+
+
 
   private:
     std::shared_ptr<FullFunctionSpace> spaces_ptr_;
     ElemDofMap elemdofmap_;
     Map map_;
     VecVecVec map_vec_;
+    SortedLevelsVec entities_ordered_;
+    MapBoolPtr map_bool_;
 
 
   };
 
+
+  
 
 
 
