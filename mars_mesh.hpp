@@ -15,7 +15,7 @@
 #include <fstream>
 #include <sstream>
 #include <memory>
-#include <algorithm>  
+#include <algorithm>
 
 namespace mars {
 
@@ -26,7 +26,7 @@ namespace mars {
 		static constexpr Integer ManifoldDim = ManifoldDim_;
 
 		using Elem     = mars::Simplex<Dim, ManifoldDim>;
-		using SideElem = mars::Simplex<Dim, ManifoldDim-1>; 
+		using SideElem = mars::Simplex<Dim, ManifoldDim-1>;
 		using Point    = mars::Vector<Real, Dim>;
 
 		void reserve(
@@ -109,7 +109,7 @@ namespace mars {
 			assert(i < points_.size());
 			return points_[i];
 		}
-		
+
 		inline const Point &point(const Integer i) const override
 		{
 			assert(i >= 0);
@@ -150,7 +150,7 @@ namespace mars {
 			for(Integer i = 0; i < mars::n_nodes(elem); ++i) {
 				elem.nodes[i] = nodes[i];
 			}
-			
+
 			return add_elem(elem);
 		}
 
@@ -208,7 +208,7 @@ namespace mars {
 
 			auto &e = elements_[id];
 			pts.resize(ManifoldDim + 1);
-			
+
 			for(Integer i = 0; i < ManifoldDim + 1; ++i) {
 				pts[i] = points_[e.nodes[i]];
 			}
@@ -265,7 +265,7 @@ namespace mars {
 				if(!is_active(i) && skip_inactive) continue;
 
 				const auto &e = elem(i);
-				
+
 				if(match_all) {
 					Integer n_matching = 0;
 					for(auto e_n : e.nodes) {
@@ -448,7 +448,7 @@ namespace mars {
 			for(Integer i = 0; i < n_new_points; ++i) {
 				add_point(other.point(i));
 			}
-			
+
 			for(Integer i = 0; i < n_new_elements; ++i) {
 				Elem e = other.elem(i);
 				e.parent_id += element_offset;
@@ -503,8 +503,8 @@ namespace mars {
 
 			Simplex<Dim, ManifoldDim-1> side;
 			for(Integer k = 0; k < n_sides(e1); ++k) {
-				e1.side(k, side);				
-				
+				e1.side(k, side);
+
 				Integer nn = 0;
 
 				for(Integer i = 0; i < ManifoldDim; ++i) {
@@ -556,7 +556,7 @@ namespace mars {
 		bool check_side_ordering() const
 		{
 			assert( !dual_graph_.empty() && "requires that build_dual_graph is called first");
-			
+
 			if(ManifoldDim == 4) {
 				std::cerr << "not implemented for 4d yet" << std::endl;
 				return false;
@@ -566,7 +566,7 @@ namespace mars {
 
 			for(Integer i = 0; i < n_elements(); ++i) {
 				if(!active_[i]) continue;
-				
+
 				const auto &e = elem(i);
 				const auto &e_adj = dual_graph_.adj(i);
 				for(Integer k = 0; k < e_adj.size(); ++k) {
@@ -581,7 +581,7 @@ namespace mars {
 					Integer other_side_index = 0;
 					{
 						auto it = std::find(other_adj.begin(), other_adj.end(), i);
-						
+
 
 						if(it == other_adj.end()) {
 							std::cerr << "Bad dual graph for " <<  i << " <-> " << j << std::endl;
@@ -600,7 +600,7 @@ namespace mars {
 
 					for(Integer q = 0; q < ManifoldDim; ++q) {
 						Integer other_q = other_offset - q;
-						
+
 						if(other_q < 0) {
 							other_q += ManifoldDim;
 						}
@@ -666,7 +666,7 @@ namespace mars {
 					e.edge(k, v1, v2);
 
 					Integer edge_id = enm.get(v1, v2);
-					
+
 					if(edge_id == INVALID_INDEX) {
 						enm.update(v1, v2, edge_index++);
 					}
@@ -685,7 +685,7 @@ namespace mars {
 				Integer v2 = en.first[1];
 
 				Real d = (point(v1) - point(v2)).norm();
-				
+
 				weight[v1].first += d;
 				weight[v1].second = v1;
 
@@ -694,7 +694,7 @@ namespace mars {
 
 				++hits[v1];
 				++hits[v2];
-			}	
+			}
 
 			for(std::size_t i = 0; i < weight.size(); ++i) {
 				weight[i].first /= hits[i];
@@ -751,7 +751,7 @@ namespace mars {
 		{
 			std::vector< Elem > elements;
 			std::vector<Integer> tags;
-			
+
 			elements.reserve(n_active_elements());
 			tags.reserve(elements.capacity());
 
@@ -759,11 +759,11 @@ namespace mars {
 				if(!is_active(i)) continue;
 
 				assert(elem(i).children.empty());
-				
+
 				elements.push_back(elem(i));
 				elements.back().id        = elements.size() - 1;
 				elements.back().parent_id = INVALID_INDEX;
-				
+
 				if(!tags_.empty()) {
 					tags.push_back(tags_[i]);
 				}
@@ -789,7 +789,7 @@ namespace mars {
 		}
 
 		inline Integer root(const Integer id) const
-		{	
+		{
 			if(id == INVALID_INDEX) return INVALID_INDEX;
 
 			Integer current_id = id;
@@ -844,7 +844,7 @@ namespace mars {
 			std::vector<bool> to_remove(n_elems, false);
 
 			Integer min_elem_index = n_elems;
-			
+
 			for(auto e : elems) {
 				to_remove[e] = true;
 				min_elem_index = std::min(e, min_elem_index);
@@ -868,7 +868,7 @@ namespace mars {
 			assert(is_contiguous);
 
 			std::vector<bool> is_node_referenced(n_nodes(), false);
-			
+
 			Integer max_node_index = 0;
 			for(Integer i = 0; i < n_elems; ++i) {
 				if(to_remove[i]) continue;
@@ -895,7 +895,7 @@ namespace mars {
 		{
 			for(Integer i = 0; i < n_elements(); ++i) {
 				if(!is_active(i)) continue;
-				
+
 				auto &e   = elem(i);
 				auto &adj = dual_graph().adj(i);
 
