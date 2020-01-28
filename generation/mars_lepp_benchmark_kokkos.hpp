@@ -85,7 +85,7 @@ namespace mars {
 			std::cout << "parallel LEPP Refinement took: " << time << " seconds." << std::endl;
 
 			typename Mesh::SerialMesh sMesh;
-			convert_parallel_mesh_to_serial<Dim, ManifoldDim>(sMesh, mesh);
+			convert_parallel_mesh_to_serial(sMesh, mesh);
 
 			std::cout << "======================================\n";
 
