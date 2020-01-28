@@ -470,10 +470,10 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
     void apply_zero_bc_to_matrix(SystemMat& A)
     {
       Real one=1.0;
-      std::cout<<"------APPLY ZERO BC -------"<<std::endl;
+      std::cout<<"------APPLY ZERO BC -------,n_dofs_="<<n_dofs_<<std::endl;
      for(Integer i=0;i<n_dofs_;++i)
      {
-      // std::cout<<i <<std::endl;
+      // std::cout<<i <<"/"<<n_dofs_<<std::endl;
       if(constrained_dofs[i])
       {       
         // std::cout<<"if " <<A.max_rows()<<" "<<A.max_cols()<<std::endl;

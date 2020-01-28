@@ -4505,6 +4505,8 @@ void dofmap_fespace5(
      // std::cout<<" Entity2Dofs"<<std::endl;
      for(Integer el=0;el<mesh.n_elements();el++)
      {
+
+          if(tracker.get_iterate(el)<0)continue;
           auto& elem=mesh.elem(el);
           const auto& nodes=elem.nodes;
 
@@ -4643,6 +4645,20 @@ void dofmap_fespace5(
       return vec;
 
     }
+
+    auto& get(const std::vector<Integer>& levels)
+    {
+      levels_vec_.clear();
+      Integer size=levels.size();
+      levels_vec_.resize(size);
+      for(Integer i=0;i<size;i++)
+        levels_vec_[i]=get(levels[i]);
+
+
+      return levels_vec_;
+
+    }
+
 
       inline void ordered_entities_aux_aux(const Integer el,Integer& cont_elem,std::vector<bool>& elems_iterate)
       {
@@ -4926,6 +4942,7 @@ void dofmap_fespace5(
     VecVecVec map_vec_;
     SortedLevelsVec entities_ordered_;
     MapBoolPtr map_bool_;
+    VecVecVec levels_vec_;
 
 
   };

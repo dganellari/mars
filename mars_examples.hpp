@@ -6286,14 +6286,15 @@ std::cout<<" POST W="<<std::endl;
         std::vector<SparseMatrix<Real>> A_levels(levels.size());
 
 
-
+        for(Integer el=0;el<mesh.n_elements();el++)
+        	std::cout<<"el="<<el<<" lev="<<bisection.tracker().get_iterate(el)<<std::endl;
         std::cout<<"i=="<<levels.size()-1<<std::endl;
         A_levels[levels.size()-1]=AL;
 
         std::cout<<A_levels[levels.size()-1].max_rows()<<std::endl;
         std::cout<<A_levels[levels.size()-1].max_cols()<<std::endl;
 
-
+          
         std::cout<<" LEVEL INTERPS "<<std::endl;
         std::cout<<" LEVEL INTERPS "<<std::endl;
 
@@ -6321,6 +6322,7 @@ std::cout<<" POST W="<<std::endl;
         	std::cout<<A_levels[i].max_cols()<<std::endl;
             context.build_boundary_info(levels[i]);
             context.apply_zero_bc_to_matrix(A_levels[i]);
+            A_levels[i].print_val();
         }
 
         // for(Integer i=0;i<A_levels.size();i++)
@@ -6361,16 +6363,16 @@ std::cout<<" POST W="<<std::endl;
 
 
 
-		using AuxRT1= FunctionSpace< MeshT, RT<0,2>>;
-		using AuxP2= FunctionSpace< MeshT, Lagrange<1,1>>;
+		// using AuxRT1= FunctionSpace< MeshT, RT<0,2>>;
+		// using AuxP2= FunctionSpace< MeshT, Lagrange<1,1>>;
 
-		AuxRT1 rt1(mesh,bisection,n2em);//csmc);
-		AuxP2 p2(mesh,bisection,n2em);//csmc);
+		// AuxRT1 rt1(mesh,bisection,n2em);//csmc);
+		// AuxP2 p2(mesh,bisection,n2em);//csmc);
 
-	    auto Wtrial2try=(MixedFunctionSpace(rt1,p2));
-	    auto Wtrial2=FullSpaceBuild(Wtrial2try);
-	    using W_type2=decltype(Wtrial2);
-	    auto W_ptr2=std::make_shared<W_type2>(Wtrial2);
+	 //    auto Wtrial2try=(MixedFunctionSpace(rt1,p2));
+	 //    auto Wtrial2=FullSpaceBuild(Wtrial2try);
+	 //    using W_type2=decltype(Wtrial2);
+	 //    auto W_ptr2=std::make_shared<W_type2>(Wtrial2);
 
 
 	    clock_t begin2 = clock();
@@ -6381,7 +6383,7 @@ std::cout<<" POST W="<<std::endl;
 	    std::cout<<"TIME BUILD="<< double(end2 - begin2) / CLOCKS_PER_SEC <<std::endl;
 
          begin2 = clock();
-	    auto& e2d=entity2dofs.get();
+	    auto& e2d=entity2dofs.get(levels);
 	    end2 = clock();
 
 	    std::cout<<"TIME E2D GET="<< double(end2 - begin2) / CLOCKS_PER_SEC <<std::endl;
@@ -6638,11 +6640,11 @@ std::cout<<" POST W="<<std::endl;
 
 	    os.close();
 
-        std::vector<Integer> a{14,3,2,1,4,2,3,48,3};
+        // std::vector<Integer> a{14,3,2,1,4,2,3,48,3};
 
-        std::sort(a.begin(),a.end()-1);
-        for(auto it=a.begin();it!=a.end();it++)
-        	std::cout<<*it<<std::endl;
+        // std::sort(a.begin(),a.end()-1);
+        // for(auto it=a.begin();it!=a.end();it++)
+        // 	std::cout<<*it<<std::endl;
 
 
 
