@@ -16,7 +16,6 @@
 #include "mars_benchmark.hpp"
 #include "mars_lepp_benchmark.hpp"
 #include "mars_prelepp_benchmark.hpp"
-#include "mars_lepp_benchmark_kokkos.hpp"
 
 #include "mars_test.hpp"
 #include "mars_ranked_edge.hpp"
@@ -32,7 +31,14 @@
 
 #ifdef WITH_KOKKOS
 #include "mars_test_kokkos.hpp"
+#include "mars_lepp_benchmark_kokkos.hpp"
 #endif //WITH_KOKKOS
+
+#ifdef WITH_PAR_MOONOLITH
+#include "mars_moonolith_test.hpp"
+#include <mpi.h>
+#endif //WITH_PAR_MOONOLITH
+
 
 #ifdef WITH_MPI
 #include "mars_par_bisection.hpp"
@@ -1001,10 +1007,11 @@ void run_benchmarks(int level, int refine_level)
 
 	PreLeppBenchmark<Mesh2> b;
 	b.run(level, m, "b");*/
+	
 
+#ifdef WITH_KOKKOS
 
-
-/*	ParallelMesh2 pMesh2;
+	/*	ParallelMesh2 pMesh2;
 	//generate_cube(pMesh2, level +6, level + 20 , 0);
 	generate_cube(pMesh2, level, level, 0);
 	ParallelLeppBenchmark<ParallelMesh2> b;
@@ -1017,6 +1024,7 @@ void run_benchmarks(int level, int refine_level)
 	b2.run(refine_level, sMesh, "b2");*/
 	//test_mars_mesh_generation_kokkos_3D(level,refine_level, level);
 	//test_mars_nonsimplex_mesh_generation_kokkos_2D(level, refine_level);
+
 	test_mars_nonsimplex_mesh_generation_kokkos_3D(level, refine_level, refine_level);
 
 	/*ParallelMesh3 pMesh3;
@@ -1025,11 +1033,13 @@ void run_benchmarks(int level, int refine_level)
 	ParallelLeppBenchmark<ParallelMesh3> b;
 	b.run(refine_level,pMesh3, "pb");*/
 
-/*	Mesh3 sMesh3;
+	/*	Mesh3 sMesh3;
 	convert_parallel_mesh_to_serial(sMesh3, pMesh3);
 
 	PreLeppBenchmark<Mesh3> b3;
 	b3.run(refine_level, sMesh3, "b3");*/
+#endif
+
 }
 
 void test_incomplete_2D()
@@ -1248,7 +1258,12 @@ int main(int argc, char *argv[])
 
 #ifdef WITH_MPI
 	MPI_Init(&argc, &argv);
-#endif //WITH_MPI
+#else
+#ifdef WITH_PAR_MOONOLITH
+	MPI_Init(&argc, &argv);
+#endif
+#endif 
+
 	// test_bisection_2D();
 	 //test_bisection_3D(atoi(argv[1]));
 	// test_bisection_4D();
@@ -1340,6 +1355,11 @@ int main(int argc, char *argv[])
 
 #endif
 
+
+#ifdef WITH_PAR_MOONOLITH
+	run_mars_moonolith_test();
+#endif //WITH_PAR_MOONOLITH
+
 	if (level < 100) {
 		//test_mars_mesh_generation_3D(level , level, level );
 
@@ -1348,12 +1368,14 @@ int main(int argc, char *argv[])
 	}
 
 
-
 #ifdef WITH_MPI
 	// par_mesh_test();
 	return MPI_Finalize();
 #else
-
-	return 0;
+	#ifdef WITH_PAR_MOONOLITH
+		return MPI_Finalize();
+	#else 
+		return 0;
+	#endif
 #endif //WITH_MPI
 }

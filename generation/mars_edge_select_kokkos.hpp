@@ -2,7 +2,9 @@
 #define MARS_EDGE_SELECT_KOKKOS_HPP
 
 #include "mars_base.hpp"
+#ifdef WITH_KOKKOS
 #include "mars_edge_kokkos.hpp"
+#endif
 #include "mars_fwd.hpp"
 #include "mars_globals.hpp"
 
