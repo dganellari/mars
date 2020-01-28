@@ -267,7 +267,7 @@ namespace mars {
         {
             assert(edge_num == 0);
             v1 = nodes[0];
-            v1 = nodes[1];
+            v2 = nodes[1];
         }
 
         void side(const Integer &side_num,
@@ -312,7 +312,7 @@ namespace mars {
                     return nodes[1];
                 }
             } else if(nodes[0] == v2) {
-                if(nodes[0] == v1) {
+                if(nodes[1] == v1) {
                     return nodes[2];
                 } else {
                     return nodes[1];

@@ -1,4 +1,4 @@
-	#ifndef MARS_GLOBALS_HPP
+#ifndef MARS_GLOBALS_HPP
 #define MARS_GLOBALS_HPP
 
 #include <vector>
@@ -6,14 +6,13 @@
 #include "mars_base.hpp"
 
 #ifdef WITH_KOKKOS
-#include <Kokkos_Core.hpp>
-#include <Kokkos_UnorderedMap.hpp>
-#define MARS_INLINE_FUNCTION KOKKOS_INLINE_FUNCTION 
+	#define MARS_INLINE_FUNCTION KOKKOS_INLINE_FUNCTION 
+	#include <Kokkos_Core.hpp>
+	#include <Kokkos_UnorderedMap.hpp>
+	#include "mars_device_vector.hpp"
 #else
-#define MARS_INLINE_FUNCTION inline
+	#define MARS_INLINE_FUNCTION inline
 #endif
-
-#include "mars_device_vector.hpp"
 
 namespace mars {
 
@@ -41,7 +40,7 @@ namespace mars {
         return i + (2 * xDim + 1) * (j + k * (2 * yDim + 1));
     }
 
-	KOKKOS_INLINE_FUNCTION
+	MARS_INLINE_FUNCTION
 	Integer elem_index(const Integer i, const Integer j, const Integer k,
 		const Integer xDim, const Integer yDim)
 	{
@@ -130,12 +129,13 @@ namespace mars {
 		return (exp == 0 ? 1 : base * power(base, exp - 1));
 	}
 
-	template<typename T, Integer N>
-	MARS_INLINE_FUNCTION
-	int find_pivot (TempArray<T,N> &in, int start, int end)
+#ifdef WITH_KOKKOS
+
+	template <typename T, Integer N>
+	MARS_INLINE_FUNCTION int find_pivot(TempArray<T, N> &in, int start, int end)
 	{
 		int pivot = in[end]; // pivot
-		int i = (start - 1);// Index of smaller element
+		int i = (start - 1); // Index of smaller element
 
 		for (int j = start; j <= end - 1; j++)
 		{
@@ -150,9 +150,8 @@ namespace mars {
 		return (i + 1);
 	}
 
-	template<typename T, Integer N>
-	MARS_INLINE_FUNCTION
-	void quick_sort(TempArray<T,N> &in, int start, int end)
+	template <typename T, Integer N>
+	MARS_INLINE_FUNCTION void quick_sort(TempArray<T, N> &in, int start, int end)
 	{
 		if (start < end)
 		{
@@ -163,18 +162,17 @@ namespace mars {
 		}
 	}
 
-	template<typename T>
-	MARS_INLINE_FUNCTION
-	void quick_sort(TempArray<T, 2> &in, const int start,
-			const int end)
+	template <typename T>
+	MARS_INLINE_FUNCTION void quick_sort(TempArray<T, 2> &in, const int start,
+										const int end)
 	{
 		if (start < end)
 		{
-			if(in[end]<in[start])
-			swap(&in[start], &in[end]);
+			if (in[end] < in[start])
+				swap(&in[start], &in[end]);
 		}
 	}
-
+#endif
 }
 
 #endif //MARS_GLOBALS_HPP

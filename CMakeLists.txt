@@ -2,69 +2,119 @@ cmake_minimum_required(VERSION 2.8.12)
 
 project(mars)
 
+option(TRY_WITH_MOONOLITH "Use -DTRY_WITH_MOONOLITH=ON for enabling mesh transfer functions." OFF)
+option(TRY_WITH_KOKKOS "Use -DTRY_WITH_KOKKOS=ON for enabling mesh transfer functions." OFF)
+
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING
+      "Choose the type of build, options are: Debug Release
+RelWithDebInfo MinSizeRel."
+      FORCE)
+
+  	message(STATUS "[Status] CMAKE_BUILD_TYPE=Release")
+endif(NOT CMAKE_BUILD_TYPE)
+
+#################################################################################
+#################################################################################
+#################################################################################
+
+
+function(find_project_files rootPath dirPaths headers sources)
+	SET(verbose TRUE)
+
+	SET(theaders ${${headers}})
+	SET(tsources ${${sources}})
+
+	SET(ROOT_PATH ${${rootPath}})
+	SET(DIR_PATHS ${${dirPaths}})
+
+	FOREACH(INCLUDE_PATH ${DIR_PATHS})
+		INCLUDE_DIRECTORIES(${ROOT_PATH}/${INCLUDE_PATH})
+
+		file(GLOB TEMP_HPPSRC "${ROOT_PATH}/${INCLUDE_PATH}/*.cpp" )
+		file(GLOB TEMP_SRC "${ROOT_PATH}/${INCLUDE_PATH}/*.c" )
+		file(GLOB TEMP_HPPDR "${ROOT_PATH}/${INCLUDE_PATH}/*.hpp" )
+		file(GLOB TEMP_HDR "${ROOT_PATH}/${INCLUDE_PATH}/*.h" )
+
+		SOURCE_GROUP(${INCLUDE_PATH} FILES ${TEMP_HPPDR}; ${TEMP_HDR}; ${TEMP_HPPSRC}; ${TEMP_SRC}; ${TEMP_UI})
+
+		SET(tsources ${tsources}; ${TEMP_SRC}; ${TEMP_HPPSRC})
+		SET(theaders ${theaders}; ${TEMP_HDR}; ${TEMP_HPPDR})
+	ENDFOREACH(INCLUDE_PATH)
+
+	SET(${headers} ${theaders} PARENT_SCOPE)
+	SET(${sources} ${tsources} PARENT_SCOPE)
+endfunction()
+
+#################################################################################
+#################################################################################
+#################################################################################
 
 find_package(MPIExtended)
 
-#if(MPI_FOUND)
-#	set(CMAKE_CXX_COMPILER ${MPI_CXX_COMPILER})
-#	set(CMAKE_CXX_COMPILER_DEBUG ${MPI_CXX_COMPILER})
-#	set(WITH_MPI ON)
-#endif()
+# if(MPI_FOUND)
+# 	set(CMAKE_CXX_COMPILER ${MPI_CXX_COMPILER})
+# 	set(CMAKE_CXX_COMPILER_DEBUG ${MPI_CXX_COMPILER})
+# 	set(WITH_MPI ON)
+# endif()
 
 option(MARS_USE_CUDA "Build mars with cuda support" OFF)
 
 
-if (NOT TRILINOS_DIR)
-  message(STATUS "Setting TRILINOS_DIR to $ENV{TRILINOS_DIR}")
-  set(TRILINOS_DIR $ENV{TRILINOS_DIR} CACHE PATH "Directory where Kokkos is installed")
-endif()
+if(TRY_WITH_KOKKOS)
+	if (NOT TRILINOS_DIR)
+	  message(STATUS "Setting TRILINOS_DIR to $ENV{TRILINOS_DIR}")
+	  set(TRILINOS_DIR $ENV{TRILINOS_DIR} CACHE PATH "Directory where Kokkos is installed")
+	endif()
 
-if (NOT KOKKOS_DIR)
-  message(STATUS "Setting KOKKOS_DIR to $ENV{KOKKOS_DIR}")
-  set(KOKKOS_DIR $ENV{KOKKOS_DIR} CACHE PATH "Directory where Kokkos is installed")
-endif()
+	if (NOT KOKKOS_DIR)
+	  message(STATUS "Setting KOKKOS_DIR to $ENV{KOKKOS_DIR}")
+	  set(KOKKOS_DIR $ENV{KOKKOS_DIR} CACHE PATH "Directory where Kokkos is installed")
+	endif()
 
-#FIND_PACKAGE(Trilinos PATHS ${TRILINOS_DIR}/lib/cmake/Trilinos QUIET)
-FIND_PACKAGE(Kokkos HINTS ${KOKKOS_DIR}/lib/CMake/Kokkos ${TRILINOS_DIR}/lib/cmake/Kokkos QUIET)
+	#FIND_PACKAGE(Trilinos PATHS ${TRILINOS_DIR}/lib/cmake/Trilinos QUIET)
+	FIND_PACKAGE(Kokkos HINTS ${KOKKOS_DIR}/lib/CMake/Kokkos ${TRILINOS_DIR}/lib/cmake/Kokkos QUIET)
 
-IF(Kokkos_FOUND)
-   	MESSAGE("\nFound Kokkos!  Here are the details: ")
-   	MESSAGE("   Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
-   	MESSAGE("   Kokkos_C_COMPILER = ${Kokkos_C_COMPILER}")
-   
-   	IF(Kokkos_CXX_COMPILER)
-		SET(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
-		SET(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
-		MESSAGE("Setting CMAKE_CXX_COMPILER to Kokkos_CXX_COMPILER")
-   	ENDIF()
-   
-   	set(WITH_KOKKOS ON)
-   
-	FIND_PACKAGE(OpenMP)
+	IF(Kokkos_FOUND)
+	   	MESSAGE("\nFound Kokkos!  Here are the details: ")
+	   	MESSAGE("   Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
+	   	MESSAGE("   Kokkos_C_COMPILER = ${Kokkos_C_COMPILER}")
+	   
+	   	IF(Kokkos_CXX_COMPILER)
+			SET(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
+			SET(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
+			MESSAGE("Setting CMAKE_CXX_COMPILER to Kokkos_CXX_COMPILER")
+	   	ENDIF()
+	   
+	   	set(WITH_KOKKOS ON)
+	   
+		FIND_PACKAGE(OpenMP)
 
-	IF(OPENMP_FOUND)
-	 	SET (CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${OpenMP_Fortran_FLAGS}")
-	 	SET (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-	 	SET (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
-	 	set (CMAKE_CXX_LINK_FLAGS "${CMAKE_CXX_LINK_FLAGS} ${OpenMP_CXX_FLAGS}")
+		IF(OPENMP_FOUND)
+		 	SET (CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${OpenMP_Fortran_FLAGS}")
+		 	SET (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+		 	SET (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
+		 	set (CMAKE_CXX_LINK_FLAGS "${CMAKE_CXX_LINK_FLAGS} ${OpenMP_CXX_FLAGS}")
+		ENDIF()
+	   
+	ELSE()
+	  	MESSAGE(WARNING "Could not find Kokkos!")
+	  	IF(MARS_USE_CUDA)
+	    	MESSAGE(FATAL_ERROR "Could not use CUDA without Kokkos!")
+	  	ENDIF()
 	ENDIF()
-   
-ELSE()
-  	MESSAGE(WARNING "Could not find Kokkos!")
-  	IF(MARS_USE_CUDA)
-    	MESSAGE(FATAL_ERROR "Could not use CUDA without Kokkos!")
-  	ENDIF()
-ENDIF()
+
+endif()
 
 list(APPEND MARS_HEADERS
 	mars.hpp
 	mars_base.hpp
 	mars_benchmark.hpp
 	mars_bisection.hpp
-	mars_lepp_bisection.hpp
-	mars_lepp_benchmark.hpp
 	mars_communicator.hpp
+	mars_config.hpp.in
 	mars_dof_map.hpp
 	mars_dual_graph.hpp
 	mars_edge.hpp
@@ -73,14 +123,17 @@ list(APPEND MARS_HEADERS
 	mars_edge_select.hpp
 	mars_edge_split.hpp
 	mars_edge_split_pool.hpp
+	mars_extract_surface.hpp
+	mars_fwd.hpp
+	mars_globals.hpp
 	mars_imesh.hpp
 	mars_lagrange_element.hpp
-	mars_globals.hpp
 	mars_longest_edge.hpp
 	mars_matrix.hpp
-	mars_imesh.hpp
 	mars_mesh.hpp
 	mars_mesh_partition.hpp
+	mars_mesh_reader.hpp
+	mars_mesh_writer.hpp
 	mars_newest_vertex.hpp
 	mars_node_rank.hpp
 	mars_oldest_edge.hpp
@@ -100,8 +153,9 @@ list(APPEND MARS_HEADERS
 	mars_vector.hpp
 	mars_visualization.hpp
 	mars_vtk_writer.hpp
-	mars_fwd.hpp
 	mars_non_simplex.hpp
+	mars_lepp_bisection.hpp
+	mars_lepp_benchmark.hpp
 	mars_prelepp_benchmark.hpp
 	mars_prelepp_bisection.hpp
 	mars_mesh_reader.hpp
@@ -110,6 +164,7 @@ list(APPEND MARS_HEADERS
 	generation/mars_point.hpp
 	generation/mars_mesh_generation.hpp
     generation/mars_device_vector.hpp
+	generation/mars_memory.hpp
 	)
 	
 IF(Kokkos_FOUND)
@@ -180,6 +235,16 @@ ENDIF()
 add_executable(mars_exec main.cpp)
 target_link_libraries(mars_exec mars)
 
+if(TRY_WITH_MOONOLITH)
+	add_subdirectory(moonolith_adapter)
+endif()
+
+target_link_libraries(mars ${MARS_LIBRARIES})
+target_include_directories(mars PUBLIC ${CMAKE_BINARY_DIR})
+target_include_directories(mars PUBLIC ${MARS_INCLUDES})
+
+message(STATUS "${MARS_INCLUDES}")
+
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/mars_config.hpp.in ${CMAKE_BINARY_DIR}/mars_config.hpp)
 include_directories(${CMAKE_BINARY_DIR})
 
@@ -191,7 +256,6 @@ install(TARGETS mars mars_exec
 
 install(FILES ${MARS_HEADERS} DESTINATION include)
 install(FILES ${CMAKE_BINARY_DIR}/mars_config.hpp DESTINATION include)
-
 
 
 # add_definitions("-DWITH_MOONOLITH")

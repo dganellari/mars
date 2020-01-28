@@ -494,6 +494,7 @@ namespace mars {
         return (gen_pts && gen_elm);
     }
     
+#ifdef WITH_KOKKOS    
 		//non simplex cube generation.
 	template<Integer Dim, Integer ManifoldDim, Integer Type>
 	bool generate_cube(
@@ -515,9 +516,7 @@ namespace mars {
 
 		return (gen_pts && gen_elm);
 	}
-    
-#ifdef WITH_KOKKOS
-    
+
     inline bool generate_square(ParallelMesh2& mesh, const Integer xDim, const Integer yDim) {
         return generate_cube(mesh, xDim, yDim, 0);
     }
