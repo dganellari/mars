@@ -1,7 +1,8 @@
 #ifndef MARS_LONGEST_EDGE_SELECT_HPP
 #define MARS_LONGEST_EDGE_SELECT_HPP
 
-#include "generation/mars_edge_select_kokkos.hpp"
+#include "mars_edge_select.hpp"
+#include "mars_edge_select_kokkos.hpp"
 #include "mars_node_rank.hpp"
 
 namespace mars {

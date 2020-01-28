@@ -1,4 +1,4 @@
-#include "generation/mars_mesh_kokkos.hpp"
+#include "mars_mesh_kokkos.hpp"
 
 void test_mars_mesh_generation_kokkos_1D(const int level) {
 
@@ -79,11 +79,12 @@ void test_mars_nonsimplex_mesh_generation_kokkos_2D(const int x, const int y) {
 	ParallelQuad4Mesh pMesh;
 	generate_cube(pMesh, x, y, 0);
 
-
 	double time = timer.seconds();
 
 	std::cout << "Generation 2D kokkos took: " << time << " seconds." << std::endl;
 
+	std::cout << "n_active_elements pmesh: " << pMesh.n_active_elements(pMesh.get_view_elements().extent(0))
+			<< std::endl;
 	if (x < 100) {
 
 		Quad4_Mesh sMesh;
@@ -110,12 +111,12 @@ void test_mars_nonsimplex_mesh_generation_kokkos_3D(const int x, const int y, co
 	ParallelHex8Mesh pMesh;
 	generate_cube(pMesh, x, y, z);
 
-/* 		std::cout << "n_active_elements pmesh: " << pMesh.n_active_elements(pMesh.get_view_elements().extent(0))
-				<< std::endl; */
 	double time = timer.seconds();
 
 	std::cout << "Generation 3D kokkos took: " << time << " seconds." << std::endl;
-
+	std::cout << "n_active_elements pmesh: " << pMesh.n_active_elements(pMesh.get_view_elements().extent(0))
+				<< std::endl;
+				
 	if (x < 100) {
 
 		Hex8_Mesh sMesh;

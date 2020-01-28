@@ -30,7 +30,7 @@ namespace mars {
 
 			//RecursiveLeppBisection<Mesh> b(mesh);
 			LeppBisection<Mesh> b(mesh);
-			b.uniform_refine(1);
+			//b.uniform_refine(1);
 
 			Integer exp_num = 0;
 			run_benchmark(n_levels, es, mesh, output_path, exp_num++);
@@ -62,7 +62,7 @@ namespace mars {
 			//RecursiveLeppBisection<Mesh> b(mesh);
 			LeppBisection<Mesh> b(mesh);
 
-			b.uniform_refine(2);
+			b.uniform_refine(1);
 
 			std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
 
@@ -93,11 +93,16 @@ namespace mars {
 
 			std::cout << "volume: " << mesh.volume() << std::endl;
 			std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+			std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
+
+			//test_incomplete_ND(mesh, 10, true);
+
 
 			if(n_levels <= 20 && mesh.ManifoldDim <4){
 				VTKMeshWriter<Mesh> w;
 				w.write("LEPP_" + edge_select->name() + std::to_string(n_levels) + "_" + std::to_string(mesh.ManifoldDim) + ".vtu", mesh);
 			}
+			mesh.repair(true);
 
 			mesh.update_dual_graph();
 			// q.report.normalize_data_points();

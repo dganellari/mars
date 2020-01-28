@@ -11,7 +11,7 @@ namespace mars {
 	template<class Mesh>
 	class Benchmark {
 	public:
-		using EdgeSelectPtr = std::shared_ptr<EdgeSelect<Mesh>>;
+		using EdgeSelectPtr = std::shared_ptr<ParallelEdgeSelect<Mesh>>;
 		
 		static const Integer Dim 		 = Mesh::Dim;
 		static const Integer ManifoldDim = Mesh::ManifoldDim;
@@ -36,7 +36,7 @@ namespace mars {
 			//refine once for creating nice intial set-up for newest vertex algorithm
 			auto mesh = mesh_in;
 			Bisection<Mesh> b(mesh);
-			b.uniform_refine(1);
+		//	b.uniform_refine(1);
 
 			Integer exp_num = 0;
 			for(auto es : edge_selects) {
@@ -68,8 +68,8 @@ namespace mars {
 			std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 
 			Bisection<Mesh> b(mesh);
-			b.set_edge_select(edge_select);
-			b.uniform_refine(2);
+		//	b.set_edge_select(edge_select);
+			b.uniform_refine(1);
 
 			std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
 

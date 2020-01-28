@@ -101,6 +101,12 @@ list(APPEND MARS_HEADERS
 	mars_visualization.hpp
 	mars_vtk_writer.hpp
 	mars_fwd.hpp
+	mars_non_simplex.hpp
+	mars_prelepp_benchmark.hpp
+	mars_prelepp_bisection.hpp
+	mars_mesh_reader.hpp
+	mars_mesh_writer.hpp
+	generation/mars_sub_view.hpp
 	generation/mars_point.hpp
 	generation/mars_mesh_generation.hpp
     generation/mars_device_vector.hpp
@@ -112,6 +118,16 @@ IF(Kokkos_FOUND)
 	    generation/mars_mesh_kokkos.hpp
 	    generation/mars_test_kokkos.hpp
 	    generation/mars_utils_kokkos.hpp
+		generation/mars_edge_select_kokkos.hpp
+		generation/mars_static_math_kokkos.hpp
+		generation/mars_simplex_kokkos.hpp
+		generation/mars_non_simplex_kokkos.hpp
+		generation/mars_edge_kokkos.hpp
+		generation/mars_lepp_benchmark_kokkos.hpp
+		generation/mars_bisection_kokkos.hpp
+		generation/mars_edge_node_map_kokkos.hpp
+		generation/mars_edge_element_map_kokkos.hpp
+		generation/mars_mark_kokkos.hpp
 	)
 ENDIF()
 
@@ -138,6 +154,7 @@ target_link_libraries(mars ${MPI_LIBRARIES})
 
 add_definitions("-std=c++11")
 target_include_directories(mars PUBLIC .)
+target_include_directories(mars PUBLIC generation)
 
 IF(Kokkos_FOUND)
 	MESSAGE(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
