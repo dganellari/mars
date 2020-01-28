@@ -6316,7 +6316,7 @@ std::cout<<" POST W="<<std::endl;
         	// std::cout<<AP.max_cols()<<std::endl;
          //    A_levels[i]=levels_interp.matrix(i).transpose_and_multiply(AP);
 
-            context.matrix_assembly(A_levels[i],i);
+            context.matrix_assembly(A_levels[i],levels[i]);
         	std::cout<<A_levels[i].max_rows()<<std::endl;
         	std::cout<<A_levels[i].max_cols()<<std::endl;
             context.build_boundary_info(levels[i]);
