@@ -39,25 +39,24 @@ public:
 		//, combinations(nullptr)
 	{}
 
-	void reserve(const std::size_t n_elements, const std::size_t n_points) override
-	{
-		elements_size_ = n_elements;
-		points_size_ = n_points;
-		children_size_=0;
+    void reserve(const std::size_t n_elements, const std::size_t n_points) override
+    {
+        elements_size_ = n_elements;
+        points_size_ = n_points;
+        children_size_ = 0;
 
-		elements_ = ViewMatrixType<Integer>("elems", n_elements,
-				Elem::ElemType);
-		active_ = ViewVectorType<bool>("active_", n_elements);
-		points_ = ViewMatrixType<Real>("pts", n_points, Dim);
-	}
+        elements_ = ViewMatrixType<Integer>("elems", n_elements, Elem::ElemType);
+        active_ = ViewVectorType<bool>("active_", n_elements);
+        points_ = ViewMatrixType<Real>("pts", n_points, Dim);
+    }
 
-	void reserve_points(const std::size_t n_points)
-	{
-		points_size_ = n_points;
-		points_ = ViewMatrixType<Real>("pts", n_points, Dim);
-	}
+    void reserve_points(const std::size_t n_points)
+    {
+        points_size_ = n_points;
+        points_ = ViewMatrixType<Real>("pts", n_points, Dim);
+    }
 
-	void reserve_elements(const std::size_t n_elements)
+    void reserve_elements(const std::size_t n_elements)
 	{
 		elements_size_ = n_elements;
 		children_size_=0;
@@ -146,18 +145,18 @@ public:
 		return active_(id);
 	}
 
-	MARS_INLINE_FUNCTION bool is_valid(const Integer id) const
-	{
-		return id >= 0 && id < n_elements();
-	}
+    MARS_INLINE_FUNCTION bool is_valid(const Integer id) const
+    {
+        return id >= 0 && id < n_elements();
+    }
 
-	MARS_INLINE_FUNCTION bool is_node_valid(const Integer id) const
-	{
-		return id >= 0 && id < n_nodes();
-	}
+    MARS_INLINE_FUNCTION bool is_node_valid(const Integer id) const
+    {
+        return id >= 0 && id < n_nodes();
+    }
 
-	MARS_INLINE_FUNCTION
-	const ViewMatrixTextureC<Integer, Comb::value, 2> & combs() const
+    MARS_INLINE_FUNCTION
+    const ViewMatrixTextureC<Integer, Comb::value, 2> & combs() const
 	{
 		return combinations;
 	}
@@ -187,16 +186,16 @@ public:
 		active_(id) = val;
 	}
 
-	MARS_INLINE_FUNCTION
-	void add_point(const Point &point, const Integer index)
-	{
-		for (Integer i = 0; i < Dim; ++i)
-		{
-			points_(index, i) = point[i];
-		}
-	}
+    MARS_INLINE_FUNCTION
+    void add_point(const Point &point, const Integer index)
+    {
+        for (Integer i = 0; i < Dim; ++i)
+        {
+            points_(index, i) = point[i];
+        }
+    }
 
-	MARS_INLINE_FUNCTION
+    MARS_INLINE_FUNCTION
 	void add_point(const TempArray<Real, Dim> &point, const Integer index)
 	{
 		for (Integer i = 0; i < Dim; ++i)
@@ -1233,7 +1232,8 @@ public:
 	
 	};
 
-inline bool generate_points(const int xDim, const int yDim, const int zDim, Integer type) {
+	inline bool generate_points(const int xDim, const int yDim, const int zDim, 
+				Integer type) {
 
 		using namespace Kokkos;
 
@@ -1243,8 +1243,7 @@ inline bool generate_points(const int xDim, const int yDim, const int zDim, Inte
 
 			switch(type){
 
-			case ElementType::Quad4:{
-
+			case ElementType::Quad4: {
 				assert(xDim != 0);
 				assert(yDim != 0);
 				assert(zDim == 0);
@@ -1255,7 +1254,6 @@ inline bool generate_points(const int xDim, const int yDim, const int zDim, Inte
 				parallel_for(
 						MDRangePolicy<Rank<2> >( { 0, 0 }, { yDim + 1, xDim + 1 }),
 						AddNonSimplexPoint(points_, xDim, yDim));
-
 				return true;
 			}
 			default: {
@@ -1267,8 +1265,7 @@ inline bool generate_points(const int xDim, const int yDim, const int zDim, Inte
 
 			switch(type){
 
-			case ElementType::Hex8:{
-
+			case ElementType::Hex8: {
 				assert(xDim != 0);
 				assert(yDim != 0);
 				assert(zDim != 0);
@@ -1281,7 +1278,6 @@ inline bool generate_points(const int xDim, const int yDim, const int zDim, Inte
 						MDRangePolicy<Rank<3> >( { 0, 0, 0 },
 								{ zDim + 1, yDim + 1, xDim + 1}),
 						AddNonSimplexPoint(points_, xDim, yDim, zDim));
-
 				return true;
 			}
 			default: {
@@ -1310,19 +1306,22 @@ inline bool generate_points(const int xDim, const int yDim, const int zDim, Inte
 
 		AddElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
 				Integer xdm) :
-				elem(el), active(ac), xDim(xdm) {
+				elem(el), active(ac), xDim(xdm) 
+		{
 		}
 
 		AddElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
 				Integer xdm, Integer ydm) :
-				elem(el), active(ac), xDim(xdm), yDim(ydm) {
+				elem(el), active(ac), xDim(xdm), yDim(ydm) 
+		{
 		}
 
 		AddElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
 				ViewMatrixTexture<Integer,hex_n_nodes> hxs, ViewMatrixTextureC<unsigned int,hex_n_sides, hex_side_n_nodes> map,
 				Integer xdm, Integer ydm, Integer zdm) :
-				elem(el), active(ac), hexes(hxs), map_side_nodes(map), xDim(xdm), yDim(ydm), zDim(zdm) {
-		}
+				elem(el), active(ac), hexes(hxs), map_side_nodes(map), xDim(xdm), yDim(ydm), zDim(zdm) 
+				{
+				}
 
 		KOKKOS_INLINE_FUNCTION
 		void operator()(int index) const {
@@ -1330,7 +1329,6 @@ inline bool generate_points(const int xDim, const int yDim, const int zDim, Inte
 			switch (ManifoldDim_) {
 
 			case 1: {
-
 				for (int i = 0; i < ManifoldDim + 1; ++i) {
 					elem(index, i) = index + i;
 				}
@@ -1339,7 +1337,6 @@ inline bool generate_points(const int xDim, const int yDim, const int zDim, Inte
 				break;
 			}
 			case 2: {
-
 				const int offset = yDim + 1;
 
 				//extracting i and j from the global index from the parallel for to make it coalesced.
@@ -1367,7 +1364,6 @@ inline bool generate_points(const int xDim, const int yDim, const int zDim, Inte
 				break;
 			}
 			case 3: {
-
 				const int n_cube_nodes = (2 * xDim + 1) * (2 * yDim + 1)
 						* (2 * zDim + 1);
 
@@ -1390,7 +1386,6 @@ inline bool generate_points(const int xDim, const int yDim, const int zDim, Inte
 				elem(index, 3) = centerHex; // the center of the cube.
 
 				active(index) = true;
-
 				break;
 			}
 			default:
@@ -1424,14 +1419,12 @@ inline bool generate_points(const int xDim, const int yDim, const int zDim, Inte
 		 */
 
 		KOKKOS_INLINE_FUNCTION
-		void operator()(int z, int y, int x) const {
-
+		void operator()(int z, int y, int x) const 
+		{
 			Integer cube_index = xDim * yDim * z + xDim * y + x;
-
 			//build the hex27 element which serves to generalize the idea to many hex27.
 			//without generating the hex27 element first there is no easy way to create the sides.
 			build_hex27(IndexView<Integer,hex_n_nodes>(hexes, cube_index), xDim, yDim, 2 * x, 2 * y, 2 * z);
-
 		}
 	};
 
@@ -1497,7 +1490,8 @@ inline bool generate_points(const int xDim, const int yDim, const int zDim, Inte
 	}
 
 	//add elem functor
-	struct AddNonSimplexElem {
+	struct AddNonSimplexElem
+	{
 
 		ViewMatrixType<Integer> elem;
 		ViewVectorType<bool> active;
@@ -1507,53 +1501,53 @@ inline bool generate_points(const int xDim, const int yDim, const int zDim, Inte
 		Integer zDim;
 
 		AddNonSimplexElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
-				Integer xdm) :
-				elem(el), active(ac), xDim(xdm) {
+							Integer xdm) : elem(el), active(ac), xDim(xdm)
+		{
 		}
 
 		AddNonSimplexElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
-				Integer xdm, Integer ydm) :
-				elem(el), active(ac), xDim(xdm), yDim(ydm) {
+							Integer xdm, Integer ydm) : elem(el), active(ac), xDim(xdm), yDim(ydm)
+		{
 		}
 
 		AddNonSimplexElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
-				Integer xdm, Integer ydm, Integer zdm) :
-				elem(el), active(ac), xDim(xdm), yDim(ydm), zDim(zdm) {
+							Integer xdm, Integer ydm, Integer zdm) : elem(el), active(ac), xDim(xdm), yDim(ydm), zDim(zdm)
+		{
 		}
 
-		KOKKOS_INLINE_FUNCTION
-		void operator()(int j, int i) const {
+        KOKKOS_INLINE_FUNCTION
+        void operator()(int j, int i) const
+        {
+            const int offset = xDim + 1;
+            int index = j * xDim + i;
 
-		const int offset = xDim + 1;
-		int index = j * xDim + i;
+            elem(index, 0) = i + offset * j;
+            elem(index, 1) = (i + 1) + offset * j;
+            elem(index, 2) = (i + 1) + offset * (j + 1);
+            elem(index, 3) = i + offset * (j + 1);
 
-		elem(index, 0) = i  + offset * j;
-		elem(index, 1) = (i + 1) + offset * j;
-		elem(index, 2) = (i + 1) + offset * (j + 1);
-		elem(index, 3) = i + offset * (j + 1);
+            active(index) = true;
+        }
 
-		active(index) = true;
-		}
-		
-		KOKKOS_INLINE_FUNCTION
-		void operator()(int k, int j, int i) const {
-
-			int index =  k * xDim * yDim + j * xDim + i;
-
-			elem(index,0) = elem_index(i, j, k, xDim, yDim);
-			elem(index,1) = elem_index(i+1, j, k, xDim, yDim);
-			elem(index,2) = elem_index(i+1, j+1, k, xDim, yDim);
-			elem(index,3) = elem_index(i, j+1, k, xDim, yDim);
-			elem(index,4) = elem_index(i, j, k+1, xDim, yDim);
-			elem(index,5) = elem_index(i+1, j, k+1, xDim, yDim);
-			elem(index,6) = elem_index(i+1, j+1, k+1, xDim, yDim);
-			elem(index,7) = elem_index(i, j+1, k+1, xDim, yDim);
+        KOKKOS_INLINE_FUNCTION
+		void operator()(int k, int j, int i) const
+		{
+			int index = k * xDim * yDim + j * xDim + i;
+			
+			elem(index, 0) = elem_index(i, j, k, xDim, yDim);
+			elem(index, 1) = elem_index(i + 1, j, k, xDim, yDim);
+			elem(index, 2) = elem_index(i + 1, j + 1, k, xDim, yDim);
+			elem(index, 3) = elem_index(i, j + 1, k, xDim, yDim);
+			elem(index, 4) = elem_index(i, j, k + 1, xDim, yDim);
+			elem(index, 5) = elem_index(i + 1, j, k + 1, xDim, yDim);
+			elem(index, 6) = elem_index(i + 1, j + 1, k + 1, xDim, yDim);
+			elem(index, 7) = elem_index(i, j + 1, k + 1, xDim, yDim);
 
 			active(index) = true;
 		}
 	};
 
-	inline bool generate_elements(const int xDim, const int yDim,
+    inline bool generate_elements(const int xDim, const int yDim,
 			 const int zDim, Integer type) {
 
 		using namespace Kokkos;
@@ -1564,14 +1558,12 @@ inline bool generate_points(const int xDim, const int yDim, const int zDim, Inte
 
 			switch(type){
 
-				case ElementType::Quad4:{
-
+			case ElementType::Quad4: {
 				const int n_elements = xDim * yDim;
 				reserve_elements(n_elements);
 
 				parallel_for(MDRangePolicy<Rank<2> >( { 0, 0 }, {yDim, xDim}),
-			 				AddNonSimplexElem(elements_, active_, xDim, yDim));
-							 
+			 				AddNonSimplexElem(elements_, active_, xDim, yDim));							 
 				return true;
 			}
 			default: {
@@ -1583,14 +1575,12 @@ inline bool generate_points(const int xDim, const int yDim, const int zDim, Inte
 
 			switch(type){
 
-			case ElementType::Hex8:{
-
+			case ElementType::Hex8: {
 				const int n_elements = xDim * yDim * zDim;
 				reserve_elements(n_elements);
 
 				parallel_for(MDRangePolicy<Rank<3> >( { 0, 0, 0 }, {zDim, yDim, xDim}),
-							AddNonSimplexElem(elements_, active_, xDim, yDim, zDim));
-								
+							AddNonSimplexElem(elements_, active_, xDim, yDim, zDim));								
 				return true;
 			}
 			default: {
@@ -1604,61 +1594,53 @@ inline bool generate_points(const int xDim, const int yDim, const int zDim, Inte
 		}
 	}
 
-		struct RefineMesh {
+    struct RefineMesh
+    {
+        Mesh *mesh;
+        Integer xDim;
 
-			Mesh* mesh;
+        void init(const Mesh &m)
+        {
+            Mesh *tmp = (Mesh *)Kokkos::kokkos_malloc(sizeof(Mesh));
 
-			Integer xDim;
+            Kokkos::parallel_for("CreateMeshObject", 1, KOKKOS_LAMBDA(const int &) {
+                new ((Mesh *)tmp) Mesh(m);
+            });
 
-			void init(const Mesh& m){
+            mesh = tmp; //otherwise "this" pointer is still a host pointer within the parallel_for.
+        }
 
-				Mesh* tmp = (Mesh*) Kokkos::kokkos_malloc(sizeof(Mesh));
+        RefineMesh(const Mesh &m, Integer xdm) : xDim(xdm)
+        {
+            init(m);
+        }
+        /*~RefineMesh() {
+			Kokkos::kokkos_free(m);
+		}*/
+        KOKKOS_INLINE_FUNCTION
+        void operator()(int x) const
+        {
+            LongestEdgeSelect<Mesh> es;
+            es.select(*mesh, x);
+        }
+    };
 
-				Kokkos::parallel_for("CreateMeshObject", 1, KOKKOS_LAMBDA (const int&){
-					new ((Mesh*)tmp) Mesh(m);
-				});
+    inline bool refine_mesh(const int xDim)
+	{
+		using namespace Kokkos;
+		const int n_elements = xDim;
 
-				mesh = tmp; //otherwise "this" pointer is still a host pointer within the parallel_for.
-			}
+		RefineMesh ref= RefineMesh(*this, xDim);
+		parallel_for(n_elements, ref);
 
-			RefineMesh(const Mesh& m, Integer xdm) :
-					xDim(xdm)
-			{
-				init(m);
-			}
+		const Mesh* tmp = ref.mesh;
 
-			/*~RefineMesh() {
-				Kokkos::kokkos_free(m);
-			}*/
+		parallel_for("DestroyMeshObject",1, KOKKOS_LAMBDA (const int&) {
+			tmp->~Mesh();
+		});
 
-			KOKKOS_INLINE_FUNCTION
-			void operator()(int x) const {
-
-
-				LongestEdgeSelect<Mesh> es;
-				es.select(*mesh, x);
-
-
-			}
-		};
-
-		inline bool refine_mesh(const int xDim)
-		{
-
-			using namespace Kokkos;
-			const int n_elements = xDim;
-
-			RefineMesh ref= RefineMesh(*this, xDim);
-			parallel_for(n_elements, ref);
-
-			const Mesh* tmp = ref.mesh;
-
-			parallel_for("DestroyMeshObject",1, KOKKOS_LAMBDA (const int&) {
-				tmp->~Mesh();
-			});
-
-			return true;
-		}
+		return true;
+	}
 
 private:
 	ViewMatrixTextureC<Integer, Comb::value, 2> combinations;

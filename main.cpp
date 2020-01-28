@@ -16,22 +16,22 @@
 #include "mars_benchmark.hpp"
 #include "mars_lepp_benchmark.hpp"
 #include "mars_prelepp_benchmark.hpp"
-#include "generation/mars_lepp_benchmark_kokkos.hpp"
+#include "mars_lepp_benchmark_kokkos.hpp"
 
 #include "mars_test.hpp"
 #include "mars_ranked_edge.hpp"
 #include "mars_oldest_edge.hpp"
 #include "mars_longest_edge.hpp"
-#include "generation/mars_memory.hpp"
+#include "mars_memory.hpp"
 #include "mars_mesh_reader.hpp"
 #include "mars_mesh_writer.hpp"
 #include <err.h>
 
 
-#include "generation/mars_mesh_generation.hpp"
+#include "mars_mesh_generation.hpp"
 
 #ifdef WITH_KOKKOS
-#include "generation/mars_test_kokkos.hpp"
+#include "mars_test_kokkos.hpp"
 #endif //WITH_KOKKOS
 
 #ifdef WITH_MPI
@@ -116,7 +116,7 @@ mars::Quad4_Mesh test_mars_quad_mesh_generation_2D(const int x,
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
 
 
-	if (x <= 1000) {
+	if (x <= 100) {
 		VTKMeshWriter<Quad4_Mesh> w;
 		w.write("build_quad4" + std::to_string(x) + std::to_string(y) + ".vtu", mesh);
 	}
@@ -143,7 +143,7 @@ mars::Hex8_Mesh test_mars_hex8_mesh_generation_3D(const int x,
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
 
 
-	if (x <= 1000) {
+	if (x <= 100) {
 		VTKMeshWriter<Hex8_Mesh> w;
 		w.write("build_hex8" + std::to_string(x) + std::to_string(y) + ".vtu", mesh);
 	}
@@ -169,7 +169,7 @@ mars::Mesh3 test_mars_mesh_generation_3D(const int x,
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
 
-	if (z < 102) {
+	if (z < 100) {
 		std::cout<<"build_cube" + std::to_string(x) + std::to_string(y) + ".vtu"<<std::endl;
 		VTKMeshWriter<Mesh3> w;
 		w.write("build_cube" + std::to_string(x) + std::to_string(y) + ".vtu", mesh);
@@ -912,7 +912,7 @@ void run_benchmarks(int level, int refine_level)
 	std::cout<<"Generation level:"<<level<<std::endl;
 	std::cout<<"Refinement level:"<<refine_level<<std::endl;
 
-	/*Mesh2 m;
+    /*Mesh2 m;
 	read_mesh("../data/square_2_def.MFEM", m);
 
 	LeppBenchmark<Mesh2> lb;
@@ -1015,10 +1015,10 @@ void run_benchmarks(int level, int refine_level)
 
 	PreLeppBenchmark<Mesh2> b2;
 	b2.run(refine_level, sMesh, "b2");*/
-	test_mars_quad_mesh_generation_2D(level, refine_level);
-	test_mars_mesh_generation_3D(level,refine_level, level);
-	test_mars_quad_mesh_generation_2D(level, refine_level);
-	test_mars_hex8_mesh_generation_3D(level, refine_level, refine_level);
+	//test_mars_mesh_generation_kokkos_3D(level,refine_level, level);
+	//test_mars_nonsimplex_mesh_generation_kokkos_2D(level, refine_level);
+	test_mars_nonsimplex_mesh_generation_kokkos_3D(level, refine_level, refine_level);
+
 	/*ParallelMesh3 pMesh3;
 	generate_cube(pMesh3, level, level, level);
 

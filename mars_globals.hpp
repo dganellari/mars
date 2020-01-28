@@ -13,7 +13,7 @@
 #define MARS_INLINE_FUNCTION inline
 #endif
 
-#include "generation/mars_device_vector.hpp"
+#include "mars_device_vector.hpp"
 
 namespace mars {
 
