@@ -285,7 +285,7 @@ public:
 		read_mesh("../data/write/euler.MFEM", sMesh3);*/
 
 		typename Mesh::SerialMesh sMesh;
-		convert_parallel_mesh_to_serial<Dim,ManifoldDim>(sMesh, *mesh);
+		convert_parallel_mesh_to_serial(sMesh, *mesh);
 
 		Kokkos::Timer timer;
 
