@@ -245,8 +245,15 @@ namespace mars {
     		
     		std::ofstream os;
     		os.open(path.c_str());
-    		if (!os.good()) {
+    		if (!os.good())
+    		{
     			os.close();
+    			return false;
+    		}
+
+    		if(mesh.n_active_elements()==0)
+    		{
+    			std::cout<<"No active elements in the mesh. Nothing to write in a vtk file."<<std::endl;
     			return false;
     		}
 
@@ -332,10 +339,10 @@ namespace mars {
     		for (Integer k = 0; k < mesh.n_elements(); ++k) {
     			if(!mesh.is_active(k)) continue;
 
-    			for (Integer i = 0; i < ManifoldDim+1; ++i) {
+    			for (Integer i = 0; i <  mars::n_nodes(mesh.elem(k)); ++i) {
     				const Integer v = mesh.elem(k).nodes[i];
     				os << v;
-    				if (i < ManifoldDim) {
+    				if (i < mars::n_nodes(mesh.elem(k))-1) {
     					os << " ";
     				}
     			}
@@ -346,14 +353,14 @@ namespace mars {
             /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     		int minTag, maxTag;
     		if(ManifoldDim == 1){
-    			minTag = VTKTag(ManifoldDim+1);
-    			maxTag = VTKTag(ManifoldDim+1);
+    			minTag = VTKTag(mesh.elem(0).type());
+    			maxTag = VTKTag(mesh.elem(0).type());
     		}else if (ManifoldDim == 2) {
-    			minTag = VTKTagPlanar(ManifoldDim+1);
-    			maxTag = VTKTagPlanar(ManifoldDim+1);
+    			minTag = VTKTagPlanar(mesh.elem(0).type());
+    			maxTag = VTKTagPlanar(mesh.elem(0).type());
     		} else {
-    			minTag = VTKTagVolume(ManifoldDim+1);
-    			maxTag = VTKTagVolume(ManifoldDim+1);
+    			minTag = VTKTagVolume(mesh.elem(0).type());
+    			maxTag = VTKTagVolume(mesh.elem(0).type());
     		}
 
     		
@@ -362,11 +369,11 @@ namespace mars {
     		"\" RangeMax=\"" << maxTag << "\">\n";
     		for (Integer i = 0; i < n_active_elements; ++i) {
     			if (ManifoldDim == 3) {
-    				os << VTKTagVolume(ManifoldDim+1) << "\n";
+    				os << VTKTagVolume(mesh.elem(i).type()) << "\n";
     			} else if (ManifoldDim == 2) {
-    				os << VTKTagPlanar(ManifoldDim+1) << "\n";
+    				os << VTKTagPlanar(mesh.elem(i).type()) << "\n";
     			}else
-    				os << VTKTag(ManifoldDim+1) << "\n";
+    				os << VTKTag(mesh.elem(i).type()) << "\n";
 
     		}
 
@@ -376,9 +383,9 @@ namespace mars {
 
     		
     		os << "<DataArray type=\"UInt64\" Name=\"offsets\" format=\"ascii\" RangeMin=\"" << (ManifoldDim+1) <<
-    		"\" RangeMax=\"" << (n_active_elements * (ManifoldDim+1)) << "\">\n";
+    		"\" RangeMax=\"" << (n_active_elements * (mars::n_nodes(mesh.elem(0)))) << "\">\n";
 
-    		for (Integer i = 0, offset = (ManifoldDim+1); i < n_active_elements; ++i, offset += (ManifoldDim+1)) {
+    		for (Integer i = 0, offset = (mars::n_nodes(mesh.elem(0))); i < n_active_elements; ++i, offset += (mars::n_nodes(mesh.elem(0)))) {
     			os << offset << "\n";
     		}
 
