@@ -44,6 +44,8 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
     
 
     auto full_spaces_ptr(){return bilinear_form_.spaces_ptr();}
+
+    
     template<typename SystemMat, typename Rhs>
     void assembly(SystemMat& A, Rhs& b,const Integer level=-1)
     {
@@ -101,7 +103,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
     // NodeToElem<MeshT> node_2_elem(mesh);
      // const auto& node2elem=node_2_elem.val();
      Integer max_cols=n2e.max_n_nodes();
-     // std::cout<<"------_______-----llll"<<std::endl;
+     std::cout<<"------_______-----max_cols"<<max_cols<<std::endl;
      // // std::cout<<node2elem.size()<<std::endl;
      // for(Integer i=0;i<node2elem.size();i++)
      // {

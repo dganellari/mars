@@ -49,7 +49,7 @@ namespace mars {
 
 
 template<typename T>
-class MatTraceOperator
+class MatTraceOperator: public Expression<MatTraceOperator<Expression<T>>>
 {    
  public:     
   static_assert(StaticAssertMatrixOrTransposed<T>::value && "UnaryMinus allows:mat+mat;");
@@ -58,12 +58,14 @@ class MatTraceOperator
  inline static void apply(Output& A,const T& B)
   {
     // std::cout<<"pre MatTraceOperator"<<std::endl;
+    // std::cout<<B<<std::endl;
     static_assert(T::Rows==T::Cols && "trace operator can only be applied to square matrices");
     // std::cout<<"MatTraceOperator<Transposed<Matrix<T,Rows,Cols>> "<<std::endl;
    A(0,0)=B(0,0);
    for(Integer ii=1;ii<T::Rows;ii++)
     A(0,0)+=B(ii,ii);
     // std::cout<<"after MatTraceOperator"<<std::endl;
+    // std::cout<<A<<std::endl;
   };
 
 
@@ -131,6 +133,8 @@ template<typename T>
 class MatTraceOperator<Expression<T>>: public Expression<MatTraceOperator<Expression<T>>>
 {
 public:
+
+    MatTraceOperator(){}
 
     MatTraceOperator(const Expression<T>& expr): value_(expr.derived()){};
     MatTraceOperator(const Expression<MatTraceOperator<Expression<T>>>& expr): value_(expr.derived().derived().derived()){};

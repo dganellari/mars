@@ -176,6 +176,7 @@ public:
     {
     Integer cont_=0;
     Vector<Real,Dim> point;
+    // std::cout<<"QPPointsFunction begin" <<std::endl;
     for(Integer ii=0;ii<Points.size();ii++)
      {
       FE.transform_point(point,Points[ii]);
@@ -186,7 +187,10 @@ public:
       // const auto point_tmp=FE.jac()*Points[ii];
       // const auto v0=FE.v0();
       // const auto point=point_tmp+v0;
+      // std::cout<<"evaluation pre"<<std::endl;
       const auto& evaluation=FuncType::eval(point);
+      // std::cout<<"evaluation after "<<std::endl;
+
 
       // for(Integer jj=0;jj<evaluation.rows();jj++)
       //   {
@@ -199,6 +203,7 @@ public:
       //   }
 
       }
+    // std::cout<<"QPPointsFunction end" <<std::endl;
 
     }
 
@@ -221,6 +226,8 @@ public:
     {
     Integer cont_=0;
     Vector<Real,Dim> point;
+    // std::cout<<"QPPointsFunction begin2 " <<std::endl;
+
     for(Integer ii=0;ii<Points.size();ii++)
      {
       FE.transform_point(point,Points[ii]);
@@ -228,19 +235,26 @@ public:
       // const auto point_tmp=FE.jac()*Points[ii];
       // const auto v0=FE.v0();
       // const auto point=point_tmp+v0;
+      // std::cout<<"evaluation pre"<<std::endl;
       const auto& evaluation=FuncType::eval(point);
+      // std::cout<<"evaluation post"<<std::endl;
+      // std::cout<<"evaluation.rows()"<<evaluation.rows()<<std::endl;
+      // std::cout<<"evaluation.cols()"<<evaluation.cols()<<std::endl;
+      // std::cout<<"local_dofs"<<local_dofs<<std::endl;
 
       for(Integer jj=0;jj<evaluation.rows();jj++)
         {
         for(Integer kk=0;kk<evaluation.cols();kk++)
         {
-          local_dofs[cont_]=evaluation(kk,jj);  
+          // std::cout<<"jj,kk"<<jj<<","<<kk<<std::endl;
+          local_dofs[cont_]=evaluation(jj,kk);  
           cont_++;
         }
 
         }
 
       }
+    // std::cout<<"QPPointsFunction end2" <<std::endl;
 
     }
 
@@ -294,7 +308,9 @@ class Function
 
 
       // TODO FIXME
+      // std::cout<<"begin Function local_dofs_update"<<std::endl;
       QPPointsFunction<FunctionType,Space>::init(FE,local_dofs_);
+      // std::cout<<"end Function local_dofs_update"<<std::endl;
 
 
     } 
@@ -691,7 +707,7 @@ class Function<FullSpace,N,Operator_,EmptyClass>
   
    void local_dofs_update(const FiniteElem<Elem>& FE)
     {
-      // std::cout<<"local_dofs_update1"<<std::endl;
+      std::cout<<"local_dofs_update1"<<std::endl;
       auto local_map=tuple_get<N>(elemdofmap_); 
       const auto& level=FE.level();
       full_spaces_ptr_->dofsdofmap().template dofmap_get<N>(local_map,FE.elem_id(),level);

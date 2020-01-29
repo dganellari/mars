@@ -822,7 +822,6 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
   init_composite_shape_functions_aux_aux(Tuple& tuple, std::tuple<Args1...>& tuple_tensor,const FiniteElem<Elem> &J, std::tuple<Args2...>& tuple_composite)
   {
     // std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
-
   }
 
   template<Integer Nmax,Integer N,typename Tuple,typename...Args1>
@@ -841,8 +840,7 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
   template<Integer Nmax,Integer N,typename Tuple>
   constexpr void init_composite_shape_functions_aux_aux(Tuple& tuple, std::tuple<>& tuple_tensor,const FiniteElem<Elem> &J, std::tuple<>& tuple_composite)
   {
-    // std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
-
+    // std::cout<<"init_composite_shape_functions_aux_aux Nmax,N="<<Nmax<<", "<<N<<std::endl;
   }
 
   template<Integer Nmax,Integer N,typename Tuple,typename...Args1,typename...Args2>
@@ -860,7 +858,7 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
     // TupleOfTupleCompositeShapeFunctionTensor eee(6);
     // Number<N> ee3(5);
     // Number<Nmax> ee(5);
-    // std::cout<<"aux aux Nmax,N="<<Nmax<<", "<<N<<std::endl;
+    // std::cout<<"init_composite_shape_functions_aux_aux Nmax,N="<<Nmax<<", "<<N<<std::endl;
 
     // todo fixme scommentami
     composite.apply(tensor,J,tuple);

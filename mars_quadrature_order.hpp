@@ -162,10 +162,17 @@ class QuadratureOrder<DivergenceOperator, BaseFunctionSpace<RaviartThomasFE,Orde
 };
 
 
+// template<typename T,Integer FEFamily, Integer Order,Integer Continuity, Integer NComponents>
+// class QuadratureOrder<Operator,BaseFunctionSpace<FEFamily,Order,Continuity,NComponents> >
+// { public:
+//   static constexpr Integer value=QuadratureOrder<IdentityOperator,BaseFunctionSpace<FEFamily,Order,Continuity,NComponents>>::value;
+// };
+
+
 template<typename Operator,typename Elem, Integer FEFamily, Integer Order,Integer Continuity, Integer NComponents>
 class QuadratureOrder<Operator,ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents> >
 { public:
-  static constexpr Integer value=QuadratureOrder<Operator,BaseFunctionSpace<FEFamily,Order,Continuity,NComponents>>::value;
+  static constexpr Integer value=QuadratureOrder<IdentityOperator,BaseFunctionSpace<FEFamily,Order,Continuity,NComponents>>::value;
 };
 
 

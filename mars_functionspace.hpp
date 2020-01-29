@@ -623,7 +623,8 @@ public:
 
       // inline const Integer& n_dofs()const{return n_dofs_;};
 
-      inline const Integer& n_dofs()const{return dofsdm_.n_dofs()[0];};
+      inline const Integer& n_dofs()const
+      {return dofsdm_.level_n_dofs_array()[0][dofsdm_.level_n_dofs_array()[0].size()-1];};
 
 
       inline const auto& level_n_dofs_array()const{return dofsdm_.level_n_dofs_array();}

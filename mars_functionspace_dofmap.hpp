@@ -1716,7 +1716,7 @@ void dofmap_fespace4( MeshAndEntity<MeshT>& mesh_and_entity,
       // if(mesh_ptr->is_active(elem_iter))
       // {
        // change it for smarter algorithms   
-      std::cout<<" dofmap elem == "<< elem_iter <<std::endl;
+      // std::cout<<" dofmap elem == "<< elem_iter <<std::endl;
        auto& elem=mesh_ptr->elem(elem_iter);
        auto &elem_id=elem_iter;
 
@@ -1730,7 +1730,7 @@ void dofmap_fespace4( MeshAndEntity<MeshT>& mesh_and_entity,
     }
     end = clock();
     elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
-    std::cout<<"dofmap tuple elapsed_secs="<<elapsed_secs<<std::endl;
+    // std::cout<<"dofmap tuple elapsed_secs="<<elapsed_secs<<std::endl;
     for(std::size_t i=0; i<dofsdm_.n_dofs().size() ;i++)
       dofsdm_.n_dofs()[i]=global_dof_count;
 
@@ -2134,9 +2134,11 @@ public:
         // otherwise
         else
         {
+          // std::cout<<"do not reorder"<<std::endl;
     //     // if the entity has not been already visited, then create n_components new dofs
         if(!dof || continuity==Discontinuous)
         {
+          // std::cout<<"!dof || continuity==Discontinuous"<<std::endl;
           dof=std::make_shared<Integer>(global_dof_count);
           for(Integer entity_dofs_iter=0;entity_dofs_iter<dofs_per_entity;entity_dofs_iter++)
              for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
@@ -2145,18 +2147,22 @@ public:
 
                  // to add ??
                  // space_dofs->push_back(global_dof_count);
+                 // std::cout<<global_dof_count <<std::endl;
                  loc_dof_count++;
                  global_dof_count++;
+
                  }
         }
         else
         {
+          // std::cout<<"else"<<std::endl;
          global_old_dof=*dof;
          for(Integer entity_dofs_iter=0;entity_dofs_iter<dofs_per_entity;entity_dofs_iter++)
             for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
                {           
                 dofmap_vec[elem_id][loc_dof_count]=global_old_dof;
                 loc_dof_count++;
+                // std::cout<<global_old_dof <<std::endl;
                 global_old_dof++;
                }
         }
@@ -2867,8 +2873,8 @@ public:
       constexpr auto combinations_nums=ElemEntityCombinations<Elem,entity_dim>::value;
 
 
-          // std::cout<<"___________LEVEL="<<level<<std::endl;
-          // std::cout<<"count_n_entity_vec.size()-1="<<count_n_entity_vec.size()-1<<std::endl;
+          std::cout<<"___________LEVEL="<<level<<std::endl;
+          std::cout<<"count_n_entity_vec.size()-1="<<count_n_entity_vec.size()-1<<std::endl;
       if(count_n_entity_vec.size()-1<level)
         count_n_entity_vec.push_back(count_n_entity_vec[count_n_entity_vec.size()-1]);
       // std::cout<<"count_n_entity_vec[END]="<<std::endl;
@@ -3054,6 +3060,7 @@ public:
     auto& m1=tuple_get<N>(map);
     auto& m2=tuple_get<N>(parent_map);
     auto& m3=tuple_get<N>(map_dof);
+    std::cout<<"INIT ELEM aux ="<<std::endl;
     init_elem_aux_aux<N>(elem2dofs,m1,m2,m3,local_dof_count,count_n_entity_vec,elem,level);
     init_elem_aux<N+1>(elem2dofs,map,parent_map,map_dof,local_dof_count,count_n_entity_vec,elem,level);
    }
@@ -3083,6 +3090,7 @@ public:
              const Elem elem)
 
    {
+    // std::cout<<"INIT COARSE ELEM ="<<std::endl;
     auto& m1=tuple_get<N>(map);
     auto& m2=tuple_get<N>(parent_map);
     auto& m3=tuple_get<N>(map_dof);
@@ -3259,7 +3267,7 @@ template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Ma
   auto& m1=tuple_get<N>(map);
   auto& m2=tuple_get<N>(parent_map);
   auto& m3=tuple_get<N>(map_dof);
-  // std::cout<<"DofMapFESpace level = " << level<<std::endl;
+  // std::cout<<"DofMapFESpace aux level = " << level<<std::endl;
   dofmapfespace.init_elem(m0,m1,m2,m3,count_n_entity_vec,elem,level);
 }
 
@@ -3280,7 +3288,7 @@ template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Ma
   auto& m1=tuple_get<N>(map);
   auto& m2=tuple_get<N>(parent_map);
   auto& m3=tuple_get<N>(map_dof);
-  // std::cout<<"DofMapFESpace level = " << level<<std::endl;
+  // std::cout<<"DofMapFESpace aux level = " << level<<std::endl;
   dofmapfespace.init_elem(m0,m1,m2,m3,count_n_entity_vec,elem,level);
   init_elem_aux<N+1,BFSs...>(elem2dofs,map,parent_map,map_dof,count_n_entity_vec,elem,level);
 }
@@ -4205,12 +4213,11 @@ void dofmap_fespace5(
       // if(!elem_belongs_to_level(mesh,elem_iter,level,bisection)) continue;
        
        // change it for smarter algorithms   
-      // std::cout<<" dofmap elem == "<< elem_iter <<std::endl;
+      // std::cout<<" dofmap elem == "<< elem_iter <<" /"<< mesh.n_elements()<< std::endl;
       // std::cout<<"elem_iter="<<elem_iter<<std::endl;
 
        auto& elem=mesh.elem(elem_iter);
-       // std::cout<<"qui1="<<elem_iter<<std::endl;
-       auto &elem_id=elem_iter;
+       auto &elem_id=elem.id;
        // std::cout<<"has_tracked="<<has_tracked<<std::endl;
        if(has_tracked)
           level=tracker.get_iterate(elem_id);
@@ -4265,7 +4272,7 @@ void dofmap_fespace5(
 //     std::cout<< global_dof_count[i]<<" ";
 //      std::cout<<std::endl;}
 
-    // std::cout<<"AFTER LEVEL N DOFS ARRAY ="<<std::endl;
+    std::cout<<"AFTER LEVEL N DOFS ARRAY ="<<std::endl;
     // loop on the spaces
     for(std::size_t i=0; i<dofsdm_.n_dofs().size() ;i++)
       { dofsdm_.level_n_dofs_array()[i].resize(n_levels);
@@ -4273,10 +4280,20 @@ void dofmap_fespace5(
         for(std::size_t j=0;j<n_levels;j++)
            {
             dofsdm_.level_n_dofs_array()[i][j]=global_dof_count[j];
-            // std::cout<<dofsdm_.level_n_dofs_array()[i][j]<<" ";
+            std::cout<<dofsdm_.level_n_dofs_array()[i][j]<<" ";
           }
-         // std::cout<<std::endl;
+         std::cout<<std::endl;
        }
+
+    std::cout<<"AFTER LEVEL N DOFS ="<<std::endl;
+
+        for(Integer i=0;i<dofsdm_.n_dofs().size();i++)
+        {
+          dofsdm_.n_dofs()[i]=dofsdm_.level_n_dofs_array()[i][n_levels-1];
+          std::cout<<dofsdm_.n_dofs()[i]<<std::endl;
+        }
+
+
  // std::cout<<" after dofmap tuple elapsed_secs="<<elapsed_secs<<std::endl;
 // tuple2array_dofs_offset<n_spaces-1>(dofs_offset,dofs_offset_arr);
 }

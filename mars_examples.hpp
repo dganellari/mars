@@ -16,7 +16,7 @@
 
 
 
-
+    #include "mars_constant.hpp"
 	#include "mars_evaluation.hpp"
 	#include "mars_quadrature_order.hpp"
 	#include "mars_function.hpp"
@@ -2209,9 +2209,9 @@ public:
 	static constexpr Integer solution_array_size=Npoints*Rows*Cols;
 	using TotType = typename SingleTypeShapeFunction<FunctionSpace,Operator>::TotType;
 	static constexpr Integer Ntot=FunctionSpaceDofsPerSubEntityElem<ElemFunctionSpace<Elem,BaseFunctionSpace>,Elem::ManifoldDim>::value;
-	static constexpr Integer Ndofs=Ntot/NComponents;
+	static constexpr Integer NDofs_single_space=Ntot/NComponents;
 	static constexpr auto 
-	reference_values{reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(Points::points)};
+	reference_values{reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,NDofs_single_space>(Points::points)};
 	using Map=MapFromReference<Operator,Elem,FEFamily>;  
 	static constexpr auto NShapes=reference_values.size();
 
@@ -2244,6 +2244,8 @@ public:
         auto& signed_normal=mesh_ptr->signed_normal();
 		SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(FE.elem_id()),coeff_);
 		shape_.init_map(map_);
+
+
 
 		shape_.init(coeff_,MatPoints);
 		const auto& shape_eval=shape_.eval();
@@ -2410,7 +2412,7 @@ public:
 		Map map_;
 		Array<SingleType,Npoints*NComponents> mat_tmp_;
 		Array<Real,solution_array_size> output_;
-		Array<Real,NDofs> coeff_;
+		Array<Real,NDofs_single_space> coeff_;
 		Shape shape_;
 // std::vector<> 
 
@@ -4487,9 +4489,6 @@ private:
 
 
 
-
-
-
 template <Integer Dim,Integer ManifoldDim,Integer Continuity, Integer NComponents_,Integer QR>
 class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Continuity,NComponents_>,QR>
 {
@@ -4527,6 +4526,7 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Con
     using ShapeFaceValue=typename ShapeFace::type;
     using QPpointsFace=typename ShapeFace::qp_points_type;
 
+    // using ShapeTraceFace=ShapeFunction<Elem,RTnBaseFunctionSpace,TraceOperator,QRuleFaceReference>;
 
     using ShapeTraceFace=ShapeFunction<Elem,RTnBaseFunctionSpace,TraceOperator,QRuleFaceReference>;
     using trace_type=typename ShapeTraceFace::trace_type;
@@ -4536,14 +4536,14 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Con
     using ShapeMomentumValue=typename ShapeMomentum::type;
     using QPpointsMomentum=typename ShapeMomentum::qp_points_type;
 
+	using QRuleBarycenterReference=typename QuadratureRule<QR>:: template rule<Elem,1>;
+    using ShapeBarycenter=ShapeFunction<Elem,RTnBaseFunctionSpace,IdentityOperator,QRuleBarycenterReference>;
+    using QPpointsBarycenter=typename ShapeBarycenter::qp_points_type;
+
+
     using Coefficients=ShapeFunctionCoefficientsCollectionSingleType<Elem,FEFamily>;
     using ShapeLagrangianMomentum=ShapeFunction<Elem,PnBaseFunctionSpace,IdentityOperator,QRuleMomentum>;
 
-  // template<typename Mat,typename Values>
-  // static void compute(Mat& local_mat, Values& func_values )
-  // {
-  // 	local_mat(M,N)=func_values[N][0](0,0);
-  // }
     template<typename Output, typename Weight, typename ShapeValue,typename ShapeTraceValue,typename Normal>
     void compute_face_dofs(Output& out, Integer& fine_dof, const Weight& weights,const ShapeValue& shape_value,ShapeTraceValue& shape_trace_value, const Normal& normal, FiniteElem<Elem>& FE)
     {
@@ -4574,67 +4574,127 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Con
      // std::cout<<out<<std::endl;    
     }
 
-    template<typename Output, typename Weight, typename ShapeValue, typename ShapeLagrangeValue>
-    void compute_momentum_dofs(Output& out, Integer& fine_dof,  const Weight& weights, ShapeValue& shape_value,const Integer component, ShapeLagrangeValue& shape_lagrange_value,const FiniteElem<Elem>& FE)
+    // template<typename Output, typename Weight, typename ShapeValue,typename Normal>
+    // void compute_face_dofs(Output& out, Integer& fine_dof, const Weight& weights,const ShapeValue& shape_value, const Normal& normal, FiniteElem<Elem>& FE)
+    // {
+    //  const auto& NQPoints=ShapeValue::NQPoints;
+    //  const auto& Ndofs=Output::Rows;
+
+    //  // std::cout<<"compute_face_dofs"<<std::endl;
+    //  // std::cout<<"shape_value"<<std::endl;
+    //  // std::cout<<shape_value<<std::endl; 
+
+    //  // std::cout<<"normal"<<std::endl;
+    //  // std::cout<<normal<<std::endl;
+    //  // std::cout<<"weights"<<std::endl;
+    //  // std::cout<<weights<<std::endl;
+    //  // std::cout<<"FE.get_det_side()"<<std::endl;
+    //  // std::cout<<FE.get_det_side()<<std::endl;
+    //  for(Integer coarse_dof=0;coarse_dof<NDofs;coarse_dof++)
+    //  {
+    //     out(fine_dof,coarse_dof)=0;
+
+    //  	for(Integer qp=0;qp<NQPoints;qp++)
+    //  	{
+    //  		for(Integer i=0;i<ManifoldDim;i++)
+    //  		{
+    //  			out(fine_dof,coarse_dof)+= weights[qp]*shape_value[coarse_dof][qp][i]*normal[i];
+    //  		}
+    //  	}
+    //    out(fine_dof,coarse_dof)*=FE.get_det_side();
+
+    //  }
+    //  // std::cout<<"out"<<std::endl;
+    //  // std::cout<<out<<std::endl;    
+    // }
+
+
+
+    // template<typename Output, typename Weight, typename ShapeValue, typename ShapeLagrangeValue>
+    // void compute_momentum_dofs(Output& out, Integer& fine_dof,  const Weight& weights, ShapeValue& shape_value,const Integer component, ShapeLagrangeValue& shape_lagrange_value,const FiniteElem<Elem>& FE)
+    // {
+    //  const auto& NQPoints=ShapeValue::NQPoints;
+    //  const auto& Ndofs=Output::Rows;
+     
+
+    //   // std::cout<<"compute_momentum_dofs"<<std::endl;
+    //   // std::cout<<"weights"<<std::endl;
+    //   // std::cout<<weights<<std::endl;
+
+    //   // std::cout<<"shape_value"<<std::endl;
+    //   // std::cout<<shape_value<<std::endl;
+
+    //   // std::cout<<"shape_lagrange_value"<<std::endl;
+    //   // std::cout<<shape_lagrange_value<<std::endl;
+
+    //   // std::cout<<"FE.get_det()"<<std::endl;
+    //   // std::cout<<FE.get_det()<<std::endl;
+
+    //  for(Integer coarse_dof=0;coarse_dof<Ndofs;coarse_dof++)
+    //  {
+    //     out(fine_dof,coarse_dof)=0;
+    //     // std::cout<<"n_dof="<<n_dof<<std::endl;
+    //  	for(Integer qp=0;qp<NQPoints;qp++)
+    //  	{
+    //  			out(fine_dof,coarse_dof)+= weights[qp]*shape_value[coarse_dof][qp][component]*shape_lagrange_value[qp](0,0);
+    //  			// std::cout<<out(n_dof,cont)<<" ";
+    //  	}
+
+    //    // std::cout<<out(n_dof,cont)<<std::endl;
+    //    out(fine_dof,coarse_dof)*=FE.get_det();
+
+    //  }
+    //  // std::cout<<"out"<<std::endl;
+    //  // std::cout<<out<<std::endl;    
+    // }
+
+
+
+    template<typename Output, typename ShapeValue>
+    void compute_barycenter_dofs(Output& out, Integer& fine_dof,  const Integer component, ShapeValue& shape_value)
     {
      const auto& NQPoints=ShapeValue::NQPoints;
      const auto& Ndofs=Output::Rows;
-     
 
-      // std::cout<<"compute_momentum_dofs"<<std::endl;
-      // std::cout<<"weights"<<std::endl;
-      // std::cout<<weights<<std::endl;
 
-      // std::cout<<"shape_value"<<std::endl;
-      // std::cout<<shape_value<<std::endl;
+     std::cout<<"Ndofs="<<Ndofs<<" NQPoints="<<NQPoints<<std::endl;
 
-      // std::cout<<"shape_lagrange_value"<<std::endl;
-      // std::cout<<shape_lagrange_value<<std::endl;
-
-      // std::cout<<"FE.get_det()"<<std::endl;
-      // std::cout<<FE.get_det()<<std::endl;
 
      for(Integer coarse_dof=0;coarse_dof<Ndofs;coarse_dof++)
      {
         out(fine_dof,coarse_dof)=0;
-        // std::cout<<"n_dof="<<n_dof<<std::endl;
-     	for(Integer qp=0;qp<NQPoints;qp++)
+        std::cout<<"fine_dof="<<fine_dof<<" coarse_dof="<<coarse_dof<<std::endl;
+     	for(Integer qp=0;qp<1;qp++)
      	{
-     			out(fine_dof,coarse_dof)+= weights[qp]*shape_value[coarse_dof][qp][component]*shape_lagrange_value[qp](0,0);
-     			// std::cout<<out(n_dof,cont)<<" ";
+     			out(fine_dof,coarse_dof)=shape_value[coarse_dof][qp][component];
+     			std::cout<<out(fine_dof,coarse_dof)<<" ";
      	}
+     	std::cout<<std::endl;
 
        // std::cout<<out(n_dof,cont)<<std::endl;
-       out(fine_dof,coarse_dof)*=FE.get_det();
 
      }
-     // std::cout<<"out"<<std::endl;
-     // std::cout<<out<<std::endl;    
+  
     }
+
+
 
     // face dofs
     template<Integer EntityDim, typename Mat>
     std::enable_if_t< (EntityDim==entity[0]), void>
     compute(Mat& mat, Integer& cont, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
     {
-     // F_map_.init(F_FE_);
-    	// QPpointsFace frfrfr(5);
-    	// typename QRuleFaceReference::qp_points_type feef(5);
-    	// std::cout<<"compute "<<std::endl;
-    	auto mesh_ptr=F_FE.mesh_ptr();
-    	// std::cout<<"qui1 "<<std::endl;
+
+
+
+     	auto mesh_ptr=F_FE.mesh_ptr();
     	const auto& signed_normal=mesh_ptr->signed_normal();
-    	// std::cout<<"qui2 "<<std::endl;
         C_map_.init(C_FE);
-        // std::cout<<"qui3 "<<std::endl;
         shape_face_.init_map(C_map_);
-        // std::cout<<"qui4 "<<std::endl;
         // coeffs_.init(*mesh_ptr);
 
         SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
-        // std::cout<<"qui5 "<<std::endl;
     	F_FE.side_transform_point(qp_points_face_,QRuleFaceReference::qp_points);
-    	// std::cout<<"qui6 "<<std::endl;
      // 	std::cout<<"QRuleFaceReference::qp_points"<<std::endl;
     	// std::cout<<QRuleFaceReference::qp_points<<std::endl;
     	// std::cout<<"qp_points_face_"<<std::endl;
@@ -4643,15 +4703,12 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Con
         C_FE.points_to_reference_points(reference_qp_points_face_,qp_points_face_);
         // std::cout<<"qui7 "<<std::endl;
     	// std::cout<<"reference_qp_points_face_"<<std::endl;
-    	// std::cout<<reference_qp_points_face_<<std::endl;
+    	std::cout<<reference_qp_points_face_<<std::endl;
         shape_face_.init(coeff_,reference_qp_points_face_);
-        // std::cout<<"shape_face_.eval()"<<std::endl;
-        // std::cout<<shape_face_.eval()<<std::endl;
-        // Vector<Real,NDofsFace> out; 
+        // // Vector<Real,NDofsFace> out; 
 
         const auto& normal=signed_normal.normals()[F_FE.elem_id()][F_FE.side_id()];
-        
-        // std::cout<<"qui1"<<std::endl;
+
         Integer id=F_FE.side_id();
         // std::cout<<"qui2"<<std::endl;
         trace_map_.init(F_FE);
@@ -4659,98 +4716,220 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Con
         shape_trace_face_.init_map(trace_map_);
         // std::cout<<"qui4"<<std::endl;
         shape_trace_face_.init(coeff_,id);
-        // std::cout<<"F_FE.side_id()"<<std::endl;
-        // std::cout<<F_FE.side_id()<<std::endl;
 
-        // std::cout<<"shape_trace_face_.eval()"<<std::endl;
-        // std::cout<<shape_trace_face_.eval()<<std::endl;
         
+        std::cout<<"reference_qp_points_face_"<<std::endl;
+        std::cout<<reference_qp_points_face_<<std::endl;
+        std::cout<<"normal"<<std::endl;
+        std::cout<<normal<<std::endl;
+        std::cout<<"shape_face_.eval()"<<std::endl;
+        std::cout<<shape_face_.eval()<<std::endl;
+        std::cout<<"shape_trace_face_.eval()"<<std::endl;
+        std::cout<<shape_trace_face_.eval()<<std::endl;
+
         for(Integer i=0;i<dofs_per_entity[0]; i++)
         {
          compute_face_dofs(mat,cont,QRuleFace::qp_weights,shape_face_.eval() ,shape_trace_face_.eval()[i], normal, F_FE);
          cont++;
         }
-    	// std::cout<<"mat"<<std::endl;
-    	// std::cout<<mat<<std::endl;
+
+
+
+
+
+     // F_map_.init(F_FE_);
+    	// QPpointsFace frfrfr(5);
+    	// typename QRuleFaceReference::qp_points_type feef(5);
+    	// // std::cout<<"compute "<<std::endl;
+    	// auto mesh_ptr=F_FE.mesh_ptr();
+    	// // std::cout<<"qui1 "<<std::endl;
+    	// const auto& signed_normal=mesh_ptr->signed_normal();
+    	// // std::cout<<"qui2 "<<std::endl;
+     //    C_map_.init(C_FE);
+     //    // std::cout<<"qui3 "<<std::endl;
+     //    shape_face_.init_map(C_map_);
+     //    // std::cout<<"qui4 "<<std::endl;
+     //    // coeffs_.init(*mesh_ptr);
+
+     //    SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
+     //    // std::cout<<"qui5 "<<std::endl;
+    	// F_FE.side_transform_point(qp_points_face_,QRuleFaceReference::qp_points);
+    	// // std::cout<<"qui6 "<<std::endl;
+     // // 	std::cout<<"QRuleFaceReference::qp_points"<<std::endl;
+    	// // std::cout<<QRuleFaceReference::qp_points<<std::endl;
+    	// // std::cout<<"qp_points_face_"<<std::endl;
+    	// // std::cout<<qp_points_face_<<std::endl;
+     // // transformed_point_row_=C_FE_.inv_jac()*transformed_point_col_;
+     //    C_FE.points_to_reference_points(reference_qp_points_face_,qp_points_face_);
+     //    // std::cout<<"qui7 "<<std::endl;
+    	// // std::cout<<"reference_qp_points_face_"<<std::endl;
+    	// // std::cout<<reference_qp_points_face_<<std::endl;
+     //    shape_face_.init(coeff_,reference_qp_points_face_);
+     //    std::cout<<"shape_face_.eval()"<<std::endl;
+     //    // std::cout<<shape_face_.eval()<<std::endl;
+     //    // Vector<Real,NDofsFace> out; 
+
+     //    const auto& normal=signed_normal.normals()[F_FE.elem_id()][F_FE.side_id()];
+        
+     //    // std::cout<<"qui1"<<std::endl;
+     //    Integer id=F_FE.side_id();
+     //    // std::cout<<"qui2"<<std::endl;
+     //    trace_map_.init(F_FE);
+     //    // std::cout<<"qui3"<<std::endl;
+     //    shape_trace_face_.init_map(trace_map_);
+     //    // std::cout<<"qui4"<<std::endl;
+     //    shape_trace_face_.init(coeff_,id);
+     //    // std::cout<<"F_FE.side_id()"<<std::endl;
+     //    // std::cout<<F_FE.side_id()<<std::endl;
+
+     //    // std::cout<<"shape_trace_face_.eval()"<<std::endl;
+     //    // std::cout<<shape_trace_face_.eval()<<std::endl;
+        
+     //    for(Integer i=0;i<dofs_per_entity[0]; i++)
+     //    {
+     //     compute_face_dofs(mat,cont,QRuleFace::qp_weights,shape_face_.eval() ,shape_trace_face_.eval()[i], normal, F_FE);
+     //     cont++;
+     //    }
+    	std::cout<<"mat"<<std::endl;
+    	std::cout<<mat<<std::endl;
 
  
 
 
-     // qp_points_face_
-     // shape_face_.init_map(C_map);
+     // // qp_points_face_
+     // // shape_face_.init_map(C_map);
     }
 
 
-    // momentum dofs
+    // // momentum dofs
+    // template<Integer EntityDim, typename Mat>
+    // std::enable_if_t< (EntityDim==entity[1]), void> 
+    // compute(Mat& mat, Integer& cont, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+    // {
+    //  // qp_points_momentum_
+    //  auto mesh_ptr=F_FE.mesh_ptr();
+    //  const auto& signed_normal=mesh_ptr->signed_normal();
+    //  C_map_.init(C_FE);
+    //  F_Pn_map_.init(F_FE);
+    //  shape_momentum_.init_map(C_map_);
+    //  shape_lagrange_momentum_.init_map(F_Pn_map_);
+    //  SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
+    //  F_FE.transform_point(qp_points_momentum_,QRuleMomentum::qp_points);
+    //  C_FE.points_to_reference_points(reference_qp_points_momentum_,qp_points_momentum_);
+
+    //  std::cout<<"QRuleMomentum::qp_points"<<std::endl;
+    //  // std::cout<<QRuleMomentum::qp_points<<std::endl;
+    //  // std::cout<<"qp_points_momentum_"<<std::endl;
+    //  // std::cout<<qp_points_momentum_<<std::endl;
+    //  // std::cout<<"reference_qp_points_momentum_"<<std::endl;
+    //  // std::cout<<reference_qp_points_momentum_<<std::endl;
+
+    //  shape_momentum_.init(reference_qp_points_momentum_);
+    //  shape_lagrange_momentum_.init(reference_qp_points_momentum_);
+     
+    //  int cont2=0;
+    //  // Vector<Real,NDofsMomentum > out; 
+    //  for(Integer i=NDofsFace;i<NDofs;i++)
+    //  {
+    //  compute_momentum_dofs(mat,cont,QRuleFace::qp_weights,shape_momentum_.eval(),cont2,shape_lagrange_momentum_.eval()[cont2], F_FE);
+    //  cont++;
+    //  cont2++;
+
+    //  }
+
+
+    //  // std::cout<<"QRuleMomentum::qp_points"<<std::endl;
+    //  // std::cout<<QRuleMomentum::qp_points<<std::endl;
+
+    //  // std::cout<<"qp_points_momentum_"<<std::endl;
+    //  // std::cout<<qp_points_momentum_<<std::endl;
+
+
+
+    //  // std::cout<<"shape_momentum_.eval()"<<std::endl;
+    //  // std::cout<<shape_momentum_.eval()<<std::endl;
+    //  // std::cout<<"shape_lagrange_momentum_.eval()"<<std::endl;
+    //  // std::cout<<shape_lagrange_momentum_.eval()<<std::endl;
+
+    //  // std::cout<<"mat"<<std::endl;
+    //  // std::cout<<mat<<std::endl;
+    // }
+
+
     template<Integer EntityDim, typename Mat>
     std::enable_if_t< (EntityDim==entity[1]), void> 
     compute(Mat& mat, Integer& cont, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
     {
-     // qp_points_momentum_
-     auto mesh_ptr=F_FE.mesh_ptr();
-     const auto& signed_normal=mesh_ptr->signed_normal();
-     C_map_.init(C_FE);
-     F_Pn_map_.init(F_FE);
-     shape_momentum_.init_map(C_map_);
-     shape_lagrange_momentum_.init_map(F_Pn_map_);
-     SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
-     F_FE.transform_point(qp_points_momentum_,QRuleMomentum::qp_points);
-     C_FE.points_to_reference_points(reference_qp_points_momentum_,qp_points_momentum_);
+
+
+
+
+     	auto mesh_ptr=F_FE.mesh_ptr();
+    	const auto& signed_normal=mesh_ptr->signed_normal();
+        C_map_.init(C_FE);
+        shape_barycenter_.init_map(C_map_);
+        // coeffs_.init(*mesh_ptr);
+
+        SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
+    	F_FE.transform_point(qp_points_barycenter_,QRuleBarycenterReference::qp_points);
+     // 	std::cout<<"QRuleFaceReference::qp_points"<<std::endl;
+    	// std::cout<<QRuleFaceReference::qp_points<<std::endl;
+    	// std::cout<<"qp_points_face_"<<std::endl;
+    	// std::cout<<qp_points_face_<<std::endl;
+     // transformed_point_row_=C_FE_.inv_jac()*transformed_point_col_;
+        C_FE.points_to_reference_points(reference_qp_points_barycenter_,qp_points_barycenter_);
+        // std::cout<<"qui7 "<<std::endl;
+        std::cout<<"QRuleBarycenterReference::qp_points"<<std::endl;
+        std::cout<<QRuleBarycenterReference::qp_points<<std::endl;
+        std::cout<<"qp_points_barycenter_"<<std::endl;
+        std::cout<<qp_points_barycenter_<<std::endl;
+    	std::cout<<"reference_qp_points_barycenter_"<<std::endl;
+    	std::cout<<reference_qp_points_barycenter_<<std::endl;
+        shape_barycenter_.init(coeff_,reference_qp_points_barycenter_);
+        // // Vector<Real,NDofsFace> out; 
+
+        const auto& normal=signed_normal.normals()[F_FE.elem_id()][F_FE.side_id()];
+        for(Integer k=0;k<dofs_per_entity[1];k++)
+        {
+         compute_barycenter_dofs(mat,cont,k,shape_barycenter_.eval());
+         cont++;
+        }
+
+
+
+
+
+     // auto mesh_ptr=F_FE.mesh_ptr();
+     // const auto& signed_normal=mesh_ptr->signed_normal();
+     // C_map_.init(C_FE);
+     // F_Pn_map_.init(F_FE);
+     // shape_momentum_.init_map(C_map_);
+     // shape_lagrange_momentum_.init_map(F_Pn_map_);
+     // SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
+     // F_FE.transform_point(qp_points_momentum_,QRuleMomentum::qp_points);
+     // C_FE.points_to_reference_points(reference_qp_points_momentum_,qp_points_momentum_);
 
      // std::cout<<"QRuleMomentum::qp_points"<<std::endl;
-     // std::cout<<QRuleMomentum::qp_points<<std::endl;
-     // std::cout<<"qp_points_momentum_"<<std::endl;
-     // std::cout<<qp_points_momentum_<<std::endl;
-     // std::cout<<"reference_qp_points_momentum_"<<std::endl;
-     // std::cout<<reference_qp_points_momentum_<<std::endl;
+     // // std::cout<<QRuleMomentum::qp_points<<std::endl;
+     // // std::cout<<"qp_points_momentum_"<<std::endl;
+     // // std::cout<<qp_points_momentum_<<std::endl;
+     // // std::cout<<"reference_qp_points_momentum_"<<std::endl;
+     // // std::cout<<reference_qp_points_momentum_<<std::endl;
 
-     shape_momentum_.init(reference_qp_points_momentum_);
-     shape_lagrange_momentum_.init(reference_qp_points_momentum_);
+     // shape_momentum_.init(reference_qp_points_momentum_);
+     // shape_lagrange_momentum_.init(reference_qp_points_momentum_);
      
-     int cont2=0;
-     // Vector<Real,NDofsMomentum > out; 
-     for(Integer i=NDofsFace;i<NDofs;i++)
-     {
-     compute_momentum_dofs(mat,cont,QRuleFace::qp_weights,shape_momentum_.eval(),cont2,shape_lagrange_momentum_.eval()[cont2], F_FE);
-     cont++;
-     cont2++;
+     // int cont2=0;
+     // // Vector<Real,NDofsMomentum > out; 
+     // for(Integer i=NDofsFace;i<NDofs;i++)
+     // {
+     // compute_momentum_dofs(mat,cont,QRuleFace::qp_weights,shape_momentum_.eval(),cont2,shape_lagrange_momentum_.eval()[cont2], F_FE);
+     // cont++;
+     // cont2++;
 
-     }
+     // }
 
-
-     // std::cout<<"QRuleMomentum::qp_points"<<std::endl;
-     // std::cout<<QRuleMomentum::qp_points<<std::endl;
-
-     // std::cout<<"qp_points_momentum_"<<std::endl;
-     // std::cout<<qp_points_momentum_<<std::endl;
-
-
-
-     // std::cout<<"shape_momentum_.eval()"<<std::endl;
-     // std::cout<<shape_momentum_.eval()<<std::endl;
-     // std::cout<<"shape_lagrange_momentum_.eval()"<<std::endl;
-     // std::cout<<shape_lagrange_momentum_.eval()<<std::endl;
-
-     // std::cout<<"mat"<<std::endl;
-     // std::cout<<mat<<std::endl;
     }
-
-    // template<Integer H,typename Mat>
-    // std::enable_if_t<H==NDofs,void> 
-    // compute_aux(Mat& mat, Integer& cont, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
-    // {} 
-
-
-    // template<Integer H,typename Mat>
-    // std::enable_if_t<H<NDofs,void> 
-    // compute_aux(Mat& mat, Integer& cont, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
-    // {
-    // 	compute<entity[0]>(mat,cont,C_FE,F_FE);
-    // 	compute<entity[1]>(mat,cont,C_FE,F_FE);
-    // 	cont++;
-    // 	compute_aux<H+1>(mat,cont,C_FE,F_FE);
-    // } 
-
 
     template<typename Mat>
     void compute(Mat& mat, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
@@ -4759,29 +4938,52 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Con
     	// compute_aux<Cont>(mat,cont,C_FE,F_FE);
     	// compute_face_aux<0>(mat,cont,C_FE,F_FE);
     	// compute_momentum_aux<0>(mat,cont,C_FE,F_FE);
-        // std::cout<<"compute first"<<std::endl;
+        std::cout<<"compute first"<<std::endl;
 
-        compute<entity[1]>(mat,cont,C_FE,F_FE);
+        FiniteElem<Elem> C_FE_new(*C_FE.mesh_ptr());
 
+        C_FE_new.init(C_FE.elem_id());
+
+        
+
+       
+        
     	for(Integer i=0;i<ManifoldDim+1;i++)
     		{F_FE.init_boundary(i,true);
-    	     compute<entity[0]>(mat,cont,C_FE,F_FE);}
+    	     // compute<entity[0]>(mat,cont,C_FE,F_FE);
+
+    			 C_FE_new.init_boundary(i,true);
+    			 compute<entity[0]>(mat,cont,C_FE,C_FE_new);
+    	 }
+
+    	 std::cout<<"compute second"<<std::endl;
+
+
+    	 C_FE_new.init(C_FE.elem_id());
+        
+        compute<entity[1]>(mat,cont,C_FE,C_FE_new);
+    	// compute<entity[1]>(mat,cont,C_FE,F_FE);
 
     	
 
 
-     // std::cout<<"mat"<<std::endl;
-     // std::cout<<mat<<std::endl;
+     std::cout<<"mat"<<std::endl;
+     std::cout<<mat<<std::endl;
 
     	// compute<entity[1]>(mat,C_FE,F_FE);
     }  
 
 
 private:
+	ShapeBarycenter shape_barycenter_;
 	ShapeFace shape_face_;
 	ShapeTraceFace shape_trace_face_;
 	ShapeMomentum shape_momentum_;
 	ShapeLagrangianMomentum shape_lagrange_momentum_;
+
+	QPpointsBarycenter qp_points_barycenter_;
+	QPpointsBarycenter reference_qp_points_barycenter_;
+
 	QPpointsFace qp_points_face_;
 	QPpointsFace reference_qp_points_face_;
 	QPpointsMomentum qp_points_momentum_;
@@ -4793,6 +4995,312 @@ private:
 	// Coefficients coeffs_;
 	Array<Real,NDofs> coeff_;
 };
+
+
+
+// template <Integer Dim,Integer ManifoldDim,Integer Continuity, Integer NComponents_,Integer QR>
+// class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Continuity,NComponents_>,QR>
+// {
+//  public:
+
+//     using Elem=Simplex<Dim,ManifoldDim>;
+//     static constexpr Integer Order=1;
+//  	using Face=typename VolumeOrSurfaceElem<Elem,false>::type;
+//  	static constexpr Integer FEFamily=RaviartThomasFE;
+//  	static constexpr Integer NComponents=1; 
+//  	using RTnBaseFunctionSpace=BaseFunctionSpace<FEFamily,Order,Continuity,NComponents>;
+//  	using PnBaseFunctionSpace=BaseFunctionSpace<LagrangeFE,Order,Continuity,NComponents>;
+//  	using ElementFunctionSpace=ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>;
+//  	static constexpr auto entity=ElementFunctionSpace::entity;
+//  	static constexpr auto dofs_per_entity=ElementFunctionSpace::dofs_per_entity;
+
+//     static constexpr Integer NDofs=FunctionSpaceDofsPerElem<ElementFunctionSpace>::value;
+
+//     static constexpr Integer NDofsFace= NComponents * dofs_per_entity[0] * ElemEntityCombinations<Elem,entity[0]>::value;
+//     static constexpr Integer NDofsMomentum= NComponents * dofs_per_entity[1] * ElemEntityCombinations<Elem,entity[1]>::value;
+
+//     // we have to integrate so + 1
+//     static constexpr Integer QRuleOrder=QuadratureOrder<IdentityOperator, RTnBaseFunctionSpace>::value+1;
+    
+
+//     using Map=MapFromReference<IdentityOperator,Elem,FEFamily> ;
+//     using TraceMap=MapFromReference<TraceOperator,Face,FEFamily> ;
+
+//     using F_Lagrangian_Map=MapFromReference<IdentityOperator,Elem,LagrangeFE> ;
+
+
+//     using QRuleFaceReference=typename QuadratureRule<QR>:: template rule<Face,QRuleOrder>;
+//     using QRuleFace=Boundary2VolumetricQuadratureRule<QRuleFaceReference>;
+//     using ShapeFace=ShapeFunction<Elem,RTnBaseFunctionSpace,IdentityOperator,QRuleFace>;
+//     using ShapeFaceValue=typename ShapeFace::type;
+//     using QPpointsFace=typename ShapeFace::qp_points_type;
+
+
+//     using ShapeTraceFace=ShapeFunction<Elem,RTnBaseFunctionSpace,TraceOperator,QRuleFaceReference>;
+//     using trace_type=typename ShapeTraceFace::trace_type;
+
+//     using QRuleMomentum=typename QuadratureRule<QR>:: template rule<Elem,QRuleOrder>;
+//     using ShapeMomentum=ShapeFunction<Elem,RTnBaseFunctionSpace,IdentityOperator,QRuleMomentum>;
+//     using ShapeMomentumValue=typename ShapeMomentum::type;
+//     using QPpointsMomentum=typename ShapeMomentum::qp_points_type;
+
+//     using Coefficients=ShapeFunctionCoefficientsCollectionSingleType<Elem,FEFamily>;
+//     using ShapeLagrangianMomentum=ShapeFunction<Elem,PnBaseFunctionSpace,IdentityOperator,QRuleMomentum>;
+
+//   // template<typename Mat,typename Values>
+//   // static void compute(Mat& local_mat, Values& func_values )
+//   // {
+//   // 	local_mat(M,N)=func_values[N][0](0,0);
+//   // }
+//     template<typename Output, typename Weight, typename ShapeValue,typename ShapeTraceValue,typename Normal>
+//     void compute_face_dofs(Output& out, Integer& fine_dof, const Weight& weights,const ShapeValue& shape_value,ShapeTraceValue& shape_trace_value, const Normal& normal, FiniteElem<Elem>& FE)
+//     {
+//      const auto& NQPoints=ShapeValue::NQPoints;
+//      const auto& Ndofs=Output::Rows;
+
+//      // std::cout<<"compute_face_dofs"<<std::endl;
+
+
+//      // std::cout<<"normal"<<std::endl;
+//      // std::cout<<normal<<std::endl;
+   
+//      for(Integer coarse_dof=0;coarse_dof<NDofs;coarse_dof++)
+//      {
+//         out(fine_dof,coarse_dof)=0;
+
+//      	for(Integer qp=0;qp<NQPoints;qp++)
+//      	{
+//      		for(Integer i=0;i<ManifoldDim;i++)
+//      		{
+//      			out(fine_dof,coarse_dof)+= weights[qp]*shape_value[coarse_dof][qp][i]*normal[i]*shape_trace_value[qp](0,0);
+//      		}
+//      	}
+//        out(fine_dof,coarse_dof)*=FE.get_det_side();
+
+//      }
+//      // std::cout<<"out"<<std::endl;
+//      // std::cout<<out<<std::endl;    
+//     }
+
+//     template<typename Output, typename Weight, typename ShapeValue, typename ShapeLagrangeValue>
+//     void compute_momentum_dofs(Output& out, Integer& fine_dof,  const Weight& weights, ShapeValue& shape_value,const Integer component, ShapeLagrangeValue& shape_lagrange_value,const FiniteElem<Elem>& FE)
+//     {
+//      const auto& NQPoints=ShapeValue::NQPoints;
+//      const auto& Ndofs=Output::Rows;
+     
+
+//       // std::cout<<"compute_momentum_dofs"<<std::endl;
+//       // std::cout<<"weights"<<std::endl;
+//       // std::cout<<weights<<std::endl;
+
+//       // std::cout<<"shape_value"<<std::endl;
+//       // std::cout<<shape_value<<std::endl;
+
+//       // std::cout<<"shape_lagrange_value"<<std::endl;
+//       // std::cout<<shape_lagrange_value<<std::endl;
+
+//       // std::cout<<"FE.get_det()"<<std::endl;
+//       // std::cout<<FE.get_det()<<std::endl;
+
+//      for(Integer coarse_dof=0;coarse_dof<Ndofs;coarse_dof++)
+//      {
+//         out(fine_dof,coarse_dof)=0;
+//         // std::cout<<"n_dof="<<n_dof<<std::endl;
+//      	for(Integer qp=0;qp<NQPoints;qp++)
+//      	{
+//      			out(fine_dof,coarse_dof)+= weights[qp]*shape_value[coarse_dof][qp][component]*shape_lagrange_value[qp](0,0);
+//      			// std::cout<<out(n_dof,cont)<<" ";
+//      	}
+
+//        // std::cout<<out(n_dof,cont)<<std::endl;
+//        out(fine_dof,coarse_dof)*=FE.get_det();
+
+//      }
+//      // std::cout<<"out"<<std::endl;
+//      // std::cout<<out<<std::endl;    
+//     }
+
+//     // face dofs
+//     template<Integer EntityDim, typename Mat>
+//     std::enable_if_t< (EntityDim==entity[0]), void>
+//     compute(Mat& mat, Integer& cont, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+//     {
+//      // F_map_.init(F_FE_);
+//     	// QPpointsFace frfrfr(5);
+//     	// typename QRuleFaceReference::qp_points_type feef(5);
+//     	// std::cout<<"compute "<<std::endl;
+//     	auto mesh_ptr=F_FE.mesh_ptr();
+//     	// std::cout<<"qui1 "<<std::endl;
+//     	const auto& signed_normal=mesh_ptr->signed_normal();
+//     	// std::cout<<"qui2 "<<std::endl;
+//         C_map_.init(C_FE);
+//         // std::cout<<"qui3 "<<std::endl;
+//         shape_face_.init_map(C_map_);
+//         // std::cout<<"qui4 "<<std::endl;
+//         // coeffs_.init(*mesh_ptr);
+
+//         SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
+//         // std::cout<<"qui5 "<<std::endl;
+//     	F_FE.side_transform_point(qp_points_face_,QRuleFaceReference::qp_points);
+//     	// std::cout<<"qui6 "<<std::endl;
+//      // 	std::cout<<"QRuleFaceReference::qp_points"<<std::endl;
+//     	// std::cout<<QRuleFaceReference::qp_points<<std::endl;
+//     	// std::cout<<"qp_points_face_"<<std::endl;
+//     	// std::cout<<qp_points_face_<<std::endl;
+//      // transformed_point_row_=C_FE_.inv_jac()*transformed_point_col_;
+//         C_FE.points_to_reference_points(reference_qp_points_face_,qp_points_face_);
+//         // std::cout<<"qui7 "<<std::endl;
+//     	// std::cout<<"reference_qp_points_face_"<<std::endl;
+//     	// std::cout<<reference_qp_points_face_<<std::endl;
+//         shape_face_.init(coeff_,reference_qp_points_face_);
+//         // std::cout<<"shape_face_.eval()"<<std::endl;
+//         // std::cout<<shape_face_.eval()<<std::endl;
+//         // Vector<Real,NDofsFace> out; 
+
+//         const auto& normal=signed_normal.normals()[F_FE.elem_id()][F_FE.side_id()];
+        
+//         // std::cout<<"qui1"<<std::endl;
+//         Integer id=F_FE.side_id();
+//         // std::cout<<"qui2"<<std::endl;
+//         trace_map_.init(F_FE);
+//         // std::cout<<"qui3"<<std::endl;
+//         shape_trace_face_.init_map(trace_map_);
+//         // std::cout<<"qui4"<<std::endl;
+//         shape_trace_face_.init(coeff_,id);
+//         // std::cout<<"F_FE.side_id()"<<std::endl;
+//         // std::cout<<F_FE.side_id()<<std::endl;
+
+//         // std::cout<<"shape_trace_face_.eval()"<<std::endl;
+//         // std::cout<<shape_trace_face_.eval()<<std::endl;
+        
+//         for(Integer i=0;i<dofs_per_entity[0]; i++)
+//         {
+//          compute_face_dofs(mat,cont,QRuleFace::qp_weights,shape_face_.eval() ,shape_trace_face_.eval()[i], normal, F_FE);
+//          cont++;
+//         }
+//     	// std::cout<<"mat"<<std::endl;
+//     	// std::cout<<mat<<std::endl;
+
+ 
+
+
+//      // qp_points_face_
+//      // shape_face_.init_map(C_map);
+//     }
+
+
+//     // momentum dofs
+//     template<Integer EntityDim, typename Mat>
+//     std::enable_if_t< (EntityDim==entity[1]), void> 
+//     compute(Mat& mat, Integer& cont, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+//     {
+//      // qp_points_momentum_
+//      auto mesh_ptr=F_FE.mesh_ptr();
+//      const auto& signed_normal=mesh_ptr->signed_normal();
+//      C_map_.init(C_FE);
+//      F_Pn_map_.init(F_FE);
+//      shape_momentum_.init_map(C_map_);
+//      shape_lagrange_momentum_.init_map(F_Pn_map_);
+//      SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
+//      F_FE.transform_point(qp_points_momentum_,QRuleMomentum::qp_points);
+//      C_FE.points_to_reference_points(reference_qp_points_momentum_,qp_points_momentum_);
+
+//      // std::cout<<"QRuleMomentum::qp_points"<<std::endl;
+//      // std::cout<<QRuleMomentum::qp_points<<std::endl;
+//      // std::cout<<"qp_points_momentum_"<<std::endl;
+//      // std::cout<<qp_points_momentum_<<std::endl;
+//      // std::cout<<"reference_qp_points_momentum_"<<std::endl;
+//      // std::cout<<reference_qp_points_momentum_<<std::endl;
+
+//      shape_momentum_.init(reference_qp_points_momentum_);
+//      shape_lagrange_momentum_.init(reference_qp_points_momentum_);
+     
+//      int cont2=0;
+//      // Vector<Real,NDofsMomentum > out; 
+//      for(Integer i=NDofsFace;i<NDofs;i++)
+//      {
+//      compute_momentum_dofs(mat,cont,QRuleFace::qp_weights,shape_momentum_.eval(),cont2,shape_lagrange_momentum_.eval()[cont2], F_FE);
+//      cont++;
+//      cont2++;
+
+//      }
+
+
+//      // std::cout<<"QRuleMomentum::qp_points"<<std::endl;
+//      // std::cout<<QRuleMomentum::qp_points<<std::endl;
+
+//      // std::cout<<"qp_points_momentum_"<<std::endl;
+//      // std::cout<<qp_points_momentum_<<std::endl;
+
+
+
+//      // std::cout<<"shape_momentum_.eval()"<<std::endl;
+//      // std::cout<<shape_momentum_.eval()<<std::endl;
+//      // std::cout<<"shape_lagrange_momentum_.eval()"<<std::endl;
+//      // std::cout<<shape_lagrange_momentum_.eval()<<std::endl;
+
+//      // std::cout<<"mat"<<std::endl;
+//      // std::cout<<mat<<std::endl;
+//     }
+
+//     // template<Integer H,typename Mat>
+//     // std::enable_if_t<H==NDofs,void> 
+//     // compute_aux(Mat& mat, Integer& cont, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+//     // {} 
+
+
+//     // template<Integer H,typename Mat>
+//     // std::enable_if_t<H<NDofs,void> 
+//     // compute_aux(Mat& mat, Integer& cont, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+//     // {
+//     // 	compute<entity[0]>(mat,cont,C_FE,F_FE);
+//     // 	compute<entity[1]>(mat,cont,C_FE,F_FE);
+//     // 	cont++;
+//     // 	compute_aux<H+1>(mat,cont,C_FE,F_FE);
+//     // } 
+
+
+//     template<typename Mat>
+//     void compute(Mat& mat, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+//     {
+//     	Integer cont=0;
+//     	// compute_aux<Cont>(mat,cont,C_FE,F_FE);
+//     	// compute_face_aux<0>(mat,cont,C_FE,F_FE);
+//     	// compute_momentum_aux<0>(mat,cont,C_FE,F_FE);
+//         // std::cout<<"compute first"<<std::endl;
+
+//         compute<entity[1]>(mat,cont,C_FE,F_FE);
+
+//     	for(Integer i=0;i<ManifoldDim+1;i++)
+//     		{F_FE.init_boundary(i,true);
+//     	     compute<entity[0]>(mat,cont,C_FE,F_FE);}
+
+    	
+
+
+//      // std::cout<<"mat"<<std::endl;
+//      // std::cout<<mat<<std::endl;
+
+//     	// compute<entity[1]>(mat,C_FE,F_FE);
+//     }  
+
+
+// private:
+// 	ShapeFace shape_face_;
+// 	ShapeTraceFace shape_trace_face_;
+// 	ShapeMomentum shape_momentum_;
+// 	ShapeLagrangianMomentum shape_lagrange_momentum_;
+// 	QPpointsFace qp_points_face_;
+// 	QPpointsFace reference_qp_points_face_;
+// 	QPpointsMomentum qp_points_momentum_;
+// 	QPpointsMomentum reference_qp_points_momentum_;
+// 	Map C_map_;
+// 	TraceMap trace_map_;
+// 	Map F_map_;
+// 	F_Lagrangian_Map F_Pn_map_;
+// 	// Coefficients coeffs_;
+// 	Array<Real,NDofs> coeff_;
+// };
 
 
 
@@ -4893,7 +5401,7 @@ class Dof<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,FEFamily,Order,Continuit
     inline std::enable_if_t<N<NDofs,void>
     loop_fine_dof(const Elem& C_elem, const Elem& F_elem)
     {
-     // std::cout<<"loop_fine_dof =="<<N<<"    "<<Dofs[N]<<std::endl;
+     std::cout<<"loop_fine_dof =="<<N<<"    "<<Dofs[N]<<std::endl;
      F_FE_.init(F_elem.id);
      F_map_.init(F_FE_);
      F_FE_.transform_point(transformed_point_col_,Dofs[N]);
@@ -5004,7 +5512,8 @@ public:
      using Space=GetType<TupleOfSpaces,N>;
      constexpr Integer n_dofs=FunctionSpaceDofsPerElem<Space>::value;
      constexpr Integer NComponents=Space::NComponents;
-     Matrix<Real,n_dofs,n_dofs> mat;
+     constexpr Integer n_dofs_one_component=n_dofs/NComponents;
+     Matrix<Real,n_dofs_one_component,n_dofs_one_component> mat;
    	 DofAux<Space> dof;
    	 
 
@@ -5026,16 +5535,27 @@ public:
      
    	 dofsdofmap.template dofmap_get<N>(dm_row,F_FE_.elem_id(),F_FE_.level());
    	 dofsdofmap.template dofmap_get<N>(dm_col,C_FE_.elem_id(),C_FE_.level());
+
+
+     F_FE_.init(F_FE_.elem_id(),F_FE_.level());
+     // std::cout<< "pre dof compute " <<std::endl;
+     dof.compute(mat,C_FE_,F_FE_);
+     // std::cout<< "after dof compute " <<std::endl;
+     // std::cout<< "mat " <<std::endl;
+     // std::cout<< mat  <<std::endl;
+     // std::cout<< "n_dofs " <<std::endl;
+     // std::cout<< n_dofs  <<std::endl;
+     // std::cout<< "n_dofs_one_component " <<std::endl;
+     // std::cout<< n_dofs_one_component  <<std::endl;
+     // std::cout<< "NComponents " <<std::endl;
+     // std::cout<< NComponents  <<std::endl;
      // std::cout<< "dm_row" <<std::endl;
      // std::cout<< dm_row <<std::endl;
      // std::cout<< "dm_col" <<std::endl;
      // std::cout<< dm_col <<std::endl;
-
-     F_FE_.init(F_FE_.elem_id(),F_FE_.level());
-     dof.compute(mat,C_FE_,F_FE_);
-
-     for(Integer i=0;i<n_dofs;i++)
-     	for(Integer j=0;j<n_dofs;j++)
+         
+     for(Integer i=0;i<n_dofs_one_component;i++)
+     	for(Integer j=0;j<n_dofs_one_component;j++)
      		for(Integer k=0;k<NComponents;k++)
      		{
               // std::cout<<"("<<dm_row[i*NComponents+k]<<", "<<dm_col[j*NComponents+k]<<", "<<mat(i,j)<<")   ";
@@ -5550,9 +6070,77 @@ private:
 			else if(ManifoldDim==3)
 				return ExactPoisson3D::eval(p); 
 		}
+	};
 
+
+
+
+
+	class ExactLinearElasticity2D
+	{
+	public: 
+	    // using Point=Matrix<Real,3,1>;
+		using type=Matrix<Real,2,1>;
+	    template<typename Point>
+		static auto eval(const Point& p)
+		{
+			// auto M_PI_Squared=M_PI*M_PI;
+			const auto& x=p[0];
+			const auto& y=p[1];
+
+			type func{(1.0)*( 4.0 * M_PI_Squared * sin(M_PI * x) * sin(M_PI * y) - 2.0 * M_PI_Squared *cos( M_PI * x) * cos( M_PI * y) ),
+                      (1.0)*( 4.0 * M_PI_Squared * sin(M_PI * x) * sin(M_PI * y) - 2.0 * M_PI_Squared *cos( M_PI * x) * cos( M_PI * y) )
+			          };
+			return func; 
+		}
+	};
+
+	class ExactLinearElasticity3D
+	{
+	public: 
+	    // using Point=Matrix<Real,3,1>;
+		using type=Matrix<Real,3,1>;
+	    template<typename Point>
+		static auto eval(const Point& p)
+		{
+			type func{0,0,0};
+			return func; 
+		}
+	};
+
+
+	template<Integer ManifoldDim>
+	class ExactLinearElasticity
+	{
+	public: 
+		using type=Matrix<Real,ManifoldDim,1>;
+
+	    template<Integer N,typename Point>
+		static std::enable_if_t<N==2,type> eval_aux(const Point& p)
+		{
+				return ExactLinearElasticity2D::eval(p);  
+		}
+
+	    template<Integer N,typename Point>
+		static std::enable_if_t<N==3,type> eval_aux(const Point& p)
+		{
+				return ExactLinearElasticity3D::eval(p);  
+		}
+
+	    template<typename Point>
+		static type eval(const Point& p)
+		{
+			return eval_aux<ManifoldDim>(p);
+			// if(ManifoldDim==2)
+			// 	return ExactLinearElasticity2D::eval(p); 
+			// else if(ManifoldDim==3)
+			// 	return ExactLinearElasticity3D::eval(p); 
+		}
 
 	};
+
+
+
 
 template<Integer Dim>
 class NormalFunction;
@@ -5635,6 +6223,495 @@ class NormalFunction;
 		
 
 	}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	template<Integer ManifoldDim,Integer Order1,Integer Order2>
+	void LSFEM_LinearElasticity(const Integer n, const Integer level, const Integer n_levels)
+	{
+	  // constexpr Integer ManifoldDim=2;
+		constexpr Integer Dim=ManifoldDim;
+		using MeshT=Mesh<Dim, ManifoldDim>;
+		using Elem=typename MeshT::Elem;
+		MeshT mesh;
+		if(ManifoldDim==2)
+		{
+			std::cout<<"2D LSFEM_LinearElasticity";
+			// generate_cube(mesh,n,n,0);
+			// mesh.build_dual_graph();
+			// mark_boundary(mesh);
+	      read_mesh("../data/triangle_square.MFEM", mesh);
+	      assign_tags(mesh);
+
+
+	      // Bisection<MeshT> bisection(mesh);
+	      // bisection.uniform_refine(4);
+	      mesh.update_dual_graph();
+		}
+		else if(ManifoldDim==3)
+		{
+			std::cout<<"3D LSFEM_LinearElasticity";
+			generate_cube(mesh,n,n,n);
+			mesh.build_dual_graph();
+			mark_boundary(mesh);
+
+	      // read_mesh("../data/tetrahedron.MFEM", mesh);
+	      // assign_tags(mesh);
+	      // Bisection<MeshT> bisection(mesh);
+	      // bisection.uniform_refine(0);
+	      // mesh.update_dual_graph();
+		}
+        // Integer n_levels=12;
+	    clock_t begin=clock();
+		clock_t end = clock();
+		double elapsed_secs;
+
+		// std::cout<<"mat==="<<mat3<<std::endl;
+
+		
+
+        std::cout<<"n2em init="<<std::endl;
+
+
+		std::cout<<"first child="<<mesh.elem(0).children.size()<<std::endl;
+		Bisection<MeshT> bisection(mesh);
+
+	    begin=clock();
+		std::cout<<"bisec 1="<<std::endl;
+		// bisection.tracking_begin();
+		// bisection.uniform_refine(1);
+		// bisection.tracking_end();
+		end=clock();
+		std::cout<<double(end - begin) / CLOCKS_PER_SEC<<std::endl;
+
+		begin=clock();
+		std::cout<<"bisec 2="<<std::endl;
+		for(int i=0;i<n_levels;i++)
+		{
+		// bisection.tracking_begin();
+		// bisection.uniform_refine(1);
+		// bisection.tracking_end();			
+		}
+
+		end=clock();
+		std::cout<<double(end - begin) / CLOCKS_PER_SEC<<std::endl;
+
+		std::cout<<"dual 1="<<std::endl;
+		mesh.update_dual_graph();
+
+	    auto track=bisection.tracker();
+	   
+	    std::cout<<"___="<<std::endl;
+	    auto& edge_node_map=bisection.edge_node_map();
+	    auto& edge_element_map=bisection.edge_element_map();
+	    std::cout<<"____="<<std::endl;
+
+	    Node2ElemMap<MeshT> n2em(mesh,bisection);
+	    n2em.init();	      
+	    // n2em.add_bisection(bisection);
+	    // n2em.init();
+	    std::cout<<"--------------:mesh n elements=="<<mesh.n_elements()<<std::endl;
+	    std::cout<<"--------------:n2em n max_n_nodes=="<<n2em.max_n_nodes()<<std::endl;
+
+
+
+
+
+
+		using AuxRT_n= FunctionSpace< MeshT, RT<Order1,2>>;
+		using AuxP_n= FunctionSpace< MeshT, Lagrange<Order2,2>>;
+		using AuxP_0= FunctionSpace< MeshT, Lagrange<0,2>>;
+		using LSFEM= FunctionSpace< MeshT, RT<Order1,2>,Lagrange<Order2,2>>;
+
+		AuxRT_n rtn(mesh,bisection,n2em);//csmc);
+		AuxP_n pn(mesh,bisection,n2em);//csmc);
+		AuxP_0 p0(mesh,bisection,n2em);//csmc);
+		std::cout<<"FIRST PRE UPDATE="<<std::endl;
+		LSFEM lsfem(mesh,bisection,n2em);//csmc);
+		std::cout<<"FIRST POST UPDATE="<<std::endl;
+	    std::cout<<"--------------:rtn n max_n_nodes=="<<rtn.node2elem().max_n_nodes()<<std::endl;
+	    std::cout<<"--------------:pn n max_n_nodes=="<<pn.node2elem().max_n_nodes()<<std::endl;
+
+	    auto Wtrial=MixedFunctionSpace(rtn,pn);
+		std::cout<<"FIRST POST Wtrial="<<std::endl;
+	    std::cout<<"--------------:Wtrial n max_n_nodes=="<<Wtrial.node2elem().max_n_nodes()<<std::endl;
+
+		auto Waux=AuxFunctionSpacesBuild(pn);
+		std::cout<<"FIRST POST Waux="<<std::endl;
+
+		auto W=FullSpaceBuild(Wtrial,Waux);
+		std::cout<<" POST W="<<std::endl;
+	    std::cout<<"--------------:W n max_n_nodes=="<<W.node2elem().max_n_nodes()<<std::endl;
+
+		using W_type=decltype(W);
+		auto W_ptr=std::make_shared<W_type>(W);
+
+	    std::cout<<"--------------:W_ptr n max_n_nodes=="<<W_ptr->node2elem().max_n_nodes()<<std::endl;
+
+		for(int i=0;i<n_levels;i++)
+		{
+		bisection.tracking_begin();
+		bisection.uniform_refine(1);
+		bisection.tracking_end();			
+		}
+
+
+		std::cout<<" BISECTION COMPLETED "<<std::endl;
+ 
+
+	    std::cout<<"--------------:W_ptr n max_n_nodes=="<<W_ptr->node2elem().max_n_nodes()<<std::endl;
+
+
+
+		auto sigma = MakeTrial<0>(W_ptr);
+		auto u = MakeTrial<1>(W_ptr);
+
+		auto tau = MakeTest<0>(W_ptr);
+		auto v = MakeTest<1>(W_ptr);
+
+		auto f1 = MakeFunction<0,ExactLinearElasticity<ManifoldDim>>(W_ptr);
+
+		constexpr Real mu=1.0;
+		constexpr Real lambda=1.0;
+
+		constexpr auto halp=Constant<Scalar>(0.5);
+
+		constexpr auto C_coeff1=Constant<Scalar>(1.0/Real(2.0*mu));
+
+	    constexpr auto C_coeff2=Constant<Scalar>((1.0/Real(2.0*mu))*(-lambda/(Real(ManifoldDim)*lambda+ 2.0 * mu)));	
+	    constexpr auto identity=Constant<Identity<ManifoldDim>>();					
+
+	    auto Epsilon=NewOperator(halp*((GradientOperator()+Transpose(GradientOperator()))));//+Transpose(GradientOperator())));
+
+		// auto C_inverse=NewOperator(C_coeff1*IdentityOperator() + C_coeff2 * IdentityOperator() * MatTraceOperator<Matrix<Real,2,2>>());
+		auto C_inverse=NewOperator(C_coeff1*IdentityOperator() + C_coeff2*identity* MatTrace(IdentityOperator()) );
+
+		// auto normal = MakeFunction<1,NormalFunction<ManifoldDim>>(W_ptr);
+        
+        // auto normal =
+        std::cout<<"C_coeff1="<<C_coeff1()<<std::endl;
+        std::cout<<"C_coeff2="<<C_coeff2()<<std::endl;
+        std::cout<<"identity="<<identity()<<std::endl;
+		std::cout<<"RTN NDOFS="<<rtn.n_dofs()<<std::endl;
+		std::cout<<"PN NDOFS="<<pn.n_dofs()<<std::endl;
+		std::cout<<"NDOFS="<<W.spaces_ptr()->n_dofs()<<std::endl;
+
+	    // 2D LSFEM POISSION
+		auto bilinearform=
+		L2Inner(Div(sigma),Div(tau))+
+		L2Inner(C_inverse(sigma),C_inverse(tau))+
+		L2Inner(Epsilon(u),Epsilon(v))-
+		L2Inner(Epsilon(u),C_inverse(tau))-
+		L2Inner(C_inverse(sigma),Epsilon(v))
+		// L2Inner(MatTrace(sigma),MatTrace(tau))
+		;
+
+		auto linearform=
+		L2Inner(-Div(tau),f1)
+		;
+        // decltype(MatTrace(IdentityOperator())) feef(5,5,5);
+		std::cout<<" DEFINE BCS  "<<std::endl;
+
+
+
+
+		auto bcs1=DirichletBC<1,FunctionZero2D>(W_ptr,1);
+		auto bcs2=DirichletBC<1,FunctionZero2D>(W_ptr,2);
+		auto bcs3=DirichletBC<1,FunctionZero2D>(W_ptr,3);
+		auto bcs4=DirichletBC<1,FunctionZero2D>(W_ptr,4);
+		auto bcs5=DirichletBC<1,FunctionZero2D>(W_ptr,5);
+		auto bcs6=DirichletBC<1,FunctionZero2D>(W_ptr,6);
+
+        
+
+
+
+
+		std::cout<<"CREATE CONTEXT"<<std::endl;
+
+		auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4,bcs5,bcs6);
+
+
+
+
+
+
+	//     auto &dofsdofmap=W_ptr->dofsdofmap();
+	// 	// auto &dofsdofmap=context.full_spaces_ptr()->dofsdofmap();
+	// 	std::cout<<"<<<< UPDATE >>>>"<<std::endl;
+	//     // dofsdofmap.update();
+	//     std::cout<<"PRE UPDATE="<<std::endl;
+	//     // context.full_spaces_ptr()->update();
+	     W_ptr->update();
+	    
+	//     std::cout<<"POST UPDATE="<<std::endl;
+
+
+
+
+
+
+		SparseMatrix<Real> A;
+		std::vector<Real> b;
+
+		std::cout<<"ASSEMBLY"<<std::endl;
+		// Integer level=2;//bisection.tracker().current_iterate();
+		// Integer level=4;
+		std::cout<<"level---"<<level<<std::endl;
+		context.assembly(A,b,level);
+
+
+		A.print_val();
+	//    // A.print_val();
+		std::cout<<"APPLY BC "<<std::endl;
+		context.apply_bc(A,b);
+
+
+	//    // A.print_val();
+		std::vector<Real> x;
+		Integer max_iter=1;
+
+
+	// 	std::cout<<"START SOLVING"<<std::endl;
+	// 	// gauss_seidel(x,A,b,max_iter);
+	// 	std::cout<<"END SOLVING"<<std::endl;
+
+	//     std::cout<<"---------------------------x"<<std::endl;
+
+
+
+		std::ofstream os;
+		auto var_names=variables_names("stress","disp");
+
+        
+
+
+		SparseMatrix<Real> AL;
+		std::vector<Real> bL;
+
+		Integer levelL=bisection.tracker().current_iterate()-1;
+
+		context.assembly(AL,bL,levelL);
+	   // A.print_val();
+		std::cout<<"APPLY BC "<<std::endl;
+		context.apply_bc(AL,bL);
+
+
+	   // A.print_val();
+		std::vector<Real> xL;
+
+
+		auto var_namesL=variables_names("stress","disp");
+
+
+	     auto &dofsdofmap2=W_ptr->dofsdofmap();
+
+
+    
+	     auto& level_cumultive_n_dofs2=dofsdofmap2.level_cumultive_n_dofs();
+	     std::cout<<"level_n_dofs_array="<<std::endl;
+	     for(int i=0;i<level_cumultive_n_dofs2.size();i++)
+	     {
+	      // for(int j=0; j<level_n_dofs_array[i].size();j++)
+	      std::cout<<level_cumultive_n_dofs2[i]<<" ";
+	      std::cout<<std::endl;
+	     }   
+
+	    // FullFunctionSpaceInterpolation<decltype(W)> interp(W_ptr);
+	    SparseMatrix<Real> InterpMat;
+	    std::cout<<"level="<<level<<std::endl;
+	    Integer level_finer=n_levels-1;
+	    std::cout<<"level_finer="<<level_finer<<std::endl;
+     
+	    // interp.init(InterpMat,n_levels-1,n_levels);
+
+	    FullFunctionSpaceLevelsInterpolation<W_type> levels_interp(W_ptr);
+        
+        std::vector<Integer> levels(n_levels+1-level);
+
+        std::cout<<"n_levels=="<<n_levels <<std::endl;
+        std::cout<<"level=="<<level <<std::endl;
+        std::cout<<"n_levels-level=="<<n_levels-level <<std::endl;
+        for(Integer i=0;i<n_levels+1-level;i++)
+        {
+        	levels[i]=i+level;
+        	std::cout<<"levels[i]=="<<levels[i] <<std::endl;
+        }
+
+	    levels_interp.init(levels);
+
+
+        std::cout<<"start multiply mat mat"<<std::endl;
+
+       
+        std::vector<SparseMatrix<Real>> A_levels(levels.size());
+
+
+        for(Integer el=0;el<mesh.n_elements();el++)
+        	std::cout<<"el="<<el<<" lev="<<bisection.tracker().get_iterate(el)<<std::endl;
+        std::cout<<"i=="<<levels.size()-1<<std::endl;
+        A_levels[levels.size()-1]=AL;
+
+        std::cout<<A_levels[levels.size()-1].max_rows()<<std::endl;
+        std::cout<<A_levels[levels.size()-1].max_cols()<<std::endl;
+
+          
+        std::cout<<" LEVEL INTERPS "<<std::endl;
+        std::cout<<" LEVEL INTERPS "<<std::endl;
+
+
+        for(Integer i=0;i<levels.size()-1;i++)
+        {
+        	auto& P=levels_interp.matrix(i);
+        	std::cout<<P.max_rows()<<"  "<<P.max_cols()<<std::endl;
+        }
+
+
+        for(Integer i=levels.size()-2;i>=0;i--)
+        { 
+        	std::cout<<"i=="<<i<<std::endl;
+        	auto& P=levels_interp.matrix(i);
+        	// auto AP=A_levels[i+1].multiply(levels_interp.matrix(i));
+        	// std::cout<<P.max_rows()<<std::endl;
+        	// std::cout<<P.max_cols()<<std::endl;
+        	// std::cout<<AP.max_rows()<<std::endl;
+        	// std::cout<<AP.max_cols()<<std::endl;
+         //    A_levels[i]=levels_interp.matrix(i).transpose_and_multiply(AP);
+
+            context.matrix_assembly(A_levels[i],levels[i]);
+        	std::cout<<A_levels[i].max_rows()<<std::endl;
+        	std::cout<<A_levels[i].max_cols()<<std::endl;
+            context.build_boundary_info(levels[i]);
+            context.apply_zero_bc_to_matrix(A_levels[i]);
+        }
+
+
+        std::vector<Real> solution;
+
+        solution.resize(bL.size());
+
+        for(Integer i=0;i<bL.size();i++)
+        	solution[i]=0.0;
+
+
+	    clock_t begin2 = clock();
+
+	    Entity2Dofs<W_type,0> entity2dofs(W_ptr);
+	    entity2dofs.build();
+		clock_t end2 = clock();
+	    std::cout<<"TIME BUILD="<< double(end2 - begin2) / CLOCKS_PER_SEC <<std::endl;
+
+         begin2 = clock();
+	    auto& e2d=entity2dofs.get(levels);
+	    end2 = clock();
+
+	    std::cout<<"TIME E2D GET="<< double(end2 - begin2) / CLOCKS_PER_SEC <<std::endl;
+
+
+	    clock_t begin1 = clock();
+		// auto& ordered_entities=entity2dofs.ordered_entities();	     
+		clock_t end1 = clock();
+	    std::cout<<"TIME BUILD="<< double(end1 - begin1) / CLOCKS_PER_SEC <<std::endl;
+
+          std::cout<<"END ORDERED ENTITY 2 DOFS"<<std::endl;
+           // gauss_seidel(solution,AL,bL,10000);
+           std::vector<Real> rhs;
+           
+         std::cout<<"START SOLVING PATCH MULTIGRID"<<std::endl;           
+         patch_multigrid(solution,A_levels,bL,levels_interp,e2d,3,3,levels.size()-1,100,0.000000001);
+         // patch_multigrid(solution,A_levels,bL,levels_interp,ordered_entities,5,5,levels.size()-1,50,0.0000000001);
+         AL.multiply_and_add(rhs,-1.0,solution,bL);
+         std::cout<<"residual="<<l2_norm(rhs)<<std::endl;
+		std::cout<<"END SOLVING PATCH MULTIGRID"<<std::endl;
+		std::string output_fileMULTIGRID ="LSFEM_Elasticity"+ std::to_string(ManifoldDim) +
+		"D_RT" + std::to_string(Order1)+
+		"_P" + std::to_string(Order2)+"_outputMULTIGRID.vtk";
+
+		os.close();
+		os.open(output_fileMULTIGRID.c_str());
+		// write_wtk_isoparametric(os,*context.full_spaces_ptr(),xL,var_namesL,level);
+		write_wtk_isoparametric(os,W_ptr,solution,var_namesL,levelL);
+
+	//     os.close();
+
+
+
+	// std::cout<<"end "<<std::endl;
+	}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 	template<Integer ManifoldDim,Integer Order1,Integer Order2>
@@ -6061,6 +7138,12 @@ std::cout<<" POST W="<<std::endl;
 
 
 		std::cout<<"CREATE CONTEXT"<<std::endl;
+        auto genform=general_form(bilinearform);
+
+		std::cout<<"bilinearform->"<<genform.spaces_ptr()->node2elem().max_n_nodes()<<std::endl;
+		std::cout<<"bilinearform->"<<genform.spaces_ptr()->spaces_ptr()->node2elem().max_n_nodes()<<std::endl;
+
+
 		auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4,bcs5,bcs6);
 
 
@@ -6109,7 +7192,7 @@ std::cout<<" POST W="<<std::endl;
 
 
 		std::cout<<"START SOLVING"<<std::endl;
-		gauss_seidel(x,A,b,max_iter);
+		// gauss_seidel(x,A,b,max_iter);
 		std::cout<<"END SOLVING"<<std::endl;
 
 	    std::cout<<"---------------------------x"<<std::endl;
@@ -6118,8 +7201,8 @@ std::cout<<" POST W="<<std::endl;
 	    	// x[i]=1;
 
 
-	    for(int i=0;i<x.size();i++)
-	    	std::cout<<x[i]<<std::endl;
+	    // for(int i=0;i<x.size();i++)
+	    // 	std::cout<<x[i]<<std::endl;
 
 
 
@@ -6127,18 +7210,18 @@ std::cout<<" POST W="<<std::endl;
 
 		std::ofstream os;
 		auto var_names=variables_names("stress","disp");
-		std::string output_file ="LSFEM_Poisson"+ std::to_string(ManifoldDim) +
-		"D_RT" + std::to_string(Order1)+
-		"_P" + std::to_string(Order2)+"_output.vtk";
+		// std::string output_file ="LSFEM_Poisson"+ std::to_string(ManifoldDim) +
+		// "D_RT" + std::to_string(Order1)+
+		// "_P" + std::to_string(Order2)+"_output.vtk";
 
-		os.close();
-		os.open(output_file.c_str());
-		// write_wtk_isoparametric(os,*context.full_spaces_ptr(),x,var_names,level);
-		std::cout<<" write to file START"<<std::endl;
-		write_wtk_isoparametric(os,W_ptr,x,var_names,level);
-		std::cout<<" write to file END"<<std::endl;
+		// os.close();
+		// os.open(output_file.c_str());
+		// // write_wtk_isoparametric(os,*context.full_spaces_ptr(),x,var_names,level);
+		// std::cout<<" write to file START"<<std::endl;
+		// write_wtk_isoparametric(os,W_ptr,x,var_names,level);
+		// std::cout<<" write to file END"<<std::endl;
 
-	    os.close();
+	 //    os.close();
 
 
 
@@ -6168,20 +7251,20 @@ std::cout<<" POST W="<<std::endl;
 		std::vector<Real> xL;
 
 
-		std::cout<<"START SOLVING"<<std::endl;
-		gauss_seidel(xL,AL,bL,max_iter);
-		std::cout<<"END SOLVING"<<std::endl;
+		// std::cout<<"START SOLVING"<<std::endl;
+		// gauss_seidel(xL,AL,bL,max_iter);
+		// std::cout<<"END SOLVING"<<std::endl;
 		auto var_namesL=variables_names("stress","disp");
-		std::string output_fileL ="LSFEM_Poisson"+ std::to_string(ManifoldDim) +
-		"D_RT" + std::to_string(Order1)+
-		"_P" + std::to_string(Order2)+"_outputFINE.vtk";
+		// std::string output_fileL ="LSFEM_Poisson"+ std::to_string(ManifoldDim) +
+		// "D_RT" + std::to_string(Order1)+
+		// "_P" + std::to_string(Order2)+"_outputFINE.vtk";
 
-		os.close();
-		os.open(output_fileL.c_str());
-		// write_wtk_isoparametric(os,*context.full_spaces_ptr(),xL,var_namesL,level);
-		write_wtk_isoparametric(os,W_ptr,xL,var_namesL,levelL);
+		// os.close();
+		// os.open(output_fileL.c_str());
+		// // write_wtk_isoparametric(os,*context.full_spaces_ptr(),xL,var_namesL,level);
+		// write_wtk_isoparametric(os,W_ptr,xL,var_namesL,levelL);
 
-	    os.close();
+	 //    os.close();
 
 
 	    // std::cout<<"xL"<<std::endl;
@@ -6286,9 +7369,9 @@ std::cout<<" POST W="<<std::endl;
         std::vector<SparseMatrix<Real>> A_levels(levels.size());
 
 
-        for(Integer el=0;el<mesh.n_elements();el++)
-        	std::cout<<"el="<<el<<" lev="<<bisection.tracker().get_iterate(el)<<std::endl;
-        std::cout<<"i=="<<levels.size()-1<<std::endl;
+        // for(Integer el=0;el<mesh.n_elements();el++)
+        	// std::cout<<"el="<<el<<" lev="<<bisection.tracker().get_iterate(el)<<std::endl;
+        // std::cout<<"i=="<<levels.size()-1<<std::endl;
         A_levels[levels.size()-1]=AL;
 
         std::cout<<A_levels[levels.size()-1].max_rows()<<std::endl;
@@ -6322,7 +7405,7 @@ std::cout<<" POST W="<<std::endl;
         	std::cout<<A_levels[i].max_cols()<<std::endl;
             context.build_boundary_info(levels[i]);
             context.apply_zero_bc_to_matrix(A_levels[i]);
-            A_levels[i].print_val();
+            // A_levels[i].print_val();
         }
 
         // for(Integer i=0;i<A_levels.size();i++)

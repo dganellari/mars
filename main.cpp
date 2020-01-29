@@ -53,6 +53,7 @@
 #endif //WITH_MPI
 #include <chrono>
 
+
 using namespace std::chrono;
 
 mars::Mesh1 test_mars_mesh_generation_1D(const int x) {
@@ -1286,11 +1287,19 @@ std::cout<<"after LSFEM_Poisson"<<std::endl;
 
 
 // LSFEM_Poisson<3,0,1>(1,0,2);
-LSFEM_Poisson<2,0,1>(1,1,5);
+LSFEM_Poisson<2,0,1>(1,1,7);
 // LSFEM_Poisson<3,0,1>(1,0,5);
-// LSFEM_Poisson<2,1,2>(1,1,3);
+// LSFEM_Poisson<2,1,2>(1,1,2);
 // LSFEM_Poisson<3,1,2>(1,1,3);
+
+
 std::cout<<"after LSFEM_Poisson2D"<<std::endl;
+
+
+
+
+
+LSFEM_LinearElasticity<2,0,1>(1,0,10);
 // 
 // LSFEM_Poisson<3,1,2>(10);
 // std::cout<< FunctionSpaceDofsPerElem<ElemFunctionSpace<Simplex<3,3>,RT1<1>>>::value <<std::endl;

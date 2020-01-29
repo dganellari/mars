@@ -716,6 +716,8 @@ namespace mars {
 	  constexpr std::enable_if_t<(1==Ncomponents),void> 
 	  assign(Matrix<T, Rows1,Cols1>& mat1, const Matrix<T, Rows2,Cols2>& mat2, Integer II, Integer JJ)
      {
+
+
      	static_assert(Rows1>=Rows2," only a smaller matrix can be assigned: Rows1>=Rows2");
      	static_assert(Cols1>=Cols2," only a smaller matrix can be assigned: Cols1>=Cols2");
      	assert(Rows2+II<=Rows1 && " Rows2+II<=Rows1");

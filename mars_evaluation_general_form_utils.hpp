@@ -466,8 +466,14 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
   void apply(subtype& vec, const FiniteElem<Elem>& J, ShapeFunctionsCollection<Forms...>& shape_functions, const DofMaps&...dofmaps)
 
  {
+    // std::cout<<"LOCAL TENSOR APPLY=="<<std::endl;
+
   eval_left_.apply(left_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
+  // std::cout<<"after left =="<<std::endl;
+  // std::cout<<left_value_<<std::endl;
   eval_right_.apply(right_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
+  // std::cout<<"left_value_=="<<left_value_<<std::endl;
+  // std::cout<<"right_value_=="<<right_value_<<std::endl;
   apply_aux(vec,J,left_value_,right_value_);
   // std::cout<<"detJ=="<<J.get_det()<<std::endl;
   // std::cout<<"vec=="<<vec<<std::endl;
@@ -1266,8 +1272,9 @@ public:
      auto& local_mat=std::get<N>(tensor_tuple_);
      local_mat.zero();
      auto & eval_N=std::get<N>(eval_inners_);
-     // std::cout<< "linear apply_aux_aux "<<std::endl;
+     // std::cout<< "pre linear apply_aux_aux "<<std::endl;
      apply_aux_aux_aux(eval_N,local_mat,FE,dofmap_test);
+     // std::cout<< "after linear apply_aux_aux "<<std::endl;
 
      for(std::size_t ii=0;ii<dofmap_test.size();ii++)
      {

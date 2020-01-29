@@ -90,8 +90,8 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
   // std::cout<< " local_dofs"<<local_dofs<<std::endl;
   // std::cout<< " value"<<value<<std::endl;
 
-   // std::cout<<"local_dofs not TraceOperator="<<local_dofs<<std::endl;
-   // std::cout<<shapes<<std::endl;
+  //  std::cout<<"local_dofs not TraceOperator="<<local_dofs<<std::endl;
+  //  std::cout<<shapes<<std::endl;
     // loop on qp points
     for(Integer ii=0;ii< type2::Dim;ii++)
     {

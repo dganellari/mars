@@ -189,6 +189,7 @@ class ConstantTensor: public Expression<ConstantTensor<ConstType,Inputs...>>
   
   
   constexpr type eval()const {return tensor_;};
+  constexpr type operator()()const {return tensor_;};
 
   template<Integer N>
   constexpr qptype<N> qp_eval()const
