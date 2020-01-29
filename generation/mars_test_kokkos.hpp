@@ -1,4 +1,4 @@
-#include "generation/mars_mesh_kokkos.hpp"
+#include "mars_mesh_kokkos.hpp"
 
 void test_mars_mesh_generation_kokkos_1D(const int level) {
 
@@ -61,12 +61,78 @@ void test_mars_mesh_generation_kokkos_2D(const int x, const int y) {
 				"build_square_parallel" + std::to_string(x) + std::to_string(y)
 						+ ".vtu", sMesh);
 
+		sMesh.repair(true);
 	}
 	/*}
 
 	 Kokkos::finalize();*/
 }
 
+
+void test_mars_nonsimplex_mesh_generation_kokkos_2D(const int x, const int y) {
+
+	using namespace mars;
+
+
+	Kokkos::Timer timer;
+
+	ParallelQuad4Mesh pMesh;
+	generate_cube(pMesh, x, y, 0);
+
+	double time = timer.seconds();
+
+	std::cout << "Generation 2D kokkos took: " << time << " seconds." << std::endl;
+
+	std::cout << "n_active_elements pmesh: " << pMesh.n_active_elements(pMesh.get_view_elements().extent(0))
+			<< std::endl;
+	if (x < 100) {
+
+		Quad4_Mesh sMesh;
+		convert_parallel_mesh_to_serial(sMesh, pMesh);
+
+		std::cout << "n_active_elements: " << sMesh.n_active_elements()
+				<< std::endl;
+		std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
+
+		VTKMeshWriter<Quad4_Mesh> w;
+		w.write(
+				"build_quad4_parallel" + std::to_string(x) + std::to_string(y)
+						+ ".vtu", sMesh);
+	}
+	
+}
+
+void test_mars_nonsimplex_mesh_generation_kokkos_3D(const int x, const int y, const int z) {
+
+	using namespace mars;
+
+	Kokkos::Timer timer;
+
+	ParallelHex8Mesh pMesh;
+	generate_cube(pMesh, x, y, z);
+
+	double time = timer.seconds();
+
+	std::cout << "Generation 3D kokkos took: " << time << " seconds." << std::endl;
+	std::cout << "n_active_elements pmesh: " << pMesh.n_active_elements(pMesh.get_view_elements().extent(0))
+				<< std::endl;
+				
+	if (x < 100) {
+
+		Hex8_Mesh sMesh;
+		convert_parallel_mesh_to_serial(sMesh, pMesh);
+
+		std::cout << "n_active_elements: " << sMesh.n_active_elements()
+				<< std::endl;
+		std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
+
+		VTKMeshWriter<Hex8_Mesh> w;
+		w.write(
+				"build_hex8_parallel" + std::to_string(x) + std::to_string(y)
+						+ ".vtu", sMesh);
+	}
+	
+}
 void test_mars_mesh_generation_kokkos_3D(const int x, const int y, const int z) {
 
 	using namespace mars;
@@ -96,6 +162,8 @@ void test_mars_mesh_generation_kokkos_3D(const int x, const int y, const int z) 
 		w.write(
 				"build_cube_parallel" + std::to_string(x) + std::to_string(y)
 						+ ".vtu", sMesh);
+
+		sMesh.repair(true);
 
 	}
 }

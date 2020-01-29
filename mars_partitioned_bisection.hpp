@@ -5,23 +5,23 @@
 
 namespace mars {
 
-	template<class Mesh>
+	template<class Mesh, class EdgeSelect>
 	class Bisection;
 
-	template<class Mesh>
+	template<class Mesh, class EdgeSelect = LongestEdgeSelect<Mesh>>
 	class PartitionedBisection {
 	public:
 		template<typename T>
 		using ptr = std::shared_ptr<T>;
-		using B = Bisection<Mesh>;
+		using B = Bisection<Mesh, EdgeSelect>;
 		using P = MeshPartition<Mesh>;
-		using ES = EdgeSelect<Mesh>;
+		using ES = EdgeSelect;
 
-		PartitionedBisection(std::vector<ptr<P>> &parts)
+		PartitionedBisection(std::vector<ptr<P>> &parts, std::shared_ptr<ES> edge_select=std::make_shared<ES>())
 		: parts(parts)
 		{
 			for(auto &m : parts) {
-				bisection.push_back(std::make_shared<B>(m->get_mesh()));
+				bisection.push_back(std::make_shared<B>(m->get_mesh(), edge_select));
 				
 				edge_split_pool_.push_back(
 					std::make_shared<EdgeSplitPool>(
