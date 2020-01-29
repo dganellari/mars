@@ -400,7 +400,7 @@ namespace mars {
 
 		template<class Mesh>
 		void build_edge_interface(
-			const std::vector< ptr< Bisection<Mesh> > > &b,
+			const std::vector< ptr< Bisection<Mesh, EdgeSelect<Mesh>> > > &b,
 			const std::vector< ptr< MeshPartition<Mesh> > > &parts)
 		{
 			// edge_interface_.clear();

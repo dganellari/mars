@@ -128,8 +128,6 @@ list(APPEND MARS_HEADERS
 	mars_globals.hpp
 	mars_imesh.hpp
 	mars_lagrange_element.hpp
-	mars_lepp_benchmark.hpp
-	mars_lepp_bisection.hpp
 	mars_longest_edge.hpp
 	mars_matrix.hpp
 	mars_mesh.hpp
@@ -155,8 +153,17 @@ list(APPEND MARS_HEADERS
 	mars_vector.hpp
 	mars_visualization.hpp
 	mars_vtk_writer.hpp
+	mars_non_simplex.hpp
+	mars_lepp_bisection.hpp
+	mars_lepp_benchmark.hpp
+	mars_prelepp_benchmark.hpp
+	mars_prelepp_bisection.hpp
+	mars_mesh_reader.hpp
+	mars_mesh_writer.hpp
+	generation/mars_sub_view.hpp
 	generation/mars_point.hpp
 	generation/mars_mesh_generation.hpp
+    generation/mars_device_vector.hpp
 	generation/mars_memory.hpp
 	)
 	
@@ -166,6 +173,16 @@ IF(Kokkos_FOUND)
 	    generation/mars_mesh_kokkos.hpp
 	    generation/mars_test_kokkos.hpp
 	    generation/mars_utils_kokkos.hpp
+		generation/mars_edge_select_kokkos.hpp
+		generation/mars_static_math_kokkos.hpp
+		generation/mars_simplex_kokkos.hpp
+		generation/mars_non_simplex_kokkos.hpp
+		generation/mars_edge_kokkos.hpp
+		generation/mars_lepp_benchmark_kokkos.hpp
+		generation/mars_bisection_kokkos.hpp
+		generation/mars_edge_node_map_kokkos.hpp
+		generation/mars_edge_element_map_kokkos.hpp
+		generation/mars_mark_kokkos.hpp
 	)
 ENDIF()
 
@@ -178,13 +195,21 @@ list(APPEND MARS_SOURCES
 set(CMAKE_CXX_DEBUG "-g")
 
 add_library(mars STATIC ${MARS_HEADERS} ${MARS_SOURCES})
+target_link_libraries(mars
+  #$<$<CONFIG:RelWithDebInfo>:asan>
+ # $<$<CONFIG:RelWithDebInfo>:ubsan>
+)
+target_compile_options(mars PUBLIC
+  -Wall -Wextra
+  #$<$<CONFIG:RelWithDebInfo>:-fsanitize=address -fsanitize=leak -fsanitize=undefined -fsanitize-address-use-after-scope>
+#  $<$<CONFIG:RelWithDebInfo>:-fsanitize=memory -fsanitize-memory-track-origins>
+)
 target_link_libraries(mars ${MPI_LIBRARIES})
 #target_compile_features(mars PUBLIC cxx_std_11)
+
 add_definitions("-std=c++11")
 target_include_directories(mars PUBLIC .)
-
-add_executable(mars_exec main.cpp ${MARS_HEADERS} ${MARS_SOURCES})
-target_link_libraries(mars_exec mars)
+target_include_directories(mars PUBLIC generation)
 
 IF(Kokkos_FOUND)
 	MESSAGE(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
@@ -197,16 +222,18 @@ IF(Kokkos_FOUND)
 	ENDIF()
 	
 	target_include_directories(mars PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
-	# target_include_directories(mars_exec PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
 
 	message(STATUS "Kokkos_INCLUDE_DIRS=${Kokkos_INCLUDE_DIRS}, ${Kokkos_TPL_INCLUDE_DIRS}")
 	
 	IF(Kokkos_CXX_COMPILER)
-		target_link_libraries(mars_exec mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES})
+		target_link_libraries(mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES})
 	ELSE()
-		target_link_libraries(mars_exec mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES} -L${Kokkos_LIBRARY_DIRS})
+		target_link_libraries(mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES} -L${Kokkos_LIBRARY_DIRS})
 	ENDIF()
 ENDIF()
+
+add_executable(mars_exec main.cpp)
+target_link_libraries(mars_exec mars)
 
 if(TRY_WITH_MOONOLITH)
 	add_subdirectory(moonolith_adapter)
@@ -229,7 +256,6 @@ install(TARGETS mars mars_exec
 
 install(FILES ${MARS_HEADERS} DESTINATION include)
 install(FILES ${CMAKE_BINARY_DIR}/mars_config.hpp DESTINATION include)
-
 
 
 # add_definitions("-DWITH_MOONOLITH")

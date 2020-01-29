@@ -1,9 +1,10 @@
-#ifndef MARS_EDGE_SELECT_HPP
-#define MARS_EDGE_SELECT_HPP
+#ifndef MARS_EDGE_SELECT_KOKKOS_HPP
+#define MARS_EDGE_SELECT_KOKKOS_HPP
 
 #include "mars_base.hpp"
-#include "mars_edge.hpp"
-#include "mars_edge_element_map.hpp"
+#ifdef WITH_KOKKOS
+#include "mars_edge_kokkos.hpp"
+#endif
 #include "mars_fwd.hpp"
 #include "mars_globals.hpp"
 
@@ -12,13 +13,16 @@
 namespace mars {
 
 	template<class Mesh>
-	class EdgeSelect {
+	class ParallelEdgeSelect {
 	public:
+		using Edge = typename Mesh::Edge;
+
 		static const Integer Dim = Mesh::Dim;
 		static const Integer ManifoldDim = Mesh::ManifoldDim;
 
-		virtual ~EdgeSelect() {}
-		virtual Integer select(
+		virtual MARS_INLINE_FUNCTION ~ParallelEdgeSelect() {}
+
+		virtual MARS_INLINE_FUNCTION Integer select(
 			const Mesh &mesh,
 			const Integer element_id) const
 		{
@@ -26,7 +30,8 @@ namespace mars {
 			return 0;
 		}
 
-		virtual Integer select(
+
+		virtual MARS_INLINE_FUNCTION Integer select(
 			const Mesh &mesh,
 			const Edge &neighbor_edge,
 			const Integer element_id) const
@@ -35,7 +40,7 @@ namespace mars {
 			return 0;
 		}
 
-		virtual Integer select(
+		virtual MARS_INLINE_FUNCTION Integer select(
 			const Mesh &mesh,
 			const Integer element_id,
 			const EdgeElementMap &edge_element_map) const
@@ -44,7 +49,7 @@ namespace mars {
 			return 0;
 		}
 
-		virtual Integer stable_select(
+		virtual MARS_INLINE_FUNCTION Integer stable_select(
 			const Mesh &mesh,
 			const Integer element_id) const
 		{
@@ -91,7 +96,7 @@ namespace mars {
 			//do smth
 		}
 
-		virtual bool is_recursive() const
+		virtual MARS_INLINE_FUNCTION bool is_recursive() const
 		{
 			return false;
 		}

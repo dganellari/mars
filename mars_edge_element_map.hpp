@@ -1,6 +1,7 @@
 #ifndef MARS_EDGE_ELEMENT_MAP_HPP
 #define MARS_EDGE_ELEMENT_MAP_HPP
 
+
 #include "mars_edge.hpp"
 #include "mars_static_math.hpp"
 
@@ -10,13 +11,11 @@
 #include <cassert>
 #include <set>
 
-#include "mars_fwd.hpp"
-
 namespace mars {
-	template<Integer Dim, Integer ManifoldDim>
-	class Simplex;
+/*	template<Integer Dim, Integer ManifoldDim>
+	class Simplex;*/
 
-	template<Integer N>
+	template<Integer N, class Implementation_>
 	class SubManifoldElementMap {
 	public:
 		using ElementVector = std::vector<Integer>;

@@ -52,7 +52,7 @@ namespace mars {
 				}
 			}
 
-			if(inside && outside) {
+			if(inside) {
 				elements.push_back(i);
 			}
 		}
