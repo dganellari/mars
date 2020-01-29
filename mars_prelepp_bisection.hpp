@@ -5,7 +5,7 @@
 
 #include <stack>
 #include <err.h>
-#include <omp.h>
+// #include <omp.h>
 
 #define select_err 1
 
