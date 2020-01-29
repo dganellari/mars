@@ -11,7 +11,7 @@
 
 namespace mars {
 
-	template<Integer N>
+	template<Integer N, class Implementation_>
 	class Side {
 	public:
 		static_assert(N > 0, "N cannot be zero");

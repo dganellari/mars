@@ -50,6 +50,19 @@ namespace mars {
 	        return ret;
 	    }
 	    
+		bool operator<(const Vector &right) const
+		{
+			for (Integer i = 0; i < Dim; ++i)
+			{
+				if((*this)(i) < right(i))
+					return true;
+				if((*this)(i) > right(i))
+					return false;
+			}
+
+			return false;
+		}
+
 	    Vector operator+(const Vector &right) const
 	    {
 	        Vector ret;
@@ -147,6 +160,11 @@ namespace mars {
 
 	        return sqn;
 	    }
+
+	    inline T squared_distance(const Vector& right) const
+		{
+	    	return ((*this) - right).squared_norm();
+		}
 
 	    inline T norm() const
 	    {
