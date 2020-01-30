@@ -6100,10 +6100,21 @@ private:
 	public: 
 	    // using Point=Matrix<Real,3,1>;
 		using type=Matrix<Real,3,1>;
+
+
 	    template<typename Point>
 		static auto eval(const Point& p)
 		{
-			type func{0,0,0};
+			const auto& x=p[0];
+			const auto& y=p[1];
+			const auto& z=p[2];
+
+			Real A=5.0*M_PI_Squared*sin(M_PI*x)*sin(M_PI*y)*sin(M_PI*z);
+			Real B=2.0*M_PI_Squared*cos(M_PI*y)*cos(M_PI*z)*sin(M_PI*x);
+			Real C=2.0*M_PI_Squared*cos(M_PI*x)*cos(M_PI*z)*sin(M_PI*y);
+
+			type func{(A - B - C ),(A - B - C ),(A - B - C )};
+				
 			return func; 
 		}
 	};
@@ -6131,10 +6142,6 @@ private:
 		static type eval(const Point& p)
 		{
 			return eval_aux<ManifoldDim>(p);
-			// if(ManifoldDim==2)
-			// 	return ExactLinearElasticity2D::eval(p); 
-			// else if(ManifoldDim==3)
-			// 	return ExactLinearElasticity3D::eval(p); 
 		}
 
 	};
@@ -6335,10 +6342,10 @@ class NormalFunction;
 
 
 
-		using AuxRT_n= FunctionSpace< MeshT, RT<Order1,2>>;
-		using AuxP_n= FunctionSpace< MeshT, Lagrange<Order2,2>>;
-		using AuxP_0= FunctionSpace< MeshT, Lagrange<0,2>>;
-		using LSFEM= FunctionSpace< MeshT, RT<Order1,2>,Lagrange<Order2,2>>;
+		using AuxRT_n= FunctionSpace< MeshT, RT<Order1,ManifoldDim>>;
+		using AuxP_n= FunctionSpace< MeshT, Lagrange<Order2,ManifoldDim>>;
+		using AuxP_0= FunctionSpace< MeshT, Lagrange<0,ManifoldDim>>;
+		using LSFEM= FunctionSpace< MeshT, RT<Order1,ManifoldDim>,Lagrange<Order2,ManifoldDim>>;
 
 		AuxRT_n rtn(mesh,bisection,n2em);//csmc);
 		AuxP_n pn(mesh,bisection,n2em);//csmc);
@@ -6390,6 +6397,8 @@ class NormalFunction;
 
 		constexpr Real mu=1.0;
 		constexpr Real lambda=1.0;
+		constexpr Real alpha=1.0/Real(2.0*mu);
+		constexpr Real beta=alpha*(-lambda/(Real(ManifoldDim)*lambda+ 2.0 * mu));
 
 		constexpr auto halp=Constant<Scalar>(0.5);
 
@@ -6421,6 +6430,8 @@ class NormalFunction;
 		L2Inner(Epsilon(u),C_inverse(tau))-
 		L2Inner(C_inverse(sigma),Epsilon(v))
 		// L2Inner(MatTrace(sigma),MatTrace(tau))
+		// L2Inner(sigma,halp*((Grad(v))))+
+		// L2Inner(C_coeff2*identity* MatTrace(sigma),halp*(Transpose(Grad(v))))
 		;
 
 		auto linearform=
@@ -6432,12 +6443,12 @@ class NormalFunction;
 
 
 
-		auto bcs1=DirichletBC<1,FunctionZero2D>(W_ptr,1);
-		auto bcs2=DirichletBC<1,FunctionZero2D>(W_ptr,2);
-		auto bcs3=DirichletBC<1,FunctionZero2D>(W_ptr,3);
-		auto bcs4=DirichletBC<1,FunctionZero2D>(W_ptr,4);
-		auto bcs5=DirichletBC<1,FunctionZero2D>(W_ptr,5);
-		auto bcs6=DirichletBC<1,FunctionZero2D>(W_ptr,6);
+		auto bcs1=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,1);
+		auto bcs2=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,2);
+		auto bcs3=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,3);
+		auto bcs4=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,4);
+		auto bcs5=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,5);
+		auto bcs6=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,6);
 
         
 
@@ -6564,9 +6575,9 @@ class NormalFunction;
         std::vector<SparseMatrix<Real>> A_levels(levels.size());
 
 
-        for(Integer el=0;el<mesh.n_elements();el++)
-        	std::cout<<"el="<<el<<" lev="<<bisection.tracker().get_iterate(el)<<std::endl;
-        std::cout<<"i=="<<levels.size()-1<<std::endl;
+        // for(Integer el=0;el<mesh.n_elements();el++)
+        // 	std::cout<<"el="<<el<<" lev="<<bisection.tracker().get_iterate(el)<<std::endl;
+        // std::cout<<"i=="<<levels.size()-1<<std::endl;
         A_levels[levels.size()-1]=AL;
 
         std::cout<<A_levels[levels.size()-1].max_rows()<<std::endl;
@@ -6631,12 +6642,10 @@ class NormalFunction;
 	    std::cout<<"TIME BUILD="<< double(end1 - begin1) / CLOCKS_PER_SEC <<std::endl;
 
           std::cout<<"END ORDERED ENTITY 2 DOFS"<<std::endl;
-           // gauss_seidel(solution,AL,bL,10000);
            std::vector<Real> rhs;
            
          std::cout<<"START SOLVING PATCH MULTIGRID"<<std::endl;           
-         patch_multigrid(solution,A_levels,bL,levels_interp,e2d,3,3,levels.size()-1,100,0.000000001);
-         // patch_multigrid(solution,A_levels,bL,levels_interp,ordered_entities,5,5,levels.size()-1,50,0.0000000001);
+         patch_multigrid(solution,A_levels,bL,levels_interp,e2d,1,1,levels.size()-1,100,0.000000001);
          AL.multiply_and_add(rhs,-1.0,solution,bL);
          std::cout<<"residual="<<l2_norm(rhs)<<std::endl;
 		std::cout<<"END SOLVING PATCH MULTIGRID"<<std::endl;
@@ -6646,14 +6655,9 @@ class NormalFunction;
 
 		os.close();
 		os.open(output_fileMULTIGRID.c_str());
-		// write_wtk_isoparametric(os,*context.full_spaces_ptr(),xL,var_namesL,level);
 		write_wtk_isoparametric(os,W_ptr,solution,var_namesL,levelL);
 
-	//     os.close();
 
-
-
-	// std::cout<<"end "<<std::endl;
 	}
 
 
@@ -7111,12 +7115,12 @@ std::cout<<" POST W="<<std::endl;
 
 
 
-		auto bcs1=DirichletBC<1,FunctionZero2D>(W_ptr,1);
-		auto bcs2=DirichletBC<1,FunctionZero2D>(W_ptr,2);
-		auto bcs3=DirichletBC<1,FunctionZero2D>(W_ptr,3);
-		auto bcs4=DirichletBC<1,FunctionZero2D>(W_ptr,4);
-		auto bcs5=DirichletBC<1,FunctionZero2D>(W_ptr,5);
-		auto bcs6=DirichletBC<1,FunctionZero2D>(W_ptr,6);
+		auto bcs1=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,1);
+		auto bcs2=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,2);
+		auto bcs3=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,3);
+		auto bcs4=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,4);
+		auto bcs5=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,5);
+		auto bcs6=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,6);
 
         
 		// using P1_2= FunctionSpace< MeshT, Lagrange<1,2>>;
