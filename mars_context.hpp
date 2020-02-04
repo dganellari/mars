@@ -179,7 +179,9 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                 FE.init_boundary(s);
                 if(FE.is_side_on_boundary())
                 {
+                  std::cout<<"------_______----- reference_maps_===="<<s<<std::endl;
                   reference_maps_.init_boundary(FE);
+                  std::cout<<"------_______----- shapefunctions_===="<<s<<std::endl;
                   shapefunctions_.init_boundary(FE);
                   std::cout<<"------_______----- BEGIN SIDE EVAL===="<<s<<std::endl;
                   std::cout<<"------bilinear"<<s<<std::endl;

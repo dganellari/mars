@@ -21,8 +21,9 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
  using Operator=typename type::Operator;
  using value_type=OperatorType<type,OtherTemplateArguments...>;
  static constexpr auto trace=TraceDofs<Space>::dofs();//trace_dofs<FunctionSpaces>(); //TraceDofs<FunctionSpace>::dofs();//
- using trace_type=decltype(trace);//typename decltype(trace)::value_type; 
- 
+ // using trace_type=decltype(trace);//typename decltype(trace)::value_type; 
+ using trace_type_tmp=typename decltype(trace)::value_type;
+ using trace_type=ArrayChangeType<Real,trace_type_tmp>; 
 
  Evaluation(){};
 
@@ -43,6 +44,10 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
    eval.local_dofs_update(FE);
    const auto& all_local_dofs=eval.local_dofs();
    // auto local_dofs=subarray(all_local_dofs,trace[face]);
+   // decltype(trace[face]) m1(1); //const mars::Array<long, 4>
+   // decltype(all_local_dofs) m2(1);//'const mars::Array<double, 6>
+   // decltype(local_dofs_) m3(1); //const mars::Array<mars::Array<long, 4>, 3>
+
    subarray(local_dofs_,all_local_dofs,trace[face]);
    // std::cout<<"local_dofs TraceOperator="<<local_dofs_<<std::endl;
    // std::cout<<shapes<<std::endl;

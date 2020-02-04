@@ -102,7 +102,7 @@ public:
       FE.transform_point(point,Points[ii]);
       auto mesh_ptr=FE.mesh_ptr();
       auto& signed_normal=mesh_ptr->signed_normal();
-      auto& local_normals=signed_normal.normals(FE.elem_id());
+      auto& local_normals=signed_normal.normals()[FE.elem_id()];
       // const auto& point=FE.transform_point(Points[ii]);
       // const auto point_tmp=FE.jac()*Points[ii];
       // const auto v0=FE.v0();

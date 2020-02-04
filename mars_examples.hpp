@@ -6597,6 +6597,8 @@ class NormalFunction;
 		auto v = MakeTest<1>(W_ptr);
 
 		auto f1 = MakeFunction<0,ExactLinearElasticity<ManifoldDim>>(W_ptr);
+		auto f1_surf = MakeFunction<0,ExactLinearElasticity<ManifoldDim>,TraceOperator>(W_ptr);
+
 
 		constexpr Real mu=1.0;
 		constexpr Real lambda=1.0;
@@ -6615,8 +6617,8 @@ class NormalFunction;
 		// auto C_inverse=NewOperator(C_coeff1*IdentityOperator() + C_coeff2 * IdentityOperator() * MatTraceOperator<Matrix<Real,2,2>>());
 		auto C_inverse=NewOperator(C_coeff1*IdentityOperator() + C_coeff2*identity* MatTrace(IdentityOperator()) );
 
-		// auto normal = MakeFunction<1,NormalFunction<ManifoldDim>,TraceOperator>(W_ptr);
-		auto normal = MakeFunction<1,NormalFunction<ManifoldDim>>(W_ptr);
+		auto normal = MakeFunction<1,NormalFunction<ManifoldDim>,TraceOperator>(W_ptr);
+		// auto normal = MakeFunction<1,NormalFunction<ManifoldDim>>(W_ptr);
         // 
 
 	    // 2D LSFEM POISSION
@@ -6627,8 +6629,8 @@ class NormalFunction;
 		// L2Inner(Epsilon(u),C_inverse(tau))-
 		// L2Inner(C_inverse(sigma),Epsilon(v))
 
-		// +surface_integral(0,Inner(Trace(sigma),normal),Inner(Trace(v),normal))
-		+surface_integral(0,Trace(u),Trace(v))
+		+surface_integral(0,Inner(Trace(sigma),normal),Inner(Trace(v),normal))
+		+surface_integral(0,Trace(sigma),Trace(v))
 
 		// L2Inner(MatTrace(sigma),MatTrace(tau))
 		// L2Inner(sigma,halp*((Grad(v))))+
@@ -6638,7 +6640,7 @@ class NormalFunction;
 		auto linearform=
 		L2Inner(-Div(tau),f1)
 		// +
-		// +surface_integral(0,Trace(u),(f1))
+		+surface_integral(0,Trace(v),(f1_surf))
 		;
         // decltype(MatTrace(IdentityOperator())) feef(5,5,5);
 		std::cout<<" DEFINE BCS  "<<std::endl;

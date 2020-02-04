@@ -4784,6 +4784,13 @@ public:
     static constexpr Integer ManifoldDim=Elem::ManifoldDim;
     static constexpr Integer NComponents=BaseFunctionSpace::NComponents;
     static constexpr Integer NQPoints=QuadratureRule::NQPoints;
+    static constexpr Integer FEFamily=BaseFunctionSpace::FEFamily;
+    static constexpr Integer Order=BaseFunctionSpace::Order;
+    static constexpr Integer Continuity=BaseFunctionSpace::Continuity;
+
+    using SingleFunctionSpace=ElementFunctionSpace<Elem,FEFamily,Order,Continuity,1>;
+
+
     // static constexpr Integer Ntot=FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,BaseFunctionSpace>>::value;
     // if QuadratureElem==Elem, then FunctionSpaceDofsPerSubEntityElem==FunctionSpaceDofsPerElem
     // if QuadratureElem::ManifoldDim=Elem::ManifoldDim-1, 
@@ -4793,10 +4800,10 @@ public:
     static constexpr Integer NdofsVolume=NtotVolume/NComponents;
     static constexpr Integer Ntot=FunctionSpaceDofsPerSubEntityElem<ElemFunctionSpace<Elem,BaseFunctionSpace>,QuadratureElem::ManifoldDim>::value;
     static constexpr Integer Ndofs=Ntot/NComponents;
-    static constexpr Integer FEFamily=BaseFunctionSpace::FEFamily;
-    static constexpr Integer Order=BaseFunctionSpace::Order;
-    static constexpr Integer Continuity=BaseFunctionSpace::Continuity;
-    static constexpr auto trace=TraceDofs<FunctionSpace>::dofs();//trace_dofs<FunctionSpace>();
+
+    // static constexpr auto trace=TraceDofs<FunctionSpace>::dofs();//trace_dofs<FunctionSpace>();
+    static constexpr auto trace=TraceDofs<SingleFunctionSpace>::dofs();
+    
     using SingleType   = typename SingleTypeShapeFunction<FunctionSpace,Operator>::SingleType;
     using VectorSingleType   = Vector<SingleType,Ndofs>;
     using tot_type= typename SingleTypeShapeFunction<FunctionSpace,Operator>::TotType;
@@ -4871,6 +4878,7 @@ public:
         }
         
      std::cout<<"ShapeFunction  trace end"<<std::endl;
+     std::cout<<func_values_<<std::endl;
 
     }
     
@@ -4883,6 +4891,16 @@ public:
         // std::cout<<"face"<<face<<std::endl;
         //   std::cout<<"beta"<<beta<<std::endl;
         //   std::cout<<"trace[face]"<<trace[face]<<std::endl;
+
+      std::cout<<"init RT elements (coeffs)"<<std::endl;
+      std::cout<<"alpha_"<<std::endl;
+      std::cout<<alpha_<<std::endl;
+      std::cout<<"beta"<<std::endl;
+      std::cout<<beta<<std::endl;
+      std::cout<<"trace"<<std::endl;
+      std::cout<<trace<<std::endl;
+      std::cout<<"trace[face]"<<std::endl;
+      std::cout<<trace[face]<<std::endl;
         subarray(alpha_,beta,trace[face]);
 
 
