@@ -153,7 +153,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
           // if(!elem_belongs_to_level(mesh_ptr,el,level_,tracker)) continue;
           if(!elem_belongs_to_level(mesh,el,level_,tracker)) continue;
 
-          // std::cout<<"------_______----- ELEMENT ID = "<<el<<". -----_______--------"<<std::endl;
+          std::cout<<"------_______----- ELEMENT ID = "<<el<<". -----_______--------"<<std::endl;
           FE.init(el,level_);
           // std::cout<<"fe jac"<<FE.jac()<<std::endl;
           // std::cout<<"------_______----- qui1 -----_______--------"<<std::endl;
@@ -175,18 +175,20 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                 // controlla, qui passiamo side_id, ma dovremmo avere label
                 // dovresti costruire mesh coi label
 
-                // std::cout<<"------_______----- BEGIN SIDE===="<<s<<std::endl;
+                std::cout<<"------_______----- BEGIN SIDE===="<<s<<std::endl;
                 FE.init_boundary(s);
                 if(FE.is_side_on_boundary())
                 {
                   reference_maps_.init_boundary(FE);
                   shapefunctions_.init_boundary(FE);
-                  // std::cout<<"------_______----- BEGIN SIDE EVAL===="<<s<<std::endl;
+                  std::cout<<"------_______----- BEGIN SIDE EVAL===="<<s<<std::endl;
+                  std::cout<<"------bilinear"<<s<<std::endl;
                   eval_bilinear_form_.apply_boundary(A,FE);
+                  std::cout<<"------linear===="<<s<<std::endl;
                   eval_linear_form_.apply_boundary(b,FE);
-                  // std::cout<<"------_______----- END SIDE EVAL===="<<s<<std::endl;
+                  std::cout<<"------_______----- END SIDE EVAL===="<<s<<std::endl;
                 }
-                // std::cout<<"------_______----- END SIDE===="<<s<<std::endl;
+                std::cout<<"------_______----- END SIDE===="<<s<<std::endl;
               }
 
 

@@ -70,7 +70,7 @@ class Evaluation<Expression<Binary< Expression<DerivedLeft>  ,
  {};
 
  template<typename subtype,typename...OtherTemplateArguments2,typename...Inputs>
- void apply(subtype& output,const Inputs&...inputs)
+ void apply(subtype& output, Inputs&...inputs)
  {
   
   eval_left_.apply(left_value_,inputs...);

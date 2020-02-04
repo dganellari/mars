@@ -34,7 +34,7 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
 
  template<typename OperatorType, typename Shapes>
  std::enable_if_t<IsSame<OperatorType,TraceOperator>::value,void> compute
- (value_type& value, type&eval,const FiniteElem<Elem>&FE, const Shapes& shapes )
+ (value_type& value, type&eval, FiniteElem<Elem>&FE, const Shapes& shapes )
  {
   using type1=typename Shapes::type; 
   using type2=typename Shapes::subtype;
@@ -74,7 +74,7 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
 
  template<typename OperatorType, typename Shapes>
  std::enable_if_t<IsDifferent<OperatorType,TraceOperator>::value,void> compute
- (value_type& value, type&eval,const FiniteElem<Elem>&FE, const Shapes& shapes )
+ (value_type& value, type&eval, FiniteElem<Elem>&FE, const Shapes& shapes )
  {
   using type1=typename Shapes::type; 
   using type2=typename Shapes::subtype;
@@ -113,7 +113,7 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
  // template<typename...Forms, typename FiniteElem,typename...Inputs>
  // constexpr void apply(value_type& value,const FiniteElem& J, const typename ShapeFunctions2<Forms...>::TupleOfTupleShapeFunction& shape_functions,const Inputs&...inputs)
  template<typename...Args, typename FiniteElem,typename...Inputs>
- constexpr void apply(value_type& value,const FiniteElem& FE, const std::tuple<Args...>& shape_functions,const Inputs&...inputs)
+ constexpr void apply(value_type& value, FiniteElem& FE, const std::tuple<Args...>& shape_functions,const Inputs&...inputs)
 
  {
   using TupleOfTupleShapeFunction=std::tuple<Args...>;

@@ -780,6 +780,7 @@
 
 				for(std::size_t it=0;it<max_iter;it++)
 				{
+					std::cout<<it<<"/"<<max_iter<<std::endl;
 
 					A.row_gauss_seidel(x,b);
 
@@ -2232,7 +2233,7 @@ public:
         
         template<Integer Family>
 		std::enable_if_t<Family==RaviartThomasFE, void> 
-		init_aux(const FiniteElem<Elem>& FE,Array<Real,Ntot> vec,const Integer component)
+		init_aux( FiniteElem<Elem>& FE,Array<Real,Ntot> vec,const Integer component)
 		{
 
 		map_.init(FE);
@@ -2247,7 +2248,7 @@ public:
 
 
 
-		shape_.init(coeff_,MatPoints);
+		shape_.init(coeff_,MatPoints,FE);
 		const auto& shape_eval=shape_.eval();
 		// std::cout<<"reference_values="<<std::endl;
 		// std::cout<<reference_values<<std::endl;
@@ -2357,7 +2358,7 @@ public:
 
         template<Integer Family>
 		std::enable_if_t<Family==LagrangeFE, void> 
-		init_aux(const FiniteElem<Elem>& FE,Array<Real,Ntot> vec,const Integer component)
+		init_aux( FiniteElem<Elem>& FE,Array<Real,Ntot> vec,const Integer component)
 		{
 
 		map_.init(FE);
@@ -2396,7 +2397,7 @@ public:
 		}
 
 
-        void init(const FiniteElem<Elem>& FE,Array<Real,Ntot> vec,const Integer component)
+        void init( FiniteElem<Elem>& FE,Array<Real,Ntot> vec,const Integer component)
         {
         	init_aux<FEFamily>(FE,vec,component);
         }
@@ -4200,7 +4201,7 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,LagrangeFE,Order,Cont
      // std::cout<<"shape init first"<<std::endl;
 
      shape_.init_map(C_map_);
-     shape_.init(transformed_point_row_);
+     shape_.init(transformed_point_row_,C_FE);
      // std::cout<<"shape init end"<<std::endl;
 
 
@@ -4412,7 +4413,7 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,0,Con
         // std::cout<<"qui7 "<<std::endl;
     	// std::cout<<"reference_qp_points_face_"<<std::endl;
     	// std::cout<<reference_qp_points_face_<<std::endl;
-        shape_face_.init(coeff_,reference_qp_points_face_);
+        shape_face_.init(coeff_,reference_qp_points_face_,C_FE);
         // std::cout<<"shape_face_.eval()"<<std::endl;
         // std::cout<<shape_face_.eval()<<std::endl;
         // // Vector<Real,NDofsFace> out; 
@@ -4536,6 +4537,11 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Con
     using ShapeMomentumValue=typename ShapeMomentum::type;
     using QPpointsMomentum=typename ShapeMomentum::qp_points_type;
 
+    using QRuleSimplexPointsReference=typename QuadratureRule<QR>:: template rule<Elem,2>;
+    using ShapeSimplexPoints=ShapeFunction<Elem,RTnBaseFunctionSpace,IdentityOperator,QRuleSimplexPointsReference>;
+
+
+
 	using QRuleBarycenterReference=typename QuadratureRule<QR>:: template rule<Elem,1>;
     using ShapeBarycenter=ShapeFunction<Elem,RTnBaseFunctionSpace,IdentityOperator,QRuleBarycenterReference>;
     using QPpointsBarycenter=typename ShapeBarycenter::qp_points_type;
@@ -4657,19 +4663,19 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Con
      const auto& Ndofs=Output::Rows;
 
 
-     std::cout<<"Ndofs="<<Ndofs<<" NQPoints="<<NQPoints<<std::endl;
+     // std::cout<<"Ndofs="<<Ndofs<<" NQPoints="<<NQPoints<<std::endl;
 
 
      for(Integer coarse_dof=0;coarse_dof<Ndofs;coarse_dof++)
      {
         out(fine_dof,coarse_dof)=0;
-        std::cout<<"fine_dof="<<fine_dof<<" coarse_dof="<<coarse_dof<<std::endl;
+        // std::cout<<"fine_dof="<<fine_dof<<" coarse_dof="<<coarse_dof<<std::endl;
      	for(Integer qp=0;qp<1;qp++)
      	{
      			out(fine_dof,coarse_dof)=shape_value[coarse_dof][qp][component];
-     			std::cout<<out(fine_dof,coarse_dof)<<" ";
+     			// std::cout<<out(fine_dof,coarse_dof)<<" ";
      	}
-     	std::cout<<std::endl;
+     	// std::cout<<std::endl;
 
        // std::cout<<out(n_dof,cont)<<std::endl;
 
@@ -4678,127 +4684,161 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Con
     }
 
 
-
-    // face dofs
-    template<Integer EntityDim, typename Mat>
-    std::enable_if_t< (EntityDim==entity[0]), void>
-    compute(Mat& mat, Integer& cont, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+    template<typename Output, typename ShapeValue,typename Normal>
+    void compute_simplex_nodes_dofs(Output& out, Integer& fine_dof,const Integer& k, const Integer& local_node, const Normal& normal, const ShapeValue& shape_value)
     {
+     const auto& NQPoints=ShapeValue::NQPoints;
+     const auto& Ndofs=Output::Rows;
+
+     // std::cout<<"compute_simplex_nodes_dofs="<<std::endl;
+     // std::cout<<"Ndofs="<<Ndofs<<" NQPoints="<<NQPoints<<std::endl;
+     // std::cout<<"fine_dof="<<fine_dof<<std::endl;
+     // std::cout<<"k="<<k<<std::endl;
+     // std::cout<<"local_node="<<local_node<<std::endl;
+
+     // Integer coarse_dof=k*ManifoldDim+local_node;
+     for(Integer coarse_dof=0;coarse_dof<Ndofs;coarse_dof++)
+     {
+        out(fine_dof,coarse_dof)=0;
+        // std::cout<<" coarse_dof="<<coarse_dof<<std::endl;
+        // std::cout<<shape_value[coarse_dof]<<std::endl;
+     	for(Integer comp=0;comp<ManifoldDim;comp++)
+     	{
+     			out(fine_dof,coarse_dof)+=shape_value[coarse_dof][local_node][comp] * normal[comp];
+     			
+     	}
+     	// std::cout<<out(fine_dof,coarse_dof)<<" ";
+     	// std::cout<<std::endl;
+
+       // std::cout<<out(n_dof,cont)<<std::endl;
+
+     }
+
+
+    }
 
 
 
-     	auto mesh_ptr=F_FE.mesh_ptr();
-    	const auto& signed_normal=mesh_ptr->signed_normal();
-        C_map_.init(C_FE);
-        shape_face_.init_map(C_map_);
-        // coeffs_.init(*mesh_ptr);
+    // // face dofs
+    // template<Integer EntityDim, typename Mat>
+    // std::enable_if_t< (EntityDim==entity[0]), void>
+    // compute(Mat& mat, Integer& cont, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+    // {
 
-        SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
-    	F_FE.side_transform_point(qp_points_face_,QRuleFaceReference::qp_points);
-     // 	std::cout<<"QRuleFaceReference::qp_points"<<std::endl;
-    	// std::cout<<QRuleFaceReference::qp_points<<std::endl;
-    	// std::cout<<"qp_points_face_"<<std::endl;
-    	// std::cout<<qp_points_face_<<std::endl;
-     // transformed_point_row_=C_FE_.inv_jac()*transformed_point_col_;
-        C_FE.points_to_reference_points(reference_qp_points_face_,qp_points_face_);
-        // std::cout<<"qui7 "<<std::endl;
-    	// std::cout<<"reference_qp_points_face_"<<std::endl;
-    	std::cout<<reference_qp_points_face_<<std::endl;
-        shape_face_.init(coeff_,reference_qp_points_face_);
-        // // Vector<Real,NDofsFace> out; 
 
-        const auto& normal=signed_normal.normals()[F_FE.elem_id()][F_FE.side_id()];
 
-        Integer id=F_FE.side_id();
-        // std::cout<<"qui2"<<std::endl;
-        trace_map_.init(F_FE);
-        // std::cout<<"qui3"<<std::endl;
-        shape_trace_face_.init_map(trace_map_);
-        // std::cout<<"qui4"<<std::endl;
-        shape_trace_face_.init(coeff_,id);
+    //  	auto mesh_ptr=F_FE.mesh_ptr();
+    // 	const auto& signed_normal=mesh_ptr->signed_normal();
+    //     C_map_.init(C_FE);
+    //     shape_face_.init_map(C_map_);
+    //     // coeffs_.init(*mesh_ptr);
+
+    //     SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
+    // 	F_FE.side_transform_point(qp_points_face_,QRuleFaceReference::qp_points);
+    //  // 	std::cout<<"QRuleFaceReference::qp_points"<<std::endl;
+    // 	// std::cout<<QRuleFaceReference::qp_points<<std::endl;
+    // 	// std::cout<<"qp_points_face_"<<std::endl;
+    // 	// std::cout<<qp_points_face_<<std::endl;
+    //  // transformed_point_row_=C_FE_.inv_jac()*transformed_point_col_;
+    //     C_FE.points_to_reference_points(reference_qp_points_face_,qp_points_face_);
+    //     // std::cout<<"qui7 "<<std::endl;
+    // 	// std::cout<<"reference_qp_points_face_"<<std::endl;
+    // 	std::cout<<reference_qp_points_face_<<std::endl;
+    //     shape_face_.init(coeff_,reference_qp_points_face_,C_FE);
+    //     // // Vector<Real,NDofsFace> out; 
+
+    //     const auto& normal=signed_normal.normals()[F_FE.elem_id()][F_FE.side_id()];
+
+    //     Integer id=F_FE.side_id();
+    //     // std::cout<<"qui2"<<std::endl;
+    //     trace_map_.init(F_FE);
+    //     // std::cout<<"qui3"<<std::endl;
+    //     shape_trace_face_.init_map(trace_map_);
+    //     // std::cout<<"qui4"<<std::endl;
+    //     shape_trace_face_.init(coeff_,id,C_FE);
 
         
-        std::cout<<"reference_qp_points_face_"<<std::endl;
-        std::cout<<reference_qp_points_face_<<std::endl;
-        std::cout<<"normal"<<std::endl;
-        std::cout<<normal<<std::endl;
-        std::cout<<"shape_face_.eval()"<<std::endl;
-        std::cout<<shape_face_.eval()<<std::endl;
-        std::cout<<"shape_trace_face_.eval()"<<std::endl;
-        std::cout<<shape_trace_face_.eval()<<std::endl;
+    //     std::cout<<"reference_qp_points_face_"<<std::endl;
+    //     std::cout<<reference_qp_points_face_<<std::endl;
+    //     std::cout<<"normal"<<std::endl;
+    //     std::cout<<normal<<std::endl;
+    //     std::cout<<"shape_face_.eval()"<<std::endl;
+    //     std::cout<<shape_face_.eval()<<std::endl;
+    //     std::cout<<"shape_trace_face_.eval()"<<std::endl;
+    //     std::cout<<shape_trace_face_.eval()<<std::endl;
 
-        for(Integer i=0;i<dofs_per_entity[0]; i++)
-        {
-         compute_face_dofs(mat,cont,QRuleFace::qp_weights,shape_face_.eval() ,shape_trace_face_.eval()[i], normal, F_FE);
-         cont++;
-        }
-
-
+    //     for(Integer i=0;i<dofs_per_entity[0]; i++)
+    //     {
+    //      compute_face_dofs(mat,cont,QRuleFace::qp_weights,shape_face_.eval() ,shape_trace_face_.eval()[i], normal, F_FE);
+    //      cont++;
+    //     }
 
 
 
-     // F_map_.init(F_FE_);
-    	// QPpointsFace frfrfr(5);
-    	// typename QRuleFaceReference::qp_points_type feef(5);
-    	// // std::cout<<"compute "<<std::endl;
-    	// auto mesh_ptr=F_FE.mesh_ptr();
-    	// // std::cout<<"qui1 "<<std::endl;
-    	// const auto& signed_normal=mesh_ptr->signed_normal();
-    	// // std::cout<<"qui2 "<<std::endl;
-     //    C_map_.init(C_FE);
-     //    // std::cout<<"qui3 "<<std::endl;
-     //    shape_face_.init_map(C_map_);
-     //    // std::cout<<"qui4 "<<std::endl;
-     //    // coeffs_.init(*mesh_ptr);
 
-     //    SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
-     //    // std::cout<<"qui5 "<<std::endl;
-    	// F_FE.side_transform_point(qp_points_face_,QRuleFaceReference::qp_points);
-    	// // std::cout<<"qui6 "<<std::endl;
-     // // 	std::cout<<"QRuleFaceReference::qp_points"<<std::endl;
-    	// // std::cout<<QRuleFaceReference::qp_points<<std::endl;
-    	// // std::cout<<"qp_points_face_"<<std::endl;
-    	// // std::cout<<qp_points_face_<<std::endl;
-     // // transformed_point_row_=C_FE_.inv_jac()*transformed_point_col_;
-     //    C_FE.points_to_reference_points(reference_qp_points_face_,qp_points_face_);
-     //    // std::cout<<"qui7 "<<std::endl;
-    	// // std::cout<<"reference_qp_points_face_"<<std::endl;
-    	// // std::cout<<reference_qp_points_face_<<std::endl;
-     //    shape_face_.init(coeff_,reference_qp_points_face_);
-     //    std::cout<<"shape_face_.eval()"<<std::endl;
-     //    // std::cout<<shape_face_.eval()<<std::endl;
-     //    // Vector<Real,NDofsFace> out; 
 
-     //    const auto& normal=signed_normal.normals()[F_FE.elem_id()][F_FE.side_id()];
+    //  // F_map_.init(F_FE_);
+    // 	// QPpointsFace frfrfr(5);
+    // 	// typename QRuleFaceReference::qp_points_type feef(5);
+    // 	// // std::cout<<"compute "<<std::endl;
+    // 	// auto mesh_ptr=F_FE.mesh_ptr();
+    // 	// // std::cout<<"qui1 "<<std::endl;
+    // 	// const auto& signed_normal=mesh_ptr->signed_normal();
+    // 	// // std::cout<<"qui2 "<<std::endl;
+    //  //    C_map_.init(C_FE);
+    //  //    // std::cout<<"qui3 "<<std::endl;
+    //  //    shape_face_.init_map(C_map_);
+    //  //    // std::cout<<"qui4 "<<std::endl;
+    //  //    // coeffs_.init(*mesh_ptr);
+
+    //  //    SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
+    //  //    // std::cout<<"qui5 "<<std::endl;
+    // 	// F_FE.side_transform_point(qp_points_face_,QRuleFaceReference::qp_points);
+    // 	// // std::cout<<"qui6 "<<std::endl;
+    //  // // 	std::cout<<"QRuleFaceReference::qp_points"<<std::endl;
+    // 	// // std::cout<<QRuleFaceReference::qp_points<<std::endl;
+    // 	// // std::cout<<"qp_points_face_"<<std::endl;
+    // 	// // std::cout<<qp_points_face_<<std::endl;
+    //  // // transformed_point_row_=C_FE_.inv_jac()*transformed_point_col_;
+    //  //    C_FE.points_to_reference_points(reference_qp_points_face_,qp_points_face_);
+    //  //    // std::cout<<"qui7 "<<std::endl;
+    // 	// // std::cout<<"reference_qp_points_face_"<<std::endl;
+    // 	// // std::cout<<reference_qp_points_face_<<std::endl;
+    //  //    shape_face_.init(coeff_,reference_qp_points_face_);
+    //  //    std::cout<<"shape_face_.eval()"<<std::endl;
+    //  //    // std::cout<<shape_face_.eval()<<std::endl;
+    //  //    // Vector<Real,NDofsFace> out; 
+
+    //  //    const auto& normal=signed_normal.normals()[F_FE.elem_id()][F_FE.side_id()];
         
-     //    // std::cout<<"qui1"<<std::endl;
-     //    Integer id=F_FE.side_id();
-     //    // std::cout<<"qui2"<<std::endl;
-     //    trace_map_.init(F_FE);
-     //    // std::cout<<"qui3"<<std::endl;
-     //    shape_trace_face_.init_map(trace_map_);
-     //    // std::cout<<"qui4"<<std::endl;
-     //    shape_trace_face_.init(coeff_,id);
-     //    // std::cout<<"F_FE.side_id()"<<std::endl;
-     //    // std::cout<<F_FE.side_id()<<std::endl;
+    //  //    // std::cout<<"qui1"<<std::endl;
+    //  //    Integer id=F_FE.side_id();
+    //  //    // std::cout<<"qui2"<<std::endl;
+    //  //    trace_map_.init(F_FE);
+    //  //    // std::cout<<"qui3"<<std::endl;
+    //  //    shape_trace_face_.init_map(trace_map_);
+    //  //    // std::cout<<"qui4"<<std::endl;
+    //  //    shape_trace_face_.init(coeff_,id);
+    //  //    // std::cout<<"F_FE.side_id()"<<std::endl;
+    //  //    // std::cout<<F_FE.side_id()<<std::endl;
 
-     //    // std::cout<<"shape_trace_face_.eval()"<<std::endl;
-     //    // std::cout<<shape_trace_face_.eval()<<std::endl;
+    //  //    // std::cout<<"shape_trace_face_.eval()"<<std::endl;
+    //  //    // std::cout<<shape_trace_face_.eval()<<std::endl;
         
-     //    for(Integer i=0;i<dofs_per_entity[0]; i++)
-     //    {
-     //     compute_face_dofs(mat,cont,QRuleFace::qp_weights,shape_face_.eval() ,shape_trace_face_.eval()[i], normal, F_FE);
-     //     cont++;
-     //    }
-    	std::cout<<"mat"<<std::endl;
-    	std::cout<<mat<<std::endl;
+    //  //    for(Integer i=0;i<dofs_per_entity[0]; i++)
+    //  //    {
+    //  //     compute_face_dofs(mat,cont,QRuleFace::qp_weights,shape_face_.eval() ,shape_trace_face_.eval()[i], normal, F_FE);
+    //  //     cont++;
+    //  //    }
+    // 	std::cout<<"mat"<<std::endl;
+    // 	std::cout<<mat<<std::endl;
 
  
 
 
-     // // qp_points_face_
-     // // shape_face_.init_map(C_map);
-    }
+    //  // // qp_points_face_
+    //  // // shape_face_.init_map(C_map);
+    // }
 
 
     // // momentum dofs
@@ -4856,28 +4896,147 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Con
     // }
 
 
-    template<Integer EntityDim, typename Mat>
-    std::enable_if_t< (EntityDim==entity[1]), void> 
-    compute(Mat& mat, Integer& cont, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
-    {
+
+    static constexpr const Array<Array<Real, ManifoldDim>,ManifoldDim+1> reference_nodes_arr=Elem::reference();
+    static constexpr const auto reference_nodes=ArrayOfArray2Matrix(reference_nodes_arr);
+
+
+	    template<Integer EntityDim, typename Mat>
+	    std::enable_if_t< (EntityDim==entity[0]), void> 
+	    compute(Mat& mat, Integer& cont, FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+	    {
+
 
 
 
 
      	auto mesh_ptr=F_FE.mesh_ptr();
     	const auto& signed_normal=mesh_ptr->signed_normal();
+     
+    	F_FE.init(F_FE.elem_id());
+    	C_FE.init(C_FE.elem_id());
+    	C_FE.init_inv_jac();
         C_map_.init(C_FE);
-        shape_barycenter_.init_map(C_map_);
-        // coeffs_.init(*mesh_ptr);
+        // shape_simplex_points_.init_map(C_map_);
+
+
+  
+        FQPValues<Matrix<Real,ManifoldDim,1>,ManifoldDim+1,NDofs> func_values;
+
 
         SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
-    	F_FE.transform_point(qp_points_barycenter_,QRuleBarycenterReference::qp_points);
+     	F_FE.transform_point(qp_points_simplex_,reference_nodes);
+        C_FE.points_to_reference_points(reference_qp_points_simplex_,qp_points_simplex_);
+
+
+        DynamicShapeFunctionValue<ElementFunctionSpace,IdentityOperator>::apply4(func_values,reference_qp_points_simplex_,C_FE,C_map_(),coeff_); 
+
+
+
+
+        // coeffs_.init(*mesh_ptr);
+
+        // for(Integer i=0;i<ManifoldDim+1;i++)
+    	// F_FE.transform_point(qp_points_simplex_,reference_nodes);
      // 	std::cout<<"QRuleFaceReference::qp_points"<<std::endl;
     	// std::cout<<QRuleFaceReference::qp_points<<std::endl;
     	// std::cout<<"qp_points_face_"<<std::endl;
     	// std::cout<<qp_points_face_<<std::endl;
      // transformed_point_row_=C_FE_.inv_jac()*transformed_point_col_;
-        C_FE.points_to_reference_points(reference_qp_points_barycenter_,qp_points_barycenter_);
+        // C_FE.points_to_reference_points(reference_qp_points_simplex_,qp_points_simplex_);
+        // std::cout<<"qui7 "<<std::endl;
+        std::cout<<"reference_nodes"<<std::endl;
+        std::cout<<reference_nodes<<std::endl;
+        std::cout<<"qp_points_simplex_"<<std::endl;
+        std::cout<<qp_points_simplex_<<std::endl;
+    	std::cout<<"reference_qp_points_simplex_"<<std::endl;
+    	std::cout<<reference_qp_points_simplex_<<std::endl;
+        // shape_simplex_points_.init(coeff_,reference_qp_points_simplex_,C_FE);
+        // // Vector<Real,NDofsFace> out; 
+    	// std::cout<<"interp func_values"<<std::endl;
+    	// std::cout<<func_values<<std::endl;
+        const auto& normal=signed_normal.normals()[F_FE.elem_id()][F_FE.side_id()];
+        Integer local_nodes[ManifoldDim];
+
+
+        Combinations<ManifoldDim + 1,ManifoldDim>::generate(F_FE.side_id(),local_nodes);
+
+
+        for(Integer k=0;k<ManifoldDim;k++)
+        {       	
+     //    	std::cout<<"local_nodes"<<std::endl;
+     //    	for(Integer m=0;m<ManifoldDim;m++)
+     //    	std::cout<<local_nodes[m]<<" ";
+     //    std::cout<<"local_nodes[k]="<<local_nodes[k]<<std::endl;
+     //    std::cout<<std::endl;
+    	// std::cout<<"func_values"<<std::endl;
+    	// std::cout<<func_values<<std::endl; 
+    	// std::cout<<"normal"<<std::endl;
+    	// std::cout<<normal<<std::endl;        
+         compute_simplex_nodes_dofs(mat,cont,k,local_nodes[k],normal,func_values);
+         cont++;
+        }
+
+
+    	// std::cout<<"mat"<<std::endl;
+    	// std::cout<<mat<<std::endl;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+	    template<Integer EntityDim, typename Mat>
+	    std::enable_if_t< (EntityDim==entity[1]), void> 
+	    compute(Mat& mat, Integer& cont, FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+	    {
+
+
+
+
+
+     	auto mesh_ptr=F_FE.mesh_ptr();
+    	const auto& signed_normal=mesh_ptr->signed_normal();
+     
+    	F_FE.init(F_FE.elem_id());
+    	C_FE.init(C_FE.elem_id());
+    	C_FE.init_inv_jac();
+        C_map_.init(C_FE);
+        // shape_simplex_points_.init_map(C_map_);
+
+
+  
+        FQPValues<Matrix<Real,ManifoldDim,1>,ManifoldDim+1,NDofs> func_values;
+
+
+        SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
+    	F_FE.transform_point(qp_points_barycenter_,QRuleBarycenterReference::qp_points);
+         C_FE.points_to_reference_points(reference_qp_points_barycenter_,qp_points_barycenter_);
+
+
+        DynamicShapeFunctionValue<ElementFunctionSpace,IdentityOperator>::apply4(func_values,reference_qp_points_barycenter_,C_FE,C_map_(),coeff_); 
+
+
+
+
+        // coeffs_.init(*mesh_ptr);
+
+        // for(Integer i=0;i<ManifoldDim+1;i++)
+    	// F_FE.transform_point(qp_points_simplex_,reference_nodes);
+     // 	std::cout<<"QRuleFaceReference::qp_points"<<std::endl;
+    	// std::cout<<QRuleFaceReference::qp_points<<std::endl;
+    	// std::cout<<"qp_points_face_"<<std::endl;
+    	// std::cout<<qp_points_face_<<std::endl;
+     // transformed_point_row_=C_FE_.inv_jac()*transformed_point_col_;
+        // C_FE.points_to_reference_points(reference_qp_points_simplex_,qp_points_simplex_);
         // std::cout<<"qui7 "<<std::endl;
         std::cout<<"QRuleBarycenterReference::qp_points"<<std::endl;
         std::cout<<QRuleBarycenterReference::qp_points<<std::endl;
@@ -4885,54 +5044,107 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Con
         std::cout<<qp_points_barycenter_<<std::endl;
     	std::cout<<"reference_qp_points_barycenter_"<<std::endl;
     	std::cout<<reference_qp_points_barycenter_<<std::endl;
-        shape_barycenter_.init(coeff_,reference_qp_points_barycenter_);
-        // // Vector<Real,NDofsFace> out; 
+        // shape_simplex_points_.init(coeff_,reference_qp_points_simplex_,C_FE);
+     //    // // Vector<Real,NDofsFace> out; 
+    	// std::cout<<"interp func_values"<<std::endl;
+    	// std::cout<<func_values<<std::endl;
+        // const auto& normal=signed_normal.normals()[F_FE.elem_id()][F_FE.side_id()];
+        // Integer local_nodes[ManifoldDim];
 
-        const auto& normal=signed_normal.normals()[F_FE.elem_id()][F_FE.side_id()];
+
+        // Combinations<ManifoldDim + 1,ManifoldDim>::generate(F_FE.side_id(),local_nodes);
+
+
         for(Integer k=0;k<dofs_per_entity[1];k++)
         {
-         compute_barycenter_dofs(mat,cont,k,shape_barycenter_.eval());
+         compute_barycenter_dofs(mat,cont,k,func_values);
          cont++;
         }
 
 
-
-
-
-     // auto mesh_ptr=F_FE.mesh_ptr();
-     // const auto& signed_normal=mesh_ptr->signed_normal();
-     // C_map_.init(C_FE);
-     // F_Pn_map_.init(F_FE);
-     // shape_momentum_.init_map(C_map_);
-     // shape_lagrange_momentum_.init_map(F_Pn_map_);
-     // SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
-     // F_FE.transform_point(qp_points_momentum_,QRuleMomentum::qp_points);
-     // C_FE.points_to_reference_points(reference_qp_points_momentum_,qp_points_momentum_);
-
-     // std::cout<<"QRuleMomentum::qp_points"<<std::endl;
-     // // std::cout<<QRuleMomentum::qp_points<<std::endl;
-     // // std::cout<<"qp_points_momentum_"<<std::endl;
-     // // std::cout<<qp_points_momentum_<<std::endl;
-     // // std::cout<<"reference_qp_points_momentum_"<<std::endl;
-     // // std::cout<<reference_qp_points_momentum_<<std::endl;
-
-     // shape_momentum_.init(reference_qp_points_momentum_);
-     // shape_lagrange_momentum_.init(reference_qp_points_momentum_);
-     
-     // int cont2=0;
-     // // Vector<Real,NDofsMomentum > out; 
-     // for(Integer i=NDofsFace;i<NDofs;i++)
-     // {
-     // compute_momentum_dofs(mat,cont,QRuleFace::qp_weights,shape_momentum_.eval(),cont2,shape_lagrange_momentum_.eval()[cont2], F_FE);
-     // cont++;
-     // cont2++;
-
-     // }
-
+    	// std::cout<<"mat"<<std::endl;
+    	// std::cout<<mat<<std::endl;
     }
 
+
+
+    // template<Integer EntityDim, typename Mat>
+    // std::enable_if_t< (EntityDim==entity[1]), void> 
+    // compute(Mat& mat, Integer& cont, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+    // {
+
+
+
+
+    //  	auto mesh_ptr=F_FE.mesh_ptr();
+    // 	const auto& signed_normal=mesh_ptr->signed_normal();
+    //     C_map_.init(C_FE);
+    //     shape_barycenter_.init_map(C_map_);
+    //     // coeffs_.init(*mesh_ptr);
+
+    //     SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
+    // 	F_FE.transform_point(qp_points_barycenter_,QRuleBarycenterReference::qp_points);
+    //  // 	std::cout<<"QRuleFaceReference::qp_points"<<std::endl;
+    // 	// std::cout<<QRuleFaceReference::qp_points<<std::endl;
+    // 	// std::cout<<"qp_points_face_"<<std::endl;
+    // 	// std::cout<<qp_points_face_<<std::endl;
+    //  // transformed_point_row_=C_FE_.inv_jac()*transformed_point_col_;
+    //     C_FE.points_to_reference_points(reference_qp_points_barycenter_,qp_points_barycenter_);
+    //     // std::cout<<"qui7 "<<std::endl;
+    //  //    std::cout<<"QRuleBarycenterReference::qp_points"<<std::endl;
+    //  //    std::cout<<QRuleBarycenterReference::qp_points<<std::endl;
+    //  //    std::cout<<"qp_points_barycenter_"<<std::endl;
+    //  //    std::cout<<qp_points_barycenter_<<std::endl;
+    // 	// std::cout<<"reference_qp_points_barycenter_"<<std::endl;
+    // 	// std::cout<<reference_qp_points_barycenter_<<std::endl;
+    //     shape_barycenter_.init(coeff_,reference_qp_points_barycenter_,C_FE);
+    //     // // Vector<Real,NDofsFace> out; 
+
+    //     const auto& normal=signed_normal.normals()[F_FE.elem_id()][F_FE.side_id()];
+    //     for(Integer k=0;k<dofs_per_entity[1];k++)
+    //     {
+    //      compute_barycenter_dofs(mat,cont,k,shape_barycenter_.eval());
+    //      cont++;
+    //     }
+
+
+
+
+
+    //  // auto mesh_ptr=F_FE.mesh_ptr();
+    //  // const auto& signed_normal=mesh_ptr->signed_normal();
+    //  // C_map_.init(C_FE);
+    //  // F_Pn_map_.init(F_FE);
+    //  // shape_momentum_.init_map(C_map_);
+    //  // shape_lagrange_momentum_.init_map(F_Pn_map_);
+    //  // SingleShapeFunctionCoefficientsCollection<Elem,FEFamily,Order>::apply(signed_normal.sign(C_FE.elem_id()),coeff_);
+    //  // F_FE.transform_point(qp_points_momentum_,QRuleMomentum::qp_points);
+    //  // C_FE.points_to_reference_points(reference_qp_points_momentum_,qp_points_momentum_);
+
+    //  // std::cout<<"QRuleMomentum::qp_points"<<std::endl;
+    //  // // std::cout<<QRuleMomentum::qp_points<<std::endl;
+    //  // // std::cout<<"qp_points_momentum_"<<std::endl;
+    //  // // std::cout<<qp_points_momentum_<<std::endl;
+    //  // // std::cout<<"reference_qp_points_momentum_"<<std::endl;
+    //  // // std::cout<<reference_qp_points_momentum_<<std::endl;
+
+    //  // shape_momentum_.init(reference_qp_points_momentum_);
+    //  // shape_lagrange_momentum_.init(reference_qp_points_momentum_);
+     
+    //  // int cont2=0;
+    //  // // Vector<Real,NDofsMomentum > out; 
+    //  // for(Integer i=NDofsFace;i<NDofs;i++)
+    //  // {
+    //  // compute_momentum_dofs(mat,cont,QRuleFace::qp_weights,shape_momentum_.eval(),cont2,shape_lagrange_momentum_.eval()[cont2], F_FE);
+    //  // cont++;
+    //  // cont2++;
+
+    //  // }
+
+    // }
+
     template<typename Mat>
-    void compute(Mat& mat, const FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+    void compute(Mat& mat, FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
     {
     	Integer cont=0;
     	// compute_aux<Cont>(mat,cont,C_FE,F_FE);
@@ -4940,34 +5152,26 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Con
     	// compute_momentum_aux<0>(mat,cont,C_FE,F_FE);
         std::cout<<"compute first"<<std::endl;
 
-        FiniteElem<Elem> C_FE_new(*C_FE.mesh_ptr());
-
-        C_FE_new.init(C_FE.elem_id());
+        // C_FE_new.init(C_FE.elem_id());
 
         
 
        
         
     	for(Integer i=0;i<ManifoldDim+1;i++)
-    		{F_FE.init_boundary(i,true);
-    	     // compute<entity[0]>(mat,cont,C_FE,F_FE);
-
-    			 C_FE_new.init_boundary(i,true);
-    			 compute<entity[0]>(mat,cont,C_FE,C_FE_new);
+    		{
+    			F_FE.init_boundary(i,true);
+    			compute<entity[0]>(mat,cont,C_FE,F_FE);
     	 }
 
     	 std::cout<<"compute second"<<std::endl;
 
-
-    	 C_FE_new.init(C_FE.elem_id());
-        
-        compute<entity[1]>(mat,cont,C_FE,C_FE_new);
-    	// compute<entity[1]>(mat,cont,C_FE,F_FE);
+    	compute<entity[1]>(mat,cont,C_FE,F_FE);
 
     	
 
 
-     std::cout<<"mat"<<std::endl;
+     std::cout<<"last final mat"<<std::endl;
      std::cout<<mat<<std::endl;
 
     	// compute<entity[1]>(mat,C_FE,F_FE);
@@ -4981,8 +5185,13 @@ private:
 	ShapeMomentum shape_momentum_;
 	ShapeLagrangianMomentum shape_lagrange_momentum_;
 
+	ShapeSimplexPoints shape_simplex_points_;
+
 	QPpointsBarycenter qp_points_barycenter_;
 	QPpointsBarycenter reference_qp_points_barycenter_;
+    
+	Matrix<Real,ManifoldDim+1,ManifoldDim> qp_points_simplex_;
+	Matrix<Real,ManifoldDim+1,ManifoldDim> reference_qp_points_simplex_;
 
 	QPpointsFace qp_points_face_;
 	QPpointsFace reference_qp_points_face_;
@@ -5408,7 +5617,7 @@ class Dof<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,FEFamily,Order,Continuit
      // transformed_point_row_=C_FE_.inv_jac()*transformed_point_col_;
      compute_point_row();
 
-     shape_.init(transformed_point_row_);
+     shape_.init(transformed_point_row_,C_FE_);
      // std::cout<<"Dofs[N] =="<<std::endl;
      // std::cout<<Dofs[N]<<std::endl;
      // std::cout<<"transformed_point_col_ =="<<std::endl;
@@ -6102,8 +6311,8 @@ private:
 		using type=Matrix<Real,3,1>;
 
 
-	    template<typename Point>
-		static auto eval(const Point& p)
+	    template<typename Point,typename FiniteElem>
+		static type eval(const Point& p,FiniteElem& FE)
 		{
 			const auto& x=p[0];
 			const auto& y=p[1];
@@ -6138,8 +6347,8 @@ private:
 				return ExactLinearElasticity3D::eval(p);  
 		}
 
-	    template<typename Point>
-		static type eval(const Point& p)
+	    template<typename Point,typename FiniteElem>
+		static type eval(const Point& p,FiniteElem& FE)
 		{
 			return eval_aux<ManifoldDim>(p);
 		}
@@ -6243,6 +6452,384 @@ class NormalFunction;
 
 
 
+	template<Integer ManifoldDim,Integer Order1,Integer Order2>
+	void LSFEM_ContactLinearElasticity(const Integer n, const Integer level, const Integer n_levels)
+	{
+	  // constexpr Integer ManifoldDim=2;
+		constexpr Integer Dim=ManifoldDim;
+		using MeshT=Mesh<Dim, ManifoldDim>;
+		using Elem=typename MeshT::Elem;
+		MeshT mesh;
+		if(ManifoldDim==2)
+		{
+			std::cout<<"2D LSFEM_ContactLinearElasticity";
+			// generate_cube(mesh,n,n,0);
+			// mesh.build_dual_graph();
+			// mark_boundary(mesh);
+	      read_mesh("../data/triangle_square.MFEM", mesh);
+	      assign_tags(mesh);
+
+
+	      // Bisection<MeshT> bisection(mesh);
+	      // bisection.uniform_refine(4);
+	      mesh.update_dual_graph();
+		}
+		else if(ManifoldDim==3)
+		{
+			std::cout<<"3D LSFEM_ContactLinearElasticity";
+			generate_cube(mesh,n,n,n);
+			mesh.build_dual_graph();
+			mark_boundary(mesh);
+
+	      // read_mesh("../data/tetrahedron.MFEM", mesh);
+	      // assign_tags(mesh);
+	      // Bisection<MeshT> bisection(mesh);
+	      // bisection.uniform_refine(0);
+	      // mesh.update_dual_graph();
+		}
+        // Integer n_levels=12;
+	    clock_t begin=clock();
+		clock_t end = clock();
+		double elapsed_secs;
+
+		// std::cout<<"mat==="<<mat3<<std::endl;
+
+		
+
+        std::cout<<"n2em init="<<std::endl;
+
+
+		std::cout<<"first child="<<mesh.elem(0).children.size()<<std::endl;
+		Bisection<MeshT> bisection(mesh);
+
+	    begin=clock();
+		std::cout<<"bisec 1="<<std::endl;
+		// bisection.tracking_begin();
+		// bisection.uniform_refine(1);
+		// bisection.tracking_end();
+		end=clock();
+		std::cout<<double(end - begin) / CLOCKS_PER_SEC<<std::endl;
+
+		begin=clock();
+		std::cout<<"bisec 2="<<std::endl;
+		for(int i=0;i<n_levels;i++)
+		{
+		// bisection.tracking_begin();
+		// bisection.uniform_refine(1);
+		// bisection.tracking_end();			
+		}
+
+		end=clock();
+		std::cout<<double(end - begin) / CLOCKS_PER_SEC<<std::endl;
+
+		std::cout<<"dual 1="<<std::endl;
+		mesh.update_dual_graph();
+
+	    auto track=bisection.tracker();
+	   
+	    std::cout<<"___="<<std::endl;
+	    auto& edge_node_map=bisection.edge_node_map();
+	    auto& edge_element_map=bisection.edge_element_map();
+	    std::cout<<"____="<<std::endl;
+
+	    Node2ElemMap<MeshT> n2em(mesh,bisection);
+	    n2em.init();	      
+	    // n2em.add_bisection(bisection);
+	    // n2em.init();
+	    std::cout<<"--------------:mesh n elements=="<<mesh.n_elements()<<std::endl;
+	    std::cout<<"--------------:n2em n max_n_nodes=="<<n2em.max_n_nodes()<<std::endl;
+
+
+
+
+
+
+		using AuxRT_n= FunctionSpace< MeshT, RT<Order1,ManifoldDim>>;
+		using AuxP_n= FunctionSpace< MeshT, Lagrange<Order2,ManifoldDim>>;
+		using AuxP_0= FunctionSpace< MeshT, Lagrange<0,ManifoldDim>>;
+		using LSFEM= FunctionSpace< MeshT, RT<Order1,ManifoldDim>,Lagrange<Order2,ManifoldDim>>;
+
+		AuxRT_n rtn(mesh,bisection,n2em);//csmc);
+		AuxP_n pn(mesh,bisection,n2em);//csmc);
+		AuxP_0 p0(mesh,bisection,n2em);//csmc);
+		std::cout<<"FIRST PRE UPDATE="<<std::endl;
+		LSFEM lsfem(mesh,bisection,n2em);//csmc);
+		std::cout<<"FIRST POST UPDATE="<<std::endl;
+	    std::cout<<"--------------:rtn n max_n_nodes=="<<rtn.node2elem().max_n_nodes()<<std::endl;
+	    std::cout<<"--------------:pn n max_n_nodes=="<<pn.node2elem().max_n_nodes()<<std::endl;
+
+	    auto Wtrial=MixedFunctionSpace(rtn,pn);
+		std::cout<<"FIRST POST Wtrial="<<std::endl;
+	    std::cout<<"--------------:Wtrial n max_n_nodes=="<<Wtrial.node2elem().max_n_nodes()<<std::endl;
+
+		// auto Waux=AuxFunctionSpacesBuild(pn);
+		auto Waux=AuxFunctionSpacesBuild(pn,pn);
+		std::cout<<"FIRST POST Waux="<<std::endl;
+
+		auto W=FullSpaceBuild(Wtrial,Waux);
+		std::cout<<" POST W="<<std::endl;
+	    std::cout<<"--------------:W n max_n_nodes=="<<W.node2elem().max_n_nodes()<<std::endl;
+
+		using W_type=decltype(W);
+		auto W_ptr=std::make_shared<W_type>(W);
+
+	    std::cout<<"--------------:W_ptr n max_n_nodes=="<<W_ptr->node2elem().max_n_nodes()<<std::endl;
+
+		for(int i=0;i<n_levels;i++)
+		{
+		bisection.tracking_begin();
+		bisection.uniform_refine(1);
+		bisection.tracking_end();			
+		}
+
+
+		std::cout<<" BISECTION COMPLETED "<<std::endl;
+ 
+
+	    std::cout<<"--------------:W_ptr n max_n_nodes=="<<W_ptr->node2elem().max_n_nodes()<<std::endl;
+
+
+
+		auto sigma = MakeTrial<0>(W_ptr);
+		auto u = MakeTrial<1>(W_ptr);
+
+		auto tau = MakeTest<0>(W_ptr);
+		auto v = MakeTest<1>(W_ptr);
+
+		auto f1 = MakeFunction<0,ExactLinearElasticity<ManifoldDim>>(W_ptr);
+
+		constexpr Real mu=1.0;
+		constexpr Real lambda=1.0;
+		constexpr Real alpha=1.0/Real(2.0*mu);
+		constexpr Real beta=alpha*(-lambda/(Real(ManifoldDim)*lambda+ 2.0 * mu));
+
+		constexpr auto halp=Constant<Scalar>(0.5);
+
+		constexpr auto C_coeff1=Constant<Scalar>(1.0/Real(2.0*mu));
+
+	    constexpr auto C_coeff2=Constant<Scalar>((1.0/Real(2.0*mu))*(-lambda/(Real(ManifoldDim)*lambda+ 2.0 * mu)));	
+	    constexpr auto identity=Constant<Identity<ManifoldDim>>();					
+
+	    auto Epsilon=NewOperator(halp*((GradientOperator()+Transpose(GradientOperator()))));//+Transpose(GradientOperator())));
+
+		// auto C_inverse=NewOperator(C_coeff1*IdentityOperator() + C_coeff2 * IdentityOperator() * MatTraceOperator<Matrix<Real,2,2>>());
+		auto C_inverse=NewOperator(C_coeff1*IdentityOperator() + C_coeff2*identity* MatTrace(IdentityOperator()) );
+
+		// auto normal = MakeFunction<1,NormalFunction<ManifoldDim>,TraceOperator>(W_ptr);
+		auto normal = MakeFunction<1,NormalFunction<ManifoldDim>>(W_ptr);
+        // 
+
+	    // 2D LSFEM POISSION
+		auto bilinearform=
+		// L2Inner(Div(sigma),Div(tau))+
+		// L2Inner(C_inverse(sigma),C_inverse(tau))+
+		// L2Inner(Epsilon(u),Epsilon(v))-
+		// L2Inner(Epsilon(u),C_inverse(tau))-
+		// L2Inner(C_inverse(sigma),Epsilon(v))
+
+		// +surface_integral(0,Inner(Trace(sigma),normal),Inner(Trace(v),normal))
+		+surface_integral(0,Trace(u),Trace(v))
+
+		// L2Inner(MatTrace(sigma),MatTrace(tau))
+		// L2Inner(sigma,halp*((Grad(v))))+
+		// L2Inner(C_coeff2*identity* MatTrace(sigma),halp*(Transpose(Grad(v))))
+		;
+
+		auto linearform=
+		L2Inner(-Div(tau),f1)
+		// +
+		// +surface_integral(0,Trace(u),(f1))
+		;
+        // decltype(MatTrace(IdentityOperator())) feef(5,5,5);
+		std::cout<<" DEFINE BCS  "<<std::endl;
+
+
+
+
+		auto bcs1=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,1);
+		auto bcs2=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,2);
+		auto bcs3=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,3);
+		auto bcs4=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,4);
+		auto bcs5=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,5);
+		auto bcs6=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,6);
+
+
+		auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4,bcs5,bcs6);
+
+	    W_ptr->update();
+	    
+		SparseMatrix<Real> A;
+		std::vector<Real> b;
+
+		std::cout<<"ASSEMBLY"<<std::endl;
+		std::cout<<"level---"<<level<<std::endl;
+		context.assembly(A,b,level);
+
+		// std::cout<<"APPLY BC "<<std::endl;
+		// context.apply_bc(A,b);
+		// std::vector<Real> x;
+		// Integer max_iter=1;
+  // 		std::ofstream os;
+		// auto var_names=variables_names("stress","disp");
+
+		// std::vector<Real> rhs;
+  //       std::cout<<"START SOLVING PATCH MULTIGRID"<<std::endl;  
+  //       gauss_seidel(x,A,b,1);         
+		// std::cout<<"END SOLVING PATCH MULTIGRID"<<std::endl;
+		
+ 	// 	std::string output_fileCOARSE ="LSFEM_ContactLinearElasticity"+ std::to_string(ManifoldDim) +
+		// "D_RT" + std::to_string(Order1)+
+		// "_P" + std::to_string(Order2)+"_outputCOARSE.vtk";
+
+		// os.close();
+  //       std::cout<<"GUARDA Qui"<<std::endl;
+		// std::cout<<x.size()<<std::endl;
+		// std::cout<<b.size()<<std::endl;
+		// std::cout<<A.max_rows()<<std::endl;
+		// std::cout<<A.max_cols()<<std::endl;
+		// os.open(output_fileCOARSE.c_str());
+		// write_wtk_isoparametric(os,W_ptr,x,var_names,level);
+
+
+        
+
+
+		// SparseMatrix<Real> AL;
+		// std::vector<Real> bL;
+
+		// Integer levelL=bisection.tracker().current_iterate()-1;
+
+		// context.assembly(AL,bL,levelL);
+	 //   // A.print_val();
+		// std::cout<<"APPLY BC "<<std::endl;
+		// context.apply_bc(AL,bL);
+
+
+	 //   // A.print_val();
+		// std::vector<Real> xL;
+
+
+		// auto var_namesL=variables_names("stress","disp");
+
+
+	 //     auto &dofsdofmap2=W_ptr->dofsdofmap();
+
+
+    
+	 //     auto& level_cumultive_n_dofs2=dofsdofmap2.level_cumultive_n_dofs();
+	 //     std::cout<<"level_n_dofs_array="<<std::endl;
+	 //     for(int i=0;i<level_cumultive_n_dofs2.size();i++)
+	 //     {
+	 //      // for(int j=0; j<level_n_dofs_array[i].size();j++)
+	 //      std::cout<<level_cumultive_n_dofs2[i]<<" ";
+	 //      std::cout<<std::endl;
+	 //     }   
+
+	 //    // FullFunctionSpaceInterpolation<decltype(W)> interp(W_ptr);
+	 //    SparseMatrix<Real> InterpMat;
+	 //    std::cout<<"level="<<level<<std::endl;
+	 //    Integer level_finer=n_levels-1;
+	 //    std::cout<<"level_finer="<<level_finer<<std::endl;
+     
+	 //    // interp.init(InterpMat,n_levels-1,n_levels);
+
+	 //    FullFunctionSpaceLevelsInterpolation<W_type> levels_interp(W_ptr);
+        
+  //       std::vector<Integer> levels(n_levels+1-level);
+
+  //       std::cout<<"n_levels=="<<n_levels <<std::endl;
+  //       std::cout<<"level=="<<level <<std::endl;
+  //       std::cout<<"n_levels-level=="<<n_levels-level <<std::endl;
+  //       for(Integer i=0;i<n_levels+1-level;i++)
+  //       {
+  //       	levels[i]=i+level;
+  //       	std::cout<<"levels[i]=="<<levels[i] <<std::endl;
+  //       }
+
+	 //    levels_interp.init(levels);
+
+
+  //       std::cout<<"start multiply mat mat"<<std::endl;
+
+       
+  //       std::vector<SparseMatrix<Real>> A_levels(levels.size());
+
+  //       // for(Integer el=0;el<mesh.n_elements();el++)
+  //       // 	std::cout<<"el="<<el<<" lev="<<bisection.tracker().get_iterate(el)<<std::endl;
+  //       // std::cout<<"i=="<<levels.size()-1<<std::endl;
+  //       A_levels[levels.size()-1]=AL;
+
+  //       std::cout<<A_levels[levels.size()-1].max_rows()<<std::endl;
+  //       std::cout<<A_levels[levels.size()-1].max_cols()<<std::endl;
+
+          
+  //       std::cout<<" LEVEL INTERPS "<<std::endl;
+  //       std::cout<<" LEVEL INTERPS "<<std::endl;
+
+
+  //       for(Integer i=0;i<levels.size()-1;i++)
+  //       {
+  //       	auto& P=levels_interp.matrix(i);
+  //       	std::cout<<P.max_rows()<<"  "<<P.max_cols()<<std::endl;
+  //       }
+
+
+  //       for(Integer i=levels.size()-2;i>=0;i--)
+  //       { 
+  //       	std::cout<<"i=="<<i<<std::endl;
+  //       	auto& P=levels_interp.matrix(i);
+  //           context.matrix_assembly(A_levels[i],levels[i]);
+  //       	std::cout<<A_levels[i].max_rows()<<std::endl;
+  //       	std::cout<<A_levels[i].max_cols()<<std::endl;
+  //           context.build_boundary_info(levels[i]);
+  //           context.apply_zero_bc_to_matrix(A_levels[i]);
+  //       }
+
+
+  //       std::vector<Real> solution;
+
+  //       solution.resize(bL.size());
+
+  //       for(Integer i=0;i<bL.size();i++)
+  //       	solution[i]=0.0;
+
+
+	 //    clock_t begin2 = clock();
+
+	 //    Entity2Dofs<W_type,0> entity2dofs(W_ptr);
+	 //    entity2dofs.build();
+		// clock_t end2 = clock();
+	 //    std::cout<<"TIME BUILD="<< double(end2 - begin2) / CLOCKS_PER_SEC <<std::endl;
+
+  //        begin2 = clock();
+	 //    auto& e2d=entity2dofs.get(levels);
+	 //    end2 = clock();
+
+	 //    std::cout<<"TIME E2D GET="<< double(end2 - begin2) / CLOCKS_PER_SEC <<std::endl;
+
+
+	 //    clock_t begin1 = clock();
+		// // auto& ordered_entities=entity2dofs.ordered_entities();	     
+		// clock_t end1 = clock();
+	 //    std::cout<<"TIME BUILD="<< double(end1 - begin1) / CLOCKS_PER_SEC <<std::endl;
+
+  //         std::cout<<"END ORDERED ENTITY 2 DOFS"<<std::endl;
+  //          // std::vector<Real> rhs;
+           
+  //        std::cout<<"START SOLVING PATCH MULTIGRID"<<std::endl;           
+  //        patch_multigrid(solution,A_levels,bL,levels_interp,e2d,1,1,levels.size()-1,10,0.000000001);
+  //        AL.multiply_and_add(rhs,-1.0,solution,bL);
+  //        std::cout<<"residual="<<l2_norm(rhs)<<std::endl;
+		// std::cout<<"END SOLVING PATCH MULTIGRID"<<std::endl;
+		// std::string output_fileMULTIGRID ="LSFEM_ContactLinearElasticity"+ std::to_string(ManifoldDim) +
+		// "D_RT" + std::to_string(Order1)+
+		// "_P" + std::to_string(Order2)+"_outputMULTIGRID.vtk";
+
+		// os.close();
+		// os.open(output_fileMULTIGRID.c_str());
+		// write_wtk_isoparametric(os,W_ptr,solution,var_namesL,levelL);
+      
+	}
 
 
 
@@ -6455,7 +7042,47 @@ class NormalFunction;
 
 
 
-		std::cout<<"CREATE CONTEXT"<<std::endl;
+		// std::cout<<"CREATE CONTEXT"<<std::endl;
+		// std::cout<<"coeff 2d "<<std::endl;
+  //       std::cout<<"external "<<std::endl;
+  //       // std::cout<<ReferenceShapeFunctionValue<Simplex<Dim,2>,IdentityOperator, RaviartThomasFE, 1>::reference_external_coeff<<std::endl;
+  //       std::cout<<"internal "<<std::endl;
+
+  //       // std::cout<<ReferenceShapeFunctionValue<Simplex<Dim,2>,IdentityOperator, RaviartThomasFE, 1>::reference_internal_coeff<<std::endl;
+
+  //       std::cout<<"coeff 3d "<<std::endl;
+  //       std::cout<<"external "<<std::endl;
+
+  //       // std::cout<<ReferenceShapeFunctionValue<Simplex<Dim,3>,IdentityOperator, RaviartThomasFE, 1>::reference_external_coeff<<std::endl;
+  //       std::cout<<"internal "<<std::endl;
+
+        // std::cout<<ReferenceShapeFunctionValue<Simplex<Dim,3>,IdentityOperator, RaviartThomasFE, 1>::reference_internal_coeff<<std::endl;
+        
+        MapFromReference<IdentityOperator, Elem,RaviartThomasFE> map_RT;
+
+        FiniteElem<Elem> FE(mesh);
+
+        FE.init(2);
+        typename ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 1>::Output func;
+  
+        
+        std::cout<<"apply3 1/3,1/3" <<std::endl;
+        Vector<Real,2> point{1./3.,1./3.};
+        // ReferenceShapeFunctionValue<Elem, IdentityOperator, RaviartThomasFE, 1>::apply3(func,point,FE,mesh);
+        // std::cout<<func<<std::endl;
+        std::cout<<"apply3 0,0" <<std::endl;
+        point={0.,0.};
+        // ReferenceShapeFunctionValue<Elem, IdentityOperator, RaviartThomasFE, 1>::apply3(func,point,FE,mesh);
+        std::cout<<func<<std::endl;
+        std::cout<<"apply3 1,0" <<std::endl;
+        point={1.,0.};
+        std::cout<<func<<std::endl;
+        // ReferenceShapeFunctionValue<Elem, IdentityOperator, RaviartThomasFE, 1>::apply3(func,point,FE,mesh);
+        point={0.,1.};
+        std::cout<<"apply3 0,1" <<std::endl;
+        // ReferenceShapeFunctionValue<Elem, IdentityOperator, RaviartThomasFE, 1>::apply3(func,point,FE,mesh);
+        std::cout<<func<<std::endl;
+
 
 		auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4,bcs5,bcs6);
 
@@ -6489,7 +7116,7 @@ class NormalFunction;
 		context.assembly(A,b,level);
 
 
-		A.print_val();
+		// A.print_val();
 	//    // A.print_val();
 		std::cout<<"APPLY BC "<<std::endl;
 		context.apply_bc(A,b);
@@ -6498,18 +7125,48 @@ class NormalFunction;
 	//    // A.print_val();
 		std::vector<Real> x;
 		Integer max_iter=1;
-
-
-	// 	std::cout<<"START SOLVING"<<std::endl;
-	// 	// gauss_seidel(x,A,b,max_iter);
-	// 	std::cout<<"END SOLVING"<<std::endl;
-
-	//     std::cout<<"---------------------------x"<<std::endl;
-
-
-
-		std::ofstream os;
+  		std::ofstream os;
 		auto var_names=variables_names("stress","disp");
+
+
+
+
+
+
+
+
+
+std::vector<Real> rhs;
+         std::cout<<"START SOLVING PATCH MULTIGRID"<<std::endl;  
+         gauss_seidel(x,A,b,1);         
+		std::cout<<"END SOLVING PATCH MULTIGRID"<<std::endl;
+		
+  //        A.multiply_and_add(rhs,-1.0,x,b);
+  //        std::cout<<"residual="<<l2_norm(rhs)<<std::endl;
+
+
+		std::string output_fileCOARSE ="LSFEM_Elasticity"+ std::to_string(ManifoldDim) +
+		"D_RT" + std::to_string(Order1)+
+		"_P" + std::to_string(Order2)+"_outputCOARSE.vtk";
+
+		os.close();
+        std::cout<<"GUARDA Qui"<<std::endl;
+		std::cout<<x.size()<<std::endl;
+		std::cout<<b.size()<<std::endl;
+		std::cout<<A.max_rows()<<std::endl;
+		std::cout<<A.max_cols()<<std::endl;
+		os.open(output_fileCOARSE.c_str());
+		write_wtk_isoparametric(os,W_ptr,x,var_names,level);
+
+		// std::cout<<"START SOLVING"<<std::endl;
+		// // gauss_seidel(x,A,b,max_iter);
+		// std::cout<<"END SOLVING"<<std::endl;
+
+	    // std::cout<<"---------------------------x"<<std::endl;
+
+
+
+
 
         
 
@@ -6573,7 +7230,6 @@ class NormalFunction;
 
        
         std::vector<SparseMatrix<Real>> A_levels(levels.size());
-
 
         // for(Integer el=0;el<mesh.n_elements();el++)
         // 	std::cout<<"el="<<el<<" lev="<<bisection.tracker().get_iterate(el)<<std::endl;
@@ -6642,10 +7298,10 @@ class NormalFunction;
 	    std::cout<<"TIME BUILD="<< double(end1 - begin1) / CLOCKS_PER_SEC <<std::endl;
 
           std::cout<<"END ORDERED ENTITY 2 DOFS"<<std::endl;
-           std::vector<Real> rhs;
+           // std::vector<Real> rhs;
            
          std::cout<<"START SOLVING PATCH MULTIGRID"<<std::endl;           
-         patch_multigrid(solution,A_levels,bL,levels_interp,e2d,1,1,levels.size()-1,100,0.000000001);
+         patch_multigrid(solution,A_levels,bL,levels_interp,e2d,1,1,levels.size()-1,10,0.000000001);
          AL.multiply_and_add(rhs,-1.0,solution,bL);
          std::cout<<"residual="<<l2_norm(rhs)<<std::endl;
 		std::cout<<"END SOLVING PATCH MULTIGRID"<<std::endl;
@@ -6656,6 +7312,82 @@ class NormalFunction;
 		os.close();
 		os.open(output_fileMULTIGRID.c_str());
 		write_wtk_isoparametric(os,W_ptr,solution,var_namesL,levelL);
+
+		// Matrix<Real,4,2> points{0,0,1.,0,0,1.,1./3,1./3};
+		// Array<Real,8> alpha2{1,1,1,1,1,1,1,1};
+
+		// FQPValues<Matrix<Real,2,1>,4,8> func_values;
+		// FQPValues<Matrix<Real,1,1>,4,8> div_values;
+		// MapFromReference<IdentityOperator,Elem,RaviartThomasFE> map_rt;
+		// MapFromReference<DivergenceOperator,Elem,RaviartThomasFE> map_div_rt;
+
+		// FE.init(2);
+		// map_rt.init(FE);
+		// map_div_rt.init(FE);
+
+		// // std::cout<<"IDENTITY dynamic"<<std::endl;   
+  // //       DynamicShapeFunctionValue<ElementFunctionSpace<Elem,RaviartThomasFE,1,1,1>,IdentityOperator>::apply4(func_values,points,FE,map_rt(),alpha2); 
+
+  // //       ShapeFunction<Simplex<2,2>,BaseFunctionSpace<RaviartThomasFE,1,1,1>,IdentityOperator,GaussPoints< Simplex<Dim,2> , 3>> shape;
+  // //       std::cout<<"IDENTITY reference values"<<std::endl;
+
+  // //       shape.init_map(map_rt);
+  // //       shape.init(alpha2,points,FE);
+  // //       std::cout<<"after init"<<std::endl;
+  // //       std::cout<<shape.eval()<<std::endl;
+
+
+		// std::cout<<"DIVERGENCE dynamic"<<std::endl;   
+  //       DynamicShapeFunctionValue<ElementFunctionSpace<Elem,RaviartThomasFE,1,1,1>,DivergenceOperator>::apply4(div_values,points,FE,map_div_rt(),alpha2); 
+
+  //       ShapeFunction<Simplex<2,2>,BaseFunctionSpace<RaviartThomasFE,1,1,1>,DivergenceOperator,GaussPoints< Simplex<Dim,2> , 3>> shape_div;
+  //       std::cout<<"DIVERGENCE reference values"<<std::endl;
+
+  //       shape_div.init_map(map_div_rt);
+  //       shape_div.init(alpha2,points,FE);
+  //       std::cout<<"after init"<<std::endl;
+  //       std::cout<<shape_div.eval()<<std::endl;
+      
+
+
+      DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,1,1>> dof ;
+
+      FiniteElem<Elem> C_FE(mesh);
+      FiniteElem<Elem> F_FE(mesh);
+
+      Matrix<Real,8,8> mat88;
+
+      C_FE.init(0);
+      F_FE.init(2);
+
+
+
+
+      dof.compute(mat88,C_FE,F_FE);
+
+
+	    std::vector<std::vector<Real>> x_interp_vec(levels.size());
+
+        std::cout<<"multiply level == "<<0<<std::endl;
+	    x_interp_vec[0]=x;
+
+        for(Integer i=1;i<levels.size();i++)
+        {
+            // std::cout<<"pre ultiply level == "<<i<<std::endl;
+        	x_interp_vec[i]=levels_interp.matrix(i-1).multiply(x_interp_vec[i-1]);
+        	// std::cout<<"after multiply level == "<<i<<std::endl;
+			std::string output_file_interp ="LSFEM_Elasticity"+ std::to_string(ManifoldDim) +
+			"D_RT" + std::to_string(Order1)+
+			"_P" + std::to_string(Order2)+"_outputINTERPLEVEL"+ std::to_string(levels[i])+"-"+
+			std::to_string(levels[i+1])+
+			+".vtk";
+			os.close();
+			os.open(output_file_interp.c_str());
+			// write_wtk_isoparametric(os,*context.full_spaces_ptr(),xL,var_namesL,level);
+			write_wtk_isoparametric(os,W_ptr,x_interp_vec[i],var_namesL,levels[i]);
+		    os.close();
+        }
+
 
 
 	}

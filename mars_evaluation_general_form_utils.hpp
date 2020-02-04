@@ -282,7 +282,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
  }
 
  template<typename Elem, typename T,typename S, Integer NQPoints>
- void apply_aux(Matrix<Real,1,1>& mat, const FiniteElem<Elem>& J, 
+ void apply_aux(Matrix<Real,1,1>& mat, FiniteElem<Elem>& J, 
                const QPValues<T,NQPoints> & qp_values1,
                const QPValues<S,NQPoints> & qp_values2)
  {
@@ -305,7 +305,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
  }
 
  template<typename Elem, typename T,typename S, Integer NQPoints, Integer NComponents>
- void apply_aux(subtype& vec, const FiniteElem<Elem>& J, 
+ void apply_aux(subtype& vec, FiniteElem<Elem>& J, 
                const FQPValues<T,NQPoints,NComponents> & fqp_values,
                const  QPValues<S,NQPoints> & qp_values)
  {
@@ -324,7 +324,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
  }
 
  template<typename Elem, typename T,typename S, Integer NQPoints, Integer NComponents>
- void apply_aux(subtype& vec, const FiniteElem<Elem>& J, 
+ void apply_aux(subtype& vec, FiniteElem<Elem>& J, 
                const  QPValues<T,NQPoints> & qp_values,
                const FQPValues<S,NQPoints,NComponents> & fqp_values)
  {
@@ -343,7 +343,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
  }
 
  template<typename Elem,typename...Forms, typename...DofMaps>
-  void apply(subtype& vec, const FiniteElem<Elem>& J, ShapeFunctionsCollection<Forms...>& shape_functions, const DofMaps&...dofmaps)
+  void apply(subtype& vec, FiniteElem<Elem>& J, ShapeFunctionsCollection<Forms...>& shape_functions, const DofMaps&...dofmaps)
 
  {
   // std::cout<<"eval_left_"<<std::endl;
@@ -394,7 +394,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
   
 
  template<typename Elem, typename T,typename S, Integer NQPoints, Integer NComponents>
- void apply_aux(subtype& vec, const FiniteElem<Elem>& J, 
+ void apply_aux(subtype& vec, FiniteElem<Elem>& J, 
                const FQPValues<T,NQPoints,NComponents> & fqp_values,
                const  QPValues<S,NQPoints> & qp_values)
  {
@@ -429,7 +429,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
  }
 
  template<typename Elem, typename T,typename S, Integer NQPoints, Integer NComponents>
- void apply_aux(subtype& vec, const FiniteElem<Elem>& J, 
+ void apply_aux(subtype& vec, FiniteElem<Elem>& J, 
                const  QPValues<T,NQPoints> & qp_values,
                const FQPValues<S,NQPoints,NComponents> & fqp_values)
  {
@@ -463,7 +463,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
  }
 
  template<typename Elem,typename...Forms, typename...DofMaps>
-  void apply(subtype& vec, const FiniteElem<Elem>& J, ShapeFunctionsCollection<Forms...>& shape_functions, const DofMaps&...dofmaps)
+  void apply(subtype& vec, FiniteElem<Elem>& J, ShapeFunctionsCollection<Forms...>& shape_functions, const DofMaps&...dofmaps)
 
  {
     // std::cout<<"LOCAL TENSOR APPLY=="<<std::endl;
@@ -519,7 +519,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
  // left is the trial
  template<Integer TestOrTrial_,typename Elem,typename ShapeFunctions, typename...DofMaps> 
  std::enable_if_t<(2==TestOrTrial_), void>
- apply_aux(subtype& mat, const FiniteElem<Elem>& J, const ShapeFunctions& shape_functions, const DofMaps&...dofmaps)
+ apply_aux(subtype& mat, FiniteElem<Elem>& J, const ShapeFunctions& shape_functions, const DofMaps&...dofmaps)
  {
 
   const auto& detJ=J.template get_det<VolumeIntegral>();
@@ -572,7 +572,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
  // left is the test
  template<Integer TestOrTrial_,typename Elem,typename ShapeFunctions, typename...DofMaps> 
  std::enable_if_t<(1==TestOrTrial_), void>
- apply_aux(subtype& mat, const FiniteElem<Elem>& J, const ShapeFunctions& shape_functions, const DofMaps&...dofmaps)
+ apply_aux(subtype& mat, FiniteElem<Elem>& J, const ShapeFunctions& shape_functions, const DofMaps&...dofmaps)
  {
 
   const auto& detJ=J.template get_det<VolumeIntegral>();
@@ -624,7 +624,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
 
 
   template<typename Elem,typename ShapeFunctions, typename...DofMaps>
- void apply(subtype& mat, const FiniteElem<Elem>& FE, const ShapeFunctions& shape_functions, const DofMaps&...dofmaps)
+ void apply(subtype& mat, FiniteElem<Elem>& FE, const ShapeFunctions& shape_functions, const DofMaps&...dofmaps)
  {
   apply_aux<type::TestOrTrialLeftType::value>(mat,FE,shape_functions,dofmaps...);
  }
@@ -1216,6 +1216,9 @@ public:
     using L2Products=typename EvaluationGeneralForm::template L2Products<H>;
     using EvalOfL2InnersType=EvalOfL2InnersAux<L2Products,0,ShapeFunctions>;
     using TupleOfPairsNumbers=typename GeneralForm::TupleOfPairsNumbers;
+    using FunctionSpace=typename GeneralForm::FunctionSpace;
+    static constexpr auto dofs =TraceDofs<FunctionSpace>::dofs();
+    using ElemDofMapTrace=typename TraceDofs<FunctionSpace>::type ;
     
 
 
@@ -1229,7 +1232,7 @@ public:
 
  template<typename Eval,typename Output,typename FiniteElem,typename ...DofMaps>
     constexpr std::enable_if_t<IsDifferent<Eval,std::tuple<>>::value,void>
-    apply_aux_aux_aux(Eval& eval,Output& local_mat,const FiniteElem& FE,const DofMaps&...dofmaps)
+    apply_aux_aux_aux(Eval& eval,Output& local_mat, FiniteElem& FE,const DofMaps&...dofmaps)
     {
       // std::cout<<"apply_aux_aux_aux evalN"<<std::endl;
       // std::cout<<"local_mat="<<local_mat<<std::endl;
@@ -1241,7 +1244,7 @@ public:
 
  template<typename Eval,typename Output,typename FiniteElem,typename ...DofMaps>
     constexpr std::enable_if_t<IsSame<Eval,std::tuple<>>::value,void>
-    apply_aux_aux_aux(Eval& eval,Output& local_mat,const FiniteElem& FE,const DofMaps&...dofmaps)
+    apply_aux_aux_aux(Eval& eval,Output& local_mat, FiniteElem& FE,const DofMaps&...dofmaps)
     {}  
 
 
@@ -1291,13 +1294,14 @@ public:
      auto& local_mat=std::get<N>(tensor_tuple_);
      local_mat.zero();
      auto & eval_N=std::get<N>(eval_inners_);
-     // std::cout<< "bilinear apply_aux_aux "<<std::endl;
+     std::cout<< "bilinear apply_aux_aux "<<std::endl;
      apply_aux_aux_aux(eval_N,local_mat,FE,dofmap_test,dofmap_trial);
-     // std::cout<< "bilinear dofmap_test "<<std::endl;
-     // std::cout<<  dofmap_test <<std::endl;
-     // std::cout<< "bilinear dofmap_trial "<<std::endl;
-     // std::cout<<  dofmap_trial <<std::endl;
-     // std::cout<< "mat size "<<mat.rows()<<std::endl;
+     std::cout<< "bilinear dofmap_test "<<std::endl;
+     std::cout<<  dofmap_test <<std::endl;
+     std::cout<< "bilinear dofmap_trial "<<std::endl;
+     std::cout<<  dofmap_trial <<std::endl;
+     std::cout<< "mat size "<<mat.rows()<<std::endl;
+     std::cout<<local_mat<<std::endl;
      for(std::size_t ii=0;ii<dofmap_test.size();ii++)
      {
      for(std::size_t jj=0;jj<dofmap_trial.size();jj++)
@@ -1531,15 +1535,15 @@ public:
   // zero form -> only test dofmaps
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
     constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==0 && IsSame<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
-    apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+    apply_boundary_aux(Output& mat,FiniteElem& FE,const DofMap& dofmap )
    {}
 
   // zero form -> only test dofmap
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
     constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==0 && IsSame<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
-    apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+    apply_boundary_aux(Output& mat,FiniteElem& FE,const DofMap& dofmap )
    {
-    apply_boundary_aux<Nmax,N+1>(mat,J,dofmap);
+    apply_boundary_aux<Nmax,N+1>(mat,FE,dofmap);
    }
 
 
@@ -1547,16 +1551,16 @@ public:
 // linear form -> only test dofmap
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
     constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==0 && IsDifferent<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
-    apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+    apply_boundary_aux(Output& mat,FiniteElem& FE,const DofMap& dofmap )
     {
-      apply_aux_aux<N>(mat,J);
+      apply_aux_aux<N>(mat,FE);
     }
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
     constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==0 && IsDifferent<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
-    apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+    apply_boundary_aux(Output& mat,FiniteElem& FE,const DofMap& dofmap )
     {
-      apply_aux_aux<N>(mat,J);
-      apply_boundary_aux<Nmax,N+1>(mat,J,dofmap);
+      apply_aux_aux<N>(mat,FE);
+      apply_boundary_aux<Nmax,N+1>(mat,FE,dofmap);
      }
 
 
@@ -1565,15 +1569,15 @@ public:
   // linear form -> only test dofmaps
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
     constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==1 && IsSame<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
-    apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+    apply_boundary_aux(Output& mat,FiniteElem& FE,const DofMap& dofmap )
    {}
 
   // linear form -> only test dofmap
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
     constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==1 && IsSame<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
-    apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+    apply_boundary_aux(Output& mat,FiniteElem& FE,const DofMap& dofmap )
    {
-    apply_boundary_aux<Nmax,N+1>(mat,J,dofmap);
+    apply_boundary_aux<Nmax,N+1>(mat,FE,dofmap);
    }
 
 
@@ -1581,116 +1585,148 @@ public:
 // linear form -> only test dofmap
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
     constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==1 && IsDifferent<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
-    apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+    apply_boundary_aux(Output& mat,FiniteElem& FE,const DofMap& dofmap )
     {
-      const Integer & elem_id=J.elem_id();
+      const Integer & elem_id=FE.elem_id();
       using Pairs=GetType<TupleOfPairsNumbers,N>;
-      const auto& level=J.level();
+      const auto& level=FE.level();
       auto dofmap_test=tuple_get<GetType<Pairs,0>::value>(dm_test_); 
       dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id,level);
+
+
+      const auto& dofmap_test_trace=tuple_get< GetType<Pairs,0>::value >(dofs)[FE.side_id()];
+      auto& test_trace=tuple_get<GetType<Pairs,0>::value>(dm_test_trace_)[0];
+      subarray(test_trace,dofmap_test, dofmap_test_trace );
 
       
       // std::cout<<"apply_boundary_aux, N="<<N<<std::endl;
       // std::cout<<"dofmap_test"<<std::endl;
       // std::cout<<dofmap_test<<std::endl;
       // const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
-      apply_aux_aux<N>(mat,J,dofmap_test);
+      apply_aux_aux<N>(mat,FE,test_trace);
     }
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
     constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==1 && IsDifferent<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
-    apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+    apply_boundary_aux(Output& mat,FiniteElem& FE,const DofMap& dofmap )
     {
-      const Integer & elem_id=J.elem_id();
+      const Integer & elem_id=FE.elem_id();
       using Pairs=GetType<TupleOfPairsNumbers,N>;
-      const auto& level=J.level();
+      const auto& level=FE.level();
       auto dofmap_test=tuple_get<GetType<Pairs,0>::value>(dm_test_); 
       dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id,level);
 
+
+      const auto& dofmap_test_trace=tuple_get< GetType<Pairs,0>::value >(dofs)[FE.side_id()];
+      auto& test_trace=tuple_get<GetType<Pairs,0>::value>(dm_test_trace_)[0];
+      subarray(test_trace,dofmap_test, dofmap_test_trace );
 
       
       // std::cout<<"apply_boundary_aux, N="<<N<<std::endl;
       // std::cout<<"dofmap_test"<<std::endl;
       // std::cout<<dofmap_test<<std::endl;
       // const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
-      apply_aux_aux<N>(mat,J,dofmap_test);
-      apply_boundary_aux<Nmax,N+1>(mat,J,dofmap);
+      // apply_aux_aux<N>(mat,J,dofmap_test);
+      apply_aux_aux<N>(mat,FE,test_trace);
+      apply_boundary_aux<Nmax,N+1>(mat,FE,dofmap);
      }
 
 
  // bilinear form   -> test and trial dofmaps
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
     constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==2 && IsSame<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
-    apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+    apply_boundary_aux(Output& mat,FiniteElem&FE,const DofMap& dofmap )
    {}
 
  // bilinear form   -> test and trial dofmaps
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
     constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==2 && IsSame<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
-    apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+    apply_boundary_aux(Output& mat,FiniteElem&FE,const DofMap& dofmap )
    {
-    apply_boundary_aux<Nmax,N+1>(mat,J,dofmap);
+    apply_boundary_aux<Nmax,N+1>(mat,FE,dofmap);
    }
 
  // bilinear form   -> test and trial dofmaps
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
     constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==2 && IsDifferent<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
-    apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+    apply_boundary_aux(Output& mat,FiniteElem&FE,const DofMap& dofmap )
     {
-      const Integer & elem_id=J.elem_id();
+      const Integer & elem_id=FE.elem_id();
       using Pairs=GetType<TupleOfPairsNumbers,N>;
-      const auto& level=J.level();
-      auto dofmap_test=tuple_get<GetType<Pairs,0>::value>(dm_test_); 
-      auto dofmap_trial=tuple_get<GetType<Pairs,1>::value>(dm_trial_); 
+      const auto& level=FE.level();
+       auto dofmap_test=tuple_get<GetType<Pairs,0>::value>(dm_test_); 
+       auto dofmap_trial=tuple_get<GetType<Pairs,1>::value>(dm_trial_); 
       dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id,level);
       dofmap.template dofmap_get<GetType<Pairs,1>::value>(dofmap_trial,elem_id,level);
 
-      // std::cout<<"apply_boundary_aux, N="<<N<<std::endl;
-      // std::cout<<"dofmap_test"<<std::endl;
-      // std::cout<<dofmap_test<<std::endl;
-      // std::cout<<"dofmap_trial"<<std::endl;
-      // std::cout<<dofmap_trial<<std::endl;
+      const auto& dofmap_test_trace=tuple_get< GetType<Pairs,0>::value >(dofs)[FE.side_id()];
+      const auto& dofmap_trial_trace=tuple_get< GetType<Pairs,1>::value >(dofs)[FE.side_id()];
+
+      std::cout<<tuple_get< GetType<Pairs,0>::value >(dofs)<<std::endl;
+      std::cout<<tuple_get< GetType<Pairs,1>::value >(dofs)<<std::endl;
+
+      std::cout<<"OOOOO apply_boundary_aux, N="<<N<<std::endl;
+      std::cout<<"dofmap_test"<<std::endl;
+      std::cout<<dofmap_test<<std::endl;
+      std::cout<<"dofmap_trial"<<std::endl;
+      std::cout<<dofmap_trial<<std::endl;
+      auto& test_trace=tuple_get<GetType<Pairs,0>::value>(dm_test_trace_)[0];
+      auto& trial_trace=tuple_get<GetType<Pairs,1>::value>(dm_trial_trace_)[0];
+      subarray(test_trace,dofmap_test, dofmap_test_trace );
+      subarray(trial_trace,dofmap_trial, dofmap_trial_trace );
+
      // todo fixme
      // here take the submatrix  of mat(dofmap_test,dofmap_trial)
       // const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
       // const auto& dofmap_trial= tuple_get<GetType<Pairs,1>::value>(dofmap)[elem_id];
-
-     apply_aux_aux<N>(mat,J,dofmap_test,dofmap_trial);
+     // apply_aux_aux<N>(mat,FE,dofmap_test,dofmap_trial);
+     apply_aux_aux<N>(mat,FE,test_trace,trial_trace);
     }
 
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
     constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==2 && IsDifferent<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
-    apply_boundary_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
+    apply_boundary_aux(Output& mat,FiniteElem&FE,const DofMap& dofmap )
     {
 
-      const Integer & elem_id=J.elem_id();
+      const Integer & elem_id=FE.elem_id();
       using Pairs=GetType<TupleOfPairsNumbers,N>;
-      const auto& level=J.level();
+      const auto& level=FE.level();
       auto dofmap_test=tuple_get<GetType<Pairs,0>::value>(dm_test_); 
       auto dofmap_trial=tuple_get<GetType<Pairs,1>::value>(dm_trial_); 
       dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id,level);
       dofmap.template dofmap_get<GetType<Pairs,1>::value>(dofmap_trial,elem_id,level);
 
 
+      const auto& dofmap_test_trace=tuple_get< GetType<Pairs,0>::value >(dofs)[FE.side_id()];
+      const auto& dofmap_trial_trace=tuple_get< GetType<Pairs,1>::value >(dofs)[FE.side_id()];
+      auto& test_trace=tuple_get<GetType<Pairs,0>::value>(dm_test_trace_)[0];
+      auto& trial_trace=tuple_get<GetType<Pairs,1>::value>(dm_trial_trace_)[0];
+      subarray(test_trace,dofmap_test, dofmap_test_trace );
+      subarray(trial_trace,dofmap_trial, dofmap_trial_trace );
 
-      // std::cout<<"apply_boundary_aux, N="<<N<<std::endl;
-      // std::cout<<"dofmap_test"<<std::endl;
-      // std::cout<<dofmap_test<<std::endl;
-      // std::cout<<"dofmap_trial"<<std::endl;
-      // std::cout<<dofmap_trial<<std::endl;
+
+
+
+      std::cout<<"PPPPPP apply_boundary_aux, N="<<N<<std::endl;
+      std::cout<<"dofmap_test"<<std::endl;
+      std::cout<<dofmap_test<<std::endl;
+      std::cout<<"dofmap_trial"<<std::endl;
+      std::cout<<dofmap_trial<<std::endl;
       // todo fixme
       // here take the submatrix  of mat(dofmap_test,dofmap_trial)
       // const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
       // const auto& dofmap_trial= tuple_get<GetType<Pairs,1>::value>(dofmap)[elem_id];
 
-      apply_aux_aux<N>(mat,J,dofmap_test,dofmap_trial);
-      apply_boundary_aux<Nmax,N+1>(mat,J,dofmap);
+      // apply_aux_aux<N>(mat,FE,dofmap_test,dofmap_trial);
+      apply_aux_aux<N>(mat,FE,test_trace,trial_trace);
+      apply_boundary_aux<Nmax,N+1>(mat,FE,dofmap);
      }
 
 
  template<typename Output,typename FiniteElem, typename DofMap>
     void apply_boundary(Output& mat,FiniteElem&FE,const DofMap& dofmap )
     {
-       // std::cout<<FE.elem_id()<<std::endl;
+
+       std::cout<<"general apply_boundary "<<FE.elem_id()<<std::endl;
       apply_boundary_aux<TupleTypeSize<L2Products>::value-1,0>(mat,FE,dofmap);
     }
 
@@ -1699,6 +1735,8 @@ private:
     EvalOfL2InnersType eval_inners_;  
     ElemDofMap dm_test_;
     ElemDofMap dm_trial_;  
+    ElemDofMapTrace dm_test_trace_;
+    ElemDofMapTrace dm_trial_trace_;
 };
 
 

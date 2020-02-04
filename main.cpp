@@ -1299,8 +1299,14 @@ std::cout<<"after LSFEM_Poisson2D"<<std::endl;
 
 
 
-// LSFEM_LinearElasticity<2,0,1>(1,0,10);
-LSFEM_LinearElasticity<3,0,1>(1,0,10);
+// LSFEM_LinearElasticity<2,0,1>(1,1,8);
+// LSFEM_LinearElasticity<3,0,1>(1,1,5);
+
+LSFEM_ContactLinearElasticity<2,0,1>(1,0,4);
+
+// LSFEM_LinearElasticity<2,1,1>(1,0,4);
+
+// LSFEM_LinearElasticity<3,0,1>(1,0,10);
 // 
 // LSFEM_Poisson<3,1,2>(10);
 // std::cout<< FunctionSpaceDofsPerElem<ElemFunctionSpace<Simplex<3,3>,RT1<1>>>::value <<std::endl;

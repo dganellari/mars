@@ -77,8 +77,8 @@ class DirichletBoundaryCondition
 
     inline auto label()const {return label_;}
 
-    template<typename Point>
-    inline auto eval(const Point& point)const {return FunctionType::eval(point);}
+    template<typename Point,typename FiniteElem>
+    inline auto eval(const Point& point,FiniteElem& FE)const {return FunctionType::eval(point,FE);}
 
  private:
     std::shared_ptr<FunctionSpace> spaces_ptr_;
@@ -153,21 +153,21 @@ public:
 
   template<typename T,typename Elem>
   std::enable_if_t<IsSame<T,std::tuple<>>::value,void> 
-  init_aux_aux( T& t,const FiniteElem<Elem> &FE){}
+  init_aux_aux( T& t, FiniteElem<Elem> &FE){}
 
   template<typename T,typename Elem>
   std::enable_if_t<IsDifferent<T,std::tuple<>>::value,void> 
-  init_aux_aux( T& t,const FiniteElem<Elem> &FE){t.init(FE);}
+  init_aux_aux( T& t, FiniteElem<Elem> &FE){t.init(FE);}
 
   template<Integer Nmax, Integer N,typename Elem>
   std::enable_if_t<(N>Nmax),void> 
-  init_aux(const FiniteElem<Elem> &FE)
+  init_aux( FiniteElem<Elem> &FE)
   {}
 
 
   template<Integer Nmax, Integer N,typename Elem>
   std::enable_if_t<(N<=Nmax),void> 
-  init_aux(const FiniteElem<Elem> &FE)
+  init_aux( FiniteElem<Elem> &FE)
   {
     
     // std::cout<<"side_tag="<<FE.side_tag()<<std::endl;
@@ -188,7 +188,7 @@ public:
 
 
   template<typename Elem>
-  constexpr void init(const FiniteElem<Elem> &FE)
+  constexpr void init( FiniteElem<Elem> &FE)
   {
    init_aux<TupleTypeSize<Maps>::value-1,0>(FE);
   }
@@ -280,7 +280,8 @@ public:
     std::enable_if_t<(N>Nmax), void> apply_aux(
                                                     ConstrainedDofs& constrained_dofs,
                                                     ConstrainedMatrixVal& constrained_mat,
-                                                    ConstrainedVecVal& constrained_vec,                                               const FiniteElem<Elem>& FE,
+                                                    ConstrainedVecVal& constrained_vec,                                               
+                                                    FiniteElem<Elem>& FE,
                                                const Maps& tuple_map,
                                                const DofMap&dm)                                                
     {}
@@ -292,7 +293,7 @@ public:
                                                     ConstrainedDofs& constrained_dofs,
                                                     ConstrainedMatrixVal& constrained_mat,
                                                     ConstrainedVecVal& constrained_vec,
-                                                const FiniteElem<Elem>& FE,
+                                                    FiniteElem<Elem>& FE,
                                                 const Maps& tuple_map,
                                                 const DofMap&dm)
     {
@@ -392,7 +393,7 @@ public:
     // for(std::size_t i=0;i<dofmap_trace.size();i++)
     for(std::size_t i=0;i<ratio;i++)
         {
-         const auto& rhs_local=bc.eval(points[i]);
+         const auto& rhs_local=bc.eval(points[i],FE);
          for(std::size_t comp=0;comp<BC_N::NComponents;comp++)
          {
           // std::cout<<"i=="<<dofmap_trace[i*NComponents+comp]<<std::endl;
@@ -431,7 +432,7 @@ public:
                         ConstrainedDofs& constrained_dofs,
                         ConstrainedMatrixVal& constrained_mat,
                         ConstrainedVecVal& constrained_vec,
-                  const FiniteElem<Elem>& FE )
+                        FiniteElem<Elem>& FE )
     {
         // auto mesh_ptr=spaces_ptr_->mesh_ptr();
         // const auto& mesh_side_nodes=mesh_ptr->side_nodes();

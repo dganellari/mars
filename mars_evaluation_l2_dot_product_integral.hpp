@@ -35,7 +35,7 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>
 
  template<bool VolumeIntegralAux,typename Elem, typename...DofMaps>
  std::enable_if_t<(VolumeIntegralAux==true),void>
-  apply_aux(subtype& mat, const FiniteElem<Elem>& J, const DofMaps&...dofmaps)
+  apply_aux(subtype& mat, FiniteElem<Elem>& J, const DofMaps&...dofmaps)
  {
 
   // changed todo fixme
@@ -50,7 +50,7 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>
 
  template<bool VolumeIntegralAux,typename Elem, typename...DofMaps>
  std::enable_if_t<(VolumeIntegralAux==false),void>
-  apply_aux(subtype& mat, const FiniteElem<Elem>& J, const DofMaps&...dofmaps)
+  apply_aux(subtype& mat, FiniteElem<Elem>& J, const DofMaps&...dofmaps)
  {
 
   // changed todo fixme
@@ -70,7 +70,7 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>
 
 
  template<typename...Inputs>
- void apply(subtype& mat, const Inputs&...inputs)
+ void apply(subtype& mat, Inputs&...inputs)
  {apply_aux<VolumeIntegral>(mat,inputs...);
  // std::cout<<"after apply Evaluation<Expression<L2DotProductIntegral="<<std::endl;
  }

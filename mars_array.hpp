@@ -566,6 +566,20 @@ using ArrayChangeType=typename ArrayChangeTypeHelper<NewType, Arr>::type;
   return arr;
   }
 
+  template<typename T,Integer Rows,Integer Cols, Integer NonZeroRows>
+  class Matrix;
+
+  template<typename T, Integer Dim1,Integer Dim2>
+  constexpr auto ArrayOfArray2Matrix(const Array<Array<T,Dim2>,Dim1>& arr)
+  {
+    Matrix<T,Dim1,Dim2,-1> mat;
+    for(Integer i=0;i<Dim1;i++)
+      for(Integer j=0;j<Dim2;j++)
+        mat(i,j)=arr[i][j];
+
+    return mat;
+  }
+
 
 
 

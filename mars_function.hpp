@@ -8,73 +8,29 @@
 
 namespace mars{
 
+
+
+template<typename Elem>
+  class FiniteElem;
+
 template<Integer Dim>
 class NormalFunction
 {
     public: 
     // using Point=Vector<Real,2>;
-    using type=Matrix<Real,Dim,1>;
+    // using type=Matrix<Real,Dim,1>;
+    using type=Vector<Real,Dim>;
     
-    // template<typename Point>
-    // static type eval(const Point& p)
-    // {
-    //  return (0.5+p[0])*(0.5+p[0])*(0.5+p[0])*(0.5+p[0])*10.0; 
-    // }
-};
-
-
-
-class Function1
-{
-    public: 
-    // using Point=Vector<Real,2>;
-    using type=Matrix<Real,1,1>;
-    
-    template<typename Point>
-    static type eval(const Point& p)
+    template<typename Point,typename FiniteElem>
+    static type eval(const Point& p, FiniteElem& FE)
     {
-     return (0.5+p[0])*(0.5+p[0])*(0.5+p[0])*(0.5+p[0])*10.0; 
+
+      auto& mesh_ptr=FE.mesh_ptr();
+      auto& normal=mesh_ptr->signed_normal().normals()[FE.elem_id()][FE.side_id()];
+      return normal; 
     }
 };
 
-
-class Function2
-{
-    public: 
-    // using Point=Matrix<Real,2,1>;
-    using type=Matrix<Real,1,1>;
-    template<typename Point>
-    static type eval(const Point& p)
-    {
-     return 0.0;//p(0,0)+p(1,0); 
-    }
-};
-
-
-class Function3
-{
-    public: 
-    // using Point=Matrix<Real,2,1>;
-    using type=Matrix<Real,1,1>;
-    template<typename Point>
-    static type eval(const Point& p)
-    {
-     return -p(0,0)*p(0,0)+p(0,0); 
-    }
-};
-
-
-class Function4
-{
-    public: 
-    // using Point=Matrix<Real,2,1>;
-    using type=Matrix<Real,1,1>;
-    template<typename Point>
-    static type eval(const Point& p)
-    {
-     return 1.0; 
-    }
-};
 
 template<Integer Dim>
 class FunctionOne
@@ -82,51 +38,14 @@ class FunctionOne
     public: 
     // using Point=Matrix<Real,Dim,1>;
     using type=Matrix<Real,1,1>;
-    template<typename Point>
-    static type eval(const Point& p)
+    template<typename Point,typename FiniteElem>
+    static type eval(const Point& p,FiniteElem& FE)
     {
      return 1.0; 
     }
 };
 
-class FunctionZero1D
-{
-    public: 
-    // using Point=Matrix<Real,2,1>;
-    using type=Matrix<Real,1,1>;
-    template<typename Point>
-    static type eval(const Point& p)
-    {
-     Matrix<Real,1,1> func{0.0};
-     return func; 
-    }
-};
 
-class FunctionZero2D
-{
-    public: 
-    // using Point=Matrix<Real,2,1>;
-    using type=Matrix<Real,2,1>;
-    template<typename Point>
-    static type eval(const Point& p)
-    {
-     Matrix<Real,2,1> func{0.0,0.0};
-     return func; 
-    }
-};
-
-class FunctionZero3D
-{
-    public: 
-    // using Point=Matrix<Real,3,1>;
-    using type=Matrix<Real,3,1>;
-    template<typename Point>
-    static type eval(const Point& p)
-    {
-     Matrix<Real,3,1> func{0.0,0.0,0.0};
-     return func; 
-    }
-};
 
 
 template<Integer Dim>
@@ -135,8 +54,9 @@ class FunctionZero
     public: 
     // using Point=Matrix<Real,2,1>;
     using type=Matrix<Real,Dim,1>;
-    template<typename Point>
-    static type eval(const Point& p)
+
+    template<typename Point,typename Elem>
+    static type eval(const Point& p, FiniteElem<Elem>& FE)
     {
      Matrix<Real,Dim,1> func;
      for(Integer i=0;i<Dim;i++)
@@ -172,7 +92,7 @@ public:
  using ElemPoints=ElemGeometricPoints<Elem,ElementOrder<std::tuple<Space>>::value>;
  static constexpr auto Points=ElemPoints::points;
 
-    inline static void init(const FiniteElem<Elem>& FE,Array<Real,Ndofs>& local_dofs)
+    inline static void init(FiniteElem<Elem>& FE,Array<Real,Ndofs>& local_dofs)
     {
     Integer cont_=0;
     Vector<Real,Dim> point;
@@ -188,7 +108,7 @@ public:
       // const auto v0=FE.v0();
       // const auto point=point_tmp+v0;
       // std::cout<<"evaluation pre"<<std::endl;
-      const auto& evaluation=FuncType::eval(point);
+      const auto& evaluation=FuncType::eval(point,FE);
       // std::cout<<"evaluation after "<<std::endl;
 
 
@@ -222,7 +142,7 @@ public:
  static constexpr auto Points=ElemPoints::points;
  static constexpr auto Dim=Elem::Dim;
 
-    inline static void init(const FiniteElem<Elem>& FE,Array<Real,Ndofs>& local_dofs)
+    inline static void init( FiniteElem<Elem>& FE,Array<Real,Ndofs>& local_dofs)
     {
     Integer cont_=0;
     Vector<Real,Dim> point;
@@ -236,7 +156,7 @@ public:
       // const auto v0=FE.v0();
       // const auto point=point_tmp+v0;
       // std::cout<<"evaluation pre"<<std::endl;
-      const auto& evaluation=FuncType::eval(point);
+      const auto& evaluation=FuncType::eval(point,FE);
       // std::cout<<"evaluation post"<<std::endl;
       // std::cout<<"evaluation.rows()"<<evaluation.rows()<<std::endl;
       // std::cout<<"evaluation.cols()"<<evaluation.cols()<<std::endl;
@@ -300,7 +220,7 @@ class Function
   global_dofs_ptr_(std::make_shared<std::vector<Real>>(NULL))
   {} 
 
-   void local_dofs_update(const FiniteElem<Elem>& FE)
+   void local_dofs_update(FiniteElem<Elem>& FE)
     {
 
 

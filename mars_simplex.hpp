@@ -87,10 +87,10 @@ namespace mars {
 
 
        
-        inline constexpr static Array<Vector<Real, Dim>,Npoints> reference_init()
+        inline constexpr static auto reference_init()
         {
 
-            Array<Vector<Real, Dim>,Npoints> ref;
+            Array<Array<Real, Dim>,Npoints> ref;
 
             for(Integer ii=0;ii<Npoints;ii++)
                 for(Integer jj=0;jj<Dim;jj++)
@@ -102,7 +102,7 @@ namespace mars {
             
             return ref;
         }
-        static constexpr Array<Vector<Real, Dim>,Npoints> reference=reference_init();
+        static constexpr auto reference=reference_init();
 
         void edge(const Integer &edge_num, Integer &v1, Integer &v2) const
         {
@@ -434,9 +434,9 @@ namespace mars {
             return nodes[opposite > 2? (opposite - 3) : opposite];
         }
 
-        inline constexpr static Array<Vector<Real, Dim>,Npoints> reference_init()
+        inline static constexpr auto reference_init()
         {
-            Array<Vector<Real, Dim>,Npoints> ref;
+            Array<Array<Real, Dim>,Npoints> ref;
             for(Integer ii=0;ii<Npoints;ii++)
                 for(Integer jj=0;jj<Dim;jj++)
                    ref[ii](jj)=0;
@@ -447,7 +447,7 @@ namespace mars {
             return ref;
         }
 
-        static constexpr Array<Vector<Real, Dim>,Npoints> reference=reference_init();
+        static constexpr const auto reference=reference_init();
 
         
         inline static std::vector<Vector<Real, Dim>> &ref()
@@ -582,10 +582,10 @@ namespace mars {
 
 
 
-        inline constexpr static Array<Vector<Real, Dim>,Npoints> reference_init()
+        inline constexpr static auto reference_init()
         {
 
-            Array<Vector<Real, Dim>,Npoints> ref;
+            Array<Array<Real, Dim>,Npoints> ref;
             for(Integer ii=0;ii<Npoints;ii++)
                 for(Integer jj=0;jj<Dim;jj++)
                    ref[ii](jj)=0;
@@ -599,7 +599,7 @@ namespace mars {
             return ref;
         }
 
-        static constexpr Array<Vector<Real, Dim>,Npoints> reference=reference_init();
+        static constexpr const auto reference=reference_init();
 
         inline static std::vector<Vector<Real, Dim>> &ref()
         {
@@ -664,10 +664,10 @@ namespace mars {
         std::vector<Integer> children;
         
  
-        inline constexpr static Array<Vector<Real, Dim>,Npoints> reference_init()
+        inline constexpr static auto reference_init()
         {
 
-            Array<Vector<Real, Dim>,Npoints> ref;
+            Array<Array<Real, Dim>,Npoints> ref;
             for(Integer ii=0;ii<Npoints;ii++)
                 for(Integer jj=0;jj<Dim;jj++)
                    ref[ii](jj)=0;
@@ -683,7 +683,7 @@ namespace mars {
             return ref;
         }
 
-        static constexpr Array<Vector<Real, Dim>,Npoints> reference=reference_init();
+        static constexpr auto reference=reference_init();
 
 
 
