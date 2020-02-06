@@ -6399,19 +6399,14 @@ private:
 		{
 
 			tmp_vec_=0.5*(normal - e1_);
-			std::cout<<"tmp_vec_"<<std::endl;
-			std::cout<<tmp_vec_<<std::endl;
-
 
 			if(tmp_vec_.norm()>toll_)
 				tmp_vec_.normalize();
-			std::cout<<"tmp_vec_ normalize"<<std::endl;
-			std::cout<<tmp_vec_<<std::endl;
+
 			for(Integer i=0;i<Dim;i++)
 				for(Integer j=0;j<Dim;j++)
 					{
 						H_(i,j)=identity(i,j)-2.0*tmp_vec_(i)*tmp_vec_(j);
-						std::cout<<identity(i,j)<<", "<< -2.0*tmp_vec_(i)*tmp_vec_(j)<<std::endl;
 					}
 		}
 
@@ -6434,7 +6429,11 @@ private:
 	    using MeshT=typename FunctionSpace::MeshT;
 	    using Elem= typename MeshT::Elem;
 	    using BoundaryElem=FromVolumetricToBoundaryElem<Elem>;
-	    static constexpr Integer Dim=Elem::Dim;
+	    static constexpr Integer ManifoldDim=Elem::ManifoldDim;
+	    using ElemDofMap=typename FunctionSpace::DofsDM::ElemDofMap;
+	    static constexpr auto trace=TraceDofs<FunctionSpace>::dofs();
+	    using trace_type=typename TraceDofs<FunctionSpace>::type;
+	    // static constexpr Integer BoundaryNPoints=ElemEntityCombinations<BoundaryElem,0>::value;
 
 
 		GlobalHouseHolder(const std::shared_ptr<FunctionSpace> & W_ptr):
@@ -6442,75 +6441,246 @@ private:
 		{}
      
 
-		template<Integer N, typename T>
+		template<typename Space,Integer N, Integer DofsPerEntity, typename T, typename HouseHolderMat,typename Mat>
 		std::enable_if_t<(N!=0),void>
-        node_normal(T&t)
+        node_normal(const Integer& level, std::vector<std::vector<bool>>& found_bool, Mat& A, 
+        			const HouseHolderMat& h, const Integer& local_node,FiniteElem<Elem>&FE,T&t)
         {}
 
-		template<Integer N, typename T>
+		template<typename Space, Integer N, Integer DofsPerEntity, typename T, typename HouseHolderMat,typename Mat>
 		std::enable_if_t<(N==0),void>
-        node_normal(T& t)
-        {}
+        node_normal(const Integer& level, std::vector<std::vector<bool>>& found_bool, Mat& A, 
+        			const HouseHolderMat& h, const Integer& local_node,FiniteElem<Elem>&FE,T& t)
+        {
+         std::cout<<"local_node="<<local_node<<std::endl;
+         std::cout<<"h="<<h<<std::endl;
+         std::cout<<"coeff="<<t<<std::endl;
+         std::cout<<"A.max_rows()="<<A.max_rows()<<std::endl;
+         std::cout<<"A.max_cols()="<<A.max_cols()<<std::endl;
+         for(Integer k =0;k<DofsPerEntity;k++)
+         { 
+	         for(Integer i=0;i<Space::NComponents;i++)
+	         {
+	         	 std::cout<<"i="<<i<<"/"<<Space::NComponents<<std::endl;
+	         	 const auto& ii=t[local_node*Space::NComponents+i];
+
+	         	 found_bool[level][ii]=true;
+		         for(Integer j=0;j<Space::NComponents;j++)
+		         {    
+		         	std::cout<<"j="<<j<<"/"<<Space::NComponents<<std::endl;
+		            const auto& jj=t[local_node*Space::NComponents+j];   
+		            std::cout<<"h(i,j)="<<h(i,j)<<std::endl; 
+		            std::cout<<"ii="<<ii<<std::endl; 
+		            std::cout<<"jj="<<jj<<std::endl; 
+		            A.equal(h(i,j),ii,jj); 	
+		         	// std::cout<<t[local_node*Space::NComponents+i]<<std::endl;
+		         }
+	         }
+	        }
+  		  }
 
 
-        template<typename Space,Integer N=0,typename T>
+        template<typename Space,Integer N=0,typename T, typename HouseHolderMat,typename Mat>
 		std::enable_if_t< (N>=Space::entity.size()),void>  
-		node_normal_loop(T& t)
+		node_normal_loop(const Integer& level, std::vector<std::vector<bool>>& found_bool, Mat& A, 
+						 const HouseHolderMat& h, const Integer& local_node,FiniteElem<Elem>&FE,T& t)
 		{}
 
-        template<typename Space, Integer N=0,typename T>
+        template<typename Space, Integer N=0,typename T, typename HouseHolderMat,typename Mat>
 		std::enable_if_t<(N<Space::entity.size()),void>  
-		node_normal_loop(T& t)
+		node_normal_loop(const Integer& level, std::vector<std::vector<bool>>& found_bool, Mat& A, 
+						 const HouseHolderMat& h, const Integer& local_node,FiniteElem<Elem>&FE,T& t)
 		{
-			node_normal<Space::entity[N]>(t);
-			node_normal_loop<Space,N+1>(t);
+			node_normal<Space,Space::entity[N],Space::dofs_per_entity[N]>(level,found_bool,A,h,local_node,FE,t);
+			node_normal_loop<Space,N+1>(level,found_bool,A,h,local_node,FE,t);
 		}
 
 
 
 
 
-        template<typename TupleOfSpaces, Integer N=0,typename T>
-		std::enable_if_t< (N>=TupleTypeSize<T>::value),void>  
-		space_loop(T& t)
+        template<typename TupleOfSpaces, Integer N=0,typename T, typename HouseHolderMat,typename Mat>
+		std::enable_if_t< (N>=TupleTypeSize<TupleOfSpaces>::value),void>  
+		space_loop(const Integer& level, std::vector<std::vector<bool>>& found_bool, Mat& A, 
+				   const HouseHolderMat& h, const Integer& local_node,FiniteElem<Elem>&FE,T& dm)
 		{}
 
-        template<typename TupleOfSpaces, Integer N=0,typename T>
-		std::enable_if_t< (N<TupleTypeSize<T>::value),void> 
-		space_loop(T& tuple)
+        template<typename TupleOfSpaces, Integer N=0,typename T, typename HouseHolderMat,typename Mat>
+		std::enable_if_t< (N<TupleTypeSize<TupleOfSpaces>::value),void> 
+		space_loop(const Integer& level, std::vector<std::vector<bool>>& found_bool, Mat& A, 
+				   const HouseHolderMat& h, const Integer& local_node, FiniteElem<Elem>&FE, T& dm)
 		{
-         auto& t=tuple_get<N>(tuple);
-         using FS=remove_all_t<decltype(t)>;
-         node_normal_loop<GetType<TupleOfSpaces,N>>(t);
-
-         space_loop<TupleOfSpaces,N+1>(tuple);
+         // auto& t=tuple_get<N>(tuple);
+			auto& elem_dm=tuple_get<N>(elemdm_);
+			std::cout<<"FE.level()="<<FE.level()<<std::endl;
+			dm.template dofmap_get<N>(elem_dm,FE.elem_id(),FE.level());
+			std::cout<<elem_dm<<std::endl;
+			auto& trace_N=tuple_get<N>(trace);
+			std::cout<<"trace_N[s]"<<std::endl;
+			std::cout<<trace_N[FE.side_id()]<<std::endl;
+			auto& alpha=tuple_get<N>(trace_elem_dm_)[0];
+			subarray(alpha,elem_dm,trace_N[FE.side_id()]);
+			std::cout<<"elem_dm"<<std::endl;
+			std::cout<<elem_dm<<std::endl;
+			std::cout<<"alpha"<<std::endl;
+			std::cout<<alpha<<std::endl;
+         // using FS=remove_all_t<decltype(t)>;
+        	node_normal_loop<GetType<TupleOfSpaces,N>>(level,found_bool,A,h,local_node,FE,alpha);
+        	space_loop<TupleOfSpaces,N+1>(level,found_bool,A,h,local_node,FE,dm);
 		}
 
 
-		void inline compute(std::vector<std::vector<Vector<Real,Dim>>>& node_normals,
-							const Integer boundary_tag,
-							const Integer level=0)
+
+
+
+
+
+
+
+
+
+
+
+
+
+		template<typename Space,Integer N, Integer DofsPerEntity, typename T, typename HouseHolderMat,typename Mat>
+		std::enable_if_t<(N!=ManifoldDim),void>
+        face_normal(const Integer& level, std::vector<std::vector<bool>>& found_bool, Mat& A, 
+        			const HouseHolderMat& h,Integer& cont, FiniteElem<Elem>&FE,T&t)
+        {
+        	cont += Space::NComponents*ElemEntityCombinations<BoundaryElem,N>::value * DofsPerEntity;
+        }
+
+		template<typename Space, Integer N, Integer DofsPerEntity,typename T, typename HouseHolderMat,typename Mat>
+		std::enable_if_t<(N==ManifoldDim),void>
+        face_normal(const Integer& level, std::vector<std::vector<bool>>& found_bool, Mat& A, 
+        			const HouseHolderMat& h,Integer& cont,FiniteElem<Elem>&FE,T& t)
+        {
+         std::cout<<"face_normal stat="<<std::endl;
+         std::cout<<"h="<<h<<std::endl;
+         std::cout<<"coeff="<<t<<std::endl;
+         for(Integer k =0;k<DofsPerEntity;k++)
+         { 
+         	std::cout<<"cont="<<cont<<std::endl;
+         	std::cout<<"k="<<k<<"/"<<DofsPerEntity<<std::endl;
+	         for(Integer i=0;i<Space::NComponents;i++)
+	         {
+	         	std::cout<<"i="<<i<<"/"<<Space::NComponents<<std::endl;
+	         	const auto& ii=t[cont+i];
+	         	found_bool[level][ii]=true;
+		         for(Integer j=0;j<Space::NComponents;j++)
+		         {    
+		         	std::cout<<"j="<<j<<"/"<<Space::NComponents<<std::endl;
+		            const auto& jj=t[cont+j];    
+		            A.equal(h(i,j),ii,jj); 	
+		         	std::cout<<t[cont+i]<<std::endl;
+		         }
+	         }
+	         cont+=Space::NComponents;
+         }
+         std::cout<<"face_normal end="<<std::endl;
+
+        }
+
+        template<typename Space,Integer N=0,typename T, typename HouseHolderMat,typename Mat>
+		std::enable_if_t< (N>=Space::entity.size()),void>  
+		face_normal_loop(const Integer& level, std::vector<std::vector<bool>>& found_bool, Mat& A, 
+						 const HouseHolderMat& h, Integer& cont,FiniteElem<Elem>&FE,T& t)
+		{}
+
+        template<typename Space, Integer N=0,typename T, typename HouseHolderMat,typename Mat>
+		std::enable_if_t<(N<Space::entity.size()),void>  
+		face_normal_loop(const Integer& level, std::vector<std::vector<bool>>& found_bool, Mat& A, 
+						 const HouseHolderMat& h, Integer& cont,FiniteElem<Elem>&FE,T& t)
 		{
+			face_normal<Space,Space::entity[N],Space::dofs_per_entity[N]>(level,found_bool,A,h,cont,FE,t);
+			face_normal_loop<Space,N+1>(level,found_bool,A,h,cont,FE,t);
+		}
+
+
+        template<typename TupleOfSpaces, Integer N=0,typename T, typename HouseHolderMat,typename Mat>
+		std::enable_if_t< (N>=TupleTypeSize<TupleOfSpaces>::value),void>  
+		face_space_loop(const Integer& level, std::vector<std::vector<bool>>& found_bool, Mat& A, 
+						const HouseHolderMat& h,FiniteElem<Elem>&FE,T& dm)
+		{}
+
+        template<typename TupleOfSpaces, Integer N=0,typename T, typename HouseHolderMat,typename Mat>
+		std::enable_if_t< (N<TupleTypeSize<TupleOfSpaces>::value),void> 
+		face_space_loop(const Integer& level, std::vector<std::vector<bool>>& found_bool, Mat& A, 
+						const HouseHolderMat& h, FiniteElem<Elem>&FE, T& dm)
+		{
+         // auto& t=tuple_get<N>(tuple);
+			auto& elem_dm=tuple_get<N>(elemdm_);
+			std::cout<<"FE.level()="<<FE.level()<<std::endl;
+			dm.template dofmap_get<N>(elem_dm,FE.elem_id(),FE.level());
+			std::cout<<elem_dm<<std::endl;
+			auto& trace_N=tuple_get<N>(trace);
+			std::cout<<"trace_N[s]"<<std::endl;
+			std::cout<<trace_N[FE.side_id()]<<std::endl;
+			auto& alpha=tuple_get<N>(trace_elem_dm_)[0];
+			subarray(alpha,elem_dm,trace_N[FE.side_id()]);
+			std::cout<<"elem_dm"<<std::endl;
+			std::cout<<elem_dm<<std::endl;
+			std::cout<<"alpha"<<std::endl;
+			std::cout<<alpha<<std::endl;
+         // using FS=remove_all_t<decltype(t)>;
+			Integer cont=0;
+        	face_normal_loop<GetType<TupleOfSpaces,N>>(level,found_bool,A,h,cont,FE,alpha);
+        	face_space_loop<TupleOfSpaces,N+1>(level,found_bool,A,h,FE,dm);
+		}
+
+
+
+
+
+
+		void inline compute(std::vector<std::vector<Vector<Real,ManifoldDim>>>& node_normals,
+							const Integer boundary_tag)
+		{
+			std::cout<<" global householder compute" <<std::endl;
 			auto& mesh=spaces_ptr_->mesh();
+			auto& bisection=spaces_ptr_->bisection();
+			auto& tracker=bisection.tracker();
 			auto& signed_normal= mesh.signed_normal().normals();
 			auto& level_cumultive_n_dofs=spaces_ptr_->dofsdofmap().level_cumultive_n_dofs();
+			std::cout<<" global householder 1" <<std::endl;
+			Integer level;
 
 
 			FiniteElem<Elem> FE(mesh);
 			BoundaryElem side_elem;
 
-			SparseMatrix<Real> A;
+			Integer n_levels=level_cumultive_n_dofs.size();
+            std::cout<<" global householder 2, n_levels=" <<n_levels<<std::endl;
+			std::vector<SparseMatrix<Real>> A(n_levels);
+			std::vector<std::vector<bool>> found_bool(n_levels);
+			for(Integer lev=0;lev<n_levels;lev++)
+			std::cout<<" level_cumultive_n_dofs=" <<level_cumultive_n_dofs[lev]<<std::endl;
 
-			n_dofs_=level_cumultive_n_dofs[level];
+            for(Integer lev=0;lev<n_levels;lev++)
+            {
+            	std::cout<<" lev=" <<lev<<std::endl;
+
+            	n_dofs_=level_cumultive_n_dofs[lev];
+            	std::cout<<" n_dofs_=" <<n_dofs_<<std::endl;
+            	std::cout<<" ManifoldDim=" <<ManifoldDim<<std::endl;
+            	A[lev].init(n_dofs_,n_dofs_,ManifoldDim);
+          		std::cout<<"ALev" <<std::endl;
+          		found_bool[lev].resize(n_dofs_,false);
+          		std::cout<<A[lev].max_rows()<<std::endl;
+          		std::cout<<A[lev].max_cols()<<std::endl;
+            }
+            std::cout<<" global householder 3" <<std::endl;
+			
 
 			// householder is a local N-dim transformation, so max_cols=Dim 
 
-			A.init(n_dofs_,n_dofs_,Dim);
-
-			auto& tuple_reference_spaces=spaces_ptr_->spaces_ptr()->tuple_reference_spaces();
+			
+            
+            auto& dofsdofmap=spaces_ptr_->dofsdofmap();
+			// auto& tuple_reference_spaces=spaces_ptr_->spaces_ptr()->tuple_reference_spaces();
 
 			using TupleOfSpaces= typename FunctionSpace::FunctionSpace::TupleOfSpaces;
-           space_loop<TupleOfSpaces>(tuple_reference_spaces);
 
 
 			std::cout<<" global householder" <<std::endl;
@@ -6519,46 +6689,58 @@ private:
 			{
 				std::cout<<"el=="<<el<<std::endl;
 
+				level=tracker.get_level(el);
 
-				FE.init(el);
+				FE.init(el,level);
 
 				if(FE.is_on_boundary())
 				{
 
-				auto& elem = mesh.elem(el);
-
-
-	            for(std::size_t s=0;s<FE.n_side();s++)
+				 auto& elem = mesh.elem(el);
+	             for(std::size_t s=0;s<FE.n_side();s++)
 	              {
 	              	// if the boundary of the element belongs to the boundary_tag
 	              	FE.init_boundary(s);
 	              	// std::cout<< FE.side_tag()<< ", "<<boundary_tag << std::endl;
 	                if(FE.side_tag()==boundary_tag)
 	                {
-	                	std::cout<<"side=="<<s<<" with tag=="<<boundary_tag <<std::endl;
+	                  std::cout<<"side=="<<s<<" with tag=="<<boundary_tag <<std::endl;
+	                	
 		              elem.side(s,side_elem);
 		              auto& side_nodes=side_elem.nodes;
 		              // loop on the normal nodes
 		              for(Integer i=0;i<side_nodes.size();i++)
 		              {
 		              	auto& normal=node_normals[side_nodes[i]];
-		              	for(Integer lev=0;lev<normal.size();lev++)
-		              	{
-		              		house_holder_.compute(normal[lev]);
-		              		std::cout<<"node normal, lev=="<<lev<<std::endl;
-		              		std::cout<<normal[lev]<<std::endl;
-		              		std::cout<<house_holder_()<<std::endl;
+		              	// for(Integer lev=0;lev<level;lev++)
+		              	{	              		
+		              		house_holder_.compute(normal[level]);
+		              		std::cout<<"ALev" <<std::endl;
 
+		              		for(Integer lev=0;lev<n_levels;lev++)
+		              		{
+			              		if(!elem_belongs_to_level(mesh,el,lev,tracker)) continue;
+			              		std::cout<<A[level].max_rows()<<std::endl;
+			              		std::cout<<A[level].max_cols()<<std::endl;
+			              		space_loop<TupleOfSpaces>(lev,found_bool,A[lev],house_holder_(),i,FE,dofsdofmap);
+		              		}
+		              		// std::cout<<"node normal, lev=="<<lev<<std::endl;
+		              		// std::cout<<normal[lev]<<std::endl;
+		              		// std::cout<<house_holder_()<<std::endl;
 		              	}
-
 		              }
+                    
+                    house_holder_.compute(signed_normal[el][s]);
 
-
-
-		            house_holder_.compute(signed_normal[el][s]);
-              		std::cout<<"face normal"<<std::endl;
-              		std::cout<<signed_normal[el][s]<<std::endl;
-              		std::cout<<house_holder_()<<std::endl;
+                    for(Integer lev=0;lev<=level;lev++)
+                    {
+                    	if(!elem_belongs_to_level(mesh,el,lev,tracker)) continue;
+                    	face_space_loop<TupleOfSpaces>(lev,found_bool,A[lev],house_holder_(),FE,dofsdofmap);                   	
+                    }
+		            
+              		// std::cout<<"face normal"<<std::endl;
+              		// std::cout<<signed_normal[el][s]<<std::endl;
+              		// std::cout<<house_holder_()<<std::endl;
 
 
 
@@ -6587,6 +6769,25 @@ private:
 			}
 
 
+			for(Integer lev=0;lev<n_levels;lev++)
+			{
+				std::cout<< "found bool  level " <<lev<< std::endl;
+				for(Integer i=0;i<found_bool[lev].size();i++)
+					{
+						std::cout<< found_bool[lev][i] <<std::endl;
+						if(!found_bool[lev][i])
+						{
+							A[lev].equal(1.0, i,i);
+
+						}
+					}
+
+					A[lev].print_val();
+			}
+
+
+
+
 
 		}
 
@@ -6598,8 +6799,10 @@ private:
 
 	private:
 		std::shared_ptr<FunctionSpace> spaces_ptr_;
-		HouseHolder<Dim> house_holder_;
+		HouseHolder<ManifoldDim> house_holder_;
 		Integer n_dofs_;
+		ElemDofMap elemdm_;
+		trace_type trace_elem_dm_;
 
 	};
 
@@ -7051,11 +7254,11 @@ private:
 		"_P" + std::to_string(Order2)+"_outputCOARSE.vtk";
 
 		os.close();
-        std::cout<<"GUARDA Qui"<<std::endl;
-		std::cout<<x.size()<<std::endl;
-		std::cout<<b.size()<<std::endl;
-		std::cout<<A.max_rows()<<std::endl;
-		std::cout<<A.max_cols()<<std::endl;
+  //       std::cout<<"GUARDA Qui"<<std::endl;
+		// std::cout<<x.size()<<std::endl;
+		// std::cout<<b.size()<<std::endl;
+		// std::cout<<A.max_rows()<<std::endl;
+		// std::cout<<A.max_cols()<<std::endl;
 		os.open(output_fileCOARSE.c_str());
 		write_wtk_isoparametric(os,W_ptr,x,var_names,level);
 
@@ -7519,12 +7722,12 @@ std::vector<Real> rhs;
 		"_P" + std::to_string(Order2)+"_outputCOARSE.vtk";
 
 		os.close();
-        std::cout<<"GUARDA Qui"<<std::endl;
-		std::cout<<x.size()<<std::endl;
-		std::cout<<b.size()<<std::endl;
-		std::cout<<A.max_rows()<<std::endl;
-		std::cout<<A.max_cols()<<std::endl;
-		os.open(output_fileCOARSE.c_str());
+  //       std::cout<<"GUARDA Qui"<<std::endl;
+		// std::cout<<x.size()<<std::endl;
+		// std::cout<<b.size()<<std::endl;
+		// std::cout<<A.max_rows()<<std::endl;
+		// std::cout<<A.max_cols()<<std::endl;
+		// os.open(output_fileCOARSE.c_str());
 		write_wtk_isoparametric(os,W_ptr,x,var_names,level);
 
 		// std::cout<<"START SOLVING"<<std::endl;

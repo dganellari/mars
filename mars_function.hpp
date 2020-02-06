@@ -83,23 +83,23 @@ public:
     for(auto it=n2e().begin();it!=n2e().end();it++)
     {
       const auto& node_id=it->first;
-      std::cout<< "NODE ID = ="<<node_id<< std::endl;
+      // std::cout<< "NODE ID = ="<<node_id<< std::endl;
       auto& vecs=*(it->second);
 
       for(auto el_iter=vecs.begin();el_iter!=vecs.end();el_iter++)
       {
         const auto& el=*el_iter;
-        std::cout<<"QUI"<<std::endl;
-        std::cout<<elem_belongs_to_level(mesh,el,0,tracker)<<std::endl;
-        std::cout<<elem_belongs_to_level(mesh,el,1,tracker)<<std::endl;
-        std::cout<<elem_belongs_to_level(mesh,el,2,tracker)<<std::endl;
+        // std::cout<<"QUI"<<std::endl;
+        // std::cout<<elem_belongs_to_level(mesh,el,0,tracker)<<std::endl;
+        // std::cout<<elem_belongs_to_level(mesh,el,1,tracker)<<std::endl;
+        // std::cout<<elem_belongs_to_level(mesh,el,2,tracker)<<std::endl;
 
         FE.init(el);
         if(FE.is_on_boundary())
         {
         auto& elem=mesh.elem(el);
         auto& nodes=elem.nodes;
-        std::cout<<el<<"/"<<n_elements<< std::endl;
+        // std::cout<<el<<"/"<<n_elements<< std::endl;
         auto level=tracker.get_level(el);
         auto & node_normal_tmp=node_normals_[node_id];
         size=node_normal_tmp.size();

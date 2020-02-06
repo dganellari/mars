@@ -109,7 +109,6 @@ namespace mars {
 	{
 		return  (!track.has_tracked()) || (track.get_iterate(i)==level || (mesh.elem(i).children.size()==0 && track.get_iterate(i)<=level));
 		// return   (track.get_iterate(i)==level || (mesh.elem(i).children.size()==0 && track.get_iterate(i)<=level));
-
 	}
 
 	template<typename MeshT>
