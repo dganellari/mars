@@ -266,6 +266,21 @@ namespace mars {
         inline constexpr const Integer size()const {return Dim;};
 
 
+        static constexpr Vector eye_vector(const T& t){
+        	Vector tmp;
+        	for(Integer i=0; i<Dim;i++)
+        		tmp[i]=t;
+        	return tmp;
+        }
+
+        constexpr bool is_zero(){
+        	Vector tmp;
+        	for(Integer i=0; i<Dim;i++)
+        	  if((*this)[i]!=0)
+        		return false;
+        	return true;
+        }
+
 	};
 
 	template<typename T, Integer Dim>

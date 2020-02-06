@@ -175,7 +175,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                 // controlla, qui passiamo side_id, ma dovremmo avere label
                 // dovresti costruire mesh coi label
 
-                std::cout<<"------_______----- BEGIN SIDE===="<<s<<std::endl;
+                std::cout<<"------_______----- BEGIN SIDE===="<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
                 FE.init_boundary(s);
                 if(FE.is_side_on_boundary())
                 {
@@ -184,9 +184,9 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                   std::cout<<"------_______----- shapefunctions_===="<<s<<std::endl;
                   shapefunctions_.init_boundary(FE);
                   std::cout<<"------_______----- BEGIN SIDE EVAL===="<<s<<std::endl;
-                  std::cout<<"------bilinear"<<s<<std::endl;
+                  std::cout<<"------bilinear"<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
                   eval_bilinear_form_.apply_boundary(A,FE);
-                  std::cout<<"------linear===="<<s<<std::endl;
+                  std::cout<<"------linear===="<<s<<", tag="<<FE.side_tags()[s]<<std::endl;
                   eval_linear_form_.apply_boundary(b,FE);
                   std::cout<<"------_______----- END SIDE EVAL===="<<s<<std::endl;
                 }

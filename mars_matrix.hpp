@@ -422,6 +422,16 @@ namespace mars {
 			return ret;
 		}
 
+
+		static constexpr Matrix eye(const T& t)
+		{
+        	Matrix tmp;
+        	for(Integer i=0; i<Rows;i++)
+        			tmp(i,i)=t;
+        	return tmp;
+        }
+
+
 	};
 
 	template<typename T, Integer N>

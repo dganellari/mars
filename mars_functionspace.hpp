@@ -90,7 +90,21 @@ public:
 
 
 
-
+   template<Integer N>
+   void dofmap_get(GetType<ElemDofMap,N>& elemdm, const Integer elem_id, const Integer level)const
+   {
+    const auto& dm=tuple_get<N>(dofmap_)->operator[](elem_id);
+    
+    // std::cout<<"level_cumulative_dofs_array_ done update" <<std::endl;
+    // for(int i=0;i<level_cumulative_dofs_array_.size();i++)
+    //   {
+    //     for(int j=0;j<level_cumulative_dofs_array_[i].size();j++)
+    //     std::cout<<level_cumulative_dofs_array_[i][j]<<" ";
+    //     std::cout<<std::endl;
+    //   }    
+    for(std::size_t i=0;i<elemdm.size();i++)
+        elemdm[i]=dm[i];
+    }
 
  // template<Integer N=0>
  // inline std::enable_if_t<(N>=Nsubspaces),void>
@@ -351,6 +365,12 @@ public:
    Array<std::vector<Integer>, Nsubspaces+1> level_cumulative_dofs_array_;
    std::vector<Integer> level_cumultive_n_dofs_;
 };
+
+template<Integer N=0, template<class...> class U,typename...Args>
+void dofmap_get(U<Args...>& dm, GetType<typename U<Args...>::ElemDofMap,N>& elemdm, const Integer elem_id, const Integer level)
+{
+ dm.template dofmap_get<N>(elemdm,elem_id,level);
+}
 
 
 template<Integer Nsubspaces, typename Arg1, typename Arg2>
@@ -1236,6 +1256,7 @@ public:
 
   inline auto& bisection()const {return bisection_;};
 
+  inline auto& tuple_reference_spaces(){return tuple_reference_spaces_;}
 
 private:
 std::shared_ptr<FunctionSpace> spaces_ptr_;
@@ -1341,6 +1362,7 @@ public:
   inline const auto& dofsdofmap()const{return dofsdm_;};
   inline auto& bisection()const {return bisection_;};
 
+  inline auto& tuple_reference_spaces(){return tuple_reference_spaces_;}
 
 
 

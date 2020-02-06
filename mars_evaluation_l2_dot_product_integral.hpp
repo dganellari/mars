@@ -56,12 +56,13 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>
   // changed todo fixme
    // local_tensor_.apply(mat,J,shape_functions_());
   // std::cout<<"L2DotProductIntegral LABEL="<<label_<<std::endl;
-  // std::cout<<"side="<<J.side_id()<<std::endl;
-  // std::cout<<"tag="<<J.side_tag()<<std::endl;
-  
+  std::cout<<"side="<<J.side_id()<<std::endl;
+  std::cout<<"tag="<<J.side_tag()<<std::endl;
+  std::cout<<"label_="<<label_<<std::endl;
+  // 
   if(J.side_tag()==label_)
    { 
-    // std::cout<<"VALUTO IL BOUNDARY"<<std::endl;
+    std::cout<<"VALUTO IL BOUNDARY"<<std::endl;
     local_tensor_.apply(mat,J,shape_functions_, dofmaps...);//(),shape_functions_.composite_tensor(),shape_functions_.composite_shapes());
     }
   // std::cout<<"after BOUNDAR Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;

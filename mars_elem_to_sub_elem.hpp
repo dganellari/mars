@@ -21,6 +21,9 @@ class ChangeElemDim<Elem_<Dim,ManifoldDim>,SubElemDim>
 
 template<typename Elem>
 using FromBoundaryToVolumetricElem=typename ChangeElemDim<Elem,Elem::ManifoldDim+1>::type;
+template<typename Elem>
+using FromVolumetricToBoundaryElem=typename ChangeElemDim<Elem,Elem::ManifoldDim-1>::type;
+
 /////////////////////////////////////////////////////////////////////////////
 //// VolumeOrSurfaceElem return the volume/surface Element if true/false ////
 /////////////////////////////////////////////////////////////////////////////

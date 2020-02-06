@@ -82,7 +82,21 @@ namespace mars {
 		auto has_tracked()const {if(iterates_.size()==0)
 			                       return false;
 			                     else return true;}
-		
+
+		inline Integer get_level(const Integer element_id) const
+		{
+			if(iterates_.size()==0)
+				{
+
+					return 0;
+				}
+			else
+				{
+					return get_iterate(element_id);
+				}
+		}
+
+
 	private:
 		bool is_tracking_;
 		Integer current_iterate_;

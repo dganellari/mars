@@ -25,7 +25,7 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
  using trace_type_tmp=typename decltype(trace)::value_type;
  using trace_type=ArrayChangeType<Real,trace_type_tmp>; 
 
- Evaluation(){};
+ // Evaluation(){};
 
  Evaluation(const type& expr):
  eval_ptr_(std::make_shared<type>(expr)) 
@@ -41,8 +41,13 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
   using type2=typename Shapes::subtype;
   using type3=typename Shapes::subtype::subtype; 
   const Integer face=FE.side_id();
+
+     // std::cout<<"local_dofs  TraceOperator="<<std::endl;
+
    eval.local_dofs_update(FE);
    const auto& all_local_dofs=eval.local_dofs();
+   // eval_ptr_->local_dofs_update(FE);
+   // const auto& all_local_dofs=eval_ptr_->local_dofs();
    // auto local_dofs=subarray(all_local_dofs,trace[face]);
    // decltype(trace[face]) m1(1); //const mars::Array<long, 4>
    // decltype(all_local_dofs) m2(1);//'const mars::Array<double, 6>
@@ -50,6 +55,9 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
 
    subarray(local_dofs_,all_local_dofs,trace[face]);
    // std::cout<<"local_dofs TraceOperator="<<local_dofs_<<std::endl;
+   // std::cout<<"type2::Dim"<<type2::Dim<<std::endl;
+   // std::cout<<"type3::Rows"<<type3::Rows<<std::endl;
+   // std::cout<<"type3::Cols"<<type3::Cols<<std::endl;
    // std::cout<<shapes<<std::endl;
    // std::cout<<"___"<<std::endl;
     // loop on qp points
@@ -60,6 +68,7 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
            {value[ii](mm,nn)=local_dofs_[0]*shapes[0][ii](mm,nn);
             // std::cout<<local_dofs_[0]<<" "<<shapes[0][ii](mm,nn)<<std::endl;
            }
+           // std::cout<<"here ::Cols"<<type3::Cols<<std::endl;
     // loop on dofs
      for(Integer jj=1;jj< type1::Dim;jj++)
       // loop on components of subtype (is a matrix)
@@ -95,7 +104,7 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
   // std::cout<< " local_dofs"<<local_dofs<<std::endl;
   // std::cout<< " value"<<value<<std::endl;
 
-  //  std::cout<<"local_dofs not TraceOperator="<<local_dofs<<std::endl;
+   // std::cout<<"local_dofs not TraceOperator="<<local_dofs<<std::endl;
   //  std::cout<<shapes<<std::endl;
     // loop on qp points
     for(Integer ii=0;ii< type2::Dim;ii++)

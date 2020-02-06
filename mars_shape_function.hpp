@@ -1409,7 +1409,7 @@ constexpr auto NumberOfLagrangianSimplexDofs()
     // then (dim+Order) is again integer, but we multiply it by a real
     // do not do (dim+Order)/dim which is an integer division!
     for(Integer dim=1;dim<ManifoldDim+1;dim++)
-        N*= (dim+Order) * (N/dim);
+        N= (dim+Order) * (N/dim);
     return static_cast<Integer>(N);
 }
 
@@ -4342,6 +4342,7 @@ constexpr const Vector<Vector<single_type,NQPoints>,Ndofs> reference_shape_funct
     Vector<Vector<single_type,NQPoints>,Ndofs> v;
     Vector<Real,Dim> qp_point;
     Vector<single_type,Ndofs> func;
+
     for(Integer qp=0;qp<NQPoints;qp++)
     {
         qp_point=qp_points.get_row(qp);
@@ -4848,8 +4849,8 @@ public:
         // std::cout<<"func_values_"<<std::endl;
         
         // std::cout<<func_values_<<std::endl;
-        std::cout<<" init func_tmp_"<<std::endl;
-        std::cout<<func_tmp_<<std::endl;
+        // std::cout<<" init func_tmp_"<<std::endl;
+        // std::cout<<func_tmp_<<std::endl;
         for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
         {
 
@@ -4861,24 +4862,24 @@ public:
                 n_=n_comp;
                 for(Integer qp=0;qp<NQPoints;qp++)
                 {
-                    std::cout<<n_dof<<", "<<n_comp<<", " <<qp<<std::endl;
+                    // std::cout<<n_dof<<", "<<n_comp<<", " <<qp<<std::endl;
                     func_values_[n_tot_][qp].zero();
-                    std::cout<<"qui1"<<std::endl;
+                    // std::cout<<"qui1"<<std::endl;
                     // func_tmp_=  mapping * weighted_reference_values[n_dof][qp];
                     func_tmp_=  mapping * reference_values[n_dof][qp];
-                    std::cout<<"qui2"<<std::endl;
+                    // std::cout<<"qui2"<<std::endl;
                     
                     // se ncompontensts >1, allora assegni alla riga
                     assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
-                    std::cout<<"qui3"<<std::endl;
+                    // std::cout<<"qui3"<<std::endl;
                    // std::cout<<"func_tmp_="<<mapping<<" "<<reference_values[n_dof][qp]<<std::endl;
                 }
                 
             }
         }
         
-     std::cout<<"ShapeFunction  trace end"<<std::endl;
-     std::cout<<func_values_<<std::endl;
+     // std::cout<<"ShapeFunction  trace end"<<std::endl;
+     // std::cout<<func_values_<<std::endl;
 
     }
     
@@ -4892,21 +4893,21 @@ public:
         //   std::cout<<"beta"<<beta<<std::endl;
         //   std::cout<<"trace[face]"<<trace[face]<<std::endl;
 
-      std::cout<<"init RT elements (coeffs)"<<std::endl;
-      std::cout<<"alpha_"<<std::endl;
-      std::cout<<alpha_<<std::endl;
-      std::cout<<"beta"<<std::endl;
-      std::cout<<beta<<std::endl;
-      std::cout<<"trace"<<std::endl;
-      std::cout<<trace<<std::endl;
-      std::cout<<"trace[face]"<<std::endl;
-      std::cout<<trace[face]<<std::endl;
+      // std::cout<<"init RT elements (coeffs)"<<std::endl;
+      // std::cout<<"alpha_"<<std::endl;
+      // std::cout<<alpha_<<std::endl;
+      // std::cout<<"beta"<<std::endl;
+      // std::cout<<beta<<std::endl;
+      // std::cout<<"trace"<<std::endl;
+      // std::cout<<trace<<std::endl;
+      // std::cout<<"trace[face]"<<std::endl;
+      // std::cout<<trace[face]<<std::endl;
         subarray(alpha_,beta,trace[face]);
 
 
-        std::cout<<"init RT elements (coeffs)"<<std::endl;
-        std::cout<<beta<<std::endl;
-         std::cout<<alpha_<<std::endl;
+        // std::cout<<"init RT elements (coeffs)"<<std::endl;
+        // std::cout<<beta<<std::endl;
+        //  std::cout<<alpha_<<std::endl;
         
         const auto& map=(*map_ptr);
         const auto& mapping=map();
@@ -4919,23 +4920,23 @@ public:
                 n_=n_comp;
                 for(Integer qp=0;qp<NQPoints;qp++)
                 {
-                    std::cout<<n_dof<<", "<<n_comp<<", " <<qp<<std::endl;
+                    // std::cout<<n_dof<<", "<<n_comp<<", " <<qp<<std::endl;
                     func_values_[n_tot_][qp].zero();
-                    std::cout<<"qui4"<<std::endl;
+                    // std::cout<<"qui4"<<std::endl;
                     // func_tmp_=alpha[n_dof] * mapping * weighted_reference_values[n_dof][qp];
                     // std::cout<< "n_dof, qp, n_tot_, n_comp, n_=("<<n_dof<<", "<<qp<<", "<< n_tot_<<", "<<n_comp<<", "<< n_<<")"<<std::endl;
                     // std::cout<< "func_values_="<<func_values_[n_tot_][qp]<<std::endl;
                     func_tmp_=alpha_[n_dof] * mapping * reference_values[n_dof][qp];
-                    std::cout<<"qui5"<<std::endl;
+                    // std::cout<<"qui5"<<std::endl;
                     // std::cout<< "func_tmp_="<<func_tmp_<<std::endl;
                     assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
-                    std::cout<<"qui6"<<std::endl;
+                    // std::cout<<"qui6"<<std::endl;
                     // std::cout<< "func_values_ after="<<func_values_[n_tot_][qp]<<std::endl;
                 }
                 
             }
         }
-        std::cout<<"init end"<<std::endl;
+        // std::cout<<"init end"<<std::endl;
         
     };
     

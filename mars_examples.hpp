@@ -3321,9 +3321,14 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 							val = std::make_shared<IntegerVector>();
 						}
 		            val->push_back(i);
+
+
 		        } 	  
 		}                 
 	 }
+
+
+
 	 
 	 auto& operator()()     {return map_;}
 	 auto& operator()()const{return map_;}
@@ -6271,8 +6276,8 @@ private:
 	public: 
 		using type=Matrix<Real,1,1>;
 
-	    template<typename Point>
-		static type eval(const Point& p)
+	    template<typename Point,typename FiniteElem>
+		static type eval(const Point& p,FiniteElem& FE)
 		{
 			if(ManifoldDim==2)
 				return ExactPoisson2D::eval(p); 
@@ -6280,6 +6285,21 @@ private:
 				return ExactPoisson3D::eval(p); 
 		}
 	};
+
+
+
+	class GapFunction
+	{
+	public: 
+		using type=Matrix<Real,1,1>;
+
+	    template<typename Point,typename FiniteElem>
+		static type eval(const Point& p,FiniteElem& FE)
+		{
+          return 0.0; 
+		}
+	};
+
 
 
 
@@ -6358,8 +6378,236 @@ private:
 
 
 
-template<Integer Dim>
-class NormalFunction;
+
+
+	template<Integer Dim>
+	class HouseHolder
+	{
+	 public:
+		static constexpr auto identity=Matrix<Real,Dim,Dim>::eye(1.0);
+
+		HouseHolder():
+		toll_(1e-8)
+		{
+			// the first component of the new reference system is the normal one
+			e1_[0]=1.0;
+			for(Integer i=1;i<Dim;i++)
+				e1_[i]=0.0;
+		}
+
+		inline void compute(const Vector<Real,Dim>& normal)
+		{
+
+			tmp_vec_=0.5*(normal - e1_);
+			std::cout<<"tmp_vec_"<<std::endl;
+			std::cout<<tmp_vec_<<std::endl;
+
+
+			if(tmp_vec_.norm()>toll_)
+				tmp_vec_.normalize();
+			std::cout<<"tmp_vec_ normalize"<<std::endl;
+			std::cout<<tmp_vec_<<std::endl;
+			for(Integer i=0;i<Dim;i++)
+				for(Integer j=0;j<Dim;j++)
+					{
+						H_(i,j)=identity(i,j)-2.0*tmp_vec_(i)*tmp_vec_(j);
+						std::cout<<identity(i,j)<<", "<< -2.0*tmp_vec_(i)*tmp_vec_(j)<<std::endl;
+					}
+		}
+
+		auto& operator()()		{return H_;}
+
+		auto& operator()()const {return H_;}
+
+	 private:
+		Real toll_;
+		Vector<Real,Dim> e1_;
+		Vector<Real,Dim> tmp_vec_;
+		Matrix<Real,Dim,Dim> H_;
+	};
+
+    
+    template<typename FunctionSpace>
+	class GlobalHouseHolder
+	{
+	public:
+	    using MeshT=typename FunctionSpace::MeshT;
+	    using Elem= typename MeshT::Elem;
+	    using BoundaryElem=FromVolumetricToBoundaryElem<Elem>;
+	    static constexpr Integer Dim=Elem::Dim;
+
+
+		GlobalHouseHolder(const std::shared_ptr<FunctionSpace> & W_ptr):
+		spaces_ptr_(W_ptr)
+		{}
+     
+
+		template<Integer N, typename T>
+		std::enable_if_t<(N!=0),void>
+        node_normal(T&t)
+        {}
+
+		template<Integer N, typename T>
+		std::enable_if_t<(N==0),void>
+        node_normal(T& t)
+        {}
+
+
+        template<typename Space,Integer N=0,typename T>
+		std::enable_if_t< (N>=Space::entity.size()),void>  
+		node_normal_loop(T& t)
+		{}
+
+        template<typename Space, Integer N=0,typename T>
+		std::enable_if_t<(N<Space::entity.size()),void>  
+		node_normal_loop(T& t)
+		{
+			node_normal<Space::entity[N]>(t);
+			node_normal_loop<Space,N+1>(t);
+		}
+
+
+
+
+
+        template<typename TupleOfSpaces, Integer N=0,typename T>
+		std::enable_if_t< (N>=TupleTypeSize<T>::value),void>  
+		space_loop(T& t)
+		{}
+
+        template<typename TupleOfSpaces, Integer N=0,typename T>
+		std::enable_if_t< (N<TupleTypeSize<T>::value),void> 
+		space_loop(T& tuple)
+		{
+         auto& t=tuple_get<N>(tuple);
+         using FS=remove_all_t<decltype(t)>;
+         node_normal_loop<GetType<TupleOfSpaces,N>>(t);
+
+         space_loop<TupleOfSpaces,N+1>(tuple);
+		}
+
+
+		void inline compute(std::vector<std::vector<Vector<Real,Dim>>>& node_normals,
+							const Integer boundary_tag,
+							const Integer level=0)
+		{
+			auto& mesh=spaces_ptr_->mesh();
+			auto& signed_normal= mesh.signed_normal().normals();
+			auto& level_cumultive_n_dofs=spaces_ptr_->dofsdofmap().level_cumultive_n_dofs();
+
+
+			FiniteElem<Elem> FE(mesh);
+			BoundaryElem side_elem;
+
+			SparseMatrix<Real> A;
+
+			n_dofs_=level_cumultive_n_dofs[level];
+
+			// householder is a local N-dim transformation, so max_cols=Dim 
+
+			A.init(n_dofs_,n_dofs_,Dim);
+
+			auto& tuple_reference_spaces=spaces_ptr_->spaces_ptr()->tuple_reference_spaces();
+
+			using TupleOfSpaces= typename FunctionSpace::FunctionSpace::TupleOfSpaces;
+           space_loop<TupleOfSpaces>(tuple_reference_spaces);
+
+
+			std::cout<<" global householder" <<std::endl;
+
+			for(Integer el=0;el<mesh.n_elements();el++)
+			{
+				std::cout<<"el=="<<el<<std::endl;
+
+
+				FE.init(el);
+
+				if(FE.is_on_boundary())
+				{
+
+				auto& elem = mesh.elem(el);
+
+
+	            for(std::size_t s=0;s<FE.n_side();s++)
+	              {
+	              	// if the boundary of the element belongs to the boundary_tag
+	              	FE.init_boundary(s);
+	              	// std::cout<< FE.side_tag()<< ", "<<boundary_tag << std::endl;
+	                if(FE.side_tag()==boundary_tag)
+	                {
+	                	std::cout<<"side=="<<s<<" with tag=="<<boundary_tag <<std::endl;
+		              elem.side(s,side_elem);
+		              auto& side_nodes=side_elem.nodes;
+		              // loop on the normal nodes
+		              for(Integer i=0;i<side_nodes.size();i++)
+		              {
+		              	auto& normal=node_normals[side_nodes[i]];
+		              	for(Integer lev=0;lev<normal.size();lev++)
+		              	{
+		              		house_holder_.compute(normal[lev]);
+		              		std::cout<<"node normal, lev=="<<lev<<std::endl;
+		              		std::cout<<normal[lev]<<std::endl;
+		              		std::cout<<house_holder_()<<std::endl;
+
+		              	}
+
+		              }
+
+
+
+		            house_holder_.compute(signed_normal[el][s]);
+              		std::cout<<"face normal"<<std::endl;
+              		std::cout<<signed_normal[el][s]<<std::endl;
+              		std::cout<<house_holder_()<<std::endl;
+
+
+
+
+
+	                  // std::cout<<"------_______----- reference_maps_===="<<s<<std::endl;
+	                  // reference_maps_.init_boundary(FE);
+	                  // std::cout<<"------_______----- shapefunctions_===="<<s<<std::endl;
+	                  // shapefunctions_.init_boundary(FE);
+	                  // std::cout<<"------_______----- BEGIN SIDE EVAL===="<<s<<std::endl;
+	                  // std::cout<<"------bilinear"<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
+	                  // eval_bilinear_form_.apply_boundary(A,FE);
+	                  // std::cout<<"------linear===="<<s<<", tag="<<FE.side_tags()[s]<<std::endl;
+	                  // eval_linear_form_.apply_boundary(b,FE);
+	                  // std::cout<<"------_______----- END SIDE EVAL===="<<s<<std::endl;
+	                }
+	           	  }				
+				}
+				// if(elem_belongs_to_level)
+
+					// if(!elem_belongs_to_level(mesh,i,level,track)) continue;
+				{
+
+				}
+				
+			}
+
+
+
+		}
+
+
+		
+
+
+
+
+	private:
+		std::shared_ptr<FunctionSpace> spaces_ptr_;
+		HouseHolder<Dim> house_holder_;
+		Integer n_dofs_;
+
+	};
+
+	template<typename FunctionSpace>
+	auto MakeGlobalHouseHolder(std::shared_ptr<FunctionSpace> W_ptr){return GlobalHouseHolder<FunctionSpace>(W_ptr);}
+
+	template<Integer Dim>
+	class NormalFunction;
 
 	template<Integer ManifoldDim,Integer Order>
 	void Poisson_Lagrange(const Integer n)
@@ -6463,11 +6711,11 @@ class NormalFunction;
 		if(ManifoldDim==2)
 		{
 			std::cout<<"2D LSFEM_ContactLinearElasticity";
-			// generate_cube(mesh,n,n,0);
-			// mesh.build_dual_graph();
-			// mark_boundary(mesh);
-	      read_mesh("../data/triangle_square.MFEM", mesh);
-	      assign_tags(mesh);
+			generate_cube(mesh,n,n,0);
+			mesh.build_dual_graph();
+			mark_boundary(mesh);
+	      // read_mesh("../data/triangle_square.MFEM", mesh);
+	      // assign_tags(mesh);
 
 
 	      // Bisection<MeshT> bisection(mesh);
@@ -6546,11 +6794,15 @@ class NormalFunction;
 
 		using AuxRT_n= FunctionSpace< MeshT, RT<Order1,ManifoldDim>>;
 		using AuxP_n= FunctionSpace< MeshT, Lagrange<Order2,ManifoldDim>>;
+		using AuxP_1= FunctionSpace< MeshT, Lagrange<1,ManifoldDim>>;
+		using AuxP_1_single_component= FunctionSpace< MeshT, Lagrange<1,1>>;
 		using AuxP_0= FunctionSpace< MeshT, Lagrange<0,ManifoldDim>>;
 		using LSFEM= FunctionSpace< MeshT, RT<Order1,ManifoldDim>,Lagrange<Order2,ManifoldDim>>;
 
 		AuxRT_n rtn(mesh,bisection,n2em);//csmc);
 		AuxP_n pn(mesh,bisection,n2em);//csmc);
+		AuxP_1 p1(mesh,bisection,n2em);//csmc);
+		AuxP_1_single_component p1_1(mesh,bisection,n2em);
 		AuxP_0 p0(mesh,bisection,n2em);//csmc);
 		std::cout<<"FIRST PRE UPDATE="<<std::endl;
 		LSFEM lsfem(mesh,bisection,n2em);//csmc);
@@ -6563,7 +6815,7 @@ class NormalFunction;
 	    std::cout<<"--------------:Wtrial n max_n_nodes=="<<Wtrial.node2elem().max_n_nodes()<<std::endl;
 
 		// auto Waux=AuxFunctionSpacesBuild(pn);
-		auto Waux=AuxFunctionSpacesBuild(pn,pn);
+		auto Waux=AuxFunctionSpacesBuild(pn,p1,p1_1);
 		std::cout<<"FIRST POST Waux="<<std::endl;
 
 		auto W=FullSpaceBuild(Wtrial,Waux);
@@ -6575,6 +6827,9 @@ class NormalFunction;
 
 	    std::cout<<"--------------:W_ptr n max_n_nodes=="<<W_ptr->node2elem().max_n_nodes()<<std::endl;
 
+		// bisection.tracking_begin();
+		// bisection.uniform_refine(0);
+		// bisection.tracking_end();
 		for(int i=0;i<n_levels;i++)
 		{
 		bisection.tracking_begin();
@@ -6597,7 +6852,8 @@ class NormalFunction;
 		auto v = MakeTest<1>(W_ptr);
 
 		auto f1 = MakeFunction<0,ExactLinearElasticity<ManifoldDim>>(W_ptr);
-		auto f1_surf = MakeFunction<0,ExactLinearElasticity<ManifoldDim>,TraceOperator>(W_ptr);
+		auto node_normal = MakeTraceFunction<1>(W_ptr);
+		auto gap = MakeGapFunction<2>(W_ptr);//MakeFunction<2,GapFunction>(W_ptr);
 
 
 		constexpr Real mu=1.0;
@@ -6610,15 +6866,121 @@ class NormalFunction;
 		constexpr auto C_coeff1=Constant<Scalar>(1.0/Real(2.0*mu));
 
 	    constexpr auto C_coeff2=Constant<Scalar>((1.0/Real(2.0*mu))*(-lambda/(Real(ManifoldDim)*lambda+ 2.0 * mu)));	
-	    constexpr auto identity=Constant<Identity<ManifoldDim>>();					
+	    constexpr auto identity=Constant<Identity<ManifoldDim>>();		
+	    constexpr auto fixed_normal=Constant<Mat<2,1>>(1.,0);			
 
 	    auto Epsilon=NewOperator(halp*((GradientOperator()+Transpose(GradientOperator()))));//+Transpose(GradientOperator())));
 
 		// auto C_inverse=NewOperator(C_coeff1*IdentityOperator() + C_coeff2 * IdentityOperator() * MatTraceOperator<Matrix<Real,2,2>>());
 		auto C_inverse=NewOperator(C_coeff1*IdentityOperator() + C_coeff2*identity* MatTrace(IdentityOperator()) );
 
-		auto normal = MakeFunction<1,NormalFunction<ManifoldDim>,TraceOperator>(W_ptr);
+		// auto face_normal = MakeFunction<1,NormalFunction<ManifoldDim>,TraceOperator>(W_ptr);
+		
 		// auto normal = MakeFunction<1,NormalFunction<ManifoldDim>>(W_ptr);
+
+		auto node_normal_values=MakeNodeNormalValues(W_ptr);
+
+
+
+
+        W_ptr->update();
+		node_normal_values.compute();
+
+		std::vector<Real> x_p1;
+		node_normal_values.compute_dofs(x_p1);
+
+		
+
+		// auto& node_normal_vals=node_normal_values();
+
+		// auto normal_func = MakeFunction<1>(W_ptr);
+		node_normal.global_dofs_update(x_p1);
+		// std::cout<<" NODE NORMAL VALUES  "<<std::endl;
+		// for(Integer i=0;i<node_normal_vals.size();i++)
+		// { 
+		// 	std::cout<<" node "<< i<<std::endl;
+		// 	for(Integer j=0;j<node_normal_vals[i].size();j++)
+		// 		std::cout<<node_normal_vals[i][j];
+		// 	std::cout<<std::endl;
+		// }
+  //        std::cout<<"  nodes VALUES  "<<std::endl;
+		// for(Integer i=0;i<mesh.elem(0).nodes.size();i++)
+		// 	std::cout<<mesh.elem(0).nodes[i]<<" ";
+		// std::cout<<std::endl;
+
+		// for(Integer i=0;i<mesh.elem(1).nodes.size();i++)
+		// 	std::cout<<mesh.elem(1).nodes[i]<<" ";
+		// std::cout<<std::endl;
+
+		// for(Integer i=0;i<mesh.points().size();i++)
+		// {
+		// 	for(Integer j=0;j<mesh.points()[i].size();j++)
+		// 	std::cout<<mesh.points()[i][j]<<" ";
+		// std::cout<<std::endl;
+		// }
+
+		HouseHolder<ManifoldDim> hh;
+
+        Vector<Real,ManifoldDim> normal_tmp{0.447213595499958,0.894427190999916};
+
+		hh.compute(normal_tmp);
+
+		std::cout<<"hh()"<<std::endl;
+		std::cout<<hh()<<std::endl;
+
+		auto globalHH=MakeGlobalHouseHolder(W_ptr);
+		globalHH.compute(node_normal_values(),1);
+
+
+		
+
+
+
+
+
+
+        
+
+		// auto& p1dm=p1.dofsdofmap();
+		// Integer n_dofs=p1.n_dofs();
+		// using DofsDmP1=typename remove_all_t< decltype(p1)>::DofsDM ;
+
+		// GetType<typename DofsDmP1::ElemDofMap,0> elemdmp1;
+
+		// // dofmap_get<0>(p1dm,elemdmp1,0,0);
+		// std::cout<<"elemdmp1"<<std::endl;
+		// std::cout<<"n_dof="<<n_dofs<<std::endl;
+		// std::vector<Real> x_p1(n_dofs,0);
+		// Integer cont;
+		// for(Integer el=0;el<2;el++)///mesh.n_elements();el++)
+		// {
+		// 	p1dm.template dofmap_get<0>(elemdmp1,el,0);
+		// 	auto& elem=mesh.elem(el);
+		// 	auto& nodes=elem.nodes;
+		// 	cont=0;
+		// 	for(Integer i=0;i<nodes.size();i++)
+		// 	{
+		// 		std::cout<<"i="<<i<<", node="<< nodes[i]<< std::endl;
+		// 		std::cout<< node_normal_vals[nodes[i]][0]<<std::endl;
+		// 		for(Integer j=0; j<ManifoldDim; j++)
+		// 		{
+		// 			x_p1[elemdmp1[cont]]=node_normal_vals[nodes[i]][0][j];
+		// 			cont++;
+		// 		}
+
+		// 	}
+  //       std::cout<<"x_p1"<<std::endl;
+		// for(Integer i=0;i<x_p1.size();i++)
+		// 	std::cout<<x_p1[i]<<std::endl;			
+		// 	std::cout<<elemdmp1<<std::endl;
+		// }
+
+
+  //       std::cout<<"x_p1"<<std::endl;
+		// for(Integer i=0;i<x_p1.size();i++)
+		// 	std::cout<<x_p1[i]<<std::endl;
+
+
         // 
 
 	    // 2D LSFEM POISSION
@@ -6628,9 +6990,11 @@ class NormalFunction;
 		// L2Inner(Epsilon(u),Epsilon(v))-
 		// L2Inner(Epsilon(u),C_inverse(tau))-
 		// L2Inner(C_inverse(sigma),Epsilon(v))
-
-		+surface_integral(0,Inner(Trace(sigma),normal),Inner(Trace(v),normal))
-		+surface_integral(0,Trace(sigma),Trace(v))
+		// surface_integral(1,Inner(Trace(sigma),node_normal),Inner(Trace(v),node_normal))
+		// +surface_integral(1,Inner(Trace(tau),node_normal),Inner(Trace(u),node_normal))
+		surface_integral(1,Inner(Trace(sigma),node_normal),Inner(Trace(v),node_normal))
+		+surface_integral(1,Inner(Trace(tau),node_normal),Inner(Trace(u),node_normal))
+		// +surface_integral(1,Trace(sigma),Trace(v))
 
 		// L2Inner(MatTrace(sigma),MatTrace(tau))
 		// L2Inner(sigma,halp*((Grad(v))))+
@@ -6638,12 +7002,14 @@ class NormalFunction;
 		;
 
 		auto linearform=
-		L2Inner(-Div(tau),f1)
-		// +
-		+surface_integral(0,Trace(v),(f1_surf))
+		// L2Inner(-Div(tau),f1)
+		+surface_integral(1,Inner(Trace(v),node_normal),gap)
 		;
         // decltype(MatTrace(IdentityOperator())) feef(5,5,5);
 		std::cout<<" DEFINE BCS  "<<std::endl;
+		// std::cout<<bilinearform.label()<<std::endl;
+
+		
 
 
 
@@ -6667,30 +7033,31 @@ class NormalFunction;
 		std::cout<<"level---"<<level<<std::endl;
 		context.assembly(A,b,level);
 
-		// std::cout<<"APPLY BC "<<std::endl;
-		// context.apply_bc(A,b);
-		// std::vector<Real> x;
-		// Integer max_iter=1;
-  // 		std::ofstream os;
-		// auto var_names=variables_names("stress","disp");
+		std::cout<<"APPLY BC "<<std::endl;
+		A.print_val();
+		context.apply_bc(A,b);
+		std::vector<Real> x;
+		Integer max_iter=1;
+  		std::ofstream os;
+		auto var_names=variables_names("stress","disp");
 
-		// std::vector<Real> rhs;
-  //       std::cout<<"START SOLVING PATCH MULTIGRID"<<std::endl;  
-  //       gauss_seidel(x,A,b,1);         
-		// std::cout<<"END SOLVING PATCH MULTIGRID"<<std::endl;
+		std::vector<Real> rhs;
+        std::cout<<"START SOLVING PATCH MULTIGRID"<<std::endl;  
+        gauss_seidel(x,A,b,1);         
+		std::cout<<"END SOLVING PATCH MULTIGRID"<<std::endl;
 		
- 	// 	std::string output_fileCOARSE ="LSFEM_ContactLinearElasticity"+ std::to_string(ManifoldDim) +
-		// "D_RT" + std::to_string(Order1)+
-		// "_P" + std::to_string(Order2)+"_outputCOARSE.vtk";
+ 		std::string output_fileCOARSE ="LSFEM_ContactLinearElasticity"+ std::to_string(ManifoldDim) +
+		"D_RT" + std::to_string(Order1)+
+		"_P" + std::to_string(Order2)+"_outputCOARSE.vtk";
 
-		// os.close();
-  //       std::cout<<"GUARDA Qui"<<std::endl;
-		// std::cout<<x.size()<<std::endl;
-		// std::cout<<b.size()<<std::endl;
-		// std::cout<<A.max_rows()<<std::endl;
-		// std::cout<<A.max_cols()<<std::endl;
-		// os.open(output_fileCOARSE.c_str());
-		// write_wtk_isoparametric(os,W_ptr,x,var_names,level);
+		os.close();
+        std::cout<<"GUARDA Qui"<<std::endl;
+		std::cout<<x.size()<<std::endl;
+		std::cout<<b.size()<<std::endl;
+		std::cout<<A.max_rows()<<std::endl;
+		std::cout<<A.max_cols()<<std::endl;
+		os.open(output_fileCOARSE.c_str());
+		write_wtk_isoparametric(os,W_ptr,x,var_names,level);
 
 
         
@@ -6702,7 +7069,7 @@ class NormalFunction;
 		// Integer levelL=bisection.tracker().current_iterate()-1;
 
 		// context.assembly(AL,bL,levelL);
-	 //   // A.print_val();
+	   // A.print_val();
 		// std::cout<<"APPLY BC "<<std::endl;
 		// context.apply_bc(AL,bL);
 

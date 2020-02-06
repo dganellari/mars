@@ -1041,7 +1041,9 @@ namespace mars {
 			}
 			else if(line == "boundary") {
 				std::getline(is, line);
+				std::cout<<" boundary "<<std::endl;
 				n_boundary_nodes=atoi(line.c_str());
+				std::cout<<" n_boundary_nodes "<<n_boundary_nodes<<std::endl;
 				mesh.side_tags().resize(n_boundary_nodes);
 				mesh.side_nodes().resize(n_boundary_nodes);
 				for(Integer i = 0; i < n_boundary_nodes; ++i){
@@ -1055,6 +1057,7 @@ namespace mars {
                     mesh.side_tags()[i]=attr;
 					for(Integer k = 0; k < ManifoldDim; ++k) {
 						ss >> mesh.side_nodes()[i][k];
+						std::cout<<mesh.side_nodes()[i][k]<<std::endl;
 					}
 
 				}

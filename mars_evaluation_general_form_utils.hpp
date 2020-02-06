@@ -1294,14 +1294,14 @@ public:
      auto& local_mat=std::get<N>(tensor_tuple_);
      local_mat.zero();
      auto & eval_N=std::get<N>(eval_inners_);
-     std::cout<< "bilinear apply_aux_aux "<<std::endl;
+     // std::cout<< "bilinear apply_aux_aux "<<std::endl;
      apply_aux_aux_aux(eval_N,local_mat,FE,dofmap_test,dofmap_trial);
-     std::cout<< "bilinear dofmap_test "<<std::endl;
-     std::cout<<  dofmap_test <<std::endl;
-     std::cout<< "bilinear dofmap_trial "<<std::endl;
-     std::cout<<  dofmap_trial <<std::endl;
-     std::cout<< "mat size "<<mat.rows()<<std::endl;
-     std::cout<<local_mat<<std::endl;
+     // std::cout<< "bilinear dofmap_test "<<std::endl;
+     // std::cout<<  dofmap_test <<std::endl;
+     // std::cout<< "bilinear dofmap_trial "<<std::endl;
+     // std::cout<<  dofmap_trial <<std::endl;
+     // std::cout<< "mat size "<<mat.rows()<<std::endl;
+     // std::cout<<local_mat<<std::endl;
      for(std::size_t ii=0;ii<dofmap_test.size();ii++)
      {
      for(std::size_t jj=0;jj<dofmap_trial.size();jj++)
@@ -1664,11 +1664,11 @@ public:
       std::cout<<tuple_get< GetType<Pairs,0>::value >(dofs)<<std::endl;
       std::cout<<tuple_get< GetType<Pairs,1>::value >(dofs)<<std::endl;
 
-      std::cout<<"OOOOO apply_boundary_aux, N="<<N<<std::endl;
-      std::cout<<"dofmap_test"<<std::endl;
-      std::cout<<dofmap_test<<std::endl;
-      std::cout<<"dofmap_trial"<<std::endl;
-      std::cout<<dofmap_trial<<std::endl;
+      // std::cout<<"OOOOO apply_boundary_aux, N="<<N<<std::endl;
+      // std::cout<<"dofmap_test"<<std::endl;
+      // std::cout<<dofmap_test<<std::endl;
+      // std::cout<<"dofmap_trial"<<std::endl;
+      // std::cout<<dofmap_trial<<std::endl;
       auto& test_trace=tuple_get<GetType<Pairs,0>::value>(dm_test_trace_)[0];
       auto& trial_trace=tuple_get<GetType<Pairs,1>::value>(dm_trial_trace_)[0];
       subarray(test_trace,dofmap_test, dofmap_test_trace );
@@ -1706,11 +1706,11 @@ public:
 
 
 
-      std::cout<<"PPPPPP apply_boundary_aux, N="<<N<<std::endl;
-      std::cout<<"dofmap_test"<<std::endl;
-      std::cout<<dofmap_test<<std::endl;
-      std::cout<<"dofmap_trial"<<std::endl;
-      std::cout<<dofmap_trial<<std::endl;
+      // std::cout<<"PPPPPP apply_boundary_aux, N="<<N<<std::endl;
+      // std::cout<<"dofmap_test"<<std::endl;
+      // std::cout<<dofmap_test<<std::endl;
+      // std::cout<<"dofmap_trial"<<std::endl;
+      // std::cout<<dofmap_trial<<std::endl;
       // todo fixme
       // here take the submatrix  of mat(dofmap_test,dofmap_trial)
       // const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
@@ -1726,7 +1726,7 @@ public:
     void apply_boundary(Output& mat,FiniteElem&FE,const DofMap& dofmap )
     {
 
-       std::cout<<"general apply_boundary "<<FE.elem_id()<<std::endl;
+       // std::cout<<"general apply_boundary "<<FE.elem_id()<<std::endl;
       apply_boundary_aux<TupleTypeSize<L2Products>::value-1,0>(mat,FE,dofmap);
     }
 
