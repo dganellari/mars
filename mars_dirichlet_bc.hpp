@@ -22,12 +22,17 @@ class DofsPoints;
 template<typename DofsPoints_>
 class DofsPointsType;
 
-template<typename FullSpace_, Integer N, typename Func>
-class DirichletBoundaryCondition
+template<typename FullSpace_, Integer N, typename Func, Integer Component_=-1>
+class DirichletBoundaryCondition;
+
+
+template<typename FullSpace_, Integer N, typename Func, Integer Component_>
+class DirichletBoundaryCondition //<FullSpace_,N,Func,-1>
 {
  public:
     using FunctionType=Func;
     using FunctionSpace=FullSpace_;
+    static constexpr Integer Component=Component_;
     using Elem=typename FunctionSpace::Elem;
     static constexpr Integer number=N;
     static constexpr Integer value=GetType<typename FunctionSpace::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value;
@@ -44,12 +49,16 @@ class DirichletBoundaryCondition
     using tipo1= typename DofsPointsType<PointsType>::type;
     using mapped_type= typename DofsPointsType<PointsType>::mapped_type;
     static constexpr auto points=PointsType::points;
+    using Output=typename FunctionType::type ;
 
     DirichletBoundaryCondition(const FunctionSpace& W, const Integer label)
     :
     spaces_ptr_(std::make_shared<FunctionSpace>(W)),
     label_(label)
-    {}
+    {
+      for(Integer i=0;i<output_.size();i++)
+        output_[i]=0.0;
+    }
 
     DirichletBoundaryCondition(const std::shared_ptr<FunctionSpace>& W_ptr, const Integer label)
     :
@@ -80,35 +89,60 @@ class DirichletBoundaryCondition
     template<typename Point,typename FiniteElem>
     inline auto eval(const Point& point,FiniteElem& FE)const {return FunctionType::eval(point,FE);}
 
+
+    template< Integer M,typename Point,typename FiniteElem>
+    std::enable_if_t<(M==-1) , Output>
+    eval_aux(const Point& point,FiniteElem& FE)const {return FunctionType::eval(point,FE);}
+
+
+    // template< Integer M,typename Point,typename FiniteElem>
+    // std::enable_if_t<(M==-1) , Output>
+    // eval_aux(const Point& point,FiniteElem& FE)const {return FunctionType::eval(point,FE);}
+
+
+    // // // template<typename Point,typename FiniteElem, Integer M>
+    // // // std::enable_if_t<(M>=0) , Output>
+    // // // eval(const Point& point,FiniteElem& FE)const 
+    // // // {
+    // // //   return FunctionType::eval(point,FE);}
+
+
+
+    // template<typename Point,typename FiniteElem>
+    // inline auto eval(const Point& point,FiniteElem& FE)const 
+    // {return eval_aux<Component>(point,FE);}
+
+
  private:
     std::shared_ptr<FunctionSpace> spaces_ptr_;
     Integer label_;
     FunctionType func_;
+    Output output_;
 };
 
 
-template<Integer N, typename FullSpace, typename Func>
+template<Integer N, Integer Component=-1, typename FullSpace, typename Func>
 constexpr auto DirichletBC(const FullSpace& W, const Func& func, const Integer label)
 {
-return DirichletBoundaryCondition<FullSpace,N,Func>(W,func,label);
+return DirichletBoundaryCondition<FullSpace,N,Func,Component>(W,func,label);
 }
 
-template<Integer N, typename FullSpace, typename Func>
+template<Integer N, Integer Component=-1, typename FullSpace, typename Func>
 constexpr auto DirichletBC(const std::shared_ptr<FullSpace>& W_ptr, const Func& func, const Integer label)
 {
-return DirichletBoundaryCondition<FullSpace,N,Func>(W_ptr,func,label);
+return DirichletBoundaryCondition<FullSpace,N,Func,Component>(W_ptr,func,label);
 }
 
-template< Integer N, typename Func, typename FullSpace>
+template< Integer N, typename Func, Integer Component=-1, typename FullSpace>
 constexpr auto DirichletBC(const FullSpace& W,const Integer label)
 {
-return DirichletBoundaryCondition<FullSpace,N,Func>(W,label);
+return DirichletBoundaryCondition<FullSpace,N,Func,Component>(W,label);
 }
 
-template< Integer N, typename Func, typename FullSpace>
+template< Integer N, typename Func, Integer Component=-1, typename FullSpace>
 constexpr auto DirichletBC(const std::shared_ptr<FullSpace>& W_ptr,const Integer label)
 {
-return DirichletBoundaryCondition<FullSpace,N,Func>(W_ptr,label);
+return DirichletBoundaryCondition<FullSpace,N,Func,Component>(W_ptr,label);
 }
 
 
@@ -275,6 +309,32 @@ public:
 
 
 
+    template<typename BC_N,typename Dofs,typename Mat,typename Vec,typename DofMapTrace,typename Rhs>
+    inline std::enable_if_t<(BC_N::Component==-1),void>
+    compute_constraints(Dofs& constrained_dofs,Mat& constrained_mat,Vec& constrained_vec,const Integer& i, const DofMapTrace& dofmap_trace,const Rhs& rhs_local )
+    {
+
+         for(std::size_t comp=0;comp<BC_N::NComponents;comp++)
+         {
+          // std::cout<<"i=="<<dofmap_trace[i*NComponents+comp]<<std::endl;
+          constrained_dofs[dofmap_trace[i*BC_N::NComponents+comp]]=true;
+          constrained_mat[dofmap_trace[i*BC_N::NComponents+comp]]=1;   
+          constrained_vec[dofmap_trace[i*BC_N::NComponents+comp]]= rhs_local(comp,0);      
+         }
+    }
+
+    template<typename BC_N,typename Dofs,typename Mat,typename Vec,typename DofMapTrace,typename Rhs>
+    inline std::enable_if_t<(BC_N::Component>=0),void>
+    compute_constraints(Dofs& constrained_dofs,Mat& constrained_mat,Vec& constrained_vec,const Integer& i, const DofMapTrace& dofmap_trace,const Rhs& rhs_local )
+    {
+      std::cout<< " compute_constraints begin " <<std::endl;
+          constrained_dofs[dofmap_trace[i*BC_N::NComponents+BC_N::Component]]=true;
+          constrained_mat[dofmap_trace[i*BC_N::NComponents+BC_N::Component]]=1;   
+          constrained_vec[dofmap_trace[i*BC_N::NComponents+BC_N::Component]]= rhs_local(0,0);   
+      std::cout<< " compute_constraints end " <<std::endl;   
+    }
+
+
     template<Integer Nmax,Integer N, typename Maps,typename DofMap,typename Elem,
              typename ConstrainedDofs,typename ConstrainedMatrixVal,typename ConstrainedVecVal>
     std::enable_if_t<(N>Nmax), void> apply_aux(
@@ -394,13 +454,15 @@ public:
     for(std::size_t i=0;i<ratio;i++)
         {
          const auto& rhs_local=bc.eval(points[i],FE);
-         for(std::size_t comp=0;comp<BC_N::NComponents;comp++)
-         {
-          // std::cout<<"i=="<<dofmap_trace[i*NComponents+comp]<<std::endl;
-          constrained_dofs[dofmap_trace[i*NComponents+comp]]=true;
-          constrained_mat[dofmap_trace[i*NComponents+comp]]=1;   
-          constrained_vec[dofmap_trace[i*NComponents+comp]]= rhs_local(comp,0);      
-         }
+
+         compute_constraints<BC_N>(constrained_dofs,constrained_mat,constrained_vec,i,dofmap_trace,rhs_local);
+         // for(std::size_t comp=0;comp<BC_N::NComponents;comp++)
+         // {
+         //  // std::cout<<"i=="<<dofmap_trace[i*NComponents+comp]<<std::endl;
+         //  constrained_dofs[dofmap_trace[i*NComponents+comp]]=true;
+         //  constrained_mat[dofmap_trace[i*NComponents+comp]]=1;   
+         //  constrained_vec[dofmap_trace[i*NComponents+comp]]= rhs_local(comp,0);      
+         // }
 
 
          // constrained_dofs[dofmap_trace[i]]=true;

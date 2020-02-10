@@ -264,6 +264,41 @@ class FunctionOne
 };
 
 
+template<Integer Dim>
+class FunctionLastComponent
+{
+    public: 
+    // using Point=Matrix<Real,2,1>;
+    using type=Matrix<Real,Dim,1>;
+
+
+    template<typename Point,typename Elem>
+    static type eval(const Point& p, FiniteElem<Elem>& FE)
+    {
+     Matrix<Real,Dim,1> func;
+     for(Integer i=0;i<Dim-1;i++)
+      func[i]=0;
+     func[Dim-1]=-0.01;
+     return func; 
+    }
+};
+
+template<Integer Dim>
+class FunctionLinear
+{
+    public: 
+    // using Point=Matrix<Real,Dim,1>;
+    using type=Matrix<Real,1,1>;
+    template<typename Point,typename FiniteElem>
+    static type eval(const Point& p,FiniteElem& FE)
+    {
+      Real tmp;
+      tmp=p[0];
+      for(Integer i=1;i<Dim;i++)
+        tmp+=p[i];
+     return tmp; 
+    }
+};
 
 
 template<Integer Dim>

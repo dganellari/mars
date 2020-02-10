@@ -179,16 +179,14 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                 FE.init_boundary(s);
                 if(FE.is_side_on_boundary())
                 {
-                  std::cout<<"------_______----- reference_maps_===="<<s<<std::endl;
+                  // std::cout<<"------_______----- reference_maps_===="<<s<<std::endl;
                   reference_maps_.init_boundary(FE);
-                  std::cout<<"------_______----- shapefunctions_===="<<s<<std::endl;
+                  // std::cout<<"------_______----- shapefunctions_===="<<s<<std::endl;
                   shapefunctions_.init_boundary(FE);
-                  std::cout<<"------_______----- BEGIN SIDE EVAL===="<<s<<std::endl;
-                  std::cout<<"------bilinear"<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
+                  std::cout<<"------_______----- BILINEAR BEGIN SIDE EVAL===="<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
                   eval_bilinear_form_.apply_boundary(A,FE);
-                  std::cout<<"------linear===="<<s<<", tag="<<FE.side_tags()[s]<<std::endl;
+                  std::cout<<"------_______----- LINEAR BEGIN SIDE EVAL===="<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
                   eval_linear_form_.apply_boundary(b,FE);
-                  std::cout<<"------_______----- END SIDE EVAL===="<<s<<std::endl;
                 }
                 std::cout<<"------_______----- END SIDE===="<<s<<std::endl;
               }
@@ -338,39 +336,39 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
      constrained_vec.resize(n_dofs_,0);
 
      shape_coefficients_.init();
-       for(std::size_t el=0;el<mesh.n_elements();el++)
+     for(std::size_t el=0;el<mesh.n_elements();el++)
        {
-          if(!elem_belongs_to_level(mesh,el,level_,tracker)) continue;
-          FE.init(el,level_);
-          shape_coefficients_.init(el);
-          reference_maps_.init(FE);
-          shapefunctions_.init(FE);
-          eval_bilinear_form_.apply(A,FE);
+        if(!elem_belongs_to_level(mesh,el,level_,tracker)) continue;
+        FE.init(el,level_);
+        shape_coefficients_.init(el);
+        reference_maps_.init(FE);
+        shapefunctions_.init(FE);
+        eval_bilinear_form_.apply(A,FE);
 
 
-          if(FE.is_on_boundary())
-          {
-            for(std::size_t s=0;s<FE.n_side();s++)
+
+        if(FE.is_on_boundary())
+        {
+          for(std::size_t s=0;s<FE.n_side();s++)
+            {
+               FE.init_boundary(s);
+              if(FE.is_side_on_boundary())
               {
-                 FE.init_boundary(s);
-                if(FE.is_side_on_boundary())
-                {
-                  reference_maps_.init_boundary(FE);
-                  shapefunctions_.init_boundary(FE);
-                  eval_bilinear_form_.apply_boundary(A,FE);
-                }
+                reference_maps_.init_boundary(FE);
+                shapefunctions_.init_boundary(FE);
+                eval_bilinear_form_.apply_boundary(A,FE);
               }
+            }
 
-
-            for(std::size_t s=0;s<FE.n_side();s++)
+          for(std::size_t s=0;s<FE.n_side();s++)
+            {
+            if(FE.side_tags()[s]!=INVALID_INDEX)
               {
-              if(FE.side_tags()[s]!=INVALID_INDEX)
-                {
-                  FE.init_boundary(s);
-                  bcs_.assembly(full_spaces_ptr(),constrained_dofs,constrained_mat,constrained_vec,FE);
+                FE.init_boundary(s);
+                bcs_.assembly(full_spaces_ptr(),constrained_dofs,constrained_mat,constrained_vec,FE);
 
-                }
               }
+            }
          }
         
        }
@@ -434,13 +432,32 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
     template<typename SystemMat, typename Rhs>
     void apply_bc(SystemMat& A, Rhs& b)
     {
-      // std::cout<<"------APPLY BC -------"<<std::endl;
+      std::cout<<"------APPLY BC -------"<<std::endl;
+      std::cout<<"------b.size="<<b.size()<<std::endl;
+      std::cout<<"------n_dofs_="<<n_dofs_<<std::endl;
+      A.print_val();
+      std::cout<<"constrained_dofs size="<<constrained_vec.size()<<std::endl;
+
      for(Integer i=0;i<n_dofs_;++i)
      {
-      // std::cout<<"i="<<i<<std::endl;
+      std::cout<<constrained_dofs[i]<<std::endl;
+     }
+      std::cout<<"------constrained_vec BC -------"<<std::endl;
+     for(Integer i=0;i<n_dofs_;++i)
+     {
+      std::cout<< constrained_vec[i]<<", "  <<std::endl;
+     }
+     std::cout<<"------constrained_mat BC -------"<<std::endl;
+     for(Integer i=0;i<n_dofs_;++i)
+     {
+      std::cout<<constrained_mat[i] << ", "   <<std::endl;
+     }
+     for(Integer i=0;i<n_dofs_;++i)
+     {
+      std::cout<<"i="<<i<<"/"<<n_dofs_<<std::endl;
       if(constrained_dofs[i])
       {
-        // std::cout<<"constrained = "<< i << std::endl;
+        std::cout<<"constrained = "<< constrained_vec[i] << std::endl;
         
         b[i]=constrained_vec[i];
 
@@ -449,8 +466,11 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
         //       A[i][j]=0;
         //     }
         // A[i][i]=constrained_mat[i];
+        // std::cout<<"set_zero_row = "<< i << std::endl;
         A.set_zero_row(i);
+        // std::cout<<"equal = "<< i << std::endl;
         A.equal(constrained_mat[i],i,i);
+        // std::cout<<"after equal = "<< i << std::endl;
 
         // for(Integer j=i+1;j<n_dofs_;++j)
         //     A[i][j]=0;
@@ -458,7 +478,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
       }
       else
       {
-        // std::cout<<"not constrained = "<< i <<std::endl;
+        std::cout<<"not constrained = "<< constrained_vec[i] << std::endl;
         A.row_static_condensation(i,constrained_vec,constrained_dofs,b[i]);
         // for(Integer j=0;j<n_dofs_;++j)
         //   if(constrained_dofs[j])
@@ -470,6 +490,8 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
 
      }
+
+     A.print_val();
     }
 
     template<typename SystemMat>

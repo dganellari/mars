@@ -466,7 +466,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
   void apply(subtype& vec, FiniteElem<Elem>& J, ShapeFunctionsCollection<Forms...>& shape_functions, const DofMaps&...dofmaps)
 
  {
-    // std::cout<<"LOCAL TENSOR APPLY=="<<std::endl;
+    std::cout<<"LOCAL TENSOR APPLY=="<<std::endl;
 
   eval_left_.apply(left_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
   // std::cout<<"after left =="<<std::endl;
@@ -521,6 +521,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
  std::enable_if_t<(2==TestOrTrial_), void>
  apply_aux(subtype& mat, FiniteElem<Elem>& J, const ShapeFunctions& shape_functions, const DofMaps&...dofmaps)
  {
+  std::cout<<"apply_aux="<<std::endl;
 
   const auto& detJ=J.template get_det<VolumeIntegral>();
   // const auto& detJ=J.get_det();
@@ -626,6 +627,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
   template<typename Elem,typename ShapeFunctions, typename...DofMaps>
  void apply(subtype& mat, FiniteElem<Elem>& FE, const ShapeFunctions& shape_functions, const DofMaps&...dofmaps)
  {
+  std::cout<<"apply="<<std::endl;
   apply_aux<type::TestOrTrialLeftType::value>(mat,FE,shape_functions,dofmaps...);
  }
   

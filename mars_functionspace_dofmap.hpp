@@ -4519,17 +4519,19 @@ void dofmap_fespace5(
 
      FiniteElem<Elem> FE(mesh);
 
-     // std::cout<<" Entity2Dofs"<<std::endl;
+     std::cout<<" Entity2Dofs"<<std::endl;
      for(Integer el=0;el<mesh.n_elements();el++)
      {
 
-          if(tracker.get_iterate(el)<0)continue;
+          // if(tracker.get_iterate(el)<0)continue;
+          if(tracker.get_level(el)<0)continue;
           auto& elem=mesh.elem(el);
           const auto& nodes=elem.nodes;
 
 
-          // std::cout<<" el=="<<el<<std::endl;
-          FE.init(el,tracker.get_iterate(el));
+          std::cout<<" el=="<<el<<std::endl;
+          // FE.init(el,tracker.get_iterate(el));
+          FE.init(el,tracker.get_level(el));
 
           for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
              { 
