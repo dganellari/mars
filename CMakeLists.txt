@@ -183,6 +183,9 @@ IF(Kokkos_FOUND)
 		generation/mars_edge_node_map_kokkos.hpp
 		generation/mars_edge_element_map_kokkos.hpp
 		generation/mars_mark_kokkos.hpp
+		generation/sfc/mars_sfc_code.hpp
+		generation/sfc/mars_sfc_generation
+		generation/sfc/mars_mesh_distributed_generation.hpp
 	)
 ENDIF()
 
@@ -210,6 +213,7 @@ target_link_libraries(mars ${MPI_LIBRARIES})
 add_definitions("-std=c++11")
 target_include_directories(mars PUBLIC .)
 target_include_directories(mars PUBLIC generation)
+target_include_directories(mars PUBLIC generation/sfc)
 
 IF(Kokkos_FOUND)
 	MESSAGE(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")

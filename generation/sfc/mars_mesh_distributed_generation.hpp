@@ -14,6 +14,15 @@ bool generate_distributed_cube(
     const Integer xDim, const Integer yDim, const Integer zDim)
 {
 
+    using namespace Kokkos;
+    SFC morton;
+    morton.generate_sfc_elements<Type>(xDim, yDim, zDim);
+
+   /*  parallel_for(
+        "print_elem", xDim * yDim, KOKKOS_LAMBDA(const int i) {
+            printf(" %u-%i\n", morton.get_view_elements()(i), i);
+        }); */
+
     using Elem = mars::NonSimplex<Type, KokkosImplementation>;
 
     assert(Dim <= 3);
