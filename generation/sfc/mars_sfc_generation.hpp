@@ -13,38 +13,29 @@ class SFC
     struct GenerateSFC
     {
 
-        ViewVectorType<bool> elems;
+        ViewVectorType<bool> predicate;
         Integer xDim;
         Integer yDim;
         Integer zDim;
 
-        GenerateSFC(ViewVectorType<bool> el, Integer xdm, Integer ydm) : 
-		elems(el), xDim(xdm), yDim(ydm)
+        GenerateSFC(ViewVectorType<bool> el, Integer xdm, Integer ydm) : predicate(el), xDim(xdm), yDim(ydm)
         {
         }
-
-        GenerateSFC(ViewVectorType<bool> el, Integer xdm, Integer ydm, Integer zdm) : 
-		elems(el), xDim(xdm), yDim(ydm), zDim(zdm)
+        GenerateSFC(ViewVectorType<bool> el, Integer xdm, Integer ydm, Integer zdm) : predicate(el), xDim(xdm), yDim(ydm), zDim(zdm)
         {
         }
-
         KOKKOS_INLINE_FUNCTION
         void operator()(int j, int i) const
         {
- 			// set to true only those elements from the vector that are generated.
-			// in this way the array is already sorted and you just compact it using scan which is much faster in parallel.
-			elems(encode_morton_2D(i, j)) = 1;
+            // set to true only those elements from the vector that are generated.
+            // in this way the array is already sorted and you just compact it using scan which is much faster in parallel.
+            assert(encode_morton_2D(i, j) < encode_morton_2D(xDim, yDim));
+            predicate(encode_morton_2D(i, j)) = 1;
         }
 
-  /*       KOKKOS_INLINE_FUNCTION
+        /*       KOKKOS_INLINE_FUNCTION
         void operator()(int z, int y, int x) const
         {
-
-            int index = (xDim + 1) * (yDim + 1) * z + (xDim + 1) * y + x;
-
-            points(index, 0) = static_cast<Real>(x) / static_cast<Real>(xDim);
-            points(index, 1) = static_cast<Real>(y) / static_cast<Real>(yDim);
-            points(index, 2) = static_cast<Real>(z) / static_cast<Real>(zDim);
         } */
     };
 
@@ -61,20 +52,21 @@ class SFC
             assert(yDim != 0);
             assert(zDim == 0);
 
-            const int n__anchor_nodes = xDim * yDim;
+            const unsigned int n__anchor_nodes = xDim * yDim;
             reserve_elements(n__anchor_nodes);
 
             //calculate all range before compaction to avoid sorting.
             unsigned int allrange = encode_morton_2D(xDim, yDim); //TODO : check if enough. Test with xdim != ydim.
-            ViewVectorType<bool> all_elements_ = ViewVectorType<bool>("allelems", allrange);
+            ViewVectorType<bool> all_elements("predicate", allrange);
+            ViewVectorType<unsigned int> scan_indices("scan_indices", allrange);
 
             parallel_for(
                 MDRangePolicy<Rank<2>>({0, 0}, {yDim, xDim}),
-                GenerateSFC(all_elements_, xDim, yDim));
+                GenerateSFC(all_elements, xDim, yDim));
 
-			//compacting the 1 and 0 array and inserting the "true" index of the all elements 
-			//which is the correct morton code leaving the sfc elements array sorted.
-			compact_elements(all_elements_, allrange);
+            //compacting the 1 and 0 array and inserting the "true" index of the all elements
+            //which is the correct morton code leaving the sfc elements array sorted.
+            compact_elements(scan_indices, all_elements, allrange);
 
             return true;
         }
@@ -85,49 +77,52 @@ class SFC
         }
     }
 
-    inline void compact_elements(ViewVectorType<bool> &all_elements_, const int size)
+    inline void compact_elements(const ViewVectorType<unsigned int> scan_indices,
+                                 const ViewVectorType<bool> all_elements, const unsigned int size)
     {
-		using namespace Kokkos;
+        using namespace Kokkos;
 
-		Timer timer;
+        Timer timer;
 
-		exclusive_scan(0, size, all_elements_);
+        exclusive_bool_scan(0, size, scan_indices, all_elements);
 
-		parallel_for(size, KOKKOS_LAMBDA(uint32_t i)
-		{
-			if(all_elements_(i) == 1)
-			{
-				Integer k = all_elements_(i);
-				elements_(k) = i;
-			}
-		});
+        parallel_for(
+            size, KOKKOS_LAMBDA(const unsigned int i) {
+                if (all_elements(i) == 1)
+                {
+                    Integer k = scan_indices(i);
+                    elements_(k) = i;
+                }
+            });
     }
 
+public:
     template <Integer Type>
     bool generate_sfc_elements(const Integer xDim, const Integer yDim, const Integer zDim)
     {
-
-        assert(Dim <= 3);
-        assert(ManifoldDim <= Dim);
-
         bool gen_sfc = generate_sfc(xDim, yDim, zDim, Type);
-
         if (!gen_sfc)
+        {
             std::cerr << "Not implemented for other dimensions yet" << std::endl;
-
+        }
         return (gen_sfc);
     }
 
-    void reserve_elements(const std::size_t n_elements)
+    void reserve_elements(const unsigned int n_elements)
     {
         elements_size_ = n_elements;
-        elements_ = ViewVectorType<Integer>("elems", n_elements);
+        elements_ = ViewVectorType<unsigned int>("morton_code", n_elements);
+    }
+
+    const ViewVectorType<unsigned int> &get_view_elements() const //override
+    {
+        return elements_;
     }
 
 private:
-    ViewVectorType<Integer> elements_;
-    Integer elements_size_;
-}
+    ViewVectorType<unsigned int> elements_;
+    unsigned int elements_size_;
+};
 
 } // namespace mars
 #endif //MARS_MESH_HPP

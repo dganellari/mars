@@ -332,7 +332,7 @@ void exclusive_scan(const Integer start, const Integer end,
 {
 	using namespace Kokkos;
 
-	parallel_scan (RangePolicy<>(start , end ),	KOKKOS_LAMBDA (const int& i,
+	parallel_scan (RangePolicy<>(start , end ),	KOKKOS_LAMBDA (const Integer& i,
 				T& upd, const bool& final)
 	{
 		// Load old value in case we update it before accumulating
@@ -341,6 +341,29 @@ void exclusive_scan(const Integer start, const Integer end,
 		if (final)
 		{
 			in_(i) = upd; // only update array on final pass
+		}
+
+		upd += val_i;
+
+	});
+}
+
+
+template<typename T>
+void exclusive_bool_scan(const unsigned int start, const unsigned int end,
+			ViewVectorType<T> out_, ViewVectorType<bool> in_)
+{
+	using namespace Kokkos;
+
+	parallel_scan (RangePolicy<>(start , end ),	KOKKOS_LAMBDA (const unsigned int& i,
+				T& upd, const bool& final)
+	{
+		// Load old value in case we update it before accumulating
+		const T val_i = in_(i);
+
+		if (final)
+		{
+			out_(i) = upd; // only update array on final pass
 		}
 
 		upd += val_i;
