@@ -1,7 +1,7 @@
 #ifndef MARS_PAR_BISECTION_HPP
 #define MARS_PAR_BISECTION_HPP
 
-#include "mars_edge_select.hpp"
+#include "mars_longest_edge.hpp"
 #include "mars_oldest_edge.hpp"
 #include "mars_communicator.hpp"
 #include "mars_par_edge_split_pool.hpp"
@@ -10,7 +10,7 @@
 
 namespace mars {
 
-	template<class Mesh>
+	template<class Mesh, class EdgeSelect>
 	class Bisection;
 
 	template<class ParMesh>
