@@ -1,10 +1,9 @@
 #ifndef GENERATION_MARS_MESH_DISTRIBUTED_GENERATION_HPP_
 #define GENERATION_MARS_MESH_DISTRIBUTED_GENERATION_HPP_
 
-#include "mars_parallel_descriptor.hpp"
+#ifdef WITH_MPI
 #ifdef WITH_KOKKOS
 #include "mars_sfc_generation.hpp"
-
 namespace mars
 {
 
@@ -18,7 +17,7 @@ bool generate_distributed_cube(
     SFC morton;
     morton.generate_sfc_elements<Type>(xDim, yDim, zDim);
 
-   /*  parallel_for(
+    /*  parallel_for(
         "print_elem", xDim * yDim, KOKKOS_LAMBDA(const int i) {
             printf(" %u-%i\n", morton.get_view_elements()(i), i);
         }); */
@@ -39,6 +38,7 @@ bool generate_distributed_cube(
 }
 } // namespace mars
 
+#endif
 #endif
 
 #endif // GENERATION_MARS_MESH_DISTRIBUTED_GENERATION_HPP_

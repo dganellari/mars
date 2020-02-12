@@ -4,6 +4,7 @@
 #include <vector>
 #include "mars_config.hpp"
 #include "mars_base.hpp"
+#include <numeric>
 
 #ifdef WITH_KOKKOS
 	#define MARS_INLINE_FUNCTION KOKKOS_INLINE_FUNCTION 
@@ -122,12 +123,25 @@ namespace mars {
 		return a;
 	}
 
-	template<typename T>
-	MARS_INLINE_FUNCTION
-	constexpr Integer power(T base, T exp) noexcept
-	{
-		return (exp == 0 ? 1 : base * power(base, exp - 1));
-	}
+    template <typename T>
+    MARS_INLINE_FUNCTION constexpr Integer power(T base, T exp) noexcept
+    {
+        return (exp == 0 ? 1 : base * power(base, exp - 1));
+    }
+
+    // returns the prefix sum of C
+    template <typename C>
+    C make_scan_index(C const &c)
+    {
+        static_assert(
+            std::is_integral<typename C::value_type>::value,
+            "make_index only applies to integral types");
+
+        C out(c.size() + 1);
+        out[0] = 0;
+        std::partial_sum(c.begin(), c.end(), out.begin() + 1);
+        return out;
+    }
 
 #ifdef WITH_KOKKOS
 

@@ -54,11 +54,11 @@ endfunction()
 
 find_package(MPIExtended)
 
-# if(MPI_FOUND)
+if(MPI_FOUND)
 # 	set(CMAKE_CXX_COMPILER ${MPI_CXX_COMPILER})
 # 	set(CMAKE_CXX_COMPILER_DEBUG ${MPI_CXX_COMPILER})
-# 	set(WITH_MPI ON)
-# endif()
+set(WITH_MPI ON)
+endif()
 
 option(MARS_USE_CUDA "Build mars with cuda support" OFF)
 
@@ -184,8 +184,22 @@ IF(Kokkos_FOUND)
 		generation/mars_edge_element_map_kokkos.hpp
 		generation/mars_mark_kokkos.hpp
 		generation/sfc/mars_sfc_code.hpp
-		generation/sfc/mars_sfc_generation
+		generation/sfc/mars_sfc_generation.hpp
+	)
+ENDIF()
+
+IF(WITH_MPI)
+	list(APPEND MARS_HEADERS
 		generation/sfc/mars_mesh_distributed_generation.hpp
+		generation/sfc/mars_test_mpi.hpp
+		generation/communication/util/mars_pp_util.hpp
+		generation/communication/mars_context.hpp
+		generation/communication/mars_gathered_vector.hpp
+		generation/communication/mars_mpi_error.hpp
+		generation/communication/mars_mpi.hpp
+		generation/communication/mars_distributed_context.hpp
+		generation/communication/mars_execution_context.hpp
+		generation/mars_env/mars_mpi_guard.hpp
 	)
 ENDIF()
 
@@ -194,6 +208,17 @@ list(APPEND MARS_SOURCES
 	mars_simplex.cpp
 	mars_test.cpp
 	)
+
+IF(WITH_MPI)
+	list(APPEND MARS_SOURCES
+		generation/communication/mars_mpi.cpp
+		generation/communication/mars_mpi_error.cpp
+		generation/communication/mars_mpi_context.cpp
+		generation/communication/mars_execution_context.cpp
+		generation/communication/mars_dry_run_context.cpp
+	)
+ENDIF()
+
 
 set(CMAKE_CXX_DEBUG "-g")
 
@@ -210,10 +235,17 @@ target_compile_options(mars PUBLIC
 target_link_libraries(mars ${MPI_LIBRARIES})
 #target_compile_features(mars PUBLIC cxx_std_11)
 
+IF(WITH_MPI)
+	target_compile_definitions(mars PUBLIC MARS_HAVE_MPI)
+ENDIF()
+
 add_definitions("-std=c++11")
 target_include_directories(mars PUBLIC .)
 target_include_directories(mars PUBLIC generation)
 target_include_directories(mars PUBLIC generation/sfc)
+target_include_directories(mars PUBLIC generation/communication)
+target_include_directories(mars PUBLIC generation/communication/util)
+target_include_directories(mars PUBLIC generation/mars_env)
 
 IF(Kokkos_FOUND)
 	MESSAGE(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")

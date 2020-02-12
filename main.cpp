@@ -32,6 +32,7 @@
 #ifdef WITH_KOKKOS
 #include "mars_test_kokkos.hpp"
 #include "mars_lepp_benchmark_kokkos.hpp"
+#include "mars_mesh_distributed_generation.hpp"
 #endif //WITH_KOKKOS
 
 #ifdef WITH_PAR_MOONOLITH
@@ -43,6 +44,7 @@
 #ifdef WITH_MPI
 #include "mars_par_bisection.hpp"
 #include "mars_par_mesh.hpp"
+#include "mars_test_mpi.hpp"
 #endif //WITH_MPI
 #include <chrono>
 
@@ -1025,8 +1027,11 @@ void run_benchmarks(int level, int refine_level)
 	//test_mars_mesh_generation_kokkos_3D(level,refine_level, level);
 	//test_mars_nonsimplex_mesh_generation_kokkos_2D(level, refine_level);
 
-	test_mars_nonsimplex_mesh_generation_kokkos_3D(level, refine_level, refine_level);
-
+	//test_mars_nonsimplex_mesh_generation_kokkos_3D(level, refine_level, refine_level);
+	
+	ParallelQuad4Mesh nsm;
+	generate_distributed_cube(nsm, level, refine_level, 0);
+	
 	/*ParallelMesh3 pMesh3;
 	generate_cube(pMesh3, level, level, level);
 
@@ -1256,13 +1261,11 @@ int main(int argc, char *argv[])
 {
 	using namespace mars;
 
-#ifdef WITH_MPI
-	MPI_Init(&argc, &argv);
-#else
+test_mpi_context(argc, argv);
+
 #ifdef WITH_PAR_MOONOLITH
 	MPI_Init(&argc, &argv);
 #endif
-#endif 
 
 	// test_bisection_2D();
 	 //test_bisection_3D(atoi(argv[1]));
@@ -1368,14 +1371,10 @@ int main(int argc, char *argv[])
 	}
 
 
-#ifdef WITH_MPI
-	// par_mesh_test();
-	return MPI_Finalize();
-#else
+
 	#ifdef WITH_PAR_MOONOLITH
 		return MPI_Finalize();
 	#else 
 		return 0;
 	#endif
-#endif //WITH_MPI
 }

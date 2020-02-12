@@ -9,6 +9,7 @@ namespace mars
 
 class SFC
 {
+public:
     //add point functor
     struct GenerateSFC
     {
@@ -86,17 +87,20 @@ class SFC
 
         exclusive_bool_scan(0, size, scan_indices, all_elements);
 
+        //otherwise kokkos lambda will not work with CUDA
+        ViewVectorType<unsigned int> tmp = elements_; 
+
         parallel_for(
             size, KOKKOS_LAMBDA(const unsigned int i) {
                 if (all_elements(i) == 1)
                 {
-                    Integer k = scan_indices(i);
-                    elements_(k) = i;
+                    unsigned int k = scan_indices(i);
+                    tmp(k) = i;
+                    //elements_(k) =i; It will not work with CUDA. this.elements_ is a host pointer.
                 }
             });
     }
 
-public:
     template <Integer Type>
     bool generate_sfc_elements(const Integer xDim, const Integer yDim, const Integer zDim)
     {

@@ -3,13 +3,14 @@
 
 #include "mars_communicator.hpp"
 #include "mars_edge.hpp"
+#include "mars_longest_edge.hpp"
 
 #include <sstream>
 #include <string>
 #include <iomanip>
 
 namespace mars {
-	template<class Mesh>
+	template<class Mesh, class EdgeSelect>
 	class Bisection;
 
 	template<Integer Dim, Integer ManifoldDim>
