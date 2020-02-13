@@ -1,7 +1,6 @@
 #ifndef MARS_SFC_GENERATION_HPP
 #define MARS_SFC_GENERATION_HPP
 
-#include "mars_mesh_kokkos.hpp"
 #include "mars_sfc_code.hpp"
 
 namespace mars
@@ -121,6 +120,11 @@ public:
     const ViewVectorType<unsigned int> &get_view_elements() const //override
     {
         return elements_;
+    }
+
+    unsigned int get_elem_size()
+    {
+        return elements_size_;
     }
 
 private:
