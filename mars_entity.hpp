@@ -44,6 +44,10 @@ class Mesh;
      public:
       static const Integer value =0;  
     };
+
+
+
+
     
 template<typename Elem, Integer EntityDim>
 class ElemEntityCombinations;
@@ -53,7 +57,10 @@ class ElemEntityCombinations<Simplex<Dim,ManifoldDim>,EntityDim>
 {
 
 public: 
-static constexpr Integer value=Combinations<ManifoldDim+1,EntityDim+1>::value;
+    using Elem=Simplex<Dim,ManifoldDim>;
+    static constexpr Integer value=Combinations<ManifoldDim+1,EntityDim+1>::value;
+    static constexpr void generate(const Integer k, Integer comb[EntityDim+1])
+    {Combinations<ManifoldDim + 1, EntityDim+1>::generate(k,comb);}
 
 };
 

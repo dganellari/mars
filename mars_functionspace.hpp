@@ -324,7 +324,7 @@ public:
 
    void update()
    {
-    // std::cout<<"level_n_dofs_array_update update" <<std::endl;
+    std::cout<<"level_n_dofs_array_update update" <<std::endl;
     level_n_dofs_array_update();
     level_cumulative_dofs_array_=cumulative_array(level_n_dofs_array_,NsubspacesArray);
     // std::cout<<"level_cumulative_dofs_array_ done update" <<std::endl;
@@ -484,19 +484,22 @@ public:
 
    void update()
    {
-    // std::cout<<"DofsDofMapFullAndAux update" <<std::endl;
+    std::cout<<"BEGIN DofsDofMapFullAndAux update" <<std::endl;
     dm1_.update();
-    // std::cout<<"dm1 done update" <<std::endl;
+    std::cout<<"dm1 done update" <<std::endl;
     dm2_.update();
-    // std::cout<<"dm2 done update" <<std::endl;
+    std::cout<<"dm2 done update" <<std::endl;
 
     level_n_dofs_array_=concat(dm1_.level_n_dofs_array(),dm2_.level_n_dofs_array());
 
+    std::cout<<"level_n_dofs_array_done " <<std::endl;
+
 
     // cumulative_dofs_array_=cumulative_array_and_zero(dm1_.cumulative_n_dofs(),dm2_.n_dofs());
-    level_cumulative_dofs_array_=cumulative_array_and_zero(dm1_.level_cumulative_dofs_array(),dm2_.level_n_dofs_array()),
-
+    level_cumulative_dofs_array_=cumulative_array_and_zero(dm1_.level_cumulative_dofs_array(),dm2_.level_n_dofs_array());
+    std::cout<<"level_cumulative_dofs_array_ update" <<std::endl;
     level_cumultive_n_dofs_=dm1_.level_cumulative_dofs_array()[dm1_.level_cumulative_dofs_array().size()-1];
+    std::cout<<"END DofsDofMapFullAndAux update" <<std::endl;
 
 
 
@@ -1385,9 +1388,8 @@ public:
 
       void update()
       {
-
-       update_aux();
-       std::cout<<"dofmap_vec udpate aux "<<std::endl;
+       std::cout<<"BEGIN FULL SPACE UPDATE  "<<std::endl;
+       update_aux(); 
        auto& dofmap_vec=dofsdm_.dofmap();
        // std::cout<<"____________dofmap_vec udpate aux "<<std::endl;
       //   auto dm=(*tuple_get<0>(dofmap_vec));
@@ -1396,8 +1398,10 @@ public:
       //     std::cout<< dm[i][j]<<" ";
       //      std::cout<<std::endl;}
       // std::cout<<"________________ "<<std::endl;
+       std::cout<<"FULL SPACE UPDATE dofsdm_ "<<std::endl;
        dofsdm_.update();
        // std::cout<<"end dofmap_vec udpate aux "<<std::endl;
+       std::cout<<"END FULL SPACE UPDATE  "<<std::endl;
       }
 
 

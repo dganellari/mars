@@ -61,8 +61,9 @@ public:
   void compute()
   {
 
-
+     std::cout<<"--NodeNormalValues compute" <<std::endl;
      spaces_ptr->update();
+     std::cout<<"--NodeNormalValues compute" <<std::endl;
 
      auto& mesh= spaces_ptr->mesh();
      auto& bisection=spaces_ptr->bisection();
@@ -72,6 +73,8 @@ public:
      Integer n_elements=mesh.n_elements();
      auto& signed_normals=mesh.signed_normal()();
 
+     std::cout<<"--qui1" <<std::endl;
+
      node_normals_.resize(n_nodes );
      Integer size;
 
@@ -79,9 +82,13 @@ public:
      BoundaryElem side_elem;
     
     // loop on the elements
+     std::cout<<"--qui2" <<std::endl;
 
     for(auto it=n2e().begin();it!=n2e().end();it++)
     {
+
+       std::cout<<"--it->first=" <<it->first<<std::endl;
+
       const auto& node_id=it->first;
       // std::cout<< "NODE ID = ="<<node_id<< std::endl;
       auto& vecs=*(it->second);
@@ -89,6 +96,7 @@ public:
       for(auto el_iter=vecs.begin();el_iter!=vecs.end();el_iter++)
       {
         const auto& el=*el_iter;
+        std::cout<<"--el=" <<el<<std::endl;
         // std::cout<<"QUI"<<std::endl;
         // std::cout<<elem_belongs_to_level(mesh,el,0,tracker)<<std::endl;
         // std::cout<<elem_belongs_to_level(mesh,el,1,tracker)<<std::endl;
@@ -99,15 +107,23 @@ public:
         {
         auto& elem=mesh.elem(el);
         auto& nodes=elem.nodes;
-        // std::cout<<el<<"/"<<n_elements<< std::endl;
+        std::cout<<el<<"/"<<n_elements<< std::endl;
         auto level=tracker.get_level(el);
+        
+        if( level < 0 ) continue;
+
+        std::cout<<"--"<< std::endl;
         auto & node_normal_tmp=node_normals_[node_id];
+        std::cout<<"---"<< std::endl;
         size=node_normal_tmp.size();
 
         if(size<=level)
         {
           for(Integer i=size;i<=level;i++)
-            node_normal_tmp.push_back(Normal::eye_vector(0.0));
+            {
+              std::cout<<"-- "<<i<< std::endl;
+              node_normal_tmp.push_back(Normal::eye_vector(0.0));
+            }
         }
         // std::cout<<" size "<<std::endl;
         // std::cout<<size<<std::endl;       
@@ -118,7 +134,9 @@ public:
 
         // std::cout<<"elem id"<<std::endl;
         // std::cout<<el<<std::endl;
+        std::cout<<"---- node_id ="<<node_id<<", level+1="<<level+1<< std::endl;
         node_normals_[node_id].reserve(level+1);
+        std::cout<<"-------"<< std::endl;
         for(std::size_t s=0;s<FE.n_side();s++)
           {
             FE.init_boundary(s);
@@ -126,7 +144,7 @@ public:
             {
               elem.side(s,side_elem);
               auto& side_nodes=side_elem.nodes;
-              // std::cout<<"side_nodes"<<std::endl;
+              std::cout<<"side_nodes"<<std::endl;
               // for(Integer m=0;m<side_nodes.size();m++)
               // std::cout<<side_nodes[m]<<" ";
               // std::cout<<std::endl;
@@ -134,7 +152,7 @@ public:
               for(auto node_iter=side_nodes.begin();node_iter!=side_nodes.end();node_iter++)
               {
                 auto& node_it_tmp=*node_iter;
-                // std::cout<<node_it_tmp<<" ";
+                std::cout<<node_it_tmp<<" ";
                 // if the face contains the node, consider its normal
                 if(node_it_tmp==node_id)
                 {
@@ -149,13 +167,14 @@ public:
 
                 }
               }
-              // std::cout<<std::endl;
+              std::cout<<std::endl;
             }
           }
         }
       }
      // std::cout<<*it<<std::endl;
     }
+     std::cout<<"--qui5" <<std::endl;
 
     for(Integer node_id=0;node_id<n_nodes;node_id++)
     {
@@ -168,6 +187,7 @@ public:
         }
 
     }
+     std::cout<<"--NodeNormalValues compute end" <<std::endl;
 
   }
 

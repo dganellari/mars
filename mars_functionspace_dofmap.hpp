@@ -4271,8 +4271,8 @@ void dofmap_fespace5(
 //     {
 //     std::cout<< global_dof_count[i]<<" ";
 //      std::cout<<std::endl;}
-
-    std::cout<<"AFTER LEVEL N DOFS ARRAY ="<<std::endl;
+// 
+    // std::cout<<"AFTER LEVEL N DOFS ARRAY ="<<std::endl;
     // loop on the spaces
     for(std::size_t i=0; i<dofsdm_.n_dofs().size() ;i++)
       { dofsdm_.level_n_dofs_array()[i].resize(n_levels);
@@ -4280,17 +4280,17 @@ void dofmap_fespace5(
         for(std::size_t j=0;j<n_levels;j++)
            {
             dofsdm_.level_n_dofs_array()[i][j]=global_dof_count[j];
-            std::cout<<dofsdm_.level_n_dofs_array()[i][j]<<" ";
+            // std::cout<<dofsdm_.level_n_dofs_array()[i][j]<<" ";
           }
-         std::cout<<std::endl;
+         // std::cout<<std::endl;
        }
 
-    std::cout<<"AFTER LEVEL N DOFS ="<<std::endl;
+    // std::cout<<"AFTER LEVEL N DOFS ="<<std::endl;
 
         for(Integer i=0;i<dofsdm_.n_dofs().size();i++)
         {
           dofsdm_.n_dofs()[i]=dofsdm_.level_n_dofs_array()[i][n_levels-1];
-          std::cout<<dofsdm_.n_dofs()[i]<<std::endl;
+          // std::cout<<dofsdm_.n_dofs()[i]<<std::endl;
         }
 
 
