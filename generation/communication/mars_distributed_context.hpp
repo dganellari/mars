@@ -27,15 +27,16 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
-
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <string>
 
 #include <mars_pp_util.hpp>
 
 #include "mars_gathered_vector.hpp"
+#include "mars_utils_kokkos.hpp"
 
 namespace mars
 {
@@ -73,6 +74,8 @@ class distributed_context
 {
 public:
     using gid_vector = std::vector<unsigned int>;
+    
+    using local_sfc = ViewVectorType<unsigned int>;
 
     // default constructor uses a local context: see below.
     distributed_context();
@@ -88,6 +91,11 @@ public:
     gathered_vector<unsigned int> gather_gids(const gid_vector &local_gids) const
     {
         return impl_->gather_gids(local_gids);
+    }
+
+    local_sfc scatter_gids(const local_sfc global, const local_sfc local) const
+    {
+        return impl_->scatter_gids(global, local);
     }
 
     int id() const
@@ -122,6 +130,8 @@ private:
     {
         virtual gathered_vector<unsigned int>
         gather_gids(const gid_vector &local_gids) const = 0;
+        virtual local_sfc
+        scatter_gids(const local_sfc global, const local_sfc local) const = 0;
         virtual int id() const = 0;
         virtual int size() const = 0;
         virtual void barrier() const = 0;
@@ -143,6 +153,12 @@ private:
         gather_gids(const gid_vector &local_gids) const override
         {
             return wrapped.gather_gids(local_gids);
+        }
+
+        virtual local_sfc
+        scatter_gids(const local_sfc global, const local_sfc local) const override
+        {
+            return wrapped.scatter_gids(global, local);
         }
         int id() const override
         {
@@ -176,6 +192,8 @@ private:
 
 struct local_context
 {
+    using local_sfc = ViewVectorType<unsigned int>;
+
     gathered_vector<unsigned int>
     gather_gids(const std::vector<unsigned int> &local_gids) const
     {
@@ -185,6 +203,11 @@ struct local_context
             {0u, static_cast<count_type>(local_gids.size())});
     }
 
+    local_sfc 
+    scatter_gids(const local_sfc global, const local_sfc local) const
+    {
+        return ViewVectorType<unsigned int>("local_context_view",0);
+    }
     int id() const { return 0; }
 
     int size() const { return 1; }

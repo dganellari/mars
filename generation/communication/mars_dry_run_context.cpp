@@ -43,30 +43,41 @@ struct dry_run_context_impl {
         num_ranks_(num_ranks), num_cells_per_tile_(num_cells_per_tile) {};
 
     gathered_vector<unsigned int>
-    gather_gids(const std::vector<unsigned int>& local_gids) const {
+    gather_gids(const std::vector<unsigned int> &local_gids) const
+    {
         using count_type = typename gathered_vector<unsigned int>::count_type;
 
         count_type local_size = local_gids.size();
 
         std::vector<unsigned int> gathered_gids;
-        gathered_gids.reserve(local_size*num_ranks_);
+        gathered_gids.reserve(local_size * num_ranks_);
 
-        for (count_type i = 0; i < num_ranks_; i++) {
+        for (count_type i = 0; i < num_ranks_; i++)
+        {
             gathered_gids.insert(gathered_gids.end(), local_gids.begin(), local_gids.end());
         }
 
-        for (count_type i = 0; i < num_ranks_; i++) {
-            for (count_type j = i*local_size; j < (i+1)*local_size; j++){
-                gathered_gids[j] += num_cells_per_tile_*i;
+        for (count_type i = 0; i < num_ranks_; i++)
+        {
+            for (count_type j = i * local_size; j < (i + 1) * local_size; j++)
+            {
+                gathered_gids[j] += num_cells_per_tile_ * i;
             }
         }
 
         std::vector<count_type> partition;
-        for (count_type i = 0; i <= num_ranks_; i++) {
-            partition.push_back(static_cast<count_type>(i*local_size));
+        for (count_type i = 0; i <= num_ranks_; i++)
+        {
+            partition.push_back(static_cast<count_type>(i * local_size));
         }
 
         return gathered_vector<unsigned int>(std::move(gathered_gids), std::move(partition));
+    }
+
+    ViewVectorType<unsigned int>
+    scatter_gids(const ViewVectorType<unsigned int> global, const ViewVectorType<unsigned int> local) const
+    {
+        return ViewVectorType<unsigned int>("dry_run", 0);
     }
 
     int id() const { return 0; }

@@ -27,7 +27,6 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
-
 // Attempting to acquire an MPI context without MPI enabled will produce
 // a link error.
 
@@ -63,6 +62,12 @@ struct mpi_context_impl
     gather_gids(const std::vector<unsigned int> &local_gids) const
     {
         return mpi::gather_all_with_partition(local_gids, comm_);
+    }
+
+    ViewVectorType<unsigned int> scatter_gids(const ViewVectorType<unsigned int> global, 
+                    const ViewVectorType<unsigned int> local) const
+    {
+        return mpi::scatter(global, local, comm_);
     }
 
     std::string name() const { return "MPI"; }

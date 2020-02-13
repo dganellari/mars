@@ -115,6 +115,22 @@ std::vector<T> gather(T value, int root, MPI_Comm comm)
     return buffer;
 }
 
+// Scatter sfc values of type T from root into each rank
+template <typename T>
+ViewVectorType<T> scatter(const ViewVectorType<T> global, 
+                const ViewVectorType<T> local, MPI_Comm comm)
+{
+    using traits = mpi_traits<T>;
+    unsigned int chunk_size = local.extent(0);
+
+      MPI_OR_THROW(MPI_Scatter,
+                 global.data(), chunk_size, traits::mpi_type(),        // send buffer
+                 local.data(), chunk_size, traits::mpi_type(), // receive buffer
+                 0, comm);
+
+    return local;
+}
+
 // Gather individual values of type T from each rank into a std::vector on
 // the every rank.
 // T must be trivially copyable
