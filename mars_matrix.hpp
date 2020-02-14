@@ -663,9 +663,9 @@ namespace mars {
 		}
 
         template<typename T>
-		inline constexpr Matrix<T, 1,1> inverse(const Matrix<T,1,1>& mat)
+		inline constexpr Matrix<Real, 1,1> inverse(const Matrix<T,1,1>& mat)
 		{
-			Matrix<T, 1,1> inv{1/mat(1,1)};
+			Matrix<Real, 1,1> inv{1./mat(0,0)};
 			return inv;
 		}
 
@@ -693,6 +693,17 @@ namespace mars {
 		     				   inv/=det(mat);
 		     				   return inv;
 		     				}
+
+
+        template<typename T, Integer Rows, Integer Cols>
+		inline constexpr Matrix<T, Cols,Rows> inverse(const Matrix<T,Rows,Cols>& A)
+		{
+			Matrix<T, Cols,Rows> A_t;
+			A_t=transpose(A);
+			return inverse(A_t*A)*A_t;
+		}
+
+
 
 
       template<typename T, Integer Rows1,Integer Cols1,Integer Rows2,Integer Cols2>

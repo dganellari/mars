@@ -1299,7 +1299,7 @@ std::cout<<"after LSFEM_Poisson2D"<<std::endl;
 
 
 
-// LSFEM_LinearElasticity<2,0,1>(1,1,8);
+// LSFEM_LinearElasticity<2,0,1>(1,1,3,3);
 // LSFEM_LinearElasticity<3,0,1>(1,1,5);
 
 LSFEM_ContactLinearElasticity<2,0,1>(1,0,1);

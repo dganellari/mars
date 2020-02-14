@@ -1354,6 +1354,33 @@ namespace mars {
 
 
 
+
+    template<Integer Dim>
+    bool is_point_in_reference_simplex( Vector<Real,Dim>& point )
+    {
+        Real toll =1e-8;
+        Real tmp=0;
+        for(Integer i=0;i<Dim;i++)
+        {
+            if(point[i]<-toll)
+                return false;
+            tmp-=point[i];
+        }
+
+        if(tmp+1<-toll)
+            return false;
+        else
+            return true;
+
+    }
+
+
+
+
+
+
+
+
  template<Integer N>
  constexpr inline static std::enable_if_t<(N==0),Real> 
  reference_simplex_volume()

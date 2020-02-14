@@ -3709,10 +3709,10 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 
 
 	// a simplex is containd into another simplex if all its nodes are inside it
-	template<Integer Dim,Integer ManifoldDim1,Integer ManifoldDim2,Integer ManifoldDim3>
+	template<Integer Dim,Integer ManifoldDim1,Integer ManifoldDim2>
 	bool is_simplex_inside_simplex(const Simplex<Dim,ManifoldDim1>& simplex1,
 								   const Simplex<Dim,ManifoldDim2>& simplex2,
-								   const Mesh<Dim,ManifoldDim3>& mesh)
+								   const std::vector<Vector<Real,Dim>>& points)
 	{
 	    bool is_inside=true;
 	    const auto nodes1=simplex1.nodes;
@@ -3720,65 +3720,141 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 		Simplex<Dim,ManifoldDim1> simplex_tmp;
 		Integer nodes_tmp[ManifoldDim1];
 
+		Matrix<Real, Dim, ManifoldDim1> J;
+		Matrix<Real, ManifoldDim1, Dim> J_inv;
+		Vector<Real, ManifoldDim1> reference_point;
+		Vector<Real, Dim> mapped_point;
+		Vector<Real, Dim> point_a;
+		
+		// auto& points=mesh.points();
+
+		jacobian( simplex1, points, J );
+
+		J_inv=inverse(J);
 
 
-        std::cout<<"SIMPLEX 1 NODES == "<<std::endl;
-		for(Integer i=0;i<simplex1.nodes.size();i++)
-		{
-			std::cout<<simplex1.nodes[i]<<std::endl;
+		for(Integer i=0;i<Dim;i++)
+			point_a[i]=points[simplex1.nodes[0]][i] ;
 
-		}
 
-        std::cout<<"SIMPLEX 2 NODES == "<<std::endl;
-		for(Integer i=0;i<simplex2.nodes.size();i++)
-		{
-			std::cout<<simplex2.nodes[i]<<std::endl;
-		}
+  //       std::cout<<"SIMPLEX 1 NODES == "<<std::endl;
+		// for(Integer i=0;i<simplex1.nodes.size();i++)
+		// {
+		// 	std::cout<<simplex1.nodes[i]<<std::endl;
+		// 	for(Integer j=0;j<Dim;j++)
+		// 		std::cout<<points[simplex1.nodes[i]][j]<<" ";
+		// 	std::cout<<std::endl;
+
+
+		// }
+
+  //       std::cout<<"SIMPLEX 2 NODES == "<<std::endl;
+		// for(Integer i=0;i<simplex2.nodes.size();i++)
+		// {
+		// 	std::cout<<simplex2.nodes[i]<<std::endl;
+		// 	for(Integer j=0;j<Dim;j++)
+		// 		std::cout<<points[simplex2.nodes[i]][j]<<" ";
+		// 	std::cout<<std::endl;
+		// }
+
+		// std::cout<< " J  "<<std::endl;
+		// std::cout<< J <<std::endl;
+
+		// std::cout<< " J_inv  "<<std::endl;
+		// std::cout<< J_inv <<std::endl;
+
+		// std::cout<< " point_a  "<<std::endl;
+		// std::cout<< point_a <<std::endl;
+
 
 	    // loop on the nodes of simplex2
+	    // transform them back in the reference simplex2
+	    // (use inv(J), where J is the map of simplex2)
+	    // check if all the reference points belong to the reference simplex1
+
 		for(std::size_t i=0;i<nodes2.size();i++)
 		{
 
 	      const auto& node=nodes2[i];
+	      const auto& point_node=points[node];
 
-	      std::cout<<"node == "<< node<<std::endl;
+	      // std::cout<<"node == "<< node<<std::endl;
 
-	      // for a given node, check if it inside
-	      // loop on all the face of simplex1 and create a temporary simplex
-	      for(std::size_t j=0;j<ManifoldDim1+1;j++)
-	      {
-	       std::cout<<"nodes j == "<< j<<std::endl;
-	       Combinations<ManifoldDim1 + 1,ManifoldDim1>::generate(j,nodes_tmp);
-	       // std::cout<<"ManifoldDim1-j == "<< node<<std::endl;
-	       simplex_tmp.nodes[ManifoldDim1-j]= node;
-		   for(std::size_t k=0;k<ManifoldDim1;k++)
-		      {
-		      	simplex_tmp.nodes[nodes_tmp[k]]= nodes1[nodes_tmp[k]];
-		      }
 
-	       std::cout <<std::endl;
-	       std::cout<<"simplex_tmp =  " <<std::endl;
-		   for(std::size_t k=0;k<ManifoldDim1+1;k++)
-		      {
-		      	std::cout<<simplex_tmp.nodes[k]<< " ";
-		      } 
-		    std::cout <<std::endl;
-		   const auto vol=volume(simplex_tmp,mesh.points());
-		   std::cout<<"vol =  "<< vol <<std::endl;
-		   if(vol<=-0.00000000000001)
-		      {is_inside=false;
-		       break;}
+	      reference_point=J_inv*(point_node-point_a);
+	      mapped_point=J*reference_point+point_a;
+	      // std::cout<<"point_node"<<std::endl;
+	      // std::cout<<point_node<<std::endl;
+	      // std::cout<<"reference_point"<<std::endl;
+	      // std::cout<<reference_point<<std::endl;	      
+	      // std::cout<<"is_point_in_reference_simplex"<<std::endl;
+	      // std::cout<<is_point_in_reference_simplex(reference_point)<<std::endl;
+
+	      
+	      // std::cout<<"mapped_point"<<std::endl;
+	      // std::cout<<mapped_point<<std::endl;
+
+	      if(!are_vectors_equal(point_node,mapped_point) ||!(is_point_in_reference_simplex(reference_point)))
+	      	{
+	      		// std::cout<<point_node<<std::endl;
+	      		// std::cout<<is_point_in_reference_simplex(reference_point)<<std::endl;
+	      		// std::cout<<mapped_point<<std::endl;
+	      		// std::cout<<"false"<<std::endl;
+	      		return false;
+	      	}	      	
+	      // std::cout<< "points[node] "<<std::endl;
+	      // std::cout<< points[node] <<std::endl;
+	      // std::cout<< "reference_point "<<std::endl;
+	      // std::cout<< reference_point <<std::endl;
+	      // std::cout<< "J*reference_point "<<std::endl;
+	      // std::cout<< J*reference_point <<std::endl;
+
+	      // if(!is_point_in_reference_simplex(reference_point))
+	      // 	{
+	      // 		std::cout<<"false"<<std::endl;
+	      // 		return false;
+	      // 	}
+
+	    //   // for a given node, check if it inside
+	    //   // loop on all the face of simplex1 and create a temporary simplex
+	    //   for(std::size_t j=0;j<ManifoldDim1+1;j++)
+	    //   {
+	    //    std::cout<<"nodes j == "<< j<<std::endl;
+	    //    Combinations<ManifoldDim1 + 1,ManifoldDim1>::generate(j,nodes_tmp);
+	    //    // std::cout<<"ManifoldDim1-j == "<< node<<std::endl;
+	    //    simplex_tmp.nodes[ManifoldDim1-j]= node;
+		   // for(std::size_t k=0;k<ManifoldDim1;k++)
+		   //    {
+		   //    	simplex_tmp.nodes[nodes_tmp[k]]= nodes1[nodes_tmp[k]];
+		   //    }
+
+	    //    std::cout <<std::endl;
+	    //    std::cout<<"simplex_tmp =  " <<std::endl;
+		   // for(std::size_t k=0;k<ManifoldDim1+1;k++)
+		   //    {
+		   //    	std::cout<<simplex_tmp.nodes[k]<< " ";
+		   //    } 
+		   //  std::cout <<std::endl;
+		   // const auto vol=volume(simplex_tmp,mesh.points());
+		   // std::cout<<"vol =  "<< vol <<std::endl;
+		   // if(vol<=-0.00000000000001)
+		   //    {is_inside=false;
+		   //     break;}
 		      	
 		      // }  
 		      // if(is_inside==false)
 		      //    break;           
 
 	      }
-		   if(is_inside==false)
-		      break;  
-		}
+		   // if(is_inside==false)
+		   //    break;  
+		
 
-		return is_inside;
+		// return is_inside;
+
+	    std::cout<<"true"<<std::endl;
+
+		return true;
 	}
 
 
@@ -7688,6 +7764,7 @@ template<typename FunctionSpace_>
  {
 	public:
 		using FunctionSpace=FunctionSpace_;
+		using TupleOfSpaces=typename FunctionSpace::FunctionSpace::TupleOfSpaces;
 		using Elem=typename FunctionSpace::Elem;
 		using BoundaryElem=FromVolumetricToBoundaryElem<Elem>;
 		using DofsDM=typename FunctionSpace::DofsDM;
@@ -7696,6 +7773,9 @@ template<typename FunctionSpace_>
 		static constexpr Integer FaceDim=ManifoldDim-1;
 		static constexpr Integer FaceNPoints=ElemEntityNPoints<Elem,FaceDim>::value; 
 		static constexpr Integer FaceNums=ElemEntityCombinations<Elem,FaceDim>::value;
+		static constexpr Integer EdgeDim=1;
+		static constexpr Integer EdgeNPoints=ElemEntityNPoints<Elem,EdgeDim>::value;
+		static constexpr Integer EdgeNums=ElemEntityCombinations<Elem,EdgeDim>::value;
 
 
 
@@ -7703,230 +7783,452 @@ template<typename FunctionSpace_>
 		spaces_ptr_(W_ptr)
 		{}
 
-    void inline find_faces(Array<Array<Integer,FaceNPoints>,FaceNums>& face_nodes, Array<Array<Vector<Real,ManifoldDim>,FaceNPoints>,FaceNums>& face_points,FiniteElem<Elem>& FE)
+
+
+    template<Integer N>
+    void inline find_edges(Array<Array<Integer,EdgeNPoints>,N>& edge_nodes, Vector<Vector<Real,ManifoldDim>,N>& p0,Vector<Vector<Real,ManifoldDim>,N>& p1,FiniteElem<Elem>& FE)
     {
-    	// std::cout<< "find_edges begin"<<std::endl;
     	auto &mesh=spaces_ptr_->mesh();
 
     	const Integer& elem_id=FE.elem_id();
     	auto& elem=mesh.elem(elem_id);
 
     	auto& nodes=elem.nodes;
-    	Integer comb[FaceNPoints];
+    	Integer comb[EdgeNPoints];
 
-
-    	for(Integer k=0;k<FaceNums;k++)
+    	for(Integer k=0;k<EdgeNums;k++)
     	{
-    		ElemEntityCombinations<Elem,FaceDim>::generate(k,comb);
+    		ElemEntityCombinations<Elem,EdgeDim>::generate(k,comb);
             
-            for(Integer i=0;i<FaceNPoints;i++)
-    			face_nodes[k][i]=comb[i];
+            for(Integer i=0;i<EdgeNPoints;i++)
+    			edge_nodes[k][i]=comb[i];
 
-    		for(Integer i=0;i<FaceNPoints;i++)
+    		for(Integer i=0;i<EdgeNPoints;i++)
     		{
-    			for(Integer j=0;j<ManifoldDim;j++)
-    			face_points[k][i][j]=mesh.points()[nodes[comb[i]]][j];
+    			p0[k][i]=mesh.points()[nodes[comb[0]]][i];
+    			p1[k][i]=mesh.points()[nodes[comb[1]]][i];
     		}
-
     	}
-
     }
 
-
-    inline void find_face_intersection(std::vector<Real>& C_constraint,const std::vector<Real>& C_constraint_old,const std::vector<Real>& F_constraint,
-    								   FiniteElem<Elem>& C_FE,FiniteElem<Elem>& F_FE)
+    template<Integer N>
+    inline void find_segment_intersection(std::vector<Real>& C_constraint,const std::vector<Real>& C_constraint_old,const std::vector<Real>& F_constraint,
+    									  FiniteElem<Elem>& C_FE,FiniteElem<Elem>& F_FE)
     {
+        constexpr Integer NComponents= GetType<typename FunctionSpace::TupleOfSpaces,1>::NComponents;
+    	find_edges(F_edge_nodes_,F_p0_,F_p1_,F_FE);
     	auto& mesh=spaces_ptr_->mesh();
-    	auto& C_elem=mesh.elem(C_FE.elem_id());
-    	auto& F_elem=mesh.elem(F_FE.elem_id());
+    	auto& dofmap=spaces_ptr_->dofsdofmap();
+
+    	auto& C_nodes=mesh.elem(C_FE.elem_id());
+    	auto& F_nodes=mesh.elem(F_FE.elem_id());
+	
+    	auto & C_elemdm=tuple_get<N>(C_elem_dm_);
+    	auto & F_elemdm=tuple_get<N>(F_elem_dm_);
+
+    	dofmap. template dofmap_get<N>(C_elemdm,C_FE.elem_id(),C_FE.level());
+    	dofmap. template dofmap_get<N>(F_elemdm,F_FE.elem_id(),F_FE.level());
+
+    	const auto& inf= std::numeric_limits<double>::infinity();
+
+    	Real fraction;
+    	Real C_dof0_tmp;
+    	Real C_dof1_tmp;
+    	for(Integer k=0;k<EdgeNums;k++)
+    		for(Integer m=0;m<EdgeNums;m++)
+    		{   						
+    			if(is_subsegment(C_p0_[k],C_p1_[k],F_p0_[m],F_p1_[m]) )
+    			{
+    				auto& C_dof0=C_constraint[C_elemdm[C_edge_nodes_[k][0]*NComponents]];
+    				auto& C_dof1=C_constraint[C_elemdm[C_edge_nodes_[k][1]*NComponents]];
+
+    				auto& C_dof0_old=C_constraint_old[C_elemdm[C_edge_nodes_[k][0]*NComponents]];
+    				auto& C_dof1_old=C_constraint_old[C_elemdm[C_edge_nodes_[k][1]*NComponents]];
+
+    				auto& F_dof0=F_constraint[F_elemdm[F_edge_nodes_[m][0]*NComponents]];
+    				auto& F_dof1=F_constraint[F_elemdm[F_edge_nodes_[m][1]*NComponents]];
 
 
+    				auto dof1=C_elemdm[C_edge_nodes_[k][0]*NComponents];
+    				auto dof2=C_elemdm[C_edge_nodes_[k][1]*NComponents];
 
-    	for(Integer C_s=0;C_s<FaceNums; C_s++)
-    	{
-    		C_elem.side(C_s,C_side_elem_);
-    		for(Integer F_s=0;F_s<FaceNums; F_s++)
-    		{
-    			F_elem.side(F_s,F_side_elem_);
+    				if(C_dof0_old<inf)
+    				{
+    					fraction=segment_fraction_length(C_p0_[k],C_p1_[k],F_p0_[m],C_p0_[k]);
+    					C_dof0_tmp=linear_projection_aux_aux(C_dof0_old,C_dof1_old,F_dof0,fraction);
+    					std::cout<< "C_dof0_tmp="<<C_dof0_tmp<<std::endl;
+    					fraction=segment_fraction_length(C_p0_[k],C_p1_[k],F_p1_[m],C_p0_[k]);
+    					C_dof0_tmp=linear_projection_aux_aux(C_dof0_tmp,C_dof1_old,F_dof1,fraction);
+    					std::cout<< "C_dof0_tmp="<<C_dof0_tmp<<std::endl;
+    					C_dof0=min(C_dof0,C_dof0_tmp);
 
-				if(is_simplex_inside_simplex(C_side_elem_,F_side_elem_,mesh))
-				{
+    				}
 
-					std::cout<<"C_side_elem_.nodes ==";
-					for(Integer i=0;i<C_side_elem_.nodes .size();i++)
-					std::cout<<C_side_elem_.nodes[i] <<" ";
-				    std::cout<< std::endl;
-					std::cout<<"F_side_elem_.nodes ==";
-					for(Integer i=0;i<C_side_elem_.nodes .size();i++)
-					std::cout<<F_side_elem_.nodes[i] <<" ";
-					std::cout<< std::endl;
-
-
-				}
-
+    				if(C_dof1_old<inf)
+    				{
+    					fraction=segment_fraction_length(C_p0_[k],C_p1_[k],F_p0_[m],C_p1_[k]);
+    					C_dof1_tmp=linear_projection_aux_aux(C_dof1_old,C_dof0_old,F_dof0,fraction);
+    					std::cout<< "C_dof1_tmp="<<C_dof1_tmp<<std::endl;
+    					fraction=segment_fraction_length(C_p0_[k],C_p1_[k],F_p1_[m],C_p1_[k]);
+    					C_dof1_tmp=linear_projection_aux_aux(C_dof1_tmp,C_dof0_old,F_dof1,fraction);
+    					std::cout<< "C_dof1_tmp="<<C_dof1_tmp<<std::endl;
+    					C_dof1=min(C_dof1,C_dof1_tmp);
+    				}
+    				std::cout<< "F_dof0="<<F_dof0<<std::endl;
+    				std::cout<< "F_dof1="<<F_dof1<<std::endl;
+    				std::cout<< "C_dof0="<<C_dof0<<std::endl;
+    				std::cout<< "C_dof1="<<C_dof1<<std::endl;
+    			}
     		}
     	}
 
 
+        template<Integer N>
+	    inline void find_face_intersection(std::vector<Real>& C_constraint,const std::vector<Real>& F_constraint,
+	    								   FiniteElem<Elem>& C_FE,FiniteElem<Elem>& F_FE)
+	    {
+	    	auto& mesh=spaces_ptr_->mesh();
+	    	auto& points=mesh.points();
+	    	auto& C_elem=mesh.elem(C_FE.elem_id());
+	    	auto& F_elem=mesh.elem(F_FE.elem_id());
+
+	    	auto& dofmap=spaces_ptr_->dofsdofmap();	
+	    	auto & C_elemdm=tuple_get<N>(C_elem_dm_);
+	    	auto & F_elemdm=tuple_get<N>(F_elem_dm_);
+
+	    	dofmap. template dofmap_get<N>(C_elemdm,C_FE.elem_id(),C_FE.level());
+	    	dofmap. template dofmap_get<N>(F_elemdm,F_FE.elem_id(),F_FE.level());
+
+	    	constexpr Integer NComponents= GetType<typename FunctionSpace::TupleOfSpaces,N>::NComponents;
+
+
+	    	for(Integer C_s=0;C_s<FaceNums; C_s++)
+	    	{
+	    		C_elem.side(C_s,C_side_elem_);
+	    		for(Integer F_s=0;F_s<FaceNums; F_s++)
+	    		{
+	    			F_elem.side(F_s,F_side_elem_);
+
+					if(is_simplex_inside_simplex(C_side_elem_,F_side_elem_,points))
+					{
+	    				auto& C_dof=C_constraint[C_elemdm[C_s*NComponents]];
+						auto& F_dof=F_constraint[F_elemdm[F_s*NComponents]];
+	    				C_dof=min(C_dof,F_dof);
+					}
+
+	    		}
+	    	}
+	    }
+
+
+	    inline Real linear_projection_aux_aux(const Real& C_dof0,const Real& C_dof1,const Real& F_dof, const Real & alpha)
+	    {
+
+	        if(alpha<1e-8 || alpha>1-1e-8)
+	        {
+	        	return C_dof0;
+	        }
+	        else
+	        {
+	         return min(C_dof0, max (F_dof/alpha - C_dof1 , F_dof) );
+	        }
+	    }
+
+	  template<Integer N>
+	  inline void linear_projection_aux(std::vector<Real>& C_constraint, std::vector<Real>& F_constraint,
+	  									 FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+	  {
+	  	// std::cout<<"linear_projection_aux" << std::endl;
+	  	auto &mesh=spaces_ptr_->mesh();
+	  	auto& dofmap=spaces_ptr_->dofsdofmap();
+
+	  	Integer C_id=C_FE.elem_id();
+	  	Integer F_id=F_FE.elem_id();
+
+	  	auto& C_nodes=mesh.elem(C_id).nodes;
+	  	auto& F_nodes=mesh.elem(F_id).nodes;
+
+	  	auto & C_elemdm=tuple_get<N>(C_elem_dm_);
+	  	auto & F_elemdm=tuple_get<N>(F_elem_dm_);
+
+	  	dofmap. template dofmap_get<N>(C_elemdm,C_id,C_FE.level());
+	  	dofmap. template dofmap_get<N>(F_elemdm,F_id,F_FE.level());
+	  	// std::cout<<"C_elemdm" << C_elemdm<<std::endl;
+	  	// std::cout<<"F_elemdm" << F_elemdm<<std::endl;
+	  	constexpr Integer NComponents= GetType<typename FunctionSpace::TupleOfSpaces,1>::NComponents;
+
+
+	  	for(Integer C_i=0;C_i<C_nodes.size();C_i++)
+	  		for(Integer F_i=0;F_i<F_nodes.size();F_i++)
+	  		{
+	  			if(C_nodes[C_i]==F_nodes[F_i])
+	  			{
+	  				// std::cout<<"linear_projection_aux entro" << std::endl;
+	  				// find the fine dof and project it onto the coarse dof
+	  				C_constraint[C_elemdm[C_i*NComponents]]=F_constraint[F_elemdm[F_i*NComponents]];
+	  			}
+	  		}
+
+	  }
 
 
 
 
-    }
 
 
-    void find_children(//Vector<Vector<Real,ManifoldDim>,EdgeNums>& C_p0,
-    				   //Vector<Vector<Real,ManifoldDim>,EdgeNums>& C_p1,
-    				   std::vector<Real>& C_constraint,
-    				   const std::vector<Real>& C_constraint_old,
-    				   const std::vector<Real>& F_constraint,
-    				   FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE,  
-    				   const Integer elem_id,const Integer child_id, 
-    				   const Integer C_level,const Integer F_level)
-    {
-        auto &mesh=spaces_ptr_->mesh();
-        auto &bisection=spaces_ptr_->bisection();
-        auto &tracker=bisection.tracker();
-        // std::cout<<"F_level=="<<F_level<<std::endl;
-        // std::cout<<"find_children el=="<<elem_id<<std::endl;
-    	// auto& fine_elem=mesh.elem(elem_id);
-    	auto& child_elem=mesh.elem(child_id);
-      	auto& children=child_elem.children;
-      	// for(std::size_t i=0;i<children.size();i++)
-      	// 	std::cout<<children[i]<<" ";
-      	// std::cout<<std::endl;
-
-        if(elem_belongs_to_level(mesh,child_id,F_level,tracker))
-            {
-            F_FE.init(child_id,F_level);
-            find_face_intersection(C_constraint,C_constraint_old,F_constraint,C_FE,F_FE);
-      		// space_loop(A,old_el,C_level,el,F_level);
-            }
-        else
-        	{
-	      	for(std::size_t i=0;i<children.size();i++)
-	      	{
-	            
-	      		if(elem_belongs_to_level(mesh,children[i],F_level,tracker))
-	      		{
-	      			F_FE.init(children[i],F_level);
-
-	               find_face_intersection(C_constraint,C_constraint_old,F_constraint,C_FE,F_FE);
- 
-	      		   // space_loop(A,old_el,C_level,children[i],F_level);
-	      		}
-	      		else
-	      		{
-	      			// find_children(C_p0,C_p1,C_FE,F_FE,elem_id,children[i], C_level,F_level);
-	      			find_children(C_constraint,C_constraint_old,F_constraint,C_FE,F_FE,elem_id,children[i], C_level,F_level);
-
-	      		}
-	      	 }
-        	}
-
-    }
 
 
-	inline void compute(const Integer C_level, const Integer F_level)
-	{
-		std::cout<<"ContactConstantConstraints" <<std::endl;
+	    template<Integer N>
+	    void linear_projection(std::vector<Real>& C_constraint,
+		    				   std::vector<Real>& F_constraint,
+		    				   FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE,  
+		    				   const Integer elem_id,const Integer child_id, 
+		    				   const Integer C_level,const Integer F_level)
+	    {
+	        auto &mesh=spaces_ptr_->mesh();
+	        auto &bisection=spaces_ptr_->bisection();
+	        auto &tracker=bisection.tracker();
+	        // std::cout<<"F_level=="<<F_level<<std::endl;
+	        // std::cout<<"find_children el=="<<elem_id<<std::endl;
+	    	// auto& fine_elem=mesh.elem(elem_id);
+	    	auto& child_elem=mesh.elem(child_id);
+	      	auto& children=child_elem.children;
+	      	// for(std::size_t i=0;i<children.size();i++)
+	      	// 	std::cout<<children[i]<<" ";
+	      	// std::cout<<std::endl;
+
+	        if(elem_belongs_to_level(mesh,child_id,F_level,tracker))
+	            {
+	            F_FE.init(child_id,F_level);
+	            linear_projection_aux<N>(C_constraint,F_constraint,C_FE,F_FE);
+	      		// space_loop(A,old_el,C_level,el,F_level);
+	            }
+	        else
+	        	{
+		      	for(std::size_t i=0;i<children.size();i++)
+		      	{
+		            
+		      		if(elem_belongs_to_level(mesh,children[i],F_level,tracker))
+		      		{
+		      		   F_FE.init(children[i],F_level);
+
+		               linear_projection_aux<N>(C_constraint,F_constraint,C_FE,F_FE);
+	 
+		      		   // space_loop(A,old_el,C_level,children[i],F_level);
+		      		}
+		      		else
+		      		{
+		      			// find_children(C_p0,C_p1,C_FE,F_FE,elem_id,children[i], C_level,F_level);
+		      			linear_projection<N>(C_constraint,F_constraint,C_FE,F_FE,elem_id,children[i], C_level,F_level);
+
+		      		}
+		      	 }
+	        	}
+
+	    }
+
+	    template<Integer N>
+	    void linear_constraint_find_children(//Vector<Vector<Real,ManifoldDim>,EdgeNums>& C_p0,
+	    				   //Vector<Vector<Real,ManifoldDim>,EdgeNums>& C_p1,
+	    				   std::vector<Real>& C_constraint,
+	    				   const std::vector<Real>& C_constraint_old,
+	    				   const std::vector<Real>& F_constraint,
+	    				   FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE,  
+	    				   const Integer elem_id,const Integer child_id, 
+	    				   const Integer C_level,const Integer F_level)
+	    {
+	        auto &mesh=spaces_ptr_->mesh();
+	        auto &bisection=spaces_ptr_->bisection();
+	        auto &tracker=bisection.tracker();
+	        // std::cout<<"F_level=="<<F_level<<std::endl;
+	        // std::cout<<"find_children el=="<<elem_id<<std::endl;
+	    	// auto& fine_elem=mesh.elem(elem_id);
+	    	auto& child_elem=mesh.elem(child_id);
+	      	auto& children=child_elem.children;
+	      	// for(std::size_t i=0;i<children.size();i++)
+	      	// 	std::cout<<children[i]<<" ";
+	      	// std::cout<<std::endl;
+
+	        if(elem_belongs_to_level(mesh,child_id,F_level,tracker))
+	            {
+	            F_FE.init(child_id,F_level);
+	            find_segment_intersection<N>(C_constraint,C_constraint_old,F_constraint,C_FE,F_FE);
+	      		// space_loop(A,old_el,C_level,el,F_level);
+	            }
+	        else
+	        	{
+		      	for(std::size_t i=0;i<children.size();i++)
+		      	{
+		            
+		      		if(elem_belongs_to_level(mesh,children[i],F_level,tracker))
+		      		{
+		      			F_FE.init(children[i],F_level);
+
+		               find_segment_intersection<N>(C_constraint,C_constraint_old,F_constraint,C_FE,F_FE);
+	 
+		      		   // space_loop(A,old_el,C_level,children[i],F_level);
+		      		}
+		      		else
+		      		{
+		      			// find_children(C_p0,C_p1,C_FE,F_FE,elem_id,children[i], C_level,F_level);
+		      			linear_constraint_find_children<N>(C_constraint,C_constraint_old,F_constraint,C_FE,F_FE,elem_id,children[i], C_level,F_level);
+
+		      		}
+		      	 }
+	        	}
+
+	    }
+
+        template<Integer N>
+	    void constant_constraint_find_children(std::vector<Real>& C_constraint,
+	    				   const std::vector<Real>& F_constraint,
+	    				   FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE,  
+	    				   const Integer elem_id,const Integer child_id, 
+	    				   const Integer C_level,const Integer F_level)
+	    {
+	        auto &mesh=spaces_ptr_->mesh();
+	        auto &tracker=spaces_ptr_->bisection().tracker();
+	    	auto& child_elem=mesh.elem(child_id);
+	      	auto& children=child_elem.children;
 
 
+	        if(elem_belongs_to_level(mesh,child_id,F_level,tracker))
+	            {
+	            F_FE.init(child_id,F_level);
+	            find_face_intersection<N>(C_constraint,F_constraint,C_FE,F_FE);
+	            }
+	        else
+	        	{
+		      	for(std::size_t i=0;i<children.size();i++)
+		      	{
+		            
+		      		if(elem_belongs_to_level(mesh,children[i],F_level,tracker))
+		      		{
+		      		   F_FE.init(children[i],F_level);
+		               find_face_intersection<N>(C_constraint,F_constraint,C_FE,F_FE);
+	 	      		}
+		      		else
+		      		{
+		      			constant_constraint_find_children<N>(C_constraint,F_constraint,C_FE,F_FE,elem_id,children[i], C_level,F_level);
+		      		}
+		      	 }
+	        	}
+
+	    }
+
+	    template<typename ElementFunctionSpace,Integer M>
+		inline std::enable_if_t<(ElementFunctionSpace::FEFamily==LagrangeFE && ElementFunctionSpace::Order==1 ),void> 
+		compute(std::vector<Real>& C_constraint,std::vector<Real>& F_constraint,
+			    const Integer C_level, const Integer F_level)
+		{
+
+		std::cout<<"ContactLinearConstraints" <<std::endl;
 		auto& mesh=spaces_ptr_->mesh();
-		auto& bisection=spaces_ptr_->bisection();
-		auto& tracker=bisection.tracker();
-		auto& signed_normal= mesh.signed_normal().normals();
-		auto& level_cumultive_n_dofs=spaces_ptr_->dofsdofmap().level_cumultive_n_dofs();
-
-		auto& dofmap=spaces_ptr_->dofsdofmap();
-
-		std::vector<Real> C_constraint;
-		// std::vector<Real> F_constraint;
-		C_constraint.resize(level_cumultive_n_dofs[C_level],0);
-     
-		// F_constraint.resize(level_cumultive_n_dofs[F_level],0);
-
-		// C_constraint.resize(level_cumultive_n_dofs[C_level],0);
-     
-		// F_constraint.resize(level_cumultive_n_dofs[F_level],0);
-        
-        // std::vector<Real> C_constraint;//{0,0,0,0,0,0,0,0,0,0,14,0,16,0,18,0,10,0};
-		std::vector<Real> F_constraint{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,10,0,19,0,30,0,13,0,14,0,5,0,2,0,1,0,7,0,6,0};
-			// 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,12,13,14,15,16,17,18,19,10,11,12,13,14,15,16,17,18,19,10,11,12};
-		// auto& dm=tuple_get<0>(dofmap);
-
+		auto& tracker=spaces_ptr_->bisection().tracker();
 		FiniteElem<Elem> C_FE(mesh);
 		FiniteElem<Elem> F_FE(mesh);
 
-		auto & C_elemdm=tuple_get<0>(C_elem_dm_);
+		std::cout<< "linear_projection="<<std::endl;
+		for(Integer el =0;el<mesh.n_elements();el++)
+		{
+			if(!elem_belongs_to_level(mesh,el,C_level,tracker)) continue;
 
-
-		// for(Integer i=0;i<F_constraint.size();i++)
-		// 	F_constraint[i]=i;
-
-
-
-
-  //       std::cout<< "linear_projection="<<std::endl;
-		// for(Integer el =0;el<mesh.n_elements();el++)
-		// {
-		// 	if(!elem_belongs_to_level(mesh,el,C_level,tracker)) continue;
-
-  //           C_FE.init(el,C_level);
-		// 	linear_projection(C_constraint,F_constraint,C_FE,F_FE,el,el,C_level,F_level);
-		// }
-
-
-		// std::cout<< "level_cumultive_n_dofs[C_level]="<<level_cumultive_n_dofs[C_level]<<std::endl;
-		// std::cout<< "level_cumultive_n_dofs[F_level]="<<level_cumultive_n_dofs[F_level]<<std::endl;
-
-		// std::cout<< "F_constraint="<<F_constraint.size()<<std::endl;
-
-		// for(Integer i=0;i<F_constraint.size();i++)
-		// 	{std::cout<<F_constraint[i]<<std::endl;}
-
-		// std::cout<< "C_constraint="<<C_constraint.size()<<std::endl;
-
-		// for(Integer i=0;i<C_constraint.size();i++)
-		// 	{
-				
-		// 		std::cout<<C_constraint[i]<<std::endl;
-		// 	}
-
+            C_FE.init(el,C_level);
+			linear_projection<M>(C_constraint,F_constraint,C_FE,F_FE,el,el,C_level,F_level);
+		}
 
 
 		std::vector<Real> C_constraint_old(C_constraint);
 
-		std::cout<< std::endl;
 
 
 		for(Integer el =0;el<mesh.n_elements();el++)
-		{
-
+			{
 			if(!elem_belongs_to_level(mesh,el,C_level,tracker)) continue;
 
             C_FE.init(el,C_level);
-			find_faces(C_face_nodes_,C_face_points_,C_FE);
-			std::cout<<C_face_nodes_<<std::endl;
-			std::cout<<C_face_points_<<std::endl;
+            find_edges(C_edge_nodes_,C_p0_,C_p1_,C_FE);
+			linear_constraint_find_children<M>(C_constraint,C_constraint_old,F_constraint,C_FE,F_FE,el,el,C_level,F_level);
+			}
+		}
 
-			
-			dofmap. template dofmap_get<0>(C_elemdm,el,C_level);
 
-			find_children(C_constraint,C_constraint_old,F_constraint,C_FE,F_FE,el,el,C_level,F_level);
 
+
+
+
+
+	    template<typename ElementFunctionSpace,Integer M>
+		inline std::enable_if_t<(ElementFunctionSpace::FEFamily==RaviartThomasFE && ElementFunctionSpace::Order==0 ),void> 
+		compute(std::vector<Real>& C_constraint,std::vector<Real>& F_constraint,
+			    const Integer C_level, const Integer F_level)
+		{
+			std::cout<<"ContactConstantConstraints" <<std::endl;
+			auto& mesh=spaces_ptr_->mesh();
+			auto& tracker=spaces_ptr_->bisection().tracker();
+			FiniteElem<Elem> C_FE(mesh);
+			FiniteElem<Elem> F_FE(mesh);
+
+			for(Integer el =0;el<mesh.n_elements();el++)
+			{
+				if(!elem_belongs_to_level(mesh,el,C_level,tracker)) continue;
+	            C_FE.init(el,C_level);
+				constant_constraint_find_children<M>(C_constraint,F_constraint,C_FE,F_FE,el,el,C_level,F_level);
+			}
 
 		}
-	}
+
+
+	    template<Integer N=0>
+		inline std::enable_if_t<(N>=TupleTypeSize<TupleOfSpaces>::value), void> 
+		compute_aux(std::vector<Real>& C_constraint,std::vector<Real>& F_constraint,
+					const Integer C_level, const Integer F_level)
+		{}
+
+
+
+	    template<Integer N=0>
+		inline std::enable_if_t<(N<TupleTypeSize<TupleOfSpaces>::value), void> 
+		compute_aux(std::vector<Real>& C_constraint,std::vector<Real>& F_constraint,
+					const Integer C_level, const Integer F_level)
+		{
+			std::cout<<"N="<<N<<std::endl;
+			compute<GetType<TupleOfSpaces,N>,N>(C_constraint,F_constraint,C_level,F_level);
+			compute_aux<N+1>(C_constraint,F_constraint,C_level,F_level);		
+		}
+
+		inline void compute(std::vector<Real>& C_constraint,std::vector<Real>& F_constraint,
+						    const Integer C_level, const Integer F_level)
+		{
+
+
+			Real inf= std::numeric_limits<double>::infinity();
+
+			for(Integer i=0;i<C_constraint.size();i++)
+				C_constraint[i]=inf;
+
+
+
+			auto& mesh=spaces_ptr_->mesh();
+			auto& bisection=spaces_ptr_->bisection();
+			auto& tracker=bisection.tracker();
+			auto& signed_normal= mesh.signed_normal().normals();
+			auto& level_cumultive_n_dofs=spaces_ptr_->dofsdofmap().level_cumultive_n_dofs();
+			auto& dofmap=spaces_ptr_->dofsdofmap();
+
+			compute_aux(C_constraint,F_constraint,C_level,F_level);
+		}
 
 
 
 	private:
 		std::shared_ptr<FunctionSpace> spaces_ptr_;
-		Array<Array<Integer,FaceNPoints>,FaceNums> C_face_nodes_;
-		Array<Array<Integer,FaceNPoints>,FaceNums> F_face_nodes_;
-	    Array<Array<Vector<Real,ManifoldDim>,FaceNPoints>,FaceNums> C_face_points_;
-	    Array<Array<Vector<Real,ManifoldDim>,FaceNPoints>,FaceNums> F_face_points_;
+    	Vector<Vector<Real,ManifoldDim>,EdgeNums> C_p0_;
+    	Vector<Vector<Real,ManifoldDim>,EdgeNums> C_p1_;
+    	Vector<Vector<Real,ManifoldDim>,EdgeNums> F_p0_;
+    	Vector<Vector<Real,ManifoldDim>,EdgeNums> F_p1_;
+    	Array<Array<Integer,EdgeNPoints>, EdgeNums> C_edge_nodes_;
+    	Array<Array<Integer,EdgeNPoints>, EdgeNums> F_edge_nodes_;		
 	    BoundaryElem C_side_elem_;
 	    BoundaryElem F_side_elem_;
     	ElemDofMap C_elem_dm_;
@@ -7936,8 +8238,6 @@ template<typename FunctionSpace_>
     template<typename FunctionSpace>
 	auto ProjectContactConstantConstraints(std::shared_ptr<FunctionSpace> W_ptr)
 	{return ContactConstantConstraints<FunctionSpace>(W_ptr);}
-
-
 
 
     template<typename FunctionSpace>
@@ -8633,92 +8933,242 @@ template<typename FunctionSpace_>
         W_ptr->update();
         std::cout<<"POST W_ptr->update()"<<std::endl;
 
-		node_normal_values.compute();
-
-		std::cout<<"-------node_normal_values.compute()"<<std::endl;
-
-		auto& nnv=node_normal_values();
-		for(Integer i=0;i<nnv.size();i++)
-		{
-			for(Integer j=0;j<nnv[i].size();j++)
-
-			nnv[i][j]=Vector<Real,2>{0,-1};
-
-
-		}
 
 
 
+		// node_normal_values.compute();
+
+		// std::cout<<"-------node_normal_values.compute()"<<std::endl;
+
+		// auto& nnv=node_normal_values();
+		// for(Integer i=0;i<nnv.size();i++)
+		// {
+		// 	for(Integer j=0;j<nnv[i].size();j++)
+
+		// 	nnv[i][j]=Vector<Real,2>{0,-1};
 
 
-		std::vector<Real> x_p1;
-		std::cout<<"compute_dofs"<<std::endl;
-		node_normal_values.compute_dofs(x_p1);
-		std::cout<<"global_dofs_update"<<std::endl;
-		node_normal.global_dofs_update(x_p1);
+		// }
 
 
 
-		Integer contact_boundary=4;
+
+
+		// std::vector<Real> x_p1;
+		// std::cout<<"compute_dofs"<<std::endl;
+		// node_normal_values.compute_dofs(x_p1);
+		// std::cout<<"global_dofs_update"<<std::endl;
+		// node_normal.global_dofs_update(x_p1);
+
+
+
+		// Integer contact_boundary=4;
 	
 
-	    // 2D LSFEM POISSION
-		auto bilinearform=
-		L2Inner(Div(sigma),Div(tau))+
-		// L2Inner(C_inverse(sigma),C_inverse(tau))+
-		// L2Inner(Epsilon(u),Epsilon(v))-
-		// L2Inner(Epsilon(u),C_inverse(tau))-
-		// L2Inner(C_inverse(sigma),Epsilon(v))+
-		L2Inner(C_inverse(sigma)-Epsilon(u),C_inverse(tau)-Epsilon(v))+
-		surface_integral(contact_boundary,Inner(Trace(sigma),node_normal),Inner(Trace(v),node_normal))+
+	 //    // 2D LSFEM POISSION
+		// auto bilinearform=
+		// L2Inner(Div(sigma),Div(tau))+
+		// // L2Inner(C_inverse(sigma),C_inverse(tau))+
+		// // L2Inner(Epsilon(u),Epsilon(v))-
+		// // L2Inner(Epsilon(u),C_inverse(tau))-
+		// // L2Inner(C_inverse(sigma),Epsilon(v))+
+		// L2Inner(C_inverse(sigma)-Epsilon(u),C_inverse(tau)-Epsilon(v))+
+		// surface_integral(contact_boundary,Inner(Trace(sigma),node_normal),Inner(Trace(v),node_normal))+
 
-		surface_integral(contact_boundary,Inner(Trace(sigma),node_normal),Inner(Trace(v),node_normal))+
-		surface_integral(contact_boundary,Inner(Trace(tau),node_normal),Inner(Trace(u),node_normal))
-		// +surface_integral(1,Trace(sigma),Trace(v))
+		// surface_integral(contact_boundary,Inner(Trace(sigma),node_normal),Inner(Trace(v),node_normal))+
+		// surface_integral(contact_boundary,Inner(Trace(tau),node_normal),Inner(Trace(u),node_normal))
+		// // +surface_integral(1,Trace(sigma),Trace(v))
 
-		// L2Inner(MatTrace(sigma),MatTrace(tau))
-		// L2Inner(sigma,halp*((Grad(v))))+
-		// L2Inner(C_coeff2*identity* MatTrace(sigma),halp*(Transpose(Grad(v))))
-		;
+		// // L2Inner(MatTrace(sigma),MatTrace(tau))
+		// // L2Inner(sigma,halp*((Grad(v))))+
+		// // L2Inner(C_coeff2*identity* MatTrace(sigma),halp*(Transpose(Grad(v))))
+		// ;
 
-		auto linearform=
-		L2Inner(-Div(tau),f1)
-		+surface_integral(contact_boundary,Inner(Trace(v),node_normal),gap)
-		;
-        // decltype(MatTrace(IdentityOperator())) feef(5,5,5);
-		std::cout<<" DEFINE BCS  "<<std::endl;
-		// std::cout<<bilinearform.label()<<std::endl;
+		// auto linearform=
+		// L2Inner(-Div(tau),f1)
+		// +surface_integral(contact_boundary,Inner(Trace(v),node_normal),gap)
+		// ;
+  //       // decltype(MatTrace(IdentityOperator())) feef(5,5,5);
+		// std::cout<<" DEFINE BCS  "<<std::endl;
+		// // std::cout<<bilinearform.label()<<std::endl;
 
 		
 
 
 
 
-		auto bcs1=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,1);
-		auto bcs2=DirichletBC<1,FunctionLastComponent<ManifoldDim>>(W_ptr,2);
-		auto bcs3=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,3);
-		// auto bcs4=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,4);
-		// auto bcs5=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,5);
-		// auto bcs6=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,6);
-		auto bcs4=DirichletBC<0,FunctionZero<1>,1>(W_ptr,contact_boundary);
-		auto bcs5=DirichletBC<0,FunctionZero<1>,2>(W_ptr,5);
-		// if(ManifoldDim==2)
-		  // {bcs5=DirichletBC<1,FunctionZero<1>,1>(W_ptr,5);}
+		// auto bcs1=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,1);
+		// auto bcs2=DirichletBC<1,FunctionLastComponent<ManifoldDim>>(W_ptr,2);
+		// auto bcs3=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,3);
+		// // auto bcs4=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,4);
+		// // auto bcs5=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,5);
+		// // auto bcs6=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,6);
+		// auto bcs4=DirichletBC<0,FunctionZero<1>,1>(W_ptr,contact_boundary);
+		// auto bcs5=DirichletBC<0,FunctionZero<1>,2>(W_ptr,5);
+		// // if(ManifoldDim==2)
+		//   // {bcs5=DirichletBC<1,FunctionZero<1>,1>(W_ptr,5);}
 
 
-		auto bcs6=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,5);
-		auto bcs7=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,5);
+		// auto bcs6=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,5);
+		// auto bcs7=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,5);
 
-		auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4,bcs5,bcs6);
+		// auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4,bcs5,bcs6);
 
-	    W_ptr->update();
+	 //    // W_ptr->update();
 
         // auto linear_contact_constraints=ProjectContactLinearConstraints(W_ptr);
         // linear_contact_constraints.compute(0,1);
 
         auto constant_contact_constraints=ProjectContactConstantConstraints(W_ptr);
-        constant_contact_constraints.compute(0,1);
+        // constant_contact_constraints.compute(0,1);
+        std::vector<Real> C_constraint;
+        // std::vector<Real> F_constraint;
+		std::vector<Real> F_constraint{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,10,0,19,0,30,0,13,0,14,0,5,0,2,0,1,0,7,0,6,0};
 
+        Integer C_level=0;
+        Integer F_level=1;
+
+
+		auto& level_cumultive_n_dofs=W_ptr->dofsdofmap().level_cumultive_n_dofs();
+
+
+		F_constraint.resize(level_cumultive_n_dofs[F_level],0);
+
+		C_constraint.resize(level_cumultive_n_dofs[C_level],0);
+     
+
+		for(Integer i=0;i<31;i++)//F_constraint.size();i++)
+			F_constraint[i]=i;
+
+        constant_contact_constraints.compute(C_constraint,F_constraint,C_level,F_level);
+
+
+		for(Integer i=0;i<C_constraint.size();i++)
+			std::cout<<C_constraint[i]<<std::endl;
+
+        // auto child=get_used_children_elem_id(0,mesh,bisection.tracker());
+        // for(Integer i=0;i<child.size();i++)
+        // {
+        // 	std::cout<<child[i]<<std::endl;
+
+        // }
+
+        // std::cout<<"get_used_children_elem_id 2"<<std::endl;
+
+        // auto child2=get_used_children_elem_id(1,mesh,bisection.tracker());
+        // for(Integer i=0;i<child2.size();i++)
+        // {
+        // 	std::cout<<child2[i]<<std::endl;
+
+        // }
+
+
+        // std::cout<<get_used_parent_elem_id(6,mesh,bisection.tracker())<<std::endl;
+        // std::cout<<get_used_parent_elem_id(7,mesh,bisection.tracker())<<std::endl;
+        // std::cout<<get_used_parent_elem_id(8,mesh,bisection.tracker())<<std::endl;
+        // std::cout<<get_used_parent_elem_id(9,mesh,bisection.tracker())<<std::endl;
+        // std::cout<<get_used_parent_elem_id(10,mesh,bisection.tracker())<<std::endl;
+        // std::cout<<get_used_parent_elem_id(11,mesh,bisection.tracker())<<std::endl;
+        // std::cout<<get_used_parent_elem_id(12,mesh,bisection.tracker())<<std::endl;
+        // std::cout<<get_used_parent_elem_id(13,mesh,bisection.tracker())<<std::endl;
+
+        // // std::cout<<inverse(Matrix<Real,3,2>{1,-1,1,3,1,-1})<<std::endl;
+
+
+
+        // Simplex<4,3> simp43;
+        // Simplex<4,2> simp42;
+
+        // simp43.nodes[0]=0;
+        // simp43.nodes[1]=1;
+        // simp43.nodes[2]=2;
+        // simp43.nodes[3]=3;
+
+
+
+        // std::vector<Vector<Real,4>> points;
+        // std::vector<Vector<Real,4>> points_tmp;
+
+        // points.resize(7);
+        // points_tmp.resize(7);
+
+        // points_tmp[0]=Vector<Real,4>{1,1,1,1};
+        // points_tmp[1]=Vector<Real,4>{2,0,0,0};
+        // points_tmp[2]=Vector<Real,4>{0,3,0,0};
+        // points_tmp[3]=Vector<Real,4>{0,0,4,0};
+
+        // points[0]=points_tmp[0];
+        // points[1]=points_tmp[1];
+        // points[2]=points_tmp[2];
+        // points[3]=points_tmp[3];
+
+
+
+
+
+        // points[4]=points_tmp[0];
+        // points[5]=points_tmp[1];
+        // points[6]=points_tmp[2];
+        // simp42.nodes[0]=4;
+        // simp42.nodes[1]=5;
+        // simp42.nodes[2]=6;
+        // std::cout<<"face 1"<<std::endl;
+        // std::cout<< is_simplex_inside_simplex(simp43,simp42,points)<<std::endl;
+
+
+
+
+        // points[4]=points_tmp[0];
+        // points[5]=points_tmp[1];
+        // points[6]=points_tmp[3];
+        //  simp42.nodes[0]=4;
+        // simp42.nodes[1]=5;
+        // simp42.nodes[2]=6;       
+        // std::cout<<"face 2"<<std::endl;
+        // std::cout<< is_simplex_inside_simplex(simp43,simp42,points)<<std::endl;
+
+
+
+
+        // points[4]=points_tmp[0];
+        // points[5]=points_tmp[2];
+        // points[6]=points_tmp[3];
+        // simp42.nodes[0]=4;
+        // simp42.nodes[1]=5;
+        // simp42.nodes[2]=6;        
+        // std::cout<<"face 3"<<std::endl;
+        // std::cout<< is_simplex_inside_simplex(simp43,simp42,points)<<std::endl;
+
+
+
+        // points[4]=points_tmp[1];
+        // points[5]=points_tmp[2];
+        // points[6]=points_tmp[3];
+        // simp42.nodes[0]=4;
+        // simp42.nodes[1]=5;
+        // simp42.nodes[2]=6;        
+        // std::cout<<"face 4"<<std::endl;
+        // std::cout<< is_simplex_inside_simplex(simp43,simp42,points)<<std::endl;
+
+
+        // points[4]=Vector<Real,4>{0.1,0.01,0.01,0};
+        // points[5]=Vector<Real,4>{0.01,0.1,0.01,0};
+        // points[6]=Vector<Real,4>{0.01,0.01,0.1,0};
+        // simp42.nodes[0]=4;
+        // simp42.nodes[1]=5;
+        // simp42.nodes[2]=6;        
+        // std::cout<<"internal "<<std::endl;
+        // std::cout<< is_simplex_inside_simplex(simp43,simp42,points)<<std::endl;
+
+
+        // points[4]=Vector<Real,4>{0.,0,0,0};
+        // points[5]=Vector<Real,4>{0.0,1,1,0};
+        // points[6]=Vector<Real,4>{0.0,0.0,1,0};
+        // simp42.nodes[0]=4;
+        // simp42.nodes[1]=5;
+        // simp42.nodes[2]=6;        
+        // std::cout<<"cutting "<<std::endl;
+        // std::cout<< is_simplex_inside_simplex(simp43,simp42,points)<<std::endl;
 
 
 
@@ -9040,13 +9490,13 @@ template<typename FunctionSpace_>
 //         // std::cout<<"----------"<<std::endl;
 //         // std::cout<<is_subsegment(Vector<Real,2>{0,0},Vector<Real,2>{0,1},Vector<Real,2>{0.5,0.5},Vector<Real,2>{0.5,1})<<std::endl;
  
-    std::cout<<does_point_belong_to_segment(Vector<Real,Dim>{0,1},Vector<Real,Dim>{1,1},Vector<Real,Dim>{0.5,1})<<std::endl;
-    std::cout<<are_parallel_vectors(Vector<Real,Dim>{0,1},Vector<Real,Dim>{1,1},Vector<Real,Dim>{0.5,1},Vector<Real,Dim>{0.5,0.5})<<std::endl;
+    // std::cout<<does_point_belong_to_segment(Vector<Real,Dim>{0,1},Vector<Real,Dim>{1,1},Vector<Real,Dim>{0.5,1})<<std::endl;
+    // std::cout<<are_parallel_vectors(Vector<Real,Dim>{0,1},Vector<Real,Dim>{1,1},Vector<Real,Dim>{0.5,1},Vector<Real,Dim>{0.5,0.5})<<std::endl;
 
-    std::cout<<is_subsegment(Vector<Real,Dim>{1,1},Vector<Real,Dim>{0,1},Vector<Real,Dim>{0.5,1},Vector<Real,Dim>{0.,1})<<std::endl;
-    std::cout<<is_subsegment(Vector<Real,Dim>{0,1},Vector<Real,Dim>{1,1},Vector<Real,Dim>{0.5,1},Vector<Real,Dim>{0.,1})<<std::endl;
-    std::cout<<is_subsegment(Vector<Real,Dim>{1,1},Vector<Real,Dim>{0,1},Vector<Real,Dim>{0.,1},Vector<Real,Dim>{0.5,1})<<std::endl;
-    std::cout<<is_subsegment(Vector<Real,Dim>{0,1},Vector<Real,Dim>{1,1},Vector<Real,Dim>{0.,1},Vector<Real,Dim>{0.5,1})<<std::endl;
+    // std::cout<<is_subsegment(Vector<Real,Dim>{1,1},Vector<Real,Dim>{0,1},Vector<Real,Dim>{0.5,1},Vector<Real,Dim>{0.,1})<<std::endl;
+    // std::cout<<is_subsegment(Vector<Real,Dim>{0,1},Vector<Real,Dim>{1,1},Vector<Real,Dim>{0.5,1},Vector<Real,Dim>{0.,1})<<std::endl;
+    // std::cout<<is_subsegment(Vector<Real,Dim>{1,1},Vector<Real,Dim>{0,1},Vector<Real,Dim>{0.,1},Vector<Real,Dim>{0.5,1})<<std::endl;
+    // std::cout<<is_subsegment(Vector<Real,Dim>{0,1},Vector<Real,Dim>{1,1},Vector<Real,Dim>{0.,1},Vector<Real,Dim>{0.5,1})<<std::endl;
 
 
 	}
@@ -9058,7 +9508,7 @@ template<typename FunctionSpace_>
 
 
 	template<Integer ManifoldDim,Integer Order1,Integer Order2>
-	void LSFEM_LinearElasticity(const Integer n, const Integer level, const Integer n_levels)
+	void LSFEM_LinearElasticity(const Integer n, const Integer level, const Integer n_levels, const Integer jump=1)
 	{
 	  // constexpr Integer ManifoldDim=2;
 		constexpr Integer Dim=ManifoldDim;
@@ -9182,7 +9632,7 @@ template<typename FunctionSpace_>
 		for(int i=0;i<n_levels;i++)
 		{
 		bisection.tracking_begin();
-		bisection.uniform_refine(1);
+		bisection.uniform_refine(jump);
 		bisection.tracking_end();			
 		}
 

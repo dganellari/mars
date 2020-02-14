@@ -174,10 +174,45 @@ namespace mars {
 	            	list_of_elems.push_back(i);
 	            }
 	        }
-	    }
+	}
 
+     template<typename MeshT>
+	 inline Real get_used_parent_elem_id(const Integer child_id,const MeshT & mesh,const Tracker& tracker)
+	 {
+	 	Integer parent_id=mesh.elem(child_id).parent_id;
+        if(tracker.get_level(parent_id)<0)
+        	return get_used_parent_elem_id(parent_id,mesh,tracker);
+        else
+        	return parent_id;
+	 }
 
-	
+     template<typename MeshT>
+	 inline void  get_used_children_elem_id_aux(std::vector<Integer>& children_full, const Integer parent_id,const MeshT & mesh,const Tracker& tracker)
+	 {
+	 	auto& children=mesh.elem(parent_id).children;
+
+	 	for(Integer i=0;i<children.size();i++)
+	 	{
+	 		if(tracker.get_level(children[i])>=0)
+	 		{
+             children_full.push_back(children[i]);
+	 		}
+	 		else
+	 		{
+	 			get_used_children_elem_id_aux(children_full, children[i],mesh,tracker);
+	 		}
+
+	 	}
+	 }
+
+	 template<typename MeshT>
+	 inline std::vector<Integer>  get_used_children_elem_id(const Integer parent_id,const MeshT & mesh,const Tracker& tracker)
+	 {
+	 	std::vector<Integer> children_full;
+	 	get_used_children_elem_id_aux(children_full,parent_id,mesh,tracker);
+	 	return children_full;
+	 }
+
 
 }
 

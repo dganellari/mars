@@ -2215,7 +2215,7 @@ public:
 
 
    template<Integer N, typename Elem2Dofs, typename Map, typename ParentMap,typename MapDof>
-   void init_elem_aux_aux3(
+   void init_fine_elem_aux_aux(
              const Integer& cont_tot,
              Integer& cont_new,
              std::vector<Integer>& entity_used,
@@ -2244,7 +2244,7 @@ public:
     constexpr auto combinations_nums=ElemEntityCombinations<Elem,entity_dim>::value;
 
 
-      //   std::cout  << "ELEM===="<<elem.id<<"     with entity==="<<entity_dim<<std::endl;
+        // std::cout  << "ELEM===="<<elem.id<<"     with entity==="<<entity_dim<<std::endl;
 
       // for(std::size_t i=0;i<count_n_entity_vec.size();i++)
       //   std::cout<<count_n_entity_vec[i]<<" ";
@@ -2294,9 +2294,9 @@ public:
           entity_nodes[i]=nodes[entity_[i]];
 
         // std::cout<<"entity_nodes="<<std::endl;
-        //   for(int s=0;s<entity_nodes.size();s++)
-        //   std::cout<<entity_nodes[s]<<std::endl;
-        //   std::cout<<std::endl;
+          // for(int s=0;s<entity_nodes.size();s++)
+          // std::cout<<entity_nodes[s]<<std::endl;
+          // std::cout<<std::endl;
 
         std::sort(entity_nodes.begin(),entity_nodes.end());
 
@@ -2398,9 +2398,11 @@ public:
         {
 
            // std::cout<<"!dof ="<<std::endl;
+           // std::cout<<"cont_new ="<<cont_new<<std::endl;
+           // std::cout<<"cont_tot ="<<cont_tot<<std::endl;
            if(cont_new<cont_tot)
            {
-             // std::cout<<"cont_new<cont_tot=>>"<<entity_used[cont_new]<<std::endl;
+            // std::cout<<"entity_used[cont_new]="<<entity_used[cont_new]<<std::endl;
              dof=std::make_shared<Integer>(entity_used[cont_new]);
              cont_new++; 
              global_dof_count_tmp=*dof;
@@ -2419,7 +2421,7 @@ public:
            else
            {
             dof=std::make_shared<Integer>(global_dof_count);
-            // std::cout<<"cont_new>=cont_tot=>>"<<global_dof_count<<std::endl;
+            // std::cout<<"global_dof_count="<<global_dof_count<<std::endl;
             for(Integer entity_dofs_iter=0;entity_dofs_iter<dofs_per_entity;entity_dofs_iter++)
                for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
                   {            
@@ -2467,7 +2469,7 @@ public:
 
    template<Integer N=0, typename Elem2Dofs, typename Map, typename ParentMap,typename MapDof>
    std::enable_if_t<(N==n_entity),void >
-   init_elem_aux3(
+   init_fine_elem_aux(
              const Integer& cont_tot,
              Integer& cont_new,
              std::vector<Integer>& entity_used,
@@ -2483,7 +2485,7 @@ public:
 
    template<Integer N=0, typename Elem2Dofs, typename Map, typename ParentMap,typename MapDof>
    std::enable_if_t<(N<n_entity),void >
-   init_elem_aux3(
+   init_fine_elem_aux(
              const Integer& cont_tot,
              Integer& cont_new,
              std::vector<Integer>& entity_used,
@@ -2500,17 +2502,17 @@ public:
     auto& map=tuple_get<N>(tuple_map);
     auto& parent_map=tuple_get<N>(tuple_parent_map);
     auto& map_dof=tuple_get<N>(tuple_map_dof);    
-    init_elem_aux_aux3<N>(cont_tot,cont_new,entity_used,dofmap_vec,
+    init_fine_elem_aux_aux<N>(cont_tot,cont_new,entity_used,dofmap_vec,
                           map,parent_map,map_dof,
                           loc_dof_count,count_n_entity_vec,elem,level);
-    init_elem_aux3<N+1>(cont_tot,cont_new,entity_used,dofmap_vec,
+    init_fine_elem_aux<N+1>(cont_tot,cont_new,entity_used,dofmap_vec,
                        tuple_map,tuple_parent_map,tuple_map_dof,
                        loc_dof_count,count_n_entity_vec,elem,level);
    }
 
 
    template<typename Elem2Dofs, typename Map, typename ParentMap,typename MapDof>
-   void init_elem3(
+   void init_fine_elem(
              const Integer& cont_tot,  
              Integer& cont_new,         
              std::vector<Integer>& entity_used,
@@ -2529,8 +2531,8 @@ public:
       //   std::cout<<count_n_entity_vec[i]<<" ";
       // std::cout<<"\n"<<std::endl;
     // loop on spaces
-    // std::cout<<"init_elem3 level = "<<level<<std::endl;
-    init_elem_aux3(cont_tot,cont_new,entity_used,dofmap_vec,tuple_map,tuple_parent_map,tuple_map_dof,loc_dof_count,count_n_entity_vec,elem,level);
+    // std::cout<<"init_fine_elem level = "<<level<<std::endl;
+    init_fine_elem_aux(cont_tot,cont_new,entity_used,dofmap_vec,tuple_map,tuple_parent_map,tuple_map_dof,loc_dof_count,count_n_entity_vec,elem,level);
    }
 
 
@@ -2542,7 +2544,7 @@ public:
              Map& tuple_map,
              ParentMap& tuple_parent_map,
              MapDof& tuple_map_dof,
-             const Elem elem, const Integer level )
+             const Elem elem, const Integer level,const MeshT& mesh ,const Tracker&tracker)
    {}
 
 
@@ -2554,7 +2556,7 @@ public:
              Map& tuple_map,
              ParentMap& tuple_parent_map,
              MapDof& tuple_map_dof,
-             const Elem elem, const Integer level )
+             const Elem elem, const Integer level ,const MeshT& mesh, const Tracker&tracker)
 {
       constexpr const auto entity_dim=FunctionSpace::entity[N];
       constexpr const auto dofs_per_entity=FunctionSpace::dofs_per_entity[N];
@@ -2565,7 +2567,10 @@ public:
       auto& map=tuple_get<N>(tuple_map);
       auto& parent_map=tuple_get<N>(tuple_parent_map);
       auto& map_dof=tuple_get<N>(tuple_map_dof);
-      const auto& parent_id=elem.parent_id;
+
+      Integer parent_id=get_used_parent_elem_id(elem.id,mesh,tracker);
+      // const auto& parent_id=elem.parent_id;
+
       const auto& parent_elem=mesh_.elem(parent_id);
       const auto& parent_nodes=parent_elem.nodes;
       std::array<Integer,entity_points> parent_entity_nodes;
@@ -2608,7 +2613,11 @@ public:
            // entities which belong to both coarse and fine level are untouched
            // the new ones are created, counting them from n_coarse_entities-cont
        // we loop on all the entities of dimension EntityDim of the element
-       const auto& child=parent_elem.children;
+   
+
+       // const auto& child=parent_elem.children;
+       auto child=get_used_children_elem_id(parent_id,mesh,tracker);
+
      
            for(std::size_t parent_entity=0;parent_entity<combinations_nums;parent_entity++)
             {
@@ -2645,7 +2654,13 @@ public:
                        found_parent_entity=std::equal(child_entity_nodes.begin(),child_entity_nodes.end(),parent_entity_nodes.begin());
                    
                    if(found_parent_entity)             
-                     goto label;
+                     {
+                      // std::cout<<"child_entity_nodes"<<std::endl;
+                      // for(Integer i=0;i<child_entity_nodes.size();i++)
+                        // std::cout<<child_entity_nodes[i]<<" ";
+                      // std::cout<<std::endl;
+                      goto label;
+                    }
                     
                    }
                 }
@@ -2665,7 +2680,7 @@ public:
           }
         }
    // std::cout<<"count_new_dofs_aux==="<<cont<<std::endl;
-    count_new_dofs_aux<N+1>(cont,entity_used,tuple_map,tuple_parent_map,tuple_map_dof,elem,level);
+    count_new_dofs_aux<N+1>(cont,entity_used,tuple_map,tuple_parent_map,tuple_map_dof,elem,level,mesh,tracker);
 
 }
 
@@ -2680,9 +2695,9 @@ public:
              Map& tuple_map,
              ParentMap& tuple_parent_map,
              MapDof& tuple_map_dof,
-             const Elem elem, const Integer level )
+             const Elem elem, const Integer level,const MeshT& mesh,const Tracker&tracker )
    {
-     count_new_dofs_aux(cont,entity_used,tuple_map,tuple_parent_map,tuple_map_dof,elem,level);
+     count_new_dofs_aux(cont,entity_used,tuple_map,tuple_parent_map,tuple_map_dof,elem,level,mesh,tracker);
    }
 
 
@@ -2691,14 +2706,14 @@ public:
 
    // // init refined elem for entitydim
    template<typename Elem2Dofs, typename Map, typename ParentMap,typename MapDof>
-   void init_elem_aux2(
+   void init_fine_elem_aux(
              Elem2Dofs& elem2dofs,
              Map& tuple_map,
              ParentMap& tuple_parent_map,
              MapDof& tuple_map_dof,
              Integer& loc_dof_count,
              IntegerVector& count_n_entity_vec,
-             const Elem elem, const Integer level )
+             const Elem elem, const Integer level,const MeshT& mesh, const Tracker&tracker )
    {
 
 
@@ -2712,21 +2727,23 @@ public:
       // for(std::size_t i=0;i<count_n_entity_vec.size();i++)
       //   std::cout<<count_n_entity_vec[i]<<" ";
 
-      const auto& parent_id=elem.parent_id;
+      // const auto& parent_id=elem.parent_id;
+      Integer parent_id=get_used_parent_elem_id(elem.id,mesh,tracker);
       const auto& parent_elem=mesh_.elem(parent_id);
       Integer cont_tot;
       std::vector<Integer> entity_used;
       cont_tot=0;
-      count_new_dofs(cont_tot,entity_used,tuple_map,tuple_parent_map,tuple_map_dof,elem,level);
+      count_new_dofs(cont_tot,entity_used,tuple_map,tuple_parent_map,tuple_map_dof,elem,level,mesh,tracker);
       // std::cout<<"CONT TOT ==="<<cont_tot<<std::endl;
 
       // loop on child nodes
       Integer cont_new=0;
-      const auto& child=parent_elem.children;
+      // const auto& child=parent_elem.children;
+      auto child=get_used_children_elem_id(parent_id,mesh,tracker);
         for(std::size_t i=0;i<child.size();i++)
         {
          const auto& child_elem=mesh_.elem(child[i]);
-         init_elem3(cont_tot,cont_new,entity_used,elem2dofs,tuple_map,tuple_parent_map,tuple_map_dof,count_n_entity_vec,child_elem,level);
+         init_fine_elem(cont_tot,cont_new,entity_used,elem2dofs,tuple_map,tuple_parent_map,tuple_map_dof,count_n_entity_vec,child_elem,level);
        }
 
 
@@ -2863,7 +2880,7 @@ public:
              MapDof& map_dof,
              Integer& loc_dof_count,
              IntegerVector& count_n_entity_vec,
-             const Elem elem, const Integer level )
+             const Elem elem, const Integer level, const MeshT& mesh, const Tracker& tracker )
    {
 
       constexpr const auto entity_dim=FunctionSpace::entity[N];
@@ -2873,8 +2890,8 @@ public:
       constexpr auto combinations_nums=ElemEntityCombinations<Elem,entity_dim>::value;
 
 
-          std::cout<<"___________LEVEL="<<level<<std::endl;
-          std::cout<<"count_n_entity_vec.size()-1="<<count_n_entity_vec.size()-1<<std::endl;
+          // std::cout<<"___________LEVEL="<<level<<std::endl;
+          // std::cout<<"count_n_entity_vec.size()-1="<<count_n_entity_vec.size()-1<<std::endl;
       if(count_n_entity_vec.size()-1<level)
         count_n_entity_vec.push_back(count_n_entity_vec[count_n_entity_vec.size()-1]);
       // std::cout<<"count_n_entity_vec[END]="<<std::endl;
@@ -2886,7 +2903,8 @@ public:
       Integer cont1=0;
       Integer cont2=0;
 
-      const auto& parent_id=elem.parent_id;
+      // const auto& parent_id=elem.parent_id;
+      Integer parent_id=get_used_parent_elem_id(elem.id,mesh,tracker);
       const auto& parent_elem=mesh_.elem(parent_id);
       const auto& parent_nodes=parent_elem.nodes;
       std::array<Integer,entity_points> parent_entity_nodes;
@@ -2913,7 +2931,8 @@ public:
            // entities which belong to both coarse and fine level are untouched
            // the new ones are created, counting them from n_coarse_entities-cont
        // we loop on all the entities of dimension EntityDim of the element
-       const auto& child=parent_elem.children;
+       // const auto& child=parent_elem.children;
+       auto child=get_used_children_elem_id(parent_id,mesh,tracker);
      
            for(std::size_t parent_entity=0;parent_entity<combinations_nums;parent_entity++)
             {
@@ -3043,7 +3062,7 @@ public:
              MapDof& map_dof,
              Integer& local_dof_count,
              IntegerVector& count_n_entity_vec,
-             const Elem elem,const Integer level)
+             const Elem elem,const Integer level, const MeshT& mesh, const Tracker& tracker )
    {}
 
    template<Integer N=0, typename Elem2Dofs, typename Map, typename ParentMap,typename MapDof>
@@ -3055,14 +3074,14 @@ public:
              MapDof& map_dof,
              Integer& local_dof_count,
              IntegerVector& count_n_entity_vec,
-             const Elem elem,const Integer level)
+             const Elem elem,const Integer level, const MeshT& mesh, const Tracker& tracker )
    {
     auto& m1=tuple_get<N>(map);
     auto& m2=tuple_get<N>(parent_map);
     auto& m3=tuple_get<N>(map_dof);
-    std::cout<<"INIT ELEM aux ="<<std::endl;
-    init_elem_aux_aux<N>(elem2dofs,m1,m2,m3,local_dof_count,count_n_entity_vec,elem,level);
-    init_elem_aux<N+1>(elem2dofs,map,parent_map,map_dof,local_dof_count,count_n_entity_vec,elem,level);
+    // std::cout<<"INIT ELEM aux ="<<std::endl;
+    init_elem_aux_aux<N>(elem2dofs,m1,m2,m3,local_dof_count,count_n_entity_vec,elem,level,mesh,tracker);
+    init_elem_aux<N+1>(elem2dofs,map,parent_map,map_dof,local_dof_count,count_n_entity_vec,elem,level,mesh,tracker);
    }
 
 
@@ -3108,7 +3127,7 @@ public:
              ParentMap& parent_map,
              MapDof& map_dof,
              IntegerVector& count_n_entity_vec,
-             const Elem elem,const Integer level)
+             const Elem elem,const Integer level,const MeshT& mesh, const Tracker&tracker)
 
    {
     Integer local_dof_count=0;
@@ -3123,7 +3142,7 @@ public:
         // std::cout<<std::endl;
         // std::cout<<"level="<<level<<std::endl;
 
-        init_elem_aux2(elem2dofs,map,parent_map,map_dof,local_dof_count,count_n_entity_vec,elem,level);
+        init_fine_elem_aux(elem2dofs,map,parent_map,map_dof,local_dof_count,count_n_entity_vec,elem,level,mesh,tracker);
         // init_elem_aux(elem2dofs,map,parent_map,map_dof,local_dof_count,count_n_entity_vec,elem,level);
       // Integer cont3;
       // std::vector<Integer> vec;
@@ -3136,27 +3155,27 @@ public:
 
 
 
-   template< typename Elem2Dofs, typename Map, typename ParentMap,typename MapDof>
-   void init_elem6(
-             Integer& cont_tot,
-             Integer& cont_new,
-             std::vector<Integer>& entity_used,     
-             Elem2Dofs& elem2dofs,
-             Map& map,
-             ParentMap& parent_map,
-             MapDof& map_dof,
-             Integer& loc_dof_count,
-             IntegerVector& count_n_entity_vec,
-             const Elem elem,const Integer level)
+   // template< typename Elem2Dofs, typename Map, typename ParentMap,typename MapDof>
+   // void init_elem6(
+   //           Integer& cont_tot,
+   //           Integer& cont_new,
+   //           std::vector<Integer>& entity_used,     
+   //           Elem2Dofs& elem2dofs,
+   //           Map& map,
+   //           ParentMap& parent_map,
+   //           MapDof& map_dof,
+   //           Integer& loc_dof_count,
+   //           IntegerVector& count_n_entity_vec,
+   //           const Elem elem,const Integer level)
 
-   {
+   // {
 
-        // init_elem3(cont_tot,cont_new,elem2dofs,map,parent_map,map_dof,loc_dof_count,count_n_entity_vec,elem,level);
+   //      // init_fine_elem(cont_tot,cont_new,elem2dofs,map,parent_map,map_dof,loc_dof_count,count_n_entity_vec,elem,level);
 
-          init_elem_aux3(cont_tot,cont_new,entity_used,elem2dofs,map,parent_map,map_dof,loc_dof_count,count_n_entity_vec,elem,level);
+   //        init_fine_elem_aux(cont_tot,cont_new,entity_used,elem2dofs,map,parent_map,map_dof,loc_dof_count,count_n_entity_vec,elem,level);
 
-    //init_elem_aux1<N,FunctionSpace,FunctionSpaces...>(t1,t2,t3,t4,count_n_entity_vec,elem,level);
-   }
+   //  //init_elem_aux1<N,FunctionSpace,FunctionSpaces...>(t1,t2,t3,t4,count_n_entity_vec,elem,level);
+   // }
 
 private:
     MeshT& mesh_;
@@ -3259,7 +3278,7 @@ template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Ma
              ParentMap& parent_map,
              MapDof& map_dof,
              IntegerVector& count_n_entity_vec,
-             const Elem elem,const Integer level)
+             const Elem elem,const Integer level,const MeshT& mesh, const Tracker&tracker)
 
 { 
   auto& dofmapfespace=tuple_get<N>(tuple_dofmapfespace_);
@@ -3268,7 +3287,7 @@ template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Ma
   auto& m2=tuple_get<N>(parent_map);
   auto& m3=tuple_get<N>(map_dof);
   // std::cout<<"DofMapFESpace aux level = " << level<<std::endl;
-  dofmapfespace.init_elem(m0,m1,m2,m3,count_n_entity_vec,elem,level);
+  dofmapfespace.init_elem(m0,m1,m2,m3,count_n_entity_vec,elem,level,mesh,tracker);
 }
 
 
@@ -3280,7 +3299,7 @@ template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Ma
              ParentMap& parent_map,
              MapDof& map_dof,
              IntegerVector& count_n_entity_vec,
-             const Elem elem,const Integer level)
+             const Elem elem,const Integer level,const MeshT& mesh, const Tracker&tracker)
 
 { 
   auto& dofmapfespace=tuple_get<N>(tuple_dofmapfespace_); 
@@ -3289,8 +3308,8 @@ template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Ma
   auto& m2=tuple_get<N>(parent_map);
   auto& m3=tuple_get<N>(map_dof);
   // std::cout<<"DofMapFESpace aux level = " << level<<std::endl;
-  dofmapfespace.init_elem(m0,m1,m2,m3,count_n_entity_vec,elem,level);
-  init_elem_aux<N+1,BFSs...>(elem2dofs,map,parent_map,map_dof,count_n_entity_vec,elem,level);
+  dofmapfespace.init_elem(m0,m1,m2,m3,count_n_entity_vec,elem,level,mesh,tracker);
+  init_elem_aux<N+1,BFSs...>(elem2dofs,map,parent_map,map_dof,count_n_entity_vec,elem,level,mesh,tracker);
 }
 
  template<typename Elem2Dofs, typename Map, typename ParentMap,typename MapDof>
@@ -3300,13 +3319,13 @@ template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Ma
              ParentMap& parent_map,
              MapDof& map_dof,
              IntegerVector& count_n_entity_vec,
-             const Elem elem,const Integer level)
+             const Elem elem,const Integer level,const MeshT& mesh, const Tracker&tracker)
 {
 
   // QUI DISTINGUO SE E' LEVEL = 0 OPPURE NO
   // std::cout<<"dofmap init elem"<<std::endl;
   // std::cout<<"DofMapFESpace level = " << level<<std::endl;
-  init_elem_aux<0,BaseFunctionSpaces...>(elem2dofs,map,parent_map,map_dof,count_n_entity_vec,elem,level);
+  init_elem_aux<0,BaseFunctionSpaces...>(elem2dofs,map,parent_map,map_dof,count_n_entity_vec,elem,level,mesh, tracker);
 
 }
 
@@ -3322,109 +3341,107 @@ template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Ma
 
 
 
-template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Map, typename ParentMap,typename MapDof>
- std::enable_if_t<(sizeof...(BFSs)==0),void> 
- init_elem_aux6(
-             Integer& cont_tot,
-             Integer& cont_new,
-             std::vector<Integer>& entity_used,  
-             Elem2Dofs& elem2dofs,
-             Map& map,
-             ParentMap& parent_map,
-             MapDof& map_dof,
-             Integer& loc_dof_count,
-             IntegerVector& count_n_entity_vec,
-             const Elem elem,const Integer level)
+// template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Map, typename ParentMap,typename MapDof>
+//  std::enable_if_t<(sizeof...(BFSs)==0),void> 
+//  init_elem_aux6(
+//              Integer& cont_tot,
+//              Integer& cont_new,
+//              std::vector<Integer>& entity_used,  
+//              Elem2Dofs& elem2dofs,
+//              Map& map,
+//              ParentMap& parent_map,
+//              MapDof& map_dof,
+//              Integer& loc_dof_count,
+//              IntegerVector& count_n_entity_vec,
+//              const Elem elem,const Integer level)
 
-{ 
-  auto& dofmapfespace=tuple_get<N>(tuple_dofmapfespace_);
-  auto& m0=*tuple_get<N>(elem2dofs);
-  auto& m1=tuple_get<N>(map);
-  auto& m2=tuple_get<N>(parent_map);
-  auto& m3=tuple_get<N>(map_dof);
-  dofmapfespace.init_elem6(cont_tot,cont_new,entity_used,m0,m1,m2,m3,loc_dof_count,count_n_entity_vec,elem,level);
-}
+// { 
+//   auto& dofmapfespace=tuple_get<N>(tuple_dofmapfespace_);
+//   auto& m0=*tuple_get<N>(elem2dofs);
+//   auto& m1=tuple_get<N>(map);
+//   auto& m2=tuple_get<N>(parent_map);
+//   auto& m3=tuple_get<N>(map_dof);
+//   dofmapfespace.init_elem6(cont_tot,cont_new,entity_used,m0,m1,m2,m3,loc_dof_count,count_n_entity_vec,elem,level);
+// }
 
 
-template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Map, typename ParentMap,typename MapDof>
- std::enable_if_t<(sizeof...(BFSs)>0),void> 
- init_elem_aux6(    
-             Integer& cont_tot,
-             Integer& cont_new,
-             std::vector<Integer>& entity_used,          
-             Elem2Dofs& elem2dofs,
-             Map& map,
-             ParentMap& parent_map,
-             MapDof& map_dof,
-             Integer& loc_dof_count,
-             IntegerVector& count_n_entity_vec,
-             const Elem elem,const Integer level)
+// template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Map, typename ParentMap,typename MapDof>
+//  std::enable_if_t<(sizeof...(BFSs)>0),void> 
+//  init_elem_aux6(    
+//              Integer& cont_tot,
+//              Integer& cont_new,
+//              std::vector<Integer>& entity_used,          
+//              Elem2Dofs& elem2dofs,
+//              Map& map,
+//              ParentMap& parent_map,
+//              MapDof& map_dof,
+//              Integer& loc_dof_count,
+//              IntegerVector& count_n_entity_vec,
+//              const Elem elem,const Integer level)
 
-{ 
-  auto& dofmapfespace=tuple_get<N>(tuple_dofmapfespace_); 
-  auto& m0=*tuple_get<N>(elem2dofs);
-  auto& m1=tuple_get<N>(map);
-  auto& m2=tuple_get<N>(parent_map);
-  auto& m3=tuple_get<N>(map_dof);
-  dofmapfespace.init_elem6(cont_tot,cont_new,entity_used,m0,m1,m2,m3,loc_dof_count,count_n_entity_vec,elem,level);
-  init_elem_aux6<N+1,BFSs...>(cont_tot,cont_new,entity_used,elem2dofs,map,parent_map,map_dof,loc_dof_count,count_n_entity_vec,elem,level);
-}
+// { 
+//   auto& dofmapfespace=tuple_get<N>(tuple_dofmapfespace_); 
+//   auto& m0=*tuple_get<N>(elem2dofs);
+//   auto& m1=tuple_get<N>(map);
+//   auto& m2=tuple_get<N>(parent_map);
+//   auto& m3=tuple_get<N>(map_dof);
+//   dofmapfespace.init_elem6(cont_tot,cont_new,entity_used,m0,m1,m2,m3,loc_dof_count,count_n_entity_vec,elem,level);
+//   init_elem_aux6<N+1,BFSs...>(cont_tot,cont_new,entity_used,elem2dofs,map,parent_map,map_dof,loc_dof_count,count_n_entity_vec,elem,level);
+// }
 
- template<typename Elem2Dofs, typename Map, typename ParentMap,typename MapDof>
- void init_elem6(
-             Integer& cont_tot,
-             Integer& cont_new,
-             std::vector<Integer>& entity_used,  
-             Elem2Dofs& elem2dofs,
-             Map& map,
-             ParentMap& parent_map,
-             MapDof& map_dof,
-             Integer& loc_dof_count,
-             IntegerVector& count_n_entity_vec,
-             const Elem elem,const Integer level)
-{
+//  template<typename Elem2Dofs, typename Map, typename ParentMap,typename MapDof>
+//  void init_elem6(
+//              Integer& cont_tot,
+//              Integer& cont_new,
+//              std::vector<Integer>& entity_used,  
+//              Elem2Dofs& elem2dofs,
+//              Map& map,
+//              ParentMap& parent_map,
+//              MapDof& map_dof,
+//              Integer& loc_dof_count,
+//              IntegerVector& count_n_entity_vec,
+//              const Elem elem,const Integer level)
+// {
 
-  // QUI DISTINGUO SE E' LEVEL = 0 OPPURE NO
+//   // QUI DISTINGUO SE E' LEVEL = 0 OPPURE NO
   
-  init_elem_aux6<0,BaseFunctionSpaces...>(cont_tot,cont_new,entity_used,elem2dofs,map,parent_map,map_dof,loc_dof_count,count_n_entity_vec,elem,level);
+//   init_elem_aux6<0,BaseFunctionSpaces...>(cont_tot,cont_new,entity_used,elem2dofs,map,parent_map,map_dof,loc_dof_count,count_n_entity_vec,elem,level);
 
-}
-
-
+// }
 
 
 
 
-   template<Integer N=0, typename Map, typename ParentMap,typename MapDof>
-   std::enable_if_t<(N==sizeof...(BaseFunctionSpaces)),void> count_new_dofs_aux(
-             Integer& cont,
-             std::vector<Integer>& entity_used,
-             Map& tuple_map,
-             ParentMap& tuple_parent_map,
-             MapDof& tuple_map_dof,
-             const Elem elem, const Integer level )
-  {}
-
-   template<Integer N=0, typename Map, typename ParentMap,typename MapDof>
-   std::enable_if_t<(N<sizeof...(BaseFunctionSpaces)),void> count_new_dofs_aux(
-             Integer& cont_tot,
-             std::vector<Integer>& entity_used,
-             Map& tuple_map,
-             ParentMap& tuple_parent_map,
-             MapDof& tuple_map_dof,
-             const Elem elem, const Integer level )
-  {
-
-   auto& dofmapfespace=tuple_get<N>(tuple_dofmapfespace_); 
-   auto& m1=tuple_get<N>(tuple_map);
-   auto& m2=tuple_get<N>(tuple_parent_map);
-   auto& m3=tuple_get<N>(tuple_map_dof);
-   dofmapfespace.count_new_dofs(cont_tot,entity_used,m1,m2,m3,elem,level);
-   // std::cout<<"cont_tot=="<<cont_tot<<std::endl;
-   count_new_dofs_aux<N+1>(cont_tot,entity_used,tuple_map,tuple_parent_map,tuple_map_dof,elem,level);
-  }
 
 
+//    template<Integer N=0, typename Map, typename ParentMap,typename MapDof>
+//    std::enable_if_t<(N==sizeof...(BaseFunctionSpaces)),void> count_new_dofs_aux(
+//              Integer& cont,
+//              std::vector<Integer>& entity_used,
+//              Map& tuple_map,
+//              ParentMap& tuple_parent_map,
+//              MapDof& tuple_map_dof,
+//              const Elem elem, const Integer level )
+//   {}
+
+//    template<Integer N=0, typename Map, typename ParentMap,typename MapDof>
+//    std::enable_if_t<(N<sizeof...(BaseFunctionSpaces)),void> count_new_dofs_aux(
+//              Integer& cont_tot,
+//              std::vector<Integer>& entity_used,
+//              Map& tuple_map,
+//              ParentMap& tuple_parent_map,
+//              MapDof& tuple_map_dof,
+//              const Elem elem, const Integer level )
+//   {
+
+//    auto& dofmapfespace=tuple_get<N>(tuple_dofmapfespace_); 
+//    auto& m1=tuple_get<N>(tuple_map);
+//    auto& m2=tuple_get<N>(tuple_parent_map);
+//    auto& m3=tuple_get<N>(tuple_map_dof);
+//    dofmapfespace.count_new_dofs(cont_tot,entity_used,m1,m2,m3,elem,level);
+//    // std::cout<<"cont_tot=="<<cont_tot<<std::endl;
+//    count_new_dofs_aux<N+1>(cont_tot,entity_used,tuple_map,tuple_parent_map,tuple_map_dof,elem,level);
+//   }
 
 
 
@@ -3433,46 +3450,48 @@ template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Ma
 
 
 
-template<typename Elem2Dofs, typename Map, typename ParentMap,typename MapDof>
- void init_elem5(
-             Elem2Dofs& elem2dofs,
-             Map& tuple_map,
-             ParentMap& tuple_parent_map,
-             MapDof& tuple_map_dof,
-             IntegerVector& count_n_entity_vec,
-             const Elem elem,const Integer level)
-{
 
-if(level==0)
-init_elem_aux<0,BaseFunctionSpaces...>(elem2dofs,tuple_map,tuple_parent_map,tuple_map_dof,count_n_entity_vec,elem,level);
 
-else{
-      if(count_n_entity_vec.size()-1<level)
-        count_n_entity_vec.push_back(count_n_entity_vec[count_n_entity_vec.size()-1]);
-      // std::cout<<"count_n_entity_vec[END]="<<std::endl;
+// template<typename Elem2Dofs, typename Map, typename ParentMap,typename MapDof>
+//  void init_elem5(
+//              Elem2Dofs& elem2dofs,
+//              Map& tuple_map,
+//              ParentMap& tuple_parent_map,
+//              MapDof& tuple_map_dof,
+//              IntegerVector& count_n_entity_vec,
+//              const Elem elem,const Integer level)
+// {
 
-      // for(std::size_t i=0;i<count_n_entity_vec.size();i++)
-      //   std::cout<<count_n_entity_vec[i]<<" ";
+// if(level==0)
+// init_elem_aux<0,BaseFunctionSpaces...>(elem2dofs,tuple_map,tuple_parent_map,tuple_map_dof,count_n_entity_vec,elem,level);
 
-      const auto& parent_id=elem.parent_id;
-      const auto& parent_elem=mesh_.elem(parent_id);
-      Integer cont_tot=0;
-      std::vector<Integer> entity_used;
-      count_new_dofs_aux(cont_tot,entity_used,tuple_map,tuple_parent_map,tuple_map_dof,elem,level);
-      // std::cout<<"CONT TOT ==="<<cont_tot<<std::endl;
+// else{
+//       if(count_n_entity_vec.size()-1<level)
+//         count_n_entity_vec.push_back(count_n_entity_vec[count_n_entity_vec.size()-1]);
+//       // std::cout<<"count_n_entity_vec[END]="<<std::endl;
 
-      // loop on child nodes
-      Integer cont_new=0;
-      Integer loc_dof_count;
-      const auto& child=parent_elem.children;
-        for(std::size_t i=0;i<child.size();i++)
-        {
-          loc_dof_count=0;
-         const auto& child_elem=mesh_.elem(child[i]);
-         init_elem6(cont_tot,cont_new,entity_used,elem2dofs,tuple_map,tuple_parent_map,tuple_map_dof,loc_dof_count,count_n_entity_vec,child_elem,level);
-       }
-  }
-}
+//       // for(std::size_t i=0;i<count_n_entity_vec.size();i++)
+//       //   std::cout<<count_n_entity_vec[i]<<" ";
+
+//       const auto& parent_id=elem.parent_id;
+//       const auto& parent_elem=mesh_.elem(parent_id);
+//       Integer cont_tot=0;
+//       std::vector<Integer> entity_used;
+//       count_new_dofs_aux(cont_tot,entity_used,tuple_map,tuple_parent_map,tuple_map_dof,elem,level);
+//       // std::cout<<"CONT TOT ==="<<cont_tot<<std::endl;
+
+//       // loop on child nodes
+//       Integer cont_new=0;
+//       Integer loc_dof_count;
+//       const auto& child=parent_elem.children;
+//         for(std::size_t i=0;i<child.size();i++)
+//         {
+//           loc_dof_count=0;
+//          const auto& child_elem=mesh_.elem(child[i]);
+//          init_elem6(cont_tot,cont_new,entity_used,elem2dofs,tuple_map,tuple_parent_map,tuple_map_dof,loc_dof_count,count_n_entity_vec,child_elem,level);
+//        }
+//   }
+// }
 
 
 
@@ -4214,7 +4233,7 @@ void dofmap_fespace5(
        
        // change it for smarter algorithms   
       // std::cout<<" dofmap elem == "<< elem_iter <<" /"<< mesh.n_elements()<< std::endl;
-      // std::cout<<"elem_iter="<<elem_iter<<std::endl;
+      std::cout<<"dofmap5 elem_iter="<<elem_iter<<std::endl;
 
        auto& elem=mesh.elem(elem_iter);
        auto &elem_id=elem.id;
@@ -4232,7 +4251,7 @@ void dofmap_fespace5(
        // std::cout<<"DOFMAPSPACE5 ELEM ITER="<<elem_iter<<" level=="<<level<<std::endl;
        if(level>-1)
        dofmap.init_elem(dofmap_vec,tuple_map,tuple_parent_map,tuple_map_dofs,
-                        global_dof_count,elem,level);
+                        global_dof_count,elem,level,mesh,tracker);
 
        // ElementDofMap5<0,Elem,BaseFunctionSpace,BaseFunctionSpaces...>
        //                   (entities.tuple_entities(),flag_entities,elem,elem_id,dofmap_vec,global_dof_count[level],loc_dof_count,dofs_offset,space_dofs,level_array_ndofs,level);

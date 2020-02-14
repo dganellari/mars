@@ -503,7 +503,20 @@ namespace mars {
   }
 
 
+  template<Integer Dim>
+  bool are_vectors_equal(const Vector<Real,Dim>& a,const Vector<Real,Dim>& b)
+  {
+  	Real toll=1e-8;
 
+    for(Integer i=0;i<Dim;i++)
+    {
+    	if(abs(a[i]-b[i])>toll)
+    		return false;
+
+    }
+  	return true;
+
+  }
 
 
 }
