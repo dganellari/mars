@@ -1273,7 +1273,7 @@ namespace mars {
 			return values[i];
 		}
 
-		inline constexpr const T &operator[](const Integer i)const
+		inline constexpr T &operator[](const Integer i)const
 		{
 			assert(i < Rows);
 			return values[i];

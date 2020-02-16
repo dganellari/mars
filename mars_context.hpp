@@ -499,6 +499,8 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
     {
       Real one=1.0;
       std::cout<<"------APPLY ZERO BC -------,n_dofs_="<<n_dofs_<<std::endl;
+      // std::cout<<"level_="<< level_<<std::endl;
+      // std::cout<<"A.max_rows()="<< A.max_rows()<<std::endl;
      for(Integer i=0;i<n_dofs_;++i)
      {
       // std::cout<<i <<"/"<<n_dofs_<<std::endl;

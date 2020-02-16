@@ -297,8 +297,10 @@ class FunctionLastComponent
     {
      Matrix<Real,Dim,1> func;
      for(Integer i=0;i<Dim-1;i++)
-      func[i]=0;
-     func[Dim-1]=-0.01;
+      // func[i]=0;
+        func(i,0)=0;
+     // func[Dim-1]=-0.01;
+     func(Dim-1,0)=-0.01;
      return func; 
     }
 };
@@ -333,7 +335,8 @@ class FunctionZero
     {
      Matrix<Real,Dim,1> func;
      for(Integer i=0;i<Dim;i++)
-      func[i]=0;
+      // func[i]=0;
+      func(i,0)=0;
      return func; 
     }
 };

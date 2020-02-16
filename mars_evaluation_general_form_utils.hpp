@@ -521,7 +521,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
  std::enable_if_t<(2==TestOrTrial_), void>
  apply_aux(subtype& mat, FiniteElem<Elem>& J, const ShapeFunctions& shape_functions, const DofMaps&...dofmaps)
  {
-  std::cout<<"apply_aux="<<std::endl;
+  // std::cout<<"apply_aux="<<std::endl;
 
   const auto& detJ=J.template get_det<VolumeIntegral>();
   // const auto& detJ=J.get_det();
@@ -627,7 +627,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
   template<typename Elem,typename ShapeFunctions, typename...DofMaps>
  void apply(subtype& mat, FiniteElem<Elem>& FE, const ShapeFunctions& shape_functions, const DofMaps&...dofmaps)
  {
-  std::cout<<"apply="<<std::endl;
+  // std::cout<<"apply="<<std::endl;
   apply_aux<type::TestOrTrialLeftType::value>(mat,FE,shape_functions,dofmaps...);
  }
   
