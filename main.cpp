@@ -32,7 +32,7 @@
 #ifdef WITH_KOKKOS
 #include "mars_test_kokkos.hpp"
 #include "mars_lepp_benchmark_kokkos.hpp"
-#include "mars_mesh_distributed_generation.hpp"
+#include "mars_distributed_mesh_generation.hpp"
 #endif //WITH_KOKKOS
 
 #ifdef WITH_PAR_MOONOLITH
@@ -1030,8 +1030,7 @@ void run_benchmarks(int level, int refine_level)
 	//test_mars_nonsimplex_mesh_generation_kokkos_3D(level, refine_level, refine_level);
 	
 	ParallelQuad4Mesh nsm;
-	generate_distributed_cube(nsm, level, refine_level, 0);
-	
+	generate_cube(nsm, level, refine_level, 0);
 	/*ParallelMesh3 pMesh3;
 	generate_cube(pMesh3, level, level, level);
 
@@ -1261,7 +1260,6 @@ int main(int argc, char *argv[])
 {
 	using namespace mars;
 
-test_mpi_context(argc, argv);
 
 #ifdef WITH_PAR_MOONOLITH
 	MPI_Init(&argc, &argv);
@@ -1345,8 +1343,11 @@ test_mpi_context(argc, argv);
 		cudaDeviceSetLimit(cudaLimitStackSize, 32768); // set stack to 32KB only for cuda since it is not yet supported in kokkos.
 #endif
 
-		run_benchmarks(level, refine_level);
+		//run_benchmarks(level, refine_level);
 
+
+	test_mpi_sfc(argc, argv, level);
+		//test_mpi_context(argc, argv);
 		//test_mars_mesh_generation_kokkos_2D(2,4);
 
 		//test_mars_mesh_generation_kokkos_2D(level + 4,level);

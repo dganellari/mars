@@ -98,6 +98,10 @@ class KokkosImplementation {
 	std::string name = "kokkos";
 };
 
+class DistributedImplementation {
+	std::string name = "distributed";
+};
+
 template <class SerialMesh, class ParallelMesh>
 void convert_parallel_mesh_to_serial(SerialMesh &mesh, const ParallelMesh &pMesh)
 {

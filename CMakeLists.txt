@@ -109,113 +109,116 @@ if(TRY_WITH_KOKKOS)
 endif()
 
 list(APPEND MARS_HEADERS
-	mars.hpp
-	mars_base.hpp
-	mars_benchmark.hpp
-	mars_bisection.hpp
-	mars_communicator.hpp
-	mars_config.hpp.in
-	mars_dof_map.hpp
-	mars_dual_graph.hpp
-	mars_edge.hpp
-	mars_edge_element_map.hpp
-	mars_edge_node_map.hpp
-	mars_edge_select.hpp
-	mars_edge_split.hpp
-	mars_edge_split_pool.hpp
-	mars_extract_surface.hpp
-	mars_fwd.hpp
-	mars_globals.hpp
-	mars_imesh.hpp
-	mars_lagrange_element.hpp
-	mars_longest_edge.hpp
-	mars_matrix.hpp
-	mars_mesh.hpp
-	mars_mesh_partition.hpp
-	mars_mesh_reader.hpp
-	mars_mesh_writer.hpp
-	mars_newest_vertex.hpp
-	mars_node_rank.hpp
-	mars_oldest_edge.hpp
-	mars_par_bisection.hpp
-	mars_par_edge_split_pool.hpp
-	mars_par_mesh.hpp
-	mars_partitioned_bisection.hpp
-	mars_quality.hpp
-	mars_ranked_edge.hpp
-	mars_red_green_refinement.hpp
-	mars_simplex.hpp
-	mars_static_math.hpp
-	mars_stream.hpp
-	mars_test.hpp
-	mars_tracker.hpp
-	mars_utils.hpp
-	mars_vector.hpp
-	mars_visualization.hpp
-	mars_vtk_writer.hpp
-	mars_non_simplex.hpp
-	mars_lepp_bisection.hpp
-	mars_lepp_benchmark.hpp
-	mars_prelepp_benchmark.hpp
-	mars_prelepp_bisection.hpp
-	mars_mesh_reader.hpp
-	mars_mesh_writer.hpp
-	generation/mars_sub_view.hpp
-	generation/mars_point.hpp
-	generation/mars_mesh_generation.hpp
-    generation/mars_device_vector.hpp
-	generation/mars_memory.hpp
+	base/mars.hpp
+	base/mars_base.hpp
+	base/mars_benchmark.hpp
+	base/mars_bisection.hpp
+	base/mars_communicator.hpp
+	base/mars_config.hpp.in
+	base/mars_dof_map.hpp
+	base/mars_dual_graph.hpp
+	base/mars_edge.hpp
+	base/mars_edge_element_map.hpp
+	base/mars_edge_node_map.hpp
+	base/mars_edge_select.hpp
+	base/mars_edge_split.hpp
+	base/mars_edge_split_pool.hpp
+	base/mars_extract_surface.hpp
+	base/mars_fwd.hpp
+	base/mars_globals.hpp
+	base/mars_imesh.hpp
+	base/mars_lagrange_element.hpp
+	base/mars_longest_edge.hpp
+	base/mars_matrix.hpp
+	base/mars_mesh.hpp
+	base/mars_mesh_partition.hpp
+	base/mars_mesh_reader.hpp
+	base/mars_mesh_writer.hpp
+	base/mars_newest_vertex.hpp
+	base/mars_node_rank.hpp
+	base/mars_oldest_edge.hpp
+	base/mars_par_bisection.hpp
+	base/mars_par_edge_split_pool.hpp
+	base/mars_par_mesh.hpp
+	base/mars_partitioned_bisection.hpp
+	base/mars_quality.hpp
+	base/mars_ranked_edge.hpp
+	base/mars_red_green_refinement.hpp
+	base/mars_simplex.hpp
+	base/mars_static_math.hpp
+	base/mars_stream.hpp
+	base/mars_test.hpp
+	base/mars_tracker.hpp
+	base/mars_utils.hpp
+	base/mars_vector.hpp
+	base/mars_visualization.hpp
+	base/mars_vtk_writer.hpp
+	base/mars_non_simplex.hpp
+	base/mars_lepp_bisection.hpp
+	base/mars_lepp_benchmark.hpp
+	base/mars_prelepp_benchmark.hpp
+	base/mars_prelepp_bisection.hpp
+	base/mars_mesh_reader.hpp
+	base/mars_mesh_writer.hpp
+	kokkos/mars_sub_view.hpp
+	kokkos/mars_point.hpp
+	kokkos/mars_mesh_generation.hpp
+    kokkos/mars_device_vector.hpp
+	kokkos/mars_memory.hpp
 	)
 	
 IF(Kokkos_FOUND)
 	list(APPEND MARS_HEADERS
-		generation/mars_imesh_kokkos.hpp	
-	    generation/mars_mesh_kokkos.hpp
-	    generation/mars_test_kokkos.hpp
-	    generation/mars_utils_kokkos.hpp
-		generation/mars_edge_select_kokkos.hpp
-		generation/mars_static_math_kokkos.hpp
-		generation/mars_simplex_kokkos.hpp
-		generation/mars_non_simplex_kokkos.hpp
-		generation/mars_edge_kokkos.hpp
-		generation/mars_lepp_benchmark_kokkos.hpp
-		generation/mars_bisection_kokkos.hpp
-		generation/mars_edge_node_map_kokkos.hpp
-		generation/mars_edge_element_map_kokkos.hpp
-		generation/mars_mark_kokkos.hpp
-		generation/sfc/mars_sfc_code.hpp
-		generation/sfc/mars_sfc_generation.hpp
+		kokkos/mars_imesh_kokkos.hpp	
+	    kokkos/mars_mesh_kokkos.hpp
+	    kokkos/mars_test_kokkos.hpp
+	    kokkos/mars_utils_kokkos.hpp
+		kokkos/mars_edge_select_kokkos.hpp
+		kokkos/mars_static_math_kokkos.hpp
+		kokkos/mars_simplex_kokkos.hpp
+		kokkos/mars_non_simplex_kokkos.hpp
+		kokkos/mars_edge_kokkos.hpp
+		kokkos/mars_lepp_benchmark_kokkos.hpp
+		kokkos/mars_bisection_kokkos.hpp
+		kokkos/mars_edge_node_map_kokkos.hpp
+		kokkos/mars_edge_element_map_kokkos.hpp
+		kokkos/mars_mark_kokkos.hpp
+		distributed/sfc/mars_sfc_code.hpp
+		distributed/sfc/mars_sfc_generation.hpp
 	)
 ENDIF()
 
 IF(WITH_MPI)
 	list(APPEND MARS_HEADERS
-		generation/sfc/mars_mesh_distributed_generation.hpp
-		generation/sfc/mars_test_mpi.hpp
-		generation/communication/util/mars_pp_util.hpp
-		generation/communication/mars_context.hpp
-		generation/communication/mars_gathered_vector.hpp
-		generation/communication/mars_mpi_error.hpp
-		generation/communication/mars_mpi.hpp
-		generation/communication/mars_distributed_context.hpp
-		generation/communication/mars_execution_context.hpp
-		generation/mars_env/mars_mpi_guard.hpp
+		distributed/kokkos/mars_distributed_mesh_kokkos.hpp
+		distributed/kokkos/mars_distributed_non_simplex_kokkos.hpp
+		distributed/kokkos/mars_distributed_simplex_kokkos.hpp
+		distributed/mars_distributed_mesh_generation.hpp
+		distributed/mars_test_mpi.hpp
+		distributed/communication/util/mars_pp_util.hpp
+		distributed/communication/mars_context.hpp
+		distributed/communication/mars_gathered_vector.hpp
+		distributed/communication/mars_mpi_error.hpp
+		distributed/communication/mars_mpi.hpp
+		distributed/communication/mars_distributed_context.hpp
+		distributed/communication/mars_execution_context.hpp
+		distributed/mars_env/mars_mpi_guard.hpp
 	)
 ENDIF()
 
 list(APPEND MARS_SOURCES
-	mars_communicator.cpp
-	mars_simplex.cpp
-	mars_test.cpp
+	base/mars_communicator.cpp
+	base/mars_simplex.cpp
+	base/mars_test.cpp
 	)
 
 IF(WITH_MPI)
 	list(APPEND MARS_SOURCES
-		generation/communication/mars_mpi.cpp
-		generation/communication/mars_mpi_error.cpp
-		generation/communication/mars_mpi_context.cpp
-		generation/communication/mars_execution_context.cpp
-		generation/communication/mars_dry_run_context.cpp
+		distributed/communication/mars_mpi.cpp
+		distributed/communication/mars_mpi_error.cpp
+		distributed/communication/mars_mpi_context.cpp
+		distributed/communication/mars_execution_context.cpp
+		distributed/communication/mars_dry_run_context.cpp
 	)
 ENDIF()
 
@@ -240,12 +243,14 @@ IF(WITH_MPI)
 ENDIF()
 
 add_definitions("-std=c++11")
-target_include_directories(mars PUBLIC .)
-target_include_directories(mars PUBLIC generation)
-target_include_directories(mars PUBLIC generation/sfc)
-target_include_directories(mars PUBLIC generation/communication)
-target_include_directories(mars PUBLIC generation/communication/util)
-target_include_directories(mars PUBLIC generation/mars_env)
+target_include_directories(mars PUBLIC base)
+target_include_directories(mars PUBLIC kokkos)
+target_include_directories(mars PUBLIC distributed)
+target_include_directories(mars PUBLIC distributed/kokkos)
+target_include_directories(mars PUBLIC distributed/sfc)
+target_include_directories(mars PUBLIC distributed/mars_env)
+target_include_directories(mars PUBLIC distributed/communication)
+target_include_directories(mars PUBLIC distributed/communication/util)
 
 IF(Kokkos_FOUND)
 	MESSAGE(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
@@ -281,7 +286,7 @@ target_include_directories(mars PUBLIC ${MARS_INCLUDES})
 
 message(STATUS "${MARS_INCLUDES}")
 
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/mars_config.hpp.in ${CMAKE_BINARY_DIR}/mars_config.hpp)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/base/mars_config.hpp.in ${CMAKE_BINARY_DIR}/mars_config.hpp)
 include_directories(${CMAKE_BINARY_DIR})
 
 install(TARGETS mars mars_exec

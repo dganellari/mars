@@ -38,7 +38,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 #include "mars_mpi_guard.hpp"
 
 #ifdef WITH_KOKKOS
-#include "mars_mesh_distributed_generation.hpp"
+#include "mars_distributed_mesh_generation.hpp"
 #endif //WITH_KOKKOS
 
 void test_mpi(int &argc, char **&argv)
@@ -151,7 +151,7 @@ void test_mpi_sfc(int &argc, char **&argv, const int level)
 
 #ifdef WITH_KOKKOS
         // run some kokkos simulations!
-        ParallelQuad4Mesh nsm;
+        DistributedQuad4Mesh nsm;
         generate_distributed_cube(context, nsm, level, level , 0);
 #endif
     }
