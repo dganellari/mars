@@ -5,15 +5,17 @@
 #include "mars_context.hpp"
 #include "mars_execution_context.hpp"
 #ifdef WITH_KOKKOS
-#include "mars_mesh_kokkos.hpp"
+#include "mars_distributed_mesh_kokkos.hpp"
 #include "mars_sfc_generation.hpp"
 #include "mars_utils_kokkos.hpp"
 namespace mars
 {
 
 template <Integer Dim, Integer ManifoldDim, Integer Type>
-bool generate_distributed_cube(const context &context,
-                               Mesh<Dim, ManifoldDim, KokkosImplementation, NonSimplex<Type, KokkosImplementation>> &mesh,
+using DMesh = Mesh<Dim, ManifoldDim, DistributedImplementation, NonSimplex<Type, DistributedImplementation>>;
+
+template <Integer Dim, Integer ManifoldDim, Integer Type>
+bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, Type> &mesh,
                                const Integer xDim, const Integer yDim, const Integer zDim)
 {
     using namespace Kokkos;
@@ -62,16 +64,20 @@ bool generate_distributed_cube(const context &context,
                 printf(" el: %u-%i\n", morton.get_view_elements()(i), i);
             });
     }
+    std::cout << "MPI Scatter started!"<< std::endl;
 
-     context->distributed->scatter_gids(morton.get_view_elements(), local);
+    context->distributed->scatter_gids(morton.get_view_elements(), local);
+
+    std::cout << "MPI Scatter ended!"<< std::endl;
+
 
    parallel_for(
         "print_elem_chunk",chunk_size, KOKKOS_LAMBDA(const int i) {
             printf(" elch: %u-%i\n", local(i), proc_num);
         });
 
-    using Elem = mars::NonSimplex<Type, KokkosImplementation>;
-
+    mesh.set_view_sfc(local);
+    
     assert(Dim <= 3);
     assert(ManifoldDim <= Dim);
 

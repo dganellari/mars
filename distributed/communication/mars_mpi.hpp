@@ -27,7 +27,6 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
-
 #pragma once
 
 #include <algorithm>
@@ -117,15 +116,15 @@ std::vector<T> gather(T value, int root, MPI_Comm comm)
 
 // Scatter sfc values of type T from root into each rank
 template <typename T>
-ViewVectorType<T> scatter(const ViewVectorType<T> global, 
-                const ViewVectorType<T> local, MPI_Comm comm)
+ViewVectorType<T> scatter(const ViewVectorType<T> global,
+                          const ViewVectorType<T> local, MPI_Comm comm)
 {
     using traits = mpi_traits<T>;
     unsigned int chunk_size = local.extent(0);
 
-      MPI_OR_THROW(MPI_Scatter,
-                 global.data(), chunk_size, traits::mpi_type(),        // send buffer
-                 local.data(), chunk_size, traits::mpi_type(), // receive buffer
+    MPI_OR_THROW(MPI_Scatter,
+                 global.data(), chunk_size, traits::mpi_type(), // send buffer
+                 local.data(), chunk_size, traits::mpi_type(),  // receive buffer
                  0, comm);
 
     return local;

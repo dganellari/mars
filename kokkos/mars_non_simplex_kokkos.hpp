@@ -38,12 +38,12 @@ namespace mars {
         {
     	}
 
-        MARS_INLINE_FUNCTION Integer get_block() const override
+        MARS_INLINE_FUNCTION Integer get_block() const //override
         {
             return block;
         }
 
-        MARS_INLINE_FUNCTION void set_block(const Integer block_id) override
+        MARS_INLINE_FUNCTION void set_block(const Integer block_id) //override
         {
             block = block_id;
         }

@@ -1,5 +1,5 @@
-#ifndef MARS_SIMPLEX_KOKKOS_HPP
-#define MARS_SIMPLEX_KOKKOS_HPP
+#ifndef MARS_DIST_SIMPLEX_KOKKOS_HPP
+#define MARS_DIST_SIMPLEX_KOKKOS_HPP
 
 #include "mars_base.hpp"
 #include "mars_matrix.hpp"
@@ -23,7 +23,7 @@
 namespace mars {
 
     template<Integer Dim, Integer ManifoldDim>
-    class Simplex<Dim, ManifoldDim, KokkosImplementation> final : public ParallelIElem {
+    class Simplex<Dim, ManifoldDim, DistributedImplementation> final : public ParallelIElem {
     public:
     	static constexpr Integer ManifoldDim_ = ManifoldDim;
         
@@ -34,13 +34,11 @@ namespace mars {
 		ViewMatrixTextureC<Integer, Comb::value, 2> combs;
 
     	SubView<Integer,ManifoldDim+1> nodes;
-        SubView<Integer,2> children; //TODO: templatize for the number of children based onthe select algorithm
-        SubView<Integer,ManifoldDim+1> side_tags;
 
         Integer id = INVALID_INDEX;
-        Integer parent_id = INVALID_INDEX;
+/*         Integer parent_id = INVALID_INDEX;
         Integer block = INVALID_INDEX;
-
+ */
         MARS_INLINE_FUNCTION Simplex() {}
 
         MARS_INLINE_FUNCTION Simplex(SubView<Integer,ManifoldDim+1> n) :
@@ -52,36 +50,7 @@ namespace mars {
 				const ViewMatrixTextureC<Integer, Comb::value, 2> &cmbs) :
 				nodes(n), combs(cmbs)
 		{
-		}
-
-		MARS_INLINE_FUNCTION Simplex(SubView<Integer, ManifoldDim + 1> n,
-			SubView<Integer, 2> ch) :	nodes(n), children(ch)
-		{
-		}
-
-		MARS_INLINE_FUNCTION Simplex(SubView<Integer, ManifoldDim + 1> n,
-				SubView<Integer, 2> ch, SubView<Integer, ManifoldDim + 1> st) :
-				nodes(n), children(ch), side_tags(st)
-		{
-		}
-
-
-        /*inline void get_nodes(std::vector<Integer> &nodes_copy) const override
-        {
-            nodes_copy.resize(nodes.size());
-            std::copy(std::begin(nodes), std::end(nodes), std::begin(nodes_copy));
-        }*/
-
-        MARS_INLINE_FUNCTION Integer get_block() const override
-        {
-            return block;
         }
-
-        MARS_INLINE_FUNCTION void set_block(const Integer block_id) override
-        {
-            block = block_id;
-        }
-
 
         MARS_INLINE_FUNCTION Integer n_nodes() const override { return ManifoldDim+1; }
 
@@ -132,25 +101,25 @@ namespace mars {
 
     
     template<Integer Dim, Integer ManifoldDim>
-    MARS_INLINE_FUNCTION constexpr static Integer n_nodes(const Simplex<Dim, ManifoldDim, KokkosImplementation> &)
+    MARS_INLINE_FUNCTION constexpr static Integer n_nodes(const Simplex<Dim, ManifoldDim, DistributedImplementation> &)
     {
         return ManifoldDim + 1;
     }
     
     template<Integer Dim, Integer ManifoldDim>
-    MARS_INLINE_FUNCTION constexpr static Integer n_sides(const Simplex<Dim, ManifoldDim, KokkosImplementation> &)
+    MARS_INLINE_FUNCTION constexpr static Integer n_sides(const Simplex<Dim, ManifoldDim, DistributedImplementation> &)
     {
         return ManifoldDim + 1;
     }
     
     template<Integer Dim, Integer ManifoldDim>
-    MARS_INLINE_FUNCTION constexpr static Integer n_dims(const Simplex<Dim, ManifoldDim ,KokkosImplementation> &)
+    MARS_INLINE_FUNCTION constexpr static Integer n_dims(const Simplex<Dim, ManifoldDim ,DistributedImplementation> &)
     {
         return Dim;
     }
 
     template<Integer Dim, Integer ManifoldDim>
-    MARS_INLINE_FUNCTION constexpr static Integer n_edges(const Simplex<Dim, ManifoldDim ,KokkosImplementation> &)
+    MARS_INLINE_FUNCTION constexpr static Integer n_edges(const Simplex<Dim, ManifoldDim ,DistributedImplementation> &)
     {
         return Combinations<ManifoldDim + 1, 2,KokkosImplementation>::value;
     }

@@ -1824,6 +1824,6 @@ private:
 	using ParallelHex8Mesh = mars::Mesh<3, 3, KokkosImplementation, Hex8PElem>;
 
 	template<Integer Type>
-	using ParallelNSMesh2 = mars::Mesh<2, 2, DefaultImplementation, NonSimplex<Type, KokkosImplementation>>;
+	using ParallelNSMesh2 = mars::Mesh<2, 2, KokkosImplementation, NonSimplex<Type, KokkosImplementation>>;
 }
 #endif //MARS_MESH_HPP
