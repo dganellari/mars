@@ -6,7 +6,6 @@
 #include "mars_execution_context.hpp"
 #ifdef WITH_KOKKOS
 #include "mars_distributed_mesh_kokkos.hpp"
-#include "mars_sfc_generation.hpp"
 #include "mars_utils_kokkos.hpp"
 namespace mars
 {
@@ -19,6 +18,8 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
                                const Integer xDim, const Integer yDim, const Integer zDim)
 {
     using namespace Kokkos;
+
+	Kokkos::Timer timer;
 
     int proc_num =  rank(context);
     std::cout << "rank -:    " << proc_num << std::endl;
@@ -35,7 +36,7 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
     {
     case ElementType::Quad4:
     {
-        std::cout << "ElementType:: - :    " << ElementType::Quad4 << std::endl;
+        //std::cout << "ElementType:: - :    " << ElementType::Quad4 << std::endl;
 
         n__anchor_nodes = xDim * yDim;
         chunk_size = (unsigned int)ceil((double)n__anchor_nodes / size);
@@ -59,34 +60,62 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
 
         morton.generate_sfc_elements<Type>(xDim, yDim, zDim);
 
-        parallel_for(
+       /*  parallel_for(
             "print_elem", xDim * yDim, KOKKOS_LAMBDA(const int i) {
                 printf(" el: %u-%i\n", morton.get_view_elements()(i), i);
-            });
+            }); */
     }
-    std::cout << "MPI Scatter started!"<< std::endl;
 
     context->distributed->scatter_gids(morton.get_view_elements(), local);
 
     std::cout << "MPI Scatter ended!"<< std::endl;
 
 
-   parallel_for(
+  /*  parallel_for(
         "print_elem_chunk",chunk_size, KOKKOS_LAMBDA(const int i) {
             printf(" elch: %u-%i\n", local(i), proc_num);
-        });
+        }); */
 
     mesh.set_view_sfc(local);
     
+    //set the chunk size to the remainder for the last mpi processes.
+    if(proc_num == size-1)
+        mesh.set_chunk_size(last_chunk_size);
+    else
+        mesh.set_chunk_size(chunk_size);
+
     assert(Dim <= 3);
     assert(ManifoldDim <= Dim);
+
+	Kokkos::Timer timer_gen;
 
     bool gen_pts = mesh.generate_points(xDim, yDim, zDim, Type);
 
     bool gen_elm = mesh.generate_elements(xDim, yDim, zDim, Type);
 
-    if (!gen_pts || !gen_elm)
+   	double time_gen = timer_gen.seconds();
+	std::cout << "Generation 2D distributed kokkos took: " << time_gen << " seconds. Process: "<<proc_num << std::endl;
+
+      if (!gen_pts || !gen_elm)
         std::cerr << "Not implemented for other dimensions yet" << std::endl;
+
+	double time = timer.seconds();
+	std::cout << "Total Generation 2D distributed kokkos took: " << time << " seconds. Process: "<<proc_num << std::endl;
+
+
+    /* ViewMatrixType<Real> poi = mesh.get_view_points();
+
+    parallel_for(
+        "print_elem_chunk1", mesh.get_view_points().extent(0), KOKKOS_LAMBDA(const int i) {
+            printf(" pt: [(%f, %f) - %i]\n", poi(i, 0), poi(i, 1), proc_num);
+        });
+
+          ViewMatrixType<Integer> eeel = mesh.get_view_elements();
+
+    parallel_for(
+        "print_elem_chunk", mesh.get_view_elements().extent(0), KOKKOS_LAMBDA(const int i) {
+            printf(" pt: [(%li, %li, %li, %li) - %i]\n", eeel(i, 0), eeel(i, 1), eeel(i, 2), eeel(i, 3), proc_num);
+        }); */
 
     return (gen_pts && gen_elm);
 }

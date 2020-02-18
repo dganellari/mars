@@ -1,3 +1,6 @@
+#ifndef MARS_SFC_CODE_HPP
+#define MARS_SFC_CODE_HPP
+
 namespace mars
 {
 
@@ -94,3 +97,4 @@ unsigned int decode_morton_3DZ(unsigned int code)
 }
 
 } // namespace mars
+#endif 
