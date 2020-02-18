@@ -32,7 +32,6 @@
 #ifdef WITH_KOKKOS
 #include "mars_test_kokkos.hpp"
 #include "mars_lepp_benchmark_kokkos.hpp"
-#include "mars_distributed_mesh_generation.hpp"
 #endif //WITH_KOKKOS
 
 #ifdef WITH_PAR_MOONOLITH
@@ -45,6 +44,7 @@
 #include "mars_par_bisection.hpp"
 #include "mars_par_mesh.hpp"
 #include "mars_test_mpi.hpp"
+#include "mars_distributed_mesh_generation.hpp"
 #endif //WITH_MPI
 #include <chrono>
 
@@ -1345,8 +1345,9 @@ int main(int argc, char *argv[])
 
 		//run_benchmarks(level, refine_level);
 
-
-	test_mpi_sfc(argc, argv, level);
+		test_mars_nonsimplex_mesh_generation_kokkos_2D(level, level);
+	
+		test_mpi_sfc(argc, argv, level);
 		//test_mpi_context(argc, argv);
 		//test_mars_mesh_generation_kokkos_2D(2,4);
 
