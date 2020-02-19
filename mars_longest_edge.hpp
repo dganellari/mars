@@ -2,12 +2,12 @@
 #define MARS_LONGEST_EDGE_SELECT_HPP
 
 #include "mars_edge_select.hpp"
-#include "mars_edge_select_kokkos.hpp"
+// #include "mars_edge_select_kokkos.hpp"
 #include "mars_node_rank.hpp"
 
 namespace mars {
 	template<class Mesh>
-	class LongestEdgeSelect final : public ParallelEdgeSelect<Mesh> {
+	class LongestEdgeSelect final : public EdgeSelect<Mesh> {
 	public:
 		using Edge = typename Mesh::Edge;
 
@@ -154,7 +154,7 @@ namespace mars {
 					len = dist;
 					edge_num = i;
 				}
-				
+
 				if(Edge(v1, v2) == neighbor_edge) {
 					neigh_len 	   = dist;
 					neigh_edge_num = i;
@@ -395,7 +395,7 @@ namespace mars {
 
 		class EdgeDesc {
 		public:
-			EdgeDesc(const Edge &edge, const Integer edge_num) 
+			EdgeDesc(const Edge &edge, const Integer edge_num)
 			: edge(edge), edge_num(edge_num)
 			{
 				assert(edge.is_valid());
@@ -426,7 +426,7 @@ namespace mars {
 				edge_pairs.emplace_back(Edge(map.global(v1), map.global(v2)), i);
 			}
 
-			std::sort(edge_pairs.begin(), edge_pairs.end(), 
+			std::sort(edge_pairs.begin(), edge_pairs.end(),
 				[](const EdgeDesc &e1, const EdgeDesc &e2) -> bool {
 					return e1 < e2;
 			});
@@ -439,7 +439,7 @@ namespace mars {
 				const Integer v2 = map.local(ep.edge[1]);
 
 				Real len_i = (mesh.point(v1) - mesh.point(v2)).squared_norm();
-				
+
 				// if(use_trick_) {
 				// 	len_i += ( len_i / ( ep.first[0] + ep.first[1] ) );
 				// }
@@ -458,7 +458,7 @@ namespace mars {
 		// 	EdgeDesc(
 		// 		const Edge &edge,
 		// 		const Real len,
-		// 		const Integer edge_num) 
+		// 		const Integer edge_num)
 		// 	: edge(edge), len(len), edge_num(edge_num)
 		// 	{
 		// 		assert(edge.is_valid());

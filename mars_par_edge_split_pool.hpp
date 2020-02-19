@@ -9,8 +9,8 @@
 #include <iomanip>
 
 namespace mars {
-	template<class Mesh>
-	class Bisection;
+	// template<class Mesh>
+	// class Bisection;
 
 	template<Integer Dim, Integer ManifoldDim>
 	class ParMesh;
@@ -21,10 +21,10 @@ namespace mars {
 		using InputStream  = std::istringstream;
 		using BufferObject = std::string;
 
-		template<class ParMesh>
+		template<class ParMesh, class EdgeSelect>
 		void build_edge_interface(
 			ParMesh &p_mesh,
-			Bisection<typename ParMesh::Mesh> &bisection)
+			Bisection<typename ParMesh::Mesh, EdgeSelect> &bisection)
 		{
 			const auto &mesh = p_mesh.get_serial_mesh();
 			std::vector< std::set<Edge> > edges(comm_.size());
@@ -232,10 +232,10 @@ namespace mars {
 			if(gs.only_on_partition(comm_.rank())) {
 				return false;
 			}
-			
+
 			if(!es.is_valid()) {
 				to_communicate_.push_back(gs);
-			} 
+			}
 
 			return false;
 		}
@@ -251,7 +251,7 @@ namespace mars {
 			e_temp.fix_ordering();
 
 			auto it = edge_to_split_map_.find(e_temp);
-			
+
 			if(it == edge_to_split_map_.end()) {
 				Integer split_id = splits_.size();
 				edge_to_split_map_[e_temp] = split_id;
@@ -332,7 +332,7 @@ namespace mars {
 			assert(split_id >= 0);
 			assert(split_id < splits_.size());
 			assert(edge_to_split_map_.size() == splits_.size());
-			
+
 			return splits_[split_id];
 		}
 
@@ -397,7 +397,7 @@ namespace mars {
 			assert(!it->second.empty());
 			// assert(edge_interface_[e1].empty());
 			// assert(edge_interface_[e2].empty());
-			
+
 			auto &ei1 = edge_interface_[e1];
 			if(ei1.empty()) {
 				ei1 = parent_interface;
@@ -462,7 +462,7 @@ namespace mars {
 				map_it->second -= remove_index;
 
 				Edge e = part.local_edge(gs.edge);
-				
+
 				if(!e.is_valid()) {
 					std::cout << "invalid local edge: ";
 					gs.describe(std::cout);
@@ -481,7 +481,7 @@ namespace mars {
 				part.assign_node_owner(local_mp, gs.owner);
 
 				if(gs.midpoint == INVALID_INDEX) { ++gs_it; continue; }
-				
+
 				part.assign_node_local_to_global(local_mp, gs.midpoint);
 				update_edge_interface(gs.edge, gs.midpoint);
 
@@ -542,7 +542,7 @@ namespace mars {
 		/////////////////////////////////////////////////////
 
 		ParEdgeSplitPool(const Communicator &comm)
-		: comm_(comm), 
+		: comm_(comm),
 		  output_(comm.size()),
 		  send_buff_(comm.size()),
 		  recv_buff_(comm.size()),
@@ -550,7 +550,7 @@ namespace mars {
 		{}
 
 		/////////////////////////////////////////////////////
-		
+
 	private:
 		Communicator comm_;
 		std::map<Edge, std::vector<Integer> > edge_interface_;

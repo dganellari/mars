@@ -2,6 +2,8 @@
 #include "mars_moonolith_l2_transfer.hpp"
 #include "generation/mars_mesh_generation.hpp"
 #include "mars_par_mesh.hpp"
+#include "mars_bisection.hpp"
+#include "mars_vtk_writer.hpp"
 #include "mars_moonolith_function_space_adapter.hpp"
 
 #include <cassert>
@@ -68,7 +70,7 @@ namespace mars {
 
        Integer n_master = N_MASTER;
        Integer n_slave  = N_SLAVE;
-        
+
         mars::Mesh3 mesh_master;
 
         if(comm.rank() == 0 || comm.is_alone()) {
@@ -169,13 +171,13 @@ namespace mars {
 
         Integer n_master = N_MASTER;
         Integer n_slave  = N_SLAVE;
-        
+
         ParMesh3 mesh_master(comm.get());
 
         mars::Mesh3 mesh;
         mars::generate_cube(mesh, n_master, n_master, n_master);
         partition_mesh(mesh, mesh_master);
-        
+
         mars::write_mesh(
             "mesh_m" + std::to_string(comm.rank()),
             mesh_master.get_serial_mesh()
@@ -186,7 +188,7 @@ namespace mars {
         mesh.clear();
         mars::generate_cube(mesh, n_slave, n_slave, n_slave);
         partition_mesh(mesh, mesh_slave);
-        
+
         mars::write_mesh(
             "mesh_s" + std::to_string(comm.rank()),
             mesh_slave.get_serial_mesh()
@@ -225,18 +227,18 @@ namespace mars {
         Integer n1 = 2;
         Integer n2 = 2;
         Integer n3 = 2;
-        
+
         ParMesh3 mesh(comm.get());
 
         mars::Mesh3 mesh1;
         mars::generate_cube(mesh1, n1, n1, n1);
-        
+
         mars::Mesh3 mesh2(comm.get());
         mars::generate_cube(mesh2, n2, n2, n2);
 
         mars::Mesh3 mesh3(comm.get());
         mars::generate_cube(mesh3, n3, n3, n3);
-        
+
         concatenate_mesh(mesh1, mesh2, mesh3, mesh);
 
         ////////////////////////////////////////////////////////////////
