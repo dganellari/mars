@@ -10,8 +10,8 @@
 
 namespace mars {
 
-	template<class Mesh>
-	class Bisection;
+	// template<class Mesh>
+	// class Bisection;
 
 	template<class ParMesh>
 	class ParBisection {
@@ -23,8 +23,8 @@ namespace mars {
 		static const Integer ManifoldDim = ParMesh::ManifoldDim;
 		using Mesh 						 = typename ParMesh::Mesh;
 
-		using Bisection = mars::Bisection<Mesh>;
 		using ES 	    = EdgeSelect<Mesh>;
+		using Bisection = mars::Bisection<Mesh, ES>;
 		using DefaultES = OldestEdgeSelect<Mesh>;
 
 		ParBisection(ParMesh &mesh)
@@ -110,7 +110,7 @@ namespace mars {
 			edge_split_pool_.update_midpoint_parts(bisection_.edge_node_map(), mesh_);
 
 			build_edge_interface();
-		}	
+		}
 
 		//4) (parallel)
 		bool conform_interfaces()
@@ -123,7 +123,7 @@ namespace mars {
 			);
 
 			 //refine edges
-			bisection_.refine_edges(splits);	
+			bisection_.refine_edges(splits);
 			int has_more = !edge_split_pool_.empty();
 
 			mesh_.comm().all_reduce(&has_more, 1, MPIMax());

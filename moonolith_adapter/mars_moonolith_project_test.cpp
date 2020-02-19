@@ -1,6 +1,8 @@
 #include "mars_moonolith_project_test.hpp"
 
-#include "mars.hpp"
+#include "mars_base.hpp"
+#include "mars_mesh.hpp"
+#include "mars_utils.hpp"
 
 #include "moonolith_mesh_adapter.hpp"
 #include "moonolith_polygon.hpp"
@@ -24,14 +26,14 @@ namespace mars {
 	class ProjectData {
 	public:
         using Trafo = moonolith::AffineTransform<double, Dim-1, Dim>;
-        
+
         moonolith::AffineContact<double, Dim> contact;
         std::shared_ptr<Trafo> trafo_m, trafo_s;
 
         ProjectData()
         {
             trafo_m = std::make_shared<Trafo>();
-            trafo_s = std::make_shared<Trafo>(); 
+            trafo_s = std::make_shared<Trafo>();
 
             contact.trafo_master = trafo_m;
             contact.trafo_slave  = trafo_s;
@@ -62,7 +64,7 @@ namespace mars {
 			return 0.;
 		}
 	};
-    
+
 
 	template<Integer Dim, Integer ManifoldDim>
 	static double mars_compute_project_measure(
@@ -79,7 +81,7 @@ namespace mars {
 
 		auto cm = std::make_shared<moonolith::CollectionManager<MeshT>>();
 		moonolith::ManyMastersOneSlaveAlgorithm<Dim, MeshT> algo(comm, cm);
-		
+
 
 		algo.init_simple(
 			mesh_master,
@@ -94,9 +96,9 @@ namespace mars {
 
 		elapsed = MPI_Wtime() - elapsed;
 		moonolith::logger() << "init: " << elapsed  << std::endl;
-		
+
 		elapsed = MPI_Wtime();
-		
+
 		algo.compute([&](const Adapter &master, const Adapter &slave) -> bool {
 			auto v = isect.compute(master, slave);
 
@@ -144,7 +146,7 @@ namespace mars {
         std::shared_ptr<Trafo> trafo_m, trafo_s;
 
         trafo_m = std::make_shared<Trafo>();
-        trafo_s = std::make_shared<Trafo>(); 
+        trafo_s = std::make_shared<Trafo>();
 
         contact.q_rule.points  = { { 0.}, {1.} };
         contact.q_rule.weights = { 0.5, 0.5};
@@ -201,7 +203,7 @@ namespace mars {
 		if(comm.rank() == 1 || comm.is_alone()) {
 			read_mesh("../data/cube_6.MFEM", mesh_slave);
 			mars::mark_boundary(mesh_slave);
-			
+
 			mars::Bisection<mars::Mesh3> b(mesh_slave);
 			b.uniform_refine(res * 3);
 			mesh_slave.clean_up();
@@ -209,7 +211,7 @@ namespace mars {
 			mars::write_mesh("mesh_s", mesh_slave);
 
 			mesh_slave.update_dual_graph(true);
-			
+
 			mars::extract_surface(mesh_slave, surf_mesh_slave);
 
 			// surf_mesh_slave.describe(logger());
@@ -243,7 +245,7 @@ namespace mars {
 
         master.make_reference();
         slave.make_reference();
-        
+
         moonolith::ContactMortar<MasterElem, SlaveElem> algo;
 
         //always initialize both rules
@@ -252,13 +254,13 @@ namespace mars {
 
         if(algo.assemble(master, slave)) {
             assert(false);
-        } 
+        }
 
         slave.set_affine(false);
 
         if(algo.assemble(master, slave)) {
             assert(false);
-        } 
+        }
 
         invert_orientation(slave);
 
@@ -266,15 +268,15 @@ namespace mars {
 
         if(!algo.assemble(master, slave)) {
             assert(false);
-        } 
+        }
         assert(moonolith::approxeq(0.5, algo.projection_measure(), 1e-5));
 
         slave.set_affine(false);
-        
+
         algo.clear();
         if(!algo.assemble(master, slave)) {
             assert(false);
-        } 
+        }
 
         assert(moonolith::approxeq(0.5, algo.projection_measure(), 1e-5));
         // algo.describe(logger());
@@ -297,7 +299,7 @@ namespace mars {
 
         master.make_reference();
         slave.make_reference();
-        
+
         moonolith::ContactMortar<PolymorphicElem, PolymorphicElem> algo;
 
         //always initialize both rules
@@ -306,13 +308,13 @@ namespace mars {
 
         if(algo.assemble(master, slave)) {
             assert(false);
-        } 
+        }
 
         slave.set_affine(false);
 
         if(algo.assemble(master, slave)) {
             assert(false);
-        } 
+        }
 
         invert_orientation(slave);
 
@@ -320,15 +322,15 @@ namespace mars {
 
         if(!algo.assemble(master, slave)) {
             assert(false);
-        } 
+        }
         assert(moonolith::approxeq(0.5, algo.projection_measure(), 1e-5));
 
         slave.set_affine(false);
-        
+
         algo.clear();
         if(!algo.assemble(master, slave)) {
             assert(false);
-        } 
+        }
 
         assert(moonolith::approxeq(0.5, algo.projection_measure(), 1e-5));
         // algo.describe(logger());

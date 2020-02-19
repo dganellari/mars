@@ -81,15 +81,15 @@ if(TRY_WITH_KOKKOS)
 	   	MESSAGE("\nFound Kokkos!  Here are the details: ")
 	   	MESSAGE("   Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
 	   	MESSAGE("   Kokkos_C_COMPILER = ${Kokkos_C_COMPILER}")
-	   
+
 	   	IF(Kokkos_CXX_COMPILER)
 			SET(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
 			SET(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
 			MESSAGE("Setting CMAKE_CXX_COMPILER to Kokkos_CXX_COMPILER")
 	   	ENDIF()
-	   
+
 	   	set(WITH_KOKKOS ON)
-	   
+
 		FIND_PACKAGE(OpenMP)
 
 		IF(OPENMP_FOUND)
@@ -98,7 +98,7 @@ if(TRY_WITH_KOKKOS)
 		 	SET (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
 		 	set (CMAKE_CXX_LINK_FLAGS "${CMAKE_CXX_LINK_FLAGS} ${OpenMP_CXX_FLAGS}")
 		ENDIF()
-	   
+
 	ELSE()
 	  	MESSAGE(WARNING "Could not find Kokkos!")
 	  	IF(MARS_USE_CUDA)
@@ -166,10 +166,10 @@ list(APPEND MARS_HEADERS
     generation/mars_device_vector.hpp
 	generation/mars_memory.hpp
 	)
-	
+
 IF(Kokkos_FOUND)
 	list(APPEND MARS_HEADERS
-		generation/mars_imesh_kokkos.hpp	
+		generation/mars_imesh_kokkos.hpp
 	    generation/mars_mesh_kokkos.hpp
 	    generation/mars_test_kokkos.hpp
 	    generation/mars_utils_kokkos.hpp
@@ -216,15 +216,15 @@ IF(Kokkos_FOUND)
 	MESSAGE(" Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
 	MESSAGE(" Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
 	MESSAGE(" Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
-	
+
 	IF(MARS_USE_CUDA AND NOT Kokkos_TPL_LIBRARIES MATCHES "cuda")
 		MESSAGE(FATAL_ERROR "Enable Kokkos Cuda or unset MARS_USE_CUDA to continue with OpenMP!")
 	ENDIF()
-	
+
 	target_include_directories(mars PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
 
 	message(STATUS "Kokkos_INCLUDE_DIRS=${Kokkos_INCLUDE_DIRS}, ${Kokkos_TPL_INCLUDE_DIRS}")
-	
+
 	IF(Kokkos_CXX_COMPILER)
 		target_link_libraries(mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES})
 	ELSE()
@@ -237,6 +237,10 @@ target_link_libraries(mars_exec mars)
 
 if(TRY_WITH_MOONOLITH)
 	add_subdirectory(moonolith_adapter)
+
+	if(WITH_PAR_MOONOLITH)
+		target_link_libraries(mars mars_moonolith)
+	endif()
 endif()
 
 target_link_libraries(mars ${MARS_LIBRARIES})
@@ -249,9 +253,9 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/mars_config.hpp.in ${CMAKE_BINARY_DIR
 include_directories(${CMAKE_BINARY_DIR})
 
 install(TARGETS mars mars_exec
-	RUNTIME DESTINATION bin 
-	LIBRARY DESTINATION lib 
-	ARCHIVE DESTINATION lib 
+	RUNTIME DESTINATION bin
+	LIBRARY DESTINATION lib
+	ARCHIVE DESTINATION lib
 	)
 
 install(FILES ${MARS_HEADERS} DESTINATION include)
@@ -261,7 +265,7 @@ install(FILES ${CMAKE_BINARY_DIR}/mars_config.hpp DESTINATION include)
 # add_definitions("-DWITH_MOONOLITH")
 # set(MOONOLITH_DIR "$ENV{INSTALL_DIR}/moon")
 # target_include_directories(mars_exec PUBLIC ${MOONOLITH_DIR}/include)
-# target_link_libraries(mars_exec 
+# target_link_libraries(mars_exec
 # 	-L${MOONOLITH_DIR}/lib/
 # 	-leps
 # 	-lexternal

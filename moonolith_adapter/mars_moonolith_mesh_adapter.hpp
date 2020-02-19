@@ -1,7 +1,9 @@
 #ifndef MOONOLITH_MARS_MESH_ADAPTER_HPP
-#define MOONOLITH_MARS_MESH_ADAPTER_HPP 
+#define MOONOLITH_MARS_MESH_ADAPTER_HPP
 
-#include "mars.hpp"
+#include "mars_base.hpp"
+#include "mars_mesh.hpp"
+#include "mars_dof_map.hpp"
 #include "moonolith_mesh_adapter.hpp"
 #include "moonolith_polygon.hpp"
 #include "moonolith_polyhedron.hpp"
@@ -17,7 +19,7 @@
 #include <vector>
 
 namespace mars {
-	
+
 	template<class Mesh>
 	class MeshAllocator {};
 
@@ -98,7 +100,7 @@ namespace mars {
 			(void)a;
 		}
 
-		static const Elem &elem(const Mesh &mesh, const Integer handle) 
+		static const Elem &elem(const Mesh &mesh, const Integer handle)
 		{
 			return mesh.elem(handle);
 		}
@@ -140,12 +142,12 @@ namespace mars {
 
 			if(e.type() < Dim) {
 				Point p, q;
-				
+
 				mars::Vector<double, Dim> nn;
 				BlowUpDir<Mesh>::build(mesh, e, nn);
 
 				for(Integer i = 0; i < n_nodes(e); ++i) {
-					
+
 					auto n = e.node(i);
 					q = mesh.point(n);
 
@@ -188,7 +190,7 @@ namespace mars {
 				const auto &e = mesh.elem(*it);
 
 				for(Integer i = 0; i < n_nodes(e); ++i) {
-					node_index[e.node(i)] = 1; 
+					node_index[e.node(i)] = 1;
 				}
 			}
 
@@ -214,7 +216,7 @@ namespace mars {
 			for(Integer i = 0; i < mesh.n_nodes(); ++i) {
 				if(node_index[i] >= 0) {
 					const auto &p = mesh.point(i);
-					
+
 					for(Integer d = 0; d < Dim; ++d) {
 						os << p[d];
 					}
@@ -295,7 +297,7 @@ namespace mars {
 
 	namespace mars {
 	inline void make_aux(const mars::Mesh<2, 1> &mesh, const mars::Mesh<2, 1>::Elem &elem, moonolith::Line<double, 2> &poly)
-	{	
+	{
 		const auto &p0 = mesh.point(elem.nodes[0]);
 		const auto &p1 = mesh.point(elem.nodes[1]);
 
@@ -423,22 +425,22 @@ namespace mars {
         poly.el_index[0] = 0;
         poly.el_index[1] = 2;
         poly.el_index[2] = 1;
-   
+
         poly.el_index[3] = 0;
         poly.el_index[4] = 3;
         poly.el_index[5] = 2;
-   
+
         poly.el_index[6] = 0;
         poly.el_index[7] = 1;
         poly.el_index[8] = 3;
-   
+
         poly.el_index[9] = 1;
         poly.el_index[10] = 2;
         poly.el_index[11] = 3;
-		       
+
 	}
 
-	
+
 	inline void make(const mars::Mesh3 &mesh, const mars::Mesh3::Elem &elem, moonolith::Polyhedron<double> &poly)
 	{
 		make_aux(mesh, elem, poly);
@@ -483,19 +485,19 @@ namespace mars {
         poly.el_index[0] = 0;
         poly.el_index[1] = 2;
         poly.el_index[2] = 1;
-   
+
         poly.el_index[3] = 0;
         poly.el_index[4] = 3;
         poly.el_index[5] = 2;
-   
+
         poly.el_index[6] = 0;
         poly.el_index[7] = 1;
         poly.el_index[8] = 3;
-   
+
         poly.el_index[9] = 1;
         poly.el_index[10] = 2;
         poly.el_index[11] = 3;
-		       
+
 	}
 
     inline void make_transform(
