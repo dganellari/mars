@@ -355,6 +355,7 @@ public:
         } */
     };
 
+    template <Integer Type>
     struct BuildGlobalPointIndex
     {
 
@@ -379,39 +380,80 @@ public:
         KOKKOS_INLINE_FUNCTION
         void operator()(int i) const
         {
-            // set to true only those elements from the vector that are generated.
-            // in this way the array is already sorted and you just compact it using scan which is much faster in parallel.
+            switch (Type)
+            {
+            case ElementType::Quad4:
+            {
+                // set to true only those elements from the vector that are generated.
+                // in this way the array is already sorted and you just compact it using scan which is much faster in parallel.
 
-            unsigned int gl_index = global(i);
-            assert(gl_index < encode_morton_2D(xDim + 1, yDim + 1));
+                unsigned int gl_index = global(i);
+                assert(gl_index < encode_morton_2D(xDim + 1, yDim + 1));
 
-            // gl_index defines one element by its corner node. Then we add all the other nodes for that element.
-            const unsigned int x = decode_morton_2DX(gl_index);
-            const unsigned int y = decode_morton_2DY(gl_index);
-            predicate(gl_index) = 1;
-            predicate(encode_morton_2D(x + 1, y + 1)) = 1;
-            predicate(encode_morton_2D(x + 1, y)) = 1;
-            predicate(encode_morton_2D(x, y + 1)) = 1;
+                // gl_index defines one element by its corner node. Then we add all the other nodes for that element.
+                const unsigned int x = decode_morton_2DX(gl_index);
+                const unsigned int y = decode_morton_2DY(gl_index);
+                predicate(gl_index) = 1;
+                predicate(encode_morton_2D(x + 1, y)) = 1;
+                predicate(encode_morton_2D(x, y + 1)) = 1;
+                predicate(encode_morton_2D(x + 1, y + 1)) = 1;
+                break;
+
+            }
+            case ElementType::Hex8:
+            {
+                // set to true only those elements from the vector that are generated.
+                // in this way the array is already sorted and you just compact it using scan which is much faster in parallel.
+
+                unsigned int gl_index = global(i);
+                assert(gl_index < encode_morton_3D(xDim + 1, yDim + 1, zDim + 1));
+
+                // gl_index defines one element by its corner node. Then we add all the other nodes for that element.
+                const unsigned int x = decode_morton_3DX(gl_index);
+                const unsigned int y = decode_morton_3DY(gl_index);
+                const unsigned int z = decode_morton_3DZ(gl_index);
+
+                predicate(gl_index) = 1;
+                predicate(encode_morton_3D(x + 1, y, z)) = 1;
+                predicate(encode_morton_3D(x, y + 1, z)) = 1;
+                predicate(encode_morton_3D(x + 1, y + 1, z)) = 1;
+
+                predicate(encode_morton_3D(x , y , z + 1)) = 1;
+                predicate(encode_morton_3D(x + 1, y, z + 1)) = 1;
+                predicate(encode_morton_3D(x, y + 1, z + 1)) = 1;
+                predicate(encode_morton_3D(x + 1, y + 1, z + 1)) = 1;
+                break;
+            }
+            }
         }
-
-        /*       KOKKOS_INLINE_FUNCTION
-        void operator()(int z, int y, int x) const
-        {
-        } */
     };
 
-    inline unsigned int compact_elements(ViewVectorType<unsigned int> &ltg, const int xDim, const int yDim)
+    template <Integer Type>
+    inline ViewVectorType<bool> build_global_elements(const unsigned int allrange, 
+                const int xDim, const int yDim, const int zDim)
     {
         using namespace Kokkos;
 
         Timer timer;
 
-        unsigned int allrange = encode_morton_2D(xDim + 1, yDim + 1); //TODO : check if enough. Test with xdim != ydim.
         ViewVectorType<bool> all_elements("predicate", allrange);
-        ViewVectorType<unsigned int> scan_indices("scan_indices", allrange + 1);
 
         parallel_for("local_sfc_range", get_chunk_size(),
-                     BuildGlobalPointIndex(all_elements, local_sfc_, xDim, yDim));
+                     BuildGlobalPointIndex<Type>(all_elements, local_sfc_, xDim, yDim));
+
+        return all_elements;                     
+    }
+
+    template <Integer Type>
+    inline unsigned int compact_elements(ViewVectorType<unsigned int> &ltg, const unsigned int allrange, 
+                const int xDim, const int yDim, const int zDim)
+    {
+        using namespace Kokkos;
+
+        Timer timer;
+
+        const ViewVectorType<bool>& all_elements = build_global_elements<Type>(allrange, xDim, yDim, zDim);
+        ViewVectorType<unsigned int> scan_indices("scan_indices", allrange + 1);
 
         incl_excl_scan(0, allrange, all_elements, scan_indices);
 
@@ -436,8 +478,8 @@ public:
         return h_ic();
     }
 
-    inline bool generate_points(const int xDim, const int yDim, const int zDim,
-                                Integer type)
+    template <Integer Type>
+    inline bool generate_points(const int xDim, const int yDim, const int zDim)
     {
         using namespace Kokkos;
 
@@ -446,7 +488,7 @@ public:
 
         case 2:
         {
-            switch (type)
+            switch (Type)
             {
 
             case ElementType::Quad4:
@@ -457,7 +499,9 @@ public:
 
                 ViewVectorType<unsigned int> local_to_global;
 
-                unsigned int nr_points = compact_elements(local_to_global, xDim, yDim);
+                const unsigned int allrange = encode_morton_2D(xDim + 1, yDim + 1); //TODO : check if enough. Test with xdim != ydim.
+
+                const unsigned int nr_points = compact_elements<Type>(local_to_global, allrange, xDim, yDim, zDim);
                 printf("nr_p: %u\n", nr_points);
 
                 reserve_points(nr_points);
@@ -492,13 +536,18 @@ public:
         }
         case 3:
         {
-            switch (type)
+            switch (Type)
             {
             case ElementType::Hex8:
             {
                 assert(xDim != 0);
                 assert(yDim != 0);
                 assert(zDim != 0);
+
+               /*  ViewVectorType<unsigned int> local_to_global;
+
+                unsigned int nr_points = compact_elements<Type>(local_to_global, xDim, yDim, zDim);
+                printf("nr_p: %u\n", nr_points); */
 
                 /*   const int n_nodes = (xDim + 1) * (yDim + 1) * (zDim + 1);
 
