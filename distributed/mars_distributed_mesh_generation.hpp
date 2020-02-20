@@ -44,6 +44,16 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
         local = ViewVectorType<unsigned int>("local_partition_sfc", chunk_size);
         break;
     }
+    case ElementType::Hex8:
+    {
+        //std::cout << "ElementType:: - :    " << ElementType::Quad4 << std::endl;
+
+        n__anchor_nodes = xDim * yDim * zDim;
+        chunk_size = (unsigned int)ceil((double)n__anchor_nodes / size);
+        last_chunk_size = chunk_size - (chunk_size * size - n__anchor_nodes);
+        local = ViewVectorType<unsigned int>("local_partition_sfc", chunk_size);
+        break;
+    }
     default:
     {
         std::cout << "Not yet implemented for other element types!" << std::endl;
@@ -71,12 +81,12 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
     std::cout << "MPI Scatter ended!"<< std::endl;
 
 
-  /*  parallel_for(
+   parallel_for(
         "print_elem_chunk",chunk_size, KOKKOS_LAMBDA(const int i) {
             printf(" elch: %u-%i\n", local(i), proc_num);
-        }); */
+        });
 
-    mesh.set_view_sfc(local);
+     mesh.set_view_sfc(local);
     
     //set the chunk size to the remainder for the last mpi processes.
     if(proc_num == size-1)
@@ -89,7 +99,8 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
 
 	Kokkos::Timer timer_gen;
 
-    bool gen_pts = mesh.generate_points(xDim, yDim, zDim, Type);
+    //the mesh construct depends on template parameters. 
+    bool gen_pts = mesh.template generate_points<Type>(xDim, yDim, zDim);
 
     bool gen_elm = mesh.generate_elements(xDim, yDim, zDim, Type);
 
@@ -103,7 +114,7 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
 	std::cout << "Total Generation 2D distributed kokkos took: " << time << " seconds. Process: "<<proc_num << std::endl;
 
 
-    /* ViewMatrixType<Real> poi = mesh.get_view_points();
+    ViewMatrixType<Real> poi = mesh.get_view_points();
 
     parallel_for(
         "print_elem_chunk1", mesh.get_view_points().extent(0), KOKKOS_LAMBDA(const int i) {
@@ -115,9 +126,10 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
     parallel_for(
         "print_elem_chunk", mesh.get_view_elements().extent(0), KOKKOS_LAMBDA(const int i) {
             printf(" pt: [(%li, %li, %li, %li) - %i]\n", eeel(i, 0), eeel(i, 1), eeel(i, 2), eeel(i, 3), proc_num);
-        }); */
+        });
 
     return (gen_pts && gen_elm);
+    return true;
 }
 
 } // namespace mars

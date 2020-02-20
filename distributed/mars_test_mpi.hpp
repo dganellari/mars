@@ -114,7 +114,7 @@ void test_mpi_context(int &argc, char **&argv)
     }
 }
 
-void test_mpi_sfc(int &argc, char **&argv, const int level)
+void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(int &argc, char **&argv, const int level)
 {
 
     using namespace mars;
@@ -152,7 +152,55 @@ void test_mpi_sfc(int &argc, char **&argv, const int level)
 #ifdef WITH_KOKKOS
         // run some kokkos simulations!
         DistributedQuad4Mesh nsm;
-        generate_distributed_cube(context, nsm, level, level , 0);
+        generate_distributed_cube(context, nsm, level, level, 0);
+#endif
+    }
+    catch (std::exception &e)
+    {
+        std::cerr << "exception caught in ring miniapp: " << e.what() << "\n";
+    }
+}
+
+
+void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char **&argv, const int level)
+{
+
+    using namespace mars;
+
+    try
+    {
+        mars::proc_allocation resources;
+        /* 
+        // try to detect how many threads can be run on this system
+        resources.num_threads = marsenv::thread_concurrency();
+
+        // override thread count if the user set MARS_NUM_THREADS
+        if (auto nt = marsenv::get_env_num_threads())
+        {
+            resources.num_threads = nt;
+        } */
+
+#ifdef WITH_MPI
+        // initialize MPI
+        marsenv::mpi_guard guard(argc, argv, false);
+
+        // assign a unique gpu to this rank if available
+        /*  resources.gpu_id = marsenv::find_private_gpu(MPI_COMM_WORLD); */
+
+        // create a distributed context
+        auto context = mars::make_context(resources, MPI_COMM_WORLD);
+        //bool root = mars::rank(context) == 0;
+#else
+        // resources.gpu_id = marsenv::default_gpu();
+
+        // // create a local context
+        // auto context = mars::make_context(resources);
+#endif
+
+#ifdef WITH_KOKKOS
+        // run some kokkos simulations!
+        DistributedHex8Mesh nsm;
+        generate_distributed_cube(context, nsm, level, level ,level);
 #endif
     }
     catch (std::exception &e)

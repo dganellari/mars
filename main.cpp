@@ -1347,7 +1347,9 @@ int main(int argc, char *argv[])
 
 		test_mars_nonsimplex_mesh_generation_kokkos_2D(level, level);
 	
-		test_mpi_sfc(argc, argv, level);
+		test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(argc, argv, level);
+	//	test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(argc, argv, level);
+
 		//test_mpi_context(argc, argv);
 		//test_mars_mesh_generation_kokkos_2D(2,4);
 

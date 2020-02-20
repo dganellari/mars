@@ -33,10 +33,14 @@ public:
             predicate(encode_morton_2D(i, j)) = 1;
         }
 
-        /*       KOKKOS_INLINE_FUNCTION
-        void operator()(int z, int y, int x) const
+        KOKKOS_INLINE_FUNCTION
+        void operator()(int k, int j, int i) const
         {
-        } */
+            // set to true only those elements from the vector that are generated.
+            // in this way the array is already sorted and you just compact it using scan which is much faster in parallel.
+            assert(encode_morton_3D(i, j, k) < encode_morton_3D(xDim, yDim, zDim));
+            predicate(encode_morton_3D(i, j, k)) = 1;
+        }
     };
 
     inline bool generate_sfc(const int xDim, const int yDim, const int zDim,
@@ -63,6 +67,30 @@ public:
             parallel_for(
                 MDRangePolicy<Rank<2>>({0, 0}, {yDim, xDim}),
                 GenerateSFC(all_elements, xDim, yDim));
+
+            //compacting the 1 and 0 array and inserting the "true" index of the all elements
+            //which is the correct morton code leaving the sfc elements array sorted.
+            compact_elements(scan_indices, all_elements, allrange);
+
+            return true;
+        }
+        case ElementType::Hex8:
+        {
+            assert(xDim != 0);
+            assert(yDim != 0);
+            assert(zDim != 0);
+
+            const unsigned int n__anchor_nodes = xDim * yDim *zDim;
+            reserve_elements(n__anchor_nodes);
+
+            //calculate all range before compaction to avoid sorting.
+            unsigned int allrange = encode_morton_3D(xDim, yDim, zDim); //TODO : check if enough. Test with xdim != ydim.
+            ViewVectorType<bool> all_elements("predicate", allrange);
+            ViewVectorType<unsigned int> scan_indices("scan_indices", allrange);
+
+            parallel_for(
+                MDRangePolicy<Rank<3>>({0, 0, 0}, {zDim, yDim, xDim}),
+                GenerateSFC(all_elements, xDim, yDim, zDim));
 
             //compacting the 1 and 0 array and inserting the "true" index of the all elements
             //which is the correct morton code leaving the sfc elements array sorted.
