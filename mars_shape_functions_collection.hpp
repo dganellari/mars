@@ -636,11 +636,11 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
   constexpr typename std::enable_if_t< FEFamily==LagrangeFE,void> 
   shape_function_init_aux_aux_aux(Shape& shape, const ShapeFunctionCoefficientsCollection<Args...> &coefficients,FiniteElem<Elem>&FE)
   {
-    // std::cout<<" M = "<< M<<" FEFamily = "<<FEFamily<<" Order = "<<Order<<std::endl;
+    // // std::cout<<" M = "<< M<<" FEFamily = "<<FEFamily<<" Order = "<<Order<<std::endl;
     tuple_get<N>(shape).init(FE);
-    // std::cout<<" map = "<< tuple_get<N>(shape).map()()<<std::endl;
-    // std::cout<<" reference_values = "<< tuple_get<N>(shape).reference_values<<std::endl;
-    // std::cout<<tuple_get<N>(shape).eval()<<std::endl;
+    // // std::cout<<" map = "<< tuple_get<N>(shape).map()()<<std::endl;
+    // // std::cout<<" reference_values = "<< tuple_get<N>(shape).reference_values<<std::endl;
+    // // std::cout<<tuple_get<N>(shape).eval()<<std::endl;
   }
 
 
@@ -648,13 +648,13 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
   constexpr typename std::enable_if_t<FEFamily==RaviartThomasFE,void> 
   shape_function_init_aux_aux_aux(Shape& shape, const ShapeFunctionCoefficientsCollection<Args...> &coefficients,FiniteElem<Elem>&FE)
   {
-    // std::cout<<" M = "<< M<<" FEFamily = "<<FEFamily<<" Order = "<<Order<<std::endl;
+    // // std::cout<<" M = "<< M<<" FEFamily = "<<FEFamily<<" Order = "<<Order<<std::endl;
     tuple_get<N>(shape).init(tuple_get<M>(coefficients()),FE);
-    // std::cout<<" map = "<< tuple_get<N>(shape).map()()<<std::endl;
-    // std::cout<<" reference_values = "<< tuple_get<N>(shape).reference_values<<std::endl;
-    // std::cout<<tuple_get<N>(shape).eval()<<std::endl;
-    // std::cout<<"coefficients="<<std::endl;
-    // std::cout<<tuple_get<M>(coefficients())<<std::endl;
+    // // std::cout<<" map = "<< tuple_get<N>(shape).map()()<<std::endl;
+    // // std::cout<<" reference_values = "<< tuple_get<N>(shape).reference_values<<std::endl;
+    // // std::cout<<tuple_get<N>(shape).eval()<<std::endl;
+    // // std::cout<<"coefficients="<<std::endl;
+    // // std::cout<<tuple_get<M>(coefficients())<<std::endl;
   }
 
 
@@ -741,10 +741,10 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
   constexpr typename std::enable_if_t< FEFamily==LagrangeFE,void> 
   shape_function_init_surface_aux_aux_aux(Shape& shape, const ShapeFunctionCoefficientsCollection<Args...> &coefficients, FiniteElem<Elem> &FE)
   {
-    // std::cout<<"M,N= "<<M<<" "<<N<<std::endl;
+    // // std::cout<<"M,N= "<<M<<" "<<N<<std::endl;
     // from reference to actual element: use rectangular jacobian!!!
     tuple_get<N>(shape).init(FE.side_id(),FE);
-    // std::cout<<tuple_get<N>(shape).eval()<<std::endl;
+    // // std::cout<<tuple_get<N>(shape).eval()<<std::endl;
   }
 
 
@@ -752,10 +752,10 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
   constexpr typename std::enable_if_t<FEFamily==RaviartThomasFE,void> 
   shape_function_init_surface_aux_aux_aux(Shape& shape, const ShapeFunctionCoefficientsCollection<Args...> &coefficients, FiniteElem<Elem> &FE)
   {
-    // std::cout<<" shape_function_init_surface_aux_aux_aux "<<std::endl;
-    // std::cout<<" "<<M<<" "<<N<<std::endl;
-    std::cout<<tuple_get<M>(coefficients())<<std::endl;
-    std::cout<<FE.side_id()<<std::endl;
+    // // std::cout<<" shape_function_init_surface_aux_aux_aux "<<std::endl;
+    // // std::cout<<" "<<M<<" "<<N<<std::endl;
+    // std::cout<<tuple_get<M>(coefficients())<<std::endl;
+    // std::cout<<FE.side_id()<<std::endl;
     tuple_get<N>(shape).init(tuple_get<M>(coefficients()), FE.side_id(),FE);
   }
 
@@ -775,7 +775,7 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
     using Elem=typename Shape::Elem;
     constexpr Integer FEFamily=Shape::FEFamily;
     constexpr Integer Order=Shape::Order;
-    // std::cout<<" shape_function_init_surface_aux_aux "<<N<<std::endl;
+    // // std::cout<<" shape_function_init_surface_aux_aux "<<N<<std::endl;
     shape_function_init_surface_aux_aux_aux<N,M,Elem,FEFamily,Order>(tuple,coefficients,FE);
     shape_function_init_surface_aux_aux<M,Nmax,N+1>(tuple,coefficients,FE);
   }
@@ -791,7 +791,7 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
   shape_function_init_surface_aux(Tuple&tuple, const ShapeFunctionCoefficientsCollection<Args...> &coefficients, FiniteElem<Elem> &FE)
   {
     constexpr Integer Nmax_aux=TupleTypeSize<GetType<TupleOfTupleShapeFunctionSurface,N>>::value-1;
-    // std::cout<<" shape_function_init_surface_aux "<<N<<std::endl;
+    // // std::cout<<" shape_function_init_surface_aux "<<N<<std::endl;
     shape_function_init_surface_aux_aux<N,Nmax_aux,0>(tuple_get<N>(tuple),coefficients,FE);
     shape_function_init_surface_aux<TupleOfTupleShapeFunction,Nmax,N+1>(tuple,coefficients,FE);
   }
@@ -825,26 +825,26 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
   constexpr typename std::enable_if_t<(N>Nmax),void> 
   init_composite_shape_functions_aux_aux(Tuple& tuple, std::tuple<Args1...>& tuple_tensor, FiniteElem<Elem> &J, std::tuple<Args2...>& tuple_composite)
   {
-    // std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
+    // // std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
   }
 
   template<Integer Nmax,Integer N,typename Tuple,typename...Args1>
   constexpr void init_composite_shape_functions_aux_aux(Tuple& tuple, std::tuple<>& tuple_tensor, FiniteElem<Elem> &J, std::tuple<Args1...>& tuple_composite)
   {
-    // std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
+    // // std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
   }
 
   template<Integer Nmax,Integer N,typename Tuple,typename...Args1>
   constexpr void init_composite_shape_functions_aux_aux(Tuple& tuple, std::tuple<Args1...>& tuple_tensor, FiniteElem<Elem> &J, std::tuple<>& tuple_composite)
   {
-    // std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
+    // // std::cout<<"aux aux void Nmax,N="<<Nmax<<", "<<N<<std::endl;
 
   }
 
   template<Integer Nmax,Integer N,typename Tuple>
   constexpr void init_composite_shape_functions_aux_aux(Tuple& tuple, std::tuple<>& tuple_tensor, FiniteElem<Elem> &J, std::tuple<>& tuple_composite)
   {
-    // std::cout<<"init_composite_shape_functions_aux_aux Nmax,N="<<Nmax<<", "<<N<<std::endl;
+    // // std::cout<<"init_composite_shape_functions_aux_aux Nmax,N="<<Nmax<<", "<<N<<std::endl;
   }
 
   template<Integer Nmax,Integer N,typename Tuple,typename...Args1,typename...Args2>
@@ -862,7 +862,7 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
     // TupleOfTupleCompositeShapeFunctionTensor eee(6);
     // Number<N> ee3(5);
     // Number<Nmax> ee(5);
-    // std::cout<<"init_composite_shape_functions_aux_aux Nmax,N="<<Nmax<<", "<<N<<std::endl;
+    // // std::cout<<"init_composite_shape_functions_aux_aux Nmax,N="<<Nmax<<", "<<N<<std::endl;
 
     // todo fixme scommentami
     composite.apply(tensor,J,tuple);
@@ -889,7 +889,7 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
 
   constexpr void init_composite_shape_functions_volume( FiniteElem<Elem> &J)
   {
-    // std::cout<<"init_composite_shape_functions"<<std::endl;
+    // // std::cout<<"init_composite_shape_functions"<<std::endl;
    constexpr Integer Nmax=TupleTypeSize<TupleOfTupleCompositeShapeFunctionVolumetric>::value-1;
    init_composite_shape_functions_aux<Nmax,0>(tuple_volume_,tuple_tensors_volume_,tuple_composite_volume_,J);
    }
@@ -897,7 +897,7 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
 
   constexpr void init_composite_shape_functions_surface( FiniteElem<Elem> &J)
   {
-    // std::cout<<"init_composite_shape_functions"<<std::endl;
+    // // std::cout<<"init_composite_shape_functions"<<std::endl;
    constexpr Integer Nmax=TupleTypeSize<TupleOfTupleCompositeShapeFunctionSurface>::value-1;
    init_composite_shape_functions_aux<Nmax,0>(tuple_surface_,tuple_tensors_surface_,tuple_composite_surface_,J);
    }
@@ -910,12 +910,12 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
   {
     // TODO CHECK: SINCE WE HAVE ALREADY HAVE REFERENCES TO MAPS AND COEFFS, do we have to init_map?
     // INIT MAP: takes the corresponding map and compute the shape function in the actual element
-    // std::cout<<"init maps"<<std::endl;
+    // // std::cout<<"init maps"<<std::endl;
     init_map_volume<MapTupleNumbersVolumetric>(maps_);
     // init_shape_functions: takes also the coefficients which multiply the actual shape functions
-    // std::cout<<"init_shape_functions"<<std::endl;
+    // // std::cout<<"init_shape_functions"<<std::endl;
     init_shape_functions_volume(FE);
-    // std::cout<<"init_composite_shape_functions"<<std::endl;
+    // // std::cout<<"init_composite_shape_functions"<<std::endl;
     init_composite_shape_functions_volume(FE);
    }
 
@@ -923,12 +923,12 @@ class ShapeFunctionsCollection<GeneralForm<Form_>,GeneralForm<Forms_>...>
   {
     // TODO CHECK: SINCE WE HAVE ALREADY HAVE REFERENCES TO MAPS AND COEFFS, do we have to init_map?
     // INIT MAP: takes the corresponding map and compute the shape function in the actual element
-    // std::cout<<"init_boundary init maps"<<std::endl;
+    // // std::cout<<"init_boundary init maps"<<std::endl;
     init_map_surface<MapTupleNumbersSurface>(maps_);
     // init_shape_functions: takes also the coefficients which multiply the actual shape functions
-    // std::cout<<"init_boundary init_shape_functions"<<std::endl;
+    // // std::cout<<"init_boundary init_shape_functions"<<std::endl;
     init_shape_functions_surface(FE);
-    // std::cout<<"init_boundary init_composite_shape_functions"<<std::endl;
+    // // std::cout<<"init_boundary init_composite_shape_functions"<<std::endl;
     init_composite_shape_functions_surface(FE);
    }
 

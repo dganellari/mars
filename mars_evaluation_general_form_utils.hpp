@@ -10,7 +10,7 @@ namespace mars {
     // template<Integer Dim>
     // inline constexpr Real dotofdots(const Vector<Real, Dim> &left, const Vector<Real,Dim> &right)
     // {
-    //      // std::cout<<"dotofdots const Vector<Real, Dim> &left, const Vector<Real,Dim> &right"<<std::endl;
+    //      // // std::cout<<"dotofdots const Vector<Real, Dim> &left, const Vector<Real,Dim> &right"<<std::endl;
 
     //     return dot(left,right);
     // }
@@ -21,7 +21,7 @@ namespace mars {
     inline constexpr Real dotofdots(const Matrix<Real, Rows,Cols> &left, const Matrix<Real,Rows,Cols> &right)
     {
 
-      // std::cout<<"dotofdots mat mat"<<std::endl;
+      // // std::cout<<"dotofdots mat mat"<<std::endl;
         Real result = left(0,0)*right(0,0);
         
         for(Integer col = 1; col < Cols; ++col) 
@@ -31,49 +31,49 @@ namespace mars {
             result += left(row,col)*right(row,col);  
 
 
-         // std::cout<<"dotofdots const Matrix<Real, Rows,Cols> &left, const Matrix<Real,Rows,Cols> &right"<<std::endl;
-         // std::cout<<left<<" "<<right<<std::endl;
-         // std::cout<<left(0,0)<<" "<<right(0,0)<<std::endl;
+         // // std::cout<<"dotofdots const Matrix<Real, Rows,Cols> &left, const Matrix<Real,Rows,Cols> &right"<<std::endl;
+         // // std::cout<<left<<" "<<right<<std::endl;
+         // // std::cout<<left(0,0)<<" "<<right(0,0)<<std::endl;
         return result;
     }
 
     template<Integer Rows,Integer Cols>
     inline constexpr Real dotofdots(const Transposed<Matrix<Real,Cols,Rows>> &left, const Matrix<Real,Rows,Cols> &right)
     {
-            // std::cout<<"dotofdots trans mat mat"<<std::endl;
-            // std::cout<<left.rows()<<" "<<left.cols()<<std::endl;
-            // std::cout<<right.rows()<<" "<<right.cols()<<std::endl;
+            // // std::cout<<"dotofdots trans mat mat"<<std::endl;
+            // // std::cout<<left.rows()<<" "<<left.cols()<<std::endl;
+            // // std::cout<<right.rows()<<" "<<right.cols()<<std::endl;
 
         Real result = left(0,0)*right(0,0);
-         // std::cout<<0<<" "<<0<<std::endl;
+         // // std::cout<<0<<" "<<0<<std::endl;
         for(Integer col = 1; col < Cols; ++col) 
             {
-               // std::cout<<"here1 "<<std::endl;
-               // std::cout<<col<<", "<<0<<std::endl;
+               // // std::cout<<"here1 "<<std::endl;
+               // // std::cout<<col<<", "<<0<<std::endl;
               // result += left(col,0)*right(0,col);
               result += left(0,col)*right(0,col);
             }
         for(Integer col = 0; col < Cols; ++col)
            for(Integer row = 1; row < Rows; ++row)  
             {
-                             // std::cout<<"here2 "<<std::endl;
+                             // // std::cout<<"here2 "<<std::endl;
 
-               // std::cout<<col<<", "<<row<<std::endl;
+               // // std::cout<<col<<", "<<row<<std::endl;
               // result += left(col,row)*right(row,col);  
               result += left(row,col)*right(row,col);  
             }
 
              
-         // std::cout<<"dotofdots const Matrix<Real, Rows,Cols> &left, const Matrix<Real,Rows,Cols> &right"<<std::endl;
-         // std::cout<<left<<" "<<right<<std::endl;
-         // std::cout<<left(0,0)<<" "<<right(0,0)<<std::endl;
+         // // std::cout<<"dotofdots const Matrix<Real, Rows,Cols> &left, const Matrix<Real,Rows,Cols> &right"<<std::endl;
+         // // std::cout<<left<<" "<<right<<std::endl;
+         // // std::cout<<left(0,0)<<" "<<right(0,0)<<std::endl;
         return result;
     }
 
     template<Integer Rows,Integer Cols>
     inline constexpr Real dotofdots(const Matrix<Real,Rows,Cols> &left, const Transposed<Matrix<Real,Cols,Rows>> &right)
     {
-          // std::cout<<"dotofdots mat trans_mat"<<std::endl;
+          // // std::cout<<"dotofdots mat trans_mat"<<std::endl;
 
         Real result = left(0,0)*right(0,0);
         
@@ -85,9 +85,9 @@ namespace mars {
             // result += left(row,col)*right(col,row);  
             result += left(row,col)*right(row,col);  
 
-         // std::cout<<"dotofdots const Matrix<Real, Rows,Cols> &left, const Matrix<Real,Rows,Cols> &right"<<std::endl;
-         // std::cout<<left<<" "<<right<<std::endl;
-         // std::cout<<left(0,0)<<" "<<right(0,0)<<std::endl;
+         // // std::cout<<"dotofdots const Matrix<Real, Rows,Cols> &left, const Matrix<Real,Rows,Cols> &right"<<std::endl;
+         // // std::cout<<left<<" "<<right<<std::endl;
+         // // std::cout<<left(0,0)<<" "<<right(0,0)<<std::endl;
         return result;
     }
 
@@ -95,7 +95,7 @@ namespace mars {
     template<Integer Rows,Integer Cols>
     inline constexpr Real dotofdots(const Transposed<Matrix<Real,Cols, Rows>> &left, const Transposed<Matrix<Real,Cols,Rows>> &right)
     {
-              // std::cout<<"dotofdots trans_mat trans_mat"<<std::endl;
+              // // std::cout<<"dotofdots trans_mat trans_mat"<<std::endl;
 
         Real result = left(0,0)*right(0,0);
         
@@ -106,9 +106,9 @@ namespace mars {
             result += left(row,col)*right(row,col);  
 
 
-         // std::cout<<"dotofdots const Matrix<Real, Rows,Cols> &left, const Matrix<Real,Rows,Cols> &right"<<std::endl;
-         // std::cout<<left<<" "<<right<<std::endl;
-         // std::cout<<left(0,0)<<" "<<right(0,0)<<std::endl;
+         // // std::cout<<"dotofdots const Matrix<Real, Rows,Cols> &left, const Matrix<Real,Rows,Cols> &right"<<std::endl;
+         // // std::cout<<left<<" "<<right<<std::endl;
+         // // std::cout<<left(0,0)<<" "<<right(0,0)<<std::endl;
         return result;
     }
     // template<Integer Rows,Integer Cols>
@@ -154,7 +154,7 @@ namespace mars {
         // T ok4(4,3);
 
         // decltype(right[0]) ok2(333.44,5);
-        // std::cout<<dotofdots(left[0],right[0])<<std::endl;
+        // // std::cout<<dotofdots(left[0],right[0])<<std::endl;
         return ret;
     }
 
@@ -176,7 +176,7 @@ namespace mars {
     template<typename S, Integer Dim, typename T>
     inline constexpr Real dotofdots(const S &left, const Vector<T, Dim> &right)
     {
-      // std::cout<<" eee"<<std::endl;
+      // // std::cout<<" eee"<<std::endl;
         Real ret = dotofdots(left,right(0));
         for(Integer d = 1; d < Dim; ++d) {
             ret += dotofdots(left,right(d));
@@ -286,18 +286,18 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
                const QPValues<T,NQPoints> & qp_values1,
                const QPValues<S,NQPoints> & qp_values2)
  {
-  // std::cout<<"apply_aux"<<std::endl;
+  // // std::cout<<"apply_aux"<<std::endl;
   const auto& detJ=J.template get_det<VolumeIntegral>();
   const auto& qp_weights=QRule::qp_weights;
 
 
-  // std::cout<<"LocalTensor form 0"<<std::endl;
-  // std::cout<<qp_values1<<std::endl;
-  // std::cout<<qp_values2<<std::endl;
-  // std::cout<<qp_weights<<std::endl;
+  // // std::cout<<"LocalTensor form 0"<<std::endl;
+  // // std::cout<<qp_values1<<std::endl;
+  // // std::cout<<qp_values2<<std::endl;
+  // // std::cout<<qp_weights<<std::endl;
   for(Integer qp=0;qp<QRule::NQPoints;qp++)
      {   
-      // std::cout<<"qp="<<qp<<std::endl;
+      // // std::cout<<"qp="<<qp<<std::endl;
       mat(0,0)+=apply_qp_weight(qp_values1[qp],qp_values2[qp], qp_weights[qp]);
      }
 
@@ -346,12 +346,12 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
   void apply(subtype& vec, FiniteElem<Elem>& J, ShapeFunctionsCollection<Forms...>& shape_functions, const DofMaps&...dofmaps)
 
  {
-  // std::cout<<"eval_left_"<<std::endl;
+  // // std::cout<<"eval_left_"<<std::endl;
   eval_left_.apply(left_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
-  // std::cout<<left_value_<<std::endl;
-  // std::cout<<"eval_right_"<<std::endl;
+  // // std::cout<<left_value_<<std::endl;
+  // // std::cout<<"eval_right_"<<std::endl;
   eval_right_.apply(right_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
-  // std::cout<<right_value_<<std::endl;
+  // // std::cout<<right_value_<<std::endl;
   apply_aux(vec,J,left_value_,right_value_);
  }
 
@@ -405,8 +405,8 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
     // {   
     //     vec[ii]=detJ*dotofdots(qp_values,fqp_values[ii]);
     // }
-  // std::cout<<"qp_weights"<<std::endl;
-  // std::cout<<qp_weights<<std::endl;
+  // // std::cout<<"qp_weights"<<std::endl;
+  // // std::cout<<qp_weights<<std::endl;
   // for(std::size_t n_dof=0;n_dof<NComponents;n_dof++)
   //   {   
   //       vec(n_dof,0)=detJ*apply_qp_weight(qp_values[0], fqp_values[n_dof][0], qp_weights[0]);
@@ -437,8 +437,8 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
   const auto& detJ=J.template get_det<VolumeIntegral>();
   // const auto& detJ=J.get_det();
   const auto& qp_weights=QRule::qp_weights;
-  // std::cout<<"qp_weights"<<std::endl;
-  // std::cout<<qp_weights<<std::endl;
+  // // std::cout<<"qp_weights"<<std::endl;
+  // // std::cout<<qp_weights<<std::endl;
 
   // for(std::size_t n_dof=0;n_dof<NComponents;n_dof++)
   //   {   
@@ -466,17 +466,17 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
   void apply(subtype& vec, FiniteElem<Elem>& J, ShapeFunctionsCollection<Forms...>& shape_functions, const DofMaps&...dofmaps)
 
  {
-    std::cout<<"LOCAL TENSOR APPLY=="<<std::endl;
+    // // std::cout<<"LOCAL TENSOR APPLY=="<<std::endl;
 
   eval_left_.apply(left_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
-  // std::cout<<"after left =="<<std::endl;
-  // std::cout<<left_value_<<std::endl;
+  // // std::cout<<"after left =="<<std::endl;
+  // // std::cout<<left_value_<<std::endl;
   eval_right_.apply(right_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
-  // std::cout<<"left_value_=="<<left_value_<<std::endl;
-  // std::cout<<"right_value_=="<<right_value_<<std::endl;
+  // // std::cout<<"left_value_=="<<left_value_<<std::endl;
+  // // std::cout<<"right_value_=="<<right_value_<<std::endl;
   apply_aux(vec,J,left_value_,right_value_);
-  // std::cout<<"detJ=="<<J.get_det()<<std::endl;
-  // std::cout<<"vec=="<<vec<<std::endl;
+  // // std::cout<<"detJ=="<<J.get_det()<<std::endl;
+  // // std::cout<<"vec=="<<vec<<std::endl;
  }
 
   
@@ -521,7 +521,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
  std::enable_if_t<(2==TestOrTrial_), void>
  apply_aux(subtype& mat, FiniteElem<Elem>& J, const ShapeFunctions& shape_functions, const DofMaps&...dofmaps)
  {
-  // std::cout<<"apply_aux="<<std::endl;
+  // // std::cout<<"apply_aux="<<std::endl;
 
   const auto& detJ=J.template get_det<VolumeIntegral>();
   // const auto& detJ=J.get_det();
@@ -529,12 +529,12 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
   // todo fixme
   eval_left_.apply(left_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
   eval_right_.apply(right_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
-  // std::cout<<"left_value_"<<std::endl;
-  // std::cout<<left_value_<<std::endl;
-  // std::cout<<"right_value_"<<std::endl;
-  // std::cout<<right_value_<<std::endl;
-  // std::cout<<"qp_weights"<<std::endl;
-  // std::cout<<qp_weights<<std::endl;
+  // // std::cout<<"left_value_"<<std::endl;
+  // // std::cout<<left_value_<<std::endl;
+  // // std::cout<<"right_value_"<<std::endl;
+  // // std::cout<<right_value_<<std::endl;
+  // // std::cout<<"qp_weights"<<std::endl;
+  // // std::cout<<qp_weights<<std::endl;
 
   // for(std::size_t ii=0;ii<mat.rows();ii++)
   //   {   
@@ -563,10 +563,10 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
   //       mat(ii,jj)=detJ*dotofdots(left_value_[jj],right_value_[ii]);//,QRule::qp_weights);
   //   }
 
-    // std::cout<<"detJ="<<std::endl;
-    // std::cout<<detJ<<std::endl;
-    // std::cout<<"mat="<<std::endl;
-    // std::cout<<mat<<std::endl;
+    // // std::cout<<"detJ="<<std::endl;
+    // // std::cout<<detJ<<std::endl;
+    // // std::cout<<"mat="<<std::endl;
+    // // std::cout<<mat<<std::endl;
  }
 
 
@@ -582,12 +582,12 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
   // todo fixme
   eval_left_.apply(left_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
   eval_right_.apply(right_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
-  // std::cout<<"left_value_"<<std::endl;
-  // std::cout<<left_value_<<std::endl;
-  // std::cout<<"right_value_"<<std::endl;
-  // std::cout<<right_value_<<std::endl;
-  // std::cout<<"qp_weights"<<std::endl;
-  // std::cout<<qp_weights<<std::endl;
+  // // std::cout<<"left_value_"<<std::endl;
+  // // std::cout<<left_value_<<std::endl;
+  // // std::cout<<"right_value_"<<std::endl;
+  // // std::cout<<right_value_<<std::endl;
+  // // std::cout<<"qp_weights"<<std::endl;
+  // // std::cout<<qp_weights<<std::endl;
 
   // for(std::size_t ii=0;ii<mat.rows();ii++)
   //   {   
@@ -616,10 +616,10 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
         // mat(ii,jj)=detJ*dotofdots(left_value_[ii],right_value_[jj]);
     }
 
-    // std::cout<<"detJ="<<std::endl;
-    // std::cout<<detJ<<std::endl;
-    // std::cout<<"mat="<<std::endl;
-    // std::cout<<mat<<std::endl;
+    // // std::cout<<"detJ="<<std::endl;
+    // // std::cout<<detJ<<std::endl;
+    // // std::cout<<"mat="<<std::endl;
+    // // std::cout<<mat<<std::endl;
  }
 
 
@@ -627,7 +627,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
   template<typename Elem,typename ShapeFunctions, typename...DofMaps>
  void apply(subtype& mat, FiniteElem<Elem>& FE, const ShapeFunctions& shape_functions, const DofMaps&...dofmaps)
  {
-  // std::cout<<"apply="<<std::endl;
+  // // std::cout<<"apply="<<std::endl;
   apply_aux<type::TestOrTrialLeftType::value>(mat,FE,shape_functions,dofmaps...);
  }
   
@@ -1033,7 +1033,7 @@ build_tuple_of_evals_aux2(const Tuple& tuple,
                           const L2DotProductIntegral<Left,Right,VolumeIntegral,QR>& l2prod,
                                 ShapeFunctionsCollection<Forms...>&shape_functions)
 {
-  // std::cout<< "________build_tuple_of_evals_aux2______" <<std::endl;  
+  // // std::cout<< "________build_tuple_of_evals_aux2______" <<std::endl;  
   return tuple;
 }
 
@@ -1071,10 +1071,10 @@ build_tuple_of_evals_aux2(const Tuple& tuple,
   using L2=L2DotProductIntegral<Left,Right,VolumeIntegral,QR>;
   using TestTrialNumbers=typename L2::TestTrialNumbers;
   // auto tuple_nth=tuple_get< TypeToTupleElementPosition<TestTrialNumbers,TupleOfPairsNumbers>::value >(tuple);
-   // std::cout<< "________build_tuple_of_evals_aux2 PRE 222______" <<std::endl;
+   // // std::cout<< "________build_tuple_of_evals_aux2 PRE 222______" <<std::endl;
   auto new_elem=Evaluation<Expression<L2>,ShapeFunctionsCollection<Forms...>>(Eval(l2prod,shape_functions));
   // auto new_elem=build_tuple_of_evals_aux_aux(tuple_nth,l2prod,shape_functions);
-  // std::cout<< "________build_tuple_of_evals_aux2______" <<std::endl;
+  // // std::cout<< "________build_tuple_of_evals_aux2______" <<std::endl;
   return tuple_change_element<TypeToTupleElementPosition<TestTrialNumbers,TupleOfPairsNumbers>::value>
    (tuple, decltype(new_elem)(new_elem));
 }
@@ -1129,7 +1129,7 @@ build_tuple_of_evals_aux2(const Tuple& tuple,
   using TestTrialNumbers=typename L2::TestTrialNumbers;
   auto tuple_nth=tuple_get< TypeToTupleElementPosition<TestTrialNumbers,TupleOfPairsNumbers>::value >(tuple);
   auto new_elem=build_tuple_of_evals_aux_aux(tuple_nth,l2prod,shape_functions);
-  // std::cout<< "________build_tuple_of_evals_aux2______" <<std::endl;
+  // // std::cout<< "________build_tuple_of_evals_aux2______" <<std::endl;
   return tuple_change_element<TypeToTupleElementPosition<TestTrialNumbers,TupleOfPairsNumbers>::value>
    (tuple, decltype(new_elem)(new_elem));
 }
@@ -1160,7 +1160,7 @@ constexpr auto build_tuple_of_evals_aux2(const Tuple& tuple,
                                               ShapeFunctionsCollection<Forms...>&shape_functions)
 {
   auto tuple_new=build_tuple_of_evals_aux2<H,TupleOfPairsNumbers>(tuple,addition.left(),shape_functions);
-  // std::cout<< "________build_tuple_of_evals_aux2______" <<std::endl;
+  // // std::cout<< "________build_tuple_of_evals_aux2______" <<std::endl;
   return build_tuple_of_evals_aux2<H,TupleOfPairsNumbers>(tuple_new,addition.right(),shape_functions);
 }
 
@@ -1169,7 +1169,7 @@ template<Integer H,typename TupleOfPairsNumbers, typename Expr, typename...Forms
 constexpr auto build_tuple_of_evals2(const Expr& expr,ShapeFunctionsCollection<Forms...>&shape_functions)
 {
   using emptytuple=TupleOfType<TupleTypeSize<TupleOfPairsNumbers>::value,std::tuple<> > ;
-  // std::cout<< "________build_tuple_of_evals2______" <<std::endl;
+  // // std::cout<< "________build_tuple_of_evals2______" <<std::endl;
   return build_tuple_of_evals_aux2<H,TupleOfPairsNumbers>(emptytuple(),expr,shape_functions);
 }
 
@@ -1228,7 +1228,7 @@ public:
     :
     eval_inners_(build_tuple_of_evals2<H,TupleOfPairsNumbers>(form(),shapefunctions))
     {
-      // std::cout<<"EvaluationOfL2Inners CONSTRUCTOR" <<std::endl;
+      // // std::cout<<"EvaluationOfL2Inners CONSTRUCTOR" <<std::endl;
     }
 
 
@@ -1236,11 +1236,11 @@ public:
     constexpr std::enable_if_t<IsDifferent<Eval,std::tuple<>>::value,void>
     apply_aux_aux_aux(Eval& eval,Output& local_mat, FiniteElem& FE,const DofMaps&...dofmaps)
     {
-      // std::cout<<"apply_aux_aux_aux evalN"<<std::endl;
-      // std::cout<<"local_mat="<<local_mat<<std::endl;
+      // // std::cout<<"apply_aux_aux_aux evalN"<<std::endl;
+      // // std::cout<<"local_mat="<<local_mat<<std::endl;
 
      eval.apply(local_mat,FE,dofmaps...);
-     // std::cout<<"after apply_aux_aux_aux evalN"<<std::endl;
+     // // std::cout<<"after apply_aux_aux_aux evalN"<<std::endl;
 
     }  
 
@@ -1254,18 +1254,18 @@ public:
     constexpr void apply_aux_aux(Output& alpha,FiniteElem& FE)
     {
       // decltype(tensor_tuple_) eekjj(5,4,5,6,7);
-      // std::cout<<"apply_aux_aux 1"<<std::endl;
+      // // std::cout<<"apply_aux_aux 1"<<std::endl;
      auto& local_mat=std::get<N>(tensor_tuple_);
      local_mat.zero();
-     // std::cout<<"apply_aux_aux 2"<<std::endl;
+     // // std::cout<<"apply_aux_aux 2"<<std::endl;
      auto & eval_N=std::get<N>(eval_inners_);
      // decltype(eval_inners_)eee(6,5);
-     // std::cout<<"apply_aux_aux 3"<<std::endl;
+     // // std::cout<<"apply_aux_aux 3"<<std::endl;
      apply_aux_aux_aux(eval_N,local_mat,FE);
-     // std::cout<<"apply_aux_aux 4"<<std::endl;
+     // // std::cout<<"apply_aux_aux 4"<<std::endl;
 
      alpha+=local_mat(0,0);
-     // std::cout<<"apply_aux_aux 5  ===="<<alpha<<std::endl;
+     // // std::cout<<"apply_aux_aux 5  ===="<<alpha<<std::endl;
     } 
 
 
@@ -1277,17 +1277,17 @@ public:
      auto& local_mat=std::get<N>(tensor_tuple_);
      local_mat.zero();
      auto & eval_N=std::get<N>(eval_inners_);
-     // std::cout<< "pre linear apply_aux_aux "<<std::endl;
+     // // std::cout<< "pre linear apply_aux_aux "<<std::endl;
      apply_aux_aux_aux(eval_N,local_mat,FE,dofmap_test);
-     // std::cout<< "after linear apply_aux_aux "<<std::endl;
+     // // std::cout<< "after linear apply_aux_aux "<<std::endl;
 
      for(std::size_t ii=0;ii<dofmap_test.size();ii++)
      {
       mat[dofmap_test[ii]]+=local_mat(ii,0);
      }
      //////////////////// mat must be inizialied with local_mat
-     // std::cout<<"local_mat="<<std::endl;
-     // std::cout<<local_mat<<std::endl;
+     // // std::cout<<"local_mat="<<std::endl;
+     // // std::cout<<local_mat<<std::endl;
     }   
 
  template<Integer N,typename Output,typename FiniteElem,typename DofMapTest,typename DofMapTrial>
@@ -1296,29 +1296,29 @@ public:
      auto& local_mat=std::get<N>(tensor_tuple_);
      local_mat.zero();
      auto & eval_N=std::get<N>(eval_inners_);
-     // std::cout<< "bilinear apply_aux_aux "<<std::endl;
+     // // std::cout<< "bilinear apply_aux_aux "<<std::endl;
      apply_aux_aux_aux(eval_N,local_mat,FE,dofmap_test,dofmap_trial);
-     // std::cout<< "bilinear dofmap_test "<<std::endl;
-     // std::cout<<  dofmap_test <<std::endl;
-     // std::cout<< "bilinear dofmap_trial "<<std::endl;
-     // std::cout<<  dofmap_trial <<std::endl;
-     // std::cout<< "mat size "<<mat.rows()<<std::endl;
-     // std::cout<<local_mat<<std::endl;
+     // // std::cout<< "bilinear dofmap_test "<<std::endl;
+     // // std::cout<<  dofmap_test <<std::endl;
+     // // std::cout<< "bilinear dofmap_trial "<<std::endl;
+     // // std::cout<<  dofmap_trial <<std::endl;
+     // // std::cout<< "mat size "<<mat.rows()<<std::endl;
+     // // std::cout<<local_mat<<std::endl;
      for(std::size_t ii=0;ii<dofmap_test.size();ii++)
      {
      for(std::size_t jj=0;jj<dofmap_trial.size();jj++)
      {
       // mat[dofmap_test[ii]][dofmap_trial[jj]]+=local_mat(ii,jj);
-      // std::cout<<"plus equal"<<std::endl;
-      // std::cout<<local_mat(ii,jj)<<" "<<dofmap_test[ii]<<" "<<dofmap_trial[jj]<<" "<<" " <<std::endl;
+      // // std::cout<<"plus equal"<<std::endl;
+      // // std::cout<<local_mat(ii,jj)<<" "<<dofmap_test[ii]<<" "<<dofmap_trial[jj]<<" "<<" " <<std::endl;
       mat.plus_equal(local_mat(ii,jj),dofmap_test[ii],dofmap_trial[jj]);
       // mat[dofmap_test[ii]][dofmap_trial[jj]]+=local_mat(ii,jj);
      }
      }
-     // std::cout<< "after apply_aux_aux "<<std::endl;
+     // // std::cout<< "after apply_aux_aux "<<std::endl;
      //////////////////// mat must be inizialied with local_mat
-     // std::cout<<"local_mat"<<std::endl;
-     // std::cout<<local_mat<<std::endl;
+     // // std::cout<<"local_mat"<<std::endl;
+     // // std::cout<<local_mat<<std::endl;
     }
 
   // zero form -> only test dofmap
@@ -1379,7 +1379,7 @@ public:
       // const Integer & elem_id=J.elem_id();
       // using Pairs=GetType<TupleOfPairsNumbers,N>;
       // const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
-      // std::cout<<"apply_volume_aux form=0, N="<<N<<" Nmax="<<Nmax<<std::endl;
+      // // std::cout<<"apply_volume_aux form=0, N="<<N<<" Nmax="<<Nmax<<std::endl;
       apply_aux_aux<N>(mat,J);
     }
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
@@ -1389,7 +1389,7 @@ public:
       // const Integer & elem_id=J.elem_id();
       // using Pairs=GetType<TupleOfPairsNumbers,N>;
       // const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
-      // std::cout<<"apply_volume_aux form=0, N="<<N<<" Nmax="<<Nmax<<std::endl;
+      // // std::cout<<"apply_volume_aux form=0, N="<<N<<" Nmax="<<Nmax<<std::endl;
       apply_aux_aux<N>(mat,J);
       apply_volume_aux<Nmax,N+1>(mat,J,dofmap);
      }
@@ -1402,30 +1402,30 @@ public:
     constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==1 && IsDifferent<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
     apply_volume_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
     {
-      // std::cout<<"pre 1 apply_aux, N="<<N<<std::endl;
+      // // std::cout<<"pre 1 apply_aux, N="<<N<<std::endl;
 
       const Integer & elem_id=J.elem_id();
       using Pairs=GetType<TupleOfPairsNumbers,N>;
       const auto& level=J.level();
       auto dofmap_test=tuple_get<GetType<Pairs,0>::value>(dm_test_); 
       dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id,level);
-      // std::cout<<"middle 1 apply_aux, N="<<N<<std::endl;
+      // // std::cout<<"middle 1 apply_aux, N="<<N<<std::endl;
       
-      // std::cout<<"apply_aux, N="<<N<<std::endl;
-      // std::cout<<"dofmap_test"<<std::endl;
-      // std::cout<<dofmap_test<<std::endl;
+      // // std::cout<<"apply_aux, N="<<N<<std::endl;
+      // // std::cout<<"dofmap_test"<<std::endl;
+      // // std::cout<<dofmap_test<<std::endl;
 
 
       // const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
       apply_aux_aux<N>(mat,J,dofmap_test);
-      // std::cout<<"after 1 apply_aux, N="<<N<<std::endl;
+      // // std::cout<<"after 1 apply_aux, N="<<N<<std::endl;
 
     }
  template<Integer Nmax,Integer N,typename Output,typename FiniteElem, typename DofMap>
     constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==1 && IsDifferent<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
     apply_volume_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
     {
-      // std::cout<<"pre 1 apply_aux, N="<<N<<std::endl;
+      // // std::cout<<"pre 1 apply_aux, N="<<N<<std::endl;
 
       const Integer & elem_id=J.elem_id();
       using Pairs=GetType<TupleOfPairsNumbers,N>;
@@ -1435,15 +1435,15 @@ public:
 
       
 
-      // std::cout<<"apply_aux, N="<<N<<std::endl;
-      // std::cout<<"dofmap_test"<<std::endl;
-      // std::cout<<dofmap_test<<std::endl;
+      // // std::cout<<"apply_aux, N="<<N<<std::endl;
+      // // std::cout<<"dofmap_test"<<std::endl;
+      // // std::cout<<dofmap_test<<std::endl;
       // const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
       apply_aux_aux<N>(mat,J,dofmap_test);
-      // std::cout<<"middle 1 apply_aux, N="<<N<<std::endl;
+      // // std::cout<<"middle 1 apply_aux, N="<<N<<std::endl;
 
       apply_volume_aux<Nmax,N+1>(mat,J,dofmap);
-      // std::cout<<"after 1 apply_aux, N="<<N<<std::endl;
+      // // std::cout<<"after 1 apply_aux, N="<<N<<std::endl;
 
      }
 
@@ -1452,7 +1452,7 @@ public:
     constexpr std::enable_if_t<(0<=N && N==Nmax && form::value==2 && IsDifferent<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
     apply_volume_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
     {
-      // std::cout<<"pre 2 apply_aux, N="<<N<<std::endl;
+      // // std::cout<<"pre 2 apply_aux, N="<<N<<std::endl;
 
       const Integer & elem_id=J.elem_id();
       using Pairs=GetType<TupleOfPairsNumbers,N>;
@@ -1462,18 +1462,18 @@ public:
       dofmap.template dofmap_get<GetType<Pairs,0>::value>(dofmap_test,elem_id,level);
       dofmap.template dofmap_get<GetType<Pairs,1>::value>(dofmap_trial,elem_id,level);
 
-      // std::cout<<"dofmap_test"<<std::endl;
-      // std::cout<<dofmap_test<<std::endl;
-      // std::cout<<"dofmap_trial"<<std::endl;
-      // std::cout<<dofmap_trial<<std::endl;
+      // // std::cout<<"dofmap_test"<<std::endl;
+      // // std::cout<<dofmap_test<<std::endl;
+      // // std::cout<<"dofmap_trial"<<std::endl;
+      // // std::cout<<dofmap_trial<<std::endl;
       
-      // std::cout<<"middle 2 apply_aux, N="<<N<<", Nmax=="<<Nmax<<std::endl;
+      // // std::cout<<"middle 2 apply_aux, N="<<N<<", Nmax=="<<Nmax<<std::endl;
 
-      // std::cout<<"apply_aux, N="<<N<<std::endl;
-      // std::cout<<"dofmap_test"<<std::endl;
-      // std::cout<<dofmap_test<<std::endl;
-      // std::cout<<"dofmap_trial"<<std::endl;
-      // std::cout<<dofmap_trial<<std::endl;
+      // // std::cout<<"apply_aux, N="<<N<<std::endl;
+      // // std::cout<<"dofmap_test"<<std::endl;
+      // // std::cout<<dofmap_test<<std::endl;
+      // // std::cout<<"dofmap_trial"<<std::endl;
+      // // std::cout<<dofmap_trial<<std::endl;
      // todo fixme
      // here take the submatrix  of mat(dofmap_test,dofmap_trial)
 
@@ -1481,7 +1481,7 @@ public:
       // const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
       // const auto& dofmap_trial= tuple_get<GetType<Pairs,1>::value>(dofmap)[elem_id];
      apply_aux_aux<N>(mat,J,dofmap_test,dofmap_trial);
-      // std::cout<<"after 2 apply_aux, N="<<N<<std::endl;
+      // // std::cout<<"after 2 apply_aux, N="<<N<<std::endl;
 
     }
 
@@ -1489,7 +1489,7 @@ public:
     constexpr std::enable_if_t<(0<=N && N<Nmax && form::value==2 && IsDifferent<GetType<EvalOfL2InnersType,N>,std::tuple<>>::value),void> 
     apply_volume_aux(Output& mat,FiniteElem&J,const DofMap& dofmap )
     {
-      // std::cout<<"pre 2 apply_aux, N="<<N<<std::endl;
+      // // std::cout<<"pre 2 apply_aux, N="<<N<<std::endl;
       const Integer & elem_id=J.elem_id();
       const auto& level=J.level();
       using Pairs=GetType<TupleOfPairsNumbers,N>;
@@ -1506,17 +1506,17 @@ public:
       // const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
       // const auto& dofmap_trial= tuple_get<GetType<Pairs,1>::value>(dofmap)[elem_id];
 
-// std::cout<<"middle 2 apply_aux, N="<<N<<", Nmax=="<<Nmax<<std::endl;
-      // std::cout<<"dofmap_test"<<std::endl;
-      // std::cout<<dofmap_test<<std::endl;
-      // std::cout<<"dofmap_trial"<<std::endl;
-      // std::cout<<dofmap_trial<<std::endl;
+// // std::cout<<"middle 2 apply_aux, N="<<N<<", Nmax=="<<Nmax<<std::endl;
+      // // std::cout<<"dofmap_test"<<std::endl;
+      // // std::cout<<dofmap_test<<std::endl;
+      // // std::cout<<"dofmap_trial"<<std::endl;
+      // // std::cout<<dofmap_trial<<std::endl;
       // todo fixme
       // here take the submatrix  of mat(dofmap_test,dofmap_trial)
 
       apply_aux_aux<N>(mat,J,dofmap_test,dofmap_trial);
       
-      // std::cout<<"after 2 apply_aux, N="<<N<<std::endl;
+      // // std::cout<<"after 2 apply_aux, N="<<N<<std::endl;
 
       apply_volume_aux<Nmax,N+1>(mat,J,dofmap);
      }
@@ -1524,9 +1524,9 @@ public:
  template<typename Output,typename FiniteElem, typename DofMap>
     void apply(Output& mat,FiniteElem&FE,const DofMap& dofmap )
     {
-       // std::cout<<"pre apply volume="<<FE.elem_id()<<std::endl;
+       // // std::cout<<"pre apply volume="<<FE.elem_id()<<std::endl;
       apply_volume_aux<TupleTypeSize<L2Products>::value-1,0>(mat,FE,dofmap);
-       // std::cout<<"after apply volume="<<FE.elem_id()<<std::endl;
+       // // std::cout<<"after apply volume="<<FE.elem_id()<<std::endl;
     }
 
 
@@ -1601,9 +1601,9 @@ public:
       subarray(test_trace,dofmap_test, dofmap_test_trace );
 
       
-      // std::cout<<"apply_boundary_aux, N="<<N<<std::endl;
-      // std::cout<<"dofmap_test"<<std::endl;
-      // std::cout<<dofmap_test<<std::endl;
+      // // std::cout<<"apply_boundary_aux, N="<<N<<std::endl;
+      // // std::cout<<"dofmap_test"<<std::endl;
+      // // std::cout<<dofmap_test<<std::endl;
       // const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
       apply_aux_aux<N>(mat,FE,test_trace);
     }
@@ -1623,9 +1623,9 @@ public:
       subarray(test_trace,dofmap_test, dofmap_test_trace );
 
       
-      // std::cout<<"apply_boundary_aux, N="<<N<<std::endl;
-      // std::cout<<"dofmap_test"<<std::endl;
-      // std::cout<<dofmap_test<<std::endl;
+      // // std::cout<<"apply_boundary_aux, N="<<N<<std::endl;
+      // // std::cout<<"dofmap_test"<<std::endl;
+      // // std::cout<<dofmap_test<<std::endl;
       // const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
       // apply_aux_aux<N>(mat,J,dofmap_test);
       apply_aux_aux<N>(mat,FE,test_trace);
@@ -1663,14 +1663,14 @@ public:
       const auto& dofmap_test_trace=tuple_get< GetType<Pairs,0>::value >(dofs)[FE.side_id()];
       const auto& dofmap_trial_trace=tuple_get< GetType<Pairs,1>::value >(dofs)[FE.side_id()];
 
-      std::cout<<tuple_get< GetType<Pairs,0>::value >(dofs)<<std::endl;
-      std::cout<<tuple_get< GetType<Pairs,1>::value >(dofs)<<std::endl;
+      // // std::cout<<tuple_get< GetType<Pairs,0>::value >(dofs)<<std::endl;
+      // // std::cout<<tuple_get< GetType<Pairs,1>::value >(dofs)<<std::endl;
 
-      // std::cout<<"OOOOO apply_boundary_aux, N="<<N<<std::endl;
-      // std::cout<<"dofmap_test"<<std::endl;
-      // std::cout<<dofmap_test<<std::endl;
-      // std::cout<<"dofmap_trial"<<std::endl;
-      // std::cout<<dofmap_trial<<std::endl;
+      // // std::cout<<"OOOOO apply_boundary_aux, N="<<N<<std::endl;
+      // // std::cout<<"dofmap_test"<<std::endl;
+      // // std::cout<<dofmap_test<<std::endl;
+      // // std::cout<<"dofmap_trial"<<std::endl;
+      // // std::cout<<dofmap_trial<<std::endl;
       auto& test_trace=tuple_get<GetType<Pairs,0>::value>(dm_test_trace_)[0];
       auto& trial_trace=tuple_get<GetType<Pairs,1>::value>(dm_trial_trace_)[0];
       subarray(test_trace,dofmap_test, dofmap_test_trace );
@@ -1708,11 +1708,11 @@ public:
 
 
 
-      // std::cout<<"PPPPPP apply_boundary_aux, N="<<N<<std::endl;
-      // std::cout<<"dofmap_test"<<std::endl;
-      // std::cout<<dofmap_test<<std::endl;
-      // std::cout<<"dofmap_trial"<<std::endl;
-      // std::cout<<dofmap_trial<<std::endl;
+      // // std::cout<<"PPPPPP apply_boundary_aux, N="<<N<<std::endl;
+      // // std::cout<<"dofmap_test"<<std::endl;
+      // // std::cout<<dofmap_test<<std::endl;
+      // // std::cout<<"dofmap_trial"<<std::endl;
+      // // std::cout<<dofmap_trial<<std::endl;
       // todo fixme
       // here take the submatrix  of mat(dofmap_test,dofmap_trial)
       // const auto& dofmap_test= tuple_get<GetType<Pairs,0>::value>(dofmap)[elem_id];
@@ -1728,7 +1728,7 @@ public:
     void apply_boundary(Output& mat,FiniteElem&FE,const DofMap& dofmap )
     {
 
-       // std::cout<<"general apply_boundary "<<FE.elem_id()<<std::endl;
+       // // std::cout<<"general apply_boundary "<<FE.elem_id()<<std::endl;
       apply_boundary_aux<TupleTypeSize<L2Products>::value-1,0>(mat,FE,dofmap);
     }
 

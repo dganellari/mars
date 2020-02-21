@@ -49,7 +49,6 @@ namespace mars {
 
             e.side(side_num, side);
 
-            // std::cout << e.side_tags[side_num] << std::endl;
 
             for(auto n : side.nodes) {
                 node_index[n] = 1;

@@ -1020,7 +1020,7 @@ public:
     template<typename T,typename...Ts>
     static auto value(const T&t,const Ts&...ts)
     {
-        // std::cout<<"DofsOrdering GENERAL"<<std::endl;
+        // // std::cout<<"DofsOrdering GENERAL"<<std::endl;
 
 
         return t;
@@ -1077,22 +1077,22 @@ public:
      Integer local_nodes[entity_points];
      std::array<Integer,entity_points> face_nodes;
      Combinations<manifold_points,entity_points>::generate(entity_iter,local_nodes);
-     // std::cout<<"DofsOrdering"<<std::endl;
+     // // std::cout<<"DofsOrdering"<<std::endl;
 
      for(std::size_t i=0;i<entity_points;i++)
           {
             face_nodes[i]=nodes[local_nodes[i]];
-            // std::cout<<face_nodes[i]<<" ";
+            // // std::cout<<face_nodes[i]<<" ";
           }
-     // std::cout<<std::endl;
+     // // std::cout<<std::endl;
 
      auto ordered_face_nodes=argsort(face_nodes);
 
      // for(std::size_t i=0;i<ordered_face_nodes.size();i++)
      //      {
-     //        std::cout<<ordered_face_nodes[i]<<" ";
+     //        // std::cout<<ordered_face_nodes[i]<<" ";
      //      }
-     // std::cout<<std::endl;
+     // // std::cout<<std::endl;
 
 
 
@@ -2663,14 +2663,14 @@ apply (const Vector<Real,ManifoldDim>& point, Output & func)
   //   }
 
 
-  //   // std::cout<<"mapping"<<std::endl;
-  //   // std::cout<<mapping<<std::endl; 
-  //   // std::cout<<"rt0_reference"<<std::endl;
-  //   // std::cout<<rt0_reference<<std::endl; 
-  //   // std::cout<<"rt0"<<std::endl;
-  //   // std::cout<<rt0<<std::endl; 
-  //   // std::cout<<"func"<<std::endl;
-  //   // std::cout<<func<<std::endl; 
+  //   // // std::cout<<"mapping"<<std::endl;
+  //   // // std::cout<<mapping<<std::endl; 
+  //   // // std::cout<<"rt0_reference"<<std::endl;
+  //   // // std::cout<<rt0_reference<<std::endl; 
+  //   // // std::cout<<"rt0"<<std::endl;
+  //   // // std::cout<<rt0<<std::endl; 
+  //   // // std::cout<<"func"<<std::endl;
+  //   // // std::cout<<func<<std::endl; 
 
 
 
@@ -2692,8 +2692,8 @@ apply (const Vector<Real,ManifoldDim>& point, Output & func)
 
   //       for(Integer k=1;k<ManifoldDim;k++)
   //           tmp+=reference_external_coeff(cont,k)*(points(row,k)-barycenter[k]);
-  //       // std::cout<<"cont=="<<cont<<std::endl;
-  //       // std::cout<<tmp<<std::endl;
+  //       // // std::cout<<"cont=="<<cont<<std::endl;
+  //       // // std::cout<<tmp<<std::endl;
 
   //       for(Integer k=0;k<ManifoldDim;k++)
   //       {
@@ -2705,28 +2705,28 @@ apply (const Vector<Real,ManifoldDim>& point, Output & func)
   //        }
   //   }
 
-  //    // std::cout<<"func"<<std::endl;
-  //    // std::cout<<func<<std::endl;
+  //    // // std::cout<<"func"<<std::endl;
+  //    // // std::cout<<func<<std::endl;
  
   //   Matrix<Real,ManifoldDim,ManifoldDim> dynamic_coeff;
   //   inverse_mat_dynamic_coeffs(dynamic_coeff,mapping);
 
-  //    // std::cout<<"dynamic_coeff"<<std::endl;
-  //    // std::cout<<dynamic_coeff<<std::endl;
+  //    // // std::cout<<"dynamic_coeff"<<std::endl;
+  //    // // std::cout<<dynamic_coeff<<std::endl;
 
   //   for(Integer i=0;i<ManifoldDim;i++)
   //     {
   //       for(Integer j=0;j<ManifoldDim;j++)
   //       {
-  //         // std::cout<<"i,j"<<i<<","<<j<<std::endl;
-  //         // std::cout<<"dynamic_coeff(i,0)"<<std::endl;
-  //         // std::cout<<dynamic_coeff(i,0)<<std::endl;
-  //         // std::cout<<"barycenter[0]"<<std::endl;
-  //         // std::cout<<barycenter[0]<<std::endl;
-  //         // std::cout<<"rt0[0](j)"<<std::endl;
-  //         // std::cout<<rt0[0](j)<<std::endl;
-  //         // std::cout<<"cont+i"<<cont+i<<std::endl; 
-  //         // std::cout<<"func[cont+i]"<<func[cont+i]<<std::endl; 
+  //         // // std::cout<<"i,j"<<i<<","<<j<<std::endl;
+  //         // // std::cout<<"dynamic_coeff(i,0)"<<std::endl;
+  //         // // std::cout<<dynamic_coeff(i,0)<<std::endl;
+  //         // // std::cout<<"barycenter[0]"<<std::endl;
+  //         // // std::cout<<barycenter[0]<<std::endl;
+  //         // // std::cout<<"rt0[0](j)"<<std::endl;
+  //         // // std::cout<<rt0[0](j)<<std::endl;
+  //         // // std::cout<<"cont+i"<<cont+i<<std::endl; 
+  //         // // std::cout<<"func[cont+i]"<<func[cont+i]<<std::endl; 
   //         func[cont+i][row](j)=rt0_unsigned[0](j) * points(row,ManifoldDim-1) * dynamic_coeff(i,0);
 
   //       }
@@ -2735,27 +2735,27 @@ apply (const Vector<Real,ManifoldDim>& point, Output & func)
   //         {
   //          for(Integer j=0;j<ManifoldDim;j++)
   //           {
-  //             // std::cout<<"i,k,j"<<i<<","<<k<<", "<<j<<std::endl;
+  //             // // std::cout<<"i,k,j"<<i<<","<<k<<", "<<j<<std::endl;
   //             func[cont+i][row](j)+=rt0_unsigned[k](j) * points(row,ManifoldDim-1-k) * dynamic_coeff(i,k); 
   //           }
   //         }
 
-  //       // std::cout<< "pre i=="<< i<<" cont=="<<cont<<std::endl;
+  //       // // std::cout<< "pre i=="<< i<<" cont=="<<cont<<std::endl;
 
-  //        // std::cout<< "post i=="<< i<<" cont=="<<cont<<std::endl;
+  //        // // std::cout<< "post i=="<< i<<" cont=="<<cont<<std::endl;
   //     }
 
-  //   std::cout<<"row"<<std::endl;
-  //   std::cout<<row<<std::endl; 
-  //   std::cout<<"points"<<std::endl;
-  //   std::cout<<points<<std::endl; 
+  //   // std::cout<<"row"<<std::endl;
+  //   // std::cout<<row<<std::endl; 
+  //   // std::cout<<"points"<<std::endl;
+  //   // std::cout<<points<<std::endl; 
     
   //   }
 
   //   // // ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 1>::apply(point,p1);
   //   // // mat_coeffs is a matrix whose columsn are RT0 shape functions evaluated in the reference barycenter 
-  //   //  // std::cout<<"func"<<std::endl;
-  //   //  // std::cout<<func<<std::endl;
+  //   //  // // std::cout<<"func"<<std::endl;
+  //   //  // // std::cout<<func<<std::endl;
 
 
   //   // // auto& signed_normal=mesh.signed_normal();
@@ -2774,47 +2774,47 @@ apply (const Vector<Real,ManifoldDim>& point, Output & func)
 
 
 
-  //   //  // std::cout<<"func"<<std::endl;
-  //   //  // std::cout<<func<<std::endl;
+  //   //  // // std::cout<<"func"<<std::endl;
+  //   //  // // std::cout<<func<<std::endl;
   //   //   // auto normals=mesh.signed_normal().normals()[FE.elem_id()];
-  //   //   // std::cout<<normals<<std::endl;
+  //   //   // // std::cout<<normals<<std::endl;
 
 
-  //   //   // // std::cout<<"func"<<std::endl;
-  //   //   // // std::cout<<func<<std::endl;
+  //   //   // // // std::cout<<"func"<<std::endl;
+  //   //   // // // std::cout<<func<<std::endl;
 
-  //   //   // std::cout<<"normal1"<<std::endl;
+  //   //   // // std::cout<<"normal1"<<std::endl;
   //   //   // for(Integer i=0;i<Ndofs;i++)
   //   //   // {
   //   //   //   tmp=0.0;
-  //   //   //   // std::cout<<"normals"<<std
+  //   //   //   // // std::cout<<"normals"<<std
   //   //   //   for(Integer j=0;j<ManifoldDim;j++)
   //   //   //     tmp+=func[i](j)*normals[0](j);
-  //   //   //   std::cout<<i<<", "<<tmp<<std::endl;
+  //   //   //   // std::cout<<i<<", "<<tmp<<std::endl;
   //   //   // }
 
-  //   //   // std::cout<<"normal2"<<std::endl;
+  //   //   // // std::cout<<"normal2"<<std::endl;
   //   //   // for(Integer i=0;i<Ndofs;i++)
   //   //   // {
   //   //   //   tmp=0.0;
-  //   //   //   // std::cout<<"normals"<<std
+  //   //   //   // // std::cout<<"normals"<<std
   //   //   //   for(Integer j=0;j<ManifoldDim;j++)
   //   //   //     tmp+=func[i](j)*normals[1](j);
-  //   //   //   std::cout<<i<<", "<<tmp<<std::endl;
+  //   //   //   // std::cout<<i<<", "<<tmp<<std::endl;
   //   //   // }
-  //   //   // std::cout<<"normal3"<<std::endl;
+  //   //   // // std::cout<<"normal3"<<std::endl;
   //   //   // for(Integer i=0;i<Ndofs;i++)
   //   //   // {
   //   //   //   tmp=0.0;
-  //   //   //   // std::cout<<"normals"<<std
+  //   //   //   // // std::cout<<"normals"<<std
   //   //   //   for(Integer j=0;j<ManifoldDim;j++)
   //   //   //     tmp+=func[i](j)*normals[2](j);
-  //   //   //   std::cout<<i<<", "<<tmp<<std::endl;
+  //   //   //   // std::cout<<i<<", "<<tmp<<std::endl;
   //   //   // }
   //   //   // return func;
 
-  //   std::cout<<"func"<<std::endl;
-  //   std::cout<<func<<std::endl; 
+  //   // std::cout<<"func"<<std::endl;
+  //   // std::cout<<func<<std::endl; 
   // }
 
 // inline static void 
@@ -2835,8 +2835,8 @@ apply (const Vector<Real,ManifoldDim>& point, Output & func)
 //         // loop on dimension
 //         for(Integer k=0;k<ManifoldDim;k++)
 //            func[cont](k,0)=rt0[i](k); 
-//          // std::cout<<cont<<"   "<<std::endl;
-//          // std::cout<<func[cont]<<std::endl;  
+//          // // std::cout<<cont<<"   "<<std::endl;
+//          // // std::cout<<func[cont]<<std::endl;  
 //          cont++;
 //          }
 //     cont=0;
@@ -2849,8 +2849,8 @@ apply (const Vector<Real,ManifoldDim>& point, Output & func)
 //         if(j!=ManifoldDim-i)
 //         {for(Integer k=0;k<ManifoldDim;k++)
 //            func[cont](k,0)=func[cont](k,0)*p1[j](0,0); 
-//          // std::cout<<cont<<"   "<<std::endl;
-//          // std::cout<<func[cont]<<std::endl;         
+//          // // std::cout<<cont<<"   "<<std::endl;
+//          // // std::cout<<func[cont]<<std::endl;         
 //          cont++;
 //          }
 //          }
@@ -2865,8 +2865,8 @@ apply (const Vector<Real,ManifoldDim>& point, Output & func)
 //                    func[cont+i](j,0)+=mat_coeffs(k,i)*rt0[ManifoldDim-k](j,0)*p1[k](0,0);
                 
 //             }
-//          // std::cout<<cont+i<<"   "<<std::endl;
-//          // std::cout<<func[cont+i]<<std::endl;
+//          // // std::cout<<cont+i<<"   "<<std::endl;
+//          // // std::cout<<func[cont+i]<<std::endl;
 //         }
 
 // }
@@ -3076,14 +3076,14 @@ public:
     }
 
 
-    // std::cout<<"mapping"<<std::endl;
-    // std::cout<<mapping<<std::endl; 
-    // std::cout<<"rt0_reference"<<std::endl;
-    // std::cout<<rt0_reference<<std::endl; 
-    // std::cout<<"rt0"<<std::endl;
-    // std::cout<<rt0<<std::endl; 
-    // std::cout<<"func"<<std::endl;
-    // std::cout<<func<<std::endl; 
+    // // std::cout<<"mapping"<<std::endl;
+    // // std::cout<<mapping<<std::endl; 
+    // // std::cout<<"rt0_reference"<<std::endl;
+    // // std::cout<<rt0_reference<<std::endl; 
+    // // std::cout<<"rt0"<<std::endl;
+    // // std::cout<<rt0<<std::endl; 
+    // // std::cout<<"func"<<std::endl;
+    // // std::cout<<func<<std::endl; 
 
 
 
@@ -3105,8 +3105,8 @@ public:
 
         for(Integer k=1;k<ManifoldDim;k++)
             tmp+=reference_external_coeff(cont,k)*(point[k]-barycenter[k]);
-        // std::cout<<"cont=="<<cont<<std::endl;
-        // std::cout<<tmp<<std::endl;
+        // // std::cout<<"cont=="<<cont<<std::endl;
+        // // std::cout<<tmp<<std::endl;
 
         for(Integer k=0;k<ManifoldDim;k++)
         {
@@ -3118,14 +3118,14 @@ public:
          }
     }
 
-     // std::cout<<"func"<<std::endl;
-     // std::cout<<func<<std::endl;
+     // // std::cout<<"func"<<std::endl;
+     // // std::cout<<func<<std::endl;
  
     Matrix<Real,ManifoldDim,ManifoldDim> dynamic_coeff;
     DynamicShapeFunctionValueAux<FunctionSpace>::inverse_mat_dynamic_coeffs(dynamic_coeff,mapping);
 
-     // std::cout<<"dynamic_coeff"<<std::endl;
-     // std::cout<<dynamic_coeff<<std::endl;
+     // // std::cout<<"dynamic_coeff"<<std::endl;
+     // // std::cout<<dynamic_coeff<<std::endl;
 
     for(Integer i=0;i<ManifoldDim;i++)
       {
@@ -3139,24 +3139,24 @@ public:
           {
            for(Integer j=0;j<ManifoldDim;j++)
             {
-              // std::cout<<"i,k,j"<<i<<","<<k<<", "<<j<<std::endl;
+              // // std::cout<<"i,k,j"<<i<<","<<k<<", "<<j<<std::endl;
               func[cont+i](j)+=rt0_unsigned[k](j) * point[ManifoldDim-1-k] * dynamic_coeff(i,k); 
             }
           }
 
-        // std::cout<< "pre i=="<< i<<" cont=="<<cont<<std::endl;
+        // // std::cout<< "pre i=="<< i<<" cont=="<<cont<<std::endl;
 
-         // std::cout<< "post i=="<< i<<" cont=="<<cont<<std::endl;
+         // // std::cout<< "post i=="<< i<<" cont=="<<cont<<std::endl;
       }
 
 
-      // std::cout<<"func"<<std::endl;
-      // std::cout<<func<<std::endl;
+      // // std::cout<<"func"<<std::endl;
+      // // std::cout<<func<<std::endl;
 
     
 
-    std::cout<<"func"<<std::endl;
-    std::cout<<func<<std::endl; 
+    // std::cout<<"func"<<std::endl;
+    // std::cout<<func<<std::endl; 
   }
 
 
@@ -3177,8 +3177,8 @@ public:
     Real tmp;
     SingleType func_tmp;
     Integer n_tot;
-    // std::cout<<"apply4, elem id="<<FE.elem_id()<<std::endl;
-    // std::cout<<"NComponents"<<NComponents<< std::endl;
+    // // std::cout<<"apply4, elem id="<<FE.elem_id()<<std::endl;
+    // // std::cout<<"NComponents"<<NComponents<< std::endl;
 
     Matrix<Real,ManifoldDim,ManifoldDim> dynamic_coeff;
     DynamicShapeFunctionValueAux<FunctionSpace>::inverse_mat_dynamic_coeffs(dynamic_coeff,mapping);
@@ -3187,7 +3187,7 @@ public:
     for(Integer row=0;row<Rows;row++)
     {
 
-      // std::cout<<"row"<<row<<"/"<<Rows<<std::endl;
+      // // std::cout<<"row"<<row<<"/"<<Rows<<std::endl;
 
     cont=0;
     ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 0>::apply(points,row,rt0_reference);
@@ -3221,14 +3221,14 @@ public:
     }
 
 
-    // std::cout<<"mapping"<<std::endl;
-    // std::cout<<mapping<<std::endl; 
-    // std::cout<<"rt0_reference"<<std::endl;
-    // std::cout<<rt0_reference<<std::endl; 
-    // std::cout<<"rt0"<<std::endl;
-    // std::cout<<rt0<<std::endl; 
-    // std::cout<<"func"<<std::endl;
-    // std::cout<<func<<std::endl; 
+    // // std::cout<<"mapping"<<std::endl;
+    // // std::cout<<mapping<<std::endl; 
+    // // std::cout<<"rt0_reference"<<std::endl;
+    // // std::cout<<rt0_reference<<std::endl; 
+    // // std::cout<<"rt0"<<std::endl;
+    // // std::cout<<rt0<<std::endl; 
+    // // std::cout<<"func"<<std::endl;
+    // // std::cout<<func<<std::endl; 
 
 
 
@@ -3257,8 +3257,8 @@ public:
             tmp+=reference_external_coeff(cont,k)*(points(row,k)-barycenter[k]);
 
           // tmp*=FE.side_volume();
-        // std::cout<<"cont=="<<cont<<std::endl;
-        // std::cout<<tmp<<std::endl;
+        // // std::cout<<"cont=="<<cont<<std::endl;
+        // // std::cout<<tmp<<std::endl;
 
         // for(Integer n_comp=0;n_comp<NComponents;n_comp++)
           for(Integer k=0;k<ManifoldDim;k++)
@@ -3274,7 +3274,7 @@ public:
             for(Integer n_comp=0;n_comp<NComponents;n_comp++)
             {
                 n_tot=cont * NComponents +  n_comp ;
-                // std::cout<<n_tot<<std::endl;
+                // // std::cout<<n_tot<<std::endl;
                 assign<NComponents>(func[n_tot][row],func_tmp,n_comp,0);               
             }
         
@@ -3285,23 +3285,23 @@ public:
          }
     }
 
-     // std::cout<<"func"<<std::endl;
-     // std::cout<<func<<std::endl;
+     // // std::cout<<"func"<<std::endl;
+     // // std::cout<<func<<std::endl;
  
 
-     // std::cout<<"dynamic_coeff"<<std::endl;
-     // std::cout<<dynamic_coeff<<std::endl;
+     // // std::cout<<"dynamic_coeff"<<std::endl;
+     // // std::cout<<dynamic_coeff<<std::endl;
 
     for(Integer i=0;i<ManifoldDim;++i)
       {
-        // std::cout<<"i"<<i<<"/"<<ManifoldDim<<std::endl;
+        // // std::cout<<"i"<<i<<"/"<<ManifoldDim<<std::endl;
 
           for(Integer j=0;j<ManifoldDim;j++)
           {
-             // std::cout<<"1 pre cont+i"<<cont+i<<std::endl;
+             // // std::cout<<"1 pre cont+i"<<cont+i<<std::endl;
              func[cont+i][row](j)=rt0_unsigned[0](j) * points(row,ManifoldDim-1) * dynamic_coeff(i,0);
              func_tmp[j]=rt0_unsigned[0](j) * points(row,ManifoldDim-1) * dynamic_coeff(i,0);
-              // std::cout<<"1 post cont+i"<<cont+i<<std::endl;
+              // // std::cout<<"1 post cont+i"<<cont+i<<std::endl;
 
           }
 
@@ -3309,73 +3309,73 @@ public:
             {
              for(Integer j=0;j<ManifoldDim;j++)
               {
-                // std::cout<<"2 pre cont+i"<<cont+i<<std::endl;
-                // std::cout<<"i,k,j"<<i<<","<<k<<", "<<j<<std::endl;
+                // // std::cout<<"2 pre cont+i"<<cont+i<<std::endl;
+                // // std::cout<<"i,k,j"<<i<<","<<k<<", "<<j<<std::endl;
                 func[cont+i][row](j)+=rt0_unsigned[k](j) * points(row,ManifoldDim-1-k) * dynamic_coeff(i,k); 
                 func_tmp[j]+=rt0_unsigned[k](j) * points(row,ManifoldDim-1-k) * dynamic_coeff(i,k); 
-                // std::cout<<"2 post cont+i"<<cont+i<<std::endl;
+                // // std::cout<<"2 post cont+i"<<cont+i<<std::endl;
               }
             }
 
-        // std::cout<< "pre i=="<< i<<" cont=="<<cont<<std::endl;
+        // // std::cout<< "pre i=="<< i<<" cont=="<<cont<<std::endl;
             for(Integer n_comp=0;n_comp<NComponents;n_comp++)
             {
                 n_tot=(cont+i) * NComponents +  n_comp ;
-                // std::cout<<"pre "<<n_tot<<std::endl;
+                // // std::cout<<"pre "<<n_tot<<std::endl;
                 assign<NComponents>(func[n_tot][row],func_tmp,n_comp,0);  
-                // std::cout<<"after "<<n_tot<<std::endl;             
+                // // std::cout<<"after "<<n_tot<<std::endl;             
             }
-         // std::cout<< "post i=="<< i<<" cont=="<<cont<<std::endl;
+         // // std::cout<< "post i=="<< i<<" cont=="<<cont<<std::endl;
       }
 
-    // std::cout<<"row"<<std::endl;
-    // std::cout<<row<<std::endl; 
-    // std::cout<<"points"<<std::endl;
-    // std::cout<<points<<std::endl; 
+    // // std::cout<<"row"<<std::endl;
+    // // std::cout<<row<<std::endl; 
+    // // std::cout<<"points"<<std::endl;
+    // // std::cout<<points<<std::endl; 
     
     }
-    // std::cout<<"func"<<std::endl;
-    // std::cout<<func<<std::endl; 
+    // // std::cout<<"func"<<std::endl;
+    // // std::cout<<func<<std::endl; 
     //   auto& mesh=*FE.mesh_ptr();
     //   auto normals=mesh.signed_normal().normals()[FE.elem_id()];
       
       // for(Integer row=0;row<Rows;row++)
       // {
-      // std::cout<<"elem_id="<<FE.elem_id()<<std::endl;
-      // std::cout<<"normal1"<<std::endl;
+      // // std::cout<<"elem_id="<<FE.elem_id()<<std::endl;
+      // // std::cout<<"normal1"<<std::endl;
       // for(Integer i=0;i<func.size();i++)
       // {
       //   tmp=0.0;
-      //   // std::cout<<"normals"<<std
+      //   // // std::cout<<"normals"<<std
       //   for(Integer j=0;j<ManifoldDim;j++)
       //     tmp+=func[i][row](j,0)*normals[0](j);
-      //   std::cout<<i<<", "<<tmp<<std::endl;
-      // }
-      // std::cout<<"elem_id="<<FE.elem_id()<<std::endl;
-      // std::cout<<"normal2"<<std::endl;
-      // for(Integer i=0;i<func.size();i++)
-      // {
-      //   tmp=0.0;
-      //   // std::cout<<"normals"<<std
-      //   for(Integer j=0;j<ManifoldDim;j++)
-      //     tmp+=func[i][row](j,0)*normals[1](j);
-      //   std::cout<<i<<", "<<tmp<<std::endl;
-      // }
-      // std::cout<<"elem_id="<<FE.elem_id()<<std::endl;
-      // std::cout<<"normal3"<<std::endl;
-      // for(Integer i=0;i<func.size();i++)
-      // {
-      //   tmp=0.0;
-      //   // std::cout<<"normals"<<std
-      //   for(Integer j=0;j<ManifoldDim;j++)
-      //     tmp+=func[i][row](j,0)*normals[2](j);
       //   // std::cout<<i<<", "<<tmp<<std::endl;
       // }
+      // // std::cout<<"elem_id="<<FE.elem_id()<<std::endl;
+      // // std::cout<<"normal2"<<std::endl;
+      // for(Integer i=0;i<func.size();i++)
+      // {
+      //   tmp=0.0;
+      //   // // std::cout<<"normals"<<std
+      //   for(Integer j=0;j<ManifoldDim;j++)
+      //     tmp+=func[i][row](j,0)*normals[1](j);
+      //   // std::cout<<i<<", "<<tmp<<std::endl;
       // }
-  // std::cout<<"reference_external_coeff"<<std::endl;
-  // std::cout<<reference_external_coeff<<std::endl;
-  // std::cout<<"dynamic_coeff"<<std::endl;
-  // std::cout<<dynamic_coeff<<std::endl;
+      // // std::cout<<"elem_id="<<FE.elem_id()<<std::endl;
+      // // std::cout<<"normal3"<<std::endl;
+      // for(Integer i=0;i<func.size();i++)
+      // {
+      //   tmp=0.0;
+      //   // // std::cout<<"normals"<<std
+      //   for(Integer j=0;j<ManifoldDim;j++)
+      //     tmp+=func[i][row](j,0)*normals[2](j);
+      //   // // std::cout<<i<<", "<<tmp<<std::endl;
+      // }
+      // }
+  // // std::cout<<"reference_external_coeff"<<std::endl;
+  // // std::cout<<reference_external_coeff<<std::endl;
+  // // std::cout<<"dynamic_coeff"<<std::endl;
+  // // std::cout<<dynamic_coeff<<std::endl;
   }
 
 
@@ -3395,7 +3395,7 @@ public:
     // for(Integer row=0;row<Rows;row++)
     // {
 
-    // //   // std::cout<<"row"<<row<<"/"<<Rows<<std::endl;
+    // //   // // std::cout<<"row"<<row<<"/"<<Rows<<std::endl;
 
     // // cont=0;
     // ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 0>::apply(points,row,rt0_reference);
@@ -3475,8 +3475,8 @@ public:
     Real tmp; 
     Matrix<Real,1,1> func_tmp;
     Integer n_tot;
-    // std::cout<<"apply4, elem id="<<FE.elem_id()<<std::endl;
-    // std::cout<<"NComponents"<<NComponents<< std::endl;
+    // // std::cout<<"apply4, elem id="<<FE.elem_id()<<std::endl;
+    // // std::cout<<"NComponents"<<NComponents<< std::endl;
     MapFromReference<IdentityOperator,Elem,FEFamily> id_map;
     id_map.init(FE);
     const auto& id_mapping=id_map();
@@ -3490,14 +3490,14 @@ public:
     for(Integer row=0;row<Rows;row++)
     {
 
-      // std::cout<<"row"<<row<<"/"<<Rows<<std::endl;
+      // // std::cout<<"row"<<row<<"/"<<Rows<<std::endl;
 
     cont=0;
     ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 0>::apply(points,row,rt0_reference);
     ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, DivergenceOperator, RaviartThomasFE, 0>::apply(points,row,divrt0_reference);
 
-    // std::cout<<"div_mapping="<<div_mapping<<std::endl;
-    // std::cout<<"id_mapping="<<id_mapping<<std::endl;
+    // // std::cout<<"div_mapping="<<div_mapping<<std::endl;
+    // // std::cout<<"id_mapping="<<id_mapping<<std::endl;
     
     for(Integer i=0;i<RT0Ndofs;i++)
     {
@@ -3531,14 +3531,14 @@ public:
     }
 
 
-    // // std::cout<<"mapping"<<std::endl;
-    // // std::cout<<mapping<<std::endl; 
-    // // std::cout<<"rt0_reference"<<std::endl;
-    // // std::cout<<rt0_reference<<std::endl; 
-    // // std::cout<<"rt0"<<std::endl;
-    // // std::cout<<rt0<<std::endl; 
-    // // std::cout<<"func"<<std::endl;
-    // // std::cout<<func<<std::endl; 
+    // // // std::cout<<"mapping"<<std::endl;
+    // // // std::cout<<mapping<<std::endl; 
+    // // // std::cout<<"rt0_reference"<<std::endl;
+    // // // std::cout<<rt0_reference<<std::endl; 
+    // // // std::cout<<"rt0"<<std::endl;
+    // // // std::cout<<rt0<<std::endl; 
+    // // // std::cout<<"func"<<std::endl;
+    // // // std::cout<<func<<std::endl; 
 
 
 
@@ -3548,7 +3548,7 @@ public:
     // loop on RT0 functions
     for(Integer i=0;i<RT0Ndofs;++i)
     {
-      // std::cout<<"RT0Ndofs="<<RT0Ndofs<<std::endl;
+      // // std::cout<<"RT0Ndofs="<<RT0Ndofs<<std::endl;
       // loop on dimension
       for(Integer j=0;j<ManifoldDim;++j)
         {
@@ -3560,11 +3560,11 @@ public:
         //       func_tmp[k]=rt0[i](k);
         //     }
 
-        // std::cout<<"i,j"<<i<<","<<j<<std::endl;
+        // // std::cout<<"i,j"<<i<<","<<j<<std::endl;
 
 
-        // std::cout<<"qui cont "<<cont<<std::endl;
-        // std::cout<<"reference_external_coeff "<<reference_external_coeff<<std::endl;
+        // // std::cout<<"qui cont "<<cont<<std::endl;
+        // // std::cout<<"reference_external_coeff "<<reference_external_coeff<<std::endl;
 
                     
 
@@ -3573,15 +3573,15 @@ public:
         for(Integer k=1;k<ManifoldDim;k++)
             tmp+=reference_external_coeff(cont,k)*(points(row,k)-barycenter[k]);
 
-        // std::cout<<"a) tmp="<<tmp<<std::endl;
+        // // std::cout<<"a) tmp="<<tmp<<std::endl;
 
         tmp*=divrt0[i](0,0);
 
-        // std::cout<<"divrt0[i](0,0)="<<divrt0[i](0,0)<<std::endl;
+        // // std::cout<<"divrt0[i](0,0)="<<divrt0[i](0,0)<<std::endl;
 
-        // std::cout<<"b) tmp="<<tmp<<std::endl;
+        // // std::cout<<"b) tmp="<<tmp<<std::endl;
 
-        // std::cout<<"rt0[i]="<<rt0[i]<<std::endl;
+        // // std::cout<<"rt0[i]="<<rt0[i]<<std::endl;
         
         for(Integer k=0;k<ManifoldDim;k++)
           {
@@ -3593,10 +3593,10 @@ public:
 
           }  
 
-        // std::cout<<"c) tmp="<<tmp<<std::endl;    
+        // // std::cout<<"c) tmp="<<tmp<<std::endl;    
 
-        // std::cout<<"cont=="<<cont<<std::endl;
-        // std::cout<<tmp<<std::endl;
+        // // std::cout<<"cont=="<<cont<<std::endl;
+        // // std::cout<<tmp<<std::endl;
 
         // for(Integer n_comp=0;n_comp<NComponents;n_comp++)
           // for(Integer k=0;k<ManifoldDim;k++)
@@ -3614,87 +3614,87 @@ public:
             {
                 
                 n_tot=cont * NComponents +  n_comp ;
-                // std::cout<<"pre n_tot"<<n_tot<<std::endl;
+                // // std::cout<<"pre n_tot"<<n_tot<<std::endl;
                 assign<NComponents>(func[n_tot][row],func_tmp,n_comp,0);    
             }
         
 
          cont++;
-         // std::cout<<"post cont "<<cont<<std::endl;
+         // // std::cout<<"post cont "<<cont<<std::endl;
          }
     }
 
-     // std::cout<<"func"<<std::endl;
-     // std::cout<<func<<std::endl;
+     // // std::cout<<"func"<<std::endl;
+     // // std::cout<<func<<std::endl;
  
 
-    //  // std::cout<<"dynamic_coeff"<<std::endl;
-    //  // std::cout<<dynamic_coeff<<std::endl;
+    //  // // std::cout<<"dynamic_coeff"<<std::endl;
+    //  // // std::cout<<dynamic_coeff<<std::endl;
 
     for(Integer i=0;i<ManifoldDim;++i)
       {
-        // std::cout<<"i"<<i<<"/"<<ManifoldDim<<std::endl;
-        // std::cout<<"dynamic_coeff"<<std::endl;
-        // std::cout<<dynamic_coeff<<std::endl;
-        // std::cout<<"divrt0_unsigned[0](0,0)"<<std::endl;
-        // std::cout<<divrt0_unsigned[0](0,0)<<std::endl;
-        // std::cout<<"rt0_unsigned[i]"<<std::endl;
-        // std::cout<<rt0_unsigned[i]<<std::endl;
+        // // std::cout<<"i"<<i<<"/"<<ManifoldDim<<std::endl;
+        // // std::cout<<"dynamic_coeff"<<std::endl;
+        // // std::cout<<dynamic_coeff<<std::endl;
+        // // std::cout<<"divrt0_unsigned[0](0,0)"<<std::endl;
+        // // std::cout<<divrt0_unsigned[0](0,0)<<std::endl;
+        // // std::cout<<"rt0_unsigned[i]"<<std::endl;
+        // // std::cout<<rt0_unsigned[i]<<std::endl;
 
-        // std::cout<<"func_tmp(0,0)" <<std::endl;
+        // // std::cout<<"func_tmp(0,0)" <<std::endl;
         func_tmp(0,0)=divrt0_unsigned[0](0,0) * points(row,ManifoldDim-1) * dynamic_coeff(i,0);
-        // std::cout<<divrt0_unsigned[0](0,0) * points(row,ManifoldDim-1) * dynamic_coeff(i,0) <<std::endl;
-        // std::cout<<func_tmp(0,0) <<std::endl;
-        // std::cout<<std::endl;
+        // // std::cout<<divrt0_unsigned[0](0,0) * points(row,ManifoldDim-1) * dynamic_coeff(i,0) <<std::endl;
+        // // std::cout<<func_tmp(0,0) <<std::endl;
+        // // std::cout<<std::endl;
         
         // func_tmp(0,0)+=rt0_unsigned[0](ManifoldDim-1) * dynamic_coeff(i,0);
         func_tmp(0,0)+=div_mapping*rt0_reference[0](ManifoldDim-1) * dynamic_coeff(i,0);
 
 
-        // std::cout<<rt0_unsigned[i](ManifoldDim-1) * dynamic_coeff(i,0) <<std::endl;
-        // std::cout<<func_tmp(0,0) <<std::endl;
-        // std::cout<<std::endl;
+        // // std::cout<<rt0_unsigned[i](ManifoldDim-1) * dynamic_coeff(i,0) <<std::endl;
+        // // std::cout<<func_tmp(0,0) <<std::endl;
+        // // std::cout<<std::endl;
 
         for(Integer k=1;k<ManifoldDim;k++)          
           {
             func_tmp(0,0)+=divrt0_unsigned[k](0,0) * points(row,ManifoldDim-1-k) * dynamic_coeff(i,k);
-            // std::cout<<divrt0_unsigned[k](0,0) * points(row,ManifoldDim-1-k) * dynamic_coeff(i,k) <<std::endl;
-            // std::cout<<func_tmp(0,0) <<std::endl;
-            // std::cout<<std::endl;
+            // // std::cout<<divrt0_unsigned[k](0,0) * points(row,ManifoldDim-1-k) * dynamic_coeff(i,k) <<std::endl;
+            // // std::cout<<func_tmp(0,0) <<std::endl;
+            // // std::cout<<std::endl;
             // func_tmp(0,0)+=rt0_unsigned[k](ManifoldDim-1-k) * dynamic_coeff(i,k);
             func_tmp(0,0)+=div_mapping*rt0_reference[k](ManifoldDim-1-k) * dynamic_coeff(i,k);
 
             
-            // std::cout<<rt0_unsigned[i](ManifoldDim-1-k) * dynamic_coeff(i,k) <<std::endl;
-            // std::cout<<func_tmp(0,0) <<std::endl;
-            // std::cout<<std::endl;
+            // // std::cout<<rt0_unsigned[i](ManifoldDim-1-k) * dynamic_coeff(i,k) <<std::endl;
+            // // std::cout<<func_tmp(0,0) <<std::endl;
+            // // std::cout<<std::endl;
           }
 
-        // std::cout<<std::endl;
+        // // std::cout<<std::endl;
 
 
 
         for(Integer n_comp=0;n_comp<NComponents;n_comp++)
         {
             n_tot=(cont+i) * NComponents +  n_comp ;
-            // std::cout<<"post "<<n_tot<<std::endl;
+            // // std::cout<<"post "<<n_tot<<std::endl;
             assign<NComponents>(func[n_tot][row],func_tmp,n_comp,0);  
         }
-         // std::cout<< "post i=="<< i<<" cont=="<<cont<<std::endl;
+         // // std::cout<< "post i=="<< i<<" cont=="<<cont<<std::endl;
       }
 
-    // std::cout<<"row"<<std::endl;
-    // std::cout<<row<<std::endl; 
-    // std::cout<<"points"<<std::endl;
-    // std::cout<<points<<std::endl; 
+    // // std::cout<<"row"<<std::endl;
+    // // std::cout<<row<<std::endl; 
+    // // std::cout<<"points"<<std::endl;
+    // // std::cout<<points<<std::endl; 
     
     }
-  //   std::cout<<"divergence func"<<std::endl;
-  //   std::cout<<func<<std::endl; 
-  // std::cout<<"reference_external_coeff"<<std::endl;
-  // std::cout<<reference_external_coeff<<std::endl;
-  // std::cout<<"dynamic_coeff"<<std::endl;
-  // std::cout<<dynamic_coeff<<std::endl;
+  //   // std::cout<<"divergence func"<<std::endl;
+  //   // std::cout<<func<<std::endl; 
+  // // std::cout<<"reference_external_coeff"<<std::endl;
+  // // std::cout<<reference_external_coeff<<std::endl;
+  // // std::cout<<"dynamic_coeff"<<std::endl;
+  // // std::cout<<dynamic_coeff<<std::endl;
   } 
 
 
@@ -3887,7 +3887,7 @@ apply2(const Vector<Real,ManifoldDim> point)
             {
                // for(Integer k=0;k<ManifoldDim;k++)
                func[cont](0,0)=divRT0[i](0,0)*p1[j](0,0); 
-             // std::cout<<cont<<"   "<<func[cont](0,0)<<std::endl;
+             // // std::cout<<cont<<"   "<<func[cont](0,0)<<std::endl;
              cont++;
 
              }
@@ -3903,7 +3903,7 @@ apply2(const Vector<Real,ManifoldDim> point)
             {
                for(Integer k=0;k<ManifoldDim;k++)
                func[cont](0,0)+=rt0[i](k,0)*gradP1[j](k,0); 
-             // std::cout<<cont<<"   "<<func[cont](0,0)<<std::endl;
+             // // std::cout<<cont<<"   "<<func[cont](0,0)<<std::endl;
              cont++;
              }
          }
@@ -3918,7 +3918,7 @@ apply2(const Vector<Real,ManifoldDim> point)
                 for(Integer k=0;k<ManifoldDim;k++)
                    for(Integer j=0;j<ManifoldDim;j++)
                    func[cont+i](0,0)+=mat_coeffs(k,i)*rt0[ManifoldDim-k](j,0)*gradP1[k](j,0);
-               // std::cout<<cont+i<<"   "<<func[cont+i](0,0)<<std::endl;
+               // // std::cout<<cont+i<<"   "<<func[cont+i](0,0)<<std::endl;
             }
 
 }
@@ -4091,12 +4091,12 @@ apply2(const Vector<Real,ManifoldDim> point)
     // }
 
 
-    // // std::cout<<"mapping"<<std::endl;
-    // // std::cout<<mapping<<std::endl; 
-    // // std::cout<<"rt0_reference"<<std::endl;
-    // // std::cout<<rt0_reference<<std::endl; 
-    // // std::cout<<"rt0"<<std::endl;
-    // // std::cout<<rt0<<std::endl; 
+    // // // std::cout<<"mapping"<<std::endl;
+    // // // std::cout<<mapping<<std::endl; 
+    // // // std::cout<<"rt0_reference"<<std::endl;
+    // // // std::cout<<rt0_reference<<std::endl; 
+    // // // std::cout<<"rt0"<<std::endl;
+    // // // std::cout<<rt0<<std::endl; 
 
 
 
@@ -4119,8 +4119,8 @@ apply2(const Vector<Real,ManifoldDim> point)
 
     //     for(Integer k=1;k<ManifoldDim;k++)
     //         tmp+=reference_external_coeff(cont,k)*(points(row,k)-barycenter[k]);
-    //     // std::cout<<"cont=="<<cont<<std::endl;
-    //     // std::cout<<tmp<<std::endl;
+    //     // // std::cout<<"cont=="<<cont<<std::endl;
+    //     // // std::cout<<tmp<<std::endl;
 
     //     for(Integer k=0;k<ManifoldDim;k++)
     //     {
@@ -4132,28 +4132,28 @@ apply2(const Vector<Real,ManifoldDim> point)
     //      }
     // }
 
-    //  // std::cout<<"func"<<std::endl;
-    //  // std::cout<<func<<std::endl;
+    //  // // std::cout<<"func"<<std::endl;
+    //  // // std::cout<<func<<std::endl;
  
     // Matrix<Real,ManifoldDim,ManifoldDim> dynamic_coeff;
     // inverse_mat_dynamic_coeffs(dynamic_coeff,mapping);
 
-    //  // std::cout<<"dynamic_coeff"<<std::endl;
-    //  // std::cout<<dynamic_coeff<<std::endl;
+    //  // // std::cout<<"dynamic_coeff"<<std::endl;
+    //  // // std::cout<<dynamic_coeff<<std::endl;
 
     // for(Integer i=0;i<ManifoldDim;i++)
     //   {
     //     for(Integer j=0;j<ManifoldDim;j++)
     //     {
-    //       // std::cout<<"i,j"<<i<<","<<j<<std::endl;
-    //       // std::cout<<"dynamic_coeff(i,0)"<<std::endl;
-    //       // std::cout<<dynamic_coeff(i,0)<<std::endl;
-    //       // std::cout<<"barycenter[0]"<<std::endl;
-    //       // std::cout<<barycenter[0]<<std::endl;
-    //       // std::cout<<"rt0[0](j)"<<std::endl;
-    //       // std::cout<<rt0[0](j)<<std::endl;
-    //       // std::cout<<"cont+i"<<cont+i<<std::endl; 
-    //       // std::cout<<"func[cont+i]"<<func[cont+i]<<std::endl; 
+    //       // // std::cout<<"i,j"<<i<<","<<j<<std::endl;
+    //       // // std::cout<<"dynamic_coeff(i,0)"<<std::endl;
+    //       // // std::cout<<dynamic_coeff(i,0)<<std::endl;
+    //       // // std::cout<<"barycenter[0]"<<std::endl;
+    //       // // std::cout<<barycenter[0]<<std::endl;
+    //       // // std::cout<<"rt0[0](j)"<<std::endl;
+    //       // // std::cout<<rt0[0](j)<<std::endl;
+    //       // // std::cout<<"cont+i"<<cont+i<<std::endl; 
+    //       // // std::cout<<"func[cont+i]"<<func[cont+i]<<std::endl; 
     //       func[cont+i](j)=rt0_unsigned[0](j) * points(row,ManifoldDim-1) * dynamic_coeff(i,0);
 
     //     }
@@ -4162,14 +4162,14 @@ apply2(const Vector<Real,ManifoldDim> point)
     //       {
     //        for(Integer j=0;j<ManifoldDim;j++)
     //         {
-    //           // std::cout<<"i,k,j"<<i<<","<<k<<", "<<j<<std::endl;
+    //           // // std::cout<<"i,k,j"<<i<<","<<k<<", "<<j<<std::endl;
     //           func[cont+i](j)+=rt0_unsigned[k](j) * points(row,ManifoldDim-1-k) * dynamic_coeff(i,k); 
     //         }
     //       }
 
-    //     // std::cout<< "pre i=="<< i<<" cont=="<<cont<<std::endl;
+    //     // // std::cout<< "pre i=="<< i<<" cont=="<<cont<<std::endl;
 
-    //      // std::cout<< "post i=="<< i<<" cont=="<<cont<<std::endl;
+    //      // // std::cout<< "post i=="<< i<<" cont=="<<cont<<std::endl;
     //   }
     // }
 
@@ -4597,8 +4597,8 @@ public:
         const auto& map=(*map_ptr);
         const auto& mapping=map();
 
-        // std::cout<< "reference_values="<<std::endl;
-        // std::cout<< reference_values<<std::endl;
+        // // std::cout<< "reference_values="<<std::endl;
+        // // std::cout<< reference_values<<std::endl;
 
 
         for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
@@ -4611,12 +4611,12 @@ public:
                 {
                     func_values_[n_tot_][qp].zero();
                     // func_tmp_=alpha[n_dof] * mapping * weighted_reference_values[n_dof][qp];
-                    // std::cout<< "n_dof, qp, n_tot_, n_comp, n_=("<<n_dof<<", "<<qp<<", "<< n_tot_<<", "<<n_comp<<", "<< n_<<")"<<std::endl;
-                    // std::cout<< "func_values_="<<func_values_[n_tot_][qp]<<std::endl;
+                    // // std::cout<< "n_dof, qp, n_tot_, n_comp, n_=("<<n_dof<<", "<<qp<<", "<< n_tot_<<", "<<n_comp<<", "<< n_<<")"<<std::endl;
+                    // // std::cout<< "func_values_="<<func_values_[n_tot_][qp]<<std::endl;
                     func_tmp_=alpha[n_dof] * mapping * reference_values[n_dof][qp];
-                    // std::cout<< "func_tmp_="<<func_tmp_<<std::endl;
+                    // // std::cout<< "func_tmp_="<<func_tmp_<<std::endl;
                     assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
-                    // std::cout<< "func_values_ after="<<func_values_[n_tot_][qp]<<std::endl;
+                    // // std::cout<< "func_values_ after="<<func_values_[n_tot_][qp]<<std::endl;
                 }               
             }
         }
@@ -4650,10 +4650,10 @@ public:
         const auto& map=(*map_ptr);
         const auto& mapping=map();
         dynamic_reference_values_=reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(reference_qp_points);
-        // std::cout<<"dynamic_reference_values_"<<std::endl;
-        // std::cout<<dynamic_reference_values_<<std::endl;
-        // std::cout<<"mapping"<<std::endl;
-        // std::cout<<mapping<<std::endl;
+        // // std::cout<<"dynamic_reference_values_"<<std::endl;
+        // // std::cout<<dynamic_reference_values_<<std::endl;
+        // // std::cout<<"mapping"<<std::endl;
+        // // std::cout<<mapping<<std::endl;
         for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
         {
             for(Integer n_comp=0;n_comp<NComponents;n_comp++)
@@ -4681,16 +4681,16 @@ public:
         const auto& map=(*map_ptr);
         const auto& mapping=map();
         dynamic_reference_values_=reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(reference_qp_points);
-        // std::cout<<"dynamic_reference_values_"<<std::endl;
-        // std::cout<<dynamic_reference_values_<<std::endl;
-        // std::cout<<"mapping"<<std::endl;
-        // std::cout<<mapping<<std::endl;
-        // std::cout<<"alpha"<<std::endl;
-        // std::cout<<alpha<<std::endl;
-        // std::cout<<"Ndofs"<<std::endl;
-        // std::cout<<Ndofs<<std::endl;
-        // std::cout<<"func_values_"<<std::endl;
-        // std::cout<<func_values_<<std::endl;
+        // // std::cout<<"dynamic_reference_values_"<<std::endl;
+        // // std::cout<<dynamic_reference_values_<<std::endl;
+        // // std::cout<<"mapping"<<std::endl;
+        // // std::cout<<mapping<<std::endl;
+        // // std::cout<<"alpha"<<std::endl;
+        // // std::cout<<alpha<<std::endl;
+        // // std::cout<<"Ndofs"<<std::endl;
+        // // std::cout<<Ndofs<<std::endl;
+        // // std::cout<<"func_values_"<<std::endl;
+        // // std::cout<<func_values_<<std::endl;
 
         for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
         {
@@ -4838,19 +4838,19 @@ public:
 
         // decltype(func_values_) ok1(1);
         // SingleType ok2(2);
-        // std::cout<<"SHAPE FUNCTION TRACE reference_values="<<std::endl;
+        // // std::cout<<"SHAPE FUNCTION TRACE reference_values="<<std::endl;
         
-        // std::cout<<QuadratureRule::qp_points<<std::endl;
-        // std::cout<<reference_values<<std::endl;
-        // std::cout<<mapping<<std::endl;
+        // // std::cout<<QuadratureRule::qp_points<<std::endl;
+        // // std::cout<<reference_values<<std::endl;
+        // // std::cout<<mapping<<std::endl;
         
-        // std::cout<<"func_values_[0][0]"<<std::endl;
-        // std::cout<<func_values_[0][0]<<std::endl;
-        // std::cout<<"func_values_"<<std::endl;
+        // // std::cout<<"func_values_[0][0]"<<std::endl;
+        // // std::cout<<func_values_[0][0]<<std::endl;
+        // // std::cout<<"func_values_"<<std::endl;
         
-        // std::cout<<func_values_<<std::endl;
-        // std::cout<<" init func_tmp_"<<std::endl;
-        // std::cout<<func_tmp_<<std::endl;
+        // // std::cout<<func_values_<<std::endl;
+        // // std::cout<<" init func_tmp_"<<std::endl;
+        // // std::cout<<func_tmp_<<std::endl;
         for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
         {
 
@@ -4862,24 +4862,24 @@ public:
                 n_=n_comp;
                 for(Integer qp=0;qp<NQPoints;qp++)
                 {
-                    // std::cout<<n_dof<<", "<<n_comp<<", " <<qp<<std::endl;
+                    // // std::cout<<n_dof<<", "<<n_comp<<", " <<qp<<std::endl;
                     func_values_[n_tot_][qp].zero();
-                    // std::cout<<"qui1"<<std::endl;
+                    // // std::cout<<"qui1"<<std::endl;
                     // func_tmp_=  mapping * weighted_reference_values[n_dof][qp];
                     func_tmp_=  mapping * reference_values[n_dof][qp];
-                    // std::cout<<"qui2"<<std::endl;
+                    // // std::cout<<"qui2"<<std::endl;
                     
                     // se ncompontensts >1, allora assegni alla riga
                     assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
-                    // std::cout<<"qui3"<<std::endl;
-                   // std::cout<<"func_tmp_="<<mapping<<" "<<reference_values[n_dof][qp]<<std::endl;
+                    // // std::cout<<"qui3"<<std::endl;
+                   // // std::cout<<"func_tmp_="<<mapping<<" "<<reference_values[n_dof][qp]<<std::endl;
                 }
                 
             }
         }
         
-     // std::cout<<"ShapeFunction  trace end"<<std::endl;
-     // std::cout<<func_values_<<std::endl;
+     // // std::cout<<"ShapeFunction  trace end"<<std::endl;
+     // // std::cout<<func_values_<<std::endl;
 
     }
     
@@ -4889,25 +4889,25 @@ public:
         //face=0
         // const Integer face=0;
         // auto alpha=subarray(beta,trace[face]);
-        // std::cout<<"face"<<face<<std::endl;
-        //   std::cout<<"beta"<<beta<<std::endl;
-        //   std::cout<<"trace[face]"<<trace[face]<<std::endl;
+        // // std::cout<<"face"<<face<<std::endl;
+        //   // std::cout<<"beta"<<beta<<std::endl;
+        //   // std::cout<<"trace[face]"<<trace[face]<<std::endl;
 
-      // std::cout<<"init RT elements (coeffs)"<<std::endl;
-      // std::cout<<"alpha_"<<std::endl;
-      // std::cout<<alpha_<<std::endl;
-      // std::cout<<"beta"<<std::endl;
-      // std::cout<<beta<<std::endl;
-      // std::cout<<"trace"<<std::endl;
-      // std::cout<<trace<<std::endl;
-      // std::cout<<"trace[face]"<<std::endl;
-      // std::cout<<trace[face]<<std::endl;
+      // // std::cout<<"init RT elements (coeffs)"<<std::endl;
+      // // std::cout<<"alpha_"<<std::endl;
+      // // std::cout<<alpha_<<std::endl;
+      // // std::cout<<"beta"<<std::endl;
+      // // std::cout<<beta<<std::endl;
+      // // std::cout<<"trace"<<std::endl;
+      // // std::cout<<trace<<std::endl;
+      // // std::cout<<"trace[face]"<<std::endl;
+      // // std::cout<<trace[face]<<std::endl;
         subarray(alpha_,beta,trace[face]);
 
 
-        // std::cout<<"init RT elements (coeffs)"<<std::endl;
-        // std::cout<<beta<<std::endl;
-        //  std::cout<<alpha_<<std::endl;
+        // // std::cout<<"init RT elements (coeffs)"<<std::endl;
+        // // std::cout<<beta<<std::endl;
+        //  // std::cout<<alpha_<<std::endl;
         
         const auto& map=(*map_ptr);
         const auto& mapping=map();
@@ -4920,23 +4920,23 @@ public:
                 n_=n_comp;
                 for(Integer qp=0;qp<NQPoints;qp++)
                 {
-                    // std::cout<<n_dof<<", "<<n_comp<<", " <<qp<<std::endl;
+                    // // std::cout<<n_dof<<", "<<n_comp<<", " <<qp<<std::endl;
                     func_values_[n_tot_][qp].zero();
-                    // std::cout<<"qui4"<<std::endl;
+                    // // std::cout<<"qui4"<<std::endl;
                     // func_tmp_=alpha[n_dof] * mapping * weighted_reference_values[n_dof][qp];
-                    // std::cout<< "n_dof, qp, n_tot_, n_comp, n_=("<<n_dof<<", "<<qp<<", "<< n_tot_<<", "<<n_comp<<", "<< n_<<")"<<std::endl;
-                    // std::cout<< "func_values_="<<func_values_[n_tot_][qp]<<std::endl;
+                    // // std::cout<< "n_dof, qp, n_tot_, n_comp, n_=("<<n_dof<<", "<<qp<<", "<< n_tot_<<", "<<n_comp<<", "<< n_<<")"<<std::endl;
+                    // // std::cout<< "func_values_="<<func_values_[n_tot_][qp]<<std::endl;
                     func_tmp_=alpha_[n_dof] * mapping * reference_values[n_dof][qp];
-                    // std::cout<<"qui5"<<std::endl;
-                    // std::cout<< "func_tmp_="<<func_tmp_<<std::endl;
+                    // // std::cout<<"qui5"<<std::endl;
+                    // // std::cout<< "func_tmp_="<<func_tmp_<<std::endl;
                     assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
-                    // std::cout<<"qui6"<<std::endl;
-                    // std::cout<< "func_values_ after="<<func_values_[n_tot_][qp]<<std::endl;
+                    // // std::cout<<"qui6"<<std::endl;
+                    // // std::cout<< "func_values_ after="<<func_values_[n_tot_][qp]<<std::endl;
                 }
                 
             }
         }
-        // std::cout<<"init end"<<std::endl;
+        // // std::cout<<"init end"<<std::endl;
         
     };
     

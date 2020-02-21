@@ -469,14 +469,14 @@ namespace mars {
   	if(!are_parallel_vectors(p_a,p_b,q_a,q_b))
   	   return false;
   	// std::cout<<"are_parallel_vectors(p_a,p_b,q_a,q_b)"<<std::endl;
-  	std::cout<<are_parallel_vectors(p_a,p_b,q_a,q_b)<<std::endl;
+  	// std::cout<<are_parallel_vectors(p_a,p_b,q_a,q_b)<<std::endl;
 
   	// std::cout<<"does_point_belong_to_segment(p_a,p_b,q_a)"<<std::endl;
   	bool b1=does_point_belong_to_segment(p_a,p_b,q_a);
   	// std::cout<<b1<<std::endl;
   	// std::cout<<"does_point_belong_to_segment(p_a,p_b,q_b)"<<std::endl;
   	bool b2=does_point_belong_to_segment(p_a,p_b,q_b);
-  	std::cout<<b2<<std::endl;
+  	// std::cout<<b2<<std::endl;
 
     return b1*b2;
     // return does_point_belong_to_segment(p_a,p_b,q_a)*does_point_belong_to_segment(p_a,p_b,q_b);

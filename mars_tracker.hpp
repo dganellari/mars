@@ -115,7 +115,7 @@ namespace mars {
 	bool elem_belongs_to_level(const std::shared_ptr<MeshT> mesh_ptr, const Integer i, const Integer level, const Tracker& track)
 	{
 
-		std::cout<<"!track.has_tracked()->"<<!track.has_tracked()<<" track.get_iterate(i)==level-> "<<(track.get_iterate(i)==level)<<"children.size()==0 && track.get_iterate(i)<=level)->"<<  (mesh_ptr->elem(i).children.size()==0 && track.get_iterate(i)<=level)<<std::endl;
+		// std::cout<<"!track.has_tracked()->"<<!track.has_tracked()<<" track.get_iterate(i)==level-> "<<(track.get_iterate(i)==level)<<"children.size()==0 && track.get_iterate(i)<=level)->"<<  (mesh_ptr->elem(i).children.size()==0 && track.get_iterate(i)<=level)<<std::endl;
 		return  (!track.has_tracked())||(track.get_iterate(i)==level || (mesh_ptr->elem(i).children.size()==0 && track.get_iterate(i)<=level));
 		// return (track.get_iterate(i)==level || (mesh_ptr->elem(i).children.size()==0 && track.get_iterate(i)<=level));
 

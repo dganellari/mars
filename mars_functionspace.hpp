@@ -68,8 +68,8 @@ public:
  init_dofmap_aux(const Integer n_elements)
  {
   // we reserve n_elemnts*dofs for single element for each space
-  // std::cout<<"begin N=="<<N<<std::endl;
-  // std::cout<<n_elements<<" "<< NLocalDofsArray[N]<<std::endl;
+  // // std::cout<<"begin N=="<<N<<std::endl;
+  // // std::cout<<n_elements<<" "<< NLocalDofsArray[N]<<std::endl;
   if(!is_initialized_)
   {
    tuple_get<N>(dofmap_)=std::make_shared<std::vector<Array<Integer,NLocalDofsArray[N]>>>();
@@ -77,7 +77,7 @@ public:
    }
   tuple_get<N>(dofmap_)->resize(n_elements);
   space_dofs_[N]->resize(n_elements*NLocalDofsArray[N]);
-  // std::cout<<"end N=="<<N<<" dofmap tuple size="<<tuple_get<N>(dofmap_)->size()<<" spacedofs size="<< space_dofs_[N]->size()<<std::endl;
+  // // std::cout<<"end N=="<<N<<" dofmap tuple size="<<tuple_get<N>(dofmap_)->size()<<" spacedofs size="<< space_dofs_[N]->size()<<std::endl;
   init_dofmap_aux<N+1>(n_elements);};
 
  inline void  init_dofmap(const Integer n_elements){init_dofmap_aux(n_elements);};
@@ -95,12 +95,12 @@ public:
    {
     const auto& dm=tuple_get<N>(dofmap_)->operator[](elem_id);
     
-    // std::cout<<"level_cumulative_dofs_array_ done update" <<std::endl;
+    // // std::cout<<"level_cumulative_dofs_array_ done update" <<std::endl;
     // for(int i=0;i<level_cumulative_dofs_array_.size();i++)
     //   {
     //     for(int j=0;j<level_cumulative_dofs_array_[i].size();j++)
-    //     std::cout<<level_cumulative_dofs_array_[i][j]<<" ";
-    //     std::cout<<std::endl;
+    //     // std::cout<<level_cumulative_dofs_array_[i][j]<<" ";
+    //     // std::cout<<std::endl;
     //   }    
     for(std::size_t i=0;i<elemdm.size();i++)
         elemdm[i]=dm[i];
@@ -116,13 +116,13 @@ public:
  // init_dofmap_aux2(const Integer n_elements)
  // {
  //  // we reserve n_elemnts*dofs for single element for each space
- //  std::cout<<"begin N=="<<N<<std::endl;
- //  std::cout<<n_elements<<" "<< NLocalDofsArray[N]<<std::endl;
+ //  // std::cout<<"begin N=="<<N<<std::endl;
+ //  // std::cout<<n_elements<<" "<< NLocalDofsArray[N]<<std::endl;
  //  tuple_get<N>(dofmap_)=std::make_shared<std::vector<Array<Integer,NLocalDofsArray[N]>>>();
  //  tuple_get<N>(dofmap_)->resize(n_elements);
  //  space_dofs_[N]=std::make_shared<std::vector<Integer>>();
  //  space_dofs_[N]->resize(n_elements*NLocalDofsArray[N]);
- //  std::cout<<"end N=="<<N<<" dofmap tuple size="<<tuple_get<N>(dofmap_)->size()<<" spacedofs size="<< space_dofs_[N]->size()<<std::endl;
+ //  // std::cout<<"end N=="<<N<<" dofmap tuple size="<<tuple_get<N>(dofmap_)->size()<<" spacedofs size="<< space_dofs_[N]->size()<<std::endl;
  //  init_dofmap_aux<N+1>(n_elements);};
 
  // inline void  init_dofmap2(const Integer n_elements){init_dofmap_aux2(n_elements);};
@@ -214,12 +214,12 @@ public:
     const auto& dm=tuple_get<N>(dofmap_)->operator[](elem_id);
     const auto& offset=level_cumulative_dofs_array_[N][level];
     
-    // std::cout<<"level_cumulative_dofs_array_ done update" <<std::endl;
+    // // std::cout<<"level_cumulative_dofs_array_ done update" <<std::endl;
     // for(int i=0;i<level_cumulative_dofs_array_.size();i++)
     //   {
     //     for(int j=0;j<level_cumulative_dofs_array_[i].size();j++)
-    //     std::cout<<level_cumulative_dofs_array_[i][j]<<" ";
-    //     std::cout<<std::endl;
+    //     // std::cout<<level_cumulative_dofs_array_[i][j]<<" ";
+    //     // std::cout<<std::endl;
     //   }    
     for(std::size_t i=0;i<elemdm.size();i++)
         elemdm[i]=dm[i]+offset;
@@ -249,7 +249,7 @@ public:
    std::enable_if_t<N<TupleTypeSize<DofsDofMapTuple>::value,void>
   level_n_dofs_array_update_aux(Integer cont)
    {
-    // std::cout<<"N=="<<N<<std::endl;
+    // // std::cout<<"N=="<<N<<std::endl;
     auto& level_n_dofs_array=tuple_get<N>(dofmapstuple_).level_n_dofs_array();
     
     Integer n_levels_old=level_n_dofs_array_[0].size();
@@ -257,36 +257,36 @@ public:
     for(Integer i=0;i<level_n_dofs_array.size();i++)
       {
         level_n_dofs_array_[cont].resize(n_levels_new);
-        // std::cout<<"cont=="<<cont<<"  i=="<<i<<std::endl;
+        // // std::cout<<"cont=="<<cont<<"  i=="<<i<<std::endl;
         for(Integer j=0;j<n_levels_old;j++)
            {
             
             level_n_dofs_array_[cont][j]=level_n_dofs_array[i][j];
-            // std::cout<<level_n_dofs_array_[cont][j]<<" ";
+            // // std::cout<<level_n_dofs_array_[cont][j]<<" ";
            }
 
         for(Integer j=n_levels_old;j<n_levels_new;j++)
            {
             level_n_dofs_array_[cont][j]=level_n_dofs_array[i][j];
             // level_n_dofs_array_[cont].push_back(level_n_dofs_array[i][j]);
-            // std::cout<<level_n_dofs_array_[cont][j]<<" ";
+            // // std::cout<<level_n_dofs_array_[cont][j]<<" ";
            }
 
 
-        // std::cout<<std::endl;
+        // // std::cout<<std::endl;
       cont++;
        }
-   //  std::cout<<"meanwhile first=="<<std::endl;
+   //  // std::cout<<"meanwhile first=="<<std::endl;
    // for(Integer i=0;i<level_n_dofs_array_.size();i++)
    //    {
    //      for(Integer j=0;j<level_n_dofs_array_[i].size();j++)
    //         {
             
-   //          std::cout<<level_n_dofs_array_[i][j]<<" ";
+   //          // std::cout<<level_n_dofs_array_[i][j]<<" ";
    //         }
-   //      std::cout<<std::endl;
+   //      // std::cout<<std::endl;
    //     }
-   //    std::cout<<"meanwhile end=="<<std::endl;
+   //    // std::cout<<"meanwhile end=="<<std::endl;
 
     level_n_dofs_array_update_aux<N+1>(cont);
    }
@@ -295,28 +295,28 @@ public:
    void level_n_dofs_array_update()
    {
     Integer cont=0;
-   //  std::cout<<"level_n_dofs_array_update() PRE RESULT =" <<std::endl;
+   //  // std::cout<<"level_n_dofs_array_update() PRE RESULT =" <<std::endl;
    // for(Integer i=0;i<level_n_dofs_array_.size();i++)
    //    {
    //      for(Integer j=0;j<level_n_dofs_array_[i].size();j++)
    //         {
             
-   //          std::cout<<level_n_dofs_array_[i][j]<<" ";
+   //          // std::cout<<level_n_dofs_array_[i][j]<<" ";
    //         }
-   //      std::cout<<std::endl;
+   //      // std::cout<<std::endl;
    //     }
     level_n_dofs_array_update_aux(cont);
-   //  std::cout<<"LEVEL NDOFS ARRAY RESULT =" <<std::endl;
+   //  // std::cout<<"LEVEL NDOFS ARRAY RESULT =" <<std::endl;
    // for(Integer i=0;i<level_n_dofs_array_.size();i++)
    //    {
    //      for(Integer j=0;j<level_n_dofs_array_[i].size();j++)
    //         {
             
-   //          std::cout<<level_n_dofs_array_[i][j]<<" ";
+   //          // std::cout<<level_n_dofs_array_[i][j]<<" ";
    //         }
-   //      std::cout<<std::endl;
+   //      // std::cout<<std::endl;
    //     }
-   //    std::cout<<"end RESULT =" <<std::endl;
+   //    // std::cout<<"end RESULT =" <<std::endl;
 
 
 
@@ -324,28 +324,28 @@ public:
 
    void update()
    {
-    std::cout<<"level_n_dofs_array_update update" <<std::endl;
+    // std::cout<<"level_n_dofs_array_update update" <<std::endl;
     level_n_dofs_array_update();
     level_cumulative_dofs_array_=cumulative_array(level_n_dofs_array_,NsubspacesArray);
-    // std::cout<<"level_cumulative_dofs_array_ done update" <<std::endl;
+    // // std::cout<<"level_cumulative_dofs_array_ done update" <<std::endl;
     // for(int i=0;i<level_cumulative_dofs_array_.size();i++)
     //   {
     //     for(int j=0;j<level_cumulative_dofs_array_[i].size();j++)
-    //     std::cout<<level_cumulative_dofs_array_[i][j]<<" ";
-    //     std::cout<<std::endl;
+    //     // std::cout<<level_cumulative_dofs_array_[i][j]<<" ";
+    //     // std::cout<<std::endl;
     //   }
 
 
     level_cumultive_n_dofs_=level_cumulative_dofs_array_[level_cumulative_dofs_array_.size()-1];
-    // std::cout<<"level_cumulative_dofs_array_ update" <<std::endl;
+    // // std::cout<<"level_cumulative_dofs_array_ update" <<std::endl;
 
 
-    // std::cout<<"level_cumultive_n_dofs_ update" <<std::endl;
+    // // std::cout<<"level_cumultive_n_dofs_ update" <<std::endl;
     // for(int i=0;i<level_cumultive_n_dofs_.size();i++)
     //   {
     //     // for(int j=0;j<level_cumulative_dofs_array_[i].size();j++)
-    //     std::cout<<level_cumultive_n_dofs_[i]<<" ";
-    //     std::cout<<std::endl;
+    //     // std::cout<<level_cumultive_n_dofs_[i]<<" ";
+    //     // std::cout<<std::endl;
     //   }
    }
 
@@ -438,10 +438,10 @@ public:
    init_dofmap_aux(const Integer n_elements)
    {
     // we reserve n_elemnts*dofs for single element for each space
-    // std::cout<<"begin N=="<<N<<std::endl;
+    // // std::cout<<"begin N=="<<N<<std::endl;
     // tuple_get<N>(dofmap_)->reserve(n_elements*NLocalDofsArray[N]);
     tuple_get<N>(dofmap_)->resize(n_elements);
-    // std::cout<<"end N=="<<N<<std::endl;
+    // // std::cout<<"end N=="<<N<<std::endl;
     init_dofmap_aux<N+1>(n_elements);};
 
    inline void  init_dofmap(const Integer n_elements){init_dofmap_aux(n_elements);};
@@ -465,17 +465,17 @@ public:
     const auto& dm=tuple_get<N>(dofmap_)->operator[](elem_id);
     const auto& offset=level_cumulative_dofs_array_[N][level];
     
-    // std::cout<<"dofmap_get,   offset="<<offset<<std::endl;
-    // std::cout<<"dofmap_get,   level="<<level<<std::endl;
-    // std::cout<<"dofmap_get,   N="<<N<<std::endl;
+    // // std::cout<<"dofmap_get,   offset="<<offset<<std::endl;
+    // // std::cout<<"dofmap_get,   level="<<level<<std::endl;
+    // // std::cout<<"dofmap_get,   N="<<N<<std::endl;
 
     // for(Integer i=0;i<level_cumulative_dofs_array_.size();i++)
     // {
     //   for(Integer j=0;j<level_cumulative_dofs_array_[i].size();j++)
     //   {
-    //     std::cout<<level_cumulative_dofs_array_[i][j]<<" ";
+    //     // std::cout<<level_cumulative_dofs_array_[i][j]<<" ";
     //   }
-    // std::cout<<std::endl;
+    // // std::cout<<std::endl;
     // }
 
     for(std::size_t i=0;i<elemdm.size();i++)
@@ -484,55 +484,55 @@ public:
 
    void update()
    {
-    std::cout<<"BEGIN DofsDofMapFullAndAux update" <<std::endl;
+    // std::cout<<"BEGIN DofsDofMapFullAndAux update" <<std::endl;
     dm1_.update();
-    std::cout<<"dm1 done update" <<std::endl;
+    // std::cout<<"dm1 done update" <<std::endl;
     dm2_.update();
-    std::cout<<"dm2 done update" <<std::endl;
+    // std::cout<<"dm2 done update" <<std::endl;
 
     level_n_dofs_array_=concat(dm1_.level_n_dofs_array(),dm2_.level_n_dofs_array());
 
-    std::cout<<"level_n_dofs_array_done " <<std::endl;
+    // std::cout<<"level_n_dofs_array_done " <<std::endl;
 
 
     // cumulative_dofs_array_=cumulative_array_and_zero(dm1_.cumulative_n_dofs(),dm2_.n_dofs());
     level_cumulative_dofs_array_=cumulative_array_and_zero(dm1_.level_cumulative_dofs_array(),dm2_.level_n_dofs_array());
-    std::cout<<"level_cumulative_dofs_array_ update" <<std::endl;
+    // std::cout<<"level_cumulative_dofs_array_ update" <<std::endl;
     level_cumultive_n_dofs_=dm1_.level_cumulative_dofs_array()[dm1_.level_cumulative_dofs_array().size()-1];
-    std::cout<<"END DofsDofMapFullAndAux update" <<std::endl;
+    // std::cout<<"END DofsDofMapFullAndAux update" <<std::endl;
 
 
 
-    // std::cout<<"dm1_.cumulative_n_dofs() update" <<std::endl;
+    // // std::cout<<"dm1_.cumulative_n_dofs() update" <<std::endl;
     // for(int i=0;i<dm1_.cumulative_n_dofs().size();i++)
     //   {
     //     // for(int j=0;j<cumulative_dofs_array_[i].size();j++)
-    //     std::cout<<dm1_.cumulative_n_dofs()[i]<<" ";
-    //     std::cout<<std::endl;
+    //     // std::cout<<dm1_.cumulative_n_dofs()[i]<<" ";
+    //     // std::cout<<std::endl;
     //   }
 
-    // std::cout<<"dm2_.n_dofs() update" <<std::endl;
+    // // std::cout<<"dm2_.n_dofs() update" <<std::endl;
     // for(int i=0;i<dm2_.n_dofs().size();i++)
     //   {
     //     // for(int j=0;j<cumulative_dofs_array_[i].size();j++)
-    //     std::cout<<dm2_.n_dofs()[i]<<" ";
-    //     std::cout<<std::endl;
+    //     // std::cout<<dm2_.n_dofs()[i]<<" ";
+    //     // std::cout<<std::endl;
     //   }
 
 
-    // std::cout<<"cumulative_dofs_array_ update" <<std::endl;
+    // // std::cout<<"cumulative_dofs_array_ update" <<std::endl;
     // for(int i=0;i<level_cumulative_dofs_array_.size();i++)
     //   {
     //     for(int j=0;j<level_cumulative_dofs_array_[i].size();j++)
-    //     std::cout<<level_cumulative_dofs_array_[i][j]<<" ";
-    //     std::cout<<std::endl;
+    //     // std::cout<<level_cumulative_dofs_array_[i][j]<<" ";
+    //     // std::cout<<std::endl;
     //   }
-    // std::cout<<"level_cumultive_n_dofs_ update" <<std::endl;
+    // // std::cout<<"level_cumultive_n_dofs_ update" <<std::endl;
     // for(int i=0;i<level_cumultive_n_dofs_.size();i++)
     //   {
     //     // for(int j=0;j<level_cumultive_n_dofs_[i].size();j++)
-    //     std::cout<<level_cumultive_n_dofs_[i]<<" ";
-    //     std::cout<<std::endl;
+    //     // std::cout<<level_cumultive_n_dofs_[i]<<" ";
+    //     // std::cout<<std::endl;
     //   }
 
    }
@@ -778,7 +778,7 @@ public:
 
       void update()
       {
-        std::cout<<"functionspace update"<<std::endl;
+        // std::cout<<"functionspace update"<<std::endl;
         node2elem_.init();
         dofmap_fespace5<BaseFunctionSpace,BaseFunctionSpaces...>
          (mesh_,bisection_,node2elem_,dofsdm_,offset_,n_elements_,
@@ -859,8 +859,8 @@ public:
   inline const auto& level_n_dofs_array(){return dofsdm_.level_n_dofs_array();}
 
       inline const Integer& level_n_dofs_array(const Integer level)const
-      {std::cout<<"level_n_dofs_array, level=="<<level<<std::endl;
-      std::cout<<"dofsdm_.level_n_dofs_array().size()-1=="<<dofsdm_.level_n_dofs_array().size()-1<<std::endl;
+      {// std::cout<<"level_n_dofs_array, level=="<<level<<std::endl;
+      // std::cout<<"dofsdm_.level_n_dofs_array().size()-1=="<<dofsdm_.level_n_dofs_array().size()-1<<std::endl;
         if(level==-1)
         return dofsdm_.level_n_dofs_array()[0][dofsdm_.level_n_dofs_array()[0].size()-1];
        else
@@ -920,7 +920,7 @@ template<Integer N=0,typename OtherArg, typename...OtherArgs>
      typename std::enable_if< (0<N&&0==sizeof...(OtherArgs)),typename tuple_type2<OtherArg,OtherArgs...>::type >::type  
      cumulative_tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
      { 
-      // std::cout<<"addin="<<tot_n_dofs<N-1>()<<std::endl;
+      // // std::cout<<"addin="<<tot_n_dofs<N-1>()<<std::endl;
      return // otherarg;//
          add_costant(otherarg,tot_n_dofs<N-1>());
      }
@@ -929,7 +929,7 @@ template<Integer N=0,typename OtherArg, typename...OtherArgs>
      typename std::enable_if< 0<N && 0<sizeof...(OtherArgs),typename tuple_type2<OtherArg,OtherArgs...>::type >::type  
      cumulative_tuple_make(const OtherArg& otherarg, const OtherArgs&...otherargs )
      {
-      // std::cout<<"addin="<<tot_n_dofs<N-1>()<<std::endl;
+      // // std::cout<<"addin="<<tot_n_dofs<N-1>()<<std::endl;
      return std::tuple_cat(add_costant(otherarg,tot_n_dofs<N-1>()) ,
        cumulative_tuple_make<N+1,OtherArgs...>(otherargs...));
    }
@@ -1378,7 +1378,7 @@ public:
       std::enable_if_t<(N<TupleTypeSize<TupleOfReferenceSpaces>::value),void> 
       update_aux()
       {
-       std::cout<<"udpate aux N="<<N<<std::endl;
+       // std::cout<<"udpate aux N="<<N<<std::endl;
        auto& space=tuple_get<N>(tuple_reference_spaces_);
        space.update();
        update_aux<N+1>();
@@ -1388,20 +1388,20 @@ public:
 
       void update()
       {
-       std::cout<<"BEGIN FULL SPACE UPDATE  "<<std::endl;
+       // std::cout<<"BEGIN FULL SPACE UPDATE  "<<std::endl;
        update_aux(); 
        auto& dofmap_vec=dofsdm_.dofmap();
-       // std::cout<<"____________dofmap_vec udpate aux "<<std::endl;
+       // // std::cout<<"____________dofmap_vec udpate aux "<<std::endl;
       //   auto dm=(*tuple_get<0>(dofmap_vec));
       //   for(std::size_t i=0;i<dm.size();i++)
       //     {for(std::size_t j=0;j<dm[i].size();j++)
-      //     std::cout<< dm[i][j]<<" ";
-      //      std::cout<<std::endl;}
-      // std::cout<<"________________ "<<std::endl;
-       std::cout<<"FULL SPACE UPDATE dofsdm_ "<<std::endl;
+      //     // std::cout<< dm[i][j]<<" ";
+      //      // std::cout<<std::endl;}
+      // // std::cout<<"________________ "<<std::endl;
+       // std::cout<<"FULL SPACE UPDATE dofsdm_ "<<std::endl;
        dofsdm_.update();
-       // std::cout<<"end dofmap_vec udpate aux "<<std::endl;
-       std::cout<<"END FULL SPACE UPDATE  "<<std::endl;
+       // // std::cout<<"end dofmap_vec udpate aux "<<std::endl;
+       // std::cout<<"END FULL SPACE UPDATE  "<<std::endl;
       }
 
 

@@ -44,6 +44,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
     
 
     auto full_spaces_ptr(){return bilinear_form_.spaces_ptr();}
+    auto full_spaces_ptr()const{return bilinear_form_.spaces_ptr();}
 
     
     template<typename SystemMat, typename Rhs>
@@ -53,22 +54,22 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
      auto& bisection=spaces_ptr->bisection();
      auto& tracker=bisection.tracker();
      // n_dofs_=spaces_ptr->n_dofs();
-     std::cout<<"assembly"<<std::endl;
+     // std::cout<<"assembly"<<std::endl;
      if(level==-1)
       level_=tracker.current_iterate()-1;
     else
       level_=level;
 
 
-     std::cout<<"level="<<level<<std::endl;
-     std::cout<<"level="<<level_<<std::endl;
+     // std::cout<<"level="<<level<<std::endl;
+     // std::cout<<"level="<<level_<<std::endl;
      auto& level_cumultive_n_dofs=full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
-     std::cout<<"level_cumultive_n_dofs="<<std::endl;
+     // std::cout<<"level_cumultive_n_dofs="<<std::endl;
      for(int i=0;i<level_cumultive_n_dofs.size();i++)
      {
       // for(int j=0; j<n_dofs_arr[i].size();j++)
-        std::cout<<level_cumultive_n_dofs[i]<<" ";
-      std::cout<<std::endl;
+        // std::cout<<level_cumultive_n_dofs[i]<<" ";
+      // std::cout<<std::endl;
      }
 
 
@@ -89,7 +90,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
      // n_dofs_=spaces_ptr->level_n_dofs_array(level_);
      n_dofs_=level_cumultive_n_dofs[level_];
-     std::cout<<"n_dofs_="<<n_dofs_<<std::endl;
+     // std::cout<<"n_dofs_="<<n_dofs_<<std::endl;
      auto mesh_ptr=full_spaces_ptr()->mesh_ptr();
      auto& mesh=full_spaces_ptr()->mesh();
      
@@ -103,7 +104,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
     // NodeToElem<MeshT> node_2_elem(mesh);
      // const auto& node2elem=node_2_elem.val();
      Integer max_cols=n2e.max_n_nodes();
-     std::cout<<"------_______-----max_cols"<<max_cols<<std::endl;
+     // std::cout<<"------_______-----max_cols"<<max_cols<<std::endl;
      // // std::cout<<node2elem.size()<<std::endl;
      // for(Integer i=0;i<node2elem.size();i++)
      // {
@@ -123,23 +124,23 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
 
      // A.resize(n_dofs_,std::vector<Real>(n_dofs_));
-     std::cout<<"------_______----- A init"<<std::endl;
-     std::cout<<"n_dofs_=="<<n_dofs_<<std::endl;
-     std::cout<<"NLocalDofs=="<<NLocalDofs<<std::endl;
-     std::cout<<"max_cols=="<<max_cols<<std::endl;
+     // std::cout<<"------_______----- A init"<<std::endl;
+     // std::cout<<"n_dofs_=="<<n_dofs_<<std::endl;
+     // std::cout<<"NLocalDofs=="<<NLocalDofs<<std::endl;
+     // std::cout<<"max_cols=="<<max_cols<<std::endl;
      // NLocalDofs*max_number of_elements of a node
      A.init(n_dofs_,n_dofs_,max_cols);
 
-     std::cout<<"------_______----- b init"<<std::endl;
+     // std::cout<<"------_______----- b init"<<std::endl;
      b.resize(n_dofs_);   
-     constrained_dofs.clear();
-     constrained_mat.clear();
-     constrained_vec.clear();
+     constrained_dofs_.clear();
+     constrained_mat_.clear();
+     constrained_vec_.clear();
 
-     constrained_dofs.resize(n_dofs_,false);
-     constrained_mat.resize(n_dofs_,0);
-     constrained_vec.resize(n_dofs_,0);
-     std::cout<<"------_______-----qui"<<mesh.n_elements()<<std::endl;
+     constrained_dofs_.resize(n_dofs_,false);
+     constrained_mat_.resize(n_dofs_,0);
+     constrained_vec_.resize(n_dofs_,0);
+     // std::cout<<"------_______-----qui"<<mesh.n_elements()<<std::endl;
 
      // shape_coefficients_.init(*mesh_ptr);
      // mesh.init_signed_normal();
@@ -153,7 +154,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
           // if(!elem_belongs_to_level(mesh_ptr,el,level_,tracker)) continue;
           if(!elem_belongs_to_level(mesh,el,level_,tracker)) continue;
 
-          std::cout<<"------_______----- ELEMENT ID = "<<el<<". -----_______--------"<<std::endl;
+          // std::cout<<"------_______----- ELEMENT ID = "<<el<<". -----_______--------"<<std::endl;
           FE.init(el,level_);
           // std::cout<<"fe jac"<<FE.jac()<<std::endl;
           // std::cout<<"------_______----- qui1 -----_______--------"<<std::endl;
@@ -175,7 +176,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                 // controlla, qui passiamo side_id, ma dovremmo avere label
                 // dovresti costruire mesh coi label
 
-                std::cout<<"------_______----- BEGIN SIDE===="<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
+                // std::cout<<"------_______----- BEGIN SIDE===="<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
                 FE.init_boundary(s);
                 if(FE.is_side_on_boundary())
                 {
@@ -183,12 +184,12 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                   reference_maps_.init_boundary(FE);
                   // std::cout<<"------_______----- shapefunctions_===="<<s<<std::endl;
                   shapefunctions_.init_boundary(FE);
-                  std::cout<<"------_______----- BILINEAR BEGIN SIDE EVAL===="<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
+                  // std::cout<<"------_______----- BILINEAR BEGIN SIDE EVAL===="<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
                   eval_bilinear_form_.apply_boundary(A,FE);
-                  std::cout<<"------_______----- LINEAR BEGIN SIDE EVAL===="<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
+                  // std::cout<<"------_______----- LINEAR BEGIN SIDE EVAL===="<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
                   eval_linear_form_.apply_boundary(b,FE);
                 }
-                std::cout<<"------_______----- END SIDE===="<<s<<std::endl;
+                // std::cout<<"------_______----- END SIDE===="<<s<<std::endl;
               }
 
 
@@ -206,7 +207,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                   // std::cout<<"------_______----- INIT BOUNDARY===="<<s<<std::endl;
                   FE.init_boundary(s);
                   // std::cout<<"------_______----- END INIT BOUNDARY===="<<s<<std::endl;
-                  bcs_.assembly(full_spaces_ptr(),constrained_dofs,constrained_mat,constrained_vec,FE);
+                  bcs_.assembly(full_spaces_ptr(),constrained_dofs_,constrained_mat_,constrained_vec_,FE);
                   // reference_maps_.init_boundary(FE);
                   // shapefunctions_.init_boundary(FE);
                   // std::cout<<"------_______----- BEGIN SIDE EVAL===="<<s<<std::endl;
@@ -216,7 +217,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                 }
                 // std::cout<<"------_______----- END SIDE===="<<s<<std::endl;
               }
-           // constrained_dofs
+           // constrained_dofs_
          }
         
        }
@@ -230,15 +231,17 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
        // std::cout<<"------CONSTRAINED DOFS-------"<<std::endl;
        // for(std::size_t i=0;i<n_dofs_;i++)
-       //    std::cout<<i<<" "<<constrained_dofs[i]<<std::endl;
+       //    std::cout<<i<<" "<<constrained_dofs_[i]<<std::endl;
 
        // std::cout<<"------CONSTRAINED MAT-------"<<std::endl;
        // for(std::size_t i=0;i<n_dofs_;i++)
-       //    std::cout<<i<<" "<<constrained_mat[i]<<std::endl;
+       //    std::cout<<i<<" "<<constrained_mat_[i]<<std::endl;
 
        // std::cout<<"------CONSTRAINED VEC-------"<<std::endl;
        // for(std::size_t i=0;i<n_dofs_;i++)
-       //    std::cout<<i<<" "<<constrained_vec[i]<<std::endl;
+       //    std::cout<<i<<" "<<constrained_vec_[i]<<std::endl;
+
+       std::cout<<"------END ASSEMBLY -------"<<std::endl;
 
     }
  
@@ -327,13 +330,13 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
      std::cout<<"------_______----- b init"<<std::endl;
      // b.resize(n_dofs_);   
-     constrained_dofs.clear();
-     constrained_mat.clear();
-     constrained_vec.clear();
+     constrained_dofs_.clear();
+     constrained_mat_.clear();
+     constrained_vec_.clear();
 
-     constrained_dofs.resize(n_dofs_,false);
-     constrained_mat.resize(n_dofs_,0);
-     constrained_vec.resize(n_dofs_,0);
+     constrained_dofs_.resize(n_dofs_,false);
+     constrained_mat_.resize(n_dofs_,0);
+     constrained_vec_.resize(n_dofs_,0);
 
      shape_coefficients_.init();
      for(std::size_t el=0;el<mesh.n_elements();el++)
@@ -365,7 +368,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
             if(FE.side_tags()[s]!=INVALID_INDEX)
               {
                 FE.init_boundary(s);
-                bcs_.assembly(full_spaces_ptr(),constrained_dofs,constrained_mat,constrained_vec,FE);
+                bcs_.assembly(full_spaces_ptr(),constrained_dofs_,constrained_mat_,constrained_vec_,FE);
 
               }
             }
@@ -373,9 +376,12 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
         
        }
 
+       std::cout<<"end assembly"<<std::endl;
+
     }
-    
-    void build_boundary_info(const Integer level=-1)
+
+
+    void build_boundary_info(std::vector<bool>& a, std::vector<Real>& b, std::vector<Real>& c,const Integer level=-1)
     {
      auto spaces_ptr=bilinear_form_.spaces_ptr()->spaces_ptr();
      auto& bisection=spaces_ptr->bisection();
@@ -395,12 +401,12 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
      FiniteElem<Elem> FE(mesh);
  
  
-     constrained_dofs.clear();
-     constrained_mat.clear();
-     constrained_vec.clear();
-     constrained_dofs.resize(n_dofs_,false);
-     constrained_mat.resize(n_dofs_,0);
-     constrained_vec.resize(n_dofs_,0);
+     a.clear();
+     b.clear();
+     c.clear();
+     a.resize(n_dofs_,false);
+     b.resize(n_dofs_,0);
+     c.resize(n_dofs_,0);
 
      shape_coefficients_.init();
      std::cout<<"BUILD BOUNDARY INFO"<<std::endl;
@@ -419,57 +425,154 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                 {
                   // std::cout<<"el=="<<el<<" bound=="<<FE.side_tags()[s] <<std::endl;
                   FE.init_boundary(s);
-                  bcs_.assembly(full_spaces_ptr(),constrained_dofs,constrained_mat,constrained_vec,FE);
+                  bcs_.assembly(full_spaces_ptr(),a,b,c,FE);
                  }
               }
          }      
        }
     }
 
+    void build_boundary_info(const std::vector<Integer>& levels)
+    {
+
+
+     Integer n_levels=levels.size();
+     constrained_dofs_levels_.resize(n_levels);
+     constrained_mat_levels_.resize(n_levels);
+     constrained_vec_levels_.resize(n_levels);
+
+
+     for(Integer i=0;i<n_levels;i++)
+     {
+      build_boundary_info(constrained_dofs_levels_[i],constrained_mat_levels_[i],constrained_vec_levels_[i],levels[i]);
+     }
+
+    }
+
+
+    void build_boundary_info(const Integer level=-1)
+    {
+      build_boundary_info(constrained_dofs_,constrained_mat_,constrained_vec_,level);
+    }
+
+
+    // void build_boundary_info(const Integer level=-1)
+    // {
+    //  auto spaces_ptr=bilinear_form_.spaces_ptr()->spaces_ptr();
+    //  auto& bisection=spaces_ptr->bisection();
+    //  auto& tracker=bisection.tracker();
+
+    //  if(level==-1)
+    //   level_=tracker.current_iterate()-1;
+    //  else
+    //   level_=level;
+
+    //  auto& level_cumultive_n_dofs=full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
+
+    //  n_dofs_=level_cumultive_n_dofs[level_];
+
+    //  auto& mesh=full_spaces_ptr()->mesh();
+
+    //  FiniteElem<Elem> FE(mesh);
+ 
+ 
+    //  constrained_dofs_.clear();
+    //  constrained_mat_.clear();
+    //  constrained_vec_.clear();
+    //  constrained_dofs_.resize(n_dofs_,false);
+    //  constrained_mat_.resize(n_dofs_,0);
+    //  constrained_vec_.resize(n_dofs_,0);
+
+    //  shape_coefficients_.init();
+    //  std::cout<<"BUILD BOUNDARY INFO"<<std::endl;
+    //    for(std::size_t el=0;el<mesh.n_elements();el++)
+    //    {
+    //       if(!elem_belongs_to_level(mesh,el,level_,tracker)) continue;
+
+    //       FE.init(el,level_);
+
+    //       if(FE.is_on_boundary())
+    //       {
+
+    //         for(std::size_t s=0;s<FE.n_side();s++)
+    //           {            
+    //             if(FE.side_tags()[s]!=INVALID_INDEX)
+    //             {
+    //               // std::cout<<"el=="<<el<<" bound=="<<FE.side_tags()[s] <<std::endl;
+    //               FE.init_boundary(s);
+    //               bcs_.assembly(full_spaces_ptr(),constrained_dofs_,constrained_mat_,constrained_vec_,FE);
+    //              }
+    //           }
+    //      }      
+    //    }
+    // }
+
+
+    auto& constrained_dofs_levels(){return constrained_dofs_levels_;}
+
+    auto& constrained_mat_levels(){return constrained_mat_levels_;}
+
+    auto& constrained_vec_levels(){return constrained_vec_levels_;}
+
+    void constrained_quantities(std::vector<bool>& a, std::vector<Real>& b, std::vector<Real>& c)const 
+    {
+      a.resize(n_dofs_);
+      b.resize(n_dofs_);
+      c.resize(n_dofs_);
+
+      for(Integer i=0;i<n_dofs_;i++)
+      {
+        a[i]=constrained_dofs_[i];
+        b[i]=constrained_mat_[i];
+        c[i]=constrained_vec_[i];
+      }
+
+    }
+
 
 
 
     template<typename SystemMat, typename Rhs>
-    void apply_bc(SystemMat& A, Rhs& b)
+    void apply_bc(SystemMat& A, Rhs& b)const
     {
-      std::cout<<"------APPLY BC -------"<<std::endl;
-      std::cout<<"------b.size="<<b.size()<<std::endl;
-      std::cout<<"------n_dofs_="<<n_dofs_<<std::endl;
-      A.print_val();
-      std::cout<<"constrained_dofs size="<<constrained_vec.size()<<std::endl;
+      // std::cout<<"------APPLY BC -------"<<std::endl;
+      // std::cout<<"------b.size="<<b.size()<<std::endl;
+      // std::cout<<"------n_dofs_="<<n_dofs_<<std::endl;
+      // A.print_val();
+      // std::cout<<"constrained_dofs_ size="<<constrained_vec_.size()<<std::endl;
 
+     // for(Integer i=0;i<n_dofs_;++i)
+     // {
+     //  std::cout<<constrained_dofs_[i]<<std::endl;
+     // }
+     //  std::cout<<"------constrained_vec_ BC -------"<<std::endl;
+     // for(Integer i=0;i<n_dofs_;++i)
+     // {
+     //  std::cout<< constrained_vec_[i]<<", "  <<std::endl;
+     // }
+     // std::cout<<"------constrained_mat_ BC -------"<<std::endl;
+     // for(Integer i=0;i<n_dofs_;++i)
+     // {
+     //  std::cout<<constrained_mat_[i] << ", "   <<std::endl;
+     // }
      for(Integer i=0;i<n_dofs_;++i)
      {
-      std::cout<<constrained_dofs[i]<<std::endl;
-     }
-      std::cout<<"------constrained_vec BC -------"<<std::endl;
-     for(Integer i=0;i<n_dofs_;++i)
-     {
-      std::cout<< constrained_vec[i]<<", "  <<std::endl;
-     }
-     std::cout<<"------constrained_mat BC -------"<<std::endl;
-     for(Integer i=0;i<n_dofs_;++i)
-     {
-      std::cout<<constrained_mat[i] << ", "   <<std::endl;
-     }
-     for(Integer i=0;i<n_dofs_;++i)
-     {
-      std::cout<<"i="<<i<<"/"<<n_dofs_<<std::endl;
-      if(constrained_dofs[i])
+      // std::cout<<"i="<<i<<"/"<<n_dofs_<<std::endl;
+      if(constrained_dofs_[i])
       {
-        std::cout<<"constrained = "<< constrained_vec[i] << std::endl;
+        // std::cout<<"constrained = "<< constrained_vec_[i] << std::endl;
         
-        b[i]=constrained_vec[i];
+        b[i]=constrained_vec_[i];
 
         // for(Integer j=0;j<i;++j)
         //     { 
         //       A[i][j]=0;
         //     }
-        // A[i][i]=constrained_mat[i];
+        // A[i][i]=constrained_mat_[i];
         // std::cout<<"set_zero_row = "<< i << std::endl;
         A.set_zero_row(i);
         // std::cout<<"equal = "<< i << std::endl;
-        A.equal(constrained_mat[i],i,i);
+        A.equal(constrained_mat_[i],i,i);
         // std::cout<<"after equal = "<< i << std::endl;
 
         // for(Integer j=i+1;j<n_dofs_;++j)
@@ -478,12 +581,12 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
       }
       else
       {
-        std::cout<<"not constrained = "<< constrained_vec[i] << std::endl;
-        A.row_static_condensation(i,constrained_vec,constrained_dofs,b[i]);
+        // std::cout<<"not constrained = "<< constrained_vec_[i] << std::endl;
+        A.row_static_condensation(i,constrained_vec_,constrained_dofs_,b[i]);
         // for(Integer j=0;j<n_dofs_;++j)
-        //   if(constrained_dofs[j])
+        //   if(constrained_dofs_[j])
         //   {
-        //     b[i]-=A[i][j]*constrained_vec[j];
+        //     b[i]-=A[i][j]*constrained_vec_[j];
         //     A[i][j]=0;
         //   }
       }
@@ -491,36 +594,142 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
      }
 
-     A.print_val();
+     // A.print_val();
     }
+
+
+    template<typename SystemMat, typename Rhs>
+    void apply_zero_bc(SystemMat& A, Rhs& b,const Integer level)const
+    {
+      Real one=1.0;
+
+     //  std::cout<<"constrained_dofs_levels_[level][i]"<<std::endl;
+
+     //  for(Integer i=0;i<constrained_dofs_levels_[level].size();++i)
+     // {
+     //  std::cout<<constrained_dofs_levels_[level][i]<<std::endl;
+     // }
+
+      for(Integer i=0;i<constrained_dofs_levels_[level].size();++i)
+     {
+      if(constrained_dofs_levels_[level][i])
+      {       
+        A.set_zero_row(i);
+        A.equal(one,i,i);
+        b[i]=0;
+      }
+      else
+      {
+        A.row_static_condensation(i,constrained_dofs_levels_[level]);
+      }
+     }
+    }
+
+
+
+    template<typename SystemMat, typename Rhs>
+    void apply_bc(SystemMat& A, Rhs& b,const Integer level)const
+    {
+     auto& level_cumultive_n_dofs=full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
+
+     Integer n_dofs=level_cumultive_n_dofs[level_];
+
+     for(Integer i=0;i<n_dofs;++i)
+     {
+      if(constrained_dofs_levels_[level][i])
+      {        
+        b[i]=constrained_vec_levels_[level][i];
+        A.set_zero_row(i);
+        A.equal(constrained_mat_levels_[level][i],i,i);
+      }
+      else
+      {
+        A.row_static_condensation(i,constrained_vec_levels_[level],constrained_dofs_levels_[level],b[i]);
+      }
+     }
+    }
+
+
+
+    template<typename SystemMat, typename Rhs>
+    void apply_zero_bc_for_null_diagonal_element(SystemMat& A, Rhs& b)const
+    {
+
+     Real toll=1e-10;
+     Real one=1.0;
+
+     for(Integer i=0;i<b.size();++i)
+     {       
+        if(abs(A(i,i))<toll)
+        {
+           A.equal(one,i,i);
+           b[i]=0.0;
+        }
+     }
+    }
+
+
 
     template<typename SystemMat>
     void apply_zero_bc_to_matrix(SystemMat& A)
     {
       Real one=1.0;
-      std::cout<<"------APPLY ZERO BC -------,n_dofs_="<<n_dofs_<<std::endl;
-      // std::cout<<"level_="<< level_<<std::endl;
-      // std::cout<<"A.max_rows()="<< A.max_rows()<<std::endl;
-     for(Integer i=0;i<n_dofs_;++i)
+      for(Integer i=0;i<n_dofs_;++i)
      {
-      // std::cout<<i <<"/"<<n_dofs_<<std::endl;
-      if(constrained_dofs[i])
+      if(constrained_dofs_[i])
       {       
-        // std::cout<<"if " <<A.max_rows()<<" "<<A.max_cols()<<std::endl;
         A.set_zero_row(i);
-         // std::cout<<"before equal"<<std::endl;
         A.equal(one,i,i);
-         // std::cout<<"after equal " <<std::endl;     
       }
       else
       {
-         // std::cout<<"else" <<std::endl;
+        A.row_static_condensation(i,constrained_dofs_);
+      }
+     }
+    }
 
+
+
+    template<typename SystemMat>
+    void apply_zero_bc_to_matrix(SystemMat& A, const std::vector<bool>& constrained_dofs)
+    {
+      Real one=1.0;
+      for(Integer i=0;i<n_dofs_;++i)
+     {
+      if(constrained_dofs[i])
+      {       
+        A.set_zero_row(i);
+        A.equal(one,i,i);
+      }
+      else
+      {
         A.row_static_condensation(i,constrained_dofs);
       }
      }
     }
 
+
+
+    void apply_zero_bc_to_vector(std::vector<Real>& b, Integer level=-1)const
+    {
+      Real one=1.0;
+      
+      auto& level_cumultive_n_dofs=full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
+      if(level==-1)
+        level=level_cumultive_n_dofs.size()-1;
+      // std::cout<<"apply_zero_bc_to_vector"<<std::endl;
+      // std::cout<<"level="<<level<<std::endl;
+      Integer ndofs=level_cumultive_n_dofs[level];
+      b.resize(ndofs,0);
+      for(Integer i=0;i<ndofs;++i)
+     {
+      // std::cout<<i<<"/"<<ndofs<<std::endl;
+      if(constrained_vec_levels_[level][i])
+      {       
+       b[i]=0;//constrained_vec_levels_[level][i];
+      }
+     }
+    }
 
  private:
     SignedNormal<Elem> signed_normal_;
@@ -533,9 +742,12 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
     Evaluation<Expression<Linear>,ShapeFunctions> eval_linear_form_;
     BCs bcs_;
     Integer n_dofs_;
-    std::vector<bool> constrained_dofs;
-    std::vector<Real> constrained_mat;
-    std::vector<Real> constrained_vec;
+    std::vector<bool> constrained_dofs_;
+    std::vector<Real> constrained_mat_;
+    std::vector<Real> constrained_vec_;
+    std::vector<std::vector<bool>> constrained_dofs_levels_;
+    std::vector<std::vector<Real>> constrained_mat_levels_;
+    std::vector<std::vector<Real>> constrained_vec_levels_;
     Integer level_;
 };
 
@@ -605,7 +817,7 @@ class Context<ZeroForm>
 
 
      shape_coefficients_.init(*mesh_ptr);
-     std::cout<<"------_______--6"<<std::endl;
+     // std::cout<<"------_______--6"<<std::endl;
        for(std::size_t el=0;el<mesh_ptr->n_elements();el++)
        {
           if(!mesh_ptr->is_active(el)) continue;

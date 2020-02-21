@@ -368,15 +368,15 @@ ElementDofMap_LoopEntities<N-1,FunctionSpace>
 //              (entitiestuple,flagtuples,elem_id,dofmap_vec,global_dof_count,loc_dof_count,dofs_offset,dofs_count);
 
 
-// std::cout<<"ElementDofMap_LoopEntities entity_dim = "<<entity_dim<<std::endl;
+// // std::cout<<"ElementDofMap_LoopEntities entity_dim = "<<entity_dim<<std::endl;
 
 // loop on all the entities of a given entity_dim
 for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
    { 
     const auto& entity_id=elem2entity[entity_iter];
-    // std::cout<<"entity_iter = "<<entity_iter<<std::endl;
-    // std::cout<<"entity_id = "<<entity_id<<std::endl;
-    // std::cout<<"entity_id already visited ="<<flag[entity_id][0]<<std::endl;
+    // // std::cout<<"entity_iter = "<<entity_iter<<std::endl;
+    // // std::cout<<"entity_id = "<<entity_id<<std::endl;
+    // // std::cout<<"entity_id already visited ="<<flag[entity_id][0]<<std::endl;
 
     // if the entity has not been already visited, then create n_components new dofs
     if(flag[entity_id][0]==-1 || continuity==Discontinuous)
@@ -392,7 +392,7 @@ for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
              dofmap_vec[elem_id][loc_dof_count]=global_dof_count;
              space_dofs[fs_dim].push_back(global_dof_count);
 
-             // std::cout<<" global_dof_count (new)= "<<global_dof_count<<std::endl;
+             // // std::cout<<" global_dof_count (new)= "<<global_dof_count<<std::endl;
              loc_dof_count++;
              global_dof_count++;
              dofs_count++;
@@ -413,26 +413,26 @@ for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
 
 
      // for(std::size_t i=0;i<dofmap_vec[elem_id_tmp].size();i++)
-      // std::cout<<"dofmap_vec[elem_id_tmp] = "<<dofmap_vec[elem_id_tmp][i]<<std::endl;
-     // std::cout<<"elem_id_tmp = "<<elem_id_tmp<<std::endl;
+      // // std::cout<<"dofmap_vec[elem_id_tmp] = "<<dofmap_vec[elem_id_tmp][i]<<std::endl;
+     // // std::cout<<"elem_id_tmp = "<<elem_id_tmp<<std::endl;
      
 
      
-     // std::cout<<"dofs_offset[N] = "<<dofs_offset[N]<<std::endl;
-     // std::cout<<"dofs_per_entity = "<<dofs_per_entity<<std::endl;
-     // std::cout<<"iter_tmp = "<<iter_tmp<<std::endl;
-     // std::cout<<"NComponents = "<<FunctionSpace::NComponents<<std::endl;
+     // // std::cout<<"dofs_offset[N] = "<<dofs_offset[N]<<std::endl;
+     // // std::cout<<"dofs_per_entity = "<<dofs_per_entity<<std::endl;
+     // // std::cout<<"iter_tmp = "<<iter_tmp<<std::endl;
+     // // std::cout<<"NComponents = "<<FunctionSpace::NComponents<<std::endl;
 
-     // std::cout<<dofs_offset[N]+dofs_per_entity*iter_tmp*FunctionSpace::NComponents<<std::endl;
+     // // std::cout<<dofs_offset[N]+dofs_per_entity*iter_tmp*FunctionSpace::NComponents<<std::endl;
 
-     // std::cout<<"old_dof = "<<old_dof<<std::endl;
+     // // std::cout<<"old_dof = "<<old_dof<<std::endl;
      
      
      for(Integer entity_dofs_iter=0;entity_dofs_iter<dofs_per_entity;entity_dofs_iter++)
         for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
            {           
             dofmap_vec[elem_id][loc_dof_count]=old_dof;
-            // std::cout<<" global_dof_count (old)= "<<old_dof<<std::endl;
+            // // std::cout<<" global_dof_count (old)= "<<old_dof<<std::endl;
             loc_dof_count++;
             old_dof++;
 
@@ -456,7 +456,7 @@ ElementDofMap_LoopEntities(const std::tuple<Args1...>& entitiestuple,
               SpaceDofs& space_dofs,
               Integer& dofs_count  )
 {
-  // std::cout<<"ElementDofMap_LoopEntities N="<<N<<std::endl;
+  // // std::cout<<"ElementDofMap_LoopEntities N="<<N<<std::endl;
 }
 
 
@@ -478,7 +478,7 @@ ElementDofMap(const std::tuple<Args1...>& entitiestuple,
  const auto m1=std::get<M>(entitiestuple);
  auto &m2=std::get<M>(flagtuples);
  static constexpr Integer NN=std::tuple_size<decltype(m1)>::value-1;
- // std::cout<<"ElementDofMap="<<K<<std::endl;
+ // // std::cout<<"ElementDofMap="<<K<<std::endl;
  loc_dof_count=0;
  ElementDofMap_LoopEntities<NN,ElemFunctionSpace<Elem,FunctionSpace>>
                             (m1,m2,elem_id,tuple_get<K>(dofmap_vec),global_dof_count,loc_dof_count,std::get<K>(dofs_offset),space_dofs[K],array_ndofs[K]);
@@ -511,7 +511,7 @@ ElementDofMap(const std::tuple<Args1...>& entitiestuple,
  const auto m1=std::get<0>(entitiestuple);
  auto& m2=std::get<0>(flagtuples);
  static constexpr Integer NN=std::tuple_size<decltype(m1)>::value-1;
- // std::cout<<"ElementDofMap="<<K<<std::endl;
+ // // std::cout<<"ElementDofMap="<<K<<std::endl;
  loc_dof_count=0;
 
  ElementDofMap_LoopEntities<NN,ElemFunctionSpace<Elem,FunctionSpace>>
@@ -613,41 +613,41 @@ for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
       auto ordered_entity_nodes=DofsOrdering<entity_dim,FunctionSpace>::value(nodes,entity_iter);
        // for(std::size_t i=0;i<ordered_entity_nodes.size();i++)
        //      {
-       //        std::cout<<ordered_entity_nodes[i]<<" ";
+       //        // std::cout<<ordered_entity_nodes[i]<<" ";
        //      }
 
     cont=0;
     if(flag[entity_id][0]==-1 || continuity==Discontinuous)
     {
 
-      // std::cout<< " elem id = "<< elem_id <<" NEW, iter ="<<entity_iter<<std::endl;
+      // // std::cout<< " elem id = "<< elem_id <<" NEW, iter ="<<entity_iter<<std::endl;
 
       auto ordered_dofs=DofsOrdered<entity_dim,FunctionSpace>::local_dofs(ordered_entity_nodes,loc_dof_count);
-      // std::cout<<"ordered_dofs"<<std::endl;
-      // std::cout<<ordered_dofs<<std::endl;
+      // // std::cout<<"ordered_dofs"<<std::endl;
+      // // std::cout<<ordered_dofs<<std::endl;
        
       flag[entity_id][0]=elem_id;
       flag[entity_id][1]=entity_iter;
-      // std::cout<<"elem_id = "<<elem_id<<std::endl;
-      // std::cout<<"entity_iter = "<<entity_iter<<std::endl;
-      // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
-      // std::cout<<std::endl;
+      // // std::cout<<"elem_id = "<<elem_id<<std::endl;
+      // // std::cout<<"entity_iter = "<<entity_iter<<std::endl;
+      // // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
+      // // std::cout<<std::endl;
       for(Integer m=0;m<ordered_dofs.size();m++)
       {
         (*dofmap_vec)[elem_id][ordered_dofs[cont]]=global_dof_count;
-        // std::cout<<(*dofmap_vec)[elem_id][ordered_dofs[cont]]<<std::endl;
+        // // std::cout<<(*dofmap_vec)[elem_id][ordered_dofs[cont]]<<std::endl;
         cont++;
         loc_dof_count++;
-        // std::cout<<global_dof_count<<std::endl;
+        // // std::cout<<global_dof_count<<std::endl;
         global_dof_count++;
         dofs_count++;
       }
-      // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
-      // std::cout<<std::endl;
+      // // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
+      // // std::cout<<std::endl;
      }
      else
      {
-      // std::cout<< " elem id = "<< elem_id<<" NEW, iter ="<<entity_iter<<std::endl;
+      // // std::cout<< " elem id = "<< elem_id<<" NEW, iter ="<<entity_iter<<std::endl;
 
       
       
@@ -667,32 +667,32 @@ for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
         }
       }
 
-      // std::cout<<"old offset = = "<<dofs_offset[N]+dofs_per_entity*iter_tmp*FunctionSpace::NComponents<<std::endl;
-      // std::cout<<"dofs_offset= = "<<dofs_offset[N]<<std::endl;
-      // std::cout<<"dofs_per_entity= = "<<dofs_per_entity<<std::endl;
-      // std::cout<<"iter_tmp= = "<<iter_tmp<<std::endl;
-      // std::cout<<"loc_dof_count = = "<<loc_dof_count<<std::endl;
-      // std::cout<<"global_old_dof = = "<<global_old_dof<<std::endl;
+      // // std::cout<<"old offset = = "<<dofs_offset[N]+dofs_per_entity*iter_tmp*FunctionSpace::NComponents<<std::endl;
+      // // std::cout<<"dofs_offset= = "<<dofs_offset[N]<<std::endl;
+      // // std::cout<<"dofs_per_entity= = "<<dofs_per_entity<<std::endl;
+      // // std::cout<<"iter_tmp= = "<<iter_tmp<<std::endl;
+      // // std::cout<<"loc_dof_count = = "<<loc_dof_count<<std::endl;
+      // // std::cout<<"global_old_dof = = "<<global_old_dof<<std::endl;
       
       auto ordered_dofs=DofsOrdered<entity_dim,FunctionSpace>::local_dofs(ordered_entity_nodes,loc_dof_count);
-      // std::cout<<"ordered_dofs"<<std::endl;
-      // std::cout<<ordered_dofs<<std::endl;
-      // std::cout<<std::endl;
+      // // std::cout<<"ordered_dofs"<<std::endl;
+      // // std::cout<<ordered_dofs<<std::endl;
+      // // std::cout<<std::endl;
       cont =0;
       for(Integer m=0;m<ordered_dofs.size();m++)
       {
         (*dofmap_vec)[elem_id][ordered_dofs[cont]]=global_old_dof;
-        // std::cout<<ordered_dofs[cont]<<std::endl;
-        // std::cout<<(*dofmap_vec)[elem_id][ordered_dofs[cont]]<<std::endl;
-        // std::cout<<global_dof_count<<std::endl;
+        // // std::cout<<ordered_dofs[cont]<<std::endl;
+        // // std::cout<<(*dofmap_vec)[elem_id][ordered_dofs[cont]]<<std::endl;
+        // // std::cout<<global_dof_count<<std::endl;
         cont++;
         loc_dof_count++;
         global_old_dof++;
         dofs_count++;
       }
-      // std::cout<<std::endl;
+      // // std::cout<<std::endl;
 
-      // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
+      // // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
      }
     
 
@@ -707,23 +707,23 @@ for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
        
       flag[entity_id][0]=elem_id;
       flag[entity_id][1]=entity_iter;
-      // std::cout<<"elem_id = "<<elem_id<<std::endl;
-      // std::cout<<"entity_iter = "<<entity_iter<<std::endl;
+      // // std::cout<<"elem_id = "<<elem_id<<std::endl;
+      // // std::cout<<"entity_iter = "<<entity_iter<<std::endl;
       for(Integer entity_dofs_iter=0;entity_dofs_iter<dofs_per_entity;entity_dofs_iter++)
          for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
             {            
              (*dofmap_vec)[elem_id][loc_dof_count]=global_dof_count;
              space_dofs->push_back(global_dof_count);
-             // std::cout<<global_dof_count<<std::endl;
-             // std::cout<<"entity_dofs_iter = "<<entity_dofs_iter<<std::endl;
-             // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
-             // std::cout<<"(dofsmap)="<<(*dofmap_vec)[elem_id][loc_dof_count]<<std::endl;
-             // std::cout<<" global_dof_count (new)= "<<global_dof_count<<std::endl;
+             // // std::cout<<global_dof_count<<std::endl;
+             // // std::cout<<"entity_dofs_iter = "<<entity_dofs_iter<<std::endl;
+             // // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
+             // // std::cout<<"(dofsmap)="<<(*dofmap_vec)[elem_id][loc_dof_count]<<std::endl;
+             // // std::cout<<" global_dof_count (new)= "<<global_dof_count<<std::endl;
              loc_dof_count++;
              global_dof_count++;
              dofs_count++;
              }
-      // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
+      // // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
     }
     else
     {
@@ -733,20 +733,20 @@ for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
      const auto& elem_id_tmp=flag[entity_id][0];
      const auto& iter_tmp=flag[entity_id][1];
            auto old_dof=(*dofmap_vec)[elem_id_tmp][dofs_offset[N]+dofs_per_entity*iter_tmp*FunctionSpace::NComponents];
-      // std::cout<<" elem_id = "<<elem_id<<std::endl;
-      // std::cout<<" entity_iter = "<<flag[entity_id][1]<<std::endl  ;  
+      // // std::cout<<" elem_id = "<<elem_id<<std::endl;
+      // // std::cout<<" entity_iter = "<<flag[entity_id][1]<<std::endl  ;  
      
      for(Integer entity_dofs_iter=0;entity_dofs_iter<dofs_per_entity;entity_dofs_iter++)
         for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
            {           
             (*dofmap_vec)[elem_id][loc_dof_count]=old_dof;
-            // std::cout<<old_dof<<std::endl;
-             // std::cout<<"entity_dofs_iter = "<<entity_dofs_iter<<std::endl;
-             // std::cout<<"old global_dof_count = "<<global_dof_count<<std::endl;
+            // // std::cout<<old_dof<<std::endl;
+             // // std::cout<<"entity_dofs_iter = "<<entity_dofs_iter<<std::endl;
+             // // std::cout<<"old global_dof_count = "<<global_dof_count<<std::endl;
              loc_dof_count++;
              old_dof++;
            }
-      // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
+      // // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
     }
 
     }
@@ -1132,9 +1132,9 @@ void dofmap_fespace3(const MeshT& mesh,
 
     auto& space_dofs=dofsdm_.space_dofs();
     auto& dofmap_vec=dofsdm_.dofmap();
-    std::cout<<"dofs dm reserve begin"<<std::endl;
+    // // std::cout<<"dofs dm reserve begin"<<std::endl;
     dofsdm_.init_dofmap(mesh.n_elements());
-    std::cout<<"dofs dm reserve end"<<std::endl;
+    // // std::cout<<"dofs dm reserve end"<<std::endl;
     // compute the connection node to elem (auxiliary tool, often used)
     clock_t begin = clock();
     NodeToElem<MeshT> node_2_elem(mesh);
@@ -1147,7 +1147,7 @@ void dofmap_fespace3(const MeshT& mesh,
     
     clock_t end = clock();
     double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
-    std::cout<<"dofmap entities tuple elapsed_secs="<<elapsed_secs<<std::endl;
+    // // std::cout<<"dofmap entities tuple elapsed_secs="<<elapsed_secs<<std::endl;
     // resize_tuple_of_ptr_vector(dofmap_vec,n_elements);   
     Integer global_dof_count=0;
     // loop on all the elements
@@ -1178,7 +1178,7 @@ void dofmap_fespace3(const MeshT& mesh,
     }
     end = clock();
     elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
-    std::cout<<"dofmap tuple elapsed_secs="<<elapsed_secs<<std::endl;
+    // // std::cout<<"dofmap tuple elapsed_secs="<<elapsed_secs<<std::endl;
     for(std::size_t i=0; i<dofsdm_.n_dofs().size() ;i++)
       dofsdm_.n_dofs()[i]=global_dof_count;
 
@@ -1275,7 +1275,7 @@ ElementDofMap_LoopEntities4(const std::tuple<Args1...>& entitiestuple,
                            Integer& dofs_count)
 {
 
-std::cout<< " ElementDofMap_LoopEntities4 N = "<< N <<std::endl;
+// // std::cout<< " ElementDofMap_LoopEntities4 N = "<< N <<std::endl;
 using Elem = typename FunctionSpace::Elem;
 constexpr auto ManifoldDim=FunctionSpace::ManifoldDim;
 constexpr auto continuity=FunctionSpace::Continuity;
@@ -1310,41 +1310,41 @@ for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
       auto ordered_entity_nodes=DofsOrdering<entity_dim,FunctionSpace>::value(nodes,entity_iter);
        // for(std::size_t i=0;i<ordered_entity_nodes.size();i++)
        //      {
-       //        std::cout<<ordered_entity_nodes[i]<<" ";
+       //        // std::cout<<ordered_entity_nodes[i]<<" ";
        //      }
 
     cont=0;
     if(flag[entity_id][0]==-1 || continuity==Discontinuous)
     {
 
-      // std::cout<< " elem id = "<< elem_id <<" NEW, iter ="<<entity_iter<<std::endl;
+      // // std::cout<< " elem id = "<< elem_id <<" NEW, iter ="<<entity_iter<<std::endl;
 
       auto ordered_dofs=DofsOrdered<entity_dim,FunctionSpace>::local_dofs(ordered_entity_nodes,loc_dof_count);
-      // std::cout<<"ordered_dofs"<<std::endl;
-      // std::cout<<ordered_dofs<<std::endl;
+      // // std::cout<<"ordered_dofs"<<std::endl;
+      // // std::cout<<ordered_dofs<<std::endl;
        
       flag[entity_id][0]=elem_id;
       flag[entity_id][1]=entity_iter;
-      // std::cout<<"elem_id = "<<elem_id<<std::endl;
-      // std::cout<<"entity_iter = "<<entity_iter<<std::endl;
-      // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
-      // std::cout<<std::endl;
+      // // std::cout<<"elem_id = "<<elem_id<<std::endl;
+      // // std::cout<<"entity_iter = "<<entity_iter<<std::endl;
+      // // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
+      // // std::cout<<std::endl;
       for(Integer m=0;m<ordered_dofs.size();m++)
       {
         dofmap_vec[elem_id][ordered_dofs[cont]]=global_dof_count;
-        // std::cout<<(*dofmap_vec)[elem_id][ordered_dofs[cont]]<<std::endl;
+        // // std::cout<<(*dofmap_vec)[elem_id][ordered_dofs[cont]]<<std::endl;
         cont++;
         loc_dof_count++;
-        // std::cout<<global_dof_count<<std::endl;
+        // // std::cout<<global_dof_count<<std::endl;
         global_dof_count++;
         dofs_count++;
       }
-      // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
-      // std::cout<<std::endl;
+      // // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
+      // // std::cout<<std::endl;
      }
      else
      {
-      // std::cout<< " elem id = "<< elem_id<<" NEW, iter ="<<entity_iter<<std::endl;
+      // // std::cout<< " elem id = "<< elem_id<<" NEW, iter ="<<entity_iter<<std::endl;
 
       
       
@@ -1364,33 +1364,33 @@ for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
         }
       }
 
-      // std::cout<<"old offset = = "<<dofs_offset[N]+dofs_per_entity*iter_tmp*FunctionSpace::NComponents<<std::endl;
-      // std::cout<<"dofs_offset= = "<<dofs_offset[N]<<std::endl;
-      // std::cout<<"dofs_per_entity= = "<<dofs_per_entity<<std::endl;
-      // std::cout<<"iter_tmp= = "<<iter_tmp<<std::endl;
-      // std::cout<<"loc_dof_count = = "<<loc_dof_count<<std::endl;
-      // std::cout<<"global_old_dof = = "<<global_old_dof<<std::endl;
+      // // std::cout<<"old offset = = "<<dofs_offset[N]+dofs_per_entity*iter_tmp*FunctionSpace::NComponents<<std::endl;
+      // // std::cout<<"dofs_offset= = "<<dofs_offset[N]<<std::endl;
+      // // std::cout<<"dofs_per_entity= = "<<dofs_per_entity<<std::endl;
+      // // std::cout<<"iter_tmp= = "<<iter_tmp<<std::endl;
+      // // std::cout<<"loc_dof_count = = "<<loc_dof_count<<std::endl;
+      // // std::cout<<"global_old_dof = = "<<global_old_dof<<std::endl;
       
       auto ordered_dofs=DofsOrdered<entity_dim,FunctionSpace>::local_dofs(ordered_entity_nodes,loc_dof_count);
-      // std::cout<<"ordered_dofs"<<std::endl;
-      // std::cout<<ordered_dofs<<std::endl;
-      // std::cout<<std::endl;
+      // // std::cout<<"ordered_dofs"<<std::endl;
+      // // std::cout<<ordered_dofs<<std::endl;
+      // // std::cout<<std::endl;
       cont =0;
       for(Integer m=0;m<ordered_dofs.size();m++)
       {
         dofmap_vec[elem_id][ordered_dofs[cont]]=global_old_dof;
-        std::cout<< "(*dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
-        // std::cout<<ordered_dofs[cont]<<std::endl;
-        // std::cout<<(*dofmap_vec)[elem_id][ordered_dofs[cont]]<<std::endl;
-        // std::cout<<global_dof_count<<std::endl;
+        // // std::cout<< "(*dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
+        // // std::cout<<ordered_dofs[cont]<<std::endl;
+        // // std::cout<<(*dofmap_vec)[elem_id][ordered_dofs[cont]]<<std::endl;
+        // // std::cout<<global_dof_count<<std::endl;
         cont++;
         loc_dof_count++;
         global_old_dof++;
         dofs_count++;
       }
-      // std::cout<<std::endl;
+      // // std::cout<<std::endl;
 
-      // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
+      // // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
      }
     
 
@@ -1398,7 +1398,7 @@ for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
     }
     else
     {
-      std::cout<< "ElementDofMap_LoopEntities4 = "<<entity_iter<<"  ->"<<flag[entity_id][0]<<std::endl;
+      // // std::cout<< "ElementDofMap_LoopEntities4 = "<<entity_iter<<"  ->"<<flag[entity_id][0]<<std::endl;
     // if the entity has not been already visited, then create n_components new dofs
     if(flag[entity_id][0]==-1 || continuity==Discontinuous)
     {
@@ -1406,24 +1406,24 @@ for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
        
       flag[entity_id][0]=elem_id;
       flag[entity_id][1]=entity_iter;
-      // std::cout<<"elem_id = "<<elem_id<<std::endl;
-      // std::cout<<"entity_iter = "<<entity_iter<<std::endl;
+      // // std::cout<<"elem_id = "<<elem_id<<std::endl;
+      // // std::cout<<"entity_iter = "<<entity_iter<<std::endl;
       for(Integer entity_dofs_iter=0;entity_dofs_iter<dofs_per_entity;entity_dofs_iter++)
          for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
             {            
              dofmap_vec[elem_id][loc_dof_count]=global_dof_count;
              space_dofs->push_back(global_dof_count);
-             std::cout<< "(dofmap_vec)[elem_id][loc_dof_count]="<<dofmap_vec[elem_id][loc_dof_count]<<std::endl;
-             // std::cout<<global_dof_count<<std::endl;
-             // std::cout<<"entity_dofs_iter = "<<entity_dofs_iter<<std::endl;
-             // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
-             // std::cout<<"(dofsmap)="<<(*dofmap_vec)[elem_id][loc_dof_count]<<std::endl;
-             // std::cout<<" global_dof_count (new)= "<<global_dof_count<<std::endl;
+             // // std::cout<< "(dofmap_vec)[elem_id][loc_dof_count]="<<dofmap_vec[elem_id][loc_dof_count]<<std::endl;
+             // // std::cout<<global_dof_count<<std::endl;
+             // // std::cout<<"entity_dofs_iter = "<<entity_dofs_iter<<std::endl;
+             // // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
+             // // std::cout<<"(dofsmap)="<<(*dofmap_vec)[elem_id][loc_dof_count]<<std::endl;
+             // // std::cout<<" global_dof_count (new)= "<<global_dof_count<<std::endl;
              loc_dof_count++;
              global_dof_count++;
              dofs_count++;
              }
-      // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
+      // // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
     }
     else
     {
@@ -1433,21 +1433,21 @@ for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
      const auto& elem_id_tmp=flag[entity_id][0];
      const auto& iter_tmp=flag[entity_id][1];
            auto old_dof=dofmap_vec[elem_id_tmp][dofs_offset[N]+dofs_per_entity*iter_tmp*FunctionSpace::NComponents];
-      // std::cout<<" elem_id = "<<elem_id<<std::endl;
-      // std::cout<<" entity_iter = "<<flag[entity_id][1]<<std::endl  ;  
+      // // std::cout<<" elem_id = "<<elem_id<<std::endl;
+      // // std::cout<<" entity_iter = "<<flag[entity_id][1]<<std::endl  ;  
      
      for(Integer entity_dofs_iter=0;entity_dofs_iter<dofs_per_entity;entity_dofs_iter++)
         for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
            {           
             dofmap_vec[elem_id][loc_dof_count]=old_dof;
-            // std::cout<<old_dof<<std::endl;
-             // std::cout<<"entity_dofs_iter = "<<entity_dofs_iter<<std::endl;
-             // std::cout<<"old global_dof_count = "<<global_dof_count<<std::endl;
-            std::cout<< "(dofmap_vec)[elem_id][loc_dof_count]="<<dofmap_vec[elem_id][loc_dof_count]<<std::endl;
+            // // std::cout<<old_dof<<std::endl;
+             // // std::cout<<"entity_dofs_iter = "<<entity_dofs_iter<<std::endl;
+             // // std::cout<<"old global_dof_count = "<<global_dof_count<<std::endl;
+            // // std::cout<< "(dofmap_vec)[elem_id][loc_dof_count]="<<dofmap_vec[elem_id][loc_dof_count]<<std::endl;
              loc_dof_count++;
              old_dof++;
            }
-      // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
+      // // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
     }
 
     }
@@ -1456,14 +1456,14 @@ for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
 
 
 
-   std::cout<<" DOFMAP VEC ==" <<std::endl;
+   // // std::cout<<" DOFMAP VEC ==" <<std::endl;
  
-         for(int i=0;i<dofmap_vec.size();i++)
-          {
-            for(int j=0;j<dofmap_vec[i].size();j++)
-          std::cout<<dofmap_vec[i][j]<<" ";
-          std::cout<<std::endl;
-        }
+        //  for(int i=0;i<dofmap_vec.size();i++)
+        //   {
+        //     for(int j=0;j<dofmap_vec[i].size();j++)
+        //   // std::cout<<dofmap_vec[i][j]<<" ";
+        //   // std::cout<<std::endl;
+        // }
 }
 
 template<Integer N,typename FunctionSpace, typename FlagArray,typename Element,typename...Args1, long M,typename OS, typename SpaceDofs>
@@ -1504,23 +1504,23 @@ ElementDofMap4(const std::tuple<Args1...>& entitiestuple,
  auto &m2=std::get<M>(flagtuples);
  static constexpr Integer NN=std::tuple_size<remove_all_t<decltype(m2)>>::value-1;
  loc_dof_count=0;
-  // std::cout<<"ElementDofMap3 K = "<<K <<std::endl;
+  // // std::cout<<"ElementDofMap3 K = "<<K <<std::endl;
 
  ElementDofMap_LoopEntities4<NN,ElemFunctionSpace<Elem,FunctionSpace>>
                             (entitiestuple,m2,elem,elem_id,(*tuple_get<K>(dofmap_vec)),global_dof_count,loc_dof_count,std::get<K>(dofs_offset),space_dofs[K],array_ndofs[K]);
 
 
  auto & dm=*tuple_get<K>(dofmap_vec);
- std::cout<<" elem dofmap 4 K==" << K <<std::endl;
- std::cout<<" dm.size()==" << dm.size() <<std::endl;
+ // // std::cout<<" elem dofmap 4 K==" << K <<std::endl;
+ // // std::cout<<" dm.size()==" << dm.size() <<std::endl;
  
- for(int i=0;i<dm.size();i++)
-  {
-    for(int j=0;j<dm[i].size();j++)
-  std::cout<<dm[i][j]<<" ";
-  std::cout<<std::endl;
+//  for(int i=0;i<dm.size();i++)
+//   {
+//     for(int j=0;j<dm[i].size();j++)
+//   // std::cout<<dm[i][j]<<" ";
+//   // std::cout<<std::endl;
 
-}
+// }
 
   ElementDofMap4<K+1,Elem,FunctionSpaces...>(entitiestuple,flagtuples,elem,elem_id,dofmap_vec,global_dof_count,loc_dof_count,dofs_offset,space_dofs,array_ndofs);
 
@@ -1552,16 +1552,16 @@ ElementDofMap4(const std::tuple<Args1...>& entitiestuple,
                            (entitiestuple,m2,elem,elem_id,(*tuple_get<K>(dofmap_vec)),global_dof_count,loc_dof_count,std::get<K>(dofs_offset),space_dofs[K],array_ndofs[K]);
 
  auto & dm=*tuple_get<K>(dofmap_vec);
- std::cout<<" elem dofmap 4 K==" << K <<std::endl;
- std::cout<<" dm.size()==" << dm.size() <<std::endl;
+ // // std::cout<<" elem dofmap 4 K==" << K <<std::endl;
+ // // std::cout<<" dm.size()==" << dm.size() <<std::endl;
  
- for(int i=0;i<dm.size();i++)
-  {
-    for(int j=0;j<dm[i].size();j++)
-  std::cout<<dm[i][j]<<" ";
-  std::cout<<std::endl;
+//  for(int i=0;i<dm.size();i++)
+//   {
+//     for(int j=0;j<dm[i].size();j++)
+//   // std::cout<<dm[i][j]<<" ";
+//   // std::cout<<std::endl;
 
-}
+// }
 };
 
 
@@ -1586,7 +1586,7 @@ initialize_flag_tuple_entities_aux4(std::tuple< Args...> const &tuple,
 
      entity_found[M].resize(entity_length,{-1,-1});
 
-     std::cout<<"entity_found[M] size==" <<entity_found[M].size()<<std::endl;
+     // // std::cout<<"entity_found[M] size==" <<entity_found[M].size()<<std::endl;
      initialize_flag_tuple_entities_aux4<FunctionSpace,Mmax,M+1>(tuple,entity_found);       
 };
 
@@ -1677,9 +1677,9 @@ void dofmap_fespace4( MeshAndEntity<MeshT>& mesh_and_entity,
     auto& space_dofs=dofsdm_.space_dofs();
     auto& dofmap_vec=dofsdm_.dofmap();
 
-    std::cout<<"dofs dm reserve begin"<<std::endl;
+    // // std::cout<<"dofs dm reserve begin"<<std::endl;
     dofsdm_.init_dofmap(mesh_ptr->n_elements());
-    std::cout<<"dofs dm reserve end"<<std::endl;
+    // // std::cout<<"dofs dm reserve end"<<std::endl;
     // compute the connection node to elem (auxiliary tool, often used)
     clock_t begin = clock();
     
@@ -1695,7 +1695,7 @@ void dofmap_fespace4( MeshAndEntity<MeshT>& mesh_and_entity,
     
     clock_t end = clock();
     double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
-    std::cout<<"dofmap entities tuple elapsed_secs="<<elapsed_secs<<std::endl;
+    // // std::cout<<"dofmap entities tuple elapsed_secs="<<elapsed_secs<<std::endl;
     // resize_tuple_of_ptr_vector(dofmap_vec,n_elements);   
     Integer global_dof_count=0;
     // loop on all the elements
@@ -1716,7 +1716,7 @@ void dofmap_fespace4( MeshAndEntity<MeshT>& mesh_and_entity,
       // if(mesh_ptr->is_active(elem_iter))
       // {
        // change it for smarter algorithms   
-      // std::cout<<" dofmap elem == "<< elem_iter <<std::endl;
+      // // std::cout<<" dofmap elem == "<< elem_iter <<std::endl;
        auto& elem=mesh_ptr->elem(elem_iter);
        auto &elem_id=elem_iter;
 
@@ -1730,7 +1730,7 @@ void dofmap_fespace4( MeshAndEntity<MeshT>& mesh_and_entity,
     }
     end = clock();
     elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
-    // std::cout<<"dofmap tuple elapsed_secs="<<elapsed_secs<<std::endl;
+    // // std::cout<<"dofmap tuple elapsed_secs="<<elapsed_secs<<std::endl;
     for(std::size_t i=0; i<dofsdm_.n_dofs().size() ;i++)
       dofsdm_.n_dofs()[i]=global_dof_count;
 
@@ -2050,9 +2050,9 @@ public:
              IntegerVector& count_n_entity_vec,
              const Elem elem )
    {
-   // std::cout<<"___________LEVEL="<<0<<std::endl;
+   // // std::cout<<"___________LEVEL="<<0<<std::endl;
 
-    // std::cout<< " ElementDofMap_LoopEntities5 N = "<< N <<std::endl;
+    // // std::cout<< " ElementDofMap_LoopEntities5 N = "<< N <<std::endl;
     using Elem = typename FunctionSpace::Elem;
     constexpr const auto ManifoldDim=FunctionSpace::ManifoldDim;
     constexpr const auto continuity=FunctionSpace::Continuity;
@@ -2085,14 +2085,14 @@ public:
         for(std::size_t i=0;i<entity_points;i++)
           entity_nodes[i]=nodes[entity_[i]];
 
-        // std::cout<<"entity_nodes="<<std::endl;
+        // // std::cout<<"entity_nodes="<<std::endl;
         //   for(int s=0;s<entity_nodes.size();s++)
-        //   std::cout<<entity_nodes[s]<<std::endl;
-        //   std::cout<<std::endl;
+        //   // std::cout<<entity_nodes[s]<<std::endl;
+        //   // std::cout<<std::endl;
 
         std::sort(entity_nodes.begin(),entity_nodes.end());
 
-        // std::cout<<"must_reorder="<<DofsOrdering<entity_dim,FunctionSpace>::must_reorder<<std::endl;
+        // // std::cout<<"must_reorder="<<DofsOrdering<entity_dim,FunctionSpace>::must_reorder<<std::endl;
 
         auto ordered_entity_nodes=DofsOrdering<entity_dim,FunctionSpace>::value(nodes,entity_iter);
         
@@ -2110,7 +2110,7 @@ public:
           for(Integer m=0;m<ordered_dofs.size();m++)
           {
             dofmap_vec[elem_id][ordered_dofs[cont]]=global_dof_count;
-            // std::cout<<"(*dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
+            // // std::cout<<"(*dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
             cont++;
             loc_dof_count++;
             global_dof_count++;
@@ -2124,7 +2124,7 @@ public:
           for(Integer m=0;m<ordered_dofs.size();m++)
           {
             dofmap_vec[elem_id][ordered_dofs[cont]]=global_old_dof;
-            // std::cout<< "(*dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
+            // // std::cout<< "(*dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
             cont++;
             loc_dof_count++;
             global_old_dof++;
@@ -2134,11 +2134,11 @@ public:
         // otherwise
         else
         {
-          // std::cout<<"do not reorder"<<std::endl;
+          // // std::cout<<"do not reorder"<<std::endl;
     //     // if the entity has not been already visited, then create n_components new dofs
         if(!dof || continuity==Discontinuous)
         {
-          // std::cout<<"!dof || continuity==Discontinuous"<<std::endl;
+          // // std::cout<<"!dof || continuity==Discontinuous"<<std::endl;
           dof=std::make_shared<Integer>(global_dof_count);
           for(Integer entity_dofs_iter=0;entity_dofs_iter<dofs_per_entity;entity_dofs_iter++)
              for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
@@ -2147,7 +2147,7 @@ public:
 
                  // to add ??
                  // space_dofs->push_back(global_dof_count);
-                 // std::cout<<global_dof_count <<std::endl;
+                 // // std::cout<<global_dof_count <<std::endl;
                  loc_dof_count++;
                  global_dof_count++;
 
@@ -2155,14 +2155,14 @@ public:
         }
         else
         {
-          // std::cout<<"else"<<std::endl;
+          // // std::cout<<"else"<<std::endl;
          global_old_dof=*dof;
          for(Integer entity_dofs_iter=0;entity_dofs_iter<dofs_per_entity;entity_dofs_iter++)
             for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
                {           
                 dofmap_vec[elem_id][loc_dof_count]=global_old_dof;
                 loc_dof_count++;
-                // std::cout<<global_old_dof <<std::endl;
+                // // std::cout<<global_old_dof <<std::endl;
                 global_old_dof++;
                }
         }
@@ -2170,16 +2170,16 @@ public:
       }
 
 
-      //  std::cout<<" DOFMAP VEC5 ==" <<std::endl;
-      //  std::cout<<" dofmap_vec.size() ==" <<dofmap_vec.size()<<std::endl;
+      //  // std::cout<<" DOFMAP VEC5 ==" <<std::endl;
+      //  // std::cout<<" dofmap_vec.size() ==" <<dofmap_vec.size()<<std::endl;
      
       //        for(int i=0;i<dofmap_vec.size();i++)
       //         {
       //           for(int j=0;j<dofmap_vec[i].size();j++)
-      //         std::cout<<dofmap_vec[i][j]<<" ";
-      //         std::cout<<std::endl;
+      //         // std::cout<<dofmap_vec[i][j]<<" ";
+      //         // std::cout<<std::endl;
       //       }
-      // std::cout<<"after  dofmap_vec.size() ==" <<dofmap_vec.size()<<std::endl;
+      // // std::cout<<"after  dofmap_vec.size() ==" <<dofmap_vec.size()<<std::endl;
 }
    
 
@@ -2228,11 +2228,11 @@ public:
              const Elem elem,
              const Integer level )
    {
-   // std::cout<<"___________LEVEL="<<level<<std::endl;
-   // std::cout<<"cont_new="<<cont_new<<std::endl;
-   // std::cout<<"cont_tot="<<cont_tot<<std::endl;
+   // // std::cout<<"___________LEVEL="<<level<<std::endl;
+   // // std::cout<<"cont_new="<<cont_new<<std::endl;
+   // // std::cout<<"cont_tot="<<cont_tot<<std::endl;
 
-    // std::cout<< " ElementDofMap_LoopEntities5 N = "<< N <<std::endl;
+    // // std::cout<< " ElementDofMap_LoopEntities5 N = "<< N <<std::endl;
     using Elem = typename FunctionSpace::Elem;
     constexpr const auto ManifoldDim=FunctionSpace::ManifoldDim;
     constexpr const auto continuity=FunctionSpace::Continuity;
@@ -2244,25 +2244,25 @@ public:
     constexpr auto combinations_nums=ElemEntityCombinations<Elem,entity_dim>::value;
 
 
-        // std::cout  << "ELEM===="<<elem.id<<"     with entity==="<<entity_dim<<std::endl;
+        // // std::cout  << "ELEM===="<<elem.id<<"     with entity==="<<entity_dim<<std::endl;
 
       // for(std::size_t i=0;i<count_n_entity_vec.size();i++)
-      //   std::cout<<count_n_entity_vec[i]<<" ";
+      //   // std::cout<<count_n_entity_vec[i]<<" ";
 
-      //   std::cout  << "\n-----------------------------------\n";
+      //   // std::cout  << "\n-----------------------------------\n";
 
       //   for(const auto &m : map_dof) {
       //     const auto& nodes=m.first;
       //     for(const auto n : nodes) {
-      //       std::cout << n << " ";
+      //       // std::cout << n << " ";
       //     }
 
-      //     std::cout << "-> ";
+      //     // std::cout << "-> ";
 
-      //       std::cout << *m.second << " ";
+      //       // std::cout << *m.second << " ";
           
 
-      //     std::cout << "\n";
+      //     // std::cout << "\n";
       //   }
 
 
@@ -2277,11 +2277,11 @@ public:
     Integer entity_[entity_points];
     Integer global_old_dof;
 
-    // std::cout<<"level="<<level<<std::endl;
-    // std::cout<<"count_n_entity_vec"<<std::endl;
+    // // std::cout<<"level="<<level<<std::endl;
+    // // std::cout<<"count_n_entity_vec"<<std::endl;
     // for(Integer i=0; i<count_n_entity_vec.size();i++ )
-    //   std::cout<<count_n_entity_vec[i]<<" ";
-    // std::cout<<std::endl;
+    //   // std::cout<<count_n_entity_vec[i]<<" ";
+    // // std::cout<<std::endl;
 
     auto& global_dof_count=count_n_entity_vec[level];
     auto& elem_id=elem.id;
@@ -2293,14 +2293,14 @@ public:
         for(std::size_t i=0;i<entity_points;i++)
           entity_nodes[i]=nodes[entity_[i]];
 
-        // std::cout<<"entity_nodes="<<std::endl;
+        // // std::cout<<"entity_nodes="<<std::endl;
           // for(int s=0;s<entity_nodes.size();s++)
-          // std::cout<<entity_nodes[s]<<std::endl;
-          // std::cout<<std::endl;
+          // // std::cout<<entity_nodes[s]<<std::endl;
+          // // std::cout<<std::endl;
 
         std::sort(entity_nodes.begin(),entity_nodes.end());
 
-        // std::cout<<"must_reorder="<<DofsOrdering<entity_dim,FunctionSpace>::must_reorder<<std::endl;
+        // // std::cout<<"must_reorder="<<DofsOrdering<entity_dim,FunctionSpace>::must_reorder<<std::endl;
 
         auto ordered_entity_nodes=DofsOrdering<entity_dim,FunctionSpace>::value(nodes,entity_iter);
         
@@ -2316,7 +2316,7 @@ public:
                       // global_dof_count++;}
 
    Integer global_dof_count_tmp;
-          // std::cout<<"must reorder="<<DofsOrdering<entity_dim,FunctionSpace>::must_reorder<<std::endl;
+          // // std::cout<<"must reorder="<<DofsOrdering<entity_dim,FunctionSpace>::must_reorder<<std::endl;
     //     // consider more dofs per entity (RT1)
         if(DofsOrdering<entity_dim,FunctionSpace>::must_reorder)
         {
@@ -2327,24 +2327,24 @@ public:
           // if entity not found yet
           if(!dof || continuity==Discontinuous )
           {
-            // std::cout<<"!dof ="<<std::endl;
+            // // std::cout<<"!dof ="<<std::endl;
 
            if(cont_new<cont_tot)
            {
 
 
-             // std::cout<<"cont_new<cont_tot=>>"<<entity_used[cont_new]<<std::endl;
+             // // std::cout<<"cont_new<cont_tot=>>"<<entity_used[cont_new]<<std::endl;
              // for(int s=0;s<entity_used.size();s++)
-             //  std::cout<<entity_used[s]<<" ";
-             // std::cout<<std::endl;
+             //  // std::cout<<entity_used[s]<<" ";
+             // // std::cout<<std::endl;
              dof=std::make_shared<Integer>(entity_used[cont_new]);
              cont_new++; 
-             // std::cout<<"cont_new="<<cont_new <<std::endl;
+             // // std::cout<<"cont_new="<<cont_new <<std::endl;
              global_dof_count_tmp=*dof;
             for(Integer m=0;m<ordered_dofs.size();m++)
             {
               dofmap_vec[elem_id][ordered_dofs[cont]]=global_dof_count_tmp;
-              // std::cout<<"(dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
+              // // std::cout<<"(dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
               cont++;
               loc_dof_count++;
               global_dof_count_tmp++;
@@ -2354,13 +2354,13 @@ public:
            else
            {
 
-            // std::cout<<"==dof ="<<std::endl;
+            // // std::cout<<"==dof ="<<std::endl;
             dof=std::make_shared<Integer>(global_dof_count);
-            // std::cout<<"cont_new>=cont_tot=>>"<<global_dof_count<<std::endl;
+            // // std::cout<<"cont_new>=cont_tot=>>"<<global_dof_count<<std::endl;
             for(Integer m=0;m<ordered_dofs.size();m++)
             {
               dofmap_vec[elem_id][ordered_dofs[cont]]=global_dof_count;
-              // std::cout<<"(dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
+              // // std::cout<<"(dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
               cont++;
               loc_dof_count++;
               global_dof_count++;
@@ -2379,11 +2379,11 @@ public:
           auto ordered_dofs=DofsOrdered<entity_dim,FunctionSpace>::local_dofs(ordered_entity_nodes,loc_dof_count);
           cont =0;
 
-          // std::cout<<"global_old_dof= "<<global_old_dof<<std::endl;
+          // // std::cout<<"global_old_dof= "<<global_old_dof<<std::endl;
           for(Integer m=0;m<ordered_dofs.size();m++)
           {
             dofmap_vec[elem_id][ordered_dofs[cont]]=global_old_dof;
-            // std::cout<< "(*dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
+            // // std::cout<< "(*dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
             cont++;
             loc_dof_count++;
             global_old_dof++;
@@ -2397,12 +2397,12 @@ public:
         if(!dof || continuity==Discontinuous)
         {
 
-           // std::cout<<"!dof ="<<std::endl;
-           // std::cout<<"cont_new ="<<cont_new<<std::endl;
-           // std::cout<<"cont_tot ="<<cont_tot<<std::endl;
+           // // std::cout<<"!dof ="<<std::endl;
+           // // std::cout<<"cont_new ="<<cont_new<<std::endl;
+           // // std::cout<<"cont_tot ="<<cont_tot<<std::endl;
            if(cont_new<cont_tot)
            {
-            // std::cout<<"entity_used[cont_new]="<<entity_used[cont_new]<<std::endl;
+            // // std::cout<<"entity_used[cont_new]="<<entity_used[cont_new]<<std::endl;
              dof=std::make_shared<Integer>(entity_used[cont_new]);
              cont_new++; 
              global_dof_count_tmp=*dof;
@@ -2410,7 +2410,7 @@ public:
                  for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
                     {            
                      dofmap_vec[elem_id][loc_dof_count]=global_dof_count_tmp;
-                     // std::cout<<"if loc_dof_count="<<loc_dof_count<<",  global_dof_count_tmp="<<global_dof_count_tmp<<"   dofmap_vec[elem_id][loc_dof_count]="<<dofmap_vec[elem_id][loc_dof_count]<<std::endl;
+                     // // std::cout<<"if loc_dof_count="<<loc_dof_count<<",  global_dof_count_tmp="<<global_dof_count_tmp<<"   dofmap_vec[elem_id][loc_dof_count]="<<dofmap_vec[elem_id][loc_dof_count]<<std::endl;
                      // to add ??
                      // space_dofs->push_back(global_dof_count);
                      loc_dof_count++;
@@ -2421,12 +2421,12 @@ public:
            else
            {
             dof=std::make_shared<Integer>(global_dof_count);
-            // std::cout<<"global_dof_count="<<global_dof_count<<std::endl;
+            // // std::cout<<"global_dof_count="<<global_dof_count<<std::endl;
             for(Integer entity_dofs_iter=0;entity_dofs_iter<dofs_per_entity;entity_dofs_iter++)
                for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
                   {            
                    dofmap_vec[elem_id][loc_dof_count]=global_dof_count;
-                   // std::cout<<"else loc_dof_count="<<loc_dof_count<<", global_dof_count="<<global_dof_count<<"   dofmap_vec[elem_id][loc_dof_count]="<<dofmap_vec[elem_id][loc_dof_count]<<std::endl;
+                   // // std::cout<<"else loc_dof_count="<<loc_dof_count<<", global_dof_count="<<global_dof_count<<"   dofmap_vec[elem_id][loc_dof_count]="<<dofmap_vec[elem_id][loc_dof_count]<<std::endl;
                    // to add ??
                    // space_dofs->push_back(global_dof_count);
                    loc_dof_count++;
@@ -2437,13 +2437,13 @@ public:
         }
         else
         {
-          // std::cout<<"===dof ="<<std::endl;
+          // // std::cout<<"===dof ="<<std::endl;
          global_old_dof=*dof;
          for(Integer entity_dofs_iter=0;entity_dofs_iter<dofs_per_entity;entity_dofs_iter++)
             for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
                {           
                 dofmap_vec[elem_id][loc_dof_count]=global_old_dof;
-                // std::cout<<"dofmap_vec[elem_id][loc_dof_count]="<<dofmap_vec[elem_id][loc_dof_count]<<std::endl;
+                // // std::cout<<"dofmap_vec[elem_id][loc_dof_count]="<<dofmap_vec[elem_id][loc_dof_count]<<std::endl;
                 loc_dof_count++;
                 global_old_dof++;
                }
@@ -2452,16 +2452,16 @@ public:
       }
 
 
-      //  std::cout<<" DOFMAP VEC5 ==" <<std::endl;
-      //  std::cout<<" dofmap_vec.size() ==" <<dofmap_vec.size()<<std::endl;
+      //  // std::cout<<" DOFMAP VEC5 ==" <<std::endl;
+      //  // std::cout<<" dofmap_vec.size() ==" <<dofmap_vec.size()<<std::endl;
      
       //        for(int i=0;i<dofmap_vec.size();i++)
       //         {
       //           for(int j=0;j<dofmap_vec[i].size();j++)
-      //         std::cout<<dofmap_vec[i][j]<<" ";
-      //         std::cout<<std::endl;
+      //         // std::cout<<dofmap_vec[i][j]<<" ";
+      //         // std::cout<<std::endl;
       //       }
-      // std::cout<<"after  dofmap_vec.size() ==" <<dofmap_vec.size()<<std::endl;
+      // // std::cout<<"after  dofmap_vec.size() ==" <<dofmap_vec.size()<<std::endl;
 }
 
 
@@ -2498,7 +2498,7 @@ public:
              const Elem elem,const Integer level )
    {
 
-    // std::cout<<"N="<<N<<std::endl;
+    // // std::cout<<"N="<<N<<std::endl;
     auto& map=tuple_get<N>(tuple_map);
     auto& parent_map=tuple_get<N>(tuple_parent_map);
     auto& map_dof=tuple_get<N>(tuple_map_dof);    
@@ -2526,12 +2526,12 @@ public:
    {
     // Integer cont_new=0;
     Integer loc_dof_count=0;
-    // std::cout<<"--------------count_n_entity_vec="<<std::endl;
+    // // std::cout<<"--------------count_n_entity_vec="<<std::endl;
       // for(std::size_t i=0;i<count_n_entity_vec.size();i++)
-      //   std::cout<<count_n_entity_vec[i]<<" ";
-      // std::cout<<"\n"<<std::endl;
+      //   // std::cout<<count_n_entity_vec[i]<<" ";
+      // // std::cout<<"\n"<<std::endl;
     // loop on spaces
-    // std::cout<<"init_fine_elem level = "<<level<<std::endl;
+    // // std::cout<<"init_fine_elem level = "<<level<<std::endl;
     init_fine_elem_aux(cont_tot,cont_new,entity_used,dofmap_vec,tuple_map,tuple_parent_map,tuple_map_dof,loc_dof_count,count_n_entity_vec,elem,level);
    }
 
@@ -2580,22 +2580,22 @@ public:
       Integer entity_[entity_points];
 
 
-        // std::cout  << "ELEM===="<<elem.id<<"     with entity==="<<entity_dim<<std::endl;
+        // // std::cout  << "ELEM===="<<elem.id<<"     with entity==="<<entity_dim<<std::endl;
 
-        // std::cout  << "\n------------------------parent_map-----------\n";
+        // // std::cout  << "\n------------------------parent_map-----------\n";
 
         // for(const auto &m : parent_map) {
         //   const auto& nodes=m.first;
         //   for(const auto n : nodes) {
-        //     std::cout << n << " ";
+        //     // std::cout << n << " ";
         //   }
 
-        //   std::cout << "-> ";
+        //   // std::cout << "-> ";
 
-        //     std::cout << m.second << " ";
+        //     // std::cout << m.second << " ";
           
 
-        //   std::cout << "\n";
+        //   // std::cout << "\n";
         // }
 
 
@@ -2622,19 +2622,19 @@ public:
            for(std::size_t parent_entity=0;parent_entity<combinations_nums;parent_entity++)
             {
          Combinations<manifold_points, entity_points>::generate(parent_entity,entity_);
-               // std::cout<<"\n count_new_dofs_aux parent_entity_nodes"<<std::endl;
+               // // std::cout<<"\n count_new_dofs_aux parent_entity_nodes"<<std::endl;
              for(std::size_t i=0;i<entity_points;i++)
                     {
                       parent_entity_nodes[i]=parent_nodes[entity_[i]];
-                      // std::cout<<parent_entity_nodes[i]<<" ";
+                      // // std::cout<<parent_entity_nodes[i]<<" ";
                     }
-               // std::cout<<std::endl;
+               // // std::cout<<std::endl;
                std::sort(parent_entity_nodes.begin(),parent_entity_nodes.end());
               
 
               if(!parent_map[parent_entity_nodes])
               {
-                      // std::cout<<" entro in !parent_map"<<std::endl;
+                      // // std::cout<<" entro in !parent_map"<<std::endl;
                     found_parent_entity=false;
                     // loop on all the child elements child_elem          
               for(std::size_t i=0;i<child.size();i++)
@@ -2655,10 +2655,10 @@ public:
                    
                    if(found_parent_entity)             
                      {
-                      // std::cout<<"child_entity_nodes"<<std::endl;
+                      // // std::cout<<"child_entity_nodes"<<std::endl;
                       // for(Integer i=0;i<child_entity_nodes.size();i++)
-                        // std::cout<<child_entity_nodes[i]<<" ";
-                      // std::cout<<std::endl;
+                        // // std::cout<<child_entity_nodes[i]<<" ";
+                      // // std::cout<<std::endl;
                       goto label;
                     }
                     
@@ -2673,13 +2673,13 @@ public:
 
                     parent_map[parent_entity_nodes]=true;
                     entity_used.push_back(*map_dof[parent_entity_nodes]);
-                    // std::cout<<"\n entity_used  "<<*map_dof[parent_entity_nodes]<<std::endl;
+                    // // std::cout<<"\n entity_used  "<<*map_dof[parent_entity_nodes]<<std::endl;
                     cont++;
                 }
                 {}
           }
         }
-   // std::cout<<"count_new_dofs_aux==="<<cont<<std::endl;
+   // // std::cout<<"count_new_dofs_aux==="<<cont<<std::endl;
     count_new_dofs_aux<N+1>(cont,entity_used,tuple_map,tuple_parent_map,tuple_map_dof,elem,level,mesh,tracker);
 
 }
@@ -2718,14 +2718,14 @@ public:
 
 
 
-          // std::cout<<"___________LEVEL="<<level<<std::endl;
-          // std::cout<<"count_n_entity_vec.size()-1="<<count_n_entity_vec.size()-1<<std::endl;
+          // // std::cout<<"___________LEVEL="<<level<<std::endl;
+          // // std::cout<<"count_n_entity_vec.size()-1="<<count_n_entity_vec.size()-1<<std::endl;
       if(count_n_entity_vec.size()-1<level)
         count_n_entity_vec.push_back(count_n_entity_vec[count_n_entity_vec.size()-1]);
-      // std::cout<<"count_n_entity_vec[END]="<<std::endl;
+      // // std::cout<<"count_n_entity_vec[END]="<<std::endl;
 
       // for(std::size_t i=0;i<count_n_entity_vec.size();i++)
-      //   std::cout<<count_n_entity_vec[i]<<" ";
+      //   // std::cout<<count_n_entity_vec[i]<<" ";
 
       // const auto& parent_id=elem.parent_id;
       Integer parent_id=get_used_parent_elem_id(elem.id,mesh,tracker);
@@ -2734,7 +2734,7 @@ public:
       std::vector<Integer> entity_used;
       cont_tot=0;
       count_new_dofs(cont_tot,entity_used,tuple_map,tuple_parent_map,tuple_map_dof,elem,level,mesh,tracker);
-      // std::cout<<"CONT TOT ==="<<cont_tot<<std::endl;
+      // // std::cout<<"CONT TOT ==="<<cont_tot<<std::endl;
 
       // loop on child nodes
       Integer cont_new=0;
@@ -2762,19 +2762,19 @@ public:
        //     // entities which belong to both coarse and fine level are untouched
        //     // the new ones are created, counting them from n_coarse_entities-cont
        // // we loop on all the entities of dimension EntityDim of the element
-       //  std::cout<<"qui"<<std::endl;
+       //  // std::cout<<"qui"<<std::endl;
 
        //        count_n_entity_vec[level]=count_n_entity_vec[level];//-cont;
-       //  std::cout<<"qui2"<<std::endl;
+       //  // std::cout<<"qui2"<<std::endl;
        //        // loop on all the child elements child_elem          
        //  for(std::size_t i=0;i<child.size();i++)
        //  {
        //   const auto& child_elem=mesh_.elem(child[i]);
-       //   std::cout<<"qui3"<<std::endl;
+       //   // std::cout<<"qui3"<<std::endl;
        //   const auto& child_id=child_elem.id;
-       //   std::cout<<"qui4"<<std::endl;
+       //   // std::cout<<"qui4"<<std::endl;
        //   const auto& child_nodes=child_elem.nodes; 
-       //   std::cout<<"qui4.5  ->"<<elem2dofs.size()<<std::endl;         
+       //   // std::cout<<"qui4.5  ->"<<elem2dofs.size()<<std::endl;         
        //   if(elem2dofs[child_id].size()==0)
        //   {
 
@@ -2783,7 +2783,7 @@ public:
 
 
 
-       //  std::cout<<"qui5"<<std::endl;
+       //  // std::cout<<"qui5"<<std::endl;
        //         // loop on all the entities child_entity
        //       for(std::size_t child_entity=0;child_entity<combinations_nums;child_entity++)
        //        {
@@ -2803,18 +2803,18 @@ public:
        //                if(cont2<cont)
        //                {
        //                 child_dof=entity_used[cont2];
-       //                 // std::cout<<" cont2<cont "<<child_dof<<std::endl;
+       //                 // // std::cout<<" cont2<cont "<<child_dof<<std::endl;
        //                 cont2++; 
        //                }
        //                else
        //                {child_dof=count_n_entity_vec[level];
-       //                 // std::cout<<" cont2>=cont "<<child_dof<<std::endl;
+       //                 // // std::cout<<" cont2>=cont "<<child_dof<<std::endl;
 
        //       count_n_entity_vec[level]++;}
        //             }
-       //             // std::cout<<"count_n_entity_vec[level]="<<count_n_entity_vec[level]<<std::endl;
+       //             // // std::cout<<"count_n_entity_vec[level]="<<count_n_entity_vec[level]<<std::endl;
        //             child_map->push_back(child_id);
-       //             std::cout<<" child_id = "<<child_id<<" with "<<*map_dof[child_entity_nodes]<<std::endl;
+       //             // std::cout<<" child_id = "<<child_id<<" with "<<*map_dof[child_entity_nodes]<<std::endl;
                    
 
 
@@ -2890,15 +2890,15 @@ public:
       constexpr auto combinations_nums=ElemEntityCombinations<Elem,entity_dim>::value;
 
 
-          // std::cout<<"___________LEVEL="<<level<<std::endl;
-          // std::cout<<"count_n_entity_vec.size()-1="<<count_n_entity_vec.size()-1<<std::endl;
+          // // std::cout<<"___________LEVEL="<<level<<std::endl;
+          // // std::cout<<"count_n_entity_vec.size()-1="<<count_n_entity_vec.size()-1<<std::endl;
       if(count_n_entity_vec.size()-1<level)
         count_n_entity_vec.push_back(count_n_entity_vec[count_n_entity_vec.size()-1]);
-      // std::cout<<"count_n_entity_vec[END]="<<std::endl;
+      // // std::cout<<"count_n_entity_vec[END]="<<std::endl;
 
       // for(std::size_t i=0;i<count_n_entity_vec.size();i++)
-        // std::cout<<count_n_entity_vec[i]<<" ";
-      // std::cout<<std::endl;
+        // // std::cout<<count_n_entity_vec[i]<<" ";
+      // // std::cout<<std::endl;
       Integer cont=0;
       Integer cont1=0;
       Integer cont2=0;
@@ -2937,19 +2937,19 @@ public:
            for(std::size_t parent_entity=0;parent_entity<combinations_nums;parent_entity++)
             {
          Combinations<manifold_points, entity_points>::generate(parent_entity,entity_);
-               // std::cout<<std::endl;
+               // // std::cout<<std::endl;
              for(std::size_t i=0;i<entity_points;i++)
                     {
                       parent_entity_nodes[i]=parent_nodes[entity_[i]];
-                      // std::cout<<parent_entity_nodes[i]<<" ";
+                      // // std::cout<<parent_entity_nodes[i]<<" ";
                     }
-               // std::cout<<std::endl;
+               // // std::cout<<std::endl;
                std::sort(parent_entity_nodes.begin(),parent_entity_nodes.end());
               
 
               if(!parent_map[parent_entity_nodes])
               {
-                // std::cout<<" entro in !parent_map"<<std::endl;
+                // // std::cout<<" entro in !parent_map"<<std::endl;
               found_parent_entity=false;
               // loop on all the child elements child_elem          
         for(std::size_t i=0;i<child.size();i++)
@@ -2977,14 +2977,14 @@ public:
           if(found_parent_entity)
           {
             // parent_map[parent_entity_nodes]=true;
-            // std::cout<<"found_parent_entity="<<found_parent_entity<<std::endl;
+            // // std::cout<<"found_parent_entity="<<found_parent_entity<<std::endl;
             // entity_used[cont1]=map_dof[parent_entity_nodes];
             // cont1++;
           }
           else
           {
 
-              // std::cout<<"entity_used["<<cont1<<"]="<<map_dof_[parent_entity_nodes]<<std::endl;
+              // // std::cout<<"entity_used["<<cont1<<"]="<<map_dof_[parent_entity_nodes]<<std::endl;
                       parent_map[parent_entity_nodes]=true;
                 entity_used[cont]=*map_dof[parent_entity_nodes];
               cont=cont+n_components_entity;
@@ -2992,22 +2992,22 @@ public:
           {}
           }
         }
-        // std::cout<<"qui"<<std::endl;
+        // // std::cout<<"qui"<<std::endl;
 
               count_n_entity_vec[level]=count_n_entity_vec[level];//-cont;
-        // std::cout<<"qui2"<<std::endl;
+        // // std::cout<<"qui2"<<std::endl;
               // loop on all the child elements child_elem          
         for(std::size_t i=0;i<child.size();i++)
         {
          const auto& child_elem=mesh_.elem(child[i]);
-         // std::cout<<"qui3"<<std::endl;
+         // // std::cout<<"qui3"<<std::endl;
          const auto& child_id=child_elem.id;
-         // std::cout<<"qui4"<<std::endl;
+         // // std::cout<<"qui4"<<std::endl;
          const auto& child_nodes=child_elem.nodes; 
-         // std::cout<<"qui4.5  ->"<<elem2dofs.size()<<std::endl;         
+         // // std::cout<<"qui4.5  ->"<<elem2dofs.size()<<std::endl;         
          if(elem2dofs[child_id].size()==0)
          {
-        // std::cout<<"qui5"<<std::endl;
+        // // std::cout<<"qui5"<<std::endl;
                // loop on all the entities child_entity
              for(std::size_t child_entity=0;child_entity<combinations_nums;child_entity++)
               {
@@ -3027,18 +3027,18 @@ public:
                       if(cont2<cont)
                       {
                        child_dof=entity_used[cont2];
-                       // std::cout<<" cont2<cont "<<child_dof<<std::endl;
+                       // // std::cout<<" cont2<cont "<<child_dof<<std::endl;
                        cont2++; 
                       }
                       else
                       {child_dof=count_n_entity_vec[level];
-                       // std::cout<<" cont2>=cont "<<child_dof<<std::endl;
+                       // // std::cout<<" cont2>=cont "<<child_dof<<std::endl;
 
              count_n_entity_vec[level]++;}
                    }
-                   // std::cout<<"count_n_entity_vec[level]="<<count_n_entity_vec[level]<<std::endl;
+                   // // std::cout<<"count_n_entity_vec[level]="<<count_n_entity_vec[level]<<std::endl;
                    child_map->push_back(child_id);
-                   // std::cout<<" child_id = "<<child_id<<" with "<<*map_dof[child_entity_nodes]<<std::endl;
+                   // // std::cout<<" child_id = "<<child_id<<" with "<<*map_dof[child_entity_nodes]<<std::endl;
                    
 
 
@@ -3079,7 +3079,7 @@ public:
     auto& m1=tuple_get<N>(map);
     auto& m2=tuple_get<N>(parent_map);
     auto& m3=tuple_get<N>(map_dof);
-    // std::cout<<"INIT ELEM aux ="<<std::endl;
+    // // std::cout<<"INIT ELEM aux ="<<std::endl;
     init_elem_aux_aux<N>(elem2dofs,m1,m2,m3,local_dof_count,count_n_entity_vec,elem,level,mesh,tracker);
     init_elem_aux<N+1>(elem2dofs,map,parent_map,map_dof,local_dof_count,count_n_entity_vec,elem,level,mesh,tracker);
    }
@@ -3109,7 +3109,7 @@ public:
              const Elem elem)
 
    {
-    // std::cout<<"INIT COARSE ELEM ="<<std::endl;
+    // // std::cout<<"INIT COARSE ELEM ="<<std::endl;
     auto& m1=tuple_get<N>(map);
     auto& m2=tuple_get<N>(parent_map);
     auto& m3=tuple_get<N>(map_dof);
@@ -3135,19 +3135,19 @@ public:
       init_coarse_elem_aux(elem2dofs,map,parent_map,map_dof,local_dof_count,count_n_entity_vec,elem);
     else
       {
-        // std::cout<<"INIT ELEM count_n_entity_vec="<<std::endl;
+        // // std::cout<<"INIT ELEM count_n_entity_vec="<<std::endl;
 
         // for(int i=0;i<count_n_entity_vec.size();i++)
-        //   std::cout<<count_n_entity_vec[i]<<" ";
-        // std::cout<<std::endl;
-        // std::cout<<"level="<<level<<std::endl;
+        //   // std::cout<<count_n_entity_vec[i]<<" ";
+        // // std::cout<<std::endl;
+        // // std::cout<<"level="<<level<<std::endl;
 
         init_fine_elem_aux(elem2dofs,map,parent_map,map_dof,local_dof_count,count_n_entity_vec,elem,level,mesh,tracker);
         // init_elem_aux(elem2dofs,map,parent_map,map_dof,local_dof_count,count_n_entity_vec,elem,level);
       // Integer cont3;
       // std::vector<Integer> vec;
       // count_new_dofs(cont3,vec,map,parent_map,map_dof,elem,level);
-      // std::cout<<"CONT 3 ==="<<cont3<<std::endl;
+      // // std::cout<<"CONT 3 ==="<<cont3<<std::endl;
       }
     //init_elem_aux1<N,FunctionSpace,FunctionSpaces...>(t1,t2,t3,t4,count_n_entity_vec,elem,level);
    }
@@ -3286,7 +3286,7 @@ template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Ma
   auto& m1=tuple_get<N>(map);
   auto& m2=tuple_get<N>(parent_map);
   auto& m3=tuple_get<N>(map_dof);
-  // std::cout<<"DofMapFESpace aux level = " << level<<std::endl;
+  // // std::cout<<"DofMapFESpace aux level = " << level<<std::endl;
   dofmapfespace.init_elem(m0,m1,m2,m3,count_n_entity_vec,elem,level,mesh,tracker);
 }
 
@@ -3307,7 +3307,7 @@ template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Ma
   auto& m1=tuple_get<N>(map);
   auto& m2=tuple_get<N>(parent_map);
   auto& m3=tuple_get<N>(map_dof);
-  // std::cout<<"DofMapFESpace aux level = " << level<<std::endl;
+  // // std::cout<<"DofMapFESpace aux level = " << level<<std::endl;
   dofmapfespace.init_elem(m0,m1,m2,m3,count_n_entity_vec,elem,level,mesh,tracker);
   init_elem_aux<N+1,BFSs...>(elem2dofs,map,parent_map,map_dof,count_n_entity_vec,elem,level,mesh,tracker);
 }
@@ -3323,8 +3323,8 @@ template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Ma
 {
 
   // QUI DISTINGUO SE E' LEVEL = 0 OPPURE NO
-  // std::cout<<"dofmap init elem"<<std::endl;
-  // std::cout<<"DofMapFESpace level = " << level<<std::endl;
+  // // std::cout<<"dofmap init elem"<<std::endl;
+  // // std::cout<<"DofMapFESpace level = " << level<<std::endl;
   init_elem_aux<0,BaseFunctionSpaces...>(elem2dofs,map,parent_map,map_dof,count_n_entity_vec,elem,level,mesh, tracker);
 
 }
@@ -3439,7 +3439,7 @@ template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Ma
 //    auto& m2=tuple_get<N>(tuple_parent_map);
 //    auto& m3=tuple_get<N>(tuple_map_dof);
 //    dofmapfespace.count_new_dofs(cont_tot,entity_used,m1,m2,m3,elem,level);
-//    // std::cout<<"cont_tot=="<<cont_tot<<std::endl;
+//    // // std::cout<<"cont_tot=="<<cont_tot<<std::endl;
 //    count_new_dofs_aux<N+1>(cont_tot,entity_used,tuple_map,tuple_parent_map,tuple_map_dof,elem,level);
 //   }
 
@@ -3468,17 +3468,17 @@ template<Integer N, typename BFS,typename...BFSs,typename Elem2Dofs, typename Ma
 // else{
 //       if(count_n_entity_vec.size()-1<level)
 //         count_n_entity_vec.push_back(count_n_entity_vec[count_n_entity_vec.size()-1]);
-//       // std::cout<<"count_n_entity_vec[END]="<<std::endl;
+//       // // std::cout<<"count_n_entity_vec[END]="<<std::endl;
 
 //       // for(std::size_t i=0;i<count_n_entity_vec.size();i++)
-//       //   std::cout<<count_n_entity_vec[i]<<" ";
+//       //   // std::cout<<count_n_entity_vec[i]<<" ";
 
 //       const auto& parent_id=elem.parent_id;
 //       const auto& parent_elem=mesh_.elem(parent_id);
 //       Integer cont_tot=0;
 //       std::vector<Integer> entity_used;
 //       count_new_dofs_aux(cont_tot,entity_used,tuple_map,tuple_parent_map,tuple_map_dof,elem,level);
-//       // std::cout<<"CONT TOT ==="<<cont_tot<<std::endl;
+//       // // std::cout<<"CONT TOT ==="<<cont_tot<<std::endl;
 
 //       // loop on child nodes
 //       Integer cont_new=0;
@@ -3533,7 +3533,7 @@ private:
 //                            Integer& dofs_count)
 // {
 
-// // std::cout<< " ElementDofMap_LoopEntities5 N = "<< N <<std::endl;
+// // // std::cout<< " ElementDofMap_LoopEntities5 N = "<< N <<std::endl;
 // using Elem = typename FunctionSpace::Elem;
 // constexpr auto ManifoldDim=FunctionSpace::ManifoldDim;
 // constexpr auto continuity=FunctionSpace::Continuity;
@@ -3556,14 +3556,14 @@ private:
 // ElementDofMap_LoopEntities5<N-1,FunctionSpace>
 //              (entitiestuple,flagtuples,elem,elem_id,dofmap_vec,global_dof_count,loc_dof_count,dofs_offset,space_dofs,dofs_count);
 
-// // std::cout<<"pre nodes ="<<std::endl;
+// // // std::cout<<"pre nodes ="<<std::endl;
 // const auto& nodes=elem.nodes;
 
-// // std::cout<<"after nodes ="<<std::endl;
+// // // std::cout<<"after nodes ="<<std::endl;
 
 // Integer entity_[entity_points];
 
-// // std::cout<<"after entity_ ="<<std::endl;
+// // // std::cout<<"after entity_ ="<<std::endl;
 
 
 // // loop on all the entities of a given entity_dim
@@ -3574,14 +3574,14 @@ private:
 //     for(std::size_t i=0;i<entity_points;i++)
 //       entity_nodes[i]=nodes[entity_[i]];
 
-//     // std::cout<<"entity_nodes="<<std::endl;
+//     // // std::cout<<"entity_nodes="<<std::endl;
 //     //   for(int s=0;s<entity_nodes.size();s++)
-//     //   std::cout<<entity_nodes[s]<<std::endl;
-//     //   std::cout<<std::endl;
+//     //   // std::cout<<entity_nodes[s]<<std::endl;
+//     //   // std::cout<<std::endl;
 
 //     std::sort(entity_nodes.begin(),entity_nodes.end());
 
-//     // std::cout<<"must_reorder="<<DofsOrdering<entity_dim,FunctionSpace>::must_reorder<<std::endl;
+//     // // std::cout<<"must_reorder="<<DofsOrdering<entity_dim,FunctionSpace>::must_reorder<<std::endl;
 
 //     auto ordered_entity_nodes=DofsOrdering<entity_dim,FunctionSpace>::value(nodes,entity_iter);
 
@@ -3589,36 +3589,36 @@ private:
 //     if(DofsOrdering<entity_dim,FunctionSpace>::must_reorder)
 //     {
 
-//       // std::cout<<"ordered_entity_nodes="<<std::endl;
+//       // // std::cout<<"ordered_entity_nodes="<<std::endl;
 //       // for(int s=0;s<ordered_entity_nodes.size();s++)
-//       // std::cout<<ordered_entity_nodes[s]<<" "<<std::endl;
+//       // // std::cout<<ordered_entity_nodes[s]<<" "<<std::endl;
 //       auto ordered_dofs=DofsOrdered<entity_dim,FunctionSpace>::local_dofs(ordered_entity_nodes,loc_dof_count);
-//       // std::cout<<std::endl;
-//       // std::cout<<"ordered_dofs="<<std::endl;
+//       // // std::cout<<std::endl;
+//       // // std::cout<<"ordered_dofs="<<std::endl;
 //       // for(int s=0;s<ordered_dofs.size();s++)
-//       // std::cout<<ordered_dofs[s]<<std::endl;
-//       // std::cout<<std::endl;
+//       // // std::cout<<ordered_dofs[s]<<std::endl;
+//       // // std::cout<<std::endl;
 //       cont=0;
 //       // if entity not found yet
 //       if(!flag[entity_nodes] || continuity==Discontinuous )
 //       {
 
-//       // std::cout<<"!flag[ordered_entity_nodes]"<<std::endl;
+//       // // std::cout<<"!flag[ordered_entity_nodes]"<<std::endl;
 //       flag[entity_nodes]=std::make_shared<std::array<Integer,2>>(std::array<Integer,2>{elem_id,entity_iter});
-//       // std::cout<<"after !flag[ordered_entity_nodes]"<<std::endl;
+//       // // std::cout<<"after !flag[ordered_entity_nodes]"<<std::endl;
 //       // flag[ordered_entity_nodes][0]=elem_id;
 //       // flag[ordered_entity_nodes][1]=entity_iter;
 //       for(Integer m=0;m<ordered_dofs.size();m++)
 //       {
-//         // std::cout<<"m="<<m<<std::endl;
-//         // std::cout<<"dofmap_vec[elem_id]"<<dofmap_vec.size()<<std::endl;
-//         // std::cout<<"dofmap_vec[elem_id]"<<dofmap_vec[elem_id].size()<<std::endl;
+//         // // std::cout<<"m="<<m<<std::endl;
+//         // // std::cout<<"dofmap_vec[elem_id]"<<dofmap_vec.size()<<std::endl;
+//         // // std::cout<<"dofmap_vec[elem_id]"<<dofmap_vec[elem_id].size()<<std::endl;
         
 //         dofmap_vec[elem_id][ordered_dofs[cont]]=global_dof_count;
-//         // std::cout<<"(*dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
+//         // // std::cout<<"(*dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
 //         cont++;
 //         loc_dof_count++;
-//         // std::cout<<global_dof_count<<std::endl;
+//         // // std::cout<<global_dof_count<<std::endl;
 //         global_dof_count++;
 //         dofs_count++;
 //       }
@@ -3627,15 +3627,15 @@ private:
 //       else
 //       {
 
-//        // std::cout<<"flag[entity_nodes]"<<std::endl;
+//        // // std::cout<<"flag[entity_nodes]"<<std::endl;
 //       const auto& elem_id_tmp=(*flag[entity_nodes])[0];
 //       const auto& iter_tmp=(*flag[entity_nodes])[1];
 //             auto& elem_dm=dofmap_vec[elem_id_tmp];
 //             auto ex_loc_dof_count=(dofs_offset[N]+dofs_per_entity*iter_tmp*FunctionSpace::NComponents);
 //             auto global_old_dof=elem_dm[ex_loc_dof_count];
      
-//       // std::cout<<"elem_id_tmp="<<elem_id_tmp<<std::endl;
-//       // std::cout<<"global_old_dof="<<global_old_dof<<std::endl;
+//       // // std::cout<<"elem_id_tmp="<<elem_id_tmp<<std::endl;
+//       // // std::cout<<"global_old_dof="<<global_old_dof<<std::endl;
 //       for (int i = 0; i < n_components*dofs_per_entity; ++i)
 //       {
 //         const auto m= i +ex_loc_dof_count;
@@ -3648,13 +3648,13 @@ private:
 //       auto ordered_dofs=DofsOrdered<entity_dim,FunctionSpace>::local_dofs(ordered_entity_nodes,loc_dof_count);
 
 //       cont =0;
-//       // std::cout<<"ordered_dofs="<<ordered_dofs<<std::endl;
+//       // // std::cout<<"ordered_dofs="<<ordered_dofs<<std::endl;
 //       for(Integer m=0;m<ordered_dofs.size();m++)
 //       {
-//         // std::cout<<"dofmap_vec[elem_id].size()="<<dofmap_vec[elem_id].size()<<std::endl;
-//         // std::cout<<"ordered_dofs[cont]="<<ordered_dofs[cont]<<std::endl;
+//         // // std::cout<<"dofmap_vec[elem_id].size()="<<dofmap_vec[elem_id].size()<<std::endl;
+//         // // std::cout<<"ordered_dofs[cont]="<<ordered_dofs[cont]<<std::endl;
 //         dofmap_vec[elem_id][ordered_dofs[cont]]=global_old_dof;
-//         // std::cout<< "(*dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
+//         // // std::cout<< "(*dofmap_vec)[elem_id][ordered_dofs[cont]]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
 //         cont++;
 //         loc_dof_count++;
 //         global_old_dof++;
@@ -3675,80 +3675,80 @@ private:
 //     // if the entity has not been already visited, then create n_components new dofs
 //     if(!flag[entity_nodes] || continuity==Discontinuous)
 //     {
-//       // std::cout<<"!flag[ordered_entity_nodes]"<<std::endl;
+//       // // std::cout<<"!flag[ordered_entity_nodes]"<<std::endl;
 //       flag[entity_nodes]=std::make_shared<std::array<Integer,2>>(std::array<Integer,2>{elem_id,entity_iter});
 
 //       // flag[ordered_entity_nodes][0]=elem_id;
 //       // flag[ordered_entity_nodes][1]=entity_iter;
 
 
-//       // std::cout<<"elem_id = "<<elem_id<<std::endl;
-//       // std::cout<<"entity_iter = "<<entity_iter<<std::endl;
+//       // // std::cout<<"elem_id = "<<elem_id<<std::endl;
+//       // // std::cout<<"entity_iter = "<<entity_iter<<std::endl;
 //       for(Integer entity_dofs_iter=0;entity_dofs_iter<dofs_per_entity;entity_dofs_iter++)
 //          for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
 //             {            
 //              dofmap_vec[elem_id][loc_dof_count]=global_dof_count;
 //              space_dofs->push_back(global_dof_count);
-//              // std::cout<< "(dofmap_vec)[elem_id][loc_dof_count]="<<dofmap_vec[elem_id][loc_dof_count]<<std::endl;
-//              // std::cout<<global_dof_count<<std::endl;
-//              // std::cout<<"entity_dofs_iter = "<<entity_dofs_iter<<std::endl;
-//              // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
-//              // std::cout<<"(dofsmap)="<<(*dofmap_vec)[elem_id][loc_dof_count]<<std::endl;
-//              // std::cout<<" global_dof_count (new)= "<<global_dof_count<<std::endl;
+//              // // std::cout<< "(dofmap_vec)[elem_id][loc_dof_count]="<<dofmap_vec[elem_id][loc_dof_count]<<std::endl;
+//              // // std::cout<<global_dof_count<<std::endl;
+//              // // std::cout<<"entity_dofs_iter = "<<entity_dofs_iter<<std::endl;
+//              // // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
+//              // // std::cout<<"(dofsmap)="<<(*dofmap_vec)[elem_id][loc_dof_count]<<std::endl;
+//              // // std::cout<<" global_dof_count (new)= "<<global_dof_count<<std::endl;
 //              loc_dof_count++;
 //              global_dof_count++;
 //              dofs_count++;
 //              }
-//       // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
+//       // // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
 //     }
 //     else
 //     {
-//      // std::cout<<"flag[ordered_entity_nodes]"<<std::endl;
+//      // // std::cout<<"flag[ordered_entity_nodes]"<<std::endl;
 //      // if the entity has been already visited, find the element (elem_id_tmp) in which was found 
 //      // and the corresponding entity_iter (iter_tmp)
 //      // we do not need any offset, because dofmap_vec contains  of the entity N, we move to the iter_tmp entity and find in dofmap_vec the already numbered dof
 //      const auto& elem_id_tmp=(*flag[entity_nodes])[0];
 //      const auto& iter_tmp=(*flag[entity_nodes])[1];
 //            auto old_dof=dofmap_vec[elem_id_tmp][dofs_offset[N]+dofs_per_entity*iter_tmp*FunctionSpace::NComponents];
-//       // std::cout<<" elem_id = "<<elem_id<<std::endl;
-//       // std::cout<<" entity_iter = "<<flag[entity_id][1]<<std::endl  ;  
+//       // // std::cout<<" elem_id = "<<elem_id<<std::endl;
+//       // // std::cout<<" entity_iter = "<<flag[entity_id][1]<<std::endl  ;  
      
 //      for(Integer entity_dofs_iter=0;entity_dofs_iter<dofs_per_entity;entity_dofs_iter++)
 //         for(Integer fs_dim=0;fs_dim<n_components;fs_dim++)
 //            {           
 //             dofmap_vec[elem_id][loc_dof_count]=old_dof;
-//             // std::cout<<old_dof<<std::endl;
-//              // std::cout<<"entity_dofs_iter = "<<entity_dofs_iter<<std::endl;
-//              // std::cout<<"old global_dof_count = "<<global_dof_count<<std::endl;
-//             // std::cout<< "(dofmap_vec)[elem_id][loc_dof_count]="<<dofmap_vec[elem_id][loc_dof_count]<<std::endl;
+//             // // std::cout<<old_dof<<std::endl;
+//              // // std::cout<<"entity_dofs_iter = "<<entity_dofs_iter<<std::endl;
+//              // // std::cout<<"old global_dof_count = "<<global_dof_count<<std::endl;
+//             // // std::cout<< "(dofmap_vec)[elem_id][loc_dof_count]="<<dofmap_vec[elem_id][loc_dof_count]<<std::endl;
 //              loc_dof_count++;
 //              old_dof++;
 //            }
-//       // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
+//       // // std::cout<<"global_dof_count = "<<global_dof_count<<std::endl;
 //     }
  
 //     }
 
-//     // std::cout<<std::endl;
+//     // // std::cout<<std::endl;
 //     // for(int s=0;s<dofmap_vec[elem_id].size();s++)
-//       // std::cout<<dofmap_vec[elem_id][s]<<" ";
-//     // std::cout<<std::endl;
-//     // std::cout<<"loc_dof_count="<<loc_dof_count<<std::endl;
-//     // std::cout<<"elem_id="<<elem_id<<std::endl;
+//       // // std::cout<<dofmap_vec[elem_id][s]<<" ";
+//     // // std::cout<<std::endl;
+//     // // std::cout<<"loc_dof_count="<<loc_dof_count<<std::endl;
+//     // // std::cout<<"elem_id="<<elem_id<<std::endl;
 
 //   }
 
 
-//    // std::cout<<" DOFMAP VEC5 ==" <<std::endl;
-//    // std::cout<<" dofmap_vec.size() ==" <<dofmap_vec.size()<<std::endl;
+//    // // std::cout<<" DOFMAP VEC5 ==" <<std::endl;
+//    // // std::cout<<" dofmap_vec.size() ==" <<dofmap_vec.size()<<std::endl;
  
 //         //  for(int i=0;i<dofmap_vec.size();i++)
 //         //   {
 //         //     for(int j=0;j<dofmap_vec[i].size();j++)
-//         //   std::cout<<dofmap_vec[i][j]<<" ";
-//         //   std::cout<<std::endl;
+//         //   // std::cout<<dofmap_vec[i][j]<<" ";
+//         //   // std::cout<<std::endl;
 //         // }
-//   // std::cout<<"after  dofmap_vec.size() ==" <<dofmap_vec.size()<<std::endl;
+//   // // std::cout<<"after  dofmap_vec.size() ==" <<dofmap_vec.size()<<std::endl;
 // }
 
 // template<Integer N,typename FunctionSpace, typename FlagArray,typename Element,typename MeshT, Integer P, long M,typename OS, typename SpaceDofs>
@@ -3764,7 +3764,7 @@ private:
 //               SpaceDofs& space_dofs,
 //               Integer& dofs_count  )
 // {
-//   // std::cout<<"ElementDofMap_LoopEntities5 K ==-1" <<std::endl;
+//   // // std::cout<<"ElementDofMap_LoopEntities5 K ==-1" <<std::endl;
 // }
 
 
@@ -3791,7 +3791,7 @@ private:
 
 
 
-//     // std::cout<<"__________qui0111111=2=" << K <<std::endl;
+//     // // std::cout<<"__________qui0111111=2=" << K <<std::endl;
 
 //  static constexpr Integer M=sizeof...(FunctionSpaces);
 //  // const auto& entity_tuple=std::get<M>(entitiestuple);
@@ -3806,22 +3806,22 @@ private:
 //  ElementDofMap_LoopEntities5<NN,ElemFunctionSpace<Elem,FunctionSpace>>
 //                             (entity_tuple,flagtuple,elem,elem_id,(*tuple_get<K>(dofmap_vec)),global_dof_count,loc_dof_count,std::get<K>(dofs_offset),space_dofs[K],array_ndofs[K][level]);
 
-//  // std::cout<<"__________qui==" << K <<std::endl;
+//  // // std::cout<<"__________qui==" << K <<std::endl;
 //  auto & dm=*tuple_get<K>(dofmap_vec);
-//  // std::cout<<" elem dofmap 5 K==" << K <<std::endl;
-//  // std::cout<<" dm.size()==" << dm.size() <<std::endl;
+//  // // std::cout<<" elem dofmap 5 K==" << K <<std::endl;
+//  // // std::cout<<" dm.size()==" << dm.size() <<std::endl;
 
 // const auto& m3=entity_tuple.elem2dofs(elem_id);
-//    // std::cout<<"elem2dofs=="<<std::endl;
+//    // // std::cout<<"elem2dofs=="<<std::endl;
 //     // for(int i=0;i<m3.size();i++)
-//       // std::cout<<m3[i]<<" "<<std::endl;
-//    // std::cout<<std::endl;
+//       // // std::cout<<m3[i]<<" "<<std::endl;
+//    // // std::cout<<std::endl;
 
 // //  for(int i=0;i<dm.size();i++)
 // //   {
 // //     for(int j=0;j<dm[i].size();j++)
-// //   std::cout<<dm[i][j]<<" ";
-// //   std::cout<<std::endl;
+// //   // std::cout<<dm[i][j]<<" ";
+// //   // std::cout<<std::endl;
 
 // // }
 
@@ -3848,7 +3848,7 @@ private:
 // {
 
 
-//   // std::cout<<"__________qui00000=2=" << K <<std::endl;
+//   // // std::cout<<"__________qui00000=2=" << K <<std::endl;
 //  // const auto& entity_tuple=std::get<0>(entitiestuple);
 //   const auto& entity_tuple=std::get<K>(entitiestuple);
 //  auto& flagtuple=std::get<K>(flagtuples);
@@ -3859,23 +3859,23 @@ private:
 //  ElementDofMap_LoopEntities5<NN,ElemFunctionSpace<Elem,FunctionSpace>>
 //                            (entity_tuple,flagtuple,elem,elem_id,(*tuple_get<K>(dofmap_vec)),global_dof_count,loc_dof_count,std::get<K>(dofs_offset),space_dofs[K],array_ndofs[K][level]);
 
-//  // std::cout<<"__________qui2=2=" << K <<std::endl;
+//  // // std::cout<<"__________qui2=2=" << K <<std::endl;
 
 //  auto & dm=*tuple_get<K>(dofmap_vec);
-//  // std::cout<<" elem dofmap 4 K==" << K <<std::endl;
-//  // std::cout<<" dm.size()==" << dm.size() <<std::endl;
+//  // // std::cout<<" elem dofmap 4 K==" << K <<std::endl;
+//  // // std::cout<<" dm.size()==" << dm.size() <<std::endl;
 //  const auto& m3=entity_tuple.elem2dofs(elem_id);
 
-//    // std::cout<<"elem2dofs=="<<std::endl;
+//    // // std::cout<<"elem2dofs=="<<std::endl;
 //    //  for(int i=0;i<m3.size();i++)
-//    //    std::cout<<m3[i]<<" "<<std::endl;
-//    // std::cout<<std::endl;
+//    //    // std::cout<<m3[i]<<" "<<std::endl;
+//    // // std::cout<<std::endl;
 
 // //  for(int i=0;i<dm.size();i++)
 // //   {
 // //     for(int j=0;j<dm[i].size();j++)
-// //   std::cout<<dm[i][j]<<" ";
-// //   std::cout<<std::endl;
+// //   // std::cout<<dm[i][j]<<" ";
+// //   // std::cout<<std::endl;
 // // }
 
 
@@ -3907,7 +3907,7 @@ private:
 
 //      entity_found[M].resize(entity_length,{-1,-1});
 
-//      // std::cout<<"entity_found[M] size==" <<entity_found[M].size()<<std::endl;
+//      // // std::cout<<"entity_found[M] size==" <<entity_found[M].size()<<std::endl;
 //      initialize_flag_tuple_entities_aux5<FunctionSpace,Mmax,M+1>(tuple,entity_found);       
 // };
 
@@ -4115,9 +4115,9 @@ void dofmap_fespace5(
     auto& dofmap_vec=dofsdm_.dofmap();
 
 
-    // std::cout<<"dofs dm reserve begin"<<std::endl;
+    // // std::cout<<"dofs dm reserve begin"<<std::endl;
     dofsdm_.init_dofmap(mesh.n_elements());
-    // std::cout<<"dofs dm reserve end"<<std::endl;
+    // // std::cout<<"dofs dm reserve end"<<std::endl;
     // compute the connection node to elem (auxiliary tool, often used)
     clock_t begin = clock();
     
@@ -4133,7 +4133,7 @@ void dofmap_fespace5(
     
     clock_t end = clock();
     double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
-    // std::cout<<"dofmap entities tuple elapsed_secs="<<elapsed_secs<<std::endl;
+    // // std::cout<<"dofmap entities tuple elapsed_secs="<<elapsed_secs<<std::endl;
     // resize_tuple_of_ptr_vector(dofmap_vec,n_elements); 
     
 
@@ -4145,34 +4145,34 @@ void dofmap_fespace5(
     std::vector<Integer> global_dof_count;
     if(update==false)  
     {
-    // std::cout<<"false"<<std::endl;
+    // // std::cout<<"false"<<std::endl;
     global_dof_count.push_back(0);
     } 
     else
     {
-      // std::cout<<"true"<<std::endl;
+      // // std::cout<<"true"<<std::endl;
     // for(Integer i=0;i<dofsdm_.level_n_dofs_array().size();i++)
     // {
     //   for(Integer j=0;j<dofsdm_.level_n_dofs_array()[i].size();j++)
-    //     std::cout<<dofsdm_.level_n_dofs_array()[i][j]<<" ";
-    //   std::cout<<std::endl;
+    //     // std::cout<<dofsdm_.level_n_dofs_array()[i][j]<<" ";
+    //   // std::cout<<std::endl;
     //     // space_dofs[space_id]->resize(space_components[space_id][3]);
     // } 
 
-    // std::cout<<"global_dof_count"<<std::endl;
+    // // std::cout<<"global_dof_count"<<std::endl;
     for(Integer j=0;j<dofsdm_.level_n_dofs_array()[0].size();j++)
     {
         global_dof_count.push_back(dofsdm_.level_n_dofs_array()[0][j]);
-        // std::cout<<global_dof_count[j]<<" ";
+        // // std::cout<<global_dof_count[j]<<" ";
         // space_dofs[space_id]->resize(space_components[space_id][3]);
     } 
 
-    std::cout<<std::endl;
+    // std::cout<<std::endl;
     }
     // loop on all the elements
      for(Integer j=0;j<global_dof_count.size();j++)
     {
-        // std::cout<<global_dof_count[j]<<" ";
+        // // std::cout<<global_dof_count[j]<<" ";
         // space_dofs[space_id]->resize(space_components[space_id][3]);
     }  
 
@@ -4183,7 +4183,7 @@ void dofmap_fespace5(
     //   //   for(std::size_t j=0;j<n_levels;j++)
     //   // level_array_ndofs[i][j]=0;
     //   }
-    // std::cout<<"dofmap_fespace5 2="<<elapsed_secs<<std::endl;
+    // // std::cout<<"dofmap_fespace5 2="<<elapsed_secs<<std::endl;
     // auto& bisection=entities.bisection();
 
     
@@ -4209,18 +4209,18 @@ void dofmap_fespace5(
    // TupleOfTupleMapConstructor<bool,Elem,BaseFunctionSpace,BaseFunctionSpaces...> tuple_parent_map;
    // TupleOfTupleMapConstructor<std::shared_ptr<Integer>,Elem,BaseFunctionSpace,BaseFunctionSpaces...> tuple_map_dofs;
 
-    // std::cout<<"levels="<<n_levels<<std::endl;
-    // std::cout<<"PRE LEVEL N DOFS ARRAY ="<<std::endl;
+    // // std::cout<<"levels="<<n_levels<<std::endl;
+    // // std::cout<<"PRE LEVEL N DOFS ARRAY ="<<std::endl;
     // loop on the spaces
     // for(std::size_t i=0; i<dofsdm_.n_dofs().size() ;i++)
     //   { dofsdm_.level_n_dofs_array()[i].resize(n_levels);
     //     // loop on the levels
     //     for(std::size_t j=0;j<n_levels;j++)
     //        {dofsdm_.level_n_dofs_array()[i][j]=global_dof_count[j];
-    //         std::cout<<dofsdm_.level_n_dofs_array()[i][j]<<" ";}
-    //      std::cout<<std::endl;
+    //         // std::cout<<dofsdm_.level_n_dofs_array()[i][j]<<" ";}
+    //      // std::cout<<std::endl;
     //    }
-    // std::cout<<"dofmap_fespace5 3="<<elapsed_secs<<std::endl;
+    // // std::cout<<"dofmap_fespace5 3="<<elapsed_secs<<std::endl;
     // Integer n_levels=bisection.tracker().current_iterate()+1;
     // decltype(flag_entities) ffe(5);
     Integer level=0;
@@ -4232,23 +4232,23 @@ void dofmap_fespace5(
       // if(!elem_belongs_to_level(mesh,elem_iter,level,bisection)) continue;
        
        // change it for smarter algorithms   
-      // std::cout<<" dofmap elem == "<< elem_iter <<" /"<< mesh.n_elements()<< std::endl;
-      std::cout<<"dofmap5 elem_iter="<<elem_iter<<std::endl;
+      // // std::cout<<" dofmap elem == "<< elem_iter <<" /"<< mesh.n_elements()<< std::endl;
+      // // std::cout<<"dofmap5 elem_iter="<<elem_iter<<std::endl;
 
        auto& elem=mesh.elem(elem_iter);
        auto &elem_id=elem.id;
-       // std::cout<<"has_tracked="<<has_tracked<<std::endl;
+       // // std::cout<<"has_tracked="<<has_tracked<<std::endl;
        if(has_tracked)
           level=tracker.get_iterate(elem_id);
-       // std::cout<<"level="<<level<<std::endl;
-       // std::cout<<"0<level && global_dof_count.size()-1<level="<<(0<level && global_dof_count.size()-1<level)<<std::endl;
+       // // std::cout<<"level="<<level<<std::endl;
+       // // std::cout<<"0<level && global_dof_count.size()-1<level="<<(0<level && global_dof_count.size()-1<level)<<std::endl;
        
       if(0<level && global_dof_count.size()-1<level)
          global_dof_count.push_back(global_dof_count[global_dof_count.size()-1]);
 
  
        Integer loc_dof_count=0;
-       // std::cout<<"DOFMAPSPACE5 ELEM ITER="<<elem_iter<<" level=="<<level<<std::endl;
+       // // std::cout<<"DOFMAPSPACE5 ELEM ITER="<<elem_iter<<" level=="<<level<<std::endl;
        if(level>-1)
        dofmap.init_elem(dofmap_vec,tuple_map,tuple_parent_map,tuple_map_dofs,
                         global_dof_count,elem,level,mesh,tracker);
@@ -4263,7 +4263,7 @@ void dofmap_fespace5(
     n_elements=mesh.n_elements();
     end = clock();
     elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
-    // std::cout<<"dofmap tuple elapsed_secs="<<elapsed_secs<<std::endl;
+    // // std::cout<<"dofmap tuple elapsed_secs="<<elapsed_secs<<std::endl;
     
   //   for(std::size_t i=0; i<dofsdm_.n_dofs().size() ;i++)
   //     { dofsdm_.level_n_dofs_array()[i].resize(n_levels);
@@ -4275,23 +4275,23 @@ void dofmap_fespace5(
   // auto dm=(*tuple_get<0>(dofmap_vec));
   // for(std::size_t i=0;i<dm.size();i++)
   //   {for(std::size_t j=0;j<dm[i].size();j++)
-  //   std::cout<< dm[i][j]<<" ";
-  //    std::cout<<std::endl;}
-// std::cout<<" level_array_ndofs[i][j]"<<std::endl;
+  //   // std::cout<< dm[i][j]<<" ";
+  //    // std::cout<<std::endl;}
+// // std::cout<<" level_array_ndofs[i][j]"<<std::endl;
 
 //   for(std::size_t i=0;i<level_array_ndofs.size();i++)
 //     {for(std::size_t j=0;j<level_array_ndofs[i].size();j++)
-//     std::cout<< level_array_ndofs[i][j]<<" ";
-//      std::cout<<std::endl;}
+//     // std::cout<< level_array_ndofs[i][j]<<" ";
+//      // std::cout<<std::endl;}
 
-// std::cout<<" global_dof_count"<<std::endl;
+// // std::cout<<" global_dof_count"<<std::endl;
 
 //   for(std::size_t i=0;i<global_dof_count.size();i++)
 //     {
-//     std::cout<< global_dof_count[i]<<" ";
-//      std::cout<<std::endl;}
+//     // std::cout<< global_dof_count[i]<<" ";
+//      // std::cout<<std::endl;}
 // 
-    // std::cout<<"AFTER LEVEL N DOFS ARRAY ="<<std::endl;
+    // // std::cout<<"AFTER LEVEL N DOFS ARRAY ="<<std::endl;
     // loop on the spaces
     for(std::size_t i=0; i<dofsdm_.n_dofs().size() ;i++)
       { dofsdm_.level_n_dofs_array()[i].resize(n_levels);
@@ -4299,21 +4299,21 @@ void dofmap_fespace5(
         for(std::size_t j=0;j<n_levels;j++)
            {
             dofsdm_.level_n_dofs_array()[i][j]=global_dof_count[j];
-            // std::cout<<dofsdm_.level_n_dofs_array()[i][j]<<" ";
+            // // std::cout<<dofsdm_.level_n_dofs_array()[i][j]<<" ";
           }
-         // std::cout<<std::endl;
+         // // std::cout<<std::endl;
        }
 
-    // std::cout<<"AFTER LEVEL N DOFS ="<<std::endl;
+    // // std::cout<<"AFTER LEVEL N DOFS ="<<std::endl;
 
         for(Integer i=0;i<dofsdm_.n_dofs().size();i++)
         {
           dofsdm_.n_dofs()[i]=dofsdm_.level_n_dofs_array()[i][n_levels-1];
-          // std::cout<<dofsdm_.n_dofs()[i]<<std::endl;
+          // // std::cout<<dofsdm_.n_dofs()[i]<<std::endl;
         }
 
 
- // std::cout<<" after dofmap tuple elapsed_secs="<<elapsed_secs<<std::endl;
+ // // std::cout<<" after dofmap tuple elapsed_secs="<<elapsed_secs<<std::endl;
 // tuple2array_dofs_offset<n_spaces-1>(dofs_offset,dofs_offset_arr);
 }
 
@@ -4367,7 +4367,7 @@ void dofmap_fespace5(
     entity_loop(Integer& cont,Tracker& tracker, DofsDM& dm, const std::array<Integer,entity_points>& entity_nodes1, const Elem& elem, const FiniteElem<Elem>&FE)
     {
 
-      // std::cout<<" entity dim=="<<Space::entity[N]<<std::endl;
+      // // std::cout<<" entity dim=="<<Space::entity[N]<<std::endl;
 
       constexpr Integer EntityDim2=Space::entity[N];
 
@@ -4389,33 +4389,33 @@ void dofmap_fespace5(
       Integer cont_nodes;
       bool found;
 
-      // std::cout<<"nodes="<<std::endl;
+      // // std::cout<<"nodes="<<std::endl;
 
       //        for(std::size_t i=0;i<nodes.size();i++)
       //       {
-      //         std::cout<<nodes[i]<<" ";
+      //         // std::cout<<nodes[i]<<" ";
       //       }   
-      // std::cout<<" "<<std::endl;
+      // // std::cout<<" "<<std::endl;
 
       for(Integer entity_iter=0;entity_iter<combinations_nums2;entity_iter++)
          { 
           found=false;
-          // std::cout<<"entity_iter="<<entity_iter<<std::endl;
+          // // std::cout<<"entity_iter="<<entity_iter<<std::endl;
           Combinations<manifold_points, entity_points2>::generate(entity_iter,entity2);
           // for(std::size_t i=0;i<entity_points2;i++)
           //   {
-          //     std::cout<<entity2[i]<<" ";
+          //     // std::cout<<entity2[i]<<" ";
           //   }
 
-          // std::cout<<" "<<std::endl;
+          // // std::cout<<" "<<std::endl;
 
 
           for(std::size_t i=0;i<entity_points2;i++)
             {
               entity_nodes2[i]=nodes[entity2[i]];
-              // std::cout<<entity_nodes2[i]<<" ";
+              // // std::cout<<entity_nodes2[i]<<" ";
             }
-          // std::cout<<" "<<std::endl;
+          // // std::cout<<" "<<std::endl;
 
           std::sort(entity_nodes2.begin(),entity_nodes2.end());
 
@@ -4435,7 +4435,7 @@ void dofmap_fespace5(
             if(cont_nodes==entity_points)
               {
                // add dofmap
-                // std::cout<<"found on level "<<level<<std::endl;
+                // // std::cout<<"found on level "<<level<<std::endl;
                 found=true;
                 auto& dofs=map_[entity_nodes1];
 
@@ -4451,35 +4451,35 @@ void dofmap_fespace5(
 
                 
                 
-                // std::cout<<" entity_nodes1 "<<std::endl;
+                // // std::cout<<" entity_nodes1 "<<std::endl;
 
                 // for(Integer m=0;m<entity_nodes1.size();m++)
                 // {
-                //   std::cout<<entity_nodes1[m]<<" ";
+                //   // std::cout<<entity_nodes1[m]<<" ";
                 // }
-                // std::cout<<" "<<std::endl;
-                // std::cout<<"  map_ "<<std::endl;
+                // // std::cout<<" "<<std::endl;
+                // // std::cout<<"  map_ "<<std::endl;
 
                 for(Integer m=0;m<Space::dofs_per_entity[N];m++)
                   for(Integer k=0;k<Space::NComponents;k++)
                      {
 
                       dofs[level].push_back(dm[cont]);
-                      // std::cout<<dm[cont]<<" ";
+                      // // std::cout<<dm[cont]<<" ";
                       cont++;
                       }
-                // std::cout<<" "<<std::endl;
+                // // std::cout<<" "<<std::endl;
 
                 // std::sort(dofs.begin(),dofs.end());
                 // dofs.erase( std::unique( dofs.begin(), dofs.end() ), dofs.end() );
 
-                // std::cout<<"dofs "<<std::endl;
+                // // std::cout<<"dofs "<<std::endl;
 
                 // for(Integer m=0;m< dofs[level].size();m++)
                 // {
-                //   std::cout<<dofs[level][m]<<" "<<std::endl;
+                //   // std::cout<<dofs[level][m]<<" "<<std::endl;
                 // }
-                // std::cout<<" "<<std::endl;
+                // // std::cout<<" "<<std::endl;
 
               }
           }
@@ -4510,12 +4510,12 @@ void dofmap_fespace5(
     inline std::enable_if_t<(N<Nmax),void> 
     loop_spaces(Tracker& tracker, DofsDM& dm, const std::array<Integer,entity_points>& entity_nodes, const Elem& elem, const FiniteElem<Elem>&FE)
     {
-      // std::cout<<" space=="<<N<<std::endl;
+      // // std::cout<<" space=="<<N<<std::endl;
       using Space=GetType<TupleOfSpaces,N>;
       constexpr auto entity=Space::entity;
       auto& single_dm=tuple_get<N>(elemdofmap_);
       dm.template dofmap_get<N>(single_dm,FE.elem_id(),FE.level());
-      // std::cout<<" single_dm=="<<single_dm<<std::endl;
+      // // std::cout<<" single_dm=="<<single_dm<<std::endl;
 
       Integer cont=0;
       entity_loop<Space,entity.size()>(cont,tracker,single_dm,entity_nodes,elem,FE);
@@ -4538,7 +4538,7 @@ void dofmap_fespace5(
 
      FiniteElem<Elem> FE(mesh);
 
-     std::cout<<" Entity2Dofs"<<std::endl;
+     // // std::cout<<" Entity2Dofs"<<std::endl;
      for(Integer el=0;el<mesh.n_elements();el++)
      {
 
@@ -4548,7 +4548,7 @@ void dofmap_fespace5(
           const auto& nodes=elem.nodes;
 
 
-          std::cout<<" el=="<<el<<std::endl;
+          // // std::cout<<" el=="<<el<<std::endl;
           // FE.init(el,tracker.get_iterate(el));
           FE.init(el,tracker.get_level(el));
 
@@ -4579,7 +4579,7 @@ void dofmap_fespace5(
               }
             }
 
-    //  // std::cout<<"-----dofmap of space="<<0<<std::endl;
+    //  // // std::cout<<"-----dofmap of space="<<0<<std::endl;
     // GetType<ElemDofMap,0> elemdm0;
     // Integer cont1=0;
 
@@ -4587,12 +4587,12 @@ void dofmap_fespace5(
     // {
 
     //     dofsdofmap.template dofmap_get<0>(elemdm0,i);
-    //          std::cout<<"dofmap == "<< i<<std::endl;
+    //          // std::cout<<"dofmap == "<< i<<std::endl;
     //          auto& elem=mesh.elem(i);
     //          auto& nodes=elem.nodes;
     //        dofsdofmap.template dofmap_get<0>(elemdm0,i);
-    //          std::cout<<"dofmap == "<< i<<std::endl;
-    //          // std::cout<<elemdm<<std::endl;
+    //          // std::cout<<"dofmap == "<< i<<std::endl;
+    //          // // std::cout<<elemdm<<std::endl;
 
     //   }
     }
@@ -4605,24 +4605,24 @@ void dofmap_fespace5(
               auto& first=it->first;
               auto& second=it->second;
 
-              std::cout<<"NODES "<<std::endl;
+              // std::cout<<"NODES "<<std::endl;
 
               for(Integer i=0;i<first.size();i++)
               {
-                  std::cout<<first[i]<<" ";
+                  // std::cout<<first[i]<<" ";
               }
-              std::cout<<std::endl;
-              std::cout<<"DOFS "<<std::endl;
+              // std::cout<<std::endl;
+              // std::cout<<"DOFS "<<std::endl;
               for(Integer i=0;i<second.size();i++)
               {
-                std::cout<<"level =="<<i<<std::endl;
+                // std::cout<<"level =="<<i<<std::endl;
                 for(Integer j=0;j<second[i].size();j++)
                 {
-                  std::cout<<second[i][j]<<" ";
+                  // std::cout<<second[i][j]<<" ";
                 }
-                std::cout<<std::endl;
+                // std::cout<<std::endl;
               }
-              std::cout<<std::endl;
+              // std::cout<<std::endl;
             }
 
     }
@@ -4675,9 +4675,9 @@ void dofmap_fespace5(
               {
               // for(Integer i=0;i<it->first.size();i++)
               // {
-              //     std::cout<<it->first[i]<<" ";
+              //     // std::cout<<it->first[i]<<" ";
               // }              
-              //   std::cout<< std::endl;
+              //   // std::cout<< std::endl;
                 vec.push_back(it->second[level]);
               }
       return vec;
@@ -4715,7 +4715,7 @@ void dofmap_fespace5(
           auto level=tracker.get_iterate(el);
           FE.init(el,level);
 
-          // std::cout<< "elem="<<el <<std::endl;
+          // // std::cout<< "elem="<<el <<std::endl;
 
           //// iterate on all the entities of the element
           for(Integer entity_iter=0;entity_iter<combinations_nums;entity_iter++)
@@ -4725,11 +4725,11 @@ void dofmap_fespace5(
               for(std::size_t i=0;i<entity_points;i++)
                 {
                   entity_nodes[i]=nodes[entity_[i]];
-                  // std::cout<< entity_nodes[i]<<"";
+                  // // std::cout<< entity_nodes[i]<<"";
                 }
 
 
-                // std::cout<< std::endl;
+                // // std::cout<< std::endl;
 
               // sort the nodes of found entity
               std::sort(entity_nodes.begin(),entity_nodes.end());
@@ -4737,39 +4737,39 @@ void dofmap_fespace5(
               for(std::size_t i=0;i<entity_points;i++)
                 {
                   entity_nodes_and_level[i]=entity_nodes[i];
-                  // std::cout<< entity_nodes[i]<<"";
+                  // // std::cout<< entity_nodes[i]<<"";
                 }
               entity_nodes_and_level[entity_points]=level;
 
 
 
           //     // here do something for the sorted dofmap
-          //     std::cout<<"pre pair" <<std::endl;
+          //     // std::cout<<"pre pair" <<std::endl;
           //      // pair=std::make_pair(entity_nodes,level);
-          //      std::cout<<"after pre entity_nodes_and_level" <<std::endl;
+          //      // std::cout<<"after pre entity_nodes_and_level" <<std::endl;
           //      for(Integer i=0;i<entity_nodes_and_level.size();i++)
-          //       std::cout<<entity_nodes_and_level[i]<<" ";
-          //     std::cout<<" "<<std::endl;
-          //     std::cout<<"level="<<level<<std::endl;
+          //       // std::cout<<entity_nodes_and_level[i]<<" ";
+          //     // std::cout<<" "<<std::endl;
+          //     // std::cout<<"level="<<level<<std::endl;
           //     // if ( map_bool_.find(entity_nodes_and_level) == map_bool_.end() ) {
-          //     //      std::cout<<"not found="<<std::endl;
+          //     //      // std::cout<<"not found="<<std::endl;
           //     //     } else {
-          //     //      std::cout<<" found="<<std::endl;
+          //     //      // std::cout<<" found="<<std::endl;
           //     //     }
 
 
-          //        std::cout<<std::endl;
+          //        // std::cout<<std::endl;
           //      for(auto it=map_bool_.begin(); it!=map_bool_.end(); ++it)
           //      {
           //        for(Integer i=0;i<entity_nodes_and_level.size();i++)
-          //            std::cout<<it->first[i]<<" ";
-          //          std::cout<<std::endl;
+          //            // std::cout<<it->first[i]<<" ";
+          //          // std::cout<<std::endl;
               
           //      }
-          //      std::cout<<"end pre pair2" <<std::endl;
+          //      // std::cout<<"end pre pair2" <<std::endl;
           //      auto m=map_bool_[entity_nodes_and_level];
 
-          //      std::cout<<"after pre pair2" <<std::endl;
+          //      // std::cout<<"after pre pair2" <<std::endl;
 
               if(map_bool_[entity_nodes_and_level])
               {
@@ -4926,7 +4926,7 @@ void dofmap_fespace5(
           el=next_elem;
         }
 
-        // std::cout<<"level="<<level<<", el="<<el<<", next_elem="<<next_elem<<", cont_elem="<<cont_elem<<"/"<<level_n_elements<<std::endl;
+        // // std::cout<<"level="<<level<<", el="<<el<<", next_elem="<<next_elem<<", cont_elem="<<cont_elem<<"/"<<level_n_elements<<std::endl;
 
 
        }
@@ -4962,7 +4962,7 @@ void dofmap_fespace5(
       
       for(Integer i=0;i<n_levels;i++)
       {
-        // std::cout<<"level=="<<i<<std::endl;
+        // // std::cout<<"level=="<<i<<std::endl;
         ordered_entities_aux(elems_iterate,i,level_n_elements[i]);
       }
 

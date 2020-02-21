@@ -141,7 +141,7 @@ class GeneralForm<Form_>
     form_(form),
     spaces_ptr_(find_spaces_ptr<FunctionSpace>(form))
     {
-           // std::cout<< "general form constructor "<<std::endl;
+           // // std::cout<< "general form constructor "<<std::endl;
     };
 
     GeneralForm(const GeneralForm& generalform)

@@ -43,20 +43,9 @@ class Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_>>,OtherTemplateAr
   const auto& tuple=tuple_get<type::value>(shape_functions);
     // const auto& tuple=tuple_get<type::value>(shape_functions());
   constexpr Integer M=TypeToTupleElementPosition<ShapeFunction<Elem,BaseFunctionSpace,Operator,OtherTemplateArguments...>,tuple_type>::value;
-    // std::cout<<"befor Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_> "<<value<<std::endl;
- // std::cout<<"tuple_get<M>(tuple).eval="<<std::endl;
- // std::cout<<tuple_get<M>(tuple).eval()<<std::endl;
- // Number<M> e5e(5);
 
- //  tuple_type ok(1);
- //  decltype(tuple) ee(3);
   Assign(value,tuple_get<M>(tuple).eval());
 
-
-
-
-  // Assignment<value_type>::apply(value,tuple_get<M>(tuple).eval());
-  // std::cout<<"after Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_> "<<value<<std::endl;
 
  }
 
@@ -112,13 +101,6 @@ class Evaluation<Expression<TestOrTrial<MixedSpace,N,CompositeOperator<Expressio
  auto& single_tensor=tuple_get<type::value,M >(tuple_tensor);
  Assign(value,single_tensor);
 
-
- // Assignment<ValueType>::apply(value,single_tensor);
-   // std::cout<<"single_tensor= "<<single_tensor<<std::endl;
-
-  // single_type ok1(1);
-  // TupleOfTupleCompositeShapeFunctionEval ok2(3);
-  // std::cout<<"Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_> "<<value<<std::endl;
 
 
   }

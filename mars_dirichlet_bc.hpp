@@ -327,11 +327,11 @@ public:
     inline std::enable_if_t<(BC_N::Component>=0),void>
     compute_constraints(Dofs& constrained_dofs,Mat& constrained_mat,Vec& constrained_vec,const Integer& i, const DofMapTrace& dofmap_trace,const Rhs& rhs_local )
     {
-      std::cout<< " compute_constraints begin " <<std::endl;
+      // std::cout<< " compute_constraints begin " <<std::endl;
           constrained_dofs[dofmap_trace[i*BC_N::NComponents+BC_N::Component]]=true;
           constrained_mat[dofmap_trace[i*BC_N::NComponents+BC_N::Component]]=1;   
           constrained_vec[dofmap_trace[i*BC_N::NComponents+BC_N::Component]]= rhs_local(0,0);   
-      std::cout<< " compute_constraints end " <<std::endl;   
+      // std::cout<< " compute_constraints end " <<std::endl;   
     }
 
 

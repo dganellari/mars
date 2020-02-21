@@ -27,8 +27,8 @@ class NormalFunction
 
       auto& mesh_ptr=FE.mesh_ptr();
       auto& normal=mesh_ptr->signed_normal().normals()[FE.elem_id()][FE.side_id()];
-      // std::cout<<"NORMAL"<<std::endl;
-      // std::cout<<normal<<std::endl;
+      // // std::cout<<"NORMAL"<<std::endl;
+      // // std::cout<<normal<<std::endl;
 
       return normal; 
     }
@@ -61,9 +61,9 @@ public:
   void compute()
   {
 
-     std::cout<<"--NodeNormalValues compute" <<std::endl;
+     // std::cout<<"--NodeNormalValues compute" <<std::endl;
      spaces_ptr->update();
-     std::cout<<"--NodeNormalValues compute" <<std::endl;
+     // std::cout<<"--NodeNormalValues compute" <<std::endl;
 
      auto& mesh= spaces_ptr->mesh();
      auto& bisection=spaces_ptr->bisection();
@@ -73,7 +73,7 @@ public:
      Integer n_elements=mesh.n_elements();
      auto& signed_normals=mesh.signed_normal()();
 
-     std::cout<<"--qui1" <<std::endl;
+     // // std::cout<<"--qui1" <<std::endl;
 
      node_normals_.resize(n_nodes );
      Integer size;
@@ -82,61 +82,61 @@ public:
      BoundaryElem side_elem;
     
     // loop on the elements
-     std::cout<<"--qui2" <<std::endl;
+     // // std::cout<<"--qui2" <<std::endl;
 
     for(auto it=n2e().begin();it!=n2e().end();it++)
     {
 
-       std::cout<<"--it->first=" <<it->first<<std::endl;
+       // // std::cout<<"--it->first=" <<it->first<<std::endl;
 
       const auto& node_id=it->first;
-      // std::cout<< "NODE ID = ="<<node_id<< std::endl;
+      // // std::cout<< "NODE ID = ="<<node_id<< std::endl;
       auto& vecs=*(it->second);
 
       for(auto el_iter=vecs.begin();el_iter!=vecs.end();el_iter++)
       {
         const auto& el=*el_iter;
-        std::cout<<"--el=" <<el<<std::endl;
-        // std::cout<<"QUI"<<std::endl;
-        // std::cout<<elem_belongs_to_level(mesh,el,0,tracker)<<std::endl;
-        // std::cout<<elem_belongs_to_level(mesh,el,1,tracker)<<std::endl;
-        // std::cout<<elem_belongs_to_level(mesh,el,2,tracker)<<std::endl;
+        // // std::cout<<"--el=" <<el<<std::endl;
+        // // std::cout<<"QUI"<<std::endl;
+        // // std::cout<<elem_belongs_to_level(mesh,el,0,tracker)<<std::endl;
+        // // std::cout<<elem_belongs_to_level(mesh,el,1,tracker)<<std::endl;
+        // // std::cout<<elem_belongs_to_level(mesh,el,2,tracker)<<std::endl;
 
         FE.init(el);
         if(FE.is_on_boundary())
         {
         auto& elem=mesh.elem(el);
         auto& nodes=elem.nodes;
-        std::cout<<el<<"/"<<n_elements<< std::endl;
+        // // std::cout<<el<<"/"<<n_elements<< std::endl;
         auto level=tracker.get_level(el);
         
         if( level < 0 ) continue;
 
-        std::cout<<"--"<< std::endl;
+        // // std::cout<<"--"<< std::endl;
         auto & node_normal_tmp=node_normals_[node_id];
-        std::cout<<"---"<< std::endl;
+        // // std::cout<<"---"<< std::endl;
         size=node_normal_tmp.size();
 
         if(size<=level)
         {
           for(Integer i=size;i<=level;i++)
             {
-              std::cout<<"-- "<<i<< std::endl;
+              // // std::cout<<"-- "<<i<< std::endl;
               node_normal_tmp.push_back(Normal::eye_vector(0.0));
             }
         }
-        // std::cout<<" size "<<std::endl;
-        // std::cout<<size<<std::endl;       
-        // std::cout<<" level "<<std::endl;
-        // std::cout<<level<<std::endl;          
-        // std::cout<<" node_normal_tmp.size() "<<std::endl;
-        // std::cout<< node_normal_tmp.size()<<std::endl;
+        // // std::cout<<" size "<<std::endl;
+        // // std::cout<<size<<std::endl;       
+        // // std::cout<<" level "<<std::endl;
+        // // std::cout<<level<<std::endl;          
+        // // std::cout<<" node_normal_tmp.size() "<<std::endl;
+        // // std::cout<< node_normal_tmp.size()<<std::endl;
 
-        // std::cout<<"elem id"<<std::endl;
-        // std::cout<<el<<std::endl;
-        std::cout<<"---- node_id ="<<node_id<<", level+1="<<level+1<< std::endl;
+        // // std::cout<<"elem id"<<std::endl;
+        // // std::cout<<el<<std::endl;
+        // // std::cout<<"---- node_id ="<<node_id<<", level+1="<<level+1<< std::endl;
         node_normals_[node_id].reserve(level+1);
-        std::cout<<"-------"<< std::endl;
+        // // std::cout<<"-------"<< std::endl;
         for(std::size_t s=0;s<FE.n_side();s++)
           {
             FE.init_boundary(s);
@@ -144,15 +144,15 @@ public:
             {
               elem.side(s,side_elem);
               auto& side_nodes=side_elem.nodes;
-              std::cout<<"side_nodes"<<std::endl;
+              // // std::cout<<"side_nodes"<<std::endl;
               // for(Integer m=0;m<side_nodes.size();m++)
-              // std::cout<<side_nodes[m]<<" ";
-              // std::cout<<std::endl;
+              // // std::cout<<side_nodes[m]<<" ";
+              // // std::cout<<std::endl;
 
               for(auto node_iter=side_nodes.begin();node_iter!=side_nodes.end();node_iter++)
               {
                 auto& node_it_tmp=*node_iter;
-                std::cout<<node_it_tmp<<" ";
+                // // std::cout<<node_it_tmp<<" ";
                 // if the face contains the node, consider its normal
                 if(node_it_tmp==node_id)
                 {
@@ -167,14 +167,14 @@ public:
 
                 }
               }
-              std::cout<<std::endl;
+              // // std::cout<<std::endl;
             }
           }
         }
       }
-     // std::cout<<*it<<std::endl;
+     // // std::cout<<*it<<std::endl;
     }
-     std::cout<<"--qui5" <<std::endl;
+     // // std::cout<<"--qui5" <<std::endl;
 
     for(Integer node_id=0;node_id<n_nodes;node_id++)
     {
@@ -187,7 +187,7 @@ public:
         }
 
     }
-     std::cout<<"--NodeNormalValues compute end" <<std::endl;
+     // // std::cout<<"--NodeNormalValues compute end" <<std::endl;
 
   }
 
@@ -209,8 +209,8 @@ public:
     GetType<typename DofsDmP1::ElemDofMap,0> elemdmp1;
 
     // dofmap_get<0>(p1dm,elemdmp1,0,0);
-    // std::cout<<"elemdmp1"<<std::endl;
-    // std::cout<<"n_dof="<<n_dofs<<std::endl;
+    // // std::cout<<"elemdmp1"<<std::endl;
+    // // std::cout<<"n_dof="<<n_dofs<<std::endl;
     x_p1.resize(n_dofs,0);
     Integer cont;
     for(Integer el=0;el<2;el++)///mesh.n_elements();el++)
@@ -221,8 +221,8 @@ public:
       cont=0;
       for(Integer i=0;i<nodes.size();i++)
       {
-        // std::cout<<"i="<<i<<", node="<< nodes[i]<< std::endl;
-        // std::cout<< node_normals_[nodes[i]][0]<<std::endl;
+        // // std::cout<<"i="<<i<<", node="<< nodes[i]<< std::endl;
+        // // std::cout<< node_normals_[nodes[i]][0]<<std::endl;
         for(Integer j=0; j<ManifoldDim; j++)
         {
           x_p1[elemdmp1[cont]]=node_normals_[nodes[i]][0][j];
@@ -230,10 +230,10 @@ public:
         }
 
       }
-    //     std::cout<<"x_p1"<<std::endl;
+    //     // std::cout<<"x_p1"<<std::endl;
     // for(Integer i=0;i<x_p1.size();i++)
-    //   std::cout<<x_p1[i]<<std::endl;      
-    //   std::cout<<elemdmp1<<std::endl;
+    //   // std::cout<<x_p1[i]<<std::endl;      
+    //   // std::cout<<elemdmp1<<std::endl;
     }
 
   }
@@ -372,7 +372,7 @@ public:
     {
     Integer cont_=0;
     Vector<Real,Dim> point;
-    // std::cout<<"QPPointsFunction begin" <<std::endl;
+    // // std::cout<<"QPPointsFunction begin" <<std::endl;
     for(Integer ii=0;ii<Points.size();ii++)
      {
       FE.transform_point(point,Points[ii]);
@@ -383,9 +383,9 @@ public:
       // const auto point_tmp=FE.jac()*Points[ii];
       // const auto v0=FE.v0();
       // const auto point=point_tmp+v0;
-      // std::cout<<"evaluation pre"<<std::endl;
+      // // std::cout<<"evaluation pre"<<std::endl;
       const auto& evaluation=FuncType::eval(point,FE);
-      // std::cout<<"evaluation after "<<std::endl;
+      // // std::cout<<"evaluation after "<<std::endl;
 
 
       // for(Integer jj=0;jj<evaluation.rows();jj++)
@@ -399,7 +399,7 @@ public:
       //   }
 
       }
-    // std::cout<<"QPPointsFunction end" <<std::endl;
+    // // std::cout<<"QPPointsFunction end" <<std::endl;
 
     }
 
@@ -422,7 +422,7 @@ public:
     {
     Integer cont_=0;
     Vector<Real,Dim> point;
-    // std::cout<<"QPPointsFunction begin2 " <<std::endl;
+    // // std::cout<<"QPPointsFunction begin2 " <<std::endl;
 
     for(Integer ii=0;ii<Points.size();ii++)
      {
@@ -431,18 +431,18 @@ public:
       // const auto point_tmp=FE.jac()*Points[ii];
       // const auto v0=FE.v0();
       // const auto point=point_tmp+v0;
-      // std::cout<<"evaluation pre"<<std::endl;
+      // // std::cout<<"evaluation pre"<<std::endl;
       const auto& evaluation=FuncType::eval(point,FE);
-      // std::cout<<"evaluation post"<<std::endl;
-      // std::cout<<"evaluation.rows()"<<evaluation.rows()<<std::endl;
-      // std::cout<<"evaluation.cols()"<<evaluation.cols()<<std::endl;
-      // std::cout<<"local_dofs"<<local_dofs<<std::endl;
+      // // std::cout<<"evaluation post"<<std::endl;
+      // // std::cout<<"evaluation.rows()"<<evaluation.rows()<<std::endl;
+      // // std::cout<<"evaluation.cols()"<<evaluation.cols()<<std::endl;
+      // // std::cout<<"local_dofs"<<local_dofs<<std::endl;
 
       for(Integer jj=0;jj<evaluation.rows();jj++)
         {
         for(Integer kk=0;kk<evaluation.cols();kk++)
         {
-          // std::cout<<"jj,kk"<<jj<<","<<kk<<std::endl;
+          // // std::cout<<"jj,kk"<<jj<<","<<kk<<std::endl;
           local_dofs[cont_]=evaluation(jj,kk);  
           cont_++;
         }
@@ -450,7 +450,7 @@ public:
         }
 
       }
-    // std::cout<<"QPPointsFunction end2" <<std::endl;
+    // // std::cout<<"QPPointsFunction end2" <<std::endl;
 
     }
 
@@ -506,9 +506,9 @@ class Function
 
 
       // TODO FIXME
-      // std::cout<<"begin Function local_dofs_update"<<std::endl;
+      // // std::cout<<"begin Function local_dofs_update"<<std::endl;
       QPPointsFunction<FunctionType,Space>::init(FE,local_dofs_);
-      // std::cout<<"end Function local_dofs_update"<<std::endl;
+      // // std::cout<<"end Function local_dofs_update"<<std::endl;
 
 
     } 
@@ -518,42 +518,42 @@ class Function
 
      void local_dofs_update(const FiniteElem<Elem>& FE)
     {
-      // std::cout<<"local_dofs_update1"<<std::endl;
-      // std::cout<<"N"<<N<<std::endl;
-      // std::cout<<"elemdofmap_"<<elemdofmap_<<std::endl;
+      // // std::cout<<"local_dofs_update1"<<std::endl;
+      // // std::cout<<"N"<<N<<std::endl;
+      // // std::cout<<"elemdofmap_"<<elemdofmap_<<std::endl;
       auto local_map=tuple_get<N>(elemdofmap_); 
-      // std::cout<<"local_map"<<std::endl;
+      // // std::cout<<"local_map"<<std::endl;
       const auto& level=FE.level();
-      // std::cout<<"feee"<<std::endl;
+      // // std::cout<<"feee"<<std::endl;
       full_spaces_ptr_->dofsdofmap().template dofmap_get<N>(local_map,FE.elem_id(),level);
 
 
     // auto& tuple_map=full_spaces_ptr_->aux_spaces_ptr()->dofmap2();
-    // std::cout<<"local_dofs_update2"<<std::endl;
+    // // std::cout<<"local_dofs_update2"<<std::endl;
     // auto& local_map=tuple_get<FunctionNumber>(full_spaces_ptr_->aux_spaces_ptr()->dofmap2())[J.elem_id()];
-    // std::cout<<"local_dofs_update3, local_map="<<local_map<<std::endl;
-    // std::cout<<"local_dofs_update4, global_dofs_size="<<global_dofs_ptr_->size()<<std::endl;
-    // std::cout<<"local_dofs_update4, local_dofs_="<<local_dofs_<<std::endl;
+    // // std::cout<<"local_dofs_update3, local_map="<<local_map<<std::endl;
+    // // std::cout<<"local_dofs_update4, global_dofs_size="<<global_dofs_ptr_->size()<<std::endl;
+    // // std::cout<<"local_dofs_update4, local_dofs_="<<local_dofs_<<std::endl;
     //  // for(int ii=0;ii<global_dofs_.size();ii++)
      // {
-     //  std::cout<<"local_dofs_="<<global_dofs_[ii]<<std::endl;
+     //  // std::cout<<"local_dofs_="<<global_dofs_[ii]<<std::endl;
      // }
 
-    // std::cout<<"global_dofs_ptr_"<<std::endl;
+    // // std::cout<<"global_dofs_ptr_"<<std::endl;
      auto global_dofs_ptr_=identity_ptr_->global_dofs_ptr();
      // for(int ii=0;ii<global_dofs_ptr_->size();ii++)
      // {
-     //  // std::cout<<"global ii="<<(*global_dofs_ptr_)[ii]<<std::endl;
+     //  // // std::cout<<"global ii="<<(*global_dofs_ptr_)[ii]<<std::endl;
      // }
 
      for(int ii=0;ii<local_map.size();ii++)
      {
-      // std::cout<<"local_map="<<local_map<<std::endl;
-      // std::cout<<"local_dofs_="<<local_dofs_<<std::endl;
+      // // std::cout<<"local_map="<<local_map<<std::endl;
+      // // std::cout<<"local_dofs_="<<local_dofs_<<std::endl;
       local_dofs_[ii]=(*global_dofs_ptr_)[local_map[ii]];
      }
       
-    // std::cout<<"after local_dofs_update4, local_dofs_="<<local_dofs_<<std::endl;
+    // // std::cout<<"after local_dofs_update4, local_dofs_="<<local_dofs_<<std::endl;
     } 
    // inline const LocalDofs& local_dofs()const{return local_dofs_;}
 
@@ -563,20 +563,20 @@ class Function
   void global_dofs_update(std::vector<Real>& global_dofs)
   {
     global_dofs_ptr_=std::make_shared<std::vector<Real>>(global_dofs);
-    // std::cout<<"global_dofs_update"<<std::endl;
+    // // std::cout<<"global_dofs_update"<<std::endl;
     if(global_dofs_ptr_->size()==global_dofs.size())
     {
-       // std::cout<<" first resize==="<<std::endl;
+       // // std::cout<<" first resize==="<<std::endl;
       for(Integer ii=0;ii<global_dofs.size();ii++)
          {
           (*global_dofs_ptr_ )[ii] =global_dofs[ii];
-          // std::cout<<(*global_dofs_ptr_ )[ii]<<std::endl;
+          // // std::cout<<(*global_dofs_ptr_ )[ii]<<std::endl;
         }
       // copy(global_dofs.begin(),global_dofs.end(),back_inserter(global_dofs_));
     }
    else
    {
-    // std::cout<<" global_dofs resize==="<<global_dofs_ptr_->size()<<std::endl;
+    // // std::cout<<" global_dofs resize==="<<global_dofs_ptr_->size()<<std::endl;
   
 
 
@@ -584,7 +584,7 @@ class Function
     for(Integer ii=0;ii<global_dofs.size();ii++)
          (*global_dofs_ptr_ )[ii] =global_dofs[ii];
 
-    // std::cout<<" global_dofs resize==="<<global_dofs_ptr_->size()<<std::endl;
+    // // std::cout<<" global_dofs resize==="<<global_dofs_ptr_->size()<<std::endl;
     // copy(global_dofs.begin(),global_dofs.end(),back_inserter(global_dofs_));
    }
    }
@@ -632,15 +632,15 @@ public:
   void set(const std_vec& vec)
   {
 
-    // std::cout<<"qui1"<<std::endl;
-    // std::cout<<"global_dofssize="<<vec.size()<<std::endl;
+    // // std::cout<<"qui1"<<std::endl;
+    // // std::cout<<"global_dofssize="<<vec.size()<<std::endl;
     // for(std::size_t i=0;i<vec.size();i++)
-    //   std::cout<<vec[i]<<std::endl;
+    //   // std::cout<<vec[i]<<std::endl;
 
     vec_ptr_=std::make_shared<std_vec>(vec);
-    // std::cout<<"qui2"<<std::endl;
+    // // std::cout<<"qui2"<<std::endl;
     // for(std::size_t i=0;i<vec_ptr_->size();i++)
-    //   std::cout<<(*vec_ptr_)[i]<<std::endl;
+    //   // std::cout<<(*vec_ptr_)[i]<<std::endl;
 
     // auto size=vec.size();
     // if(vec_ptr_->size()!=size)
@@ -732,10 +732,10 @@ class Function<FullSpace,N,IdentityOperator,EmptyClass>
   // full_spaces_ptr_(spaces_ptr),
   // global_dofs_ptr_(global_dofs_ptr)
   // {
-  //   std::cout<<"son qui 2 ->"<<global_dofs_ptr->size()<<std::endl;
-  //   std::cout<<"son qui 3 ->"<<global_dofs_ptr_->size()<<std::endl;
+  //   // std::cout<<"son qui 2 ->"<<global_dofs_ptr->size()<<std::endl;
+  //   // std::cout<<"son qui 3 ->"<<global_dofs_ptr_->size()<<std::endl;
   // for(Integer i=0;i<global_dofs_ptr_->size();i++)
-  //   std::cout<<(*global_dofs_ptr_)[i]<<std::endl;
+  //   // std::cout<<(*global_dofs_ptr_)[i]<<std::endl;
   // }
   
   // Function(const FullSpace& spaces_ptr,const std::shared_ptr<std::vector<Real>>& global_dofs_ptr):
@@ -752,11 +752,11 @@ class Function<FullSpace,N,IdentityOperator,EmptyClass>
   aux_ptr_(func.aux_ptr())
   {
      // identity_ptr_=func.identity_ptr();
-     // std::cout<<"1 Function<FullSpace,N,Ide"<<std::endl;
-     // std::cout<<aux_ptr_->vec_ptr()->size()<<std::endl;
-     // std::cout<<"2 Function<FullSpace,N,IdentityOperator> ##################################################################"<<std::endl;
-     // std::cout<<global_dofs_ptr_->size()<<std::endl;
-     // std::cout<<"3 Function<FullSpace,N,IdentityOperator> ##################################################################"<<std::endl;
+     // // std::cout<<"1 Function<FullSpace,N,Ide"<<std::endl;
+     // // std::cout<<aux_ptr_->vec_ptr()->size()<<std::endl;
+     // // std::cout<<"2 Function<FullSpace,N,IdentityOperator> ##################################################################"<<std::endl;
+     // // std::cout<<global_dofs_ptr_->size()<<std::endl;
+     // // std::cout<<"3 Function<FullSpace,N,IdentityOperator> ##################################################################"<<std::endl;
 
   } 
 
@@ -764,9 +764,9 @@ class Function<FullSpace,N,IdentityOperator,EmptyClass>
   // full_spaces_ptr_(func.full_spaces_ptr()),
   // global_dofs_ptr_(func.global_dofs_ptr())
   // {
-  //   std::cout<<"##################################################################"<<std::endl;
-  //    std::cout<<func.global_dofs_ptr()->size()<<std::endl;
-  //    std::cout<<global_dofs_ptr_->size()<<std::endl;
+  //   // std::cout<<"##################################################################"<<std::endl;
+  //    // std::cout<<func.global_dofs_ptr()->size()<<std::endl;
+  //    // std::cout<<global_dofs_ptr_->size()<<std::endl;
   // } 
 
 
@@ -775,33 +775,33 @@ class Function<FullSpace,N,IdentityOperator,EmptyClass>
   
    void local_dofs_update(const FiniteElem<Elem>& FE)
     {
-      // std::cout<<"LOCAL DOFS UPDATE 1 "<<std::endl;
+      // // std::cout<<"LOCAL DOFS UPDATE 1 "<<std::endl;
       auto local_map=tuple_get<N>(elemdofmap_); 
       full_spaces_ptr_->dofsdofmap().template dofmap_get<N>(local_map,FE.elem_id());
     
     const auto& global_dofs=*(aux_ptr_->vec_ptr());
 
     // auto& tuple_map=full_spaces_ptr_->aux_spaces_ptr()->dofmap2();
-    // std::cout<<"LOCAL DOFS UPDATE 2"<<std::endl;
+    // // std::cout<<"LOCAL DOFS UPDATE 2"<<std::endl;
     // auto& local_map=tuple_get<FunctionNumber>(full_spaces_ptr_->aux_spaces_ptr()->dofmap2())[J.elem_id()];
-    // std::cout<<"LOCAL DOFS UPDATE 3, local_map="<<local_map<<std::endl;
-    // std::cout<<"local_dofs_update4, local_dofs_="<<local_dofs_<<std::endl;
-    // std::cout<<"global_dofs.size()="<<global_dofs.size()<<std::endl;
+    // // std::cout<<"LOCAL DOFS UPDATE 3, local_map="<<local_map<<std::endl;
+    // // std::cout<<"local_dofs_update4, local_dofs_="<<local_dofs_<<std::endl;
+    // // std::cout<<"global_dofs.size()="<<global_dofs.size()<<std::endl;
      // for(int ii=0;ii<global_dofs.size();ii++)
      // {
-     //  std::cout<<"global="<<global_dofs[ii]<<std::endl;
+     //  // std::cout<<"global="<<global_dofs[ii]<<std::endl;
      // }
      // auto global_dofs_ptr_=identity_ptr_->global_dofs_ptr();
 
 
      for(int ii=0;ii<local_map.size();ii++)
      {
-      // std::cout<<"local_map="<<local_map<<std::endl;
-      // std::cout<<"local_dofs_="<<local_dofs_<<std::endl;
+      // // std::cout<<"local_map="<<local_map<<std::endl;
+      // // std::cout<<"local_dofs_="<<local_dofs_<<std::endl;
       local_dofs_[ii]=global_dofs[local_map[ii]];
      }
       
-    // std::cout<<"after local_dofs_update4, local_dofs_="<<local_dofs_<<std::endl;
+    // // std::cout<<"after local_dofs_update4, local_dofs_="<<local_dofs_<<std::endl;
     } 
    inline const LocalDofs& local_dofs()const{return local_dofs_;}
 
@@ -810,29 +810,29 @@ class Function<FullSpace,N,IdentityOperator,EmptyClass>
 
   void global_dofs_update(std::vector<Real>& global_dofs)
   {
-    // std::cout<<"global_dofssize="<<global_dofs.size()<<std::endl;
+    // // std::cout<<"global_dofssize="<<global_dofs.size()<<std::endl;
     aux_ptr_->set(global_dofs);
     // decltype(aux_ptr_->vec_ptr()) feee(5);
     // auto eee=std::make_shared<std::vector<Real>>(global_dofs);
-    // std::cout<<"global_dofssize mmm="<<global_dofs.size()<<std::endl;
+    // // std::cout<<"global_dofssize mmm="<<global_dofs.size()<<std::endl;
     // aux_ptr_->vec_ptr()=eee;//std::make_shared<std::vector<Real>>(global_dofs);
     // aux_ptr_->vec_ptr()=std::make_shared<std::vector<Real>>(global_dofs);
     // auto& global_dofs=*aux_ptr_->vec_ptr();
    //  // global_dofs_ptr_=std::make_shared<std::vector<Real>>(global_dofs);
-   //  std::cout<<"global_dofs_update"<<std::endl;
+   //  // std::cout<<"global_dofs_update"<<std::endl;
    //  if(global_dofs_ptr_->size()==aux_ptr_->vec_ptr()->size())
    //  {
-   //     std::cout<<" first resize==="<<std::endl;
+   //     // std::cout<<" first resize==="<<std::endl;
    //    for(Integer ii=0;ii<global_dofs.size();ii++)
    //       {
    //        (*aux_ptr_->vec_ptr() )[ii] =global_dofs[ii];
-   //        std::cout<<(*aux_ptr_->vec_ptr() )[ii]<<std::endl;
+   //        // std::cout<<(*aux_ptr_->vec_ptr() )[ii]<<std::endl;
    //      }
    //    // copy(global_dofs.begin(),global_dofs.end(),back_inserter(global_dofs_));
    //  }
    // else
    // {
-   //  std::cout<<" global_dofs resize==="<<global_dofs_ptr_->size()<<std::endl;
+   //  // std::cout<<" global_dofs resize==="<<global_dofs_ptr_->size()<<std::endl;
   
 
 
@@ -840,7 +840,7 @@ class Function<FullSpace,N,IdentityOperator,EmptyClass>
    //  for(Integer ii=0;ii<global_dofs.size();ii++)
    //       (*global_dofs_ptr_ )[ii] =global_dofs[ii];
 
-   //  std::cout<<" global_dofs resize==="<<global_dofs_ptr_->size()<<std::endl;
+   //  // std::cout<<" global_dofs resize==="<<global_dofs_ptr_->size()<<std::endl;
    //  // copy(global_dofs.begin(),global_dofs.end(),back_inserter(global_dofs_));
    // }
    }
@@ -931,10 +931,10 @@ class Function<FullSpace,N,Operator_,EmptyClass>
   full_spaces_ptr_(spaces_ptr),
   global_dofs_ptr_(global_dofs_ptr)
   {
-    // std::cout<<"son qui 2 ->"<<global_dofs_ptr->size()<<std::endl;
-    // std::cout<<"son qui 3 ->"<<global_dofs_ptr_->size()<<std::endl;
+    // // std::cout<<"son qui 2 ->"<<global_dofs_ptr->size()<<std::endl;
+    // // std::cout<<"son qui 3 ->"<<global_dofs_ptr_->size()<<std::endl;
   // for(Integer i=0;i<global_dofs_ptr_->size();i++)
-  //   std::cout<<(*global_dofs_ptr_)[i]<<std::endl;
+  //   // std::cout<<(*global_dofs_ptr_)[i]<<std::endl;
   }
   
   Function(const FullSpace& spaces_ptr,const std::shared_ptr<std::vector<Real>>& global_dofs_ptr):
@@ -948,9 +948,9 @@ class Function<FullSpace,N,Operator_,EmptyClass>
   // identity_ptr_(std::make_shared<FunctionIdentity>(func_identity))//,
   // global_dofs_ptr_(identity_ptr_->global_dofs_ptr())
   {
-  //   std::cout<<"____________##################################################################"<<std::endl;
-  //    std::cout<<func_identity.global_dofs_ptr()->size()<<std::endl;
-  //    std::cout<<global_dofs_ptr_->size()<<std::endl;
+  //   // std::cout<<"____________##################################################################"<<std::endl;
+  //    // std::cout<<func_identity.global_dofs_ptr()->size()<<std::endl;
+  //    // std::cout<<global_dofs_ptr_->size()<<std::endl;
   } 
 
   Function(const Function& func):
@@ -958,18 +958,18 @@ class Function<FullSpace,N,Operator_,EmptyClass>
   identity_ptr_(func.identity_ptr()),
   global_dofs_ptr_(func.global_dofs_ptr())
   {
-    // std::cout<<"##################################################################"<<std::endl;
-    //  std::cout<<func.global_dofs_ptr()->size()<<std::endl;
-    //  std::cout<<global_dofs_ptr_->size()<<std::endl;
+    // // std::cout<<"##################################################################"<<std::endl;
+    //  // std::cout<<func.global_dofs_ptr()->size()<<std::endl;
+    //  // std::cout<<global_dofs_ptr_->size()<<std::endl;
   } 
 
   // Function(const Function& func):
   // full_spaces_ptr_(func.full_spaces_ptr()),
   // global_dofs_ptr_(func.global_dofs_ptr())
   // {
-  //   std::cout<<"##################################################################"<<std::endl;
-  //    std::cout<<func.global_dofs_ptr()->size()<<std::endl;
-  //    std::cout<<global_dofs_ptr_->size()<<std::endl;
+  //   // std::cout<<"##################################################################"<<std::endl;
+  //    // std::cout<<func.global_dofs_ptr()->size()<<std::endl;
+  //    // std::cout<<global_dofs_ptr_->size()<<std::endl;
   // } 
 
 
@@ -978,49 +978,49 @@ class Function<FullSpace,N,Operator_,EmptyClass>
   
    void local_dofs_update(const FiniteElem<Elem>& FE)
     {
-      // std::cout<<"local_dofs_update1"<<std::endl;
-      // std::cout<<"N"<<N<<std::endl;
-      // std::cout<<"elemdofmap_"<<elemdofmap_<<std::endl;
+      // // std::cout<<"local_dofs_update1"<<std::endl;
+      // // std::cout<<"N"<<N<<std::endl;
+      // // std::cout<<"elemdofmap_"<<elemdofmap_<<std::endl;
 
 
       auto local_map=tuple_get<N>(elemdofmap_); 
-      // std::cout<<"qu3i"<<std::endl;
+      // // std::cout<<"qu3i"<<std::endl;
       const auto& level=FE.level();
       full_spaces_ptr_->dofsdofmap().template dofmap_get<N>(local_map,FE.elem_id(),level);
 
 
     // auto& tuple_map=full_spaces_ptr_->aux_spaces_ptr()->dofmap2();
-    // std::cout<<"local_dofs_update2"<<std::endl;
+    // // std::cout<<"local_dofs_update2"<<std::endl;
     // auto& local_map=tuple_get<FunctionNumber>(full_spaces_ptr_->aux_spaces_ptr()->dofmap2())[J.elem_id()];
-    // std::cout<<"local_dofs_update3, local_map="<<local_map<<std::endl;
-    // std::cout<<"local_dofs_update4, global_dofs_size="<<global_dofs_ptr_->size()<<std::endl;
-    // std::cout<<"local_dofs_update4, local_dofs_="<<local_dofs_<<std::endl;
+    // // std::cout<<"local_dofs_update3, local_map="<<local_map<<std::endl;
+    // // std::cout<<"local_dofs_update4, global_dofs_size="<<global_dofs_ptr_->size()<<std::endl;
+    // // std::cout<<"local_dofs_update4, local_dofs_="<<local_dofs_<<std::endl;
     //  // for(int ii=0;ii<global_dofs_.size();ii++)
      // {
-     //  std::cout<<"local_dofs_="<<global_dofs_[ii]<<std::endl;
+     //  // std::cout<<"local_dofs_="<<global_dofs_[ii]<<std::endl;
      // }
-      // std::cout<<"global_dofs_ptr_"<<std::endl;
+      // // std::cout<<"global_dofs_ptr_"<<std::endl;
      // auto global_dofs_ptr_=identity_ptr_->global_dofs_ptr();
      // for(int ii=0;ii<global_dofs_ptr_->size();ii++)
      // {
-     //  // std::cout<<"global ii="<<(*global_dofs_ptr_)[ii]<<std::endl;
+     //  // // std::cout<<"global ii="<<(*global_dofs_ptr_)[ii]<<std::endl;
      // }
-      for(Integer ii=0;ii<global_dofs_ptr_->size();ii++)
-         {
-          // (*global_dofs_ptr_ )[ii] =global_dofs[ii];
-          std::cout<<(*global_dofs_ptr_ )[ii]<<std::endl;
-        }
+      // for(Integer ii=0;ii<global_dofs_ptr_->size();ii++)
+      //    {
+      //     // (*global_dofs_ptr_ )[ii] =global_dofs[ii];
+      //     // std::cout<<(*global_dofs_ptr_ )[ii]<<std::endl;
+      //   }
 
      for(int ii=0;ii<local_map.size();ii++)
      {
-      // std::cout<<"ii="<<ii<<std::endl;
-      // std::cout<<"local_map="<<local_map<<std::endl;
+      // // std::cout<<"ii="<<ii<<std::endl;
+      // // std::cout<<"local_map="<<local_map<<std::endl;
       local_dofs_[ii]=(*global_dofs_ptr_)[local_map[ii]];
-      // std::cout<<"local_dofs_="<<local_dofs_<<std::endl;
+      // // std::cout<<"local_dofs_="<<local_dofs_<<std::endl;
 
      }
       
-    // std::cout<<"after local_dofs_update4, local_dofs_="<<local_dofs_<<std::endl;
+    // // std::cout<<"after local_dofs_update4, local_dofs_="<<local_dofs_<<std::endl;
     } 
    inline const LocalDofs& local_dofs()const{return local_dofs_;}
 
@@ -1030,20 +1030,20 @@ class Function<FullSpace,N,Operator_,EmptyClass>
   void global_dofs_update(std::vector<Real>& global_dofs)
   {
     global_dofs_ptr_=std::make_shared<std::vector<Real>>(global_dofs);
-    // std::cout<<"BEGIN global_dofs_update"<<std::endl;
+    // // std::cout<<"BEGIN global_dofs_update"<<std::endl;
     if(global_dofs_ptr_->size()==global_dofs.size())
     {
-       // std::cout<<" first resize==="<<std::endl;
-      for(Integer ii=0;ii<global_dofs.size();ii++)
-         {
-          // (*global_dofs_ptr_ )[ii] =global_dofs[ii];
-          std::cout<<(*global_dofs_ptr_ )[ii]<<std::endl;
-        }
+       // // std::cout<<" first resize==="<<std::endl;
+      // for(Integer ii=0;ii<global_dofs.size();ii++)
+      //    {
+      //     // (*global_dofs_ptr_ )[ii] =global_dofs[ii];
+      //     // std::cout<<(*global_dofs_ptr_ )[ii]<<std::endl;
+      //   }
       // copy(global_dofs.begin(),global_dofs.end(),back_inserter(global_dofs_));
     }
    else
    {
-    // std::cout<<" global_dofs resize==="<<global_dofs_ptr_->size()<<std::endl;
+    // // std::cout<<" global_dofs resize==="<<global_dofs_ptr_->size()<<std::endl;
   
 
 
@@ -1051,10 +1051,10 @@ class Function<FullSpace,N,Operator_,EmptyClass>
     // for(Integer ii=0;ii<global_dofs.size();ii++)
     //      (*global_dofs_ptr_ )[ii] =global_dofs[ii];
 
-    // std::cout<<" global_dofs resize==="<<global_dofs_ptr_->size()<<std::endl;
+    // // std::cout<<" global_dofs resize==="<<global_dofs_ptr_->size()<<std::endl;
     // copy(global_dofs.begin(),global_dofs.end(),back_inserter(global_dofs_));
    }
-   // std::cout<<"END global_dofs_update"<<std::endl;
+   // // std::cout<<"END global_dofs_update"<<std::endl;
    }
 
    constexpr auto spaces_ptr(){return full_spaces_ptr_;}
@@ -1103,13 +1103,13 @@ Div(const Function<FullSpace,N,IdentityOperator,FuncType>& t)
 // template<typename FullSpace,Integer N,typename FuncType>
 // constexpr auto 
 // Grad(const Function<FullSpace,N,IdentityOperator,FuncType>& t)
-// { std::cout<<"son qui - >"<<t.global_dofs_ptr()->size()<< std::endl;
+// { // std::cout<<"son qui - >"<<t.global_dofs_ptr()->size()<< std::endl;
 //   return Function<FullSpace,N,GradientOperator,FuncType> (t.spaces_ptr(),t.global_dofs_ptr());}
 template<typename FullSpace,Integer N,typename FuncType>
 constexpr auto 
 Grad(const Function<FullSpace,N,IdentityOperator,FuncType>& t)
 { 
-  // std::cout<<"son qui - >"<<t.global_dofs_ptr()->size()<< std::endl;
+  // // std::cout<<"son qui - >"<<t.global_dofs_ptr()->size()<< std::endl;
   return Function<FullSpace,N,GradientOperator,FuncType> (t);}
 
 

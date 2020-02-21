@@ -109,7 +109,7 @@ class Evaluation<Expression<GeneralForm<Form>>,ShapeFunctionsCollection<GeneralF
  template<typename Output,typename Elem>
  constexpr void apply(Output& token_mat, FiniteElem<Elem>& FE)
  {
-    // std::cout<<" eval general form volume begin"<<std::endl;
+    // // std::cout<<" eval general form volume begin"<<std::endl;
   // eval_inners_volume_.apply(token_mat,FE,general_form_.spaces_ptr()->dofmap2());
 eval_inners_volume_.apply(token_mat,FE,general_form_.spaces_ptr()->dofsdofmap());
     
@@ -123,51 +123,51 @@ eval_inners_volume_.apply(token_mat,FE,general_form_.spaces_ptr()->dofsdofmap())
 // // FunctionSpace mm(5);
 // // for(Integer i=0;i<dofsdofmap.space_dofs().size();i++)
 // // {
-// //     std::cout<<"===== space="<<i<<std::endl;
+// //     // std::cout<<"===== space="<<i<<std::endl;
 // //     for(Integer j=0;j<dofsdofmap.space_dofs_size(i);j++)
 // //     {
 // //       // for(Integer k=0;k<sd3[i]->operator[](j).size();k++)
-// //          std::cout<<dofsdofmap.space_dofs_get(i,j)<<std::endl;
+// //          // std::cout<<dofsdofmap.space_dofs_get(i,j)<<std::endl;
 // //     }
 
 // // }
 
-//     std::cout<<"||||||||||||||||||||||||||||||||||||||||||||||||||||||-----dofmap of space="<<0<<std::endl;
+//     // std::cout<<"||||||||||||||||||||||||||||||||||||||||||||||||||||||-----dofmap of space="<<0<<std::endl;
 
 // for(Integer i=0;i<dofsdofmap.template dofmap_size<0>();i++)
 // {
-//          std::cout<<dofsdofmap.n_dofs()<<std::endl;
-//          std::cout<<dofsdofmap.template dofmap_get<0>(i);
-//          std::cout<<std::endl;
+//          // std::cout<<dofsdofmap.n_dofs()<<std::endl;
+//          // std::cout<<dofsdofmap.template dofmap_get<0>(i);
+//          // std::cout<<std::endl;
 // }
-//     std::cout<<"||||||||||||||||||||||||||||||||||||||||||||||||||||||-----dofmap of space="<<1<<std::endl;
+//     // std::cout<<"||||||||||||||||||||||||||||||||||||||||||||||||||||||-----dofmap of space="<<1<<std::endl;
 
 // for(Integer i=0;i<dofsdofmap.template dofmap_size<1>();i++)
 // {
-//          std::cout<<dofsdofmap. template dofmap_get<1>(i)<<" ";
-//          std::cout<<std::endl;
+//          // std::cout<<dofsdofmap. template dofmap_get<1>(i)<<" ";
+//          // std::cout<<std::endl;
 // }
 
-//     std::cout<<"||||||||||||||||||||||||||||||||||||||||||||||||||||||-----dofmap of space="<<2<<std::endl;
+//     // std::cout<<"||||||||||||||||||||||||||||||||||||||||||||||||||||||-----dofmap of space="<<2<<std::endl;
 
 // for(Integer i=0;i<dofsdofmap.template dofmap_size<2>();i++)
 // {
-//          std::cout<<dofsdofmap.template dofmap_get<2>(i)<<" ";
-//          std::cout<<std::endl;
+//          // std::cout<<dofsdofmap.template dofmap_get<2>(i)<<" ";
+//          // std::cout<<std::endl;
 // }
-//     std::cout<<"||||||||||||||||||||||||||||||||||||||||||||||||||||||-----dofmap of space="<<3<<std::endl;
+//     // std::cout<<"||||||||||||||||||||||||||||||||||||||||||||||||||||||-----dofmap of space="<<3<<std::endl;
 
 // for(Integer i=0;i<dofsdofmap.template dofmap_size<3>();i++)
 // {
-//          std::cout<<dofsdofmap.template dofmap_get<3>(i)<<" ";
-//          std::cout<<std::endl;
+//          // std::cout<<dofsdofmap.template dofmap_get<3>(i)<<" ";
+//          // std::cout<<std::endl;
 // }
 
 
-// std::cout<<"-----dofmap of space="<<dofsdofmap.n_dofs()<<std::endl;
-// std::cout<<"-----dofmap of space="<<dofsdofmap.cumulative_n_dofs()<<std::endl;
+// // std::cout<<"-----dofmap of space="<<dofsdofmap.n_dofs()<<std::endl;
+// // std::cout<<"-----dofmap of space="<<dofsdofmap.cumulative_n_dofs()<<std::endl;
 
-  // std::cout<<" eval general form volume end"<<std::endl;
+  // // std::cout<<" eval general form volume end"<<std::endl;
  }
 
  template<typename Output, typename Elem>
