@@ -150,9 +150,27 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(int &argc, char 
 #endif
 
 #ifdef WITH_KOKKOS
+        using namespace Kokkos;
         // run some kokkos simulations!
-        DistributedQuad4Mesh nsm;
-        generate_distributed_cube(context, nsm, level, level, 0);
+        DistributedQuad4Mesh mesh;
+        generate_distributed_cube(context, mesh, level, level, 0);
+
+        int proc_num = rank(context);
+
+        ViewMatrixType<Real> poi = mesh.get_view_points();
+
+        parallel_for(
+            "print_elem_chunk1", mesh.get_view_points().extent(0), KOKKOS_LAMBDA(const int i) {
+                printf(" pt: [(%f, %f) - %i]\n", poi(i, 0), poi(i, 1), proc_num);
+            });
+
+        ViewMatrixType<Integer> eeel = mesh.get_view_elements();
+
+        parallel_for(
+            "print_elem_chunk", mesh.get_view_elements().extent(0), KOKKOS_LAMBDA(const int i) {
+                printf("el 3D: [(  %li, %li, %li, %li)] - %i]\n",
+                       eeel(i, 0), eeel(i, 1), eeel(i, 2), eeel(i, 3), proc_num);
+            });
 #endif
     }
     catch (std::exception &e)
@@ -160,7 +178,6 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(int &argc, char 
         std::cerr << "exception caught in ring miniapp: " << e.what() << "\n";
     }
 }
-
 
 void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char **&argv, const int level)
 {
@@ -198,9 +215,29 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char 
 #endif
 
 #ifdef WITH_KOKKOS
+        using namespace Kokkos;
+
         // run some kokkos simulations!
-        DistributedHex8Mesh nsm;
-        generate_distributed_cube(context, nsm, level, level ,level);
+        DistributedHex8Mesh mesh;
+        generate_distributed_cube(context, mesh, level, level, level);
+
+        int proc_num = rank(context);
+
+        ViewMatrixType<Real> poi = mesh.get_view_points();
+
+        parallel_for(
+            "print_elem_chunk1", mesh.get_view_points().extent(0), KOKKOS_LAMBDA(const int i) {
+                printf(" pt: [(%f, %f, %f) - %i]\n", poi(i, 0), poi(i, 1), poi(i, 2), proc_num);
+            });
+
+        ViewMatrixType<Integer> eeel = mesh.get_view_elements();
+
+        parallel_for(
+            "print_elem_chunk", mesh.get_view_elements().extent(0), KOKKOS_LAMBDA(const int i) {
+                printf("el 3D: [(  %li, %li, %li, %li, %li, %li, %li, %li )] - %i]\n",
+                        eeel(i, 0), eeel(i, 1), eeel(i, 2), eeel(i, 3), eeel(i, 4), eeel(i, 5), 
+                                    eeel(i, 6), eeel(i, 7), proc_num);
+            });
 #endif
     }
     catch (std::exception &e)
