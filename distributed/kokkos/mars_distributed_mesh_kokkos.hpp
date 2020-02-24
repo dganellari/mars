@@ -313,6 +313,7 @@ public:
     }
 
     //add point functor
+    template <Integer Type>
     struct AddNonSimplexPoint
     {
         ViewMatrixType<Real> points;
@@ -322,15 +323,13 @@ public:
         Integer yDim;
         Integer zDim;
 
-        AddNonSimplexPoint(ViewMatrixType<Real> pts, Integer xdm, Integer ydm) : points(pts), xDim(xdm), yDim(ydm)
+        AddNonSimplexPoint(ViewMatrixType<Real> pts, ViewVectorType<unsigned int> epts, Integer xdm, Integer ydm) : 
+                    points(pts), encoded_points(epts), xDim(xdm), yDim(ydm)
         {
         }
 
-        AddNonSimplexPoint(ViewMatrixType<Real> pts, Integer xdm, Integer ydm, Integer zdm) : points(pts), xDim(xdm), yDim(ydm), zDim(zdm)
-        {
-        }
-
-        AddNonSimplexPoint(ViewMatrixType<Real> pts, ViewVectorType<unsigned int> epts, Integer xdm, Integer ydm) : points(pts), encoded_points(epts), xDim(xdm), yDim(ydm)
+        AddNonSimplexPoint(ViewMatrixType<Real> pts, ViewVectorType<unsigned int> epts, Integer xdm, Integer ydm, Integer zdm) : 
+                    points(pts), encoded_points(epts), xDim(xdm), yDim(ydm), zDim(zdm)
         {
         }
 
@@ -339,20 +338,21 @@ public:
         {
             unsigned int gl_index = encoded_points(index);
 
-            points(index, 0) = static_cast<Real>(decode_morton_2DX(gl_index)) / static_cast<Real>(xDim);
-            points(index, 1) = static_cast<Real>(decode_morton_2DY(gl_index)) / static_cast<Real>(yDim);
+            switch (Type)
+            {
+            case ElementType::Quad4:
+            {
+                points(index, 0) = static_cast<Real>(decode_morton_2DX(gl_index)) / static_cast<Real>(xDim);
+                points(index, 1) = static_cast<Real>(decode_morton_2DY(gl_index)) / static_cast<Real>(yDim);
+            }
+            case ElementType::Hex8:
+            {
+                points(index, 0) = static_cast<Real>(decode_morton_3DX(gl_index)) / static_cast<Real>(xDim);
+                points(index, 1) = static_cast<Real>(decode_morton_3DY(gl_index)) / static_cast<Real>(yDim);
+                points(index, 2) = static_cast<Real>(decode_morton_3DZ(gl_index)) / static_cast<Real>(zDim);
+            }
+            }
         }
-
-        /* KOKKOS_INLINE_FUNCTION
-        void operator()(int z, int y, int x) const
-        {
-
-            int index = (xDim + 1) * (yDim + 1) * z + (xDim + 1) * y + x;
-
-            points(index, 0) = static_cast<Real>(x) / static_cast<Real>(xDim);
-            points(index, 1) = static_cast<Real>(y) / static_cast<Real>(yDim);
-            points(index, 2) = static_cast<Real>(z) / static_cast<Real>(zDim);
-        } */
     };
 
     template <Integer Type>
@@ -366,17 +366,16 @@ public:
         Integer yDim;
         Integer zDim;
 
-        BuildGlobalPointIndex(ViewVectorType<bool> el, Integer xdm, Integer ydm) : predicate(el), xDim(xdm), yDim(ydm)
-        {
-        }
-        BuildGlobalPointIndex(ViewVectorType<bool> el, Integer xdm, Integer ydm, Integer zdm) : predicate(el), xDim(xdm), yDim(ydm), zDim(zdm)
-        {
-        }
-
         BuildGlobalPointIndex(ViewVectorType<bool> el, ViewVectorType<unsigned int> gl,
                               Integer xdm, Integer ydm) : predicate(el), global(gl), xDim(xdm), yDim(ydm)
         {
         }
+
+        BuildGlobalPointIndex(ViewVectorType<bool> el, ViewVectorType<unsigned int> gl,
+                              Integer xdm, Integer ydm, Integer zdm) : predicate(el), global(gl), xDim(xdm), yDim(ydm), zDim(zdm)
+        {
+        }
+
         KOKKOS_INLINE_FUNCTION
         void operator()(int i) const
         {
@@ -507,7 +506,7 @@ public:
                 reserve_points(nr_points);
 
                 parallel_for("non_simplex_point", nr_points,
-                             AddNonSimplexPoint(points_, local_to_global, xDim, yDim));
+                             AddNonSimplexPoint<Type>(points_, local_to_global, xDim, yDim));
 
                 //build global_to_local map for use in generate elements.
                 UnorderedMap<unsigned int, unsigned int> global_to_local_map(nr_points);
@@ -544,19 +543,33 @@ public:
                 assert(yDim != 0);
                 assert(zDim != 0);
 
-               /*  ViewVectorType<unsigned int> local_to_global;
+                ViewVectorType<unsigned int> local_to_global;
+                const unsigned int allrange = encode_morton_3D(xDim + 1, yDim + 1, zDim + 1); //TODO : check if enough. Test with xdim != ydim.
 
-                unsigned int nr_points = compact_elements<Type>(local_to_global, xDim, yDim, zDim);
-                printf("nr_p: %u\n", nr_points); */
+                const unsigned int nr_points = compact_elements<Type>(local_to_global, allrange, xDim, yDim, zDim);
+                printf("nr_p 3D: %u\n", nr_points);
 
-                /*   const int n_nodes = (xDim + 1) * (yDim + 1) * (zDim + 1);
+                reserve_points(nr_points);
 
-                reserve_points(n_nodes);
+                parallel_for("non_simplex_point", nr_points,
+                             AddNonSimplexPoint<Type>(points_, local_to_global, xDim, yDim, zDim));
+
+                //build global_to_local map for use in generate elements.
+                UnorderedMap<unsigned int, unsigned int> global_to_local_map(nr_points);
 
                 parallel_for(
-                    MDRangePolicy<Rank<3>>({0, 0, 0},
-                                           {zDim + 1, yDim + 1, xDim + 1}),
-                    AddNonSimplexPoint(points_, xDim, yDim, zDim)); */
+                    "local_global_map_for", nr_points, KOKKOS_LAMBDA(const int i) {
+
+                        const unsigned int gl_index = local_to_global(i);
+
+                        const unsigned int x = decode_morton_3DX(gl_index);
+                        const unsigned int y = decode_morton_3DY(gl_index);
+                        const unsigned int z = decode_morton_3DZ(gl_index);
+
+                        global_to_local_map.insert(elem_index(x, y, z, xDim, yDim), i);
+                    });
+
+                set_global_to_local_map(global_to_local_map);
                 return true;
             }
             default:
@@ -573,6 +586,7 @@ public:
     }
 
     //add elem functor
+    template <Integer Type>
     struct AddNonSimplexElem
     {
 
@@ -586,65 +600,66 @@ public:
         Integer yDim;
         Integer zDim;
 
-        AddNonSimplexElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
-                          Integer xdm) : elem(el), active(ac), xDim(xdm)
-        {
-        }
-
-        AddNonSimplexElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
-                          Integer xdm, Integer ydm) : elem(el), active(ac), xDim(xdm), yDim(ydm)
-        {
-        }
-
         AddNonSimplexElem(ViewMatrixType<Integer> el, ViewVectorType<unsigned int> gl, UMap mp,
                           ViewVectorType<bool> ac, Integer xdm, Integer ydm) : 
                                     elem(el), global(gl), map(mp), active(ac), xDim(xdm), yDim(ydm)
         {
         }
 
-        AddNonSimplexElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
-                          Integer xdm, Integer ydm, Integer zdm) : elem(el), active(ac), xDim(xdm), yDim(ydm), zDim(zdm)
+        AddNonSimplexElem(ViewMatrixType<Integer> el, ViewVectorType<unsigned int> gl, UMap mp,
+                          ViewVectorType<bool> ac, Integer xdm, Integer ydm, Integer zdm) : 
+                                    elem(el), global(gl), map(mp), active(ac), xDim(xdm), yDim(ydm), zDim(zdm)
         {
         }
 
         KOKKOS_INLINE_FUNCTION
         void operator()(int index) const
         {
-            const int offset = xDim + 1;
 
-            const unsigned int gl_index = global(index);
+            switch (Type)
+            {
+            case ElementType::Quad4:
+            {
+                const int offset = xDim + 1;
 
-            const unsigned int i = decode_morton_2DX(gl_index);
-            const unsigned int j = decode_morton_2DY(gl_index);
+                const unsigned int gl_index = global(index);
 
-            elem(index, 0) = map.value_at(map.find(i + offset * j));
-            elem(index, 1) = map.value_at(map.find((i + 1) + offset * j));
-            elem(index, 2) = map.value_at(map.find((i + 1) + offset * (j + 1)));
-            elem(index, 3) = map.value_at(map.find(i + offset * (j + 1)));
+                const unsigned int i = decode_morton_2DX(gl_index);
+                const unsigned int j = decode_morton_2DY(gl_index);
 
-            active(index) = true;
+                elem(index, 0) = map.value_at(map.find(i + offset * j));
+                elem(index, 1) = map.value_at(map.find((i + 1) + offset * j));
+                elem(index, 2) = map.value_at(map.find((i + 1) + offset * (j + 1)));
+                elem(index, 3) = map.value_at(map.find(i + offset * (j + 1)));
+
+                active(index) = true;
+            }
+            case ElementType::Hex8:
+            {
+                const unsigned int gl_index = global(index);
+
+                const unsigned int i = decode_morton_3DX(gl_index);
+                const unsigned int j = decode_morton_3DY(gl_index);
+                const unsigned int k = decode_morton_3DZ(gl_index);
+
+                elem(index, 0) = map.value_at(map.find(elem_index(i, j, k, xDim, yDim)));
+                elem(index, 1) = map.value_at(map.find(elem_index(i + 1, j, k, xDim, yDim)));
+                elem(index, 2) = map.value_at(map.find(elem_index(i + 1, j + 1, k, xDim, yDim)));
+                elem(index, 3) = map.value_at(map.find(elem_index(i, j + 1, k, xDim, yDim)));
+                elem(index, 4) = map.value_at(map.find(elem_index(i, j, k + 1, xDim, yDim)));
+                elem(index, 5) = map.value_at(map.find(elem_index(i + 1, j, k + 1, xDim, yDim)));
+                elem(index, 6) = map.value_at(map.find(elem_index(i + 1, j + 1, k + 1, xDim, yDim)));
+                elem(index, 7) = map.value_at(map.find(elem_index(i, j + 1, k + 1, xDim, yDim)));
+
+                active(index) = true;
+            }
+            }
         }
-
-        /*   KOKKOS_INLINE_FUNCTION
-        void operator()(int k, int j, int i) const
-        {
-            int index = k * xDim * yDim + j * xDim + i;
-
-            elem(index, 0) = elem_index(i, j, k, xDim, yDim);
-            elem(index, 1) = elem_index(i + 1, j, k, xDim, yDim);
-            elem(index, 2) = elem_index(i + 1, j + 1, k, xDim, yDim);
-            elem(index, 3) = elem_index(i, j + 1, k, xDim, yDim);
-            elem(index, 4) = elem_index(i, j, k + 1, xDim, yDim);
-            elem(index, 5) = elem_index(i + 1, j, k + 1, xDim, yDim);
-            elem(index, 6) = elem_index(i + 1, j + 1, k + 1, xDim, yDim);
-            elem(index, 7) = elem_index(i, j + 1, k + 1, xDim, yDim);
-
-            active(index) = true;
-        } */
     };
 
+    template <Integer Type>
     inline bool generate_elements(const int xDim, const int yDim,
-                                  const int zDim, Integer type)
+                                  const int zDim)
     {
 
         using namespace Kokkos;
@@ -655,7 +670,7 @@ public:
         case 2:
         {
 
-            switch (type)
+            switch (Type)
             {
 
             case ElementType::Quad4:
@@ -663,7 +678,7 @@ public:
                 reserve_elements(get_chunk_size());
 
                 parallel_for("generate_elements", get_chunk_size(),
-                             AddNonSimplexElem(elements_, local_sfc_, global_to_local_map_, active_, xDim, yDim));
+                             AddNonSimplexElem<Type>(elements_, local_sfc_, global_to_local_map_, active_, xDim, yDim));
                 return true;
             }
             default:
@@ -675,16 +690,15 @@ public:
         case 3:
         {
 
-            switch (type)
+            switch (Type)
             {
 
             case ElementType::Hex8:
             {
-                /*    const int n_elements = xDim * yDim * zDim;
-                reserve_elements(n_elements);
+                reserve_elements(get_chunk_size());
 
-                parallel_for(MDRangePolicy<Rank<3>>({0, 0, 0}, {zDim, yDim, xDim}),
-                             AddNonSimplexElem(elements_, active_, xDim, yDim, zDim)); */
+                parallel_for("generate_elements", get_chunk_size(),
+                             AddNonSimplexElem<Type>(elements_, local_sfc_, global_to_local_map_, active_, xDim, yDim, zDim));
                 return true;
             }
             default:

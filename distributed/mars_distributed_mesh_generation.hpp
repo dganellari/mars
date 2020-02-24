@@ -102,7 +102,7 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
     //the mesh construct depends on template parameters. 
     bool gen_pts = mesh.template generate_points<Type>(xDim, yDim, zDim);
 
-    bool gen_elm = mesh.generate_elements(xDim, yDim, zDim, Type);
+    bool gen_elm = mesh.template generate_elements<Type>(xDim, yDim, zDim);
 
    	double time_gen = timer_gen.seconds();
 	std::cout << "Generation 2D distributed kokkos took: " << time_gen << " seconds. Process: "<<proc_num << std::endl;
@@ -112,22 +112,7 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
 
 	double time = timer.seconds();
 	std::cout << "Total Generation 2D distributed kokkos took: " << time << " seconds. Process: "<<proc_num << std::endl;
-
-
-    ViewMatrixType<Real> poi = mesh.get_view_points();
-
-    parallel_for(
-        "print_elem_chunk1", mesh.get_view_points().extent(0), KOKKOS_LAMBDA(const int i) {
-            printf(" pt: [(%f, %f) - %i]\n", poi(i, 0), poi(i, 1), proc_num);
-        });
-
-          ViewMatrixType<Integer> eeel = mesh.get_view_elements();
-
-    parallel_for(
-        "print_elem_chunk", mesh.get_view_elements().extent(0), KOKKOS_LAMBDA(const int i) {
-            printf(" pt: [(%li, %li, %li, %li) - %i]\n", eeel(i, 0), eeel(i, 1), eeel(i, 2), eeel(i, 3), proc_num);
-        });
-
+    
     return (gen_pts && gen_elm);
     return true;
 }
