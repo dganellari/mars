@@ -437,6 +437,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
 
      Integer n_levels=levels.size();
+     levels_.resize(n_levels);
      constrained_dofs_levels_.resize(n_levels);
      constrained_mat_levels_.resize(n_levels);
      constrained_vec_levels_.resize(n_levels);
@@ -444,6 +445,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
      for(Integer i=0;i<n_levels;i++)
      {
+      levels_[i]=levels[i];
       build_boundary_info(constrained_dofs_levels_[i],constrained_mat_levels_[i],constrained_vec_levels_[i],levels[i]);
      }
 
@@ -709,6 +711,31 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
     }
 
 
+    void apply_bc_to_vector(std::vector<Real>& b, Integer level=-1)const
+    {
+      Real one=1.0;
+      
+      auto& level_cumultive_n_dofs=full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
+      if(level==-1)
+        level=levels_[levels_.size()-1];
+      std::cout<<"apply_zero_bc_to_vector"<<std::endl;
+      std::cout<<"level="<<level<<std::endl;
+      Integer ndofs=constrained_vec_levels_[level].size();
+
+      if(b.size()<ndofs)
+         {b.resize(ndofs,0);}
+
+        for(Integer i=0;i<ndofs;++i)
+       {
+        // std::cout<<i<<"/"<<ndofs<<std::endl;
+        if(constrained_vec_levels_[level][i])
+        {       
+         b[i]=constrained_vec_levels_[level][i];
+        }
+       }
+      
+    }
+
 
     void apply_zero_bc_to_vector(std::vector<Real>& b, Integer level=-1)const
     {
@@ -716,19 +743,24 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
       
       auto& level_cumultive_n_dofs=full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
       if(level==-1)
-        level=level_cumultive_n_dofs.size()-1;
-      // std::cout<<"apply_zero_bc_to_vector"<<std::endl;
-      // std::cout<<"level="<<level<<std::endl;
-      Integer ndofs=level_cumultive_n_dofs[level];
-      b.resize(ndofs,0);
-      for(Integer i=0;i<ndofs;++i)
-     {
-      // std::cout<<i<<"/"<<ndofs<<std::endl;
-      if(constrained_vec_levels_[level][i])
-      {       
-       b[i]=0;//constrained_vec_levels_[level][i];
+        level=levels_[levels_.size()-1];
+      std::cout<<"apply_zero_bc_to_vector"<<std::endl;
+      std::cout<<"level="<<level<<std::endl;
+      Integer ndofs=constrained_vec_levels_[level].size();
+      if(b.size()<ndofs)
+         b.resize(ndofs,0);
+      else
+      {
+        for(Integer i=0;i<ndofs;++i)
+       {
+        // std::cout<<i<<"/"<<ndofs<<std::endl;
+        if(constrained_vec_levels_[level][i])
+        {       
+         b[i]=0;//constrained_vec_levels_[level][i];
+        }
+       }
       }
-     }
+
     }
 
  private:
@@ -745,6 +777,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
     std::vector<bool> constrained_dofs_;
     std::vector<Real> constrained_mat_;
     std::vector<Real> constrained_vec_;
+    std::vector<Integer> levels_;
     std::vector<std::vector<bool>> constrained_dofs_levels_;
     std::vector<std::vector<Real>> constrained_mat_levels_;
     std::vector<std::vector<Real>> constrained_vec_levels_;

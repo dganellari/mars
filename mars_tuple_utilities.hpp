@@ -33,7 +33,7 @@ constexpr T Max (const T& a,const T& b)
 }
 
 template<typename T,typename...Ts>
-constexpr T Max(const T&t,const Ts&...ts)
+constexpr T Max(const T& t,const Ts&...ts)
 {
   return Max(t,Max(ts...));
 }
