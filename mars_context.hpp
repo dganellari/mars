@@ -743,9 +743,10 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
       
       auto& level_cumultive_n_dofs=full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
       if(level==-1)
-        level=levels_[levels_.size()-1];
+        level=levels_.size()-1;//[levels_.size()-1];
       std::cout<<"apply_zero_bc_to_vector"<<std::endl;
       std::cout<<"level="<<level<<std::endl;
+      std::cout<<"constrained_vec_levels_.size()="<<constrained_vec_levels_.size()<<std::endl;
       Integer ndofs=constrained_vec_levels_[level].size();
       if(b.size()<ndofs)
          b.resize(ndofs,0);

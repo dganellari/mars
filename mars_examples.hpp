@@ -8269,11 +8269,11 @@ void compute_working_set(std::vector<bool>& working_set,const std::vector<Real>&
    		patch_active_set_gauss_seidel(x,AL,b,F_constraint,nodes2entity[0],
                               		 local_mat,A_tmp,H_tmp,b_tmp,lambda_tmp,y_tmp,c_tmp,200);
 
-   		// std::cout<<" post post patch_active_set_gauss_seidel level"<< level<<std::endl;	
+   		std::cout<<" post post patch_active_set_gauss_seidel level"<< level<<std::endl;	
 
-     //    std::vector<Real> rhs;
-   		// AL.multiply_and_add(rhs,-1.0,x,b);
-   		// std::cout<<" post multiply_and_add level"<< level<<std::endl;	
+        std::vector<Real> rhs;
+   		AL.multiply_and_add(rhs,-1.0,x,b);
+   		std::cout<<" post multiply_and_add level"<< level<<std::endl;	
 
 
 
@@ -10727,11 +10727,13 @@ void truncate_matrix(SparseMatrix<Real>& C_truncated_mat,const SparseMatrix<Real
 
         // {0.026703307073099,0.022496170882933,0,0,0.001078653727901,-0.022145178768472,0.068164173233844,0.000000259594693,-0.026732468108231,0.023088162955592,-0.027099419222832,-0.024215419172006,0.026703271917128,-0.022494818034611,-0.027099349664396,0.024214044757882,0.026732516602371,0.023089526194752,0,0,0.027787621981669,0.000000066291527,-0.001078679752341,-0.022143962685241,-0.025761846634974,-0.095969452799776,-0.025759941477953,0.095969356725823,0,0,0,0,0.066726541220820,0.006305898489267,0,-0.050000000000000,0,-0.050000000000000,0.051640943561982,0.042726232725873,-0.000000324054964,-0.070199322260698,-0.002995443989861,-0.056916928223938,0,-0.050000000000000,0.091234852608241,0.000000958542696,0.002994523411544,-0.056917693644943};
         std::vector<std::vector<bool>> working_set(levels.size(),std::vector<bool>{});
-
+        std::cout<<"ProjectContactConstraints=="<<std::endl;
         auto contact_constraints=ProjectContactConstraints(W_ptr);
         auto AL_nt=Ant_levels[levels.size()-1];
         auto AL_nt_nobc=Ant_levels[levels.size()-1];
+        std::cout<<"build_boundary_info(levels)=="<<std::endl;
         context.build_boundary_info(levels);
+        std::cout<<"apply_zero_bc_to_vector=="<<std::endl;
         context.apply_zero_bc_to_vector(active_x);
          std::cout<<"starting active_solution=="<<std::endl;
         for(Integer i=0;i<active_x.size();i++)
