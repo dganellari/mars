@@ -63,6 +63,13 @@ find_package(MPIExtended)
 option(MARS_USE_CUDA "Build mars with cuda support" OFF)
 
 
+if (NOT DEFINED CMAKE_CXX_STANDARD_REQUIRED)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+endif()
+if (NOT DEFINED CMAKE_CXX_STANDARD)
+    set(CMAKE_CXX_STANDARD 11)
+endif()
+
 if(TRY_WITH_KOKKOS)
 	if (NOT TRILINOS_DIR)
 	  message(STATUS "Setting TRILINOS_DIR to $ENV{TRILINOS_DIR}")
@@ -207,7 +214,6 @@ target_compile_options(mars PUBLIC
 target_link_libraries(mars ${MPI_LIBRARIES})
 #target_compile_features(mars PUBLIC cxx_std_11)
 
-add_definitions("-std=c++11")
 target_include_directories(mars PUBLIC .)
 target_include_directories(mars PUBLIC generation)
 
@@ -216,6 +222,7 @@ IF(Kokkos_FOUND)
 	MESSAGE(" Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
 	MESSAGE(" Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
 	MESSAGE(" Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
+
 
 	IF(MARS_USE_CUDA AND NOT Kokkos_TPL_LIBRARIES MATCHES "cuda")
 		MESSAGE(FATAL_ERROR "Enable Kokkos Cuda or unset MARS_USE_CUDA to continue with OpenMP!")
