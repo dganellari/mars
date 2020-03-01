@@ -673,19 +673,26 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
 
     template<typename SystemMat>
-    void apply_zero_bc_to_matrix(SystemMat& A)
+    void apply_zero_bc_to_matrix(SystemMat& A,const Integer level)
     {
+
       Real one=1.0;
+
+      auto& level_cumultive_n_dofs=full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
+
+      Integer n_dofs=level_cumultive_n_dofs[level];
+
+
       for(Integer i=0;i<n_dofs_;++i)
      {
-      if(constrained_dofs_[i])
+      if(constrained_dofs_levels_[level][i])
       {       
         A.set_zero_row(i);
         A.equal(one,i,i);
       }
       else
       {
-        A.row_static_condensation(i,constrained_dofs_);
+        A.row_static_condensation(i,constrained_dofs_levels_[level]);
       }
      }
     }
