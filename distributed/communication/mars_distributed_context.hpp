@@ -98,6 +98,11 @@ public:
         return impl_->scatter_gids(global, local);
     }
 
+    void scatterv_gids(const local_sfc global, const local_sfc local, const std::vector<int> &counts) const
+    {
+        return impl_->scatterv_gids(global, local, counts);
+    }
+
     int id() const
     {
         return impl_->id();
@@ -132,6 +137,8 @@ private:
         gather_gids(const gid_vector &local_gids) const = 0;
         virtual local_sfc
         scatter_gids(const local_sfc global, const local_sfc local) const = 0;
+        virtual void 
+        scatterv_gids(const local_sfc global, const local_sfc local, const std::vector<int>& counts) const = 0;
         virtual int id() const = 0;
         virtual int size() const = 0;
         virtual void barrier() const = 0;
@@ -159,6 +166,11 @@ private:
         scatter_gids(const local_sfc global, const local_sfc local) const override
         {
             return wrapped.scatter_gids(global, local);
+        }
+        virtual void
+        scatterv_gids(const local_sfc global, const local_sfc local, const std::vector<int>& counts) const override
+        {
+            wrapped.scatterv_gids(global, local, counts);
         }
         int id() const override
         {
@@ -193,6 +205,7 @@ private:
 struct local_context
 {
     using local_sfc = ViewVectorType<unsigned int>;
+    using gid_vector = std::vector<unsigned int>;
 
     gathered_vector<unsigned int>
     gather_gids(const std::vector<unsigned int> &local_gids) const
@@ -207,6 +220,11 @@ struct local_context
     scatter_gids(const local_sfc global, const local_sfc local) const
     {
         return ViewVectorType<unsigned int>("local_context_view",0);
+    }
+
+    void 
+    scatterv_gids(const local_sfc global, const local_sfc local, const std::vector<int>& counts) const
+    {
     }
     int id() const { return 0; }
 

@@ -9,6 +9,28 @@ namespace mars
 class SFC
 {
 public:
+    inline void compact_elements(const ViewVectorType<unsigned int> scan_indices,
+                                 const ViewVectorType<bool> all_elements, const unsigned int size)
+    {
+        using namespace Kokkos;
+
+        Timer timer;
+
+        exclusive_bool_scan(0, size, scan_indices, all_elements);
+
+        //otherwise kokkos lambda will not work with CUDA
+        ViewVectorType<unsigned int> tmp = elements_;
+
+        parallel_for(
+            size, KOKKOS_LAMBDA(const unsigned int i) {
+                if (all_elements(i) == 1)
+                {
+                    unsigned int k = scan_indices(i);
+                    tmp(k) = i;
+                    //elements_(k) =i; It will not work with CUDA. this.elements_ is a host pointer.
+                }
+            });
+    }
     //add point functor
     struct GenerateSFC
     {
@@ -80,9 +102,9 @@ public:
             assert(yDim != 0);
             assert(zDim != 0);
 
-            const unsigned int n__anchor_nodes = xDim * yDim *zDim;
+            const unsigned int n__anchor_nodes = xDim * yDim * zDim;
             reserve_elements(n__anchor_nodes);
-
+            std::cout<<"nnodes sfc: "<<n__anchor_nodes<<std::endl;
             //calculate all range before compaction to avoid sorting.
             unsigned int allrange = encode_morton_3D(xDim, yDim, zDim); //TODO : check if enough. Test with xdim != ydim.
             ViewVectorType<bool> all_elements("predicate", allrange);
@@ -103,29 +125,6 @@ public:
             return false;
         }
         }
-    }
-
-    inline void compact_elements(const ViewVectorType<unsigned int> scan_indices,
-                                 const ViewVectorType<bool> all_elements, const unsigned int size)
-    {
-        using namespace Kokkos;
-
-        Timer timer;
-
-        exclusive_bool_scan(0, size, scan_indices, all_elements);
-
-        //otherwise kokkos lambda will not work with CUDA
-        ViewVectorType<unsigned int> tmp = elements_; 
-
-        parallel_for(
-            size, KOKKOS_LAMBDA(const unsigned int i) {
-                if (all_elements(i) == 1)
-                {
-                    unsigned int k = scan_indices(i);
-                    tmp(k) = i;
-                    //elements_(k) =i; It will not work with CUDA. this.elements_ is a host pointer.
-                }
-            });
     }
 
     template <Integer Type>
@@ -161,4 +160,4 @@ private:
 };
 
 } // namespace mars
-#endif 
+#endif

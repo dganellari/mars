@@ -80,6 +80,12 @@ struct dry_run_context_impl {
         return ViewVectorType<unsigned int>("dry_run", 0);
     }
 
+    void
+    scatterv_gids(const ViewVectorType<unsigned int> global, const ViewVectorType<unsigned int> local, 
+                const std::vector<int>& counts) const
+    {
+    }
+
     int id() const { return 0; }
 
     int size() const { return num_ranks_; }

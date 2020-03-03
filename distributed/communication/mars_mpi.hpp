@@ -28,15 +28,15 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
 #pragma once
-
 #include <algorithm>
-#include <iostream>
-#include <type_traits>
-#include <vector>
-
 #include <assert.h>
+#include <cstdint>
+#include <iostream>
+#include <limits>
 #include <mars_mpi_error.hpp>
 #include <mpi.h>
+#include <type_traits>
+#include <vector>
 
 #include "mars_gathered_vector.hpp"
 #include "mars_globals.hpp"
@@ -96,6 +96,17 @@ static_assert(std::is_same<std::size_t, unsigned long>::value ||
                   std::is_same<std::size_t, unsigned long long>::value,
               "size_t is not the same as unsigned long or unsigned long long");
 
+inline int SizeToInt(unsigned int u)
+{
+    if (u > static_cast<unsigned int>((std::numeric_limits<int>::max)()))
+    {
+        /*  throw std::overflow_error(
+            "unsinged int value cannot be stored in a variable of type int."); */
+        std::cout << "limit: " << std::numeric_limits<unsigned char>::max() << "limit 2: " << std::numeric_limits<unsigned short>::max() << std::endl;
+    }
+
+    return static_cast<int>(u);
+}
 // Gather individual values of type T from each rank into a std::vector on
 // the root rank.
 // T must be trivially copyable.
@@ -121,13 +132,28 @@ ViewVectorType<T> scatter(const ViewVectorType<T> global,
 {
     using traits = mpi_traits<T>;
     unsigned int chunk_size = local.extent(0);
-
+  
     MPI_OR_THROW(MPI_Scatter,
                  global.data(), chunk_size, traits::mpi_type(), // send buffer
                  local.data(), chunk_size, traits::mpi_type(),  // receive buffer
                  0, comm);
 
     return local;
+}
+
+template <typename T>
+void scatterv(const ViewVectorType<T> global,
+            const ViewVectorType<T> local, const std::vector<int>& counts, MPI_Comm comm)
+{
+    using traits = mpi_traits<T>;
+    unsigned int chunk_size = local.extent(0);
+
+    auto displs = make_scan_index(counts);
+
+    MPI_OR_THROW(MPI_Scatterv,
+                 global.data(), counts.data(), displs.data(), traits::mpi_type(), // send buffer
+                 local.data(), chunk_size, traits::mpi_type(),                   // receive buffer
+                 0, comm);
 }
 
 // Gather individual values of type T from each rank into a std::vector on
