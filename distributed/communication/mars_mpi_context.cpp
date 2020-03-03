@@ -70,6 +70,12 @@ struct mpi_context_impl
         return mpi::scatter(global, local, comm_);
     }
 
+    void scatterv_gids(const ViewVectorType<unsigned int> global, 
+                    const ViewVectorType<unsigned int> local, const std::vector<int>& counts) const
+    {
+        mpi::scatterv(global, local, counts, comm_);
+    }
+
     std::string name() const { return "MPI"; }
     int id() const { return rank_; }
     int size() const { return size_; }

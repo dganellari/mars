@@ -220,7 +220,7 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char 
         // run some kokkos simulations!
         DistributedHex8Mesh mesh;
         generate_distributed_cube(context, mesh, level, level, level);
-
+/* 
         int proc_num = rank(context);
 
         ViewMatrixType<Real> poi = mesh.get_view_points();
@@ -237,7 +237,7 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char 
                 printf("el 3D: [(  %li, %li, %li, %li, %li, %li, %li, %li )] - %i]\n",
                         eeel(i, 0), eeel(i, 1), eeel(i, 2), eeel(i, 3), eeel(i, 4), eeel(i, 5), 
                                     eeel(i, 6), eeel(i, 7), proc_num);
-            });
+            }); */
 #endif
     }
     catch (std::exception &e)

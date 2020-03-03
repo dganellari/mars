@@ -1346,7 +1346,7 @@ int main(int argc, char *argv[])
 		//run_benchmarks(level, refine_level);
 
 		//test_mars_nonsimplex_mesh_generation_kokkos_2D(level, level);
-		test_mars_nonsimplex_mesh_generation_kokkos_3D(level, level, level);
+		//test_mars_nonsimplex_mesh_generation_kokkos_3D(level, level, level);
 		//test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(argc, argv, level);
 		test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(argc, argv, level);
 

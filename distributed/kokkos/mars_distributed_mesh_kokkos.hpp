@@ -18,6 +18,7 @@
 #include "mars_sfc_generation.hpp"
 #endif
 #include "mars_utils_kokkos.hpp"
+#define ASSERT(left,operator,right) { if(!((left) operator (right))){ std::cerr << "ASSERT FAILED: " << #left << #operator << #right << " @ " << __FILE__ << " (" << __LINE__ << "). " << #left << "=" << (left) << "; " << #right << "=" << (right) << std::endl; } }
 
 namespace mars
 {
@@ -405,6 +406,7 @@ public:
                 // in this way the array is already sorted and you just compact it using scan which is much faster in parallel.
 
                 unsigned int gl_index = global(i);
+
                 assert(gl_index < encode_morton_3D(xDim + 1, yDim + 1, zDim + 1));
 
                 // gl_index defines one element by its corner node. Then we add all the other nodes for that element.
@@ -438,7 +440,7 @@ public:
         ViewVectorType<bool> all_elements("predicate", allrange);
 
         parallel_for("local_sfc_range", get_chunk_size(),
-                     BuildGlobalPointIndex<Type>(all_elements, local_sfc_, xDim, yDim));
+                     BuildGlobalPointIndex<Type>(all_elements, local_sfc_, xDim, yDim, zDim));
 
         return all_elements;                     
     }
