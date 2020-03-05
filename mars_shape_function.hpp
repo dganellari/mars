@@ -1077,27 +1077,53 @@ public:
      Integer local_nodes[entity_points];
      std::array<Integer,entity_points> face_nodes;
      Combinations<manifold_points,entity_points>::generate(entity_iter,local_nodes);
-     // // std::cout<<"DofsOrdering"<<std::endl;
+
+     std::cout<<"DofsOrdering"<<std::endl;
+
+
+     std::cout<<"entity_iter="<<entity_iter<<std::endl;
+
+
+     std::cout<<"local_nodes"<<std::endl;
+
+     for(std::size_t i=0;i<entity_points;i++)
+          {
+            std::cout<<local_nodes[i]<<" ";
+          }
+
+     std::cout<<"face_nodes"<<std::endl;
 
      for(std::size_t i=0;i<entity_points;i++)
           {
             face_nodes[i]=nodes[local_nodes[i]];
-            // // std::cout<<face_nodes[i]<<" ";
+            std::cout<<face_nodes[i]<<" ";
           }
-     // // std::cout<<std::endl;
+     std::cout<<std::endl;
 
      auto ordered_face_nodes=argsort(face_nodes);
+     
+     std::cout<<"ordered_face_nodes"<<std::endl;
+     for(std::size_t i=0;i<ordered_face_nodes.size();i++)
+          {
+            std::cout<<ordered_face_nodes[i]<<" ";
+          }
+     std::cout<<std::endl;
 
-     // for(std::size_t i=0;i<ordered_face_nodes.size();i++)
-     //      {
-     //        // std::cout<<ordered_face_nodes[i]<<" ";
-     //      }
-     // // std::cout<<std::endl;
+
+     auto prova=argsort(ordered_face_nodes);
+     std::cout<<"prova"<<std::endl;
+     for(std::size_t i=0;i<prova.size();i++)
+          {
+            std::cout<<prova[i]<<" ";
+          }
 
 
 
 
-     return ordered_face_nodes;
+
+     // return ordered_face_nodes;
+
+     return prova;
     }
 
 };
@@ -1451,6 +1477,8 @@ class SimplexRT1Coefficient
 public:
 
     using OutputRT0=typename ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 0>::Output;
+    using OutputP1=typename ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 1>::Output;
+
     static constexpr auto barycenter=LinearSimplex<ManifoldDim>::barycenter();
     
     static constexpr auto value()
@@ -1464,6 +1492,39 @@ public:
                mat(i,j)=rt0barycenter[j](i,0);
         return mat;
     }
+
+    static constexpr auto inv_mat()
+    {
+        OutputRT0 rt0barycenter;
+        ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 0>::apply(barycenter,rt0barycenter);
+        Matrix<Real,ManifoldDim,ManifoldDim> mat;
+
+        for(Integer i=0;i<ManifoldDim;i++)
+           for(Integer j=0;j<ManifoldDim;j++)
+               mat(i,j)=rt0barycenter[j](i,0);
+
+        return inverse(mat);
+    }
+
+    // static constexpr auto mat()
+    // {
+    //     OutputP1 p1barycenter;
+    //     ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 1>::apply(barycenter,p1barycenter);
+
+    //     auto mat_inv=inverse(value());
+    //     Matrix<Real,ManifoldDim,ManifoldDim> mat_coeffs;
+
+    //     for(Integer i=0;i<ManifoldDim;i++)
+    //     {
+
+    //       for(Integer j=0;j<ManifoldDim;j++)
+    //         mat_coeffs(j,i)=mat_inv(j,i) * (ManifoldDim+1);
+
+    //     }
+
+    //     return mat_coeffs;
+    // }
+
 };
 //////////////////////////////////////////////////////
 ////////        SIMPLEX - IDENTITY - P0       ////////
@@ -2394,7 +2455,7 @@ public:
   // static constexpr Integer ManifoldDim=2;
   static constexpr Integer Ndofs=NumberOfRaviartThomasSimplexDofs<ManifoldDim,1>();
   static constexpr Integer RT0Ndofs=NumberOfRaviartThomasSimplexDofs<ManifoldDim,0>();
-  static constexpr Integer PnNdofs=NumberOfLagrangianSimplexDofs<ManifoldDim,Order>();
+  static constexpr Integer PnNdofs=NumberOfLagrangianSimplexDofs<ManifoldDim-1,Order>();
   using Elem=Simplex<Dim,ManifoldDim>;
   using Output=Vector<Matrix<Real, ManifoldDim, 1>,Ndofs>;
   // using Output=Vector<Matrix<Real, 1, 1>,ManifoldDim+1>;
@@ -2417,6 +2478,53 @@ apply (const Vector<Real,ManifoldDim>& point, Output & func)
     ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 1>::apply(point,p1);
     
 
+////////////////////////////////OLD BUT MAYBE WORKING STILL CHECK ///////////////////////////////
+    // Integer cont=0;
+    // // loop on RT0 functions
+    // for(Integer i=0;i<RT0Ndofs;i++)
+    //   // loop on dimension
+    //   for(Integer j=0;j<ManifoldDim;j++)
+    //     {
+    //     // loop on dimension
+    //     for(Integer k=0;k<ManifoldDim;k++)
+    //        func[cont](k,0)=rt0[i](k); 
+    //      cont++;
+    //      }
+    // cont=0;
+
+    // for(Integer i=0;i<RT0Ndofs;i++)
+    //   // loop on dimension
+    //   for(Integer j=0;j<PnNdofs;j++)
+    //     {
+    //     // loop on dimension
+    //     if(j!=ManifoldDim-i)
+    //     {for(Integer k=0;k<ManifoldDim;k++)
+    //        func[cont](k,0)=func[cont](k,0)*p1[j](0,0); 
+    //      cont++;
+    //      }
+    //      }
+
+
+
+    // // // the i-th column represents the coefficients of the i-th momenta shape function
+    // // // auto inv_mat=inverse(mat);
+    // for(Integer i=0;i<ManifoldDim;i++)
+    //     for(Integer j=0;j<ManifoldDim;j++)
+    //         {
+    //             func[cont+i](j,0)=0;
+    //             for(Integer k=0;k<ManifoldDim;k++)
+    //                func[cont+i](j,0)+=mat_coeffs(k,i)*rt0[ManifoldDim-k](j,0)*p1[k](0,0);
+    //         }
+
+
+
+
+   // we compute the shape functions in this way:
+   // boundary dof psi = RT0_i (lambda_m - lambda_n)
+   // where n is the node opposite to the face i and m is one of the node of the face i
+   // psi = sum_{i=0}^{dim-1} lambda_i RT0_i
+
+
 
     Integer cont=0;
     // loop on RT0 functions
@@ -2431,17 +2539,25 @@ apply (const Vector<Real,ManifoldDim>& point, Output & func)
          }
     cont=0;
 
+
+    const auto combs=combinations_generate<ManifoldDim+1,ManifoldDim>(); 
     for(Integer i=0;i<RT0Ndofs;i++)
+    {
+      const auto& comb_i=combs[i];
+      
       // loop on dimension
-      for(Integer j=0;j<PnNdofs;j++)
+      for(Integer j=0;j<ManifoldDim;j++)
         {
+        Real tmp=p1[comb_i[j]](0,0)-p1[ManifoldDim-i](0,0);
         // loop on dimension
-        if(j!=ManifoldDim-i)
-        {for(Integer k=0;k<ManifoldDim;k++)
-           func[cont](k,0)=func[cont](k,0)*p1[j](0,0); 
-         cont++;
-         }
-         }
+        // if(j!=ManifoldDim-i)
+        for(Integer k=0;k<ManifoldDim;k++)
+           func[cont](k,0)=func[cont](k,0)*tmp; 
+           cont++;
+         
+        }
+    }
+
 
 
 
@@ -2915,6 +3031,7 @@ public:
     using OutputP1=typename ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 1>::Output;
     static constexpr auto barycenter=LinearSimplex<ManifoldDim>::barycenter();
     static constexpr auto mat_coeffs=SimplexRT1Coefficient<Dim,ManifoldDim>::value();
+    // static constexpr auto inv_mat=SimplexRT1Coefficient<Dim,ManifoldDim>::inv_mat();
     static constexpr const auto reference_nodes=Elem::reference();
 
 
@@ -3028,6 +3145,8 @@ public:
   using OutputP1=typename ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 1>::Output;
   static constexpr auto barycenter=LinearSimplex<ManifoldDim>::barycenter();
   static constexpr auto mat_coeffs=SimplexRT1Coefficient<Dim,ManifoldDim>::value();
+  static constexpr auto inv_mat=SimplexRT1Coefficient<Dim,ManifoldDim>::inv_mat();
+
   // static constexpr const auto reference_nodes=Elem::reference();
   static constexpr const auto reference_external_coeff=DynamicShapeFunctionValueAux<FunctionSpace>::reference_external_coeff;
   // static constexpr const  Matrix<Real, 6,2> reference_external_coeff{-6.,-6.,6.,0.,-6.,-6.,0.,6.,6.*SquareRoot2,0.,0.,6.*SquareRoot2};
@@ -3183,14 +3302,24 @@ public:
     Matrix<Real,ManifoldDim,ManifoldDim> dynamic_coeff;
     DynamicShapeFunctionValueAux<FunctionSpace>::inverse_mat_dynamic_coeffs(dynamic_coeff,mapping);
 
+     Vector<Real,Dim> point;
 
+
+
+
+
+     auto inv_map=inverse(mapping);
     for(Integer row=0;row<Rows;row++)
     {
 
-      // // std::cout<<"row"<<row<<"/"<<Rows<<std::endl;
+      // std::cout<<"row"<<row<<"/"<<Rows<<std::endl;
 
     cont=0;
     ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 0>::apply(points,row,rt0_reference);
+    for(Integer pp=0;pp<ManifoldDim;pp++)
+      point[pp]=points(row,pp);
+    
+    ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 1>::apply(point,p1);
 
 
     for(Integer i=0;i<RT0Ndofs;i++)
@@ -3220,6 +3349,177 @@ public:
           }
     }
 
+    // std::cout<<"combs"<<std::endl;
+    const auto combs=combinations_generate<ManifoldDim+1,ManifoldDim>(); 
+
+
+    // loop on RT0 functions
+    for(Integer i=0;i<RT0Ndofs;i++)
+    {
+      const auto& comb_i=combs[i];
+      // std::cout<<"i="<<i<<"/"<<RT0Ndofs<<std::endl;
+      // loop on dimension
+      for(Integer j=0;j<ManifoldDim;j++)
+      {
+        // std::cout<<"j="<<j<<"/"<<ManifoldDim<<std::endl;
+
+          for(Integer k=0;k<ManifoldDim;k++)
+          {
+            func_tmp[k]=rt0[i](k);
+          }
+        // std::cout<<"qui1"<<std::endl;
+
+          tmp=p1[comb_i[j]](0,0)-p1[ManifoldDim-i](0,0);
+        // std::cout<<"qui2"<<std::endl;
+
+
+          for(Integer k=0;k<ManifoldDim;k++)
+          {
+            func_tmp[k]=func_tmp[k]*tmp;
+          } 
+        // std::cout<<"qui3"<<std::endl;
+
+         // OutputFunc feeef(5.6);
+          for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+          {
+              n_tot=cont * NComponents +  n_comp ;
+              // std::cout<<"n_tot=="<<n_tot<<std::endl;
+              assign<NComponents>(func[n_tot][row],func_tmp,n_comp,0);               
+          }
+
+
+          cont++;       
+
+      }
+
+    }
+
+
+
+    // std::cout<<"inv_map="<<inv_map<<std::endl;
+    // std::cout<<inv_map<<std::endl;
+    // std::cout<<"mat_coeffs="<<std::endl;
+    // std::cout<<mat_coeffs<<std::endl;
+    // std::cout<<"val="<<std::endl;
+    // std::cout<<inverse(inv_mat)<<std::endl;
+    // std::cout<<"inv_mat="<<std::endl;
+    // std::cout<<inv_mat<<std::endl;
+    // std::cout<<inv_mat*inverse(inv_mat)<<std::endl;
+    // std::cout<<inverse(inv_mat)*inv_mat<<std::endl;
+
+    // std::cout<<"before internal"<<std::endl;
+    for(Integer i=0;i<ManifoldDim;++i)
+      {
+        // std::cout<<"i="<<i<<std::endl;
+
+          for(Integer k=0;k<ManifoldDim;k++) 
+            func_tmp(k)=0;
+
+
+          for(Integer j=0;j<ManifoldDim;j++)
+          {
+                Real alpha_j=0;
+
+                for(Integer h=0;h<ManifoldDim;h++)
+                    alpha_j+=inv_mat(j,h)*inv_map(h,i)*(ManifoldDim+1);
+
+
+
+                for(Integer k=0;k<ManifoldDim;k++)          
+                    func_tmp(k)+= alpha_j * p1[ManifoldDim-j](0,0) * rt0_unsigned[j](k) ;
+
+                  // std::cout<<"(i,j)=("<<i<<","<<j<<"). alpha="<<alpha_j<<std::endl;
+          }
+
+
+          // std::cout<<func[cont+i]<<std::endl;
+
+
+          
+          for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+          {
+              n_tot=(cont+i) * NComponents +  n_comp ;
+              // std::cout<<"n_tot="<<n_tot<<std::endl;
+              assign<NComponents>(func[n_tot][row],func_tmp,n_comp,0);  
+          }
+
+      }
+
+    // std::cout<<"after internal"<<std::endl;
+
+
+
+
+
+
+
+
+
+
+    // // loop on RT0 functions
+    // for(Integer i=0;i<RT0Ndofs;i++)
+    // {
+    //   // loop on dimension
+    //   for(Integer j=0;j<ManifoldDim;j++)
+    //     {
+    //     // loop on dimension
+    //     // for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+    //        for(Integer k=0;k<ManifoldDim;k++)
+    //         {
+    //           // func[cont][row](k,0)=rt0[i](k); 
+    //           func_tmp[k]=rt0[i](k);
+    //         }
+
+                    
+
+    //     tmp=reference_external_coeff(cont,0)*(points(row,0)-barycenter[0]); 
+
+    //     for(Integer k=1;k<ManifoldDim;k++)
+    //         tmp+=reference_external_coeff(cont,k)*(points(row,k)-barycenter[k]);
+
+    //       for(Integer k=0;k<ManifoldDim;k++)
+    //       {
+
+    //              func_tmp[k]*=tmp;
+    //       }
+
+    //         for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+    //         {
+    //             n_tot=cont * NComponents +  n_comp ;
+    //             assign<NComponents>(func[n_tot][row],func_tmp,n_comp,0);               
+    //         }
+        
+    //      cont++;
+    //      }
+    // }
+
+    // for(Integer i=0;i<ManifoldDim;++i)
+    //   {
+    //       for(Integer j=0;j<ManifoldDim;j++)
+    //       {
+    //          func[cont+i][row](j)=rt0_unsigned[0](j) * points(row,ManifoldDim-1) * dynamic_coeff(i,0);
+    //          func_tmp[j]=rt0_unsigned[0](j) * points(row,ManifoldDim-1) * dynamic_coeff(i,0);
+    //       }
+
+    //       for(Integer k=1;k<ManifoldDim;k++)          
+    //         {
+    //          for(Integer j=0;j<ManifoldDim;j++)
+    //           {
+    //             func[cont+i][row](j)+=rt0_unsigned[k](j) * points(row,ManifoldDim-1-k) * dynamic_coeff(i,k); 
+    //             func_tmp[j]+=rt0_unsigned[k](j) * points(row,ManifoldDim-1-k) * dynamic_coeff(i,k); 
+    //           }
+    //         }
+
+    //         for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+    //         {
+    //             n_tot=(cont+i) * NComponents +  n_comp ;
+    //             assign<NComponents>(func[n_tot][row],func_tmp,n_comp,0);  
+    //         }
+    //   }
+
+    
+    }
+
 
     // // std::cout<<"mapping"<<std::endl;
     // // std::cout<<mapping<<std::endl; 
@@ -3235,147 +3535,72 @@ public:
     
 
 
-    // loop on RT0 functions
-    for(Integer i=0;i<RT0Ndofs;i++)
-    {
-      // loop on dimension
-      for(Integer j=0;j<ManifoldDim;j++)
-        {
-        // loop on dimension
-        // for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-           for(Integer k=0;k<ManifoldDim;k++)
-            {
-              // func[cont][row](k,0)=rt0[i](k); 
-              func_tmp[k]=rt0[i](k);
-            }
+    // // loop on RT0 functions
+    // for(Integer i=0;i<RT0Ndofs;i++)
+    // {
+    //   // loop on dimension
+    //   for(Integer j=0;j<ManifoldDim;j++)
+    //     {
+    //     // loop on dimension
+    //     // for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+    //        for(Integer k=0;k<ManifoldDim;k++)
+    //         {
+    //           // func[cont][row](k,0)=rt0[i](k); 
+    //           func_tmp[k]=rt0[i](k);
+    //         }
 
                     
 
-        tmp=reference_external_coeff(cont,0)*(points(row,0)-barycenter[0]); 
+    //     tmp=reference_external_coeff(cont,0)*(points(row,0)-barycenter[0]); 
 
-        for(Integer k=1;k<ManifoldDim;k++)
-            tmp+=reference_external_coeff(cont,k)*(points(row,k)-barycenter[k]);
+    //     for(Integer k=1;k<ManifoldDim;k++)
+    //         tmp+=reference_external_coeff(cont,k)*(points(row,k)-barycenter[k]);
 
-          // tmp*=FE.side_volume();
-        // // std::cout<<"cont=="<<cont<<std::endl;
-        // // std::cout<<tmp<<std::endl;
+    //       for(Integer k=0;k<ManifoldDim;k++)
+    //       {
 
-        // for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-          for(Integer k=0;k<ManifoldDim;k++)
-          {
-              // func[cont+n_comp][row](k,0)*=tmp; 
-                 // func[cont][row](k,0)*=tmp; 
-                 func_tmp[k]*=tmp;
-          }
+    //              func_tmp[k]*=tmp;
+    //       }
 
-
-           //n_dof = cont
-
-            for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-            {
-                n_tot=cont * NComponents +  n_comp ;
-                // // std::cout<<n_tot<<std::endl;
-                assign<NComponents>(func[n_tot][row],func_tmp,n_comp,0);               
-            }
+    //         for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+    //         {
+    //             n_tot=cont * NComponents +  n_comp ;
+    //             assign<NComponents>(func[n_tot][row],func_tmp,n_comp,0);               
+    //         }
         
 
 
-         cont++;
-         // cont = cont+ NComponents;
-         }
-    }
+    //      cont++;
+    //      }
+    // }
 
-     // // std::cout<<"func"<<std::endl;
-     // // std::cout<<func<<std::endl;
- 
+    // for(Integer i=0;i<ManifoldDim;++i)
+    //   {
+    //       for(Integer j=0;j<ManifoldDim;j++)
+    //       {
+    //          func[cont+i][row](j)=rt0_unsigned[0](j) * points(row,ManifoldDim-1) * dynamic_coeff(i,0);
+    //          func_tmp[j]=rt0_unsigned[0](j) * points(row,ManifoldDim-1) * dynamic_coeff(i,0);
+    //       }
 
-     // // std::cout<<"dynamic_coeff"<<std::endl;
-     // // std::cout<<dynamic_coeff<<std::endl;
+    //       for(Integer k=1;k<ManifoldDim;k++)          
+    //         {
+    //          for(Integer j=0;j<ManifoldDim;j++)
+    //           {
+    //             func[cont+i][row](j)+=rt0_unsigned[k](j) * points(row,ManifoldDim-1-k) * dynamic_coeff(i,k); 
+    //             func_tmp[j]+=rt0_unsigned[k](j) * points(row,ManifoldDim-1-k) * dynamic_coeff(i,k); 
+    //           }
+    //         }
 
-    for(Integer i=0;i<ManifoldDim;++i)
-      {
-        // // std::cout<<"i"<<i<<"/"<<ManifoldDim<<std::endl;
+    //         for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+    //         {
+    //             n_tot=(cont+i) * NComponents +  n_comp ;
+    //             assign<NComponents>(func[n_tot][row],func_tmp,n_comp,0);  
+    //         }
+    //   }
 
-          for(Integer j=0;j<ManifoldDim;j++)
-          {
-             // // std::cout<<"1 pre cont+i"<<cont+i<<std::endl;
-             func[cont+i][row](j)=rt0_unsigned[0](j) * points(row,ManifoldDim-1) * dynamic_coeff(i,0);
-             func_tmp[j]=rt0_unsigned[0](j) * points(row,ManifoldDim-1) * dynamic_coeff(i,0);
-              // // std::cout<<"1 post cont+i"<<cont+i<<std::endl;
-
-          }
-
-          for(Integer k=1;k<ManifoldDim;k++)          
-            {
-             for(Integer j=0;j<ManifoldDim;j++)
-              {
-                // // std::cout<<"2 pre cont+i"<<cont+i<<std::endl;
-                // // std::cout<<"i,k,j"<<i<<","<<k<<", "<<j<<std::endl;
-                func[cont+i][row](j)+=rt0_unsigned[k](j) * points(row,ManifoldDim-1-k) * dynamic_coeff(i,k); 
-                func_tmp[j]+=rt0_unsigned[k](j) * points(row,ManifoldDim-1-k) * dynamic_coeff(i,k); 
-                // // std::cout<<"2 post cont+i"<<cont+i<<std::endl;
-              }
-            }
-
-        // // std::cout<< "pre i=="<< i<<" cont=="<<cont<<std::endl;
-            for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-            {
-                n_tot=(cont+i) * NComponents +  n_comp ;
-                // // std::cout<<"pre "<<n_tot<<std::endl;
-                assign<NComponents>(func[n_tot][row],func_tmp,n_comp,0);  
-                // // std::cout<<"after "<<n_tot<<std::endl;             
-            }
-         // // std::cout<< "post i=="<< i<<" cont=="<<cont<<std::endl;
-      }
-
-    // // std::cout<<"row"<<std::endl;
-    // // std::cout<<row<<std::endl; 
-    // // std::cout<<"points"<<std::endl;
-    // // std::cout<<points<<std::endl; 
     
-    }
-    // // std::cout<<"func"<<std::endl;
-    // // std::cout<<func<<std::endl; 
-    //   auto& mesh=*FE.mesh_ptr();
-    //   auto normals=mesh.signed_normal().normals()[FE.elem_id()];
-      
-      // for(Integer row=0;row<Rows;row++)
-      // {
-      // // std::cout<<"elem_id="<<FE.elem_id()<<std::endl;
-      // // std::cout<<"normal1"<<std::endl;
-      // for(Integer i=0;i<func.size();i++)
-      // {
-      //   tmp=0.0;
-      //   // // std::cout<<"normals"<<std
-      //   for(Integer j=0;j<ManifoldDim;j++)
-      //     tmp+=func[i][row](j,0)*normals[0](j);
-      //   // std::cout<<i<<", "<<tmp<<std::endl;
-      // }
-      // // std::cout<<"elem_id="<<FE.elem_id()<<std::endl;
-      // // std::cout<<"normal2"<<std::endl;
-      // for(Integer i=0;i<func.size();i++)
-      // {
-      //   tmp=0.0;
-      //   // // std::cout<<"normals"<<std
-      //   for(Integer j=0;j<ManifoldDim;j++)
-      //     tmp+=func[i][row](j,0)*normals[1](j);
-      //   // std::cout<<i<<", "<<tmp<<std::endl;
-      // }
-      // // std::cout<<"elem_id="<<FE.elem_id()<<std::endl;
-      // // std::cout<<"normal3"<<std::endl;
-      // for(Integer i=0;i<func.size();i++)
-      // {
-      //   tmp=0.0;
-      //   // // std::cout<<"normals"<<std
-      //   for(Integer j=0;j<ManifoldDim;j++)
-      //     tmp+=func[i][row](j,0)*normals[2](j);
-      //   // // std::cout<<i<<", "<<tmp<<std::endl;
-      // }
-      // }
-  // // std::cout<<"reference_external_coeff"<<std::endl;
-  // // std::cout<<reference_external_coeff<<std::endl;
-  // // std::cout<<"dynamic_coeff"<<std::endl;
-  // // std::cout<<dynamic_coeff<<std::endl;
+    // }
+
   }
 
 
@@ -4649,6 +4874,8 @@ public:
     {
         const auto& map=(*map_ptr);
         const auto& mapping=map();
+
+
         dynamic_reference_values_=reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(reference_qp_points);
         // // std::cout<<"dynamic_reference_values_"<<std::endl;
         // // std::cout<<dynamic_reference_values_<<std::endl;
@@ -4671,12 +4898,94 @@ public:
                 }
             }
         }
+
+
     }
+
+
 
 
     // initialization of shape functions by choosing dynamically the reference quadrature points
     // the order of the quadrature rule (and so the number of points) is chosen at compile-time
-    void init(const Array<Real,Ndofs> &alpha, const qp_points_type& reference_qp_points, FiniteElem<Elem>&FE)
+    // void init(const qp_points_type& reference_qp_points, FiniteElem<Elem>&FE)
+    // {
+    //     const auto& map=(*map_ptr);
+    //     const auto& mapping=map();
+
+
+    //     dynamic_reference_values_=reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(reference_qp_points);
+    //     // // std::cout<<"dynamic_reference_values_"<<std::endl;
+    //     // // std::cout<<dynamic_reference_values_<<std::endl;
+    //     // // std::cout<<"mapping"<<std::endl;
+    //     // // std::cout<<mapping<<std::endl;
+    //     for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+    //     {
+    //         for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+    //         {
+    //             n_tot_=n_dof * NComponents +  n_comp ;
+    //             n_=n_comp*ShapeFunctionDim1;
+    //             for(Integer qp=0;qp<NQPoints;qp++)
+    //             {
+    //                 func_values_[n_tot_][qp].zero();
+    //                 // func_tmp_=  mapping * weighted_reference_values[n_dof][qp];
+    //                 func_tmp_=  mapping * dynamic_reference_values_[n_dof][qp];
+                    
+    //                 // se ncompontensts >1, allora assegni alla riga
+    //                 assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
+    //             }
+    //         }
+    //     }
+
+
+    // }
+
+
+    // // initialization of shape functions by choosing dynamically the reference quadrature points
+    // // the order of the quadrature rule (and so the number of points) is chosen at compile-time
+    // void init(const Array<Real,Ndofs> &alpha, const qp_points_type& reference_qp_points, FiniteElem<Elem>&FE)
+    // {
+    //     const auto& map=(*map_ptr);
+    //     const auto& mapping=map();
+    //     dynamic_reference_values_=reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(reference_qp_points);
+    //     // // std::cout<<"dynamic_reference_values_"<<std::endl;
+    //     // // std::cout<<dynamic_reference_values_<<std::endl;
+    //     // // std::cout<<"mapping"<<std::endl;
+    //     // // std::cout<<mapping<<std::endl;
+    //     // // std::cout<<"alpha"<<std::endl;
+    //     // // std::cout<<alpha<<std::endl;
+    //     // // std::cout<<"Ndofs"<<std::endl;
+    //     // // std::cout<<Ndofs<<std::endl;
+    //     // // std::cout<<"func_values_"<<std::endl;
+    //     // // std::cout<<func_values_<<std::endl;
+
+    //     for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+    //     {
+    //         for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+    //         {
+    //             n_tot_=n_dof * NComponents +  n_comp ;
+    //             n_=n_comp;
+    //             for(Integer qp=0;qp<NQPoints;qp++)
+    //             {   
+    //                 func_values_[n_tot_][qp].zero();
+    //                 // func_tmp_=  mapping * weighted_reference_values[n_dof][qp];
+    //                 func_tmp_=alpha[n_dof] * mapping * dynamic_reference_values_[n_dof][qp];
+                    
+    //                 // se ncompontensts >1, allora assegni alla riga
+    //                 assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
+    //             }
+    //         }
+    //     }
+
+    // }
+
+
+
+
+    template<bool value>
+    std::enable_if_t<value,void> 
+    // initialization of shape functions by choosing dynamically the reference quadrature points
+    // the order of the quadrature rule (and so the number of points) is chosen at compile-time
+    init_aux(const Array<Real,Ndofs> &alpha, const qp_points_type& reference_qp_points, FiniteElem<Elem>&FE)
     {
         const auto& map=(*map_ptr);
         const auto& mapping=map();
@@ -4710,7 +5019,38 @@ public:
             }
         }
 
+      // std::cout<<"reference_qp_points"<<std::endl;
+      // std::cout<<reference_qp_points<<std::endl;
+      // std::cout<<"alpha"<<std::endl;
+      // std::cout<<alpha<<std::endl;
+      // std::cout<<"mapping"<<std::endl;
+      // std::cout<<mapping<<std::endl;      
+      // DynamicShapeFunctionValue<FunctionSpace,Operator>::apply4(func_values_,reference_qp_points,FE,mapping,alpha); 
+      // std::cout<<"func_values_"<<std::endl;
+      // std::cout<<func_values_<<std::endl; 
+
     }
+
+
+    template<bool value>
+    std::enable_if_t<!value,void> 
+    init_aux(const Array<Real,Ndofs> &alpha, const qp_points_type& reference_qp_points, FiniteElem<Elem>&FE)
+    {
+        const auto& map=(*map_ptr);
+        const auto& mapping=map();
+
+        DynamicShapeFunctionValue<FunctionSpace,Operator>::apply4(func_values_,reference_qp_points,FE,mapping,alpha); 
+    }
+
+
+
+    void init(const Array<Real,Ndofs> &alpha, const qp_points_type& reference_qp_points, FiniteElem<Elem>&FE)
+    {
+     
+      // init_aux<true>(alpha,FE);
+      init_aux<build_on_reference>(alpha,reference_qp_points,FE);
+    }
+
 
 
     constexpr void init_map(const Map& map){map_ptr=std::make_shared<Map>(map);}

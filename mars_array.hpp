@@ -191,7 +191,7 @@ template<typename S, typename T>
 void subvector(std::vector<S>& u,const std::vector<T>&v,const std::vector<Integer>&w)
 {
   Integer size=w.size();
-  u.resize(size);
+  // u.resize(size);
   for(Integer ii=0;ii<size;ii++)
     u[ii]=v[w[ii]];
 }
@@ -201,7 +201,7 @@ template<typename S, typename T>
 void subvector_of_diff(std::vector<S>& u,const std::vector<T>&a,const std::vector<T>&b,const std::vector<Integer>&w)
 {
   Integer size=w.size();
-  u.resize(size);
+  // u.resize(size);
   for(Integer ii=0;ii<size;ii++)
     u[ii]=a[w[ii]]-b[w[ii]];
 }
