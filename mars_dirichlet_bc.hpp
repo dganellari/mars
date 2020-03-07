@@ -316,10 +316,14 @@ public:
 
          for(std::size_t comp=0;comp<BC_N::NComponents;comp++)
          {
-          // std::cout<<"i=="<<dofmap_trace[i*NComponents+comp]<<std::endl;
+      std::cout<< " compute_constraints begin " <<std::endl;
+      std::cout<<"dofmap_trace="<<dofmap_trace<<std::endl;
+      std::cout<<"i*BC_N::NComponents+BC_N::Component="<< i*BC_N::NComponents+BC_N::Component <<std::endl;
           constrained_dofs[dofmap_trace[i*BC_N::NComponents+comp]]=true;
           constrained_mat[dofmap_trace[i*BC_N::NComponents+comp]]=1;   
           constrained_vec[dofmap_trace[i*BC_N::NComponents+comp]]= rhs_local(comp,0);      
+       std::cout<< " compute_constraints end " <<std::endl;   
+
          }
     }
 
@@ -327,11 +331,13 @@ public:
     inline std::enable_if_t<(BC_N::Component>=0),void>
     compute_constraints(Dofs& constrained_dofs,Mat& constrained_mat,Vec& constrained_vec,const Integer& i, const DofMapTrace& dofmap_trace,const Rhs& rhs_local )
     {
-      // std::cout<< " compute_constraints begin " <<std::endl;
+      std::cout<< " compute_constraints begin " <<std::endl;
+      std::cout<<"dofmap_trace="<<dofmap_trace<<std::endl;
+      std::cout<<"i*BC_N::NComponents+BC_N::Component="<< i*BC_N::NComponents+BC_N::Component <<std::endl;
           constrained_dofs[dofmap_trace[i*BC_N::NComponents+BC_N::Component]]=true;
           constrained_mat[dofmap_trace[i*BC_N::NComponents+BC_N::Component]]=1;   
           constrained_vec[dofmap_trace[i*BC_N::NComponents+BC_N::Component]]= rhs_local(0,0);   
-      // std::cout<< " compute_constraints end " <<std::endl;   
+      std::cout<< " compute_constraints end " <<std::endl;   
     }
 
 
@@ -381,6 +387,10 @@ public:
     // decltype(tuple_dofmap_trace_) mmm(56,7,8,9,8,8,8,8,8);
     // std::remove_reference<decltype(tr)> kmnbvv(5,6,66,66,6);
     // decltype(dofmap_trace) mmm=4;
+
+    // std::cout<<"dofmap="<<dofmap<<std::endl;
+    // std::cout<<"dofmap_trace="<<dofmap_trace<<std::endl;
+
     
 
     
@@ -416,6 +426,10 @@ public:
      
      // tipo1 io(5);
      // mapped_type mm(3);
+
+
+
+
     for(std::size_t k=0; k < points.size() ;k++)
         {
 
@@ -433,11 +447,7 @@ public:
         }
     }
 
-    // std::cout<<"reference_points"<<std::endl;
-    // std::cout<<reference_points<<std::endl;
-
-    // std::cout<<"points"<<std::endl;
-    // std::cout<<points<<std::endl;
+ 
 
     // std::cout<<"elem points"<<std::endl;
     // for( std::size_t i=0;i<FE.points().size();i++)
@@ -448,12 +458,22 @@ public:
 
 
     auto ratio=dofmap_trace.size()/NComponents;
-    // std::cout<<"___--dofmap_trace="<<std::endl;
+    // std::cout<<"___--assembly dirichlet bc apply_aux="<<std::endl;
     // std::cout<<dofmap_trace<<std::endl;
     // for(std::size_t i=0;i<dofmap_trace.size();i++)
+    std::cout<<"reference_points"<<std::endl;
+    std::cout<<reference_points<<std::endl;
+
+    std::cout<<"points"<<std::endl;
+    std::cout<<points<<std::endl;
+
+    std::cout<<"___--ratio="<<std::endl;
+    std::cout<<ratio<<std::endl;
     for(std::size_t i=0;i<ratio;i++)
         {
          const auto& rhs_local=bc.eval(points[i],FE);
+         // std::cout<<"i="<<i<<"/"<<ratio<<std::endl;
+         // std::cout<<"BC_N::Component="<<BC_N::Component<<std::endl;
 
          compute_constraints<BC_N>(constrained_dofs,constrained_mat,constrained_vec,i,dofmap_trace,rhs_local);
          // for(std::size_t comp=0;comp<BC_N::NComponents;comp++)
@@ -527,7 +547,7 @@ public:
     //     {
     //      std::cout<<dm3[i]<<std::endl;
     //      }  
-    // std::cout<<std::endl;
+    // std::cout<<"apply bc assembly "<<std::endl;
     
 
 

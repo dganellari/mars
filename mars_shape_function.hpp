@@ -1078,44 +1078,40 @@ public:
      std::array<Integer,entity_points> face_nodes;
      Combinations<manifold_points,entity_points>::generate(entity_iter,local_nodes);
 
-     std::cout<<"DofsOrdering"<<std::endl;
+     // std::cout<<"DofsOrdering"<<std::endl;
 
 
-     std::cout<<"entity_iter="<<entity_iter<<std::endl;
+     // std::cout<<"entity_iter="<<entity_iter<<std::endl;
 
 
-     std::cout<<"local_nodes"<<std::endl;
+     // std::cout<<"local_nodes"<<std::endl;
 
-     for(std::size_t i=0;i<entity_points;i++)
-          {
-            std::cout<<local_nodes[i]<<" ";
-          }
+     // for(std::size_t i=0;i<entity_points;i++)
+     //      {
+     //        std::cout<<local_nodes[i]<<" ";
+     //      }
 
-     std::cout<<"face_nodes"<<std::endl;
+     // std::cout<<"face_nodes"<<std::endl;
 
      for(std::size_t i=0;i<entity_points;i++)
           {
             face_nodes[i]=nodes[local_nodes[i]];
-            std::cout<<face_nodes[i]<<" ";
+            // std::cout<<face_nodes[i]<<" ";
           }
-     std::cout<<std::endl;
+     // std::cout<<std::endl;
 
      auto ordered_face_nodes=argsort(face_nodes);
      
-     std::cout<<"ordered_face_nodes"<<std::endl;
-     for(std::size_t i=0;i<ordered_face_nodes.size();i++)
-          {
-            std::cout<<ordered_face_nodes[i]<<" ";
-          }
-     std::cout<<std::endl;
+     // std::cout<<"ordered_face_nodes"<<std::endl;
+     // for(std::size_t i=0;i<ordered_face_nodes.size();i++)
+     //      {
+     //        std::cout<<ordered_face_nodes[i]<<" ";
+     //      }
+     // std::cout<<std::endl;
 
 
      auto prova=argsort(ordered_face_nodes);
-     std::cout<<"prova"<<std::endl;
-     for(std::size_t i=0;i<prova.size();i++)
-          {
-            std::cout<<prova[i]<<" ";
-          }
+
 
 
 
@@ -1316,7 +1312,7 @@ template<Integer Dim>
 class DofsPoints<Simplex<Dim,3>,TraceOperator, LagrangeFE, 2>
 {
 public:
- static constexpr auto points=Dofs_Simplex2_Trace_Lagrange1;
+ static constexpr auto points=Dofs_Simplex2_Trace_Lagrange2;
  using type=decltype(points);
 };
 
@@ -3296,11 +3292,10 @@ public:
     Real tmp;
     SingleType func_tmp;
     Integer n_tot;
-    // // std::cout<<"apply4, elem id="<<FE.elem_id()<<std::endl;
     // // std::cout<<"NComponents"<<NComponents<< std::endl;
 
-    Matrix<Real,ManifoldDim,ManifoldDim> dynamic_coeff;
-    DynamicShapeFunctionValueAux<FunctionSpace>::inverse_mat_dynamic_coeffs(dynamic_coeff,mapping);
+    // Matrix<Real,ManifoldDim,ManifoldDim> dynamic_coeff;
+    // DynamicShapeFunctionValueAux<FunctionSpace>::inverse_mat_dynamic_coeffs(dynamic_coeff,mapping);
 
      Vector<Real,Dim> point;
 
@@ -3670,257 +3665,456 @@ public:
 
   using OutputRT0=typename ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 0>::Output;
   using OutputP1=typename ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 1>::Output;
+  using OutputGradP1=typename ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, GradientOperator, LagrangeFE, 1>::Output;
+
   using OutputDivRT0=typename ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, DivergenceOperator, RaviartThomasFE, 0>::Output;
   static constexpr auto barycenter=LinearSimplex<ManifoldDim>::barycenter();
   static constexpr auto mat_coeffs=SimplexRT1Coefficient<Dim,ManifoldDim>::value();
   static constexpr Integer ShapeFunctionDim1=FunctionSpace::ShapeFunctionDim1;
   static constexpr Integer ShapeFunctionDim2=FunctionSpace::ShapeFunctionDim2;
   static constexpr Integer FEFamily=RaviartThomasFE;
-  using SingleType=Matrix<Real, ShapeFunctionDim1, ShapeFunctionDim2>;
+  using SingleType=Matrix<Real, 1, 1>;
   static constexpr const auto reference_external_coeff=DynamicShapeFunctionValueAux<FunctionSpace>::reference_external_coeff;
   // static constexpr const  Matrix<Real, 6,2> reference_external_coeff{-6.,-6.,6.,0.,-6.,-6.,0.,6.,6.*SquareRoot2,0.,0.,6.*SquareRoot2};
+  static constexpr auto inv_mat=SimplexRT1Coefficient<Dim,ManifoldDim>::inv_mat();
 
 
   template<typename OutputFunc, typename Map,Integer Rows,Integer Cols>
   inline static void 
-  apply4 (OutputFunc& func,const Matrix<Real,Rows,Cols> points, FiniteElem<Elem>& FE, Map& div_mapping,const Array<Real,Ndofs> &alpha)
+  apply4 (OutputFunc& func,const Matrix<Real,Rows,Cols> points, FiniteElem<Elem>& FE, Map& mapping,const Array<Real,Ndofs> &alpha)
   {
     Integer cont=0;
     OutputRT0 rt0_reference;
     OutputRT0 rt0;
     OutputRT0 rt0_unsigned;
+    OutputP1 p1_reference;
+    OutputGradP1 gradp1_reference;
+    Real tmp;
+    SingleType func_tmp;
+    Integer n_tot;
+    Vector<Real,Dim> point;
 
     OutputDivRT0 divrt0_reference;
     OutputDivRT0 divrt0_unsigned;
     OutputDivRT0 divrt0;
 
-
-    OutputP1 p1;
-    // Output func;
-    Real tmp; 
-    Matrix<Real,1,1> func_tmp;
-    Integer n_tot;
-    // // std::cout<<"apply4, elem id="<<FE.elem_id()<<std::endl;
-    // // std::cout<<"NComponents"<<NComponents<< std::endl;
-    MapFromReference<IdentityOperator,Elem,FEFamily> id_map;
-    id_map.init(FE);
-    const auto& id_mapping=id_map();
-    Matrix<Real,ManifoldDim,ManifoldDim> dynamic_coeff;
-    DynamicShapeFunctionValueAux<FunctionSpace>::inverse_mat_dynamic_coeffs(dynamic_coeff,id_mapping);
+     // Here we should use the inverse of the mapping for the identity RT
+     // however inv(J/detJ)= detJ inv(J)
+     // since we also multiply by the mapping of the divergence (1/detJ),
+     // then for comoputing the coefficients we just need inv(J)
+     // auto inv_map=inverse(mapping);
 
 
+     MapFromReference<IdentityOperator,Simplex<Dim,ManifoldDim>,RaviartThomasFE> map_id;
+     map_id.init(FE);
+       // FE.init_inv_jac();
+     const auto& inv_map=inverse(map_id());//FE.inv_jac(); 
 
+     // std::cout<<   "inv_map"<<std::endl;
+     // std::cout<< inv_map<<std::endl;
+     // std::cout<<   "mapping"<<std::endl;
+     // std::cout<< mapping<<std::endl;
 
-
+    // phi_internal= alpha (dviRT0 (lambda_m-lambda_n)+ RT0'(grad(lambda_m-lambda_n))
     for(Integer row=0;row<Rows;row++)
     {
-
-      // // std::cout<<"row"<<row<<"/"<<Rows<<std::endl;
-
     cont=0;
+
+    // std::cout<<"qui0="<<row<<"/"<<Rows<<std::endl;
+
     ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 0>::apply(points,row,rt0_reference);
     ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, DivergenceOperator, RaviartThomasFE, 0>::apply(points,row,divrt0_reference);
 
-    // // std::cout<<"div_mapping="<<div_mapping<<std::endl;
-    // // std::cout<<"id_mapping="<<id_mapping<<std::endl;
+    for(Integer pp=0;pp<ManifoldDim;pp++)
+      point[pp]=points(row,pp);
     
-    for(Integer i=0;i<RT0Ndofs;i++)
-    {
-      FE.init_boundary(i,true);
-      // divrt0[i](0,0)=alpha[i*ManifoldDim]*FE.side_volume()*div_mapping*divrt0_reference[i](0,0);
-      divrt0[i](0,0)=alpha[i*ManifoldDim]*FE.side_volume()*div_mapping*divrt0_reference[i](0,0);
-      divrt0_unsigned[i](0,0)=div_mapping*divrt0_reference[i](0,0);
+    // for(Integer i=0;i<RT0Ndofs;i++)
+    // {
+    //   FE.init_boundary(i,true);
+    //       for(Integer j=0;j<ManifoldDim;j++)
+    //       {
+    //         rt0[i](j)=0;
+    //         for(Integer k=0;k<ManifoldDim;k++)
+    //          {
+    //           rt0[i](j)+=alpha[i*ManifoldDim]*mapping(j,k)*rt0_reference[i](k)*FE.side_volume();
+    //          }
 
+    //       }
 
-          for(Integer j=0;j<ManifoldDim;j++)
-          {
-            rt0[i](j)=0;
-            for(Integer k=0;k<ManifoldDim;k++)
-             {
-              // rt0[i](j)+=alpha[i*ManifoldDim]*FE.side_volume()*id_mapping(j,k)*rt0_reference[i](k);
-              rt0[i](j)+=alpha[i*ManifoldDim]*div_mapping*FE.side_volume()*rt0_reference[i](k);
-             }
-          }
-    }
+    //   divrt0[i]=alpha[i*ManifoldDim]*mapping*divrt0_reference[i]*FE.side_volume();
 
-    for(Integer i=0;i<RT0Ndofs;i++)
-    {
-          for(Integer j=0;j<ManifoldDim;j++)
-          {
-            rt0_unsigned[i](j)=0;
-            for(Integer k=0;k<ManifoldDim;k++)
-             {
-              rt0_unsigned[i](j)+=id_mapping(j,k)*rt0_reference[i](k);
-             }
-          }
-    }
+    // }
 
+    // for(Integer i=0;i<RT0Ndofs;i++)
+    // {
+    //       for(Integer j=0;j<ManifoldDim;j++)
+    //       {
+    //         rt0_unsigned[i](j)=0;
+    //         for(Integer k=0;k<ManifoldDim;k++)
+    //          {
+    //           rt0_unsigned[i](j)+=mapping(j,k)*rt0_reference[i](k);
+    //          }
+    //       }
+    //   divrt0_unsigned[i]=mapping*divrt0_reference[i]*FE.side_volume();
 
-    // // // std::cout<<"mapping"<<std::endl;
-    // // // std::cout<<mapping<<std::endl; 
-    // // // std::cout<<"rt0_reference"<<std::endl;
-    // // // std::cout<<rt0_reference<<std::endl; 
-    // // // std::cout<<"rt0"<<std::endl;
-    // // // std::cout<<rt0<<std::endl; 
-    // // // std::cout<<"func"<<std::endl;
-    // // // std::cout<<func<<std::endl; 
-
+    // }
+    // std::cout<<"row="<<row<<std::endl;
+    // std::cout<<"point="<<point<<std::endl;
+    ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, LagrangeFE, 1>::apply(point,p1_reference);
+    ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, GradientOperator, LagrangeFE, 1>::apply(point,gradp1_reference);
 
 
     
 
+    const auto combs=combinations_generate<ManifoldDim+1,ManifoldDim>(); 
 
     // loop on RT0 functions
-    for(Integer i=0;i<RT0Ndofs;++i)
+    for(Integer i=0;i<RT0Ndofs;i++)
     {
-      // // std::cout<<"RT0Ndofs="<<RT0Ndofs<<std::endl;
-      // loop on dimension
-      for(Integer j=0;j<ManifoldDim;++j)
-        {
-        // loop on dimension
-        // // for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-        //    for(Integer k=0;k<ManifoldDim;k++)
-        //     {
-        //       // func[cont][row](k,0)=rt0[i](k); 
-        //       func_tmp[k]=rt0[i](k);
-        //     }
 
-        // // std::cout<<"i,j"<<i<<","<<j<<std::endl;
+      FE.init_boundary(i,true);
+      const auto& comb_i=combs[i];
+      for(Integer j=0;j<ManifoldDim;j++)
+      {
 
+        // std::cout<<"i="<<i<<" j="<<j<<"  "<<std::endl;
 
-        // // std::cout<<"qui cont "<<cont<<std::endl;
-        // // std::cout<<"reference_external_coeff "<<reference_external_coeff<<std::endl;
+        // std::cout<<"divrt0_reference[i]="<<divrt0_reference[i]<<std::endl;
+        // std::cout<<"rt0_reference[i]="<<rt0_reference[i]<<std::endl;
+        // std::cout<<"p1_reference[comb_i[j]](0,0)="<<p1_reference[comb_i[j]](0,0)<<std::endl;
+        // std::cout<<"p1_reference[ManifoldDim-i](0,0)="<<p1_reference[ManifoldDim-i](0,0)<<std::endl;
+        // std::cout<<"gradp1_reference[comb_i[j]])="<<gradp1_reference[comb_i[j]]<<std::endl;
+        // std::cout<<"gradp1_reference[ManifoldDim-i])="<<gradp1_reference[ManifoldDim-i]<<std::endl;
 
-                    
-
-        tmp=reference_external_coeff(cont,0)*(points(row,0)-barycenter[0]); 
-
-        for(Integer k=1;k<ManifoldDim;k++)
-            tmp+=reference_external_coeff(cont,k)*(points(row,k)-barycenter[k]);
-
-        // // std::cout<<"a) tmp="<<tmp<<std::endl;
-
-        tmp*=divrt0[i](0,0);
-
-        // // std::cout<<"divrt0[i](0,0)="<<divrt0[i](0,0)<<std::endl;
-
-        // // std::cout<<"b) tmp="<<tmp<<std::endl;
-
-        // // std::cout<<"rt0[i]="<<rt0[i]<<std::endl;
-        
-        for(Integer k=0;k<ManifoldDim;k++)
+            func_tmp(0,0)=divrt0_reference[i](0,0) * (p1_reference[comb_i[j]](0,0)-p1_reference[ManifoldDim-i](0,0));
+            // std::cout<<func_tmp(0,0)<<std::endl;
+          for(Integer k=0;k<ManifoldDim;k++)
           {
+            func_tmp(0,0) += rt0_reference[i](k) * ( gradp1_reference[comb_i[j]][k] - gradp1_reference[ManifoldDim-i][k] );
+          } 
 
-            // tmp+=(rt0[i](k)*( reference_external_coeff(cont,k) ));
-            // tmp+=alpha[i*ManifoldDim]* div_mapping*(rt0_reference[i](k)*( reference_external_coeff(cont,k) ));
-// 
-            tmp+=rt0[i](k)*( reference_external_coeff(cont,k) );
+          // std::cout<<"  "<<func_tmp(0,0)<<std::endl;
 
-          }  
+          func_tmp(0,0)*=  (alpha[i*ManifoldDim] * FE.side_volume() * mapping);  
 
-        // // std::cout<<"c) tmp="<<tmp<<std::endl;    
+          // std::cout<<"  FE.side_volume()=  "<<FE.side_volume()<<std::endl;
 
-        // // std::cout<<"cont=="<<cont<<std::endl;
-        // // std::cout<<tmp<<std::endl;
+          // std::cout<<"  final=  "<<func_tmp(0,0)<<std::endl;
 
-        // for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-          // for(Integer k=0;k<ManifoldDim;k++)
-          // {
-          //     // func[cont+n_comp][row](k,0)*=tmp; 
-          //        // func[cont][row](k,0)*=tmp; 
-          //        func_tmp[k]*=tmp;
-          // }
-          func_tmp(0,0)=tmp;//*FE.side_volume();;
+          for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+          {
+              n_tot=cont * NComponents +  n_comp ;
+              assign<NComponents>(func[n_tot][row],func_tmp,n_comp,0);               
+          }
 
-
-           //n_dof = cont
-
-            for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-            {
-                
-                n_tot=cont * NComponents +  n_comp ;
-                // // std::cout<<"pre n_tot"<<n_tot<<std::endl;
-                assign<NComponents>(func[n_tot][row],func_tmp,n_comp,0);    
-            }
-        
-
-         cont++;
-         // // std::cout<<"post cont "<<cont<<std::endl;
-         }
+          cont++;       
+      }
     }
 
-     // // std::cout<<"func"<<std::endl;
-     // // std::cout<<func<<std::endl;
- 
 
-    //  // // std::cout<<"dynamic_coeff"<<std::endl;
-    //  // // std::cout<<dynamic_coeff<<std::endl;
+    // std::cout<<"qui2"<<std::endl;
+
+
+    // phi_internal= sum_{i=0}^{d-1} alpha (divRT0_i lambda_i + RT0_i' grad(lambda_i))
+
 
     for(Integer i=0;i<ManifoldDim;++i)
       {
-        // // std::cout<<"i"<<i<<"/"<<ManifoldDim<<std::endl;
-        // // std::cout<<"dynamic_coeff"<<std::endl;
-        // // std::cout<<dynamic_coeff<<std::endl;
-        // // std::cout<<"divrt0_unsigned[0](0,0)"<<std::endl;
-        // // std::cout<<divrt0_unsigned[0](0,0)<<std::endl;
-        // // std::cout<<"rt0_unsigned[i]"<<std::endl;
-        // // std::cout<<rt0_unsigned[i]<<std::endl;
 
-        // // std::cout<<"func_tmp(0,0)" <<std::endl;
-        func_tmp(0,0)=divrt0_unsigned[0](0,0) * points(row,ManifoldDim-1) * dynamic_coeff(i,0);
-        // // std::cout<<divrt0_unsigned[0](0,0) * points(row,ManifoldDim-1) * dynamic_coeff(i,0) <<std::endl;
-        // // std::cout<<func_tmp(0,0) <<std::endl;
-        // // std::cout<<std::endl;
-        
-        // func_tmp(0,0)+=rt0_unsigned[0](ManifoldDim-1) * dynamic_coeff(i,0);
-        func_tmp(0,0)+=div_mapping*rt0_reference[0](ManifoldDim-1) * dynamic_coeff(i,0);
-
-
-        // // std::cout<<rt0_unsigned[i](ManifoldDim-1) * dynamic_coeff(i,0) <<std::endl;
-        // // std::cout<<func_tmp(0,0) <<std::endl;
-        // // std::cout<<std::endl;
-
-        for(Integer k=1;k<ManifoldDim;k++)          
+          func_tmp(0,0)=0;
+          for(Integer j=0;j<ManifoldDim;j++)
           {
-            func_tmp(0,0)+=divrt0_unsigned[k](0,0) * points(row,ManifoldDim-1-k) * dynamic_coeff(i,k);
-            // // std::cout<<divrt0_unsigned[k](0,0) * points(row,ManifoldDim-1-k) * dynamic_coeff(i,k) <<std::endl;
-            // // std::cout<<func_tmp(0,0) <<std::endl;
-            // // std::cout<<std::endl;
-            // func_tmp(0,0)+=rt0_unsigned[k](ManifoldDim-1-k) * dynamic_coeff(i,k);
-            func_tmp(0,0)+=div_mapping*rt0_reference[k](ManifoldDim-1-k) * dynamic_coeff(i,k);
+                Real alpha_j=0;
 
-            
-            // // std::cout<<rt0_unsigned[i](ManifoldDim-1-k) * dynamic_coeff(i,k) <<std::endl;
-            // // std::cout<<func_tmp(0,0) <<std::endl;
-            // // std::cout<<std::endl;
+                for(Integer h=0;h<ManifoldDim;h++)
+                    alpha_j+=inv_mat(j,h)*inv_map(h,i)*(ManifoldDim+1);
+
+                func_tmp(0,0)+= alpha_j * p1_reference[ManifoldDim-j](0,0) * divrt0_reference[j](0,0) ;
+
+                for(Integer k=0;k<ManifoldDim;k++)          
+                    {
+                      
+                      func_tmp(0,0)+= alpha_j * gradp1_reference[ManifoldDim-j][k] * rt0_reference[j](k) ;
+                    }
+          }
+          // we do not use the div mapping because inside the coefficients we have multiplied by detJ
+          func_tmp(0,0)*=mapping;
+          // std::cout<<"  final=  "<<func_tmp(0,0)<<std::endl;
+
+          for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+          {
+              n_tot=(cont+i) * NComponents +  n_comp ;
+              assign<NComponents>(func[n_tot][row],func_tmp,n_comp,0);  
           }
 
-        // // std::cout<<std::endl;
-
-
-
-        for(Integer n_comp=0;n_comp<NComponents;n_comp++)
-        {
-            n_tot=(cont+i) * NComponents +  n_comp ;
-            // // std::cout<<"post "<<n_tot<<std::endl;
-            assign<NComponents>(func[n_tot][row],func_tmp,n_comp,0);  
-        }
-         // // std::cout<< "post i=="<< i<<" cont=="<<cont<<std::endl;
       }
 
-    // // std::cout<<"row"<<std::endl;
-    // // std::cout<<row<<std::endl; 
-    // // std::cout<<"points"<<std::endl;
-    // // std::cout<<points<<std::endl; 
-    
+    // std::cout<<"qui3"<<std::endl;
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     }
-  //   // std::cout<<"divergence func"<<std::endl;
-  //   // std::cout<<func<<std::endl; 
-  // // std::cout<<"reference_external_coeff"<<std::endl;
-  // // std::cout<<reference_external_coeff<<std::endl;
-  // // std::cout<<"dynamic_coeff"<<std::endl;
-  // // std::cout<<dynamic_coeff<<std::endl;
-  } 
+  }
+
+
+
+
+
+
+
+//   template<typename OutputFunc, typename Map,Integer Rows,Integer Cols>
+//   inline static void 
+//   apply4 (OutputFunc& func,const Matrix<Real,Rows,Cols> points, FiniteElem<Elem>& FE, Map& div_mapping,const Array<Real,Ndofs> &alpha)
+//   {
+//     Integer cont=0;
+//     OutputRT0 rt0_reference;
+//     OutputRT0 rt0;
+//     OutputRT0 rt0_unsigned;
+
+//     OutputDivRT0 divrt0_reference;
+//     OutputDivRT0 divrt0_unsigned;
+//     OutputDivRT0 divrt0;
+
+
+//     OutputP1 p1;
+//     // Output func;
+//     Real tmp; 
+//     Matrix<Real,1,1> func_tmp;
+//     Integer n_tot;
+//     // // std::cout<<"apply4, elem id="<<FE.elem_id()<<std::endl;
+//     // // std::cout<<"NComponents"<<NComponents<< std::endl;
+//     MapFromReference<IdentityOperator,Elem,FEFamily> id_map;
+//     id_map.init(FE);
+//     const auto& id_mapping=id_map();
+//     Matrix<Real,ManifoldDim,ManifoldDim> dynamic_coeff;
+//     DynamicShapeFunctionValueAux<FunctionSpace>::inverse_mat_dynamic_coeffs(dynamic_coeff,id_mapping);
+
+
+
+
+
+//     for(Integer row=0;row<Rows;row++)
+//     {
+
+//       // // std::cout<<"row"<<row<<"/"<<Rows<<std::endl;
+
+//     cont=0;
+//     ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, IdentityOperator, RaviartThomasFE, 0>::apply(points,row,rt0_reference);
+//     ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, DivergenceOperator, RaviartThomasFE, 0>::apply(points,row,divrt0_reference);
+
+//     // // std::cout<<"div_mapping="<<div_mapping<<std::endl;
+//     // // std::cout<<"id_mapping="<<id_mapping<<std::endl;
+    
+//     for(Integer i=0;i<RT0Ndofs;i++)
+//     {
+//       FE.init_boundary(i,true);
+//       // divrt0[i](0,0)=alpha[i*ManifoldDim]*FE.side_volume()*div_mapping*divrt0_reference[i](0,0);
+//       divrt0[i](0,0)=alpha[i*ManifoldDim]*FE.side_volume()*div_mapping*divrt0_reference[i](0,0);
+//       divrt0_unsigned[i](0,0)=div_mapping*divrt0_reference[i](0,0);
+
+
+//           for(Integer j=0;j<ManifoldDim;j++)
+//           {
+//             rt0[i](j)=0;
+//             for(Integer k=0;k<ManifoldDim;k++)
+//              {
+//               // rt0[i](j)+=alpha[i*ManifoldDim]*FE.side_volume()*id_mapping(j,k)*rt0_reference[i](k);
+//               rt0[i](j)+=alpha[i*ManifoldDim]*div_mapping*FE.side_volume()*rt0_reference[i](k);
+//              }
+//           }
+//     }
+
+//     for(Integer i=0;i<RT0Ndofs;i++)
+//     {
+//           for(Integer j=0;j<ManifoldDim;j++)
+//           {
+//             rt0_unsigned[i](j)=0;
+//             for(Integer k=0;k<ManifoldDim;k++)
+//              {
+//               rt0_unsigned[i](j)+=id_mapping(j,k)*rt0_reference[i](k);
+//              }
+//           }
+//     }
+
+
+//     // // // std::cout<<"mapping"<<std::endl;
+//     // // // std::cout<<mapping<<std::endl; 
+//     // // // std::cout<<"rt0_reference"<<std::endl;
+//     // // // std::cout<<rt0_reference<<std::endl; 
+//     // // // std::cout<<"rt0"<<std::endl;
+//     // // // std::cout<<rt0<<std::endl; 
+//     // // // std::cout<<"func"<<std::endl;
+//     // // // std::cout<<func<<std::endl; 
+
+
+
+    
+
+
+//     // loop on RT0 functions
+//     for(Integer i=0;i<RT0Ndofs;++i)
+//     {
+//       // // std::cout<<"RT0Ndofs="<<RT0Ndofs<<std::endl;
+//       // loop on dimension
+//       for(Integer j=0;j<ManifoldDim;++j)
+//         {
+//         // loop on dimension
+//         // // for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+//         //    for(Integer k=0;k<ManifoldDim;k++)
+//         //     {
+//         //       // func[cont][row](k,0)=rt0[i](k); 
+//         //       func_tmp[k]=rt0[i](k);
+//         //     }
+
+//         // // std::cout<<"i,j"<<i<<","<<j<<std::endl;
+
+
+//         // // std::cout<<"qui cont "<<cont<<std::endl;
+//         // // std::cout<<"reference_external_coeff "<<reference_external_coeff<<std::endl;
+
+                    
+
+//         tmp=reference_external_coeff(cont,0)*(points(row,0)-barycenter[0]); 
+
+//         for(Integer k=1;k<ManifoldDim;k++)
+//             tmp+=reference_external_coeff(cont,k)*(points(row,k)-barycenter[k]);
+
+//         // // std::cout<<"a) tmp="<<tmp<<std::endl;
+
+//         tmp*=divrt0[i](0,0);
+
+//         // // std::cout<<"divrt0[i](0,0)="<<divrt0[i](0,0)<<std::endl;
+
+//         // // std::cout<<"b) tmp="<<tmp<<std::endl;
+
+//         // // std::cout<<"rt0[i]="<<rt0[i]<<std::endl;
+        
+//         for(Integer k=0;k<ManifoldDim;k++)
+//           {
+
+//             // tmp+=(rt0[i](k)*( reference_external_coeff(cont,k) ));
+//             // tmp+=alpha[i*ManifoldDim]* div_mapping*(rt0_reference[i](k)*( reference_external_coeff(cont,k) ));
+// // 
+//             tmp+=rt0[i](k)*( reference_external_coeff(cont,k) );
+
+//           }  
+
+//         // // std::cout<<"c) tmp="<<tmp<<std::endl;    
+
+//         // // std::cout<<"cont=="<<cont<<std::endl;
+//         // // std::cout<<tmp<<std::endl;
+
+//         // for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+//           // for(Integer k=0;k<ManifoldDim;k++)
+//           // {
+//           //     // func[cont+n_comp][row](k,0)*=tmp; 
+//           //        // func[cont][row](k,0)*=tmp; 
+//           //        func_tmp[k]*=tmp;
+//           // }
+//           func_tmp(0,0)=tmp;//*FE.side_volume();;
+
+
+//            //n_dof = cont
+
+//             for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+//             {
+                
+//                 n_tot=cont * NComponents +  n_comp ;
+//                 // // std::cout<<"pre n_tot"<<n_tot<<std::endl;
+//                 assign<NComponents>(func[n_tot][row],func_tmp,n_comp,0);    
+//             }
+        
+
+//          cont++;
+//          // // std::cout<<"post cont "<<cont<<std::endl;
+//          }
+//     }
+
+//      // // std::cout<<"func"<<std::endl;
+//      // // std::cout<<func<<std::endl;
+ 
+
+//     //  // // std::cout<<"dynamic_coeff"<<std::endl;
+//     //  // // std::cout<<dynamic_coeff<<std::endl;
+
+//     for(Integer i=0;i<ManifoldDim;++i)
+//       {
+//         // // std::cout<<"i"<<i<<"/"<<ManifoldDim<<std::endl;
+//         // // std::cout<<"dynamic_coeff"<<std::endl;
+//         // // std::cout<<dynamic_coeff<<std::endl;
+//         // // std::cout<<"divrt0_unsigned[0](0,0)"<<std::endl;
+//         // // std::cout<<divrt0_unsigned[0](0,0)<<std::endl;
+//         // // std::cout<<"rt0_unsigned[i]"<<std::endl;
+//         // // std::cout<<rt0_unsigned[i]<<std::endl;
+
+//         // // std::cout<<"func_tmp(0,0)" <<std::endl;
+//         func_tmp(0,0)=divrt0_unsigned[0](0,0) * points(row,ManifoldDim-1) * dynamic_coeff(i,0);
+//         // // std::cout<<divrt0_unsigned[0](0,0) * points(row,ManifoldDim-1) * dynamic_coeff(i,0) <<std::endl;
+//         // // std::cout<<func_tmp(0,0) <<std::endl;
+//         // // std::cout<<std::endl;
+        
+//         // func_tmp(0,0)+=rt0_unsigned[0](ManifoldDim-1) * dynamic_coeff(i,0);
+//         func_tmp(0,0)+=div_mapping*rt0_reference[0](ManifoldDim-1) * dynamic_coeff(i,0);
+
+
+//         // // std::cout<<rt0_unsigned[i](ManifoldDim-1) * dynamic_coeff(i,0) <<std::endl;
+//         // // std::cout<<func_tmp(0,0) <<std::endl;
+//         // // std::cout<<std::endl;
+
+//         for(Integer k=1;k<ManifoldDim;k++)          
+//           {
+//             func_tmp(0,0)+=divrt0_unsigned[k](0,0) * points(row,ManifoldDim-1-k) * dynamic_coeff(i,k);
+//             // // std::cout<<divrt0_unsigned[k](0,0) * points(row,ManifoldDim-1-k) * dynamic_coeff(i,k) <<std::endl;
+//             // // std::cout<<func_tmp(0,0) <<std::endl;
+//             // // std::cout<<std::endl;
+//             // func_tmp(0,0)+=rt0_unsigned[k](ManifoldDim-1-k) * dynamic_coeff(i,k);
+//             func_tmp(0,0)+=div_mapping*rt0_reference[k](ManifoldDim-1-k) * dynamic_coeff(i,k);
+
+            
+//             // // std::cout<<rt0_unsigned[i](ManifoldDim-1-k) * dynamic_coeff(i,k) <<std::endl;
+//             // // std::cout<<func_tmp(0,0) <<std::endl;
+//             // // std::cout<<std::endl;
+//           }
+
+//         // // std::cout<<std::endl;
+
+
+
+//         for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+//         {
+//             n_tot=(cont+i) * NComponents +  n_comp ;
+//             // // std::cout<<"post "<<n_tot<<std::endl;
+//             assign<NComponents>(func[n_tot][row],func_tmp,n_comp,0);  
+//         }
+//          // // std::cout<< "post i=="<< i<<" cont=="<<cont<<std::endl;
+//       }
+
+//     // // std::cout<<"row"<<std::endl;
+//     // // std::cout<<row<<std::endl; 
+//     // // std::cout<<"points"<<std::endl;
+//     // // std::cout<<points<<std::endl; 
+    
+//     }
+//   //   // std::cout<<"divergence func"<<std::endl;
+//   //   // std::cout<<func<<std::endl; 
+//   // // std::cout<<"reference_external_coeff"<<std::endl;
+//   // // std::cout<<reference_external_coeff<<std::endl;
+//   // // std::cout<<"dynamic_coeff"<<std::endl;
+//   // // std::cout<<dynamic_coeff<<std::endl;
+//   } 
 
 
 

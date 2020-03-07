@@ -662,6 +662,12 @@ namespace mars {
 			return ret;
 		}
 
+
+		inline constexpr Real inverse(const Real& alpha)
+		{
+			return 1.0/alpha;
+		}
+
         template<typename T>
 		inline constexpr Matrix<Real, 1,1> inverse(const Matrix<T,1,1>& mat)
 		{

@@ -2244,7 +2244,7 @@ public:
     constexpr auto combinations_nums=ElemEntityCombinations<Elem,entity_dim>::value;
 
 
-        std::cout  << "ELEM===="<<elem.id<<"     with entity==="<<entity_dim<<std::endl;
+        // std::cout  << "ELEM===="<<elem.id<<"     with entity==="<<entity_dim<<std::endl;
 
       // for(std::size_t i=0;i<count_n_entity_vec.size();i++)
       //   // std::cout<<count_n_entity_vec[i]<<" ";
@@ -2294,20 +2294,20 @@ public:
           entity_nodes[i]=nodes[entity_[i]];
 
 
-        std::cout<<"entity_dim="<<entity_dim<<std::endl;
+        // std::cout<<"entity_dim="<<entity_dim<<std::endl;
 
-        std::cout<<"entity_nodes="<<std::endl;
-          for(int s=0;s<entity_nodes.size();s++)
-          std::cout<<entity_nodes[s]<<std::endl;
-          std::cout<<std::endl;
+        // std::cout<<"entity_nodes="<<std::endl;
+        //   for(int s=0;s<entity_nodes.size();s++)
+        //   std::cout<<entity_nodes[s]<<std::endl;
+        //   std::cout<<std::endl;
 
         std::sort(entity_nodes.begin(),entity_nodes.end());
 
         // // std::cout<<"must_reorder="<<DofsOrdering<entity_dim,FunctionSpace>::must_reorder<<std::endl;
-        std::cout<<"nodes="<<std::endl;
-          for(int s=0;s<nodes.size();s++)
-          std::cout<<nodes[s]<<std::endl;
-          std::cout<<std::endl;
+        // std::cout<<"nodes="<<std::endl;
+        //   for(int s=0;s<nodes.size();s++)
+        //   std::cout<<nodes[s]<<std::endl;
+        //   std::cout<<std::endl;
 
 
         auto ordered_entity_nodes=DofsOrdering<entity_dim,FunctionSpace>::value(nodes,entity_iter);
@@ -2324,31 +2324,27 @@ public:
                       // global_dof_count++;}
 
    Integer global_dof_count_tmp;
-          std::cout<<"must reorder="<<DofsOrdering<entity_dim,FunctionSpace>::must_reorder<<std::endl;
+          // std::cout<<"must reorder="<<DofsOrdering<entity_dim,FunctionSpace>::must_reorder<<std::endl;
     //     // consider more dofs per entity (RT1)
         if(DofsOrdering<entity_dim,FunctionSpace>::must_reorder)
         {
           cont=0;
 
           auto ordered_dofs=DofsOrdered<entity_dim,FunctionSpace>::local_dofs(ordered_entity_nodes,loc_dof_count);
-        std::cout<<"ordered_entity_nodes="<<std::endl;
-          for(int s=0;s<ordered_entity_nodes.size();s++)
-          std::cout<<ordered_entity_nodes[s]<<std::endl;
-          std::cout<<std::endl;
-         std::cout<<"ordered_dofs="<<std::endl;
-          for(int s=0;s<ordered_dofs.size();s++)
-          std::cout<<ordered_dofs[s]<<std::endl;
-          std::cout<<std::endl;         
+        // std::cout<<"ordered_entity_nodes="<<std::endl;
+        //   for(int s=0;s<ordered_entity_nodes.size();s++)
+        //   std::cout<<ordered_entity_nodes[s]<<std::endl;
+        //   std::cout<<std::endl;
+        //  std::cout<<"ordered_dofs="<<std::endl;
+        //   for(int s=0;s<ordered_dofs.size();s++)
+        //   std::cout<<ordered_dofs[s]<<std::endl;
+        //   std::cout<<std::endl;         
 
           auto order_of_entity_nodes=argsort(entity_nodes);
-          std::cout<<"order_of_entity_nodes="<<std::endl;
-          for(int s=0;s<order_of_entity_nodes.size();s++)
-          std::cout<<order_of_entity_nodes[s]<<std::endl;
-          std::cout<<std::endl; 
           // if entity not found yet
           if(!dof || continuity==Discontinuous )
           {
-            std::cout<<"!dof ="<<std::endl;
+            // std::cout<<"!dof ="<<std::endl;
 
            if(cont_new<cont_tot)
            {
@@ -2365,7 +2361,7 @@ public:
             for(Integer m=0;m<ordered_dofs.size();m++)
             {
               dofmap_vec[elem_id][ordered_dofs[cont]]=global_dof_count_tmp;
-              std::cout<<"(dofmap_vec)[elem_id]["<<ordered_dofs[cont]<<"]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
+              // std::cout<<"(dofmap_vec)[elem_id]["<<ordered_dofs[cont]<<"]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
               cont++;
               loc_dof_count++;
               global_dof_count_tmp++;
@@ -2375,13 +2371,13 @@ public:
            else
            {
 
-            std::cout<<"==dof ="<<std::endl;
+            // std::cout<<"==dof ="<<std::endl;
             dof=std::make_shared<Integer>(global_dof_count);
             // // std::cout<<"cont_new>=cont_tot=>>"<<global_dof_count<<std::endl;
             for(Integer m=0;m<ordered_dofs.size();m++)
             {
               dofmap_vec[elem_id][ordered_dofs[cont]]=global_dof_count;
-              std::cout<<"(dofmap_vec)[elem_id]["<<ordered_dofs[cont]<<"]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
+              // std::cout<<"(dofmap_vec)[elem_id]["<<ordered_dofs[cont]<<"]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
               cont++;
               loc_dof_count++;
               global_dof_count++;
@@ -2400,11 +2396,11 @@ public:
           auto ordered_dofs=DofsOrdered<entity_dim,FunctionSpace>::local_dofs(ordered_entity_nodes,loc_dof_count);
           cont =0;
 
-          std::cout<<"global_old_dof= "<<global_old_dof<<std::endl;
+          // std::cout<<"global_old_dof= "<<global_old_dof<<std::endl;
           for(Integer m=0;m<ordered_dofs.size();m++)
           {
             dofmap_vec[elem_id][ordered_dofs[cont]]=global_old_dof;
-            std::cout<< "(*dofmap_vec)[elem_id]["<<ordered_dofs[cont]<<"]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
+            // std::cout<< "(*dofmap_vec)[elem_id]["<<ordered_dofs[cont]<<"]="<<dofmap_vec[elem_id][ordered_dofs[cont]]<<std::endl;
             cont++;
             loc_dof_count++;
             global_old_dof++;
