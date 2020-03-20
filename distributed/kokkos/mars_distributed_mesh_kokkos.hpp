@@ -1,6 +1,7 @@
 #ifndef MARS_DIST_MESH_KOKKOS_HPP
 #define MARS_DIST_MESH_KOKKOS_HPP
 
+#include "mars_globals.hpp"
 #include "mars_point.hpp"
 
 #include <algorithm>
@@ -11,14 +12,22 @@
 #include <vector>
 
 #include "mars_distributed_non_simplex_kokkos.hpp"
+#include "mars_distributed_octant.hpp"
 #include "mars_distributed_simplex_kokkos.hpp"
 #include "mars_imesh_kokkos.hpp"
+#include "mars_sfc_code.hpp"
 
 #ifdef WITH_MPI
 #include "mars_sfc_generation.hpp"
 #endif
 #include "mars_utils_kokkos.hpp"
-#define ASSERT(left,operator,right) { if(!((left) operator (right))){ std::cerr << "ASSERT FAILED: " << #left << #operator << #right << " @ " << __FILE__ << " (" << __LINE__ << "). " << #left << "=" << (left) << "; " << #right << "=" << (right) << std::endl; } }
+#define ASSERT(left, operator, right)                                                                                                                                                                  \
+    {                                                                                                                                                                                                  \
+        if (!((left) operator(right)))                                                                                                                                                                 \
+        {                                                                                                                                                                                              \
+            std::cerr << "ASSERT FAILED: " << #left << #operator<< #right << " @ " << __FILE__ << " (" << __LINE__ << "). " << #left << "=" <<(left) << "; " << #right << "=" << (right) << std::endl; \
+        }                                                                                                                                                                                              \
+    }
 
 namespace mars
 {
@@ -200,6 +209,18 @@ public:
         local_sfc_ = local;
     }
 
+    MARS_INLINE_FUNCTION
+    const ViewVectorType<Integer> &get_view_gp() const
+    {
+        return gp_np;
+    }
+
+    MARS_INLINE_FUNCTION
+    void set_view_gp(const ViewVectorType<Integer> &gp)
+    {
+        gp_np = gp;
+    }
+
     void resize_points(const Integer size)
     {
         points_size_ += size;
@@ -255,7 +276,19 @@ public:
     }
 
     MARS_INLINE_FUNCTION
-    void set_global_to_local_map(const UnorderedMap<unsigned int,unsigned int>& gl_map)
+    void set_proc(Integer p)
+    {
+        proc = p;
+    }
+
+    MARS_INLINE_FUNCTION
+    unsigned int get_proc()
+    {
+        return proc;
+    }
+
+    MARS_INLINE_FUNCTION
+    void set_global_to_local_map(const UnorderedMap<unsigned int, unsigned int> &gl_map)
     {
         global_to_local_map_ = gl_map;
     }
@@ -324,13 +357,11 @@ public:
         Integer yDim;
         Integer zDim;
 
-        AddNonSimplexPoint(ViewMatrixType<Real> pts, ViewVectorType<unsigned int> epts, Integer xdm, Integer ydm) : 
-                    points(pts), encoded_points(epts), xDim(xdm), yDim(ydm)
+        AddNonSimplexPoint(ViewMatrixType<Real> pts, ViewVectorType<unsigned int> epts, Integer xdm, Integer ydm) : points(pts), encoded_points(epts), xDim(xdm), yDim(ydm)
         {
         }
 
-        AddNonSimplexPoint(ViewMatrixType<Real> pts, ViewVectorType<unsigned int> epts, Integer xdm, Integer ydm, Integer zdm) : 
-                    points(pts), encoded_points(epts), xDim(xdm), yDim(ydm), zDim(zdm)
+        AddNonSimplexPoint(ViewMatrixType<Real> pts, ViewVectorType<unsigned int> epts, Integer xdm, Integer ydm, Integer zdm) : points(pts), encoded_points(epts), xDim(xdm), yDim(ydm), zDim(zdm)
         {
         }
 
@@ -345,12 +376,14 @@ public:
             {
                 points(index, 0) = static_cast<Real>(decode_morton_2DX(gl_index)) / static_cast<Real>(xDim);
                 points(index, 1) = static_cast<Real>(decode_morton_2DY(gl_index)) / static_cast<Real>(yDim);
+                break;
             }
             case ElementType::Hex8:
             {
                 points(index, 0) = static_cast<Real>(decode_morton_3DX(gl_index)) / static_cast<Real>(xDim);
                 points(index, 1) = static_cast<Real>(decode_morton_3DY(gl_index)) / static_cast<Real>(yDim);
                 points(index, 2) = static_cast<Real>(decode_morton_3DZ(gl_index)) / static_cast<Real>(zDim);
+                break;
             }
             }
         }
@@ -398,7 +431,6 @@ public:
                 predicate(encode_morton_2D(x, y + 1)) = 1;
                 predicate(encode_morton_2D(x + 1, y + 1)) = 1;
                 break;
-
             }
             case ElementType::Hex8:
             {
@@ -419,7 +451,7 @@ public:
                 predicate(encode_morton_3D(x, y + 1, z)) = 1;
                 predicate(encode_morton_3D(x + 1, y + 1, z)) = 1;
 
-                predicate(encode_morton_3D(x , y , z + 1)) = 1;
+                predicate(encode_morton_3D(x, y, z + 1)) = 1;
                 predicate(encode_morton_3D(x + 1, y, z + 1)) = 1;
                 predicate(encode_morton_3D(x, y + 1, z + 1)) = 1;
                 predicate(encode_morton_3D(x + 1, y + 1, z + 1)) = 1;
@@ -430,8 +462,8 @@ public:
     };
 
     template <Integer Type>
-    inline ViewVectorType<bool> build_global_elements(const unsigned int allrange, 
-                const int xDim, const int yDim, const int zDim)
+    inline ViewVectorType<bool> build_global_elements(const unsigned int allrange,
+                                                      const int xDim, const int yDim, const int zDim)
     {
         using namespace Kokkos;
 
@@ -442,18 +474,18 @@ public:
         parallel_for("local_sfc_range", get_chunk_size(),
                      BuildGlobalPointIndex<Type>(all_elements, local_sfc_, xDim, yDim, zDim));
 
-        return all_elements;                     
+        return all_elements;
     }
 
     template <Integer Type>
-    inline unsigned int compact_elements(ViewVectorType<unsigned int> &ltg, const unsigned int allrange, 
-                const int xDim, const int yDim, const int zDim)
+    inline unsigned int compact_elements(ViewVectorType<unsigned int> &ltg, const unsigned int allrange,
+                                         const int xDim, const int yDim, const int zDim)
     {
         using namespace Kokkos;
 
         Timer timer;
 
-        const ViewVectorType<bool>& all_elements = build_global_elements<Type>(allrange, xDim, yDim, zDim);
+        const ViewVectorType<bool> &all_elements = build_global_elements<Type>(allrange, xDim, yDim, zDim);
         ViewVectorType<unsigned int> scan_indices("scan_indices", allrange + 1);
 
         incl_excl_scan(0, allrange, all_elements, scan_indices);
@@ -534,6 +566,7 @@ public:
                 return false;
             }
             }
+            break;
         }
         case 3:
         {
@@ -561,7 +594,6 @@ public:
 
                 parallel_for(
                     "local_global_map_for", nr_points, KOKKOS_LAMBDA(const int i) {
-
                         const unsigned int gl_index = local_to_global(i);
 
                         const unsigned int x = decode_morton_3DX(gl_index);
@@ -579,6 +611,7 @@ public:
                 return false;
             }
             }
+            break;
         }
         default:
         {
@@ -597,21 +630,98 @@ public:
         ViewVectorType<bool> active;
         ViewVectorType<unsigned int> global;
         UMap map;
-        
+
         Integer xDim;
         Integer yDim;
         Integer zDim;
 
         AddNonSimplexElem(ViewMatrixType<Integer> el, ViewVectorType<unsigned int> gl, UMap mp,
-                          ViewVectorType<bool> ac, Integer xdm, Integer ydm) : 
-                                    elem(el), global(gl), map(mp), active(ac), xDim(xdm), yDim(ydm)
+                          ViewVectorType<bool> ac, Integer xdm, Integer ydm) : elem(el), global(gl), map(mp), active(ac), xDim(xdm), yDim(ydm)
         {
         }
 
         AddNonSimplexElem(ViewMatrixType<Integer> el, ViewVectorType<unsigned int> gl, UMap mp,
-                          ViewVectorType<bool> ac, Integer xdm, Integer ydm, Integer zdm) : 
-                                    elem(el), global(gl), map(mp), active(ac), xDim(xdm), yDim(ydm), zDim(zdm)
+                          ViewVectorType<bool> ac, Integer xdm, Integer ydm, Integer zdm) : elem(el), global(gl), map(mp), active(ac), xDim(xdm), yDim(ydm), zDim(zdm)
         {
+        }
+
+        MARS_INLINE_FUNCTION
+        Octant face_nbh(const unsigned int enc_octant, const int face) const
+        {
+
+            switch (Type)
+            {
+            case ElementType::Quad4:
+            {
+                const Integer i = decode_morton_2DX(enc_octant);
+                const Integer j = decode_morton_2DY(enc_octant);
+
+                //adapted from the p4est corner neighbor for the mesh generation
+                const Integer x = i + ((face == 0) ? -1 : (face == 1) ? 1 : 0);
+                const Integer y = j + ((face == 2) ? -1 : (face == 3) ? 1 : 0);
+
+                Octant o(x, y);
+                if (o.x < 0 || o.y < 0 || o.x >= xDim || o.y >= yDim)
+                    o.set_invalid();
+                return o;
+            }
+            case ElementType::Hex8:
+            {
+                const Integer i = decode_morton_3DX(enc_octant);
+                const Integer j = decode_morton_3DY(enc_octant);
+                const Integer k = decode_morton_3DZ(enc_octant);
+
+                //adapted from the p4est corner neighbor for the mesh generation
+                const Integer x = i + ((face == 0) ? -1 : (face == 1) ? 1 : 0);
+                const Integer y = j + ((face == 2) ? -1 : (face == 3) ? 1 : 0);
+                const Integer z = k + ((face == 4) ? -1 : (face == 5) ? 1 : 0);
+
+                Octant o(x, y, z);
+                if (o.x < 0 || o.y < 0 || o.z < 0 || o.x >= xDim || o.y >= yDim || o.z >= zDim)
+                    o.set_invalid();
+                return o;
+            }
+            }
+        }
+
+        MARS_INLINE_FUNCTION
+        Octant corner_nbh(const unsigned int enc_octant, const int corner) const
+        {
+
+            switch (Type)
+            {
+            case ElementType::Quad4:
+            {
+                const Integer i = decode_morton_2DX(enc_octant);
+                const Integer j = decode_morton_2DY(enc_octant);
+
+                //adapted from the p4est corner neighbor for the mesh generation
+                const Integer x = i + 2 * (corner & 1) - 1;
+                const Integer y = j + (corner & 2) - 1;
+
+                Octant o(x, y);
+                if (o.x < 0 || o.y < 0 || o.x >= xDim || o.y >= yDim)
+                    o.set_invalid();
+                return o;
+            }
+            case ElementType::Hex8:
+            {
+                const Integer i = decode_morton_3DX(enc_octant);
+                const Integer j = decode_morton_3DY(enc_octant);
+                const Integer k = decode_morton_3DZ(enc_octant);
+
+                //adapted from the p4est corner neighbor for the mesh generation
+                const Integer x = i + 2 * (corner & 1) - 1;
+                ;
+                const Integer y = j + (corner & 2) - 1;
+                const Integer z = k + (corner & 4) / 2 - 1;
+
+                Octant o(x, y, z);
+                if (o.x < 0 || o.y < 0 || o.z < 0 || o.x >= xDim || o.y >= yDim || o.z >= zDim)
+                    o.set_invalid();
+                return o;
+            }
+            }
         }
 
         KOKKOS_INLINE_FUNCTION
@@ -629,12 +739,27 @@ public:
                 const unsigned int i = decode_morton_2DX(gl_index);
                 const unsigned int j = decode_morton_2DY(gl_index);
 
+                for (int face = 0; face < 2 * ManifoldDim; ++face)
+                {
+                    Octant o = face_nbh(gl_index, face);
+                    if (o.is_valid())
+                        printf("face Nbh of %u is %li: x and y: %li - %li\n", i + offset * j, o.x + offset * o.y, o.x, o.y);
+                }
+
+                for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner)
+                {
+                    Octant o = corner_nbh(gl_index, corner);
+                    if (o.is_valid())
+                        printf("Corner Nbh of %u is %li: x and y: %li - %li\n", i + offset * j, o.x + offset * o.y, o.x, o.y);
+                }
+
                 elem(index, 0) = map.value_at(map.find(i + offset * j));
                 elem(index, 1) = map.value_at(map.find((i + 1) + offset * j));
                 elem(index, 2) = map.value_at(map.find((i + 1) + offset * (j + 1)));
                 elem(index, 3) = map.value_at(map.find(i + offset * (j + 1)));
 
                 active(index) = true;
+                break;
             }
             case ElementType::Hex8:
             {
@@ -654,6 +779,7 @@ public:
                 elem(index, 7) = map.value_at(map.find(elem_index(i, j + 1, k + 1, xDim, yDim)));
 
                 active(index) = true;
+                break;
             }
             }
         }
@@ -688,6 +814,7 @@ public:
                 return false;
             }
             }
+            break;
         }
         case 3:
         {
@@ -708,6 +835,7 @@ public:
                 return false;
             }
             }
+            break;
         }
         default:
         {
@@ -715,6 +843,233 @@ public:
         }
         }
     }
+
+    //binary search on the gp view.
+    template <typename T>
+    MARS_INLINE_FUNCTION Integer find_owner_processor(const ViewVectorType<T> view,
+                                                      const T enc_oc, const int offset, const Integer guess) const
+    {
+        const int first_proc = 0;
+        const int last_proc = view.extent(0) / offset;
+
+        while (first_proc <= last_proc)
+        {
+            T current = view(offset * guess);
+            T next = view(offset * (guess + 1));
+
+            if (enc_oc >= current && enc_oc < next)
+            {
+                return guess;
+            }
+            else if (enc_oc < current)
+            {
+                last_proc = guess - 1;
+                guess = (first_proc + last_proc + 1) / 2;
+            }
+            else if (enc_oc >= next)
+            {
+                first_proc = guess + 1;
+                guess = (first_proc + last_proc) / 2;
+            }
+        }
+
+        return -1;
+    }
+
+    //add elem functor
+    template <Integer Type>
+    struct CountGhostNeighbors
+    {
+        ViewVectorType<Integer> count;
+        ViewVectorType<Integer> gp;
+        Integer xDim;
+        Integer yDim;
+        Integer zDim;
+
+        CountGhostNeighbors(ViewVectorType<Integer> ct, ViewVectorType<Integer> g, 
+                    Integer xdm, Integer ydm) : count(ct), gp(g), xDim(xdm), yDim(ydm)
+        {
+        }
+
+        CountGhostNeighbors(ViewVectorType<Integer> ct, ViewVectorType<Integer> g, 
+                    Integer xdm, Integer ydm, Integer zdm) : count(ct), gp(g), xDim(xdm), 
+                                    yDim(ydm), zDim(zdm)
+        {
+        }
+
+        MARS_INLINE_FUNCTION
+        Octant face_nbh(const Octant &ref_octant, const int face) const
+        {
+
+            switch (Type)
+            {
+            case ElementType::Quad4:
+            {
+                //adapted from the p4est corner neighbor for the mesh generation
+                const Integer x = ref_octant.x + ((face == 0) ? -1 : (face == 1) ? 1 : 0);
+                const Integer y = ref_octant.y + ((face == 2) ? -1 : (face == 3) ? 1 : 0);
+
+                Octant o(x, y);
+                if (o.x < 0 || o.y < 0 || o.x >= xDim || o.y >= yDim)
+                    o.set_invalid();
+
+                return o;
+            }
+            case ElementType::Hex8:
+            {
+
+                //adapted from the p4est corner neighbor for the mesh generation
+                const Integer x = ref_octant.x + ((face == 0) ? -1 : (face == 1) ? 1 : 0);
+                const Integer y = ref_octant.y + ((face == 2) ? -1 : (face == 3) ? 1 : 0);
+                const Integer z = ref_octant.z + ((face == 4) ? -1 : (face == 5) ? 1 : 0);
+
+                Octant o(x, y, z);
+                if (o.x < 0 || o.y < 0 || o.z < 0 || o.x >= xDim || o.y >= yDim || o.z >= zDim)
+                    o.set_invalid();
+                return o;
+            }
+            }
+        }
+
+        MARS_INLINE_FUNCTION
+        Octant corner_nbh(const Octant &ref_octant, const int corner) const
+        {
+
+            switch (Type)
+            {
+            case ElementType::Quad4:
+            {
+                //adapted from the p4est corner neighbor for the mesh generation
+                const Integer x = ref_octant.x + 2 * (corner & 1) - 1;
+                const Integer y = ref_octant.y + (corner & 2) - 1;
+
+                Octant o(x, y);
+                if (o.x < 0 || o.y < 0 || o.x >= xDim || o.y >= yDim)
+                    o.set_invalid();
+
+                return o;
+            }
+            case ElementType::Hex8:
+            {
+                //adapted from the p4est corner neighbor for the mesh generation
+                const Integer x = ref_octant.x + 2 * (corner & 1) - 1;
+                ;
+                const Integer y = ref_octant.y + (corner & 2) - 1;
+                const Integer z = ref_octant.z + (corner & 4) / 2 - 1;
+
+                Octant o(x, y, z);
+                if (o.x < 0 || o.y < 0 || o.z < 0 || o.x >= xDim || o.y >= yDim || o.z >= zDim)
+                    o.set_invalid();
+
+                return o;
+            }
+            }
+        }
+
+        MARS_INLINE_FUNCTION
+        void increment(const Octant &o)
+        {
+            const Integer enc_oc;
+
+            switch (Type)
+            {
+            case ElementType::Quad4:
+            {
+                enc_oc = encode_morton_2D(o.x, o.y);
+                break;
+            }
+            case ElementType::Hex8:
+            {
+                enc_oc = encode_morton_3D(o.x, o.y, o.z);
+                break;
+            }
+            }
+
+            assert(find_owner_processor(gp, enc_oc, 2, proc) >= 0);
+            Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
+            
+            //the case when the neihgbor is a ghost element.
+            if (proc != owner_proc)
+            {
+                atomic_increment(&count(owner_proc));
+            }
+        }
+
+        MARS_INLINE_FUNCTION
+        void operator()(int index) const
+        {
+            switch (Type)
+            {
+            case ElementType::Quad4:
+            {
+                const int offset = xDim + 1;
+
+                const unsigned int gl_index = global(index);
+
+                const Integer i = decode_morton_2DX(gl_index);
+                const Integer j = decode_morton_2DY(gl_index);
+
+                const Octant ref_octant(i, j);
+
+                for (int face = 0; face < 2 * ManifoldDim; ++face)
+                {
+                    Octant o = face_nbh(ref_octant, face);
+                    if (o.is_valid())
+                    {
+                        printf("face Nbh of %u is %li: x and y: %li - %li\n",
+                               i + offset * j, o.x + offset * o.y, o.x, o.y);
+                        increment(o);
+                    }
+                }
+
+                for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner)
+                {
+                    Octant o = corner_nbh(ref_octant, corner);
+                    if (o.is_valid())
+                    {
+                        printf("Corner Nbh of %u is %li: x and y: %li - %li\n",
+                               i + offset * j, o.x + offset * o.y, o.x, o.y);
+                        increment(o);
+                    }
+                }
+
+                break;
+            }
+            case ElementType::Hex8:
+            {
+                const unsigned int gl_index = global(index);
+
+                const Integer i = decode_morton_3DX(gl_index);
+                const Integer j = decode_morton_3DY(gl_index);
+                const Integer k = decode_morton_3DZ(gl_index);
+
+                const Octant ref_octant(i, j, k);
+
+                for (int face = 0; face < 2 * ManifoldDim; ++face)
+                {
+                    Octant o = face_nbh(ref_octant, face);
+                    if (o.is_valid())
+                    {
+                        printf("face Nbh of %u is %li: x and y: %li - %li\n", i + offset * j, o.x + offset * o.y, o.x, o.y);
+                        increment(o);
+                    }
+                }
+
+                for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner)
+                {
+                    Octant o = corner_nbh(ref_octant, corner);
+                    if (o.is_valid())
+                    {
+                        printf("Corner Nbh of %u is %li: x and y: %li - %li\n", i + offset * j, o.x + offset * o.y, o.x, o.y);
+                        increment(o);
+                    }
+                }
+
+                break;
+            }
+            }
+        }
+    };
 
 private:
     ViewMatrixTextureC<Integer, Comb::value, 2> combinations;
@@ -726,7 +1081,9 @@ private:
     Integer points_size_;
 
     ViewVectorType<unsigned int> local_sfc_;
+    ViewVectorType<Integer> gp_np; // parallel partition info shared among all processes.
     unsigned int chunk_size_;
+    Integer proc;
 
     UnorderedMap<unsigned int, unsigned int> global_to_local_map_;
 };

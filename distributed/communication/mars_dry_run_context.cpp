@@ -86,6 +86,11 @@ struct dry_run_context_impl {
     {
     }
 
+    void 
+    broadcast(const ViewVectorType<Integer> global) const
+    {
+    }
+
     int id() const { return 0; }
 
     int size() const { return num_ranks_; }

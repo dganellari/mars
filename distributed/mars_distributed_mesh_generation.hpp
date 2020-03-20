@@ -19,16 +19,16 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
 {
     using namespace Kokkos;
 
-	Kokkos::Timer timer;
+    Kokkos::Timer timer;
 
-    int proc_num =  rank(context);
-   // std::cout << "rank -:    " << proc_num << std::endl;
+    int proc_num = rank(context);
+    // std::cout << "rank -:    " << proc_num << std::endl;
 
     int size = num_ranks(context);
-   // std::cout << "size - :    " << size << std::endl;
+    // std::cout << "size - :    " << size << std::endl;
 
     unsigned int n__anchor_nodes = 0;
-    
+
     switch (Type)
     {
     case ElementType::Quad4:
@@ -48,9 +48,10 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
     }
     }
 
-    unsigned int chunk_size = (unsigned int)ceil((double)n__anchor_nodes / size);
-    unsigned int last_chunk_size  = chunk_size - (chunk_size * size - n__anchor_nodes);
-    
+    //unsigned int chunk_size = (unsigned int)ceil((double)n__anchor_nodes / size);
+    unsigned int chunk_size = n__anchor_nodes / size + (n__anchor_nodes % size != 0);
+    unsigned int last_chunk_size = chunk_size - (chunk_size * size - n__anchor_nodes);
+
     SFC morton;
 
     bool root = mars::rank(context) == 0;
@@ -82,45 +83,68 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
     //printf(" endcount\n");
 
     //set the chunk size to the remainder for the last mpi processes.
-    if(proc_num == size - 1)
+    if (proc_num == size - 1)
     {
         chunk_size = last_chunk_size;
     }
 
     ViewVectorType<unsigned int> local = ViewVectorType<unsigned int>("local_partition_sfc", chunk_size);
-    
+
     context->distributed->scatterv_gids(morton.get_view_elements(), local, counts);
 
-    std::cout << "MPI Scatter ended!"<< std::endl;
+    std::cout << "MPI Scatter ended!" << std::endl;
 
-
-  /*  parallel_for(
+    /*  parallel_for(
         "print_elem_chunk",chunk_size, KOKKOS_LAMBDA(const int i) {
             printf(" elch: %u-%i\n", local(i), proc_num);
         }); */
 
-     mesh.set_view_sfc(local);
-     mesh.set_chunk_size(chunk_size);
+    mesh.set_view_sfc(local);
+    mesh.set_chunk_size(chunk_size);
+    mesh.set_proc(proc_num);
+
+    ViewVectorType<Integer> GpNp = ViewVectorType<Integer>("global_static_partition", 2 * size);
+
+    if (root)
+    {
+        auto GpNp_host = create_mirror_view(GpNp);
+        for (int i = 0; i < size; ++i)
+        {
+            GpNp_host(2 * i) = morton.get_view_elements()(i * chunk_size); // acc sum scan giving the first element per process
+            GpNp_host(2 * i + 1) = counts[i];
+        }
+        deep_copy(GpNp, GpNp_host);
+    }
+
+    context->distributed->broadcast(GpNp); //broadcast to all processors.
+    std::cout << "MPI broadcast ended!" << std::endl;
+
+    /* parallel_for(
+        "print_elem_gp:",2*size, KOKKOS_LAMBDA(const int i) {
+            printf(" elch: %li-%i - %i\n", GpNp(i), i, proc_num);
+        }); */
+
+    mesh.set_view_gp(GpNp);
 
     assert(Dim <= 3);
     assert(ManifoldDim <= Dim);
 
-	Kokkos::Timer timer_gen;
+    Kokkos::Timer timer_gen;
 
-    //the mesh construct depends on template parameters. 
+    //the mesh construct depends on template parameters.
     bool gen_pts = mesh.template generate_points<Type>(xDim, yDim, zDim);
 
     bool gen_elm = mesh.template generate_elements<Type>(xDim, yDim, zDim);
 
-   	double time_gen = timer_gen.seconds();
-	std::cout << "Distributed Generation kokkos took: " << time_gen << " seconds. Process: "<<proc_num << std::endl;
+    double time_gen = timer_gen.seconds();
+    std::cout << "Distributed Generation kokkos took: " << time_gen << " seconds. Process: " << proc_num << std::endl;
 
-      if (!gen_pts || !gen_elm)
+    if (!gen_pts || !gen_elm)
         std::cerr << "Not implemented for other dimensions yet" << std::endl;
 
-	double time = timer.seconds();
-	std::cout << "Total distributed generation  kokkos took: " << time << " seconds. Process: "<<proc_num << std::endl;
-    
+    double time = timer.seconds();
+    std::cout << "Total distributed generation  kokkos took: " << time << " seconds. Process: " << proc_num << std::endl;
+
     return (gen_pts && gen_elm);
 }
 
