@@ -100,9 +100,14 @@ public:
 
     void scatterv_gids(const local_sfc global, const local_sfc local, const std::vector<int> &counts) const
     {
-        return impl_->scatterv_gids(global, local, counts);
+        impl_->scatterv_gids(global, local, counts);
     }
 
+    void broadcast(const ViewVectorType<Integer> global) const
+    {
+        impl_->broadcast(global);
+    }
+    
     int id() const
     {
         return impl_->id();
@@ -139,6 +144,9 @@ private:
         scatter_gids(const local_sfc global, const local_sfc local) const = 0;
         virtual void 
         scatterv_gids(const local_sfc global, const local_sfc local, const std::vector<int>& counts) const = 0;
+        virtual void 
+        broadcast(const ViewVectorType<Integer> global) const = 0;
+
         virtual int id() const = 0;
         virtual int size() const = 0;
         virtual void barrier() const = 0;
@@ -168,10 +176,18 @@ private:
             return wrapped.scatter_gids(global, local);
         }
         virtual void
-        scatterv_gids(const local_sfc global, const local_sfc local, const std::vector<int>& counts) const override
+        scatterv_gids(const local_sfc global, const local_sfc local, 
+                        const std::vector<int> &counts) const override
         {
             wrapped.scatterv_gids(global, local, counts);
         }
+
+        virtual void
+        broadcast(const ViewVectorType<Integer> global) const override
+        {
+            wrapped.broadcast(global);
+        }
+
         int id() const override
         {
             return wrapped.id();
@@ -223,9 +239,16 @@ struct local_context
     }
 
     void 
-    scatterv_gids(const local_sfc global, const local_sfc local, const std::vector<int>& counts) const
+    scatterv_gids(const local_sfc global, const local_sfc local, 
+                const std::vector<int>& counts) const
     {
     }
+
+    void 
+    broadcast(const ViewVectorType<Integer> global) const
+    {
+    }
+
     int id() const { return 0; }
 
     int size() const { return 1; }

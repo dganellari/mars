@@ -156,6 +156,21 @@ void scatterv(const ViewVectorType<T> global,
                  0, comm);
 }
 
+
+template <typename T>
+void broadcast(const ViewVectorType<T> global, MPI_Comm comm)
+{
+    static_assert(std::is_trivially_copyable<T>::value,
+                  "broadcast can only be performed on trivally copyable types");
+
+    using traits = mpi_traits<T>;
+    unsigned int count = global.extent(0);
+    
+    MPI_OR_THROW(MPI_Bcast,
+                 global.data(), count, traits::mpi_type(), 0, comm);
+
+}
+
 // Gather individual values of type T from each rank into a std::vector on
 // the every rank.
 // T must be trivially copyable

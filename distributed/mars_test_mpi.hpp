@@ -151,11 +151,11 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(int &argc, char 
 
 #ifdef WITH_KOKKOS
         using namespace Kokkos;
-        // run some kokkos simulations!
+
         DistributedQuad4Mesh mesh;
         generate_distributed_cube(context, mesh, level, level, 0);
 
-        int proc_num = rank(context);
+        /* int proc_num = rank(context);
 
         ViewMatrixType<Real> poi = mesh.get_view_points();
 
@@ -170,7 +170,7 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(int &argc, char 
             "print_elem_chunk", mesh.get_view_elements().extent(0), KOKKOS_LAMBDA(const int i) {
                 printf("el 3D: [(  %li, %li, %li, %li)] - %i]\n",
                        eeel(i, 0), eeel(i, 1), eeel(i, 2), eeel(i, 3), proc_num);
-            });
+            }); */
 #endif
     }
     catch (std::exception &e)
@@ -217,7 +217,6 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char 
 #ifdef WITH_KOKKOS
         using namespace Kokkos;
 
-        // run some kokkos simulations!
         DistributedHex8Mesh mesh;
         generate_distributed_cube(context, mesh, level, level, level);
 /* 

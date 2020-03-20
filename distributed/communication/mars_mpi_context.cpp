@@ -76,6 +76,12 @@ struct mpi_context_impl
         mpi::scatterv(global, local, counts, comm_);
     }
 
+
+    void broadcast(const ViewVectorType<Integer> global) const
+    {
+        mpi::broadcast(global, comm_);
+    }
+
     std::string name() const { return "MPI"; }
     int id() const { return rank_; }
     int size() const { return size_; }

@@ -129,6 +129,12 @@ namespace mars {
         return (exp == 0 ? 1 : base * power(base, exp - 1));
     }
 
+    template <typename T>
+    MARS_INLINE_FUNCTION constexpr Integer power_of_2(T exp)
+    {
+        return (exp == 0 ? 1 : 2 * power_of_2(exp - 1));
+    }
+
     // returns the prefix sum of C
     template <typename C>
     C make_scan_index(C const &c)
@@ -186,6 +192,7 @@ namespace mars {
 				swap(&in[start], &in[end]);
 		}
 	}
+
 #endif
 }
 
