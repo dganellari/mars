@@ -1305,8 +1305,9 @@ std::cout<<"after LSFEM_Poisson2D"<<std::endl;
 // LSFEM_ContactLinearElasticity<2,0,1>(1,0,2);
 // LSFEM_ContactLinearElasticity<2,0,1>(1,1,14);
 
-// LSFEM_ContactLinearElasticity<2,0,1>(1,0,10);
-
+// LSFEM_ContactLinearElasticity<2,0,1>(1,0,2);
+PROVALSFEM_ContactLinearElasticity<2,0,1>(1,0,1);
+// PROVALSFEM_ContactLinearElasticity2<2,0,1>(1,0,1);
 
 // compute_RT1_interpolation<2,1,1>(1,0,1);
 
@@ -1320,7 +1321,7 @@ std::cout<<"after LSFEM_Poisson2D"<<std::endl;
 
 // LSFEM_Poisson<2,1,2>(1,0,12);
 // LSFEM_Poisson<3,1,1>(1,0,6);
-LSFEM_Poisson<3,1,2>(1,0,6);
+// LSFEM_Poisson<3,1,2>(1,0,6);
 // std::cout<< FunctionSpaceDofsPerElem<ElemFunctionSpace<Simplex<3,3>,RT1<1>>>::value <<std::endl;
 // Poisson3D_P1(4);
 // Poisson2D_P2();

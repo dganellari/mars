@@ -58,7 +58,7 @@ public:
   {}
 
 
-  void compute()
+  void compute_node_normals()
   {
 
      // std::cout<<"--NodeNormalValues compute" <<std::endl;
@@ -90,7 +90,7 @@ public:
        // // std::cout<<"--it->first=" <<it->first<<std::endl;
 
       const auto& node_id=it->first;
-      // // std::cout<< "NODE ID = ="<<node_id<< std::endl;
+      // std::cout<< "NODE ID = ="<<node_id<< std::endl;
       auto& vecs=*(it->second);
 
       for(auto el_iter=vecs.begin();el_iter!=vecs.end();el_iter++)
@@ -103,14 +103,17 @@ public:
         // // std::cout<<elem_belongs_to_level(mesh,el,2,tracker)<<std::endl;
 
         FE.init(el);
-        if(FE.is_on_boundary())
-        {
-        auto& elem=mesh.elem(el);
-        auto& nodes=elem.nodes;
-        // // std::cout<<el<<"/"<<n_elements<< std::endl;
         auto level=tracker.get_level(el);
         
         if( level < 0 ) continue;
+
+
+        // if(FE.is_on_boundary())
+        // {
+        auto& elem=mesh.elem(el);
+        auto& nodes=elem.nodes;
+        // // std::cout<<el<<"/"<<n_elements<< std::endl;
+
 
         // // std::cout<<"--"<< std::endl;
         auto & node_normal_tmp=node_normals_[node_id];
@@ -135,6 +138,8 @@ public:
         // // std::cout<<"elem id"<<std::endl;
         // // std::cout<<el<<std::endl;
         // // std::cout<<"---- node_id ="<<node_id<<", level+1="<<level+1<< std::endl;
+        if(FE.is_on_boundary())
+        {
         node_normals_[node_id].reserve(level+1);
         // // std::cout<<"-------"<< std::endl;
         for(std::size_t s=0;s<FE.n_side();s++)
@@ -193,6 +198,54 @@ public:
 
 
 
+  void compute_face_normals()
+  {
+
+     // std::cout<<"--NodeNormalValues compute" <<std::endl;
+     spaces_ptr->update();
+     // std::cout<<"--NodeNormalValues compute" <<std::endl;
+
+     auto& mesh= spaces_ptr->mesh();
+     auto& bisection=spaces_ptr->bisection();
+     auto& tracker=bisection.tracker();
+     auto& n2e=spaces_ptr->node2elem();
+     Integer n_nodes=mesh.n_nodes();
+     Integer n_elements=mesh.n_elements();
+     auto& signed_normals=mesh.signed_normal()();
+
+     // // std::cout<<"--qui1" <<std::endl;
+
+     face_normals_.resize(mesh.n_elements());
+     Integer size;
+
+     FiniteElem<Elem> FE(mesh);
+
+    for(Integer el=0;el<mesh.n_elements();el++)
+    {
+     
+        FE.init(el);
+        if(FE.is_on_boundary())
+        {
+        auto& elem=mesh.elem(el);
+        auto& nodes=elem.nodes;
+
+        face_normals_[el].resize(FE.n_side());
+        
+        for(std::size_t s=0;s<FE.n_side();s++)
+          {
+            FE.init_boundary(s);
+            
+            if(FE.is_side_on_boundary())
+            {
+              face_normals_[el][s]=signed_normals[el][s];
+            }
+          }
+        }
+    }
+  }
+
+
+
 
 
    inline void compute_dofs(std::vector<Real>& x_p1)
@@ -209,23 +262,41 @@ public:
     GetType<typename DofsDmP1::ElemDofMap,0> elemdmp1;
 
     // dofmap_get<0>(p1dm,elemdmp1,0,0);
-    // // std::cout<<"elemdmp1"<<std::endl;
-    // // std::cout<<"n_dof="<<n_dofs<<std::endl;
+    // std::cout<<"elemdmp1"<<std::endl;
+    // std::cout<<"n_dof="<<n_dofs<<std::endl;
     x_p1.resize(n_dofs,0);
-    Integer cont;
-    for(Integer el=0;el<2;el++)///mesh.n_elements();el++)
+
+    for(Integer i=0;i<node_normals_.size();i++)
     {
+      // std::cout<<i<<"/"<< node_normals_.size()<<std::endl;
+      // for(Integer j=0;j<node_normals_[i].size();j++)
+      // std::cout<<node_normals_[i][j]<<std::endl;
+    }
+
+
+    Integer cont;
+    for(Integer el=0;el<mesh.n_elements();el++)
+    {
+      // std::cout<<"el="<<el<< std::endl;
       p1dm.template dofmap_get<0>(elemdmp1,el,0);
       auto& elem=mesh.elem(el);
       auto& nodes=elem.nodes;
       cont=0;
       for(Integer i=0;i<nodes.size();i++)
       {
-        // // std::cout<<"i="<<i<<", node="<< nodes[i]<< std::endl;
-        // // std::cout<< node_normals_[nodes[i]][0]<<std::endl;
+        // std::cout<<"i="<<i<<"/"<<nodes.size()<< std::endl;
+        // std::cout<< node_normals_[nodes[i]][0]<<std::endl;
         for(Integer j=0; j<ManifoldDim; j++)
         {
-          x_p1[elemdmp1[cont]]=node_normals_[nodes[i]][0][j];
+          // std::cout<<"elemdmp1[cont]="<<elemdmp1[cont] <<std::endl;
+          // std::cout<<"nodes[i]="<<nodes[i] <<std::endl;
+          // std::cout<<"x_p1.size()="<<x_p1.size() <<std::endl;
+          // std::cout<<"node_normals_.size()="<<node_normals_.size() <<std::endl;
+          // std::cout<<"node_normals_[nodes[i]].size()="<<node_normals_[nodes[i]].size() <<std::endl;
+          x_p1[elemdmp1[cont]]=node_normals_[nodes[i]][node_normals_[nodes[i]].size()-1][j];
+          // TODO FIXME CHECK fixme check if this is correct
+          // x_p1[elemdmp1[cont]]=node_normals_[nodes[i]][0][j];
+
           cont++;
         }
 
@@ -238,12 +309,17 @@ public:
 
   }
 
-  auto& operator()()      {return node_normals_;}
-  auto& operator()()const {return node_normals_;}
+  // auto& operator()()      {return node_normals_;}
+  // auto& operator()()const {return node_normals_;}
+  auto& node_normals()      {return node_normals_;}
+  auto& node_normals()const {return node_normals_;}
 
+  auto& face_normals()      {return face_normals_;}
+  auto& face_normals()const {return face_normals_;}
 private:
   std::shared_ptr<FunctionSpace> spaces_ptr;
   std::vector<std::vector<Normal>> node_normals_;
+  std::vector<std::vector<Normal>> face_normals_;
 };
 
 template<typename FunctionSpace>
@@ -258,6 +334,8 @@ auto MakeFaceNormal(const std::shared_ptr<FullSpace>& AuxW_ptr)
 
 
 class GapFunction;
+
+
 
 template<Integer N,typename FullSpace>
 auto MakeGapFunction(const std::shared_ptr<FullSpace>& AuxW_ptr)
@@ -284,8 +362,11 @@ class FunctionOne
 };
 
 
+template<Integer Dim,typename ... FunctionTypes>
+class FunctionLastComponent;
+
 template<Integer Dim>
-class FunctionLastComponent
+class FunctionLastComponent<Dim>
 {
     public: 
     // using Point=Matrix<Real,2,1>;
@@ -304,6 +385,29 @@ class FunctionLastComponent
      return func; 
     }
 };
+
+template<Integer Dim,typename FunctionType>
+class FunctionLastComponent<Dim,FunctionType>
+{
+    public: 
+    // using Point=Matrix<Real,2,1>;
+    using type=Matrix<Real,Dim,1>;
+
+
+    template<typename Point,typename Elem>
+    static type eval(const Point& p, FiniteElem<Elem>& FE)
+    {
+     Matrix<Real,Dim,1> func;
+     for(Integer i=0;i<Dim-1;i++)
+      // func[i]=0;
+        func(i,0)=0;
+     // func[Dim-1]=-0.01;
+     func(Dim-1,0)=FunctionType::eval(p,FE)(0,0);
+     return func; 
+    }
+};
+
+
 
 template<Integer Dim>
 class FunctionLinear
@@ -340,6 +444,11 @@ class FunctionZero
      return func; 
     }
 };
+
+template<Integer N,typename FullSpace>
+auto MakeZeroFunction(const std::shared_ptr<FullSpace>& AuxW_ptr)
+{return Function<FullSpace,N+FullSpace::TrialSpaceSize,TraceOperator,FunctionZero<1>>(AuxW_ptr);}
+
 
 template<typename FullSpace,Integer N,typename Operator_=IdentityOperator,typename FuncType=EmptyClass>
 class Function;
@@ -388,15 +497,16 @@ public:
       // // std::cout<<"evaluation after "<<std::endl;
 
 
-      // for(Integer jj=0;jj<evaluation.rows();jj++)
-      //   {
-      //   for(Integer kk=0;kk<evaluation.cols();kk++)
-      //   {
-      //     local_dofs[cont_]=evaluation(kk,jj);  
-      //     cont_++;
-      //   }
+      for(Integer jj=0;jj<evaluation.rows();jj++)
+        {
+        for(Integer kk=0;kk<evaluation.cols();kk++)
+        {
+          local_dofs[cont_]=evaluation(kk,jj); 
+          // std::cout<< "local_dofs====="<<local_dofs[cont_]<<std::endl;
+          cont_++;
+        }
 
-      //   }
+        }
 
       }
     // // std::cout<<"QPPointsFunction end" <<std::endl;
@@ -432,18 +542,30 @@ public:
       // const auto v0=FE.v0();
       // const auto point=point_tmp+v0;
       // // std::cout<<"evaluation pre"<<std::endl;
+      // std::cout<<"FE.jac()"<<std::endl;
+      // std::cout<<FE.jac()<<std::endl; 
+      // std::cout<<"FE.v0()"<<std::endl;
+      // std::cout<<FE.v0()<<std::endl;      
+      // std::cout<<"Points[ii]"<<std::endl;
+      // std::cout<<Points[ii]<<std::endl;
+      // std::cout<<"point"<<std::endl;
+      // std::cout<<point<<std::endl;
       const auto& evaluation=FuncType::eval(point,FE);
       // // std::cout<<"evaluation post"<<std::endl;
       // // std::cout<<"evaluation.rows()"<<evaluation.rows()<<std::endl;
       // // std::cout<<"evaluation.cols()"<<evaluation.cols()<<std::endl;
       // // std::cout<<"local_dofs"<<local_dofs<<std::endl;
 
+      // std::cout<<"evaluation"<<std::endl;
+      // std::cout<<evaluation<<std::endl;
+
       for(Integer jj=0;jj<evaluation.rows();jj++)
         {
         for(Integer kk=0;kk<evaluation.cols();kk++)
         {
-          // // std::cout<<"jj,kk"<<jj<<","<<kk<<std::endl;
+          // std::cout<<"jj,kk"<<jj<<","<<kk<<std::endl;
           local_dofs[cont_]=evaluation(jj,kk);  
+          // std::cout<<"local_dofs[cont_]="<<local_dofs[cont_]<<std::endl;
           cont_++;
         }
 
@@ -506,9 +628,9 @@ class Function
 
 
       // TODO FIXME
-      // // std::cout<<"begin Function local_dofs_update"<<std::endl;
+      // std::cout<<"begin Function local_dofs_update"<<std::endl;
       QPPointsFunction<FunctionType,Space>::init(FE,local_dofs_);
-      // // std::cout<<"end Function local_dofs_update"<<std::endl;
+      // std::cout<<"end Function local_dofs_update"<<std::endl;
 
 
     } 
@@ -551,6 +673,8 @@ class Function
       // // std::cout<<"local_map="<<local_map<<std::endl;
       // // std::cout<<"local_dofs_="<<local_dofs_<<std::endl;
       local_dofs_[ii]=(*global_dofs_ptr_)[local_map[ii]];
+      // std::cout<<"local_dofs_="<<local_dofs_[ii]<<std::endl;
+
      }
       
     // // std::cout<<"after local_dofs_update4, local_dofs_="<<local_dofs_<<std::endl;
@@ -775,7 +899,7 @@ class Function<FullSpace,N,IdentityOperator,EmptyClass>
   
    void local_dofs_update(const FiniteElem<Elem>& FE)
     {
-      // // std::cout<<"LOCAL DOFS UPDATE 1 "<<std::endl;
+      // std::cout<<"LOCAL DOFS UPDATE 1 "<<std::endl;
       auto local_map=tuple_get<N>(elemdofmap_); 
       full_spaces_ptr_->dofsdofmap().template dofmap_get<N>(local_map,FE.elem_id());
     
@@ -784,8 +908,8 @@ class Function<FullSpace,N,IdentityOperator,EmptyClass>
     // auto& tuple_map=full_spaces_ptr_->aux_spaces_ptr()->dofmap2();
     // // std::cout<<"LOCAL DOFS UPDATE 2"<<std::endl;
     // auto& local_map=tuple_get<FunctionNumber>(full_spaces_ptr_->aux_spaces_ptr()->dofmap2())[J.elem_id()];
-    // // std::cout<<"LOCAL DOFS UPDATE 3, local_map="<<local_map<<std::endl;
-    // // std::cout<<"local_dofs_update4, local_dofs_="<<local_dofs_<<std::endl;
+    // std::cout<<"LOCAL DOFS UPDATE 3, local_map="<<local_map<<std::endl;
+    // std::cout<<"local_dofs_update4, local_dofs_="<<local_dofs_<<std::endl;
     // // std::cout<<"global_dofs.size()="<<global_dofs.size()<<std::endl;
      // for(int ii=0;ii<global_dofs.size();ii++)
      // {
@@ -978,7 +1102,7 @@ class Function<FullSpace,N,Operator_,EmptyClass>
   
    void local_dofs_update(const FiniteElem<Elem>& FE)
     {
-      // // std::cout<<"local_dofs_update1"<<std::endl;
+      // std::cout<<">>>>>>>>>> MARS_FUNCTION local_dofs_update <<<<<<<<<<<"<<std::endl;
       // // std::cout<<"N"<<N<<std::endl;
       // // std::cout<<"elemdofmap_"<<elemdofmap_<<std::endl;
 
@@ -990,9 +1114,9 @@ class Function<FullSpace,N,Operator_,EmptyClass>
 
 
     // auto& tuple_map=full_spaces_ptr_->aux_spaces_ptr()->dofmap2();
-    // // std::cout<<"local_dofs_update2"<<std::endl;
+    // std::cout<<"local_dofs_update2"<<std::endl;
     // auto& local_map=tuple_get<FunctionNumber>(full_spaces_ptr_->aux_spaces_ptr()->dofmap2())[J.elem_id()];
-    // // std::cout<<"local_dofs_update3, local_map="<<local_map<<std::endl;
+    // std::cout<<"local_dofs_update3, local_map="<<local_map<<std::endl;
     // // std::cout<<"local_dofs_update4, global_dofs_size="<<global_dofs_ptr_->size()<<std::endl;
     // // std::cout<<"local_dofs_update4, local_dofs_="<<local_dofs_<<std::endl;
     //  // for(int ii=0;ii<global_dofs_.size();ii++)
@@ -1005,18 +1129,23 @@ class Function<FullSpace,N,Operator_,EmptyClass>
      // {
      //  // // std::cout<<"global ii="<<(*global_dofs_ptr_)[ii]<<std::endl;
      // }
+
+      // std::cout<<"N="<<N<<std::endl;
+      //     std::cout<<"global_dofs_ptr_="<<std::endl;
+
       // for(Integer ii=0;ii<global_dofs_ptr_->size();ii++)
       //    {
       //     // (*global_dofs_ptr_ )[ii] =global_dofs[ii];
-      //     // std::cout<<(*global_dofs_ptr_ )[ii]<<std::endl;
+      //     std::cout<<"global_dofs_ptr_="<<(*global_dofs_ptr_ )[ii]<<std::endl;
       //   }
+    
+     // std::cout<<"local_map="<<local_map<<std::endl;
 
      for(int ii=0;ii<local_map.size();ii++)
      {
-      // // std::cout<<"ii="<<ii<<std::endl;
-      // // std::cout<<"local_map="<<local_map<<std::endl;
+      // std::cout<<"local_map["<<ii<<"]="<<local_map[ii]<<std::endl;
       local_dofs_[ii]=(*global_dofs_ptr_)[local_map[ii]];
-      // // std::cout<<"local_dofs_="<<local_dofs_<<std::endl;
+      // std::cout<<"MARS_FUNCTION local_dofs_["<<ii<<"]="<<local_dofs_[ii]<<std::endl;
 
      }
       

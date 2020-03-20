@@ -221,6 +221,10 @@ public:
     //     // std::cout<<level_cumulative_dofs_array_[i][j]<<" ";
     //     // std::cout<<std::endl;
     //   }    
+
+    std::cout<<"N="<<N<<std::endl;
+    std::cout<<"dofmap_get="<<std::endl;
+    std::cout<<offset<<std::endl;
     for(std::size_t i=0;i<elemdm.size();i++)
         elemdm[i]=dm[i]+offset;
     }
@@ -458,9 +462,48 @@ public:
    //      elemdm[i]=dm[i]+offset;
    //  }
 
+   template<Integer N>
+   std::enable_if_t<N>=Arg1::Nsubspaces , void> 
+   dofmap_get(GetType<ElemDofMap,N>& elemdm, const Integer elem_id, const Integer level)const
+   {
+    const auto& dm=tuple_get<N>(dofmap_)->operator[](elem_id);
+    
+    // // std::cout<<"dofmap_get,   offset="<<offset<<std::endl;
+    // // std::cout<<"dofmap_get,   level="<<level<<std::endl;
+    // // std::cout<<"dofmap_get,   N="<<N<<std::endl;
+
+    // for(Integer i=0;i<level_cumulative_dofs_array_.size();i++)
+    // {
+    //   for(Integer j=0;j<level_cumulative_dofs_array_[i].size();j++)
+    //   {
+    //     // std::cout<<level_cumulative_dofs_array_[i][j]<<" ";
+    //   }
+    // // std::cout<<std::endl;
+    // }
+  //   for(Integer k=0;k<level_cumulative_dofs_array_.size();k++)
+  //     {for(Integer m=0;m<level_cumulative_dofs_array_[k].size();m++)
+  //   std::cout<<level_cumulative_dofs_array_[k][m]<<" ";
+  //   std::cout<<std::endl;
+  // }
+  // std::cout<<"Arg1::Nsubspaces"<<std::endl;
+  // std::cout<<Arg1::Nsubspaces<<std::endl;
+  // std::cout<<"Arg2::Nsubspaces"<<std::endl;
+  // std::cout<<Arg2::Nsubspaces<<std::endl;
+
+    // std::cout<<"DofsDofMapFullAndAux N="<<N<<std::endl;
+    // std::cout<<"DofsDofMapFullAndAux dofmap_get="<<std::endl;
+    for(std::size_t i=0;i<elemdm.size();i++)
+        {
+          elemdm[i]=dm[i];
+          // std::cout<<"elemdm[i]="<<elemdm[i]<<std::endl;
+        }
+    }
+
+
 
    template<Integer N>
-   void dofmap_get(GetType<ElemDofMap,N>& elemdm, const Integer elem_id, const Integer level)const
+   std::enable_if_t<N<Arg1::Nsubspaces , void> 
+   dofmap_get(GetType<ElemDofMap,N>& elemdm, const Integer elem_id, const Integer level)const
    {
     const auto& dm=tuple_get<N>(dofmap_)->operator[](elem_id);
     const auto& offset=level_cumulative_dofs_array_[N][level];
@@ -477,7 +520,19 @@ public:
     //   }
     // // std::cout<<std::endl;
     // }
+  //   for(Integer k=0;k<level_cumulative_dofs_array_.size();k++)
+  //     {for(Integer m=0;m<level_cumulative_dofs_array_[k].size();m++)
+  //   std::cout<<level_cumulative_dofs_array_[k][m]<<" ";
+  //   std::cout<<std::endl;
+  // }
+  // std::cout<<"Arg1::Nsubspaces"<<std::endl;
+  // std::cout<<Arg1::Nsubspaces<<std::endl;
+  // std::cout<<"Arg2::Nsubspaces"<<std::endl;
+  // std::cout<<Arg2::Nsubspaces<<std::endl;
 
+  //   std::cout<<"DofsDofMapFullAndAux N="<<N<<std::endl;
+  //   std::cout<<"DofsDofMapFullAndAux dofmap_get="<<std::endl;
+  //   std::cout<<"offset="<<offset<<std::endl;
     for(std::size_t i=0;i<elemdm.size();i++)
         elemdm[i]=dm[i]+offset;
     }

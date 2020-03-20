@@ -11,6 +11,8 @@
 #include "mars_imesh.hpp"
 #include "mars_signed_normal.hpp"
 
+#include "mars_elem_to_sub_elem.hpp"
+
 #include <vector>
 #include <array>
 #include <fstream>
@@ -968,7 +970,7 @@ namespace mars {
 		std::vector<bool> active_;
 		bool sorted_elements_;
 		std::vector<Integer> side_tags_;
-		std::vector<std::array<Integer,ManifoldDim>> side_nodes_;
+		std::vector<std::array<Integer,ManifoldDim+1>> side_nodes_;
 		std::vector<Integer> boundary2elem_;
 		SignedNormal<Elem> signed_normal_;
 	};
@@ -1170,12 +1172,17 @@ namespace mars {
 
 
 
+    template<typename Elem>
+    class Node2ElemMap;
 
+    template<typename Elem>
+    class FiniteElem;
 
 	template<Integer Dim, Integer ManifoldDim>
 	void assign_tags(Mesh<Dim, ManifoldDim> &mesh)
 	{
 	  using Elem=Simplex<Dim,ManifoldDim>;
+	  using BoundaryElem=FromVolumetricToBoundaryElem<Elem>;
 	  using Side=Simplex<Dim,ManifoldDim-1>;
 	  const auto& mesh_side_nodes=mesh.side_nodes();
 	  const auto& n_sides_tot=mesh_side_nodes.size();
@@ -1186,60 +1193,201 @@ namespace mars {
 
       Side side;
 
-	  for(int b=0;b<n_sides_tot;b++)
+      auto& side_nodes=mesh.side_nodes();
+      std::array<Integer,ManifoldDim> boundary_nodes;
+
+      FiniteElem<Elem> FE(mesh);
+      BoundaryElem side_elem;
+
+
+      bool found;
+      Integer n_nodes=mesh.points().size();
+
+      for(Integer el=0;el<mesh.n_elements();el++)
+      {
+      	std::cout<<"assign_tags el="<<el <<std::endl;
+      	auto& elem=mesh.elem(el);
+      	auto& side_tags=elem.side_tags;
+      	for(Integer i=0;i<side_tags.size();i++)
+      		side_tags[i]=INVALID_INDEX;
+
+
+
+      }
+
+
+      std::vector<std::vector<Integer>> node2elem(n_nodes,std::vector<Integer>{});
+      for(Integer el=0;el<mesh.n_elements();el++)
+      {
+      	std::cout<<"---assign_tags el="<<el <<"/"<<mesh.n_elements() <<std::endl;
+      	auto& elem=mesh.elem(el);
+      	auto& nodes=elem.nodes;
+       	for(Integer i=0;i<nodes.size();i++)
+      	{
+      		std::cout<<nodes[i]<<" ";    
+         }     	
+      	std::cout<<std::endl;
+      	for(Integer i=0;i<nodes.size();i++)
+      	{
+      		found=false;
+      		std::cout<<nodes[i]<<"/"<<n_nodes<<std::endl;    		
+      		std::cout<<"size="<<node2elem[nodes[i]].size()<<std::endl;
+      		for(Integer m=0;m<node2elem[nodes[i]].size();m++)
+      			if(node2elem[nodes[i]][m]==el)
+      				found=true;
+
+      		if(!found)
+      		{
+       	    // std::cout<<nodes[i]<<"/"<<mesh.n_nodes()<<std::endl;    			
+      			node2elem[nodes[i]].push_back(el);
+      			// std::cout<<nodes[i]<<" post "<<mesh.n_nodes()<<std::endl;    			
+      		}
+      	}
+
+      }
+
+
+      std::cout<<"node2elem="<<std::endl;
+
+       for(Integer i=0;i<mesh.points().size();i++)
+      	{
+      		for(Integer m=0;m<node2elem[i].size();m++)
+      		std::cout<<node2elem[i][m]<<" ";   
+      		std::cout<<std::endl; 
+         }     	
+      	
+
+
+
+      std::cout<<"---assign_tags end=" <<std::endl;
+
+
+
+	  for(int b=0;b<side_nodes.size();b++)
 	  {
-	    auto side_nodes=mesh_side_nodes[b];//std::sort(mesh_side_nodes[b]);
-	    std::sort(std::begin(side_nodes),std::end(side_nodes),std::less<int>());
-	    const auto& side_tag=side_tags[b];
-        bool found=false;
-        bool found_tmp=false;
-        // std::cout<<std::endl;
-        // std::cout<< "side_nodes="<<std::endl;
-        // for(Integer t=0;t<side_nodes.size();t++)
-        // 	std::cout<<side_nodes[t]<<" ";
-        // std::cout<<std::endl;
+	  	std::cout<<"---------------------assign_tags b=="<<b<<std::endl;
+	  	for(Integer n=0;n<side_nodes[b].size();n++)
+	  	{
+	  		std::cout<<side_nodes[b][n]<<" ";
+	  	}
+	  	std::cout<<std::endl;
 
-	    for(Integer e=0;e<n_elements;e++)
-	    {
-	     if(found==true)
-	     	break;
+	  	for(Integer n=0;n<side_nodes[b].size()-1;n++)
+	  	{
+	  		std::cout<<">>>>>>>>>>>>>side_nodes="<<side_nodes[b][n]<<std::endl;
+	  		// std::cout<<std::endl;
+	  		auto elems=node2elem[side_nodes[b][n]];;
 
-	     auto& elem=mesh.elem(e);
-         // const auto& nodes=elem.nodes;
-         // std::cout<< "elem="<<e<<std::endl;
-         auto nsides=n_sides(elem);
-         for(Integer s=0;s<nsides ;s++)
-            {                  
-            	elem.side(s,side);
-                auto s_nodes=side.nodes;
-                std::sort(std::begin(s_nodes),std::end(s_nodes),std::less<int>());
-            	found_tmp=true;
-            	for(Integer t=0;t<s_nodes.size() ;t++)
-            	{
-            		if(s_nodes[t]!=side_nodes[t])
-            			found_tmp=false;
-            		// std::cout<< s_nodes[t]<<" ";
-            	}
-                // std::cout<<std::endl;
-            	if(found_tmp==true)
-            	{
-            		boundary2elem[b]=e;
-            		elem.side_tags[s]=side_tag;
-            		// std::cout<<"found= "<<std::endl;
-		            	// for(Integer t=0;t<s_nodes.size() ;t++)
-		            	// {
-		             //     std::cout<< s_nodes[t]<<" ";
-		            	// }
-		             //    std::cout<< std::endl;
-            		 found=true;
-            		 break;
-            	}
-            	
-            }
-	    }
+	  		for(Integer el=0;el<elems.size();el++)
+	  		{
+	  			std::cout<<"el=="<<elems[el]<<std::endl;
 
-	  // std::cout<<std::endl;
+		  			auto& elem=mesh.elem(elems[el]);
+		  			FE.init(elems[el]);
+		  			for(std::size_t s=0;s<FE.n_side();s++)
+		  			{
+		  				found=true;
+		  				FE.init_boundary(s);
+		  				
+		  				elem.side(s,side_elem);
+
+		  				auto b_nodes=side_elem.nodes;
+		  				std::sort(std::begin(b_nodes), std::end(b_nodes));
+
+
+		  				// std::cout<<"pre elem.side_tags[s]="<<elem.side_tags[s]<<std::endl;
+
+
+		  				// std::cout<<" b_nodes[i] "<< std::endl;
+                        
+                        for(Integer i=0;i<b_nodes.size();i++)
+                        {
+                        std::cout<< b_nodes[i] <<" ";
+		  				if(b_nodes[i]!=side_nodes[b][i])
+		  					{
+		  						
+		  						found=false;
+		  					}
+                        }
+                        std::cout<<std::endl;
+
+                        // std::cout<<"found="<<found<<std::endl;
+
+
+		  				if(found)
+		  				{
+
+
+		  					elem.side_tags[s]=side_nodes[b][side_nodes[b].size()-1];
+
+		  				}
+		  				std::cout<<"after elem.side_tags[s]="<<elem.side_tags[s]<<std::endl;
+		  			}
+		  			// std::cout<<std::endl;
+
+		  		
+	  		}
+	  		std::cout<<std::endl;
+
+
+
+	  		
+	  	}
 	  }
+
+
+	  //   auto side_nodes=mesh_side_nodes[b];//std::sort(mesh_side_nodes[b]);
+	  //   std::sort(std::begin(side_nodes),std::end(side_nodes),std::less<int>());
+	  //   const auto& side_tag=side_tags[b];
+   //      bool found=false;
+   //      bool found_tmp=false;
+   //      // std::cout<<std::endl;
+   //      // std::cout<< "side_nodes="<<std::endl;
+   //      // for(Integer t=0;t<side_nodes.size();t++)
+   //      // 	std::cout<<side_nodes[t]<<" ";
+   //      // std::cout<<std::endl;
+
+	  //   for(Integer e=0;e<n_elements;e++)
+	  //   {
+	  //    if(found==true)
+	  //    	break;
+
+	  //    auto& elem=mesh.elem(e);
+   //       // const auto& nodes=elem.nodes;
+   //       // std::cout<< "elem="<<e<<std::endl;
+   //       auto nsides=n_sides(elem);
+   //       for(Integer s=0;s<nsides ;s++)
+   //          {                  
+   //          	elem.side(s,side);
+   //              auto s_nodes=side.nodes;
+   //              std::sort(std::begin(s_nodes),std::end(s_nodes),std::less<int>());
+   //          	found_tmp=true;
+   //          	for(Integer t=0;t<s_nodes.size() ;t++)
+   //          	{
+   //          		if(s_nodes[t]!=side_nodes[t])
+   //          			found_tmp=false;
+   //          		// std::cout<< s_nodes[t]<<" ";
+   //          	}
+   //              // std::cout<<std::endl;
+   //          	if(found_tmp==true)
+   //          	{
+   //          		boundary2elem[b]=e;
+   //          		elem.side_tags[s]=side_tag;
+   //          		// std::cout<<"found= "<<std::endl;
+		 //            	// for(Integer t=0;t<s_nodes.size() ;t++)
+		 //            	// {
+		 //             //     std::cout<< s_nodes[t]<<" ";
+		 //            	// }
+		 //             //    std::cout<< std::endl;
+   //          		 found=true;
+   //          		 break;
+   //          	}
+            	
+   //          }
+	  //   }
+
+	  // // std::cout<<std::endl;
+	  // }
 
 	}
 

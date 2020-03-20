@@ -316,13 +316,13 @@ public:
 
          for(std::size_t comp=0;comp<BC_N::NComponents;comp++)
          {
-      std::cout<< " compute_constraints begin " <<std::endl;
-      std::cout<<"dofmap_trace="<<dofmap_trace<<std::endl;
-      std::cout<<"i*BC_N::NComponents+BC_N::Component="<< i*BC_N::NComponents+BC_N::Component <<std::endl;
+      // std::cout<< " compute_constraints begin " <<std::endl;
+      // std::cout<<"dofmap_trace="<<dofmap_trace<<std::endl;
+      // std::cout<<"i*BC_N::NComponents+BC_N::Component="<< i*BC_N::NComponents+BC_N::Component <<std::endl;
           constrained_dofs[dofmap_trace[i*BC_N::NComponents+comp]]=true;
           constrained_mat[dofmap_trace[i*BC_N::NComponents+comp]]=1;   
           constrained_vec[dofmap_trace[i*BC_N::NComponents+comp]]= rhs_local(comp,0);      
-       std::cout<< " compute_constraints end " <<std::endl;   
+       // std::cout<< " compute_constraints end " <<constrained_vec[dofmap_trace[i*BC_N::NComponents+comp]]<<std::endl;   
 
          }
     }
@@ -331,13 +331,13 @@ public:
     inline std::enable_if_t<(BC_N::Component>=0),void>
     compute_constraints(Dofs& constrained_dofs,Mat& constrained_mat,Vec& constrained_vec,const Integer& i, const DofMapTrace& dofmap_trace,const Rhs& rhs_local )
     {
-      std::cout<< " compute_constraints begin " <<std::endl;
-      std::cout<<"dofmap_trace="<<dofmap_trace<<std::endl;
-      std::cout<<"i*BC_N::NComponents+BC_N::Component="<< i*BC_N::NComponents+BC_N::Component <<std::endl;
+      // std::cout<< " compute_constraints begin " <<std::endl;
+      // std::cout<<"dofmap_trace="<<dofmap_trace<<std::endl;
+      // std::cout<<"i*BC_N::NComponents+BC_N::Component="<< i*BC_N::NComponents+BC_N::Component <<std::endl;
           constrained_dofs[dofmap_trace[i*BC_N::NComponents+BC_N::Component]]=true;
           constrained_mat[dofmap_trace[i*BC_N::NComponents+BC_N::Component]]=1;   
           constrained_vec[dofmap_trace[i*BC_N::NComponents+BC_N::Component]]= rhs_local(0,0);   
-      std::cout<< " compute_constraints end " <<std::endl;   
+      // std::cout<< " compute_constraints end " <<constrained_vec[dofmap_trace[i*BC_N::NComponents+BC_N::Component]]<<std::endl;   
     }
 
 
@@ -461,14 +461,14 @@ public:
     // std::cout<<"___--assembly dirichlet bc apply_aux="<<std::endl;
     // std::cout<<dofmap_trace<<std::endl;
     // for(std::size_t i=0;i<dofmap_trace.size();i++)
-    std::cout<<"reference_points"<<std::endl;
-    std::cout<<reference_points<<std::endl;
+    // std::cout<<"reference_points"<<std::endl;
+    // std::cout<<reference_points<<std::endl;
 
-    std::cout<<"points"<<std::endl;
-    std::cout<<points<<std::endl;
+    // std::cout<<"points"<<std::endl;
+    // std::cout<<points<<std::endl;
 
-    std::cout<<"___--ratio="<<std::endl;
-    std::cout<<ratio<<std::endl;
+    // std::cout<<"___--ratio="<<std::endl;
+    // std::cout<<ratio<<std::endl;
     for(std::size_t i=0;i<ratio;i++)
         {
          const auto& rhs_local=bc.eval(points[i],FE);

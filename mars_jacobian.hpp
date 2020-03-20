@@ -93,7 +93,7 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
       // for(Integer ii=0;ii<side_points_.size();ii++)
       //   std::cout<<side_points_[ii]<<std::endl;
       // jacobian(side_,points_,side_J_);
-      affine_transformation(side_,points,side_J_,v0_);
+      affine_transformation(side_,points,side_J_,side_v0_);
       // std::cout<<"init boundary"<<std::endl;
       // for(Integer k = 0; k < side_.nodes.size(); ++k)
       // std::cout<<side_.nodes[k]<<" "<<std::endl;
@@ -134,6 +134,8 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
   constexpr auto & jac_side()const {return side_J_;}
 
   constexpr auto & v0()const {return v0_;}
+
+  constexpr auto & side_v0()const {return side_v0_;}
 
   inline auto & mesh_ptr()const {return mesh_ptr_;}
 
@@ -220,7 +222,7 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
       // std::cout<<"s="<<s<<std::endl;
     for(Integer i=0; i<Dim;i++)
      {
-       mat_transformed_point(s,i)=v0_[i];
+       mat_transformed_point(s,i)=side_v0_[i];
        for(Integer j=0;j<side_J_.cols();j++)
         mat_transformed_point(s,i)+=side_J_(i,j)*Point(s,j);
      }
@@ -319,6 +321,7 @@ class FiniteElem<Simplex<Dim, ManifoldDim>>
   Real det_side_J_;
   Real side_volume_;
   Vector<Real, Dim> v0_;
+  Vector<Real, Dim> side_v0_;
   std::shared_ptr<Mesh<Dim,ManifoldDim>> mesh_ptr_;
 
   Integer level_;

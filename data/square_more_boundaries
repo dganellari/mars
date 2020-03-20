@@ -1,0 +1,28 @@
+int n=1;
+
+
+real L1=1;
+real L2=1;
+real L3=1;
+real L41=0.45;
+real L42=0.1;
+real L43=0.45;
+
+
+border e41(t=0,L41){x = t;         y = 0;           label = 4;}
+border e42(t=0,L42){x = L41+t; y = 0 ;          label = 5;}
+border e43(t=0,L43){x = L41+L42+t; y = 0 ;          label = 4;}
+border e3(t=0,L3){x = L41+L42+L43; y =t ;          label = 3;}
+border e2(t=0,L2){x = L41+L42+L43-t; y = L3 ;          label = 2;}
+border e1(t=0,L1){x = 0; y = L2-t ;          label = 1;}
+
+//mesh Th=buildmesh( e41(n)+e42(1*n)+e43(n) + e1(1*n));//+e2(n)+e3(n) );
+
+mesh Th=buildmesh( e41(3*n)+e42(5*n)+e43(3*n)+e3(1*n)+e2(2*n) + e1(1*n));//+e2(n)+e3(n) );
+
+
+savemesh(Th,"SquareMoreBoundaries.msh");
+
+plot(Th);
+
+

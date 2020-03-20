@@ -42,7 +42,7 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
   using type3=typename Shapes::subtype::subtype; 
   const Integer face=FE.side_id();
 
-     // std::cout<<"local_dofs  TraceOperator="<<std::endl;
+     // std::cout<<"Evaluation<Expression<Function TraceOperator="<<std::endl;
 
    eval.local_dofs_update(FE);
    const auto& all_local_dofs=eval.local_dofs();
@@ -52,13 +52,19 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
    // decltype(trace[face]) m1(1); //const mars::Array<long, 4>
    // decltype(all_local_dofs) m2(1);//'const mars::Array<double, 6>
    // decltype(local_dofs_) m3(1); //const mars::Array<mars::Array<long, 4>, 3>
+   
 
    subarray(local_dofs_,all_local_dofs,trace[face]);
-   // std::cout<<"local_dofs TraceOperator="<<local_dofs_<<std::endl;
+   // std::cout<<"local_dofs TraceOperator="<<std::endl;
+   // for(Integer i=0;i<all_local_dofs.size();i++)
+   //  std::cout<<all_local_dofs[i]<<std::endl;
    // std::cout<<"type2::Dim"<<type2::Dim<<std::endl;
    // std::cout<<"type3::Rows"<<type3::Rows<<std::endl;
    // std::cout<<"type3::Cols"<<type3::Cols<<std::endl;
+   // std::cout<<"shapes"<<std::endl;
    // std::cout<<shapes<<std::endl;
+   // std::cout<<"local_dofs_"<<std::endl;
+   // std::cout<<local_dofs_<<std::endl;
    // std::cout<<"___"<<std::endl;
     // loop on qp points
     for(Integer ii=0;ii< type2::Dim;ii++)
@@ -66,6 +72,8 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
       for(Integer mm=0;mm<type3::Rows;mm++)
         for(Integer nn=0;nn<type3::Cols;nn++)
            {value[ii](mm,nn)=local_dofs_[0]*shapes[0][ii](mm,nn);
+
+            // std::cout<<value[ii](mm,nn)<<std::endl;
             // std::cout<<local_dofs_[0]<<" "<<shapes[0][ii](mm,nn)<<std::endl;
            }
            // std::cout<<"here ::Cols"<<type3::Cols<<std::endl;
@@ -76,7 +84,8 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
         for(Integer nn=0;nn<type3::Cols;nn++)
            {
             value[ii](mm,nn)+=local_dofs_[jj]*shapes[jj][ii](mm,nn);
-            // std::cout<<local_dofs_[jj]<<" "<<shapes[jj][ii](mm,nn)<<std::endl;
+            // std::cout<<"<IsSame<OperatorType,TraceOperator> value[ii](mm,nn)="<<value[ii](mm,nn)<<std::endl;
+            // std::cout<<"<IsSame<OperatorType,TraceOperator> local_dofs_[jj]="<<local_dofs_[jj]<<std::endl;
           }
 
     }
@@ -117,7 +126,12 @@ class Evaluation<Expression<Function<FullSpace,N,Operator_,FuncType>>,OtherTempl
       // loop on components of subtype (is a matrix)
       for(Integer mm=0;mm<type3::Rows;mm++)
         for(Integer nn=0;nn<type3::Cols;nn++)
-           value[ii](mm,nn)+=local_dofs[jj]*shapes[jj][ii](mm,nn);
+           {
+            value[ii](mm,nn)+=local_dofs[jj]*shapes[jj][ii](mm,nn);
+            // std::cout<<"<IsDifferent<OperatorType,TraceOperator> value[ii](mm,nn)="<<value[ii](mm,nn)<<std::endl;
+            // std::cout<<"<IsDifferent<OperatorType,TraceOperator> local_dofs_[jj]="<<local_dofs[jj]<<std::endl;
+
+          }
 
     }
   // std::cout<< " value post"<<value<<std::endl;
