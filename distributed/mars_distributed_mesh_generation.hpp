@@ -103,7 +103,7 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
     mesh.set_chunk_size(chunk_size);
     mesh.set_proc(proc_num);
 
-    ViewVectorType<Integer> GpNp = ViewVectorType<Integer>("global_static_partition", 2 * size);
+    ViewVectorType<Integer> GpNp = ViewVectorType<Integer>("global_static_partition", 2 * (size + 1));
 
     if (root)
     {
@@ -113,6 +113,8 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
             GpNp_host(2 * i) = morton.get_view_elements()(i * chunk_size); // acc sum scan giving the first element per process
             GpNp_host(2 * i + 1) = counts[i];
         }
+        //insert the last element of the sfc adding 1 to it (to make the last element not part of the linearization) for the binary search to work properly
+        GpNp_host(2 * size) = morton.get_view_elements()(n__anchor_nodes-1) + 1;
         deep_copy(GpNp, GpNp_host);
     }
 
@@ -120,8 +122,8 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
     std::cout << "MPI broadcast ended!" << std::endl;
 
     /* parallel_for(
-        "print_elem_gp:",2*size, KOKKOS_LAMBDA(const int i) {
-            printf(" elch: %li-%i - %i\n", GpNp(i), i, proc_num);
+        "print_elem_gp:", size+1, KOKKOS_LAMBDA(const int i) {
+            printf(" elch: (%li-%li) - %i - %i\n", GpNp(2*i),  GpNp(2*i+1), i, proc_num);
         }); */
 
     mesh.set_view_gp(GpNp);
@@ -135,6 +137,8 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
     bool gen_pts = mesh.template generate_points<Type>(xDim, yDim, zDim);
 
     bool gen_elm = mesh.template generate_elements<Type>(xDim, yDim, zDim);
+
+    mesh.template build_boundary_element_sets<Type>(xDim, yDim, zDim);
 
     double time_gen = timer_gen.seconds();
     std::cout << "Distributed Generation kokkos took: " << time_gen << " seconds. Process: " << proc_num << std::endl;

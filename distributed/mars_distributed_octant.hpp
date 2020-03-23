@@ -9,6 +9,9 @@ struct Octant
     Integer z;
 
     bool valid;
+    
+    MARS_INLINE_FUNCTION
+    Octant() = default;
 
     MARS_INLINE_FUNCTION
     Octant(Integer i, Integer j) : x(i), y(j)
