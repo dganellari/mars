@@ -1,6 +1,7 @@
 #ifndef MARS_DIST_MESH_KOKKOS_HPP
 #define MARS_DIST_MESH_KOKKOS_HPP
 
+#include "mars_base.hpp"
 #include "mars_globals.hpp"
 #include "mars_point.hpp"
 
@@ -645,85 +646,6 @@ public:
         {
         }
 
-        MARS_INLINE_FUNCTION
-        Octant face_nbh(const unsigned int enc_octant, const int face) const
-        {
-
-            switch (Type)
-            {
-            case ElementType::Quad4:
-            {
-                const Integer i = decode_morton_2DX(enc_octant);
-                const Integer j = decode_morton_2DY(enc_octant);
-
-                //adapted from the p4est corner neighbor for the mesh generation
-                const Integer x = i + ((face == 0) ? -1 : (face == 1) ? 1 : 0);
-                const Integer y = j + ((face == 2) ? -1 : (face == 3) ? 1 : 0);
-
-                Octant o(x, y);
-                if (o.x < 0 || o.y < 0 || o.x >= xDim || o.y >= yDim)
-                    o.set_invalid();
-                return o;
-            }
-            case ElementType::Hex8:
-            {
-                const Integer i = decode_morton_3DX(enc_octant);
-                const Integer j = decode_morton_3DY(enc_octant);
-                const Integer k = decode_morton_3DZ(enc_octant);
-
-                //adapted from the p4est corner neighbor for the mesh generation
-                const Integer x = i + ((face == 0) ? -1 : (face == 1) ? 1 : 0);
-                const Integer y = j + ((face == 2) ? -1 : (face == 3) ? 1 : 0);
-                const Integer z = k + ((face == 4) ? -1 : (face == 5) ? 1 : 0);
-
-                Octant o(x, y, z);
-                if (o.x < 0 || o.y < 0 || o.z < 0 || o.x >= xDim || o.y >= yDim || o.z >= zDim)
-                    o.set_invalid();
-                return o;
-            }
-            }
-        }
-
-        MARS_INLINE_FUNCTION
-        Octant corner_nbh(const unsigned int enc_octant, const int corner) const
-        {
-
-            switch (Type)
-            {
-            case ElementType::Quad4:
-            {
-                const Integer i = decode_morton_2DX(enc_octant);
-                const Integer j = decode_morton_2DY(enc_octant);
-
-                //adapted from the p4est corner neighbor for the mesh generation
-                const Integer x = i + 2 * (corner & 1) - 1;
-                const Integer y = j + (corner & 2) - 1;
-
-                Octant o(x, y);
-                if (o.x < 0 || o.y < 0 || o.x >= xDim || o.y >= yDim)
-                    o.set_invalid();
-                return o;
-            }
-            case ElementType::Hex8:
-            {
-                const Integer i = decode_morton_3DX(enc_octant);
-                const Integer j = decode_morton_3DY(enc_octant);
-                const Integer k = decode_morton_3DZ(enc_octant);
-
-                //adapted from the p4est corner neighbor for the mesh generation
-                const Integer x = i + 2 * (corner & 1) - 1;
-                ;
-                const Integer y = j + (corner & 2) - 1;
-                const Integer z = k + (corner & 4) / 2 - 1;
-
-                Octant o(x, y, z);
-                if (o.x < 0 || o.y < 0 || o.z < 0 || o.x >= xDim || o.y >= yDim || o.z >= zDim)
-                    o.set_invalid();
-                return o;
-            }
-            }
-        }
-
         KOKKOS_INLINE_FUNCTION
         void operator()(int index) const
         {
@@ -738,20 +660,6 @@ public:
 
                 const unsigned int i = decode_morton_2DX(gl_index);
                 const unsigned int j = decode_morton_2DY(gl_index);
-
-                for (int face = 0; face < 2 * ManifoldDim; ++face)
-                {
-                    Octant o = face_nbh(gl_index, face);
-                    if (o.is_valid())
-                        printf("face Nbh of %u is %li: x and y: %li - %li\n", i + offset * j, o.x + offset * o.y, o.x, o.y);
-                }
-
-                for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner)
-                {
-                    Octant o = corner_nbh(gl_index, corner);
-                    if (o.is_valid())
-                        printf("Corner Nbh of %u is %li: x and y: %li - %li\n", i + offset * j, o.x + offset * o.y, o.x, o.y);
-                }
 
                 elem(index, 0) = map.value_at(map.find(i + offset * j));
                 elem(index, 1) = map.value_at(map.find((i + 1) + offset * j));
@@ -827,7 +735,8 @@ public:
                 reserve_elements(get_chunk_size());
 
                 parallel_for("generate_elements", get_chunk_size(),
-                             AddNonSimplexElem<Type>(elements_, local_sfc_, global_to_local_map_, active_, xDim, yDim, zDim));
+                             AddNonSimplexElem<Type>(elements_, local_sfc_, global_to_local_map_, active_,
+                                                     xDim, yDim, zDim));
                 return true;
             }
             default:
@@ -844,15 +753,88 @@ public:
         }
     }
 
+    template <Integer Type>
+    MARS_INLINE_FUNCTION static Octant face_nbh(const Octant &ref_octant, const int face,
+                                                const Integer xDim, const Integer yDim, const Integer zDim)
+    {
+
+        switch (Type)
+        {
+        case ElementType::Quad4:
+        {
+            //adapted from the p4est corner neighbor for the mesh generation
+            const Integer x = ref_octant.x + ((face == 0) ? -1 : (face == 1) ? 1 : 0);
+            const Integer y = ref_octant.y + ((face == 2) ? -1 : (face == 3) ? 1 : 0);
+
+            Octant o(x, y);
+            if (o.x < 0 || o.y < 0 || o.x >= xDim || o.y >= yDim)
+                o.set_invalid();
+
+            return o;
+        }
+        case ElementType::Hex8:
+        {
+
+            //adapted from the p4est corner neighbor for the mesh generation
+            const Integer x = ref_octant.x + ((face == 0) ? -1 : (face == 1) ? 1 : 0);
+            const Integer y = ref_octant.y + ((face == 2) ? -1 : (face == 3) ? 1 : 0);
+            const Integer z = ref_octant.z + ((face == 4) ? -1 : (face == 5) ? 1 : 0);
+
+            Octant o(x, y, z);
+            if (o.x < 0 || o.y < 0 || o.z < 0 || o.x >= xDim || o.y >= yDim || o.z >= zDim)
+                o.set_invalid();
+            return o;
+        }
+        }
+    }
+
+    template <Integer Type>
+    MARS_INLINE_FUNCTION static Octant corner_nbh(const Octant &ref_octant, const int corner,
+                                                  const Integer xDim, const Integer yDim, const Integer zDim)
+    {
+
+        switch (Type)
+        {
+        case ElementType::Quad4:
+        {
+            //adapted from the p4est corner neighbor for the mesh generation
+            const Integer x = ref_octant.x + 2 * (corner & 1) - 1;
+            const Integer y = ref_octant.y + (corner & 2) - 1;
+
+            Octant o(x, y);
+            if (o.x < 0 || o.y < 0 || o.x >= xDim || o.y >= yDim)
+                o.set_invalid();
+
+            return o;
+        }
+        case ElementType::Hex8:
+        {
+            //adapted from the p4est corner neighbor for the mesh generation
+            const Integer x = ref_octant.x + 2 * (corner & 1) - 1;
+            ;
+            const Integer y = ref_octant.y + (corner & 2) - 1;
+            const Integer z = ref_octant.z + (corner & 4) / 2 - 1;
+
+            Octant o(x, y, z);
+            if (o.x < 0 || o.y < 0 || o.z < 0 || o.x >= xDim || o.y >= yDim || o.z >= zDim)
+                o.set_invalid();
+
+            return o;
+        }
+        }
+    }
+
     //binary search on the gp view.
     template <typename T>
-    MARS_INLINE_FUNCTION Integer find_owner_processor(const ViewVectorType<T> view,
-                                                      const T enc_oc, const int offset, const Integer guess) const
+    MARS_INLINE_FUNCTION static Integer find_owner_processor(const ViewVectorType<T> view,
+                                                             const T enc_oc, const int offset, Integer guess)
     {
-        const int first_proc = 0;
-        const int last_proc = view.extent(0) / offset;
+        const int last_index =  view.extent(0) / offset - 1;
+        int first_proc = 0;
+        int last_proc = last_index;
 
-        while (first_proc <= last_proc)
+        //special implementation of the binary search considering found if an element is between current and next proc value.
+        while (first_proc <= last_proc && first_proc != last_index)
         {
             T current = view(offset * guess);
             T next = view(offset * (guess + 1));
@@ -880,96 +862,31 @@ public:
     template <Integer Type>
     struct CountGhostNeighbors
     {
+        ViewVectorType<unsigned int> global;
         ViewVectorType<Integer> count;
         ViewVectorType<Integer> gp;
+
+        Integer proc;
+
         Integer xDim;
         Integer yDim;
         Integer zDim;
 
-        CountGhostNeighbors(ViewVectorType<Integer> ct, ViewVectorType<Integer> g, 
-                    Integer xdm, Integer ydm) : count(ct), gp(g), xDim(xdm), yDim(ydm)
+        CountGhostNeighbors(ViewVectorType<unsigned int> gl, ViewVectorType<Integer> ct, ViewVectorType<Integer> g,
+                            Integer p, Integer xdm, Integer ydm) : global(gl), count(ct), gp(g), proc(p), xDim(xdm), yDim(ydm)
         {
         }
 
-        CountGhostNeighbors(ViewVectorType<Integer> ct, ViewVectorType<Integer> g, 
-                    Integer xdm, Integer ydm, Integer zdm) : count(ct), gp(g), xDim(xdm), 
-                                    yDim(ydm), zDim(zdm)
+        CountGhostNeighbors(ViewVectorType<unsigned int> gl, ViewVectorType<Integer> ct, ViewVectorType<Integer> g,
+                            Integer p, Integer xdm, Integer ydm, Integer zdm) : global(gl), count(ct), gp(g), proc(p), xDim(xdm),
+                                                                                yDim(ydm), zDim(zdm)
         {
-        }
-
-        MARS_INLINE_FUNCTION
-        Octant face_nbh(const Octant &ref_octant, const int face) const
-        {
-
-            switch (Type)
-            {
-            case ElementType::Quad4:
-            {
-                //adapted from the p4est corner neighbor for the mesh generation
-                const Integer x = ref_octant.x + ((face == 0) ? -1 : (face == 1) ? 1 : 0);
-                const Integer y = ref_octant.y + ((face == 2) ? -1 : (face == 3) ? 1 : 0);
-
-                Octant o(x, y);
-                if (o.x < 0 || o.y < 0 || o.x >= xDim || o.y >= yDim)
-                    o.set_invalid();
-
-                return o;
-            }
-            case ElementType::Hex8:
-            {
-
-                //adapted from the p4est corner neighbor for the mesh generation
-                const Integer x = ref_octant.x + ((face == 0) ? -1 : (face == 1) ? 1 : 0);
-                const Integer y = ref_octant.y + ((face == 2) ? -1 : (face == 3) ? 1 : 0);
-                const Integer z = ref_octant.z + ((face == 4) ? -1 : (face == 5) ? 1 : 0);
-
-                Octant o(x, y, z);
-                if (o.x < 0 || o.y < 0 || o.z < 0 || o.x >= xDim || o.y >= yDim || o.z >= zDim)
-                    o.set_invalid();
-                return o;
-            }
-            }
         }
 
         MARS_INLINE_FUNCTION
-        Octant corner_nbh(const Octant &ref_octant, const int corner) const
+        void increment(const Octant &o) const
         {
-
-            switch (Type)
-            {
-            case ElementType::Quad4:
-            {
-                //adapted from the p4est corner neighbor for the mesh generation
-                const Integer x = ref_octant.x + 2 * (corner & 1) - 1;
-                const Integer y = ref_octant.y + (corner & 2) - 1;
-
-                Octant o(x, y);
-                if (o.x < 0 || o.y < 0 || o.x >= xDim || o.y >= yDim)
-                    o.set_invalid();
-
-                return o;
-            }
-            case ElementType::Hex8:
-            {
-                //adapted from the p4est corner neighbor for the mesh generation
-                const Integer x = ref_octant.x + 2 * (corner & 1) - 1;
-                ;
-                const Integer y = ref_octant.y + (corner & 2) - 1;
-                const Integer z = ref_octant.z + (corner & 4) / 2 - 1;
-
-                Octant o(x, y, z);
-                if (o.x < 0 || o.y < 0 || o.z < 0 || o.x >= xDim || o.y >= yDim || o.z >= zDim)
-                    o.set_invalid();
-
-                return o;
-            }
-            }
-        }
-
-        MARS_INLINE_FUNCTION
-        void increment(const Octant &o)
-        {
-            const Integer enc_oc;
+            Integer enc_oc = -1;
 
             switch (Type)
             {
@@ -987,52 +904,30 @@ public:
 
             assert(find_owner_processor(gp, enc_oc, 2, proc) >= 0);
             Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
-            
+
+            //printf("Proc: %li, %li\n", proc, owner_proc);
             //the case when the neihgbor is a ghost element.
             if (proc != owner_proc)
             {
-                atomic_increment(&count(owner_proc));
+                Kokkos::atomic_increment(&count(owner_proc));
             }
         }
 
         MARS_INLINE_FUNCTION
         void operator()(int index) const
         {
+            Octant ref_octant;
+
             switch (Type)
             {
             case ElementType::Quad4:
             {
-                const int offset = xDim + 1;
-
                 const unsigned int gl_index = global(index);
 
                 const Integer i = decode_morton_2DX(gl_index);
                 const Integer j = decode_morton_2DY(gl_index);
 
-                const Octant ref_octant(i, j);
-
-                for (int face = 0; face < 2 * ManifoldDim; ++face)
-                {
-                    Octant o = face_nbh(ref_octant, face);
-                    if (o.is_valid())
-                    {
-                        printf("face Nbh of %u is %li: x and y: %li - %li\n",
-                               i + offset * j, o.x + offset * o.y, o.x, o.y);
-                        increment(o);
-                    }
-                }
-
-                for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner)
-                {
-                    Octant o = corner_nbh(ref_octant, corner);
-                    if (o.is_valid())
-                    {
-                        printf("Corner Nbh of %u is %li: x and y: %li - %li\n",
-                               i + offset * j, o.x + offset * o.y, o.x, o.y);
-                        increment(o);
-                    }
-                }
-
+                ref_octant = Octant(i, j);
                 break;
             }
             case ElementType::Hex8:
@@ -1043,33 +938,108 @@ public:
                 const Integer j = decode_morton_3DY(gl_index);
                 const Integer k = decode_morton_3DZ(gl_index);
 
-                const Octant ref_octant(i, j, k);
-
-                for (int face = 0; face < 2 * ManifoldDim; ++face)
-                {
-                    Octant o = face_nbh(ref_octant, face);
-                    if (o.is_valid())
-                    {
-                        printf("face Nbh of %u is %li: x and y: %li - %li\n", i + offset * j, o.x + offset * o.y, o.x, o.y);
-                        increment(o);
-                    }
-                }
-
-                for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner)
-                {
-                    Octant o = corner_nbh(ref_octant, corner);
-                    if (o.is_valid())
-                    {
-                        printf("Corner Nbh of %u is %li: x and y: %li - %li\n", i + offset * j, o.x + offset * o.y, o.x, o.y);
-                        increment(o);
-                    }
-                }
-
+                ref_octant = Octant(i, j, k);
                 break;
             }
             }
+
+            const int offset = xDim + 1;
+
+            for (int face = 0; face < 2 * ManifoldDim; ++face)
+            {
+                Octant o = face_nbh<Type>(ref_octant, face, xDim, yDim, zDim);
+                if (o.is_valid())
+                {
+                    printf("face Nbh of %u is %li: x and y: %li - %li\n",
+                           ref_octant.x + offset * ref_octant.y, o.x + offset * o.y, o.x, o.y);
+                    increment(o);
+                }
+            }
+
+            for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner)
+            {
+                Octant o = corner_nbh<Type>(ref_octant, corner, xDim, yDim, zDim);
+                if (o.is_valid())
+                {
+                    printf("Corner Nbh of %u is %li: x and y: %li - %li\n",
+                           ref_octant.x + offset * ref_octant.y, o.x + offset * o.y, o.x, o.y);
+                    increment(o);
+                }
+            }
         }
     };
+
+    template <Integer Type>
+    inline bool build_boundary_element_sets(const int xDim, const int yDim,
+                                            const int zDim)
+    {
+        using namespace Kokkos;
+
+        switch (ManifoldDim_)
+        {
+        case 2:
+        {
+            switch (Type)
+            {
+
+            case ElementType::Quad4:
+            {
+                const Integer rank_size = gp_np.extent(0)/2 - 1;
+
+               /*  parallel_for(
+                    "print_elem_gp:", rank_size + 1, KOKKOS_LAMBDA(const int i) {
+                        printf(" elch: (%li-%li) - %i - %i\n", gp_np(2 * i), gp_np(2 * i + 1), i, proc);
+                    }); */
+
+                ViewVectorType<Integer> count("count_per_proc", rank_size);
+
+                parallel_for("count_ghost_nbhs", get_chunk_size(),
+                             CountGhostNeighbors<Type>(local_sfc_, count, gp_np,
+                                                       proc, xDim, yDim));
+
+                parallel_for(
+                    "print acc", rank_size, KOKKOS_LAMBDA(const int i) {
+                        printf(" count : %i-%li\n", i, count(i));
+                    });
+                    
+                return true;
+            }
+            default:
+            {
+                return false;
+            }
+            }
+            break;
+        }
+        case 3:
+        {
+            switch (Type)
+            {
+
+            case ElementType::Hex8:
+            {
+                const Integer rank_size = gp_np.extent(0)/2 - 1;
+
+                ViewVectorType<Integer> count("count_per_proc", rank_size);
+
+                parallel_for("count_ghost_nbhs", get_chunk_size(),
+                             CountGhostNeighbors<Type>(local_sfc_, count, gp_np,
+                                                       proc, xDim, yDim, zDim));
+                return true;
+            }
+            default:
+            {
+                return false;
+            }
+            }
+            break;
+        }
+        default:
+        {
+            return false;
+        }
+        }
+    }
 
 private:
     ViewMatrixTextureC<Integer, Comb::value, 2> combinations;
