@@ -737,24 +737,38 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
     void apply_bc_to_vector(std::vector<Real>& b, Integer level=-1)const
     {
       Real one=1.0;
+
+      std::cout<<"1 apply_bc_to_vector"<<std::endl;
       
-      auto& level_cumultive_n_dofs=full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
+      // auto& level_cumultive_n_dofs=full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
       if(level==-1)
         level=levels_[levels_.size()-1];
-      // //std::cout<<"apply_zero_bc_to_vector"<<std::endl;
+      std::cout<<"2 apply_bc_to_vector"<<std::endl;
       // //std::cout<<"level="<<level<<std::endl;
-      Integer ndofs=constrained_vec_levels_[level].size();
+      std::cout<<"constrained_vec_levels_.size()="<<constrained_vec_levels_.size()<<std::endl;
+      std::cout<<std::endl;
+      std::cout<<"level="<<level<<std::endl;
+      for(Integer i=0;i<levels_.size();i++)
+        std::cout<<levels_[i]<<std::endl;
+      std::cout<<std::endl;
+
+
+      std::cout<<std::endl;
+
+      auto& constrained_vec=constrained_vec_levels_[constrained_vec_levels_.size()-1];
+      Integer ndofs=constrained_vec.size();
 
       if(b.size()<ndofs)
          {b.resize(ndofs,0);}
 
         for(Integer i=0;i<ndofs;++i)
        {
-        // //std::cout<<i<<"/"<<ndofs<<std::endl;
-        if(constrained_vec_levels_[level][i])
+        std::cout<<i<<"/"<<ndofs<<std::endl;
+        if(constrained_vec[i])
         {       
-         b[i]=constrained_vec_levels_[level][i];
+         b[i]=constrained_vec[i];
         }
+
        }
       
     }
