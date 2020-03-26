@@ -687,6 +687,22 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
     }
 
 
+    template<typename SystemMat>
+    void apply_zero_bc_for_null_diagonal_element(SystemMat& A)const
+    {
+
+     Real toll=1e-10;
+     Real one=1.0;
+
+     for(Integer i=0;i<A.rows();++i)
+     {       
+        if(abs(A(i,i))<toll)
+        {
+           A.equal(one,i,i);
+        }
+     }
+    }
+
 
     template<typename SystemMat>
     void apply_zero_bc_to_matrix(SystemMat& A,const Integer level)

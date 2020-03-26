@@ -414,7 +414,7 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
   //       for(std::size_t qp=1; qp<NQPoints; qp++)
   //       vec(n_dof,0)+=detJ*apply_qp_weight(qp_values[qp], fqp_values[n_dof][qp], qp_weights[qp]);
   //   }
-std::cout<<"marsi_evaluation_general_form_utils apply_aux_aux"<<std::endl;
+// std::cout<<"marsi_evaluation_general_form_utils apply_aux_aux"<<std::endl;
 
   for(Integer ii=0;ii<vec.rows();ii++)
     {   
