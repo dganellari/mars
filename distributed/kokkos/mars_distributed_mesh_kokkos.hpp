@@ -824,12 +824,62 @@ public:
         }
     }
 
+    template <Integer Type>
+    MARS_INLINE_FUNCTION static Octant get_octant_from_sfc(const Integer gl_index)
+    {
+        Octant ref_octant;
+
+        switch (Type)
+        {
+        case ElementType::Quad4:
+        {
+            const Integer i = decode_morton_2DX(gl_index);
+            const Integer j = decode_morton_2DY(gl_index);
+
+            ref_octant = Octant(i, j);
+            break;
+        }
+        case ElementType::Hex8:
+        {
+            const Integer i = decode_morton_3DX(gl_index);
+            const Integer j = decode_morton_3DY(gl_index);
+            const Integer k = decode_morton_3DZ(gl_index);
+
+            ref_octant = Octant(i, j, k);
+            break;
+        }
+        }
+        return ref_octant;
+    }
+
+    template <Integer Type>
+    MARS_INLINE_FUNCTION static Integer get_sfc_from_octant(const Octant &o)
+    {
+        Integer enc_oc = -1;
+
+        switch (Type)
+        {
+        case ElementType::Quad4:
+        {
+            enc_oc = encode_morton_2D(o.x, o.y);
+            break;
+        }
+        case ElementType::Hex8:
+        {
+            enc_oc = encode_morton_3D(o.x, o.y, o.z);
+            break;
+        }
+        }
+
+        return enc_oc;
+    }
+
     //binary search on the gp view.
     template <typename T>
     MARS_INLINE_FUNCTION static Integer find_owner_processor(const ViewVectorType<T> view,
                                                              const T enc_oc, const int offset, Integer guess)
     {
-        const int last_index =  view.extent(0) / offset - 1;
+        const int last_index = view.extent(0) / offset - 1;
         int first_proc = 0;
         int last_proc = last_index;
 
@@ -858,7 +908,6 @@ public:
         return -1;
     }
 
-    //add elem functor
     template <Integer Type>
     struct CountGhostNeighbors
     {
@@ -873,11 +922,6 @@ public:
         Integer zDim;
 
         CountGhostNeighbors(ViewVectorType<unsigned int> gl, ViewVectorType<Integer> ct, ViewVectorType<Integer> g,
-                            Integer p, Integer xdm, Integer ydm) : global(gl), count(ct), gp(g), proc(p), xDim(xdm), yDim(ydm)
-        {
-        }
-
-        CountGhostNeighbors(ViewVectorType<unsigned int> gl, ViewVectorType<Integer> ct, ViewVectorType<Integer> g,
                             Integer p, Integer xdm, Integer ydm, Integer zdm) : global(gl), count(ct), gp(g), proc(p), xDim(xdm),
                                                                                 yDim(ydm), zDim(zdm)
         {
@@ -886,21 +930,7 @@ public:
         MARS_INLINE_FUNCTION
         void increment(const Octant &o) const
         {
-            Integer enc_oc = -1;
-
-            switch (Type)
-            {
-            case ElementType::Quad4:
-            {
-                enc_oc = encode_morton_2D(o.x, o.y);
-                break;
-            }
-            case ElementType::Hex8:
-            {
-                enc_oc = encode_morton_3D(o.x, o.y, o.z);
-                break;
-            }
-            }
+            Integer enc_oc = get_sfc_from_octant<Type>(o);
 
             assert(find_owner_processor(gp, enc_oc, 2, proc) >= 0);
             Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
@@ -916,32 +946,8 @@ public:
         MARS_INLINE_FUNCTION
         void operator()(int index) const
         {
-            Octant ref_octant;
-
-            switch (Type)
-            {
-            case ElementType::Quad4:
-            {
-                const unsigned int gl_index = global(index);
-
-                const Integer i = decode_morton_2DX(gl_index);
-                const Integer j = decode_morton_2DY(gl_index);
-
-                ref_octant = Octant(i, j);
-                break;
-            }
-            case ElementType::Hex8:
-            {
-                const unsigned int gl_index = global(index);
-
-                const Integer i = decode_morton_3DX(gl_index);
-                const Integer j = decode_morton_3DY(gl_index);
-                const Integer k = decode_morton_3DZ(gl_index);
-
-                ref_octant = Octant(i, j, k);
-                break;
-            }
-            }
+            const Integer gl_index = global(index);
+            Octant ref_octant = get_octant_from_sfc<Type>(gl_index);
 
             const int offset = xDim + 1;
 
@@ -950,7 +956,7 @@ public:
                 Octant o = face_nbh<Type>(ref_octant, face, xDim, yDim, zDim);
                 if (o.is_valid())
                 {
-                    printf("face Nbh of %u is %li: x and y: %li - %li\n",
+                    printf("face Nbh of %li (%li) is : %li with--- x and y: %li - %li\n", gl_index,
                            ref_octant.x + offset * ref_octant.y, o.x + offset * o.y, o.x, o.y);
                     increment(o);
                 }
@@ -961,7 +967,7 @@ public:
                 Octant o = corner_nbh<Type>(ref_octant, corner, xDim, yDim, zDim);
                 if (o.is_valid())
                 {
-                    printf("Corner Nbh of %u is %li: x and y: %li - %li\n",
+                    printf("corner Nbh of %li (%li) is : %li with--- x and y: %li - %li\n", gl_index,
                            ref_octant.x + offset * ref_octant.y, o.x + offset * o.y, o.x, o.y);
                     increment(o);
                 }
@@ -970,75 +976,123 @@ public:
     };
 
     template <Integer Type>
-    inline bool build_boundary_element_sets(const int xDim, const int yDim,
+    struct BuildBoundarySets
+    {
+        ViewVectorType<unsigned int> global;
+        ViewVectorType<Integer> gp;
+
+        ViewVectorType<Integer> set;
+        ViewVectorType<Integer> scan;
+        //ViewVectorType<Integer> index;
+
+        Integer proc;
+
+        Integer xDim;
+        Integer yDim;
+        Integer zDim;
+
+        BuildBoundarySets(ViewVectorType<unsigned int> gl, ViewVectorType<Integer> g, ViewVectorType<Integer> st,
+                          ViewVectorType<Integer> sc,                                                               //ViewVectorType<Integer> in,
+                          Integer p, Integer xdm, Integer ydm, Integer zdm) : global(gl), gp(g), set(st), scan(sc), //index(in),
+                                                                              proc(p), xDim(xdm), yDim(ydm), zDim(zdm)
+        {
+        }
+
+        MARS_INLINE_FUNCTION
+        void scatter(const Octant &o, const Integer ref) const
+        {
+            Integer enc_oc = get_sfc_from_octant<Type>(o);
+
+            assert(find_owner_processor(gp, enc_oc, 2, proc) >= 0);
+            Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
+
+            //the case when the neihgbor is a ghost element.
+            if (proc != owner_proc)
+            {
+                // printf("Proc: %li, %li , %li\n", proc, owner_proc, i);
+                //get the starting index before incrementing it.
+                Integer i = Kokkos::atomic_fetch_add(&scan(owner_proc), 1);
+                set(i) = ref;
+            }
+        }
+
+        MARS_INLINE_FUNCTION
+        void operator()(int index) const
+        {
+            const Integer gl_index = global(index);
+            Octant ref_octant = get_octant_from_sfc<Type>(gl_index);
+
+            const int offset = xDim + 1;
+            for (int face = 0; face < 2 * ManifoldDim; ++face)
+            {
+                Octant o = face_nbh<Type>(ref_octant, face, xDim, yDim, zDim);
+                if (o.is_valid())
+                {
+                    /* printf("face Nbh of %u is %li: x and y: %li - %li\n",
+                           ref_octant.x + offset * ref_octant.y,
+                           o.x + offset * o.y, o.x, o.y); */
+                    scatter(o, gl_index);
+                }
+            }
+
+            for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner)
+            {
+                Octant o = corner_nbh<Type>(ref_octant, corner, xDim, yDim, zDim);
+                if (o.is_valid())
+                {
+                    /* printf("Corner Nbh of %u is %li: x and y: %li - %li\n",
+                           ref_octant.x + offset * ref_octant.y, 
+                           o.x + offset * o.y, o.x, o.y); */
+                    scatter(o, gl_index);
+                }
+            }
+        }
+    };
+
+    template <Integer Type>
+    inline void build_boundary_element_sets(const int xDim, const int yDim,
                                             const int zDim)
     {
         using namespace Kokkos;
 
-        switch (ManifoldDim_)
-        {
-        case 2:
-        {
-            switch (Type)
-            {
+        const Integer rank_size = gp_np.extent(0) / 2 - 1;
 
-            case ElementType::Quad4:
-            {
-                const Integer rank_size = gp_np.extent(0)/2 - 1;
+        ViewVectorType<Integer> count("count_per_proc", rank_size);
 
-               /*  parallel_for(
-                    "print_elem_gp:", rank_size + 1, KOKKOS_LAMBDA(const int i) {
-                        printf(" elch: (%li-%li) - %i - %i\n", gp_np(2 * i), gp_np(2 * i + 1), i, proc);
-                    }); */
+        parallel_for("count_ghost_nbhs", get_chunk_size(),
+                     CountGhostNeighbors<Type>(local_sfc_, count, gp_np,
+                                               proc, xDim, yDim, zDim));
 
-                ViewVectorType<Integer> count("count_per_proc", rank_size);
+        parallel_for(
+            "print acc", rank_size, KOKKOS_LAMBDA(const int i) {
+                printf(" count : %i-%li\n", i, count(i));
+            });
 
-                parallel_for("count_ghost_nbhs", get_chunk_size(),
-                             CountGhostNeighbors<Type>(local_sfc_, count, gp_np,
-                                                       proc, xDim, yDim));
+        ViewVectorType<Integer> scan("scan", rank_size + 1);
+        incl_excl_scan(0, rank_size, count, scan);
 
-                parallel_for(
-                    "print acc", rank_size, KOKKOS_LAMBDA(const int i) {
-                        printf(" count : %i-%li\n", i, count(i));
-                    });
-                    
-                return true;
-            }
-            default:
-            {
-                return false;
-            }
-            }
-            break;
-        }
-        case 3:
-        {
-            switch (Type)
-            {
+        auto index_subview = subview(scan, rank_size);
+        auto h_ic = create_mirror_view(index_subview);
 
-            case ElementType::Hex8:
-            {
-                const Integer rank_size = gp_np.extent(0)/2 - 1;
+        // Deep copy device view to host view.
+        deep_copy(h_ic, index_subview);
+        std::cout << "Hyper count result: " << h_ic(0) << std::endl;
 
-                ViewVectorType<Integer> count("count_per_proc", rank_size);
+        parallel_for(
+            "print scan", rank_size + 1, KOKKOS_LAMBDA(const int i) {
+                printf(" scan : %i-%li\n", i, scan(i));
+            });
 
-                parallel_for("count_ghost_nbhs", get_chunk_size(),
-                             CountGhostNeighbors<Type>(local_sfc_, count, gp_np,
-                                                       proc, xDim, yDim, zDim));
-                return true;
-            }
-            default:
-            {
-                return false;
-            }
-            }
-            break;
-        }
-        default:
-        {
-            return false;
-        }
-        }
+        //the set containing all the ghost elements for all processes. Scan helps to identify part of the set array to which process it belongs.
+        ViewVectorType<Integer> set("build_set", h_ic());
+
+        parallel_for("build_set_kernel", get_chunk_size(),
+                     BuildBoundarySets<Type>(local_sfc_, gp_np, set, scan,
+                                             proc, xDim, yDim, zDim));
+        parallel_for(
+            "print set", h_ic(), KOKKOS_LAMBDA(const int i) {
+                printf(" set : %i - %li\n", i, set(i));
+            });
     }
 
 private:
