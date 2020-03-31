@@ -98,12 +98,12 @@ public Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>>
     {}
      
 
-    L2DotProductIntegral(const Expression<L2DotProductIntegral<Left,Right,VolumeIntegral,QR>>& l2prod,const Integer label=-666)
+    L2DotProductIntegral(const Expression<L2DotProductIntegral<Left,Right,VolumeIntegral,QR>>& l2prod)
     :
     left_(l2prod.derived().left()),
     right_(l2prod.derived().right()),
     product_(Inner(left_,right_)),
-    label_(label),
+    label_(l2prod.label()),
     spaces_ptr_(l2prod.spaces_ptr())//find_spaces_ptr<FunctionSpace>(left_*right_))
     {}
 
@@ -131,6 +131,17 @@ auto
 L2InnerProduct(const Expression<Left>& left,const Expression<Right>& right)
 {return L2DotProductIntegral<Left,Right,VolumeIntegral,QR>(left,right);}
 
+template<bool VolumeIntegral,Integer QR,typename Left,typename Right>
+auto
+L2InnerProduct(const Expression<Left>& left,const Expression<Right>& right, const Integer label)
+{return L2DotProductIntegral<Left,Right,VolumeIntegral,QR>(left,right,label);}
+
+
+
+
+
+
+
 
 
 template<typename Left,typename Right,bool VolumeIntegral=true,Integer QR=GaussianQuadrature>
@@ -143,11 +154,11 @@ auto
 surface_integral(const Integer label,const Expression<Left>& left,const Expression<Right>& right)
 {return L2DotProductIntegral<Left,Right,false,QR>(left,right,label);}
 
-template<typename Left,typename Right,Integer QR=GaussianQuadrature>
-auto
-surface_integral(const Expression<Left>& left,const Expression<Right>& right)
-{ assert(1&&"Add a label for the surface integral");
-  return L2DotProductIntegral<Left,Right,false,QR>(left,right,-1);}
+// template<typename Left,typename Right,Integer QR=GaussianQuadrature>
+// auto
+// surface_integral(const Expression<Left>& left,const Expression<Right>& right)
+// { assert(1&&"Add a label for the surface integral");
+//   return L2DotProductIntegral<Left,Right,false,QR>(left,right,-1);}
 
 
 // template<typename Left,typename Right>
@@ -302,7 +313,7 @@ Addition<Expression<decltype(L2Inner(left.derived().left(),right.derived()))>,
 template< typename Left,typename Right,bool VolumeIntegral,Integer QR>
 class L2DotProductIntegral<Left,Right,VolumeIntegral,QR >
 operator+(const Expression<L2DotProductIntegral<Left,Right,VolumeIntegral,QR>>&l2prod)
-{return L2InnerProduct<VolumeIntegral,QR>(l2prod.derived().left(),l2prod.derived().right());}
+{return L2InnerProduct<VolumeIntegral,QR>(l2prod.derived().left(),l2prod.derived().right(),l2prod.derived().label());}
 
 
 
@@ -324,7 +335,8 @@ class Addition< Expression <Left1>,
                 Expression<L2DotProductIntegral<UnaryMinus<Expression<Left2>>,Right2,VolumeIntegral2,QR2>> >
 operator-(const Expression<Left1>&left, 
           const Expression<L2DotProductIntegral<Left2,Right2,VolumeIntegral2,QR2>>&right)
-{return left+L2InnerProduct<VolumeIntegral2,QR2>(-right.derived().left(),right.derived().right());}
+{return left+L2InnerProduct<VolumeIntegral2,QR2>(-right.derived().left(),right.derived().right(),
+                                                right.derived().label());}
 
 
 
@@ -334,7 +346,8 @@ class Addition< Expression <Left1>,
                 Expression<L2DotProductIntegral<Left2,Right2,VolumeIntegral2,QR2>> >
 operator-(const Expression<Left1>&left, 
           const Expression<L2DotProductIntegral<UnaryMinus<Expression<Left2>>,Right2,VolumeIntegral2,QR2>>&right)
-{return left+L2InnerProduct<VolumeIntegral2,QR2>(right.derived().left().derived(),right.derived().right());}
+{return left+L2InnerProduct<VolumeIntegral2,QR2>(right.derived().left().derived(),right.derived().right(),
+                                                 right.derived().label());}
 
 
 
@@ -343,7 +356,8 @@ class Addition< Expression<Left1>,
                 Expression<L2DotProductIntegral<Left2,Right2,VolumeIntegral2,QR2>> >
 operator-(const Expression<Left1>&left, 
           const Expression<L2DotProductIntegral<Left2,UnaryMinus<Expression<Right2>>,VolumeIntegral2,QR2>>&right)
-{return left+L2InnerProduct<VolumeIntegral2,QR2>(right.derived().left(),right.derived().right().derived());}
+{return left+L2InnerProduct<VolumeIntegral2,QR2>(right.derived().left(),right.derived().right().derived(),
+                                                 right.derived().label());}
 
 
 
@@ -353,7 +367,8 @@ class Addition< Expression<Left1>,
                 Expression<L2DotProductIntegral<UnaryMinus<Expression<Left2>>,Right2,VolumeIntegral2,QR2>> >
 operator-(const Expression<Left1>&left, 
           const Expression<L2DotProductIntegral<UnaryMinus<Expression<Left2>>,UnaryMinus<Expression<Right2>>,VolumeIntegral2,QR2>>&right)
-{return left+L2InnerProduct<VolumeIntegral2,QR2>(right.derived().left(),right.derived().right().derived());}
+{return left+L2InnerProduct<VolumeIntegral2,QR2>(right.derived().left(),right.derived().right().derived(),
+                                                 right.derived().label());}
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////

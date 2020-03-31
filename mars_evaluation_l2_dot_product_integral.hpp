@@ -23,7 +23,7 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>
  static constexpr bool PositiveWeights= IsPositive(QRule::qp_weights);
  
  Evaluation(const type& expr, ShapeFunctionsCollection<Forms...>& shape_functions):
- expr_(expr.left(),expr.right())
+ expr_(expr.left(),expr.right(),expr.label())
  ,
  shape_functions_(shape_functions)
  ,
@@ -42,6 +42,7 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>
    // local_tensor_.apply(mat,J,shape_functions_());
   // // std::cout<<"pre Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
   
+    std::cout<<"Evaluation<Expression<L2DotProductIntegral--------------VOLUME"<<std::endl;
 
   local_tensor_.apply(mat,J,shape_functions_, dofmaps...);//(),shape_functions_.composite_tensor(),shape_functions_.composite_shapes());
   // // std::cout<<"after Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
@@ -55,18 +56,29 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>
 
   // changed todo fixme
    // local_tensor_.apply(mat,J,shape_functions_());
-  // // std::cout<<"L2DotProductIntegral LABEL="<<label_<<std::endl;
-  // // std::cout<<"side="<<J.side_id()<<std::endl;
-  // // std::cout<<"tag="<<J.side_tag()<<std::endl;
-  // // std::cout<<"label_="<<label_<<std::endl;
+  std::cout<<"L2DotProductIntegral LABEL="<<label_<<std::endl;
+  std::cout<<"side="<<J.side_id()<<std::endl;
+  std::cout<<"tag="<<J.side_tag()<<std::endl;
+  std::cout<<"label_="<<label_<<std::endl;
+  std::cout<<mat<<std::endl;
+  std::cout<<"not evaluated yet"<<mat<<std::endl;
   // // 
+
   if(J.side_tag()==label_)
    { 
-    // std::cout<<"Evaluation<Expression<L2DotProductIntegral-----------------VALUTO IL BOUNDARY"<<std::endl;
+    std::cout<<"Evaluation<Expression<L2DotProductIntegral-----------------VALUTO IL BOUNDARY "<<label_<<std::endl;
     local_tensor_.apply(mat,J,shape_functions_, dofmaps...);//(),shape_functions_.composite_tensor(),shape_functions_.composite_shapes());
+    std::cout<<"after BOUNDAR Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
+    std::cout<<mat<<std::endl;
     }
-  // // std::cout<<"after BOUNDAR Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
-  // // std::cout<<mat<<std::endl;
+    else
+    {
+
+      for(Integer i=0;i<mat.rows();i++)
+        for(Integer j=0;j<mat.cols();j++)
+          mat(i,j)=0.0;
+    }
+
  }
 
 

@@ -8,7 +8,7 @@
  * M.A.R.S Mesh Adaptive Refinement for Simplical meshes
  */
 namespace mars {
-    using Real    = double;
+    using Real    = long double;
     using Integer = long;
     static const long INVALID_INDEX = -1;
 }

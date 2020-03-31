@@ -188,8 +188,10 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                   reference_maps_.init_boundary(FE);
                   //std::cout<<"------_______----- shapefunctions_===="<<s<<std::endl;
                   shapefunctions_.init_boundary(FE);
-                  //std::cout<<"------_______----- BILINEAR BEGIN SIDE EVAL===="<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
+                  std::cout<<"------_______----- FE.elem_id="<<FE.elem_id()<<std::endl;                  
+                  std::cout<<"------_______----- BILINEAR BEGIN SIDE EVAL===="<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
                   eval_bilinear_form_.apply_boundary(A,FE);
+                  // A.print_val();
                   // std::cout<<"------_______----- LINEAR BEGIN SIDE EVAL===="<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
                   // auto&elem =mesh.elem(el);
                   // auto&nodes=elem.nodes;
