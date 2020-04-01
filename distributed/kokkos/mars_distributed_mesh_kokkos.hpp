@@ -1049,8 +1049,10 @@ public:
         }
     };
 
+
+
     template <Integer Type>
-    inline void build_boundary_element_sets(const int xDim, const int yDim,
+    inline void build_ghost_element_sets(const int xDim, const int yDim,
                                             const int zDim)
     {
         using namespace Kokkos;
@@ -1095,6 +1097,143 @@ public:
             });
     }
 
+    template <Integer Type>
+    struct IdentifyBoundaryPerRank
+    {
+        ViewVectorType<unsigned int> global;
+        ViewMatrixType<bool> predicate;
+        ViewVectorType<Integer> gp;
+
+        Integer proc;
+
+        Integer xDim;
+        Integer yDim;
+        Integer zDim;
+
+        IdentifyBoundaryPerRank(ViewVectorType<unsigned int> gl, ViewMatrixType<bool> pr, ViewVectorType<Integer> g,
+                            Integer p, Integer xdm, Integer ydm, Integer zdm) : global(gl), predicate(pr), gp(g), proc(p), xDim(xdm),
+                                                                                yDim(ydm), zDim(zdm)
+        {
+        }
+
+        MARS_INLINE_FUNCTION
+        void setPredicate(const int index, const Octant &o) const
+        {
+            Integer enc_oc = get_sfc_from_octant<Type>(o);
+
+            assert(find_owner_processor(gp, enc_oc, 2, proc) >= 0);
+            Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
+
+            //printf("Proc: %li, %li\n", proc, owner_proc);
+            //the case when the neihgbor is a ghost element.
+            if (proc != owner_proc)
+            {
+                predicate(owner_proc, index) = 1;
+            }
+        }
+
+        MARS_INLINE_FUNCTION
+        void operator()(int index) const
+        {
+            const Integer gl_index = global(index);
+            Octant ref_octant = get_octant_from_sfc<Type>(gl_index);
+
+            const int offset = xDim + 1;
+
+            for (int face = 0; face < 2 * ManifoldDim; ++face)
+            {
+                Octant o = face_nbh<Type>(ref_octant, face, xDim, yDim, zDim);
+                if (o.is_valid())
+                {
+                    printf("face Nbh of %li (%li) is : %li with--- x and y: %li - %li\n", gl_index,
+                           ref_octant.x + offset * ref_octant.y, o.x + offset * o.y, o.x, o.y);
+                    setPredicate(index, o);
+                }
+            }
+
+            for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner)
+            {
+                Octant o = corner_nbh<Type>(ref_octant, corner, xDim, yDim, zDim);
+                if (o.is_valid())
+                {
+                    printf("corner Nbh of %li (%li) is : %li with--- x and y: %li - %li\n", gl_index,
+                           ref_octant.x + offset * ref_octant.y, o.x + offset * o.y, o.x, o.y);
+                    setPredicate(index, o);
+                }
+            }
+        }
+    };
+
+    inline void compact_elements(const ViewVectorType<Integer> scan_indices, 
+                const ViewMatrixType<bool> predicate, const ViewMatrixType<Integer> predicate_scan, 
+                const Integer rank_size)
+    {
+        using namespace Kokkos;
+
+        Timer timer;
+
+        parallel_for(
+            MDRangePolicy<Rank<3>>({0, 0}, {rank_size, chunk_size_}),
+            KOKKOS_LAMBDA(const Integer i, const Integer j) {
+                if (predicate(i, j) == 1)
+                {
+                    unsigned int index = scan_indices(i) + predicate_scan(i,j);
+                    boundary_(index) = local_sfc_(j);
+                }
+            });
+    }
+
+    template <Integer Type>
+    inline void build_boundary_element_sets(const int xDim, const int yDim,
+                                            const int zDim)
+    {
+        using namespace Kokkos;
+
+        const Integer rank_size = gp_np.extent(0) / 2 - 1;
+
+        ViewMatrixType<bool> rank_boundary("count_per_proc", rank_size, chunk_size_);
+        scan_boundary_ = ViewVectorType<Integer>("rank_scan", rank_size + 1);
+
+        parallel_for("IdentifyBoundaryPerRank", get_chunk_size(),
+                     IdentifyBoundaryPerRank<Type>(local_sfc_, rank_boundary, gp_np,
+                                               proc, xDim, yDim, zDim));
+
+        /* perform a scan for each row with the sum at the end for each rank */
+        ViewMatrixType<Integer> scan("scan", rank_size, chunk_size_ + 1);
+        for (int i = 0; i < rank_size; ++i)
+        {
+            if (i != proc)
+            {
+                auto row_predicate = subview(rank_boundary, i, ALL());
+                auto row_scan = subview(scan, i, ALL());
+                incl_excl_scan(0, chunk_size_, row_predicate, row_scan);
+            }
+        }
+
+        //perform a scan on the last column to get the total sum.
+        column_scan(rank_size, chunk_size_, rank_boundary, scan_boundary_);
+
+        auto index_subview = subview(scan_boundary_, rank_size);
+        auto h_ic = create_mirror_view(index_subview);
+
+        // Deep copy device view to host view.
+        deep_copy(h_ic, index_subview);
+        std::cout << "Hyper count result: " << h_ic(0) << std::endl;
+
+        parallel_for(
+            "print scan", rank_size + 1, KOKKOS_LAMBDA(const int i) {
+                printf(" scan : %i-%li\n", i, scan_boundary_(i));
+            });
+
+        //the set containing all the ghost elements for all processes. Scan helps to identify part of the set array to which process it belongs.
+        compact_element(rank_scan, rank_boundary, rank_size);
+
+        parallel_for(
+            "print set", h_ic(), KOKKOS_LAMBDA(const int i) {
+                printf(" set : %i - %li\n", i, set(i));
+            });
+    }
+
 private:
     ViewMatrixTextureC<Integer, Comb::value, 2> combinations;
 
@@ -1110,6 +1249,13 @@ private:
     Integer proc;
 
     UnorderedMap<unsigned int, unsigned int> global_to_local_map_;
+
+    //ghost and boundary layers
+    ViewVectorType<Integer> ghost_;
+    ViewVectorType<Integer> scan_ghost_;
+
+    ViewVectorType<Integer> boundary_;
+    ViewVectorType<Integer> scan_boundary_;
 };
 
 using DistributedMesh1 = mars::Mesh<1, 1, DistributedImplementation, Simplex<1, 1, DistributedImplementation>>;
