@@ -90,7 +90,7 @@ void test_mpi_context(int &argc, char **&argv)
 
         // create a distributed context
         auto context = mars::make_context(resources, MPI_COMM_WORLD);
-        int root = mars::rank(context) == 0;
+        //int root = mars::rank(context) == 0;
 #else
         // resources.gpu_id = marsenv::default_gpu();
 
