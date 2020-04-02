@@ -138,6 +138,8 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
 
     bool gen_elm = mesh.template generate_elements<Type>(xDim, yDim, zDim);
 
+    mesh.template build_ghost_element_sets<Type>(xDim, yDim, zDim);
+
     mesh.template build_boundary_element_sets<Type>(xDim, yDim, zDim);
 
     double time_gen = timer_gen.seconds();

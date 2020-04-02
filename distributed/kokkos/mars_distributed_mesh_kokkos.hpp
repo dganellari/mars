@@ -1049,11 +1049,9 @@ public:
         }
     };
 
-
-
     template <Integer Type>
     inline void build_ghost_element_sets(const int xDim, const int yDim,
-                                            const int zDim)
+                                         const int zDim)
     {
         using namespace Kokkos;
 
@@ -1111,8 +1109,8 @@ public:
         Integer zDim;
 
         IdentifyBoundaryPerRank(ViewVectorType<unsigned int> gl, ViewMatrixType<bool> pr, ViewVectorType<Integer> g,
-                            Integer p, Integer xdm, Integer ydm, Integer zdm) : global(gl), predicate(pr), gp(g), proc(p), xDim(xdm),
-                                                                                yDim(ydm), zDim(zdm)
+                                Integer p, Integer xdm, Integer ydm, Integer zdm) : global(gl), predicate(pr), gp(g), proc(p), xDim(xdm),
+                                                                                    yDim(ydm), zDim(zdm)
         {
         }
 
@@ -1145,8 +1143,8 @@ public:
                 Octant o = face_nbh<Type>(ref_octant, face, xDim, yDim, zDim);
                 if (o.is_valid())
                 {
-                    printf("face Nbh of %li (%li) is : %li with--- x and y: %li - %li\n", gl_index,
-                           ref_octant.x + offset * ref_octant.y, o.x + offset * o.y, o.x, o.y);
+                    /*  printf("face Nbh of %li (%li) is : %li with--- x and y: %li - %li\n", gl_index,
+                           ref_octant.x + offset * ref_octant.y, o.x + offset * o.y, o.x, o.y); */
                     setPredicate(index, o);
                 }
             }
@@ -1156,28 +1154,28 @@ public:
                 Octant o = corner_nbh<Type>(ref_octant, corner, xDim, yDim, zDim);
                 if (o.is_valid())
                 {
-                    printf("corner Nbh of %li (%li) is : %li with--- x and y: %li - %li\n", gl_index,
-                           ref_octant.x + offset * ref_octant.y, o.x + offset * o.y, o.x, o.y);
+                    /* printf("corner Nbh of %li (%li) is : %li with--- x and y: %li - %li\n", gl_index,
+                           ref_octant.x + offset * ref_octant.y, o.x + offset * o.y, o.x, o.y); */
                     setPredicate(index, o);
                 }
             }
         }
     };
 
-    inline void compact_elements(const ViewVectorType<Integer> scan_indices, 
-                const ViewMatrixType<bool> predicate, const ViewMatrixType<Integer> predicate_scan, 
-                const Integer rank_size)
+    inline void compact_boundary_elements(const ViewVectorType<Integer> scan_indices,
+                                          const ViewMatrixType<bool> predicate, const ViewMatrixType<Integer> predicate_scan,
+                                          const Integer rank_size)
     {
         using namespace Kokkos;
 
         Timer timer;
 
         parallel_for(
-            MDRangePolicy<Rank<3>>({0, 0}, {rank_size, chunk_size_}),
+            MDRangePolicy<Rank<2>>({0, 0}, {rank_size, chunk_size_}),
             KOKKOS_LAMBDA(const Integer i, const Integer j) {
                 if (predicate(i, j) == 1)
                 {
-                    unsigned int index = scan_indices(i) + predicate_scan(i,j);
+                    unsigned int index = scan_indices(i) + predicate_scan(i, j);
                     boundary_(index) = local_sfc_(j);
                 }
             });
@@ -1192,45 +1190,62 @@ public:
         const Integer rank_size = gp_np.extent(0) / 2 - 1;
 
         ViewMatrixType<bool> rank_boundary("count_per_proc", rank_size, chunk_size_);
-        scan_boundary_ = ViewVectorType<Integer>("rank_scan", rank_size + 1);
+        scan_boundary_ = ViewVectorType<Integer>("scan_boundary_", rank_size + 1);
 
         parallel_for("IdentifyBoundaryPerRank", get_chunk_size(),
                      IdentifyBoundaryPerRank<Type>(local_sfc_, rank_boundary, gp_np,
-                                               proc, xDim, yDim, zDim));
+                                                   proc, xDim, yDim, zDim));
 
         /* perform a scan for each row with the sum at the end for each rank */
-        ViewMatrixType<Integer> scan("scan", rank_size, chunk_size_ + 1);
+        ViewMatrixType<Integer> rank_scan("rank_scan", rank_size, chunk_size_ + 1);
         for (int i = 0; i < rank_size; ++i)
         {
             if (i != proc)
             {
-                auto row_predicate = subview(rank_boundary, i, ALL());
-                auto row_scan = subview(scan, i, ALL());
+                ViewVectorType<bool> row_predicate = subview(rank_boundary, i, ALL());
+                ViewVectorType<Integer> row_scan = subview(rank_scan, i, ALL());
                 incl_excl_scan(0, chunk_size_, row_predicate, row_scan);
+
+                parallel_for(
+                    "print scan", chunk_size_, KOKKOS_LAMBDA(const int i) {
+                        printf(" boundary -inside: %i-%li", i, row_predicate(i));
+                    });
+
+                printf("\n");
+
+                parallel_for(
+                    "print scan", chunk_size_ + 1, KOKKOS_LAMBDA(const int i) {
+                        printf(" scan -inside: %i-%li", i, row_scan(i));
+                    });
+
+                printf("\n");
             }
         }
 
         //perform a scan on the last column to get the total sum.
-        column_scan(rank_size, chunk_size_, rank_boundary, scan_boundary_);
+        column_scan(rank_size, chunk_size_, rank_scan, scan_boundary_);
 
         auto index_subview = subview(scan_boundary_, rank_size);
         auto h_ic = create_mirror_view(index_subview);
 
         // Deep copy device view to host view.
         deep_copy(h_ic, index_subview);
-        std::cout << "Hyper count result: " << h_ic(0) << std::endl;
+        std::cout << "boundary_ count result: " << h_ic() << std::endl;
+
+        boundary_ = ViewVectorType<Integer>("boundary_", h_ic());
 
         parallel_for(
             "print scan", rank_size + 1, KOKKOS_LAMBDA(const int i) {
-                printf(" scan : %i-%li\n", i, scan_boundary_(i));
+                printf(" scan boundary: %i-%li\n", i, scan_boundary_(i));
             });
 
-        //the set containing all the ghost elements for all processes. Scan helps to identify part of the set array to which process it belongs.
-        compact_element(rank_scan, rank_boundary, rank_size);
+        /* We use this strategy so that the compacted elements from the local_sfc 
+        would still be sorted and unique. */
+        compact_boundary_elements(scan_boundary_, rank_boundary, rank_scan, rank_size);
 
         parallel_for(
             "print set", h_ic(), KOKKOS_LAMBDA(const int i) {
-                printf(" set : %i - %li\n", i, set(i));
+                printf(" boundary_ : %i - %li\n", i, boundary_(i));
             });
     }
 
