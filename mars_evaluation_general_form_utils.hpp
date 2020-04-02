@@ -1237,12 +1237,12 @@ public:
     constexpr std::enable_if_t<IsDifferent<Eval,std::tuple<>>::value,void>
     apply_aux_aux_aux(Eval& eval,Output& local_mat, FiniteElem& FE,const DofMaps&...dofmaps)
     {
-      std::cout<<"apply_aux_aux_aux evalN"<<std::endl;
-
-     std::cout<<local_mat<<std::endl;
+      // std::cout<<"apply_aux_aux_aux evalN"<<std::endl;
+// 
+     // std::cout<<local_mat<<std::endl;
      eval.apply(local_mat,FE,dofmaps...);
-     std::cout<<"local_mat="<<local_mat<<std::endl;
-     std::cout<<"after apply_aux_aux_aux evalN"<<std::endl;
+     // std::cout<<"local_mat="<<local_mat<<std::endl;
+     // std::cout<<"after apply_aux_aux_aux evalN"<<std::endl;
 
     }  
 
@@ -1305,8 +1305,8 @@ public:
      // // std::cout<< "bilinear dofmap_trial "<<std::endl;
      // // std::cout<<  dofmap_trial <<std::endl;
      // // std::cout<< "mat size "<<mat.rows()<<std::endl;
-     std::cout<<"apply_aux_aux local_mat"<<std::endl;
-     std::cout<<local_mat<<std::endl;
+     // std::cout<<"apply_aux_aux local_mat"<<std::endl;
+     // std::cout<<local_mat<<std::endl;
      for(std::size_t ii=0;ii<dofmap_test.size();ii++)
      {
      for(std::size_t jj=0;jj<dofmap_trial.size();jj++)
@@ -1669,7 +1669,7 @@ public:
       // // std::cout<<tuple_get< GetType<Pairs,0>::value >(dofs)<<std::endl;
       // // std::cout<<tuple_get< GetType<Pairs,1>::value >(dofs)<<std::endl;
 
-      std::cout<<"OOOOO apply_boundary_aux, N="<<N<<std::endl;
+      // std::cout<<"OOOOO apply_boundary_aux, N="<<N<<std::endl;
       // // std::cout<<"dofmap_test"<<std::endl;
       // // std::cout<<dofmap_test<<std::endl;
       // // std::cout<<"dofmap_trial"<<std::endl;
@@ -1711,7 +1711,7 @@ public:
 
 
 
-      std::cout<<"PPPPPP apply_boundary_aux, N="<<N<<std::endl;
+      // std::cout<<"PPPPPP apply_boundary_aux, N="<<N<<std::endl;
       // // std::cout<<"dofmap_test"<<std::endl;
       // // std::cout<<dofmap_test<<std::endl;
       // // std::cout<<"dofmap_trial"<<std::endl;
@@ -1731,7 +1731,7 @@ public:
     void apply_boundary(Output& mat,FiniteElem&FE,const DofMap& dofmap )
     {
 
-       std::cout<<"general apply_boundary "<<FE.elem_id()<<std::endl;
+       // std::cout<<"general apply_boundary "<<FE.elem_id()<<std::endl;
       apply_boundary_aux<TupleTypeSize<L2Products>::value-1,0>(mat,FE,dofmap);
     }
 

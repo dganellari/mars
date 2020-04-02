@@ -3963,6 +3963,9 @@ public:
 		// std::cout<<reference_values<<std::endl;
 		// std::cout<<"vec="<<std::endl;
 		// std::cout<<vec<<std::endl;
+		// std::cout<<"shape_eval="<<std::endl;
+		// std::cout<<shape_eval<<std::endl;
+
 		// loop on dof points and evaluate u_0 phi_0 in those points
 		// if i have RT0 valutato su sei punti...cosa devo fare?
 		// loop esterno sui punti e' ok, ma poi internamente dovrei loopare solo sule shape functions
@@ -3979,13 +3982,27 @@ public:
 
 		// mat_tmp_[k](i,j)=vec[0+component]*coeff_[0]*reference_values[0][k](i,j);
 
-		mat_tmp_[k](i,j)=vec[0+component]*shape_eval[0][k](i,j);
+		// mat_tmp_[k](i,j)=vec[0+component]*shape_eval[0][k](i,j);
+			if(NComponents>1 && Rows>1)
+			mat_tmp_[k](i,j)=vec[component]*shape_eval[component][k](component+j,i);					
+			else				
+			mat_tmp_[k](i,j)=vec[0+component]*shape_eval[0+component][k](i,j);
+
+
 
 
 		// std::cout<<"k,i,j="<<k<<","<<i<<","<<j<<"="<<mat_tmp_[k](i,j)<<std::endl;
 		}
        
-
+			// if(FE.elem_id()==59  )
+			// {
+			// 	std::cout<<"k,qp="<<k<<","<<0<<std::endl;
+			// 	std::cout<<"Rows,Cols ="<<Rows<<","<<Cols<<std::endl;
+			// 	std::cout<<vec[0+component]<<std::endl;
+			// 	std::cout<<shape_eval[0+component][k]<<std::endl;
+			// 	std::cout<<mat_tmp_[k]<<std::endl;
+				
+			// }
 		// for(std::size_t qp=1;qp<Npoints;qp++)
 		//    for(std::size_t i=0;i<Ndofs;i++)
 		//     for(std::size_t j=0;j<Ndofs;j++)
@@ -3993,6 +4010,7 @@ public:
 
 		//for(Integer qp=1;qp<NPoints;qp++) TODO FIX CHECK <---------------
 		for(Integer qp=1;qp<NShapes;qp++)
+		{
 		for(Integer i=0;i<Rows;i++)
 			for(Integer j=0;j<Cols;j++)            
 			{
@@ -4003,8 +4021,26 @@ public:
 				// mat_tmp_[k](i,j)+=vec[qp*NComponents+component]*coeff_[qp]*reference_values[qp][k](i,j);
 
 
-				mat_tmp_[k](i,j)+=vec[qp*NComponents+component]*shape_eval[qp][k](i,j);
+				// mat_tmp_[k](i,j)+=vec[qp*NComponents+component]*shape_eval[qp][k](i,j);
+				if(NComponents>1 && Rows>1)
+				mat_tmp_[k](i,j)+=vec[qp*NComponents+component]*shape_eval[qp*NComponents+component][k](component+j,i);					
+				else
+				mat_tmp_[k](i,j)+=vec[qp*NComponents+component]*shape_eval[qp*NComponents+component][k](i,j);
+
+
 			}
+
+
+		// if(FE.elem_id()==59  )
+		// 	{
+		// 		std::cout<<"k,qp="<<k<<","<<qp<<std::endl;
+		// 		std::cout<<vec[qp*NComponents+component]<<std::endl;
+		// 		std::cout<<shape_eval[qp*NComponents+component][k]<<std::endl;				
+		// 		std::cout<<mat_tmp_[k]<<std::endl;
+				
+		// 	}
+		}
+
 		// if(FE.elem_id()==18 ||FE.elem_id()==19 )
 
 		// {
@@ -4046,14 +4082,20 @@ public:
 
 		// }
 			}
+			// std::cout<<"output_"<<output_<<std::endl;
 
-		// if(FE.elem_id()==18 ||FE.elem_id()==19 )
+		// if(FE.elem_id()==59  )
 
 		// {
-		// 	// std::cout<<"post mat_tmp_"<<std::endl;
-		// 	// std::cout<<mat_tmp_<<std::endl;
-		// 	// std::cout<<"output_"<<std::endl;
-		// 	// std::cout<<output_<<std::endl;
+
+		// std::cout<<"vec="<<std::endl;
+		// std::cout<<vec<<std::endl;
+		// std::cout<<"shape_eval="<<std::endl;
+		// std::cout<<shape_eval<<std::endl;
+		// 			std::cout<<"post mat_tmp_"<<std::endl;
+		// 	std::cout<<mat_tmp_<<std::endl;
+		// 	std::cout<<"output_"<<std::endl;
+		// 	std::cout<<output_<<std::endl;
 		// }
 		// std::cout<<"Npoints="<<Npoints<<std::endl;
 		// std::cout<<"NComponents="<<NComponents<<std::endl;
@@ -4341,6 +4383,28 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 
 				var.init(FE,local_sol,comp);
 				const auto& val=var.value();
+
+
+				if(i==59)
+					// if(i==36||i==37||i==58||i==59)
+				{
+
+					std::cout<<" i== "<<i<<std::endl;
+					std::cout<<localdofmap <<std::endl; 
+					
+
+					std::cout<<" print_solutions_aux_aux "<<std::endl;
+					std::cout<<val <<std::endl; 
+					std::cout<<" local_sol"<<local_sol <<std::endl; 
+					std::cout<<" Npoints"<<Npoints <<std::endl; 
+					auto& nodes=mesh.elem(i).nodes;
+					for(Integer m=0;m<nodes.size();m++)
+						std::cout<<mesh.points()[nodes[m]]<<std::endl;
+					// std::cout<<decltype(var)::MatPoints<<std::endl; 
+
+					// var.init(FE,local_sol,comp);
+
+				}
 
 
 // std::cout<<"ElementOrder="<<ElementOrder<<std::endl;
@@ -9230,7 +9294,7 @@ void compute_working_set(std::vector<bool>& working_set,const std::vector<Real>&
 
 
    		patch_active_set_gauss_seidel(x,truncated_A_levels[level],b,F_constraint,nodes2entity[0],
-                              		 local_mat,A_tmp,H_tmp,b_tmp,lambda_tmp,y_tmp,c_tmp,1000);
+                              		 local_mat,A_tmp,H_tmp,b_tmp,lambda_tmp,y_tmp,c_tmp,2000);
  
          compute_working_set(working_set[level],x,F_constraint);
          std::cout<<"working_set on level=="<<level<<std::endl;
@@ -9374,8 +9438,7 @@ void compute_working_set(std::vector<bool>& working_set,const std::vector<Real>&
          for(Integer i=0;i<working_set[level].size();i++)
          	{if(working_set[level][i]!=working_set_old[level][i])
          		{
-         			std::cout<<i<<"-> "<<working_set[level][i]<<", "<<working_set_old[level][i] <<std::endl;
-         			std::cout<<x[i]<<", "<<F_constraint[i] <<std::endl;
+         			std::cout<<i<<",      "<<working_set[level][i]<<",     "<<working_set_old[level][i] <<",     "<<x[i]<<",    "<<F_constraint[i] <<std::endl;
          		}
          	// std::cout<<working_set[level][i]<<", "<<working_set_old[level][i] <<std::endl;
          	}
@@ -9452,8 +9515,8 @@ void compute_working_set(std::vector<bool>& working_set,const std::vector<Real>&
          // truncate_matrix_with_bc(truncated_A_levels[level-1],A_levels[level],interpolation.matrix(level-1),working_set[level],working_set_old[level]);
 
  
-	     patch_vcycle_active_set(context, C_correction,A_levels,truncated_A_levels,C_rhs,C_constraint,contact_constraints,levels,working_set,working_set_old,interpolation,nodes2entity,
-	     						 local_mat,A_tmp,H_tmp,b_tmp,lambda_tmp,y_tmp,c_tmp,pre_smoothing,post_smoothing,level-1,max_level,change_coarser_matrix);
+	     // patch_vcycle_active_set(context, C_correction,A_levels,truncated_A_levels,C_rhs,C_constraint,contact_constraints,levels,working_set,working_set_old,interpolation,nodes2entity,
+	     // 						 local_mat,A_tmp,H_tmp,b_tmp,lambda_tmp,y_tmp,c_tmp,pre_smoothing,post_smoothing,level-1,max_level,change_coarser_matrix);
  
 
 	     interpolation.matrix(level-1).multiply(F_correction,C_correction,working_set[level]);
@@ -9770,6 +9833,35 @@ void compute_working_set(std::vector<bool>& working_set,const std::vector<Real>&
 	    ofs.close();
     }
 
+    template<typename T>
+    void read_vector(const std::string s, std::vector<T>& v)
+    {
+    	
+		std::ifstream ifs(s);
+
+		ifs.precision(17);
+		std::string line;
+
+		// ifs.open(s.c_str());
+
+		std::getline(ifs, line);
+		std::stringstream ss1(line);
+		Integer size;
+	    ss1 >> size ;
+		v.resize(size);
+
+		for(Integer i=0;i<v.size();i++)
+		{
+			std::getline(ifs, line);
+			std::stringstream ss(line);
+			ss.precision(17);
+			ss>> v[i];
+			std::cout.precision(17);
+			std::cout<<"v="<<v[i]<<std::endl;
+		}
+
+	    ifs.close();
+    }
 
    template<typename FunctionSpace,typename VecVecVec,typename ...Ts>
    inline void patch_multigrid_active_set(
@@ -9900,10 +9992,10 @@ void compute_working_set(std::vector<bool>& working_set,const std::vector<Real>&
      M.multiply_and_add(rhs,-1.0,x,b);
 
      norm_rhs=l2_norm(rhs,working_set[level]);
-     save_vector("matlab_ws.dat",working_set[level]);
-     save_vector("matlab_rhs.dat",rhs);
-     save_vector("matlab_x.dat",x);
-     save_vector("matlab_b_inside.dat",b);
+     // save_vector("matlab_ws.dat",working_set[level]);
+     // save_vector("matlab_rhs.dat",rhs);
+     // save_vector("matlab_x.dat",x);
+     // save_vector("matlab_b_inside.dat",b);
 
 
 
@@ -9919,6 +10011,26 @@ void compute_working_set(std::vector<bool>& working_set,const std::vector<Real>&
    	{
    	// std::cout<<"patch_vcycle_active_set iter="<<i<<std::endl;
 
+     M.multiply_and_add(rhs,-1.0,x,b);
+
+     compute_working_set(working_set[level],x,c);
+     for(Integer i=0;i<working_set[level].size();i++)
+     {
+     	if(working_set[level][i] && (!context.constrained_dofs_levels()[level][i]))
+     		std::cout<<i<< "   "<<x[i]<<std::endl;
+     }
+     	
+     save_vector("matlab_ws2.dat",working_set[level]);
+     save_vector("matlab_rhs2.dat",rhs);
+     save_vector("matlab_x2.dat",x);
+     save_vector("matlab_b_inside2.dat",b);
+
+     norm_rhs=l2_norm(rhs,working_set[level]);
+
+     std::cout<<"PATCH multigrid iteration == "<< i<<"  BEEEEEFORE norm_rhs="<<norm_rhs<<std::endl;
+
+      //     if(norm_rhs<toll)
+     	// break;
 
 
    
@@ -9938,6 +10050,8 @@ void compute_working_set(std::vector<bool>& working_set,const std::vector<Real>&
      M.multiply_and_add(rhs,-1.0,x,b);
 
      norm_rhs=l2_norm(rhs,working_set[level]);
+
+
 
      compute_working_set(working_set[level],x,c);
   //    if(i>0)
@@ -10049,7 +10163,13 @@ void compute_working_set(std::vector<bool>& working_set,const std::vector<Real>&
           // return 0.5*(1-sin(acos(point[0]/0.5)));
 		  // return (point[0]-0.5)*(point[0]-0.5)+point[1]*point[1]-1; 
 			 // return 1.0; 
-			return 1.* 0.5*(1-sin(acos((point[0]-0.5)/0.5)));
+			if(point[0]<0.35 || point[0]>0.65)
+				return 1.0;
+			else
+				return 0.00345;
+
+
+			// return 1.* 0.5*(1-sin(acos((point[0]-0.5)/0.5)));
           // return 0.005; 
 			// return 0.00; 
 		}
@@ -11389,6 +11509,14 @@ void compute_working_set(std::vector<bool>& working_set,const std::vector<Real>&
                     
                     // auto& normal=fnode_normals[side_nodes[i]];
                     house_holder_.compute(face_normals[el][s]);
+
+
+                   	// here we want to normalize wrt the volume side
+                   	// [F_x;F_y]=sigma n = [phi S_x;phi S_y] n= (phi n) [S_x;S_y]= H[S_n;S_t]
+                   	// H transform the force F from the normal-tangent to the x-y coordinate system
+                   	// [S_x;S_y]= H/(phi n )[S_n;S_t]
+                   	// 
+                    // house_holder_()/=FE.side_volume();
 
                     for(Integer lev=0;lev<=level;lev++)
                     {
@@ -13214,8 +13342,10 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
         	if(!context.constrained_dofs_levels()[levels.size()-1][i])
         	constraints()[i]=1000000000;
         }
+        std::ofstream os1,os2;
 
-		patch_multigrid_active_set(context,active_x,Ant_levels,truncated_Ant_levels,bL,constraints(),contact_constraints,levels,working_set,levels_interp,e2d,5,5,levels.size()-1,50,0.000000001);
+
+		patch_multigrid_active_set(os1,os2,context,active_x,Ant_levels,truncated_Ant_levels,bL,constraints(),contact_constraints,levels,working_set,levels_interp,e2d,5,5,levels.size()-1,50,0.000000001);
 
         std::vector<Real> active_solution(Ant_levels[levels.size()-1].max_rows(),0);
         level_global_house_holder[levels[levels.size()-1]].transpose_and_multiply(active_solution,active_x);
@@ -13355,9 +13485,9 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 		constexpr auto halp=Constant<Scalar>(0.5);
 
 
-		constexpr auto C_eq=Constant<Scalar>(10.0);
+		constexpr auto C_eq=Constant<Scalar>(1.0);
 
-		constexpr auto C_compl=Constant<Scalar>(0.13);
+		constexpr auto C_compl=Constant<Scalar>(0.1);
 
 		constexpr auto C_coeff1=Constant<Scalar>(1.0/Real(2.0*mu));
 		constexpr auto ZeroConstant=Constant<Scalar>(0.0);
@@ -13438,6 +13568,23 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 
 
 	    // 2D LSFEM POISSION
+		// auto bilinearform=
+		// L2Inner( Div(sigma),Div(tau))
+		// +L2Inner(C_inverse(sigma)-Epsilon(u),C_inverse(tau)-Epsilon(v))//+
+
+		// // +L2Inner(ZeroConstant* Epsilon(u),Epsilon(v))
+		// // L2Inner(Epsilon(u),C_inverse(tau))-
+		// // L2Inner(C_inverse(sigma),Epsilon(v))
+		// +surface_integral(contact_boundary,Inner(Trace(sigma),node_normal),Inner(Trace(v),node_normal))+
+		// +surface_integral(contact_boundary,Inner(Trace(tau),node_normal),  Inner(Trace(u),node_normal))
+		// ;
+
+		// auto linearform=
+		// L2Inner(-Div(tau),f1)
+		// +surface_integral(contact_boundary,Inner(Trace(tau),node_normal),gap)
+		// ;
+
+
 		auto bilinearform=
 		L2Inner( C_eq*Div(sigma),Div(tau))
 		+L2Inner(C_inverse(sigma)-Epsilon(u),C_inverse(tau)-Epsilon(v))//+
@@ -13453,6 +13600,8 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 		L2Inner(-C_eq*Div(tau),f1)
 		+surface_integral(contact_boundary,C_compl*Inner(Trace(tau),node_normal),gap)
 		;
+
+
 
 		// std::cout<<"label= "<< bilinearform.left().left().label() <<std::endl;
 		// std::cout<<"label= "<< bilinearform.left().right().label() <<std::endl;
@@ -13596,10 +13745,10 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
         truncated_Ant_levels[levels.size()-1]=Ant_levels[levels.size()-1];
         std::cout<<"truncated_Ant_levels[levels.size()-1].print_val();"<<std::endl;
 
-        AL.save_mat("matlab_matrix_nobc.dat");
-        std::cout<< " AL.print();"<<std::endl;
+        // AL.save_mat("matlab_matrix_nobc.dat");
+        // std::cout<< " AL.print();"<<std::endl;
         // AL.print();
-        std::cout<< " AL.print();"<<std::endl;
+        // std::cout<< " AL.print();"<<std::endl;
         // AL.print_val();
 
 
@@ -13721,6 +13870,20 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 
         }
 
+
+
+       
+        for(Integer i=0;i<Ant_levels.size();i++)
+        { 
+        	std::cout<<"Ant_levels level = "<<i<<std::endl;
+
+            // Ant_levels[i].print_val();
+            // std::cout<<"truncated_Ant_levels level = "<<i<<std::endl;
+            // truncated_Ant_levels[i].print_val();
+          }
+
+
+
         for(Integer i=levels.size()-2;i>=0;i--)
         { 
                context.apply_zero_bc_for_null_diagonal_element(truncated_Ant_levels[i]);
@@ -13822,15 +13985,14 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 
         // std::cout<<"PRINT ALL MATRICES"<<std::endl;
 
-        for(Integer i=0;i<Ant_levels.size();i++)
-        { 
-        	std::cout<<"Ant_levels level = "<<i<<std::endl;
-        	std::cout<<Ant_levels[i].max_rows()<<std::endl;
+        // for(Integer i=0;i<Ant_levels.size();i++)
+        // { 
+        // 	std::cout<<"Ant_levels level = "<<i<<std::endl;
 
-            // Ant_levels[i].print_val();
-            // std::cout<<"truncated_Ant_levels level = "<<i<<std::endl;
-            // truncated_Ant_levels[i].print_val();
-          }
+        //     Ant_levels[i].print_val();
+        //     // std::cout<<"truncated_Ant_levels level = "<<i<<std::endl;
+        //     // truncated_Ant_levels[i].print_val();
+        //   }
 
 
 		// patch_multigrid_active_set(context,active_x,Ant_levels,truncated_Ant_levels,bL,constraints(),contact_constraints,levels,working_set,levels_interp,e2d,5,5,levels.size()-1,1000,0.000000001);
@@ -13883,7 +14045,16 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 		// }
 
 
-		patch_multigrid_active_set(os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,constraints(),contact_constraints,levels,working_set,levels_interp,e2d,5,5,levels.size()-1,40,0.000000001);
+		// read_vector("sol.txt",active_x);
+		// 	for(Integer i=0;i<active_x.size();i++)
+		// 	{
+		// 		std::cout.precision(17);
+		// 		std::cout<<"sol["<<i<<"]="<<active_x[i]<<"\n";
+		// 	}
+	
+
+
+		patch_multigrid_active_set(os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,constraints(),contact_constraints,levels,working_set,levels_interp,e2d,5,5,levels.size()-1,5,0.000000001);
         os2.close();
 
         std::vector<Real> active_solution(Ant_levels[levels.size()-1].max_rows(),0);
@@ -13930,8 +14101,58 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 	 //    ofs3.close();
 
 
-	    save_vector("matlab_vector.dat",b_transformed);
-	    save_vector("matlab_constraint.dat",constraints());
+	    save_vector("~/Desktop/articles/svn-rovig/9_All/matlab_vector.dat",b_transformed);
+	    save_vector("~/Desktop/articles/svn-rovig/9_All/matlab_constraint.dat",constraints());
+
+
+	     auto &dofsdofmap=W_ptr->dofsdofmap();
+
+
+    
+	     auto& cumultive_n_dofs=*tuple_get<0>(dofsdofmap.dofmap());
+	     // auto& cumultive_n_dofs=level_cumultive_n_dofs2[level_cumultive_n_dofs2.size()-1];
+	     std::cout<<"level_n_dofs_array="<<cumultive_n_dofs.size()<<std::endl;
+	     FiniteElem<Elem> FE(mesh);
+	     Integer tmp_cont=0;
+	     for(int el=0;el<cumultive_n_dofs.size();el++)
+	     {
+	     	if(!mesh.is_active(el))continue;
+	     	FE.init(el);
+	     	tmp_cont++;
+
+          if(FE.is_on_boundary())
+          {
+            for(std::size_t s=0;s<FE.n_side();s++)
+              {
+                // controlla, qui passiamo side_id, ma dovremmo avere label
+                // dovresti costruire mesh coi label
+
+                //std::cout<<"------_______----- BEGIN SIDE===="<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
+                FE.init_boundary(s);
+                if(FE.side_tag()==contact_boundary)
+                {
+                	std::cout<<"tmp_cont="<<tmp_cont<<",  el=="<<el<<",  s=="<<s<<"   "<< cumultive_n_dofs[el] <<std::endl;
+
+                }
+
+            	}
+            }
+
+	     }   
+
+
+
+	     save_vector("solution.txt " , active_x);
+	     save_vector("solution_rotated.txt " , active_solution);
+
+	     
+
+        std::cout<<"X_active"<<std::endl;
+		for(Integer i=0;i<active_x.size();i++)
+			{
+				if(constraints()[i]<10)
+				std::cout<<i<<", "<<active_x[i]<<std::endl;
+			}
 
 
   //       std::cout<<"X_active"<<std::endl;
