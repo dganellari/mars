@@ -874,6 +874,7 @@ public:
         return enc_oc;
     }
 
+
     //binary search on the gp view.
     template <typename T>
     MARS_INLINE_FUNCTION static Integer find_owner_processor(const ViewVectorType<T> view,
@@ -1076,12 +1077,6 @@ public:
 
         // Deep copy device view to host view.
         deep_copy(h_ic, index_subview);
-        std::cout << "Hyper count result: " << h_ic(0) << std::endl;
-
-        parallel_for(
-            "print scan", rank_size + 1, KOKKOS_LAMBDA(const int i) {
-                printf(" scan : %i-%li\n", i, scan(i));
-            });
 
         //the set containing all the ghost elements for all processes. Scan helps to identify part of the set array to which process it belongs.
         ViewVectorType<Integer> set("build_set", h_ic());
@@ -1213,12 +1208,12 @@ public:
 
                 printf("\n");
 
-                parallel_for(
+                /* parallel_for(
                     "print scan", chunk_size_ + 1, KOKKOS_LAMBDA(const int i) {
                         printf(" scan -inside: %i-%li", i, row_scan(i));
                     });
 
-                printf("\n");
+                printf("\n"); */
             }
         }
 
@@ -1234,18 +1229,23 @@ public:
 
         boundary_ = ViewVectorType<Integer>("boundary_", h_ic());
 
-        parallel_for(
+      /*   parallel_for(
             "print scan", rank_size + 1, KOKKOS_LAMBDA(const int i) {
                 printf(" scan boundary: %i-%li\n", i, scan_boundary_(i));
-            });
+            }); */
 
         /* We use this strategy so that the compacted elements from the local_sfc 
         would still be sorted and unique. */
         compact_boundary_elements(scan_boundary_, rank_boundary, rank_scan, rank_size);
 
         parallel_for(
-            "print set", h_ic(), KOKKOS_LAMBDA(const int i) {
-                printf(" boundary_ : %i - %li\n", i, boundary_(i));
+            "print set", h_ic(), KOKKOS_LAMBDA(const Integer i) {
+
+                const Integer rank = find_owner_processor(scan_boundary_, i, 1, proc);
+
+                printf(" boundary_ : %i - %li (%li) - proc: %li - rank: %li\n", i, boundary_(i), 
+                            get_octant_from_sfc<Type>(boundary_(i)).template get_global_index<Type>(xDim, yDim), 
+                            rank , proc);
             });
     }
 

@@ -9,7 +9,7 @@ struct Octant
     Integer z;
 
     bool valid;
-    
+
     MARS_INLINE_FUNCTION
     Octant() = default;
 
@@ -35,6 +35,23 @@ struct Octant
     void set_invalid()
     {
         valid = false;
+    }
+
+    template <Integer Type>
+    MARS_INLINE_FUNCTION
+    Integer get_global_index(const int xDim, const int yDim)
+    {
+        switch (Type)
+        {
+        case ElementType::Quad4:
+        {
+            return x + (xDim + 1) * y;
+        }
+        case ElementType::Hex8:
+        {
+            return elem_index(x, y, z, xDim, yDim);
+        }
+        }
     }
 };
 } // namespace mars
