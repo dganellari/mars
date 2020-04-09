@@ -222,7 +222,8 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                 
                 if(FE.side_tags()[s]!=INVALID_INDEX)
                 {
-                  // std::cout<<"------_______----- INIT BOUNDARY===="<<s<<std::endl;
+                  // std::cout<<"------_______----- ELEM===="<<el<<std::endl;
+                  // std::cout<<"------_______----- INIT BOUNDARY===="<<FE.side_tags()[s]<<std::endl;
                   FE.init_boundary(s);
                   // std::cout<<"------_______----- END INIT BOUNDARY===="<<s<<std::endl;
                   bcs_.assembly(full_spaces_ptr(),constrained_dofs_,constrained_mat_,constrained_vec_,FE);
@@ -530,9 +531,15 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
     auto& constrained_dofs_levels(){return constrained_dofs_levels_;}
 
+    auto& constrained_dofs_levels()const {return constrained_dofs_levels_;}
+
     auto& constrained_mat_levels(){return constrained_mat_levels_;}
 
+    auto& constrained_mat_levels()const {return constrained_mat_levels_;}
+
     auto& constrained_vec_levels(){return constrained_vec_levels_;}
+
+    auto& constrained_vec_levels()const{return constrained_vec_levels_;}
 
     void constrained_quantities(std::vector<bool>& a, std::vector<Real>& b, std::vector<Real>& c)const 
     {
@@ -772,7 +779,8 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
 
       std::cout<<std::endl;
-
+      
+      auto& constrained_dofs=constrained_dofs_levels_[constrained_dofs_levels_.size()-1];
       auto& constrained_vec=constrained_vec_levels_[constrained_vec_levels_.size()-1];
       Integer ndofs=constrained_vec.size();
 
@@ -781,10 +789,12 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
         for(Integer i=0;i<ndofs;++i)
        {
-        std::cout<<i<<"/"<<ndofs<<std::endl;
-        if(constrained_vec[i])
-        {       
+        if(constrained_dofs[i])
+        {   
+
          b[i]=constrained_vec[i];
+        std::cout<<i<<"/"<<ndofs<<"   "<<b[i]<<std::endl;
+
         }
 
        }

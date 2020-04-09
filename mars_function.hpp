@@ -408,6 +408,28 @@ class FunctionLastComponent<Dim,FunctionType>
 };
 
 
+template<Integer Dim,Integer Component, typename FunctionType>
+class FunctionNthComponent
+{
+    public: 
+    // using Point=Matrix<Real,2,1>;
+    using type=Matrix<Real,Dim,1>;
+
+
+    template<typename Point,typename Elem>
+    static type eval(const Point& p, FiniteElem<Elem>& FE)
+    {
+     Matrix<Real,Dim,1> func;
+     for(Integer i=0;i<Dim;i++)
+      // func[i]=0;
+        func(i,0)=0;
+     // func[Dim-1]=-0.01;
+     func(Component,0)=FunctionType::eval(p,FE)(0,0);
+     return func; 
+    }
+};
+
+
 
 template<Integer Dim>
 class FunctionLinear

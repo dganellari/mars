@@ -1303,17 +1303,22 @@ std::cout<<"after LSFEM_Poisson2D"<<std::endl;
 // LSFEM_LinearElasticity<3,0,1>(1,1,5);
 
 // LSFEM_ContactLinearElasticity<2,0,1>(1,0,2);
-// LSFEM_ContactLinearElasticity<2,0,1>(1,1,14);
+// LSFEM_ContactLinearElasticity<2,0,1>(1,0,6);
+
+// PROVALSFEM_ContactLinearElasticity<2,0,1>(1,5,6);
 
 // LSFEM_ContactLinearElasticity<2,0,1>(1,0,2);
-// PROVALSFEM_ContactLinearElasticity<2,0,1>(1,0,3);
+// PROVALSFEM_ContactLinearElasticity<2,0,1>(1,0,6);
 // for(Integer i=10;i<14;i++)
 // for(Integer j=7;j<i;j++)
 // PROVALSFEM_ContactLinearElasticity2<2,0,1>(1,j,i,1);
 
-// PROVALSFEM_ContactLinearElasticity2<2,0,1>(1,2,8,1);
+// PROVALSFEM_ContactLinearElasticity2<2,0,1>(1,5,6,1);
+// PROVALSFEM_ContactLinearElasticity3<2>(1,0,14,1);
+PROVALSFEM_ContactLinearElasticity4<2,0>(1,0,4,1);
 
-PROVALSFEM_ContactLinearElasticity2<2,0,1>(1,7,8,1);
+
+// PROVALSFEM_ContactLinearElasticity2<2,0,1>(1,0,6,1);
 
 
 // compute_RT1_interpolation<2,1,1>(1,0,1);
