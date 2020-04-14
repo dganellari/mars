@@ -81,12 +81,18 @@ struct dry_run_context_impl {
     }
 
     void
-    scatterv_gids(const ViewVectorType<unsigned int> global, const ViewVectorType<unsigned int> local, 
-                const std::vector<int>& counts) const
+    scatterv_gids(const ViewVectorType<unsigned int> global, const ViewVectorType<unsigned int> local,
+                  const std::vector<int> &counts) const
     {
     }
 
-    void 
+    template <typename T>
+    void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, 
+                const Integer proc_count) const
+    {
+    }
+
+    void
     broadcast(const ViewVectorType<Integer> global) const
     {
     }

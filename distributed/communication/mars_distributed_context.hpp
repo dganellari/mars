@@ -51,7 +51,7 @@ namespace mars
     virtual T min(T value) const = 0;  \
     virtual T max(T value) const = 0;  \
     virtual T sum(T value) const = 0;  \
-    virtual std::vector<T> gather(T value, int root) const = 0;
+    virtual std::vector<T> gather(T value, int root) const = 0; 
 
 #define MARS_WRAP_COLLECTIVES_(T)                                \
     T min(T value) const override { return wrapped.min(value); } \
@@ -60,6 +60,23 @@ namespace mars
     std::vector<T> gather(T value, int root) const override { return wrapped.gather(value, root); }
 
 #define MARS_COLLECTIVE_TYPES_ float, double, int, unsigned, long, unsigned long, long long, unsigned long long
+
+
+#define MARS_PUBLIC_PTOP_(T)                    \
+    void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, const Integer proc_count)  \
+                { impl_->i_send_recv_vec(send_count, receive_count, proc_count); } /* \
+    void i_send_recv_view(const std::ViewVectorType<T> &local, const Integer offset, const Integer count, const Integer source_proc, \
+                int tag, T *request) { impl_->i_receive_vec(local, offset, count, source_proc, tag, request); } */
+
+#define MARS_INTERFACE_PTOP_(T) \
+    virtual void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, const Integer proc_count) const = 0; 
+
+#define MARS_WRAP_PTOP_(T)                                \
+    void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, const Integer proc_count) const override \
+                { wrapped.i_send_recv_vec(send_count, receive_count, proc_count); } 
+    
+#define MARS_PTOP_TYPES_ Integer
+
 
 // Defines the concept/interface for a distributed communication context.
 //
@@ -74,7 +91,7 @@ class distributed_context
 {
 public:
     using gid_vector = std::vector<unsigned int>;
-    
+
     using local_sfc = ViewVectorType<unsigned int>;
 
     // default constructor uses a local context: see below.
@@ -107,7 +124,7 @@ public:
     {
         impl_->broadcast(global);
     }
-    
+
     int id() const
     {
         return impl_->id();
@@ -129,6 +146,7 @@ public:
     }
 
     MARS_PP_FOREACH(MARS_PUBLIC_COLLECTIVES_, MARS_COLLECTIVE_TYPES_);
+    MARS_PP_FOREACH(MARS_PUBLIC_PTOP_, MARS_PTOP_TYPES_);
 
     std::vector<std::string> gather(std::string value, int root) const
     {
@@ -142,9 +160,9 @@ private:
         gather_gids(const gid_vector &local_gids) const = 0;
         virtual local_sfc
         scatter_gids(const local_sfc global, const local_sfc local) const = 0;
-        virtual void 
-        scatterv_gids(const local_sfc global, const local_sfc local, const std::vector<int>& counts) const = 0;
-        virtual void 
+        virtual void
+        scatterv_gids(const local_sfc global, const local_sfc local, const std::vector<int> &counts) const = 0;
+        virtual void
         broadcast(const ViewVectorType<Integer> global) const = 0;
 
         virtual int id() const = 0;
@@ -153,6 +171,8 @@ private:
         virtual std::string name() const = 0;
 
         MARS_PP_FOREACH(MARS_INTERFACE_COLLECTIVES_, MARS_COLLECTIVE_TYPES_)
+        MARS_PP_FOREACH(MARS_INTERFACE_PTOP_, MARS_PTOP_TYPES_)
+
         virtual std::vector<std::string> gather(std::string value, int root) const = 0;
 
         virtual ~interface() {}
@@ -176,8 +196,8 @@ private:
             return wrapped.scatter_gids(global, local);
         }
         virtual void
-        scatterv_gids(const local_sfc global, const local_sfc local, 
-                        const std::vector<int> &counts) const override
+        scatterv_gids(const local_sfc global, const local_sfc local,
+                      const std::vector<int> &counts) const override
         {
             wrapped.scatterv_gids(global, local, counts);
         }
@@ -206,6 +226,7 @@ private:
         }
 
         MARS_PP_FOREACH(MARS_WRAP_COLLECTIVES_, MARS_COLLECTIVE_TYPES_)
+        MARS_PP_FOREACH(MARS_WRAP_PTOP_, MARS_PTOP_TYPES_)
 
         std::vector<std::string> gather(std::string value, int root) const override
         {
@@ -232,19 +253,25 @@ struct local_context
             {0u, static_cast<count_type>(local_gids.size())});
     }
 
-    local_sfc 
+    local_sfc
     scatter_gids(const local_sfc global, const local_sfc local) const
     {
-        return ViewVectorType<unsigned int>("local_context_view",0);
+        return ViewVectorType<unsigned int>("local_context_view", 0);
     }
 
-    void 
-    scatterv_gids(const local_sfc global, const local_sfc local, 
-                const std::vector<int>& counts) const
+    void
+    scatterv_gids(const local_sfc global, const local_sfc local,
+                const std::vector<int> &counts) const
     {
     }
 
-    void 
+    template <typename T>
+    void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, 
+                const Integer proc_count) const
+    {
+    }
+
+    void
     broadcast(const ViewVectorType<Integer> global) const
     {
     }
