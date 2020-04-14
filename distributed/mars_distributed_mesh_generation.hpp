@@ -49,8 +49,8 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
     }
 
     //unsigned int chunk_size = (unsigned int)ceil((double)n__anchor_nodes / size);
-    unsigned int chunk_size = n__anchor_nodes / size + (n__anchor_nodes % size != 0);
-    unsigned int last_chunk_size = chunk_size - (chunk_size * size - n__anchor_nodes);
+    Integer chunk_size = n__anchor_nodes / size + (n__anchor_nodes % size != 0);
+    Integer last_chunk_size = chunk_size - (chunk_size * size - n__anchor_nodes);
 
     SFC morton;
 

@@ -156,6 +156,90 @@ void scatterv(const ViewVectorType<T> global,
                  0, comm);
 }
 
+template <typename T>
+void i_send(const ViewVectorType<T> local, const Integer offset, const Integer count,
+            const Integer remote_proc, int tag, MPI_Comm comm, MPI_Request *request)
+{
+    using traits = mpi_traits<T>;
+
+    MPI_OR_THROW(MPI_Isend,
+                 local.data() + offset, count, traits::mpi_type(), // send buffer
+                 remote_proc, tag, comm, request);
+}
+
+template <typename T>
+void i_receive(const ViewVectorType<T> local, const Integer offset, const Integer count,
+               const Integer source_proc, int tag, MPI_Comm comm, MPI_Request *request)
+{
+    using traits = mpi_traits<T>;
+
+    MPI_OR_THROW(MPI_Irecv,
+                 local.data() + offset, count, traits::mpi_type(), // send buffer
+                 source_proc, tag, comm, request);
+}
+
+template <typename T>
+void i_send_v(const std::vector<T> &local, const Integer offset, const Integer count,
+            const Integer remote_proc, int tag, MPI_Comm comm, MPI_Request *request)
+{
+    using traits = mpi_traits<T>;
+
+    MPI_OR_THROW(MPI_Isend,
+                 local.data() + offset, count, traits::mpi_type(), // send buffer
+                 remote_proc, tag, comm, request);
+}
+
+template <typename T>
+void i_receive_v(std::vector<T> &local, const Integer offset, const Integer count,
+               const Integer source_proc, int tag, MPI_Comm comm, MPI_Request *request)
+{
+    using traits = mpi_traits<T>;
+
+    MPI_OR_THROW(MPI_Irecv,
+                 local.data() + offset, count, traits::mpi_type(), // send buffer
+                 source_proc, tag, comm, request);
+}
+
+inline void wait_all_send_recv(const int count, std::vector<MPI_Request> &array_req)
+{
+    MPI_OR_THROW(MPI_Waitall,
+                 count, array_req.data(), MPI_STATUSES_IGNORE);
+}
+
+template <typename T>
+void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, 
+            const Integer proc_count, MPI_Comm comm)
+{
+/*     Integer proc_count = std::count_if(send_count.begin(), send_count.end(),
+                                       [](T i) { return i > 0; }); */
+
+    std::vector<MPI_Request> send_req(proc_count);
+    std::vector<MPI_Request> receive_req(proc_count);
+
+    int recv_proc = 0;
+    for (int i = 0; i < send_count.size(); ++i)
+    {
+        if (send_count[i] > 0)
+        {
+            i_receive_v(receive_count, i, 1, i, 0, comm, &receive_req[recv_proc++]);
+        }
+    }
+
+    int send_proc = 0;
+    for (int i = 0; i < send_count.size(); ++i)
+    {
+        if (send_count[i] > 0)
+        {
+            i_send_v(send_count, i, 1, i, 0, comm, &send_req[send_proc++]);
+        }
+    }
+
+    if (proc_count > 0)
+    {
+        wait_all_send_recv(proc_count, receive_req);
+        wait_all_send_recv(proc_count, send_req);
+    }
+}
 
 template <typename T>
 void broadcast(const ViewVectorType<T> global, MPI_Comm comm)

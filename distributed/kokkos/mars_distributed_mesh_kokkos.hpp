@@ -222,6 +222,30 @@ public:
         gp_np = gp;
     }
 
+
+    MARS_INLINE_FUNCTION
+    const ViewMatrixType<Integer> &get_view_boundary() const
+    {
+        return boundary_;
+    }
+
+    MARS_INLINE_FUNCTION
+    void set_view_boundary(const ViewMatrixType<Integer> &b)
+    {
+        boundary_ = b;
+    }
+
+    MARS_INLINE_FUNCTION
+    const ViewVectorType<Integer> &get_view_scan_boundary() const
+    {
+        return scan_boundary_;
+    }
+
+    MARS_INLINE_FUNCTION
+    void set_view_scan_boundary(const ViewVectorType<Integer> &b)
+    {
+        scan_boundary_ = b;
+    }
     void resize_points(const Integer size)
     {
         points_size_ += size;
@@ -265,13 +289,13 @@ public:
     }
 
     MARS_INLINE_FUNCTION
-    void set_chunk_size(unsigned int size)
+    void set_chunk_size(Integer size)
     {
         chunk_size_ = size;
     }
 
     MARS_INLINE_FUNCTION
-    unsigned int get_chunk_size()
+    Integer get_chunk_size()
     {
         return chunk_size_;
     }
@@ -1171,7 +1195,8 @@ public:
                 if (predicate(i, j) == 1)
                 {
                     unsigned int index = scan_indices(i) + predicate_scan(i, j);
-                    boundary_(index) = local_sfc_(j);
+                    boundary_(index,0) = local_sfc_(j);
+                    boundary_(index,1) = j;
                 }
             });
     }
@@ -1227,7 +1252,7 @@ public:
         deep_copy(h_ic, index_subview);
         std::cout << "boundary_ count result: " << h_ic() << std::endl;
 
-        boundary_ = ViewVectorType<Integer>("boundary_", h_ic());
+        boundary_ = ViewMatrixType<Integer>("boundary_", h_ic(), 2);
 
       /*   parallel_for(
             "print scan", rank_size + 1, KOKKOS_LAMBDA(const int i) {
@@ -1243,12 +1268,13 @@ public:
 
                 const Integer rank = find_owner_processor(scan_boundary_, i, 1, proc);
 
-                printf(" boundary_ : %i - %li (%li) - proc: %li - rank: %li\n", i, boundary_(i), 
-                            get_octant_from_sfc<Type>(boundary_(i)).template get_global_index<Type>(xDim, yDim), 
+                printf(" boundary_ : %i - %li (%li) - proc: %li - rank: %li\n", i, boundary_(i,0), 
+                            get_octant_from_sfc<Type>(boundary_(i,0)).template get_global_index<Type>(xDim, yDim), 
                             rank , proc);
             });
     }
 
+    
 private:
     ViewMatrixTextureC<Integer, Comb::value, 2> combinations;
 
@@ -1260,7 +1286,7 @@ private:
 
     ViewVectorType<unsigned int> local_sfc_;
     ViewVectorType<Integer> gp_np; // parallel partition info shared among all processes.
-    unsigned int chunk_size_;
+    Integer chunk_size_;
     Integer proc;
 
     UnorderedMap<unsigned int, unsigned int> global_to_local_map_;
@@ -1269,7 +1295,7 @@ private:
     ViewVectorType<Integer> ghost_;
     ViewVectorType<Integer> scan_ghost_;
 
-    ViewVectorType<Integer> boundary_;
+    ViewMatrixType<Integer> boundary_;
     ViewVectorType<Integer> scan_boundary_;
 };
 
@@ -1283,5 +1309,8 @@ using DistributedHex8Mesh = mars::Mesh<3, 3, DistributedImplementation, Hex8DEle
 
 template <Integer Type>
 using DistributedNSMesh2 = mars::Mesh<2, 2, DistributedImplementation, NonSimplex<Type, DistributedImplementation>>;
+
+template <Integer Dim, Integer ManifoldDim, Integer Type>
+using DistributedNSMesh = mars::Mesh<Dim, ManifoldDim, DistributedImplementation, NonSimplex<Type, DistributedImplementation>>;
 } // namespace mars
 #endif //MARS_MESH_HPP

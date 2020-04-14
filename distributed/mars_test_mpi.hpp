@@ -39,6 +39,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
 #ifdef WITH_KOKKOS
 #include "mars_distributed_mesh_generation.hpp"
+#include "mars_distributed_user_data.hpp"
 #endif //WITH_KOKKOS
 
 void test_mpi(int &argc, char **&argv)
@@ -155,6 +156,8 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(int &argc, char 
         DistributedQuad4Mesh mesh;
         generate_distributed_cube(context, mesh, level, level, 0);
 
+        UserData<2, 2, ElementType::Quad4, double> data(&mesh);
+        exchange_ghost_user_data(context, data);
         /* int proc_num = rank(context);
 
         ViewMatrixType<Real> poi = mesh.get_view_points();
