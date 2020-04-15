@@ -31,10 +31,9 @@ public:
         user_data = ViewVectorType<T>("user_data", mesh->get_chunk_size());
     }
 
-    MARS_INLINE_FUNCTION void reserve_ghost_user_data()
-    {   //should be done based on the receive count total. not on the boundary
-     /*    const Integer size = mesh->get_view_boundary().extent(0);
-        ghost_user_data = ViewVectorType<T>("ghost_user_data", size); */
+    MARS_INLINE_FUNCTION void reserve_ghost_user_data(const Integer size)
+    {  
+        ghost_user_data = ViewVectorType<T>("ghost_user_data", size);
     }
 
     MARS_INLINE_FUNCTION void reserve_ghost_count(const Integer size)
@@ -81,24 +80,105 @@ public:
         int size = num_ranks(context);
 
         reserve_ghost_count(size);
-        auto count_mirror = create_mirror_view(mesh->get_view_scan_boundary());
-        Kokkos::deep_copy(count_mirror, mesh->get_view_scan_boundary()); 
+        scan_send_mirror = create_mirror_view(mesh->get_view_scan_boundary());
+        Kokkos::deep_copy(scan_send_mirror, mesh->get_view_scan_boundary()); 
 
-        Integer proc_count = 0;
+        proc_count = 0;
         for (int i = 0; i < size; ++i)
         {
-            Integer count = count_mirror(i + 1) - count_mirror(i);
+            Integer count = scan_send_mirror(i + 1) - scan_send_mirror(i);
             if (count > 0)
             {
                 send_count[i] = count;
                 ++proc_count;
+                std::cout<<"****ToProc: "<<i<< " count:"<<count<< " Proc: "<<proc_num<<std::endl;
             }
         }
 
+
         context->distributed->i_send_recv_vec(send_count, receive_count, proc_count);
+
+        for (int i = 0; i < size; ++i)
+        {
+            if (receive_count[i] > 0)
+            {
+                std::cout << "-----FromProc: " << i << " count:" << receive_count[i]<< " Proc: "<<proc_num<<std::endl;
+            }
+        }
     }
 
-    Mesh* get_mesh() const
+    // returns the prefix sum of C
+    template <typename C>
+    void make_scan_index_mirror(const ViewVectorType<Integer>::HostMirror& out, C const &c)
+    {
+        static_assert(
+            std::is_integral<typename C::value_type>::value,
+            "make_index only applies to integral types");
+
+        out(0) = 0;
+        std::partial_sum(c.begin(), c.end(), out.data() + 1);
+    }
+
+    void exchange_ghost_layer(const context &context)
+    {
+        using namespace Kokkos;
+
+        Kokkos::Timer timer;
+
+        int proc_num = rank(context);
+        int size = num_ranks(context);
+
+        /* auto count_mirror = create_mirror_view(mesh->get_view_scan_boundary());
+        Kokkos::deep_copy(count_mirror, mesh->get_view_scan_boundary()); */
+
+        mesh->reserve_scan_ghost(size + 1);
+
+        scan_recv_mirror = create_mirror_view(mesh->get_view_scan_ghost());
+        make_scan_index_mirror(scan_recv_mirror,receive_count);
+        Kokkos::deep_copy(mesh->get_view_scan_ghost(), scan_recv_mirror);
+
+        Integer ghost_size = scan_recv_mirror(size);
+
+        mesh->reserve_ghost(ghost_size);
+
+        //context->distributed->i_send_recv_view(mesh->ghost_, mesh->scan_ghost_, mesh->boundary_, 
+                   // mesh->scan_boundary_unsigned, proc_count);
+
+/*         for (int i = 0; i < size; ++i)
+        {
+            if (receive_count[i] > 0)
+            {
+                std::cout << "-----FromProc: " << i << " count:" << receive_count[i] << " Proc: " << proc_num << std::endl;
+            }
+        } */
+    }
+
+    void exchange_ghost_data(const context &context, const ViewVectorType<T> &buffer_data)
+    {
+        using namespace Kokkos;
+
+        Kokkos::Timer timer;
+
+        exchange_ghost_layer(context);
+        
+        int proc_num = rank(context);
+        int size = num_ranks(context);
+
+        Integer ghost_size = scan_recv_mirror(size);
+        reserve_ghost_user_data(ghost_size);
+        
+       // context->distributed->i_send_recv_view(send_count, receive_count, proc_count);
+
+        /*         for (int i = 0; i < size; ++i)
+        {
+            if (receive_count[i] > 0)
+            {
+                std::cout << "-----FromProc: " << i << " count:" << receive_count[i] << " Proc: " << proc_num << std::endl;
+            }
+        } */
+    }
+
+    Mesh *get_mesh() const
     {
         return mesh;
     }
@@ -109,8 +189,12 @@ private:
     ViewVectorType<T> ghost_user_data;
 
     std::vector<Integer> send_count;
+    ViewVectorType<Integer>::HostMirror scan_send_mirror;
+
     std::vector<Integer> receive_count;
-    std::vector<Integer> scan_receive_count;
+    ViewVectorType<Integer>::HostMirror scan_recv_mirror;
+
+    Integer proc_count;
 };
 
 template <Integer Dim, Integer ManifoldDim, Integer Type, typename T>
@@ -118,15 +202,12 @@ void exchange_ghost_user_data(const context &context, UserData<Dim, ManifoldDim,
 {
     using namespace Kokkos;
 
-   
-
-    //reserve_ghost_user_data();
     const Integer size = data.get_mesh()->get_view_boundary().extent(0);
     ViewVectorType<T> buffer_data("buffer_data", size);
 
     data.fill_buffer_data(buffer_data);
     data.exchange_ghost_counts(context);
-   // data.exchange_ghost_data(context, data, buffer_data);
+    data.exchange_ghost_data(context, buffer_data);
 }
 
 /* template <typename Functor>

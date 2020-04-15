@@ -242,10 +242,23 @@ public:
     }
 
     MARS_INLINE_FUNCTION
+    void set_view_scan_ghost(const ViewVectorType<Integer> &b)
+    {
+        scan_ghost_ = b;
+    }
+
+    MARS_INLINE_FUNCTION
+    const ViewVectorType<Integer> &get_view_scan_ghost() const
+    {
+        return scan_ghost_;
+    }
+
+    MARS_INLINE_FUNCTION
     void set_view_scan_boundary(const ViewVectorType<Integer> &b)
     {
         scan_boundary_ = b;
     }
+
     void resize_points(const Integer size)
     {
         points_size_ += size;
@@ -1274,6 +1287,16 @@ public:
             });
     }
 
+
+    void reserve_ghost(const Integer n_elements)
+    {
+        ghost_ = ViewVectorType<Integer>("ghost_", n_elements);
+    }
+
+    void reserve_scan_ghost(const Integer n_elements)
+    {
+        scan_ghost_ = ViewVectorType<Integer>("scan_ghost_", n_elements);
+    }
     
 private:
     ViewMatrixTextureC<Integer, Comb::value, 2> combinations;
