@@ -64,8 +64,8 @@ struct mpi_context_impl
         return mpi::gather_all_with_partition(local_gids, comm_);
     }
 
-    ViewVectorType<unsigned int> scatter_gids(const ViewVectorType<unsigned int> global, 
-                    const ViewVectorType<unsigned int> local) const
+    ViewVectorType<unsigned int> scatter_gids(const ViewVectorType<unsigned int> global,
+                                              const ViewVectorType<unsigned int> local) const
     {
         return mpi::scatter(global, local, comm_);
     }
@@ -77,10 +77,17 @@ struct mpi_context_impl
     }
 
     template <typename T>
-    void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, 
-                const Integer proc_count) const
+    void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count,
+                         const Integer proc_count) const
     {
         mpi::i_send_recv_vec(send_count, receive_count, proc_count, comm_);
+    }
+
+    template <typename T>
+    void i_send_recv_view(const ViewVectorType<T> &dest, const T* dest_displ,
+                          const ViewVectorType<T> &src, const T* src_displ, const Integer proc_count) const
+    {
+        mpi::i_send_recv_view(dest, dest_displ, src, src_displ, proc_count, comm_);
     }
 
     void broadcast(const ViewVectorType<Integer> global) const

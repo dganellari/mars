@@ -109,7 +109,7 @@ public:
 
     // returns the prefix sum of C
     template <typename C>
-    void make_scan_index_mirror(const ViewVectorType<Integer>::HostMirror& out, C const &c)
+    void make_scan_index_mirror(const ViewVectorType<Integer>::HostMirror &out, C const &c)
     {
         static_assert(
             std::is_integral<typename C::value_type>::value,
@@ -141,8 +141,9 @@ public:
 
         mesh->reserve_ghost(ghost_size);
 
-        //context->distributed->i_send_recv_view(mesh->ghost_, mesh->scan_ghost_, mesh->boundary_, 
-                   // mesh->scan_boundary_unsigned, proc_count);
+        ViewVectorType<Integer> boundary = subview(mesh->get_view_boundary(), ALL(), 0);
+        context->distributed->i_send_recv_view(mesh->get_view_ghost(), scan_recv_mirror.data(), 
+                    boundary, scan_send_mirror.data(), proc_count);
 
 /*         for (int i = 0; i < size; ++i)
         {
@@ -160,15 +161,16 @@ public:
         Kokkos::Timer timer;
 
         exchange_ghost_layer(context);
-        
-        int proc_num = rank(context);
+
+        /* int proc_num = rank(context);
         int size = num_ranks(context);
 
         Integer ghost_size = scan_recv_mirror(size);
         reserve_ghost_user_data(ghost_size);
-        
-       // context->distributed->i_send_recv_view(send_count, receive_count, proc_count);
-
+       
+        context->distributed->i_send_recv_view(ghost_user_data, scan_recv_mirror, buffer_data,
+                                               scan_send_mirror, proc_count);
+  */
         /*         for (int i = 0; i < size; ++i)
         {
             if (receive_count[i] > 0)
