@@ -242,6 +242,24 @@ public:
     }
 
     MARS_INLINE_FUNCTION
+    void set_view_scan_boundary(const ViewVectorType<Integer> &b)
+    {
+        scan_boundary_ = b;
+    }
+
+      MARS_INLINE_FUNCTION
+    void set_view_ghost(const ViewVectorType<Integer> &b)
+    {
+        ghost_ = b;
+    }
+
+    MARS_INLINE_FUNCTION
+    const ViewVectorType<Integer> &get_view_ghost() const
+    {
+        return ghost_;
+    }
+
+      MARS_INLINE_FUNCTION
     void set_view_scan_ghost(const ViewVectorType<Integer> &b)
     {
         scan_ghost_ = b;
@@ -251,12 +269,6 @@ public:
     const ViewVectorType<Integer> &get_view_scan_ghost() const
     {
         return scan_ghost_;
-    }
-
-    MARS_INLINE_FUNCTION
-    void set_view_scan_boundary(const ViewVectorType<Integer> &b)
-    {
-        scan_boundary_ = b;
     }
 
     void resize_points(const Integer size)

@@ -132,7 +132,7 @@ ViewVectorType<T> scatter(const ViewVectorType<T> global,
 {
     using traits = mpi_traits<T>;
     unsigned int chunk_size = local.extent(0);
-  
+
     MPI_OR_THROW(MPI_Scatter,
                  global.data(), chunk_size, traits::mpi_type(), // send buffer
                  local.data(), chunk_size, traits::mpi_type(),  // receive buffer
@@ -143,7 +143,7 @@ ViewVectorType<T> scatter(const ViewVectorType<T> global,
 
 template <typename T>
 void scatterv(const ViewVectorType<T> global,
-            const ViewVectorType<T> local, const std::vector<int>& counts, MPI_Comm comm)
+              const ViewVectorType<T> local, const std::vector<int> &counts, MPI_Comm comm)
 {
     using traits = mpi_traits<T>;
     unsigned int chunk_size = local.extent(0);
@@ -152,7 +152,7 @@ void scatterv(const ViewVectorType<T> global,
 
     MPI_OR_THROW(MPI_Scatterv,
                  global.data(), counts.data(), displs.data(), traits::mpi_type(), // send buffer
-                 local.data(), chunk_size, traits::mpi_type(),                   // receive buffer
+                 local.data(), chunk_size, traits::mpi_type(),                    // receive buffer
                  0, comm);
 }
 
@@ -180,7 +180,7 @@ void i_receive(const ViewVectorType<T> local, const Integer offset, const Intege
 
 template <typename T>
 void i_send_v(const std::vector<T> &local, const Integer offset, const Integer count,
-            const Integer remote_proc, int tag, MPI_Comm comm, MPI_Request *request)
+              const Integer remote_proc, int tag, MPI_Comm comm, MPI_Request *request)
 {
     using traits = mpi_traits<T>;
 
@@ -191,7 +191,7 @@ void i_send_v(const std::vector<T> &local, const Integer offset, const Integer c
 
 template <typename T>
 void i_receive_v(std::vector<T> &local, const Integer offset, const Integer count,
-               const Integer source_proc, int tag, MPI_Comm comm, MPI_Request *request)
+                 const Integer source_proc, int tag, MPI_Comm comm, MPI_Request *request)
 {
     using traits = mpi_traits<T>;
 
@@ -207,10 +207,10 @@ inline void wait_all_send_recv(const int count, std::vector<MPI_Request> &array_
 }
 
 template <typename T>
-void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, 
-            const Integer proc_count, MPI_Comm comm)
+void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count,
+                     const Integer proc_count, MPI_Comm comm)
 {
-/*     Integer proc_count = std::count_if(send_count.begin(), send_count.end(),
+    /*     Integer proc_count = std::count_if(send_count.begin(), send_count.end(),
                                        [](T i) { return i > 0; }); */
 
     std::vector<MPI_Request> send_req(proc_count);
@@ -242,6 +242,43 @@ void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_c
 }
 
 template <typename T>
+void i_send_recv_view(const ViewVectorType<T> &dest, const T* dest_displ,
+                      const ViewVectorType<T> &src, const T* src_displ, 
+                      const Integer proc_count, MPI_Comm comm)
+{
+    std::vector<MPI_Request> send_req(proc_count);
+    std::vector<MPI_Request> receive_req(proc_count);
+
+    auto nranks = size(comm);
+
+    int recv_proc = 0;
+    for (int i = 0; i < nranks; ++i)
+    {
+        Integer count = dest_displ[i + 1] - dest_displ[i];
+        if (count > 0)
+        {
+            i_receive(dest, dest_displ[i], count, i, 0, comm, &receive_req[recv_proc++]);
+        }
+    }
+
+    int send_proc = 0;
+    for (int i = 0; i < nranks; ++i)
+    {
+        Integer count = src_displ[i + 1] - src_displ[i];
+        if (count > 0)
+        {
+            i_send(src, src_displ[i], count, i, 0, comm, &send_req[send_proc++]);
+        }
+    }
+
+    if (proc_count > 0)
+    {
+        wait_all_send_recv(proc_count, receive_req);
+        wait_all_send_recv(proc_count, send_req);
+    }
+}
+
+template <typename T>
 void broadcast(const ViewVectorType<T> global, MPI_Comm comm)
 {
     static_assert(std::is_trivially_copyable<T>::value,
@@ -249,10 +286,9 @@ void broadcast(const ViewVectorType<T> global, MPI_Comm comm)
 
     using traits = mpi_traits<T>;
     unsigned int count = global.extent(0);
-    
+
     MPI_OR_THROW(MPI_Bcast,
                  global.data(), count, traits::mpi_type(), 0, comm);
-
 }
 
 // Gather individual values of type T from each rank into a std::vector on

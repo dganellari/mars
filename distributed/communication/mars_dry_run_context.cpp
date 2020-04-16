@@ -91,7 +91,13 @@ struct dry_run_context_impl {
                 const Integer proc_count) const
     {
     }
-
+    
+    template<typename T>
+    void i_send_recv_view(const ViewVectorType<T> &dest, const T* dest_displ,
+                const ViewVectorType<T> &src, const T* src_displ, 
+                const Integer proc_count) const
+    {
+    }
     void
     broadcast(const ViewVectorType<Integer> global) const
     {
