@@ -224,15 +224,27 @@ public:
 
 
     MARS_INLINE_FUNCTION
-    const ViewMatrixType<Integer> &get_view_boundary() const
+    const ViewVectorType<Integer> &get_view_boundary() const
     {
         return boundary_;
     }
 
     MARS_INLINE_FUNCTION
-    void set_view_boundary(const ViewMatrixType<Integer> &b)
+    void set_view_boundary(const ViewVectorType<Integer> &b)
     {
         boundary_ = b;
+    }
+
+    MARS_INLINE_FUNCTION
+    const ViewVectorType<Integer> &get_view_boundary_sfc_index() const
+    {
+        return boundary_lsfc_index_;
+    }
+
+    MARS_INLINE_FUNCTION
+    void set_view_boundary_sfc_index(const ViewVectorType<Integer> &b)
+    {
+        boundary_lsfc_index_ = b;
     }
 
     MARS_INLINE_FUNCTION
@@ -1220,8 +1232,8 @@ public:
                 if (predicate(i, j) == 1)
                 {
                     unsigned int index = scan_indices(i) + predicate_scan(i, j);
-                    boundary_(index,0) = local_sfc_(j);
-                    boundary_(index,1) = j;
+                    boundary_(index) = local_sfc_(j);
+                    boundary_lsfc_index_(index) = j;
                 }
             });
     }
@@ -1277,9 +1289,10 @@ public:
         deep_copy(h_ic, index_subview);
         std::cout << "boundary_ count result: " << h_ic() << std::endl;
 
-        boundary_ = ViewMatrixType<Integer>("boundary_", h_ic(), 2);
+        boundary_ = ViewVectorType<Integer>("boundary_", h_ic());
+        boundary_lsfc_index_ = ViewVectorType<Integer>("boundary_lsfc_index_", h_ic());
 
-      /*   parallel_for(
+        /*   parallel_for(
             "print scan", rank_size + 1, KOKKOS_LAMBDA(const int i) {
                 printf(" scan boundary: %i-%li\n", i, scan_boundary_(i));
             }); */
@@ -1293,8 +1306,8 @@ public:
 
                 const Integer rank = find_owner_processor(scan_boundary_, i, 1, proc);
 
-                printf(" boundary_ : %i - %li (%li) - proc: %li - rank: %li\n", i, boundary_(i,0), 
-                            get_octant_from_sfc<Type>(boundary_(i,0)).template get_global_index<Type>(xDim, yDim), 
+                printf(" boundary_ : %i - %li (%li) - proc: %li - rank: %li\n", i, boundary_(i), 
+                            get_octant_from_sfc<Type>(boundary_(i)).template get_global_index<Type>(xDim, yDim), 
                             rank , proc);
             });
     }
@@ -1330,7 +1343,8 @@ private:
     ViewVectorType<Integer> ghost_;
     ViewVectorType<Integer> scan_ghost_;
 
-    ViewMatrixType<Integer> boundary_;
+    ViewVectorType<Integer> boundary_;
+    ViewVectorType<Integer> boundary_lsfc_index_;
     ViewVectorType<Integer> scan_boundary_;
 };
 
