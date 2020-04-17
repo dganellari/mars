@@ -46,17 +46,17 @@ public:
     {
         ViewVectorType<T> buffer_data;
         ViewVectorType<T> user_data;
-        ViewMatrixType<Integer> boundary;
+        ViewVectorType<Integer> boundary_lsfc_index;
 
-        FillBufferData(ViewVectorType<T> bf, ViewVectorType<T> ud, ViewMatrixType<Integer> bd)
-            : buffer_data(bf), user_data(ud), boundary(bd)
+        FillBufferData(ViewVectorType<T> bf, ViewVectorType<T> ud, ViewVectorType<Integer> bd)
+            : buffer_data(bf), user_data(ud), boundary_lsfc_index(bd)
         {
         }
 
         MARS_INLINE_FUNCTION 
         void operator()(Integer i) const
         {
-            const Integer lsfc_index = boundary(i, 1);
+            const Integer lsfc_index = boundary_lsfc_index(i);
             buffer_data(i) = user_data(lsfc_index);
         }
     };
@@ -64,10 +64,10 @@ public:
     MARS_INLINE_FUNCTION void
     fill_buffer_data(ViewVectorType<T> buffer_data)
     {
-        ViewMatrixType<Integer> boundary = mesh->get_view_boundary();
+        ViewVectorType<Integer> boundary_lsfc_index = mesh->get_view_boundary_sfc_index();
 
         Kokkos::parallel_for("fill_buffer_data", buffer_data.extent(0),
-                     FillBufferData(buffer_data, user_data, boundary));
+                     FillBufferData(buffer_data, user_data, boundary_lsfc_index));
     }
 
     void exchange_ghost_counts(const context &context)
@@ -140,18 +140,23 @@ public:
         Integer ghost_size = scan_recv_mirror(size);
 
         mesh->reserve_ghost(ghost_size);
-
-        ViewVectorType<Integer> boundary = subview(mesh->get_view_boundary(), ALL(), 0);
+std::cout<<"Starting mpi send receive for the ghost layer"<<std::endl;
         context->distributed->i_send_recv_view(mesh->get_view_ghost(), scan_recv_mirror.data(), 
-                    boundary, scan_send_mirror.data(), proc_count);
+                    mesh->get_view_boundary(), scan_send_mirror.data(), proc_count);
 
-/*         for (int i = 0; i < size; ++i)
-        {
-            if (receive_count[i] > 0)
-            {
-                std::cout << "-----FromProc: " << i << " count:" << receive_count[i] << " Proc: " << proc_num << std::endl;
-            }
-        } */
+
+std::cout<<"Ending mpi send receive for the ghost layer"<<std::endl;
+
+        parallel_for(
+            "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
+
+            const Integer rank = mesh->find_owner_processor(mesh->get_view_scan_ghost(), i, 1, proc_num);
+
+                printf(" ghost: %i - %li - proc: %li - rank: %li\n", i, mesh->get_view_ghost()(i), 
+
+                            rank , proc_num);
+            });
+ 
     }
 
     void exchange_ghost_data(const context &context, const ViewVectorType<T> &buffer_data)
