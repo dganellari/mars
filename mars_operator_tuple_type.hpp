@@ -297,7 +297,7 @@ public:
  using SpacesToUniqueFEFamilies=SpacesToUniqueFEFamilies2<UniqueElementFunctionSpacesTupleType>;
  static constexpr Integer Nmax=MaxNumberInTuple<SpacesToUniqueFEFamilies>::value+1;
  using emptytuple=TupleOfTypeTCreate<std::tuple<>,Nmax>;
- using type=typename DirichletBCMapsHelper<emptytuple,DirichletBC,DirichletBCs...>::type;
+ using type=TupleRemoveType<std::tuple<>,typename DirichletBCMapsHelper<emptytuple,DirichletBC,DirichletBCs...>::type>;
 };
 
 

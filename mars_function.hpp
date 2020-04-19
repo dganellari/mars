@@ -348,7 +348,7 @@ auto MakeTraceFunction(const std::shared_ptr<FullSpace>& AuxW_ptr)
 
 
 
-template<Integer Dim>
+// template<Integer Dim>
 class FunctionOne
 {
     public: 

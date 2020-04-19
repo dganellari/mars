@@ -519,6 +519,42 @@ namespace mars {
   }
 
 
+
+
+
+
+  // template<Integer Dim>
+  // std::enable_if_t<(Dim==2),bool> 
+  // is_subface(const Vector<Real,Dim>& p_a,const Vector<Real,Dim>& p_b,const Vector<Real,Dim>& q_a,const Vector<Real,Dim>& q_b)
+  // {
+  //  return is_subsegment(p_a,p_b,q_a,q_b);
+  // }
+
+
+  // template<Integer Dim,Integer Dim1,Integer Dim2>
+  // std::enable_if_t<(Dim==3),bool> 
+  // is_subface(const Array<Vector<Real,Dim>,Dim1> & p_a,const Array<Vector<Real,Dim>,Dim2>& p_b)
+  // {
+  //   // if the two vectors are not parallel, for sure p_b-p_a cannot be subsegment of q_b-q_a
+  // 	// std::cout<<"are_parallel_vectors(p_a,p_b,q_a,q_b)"<<std::endl;
+  // 	// std::cout<<are_parallel_vectors(p_a,p_b,q_a,q_b)<<std::endl;
+
+  // 	if(!are_parallel_vectors(p_a,p_b,q_a,q_b))
+  // 	   return false;
+  // 	// std::cout<<"are_parallel_vectors(p_a,p_b,q_a,q_b)"<<std::endl;
+  // 	// std::cout<<are_parallel_vectors(p_a,p_b,q_a,q_b)<<std::endl;
+
+  // 	// std::cout<<"does_point_belong_to_segment(p_a,p_b,q_a)"<<std::endl;
+  // 	bool b1=does_point_belong_to_segment(p_a,p_b,q_a);
+  // 	// std::cout<<b1<<std::endl;
+  // 	// std::cout<<"does_point_belong_to_segment(p_a,p_b,q_b)"<<std::endl;
+  // 	bool b2=does_point_belong_to_segment(p_a,p_b,q_b);
+  // 	// std::cout<<b2<<std::endl;
+
+  //   return b1*b2;
+  //   // return does_point_belong_to_segment(p_a,p_b,q_a)*does_point_belong_to_segment(p_a,p_b,q_b);
+  // }
+
 }
 
 #endif //MARS_VECTOR_HPP

@@ -50,11 +50,12 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
     template<typename SystemMat, typename Rhs>
     void assembly(SystemMat& A, Rhs& b,const Integer level=-1)
     {
+      std::cout<<"assembly inside 1"<<std::endl;
      auto spaces_ptr=bilinear_form_.spaces_ptr()->spaces_ptr();
      auto& bisection=spaces_ptr->bisection();
      auto& tracker=bisection.tracker();
      // n_dofs_=spaces_ptr->n_dofs();
-     // //std::cout<<"assembly"<<std::endl;
+     std::cout<<"assembly inside"<<std::endl;
      if(level==-1)
       level_=tracker.current_iterate()-1;
     else
@@ -64,7 +65,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
      // //std::cout<<"level="<<level<<std::endl;
      // //std::cout<<"level="<<level_<<std::endl;
      auto& level_cumultive_n_dofs=full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
-     // //std::cout<<"level_cumultive_n_dofs="<<std::endl;
+     std::cout<<"level_cumultive_n_dofs="<<std::endl;
      for(int i=0;i<level_cumultive_n_dofs.size();i++)
      {
       // for(int j=0; j<n_dofs_arr[i].size();j++)
@@ -90,7 +91,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
      // n_dofs_=spaces_ptr->level_n_dofs_array(level_);
      n_dofs_=level_cumultive_n_dofs[level_];
-     // //std::cout<<"n_dofs_="<<n_dofs_<<std::endl;
+     std::cout<<"n_dofs_="<<n_dofs_<<std::endl;
      auto mesh_ptr=full_spaces_ptr()->mesh_ptr();
      auto& mesh=full_spaces_ptr()->mesh();
      
@@ -131,7 +132,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
      // NLocalDofs*max_number of_elements of a node
      A.init(n_dofs_,n_dofs_,max_cols);
 
-     // //std::cout<<"------_______----- b init"<<std::endl;
+     std::cout<<"------_______----- b init"<<std::endl;
      b.resize(n_dofs_);   
      constrained_dofs_.clear();
      constrained_mat_.clear();
@@ -140,7 +141,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
      constrained_dofs_.resize(n_dofs_,false);
      constrained_mat_.resize(n_dofs_,0);
      constrained_vec_.resize(n_dofs_,0);
-     // //std::cout<<"------_______-----qui"<<mesh.n_elements()<<std::endl;
+     std::cout<<"------_______-----qui"<<mesh.n_elements()<<std::endl;
 
      // shape_coefficients_.init(*mesh_ptr);
      // mesh.init_signed_normal();
@@ -154,7 +155,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
           // if(!elem_belongs_to_level(mesh_ptr,el,level_,tracker)) continue;
           if(!elem_belongs_to_level(mesh,el,level_,tracker)) continue;
 
-          // //std::cout<<"------_______----- ELEMENT ID = "<<el<<". -----_______--------"<<std::endl;
+          // std::cout<<"------_______----- ELEMENT ID = "<<el<<". -----_______--------"<<std::endl;
           FE.init(el,level_);
           // //std::cout<<"fe jac"<<FE.jac()<<std::endl;
           // //std::cout<<"------_______----- qui1 -----_______--------"<<std::endl;
@@ -171,7 +172,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
 
 
-          // //std::cout<<"------_______----- SURFACE-----_______--------"<<std::endl;
+          // std::cout<<"------_______----- SURFACE-----_______--------"<<std::endl;
 
           if(FE.is_on_boundary())
           {
@@ -180,11 +181,11 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                 // controlla, qui passiamo side_id, ma dovremmo avere label
                 // dovresti costruire mesh coi label
 
-                //std::cout<<"------_______----- BEGIN SIDE===="<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
+                // std::cout<<"------_______----- BEGIN SIDE===="<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
                 FE.init_boundary(s);
                 if(FE.is_side_on_boundary())
                 {
-                  //std::cout<<"------_______----- reference_maps_===="<<s<<std::endl;
+                  // std::cout<<"------_______----- reference_maps_===="<<s<<std::endl;
                   reference_maps_.init_boundary(FE);
                   //std::cout<<"------_______----- shapefunctions_===="<<s<<std::endl;
                   shapefunctions_.init_boundary(FE);
@@ -216,8 +217,8 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                 // controlla, qui passiamo side_id, ma dovremmo avere label
                 // dovresti costruire mesh coi label
 
-                //std::cout<<"------_______----- ELEM===="<<el<<std::endl;
-                //std::cout<<"------_______----- BEGIN SIDE===="<<s<<std::endl;
+                // std::cout<<"------_______----- ELEM===="<<el<<std::endl;
+                // std::cout<<"------_______----- BEGIN SIDE===="<<s<<std::endl;
 
                 
                 if(FE.side_tags()[s]!=INVALID_INDEX)
@@ -229,7 +230,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                   bcs_.assembly(full_spaces_ptr(),constrained_dofs_,constrained_mat_,constrained_vec_,FE);
                   // reference_maps_.init_boundary(FE);
                   // shapefunctions_.init_boundary(FE);
-                  // //std::cout<<"------_______----- BEGIN SIDE EVAL===="<<s<<std::endl;
+                  // std::cout<<"------_______-----after bcs_.assembly"<<std::endl;
                   // eval_bilinear_form_.apply_boundary(A,FE);
                   // eval_linear_form_.apply_boundary(b,FE);
                   //std::cout<<"------_______----- END SIDE EVAL===="<<s<<std::endl;

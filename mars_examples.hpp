@@ -2146,6 +2146,7 @@ for(Integer jj=0;jj<3;jj++)
 			void print_row_val(const Integer i)const
 			{
 				Integer cont_cols=0;
+				std::cout.precision(17);
 				// std::cout<<"printing matrix row "<<i<<std::endl;
 					const auto& map=cols_idx_[i]; 
 					for (auto it=map.begin(); it!=map.end(); ++it)
@@ -4582,26 +4583,7 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 				const auto& val=var.value();
 
 
-				if(i==59)
-					// if(i==36||i==37||i==58||i==59)
-				{
 
-					std::cout<<" i== "<<i<<std::endl;
-					std::cout<<localdofmap <<std::endl; 
-					
-
-					std::cout<<" print_solutions_aux_aux "<<std::endl;
-					std::cout<<val <<std::endl; 
-					std::cout<<" local_sol"<<local_sol <<std::endl; 
-					std::cout<<" Npoints"<<Npoints <<std::endl; 
-					auto& nodes=mesh.elem(i).nodes;
-					for(Integer m=0;m<nodes.size();m++)
-						std::cout<<mesh.points()[nodes[m]]<<std::endl;
-					// std::cout<<decltype(var)::MatPoints<<std::endl; 
-
-					// var.init(FE,local_sol,comp);
-
-				}
 
 
 // std::cout<<"ElementOrder="<<ElementOrder<<std::endl;
@@ -4614,84 +4596,84 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 // std::cout<<"size="<<size<<std::endl;
 				cont=0;
 
-// vector value finite elements (Raviart-Thomas)
-		if(single_shape_function_components_number>1)
-		{
-// std::cout<<"ci entro"<<std::endl;
-
-				for(Integer j=0;j<Npoints;j++)
-				{
-				for(Integer c=0;c<single_shape_function_components_number-1;c++)
+			// vector value finite elements (Raviart-Thomas)
+					if(single_shape_function_components_number>1)
 					{
-						if(abs(val[cont])>toll)
-		                os << val[cont];
-		            	else
-						os << 0;																											
+			// std::cout<<"ci entro"<<std::endl;
 
-		                // os << val[cont];//sol[localdofmap[cont]];
+							for(Integer j=0;j<Npoints;j++)
+							{
+							for(Integer c=0;c<single_shape_function_components_number-1;c++)
+								{
+									if(abs(val[cont])>toll)
+					                os << val[cont];
+					            	else
+									os << 0;																											
 
-		                // std::cout<<val[cont]<<" ";
-		                os <<" "; 
-	           	        cont++;
-	          	    }
-	            // os << val[cont];
-				if(abs(val[cont])>toll)
-                os << val[cont];
-            	else
-            	os << 0;	
-            	            
-	            cont++;  
-	            if(Dim==1)
-	            {
-	            	os <<" "; 
-	            	os <<0.0;
-	            }  
-	            if(Dim==2)
-	            {
-	            	os <<" "; 
-	            	os <<0.0;
-	            } 
-	            os <<"\n"; 
-	             // std::cout<<std::endl;
-	        } 
+					                // os << val[cont];//sol[localdofmap[cont]];
 
-	    }
-	         // scalar value finite elements (Lagrangian)
-	    else
-	    {
-	    	for(Integer j=0;j<Npoints;j++)
-	    	{
-	          // for(Integer c=0;c<NComponents-1;c++)
-	          //     {
-	          //       std::cout<<" ____ "<<c<<std::endl; 
-	          //       std::cout<< var[c]<<" "<<std::endl; 
-	          //       os << var[c];//sol[localdofmap[cont]];
-	          //       os <<" "; 
-	          //       cont++;
-	          //     }
-	    		os<< val[cont];
-	             // os << sol[localdofmap[cont]];
-	    		cont++;  
-	             // if(Dim==1 && NComponents==1)
-	             // {
-	             //  os <<" "; 
-	             //  os <<0.0;
-	             // }  
-	             // if(Dim==2&& NComponents==2)
-	             // {
-	             //  os <<" "; 
-	             //  os <<0.0;
-	             // } 
-	    		os <<"\n"; 
-	    	} 
-	    }
+					                // std::cout<<val[cont]<<" ";
+					                os <<" "; 
+				           	        cont++;
+				          	    }
+				            // os << val[cont];
+							if(abs(val[cont])>toll)
+			                os << val[cont];
+			            	else
+			            	os << 0;	
+			            	            
+				            cont++;  
+				            if(Dim==1)
+				            {
+				            	os <<" "; 
+				            	os <<0.0;
+				            }  
+				            if(Dim==2)
+				            {
+				            	os <<" "; 
+				            	os <<0.0;
+				            } 
+				            os <<"\n"; 
+				             // std::cout<<std::endl;
+				        } 
 
-	          // os << "\n"; 
-	}
-	}
+				    }
+				         // scalar value finite elements (Lagrangian)
+				    else
+				    {
+				    	for(Integer j=0;j<Npoints;j++)
+				    	{
+				          // for(Integer c=0;c<NComponents-1;c++)
+				          //     {
+				          //       std::cout<<" ____ "<<c<<std::endl; 
+				          //       std::cout<< var[c]<<" "<<std::endl; 
+				          //       os << var[c];//sol[localdofmap[cont]];
+				          //       os <<" "; 
+				          //       cont++;
+				          //     }
+				    		os<< val[cont];
+				             // os << sol[localdofmap[cont]];
+				    		cont++;  
+				             // if(Dim==1 && NComponents==1)
+				             // {
+				             //  os <<" "; 
+				             //  os <<0.0;
+				             // }  
+				             // if(Dim==2&& NComponents==2)
+				             // {
+				             //  os <<" "; 
+				             //  os <<0.0;
+				             // } 
+				    		os <<"\n"; 
+				    	} 
+				    }
 
-	if(N<Nmax)
-		{os << "\n"; }
+				          // os << "\n"; 
+				}
+				}
+
+				if(N<Nmax)
+					{os << "\n"; }
 	}
 	}
 
@@ -5692,155 +5674,281 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	}
 
 
-
 	// a simplex is containd into another simplex if all its nodes are inside it
 	template<Integer Dim,Integer ManifoldDim1,Integer ManifoldDim2>
 	bool is_simplex_inside_simplex(const Simplex<Dim,ManifoldDim1>& simplex1,
 								   const Simplex<Dim,ManifoldDim2>& simplex2,
 								   const std::vector<Vector<Real,Dim>>& points)
 	{
-	    bool is_inside=true;
-	    const auto nodes1=simplex1.nodes;
-		const auto nodes2=simplex2.nodes;
-		Simplex<Dim,ManifoldDim1> simplex_tmp;
-		Integer nodes_tmp[ManifoldDim1];
-
-		Matrix<Real, Dim, ManifoldDim1> J;
-		Matrix<Real, ManifoldDim1, Dim> J_inv;
-		Vector<Real, ManifoldDim1> reference_point;
-		Vector<Real, Dim> mapped_point;
-		Vector<Real, Dim> point_a;
-		
-		// auto& points=mesh.points();
-
-		jacobian( simplex1, points, J );
-
-		J_inv=inverse(J);
 
 
-		for(Integer i=0;i<Dim;i++)
-			point_a[i]=points[simplex1.nodes[0]][i] ;
+		// we must detect if simplex1 is inside simplex2
+		// we loop on all the nodes of simplex1 and check if each of them is inside simplex2
+		// in order to check if a point P is inside the simplex2, we must solve:
+		// [P_1-P_0 ...P_dim2-P_0][x_1...P_dim2]=[P-P_0]
+		// where we solve for a Dim x ManifoldDim2 problem
+		// If the problem has a solution and satisfies:
+		// x_i >=0 for all 
+		// sum_{i=1}^dim2 x_i <=1
+		// in the point P lies inside the simplex2
+		// In order to solve the problem, we consider the LS problem:
+		// A^T A= A^T b
+		// where b=b(P) but the matrix is fixed and can be inverted at the beginning
 
 
-  //       std::cout<<"SIMPLEX 1 NODES == "<<std::endl;
-		// for(Integer i=0;i<simplex1.nodes.size();i++)
-		// {
-		// 	std::cout<<simplex1.nodes[i]<<std::endl;
-		// 	for(Integer j=0;j<Dim;j++)
-		// 		std::cout<<points[simplex1.nodes[i]][j]<<" ";
-		// 	std::cout<<std::endl;
+		bool is_inside=true;
+		Real toll=0.00000001;
+		Real sum_x;
+
+		auto& nodes1=simplex1.nodes;
+		auto& nodes2=simplex2.nodes;
+
+		Matrix<Real, Dim, ManifoldDim2> A;
+		Matrix<Real, ManifoldDim2, Dim> AT;
+		Matrix<Real, ManifoldDim2, ManifoldDim2> ATA;
+		Matrix<Real, ManifoldDim2, ManifoldDim2> inv_ATA;
+		Vector<Real, Dim> b;
+		Vector<Real, ManifoldDim2> ATb;
+		Vector<Real, Dim> res;
+
+		auto& point_0=points[nodes2[nodes2.size()-1]];
 
 
-		// }
-
-  //       std::cout<<"SIMPLEX 2 NODES == "<<std::endl;
-		// for(Integer i=0;i<simplex2.nodes.size();i++)
-		// {
-		// 	std::cout<<simplex2.nodes[i]<<std::endl;
-		// 	for(Integer j=0;j<Dim;j++)
-		// 		std::cout<<points[simplex2.nodes[i]][j]<<" ";
-		// 	std::cout<<std::endl;
-		// }
-
-		// std::cout<< " J  "<<std::endl;
-		// std::cout<< J <<std::endl;
-
-		// std::cout<< " J_inv  "<<std::endl;
-		// std::cout<< J_inv <<std::endl;
-
-		// std::cout<< " point_a  "<<std::endl;
-		// std::cout<< point_a <<std::endl;
-
-
-	    // loop on the nodes of simplex2
-	    // transform them back in the reference simplex2
-	    // (use inv(J), where J is the map of simplex2)
-	    // check if all the reference points belong to the reference simplex1
-
-		for(std::size_t i=0;i<nodes2.size();i++)
+        // std::cout<< "A"<<std::endl;
+		for(Integer j=0;j<ManifoldDim2;j++)
 		{
+			auto& point_i=points[nodes2[j]];
+			for(Integer i=0;i<Dim;i++)
+				A(i,j)=point_i[i] - point_0[i];
+		}
+		// std::cout<< A<<std::endl;
 
-	      const auto& node=nodes2[i];
-	      const auto& point_node=points[node];
+		// std::cout<< "AT"<<std::endl;
 
-	      // std::cout<<"node == "<< node<<std::endl;
+		AT=transpose(A);
+		// std::cout<< AT<<std::endl;
+
+		// std::cout<< "ATA"<<std::endl;
+		ATA=AT*A;
+		// std::cout<< ATA<<std::endl;
+		// std::cout<< "inv A"<<std::endl;
+		inv_ATA=inverse(ATA);
+		// std::cout<< inv_ATA<<std::endl;
+
+			for(Integer n1=0;n1<nodes1.size();n1++)
+			{
+
+			// std::cout<< "n1="<<n1<<std::endl;
+			auto& point_P=points[nodes1[n1]];
+   //          std::cout<< "point_P ="<<std::endl;
+			// std::cout<< point_P<<std::endl;
+   //          std::cout<< "point_0 ="<<std::endl;
+			// std::cout<< point_0<<std::endl;
+
+			for(Integer i=0;i<Dim;i++)
+				b[i] = point_P[i] - point_0[i];
+
+             // std::cout<< "b ="<<std::endl;
+             // std::cout<< b<<std::endl;
+             ATb=AT*b;
+
+             // std::cout<< "ATb ="<<std::endl;
+             // std::cout<< ATb<<std::endl;
+             auto x=inv_ATA*ATb;
+             // std::cout<< "x ="<<std::endl;
+             // std::cout<< x<<std::endl;
+             res=A*x-b;
+
+             // std::cout<< "res ="<<std::endl;
+             // std::cout<< res<<std::endl;
+             // std::cout<< "res norm="<<std::endl;
+             // std::cout<< res.norm()<<std::endl;
+             if(res.norm()> toll)
+             {
+             	// the point is not inside the simplex
+             	is_inside=false;
+             	break;
+             }
+
+             // std::cout<< "sum_x="<<std::endl;
+
+             sum_x=0.0;
+
+             for(Integer i=0;i<ManifoldDim2;i++)
+             	{
+             		// std::cout<< "i="<<i<<"/"<<Dim<<std::endl;
+             		// std::cout<< "x.size()="<<x.size()<<std::endl;
+             		if(x[i]<-toll)
+             		{
+		              	is_inside=false;
+		             	break;            			
+             		}
+             		sum_x+=x[i];
+             	}
+
+             	// std::cout<< "sum_x="<<sum_x<<std::endl;
 
 
-	      reference_point=J_inv*(point_node-point_a);
-	      mapped_point=J*reference_point+point_a;
-	      // std::cout<<"point_node"<<std::endl;
-	      // std::cout<<point_node<<std::endl;
-	      // std::cout<<"reference_point"<<std::endl;
-	      // std::cout<<reference_point<<std::endl;	      
-	      // std::cout<<"is_point_in_reference_simplex"<<std::endl;
-	      // std::cout<<is_point_in_reference_simplex(reference_point)<<std::endl;
+             	if(sum_x>1.0+toll)
+             	{
+		            is_inside=false;
+	             	break;             		
+             	}
+           }
+           return is_inside;
+	}
+
+	
+
+
+	// // a simplex is containd into another simplex if all its nodes are inside it
+	// template<Integer Dim,Integer ManifoldDim1,Integer ManifoldDim2>
+	// bool is_simplex_inside_simplex(const Simplex<Dim,ManifoldDim1>& simplex1,
+	// 							   const Simplex<Dim,ManifoldDim2>& simplex2,
+	// 							   const std::vector<Vector<Real,Dim>>& points)
+	// {
+	//     bool is_inside=true;
+	//     const auto nodes1=simplex1.nodes;
+	// 	const auto nodes2=simplex2.nodes;
+	// 	Simplex<Dim,ManifoldDim1> simplex_tmp;
+	// 	Integer nodes_tmp[ManifoldDim1];
+
+	// 	Matrix<Real, Dim, ManifoldDim1> J;
+	// 	Matrix<Real, ManifoldDim1, Dim> J_inv;
+	// 	Vector<Real, ManifoldDim1> reference_point;
+	// 	Vector<Real, Dim> mapped_point;
+	// 	Vector<Real, Dim> point_a;
+		
+	// 	// auto& points=mesh.points();
+
+	// 	jacobian( simplex1, points, J );
+
+	// 	J_inv=inverse(J);
+
+
+	// 	for(Integer i=0;i<Dim;i++)
+	// 		point_a[i]=points[simplex1.nodes[0]][i] ;
+
+
+ //  //       std::cout<<"SIMPLEX 1 NODES == "<<std::endl;
+	// 	// for(Integer i=0;i<simplex1.nodes.size();i++)
+	// 	// {
+	// 	// 	std::cout<<simplex1.nodes[i]<<std::endl;
+	// 	// 	for(Integer j=0;j<Dim;j++)
+	// 	// 		std::cout<<points[simplex1.nodes[i]][j]<<" ";
+	// 	// 	std::cout<<std::endl;
+
+
+	// 	// }
+
+ //  //       std::cout<<"SIMPLEX 2 NODES == "<<std::endl;
+	// 	// for(Integer i=0;i<simplex2.nodes.size();i++)
+	// 	// {
+	// 	// 	std::cout<<simplex2.nodes[i]<<std::endl;
+	// 	// 	for(Integer j=0;j<Dim;j++)
+	// 	// 		std::cout<<points[simplex2.nodes[i]][j]<<" ";
+	// 	// 	std::cout<<std::endl;
+	// 	// }
+
+	// 	// std::cout<< " J  "<<std::endl;
+	// 	// std::cout<< J <<std::endl;
+
+	// 	// std::cout<< " J_inv  "<<std::endl;
+	// 	// std::cout<< J_inv <<std::endl;
+
+	// 	// std::cout<< " point_a  "<<std::endl;
+	// 	// std::cout<< point_a <<std::endl;
+
+
+	//     // loop on the nodes of simplex2
+	//     // transform them back in the reference simplex2
+	//     // (use inv(J), where J is the map of simplex2)
+	//     // check if all the reference points belong to the reference simplex1
+
+	// 	for(std::size_t i=0;i<nodes2.size();i++)
+	// 	{
+
+	//       const auto& node=nodes2[i];
+	//       const auto& point_node=points[node];
+
+	//       // std::cout<<"node == "<< node<<std::endl;
+
+
+	//       reference_point=J_inv*(point_node-point_a);
+	//       mapped_point=J*reference_point+point_a;
+	//       // std::cout<<"point_node"<<std::endl;
+	//       // std::cout<<point_node<<std::endl;
+	//       // std::cout<<"reference_point"<<std::endl;
+	//       // std::cout<<reference_point<<std::endl;	      
+	//       // std::cout<<"is_point_in_reference_simplex"<<std::endl;
+	//       // std::cout<<is_point_in_reference_simplex(reference_point)<<std::endl;
 
 	      
-	      // std::cout<<"mapped_point"<<std::endl;
-	      // std::cout<<mapped_point<<std::endl;
+	//       // std::cout<<"mapped_point"<<std::endl;
+	//       // std::cout<<mapped_point<<std::endl;
 
-	      if(!are_vectors_equal(point_node,mapped_point) ||!(is_point_in_reference_simplex(reference_point)))
-	      	{
-	      		// std::cout<<point_node<<std::endl;
-	      		// std::cout<<is_point_in_reference_simplex(reference_point)<<std::endl;
-	      		// std::cout<<mapped_point<<std::endl;
-	      		// std::cout<<"false"<<std::endl;
-	      		return false;
-	      	}	      	
-	      // std::cout<< "points[node] "<<std::endl;
-	      // std::cout<< points[node] <<std::endl;
-	      // std::cout<< "reference_point "<<std::endl;
-	      // std::cout<< reference_point <<std::endl;
-	      // std::cout<< "J*reference_point "<<std::endl;
-	      // std::cout<< J*reference_point <<std::endl;
+	//       if(!are_vectors_equal(point_node,mapped_point) ||!(is_point_in_reference_simplex(reference_point)))
+	//       	{
+	//       		// std::cout<<point_node<<std::endl;
+	//       		// std::cout<<is_point_in_reference_simplex(reference_point)<<std::endl;
+	//       		// std::cout<<mapped_point<<std::endl;
+	//       		// std::cout<<"false"<<std::endl;
+	//       		return false;
+	//       	}	      	
+	//       // std::cout<< "points[node] "<<std::endl;
+	//       // std::cout<< points[node] <<std::endl;
+	//       // std::cout<< "reference_point "<<std::endl;
+	//       // std::cout<< reference_point <<std::endl;
+	//       // std::cout<< "J*reference_point "<<std::endl;
+	//       // std::cout<< J*reference_point <<std::endl;
 
-	      // if(!is_point_in_reference_simplex(reference_point))
-	      // 	{
-	      // 		std::cout<<"false"<<std::endl;
-	      // 		return false;
-	      // 	}
+	//       // if(!is_point_in_reference_simplex(reference_point))
+	//       // 	{
+	//       // 		std::cout<<"false"<<std::endl;
+	//       // 		return false;
+	//       // 	}
 
-	    //   // for a given node, check if it inside
-	    //   // loop on all the face of simplex1 and create a temporary simplex
-	    //   for(std::size_t j=0;j<ManifoldDim1+1;j++)
-	    //   {
-	    //    std::cout<<"nodes j == "<< j<<std::endl;
-	    //    Combinations<ManifoldDim1 + 1,ManifoldDim1>::generate(j,nodes_tmp);
-	    //    // std::cout<<"ManifoldDim1-j == "<< node<<std::endl;
-	    //    simplex_tmp.nodes[ManifoldDim1-j]= node;
-		   // for(std::size_t k=0;k<ManifoldDim1;k++)
-		   //    {
-		   //    	simplex_tmp.nodes[nodes_tmp[k]]= nodes1[nodes_tmp[k]];
-		   //    }
+	//     //   // for a given node, check if it inside
+	//     //   // loop on all the face of simplex1 and create a temporary simplex
+	//     //   for(std::size_t j=0;j<ManifoldDim1+1;j++)
+	//     //   {
+	//     //    std::cout<<"nodes j == "<< j<<std::endl;
+	//     //    Combinations<ManifoldDim1 + 1,ManifoldDim1>::generate(j,nodes_tmp);
+	//     //    // std::cout<<"ManifoldDim1-j == "<< node<<std::endl;
+	//     //    simplex_tmp.nodes[ManifoldDim1-j]= node;
+	// 	   // for(std::size_t k=0;k<ManifoldDim1;k++)
+	// 	   //    {
+	// 	   //    	simplex_tmp.nodes[nodes_tmp[k]]= nodes1[nodes_tmp[k]];
+	// 	   //    }
 
-	    //    std::cout <<std::endl;
-	    //    std::cout<<"simplex_tmp =  " <<std::endl;
-		   // for(std::size_t k=0;k<ManifoldDim1+1;k++)
-		   //    {
-		   //    	std::cout<<simplex_tmp.nodes[k]<< " ";
-		   //    } 
-		   //  std::cout <<std::endl;
-		   // const auto vol=volume(simplex_tmp,mesh.points());
-		   // std::cout<<"vol =  "<< vol <<std::endl;
-		   // if(vol<=-0.00000000000001)
-		   //    {is_inside=false;
-		   //     break;}
+	//     //    std::cout <<std::endl;
+	//     //    std::cout<<"simplex_tmp =  " <<std::endl;
+	// 	   // for(std::size_t k=0;k<ManifoldDim1+1;k++)
+	// 	   //    {
+	// 	   //    	std::cout<<simplex_tmp.nodes[k]<< " ";
+	// 	   //    } 
+	// 	   //  std::cout <<std::endl;
+	// 	   // const auto vol=volume(simplex_tmp,mesh.points());
+	// 	   // std::cout<<"vol =  "<< vol <<std::endl;
+	// 	   // if(vol<=-0.00000000000001)
+	// 	   //    {is_inside=false;
+	// 	   //     break;}
 		      	
-		      // }  
-		      // if(is_inside==false)
-		      //    break;           
+	// 	      // }  
+	// 	      // if(is_inside==false)
+	// 	      //    break;           
 
-	      }
-		   // if(is_inside==false)
-		   //    break;  
+	//       }
+	// 	   // if(is_inside==false)
+	// 	   //    break;  
 		
 
-		// return is_inside;
+	// 	// return is_inside;
 
-	    // std::cout<<"true"<<std::endl;
+	//     // std::cout<<"true"<<std::endl;
 
-		return true;
-	}
+	// 	return true;
+	// }
 
 
 
@@ -8737,7 +8845,84 @@ private:
 
 
 
+  // template<Integer Dim>
+  // inline void linear_coefficients_on_side
+  // ( Vector<Real,Dim>& output,const Vector<Real,Dim>& interior_point,const Integer& opposite_point,const Array<Vector<Real,Dim>,Dim>& points)
+  // {
 
+  // 	Matrix<Real,Dim,Dim-1> A;
+  // 	// Matrix<Real,Dim,Dim-1> AT;
+  // 	// Matrix<Real,Dim-1,Dim-1> ATA;
+  // 	// Matrix<Real,Dim,Dim> inv_A;
+
+
+  // 	// Integer cont=0;
+  // 	// bool found_first_not_opposite=false;
+  // 	// Integer first_not_opposite=-1;
+
+  // 	// for(Integer i=0;i<Dim;i++)
+  // 	// {
+  // 	// 	if(i==opposite_point)
+  // 	// 	{
+
+  // 	// 	}
+  // 	// 	else
+  // 	// 	{
+
+  // 	// 		if(found_first_not_opposite)
+  // 	// 		{
+  // 	// 			cont++;
+
+  // 	// 		}
+  // 	// 		if(!found_first_not_opposite)
+  // 	// 		   {
+  // 	// 		   	found_first_not_opposite=true;
+  // 	// 		   	first_not_opposite=i;
+  // 	// 		   }
+  			
+
+
+
+  // 	// 	}
+
+
+
+  		
+  // 	// }
+
+  // 	// for(Integer i=0;i<Dim-1;i++)
+  // 	// 	for(Integer j=0;j<Dim;j++)
+  // 	// 		A(i,j)=points[j][i];
+
+
+  // 	// for(Integer j=0;j<Dim-1;j++)
+  // 	// 	A(j,opposite_point)-=interior_point[j];
+  //  //  AT=transpose(A);
+  // 	// ATA=AT*A;
+
+
+  // 	// std::cout<<"points"<<std::endl;
+  // 	// std::cout<<points<<std::endl;
+  // 	// std::cout<<"interior_point"<<std::endl;
+  // 	// std::cout<<interior_point<<std::endl;
+  // 	// std::cout<<"A"<<std::endl;
+  // 	// std::cout<<A<<std::endl;
+
+  // 	// inv_A=inverse(ATA);
+
+  // 	// std::cout<<"inv_A"<<std::endl;
+  // 	// std::cout<<inv_A<<std::endl;
+  // 	// std::cout<<"points[opposite_point]"<<std::endl;
+  // 	// std::cout<<points[opposite_point]<<std::endl;
+
+  // 	// output=inv_A*AT*points[opposite_point];
+
+
+
+
+
+
+  // }
 
 
 template<typename FunctionSpace_>
@@ -8750,6 +8935,7 @@ template<typename FunctionSpace_>
 		using BoundaryElem=FromVolumetricToBoundaryElem<Elem>;
 		using DofsDM=typename FunctionSpace::DofsDM;
 		using ElemDofMap=typename DofsDM::ElemDofMap;
+		static constexpr Integer Dim=Elem::Dim;
 		static constexpr Integer ManifoldDim=Elem::ManifoldDim;
 		static constexpr Integer FaceDim=ManifoldDim-1;
 		static constexpr Integer FaceNPoints=ElemEntityNPoints<Elem,FaceDim>::value; 
@@ -8757,6 +8943,9 @@ template<typename FunctionSpace_>
 		static constexpr Integer EdgeDim=1;
 		static constexpr Integer EdgeNPoints=ElemEntityNPoints<Elem,EdgeDim>::value;
 		static constexpr Integer EdgeNums=ElemEntityCombinations<Elem,EdgeDim>::value;
+		static constexpr Integer BoundaryEdgeNums=ElemEntityCombinations<BoundaryElem,EdgeDim>::value;
+		// template<Integer Dim>
+		// static constexpr Integer EntitiesNums=ElemEntityCombinations<Elem,Dim>::value;
 
 
 
@@ -8778,6 +8967,28 @@ template<typename FunctionSpace_>
     	Integer comb[EdgeNPoints];
 
     	for(Integer k=0;k<EdgeNums;k++)
+    	{
+    		ElemEntityCombinations<BoundaryElem,EdgeDim>::generate(k,comb);
+            
+            for(Integer i=0;i<EdgeNPoints;i++)
+    			edge_nodes[k][i]=comb[i];
+
+    		for(Integer i=0;i<EdgeNPoints;i++)
+    		{
+    			p0[k][i]=mesh.points()[nodes[comb[0]]][i];
+    			p1[k][i]=mesh.points()[nodes[comb[1]]][i];
+    		}
+    	}
+    }
+    template<Integer N>
+    void inline find_face_edges(Array<Array<Integer,EdgeNPoints>,N>& edge_nodes, Vector<Vector<Real,ManifoldDim>,N>& p0,Vector<Vector<Real,ManifoldDim>,N>& p1,BoundaryElem& boundary_elem)
+    {
+    	auto &mesh=spaces_ptr_->mesh();
+
+    	auto& nodes=boundary_elem.nodes;
+    	Integer comb[EdgeNPoints];
+
+    	for(Integer k=0;k<BoundaryEdgeNums;k++)
     	{
     		ElemEntityCombinations<Elem,EdgeDim>::generate(k,comb);
             
@@ -8925,6 +9136,456 @@ template<typename FunctionSpace_>
 	    }
 
 
+  
+
+
+
+
+
+
+
+
+    template<Integer N>
+    inline void find_RT1_intersection( //std::vector<Real>& C_constraint,const std::vector<Real>& C_constraint_old,
+    									  std::vector<Real>& C_constraint,	const std::vector<Real>& F_constraint,
+    									  FiniteElem<Elem>& C_FE,FiniteElem<Elem>& F_FE)
+    {
+
+    	// CAMBIALO TODO FIXME 
+
+        constexpr Integer NComponents=1;// GetType<typename FunctionSpace::TupleOfSpaces,0>::NComponents;
+ 
+    	BoundaryElem C_face;
+    	BoundaryElem F_face;
+
+    	find_edges(F_edge_nodes_,F_p0_,F_p1_,F_FE);
+
+
+    	auto& mesh=spaces_ptr_->mesh();
+    	auto& dofmap=spaces_ptr_->dofsdofmap();
+
+    	// auto& C_nodes=mesh.elem(C_FE.elem_id());
+    	// auto& F_nodes=mesh.elem(F_FE.elem_id());
+	
+    	auto & C_elemdm=tuple_get<N>(C_elem_dm_);
+    	auto & F_elemdm=tuple_get<N>(F_elem_dm_);
+
+    	dofmap. template dofmap_get<N>(C_elemdm,C_FE.elem_id(),C_FE.level());
+    	dofmap. template dofmap_get<N>(F_elemdm,F_FE.elem_id(),F_FE.level());
+
+    	const auto& inf= std::numeric_limits<double>::infinity();
+
+    	Real fraction;
+    	Real C_dof0_tmp;
+    	Real C_dof1_tmp;
+
+    	auto& C_elem=mesh.elem(C_FE.elem_id());
+    	auto& F_elem=mesh.elem(F_FE.elem_id());
+
+    	auto& C_nodes=C_elem.nodes;
+    	auto& F_nodes=F_elem.nodes;
+
+    	auto C_ordered_nodes_tmp=argsort(C_nodes);
+    	auto C_ordered_nodes=argsort(C_ordered_nodes_tmp);
+    	auto F_ordered_nodes_tmp=argsort(F_nodes);
+    	auto F_ordered_nodes=argsort(F_ordered_nodes_tmp);
+
+
+    	// Vector<Real,Dim> F_sum_points;
+
+
+  //   	std::cout<<" -------------------------"<<std::endl;
+  //   	std::cout<<" -------------------------"<<std::endl;
+  //   	std::cout<<" -------------------------"<<std::endl;
+  //   	std::cout<<" COARSE elem nodes"<<std::endl;
+		// for(Integer i=0;i<C_nodes.size();i++)
+		// {
+		// 	std::cout<<mesh.points()[C_nodes[i]] <<std::endl;
+		// }
+		// std::cout<<" FINE elem nodes"<<std::endl;
+		// 	for(Integer i=0;i<F_nodes.size();i++)
+		// {
+		// 	std::cout<<mesh.points()[F_nodes[i]] <<std::endl;
+		// }  
+
+		// std::cout<<"C_edge_nodes_"<<std::endl;
+		// std::cout<<C_edge_nodes_<<std::endl;
+
+
+    	for(Integer C_s=0;C_s<FaceNums;C_s++)
+    	{
+
+    		C_elem.side_sorted(C_s,C_face);
+
+
+
+
+
+
+    		
+
+
+    		for(Integer F_s=0;F_s<FaceNums;F_s++)
+    		{  
+
+    		    // std::cout<<"______________F_s=="<<F_s<<std::endl; 		
+
+    		    F_elem.side_sorted(F_s,F_face);
+
+    			if(is_simplex_inside_simplex(F_face,C_face,mesh.points()))//is_subsegment(C_p0_[k],C_p1_[k],F_p0_[m],F_p1_[m]) )
+    			{
+
+		    		find_face_edges(C_face_edge_nodes_,C_face_p0_,C_face_p1_,C_face);
+		    		find_face_edges(F_face_edge_nodes_,F_face_p0_,F_face_p1_,F_face);
+		    		// std::cout<<"------------C_s=="<<C_s<<std::endl;
+		    		// std::cout<<"C_face_edge_nodes_"<<std::endl;
+		    		// std::cout<<C_face_edge_nodes_<<std::endl;
+		    		// std::cout<<"C_face_p0_"<<std::endl;
+		    		// std::cout<<C_face_p0_<<std::endl;
+		    		// std::cout<<"C_face_p1_"<<std::endl;
+		    		// std::cout<<C_face_p1_<<std::endl;
+
+
+    				// std::cout<<std::endl;
+    				// std::cout<<std::endl;
+    				// std::cout<<std::endl;
+
+    				// std::cout<<" is_simplex_inside_simplex"<<std::endl;
+    				// std::cout<<" COARSE"<<std::endl;
+
+
+
+
+
+    				for(Integer i=0;i<C_face.nodes.size();i++)
+    				{
+    					// std::cout<<mesh.points()[C_face.nodes[i]] <<std::endl;
+    				}
+    				// std::cout<<" FINE"<<std::endl;
+     				for(Integer i=0;i<F_face.nodes.size();i++)
+    				{
+    					// std::cout<<mesh.points()[F_face.nodes[i]] <<std::endl;
+    				}   				
+
+
+    				auto& C_face_nodes=C_face.nodes;
+    				auto& F_face_nodes=F_face.nodes;
+			    	auto C_ordered_face_nodes_tmp=argsort(C_face_nodes);
+					auto C_ordered_face_nodes=argsort(C_ordered_face_nodes_tmp);
+			    	auto F_ordered_face_nodes_tmp=argsort(F_face_nodes);
+					auto F_ordered_face_nodes=argsort(F_ordered_face_nodes_tmp);
+
+
+  					Array<Simplex<Dim,FaceDim>,Dim> arr_simplex;
+  					Array<Real,Dim> vol;
+  					Real tot_vol;
+
+  					// std::cout<<std::endl<<"________________________________________"<<std::endl;
+
+  					Real C_dof_mean=0;
+  					Real diff;
+
+
+  					for(Integer F_n1=0;F_n1<FaceNPoints;F_n1++)
+  					{
+
+  						auto& F_dofmap=F_elemdm[NComponents*ManifoldDim*F_s+F_n1];
+  						auto& F_dof=F_constraint[F_dofmap];
+
+
+
+  						// std::cout<<"interior_point="<<std::endl;
+  						// for(Integer c1=0;c1<arr_simplex[i].nodes.size();c1++)
+  						// std::cout<<mesh.points()[F_face_nodes[F_n1]]<<std::endl;
+
+
+  						tot_vol=0.0;
+ 					for(Integer i=0;i<Dim;i++)
+  						{
+  						 arr_simplex[i].nodes=C_face_nodes;
+  						 arr_simplex[i].nodes[i]=F_face_nodes[F_n1];
+
+  						 vol[i]=unsigned_volume(arr_simplex[i],mesh.points());
+
+  						 tot_vol+=vol[i];
+
+  						 auto& C_dofmap=C_elemdm[NComponents*ManifoldDim*C_s+i];
+
+  						 
+                         if(C_constraint[C_dofmap]==inf)
+                         	C_dof_mean=inf;
+                         else
+  						    C_dof_mean+=vol[i]*C_constraint[C_dofmap];
+
+
+  						 // std::cout<<std::endl<<"points="<<std::endl;
+
+  						 // for(Integer c1=0;c1<arr_simplex[i].nodes.size();c1++)
+  						 	// std::cout<<std::endl<<mesh.points()[arr_simplex[i].nodes[c1]]<<" "<<std::endl;
+
+  						 // std::cout<<"vol="<< vol[i]<<std::endl;
+  						 // std::cout<<std::endl<<"C_dof_mean_tmp="<<C_dof_mean<<std::endl;
+  						 // std::cout<<std::endl<<"C_constraint[C_dofmap]="<<C_constraint[C_dofmap]<<std::endl;
+
+  						}
+
+  					for(Integer i=0;i<Dim;i++)
+  						{
+                          vol[i]/=tot_vol;
+                          // std::cout<<"vol["<<i<<"]="<< vol[i]<<std::endl;
+
+  						}
+
+  						C_dof_mean/=tot_vol;
+
+  						// std::cout<<"C_dof_mean="<< C_dof_mean<<std::endl;
+
+
+  						diff=F_dof-C_dof_mean;
+
+  						if(diff>0)
+  						{
+  							for(Integer i=0;i<Dim;i++)
+  								C_elemdm[NComponents*ManifoldDim*C_s+i]-=diff;
+  						}
+
+
+  					}
+ 
+
+
+
+
+
+
+
+
+
+
+
+     //                Real C_dof_tmp;
+					// for(Integer C_n1=0;C_n1<FaceNPoints;C_n1++)
+					// {
+			  //   	auto& C_dof=C_elemdm[NComponents*ManifoldDim*C_s+C_n1];
+
+			  //   	C_dof_tmp=0.0;
+			  //   	for(Integer C_n2=0;C_n2<FaceNPoints;C_n2++)
+			  //   	{
+			  //   		if(C_n2!=C_n1)
+			  //   			C_dof_tmp+=C_elemdm[NComponents*ManifoldDim*C_s+C_n2];
+			  //   	}
+
+
+
+
+
+					// for(Integer F_n1=0;F_n1<FaceNPoints;F_n1++)
+					// {
+					// 	auto& F_dof=F_elemdm[NComponents*ManifoldDim*F_s+F_n1];
+
+					// 	auto& F_point=mesh.points()[F_face_nodes[F_n1]];
+
+					// 	// for(Integer F_face_n=1;F_face_n<FaceNPoints;F_face_n++)
+					// 		// F_sum_points+=mesh.points()[F_face_nodes[F_face_n]];
+
+
+					// }
+
+
+
+
+
+
+			  //   	// auto& C_dof1=C_elemdm[NComponents*ManifoldDim*C_s+C_face_local_node1];
+
+
+					// }
+
+
+     //                // we loop on all the C_edges and loop on all F_edges
+     //                // given a F_edge, loop on its nodes and check if they belong to a C_edge
+     //                // if so, then we project the constraint 
+			  //   	for(Integer C_e=0;C_e<C_face_edge_nodes_.size();C_e++)
+			  //   	{
+			  //   		auto& C_face_local_node0=C_face_edge_nodes_[C_e][0];
+			  //   		auto& C_face_local_node1=C_face_edge_nodes_[C_e][1];
+
+			  //   		// auto C_edge_0=C_face_nodes[C_face_local0];
+			  //   		// auto C_edge_1=C_face_nodes[C_face_local1];
+
+
+	    // 				// auto& C_dof=C_constraint[C_elemdm[C_s*NComponents]];
+	    // 				// std::cout<< "ora2="<<std::endl;
+					// 	// auto& F_dof=F_constraint[F_elemdm[F_s*NComponents]];
+
+					// 	std::cout<<"C_e="<<C_e<<std::endl;
+		   //  			auto& C_edge_point0=C_face_p0_[C_e];
+		   //  			auto& C_edge_point1=C_face_p1_[C_e];
+
+					// 	for(Integer F_e=0;F_e<F_face_edge_nodes_.size();F_e++)
+					// 	{
+			  //   		// auto& F_face_local0=F_face_edge_nodes_[F_e][0];
+			  //   		// auto& F_face_local1=F_face_edge_nodes_[F_e][1];
+
+			  //   		for(Integer n=0;n<EdgeNPoints;n++)
+			  //   		{
+			  //   			auto& F_face_local_node=F_face_edge_nodes_[F_e][n];
+			  //   			auto& F_point=mesh.points()[F_face_nodes[F_face_local_node]];
+
+			  //   			if(does_point_belong_to_segment(C_edge_point0,C_edge_point1,F_point))
+			  //   			{
+
+			  //   				auto& C_dof0=C_elemdm[NComponents*ManifoldDim*C_s+C_face_local_node0];
+
+			  //   				auto& C_dof1=C_elemdm[NComponents*ManifoldDim*C_s+C_face_local_node1];
+
+			  //   				auto& F_dof1=F_elemdm[NComponents*ManifoldDim*F_s+F_face_local_node];
+
+
+			  //   			}
+
+			  //   		}
+
+
+					// 	}
+
+
+
+
+			  //   		for(Integer F_point_num=0;F_point_num<FaceNPoints;F_point_num++)
+			  //   		{
+
+			  //   			auto& C_dof=C_constraint[C_elemdm[C_e*NComponents]];
+
+
+			  //   			auto& C_edge_node1=C_face_p0_[C_e];
+			  //   			auto& C_edge_node2=C_face_p1_[C_e];
+
+			  //   			auto& F_point=mesh.points()[F_face_nodes[F_point_num]];
+
+			  //   			if(does_point_belong_to_segment(C_edge_node1,C_edge_node2,F_point))
+			  //   			{
+
+
+
+			  //   				std::cout<< "point_belong_to_segment"<<std::endl;
+			  //   				std::cout<< C_edge_node1<<std::endl;
+			  //   				std::cout<< C_edge_node2<<std::endl;
+			  //   				std::cout<< F_point<<std::endl;
+
+
+			    				
+			  //   				std::cout<<"C_face_local_node0"<<std::endl;
+			  //   				std::cout<<C_face_local_node0<<std::endl;
+			  //   				std::cout<<"C_face_local_node1"<<std::endl;
+			  //   				std::cout<<C_face_local_node1<<std::endl;
+			  //   				// std::cout<<"C_edge_0"<<std::endl;
+			  //   				// std::cout<<C_edge_0<<std::endl;
+			  //   				// std::cout<<"C_edge_1"<<std::endl;
+			  //   				// std::cout<<C_edge_1<<std::endl;
+			  //   				std::cout<<"C_nodes"<<std::endl;
+			  //   				for(Integer lll=0;lll<C_nodes.size();lll++)
+			  //   				std::cout<<C_nodes[lll]<<std::endl;
+			  //   				for(Integer lll=0;lll<C_ordered_nodes.size();lll++)
+			  //   				std::cout<<C_ordered_nodes[lll]<<std::endl;
+			  //   			     std::cout<<"C_face_nodes"<<std::endl;
+			  //   				for(Integer lll=0;lll<C_face_nodes.size();lll++)
+			  //   				std::cout<<C_face_nodes[lll]<<std::endl;
+			  //   				for(Integer lll=0;lll<C_ordered_face_nodes.size();lll++)
+			  //   				std::cout<<C_ordered_face_nodes[lll]<<std::endl;
+			  //   			     std::cout<<"F_face_nodes"<<std::endl;
+			  //   				for(Integer lll=0;lll<F_face_nodes.size();lll++)
+			  //   				std::cout<<F_face_nodes[lll]<<std::endl;
+			  //   				for(Integer lll=0;lll<F_ordered_face_nodes.size();lll++)
+			  //   				std::cout<<F_ordered_face_nodes[lll]<<std::endl;
+
+			  //   			    std::cout<<"______________F_s=="<<F_s<<std::endl; 
+			  //   			    std::cout<<"______________C_s=="<<C_s<<std::endl; 	
+
+			  //   				std::cout<<" C_elemdm "<<std::endl;
+			  //   				for(Integer lll=0;lll<C_ordered_face_nodes.size();lll++)
+			  //   					std::cout<<C_elemdm[NComponents*ManifoldDim*C_s+lll]<<std::endl;
+	
+			  //   				std::cout<<" F_elemdm "<<std::endl;
+			  //   				for(Integer lll=0;lll<F_ordered_face_nodes.size();lll++)
+			  //   					std::cout<<F_elemdm[NComponents*ManifoldDim*F_s+lll]<<std::endl;
+
+
+			  //   				// F_elemdm[NComponents*ManifoldDim*F_s+lll];
+
+
+			  //   				// auto& C_dof0=C_elemdm[NComponents*ManifoldDim*C_s+C_face_local_node0];
+
+			  //   				// auto& C_dof1=C_elemdm[NComponents*ManifoldDim*C_s+C_face_local_node1];
+
+			  //   				// auto& F_dof1=F_elemdm[NComponents*ManifoldDim*F_s+F_face_local_node];
+
+
+			    				
+
+
+
+			  //   			// C_elemdm[Ncomponents*ManifoldDim*C_s+C_ordered_face_nodes[lll]]
+			  //   			std::cout<<C_elemdm<<std::endl;
+			  //   			std::cout<<F_elemdm<<std::endl;
+			  //   			  //   	auto C_ordered_nodes_tmp=argsort(C_nodes);
+    	// 							// auto C_ordered_nodes=argsort(C_ordered_nodes_tmp);
+
+
+					// 			std::cout<<std::endl;
+
+			  //   			}
+
+
+			  //   		}
+			  //   	}
+
+    				// auto& C_dof0=C_constraint[C_elemdm[C_edge_nodes_[k][0]*NComponents]];
+    				// auto& C_dof1=C_constraint[C_elemdm[C_edge_nodes_[k][1]*NComponents]];
+
+    				// auto& C_dof0_old=C_constraint_old[C_elemdm[C_edge_nodes_[k][0]*NComponents]];
+    				// auto& C_dof1_old=C_constraint_old[C_elemdm[C_edge_nodes_[k][1]*NComponents]];
+
+    				// auto& F_dof0=F_constraint[F_elemdm[F_edge_nodes_[m][0]*NComponents]];
+    				// auto& F_dof1=F_constraint[F_elemdm[F_edge_nodes_[m][1]*NComponents]];
+
+
+    				// auto dof1=C_elemdm[C_edge_nodes_[k][0]*NComponents];
+    				// auto dof2=C_elemdm[C_edge_nodes_[k][1]*NComponents];
+
+    				// if(C_dof0_old<inf)
+    				// {
+    				// 	fraction=segment_fraction_length(C_p0_[k],C_p1_[k],F_p0_[m],C_p0_[k]);
+    				// 	C_dof0_tmp=linear_projection_aux_aux(C_dof0_old,C_dof1_old,F_dof0,fraction);
+    				// 	// std::cout<< "C_dof0_tmp="<<C_dof0_tmp<<std::endl;
+    				// 	fraction=segment_fraction_length(C_p0_[k],C_p1_[k],F_p1_[m],C_p0_[k]);
+    				// 	C_dof0_tmp=linear_projection_aux_aux(C_dof0_tmp,C_dof1_old,F_dof1,fraction);
+    				// 	// std::cout<< "C_dof0_tmp="<<C_dof0_tmp<<std::endl;
+    				// 	C_dof0=min(C_dof0,C_dof0_tmp);
+
+    				// }
+
+    				// if(C_dof1_old<inf)
+    				// {
+    				// 	fraction=segment_fraction_length(C_p0_[k],C_p1_[k],F_p0_[m],C_p1_[k]);
+    				// 	C_dof1_tmp=linear_projection_aux_aux(C_dof1_old,C_dof0_old,F_dof0,fraction);
+    				// 	// std::cout<< "C_dof1_tmp="<<C_dof1_tmp<<std::endl;
+    				// 	fraction=segment_fraction_length(C_p0_[k],C_p1_[k],F_p1_[m],C_p1_[k]);
+    				// 	C_dof1_tmp=linear_projection_aux_aux(C_dof1_tmp,C_dof0_old,F_dof1,fraction);
+    				// 	// std::cout<< "C_dof1_tmp="<<C_dof1_tmp<<std::endl;
+    				// 	C_dof1=min(C_dof1,C_dof1_tmp);
+    				// }
+    				// std::cout<< "F_dof0="<<F_dof0<<std::endl;
+    				// std::cout<< "F_dof1="<<F_dof1<<std::endl;
+    				// std::cout<< "C_dof0="<<C_dof0<<std::endl;
+    				// std::cout<< "C_dof1="<<C_dof1<<std::endl;
+    			}
+    		}
+    	}
+
+    	}
+
+
 	    inline Real linear_projection_aux_aux(const Real& C_dof0,const Real& C_dof1,const Real& F_dof, const Real & alpha)
 	    {
 
@@ -8942,7 +9603,7 @@ template<typename FunctionSpace_>
 	  inline void linear_projection_aux(std::vector<Real>& C_constraint,const std::vector<Real>& F_constraint,
 	  									 FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
 	  {
-	  	// std::cout<<"linear_projection_aux" << std::endl;
+	  	std::cout<<"linear_projection_aux" << std::endl;
 	  	auto &mesh=spaces_ptr_->mesh();
 	  	auto& dofmap=spaces_ptr_->dofsdofmap();
 
@@ -8965,9 +9626,12 @@ template<typename FunctionSpace_>
 	  	for(Integer C_i=0;C_i<C_nodes.size();C_i++)
 	  		for(Integer F_i=0;F_i<F_nodes.size();F_i++)
 	  		{
+	  			std::cout<<"C_nodes[C_i]="<<C_nodes[C_i]<<std::endl;
+	  			std::cout<<"F_nodes[C_i]="<<F_nodes[C_i]<<std::endl;
 	  			if(C_nodes[C_i]==F_nodes[F_i])
 	  			{
-	  				// std::cout<<"linear_projection_aux entro" << std::endl;
+	  				std::cout<<"linear_projection_aux entro" << std::endl;
+	  				std::cout<<"F_constraint[F_elemdm[F_i*NComponents]]=" << F_constraint[F_elemdm[F_i*NComponents]]<<std::endl;
 	  				// find the fine dof and project it onto the coarse dof
 	  				C_constraint[C_elemdm[C_i*NComponents]]=F_constraint[F_elemdm[F_i*NComponents]];
 	  			}
@@ -8979,6 +9643,288 @@ template<typename FunctionSpace_>
 
 
 
+
+
+
+
+
+
+  template<Integer N>
+	  inline void RT1_projection_aux(std::vector<Real>& C_constraint,const std::vector<Real>& F_constraint,
+	  									 FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+	  {
+	  	// std::cout<<"RT1_projection_aux" << std::endl;
+	  	auto &mesh=spaces_ptr_->mesh();
+	  	auto& dofmap=spaces_ptr_->dofsdofmap();
+
+	  	Integer C_id=C_FE.elem_id();
+	  	Integer F_id=F_FE.elem_id();
+
+	  	auto& C_nodes=mesh.elem(C_id).nodes;
+	  	auto& F_nodes=mesh.elem(F_id).nodes;
+
+	  	auto & C_elemdm=tuple_get<N>(C_elem_dm_);
+	  	auto & F_elemdm=tuple_get<N>(F_elem_dm_);
+
+	  	dofmap. template dofmap_get<N>(C_elemdm,C_id,C_FE.level());
+	  	dofmap. template dofmap_get<N>(F_elemdm,F_id,F_FE.level());
+	  	// std::cout<<"C_elemdm" << C_elemdm<<std::endl;
+	  	// std::cout<<"F_elemdm" << F_elemdm<<std::endl;
+
+
+	  	// constexpr Integer NComponents= GetType<typename FunctionSpace::TupleOfSpaces,1>::NComponents;
+        constexpr Integer NComponents=1;
+        Integer component=0;
+
+
+
+
+
+
+
+
+        Integer C_comb[FaceNPoints];
+        Integer F_comb[FaceNPoints];
+
+
+        // std::cout<<std::endl<<"C_nodes "<<std::endl;;
+
+        // for(Integer C_n=0;C_n<FaceNPoints;C_n++)
+        // 	std::cout<<C_nodes[C_n]<<" ";
+
+
+        std::cout<<std::endl;
+
+        Simplex<Dim,FaceDim> C_simplex;
+        Simplex<Dim,FaceDim> F_simplex;
+
+        std::array<Integer,FaceNPoints> C_face_nodes;
+        std::array<Integer,FaceNPoints> C_sort;
+        std::array<Integer,FaceNPoints> F_face_nodes;
+        std::array<Integer,FaceNPoints> F_sort;
+
+
+
+ 		
+       
+
+	  	for(Integer C_f=0;C_f<FaceNums;C_f++)
+	  	{
+	  		Combinations<ManifoldDim + 1, ManifoldDim>::generate(C_f,C_comb);
+	  		for(Integer i=0;i<FaceNPoints;i++)
+	  			C_simplex.nodes[i]=C_nodes[C_comb[i]];
+
+	  		for(Integer F_f=0;F_f<FaceNums;F_f++)
+	  		{
+
+	  			Combinations<ManifoldDim + 1, ManifoldDim>::generate(F_f,F_comb);
+		  		for(Integer i=0;i<FaceNPoints;i++)
+		  			F_simplex.nodes[i]=F_nodes[F_comb[i]];
+
+
+		  		if(is_simplex_inside_simplex(F_simplex,C_simplex,mesh.points()))
+		  		{
+	  			for(Integer C_n=0;C_n<FaceNPoints;C_n++)
+					for(Integer F_n=0;F_n<FaceNPoints;F_n++)
+					{
+						if(C_nodes[C_comb[C_n]]==F_nodes[F_comb[F_n]])
+						{
+
+                            for(Integer n=0;n<FaceNPoints;n++)
+								C_face_nodes[n]=C_nodes[C_comb[n]];
+                            for(Integer n=0;n<FaceNPoints;n++)
+								F_face_nodes[n]=F_nodes[F_comb[n]];
+
+					    	auto C_face_nodes_tmp=argsort(C_face_nodes);
+					    	auto C_ordered_nodes=argsort(C_face_nodes_tmp);
+
+					    	auto F_face_nodes_tmp=argsort(F_face_nodes);
+					    	auto F_ordered_nodes=argsort(F_face_nodes_tmp);
+
+							// the fine face and the coars face share this node
+							auto F_dof=F_constraint[F_elemdm[(F_f*ManifoldDim+F_ordered_nodes[F_n])*NComponents+component]];
+							auto& C_dof=C_constraint[C_elemdm[(C_f*ManifoldDim+C_ordered_nodes[C_n])*NComponents+component]];
+							C_dof=min(C_dof,F_dof);
+
+
+							if(0)//mesh.points()[C_nodes[C_comb[C_n]]][0]==0 && mesh.points()[C_nodes[C_comb[C_n]]][1]==1)
+							{
+
+							std::cout<<"Coarse face with points:"<<std::endl;
+					  		for(Integer i=0;i<FaceNPoints;i++)
+					  			std::cout<<mesh.points()[C_simplex.nodes[i]]<<std::endl;
+
+
+					        std::cout<<std::endl<<"F_nodes "<<std::endl;
+					        for(Integer i=0;i<F_nodes.size();i++)
+					        	std::cout<<F_nodes[i]<<" ";
+					        std::cout<<std::endl;
+					        for(Integer i=0;i<F_nodes.size();i++)
+					        	std::cout<<mesh.points()[F_nodes[i]]<<" ";					        
+					        std::cout<<std::endl;
+
+					        for(Integer i=0;i<FaceNPoints;i++)
+					        	std::cout<<mesh.points()[F_nodes[F_comb[i]]]<<" ";					        
+					        std::cout<<std::endl;
+
+					        std::cout<<std::endl<<"F_ordered_nodes "<<std::endl;
+					        for(Integer i=0;i<F_ordered_nodes.size();i++)
+					        	std::cout<<F_ordered_nodes[i]<<" ";
+					        
+
+
+
+					        std::cout<<std::endl<<"C_nodes "<<std::endl;
+					        for(Integer i=0;i<C_nodes.size();i++)
+					        	std::cout<<C_nodes[i]<<" ";
+					        std::cout<<std::endl;
+					        for(Integer i=0;i<C_nodes.size();i++)
+					        	std::cout<<mesh.points()[C_nodes[i]]<<" ";					        
+					        std::cout<<std::endl;
+					        for(Integer i=0;i<FaceNPoints;i++)
+					        	std::cout<<mesh.points()[C_nodes[C_comb[i]]]<<" ";					        
+					        std::cout<<std::endl;
+
+					        std::cout<<std::endl<<"C_ordered_nodes "<<std::endl;
+					        for(Integer i=0;i<C_ordered_nodes.size();i++)
+					        	std::cout<<C_ordered_nodes[i]<<" ";
+
+
+
+					  		std::cout<<std::endl<<"single point coarse:" <<std::endl;
+					  		std::cout<<mesh.points()[C_nodes[C_comb[C_n]]]<<std::endl;
+					  		std::cout<<"single point fine:" <<std::endl;
+					  		std::cout<<mesh.points()[F_nodes[F_comb[F_n]]]<<std::endl;
+
+
+					  		std::cout<<"F_n "<<F_n<<std::endl;
+					  		std::cout<<"C_f "<<C_f<<std::endl;
+					  		std::cout<<"C_n "<<C_n<<std::endl;
+					  		std::cout<<"F_f "<<F_f<<std::endl;
+
+
+					  		for(Integer i=0;i<FaceNPoints;i++)
+					  		{
+					  			std::cout<<"F_nodes["<<F_comb[i]<<"]="<<mesh.points()[F_nodes[F_comb[i]]]<<std::endl;
+					  			std::cout<<"C_nodes["<<C_comb[i]<<"]="<<mesh.points()[C_nodes[C_comb[i]]]<<std::endl;
+					  			std::cout<<"F_dof["<<F_elemdm[(F_f*ManifoldDim+i)*NComponents+component]<<"]="<<F_constraint[F_elemdm[(F_f*ManifoldDim+i)*NComponents+component]]<<std::endl;	
+					  		}
+					  		std::cout<<F_elemdm<<std::endl;
+							std::cout<<"F_dof["<<F_elemdm[(F_f*ManifoldDim+F_n)*NComponents+component]<<"]="<<F_dof<<std::endl;
+							std::cout<<"C_dof["<<C_elemdm[(C_f*ManifoldDim+C_n)*NComponents+component]<<"]="<<C_dof<<std::endl;
+
+							}
+
+
+
+
+						}
+					}
+		  		}
+
+
+	  		}
+
+	  		// for(Integer F_n=0;F_n<F_nodes.size();F_n++)
+	  		// {
+		  	// 	for(Integer C_n=0;C_n<C_nodes.size();C_n++)
+		  	// 	{
+
+		  	// 		if(F_nodes[F_n]==C_nodes[C_n])
+		  	// 		{
+
+
+
+		  	// 		}
+
+
+
+		  	// 	}
+	  		// }
+
+
+
+
+
+
+
+	  	}
+
+
+	  	// for(Integer C_i=0;C_i<C_nodes.size();C_i++)
+	  	// 	for(Integer F_i=0;F_i<F_nodes.size();F_i++)
+	  	// 	{
+	  	// 		// std::cout<<"C_nodes[C_i]="<<C_nodes[C_i]<<std::endl;
+	  	// 		// std::cout<<"F_nodes[C_i]="<<F_nodes[C_i]<<std::endl;
+	  	// 		if(C_nodes[C_i]==F_nodes[F_i])
+	  	// 		{
+	  	// 			std::cout<<"C_nodes[C_i]="<<C_nodes[C_i]<<std::endl;
+	  	// 			std::cout<<"F_nodes[C_i]="<<F_nodes[C_i]<<std::endl;
+	  	// 			std::cout<<"linear_projection_aux entro" << std::endl;
+	  	// 			std::cout<<"F_constraint[F_elemdm[F_i*NComponents]]=" << F_constraint[F_elemdm[F_i*NComponents]]<<std::endl;
+	  	// 			// find the fine dof and project it onto the coarse dof
+	  	// 			for(Integer i=0;i<F_elemdm.size();i++)
+	  	// 				std::cout<<F_constraint[F_elemdm[i]] <<std::endl;
+	  	// 			C_constraint[C_elemdm[C_i*NComponents]]=F_constraint[F_elemdm[F_i*NComponents]];
+	  	// 		}
+	  	// 	}
+
+	  }
+
+
+
+	    template<Integer N>
+	    void RT1_projection(std::vector<Real>& C_constraint,
+		    				   const std::vector<Real>& F_constraint,
+		    				   FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE,  
+		    				   const Integer elem_id,const Integer child_id, 
+		    				   const Integer C_level,const Integer F_level)
+	    {
+	        auto &mesh=spaces_ptr_->mesh();
+	        auto &bisection=spaces_ptr_->bisection();
+	        auto &tracker=bisection.tracker();
+	        // std::cout<<"F_level=="<<F_level<<std::endl;
+	        // std::cout<<"find_children el=="<<elem_id<<std::endl;
+	    	// auto& fine_elem=mesh.elem(elem_id);
+	    	auto& child_elem=mesh.elem(child_id);
+	      	auto& children=child_elem.children;
+	      	// for(std::size_t i=0;i<children.size();i++)
+	      	// 	std::cout<<children[i]<<" ";
+	      	// std::cout<<std::endl;
+
+	        if(elem_belongs_to_level(mesh,child_id,F_level,tracker))
+	            {
+	            F_FE.init(child_id,F_level);
+	            // std::cout<<"elem_belongs_to_level=="<<std::endl;
+	            RT1_projection_aux<N>(C_constraint,F_constraint,C_FE,F_FE);
+	      		// space_loop(A,old_el,C_level,el,F_level);
+	            }
+	        else
+	        	{
+	        		// std::cout<<"else=="<<std::endl;
+		      	for(std::size_t i=0;i<children.size();i++)
+		      	{
+		            
+		      		if(elem_belongs_to_level(mesh,children[i],F_level,tracker))
+		      		{
+		      			// std::cout<<"if if=="<<std::endl;
+		      		   F_FE.init(children[i],F_level);
+
+		               RT1_projection_aux<N>(C_constraint,F_constraint,C_FE,F_FE);
+	 
+		      		   // space_loop(A,old_el,C_level,children[i],F_level);
+		      		}
+		      		else
+		      		{
+		      			// std::cout<<"else else =="<<std::endl;
+		      			// find_children(C_p0,C_p1,C_FE,F_FE,elem_id,children[i], C_level,F_level);
+		      			RT1_projection<N>(C_constraint,F_constraint,C_FE,F_FE,elem_id,children[i], C_level,F_level);
+
+		      		}
+		      	 }
+	        	}
+
+	    }
 
 
 
@@ -9004,16 +9950,19 @@ template<typename FunctionSpace_>
 	        if(elem_belongs_to_level(mesh,child_id,F_level,tracker))
 	            {
 	            F_FE.init(child_id,F_level);
+	            // std::cout<<"elem_belongs_to_level=="<<std::endl;
 	            linear_projection_aux<N>(C_constraint,F_constraint,C_FE,F_FE);
 	      		// space_loop(A,old_el,C_level,el,F_level);
 	            }
 	        else
 	        	{
+	        		// std::cout<<"else=="<<std::endl;
 		      	for(std::size_t i=0;i<children.size();i++)
 		      	{
 		            
 		      		if(elem_belongs_to_level(mesh,children[i],F_level,tracker))
 		      		{
+		      			// std::cout<<"if if=="<<std::endl;
 		      		   F_FE.init(children[i],F_level);
 
 		               linear_projection_aux<N>(C_constraint,F_constraint,C_FE,F_FE);
@@ -9022,6 +9971,7 @@ template<typename FunctionSpace_>
 		      		}
 		      		else
 		      		{
+		      			// std::cout<<"else else =="<<std::endl;
 		      			// find_children(C_p0,C_p1,C_FE,F_FE,elem_id,children[i], C_level,F_level);
 		      			linear_projection<N>(C_constraint,F_constraint,C_FE,F_FE,elem_id,children[i], C_level,F_level);
 
@@ -9120,6 +10070,61 @@ template<typename FunctionSpace_>
 
 	    }
 
+
+	    template<Integer N>
+	    void RT1_constraint_find_children(//Vector<Vector<Real,ManifoldDim>,EdgeNums>& C_p0,
+	    				   //Vector<Vector<Real,ManifoldDim>,EdgeNums>& C_p1,
+	    				   std::vector<Real>& C_constraint,
+	    				   const std::vector<Real>& F_constraint,
+	    				   FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE,  
+	    				   const Integer elem_id,const Integer child_id, 
+	    				   const Integer C_level,const Integer F_level)
+	    {
+	        auto &mesh=spaces_ptr_->mesh();
+	        auto &bisection=spaces_ptr_->bisection();
+	        auto &tracker=bisection.tracker();
+	        // std::cout<<"F_level=="<<F_level<<std::endl;
+	        // std::cout<<"find_children el=="<<elem_id<<std::endl;
+	    	// auto& fine_elem=mesh.elem(elem_id);
+	    	auto& child_elem=mesh.elem(child_id);
+	      	auto& children=child_elem.children;
+	      	// for(std::size_t i=0;i<children.size();i++)
+	      	// 	std::cout<<children[i]<<" ";
+	      	std::cout<<"RT1_constraint_find_children children.size()="<<children.size()<<std::endl;
+	      	std::cout<<"elem="<<elem_id<<std::endl;
+	      	std::cout<<"child_id="<<child_id<<std::endl;
+
+	        if(elem_belongs_to_level(mesh,child_id,F_level,tracker))
+	            {
+	            F_FE.init(child_id,F_level);
+	            find_RT1_intersection<N>(C_constraint,F_constraint,C_FE,F_FE);
+	      		// space_loop(A,old_el,C_level,el,F_level);
+	            }
+	        else
+	        	{
+		      	for(std::size_t i=0;i<children.size();i++)
+		      	{
+		            
+		      		if(elem_belongs_to_level(mesh,children[i],F_level,tracker))
+		      		{
+		      			F_FE.init(children[i],F_level);
+	          		    find_RT1_intersection<N>(C_constraint,F_constraint,C_FE,F_FE);
+
+	 
+		      		   // space_loop(A,old_el,C_level,children[i],F_level);
+		      		}
+		      		else
+		      		{
+		      			// find_children(C_p0,C_p1,C_FE,F_FE,elem_id,children[i], C_level,F_level);
+		      			RT1_constraint_find_children<N>(C_constraint,F_constraint,C_FE,F_FE,elem_id,children[i], C_level,F_level);
+
+		      		}
+		      	 }
+	        	}
+
+	    }
+
+
 	    template<typename ElementFunctionSpace,Integer M>
 		inline std::enable_if_t<(ElementFunctionSpace::FEFamily==LagrangeFE && ElementFunctionSpace::Order==1 ),void> 
 		compute(std::vector<Real>& C_constraint,const std::vector<Real>& F_constraint,
@@ -9166,7 +10171,57 @@ template<typename FunctionSpace_>
 
 
 
+	    template<typename ElementFunctionSpace,Integer M>
+		inline std::enable_if_t<(ElementFunctionSpace::FEFamily==RaviartThomasFE && ElementFunctionSpace::Order==1 ),void> 
+		compute(std::vector<Real>& C_constraint,const std::vector<Real>& F_constraint,
+			    const Integer C_level, const Integer F_level)
+		{
+			// std::cout<<"RaviartThomasFE ProjectedContactConstraints" <<std::endl;
+			// std::cout<<"F_level=" <<F_level<<std::endl;
+			// std::cout<<"C_level=" <<C_level<<std::endl;
+			// std::cout<<"C_constraint.size=" <<C_constraint.size()<<std::endl;
+			auto& mesh=spaces_ptr_->mesh();
+			auto& tracker=spaces_ptr_->bisection().tracker();
+			FiniteElem<Elem> C_FE(mesh);
+			FiniteElem<Elem> F_FE(mesh);
+			// std::cout<< "begin linear_projection="<<std::endl;
+			// std::cout<< "F_constraint"<<std::endl;
 
+			for(Integer i =0;i<F_constraint.size();i++)
+			{
+				std::cout<< F_constraint[i]<<std::endl;
+			}
+				
+
+
+			for(Integer el =0;el<mesh.n_elements();el++)
+			{
+				
+				if(!elem_belongs_to_level(mesh,el,C_level,tracker)) continue;
+				// std::cout<<el<< "/"<<mesh.n_elements()<<std::endl;
+				// std::cout<< "M=="<<M<<std::endl;
+
+	            C_FE.init(el,C_level);
+				RT1_projection<M>(C_constraint,F_constraint,C_FE,F_FE,el,el,C_level,F_level);
+			}
+			// std::cout<< "C_constraint"<<std::endl;
+
+			// for(Integer i =0;i<C_constraint.size();i++)
+			// {
+			// 	// std::cout<< C_constraint[i]<<std::endl;
+			// }
+				
+			for(Integer el =0;el<mesh.n_elements();el++)
+			{
+				// std::cout<<"el="<<el <<std::endl;
+				if(!elem_belongs_to_level(mesh,el,C_level,tracker)) continue;
+	            C_FE.init(el,C_level);
+	            find_edges(C_edge_nodes_,C_p0_,C_p1_,C_FE);
+				RT1_constraint_find_children<M>(C_constraint,F_constraint,C_FE,F_FE,el,el,C_level,F_level);
+			}
+		// std::cout<< "end compute ProjectedContactConstraints"<<std::endl;
+
+		}
 
 	    template<typename ElementFunctionSpace,Integer M>
 		inline std::enable_if_t<(ElementFunctionSpace::FEFamily==RaviartThomasFE && ElementFunctionSpace::Order==0 ),void> 
@@ -9246,14 +10301,304 @@ template<typename FunctionSpace_>
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+  template<Integer N>
+	  inline void RT1_truncated_coarse_dofs_aux(
+	  	std::vector<Real>&vec,const std::vector<bool>& working_set,const std::vector<Real>& F_constraint,
+	  									 FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE)
+	  {
+
+	  	std::cout<<"RT1_truncated_coarse_dofs_aux="<<std::endl;
+
+	  	Real inf = std::numeric_limits<double>::infinity();
+	  	auto &mesh=spaces_ptr_->mesh();
+	  	auto& dofmap=spaces_ptr_->dofsdofmap();
+
+	  	Integer C_id=C_FE.elem_id();
+	  	Integer F_id=F_FE.elem_id();
+
+	  	auto& C_nodes=mesh.elem(C_id).nodes;
+	  	auto& F_nodes=mesh.elem(F_id).nodes;
+
+	  	auto & C_elemdm=tuple_get<N>(C_elem_dm_);
+	  	auto & F_elemdm=tuple_get<N>(F_elem_dm_);
+
+	  	dofmap. template dofmap_get<N>(C_elemdm,C_id,C_FE.level());
+	  	dofmap. template dofmap_get<N>(F_elemdm,F_id,F_FE.level());
+
+	  	// constexpr Integer NComponents= GetType<typename FunctionSpace::TupleOfSpaces,1>::NComponents;
+        constexpr Integer NComponents=1;
+        Integer component=0;
+        Integer C_comb[FaceNPoints];
+        Integer F_comb[FaceNPoints];
+
+        std::cout<<std::endl;
+
+        Simplex<Dim,FaceDim> C_simplex;
+        Simplex<Dim,FaceDim> F_simplex;
+
+        std::array<Integer,FaceNPoints> C_face_nodes;
+        std::array<Integer,FaceNPoints> C_sort;
+        std::array<Integer,FaceNPoints> F_face_nodes;
+        std::array<Integer,FaceNPoints> F_sort; 
+
+	  	for(Integer C_f=0;C_f<FaceNums;C_f++)
+	  	{
+	  		Combinations<ManifoldDim + 1, ManifoldDim>::generate(C_f,C_comb);
+	  		for(Integer i=0;i<FaceNPoints;i++)
+	  			C_simplex.nodes[i]=C_nodes[C_comb[i]];
+
+	  		for(Integer F_f=0;F_f<FaceNums;F_f++)
+	  		{
+
+	  			Combinations<ManifoldDim + 1, ManifoldDim>::generate(F_f,F_comb);
+		  		for(Integer i=0;i<FaceNPoints;i++)
+		  			F_simplex.nodes[i]=F_nodes[F_comb[i]];
+
+
+		  		if(is_simplex_inside_simplex(F_simplex,C_simplex,mesh.points()))
+		  		{
+	  			for(Integer C_n=0;C_n<FaceNPoints;C_n++)
+					for(Integer F_n=0;F_n<FaceNPoints;F_n++)
+					{
+						if(C_nodes[C_comb[C_n]]==F_nodes[F_comb[F_n]])
+						{
+
+                            for(Integer n=0;n<FaceNPoints;n++)
+								C_face_nodes[n]=C_nodes[C_comb[n]];
+                            for(Integer n=0;n<FaceNPoints;n++)
+								F_face_nodes[n]=F_nodes[F_comb[n]];
+
+					    	auto C_face_nodes_tmp=argsort(C_face_nodes);
+					    	auto C_ordered_nodes=argsort(C_face_nodes_tmp);
+
+					    	auto F_face_nodes_tmp=argsort(F_face_nodes);
+					    	auto F_ordered_nodes=argsort(F_face_nodes_tmp);
+
+
+					    	// if(vec[C_dof]==-2) continue; (it means one inactive fine dof has been found)
+					    	// if the F_constraint[F_dof]=inf -> vec[C_dof]=-1
+					    	// else if the working_set[F_dof]=1 -> vec[C_dof]=-2 (i cannot truncate this)
+					    	// else if the working_set[F_dof]=0 -> vec[C_dof]=0 
+					    	// (there is an inactive dof)
+
+							// the fine face and the coars face share this node
+							auto& F_dof=F_elemdm[(F_f*ManifoldDim+F_ordered_nodes[F_n])*NComponents+component];
+							auto& C_dof=C_elemdm[(C_f*ManifoldDim+C_ordered_nodes[C_n])*NComponents+component];
+
+							// auto F_constr=F_constraint[F_dof];
+							// auto& C_constr=C_constraint[C_dof];
+							// C_dof=min(C_dof,F_dof);
+
+							if(vec[C_dof]==-2) continue; // it means one inactive fine dof has been found -> no truncation!
+							else 
+								{
+									if(F_constraint[F_dof]==inf) 
+									  vec[C_dof]=-1;
+									else
+									{
+								    if(working_set[F_dof]==false) 
+								    	vec[C_dof]=-2;
+									else 
+										vec[C_dof]=0;
+									}
+								}
+
+
+
+
+						}
+					}
+		  		}
+	  		}
+	  	}
+	  }
+
+
+
+
+
+
+    template<Integer N>
+	    void RT1_truncated_coarse_dofs(
+	    					   std::vector<Real>& vec,
+	    	                   const std::vector<bool>& working_set,
+		    				   const std::vector<Real>& F_constraint,
+		    				   FiniteElem<Elem>& C_FE, FiniteElem<Elem>& F_FE,  
+		    				   const Integer elem_id,const Integer child_id, 
+		    				   const Integer C_level,const Integer F_level)
+	    {
+
+	    	std::cout<<"RT1_truncated_coarse_dofs=="<<std::endl;
+	    	std::cout<<"child_id=="<<child_id<<std::endl;
+	        auto &mesh=spaces_ptr_->mesh();
+	        auto &bisection=spaces_ptr_->bisection();
+	        auto &tracker=bisection.tracker();
+	        // std::cout<<"F_level=="<<F_level<<std::endl;
+	        // std::cout<<"find_children el=="<<elem_id<<std::endl;
+	    	// auto& fine_elem=mesh.elem(elem_id);
+	    	auto& child_elem=mesh.elem(child_id);
+	      	auto& children=child_elem.children;
+	      	// for(std::size_t i=0;i<children.size();i++)
+	      	// 	std::cout<<children[i]<<" ";
+	      	// std::cout<<std::endl;
+
+	        if(elem_belongs_to_level(mesh,child_id,F_level,tracker))
+	            {
+	            F_FE.init(child_id,F_level);
+	            std::cout<<"elem_belongs_to_level=="<<std::endl;
+	            RT1_truncated_coarse_dofs_aux<N>(vec,working_set,F_constraint,C_FE,F_FE);
+	      		// space_loop(A,old_el,C_level,el,F_level);
+	            }
+	        else
+	        	{
+	        		std::cout<<"else=="<<"  children.size()="<<children.size()<<std::endl;
+		      	for(std::size_t i=0;i<children.size();i++)
+		      	{
+		            
+		      		if(elem_belongs_to_level(mesh,children[i],F_level,tracker))
+		      		{
+		      			std::cout<<"if if=="<<std::endl;
+		      		   F_FE.init(children[i],F_level);
+
+		               RT1_truncated_coarse_dofs_aux<N>(vec,working_set,F_constraint,C_FE,F_FE);
+	 
+		      		   // space_loop(A,old_el,C_level,children[i],F_level);
+		      		}
+		      		else
+		      		{
+		      			std::cout<<"else else =="<<std::endl;
+		      			// find_children(C_p0,C_p1,C_FE,F_FE,elem_id,children[i], C_level,F_level);
+		      			RT1_truncated_coarse_dofs<N>(vec,working_set,F_constraint,C_FE,F_FE,elem_id,children[i], C_level,F_level);
+
+		      		}
+		      	 }
+	        	}
+
+	    }
+
+	    template<typename ElementFunctionSpace,Integer M>
+		inline std::enable_if_t<(ElementFunctionSpace::FEFamily==RaviartThomasFE && ElementFunctionSpace::Order==1 ),void> 
+		fully_truncated_coarse_dofs_aux(std::vector<Real>& vec,const std::vector<bool>& working_set,const std::vector<Real>& F_constraint,
+			    const Integer C_level, const Integer F_level)
+		{
+			// std::cout<<"RaviartThomasFE ProjectedContactConstraints" <<std::endl;
+			// std::cout<<"F_level=" <<F_level<<std::endl;
+			// std::cout<<"C_level=" <<C_level<<std::endl;
+			// std::cout<<"C_constraint.size=" <<C_constraint.size()<<std::endl;
+			auto& mesh=spaces_ptr_->mesh();
+			auto& tracker=spaces_ptr_->bisection().tracker();
+			FiniteElem<Elem> C_FE(mesh);
+			FiniteElem<Elem> F_FE(mesh);
+			// std::cout<< "begin linear_projection="<<std::endl;
+			// std::cout<< "F_constraint"<<std::endl;
+
+			for(Integer i =0;i<F_constraint.size();i++)
+			{
+				// std::cout<< F_constraint[i]<<std::endl;
+			}
+
+			// std::vector<bool> vec(C_constraint.size(),false);
+				
+
+
+			for(Integer el =0;el<mesh.n_elements();el++)
+			{
+
+				
+				if(!elem_belongs_to_level(mesh,el,C_level,tracker)) continue;
+
+				std::cout<< "el="<<el<<std::endl;
+	            C_FE.init(el,C_level);
+				RT1_truncated_coarse_dofs<M>(vec,working_set,F_constraint,C_FE,F_FE,el,el,C_level,F_level);
+			}
+
+		}
+
+
+	    template<Integer N=0>
+		inline std::enable_if_t<(N>=TupleTypeSize<TupleOfSpaces>::value), void> 
+		find_fully_truncated_coarse_dofs_aux(std::vector<Real>& vec,const std::vector<bool>& C_constraint,const std::vector<Real>& F_constraint,
+					const Integer C_level, const Integer F_level)
+		{}
+
+
+
+	    template<Integer N=0>
+		inline std::enable_if_t<(N<TupleTypeSize<TupleOfSpaces>::value), void> 
+		find_fully_truncated_coarse_dofs_aux(std::vector<Real>& vec,const std::vector<bool>& working_set,const std::vector<Real>& F_constraint,
+					const Integer C_level, const Integer F_level)
+		{
+			// std::cout<<"compute_aux="<<std::endl;
+			// std::cout<<"N="<<N<<std::endl;
+			fully_truncated_coarse_dofs_aux<GetType<TupleOfSpaces,N>,N>(vec,working_set,F_constraint,C_level,F_level);
+			find_fully_truncated_coarse_dofs_aux<N+1>(vec,working_set,F_constraint,C_level,F_level);		
+		}
+
+
+
+		inline void find_fully_truncated_coarse_dofs
+		                   (std::vector<Real>& vec,const std::vector<bool>& working_set,const std::vector<Real>& F_constraint,
+						    const Integer C_level, const Integer F_level)
+		{
+			// std::cout<<"compute="<<std::endl;
+			// std::cout<<"C_constraint.size()="<<C_constraint.size()<<std::endl;
+			// std::cout<<"F_constraint.size()="<<F_constraint.size()<<std::endl;
+			// std::cout<<"C_level="<<C_level<<std::endl;
+			// std::cout<<"F_level="<<F_level<<std::endl;
+
+
+
+			Real inf= std::numeric_limits<double>::infinity();
+
+			for(Integer i=0;i<vec.size();i++)
+				vec[i]=-1;
+
+
+
+			auto& mesh=spaces_ptr_->mesh();
+			auto& bisection=spaces_ptr_->bisection();
+			auto& tracker=bisection.tracker();
+			auto& signed_normal= mesh.signed_normal().normals();
+			auto& level_cumultive_n_dofs=spaces_ptr_->dofsdofmap().level_cumultive_n_dofs();
+			auto& dofmap=spaces_ptr_->dofsdofmap();
+
+			// std::cout<<"begin compute_aux="<<std::endl;
+
+			find_fully_truncated_coarse_dofs_aux(vec,working_set,F_constraint,C_level,F_level);
+			// std::cout<<"end compute_aux="<<std::endl;
+		}
+
+
 	private:
 		std::shared_ptr<FunctionSpace> spaces_ptr_;
     	Vector<Vector<Real,ManifoldDim>,EdgeNums> C_p0_;
     	Vector<Vector<Real,ManifoldDim>,EdgeNums> C_p1_;
+    	Array<Array<Integer,EdgeNPoints>, EdgeNums> C_edge_nodes_;
+
     	Vector<Vector<Real,ManifoldDim>,EdgeNums> F_p0_;
     	Vector<Vector<Real,ManifoldDim>,EdgeNums> F_p1_;
-    	Array<Array<Integer,EdgeNPoints>, EdgeNums> C_edge_nodes_;
-    	Array<Array<Integer,EdgeNPoints>, EdgeNums> F_edge_nodes_;		
+    	Array<Array<Integer,EdgeNPoints>, EdgeNums> F_edge_nodes_;	
+    	
+       	Vector<Vector<Real,ManifoldDim>,BoundaryEdgeNums> C_face_p0_;
+    	Vector<Vector<Real,ManifoldDim>,BoundaryEdgeNums> C_face_p1_;    	
+		Array<Array<Integer,EdgeNPoints>, BoundaryEdgeNums> C_face_edge_nodes_;
+
+       	Vector<Vector<Real,ManifoldDim>,BoundaryEdgeNums> F_face_p0_;
+    	Vector<Vector<Real,ManifoldDim>,BoundaryEdgeNums> F_face_p1_;    	
+    	Array<Array<Integer,EdgeNPoints>, BoundaryEdgeNums> F_face_edge_nodes_;
+
+    		
 	    BoundaryElem C_side_elem_;
 	    BoundaryElem F_side_elem_;
     	ElemDofMap C_elem_dm_;
@@ -9491,8 +10836,9 @@ void compute_working_set2(const Integer ndofs,const std::vector<bool>& constrain
         context.apply_zero_bc_for_null_diagonal_element(truncated_A_levels[level],b);
 
 
-   		// std::cout<<"level =="<<level<<std::endl;
-     //    // truncated_A_levels[level].print_val();
+   		std::cout<<"level =="<<level<<std::endl;
+        truncated_A_levels[level].print_val();
+        A_levels[level].print_val();
 
      //    std::cout<<"level =="<<level<<"   x=="<<std::endl;
 
@@ -9501,13 +10847,13 @@ void compute_working_set2(const Integer ndofs,const std::vector<bool>& constrain
      //     std::cout<<std::endl;
      //     std::cout<<"level =="<<level<<"   b=="<<std::endl;
 
-     //     for(Integer i=0;i<working_set[level].size();i++)
-     //     		std::cout<<b[i]<<std::endl;
-     //     std::cout<<std::endl;
+         for(Integer i=0;i<working_set[level].size();i++)
+         		std::cout<<b[i]<<std::endl;
+         std::cout<<std::endl;
 
-     //     std::cout<<"level="<< level<<"   F_constraint=="<<std::endl;
-     //     for(Integer i=0;i<working_set[level].size();i++)
-     //     		std::cout<<F_constraint[i]<<std::endl;
+         std::cout<<"level="<< level<<"   F_constraint=="<<std::endl;
+         for(Integer i=0;i<working_set[level].size();i++)
+         		std::cout<<F_constraint[i]<<std::endl;
      //     std::cout<<std::endl;
      //     std::cout<<std::endl;
      //     std::cout<<"level =="<<level<<"   working_set=="<<std::endl;
@@ -9537,10 +10883,10 @@ void compute_working_set2(const Integer ndofs,const std::vector<bool>& constrain
 
 
 
-         // std::cout<<"post patch_active_set_gauss_seidel level"<< level<<"   x=="<<std::endl;
-         // for(Integer i=0;i<x.size();i++)
-         // 		std::cout<<x[i]<<std::endl;
-         // std::cout<<std::endl;
+         std::cout<<"post patch_active_set_gauss_seidel level"<< level<<"   x=="<<std::endl;
+         for(Integer i=0;i<x.size();i++)
+         		std::cout<<x[i]<<std::endl;
+         std::cout<<std::endl;
 
 
          // std::cout<<"level =="<<level<<"   working_set=="<<std::endl;
@@ -9565,8 +10911,10 @@ void compute_working_set2(const Integer ndofs,const std::vector<bool>& constrain
    	 //    	context.apply_zero_bc(truncated_A_levels[level],b,level);
 
    		context.apply_zero_bc_for_null_diagonal_element(truncated_A_levels[level],b);
-   		// std::cout<<"level =="<<level<<std::endl;
-     //    truncated_A_levels[level].print_val();
+   		std::cout<<"level =="<<level<<std::endl;
+        truncated_A_levels[level].print_val();
+        A_levels[level].print_val();
+        interpolation.matrix(level-1).print_val();
      //     for(Integer i=0;i<working_set[level].size();i++)
      //     		std::cout<<"  b=="<<b[i]<<std::endl;
      //     std::cout<<std::endl;
@@ -9669,9 +11017,9 @@ void compute_working_set2(const Integer ndofs,const std::vector<bool>& constrain
          for(Integer i=0;i<working_set[level].size();i++)
          	{if(working_set[level][i]!=working_set_old[level][i])
          		{
-         			std::cout<<i<<",      "<<working_set[level][i]<<",     "<<working_set_old[level][i] <<",     "<<x[i]<<",    "<<F_constraint[i] <<std::endl;
+         			// std::cout<<i<<",      "<<working_set[level][i]<<",     "<<working_set_old[level][i] <<",     "<<x[i]<<",    "<<F_constraint[i] <<std::endl;
          		}
-         	// std::cout<<working_set[level][i]<<", "<<working_set_old[level][i] <<std::endl;
+         	std::cout<<working_set[level][i]<<", "<<working_set_old[level][i] <<std::endl;
          	}
          std::cout<<std::endl;
 
@@ -9746,28 +11094,18 @@ void compute_working_set2(const Integer ndofs,const std::vector<bool>& constrain
          // truncate_matrix_with_bc(truncated_A_levels[level-1],A_levels[level],interpolation.matrix(level-1),working_set[level],working_set_old[level]);
 
  
+
+
+
+
+
+
+
 	     patch_vcycle_active_set(context, C_correction,A_levels,truncated_A_levels,C_rhs,C_constraint,contact_constraints,levels,working_set,working_set_old,interpolation,nodes2entity,
 	     						 local_mat,A_tmp,H_tmp,b_tmp,lambda_tmp,y_tmp,c_tmp,pre_smoothing,post_smoothing,level-1,max_level,change_coarser_matrix);
- 
-
 	     interpolation.matrix(level-1).multiply(F_correction,C_correction,working_set[level]);
 	     for(Integer i=0;i<working_set_old[level].size();i++)
 	     	working_set_old[level][i]=working_set[level][i];
- 
-// 	   	context.apply_zero_bc_to_vector(F_correction,level);
-        
-//         std::vector<Real> tmp(x);
-         
-
-
-
-
-
-
-
-
-
-
          plus_equal(x,F_correction);
 
 
@@ -10722,9 +12060,11 @@ void compute_working_set2(const Integer ndofs,const std::vector<bool>& constrain
 			// 	return 0.00;
 
 
-			return 1.* 0.5*(1-sin(acos((point[0]-0.5)/0.5)));
-          // return 0.005; 
-			// return 0.00; 
+			// return 1.* 0.5*(1-sin(acos((point[0]-0.5)/0.5)));
+          return 100.005; 
+			// return -0.05;//0.5*sin(20.*point[0]); 
+
+			return 0.5*sin(point[0]*M_PI);//.* 0.5*(1-sin(acos((point[0]-0.5)/0.5)));
 		}
 	};
 
@@ -11059,6 +12399,279 @@ void compute_working_set2(const Integer ndofs,const std::vector<bool>& constrain
         	face_normal_loop<FaceGap,GetType<TupleOfSpaces,N>>(val,level,constraint,cont,FE,alpha);
         	face_space_loop<FaceGap,TupleOfSpaces,N+1>(val,level,constraint,FE,dm);
 		}
+
+
+
+        template<typename FaceGap,typename TupleOfSpaces, Integer N=0,typename Nodes,typename T>
+		std::enable_if_t< (N>=TupleTypeSize<TupleOfSpaces>::value),void>  
+		RT1_space_loop(const Nodes& nodes,const Integer& level, std::vector<Real>& constraint, FiniteElem<Elem>&FE,T& dm)
+		{}
+
+        template<typename FaceGap,typename TupleOfSpaces, Integer N=0,typename Nodes,typename T>
+		std::enable_if_t< (N<TupleTypeSize<TupleOfSpaces>::value),void> 
+		RT1_space_loop(const Nodes& nodes,const Integer& level, std::vector<Real>& constraint, FiniteElem<Elem>&FE, T& dm)
+		{
+         // auto& t=tuple_get<N>(tuple);
+
+			auto& elem_dm=tuple_get<N>(elemdm_);
+			// std::cout<<"FE.level()="<<FE.level()<<std::endl;
+			dm.template dofmap_get<N>(elem_dm,FE.elem_id(),FE.level());
+			// std::cout<<elem_dm<<std::endl;
+			auto& trace_N=tuple_get<N>(trace);
+			// std::cout<<"trace_N[s]"<<std::endl;
+			// std::cout<<trace_N[FE.side_id()]<<std::endl;
+			auto& alpha=tuple_get<N>(trace_elem_dm_)[0];
+			subarray(alpha,elem_dm,trace_N[FE.side_id()]);
+			// std::cout<<"elem_dm"<<std::endl;
+			// std::cout<<elem_dm<<std::endl;
+			// std::cout<<"alpha"<<std::endl;
+			// std::cout<<alpha<<std::endl;
+         // using FS=remove_all_t<decltype(t)>;
+			Integer cont=0;
+			Matrix<Real,1,1> val;
+
+			auto mesh_ptr=FE.mesh_ptr();
+
+			for(Integer i=0;i<nodes.size();i++)
+			{
+
+				auto& point=mesh_ptr->points()[nodes[i]];
+				val=FaceGap::FunctionType::eval(point,FE);	
+				std::cout<<"point="<<point <<std::endl;
+				std::cout<<"val="<<val <<std::endl;
+				constraint[alpha[cont]]=val(0,0);
+				cont++;
+
+
+			}
+
+        	// face_normal_loop<FaceGap,GetType<TupleOfSpaces,N>>(val,level,constraint,cont,FE,alpha);
+        	// RT1_space_loop<FaceGap,TupleOfSpaces,N+1>(nodes,level,constraint,FE,dm);
+		}
+
+
+
+
+
+
+        template<typename Space, typename Context,typename Gap>
+        std::enable_if_t< IsSame<typename Space::Elem,Elem>::value && (Space::FEFamily==LagrangeFE) && (Space::Order==1),void>
+        compute_constraint(Context& context, const Integer boundary_tag, const Gap& gap)
+         {
+         	std::cout<<"entro nel lagrangiano"<<std::endl;
+
+         }
+
+        template<typename Space,typename Context,typename Gap>
+        std::enable_if_t< IsSame<typename Space::Elem,Elem>::value && (Space::FEFamily==RaviartThomasFE) && (Space::Order==0),void>
+        compute_constraint(Context& context, const Integer boundary_tag, const Gap& gap)
+         {
+         	std::cout<<"entro nel RT0 "<<std::endl;
+		// std::cout<<" global householder compute" <<std::endl;
+			auto& mesh=spaces_ptr_->mesh();
+			auto& bisection=spaces_ptr_->bisection();
+			auto& tracker=bisection.tracker();
+			auto& signed_normal= mesh.signed_normal().normals();
+			auto& level_cumultive_n_dofs=spaces_ptr_->dofsdofmap().level_cumultive_n_dofs();
+			auto& dofsdofmap=spaces_ptr_->dofsdofmap();
+
+
+			FiniteElem<Elem> FE(mesh);
+			BoundaryElem side_elem;
+
+			Integer n_levels=level_cumultive_n_dofs.size();	
+			Integer level=level_cumultive_n_dofs.size()-1;
+            n_dofs_=level_cumultive_n_dofs[level];
+            Real inf= std::numeric_limits<double>::infinity();
+            Matrix<Real,1,1> val;
+            constraint_.resize(n_dofs_, inf);
+            Vector<Real,ManifoldDim> mean;
+            Integer dofs_levels_size=context.constrained_dofs_levels().size();
+            auto& constrained_dofs=context.constrained_dofs_levels()[dofs_levels_size-1];
+            auto& constrained_vec=context.constrained_vec_levels()[dofs_levels_size-1];
+
+	            MapFromReference<TraceOperator,BoundaryElem,RaviartThomasFE> map;
+
+				for(Integer el=0;el<mesh.n_elements();el++)
+				{
+					if(!mesh.is_active(el)) continue;
+					level=tracker.get_level(el);
+					FE.init(el,level);
+					if(FE.is_on_boundary())
+					{
+					 auto& elem = mesh.elem(el);
+	                 auto& nodes=elem.nodes;
+		             for(std::size_t s=0;s<FE.n_side();s++)
+		              {
+		              	for(Integer i=0;i<ManifoldDim;i++)
+		              		mean[i]=0.0;
+		              	// if the boundary of the element belongs to the boundary_tag
+		              	FE.init_boundary(s);
+		                if(FE.side_tag()==boundary_tag)
+		                {
+			              elem.side_sorted(s,side_elem);
+			              auto& side_nodes=side_elem.nodes;
+			              for(Integer i=0;i<side_nodes.size();i++)
+			              {
+			              	{	              		
+			              		val=Gap::FunctionType::eval(mesh.points()[side_nodes[i]],FE);
+			              		mean+=mesh.points()[side_nodes[i]];		              		
+			              	}
+			              }
+
+			             mean/=side_nodes.size();
+
+			             map.init(FE);
+			             std::cout<< "mean1 ="<<mean<<std::endl;
+	                     val=Gap::FunctionType::eval(mean,FE)/map();
+
+			             std::cout<< "val ="<<val<<std::endl;
+
+	                     face_space_loop<Gap,TupleOfSpaces>(val,level,constraint_,FE,dofsdofmap);                   	                    
+			          }
+			      }
+			  }
+			}
+
+         }
+
+
+
+        template<typename Space,typename Context,typename Gap>
+        std::enable_if_t< IsSame<typename Space::Elem,Elem>::value && (Space::FEFamily==RaviartThomasFE) && (Space::Order==1),void>
+        compute_constraint(Context& context, const Integer boundary_tag, const Gap& gap)
+         {
+         	std::cout<<"entro nel RT1 "<<std::endl;
+		// std::cout<<" global householder compute" <<std::endl;
+			auto& mesh=spaces_ptr_->mesh();
+			auto& bisection=spaces_ptr_->bisection();
+			auto& tracker=bisection.tracker();
+			auto& signed_normal= mesh.signed_normal().normals();
+			auto& level_cumultive_n_dofs=spaces_ptr_->dofsdofmap().level_cumultive_n_dofs();
+			auto& dofsdofmap=spaces_ptr_->dofsdofmap();
+
+
+			FiniteElem<Elem> FE(mesh);
+			BoundaryElem side_elem;
+
+			Integer n_levels=level_cumultive_n_dofs.size();	
+			Integer level=level_cumultive_n_dofs.size()-1;
+            n_dofs_=level_cumultive_n_dofs[level];
+            Real inf= std::numeric_limits<double>::infinity();
+            Matrix<Real,1,1> val;
+            constraint_.resize(n_dofs_, inf);
+            Vector<Real,ManifoldDim> point;
+            Integer dofs_levels_size=context.constrained_dofs_levels().size();
+            auto& constrained_dofs=context.constrained_dofs_levels()[dofs_levels_size-1];
+            auto& constrained_vec=context.constrained_vec_levels()[dofs_levels_size-1];
+
+            std::vector<Integer> side_nodes(ManifoldDim,0);
+
+	            MapFromReference<TraceOperator,BoundaryElem,RaviartThomasFE> map;
+
+				for(Integer el=0;el<mesh.n_elements();el++)
+				{
+					if(!mesh.is_active(el)) continue;
+					level=tracker.get_level(el);
+					FE.init(el,level);
+					if(FE.is_on_boundary())
+					{
+					 auto& elem = mesh.elem(el);
+	                 auto& nodes=elem.nodes;
+		             for(std::size_t s=0;s<FE.n_side();s++)
+		              {
+		              	// for(Integer i=0;i<ManifoldDim;i++)
+		              	// 	mean[i]=0.0;
+		              	// if the boundary of the element belongs to the boundary_tag
+		              	FE.init_boundary(s);
+		                if(FE.side_tag()==boundary_tag)
+		                {
+			              elem.side_sorted(s,side_elem);
+			              auto& side_nodes_tmp=side_elem.nodes;
+
+			              for(Integer i=0;i<side_nodes.size();i++)
+			              	side_nodes[i]=side_nodes_tmp[i];
+
+			              std::sort(side_nodes.begin(),side_nodes.end());
+
+			              RT1_space_loop<Gap,TupleOfSpaces>(side_nodes,level,constraint_,FE,dofsdofmap);              
+			              // for(Integer i=0;i<side_nodes.size();i++)
+			              // {
+			              // 	{	              		
+			              // 		point=mesh.points()[side_nodes[i]];	
+			              // 		val=Gap::FunctionType::eval(point,FE);	
+			              // 		RT1_space_loop<Gap,TupleOfSpaces>(FE,side_nodes,level,constraint_,FE,dofsdofmap);              
+
+
+			              // 	}
+			              // }
+
+			             // mean/=side_nodes.size();
+
+			             // map.init(FE);
+			             // std::cout<< "mean1 ="<<mean<<std::endl;
+	               //       val=Gap::FunctionType::eval(mean,FE)/map();
+
+			             // std::cout<< "val ="<<val<<std::endl;
+
+	               //       face_space_loop<Gap,TupleOfSpaces>(val,level,constraint_,FE,dofsdofmap);                   	                    
+			          }
+			      }
+			  }
+			}
+
+
+
+         }
+
+        template<Integer N=0,typename Context,typename Gap, typename...Gaps>
+		inline std::enable_if_t<(sizeof...(Gaps)==0) ,void>
+		space_loop(Context& context, const Integer boundary_tag, const Gap& gap, const Gaps&...gaps)
+		{
+			using Space=GetType<TupleOfSpaces,N>;
+			compute_constraint<Space>(context,boundary_tag,gap);
+		std::cout<<"compute 2 N="<<N<<std::endl;
+
+		}
+
+
+        template<Integer N=0,typename Context,typename Gap, typename...Gaps>
+		inline std::enable_if_t<(sizeof...(Gaps)>0) ,void>
+		space_loop(Context& context, const Integer boundary_tag, const Gap& gap, const Gaps&...gaps)
+		{
+		using Space=GetType<TupleOfSpaces,N>;
+
+		compute_constraint<Space>(context,boundary_tag,gap);
+		std::cout<<"compute 2 N="<<N<<std::endl;
+
+		space_loop<N+1>(context,boundary_tag,gaps...);
+		}
+
+
+
+        template<typename Context, typename Gap, typename...Gaps>
+		inline void compute2(Context& context, const Integer boundary_tag, const Gap& gap, const Gaps&...gaps)
+		{
+			std::cout<<"compute 2"<<std::endl;
+		space_loop(context,boundary_tag,gap,gaps...);
+
+        Integer dofs_levels_size=context.constrained_dofs_levels().size();
+
+        auto& constrained_dofs=context.constrained_dofs_levels()[dofs_levels_size-1];
+        auto& constrained_vec=context.constrained_vec_levels()[dofs_levels_size-1];
+
+
+
+		for(Integer i=0;i<constrained_dofs.size();i++)
+		{
+			if(constrained_dofs[i])
+			{
+				constraint_[i]=constrained_vec[i];
+			}
+		}		
+		}
+        
+
 
 
 
@@ -14170,6 +15783,9 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 		std::cout<<" global_dofs_ptr "<<std::endl;
 		node_normal.global_dofs_update(x_p1);
 
+				// typename W_type::FunctionSpace:: SpacesToUniqueFEFamily fefe(5,4,54,6);
+
+
 
 
 
@@ -14615,7 +16231,8 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 	    n2em.init();
 
 
-	    using AuxRT_n= FunctionSpace< MeshT, RT<Order,ManifoldDim>>;	      
+	    // using AuxRT_n= FunctionSpace< MeshT, RT<Order,ManifoldDim>>;	      
+	    using AuxRT_n= FunctionSpace< MeshT, RT<Order,1>>;	      
 		using AuxP_1= FunctionSpace< MeshT, Lagrange<1,ManifoldDim>>;
 		using AuxP_1_single_component= FunctionSpace< MeshT, Lagrange<1,1>>;
 		using AuxP_0= FunctionSpace< MeshT, Lagrange<0,ManifoldDim>>;
@@ -14652,7 +16269,9 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 		auto tau = MakeTest<0>(W_ptr);
 
 		// auto f1 = MakeFunction<0,ExactLinearElasticity<ManifoldDim>>(W_ptr);
-		auto f1 = MakeFunction<0,FunctionZero<ManifoldDim>>(W_ptr);
+		// auto f1 = MakeFunction<0,FunctionZero<ManifoldDim>>(W_ptr);
+		auto f1 = MakeFunction<1,FunctionLinear<2>>(W_ptr);
+		// auto f1 = MakeFunction<0,FunctionZero<1>>(W_ptr);
 		auto node_normal = MakeTraceFunction<0>(W_ptr);
 		auto f_neumann = MakeZeroFunction<0>(W_ptr);
 		auto gap = MakeGapFunction<1>(W_ptr);
@@ -14719,9 +16338,9 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 		}
 
 
-		Integer contact_boundary=4;
-	    // contact_boundary=5;
-	    // contact_boundary=6;
+		Integer contact_boundary=2;
+		// contact_boundary=5;
+
 
 	    std::cout<<" qui1 "<<std::endl;
 		
@@ -14735,28 +16354,50 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 
 		std::cout<<" global_dofs_ptr "<<std::endl;
 		node_normal.global_dofs_update(x_p1);
+		std::cout<<"after global_dofs_ptr "<<std::endl;
 
 
 
 
 		auto bilinearform=
-		L2Inner( Div(sigma),Div(tau));
-		// L2Inner( TwoMu * Epsilon(u) + C_elastic(u) ,Epsilon(v));
+		L2Inner( Div(sigma),Div(tau))+
+		L2Inner( sigma,tau);
 
 		auto linearform=
-		L2Inner(-Div(tau),f1)
-		// +surface_integral(1,v,f_neumann)
-		// +surface_integral(3,v,f_neumann)
-		;
+		L2Inner(-Div(tau),-f1);
 
 
-		auto bcs=DirichletBC<0,FunctionNthComponent<ManifoldDim,1,FuncMinus001>>(W_ptr,2);
+		// // auto bcs1=DirichletBC<0,FunctionNthComponent<ManifoldDim,1,FuncMinus001>>(W_ptr,1);
+		// // auto bcs2=DirichletBC<0,FunctionNthComponent<ManifoldDim,0,FuncMinus001>>(W_ptr,2);
+		// // auto bcs3=DirichletBC<0,FunctionNthComponent<ManifoldDim,1,FuncMinus001>>(W_ptr,3);
+		auto bcs1=DirichletBC<0,FunctionZero<1>>(W_ptr,1);
+		auto bcs2=DirichletBC<0,FunctionOne>(W_ptr,4);
+		auto bcs3=DirichletBC<0,FunctionZero<1>>(W_ptr,3);	
+
+
+
+// auto bcs1=DirichletBC<0,FunctionZero<1>>(W_ptr,1);
+// auto bcs2=DirichletBC<0,FunctionZero<1>>(W_ptr,2);
+// auto bcs3=DirichletBC<0,FunctionZero<1>>(W_ptr,3);
+// 		auto bcs4=DirichletBC<0,FunctionZero<1>>(W_ptr,4);		
+		// // auto bcs4=DirichletBC<0,FunctionNthComponent<ManifoldDim,1,FuncMinus001>>(W_ptr,4);
+		// // auto bcs=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,2);
+
+		// std::cout<<"---------- "<<std::endl;
 
 	
-		auto context=create_context(bilinearform,linearform,bcs);
+		auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3);
+		// auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4);
+
+		// // typename W_type::FunctionSpace:: SpacesToUniqueFEFamily fefe(5,4,54,6);
+
+		// std::cout<<"---------- 1"<<std::endl;
 
 		
+
 	    W_ptr->update();
+
+	 //    std::cout<<"---------- 2"<<std::endl;
 	    
 
   		std::ofstream os;
@@ -14768,9 +16409,15 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 		SparseMatrix<Real> AL;
 		std::vector<Real> bL;
 
+		std::cout<<"---------- 3"<<std::endl;
+
 		Integer levelL=bisection.tracker().current_iterate()-1;
         std::cout<<"assembly "<<std::endl;
 		context.assembly(AL,bL,levelL);
+
+
+
+		std::cout<<"end assembly "<<std::endl;
 
 		std::vector<Real> xL;
 
@@ -14798,7 +16445,12 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 
 		auto globalHH=MakeGlobalHouseHolder(W_ptr);
 
- 		globalHH.compute(normal_values,contact_boundary);
+
+
+
+
+        Integer new_contact_boundary=6;
+ 		globalHH.compute(normal_values,new_contact_boundary);
 		std::cout<<"MakeGlobalHouseHolder end"<<std::endl;
         auto& level_global_house_holder=globalHH.level_global_house_holder();
 
@@ -14807,7 +16459,10 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
         std::cout<<"MakeConstraints"<<std::endl;
 
 		auto constraints=MakeConstraints(W_ptr);
-		constraints.compute(gap, zero, context, contact_boundary);
+		// constraints.compute(zero, gap, context, contact_boundary);
+
+        std::cout<<"MakeConstraints compute2"<<std::endl;
+		constraints.compute2(context, contact_boundary, gap);
 		std::cout<<"MakeConstraints compute end"<<std::endl;
 
 
@@ -14819,6 +16474,8 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
         Ant_levels[levels.size()-1]=AL.multiply_left_transpose_and_multiply_right(level_global_house_holder[levels[levels.size()-1]]);
         truncated_Ant_levels[levels.size()-1]=Ant_levels[levels.size()-1];
         std::cout<<"truncated_Ant_levels[levels.size()-1].print_val();"<<std::endl;
+        std::cout<<"AL.print_val()"<<std::endl;
+        AL.print_val();
 
 
         std::vector<Real> b_transformed(bL);
@@ -14855,6 +16512,23 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
         { 
             Ant_levels[i]=Ant_levels[i+1].multiply_left_transpose_and_multiply_right(levels_interp.matrix(i));
             truncated_Ant_levels[i]=Ant_levels[i+1].multiply_left_transpose_and_multiply_right(levels_interp.matrix(i),working_set[i+1]);
+
+
+
+
+            std::cout<< "Ant_levels[i+1] "<<std::endl;
+            Ant_levels[i+1].print_val();
+
+            std::cout<< "levels_interp.matrix(i) "<<std::endl;
+            levels_interp.matrix(i).print_val();
+
+            for(Integer j=0;j<working_set[i+1].size() ;j++)
+            	std::cout<< working_set[i+1][j]<<std::endl;
+
+
+            std::cout<< "truncated_Ant_levels "<<std::endl;
+
+            truncated_Ant_levels[i].print_val();
          }
 
 
@@ -14892,16 +16566,59 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 		std::string output_active_set ="../residuals/ActiveSet_DivDivMonotone"+ std::to_string(ManifoldDim) +
 		"_N_C_F="+ std::to_string(refinement_jump)+"_"+ std::to_string(level)+"_"+ std::to_string(n_levels)+".txt";		
 		os2.close();
-		os2.open(output_active_set.c_str());		
+		os2.open(output_active_set.c_str());
 
-		Ant_levels[levels.size()-1].save_mat("matlab_matrix_no_truncation.dat");
-		save_vector("matlab_b_no_truncation.dat",bnotruncation);
+		// for(Integer i=0;i<truncated_Ant_levels.size();i++)
+		//     truncated_Ant_levels[i].print_val();
+		// for(Integer i=0;i<b_transformed.size();i++)
+		// 	std::cout<< b_transformed[i]<<std::endl;
+
+		// std::cout<<"pre active_x[i]"<<std::endl;
+		// for(Integer i=0;i<active_x.size();i++)
+		// 	std::cout<< active_x[i]<<"   "<<constraints()[i]  <<"  "<<(active_x[i]<=constraints()[i] ) <<std::endl;
+
+		// Ant_levels[levels.size()-1].save_mat("matlab_matrix_no_truncation.dat");
+		// save_vector("matlab_b_no_truncation.dat",bnotruncation);
 
 
-		patch_multigrid_active_set(os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,constraints(),contact_constraints,levels,working_set,levels_interp,e2d,5,5,levels.size()-1,20,0.000000001);
+   		std::cout<<"constraints"<<std::endl;
+		// for(Integer i=0;i<constraints().size();i++)
+			// constraints()[i]= std::numeric_limits<double>::infinity();
+		// patch_multigrid_active_set(os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,constraints(),contact_constraints,levels,working_set,levels_interp,e2d,5,5,levels.size()-1,1,0.000000001);
+		
+
+
+
+
+
+
 		// patch_multigrid_active_set2(Ant_levels[levels.size()-1],bnotruncation ,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,constraints(),contact_constraints,levels,working_set,levels_interp,e2d,5,5,levels.size()-1,20,0.000000001);
-       
+   		// std::cout<<"after active_x[i]"<<std::endl;
+		// for(Integer i=0;i<active_x.size();i++)
+			// std::cout<< active_x[i]<<"   "<<constraints()[i]  <<"  "<<(active_x[i]<=constraints()[i] ) <<std::endl;
+			// std::cout<<(active_x[i]<=constraints()[i] ) <<std::endl;
+
+
+
+		// truncated_Ant_levels[Ant_levels.size()-1].print_val();
+
+
+  // 		std::cout<<"b_transformed [i]"<<std::endl;
+		// for(Integer i=0;i<b_transformed.size();i++)
+		// 	// std::cout<< active_x[i]<<"   "<<constraints()[i]  <<"  "<<(active_x[i]<=constraints()[i] ) <<std::endl;
+		// 	std::cout<<(b_transformed[i] ) <<std::endl;
+
+
+
+   		std::cout<<"constraints"<<std::endl;
+		// for(Integer i=0;i<constraints().size();i++)
+			// std::cout<< constraints()[i]  <<std::endl;
+
+		// for(Integer i=0;i<level_global_house_holder.size();i++)
+		// 	level_global_house_holder[i].print_val();
+
         os2.close();
+
 
         std::vector<Real> active_solution(Ant_levels[levels.size()-1].max_rows(),0);
         level_global_house_holder[levels[levels.size()-1]].transpose_and_multiply(active_solution,active_x);
@@ -14912,11 +16629,501 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 		os.close();
 		os.open(output_fileACTIVESET.c_str());
 		write_wtk_isoparametric(os,W_ptr,active_solution,var_names,levelL);
+
+
+		std::vector<Real> C_constraint(level_global_house_holder[levels[levels.size()-2]].rows());
+
+
+		contact_constraints.compute(C_constraint,constraints(),3,4);
+   		std::cout<<"constraints"<<std::endl;
+		// for(Integer i=0;i<C_constraint.size();i++)
+			// std::cout<< C_constraint[i]  <<std::endl;
+
+   		for(Integer i=0;i<truncated_Ant_levels.size();i++)
+   			{ 
+   				std::cout<<"----------------------------------   "<<i<<"   ----------------------------------   "<<std::endl;
+   				// truncated_Ant_levels[i].print_val();
+
+   				truncated_Ant_levels[i].save_mat("matlab_matrix_RT1_"+std::to_string(i)+".dat");
+   			}
+
+
+   		for(Integer i=0;i<truncated_Ant_levels.size()-1;i++)
+   		{
+   				std::cout<<"----------------------------------   "<<i<<"   ----------------------------------   "<<std::endl;
+   		levels_interp.matrix(i).print_val();
+   		levels_interp.matrix(i).save_mat("matlab_interpolation_RT1_"+std::to_string(i)+".dat");
+	   	}
+
+
+	   		for(Integer i=0;i<working_set[working_set.size()-1].size();i++)
+	   		{
+	   				std::cout<<working_set[working_set.size()-1][i]<<std::endl;
+	   		// levels_interp.matrix(i).print_val();
+	   	}
+
+
+
+
+
+
+	   	// levels_interp.matrix(0).print_val();
+
+
+
+	    Integer cont_active;
+	    Integer cont_inactive;
+	    Integer cont_inf;
+	    Integer cont_tot;
+
+
+	    auto& PP=levels_interp.matrix(truncated_Ant_levels.size()-2);
+	    Integer Pcols=PP.max_cols();
+
+
+	    std::vector<bool> w_new(Pcols,false);
+
+
+	    const auto& inf= std::numeric_limits<double>::infinity();
+
+	   	for(Integer C_dof=0;C_dof<PP.max_cols();C_dof++)
+	   	{
+
+			cont_active=0;
+			cont_inactive=0;
+			cont_inf=0;
+			cont_tot=0;
+
+			for (auto F_dof_it=PP.rows_idx()[C_dof].begin(); F_dof_it!=PP.rows_idx()[C_dof].end(); ++F_dof_it)
+			{ 
+				const auto& F_dof=F_dof_it->first;
+				std::cout<<"F_dof="<<F_dof<<",   C_dof="<<C_dof<<"    w="<<working_set[truncated_Ant_levels.size()-1][F_dof]<<"   c="<<constraints()[F_dof]<<std::endl;
+
+				// std::cout<<constraints()[F_dof]<<std::endl;
+				if(constraints()[F_dof]<inf)
+				{
+					if(working_set[truncated_Ant_levels.size()-1][F_dof]==true)
+					{
+						
+						cont_active++;
+					}
+					else
+					{
+						cont_inactive++;
+					}
+				}
+				else
+				{
+					cont_inf++;
+				}
+				cont_tot++;
+			}
+
+
+
+
+
+			// if all fine dofs, which are subject to a constraints, are constrained
+			// then the coarse dof is fully truncated, then a bc there is needed
+			if(cont_inactive==0 && cont_active>0)
+			{
+			std::cout<<"C_dof="<<C_dof<<",   cont_active="<<cont_active<<",  cont_inactive="<<cont_inactive<<",  cont_inf="<<cont_inf<<",   cont_tot="<<cont_tot <<std::endl;
+
+				w_new[C_dof]=true;
+
+			}
+
+
+
+						// for (auto it_r=B_cols_idx[k].begin(); it_r!=B_cols_idx[k].end(); ++it_r)
+						// 	{ 
+						// 	const auto& j_new=it_r->first;
+						// 	const auto& j_new2=it_r->second;
+
+	     //                    tmp=get(i,k)*B(k,j_new);
+
+	   	}
+
+
+		for(Integer i=0;i<w_new.size();i++)
+		{
+			std::cout<< w_new[i]<<std::endl;
+		}
+
+
+		std::cout<<"constraints()="<<std::endl;
+
+
+   		for(Integer i=0;i<constraints().size();i++)
+   		{
+   				std::cout<<constraints()[i]<<std::endl;
+   		// levels_interp.matrix(i).print_val();
+   		}
+
+
+
+   		std::vector<Real> vec_rem_diag(working_set[working_set.size()-2].size());
+
+   		contact_constraints.find_fully_truncated_coarse_dofs(vec_rem_diag,working_set[working_set.size()-1],constraints(),levels[levels.size()-2],levels[levels.size()-1]);
+
+        std::cout<<"vec_rem_diag()="<<std::endl;
+   		for(Integer i=0;i<vec_rem_diag.size();i++)
+   			std::cout<<vec_rem_diag[i]<<std::endl;
+
+
+
+
+
+
+
+		// Simplex<Dim,1> simplex1;
+		// Simplex<Dim,2> simplex2;
+
+
+
+		// simplex1.nodes[0] = 0 ;
+		// simplex1.nodes[1] = 4 ;
+		// simplex2.nodes[0] = 0 ;
+		// simplex2.nodes[1] = 1 ;
+		// simplex2.nodes[2] = 2 ;
+
+
+		// std::cout<<"simplex1  "<<std::endl;
+
+		// for(Integer i=0;i<simplex1.nodes.size();i++)
+		// {
+		// 	std::cout<< mesh.points()[simplex1.nodes[i]]<<std::endl;
+		// }
+		// std::cout<<"simplex2  "<<std::endl;
+
+		// for(Integer i=0;i<simplex2.nodes.size();i++)
+		// {
+		// 	std::cout<< mesh.points()[simplex2.nodes[i]]<<std::endl;
+		// }
+	
+	 //    std::cout<< is_simplex_inside_simplex(simplex1,simplex2,mesh.points()) <<std::endl;
+
+// constexpr Integer Dim2=3;
+// Vector<Real,Dim2> output;
+
+// Integer opposite_point=0;
+// Array<Vector<Real,Dim2>,Dim2> points{{ 0,0,0},{1,0.1,0.2},{2,0.3,0.4} } ;
+// Vector<Real,Dim2> interior_point{(points[0]+points[1]+points[2])/3};
+
+
+// linear_coefficients_on_side(output,interior_point,opposite_point,points); 
+// std::cout<<"output"<<std::endl;
+// std::cout<<output<<std::endl;
+		}
+
+
+
+template<Integer ManifoldDim, Integer Dim1, Integer Dim2>
+ void find_if_simplex_is_inside_another_one(const Integer n)
+{
+		constexpr Integer Dim=ManifoldDim;
+		using MeshT=Mesh<Dim, ManifoldDim>;
+		using Elem=typename MeshT::Elem;
+		MeshT mesh;
+		generate_cube(mesh,n,n,n);
+		mesh.build_dual_graph();
+		mark_boundary(mesh);
+
+
+
+		using Point=Vector<Real,Dim>;
+
+		std::vector<Point> points;
+		points.push_back(Point{0,0,0});//0
+		points.push_back(Point{1,0,0});//1
+		points.push_back(Point{0,1,0});//2
+		points.push_back(Point{0,0,1});//3
+		points.push_back(Point{0.5,0,0});//4
+		points.push_back(Point{0,0.5,0});//5
+		points.push_back(Point{0.5,0.5,0});//6
+		points.push_back(Point{0.5,0,0.5});//7
+		points.push_back(Point{0,0.5,0.5});//8
+		points.push_back(Point{0.25,0.25,0.25});//9
+		points.push_back(Point{0.333333333333,0.333333333333,0.333333333333});//10
+		points.push_back(Point{0.25,0.25,0.5});//11
+		points.push_back(Point{0.1,0.8,0.1});//12
+
+		
+		Simplex<Dim,2> simplex_main;
+		Simplex<Dim,1> simplex1;
+		Simplex<Dim,1> simplex2;
+		Simplex<Dim,1> simplex3;
+		Simplex<Dim,1> simplex4;
+		Simplex<Dim,1> simplex5;
+		Simplex<Dim,1> simplex6;
+		Simplex<Dim,1> simplex7;
+		Simplex<Dim,1> simplex8;
+		Simplex<Dim,1> simplex9;
+
+
+		Simplex<Dim,2> triangle;
+
+
+
+		// std::cout<<"simplex1  "<<std::endl;
+
+		// for(Integer i=0;i<simplex1.nodes.size();i++)
+		// {
+		// 	std::cout<< mesh.points()[simplex1.nodes[i]]<<std::endl;
+		// }
+		// std::cout<<"simplex2  "<<std::endl;
+
+		// for(Integer i=0;i<simplex2.nodes.size();i++)
+		// {
+		// 	std::cout<< mesh.points()[simplex2.nodes[i]]<<std::endl;
+		// }
+		simplex_main.nodes[0] = 0 ;
+		simplex_main.nodes[1] = 1 ;
+		simplex_main.nodes[2] = 2 ;
+
+		simplex1.nodes[0] = 0 ;
+		simplex1.nodes[1] = 1 ;
+		simplex2.nodes[0] = 0 ;
+		simplex2.nodes[1] = 2 ;
+		simplex3.nodes[0] = 1 ;
+		simplex3.nodes[1] = 2 ;
+
+		simplex4.nodes[0] = 0 ;
+		simplex4.nodes[1] = 3 ;
+		simplex5.nodes[0] = 0 ;
+		simplex5.nodes[1] = 4 ;
+		simplex5.nodes[0] = 0 ;
+		simplex5.nodes[1] = 5 ;
+		simplex6.nodes[0] = 0 ;
+		simplex6.nodes[1] = 6 ;
+		simplex7.nodes[0] = 0 ;
+		simplex7.nodes[1] = 7 ;
+		simplex8.nodes[0] = 0 ;
+		simplex8.nodes[1] = 8 ;
+
+
+        std::cout<<"simplex1"<<std::endl;
+		for(Integer i=0;i<simplex1.nodes.size();i++)
+		{
+			std::cout<< points[simplex1.nodes[i]]<<std::endl;
+		}		
+	    std::cout<< is_simplex_inside_simplex(simplex1,simplex_main,points) <<std::endl;
+        std::cout<<"simplex2"<<std::endl;
+		for(Integer i=0;i<simplex2.nodes.size();i++)
+		{
+			std::cout<< points[simplex2.nodes[i]]<<std::endl;
+		}	
+	    std::cout<< is_simplex_inside_simplex(simplex2,simplex_main,points) <<std::endl;
+        std::cout<<"simplex3"<<std::endl;
+		for(Integer i=0;i<simplex3.nodes.size();i++)
+		{
+			std::cout<< points[simplex3.nodes[i]]<<std::endl;
+		}		    
+	    std::cout<< is_simplex_inside_simplex(simplex3,simplex_main,points) <<std::endl;
+
+
+        std::cout<<"simplex4"<<std::endl;
+		for(Integer i=0;i<simplex4.nodes.size();i++)
+		{
+			std::cout<< points[simplex4.nodes[i]]<<std::endl;
+		}	
+	    std::cout<< is_simplex_inside_simplex(simplex4,simplex_main,points) <<std::endl;
+
+
+
+        std::cout<<"simplex5"<<std::endl;
+		for(Integer i=0;i<simplex5.nodes.size();i++)
+		{
+			std::cout<< points[simplex5.nodes[i]]<<std::endl;
+		}		    
+	    std::cout<< is_simplex_inside_simplex(simplex5,simplex_main,points) <<std::endl;
+
+
+
+
+
+        std::cout<<"simplex6"<<std::endl;
+		for(Integer i=0;i<simplex6.nodes.size();i++)
+		{
+			std::cout<< points[simplex6.nodes[i]]<<std::endl;
+		}		    
+	    std::cout<< is_simplex_inside_simplex(simplex6,simplex_main,points) <<std::endl;
+
+
+
+
+
+
+
+        std::cout<<"simplex7"<<std::endl;
+		for(Integer i=0;i<simplex7.nodes.size();i++)
+		{
+			std::cout<< points[simplex7.nodes[i]]<<std::endl;
+		}		    
+	    std::cout<< is_simplex_inside_simplex(simplex7,simplex_main,points) <<std::endl;
+
+       std::cout<<"simplex8"<<std::endl;
+		for(Integer i=0;i<simplex8.nodes.size();i++)
+		{
+			std::cout<< points[simplex8.nodes[i]]<<std::endl;
+		}		    
+	    std::cout<< is_simplex_inside_simplex(simplex8,simplex_main,points) <<std::endl;
+
+
+
+
+
+
+		simplex_main.nodes[0] = 1 ;
+		simplex_main.nodes[1] = 2 ;
+		simplex_main.nodes[2] = 3 ;
+       std::cout<<"simplex_main"<<std::endl;
+		for(Integer i=0;i<simplex_main.nodes.size();i++)
+		{
+			std::cout<< points[simplex_main.nodes[i]]<<std::endl;
+		}		    
+
+
+
+	   triangle.nodes[0] = 0 ;
+	   triangle.nodes[1] = 4 ;
+	   triangle.nodes[2] = 5 ;
+	   std::cout<<std::endl;
+	   std::cout<<std::endl;
+       std::cout<<"triangle"<<std::endl;
+		for(Integer i=0;i<triangle.nodes.size();i++)
+		{
+			std::cout<< points[triangle.nodes[i]]<<std::endl;
+		}		    
+	    std::cout<< is_simplex_inside_simplex(triangle,simplex_main,points) <<std::endl;
+
+	   triangle.nodes[0] = 1 ;
+	   triangle.nodes[1] = 2 ;
+	   triangle.nodes[2] = 6 ;
+	   std::cout<<std::endl;
+	   std::cout<<std::endl;
+       std::cout<<"triangle"<<std::endl;
+		for(Integer i=0;i<triangle.nodes.size();i++)
+		{
+			std::cout<< points[triangle.nodes[i]]<<std::endl;
+		}		    
+	    std::cout<< is_simplex_inside_simplex(triangle,simplex_main,points) <<std::endl;
+       std::cout<<"-------------------------"<<std::endl;
+
+	   triangle.nodes[0] = 1 ;
+	   triangle.nodes[1] = 2 ;
+	   triangle.nodes[2] = 10 ;
+	   std::cout<<std::endl;
+	   std::cout<<std::endl;
+       std::cout<<"triangle"<<std::endl;
+		for(Integer i=0;i<triangle.nodes.size();i++)
+		{
+			std::cout<< points[triangle.nodes[i]]<<std::endl;
+		}		    
+	    std::cout<< is_simplex_inside_simplex(triangle,simplex_main,points) <<std::endl;
+
+	   triangle.nodes[0] = 1 ;
+	   triangle.nodes[1] = 3 ;
+	   triangle.nodes[2] = 10 ;
+	   std::cout<<std::endl;
+	   std::cout<<std::endl;
+       std::cout<<"triangle"<<std::endl;
+		for(Integer i=0;i<triangle.nodes.size();i++)
+		{
+			std::cout<< points[triangle.nodes[i]]<<std::endl;
+		}		    
+	    std::cout<< is_simplex_inside_simplex(triangle,simplex_main,points) <<std::endl;
+
+
+	   triangle.nodes[0] = 3 ;
+	   triangle.nodes[1] = 2 ;
+	   triangle.nodes[2] = 10 ;
+	   std::cout<<std::endl;
+	   std::cout<<std::endl;
+       std::cout<<"triangle"<<std::endl;
+		for(Integer i=0;i<triangle.nodes.size();i++)
+		{
+			std::cout<< points[triangle.nodes[i]]<<std::endl;
+		}		    
+	    std::cout<< is_simplex_inside_simplex(triangle,simplex_main,points) <<std::endl;
+
+
+	   triangle.nodes[0] = 1 ;
+	   triangle.nodes[1] = 2 ;
+	   triangle.nodes[2] = 11 ;
+	   std::cout<<std::endl;
+	   std::cout<<std::endl;
+       std::cout<<"triangle"<<std::endl;
+		for(Integer i=0;i<triangle.nodes.size();i++)
+		{
+			std::cout<< points[triangle.nodes[i]]<<std::endl;
+		}		    
+	    std::cout<< is_simplex_inside_simplex(triangle,simplex_main,points) <<std::endl;
+
+	   triangle.nodes[0] = 1 ;
+	   triangle.nodes[1] = 3 ;
+	   triangle.nodes[2] = 11 ;
+	   std::cout<<std::endl;
+	   std::cout<<std::endl;
+       std::cout<<"triangle"<<std::endl;
+		for(Integer i=0;i<triangle.nodes.size();i++)
+		{
+			std::cout<< points[triangle.nodes[i]]<<std::endl;
+		}		    
+	    std::cout<< is_simplex_inside_simplex(triangle,simplex_main,points) <<std::endl;
+
+
+	   triangle.nodes[0] = 3 ;
+	   triangle.nodes[1] = 2 ;
+	   triangle.nodes[2] = 11 ;
+	   std::cout<<std::endl;
+	   std::cout<<std::endl;
+       std::cout<<"triangle"<<std::endl;
+		for(Integer i=0;i<triangle.nodes.size();i++)
+		{
+			std::cout<< points[triangle.nodes[i]]<<std::endl;
+		}		    
+	    std::cout<< is_simplex_inside_simplex(triangle,simplex_main,points) <<std::endl;
+
+
+	   triangle.nodes[0] = 1 ;
+	   triangle.nodes[1] = 2 ;
+	   triangle.nodes[2] = 12 ;
+	   std::cout<<std::endl;
+	   std::cout<<std::endl;
+       std::cout<<"triangle"<<std::endl;
+		for(Integer i=0;i<triangle.nodes.size();i++)
+		{
+			std::cout<< points[triangle.nodes[i]]<<std::endl;
+		}		    
+	    std::cout<< is_simplex_inside_simplex(triangle,simplex_main,points) <<std::endl;
+
+
+	   triangle.nodes[0] = 3 ;
+	   triangle.nodes[1] = 2 ;
+	   triangle.nodes[2] = 12 ;
+	   std::cout<<std::endl;
+	   std::cout<<std::endl;
+       std::cout<<"triangle"<<std::endl;
+		for(Integer i=0;i<triangle.nodes.size();i++)
+		{
+			std::cout<< points[triangle.nodes[i]]<<std::endl;
+		}		    
+	    std::cout<< is_simplex_inside_simplex(triangle,simplex_main,points) <<std::endl;
+
+	   triangle.nodes[0] = 1 ;
+	   triangle.nodes[1] = 3 ;
+	   triangle.nodes[2] = 12 ;
+	   std::cout<<std::endl;
+	   std::cout<<std::endl;
+       std::cout<<"triangle"<<std::endl;
+		for(Integer i=0;i<triangle.nodes.size();i++)
+		{
+			std::cout<< points[triangle.nodes[i]]<<std::endl;
+		}		    
+	    std::cout<< is_simplex_inside_simplex(triangle,simplex_main,points) <<std::endl;
+	
 }
-
-
-
-
 
 
 
