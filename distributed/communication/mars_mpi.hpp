@@ -242,8 +242,8 @@ void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_c
 }
 
 template <typename T>
-void i_send_recv_view(const ViewVectorType<T> &dest, const T* dest_displ,
-                      const ViewVectorType<T> &src, const T* src_displ, 
+void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ,
+                      const ViewVectorType<T> &src, const Integer* src_displ,
                       const Integer proc_count, MPI_Comm comm)
 {
     std::vector<MPI_Request> send_req(proc_count);

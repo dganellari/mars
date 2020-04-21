@@ -259,30 +259,6 @@ public:
         scan_boundary_ = b;
     }
 
-      MARS_INLINE_FUNCTION
-    void set_view_ghost(const ViewVectorType<Integer> &b)
-    {
-        ghost_ = b;
-    }
-
-    MARS_INLINE_FUNCTION
-    const ViewVectorType<Integer> &get_view_ghost() const
-    {
-        return ghost_;
-    }
-
-      MARS_INLINE_FUNCTION
-    void set_view_scan_ghost(const ViewVectorType<Integer> &b)
-    {
-        scan_ghost_ = b;
-    }
-
-    MARS_INLINE_FUNCTION
-    const ViewVectorType<Integer> &get_view_scan_ghost() const
-    {
-        return scan_ghost_;
-    }
-
     void resize_points(const Integer size)
     {
         points_size_ += size;
@@ -1018,8 +994,9 @@ public:
                 Octant o = face_nbh<Type>(ref_octant, face, xDim, yDim, zDim);
                 if (o.is_valid())
                 {
+
                     printf("face Nbh of %li (%li) is : %li with--- x and y: %li - %li\n", gl_index,
-                           ref_octant.x + offset * ref_octant.y, o.x + offset * o.y, o.x, o.y);
+                            elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim),elem_index(o.x, o.y, o.z, xDim, yDim), o.x, o.y);
                     increment(o);
                 }
             }
@@ -1029,8 +1006,8 @@ public:
                 Octant o = corner_nbh<Type>(ref_octant, corner, xDim, yDim, zDim);
                 if (o.is_valid())
                 {
-                    printf("corner Nbh of %li (%li) is : %li with--- x and y: %li - %li\n", gl_index,
-                           ref_octant.x + offset * ref_octant.y, o.x + offset * o.y, o.x, o.y);
+                    printf("Corner Nbh of %li (%li) is : %li with--- x and y: %li - %li\n", gl_index,
+                            elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim),elem_index(o.x, o.y, o.z, xDim, yDim), o.x, o.y);
                     increment(o);
                 }
             }
@@ -1313,16 +1290,7 @@ public:
     }
 
 
-    void reserve_ghost(const Integer n_elements)
-    {
-        ghost_ = ViewVectorType<Integer>("ghost_", n_elements);
-    }
 
-    void reserve_scan_ghost(const Integer n_elements)
-    {
-        scan_ghost_ = ViewVectorType<Integer>("scan_ghost_", n_elements);
-    }
-    
 private:
     ViewMatrixTextureC<Integer, Comb::value, 2> combinations;
 
@@ -1338,10 +1306,6 @@ private:
     Integer proc;
 
     UnorderedMap<unsigned int, unsigned int> global_to_local_map_;
-
-    //ghost and boundary layers
-    ViewVectorType<Integer> ghost_;
-    ViewVectorType<Integer> scan_ghost_;
 
     ViewVectorType<Integer> boundary_;
     ViewVectorType<Integer> boundary_lsfc_index_;

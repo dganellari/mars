@@ -129,34 +129,31 @@ public:
         int size = num_ranks(context);
 
         /* auto count_mirror = create_mirror_view(mesh->get_view_scan_boundary());
-        Kokkos::deep_copy(count_mirror, mesh->get_view_scan_boundary()); */
+           Kokkos::deep_copy(count_mirror, mesh->get_view_scan_boundary()); */
 
-        mesh->reserve_scan_ghost(size + 1);
+        reserve_scan_ghost(size + 1);
 
-        scan_recv_mirror = create_mirror_view(mesh->get_view_scan_ghost());
+        scan_recv_mirror = create_mirror_view(get_view_scan_ghost());
         make_scan_index_mirror(scan_recv_mirror,receive_count);
-        Kokkos::deep_copy(mesh->get_view_scan_ghost(), scan_recv_mirror);
+        Kokkos::deep_copy(get_view_scan_ghost(), scan_recv_mirror);
 
         Integer ghost_size = scan_recv_mirror(size);
 
-        mesh->reserve_ghost(ghost_size);
-std::cout<<"Starting mpi send receive for the ghost layer"<<std::endl;
-        context->distributed->i_send_recv_view(mesh->get_view_ghost(), scan_recv_mirror.data(), 
-                    mesh->get_view_boundary(), scan_send_mirror.data(), proc_count);
+        reserve_ghost(ghost_size);
 
-
-std::cout<<"Ending mpi send receive for the ghost layer"<<std::endl;
-
+        std::cout<<"Starting mpi send receive for the ghost layer"<<std::endl;
+        context->distributed->i_send_recv_view(get_view_ghost(), scan_recv_mirror.data(),
+                mesh->get_view_boundary(), scan_send_mirror.data(), proc_count);
+        std::cout<<"Ending mpi send receive for the ghost layer"<<std::endl;
+/*
         parallel_for(
-            "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
+                "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
+                const Integer rank = mesh->find_owner_processor(get_view_scan_ghost(), i, 1, proc_num);
 
-            const Integer rank = mesh->find_owner_processor(mesh->get_view_scan_ghost(), i, 1, proc_num);
-
-                printf(" ghost: %i - %li - proc: %li - rank: %li\n", i, mesh->get_view_ghost()(i), 
-
-                            rank , proc_num);
-            });
- 
+                printf(" ghost: %i - %li - proc: %li - rank: %li\n", i, get_view_ghost()(i),
+                        rank , proc_num);
+                });
+*/
     }
 
     void exchange_ghost_data(const context &context, const ViewVectorType<T> &buffer_data)
@@ -167,22 +164,23 @@ std::cout<<"Ending mpi send receive for the ghost layer"<<std::endl;
 
         exchange_ghost_layer(context);
 
-        /* int proc_num = rank(context);
+        int proc_num = rank(context);
         int size = num_ranks(context);
 
         Integer ghost_size = scan_recv_mirror(size);
         reserve_ghost_user_data(ghost_size);
-       
-        context->distributed->i_send_recv_view(ghost_user_data, scan_recv_mirror, buffer_data,
-                                               scan_send_mirror, proc_count);
-  */
-        /*         for (int i = 0; i < size; ++i)
-        {
-            if (receive_count[i] > 0)
-            {
-                std::cout << "-----FromProc: " << i << " count:" << receive_count[i] << " Proc: " << proc_num << std::endl;
-            }
-        } */
+
+        context->distributed->i_send_recv_view(ghost_user_data, scan_recv_mirror.data(),
+                buffer_data, scan_send_mirror.data(), proc_count);
+
+        parallel_for(
+                "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
+                const Integer rank = mesh->find_owner_processor(get_view_scan_ghost(), i, 1, proc_num);
+                std::stringstream stream;
+                stream<<" ghost data: "<< i <<" - "<< get_view_ghost()(i)<< "data: "<< ghost_user_data(i)
+                        <<" proc: "<< rank << " - rank: "<< proc_num<< std::endl;
+                std::cout<<stream.str();
+                });
     }
 
     Mesh *get_mesh() const
@@ -190,15 +188,57 @@ std::cout<<"Ending mpi send receive for the ghost layer"<<std::endl;
         return mesh;
     }
 
+     void reserve_ghost(const Integer n_elements)
+    {
+        ghost_ = ViewVectorType<Integer>("ghost_", n_elements);
+    }
+
+    void reserve_scan_ghost(const Integer n_elements)
+    {
+        scan_ghost_ = ViewVectorType<Integer>("scan_ghost_", n_elements);
+    }
+
+    MARS_INLINE_FUNCTION
+    void set_view_ghost(const ViewVectorType<Integer> &b)
+    {
+        ghost_ = b;
+    }
+
+    MARS_INLINE_FUNCTION
+    const ViewVectorType<Integer> &get_view_ghost() const
+    {
+        return ghost_;
+    }
+
+      MARS_INLINE_FUNCTION
+    void set_view_scan_ghost(const ViewVectorType<Integer> &b)
+    {
+        scan_ghost_ = b;
+    }
+
+    MARS_INLINE_FUNCTION
+    const ViewVectorType<Integer> &get_view_scan_ghost() const
+    {
+        return scan_ghost_;
+    }
+
 private:
     Mesh *mesh;
+
+     //ghost and boundary layers
+    ViewVectorType<Integer> ghost_;
+    ViewVectorType<Integer> scan_ghost_;
+
+    //ghost data layer
     ViewVectorType<T> user_data;
     ViewVectorType<T> ghost_user_data;
 
     std::vector<Integer> send_count;
+    //mirror view on the mesh scan boundary view used for the mpi send receive
     ViewVectorType<Integer>::HostMirror scan_send_mirror;
 
     std::vector<Integer> receive_count;
+    //mirror view on the scan_ghost view
     ViewVectorType<Integer>::HostMirror scan_recv_mirror;
 
     Integer proc_count;

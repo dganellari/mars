@@ -65,23 +65,23 @@ namespace mars
 #define MARS_PUBLIC_PTOP_(T)                    \
     void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, const Integer proc_count)  \
                 { impl_->i_send_recv_vec(send_count, receive_count, proc_count); } \
-    void i_send_recv_view(const ViewVectorType<T> &dest, const T* dest_displ, \
-                const ViewVectorType<T> &src, const T* src_displ, const Integer proc_count) \
+    void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ, \
+                const ViewVectorType<T> &src, const Integer* src_displ, const Integer proc_count) \
                 { impl_->i_send_recv_view(dest, dest_displ, src, src_displ, proc_count); }
 
 #define MARS_INTERFACE_PTOP_(T) \
     virtual void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, const Integer proc_count) const = 0; \ 
-    virtual void i_send_recv_view(const ViewVectorType<T> &dest, const T* dest_displ, \
-                const ViewVectorType<T> &src, const T* src_displ, const Integer proc_count) const = 0; 
+    virtual void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ, \
+                const ViewVectorType<T> &src, const Integer* src_displ, const Integer proc_count) const = 0;
     
 #define MARS_WRAP_PTOP_(T)                                \
     void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, const Integer proc_count) const override \
                 { wrapped.i_send_recv_vec(send_count, receive_count, proc_count); } \
-    void i_send_recv_view(const ViewVectorType<T> &dest, const T* dest_displ, \
-                const ViewVectorType<T> &src, const T* src_displ, const Integer proc_count) const override \
+    void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ, \
+                const ViewVectorType<T> &src, const Integer* src_displ, const Integer proc_count) const override \
                 { wrapped.i_send_recv_view(dest, dest_displ, src, src_displ, proc_count); }           
     
-#define MARS_PTOP_TYPES_ Integer
+#define MARS_PTOP_TYPES_ Integer, double
 
 
 // Defines the concept/interface for a distributed communication context.
@@ -278,8 +278,8 @@ struct local_context
     }
 
     template<typename T>
-    void i_send_recv_view(const ViewVectorType<T> &dest, const T* dest_displ,
-                const ViewVectorType<T> &src, const T* src_displ, 
+    void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ,
+                const ViewVectorType<T> &src, const Integer* src_displ,
                 const Integer proc_count) const
     {
     }

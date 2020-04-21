@@ -14,7 +14,7 @@ struct Octant
     Octant() = default;
 
     MARS_INLINE_FUNCTION
-    Octant(Integer i, Integer j) : x(i), y(j)
+    Octant(Integer i, Integer j) : x(i), y(j), z(0)
     {
         valid = true;
     }
