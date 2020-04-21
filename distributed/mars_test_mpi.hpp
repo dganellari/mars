@@ -222,6 +222,10 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char 
 
         DistributedHex8Mesh mesh;
         generate_distributed_cube(context, mesh, level, level, level);
+
+        UserData<3, 3, ElementType::Hex8, double> data(&mesh);
+        exchange_ghost_user_data(context, data);
+
 /* 
         int proc_num = rank(context);
 

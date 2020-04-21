@@ -31,26 +31,36 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
 
     switch (Type)
     {
-    case ElementType::Quad4:
-    {
-        n__anchor_nodes = xDim * yDim;
-        break;
-    }
-    case ElementType::Hex8:
-    {
-        n__anchor_nodes = xDim * yDim * zDim;
-        break;
-    }
-    default:
-    {
-        std::cout << "Not yet implemented for other element types!" << std::endl;
-        return false;
-    }
+        case ElementType::Quad4:
+            {
+                n__anchor_nodes = xDim * yDim;
+                break;
+            }
+        case ElementType::Hex8:
+            {
+                n__anchor_nodes = xDim * yDim * zDim;
+                break;
+            }
+        default:
+            {
+                std::cout << "Not yet implemented for other element types!" << std::endl;
+                return false;
+            }
     }
 
     //unsigned int chunk_size = (unsigned int)ceil((double)n__anchor_nodes / size);
-    Integer chunk_size = n__anchor_nodes / size + (n__anchor_nodes % size != 0);
+    //Integer chunk_size = n__anchor_nodes / size + (n__anchor_nodes % size != 0);
+    //Integer last_chunk_size = chunk_size - (chunk_size * size - n__anchor_nodes);
+    Integer chunk_size = n__anchor_nodes / size;
     Integer last_chunk_size = chunk_size - (chunk_size * size - n__anchor_nodes);
+
+
+    assert(chunk_size > 0);
+
+    if(chunk_size<=0)
+    {
+        errx(1, " Invalid number of mpi processes. Defined more mpi processes than mesh elements to be generated!");
+    }
 
     SFC morton;
 
@@ -65,7 +75,7 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
 
         /*  parallel_for(
             "print_elem", xDim * yDim, KOKKOS_LAMBDA(const int i) {
-                printf(" el: %u-%i\n", morton.get_view_elements()(i), i);
+            printf(" el: %u-%i\n", morton.get_view_elements()(i), i);
             }); */
     }
 
@@ -96,7 +106,7 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
 
     /*  parallel_for(
         "print_elem_chunk",chunk_size, KOKKOS_LAMBDA(const int i) {
-            printf(" elch: %u-%i\n", local(i), proc_num);
+        printf(" elch: %u-%i\n", local(i), proc_num);
         }); */
 
     mesh.set_view_sfc(local);
@@ -122,9 +132,9 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
     std::cout << "MPI broadcast ended!" << std::endl;
 
     /* parallel_for(
-        "print_elem_gp:", size+1, KOKKOS_LAMBDA(const int i) {
-            printf(" elch: (%li-%li) - %i - %i\n", GpNp(2*i),  GpNp(2*i+1), i, proc_num);
-        }); */
+       "print_elem_gp:", size+1, KOKKOS_LAMBDA(const int i) {
+       printf(" elch: (%li-%li) - %i - %i\n", GpNp(2*i),  GpNp(2*i+1), i, proc_num);
+       }); */
 
     mesh.set_view_gp(GpNp);
 
