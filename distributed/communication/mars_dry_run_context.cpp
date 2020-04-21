@@ -93,8 +93,8 @@ struct dry_run_context_impl {
     }
     
     template<typename T>
-    void i_send_recv_view(const ViewVectorType<T> &dest, const T* dest_displ,
-                const ViewVectorType<T> &src, const T* src_displ, 
+    void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ,
+                const ViewVectorType<T> &src, const Integer* src_displ,
                 const Integer proc_count) const
     {
     }
