@@ -52,6 +52,28 @@ constexpr T Min (const T& a,const T& b)
   return a < b ? a : b;
 }
 
+template<typename T,typename...Ts>
+constexpr T Min(const T& t,const Ts&...ts)
+{
+  return Min(t,Min(ts...));
+}
+
+
+template<Integer M,typename T,typename...Ts>
+std::enable_if_t<M==-1, T>
+MinOrMax(const T& t,const Ts&...ts)
+{
+  return Min(t,ts...);
+}
+
+template<Integer M,typename T,typename...Ts>
+std::enable_if_t<M==1, T>
+MinOrMax(const T& t,const Ts&...ts)
+{
+  return Max(t,ts...);
+}
+
+
 template<typename T,typename S>
 constexpr bool Equal (const T& a,const S& b) 
 {

@@ -696,6 +696,27 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
      }
     }
 
+    template<typename SystemMat, typename Rhs>
+    void apply_zero_bc_for_null_diagonal_element(SystemMat& A, Rhs& b, const std::vector<Integer>& w)const
+    {
+
+     Real toll=1e-10;
+     Real big=1.0/toll;
+     Real tmp;
+
+     for(Integer i=0;i<b.size();++i)
+     {  
+
+      tmp=0.0;
+
+
+        if(w[i]==0)
+        {
+           A.equal(big,i,i);
+           b[i]=0.0;
+        }
+     }
+    }
 
     template<typename SystemMat>
     void apply_zero_bc_for_null_diagonal_element(SystemMat& A)const
