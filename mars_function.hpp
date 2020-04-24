@@ -341,6 +341,11 @@ template<Integer N,typename FullSpace>
 auto MakeGapFunction(const std::shared_ptr<FullSpace>& AuxW_ptr)
 {return Function<FullSpace,N+FullSpace::TrialSpaceSize,TraceOperator,GapFunction>(AuxW_ptr);}
 
+template<Integer N,typename GapFunc,typename FullSpace>
+auto MakeGapFunction(const std::shared_ptr<FullSpace>& AuxW_ptr)
+{return Function<FullSpace,N+FullSpace::TrialSpaceSize,TraceOperator,GapFunc>(AuxW_ptr);}
+
+
 template<Integer N,typename FullSpace>
 auto MakeTraceFunction(const std::shared_ptr<FullSpace>& AuxW_ptr)
 {return Function<FullSpace,N+FullSpace::TrialSpaceSize,TraceOperator,EmptyClass>(AuxW_ptr);}
@@ -349,15 +354,30 @@ auto MakeTraceFunction(const std::shared_ptr<FullSpace>& AuxW_ptr)
 
 
 // template<Integer Dim>
-class FunctionOne
+// class FunctionOne
+// {
+//     public: 
+//     // using Point=Matrix<Real,Dim,1>;
+//     using type=Matrix<Real,1,1>;
+//     template<typename Point,typename FiniteElem>
+//     static type eval(const Point& p,FiniteElem& FE)
+//     {
+//      return 1.0; 
+//     }
+// };
+
+template<Integer Dim=1>
+class FunctionOne//<Dim>
 {
     public: 
-    // using Point=Matrix<Real,Dim,1>;
-    using type=Matrix<Real,1,1>;
-    template<typename Point,typename FiniteElem>
-    static type eval(const Point& p,FiniteElem& FE)
+    using type=Matrix<Real,Dim,1>;
+    template<typename Point,typename Elem>
+    static type eval(const Point& p, FiniteElem<Elem>& FE)
     {
-     return 1.0; 
+     Matrix<Real,Dim,1> func;
+     for(Integer i=0;i<Dim;i++)
+        func(i,0)=1.;
+     return func; 
     }
 };
 
@@ -431,19 +451,24 @@ class FunctionNthComponent
 
 
 
-template<Integer Dim>
+
+template<Integer Dim,Integer Dim2=1>
 class FunctionLinear
 {
     public: 
     // using Point=Matrix<Real,Dim,1>;
-    using type=Matrix<Real,1,1>;
+    using type=Matrix<Real,Dim2,1>;
     template<typename Point,typename FiniteElem>
     static type eval(const Point& p,FiniteElem& FE)
     {
-      Real tmp;
-      tmp=p[0];
-      for(Integer i=1;i<Dim;i++)
-        tmp+=p[i];
+      type tmp;
+
+      for(Integer i=0;i<Dim2;i++)
+      tmp(i,0)=p[0];
+
+      for(Integer i=0;i<Dim2;i++)
+      for(Integer j=1;j<Dim;j++)
+        tmp(i,0)+=p[j];
      return tmp; 
     }
 };
