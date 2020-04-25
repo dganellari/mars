@@ -35,7 +35,7 @@ class Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_>>,OtherTemplateAr
  //  template<typename...Forms, typename FiniteElem, typename...Inputs>
  // constexpr void apply(value_type& value,const FiniteElem& J, const ShapeFunctions2<Forms...>& shape_functions)
  template<typename...Args, typename FiniteElem,typename...Inputs>
- constexpr void apply(value_type& value,const FiniteElem& J, const std::tuple<Args...>& shape_functions,const Inputs&...inputs)
+ constexpr void apply(value_type& value, FiniteElem& J, const std::tuple<Args...>& shape_functions,const Inputs&...inputs)
 
  {
   using TupleOfTupleShapeFunction=std::tuple<Args...>;
@@ -87,7 +87,7 @@ class Evaluation<Expression<TestOrTrial<MixedSpace,N,CompositeOperator<Expressio
  //  template<typename ValueType,typename...Forms, typename FiniteElem, typename...Inputs>
  // constexpr void apply(ValueType& value,const FiniteElem& J, const ShapeFunctions2<Forms...>& shape_functions)
   template<typename ValueType, typename FiniteElem, typename...Args1,typename...Args2,typename...Args3>
- constexpr void apply(ValueType& value,const FiniteElem& J, const std::tuple<Args1...>& tuple_shape_functions,const std::tuple<Args2...>&tuple_tensor,const std::tuple<Args3...>&tuple_composite_shapes)
+ constexpr void apply(ValueType& value, FiniteElem& J, const std::tuple<Args1...>& tuple_shape_functions,const std::tuple<Args2...>&tuple_tensor,const std::tuple<Args3...>&tuple_composite_shapes)
 
  {
  using single_type=Evaluation<Expression<typename FormOfCompositeOperatorType<type>::type >,OtherTemplateArguments...>;

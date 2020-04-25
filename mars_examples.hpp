@@ -15056,7 +15056,7 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 		auto f1 = MakeFunction<0,FunctionZero<ManifoldDim>>(W_ptr);
 		auto node_normal = MakeTraceFunction<0>(W_ptr);
 		auto gap = MakeGapFunction<1>(W_ptr);//MakeFunction<2,GapFunction>(W_ptr);
-		auto zero = MakeZeroFunction<1>(W_ptr);
+		auto zero = MakeZeroTraceFunction<1>(W_ptr);
 
 
 		constexpr Real mu=1.0;
@@ -15731,7 +15731,7 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 		auto f1 = MakeFunction<0,FunctionZero<ManifoldDim>>(W_ptr);
 		auto node_normal = MakeTraceFunction<0>(W_ptr);
 		auto gap = MakeGapFunction<1>(W_ptr);//MakeFunction<2,GapFunction>(W_ptr);
-		auto zero = MakeZeroFunction<1>(W_ptr);
+		auto zero = MakeZeroTraceFunction<1>(W_ptr);
 
 
 		constexpr Real mu=1.0;
@@ -16133,9 +16133,9 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 		// auto f1 = MakeFunction<0,ExactLinearElasticity<ManifoldDim>>(W_ptr);
 		auto f1 = MakeFunction<0,FunctionZero<ManifoldDim>>(W_ptr);
 		auto node_normal = MakeTraceFunction<0>(W_ptr);
-		auto f_neumann = MakeZeroFunction<0>(W_ptr);
+		auto f_neumann = MakeZeroTraceFunction<0>(W_ptr);
 		auto gap = MakeGapFunction<1>(W_ptr);
-		auto zero = MakeZeroFunction<1>(W_ptr);
+		auto zero = MakeZeroTraceFunction<1>(W_ptr);
 		auto gap_sup =  MakeGapFunction<1,InfiniteFunction>(W_ptr);
 
 
@@ -16711,10 +16711,10 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 		auto f1 = MakeFunction<1,FunctionLinear<2>>(W_ptr);
 		// auto f1 = MakeFunction<0,FunctionZero<1>>(W_ptr);
 		auto node_normal = MakeTraceFunction<0>(W_ptr);
-		auto f_neumann = MakeZeroFunction<0>(W_ptr);
+		auto f_neumann = MakeZeroTraceFunction<0>(W_ptr);
 		auto gap = MakeGapFunction<1>(W_ptr);
 		auto gap_inf = MakeGapFunction<1,GapInf>(W_ptr);
-		auto zero = MakeZeroFunction<1>(W_ptr);
+		auto zero = MakeZeroTraceFunction<1>(W_ptr);
 
 
 		constexpr Real mu=1.0;
@@ -17349,10 +17349,10 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 		auto f1 = MakeFunction<0,FunctionLinear<ManifoldDim,ManifoldDim>>(W_ptr);
 		// auto f1 = MakeFunction<0,FunctionZero<1>>(W_ptr);
 		auto node_normal = MakeTraceFunction<0>(W_ptr);
-		auto f_neumann = MakeZeroFunction<0>(W_ptr);
+		auto f_neumann = MakeZeroTraceFunction<0>(W_ptr);
 		auto gap = MakeGapFunction<1>(W_ptr);
 		auto gap_inf = MakeGapFunction<1,GapInf>(W_ptr);
-		auto zero = MakeZeroFunction<1>(W_ptr);
+		auto zero = MakeZeroTraceFunction<1>(W_ptr);
 
 
 		constexpr Real mu=1.0;
@@ -17573,6 +17573,306 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 
 
 
+
+	template<Integer ManifoldDim,Integer Order>
+	void DUALContactLinearElasticity5(const Integer n, const Integer level, const Integer n_levels,const Integer refinement_jump)
+	{
+		constexpr Integer Dim=ManifoldDim;
+		using MeshT=Mesh<Dim, ManifoldDim>;
+		using Elem=typename MeshT::Elem;
+		MeshT mesh;
+
+			// read_freefem_mesh("../data/SquareMoreBoundaries.msh", mesh);
+			// read_freefem_mesh("square_6ref.msh", mesh);
+			
+			// assign_tags(mesh);
+
+			generate_cube(mesh,n,n,0);
+			mesh.build_dual_graph();
+			mark_boundary(mesh);
+
+
+		Bisection<MeshT> bisection(mesh);
+
+
+	    Node2ElemMap<MeshT> n2em(mesh,bisection);
+	    n2em.init();
+
+	    using AuxRT_n= FunctionSpace< MeshT, RT<Order,ManifoldDim>>;	      
+		using AuxP_1= FunctionSpace< MeshT, Lagrange<1,ManifoldDim>>;
+		using AuxDGP_1= FunctionSpace< MeshT, LagrangeDG<1,ManifoldDim>>;
+		using AuxP_1_single_component= FunctionSpace< MeshT, Lagrange<1,1>>;
+		using AuxP_0= FunctionSpace< MeshT, Lagrange<0,ManifoldDim>>;
+
+		AuxRT_n rtn(mesh,bisection,n2em);
+		AuxP_1 p1(mesh,bisection,n2em);
+		AuxDGP_1 dgp1(mesh,bisection,n2em);
+		AuxP_1_single_component p1_1(mesh,bisection,n2em);
+		AuxP_0 p0(mesh,bisection,n2em);
+
+	    auto Wtrial=MixedFunctionSpace(rtn,dgp1,p1_1);
+
+		auto Waux=AuxFunctionSpacesBuild(p1,p1_1);
+		auto W=FullSpaceBuild(Wtrial,Waux);
+
+		using W_type=decltype(W);
+		auto W_ptr=std::make_shared<W_type>(W);
+
+		for(int i=0;i<n_levels;i++)
+		{
+		bisection.tracking_begin();
+		bisection.uniform_refine(refinement_jump);
+		bisection.tracking_end();			
+		}
+
+
+		auto sigma = MakeTrial<0>(W_ptr);
+		auto tau = MakeTest<0>(W_ptr);
+		auto u = MakeTrial<1>(W_ptr);
+		auto v = MakeTest<1>(W_ptr);
+		auto theta = MakeTrial<2>(W_ptr);
+		auto rho = MakeTest<2>(W_ptr);
+
+		// auto f1 = MakeFunction<0,ExactLinearElasticity<ManifoldDim>>(W_ptr);
+		// auto f1 = MakeFunction<0,FunctionZero<ManifoldDim>>(W_ptr);
+		auto f_ext = MakeFunction<0,FunctionZero<2>>(W_ptr);
+		// auto f1 = MakeFunction<0,FunctionZero<1>>(W_ptr);
+		auto u_dirichlet=MakeTraceFunction<0,FunctionZero<ManifoldDim>>(W_ptr);
+		auto node_normal = MakeTraceFunction<0>(W_ptr);
+		auto f_neumann = MakeZeroTraceFunction<0>(W_ptr);
+		auto gap = MakeGapFunction<1>(W_ptr);
+		auto gap_inf = MakeGapFunction<1,GapInf>(W_ptr);
+		auto zero = MakeZeroTraceFunction<1>(W_ptr);
+		auto zero_func = MakeFunction<1,FunctionZero<1>>(W_ptr);
+
+		
+
+
+		constexpr Real mu=1.0;
+		constexpr Real lambda=1.0;
+
+		constexpr auto TwoMu=Constant<Scalar>(2.0*mu);
+		constexpr auto Lambda=Constant<Scalar>(lambda);
+
+
+
+		constexpr Real alpha=1.0/Real(2.0*mu);
+		constexpr Real beta=alpha*(-lambda/(Real(ManifoldDim)*lambda+ 2.0 * mu));
+
+		constexpr auto halp=Constant<Scalar>(0.5);
+
+
+
+		constexpr auto C_coeff1=Constant<Scalar>(1.0/Real(2.0*mu));
+		constexpr auto ZeroConstant=Constant<Scalar>(0.0);
+
+	    constexpr auto C_coeff2=Constant<Scalar>((1.0/Real(2.0*mu))*(-lambda/(Real(ManifoldDim)*lambda+ 2.0 * mu)));	
+	    constexpr auto identity=Constant<Identity<ManifoldDim>>();		
+	    constexpr auto asym_mat=Constant<Mat<2,2>>(0.0,1.0, 0.0,0.0);	
+	    constexpr auto fixed_normal=Constant<Mat<2,1>>(1.,0);			
+		auto C_inverse=NewOperator(C_coeff1*IdentityOperator() + C_coeff2*identity* MatTrace(IdentityOperator()) );
+	    auto Asym=NewOperator(Inner(asym_mat,(IdentityOperator()-Transpose(IdentityOperator()))));//+Transpose(GradientOperator())));
+	    // auto Asym=NewOperator((IdentityOperator()-Transpose(IdentityOperator())));//+Transpose(GradientOperator())));
+
+
+		auto normal_values=MakeNodeNormalValues(W_ptr);
+        W_ptr->update();
+		normal_values.compute_node_normals();
+		normal_values.compute_face_normals();
+        
+        Vector<Real,2> nn2{0,-1};
+        Vector<Real,3> nn3{0,0,-1};
+
+		auto& nnv=normal_values.node_normals();
+		auto& nf=normal_values.face_normals();
+
+		for(Integer i=0;i<nnv.size();i++)
+		{
+			for(Integer j=0;j<nnv[i].size();j++)
+				nnv[i][j]=nn2;
+		}
+
+		for(Integer i=0;i<nf.size();i++)
+		{
+
+			for(Integer j=0;j<nf[i].size();j++)
+				nf[i][j]=nn2;
+		}
+
+
+		Integer contact_boundary=2;
+
+		
+		std::vector<Real> x_p1;
+		normal_values.compute_dofs(x_p1);
+
+		node_normal.global_dofs_update(x_p1);
+
+		auto bilinearform=
+		+L2Inner( C_inverse(sigma),tau)
+		+L2Inner( Div(sigma),v)
+		+L2Inner( u, Div(tau))
+		+L2Inner( Asym(tau), theta)
+		+L2Inner( Asym(sigma),rho)
+		;
+
+		auto linearform=
+		+L2Inner(v,-f_ext)
+		+surface_integral(5,Trace(tau),u_dirichlet)
+		+surface_integral(contact_boundary,Inner(Trace(tau),node_normal),gap)
+		;
+		// +surface_integral(contact_boundary,Inner(Trace(sigma),node_normal),Inner(Trace(v),node_normal))+
+
+
+		auto bcs1=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,1);
+		auto bcs2=DirichletBC<0,FunctionOne<ManifoldDim>>(W_ptr,4);
+		auto bcs3=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,3);	
+
+	
+		auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3);		
+
+	    W_ptr->update();
+
+	    Integer levelL=bisection.tracker().current_iterate()-1;
+
+		SparseMatrix<Real> AL;
+		std::vector<Real> bL;
+		std::vector<Real> xL;
+		std::vector<Real> rhs;
+  		std::ofstream os;
+		auto var_names=variables_names("disp");
+
+		
+
+		context.assembly(AL,bL,levelL);
+
+		AL.print_val();
+
+		
+
+
+	 //    FullFunctionSpaceLevelsInterpolation<W_type> levels_interp(W_ptr);
+        
+  //       std::vector<Integer> levels(n_levels+1-level);
+
+  //       for(Integer i=0;i<n_levels+1-level;i++)
+  //       {
+  //       	levels[i]=i+level;
+  //       }
+
+  //       context.build_boundary_info(levels);
+
+	 //    levels_interp.init(levels);
+
+
+	    Entity2Dofs<W_type,0> entity2dofs(W_ptr);
+	 //    entity2dofs.build();
+
+	 //    auto& e2d=entity2dofs.get(levels);
+		// auto globalHH=MakeGlobalHouseHolder(W_ptr);
+
+  //       Integer new_contact_boundary=6;
+ 	// 	globalHH.compute(normal_values,new_contact_boundary);
+  //       auto& level_global_house_holder=globalHH.level_global_house_holder();
+
+  // 		std::vector<SparseMatrix<Real>> Ant_levels(levels.size());
+  // 		std::vector<SparseMatrix<Real>> truncated_Ant_levels(levels.size());
+
+  //       Ant_levels[levels.size()-1]=AL.multiply_left_transpose_and_multiply_right(level_global_house_holder[levels[levels.size()-1]]);
+  //       truncated_Ant_levels[levels.size()-1]=Ant_levels[levels.size()-1];
+
+  //       std::vector<Real> b_transformed(bL);
+  //       level_global_house_holder[levels[levels.size()-1]].multiply(b_transformed,bL);
+  //       std::vector<std::vector<bool>> working_set(levels.size(),std::vector<bool>{});           
+  //       auto& constrained_dofs_levels=context.constrained_dofs_levels();
+
+	 //   	for(Integer i=0;i<working_set.size();i++)
+	 //   	{
+	 //   		working_set[i].resize(constrained_dofs_levels[i].size(),false);
+	 //   	}
+
+
+	 //   	for(Integer i=0;i< working_set[working_set.size()-1].size();i++)
+	 //   	{
+	 //   		working_set[working_set.size()-1][i]=constrained_dofs_levels[working_set.size()-1][i];
+
+	 //   	}
+        
+  //       for(Integer i=levels.size()-2;i>=0;i--)
+  //       { 
+  //       	auto& P=levels_interp.matrix(i);
+  //           auto tmp_P=P.multiply(level_global_house_holder[levels[i]]);
+  //           levels_interp.matrix(i)=level_global_house_holder[levels[i+1]].multiply(tmp_P);
+  //       }
+
+  //       for(Integer i=levels.size()-2;i>=(Integer(levels.size())-3)&& i>=0;i--)
+  //       { 
+  //           Ant_levels[i]=Ant_levels[i+1].multiply_left_transpose_and_multiply_right(levels_interp.matrix(i));
+  //           truncated_Ant_levels[i]=Ant_levels[i+1].multiply_left_transpose_and_multiply_right(levels_interp.matrix(i),working_set[i+1]);
+  //       }
+         
+  //       for(Integer i=levels.size()-3;i>=0;i--)
+  //       { 
+  //           Ant_levels[i]=Ant_levels[i+1].multiply_left_transpose_and_multiply_right(levels_interp.matrix(i));
+  //           truncated_Ant_levels[i]=truncated_Ant_levels[i+1].multiply_left_transpose_and_multiply_right(levels_interp.matrix(i));
+  //       }
+
+
+  //       for(Integer i=levels.size()-2;i>=0;i--)
+  //       { 
+  //              context.apply_zero_bc_for_null_diagonal_element(truncated_Ant_levels[i]);
+  //       }
+
+  //       std::vector<Real> bnotruncation(b_transformed);
+  //       context.apply_bc(truncated_Ant_levels[levels.size()-1],b_transformed);
+  //       std::vector<bool> working_set_old(working_set[working_set.size()-1].size(),false);
+
+  //       std::vector<Real> active_x(Ant_levels[levels.size()-1].max_rows(),0);
+  //       auto contact_constraints=ProjectContactConstraints(W_ptr);
+
+		// std::string output_residual ="../residuals/Residual_DualMonotone"+ std::to_string(ManifoldDim) +
+		// "_N_C_F="+ std::to_string(refinement_jump)+"_"+ std::to_string(level)+"_"+ std::to_string(n_levels)+".txt";		
+		// os.close();
+		// os.open(output_residual.c_str());
+
+		// std::ofstream os2;
+		// std::string output_active_set ="../residuals/ActiveSet_DualMonotone_dim"+ std::to_string(ManifoldDim) +"_order"+ std::to_string(Order)+
+		// "_N_C_F="+ std::to_string(refinement_jump)+"_"+ std::to_string(level)+"_"+ std::to_string(n_levels)+".txt";		
+		// os2.close();
+		// os2.open(output_active_set.c_str());
+
+		// auto constraints_sup=MakeConstraints(W_ptr);
+		// auto constraints_inf=MakeConstraints(W_ptr);
+
+		// constraints_inf.set_minus_infty_constraints();
+		// constraints_sup.set_plus_infty_constraints();
+
+		// compute_constraint(constraints_inf,context,gap_inf, contact_boundary);
+		// compute_constraint(constraints_sup,context,gap,contact_boundary);
+
+		// // compute_constraint(constraints_inf,context,gap_inf, contact_boundary,1);
+		// // compute_constraint(constraints_sup,context,gap,contact_boundary,1);
+
+		// patch_multigrid_active_set(os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,constraints_inf(),constraints_sup(),contact_constraints,levels,working_set,levels_interp,e2d,5,5,levels.size()-1,15,0.000000001);
+  //       os2.close();
+
+
+  //       std::vector<Real> active_solution(Ant_levels[levels.size()-1].max_rows(),0);
+  //       level_global_house_holder[levels[levels.size()-1]].transpose_and_multiply(active_solution,active_x);
+
+		// std::string output_fileACTIVESET ="DualMonotone_dim"+ std::to_string(ManifoldDim) +"_order"+ std::to_string(Order)+
+		// +"_output.vtk";
+
+
+
+		// std::cout<<"constraints "<<std::endl;
+		// for(Integer i=0;i<constraints_sup().size();i++)
+		// 	std::cout<<constraints_sup()[i]<<" "<<constraints_inf()[i]<<std::endl;
+
+		// os.close();
+		// os.open(output_fileACTIVESET.c_str());
+		// write_wtk_isoparametric(os,W_ptr,active_solution,var_names,levelL);
+		}
 
 
 
@@ -18043,7 +18343,7 @@ template<Integer ManifoldDim, Integer Dim1, Integer Dim2>
 		auto f1 = MakeFunction<0,FunctionZero<ManifoldDim>>(W_ptr);
 		auto node_normal = MakeTraceFunction<0>(W_ptr);
 		auto gap = MakeGapFunction<1>(W_ptr);//MakeFunction<2,GapFunction>(W_ptr);
-		auto zero = MakeZeroFunction<1>(W_ptr);
+		auto zero = MakeZeroTraceFunction<1>(W_ptr);
 
 
 		constexpr Real mu=1.0;

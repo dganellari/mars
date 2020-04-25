@@ -350,6 +350,11 @@ template<Integer N,typename FullSpace>
 auto MakeTraceFunction(const std::shared_ptr<FullSpace>& AuxW_ptr)
 {return Function<FullSpace,N+FullSpace::TrialSpaceSize,TraceOperator,EmptyClass>(AuxW_ptr);}
 
+template<Integer N,typename Func,typename FullSpace>
+auto MakeTraceFunction(const std::shared_ptr<FullSpace>& AuxW_ptr)
+{return Function<FullSpace,N+FullSpace::TrialSpaceSize,TraceOperator,Func>(AuxW_ptr);}
+
+
 
 
 
@@ -452,6 +457,27 @@ class FunctionNthComponent
 
 
 
+// template<Integer Dim,Integer Dim2=1>
+// class FunctionLinear
+// {
+//     public: 
+//     // using Point=Matrix<Real,Dim,1>;
+//     using type=Matrix<Real,Dim2,1>;
+//     template<typename Point,typename FiniteElem>
+//     static type eval(const Point& p,FiniteElem& FE)
+//     {
+//       type tmp;
+
+//       for(Integer i=0;i<Dim2;i++)
+//       tmp(i,0)=p[0];
+
+//       for(Integer i=0;i<Dim2;i++)
+//       for(Integer j=1;j<Dim;j++)
+//         tmp(i,0)+=p[j];
+//      return tmp; 
+//     }
+// };
+
 template<Integer Dim,Integer Dim2=1>
 class FunctionLinear
 {
@@ -472,8 +498,6 @@ class FunctionLinear
      return tmp; 
     }
 };
-
-
 template<Integer Dim>
 class FunctionZero
 {
@@ -493,7 +517,7 @@ class FunctionZero
 };
 
 template<Integer N,typename FullSpace>
-auto MakeZeroFunction(const std::shared_ptr<FullSpace>& AuxW_ptr)
+auto MakeZeroTraceFunction(const std::shared_ptr<FullSpace>& AuxW_ptr)
 {return Function<FullSpace,N+FullSpace::TrialSpaceSize,TraceOperator,FunctionZero<1>>(AuxW_ptr);}
 
 
@@ -948,7 +972,7 @@ class Function<FullSpace,N,IdentityOperator,EmptyClass>
     {
       // std::cout<<"LOCAL DOFS UPDATE 1 "<<std::endl;
       auto local_map=tuple_get<N>(elemdofmap_); 
-      full_spaces_ptr_->dofsdofmap().template dofmap_get<N>(local_map,FE.elem_id());
+      full_spaces_ptr_->dofsdofmap().template dofmap_get<N>(local_map,FE.elem_id(),FE.level());
     
     const auto& global_dofs=*(aux_ptr_->vec_ptr());
 

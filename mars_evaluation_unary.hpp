@@ -26,7 +26,7 @@ class Evaluation<Expression<Unary<Expression<Derived> > >,OtherTemplateArguments
  {};
  
  template<typename...Inputs>
- void apply(outputsubtype& output,const Inputs&...inputs)
+ void apply(outputsubtype& output, Inputs&...inputs)
  {
 
   eval_.apply(derived_value_,inputs...);

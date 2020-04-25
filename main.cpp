@@ -1280,10 +1280,10 @@ Kokkos::View<Real **[3][4]> aaa("aaa",M,N);
 // LSFEM_Poisson<3,1,2>(1);
 
 // LSFEM_Poisson<2,0,1>(1);
-std::cout<<"after LSFEM_Poisson2D"<<std::endl;
+// std::cout<<"after LSFEM_Poisson2D"<<std::endl;
 // LSFEM_Poisson<3,1,2>(1);
 // LSFEM_Poisson<3,0,1>(1);
-std::cout<<"after LSFEM_Poisson"<<std::endl;
+// std::cout<<"after LSFEM_Poisson"<<std::endl;
 
 
 // LSFEM_Poisson<3,0,1>(1,0,2);
@@ -1293,7 +1293,7 @@ std::cout<<"after LSFEM_Poisson"<<std::endl;
 // LSFEM_Poisson<3,1,2>(1,1,3);
 
 
-std::cout<<"after LSFEM_Poisson2D"<<std::endl;
+// std::cout<<"after LSFEM_Poisson2D"<<std::endl;
 
 
 
@@ -1314,11 +1314,17 @@ std::cout<<"after LSFEM_Poisson2D"<<std::endl;
 // PROVALSFEM_ContactLinearElasticity2<2,0,1>(1,j,i,1);
 
 // PROVALSFEM_ContactLinearElasticity2<2,0,1>(1,5,6,1);
-// PROVALSFEM_ContactLinearElasticity3<2>(1,0,14,1);
-PROVALSFEM_ContactLinearElasticity4<2,0>(1,0,4,1);
+// PrimalContactLinearElasticity<2>(1,1,10,1);
+// PROVALSFEM_ContactLinearElasticity4<2,0>(1,0,4,1);
+// PROVALSFEM_ContactLinearElasticity4<2,0>(1,0,8,1);
+// PROVALSFEM_ContactLinearElasticity5<2,1>(1,0,1,1);
 
+// PROVALSFEM_ContactLinearElasticity5<2,1>(1,0,8,1);
+DUALContactLinearElasticity5<2,1>(1,0,0,1);
 
-// PROVALSFEM_ContactLinearElasticity2<2,0,1>(1,0,6,1);
+// find_if_simplex_is_inside_another_one<3,2,2>(1);
+
+// PROVALSFEM_ContactLinearElasticity<2,0,1>(1,1,3);
 
 
 // compute_RT1_interpolation<2,1,1>(1,0,1);
