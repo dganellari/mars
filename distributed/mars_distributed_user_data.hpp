@@ -7,13 +7,16 @@
 #ifdef WITH_KOKKOS
 #include "mars_distributed_mesh_kokkos.hpp"
 #include "mars_utils_kokkos.hpp"
+#include "tuple"
+
 namespace mars
 {
 
-template <Integer Dim, Integer ManifoldDim, Integer Type, typename T>
+template <Integer Dim, Integer ManifoldDim, Integer Type, typename T...>
 class UserData
 {
     using Mesh = mars::Mesh<Dim, ManifoldDim, DistributedImplementation, NonSimplex<Type, DistributedImplementation>>;
+    using user_tuple = std::tuple<ViewVectorType<T>... >;
 
 public:
     MARS_INLINE_FUNCTION UserData(Mesh *mesh) : mesh(mesh)
@@ -21,21 +24,34 @@ public:
         reserve_user_data();
     }
 
-    MARS_INLINE_FUNCTION UserData(Mesh *mesh, const ViewVectorType<T>& data) : 
-                mesh(mesh), user_data(data)
+    MARS_INLINE_FUNCTION UserData(Mesh *mesh, const user_tuple& data) :
+                mesh(mesh), user_data_(data)
     {
     }
 
-    MARS_INLINE_FUNCTION void reserve_user_data()
+    MARS_INLINE_FUNCTION Integer reserve_user_data(user_tuple tuple, const Integer size, String view_desc)
     {
-        user_data = ViewVectorType<T>("user_data", mesh->get_chunk_size());
+        const Integer data_size = std::tuple_size<decltype(tuple)>::value;
+        std::cout << "tpsize:" << data_size << std::endl;
+
+        for (int i = 0; i < data_size; ++i)
+        {
+            std::get<i>(tuple) = typename std::tuple_element<i, decltype(tuple)>::type(view_desc + i, size);
+        }
+
+        return data_size;
     }
 
-    MARS_INLINE_FUNCTION void reserve_ghost_user_data(const Integer size)
-    {  
-        ghost_user_data = ViewVectorType<T>("ghost_user_data", size);
-    }
+    /* MARS_INLINE_FUNCTION void reserve_ghost_user_data(const Integer size)
+    {
+        const Integer data_size = std::tuple_size<decltype(user_data)>::value;
 
+        for (int i = 0; i < data_size; ++i)
+        {
+            std::get<i>(ghost_user_data) = typename std::tuple_element<i, decltype(ghost_user_data)>::type("ghost_user_data_" + i, size);
+        }
+    }
+ */
     MARS_INLINE_FUNCTION void reserve_ghost_count(const Integer size)
     {
         send_count.assign(size, 0);
@@ -53,7 +69,7 @@ public:
         {
         }
 
-        MARS_INLINE_FUNCTION 
+        MARS_INLINE_FUNCTION
         void operator()(Integer i) const
         {
             const Integer lsfc_index = boundary_lsfc_index(i);
@@ -62,12 +78,19 @@ public:
     };
 
     MARS_INLINE_FUNCTION void
-    fill_buffer_data(ViewVectorType<T> buffer_data)
+    fill_buffer_data(const user_tuple& buffer_data)
     {
+        const Integer size = mesh->get_view_boundary().extent(0);
+
+        const Integer count = reserve_user_data(buffer_data, size, "buffer_data");
+
         ViewVectorType<Integer> boundary_lsfc_index = mesh->get_view_boundary_sfc_index();
 
-        Kokkos::parallel_for("fill_buffer_data", buffer_data.extent(0),
-                     FillBufferData(buffer_data, user_data, boundary_lsfc_index));
+        for (int i = 0; i < count; ++i)
+        {
+            Kokkos::parallel_for("fill_buffer_data", size,
+                                 FillBufferData(std::get<i>(buffer_data), std::get<i>(user_data_), boundary_lsfc_index));
+        }
     }
 
     void exchange_ghost_counts(const context &context)
@@ -81,7 +104,7 @@ public:
 
         reserve_ghost_count(size);
         scan_send_mirror = create_mirror_view(mesh->get_view_scan_boundary());
-        Kokkos::deep_copy(scan_send_mirror, mesh->get_view_scan_boundary()); 
+        Kokkos::deep_copy(scan_send_mirror, mesh->get_view_scan_boundary());
 
         proc_count = 0;
         for (int i = 0; i < size; ++i)
@@ -156,7 +179,7 @@ public:
 */
     }
 
-    void exchange_ghost_data(const context &context, const ViewVectorType<T> &buffer_data)
+    void exchange_ghost_data(const context &context)
     {
         using namespace Kokkos;
 
@@ -168,19 +191,25 @@ public:
         int size = num_ranks(context);
 
         Integer ghost_size = scan_recv_mirror(size);
-        reserve_ghost_user_data(ghost_size);
+        const Integer count = reserve_user_data(ghost_user_data_, ghost_size, "ghost_user_data");
 
-        context->distributed->i_send_recv_view(ghost_user_data, scan_recv_mirror.data(),
-                buffer_data, scan_send_mirror.data(), proc_count);
+        user_tuple buffer_data;
+        fill_buffer_data(buffer_data);
+
+        for (int i = 0; i < count; ++i)
+        {
+            context->distributed->i_send_recv_view(std::get<i>(ghost_user_data_), scan_recv_mirror.data(),
+                                                   std::get<i>(buffer_data), scan_send_mirror.data(), proc_count);
+        }
 
         parallel_for(
-                "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
+            "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
                 const Integer rank = mesh->find_owner_processor(get_view_scan_ghost(), i, 1, proc_num);
                 std::stringstream stream;
-                stream<<" ghost data: "<< i <<" - "<< get_view_ghost()(i)<< "data: "<< ghost_user_data(i)
-                        <<" proc: "<< rank << " - rank: "<< proc_num<< std::endl;
-                std::cout<<stream.str();
-                });
+                stream << " ghost data: " << i << " - " << get_view_ghost()(i) << "data: " << std::get<0>(ghost_user_data_)(i)
+                       << " proc: " << rank << " - rank: " << proc_num << std::endl;
+                std::cout << stream.str();
+            });
     }
 
     Mesh *get_mesh() const
@@ -230,8 +259,10 @@ private:
     ViewVectorType<Integer> scan_ghost_;
 
     //ghost data layer
-    ViewVectorType<T> user_data;
-    ViewVectorType<T> ghost_user_data;
+    /* ViewVectorType<T> user_data; */
+    /* ViewVectorType<T> ghost_user_data; */
+    user_tuple user_data_;
+    user_tuple ghost_user_data_;
 
     std::vector<Integer> send_count;
     //mirror view on the mesh scan boundary view used for the mpi send receive
@@ -249,12 +280,8 @@ void exchange_ghost_user_data(const context &context, UserData<Dim, ManifoldDim,
 {
     using namespace Kokkos;
 
-    const Integer size = data.get_mesh()->get_view_boundary().extent(0);
-    ViewVectorType<T> buffer_data("buffer_data", size);
-
-    data.fill_buffer_data(buffer_data);
     data.exchange_ghost_counts(context);
-    data.exchange_ghost_data(context, buffer_data);
+    data.exchange_ghost_data(context);
 }
 
 /* template <typename Functor>
