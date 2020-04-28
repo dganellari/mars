@@ -102,6 +102,9 @@ public:
     //     // std::cout<<level_cumulative_dofs_array_[i][j]<<" ";
     //     // std::cout<<std::endl;
     //   }    
+
+      // std::cout<<"dofmap_get  == "<<std::endl;
+
     for(std::size_t i=0;i<elemdm.size();i++)
         elemdm[i]=dm[i];
     }
@@ -492,6 +495,7 @@ public:
 
     // std::cout<<"DofsDofMapFullAndAux N="<<N<<std::endl;
     // std::cout<<"DofsDofMapFullAndAux dofmap_get="<<std::endl;
+    // std::cout<<"merdaaaa dofmap_get="<<std::endl;
     for(std::size_t i=0;i<elemdm.size();i++)
         {
           elemdm[i]=dm[i];
@@ -530,9 +534,10 @@ public:
   // std::cout<<"Arg2::Nsubspaces"<<std::endl;
   // std::cout<<Arg2::Nsubspaces<<std::endl;
 
-  //   std::cout<<"DofsDofMapFullAndAux N="<<N<<std::endl;
-  //   std::cout<<"DofsDofMapFullAndAux dofmap_get="<<std::endl;
-  //   std::cout<<"offset="<<offset<<std::endl;
+    // std::cout<<"DofsDofMapFullAndAux N="<<N<<std::endl;
+    // std::cout<<"DofsDofMapFullAndAux dofmap_get="<<std::endl;
+    // std::cout<<"offset="<<offset<<std::endl;
+    // std::cout<<"offset="<<dm<<std::endl;
     for(std::size_t i=0;i<elemdm.size();i++)
         elemdm[i]=dm[i]+offset;
     }
