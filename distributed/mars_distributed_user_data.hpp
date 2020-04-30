@@ -7,12 +7,12 @@
 #ifdef WITH_KOKKOS
 #include "mars_distributed_mesh_kokkos.hpp"
 #include "mars_utils_kokkos.hpp"
-#include "tuple"
+#include "mars_distributed_utils.hpp"
 
 namespace mars
 {
 
-template <Integer Dim, Integer ManifoldDim, Integer Type, typename T...>
+template <Integer Dim, Integer ManifoldDim, Integer Type, typename ...T>
 class UserData
 {
     using Mesh = mars::Mesh<Dim, ManifoldDim, DistributedImplementation, NonSimplex<Type, DistributedImplementation>>;
@@ -21,7 +21,8 @@ class UserData
 public:
     MARS_INLINE_FUNCTION UserData(Mesh *mesh) : mesh(mesh)
     {
-        reserve_user_data();
+        const Integer size = mesh->get_chunk_size();
+        reserve_user_data(user_data_, "user_data", size);
     }
 
     MARS_INLINE_FUNCTION UserData(Mesh *mesh, const user_tuple& data) :
@@ -29,17 +30,11 @@ public:
     {
     }
 
-    MARS_INLINE_FUNCTION Integer reserve_user_data(user_tuple tuple, const Integer size, String view_desc)
+    MARS_INLINE_FUNCTION void reserve_user_data(user_tuple &tuple, std::string view_desc, const Integer size)
     {
-        const Integer data_size = std::tuple_size<decltype(tuple)>::value;
-        std::cout << "tpsize:" << data_size << std::endl;
-
-        for (int i = 0; i < data_size; ++i)
-        {
-            std::get<i>(tuple) = typename std::tuple_element<i, decltype(tuple)>::type(view_desc + i, size);
-        }
-
-        return data_size;
+        /* constexpr Integer data_size = std::tuple_size<std::decay<decltype(tuple)>::type>::value; */
+        /* reserve_view_tuple(tuple, size, view_desc); */
+        apply_impl(resize_view_functor(view_desc, size), tuple);
     }
 
     /* MARS_INLINE_FUNCTION void reserve_ghost_user_data(const Integer size)
@@ -58,13 +53,14 @@ public:
         receive_count.assign(size, 0);
     }
 
+    template <typename ElementType>
     struct FillBufferData
     {
-        ViewVectorType<T> buffer_data;
-        ViewVectorType<T> user_data;
+        ElementType buffer_data;
+        ElementType user_data;
         ViewVectorType<Integer> boundary_lsfc_index;
 
-        FillBufferData(ViewVectorType<T> bf, ViewVectorType<T> ud, ViewVectorType<Integer> bd)
+        FillBufferData(ElementType bf, ElementType ud, ViewVectorType<Integer> bd)
             : buffer_data(bf), user_data(ud), boundary_lsfc_index(bd)
         {
         }
@@ -77,20 +73,32 @@ public:
         }
     };
 
+    struct fill_buffer_data_functor
+    {
+        fill_buffer_data_functor(std::string d, size_t s, ViewVectorType<Integer> b) : desc(d), size(s), boundary_lsfc_index(b) {}
+
+        template <typename ElementType>
+        void operator()(ElementType &el_1, ElementType &el_2) const
+        {
+            Kokkos::parallel_for(desc, size,
+                                 FillBufferData<ElementType>(el_1, el_2, boundary_lsfc_index));
+        }
+
+        std::string desc;
+        size_t size;
+
+        ViewVectorType<Integer> boundary_lsfc_index;
+    };
+
     MARS_INLINE_FUNCTION void
-    fill_buffer_data(const user_tuple& buffer_data)
+    fill_buffer_data(user_tuple &buffer_data)
     {
         const Integer size = mesh->get_view_boundary().extent(0);
 
-        const Integer count = reserve_user_data(buffer_data, size, "buffer_data");
+        reserve_user_data(buffer_data, "buffer_data", size);
 
         ViewVectorType<Integer> boundary_lsfc_index = mesh->get_view_boundary_sfc_index();
-
-        for (int i = 0; i < count; ++i)
-        {
-            Kokkos::parallel_for("fill_buffer_data", size,
-                                 FillBufferData(std::get<i>(buffer_data), std::get<i>(user_data_), boundary_lsfc_index));
-        }
+        apply_impl(fill_buffer_data_functor("fill_buffer_data", size, boundary_lsfc_index), buffer_data, user_data_);
     }
 
     void exchange_ghost_counts(const context &context)
@@ -179,28 +187,45 @@ public:
 */
     }
 
+    struct exchange_ghost_data_functor
+    {
+        exchange_ghost_data_functor(const context &c, ViewVectorType<Integer>::HostMirror sr,
+                                    ViewVectorType<Integer>::HostMirror ss, Integer p) : con(c), sc_rcv_mirror(sr), sc_snd_mirror(ss), proc(p) {}
+
+        template <typename ElementType>
+        void operator()(ElementType &el_1, ElementType &el_2) const
+        {
+            con->distributed->i_send_recv_view(el_1, sc_rcv_mirror.data(),
+                                               el_2, sc_snd_mirror.data(), proc);
+        }
+
+        Integer proc;
+        ViewVectorType<Integer>::HostMirror sc_rcv_mirror;
+        ViewVectorType<Integer>::HostMirror sc_snd_mirror;
+
+        const context &con;
+    };
+
     void exchange_ghost_data(const context &context)
     {
         using namespace Kokkos;
 
         Kokkos::Timer timer;
 
+        //exchange the ghost layer first since it will be used to find the address of the userdata based on the sfc code.
         exchange_ghost_layer(context);
 
         int proc_num = rank(context);
         int size = num_ranks(context);
 
         Integer ghost_size = scan_recv_mirror(size);
-        const Integer count = reserve_user_data(ghost_user_data_, ghost_size, "ghost_user_data");
+        reserve_user_data(ghost_user_data_, "ghost_user_data", ghost_size);
 
         user_tuple buffer_data;
         fill_buffer_data(buffer_data);
 
-        for (int i = 0; i < count; ++i)
-        {
-            context->distributed->i_send_recv_view(std::get<i>(ghost_user_data_), scan_recv_mirror.data(),
-                                                   std::get<i>(buffer_data), scan_send_mirror.data(), proc_count);
-        }
+        apply_impl(exchange_ghost_data_functor(context, scan_recv_mirror, scan_send_mirror, proc_count),
+                   ghost_user_data_, buffer_data);
 
         parallel_for(
             "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
@@ -289,6 +314,7 @@ inline void init_data(UserData data, Mesh mesh, Functor init_cond)
 {
     init_cond();
 } */
+
 
 } // namespace mars
 
