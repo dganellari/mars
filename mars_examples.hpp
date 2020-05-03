@@ -1185,7 +1185,13 @@ for(Integer jj=0;jj<3;jj++)
 		}
 
 
-
+  bool isnan(const std::vector<Real>& v)
+  {
+  	for(Integer i =0;i<v.size();i++)
+  		if(std::isnan(v[i]))
+  			return true;
+  	return false;
+  }
 
 
   Real l2_dot_product(const std::vector<Real>& a,const std::vector<Real>& b)
@@ -1360,6 +1366,7 @@ for(Integer jj=0;jj<3;jj++)
 
 			inline void cholesky_matrix(DenseMatrix& Chol)
 			{
+
        
                 Chol(0,0)=sqrt(get(0,0));
 
@@ -2236,8 +2243,8 @@ for(Integer jj=0;jj<3;jj++)
 
             inline void uzawa_solve(std::vector<Real>& u,std::vector<Real>& lambda,std::vector<Real>& b, std::vector<Real>& g, 
             					   DenseMatrix& B,DenseMatrix& H,
-            					   std::vector<Real>& y,
-            					   std::vector<Real>& tmp,
+            					   std::vector<Real>& tmp1,
+            					   std::vector<Real>& tmp2,
             					   std::vector<Real>& h,
             					   std::vector<Real>& d,
             					   std::vector<Real>& p,
@@ -2254,16 +2261,30 @@ for(Integer jj=0;jj<3;jj++)
 				Real beta;
 
 
-				for(Integer i=0;i<lambda.size();i++)
+				for(Integer i=0;i<B_sub_rows;i++)
 					lambda[i]=0.0;
 
-		        B.transpose_multiply_alpha_x_beta_b(tmp,lambda,b,-1,1);
+		        B.transpose_multiply_alpha_x_beta_b(tmp2,lambda,b,-1,1);
 
 		        // std::cout<<"tmp[i]" << std::endl;
 		        // for(Integer i=0;i<B_sub_cols;i++)
 		        // 	std::cout<<tmp[i] << std::endl;
 
-		        cholesky_solve(H,y,u,tmp);
+		        cholesky_solve(H,tmp1,u,tmp2);
+
+
+		  //       multiply_alpha_x_beta_b(tmp1,u,tmp2,-1,1);
+
+
+
+    //             for(Integer i=0;i<1;i++)
+    //             {
+    //             	cholesky_solve(H,tmp2,d,tmp1);
+				// for(Integer i=0;i<x_tmp.size();i++)
+				// 	u[i]+=tmp2[i];
+    //             }
+
+
 
 		        // std::cout<<"u[i]" << std::endl;
 		        // for(Integer i=0;i<B_sub_cols;i++)
@@ -2282,9 +2303,11 @@ for(Integer jj=0;jj<3;jj++)
 
 		        Integer cont=0;
 
-		        while(l2_norm(q,B_sub_rows)>0.0000001 && cont<max_iter)
+		        while(l2_norm(q,B_sub_rows)>0.00000000000001 && cont<max_iter)
 		        {
 		        	cont++;
+
+		        	q_norm=l2_dot_product(q,q,B_sub_rows);
 
 		        	B.transpose_multiply_alpha_x(p,d,1);
 
@@ -2297,7 +2320,13 @@ for(Integer jj=0;jj<3;jj++)
 
 
 
-		        	cholesky_solve(H,y,h,p);
+		        	cholesky_solve(H,tmp1,h,p);
+
+
+
+		        	// transpose_multiply_alpha_x_beta_b(q,h,p,-1,1);
+
+		        	// cholesky_solve(H,tmp1,h,q);
 
 			        // std::cout<<"h[i]" << std::endl;
 			        // for(Integer i=0;i<B_sub_cols;i++)
@@ -2305,7 +2334,7 @@ for(Integer jj=0;jj<3;jj++)
 
 
 
-		        	q_norm=l2_dot_product(q,q,B_sub_rows);
+		        	
 		        	// std::cout<<"q_norm=" <<q_norm<< std::endl;
 
 		        	alpha=q_norm/l2_dot_product(p,h,B_sub_cols);
@@ -2359,7 +2388,7 @@ for(Integer jj=0;jj<3;jj++)
 
 		        }
 
-		        std::cout<<"cont="<<cont<<std::endl;
+		        // std::cout<<"cont="<<cont<<std::endl;
 				//     cont=cont+1;
 				//     p=B'*d;
 				//     h =  H\(H'\p);
@@ -2385,106 +2414,143 @@ for(Integer jj=0;jj<3;jj++)
 			}
 
 
-            inline void uzawa_active_set(DenseMatrix& B,std::vector<Real>& x_tmp,std::vector<Real>& b, std::vector<Real>& c_inf, std::vector<Real>& c_sup, 
-            					   DenseMatrix& A_tmp,DenseMatrix& H_tmp,
-            					   std::vector<Real>& b_tmp,std::vector<Real>& mu, std::vector<Real>& lambda,
-            					   std::vector<Real>& c_tmp,
-            					   std::vector<Real>& y_tmp,
-            					   const Integer max_iter=100)
+            inline void uzawa_active_set(
+								   std::vector<Real>& u,std::vector<Real>& lambda,std::vector<Real>& b, std::vector<Real>& g, 
+            					   DenseMatrix& B,std::vector<Real>& c_inf, std::vector<Real>& c_sup, 
+            					   DenseMatrix& H,
+            					   std::vector<Real>& y,
+            					   std::vector<Real>& tmp,
+            					   std::vector<Real>& h,
+            					   std::vector<Real>& d,
+            					   std::vector<Real>& p,
+            					   std::vector<Real>& q,
+            					   std::vector<Real>& q_new,
+            					   std::vector<Integer>& lambda_inf_check,
+            					   std::vector<Integer>& lambda_sup_check,
+            					   const Integer max_iter=100  
+            					   )
             {
-			Real toll=1e-7;
-			Integer size=x_tmp.size();
+
+
+			Real toll=1e-8;
 			bool go_on=true;
-			Real proj_grad_norm=1.0;
-			Real lower_bound=-1e-10;
 			Integer cont=0;
+			Integer B_cont_row=0;
+
+
+			const auto B_sub_rows_no_constraints=B.sub_rows();
+			const auto B_sub_cols=B.sub_cols();
+			// std::cout<< "sub_rows_ =="<<sub_rows_<<std::endl;
+			// std::cout<< "B_sub_rows_no_constraints =="<<B_sub_rows_no_constraints<<std::endl;
+			// std::cout<< "B_sub_cols =="<<B_sub_cols<<std::endl;
+			// std::cout<< "H.sub_rows() =="<<H.sub_rows()<<std::endl;
+
+
+
+			cholesky_matrix(H);
 
 			for(Integer i=0;i<sub_rows_;i++)
-					lambda[i]=0;
+					lambda_sup_check[i]=0;
 			for(Integer i=0;i<sub_rows_;i++)
-					mu[i]=0;
+					lambda_inf_check[i]=0;
 
-			while(go_on)
+			while(go_on && cont<max_iter)
 			{
-			for(Integer i=0;i<sub_rows_;i++)
-				for(Integer j=0;j<sub_cols_;j++)
-					A_tmp(i,j)=get(i,j);
-			for(Integer i=0;i<sub_rows_;i++)
-					b_tmp[i]=b[i];
+
+
+				// std::cout<< "uzawa_active_set cont=="<<cont<<std::endl;
+				// std::cout<< " "<<std::endl;
+
+
+				B_cont_row=0;
 
 				for(Integer i=0;i<sub_rows_;i++)
 					{
-						if(lambda[i]>0)
+						if(lambda_sup_check[i]>0)
 						{
-							A_tmp(i,i)=1.0;
-							b_tmp[i]=c_sup[i];
-							for(Integer k=0;k<i;k++)
-								A_tmp(i,k)=0.0;							
-							for(Integer k=i+1;k<sub_cols_;k++)
-								A_tmp(i,k)=0.0;
+							for(Integer j=0;j<sub_rows_;j++)
+								B(B_sub_rows_no_constraints + B_cont_row,j)=0;
 
-							for(Integer k=0;k<i;k++)
-								{
-									b_tmp[k]-=A_tmp(k,i)*c_sup[i];
-									A_tmp(k,i)=0.0;
-								}							
-							for(Integer k=i+1;k<sub_cols_;k++)
-								{
-									b_tmp[k]-=A_tmp(k,i)*c_sup[i];
-									A_tmp(k,i)=0.0;
-								}
+							B(B_sub_rows_no_constraints + B_cont_row,i)=1.0;
+
+							g[B_sub_rows_no_constraints + B_cont_row ] = c_sup[i];
+
+							B_cont_row++;
 						}
-						else if(mu[i]>0)
+						else if(lambda_inf_check[i]>0)
 						{
-							A_tmp(i,i)=1.0;
-							b_tmp[i]=c_inf[i];
-							for(Integer k=0;k<i;k++)
-								A_tmp(i,k)=0.0;							
-							for(Integer k=i+1;k<sub_cols_;k++)
-								A_tmp(i,k)=0.0;
+							for(Integer j=0;j<sub_rows_;j++)
+								B(B_sub_rows_no_constraints + B_cont_row,j)=0;
 
-							for(Integer k=0;k<i;k++)
-								{
-									b_tmp[k]-=A_tmp(k,i)*b_tmp[i];
-									A_tmp(k,i)=0.0;
-								}							
-							for(Integer k=i+1;k<sub_cols_;k++)
-								{
-									b_tmp[k]-=A_tmp(k,i)*b_tmp[i];
-									A_tmp(k,i)=0.0;
-								}
+							B(B_sub_rows_no_constraints + B_cont_row,i)=1.0;
+
+							g[B_sub_rows_no_constraints + B_cont_row ] = c_inf[i];
+
+							B_cont_row++;
 						}
-
 					}
 
-			    A_tmp.cholesky_matrix(H_tmp);
 
-			    A_tmp.cholesky_solve(H_tmp,y_tmp,x_tmp,b_tmp);
 
-                for(Integer i=0;i<1;i++)
-                {
-                	A_tmp.residual(x_tmp,b_tmp);
-                	A_tmp.cholesky_solve(H_tmp,y_tmp,c_tmp,A_tmp.residual());
-				for(Integer i=0;i<x_tmp.size();i++)
-					x_tmp[i]+=c_tmp[i];
-                }
-				residual(x_tmp,b);
+				B.sub_rows()=B_sub_rows_no_constraints+B_cont_row;
+
+			    uzawa_solve(u,lambda,b,g,B,H,y,tmp,h,d,p,q,q_new);
+
+			    // std::cout<<"B.sub_rows()"<<std::endl;
+			    // B.print_val();
+			    // std::cout<<"g[i]"<<std::endl;
+			    // for(Integer i=0;i<B.sub_rows();i++)
+			    // 	std::cout<<g[i]<<std::endl;
+
+
+
+   //              for(Integer i=0;i<1;i++)
+   //              {
+   //              	A_tmp.residual(x_tmp,b_tmp);
+   //              	A_tmp.cholesky_solve(H_tmp,y_tmp,c_tmp,A_tmp.residual());
+			// 	for(Integer i=0;i<x_tmp.size();i++)
+			// 		x_tmp[i]+=c_tmp[i];
+   //              }
+			// 	
+
+			    
+			    B.sub_rows()=B_sub_rows_no_constraints;
+
+			    B.transpose_multiply_alpha_x_beta_b(tmp,lambda,b,-1,1);
+
+			    // std::cout<<"b[i]"<<std::endl;
+			    // for(Integer i=0;i<b.size();i++)
+			    // 	std::cout<<b[i]<<std::endl;
+
+			    // std::cout<<"lambda[i]"<<std::endl;
+			    // for(Integer i=0;i<B_sub_cols;i++)
+			    // 	std::cout<<lambda[i]<<std::endl;
+
+			    // std::cout<<"tmp[i]"<<std::endl;
+			    // for(Integer i=0;i<B_sub_cols;i++)
+			    // 	std::cout<<tmp[i]<<std::endl;
+
+
+			    residual(u,tmp);
 			
 				go_on=false;
 
 				for(Integer i=0;i<sub_rows_;i++)
 				{
 						
-					if(lambda[i]>0 && residual_[i]<0)
+					if(lambda_sup_check[i]>0 && residual_[i]<0)
 						{
-							lambda[i]=0;
+							
+							// std::cout<<u[i] <<"=u["<<i<<"],   "<<"lambda_sup_check["<<i<<"]="<<lambda_sup_check[i]<<",  residual_["<<i<<"]= "<<residual_[i]<<std::endl;
+							lambda_sup_check[i]=0;
 							go_on=true;
 						}
 
-					// if(mu[i]>0 && residual_[i]<0)
-					if(mu[i]>0 && residual_[i]>0)	
+					if(lambda_inf_check[i]>0 && residual_[i]>0)	
 						{
-							mu[i]=0;
+							
+							// std::cout<<u[i] <<"=u["<<i<<"],   "<<"lambda_inf_check["<<i<<"]="<<lambda_inf_check[i]<<",  residual_["<<i<<"]= "<<residual_[i]<<std::endl;
+							lambda_inf_check[i]=0;
 							go_on=true;
 						}
 
@@ -2492,23 +2558,20 @@ for(Integer jj=0;jj<3;jj++)
 
 				for(Integer i=0;i<sub_rows_;i++)
 				{
-					if(c_sup[i]<=x_tmp[i] )
+					if(c_sup[i]<=u[i]-toll )
 						{
 							go_on=true;
-							lambda[i]=1;
+							lambda_sup_check[i]=1;
+							// std::cout<<"c_sup["<<i<<"]="<< c_sup[i]<<"<="<<u[i] <<"=u["<<i<<"]"<<std::endl;
 						}
 
-					if(c_inf[i]>=x_tmp[i] )
+					if(c_inf[i]>=u[i]+toll )
 						{
 							go_on=true;
-							mu[i]=1;
+							lambda_inf_check[i]=1;
+							// std::cout<<"c_inf["<<i<<"]="<< c_inf[i]<<">="<<u[i] <<"=u["<<i<<"]"<<std::endl;
 						}						
-
-
 				}
-
-				if(proj_grad_norm<toll || cont>max_iter)
-					go_on=false;
 
 				cont++;
 
@@ -2757,6 +2820,16 @@ for(Integer jj=0;jj<3;jj++)
 			}
 
 
+			// in local multiply we trust the fact the result vector has already been properly resized
+			void local_multiply(std::vector<T>& result,const std::vector<T>& b,const std::vector<Integer>& index)const
+			{
+				for(Integer i=0;i<index.size();i++)
+				{
+					result[i]=multiply(index[i],b);
+				}
+			}
+
+
 			auto multiply(const Integer i,const std::vector<T>& b)const
 			{
 				T tmp=0;
@@ -2798,6 +2871,9 @@ for(Integer jj=0;jj<3;jj++)
 				}
 			}
 
+
+
+
 			void multiply(std::vector<T>& result,const std::vector<T>& b,const std::vector<Integer>& index)const
 			{
 				// std::cout<< " multiply result=A*b"<<std::endl;
@@ -2807,6 +2883,25 @@ for(Integer jj=0;jj<3;jj++)
 				{
 					result[i]=multiply(index[i],b);
 				}
+			}
+
+			void multiply(std::vector<T>& result,const std::vector<T>& b,const std::vector<Integer>& index1,const std::vector<Integer>& index2)const
+			{
+				// std::cout<< " multiply result=A*b"<<std::endl;
+				// if(result.size()==0)
+				Integer size1=index1.size();
+				Integer size2=index2.size();
+
+				result.resize(size1+size2);
+				for(Integer i=0;i<size1;i++)
+				{
+					result[i]=multiply(index1[i],b);
+				}
+				for(Integer i=0;i<size2;i++)
+				{
+					result[size1+i]=multiply(index2[i],b);
+				}
+
 			}
 
 			Real left_and_right_multiply(std::vector<T>& result,const std::vector<T>& x)const
@@ -4201,7 +4296,157 @@ void patch_uzawa_active_set_gauss_seidel_aux( std::vector<Real>& local_b,std::ve
 
 
 
+template<typename Mat,typename Vec,typename VecVec>//, typename VecBool>
+void uzawa_patch_active_set_gauss_seidel_aux(
+									   const Integer& i,
+ 									   Vec& x, const Mat& A, const Vec& b,
+					 				   const Vec& c_inf,
+					 				   const Vec& c_sup,
+					                   const VecVec& A_entity2dofs,
+					                   const VecVec& B_entity2dofs,
+									   std::vector<Real>& u_local,std::vector<Real>& lambda_local,std::vector<Real>& b_local, std::vector<Real>& g_local, 
+	            					   DenseMatrix<Real>& A_local,
+	            					   DenseMatrix<Real>& B_local,
+	            					   std::vector<Real>& c_inf_local,std::vector<Real>& c_sup_local,
+	            					   DenseMatrix<Real>& H_local,
+	            					   std::vector<Real>& y,
+	            					   std::vector<Real>& tmp,
+	            					   std::vector<Real>& h,
+	            					   std::vector<Real>& d,
+	            					   std::vector<Real>& p,
+	            					   std::vector<Real>& q,
+	            					   std::vector<Real>& q_new,
+	            					   std::vector<Integer>& lambda_inf_check,
+	            					   std::vector<Integer>& lambda_sup_check
+	            					  
+            					   )
+{
 
+
+
+						auto& A_e2d=A_entity2dofs[i];
+						auto& B_e2d=B_entity2dofs[i];
+						auto& AB_e2d=B_entity2dofs[i];
+						Integer A_e2d_size=A_e2d.size();
+						Integer B_e2d_size=B_e2d.size();
+
+						if(A_e2d_size)
+						{						
+						// std::cout<<"A_e2d_size="<<A_e2d_size<<std::endl;
+						// std::cout<<"B_e2d_size="<<B_e2d_size<<std::endl;
+
+						A_local.sub_rows()=A_e2d_size;
+						A_local.sub_cols()=A_e2d_size;
+
+						// std::cout<<"H_local="<<std::endl;
+
+						H_local.sub_rows()=A_e2d_size;
+						H_local.sub_cols()=A_e2d_size;
+
+						// std::cout<<"B_local="<<std::endl;
+
+						B_local.sub_rows()=B_e2d_size;
+						B_local.sub_cols()=A_e2d_size;
+
+
+						// std::cout<<"get_dense_matrix A="<<std::endl;
+
+
+						A.get_dense_matrix(A_local,A_e2d,A_e2d);
+
+						// std::cout<<"get_dense_matrix B="<<std::endl;
+
+						A.get_dense_matrix(B_local,B_e2d,A_e2d);
+
+						// std::cout<<"u_local="<<std::endl;
+
+						subvector(u_local,x,A_e2d);
+
+						// std::cout<<"lambda_local="<<std::endl;
+
+						subvector(lambda_local,x,B_e2d);
+
+						// std::cout<<"c_inf_local="<<std::endl;
+
+						subvector_of_diff(c_inf_local,c_inf,x,A_e2d);
+
+						// std::cout<<"c_sup_local="<<std::endl;
+
+
+						subvector_of_diff(c_sup_local,c_sup,x,A_e2d);
+
+						// std::cout<<"b_local="<<std::endl;
+
+
+						A.local_multiply(b_local,x,A_e2d);
+
+						// std::cout<<"g_local="<<std::endl;
+
+
+						A.local_multiply(g_local,x,B_e2d);
+
+
+						for(Integer j=0;j<A_e2d_size;j++)
+							b_local[j]=b[A_e2d[j]] - b_local[j];
+
+						for(Integer j=0;j<B_e2d_size;j++)
+							g_local[j]=b[B_e2d[j]] - g_local[j];
+
+
+
+						// local_mat.active_set(local_correction,local_rhs,local_c_inf,local_c_sup,
+						// 					 A_tmp,H_tmp,b_tmp,mu_tmp,lambda_tmp,y_tmp,c_tmp,100);
+
+
+						// std::cout<<"A_local.sub_rows()="<<A_local.sub_rows()<<std::endl;
+						// std::cout<<"A_local.sub_cols()="<<A_local.sub_cols()<<std::endl;
+						// std::cout<<"H_local.sub_rows()="<<H_local.sub_rows()<<std::endl;
+						// std::cout<<"H_local.sub_cols()="<<H_local.sub_cols()<<std::endl;
+						// std::cout<<"B_local.sub_rows()="<<B_local.sub_rows()<<std::endl;
+						// std::cout<<"B_local.sub_cols()="<<B_local.sub_cols()<<std::endl;
+
+						// std::cout<<"uzawa_active_set="<<std::endl;
+						// std::cout<<"u_local.size()="<<u_local.size()<<std::endl;
+						// std::cout<<"lambda_local.size()="<<lambda_local.size()<<std::endl;
+						// std::cout<<"g_local.size()="<<g_local.size()<<std::endl;
+						// std::cout<<"c_inf_local.size()="<<c_inf_local.size()<<std::endl;
+						// std::cout<<"c_sup_local.size()="<<c_sup_local.size()<<std::endl;
+						// std::cout<<"y.size()="<<y.size()<<std::endl;
+						// std::cout<<"tmp.size()="<<tmp.size()<<std::endl;
+						// std::cout<<"h.size()="<<h.size()<<std::endl;
+						// std::cout<<"d.size()="<<d.size()<<std::endl;
+						// std::cout<<"p.size()="<<p.size()<<std::endl;
+						// std::cout<<"q.size()="<<q.size()<<std::endl;
+						// std::cout<<"q_new.size()="<<q_new.size()<<std::endl;
+						// std::cout<<"lambda_inf_check.size()="<<lambda_inf_check.size()<<std::endl;
+						// std::cout<<"lambda_sup_check.size()="<<lambda_sup_check.size()<<std::endl;
+
+						// A_local.print_val();
+						// A_local.cholesky_matrix(H_local);
+
+
+
+
+
+						A_local.uzawa_active_set(u_local,lambda_local,b_local,g_local,B_local,
+												 c_inf_local,c_sup_local, 
+            					  		 		 H_local,y,tmp,h,d,p,q,q_new,
+            					  		 		 lambda_inf_check,lambda_sup_check,100);
+
+
+						// std::cout<<"x[A_e2d[j]]="<<std::endl;
+
+
+						for(Integer j=0;j<A_e2d_size;j++)
+							x[A_e2d[j]]+=u_local[j];
+
+						// std::cout<<"x[B_e2d[j]]="<<std::endl;
+
+						for(Integer j=0;j<B_e2d_size;j++)
+							x[B_e2d[j]]+=lambda_local[j];
+
+					    }
+}
 
 template<typename Mat,typename Vec,typename VecVec>//, typename VecBool>
 void patch_active_set_gauss_seidel_aux( std::vector<Real>& local_b,std::vector<Real>& local_c_inf,std::vector<Real>& local_c_sup,
@@ -4597,6 +4842,57 @@ Real patch_active_set_gauss_seidel_compute_energy_aux( std::vector<Real>& local_
 
 			}
 
+
+
+
+
+	template<typename Mat,typename Vec,typename VecVec>//, typename VecBool>
+			void uzawa_patch_active_set_gauss_seidel(Vec& x, const Mat& A, const Vec& b,
+							 				       const Vec& c_inf,
+							 				       const Vec& c_sup,
+							        	           const VecVec& A_entity2dofs,
+							       	               const VecVec& B_entity2dofs,
+												   std::vector<Real>& u_local,std::vector<Real>& lambda_local,std::vector<Real>& b_local, std::vector<Real>& g_local, 
+				            					   DenseMatrix<Real>& A_local,
+				            					   DenseMatrix<Real>& B_local,
+				            					   std::vector<Real>& c_inf_local,std::vector<Real>& c_sup_local,
+				            					   DenseMatrix<Real>& H_local,
+				            					   std::vector<Real>& y,
+				            					   std::vector<Real>& tmp,
+				            					   std::vector<Real>& h,
+				            					   std::vector<Real>& d,
+				            					   std::vector<Real>& p,
+				            					   std::vector<Real>& q,
+				            					   std::vector<Real>& q_new,
+				            					   std::vector<Integer>& lambda_inf_check,
+				            					   std::vector<Integer>& lambda_sup_check,
+				            					   const Integer max_iter=100,
+				            					   const Real toll=1e-10)
+
+
+			{
+                const int n=b.size();
+                std::vector<Real> local_b(n);
+                std::vector<Real> local_c_inf(n);
+                std::vector<Real> local_c_sup(n);
+                std::vector<Real> local_correction(n);
+                std::vector<Real> local_rhs(n);
+                Integer e2d_size;
+                // std::cout << "patch_active_set_gauss_seidel inf sup "<< std::endl;
+				for(std::size_t it=0;it<max_iter;it++)
+				{
+					for(Integer i=0;i<A_entity2dofs.size();i++)
+					{
+						// std::cout << "it,i == "<<it<<","<< i<<std::endl;
+						uzawa_patch_active_set_gauss_seidel_aux(
+						i,x,A,b,c_inf,c_sup,
+						A_entity2dofs,B_entity2dofs,
+						u_local,lambda_local,b_local,g_local,
+						A_local,B_local,c_inf_local,c_sup_local,
+						H_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check);
+					}
+				}
+			}
 
 
 
@@ -5171,6 +5467,7 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
         {
 
         	std::cout<< "single_shape_function_components_number==1 && NComponents==Dim"<<std::endl;
+        	std::cout<<names[N]<<std::endl;
 			os << "VECTORS ";
 			os << names[N];
 			os << " float";
@@ -5193,6 +5490,7 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 				FE.init(i,level);
 				dofsdofmap.template dofmap_get<N>(localdofmap,i,level);
 				subarray(local_sol, sol, localdofmap);
+				
  				
                 for(Integer comp=0;comp<NComponents;comp++)
                 {
@@ -5239,7 +5537,8 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
     }
     else
     {
-
+    	std::cout<< "!(single_shape_function_components_number==1 && NComponents==Dim)"<<std::endl;
+    	std::cout<<names[N]<<std::endl;
 		for(Integer comp=0;comp<NComponents;comp++)
 		{
 			if(single_shape_function_components_number==1)
@@ -5282,6 +5581,8 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 				// if(!elem_belongs_to_level(mesh_ptr,i,level,tracker))continue;
 				if(!elem_belongs_to_level(mesh,i,level,tracker))continue;
 				// std::cout<<"i=="<<i<<" n_elements=="<<n_elements<<std::endl;
+
+				// std::cout<< "i=="<<i<<"/"<<n_elements<<std::endl;
                 
 
 				FE.init(i,level);
@@ -5323,6 +5624,8 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 			// vector value finite elements (Raviart-Thomas)
 					if(single_shape_function_components_number>1)
 					{
+					    	// std::cout<< "single_shape_function_components_number>1"<<std::endl;
+					    	// std::cout<<names[N]<<std::endl;						
 			// std::cout<<"ci entro"<<std::endl;
 
 							for(Integer j=0;j<Npoints;j++)
@@ -5393,6 +5696,8 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 				    }
 
 				          // os << "\n"; 
+
+				    // std::cout<< "after i=="<<i<<"/"<<n_elements<<std::endl;
 				}
 				}
 
@@ -5413,7 +5718,8 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	print_solutions_aux(std::ostream &os,FiniteElem& FE, const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names,const Integer level=-1)
 	{
 		using Space=GetType<TupleOfSpaces,N>;
-		// std::cout<<"N="<<N <<std::endl;
+		std::cout<<"N="<<N <<std::endl;
+		std::cout<<names[N]<<std::endl;	
 
 		print_solutions_aux_aux<N,Nmax,Space,ElementOrder>(os,FE,space,sol,names,level);
 		print_solutions_aux<N+1,Nmax,TupleOfSpaces,ElementOrder>(os,FE,space,sol,names,level);
@@ -5587,9 +5893,9 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	os << n_points;
 	os << "\n";
 
-    // std::cout<<"before print_solutions"<<std::endl;
+    std::cout<<"before print_solutions"<<std::endl;
 	print_solutions<TupleOfSpaces,IsIsoparametricOrder<IsIsoparametric,TupleOfSpaces>::value>(os,space,sol,names,level);
-
+    std::cout<<"after print_solutions"<<std::endl;
 
 
 	// std::ofstream file(baseFilename);
@@ -5613,18 +5919,21 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	void write_wtk(std::ostream &os,const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names,const Integer level=-1) 
 	{
 		write_wtk_aux<0>(os,space,sol,names,level);
+
 	}
 
 	template<typename...Args,typename Solution,typename VariablesNamesVec>
 	void write_wtk_isoparametric(std::ostream &os,const FullSpace<Args...>& space,const Solution&sol,const VariablesNamesVec& names,const Integer level=-1) 
 	{
 		write_wtk_aux<1>(os,space,sol,names,level);
+
 	}
 
 	template<typename...Args,typename Solution,typename VariablesNamesVec>
 	void write_wtk_isoparametric(std::ostream &os,const std::shared_ptr<FullSpace<Args...>>& space,const Solution&sol,const VariablesNamesVec& names,const Integer level=-1) 
 	{
 		write_wtk_aux<1>(os,*space,sol,names,level);
+		std::cout<<"end write_wtk "<<std::endl;
 	}
 
 
@@ -9220,23 +9529,19 @@ public:
 	void init(const std::vector<Integer> levels)
 	{
 
-		std::cout << " FullFunctionSpaceLevelsInterpolation init" << std::endl;
         Integer n_levels_=levels.size();
         mat_vec_.resize(n_levels_-1);
         interp_levels_vec_.resize(n_levels_-1);
         levels_.resize(n_levels_);
 
-        std::cout << " n_levels_ =" <<n_levels_<< std::endl;
 
         for(Integer i=0;i<n_levels_;i++)
         	levels_[i]=levels[i];
 
 		for(Integer i=0;i<n_levels_-1;i++)
 		{
-			std::cout << " FullFunctionSpaceLevelsInterpolation " <<i<< std::endl;
 
 			interp_vec_.push_back(FunctionSpaceInterpolation(spaces_ptr_));
-			std::cout << " FullFunctionSpaceLevelsInterpolation dopo" <<i<< std::endl;
 			interp_levels_vec_[i][0]=levels[i+1];
 			interp_levels_vec_[i][1]=levels[i+1];
 			interp_vec_[i].init(mat_vec_[i],levels[i],levels[i+1]);
@@ -10150,7 +10455,7 @@ template<typename FunctionSpace_>
 	  	dofmap. template dofmap_get<N>(F_elemdm,F_id,F_FE.level());
 	  	// std::cout<<"C_elemdm" << C_elemdm<<std::endl;
 	  	// std::cout<<"F_elemdm" << F_elemdm<<std::endl;
-	  	constexpr Integer NComponents= GetType<typename FunctionSpace::TupleOfSpaces,1>::NComponents;
+	  	constexpr Integer NComponents= GetType<typename FunctionSpace::TupleOfSpaces,N>::NComponents;
 
 
 	  	for(Integer C_i=0;C_i<C_nodes.size();C_i++)
@@ -10223,7 +10528,7 @@ template<typename FunctionSpace_>
         // 	std::cout<<C_nodes[C_n]<<" ";
 
 
-        std::cout<<std::endl;
+        // std::cout<<std::endl;
 
         Simplex<Dim,FaceDim> C_simplex;
         Simplex<Dim,FaceDim> F_simplex;
@@ -10685,7 +10990,7 @@ template<typename FunctionSpace_>
         Integer C_comb[FaceNPoints];
         Integer F_comb[FaceNPoints];
 
-        std::cout<<std::endl;
+        // std::cout<<std::endl;
 
         Simplex<Dim,FaceDim> C_simplex;
         Simplex<Dim,FaceDim> F_simplex;
@@ -10745,19 +11050,26 @@ template<typename FunctionSpace_>
 							// auto F_constr=F_constraint[F_dof];
 							// auto& C_constr=C_constraint[C_dof];
 							// C_dof=min(C_dof,F_dof);
-							// std::cout<<"F_dof="<<F_dof <<std::endl;
+							std::cout<<F_constraint_inf[F_dof]<< "   "<<F_constraint_sup[F_dof]<< "   "<<vec[C_dof] <<std::endl;
 
 							if(vec[C_dof]==-2) continue; // it means one inactive fine dof has been found -> no truncation!
 							else 
 								{
-									if(F_constraint_inf[F_dof]==-inf || F_constraint_sup[F_dof]==inf) 
+									// if(F_constraint_inf[F_dof]==-inf || F_constraint_sup[F_dof]==inf) 
+									if(F_constraint_inf[F_dof]==-inf && F_constraint_sup[F_dof]==inf) 
 									  vec[C_dof]=-1;
 									else
 									{
+
 								    if(working_set[F_dof]==false) 
 								    	vec[C_dof]=-2;
 									else 
 										vec[C_dof]=0;
+										std::cout<<"F_dof= "<<F_dof<<std::endl;
+										std::cout<<"C_dof= "<<C_dof<<std::endl;
+										std::cout<<"vec[C_dof]= "<<vec[C_dof]<<std::endl;
+
+
 									}
 								}
 						}
@@ -11838,6 +12150,277 @@ void compute_working_set2(const Integer ndofs,const std::vector<bool>& constrain
 
 
 
+  template<typename FunctionSpace,typename VecVecVec,typename...Ts>
+   inline void uzawa_patch_vcycle_active_set(
+                         const Context<Ts...>& context,	
+   							   std::vector<Real>& x,
+   	                           std::vector<SparseMatrix<Real>>& A_levels,
+   	                           std::vector<SparseMatrix<Real>>& truncated_A_levels,
+   	                           std::vector<Real>& b,
+   	                     const std::vector<Real>& F_constraint_inf,
+   	                     const std::vector<Real>& F_constraint_sup,
+   	                     	   ProjectedContactConstraints<FunctionSpace>& contact_constraints,
+   	                     const std::vector<Integer>& levels,	   
+   	                     std::vector<std::vector<bool>>& working_set,
+   	                     std::vector<std::vector<bool>>& working_set_old,
+   	                     const FullFunctionSpaceLevelsInterpolation<FunctionSpace>& interpolation,
+   	                     const VecVecVec& A_entity2dofs,
+   	                     const VecVecVec& B_entity2dofs,
+   	                     const Integer pre_smoothing,
+   	                     const Integer post_smoothing,
+   	                     const Integer level,
+   	                     const Integer max_level,
+   	                     	   bool& change_matrix,
+						   std::vector<Real>& u_local,std::vector<Real>& lambda_local,std::vector<Real>& b_local, std::vector<Real>& g_local, 
+    					   DenseMatrix<Real>& A_local,
+    					   DenseMatrix<Real>& B_local,
+    					   std::vector<Real>& c_inf_local,std::vector<Real>& c_sup_local,
+    					   DenseMatrix<Real>& H_local,
+    					   std::vector<Real>& y,
+    					   std::vector<Real>& tmp,
+    					   std::vector<Real>& h,
+    					   std::vector<Real>& d,
+    					   std::vector<Real>& p,
+    					   std::vector<Real>& q,
+    					   std::vector<Real>& q_new,
+    					   std::vector<Integer>& lambda_inf_check,
+    					   std::vector<Integer>& lambda_sup_check
+    					   )
+   {
+    std::vector<Real> F_rhs;
+    std::vector<Real> C_rhs;
+    std::vector<Real> C_correction;
+    std::vector<Real> F_correction;
+    std::vector<Real> F_constraint_sup_tmp(F_constraint_sup.size());
+    std::vector<Real> F_constraint_inf_tmp(F_constraint_sup.size());
+    std::vector<Real> C_constraint_sup;
+    std::vector<Real> C_constraint_inf;
+
+    Real toll=1e-10;
+    Integer max_active_set_iter=100;
+    Real inf= std::numeric_limits<double>::infinity();
+    bool change_coarser_matrix=false;
+
+
+    std::cout<<"uzawa_patch_vcycle_active_set 1 level"<<level<<std::endl;
+
+    
+
+
+   	if(level==0)
+   	{
+
+
+
+   		uzawa_patch_active_set_gauss_seidel(x,truncated_A_levels[level],b,F_constraint_inf,F_constraint_sup,A_entity2dofs[level],B_entity2dofs[level],
+											u_local,lambda_local,b_local,g_local,
+											A_local,B_local,c_inf_local,c_sup_local,
+											H_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,100,toll);
+ 
+         compute_working_set(working_set[level],x,F_constraint_inf,F_constraint_sup);
+
+
+
+         // truncated_A_levels[level].print_val();
+         // std::cout<<"F_constraint_inf on level = "<<level<<std::endl;
+         // for(Integer i=0;i<F_constraint_inf.size();i++)
+         // 	std::cout<<F_constraint_inf[i]<<std::endl;
+
+         // std::cout<<"F_constraint_sup on level = "<<level<<std::endl;
+         // for(Integer i=0;i<F_constraint_sup.size();i++)
+         // 	std::cout<<F_constraint_sup[i]<<std::endl;
+
+         // std::cout<<"b on level = "<<level<<std::endl;
+         // for(Integer i=0;i<b.size();i++)
+         // 	std::cout<<b[i]<<std::endl;
+
+         // std::cout<<"x on level = "<<level<<std::endl;
+
+
+         // for(Integer i=0;i<working_set[level].size();i++)
+         // 	std::cout<<x[i]<<std::endl;
+
+   	}
+   	else 
+   	{
+
+   		std::cout<<"uzawa_patch_vcycle_active_set 2"<<std::endl;
+    	// context.apply_zero_bc_for_null_diagonal_element(truncated_A_levels[level],b);
+   		std::cout<<"uzawa_patch_vcycle_active_set 3"<<std::endl;
+   		uzawa_patch_active_set_gauss_seidel(x,truncated_A_levels[level],b,F_constraint_inf,F_constraint_sup,A_entity2dofs[level],B_entity2dofs[level],
+											u_local,lambda_local,b_local,g_local,
+											A_local,B_local,c_inf_local,c_sup_local,
+											H_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,pre_smoothing,toll);
+        if(level==7)
+        {
+   		truncated_A_levels[level].save_mat("AA7.dat");
+   		save_vector("Ab7.dat",b);
+   		save_vector("Ax7.dat",x);
+   		save_vector("Ac_inf.dat",F_constraint_inf);
+   		save_vector("Ac_sup.dat",F_constraint_sup);
+   		std::cout<<"saved<----------------------------------------------"<<std::endl;
+
+        }
+
+         
+         std::cout<<"uzawa_patch_vcycle_active_set 3.5"<<std::endl;
+         std::cout<<"isna(b)="<<isnan(b)<<std::endl;
+         std::cout<<"isna(F_constraint_inf)="<<isnan(F_constraint_inf)<<std::endl;
+         std::cout<<"isna(F_constraint_sup)="<<isnan(F_constraint_sup)<<std::endl;
+         std::cout<<"isnan(X)="<<isnan(x)<<std::endl;
+         compute_working_set(working_set[level],x,F_constraint_inf,F_constraint_sup);
+
+
+         std::cout<<"uzawa_patch_vcycle_active_set 4"<<std::endl;
+         
+         if(level == max_level) 
+         {
+         	change_matrix=false;
+         	change_coarser_matrix=false;         	
+         for(Integer i=0;i<working_set[level].size();i++)
+         	{
+         	 if(working_set[level][i]!=working_set_old[level][i])
+         		{
+         			change_coarser_matrix=true;
+         			change_matrix=true;
+         			break;
+         		}
+         	}
+         }
+         else
+         {
+         	if(change_matrix)
+         		change_coarser_matrix=true;
+         	else
+         	{
+	         for(Integer i=0;i<working_set[level].size();i++)
+	         	{
+	         	 if(working_set[level][i]!=working_set_old[level][i])
+	         		{
+	         			change_coarser_matrix=true;
+	         			break;
+	         		}
+	         	}         		
+         	}
+         }
+         std::cout<<"uzawa_patch_vcycle_active_set 5"<<std::endl;
+ 	   	 truncated_A_levels[level]. multiply_and_add(F_rhs,-1.0,x,b);
+ 	   	 std::cout<<"uzawa_patch_vcycle_active_set 6"<<std::endl;
+
+	   	 interpolation.matrix(level-1).transpose_and_multiply(C_rhs,F_rhs,working_set[level]);
+	   	 std::cout<<"uzawa_patch_vcycle_active_set 7"<<std::endl;
+
+	   	 C_correction.resize(C_rhs.size(),0.0);
+
+	   	 C_constraint_sup.resize(C_rhs.size(),0.0);
+
+	   	 C_constraint_inf.resize(C_rhs.size(),0.0);
+
+	   	 for(Integer i=0;i<x.size();i++)
+	   		 {
+	   		 	if(working_set[level][i] && abs(F_constraint_sup[i]-x[i]) < toll)
+	   		 		F_constraint_sup_tmp[i]=inf;
+	   		 	else
+	   		 	F_constraint_sup_tmp[i]=F_constraint_sup[i]-x[i];
+
+	   		 	if(working_set[level][i] && abs(F_constraint_inf[i]-x[i]) < toll)
+	   		 		F_constraint_inf_tmp[i]=-inf;
+	   		 	else
+	   		 	F_constraint_inf_tmp[i]=F_constraint_inf[i]-x[i];
+
+	   		 }
+	   	std::cout<<"uzawa_patch_vcycle_active_set 8"<<std::endl;
+
+	   	contact_constraints.compute_sup_constraints(C_constraint_sup,F_constraint_sup_tmp,levels[level-1],levels[level]);
+	   	contact_constraints.compute_inf_constraints(C_constraint_inf,F_constraint_inf_tmp,levels[level-1],levels[level]);
+
+
+	   	std::cout<<"uzawa_patch_vcycle_active_set 9"<<std::endl;
+
+
+
+	   	 if(max_level==level)
+    	    {
+    	    	std::cout<<"change_coarser_matrix="<<change_coarser_matrix<<" on level "<<level<<std::endl;
+    	    	// truncate_matrix(truncated_A_levels[level-1],A_levels[level],interpolation.matrix(level-1),working_set[level],working_set_old[level]);
+ 	   	 		truncated_A_levels[level-1]=truncated_A_levels[level].multiply_left_transpose_and_multiply_right(interpolation.matrix(level-1),working_set[level]);
+
+    	    }
+	   	 else 
+	   	 {
+    	    	std::cout<<"change_coarser_matrix="<<change_coarser_matrix<<" on level "<<level<<std::endl;
+    	    	if(change_coarser_matrix)
+	   	 		truncated_A_levels[level-1]=truncated_A_levels[level].multiply_left_transpose_and_multiply_right(interpolation.matrix(level-1),working_set[level]);
+	   	 }
+ 
+        std::vector<Integer> vec_remove_diag(C_constraint_sup.size(),-1);
+
+        std::cout<<"uzawa_patch_vcycle_active_set 10"<<std::endl;
+
+
+   	   	 contact_constraints.find_fully_truncated_coarse_dofs(vec_remove_diag,working_set[level],F_constraint_inf,F_constraint_sup,level-1,level);
+   	   	 if(level==8)
+   	   	 {
+   	   	 	save_vector("Aw8.dat",working_set[level]);
+   	   	 save_vector("AF_constraint_inf8.dat",F_constraint_inf);
+   	   	 save_vector("AF_constraint_sup8.dat",F_constraint_sup);
+   	   	 save_vector("Avec_rem_diag8.dat",vec_remove_diag);   	   	 	
+   	   	 }
+   	   	 context.apply_zero_bc_for_null_diagonal_element(truncated_A_levels[level-1],C_rhs,vec_remove_diag);
+
+   	   	 // std::cout<<"uzawa_patch_vcycle_active_set 11"<<std::endl;
+ 
+
+
+
+        uzawa_patch_vcycle_active_set(context,C_correction,A_levels,truncated_A_levels,C_rhs,C_constraint_inf,C_constraint_sup,
+     						 	   contact_constraints,levels,working_set,working_set_old,interpolation,A_entity2dofs,B_entity2dofs,
+     						 	   pre_smoothing,post_smoothing,level-1,max_level,change_matrix,
+     							   u_local,lambda_local,b_local,g_local,
+								   A_local,B_local,c_inf_local,c_sup_local,
+								   H_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check);
+
+
+        std::cout<<"uzawa_patch_vcycle_active_set 12"<<std::endl;
+	  
+
+
+
+
+
+
+
+
+	     interpolation.matrix(level-1).multiply(F_correction,C_correction,working_set[level]);
+	     for(Integer i=0;i<working_set_old[level].size();i++)
+	     	working_set_old[level][i]=working_set[level][i];
+         plus_equal(x,F_correction);
+
+         std::cout<<"uzawa_patch_vcycle_active_set 12.5"<<std::endl;
+
+         std::cout<<"isna(b)="<<isnan(b)<<std::endl;
+         std::cout<<"isna(F_constraint_inf)="<<isnan(F_constraint_inf)<<std::endl;
+         std::cout<<"isna(F_constraint_sup)="<<isnan(F_constraint_sup)<<std::endl;
+         std::cout<<"isnan(X)="<<isnan(x)<<std::endl;
+
+   		uzawa_patch_active_set_gauss_seidel(x,truncated_A_levels[level],b,F_constraint_inf,F_constraint_sup,A_entity2dofs[level],B_entity2dofs[level],
+											u_local,lambda_local,b_local,g_local,
+											A_local,B_local,c_inf_local,c_sup_local,
+											H_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,post_smoothing,toll);
+
+   		 std::cout<<"uzawa_patch_vcycle_active_set 13"<<std::endl;
+
+         std::cout<<"isna(b)="<<isnan(b)<<std::endl;
+         std::cout<<"isna(F_constraint_inf)="<<isnan(F_constraint_inf)<<std::endl;
+         std::cout<<"isna(F_constraint_sup)="<<isnan(F_constraint_sup)<<std::endl;
+         std::cout<<"isnan(X)="<<isnan(x)<<std::endl;
+
+
+        compute_working_set(working_set[level],x,F_constraint_inf,F_constraint_sup);
+   	}
+
+
+   }
 
 
   template<typename FunctionSpace,typename VecVecVec,typename...Ts>
@@ -12653,8 +13236,8 @@ void compute_working_set2(const Integer ndofs,const std::vector<bool>& constrain
    	                     const std::vector<Integer>& levels,
    	                     std::vector<std::vector<bool>>& working_set,
    	                     const FullFunctionSpaceLevelsInterpolation<FunctionSpace>& interpolation,
-   	                     const VecVecVec& entity2dofs0,
-   	                     const VecVecVec& entity2dofs1,
+   	                     const VecVecVec& A_entity2dofs,
+   	                     const VecVecVec& B_entity2dofs,
    	                     const Integer pre_smoothing,
    	                     const Integer post_smoothing,
    	                     const Integer level,
@@ -12664,49 +13247,74 @@ void compute_working_set2(const Integer ndofs,const std::vector<bool>& constrain
    {
    	std::vector<Real> rhs;
    	Real norm_rhs;
-   	DenseMatrix<Real> local_mat;
-   	DenseMatrix<Real> A_tmp;
-   	DenseMatrix<Real> B_tmp;
-   	DenseMatrix<Real> H_tmp;
-   	std::vector<Real> b_tmp;
-   	std::vector<Real> lambda_tmp;
-   	std::vector<Real> mu_tmp;
-   	std::vector<Real> y_tmp;
-   	std::vector<Real> c_tmp;
+   	DenseMatrix<Real> A_local,B_local,H_local;
+   	std::vector<Real> u_local,lambda_local,b_local,g_local,c_inf_local,c_sup_local;
+	std::vector<Real> y,tmp,h,d,p,q,q_new;
+	std::vector<Integer> lambda_inf_check,lambda_sup_check;
+
      
-    std::size_t max_rows0=0;
-    for(Integer i=0;i<entity2dofs0[level].size();i++)
-     max_rows0=max(max_rows0,entity2dofs0[level][i].size());
+     
+         // std::cout<<"uzawa_patch_multigrid_active_set 1"<<std::endl;
 
-    std::size_t max_rows1=0;
-    for(Integer i=0;i<entity2dofs1[level].size();i++)
-     max_rows1=max(max_rows0,entity2dofs1[level][i].size());
+    std::size_t A_max_rows=0;
+    std::size_t B_max_rows=0;
+    std::size_t AB_max_rows=0;
+    for(Integer i=0;i<A_entity2dofs[level].size();i++)
+    	A_max_rows=max(A_max_rows,A_entity2dofs[level][i].size());
+    
+    for(Integer i=0;i<B_entity2dofs[level].size();i++)
+    	B_max_rows=max(B_max_rows,B_entity2dofs[level][i].size());
+
+    AB_max_rows=A_max_rows+B_max_rows;
+
+ // std::cout<<"A_max_rows ="<<A_max_rows<<std::endl;
+ // std::cout<<"B_max_rows ="<<B_max_rows<<std::endl;
+ // std::cout<<"AB_max_rows ="<<AB_max_rows<<std::endl;
 
 
-   	local_mat.resize(max_rows0,max_rows0);
-   	A_tmp.resize(max_rows0,max_rows0);
-   	H_tmp.resize(max_rows0,max_rows0);
-   	b_tmp.resize(max_rows0);
-   	lambda_tmp.resize(max_rows0);
-   	mu_tmp.resize(max_rows0);
-   	y_tmp.resize(max_rows0);
-   	c_tmp.resize(max_rows0);
+
+ // std::cout<<"uzawa_patch_multigrid_active_set 3"<<std::endl;
+
+
+   	A_local.resize(A_max_rows,A_max_rows);
+   	B_local.resize(AB_max_rows,A_max_rows);
+   	H_local.resize(A_max_rows,A_max_rows);
+   	u_local.resize(A_max_rows);
+   	lambda_local.resize(AB_max_rows);
+   	b_local.resize(A_max_rows);
+   	g_local.resize(AB_max_rows);
+   	c_inf_local.resize(A_max_rows);
+   	c_sup_local.resize(A_max_rows);
+   	y.resize(A_max_rows);
+   	tmp.resize(AB_max_rows);
+   	h.resize(AB_max_rows);
+   	d.resize(AB_max_rows);
+   	p.resize(AB_max_rows);
+   	q.resize(AB_max_rows);
+   	q_new.resize(AB_max_rows);
+   	lambda_inf_check.resize(A_max_rows);
+   	lambda_sup_check.resize(A_max_rows);
+
+
+   	// std::cout<<"uzawa_patch_multigrid_active_set 4"<<std::endl;
 
 
    	// B has to be large enough to contain:
    	// the multiplier part related to the dual formulation (max_rows1)
    	// then it could also contain all inferior and superior constraints
    	// which have the same dimension as max_rows0, respectively.
-   	Integer max_rowsB=(max_rows1+2*max_rows0);
-
-   	B_tmp.resize(max_rowsB,max_rows0);
 
 
+     // std::cout<<"uzawa_patch_multigrid_active_set 5"<<std::endl;
    	Integer levels_size=levels.size();
 
    	context.build_boundary_info(levels);
 
+   	// std::cout<<"uzawa_patch_multigrid_active_set 6"<<std::endl;
+
    	auto& constrained_dofs_levels=context.constrained_dofs_levels();
+
+   	// std::cout<<"uzawa_patch_multigrid_active_set 7"<<std::endl;
 
  	std::vector<std::vector<bool>> working_set_old(levels_size);
 
@@ -12716,14 +13324,15 @@ void compute_working_set2(const Integer ndofs,const std::vector<bool>& constrain
    			for(Integer j=0;j<working_set_old[i].size();j++)
    				working_set_old[i][j]=working_set[i][j];
    		}
-
+// std::cout<<"uzawa_patch_multigrid_active_set 8"<<std::endl;
      std::vector<Real> norm_rhs_vec;
      auto M=truncated_A_levels[level];
 
-     context.apply_bc(M,b,level);
+     // context.apply_bc(M,b,level);
+     // std::cout<<"uzawa_patch_multigrid_active_set 9"<<std::endl;
 
-     M.save_mat("matlab_matrix2.dat");
      compute_working_set(working_set[level],x,c_inf,c_sup);
+     // std::cout<<"uzawa_patch_multigrid_active_set 10"<<std::endl;
 
 
 
@@ -12731,26 +13340,38 @@ void compute_working_set2(const Integer ndofs,const std::vector<bool>& constrain
 
 
      M.multiply_and_add(rhs,-1.0,x,b);
+     // std::cout<<"uzawa_patch_multigrid_active_set 11"<<std::endl;
 
      norm_rhs=l2_norm(rhs,working_set[level]);
+     // std::cout<<"uzawa_patch_multigrid_active_set 12"<<std::endl;
      norm_rhs_vec.push_back(norm_rhs);
+     // std::cout<<"uzawa_patch_multigrid_active_set 13"<<std::endl;
      bool change_matrix=false;
 
 
 
    	for(Integer i=0;i<max_iter;i++)
    	{
+   		// std::cout<<"uzawa_patch_multigrid_active_set 14"<<std::endl;
 
      M.multiply_and_add(rhs,-1.0,x,b);
+     // std::cout<<"uzawa_patch_multigrid_active_set 15"<<std::endl;
 
      compute_working_set(working_set[level],x,c_inf,c_sup);
+     // std::cout<<"uzawa_patch_multigrid_active_set 16"<<std::endl;
 
 
      norm_rhs=l2_norm(rhs,working_set[level]);
+     // std::cout<<"uzawa_patch_multigrid_active_set 17"<<std::endl;
   
-     // patch_vcycle_active_set(context,x,A_levels,truncated_A_levels,b,c_inf,c_sup,
-     // 						 contact_constraints,levels,working_set,working_set_old,interpolation,entity2dofs,
-   	 // 						 local_mat,A_tmp,H_tmp,b_tmp,mu_tmp,lambda_tmp,y_tmp,c_tmp,pre_smoothing,post_smoothing,level,level,change_matrix);
+     uzawa_patch_vcycle_active_set(context,x,A_levels,truncated_A_levels,b,c_inf,c_sup,
+     						 	   contact_constraints,levels,working_set,working_set_old,interpolation,A_entity2dofs,B_entity2dofs,
+     						 	   pre_smoothing,post_smoothing,level,level,change_matrix,
+     							   u_local,lambda_local,b_local,g_local,
+								   A_local,B_local,c_inf_local,c_sup_local,
+								   H_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check);
+
+
 
      M.multiply_and_add(rhs,-1.0,x,b);
 
@@ -12979,11 +13600,11 @@ void compute_working_set2(const Integer ndofs,const std::vector<bool>& constrain
 			// 	return 0.00;
 
 
-			// return 1.* 0.5*(1-sin(acos((point[0]-0.5)/0.5)));
+			return -1.* 0.5*(1-sin(acos((point[0]-0.5)/0.5)));
           // return 100.005; 
 			// return -0.05;//0.5*sin(20.*point[0]); 
 
-			return 0.3;//0.5*sin(point[0]*M_PI);//.* 0.5*(1-sin(acos((point[0]-0.5)/0.5)));
+			// return 4.50;//0.5*sin(point[0]*M_PI);//.* 0.5*(1-sin(acos((point[0]-0.5)/0.5)));
 		}
 	};
 
@@ -12995,7 +13616,7 @@ void compute_working_set2(const Integer ndofs,const std::vector<bool>& constrain
 	    template<typename Point,typename FiniteElem>
 		static type eval(const Point& point,FiniteElem& FE)
 		{
-			return 0.1;//.* 0.5*(1-sin(acos((point[0]-0.5)/0.5)));
+			return -5.0;//.* 0.5*(1-sin(acos((point[0]-0.5)/0.5)));
 		}
 	};
 
@@ -18191,6 +18812,9 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 		os.close();
 		os.open(output_fileACTIVESET.c_str());
 		write_wtk_isoparametric(os,W_ptr,active_solution,var_names,levelL);
+
+
+		std::cout<<"end  "<<std::endl;
 		}
 
 
@@ -18257,11 +18881,12 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 		auto theta = MakeTrial<2>(W_ptr);
 		auto rho = MakeTest<2>(W_ptr);
 
-		// auto f1 = MakeFunction<0,ExactLinearElasticity<ManifoldDim>>(W_ptr);
-		// auto f1 = MakeFunction<0,FunctionZero<ManifoldDim>>(W_ptr);
-		auto f_ext = MakeFunction<0,FunctionZero<2>>(W_ptr);
+		// auto f_ext = MakeFunction<0,ExactLinearElasticity<ManifoldDim>>(W_ptr);
+		auto f_ext = MakeFunction<0,FunctionZero<ManifoldDim>>(W_ptr);
 		// auto f1 = MakeFunction<0,FunctionZero<1>>(W_ptr);
-		auto u_dirichlet=MakeTraceFunction<0,FunctionZero<ManifoldDim>>(W_ptr);
+		// auto u_dirichlet=MakeTraceFunction<0,FunctionZero<ManifoldDim>>(W_ptr);
+		auto u_dirichlet=MakeTraceFunction<0,FunctionNthComponent<ManifoldDim,1,Func001>>(W_ptr);
+		
 		auto node_normal = MakeTraceFunction<0>(W_ptr);
 		auto f_neumann = MakeZeroTraceFunction<0>(W_ptr);
 		auto gap = MakeGapFunction<1>(W_ptr);
@@ -18342,14 +18967,13 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 
 		auto linearform=
 		+L2Inner(v,-f_ext)
-		+surface_integral(5,Trace(tau),u_dirichlet)
+		+surface_integral(4,Trace(tau),u_dirichlet)
 		+surface_integral(contact_boundary,Inner(Trace(tau),node_normal),gap)
 		;
-		// +surface_integral(contact_boundary,Inner(Trace(sigma),node_normal),Inner(Trace(v),node_normal))+
 
 
 		auto bcs1=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,1);
-		auto bcs2=DirichletBC<0,FunctionOne<ManifoldDim>>(W_ptr,4);
+		auto bcs2=DirichletBC<0,FunctionZero<1>,0>(W_ptr,contact_boundary);
 		auto bcs3=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,3);	
 
 	
@@ -18364,13 +18988,16 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 		std::vector<Real> xL;
 		std::vector<Real> rhs;
   		std::ofstream os;
-		auto var_names=variables_names("disp");
+		auto var_names=variables_names("stress","disp","rotation");
+
+
+		std::cout<<"pre assembly"<<std::endl;
 
 		
 
 		context.assembly(AL,bL,levelL);
 
-		// AL.print_val();
+		std::cout<<"after assembly"<<std::endl;
 
 		
 
@@ -18386,28 +19013,28 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 
         context.build_boundary_info(levels);
 
-        std::cout<<"qui"<<std::endl;
+        
 
 	    levels_interp.init(levels);
-	    auto &dofsdofmap=W_ptr->dofsdofmap();
-	    GetType<typename decltype(W)::DofsDM::ElemDofMap,0> elemdm0;
-	    GetType<typename decltype(W)::DofsDM::ElemDofMap,1> elemdm1;
-	    GetType<typename decltype(W)::DofsDM::ElemDofMap,2> elemdm2;
-	    FiniteElem<Elem> FE(mesh);
+	    // auto &dofsdofmap=W_ptr->dofsdofmap();
+	    // GetType<typename decltype(W)::DofsDM::ElemDofMap,0> elemdm0;
+	    // GetType<typename decltype(W)::DofsDM::ElemDofMap,1> elemdm1;
+	    // GetType<typename decltype(W)::DofsDM::ElemDofMap,2> elemdm2;
+	    // FiniteElem<Elem> FE(mesh);
 
 
-	    for(Integer el=0;el<mesh.n_elements();el++)
-	    {
-	    	auto lev=bisection.tracker().get_level(el);
-			FE.init(el,lev);
-			std::cout<<"el = "<<el<<std::endl;
-		    dofsdofmap.template dofmap_get<0>(elemdm0,el,lev);
-		    std::cout<<elemdm0<<std::endl;
-		    dofsdofmap.template dofmap_get<1>(elemdm1,el,lev);
-		    std::cout<<elemdm1<<std::endl;
-		    dofsdofmap.template dofmap_get<2>(elemdm2,el,lev);
-		    std::cout<<elemdm2<<std::endl;		    		    
-	    }
+	  //   for(Integer el=0;el<mesh.n_elements();el++)
+	  //   {
+	  //   	auto lev=bisection.tracker().get_level(el);
+			// FE.init(el,lev);
+			// std::cout<<"el = "<<el<<std::endl;
+		 //    dofsdofmap.template dofmap_get<0>(elemdm0,el,lev);
+		 //    std::cout<<elemdm0<<std::endl;
+		 //    dofsdofmap.template dofmap_get<1>(elemdm1,el,lev);
+		 //    std::cout<<elemdm1<<std::endl;
+		 //    dofsdofmap.template dofmap_get<2>(elemdm2,el,lev);
+		 //    std::cout<<elemdm2<<std::endl;		    		    
+	  //   }
 
 
 	   auto& level_cumulative_dofs_array= W_ptr->dofsdofmap().level_cumulative_dofs_array();
@@ -18511,7 +19138,7 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
         for(Integer i=levels.size()-2;i>=0;i--)
         { 
         	std::cout<<"i=="<<i<<std::endl;
-        	truncated_Ant_levels[i].print_val();
+        	// truncated_Ant_levels[i].print_val();
         	std::cout<<"qi8.5"<<std::endl;
    		    // context.apply_zero_bc_for_null_diagonal_element(truncated_A_levels[i],C_rhs,vec_remove_diag);
 
@@ -18544,154 +19171,134 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 		constraints_inf.set_minus_infty_constraints();
 		constraints_sup.set_plus_infty_constraints();
 
-		compute_constraint(constraints_inf,context,gap_inf, contact_boundary);
-		compute_constraint(constraints_sup,context,gap,contact_boundary);
+		// compute_constraint(constraints_inf,context,gap_inf, contact_boundary);
+		// compute_constraint(constraints_sup,context,gap,contact_boundary);
 
 		// compute_constraint(constraints_inf,context,gap_inf, contact_boundary,1);
-		// compute_constraint(constraints_sup,context,gap,contact_boundary,1);
+		compute_constraint(constraints_sup,context,zero_func,contact_boundary,1);
 
 
-		Real toll=0.000000001;
-		Integer max_iter=15;
-		Integer pre_smoothing=5;
-		Integer post_smoothing=5;
-		Integer number_of_levels=levels.size()-1;
-
-		DenseMatrix<Real> tmpdense(5,5);
-		for(Integer i=0;i<5;i++)
-			for(Integer j=0;j<5;j++)
-				tmpdense(i,j)=(2+i)*(1+j);
 
 
-        tmpdense.set_sub_dimension(3,2);
-        std::vector<Real> vec(5);
-
-        std::vector<Real> m1{1,2,3};
-        std::vector<Real> m2{1,1};
-		for(Integer i=0;i<5;i++)
-			{
-			for(Integer j=0;j<5;j++)
-				std::cout<<tmpdense(i,j)<<" ";
-			std::cout<<std::endl;
-			}
+		// DenseMatrix<Real> tmpdense(5,5);
+		// for(Integer i=0;i<5;i++)
+		// 	for(Integer j=0;j<5;j++)
+		// 		tmpdense(i,j)=(2+i)*(1+j);
 
 
-		std::cout<<"transpose_multiply_alpha_x_beta_b"<<std::endl;
+  //       tmpdense.set_sub_dimension(3,2);
+  //       std::vector<Real> vec(5);
 
-        tmpdense.transpose_multiply_alpha_x_beta_b(vec,m1,m2,-1,1);
+  //       std::vector<Real> m1{1,2,3};
+  //       std::vector<Real> m2{1,1};
+		// for(Integer i=0;i<5;i++)
+		// 	{
+		// 	for(Integer j=0;j<5;j++)
+		// 		std::cout<<tmpdense(i,j)<<" ";
+		// 	std::cout<<std::endl;
+		// 	}
+
+
+		// std::cout<<"transpose_multiply_alpha_x_beta_b"<<std::endl;
+
+  //       tmpdense.transpose_multiply_alpha_x_beta_b(vec,m1,m2,-1,1);
         
-        for(Integer i=0;i<tmpdense.cols();i++)
-        	std::cout<<vec[i]<<std::endl;
+  //       for(Integer i=0;i<tmpdense.cols();i++)
+  //       	std::cout<<vec[i]<<std::endl;
 
 
-		std::cout<<"multiply_alpha_x_beta_b"<<std::endl;
+		// std::cout<<"multiply_alpha_x_beta_b"<<std::endl;
 
-        tmpdense.multiply_alpha_x_beta_b(vec,m2,m1,-1,1);
+  //       tmpdense.multiply_alpha_x_beta_b(vec,m2,m1,-1,1);
         
-        for(Integer i=0;i<tmpdense.sub_rows();i++)
-        	std::cout<<vec[i]<<std::endl;
+  //       for(Integer i=0;i<tmpdense.sub_rows();i++)
+  //       	std::cout<<vec[i]<<std::endl;
 
 
-        std::cout<<"multiply_alpha_x"<<std::endl;
+  //       std::cout<<"multiply_alpha_x"<<std::endl;
 
 
-        tmpdense.multiply_alpha_x(vec,m2,-2); 
+  //       tmpdense.multiply_alpha_x(vec,m2,-2); 
 
-        for(Integer i=0;i<tmpdense.sub_rows();i++)
-        	std::cout<<vec[i]<<std::endl;
+  //       for(Integer i=0;i<tmpdense.sub_rows();i++)
+  //       	std::cout<<vec[i]<<std::endl;
 
-        std::cout<<"transpose_multiply_alpha_x"<<std::endl;
-
-
-        tmpdense.transpose_multiply_alpha_x(vec,m1,-2); 
-        for(Integer i=0;i<tmpdense.sub_cols();i++)
-        	std::cout<<vec[i]<<std::endl;
+  //       std::cout<<"transpose_multiply_alpha_x"<<std::endl;
 
 
-
-
-        DenseMatrix<Real>Alocal;
-        DenseMatrix<Real>Blocal;
-        DenseMatrix<Real>Hlocal;
-
-
-        Alocal.init(AL.rows(),AL.rows());
-        Blocal.init(AL.rows(),AL.rows());
-
-
-        Alocal.set_sub_dimension(48,48);
-        Blocal.set_sub_dimension(29,48);
-
-        std::vector<Integer> v0(48);
-        std::vector<Integer> v1(AL.rows()-48);
-
-        for(Integer i=0;i<48;i++)
-        	v0[i]=i;
-        for(Integer i=48;i<AL.rows();i++)
-        	v1[i-48]=i;
+  //       tmpdense.transpose_multiply_alpha_x(vec,m1,-2); 
+  //       for(Integer i=0;i<tmpdense.sub_cols();i++)
+  //       	std::cout<<vec[i]<<std::endl;
 
 
 
 
-        std::cout<<"qui"<<std::endl;
+        // DenseMatrix<Real>Alocal;
+        // DenseMatrix<Real>Blocal;
+        // DenseMatrix<Real>Hlocal;
+
+
+        // Alocal.init(AL.rows(),AL.rows());
+        // Blocal.init(AL.rows(),AL.rows());
+
+
+        // Alocal.set_sub_dimension(48,48);
+        // Blocal.set_sub_dimension(29,48);
+
+        // std::vector<Integer> v0(48);
+        // std::vector<Integer> v1(AL.rows()-48);
+
+        // for(Integer i=0;i<48;i++)
+        // 	v0[i]=i;
+        // for(Integer i=48;i<AL.rows();i++)
+        // 	v1[i-48]=i;
 
 
 
 
+        // std::cout<<"qui"<<std::endl;
+
+
+  //       AL.get_dense_matrix(Alocal,v0,v0);
+  //       std::cout<<"qui1"<<std::endl;
+  //       AL.get_dense_matrix(Blocal,v1,v0);
+  //       std::cout<<"qui2"<<std::endl;
 
 
 
-        AL.get_dense_matrix(Alocal,v0,v0);
-        std::cout<<"qui1"<<std::endl;
-        AL.get_dense_matrix(Blocal,v1,v0);
-        std::cout<<"qui2"<<std::endl;
 
-
-
-
-        std::vector<Real> u_sol(AL.rows());
-        std::vector<Real> lambda_sol(AL.rows());
-        std::vector<Real> b_sol(48);
-        std::vector<Real> g_sol(29);
+  //       std::vector<Real> u_sol(AL.rows());
+  //       std::vector<Real> lambda_sol(AL.rows());
+  //       std::vector<Real> b_sol(48);
+  //       std::vector<Real> g_sol(29+48);
   
 
-        for(Integer i=0;i<b_sol.size();i++)
-        	b_sol[i]=1;//b_transformed[i];
+  //       for(Integer i=0;i<b_sol.size();i++)
+  //       	b_sol[i]=1;//b_transformed[i];
 
-         for(Integer i=0;i<g_sol.size();i++)
-        	g_sol[i]=1;//b_transformed[i];       
-
-
-        std::vector<Real> y(AL.rows());
-        std::vector<Real> tmp (AL.rows());
-        std::vector<Real> h(AL.rows());
-        std::vector<Real> d(AL.rows());
-        std::vector<Real> p(AL.rows());
-        std::vector<Real> q(AL.rows());
-        std::vector<Real> q_new(AL.rows());
-
-        std::cout<<"qui2"<<std::endl;
+  //        for(Integer i=0;i<g_sol.size();i++)
+  //       	g_sol[i]=1;//b_transformed[i];       
 
 
-        Hlocal.init(AL.rows(),AL.rows());
+  //       std::vector<Real> y(AL.rows());
+  //       std::vector<Real> tmp (AL.rows());
+  //       std::vector<Real> h(AL.rows());
+  //       std::vector<Real> d(AL.rows());
+  //       std::vector<Real> p(AL.rows());
+  //       std::vector<Real> q(AL.rows());
+  //       std::vector<Real> q_new(AL.rows());
 
-        Hlocal.sub_rows()=Alocal.sub_rows();
-		Hlocal.sub_cols()=Alocal.sub_cols();;
+  //       std::cout<<"qui2"<<std::endl;
 
 
-        Alocal.cholesky_matrix(Hlocal);
+  //       Hlocal.init(AL.rows(),AL.rows());
+
+  //       Hlocal.sub_rows()=Alocal.sub_rows();
+		// Hlocal.sub_cols()=Alocal.sub_cols();;
 
 
+  //       Alocal.cholesky_matrix(Hlocal);
 
-        std::cout<<std::endl;
-        std::cout<<std::endl;
-        std::cout<<std::endl;
-        std::cout<<std::endl;
-        std::cout<<std::endl;
-        std::cout<<std::endl;
-
-        std::cout<<"Alocal"<<std::endl;
-        Alocal.print_val();
 
 
   //       std::cout<<std::endl;
@@ -18701,49 +19308,90 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
   //       std::cout<<std::endl;
   //       std::cout<<std::endl;
 
-
-        // std::cout<<"Blocal"<<std::endl;
-        // Blocal.print_val();
-
+  //       std::cout<<"Alocal"<<std::endl;
+  //       Alocal.print_val();
 
 
-        Alocal.uzawa_solve(u_sol,lambda_sol,b_sol,g_sol,Blocal,Hlocal,y,tmp,h,d,p,q,q_new);
+  // //       std::cout<<std::endl;
+  // //       std::cout<<std::endl;
+  // //       std::cout<<std::endl;
+  // //       std::cout<<std::endl;
+  // //       std::cout<<std::endl;
+  // //       std::cout<<std::endl;
 
-        std::cout<<"u_sol"<<std::endl;
 
-        for(Integer i=0;i<u_sol.size();i++)
-        	std::cout<<u_sol[i]<<std::endl;
+  //       std::cout<<"Blocal"<<std::endl;
+  //       Blocal.print_val();
 
-        std::cout<<"lambda_sol"<<std::endl;
-        for(Integer i=0;i<lambda_sol.size();i++)
-        	std::cout<<lambda_sol[i]<<std::endl;
+  //       std::vector<Real> c_inf(77,-10000);
+  //       std::vector<Real> c_sup(77,10);
+  //       std::vector<Integer> lambda_inf_check(77,0);
+  //       std::vector<Integer> lambda_sup_check(77,0);
+
+
+
+  //       Alocal.uzawa_solve(u_sol,lambda_sol,b_sol,g_sol,Blocal,Hlocal,y,tmp,h,d,p,q,q_new);
+
+  //       Alocal.uzawa_active_set(u_sol,lambda_sol,b_sol,g_sol,Blocal,c_inf,c_sup,
+  //       	                    Hlocal,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,10);
+  //       std::cout<<"u_sol"<<std::endl;
+
+  //       for(Integer i=0;i<u_sol.size();i++)
+  //       	std::cout<<u_sol[i]<<std::endl;
+
+  //       std::cout<<"lambda_sol"<<std::endl;
+  //       for(Integer i=0;i<lambda_sol.size();i++)
+  //       	std::cout<<lambda_sol[i]<<std::endl;
+
+
+        
 
 
   //       AL.print_val();
 
+		Real toll=0.000000001;
+		Integer max_iter=50;
+		Integer pre_smoothing=5;
+		Integer post_smoothing=5;
+		Integer number_of_levels=levels.size()-1;
 
-		// uzawa_patch_multigrid_active_set(os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,
-		// 								 constraints_inf(),constraints_sup(),contact_constraints,
-		// 								 levels,working_set,levels_interp,
-		// 								 RT1_e2d,multipliers_e2d,pre_smoothing,post_smoothing,number_of_levels,max_iter,toll);
+		std::cout<<"b_transformed"<<std::endl;
+		for(Integer i=0;i<b_transformed.size();i++)
+			std::cout<<b_transformed[i]<<std::endl;
+		uzawa_patch_multigrid_active_set(os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,
+										 constraints_inf(),constraints_sup(),contact_constraints,
+										 levels,working_set,levels_interp,
+										 RT1_e2d,multipliers_e2d,pre_smoothing,post_smoothing,number_of_levels,max_iter,toll);
   //       os2.close();
 
 
-  //       std::vector<Real> active_solution(Ant_levels[levels.size()-1].max_rows(),0);
-  //       level_global_house_holder[levels[levels.size()-1]].transpose_and_multiply(active_solution,active_x);
+        std::vector<Real> active_solution(Ant_levels[levels.size()-1].max_rows(),0);
+        level_global_house_holder[levels[levels.size()-1]].transpose_and_multiply(active_solution,active_x);
 
-		// std::string output_fileACTIVESET ="DualMonotone_dim"+ std::to_string(ManifoldDim) +"_order"+ std::to_string(Order)+
-		// +"_output.vtk";
+		std::string output_fileACTIVESET ="DualContactElasticityMonotone_dim"+ std::to_string(ManifoldDim) +"_order"+ std::to_string(Order)+
+		+"_output.vtk";
 
+
+		// std::cout<<"b_transformed "<<std::endl;
+		// for(Integer i=0;i<b_transformed.size();i++)
+		// 	std::cout<<b_transformed[i]<<std::endl;
+		// std::cout<<"working_set "<<std::endl;
+		// for(Integer i=0;i<working_set[working_set.size()-1].size();i++)
+		// 	std::cout<<working_set[working_set.size()-1][i]<<std::endl;
 
 
 		// std::cout<<"constraints "<<std::endl;
-		// for(Integer i=0;i<constraints_sup().size();i++)
-		// 	std::cout<<constraints_sup()[i]<<" "<<constraints_inf()[i]<<std::endl;
+		// for(Integer i=0;i<active_x.size();i++)
+		// 	std::cout<<constraints_sup()[i]<<" "<<active_x[i]<<"  "<<constraints_inf()[i]<<std::endl;
 
-		// os.close();
-		// os.open(output_fileACTIVESET.c_str());
-		// write_wtk_isoparametric(os,W_ptr,active_solution,var_names,levelL);
+		// std::cout<<"active_x.size() "<<std::endl;
+		// 	std::cout<<active_x.size()<<std::endl;
+
+
+
+		os.close();
+		os.open(output_fileACTIVESET.c_str());
+		write_wtk_isoparametric(os,W_ptr,active_solution,var_names,levelL);
 		}
 
 

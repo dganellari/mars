@@ -5356,6 +5356,7 @@ public:
     
     static constexpr FQPValues<SingleType,NQPoints,Ndofs>
     reference_values{reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(QuadratureRule::qp_points)};
+    static constexpr bool build_on_reference=BuildOnReferenceElement<FunctionSpace>::value;
     
     using trace_type_tmp=typename decltype(trace)::value_type;
     using trace_type=ArrayChangeType<Real,trace_type_tmp>;
@@ -5416,8 +5417,10 @@ public:
      // // std::cout<<func_values_<<std::endl;
 
     }
-    
-    void init(const Array<Real,NdofsVolume> &beta, const Integer face, FiniteElem<Elem>&FE)
+
+    template<bool value>
+    std::enable_if_t<value,void>     
+    init_aux(const Array<Real,NdofsVolume> &beta, const Integer face, FiniteElem<Elem>&FE)
     {
 
         //face=0
@@ -5427,7 +5430,7 @@ public:
         //   // std::cout<<"beta"<<beta<<std::endl;
         //   // std::cout<<"trace[face]"<<trace[face]<<std::endl;
 
-      // // std::cout<<"init RT elements (coeffs)"<<std::endl;
+      std::cout<<"init RT elements (coeffs)"<<std::endl;
       // // std::cout<<"alpha_"<<std::endl;
       // // std::cout<<alpha_<<std::endl;
       // // std::cout<<"beta"<<std::endl;
@@ -5473,7 +5476,66 @@ public:
         // // std::cout<<"init end"<<std::endl;
         
     };
-    
+
+    template<bool value>
+    std::enable_if_t<!value,void>     
+    init_aux(const Array<Real,NdofsVolume> &beta, const Integer face, FiniteElem<Elem>&FE)
+    {
+
+        //face=0
+        // const Integer face=0;
+        // auto alpha=subarray(beta,trace[face]);
+        // // std::cout<<"face"<<face<<std::endl;
+        //   // std::cout<<"beta"<<beta<<std::endl;
+        //   // std::cout<<"trace[face]"<<trace[face]<<std::endl;
+
+      std::cout<<"init RT elements (coeffs)"<<std::endl;
+      // // std::cout<<"alpha_"<<std::endl;
+      // // std::cout<<alpha_<<std::endl;
+      // // std::cout<<"beta"<<std::endl;
+      // // std::cout<<beta<<std::endl;
+      // // std::cout<<"trace"<<std::endl;
+      // // std::cout<<trace<<std::endl;
+      // // std::cout<<"trace[face]"<<std::endl;
+      // // std::cout<<trace[face]<<std::endl;
+        subarray(alpha_,beta,trace[face]);
+
+        for(Integer n_dof=0;n_dof<Ndofs;n_dof++)
+        {
+            for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+            {
+                
+                n_tot_=n_dof * NComponents +  n_comp ;
+                n_=n_comp;
+                for(Integer qp=0;qp<NQPoints;qp++)
+                {
+                    // // std::cout<<n_dof<<", "<<n_comp<<", " <<qp<<std::endl;
+                    func_values_[n_tot_][qp].zero();
+                    // // std::cout<<"qui4"<<std::endl;
+                    // func_tmp_=alpha[n_dof] * mapping * weighted_reference_values[n_dof][qp];
+                    // // std::cout<< "n_dof, qp, n_tot_, n_comp, n_=("<<n_dof<<", "<<qp<<", "<< n_tot_<<", "<<n_comp<<", "<< n_<<")"<<std::endl;
+                    // // std::cout<< "func_values_="<<func_values_[n_tot_][qp]<<std::endl;
+                    func_tmp_=alpha_[n_dof]  * reference_values[n_dof][qp];
+                    // // std::cout<<"qui5"<<std::endl;
+                    // // std::cout<< "func_tmp_="<<func_tmp_<<std::endl;
+                    assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
+                    // // std::cout<<"qui6"<<std::endl;
+                    // // std::cout<< "func_values_ after="<<func_values_[n_tot_][qp]<<std::endl;
+                }
+                
+            }
+        }
+        // // std::cout<<"init end"<<std::endl;
+        
+    };
+
+
+    void init(const Array<Real,NdofsVolume> &beta, const Integer face, FiniteElem<Elem>&FE)
+    {
+           init_aux<build_on_reference>(beta,face,FE);
+    }
+
+
     constexpr void init_map(const Map& map){map_ptr=std::make_shared<Map>(map);}
     
     ShapeFunction(const Map& map):

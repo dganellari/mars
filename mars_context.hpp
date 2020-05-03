@@ -141,7 +141,6 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
      constrained_dofs_.resize(n_dofs_,false);
      constrained_mat_.resize(n_dofs_,0);
      constrained_vec_.resize(n_dofs_,0);
-     std::cout<<"------_______-----qui"<<mesh.n_elements()<<std::endl;
 
      // shape_coefficients_.init(*mesh_ptr);
      // mesh.init_signed_normal();
