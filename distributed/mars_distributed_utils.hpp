@@ -96,7 +96,7 @@ inline typename std::enable_if <
 I<sizeof...(Tp), void>::type apply_impl(const F &f, std::tuple<Tp...> &t, std::tuple<Tp...> &v)
 {
     f(std::get<I>(t), std::get<I>(v));
-    apply_impl<F, I + 1, Tp...>(f, t);
+    apply_impl<F, I + 1, Tp...>(f, t, v);
 }
 
 /* other utils */
@@ -133,5 +133,6 @@ struct print_functor
         std::cout << el << std::endl;
     }
 };
+
 
 } //namespace mars
