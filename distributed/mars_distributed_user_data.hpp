@@ -12,10 +12,11 @@
 namespace mars
 {
 
-template <Integer Dim, Integer ManifoldDim, Integer Type, typename ...T>
+/* template <Integer Dim, Integer ManifoldDim, Integer Type, typename ...T> */
+template <class Mesh, typename ...T>
 class UserData
 {
-    using Mesh = mars::Mesh<Dim, ManifoldDim, DistributedImplementation, NonSimplex<Type, DistributedImplementation>>;
+    /* using Mesh = mars::Mesh<Dim, ManifoldDim, DistributedImplementation, NonSimplex<Type, DistributedImplementation>>; */
     using user_tuple = std::tuple<ViewVectorType<T>... >;
 
 public:
@@ -231,10 +232,53 @@ public:
             "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
                 const Integer rank = mesh->find_owner_processor(get_view_scan_ghost(), i, 1, proc_num);
                 std::stringstream stream;
-                stream << " ghost data: " << i << " - " << get_view_ghost()(i) << "data: " << std::get<0>(ghost_user_data_)(i)
+                stream << " ghost data: " << i << " - " << get_view_ghost()(i) << " data: " << std::get<2>(ghost_user_data_)(i)
                        << " proc: " << rank << " - rank: " << proc_num << std::endl;
                 std::cout << stream.str();
             });
+    }
+
+    template <typename ElementType>
+    struct InitialCondition
+    {
+        ElementType user_data;
+        Integer proc;
+
+        InitialCondition(ElementType ud, Integer p) : user_data(ud), proc(p)
+        {
+        }
+
+        MARS_INLINE_FUNCTION
+        void operator()(Integer i) const
+        {
+            user_data(i) = proc;
+        }
+    };
+
+
+    struct InitData
+    {
+        InitData(std::string d, size_t s, Integer p) : desc(d), size(s), proc(p) {}
+
+        template <typename ElementType>
+        void operator()(ElementType &el_1) const
+        {
+            Kokkos::parallel_for(desc, size,
+                                 InitialCondition<ElementType>(el_1, proc));
+        }
+
+        std::string desc;
+        size_t size;
+        Integer proc;
+    };
+
+    MARS_INLINE_FUNCTION void
+    init_user_data()
+    {
+        const Integer size = mesh->get_chunk_size();
+        const Integer proc = mesh->get_proc();
+
+        apply_impl(InitData("init_data", size, proc), user_data_);
     }
 
     Mesh *get_mesh() const
@@ -300,11 +344,29 @@ private:
     Integer proc_count;
 };
 
-template <Integer Dim, Integer ManifoldDim, Integer Type, typename T>
-void exchange_ghost_user_data(const context &context, UserData<Dim, ManifoldDim, Type, T> &data)
+template <typename ElementType>
+struct InitialCondition
+{
+    ElementType user_data;
+    Integer proc;
+
+    InitialCondition(ElementType ud, Integer p) : user_data(ud), proc(p)
+    {
+    }
+
+    MARS_INLINE_FUNCTION
+    void operator()(Integer i) const
+    {
+        user_data(i) = proc;
+    }
+};
+
+template <class UserData>
+void exchange_ghost_user_data(const context &context, UserData &data)
 {
     using namespace Kokkos;
 
+    data.init_user_data();
     data.exchange_ghost_counts(context);
     data.exchange_ghost_data(context);
 }

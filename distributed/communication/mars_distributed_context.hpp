@@ -81,7 +81,7 @@ namespace mars
                 const ViewVectorType<T> &src, const Integer* src_displ, const Integer proc_count) const override \
                 { wrapped.i_send_recv_view(dest, dest_displ, src, src_displ, proc_count); }           
     
-#define MARS_PTOP_TYPES_ Integer, double
+#define MARS_PTOP_TYPES_ double, Integer, float, int, unsigned, short
 
 
 // Defines the concept/interface for a distributed communication context.

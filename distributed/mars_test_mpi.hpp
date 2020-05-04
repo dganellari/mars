@@ -156,7 +156,8 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(int &argc, char 
         DistributedQuad4Mesh mesh;
         generate_distributed_cube(context, mesh, level, level, 0);
 
-        UserData<2, 2, ElementType::Quad4, double> data(&mesh);
+        /* UserData<2, 2, ElementType::Quad4, double, Integer, double> data(&mesh); */
+        UserData<DistributedQuad4Mesh, double, Integer, double> data(&mesh);
         exchange_ghost_user_data(context, data);
         /* int proc_num = rank(context);
 
@@ -223,7 +224,8 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char 
         DistributedHex8Mesh mesh;
         generate_distributed_cube(context, mesh, level, level, level);
 
-        UserData<3, 3, ElementType::Hex8, double> data(&mesh);
+        /* UserData<3, 3, ElementType::Hex8, double, Integer, double> data(&mesh); */
+        UserData<DistributedHex8Mesh, double, Integer, double> data(&mesh);
         exchange_ghost_user_data(context, data);
 
 /* 
