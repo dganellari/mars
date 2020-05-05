@@ -272,6 +272,7 @@ public:
         Integer proc;
     };
 
+    /* TODO: make it for T... values */
     MARS_INLINE_FUNCTION void
     init_user_data()
     {
@@ -281,12 +282,53 @@ public:
         apply_impl(InitData("init_data", size, proc), user_data_);
     }
 
-    Mesh *get_mesh() const
+    template <typename elem_type>
+    MARS_INLINE_FUNCTION static void init_cond(elem_type v, int i);
+
+    template <typename ElementType>
+    struct InitCond
+    {
+        /* InitCond(user_tuple t, H ic) : tuple(t), init_cond(ic) {} */
+        InitCond(ElementType t) : view(t) {}
+
+        void operator()(int i) const
+        {
+            init_cond(view, i);
+        }
+
+        ElementType view;
+    };
+
+    struct InitCondData
+    {
+        InitCondData(std::string d, size_t s) : desc(d), size(s) {}
+
+        template <typename ElementType>
+        void operator()(ElementType &el_1) const
+        {
+            Kokkos::parallel_for(desc, size,
+                                 InitCond<ElementType>(el_1));
+        }
+
+        std::string desc;
+        size_t size;
+    };
+
+    /* template <typename H> */
+    MARS_INLINE_FUNCTION void
+    set_init_cond()
+    {
+        const Integer size = mesh->get_chunk_size();
+        apply_impl(InitCondData("init_data", size), user_data_);
+    }
+
+    Mesh *
+    get_mesh() const
     {
         return mesh;
     }
 
-     void reserve_ghost(const Integer n_elements)
+    void reserve_ghost(const Integer n_elements)
     {
         ghost_ = ViewVectorType<Integer>("ghost_", n_elements);
     }
@@ -344,29 +386,11 @@ private:
     Integer proc_count;
 };
 
-template <typename ElementType>
-struct InitialCondition
-{
-    ElementType user_data;
-    Integer proc;
-
-    InitialCondition(ElementType ud, Integer p) : user_data(ud), proc(p)
-    {
-    }
-
-    MARS_INLINE_FUNCTION
-    void operator()(Integer i) const
-    {
-        user_data(i) = proc;
-    }
-};
-
 template <class UserData>
 void exchange_ghost_user_data(const context &context, UserData &data)
 {
     using namespace Kokkos;
 
-    data.init_user_data();
     data.exchange_ghost_counts(context);
     data.exchange_ghost_data(context);
 }
