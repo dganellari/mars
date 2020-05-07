@@ -5430,7 +5430,7 @@ public:
         //   // std::cout<<"beta"<<beta<<std::endl;
         //   // std::cout<<"trace[face]"<<trace[face]<<std::endl;
 
-      std::cout<<"init RT elements (coeffs)"<<std::endl;
+      // std::cout<<"init RT elements (coeffs)"<<std::endl;
       // // std::cout<<"alpha_"<<std::endl;
       // // std::cout<<alpha_<<std::endl;
       // // std::cout<<"beta"<<std::endl;
@@ -5489,7 +5489,7 @@ public:
         //   // std::cout<<"beta"<<beta<<std::endl;
         //   // std::cout<<"trace[face]"<<trace[face]<<std::endl;
 
-      std::cout<<"init RT elements (coeffs)"<<std::endl;
+      // std::cout<<"init RT elements (coeffs)"<<std::endl;
       // // std::cout<<"alpha_"<<std::endl;
       // // std::cout<<alpha_<<std::endl;
       // // std::cout<<"beta"<<std::endl;

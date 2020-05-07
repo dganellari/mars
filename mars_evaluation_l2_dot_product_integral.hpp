@@ -66,9 +66,9 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>
 
   if(J.side_tag()==label_)
    { 
-    std::cout<<"Evaluation<Expression<L2DotProductIntegral-----------------VALUTO IL BOUNDARY "<<label_<<std::endl;
+    // std::cout<<"Evaluation<Expression<L2DotProductIntegral-----------------VALUTO IL BOUNDARY "<<label_<<std::endl;
     local_tensor_.apply(mat,J,shape_functions_, dofmaps...);//(),shape_functions_.composite_tensor(),shape_functions_.composite_shapes());
-    std::cout<<"after BOUNDAR Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
+    // std::cout<<"after BOUNDAR Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
     // std::cout<<mat<<std::endl;
     }
     else
