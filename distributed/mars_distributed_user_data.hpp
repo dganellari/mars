@@ -17,7 +17,9 @@ template <class Mesh, typename ...T>
 class UserData
 {
     /* using Mesh = mars::Mesh<Dim, ManifoldDim, DistributedImplementation, NonSimplex<Type, DistributedImplementation>>; */
-    using user_tuple = std::tuple<ViewVectorType<T>... >;
+    /* using user_tuple = std::tuple<ViewVectorType<T>... >; */
+    using user_tuple = ViewsTuple<T...>;
+    using tuple  = std::tuple<T...>;
 
 public:
     MARS_INLINE_FUNCTION UserData(Mesh *mesh) : mesh(mesh)
@@ -38,17 +40,7 @@ public:
         apply_impl(resize_view_functor(view_desc, size), tuple);
     }
 
-    /* MARS_INLINE_FUNCTION void reserve_ghost_user_data(const Integer size)
-    {
-        const Integer data_size = std::tuple_size<decltype(user_data)>::value;
-
-        for (int i = 0; i < data_size; ++i)
-        {
-            std::get<i>(ghost_user_data) = typename std::tuple_element<i, decltype(ghost_user_data)>::type("ghost_user_data_" + i, size);
-        }
-    }
- */
-    MARS_INLINE_FUNCTION void reserve_ghost_count(const Integer size)
+   MARS_INLINE_FUNCTION void reserve_ghost_count(const Integer size)
     {
         send_count.assign(size, 0);
         receive_count.assign(size, 0);
@@ -232,7 +224,7 @@ public:
             "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
                 const Integer rank = mesh->find_owner_processor(get_view_scan_ghost(), i, 1, proc_num);
                 std::stringstream stream;
-                stream << " ghost data: " << i << " - " << get_view_ghost()(i) << " data: " << std::get<2>(ghost_user_data_)(i)
+                stream << " ghost data: " << i << " - " << get_view_ghost()(i) << " data: " << std::get<1>(ghost_user_data_)(i)
                        << " proc: " << rank << " - rank: " << proc_num << std::endl;
                 std::cout << stream.str();
             });
@@ -258,69 +250,70 @@ public:
 
     struct InitData
     {
-        InitData(std::string d, size_t s, Integer p) : desc(d), size(s), proc(p) {}
+        InitData(std::string d, size_t s, tuple t) : desc(d), size(s), tup(t) {}
 
-        template <typename ElementType>
-        void operator()(ElementType &el_1) const
+         /* template <typename ElementType, std::size_t I>
+        void operator()(ElementType &el_1, std::size_t L) const
         {
-            Kokkos::parallel_for(desc, size,
-                                 InitialCondition<ElementType>(el_1, proc));
+            Kokkos::parallel_for(desc + std::to_string(I), size,
+                                 InitialCondition<ElementType>(el_1, std::get<2>(tup)));
+            std::cout<<"I: "<< I<<std::endl;
+        }
+ */
+       template <std::size_t I>
+        void operator()(std::size_t L) const
+        {
+                                 /* std::get<1>(user_data)(0)=0; */
+            std::cout<<"I: "<< I<<std::endl;
         }
 
         std::string desc;
         size_t size;
-        Integer proc;
+        tuple tup;
+
     };
 
-    /* TODO: make it for T... values */
     MARS_INLINE_FUNCTION void
-    init_user_data()
+    init_user_data(T... args)
     {
         const Integer size = mesh->get_chunk_size();
         const Integer proc = mesh->get_proc();
 
-        apply_impl(InitData("init_data", size, proc), user_data_);
+        /* apply_impl(InitData("init_data", size, std::forward_as_tuple(args...)), user_data_); */
+        for_each_tuple_elem<0, sizeof...(T)>(InitData("init_data", size, std::forward_as_tuple(args...)));
     }
 
-    template <typename elem_type>
-    MARS_INLINE_FUNCTION static void init_cond(elem_type v, int i);
-
-    template <typename ElementType>
+    /* template <typename H>
     struct InitCond
     {
-        /* InitCond(user_tuple t, H ic) : tuple(t), init_cond(ic) {} */
-        InitCond(ElementType t) : view(t) {}
+        user_tuple tuple;
+        H init_cond;
+
+        InitCond(user_tuple t, H f) : tuple(t), init_cond(f) {}
 
         void operator()(int i) const
         {
-            init_cond(view, i);
+            init_cond(tuple, i);
         }
-
-        ElementType view;
     };
+ */
 
-    struct InitCondData
-    {
-        InitCondData(std::string d, size_t s) : desc(d), size(s) {}
-
-        template <typename ElementType>
-        void operator()(ElementType &el_1) const
-        {
-            Kokkos::parallel_for(desc, size,
-                                 InitCond<ElementType>(el_1));
-        }
-
-        std::string desc;
-        size_t size;
-    };
-
-    /* template <typename H> */
+    template <typename H>
     MARS_INLINE_FUNCTION void
-    set_init_cond()
+    parallel_for_data(const Integer size, H f)
+    {
+        Kokkos::parallel_for("init_initial_cond", size, f);
+    }
+
+
+    template <typename H>
+    MARS_INLINE_FUNCTION void
+    set_init_cond(H f)
     {
         const Integer size = mesh->get_chunk_size();
-        apply_impl(InitCondData("init_data", size), user_data_);
+        Kokkos::parallel_for("init_initial_cond", size, f);
     }
+
 
     Mesh *
     get_mesh() const
@@ -362,6 +355,39 @@ public:
         return scan_ghost_;
     }
 
+    MARS_INLINE_FUNCTION
+    const user_tuple &get_user_data() const
+    {
+        return user_data_;
+    }
+
+     /* template<std::size_t idx, typename H = typename NthType<idx, T...>::type> */
+    template<std::size_t idx, typename H = typename std::tuple_element<idx, tuple>::type>
+    H& get_elem_data(const int i) const
+    {
+        return std::get<idx>(user_data_)(i);
+    }
+
+   /* template<std::size_t idx, typename H = NthType<idx, T...>> */
+    template<std::size_t idx, typename H = typename std::tuple_element<idx, user_tuple>::type>
+    const H get_data() const
+    {
+        return std::get<idx>(user_data_);
+    }
+
+    template<std::size_t idx, typename H = typename std::tuple_element<idx, tuple>::type>
+    H& get_ghost_elem_data(const int i) const
+    {
+        return std::get<idx>(ghost_user_data_)(i);
+    }
+
+    template<std::size_t idx, typename H = typename std::tuple_element<idx, user_tuple>::type>
+    const H get_ghost_data() const
+    {
+        return std::get<idx>(ghost_user_data_);
+    }
+
+
 private:
     Mesh *mesh;
 
@@ -370,8 +396,6 @@ private:
     ViewVectorType<Integer> scan_ghost_;
 
     //ghost data layer
-    /* ViewVectorType<T> user_data; */
-    /* ViewVectorType<T> ghost_user_data; */
     user_tuple user_data_;
     user_tuple ghost_user_data_;
 
@@ -394,13 +418,6 @@ void exchange_ghost_user_data(const context &context, UserData &data)
     data.exchange_ghost_counts(context);
     data.exchange_ghost_data(context);
 }
-
-/* template <typename Functor>
-inline void init_data(UserData data, Mesh mesh, Functor init_cond)
-{
-    init_cond();
-} */
-
 
 } // namespace mars
 

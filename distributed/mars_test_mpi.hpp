@@ -72,7 +72,7 @@ void test_mpi_context(int &argc, char **&argv)
     try
     {
         mars::proc_allocation resources;
-        /* 
+        /*
         // try to detect how many threads can be run on this system
         resources.num_threads = marsenv::thread_concurrency();
 
@@ -115,15 +115,33 @@ void test_mpi_context(int &argc, char **&argv)
     }
 }
 
+
+template <typename... T>
+using user_tuple = mars::ViewsTuple<T...>;
+
+template <typename... T>
+struct functor
+{
+    user_tuple<T...> tuple;
+
+    functor(user_tuple<T...> t) : tuple(t) {}
+
+    MARS_INLINE_FUNCTION
+    void operator()(int i) const
+    {
+        /* note the use of std get instead */
+        std::get<1>(tuple)(i) = 1;
+    }
+};
+
 void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(int &argc, char **&argv, const int level)
 {
 
     using namespace mars;
-
     try
     {
         mars::proc_allocation resources;
-        /* 
+        /*
         // try to detect how many threads can be run on this system
         resources.num_threads = marsenv::thread_concurrency();
 
@@ -151,13 +169,28 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(int &argc, char 
 #endif
 
 #ifdef WITH_KOKKOS
-        using namespace Kokkos;
 
         DistributedQuad4Mesh mesh;
         generate_distributed_cube(context, mesh, level, level, 0);
 
-        /* UserData<2, 2, ElementType::Quad4, double, Integer, double> data(&mesh); */
         UserData<DistributedQuad4Mesh, double, Integer, double> data(&mesh);
+
+        /* first option and recommended one to init the init condition */
+        data.set_init_cond(MARS_LAMBDA(const int i) {
+            data.get_elem_data<1>(i) = i;
+            /* data.get_ghost_elem_data<2>(i)i = ...; */
+        });
+
+        /******** second possibility to do it using a more general approach using a functor by coping the tuple directly instead of the UserData object*/
+        /* data.parallel_for_data(mesh.get_chunk_size(), functor<double, Integer, double>(data.get_user_data())); */
+
+        /********* the same as above but using a lambda instead of the functor. This way can be used for any UserData class member accessing it using the data object. */
+        /* data.parallel_for_data(
+            mesh.get_chunk_size(), MARS_LAMBDA(const int i) {
+                data.get_elem_data<1>(i) = 2;
+            });
+ */
+        /* data.init_user_data(1.1, 2, 3.3); */
         exchange_ghost_user_data(context, data);
         /* int proc_num = rank(context);
 
@@ -182,7 +215,7 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(int &argc, char 
         std::cerr << "exception caught in ring miniapp: " << e.what() << "\n";
     }
 }
-
+/*
 void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char **&argv, const int level)
 {
 
@@ -191,7 +224,7 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char 
     try
     {
         mars::proc_allocation resources;
-        /* 
+        /*
         // try to detect how many threads can be run on this system
         resources.num_threads = marsenv::thread_concurrency();
 
@@ -199,14 +232,14 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char 
         if (auto nt = marsenv::get_env_num_threads())
         {
             resources.num_threads = nt;
-        } */
+        }<]
 
 #ifdef WITH_MPI
         // initialize MPI
         marsenv::mpi_guard guard(argc, argv, false);
 
         // assign a unique gpu to this rank if available
-        /*  resources.gpu_id = marsenv::find_private_gpu(MPI_COMM_WORLD); */
+        [> resources.gpu_id = marsenv::find_private_gpu(MPI_COMM_WORLD);<]
 
         // create a distributed context
         auto context = mars::make_context(resources, MPI_COMM_WORLD);
@@ -224,11 +257,11 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char 
         DistributedHex8Mesh mesh;
         generate_distributed_cube(context, mesh, level, level, level);
 
-        /* UserData<3, 3, ElementType::Hex8, double, Integer, double> data(&mesh); */
+        [>UserData<3, 3, ElementType::Hex8, double, Integer, double> data(&mesh);<]
         UserData<DistributedHex8Mesh, double, Integer, double> data(&mesh);
         exchange_ghost_user_data(context, data);
 
-/* 
+/*
         int proc_num = rank(context);
 
         ViewMatrixType<Real> poi = mesh.get_view_points();
@@ -243,13 +276,13 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char 
         parallel_for(
             "print_elem_chunk", mesh.get_view_elements().extent(0), KOKKOS_LAMBDA(const int i) {
                 printf("el 3D: [(  %li, %li, %li, %li, %li, %li, %li, %li )] - %i]\n",
-                        eeel(i, 0), eeel(i, 1), eeel(i, 2), eeel(i, 3), eeel(i, 4), eeel(i, 5), 
+                        eeel(i, 0), eeel(i, 1), eeel(i, 2), eeel(i, 3), eeel(i, 4), eeel(i, 5),
                                     eeel(i, 6), eeel(i, 7), proc_num);
-            }); */
+            });<]
 #endif
     }
     catch (std::exception &e)
     {
         std::cerr << "exception caught in ring miniapp: " << e.what() << "\n";
     }
-}
+} */

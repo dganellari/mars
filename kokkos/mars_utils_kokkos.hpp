@@ -68,6 +68,9 @@ using ViewObject = Kokkos::View<T[1], KokkosSpace>;
 
 template<typename T, class space>
 using ViewObjectU = Kokkos::View<T[1], space, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+
+template <typename... T>
+using ViewsTuple = std::tuple<ViewVectorType<T>...>;
 /*
 
 template<typename T>

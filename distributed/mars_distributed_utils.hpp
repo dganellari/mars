@@ -5,6 +5,24 @@ namespace mars
 
 /* Tuple utils */
 
+//getting the  nth type of a variadic.
+template <std::size_t I, typename... T>
+struct NthType;
+
+// recursive case
+template <std::size_t I, typename Head, typename... Tail>
+struct NthType<I, Head, Tail...>
+{
+    typedef typename NthType<I-1, Tail...>::type type;
+};
+
+template <class Head, class... Tail>
+struct NthType<0, Head, Tail...>
+{
+    typedef Head type;
+};
+
+
 //getting the type of a tuple element. The same as std::tuple_element
 template <std::size_t I, class T>
 struct tuple_el;
@@ -16,7 +34,6 @@ struct tuple_el<I, std::tuple<Head, Tail...>>
 {
 };
 
-// base case
 template <class Head, class... Tail>
 struct tuple_el<0, std::tuple<Head, Tail...>>
 {
@@ -71,6 +88,26 @@ void apply_each_element(const F &fct, std::tuple<Vs...> &tuple)
     apply_each_element_impl<F, sizeof...(Vs) - 1, Vs...>(fct, tuple);
 }
 
+template <int I, class... Ts>
+auto get_nth_value(Ts&&... ts) -> decltype(std::get<I>(std::forward_as_tuple(ts...)))
+{
+  return std::get<I>(std::forward_as_tuple(ts...));
+}
+
+/*
+template <std::size_t I=0, std::size_t J, typename F>
+inline typename std::enable_if<I == J, void>::type
+for_each_tuple_elem(const F &f) {}
+
+template <std::size_t I=0, std::size_t J, typename F>
+inline typename std::enable_if <
+I<J, void>::type for_each_tuple_elem(const F &f)
+{
+    f(I);
+    for_each_tuple_elem<I + 1, J, F>(f);
+}
+ */
+
 
 //forwards expansion of a tuple from 0-N
 template <typename F, std::size_t I = 0, typename... Tp>
@@ -81,7 +118,7 @@ template <typename F, std::size_t I = 0, typename... Tp>
 inline typename std::enable_if <
 I<sizeof...(Tp), void>::type apply_impl(const F &f, std::tuple<Tp...> &t)
 {
-    f(std::get<I>(t));
+    f(std::get<I>(t), I);
     apply_impl<F, I + 1, Tp...>(f, t);
 }
 
@@ -105,9 +142,9 @@ struct resize_view_functor
 {
     resize_view_functor(std::string d, size_t s) : _desc(d), _size(s)  {}
     template <typename ElementType>
-    void operator()(ElementType &el) const
+    void operator()(ElementType &el, std::size_t I) const
     {
-        el = ElementType(_desc, _size);
+        el = ElementType(_desc + std::to_string(I), _size);
     }
 
     std::string _desc;
@@ -118,7 +155,7 @@ struct resize_functor
 {
     resize_functor(size_t s) : _size(s) {}
     template <typename ElementType>
-    void operator()(ElementType &el) const
+    void operator()(ElementType &el, std::size_t I) const
     {
         el = ElementType(_size);
     }
