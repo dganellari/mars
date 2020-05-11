@@ -43,6 +43,9 @@ constexpr std::size_t arraySize(T (&)[N][M]) noexcept
 
 
 template<typename T>
+using ViewVectorTypeStride = Kokkos::View<T*, Kokkos::LayoutStride, KokkosSpace>;
+
+template<typename T>
 using ViewVectorType = Kokkos::View<T*,KokkosLayout,KokkosSpace>;
 
 template<typename T>
@@ -272,6 +275,28 @@ void inclusive_scan(const Integer start, const Integer end,
 		}
 	});
 }
+
+template<typename T, typename U>
+void incl_excl_scan_strided(const Integer start, const Integer end,
+			const U in_, T out_)
+{
+	using namespace Kokkos;
+
+	parallel_scan (RangePolicy<>(start , end ),	KOKKOS_LAMBDA (const int& i,
+				Integer& upd, const bool& final)
+	{
+		// Load old value in case we update it before accumulating
+		const Integer val_i = in_(i);
+
+		upd += val_i;
+
+		if (final)
+		{
+			out_(i+1) = upd; // To have both ex and inclusive in the same output.
+		}
+	});
+}
+
 
 template<typename T, typename U>
 void incl_excl_scan(const Integer start, const Integer end,

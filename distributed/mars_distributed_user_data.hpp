@@ -7,7 +7,6 @@
 #ifdef WITH_KOKKOS
 #include "mars_distributed_mesh_kokkos.hpp"
 #include "mars_utils_kokkos.hpp"
-#include "mars_distributed_utils.hpp"
 
 namespace mars
 {
@@ -75,6 +74,7 @@ public:
         {
             Kokkos::parallel_for(desc, size,
                                  FillBufferData<ElementType>(el_1, el_2, boundary_lsfc_index));
+
         }
 
         std::string desc;
@@ -220,13 +220,23 @@ public:
         apply_impl(exchange_ghost_data_functor(context, scan_recv_mirror, scan_send_mirror, proc_count),
                    ghost_user_data_, buffer_data);
 
+        print_nth_tuple<1>(proc_num, ghost_size);
+
+    }
+
+    template <Integer I, typename H = typename std::tuple_element<I, tuple>::type>
+    void print_nth_tuple(const int proc, const Integer ghost_size)
+    {
+        using namespace Kokkos;
+
+        ViewVectorType<Integer> scan_ghost = get_view_scan_ghost();
+        ViewVectorType<Integer> ghost = get_view_ghost();
+        ViewVectorType<H> data = std::get<I>(ghost_user_data_);
+
         parallel_for(
             "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
-                const Integer rank = mesh->find_owner_processor(get_view_scan_ghost(), i, 1, proc_num);
-                std::stringstream stream;
-                stream << " ghost data: " << i << " - " << get_view_ghost()(i) << " data: " << std::get<1>(ghost_user_data_)(i)
-                       << " proc: " << rank << " - rank: " << proc_num << std::endl;
-                std::cout << stream.str();
+                const Integer r = find_owner_processor(scan_ghost, i, 1, proc);
+                printf("ghost data: %li - %li data: %li - proc: %li - rank: %i\n", i, ghost(i), data(i), r, proc);
             });
     }
 
@@ -264,7 +274,7 @@ public:
         void operator()(std::size_t L) const
         {
                                  /* std::get<1>(user_data)(0)=0; */
-            std::cout<<"I: "<< I<<std::endl;
+            /* std::cout<<"I: "<< I<<std::endl; */
         }
 
         std::string desc;
@@ -280,7 +290,7 @@ public:
         const Integer proc = mesh->get_proc();
 
         /* apply_impl(InitData("init_data", size, std::forward_as_tuple(args...)), user_data_); */
-        for_each_tuple_elem<0, sizeof...(T)>(InitData("init_data", size, std::forward_as_tuple(args...)));
+        /* for_each_tuple_elem<0, sizeof...(T)>(InitData("init_data", size, std::forward_as_tuple(args...))); */
     }
 
     /* template <typename H>
@@ -363,6 +373,7 @@ public:
 
      /* template<std::size_t idx, typename H = typename NthType<idx, T...>::type> */
     template<std::size_t idx, typename H = typename std::tuple_element<idx, tuple>::type>
+    MARS_INLINE_FUNCTION
     H& get_elem_data(const int i) const
     {
         return std::get<idx>(user_data_)(i);
@@ -370,18 +381,21 @@ public:
 
    /* template<std::size_t idx, typename H = NthType<idx, T...>> */
     template<std::size_t idx, typename H = typename std::tuple_element<idx, user_tuple>::type>
+    MARS_INLINE_FUNCTION
     const H get_data() const
     {
         return std::get<idx>(user_data_);
     }
 
     template<std::size_t idx, typename H = typename std::tuple_element<idx, tuple>::type>
+    MARS_INLINE_FUNCTION
     H& get_ghost_elem_data(const int i) const
     {
         return std::get<idx>(ghost_user_data_)(i);
     }
 
     template<std::size_t idx, typename H = typename std::tuple_element<idx, user_tuple>::type>
+    MARS_INLINE_FUNCTION
     const H get_ghost_data() const
     {
         return std::get<idx>(ghost_user_data_);
