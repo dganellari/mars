@@ -17,6 +17,7 @@
 #include "mars_distributed_simplex_kokkos.hpp"
 #include "mars_imesh_kokkos.hpp"
 #include "mars_sfc_code.hpp"
+#include "mars_distributed_utils.hpp"
 
 #ifdef WITH_MPI
 #include "mars_sfc_generation.hpp"
@@ -911,41 +912,6 @@ public:
         return enc_oc;
     }
 
-
-    //binary search on the gp view.
-    template <typename T>
-    MARS_INLINE_FUNCTION static Integer find_owner_processor(const ViewVectorType<T> view,
-                                                             const T enc_oc, const int offset, Integer guess)
-    {
-        const int last_index = view.extent(0) / offset - 1;
-        int first_proc = 0;
-        int last_proc = last_index;
-
-        //special implementation of the binary search considering found if an element is between current and next proc value.
-        while (first_proc <= last_proc && first_proc != last_index)
-        {
-            T current = view(offset * guess);
-            T next = view(offset * (guess + 1));
-
-            if (enc_oc >= current && enc_oc < next)
-            {
-                return guess;
-            }
-            else if (enc_oc < current)
-            {
-                last_proc = guess - 1;
-                guess = (first_proc + last_proc + 1) / 2;
-            }
-            else if (enc_oc >= next)
-            {
-                first_proc = guess + 1;
-                guess = (first_proc + last_proc) / 2;
-            }
-        }
-
-        return -1;
-    }
-
     template <Integer Type>
     struct CountGhostNeighbors
     {
@@ -1080,7 +1046,7 @@ public:
                 if (o.is_valid())
                 {
                     /* printf("Corner Nbh of %u is %li: x and y: %li - %li\n",
-                           ref_octant.x + offset * ref_octant.y, 
+                           ref_octant.x + offset * ref_octant.y,
                            o.x + offset * o.y, o.x, o.y); */
                     scatter(o, gl_index);
                 }
@@ -1203,14 +1169,19 @@ public:
 
         Timer timer;
 
+        /* the only way to work using the lambda instead of the functor on c++11 */
+        ViewVectorType<Integer> boundary = boundary_;
+        ViewVectorType<unsigned int> local_sfc = local_sfc_;
+        ViewVectorType<Integer> boundary_lsfc_index = boundary_lsfc_index_;
+
         parallel_for(
             MDRangePolicy<Rank<2>>({0, 0}, {rank_size, chunk_size_}),
             KOKKOS_LAMBDA(const Integer i, const Integer j) {
                 if (predicate(i, j) == 1)
                 {
                     unsigned int index = scan_indices(i) + predicate_scan(i, j);
-                    boundary_(index) = local_sfc_(j);
-                    boundary_lsfc_index_(index) = j;
+                    boundary(index) = local_sfc(j);
+                    boundary_lsfc_index(index) = j;
                 }
             });
     }
@@ -1236,13 +1207,13 @@ public:
         {
             if (i != proc)
             {
-                ViewVectorType<bool> row_predicate = subview(rank_boundary, i, ALL());
-                ViewVectorType<Integer> row_scan = subview(rank_scan, i, ALL());
-                incl_excl_scan(0, chunk_size_, row_predicate, row_scan);
+                auto row_predicate = subview(rank_boundary, i, ALL);
+                auto row_scan = subview(rank_scan, i, ALL);
+                incl_excl_scan_strided(0, chunk_size_, row_predicate, row_scan);
 
                 parallel_for(
                     "print scan", chunk_size_, KOKKOS_LAMBDA(const int i) {
-                        printf(" boundary -inside: %i-%li", i, row_predicate(i));
+                        printf(" boundary -inside: %i-%i", i, row_predicate(i));
                     });
 
                 printf("\n");
@@ -1274,19 +1245,19 @@ public:
                 printf(" scan boundary: %i-%li\n", i, scan_boundary_(i));
             }); */
 
-        /* We use this strategy so that the compacted elements from the local_sfc 
+        /* We use this strategy so that the compacted elements from the local_sfc
         would still be sorted and unique. */
         compact_boundary_elements(scan_boundary_, rank_boundary, rank_scan, rank_size);
 
-        parallel_for(
+        /* parallel_for(
             "print set", h_ic(), KOKKOS_LAMBDA(const Integer i) {
 
                 const Integer rank = find_owner_processor(scan_boundary_, i, 1, proc);
 
-                printf(" boundary_ : %i - %li (%li) - proc: %li - rank: %li\n", i, boundary_(i), 
-                            get_octant_from_sfc<Type>(boundary_(i)).template get_global_index<Type>(xDim, yDim), 
+                printf(" boundary_ : %i - %li (%li) - proc: %li - rank: %li\n", i, boundary_(i),
+                            get_octant_from_sfc<Type>(boundary_(i)).template get_global_index<Type>(xDim, yDim),
                             rank , proc);
-            });
+            }); */
     }
 
 

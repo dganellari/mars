@@ -13,6 +13,30 @@ namespace mars
 template <Integer Dim, Integer ManifoldDim, Integer Type>
 using DMesh = Mesh<Dim, ManifoldDim, DistributedImplementation, NonSimplex<Type, DistributedImplementation>>;
 
+void fill_gp_np(const std::vector<int> &counts, ViewVectorType<Integer> GpNp, ViewVectorType<unsigned int> elems, const bool root, const Integer chunk_size, const Integer n__anchor_nodes, const Integer size)
+{
+    std::cout << "MPI broadcast ende0!" << std::endl;
+    if (root)
+    {
+        auto GpNp_host = create_mirror_view(GpNp);
+
+        auto elem_view_host = create_mirror_view(elems);
+        deep_copy(elem_view_host, elems);
+
+
+        for (int i = 0; i < size; ++i)
+        {
+            GpNp_host(2 * i) = elem_view_host(i * chunk_size); // acc sum scan giving the first element per process
+            GpNp_host(2 * i + 1) = counts[i];
+        }
+        //insert the last element of the sfc adding 1 to it (to make the last element not part of the linearization) for the binary search to work properly
+        GpNp_host(2 * size) = elem_view_host(n__anchor_nodes - 1) + 1;
+        deep_copy(GpNp, GpNp_host);
+    }
+
+    std::cout << "MPI broadcast ende1!" << std::endl;
+}
+
 template <Integer Dim, Integer ManifoldDim, Integer Type>
 bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, Type> &mesh,
                                const Integer xDim, const Integer yDim, const Integer zDim)
@@ -115,23 +139,11 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
 
     ViewVectorType<Integer> GpNp = ViewVectorType<Integer>("global_static_partition", 2 * (size + 1));
 
-    if (root)
-    {
-        auto GpNp_host = create_mirror_view(GpNp);
-        for (int i = 0; i < size; ++i)
-        {
-            GpNp_host(2 * i) = morton.get_view_elements()(i * chunk_size); // acc sum scan giving the first element per process
-            GpNp_host(2 * i + 1) = counts[i];
-        }
-        //insert the last element of the sfc adding 1 to it (to make the last element not part of the linearization) for the binary search to work properly
-        GpNp_host(2 * size) = morton.get_view_elements()(n__anchor_nodes-1) + 1;
-        deep_copy(GpNp, GpNp_host);
-    }
-
+    fill_gp_np(counts, GpNp, morton.get_view_elements(), root, chunk_size, n__anchor_nodes, size);
     context->distributed->broadcast(GpNp); //broadcast to all processors.
     std::cout << "MPI broadcast ended!" << std::endl;
 
-    /* parallel_for(
+        /* parallel_for(
        "print_elem_gp:", size+1, KOKKOS_LAMBDA(const int i) {
        printf(" elch: (%li-%li) - %i - %i\n", GpNp(2*i),  GpNp(2*i+1), i, proc_num);
        }); */
@@ -148,7 +160,7 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
 
     bool gen_elm = mesh.template generate_elements<Type>(xDim, yDim, zDim);
 
-    mesh.template build_ghost_element_sets<Type>(xDim, yDim, zDim);
+    /* mesh.template build_ghost_element_sets<Type>(xDim, yDim, zDim); */
 
     mesh.template build_boundary_element_sets<Type>(xDim, yDim, zDim);
 

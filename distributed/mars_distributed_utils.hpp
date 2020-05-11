@@ -94,7 +94,7 @@ auto get_nth_value(Ts&&... ts) -> decltype(std::get<I>(std::forward_as_tuple(ts.
   return std::get<I>(std::forward_as_tuple(ts...));
 }
 
-/*
+
 template <std::size_t I=0, std::size_t J, typename F>
 inline typename std::enable_if<I == J, void>::type
 for_each_tuple_elem(const F &f) {}
@@ -106,7 +106,7 @@ I<J, void>::type for_each_tuple_elem(const F &f)
     f(I);
     for_each_tuple_elem<I + 1, J, F>(f);
 }
- */
+
 
 
 //forwards expansion of a tuple from 0-N
@@ -171,5 +171,38 @@ struct print_functor
     }
 };
 
+//binary search on the gp view.
+template <typename T>
+MARS_INLINE_FUNCTION Integer find_owner_processor(const ViewVectorType<T> view,
+                                                  const T enc_oc, const int offset, Integer guess)
+{
+    const int last_index = view.extent(0) / offset - 1;
+    int first_proc = 0;
+    int last_proc = last_index;
+
+    //special implementation of the binary search considering found if an element is between current and next proc value.
+    while (first_proc <= last_proc && first_proc != last_index)
+    {
+        T current = view(offset * guess);
+        T next = view(offset * (guess + 1));
+
+        if (enc_oc >= current && enc_oc < next)
+        {
+            return guess;
+        }
+        else if (enc_oc < current)
+        {
+            last_proc = guess - 1;
+            guess = (first_proc + last_proc + 1) / 2;
+        }
+        else if (enc_oc >= next)
+        {
+            first_proc = guess + 1;
+            guess = (first_proc + last_proc) / 2;
+        }
+    }
+
+    return -1;
+}
 
 } //namespace mars
