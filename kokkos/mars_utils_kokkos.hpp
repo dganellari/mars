@@ -276,7 +276,7 @@ void inclusive_scan(const Integer start, const Integer end,
 	});
 }
 
-template<typename T, typename U>
+/* template<typename T, typename U>
 void incl_excl_scan_strided(const Integer start, const Integer end,
 			const U in_, T out_)
 {
@@ -296,13 +296,15 @@ void incl_excl_scan_strided(const Integer start, const Integer end,
 		}
 	});
 }
-
-
-template<typename T, typename U>
+ */
+//works for all cases including those with strided access views coming from auto = subview...
+template<typename H, typename U>
 void incl_excl_scan(const Integer start, const Integer end,
-			const ViewVectorType<U> in_, ViewVectorType<T> out_)
+			const U in_, H out_)
 {
 	using namespace Kokkos;
+
+    using T = typename H::value_type;
 
 	parallel_scan (RangePolicy<>(start , end ),	KOKKOS_LAMBDA (const int& i,
 				T& upd, const bool& final)

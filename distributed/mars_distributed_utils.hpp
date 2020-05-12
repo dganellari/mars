@@ -1,10 +1,43 @@
-#include "tuple"
+#include <tuple>
+#include <type_traits>
 
 namespace mars
 {
 
-/* Tuple utils */
+/******************** Tuple utils *****************************/
 
+/* getting the index of a type in a variadic template definition */
+
+template <class Tuple, class T, std::size_t Index = 0>
+struct TypeIdx;
+
+template <std::size_t Index, bool Valid>
+struct TypeIdxTest
+    : public std::integral_constant<std::size_t, Index>
+{
+};
+
+template <std::size_t Index>
+struct TypeIdxTest<Index, false>
+{
+    static_assert(Index == -1, "Type not found in the tuple!");
+};
+
+template <class Head, class T, std::size_t Index>
+struct TypeIdx<std::tuple<Head>, T, Index>
+    : public TypeIdxTest<Index, std::is_same<Head, T>::value>
+{
+};
+
+template <class Head, class... Rest, class T, std::size_t Index>
+struct TypeIdx<std::tuple<Head, Rest...>, T, Index>
+    : public std::conditional<std::is_same<Head, T>::value,
+                              std::integral_constant<std::size_t, Index>,
+                              TypeIdx<std::tuple<Rest...>, T, Index + 1>>::type
+{
+};
+
+/* ------------------------------------------------------------------------------------------------ */
 //getting the  nth type of a variadic.
 template <std::size_t I, typename... T>
 struct NthType;
@@ -22,8 +55,8 @@ struct NthType<0, Head, Tail...>
     typedef Head type;
 };
 
-
-//getting the type of a tuple element. The same as std::tuple_element
+/* ------------------------------------------------------------------------------------------- */
+//getting the type of a tuple element using a tuple instead. The same as std::tuple_element
 template <std::size_t I, class T>
 struct tuple_el;
 
@@ -64,7 +97,9 @@ I<sizeof...(Tp), void>::type reserve_view_tuple(std::tuple<Tp...> &t, const int 
     reserve_view_tuple<I + 1, Tp...>(t, size, desc);
 }
 
-/* generic tuple expansion using a functor to apply a template function to each tuple */
+
+
+/************* generic tuple expansion using a functor to apply a template function to each tuple ********/
 
 //backwards expansion of a tuple from N-0
 template <typename F, size_t Idx, typename... Vs>
@@ -108,7 +143,6 @@ I<J, void>::type for_each_tuple_elem(const F &f)
 }
 
 
-
 //forwards expansion of a tuple from 0-N
 template <typename F, std::size_t I = 0, typename... Tp>
 inline typename std::enable_if<I == sizeof...(Tp), void>::type
@@ -135,6 +169,8 @@ I<sizeof...(Tp), void>::type apply_impl(const F &f, std::tuple<Tp...> &t, std::t
     f(std::get<I>(t), std::get<I>(v));
     apply_impl<F, I + 1, Tp...>(f, t, v);
 }
+
+/* *************************************************************************************** */
 
 /* other utils */
 
@@ -171,7 +207,7 @@ struct print_functor
     }
 };
 
-//binary search on the gp view.
+//binary search on some view.
 template <typename T>
 MARS_INLINE_FUNCTION Integer find_owner_processor(const ViewVectorType<T> view,
                                                   const T enc_oc, const int offset, Integer guess)
