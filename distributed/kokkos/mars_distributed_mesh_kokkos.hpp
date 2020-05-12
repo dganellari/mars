@@ -1209,7 +1209,7 @@ public:
             {
                 auto row_predicate = subview(rank_boundary, i, ALL);
                 auto row_scan = subview(rank_scan, i, ALL);
-                incl_excl_scan_strided(0, chunk_size_, row_predicate, row_scan);
+                incl_excl_scan(0, chunk_size_, row_predicate, row_scan);
 
                 parallel_for(
                     "print scan", chunk_size_, KOKKOS_LAMBDA(const int i) {
@@ -1218,12 +1218,6 @@ public:
 
                 printf("\n");
 
-                /* parallel_for(
-                    "print scan", chunk_size_ + 1, KOKKOS_LAMBDA(const int i) {
-                        printf(" scan -inside: %i-%li", i, row_scan(i));
-                    });
-
-                printf("\n"); */
             }
         }
 

@@ -262,35 +262,27 @@ public:
     {
         InitData(std::string d, size_t s, tuple t) : desc(d), size(s), tup(t) {}
 
-         /* template <typename ElementType, std::size_t I>
-        void operator()(ElementType &el_1, std::size_t L) const
+        template <typename ElementType>
+        void operator()(ElementType &el_1, std::size_t I) const
         {
+            using ET = typename ElementType::value_type;
+            constexpr std::size_t TypeIndex = TypeIdx<tuple, ET>::value;
+
             Kokkos::parallel_for(desc + std::to_string(I), size,
-                                 InitialCondition<ElementType>(el_1, std::get<2>(tup)));
-            std::cout<<"I: "<< I<<std::endl;
-        }
- */
-       template <std::size_t I>
-        void operator()(std::size_t L) const
-        {
-                                 /* std::get<1>(user_data)(0)=0; */
-            /* std::cout<<"I: "<< I<<std::endl; */
+                                 InitialCondition<ElementType>(el_1, std::get<TypeIndex>(tup)));
         }
 
         std::string desc;
         size_t size;
         tuple tup;
-
     };
 
     MARS_INLINE_FUNCTION void
     init_user_data(T... args)
     {
         const Integer size = mesh->get_chunk_size();
-        const Integer proc = mesh->get_proc();
 
-        /* apply_impl(InitData("init_data", size, std::forward_as_tuple(args...)), user_data_); */
-        /* for_each_tuple_elem<0, sizeof...(T)>(InitData("init_data", size, std::forward_as_tuple(args...))); */
+        apply_impl(InitData("init_data", size, std::forward_as_tuple(args...)), user_data_);
     }
 
     /* template <typename H>

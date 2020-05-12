@@ -13,20 +13,25 @@ namespace mars
 template <Integer Dim, Integer ManifoldDim, Integer Type>
 using DMesh = Mesh<Dim, ManifoldDim, DistributedImplementation, NonSimplex<Type, DistributedImplementation>>;
 
-void fill_gp_np(const std::vector<int> &counts, ViewVectorType<Integer> GpNp, ViewVectorType<unsigned int> elems, const bool root, const Integer chunk_size, const Integer n__anchor_nodes, const Integer size)
+template <Integer Dim, Integer ManifoldDim, Integer Type>
+void broadcast_gp_np(const context &context, DMesh<Dim, ManifoldDim, Type> &mesh, const std::vector<int> &counts, ViewVectorType<unsigned int> elems, Integer n__anchor_nodes)
 {
-    std::cout << "MPI broadcast ende0!" << std::endl;
-    if (root)
+    int proc_num = rank(context);
+    int size = num_ranks(context);
+
+    ViewVectorType<Integer> GpNp = ViewVectorType<Integer>("global_static_partition", 2 * (size + 1));
+
+    if (proc_num == 0)
     {
         auto GpNp_host = create_mirror_view(GpNp);
 
         auto elem_view_host = create_mirror_view(elems);
         deep_copy(elem_view_host, elems);
 
-
         for (int i = 0; i < size; ++i)
         {
-            GpNp_host(2 * i) = elem_view_host(i * chunk_size); // acc sum scan giving the first element per process
+            //counts[0] is always chunk size
+            GpNp_host(2 * i) = elem_view_host(i * counts[0]); // acc sum scan giving the first element per process
             GpNp_host(2 * i + 1) = counts[i];
         }
         //insert the last element of the sfc adding 1 to it (to make the last element not part of the linearization) for the binary search to work properly
@@ -34,7 +39,15 @@ void fill_gp_np(const std::vector<int> &counts, ViewVectorType<Integer> GpNp, Vi
         deep_copy(GpNp, GpNp_host);
     }
 
-    std::cout << "MPI broadcast ende1!" << std::endl;
+    context->distributed->broadcast(GpNp); //broadcast to all processors.
+    std::cout << "MPI broadcast ended!" << std::endl;
+
+    mesh.set_view_gp(GpNp);
+
+    /* parallel_for(
+       "print_elem_gp:", size+1, KOKKOS_LAMBDA(const int i) {
+       printf(" elch: (%li-%li) - %i - %i\n", GpNp(2*i),  GpNp(2*i+1), i, proc_num);
+       }); */
 }
 
 template <Integer Dim, Integer ManifoldDim, Integer Type>
@@ -55,21 +68,21 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
 
     switch (Type)
     {
-        case ElementType::Quad4:
-            {
-                n__anchor_nodes = xDim * yDim;
-                break;
-            }
-        case ElementType::Hex8:
-            {
-                n__anchor_nodes = xDim * yDim * zDim;
-                break;
-            }
-        default:
-            {
-                std::cout << "Not yet implemented for other element types!" << std::endl;
-                return false;
-            }
+    case ElementType::Quad4:
+    {
+        n__anchor_nodes = xDim * yDim;
+        break;
+    }
+    case ElementType::Hex8:
+    {
+        n__anchor_nodes = xDim * yDim * zDim;
+        break;
+    }
+    default:
+    {
+        std::cout << "Not yet implemented for other element types!" << std::endl;
+        return false;
+    }
     }
 
     //unsigned int chunk_size = (unsigned int)ceil((double)n__anchor_nodes / size);
@@ -78,10 +91,9 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
     Integer chunk_size = n__anchor_nodes / size;
     Integer last_chunk_size = chunk_size - (chunk_size * size - n__anchor_nodes);
 
-
     assert(chunk_size > 0);
 
-    if(chunk_size<=0)
+    if (chunk_size <= 0)
     {
         errx(1, " Invalid number of mpi processes. Defined more mpi processes than mesh elements to be generated!");
     }
@@ -96,11 +108,6 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
         std::cout << "last_chunk_size size:: - :    " << last_chunk_size << std::endl;
 
         morton.generate_sfc_elements<Type>(xDim, yDim, zDim);
-
-        /*  parallel_for(
-            "print_elem", xDim * yDim, KOKKOS_LAMBDA(const int i) {
-            printf(" el: %u-%i\n", morton.get_view_elements()(i), i);
-            }); */
     }
 
     std::vector<int> counts(size);
@@ -111,10 +118,7 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
             counts[i] = last_chunk_size;
         else
             counts[i] = chunk_size;
-
-        //printf(" count: %d - ", counts[i]);
     }
-    //printf(" endcount\n");
 
     //set the chunk size to the remainder for the last mpi processes.
     if (proc_num == size - 1)
@@ -137,18 +141,7 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
     mesh.set_chunk_size(chunk_size);
     mesh.set_proc(proc_num);
 
-    ViewVectorType<Integer> GpNp = ViewVectorType<Integer>("global_static_partition", 2 * (size + 1));
-
-    fill_gp_np(counts, GpNp, morton.get_view_elements(), root, chunk_size, n__anchor_nodes, size);
-    context->distributed->broadcast(GpNp); //broadcast to all processors.
-    std::cout << "MPI broadcast ended!" << std::endl;
-
-        /* parallel_for(
-       "print_elem_gp:", size+1, KOKKOS_LAMBDA(const int i) {
-       printf(" elch: (%li-%li) - %i - %i\n", GpNp(2*i),  GpNp(2*i+1), i, proc_num);
-       }); */
-
-    mesh.set_view_gp(GpNp);
+    broadcast_gp_np(context, mesh, counts, morton.get_view_elements(), n__anchor_nodes);
 
     assert(Dim <= 3);
     assert(ManifoldDim <= Dim);
