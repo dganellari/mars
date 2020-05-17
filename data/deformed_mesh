@@ -1,0 +1,21 @@
+int n=1;
+
+
+
+real L1=1;
+
+
+border e1(t=0,L1){x = 0;         y = -t;           label = 4;}
+border e4(t=0,L1){x = t; y = -L1+2*t ;          label = 1;}
+border e2(t=0,L1){x = L1-2*t; y = L1-t ;label = 2;}
+border e3(t=0,L1){x = -L1+t; y =0;          label = 3;}
+
+
+
+mesh Th=buildmesh( e1(n)+e2(n)+e3(n)+e4(n) );
+
+
+savemesh(Th,"deformed.msh");
+
+plot(Th);
+

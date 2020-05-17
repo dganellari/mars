@@ -3096,13 +3096,13 @@ void dofmap_fespace5(
 
 
 
-    template<typename Space,Integer Nmax,Integer N=0,typename Tracker, typename DofsDM >
+    template<bool Dofs2Elements,typename Space,Integer Nmax,Integer N=0,typename Tracker, typename DofsDM >
     inline std::enable_if_t<(N>=Nmax),void> 
     entity_loop(Integer& cont, Tracker& tracker, DofsDM& dm, const std::array<Integer,entity_points>& entity_nodes1, const Elem& elem, const FiniteElem<Elem>&FE)
     {}
 
 
-    template<typename Space,Integer Nmax,Integer N=0,typename Tracker, typename DofsDM >
+    template<bool Dofs2Elements,typename Space,Integer Nmax,Integer N=0,typename Tracker, typename DofsDM >
     inline std::enable_if_t<(N<Nmax),void> 
     entity_loop(Integer& cont,Tracker& tracker, DofsDM& dm, const std::array<Integer,entity_points>& entity_nodes1, const Elem& elem, const FiniteElem<Elem>&FE)
     {
@@ -3172,7 +3172,7 @@ void dofmap_fespace5(
               break;
              }
             }
-            if(cont_nodes==entity_points)
+            if(cont_nodes==entity_points || Dofs2Elements)
               {
                // add dofmap
                 // // std::cout<<"found on level "<<level<<std::endl;
@@ -3234,19 +3234,19 @@ void dofmap_fespace5(
        }
 
 
-      entity_loop<Space,Nmax,N+1>(cont,tracker,dm,entity_nodes1,elem,FE);
+      entity_loop<Dofs2Elements,Space,Nmax,N+1>(cont,tracker,dm,entity_nodes1,elem,FE);
 
     }
 
 
 
 
-    template<Integer N=0,Integer Nmax=TupleTypeSize<TupleOfSpaces>::value,typename Tracker, typename DofsDM >
+    template<bool Dofs2Elements,Integer N,Integer Nmax=TupleTypeSize<TupleOfSpaces>::value,typename Tracker, typename DofsDM >
     inline std::enable_if_t<(N>=Nmax),void> 
     loop_all_spaces(Tracker& tracker, DofsDM& dm,const std::array<Integer,entity_points>& entity_nodes, const Elem& elem, const FiniteElem<Elem>&FE)
     {}
 
-    template<Integer N=0,Integer Nmax=TupleTypeSize<TupleOfSpaces>::value,typename Tracker, typename DofsDM >
+    template<bool Dofs2Elements, Integer N,Integer Nmax=TupleTypeSize<TupleOfSpaces>::value,typename Tracker, typename DofsDM >
     inline std::enable_if_t<(N<Nmax),void> 
     loop_all_spaces(Tracker& tracker, DofsDM& dm, const std::array<Integer,entity_points>& entity_nodes, const Elem& elem, const FiniteElem<Elem>&FE)
     {
@@ -3258,13 +3258,13 @@ void dofmap_fespace5(
       // // std::cout<<" single_dm=="<<single_dm<<std::endl;
 
       Integer cont=0;
-      entity_loop<Space,entity.size()>(cont,tracker,single_dm,entity_nodes,elem,FE);
-      loop_all_spaces<N+1>(tracker,dm,entity_nodes,elem,FE);
+      entity_loop<Dofs2Elements,Space,entity.size()>(cont,tracker,single_dm,entity_nodes,elem,FE);
+      loop_all_spaces<Dofs2Elements,N+1>(tracker,dm,entity_nodes,elem,FE);
     }
 
 
 
-    template<Integer N,Integer...Ns,typename Tracker, typename DofsDM >
+    template<bool Dofs2Elements,Integer N,Integer...Ns,typename Tracker, typename DofsDM >
     inline std::enable_if_t<(sizeof...(Ns)==0),void> 
     loop_some_spaces(Tracker& tracker, DofsDM& dm,const std::array<Integer,entity_points>& entity_nodes, const Elem& elem, const FiniteElem<Elem>&FE)
     {
@@ -3273,11 +3273,11 @@ void dofmap_fespace5(
       auto& single_dm=tuple_get<N>(elemdofmap_);
       dm.template dofmap_get<N>(single_dm,FE.elem_id(),FE.level());
       Integer cont=0;
-      entity_loop<Space,entity.size()>(cont,tracker,single_dm,entity_nodes,elem,FE);
+      entity_loop<Dofs2Elements,Space,entity.size()>(cont,tracker,single_dm,entity_nodes,elem,FE);
 
     }
 
-    template<Integer N,Integer...Ns,typename Tracker, typename DofsDM >
+    template<bool Dofs2Elements,Integer N,Integer...Ns,typename Tracker, typename DofsDM >
     inline std::enable_if_t<(sizeof...(Ns)>0),void> 
     loop_some_spaces(Tracker& tracker, DofsDM& dm, const std::array<Integer,entity_points>& entity_nodes, const Elem& elem, const FiniteElem<Elem>&FE)
     {
@@ -3287,26 +3287,26 @@ void dofmap_fespace5(
       dm.template dofmap_get<N>(single_dm,FE.elem_id(),FE.level());
 
       Integer cont=0;
-      entity_loop<Space,entity.size()>(cont,tracker,single_dm,entity_nodes,elem,FE);
-      loop_some_spaces<Ns...>(tracker,dm,entity_nodes,elem,FE);
+      entity_loop<Dofs2Elements,Space,entity.size()>(cont,tracker,single_dm,entity_nodes,elem,FE);
+      loop_some_spaces<Dofs2Elements,Ns...>(tracker,dm,entity_nodes,elem,FE);
     }
 
 
-    template<Integer M,Integer... Ms,Integer Nmax=TupleTypeSize<TupleOfSpaces>::value,typename Tracker, typename DofsDM >
+    template<bool Dofs2Elements,Integer M,Integer... Ms,Integer Nmax=TupleTypeSize<TupleOfSpaces>::value,typename Tracker, typename DofsDM >
     std::enable_if_t<(M==-1),void>
     loop_spaces_aux(Tracker& tracker, DofsDM& dofsdofmap, const std::array<Integer,entity_points>& entity_nodes, const Elem& elem, const FiniteElem<Elem>&FE)
     {
-      loop_all_spaces(tracker,dofsdofmap,entity_nodes,elem,FE);
+      loop_all_spaces<Dofs2Elements,0>(tracker,dofsdofmap,entity_nodes,elem,FE);
     }
-      template<Integer M,Integer... Ms,Integer Nmax=TupleTypeSize<TupleOfSpaces>::value,typename Tracker, typename DofsDM >
+      template<bool Dofs2Elements,Integer M,Integer... Ms,Integer Nmax=TupleTypeSize<TupleOfSpaces>::value,typename Tracker, typename DofsDM >
     std::enable_if_t<(M!=-1),void>
     loop_spaces_aux(Tracker& tracker, DofsDM& dofsdofmap, const std::array<Integer,entity_points>& entity_nodes, const Elem& elem, const FiniteElem<Elem>&FE)
     {
-      loop_some_spaces<M,Ms...>(tracker,dofsdofmap,entity_nodes,elem,FE);
+      loop_some_spaces<Dofs2Elements,M,Ms...>(tracker,dofsdofmap,entity_nodes,elem,FE);
     }
 
 
-    template<Integer M=-1, Integer...Ms>
+    template<bool Dofs2Elements, Integer M=-1, Integer...Ms>
     void build()
     {
      Integer entity_[entity_points];
@@ -3347,7 +3347,7 @@ void dofmap_fespace5(
               std::sort(entity_nodes.begin(),entity_nodes.end());
 
 
-              loop_spaces_aux<M,Ms...>(tracker,dofsdofmap,entity_nodes,elem,FE);
+              loop_spaces_aux<Dofs2Elements,M,Ms...>(tracker,dofsdofmap,entity_nodes,elem,FE);
              }
          }
 
@@ -3776,12 +3776,20 @@ void dofmap_fespace5(
   void build(Entity2Dofs<FullFunctionSpace,EntityDim>& entity2dofs)
   {
 
-    entity2dofs.template build<M,Ms...>();
+    entity2dofs.template build<false,M,Ms...>();
 
   }
 
 
-  
+
+  template<Integer M=-1,Integer...Ms,typename FullFunctionSpace, Integer EntityDim>
+  void build_all_element_dofs(Entity2Dofs<FullFunctionSpace,EntityDim>& entity2dofs)
+  {
+
+    entity2dofs.template build<true,M,Ms...>();
+
+  }
+
 
 
 
