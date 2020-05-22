@@ -216,7 +216,7 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(int &argc, char 
         std::cerr << "exception caught in ring miniapp: " << e.what() << "\n";
     }
 }
-/*
+
 void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char **&argv, const int level)
 {
 
@@ -225,31 +225,31 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char 
     try
     {
         mars::proc_allocation resources;
-        /*
-        // try to detect how many threads can be run on this system
-        resources.num_threads = marsenv::thread_concurrency();
 
-        // override thread count if the user set MARS_NUM_THREADS
+        /* try to detect how many threads can be run on this system */
+        /* resources.num_threads = marsenv::thread_concurrency(); */
+
+        /* override thread count if the user set MARS_NUM_THREADS
         if (auto nt = marsenv::get_env_num_threads())
         {
             resources.num_threads = nt;
-        }<]
+        }*/
 
 #ifdef WITH_MPI
-        // initialize MPI
+        /* initialize MPI */
         marsenv::mpi_guard guard(argc, argv, false);
 
-        // assign a unique gpu to this rank if available
-        [> resources.gpu_id = marsenv::find_private_gpu(MPI_COMM_WORLD);<]
+        /* assign a unique gpu to this rank if available */
+        /* resources.gpu_id = marsenv::find_private_gpu(MPI_COMM_WORLD);*/
 
-        // create a distributed context
+        /* create a distributed context */
         auto context = mars::make_context(resources, MPI_COMM_WORLD);
-        //bool root = mars::rank(context) == 0;
+        /* bool root = mars::rank(context) == 0; */
 #else
-        // resources.gpu_id = marsenv::default_gpu();
+        /* resources.gpu_id = marsenv::default_gpu();
 
-        // // create a local context
-        // auto context = mars::make_context(resources);
+        // create a local context
+        auto context = mars::make_context(resources); */
 #endif
 
 #ifdef WITH_KOKKOS
@@ -258,11 +258,11 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char 
         DistributedHex8Mesh mesh;
         generate_distributed_cube(context, mesh, level, level, level);
 
-        [>UserData<3, 3, ElementType::Hex8, double, Integer, double> data(&mesh);<]
-        UserData<DistributedHex8Mesh, double, Integer, double> data(&mesh);
+        /*UserData<3, 3, ElementType::Hex8, double, Integer, double> data(&mesh);*/
+        /* UserData<DistributedHex8Mesh, double, Integer, double> data(&mesh);
         exchange_ghost_user_data(context, data);
 
-/*
+
         int proc_num = rank(context);
 
         ViewMatrixType<Real> poi = mesh.get_view_points();
@@ -279,11 +279,11 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char 
                 printf("el 3D: [(  %li, %li, %li, %li, %li, %li, %li, %li )] - %i]\n",
                         eeel(i, 0), eeel(i, 1), eeel(i, 2), eeel(i, 3), eeel(i, 4), eeel(i, 5),
                                     eeel(i, 6), eeel(i, 7), proc_num);
-            });<]
+            });*/
 #endif
     }
     catch (std::exception &e)
     {
         std::cerr << "exception caught in ring miniapp: " << e.what() << "\n";
     }
-} */
+}

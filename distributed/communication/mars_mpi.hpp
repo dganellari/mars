@@ -39,7 +39,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 #include <vector>
 
 #include "mars_gathered_vector.hpp"
-#include "mars_globals.hpp"
 
 namespace mars
 {
@@ -131,7 +130,7 @@ ViewVectorType<T> scatter(const ViewVectorType<T> global,
                           const ViewVectorType<T> local, MPI_Comm comm)
 {
     using traits = mpi_traits<T>;
-    unsigned int chunk_size = local.extent(0);
+    Integer chunk_size = local.extent(0);
 
     MPI_OR_THROW(MPI_Scatter,
                  global.data(), chunk_size, traits::mpi_type(), // send buffer
@@ -146,7 +145,7 @@ void scatterv(const ViewVectorType<T> global,
               const ViewVectorType<T> local, const std::vector<int> &counts, MPI_Comm comm)
 {
     using traits = mpi_traits<T>;
-    unsigned int chunk_size = local.extent(0);
+    Integer chunk_size = local.extent(0);
 
     auto displs = make_scan_index(counts);
 
@@ -285,7 +284,7 @@ void broadcast(const ViewVectorType<T> global, MPI_Comm comm)
                   "broadcast can only be performed on trivally copyable types");
 
     using traits = mpi_traits<T>;
-    unsigned int count = global.extent(0);
+    Integer count = global.extent(0);
 
     MPI_OR_THROW(MPI_Bcast,
                  global.data(), count, traits::mpi_type(), 0, comm);

@@ -14,7 +14,7 @@ template <Integer Dim, Integer ManifoldDim, Integer Type>
 using DMesh = Mesh<Dim, ManifoldDim, DistributedImplementation, NonSimplex<Type, DistributedImplementation>>;
 
 template <Integer Dim, Integer ManifoldDim, Integer Type>
-void broadcast_gp_np(const context &context, DMesh<Dim, ManifoldDim, Type> &mesh, const std::vector<int> &counts, ViewVectorType<unsigned int> elems, Integer n__anchor_nodes)
+void broadcast_gp_np(const context &context, DMesh<Dim, ManifoldDim, Type> &mesh, const std::vector<int> &counts, ViewVectorType<Integer> elems, Integer n__anchor_nodes)
 {
     int proc_num = rank(context);
     int size = num_ranks(context);
@@ -69,7 +69,7 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
     int size = num_ranks(context);
     // std::cout << "size - :    " << size << std::endl;
 
-    unsigned int n__anchor_nodes = 0;
+    Integer n__anchor_nodes = 0;
 
     switch (Type)
     {
@@ -90,7 +90,7 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
     }
     }
 
-    //unsigned int chunk_size = (unsigned int)ceil((double)n__anchor_nodes / size);
+    //Integer chunk_size = (Integer)ceil((double)n__anchor_nodes / size);
     //Integer chunk_size = n__anchor_nodes / size + (n__anchor_nodes % size != 0);
     //Integer last_chunk_size = chunk_size - (chunk_size * size - n__anchor_nodes);
     Integer chunk_size = n__anchor_nodes / size;
@@ -131,7 +131,7 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
         chunk_size = last_chunk_size;
     }
 
-    ViewVectorType<unsigned int> local = ViewVectorType<unsigned int>("local_partition_sfc", chunk_size);
+    ViewVectorType<Integer> local = ViewVectorType<Integer>("local_partition_sfc", chunk_size);
 
     context->distributed->scatterv_gids(morton.get_view_elements(), local, counts);
 
@@ -158,13 +158,14 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
 
     bool gen_elm = mesh.template generate_elements<Type>(xDim, yDim, zDim);
 
-    mesh.template build_boundary_element_sets<Type>(xDim, yDim, zDim);
-
     double time_gen = timer_gen.seconds();
     std::cout << "Distributed Generation kokkos took: " << time_gen << " seconds. Process: " << proc_num << std::endl;
 
     if (!gen_pts || !gen_elm)
         std::cerr << "Not implemented for other dimensions yet" << std::endl;
+
+    std::cout<<"Building the ghost layer (boundary element set)..."<<std::endl;
+    mesh.template build_boundary_element_sets<Type>(xDim, yDim, zDim);
 
     double time = timer.seconds();
     std::cout << "Total distributed generation  kokkos took: " << time << " seconds. Process: " << proc_num << std::endl;

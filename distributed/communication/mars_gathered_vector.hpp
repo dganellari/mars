@@ -34,6 +34,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 #include <assert.h>
 #include <cstddef>
 #include <vector>
+#include "mars_globals.hpp"
 
 namespace mars
 {
@@ -43,7 +44,7 @@ class gathered_vector
 {
 public:
     using value_type = T;
-    using count_type = unsigned;
+    using count_type = Integer;
 
     gathered_vector(std::vector<value_type> &&v, std::vector<count_type> &&p) : values_(std::move(v)),
                                                                                 partition_(std::move(p))

@@ -199,13 +199,13 @@ public:
     }
 
     MARS_INLINE_FUNCTION
-    const ViewVectorType<unsigned int> &get_view_sfc() const
+    const ViewVectorType<Integer> &get_view_sfc() const
     {
         return local_sfc_;
     }
 
     MARS_INLINE_FUNCTION
-    void set_view_sfc(const ViewVectorType<unsigned int> &local)
+    void set_view_sfc(const ViewVectorType<Integer> &local)
     {
         local_sfc_ = local;
     }
@@ -356,13 +356,13 @@ public:
     }
 
     MARS_INLINE_FUNCTION
-    unsigned int get_proc()
+    Integer get_proc()
     {
         return proc;
     }
 
     MARS_INLINE_FUNCTION
-    void set_global_to_local_map(const UnorderedMap<unsigned int, unsigned int> &gl_map)
+    void set_global_to_local_map(const UnorderedMap<Integer, Integer> &gl_map)
     {
         global_to_local_map_ = gl_map;
     }
@@ -425,24 +425,24 @@ public:
     struct AddNonSimplexPoint
     {
         ViewMatrixType<Real> points;
-        ViewVectorType<unsigned int> encoded_points;
+        ViewVectorType<Integer> encoded_points;
 
         Integer xDim;
         Integer yDim;
         Integer zDim;
 
-        AddNonSimplexPoint(ViewMatrixType<Real> pts, ViewVectorType<unsigned int> epts, Integer xdm, Integer ydm) : points(pts), encoded_points(epts), xDim(xdm), yDim(ydm)
+        AddNonSimplexPoint(ViewMatrixType<Real> pts, ViewVectorType<Integer> epts, Integer xdm, Integer ydm) : points(pts), encoded_points(epts), xDim(xdm), yDim(ydm)
         {
         }
 
-        AddNonSimplexPoint(ViewMatrixType<Real> pts, ViewVectorType<unsigned int> epts, Integer xdm, Integer ydm, Integer zdm) : points(pts), encoded_points(epts), xDim(xdm), yDim(ydm), zDim(zdm)
+        AddNonSimplexPoint(ViewMatrixType<Real> pts, ViewVectorType<Integer> epts, Integer xdm, Integer ydm, Integer zdm) : points(pts), encoded_points(epts), xDim(xdm), yDim(ydm), zDim(zdm)
         {
         }
 
         KOKKOS_INLINE_FUNCTION
-        void operator()(unsigned int index) const
+        void operator()(Integer index) const
         {
-            unsigned int gl_index = encoded_points(index);
+            Integer gl_index = encoded_points(index);
 
             switch (Type)
             {
@@ -468,18 +468,18 @@ public:
     {
 
         ViewVectorType<bool> predicate;
-        ViewVectorType<unsigned int> global;
+        ViewVectorType<Integer> global;
 
         Integer xDim;
         Integer yDim;
         Integer zDim;
 
-        BuildGlobalPointIndex(ViewVectorType<bool> el, ViewVectorType<unsigned int> gl,
+        BuildGlobalPointIndex(ViewVectorType<bool> el, ViewVectorType<Integer> gl,
                               Integer xdm, Integer ydm) : predicate(el), global(gl), xDim(xdm), yDim(ydm)
         {
         }
 
-        BuildGlobalPointIndex(ViewVectorType<bool> el, ViewVectorType<unsigned int> gl,
+        BuildGlobalPointIndex(ViewVectorType<bool> el, ViewVectorType<Integer> gl,
                               Integer xdm, Integer ydm, Integer zdm) : predicate(el), global(gl), xDim(xdm), yDim(ydm), zDim(zdm)
         {
         }
@@ -494,12 +494,12 @@ public:
                 // set to true only those elements from the vector that are generated.
                 // in this way the array is already sorted and you just compact it using scan which is much faster in parallel.
 
-                unsigned int gl_index = global(i);
+                Integer gl_index = global(i);
                 assert(gl_index < encode_morton_2D(xDim + 1, yDim + 1));
 
                 // gl_index defines one element by its corner node. Then we add all the other nodes for that element.
-                const unsigned int x = decode_morton_2DX(gl_index);
-                const unsigned int y = decode_morton_2DY(gl_index);
+                const Integer x = decode_morton_2DX(gl_index);
+                const Integer y = decode_morton_2DY(gl_index);
                 predicate(gl_index) = 1;
                 predicate(encode_morton_2D(x + 1, y)) = 1;
                 predicate(encode_morton_2D(x, y + 1)) = 1;
@@ -511,14 +511,14 @@ public:
                 // set to true only those elements from the vector that are generated.
                 // in this way the array is already sorted and you just compact it using scan which is much faster in parallel.
 
-                unsigned int gl_index = global(i);
+                Integer gl_index = global(i);
 
                 assert(gl_index < encode_morton_3D(xDim + 1, yDim + 1, zDim + 1));
 
                 // gl_index defines one element by its corner node. Then we add all the other nodes for that element.
-                const unsigned int x = decode_morton_3DX(gl_index);
-                const unsigned int y = decode_morton_3DY(gl_index);
-                const unsigned int z = decode_morton_3DZ(gl_index);
+                const Integer x = decode_morton_3DX(gl_index);
+                const Integer y = decode_morton_3DY(gl_index);
+                const Integer z = decode_morton_3DZ(gl_index);
 
                 predicate(gl_index) = 1;
                 predicate(encode_morton_3D(x + 1, y, z)) = 1;
@@ -536,7 +536,7 @@ public:
     };
 
     template <Integer Type>
-    inline ViewVectorType<bool> build_global_elements(const unsigned int allrange,
+    inline ViewVectorType<bool> build_global_elements(const Integer allrange,
                                                       const int xDim, const int yDim, const int zDim)
     {
         using namespace Kokkos;
@@ -552,7 +552,7 @@ public:
     }
 
     template <Integer Type>
-    inline unsigned int compact_elements(ViewVectorType<unsigned int> &ltg, const unsigned int allrange,
+    inline Integer compact_elements(ViewVectorType<Integer> &ltg, const Integer allrange,
                                          const int xDim, const int yDim, const int zDim)
     {
         using namespace Kokkos;
@@ -560,7 +560,7 @@ public:
         Timer timer;
 
         const ViewVectorType<bool> &all_elements = build_global_elements<Type>(allrange, xDim, yDim, zDim);
-        ViewVectorType<unsigned int> scan_indices("scan_indices", allrange + 1);
+        ViewVectorType<Integer> scan_indices("scan_indices", allrange + 1);
 
         incl_excl_scan(0, allrange, all_elements, scan_indices);
 
@@ -571,13 +571,13 @@ public:
         deep_copy(h_ic, index_subview);
         //std::cout << "Hyper count result: " << h_ic(0)<< std::endl;
 
-        ltg = ViewVectorType<unsigned int>("local_to_global", h_ic());
+        ltg = ViewVectorType<Integer>("local_to_global", h_ic());
 
         parallel_for(
-            allrange, KOKKOS_LAMBDA(const unsigned int i) {
+            allrange, KOKKOS_LAMBDA(const Integer i) {
                 if (all_elements(i) == 1)
                 {
-                    unsigned int k = scan_indices(i);
+                    Integer k = scan_indices(i);
                     ltg(k) = i;
                 }
             });
@@ -604,11 +604,11 @@ public:
                 assert(yDim != 0);
                 assert(zDim == 0);
 
-                ViewVectorType<unsigned int> local_to_global;
+                ViewVectorType<Integer> local_to_global;
 
-                const unsigned int allrange = encode_morton_2D(xDim + 1, yDim + 1); //TODO : check if enough. Test with xdim != ydim.
+                const Integer allrange = encode_morton_2D(xDim + 1, yDim + 1); //TODO : check if enough. Test with xdim != ydim.
 
-                const unsigned int nr_points = compact_elements<Type>(local_to_global, allrange, xDim, yDim, zDim);
+                const Integer nr_points = compact_elements<Type>(local_to_global, allrange, xDim, yDim, zDim);
                 printf("nr_p: %u\n", nr_points);
 
                 reserve_points(nr_points);
@@ -617,16 +617,16 @@ public:
                              AddNonSimplexPoint<Type>(points_, local_to_global, xDim, yDim));
 
                 //build global_to_local map for use in generate elements.
-                UnorderedMap<unsigned int, unsigned int> global_to_local_map(nr_points);
+                UnorderedMap<Integer, Integer> global_to_local_map(nr_points);
 
                 parallel_for(
                     "local_global_map_for", nr_points, KOKKOS_LAMBDA(const int i) {
                         const int offset = xDim + 1;
 
-                        const unsigned int gl_index = local_to_global(i);
+                        const Integer gl_index = local_to_global(i);
 
-                        const unsigned int x = decode_morton_2DX(gl_index);
-                        const unsigned int y = decode_morton_2DY(gl_index);
+                        const Integer x = decode_morton_2DX(gl_index);
+                        const Integer y = decode_morton_2DY(gl_index);
 
                         global_to_local_map.insert(x + offset * y, i);
                     });
@@ -652,10 +652,10 @@ public:
                 assert(yDim != 0);
                 assert(zDim != 0);
 
-                ViewVectorType<unsigned int> local_to_global;
-                const unsigned int allrange = encode_morton_3D(xDim + 1, yDim + 1, zDim + 1); //TODO : check if enough. Test with xdim != ydim.
+                ViewVectorType<Integer> local_to_global;
+                const Integer allrange = encode_morton_3D(xDim + 1, yDim + 1, zDim + 1); //TODO : check if enough. Test with xdim != ydim.
 
-                const unsigned int nr_points = compact_elements<Type>(local_to_global, allrange, xDim, yDim, zDim);
+                const Integer nr_points = compact_elements<Type>(local_to_global, allrange, xDim, yDim, zDim);
                 printf("nr_p 3D: %u\n", nr_points);
 
                 reserve_points(nr_points);
@@ -664,15 +664,15 @@ public:
                              AddNonSimplexPoint<Type>(points_, local_to_global, xDim, yDim, zDim));
 
                 //build global_to_local map for use in generate elements.
-                UnorderedMap<unsigned int, unsigned int> global_to_local_map(nr_points);
+                UnorderedMap<Integer, Integer> global_to_local_map(nr_points);
 
                 parallel_for(
                     "local_global_map_for", nr_points, KOKKOS_LAMBDA(const int i) {
-                        const unsigned int gl_index = local_to_global(i);
+                        const Integer gl_index = local_to_global(i);
 
-                        const unsigned int x = decode_morton_3DX(gl_index);
-                        const unsigned int y = decode_morton_3DY(gl_index);
-                        const unsigned int z = decode_morton_3DZ(gl_index);
+                        const Integer x = decode_morton_3DX(gl_index);
+                        const Integer y = decode_morton_3DY(gl_index);
+                        const Integer z = decode_morton_3DZ(gl_index);
 
                         global_to_local_map.insert(elem_index(x, y, z, xDim, yDim), i);
                     });
@@ -699,22 +699,22 @@ public:
     struct AddNonSimplexElem
     {
 
-        using UMap = UnorderedMap<unsigned int, unsigned int>;
+        using UMap = UnorderedMap<Integer, Integer>;
         ViewMatrixType<Integer> elem;
         ViewVectorType<bool> active;
-        ViewVectorType<unsigned int> global;
+        ViewVectorType<Integer> global;
         UMap map;
 
         Integer xDim;
         Integer yDim;
         Integer zDim;
 
-        AddNonSimplexElem(ViewMatrixType<Integer> el, ViewVectorType<unsigned int> gl, UMap mp,
+        AddNonSimplexElem(ViewMatrixType<Integer> el, ViewVectorType<Integer> gl, UMap mp,
                           ViewVectorType<bool> ac, Integer xdm, Integer ydm) : elem(el), global(gl), map(mp), active(ac), xDim(xdm), yDim(ydm)
         {
         }
 
-        AddNonSimplexElem(ViewMatrixType<Integer> el, ViewVectorType<unsigned int> gl, UMap mp,
+        AddNonSimplexElem(ViewMatrixType<Integer> el, ViewVectorType<Integer> gl, UMap mp,
                           ViewVectorType<bool> ac, Integer xdm, Integer ydm, Integer zdm) : elem(el), global(gl), map(mp), active(ac), xDim(xdm), yDim(ydm), zDim(zdm)
         {
         }
@@ -729,10 +729,10 @@ public:
             {
                 const int offset = xDim + 1;
 
-                const unsigned int gl_index = global(index);
+                const Integer gl_index = global(index);
 
-                const unsigned int i = decode_morton_2DX(gl_index);
-                const unsigned int j = decode_morton_2DY(gl_index);
+                const Integer i = decode_morton_2DX(gl_index);
+                const Integer j = decode_morton_2DY(gl_index);
 
                 elem(index, 0) = map.value_at(map.find(i + offset * j));
                 elem(index, 1) = map.value_at(map.find((i + 1) + offset * j));
@@ -744,11 +744,11 @@ public:
             }
             case ElementType::Hex8:
             {
-                const unsigned int gl_index = global(index);
+                const Integer gl_index = global(index);
 
-                const unsigned int i = decode_morton_3DX(gl_index);
-                const unsigned int j = decode_morton_3DY(gl_index);
-                const unsigned int k = decode_morton_3DZ(gl_index);
+                const Integer i = decode_morton_3DX(gl_index);
+                const Integer j = decode_morton_3DY(gl_index);
+                const Integer k = decode_morton_3DZ(gl_index);
 
                 elem(index, 0) = map.value_at(map.find(elem_index(i, j, k, xDim, yDim)));
                 elem(index, 1) = map.value_at(map.find(elem_index(i + 1, j, k, xDim, yDim)));
@@ -900,7 +900,7 @@ public:
     template <Integer Type>
     struct CountGhostNeighbors
     {
-        ViewVectorType<unsigned int> global;
+        ViewVectorType<Integer> global;
         ViewVectorType<Integer> count;
         ViewVectorType<Integer> gp;
 
@@ -910,7 +910,7 @@ public:
         Integer yDim;
         Integer zDim;
 
-        CountGhostNeighbors(ViewVectorType<unsigned int> gl, ViewVectorType<Integer> ct, ViewVectorType<Integer> g,
+        CountGhostNeighbors(ViewVectorType<Integer> gl, ViewVectorType<Integer> ct, ViewVectorType<Integer> g,
                             Integer p, Integer xdm, Integer ydm, Integer zdm) : global(gl), count(ct), gp(g), proc(p), xDim(xdm),
                                                                                 yDim(ydm), zDim(zdm)
         {
@@ -968,7 +968,7 @@ public:
     template <Integer Type>
     struct BuildBoundarySets
     {
-        ViewVectorType<unsigned int> global;
+        ViewVectorType<Integer> global;
         ViewVectorType<Integer> gp;
 
         ViewVectorType<Integer> set;
@@ -981,7 +981,7 @@ public:
         Integer yDim;
         Integer zDim;
 
-        BuildBoundarySets(ViewVectorType<unsigned int> gl, ViewVectorType<Integer> g, ViewVectorType<Integer> st,
+        BuildBoundarySets(ViewVectorType<Integer> gl, ViewVectorType<Integer> g, ViewVectorType<Integer> st,
                           ViewVectorType<Integer> sc,                                                               //ViewVectorType<Integer> in,
                           Integer p, Integer xdm, Integer ydm, Integer zdm) : global(gl), gp(g), set(st), scan(sc), //index(in),
                                                                               proc(p), xDim(xdm), yDim(ydm), zDim(zdm)
@@ -1083,7 +1083,7 @@ public:
     template <Integer Type>
     struct IdentifyBoundaryPerRank
     {
-        ViewVectorType<unsigned int> global;
+        ViewVectorType<Integer> global;
         ViewMatrixType<bool> predicate;
         ViewVectorType<Integer> gp;
 
@@ -1093,7 +1093,7 @@ public:
         Integer yDim;
         Integer zDim;
 
-        IdentifyBoundaryPerRank(ViewVectorType<unsigned int> gl, ViewMatrixType<bool> pr, ViewVectorType<Integer> g,
+        IdentifyBoundaryPerRank(ViewVectorType<Integer> gl, ViewMatrixType<bool> pr, ViewVectorType<Integer> g,
                                 Integer p, Integer xdm, Integer ydm, Integer zdm) : global(gl), predicate(pr), gp(g), proc(p), xDim(xdm),
                                                                                     yDim(ydm), zDim(zdm)
         {
@@ -1157,7 +1157,7 @@ public:
 
         /* the only way to work using the lambda instead of the functor on c++11 */
         ViewVectorType<Integer> boundary = boundary_;
-        ViewVectorType<unsigned int> local_sfc = local_sfc_;
+        ViewVectorType<Integer> local_sfc = local_sfc_;
         ViewVectorType<Integer> boundary_lsfc_index = boundary_lsfc_index_;
 
         parallel_for(
@@ -1165,7 +1165,7 @@ public:
             KOKKOS_LAMBDA(const Integer i, const Integer j) {
                 if (predicate(i, j) == 1)
                 {
-                    unsigned int index = scan_indices(i) + predicate_scan(i, j);
+                    Integer index = scan_indices(i) + predicate_scan(i, j);
                     boundary(index) = local_sfc(j);
                     boundary_lsfc_index(index) = j;
                 }
@@ -1196,13 +1196,13 @@ public:
                 auto row_predicate = subview(rank_boundary, i, ALL);
                 auto row_scan = subview(rank_scan, i, ALL);
                 incl_excl_scan(0, chunk_size_, row_predicate, row_scan);
-
+/* 
                 parallel_for(
                     "print scan", chunk_size_, KOKKOS_LAMBDA(const int i) {
                         printf(" boundary -inside: %i-%i", i, row_predicate(i));
                     });
 
-                printf("\n");
+                printf("\n"); */
 
             }
         }
@@ -1251,13 +1251,13 @@ private:
     Integer elements_size_;
     Integer points_size_;
 
-    ViewVectorType<unsigned int> local_sfc_;
+    ViewVectorType<Integer> local_sfc_;
     ViewVectorType<Integer> gp_np; // parallel partition info shared among all processes.
     Integer xDim, yDim, zDim;
     Integer chunk_size_;
     Integer proc;
 
-    UnorderedMap<unsigned int, unsigned int> global_to_local_map_;
+    UnorderedMap<Integer, Integer> global_to_local_map_;
 
     ViewVectorType<Integer> boundary_;
     ViewVectorType<Integer> boundary_lsfc_index_;

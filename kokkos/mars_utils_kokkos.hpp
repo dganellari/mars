@@ -406,7 +406,7 @@ void exclusive_scan(const Integer start, const Integer end,
 
 
 template<typename T>
-void exclusive_bool_scan(const unsigned int start, const unsigned int end,
+void exclusive_bool_scan(const Integer start, const Integer end,
 			ViewVectorType<T> out_, ViewVectorType<bool> in_)
 {
 	using namespace Kokkos;
