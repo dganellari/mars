@@ -1009,7 +1009,7 @@ void run_benchmarks(int level, int refine_level)
 
 	PreLeppBenchmark<Mesh2> b;
 	b.run(level, m, "b");*/
-	
+
 
 #ifdef WITH_KOKKOS
 
@@ -1028,7 +1028,7 @@ void run_benchmarks(int level, int refine_level)
 	//test_mars_nonsimplex_mesh_generation_kokkos_2D(level, refine_level);
 
 	//test_mars_nonsimplex_mesh_generation_kokkos_3D(level, refine_level, refine_level);
-	
+
 	ParallelQuad4Mesh nsm;
 	generate_cube(nsm, level, refine_level, 0);
 	/*ParallelMesh3 pMesh3;
@@ -1212,8 +1212,8 @@ void read_file()
 	// read("../data/square_2.MFEM", mesh);
 	// read_msh("../data/test_3D.msh", mesh, true);
 	mesh.describe(std::cout);
-	std::cout << mesh.n_elements() << std::endl; 
-	std::cout << mesh.n_nodes() << std::endl; 
+	std::cout << mesh.n_elements() << std::endl;
+	std::cout << mesh.n_nodes() << std::endl;
 }
 
 
@@ -1227,7 +1227,7 @@ void write_file()
 	// read("../data/square_2.MFEM", mesh, true);
 	mesh.describe(std::cout);
 	write("../data/test_write_tetra3.msh", mesh);
-	// write("../data/test_write_square2.MFEM", mesh); 
+	// write("../data/test_write_square2.MFEM", mesh);
 
 }
 
@@ -1279,7 +1279,7 @@ int main(int argc, char *argv[])
 	// test_incomplete_6D();
 	// test_incomplete_bad_4D();
 	// read_file();
-	// write_file(); 
+	// write_file();
 
 	int level = 1;
 	int refine_level =1;
@@ -1347,8 +1347,8 @@ int main(int argc, char *argv[])
 
 		//test_mars_nonsimplex_mesh_generation_kokkos_2D(level, level);
 		//test_mars_nonsimplex_mesh_generation_kokkos_3D(level, level, level);
-		//test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(argc, argv, level);
-		test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(argc, argv, level);
+        test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(argc, argv, level);
+		/* test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(argc, argv, level); */
 
 		//test_mpi_context(argc, argv);
 		//test_mars_mesh_generation_kokkos_2D(2,4);
@@ -1378,7 +1378,7 @@ int main(int argc, char *argv[])
 
 	#ifdef WITH_PAR_MOONOLITH
 		return MPI_Finalize();
-	#else 
+	#else
 		return 0;
 	#endif
 }

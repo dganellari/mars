@@ -20,6 +20,8 @@ class UserData
     using user_tuple = ViewsTuple<T...>;
     using tuple  = std::tuple<T...>;
 
+    using simplex_type = typename Mesh::Elem;
+
 public:
     MARS_INLINE_FUNCTION UserData(Mesh *mesh) : mesh(mesh)
     {
@@ -233,10 +235,15 @@ public:
         ViewVectorType<Integer> ghost = get_view_ghost();
         ViewVectorType<H> data = std::get<I>(ghost_user_data_);
 
+        Integer xDim = mesh->get_XDim();
+        Integer yDim = mesh->get_YDim();
+
         parallel_for(
             "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
                 const Integer r = find_owner_processor(scan_ghost, i, 1, proc);
-                printf("ghost data: %li - %li data: %li - proc: %li - rank: %i\n", i, ghost(i), data(i), r, proc);
+
+                Octant o = get_octant_from_sfc<simplex_type::ElemType>(ghost(i));
+                printf("ghost data: %li - %li - %li data: %li - proc: %li - rank: %i\n", i, ghost(i), elem_index(o.x, o.y, o.z, xDim, yDim), data(i), r, proc);
             });
     }
 

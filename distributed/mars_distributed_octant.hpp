@@ -1,5 +1,7 @@
 #include "mars_base.hpp"
 #include "mars_globals.hpp"
+#include "mars_sfc_code.hpp"
+
 namespace mars
 {
 struct Octant
@@ -39,7 +41,8 @@ struct Octant
 
     template <Integer Type>
     MARS_INLINE_FUNCTION
-    Integer get_global_index(const int xDim, const int yDim)
+        Integer
+        get_global_index(const int xDim, const int yDim)
     {
         switch (Type)
         {
@@ -54,4 +57,55 @@ struct Octant
         }
     }
 };
+
+template <Integer Type>
+MARS_INLINE_FUNCTION Octant get_octant_from_sfc(const Integer gl_index)
+{
+    Octant ref_octant;
+
+    switch (Type)
+    {
+    case ElementType::Quad4:
+    {
+        const Integer i = decode_morton_2DX(gl_index);
+        const Integer j = decode_morton_2DY(gl_index);
+
+        ref_octant = Octant(i, j);
+        break;
+    }
+    case ElementType::Hex8:
+    {
+        const Integer i = decode_morton_3DX(gl_index);
+        const Integer j = decode_morton_3DY(gl_index);
+        const Integer k = decode_morton_3DZ(gl_index);
+
+        ref_octant = Octant(i, j, k);
+        break;
+    }
+    }
+    return ref_octant;
+}
+
+template <Integer Type>
+MARS_INLINE_FUNCTION Integer get_sfc_from_octant(const Octant &o)
+{
+    Integer enc_oc = -1;
+
+    switch (Type)
+    {
+    case ElementType::Quad4:
+    {
+        enc_oc = encode_morton_2D(o.x, o.y);
+        break;
+    }
+    case ElementType::Hex8:
+    {
+        enc_oc = encode_morton_3D(o.x, o.y, o.z);
+        break;
+    }
+    }
+
+    return enc_oc;
+}
+
 } // namespace mars
