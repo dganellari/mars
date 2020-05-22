@@ -58,20 +58,20 @@ struct mpi_context_impl
         rank_ = mpi::rank(comm_);
     }
 
-    gathered_vector<unsigned int>
-    gather_gids(const std::vector<unsigned int> &local_gids) const
+    gathered_vector<Integer>
+    gather_gids(const std::vector<Integer> &local_gids) const
     {
         return mpi::gather_all_with_partition(local_gids, comm_);
     }
 
-    ViewVectorType<unsigned int> scatter_gids(const ViewVectorType<unsigned int> global,
-                                              const ViewVectorType<unsigned int> local) const
+    ViewVectorType<Integer> scatter_gids(const ViewVectorType<Integer> global,
+                                              const ViewVectorType<Integer> local) const
     {
         return mpi::scatter(global, local, comm_);
     }
 
-    void scatterv_gids(const ViewVectorType<unsigned int> global,
-                       const ViewVectorType<unsigned int> local, const std::vector<int> &counts) const
+    void scatterv_gids(const ViewVectorType<Integer> global,
+                       const ViewVectorType<Integer> local, const std::vector<int> &counts) const
     {
         mpi::scatterv(global, local, counts, comm_);
     }

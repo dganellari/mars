@@ -96,9 +96,9 @@ namespace mars
 class distributed_context
 {
 public:
-    using gid_vector = std::vector<unsigned int>;
+    using gid_vector = std::vector<Integer>;
 
-    using local_sfc = ViewVectorType<unsigned int>;
+    using local_sfc = ViewVectorType<Integer>;
 
     // default constructor uses a local context: see below.
     distributed_context();
@@ -111,7 +111,7 @@ public:
     distributed_context(distributed_context &&other) = default;
     distributed_context &operator=(distributed_context &&other) = default;
 
-    gathered_vector<unsigned int> gather_gids(const gid_vector &local_gids) const
+    gathered_vector<Integer> gather_gids(const gid_vector &local_gids) const
     {
         return impl_->gather_gids(local_gids);
     }
@@ -162,7 +162,7 @@ public:
 private:
     struct interface
     {
-        virtual gathered_vector<unsigned int>
+        virtual gathered_vector<Integer>
         gather_gids(const gid_vector &local_gids) const = 0;
         virtual local_sfc
         scatter_gids(const local_sfc global, const local_sfc local) const = 0;
@@ -190,7 +190,7 @@ private:
         explicit wrap(const Impl &impl) : wrapped(impl) {}
         explicit wrap(Impl &&impl) : wrapped(std::move(impl)) {}
 
-        virtual gathered_vector<unsigned int>
+        virtual gathered_vector<Integer>
         gather_gids(const gid_vector &local_gids) const override
         {
             return wrapped.gather_gids(local_gids);
@@ -247,22 +247,22 @@ private:
 
 struct local_context
 {
-    using local_sfc = ViewVectorType<unsigned int>;
-    using gid_vector = std::vector<unsigned int>;
+    using local_sfc = ViewVectorType<Integer>;
+    using gid_vector = std::vector<Integer>;
 
-    gathered_vector<unsigned int>
-    gather_gids(const std::vector<unsigned int> &local_gids) const
+    gathered_vector<Integer>
+    gather_gids(const std::vector<Integer> &local_gids) const
     {
-        using count_type = typename gathered_vector<unsigned int>::count_type;
-        return gathered_vector<unsigned int>(
-            std::vector<unsigned int>(local_gids),
+        using count_type = typename gathered_vector<Integer>::count_type;
+        return gathered_vector<Integer>(
+            std::vector<Integer>(local_gids),
             {0u, static_cast<count_type>(local_gids.size())});
     }
 
     local_sfc
     scatter_gids(const local_sfc global, const local_sfc local) const
     {
-        return ViewVectorType<unsigned int>("local_context_view", 0);
+        return ViewVectorType<Integer>("local_context_view", 0);
     }
 
     void

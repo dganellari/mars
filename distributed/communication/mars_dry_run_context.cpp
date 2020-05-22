@@ -42,14 +42,14 @@ struct dry_run_context_impl {
     explicit dry_run_context_impl(unsigned num_ranks, unsigned num_cells_per_tile):
         num_ranks_(num_ranks), num_cells_per_tile_(num_cells_per_tile) {};
 
-    gathered_vector<unsigned int>
-    gather_gids(const std::vector<unsigned int> &local_gids) const
+    gathered_vector<Integer>
+    gather_gids(const std::vector<Integer> &local_gids) const
     {
-        using count_type = typename gathered_vector<unsigned int>::count_type;
+        using count_type = typename gathered_vector<Integer>::count_type;
 
         count_type local_size = local_gids.size();
 
-        std::vector<unsigned int> gathered_gids;
+        std::vector<Integer> gathered_gids;
         gathered_gids.reserve(local_size * num_ranks_);
 
         for (count_type i = 0; i < num_ranks_; i++)
@@ -71,27 +71,27 @@ struct dry_run_context_impl {
             partition.push_back(static_cast<count_type>(i * local_size));
         }
 
-        return gathered_vector<unsigned int>(std::move(gathered_gids), std::move(partition));
+        return gathered_vector<Integer>(std::move(gathered_gids), std::move(partition));
     }
 
-    ViewVectorType<unsigned int>
-    scatter_gids(const ViewVectorType<unsigned int> global, const ViewVectorType<unsigned int> local) const
+    ViewVectorType<Integer>
+    scatter_gids(const ViewVectorType<Integer> global, const ViewVectorType<Integer> local) const
     {
-        return ViewVectorType<unsigned int>("dry_run", 0);
+        return ViewVectorType<Integer>("dry_run", 0);
     }
 
     void
-    scatterv_gids(const ViewVectorType<unsigned int> global, const ViewVectorType<unsigned int> local,
+    scatterv_gids(const ViewVectorType<Integer> global, const ViewVectorType<Integer> local,
                   const std::vector<int> &counts) const
     {
     }
 
     template <typename T>
-    void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, 
+    void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count,
                 const Integer proc_count) const
     {
     }
-    
+
     template<typename T>
     void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ,
                 const ViewVectorType<T> &src, const Integer* src_displ,
