@@ -16,7 +16,6 @@
 #include "mars_distributed_octant.hpp"
 #include "mars_distributed_simplex_kokkos.hpp"
 #include "mars_imesh_kokkos.hpp"
-#include "mars_sfc_code.hpp"
 #include "mars_distributed_utils.hpp"
 
 #ifdef WITH_MPI
@@ -258,6 +257,42 @@ public:
     void set_view_scan_boundary(const ViewVectorType<Integer> &b)
     {
         scan_boundary_ = b;
+    }
+
+    MARS_INLINE_FUNCTION
+    void set_XDim(const Integer xd)
+    {
+        xDim =xd;
+    }
+
+    MARS_INLINE_FUNCTION
+    Integer get_XDim() const
+    {
+        return xDim;
+    }
+
+    MARS_INLINE_FUNCTION
+    void set_YDim(const Integer yd)
+    {
+        yDim =yd;
+    }
+
+    MARS_INLINE_FUNCTION
+    Integer get_YDim() const
+    {
+        return yDim;
+    }
+
+    MARS_INLINE_FUNCTION
+    void set_ZDim(const Integer zd)
+    {
+        zDim =zd;
+    }
+
+    MARS_INLINE_FUNCTION
+    Integer get_ZDim() const
+    {
+        return zDim;
     }
 
     void resize_points(const Integer size)
@@ -863,56 +898,6 @@ public:
     }
 
     template <Integer Type>
-    MARS_INLINE_FUNCTION static Octant get_octant_from_sfc(const Integer gl_index)
-    {
-        Octant ref_octant;
-
-        switch (Type)
-        {
-        case ElementType::Quad4:
-        {
-            const Integer i = decode_morton_2DX(gl_index);
-            const Integer j = decode_morton_2DY(gl_index);
-
-            ref_octant = Octant(i, j);
-            break;
-        }
-        case ElementType::Hex8:
-        {
-            const Integer i = decode_morton_3DX(gl_index);
-            const Integer j = decode_morton_3DY(gl_index);
-            const Integer k = decode_morton_3DZ(gl_index);
-
-            ref_octant = Octant(i, j, k);
-            break;
-        }
-        }
-        return ref_octant;
-    }
-
-    template <Integer Type>
-    MARS_INLINE_FUNCTION static Integer get_sfc_from_octant(const Octant &o)
-    {
-        Integer enc_oc = -1;
-
-        switch (Type)
-        {
-        case ElementType::Quad4:
-        {
-            enc_oc = encode_morton_2D(o.x, o.y);
-            break;
-        }
-        case ElementType::Hex8:
-        {
-            enc_oc = encode_morton_3D(o.x, o.y, o.z);
-            break;
-        }
-        }
-
-        return enc_oc;
-    }
-
-    template <Integer Type>
     struct CountGhostNeighbors
     {
         ViewVectorType<unsigned int> global;
@@ -1054,6 +1039,7 @@ public:
         }
     };
 
+    //another possible way of building the ghost layer directly without using the boundary layers and then send with mpi. This would be an mpi less method howerver it requires extra compute time for sorting"
     template <Integer Type>
     inline void build_ghost_element_sets(const int xDim, const int yDim,
                                          const int zDim)
@@ -1267,6 +1253,7 @@ private:
 
     ViewVectorType<unsigned int> local_sfc_;
     ViewVectorType<Integer> gp_np; // parallel partition info shared among all processes.
+    Integer xDim, yDim, zDim;
     Integer chunk_size_;
     Integer proc;
 

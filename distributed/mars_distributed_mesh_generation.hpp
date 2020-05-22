@@ -58,6 +58,11 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
 
     Kokkos::Timer timer;
 
+
+    mesh.set_XDim(xDim);
+    mesh.set_YDim(yDim);
+    mesh.set_ZDim(zDim);
+
     int proc_num = rank(context);
     // std::cout << "rank -:    " << proc_num << std::endl;
 
@@ -152,8 +157,6 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
     bool gen_pts = mesh.template generate_points<Type>(xDim, yDim, zDim);
 
     bool gen_elm = mesh.template generate_elements<Type>(xDim, yDim, zDim);
-
-    /* mesh.template build_ghost_element_sets<Type>(xDim, yDim, zDim); */
 
     mesh.template build_boundary_element_sets<Type>(xDim, yDim, zDim);
 

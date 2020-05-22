@@ -173,6 +173,7 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(int &argc, char 
         DistributedQuad4Mesh mesh;
         generate_distributed_cube(context, mesh, level, level, 0);
 
+
         UserData<DistributedQuad4Mesh, double, Integer, double> data(&mesh);
 
         /* first option and recommended one to init the init condition */
