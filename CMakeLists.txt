@@ -203,6 +203,7 @@ IF(WITH_MPI)
 		distributed/communication/mars_distributed_context.hpp
 		distributed/communication/mars_execution_context.hpp
 		distributed/mars_env/mars_mpi_guard.hpp
+        examples/mars_advection.hpp
 	)
 ENDIF()
 
@@ -251,6 +252,7 @@ target_include_directories(mars PUBLIC distributed/sfc)
 target_include_directories(mars PUBLIC distributed/mars_env)
 target_include_directories(mars PUBLIC distributed/communication)
 target_include_directories(mars PUBLIC distributed/communication/util)
+target_include_directories(mars PUBLIC examples)
 
 IF(Kokkos_FOUND)
 	MESSAGE(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")

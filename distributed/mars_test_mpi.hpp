@@ -1,5 +1,4 @@
-/* Copyright (c) 2016, Eidgenössische Technische Hochschule Zürich and
-Forschungszentrum Jülich GmbH.
+/* Copyright (c) 2016, Eidgenössische Technische Hochschule Zürich
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without modification,
@@ -115,7 +114,6 @@ void test_mpi_context(int &argc, char **&argv)
     }
 }
 
-
 template <typename... T>
 using user_tuple = mars::ViewsTuple<T...>;
 
@@ -173,14 +171,17 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(int &argc, char 
         DistributedQuad4Mesh mesh;
         generate_distributed_cube(context, mesh, level, level, 0);
 
-
         UserData<DistributedQuad4Mesh, double, Integer, double> data(&mesh);
 
         /* first option and recommended one to init the init condition */
+        /* another option to use this one with a functor instead of the lamda.
+        just be careful what you use within the Lambda body since it is copied by value.
+        Kokkos views are no problem but the userdata object has other host containers which should not be used inside the lambda. */
         data.set_init_cond(MARS_LAMBDA(const int i) {
             data.get_elem_data<1>(i) = i;
             /* data.get_ghost_elem_data<2>(i)i = ...; */
         });
+
 
         /******** second possibility to do it using a more general approach using a functor by coping the tuple directly instead of the UserData object*/
         /* data.parallel_for_data(mesh.get_chunk_size(), functor<double, Integer, double>(data.get_user_data())); */

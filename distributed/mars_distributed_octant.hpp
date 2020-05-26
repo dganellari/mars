@@ -108,4 +108,26 @@ MARS_INLINE_FUNCTION Integer get_sfc_from_octant(const Octant &o)
     return enc_oc;
 }
 
+template <Integer Type>
+MARS_INLINE_FUNCTION void get_vertex_coordinates_from_sfc(const Integer gl_index, double* point, const Integer xDim, const Integer yDim, const Integer zDim)
+{
+    switch (Type)
+    {
+    case ElementType::Quad4:
+    {
+        point[0] = static_cast<Real>(decode_morton_2DX(gl_index)) / static_cast<Real>(xDim);
+        point[1] = static_cast<Real>(decode_morton_2DY(gl_index)) / static_cast<Real>(yDim);
+        point[2]=0.;
+        break;
+    }
+    case ElementType::Hex8:
+    {
+        point[0] = static_cast<Real>(decode_morton_3DX(gl_index)) / static_cast<Real>(xDim);
+        point[1] = static_cast<Real>(decode_morton_3DY(gl_index)) / static_cast<Real>(yDim);
+        point[2] = static_cast<Real>(decode_morton_3DZ(gl_index)) / static_cast<Real>(zDim);
+        break;
+    }
+    }
+}
+
 } // namespace mars
