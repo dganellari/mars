@@ -44,6 +44,7 @@
 #include "mars_par_bisection.hpp"
 #include "mars_par_mesh.hpp"
 #include "mars_test_mpi.hpp"
+#include "mars_advection.hpp"
 #include "mars_distributed_mesh_generation.hpp"
 #endif //WITH_MPI
 #include <chrono>
@@ -1347,8 +1348,10 @@ int main(int argc, char *argv[])
 
 		//test_mars_nonsimplex_mesh_generation_kokkos_2D(level, level);
 		//test_mars_nonsimplex_mesh_generation_kokkos_3D(level, level, level);
-        test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(argc, argv, level);
-		/* test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(argc, argv, level); */
+        /* test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(argc, argv, level); */
+
+        advection(argc, argv, level);
+        /* test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(argc, argv, level); */
 
 		//test_mpi_context(argc, argv);
 		//test_mars_mesh_generation_kokkos_2D(2,4);

@@ -24,7 +24,8 @@ namespace mars {
         static constexpr Integer ElemType = Type;
 
     	SubView<Integer, Type> nodes;
-       
+        //SubView<Integer, Type> user_data;
+
         Integer id = INVALID_INDEX;
        // Integer parent_id = INVALID_INDEX;
         //Integer block = INVALID_INDEX;

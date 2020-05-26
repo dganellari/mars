@@ -222,18 +222,19 @@ public:
         apply_impl(exchange_ghost_data_functor(context, scan_recv_mirror, scan_send_mirror, proc_count),
                    ghost_user_data_, buffer_data);
 
-        print_nth_tuple<1>(proc_num, ghost_size);
+        /* print_nth_tuple<1>(proc_num); */
 
     }
 
     template <Integer I, typename H = typename std::tuple_element<I, tuple>::type>
-    void print_nth_tuple(const int proc, const Integer ghost_size)
+    void print_nth_tuple(const int proc)
     {
         using namespace Kokkos;
 
         ViewVectorType<Integer> scan_ghost = get_view_scan_ghost();
         ViewVectorType<Integer> ghost = get_view_ghost();
         ViewVectorType<H> data = std::get<I>(ghost_user_data_);
+        Integer ghost_size = data.extent(0);
 
         Integer xDim = mesh->get_XDim();
         Integer yDim = mesh->get_YDim();
@@ -243,7 +244,7 @@ public:
                 const Integer r = find_owner_processor(scan_ghost, i, 1, proc);
 
                 Octant o = get_octant_from_sfc<simplex_type::ElemType>(ghost(i));
-                printf("ghost data: %li - %li - %li data: %li - proc: %li - rank: %i\n", i, ghost(i), elem_index(o.x, o.y, o.z, xDim, yDim), data(i), r, proc);
+                printf("ghost data: %li - %li - %li data: %lf - proc: %li - rank: %i\n", i, ghost(i), elem_index(o.x, o.y, o.z, xDim, yDim), data(i), r, proc);
             });
     }
 
@@ -314,7 +315,6 @@ public:
         Kokkos::parallel_for("init_initial_cond", size, f);
     }
 
-
     template <typename H>
     MARS_INLINE_FUNCTION void
     set_init_cond(H f)
@@ -323,6 +323,13 @@ public:
         Kokkos::parallel_for("init_initial_cond", size, f);
     }
 
+    template <typename H>
+    MARS_INLINE_FUNCTION void
+    elem_iterate(H f)
+    {
+        const Integer size = mesh->get_chunk_size();
+        Kokkos::parallel_for("elem_iterate", size, f);
+    }
 
     Mesh *
     get_mesh() const
