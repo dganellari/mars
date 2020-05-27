@@ -56,6 +56,28 @@ struct Octant
         }
         }
     }
+
+    template <Integer Type>
+    MARS_INLINE_FUNCTION void get_vertex_coordinates(double *point, const Integer xDim, const Integer yDim, const Integer zDim)
+    {
+        switch (Type)
+        {
+        case ElementType::Quad4:
+        {
+            point[0] = static_cast<Real>(x) / static_cast<Real>(xDim);
+            point[1] = static_cast<Real>(y) / static_cast<Real>(yDim);
+            point[2] = 0.;
+            break;
+        }
+        case ElementType::Hex8:
+        {
+            point[0] = static_cast<Real>(x) / static_cast<Real>(xDim);
+            point[1] = static_cast<Real>(y) / static_cast<Real>(yDim);
+            point[2] = static_cast<Real>(z) / static_cast<Real>(zDim);
+            break;
+        }
+        }
+    }
 };
 
 template <Integer Type>

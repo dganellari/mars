@@ -238,13 +238,17 @@ public:
 
         Integer xDim = mesh->get_XDim();
         Integer yDim = mesh->get_YDim();
+        Integer zDim = mesh->get_ZDim();
 
         parallel_for(
             "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
                 const Integer r = find_owner_processor(scan_ghost, i, 1, proc);
 
+                double point[3];
+                get_vertex_coordinates_from_sfc<simplex_type::ElemType>(ghost(i), point, xDim, yDim, zDim);
+
                 Octant o = get_octant_from_sfc<simplex_type::ElemType>(ghost(i));
-                printf("ghost data: %li - %li - %li data: %lf - proc: %li - rank: %i\n", i, ghost(i), elem_index(o.x, o.y, o.z, xDim, yDim), data(i), r, proc);
+                printf("ghost data: %li - %li - %li - (%lf, %lf) - data: %lf - proc: %li - rank: %i\n", i, ghost(i), elem_index(o.x, o.y, o.z, xDim, yDim), point[0], point[1], data(i), r, proc);
             });
     }
 

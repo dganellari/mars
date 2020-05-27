@@ -154,7 +154,7 @@ MARS_INLINE_FUNCTION double initial_condition(const Data &data, const int index,
 
     for (int i = 0; i < DIM; ++i)
     {
-        printf("i: %i, x: %lf\n", i, x[i]);
+        /* printf("i: %i, x: %lf\n", i, x[i]); */
         d[i] = x[i] - c[i];
         r2 += d[i] * d[i];
     }
@@ -162,9 +162,11 @@ MARS_INLINE_FUNCTION double initial_condition(const Data &data, const int index,
     arg = -(1. / 2.) * r2 / bump_width / bump_width;
     retval = exp(arg);
 
-    data.get_elem_data<first>(index) = -(1. / bump_width / bump_width) * d[first] * retval;
-    data.get_elem_data<second>(index) = -(1. / bump_width / bump_width) * d[second] * retval;
+    data.get_elem_data<first>(index) = -(1. / bump_width / bump_width) * d[0] * retval;
+    data.get_elem_data<second>(index) = -(1. / bump_width / bump_width) * d[1] * retval;
     /* apply_impl(UpdateDu<DIM>(bump_width, retval, d, user_data), std::forward_as_tuple(args...)); */
+
+    printf("p:x %lf, py: %lf,  retval: %lf, du: %lf-%lf\n", x[0], x[1], retval, data.get_elem_data<first>(index), data.get_elem_data<second>(index));
 
     return retval;
 }
@@ -173,7 +175,6 @@ template <Integer Type>
 MARS_INLINE_FUNCTION
 void get_midpoint_coordinates(double *point, const Integer sfc, const Integer xDim, const Integer yDim, const Integer zDim)
 {
-
     assert(xDim != 0);
     assert(yDim != 0);
 
@@ -182,10 +183,7 @@ void get_midpoint_coordinates(double *point, const Integer sfc, const Integer xD
     double hx = 1. / xDim;
     double hy = 1. / yDim;
 
-    printf("hx: %lf, hy: %lf\n", hx, hy, xDim, yDim);
-
-    printf("p:x %lf, py: %lf\n", point[0], point[1]);
-
+    /* /2 for the midpoint */
     point[0] += hx/2;
     point[1] += hy/2;
 
@@ -270,9 +268,9 @@ void advection(int &argc, char **&argv, const int level)
 
             /* double* du[Dim];
             du[0] = &data.get_elem_data<1>(i);
-            du[1] = &data.get_elem_data<2>(i); */
-            /* data.get_elem_data<0>(i) - the solution u */
-            /* data.get_elem_data<0>(i) = initial_condition<Dim, 1, 2>(midpoint, du, pd); */
+            du[1] = &data.get_elem_data<2>(i);
+            data.get_elem_data<0>(i) - the solution u
+            data.get_elem_data<0>(i) = initial_condition<Dim, 1, 2>(midpoint, du, pd); */
 
             data.get_elem_data<0>(i) = initial_condition<Dim, 1, 2>(data, i, pd, midpoint);
         });
@@ -294,7 +292,7 @@ void advection(int &argc, char **&argv, const int level)
 
 
         const Integer size_ch = mesh.get_chunk_size();
-        ViewVectorType<Integer> max("max", 1);
+        ViewVectorType<double> max("max", 1);
 
         data.elem_iterate(MARS_LAMBDA(const int i) {
             if (data.get_elem_data<1>(i) > max(0))
@@ -303,7 +301,7 @@ void advection(int &argc, char **&argv, const int level)
             }
 
             if (i == size_ch - 1)
-                printf("max: %d\n", max(0));
+                printf("max: %lf\n", max(0));
         });
 
 #endif
