@@ -16,11 +16,19 @@ load AB2elements_dofs.dat
 
 load Aall2dofs.dat
 load ART2dofs.dat
+load ART2alldofs.dat
 
 load AAmultipliers.dat
 load Amultipliersdofs.dat
 
 load  Ais_patch_dirichlet.dat
+
+
+
+load Adisp2dofs.dat
+
+
+load Ab_rbm.dat
 
 
 
@@ -112,6 +120,17 @@ while(i<length(ART2dofs))
     
 end
 
+cont=0;
+i=1;
+while(i<length(ART2alldofs))
+    cont=cont+1;
+    
+    
+    W2dofs{cont}=ART2alldofs(i+1:i+ART2alldofs(i));
+    i=i+ART2alldofs(i)+1;
+    
+end
+
 
 
 for i=1:length(C2dofs)
@@ -140,7 +159,16 @@ while(i<length(Ais_patch_dirichlet))
 end
 
 
-
+cont=0;
+i=1;
+while(i<length(Adisp2dofs))
+    cont=cont+1;
+    
+    
+    disp_all_dofs{cont}=Adisp2dofs(i+1:i+Adisp2dofs(i));
+    i=i+Adisp2dofs(i)+1;
+    
+end
 
 
 
@@ -198,7 +226,7 @@ C1(1:Lconstrained,1:L)=B1(n-L+1:end,1:L);
 h1=g1(n-L+1:end);
 
 
-maxiter=2000;
+maxiter=100;
 D=speye(length(b1));
 d=zeros(L,1);
 d(constrained_dofs)=constrained_vec;
@@ -206,7 +234,9 @@ d(constrained_dofs)=constrained_vec;
 
 b=Abnobc;
 x=zeros(n,1);
- x=uzawa_patch_smoother2(Abc,bbc,x,A,b,l1,u1,constrained_dofs,d,X2dofs,Y2dofs,Z2dofs,M,C2dofs,is_patch_dirichlet{length(is_patch_dirichlet)},maxiter);
+% x = dlmread('sol.txt');
+energy=[];
+ [x,energy]=uzawa_patch_smoother2(energy,Abc,bbc,x,A,b,l1,u1,constrained_dofs,d,X2dofs,Y2dofs,Z2dofs,W2dofs,disp_all_dofs,M,C2dofs,is_patch_dirichlet{length(is_patch_dirichlet)},Ab_rbm,maxiter);
  
  
 % y=uzawa_patch_smoother(Abc,bbc,zeros(n,1),A,b,l1,u1,constrained_dofs,d,D2dofs,B2dofs,maxiter)
@@ -215,3 +245,4 @@ dlmwrite('sol.txt',[length(y);y])
 dlmwrite('sol.txt',[length(x);x])
 % x = quadprog(A,-Abnobc,[],[],C1,h1,Ac_inf,Ac_sup);dlmwrite('sol.txt',[length(x);x])
 
+%  [x,energy]=uzawa_patch_smoother2(energy,Abc,bbc,x,A,b,l1,u1,constrained_dofs,d,X2dofs,Y2dofs,Z2dofs,W2dofs,disp_all_dofs,M,C2dofs,is_patch_dirichlet{length(is_patch_dirichlet)},Ab_rbm,1);

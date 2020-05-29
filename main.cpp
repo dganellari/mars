@@ -1320,7 +1320,11 @@ Kokkos::View<Real **[3][4]> aaa("aaa",M,N);
 // PROVALSFEM_ContactLinearElasticity5<2,1>(1,0,1,1);
 
 // PROVALSFEM_ContactLinearElasticity5<2,1>(1,0,6,1);
-DUALContactLinearElasticity5<2,1>(1,3,3,1);
+// DUALContactLinearElasticity5<2,1>(1,2,6,1);
+DUALLinearElasticityCook<2,1>(argc,argv);//1,1,2);
+for (int i = 0; i < argc; ++i) 
+std::cout<<argv[i]<<std::endl;
+
 
 // find_if_simplex_is_inside_another_one<3,2,2>(1);
 

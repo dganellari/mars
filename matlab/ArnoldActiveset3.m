@@ -11,7 +11,7 @@ function [u,lambda,WorkingSet] = ArnoldActiveset3(A,B,b,c)
 % in particular BT= matrix for inequality constraints, C= corresponding rhs
 
 toll2=10^(-12);
-toll=10^(-9);
+toll=10^(-8);
 n=length(b);
 WorkingSet=zeros(n,1);
 nconstraint=length(c);
@@ -71,7 +71,7 @@ res=b- A* u_k;
 continueplease=false;
 for i=1:n
     
-    if(WorkingSet(i)>0 && res(i)<0)
+    if(WorkingSet(i)>0 && res(i)<0-toll)
         WorkingSet(i)=0;
         continueplease=true;      
     end
@@ -80,7 +80,7 @@ end
 
 for i=1:n
     
-    if(u_k(i)>c(i))
+    if(u_k(i)>c(i)+toll)
         WorkingSet(i)=1;
         continueplease=true;      
     end

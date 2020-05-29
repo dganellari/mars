@@ -84,7 +84,7 @@ template<>
 class Vec<2>
 {
     public: 
-    using type=Vector<Real,2>;
+    using type=Matrix<Real,2,1>;
 
     
     static constexpr type eval(const Real& x1, const Real& x2)
@@ -97,7 +97,7 @@ template<>
 class Vec<3>
 {
     public: 
-    using type=Vector<Real,3>;
+    using type=Matrix<Real,3,1>;
 
     
     static constexpr type eval(const Real& x1, const Real& x2, const Real& x3)

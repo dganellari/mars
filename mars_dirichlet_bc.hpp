@@ -285,13 +285,24 @@ class DirichletBoundaryConditionCollection;
 template<>
 class DirichletBoundaryConditionCollection<>
 {
-public:
+    public:
     using BCsTuple=std::tuple<>;
-    using FunctionSpace=std::tuple<>;
     DirichletBoundaryConditionCollection(){}
+
+    template< typename Elem,typename FSpace,typename ConstrainedDofs,typename ConstrainedMatrixVal,typename ConstrainedVecVal>
+    void assembly(      std::shared_ptr<FSpace> spaces_ptr_,
+                        ConstrainedDofs& constrained_dofs,
+                        ConstrainedMatrixVal& constrained_mat,
+                        ConstrainedVecVal& constrained_vec,
+                        FiniteElem<Elem>& FE )
+    {
+
+    }
+
+
     private:
     BCsTuple bcs_tuple_;
-    std::shared_ptr<FunctionSpace> spaces_ptr_;
+    // std::shared_ptr<FunctionSpace> spaces_ptr_;
 };
 
 template <typename Space>

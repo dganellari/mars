@@ -1,0 +1,258 @@
+load "Element_Mixte"
+
+ofstream fout("ExcelAsymmetricCookE70Nu033N.txt"); 
+
+
+real scaling =1.0;
+
+macro Grad(ux, uy) [dx(ux),dy(ux),dx(uy),dy(uy)] EndMacro
+macro Eps(ux, uy) [dx(ux),0.5 * (dx(uy)+ dy(ux)),0.5 * (dx(uy)+ dy(ux)),dy(uy)] EndMacro
+macro Div(ux, uy) [dx(ux)+dy(uy)] EndMacro
+macro DivT(Jxx,Jxy,Jyx,Jyy) [dx(Jxx)+dy(Jxy),dx(Jyx)+dy(Jyy)] EndMacro
+macro sigma(Jxx,Jxy,Jyx,Jyy) [Jxx, Jxy, Jyx, Jyy] EndMacro
+macro Asigma(Jxx,Jxy,Jyx,Jyy) [beta*Jxx+alpha*(Jxx+Jyy), beta*Jxy, beta*Jyx, beta*Jyy+alpha*(Jxx+Jyy)] EndMacro
+
+
+
+// LAME PARAMETERS
+
+real E=70.0;
+real nu=0.33;
+real lambda = E * nu /( (1+nu) * (1-2*nu) );
+real K=E/(3*(1-2*nu));
+real mu= 3/2*(K-lambda);
+//real lambda= 3.328885923949297e+04;
+//real mu=6.671114076051163e+01;
+
+int n=1;    // lsfem formulation
+int m=5;
+
+
+
+real Lbottom=48;
+real Lleft=44;
+real Lright=16;
+
+real ratio1=Lbottom/real(n);
+real ratio2=Lleft/real(m);
+real h=min(ratio1,ratio2);
+
+
+
+
+border e1(t=0,Lbottom){x = t;         y = t *Lleft/Lbottom;           label = 2;}
+border e2(t=0,Lright){x = Lbottom; y = Lleft+t ;          label = 1;}
+border e3(t=0,Lbottom){x = Lbottom-t; y = Lleft+Lright-t*Lright/Lbottom ;          label = 4;}
+border e4(t=0,Lleft){x = 0; y = Lleft-t ;          label = 3;}
+mesh Th=buildmesh( e1(n)+e2(n)+e3(n)+e4(n) );
+
+
+//mesh Th=buildmesh( e1(n)+e2(n)+e3(n*2)+e4(n*2) );
+mesh ThDisp=buildmesh( e1(m)+e2(m)+e3(m*2)+e4(m*2) );
+
+real omega=int2d(ThDisp) ( 1.0 );
+real sqrtomega=sqrt(omega);
+
+savemesh(Th,"Cookmesh.msh");
+ //mesh Th=square(n,m,[x0+(x1-x0)*x,y0+(y1-y0)*y]);
+ //mesh ThDisp=square(nDisp,mDisp,[x0+(x1-x0)*x,y0+(y1-y0)*y]);
+
+//mesh Th=readmesh("ProblemLSmesh.msh");
+
+fespace Vh(Th,P1);
+fespace VhDisp(ThDisp,P1);
+fespace RTh(Th,RT0);
+
+Vh ux,uy,vx,vy;
+VhDisp uxD,uyD,vxD,vyD;
+RTh [Jxx,Jxy],[Jyx,Jyy],[tauxx,tauxy],[tauyx,tauyy];
+
+
+func func1 =0;//((4.0)* pi*pi * sin(pi * x) * sin(pi * y) - (2.0) * pi*pi *cos( pi * x) * cos( pi * y));
+func func2 =0;// ((4.0)* pi*pi * sin(pi * x) * sin(pi * y) - (2.0) * pi*pi *cos( pi * x) * cos( pi * y));
+
+
+real value=0.2;
+func fx =0;//((4.0)* pi*pi * sin(pi * x) * sin(pi * y) - (2.0) * pi*pi *cos( pi * x) * cos( pi * y));
+func fy =value;// ((4.0)* pi*pi * sin(pi * x) * sin(pi * y) - (2.0) * pi*pi *cos( pi * x) * cos( pi * y));
+
+
+
+
+
+
+
+// Let us solve Linear Elasticity with Displacement Formulation
+problem elasticity([uxD,uyD], [vxD,vyD])=
+int2d(ThDisp)( 2 * mu * Eps(uxD, uyD)' * Eps(vxD, vyD)+ lambda * Div(uxD, uyD)*Div(vxD, vyD)) -
+int2d(ThDisp) (func1 * vxD + func2 * vyD)-
+int1d(ThDisp,2)( fx * vxD + fy * vyD)  + 
+on(4,uxD=0,uyD=0);
+
+elasticity;
+
+plot(ThDisp,uxD,wait=1);
+plot(ThDisp,uyD,wait=1);
+
+
+real MaxDispDY= abs(uyD[].max)/Lright;
+real MaxDispDX= abs(uxD[].min)/Lbottom;
+real MaxDispD= max(MaxDispDX,MaxDispDY);
+real L2uDisp=sqrt(int2d(ThDisp)( uxD * uxD + uyD * uyD ));
+real H1uDisp=sqrt(int2d(ThDisp)( uxD * uxD + uyD * uyD +  dx(uxD)*dx(uxD) +dy(uxD)*dy(uxD) + dx(uyD) * dx(uyD)  + dy(uyD) * dy(uyD) ));
+
+
+
+real d = 2.0;
+real beta = 1.0 / ( 2.0 * mu);
+real alpha = - beta*lambda/(d *lambda + 2.0 * mu);
+real beta2 =  beta * beta;
+real alpha2 = alpha * alpha;
+real coeff = alpha2 + (beta + alpha) * (beta + alpha);
+
+
+int startCmomentum=ceil(abs(log10(h^2)));
+
+for(int iii=startCmomentum;iii<startCmomentum+5;iii++)
+{
+for(int jjj=-4;jjj<4;jjj++)
+{
+real Cconstitutive = 1;
+real Cmomentum = 10^(iii) * h^2;
+real Csym = 10^(real(jjj));
+cout<<Csym<<endl;
+if(jjj==-4)
+{Csym=0;}
+
+
+problem LSAsymmetryelasticity([Jxx,Jxy,Jyx,Jyy,ux,uy], [tauxx,tauxy,tauyx,tauyy,vx,vy])=
+int2d(Th)(
+Cconstitutive*Eps(ux,uy)'*Grad(vx,vy)
+-Cconstitutive*Asigma(Jxx,Jxy,Jyx,Jyy)'*Grad(vx,vy)
+-Cconstitutive*Asigma(tauxx,tauxy,tauyx,tauyy)'*Eps(ux,uy)
++Cconstitutive*Asigma(Jxx,Jxy,Jyx,Jyy)'*Asigma(tauxx,tauxy,tauyx,tauyy)
++ Cmomentum * DivT(Jxx,Jxy,Jyx,Jyy)'*DivT(tauxx,tauxy,tauyx,tauyy)
++ Csym * (Jxy-Jyx)*(tauxy-tauyx)
+)
++on(4,ux=0,uy=0)
++on(1,3,Jyx=0.*N.x,Jyy=0.*N.y,Jxx=0.*N.x,Jxy=0.*N.y)
++on(2,Jyx=fy*N.x,Jyy=fy*N.y,Jxx=fx*N.x,Jxy=fx*N.y);
+
+LSAsymmetryelasticity;
+
+mesh th2=movemesh(Th,[x+ux,y+uy]);
+//plot(Th,wait=1);
+//plot(th2,wait=1);
+
+real L2errNorm2=int2d(ThDisp)( (ux-uxD)*(ux-uxD)+(uy-uyD)*(uy-uyD) );
+real a1=int2d(ThDisp)( (dx(ux)-dx(uxD) )*( dx(ux)-dx(uxD) ) );
+real a2=int2d(ThDisp)( (dy(ux)-dy(uxD) )*( dy(ux)-dy(uxD) ) );
+real a3=int2d(ThDisp)( (dx(uy)-dx(uyD) )*( dx(uy)-dx(uyD) ) );
+real a4=int2d(ThDisp)( (dy(uy)-dy(uyD) )*( dy(uy)-dy(uyD) ) );
+real H1errSemiNorm2=a1+a2+a3+a4;
+
+
+
+real ErrorEquilibrium=int2d(Th)(DivT(Jxx,Jxy,Jyx,Jyy)'*DivT(Jxx,Jxy,Jyx,Jyy) );
+ErrorEquilibrium=sqrt(ErrorEquilibrium);
+real ErrorConstitutive=int2d(Th)( (Eps(ux,uy)-Asigma(Jxx,Jxy,Jyx,Jyy))'*(Eps(ux,uy)-Asigma(Jxx,Jxy,Jyx,Jyy)));
+ErrorConstitutive=sqrt(ErrorConstitutive);
+real ErrorSymmetry=int2d(Th)( 2*(Jxy-Jyx)'*(Jxy-Jyx)) ;
+real Symmetry=int2d(Th)( 2*(0.5*(Jxy+Jyx))'* (0.5 * (Jxy+Jyx)))  ;
+ErrorSymmetry=sqrt(ErrorSymmetry);
+Symmetry=sqrt(Symmetry);
+ErrorSymmetry=ErrorSymmetry/Symmetry;
+
+
+
+real H1errNormNormalizedDisp=sqrt(L2errNorm2 + H1errSemiNorm2)/H1uDisp;
+real H1errNormNormalizedOmega=sqrt(L2errNorm2 + H1errSemiNorm2)/sqrtomega;
+real L2errNormNormalizedDisp=sqrt(L2errNorm2)/L2uDisp;
+real L2errNormNormalizedOmega=sqrt(L2errNorm2)/sqrtomega;
+
+
+cout<<"lambda "<<lambda<<endl;
+cout<<"mu "<<mu<<endl;
+cout<<"Cconstitutive "<<Cconstitutive<<endl;
+cout<<"CmomentumTOT "<<Cmomentum<<endl;
+cout<<"CmomentumConst "<<Cmomentum/(h^2)<<endl;
+cout<<"Cmomentumh2 "<<(h^2)<<endl;
+cout<<"Csym "<<Csym<<endl;
+cout<<"errore L2err Norm Normalized  wrt to Disp norm = "<<L2errNormNormalizedDisp<<endl;
+cout<<"errore L2err Norm Normalized  wrt to 1 norm = "<<L2errNormNormalizedOmega<<endl;
+cout<<"errore H1err Norm Normalized  wrt to Disp norm = "<<H1errNormNormalizedDisp<<endl;
+cout<<"errore H1err Norm Normalized  wrt to 1 norm = "<<H1errNormNormalizedOmega<<endl;
+cout<<"errore Equilibrum= "<<ErrorEquilibrium<<endl;
+cout<<"errore Constitutive= "<<ErrorConstitutive<<endl;
+cout<<"errore Simmetry= "<<ErrorSymmetry<<endl;
+cout<<"MAX DisplacementD = maxUD/y1 "<<MaxDispD<<endl;
+
+fout<<endl; 
+fout<<h^2;      fout<<" "; 
+fout<<Cmomentum/(h^2);      fout<<" "; 
+fout<<Cmomentum;      fout<<" "; 
+fout<<MaxDispD;      fout<<" "; 
+
+fout<<L2errNormNormalizedDisp; fout<<" ";
+fout<<L2errNormNormalizedOmega; fout<<" ";
+fout<<H1errNormNormalizedDisp; fout<<" ";
+fout<<H1errNormNormalizedOmega; fout<<" ";
+fout<<ErrorEquilibrium; fout<<" "; 
+fout<<ErrorConstitutive; fout<<" ";
+fout<<ErrorSymmetry; fout<<" "; 
+
+
+
+
+problem LSelasticity([Jxx,Jxy,Jyx,Jyy,ux,uy], [tauxx,tauxy,tauyx,tauyy,vx,vy])=
+int2d(Th)(
+Cconstitutive*Eps(ux,uy)'*Eps(vx,vy)
+-Cconstitutive*Asigma(Jxx,Jxy,Jyx,Jyy)'*Eps(vx,vy)
+-Cconstitutive*Asigma(tauxx,tauxy,tauyx,tauyy)'*Eps(ux,uy)
++Cconstitutive*Asigma(Jxx,Jxy,Jyx,Jyy)'*Asigma(tauxx,tauxy,tauyx,tauyy)
++ Cmomentum * DivT(Jxx,Jxy,Jyx,Jyy)'*DivT(tauxx,tauxy,tauyx,tauyy)
++ Csym * (Jxy-Jyx)*(tauxy-tauyx)
+)
++on(4,ux=0,uy=0)
++on(1,3,Jyx=0.*N.x,Jyy=0.*N.y,Jxx=0.*N.x,Jxy=0.*N.y)
++on(2,Jyx=fy*N.x,Jyy=fy*N.y,Jxx=fx*N.x,Jxy=fx*N.y);
+
+
+LSelasticity;
+
+L2errNorm2=int2d(ThDisp)( (ux-uxD)*(ux-uxD)+(uy-uyD)*(uy-uyD) );
+a1=int2d(ThDisp)( (dx(ux)-dx(uxD) )*( dx(ux)-dx(uxD) ) );
+a2=int2d(ThDisp)( (dy(ux)-dy(uxD) )*( dy(ux)-dy(uxD) ) );
+a3=int2d(ThDisp)( (dx(uy)-dx(uyD) )*( dx(uy)-dx(uyD) ) );
+a4=int2d(ThDisp)( (dy(uy)-dy(uyD) )*( dy(uy)-dy(uyD) ) );
+H1errSemiNorm2=a1+a2+a3+a4;
+
+ErrorEquilibrium=int2d(Th)(DivT(Jxx,Jxy,Jyx,Jyy)'*DivT(Jxx,Jxy,Jyx,Jyy) );
+ErrorEquilibrium=sqrt(ErrorEquilibrium);
+ErrorConstitutive=int2d(Th)( (Eps(ux,uy)-Asigma(Jxx,Jxy,Jyx,Jyy))'*(Eps(ux,uy)-Asigma(Jxx,Jxy,Jyx,Jyy)));
+ErrorConstitutive=sqrt(ErrorConstitutive);
+ErrorSymmetry=int2d(Th)( 2*(Jxy-Jyx)'*(Jxy-Jyx)) ;
+Symmetry=int2d(Th)( 2*(0.5*(Jxy+Jyx))'* (0.5 * (Jxy+Jyx)))  ;
+ErrorSymmetry=sqrt(ErrorSymmetry);
+Symmetry=sqrt(Symmetry);
+ErrorSymmetry=ErrorSymmetry/Symmetry;
+
+
+H1errNormNormalizedDisp=sqrt(L2errNorm2 + H1errSemiNorm2)/H1uDisp;
+H1errNormNormalizedOmega=sqrt(L2errNorm2 + H1errSemiNorm2)/sqrtomega;
+L2errNormNormalizedDisp=sqrt(L2errNorm2)/L2uDisp;
+L2errNormNormalizedOmega=sqrt(L2errNorm2)/sqrtomega;
+
+fout<<L2errNormNormalizedDisp; fout<<" ";
+fout<<L2errNormNormalizedOmega; fout<<" ";
+fout<<H1errNormNormalizedDisp; fout<<" ";
+fout<<H1errNormNormalizedOmega; fout<<" ";
+fout<<ErrorEquilibrium; fout<<" "; 
+fout<<ErrorConstitutive; fout<<" ";
+fout<<ErrorSymmetry; fout<<" "; 
+
+}
+}
+mesh Th4=movemesh(ThDisp,[x+uxD,y+uyD]);
+//plot(ThDisp,wait=1);
+plot(Th4,wait=1);

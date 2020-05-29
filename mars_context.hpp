@@ -264,6 +264,90 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
     }
  
+
+
+    
+    void assembly(std::vector<Real>& b,const Integer level=-1)
+    {
+
+
+     auto spaces_ptr=bilinear_form_.spaces_ptr()->spaces_ptr();
+     auto& bisection=spaces_ptr->bisection();
+     auto& tracker=bisection.tracker();
+     if(level==-1)
+      level_=tracker.current_iterate()-1;
+    else
+      level_=level;
+
+     auto& level_cumultive_n_dofs=full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
+
+
+
+
+     n_dofs_=0;
+     n_dofs_=level_cumultive_n_dofs[level_];
+     n_dofs_=level_cumultive_n_dofs[level_];
+     auto mesh_ptr=full_spaces_ptr()->mesh_ptr();
+     auto& mesh=full_spaces_ptr()->mesh();
+     
+     FiniteElem<Elem> FE(mesh);
+
+
+     std::cout<<"level = "<<level<<std::endl;
+     std::cout<<"n_dofs_ = "<<n_dofs_<<std::endl;
+
+
+
+
+     b.resize(n_dofs_);   
+     constrained_dofs_.clear();
+     constrained_mat_.clear();
+     constrained_vec_.clear();
+
+     constrained_dofs_.resize(n_dofs_,false);
+     constrained_mat_.resize(n_dofs_,0);
+     constrained_vec_.resize(n_dofs_,0);
+
+     shape_coefficients_.init();
+       for(std::size_t el=0;el<mesh.n_elements();el++)
+       {
+          if(!elem_belongs_to_level(mesh,el,level_,tracker)) continue;
+          FE.init(el,level_);
+          shape_coefficients_.init(el);
+          reference_maps_.init(FE);
+          shapefunctions_.init(FE);
+          eval_linear_form_.apply(b,FE);
+
+          std::cout<<"el=="<<el<<std::endl;
+
+          if(FE.is_on_boundary())
+          {
+            for(std::size_t s=0;s<FE.n_side();s++)
+              {
+                FE.init_boundary(s);
+                if(FE.is_side_on_boundary())
+                {
+                  reference_maps_.init_boundary(FE);
+                  shapefunctions_.init_boundary(FE);
+                  eval_linear_form_.apply_boundary(b,FE);
+                }
+              }
+
+
+            for(std::size_t s=0;s<FE.n_side();s++)
+              {              
+                if(FE.side_tags()[s]!=INVALID_INDEX)
+                {
+                  FE.init_boundary(s);
+                  bcs_.assembly(full_spaces_ptr(),constrained_dofs_,constrained_mat_,constrained_vec_,FE);
+                }
+              }
+         }      
+       }
+    }
+
+
+
     template<typename SystemMat>
     void matrix_assembly(SystemMat& A,const Integer level=-1)
     {
