@@ -55,6 +55,23 @@ struct NthType<0, Head, Tail...>
     typedef Head type;
 };
 
+//getting the  nth type of a variadic.
+template <std::size_t I, Integer... T>
+struct NthValue;
+
+// recursive case
+template <std::size_t I, Integer Head, Integer... Tail>
+struct NthValue<I, Head, Tail...>
+{
+    static constexpr Integer value = NthValue<I-1, Tail...>::value;
+};
+
+template <Integer Head, Integer... Tail>
+struct NthValue<0, Head, Tail...>
+{
+    static constexpr Integer value = Head;
+};
+
 /* ------------------------------------------------------------------------------------------- */
 //getting the type of a tuple element using a tuple instead. The same as std::tuple_element
 template <std::size_t I, class T>

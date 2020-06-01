@@ -29,9 +29,12 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 /* This example tries to do the same and compare to the step3 p4est example using MARS instead */
 
 #include "mars_context.hpp"
+#include <bits/c++config.h>
 #include <exception>
 #include <iostream>
 #include <tuple>
+#include <type_traits>
+#include <utility>
 
 #ifdef WITH_MPI
 
@@ -171,6 +174,100 @@ MARS_INLINE_FUNCTION double initial_condition(const Data &data, const int index,
     return retval;
 }
 
+//in case you might prefer the variadic version better you can use the Nthvalue equivalent to NthType to get
+//the nth value from a nontype variadic template.
+template <Integer DIM, Integer ...args>
+MARS_INLINE_FUNCTION double initial_condition_variadic(const Data &data, const int index, const ProblemDesc<DIM> &pd, double *x)
+{
+    //in this case at least the DIM isqual to #args...
+    assert(DIM == sizeof...(args));
+
+    const double *c = pd.center;
+    double bump_width = pd.bump_width;
+
+    double r2, d[DIM];
+    double arg, retval;
+
+    r2 = 0.;
+
+    for (int i = 0; i < DIM; ++i)
+    {
+        d[i] = x[i] - c[i];
+        r2 += d[i] * d[i];
+    }
+
+    arg = -(1. / 2.) * r2 / bump_width / bump_width;
+    retval = exp(arg);
+
+    /* careful: one can not use a for loop for this as the values needs to be constexpr.
+    The recursive approach on a parameter pack is the alternative. Check example at distributed_utils.hpp*/
+    constexpr Integer first = NthValue<0, args...>::value;
+    constexpr Integer second = NthValue<1, args...>::value;
+
+    data.get_elem_data<first>(index) = -(1. / bump_width / bump_width) * d[0] * retval;
+    data.get_elem_data<second>(index) = -(1. / bump_width / bump_width) * d[1] * retval;
+
+    printf("p:x %lf, py: %lf,  retval: %lf, du: %lf-%lf\n", x[0], x[1], retval, data.get_elem_data<first>(index), data.get_elem_data<second>(index));
+
+    return retval;
+}
+
+
+template <Integer I = 0, Integer N, Integer... Args>
+typename std::enable_if<I == N, void>::type
+MARS_INLINE_FUNCTION
+for_each_du(const Data &data, const double bump_width, const double retval, const int index, const double *d)
+{
+}
+
+template <Integer I = 0, Integer N, Integer... Args>
+typename std::enable_if<I < N, void>::type
+MARS_INLINE_FUNCTION
+for_each_du(const Data &data, const double bump_width, const double retval, const int index, const double *d)
+{
+    constexpr Integer dataIndex = NthValue<I, Args...>::value;
+    printf("val: %li\n", dataIndex);
+
+    data.get_elem_data<dataIndex>(index) = -(1. / bump_width / bump_width) * d[I] * retval;
+    for_each_du<I+1, N, Args...>(data, bump_width, retval, index, d);
+}
+
+//The third approach shows the recursive way of doing things for the non-type parameter pack
+template <Integer DIM, Integer ...args>
+MARS_INLINE_FUNCTION double initial_condition_recursive(const Data &data, const int index, const ProblemDesc<DIM> &pd, double *x)
+{
+    //in this case at least the DIM isqual to #args...
+    assert(DIM == sizeof...(args));
+
+    const double *c = pd.center;
+    double bump_width = pd.bump_width;
+
+    double r2, d[DIM];
+    double arg, retval;
+
+    r2 = 0.;
+
+    for (int i = 0; i < DIM; ++i)
+    {
+        d[i] = x[i] - c[i];
+        r2 += d[i] * d[i];
+    }
+
+    arg = -(1. / 2.) * r2 / bump_width / bump_width;
+    retval = exp(arg);
+
+    //compile time loop over data.get_elem_data<I>
+    for_each_du<0, sizeof...(args), args...>(data, bump_width, retval, index, d);
+
+    //just for printing purposes same as the previous example.
+    constexpr Integer first = NthValue<0, args...>::value;
+    constexpr Integer second = NthValue<1, args...>::value;
+
+    printf("p:x %lf, py: %lf,  retval: %lf, du: %lf-%lf\n", x[0], x[1], retval, data.get_elem_data<first>(index), data.get_elem_data<second>(index));
+
+    return retval;
+}
+
 template <Integer Type>
 MARS_INLINE_FUNCTION
 void get_midpoint_coordinates(double *point, const Integer sfc, const Integer xDim, const Integer yDim, const Integer zDim)
@@ -272,7 +369,9 @@ void advection(int &argc, char **&argv, const int level)
             data.get_elem_data<0>(i) - the solution u
             data.get_elem_data<0>(i) = initial_condition<Dim, 1, 2>(midpoint, du, pd); */
 
-            data.get_elem_data<0>(i) = initial_condition<Dim, 1, 2>(data, i, pd, midpoint);
+            /* data.get_elem_data<0>(i) = initial_condition<Dim, 1, 2>(data, i, pd, midpoint); */
+            /* data.get_elem_data<0>(i) = initial_condition_variadic<Dim, 1, 2>(data, i, pd, midpoint); */
+            data.get_elem_data<0>(i) = initial_condition_recursive<Dim, 1, 2>(data, i, pd, midpoint);
         });
 
         /* second possibility to do it using a more general approach using a functor by coping
