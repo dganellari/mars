@@ -152,4 +152,75 @@ MARS_INLINE_FUNCTION void get_vertex_coordinates_from_sfc(const Integer gl_index
     }
 }
 
+template <Integer Type>
+MARS_INLINE_FUNCTION Octant face_nbh(const Octant &ref_octant, const int face,
+                                            const Integer xDim, const Integer yDim, const Integer zDim)
+{
+
+    switch (Type)
+    {
+    case ElementType::Quad4:
+    {
+        //adapted from the p4est corner neighbor for the mesh generation
+        const Integer x = ref_octant.x + ((face == 0) ? -1 : (face == 1) ? 1 : 0);
+        const Integer y = ref_octant.y + ((face == 2) ? -1 : (face == 3) ? 1 : 0);
+
+        Octant o(x, y);
+        if (o.x < 0 || o.y < 0 || o.x >= xDim || o.y >= yDim)
+            o.set_invalid();
+
+        return o;
+    }
+    case ElementType::Hex8:
+    {
+
+        //adapted from the p4est corner neighbor for the mesh generation
+        const Integer x = ref_octant.x + ((face == 0) ? -1 : (face == 1) ? 1 : 0);
+        const Integer y = ref_octant.y + ((face == 2) ? -1 : (face == 3) ? 1 : 0);
+        const Integer z = ref_octant.z + ((face == 4) ? -1 : (face == 5) ? 1 : 0);
+
+        Octant o(x, y, z);
+        if (o.x < 0 || o.y < 0 || o.z < 0 || o.x >= xDim || o.y >= yDim || o.z >= zDim)
+            o.set_invalid();
+        return o;
+    }
+    }
+}
+
+template <Integer Type>
+MARS_INLINE_FUNCTION Octant corner_nbh(const Octant &ref_octant, const int corner,
+                                              const Integer xDim, const Integer yDim, const Integer zDim)
+{
+
+    switch (Type)
+    {
+    case ElementType::Quad4:
+    {
+        //adapted from the p4est corner neighbor for the mesh generation
+        const Integer x = ref_octant.x + 2 * (corner & 1) - 1;
+        const Integer y = ref_octant.y + (corner & 2) - 1;
+
+        Octant o(x, y);
+        if (o.x < 0 || o.y < 0 || o.x >= xDim || o.y >= yDim)
+            o.set_invalid();
+
+        return o;
+    }
+    case ElementType::Hex8:
+    {
+        //adapted from the p4est corner neighbor for the mesh generation
+        const Integer x = ref_octant.x + 2 * (corner & 1) - 1;
+        ;
+        const Integer y = ref_octant.y + (corner & 2) - 1;
+        const Integer z = ref_octant.z + (corner & 4) / 2 - 1;
+
+        Octant o(x, y, z);
+        if (o.x < 0 || o.y < 0 || o.z < 0 || o.x >= xDim || o.y >= yDim || o.z >= zDim)
+            o.set_invalid();
+
+        return o;
+    }
+    }
+}
+
 } // namespace mars

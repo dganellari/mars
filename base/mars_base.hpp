@@ -14,6 +14,8 @@ namespace mars {
 
 	enum ElementType : int
 	{
+        //1D
+        Line2 = 2,
 		//2D
 		Quad4 = 4,
 		Quad8 = 8,

@@ -335,104 +335,185 @@ public:
         Kokkos::parallel_for("elem_iterate", size, f);
     }
 
-    Mesh *
-    get_mesh() const
+    template <typename H>
+    struct FaceIterate
     {
-        return mesh;
-    }
+        FaceIterate(ViewVectorType<Integer> s, H f, ViewVectorType<Integer> g, ViewVectorType<Integer> gl, ViewVectorType<Integer> sg,
+                    Integer p, Integer x, Integer y, Integer z)
+            : sfc(s), func(f), gp(g), ghost_layer(gl), scan_ghost(sg), proc(p), xDim(x), yDim(y), zDim(z) {}
 
-    void reserve_ghost(const Integer n_elements)
-    {
-        ghost_ = ViewVectorType<Integer>("ghost_", n_elements);
-    }
+        MARS_INLINE_FUNCTION
+        void operator()(const Integer i) const
+        {
+            const Integer oc = sfc(index);
+            Octant ref_octant = get_octant_from_sfc<Type>(oc);
 
-    void reserve_scan_ghost(const Integer n_elements)
-    {
-        scan_ghost_ = ViewVectorType<Integer>("scan_ghost_", n_elements);
-    }
+            /* touching only the right and upper side of the local element
+             per each thread gives a full iteration on the interior faces */
+            for (int dir = 0; dir < 2; ++dir)
+            {
+                Face<simplex_type::ElemType> face(dir);
+                face.get_first_side_face().set_elem_id(i);
 
-    MARS_INLINE_FUNCTION
-    void set_view_ghost(const ViewVectorType<Integer> &b)
-    {
-        ghost_ = b;
-    }
+                Octant o = face_nbh<simplex_type::ElemType>(ref_octant, face.get_first_side_face(), xDim, yDim, zDim);
 
-    MARS_INLINE_FUNCTION
-    const ViewVectorType<Integer> &get_view_ghost() const
-    {
-        return ghost_;
-    }
+                if (o.is_valid())
+                {
+                    Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
 
-      MARS_INLINE_FUNCTION
-    void set_view_scan_ghost(const ViewVectorType<Integer> &b)
-    {
-        scan_ghost_ = b;
-    }
+                    Integer index;
 
-    MARS_INLINE_FUNCTION
-    const ViewVectorType<Integer> &get_view_scan_ghost() const
-    {
-        return scan_ghost_;
-    }
+                    Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
+                    assert(owner_proc >= 0);
 
-    MARS_INLINE_FUNCTION
-    const user_tuple &get_user_data() const
-    {
-        return user_data_;
-    }
+                    /* if the face neighbor element is ghost then do a binary search on the ghost layer to find the index */
+                    if (proc != owner_proc)
+                    {
+                        face.get_second_side_face.set_ghost();
 
-     /* template<std::size_t idx, typename H = typename NthType<idx, T...>::type> */
-    template<std::size_t idx, typename H = typename std::tuple_element<idx, tuple>::type>
-    MARS_INLINE_FUNCTION
-    H& get_elem_data(const int i) const
-    {
-        return std::get<idx>(user_data_)(i);
-    }
+                        //to narrow down the range of search we use the scan ghost and the owner proc of the ghost.
+                        const int start_index= scan_ghost(owner_proc);
+                        const int last_index = scan_ghost(owner_proc) - scan_ghost(owner_proc + 1);
+                        index = binary_search(ghost_layer, start_index, last_index, enc_oc);
 
-   /* template<std::size_t idx, typename H = NthType<idx, T...>> */
-    template<std::size_t idx, typename H = typename std::tuple_element<idx, user_tuple>::type>
-    MARS_INLINE_FUNCTION
-    const H get_data() const
-    {
-        return std::get<idx>(user_data_);
-    }
+                        assert(index >= 0);
+                    }else
+                    {
+                        //according to the z-oder the right side = 1 is the next so i + 1 (meaning at dir=0)
+                        //and at dir = 1 (the upper side = 3) the index is i + 2
+                        index = i + dir + 1;
+                    }
 
-    template<std::size_t idx, typename H = typename std::tuple_element<idx, tuple>::type>
-    MARS_INLINE_FUNCTION
-    H& get_ghost_elem_data(const int i) const
-    {
-        return std::get<idx>(ghost_user_data_)(i);
-    }
+                    face.get_second_side_face().set_elem_id(index);
+                }
 
-    template<std::size_t idx, typename H = typename std::tuple_element<idx, user_tuple>::type>
-    MARS_INLINE_FUNCTION
-    const H get_ghost_data() const
-    {
-        return std::get<idx>(ghost_user_data_);
-    }
+                //call the user provided callback function for each face.
+                func(face);
+            }
 
+            H func;
+            ViewVectorType<Integer> sfc;
+            ViewVectorType<Integer> gp;
+            ViewVectorType<Integer> ghost_layer;
+            ViewVectorType<Integer> scan_ghost;
 
-private:
-    Mesh *mesh;
+            Integer proc;
+            Integer xDim;
+            Integer yDim;
+            Integer zDim;
+        };
 
-     //ghost and boundary layers
-    ViewVectorType<Integer> ghost_;
-    ViewVectorType<Integer> scan_ghost_;
+        template <typename H>
+        void face_iterate(H f)
+        {
+            Integer xDim = mesh->get_XDim();
+            Integer yDim = mesh->get_YDim();
+            Integer zDim = mesh->get_ZDim();
 
-    //ghost data layer
-    user_tuple user_data_;
-    user_tuple ghost_user_data_;
+            const Integer size = mesh->get_chunk_size();
 
-    std::vector<Integer> send_count;
-    //mirror view on the mesh scan boundary view used for the mpi send receive
-    ViewVectorType<Integer>::HostMirror scan_send_mirror;
+            ViewVectorType<Integer> sfc = mesh.get_view_sfc();
+            Kokkos::parallel_for("elem_iterate", size, FaceIterate(sfc, f, mesh->get_view_gp(), get_view_ghost(),
+                        get_view_scan_ghost(), mesh->get_proc(), xDim, yDim, zDim));
+        }
 
-    std::vector<Integer> receive_count;
-    //mirror view on the scan_ghost view
-    ViewVectorType<Integer>::HostMirror scan_recv_mirror;
+        Mesh *
+        get_mesh() const
+        {
+            return mesh;
+        }
 
-    Integer proc_count;
-};
+        void reserve_ghost(const Integer n_elements)
+        {
+            ghost_ = ViewVectorType<Integer>("ghost_", n_elements);
+        }
+
+        void reserve_scan_ghost(const Integer n_elements)
+        {
+            scan_ghost_ = ViewVectorType<Integer>("scan_ghost_", n_elements);
+        }
+
+        MARS_INLINE_FUNCTION
+        void set_view_ghost(const ViewVectorType<Integer> &b)
+        {
+            ghost_ = b;
+        }
+
+        MARS_INLINE_FUNCTION
+        const ViewVectorType<Integer> &get_view_ghost() const
+        {
+            return ghost_;
+        }
+
+        MARS_INLINE_FUNCTION
+        void set_view_scan_ghost(const ViewVectorType<Integer> &b)
+        {
+            scan_ghost_ = b;
+        }
+
+        MARS_INLINE_FUNCTION
+        const ViewVectorType<Integer> &get_view_scan_ghost() const
+        {
+            return scan_ghost_;
+        }
+
+        MARS_INLINE_FUNCTION
+        const user_tuple &get_user_data() const
+        {
+            return user_data_;
+        }
+
+        /* template<std::size_t idx, typename H = typename NthType<idx, T...>::type> */
+        template <std::size_t idx, typename H = typename std::tuple_element<idx, tuple>::type>
+        MARS_INLINE_FUNCTION
+            H &
+            get_elem_data(const int i) const
+        {
+            return std::get<idx>(user_data_)(i);
+        }
+
+        /* template<std::size_t idx, typename H = NthType<idx, T...>> */
+        template <std::size_t idx, typename H = typename std::tuple_element<idx, user_tuple>::type>
+        MARS_INLINE_FUNCTION const H get_data() const
+        {
+            return std::get<idx>(user_data_);
+        }
+
+        template <std::size_t idx, typename H = typename std::tuple_element<idx, tuple>::type>
+        MARS_INLINE_FUNCTION
+            H &
+            get_ghost_elem_data(const int i) const
+        {
+            return std::get<idx>(ghost_user_data_)(i);
+        }
+
+        template <std::size_t idx, typename H = typename std::tuple_element<idx, user_tuple>::type>
+        MARS_INLINE_FUNCTION const H get_ghost_data() const
+        {
+            return std::get<idx>(ghost_user_data_);
+        }
+
+    private:
+        Mesh *mesh;
+
+        //ghost and boundary layers
+        ViewVectorType<Integer> ghost_;
+        ViewVectorType<Integer> scan_ghost_;
+
+        //ghost data layer
+        user_tuple user_data_;
+        user_tuple ghost_user_data_;
+
+        std::vector<Integer> send_count;
+        //mirror view on the mesh scan boundary view used for the mpi send receive
+        ViewVectorType<Integer>::HostMirror scan_send_mirror;
+
+        std::vector<Integer> receive_count;
+        //mirror view on the scan_ghost view
+        ViewVectorType<Integer>::HostMirror scan_recv_mirror;
+
+        Integer proc_count;
+    };
 
 template <class UserData>
 void exchange_ghost_user_data(const context &context, UserData &data)
