@@ -224,7 +224,9 @@ struct print_functor
     }
 };
 
-//binary search on some view.
+
+/* special implementation of the binary search considering found
+if an element is between current and next proc value. */
 template <typename T>
 MARS_INLINE_FUNCTION Integer find_owner_processor(const ViewVectorType<T> view,
                                                   const T enc_oc, const int offset, Integer guess)
@@ -233,7 +235,6 @@ MARS_INLINE_FUNCTION Integer find_owner_processor(const ViewVectorType<T> view,
     int first_proc = 0;
     int last_proc = last_index;
 
-    //special implementation of the binary search considering found if an element is between current and next proc value.
     while (first_proc <= last_proc && first_proc != last_index)
     {
         T current = view(offset * guess);
@@ -252,6 +253,34 @@ MARS_INLINE_FUNCTION Integer find_owner_processor(const ViewVectorType<T> view,
         {
             first_proc = guess + 1;
             guess = (first_proc + last_proc) / 2;
+        }
+    }
+
+    return -1;
+}
+
+//standard binary search
+template <typename T>
+MARS_INLINE_FUNCTION Integer binary_search(const ViewVectorType<T> view, const Integer f,
+                                           const Integer l, const T enc_oc)
+{
+    while (f <= l)
+    {
+        Integer guess = (l + f) / 2;
+
+        T current = view(guess);
+
+        if (enc_oc == current)
+        {
+            return guess;
+        }
+        else if (enc_oc < current)
+        {
+            l = guess - 1;
+        }
+        else
+        {
+            f = guess + 1;
         }
     }
 
