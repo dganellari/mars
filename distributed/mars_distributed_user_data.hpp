@@ -338,58 +338,71 @@ public:
     template <typename H>
     struct FaceIterate
     {
-        FaceIterate(ViewVectorType<Integer> s, H f, ViewVectorType<Integer> g, ViewVectorType<Integer> gl, ViewVectorType<Integer> sg,
-                    Integer p, Integer x, Integer y, Integer z)
+        FaceIterate(ViewVectorType<Integer> s, H f, ViewVectorType<Integer> g, ViewVectorType<Integer> gl,
+                    ViewVectorType<Integer> sg, Integer p, Integer x, Integer y, Integer z)
             : sfc(s), func(f), gp(g), ghost_layer(gl), scan_ghost(sg), proc(p), xDim(x), yDim(y), zDim(z) {}
 
         MARS_INLINE_FUNCTION
         void operator()(const Integer i) const
         {
-            const Integer oc = sfc(index);
-            Octant ref_octant = get_octant_from_sfc<Type>(oc);
+            const Integer oc = sfc(i);
+            Octant ref_octant = get_octant_from_sfc<simplex_type::ElemType>(oc);
 
             /* touching only the right and upper side of the local element
              per each thread gives a full iteration on the interior faces */
             for (int dir = 0; dir < 2; ++dir)
             {
                 Face<simplex_type::ElemType> face(dir);
-                face.get_first_side_face().set_elem_id(i);
+                face.get_first_side().set_elem_id(i);
 
-                Octant o = face_nbh<simplex_type::ElemType>(ref_octant, face.get_first_side_face(), xDim, yDim, zDim);
+                Octant nbh_oc = face_nbh<simplex_type::ElemType>(ref_octant, face.get_first_side().get_face_side(),
+                                                            xDim, yDim, zDim);
 
-                if (o.is_valid())
+                if (nbh_oc.is_valid())
                 {
-                    Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
+
+                    printf("simplex: type: %li\n", simplex_type::ElemType);
+                    Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(nbh_oc);
 
                     Integer index;
 
                     Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
                     assert(owner_proc >= 0);
 
-                    /* if the face neighbor element is ghost then do a binary search on the ghost layer to find the index */
+                    /* if the face neighbor element is ghost then do a binary search
+                     * on the ghost layer to find the index */
                     if (proc != owner_proc)
                     {
-                        face.get_second_side_face.set_ghost();
+                        face.get_second_side().set_ghost();
 
-                        //to narrow down the range of search we use the scan ghost and the owner proc of the ghost.
-                        const int start_index= scan_ghost(owner_proc);
-                        const int last_index = scan_ghost(owner_proc) - scan_ghost(owner_proc + 1);
+                        /* to narrow down the range of search we use the scan ghost
+                        and the owner proc of the ghost. */
+                        const int start_index = scan_ghost(owner_proc);
+                        const int last_index = scan_ghost(owner_proc + 1) - 1;
+
+                        /* as opposed to the whole range: */
+                        /* const int start_index = 0;
+                        const int last_index = ghost_layer.extent(0) -1; */
+
                         index = binary_search(ghost_layer, start_index, last_index, enc_oc);
-
                         assert(index >= 0);
-                    }else
+                    }
+                    else
                     {
-                        //according to the z-oder the right side = 1 is the next so i + 1 (meaning at dir=0)
-                        //and at dir = 1 (the upper side = 3) the index is i + 2
+                        /* according to the z-oder the right side = 1 is the next so i + 1
+                        (meaning at dir=0) and at dir = 1 (the upper side = 3) the index is i + 2 */
                         index = i + dir + 1;
                     }
 
-                    face.get_second_side_face().set_elem_id(index);
-                }
+                    /* printf("Index: %li, o.x: %li, y: %li, elem-index: %li, owner_proc: %li, proc: %li , o.x: %li, y: %li, index: %li, ghost: %i\n", index, ref_octant.x, ref_octant.y, elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim), owner_proc, proc, o.x, o.y, elem_index(o.x, o.y, o.z, xDim, yDim), face.get_second_side().is_ghost()); */
 
-                //call the user provided callback function for each face.
-                func(face);
+                    face.get_second_side().set_elem_id(index);
+
+                    //call the user provided callback function for each face.
+                    func(face);
+                }
             }
+        }
 
             H func;
             ViewVectorType<Integer> sfc;
@@ -412,8 +425,8 @@ public:
 
             const Integer size = mesh->get_chunk_size();
 
-            ViewVectorType<Integer> sfc = mesh.get_view_sfc();
-            Kokkos::parallel_for("elem_iterate", size, FaceIterate(sfc, f, mesh->get_view_gp(), get_view_ghost(),
+            ViewVectorType<Integer> sfc = mesh->get_view_sfc();
+            Kokkos::parallel_for("elem_iterate", size, FaceIterate<H>(sfc, f, mesh->get_view_gp(), get_view_ghost(),
                         get_view_scan_ghost(), mesh->get_proc(), xDim, yDim, zDim));
         }
 
@@ -437,6 +450,13 @@ public:
         void set_view_ghost(const ViewVectorType<Integer> &b)
         {
             ghost_ = b;
+        }
+
+
+        MARS_INLINE_FUNCTION
+        const Integer get_ghost_elem(const Integer i) const
+        {
+            return ghost_(i);
         }
 
         MARS_INLINE_FUNCTION
