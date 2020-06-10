@@ -403,6 +403,30 @@ void advection(int &argc, char **&argv, const int level)
                 printf("max: %lf\n", max(0));
         });
 
+        data.face_iterate(MARS_LAMBDA(const Face<Type>& face) {
+
+            for (int i = 0; i < 2; ++i)
+            {
+                Integer sfc_elem;
+
+                    /* printf("id: %li, face: %li\n", face.get_side(i).get_elem_id(), face.get_side(i).get_face_side()); */
+
+                if (face.get_side(i).is_ghost())
+                {
+                    sfc_elem = data.get_ghost_elem(face.get_side(i).get_elem_id());
+                }
+                else
+                {
+                    sfc_elem = sfc(face.get_side(i).get_elem_id());
+                }
+
+                double point[3];
+                get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, xDim, yDim, zDim);
+
+                printf("face data: %li - dir: %li - face: %li - (%lf, %lf) - rank: %li - ghost: %i\n", i, face.get_direction(), face.get_side(i).get_face_side(), point[0], point[1], proc_num, face.get_side(i).is_ghost());
+            }
+        });
+
 #endif
     }
     catch (std::exception &e)

@@ -23,19 +23,28 @@ namespace mars {
 
         static constexpr Integer ElemType = Type;
 
-        /* SubView<Integer, Type> nodes; */
+        SubView<Integer, Type> nodes;
         //SubView<Integer, Type> user_data;
 
         Integer elem_id = INVALID_INDEX;
        // Integer parent_id = INVALID_INDEX;
         //Integer block = INVALID_INDEX;
 
-        bool is_ghost;
+        bool ghost;
 
-        MARS_INLINE_FUNCTION NonSimplex() {}
-
-        MARS_INLINE_FUNCTION NonSimplex(bool ghost) : is_ghost(ghost)
+        MARS_INLINE_FUNCTION NonSimplex()
         {
+            ghost = false;
+        }
+
+        MARS_INLINE_FUNCTION NonSimplex(bool gt) : ghost(gt)
+        {
+        }
+
+        MARS_INLINE_FUNCTION
+        Integer get_elem_id() const
+        {
+            return elem_id;
         }
 
         MARS_INLINE_FUNCTION
@@ -45,48 +54,56 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
+        bool is_ghost() const
+        {
+            return ghost;
+        }
+
+        MARS_INLINE_FUNCTION
         void set_ghost()
         {
-            is_ghost = true;
+            ghost = true;
         }
 
 
-        /* MARS_INLINE_FUNCTION NonSimplex(SubView<Integer, Type> n) :
-        	nodes(n)
+        MARS_INLINE_FUNCTION NonSimplex(SubView<Integer, Type> n) :
+            nodes(n)
         {
-        } */
+        }
 
         MARS_INLINE_FUNCTION Integer n_nodes() const override
         {
             return Type;
         }
 
-        /* MARS_INLINE_FUNCTION Integer node(const Integer idx) const override
+        MARS_INLINE_FUNCTION Integer node(const Integer idx) const override
         {
              assert(idx < Type);
              return nodes[idx];
-        } */
+        }
 
         MARS_INLINE_FUNCTION Integer type() const override {
             return Type;
         }
     };
 
-    template<Integer Type>
+    template <Integer Type>
     class Side<Type, DistributedImplementation> : public NonSimplex<Type, DistributedImplementation>
     {
-        Integer face;
+    private:
+        Integer face_side;
 
+    public:
         MARS_INLINE_FUNCTION
-        Integer get_face()
+        Integer get_face_side() const
         {
-            return face;
+            return face_side;
         }
 
         MARS_INLINE_FUNCTION
-        void set_face(const Integer f)
+        void set_face_side(const Integer f)
         {
-            face =f;
+            face_side = f;
         }
     };
 
@@ -100,13 +117,13 @@ namespace mars {
         MARS_INLINE_FUNCTION
         Face(const int direction)
         {
-            sides[0].set_face(2 * direction + 1);
-            sides[1].set_face(2 * direction);
+            sides[0].set_face_side(2 * direction + 1);
+            sides[1].set_face_side(2 * direction);
             set_direction(direction);
         }
 
         MARS_INLINE_FUNCTION
-        Integer get_direction()
+        Integer get_direction() const
         {
             return direction;
         }
@@ -117,22 +134,29 @@ namespace mars {
             direction = d;
         }
 
+
         MARS_INLINE_FUNCTION
-        FaceSide<Type> * get_sides()
+        const FaceSide<Type> &get_side(const Integer i) const
+        {
+            return sides[i];
+        }
+
+        MARS_INLINE_FUNCTION
+        FaceSide<Type> * get_sides() const
         {
             return sides;
         }
 
         MARS_INLINE_FUNCTION
-        Integer get_second_side_face()
+        FaceSide<Type> &get_second_side()
         {
-            return sides[1].get_face();
+            return sides[1];
         }
 
         MARS_INLINE_FUNCTION
-        Integer get_first_side_face()
+        FaceSide<Type> &get_first_side()
         {
-            return sides[0].get_face();
+            return sides[0];
         }
 
     private:
