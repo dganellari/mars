@@ -60,9 +60,9 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        void set_ghost()
+        void set_ghost(bool g=true)
         {
-            ghost = true;
+            ghost = g;
         }
 
 
@@ -134,6 +134,11 @@ namespace mars {
             direction = d;
         }
 
+        MARS_INLINE_FUNCTION
+        FaceSide<Type> &get_side(const Integer i)
+        {
+            return sides[i];
+        }
 
         MARS_INLINE_FUNCTION
         const FaceSide<Type> &get_side(const Integer i) const
