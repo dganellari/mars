@@ -41,6 +41,23 @@ struct Octant
 
     template <Integer Type>
     MARS_INLINE_FUNCTION
+    bool is_boundary(const int xDim, const int yDim, const int zDim)
+    {
+        switch (Type)
+        {
+        case ElementType::Quad4:
+        {
+            return (x == -1 || y == -1 || x == xDim || y == yDim);
+        }
+        case ElementType::Hex8:
+        {
+            return (x == -1 || y == -1 || z == -1 || x == xDim || y == yDim || z == zDim);
+        }
+        }
+    }
+
+    template <Integer Type>
+    MARS_INLINE_FUNCTION
         Integer
         get_global_index(const int xDim, const int yDim)
     {

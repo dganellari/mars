@@ -133,18 +133,6 @@ public:
         }
     }
 
-    // returns the prefix sum of C
-    template <typename C>
-    void make_scan_index_mirror(const ViewVectorType<Integer>::HostMirror &out, C const &c)
-    {
-        static_assert(
-            std::is_integral<typename C::value_type>::value,
-            "make_index only applies to integral types");
-
-        out(0) = 0;
-        std::partial_sum(c.begin(), c.end(), out.data() + 1);
-    }
-
     void exchange_ghost_layer(const context &context)
     {
         using namespace Kokkos;
@@ -352,68 +340,94 @@ public:
              per each thread gives a full iteration on the interior faces */
             for (int dir = 0; dir < 2; ++dir)
             {
-                Face<simplex_type::ElemType> face(dir);
-                face.get_first_side().set_elem_id(i);
 
-                Octant nbh_oc = face_nbh<simplex_type::ElemType>(ref_octant, face.get_first_side().get_face_side(),
-                                                            xDim, yDim, zDim);
-
-                if (nbh_oc.is_valid())
+                for(int side = 0;  side <2; ++side)
                 {
+                    Integer face_nr;
 
-                    printf("simplex: type: %li\n", simplex_type::ElemType);
-                    Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(nbh_oc);
+                    if(side == 0)
+                        face_nr = 2 * dir +1;
+                    else
+                        face_nr = 2 * dir;
 
+                    Octant nbh_oc = face_nbh<simplex_type::ElemType>(ref_octant, face_nr,
+                                                                     xDim, yDim, zDim);
+
+                    bool ghost = false;
                     Integer index;
 
-                    Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
-                    assert(owner_proc >= 0);
-
-                    /* if the face neighbor element is ghost then do a binary search
-                     * on the ghost layer to find the index */
-                    if (proc != owner_proc)
+                    if (nbh_oc.is_valid())
                     {
-                        face.get_second_side().set_ghost();
+                        printf("simplex: type: %li\n", simplex_type::ElemType);
+                        Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(nbh_oc);
 
-                        /* to narrow down the range of search we use the scan ghost
+                        Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
+                        assert(owner_proc >= 0);
+
+                        /* if the face neighbor element is ghost then do a binary search
+                     * on the ghost layer to find the index */
+                        if (proc != owner_proc)
+                        {
+                            /* face.get_second_side().set_ghost(); */
+                            ghost = true;
+
+                            /* to narrow down the range of search we use the scan ghost
                         and the owner proc of the ghost. */
-                        const int start_index = scan_ghost(owner_proc);
-                        const int last_index = scan_ghost(owner_proc + 1) - 1;
+                            const int start_index = scan_ghost(owner_proc);
+                            const int last_index = scan_ghost(owner_proc + 1) - 1;
 
-                        /* as opposed to the whole range: */
-                        /* const int start_index = 0;
+                            /* as opposed to the whole range: */
+                            /* const int start_index = 0;
                         const int last_index = ghost_layer.extent(0) -1; */
 
-                        index = binary_search(ghost_layer, start_index, last_index, enc_oc);
-                        assert(index >= 0);
-                    }
-                    else
-                    {
-                        /* according to the z-oder the right side = 1 is the next so i + 1
+                            index = binary_search(ghost_layer, start_index, last_index, enc_oc);
+                            assert(index >= 0);
+                        }
+                        else
+                        {
+                            /* according to the z-oder the right side = 1 is the next so i + 1
                         (meaning at dir=0) and at dir = 1 (the upper side = 3) the index is i + 2 */
-                        index = i + dir + 1;
+                            index = i + dir + 1;
+                        }
+
+                        /* printf("Index: %li, o.x: %li, y: %li, elem-index: %li, owner_proc: %li, proc: %li , o.x: %li, y: %li, index: %li, ghost: %i\n", index, ref_octant.x, ref_octant.y, elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim), owner_proc, proc, o.x, o.y, elem_index(o.x, o.y, o.z, xDim, yDim), face.get_second_side().is_ghost()); */
+
+                        /* face.get_second_side().set_elem_id(index); */
+
+                        //call the user provided callback function for each face.
+                        /* func(face); */
+
                     }
 
-                    /* printf("Index: %li, o.x: %li, y: %li, elem-index: %li, owner_proc: %li, proc: %li , o.x: %li, y: %li, index: %li, ghost: %i\n", index, ref_octant.x, ref_octant.y, elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim), owner_proc, proc, o.x, o.y, elem_index(o.x, o.y, o.z, xDim, yDim), face.get_second_side().is_ghost()); */
+                    /* bool boundary = nbh_oc.is_boundary<simplex_type::ElemType>(xDim, yDim, zDim); */
 
-                    face.get_second_side().set_elem_id(index);
+                    /* if (ghost || boundary || !side) */
+                    if ((side == 0 && nbh_oc.is_valid()) || ghost)
+                    {
+                        Face<simplex_type::ElemType> face(dir);
+                        int otherside = side ^ 1;
 
-                    //call the user provided callback function for each face.
-                    func(face);
+                        face.get_side(side).set_elem_id(i);
+                        face.get_side(otherside).set_elem_id(index);
+
+                        face.get_side(otherside).set_ghost(ghost);
+
+                        func(face);
+                    }
                 }
             }
         }
 
-            H func;
-            ViewVectorType<Integer> sfc;
-            ViewVectorType<Integer> gp;
-            ViewVectorType<Integer> ghost_layer;
-            ViewVectorType<Integer> scan_ghost;
+        H func;
+        ViewVectorType<Integer> sfc;
+        ViewVectorType<Integer> gp;
+        ViewVectorType<Integer> ghost_layer;
+        ViewVectorType<Integer> scan_ghost;
 
-            Integer proc;
-            Integer xDim;
-            Integer yDim;
-            Integer zDim;
+        Integer proc;
+        Integer xDim;
+        Integer yDim;
+        Integer zDim;
         };
 
         template <typename H>
