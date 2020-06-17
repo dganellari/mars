@@ -368,7 +368,6 @@ public:
                      * on the ghost layer to find the index */
                         if (proc != owner_proc)
                         {
-                            /* face.get_second_side().set_ghost(); */
                             ghost = true;
 
                             /* to narrow down the range of search we use the scan ghost
@@ -392,25 +391,23 @@ public:
 
                         /* printf("Index: %li, o.x: %li, y: %li, elem-index: %li, owner_proc: %li, proc: %li , o.x: %li, y: %li, index: %li, ghost: %i\n", index, ref_octant.x, ref_octant.y, elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim), owner_proc, proc, o.x, o.y, elem_index(o.x, o.y, o.z, xDim, yDim), face.get_second_side().is_ghost()); */
 
-                        /* face.get_second_side().set_elem_id(index); */
-
-                        //call the user provided callback function for each face.
-                        /* func(face); */
-
                     }
 
-                    /* bool boundary = nbh_oc.is_boundary<simplex_type::ElemType>(xDim, yDim, zDim); */
+                    bool boundary = nbh_oc.shares_boundary_side<simplex_type::ElemType>(xDim, yDim, zDim);
 
-                    /* if (ghost || boundary || !side) */
-                    if ((side == 0 && nbh_oc.is_valid()) || ghost)
+                    if ((side == 0 && nbh_oc.is_valid()) || ghost || boundary)
                     {
                         Face<simplex_type::ElemType> face(dir);
                         int otherside = side ^ 1;
 
                         face.get_side(side).set_elem_id(i);
-                        face.get_side(otherside).set_elem_id(index);
+                        face.get_side(side).set_boundary(boundary);
 
-                        face.get_side(otherside).set_ghost(ghost);
+                        if (!boundary)
+                        {
+                            face.get_side(otherside).set_elem_id(index);
+                            face.get_side(otherside).set_ghost(ghost);
+                        }
 
                         func(face);
                     }
