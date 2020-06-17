@@ -92,6 +92,7 @@ namespace mars {
     {
     private:
         Integer face_side;
+        bool boundary = 0;
 
     public:
         MARS_INLINE_FUNCTION
@@ -104,6 +105,23 @@ namespace mars {
         void set_face_side(const Integer f)
         {
             face_side = f;
+        }
+
+        MARS_INLINE_FUNCTION bool is_boundary() const
+        {
+            return boundary;
+        }
+
+        MARS_INLINE_FUNCTION
+        void set_boundary(bool b=true)
+        {
+            boundary = b;
+        }
+
+        MARS_INLINE_FUNCTION
+        bool is_valid() const
+        {
+            return (this->elem_id > INVALID_INDEX);
         }
     };
 

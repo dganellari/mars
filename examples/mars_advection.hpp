@@ -409,10 +409,11 @@ void advection(int &argc, char **&argv, const int level)
                 Integer sfc_elem;
 
                 //in case that is a boundary face containing only one side.
-                if (face.get_side(i).get_elem_id() > INVALID_INDEX)
+                /* if (face.get_side(i).get_elem_id() > INVALID_INDEX) */
+                if (face.get_side(i).is_valid())
                 {
 
-                printf("elem_id: %li\n", face.get_side(i).get_elem_id());
+                printf("elem_id: %li, boundary: %i\n", face.get_side(i).get_elem_id(), face.get_side(i).is_boundary());
                     /* printf("id: %li, face: %li\n", face.get_side(i).get_elem_id(), face.get_side(i).get_face_side()); */
 
                     if (face.get_side(i).is_ghost())

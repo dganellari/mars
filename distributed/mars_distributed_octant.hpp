@@ -41,7 +41,7 @@ struct Octant
 
     template <Integer Type>
     MARS_INLINE_FUNCTION
-    bool is_boundary(const int xDim, const int yDim, const int zDim)
+    bool shares_boundary_side(const int xDim, const int yDim, const int zDim)
     {
         switch (Type)
         {
