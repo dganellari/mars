@@ -23,15 +23,17 @@ class UserData
     using simplex_type = typename Mesh::Elem;
 
 public:
-    MARS_INLINE_FUNCTION UserData(Mesh *mesh) : mesh(mesh)
+    MARS_INLINE_FUNCTION UserData(Mesh *mesh) : host_mesh(mesh), mesh(nullptr)
     {
-        const Integer size = mesh->get_chunk_size();
+        const Integer size = host_mesh->get_chunk_size();
         reserve_user_data(user_data_, "user_data", size);
+        copy_mesh_to_device();
     }
 
     MARS_INLINE_FUNCTION UserData(Mesh *mesh, const user_tuple& data) :
-                mesh(mesh), user_data_(data)
+               host_mesh(mesh), mesh(nullptr), user_data_(data)
     {
+        copy_mesh_to_device();
     }
 
     MARS_INLINE_FUNCTION void reserve_user_data(user_tuple &tuple, std::string view_desc, const Integer size)
@@ -88,11 +90,11 @@ public:
     MARS_INLINE_FUNCTION void
     fill_buffer_data(user_tuple &buffer_data)
     {
-        const Integer size = mesh->get_view_boundary().extent(0);
+        const Integer size = host_mesh->get_view_boundary().extent(0);
 
         reserve_user_data(buffer_data, "buffer_data", size);
 
-        ViewVectorType<Integer> boundary_lsfc_index = mesh->get_view_boundary_sfc_index();
+        ViewVectorType<Integer> boundary_lsfc_index = host_mesh->get_view_boundary_sfc_index();
         apply_impl(fill_buffer_data_functor("fill_buffer_data", size, boundary_lsfc_index), buffer_data, user_data_);
     }
 
@@ -106,8 +108,8 @@ public:
         int size = num_ranks(context);
 
         reserve_ghost_count(size);
-        scan_send_mirror = create_mirror_view(mesh->get_view_scan_boundary());
-        Kokkos::deep_copy(scan_send_mirror, mesh->get_view_scan_boundary());
+        scan_send_mirror = create_mirror_view(host_mesh->get_view_scan_boundary());
+        Kokkos::deep_copy(scan_send_mirror, host_mesh->get_view_scan_boundary());
 
         proc_count = 0;
         for (int i = 0; i < size; ++i)
@@ -142,8 +144,8 @@ public:
         int proc_num = rank(context);
         int size = num_ranks(context);
 
-        /* auto count_mirror = create_mirror_view(mesh->get_view_scan_boundary());
-           Kokkos::deep_copy(count_mirror, mesh->get_view_scan_boundary()); */
+        /* auto count_mirror = create_mirror_view(host_mesh->get_view_scan_boundary());
+           Kokkos::deep_copy(count_mirror, host_mesh->get_view_scan_boundary()); */
 
         reserve_scan_ghost(size + 1);
 
@@ -157,12 +159,12 @@ public:
 
         std::cout<<"Starting mpi send receive for the ghost layer"<<std::endl;
         context->distributed->i_send_recv_view(get_view_ghost(), scan_recv_mirror.data(),
-                mesh->get_view_boundary(), scan_send_mirror.data(), proc_count);
+                host_mesh->get_view_boundary(), scan_send_mirror.data(), proc_count);
         std::cout<<"Ending mpi send receive for the ghost layer"<<std::endl;
 /*
         parallel_for(
                 "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
-                const Integer rank = mesh->find_owner_processor(get_view_scan_ghost(), i, 1, proc_num);
+                const Integer rank = host_mesh->find_owner_processor(get_view_scan_ghost(), i, 1, proc_num);
 
                 printf(" ghost: %i - %li - proc: %li - rank: %li\n", i, get_view_ghost()(i),
                         rank , proc_num);
@@ -224,9 +226,9 @@ public:
         ViewVectorType<H> data = std::get<I>(ghost_user_data_);
         Integer ghost_size = data.extent(0);
 
-        Integer xDim = mesh->get_XDim();
-        Integer yDim = mesh->get_YDim();
-        Integer zDim = mesh->get_ZDim();
+        Integer xDim = host_mesh->get_XDim();
+        Integer yDim = host_mesh->get_YDim();
+        Integer zDim = host_mesh->get_ZDim();
 
         parallel_for(
             "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
@@ -280,7 +282,7 @@ public:
     MARS_INLINE_FUNCTION void
     init_user_data(T... args)
     {
-        const Integer size = mesh->get_chunk_size();
+        const Integer size = host_mesh->get_chunk_size();
 
         apply_impl(InitData("init_data", size, std::forward_as_tuple(args...)), user_data_);
     }
@@ -311,7 +313,7 @@ public:
     MARS_INLINE_FUNCTION void
     set_init_cond(H f)
     {
-        const Integer size = mesh->get_chunk_size();
+        const Integer size = host_mesh->get_chunk_size();
         Kokkos::parallel_for("init_initial_cond", size, f);
     }
 
@@ -319,16 +321,16 @@ public:
     MARS_INLINE_FUNCTION void
     elem_iterate(H f)
     {
-        const Integer size = mesh->get_chunk_size();
+        const Integer size = host_mesh->get_chunk_size();
         Kokkos::parallel_for("elem_iterate", size, f);
     }
 
     template <typename H>
     struct FaceIterate
     {
-        FaceIterate(ViewVectorType<Integer> s, H f, ViewVectorType<Integer> g, ViewVectorType<Integer> gl,
+        FaceIterate(Mesh *m, ViewVectorType<Integer> s, ViewVectorType<Integer> stl, H f, ViewVectorType<Integer> g, ViewVectorType<Integer> gl,
                     ViewVectorType<Integer> sg, Integer p, Integer x, Integer y, Integer z)
-            : sfc(s), func(f), gp(g), ghost_layer(gl), scan_ghost(sg), proc(p), xDim(x), yDim(y), zDim(z) {}
+            : mesh(m), sfc(s), sfc_to_local(stl), func(f), gp(g), ghost_layer(gl), scan_ghost(sg), proc(p), xDim(x), yDim(y), zDim(z) {}
 
         MARS_INLINE_FUNCTION
         void operator()(const Integer i) const
@@ -358,7 +360,6 @@ public:
 
                     if (nbh_oc.is_valid())
                     {
-                        printf("simplex: type: %li\n", simplex_type::ElemType);
                         Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(nbh_oc);
 
                         Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
@@ -384,9 +385,14 @@ public:
                         }
                         else
                         {
-                            /* according to the z-oder the right side = 1 is the next so i + 1
-                        (meaning at dir=0) and at dir = 1 (the upper side = 3) the index is i + 2 */
-                            index = i + dir + 1;
+                            /* const int start_index = 0;
+                            const int last_index = sfc.extent(0) - 1;
+                            Integer index2 = binary_search(sfc, start_index, last_index, enc_oc);
+ */
+                            //using the sfc (global) to local mapping of the mesh.
+                            index = mesh->get_index_of_sfc_elem(enc_oc);
+                            assert(index >= 0);
+                            /* printf("index: %li, i1: %li\n", index2, index1); */
                         }
 
                         /* printf("Index: %li, o.x: %li, y: %li, elem-index: %li, owner_proc: %li, proc: %li , o.x: %li, y: %li, index: %li, ghost: %i\n", index, ref_octant.x, ref_octant.y, elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim), owner_proc, proc, o.x, o.y, elem_index(o.x, o.y, o.z, xDim, yDim), face.get_second_side().is_ghost()); */
@@ -417,10 +423,12 @@ public:
 
         H func;
         ViewVectorType<Integer> sfc;
+        ViewVectorType<Integer> sfc_to_local;
         ViewVectorType<Integer> gp;
         ViewVectorType<Integer> ghost_layer;
         ViewVectorType<Integer> scan_ghost;
 
+        Mesh *mesh;
         Integer proc;
         Integer xDim;
         Integer yDim;
@@ -430,21 +438,26 @@ public:
         template <typename H>
         void face_iterate(H f)
         {
-            Integer xDim = mesh->get_XDim();
-            Integer yDim = mesh->get_YDim();
-            Integer zDim = mesh->get_ZDim();
+            Integer xDim = host_mesh->get_XDim();
+            Integer yDim = host_mesh->get_YDim();
+            Integer zDim = host_mesh->get_ZDim();
 
-            const Integer size = mesh->get_chunk_size();
+            const Integer size = host_mesh->get_chunk_size();
 
-            ViewVectorType<Integer> sfc = mesh->get_view_sfc();
-            Kokkos::parallel_for("elem_iterate", size, FaceIterate<H>(sfc, f, mesh->get_view_gp(), get_view_ghost(),
-                        get_view_scan_ghost(), mesh->get_proc(), xDim, yDim, zDim));
+            ViewVectorType<Integer> sfc = host_mesh->get_view_sfc();
+            ViewVectorType<Integer> sfc_to_local = host_mesh->get_view_sfc_to_local();
+            Kokkos::parallel_for("elem_iterate", size, FaceIterate<H>(mesh, sfc, sfc_to_local, f, host_mesh->get_view_gp(), get_view_ghost(),
+                        get_view_scan_ghost(), host_mesh->get_proc(), xDim, yDim, zDim));
         }
 
-        Mesh *
-        get_mesh() const
+        Mesh *get_mesh() const
         {
             return mesh;
+        }
+
+        Mesh *get_host_mesh() const
+        {
+            return host_mesh;
         }
 
         void reserve_ghost(const Integer n_elements)
@@ -524,8 +537,27 @@ public:
             return std::get<idx>(ghost_user_data_);
         }
 
+        //does ont perform a deep copy of the view containted in the mesh. Just the mesh object.
+        void copy_mesh_to_device()
+        {
+            Mesh *tmp = (Mesh *)Kokkos::kokkos_malloc(sizeof(Mesh));
+            Mesh mCopy = *host_mesh;
+            Mesh *oldDeviceMesh = mesh;
+            Kokkos::parallel_for(
+                "CreateDistributedMeshObject", 1, KOKKOS_LAMBDA(const int &) {
+                    // two local copies for m and tmp since this->m, this->mesh host pointers
+                    new ((Mesh *)tmp) Mesh(mCopy);
+                    if (oldDeviceMesh)
+                        oldDeviceMesh->~Mesh();
+                    // it only works on a copy since **m is still a host pointer and fails on the device.
+                });
+
+            mesh = tmp; //make the mesh pointer a device one so that this init func is not neccessary anymore
+        }
+
     private:
         Mesh *mesh;
+        Mesh *host_mesh;
 
         //ghost and boundary layers
         ViewVectorType<Integer> ghost_;

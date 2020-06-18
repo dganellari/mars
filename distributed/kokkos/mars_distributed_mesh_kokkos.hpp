@@ -210,6 +210,18 @@ public:
         local_sfc_ = local;
     }
 
+
+    MARS_INLINE_FUNCTION
+    const ViewVectorType<Integer> &get_view_sfc_to_local() const
+    {
+        return sfc_to_local_;
+    }
+
+    MARS_INLINE_FUNCTION
+    void set_view_sfc_to_local(const ViewVectorType<Integer> &local)
+    {
+        sfc_to_local_ = local;
+    }
     MARS_INLINE_FUNCTION
     const ViewVectorType<Integer> &get_view_gp() const
     {
@@ -1170,6 +1182,12 @@ public:
     }
 
 
+    MARS_INLINE_FUNCTION
+    Integer get_index_of_sfc_elem(const Integer enc_oc)
+    {
+        return sfc_to_local_(enc_oc) - gp_np(2 * proc + 1);
+    }
+
 
 private:
     ViewMatrixTextureC<Integer, Comb::value, 2> combinations;
@@ -1181,12 +1199,13 @@ private:
     Integer points_size_;
 
     ViewVectorType<Integer> local_sfc_;
+    ViewVectorType<Integer> sfc_to_local_; // global to local map from sfc allrange
     ViewVectorType<Integer> gp_np; // parallel partition info shared among all processes.
     Integer xDim, yDim, zDim;
     Integer chunk_size_;
     Integer proc;
 
-    UnorderedMap<Integer, Integer> global_to_local_map_;
+    UnorderedMap<Integer, Integer> global_to_local_map_;// global to local map for the mesh elem indices.
 
     ViewVectorType<Integer> boundary_;
     ViewVectorType<Integer> boundary_lsfc_index_;
