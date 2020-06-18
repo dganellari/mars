@@ -5,7 +5,7 @@
 
 namespace mars
 {
-
+template <Integer Type>
 class SFC
 {
 public:
@@ -79,12 +79,11 @@ public:
         }
     };
 
-    inline bool generate_sfc(const int xDim, const int yDim, const int zDim,
-                             Integer type)
+    inline bool generate_sfc(const int xDim, const int yDim, const int zDim)
     {
         using namespace Kokkos;
 
-        switch (type)
+        switch (Type)
         {
         case ElementType::Quad4:
         {
@@ -96,9 +95,9 @@ public:
             reserve_elements(n__anchor_nodes);
 
             //calculate all range before compaction to avoid sorting.
-            Integer allrange = encode_morton_2D(xDim, yDim); //TODO : check if enough. Test with xdim != ydim.
-            ViewVectorType<bool> all_elements("predicate", allrange);
-            ViewVectorType<Integer> scan_indices("scan_indices", allrange);
+            /* Integer allrange = encode_morton_2D(xDim, yDim); */
+            ViewVectorType<bool> all_elements("predicate", get_all_range());
+            /* ViewVectorType<Integer> scan_indices("scan_indices", allrange); */
 
             parallel_for(
                 MDRangePolicy<Rank<2>>({0, 0}, {yDim, xDim}),
@@ -106,7 +105,7 @@ public:
 
             //compacting the 1 and 0 array and inserting the "true" index of the all elements
             //which is the correct morton code leaving the sfc elements array sorted.
-            compact_elements(scan_indices, all_elements, allrange);
+            compact_elements(get_view_sfc_to_local(), all_elements, get_all_range());
 
             return true;
         }
@@ -120,9 +119,9 @@ public:
             reserve_elements(n__anchor_nodes);
 
             //calculate all range before compaction to avoid sorting.
-            Integer allrange = encode_morton_3D(xDim, yDim, zDim); //TODO : check if enough. Test with xdim != ydim.
-            ViewVectorType<bool> all_elements("predicate", allrange);
-            ViewVectorType<Integer> scan_indices("scan_indices", allrange);
+            /* Integer allrange = encode_morton_3D(xDim, yDim, zDim); */
+            ViewVectorType<bool> all_elements("predicate", get_all_range());
+            /* ViewVectorType<Integer> scan_indices("scan_indices", allrange); */
 
             parallel_for(
                 MDRangePolicy<Rank<3>>({0, 0, 0}, {zDim, yDim, xDim}),
@@ -130,7 +129,7 @@ public:
 
             //compacting the 1 and 0 array and inserting the "true" index of the all elements
             //which is the correct morton code leaving the sfc elements array sorted.
-            compact_elements(scan_indices, all_elements, allrange);
+            compact_elements(get_view_sfc_to_local(), all_elements, get_all_range());
 
             return true;
         }
@@ -141,10 +140,9 @@ public:
         }
     }
 
-    template <Integer Type>
     bool generate_sfc_elements(const Integer xDim, const Integer yDim, const Integer zDim)
     {
-        bool gen_sfc = generate_sfc(xDim, yDim, zDim, Type);
+        bool gen_sfc = generate_sfc(xDim, yDim, zDim);
         if (!gen_sfc)
         {
             std::cerr << "Not implemented for other dimensions yet" << std::endl;
@@ -168,9 +166,42 @@ public:
         return elements_size_;
     }
 
+    const ViewVectorType<Integer> &get_view_sfc_to_local() const //override
+    {
+        return sfc_to_local_;
+    }
+
+    Integer get_all_range()
+    {
+        return all_range_;
+    }
+
+    MARS_INLINE_FUNCTION
+    SFC(const int xDim, const int yDim, const int zDim)
+    {
+        switch (Type)
+        {
+        case ElementType::Quad4:
+        {
+            all_range_ = encode_morton_2D(xDim, yDim);
+            break;
+        }
+        case ElementType::Hex8:
+        {
+            all_range_ = encode_morton_3D(xDim, yDim, zDim);
+            break;
+        }
+        }
+
+        sfc_to_local_ = ViewVectorType<Integer>("sfc_to_local_", all_range_);
+    }
+
 private:
     ViewVectorType<Integer> elements_;
     Integer elements_size_;
+
+    ViewVectorType<Integer> sfc_to_local_;
+    Integer all_range_;
 };
 
 } // namespace mars

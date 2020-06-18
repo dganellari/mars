@@ -428,7 +428,7 @@ void advection(int &argc, char **&argv, const int level)
                     double point[3];
                     get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, xDim, yDim, zDim);
 
-                    printf("face data: %li - dir: %li - face: %li - (%lf, %lf) - rank: %li - ghost: %i\n", i, face.get_direction(), face.get_side(i).get_face_side(), point[0], point[1], proc_num, face.get_side(i).is_ghost());
+                    printf("face data: %li - dir: %li - face: %li - (%lf, %lf) - rank: %i - ghost: %i\n", i, face.get_direction(), face.get_side(i).get_face_side(), point[0], point[1], proc_num, face.get_side(i).is_ghost());
                 }
             }
         });

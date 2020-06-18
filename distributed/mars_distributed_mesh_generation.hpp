@@ -30,9 +30,11 @@ void broadcast_gp_np(const context &context, DMesh<Dim, ManifoldDim, Type> &mesh
 
         for (int i = 0; i < size; ++i)
         {
-            //counts[0] is always chunk size
-            GpNp_host(2 * i) = elem_view_host(i * counts[0]); // acc sum scan giving the first element per process
-            GpNp_host(2 * i + 1) = counts[i];
+            //counts[0] is always chunk size. Kind of scan with the first and the last elem of the sfc
+            GpNp_host(2 * i) = elem_view_host(i * counts[0]);
+
+            // acc sum scan for the count
+            GpNp_host(2 * (i + 1) + 1) = GpNp_host(2 * i + 1) + counts[i];
         }
         //insert the last element of the sfc adding 1 to it (to make the last element not part of the linearization) for the binary search to work properly
         GpNp_host(2 * size) = elem_view_host(n__anchor_nodes - 1) + 1;
@@ -103,7 +105,7 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
         errx(1, " Invalid number of mpi processes. Defined more mpi processes than mesh elements to be generated!");
     }
 
-    SFC morton;
+    SFC<Type> morton(xDim, yDim, zDim);
 
     bool root = mars::rank(context) == 0;
     if (root)
@@ -112,7 +114,7 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
         std::cout << "n__anchor_nodes size:: - :    " << n__anchor_nodes << std::endl;
         std::cout << "last_chunk_size size:: - :    " << last_chunk_size << std::endl;
 
-        morton.generate_sfc_elements<Type>(xDim, yDim, zDim);
+        morton.generate_sfc_elements(xDim, yDim, zDim);
     }
 
     std::vector<int> counts(size);
@@ -137,12 +139,18 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
 
     std::cout << "MPI Scatter ended!" << std::endl;
 
+    std::cout << "Broadcasting the sfc_to_local..." << std::endl;
+
+    context->distributed->broadcast(morton.get_view_sfc_to_local()); //broadcast to all processors.
+    std::cout << "Broadcasting the sfc_to_local ended!" << std::endl;
+
     /*  parallel_for(
         "print_elem_chunk",chunk_size, KOKKOS_LAMBDA(const int i) {
         printf(" elch: %u-%i\n", local(i), proc_num);
         }); */
 
     mesh.set_view_sfc(local);
+    mesh.set_view_sfc_to_local(morton.get_view_sfc_to_local());
     mesh.set_chunk_size(chunk_size);
     mesh.set_proc(proc_num);
 
