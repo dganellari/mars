@@ -169,7 +169,7 @@ MARS_INLINE_FUNCTION double initial_condition(const Data &data, const int index,
     data.get_elem_data<second>(index) = -(1. / bump_width / bump_width) * d[1] * retval;
     /* apply_impl(UpdateDu<DIM>(bump_width, retval, d, user_data), std::forward_as_tuple(args...)); */
 
-    printf("p:x %lf, py: %lf,  retval: %lf, du: %lf-%lf\n", x[0], x[1], retval, data.get_elem_data<first>(index), data.get_elem_data<second>(index));
+    /* printf("p:x %lf, py: %lf,  retval: %lf, du: %lf-%lf\n", x[0], x[1], retval, data.get_elem_data<first>(index), data.get_elem_data<second>(index)); */
 
     return retval;
 }
@@ -207,7 +207,7 @@ MARS_INLINE_FUNCTION double initial_condition_variadic(const Data &data, const i
     data.get_elem_data<first>(index) = -(1. / bump_width / bump_width) * d[0] * retval;
     data.get_elem_data<second>(index) = -(1. / bump_width / bump_width) * d[1] * retval;
 
-    printf("p:x %lf, py: %lf,  retval: %lf, du: %lf-%lf\n", x[0], x[1], retval, data.get_elem_data<first>(index), data.get_elem_data<second>(index));
+    /* printf("p:x %lf, py: %lf,  retval: %lf, du: %lf-%lf\n", x[0], x[1], retval, data.get_elem_data<first>(index), data.get_elem_data<second>(index)); */
 
     return retval;
 }
@@ -226,7 +226,7 @@ MARS_INLINE_FUNCTION
 for_each_du(const Data &data, const double bump_width, const double retval, const int index, const double *d)
 {
     constexpr Integer dataIndex = NthValue<I, Args...>::value;
-    printf("val: %li\n", dataIndex);
+    /* printf("val: %li\n", dataIndex); */
 
     data.get_elem_data<dataIndex>(index) = -(1. / bump_width / bump_width) * d[I] * retval;
     for_each_du<I+1, N, Args...>(data, bump_width, retval, index, d);
@@ -263,7 +263,7 @@ MARS_INLINE_FUNCTION double initial_condition_recursive(const Data &data, const 
     constexpr Integer first = NthValue<0, args...>::value;
     constexpr Integer second = NthValue<1, args...>::value;
 
-    printf("p:x %lf, py: %lf,  retval: %lf, du: %lf-%lf\n", x[0], x[1], retval, data.get_elem_data<first>(index), data.get_elem_data<second>(index));
+    /* printf("p:x %lf, py: %lf,  retval: %lf, du: %lf-%lf\n", x[0], x[1], retval, data.get_elem_data<first>(index), data.get_elem_data<second>(index)); */
 
     return retval;
 }
@@ -403,6 +403,8 @@ void advection(int &argc, char **&argv, const int level)
                 printf("max: %lf\n", max(0));
         });
 
+        Kokkos::Timer timer;
+
         data.face_iterate(MARS_LAMBDA(const Face<Type> &face) {
             for (int i = 0; i < 2; ++i)
             {
@@ -413,7 +415,7 @@ void advection(int &argc, char **&argv, const int level)
                 if (face.get_side(i).is_valid())
                 {
 
-                printf("elem_id: %li, boundary: %i\n", face.get_side(i).get_elem_id(), face.get_side(i).is_boundary());
+                /* printf("elem_id: %li, boundary: %i\n", face.get_side(i).get_elem_id(), face.get_side(i).is_boundary()); */
                     /* printf("id: %li, face: %li\n", face.get_side(i).get_elem_id(), face.get_side(i).get_face_side()); */
 
                     if (face.get_side(i).is_ghost())
@@ -428,10 +430,13 @@ void advection(int &argc, char **&argv, const int level)
                     double point[3];
                     get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, xDim, yDim, zDim);
 
-                    printf("face data: %li - dir: %li - face: %li - (%lf, %lf) - rank: %i - ghost: %i\n", i, face.get_direction(), face.get_side(i).get_face_side(), point[0], point[1], proc_num, face.get_side(i).is_ghost());
+                    /* printf("face data: %li - dir: %li - face: %li - (%lf, %lf) - rank: %i - ghost: %i\n", i, face.get_direction(), face.get_side(i).get_face_side(), point[0], point[1], proc_num, face.get_side(i).is_ghost()); */
                 }
             }
         });
+
+        double time = timer.seconds();
+        std::cout << "face iterate took: " << time << " seconds." << std::endl;
 
 #endif
     }
