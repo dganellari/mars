@@ -238,7 +238,7 @@ public:
                 get_vertex_coordinates_from_sfc<simplex_type::ElemType>(ghost(i), point, xDim, yDim, zDim);
 
                 Octant o = get_octant_from_sfc<simplex_type::ElemType>(ghost(i));
-                printf("ghost data: %li - %li - %li - (%lf, %lf) - data: %lf - proc: %li - rank: %i\n", i, ghost(i), elem_index(o.x, o.y, o.z, xDim, yDim), point[0], point[1], data(i), r, proc);
+                /* printf("ghost data: %li - %li - %li - (%lf, %lf) - data: %lf - proc: %li - rank: %i\n", i, ghost(i), elem_index(o.x, o.y, o.z, xDim, yDim), point[0], point[1], data(i), r, proc); */
             });
     }
 
@@ -328,14 +328,14 @@ public:
     template <typename H>
     struct FaceIterate
     {
-        FaceIterate(Mesh *m, ViewVectorType<Integer> s, ViewVectorType<Integer> stl, H f, ViewVectorType<Integer> g, ViewVectorType<Integer> gl,
+        FaceIterate(Mesh *m, H f, ViewVectorType<Integer> gl,
                     ViewVectorType<Integer> sg, Integer p, Integer x, Integer y, Integer z)
-            : mesh(m), sfc(s), sfc_to_local(stl), func(f), gp(g), ghost_layer(gl), scan_ghost(sg), proc(p), xDim(x), yDim(y), zDim(z) {}
+            : mesh(m), func(f), ghost_layer(gl), scan_ghost(sg), proc(p), xDim(x), yDim(y), zDim(z) {}
 
         MARS_INLINE_FUNCTION
         void operator()(const Integer i) const
         {
-            const Integer oc = sfc(i);
+            const Integer oc = mesh->get_view_sfc()(i);
             Octant ref_octant = get_octant_from_sfc<simplex_type::ElemType>(oc);
 
             /* touching only the right and upper side of the local element
@@ -362,7 +362,7 @@ public:
                     {
                         Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(nbh_oc);
 
-                        Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
+                        Integer owner_proc = find_owner_processor(mesh->get_view_gp(), enc_oc, 2, proc);
                         assert(owner_proc >= 0);
 
                         /* if the face neighbor element is ghost then do a binary search
@@ -385,14 +385,9 @@ public:
                         }
                         else
                         {
-                            /* const int start_index = 0;
-                            const int last_index = sfc.extent(0) - 1;
-                            Integer index2 = binary_search(sfc, start_index, last_index, enc_oc);
- */
                             //using the sfc (global) to local mapping of the mesh.
                             index = mesh->get_index_of_sfc_elem(enc_oc);
                             assert(index >= 0);
-                            /* printf("index: %li, i1: %li\n", index2, index1); */
                         }
 
                         /* printf("Index: %li, o.x: %li, y: %li, elem-index: %li, owner_proc: %li, proc: %li , o.x: %li, y: %li, index: %li, ghost: %i\n", index, ref_octant.x, ref_octant.y, elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim), owner_proc, proc, o.x, o.y, elem_index(o.x, o.y, o.z, xDim, yDim), face.get_second_side().is_ghost()); */
@@ -421,14 +416,12 @@ public:
             }
         }
 
+        Mesh *mesh;
         H func;
-        ViewVectorType<Integer> sfc;
-        ViewVectorType<Integer> sfc_to_local;
-        ViewVectorType<Integer> gp;
+
         ViewVectorType<Integer> ghost_layer;
         ViewVectorType<Integer> scan_ghost;
 
-        Mesh *mesh;
         Integer proc;
         Integer xDim;
         Integer yDim;
@@ -444,10 +437,7 @@ public:
 
             const Integer size = host_mesh->get_chunk_size();
 
-            ViewVectorType<Integer> sfc = host_mesh->get_view_sfc();
-            ViewVectorType<Integer> sfc_to_local = host_mesh->get_view_sfc_to_local();
-            Kokkos::parallel_for("elem_iterate", size, FaceIterate<H>(mesh, sfc, sfc_to_local, f, host_mesh->get_view_gp(), get_view_ghost(),
-                        get_view_scan_ghost(), host_mesh->get_proc(), xDim, yDim, zDim));
+            Kokkos::parallel_for("elem_iterate", size, FaceIterate<H>(mesh, f, get_view_ghost(), get_view_scan_ghost(), host_mesh->get_proc(), xDim, yDim, zDim));
         }
 
         Mesh *get_mesh() const
