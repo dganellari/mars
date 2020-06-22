@@ -176,7 +176,7 @@ MARS_INLINE_FUNCTION double initial_condition(const Data &data, const int index,
 
 //in case you might prefer the variadic version better you can use the Nthvalue equivalent to NthType to get
 //the nth value from a nontype variadic template.
-template <Integer DIM, Integer ...args>
+template <Integer DIM, Integer... args>
 MARS_INLINE_FUNCTION double initial_condition_variadic(const Data &data, const int index, const ProblemDesc<DIM> &pd, double *x)
 {
     //in this case at least the DIM isqual to #args...
@@ -212,28 +212,27 @@ MARS_INLINE_FUNCTION double initial_condition_variadic(const Data &data, const i
     return retval;
 }
 
-
 template <Integer I = 0, Integer N, Integer... Args>
 typename std::enable_if<I == N, void>::type
-MARS_INLINE_FUNCTION
-for_each_du(const Data &data, const double bump_width, const double retval, const int index, const double *d)
+    MARS_INLINE_FUNCTION
+    for_each_du(const Data &data, const double bump_width, const double retval, const int index, const double *d)
 {
 }
 
 template <Integer I = 0, Integer N, Integer... Args>
-typename std::enable_if<I < N, void>::type
-MARS_INLINE_FUNCTION
-for_each_du(const Data &data, const double bump_width, const double retval, const int index, const double *d)
+    typename std::enable_if < I<N, void>::type
+                                  MARS_INLINE_FUNCTION
+                                  for_each_du(const Data &data, const double bump_width, const double retval, const int index, const double *d)
 {
     constexpr Integer dataIndex = NthValue<I, Args...>::value;
     /* printf("val: %li\n", dataIndex); */
 
     data.get_elem_data<dataIndex>(index) = -(1. / bump_width / bump_width) * d[I] * retval;
-    for_each_du<I+1, N, Args...>(data, bump_width, retval, index, d);
+    for_each_du<I + 1, N, Args...>(data, bump_width, retval, index, d);
 }
 
 //The third approach shows the recursive way of doing things for the non-type parameter pack
-template <Integer DIM, Integer ...args>
+template <Integer DIM, Integer... args>
 MARS_INLINE_FUNCTION double initial_condition_recursive(const Data &data, const int index, const ProblemDesc<DIM> &pd, double *x)
 {
     //in this case at least the DIM isqual to #args...
@@ -263,14 +262,13 @@ MARS_INLINE_FUNCTION double initial_condition_recursive(const Data &data, const 
     constexpr Integer first = NthValue<0, args...>::value;
     constexpr Integer second = NthValue<1, args...>::value;
 
-    /* printf("p:x %lf, py: %lf,  retval: %lf, du: %lf-%lf\n", x[0], x[1], retval, data.get_elem_data<first>(index), data.get_elem_data<second>(index)); */
+    printf("p:x %lf, py: %lf,  retval: %lf, du: %lf-%lf\n", x[0], x[1], retval, data.get_elem_data<first>(index), data.get_elem_data<second>(index));
 
     return retval;
 }
 
 template <Integer Type>
-MARS_INLINE_FUNCTION
-void get_midpoint_coordinates(double *point, const Integer sfc, const Integer xDim, const Integer yDim, const Integer zDim)
+MARS_INLINE_FUNCTION void get_midpoint_coordinates(double *point, const Integer sfc, const Integer xDim, const Integer yDim, const Integer zDim)
 {
     assert(xDim != 0);
     assert(yDim != 0);
@@ -281,15 +279,15 @@ void get_midpoint_coordinates(double *point, const Integer sfc, const Integer xD
     double hy = 1. / yDim;
 
     /* /2 for the midpoint */
-    point[0] += hx/2;
-    point[1] += hy/2;
+    point[0] += hx / 2;
+    point[1] += hy / 2;
 
     if (Type == ElementType::Hex8)
     {
         assert(zDim != 0);
 
         double hz = 1 / zDim;
-        point[2] += hz/3;
+        point[2] += hz / 3;
     }
 }
 
@@ -341,7 +339,7 @@ void advection(int &argc, char **&argv, const int level)
         using Elem = typename DistributedQuad4Mesh::Elem;
         constexpr Integer Type = Elem::ElemType;
 
-        std::cout << "Type: " << Type<< std::endl;
+        std::cout << "Type: " << Type << std::endl;
 
         ProblemDesc<Dim> pd;
         pd.bump_width = 0.1;
@@ -352,7 +350,7 @@ void advection(int &argc, char **&argv, const int level)
         pd.v[0] = -0.445868402501118;
         pd.v[0] = -0.895098523991131;
 
-       Data data(&mesh);
+        Data data(&mesh);
 
         ViewVectorType<Integer> sfc = mesh.get_view_sfc();
         /* another option to use this one with a functor instead of the lamda. Just be careful what you use within
@@ -385,10 +383,10 @@ void advection(int &argc, char **&argv, const int level)
                 data.get_elem_data<1>(i) = 2;
             }); */
 
+        create_ghost_layer<Data, Type>(context, data);
         exchange_ghost_user_data(context, data);
 
         data.print_nth_tuple<1>(proc_num);
-
 
         const Integer size_ch = mesh.get_chunk_size();
         ViewVectorType<double> max("max", 1);
@@ -415,7 +413,7 @@ void advection(int &argc, char **&argv, const int level)
                 if (face.get_side(i).is_valid())
                 {
 
-                /* printf("elem_id: %li, boundary: %i\n", face.get_side(i).get_elem_id(), face.get_side(i).is_boundary()); */
+                    printf("elem_id: %li, boundary: %i\n", face.get_side(i).get_elem_id(), face.get_side(i).is_boundary());
                     /* printf("id: %li, face: %li\n", face.get_side(i).get_elem_id(), face.get_side(i).get_face_side()); */
 
                     if (face.get_side(i).is_ghost())
@@ -430,7 +428,7 @@ void advection(int &argc, char **&argv, const int level)
                     double point[3];
                     get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, xDim, yDim, zDim);
 
-                    /* printf("face data: %li - dir: %li - face: %li - (%lf, %lf) - rank: %i - ghost: %i\n", i, face.get_direction(), face.get_side(i).get_face_side(), point[0], point[1], proc_num, face.get_side(i).is_ghost()); */
+                    printf("face data: %li - dir: %li - face: %li - (%lf, %lf) - rank: %i - ghost: %i\n", i, face.get_direction(), face.get_side(i).get_face_side(), point[0], point[1], proc_num, face.get_side(i).is_ghost());
                 }
             }
         });

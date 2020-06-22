@@ -79,7 +79,7 @@ public:
         }
     };
 
-    inline bool generate_sfc(const int xDim, const int yDim, const int zDim)
+    inline bool generate_sfc()
     {
         using namespace Kokkos;
 
@@ -140,9 +140,9 @@ public:
         }
     }
 
-    bool generate_sfc_elements(const Integer xDim, const Integer yDim, const Integer zDim)
+    bool generate_sfc_elements()
     {
-        bool gen_sfc = generate_sfc(xDim, yDim, zDim);
+        bool gen_sfc = generate_sfc();
         if (!gen_sfc)
         {
             std::cerr << "Not implemented for other dimensions yet" << std::endl;
@@ -177,7 +177,7 @@ public:
     }
 
     MARS_INLINE_FUNCTION
-    SFC(const int xDim, const int yDim, const int zDim)
+    SFC(const int x, const int y, const int z) : xDim(x), yDim(y), zDim(z)
     {
         switch (Type)
         {
@@ -202,6 +202,8 @@ private:
 
     ViewVectorType<Integer> sfc_to_local_;
     Integer all_range_;
+
+    Integer xDim, yDim, zDim;
 };
 
 } // namespace mars
