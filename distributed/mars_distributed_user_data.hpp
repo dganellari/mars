@@ -198,7 +198,7 @@ public:
         Kokkos::Timer timer;
 
         //exchange the ghost layer first since it will be used to find the address of the userdata based on the sfc code.
-        exchange_ghost_layer(context);
+        /* exchange_ghost_layer(context); */
 
         int proc_num = rank(context);
         int size = num_ranks(context);
@@ -546,8 +546,8 @@ public:
         }
 
     private:
-        Mesh *mesh;
-        Mesh *host_mesh;
+        Mesh *mesh; //device mesh
+        Mesh *host_mesh; //host mesh that is copied to device.
 
         //ghost and boundary layers
         ViewVectorType<Integer> ghost_;
@@ -568,14 +568,22 @@ public:
         Integer proc_count;
     };
 
-template <class UserData>
-void exchange_ghost_user_data(const context &context, UserData &data)
-{
-    using namespace Kokkos;
+    template <class UserData, Integer Type>
+    void create_ghost_layer(const context &context, UserData &data)
+    {
+        std::cout << "Building the ghost layer (boundary element set)..." << std::endl;
+        data.get_host_mesh()->template build_boundary_element_sets<Type>();
 
-    data.exchange_ghost_counts(context);
-    data.exchange_ghost_data(context);
-}
+        data.exchange_ghost_counts(context);
+        data.exchange_ghost_layer(context);
+    }
+
+    template <class UserData>
+    void exchange_ghost_user_data(const context &context, UserData &data)
+    {
+        std::cout << "Exchange the ghost data..." << std::endl;
+        data.exchange_ghost_data(context);
+    }
 
 } // namespace mars
 

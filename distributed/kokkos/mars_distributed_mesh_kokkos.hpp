@@ -548,8 +548,7 @@ public:
     };
 
     template <Integer Type>
-    inline ViewVectorType<bool> build_global_elements(const Integer allrange,
-                                                      const int xDim, const int yDim, const int zDim)
+    inline ViewVectorType<bool> build_global_elements(const Integer allrange)
     {
         using namespace Kokkos;
 
@@ -564,14 +563,13 @@ public:
     }
 
     template <Integer Type>
-    inline Integer compact_elements(ViewVectorType<Integer> &ltg, const Integer allrange,
-                                         const int xDim, const int yDim, const int zDim)
+    inline Integer compact_elements(ViewVectorType<Integer> &ltg, const Integer allrange)
     {
         using namespace Kokkos;
 
         Timer timer;
 
-        const ViewVectorType<bool> &all_elements = build_global_elements<Type>(allrange, xDim, yDim, zDim);
+        const ViewVectorType<bool> &all_elements = build_global_elements<Type>(allrange);
         ViewVectorType<Integer> scan_indices("scan_indices", allrange + 1);
 
         incl_excl_scan(0, allrange, all_elements, scan_indices);
@@ -598,7 +596,7 @@ public:
     }
 
     template <Integer Type>
-    inline bool generate_points(const int xDim, const int yDim, const int zDim)
+    inline bool generate_points()
     {
         using namespace Kokkos;
 
@@ -620,7 +618,7 @@ public:
 
                 const Integer allrange = encode_morton_2D(xDim + 1, yDim + 1); //TODO : check if enough. Test with xdim != ydim.
 
-                const Integer nr_points = compact_elements<Type>(local_to_global, allrange, xDim, yDim, zDim);
+                const Integer nr_points = compact_elements<Type>(local_to_global, allrange);
                 printf("nr_p: %u\n", nr_points);
 
                 reserve_points(nr_points);
@@ -667,7 +665,7 @@ public:
                 ViewVectorType<Integer> local_to_global;
                 const Integer allrange = encode_morton_3D(xDim + 1, yDim + 1, zDim + 1); //TODO : check if enough. Test with xdim != ydim.
 
-                const Integer nr_points = compact_elements<Type>(local_to_global, allrange, xDim, yDim, zDim);
+                const Integer nr_points = compact_elements<Type>(local_to_global, allrange);
                 printf("nr_p 3D: %u\n", nr_points);
 
                 reserve_points(nr_points);
@@ -779,8 +777,7 @@ public:
     };
 
     template <Integer Type>
-    inline bool generate_elements(const int xDim, const int yDim,
-                                  const int zDim)
+    inline bool generate_elements()
     {
 
         using namespace Kokkos;
@@ -982,8 +979,7 @@ public:
 
     //another possible way of building the ghost layer directly without using the boundary layers and then send with mpi. This would be an mpi less method howerver it requires extra compute time for sorting. The other method is currently used.
     template <Integer Type>
-    inline void build_ghost_element_sets(const int xDim, const int yDim,
-                                         const int zDim)
+    inline void build_ghost_element_sets()
     {
         using namespace Kokkos;
 
@@ -1114,8 +1110,7 @@ public:
     }
 
     template <Integer Type>
-    inline void build_boundary_element_sets(const int xDim, const int yDim,
-                                            const int zDim)
+    inline void build_boundary_element_sets()
     {
         using namespace Kokkos;
 
@@ -1213,8 +1208,8 @@ private:
 
     UnorderedMap<Integer, Integer> global_to_local_map_;// global to local map for the mesh elem indices.
 
-    ViewVectorType<Integer> boundary_;
-    ViewVectorType<Integer> boundary_lsfc_index_;
+    ViewVectorType<Integer> boundary_; //sfc code for the ghost layer
+    ViewVectorType<Integer> boundary_lsfc_index_; // view index of the previous
     ViewVectorType<Integer> scan_boundary_;
 };
 

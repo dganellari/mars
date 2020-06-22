@@ -53,17 +53,11 @@ void broadcast_gp_np(const context &context, DMesh<Dim, ManifoldDim, Type> &mesh
 }
 
 template <Integer Dim, Integer ManifoldDim, Integer Type>
-bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, Type> &mesh,
-                               const Integer xDim, const Integer yDim, const Integer zDim)
+void partition_mesh(const context &context, DMesh<Dim, ManifoldDim, Type> &mesh)
 {
     using namespace Kokkos;
 
     Kokkos::Timer timer;
-
-
-    mesh.set_XDim(xDim);
-    mesh.set_YDim(yDim);
-    mesh.set_ZDim(zDim);
 
     int proc_num = rank(context);
     // std::cout << "rank -:    " << proc_num << std::endl;
@@ -77,18 +71,18 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
     {
     case ElementType::Quad4:
     {
-        n__anchor_nodes = xDim * yDim;
+        n__anchor_nodes = mesh.get_XDim() * mesh.get_YDim();
         break;
     }
     case ElementType::Hex8:
     {
-        n__anchor_nodes = xDim * yDim * zDim;
+        n__anchor_nodes = mesh.get_XDim() * mesh.get_YDim() * mesh.get_ZDim();
         break;
     }
     default:
     {
         std::cout << "Not yet implemented for other element types!" << std::endl;
-        return false;
+        return;
     }
     }
 
@@ -105,7 +99,7 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
         errx(1, " Invalid number of mpi processes. Defined more mpi processes than mesh elements to be generated!");
     }
 
-    SFC<Type> morton(xDim, yDim, zDim);
+    SFC<Type> morton(mesh.get_XDim(), mesh.get_YDim(), mesh.get_ZDim());
 
     bool root = mars::rank(context) == 0;
     if (root)
@@ -114,7 +108,7 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
         std::cout << "n__anchor_nodes size:: - :    " << n__anchor_nodes << std::endl;
         std::cout << "last_chunk_size size:: - :    " << last_chunk_size << std::endl;
 
-        morton.generate_sfc_elements(xDim, yDim, zDim);
+        morton.generate_sfc_elements();
     }
 
     std::vector<int> counts(size);
@@ -156,27 +150,48 @@ bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, T
 
     broadcast_gp_np(context, mesh, counts, morton.get_view_elements(), n__anchor_nodes);
 
+    double time_gen = timer.seconds();
+    std::cout << "Paritioning took: " << time_gen << " seconds. Process: " << proc_num << std::endl;
+}
+
+//the points and elements can be generated on the fly from the sfc code in case meshless true.
+template <Integer Dim, Integer ManifoldDim, Integer Type, bool Meshless = false>
+bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, Type> &mesh,
+                               const Integer xDim, const Integer yDim, const Integer zDim)
+{
+    using namespace Kokkos;
+
     assert(Dim <= 3);
     assert(ManifoldDim <= Dim);
 
-    Kokkos::Timer timer_gen;
+    int proc_num = rank(context);
 
-    //the mesh construct depends on template parameters.
-    bool gen_pts = mesh.template generate_points<Type>(xDim, yDim, zDim);
+    mesh.set_XDim(xDim);
+    mesh.set_YDim(yDim);
+    mesh.set_ZDim(zDim);
 
-    bool gen_elm = mesh.template generate_elements<Type>(xDim, yDim, zDim);
+    //partition the mesh and then generate the points and elements.
+    partition_mesh(context, mesh);
 
-    double time_gen = timer_gen.seconds();
-    std::cout << "Distributed Generation kokkos took: " << time_gen << " seconds. Process: " << proc_num << std::endl;
+    bool gen_pts = true, gen_elm = true;
 
-    if (!gen_pts || !gen_elm)
-        std::cerr << "Not implemented for other dimensions yet" << std::endl;
+    if (!Meshless)
+    {
+        Kokkos::Timer timer_gen;
 
-    std::cout<<"Building the ghost layer (boundary element set)..."<<std::endl;
-    mesh.template build_boundary_element_sets<Type>(xDim, yDim, zDim);
+        //the mesh construct depends on template parameters.
+        gen_pts = mesh.template generate_points<Type>();
 
-    double time = timer.seconds();
-    std::cout << "Total distributed generation  kokkos took: " << time << " seconds. Process: " << proc_num << std::endl;
+        gen_elm = mesh.template generate_elements<Type>();
+
+        double time_gen = timer_gen.seconds();
+        std::cout << "Distributed Generation kokkos took: " << time_gen << " seconds. Process: " << proc_num << std::endl;
+
+        if (!gen_pts || !gen_elm)
+            std::cerr << "Not implemented for other dimensions yet" << std::endl;
+    }
+
+    /* mesh.template build_boundary_element_sets<Type>(); */
 
     return (gen_pts && gen_elm);
 }
