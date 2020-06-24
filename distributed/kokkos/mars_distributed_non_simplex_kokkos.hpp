@@ -128,28 +128,21 @@ namespace mars {
     template <Integer Type>
     using FaceSide = Side<Type / 2, DistributedImplementation>;
 
-    template <Integer Type>
+    template <Integer Type, Integer direction>
     class Face
     {
     public:
         MARS_INLINE_FUNCTION
-        Face(const int direction)
+        Face()
         {
             sides[0].set_face_side(2 * direction + 1);
             sides[1].set_face_side(2 * direction);
-            set_direction(direction);
         }
 
         MARS_INLINE_FUNCTION
-        Integer get_direction() const
+        constexpr Integer get_direction() const
         {
             return direction;
-        }
-
-        MARS_INLINE_FUNCTION
-        void set_direction(const Integer d)
-        {
-            direction = d;
         }
 
         MARS_INLINE_FUNCTION
@@ -184,7 +177,6 @@ namespace mars {
 
     private:
 
-        Integer direction;
         FaceSide<Type> sides[2];
     };
 

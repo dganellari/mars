@@ -51,6 +51,9 @@ namespace mars
 
 using Data = UserData<DistributedQuad4Mesh, double, double, double, double>;
 
+template<Integer idx>
+using DataType = typename Data::type<idx>;
+
 template <Integer DIM>
 struct ProblemDesc
 {
@@ -291,6 +294,106 @@ MARS_INLINE_FUNCTION void get_midpoint_coordinates(double *point, const Integer 
     }
 }
 
+template <Integer first, Integer second>
+MARS_INLINE_FUNCTION void reset_derivatives(Data &data)
+{
+    data.elem_iterate(MARS_LAMBDA(const int i) {
+        data.get_elem_data<first>(i) = INVALID_INDEX;
+        data.get_elem_data<second>(i) = INVALID_INDEX;
+    });
+}
+
+struct Minmod
+{
+    Minmod(Data d) : data(d) {}
+
+    template <Integer Type, Integer Dir>
+    MARS_INLINE_FUNCTION void operator()(const Face<Type, Dir> &face) const
+    {
+        double uavg[2];
+
+        double hx = 1. / data.get_mesh()->get_XDim();
+        double hy = 1. / data.get_mesh()->get_YDim();
+
+        for (int i = 0; i < 2; ++i)
+        {
+            Integer sfc_elem;
+
+            //in case that is a boundary face containing only one side.
+            if (face.get_side(i).is_valid())
+            {
+                Integer idx = face.get_side(i).get_elem_id();
+
+                printf("elem_id: %li, boundary: %i, Dir: %li\n", idx, face.get_side(i).is_boundary(), Dir);
+
+                if (face.get_side(i).is_ghost())
+                {
+                    uavg[i] = data.get_ghost_elem_data<0>(idx);
+                    sfc_elem = data.get_ghost_elem(idx);
+                }
+                else
+                {
+                    //the solution u is read here
+                    uavg[i] = data.get_elem_data<0>(idx);
+                    sfc_elem = data.get_mesh()->get_sfc_elem(idx);
+                }
+
+                double point[3];
+                get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, data.get_mesh()->get_XDim(), data.get_mesh()->get_YDim(), data.get_mesh()->get_ZDim());
+
+                printf("face data: %li - dir: %li - face: %li - (%lf, %lf) - rank: %i - ghost: %i\n", i, face.get_direction(), face.get_side(i).get_face_side(), point[0], point[1], data.get_mesh()->get_proc(), face.get_side(i).is_ghost());
+            }
+        }
+
+        double du_estimate = (uavg[1] - uavg[0]) / ((hx + hy) / 2);
+
+        /*for (int i = 0; i < 2; ++i)
+         {
+            //in case that is a boundary face containing only one side.<]
+            if (face.get_side(i).is_valid())
+            {
+                if (!face.get_side(i).is_ghost())
+                {
+                    Integer idx = face.get_side(i).get_elem_id();
+                    [>the derivative in the direction is read here<]
+                    double du_old = data.get_elem_data<Dir>(idx);
+                    if (du_old == du_old)
+                    {
+                        if (du_old * du_estimate >= 0.0)
+                        {
+                            if (abs(du_estimate) < abs(du_old))
+                            {
+                                data.get_elem_data<Dir>(idx) = du_estimate;
+                            }
+                        }
+                        else
+                        {
+                            data.get_elem_data<Dir>(idx) = 0.0;
+                        }
+                    }
+                    else
+                    {
+                        data.get_elem_data<Dir>(idx) = du_estimate;
+                    }
+                }
+            }
+        } */
+    }
+
+    Data data;
+};
+
+template <Integer idx, typename H = DataType<idx>>
+MARS_INLINE_FUNCTION void umax(const Data &data, const H& max)
+{
+    data.elem_iterate(MARS_LAMBDA(const int i) {
+        if (data.get_elem_data<idx>(i) > max)
+        {
+            max = data.get_elem_data<idx>(i);
+        }
+    });
+}
+
 void advection(int &argc, char **&argv, const int level)
 {
 
@@ -391,49 +494,14 @@ void advection(int &argc, char **&argv, const int level)
         const Integer size_ch = mesh.get_chunk_size();
         ViewVectorType<double> max("max", 1);
 
-        data.elem_iterate(MARS_LAMBDA(const int i) {
-            if (data.get_elem_data<1>(i) > max(0))
-            {
-                max(0) = data.get_elem_data<1>(i);
-            }
-
-            if (i == size_ch - 1)
-                printf("max: %lf\n", max(0));
-        });
-
         Kokkos::Timer timer;
 
-        data.face_iterate(MARS_LAMBDA(const Face<Type> &face) {
-            for (int i = 0; i < 2; ++i)
-            {
-                Integer sfc_elem;
+        //1 and 2 are the derivatives in the tuple
+        reset_derivatives<1,2>(data);
 
-                //in case that is a boundary face containing only one side.
-                /* if (face.get_side(i).get_elem_id() > INVALID_INDEX) */
-                if (face.get_side(i).is_valid())
-                {
+        data.face_iterate(Minmod(data));
 
-                    printf("elem_id: %li, boundary: %i\n", face.get_side(i).get_elem_id(), face.get_side(i).is_boundary());
-                    /* printf("id: %li, face: %li\n", face.get_side(i).get_elem_id(), face.get_side(i).get_face_side()); */
-
-                    if (face.get_side(i).is_ghost())
-                    {
-                        sfc_elem = data.get_ghost_elem(face.get_side(i).get_elem_id());
-                    }
-                    else
-                    {
-                        sfc_elem = sfc(face.get_side(i).get_elem_id());
-                    }
-
-                    double point[3];
-                    get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, xDim, yDim, zDim);
-
-                    printf("face data: %li - dir: %li - face: %li - (%lf, %lf) - rank: %i - ghost: %i\n", i, face.get_direction(), face.get_side(i).get_face_side(), point[0], point[1], proc_num, face.get_side(i).is_ghost());
-                }
-            }
-        });
-
-        double time = timer.seconds();
+       double time = timer.seconds();
         std::cout << "face iterate took: " << time << " seconds." << std::endl;
 
 #endif

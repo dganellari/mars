@@ -22,6 +22,9 @@ class UserData
 
     using simplex_type = typename Mesh::Elem;
 
+    template<Integer idx>
+    using type = typename std::tuple_element<idx, tuple>::type;
+
 public:
     MARS_INLINE_FUNCTION UserData(Mesh *mesh) : host_mesh(mesh), mesh(nullptr)
     {
@@ -41,12 +44,6 @@ public:
         /* constexpr Integer data_size = std::tuple_size<std::decay<decltype(tuple)>::type>::value; */
         /* reserve_view_tuple(tuple, size, view_desc); */
         apply_impl(resize_view_functor(view_desc, size), tuple);
-    }
-
-   MARS_INLINE_FUNCTION void reserve_ghost_count(const Integer size)
-    {
-        send_count.assign(size, 0);
-        receive_count.assign(size, 0);
     }
 
     template <typename ElementType>
@@ -107,7 +104,10 @@ public:
         int proc_num = rank(context);
         int size = num_ranks(context);
 
-        reserve_ghost_count(size);
+
+        std::vector<Integer> send_count(size, 0);
+        std::vector<Integer> receive_count(size, 0);
+
         scan_send_mirror = create_mirror_view(host_mesh->get_view_scan_boundary());
         Kokkos::deep_copy(scan_send_mirror, host_mesh->get_view_scan_boundary());
 
@@ -133,6 +133,13 @@ public:
                 std::cout << "-----FromProc: " << i << " count:" << receive_count[i]<< " Proc: "<<proc_num<<std::endl;
             }
         }
+
+        //create the scan recv mirror view from the receive count
+        reserve_scan_ghost(size + 1);
+
+        scan_recv_mirror = create_mirror_view(get_view_scan_ghost());
+        make_scan_index_mirror(scan_recv_mirror,receive_count);
+        Kokkos::deep_copy(get_view_scan_ghost(), scan_recv_mirror);
     }
 
     void exchange_ghost_layer(const context &context)
@@ -146,12 +153,6 @@ public:
 
         /* auto count_mirror = create_mirror_view(host_mesh->get_view_scan_boundary());
            Kokkos::deep_copy(count_mirror, host_mesh->get_view_scan_boundary()); */
-
-        reserve_scan_ghost(size + 1);
-
-        scan_recv_mirror = create_mirror_view(get_view_scan_ghost());
-        make_scan_index_mirror(scan_recv_mirror,receive_count);
-        Kokkos::deep_copy(get_view_scan_ghost(), scan_recv_mirror);
 
         Integer ghost_size = scan_recv_mirror(size);
 
@@ -332,88 +333,89 @@ public:
                     ViewVectorType<Integer> sg, Integer p, Integer x, Integer y, Integer z)
             : mesh(m), func(f), ghost_layer(gl), scan_ghost(sg), proc(p), xDim(x), yDim(y), zDim(z) {}
 
+        template <Integer dir>
+        MARS_INLINE_FUNCTION void iterate(const Integer i, const Octant &ref_octant) const
+        {
+            for (int side = 0; side < 2; ++side)
+            {
+                Integer face_nr;
+
+                if (side == 0)
+                    face_nr = 2 * dir + 1;
+                else
+                    face_nr = 2 * dir;
+
+                Octant nbh_oc = face_nbh<simplex_type::ElemType>(ref_octant, face_nr,
+                                                                 xDim, yDim, zDim);
+
+                bool ghost = false;
+                Integer index;
+
+                if (nbh_oc.is_valid())
+                {
+                    Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(nbh_oc);
+
+                    Integer owner_proc = find_owner_processor(mesh->get_view_gp(), enc_oc, 2, proc);
+                    assert(owner_proc >= 0);
+
+                    /* if the face neighbor element is ghost then do a binary search
+                     * on the ghost layer to find the index */
+                    if (proc != owner_proc)
+                    {
+                        ghost = true;
+
+                        /* to narrow down the range of search we use the scan ghost
+                        and the owner proc of the ghost. */
+                        const int start_index = scan_ghost(owner_proc);
+                        const int last_index = scan_ghost(owner_proc + 1) - 1;
+
+                        /* as opposed to the whole range: */
+                        /* const int start_index = 0;
+                        const int last_index = ghost_layer.extent(0) -1; */
+
+                        index = binary_search(ghost_layer, start_index, last_index, enc_oc);
+                        assert(index >= 0);
+                    }
+                    else
+                    {
+                        //using the sfc (global) to local mapping of the mesh.
+                        index = mesh->get_index_of_sfc_elem(enc_oc);
+                        assert(index >= 0);
+                    }
+
+                    /* printf("Index: %li, o.x: %li, y: %li, elem-index: %li, owner_proc: %li, proc: %li , o.x: %li, y: %li, index: %li, ghost: %i\n", index, ref_octant.x, ref_octant.y, elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim), owner_proc, proc, o.x, o.y, elem_index(o.x, o.y, o.z, xDim, yDim), face.get_second_side().is_ghost()); */
+                }
+
+                bool boundary = nbh_oc.shares_boundary_side<simplex_type::ElemType>(xDim, yDim, zDim);
+
+                if ((side == 0 && nbh_oc.is_valid()) || ghost || boundary)
+                {
+                    Face<simplex_type::ElemType, dir> face;
+                    int otherside = side ^ 1;
+
+                    face.get_side(side).set_elem_id(i);
+                    face.get_side(side).set_boundary(boundary);
+
+                    if (!boundary)
+                    {
+                        face.get_side(otherside).set_elem_id(index);
+                        face.get_side(otherside).set_ghost(ghost);
+                    }
+
+                    func(face);
+                }
+            }
+        }
+
         MARS_INLINE_FUNCTION
         void operator()(const Integer i) const
         {
             const Integer oc = mesh->get_view_sfc()(i);
             Octant ref_octant = get_octant_from_sfc<simplex_type::ElemType>(oc);
 
-            /* touching only the right and upper side of the local element
-             per each thread gives a full iteration on the interior faces */
-            for (int dir = 0; dir < 2; ++dir)
-            {
-
-                for(int side = 0;  side <2; ++side)
-                {
-                    Integer face_nr;
-
-                    if(side == 0)
-                        face_nr = 2 * dir +1;
-                    else
-                        face_nr = 2 * dir;
-
-                    Octant nbh_oc = face_nbh<simplex_type::ElemType>(ref_octant, face_nr,
-                                                                     xDim, yDim, zDim);
-
-                    bool ghost = false;
-                    Integer index;
-
-                    if (nbh_oc.is_valid())
-                    {
-                        Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(nbh_oc);
-
-                        Integer owner_proc = find_owner_processor(mesh->get_view_gp(), enc_oc, 2, proc);
-                        assert(owner_proc >= 0);
-
-                        /* if the face neighbor element is ghost then do a binary search
-                     * on the ghost layer to find the index */
-                        if (proc != owner_proc)
-                        {
-                            ghost = true;
-
-                            /* to narrow down the range of search we use the scan ghost
-                        and the owner proc of the ghost. */
-                            const int start_index = scan_ghost(owner_proc);
-                            const int last_index = scan_ghost(owner_proc + 1) - 1;
-
-                            /* as opposed to the whole range: */
-                            /* const int start_index = 0;
-                        const int last_index = ghost_layer.extent(0) -1; */
-
-                            index = binary_search(ghost_layer, start_index, last_index, enc_oc);
-                            assert(index >= 0);
-                        }
-                        else
-                        {
-                            //using the sfc (global) to local mapping of the mesh.
-                            index = mesh->get_index_of_sfc_elem(enc_oc);
-                            assert(index >= 0);
-                        }
-
-                        /* printf("Index: %li, o.x: %li, y: %li, elem-index: %li, owner_proc: %li, proc: %li , o.x: %li, y: %li, index: %li, ghost: %i\n", index, ref_octant.x, ref_octant.y, elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim), owner_proc, proc, o.x, o.y, elem_index(o.x, o.y, o.z, xDim, yDim), face.get_second_side().is_ghost()); */
-
-                    }
-
-                    bool boundary = nbh_oc.shares_boundary_side<simplex_type::ElemType>(xDim, yDim, zDim);
-
-                    if ((side == 0 && nbh_oc.is_valid()) || ghost || boundary)
-                    {
-                        Face<simplex_type::ElemType> face(dir);
-                        int otherside = side ^ 1;
-
-                        face.get_side(side).set_elem_id(i);
-                        face.get_side(side).set_boundary(boundary);
-
-                        if (!boundary)
-                        {
-                            face.get_side(otherside).set_elem_id(index);
-                            face.get_side(otherside).set_ghost(ghost);
-                        }
-
-                        func(face);
-                    }
-                }
-            }
+            iterate<0>(i, ref_octant);
+            iterate<1>(i, ref_octant);
+            //TODO: 3D part
         }
 
         Mesh *mesh;
@@ -492,6 +494,18 @@ public:
         }
 
         MARS_INLINE_FUNCTION
+        const ViewVectorType<Integer>::HostMirror  &get_view_scan_recv_mirror() const
+        {
+            return scan_recv_mirror;
+        }
+
+        MARS_INLINE_FUNCTION
+        const ViewVectorType<Integer>::HostMirror &get_view_scan_send_mirror() const
+        {
+            return scan_send_mirror;
+        }
+
+        MARS_INLINE_FUNCTION
         const user_tuple &get_user_data() const
         {
             return user_data_;
@@ -557,11 +571,9 @@ public:
         user_tuple user_data_;
         user_tuple ghost_user_data_;
 
-        std::vector<Integer> send_count;
         //mirror view on the mesh scan boundary view used for the mpi send receive
         ViewVectorType<Integer>::HostMirror scan_send_mirror;
 
-        std::vector<Integer> receive_count;
         //mirror view on the scan_ghost view
         ViewVectorType<Integer>::HostMirror scan_recv_mirror;
 
@@ -581,8 +593,17 @@ public:
     template <class UserData>
     void exchange_ghost_user_data(const context &context, UserData &data)
     {
-        std::cout << "Exchange the ghost data..." << std::endl;
-        data.exchange_ghost_data(context);
+        int size = num_ranks(context);
+
+        if (data.get_view_scan_recv_mirror()(size) == data.get_view_ghost().extent(0))
+        {
+            std::cout << "Exchange the ghost data..." << std::endl;
+            data.exchange_ghost_data(context);
+        }
+        else
+        {
+           errx(1, "Not allowed to call exchange ghost data before the ghost layer creation. Please call create_ghost_layer method first!");
+        }
     }
 
 } // namespace mars
