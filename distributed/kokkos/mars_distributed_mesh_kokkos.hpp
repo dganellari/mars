@@ -199,6 +199,12 @@ public:
     }
 
     MARS_INLINE_FUNCTION
+    const Integer get_sfc_elem(const Integer index) const
+    {
+        return local_sfc_(index);
+    }
+
+    MARS_INLINE_FUNCTION
     const ViewVectorType<Integer> &get_view_sfc() const
     {
         return local_sfc_;
