@@ -635,9 +635,12 @@ public:
                 //build global_to_local map for use in generate elements.
                 UnorderedMap<Integer, Integer> global_to_local_map(nr_points);
 
+                //otherwise lambda does not see the xDim
+                const Integer xD = xDim;
+
                 parallel_for(
                     "local_global_map_for", nr_points, KOKKOS_LAMBDA(const int i) {
-                        const int offset = xDim + 1;
+                        const int offset = xD + 1;
 
                         const Integer gl_index = local_to_global(i);
 
@@ -682,6 +685,10 @@ public:
                 //build global_to_local map for use in generate elements.
                 UnorderedMap<Integer, Integer> global_to_local_map(nr_points);
 
+                //otherwise lambda does not see the xDim or ydim
+                const Integer xD = xDim;
+                const Integer yD = yDim;
+
                 parallel_for(
                     "local_global_map_for", nr_points, KOKKOS_LAMBDA(const int i) {
                         const Integer gl_index = local_to_global(i);
@@ -690,7 +697,7 @@ public:
                         const Integer y = decode_morton_3DY(gl_index);
                         const Integer z = decode_morton_3DZ(gl_index);
 
-                        global_to_local_map.insert(elem_index(x, y, z, xDim, yDim), i);
+                        global_to_local_map.insert(elem_index(x, y, z, xD, yD), i);
                     });
 
                 set_global_to_local_map(global_to_local_map);

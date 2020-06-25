@@ -92,6 +92,7 @@ void partition_mesh(const context &context, DMesh<Dim, ManifoldDim, Type> &mesh)
     Integer chunk_size = n__anchor_nodes / size;
     Integer last_chunk_size = chunk_size - (chunk_size * size - n__anchor_nodes);
 
+    printf("chunk_size: %li, n__anchor_nodes: %li, rank: %i\n", chunk_size, n__anchor_nodes, proc_num);
     assert(chunk_size > 0);
 
     if (chunk_size <= 0)

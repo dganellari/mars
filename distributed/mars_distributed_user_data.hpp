@@ -520,6 +520,13 @@ public:
             return std::get<idx>(user_data_)(i);
         }
 
+        template <std::size_t idx, typename H = typename std::tuple_element<idx, tuple>::type>
+        MARS_INLINE_FUNCTION
+        void set_elem_data(const int i, const H value) const
+        {
+            std::get<idx>(user_data_)(i) = value;
+        }
+
         /* template<std::size_t idx, typename H = NthType<idx, T...>> */
         template <std::size_t idx, typename H = typename std::tuple_element<idx, user_tuple>::type>
         MARS_INLINE_FUNCTION const H get_data() const
