@@ -1240,6 +1240,11 @@ int main(int argc, char *argv[])
 
 	/*test_uniform_bisection_3D(3, test_mars_mesh_generation_3D(1,1,1));*/
 	//parallel with kokkos.
+
+DUALContactLinearElasticity5<2,1>(argc,argv);
+
+
+
 #ifdef WITH_KOKKOS
 	Kokkos::initialize(argc,argv);
 	{
@@ -1321,7 +1326,6 @@ Kokkos::View<Real **[3][4]> aaa("aaa",M,N);
 
 // PROVALSFEM_ContactLinearElasticity5<2,1>(1,0,6,1);
 
-DUALContactLinearElasticity5<2,1>(argc,argv);
 // 
 
 // DUALLinearElasticityCook<2,1>(argc,argv);//1,1,2);

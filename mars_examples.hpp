@@ -14612,6 +14612,7 @@ template<typename FunctionSpace_>
     	    {
     	    	std::cout<<"change_coarser_matrix="<<change_coarser_matrix<<" on level "<<level<<std::endl;
     	    	// truncate_matrix(truncated_A_levels[level-1],A_levels[level],interpolation.matrix(level-1),working_set[level],working_set_old[level]);
+    	    	if(change_coarser_matrix)
  	   	 		truncated_A_levels[level-1]=truncated_A_levels[level].multiply_left_transpose_and_multiply_right(interpolation.matrix(level-1),working_set[level]);
 
     	    }
@@ -23577,9 +23578,9 @@ void RT1_external_patch(Patch& RT1_2externald,  Patch& RT1_2externald_local_posi
         Real alpha_avg=0.5;
 
 
-        max_iter=20;
-        pre_smoothing=5;
-        post_smoothing=5;
+        max_iter=50;
+        pre_smoothing=3;
+        post_smoothing=3;
         auto& level_n_dofs_array=context.full_spaces_ptr()->dofsdofmap().level_n_dofs_array();
         std::cout<<" "<<std::endl;
         	for(Integer j=0;j<level_n_dofs_array[0].size();j++)
@@ -23602,9 +23603,9 @@ void RT1_external_patch(Patch& RT1_2externald,  Patch& RT1_2externald_local_posi
         if(lambda>10000000000000)
          lambda_txt=std::numeric_limits<double>::infinity();
 
-        save_vector("../matlab/residual_cook/res_lambda_" + std::to_string(lambda_txt)+"_mu_"+ std::to_string(mu)+"_alpha_" + std::to_string(alpha_avg)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+".dat",residuals[0]);
-        save_vector("../matlab/residual_cook/res1_lambda_"+ std::to_string(lambda_txt)+"_mu_"+ std::to_string(mu)+"_alpha_" + std::to_string(alpha_avg)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+".dat",residuals[1]);
-        save_vector("../matlab/residual_cook/res2_lambda_"+ std::to_string(lambda_txt)+"_mu_"+ std::to_string(mu)+"_alpha_" + std::to_string(alpha_avg)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+".dat",residuals[2]);
+        save_vector("../matlab/residual_cook/res_lambda_" + std::to_string(lambda_txt)+"_mu_"+ std::to_string(mu)+"_alpha_" + std::to_string(alpha_avg)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+"pre_smooth_"+std::to_string(pre_smoothing)+"post_smooth_"+ std::to_string(pre_smoothing)+".dat",residuals[0]);
+        save_vector("../matlab/residual_cook/res1_lambda_"+ std::to_string(lambda_txt)+"_mu_"+ std::to_string(mu)+"_alpha_" + std::to_string(alpha_avg)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+ std::to_string(n1)+"pre_smooth_"+std::to_string(pre_smoothing)+"post_smooth_"+ std::to_string(pre_smoothing)+".dat",residuals[1]);
+        save_vector("../matlab/residual_cook/res2_lambda_"+ std::to_string(lambda_txt)+"_mu_"+ std::to_string(mu)+"_alpha_" + std::to_string(alpha_avg)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+ std::to_string(n1)+"pre_smooth_"+std::to_string(pre_smoothing)+"post_smooth_"+ std::to_string(pre_smoothing)+".dat",residuals[2]);
 
 
 
