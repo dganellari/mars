@@ -395,6 +395,8 @@ public:
 
                     face.get_side(side).set_elem_id(i);
                     face.get_side(side).set_boundary(boundary);
+                    //if it is the side element of the ref octant.
+                    face.get_side(side).set_origin();
 
                     if (!boundary)
                     {
@@ -439,7 +441,7 @@ public:
 
             const Integer size = host_mesh->get_chunk_size();
 
-            Kokkos::parallel_for("elem_iterate", size, FaceIterate<H>(mesh, f, get_view_ghost(), get_view_scan_ghost(), host_mesh->get_proc(), xDim, yDim, zDim));
+            Kokkos::parallel_for("face_iterate", size, FaceIterate<H>(mesh, f, get_view_ghost(), get_view_scan_ghost(), host_mesh->get_proc(), xDim, yDim, zDim));
         }
 
         Mesh *get_mesh() const
