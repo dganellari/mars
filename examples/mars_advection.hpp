@@ -51,9 +51,9 @@ namespace mars
 {
 
 using Data = UserData<DistributedQuad4Mesh, double, double, double, double>;
-/*
+
 template<Integer idx>
-using DataType = typename Data::type<idx>; */
+using DataType = typename Data::type<idx>;
 
 template <Integer DIM>
 struct ProblemDesc
@@ -266,7 +266,7 @@ MARS_INLINE_FUNCTION double initial_condition_recursive(const Data &data, const 
     constexpr Integer first = NthValue<0, args...>::value;
     constexpr Integer second = NthValue<1, args...>::value;
 
-    printf("p:x %lf, py: %lf,  retval: %lf, du: %lf-%lf\n", x[0], x[1], retval, data.get_elem_data<first>(index), data.get_elem_data<second>(index));
+    /* printf("p:x %lf, py: %lf,  retval: %lf, du: %lf-%lf\n", x[0], x[1], retval, data.get_elem_data<first>(index), data.get_elem_data<second>(index)); */
 
     return retval;
 }
@@ -304,6 +304,38 @@ MARS_INLINE_FUNCTION void reset_derivatives(Data &data)
     });
 }
 
+template <Integer Type, Integer first, Integer second>
+MARS_INLINE_FUNCTION void print_derivatives(Data &data)
+{
+    data.elem_iterate(MARS_LAMBDA(const int i) {
+        Integer sfc_elem = data.get_mesh()->get_sfc_elem(i);
+
+        double point[3];
+        get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, data.get_mesh()->get_XDim(), data.get_mesh()->get_YDim(), data.get_mesh()->get_ZDim());
+
+        printf("derivative data: %li - (%lf, %lf) - rank: %i - derivatives: [%lf - %lf]\n", i, point[0], point[1], data.get_mesh()->get_proc(), data.get_elem_data<first>(i), data.get_elem_data<second>(i));
+    });
+}
+
+template<typename T>
+struct AbsMinMod
+{
+    KOKKOS_INLINE_FUNCTION
+    static T apply(const T &val1, const T &val2)
+    {
+        const auto abs1 = Kokkos::ArithTraits<T>::abs(val1);
+        const auto abs2 = Kokkos::ArithTraits<T>::abs(val2);
+
+        if(Kokkos::ArithTraits<T>::isNan(val1))
+            return val2;
+
+        if(val1 * val2 >= 0)
+            return abs1 < abs2 ? val1 : val2;
+        else
+            return 0.0;
+    }
+};
+
 struct Minmod
 {
     Minmod(Data d) : data(d) {}
@@ -313,48 +345,44 @@ struct Minmod
     {
         double uavg[2];
 
-        double hx = 1. / data.get_mesh()->get_XDim();
-        double hy = 1. / data.get_mesh()->get_YDim();
+        double hx = 0;
+        double hy = 0;
+
+        /* printf("hx: %lf, hy: %lf\n", hx, hy); */
 
         for (int i = 0; i < 2; ++i)
         {
-            Integer sfc_elem;
-
             //in case that is a boundary face containing only one side.
             if (face.get_side(i).is_valid())
             {
                 Integer idx = face.get_side(i).get_elem_id();
 
-                /* printf("elem_id: %li, boundary: %i, Dir: %li\n", idx, face.get_side(i).is_boundary(), Dir); */
+                if(i == 0)
+                    hx = 1. / data.get_mesh()->get_YDim();
+                else
+                    hy = 1. / data.get_mesh()->get_XDim();
 
                 if (face.get_side(i).is_ghost())
                 {
                     uavg[i] = data.get_ghost_elem_data<0>(idx);
-                    sfc_elem = data.get_ghost_elem(idx);
                 }
                 else
                 {
                     //the solution u is read here
                     uavg[i] = data.get_elem_data<0>(idx);
-                    sfc_elem = data.get_mesh()->get_sfc_elem(idx);
                 }
-
-                /* double point[3];
-                get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, data.get_mesh()->get_XDim(), data.get_mesh()->get_YDim(), data.get_mesh()->get_ZDim());
- */
-                /* printf("face data: %li - dir: %li - face: %li - (%lf, %lf) - rank: %i - ghost: %i --- uavg: %f\n", i, face.get_direction(), face.get_side(i).get_face_side(), point[0], point[1], data.get_mesh()->get_proc(), face.get_side(i).is_ghost(), uavg[i]); */
             }
         }
 
         double du_estimate = (uavg[1] - uavg[0]) / ((hx + hy) / 2);
 
-        printf("du_estimate: %lf\n", du_estimate);
+        /* printf("du_estimate: %lf\n", du_estimate); */
         //the x derivative is in position 1 of the tuple and the y derivative in pos 2.
         constexpr Integer du_index = 1 + Dir;
 
         for (int i = 0; i < 2; ++i)
         {
-            Integer sfc_elem;
+            /* Integer sfc_elem; */
             Integer idx;
 
             /* in case that is a boundary face containing only one side.*/
@@ -363,54 +391,25 @@ struct Minmod
                 if (!face.get_side(i).is_ghost())
                 {
                     idx = face.get_side(i).get_elem_id();
-                    /*the derivative in the direction is read here*/
-                    sfc_elem = data.get_mesh()->get_sfc_elem(idx);
 
-                    double du_old = data.get_elem_data<du_index>(idx);
-/* 
-                    if (du_old == du_old)
-                    {
-                        if (du_old * du_estimate >= 0.0)
-                        { */
-                            double de = fabs(du_estimate);
-                            double ddo = fabs(du_old);
-                            printf("de: %lf, ddo: %lf\n", de, ddo);
+                    /* sfc_elem = data.get_mesh()->get_sfc_elem(idx); */
 
-                            if (de < ddo)
-                            {
-                                printf("index: %li, %li tt: %lf es: %lf, boundary: %i\n", idx, du_index, du_old, du_estimate, face.get_side(i).is_boundary());
-                                data.get_elem_data<du_index>(idx) = du_estimate;
-                            }
-                            else
-                            {
-                            printf("fabs du_estimate: %lf, du_old: %lf\n", fabs(du_estimate), du_old);
-                            }
+                    /* the derivative in the direction: data.get_elem_data<du_index>(idx)
+                    DataType<du_index> is the type of the  data.get_elem_data<du_index>(idx) */
+                    atomic_op(AbsMinMod<DataType<du_index>>(), data.get_elem_data<du_index>(idx), du_estimate);
 
-                        /* }
-                        else
-                        {
-                                printf("zero-indexx: %li, %li tt: %lf es: %lf\n", idx, du_index, du_old, du_estimate);
-                            data.get_elem_data<du_index>(idx) = 0.0;
-                        }
-                    }
-                    else
-                    {
-                                printf("last-indexx: %li, %li tt: %lf es: %lf\n", idx, du_index, du_old, du_estimate);
-                        data.get_elem_data<du_index>(idx) = du_estimate;
-                    } */
-
-                    double point[3];
+                    /* double point[3];
                     get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, data.get_mesh()->get_XDim(), data.get_mesh()->get_YDim(), data.get_mesh()->get_ZDim());
-
-                    printf("face data: %li - dir: %li - face: %li - (%lf, %lf) - rank: %i - ghost: %i --- udata: %lf -\n", i, face.get_direction(), face.get_side(i).get_face_side(), point[0], point[1], data.get_mesh()->get_proc(), face.get_side(i).is_ghost(), data.get_elem_data<du_index>(idx));
+ */
+                    /* printf("face data: %li - dir: %li - face: %li - (%lf, %lf) - rank: %i - ghost: %i --- udata: %lf -\n", i, face.get_direction(), face.get_side(i).get_face_side(), point[0], point[1], data.get_mesh()->get_proc(), face.get_side(i).is_ghost(), data.get_elem_data<du_index>(idx)); */
                 }
             }
-         }
+        }
     }
 
     Data data;
 };
-/*
+
 template <Integer idx, typename H = DataType<idx>>
 MARS_INLINE_FUNCTION void umax(const Data &data, const H& max)
 {
@@ -420,7 +419,7 @@ MARS_INLINE_FUNCTION void umax(const Data &data, const H& max)
             max = data.get_elem_data<idx>(i);
         }
     });
-} */
+}
 
 void advection(int &argc, char **&argv, const int level)
 {
@@ -529,6 +528,7 @@ void advection(int &argc, char **&argv, const int level)
 
         data.face_iterate(Minmod(data));
 
+        print_derivatives<Type, 1, 2>(data);
         double time = timer.seconds();
         std::cout << "face iterate took: " << time << " seconds." << std::endl;
 

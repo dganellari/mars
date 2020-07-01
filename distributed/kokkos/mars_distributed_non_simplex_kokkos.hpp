@@ -93,6 +93,7 @@ namespace mars {
     private:
         Integer face_side;
         bool boundary = 0;
+        bool origin = 0;
 
     public:
         MARS_INLINE_FUNCTION
@@ -112,10 +113,21 @@ namespace mars {
             return boundary;
         }
 
+        MARS_INLINE_FUNCTION bool is_origin() const
+        {
+            return origin;
+        }
+
         MARS_INLINE_FUNCTION
         void set_boundary(bool b=true)
         {
             boundary = b;
+        }
+
+        MARS_INLINE_FUNCTION
+        void set_origin(bool o=true)
+        {
+            origin = o;
         }
 
         MARS_INLINE_FUNCTION
