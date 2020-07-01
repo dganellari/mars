@@ -391,15 +391,21 @@ public:
                 if ((side == 0 && nbh_oc.is_valid()) || ghost || boundary)
                 {
                     Face<simplex_type::ElemType, dir> face;
-                    int otherside = side ^ 1;
 
-                    face.get_side(side).set_elem_id(i);
-                    face.get_side(side).set_boundary(boundary);
+                    int origin_side = side;
+                    //if boundary origin element then the side needs always be 0
+                    if(boundary)
+                        origin_side = 0;
+
+                    face.get_side(origin_side).set_elem_id(i);
+                    face.get_side(origin_side).set_boundary(boundary);
                     //if it is the side element of the ref octant.
-                    face.get_side(side).set_origin();
+                    face.get_side(origin_side).set_origin();
 
                     if (!boundary)
                     {
+                        int otherside = origin_side ^ 1;
+
                         face.get_side(otherside).set_elem_id(index);
                         face.get_side(otherside).set_ghost(ghost);
                     }
