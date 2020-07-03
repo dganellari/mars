@@ -199,7 +199,7 @@ public:
     }
 
     MARS_INLINE_FUNCTION
-    const Integer get_sfc_elem(const Integer index) const
+    Integer get_sfc_elem(const Integer index) const
     {
         return local_sfc_(index);
     }
@@ -659,7 +659,6 @@ public:
                 return false;
             }
             }
-            break;
         }
         case 3:
         {
@@ -708,7 +707,6 @@ public:
                 return false;
             }
             }
-            break;
         }
         default:
         {
@@ -817,7 +815,6 @@ public:
                 return false;
             }
             }
-            break;
         }
         case 3:
         {
@@ -839,7 +836,6 @@ public:
                 return false;
             }
             }
-            break;
         }
         default:
         {
@@ -1071,7 +1067,7 @@ public:
             const Integer gl_index = global(index);
             Octant ref_octant = get_octant_from_sfc<Type>(gl_index);
 
-            const int offset = xDim + 1;
+            /* const int offset = xDim + 1; */
 
             for (int face = 0; face < 2 * ManifoldDim; ++face)
             {
@@ -1145,7 +1141,7 @@ public:
                 auto row_predicate = subview(rank_boundary, i, ALL);
                 auto row_scan = subview(rank_scan, i, ALL);
                 incl_excl_scan(0, chunk_size_, row_predicate, row_scan);
-/* 
+/*
                 parallel_for(
                     "print scan", chunk_size_, KOKKOS_LAMBDA(const int i) {
                         printf(" boundary -inside: %i-%i", i, row_predicate(i));

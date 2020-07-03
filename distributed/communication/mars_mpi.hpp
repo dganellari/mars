@@ -396,6 +396,17 @@ gathered_vector<T> gather_all_with_partition(const std::vector<T> &values, MPI_C
 }
 
 template <typename T>
+ViewObject<T> reduce(const ViewObject<T> value, MPI_Op op, MPI_Comm comm)
+{
+    using traits = mpi_traits<T>;
+
+    ViewObject<T> result("result");
+    MPI_Allreduce(value.data(), result.data(), 1, traits::mpi_type(), op, comm);
+
+    return result;
+}
+
+template <typename T>
 T reduce(T value, MPI_Op op, int root, MPI_Comm comm)
 {
     using traits = mpi_traits<T>;

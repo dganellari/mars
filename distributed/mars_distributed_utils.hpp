@@ -1,6 +1,6 @@
+#include "Kokkos_ArithTraits.hpp"
 #include <tuple>
 #include <type_traits>
-#include "Kokkos_ArithTraits.hpp"
 
 namespace mars
 {
@@ -47,7 +47,7 @@ struct NthType;
 template <std::size_t I, typename Head, typename... Tail>
 struct NthType<I, Head, Tail...>
 {
-    typedef typename NthType<I-1, Tail...>::type type;
+    typedef typename NthType<I - 1, Tail...>::type type;
 };
 
 template <class Head, class... Tail>
@@ -64,7 +64,7 @@ struct NthValue;
 template <std::size_t I, Integer Head, Integer... Tail>
 struct NthValue<I, Head, Tail...>
 {
-    static constexpr Integer value = NthValue<I-1, Tail...>::value;
+    static constexpr Integer value = NthValue<I - 1, Tail...>::value;
 };
 
 template <Integer Head, Integer... Tail>
@@ -96,8 +96,8 @@ inline typename std::enable_if<I == sizeof...(Tp), void>::type
 print_tuple(std::tuple<Tp...> &t) {}
 
 template <std::size_t I = 0, typename... Tp>
-inline typename std::enable_if <
-I<sizeof...(Tp), void>::type print_tuple(std::tuple<Tp...> &t)
+    inline typename std::enable_if <
+    I<sizeof...(Tp), void>::type print_tuple(std::tuple<Tp...> &t)
 {
     std::cout << std::get<I>(t) << std::endl;
     print_tuple<I + 1, Tp...>(t);
@@ -108,14 +108,12 @@ inline typename std::enable_if<I == sizeof...(Tp), void>::type
 reserve_view_tuple(std::tuple<Tp...> &t, const int size, const std::string desc) {}
 
 template <std::size_t I = 0, typename... Tp>
- inline typename std::enable_if <
-I<sizeof...(Tp), void>::type reserve_view_tuple(std::tuple<Tp...> &t, const int size, const std::string desc)
+    inline typename std::enable_if <
+    I<sizeof...(Tp), void>::type reserve_view_tuple(std::tuple<Tp...> &t, const int size, const std::string desc)
 {
     std::get<I>(t) = typename std::tuple_element<I, typename std::decay<decltype(t)>::type>::type(desc + std::to_string(I), size);
     reserve_view_tuple<I + 1, Tp...>(t, size, desc);
 }
-
-
 
 /************* generic tuple expansion using a functor to apply a template function to each tuple ********/
 
@@ -142,24 +140,22 @@ void apply_each_element(const F &fct, std::tuple<Vs...> &tuple)
 }
 
 template <int I, class... Ts>
-auto get_nth_value(Ts&&... ts) -> decltype(std::get<I>(std::forward_as_tuple(ts...)))
+auto get_nth_value(Ts &&... ts) -> decltype(std::get<I>(std::forward_as_tuple(ts...)))
 {
-  return std::get<I>(std::forward_as_tuple(ts...));
+    return std::get<I>(std::forward_as_tuple(ts...));
 }
 
-
-template <std::size_t I=0, std::size_t J, typename F>
+template <std::size_t I = 0, std::size_t J, typename F>
 inline typename std::enable_if<I == J, void>::type
 for_each_tuple_elem(const F &f) {}
 
-template <std::size_t I=0, std::size_t J, typename F>
-inline typename std::enable_if <
-I<J, void>::type for_each_tuple_elem(const F &f)
+template <std::size_t I = 0, std::size_t J, typename F>
+    inline typename std::enable_if <
+    I<J, void>::type for_each_tuple_elem(const F &f)
 {
     f(I);
     for_each_tuple_elem<I + 1, J, F>(f);
 }
-
 
 //forwards expansion of a tuple from 0-N
 template <typename F, std::size_t I = 0, typename... Tp>
@@ -167,13 +163,12 @@ inline typename std::enable_if<I == sizeof...(Tp), void>::type
 apply_impl(const F &f, std::tuple<Tp...> &t) {}
 
 template <typename F, std::size_t I = 0, typename... Tp>
-inline typename std::enable_if <
-I<sizeof...(Tp), void>::type apply_impl(const F &f, std::tuple<Tp...> &t)
+    inline typename std::enable_if <
+    I<sizeof...(Tp), void>::type apply_impl(const F &f, std::tuple<Tp...> &t)
 {
     f(std::get<I>(t), I);
     apply_impl<F, I + 1, Tp...>(f, t);
 }
-
 
 /* forwards expansion of a tuple from 0-N */
 template <typename F, std::size_t I = 0, typename... Tp>
@@ -181,8 +176,8 @@ inline typename std::enable_if<I == sizeof...(Tp), void>::type
 apply_impl(const F &f, std::tuple<Tp...> &t, std::tuple<Tp...> &v) {}
 
 template <typename F, std::size_t I = 0, typename... Tp>
-inline typename std::enable_if <
-I<sizeof...(Tp), void>::type apply_impl(const F &f, std::tuple<Tp...> &t, std::tuple<Tp...> &v)
+    inline typename std::enable_if <
+    I<sizeof...(Tp), void>::type apply_impl(const F &f, std::tuple<Tp...> &t, std::tuple<Tp...> &v)
 {
     f(std::get<I>(t), std::get<I>(v));
     apply_impl<F, I + 1, Tp...>(f, t, v);
@@ -194,7 +189,7 @@ I<sizeof...(Tp), void>::type apply_impl(const F &f, std::tuple<Tp...> &t, std::t
 
 struct resize_view_functor
 {
-    resize_view_functor(std::string d, size_t s) : _desc(d), _size(s)  {}
+    resize_view_functor(std::string d, size_t s) : _desc(d), _size(s) {}
     template <typename ElementType>
     void operator()(ElementType &el, std::size_t I) const
     {
@@ -224,7 +219,6 @@ struct print_functor
         std::cout << el << std::endl;
     }
 };
-
 
 /* special implementation of the binary search considering found
 if an element is between current and next proc value. */
@@ -311,7 +305,6 @@ struct atomic_abs_min
     }
 };
 
-
 template <class T, class H>
 struct AbsMaxOp
 {
@@ -334,7 +327,6 @@ struct atomic_abs_max
     }
 };
 
-
 template <typename H>
 struct AtomicOp
 {
@@ -356,4 +348,52 @@ MARS_INLINE_FUNCTION void atomic_op(H f, S &dest, const S &src)
     Kokkos::Impl::atomic_fetch_oper(f, &dest, src);
 }
 
+//max plus functor
+template <typename T>
+class MaxPlus
+{
+public:
+    // Kokkos reduction functors need the value_type typedef.
+    // This is the type of the result of the reduction.
+    typedef T value_type;
+
+    MaxPlus(const ViewVectorType<T> x) : x_(x) {}
+
+    // This is helpful for determining the right index type,
+    // especially if you expect to need a 64-bit index.
+    typedef typename ViewVectorType<T>::size_type size_type;
+
+    KOKKOS_INLINE_FUNCTION void
+    operator()(const size_type i, value_type &update) const
+    { // max-plus semiring equivalent of "plus"
+        if (update < x_(i))
+        {
+            update = x_(i);
+        }
+    }
+
+    // "Join" intermediate results from different threads.
+    // This should normally implement the same reduction
+    // operation as operator() above. Note that both input
+    // arguments MUST be declared volatile.
+    KOKKOS_INLINE_FUNCTION void
+    join(volatile value_type &dst,
+         const volatile value_type &src) const
+    { // max-plus semiring equivalent of "plus"
+        if (dst < src)
+        {
+            dst = src;
+        }
+    }
+
+    // Tell each thread how to initialize its reduction result.
+    KOKKOS_INLINE_FUNCTION void
+    init(value_type &dst) const
+    { // The identity under max is -Inf.
+        dst = Kokkos::reduction_identity<value_type>::max();
+    }
+
+private:
+    ViewVectorType<T> x_;
+};
 } //namespace mars

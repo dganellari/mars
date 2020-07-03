@@ -28,6 +28,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
 /* This example tries to do the same and compare to the step3 p4est example using MARS instead */
 
+#include "Kokkos_Bitset.hpp"
+#include "Kokkos_Parallel_Reduce.hpp"
 #include "mars_context.hpp"
 #include "mars_globals.hpp"
 #include <bits/c++config.h>
@@ -51,9 +53,16 @@ namespace mars
 {
 
 using Data = UserData<DistributedQuad4Mesh, double, double, double, double>;
+enum  DataDesc: int
+{
+    u = 0,
+    du_0 = 1,
+    du_1 = 2,
+    dudt = 3
+};
 
 template <Integer idx>
-using DataType = typename Data::type<idx>;
+using DataType = typename Data::UserDataType<idx>;
 
 template <Integer DIM>
 struct ProblemDesc
@@ -263,11 +272,11 @@ MARS_INLINE_FUNCTION double initial_condition_recursive(const Data &data, const 
     for_each_du<0, sizeof...(args), args...>(data, bump_width, retval, index, d);
 
     //just for printing purposes same as the previous example.
-    constexpr Integer first = NthValue<0, args...>::value;
+    /* constexpr Integer first = NthValue<0, args...>::value;
     constexpr Integer second = NthValue<1, args...>::value;
 
-    /* printf("p:x %lf, py: %lf,  retval: %lf, du: %lf-%lf\n", x[0], x[1], retval, data.get_elem_data<first>(index), data.get_elem_data<second>(index)); */
-
+    printf("p:x %lf, py: %lf,  retval: %lf, du: %lf-%lf\n", x[0], x[1], retval, data.get_elem_data<first>(index), data.get_elem_data<second>(index));
+ */
     return retval;
 }
 
@@ -343,11 +352,13 @@ struct AbsMinMod
         const auto abs1 = Kokkos::ArithTraits<T>::abs(val1);
         const auto abs2 = Kokkos::ArithTraits<T>::abs(val2);
 
+        /* printf("udata: %lf - est: %lf\n", val1, val2); */
+
         if (Kokkos::ArithTraits<T>::isNan(val1))
             return val2;
 
         if (val1 * val2 >= 0)
-            return abs1 < abs2 ? val1 : val2;
+            return abs2 < abs1 ? val2 : val1;
         else
             return 0.0;
     }
@@ -360,13 +371,14 @@ struct Minmod
     template <Integer Type, Integer Dir>
     MARS_INLINE_FUNCTION void operator()(const Face<Type, Dir> &face) const
     {
-        double uavg[2];
+        double uavg[2] = {0};
 
         double hx = 0;
         double hy = 0;
 
         for (int i = 0; i < 2; ++i)
         {
+            uavg[i] = 0;
             //in case that is a boundary face containing only one side.
             if (face.get_side(i).is_valid())
             {
@@ -408,6 +420,18 @@ struct Minmod
                     DataType<du_index> is the type of the  data.get_elem_data<du_index>(idx) */
                     atomic_op(AbsMinMod<DataType<du_index>>(), data.get_elem_data<du_index>(idx), du_estimate);
 
+                    Integer sfc_elem = data.get_mesh()->get_sfc_elem(idx);
+
+                    double point[3];
+                    get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, data.get_mesh()->get_XDim(),
+                                                          data.get_mesh()->get_YDim(), data.get_mesh()->get_ZDim());
+
+                    printf("Dir: %i - (%lf, %lf) udata: %lf - %lf - [%lf - %lf]\n", Dir, point[0], point[1], data.get_elem_data<du_index>(idx), du_estimate, uavg[0], uavg[1]);
+                    /* printf("face data: %li - dir: %li - face: %li - (%lf, %lf) - rank: %i - ghost: %i --- udata: %lf -\n",
+                           i, face.get_direction(), face.get_side(i).get_face_side(), point[0], point[1], data.get_mesh()->get_proc(),
+                           face.get_side(i).is_ghost(), data.get_elem_data<du_index>(idx)); */
+                    /* Kokkos::atomic_fetch_min(&data.get_elem_data<du_index>(idx), du_estimate); */
+
                     /* print_face_data<Type, Dir>(data, face, i); */
                 }
             }
@@ -417,15 +441,32 @@ struct Minmod
     Data data;
 };
 
-template <Integer idx, typename H = DataType<idx>>
-MARS_INLINE_FUNCTION void umax(const Data &data, const H &max)
+//parallel reduction on the data view using the max plus functor from distributed utils.
+template <Integer idx>
+MARS_INLINE_FUNCTION DataType<idx> umax(Data &data)
 {
-    data.elem_iterate(MARS_LAMBDA(const int i) {
-        if (data.get_elem_data<idx>(i) > max)
+    DataType<idx> result;
+    Kokkos::parallel_reduce(data.get_mesh()->get_chunk_size(), MaxPlus<DataType<idx>>(data.get_data<idx>()), result);
+    return result;
+}
+
+
+/* parallel reduction on the data view using the kokkos max
+instead of the max plus functor from distributed utils. Same thing */
+template <Integer idx>
+MARS_INLINE_FUNCTION DataType<idx> u_max(Data &data)
+{
+    using U = DataType<idx>;
+    U result;
+
+    data.elem_iterate_reduce(KOKKOS_LAMBDA(const int &i, U &lmax) {
+        if (lmax < data.get_elem_data<idx>(i))
         {
-            max = data.get_elem_data<idx>(i);
+            lmax = data.get_elem_data<idx>(i);
         }
-    });
+    }, Kokkos::Max<U>(result));
+
+    return result;
 }
 
 void advection(int &argc, char **&argv, const int level)
@@ -506,7 +547,8 @@ void advection(int &argc, char **&argv, const int level)
 
             /* data.get_elem_data<0>(i) = initial_condition<Dim, 1, 2>(data, i, pd, midpoint); */
             /* data.get_elem_data<0>(i) = initial_condition_variadic<Dim, 1, 2>(data, i, pd, midpoint); */
-            data.get_elem_data<0>(i) = initial_condition_recursive<Dim, 1, 2>(data, i, pd, midpoint);
+            data.get_elem_data<DataDesc::u>(i) =
+                initial_condition_recursive<Dim, DataDesc::du_0, DataDesc::du_1>(data, i, pd, midpoint);
         });
 
         /* second possibility to do it using a more general approach using a functor by coping
@@ -523,19 +565,22 @@ void advection(int &argc, char **&argv, const int level)
         create_ghost_layer<Data, Type>(context, data);
         exchange_ghost_user_data(context, data);
 
-        data.print_nth_tuple<1>(proc_num);
-
-        const Integer size_ch = mesh.get_chunk_size();
-        ViewVectorType<double> max("max", 1);
+        /* data.print_nth_tuple<DataDesc::u>(proc_num); */
 
         Kokkos::Timer timer;
 
         //1 and 2 are the derivatives in the tuple
-        reset_derivatives<1, 2>(data);
-
+        reset_derivatives<DataDesc::du_0, DataDesc::du_1>(data);
         data.face_iterate(Minmod(data));
 
-        print_derivatives<Type, 1, 2>(data);
+        print_derivatives<Type, DataDesc::du_0, DataDesc::du_1>(data);
+
+        auto max_value = u_max<DataDesc::u>(data);
+        printf("u_max: %lf\n", max_value);
+        //mpi all reduce to get the global max solution value
+        auto g_max = context->distributed->max(max_value);
+        printf("global Max - %lf\n", g_max);
+
         double time = timer.seconds();
         std::cout << "face iterate took: " << time << " seconds." << std::endl;
 
