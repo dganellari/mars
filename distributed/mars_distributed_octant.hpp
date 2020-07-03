@@ -12,7 +12,6 @@ struct Octant
 
     bool valid;
 
-    MARS_INLINE_FUNCTION
     Octant() = default;
 
     MARS_INLINE_FUNCTION
@@ -53,6 +52,11 @@ struct Octant
         {
             return (x == -1 || y == -1 || z == -1 || x == xDim || y == yDim || z == zDim);
         }
+        default:
+        {
+            printf("The element type is not valid\n");
+            return false;
+        }
         }
     }
 
@@ -70,6 +74,11 @@ struct Octant
         case ElementType::Hex8:
         {
             return elem_index(x, y, z, xDim, yDim);
+        }
+        default:
+        {
+            printf("The element type is not valid\n");
+            return -1;
         }
         }
     }
@@ -93,6 +102,7 @@ struct Octant
             point[2] = static_cast<Real>(z) / static_cast<Real>(zDim);
             break;
         }
+
         }
     }
 };
@@ -201,6 +211,11 @@ MARS_INLINE_FUNCTION Octant face_nbh(const Octant &ref_octant, const int face,
             o.set_invalid();
         return o;
     }
+    default:
+    {
+        printf("The element type is not valid\n");
+        return Octant();
+    }
     }
 }
 
@@ -236,6 +251,11 @@ MARS_INLINE_FUNCTION Octant corner_nbh(const Octant &ref_octant, const int corne
             o.set_invalid();
 
         return o;
+    }
+    default:
+    {
+        printf("The element type is not valid\n");
+        return Octant();
     }
     }
 }

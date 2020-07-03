@@ -112,6 +112,18 @@ struct mpi_context_impl
     }
 
     template <typename T>
+    ViewObject<T> min(ViewObject<T> value) const
+    {
+        return mpi::reduce(value, MPI_MIN, comm_);
+    }
+
+    template <typename T>
+    ViewObject<T> max(ViewObject<T> value) const
+    {
+        return mpi::reduce(value, MPI_MAX, comm_);
+    }
+
+    template <typename T>
     T sum(T value) const
     {
         return mpi::reduce(value, MPI_SUM, comm_);

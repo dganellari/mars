@@ -63,6 +63,8 @@ namespace mars
 
 
 #define MARS_PUBLIC_PTOP_(T)                    \
+    ViewObject<T> min(ViewObject<T> value) const { return impl_->min(value); } \
+    ViewObject<T> max(ViewObject<T> value) const { return impl_->max(value); } \
     void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, const Integer proc_count)  \
                 { impl_->i_send_recv_vec(send_count, receive_count, proc_count); } \
     void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ, \
@@ -70,11 +72,15 @@ namespace mars
                 { impl_->i_send_recv_view(dest, dest_displ, src, src_displ, proc_count); }
 
 #define MARS_INTERFACE_PTOP_(T) \
-    virtual void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, const Integer proc_count) const = 0; \ 
+    virtual ViewObject<T> min(ViewObject<T> value) const = 0; \
+    virtual ViewObject<T> max(ViewObject<T> value) const = 0; \
+    virtual void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, const Integer proc_count) const = 0; \
     virtual void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ, \
                 const ViewVectorType<T> &src, const Integer* src_displ, const Integer proc_count) const = 0;
     
 #define MARS_WRAP_PTOP_(T)                                \
+    ViewObject<T> min(ViewObject<T> value) const override { return wrapped.min(value); } \
+    ViewObject<T> max(ViewObject<T> value) const override { return wrapped.max(value); } \
     void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, const Integer proc_count) const override \
                 { wrapped.i_send_recv_vec(send_count, receive_count, proc_count); } \
     void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ, \
@@ -292,6 +298,12 @@ struct local_context
     int id() const { return 0; }
 
     int size() const { return 1; }
+
+    template <typename T>
+    ViewObject<T> min(ViewObject<T> value) const { return value; }
+
+    template <typename T>
+    ViewObject<T> max(ViewObject<T> value) const { return value; }
 
     template <typename T>
     T min(T value) const { return value; }

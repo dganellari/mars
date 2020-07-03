@@ -22,10 +22,10 @@ class UserData
 
     using simplex_type = typename Mesh::Elem;
 
-    template<Integer idx>
-    using type = typename std::tuple_element<idx, tuple>::type;
-
 public:
+    template<Integer idx>
+    using UserDataType= typename std::tuple_element<idx, tuple>::type;
+
     MARS_INLINE_FUNCTION UserData(Mesh *mesh) : host_mesh(mesh), mesh(nullptr)
     {
         const Integer size = host_mesh->get_chunk_size();
@@ -239,7 +239,7 @@ public:
                 get_vertex_coordinates_from_sfc<simplex_type::ElemType>(ghost(i), point, xDim, yDim, zDim);
 
                 Octant o = get_octant_from_sfc<simplex_type::ElemType>(ghost(i));
-                /* printf("ghost data: %li - %li - %li - (%lf, %lf) - data: %lf - proc: %li - rank: %i\n", i, ghost(i), elem_index(o.x, o.y, o.z, xDim, yDim), point[0], point[1], data(i), r, proc); */
+                printf("ghost data: %li - %li - %li - (%lf, %lf) - data: %lf - proc: %li - rank: %i\n", i, ghost(i), elem_index(o.x, o.y, o.z, xDim, yDim), point[0], point[1], data(i), r, proc);
             });
     }
 
@@ -316,6 +316,14 @@ public:
     {
         const Integer size = host_mesh->get_chunk_size();
         Kokkos::parallel_for("init_initial_cond", size, f);
+    }
+
+    template <typename H, typename S>
+    MARS_INLINE_FUNCTION void
+    elem_iterate_reduce(H f, S s)
+    {
+        const Integer size = host_mesh->get_chunk_size();
+        Kokkos::parallel_reduce("elem_reduce", size, f, s);
     }
 
     template <typename H>
@@ -478,7 +486,7 @@ public:
 
 
         MARS_INLINE_FUNCTION
-        const Integer get_ghost_elem(const Integer i) const
+        Integer get_ghost_elem(const Integer i) const
         {
             return ghost_(i);
         }

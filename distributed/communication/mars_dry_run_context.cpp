@@ -114,6 +114,12 @@ struct dry_run_context_impl {
     T max(T value) const { return value; }
 
     template <typename T>
+    ViewObject<T> min(ViewObject<T> value) const { return value; }
+
+    template <typename T>
+    ViewObject<T> max(ViewObject<T> value) const { return value; }
+
+    template <typename T>
     T sum(T value) const { return value * num_ranks_; }
 
     template <typename T>
