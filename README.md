@@ -39,3 +39,36 @@ cmake -DCMAKE_VERBOSE_MAKEFILE=ON -DCMAKE_BUILD_TYPE=Release -DTRY_WITH_KOKKOS=O
 In this case Kokkos should also be compiled with CUDA support.
 
 
+## Cite MARS ##
+
+If you use MARS CPU please use the following bibliographic entry
+
+
+```
+#!bibtex
+
+@misc{marscpu,
+    author = {Zulian, Patrick and Gannelari, Daniel and Rovi, Gabriele},
+    title = {{MARS} - {M}esh {A}daptive {R}efinement for {S}upercomputing. {G}it repository},
+    url = {https://bitbucket.org/zulianp/mars},
+    year = {2018}
+}
+```
+
+If you use MARS GPU please use the following bibliographic entry
+
+
+```
+#!bibtex
+
+@misc{marsgpu,
+    author = {Gannelari, Daniel and Zulian, Patrick and Rovi, Gabriele},
+    title = {{MARS} - {M}esh {A}daptive {R}efinement for {S}upercomputing. {G}it repository},
+    url = {https://bitbucket.org/zulianp/mars},
+    year = {2018}
+}
+```
+
+
+
+
