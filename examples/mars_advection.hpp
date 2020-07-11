@@ -28,6 +28,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
 /* This example tries to do the same and compare to the step3 p4est example using MARS instead */
 
+#include "Kokkos_ArithTraits.hpp"
 #include "Kokkos_Bitset.hpp"
 #include "Kokkos_Parallel_Reduce.hpp"
 #include "mars_context.hpp"
@@ -53,7 +54,7 @@ namespace mars
 {
 
 using Data = UserData<DistributedQuad4Mesh, double, double, double, double>;
-enum  DataDesc: int
+enum DataDesc : int
 {
     u = 0,
     du_0 = 1,
@@ -313,6 +314,14 @@ MARS_INLINE_FUNCTION void reset_derivatives(Data &data)
     });
 }
 
+template <Integer dt_idx>
+MARS_INLINE_FUNCTION void quad_divergence(Data &data)
+{
+    data.elem_iterate(MARS_LAMBDA(const int i) {
+        data.get_elem_data<dt_idx>(i) = 0.;
+    });
+}
+
 template <Integer Type, Integer first, Integer second>
 MARS_INLINE_FUNCTION void print_derivatives(Data &data)
 {
@@ -385,18 +394,18 @@ struct Minmod
                 Integer idx = face.get_side(i).get_elem_id();
 
                 if (i == 0)
-                    hx = 1. / data.get_mesh()->get_YDim();
+                    hx = 1. / data.get_mesh()->get_XDim();
                 else
-                    hy = 1. / data.get_mesh()->get_XDim();
+                    hy = 1. / data.get_mesh()->get_YDim();
 
                 if (face.get_side(i).is_ghost())
                 {
-                    uavg[i] = data.get_ghost_elem_data<0>(idx);
+                    uavg[i] = data.get_ghost_elem_data<DataDesc::u>(idx);
                 }
                 else
                 {
                     //the solution u is read here
-                    uavg[i] = data.get_elem_data<0>(idx);
+                    uavg[i] = data.get_elem_data<DataDesc::u>(idx);
                 }
             }
         }
@@ -408,36 +417,89 @@ struct Minmod
 
         for (int i = 0; i < 2; ++i)
         {
-            Integer idx;
-
             /* in case that is a boundary face containing only one side.*/
             if (face.get_side(i).is_valid())
             {
                 if (!face.get_side(i).is_ghost())
                 {
-                    idx = face.get_side(i).get_elem_id();
+                    Integer idx = face.get_side(i).get_elem_id();
                     /* the derivative in the direction: data.get_elem_data<du_index>(idx)
                     DataType<du_index> is the type of the  data.get_elem_data<du_index>(idx) */
                     atomic_op(AbsMinMod<DataType<du_index>>(), data.get_elem_data<du_index>(idx), du_estimate);
 
-                    Integer sfc_elem = data.get_mesh()->get_sfc_elem(idx);
-
+                    /* Integer sfc_elem = data.get_mesh()->get_sfc_elem(idx);
                     double point[3];
                     get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, data.get_mesh()->get_XDim(),
                                                           data.get_mesh()->get_YDim(), data.get_mesh()->get_ZDim());
-
-                    printf("Dir: %i - (%lf, %lf) udata: %lf - %lf - [%lf - %lf]\n", Dir, point[0], point[1], data.get_elem_data<du_index>(idx), du_estimate, uavg[0], uavg[1]);
-                    /* printf("face data: %li - dir: %li - face: %li - (%lf, %lf) - rank: %i - ghost: %i --- udata: %lf -\n",
-                           i, face.get_direction(), face.get_side(i).get_face_side(), point[0], point[1], data.get_mesh()->get_proc(),
-                           face.get_side(i).is_ghost(), data.get_elem_data<du_index>(idx)); */
-                    /* Kokkos::atomic_fetch_min(&data.get_elem_data<du_index>(idx), du_estimate); */
-
-                    /* print_face_data<Type, Dir>(data, face, i); */
+                    printf("Dir: %i - (%lf, %lf) udata: %lf - %lf - [%lf - %lf]\n", Dir, point[0], point[1], data.get_elem_data<du_index>(idx), du_estimate, uavg[0], uavg[1]); */
                 }
             }
         }
     }
 
+    Data data;
+};
+
+template <Integer Dim>
+struct UpwindFlux
+{
+    UpwindFlux(Data d, ProblemDesc<Dim> p) : data(d), pd(p) {}
+
+    template <Integer Type, Integer Dir>
+    MARS_INLINE_FUNCTION void operator()(const Face<Type, Dir> &face) const
+    {
+        DataType<DataDesc::u> uavg = 0;
+        bool upwindside = 0;
+
+        DataType<DataDesc::u> vdotn = pd.v[Dir];
+        int face_nr = face.get_side(0).get_face_side();
+        if (face_nr == 0 || face_nr == 2)
+            vdotn = -vdotn;
+
+        if (vdotn < 0.)
+            upwindside = 1;
+
+        //in case that is a boundary face containing only one side.
+        if (face.get_side(upwindside).is_valid())
+        {
+            Integer idx = face.get_side(upwindside).get_elem_id();
+
+            if (face.get_side(upwindside).is_ghost())
+            {
+                uavg = data.get_ghost_elem_data<DataDesc::u>(idx);
+            }
+            else
+            {
+                //the solution u is read here
+                uavg = data.get_elem_data<DataDesc::u>(idx);
+            }
+        }
+
+        Data<DataDesc::u> q = vdotn * uavg;
+
+        double facearea = 0;
+        for (int i = 0; i < 2; ++i)
+        {
+            /* in case that is a boundary face containing only one side.*/
+            if (face.get_side(i).is_valid())
+            {
+                if (!face.get_side(i).is_ghost())
+                {
+                    if (i == 0)
+                        facearea = -1. / data.get_mesh()->get_XDim();
+                    else
+                        facearea = 1. / data.get_mesh()->get_YDim();
+
+                    DataType<DataDesc::dudt> du_dt = q * facearea;
+
+                    Integer idx = face.get_side(i).get_elem_id();
+                    Kokkos::atomic_add(data.get_elem_data<DataDesc::dudt>(idx), du_dt);
+                }
+            }
+        }
+    }
+
+    ProblemDesc<Dim> pd;
     Data data;
 };
 
@@ -450,7 +512,6 @@ MARS_INLINE_FUNCTION DataType<idx> umax(Data &data)
     return result;
 }
 
-
 /* parallel reduction on the data view using the kokkos max
 instead of the max plus functor from distributed utils. Same thing */
 template <Integer idx>
@@ -459,14 +520,87 @@ MARS_INLINE_FUNCTION DataType<idx> u_max(Data &data)
     using U = DataType<idx>;
     U result;
 
-    data.elem_iterate_reduce(KOKKOS_LAMBDA(const int &i, U &lmax) {
-        if (lmax < data.get_elem_data<idx>(i))
-        {
-            lmax = data.get_elem_data<idx>(i);
-        }
-    }, Kokkos::Max<U>(result));
+    data.elem_iterate_reduce(
+        KOKKOS_LAMBDA(const int &i, U &lmax) {
+            if (lmax < data.get_elem_data<idx>(i))
+            {
+                lmax = data.get_elem_data<idx>(i);
+            }
+        },
+        Kokkos::Max<U>(result));
 
     return result;
+}
+
+template <Integer Dim>
+double get_timestep(Data &data)
+{
+    double hx = 1. / data.get_mesh()->get_XDim();
+    double hy = 1. / data.get_mesh()->get_YDim();
+
+    double vnorm = 0;
+    double min_h = Kokkos::ArithTraits<double>::min(hx, hy);
+
+    for (int i = 0; i < Dim; i++)
+    {
+        vnorm += pd.v[i] * pd.v[i];
+    }
+
+    vnorm = Kokkos::ArithTraits<double>::sqrt(vnorm);
+
+    return min_h / 2. / vnorm;
+}
+
+template<typename T = typename DataType<DataDesc::dudt>>
+MARS_INLINE_FUNCTION void timestep_update(Data &data, T dt)
+{
+
+    T hx = 1. / data.get_mesh()->get_XDim();
+    T hy = 1. / data.get_mesh()->get_YDim();
+
+    T vol = hx * hy;
+
+    data.elem_iterate(MARS_LAMBDA(const int i) {
+        data.get_elem_data<DataDesc::u>(i) += dt * data.get_elem_data<DataDesc::dudt>(i) / vol;
+    });
+}
+
+template <Integer Dim>
+void timestep(const context &context, Data &data, ProblemDesc<Dim> pd, double time)
+{
+    DataType<DataDesc::dudt> dt = 0.;
+    int i = 0;
+
+    for (DataType<DataDesc::dudt> t = 0.; t < time; t += dt)
+    {
+        i++;
+        if (!(i % refine_period))
+        {
+            if (i)
+            {
+                auto max_value = u_max<DataDesc::u>(data);
+                //mpi all reduce to get the global max solution value
+                auto g_max = context->distributed->max(max_value);
+                /* printf("global Max - %lf\n", g_max); */
+                pd.max_err *= g_max;
+
+                //TODO: Here can be added the refinement step when available.
+            }
+
+            dt = get_timestep(data);
+        }
+
+        quad_divergence<DataDesc::dudt>(data);
+        data.face_iterate(UpwindFlux(data, pd));
+
+        timestep_update(data, dt);
+
+        exchange_ghost_user_data(context, data);
+
+        //1 and 2 are the derivatives in the tuple
+        reset_derivatives<DataDesc::du_0, DataDesc::du_1>(data);
+        data.face_iterate(Minmod(data));
+    }
 }
 
 void advection(int &argc, char **&argv, const int level)
@@ -526,7 +660,10 @@ void advection(int &argc, char **&argv, const int level)
         pd.center[1] = 0.5;
 
         pd.v[0] = -0.445868402501118;
-        pd.v[0] = -0.895098523991131;
+        pd.v[1] = -0.895098523991131;
+
+        pd.refine_period = 2;
+        pd.write_period = 8;
 
         Data data(&mesh);
 
@@ -573,16 +710,12 @@ void advection(int &argc, char **&argv, const int level)
         reset_derivatives<DataDesc::du_0, DataDesc::du_1>(data);
         data.face_iterate(Minmod(data));
 
-        print_derivatives<Type, DataDesc::du_0, DataDesc::du_1>(data);
-
-        auto max_value = u_max<DataDesc::u>(data);
-        printf("u_max: %lf\n", max_value);
-        //mpi all reduce to get the global max solution value
-        auto g_max = context->distributed->max(max_value);
-        printf("global Max - %lf\n", g_max);
-
         double time = timer.seconds();
         std::cout << "face iterate took: " << time << " seconds." << std::endl;
+
+        /* print_derivatives<Type, DataDesc::du_0, DataDesc::du_1>(data); */
+
+        timestep(context, data, pd, 0.1);
 
 #endif
     }
