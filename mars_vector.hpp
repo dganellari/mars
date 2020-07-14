@@ -16,13 +16,13 @@ namespace mars {
 
 
 	template<typename T, Integer Dim_>
-	class Vector: public TensorBase<T, std::make_index_sequence<Dim_>> 
+	class Vector: public TensorBase<T, std::make_integer_sequence<Integer,Dim_>> 
 	{
 	public:
 		static constexpr Integer Dim=Dim_;
 		using type=Vector<T,Dim>;
 	    using subtype=T;
-		using MB = TensorBase<T, std::make_index_sequence<Dim>>;
+		using MB = TensorBase<T, std::make_integer_sequence<Integer,Dim>>;
 		using MB::MB;
 		using MB::values;
 

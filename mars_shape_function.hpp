@@ -1006,13 +1006,13 @@ template<typename DofsPoints_>
 class DofsPointsType;
 
 
-template<Integer EntityDim, typename...Ts>
+template<typename EntityDim, typename...Ts>
 class DofsOrdering;
 template<Integer EntityDim, typename...Ts>
 class DofsOrdered;
 
 template<Integer EntityDim,typename Elem,Integer FEFamily,Integer Order,Integer Continuity,Integer NComponents>
-class DofsOrdering<EntityDim,ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>>
+class DofsOrdering<Number<EntityDim>,ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>>
 {
 public:
 
@@ -1059,7 +1059,7 @@ static constexpr auto entity_points=EntityDim+1;
 
 
 template <Integer Dim,Integer ManifoldDim,Integer Continuity, Integer NComponents>
-class DofsOrdering<ManifoldDim-1,ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Continuity,NComponents>>
+class DofsOrdering<Number<ManifoldDim-1>,ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Continuity,NComponents>>
 { 
 public:
  using Elem=Simplex<Dim,ManifoldDim>;
@@ -4853,7 +4853,7 @@ public:
     Matrix<Real, ShapeFunctionDim1, 1>,//Matrix<Real, NComponents, ShapeFunctionDim1>,
     std::conditional_t<(ShapeFunctionDim1>1 && ShapeFunctionDim2==1 && NComponents>1),
     Matrix<Real,NComponents, ShapeFunctionDim1>,
-    Matrix<Real,-6,-6,-1>
+    Matrix<Real,0,0>
     >
     >
     >;

@@ -75,9 +75,14 @@ template<typename T,Integer NQPoints,Integer Ndofs>
 class FQPValues;
 
 
-template<typename...Operators>
-class OperatorTypeHelper;
+// template<typename...Operators>
+// class OperatorTypeHelper;
 
+template<typename T, typename...Ts>
+class OperatorTypeHelper//<T,Ts...>
+{ public:
+  using type=T;
+};
 
 template<typename...Inputs>
 using OperatorType=typename OperatorTypeHelper<Inputs...>::type;
@@ -436,12 +441,6 @@ class OperatorTypeHelper<Division<Transposed<Matrix<Real,Cols,Rows>>,
 
 
 
-// type(T) = type(+T)
-template<typename T, typename...Ts>
-class OperatorTypeHelper<T,Ts...>
-{ public:
-  using type=T;
-};
 
 
 
@@ -999,14 +998,28 @@ class OperatorTypeHelper< CompositeOperator<Expression< Binary< Expression< Left
 
 
 
-template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, 
+// template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, 
+//          Integer N, typename OperatorType,typename QRule>
+// class OperatorTypeHelper<TestOrTrial<MixedSpace,N,OperatorType>,QRule >
+// { public:
+//  static_assert((IsSame<TestOrTrial<MixedSpace,N,OperatorType>,Test<MixedSpace,N,OperatorType>>::value ||
+//                 IsSame<TestOrTrial<MixedSpace,N,OperatorType>,Trial<MixedSpace,N,OperatorType>>::value )
+//                && "In Evaluation<Expression<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");  
+//   using tmptype= TestOrTrial<MixedSpace,N,OperatorType>;
+//   using FunctionSpace=typename tmptype::FunctionSpace;
+//   using FunctionSpaces=GetType<typename tmptype::UniqueElementFunctionSpacesTupleType,tmptype::value>;
+//   using Elem=typename FunctionSpaces::Elem;
+//   using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpaces>;
+//   using Operator=typename tmptype::Operator; 
+//   // TODO FIX ME SUBTYPE AND NOT TYPE CHECK (now in fwpvalues<T,M,N>, tot_type=T)
+//   using type=typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::type;
+// };
+
+template<typename MixedSpace, 
          Integer N, typename OperatorType,typename QRule>
-class OperatorTypeHelper<TestOrTrial<MixedSpace,N,OperatorType>,QRule >
+class OperatorTypeHelper<Test<MixedSpace,N,OperatorType>,QRule >
 { public:
- static_assert((IsSame<TestOrTrial<MixedSpace,N,OperatorType>,Test<MixedSpace,N,OperatorType>>::value ||
-                IsSame<TestOrTrial<MixedSpace,N,OperatorType>,Trial<MixedSpace,N,OperatorType>>::value )
-               && "In Evaluation<Expression<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");  
-  using tmptype= TestOrTrial<MixedSpace,N,OperatorType>;
+  using tmptype= Test<MixedSpace,N,OperatorType>;
   using FunctionSpace=typename tmptype::FunctionSpace;
   using FunctionSpaces=GetType<typename tmptype::UniqueElementFunctionSpacesTupleType,tmptype::value>;
   using Elem=typename FunctionSpaces::Elem;
@@ -1015,6 +1028,21 @@ class OperatorTypeHelper<TestOrTrial<MixedSpace,N,OperatorType>,QRule >
   // TODO FIX ME SUBTYPE AND NOT TYPE CHECK (now in fwpvalues<T,M,N>, tot_type=T)
   using type=typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::type;
 };
+
+template< typename MixedSpace, 
+         Integer N, typename OperatorType,typename QRule>
+class OperatorTypeHelper<Trial<MixedSpace,N,OperatorType>,QRule >
+{ public:
+  using tmptype= Trial<MixedSpace,N,OperatorType>;
+  using FunctionSpace=typename tmptype::FunctionSpace;
+  using FunctionSpaces=GetType<typename tmptype::UniqueElementFunctionSpacesTupleType,tmptype::value>;
+  using Elem=typename FunctionSpaces::Elem;
+  using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpaces>;
+  using Operator=typename tmptype::Operator; 
+  // TODO FIX ME SUBTYPE AND NOT TYPE CHECK (now in fwpvalues<T,M,N>, tot_type=T)
+  using type=typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::type;
+};
+
 
 
 template<typename FuncType,Integer N,typename OperatorType,typename FullSpace, typename QRule>
@@ -1055,24 +1083,55 @@ class OperatorTypeHelper<ConstantTensor<ConstType,Inputs...>,QRule >
 
 
 
-template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, 
+// template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, 
+//          Integer N, typename T,typename QRule>
+// class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< T >>>,QRule >
+// { public:
+//   using Operator=CompositeOperator<Expression<T>>;
+//   using tmptype= TestOrTrial<MixedSpace,N,Operator>;
+//   static_assert((IsSame<tmptype,Test<MixedSpace,N,Operator>>::value ||
+//                  IsSame<tmptype,Trial<MixedSpace,N,Operator>>::value )
+//                 && "In Evaluation<Expression<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");  
+//   // TODO FIX ME SUBTYPE AND NOT TYPE CHECK (now in fwpvalues<T,M,N>, tot_type=T)
+//   using type=typename OperatorTypeHelper<TestOrTrial<MixedSpace,N,T>,QRule>::type;
+// };
+
+template< typename MixedSpace, 
          Integer N, typename T,typename QRule>
-class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< T >>>,QRule >
+class OperatorTypeHelper<Test<MixedSpace,N,CompositeOperator<Expression< T >>>,QRule >
 { public:
   using Operator=CompositeOperator<Expression<T>>;
-  using tmptype= TestOrTrial<MixedSpace,N,Operator>;
-  static_assert((IsSame<tmptype,Test<MixedSpace,N,Operator>>::value ||
-                 IsSame<tmptype,Trial<MixedSpace,N,Operator>>::value )
-                && "In Evaluation<Expression<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");  
-  // TODO FIX ME SUBTYPE AND NOT TYPE CHECK (now in fwpvalues<T,M,N>, tot_type=T)
-  using type=typename OperatorTypeHelper<TestOrTrial<MixedSpace,N,T>,QRule>::type;
+  using tmptype= Test<MixedSpace,N,Operator>;
+  using type=typename OperatorTypeHelper<Test<MixedSpace,N,T>,QRule>::type;
 };
 
 
+template<typename MixedSpace, 
+         Integer N, typename T,typename QRule>
+class OperatorTypeHelper<Trial<MixedSpace,N,CompositeOperator<Expression< T >>>,QRule >
+{ public:
+  using Operator=CompositeOperator<Expression<T>>;
+  using tmptype= Trial<MixedSpace,N,Operator>;
+  using type=typename OperatorTypeHelper<Trial<MixedSpace,N,T>,QRule>::type;
+};
 
-template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, 
+
+// template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, 
+//          Integer N, typename FuncType,Integer M,typename OperatorType,typename FullSpace,typename QRule>
+// class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< Function<FullSpace,M,OperatorType,FuncType> >>>,QRule >
+// { public:
+//   using tmptype=Function<FullSpace,M,OperatorType,FuncType>;
+//   using FunctionSpace=typename tmptype::FunctionSpace;
+//   using FunctionSpaces=GetType<typename tmptype::UniqueElementFunctionSpacesTupleType,tmptype::value>;
+//   using Elem=typename FunctionSpaces::Elem;
+//   using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpaces>;
+//   using Operator=typename tmptype::Operator; 
+//   using type=typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::qpvalues_type;
+// };
+
+template<typename MixedSpace, 
          Integer N, typename FuncType,Integer M,typename OperatorType,typename FullSpace,typename QRule>
-class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< Function<FullSpace,M,OperatorType,FuncType> >>>,QRule >
+class OperatorTypeHelper<Test<MixedSpace,N,CompositeOperator<Expression< Function<FullSpace,M,OperatorType,FuncType> >>>,QRule >
 { public:
   using tmptype=Function<FullSpace,M,OperatorType,FuncType>;
   using FunctionSpace=typename tmptype::FunctionSpace;
@@ -1082,6 +1141,20 @@ class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< 
   using Operator=typename tmptype::Operator; 
   using type=typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::qpvalues_type;
 };
+
+template<typename MixedSpace, 
+         Integer N, typename FuncType,Integer M,typename OperatorType,typename FullSpace,typename QRule>
+class OperatorTypeHelper<Trial<MixedSpace,N,CompositeOperator<Expression< Function<FullSpace,M,OperatorType,FuncType> >>>,QRule >
+{ public:
+  using tmptype=Function<FullSpace,M,OperatorType,FuncType>;
+  using FunctionSpace=typename tmptype::FunctionSpace;
+  using FunctionSpaces=GetType<typename tmptype::UniqueElementFunctionSpacesTupleType,tmptype::value>;
+  using Elem=typename FunctionSpaces::Elem;
+  using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpaces>;
+  using Operator=typename tmptype::Operator; 
+  using type=typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::qpvalues_type;
+};
+
 
 // template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, 
 //          Integer N, typename FuncType,Integer M,typename OperatorType,typename FullSpace,typename QRule>
@@ -1098,12 +1171,35 @@ class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< 
 // };
 
 
-template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, 
+// template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, 
+//          Integer N, typename ConstType,typename...Inputs,typename QRule>
+// class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< ConstantTensor<ConstType,Inputs...> >>>,QRule >
+// { public:
+//   using type=typename OperatorTypeHelper<ConstantTensor<ConstType,Inputs...>,QRule>::type;
+// };
+template<typename MixedSpace, 
          Integer N, typename ConstType,typename...Inputs,typename QRule>
-class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< ConstantTensor<ConstType,Inputs...> >>>,QRule >
+class OperatorTypeHelper<Test<MixedSpace,N,CompositeOperator<Expression< ConstantTensor<ConstType,Inputs...> >>>,QRule >
 { public:
   using type=typename OperatorTypeHelper<ConstantTensor<ConstType,Inputs...>,QRule>::type;
 };
+
+template<typename MixedSpace, 
+         Integer N, typename ConstType,typename...Inputs,typename QRule>
+class OperatorTypeHelper<Trial<MixedSpace,N,CompositeOperator<Expression< ConstantTensor<ConstType,Inputs...> >>>,QRule >
+{ public:
+  using type=typename OperatorTypeHelper<ConstantTensor<ConstType,Inputs...>,QRule>::type;
+};
+
+
+
+
+
+
+
+
+
+
 
 // template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, 
 //          Integer N, typename ConstType,typename...Inputs,typename QRule>
@@ -1125,13 +1221,42 @@ class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< 
 // };
 
 
-template<template<class,Integer,class > class TestOrTrial, template<class>class Unary,
+// template<template<class,Integer,class > class TestOrTrial, template<class>class Unary,
+//          typename MixedSpace, Integer N, typename T,typename QRule>
+// class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Unary<Expression< T > >>>>,QRule >
+// { public:
+//   using typetmp=OperatorType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< T > >>,QRule>;
+//   using type=OperatorType<Unary<typetmp>,QRule>;
+// };
+
+
+template<template<class>class Unary,
          typename MixedSpace, Integer N, typename T,typename QRule>
-class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Unary<Expression< T > >>>>,QRule >
+class OperatorTypeHelper<Test<MixedSpace,N,CompositeOperator<Expression<Unary<Expression< T > >>>>,QRule >
 { public:
-  using typetmp=OperatorType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< T > >>,QRule>;
+  using typetmp=OperatorType<Test<MixedSpace,N,CompositeOperator<Expression< T > >>,QRule>;
   using type=OperatorType<Unary<typetmp>,QRule>;
 };
+
+template<template<class>class Unary,
+         typename MixedSpace, Integer N, typename T,typename QRule>
+class OperatorTypeHelper<Trial<MixedSpace,N,CompositeOperator<Expression<Unary<Expression< T > >>>>,QRule >
+{ public:
+  using typetmp=OperatorType<Trial<MixedSpace,N,CompositeOperator<Expression< T > >>,QRule>;
+  using type=OperatorType<Unary<typetmp>,QRule>;
+};
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1168,22 +1293,49 @@ class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<U
 
 
 
-template<template<class,class > class Binary,template<class,Integer,class > class TestOrTrial,  
+// template<template<class,class > class Binary,template<class,Integer,class > class TestOrTrial,  
+//          typename MixedSpace, Integer N, typename Left, typename Right,typename QRule>
+// class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< Binary<Expression<Left>,Expression<Right>> >>>,QRule >
+// { public:
+//   using Operator=CompositeOperator<Expression<Addition<Expression<Left>,Expression<Right>>>>;
+//   using tmptype= TestOrTrial<MixedSpace,N,Operator>;
+//  static_assert((IsSame<tmptype,Test<MixedSpace,N,Operator>>::value ||
+//                 IsSame<tmptype,Trial<MixedSpace,N,Operator>>::value )
+//                && "In Evaluation<Expression<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");  
+//   // TODO FIX ME SUBTYPE AND NOT TYPE CHECK (now in fwpvalues<T,M,N>, tot_type=T)
+//   using TestOrTrialLeft=OperatorType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Left>>>,QRule>;
+//   using TestOrTrialRight=OperatorType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Right>>>,QRule>;
+ 
+//   // using TestOrTrialLeft=TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Left>>>;
+//   // using TestOrTrialRight=TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Right>>>;
+//   // using type=typename OperatorTypeHelper<Binary<Expression<TestOrTrialLeft>,Expression<TestOrTrialRight>>,QRule>::type;//typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::type;
+//   using type=OperatorType<Binary<TestOrTrialLeft,TestOrTrialRight>,QRule>;//typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::type;
+
+// };
+
+
+
+
+template< template<class,class > class Binary,
          typename MixedSpace, Integer N, typename Left, typename Right,typename QRule>
-class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< Binary<Expression<Left>,Expression<Right>> >>>,QRule >
+class OperatorTypeHelper<Test<MixedSpace,N,CompositeOperator<Expression< Binary<Expression<Left>,Expression<Right>> >>>,QRule >
 { public:
   using Operator=CompositeOperator<Expression<Addition<Expression<Left>,Expression<Right>>>>;
-  using tmptype= TestOrTrial<MixedSpace,N,Operator>;
- static_assert((IsSame<tmptype,Test<MixedSpace,N,Operator>>::value ||
-                IsSame<tmptype,Trial<MixedSpace,N,Operator>>::value )
-               && "In Evaluation<Expression<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");  
-  // TODO FIX ME SUBTYPE AND NOT TYPE CHECK (now in fwpvalues<T,M,N>, tot_type=T)
-  using TestOrTrialLeft=OperatorType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Left>>>,QRule>;
-  using TestOrTrialRight=OperatorType<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Right>>>,QRule>;
- 
-  // using TestOrTrialLeft=TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Left>>>;
-  // using TestOrTrialRight=TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Right>>>;
-  // using type=typename OperatorTypeHelper<Binary<Expression<TestOrTrialLeft>,Expression<TestOrTrialRight>>,QRule>::type;//typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::type;
+  using tmptype= Test<MixedSpace,N,Operator>;
+  using TestOrTrialLeft=OperatorType<Test<MixedSpace,N,CompositeOperator<Expression<Left>>>,QRule>;
+  using TestOrTrialRight=OperatorType<Test<MixedSpace,N,CompositeOperator<Expression<Right>>>,QRule>;
+  using type=OperatorType<Binary<TestOrTrialLeft,TestOrTrialRight>,QRule>;//typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::type;
+
+};
+
+template< template<class,class > class Binary,
+         typename MixedSpace, Integer N, typename Left, typename Right,typename QRule>
+class OperatorTypeHelper<Trial<MixedSpace,N,CompositeOperator<Expression< Binary<Expression<Left>,Expression<Right>> >>>,QRule >
+{ public:
+  using Operator=CompositeOperator<Expression<Addition<Expression<Left>,Expression<Right>>>>;
+  using tmptype= Trial<MixedSpace,N,Operator>;
+  using TestOrTrialLeft=OperatorType<Trial<MixedSpace,N,CompositeOperator<Expression<Left>>>,QRule>;
+  using TestOrTrialRight=OperatorType<Trial<MixedSpace,N,CompositeOperator<Expression<Right>>>,QRule>;
   using type=OperatorType<Binary<TestOrTrialLeft,TestOrTrialRight>,QRule>;//typename ShapeFunction<Elem,BaseFunctionSpace,Operator,QRule>::type;
 
 };
@@ -1193,6 +1345,21 @@ class OperatorTypeHelper<TestOrTrial<MixedSpace,N,CompositeOperator<Expression< 
 
 
 
+
+
+
+
+
+
+
+
+
+
+// template<typename T, typename...Ts>
+// class OperatorTypeHelper<T,Ts...>
+// { public:
+//   using type=T;
+// };
 
 
 
@@ -1476,20 +1643,22 @@ class OperatorTypeHelper<Binary< QPValues<S,NQPoints>, FQPValues<T,NQPoints,Ndof
 
 
 
-template<template<class>class Unary,typename T, typename...Ts>
-class OperatorTypeHelper< Unary< T >, Ts...>
-{ public:
- using subtype=OperatorType<T,Ts...>;
- using type=OperatorType<Unary<subtype>,Ts...>;
-};
+// template<template<class>class Unary,typename T, typename...Ts>
+// class OperatorTypeHelper< Unary< T >, Ts...>
+// { public:
+//  using subtype=OperatorType<T,Ts...>;
+//  using type=OperatorType<Unary<subtype>,Ts...>;
+// };
 
-template<template<class,class>class Binary,typename Left, typename Right, typename...Ts>
-class OperatorTypeHelper< Binary< Left, Right >, Ts...>
-{ public:
- using subtypeleft=OperatorType<Left,Ts...>;
- using subtyperight=OperatorType<Right,Ts...>;
- using type=OperatorType<Binary<subtypeleft,subtyperight>,Ts...>;
-};
+// template<template<class,class>class Binary,typename Left, typename Right, typename...Ts>
+// class OperatorTypeHelper< Binary< Left, Right >, Ts...>
+// { public:
+//  using subtypeleft=OperatorType<Left,Ts...>;
+//  using subtyperight=OperatorType<Right,Ts...>;
+//  using type=OperatorType<Binary<subtypeleft,subtyperight>,Ts...>;
+// };
+
+
 
 
 // template<typename Left, typename Right, typename...Ts>
@@ -1882,21 +2051,21 @@ template<typename QuadratureRule, typename Tuple,typename TupleTensor,
 class TupleOfCombinationFunctionsAuxAux<QuadratureRule,Tuple,TupleTensor,TestOrTrial_<MixedSpace,N,CompositeOperator<Expression<Expr>>>>
 {
   public:
-  using Test=Test<MixedSpace,N,CompositeOperator<Expression<Expr>>>;
-  using CompositeType=typename FormOfCompositeOperatorType<Test>::type;
+  using Test_=Test<MixedSpace,N,CompositeOperator<Expression<Expr>>>;
+  using CompositeType=typename FormOfCompositeOperatorType<Test_>::type;
   using EvaluationCompositeType=Evaluation<Expression<CompositeType>,QuadratureRule>;
-  using TupleNth=GetType<Tuple,Test::value>;
+  using TupleNth=GetType<Tuple,Test_::value>;
 
   static constexpr Integer IsNotAlreadyThere=IsNegative(TypeToTupleElementPosition<EvaluationCompositeType,TupleNth>::value);
 
   using ChangeType=typename std::conditional<IsNotAlreadyThere,TupleCatType<TupleNth,std::tuple<EvaluationCompositeType>>,TupleNth>::type;
 
-  using type= TupleChangeType<Test::value, ChangeType, Tuple> ;
+  using type= TupleChangeType<Test_::value, ChangeType, Tuple> ;
 
-  using TensorType=OperatorType<Test,QuadratureRule>;
-  using TupleTensorNth=GetType<TupleTensor,Test::value>;
+  using TensorType=OperatorType<Test_,QuadratureRule>;
+  using TupleTensorNth=GetType<TupleTensor,Test_::value>;
   using ChangeTensorType=typename std::conditional<IsNotAlreadyThere,TupleCatType<TupleTensorNth,std::tuple<TensorType>>,TupleTensorNth>::type;
-  using type_tensor=TupleChangeType<Test::value, ChangeTensorType, TupleTensor> ;
+  using type_tensor=TupleChangeType<Test_::value, ChangeTensorType, TupleTensor> ;
 
 };
 

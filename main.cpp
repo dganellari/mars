@@ -34,7 +34,7 @@
 #include "mars_entity.hpp"
 #include "mars_connectivity.hpp"
 #include "mars_examples.hpp"
-#include <Kokkos_Crs.hpp>
+//#include <Kokkos_Crs.hpp>
 // #include <Kokkos_MultiVector.hpp>
 // #include <Kokkos_DefaultNode.hpp>
 // typedef Kokkos::DefaultNode::DefaultNodeType                 KokkosNode;

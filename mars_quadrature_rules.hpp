@@ -11,7 +11,7 @@ class BaseQuadrature
 {
 public:
  using Elem=Elem_;
- static constexpr Integer Order=Order;
+ static constexpr Integer Order=Order_;
 };
 
 

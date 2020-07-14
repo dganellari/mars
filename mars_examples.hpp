@@ -1218,6 +1218,17 @@ for(Integer jj=0;jj<3;jj++)
 	    ofs.close();
     }
 
+    template<typename T>
+    void save_3vectors(const std::string s, const std::vector<T>& v1, const std::vector<T>& v2,const std::vector<T>& v3)
+    {
+		std::ofstream ofs;
+		ofs.precision(17);
+		ofs.open(s.c_str());
+		for(Integer i=0;i<v1.size();i++)
+			ofs<<v1[i]<<" "<<v2[i]<<" "<<v3[i]<<"\n";
+
+	    ofs.close();
+    }
 
   Real l2_dot_product(const std::vector<Real>& a,const std::vector<Real>& b)
   {
@@ -2994,7 +3005,7 @@ void compute_working_set2(const Integer ndofs,const std::vector<bool>& constrain
 				for(Integer i=0;i<sub_rows_;i++)
 				{
 						
-					if(lambda_sup_check[i]>0 && residual_[i]<0)
+					if(lambda_sup_check[i]>0 && residual_[i]<0)///-toll)
 						{
 							
 							lambda_sup_check[i]=0;
@@ -3002,7 +3013,7 @@ void compute_working_set2(const Integer ndofs,const std::vector<bool>& constrain
 							// std::cout<<u[i] <<"=u["<<i<<"],   "<<"lambda_sup_check["<<i<<"]="<<lambda_sup_check[i]<<",  residual_["<<i<<"]= "<<residual_[i]<<std::endl;
 						}
 
-					if(lambda_inf_check[i]>0 && residual_[i]>0)	
+					if(lambda_inf_check[i]>0 && residual_[i]>0)//-toll)	
 						{
 							
 							lambda_inf_check[i]=0;
@@ -3039,7 +3050,14 @@ void compute_working_set2(const Integer ndofs,const std::vector<bool>& constrain
 
 
 
-				cont++;			
+				cont++;		
+			// 	if(cont>100)
+			// // 	{std::cout<<"cont=="<<cont<<std::endl;
+			// // print_vec(c_sup,sub_rows_,"c_sup");
+			// // print_vec(lambda_sup_check,sub_rows_,"lambda_sup_check");
+			// // print_vec(residual_,sub_rows_,"residual_");
+
+			// 	}	
 			 }
 			 // std::cout<<"uzawa2 cont = = "<<cont<<std::endl;
             }
@@ -6910,8 +6928,8 @@ public:
 	using Points=ElemGeometricPoints<Elem,ElementOrder>;
 	static constexpr Integer Npoints=Points::type::Dim;
 	using RTnBaseFunctionSpace=BaseFunctionSpace<FEFamily,Order,Continuity, NComponents>;
-	using BaseFunctionSpace=BaseElementFunctionSpace<Elem,FEFamily,Order,Continuity, NComponents>;
-	using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
+	using BaseFSpace=BaseElementFunctionSpace<Elem,FEFamily,Order,Continuity, NComponents>;
+	using FunctionSpace=ElemFunctionSpace<Elem,BaseFSpace>;
 
     static constexpr Integer NDofs=FunctionSpaceDofsPerElem<FunctionSpace>::value;
     static constexpr Integer ManifoldDim=Elem::ManifoldDim;
@@ -6924,7 +6942,7 @@ public:
 	static constexpr Integer single_shape_function_components_number=Rows*Cols;
 	static constexpr Integer solution_array_size=Npoints*Rows*Cols;
 	using TotType = typename SingleTypeShapeFunction<FunctionSpace,Operator>::TotType;
-	static constexpr Integer Ntot=FunctionSpaceDofsPerSubEntityElem<ElemFunctionSpace<Elem,BaseFunctionSpace>,Elem::ManifoldDim>::value;
+	static constexpr Integer Ntot=FunctionSpaceDofsPerSubEntityElem<ElemFunctionSpace<Elem,BaseFSpace>,Elem::ManifoldDim>::value;
 	static constexpr Integer NDofs_single_space=Ntot/NComponents;
 	static constexpr auto 
 	reference_values{reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,NDofs_single_space>(Points::points)};
@@ -7725,206 +7743,206 @@ template<Integer N, Integer Nmax, typename Space,Integer ElementOrder,typename F
 	}
 
 
-	template<typename Elem, Integer EntityDim>
-	class ElemEntity;
+	// template<typename Elem, Integer EntityDim>
+	// class ElemEntity;
 
-	template<typename Elem, Integer EntityDimMax, Integer EntityDim>
-	 class EntitiesOfMeshTupleTypeHelper;
+	// template<typename Elem, Integer EntityDimMax, Integer EntityDim>
+	//  class EntitiesOfMeshTupleTypeHelper;
 
-	template<typename Elem, Integer EntityDimMax, Integer EntityDim>
-	class EntitiesOfMeshTupleTypeHelper
-	{
-	public:
-	     using rest = typename EntitiesOfMeshTupleTypeHelper<Elem,EntityDimMax,EntityDim+1>::type;
-	     using ens  = ElemEntity<Elem,EntityDim>;
-	     using type = decltype( std::tuple_cat( std::declval< std::tuple<ens> >(),std::declval< rest >() ) );
-	};
-
-
-	template<typename Elem, Integer EntityDimMax>
-	class EntitiesOfMeshTupleTypeHelper<Elem, EntityDimMax,EntityDimMax>
-	{
-	public:
-	     using ens  = ElemEntity<Elem,EntityDimMax>;
-	     using type = typename std::tuple<ens>;
-	};
-
-	template<typename Elem>
-	using EntitiesOfMeshTupleType= typename EntitiesOfMeshTupleTypeHelper<Elem,Elem::ManifoldDim,0>::type;
+	// template<typename Elem, Integer EntityDimMax, Integer EntityDim>
+	// class EntitiesOfMeshTupleTypeHelper
+	// {
+	// public:
+	//      using rest = typename EntitiesOfMeshTupleTypeHelper<Elem,EntityDimMax,EntityDim+1>::type;
+	//      using ens  = ElemEntity<Elem,EntityDim>;
+	//      using type = decltype( std::tuple_cat( std::declval< std::tuple<ens> >(),std::declval< rest >() ) );
+	// };
 
 
+	// template<typename Elem, Integer EntityDimMax>
+	// class EntitiesOfMeshTupleTypeHelper<Elem, EntityDimMax,EntityDimMax>
+	// {
+	// public:
+	//      using ens  = ElemEntity<Elem,EntityDimMax>;
+	//      using type = typename std::tuple<ens>;
+	// };
+
+	// template<typename Elem>
+	// using EntitiesOfMeshTupleType= typename EntitiesOfMeshTupleTypeHelper<Elem,Elem::ManifoldDim,0>::type;
 
 
 
 
 
 
-	template<typename MeshT_>
-	class ElemEntityCollection
-	{
-	public:
-		using MeshT=MeshT_;
-		using BisectionT=Bisection<MeshT>;
-		using Elem=typename MeshT::Elem;
-		using EntitiesTuple=EntitiesOfMeshTupleType<Elem>;
-		static constexpr Integer ManifoldDim=Elem::ManifoldDim;
-		// ElemEntity<Elem,N>(mesh,node2elem);
-
-		template<Integer N=0>
-		inline std::enable_if_t<(N>ManifoldDim),void>
-		entity_collection_init(const MeshT& mesh){}
-
-		template<Integer N=0>
-		inline std::enable_if_t<(N<=ManifoldDim),void>
-		entity_collection_init(const MeshT& mesh)
-		{
-			tuple_get<N>(tuple_entities_).init(mesh);
-			entity_collection_init<N+1>(mesh);
-		}
 
 
-	    ElemEntityCollection(const MeshT& mesh, const Integer level=-1):
-	    node2elem_update_(false),
-	    node2elem_(mesh,level),
-	    mesh_ptr_(std::make_shared<MeshT>(mesh)),
-	    level_(level)
-	    {
-	        if(level==-1)
-	        	node2elem_update_=true;
-	    	entity_collection_init(mesh);
-	    	for(std::size_t i=0;i<is_updated_.size();i++)
-	    		is_updated_[i]=false;
-	    }
+	// template<typename MeshT_>
+	// class ElemEntityCollection
+	// {
+	// public:
+	// 	using MeshT=MeshT_;
+	// 	using BisectionT=Bisection<MeshT>;
+	// 	using Elem=typename MeshT::Elem;
+	// 	using EntitiesTuple=EntitiesOfMeshTupleType<Elem>;
+	// 	static constexpr Integer ManifoldDim=Elem::ManifoldDim;
+	// 	// ElemEntity<Elem,N>(mesh,node2elem);
+
+	// 	template<Integer N=0>
+	// 	inline std::enable_if_t<(N>ManifoldDim),void>
+	// 	entity_collection_init(const MeshT& mesh){}
+
+	// 	template<Integer N=0>
+	// 	inline std::enable_if_t<(N<=ManifoldDim),void>
+	// 	entity_collection_init(const MeshT& mesh)
+	// 	{
+	// 		tuple_get<N>(tuple_entities_).init(mesh);
+	// 		entity_collection_init<N+1>(mesh);
+	// 	}
+
+
+	//     ElemEntityCollection(const MeshT& mesh, const Integer level=-1):
+	//     node2elem_update_(false),
+	//     node2elem_(mesh,level),
+	//     mesh_ptr_(std::make_shared<MeshT>(mesh)),
+	//     level_(level)
+	//     {
+	//         if(level==-1)
+	//         	node2elem_update_=true;
+	//     	entity_collection_init(mesh);
+	//     	for(std::size_t i=0;i<is_updated_.size();i++)
+	//     		is_updated_[i]=false;
+	//     }
 
 
 
 	    
-	    template<Integer N>
-	    void init()
-	    {   
+	//     template<Integer N>
+	//     void init()
+	//     {   
 	    	
-	    	if(!node2elem_update_)
-	    	{ 
-	    		// std::cout<<"1 begin update N="<<N<<std::endl;
-	    		node2elem_.init();
-	    		node2elem_update_=true;
-	    	}
-	        if(!is_updated_[N]&&level_==-1)
-	    	{
-	    	// std::cout<<"2 real update N="<<N<<std::endl;
-	    	is_updated_[N]=true;
-	    	auto& ens=tuple_get<N>(tuple_entities_);
-	    	ens.init_elem_entity(*mesh_ptr_,node2elem_.val(),level_);
-	        }
-	    	else if(!is_updated_[N]&&level_!=-1)
-	    	{
-	    	// std::cout<<"3 real update N="<<N<<std::endl;
-	    	is_updated_[N]=true;
-	    	auto& ens=tuple_get<N>(tuple_entities_);
-	    	std::cout<<"ens="<<N<<std::endl;
-	    	ens.add_bisection(bisection_ptr_);
-	    	std::cout<<"added bisec="<<N<<std::endl;
-	    	ens.init_elem_entity(*mesh_ptr_,node2elem_.val(),level_);
-	    	std::cout<<"end init elem="<<N<<std::endl;
-	        }
-	        else
-	        {
-	        	std::cout<<" already updated "<<std::endl;
-	        }
-	    }
+	//     	if(!node2elem_update_)
+	//     	{ 
+	//     		// std::cout<<"1 begin update N="<<N<<std::endl;
+	//     		node2elem_.init();
+	//     		node2elem_update_=true;
+	//     	}
+	//         if(!is_updated_[N]&&level_==-1)
+	//     	{
+	//     	// std::cout<<"2 real update N="<<N<<std::endl;
+	//     	is_updated_[N]=true;
+	//     	auto& ens=tuple_get<N>(tuple_entities_);
+	//     	ens.init_elem_entity(*mesh_ptr_,node2elem_.val(),level_);
+	//         }
+	//     	else if(!is_updated_[N]&&level_!=-1)
+	//     	{
+	//     	// std::cout<<"3 real update N="<<N<<std::endl;
+	//     	is_updated_[N]=true;
+	//     	auto& ens=tuple_get<N>(tuple_entities_);
+	//     	std::cout<<"ens="<<N<<std::endl;
+	//     	ens.add_bisection(bisection_ptr_);
+	//     	std::cout<<"added bisec="<<N<<std::endl;
+	//     	ens.init_elem_entity(*mesh_ptr_,node2elem_.val(),level_);
+	//     	std::cout<<"end init elem="<<N<<std::endl;
+	//         }
+	//         else
+	//         {
+	//         	std::cout<<" already updated "<<std::endl;
+	//         }
+	//     }
 
 
 
-	    template<typename FunctionSpace,Integer Nmax,Integer N>
-	    std::enable_if_t<(N>Nmax),void>
-	    init_aux_aux()
-	    {}
+	//     template<typename FunctionSpace,Integer Nmax,Integer N>
+	//     std::enable_if_t<(N>Nmax),void>
+	//     init_aux_aux()
+	//     {}
 
-	    template<typename FunctionSpace,Integer Nmax,Integer N>
-	    std::enable_if_t<(N<=Nmax),void>
-	    init_aux_aux()
-	    {   
-	    	init<FunctionSpace::entity[N]>();
-	    	std::cout<<"init_aux_aux "<<N<<std::endl;
-	    	init_aux_aux<FunctionSpace,Nmax,N+1>();
-	    }
-
-
-	    template<typename TupleOfSpaces,Integer Nmax,Integer N>
-	    std::enable_if_t<(N>Nmax),void>
-	    init_aux(){}
-
-	    template<typename TupleOfSpaces,Integer Nmax,Integer N>
-	    std::enable_if_t<(N<=Nmax),void>
-	    init_aux()
-	    {   
-	    	using FunctionSpace=GetType<TupleOfSpaces,N>;
-	    	std::cout<<"init_aux "<<N<<std::endl;
-	    	init_aux_aux<FunctionSpace,FunctionSpace::entity.size()-1,0>();
-	    	init_aux<TupleOfSpaces,Nmax,N+1>();
-	    }
+	//     template<typename FunctionSpace,Integer Nmax,Integer N>
+	//     std::enable_if_t<(N<=Nmax),void>
+	//     init_aux_aux()
+	//     {   
+	//     	init<FunctionSpace::entity[N]>();
+	//     	std::cout<<"init_aux_aux "<<N<<std::endl;
+	//     	init_aux_aux<FunctionSpace,Nmax,N+1>();
+	//     }
 
 
-	    template<template<class...>class TemplateClass,typename...Args>
-	    void init(const TemplateClass<Args...>& W)
-	    {   
-	    	using TupleOfSpaces=typename TemplateClass<Args...>::TupleOfSpaces;
-	    	std::cout<<"init W"<<std::endl;
-	    	init_aux<TupleOfSpaces,TupleTypeSize<TupleOfSpaces>::value-1,0>();
-	    }
+	//     template<typename TupleOfSpaces,Integer Nmax,Integer N>
+	//     std::enable_if_t<(N>Nmax),void>
+	//     init_aux(){}
+
+	//     template<typename TupleOfSpaces,Integer Nmax,Integer N>
+	//     std::enable_if_t<(N<=Nmax),void>
+	//     init_aux()
+	//     {   
+	//     	using FunctionSpace=GetType<TupleOfSpaces,N>;
+	//     	std::cout<<"init_aux "<<N<<std::endl;
+	//     	init_aux_aux<FunctionSpace,FunctionSpace::entity.size()-1,0>();
+	//     	init_aux<TupleOfSpaces,Nmax,N+1>();
+	//     }
+
+
+	//     template<template<class...>class TemplateClass,typename...Args>
+	//     void init(const TemplateClass<Args...>& W)
+	//     {   
+	//     	using TupleOfSpaces=typename TemplateClass<Args...>::TupleOfSpaces;
+	//     	std::cout<<"init W"<<std::endl;
+	//     	init_aux<TupleOfSpaces,TupleTypeSize<TupleOfSpaces>::value-1,0>();
+	//     }
 
 
 
-	    template<typename Elem,typename BaseFunctionSpace, typename...BaseFunctionSpaces>
-	    std::enable_if_t<(sizeof...(BaseFunctionSpaces)==0),void>
-	    init_aux()
-	    {
-	    	using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
-	    	init_aux_aux<FunctionSpace,FunctionSpace::entity.size()-1,0>();
-	    }
+	//     template<typename Elem,typename BaseFunctionSpace, typename...BaseFunctionSpaces>
+	//     std::enable_if_t<(sizeof...(BaseFunctionSpaces)==0),void>
+	//     init_aux()
+	//     {
+	//     	using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
+	//     	init_aux_aux<FunctionSpace,FunctionSpace::entity.size()-1,0>();
+	//     }
 
-	    template<typename Elem,typename BaseFunctionSpace, typename...BaseFunctionSpaces>
-	    std::enable_if_t<(sizeof...(BaseFunctionSpaces)>0),void>
-	    init_aux()
-	    {   
-	    	using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
-	    	init_aux_aux<FunctionSpace,FunctionSpace::entity.size()-1,0>();
-	    	init_aux<Elem,BaseFunctionSpaces...>();
-	    }
+	//     template<typename Elem,typename BaseFunctionSpace, typename...BaseFunctionSpaces>
+	//     std::enable_if_t<(sizeof...(BaseFunctionSpaces)>0),void>
+	//     init_aux()
+	//     {   
+	//     	using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
+	//     	init_aux_aux<FunctionSpace,FunctionSpace::entity.size()-1,0>();
+	//     	init_aux<Elem,BaseFunctionSpaces...>();
+	//     }
 
 
-	    template<typename Elem,typename BaseFunctionSpace, typename...BaseFunctionSpaces>
-	    void init()
-	    {   
-	    	std::cout<<"init "<<std::endl;
-	    	init_aux<Elem,BaseFunctionSpace,BaseFunctionSpaces...>();
-	    }
+	//     template<typename Elem,typename BaseFunctionSpace, typename...BaseFunctionSpaces>
+	//     void init()
+	//     {   
+	//     	std::cout<<"init "<<std::endl;
+	//     	init_aux<Elem,BaseFunctionSpace,BaseFunctionSpaces...>();
+	//     }
 
 	     
-	    auto& tuple_entities(){return tuple_entities_;}
+	//     auto& tuple_entities(){return tuple_entities_;}
 
-		inline void add_bisection(const BisectionT& bisection)
-		{node2elem_.add_bisection(bisection);
-		 bisection_ptr_=std::make_shared<BisectionT>(bisection);}
+	// 	inline void add_bisection(const BisectionT& bisection)
+	// 	{node2elem_.add_bisection(bisection);
+	// 	 bisection_ptr_=std::make_shared<BisectionT>(bisection);}
 	    
-	    auto& node2elem(){return node2elem_.val();}
+	//     auto& node2elem(){return node2elem_.val();}
 
-	    inline auto bisection_ptr(){return bisection_ptr_;}
-	private:
-		bool node2elem_update_;
-		NodeToElem<MeshT> node2elem_;
-		EntitiesTuple tuple_entities_;
-		std::shared_ptr<MeshT> mesh_ptr_;
-		std::shared_ptr<BisectionT> bisection_ptr_;
-		Array<bool, ManifoldDim+1> is_updated_;
-	    Integer level_;
-	};
+	//     inline auto bisection_ptr(){return bisection_ptr_;}
+	// private:
+	// 	bool node2elem_update_;
+	// 	NodeToElem<MeshT> node2elem_;
+	// 	EntitiesTuple tuple_entities_;
+	// 	std::shared_ptr<MeshT> mesh_ptr_;
+	// 	std::shared_ptr<BisectionT> bisection_ptr_;
+	// 	Array<bool, ManifoldDim+1> is_updated_;
+	//     Integer level_;
+	// };
 
-	template<Integer N,typename MeshT>
-	void init(ElemEntityCollection<MeshT>& coll){coll.template init<N>();}
+	// template<Integer N,typename MeshT>
+	// void init(ElemEntityCollection<MeshT>& coll){coll.template init<N>();}
 
-	template<Integer N,typename MeshT>
-	auto& get_entity(ElemEntityCollection<MeshT>& coll){return tuple_get<N>(coll.tuple_entities());}
+	// template<Integer N,typename MeshT>
+	// auto& get_entity(ElemEntityCollection<MeshT>& coll){return tuple_get<N>(coll.tuple_entities());}
 
 
 
@@ -9426,14 +9444,14 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,LagrangeFE,Order,Cont
  	using QuadratureElem=typename VolumeOrSurfaceElem<Elem,false>::type;
  	static constexpr Integer FEFamily=LagrangeFE;
  	static constexpr Integer NComponents=1; 
- 	using BaseFunctionSpace=BaseFunctionSpace<FEFamily,Order,Continuity,NComponents>;
+ 	using BaseFSpace=BaseFunctionSpace<FEFamily,Order,Continuity,NComponents>;
 
-    static constexpr Integer QRuleOrder=QuadratureOrder<IdentityOperator, BaseFunctionSpace>::value;
+    static constexpr Integer QRuleOrder=QuadratureOrder<IdentityOperator, BaseFSpace>::value;
 
 
     using QRule=typename QuadratureRule<QR>:: template rule<Elem,1>;
     // using Shape=ShapeFunction<Elem,BaseFunctionSpace,IdentityOperator,QRule>;
-    using Shape=ShapeFunction<Elem,BaseFunctionSpace,IdentityOperator,QRule>;
+    using Shape=ShapeFunction<Elem,BaseFSpace,IdentityOperator,QRule>;
     using ShapeValue=typename Shape::type;
 
 
@@ -9444,12 +9462,12 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,LagrangeFE,Order,Cont
  	// HA SENSO PER NCOMPONENTS == 1 RIFLETTI PER PIU COMPONENTI
 
 
- 	using ElementFunctionSpace=ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>;
- 	static constexpr auto entity=ElementFunctionSpace::entity;
+ 	using ElementFSpace=ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>;
+ 	static constexpr auto entity=ElementFSpace::entity;
     using Map=MapFromReference<IdentityOperator,Elem,FEFamily> ;
     using MapReference=MapFromReference<IdentityOperator,QuadratureElem,FEFamily> ;
-    static constexpr auto Dofs=LagrangeDofs<ElementFunctionSpace>::value();
-    static constexpr auto NDofs=LagrangeDofs<ElementFunctionSpace>::NDofs;
+    static constexpr auto Dofs=LagrangeDofs<ElementFSpace>::value();
+    static constexpr auto NDofs=LagrangeDofs<ElementFSpace>::NDofs;
     
 
 
@@ -9645,11 +9663,11 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,0,Con
  	static constexpr Integer FEFamily=RaviartThomasFE;
  	static constexpr Integer NComponents=1; 
  	using RTnBaseFunctionSpace=BaseFunctionSpace<FEFamily,Order,Continuity,NComponents>;
- 	using ElementFunctionSpace=ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>;
- 	static constexpr auto entity=ElementFunctionSpace::entity;
- 	static constexpr auto dofs_per_entity=ElementFunctionSpace::dofs_per_entity;
+ 	using ElementFSpace=ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>;
+ 	static constexpr auto entity=ElementFSpace::entity;
+ 	static constexpr auto dofs_per_entity=ElementFSpace::dofs_per_entity;
 
-    static constexpr Integer NDofs=FunctionSpaceDofsPerElem<ElementFunctionSpace>::value;
+    static constexpr Integer NDofs=FunctionSpaceDofsPerElem<ElementFSpace>::value;
 
     static constexpr Integer NDofsFace= NComponents * dofs_per_entity[0] * ElemEntityCombinations<Elem,entity[0]>::value;
     static constexpr Integer NDofsMomentum= NComponents * dofs_per_entity[1] * ElemEntityCombinations<Elem,entity[1]>::value;
@@ -9842,11 +9860,11 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Con
  	static constexpr Integer NComponents=1; 
  	using RTnBaseFunctionSpace=BaseFunctionSpace<FEFamily,Order,Continuity,NComponents>;
  	using PnBaseFunctionSpace=BaseFunctionSpace<LagrangeFE,Order,Continuity,NComponents>;
- 	using ElementFunctionSpace=ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>;
- 	static constexpr auto entity=ElementFunctionSpace::entity;
- 	static constexpr auto dofs_per_entity=ElementFunctionSpace::dofs_per_entity;
+ 	using ElementFSpace=ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>;
+ 	static constexpr auto entity=ElementFSpace::entity;
+ 	static constexpr auto dofs_per_entity=ElementFSpace::dofs_per_entity;
 
-    static constexpr Integer NDofs=FunctionSpaceDofsPerElem<ElementFunctionSpace>::value;
+    static constexpr Integer NDofs=FunctionSpaceDofsPerElem<ElementFSpace>::value;
 
     static constexpr Integer NDofsFace= NComponents * dofs_per_entity[0] * ElemEntityCombinations<Elem,entity[0]>::value;
     static constexpr Integer NDofsMomentum= NComponents * dofs_per_entity[1] * ElemEntityCombinations<Elem,entity[1]>::value;
@@ -10269,7 +10287,7 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Con
         C_FE.points_to_reference_points(reference_qp_points_simplex_,qp_points_simplex_);
 
 
-        DynamicShapeFunctionValue<ElementFunctionSpace,IdentityOperator>::apply4(func_values,reference_qp_points_simplex_,C_FE,C_map_(),coeff_); 
+        DynamicShapeFunctionValue<ElementFSpace,IdentityOperator>::apply4(func_values,reference_qp_points_simplex_,C_FE,C_map_(),coeff_); 
 
 
 
@@ -10388,7 +10406,7 @@ class DofAux<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,RaviartThomasFE,1,Con
         C_FE.points_to_reference_points(reference_qp_points_barycenter_,qp_points_barycenter_);
 
 
-        DynamicShapeFunctionValue<ElementFunctionSpace,IdentityOperator>::apply4(func_values,reference_qp_points_barycenter_,C_FE,C_map_(),coeff_); 
+        DynamicShapeFunctionValue<ElementFSpace,IdentityOperator>::apply4(func_values,reference_qp_points_barycenter_,C_FE,C_map_(),coeff_); 
 
 
 
@@ -10908,16 +10926,16 @@ class Dof<ElementFunctionSpace<Simplex<Dim,ManifoldDim>,FEFamily,Order,Continuit
 
  	static constexpr Integer NComponents=1; 
 
- 	using BaseFunctionSpace=BaseFunctionSpace<FEFamily,Order,Continuity,NComponents>;
- 	using ElementFunctionSpace=ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>;
- 	static constexpr auto entity=ElementFunctionSpace::entity;
-    static constexpr Integer QRuleOrder=QuadratureOrder<IdentityOperator, BaseFunctionSpace>::value;
+ 	using BaseFSpace=BaseFunctionSpace<FEFamily,Order,Continuity,NComponents>;
+ 	using ElementFSpace=ElementFunctionSpace<Elem,FEFamily,Order,Continuity,NComponents>;
+ 	static constexpr auto entity=ElementFSpace::entity;
+    static constexpr Integer QRuleOrder=QuadratureOrder<IdentityOperator, BaseFSpace>::value;
     using QRule=typename QuadratureRule<QR>:: template rule<Elem,1>;
-    using Shape=ShapeFunction<Elem,BaseFunctionSpace,IdentityOperator,QRule>;
+    using Shape=ShapeFunction<Elem,BaseFSpace,IdentityOperator,QRule>;
     using ShapeValue=typename Shape::type;
     using Map=MapFromReference<IdentityOperator,Elem,FEFamily> ;
-    static constexpr auto Dofs=LagrangeDofs<ElementFunctionSpace>::value();
-    static constexpr auto NDofs=LagrangeDofs<ElementFunctionSpace>::NDofs;
+    static constexpr auto Dofs=LagrangeDofs<ElementFSpace>::value();
+    static constexpr auto NDofs=LagrangeDofs<ElementFSpace>::NDofs;
     
     template<typename MeshT>
     Dof(const MeshT& mesh):
@@ -12577,8 +12595,8 @@ template<typename FunctionSpace_>
 	    }
 
 
-	    template<Integer MinMax,typename ElementFunctionSpace,Integer M>
-		inline std::enable_if_t<(ElementFunctionSpace::FEFamily==LagrangeFE && ElementFunctionSpace::Order==1 ),void> 
+	    template<Integer MinMax,typename ElementFSpace,Integer M>
+		inline std::enable_if_t<(ElementFSpace::FEFamily==LagrangeFE && ElementFSpace::Order==1 ),void> 
 		compute(std::vector<Real>& C_constraint,const std::vector<Real>& F_constraint,
 			    const Integer C_level, const Integer F_level)
 		{
@@ -12616,8 +12634,8 @@ template<typename FunctionSpace_>
 
 
 
-	    template<Integer MinMax,typename ElementFunctionSpace,Integer M>
-		inline std::enable_if_t<(ElementFunctionSpace::FEFamily==RaviartThomasFE && ElementFunctionSpace::Order==1 ),void> 
+	    template<Integer MinMax,typename ElementFSpace,Integer M>
+		inline std::enable_if_t<(ElementFSpace::FEFamily==RaviartThomasFE && ElementFSpace::Order==1 ),void> 
 		compute(std::vector<Real>& C_constraint,const std::vector<Real>& F_constraint,
 			    const Integer C_level, const Integer F_level)
 		{
@@ -12647,8 +12665,8 @@ template<typename FunctionSpace_>
 
 		}
 
-	    template<Integer MinMax, typename ElementFunctionSpace,Integer M>
-		inline std::enable_if_t<(ElementFunctionSpace::FEFamily==RaviartThomasFE && ElementFunctionSpace::Order==0 ),void> 
+	    template<Integer MinMax, typename ElementFSpace,Integer M>
+		inline std::enable_if_t<(ElementFSpace::FEFamily==RaviartThomasFE && ElementFSpace::Order==0 ),void> 
 		compute(std::vector<Real>& C_constraint,const std::vector<Real>& F_constraint,
 			    const Integer C_level, const Integer F_level)
 		{
@@ -12914,8 +12932,8 @@ template<typename FunctionSpace_>
 
 	    }
 
-	    template<typename ElementFunctionSpace,Integer M>
-		inline std::enable_if_t<!(ElementFunctionSpace::FEFamily==RaviartThomasFE && ElementFunctionSpace::Order==1 ),void> 
+	    template<typename ElementFSpace,Integer M>
+		inline std::enable_if_t<!(ElementFSpace::FEFamily==RaviartThomasFE && ElementFSpace::Order==1 ),void> 
 		fully_truncated_coarse_dofs_aux(std::vector<Integer>& vec,const std::vector<bool>& working_set,const std::vector<Real>& F_constraint_inf,const std::vector<Real>& F_constraint_sup,
 			    const Integer C_level, const Integer F_level)
 		{
@@ -12923,8 +12941,8 @@ template<typename FunctionSpace_>
 		}
 
 
-	    template<typename ElementFunctionSpace,Integer M>
-		inline std::enable_if_t<(ElementFunctionSpace::FEFamily==RaviartThomasFE && ElementFunctionSpace::Order==1 ),void> 
+	    template<typename ElementFSpace,Integer M>
+		inline std::enable_if_t<(ElementFSpace::FEFamily==RaviartThomasFE && ElementFSpace::Order==1 ),void> 
 		fully_truncated_coarse_dofs_aux(std::vector<Integer>& vec,const std::vector<bool>& working_set,
 				const std::vector<Real>& F_constraint_inf,const std::vector<Real>& F_constraint_sup,
 			    const Integer C_level, const Integer F_level)
@@ -12942,7 +12960,7 @@ template<typename FunctionSpace_>
 
 
 	            C_FE.init(el,C_level);
-				RT1_truncated_coarse_dofs<ElementFunctionSpace,M>(vec,working_set,F_constraint_inf,F_constraint_sup,C_FE,F_FE,el,el,C_level,F_level);
+				RT1_truncated_coarse_dofs<ElementFSpace,M>(vec,working_set,F_constraint_inf,F_constraint_sup,C_FE,F_FE,el,el,C_level,F_level);
 			}
 
 		}
@@ -14531,7 +14549,7 @@ template<typename FunctionSpace_>
    											working_set[level],residual,
 											u_local,lambda_local,b_local,g_local,
 											A_local,B_local,c_inf_local,c_sup_local,
-											L_local,U_local,P_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,pre_smoothing,toll,residuals,RT1_n_dofs);
+											L_local,U_local,P_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,pre_smoothing,toll,residuals,RT1_n_dofs,false);
 
 
 
@@ -14646,18 +14664,18 @@ template<typename FunctionSpace_>
 	     	working_set_old[level][i]=working_set[level][i];
          plus_equal(x,F_correction);
 
-		compute_working_set(working_set[level],x,F_constraint_inf,F_constraint_sup);
+		// compute_working_set(working_set[level],x,F_constraint_inf,F_constraint_sup);
 
-		truncated_A_levels[level].multiply_and_add(F_rhs,-1.0,x,b);
+		// truncated_A_levels[level].multiply_and_add(F_rhs,-1.0,x,b);
 
-        Real norm_res=l2_norm(F_rhs,working_set[level]);
+  //       Real norm_res=l2_norm(F_rhs,working_set[level]);
 
-        residuals[0].push_back(log10(l2_norm(F_rhs,working_set[level])));
-        residuals[1].push_back(log10(l2_norm(F_rhs,working_set[level],0,RT1_n_dofs)));
-        residuals[2].push_back(log10(l2_norm(F_rhs,working_set[level],RT1_n_dofs,x.size())));
+  //       residuals[0].push_back(log10(l2_norm(F_rhs,working_set[level])));
+  //       residuals[1].push_back(log10(l2_norm(F_rhs,working_set[level],0,RT1_n_dofs)));
+  //       residuals[2].push_back(log10(l2_norm(F_rhs,working_set[level],RT1_n_dofs,x.size())));
 
 
-        std::cout<<"after correction, log10(norm_res)="<<log10(norm_res)<<std::endl;
+  //       std::cout<<"after correction, log10(norm_res)="<<log10(norm_res)<<std::endl;
 
 
 
@@ -14666,7 +14684,7 @@ template<typename FunctionSpace_>
    											working_set[level],residual,
 											u_local,lambda_local,b_local,g_local,
 											A_local,B_local,c_inf_local,c_sup_local,
-											L_local,U_local,P_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,post_smoothing,toll,residuals,RT1_n_dofs);
+											L_local,U_local,P_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,post_smoothing,toll,residuals,RT1_n_dofs,false);
 
          if(post_smoothing>0)
     	     compute_working_set(working_set[level],x,F_constraint_inf,F_constraint_sup);
@@ -16284,6 +16302,21 @@ template<typename FunctionSpace_>
 
 
 
+     auto& RT1_n_dofs=context.full_spaces_ptr()->dofsdofmap().level_n_dofs_array()[0][level];
+
+	compute_working_set(working_set[level],x,c_inf,c_sup);
+
+	M.multiply_and_add(rhs,-1.0,x,b);
+
+    Real norm_res=l2_norm(rhs,working_set[level]);
+
+    residuals[0].push_back(log10(l2_norm(rhs,working_set[level])));
+    residuals[1].push_back(log10(l2_norm(rhs,working_set[level],0,RT1_n_dofs)));
+    residuals[2].push_back(log10(l2_norm(rhs,working_set[level],RT1_n_dofs,x.size())));
+
+
+
+
    	for(Integer i=0;i<max_iter;i++)
    	{
    		// std::cout<<"uzawa_patch_multigrid_active_set 14"<<std::endl;
@@ -16306,6 +16339,18 @@ template<typename FunctionSpace_>
 								   A_local,B_local,c_inf_local,c_sup_local,
 								   L_local,U_local,P_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,residuals);
 
+		compute_working_set(working_set[level],x,c_inf,c_sup);
+
+		M.multiply_and_add(rhs,-1.0,x,b);
+
+        Real norm_res=l2_norm(rhs,working_set[level]);
+
+        residuals[0].push_back(log10(l2_norm(rhs,working_set[level])));
+        residuals[1].push_back(log10(l2_norm(rhs,working_set[level],0,RT1_n_dofs)));
+        residuals[2].push_back(log10(l2_norm(rhs,working_set[level],RT1_n_dofs,x.size())));
+
+
+        std::cout<<"after correction, log10(norm_res)="<<log10(norm_res)<<std::endl;
 
 
      M.multiply_and_add(rhs,-1.0,x,b);
@@ -17224,8 +17269,8 @@ template<typename FunctionSpace_>
 
 				auto& point=mesh_ptr->points()[nodes[i]];
 				val=FaceGap::FunctionType::eval(point,FE);	
-				std::cout<<"point="<<point <<std::endl;
-				std::cout<<"val="<<val <<std::endl;
+				// std::cout<<"point="<<point <<std::endl;
+				// std::cout<<"val="<<val <<std::endl;
 				constraint[alpha[cont*NComponents+component]]=val(0,0);
 				cont++;
 
@@ -22097,11 +22142,11 @@ void enlarge_patches
 		for(int node=0;node<mesh.n_nodes();node++)
 		{
 
-			std::cout<<"node = = "<<node<<std::endl;
+			// std::cout<<"node = = "<<node<<std::endl;
 			
 			for(int lev=0;lev<levels.size();lev++)
 			{
-				std::cout<<"level = = "<<levels[lev]<<std::endl;
+				// std::cout<<"level = = "<<levels[lev]<<std::endl;
 
 				auto n2e=n2em.get(node,levels[lev]);
 
@@ -22113,7 +22158,7 @@ void enlarge_patches
 				if(n2e.size()< 3 && n2e.size()>0)
 				{
 
-					std::cout<<"n2e.size()="<<n2e.size() <<std::endl;
+					// std::cout<<"n2e.size()="<<n2e.size() <<std::endl;
 					auto& elem_id=n2e[0];
 					auto& nodes=mesh.elem(elem_id).nodes;
 
@@ -22880,9 +22925,9 @@ void RT1_external_patch(Patch& RT1_2externald,  Patch& RT1_2externald_local_posi
 		Integer post_smoothing=5;
 		Integer number_of_levels=levels.size()-1;
 
-		std::cout<<"b_transformed"<<std::endl;
-		for(Integer i=0;i<b_transformed.size();i++)
-			std::cout<<b_transformed[i]<<std::endl;
+		// std::cout<<"b_transformed"<<std::endl;
+		// for(Integer i=0;i<b_transformed.size();i++)
+		// 	std::cout<<b_transformed[i]<<std::endl;
 
 
 		std::vector<Real> active_x2(active_x);
@@ -22913,7 +22958,7 @@ void RT1_external_patch(Patch& RT1_2externald,  Patch& RT1_2externald_local_posi
 		save_vector("../matlab/Abwithbc.dat",b_transformed);
 		save_vector("../matlab/Ab2.dat",b_transformed);
 		save_vector("../matlab/Ac2.dat",constraints_sup());
-		print_vec(working_set[0],working_set[0].size(),"working set");
+		// print_vec(working_set[0],working_set[0].size(),"working set");
 
 		save_cells_vectors("../matlab/AA2dofs.dat",RT1_e2d[RT1_e2d.size()-1],true);
 		save_cells_vectors("../matlab/AA2elements_dofs.dat",RT1_e2alld[RT1_e2alld.size()-1],true);
@@ -22923,42 +22968,42 @@ void RT1_external_patch(Patch& RT1_2externald,  Patch& RT1_2externald_local_posi
 
 		
 
-		for(Integer i=0;i<all_e2d[all_e2d.size()-1].size();i++)
-		{
-			for(Integer j=0;j<all_e2d[all_e2d.size()-1][i].size() ;j++)
-				std::cout<<all_e2d[all_e2d.size()-1][i][j]<<" ";
-			std::cout<<std::endl;
-		}
+		// for(Integer i=0;i<all_e2d[all_e2d.size()-1].size();i++)
+		// {
+		// 	for(Integer j=0;j<all_e2d[all_e2d.size()-1][i].size() ;j++)
+		// 		std::cout<<all_e2d[all_e2d.size()-1][i][j]<<" ";
+		// 	std::cout<<std::endl;
+		// }
 
-		std::cout<<"RT1_e2d"<<std::endl;
+		// std::cout<<"RT1_e2d"<<std::endl;
 
-		for(Integer i=0;i<RT1_e2d[RT1_e2d.size()-1].size();i++)
-		{
-			for(Integer j=0;j<RT1_e2d[RT1_e2d.size()-1][i].size() ;j++)
-				std::cout<<RT1_e2d[RT1_e2d.size()-1][i][j]<<" ";
-			std::cout<<std::endl;
-		}
+		// for(Integer i=0;i<RT1_e2d[RT1_e2d.size()-1].size();i++)
+		// {
+		// 	for(Integer j=0;j<RT1_e2d[RT1_e2d.size()-1][i].size() ;j++)
+		// 		std::cout<<RT1_e2d[RT1_e2d.size()-1][i][j]<<" ";
+		// 	std::cout<<std::endl;
+		// }
 
-		std::cout<<"false"<<std::endl;
+		// std::cout<<"false"<<std::endl;
 
-		for(Integer i=0;i<multipliers_e2d[multipliers_e2d.size()-1].size();i++)
-		{
-			for(Integer j=0;j<multipliers_e2d[multipliers_e2d.size()-1][i].size() ;j++)
-				std::cout<<multipliers_e2d[multipliers_e2d.size()-1][i][j]<<" ";
-			std::cout<<std::endl;
-		}
-		std::cout<<"true"<<std::endl;
-		for(Integer i=0;i<multipliers_e2alld[multipliers_e2alld.size()-1].size();i++)
-		{
-			for(Integer j=0;j<multipliers_e2alld[multipliers_e2alld.size()-1][i].size() ;j++)
-				std::cout<<multipliers_e2alld[multipliers_e2alld.size()-1][i][j]<<" ";
-			std::cout<<std::endl;
-		}
+		// for(Integer i=0;i<multipliers_e2d[multipliers_e2d.size()-1].size();i++)
+		// {
+		// 	for(Integer j=0;j<multipliers_e2d[multipliers_e2d.size()-1][i].size() ;j++)
+		// 		std::cout<<multipliers_e2d[multipliers_e2d.size()-1][i][j]<<" ";
+		// 	std::cout<<std::endl;
+		// }
+		// std::cout<<"true"<<std::endl;
+		// for(Integer i=0;i<multipliers_e2alld[multipliers_e2alld.size()-1].size();i++)
+		// {
+		// 	for(Integer j=0;j<multipliers_e2alld[multipliers_e2alld.size()-1][i].size() ;j++)
+		// 		std::cout<<multipliers_e2alld[multipliers_e2alld.size()-1][i][j]<<" ";
+		// 	std::cout<<std::endl;
+		// }
 		
-		print_vec(constraints_sup(),constraints_sup().size(),"c_sup");
-		print_vec(active_x,active_x.size(),"active_x ");
+		// print_vec(constraints_sup(),constraints_sup().size(),"c_sup");
+		// print_vec(active_x,active_x.size(),"active_x ");
 		save_vector("../matlab/Aactive_x.dat",active_x);
-		print_vec(context.constrained_dofs_levels()[0],context.constrained_dofs_levels()[0].size(),"constrained_dofs ");
+		// print_vec(context.constrained_dofs_levels()[0],context.constrained_dofs_levels()[0].size(),"constrained_dofs ");
 
 
 
@@ -22989,11 +23034,11 @@ void RT1_external_patch(Patch& RT1_2externald,  Patch& RT1_2externald_local_posi
 		for(int node=0;node<mesh.n_nodes();node++)
 		{
 
-			std::cout<<"node = = "<<node<<std::endl;
+			// std::cout<<"node = = "<<node<<std::endl;
 			
 			for(int lev=0;lev<levels.size();lev++)
 			{
-				std::cout<<"level = = "<<levels[lev]<<std::endl;
+				// std::cout<<"level = = "<<levels[lev]<<std::endl;
 
 				Integer is_dirichlet=false;
 
@@ -23001,9 +23046,9 @@ void RT1_external_patch(Patch& RT1_2externald,  Patch& RT1_2externald_local_posi
 
 				auto n2e=n2em.get(node,levels[lev]);
 
-				for(Integer k=0;k<n2e.size();k++)			
-					std::cout<<n2e[k] <<" ";
-				std::cout<<std::endl;
+				// for(Integer k=0;k<n2e.size();k++)			
+				// 	std::cout<<n2e[k] <<" ";
+				// std::cout<<std::endl;
 
 				// std::cout<<"RT1_e2d"<<std::endl;
 
@@ -23050,7 +23095,7 @@ void RT1_external_patch(Patch& RT1_2externald,  Patch& RT1_2externald_local_posi
              				    // we must find RT1 dofs on this edge
                      //            constexpr auto trace=TraceDofs<ElementFunctionSpace<Elem,RaviartThomasFE,1,1,Dim>>::dofs();
 
-             				    std::cout<<"n2e[k]="<<n2e[k]<<",  side="<<s<<std::endl;
+             				    // std::cout<<"n2e[k]="<<n2e[k]<<",  side="<<s<<std::endl;
              				    dofsdofmap.template dofmap_get<0>(RT1_elem_dofmap,n2e[k],lev);
              				    subarray(RT1alpha,RT1_elem_dofmap,RT1trace[s]);
 
@@ -23075,7 +23120,7 @@ void RT1_external_patch(Patch& RT1_2externald,  Patch& RT1_2externald_local_posi
 
 				}
 
-				std::cout<<"qui1"<<std::endl;
+				// std::cout<<"qui1"<<std::endl;
 
 
 
@@ -23086,35 +23131,35 @@ void RT1_external_patch(Patch& RT1_2externald,  Patch& RT1_2externald_local_posi
 			 //    std::back_inserter( tmp_plus4 )
 			 //    );
 
-				 std::cout<<"tmp_plus4.size()="<<tmp_plus4.size()<<std::endl;
-				 std::cout<<"RT1alpha.size()="<<RT1alpha.size()<<std::endl;
+				 // std::cout<<"tmp_plus4.size()="<<tmp_plus4.size()<<std::endl;
+				 // std::cout<<"RT1alpha.size()="<<RT1alpha.size()<<std::endl;
 
 				for(Integer i=0;i<tmp_plus4.size();i++)
 					tmp_plus4[i]=RT1alpha[i];
 
 
-			    std::cout<<"qui2"<<std::endl;
-			    std::cout<<tmp_plus4.size()<<std::endl;
-			    std::cout<<RT1alpha<<std::endl;
+			    // std::cout<<"qui2"<<std::endl;
+			    // std::cout<<tmp_plus4.size()<<std::endl;
+			    // std::cout<<RT1alpha<<std::endl;
 
 
 
 				RT1_e2alld_plus4[lev][node].insert( RT1_e2alld_plus4[lev][node].end(), tmp_plus4.begin(), tmp_plus4.begin()+min(static_cast<unsigned long>(20),tmp_plus4.size()) );
-				std::cout<<"qui21"<<std::endl;
+				// std::cout<<"qui21"<<std::endl;
 				RT1_e2alld_plus4[lev][node].insert( RT1_e2alld_plus4[lev][node].end(), RT1_e2d[lev][node].begin(), RT1_e2d[lev][node].end() );
-				std::cout<<"qui22"<<std::endl;
+				// std::cout<<"qui22"<<std::endl;
 				std::sort(std::begin(RT1_e2alld_plus4[lev][node]), std::end(RT1_e2alld_plus4[lev][node])); 
-				std::cout<<"qui23"<<std::endl;
+				// std::cout<<"qui23"<<std::endl;
 				RT1_e2alld_plus4[lev][node].erase( std::unique( RT1_e2alld_plus4[lev][node].begin(), RT1_e2alld_plus4[lev][node].end() ), RT1_e2alld_plus4[lev][node].end() ); 
 
-                std::cout<<"qui3"<<std::endl;
+                // std::cout<<"qui3"<<std::endl;
 				all_e2alld_plus4[lev][node].insert( all_e2alld_plus4[lev][node].end(), tmp_plus4.begin(), tmp_plus4.begin()+min(static_cast<unsigned long>(20),tmp_plus4.size()) );
 				all_e2alld_plus4[lev][node].insert( all_e2alld_plus4[lev][node].end(), RT1_e2d[lev][node].begin(), RT1_e2d[lev][node].end() );
 				all_e2alld_plus4[lev][node].insert( all_e2alld_plus4[lev][node].end(), multipliers_e2alld[lev][node].begin(), multipliers_e2alld[lev][node].end() );
 
 				std::sort(std::begin(all_e2alld_plus4[lev][node]), std::end(all_e2alld_plus4[lev][node])); 
 				all_e2alld_plus4[lev][node].erase( std::unique( all_e2alld_plus4[lev][node].begin(), all_e2alld_plus4[lev][node].end() ), all_e2alld_plus4[lev][node].end() ); 
-                std::cout<<"qui4"<<std::endl;
+                // std::cout<<"qui4"<<std::endl;
 
 			    
 
@@ -23181,9 +23226,9 @@ void RT1_external_patch(Patch& RT1_2externald,  Patch& RT1_2externald_local_posi
 						// std::cout<<std::endl;
 						auto n2e_tmp=n2em.get(nodes[j],levels[lev]);
 
-						for(Integer k=0;k<n2e_tmp.size();k++)			
-							std::cout<<n2e_tmp[k] <<" ";
-						std::cout<<std::endl;
+						// for(Integer k=0;k<n2e_tmp.size();k++)			
+						// 	std::cout<<n2e_tmp[k] <<" ";
+						// std::cout<<std::endl;
 
 						if(!is_dirichlet)
 						{
@@ -23375,7 +23420,7 @@ void RT1_external_patch(Patch& RT1_2externald,  Patch& RT1_2externald_local_posi
 				// std::cout<<std::endl;
 
 				
-			std::cout<<std::endl;
+			// std::cout<<std::endl;
 			}
 
 		}
@@ -23501,7 +23546,7 @@ void RT1_external_patch(Patch& RT1_2externald,  Patch& RT1_2externald_local_posi
 
 	    for(Integer i=levels.size()-2;i>=0;i--)
         { 
-        	std::cout<<"i=="<<i<<std::endl;
+        	// std::cout<<"i=="<<i<<std::endl;
         	// levels_interp.matrix(i).print_val();
         	// print_vec(b_rigid_rotation[i+1],b_rigid_rotation[i+1].size(),"b_rigid_rotation");
 
@@ -23522,7 +23567,7 @@ void RT1_external_patch(Patch& RT1_2externald,  Patch& RT1_2externald_local_posi
 
         for(Integer i=0;i<b_rigid_motion.size();i++)
         {
-        	std::cout<<"----i=="<<i<<std::endl;
+        	// std::cout<<"----i=="<<i<<std::endl;
         	for(Integer j=0;j<b_rigid_motion[i].size();j++)
         		{
         			// std::cout<<"----lev=="<<i<<std::endl;
@@ -23530,7 +23575,7 @@ void RT1_external_patch(Patch& RT1_2externald,  Patch& RT1_2externald_local_posi
         			// 	std::cout<<b_rigid_motion[i][j][k]<<" ";
         			// std::cout<<std::endl; 
        			 }
-        	std::cout<<std::endl;        		
+        	// std::cout<<std::endl;        		
         }	
 
 
@@ -23575,17 +23620,17 @@ void RT1_external_patch(Patch& RT1_2externald,  Patch& RT1_2externald_local_posi
 
 
 
-        Real alpha_avg=0.5;
+        Real alpha_avg=2.0;
 
 
         max_iter=50;
         pre_smoothing=3;
         post_smoothing=3;
         auto& level_n_dofs_array=context.full_spaces_ptr()->dofsdofmap().level_n_dofs_array();
-        std::cout<<" "<<std::endl;
-        	for(Integer j=0;j<level_n_dofs_array[0].size();j++)
-        	std::cout<<level_n_dofs_array[0][j]<<std::endl;
-        std::cout<<" "<<std::endl;
+        // std::cout<<" "<<std::endl;
+        // 	for(Integer j=0;j<level_n_dofs_array[0].size();j++)
+        // 	std::cout<<level_n_dofs_array[0][j]<<std::endl;
+        // std::cout<<" "<<std::endl;
         Array<std::vector<Real>,3> residuals;
 
 		uzawa_patch_multigrid_active_set_average(AL,bL,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,
@@ -23603,9 +23648,11 @@ void RT1_external_patch(Patch& RT1_2externald,  Patch& RT1_2externald_local_posi
         if(lambda>10000000000000)
          lambda_txt=std::numeric_limits<double>::infinity();
 
-        save_vector("../matlab/residual_cook/res_lambda_" + std::to_string(lambda_txt)+"_mu_"+ std::to_string(mu)+"_alpha_" + std::to_string(alpha_avg)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+"pre_smooth_"+std::to_string(pre_smoothing)+"post_smooth_"+ std::to_string(pre_smoothing)+".dat",residuals[0]);
-        save_vector("../matlab/residual_cook/res1_lambda_"+ std::to_string(lambda_txt)+"_mu_"+ std::to_string(mu)+"_alpha_" + std::to_string(alpha_avg)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+ std::to_string(n1)+"pre_smooth_"+std::to_string(pre_smoothing)+"post_smooth_"+ std::to_string(pre_smoothing)+".dat",residuals[1]);
-        save_vector("../matlab/residual_cook/res2_lambda_"+ std::to_string(lambda_txt)+"_mu_"+ std::to_string(mu)+"_alpha_" + std::to_string(alpha_avg)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+ std::to_string(n1)+"pre_smooth_"+std::to_string(pre_smoothing)+"post_smooth_"+ std::to_string(pre_smoothing)+".dat",residuals[2]);
+     	save_3vectors("../residual_contact/res_lambda_" + std::to_string(lambda_txt)+"_mu_"+ std::to_string(mu)+"_alpha_" + std::to_string(alpha_avg)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+"pre_smooth_"+std::to_string(pre_smoothing)+"post_smooth_"+ std::to_string(pre_smoothing)+".txt",residuals[0],residuals[1],residuals[2]);
+
+        // save_vector("../residual_contact/res_lambda_" + std::to_string(lambda_txt)+"_mu_"+ std::to_string(mu)+"_alpha_" + std::to_string(alpha_avg)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+"pre_smooth_"+std::to_string(pre_smoothing)+"post_smooth_"+ std::to_string(pre_smoothing)+".txt",residuals[0]);
+        // save_vector("../residual_contact/res1_lambda_"+ std::to_string(lambda_txt)+"_mu_"+ std::to_string(mu)+"_alpha_" + std::to_string(alpha_avg)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+ std::to_string(n1)+"pre_smooth_"+std::to_string(pre_smoothing)+"post_smooth_"+ std::to_string(pre_smoothing)+".txt",residuals[1]);
+        // save_vector("../residual_contact/res2_lambda_"+ std::to_string(lambda_txt)+"_mu_"+ std::to_string(mu)+"_alpha_" + std::to_string(alpha_avg)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+ std::to_string(n1)+"pre_smooth_"+std::to_string(pre_smoothing)+"post_smooth_"+ std::to_string(pre_smoothing)+".txt",residuals[2]);
 
 
 
@@ -23726,122 +23773,122 @@ void RT1_external_patch(Patch& RT1_2externald,  Patch& RT1_2externald_local_posi
 
 
 
-std::vector<Integer> n_nodes_level(levels.size());
+// std::vector<Integer> n_nodes_level(levels.size());
 
 
-	for(Integer j=0;j<mesh.points().size();j++)
-		{
-			for(Integer lev=0;lev<levels.size();lev++)
-				{
-				auto n2e=n2em.get(j,levels[lev]);
-				if(n2e.size())
-				n_nodes_level[lev]+=1;
-				// std::cout<<levels[lev]<<", "<< j<<", "<< n2e.size() <<std::endl;
-				}
-		}
+// 	for(Integer j=0;j<mesh.points().size();j++)
+// 		{
+// 			for(Integer lev=0;lev<levels.size();lev++)
+// 				{
+// 				auto n2e=n2em.get(j,levels[lev]);
+// 				if(n2e.size())
+// 				n_nodes_level[lev]+=1;
+// 				// std::cout<<levels[lev]<<", "<< j<<", "<< n2e.size() <<std::endl;
+// 				}
+// 		}
 	
-	for(Integer lev=0;lev<levels.size();lev++)
-		{
-		// std::cout<<n_nodes_level[lev]<<std::endl;
-		}
+// 	for(Integer lev=0;lev<levels.size();lev++)
+// 		{
+// 		// std::cout<<n_nodes_level[lev]<<std::endl;
+// 		}
 
 
-std::vector<std::vector<Integer> >  node2elem_lev(levels.size());
+// std::vector<std::vector<Integer> >  node2elem_lev(levels.size());
 
-	for(Integer lev=0;lev<levels.size();lev++)
-		{
-		node2elem_lev[lev].resize(n_nodes_level[lev]);
-		}
-
-
-	for(Integer lev=0;lev<levels.size();lev++)
-		{
-
-		 std::vector<bool>	found_node(n_nodes_level[lev],false);
-		 Integer index=0;
-		 found_node[0]=true;
-		 node2elem_lev[lev][0]=0;
-		 Integer cont=1;
+// 	for(Integer lev=0;lev<levels.size();lev++)
+// 		{
+// 		node2elem_lev[lev].resize(n_nodes_level[lev]);
+// 		}
 
 
+// 	for(Integer lev=0;lev<levels.size();lev++)
+// 		{
 
-		 while(cont<n_nodes_level[lev])
-		 {
-
-
-		 	auto n2e=n2em.get(index,levels[lev]);
-		 	index=-1;
-		 	for(Integer k=0;k<n2e.size();k++)
-		 		{
-		 			auto & nodes=mesh.elem(n2e[k]).nodes;
-		 			for(Integer n=0;n<nodes.size();n++)
-		 			{
-			 			if(!found_node[nodes[n]])
-			 			{
-				 		 node2elem_lev[lev][cont]=nodes[n];
-				 		 found_node[nodes[n]]=true;
-				 		 cont++;
-				 		 index=nodes[n];
-			 			}
-		 			}
+// 		 std::vector<bool>	found_node(n_nodes_level[lev],false);
+// 		 Integer index=0;
+// 		 found_node[0]=true;
+// 		 node2elem_lev[lev][0]=0;
+// 		 Integer cont=1;
 
 
-		 		}
-		  if(index==-1)
-		  {
-		  	for(Integer k=0;k<n_nodes_level[lev];k++)
-		  		if(!found_node[k])
-		  		{
-		  			index=k;
-				    node2elem_lev[lev][cont]=index;
-				    found_node[index]=true;
-				 	cont++;		  			
-		  			break;
-		  		}
-		  }
+
+// 		 while(cont<n_nodes_level[lev])
+// 		 {
 
 
-		 }
+// 		 	auto n2e=n2em.get(index,levels[lev]);
+// 		 	index=-1;
+// 		 	for(Integer k=0;k<n2e.size();k++)
+// 		 		{
+// 		 			auto & nodes=mesh.elem(n2e[k]).nodes;
+// 		 			for(Integer n=0;n<nodes.size();n++)
+// 		 			{
+// 			 			if(!found_node[nodes[n]])
+// 			 			{
+// 				 		 node2elem_lev[lev][cont]=nodes[n];
+// 				 		 found_node[nodes[n]]=true;
+// 				 		 cont++;
+// 				 		 index=nodes[n];
+// 			 			}
+// 		 			}
 
 
-		}
-
-	for(Integer lev=0;lev<levels.size();lev++)
-		{
-			std::cout<<std::endl<<"lev="<<lev<<std::endl;
-			for(Integer k=0;k<node2elem_lev[lev].size();k++)
-				std::cout<<node2elem_lev[lev][k]<<" "<<std::endl;
-		}
-
-		std::vector<std::vector<std::vector<Integer>>> all_e2alld_reorder,RT1_e2alld_reorder;
-		all_e2alld_reorder.resize(levels.size());
-		RT1_e2alld_reorder.resize(levels.size());
-
-
-	for(Integer lev=0;lev<levels.size();lev++)
-		{
-		// std::cout<<std::endl<<"lev="<<lev<<std::endl;
-		all_e2alld_reorder[lev].resize(node2elem_lev[lev].size());
-		RT1_e2alld_reorder[lev].resize(node2elem_lev[lev].size());			
-			for(Integer k=0;k<node2elem_lev[lev].size();k++)			
-				{
-					// std::cout<<std::endl<<"k="<<k<<std::endl;
-					auto& tmp1=all_e2alld[lev][node2elem_lev[lev][k]];
-					auto& tmp2=RT1_e2alld[lev][node2elem_lev[lev][k]];
+// 		 		}
+// 		  if(index==-1)
+// 		  {
+// 		  	for(Integer k=0;k<n_nodes_level[lev];k++)
+// 		  		if(!found_node[k])
+// 		  		{
+// 		  			index=k;
+// 				    node2elem_lev[lev][cont]=index;
+// 				    found_node[index]=true;
+// 				 	cont++;		  			
+// 		  			break;
+// 		  		}
+// 		  }
 
 
-					all_e2alld_reorder[lev][k].resize(tmp1.size());
-					RT1_e2alld_reorder[lev][k].resize(tmp2.size());
-
-					for(Integer s=0;s<tmp1.size();s++)
-						all_e2alld_reorder[lev][k][s]=tmp1[s];
-
-					for(Integer s=0;s<tmp2.size();s++)
-						RT1_e2alld_reorder[lev][k][s]=tmp2[s];
+// 		 }
 
 
-				}
-		}
+// 		}
+
+// 	for(Integer lev=0;lev<levels.size();lev++)
+// 		{
+// 			std::cout<<std::endl<<"lev="<<lev<<std::endl;
+// 			for(Integer k=0;k<node2elem_lev[lev].size();k++)
+// 				std::cout<<node2elem_lev[lev][k]<<" "<<std::endl;
+// 		}
+
+// 		std::vector<std::vector<std::vector<Integer>>> all_e2alld_reorder,RT1_e2alld_reorder;
+// 		all_e2alld_reorder.resize(levels.size());
+// 		RT1_e2alld_reorder.resize(levels.size());
+
+
+// 	for(Integer lev=0;lev<levels.size();lev++)
+// 		{
+// 		// std::cout<<std::endl<<"lev="<<lev<<std::endl;
+// 		all_e2alld_reorder[lev].resize(node2elem_lev[lev].size());
+// 		RT1_e2alld_reorder[lev].resize(node2elem_lev[lev].size());			
+// 			for(Integer k=0;k<node2elem_lev[lev].size();k++)			
+// 				{
+// 					// std::cout<<std::endl<<"k="<<k<<std::endl;
+// 					auto& tmp1=all_e2alld[lev][node2elem_lev[lev][k]];
+// 					auto& tmp2=RT1_e2alld[lev][node2elem_lev[lev][k]];
+
+
+// 					all_e2alld_reorder[lev][k].resize(tmp1.size());
+// 					RT1_e2alld_reorder[lev][k].resize(tmp2.size());
+
+// 					for(Integer s=0;s<tmp1.size();s++)
+// 						all_e2alld_reorder[lev][k][s]=tmp1[s];
+
+// 					for(Integer s=0;s<tmp2.size();s++)
+// 						RT1_e2alld_reorder[lev][k][s]=tmp2[s];
+
+
+// 				}
+// 		}
 
 
 // std::cout<<"all_e2alld"<<std::endl;
@@ -31239,123 +31286,123 @@ std::cout<<" POST W="<<std::endl;
 
 
 
-	 using tp5=std::tuple< Number<1>,Number<0>,Number<0>,Number<0>,Number<1>,Number<0>,Number<0>,Number<0>,Number<0>>;
-	 using tp6=std::tuple< Number<1>,Number<0>,Number<0>,Number<0>,Number<1>,Number<0>,Number<0>,Number<0>,Number<0>>;
-	 using nonzeroproduct=StaticBooleanMatrixMatrixMultiplicationFindNonZeros<3,3,tp5,3,3,tp6>;
-	 using booleanmatrix=TupleOfTupleToBooleanTuple<nonzeroproduct>;
-	 using findnonzeronumbers=FindNonZeroNumbers<booleanmatrix>;
-	 Matrix<Real,3,3> mat1{1,2,3,4,5,6,7,8,9};
-	 Matrix<Real,3,3> mat2{2,3,4,5,6,7,8,9,10};
-	Matrix<Real,3,3> mat3;//{0,0,0,0,0,0,0,0,0};
-	Matrix<Real,3,3> mat4;//{0,0,0,0,0,0,0,0,0};
+	//  using tp5=std::tuple< Number<1>,Number<0>,Number<0>,Number<0>,Number<1>,Number<0>,Number<0>,Number<0>,Number<0>>;
+	//  using tp6=std::tuple< Number<1>,Number<0>,Number<0>,Number<0>,Number<1>,Number<0>,Number<0>,Number<0>,Number<0>>;
+	//  using nonzeroproduct=StaticBooleanMatrixMatrixMultiplicationFindNonZeros<3,3,tp5,3,3,tp6>;
+	//  using booleanmatrix=TupleOfTupleToBooleanTuple<nonzeroproduct>;
+	//  using findnonzeronumbers=FindNonZeroNumbers<booleanmatrix>;
+	//  Matrix<Real,3,3> mat1{1,2,3,4,5,6,7,8,9};
+	//  Matrix<Real,3,3> mat2{2,3,4,5,6,7,8,9,10};
+	// Matrix<Real,3,3> mat3;//{0,0,0,0,0,0,0,0,0};
+	// Matrix<Real,3,3> mat4;//{0,0,0,0,0,0,0,0,0};
 
 
-	constexpr Integer Rows=3;
-	constexpr Integer Cols=3;
+	// constexpr Integer Rows=3;
+	// constexpr Integer Cols=3;
 
-	using boolean1=std::tuple<One,Zero,Zero,One,One,Zero,Zero,Zero,One>;
-	StaticMatrix<Real,3,3,boolean1> ede;
-	StaticMatrix<Real,3,3> hfe;
+	// using boolean1=std::tuple<One,Zero,Zero,One,One,Zero,Zero,Zero,One>;
+	// StaticMatrix<Real,3,3,boolean1> ede;
+	// StaticMatrix<Real,3,3> hfe;
 
-	Real nonzero;
-	Integer Constant=pow(10,7);
-	clock_t begin = clock();
-	for(Integer ii=0;ii<Constant;ii++)
-	{
-	    //     for(Integer i = 0; i < 3; ++i) {
-	    //       for(Integer j = 0; j < 3; ++j) {
-	    //           mat1(i, j) = mat1(i, j) /pow(1.0,1.0/ii);
-	    //         }
-	    //       }
-
-
-	    // StaticMatrixProduct<findnonzeronumbers,nonzeroproduct>(mat1,mat2,mat3);
-	    // StaticMatrixProduct<findnonzeronumbers,nonzeroproduct>(mat1,mat3,mat4);
-	    // mat3=mat1*mat2;
-
-
-	        // mat3=0;
-	        // for(Integer i = 0; i < 3; ++i) {
-	        //   for(Integer j = 0; j < 3; ++j) {
-	        //     for(Integer k = 0; k < 3; ++k) {
-	        //       mat3(i, k) += mat1(i, j) * mat2(j, k);
-	        //     }
-	        //   }
-	        // }
-
-	//         for(Integer i = 0; i < 3; ++i) {
-	//           for(Integer j = 0; j < 3; ++j) {
-	//             mat3(i, j) = mat1(i, 0) * mat2(0,j);
-	//             for(Integer k = 1; k < 1; ++k) {
-	//               mat3(i, j) += mat1(i, k) * mat2(k,j);
-	//             }
-	//           }
-	//         }
-
-
-	// nonzero+=mat3(0,0)+mat3(0,1)+mat3(0,2)+mat3(1,0)+mat3(1,1)+mat3(1,2)+mat3(2,0)+mat3(2,1)+mat3(2,2);
-
-	   // nonzero=StaticScalarProduct<Nonzero>(v0,v1);
-	    // StaticMatrixProduct<findnonzeronumbers,nonzeroproduct>(mat1,mat2,mat3,vec1,vec2);
-	    //     // nonzero=0;
-
-
-	              // mat3= mat1 * mat2;
-
-	     // nonzero=v0[3]*v1[2]+v0[4]*v1[5]+v0[5]*v1[8];
-	    // nonzero=0;
-	    // for(Integer ii=0;ii<3;ii++)
-	    //   nonzero+=mat1(1,ii)*mat2(ii,2);
-	}
-	clock_t end = clock();
-	double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
-
-	// std::cout<<"mat==="<<mat3<<std::endl;
-
-	// std::cout<<" elapsed_secs------------>"<<elapsed_secs<<std::endl;
-
-	// std::cout<<" nonzero------------>"<<nonzero<<std::endl;
-
-	// auto& dm =W1.dofmap();
-	// auto& dm0=std::get<0>(dm);
-	// auto& dm01=std::get<0>(dm0);
-	// auto& dm02=std::get<1>(dm0);
-	// auto& dm1=std::get<1>(dm);
-	// // auto& dm2=std::get<2>(dm);
-
-
-
-
-	// std::cout<<"dm01"<<std::endl;
-	// for(Integer ii=0;ii<dm01.size();ii++)
+	// Real nonzero;
+	// Integer Constant=pow(10,7);
+	// clock_t begin = clock();
+	// for(Integer ii=0;ii<Constant;ii++)
 	// {
-	//  for(Integer jj=0;jj<dm01[ii].size();jj++)
-	//   std::cout<<dm01[ii][jj]<<" ";
-	// std::cout<<std::endl;
-	// }
-	// std::cout<<"dm02"<<std::endl;
+	//     //     for(Integer i = 0; i < 3; ++i) {
+	//     //       for(Integer j = 0; j < 3; ++j) {
+	//     //           mat1(i, j) = mat1(i, j) /pow(1.0,1.0/ii);
+	//     //         }
+	//     //       }
 
-	// for(Integer ii=0;ii<dm02.size();ii++)
-	// {
-	//  for(Integer jj=0;jj<dm02[ii].size();jj++)
-	//   std::cout<<dm02[ii][jj]<<" ";
-	// std::cout<<std::endl;
-	// }
-	// std::cout<<"dm1"<<std::endl;
 
-	// for(Integer ii=0;ii<dm1.size();ii++)
-	// {
-	//  for(Integer jj=0;jj<dm1[ii].size();jj++)
-	//   std::cout<<dm1[ii][jj]<<" ";
-	// std::cout<<std::endl;
+	//     // StaticMatrixProduct<findnonzeronumbers,nonzeroproduct>(mat1,mat2,mat3);
+	//     // StaticMatrixProduct<findnonzeronumbers,nonzeroproduct>(mat1,mat3,mat4);
+	//     // mat3=mat1*mat2;
+
+
+	//         // mat3=0;
+	//         // for(Integer i = 0; i < 3; ++i) {
+	//         //   for(Integer j = 0; j < 3; ++j) {
+	//         //     for(Integer k = 0; k < 3; ++k) {
+	//         //       mat3(i, k) += mat1(i, j) * mat2(j, k);
+	//         //     }
+	//         //   }
+	//         // }
+
+	// //         for(Integer i = 0; i < 3; ++i) {
+	// //           for(Integer j = 0; j < 3; ++j) {
+	// //             mat3(i, j) = mat1(i, 0) * mat2(0,j);
+	// //             for(Integer k = 1; k < 1; ++k) {
+	// //               mat3(i, j) += mat1(i, k) * mat2(k,j);
+	// //             }
+	// //           }
+	// //         }
+
+
+	// // nonzero+=mat3(0,0)+mat3(0,1)+mat3(0,2)+mat3(1,0)+mat3(1,1)+mat3(1,2)+mat3(2,0)+mat3(2,1)+mat3(2,2);
+
+	//    // nonzero=StaticScalarProduct<Nonzero>(v0,v1);
+	//     // StaticMatrixProduct<findnonzeronumbers,nonzeroproduct>(mat1,mat2,mat3,vec1,vec2);
+	//     //     // nonzero=0;
+
+
+	//               // mat3= mat1 * mat2;
+
+	//      // nonzero=v0[3]*v1[2]+v0[4]*v1[5]+v0[5]*v1[8];
+	//     // nonzero=0;
+	//     // for(Integer ii=0;ii<3;ii++)
+	//     //   nonzero+=mat1(1,ii)*mat2(ii,2);
 	// }
-	// std::cout<<"dm2"<<std::endl;
-	// for(Integer ii=0;ii<dm2.size();ii++)
-	// {
-	//    for(Integer jj=0;jj<dm2[ii].size();jj++)
-	//       std::cout<<dm2[ii][jj]<<" ";
-	//     std::cout<<std::endl;
-	// }
+	// clock_t end = clock();
+	// double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
+
+	// // std::cout<<"mat==="<<mat3<<std::endl;
+
+	// // std::cout<<" elapsed_secs------------>"<<elapsed_secs<<std::endl;
+
+	// // std::cout<<" nonzero------------>"<<nonzero<<std::endl;
+
+	// // auto& dm =W1.dofmap();
+	// // auto& dm0=std::get<0>(dm);
+	// // auto& dm01=std::get<0>(dm0);
+	// // auto& dm02=std::get<1>(dm0);
+	// // auto& dm1=std::get<1>(dm);
+	// // // auto& dm2=std::get<2>(dm);
+
+
+
+
+	// // std::cout<<"dm01"<<std::endl;
+	// // for(Integer ii=0;ii<dm01.size();ii++)
+	// // {
+	// //  for(Integer jj=0;jj<dm01[ii].size();jj++)
+	// //   std::cout<<dm01[ii][jj]<<" ";
+	// // std::cout<<std::endl;
+	// // }
+	// // std::cout<<"dm02"<<std::endl;
+
+	// // for(Integer ii=0;ii<dm02.size();ii++)
+	// // {
+	// //  for(Integer jj=0;jj<dm02[ii].size();jj++)
+	// //   std::cout<<dm02[ii][jj]<<" ";
+	// // std::cout<<std::endl;
+	// // }
+	// // std::cout<<"dm1"<<std::endl;
+
+	// // for(Integer ii=0;ii<dm1.size();ii++)
+	// // {
+	// //  for(Integer jj=0;jj<dm1[ii].size();jj++)
+	// //   std::cout<<dm1[ii][jj]<<" ";
+	// // std::cout<<std::endl;
+	// // }
+	// // std::cout<<"dm2"<<std::endl;
+	// // for(Integer ii=0;ii<dm2.size();ii++)
+	// // {
+	// //    for(Integer jj=0;jj<dm2[ii].size();jj++)
+	// //       std::cout<<dm2[ii][jj]<<" ";
+	// //     std::cout<<std::endl;
+	// // }
 
 
 
@@ -31689,8 +31736,8 @@ std::cout<<" POST W="<<std::endl;
 	    //read_mesh("../data/square_2_def.MFEM", mesh);
 
 
-		NodeToElem<MeshT> node2elem3(mesh);
-		auto node2elem=node2elem3.val();
+		// NodeToElem<MeshT> node2elem3(mesh);
+		// auto node2elem=node2elem3.val();
 	    //auto vec=dofmap<ElemLagrange1<Elem>   , ElemLagrange3<Elem,1,1> >(mesh);
 
 	    // Primitive minusone(-1);

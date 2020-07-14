@@ -869,8 +869,8 @@ template<Integer N,typename All, typename Unique>
 ///// Find the subtuple from Nmin to Nmax of the given std::tuple<Ts...>.
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-template<Integer N,Integer Nmin,Integer Nmax,typename...Ts>
-class SubTupleHelper;
+// template<Integer N,Integer Nmin,Integer Nmax,typename...Ts>
+// class SubTupleHelper;
 
 // template<Integer N,Integer Nmin,Integer Nmax>
 // class SubTupleHelper<N,Nmin,Nmax,std::tuple<>>
@@ -892,19 +892,110 @@ class SubTupleHelper;
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// template<typename N,typename Nmin,typename Nmax,typename...Ts>
+// class SubTupleHelper;
+
+
+// template<Integer N,Integer Nmin,Integer Nmax>
+// class SubTupleHelper<N,Nmin,Nmax,std::tuple<>>
+// {
+// public:
+//  using type=std::tuple<>;
+// };
+
+
+// template<Integer Nmin,Integer Nmax,typename...Ts>
+// class SubTupleHelper<sizeof...(Ts)-1,Nmin,Nmax,std::tuple<Ts...>>
+// {
+// public:
+//  // using single_type=std::conditional_t< (N<Nmin || N>Nmax), std::tuple<>, std::tuple<GetType<std::tuple<Ts...>,N>>> ;
+//  static constexpr Integer N=sizeof...(Ts)-1;
+//  using type=std::conditional_t< (N<Nmin || N>Nmax),
+//                                  std::tuple<>,
+//                                  std::tuple<GetType<std::tuple<Ts...>,N>>>;
+// };
+
+// template<Integer N,Integer Nmin,Integer Nmax,typename...Ts>
+// class SubTupleHelper<N,Nmin,Nmax,std::tuple<Ts...>>
+// {
+// public:
+//  // using single_type=std::conditional_t< (N<Nmin || N>Nmax), std::tuple<>, std::tuple<GetType<std::tuple<Ts...>,N>>> ;
+// // if N<Nmin, we just move on, without adding types
+// // if N>Nmax, we stop, returning an empty tuple
+// // otherwise add the component
+// using type=
+// std::conditional_t<(N<Nmin),
+//                    typename SubTupleHelper<N+1,Nmin,Nmax,std::tuple<Ts...> >::type,
+//                    std::conditional_t< (N>Nmax),
+//                                        std::tuple<>,
+//                                        TupleCatType<std::tuple<GetType<std::tuple<Ts...>,N>>, 
+//                                                     typename SubTupleHelper<N+1,Nmin,Nmax,std::tuple<Ts...> >::type>
+//                                      >
+
+//                   >;
+
+
+//  // using type=std::conditional_t< (N<Nmin || N>Nmax),
+//  //                                 std::tuple<>,
+//  //                                 TupleCatType< std::tuple<GetType<std::tuple<Ts...>,N>>, 
+//  //                                               typename SubTupleHelper<N+1,Nmin,Nmax,std::tuple<Ts...> >::type >>;
+// };
+
+
+
+// template<Integer Nmin,Integer Nmax,typename...Ts>
+// using SubTupleType=typename SubTupleHelper<0,Nmin,Nmax,std::tuple<Ts...> >::type;
+
+
+
+template<typename N,typename Nmin,typename Nmax,typename...Ts>
+class SubTupleHelper;
+
+template<Integer N>
+class Number;
+
 template<Integer N,Integer Nmin,Integer Nmax>
-class SubTupleHelper<N,Nmin,Nmax,std::tuple<>>
+class SubTupleHelper<Number<N>,Number<Nmin>,Number<Nmax>,std::tuple<>>
 {
 public:
  using type=std::tuple<>;
 };
 
 
+
 template<Integer Nmin,Integer Nmax,typename...Ts>
-class SubTupleHelper<sizeof...(Ts)-1,Nmin,Nmax,std::tuple<Ts...>>
+class SubTupleHelper<Number<sizeof...(Ts)-1>,Number<Nmin>,Number<Nmax>,std::tuple<Ts...>>
 {
 public:
- // using single_type=std::conditional_t< (N<Nmin || N>Nmax), std::tuple<>, std::tuple<GetType<std::tuple<Ts...>,N>>> ;
  static constexpr Integer N=sizeof...(Ts)-1;
  using type=std::conditional_t< (N<Nmin || N>Nmax),
                                  std::tuple<>,
@@ -912,35 +1003,45 @@ public:
 };
 
 template<Integer N,Integer Nmin,Integer Nmax,typename...Ts>
-class SubTupleHelper<N,Nmin,Nmax,std::tuple<Ts...>>
+class SubTupleHelper<Number<N>,Number<Nmin>,Number<Nmax>,std::tuple<Ts...>>
 {
 public:
- // using single_type=std::conditional_t< (N<Nmin || N>Nmax), std::tuple<>, std::tuple<GetType<std::tuple<Ts...>,N>>> ;
 // if N<Nmin, we just move on, without adding types
 // if N>Nmax, we stop, returning an empty tuple
 // otherwise add the component
 using type=
 std::conditional_t<(N<Nmin),
-                   typename SubTupleHelper<N+1,Nmin,Nmax,std::tuple<Ts...> >::type,
+                   typename SubTupleHelper<Number<N+1>,Number<Nmin>,Number<Nmax>,std::tuple<Ts...> >::type,
                    std::conditional_t< (N>Nmax),
                                        std::tuple<>,
                                        TupleCatType<std::tuple<GetType<std::tuple<Ts...>,N>>, 
-                                                    typename SubTupleHelper<N+1,Nmin,Nmax,std::tuple<Ts...> >::type>
+                                                    typename SubTupleHelper<Number<N+1>,Number<Nmin>,Number<Nmax>,std::tuple<Ts...> >::type>
                                      >
-
                   >;
-
-
- // using type=std::conditional_t< (N<Nmin || N>Nmax),
- //                                 std::tuple<>,
- //                                 TupleCatType< std::tuple<GetType<std::tuple<Ts...>,N>>, 
- //                                               typename SubTupleHelper<N+1,Nmin,Nmax,std::tuple<Ts...> >::type >>;
 };
 
 
 
 template<Integer Nmin,Integer Nmax,typename...Ts>
-using SubTupleType=typename SubTupleHelper<0,Nmin,Nmax,std::tuple<Ts...> >::type;
+using SubTupleType=typename SubTupleHelper<Number<0>,Number<Nmin>,Number<Nmax>,std::tuple<Ts...> >::type;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -3232,11 +3333,11 @@ class Function;
 
 
 template<typename Tuple,typename NewTuple,Integer Nmax, Integer N>
-class FromElementFunctionSpacesToFirstSpaceTupleTypeAux;
+class TransformElementFunctionSpacesToFirstSpaceTupleTypeAux;
 
 
 template<typename Tuple>
-class FromElementFunctionSpacesToFirstSpaceTupleTypeAux<Tuple,std::tuple<>,0,0>
+class TransformElementFunctionSpacesToFirstSpaceTupleTypeAux<Tuple,std::tuple<>,0,0>
 {
 public:
   using type=std::tuple<Number<0>>;
@@ -3244,7 +3345,7 @@ public:
 
 
 template<typename Tuple,typename NewTuple,Integer Nmax>
-class FromElementFunctionSpacesToFirstSpaceTupleTypeAux<Tuple,NewTuple,Nmax,Nmax>
+class TransformElementFunctionSpacesToFirstSpaceTupleTypeAux<Tuple,NewTuple,Nmax,Nmax>
 {
 public:
   static constexpr Integer N1=GetType<NewTuple,TupleTypeSize<NewTuple>::value-1>::value;
@@ -3255,16 +3356,16 @@ public:
 };
 
 template<typename Tuple,Integer Nmax>
-class FromElementFunctionSpacesToFirstSpaceTupleTypeAux<Tuple,std::tuple<>,Nmax,0>
+class TransformElementFunctionSpacesToFirstSpaceTupleTypeAux<Tuple,std::tuple<>,Nmax,0>
 {
 public:
   using NewTuple=std::tuple<Number<0>>;
-  using type=typename FromElementFunctionSpacesToFirstSpaceTupleTypeAux<Tuple,NewTuple,Nmax,1>::type;
+  using type=typename TransformElementFunctionSpacesToFirstSpaceTupleTypeAux<Tuple,NewTuple,Nmax,1>::type;
 };
 
 
 template<typename Tuple,typename NewTuple_,Integer Nmax, Integer N>
-class FromElementFunctionSpacesToFirstSpaceTupleTypeAux
+class TransformElementFunctionSpacesToFirstSpaceTupleTypeAux
 {
 public:
   static constexpr Integer N1=GetType<NewTuple_,TupleTypeSize<NewTuple_>::value-1>::value;
@@ -3272,22 +3373,22 @@ public:
   using NewTuple=typename std::conditional<(N1<N2) , 
                                            TupleCatType< NewTuple_, std::tuple<Number<N>> >,
                                            NewTuple_>::type;
-  using type=typename FromElementFunctionSpacesToFirstSpaceTupleTypeAux<Tuple,NewTuple,Nmax,N+1>::type;
+  using type=typename TransformElementFunctionSpacesToFirstSpaceTupleTypeAux<Tuple,NewTuple,Nmax,N+1>::type;
 };
 
 
 
 
 template<typename Tuple>
-class FromElementFunctionSpacesToFirstSpaceTupleTypeHelper
+class TransformElementFunctionSpacesToFirstSpaceTupleTypeHelper
 {
 public:
   static constexpr Integer Nmax=TupleTypeSize<Tuple>::value-1;
-  using type=typename FromElementFunctionSpacesToFirstSpaceTupleTypeAux<Tuple,std::tuple<>,Nmax,0>::type;
+  using type=typename TransformElementFunctionSpacesToFirstSpaceTupleTypeAux<Tuple,std::tuple<>,Nmax,0>::type;
 };
 
 template<typename Tuple>
-using FromElementFunctionSpacesToFirstSpaceTupleType=typename FromElementFunctionSpacesToFirstSpaceTupleTypeHelper<Tuple>::type;
+using TransformElementFunctionSpacesToFirstSpaceTupleType=typename TransformElementFunctionSpacesToFirstSpaceTupleTypeHelper<Tuple>::type;
 
 
 

@@ -30,7 +30,7 @@ class MultiplicationMatrixAndTransposedAux
 public:
  using Output=OperatorType<Multiplication<Left,Right> >;
 
- template<Integer M1,Integer N1,Integer M2, Integer N2>
+ template<Integer M1,Integer N1,Integer M2, Integer N2,Integer Dummy>
  class apply_aux
  {
   public:
@@ -46,8 +46,17 @@ public:
   }
  };
 
-template<Integer M2, Integer N2>
- class apply_aux<1,1,M2,N2>
+template<Integer Dummy>
+ class apply_aux<1,1,1,1,Dummy>
+ {
+ public:
+  inline constexpr static void apply(Output& A,const Left& B,const Right& C)  
+   {A(0,0)=B(0,0)*C(0,0);};
+  
+ };
+ 
+template<Integer M2, Integer N2,Integer Dummy>
+ class apply_aux<1,1,M2,N2,Dummy>
  {
   public:
   inline constexpr static void apply(Output& A,const Left& B,const Right& C)  
@@ -59,8 +68,8 @@ template<Integer M2, Integer N2>
   
  };
 
-template<Integer M1, Integer N1>
- class apply_aux<M1,N1,1,1>
+template<Integer M1, Integer N1,Integer Dummy>
+ class apply_aux<M1,N1,1,1,Dummy>
  {
   public:
   inline constexpr static void apply(Output& A,const Left& B,const Right& C)  
@@ -72,20 +81,12 @@ template<Integer M1, Integer N1>
   
  };
 
-template<>
- class apply_aux<1,1,1,1>
- {
- public:
-  inline constexpr static void apply(Output& A,const Left& B,const Right& C)  
-   {A(0,0)=B(0,0)*C(0,0);};
-  
- };
 
  inline constexpr static void apply(Output& A,
                                     const Left& B,
                                     const Right& C)
   {
-    apply_aux<Left::Rows,Left::Cols,Right::Rows,Right::Cols>::apply(A,B,C);
+    apply_aux<Left::Rows,Left::Cols,Right::Rows,Right::Cols,1>::apply(A,B,C);
   };
 
 };

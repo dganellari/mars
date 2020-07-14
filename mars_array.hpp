@@ -17,7 +17,7 @@ namespace mars {
 
 
     template<typename T, Integer Dim_>
-    class Array: public TensorBase<T, std::make_index_sequence<Dim_>> 
+    class Array: public TensorBase<T, std::make_integer_sequence<Integer,Dim_>> 
     {
     public:
         static constexpr Integer Dim=Dim_;
@@ -31,7 +31,7 @@ namespace mars {
         using const_pointer=const value_type*;
 
 
-        using MB = TensorBase<T, std::make_index_sequence<Dim>>;
+        using MB = TensorBase<T, std::make_integer_sequence<Integer,Dim>>;
         using MB::MB;
         using MB::values;
 
@@ -576,13 +576,13 @@ using ArrayChangeType=typename ArrayChangeTypeHelper<NewType, Arr>::type;
   return arr;
   }
 
-  template<typename T,Integer Rows,Integer Cols, Integer NonZeroRows>
+  template<typename T,Integer Rows,Integer Cols>
   class Matrix;
 
   template<typename T, Integer Dim1,Integer Dim2>
   constexpr auto ArrayOfArray2Matrix(const Array<Array<T,Dim2>,Dim1>& arr)
   {
-    Matrix<T,Dim1,Dim2,-1> mat;
+    Matrix<T,Dim1,Dim2> mat;
     for(Integer i=0;i<Dim1;i++)
       for(Integer j=0;j<Dim2;j++)
         mat(i,j)=arr[i][j];

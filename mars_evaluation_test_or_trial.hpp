@@ -10,15 +10,97 @@ namespace mars {
 
 
 
-template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, Integer N, typename Operator_,typename...OtherTemplateArguments>
-class Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_>>,OtherTemplateArguments...>
+// template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, Integer N, typename Operator_,typename...OtherTemplateArguments>
+// class Evaluation<Expression<TestOrTrial<MixedSpace,N,Operator_>>,OtherTemplateArguments...>
+// {
+//  public:
+//  using type= TestOrTrial<MixedSpace,N,Operator_>;
+
+//  static_assert((IsSame<TestOrTrial<MixedSpace,N,Operator_>,Test<MixedSpace,N,Operator_>>::value ||
+//                 IsSame<TestOrTrial<MixedSpace,N,Operator_>,Trial<MixedSpace,N,Operator_>>::value )
+//                && "In Evaluation<Expression<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");
+//  using FunctionSpace=typename type::FunctionSpace;
+//  using FunctionSpaces=GetType<typename type::UniqueElementFunctionSpacesTupleType,type::value>;
+//  using Elem=typename FunctionSpaces::Elem;
+//  using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpaces>;
+//  using Operator=typename type::Operator;
+//  using value_type=OperatorType<type,OtherTemplateArguments...>;
+
+//  Evaluation(){};
+
+//  Evaluation(const type& expr):
+//  eval_(expr)
+//  {};
+ 
+//  //  template<typename...Forms, typename FiniteElem, typename...Inputs>
+//  // constexpr void apply(value_type& value,const FiniteElem& J, const ShapeFunctions2<Forms...>& shape_functions)
+//  template<typename...Args, typename FiniteElem,typename...Inputs>
+//  constexpr void apply(value_type& value, FiniteElem& J, const std::tuple<Args...>& shape_functions,const Inputs&...inputs)
+
+//  {
+//   using TupleOfTupleShapeFunction=std::tuple<Args...>;
+//   using tuple_type=GetType<TupleOfTupleShapeFunction,type::value>;
+//   const auto& tuple=tuple_get<type::value>(shape_functions);
+//     // const auto& tuple=tuple_get<type::value>(shape_functions());
+//   constexpr Integer M=TypeToTupleElementPosition<ShapeFunction<Elem,BaseFunctionSpace,Operator,OtherTemplateArguments...>,tuple_type>::value;
+
+//   Assign(value,tuple_get<M>(tuple).eval());
+
+
+//  }
+
+// private:
+ 
+//  type eval_;
+// };
+
+
+
+template<typename MixedSpace, Integer N, typename Operator_,typename...OtherTemplateArguments>
+class Evaluation<Expression<Test<MixedSpace,N,Operator_>>,OtherTemplateArguments...>
 {
  public:
- using type= TestOrTrial<MixedSpace,N,Operator_>;
+ using type= Test<MixedSpace,N,Operator_>;
+ using FunctionSpace=typename type::FunctionSpace;
+ using FunctionSpaces=GetType<typename type::UniqueElementFunctionSpacesTupleType,type::value>;
+ using Elem=typename FunctionSpaces::Elem;
+ using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpaces>;
+ using Operator=typename type::Operator;
+ using value_type=OperatorType<type,OtherTemplateArguments...>;
 
- static_assert((IsSame<TestOrTrial<MixedSpace,N,Operator_>,Test<MixedSpace,N,Operator_>>::value ||
-                IsSame<TestOrTrial<MixedSpace,N,Operator_>,Trial<MixedSpace,N,Operator_>>::value )
-               && "In Evaluation<Expression<TestOrTrial<MixedSpace,N,OperatorType>>>,TestOrTrial=Test or Trial ");
+ Evaluation(){};
+
+ Evaluation(const type& expr):
+ eval_(expr)
+ {};
+ 
+ //  template<typename...Forms, typename FiniteElem, typename...Inputs>
+ // constexpr void apply(value_type& value,const FiniteElem& J, const ShapeFunctions2<Forms...>& shape_functions)
+ template<typename...Args, typename FiniteElem,typename...Inputs>
+ constexpr void apply(value_type& value, FiniteElem& J, const std::tuple<Args...>& shape_functions,const Inputs&...inputs)
+
+ {
+  using TupleOfTupleShapeFunction=std::tuple<Args...>;
+  using tuple_type=GetType<TupleOfTupleShapeFunction,type::value>;
+  const auto& tuple=tuple_get<type::value>(shape_functions);
+    // const auto& tuple=tuple_get<type::value>(shape_functions());
+  constexpr Integer M=TypeToTupleElementPosition<ShapeFunction<Elem,BaseFunctionSpace,Operator,OtherTemplateArguments...>,tuple_type>::value;
+
+  Assign(value,tuple_get<M>(tuple).eval());
+
+
+ }
+
+private:
+ 
+ type eval_;
+};
+
+template<typename MixedSpace, Integer N, typename Operator_,typename...OtherTemplateArguments>
+class Evaluation<Expression<Trial<MixedSpace,N,Operator_>>,OtherTemplateArguments...>
+{
+ public:
+ using type= Trial<MixedSpace,N,Operator_>;
  using FunctionSpace=typename type::FunctionSpace;
  using FunctionSpaces=GetType<typename type::UniqueElementFunctionSpacesTupleType,type::value>;
  using Elem=typename FunctionSpaces::Elem;
@@ -57,21 +139,67 @@ private:
 
 
 
+// template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, Integer N, typename Expr,typename...OtherTemplateArguments>
+// class Evaluation<Expression<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>>,OtherTemplateArguments...>
+// {
+//  public:
+//  using Operator=CompositeOperator<Expression<Expr>>;
+//  using type= TestOrTrial<MixedSpace,N,Operator>;
+
+//  static_assert((IsSame<type,Test<MixedSpace,N,Operator>>::value ||
+//                 IsSame<type,Trial<MixedSpace,N,Operator>>::value )
+//                && "In Evaluation<Expression<TestOrTrial<MixedSpace,N,Composite<Operator>>>>,TestOrTrial=Test or Trial ");
+//  using FunctionSpace=typename type::FunctionSpace;
+//  using FunctionSpaces=GetType<typename type::UniqueElementFunctionSpacesTupleType,type::value>;
+//  using Elem=typename FunctionSpaces::Elem;
+//  using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpaces>;
+//  // using value_type=OperatorType<type,OtherTemplateArguments...>;
+
+//  Evaluation(){};
+
+//  Evaluation(const type& expr):
+//  eval_(expr)
+//  {};
+ 
+//  //  template<typename ValueType,typename...Forms, typename FiniteElem, typename...Inputs>
+//  // constexpr void apply(ValueType& value,const FiniteElem& J, const ShapeFunctions2<Forms...>& shape_functions)
+//   template<typename ValueType, typename FiniteElem, typename...Args1,typename...Args2,typename...Args3>
+//  constexpr void apply(ValueType& value, FiniteElem& J, const std::tuple<Args1...>& tuple_shape_functions,const std::tuple<Args2...>&tuple_tensor,const std::tuple<Args3...>&tuple_composite_shapes)
+
+//  {
+//  using single_type=Evaluation<Expression<typename FormOfCompositeOperatorType<type>::type >,OtherTemplateArguments...>;
+
+//  using TupleOfTupleCompositeShapeFunctionEval=std::tuple<Args3...>;
+//  using tuple_type=GetType<TupleOfTupleCompositeShapeFunctionEval,type::value>;
+//  // using single_type=Evaluation<Expression<typename FormOfCompositeOperatorType<type>::type >,OtherTemplateArguments...>;
+//  // const auto& tuple=tuple_get<type::value>(tuple_tensor);
+//  constexpr Integer M=TypeToTupleElementPosition<single_type,tuple_type>::value;
+
+//  auto& single_tensor=tuple_get<type::value,M >(tuple_tensor);
+//  Assign(value,single_tensor);
+
+
+
+//   }
+
+// private:
+ 
+//  type eval_;
+// };
 
 
 
 
 
-template<template<class,Integer,class > class TestOrTrial,  typename MixedSpace, Integer N, typename Expr,typename...OtherTemplateArguments>
-class Evaluation<Expression<TestOrTrial<MixedSpace,N,CompositeOperator<Expression<Expr>>>>,OtherTemplateArguments...>
+
+
+template< typename MixedSpace, Integer N, typename Expr,typename...OtherTemplateArguments>
+class Evaluation<Expression<Test<MixedSpace,N,CompositeOperator<Expression<Expr>>>>,OtherTemplateArguments...>
 {
  public:
  using Operator=CompositeOperator<Expression<Expr>>;
- using type= TestOrTrial<MixedSpace,N,Operator>;
+ using type= Test<MixedSpace,N,Operator>;
 
- static_assert((IsSame<type,Test<MixedSpace,N,Operator>>::value ||
-                IsSame<type,Trial<MixedSpace,N,Operator>>::value )
-               && "In Evaluation<Expression<TestOrTrial<MixedSpace,N,Composite<Operator>>>>,TestOrTrial=Test or Trial ");
  using FunctionSpace=typename type::FunctionSpace;
  using FunctionSpaces=GetType<typename type::UniqueElementFunctionSpacesTupleType,type::value>;
  using Elem=typename FunctionSpaces::Elem;
@@ -109,6 +237,55 @@ private:
  
  type eval_;
 };
+
+
+
+template< typename MixedSpace, Integer N, typename Expr,typename...OtherTemplateArguments>
+class Evaluation<Expression<Trial<MixedSpace,N,CompositeOperator<Expression<Expr>>>>,OtherTemplateArguments...>
+{
+ public:
+ using Operator=CompositeOperator<Expression<Expr>>;
+ using type= Trial<MixedSpace,N,Operator>;
+
+ using FunctionSpace=typename type::FunctionSpace;
+ using FunctionSpaces=GetType<typename type::UniqueElementFunctionSpacesTupleType,type::value>;
+ using Elem=typename FunctionSpaces::Elem;
+ using BaseFunctionSpace=Elem2FunctionSpace<FunctionSpaces>;
+ // using value_type=OperatorType<type,OtherTemplateArguments...>;
+
+ Evaluation(){};
+
+ Evaluation(const type& expr):
+ eval_(expr)
+ {};
+ 
+ //  template<typename ValueType,typename...Forms, typename FiniteElem, typename...Inputs>
+ // constexpr void apply(ValueType& value,const FiniteElem& J, const ShapeFunctions2<Forms...>& shape_functions)
+  template<typename ValueType, typename FiniteElem, typename...Args1,typename...Args2,typename...Args3>
+ constexpr void apply(ValueType& value, FiniteElem& J, const std::tuple<Args1...>& tuple_shape_functions,const std::tuple<Args2...>&tuple_tensor,const std::tuple<Args3...>&tuple_composite_shapes)
+
+ {
+ using single_type=Evaluation<Expression<typename FormOfCompositeOperatorType<type>::type >,OtherTemplateArguments...>;
+
+ using TupleOfTupleCompositeShapeFunctionEval=std::tuple<Args3...>;
+ using tuple_type=GetType<TupleOfTupleCompositeShapeFunctionEval,type::value>;
+ // using single_type=Evaluation<Expression<typename FormOfCompositeOperatorType<type>::type >,OtherTemplateArguments...>;
+ // const auto& tuple=tuple_get<type::value>(tuple_tensor);
+ constexpr Integer M=TypeToTupleElementPosition<single_type,tuple_type>::value;
+
+ auto& single_tensor=tuple_get<type::value,M >(tuple_tensor);
+ Assign(value,single_tensor);
+
+
+
+  }
+
+private:
+ 
+ type eval_;
+};
+
+
 
 
 }

@@ -371,7 +371,7 @@ FunctionSpaceDofsPerSubEntityElem<FunctionSpace,SubElemDim,0>
 
 
 
-template<Integer EntityDim,typename ...T>
+template<typename EntityDim,typename ...T>
 class DofsOrdering;
 template<Integer EntityDim,typename ...T>
 class DofsOrdered;
@@ -567,11 +567,41 @@ class Node2ElemMap;
 
 
 
-    template<typename FunctionSpace, typename Value, Integer Nmax,Integer N>
+    // template<typename FunctionSpace, typename Value, Integer Nmax,Integer N>
+    // struct TupleMapConstructorHelper;
+
+    // template<typename FunctionSpace, typename Value,Integer Nmax>
+    // struct TupleMapConstructorHelper<FunctionSpace,Value,Nmax,Nmax-1>
+    // {
+
+    //   using Elem=typename FunctionSpace::Elem;
+    //   static constexpr Integer entity_points=ElemEntityNPoints<Elem,FunctionSpace::entity[Nmax-1]>::value;
+    //   using Key=std::array<Integer,entity_points>;
+    //   using ens = std::map<Key, Value>;
+    //   using type = typename std::tuple<ens>;
+    // };
+
+    // template<typename FunctionSpace, typename Value,Integer Nmax,Integer N>
+    // struct TupleMapConstructorHelper
+    // {
+    //   using Elem=typename FunctionSpace::Elem;
+    //   static constexpr Integer entity_points=ElemEntityNPoints<Elem,FunctionSpace::entity[N]>::value;
+    //   using Key=std::array<Integer,entity_points>;
+    //   using ens = std::map<Key, Value>;
+    //   using tuple_ens=std::tuple<ens>;
+    //   using rest = typename TupleMapConstructorHelper<FunctionSpace,Value,Nmax,N+1>::type; 
+    //   using type = decltype( std::tuple_cat( std::declval< tuple_ens >(),std::declval< rest >() ) );
+    // };
+
+    // template<typename Value,typename FunctionSpace>
+    // using TupleOfMapConstructorType=typename TupleMapConstructorHelper<FunctionSpace,Value,FunctionSpace::entity.size(),0>::type;
+    
+
+    template<typename FunctionSpace, typename Value, typename Nmax,typename N>
     struct TupleMapConstructorHelper;
 
     template<typename FunctionSpace, typename Value,Integer Nmax>
-    struct TupleMapConstructorHelper<FunctionSpace,Value,Nmax,Nmax-1>
+    struct TupleMapConstructorHelper<FunctionSpace,Value,Number<Nmax>,Number<Nmax-1>>
     {
 
       using Elem=typename FunctionSpace::Elem;
@@ -582,24 +612,19 @@ class Node2ElemMap;
     };
 
     template<typename FunctionSpace, typename Value,Integer Nmax,Integer N>
-    struct TupleMapConstructorHelper
+    struct TupleMapConstructorHelper<FunctionSpace,Value,Number<Nmax>,Number<N>>
     {
       using Elem=typename FunctionSpace::Elem;
       static constexpr Integer entity_points=ElemEntityNPoints<Elem,FunctionSpace::entity[N]>::value;
       using Key=std::array<Integer,entity_points>;
       using ens = std::map<Key, Value>;
       using tuple_ens=std::tuple<ens>;
-      using rest = typename TupleMapConstructorHelper<FunctionSpace,Value,Nmax,N+1>::type; 
+      using rest = typename TupleMapConstructorHelper<FunctionSpace,Value,Number<Nmax>,Number<N+1>>::type; 
       using type = decltype( std::tuple_cat( std::declval< tuple_ens >(),std::declval< rest >() ) );
     };
 
     template<typename Value,typename FunctionSpace>
-    using TupleOfMapConstructorType=typename TupleMapConstructorHelper<FunctionSpace,Value,FunctionSpace::entity.size(),0>::type;
-    
-
-    // using TupleParentMap=TupleOfMap<bool,n_entity>;
-    // using TupleMap=TupleOfMap<std::shared_ptr<IntegerVector>,n_entity>;
-    // using TupleMapDof=TupleOfMap<Integer,n_entity>;
+    using TupleOfMapConstructorType=typename TupleMapConstructorHelper<FunctionSpace,Value,Number<FunctionSpace::entity.size()>,Number<0>>::type;
 
 
  
@@ -747,12 +772,12 @@ public:
 
         // // std::cout<<"must_reorder="<<DofsOrdering<entity_dim,FunctionSpace>::must_reorder<<std::endl;
 
-        auto ordered_entity_nodes=DofsOrdering<entity_dim,FunctionSpace>::value(nodes,entity_iter);
+        auto ordered_entity_nodes=DofsOrdering<Number<entity_dim>,FunctionSpace>::value(nodes,entity_iter);
         
         auto& dof=map_dof[entity_nodes];
 
     //     // consider more dofs per entity (RT1)
-        if(DofsOrdering<entity_dim,FunctionSpace>::must_reorder)
+        if(DofsOrdering<Number<entity_dim>,FunctionSpace>::must_reorder)
         {
           auto ordered_dofs=DofsOrdered<entity_dim,FunctionSpace>::local_dofs(ordered_entity_nodes,loc_dof_count);
           cont=0;
@@ -963,7 +988,7 @@ public:
         //   std::cout<<std::endl;
 
 
-        auto ordered_entity_nodes=DofsOrdering<entity_dim,FunctionSpace>::value(nodes,entity_iter);
+        auto ordered_entity_nodes=DofsOrdering<Number<entity_dim>,FunctionSpace>::value(nodes,entity_iter);
         
         auto& dof=map_dof[entity_nodes];
 
@@ -979,7 +1004,7 @@ public:
    Integer global_dof_count_tmp;
           // std::cout<<"must reorder="<<DofsOrdering<entity_dim,FunctionSpace>::must_reorder<<std::endl;
     //     // consider more dofs per entity (RT1)
-        if(DofsOrdering<entity_dim,FunctionSpace>::must_reorder)
+        if(DofsOrdering<Number<entity_dim>,FunctionSpace>::must_reorder)
         {
           cont=0;
 

@@ -318,7 +318,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
           shapefunctions_.init(FE);
           eval_linear_form_.apply(b,FE);
 
-          std::cout<<"el=="<<el<<std::endl;
+          // std::cout<<"el=="<<el<<std::endl;
 
           if(FE.is_on_boundary())
           {

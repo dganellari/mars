@@ -42,10 +42,10 @@ template<typename MixedSpace,Integer N_, typename OperatorKind,typename...Args>
 class QuadratureOrder<Test<MixedSpace,N_,OperatorKind>,Args...>
 { public:
   static constexpr Integer N=Test<MixedSpace,N_,OperatorKind>::value;
-  using Test=Test<MixedSpace,N,OperatorKind>;
-  using UniqueElementFunctionSpacesTupleType=typename Test::UniqueElementFunctionSpacesTupleType;
+  using Test_=Test<MixedSpace,N,OperatorKind>;
+  using UniqueElementFunctionSpacesTupleType=typename Test_::UniqueElementFunctionSpacesTupleType;
   using BaseFunctionSpaceAndElement=GetType<UniqueElementFunctionSpacesTupleType,N>;
-  using Operator=typename Test::Operator;
+  using Operator=typename Test_::Operator;
   using BaseFunctionSpace=Elem2FunctionSpace<BaseFunctionSpaceAndElement>;
   static constexpr Integer value=QuadratureOrder<Operator,BaseFunctionSpace>::value;
 };
@@ -54,10 +54,10 @@ template<typename MixedSpace,Integer N_, typename OperatorKind,typename...Args>
 class QuadratureOrder<Trial<MixedSpace,N_,OperatorKind>,Args...>
 { public:
   static constexpr Integer N=Trial<MixedSpace,N_,OperatorKind>::value;
-  using Trial=Trial<MixedSpace,N,OperatorKind>;
-  using UniqueElementFunctionSpacesTupleType=typename Trial::UniqueElementFunctionSpacesTupleType;
+  using Trial_=Trial<MixedSpace,N,OperatorKind>;
+  using UniqueElementFunctionSpacesTupleType=typename Trial_::UniqueElementFunctionSpacesTupleType;
   using BaseFunctionSpaceAndElement=GetType<UniqueElementFunctionSpacesTupleType,N>;
-  using Operator=typename Trial::Operator;
+  using Operator=typename Trial_::Operator;
   using BaseFunctionSpace=Elem2FunctionSpace<BaseFunctionSpaceAndElement>;
   static constexpr Integer value=QuadratureOrder<Operator,BaseFunctionSpace>::value;
 };
@@ -221,10 +221,10 @@ template<typename MixedSpace,Integer N_, typename Expr>
 class QuadratureOrder<Trial<MixedSpace,N_,CompositeOperator<Expression<Expr>>> >
 { public:
   static constexpr Integer N=Trial<MixedSpace,N_,Expression<Expr>>::value;
-  using Trial=Trial<MixedSpace,N,Expression<Expr>>;
-  using UniqueElementFunctionSpacesTupleType=typename Trial::UniqueElementFunctionSpacesTupleType;
+  using Trial_=Trial<MixedSpace,N,Expression<Expr>>;
+  using UniqueElementFunctionSpacesTupleType=typename Trial_::UniqueElementFunctionSpacesTupleType;
   using BaseFunctionSpaceAndElement=GetType<UniqueElementFunctionSpacesTupleType,N>;
-  using Operator=typename Trial::Operator;
+  using Operator=typename Trial_::Operator;
   using BaseFunctionSpace=Elem2FunctionSpace<BaseFunctionSpaceAndElement>;
   static constexpr Integer value=QuadratureOrder<Expr,BaseFunctionSpace>::value;
 };
@@ -234,10 +234,10 @@ template<typename MixedSpace,Integer N_, typename Expr>
 class QuadratureOrder<Test<MixedSpace,N_,CompositeOperator<Expression<Expr>>> >
 { public:
   static constexpr Integer N=Test<MixedSpace,N_,Expression<Expr>>::value;
-  using Test=Test<MixedSpace,N,Expression<Expr>>;
-  using UniqueElementFunctionSpacesTupleType=typename Test::UniqueElementFunctionSpacesTupleType;
+  using Test_=Test<MixedSpace,N,Expression<Expr>>;
+  using UniqueElementFunctionSpacesTupleType=typename Test_::UniqueElementFunctionSpacesTupleType;
   using BaseFunctionSpaceAndElement=GetType<UniqueElementFunctionSpacesTupleType,N>;
-  using Operator=typename Test::Operator;
+  using Operator=typename Test_::Operator;
   using BaseFunctionSpace=Elem2FunctionSpace<BaseFunctionSpaceAndElement>;
   static constexpr Integer value=QuadratureOrder<Expr,BaseFunctionSpace>::value;
 };

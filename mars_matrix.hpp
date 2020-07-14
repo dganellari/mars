@@ -24,19 +24,735 @@
 
 namespace mars {
 
-	template<typename T, Integer Rows_, Integer Cols_,Integer NonZeroRow_=-1>
-	class Matrix: public TensorBase<T, std::make_index_sequence<Rows_*Cols_>> 
+
+	template<typename T, Integer Rows_, Integer Cols_>
+	class Matrix;
+
+
+
+
+
+
+
+
+	template<>
+	class Matrix<Real,1,1>: public TensorBase<Real, std::make_integer_sequence<Integer,1>> 
 	{
 	public:
-// <<<<<<< HEAD
+		static constexpr Integer Rows=1;
+		static constexpr Integer Cols=1;
+		using T= Real;
+		using type= Matrix<T,Rows,Cols>;
+		using subtype=T;
+		using MB = TensorBase<T, std::make_integer_sequence<Integer,Rows*Cols>>;
+		using MB::MB;
+		using MB::values;
+		inline constexpr static Integer rows() { return Rows; }
+		inline constexpr static Integer cols() { return Cols; }
+
+		inline constexpr std::array<T,Rows*Cols> &operator()()
+		{
+			return values;
+		}
+
+		inline constexpr const std::array<T,Rows*Cols> &operator()()const
+		{
+			return values;
+		}
+
+		inline constexpr T &operator[](const Integer i)
+		{
+			assert(i < Rows);
+			return values[i];
+		}
+
+		inline constexpr const T &operator[](const Integer i)const
+		{
+			assert(i < Rows);
+			return values[i];
+		}
+
+
+        // access matrix direclty by using I*Col+J index
+		inline constexpr T &operator()(const Integer i)
+		{
+			assert(i < Rows*Cols);
+			return values[i];
+		}
+
+		inline constexpr const T &operator()(const Integer i)const
+		{
+			assert(i < Rows*Cols);
+			return values[i];
+		}
+
+		inline constexpr T &operator()(const Integer i, const Integer j)
+		{
+			assert(i < Rows);
+			assert(j < Cols);
+			return values[i*cols() + j];
+		}
+
+		inline constexpr const T &operator()(const Integer i, const Integer j) const
+		{
+			assert(i < Rows);
+			assert(j < Cols);
+			return values[i*cols() + j];
+		}
+
+
+
+		inline constexpr void row(const Integer r, const Vector<T, Cols> &v)
+		{
+			assert(r < Rows && " row index must be smaller than number of rows");
+
+			for(Integer d = 0; d < Cols; ++d) {
+				(*this)(r,d) = v(d);
+			}
+		}
+
+		inline constexpr void row(const Integer r, const Matrix<T, 1, Cols> &v)
+		{
+			assert(r < Rows && " row index must be smaller than number of rows");
+
+			for(Integer d = 0; d < Cols; ++d) {
+				(*this)(r,d) = v(1,d);
+			}
+		}
+
+
+		inline constexpr void col(const Integer c, const Vector<T, Rows> &v)
+		{
+			assert(c < Cols);
+
+			for(Integer d = 0; d < Rows; ++d) {
+				(*this)(d, c) = v(d);
+			}
+		}
+
+
+		inline constexpr Vector<T, Cols> get_row(const Integer r) const
+		{
+			assert(r < Rows && " row index must be smaller than number of rows");
+            Vector<T, Cols> v;
+			for(Integer d = 0; d < Cols; ++d) {
+				// c++14
+				// const_cast<T&>(static_cast<const std::array<T,Cols>& >(v())[d] )=(*this)(r,d);
+                v()[d]=(*this)(r,d);
+			}
+
+			return v;
+		}
+
+
+		inline constexpr void get_row(const Integer r, Vector<T, Cols> &v) const
+		{
+			assert(r < Rows && " row index must be smaller than number of rows");
+
+			for(Integer d = 0; d < Cols; ++d) {
+				v(d)=(*this)(r,d);
+			}
+		}
+
+		inline constexpr void get_row(const Integer r, Matrix<T, 1,Cols> &v) const
+		{
+			assert(r < Rows && " row index must be smaller than number of rows");
+
+			for(Integer d = 0; d < Cols; ++d) {
+				v(1,d)=(*this)(r,d);
+			}
+		}
+
+
+		inline constexpr void get_col(const Integer c, Vector<T, Rows> &v) const
+		{
+			assert(c < Cols);
+
+			for(Integer d = 0; d < Rows; ++d) {
+				v(d) = (*this)(d, c);
+			}
+		}
+
+		inline void zero()
+		{
+			std::fill(begin(values), end(values), 0.);
+		}
+
+
+
+		friend std::ostream &operator<<(std::ostream &os, const Matrix &m)
+		{
+			m.describe(os);
+			return os;
+		}
+
+
+
+
+		inline constexpr Matrix<T, Rows,Cols>& operator = (const Matrix<T, Rows,Cols> &m) 
+		{            
+			if(this==&m) return *this;
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					{
+		                // c++14
+						// const_cast<T&>(static_cast<const std::array<T,Rows*Cols> &>( (*this)() ) [i*cols()+j]) = m(i,j);
+						(*this)(i, j) = m(i,j);
+					}
+				}
+			}
+			return *this;
+		} 
+
+
+
+
+		inline constexpr Matrix<T, Rows,Cols>& operator = (const T &value) 
+		{            
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					{
+						(*this)(i, j) = value;
+					}
+				}
+			}
+			return *this;
+		} 
+
+		inline constexpr Matrix<T, Rows,Cols>& operator /= (const Real &alpha) 
+		{            
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					{
+						(*this)(i, j) /= alpha;
+					}
+				}
+			}
+			return *this;
+		}       
+
+
+		inline constexpr Matrix<T, Rows,Cols>& operator *= (const Real &alpha)
+		{
+
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					{
+						(*this)(i, j) *= alpha;
+					}
+				}
+			}
+			return *this;
+		} 
+
+
+		inline constexpr Matrix<T, Rows,Cols>& operator += (const Matrix<T, Rows,Cols> &mat)
+		{        
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					{
+						(*this)(i, j) += mat(i,j);
+					}
+				}
+			}
+			return *this;
+		} 
+
+		inline constexpr Matrix<T, Rows,Cols>& operator -= (const Matrix<T, Rows,Cols> &mat)
+		{        
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					{
+						(*this)(i, j) -= mat(i,j);
+					}
+				}
+			}
+			return *this;
+		} 
+
+		inline constexpr Matrix<T, Rows, Cols> operator - ()const
+		{
+			Matrix<T, Rows, Cols> result;
+
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					result(i, j) = -(*this)(i, j);
+				}
+			}
+
+			return result;
+		}
+
+		inline constexpr Matrix<T, Rows, Cols> operator + (const Matrix<T, Rows, Cols> &other)const
+		{
+			Matrix<T, Rows, Cols> ret;
+
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					ret(i, j) = (*this)(i, j) + other(i, j);
+				}
+			}
+
+			return ret;
+		}
+
+		inline constexpr Matrix<T, Rows, Cols> operator - (const Matrix<T, Rows, Cols> &other)const
+		{
+			Matrix<T, Rows, Cols> ret;
+
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					ret(i, j) = (*this)(i, j) - other(i, j);
+				}
+			}
+
+			return ret;
+		}
+
+
+	    void describe(std::ostream &os) const
+	    {
+	        for(Integer i = 0; i < Rows; ++i) {
+	            for(Integer j = 0; j < Cols; ++j) {
+	                os << (*this)(i, j) << " ";
+	            }
+	            os << "\n";
+	        }
+
+	        os << "\n";
+	    }
+
+	    template<Integer OtherCols>
+		inline constexpr Matrix<T, Rows, OtherCols> operator * (const Matrix<T, Cols, OtherCols> &other) const
+		{
+			Matrix<T, Rows, OtherCols> ret;
+			ret.zero();
+
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					for(Integer k = 0; k < OtherCols; ++k) {
+						ret(i, k) += (*this)(i, j) * other(j, k);
+					}
+				}
+			}
+			return ret;
+		}
+
+
+		inline constexpr Vector<T, Rows> operator * (const Vector<T, Cols> &other) const
+		{
+			Vector<T, Rows> ret;
+			ret.zero();
+
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					{
+						ret[i] += (*this)(i, j) * other(j);
+					}
+				}
+			}
+
+			return ret;
+		}
+
+		inline constexpr Matrix<T, Rows,Cols> operator * (const Real &alpha) const
+		{
+			Matrix<T, Rows, Cols> ret;
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					{
+					// c++14
+					// const_cast<T&>(static_cast<const std::array<T,Rows*Cols> &>( ret() ) [i*cols()+j])
+					//  = (*this)(i, j) * alpha;
+					ret(i,j) = (*this)(i, j) * alpha;
+					}
+				}
+			}
+			return ret;
+		}
+
+		inline constexpr Matrix<T, Rows,Cols> operator / (const Real &alpha) const
+		{
+			Matrix<T, Rows, Cols> ret;
+
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					{
+						ret(i,j) = (*this)(i, j) / alpha;
+					}
+				}
+			}
+			return ret;
+		}
+
+	};
+
+
+	template<typename T, Integer Rows_>
+	class Matrix<T,Rows_,1>: public TensorBase<T, std::make_integer_sequence<Integer,Rows_>> 
+	{
+	public:
+		static constexpr Integer Rows=Rows_;
+		static constexpr Integer Cols=1;
+		using type= Matrix<T,Rows,Cols>;
+		using subtype=T;
+		using MB = TensorBase<T, std::make_integer_sequence<Integer,Rows*Cols>>;
+		using MB::MB;
+		using MB::values;
+		inline constexpr static Integer rows() { return Rows; }
+		inline constexpr static Integer cols() { return Cols; }
+
+		inline constexpr std::array<T,Rows*Cols> &operator()()
+		{
+			return values;
+		}
+
+		inline constexpr const std::array<T,Rows*Cols> &operator()()const
+		{
+			return values;
+		}
+
+		inline constexpr T &operator[](const Integer i)
+		{
+			assert(i < Rows);
+			return values[i];
+		}
+
+		inline constexpr const T &operator[](const Integer i)const
+		{
+			assert(i < Rows);
+			return values[i];
+		}
+
+
+        // access matrix direclty by using I*Col+J index
+		inline constexpr T &operator()(const Integer i)
+		{
+			assert(i < Rows*Cols);
+			return values[i];
+		}
+
+		inline constexpr const T &operator()(const Integer i)const
+		{
+			assert(i < Rows*Cols);
+			return values[i];
+		}
+
+		inline constexpr T &operator()(const Integer i, const Integer j)
+		{
+			assert(i < Rows);
+			assert(j < Cols);
+			return values[i*cols() + j];
+		}
+
+		inline constexpr const T &operator()(const Integer i, const Integer j) const
+		{
+			assert(i < Rows);
+			assert(j < Cols);
+			return values[i*cols() + j];
+		}
+
+
+
+		inline constexpr void row(const Integer r, const Vector<T, Cols> &v)
+		{
+			assert(r < Rows && " row index must be smaller than number of rows");
+
+			for(Integer d = 0; d < Cols; ++d) {
+				(*this)(r,d) = v(d);
+			}
+		}
+
+		inline constexpr void row(const Integer r, const Matrix<T, 1, Cols> &v)
+		{
+			assert(r < Rows && " row index must be smaller than number of rows");
+
+			for(Integer d = 0; d < Cols; ++d) {
+				(*this)(r,d) = v(1,d);
+			}
+		}
+
+
+		inline constexpr void col(const Integer c, const Vector<T, Rows> &v)
+		{
+			assert(c < Cols);
+
+			for(Integer d = 0; d < Rows; ++d) {
+				(*this)(d, c) = v(d);
+			}
+		}
+
+
+		inline constexpr Vector<T, Cols> get_row(const Integer r) const
+		{
+			assert(r < Rows && " row index must be smaller than number of rows");
+            Vector<T, Cols> v;
+			for(Integer d = 0; d < Cols; ++d) {
+				// c++14
+				// const_cast<T&>(static_cast<const std::array<T,Cols>& >(v())[d] )=(*this)(r,d);
+                v()[d]=(*this)(r,d);
+			}
+
+			return v;
+		}
+
+
+		inline constexpr void get_row(const Integer r, Vector<T, Cols> &v) const
+		{
+			assert(r < Rows && " row index must be smaller than number of rows");
+
+			for(Integer d = 0; d < Cols; ++d) {
+				v(d)=(*this)(r,d);
+			}
+		}
+
+		inline constexpr void get_row(const Integer r, Matrix<T, 1,Cols> &v) const
+		{
+			assert(r < Rows && " row index must be smaller than number of rows");
+
+			for(Integer d = 0; d < Cols; ++d) {
+				v(1,d)=(*this)(r,d);
+			}
+		}
+
+
+		inline constexpr void get_col(const Integer c, Vector<T, Rows> &v) const
+		{
+			assert(c < Cols);
+
+			for(Integer d = 0; d < Rows; ++d) {
+				v(d) = (*this)(d, c);
+			}
+		}
+
+		inline void zero()
+		{
+			std::fill(begin(values), end(values), 0.);
+		}
+
+
+
+		friend std::ostream &operator<<(std::ostream &os, const Matrix &m)
+		{
+			m.describe(os);
+			return os;
+		}
+
+
+
+
+
+		inline constexpr Matrix<T, Rows,Cols>& operator = (const Matrix<T, Rows,Cols> &m) 
+		{            
+			if(this==&m) return *this;
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					{
+		                // c++14
+						// const_cast<T&>(static_cast<const std::array<T,Rows*Cols> &>( (*this)() ) [i*cols()+j]) = m(i,j);
+						(*this)(i, j) = m(i,j);
+					}
+				}
+			}
+			return *this;
+		} 
+
+
+		inline constexpr Matrix<T, Rows,Cols>& operator = (const T &value) 
+		{            
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					{
+						(*this)(i, j) = value;
+					}
+				}
+			}
+			return *this;
+		} 
+
+		inline constexpr Matrix<T, Rows,Cols>& operator /= (const Real &alpha) 
+		{            
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					{
+						(*this)(i, j) /= alpha;
+					}
+				}
+			}
+			return *this;
+		}       
+
+
+		inline constexpr Matrix<T, Rows,Cols>& operator *= (const Real &alpha)
+		{
+
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					{
+						(*this)(i, j) *= alpha;
+					}
+				}
+			}
+			return *this;
+		} 
+
+
+		inline constexpr Matrix<T, Rows,Cols>& operator += (const Matrix<T, Rows,Cols> &mat)
+		{        
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					{
+						(*this)(i, j) += mat(i,j);
+					}
+				}
+			}
+			return *this;
+		} 
+
+		inline constexpr Matrix<T, Rows,Cols>& operator -= (const Matrix<T, Rows,Cols> &mat)
+		{        
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					{
+						(*this)(i, j) -= mat(i,j);
+					}
+				}
+			}
+			return *this;
+		} 
+
+		inline constexpr Matrix<T, Rows, Cols> operator - ()const
+		{
+			Matrix<T, Rows, Cols> result;
+
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					result(i, j) = -(*this)(i, j);
+				}
+			}
+
+			return result;
+		}
+
+		inline constexpr Matrix<T, Rows, Cols> operator + (const Matrix<T, Rows, Cols> &other)const
+		{
+			Matrix<T, Rows, Cols> ret;
+
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					ret(i, j) = (*this)(i, j) + other(i, j);
+				}
+			}
+
+			return ret;
+		}
+
+		inline constexpr Matrix<T, Rows, Cols> operator - (const Matrix<T, Rows, Cols> &other)const
+		{
+			Matrix<T, Rows, Cols> ret;
+
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					ret(i, j) = (*this)(i, j) - other(i, j);
+				}
+			}
+
+			return ret;
+		}
+
+
+	    void describe(std::ostream &os) const
+	    {
+	        for(Integer i = 0; i < Rows; ++i) {
+	            for(Integer j = 0; j < Cols; ++j) {
+	                os << (*this)(i, j) << " ";
+	            }
+	            os << "\n";
+	        }
+
+	        os << "\n";
+	    }
+
+	    template<Integer OtherCols>
+		inline constexpr Matrix<T, Rows, OtherCols> operator * (const Matrix<T, Cols, OtherCols> &other) const
+		{
+			Matrix<T, Rows, OtherCols> ret;
+			ret.zero();
+
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					for(Integer k = 0; k < OtherCols; ++k) {
+						ret(i, k) += (*this)(i, j) * other(j, k);
+					}
+				}
+			}
+			return ret;
+		}
+
+
+		inline constexpr Vector<T, Rows> operator * (const Vector<T, Cols> &other) const
+		{
+			Vector<T, Rows> ret;
+			ret.zero();
+
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					{
+						ret[i] += (*this)(i, j) * other(j);
+					}
+				}
+			}
+
+			return ret;
+		}
+
+		inline constexpr Matrix<T, Rows,Cols> operator * (const Real &alpha) const
+		{
+			Matrix<T, Rows, Cols> ret;
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					{
+					// c++14
+					// const_cast<T&>(static_cast<const std::array<T,Rows*Cols> &>( ret() ) [i*cols()+j])
+					//  = (*this)(i, j) * alpha;
+					ret(i,j) = (*this)(i, j) * alpha;
+					}
+				}
+			}
+			return ret;
+		}
+
+		inline constexpr Matrix<T, Rows,Cols> operator / (const Real &alpha) const
+		{
+			Matrix<T, Rows, Cols> ret;
+
+			for(Integer i = 0; i < Rows; ++i) {
+				for(Integer j = 0; j < Cols; ++j) {
+					{
+						ret(i,j) = (*this)(i, j) / alpha;
+					}
+				}
+			}
+			return ret;
+		}
+
+	};
+
+
+
+
+
+	template<typename T, Integer Rows_, Integer Cols_>
+	class Matrix: public TensorBase<T, std::make_integer_sequence<Integer,Rows_*Cols_>> 
+	{
+	public:
 		static constexpr Integer Rows=Rows_;
 		static constexpr Integer Cols=Cols_;
 		using type= Matrix<T,Rows,Cols>;
 		using subtype=T;
-		using MB = TensorBase<T, std::make_index_sequence<Rows*Cols>>;
+		using MB = TensorBase<T, std::make_integer_sequence<Integer,Rows*Cols>>;
 		using MB::MB;
 		using MB::values;
-        static constexpr Integer NonZeroRow=NonZeroRow_;
 		inline constexpr static Integer rows() { return Rows; }
 		inline constexpr static Integer cols() { return Cols; }
 
@@ -154,7 +870,7 @@ namespace mars {
 			}
 		}
 
-		inline constexpr void zero()
+		inline void zero()
 		{
 			std::fill(begin(values), end(values), 0.);
 		}
@@ -299,45 +1015,6 @@ namespace mars {
 
 			return ret;
 		}
-// =======
-		// Matrix() {}
-
-	    // Matrix(std::initializer_list<T> values)
-	    // {
-	    // 	assert(values.size() == Rows*Cols);
-	    //     std::copy(std::begin(values), std::begin(values) + (Rows*Cols), std::begin(this->values));
-	    // }
-	    
-	    // inline constexpr static Integer rows() { return Rows; }
-	    // inline constexpr static Integer cols() { return Cols; }
-	    
-	    // inline T &operator()(const Integer i, const Integer j)
-	    // {
-	    //     assert(i < Rows);
-	    //     assert(j < Cols);
-	    //     return values[i*cols() + j];
-	    // }
-	    
-	    // inline const T &operator()(const Integer i, const Integer j) const
-	    // {
-	    //     assert(i < Rows);
-	    //     assert(j < Cols);
-	    //     return values[i*cols() + j];
-	    // }
-	    
-	    // inline void col(const Integer c, const Vector<T, Rows> &v)
-	    // {
-	    //     assert(c < Cols);
-
-	    //     for(Integer d = 0; d < Rows; ++d) {
-	    //         (*this)(d, c) = v(d);
-	    //     }
-	    // }
-	        
-	    // inline void zero()
-	    // {
-	    //     std::fill(begin(values), end(values), 0.);
-	    // }
 
 
 	    void describe(std::ostream &os) const
@@ -352,12 +1029,7 @@ namespace mars {
 	        os << "\n";
 	    }
 
-	    // friend std::ostream &operator<<(std::ostream &os, const Matrix &m)
-	    // {
-	    //     m.describe(os);
-	    //     return os;
-	    // }
-// >>>>>>> remotes/origin/master
+
 
 	    template<Integer OtherCols>
 		inline constexpr Matrix<T, Rows, OtherCols> operator * (const Matrix<T, Cols, OtherCols> &other) const
@@ -462,7 +1134,7 @@ namespace mars {
 	}
 
 	template<typename T, Integer N>
-	inline constexpr T det_aux(const Matrix<T, N, N> &m)
+	inline T det_aux(const Matrix<T, N, N> &m)
 	{
 		static_assert(N < 7, "max size is 6");
 
@@ -581,38 +1253,38 @@ namespace mars {
 
 		return (m00 == 0. ? 0. : (
 			m00 * det(
-				Matrix<T, 3, 3>({
+				Matrix<T, 3, 3>{
 					m11, m12, m13,
 					m21, m22, m23,
 					m31, m32, m33
 
-				}))))
+				})))
 		-
 		(m01 == 0. ? 0. :
 			m01 * det(
-				Matrix<T, 3, 3>({
+				Matrix<T, 3, 3>{
 					m10, m12, m13,
 					m20, m22, m23,
 					m30, m32, m33
-				})))
+				}))
 		+
 		(m02 == 0. ? 0. : (
 			m02 * det(
-				Matrix<T, 3, 3>({
+				Matrix<T, 3, 3>{
 					m10, m11, m13,
 					m20, m21, m23,
 					m30, m31, m33
 
-				}))))
+				})))
 		-
 		(m03 == 0. ? 0. : (
 			m03 * det(
-				Matrix<T, 3, 3>({
+				Matrix<T, 3, 3>{
 					m10, m11, m12,
 					m20, m21, m22,
 					m30, m31, m32
 
-				}))));
+				})));
 	}
 
 
@@ -762,89 +1434,21 @@ namespace mars {
      			mat1(II,i+JJ)=mat2(i,0);
 	}
 
-	// template<typename T>
-	// class Transposed;
+	
 
-	// template<typename T, Integer TransposedRows, Integer TransposedCols,Integer NonZeroRow>
-	// class Transposed<Matrix<T,TransposedRows,TransposedCols,NonZeroRow>>
-	// // : 
-	// // public Matrix<T,TransposedRows,TransposedCols,NonZeroRow>
-	// {
-	// public:
-	// 	static constexpr Integer Rows=TransposedCols;
-	// 	static constexpr Integer Cols=TransposedRows;
-	// 	using type= Matrix<T,Rows,Cols>;
-	// 	using subtype=T;
-	// 	using MB = TensorBase<T, std::make_index_sequence<Rows*Cols>>;
-	// 	// using MB::MB;
-	// 	// using MB::values;
 
-	// 	constexpr Transposed()
-	// 	//:
-	// 	// mat_(NULL)
-	// 	{}
 
-	// 	// constexpr Transposed(Matrix<T,TransposedRows,TransposedCols,NonZeroRow>& mat):
-	// 	// mat_(mat)
-	// 	// {}
 
-	// 	constexpr Transposed(const Matrix<T,TransposedRows,TransposedCols,NonZeroRow>& mat)
-	// 	:
-	// 	mat_ptr_(std::make_shared<Matrix<T,TransposedRows,TransposedCols,NonZeroRow>>(mat))
-	// 	{}
 
-	// 	inline constexpr const auto& operator()() const
-	// 	{
-	// 	 return *mat_ptr_;
-	// 	}
 
 
-	// 	inline constexpr void operator()(const Matrix<T,TransposedRows,TransposedCols,NonZeroRow>& mat)
-	// 	{
-	// 	 mat_ptr_=std::make_shared<Matrix<T,TransposedRows,TransposedCols,NonZeroRow>>(mat);
-	// 	}
 
-	// 	inline constexpr      T &operator()(const Integer& i, const Integer& j)
-	// 	{
-	// 		assert(i < Rows);
-	// 		assert(j < Cols);
-	// 		return (*mat_ptr_)(j,i);
-	// 	}
 
-	// 	inline constexpr const T &operator()(const Integer i, const Integer j) const
-	// 	{
-	// 		assert(i < Rows);
-	// 		assert(j < Cols);
-	// 		return (*mat_ptr_)(j,i);
-	// 	}
 
-	// 	void describe(std::ostream &os) const
-	// 	{
-	// 		for(Integer i = 0; i < Rows; ++i) {
-	// 			for(Integer j = 0; j < Cols; ++j) {
-	// 				os << (*this)(i, j) << " ";
-	// 			}
-	// 			os << "\n";
-	// 		}
 
-	// 		os << "\n";
-	// 	}
 
-	// 	friend std::ostream &operator<<(std::ostream &os, const Transposed &m)
-	// 	{
-	// 		m.describe(os);
-	// 		return os;
-	// 	}
 
-	// 	 inline static constexpr void apply(Transposed<Matrix<T,Rows,Cols>>& A,const Matrix<T,Rows,Cols>& B)
-	// 	  {
-	// 	       A(B);
-	// 	  };
-		
-	// private:
- //    std::shared_ptr<Matrix<T,TransposedRows,TransposedCols,NonZeroRow>> mat_ptr_;
 
-	// };
 
 
 
@@ -879,734 +1483,6 @@ namespace mars {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-	template<typename T, Integer Rows_,Integer NonZeroRow_>
-	class Matrix<T,Rows_,1,NonZeroRow_>: public TensorBase<T, std::make_index_sequence<Rows_>> 
-	{
-	public:
-		static constexpr Integer Rows=Rows_;
-		static constexpr Integer Cols=1;
-		using type= Matrix<T,Rows,Cols>;
-		using subtype=T;
-		using MB = TensorBase<T, std::make_index_sequence<Rows*Cols>>;
-		using MB::MB;
-		using MB::values;
-        static constexpr Integer NonZeroRow=NonZeroRow_;
-		inline constexpr static Integer rows() { return Rows; }
-		inline constexpr static Integer cols() { return Cols; }
-
-		inline constexpr std::array<T,Rows*Cols> &operator()()
-		{
-			return values;
-		}
-
-		inline constexpr const std::array<T,Rows*Cols> &operator()()const
-		{
-			return values;
-		}
-
-		inline constexpr T &operator[](const Integer i)
-		{
-			assert(i < Rows);
-			return values[i];
-		}
-
-		inline constexpr const T &operator[](const Integer i)const
-		{
-			assert(i < Rows);
-			return values[i];
-		}
-
-
-        // access matrix direclty by using I*Col+J index
-		inline constexpr T &operator()(const Integer i)
-		{
-			assert(i < Rows*Cols);
-			return values[i];
-		}
-
-		inline constexpr const T &operator()(const Integer i)const
-		{
-			assert(i < Rows*Cols);
-			return values[i];
-		}
-
-		inline constexpr T &operator()(const Integer i, const Integer j)
-		{
-			assert(i < Rows);
-			assert(j < Cols);
-			return values[i*cols() + j];
-		}
-
-		inline constexpr const T &operator()(const Integer i, const Integer j) const
-		{
-			assert(i < Rows);
-			assert(j < Cols);
-			return values[i*cols() + j];
-		}
-
-
-
-		inline constexpr void row(const Integer r, const Vector<T, Cols> &v)
-		{
-			assert(r < Rows && " row index must be smaller than number of rows");
-
-			for(Integer d = 0; d < Cols; ++d) {
-				(*this)(r,d) = v(d);
-			}
-		}
-
-		inline constexpr void row(const Integer r, const Matrix<T, 1, Cols> &v)
-		{
-			assert(r < Rows && " row index must be smaller than number of rows");
-
-			for(Integer d = 0; d < Cols; ++d) {
-				(*this)(r,d) = v(1,d);
-			}
-		}
-
-
-		inline constexpr void col(const Integer c, const Vector<T, Rows> &v)
-		{
-			assert(c < Cols);
-
-			for(Integer d = 0; d < Rows; ++d) {
-				(*this)(d, c) = v(d);
-			}
-		}
-
-
-		inline constexpr Vector<T, Cols> get_row(const Integer r) const
-		{
-			assert(r < Rows && " row index must be smaller than number of rows");
-            Vector<T, Cols> v;
-			for(Integer d = 0; d < Cols; ++d) {
-				// c++14
-				// const_cast<T&>(static_cast<const std::array<T,Cols>& >(v())[d] )=(*this)(r,d);
-                v()[d]=(*this)(r,d);
-			}
-
-			return v;
-		}
-
-
-		inline constexpr void get_row(const Integer r, Vector<T, Cols> &v) const
-		{
-			assert(r < Rows && " row index must be smaller than number of rows");
-
-			for(Integer d = 0; d < Cols; ++d) {
-				v(d)=(*this)(r,d);
-			}
-		}
-
-		inline constexpr void get_row(const Integer r, Matrix<T, 1,Cols> &v) const
-		{
-			assert(r < Rows && " row index must be smaller than number of rows");
-
-			for(Integer d = 0; d < Cols; ++d) {
-				v(1,d)=(*this)(r,d);
-			}
-		}
-
-
-		inline constexpr void get_col(const Integer c, Vector<T, Rows> &v) const
-		{
-			assert(c < Cols);
-
-			for(Integer d = 0; d < Rows; ++d) {
-				v(d) = (*this)(d, c);
-			}
-		}
-
-		inline constexpr void zero()
-		{
-			std::fill(begin(values), end(values), 0.);
-		}
-
-
-
-		friend std::ostream &operator<<(std::ostream &os, const Matrix &m)
-		{
-			m.describe(os);
-			return os;
-		}
-
-
-
-
-
-		inline constexpr Matrix<T, Rows,Cols>& operator = (const Matrix<T, Rows,Cols> &m) 
-		{            
-			if(this==&m) return *this;
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					{
-		                // c++14
-						// const_cast<T&>(static_cast<const std::array<T,Rows*Cols> &>( (*this)() ) [i*cols()+j]) = m(i,j);
-						(*this)(i, j) = m(i,j);
-					}
-				}
-			}
-			return *this;
-		} 
-
-
-		inline constexpr Matrix<T, Rows,Cols>& operator = (const T &value) 
-		{            
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					{
-						(*this)(i, j) = value;
-					}
-				}
-			}
-			return *this;
-		} 
-
-		inline constexpr Matrix<T, Rows,Cols>& operator /= (const Real &alpha) 
-		{            
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					{
-						(*this)(i, j) /= alpha;
-					}
-				}
-			}
-			return *this;
-		}       
-
-
-		inline constexpr Matrix<T, Rows,Cols>& operator *= (const Real &alpha)
-		{
-
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					{
-						(*this)(i, j) *= alpha;
-					}
-				}
-			}
-			return *this;
-		} 
-
-
-		inline constexpr Matrix<T, Rows,Cols>& operator += (const Matrix<T, Rows,Cols> &mat)
-		{        
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					{
-						(*this)(i, j) += mat(i,j);
-					}
-				}
-			}
-			return *this;
-		} 
-
-		inline constexpr Matrix<T, Rows,Cols>& operator -= (const Matrix<T, Rows,Cols> &mat)
-		{        
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					{
-						(*this)(i, j) -= mat(i,j);
-					}
-				}
-			}
-			return *this;
-		} 
-
-		inline constexpr Matrix<T, Rows, Cols> operator - ()const
-		{
-			Matrix<T, Rows, Cols> result;
-
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					result(i, j) = -(*this)(i, j);
-				}
-			}
-
-			return result;
-		}
-
-		inline constexpr Matrix<T, Rows, Cols> operator + (const Matrix<T, Rows, Cols> &other)const
-		{
-			Matrix<T, Rows, Cols> ret;
-
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					ret(i, j) = (*this)(i, j) + other(i, j);
-				}
-			}
-
-			return ret;
-		}
-
-		inline constexpr Matrix<T, Rows, Cols> operator - (const Matrix<T, Rows, Cols> &other)const
-		{
-			Matrix<T, Rows, Cols> ret;
-
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					ret(i, j) = (*this)(i, j) - other(i, j);
-				}
-			}
-
-			return ret;
-		}
-
-
-	    void describe(std::ostream &os) const
-	    {
-	        for(Integer i = 0; i < Rows; ++i) {
-	            for(Integer j = 0; j < Cols; ++j) {
-	                os << (*this)(i, j) << " ";
-	            }
-	            os << "\n";
-	        }
-
-	        os << "\n";
-	    }
-
-	    template<Integer OtherCols>
-		inline constexpr Matrix<T, Rows, OtherCols> operator * (const Matrix<T, Cols, OtherCols> &other) const
-		{
-			Matrix<T, Rows, OtherCols> ret;
-			ret.zero();
-
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					for(Integer k = 0; k < OtherCols; ++k) {
-						ret(i, k) += (*this)(i, j) * other(j, k);
-					}
-				}
-			}
-			return ret;
-		}
-
-
-		inline constexpr Vector<T, Rows> operator * (const Vector<T, Cols> &other) const
-		{
-			Vector<T, Rows> ret;
-			ret.zero();
-
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					{
-						ret[i] += (*this)(i, j) * other(j);
-					}
-				}
-			}
-
-			return ret;
-		}
-
-		inline constexpr Matrix<T, Rows,Cols> operator * (const Real &alpha) const
-		{
-			Matrix<T, Rows, Cols> ret;
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					{
-					// c++14
-					// const_cast<T&>(static_cast<const std::array<T,Rows*Cols> &>( ret() ) [i*cols()+j])
-					//  = (*this)(i, j) * alpha;
-					ret(i,j) = (*this)(i, j) * alpha;
-					}
-				}
-			}
-			return ret;
-		}
-
-		inline constexpr Matrix<T, Rows,Cols> operator / (const Real &alpha) const
-		{
-			Matrix<T, Rows, Cols> ret;
-
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					{
-						ret(i,j) = (*this)(i, j) / alpha;
-					}
-				}
-			}
-			return ret;
-		}
-
-	};
-
-
-
-
-
-
-	template<Integer NonZeroRow_>
-	class Matrix<Real,1,1,NonZeroRow_>: public TensorBase<Real, std::make_index_sequence<1>> 
-	{
-	public:
-		static constexpr Integer Rows=1;
-		static constexpr Integer Cols=1;
-		using T= Real;
-		using type= Matrix<T,Rows,Cols>;
-		using subtype=T;
-		using MB = TensorBase<T, std::make_index_sequence<Rows*Cols>>;
-		using MB::MB;
-		using MB::values;
-        static constexpr Integer NonZeroRow=NonZeroRow_;
-		inline constexpr static Integer rows() { return Rows; }
-		inline constexpr static Integer cols() { return Cols; }
-
-		inline constexpr std::array<T,Rows*Cols> &operator()()
-		{
-			return values;
-		}
-
-		inline constexpr const std::array<T,Rows*Cols> &operator()()const
-		{
-			return values;
-		}
-
-		inline constexpr T &operator[](const Integer i)
-		{
-			assert(i < Rows);
-			return values[i];
-		}
-
-		inline constexpr T &operator[](const Integer i)const
-		{
-			assert(i < Rows);
-			return values[i];
-		}
-
-
-        // access matrix direclty by using I*Col+J index
-		inline constexpr T &operator()(const Integer i)
-		{
-			assert(i < Rows*Cols);
-			return values[i];
-		}
-
-		inline constexpr const T &operator()(const Integer i)const
-		{
-			assert(i < Rows*Cols);
-			return values[i];
-		}
-
-		inline constexpr T &operator()(const Integer i, const Integer j)
-		{
-			assert(i < Rows);
-			assert(j < Cols);
-			return values[i*cols() + j];
-		}
-
-		inline constexpr const T &operator()(const Integer i, const Integer j) const
-		{
-			assert(i < Rows);
-			assert(j < Cols);
-			return values[i*cols() + j];
-		}
-
-
-
-		inline constexpr void row(const Integer r, const Vector<T, Cols> &v)
-		{
-			assert(r < Rows && " row index must be smaller than number of rows");
-
-			for(Integer d = 0; d < Cols; ++d) {
-				(*this)(r,d) = v(d);
-			}
-		}
-
-		inline constexpr void row(const Integer r, const Matrix<T, 1, Cols> &v)
-		{
-			assert(r < Rows && " row index must be smaller than number of rows");
-
-			for(Integer d = 0; d < Cols; ++d) {
-				(*this)(r,d) = v(1,d);
-			}
-		}
-
-
-		inline constexpr void col(const Integer c, const Vector<T, Rows> &v)
-		{
-			assert(c < Cols);
-
-			for(Integer d = 0; d < Rows; ++d) {
-				(*this)(d, c) = v(d);
-			}
-		}
-
-
-		inline constexpr Vector<T, Cols> get_row(const Integer r) const
-		{
-			assert(r < Rows && " row index must be smaller than number of rows");
-            Vector<T, Cols> v;
-			for(Integer d = 0; d < Cols; ++d) {
-				// c++14
-				// const_cast<T&>(static_cast<const std::array<T,Cols>& >(v())[d] )=(*this)(r,d);
-                v()[d]=(*this)(r,d);
-			}
-
-			return v;
-		}
-
-
-		inline constexpr void get_row(const Integer r, Vector<T, Cols> &v) const
-		{
-			assert(r < Rows && " row index must be smaller than number of rows");
-
-			for(Integer d = 0; d < Cols; ++d) {
-				v(d)=(*this)(r,d);
-			}
-		}
-
-		inline constexpr void get_row(const Integer r, Matrix<T, 1,Cols> &v) const
-		{
-			assert(r < Rows && " row index must be smaller than number of rows");
-
-			for(Integer d = 0; d < Cols; ++d) {
-				v(1,d)=(*this)(r,d);
-			}
-		}
-
-
-		inline constexpr void get_col(const Integer c, Vector<T, Rows> &v) const
-		{
-			assert(c < Cols);
-
-			for(Integer d = 0; d < Rows; ++d) {
-				v(d) = (*this)(d, c);
-			}
-		}
-
-		inline constexpr void zero()
-		{
-			std::fill(begin(values), end(values), 0.);
-		}
-
-
-
-		friend std::ostream &operator<<(std::ostream &os, const Matrix &m)
-		{
-			m.describe(os);
-			return os;
-		}
-
-
-
-
-		inline constexpr Matrix<T, Rows,Cols>& operator = (const Matrix<T, Rows,Cols> &m) 
-		{            
-			if(this==&m) return *this;
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					{
-		                // c++14
-						// const_cast<T&>(static_cast<const std::array<T,Rows*Cols> &>( (*this)() ) [i*cols()+j]) = m(i,j);
-						(*this)(i, j) = m(i,j);
-					}
-				}
-			}
-			return *this;
-		} 
-
-
-
-
-		inline constexpr Matrix<T, Rows,Cols>& operator = (const T &value) 
-		{            
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					{
-						(*this)(i, j) = value;
-					}
-				}
-			}
-			return *this;
-		} 
-
-		inline constexpr Matrix<T, Rows,Cols>& operator /= (const Real &alpha) 
-		{            
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					{
-						(*this)(i, j) /= alpha;
-					}
-				}
-			}
-			return *this;
-		}       
-
-
-		inline constexpr Matrix<T, Rows,Cols>& operator *= (const Real &alpha)
-		{
-
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					{
-						(*this)(i, j) *= alpha;
-					}
-				}
-			}
-			return *this;
-		} 
-
-
-		inline constexpr Matrix<T, Rows,Cols>& operator += (const Matrix<T, Rows,Cols> &mat)
-		{        
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					{
-						(*this)(i, j) += mat(i,j);
-					}
-				}
-			}
-			return *this;
-		} 
-
-		inline constexpr Matrix<T, Rows,Cols>& operator -= (const Matrix<T, Rows,Cols> &mat)
-		{        
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					{
-						(*this)(i, j) -= mat(i,j);
-					}
-				}
-			}
-			return *this;
-		} 
-
-		inline constexpr Matrix<T, Rows, Cols> operator - ()const
-		{
-			Matrix<T, Rows, Cols> result;
-
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					result(i, j) = -(*this)(i, j);
-				}
-			}
-
-			return result;
-		}
-
-		inline constexpr Matrix<T, Rows, Cols> operator + (const Matrix<T, Rows, Cols> &other)const
-		{
-			Matrix<T, Rows, Cols> ret;
-
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					ret(i, j) = (*this)(i, j) + other(i, j);
-				}
-			}
-
-			return ret;
-		}
-
-		inline constexpr Matrix<T, Rows, Cols> operator - (const Matrix<T, Rows, Cols> &other)const
-		{
-			Matrix<T, Rows, Cols> ret;
-
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					ret(i, j) = (*this)(i, j) - other(i, j);
-				}
-			}
-
-			return ret;
-		}
-
-
-	    void describe(std::ostream &os) const
-	    {
-	        for(Integer i = 0; i < Rows; ++i) {
-	            for(Integer j = 0; j < Cols; ++j) {
-	                os << (*this)(i, j) << " ";
-	            }
-	            os << "\n";
-	        }
-
-	        os << "\n";
-	    }
-
-	    template<Integer OtherCols>
-		inline constexpr Matrix<T, Rows, OtherCols> operator * (const Matrix<T, Cols, OtherCols> &other) const
-		{
-			Matrix<T, Rows, OtherCols> ret;
-			ret.zero();
-
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					for(Integer k = 0; k < OtherCols; ++k) {
-						ret(i, k) += (*this)(i, j) * other(j, k);
-					}
-				}
-			}
-			return ret;
-		}
-
-
-		inline constexpr Vector<T, Rows> operator * (const Vector<T, Cols> &other) const
-		{
-			Vector<T, Rows> ret;
-			ret.zero();
-
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					{
-						ret[i] += (*this)(i, j) * other(j);
-					}
-				}
-			}
-
-			return ret;
-		}
-
-		inline constexpr Matrix<T, Rows,Cols> operator * (const Real &alpha) const
-		{
-			Matrix<T, Rows, Cols> ret;
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					{
-					// c++14
-					// const_cast<T&>(static_cast<const std::array<T,Rows*Cols> &>( ret() ) [i*cols()+j])
-					//  = (*this)(i, j) * alpha;
-					ret(i,j) = (*this)(i, j) * alpha;
-					}
-				}
-			}
-			return ret;
-		}
-
-		inline constexpr Matrix<T, Rows,Cols> operator / (const Real &alpha) const
-		{
-			Matrix<T, Rows, Cols> ret;
-
-			for(Integer i = 0; i < Rows; ++i) {
-				for(Integer j = 0; j < Cols; ++j) {
-					{
-						ret(i,j) = (*this)(i, j) / alpha;
-					}
-				}
-			}
-			return ret;
-		}
-
-	    // friend Real operator=(Real alpha,const Matrix<Real,1,1> &m)
-	    // {
-
-	    // 	alpha= m[0];
-	    // 	return alpha;
-	    // }
-
-
-	};
 
 
 	  template<Integer Rows,Integer Cols>

@@ -15,9 +15,9 @@ namespace mars {
   constexpr auto Transpose(const Expression<Transposed<Expression<T>>>& t){return T(t.derived().derived());}
 
 
-  template<typename T, Integer TransposedRows, Integer TransposedCols,Integer NonZeroRow>
-  class Transposed<Matrix<T,TransposedRows,TransposedCols,NonZeroRow>>
-  : public Matrix<T,TransposedRows,TransposedCols,NonZeroRow>
+  template<typename T, Integer TransposedRows, Integer TransposedCols>
+  class Transposed<Matrix<T,TransposedRows,TransposedCols>>
+  : public Matrix<T,TransposedRows,TransposedCols>
   {
   public:
     static constexpr Integer Rows=TransposedCols;
@@ -30,9 +30,9 @@ namespace mars {
     constexpr Transposed()
     {}
 
-    constexpr Transposed(const Matrix<T,TransposedRows,TransposedCols,NonZeroRow>& mat)
+    constexpr Transposed(const Matrix<T,TransposedRows,TransposedCols>& mat)
     :
-    mat_ptr_(std::make_shared<Matrix<T,TransposedRows,TransposedCols,NonZeroRow>>(mat))
+    mat_ptr_(std::make_shared<Matrix<T,TransposedRows,TransposedCols>>(mat))
     {}
 
     inline constexpr const auto& operator()() const
@@ -41,9 +41,9 @@ namespace mars {
     }
 
 
-    inline constexpr void operator()(const Matrix<T,TransposedRows,TransposedCols,NonZeroRow>& mat)
+    inline constexpr void operator()(const Matrix<T,TransposedRows,TransposedCols>& mat)
     {
-     mat_ptr_=std::make_shared<Matrix<T,TransposedRows,TransposedCols,NonZeroRow>>(mat);
+     mat_ptr_=std::make_shared<Matrix<T,TransposedRows,TransposedCols>>(mat);
     }
 
     inline constexpr      T &operator()(const Integer& i, const Integer& j)
@@ -88,7 +88,7 @@ namespace mars {
       };
     
   private:
-    std::shared_ptr<Matrix<T,TransposedRows,TransposedCols,NonZeroRow>> mat_ptr_;
+    std::shared_ptr<Matrix<T,TransposedRows,TransposedCols>> mat_ptr_;
 
   };
 

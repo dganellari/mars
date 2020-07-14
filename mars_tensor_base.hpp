@@ -17,7 +17,7 @@ namespace mars {
     class TensorBase;
 
     template <typename T, Integer ... Is>
-    class TensorBase<T, std::index_sequence<Is...>>
+    class TensorBase<T, std::integer_sequence<Integer,Is...>>
     {
     protected:
         std::array<T, sizeof...(Is)> values{};

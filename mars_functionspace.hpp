@@ -682,7 +682,7 @@ public:
       using FromElementFunctionSpacesToUniqueNumbersTupleType=
             TupleAllToUniqueMap<TupleOfSpaces,UniqueElementFunctionSpacesTupleType>;
       using FromElementFunctionSpacesToFirstSpaceTupleType=
-            FromElementFunctionSpacesToFirstSpaceTupleType<FromElementFunctionSpacesToUniqueNumbersTupleType>;
+            TransformElementFunctionSpacesToFirstSpaceTupleType<FromElementFunctionSpacesToUniqueNumbersTupleType>;
 
       static constexpr Integer Nuniquesubspaces=TupleTypeSize<UniqueElementFunctionSpacesTupleType>::value;
 
@@ -908,7 +908,7 @@ public:
   using FromElementFunctionSpacesToUniqueNumbersTupleType=
         TupleAllToUniqueMap<TupleOfSpaces,UniqueElementFunctionSpacesTupleType>;
   using FromElementFunctionSpacesToFirstSpaceTupleType=
-        FromElementFunctionSpacesToFirstSpaceTupleType<FromElementFunctionSpacesToUniqueNumbersTupleType>;
+        TransformElementFunctionSpacesToFirstSpaceTupleType<FromElementFunctionSpacesToUniqueNumbersTupleType>;
 
   static constexpr Integer Nuniquesubspaces=TupleTypeSize<UniqueElementFunctionSpacesTupleType>::value;
   
@@ -1146,7 +1146,7 @@ public:
   using FromElementFunctionSpacesToUniqueNumbersTupleType=
         TupleAllToUniqueMap<TupleOfSpaces,UniqueElementFunctionSpacesTupleType>;
   using FromElementFunctionSpacesToFirstSpaceTupleType=
-        FromElementFunctionSpacesToFirstSpaceTupleType<FromElementFunctionSpacesToUniqueNumbersTupleType>;
+        TransformElementFunctionSpacesToFirstSpaceTupleType<FromElementFunctionSpacesToUniqueNumbersTupleType>;
 
   static constexpr Integer Nuniquesubspaces=TupleTypeSize<UniqueElementFunctionSpacesTupleType>::value;
 
@@ -1259,7 +1259,7 @@ public:
   using FromElementFunctionSpacesToUniqueNumbersTupleType=
         TupleAllToUniqueMap<TupleOfSpaces,UniqueElementFunctionSpacesTupleType>;
   using FromElementFunctionSpacesToFirstSpaceTupleType=
-        FromElementFunctionSpacesToFirstSpaceTupleType<FromElementFunctionSpacesToUniqueNumbersTupleType>;
+        TransformElementFunctionSpacesToFirstSpaceTupleType<FromElementFunctionSpacesToUniqueNumbersTupleType>;
 
   static constexpr Integer Nuniquesubspaces=TupleTypeSize<UniqueElementFunctionSpacesTupleType>::value;
 
@@ -1363,7 +1363,7 @@ public:
   using FromElementFunctionSpacesToUniqueNumbersTupleType=
         TupleAllToUniqueMap<TupleOfSpaces,UniqueElementFunctionSpacesTupleType>;
   using FromElementFunctionSpacesToFirstSpaceTupleType=
-        FromElementFunctionSpacesToFirstSpaceTupleType<FromElementFunctionSpacesToUniqueNumbersTupleType>;
+        TransformElementFunctionSpacesToFirstSpaceTupleType<FromElementFunctionSpacesToUniqueNumbersTupleType>;
 
 
   static constexpr Integer Nuniquesubspaces=TupleTypeSize<UniqueElementFunctionSpacesTupleType>::value;

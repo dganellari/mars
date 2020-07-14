@@ -347,10 +347,10 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
 
  {
   // // std::cout<<"eval_left_"<<std::endl;
-  eval_left_.apply(left_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
+  eval_left_.apply(left_value_,J,shape_functions.template tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
   // // std::cout<<left_value_<<std::endl;
   // // std::cout<<"eval_right_"<<std::endl;
-  eval_right_.apply(right_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
+  eval_right_.apply(right_value_,J,shape_functions.template tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
   // // std::cout<<right_value_<<std::endl;
   apply_aux(vec,J,left_value_,right_value_);
  }
@@ -486,10 +486,10 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
  {
     // std::cout<<"LOCAL TENSOR APPLY=="<<std::endl;
 
-  eval_left_.apply(left_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
+  eval_left_.apply(left_value_,J,shape_functions.template tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
   // std::cout<<"after left =="<<std::endl;
   // std::cout<<left_value_<<std::endl;
-  eval_right_.apply(right_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
+  eval_right_.apply(right_value_,J,shape_functions.template tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
   // std::cout<<"left_value_=="<<left_value_<<std::endl;
   // std::cout<<"right_value_=="<<right_value_<<std::endl;
   apply_aux(vec,J,left_value_,right_value_);
@@ -545,8 +545,8 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
   // const auto& detJ=J.get_det();
   const auto& qp_weights=QRule::qp_weights;
   // todo fixme
-  eval_left_.apply(left_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
-  eval_right_.apply(right_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
+  eval_left_.apply(left_value_,J,shape_functions.template tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
+  eval_right_.apply(right_value_,J,shape_functions.template tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
   // // std::cout<<"left_value_"<<std::endl;
   // // std::cout<<left_value_<<std::endl;
   // // std::cout<<"right_value_"<<std::endl;
@@ -598,8 +598,8 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
   // const auto& detJ=J.get_det();
   const auto& qp_weights=QRule::qp_weights;
   // todo fixme
-  eval_left_.apply(left_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
-  eval_right_.apply(right_value_,J,shape_functions.tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
+  eval_left_.apply(left_value_,J,shape_functions.template tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
+  eval_right_.apply(right_value_,J,shape_functions.template tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
   // // std::cout<<"left_value_"<<std::endl;
   // // std::cout<<left_value_<<std::endl;
   // // std::cout<<"right_value_"<<std::endl;
@@ -720,7 +720,7 @@ using EvalOfL2InnersAux=typename EvalOfL2InnersAuxHelper<Tuple,TupleTypeSize<Tup
 
 
 
-template<Integer H,typename GeneralForm, Integer N >
+template<Integer H,typename GeneralFormType, Integer N >
 class LocalTupleOfTensors;
 
 // template<Integer H,typename GeneralForm >
@@ -1229,20 +1229,20 @@ class EvaluationOfL2Inners<H, Evaluation<Expression<GeneralForm<Form>>,ShapeFunc
 public: 
     using EvaluationGeneralForm=Evaluation<Expression<GeneralForm<Form>>,ShapeFunctions_>;
     using ElemDofMap= typename EvaluationGeneralForm::ElemDofMap;
-    using GeneralForm=typename EvaluationGeneralForm::type;
-    using form =GetType<typename GeneralForm::form>;
+    using GeneralFormType=typename EvaluationGeneralForm::type;
+    using form =GetType<typename GeneralFormType::form>;
     using ShapeFunctions=typename EvaluationGeneralForm::ShapeFunctions;
-    using LocalTupleOfTensors=typename LocalTupleOfTensors<H,GeneralForm,GetType<typename GeneralForm::form>::value>::type;    
+    using LocalTupleOfTensors=typename LocalTupleOfTensors<H,GeneralFormType,GetType<typename GeneralFormType::form>::value>::type;    
     using L2Products=typename EvaluationGeneralForm::template L2Products<H>;
     using EvalOfL2InnersType=EvalOfL2InnersAux<L2Products,0,ShapeFunctions>;
-    using TupleOfPairsNumbers=typename GeneralForm::TupleOfPairsNumbers;
-    using FunctionSpace=typename GeneralForm::FunctionSpace;
+    using TupleOfPairsNumbers=typename GeneralFormType::TupleOfPairsNumbers;
+    using FunctionSpace=typename GeneralFormType::FunctionSpace;
     static constexpr auto dofs =TraceDofs<FunctionSpace>::dofs();
     using ElemDofMapTrace=typename TraceDofs<FunctionSpace>::type ;
     
 
 
-    EvaluationOfL2Inners(const GeneralForm& form,ShapeFunctions& shapefunctions)
+    EvaluationOfL2Inners(const GeneralFormType& form,ShapeFunctions& shapefunctions)
     :
     eval_inners_(build_tuple_of_evals2<H,TupleOfPairsNumbers>(form(),shapefunctions))
     {

@@ -23,93 +23,6 @@ public:
       inline constexpr subtype &operator[](const Integer i) {return derived().value()[i];}
       inline constexpr const subtype &operator[](const Integer i)const {return derived().value()[i];}
 
-      // // EQUAL
-      // inline constexpr Derived& operator = (const Derived &u)
-      // {            
-      //   value()=u.value();
-      //   return *this;
-      // } 
-
-      // // BINARY ADD
-      // inline constexpr Derived operator+(const Derived &other) const
-      // {
-      //   Derived result;
-      //   result.value()=derived().value()+other.value();
-      //   return result;
-      // };
-
-      // // UNARY ADD
-      // inline constexpr Derived operator+() const
-      // {
-      //    return derived();
-      // };
-
-      // // BINARY MINUS
-      // inline constexpr Derived operator-(const Derived &other) const
-      // {
-      //   Derived result;
-      //   result.value()=derived().value()-other.value();
-      //   return result;
-      // };
-      // // UNARY MINUS
-      // inline constexpr Derived operator-() const
-      // {
-      //   Derived result;
-      //   result.value()=-derived().value();
-      //   return result;
-      // };
-
-    
-      // // LEFT SCALAR MULTIPLY
-      // friend constexpr Derived operator *(const Real &alpha, const Derived& der) 
-      // { 
-      //   Derived result;
-      //   result.value()=alpha*der.value();
-      //   return result;
-      // };
-
-      // // RIGHT SCALAR MULTIPLY
-      // friend constexpr Derived operator *(const Derived& der,const Real &alpha) 
-      // { 
-      //   Derived result;
-      //   result.value()=alpha*der.value();
-      //   return result;
-      // };
-
-      // // RIGHT SCALAR DIVISION
-      // friend constexpr Derived operator /(const Derived& der,const Real &alpha) 
-      // { 
-      //   Derived result;
-      //   result.value()=der.value()/alpha;
-      //   return result;
-      // };
-
-      // // RIGHT SCALAR EQUAL DIVISION
-      // inline constexpr Derived& operator /=(const Real &alpha) 
-      // { 
-      //   (*this).derived().value()=(*this).derived().value()/alpha;
-      //   return (*this).derived();
-      // };
-      // // RIGHT SCALAR EQUAL MULTIPLICATION
-      // inline constexpr Derived& operator *=(const Real &alpha) 
-      // { 
-      //   (*this).derived().value()=(*this).derived().value()*alpha;
-      //   return (*this).derived();
-      // };   
-      // // EQUAL ADDITION
-      // inline constexpr Derived& operator +=(const Derived &other) 
-      // { 
-      //   (*this).derived().value()=(*this).derived().value()+other.value();
-      //   return (*this).derived();
-      // };  
-      // // EQUAL SUBTRACTION
-      // inline constexpr Derived& operator -=(const Derived &other) 
-      // { 
-      //   (*this).derived().value()=(*this).derived().value()-other.value();
-      //   return (*this).derived();
-      // };
-
-
       // PRINTING 
       void describe(std::ostream &os) const
       {
@@ -130,10 +43,10 @@ public:
 template<typename T,Integer NQPoints>
 class QPValues: 
 public AlgebraicExpression<QPValues<T,NQPoints>,Vector<T,NQPoints>>,
-public TensorBase<T, std::make_index_sequence<NQPoints>> 
+public TensorBase<T, std::make_integer_sequence<Integer,NQPoints>> 
 {
  public:
-    using MB = TensorBase<T, std::make_index_sequence<NQPoints>>;
+    using MB = TensorBase<T, std::make_integer_sequence<Integer,NQPoints>>;
     using MB::MB;
     using MB::values;
     using type=  Vector<T,NQPoints>;
@@ -155,10 +68,10 @@ class FQPValues:
 public AlgebraicExpression<FQPValues<T,NQPoints_,Ndofs_>,
                     Vector<Vector<T,NQPoints_>,Ndofs_>>
                     // ,
-// public TensorBase<Vector<T,NQPoints>, std::make_index_sequence<NComponents>> 
+// public TensorBase<Vector<T,NQPoints>, std::make_integer_sequence<Integer,NComponents>> 
 {
 public:
-      // using MB = TensorBase<Vector<T,NQPoints>, std::make_index_sequence<NComponents>> ;
+      // using MB = TensorBase<Vector<T,NQPoints>, std::make_integer_sequence<Integer,NComponents>> ;
       // using MB::MB;
       // using MB::values;
       static constexpr Integer NQPoints=NQPoints_;

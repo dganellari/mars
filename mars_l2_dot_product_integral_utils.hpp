@@ -951,8 +951,20 @@ std::shared_ptr<FunctionSpace> find_spaces_ptr(const Function<FullSpace,N,Operat
 }
 
 
-template<typename FunctionSpace, template<class,Integer,class>class TestOrTrial_,typename MixedSpace,Integer N,typename OperatorType>
-std::shared_ptr<FunctionSpace> find_spaces_ptr(const TestOrTrial_<MixedSpace,N,OperatorType>& t)
+// template<typename FunctionSpace, template<class,Integer,class>class TestOrTrial_,typename MixedSpace,Integer N,typename OperatorType>
+// std::shared_ptr<FunctionSpace> find_spaces_ptr(const TestOrTrial_<MixedSpace,N,OperatorType>& t)
+// {
+//  return t.spaces_ptr();
+// }
+
+template<typename FunctionSpace, typename MixedSpace,Integer N,typename OperatorType>
+std::shared_ptr<FunctionSpace> find_spaces_ptr(const Test<MixedSpace,N,OperatorType>& t)
+{
+ return t.spaces_ptr();
+}
+
+template<typename FunctionSpace, typename MixedSpace,Integer N,typename OperatorType>
+std::shared_ptr<FunctionSpace> find_spaces_ptr(const Trial<MixedSpace,N,OperatorType>& t)
 {
  return t.spaces_ptr();
 }
