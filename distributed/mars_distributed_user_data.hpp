@@ -342,7 +342,7 @@ public:
             : mesh(m), func(f), ghost_layer(gl), scan_ghost(sg), proc(p), xDim(x), yDim(y), zDim(z) {}
 
         template <Integer dir>
-        MARS_INLINE_FUNCTION void iterate(const Integer i, const Octant &ref_octant) const
+        MARS_INLINE_FUNCTION void iterate(const Integer i) const
         {
             for (int side = 0; side < 2; ++side)
             {
@@ -353,8 +353,8 @@ public:
                 else
                     face_nr = 2 * dir;
 
-                Octant nbh_oc = face_nbh<simplex_type::ElemType>(ref_octant, face_nr,
-                                                                 xDim, yDim, zDim);
+                /* Octant nbh_oc = face_nbh<simplex_type::ElemType>(ref_octant, face_nr, mesh); */
+                Octant nbh_oc = mesh->get_octant_face_nbh(i, face_nr);
 
                 bool ghost = false;
                 Integer index;
@@ -394,23 +394,30 @@ public:
                     /* printf("Index: %li, o.x: %li, y: %li, elem-index: %li, owner_proc: %li, proc: %li , o.x: %li, y: %li, index: %li, ghost: %i\n", index, ref_octant.x, ref_octant.y, elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim), owner_proc, proc, o.x, o.y, elem_index(o.x, o.y, o.z, xDim, yDim), face.get_second_side().is_ghost()); */
                 }
 
-                bool boundary = nbh_oc.shares_boundary_side<simplex_type::ElemType>(xDim, yDim, zDim);
+                bool boundary = nbh_oc.shares_boundary();
 
-                if ((side == 0 && nbh_oc.is_valid()) || ghost || boundary)
+                //constructed valid for period and non-periodic.
+                Face<simplex_type::ElemType, dir> face;
+
+                //to avoid a face been called twice. Only the upper boundary faces. check the validate_nbh func.
+                if (mesh->is_periodic() && !nbh_oc.is_valid())
                 {
-                    Face<simplex_type::ElemType, dir> face;
+                    face.invalidate();
+                }
 
+                if (face.is_valid() && ((side == 0 && nbh_oc.is_valid()) || ghost || boundary))
+                {
                     int origin_side = side;
-                    //if boundary origin element then the side needs always be 0
-                    if(boundary)
-                        origin_side = 0;
+
+                    if(boundary && !mesh->is_periodic())
+                        origin_side =0;
 
                     face.get_side(origin_side).set_elem_id(i);
                     face.get_side(origin_side).set_boundary(boundary);
                     //if it is the side element of the ref octant.
                     face.get_side(origin_side).set_origin();
 
-                    if (!boundary)
+                    if (!boundary || mesh->is_periodic())
                     {
                         int otherside = origin_side ^ 1;
 
@@ -418,19 +425,52 @@ public:
                         face.get_side(otherside).set_ghost(ghost);
                     }
 
+                    if (boundary && mesh->is_periodic())
+                        face.swap_sides();
+
                     func(face);
                 }
+
+                /* if(mesh->is_periodic() && nbh_oc.is_valid())
+                {
+                if ((side == 0 && nbh_oc.is_valid()) || ghost || boundary)
+                {
+                    Face<simplex_type::ElemType, dir> face;
+
+                    int origin_side = side;
+
+                    if(boundary && !mesh->is_periodic())
+                        origin_side =0;
+
+                    face.get_side(origin_side).set_elem_id(i);
+                    face.get_side(origin_side).set_boundary(boundary);
+                    //if it is the side element of the ref octant.
+                    face.get_side(origin_side).set_origin();
+
+                    if (!boundary || mesh->is_periodic())
+                    {
+                        int otherside = origin_side ^ 1;
+
+                        face.get_side(otherside).set_elem_id(index);
+                        face.get_side(otherside).set_ghost(ghost);
+                    }
+
+                    if (boundary && mesh->is_periodic())
+                        face.swap_sides();
+
+                    func(face);
+                }
+                } */
             }
         }
 
         MARS_INLINE_FUNCTION
         void operator()(const Integer i) const
         {
-            const Integer oc = mesh->get_view_sfc()(i);
-            Octant ref_octant = get_octant_from_sfc<simplex_type::ElemType>(oc);
-
-            iterate<0>(i, ref_octant);
-            iterate<1>(i, ref_octant);
+            /* const Integer oc = mesh->get_view_sfc()(i);
+            Octant ref_octant = get_octant_from_sfc<simplex_type::ElemType>(oc); */
+            iterate<0>(i);
+            iterate<1>(i);
             //TODO: 3D part
         }
 

@@ -331,7 +331,7 @@ MARS_INLINE_FUNCTION void print_derivatives(Data &data)
         double point[3];
         get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, data.get_mesh()->get_XDim(), data.get_mesh()->get_YDim(), data.get_mesh()->get_ZDim());
 
-        printf("derivative data: %li - (%lf, %lf) - rank: %i - derivatives: [%lf - %lf]\n", i, point[0], point[1], data.get_mesh()->get_proc(), data.get_elem_data<first>(i), data.get_elem_data<second>(i));
+        printf("derivative data: %li - (%lf, %lf) - rank: %i - u: %lf - dudt: %lf - derivatives: [%lf - %lf]\n", i, point[0], point[1], data.get_mesh()->get_proc(), data.get_elem_data<DataDesc::u>(i), data.get_elem_data<DataDesc::dudt>(i) ,data.get_elem_data<first>(i), data.get_elem_data<second>(i));
     });
 }
 
@@ -427,11 +427,14 @@ struct Minmod
                     DataType<du_index> is the type of the  data.get_elem_data<du_index>(idx) */
                     atomic_op(AbsMinMod<DataType<du_index>>(), data.get_elem_data<du_index>(idx), du_estimate);
 
-                    /* Integer sfc_elem = data.get_mesh()->get_sfc_elem(idx);
+                    /* if(face.get_side(i).is_boundary())
+                    { */
+                    Integer sfc_elem = data.get_mesh()->get_sfc_elem(idx);
                     double point[3];
                     get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, data.get_mesh()->get_XDim(),
                                                           data.get_mesh()->get_YDim(), data.get_mesh()->get_ZDim());
-                    printf("Dir: %i - (%lf, %lf) udata: %lf - %lf - [%lf - %lf]\n", Dir, point[0], point[1], data.get_elem_data<du_index>(idx), du_estimate, uavg[0], uavg[1]); */
+                    printf("i: %i - (%lf, %lf) udata: %lf - %i -  %i]\n", i, point[0], point[1], data.get_elem_data<du_index>(idx), face.get_side(i).get_face_side(), Dir);
+                    /* } */
                 }
             }
         }
@@ -475,7 +478,7 @@ struct UpwindFlux
             }
         }
 
-        Data<DataDesc::u> q = vdotn * uavg;
+        DataType<DataDesc::u> q = vdotn * uavg;
 
         double facearea = 0;
         for (int i = 0; i < 2; ++i)
@@ -493,7 +496,7 @@ struct UpwindFlux
                     DataType<DataDesc::dudt> du_dt = q * facearea;
 
                     Integer idx = face.get_side(i).get_elem_id();
-                    Kokkos::atomic_add(data.get_elem_data<DataDesc::dudt>(idx), du_dt);
+                    Kokkos::atomic_add(&data.get_elem_data<DataDesc::dudt>(idx), du_dt);
                 }
             }
         }
@@ -533,13 +536,13 @@ MARS_INLINE_FUNCTION DataType<idx> u_max(Data &data)
 }
 
 template <Integer Dim>
-double get_timestep(Data &data)
+double get_timestep(Data &data, const ProblemDesc<Dim>& pd)
 {
     double hx = 1. / data.get_mesh()->get_XDim();
     double hy = 1. / data.get_mesh()->get_YDim();
 
     double vnorm = 0;
-    double min_h = Kokkos::ArithTraits<double>::min(hx, hy);
+    double min_h = min(hx, hy);
 
     for (int i = 0; i < Dim; i++)
     {
@@ -551,7 +554,7 @@ double get_timestep(Data &data)
     return min_h / 2. / vnorm;
 }
 
-template<typename T = typename DataType<DataDesc::dudt>>
+template<typename T = DataType<DataDesc::dudt>>
 MARS_INLINE_FUNCTION void timestep_update(Data &data, T dt)
 {
 
@@ -565,33 +568,34 @@ MARS_INLINE_FUNCTION void timestep_update(Data &data, T dt)
     });
 }
 
-template <Integer Dim>
-void timestep(const context &context, Data &data, ProblemDesc<Dim> pd, double time)
+template <Integer Type, Integer Dim>
+void timestep(const context &context, Data &data, ProblemDesc<Dim>& pd, double time)
 {
     DataType<DataDesc::dudt> dt = 0.;
     int i = 0;
 
     for (DataType<DataDesc::dudt> t = 0.; t < time; t += dt)
     {
-        i++;
-        if (!(i % refine_period))
+        printf("i: %i, time %f - ref: %li\n", i, t, pd.refine_period);
+        if (!(i % pd.refine_period))
         {
             if (i)
             {
                 auto max_value = u_max<DataDesc::u>(data);
                 //mpi all reduce to get the global max solution value
                 auto g_max = context->distributed->max(max_value);
-                /* printf("global Max - %lf\n", g_max); */
+                printf("global Max - %lf\n", g_max);
                 pd.max_err *= g_max;
 
                 //TODO: Here can be added the refinement step when available.
             }
 
-            dt = get_timestep(data);
+            dt = get_timestep(data, pd);
+            printf("dt: %lf, err %f\n", dt, pd.max_err);
         }
 
         quad_divergence<DataDesc::dudt>(data);
-        data.face_iterate(UpwindFlux(data, pd));
+        data.face_iterate(UpwindFlux<Dim>(data, pd));
 
         timestep_update(data, dt);
 
@@ -600,7 +604,10 @@ void timestep(const context &context, Data &data, ProblemDesc<Dim> pd, double ti
         //1 and 2 are the derivatives in the tuple
         reset_derivatives<DataDesc::du_0, DataDesc::du_1>(data);
         data.face_iterate(Minmod(data));
+
+        print_derivatives<Type, DataDesc::du_0, DataDesc::du_1>(data);
     }
+    ++i;
 }
 
 void advection(int &argc, char **&argv, const int level)
@@ -641,6 +648,7 @@ void advection(int &argc, char **&argv, const int level)
 
         DistributedQuad4Mesh mesh;
         generate_distributed_cube(context, mesh, level, level, 0);
+        mesh.set_periodic(); //set the domain to be periodic
 
         const Integer xDim = mesh.get_XDim();
         const Integer yDim = mesh.get_YDim();
@@ -713,9 +721,9 @@ void advection(int &argc, char **&argv, const int level)
         double time = timer.seconds();
         std::cout << "face iterate took: " << time << " seconds." << std::endl;
 
-        /* print_derivatives<Type, DataDesc::du_0, DataDesc::du_1>(data); */
+        print_derivatives<Type, DataDesc::du_0, DataDesc::du_1>(data);
 
-        timestep(context, data, pd, 0.1);
+        timestep<Type>(context, data, pd, 0.1);
 
 #endif
     }
