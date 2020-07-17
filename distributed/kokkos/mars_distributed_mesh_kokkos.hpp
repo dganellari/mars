@@ -857,9 +857,11 @@ public:
         Integer yDim;
         Integer zDim;
 
+        bool periodic;
+
         CountGhostNeighbors(ViewVectorType<Integer> gl, ViewVectorType<Integer> ct, ViewVectorType<Integer> g,
-                            Integer p, Integer xdm, Integer ydm, Integer zdm) : global(gl), count(ct), gp(g), proc(p), xDim(xdm),
-                                                                                yDim(ydm), zDim(zdm)
+                            Integer p, Integer xdm, Integer ydm, Integer zdm, bool period) : global(gl), count(ct), gp(g), proc(p), xDim(xdm),
+                                                                                yDim(ydm), zDim(zdm), periodic(period)
         {
         }
 
@@ -889,7 +891,7 @@ public:
 
             for (int face = 0; face < 2 * ManifoldDim; ++face)
             {
-                Octant o = face_nbh<Type>(ref_octant, face, xDim, yDim, zDim);
+                Octant o = ref_octant.face_nbh<Type>(face, xDim, yDim, zDim, periodic);
                 if (o.is_valid())
                 {
 
@@ -901,7 +903,7 @@ public:
 
             for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner)
             {
-                Octant o = corner_nbh<Type>(ref_octant, corner, xDim, yDim, zDim);
+                Octant o = ref_octant.corner_nbh<Type>(corner, xDim, yDim, zDim, periodic);
                 if (o.is_valid())
                 {
                     printf("Corner Nbh of %li (%li) is : %li with--- x and y: %li - %li\n", gl_index,
@@ -928,10 +930,12 @@ public:
         Integer yDim;
         Integer zDim;
 
+        bool periodic;
+
         BuildBoundarySets(ViewVectorType<Integer> gl, ViewVectorType<Integer> g, ViewVectorType<Integer> st,
                           ViewVectorType<Integer> sc,                                                               //ViewVectorType<Integer> in,
-                          Integer p, Integer xdm, Integer ydm, Integer zdm) : global(gl), gp(g), set(st), scan(sc), //index(in),
-                                                                              proc(p), xDim(xdm), yDim(ydm), zDim(zdm)
+                          Integer p, Integer xdm, Integer ydm, Integer zdm, bool period) : global(gl), gp(g), set(st), scan(sc), //index(in),
+                                                                              proc(p), xDim(xdm), yDim(ydm), zDim(zdm), periodic(period)
         {
         }
 
@@ -962,7 +966,7 @@ public:
             const int offset = xDim + 1;
             for (int face = 0; face < 2 * ManifoldDim; ++face)
             {
-                Octant o = face_nbh<Type>(ref_octant, face, xDim, yDim, zDim);
+                Octant o = ref_octant.face_nbh<Type>(face, xDim, yDim, zDim, periodic);
                 if (o.is_valid())
                 {
                     /* printf("face Nbh of %u is %li: x and y: %li - %li\n",
@@ -974,7 +978,7 @@ public:
 
             for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner)
             {
-                Octant o = corner_nbh<Type>(ref_octant, corner, xDim, yDim, zDim);
+                Octant o = ref_octant.corner_nbh<Type>(corner, xDim, yDim, zDim, periodic);
                 if (o.is_valid())
                 {
                     /* printf("Corner Nbh of %u is %li: x and y: %li - %li\n",
@@ -1039,9 +1043,11 @@ public:
         Integer yDim;
         Integer zDim;
 
+        bool periodic;
+
         IdentifyBoundaryPerRank(ViewVectorType<Integer> gl, ViewMatrixType<bool> pr, ViewVectorType<Integer> g,
-                                Integer p, Integer xdm, Integer ydm, Integer zdm) : global(gl), predicate(pr), gp(g), proc(p), xDim(xdm),
-                                                                                    yDim(ydm), zDim(zdm)
+                                Integer p, Integer xdm, Integer ydm, Integer zdm, bool period) : global(gl), predicate(pr),
+                                gp(g), proc(p), xDim(xdm), yDim(ydm), zDim(zdm), periodic(period)
         {
         }
 
@@ -1071,7 +1077,7 @@ public:
 
             for (int face = 0; face < 2 * ManifoldDim; ++face)
             {
-                Octant o = face_nbh<Type>(ref_octant, face, xDim, yDim, zDim);
+                Octant o = ref_octant.face_nbh<Type>(face, xDim, yDim, zDim, periodic);
                 if (o.is_valid())
                 {
                     /*  printf("face Nbh of %li (%li) is : %li with--- x and y: %li - %li\n", gl_index,
@@ -1082,7 +1088,7 @@ public:
 
             for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner)
             {
-                Octant o = corner_nbh<Type>(ref_octant, corner, xDim, yDim, zDim);
+                Octant o = ref_octant.corner_nbh<Type>(corner, xDim, yDim, zDim, periodic);
                 if (o.is_valid())
                 {
                     /* printf("corner Nbh of %li (%li) is : %li with--- x and y: %li - %li\n", gl_index,
@@ -1130,7 +1136,7 @@ public:
 
         parallel_for("IdentifyBoundaryPerRank", get_chunk_size(),
                      IdentifyBoundaryPerRank<Type>(local_sfc_, rank_boundary, gp_np,
-                                                   proc, xDim, yDim, zDim));
+                                                   proc, xDim, yDim, zDim, periodic));
 
         /* perform a scan for each row with the sum at the end for each rank */
         ViewMatrixType<Integer> rank_scan("rank_scan", rank_size, chunk_size_ + 1);
@@ -1198,6 +1204,43 @@ public:
         return sfc_to_local_(enc_oc) - gp_np(2 * proc + 1);
     }
 
+    MARS_INLINE_FUNCTION
+    void set_periodic()
+    {
+        periodic = true;
+    }
+
+    MARS_INLINE_FUNCTION
+    bool is_periodic()
+    {
+        return periodic;
+    }
+
+
+    MARS_INLINE_FUNCTION
+    Octant get_octant(const Integer sfc_index)
+    {
+        Integer sfc_code = local_sfc_(sfc_index);
+        return get_octant_from_sfc<Elem::ElemType>(sfc_code);
+    }
+
+    MARS_INLINE_FUNCTION
+    Octant get_octant_face_nbh(const Integer sfc_index, const Integer face_nr)
+    {
+        Octant oc = get_octant(sfc_index);
+
+        return oc.face_nbh<Elem::ElemType>(face_nr, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
+    }
+
+    MARS_INLINE_FUNCTION
+    Octant get_octant_corner_nbh(const Integer sfc_index, const Integer corner_nr)
+    {
+        Octant oc = get_octant(sfc_index);
+
+        return oc.corner_nbh<Elem::ElemType>(corner_nr, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
+    }
+
+
 
 private:
     ViewMatrixTextureC<Integer, Comb::value, 2> combinations;
@@ -1214,6 +1257,8 @@ private:
     Integer xDim, yDim, zDim;
     Integer chunk_size_;
     Integer proc;
+
+    bool periodic = false;
 
     UnorderedMap<Integer, Integer> global_to_local_map_;// global to local map for the mesh elem indices.
 

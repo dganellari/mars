@@ -149,6 +149,7 @@ namespace mars {
         {
             sides[0].set_face_side(2 * direction + 1);
             sides[1].set_face_side(2 * direction);
+            valid = true;
         }
 
         MARS_INLINE_FUNCTION
@@ -187,9 +188,31 @@ namespace mars {
             return sides[0];
         }
 
-    private:
+        MARS_INLINE_FUNCTION
+        void swap_sides()
+        {
+            FaceSide<Type> tmp;
 
+            tmp = sides[0];
+            sides[0] = sides[1];
+            sides[1] = tmp;
+        }
+
+        MARS_INLINE_FUNCTION
+        bool is_valid()
+        {
+            return valid;
+        }
+
+        MARS_INLINE_FUNCTION
+        void invalidate()
+        {
+            valid = false;
+        }
+
+    private:
         FaceSide<Type> sides[2];
+        bool valid;
     };
 
     template<Integer Type>
