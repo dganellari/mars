@@ -9,4 +9,5 @@ static void BM_MeshGeneration4(benchmark::State& state) {
         Mesh4 mesh4;
     }
 }
+
 BENCHMARK(BM_MeshGeneration4);
