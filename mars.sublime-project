@@ -10,7 +10,8 @@
         "doc/api",
         "build_debug",
         "bin_debug",
-        "bin_*"
+        "bin_*",
+        "external"
       ],
       "file_exclude_patterns": [
         "*.sublime-workspace",
