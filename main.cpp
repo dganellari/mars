@@ -1241,8 +1241,12 @@ int main(int argc, char *argv[])
 	/*test_uniform_bisection_3D(3, test_mars_mesh_generation_3D(1,1,1));*/
 	//parallel with kokkos.
 
-DUALContactLinearElasticity5<2,1>(argc,argv);
-
+// DUALContactLinearElasticity5<2,1>(argc,argv);
+// LSContact<2,0>(argc,argv);
+	
+DUALLinearElasticityCook<2,1>(argc,argv);//1,1,2);
+// PROVALSFEM_ContactLinearElasticity<2,0,1>(1,5,6);
+// PROVALSFEM_ContactLinearElasticity2<2,0,1>(1,0,1,1);
 
 
 #ifdef WITH_KOKKOS
