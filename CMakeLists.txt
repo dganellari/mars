@@ -115,6 +115,13 @@ if(TRY_WITH_KOKKOS)
 
 endif()
 
+#################################################################################
+
+
+
+
+#################################################################################
+
 list(APPEND MARS_HEADERS
 	mars.hpp
 	mars_base.hpp
@@ -284,3 +291,12 @@ install(FILES ${CMAKE_BINARY_DIR}/mars_config.hpp DESTINATION include)
 # 	-lshape
 # 	-lutility
 # )
+
+add_subdirectory(external/googletest)
+include(tests/tests.cmake)
+
+
+add_subdirectory(external/benchmark)
+include(bench/benchmarks.cmake)
+
+
