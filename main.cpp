@@ -1153,7 +1153,7 @@ int main(int argc, char *argv[]) {
 
     MARS::init(argc, argv);
 
-    cxxopts::Options options("M.A.R.S.", "run M.A.R.S. based applications.");
+    cxxopts::Options options("M.A.R.S.", "Run M.A.R.S. based applications.");
 
     options.add_options()("d,debug", "Enable debugging")                                                      //
         ("l,level", "Number of levels", cxxopts::value<int>()->default_value("1"))                            //
