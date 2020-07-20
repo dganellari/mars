@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 2.8.12)
 
 project(mars)
 
+# FIXME make them usable from avaialble installation
 add_subdirectory(external/googletest)
 add_subdirectory(external/benchmark)
 
