@@ -1226,7 +1226,7 @@ int main(int argc, char *argv[]) {
             auto it = apps.find(app);
             if (it == apps.end()) {
                 std::cerr << "Could not find app: " << app << std::endl;
-                std::cout << "Avaialble apps:\n";
+                std::cout << "Available apps:\n";
 
                 for (auto &a : apps) {
                     std::cout << a.first << "\n";
