@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 2.8.12)
 
 project(mars)
 
+add_subdirectory(external/googletest)
+add_subdirectory(external/benchmark)
+
 option(TRY_WITH_MOONOLITH
        "Use -DTRY_WITH_MOONOLITH=ON for enabling mesh transfer functions." OFF)
 option(TRY_WITH_KOKKOS
@@ -129,6 +132,8 @@ endif()
 
 # ##############################################################################
 
+add_subdirectory(core)
+
 list(
     APPEND
     MARS_HEADERS
@@ -226,7 +231,7 @@ target_compile_options(
     # -fsanitize-memory-track-origins>
 )
 target_link_libraries(mars ${MPI_LIBRARIES})
-# target_compile_features(mars PUBLIC cxx_std_11)
+target_compile_features(mars PUBLIC cxx_std_14)
 
 target_include_directories(mars PUBLIC .)
 target_include_directories(mars PUBLIC generation)
@@ -263,6 +268,9 @@ endif()
 add_executable(mars_exec main.cpp)
 target_link_libraries(mars_exec mars)
 
+target_include_directories(
+    mars_exec PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/cxxopts/include)
+
 if(TRY_WITH_MOONOLITH)
     add_subdirectory(moonolith_adapter)
 
@@ -296,8 +304,5 @@ install(FILES ${CMAKE_BINARY_DIR}/mars_config.hpp DESTINATION include)
 # -L${MOONOLITH_DIR}/lib/ -leps -lexternal -lintersection -lio -lmeshing
 # -lmoonolith -lquadrature -lshape -lutility )
 
-add_subdirectory(external/googletest)
 include(tests/tests.cmake)
-
-add_subdirectory(external/benchmark)
 include(bench/benchmarks.cmake)
