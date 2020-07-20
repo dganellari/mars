@@ -1150,17 +1150,18 @@ void par_mesh_test() {
 
 int main(int argc, char *argv[]) {
     using namespace mars;
+    using namespace cxxopts;
 
     MARS::init(argc, argv);
 
-    cxxopts::Options options("M.A.R.S.", "Run M.A.R.S. based applications.");
+    Options options("./mars_exec", "Run M.A.R.S. based applications.");
 
-    options.add_options()("d,debug", "Enable debugging")                                                      //
-        ("l,level", "Number of levels", cxxopts::value<int>()->default_value("1"))                            //
-        ("r,refine_level", "Number of refinements", cxxopts::value<int>()->default_value("1"))                //
-        ("f,file", "File name", cxxopts::value<std::string>()->default_value("../data/write/tetrakis.MFEM"))  //
-        ("a,app", "Application", cxxopts::value<std::string>()->default_value(""))                            //
-        ("v,verbose", "Verbose output", cxxopts::value<bool>()->default_value("false"))                       //
+    options.add_options()("d,debug", "Enable debugging")                                             //
+        ("l,level", "Number of levels", value<int>()->default_value("1"))                            //
+        ("r,refine_level", "Number of refinements", value<int>()->default_value("1"))                //
+        ("f,file", "File name", value<std::string>()->default_value("../data/write/tetrakis.MFEM"))  //
+        ("a,app", "Application", value<std::string>()->default_value(""))                            //
+        ("v,verbose", "Verbose output", value<bool>()->default_value("false"))                       //
         ("h,help", "Print usage");
 
     try {
