@@ -2,10 +2,9 @@ set(MARS_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
 list(APPEND TEST_MODULES .)
 
-# Now simply link against gtest or gtest_main as needed. Eg
 add_executable(mars_test ${MARS_TEST_DIR}/test.cpp)
 
-target_link_libraries(mars_test gtest_main)
+target_link_libraries(mars_test gtest)
 add_test(NAME mars_test COMMAND mars_test)
 
 set(LOCAL_HEADERS "")

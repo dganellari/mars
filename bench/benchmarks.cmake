@@ -2,7 +2,6 @@ set(MARS_BENCH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/bench)
 
 list(APPEND BENCH_MODULES .)
 
-# Now simply link against gtest or gtest_main as needed. Eg
 add_executable(mars_bench ${MARS_BENCH_DIR}/mars_benchmarks.cpp)
 target_link_libraries(mars_bench benchmark::benchmark)
 add_test(NAME mars_bench COMMAND mars_bench)
