@@ -8,6 +8,7 @@
 
 #include "mars_benchmark.hpp"
 #include "mars_bisection.hpp"
+#include "mars_instance.hpp"
 #include "mars_lagrange_element.hpp"
 #include "mars_lepp_benchmark.hpp"
 #include "mars_mesh.hpp"
@@ -1150,13 +1151,7 @@ void par_mesh_test() {
 int main(int argc, char *argv[]) {
     using namespace mars;
 
-#ifdef WITH_MPI
-    MPI_Init(&argc, &argv);
-#else
-#ifdef WITH_PAR_MOONOLITH
-    MPI_Init(&argc, &argv);
-#endif
-#endif
+    MARS::init(argc, argv);
 
     cxxopts::Options options("M.A.R.S.", "run M.A.R.S. based applications.");
 
@@ -1181,22 +1176,50 @@ int main(int argc, char *argv[]) {
         std::string app = args["app"].as<std::string>();
 
         ///////////////////////////////////////////////////
-        // FIXME create tests and separate apps
+        // FIXME create tests, benchmarks and separate apps for what is below
         std::map<std::string, std::function<void()>> apps;
 
-        apps["test_bisection_2D"] = test_bisection_2D;
-        apps["test_bisection_4D"] = test_bisection_4D;
-        apps["test_partition_2D"] = test_partition_2D;
-        apps["test_partition_3D"] = test_partition_3D;
-        apps["test_partition_4D"] = test_partition_4D;
-        apps["test_incomplete_2D"] = test_incomplete_2D;
-        apps["test_incomplete_3D"] = test_incomplete_3D;
-        apps["test_incomplete_4D"] = test_incomplete_4D;
-        apps["test_incomplete_5D"] = test_incomplete_5D;
-        apps["test_incomplete_6D"] = test_incomplete_6D;
-        apps["test_incomplete_bad_4D"] = test_incomplete_bad_4D;
+        apps["bisection_2D"] = test_bisection_2D;
+        apps["bisection_4D"] = test_bisection_4D;
+        apps["partition_2D"] = test_partition_2D;
+        apps["partition_3D"] = test_partition_3D;
+        apps["partition_4D"] = test_partition_4D;
+        apps["incomplete_2D"] = test_incomplete_2D;
+        apps["incomplete_3D"] = test_incomplete_3D;
+        apps["incomplete_4D"] = test_incomplete_4D;
+        apps["incomplete_5D"] = test_incomplete_5D;
+        apps["incomplete_6D"] = test_incomplete_6D;
+        apps["incomplete_bad_4D"] = test_incomplete_bad_4D;
         apps["read_file"] = read_file;
         apps["write_file"] = write_file;
+
+#ifdef WITH_PAR_MOONOLITH
+        apps["mars_moonolith_test"] = run_mars_moonolith_test;
+#endif  // WITH_PAR_MOONOLITH
+
+        apps["bisection_3D"] = [=]() { test_bisection_3D(); };
+        apps["uniform_bisection_2D"] = [=]() { test_uniform_bisection_2D(level, filename); };
+        apps["read_write_3D"] = [=]() { test_read_write_3D(filename); };
+
+        apps["mars_mesh_generation_2D"] = [=]() { test_mars_mesh_generation_2D(level, level); };
+        apps["mars_mesh_generation_1D"] = [=]() { test_mars_mesh_generation_1D(level); };
+
+        apps["mars_mesh_generation_3D_a"] = [=]() { test_mars_mesh_generation_3D(100, 100, 100); };
+        apps["mars_mesh_generation_3D_b"] = [=]() { test_mars_mesh_generation_3D(78, 100, 80); };
+
+        apps["mars_mesh_generation_3D_a"] = [=]() { test_mars_mesh_generation_3D(150, 150, 150); };
+        apps["mars_mesh_generation_3D_b"] = [=]() { test_mars_mesh_generation_3D(200, 200, 200); };
+        apps["mars_mesh_generation_3D_c"] = [=]() { test_mars_mesh_generation_3D(level, level, level); };
+
+#ifdef WITH_KOKKOS
+        apps["benchmarks"] = [=]() { run_benchmarks(level, refine_level); };
+
+        apps["mars_mesh_generation_kokkos_2D_a"] = [=]() { test_mars_mesh_generation_kokkos_2D(2, 4); };
+        apps["mars_mesh_generation_kokkos_2D_b"] = [=]() { test_mars_mesh_generation_kokkos_2D(level + 4, level); };
+
+        apps["mars_mesh_generation_kokkos_3D"] = [=]() { test_mars_mesh_generation_kokkos_3D(level, level, level); };
+        apps["mars_mesh_generation_kokkos_1D"] = [=]() { test_mars_mesh_generation_kokkos_1D(level); };
+#endif  // WITH_KOKKOS
 
         if (!app.empty()) {
             auto it = apps.find(app);
@@ -1213,102 +1236,10 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        ///////////////////////////////////////////////////
-
-        // test_bisection_3D(atoi(argv[1]));
-
-        // int level = 1;
-        // int refine_level = 1;
-        // std::string filename = "../data/write/tetrakis.MFEM";
-        // if (argc > 1) {
-        //     char *end_ptr = argv[1];
-        //     level = strtol(argv[1], &end_ptr, 10);
-        //     if (*end_ptr != '\0' || end_ptr == argv[1]) warnx("'%s' could not be (completely) converted to long",
-        //     argv[1]);
-
-        //     if (argc == 3) {
-        //         char *end_ptr = argv[2];
-        //         refine_level = strtol(argv[2], &end_ptr, 10);
-        //         if (*end_ptr != '\0' || end_ptr == argv[1])
-        //             warnx("'%s' could not be (completely) converted to long", argv[1]);
-        //     }
-
-        // } else
-        //     std::cout << "No level of refinement was specified. Setting the default to 1!" << std::endl;
-
-        /*if (argc > 2) {
-                filename = argv[2];
-        } else
-                std::cout
-                                << "No file name was specified. Setting the default to tetrakis!"
-                                << std::endl;*/
-
-        // run_tests(level,filename);
-
-        // test_uniform_bisection_2D(level,filename);
-        // test_read_write_3D(filename);
-
-        // if(level <100){
-
-        // test_mars_mesh_generation_2D(level,level);
-        // test_mars_mesh_generation_1D(level);
-        // }
-
-        /*test_mars_mesh_generation_3D(100,100,100);
-        test_mars_mesh_generation_3D(78,100,80);*/
-
-        // test_mars_mesh_generation_3D(150,150,150);
-        // test_mars_mesh_generation_3D(200,200,200);
-
-        // equivalent 3D generation using refinement and libmesh like mesh generation technique.
-
-        /*test_uniform_bisection_3D(3, test_mars_mesh_generation_3D(1,1,1));*/
-        // parallel with kokkos.
-#ifdef WITH_KOKKOS
-        Kokkos::initialize(argc, argv);
-        {
-#ifdef MARS_USE_CUDA
-            cudaDeviceSetLimit(cudaLimitStackSize,
-                               32768);  // set stack to 32KB only for cuda since it is not yet supported in kokkos.
-#endif
-
-            run_benchmarks(level, refine_level);
-
-            // test_mars_mesh_generation_kokkos_2D(2,4);
-
-            // test_mars_mesh_generation_kokkos_2D(level + 4,level);
-            // test_mars_mesh_generation_kokkos_3D(level,level,level);
-            // test_mars_mesh_generation_kokkos_1D(level);
-        }
-
-        Kokkos::finalize();
-
-#endif
-
-#ifdef WITH_PAR_MOONOLITH
-        run_mars_moonolith_test();
-#endif  // WITH_PAR_MOONOLITH
-
-        if (level < 100) {
-            // test_mars_mesh_generation_3D(level , level, level );
-
-            // test_mars_mesh_generation_2D(level,level);
-            // test_mars_mesh_generation_1D(level);
-        }
-
     } catch (const std::exception &ex) {
         std::cerr << ex.what() << std::endl;
         std::cout << options.help() << std::endl;
     }
 
-#ifdef WITH_MPI
-    // par_mesh_test();
-    return MPI_Finalize();
-#else
-#ifdef WITH_PAR_MOONOLITH
-    return MPI_Finalize();
-#else
-    return 0;
-#endif
-#endif  // WITH_MPI
+    return MARS::finalize();
 }
