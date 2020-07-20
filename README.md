@@ -20,6 +20,16 @@ MARS targets multi-core CPUs and GPUs using the C++ Kokkos programming model. Th
 
 A distributed memory, parallel implementation based on MPI is ongoing work, and forest of octrees and space filling curves algorithms for efficient mesh partitioning are being planned.
 
+## Downloading MARS and its dependencies ##
+
+Clone the repository and its submodules. MARS relies on googletest and google/benchmark.
+
+`git clone --recurse-submodules https://bitbucket.org/zulianp/mars.git`
+or for older git versions
+
+`git clone https://bitbucket.org/zulianp/mars.git`
+`cd mars`
+`git submodule update --init --recursive`
 
 Compiling M.A.R.S for serial usage:
 
