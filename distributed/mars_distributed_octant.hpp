@@ -42,7 +42,7 @@ struct Octant
     }
 
     MARS_INLINE_FUNCTION
-    bool is_valid()
+    bool is_valid() const
     {
         return valid;
     }
@@ -160,10 +160,10 @@ struct Octant
             if (x < 0 || y < 0 || x >= xDim || y >= yDim)
             {
                 //check only xdim and ydim and not for -1 because we do not want to process the same face twice
-                if (periodic && (x == xDim || y == yDim))
+                if (periodic)
                 {
-                    x %= xDim;
-                    y %= yDim;
+                    x = (xDim + x) % xDim;
+                    y = (yDim + y) % yDim;
                 }
                 else
                 {
@@ -178,11 +178,11 @@ struct Octant
 
             if (x < 0 || y < 0 || z < 0 || x >= xDim || y >= yDim || z >= zDim)
             {
-                if (periodic && (x == xDim || y == yDim || z == zDim))
+                if (periodic)
                 {
-                    x %= xDim;
-                    y %= yDim;
-                    z %= zDim;
+                    x = (xDim + x) % xDim;
+                    y = (yDim + y) % yDim;
+                    z = (zDim + z) % zDim;
                 }
                 else
                 {
