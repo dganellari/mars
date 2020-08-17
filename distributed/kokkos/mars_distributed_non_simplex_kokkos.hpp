@@ -191,12 +191,20 @@ namespace mars {
         MARS_INLINE_FUNCTION
         void swap_sides()
         {
+            FaceSide<Type> tmp = std::move(sides[0]);
+            sides[0] = std::move(sides[1]);
+            sides[1] = std::move(tmp);
+        }
+
+        /* MARS_INLINE_FUNCTION
+        void swap_sides()
+        {
             FaceSide<Type> tmp;
 
             tmp = sides[0];
             sides[0] = sides[1];
             sides[1] = tmp;
-        }
+        } */
 
         MARS_INLINE_FUNCTION
         bool is_valid()
