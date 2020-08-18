@@ -44,26 +44,16 @@ public:
     }
  */
 
-
-    template <typename H, Integer degree>
-    struct BuildLocalPredicate
+    struct BuildLocalGlobalPredicate
     {
-        constexpr Integer volume_nodes = (degree - 1)^2;
+        constexpr Integer volume_nodes = (degree - 1) ^ 2;
         constexpr Integer face_nodes = (degree - 1);
         constexpr Integer corner_nodes = 1;
 
-        BuildLocalPredicate(Mesh *m, H f, ViewVectorType<Integer> gl,
-                            ViewVectorType<Integer> sg, Integer p, Integer x, Integer y,
-                            Integer z)
-            : mesh(m), func(f), ghost_layer(gl), scan_ghost(sg), proc(p), xDim(x),
-              yDim(y), zDim(z) {}
-
         MARS_INLINE_FUNCTION void volume_iterate(const Integer sfc_index) const
         {
-
             Octant o;
             Octant oc = get_octant(sfc_index);
-
             //go through all the inside dofs for the current element
             for (int i = 0; i < degree - 1; i++)
             {
@@ -71,32 +61,50 @@ public:
                 {
                     o.x = degree * oc.x + i + 1;
                     o.y = degree * oc.y + j + 1;
-
                     Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
 
-                    //predicate
+                    local_predicate(enc_oc) = 1;
+                    global_predicate(enc_oc) = 1;
                 }
             }
         }
 
         MARS_INLINE_FUNCTION void corner_iterate(const Integer sfc_index) const
         {
-
             Octant o;
             Octant oc = get_octant(sfc_index);
-
-            //go through all the inside dofs for the current element
-                for (int j = 0; j < power_of_2(Mesh::ManifoldDim); j++)
+            //go through all the corner dofs for the current element
+            for (int i = 0; i < Mesh::ManifoldDim; i++)
+            {
+                for (int j = 0; j < Mesh::ManifoldDim; j++)
+                /* for (int z = 0; z < Mesh::ManifoldDim; z++) // 3D case*/
                 {
-                    o.x = degree * oc.x + i + 1;
-                    o.y = degree * oc.y + j + 1;
-
+                    //get the next corner using the elem sfc
+                    o.x = oc.x + i;
+                    o.y = oc.y + j;
                     Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
 
-                    //predicate
-                }
-        }
+                    /* check the proc that owns the corner and then decide on the predicate.
+                    This works because the corner defines an element and this element is
+                    always on the largest proc number due to the z order partitioning*/
+                    Integer owner_proc =
+                        find_owner_processor(mesh->get_view_gp(), enc_oc, 2, proc);
+                    assert(owner_proc >= 0);
+                    //convert the octant value into the new nodal sfc system
+                    o.x *= degree;
+                    o.y *= degree;
+                    enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
 
+                    /* if the face neighbor element is ghost then check if the processor
+                      is less than the owner. This is how the dofs are partitioned*/
+                    if (proc >= owner_proc)
+                    {
+                        global_predicate(enc_oc) = 1;
+                    }
+                    local_predicate(enc_oc) = 1;
+                }
+            }
+        }
 
         template <Integer dir>
         MARS_INLINE_FUNCTION void face_iterate(const Integer i) const
@@ -106,19 +114,12 @@ public:
             for (int side = 0; side < 2; ++side)
             {
                 Integer face_nr;
-
                 if (side == 0)
                     face_nr = 2 * dir + 1;
                 else
                     face_nr = 2 * dir;
 
-                /* Octant nbh_oc = face_nbh<simplex_type::ElemType>(ref_octant, face_nr,
-         * mesh); */
                 Octant nbh_oc = mesh->get_octant_face_nbh(i, face_nr);
-
-                bool ghost = false;
-                Integer predicate_val = 1; // pred value = 1 means local 2 means touching with another ghost element
-
                 if (nbh_oc.is_valid())
                 {
                     Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(nbh_oc);
@@ -126,34 +127,21 @@ public:
                         find_owner_processor(mesh->get_view_gp(), enc_oc, 2, proc);
                     assert(owner_proc >= 0);
 
-                    /* if the face neighbor element is ghost then check if the processor
-                      is less than the owner. This is how the dofs are partitioned*/
-
-                    if (proc < owner_proc)
-                    {
-                        predicate_val =2;
-                    }
-
                     //find the starting corner of the face and use the direction
                     Octant face_cornerA;
                     /* Octant face_cornerB; */
-
                     const int val = origin_side ^ 1;
-
                     if (dir == 0)
                     {
                         face_cornerA.x = oc.x + val;
                         face_cornerA.y = oc.y;
-/*
-                        face_cornerB.x = oc.x + val;
+                        /* face_cornerB.x = oc.x + val;
                         face_cornerB.y = ocy + 1; */
                     }
-
                     if (dir == 1)
                     {
                         face_cornerA.x = oc.x;
                         face_cornerA.y = oc.y + val
-
                         /* face_cornerB.x = oc.x + 1;
                         face_cornerB.y = oc.y + val; */
                     }
@@ -161,23 +149,26 @@ public:
                     Octant o;
                     for (int j = 0; j < face_nodes; j++)
                     {
-                        if(dir == 0)
+                        if (dir == 0)
                         {
                             o.x = degree * face_cornerA.x;
                             o.y = degree * face_cornerA.y + j + 1;
                         }
-
-                        if(dir == 1)
+                        if (dir == 1)
                         {
                             o.x = degree * face_cornerA.x + j + 1;
                             o.y = degree * face_cornerA.y;
                         }
 
                         Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
-
-                        //predicate
+                        /* if the face neighbor element is ghost then check if the processor
+                         is less than the owner. This is how the dofs are partitioned*/
+                        if (proc >= owner_proc)
+                        {
+                            global_predicate(enc_oc) = 1;
+                        }
+                        local_predicate(enc_oc) = 1;
                     }
-
                     /* printf("Index: %li, o.x: %li, y: %li, elem-index: %li, owner_proc:
            * %li, proc: %li , o.x: %li, y: %li, index: %li, ghost: %i\n", index,
            * ref_octant.x, ref_octant.y, elem_index(ref_octant.x, ref_octant.y,
@@ -199,11 +190,14 @@ public:
             // TODO: 3D part
         }
 
-        Mesh *mesh;
-        H func;
+        BuildLocalGlobalPredicate(Mesh *m,  ViewVectorType<bool> lp, ViewVectorType<bool> gp,
+                Integer p, Integer x, Integer y, Integer z)
+            : mesh(m), local_predicate(lp), global_predicate(gp), proc(p), xDim(x), yDim(y), zDim(z) {}
 
-        ViewVectorType<Integer> ghost_layer;
-        ViewVectorType<Integer> scan_ghost;
+        Mesh *mesh;
+
+        ViewVectorType<bool> local_predicate;
+        ViewVectorType<bool> global_predicate;
 
         Integer proc;
         Integer xDim;
@@ -211,8 +205,7 @@ public:
         Integer zDim;
     };
 
-    template <typename H>
-    void face_iterate(H f)
+    void build_lg_predicate()
     {
         Integer xDim = host_mesh->get_XDim();
         Integer yDim = host_mesh->get_YDim();
@@ -220,12 +213,24 @@ public:
 
         const Integer size = host_mesh->get_chunk_size();
 
-        Kokkos::parallel_for(
-            "face_iterate", size,
-            FaceIterate<H>(mesh, f, get_view_ghost(), get_view_scan_ghost(),
-                           host_mesh->get_proc(), xDim, yDim, zDim));
-    }
+        /* TODO: xdim and ydim should be changed to max xdim and ydim
+         * of the local partition to reduce memory footprint */
+        local_dof_enum = SFC<simplex_type::ElemType>(xDim, yDim, zDim);
+        global_dof_enum = SFC<simplex_type::ElemType>(xDim, yDim, zDim);
 
+        ViewVectorType<bool> local_predicate("lpred", local_dof_enum.get_all_range());
+        ViewVectorType<bool> global_predicate("gpred", global_dof_enum.get_all_range());
+
+        /* generate the sfc for the local and global dofs containing the generation locally
+        for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
+        Kokkos::parallel_for(
+            "lg_predicate", size,
+            BuildLocalGlobalPredicate(mesh, local_predicate, global_predicate,
+                                      host_mesh->get_proc(), xDim, yDim, zDim));
+
+        local_dof_enum.compact_elements(local_predicate);
+        global_dof_enum.compact_elements(global_predicate);
+    }
 
     const Integer get_dof_size() const
     {
@@ -237,8 +242,9 @@ private:
 
     UserData<Mesh> data;
 
-    ViewVectorType<Integer> local_enum;
-    ViewVectorType<Integer> global_num;
+    SFC<simplex_type::ElemType> local_dof_enum;
+    SFC<simplex_type::ElemType> global_dof_enum;
+
     UnorderedMap<Integer, Integer> local_to_global_enum;
     ViewMatrixType<Integer> elem_dof_enum;
 
