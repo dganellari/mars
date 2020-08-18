@@ -9,23 +9,22 @@ template <Integer Type>
 class SFC
 {
 public:
-    inline void compact_elements(const ViewVectorType<Integer> scan_indices,
-                                 const ViewVectorType<bool> all_elements, const Integer size)
+    inline void compact_elements(const ViewVectorType<bool> all_elements)
     {
         using namespace Kokkos;
 
         Timer timer;
 
-        exclusive_bool_scan(0, size, scan_indices, all_elements);
+        exclusive_bool_scan(0, get_all_range(), get_view_sfc_to_local(), all_elements);
 
         //otherwise kokkos lambda will not work with CUDA
         ViewVectorType<Integer> tmp = elements_;
 
         parallel_for(
-            size, KOKKOS_LAMBDA(const Integer i) {
+            get_all_range(), KOKKOS_LAMBDA(const Integer i) {
                 if (all_elements(i) == 1)
                 {
-                    Integer k = scan_indices(i);
+                    Integer k = get_view_sfc_to_local(i);
                     tmp(k) = i;
                     //elements_(k) =i; It will not work with CUDA. this.elements_ is a host pointer.
                 }
@@ -105,7 +104,7 @@ public:
 
             //compacting the 1 and 0 array and inserting the "true" index of the all elements
             //which is the correct morton code leaving the sfc elements array sorted.
-            compact_elements(get_view_sfc_to_local(), all_elements, get_all_range());
+            compact_elements(all_elements);
 
             return true;
         }
@@ -129,7 +128,7 @@ public:
 
             //compacting the 1 and 0 array and inserting the "true" index of the all elements
             //which is the correct morton code leaving the sfc elements array sorted.
-            compact_elements(get_view_sfc_to_local(), all_elements, get_all_range());
+            compact_elements(all_elements);
 
             return true;
         }
