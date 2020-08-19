@@ -17,20 +17,23 @@ public:
 
         exclusive_bool_scan(0, get_all_range(), get_view_sfc_to_local(), all_elements);
 
+        const Integer elem_size =
+            all_elements(get_all_range() - 1) + get_view_sfc_to_local()(get_all_range() - 1);
+        reserve_elements(elem_size);
+
         //otherwise kokkos lambda will not work with CUDA
         ViewVectorType<Integer> tmp = elements_;
-
         parallel_for(
             get_all_range(), KOKKOS_LAMBDA(const Integer i) {
                 if (all_elements(i) == 1)
                 {
-                    Integer k = get_view_sfc_to_local(i);
+                    Integer k = get_view_sfc_to_local()(i);
                     tmp(k) = i;
                     //elements_(k) =i; It will not work with CUDA. this.elements_ is a host pointer.
                 }
             });
     }
-    //add point functor
+
     struct GenerateSFC
     {
 
@@ -91,7 +94,7 @@ public:
             assert(zDim == 0);
 
             const Integer n__anchor_nodes = xDim * yDim;
-            reserve_elements(n__anchor_nodes);
+            /* reserve_elements(n__anchor_nodes); */
 
             //calculate all range before compaction to avoid sorting.
             /* Integer allrange = encode_morton_2D(xDim, yDim); */
@@ -105,6 +108,7 @@ public:
             //compacting the 1 and 0 array and inserting the "true" index of the all elements
             //which is the correct morton code leaving the sfc elements array sorted.
             compact_elements(all_elements);
+            assert(n__anchor_nodes == get_elem_size());
 
             return true;
         }
@@ -115,7 +119,7 @@ public:
             assert(zDim != 0);
 
             const Integer n__anchor_nodes = xDim * yDim * zDim;
-            reserve_elements(n__anchor_nodes);
+            /* reserve_elements(n__anchor_nodes); */
 
             //calculate all range before compaction to avoid sorting.
             /* Integer allrange = encode_morton_3D(xDim, yDim, zDim); */
@@ -129,6 +133,7 @@ public:
             //compacting the 1 and 0 array and inserting the "true" index of the all elements
             //which is the correct morton code leaving the sfc elements array sorted.
             compact_elements(all_elements);
+            assert(n__anchor_nodes == get_elem_size());
 
             return true;
         }
@@ -160,7 +165,12 @@ public:
         return elements_;
     }
 
-    Integer get_elem_size()
+    void set_elem_size(const Integer size)
+    {
+        elements_size_ = size;
+    }
+
+    const Integer get_elem_size() const
     {
         return elements_size_;
     }
@@ -174,6 +184,9 @@ public:
     {
         return all_range_;
     }
+
+    MARS_INLINE_FUNCTION
+    SFC() = default;
 
     MARS_INLINE_FUNCTION
     SFC(const int x, const int y, const int z) : xDim(x), yDim(y), zDim(z)
@@ -193,6 +206,25 @@ public:
         }
 
         sfc_to_local_ = ViewVectorType<Integer>("sfc_to_local_", all_range_);
+    }
+
+
+    MARS_INLINE_FUNCTION
+    Integer get_XDim() const
+    {
+        return xDim;
+    }
+
+    MARS_INLINE_FUNCTION
+    Integer get_YDim() const
+    {
+        return yDim;
+    }
+
+    MARS_INLINE_FUNCTION
+    Integer get_ZDim() const
+    {
+        return zDim;
     }
 
 private:
