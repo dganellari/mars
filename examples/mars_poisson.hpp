@@ -133,6 +133,7 @@ void poisson(int &argc, char **&argv, const int level)
         DMQ2 dm(&mesh, context);
         dm.enumerate_dofs();
         print_dof<Type>(dm.get_global_dof_enum(), proc_num);
+        /* print_dof<Type>(dm.get_local_dof_enum(), proc_num); */
 
         /* ViewVectorType<Integer> sfc = mesh.get_view_sfc(); */
         Kokkos::Timer timer;

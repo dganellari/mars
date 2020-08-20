@@ -195,12 +195,12 @@ public:
         {
         case ElementType::Quad4:
         {
-            all_range_ = encode_morton_2D(xDim, yDim);
+            all_range_ = encode_morton_2D(xDim+1, yDim+1);
             break;
         }
         case ElementType::Hex8:
         {
-            all_range_ = encode_morton_3D(xDim, yDim, zDim);
+            all_range_ = encode_morton_3D(xDim+1, yDim+1, zDim+1);
             break;
         }
         }
