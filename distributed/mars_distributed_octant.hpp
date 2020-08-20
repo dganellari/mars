@@ -53,6 +53,12 @@ struct Octant
         valid = false;
     }
 
+    MARS_INLINE_FUNCTION
+    bool is_equals(Octant o) const
+    {
+        return (x == o.x && y == o.y && z == o.z);
+    }
+
     /* template <Integer Type>
     MARS_INLINE_FUNCTION bool shares_boundary_side(const int xDim, const int yDim, const int zDim)
     {
@@ -246,6 +252,21 @@ struct Octant
         Octant nbh = sfc_corner_nbh<Type>(corner);
         nbh.validate_nbh<Type>(xDim, yDim, zDim, periodic);
         return nbh;
+    }
+
+    template <Integer Type, Integer ManifoldDim>
+    MARS_INLINE_FUNCTION void one_ring_nbh(Octant one_ring[Type], const Integer xDim, const Integer yDim, const Integer zDim, const bool periodic) const
+    {
+        for (int i = 0; i < ManifoldDim; i++)
+        {
+            for (int j = 0; j < ManifoldDim; j++)
+            /* for (int z = 0; z < ManifoldDim; z++) // 3D case*/
+            {
+                Octant nbh(x-i, y-j);
+                nbh.validate_nbh<Type>(xDim, yDim, zDim, periodic);
+                one_ring[i * ManifoldDim + j] = nbh;
+            }
+        }
     }
 };
 

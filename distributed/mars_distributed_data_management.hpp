@@ -83,30 +83,42 @@ public:
                     o.x = oc.x + i;
                     o.y = oc.y + j;
 
-                    o.validate_nbh<simplex_type::ElemType>(xDim, yDim, zDim, mesh->is_periodic());
-                    /* if (o.is_valid())
-                    { */
-                        Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
-                        /* check the proc that owns the corner and then decide on the predicate.
+                    Integer max_proc = -1;
+                    Octant one_ring[simplex_type::ElemType];
+                    o.one_ring_nbh<simplex_type::ElemType, Mesh::ManifoldDim>
+                        (one_ring, xDim, yDim, zDim, mesh->is_periodic());
+
+                    for (int k = 0; k < simplex_type::ElemType; k++)
+                    {
+                        if (one_ring[k].is_valid())
+                        {
+                            Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(one_ring[k]);
+
+                            /* check the proc that owns the corner and then decide on the predicate.
                     This works because the corner defines an element and this element is
                     always on the largest proc number due to the z order partitioning*/
-                        Integer owner_proc =
-                            find_owner_processor(mesh->get_view_gp(), enc_oc, 2, proc);
-                        /* assert(owner_proc >= 0); */
+                            Integer owner_proc =
+                                find_owner_processor(mesh->get_view_gp(), enc_oc, 2, proc);
+                            assert(owner_proc >= 0);
 
-                        //convert the octant value into the new nodal sfc system
-                        o.x *= degree;
-                        o.y *= degree;
-                        enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
-
-                        /* if the face neighbor element is ghost then check if the processor
-                        is less than the owner. This is how the dofs are partitioned */
-                        if (proc >= owner_proc)
-                        {
-                            global_predicate(enc_oc) = 1;
+                            if(owner_proc > max_proc)
+                                max_proc = owner_proc;
                         }
-                        local_predicate(enc_oc) = 1;
-                    /* } */
+                    }
+
+                    //convert the octant value into the new nodal sfc system
+                    o.x *= degree;
+                    o.y *= degree;
+                    Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
+
+                    /* if the face neighbor element is ghost then check if the processor
+                        is less than the owner. This is how the dofs are partitioned */
+                    /* if (!o.shares_boundary() && proc >= owner_proc) */
+                    if (proc >= max_proc)
+                    {
+                        global_predicate(enc_oc) = 1;
+                    }
+                    local_predicate(enc_oc) = 1;
                 }
             }
         }
@@ -127,59 +139,48 @@ public:
                 Octant nbh_oc = mesh->get_octant_face_nbh(i, face_nr);
                 /* if (nbh_oc.is_valid())
                 { */
-                    Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(nbh_oc);
-                    Integer owner_proc =
-                        find_owner_processor(mesh->get_view_gp(), enc_oc, 2, proc);
-                    /* assert(owner_proc >= 0); */
+                Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(nbh_oc);
+                Integer owner_proc =
+                    find_owner_processor(mesh->get_view_gp(), enc_oc, 2, proc);
+                /* assert(owner_proc >= 0); */
 
-                    //find the starting corner of the face and use the direction
-                    Octant face_cornerA;
-                    /* Octant face_cornerB; */
-                    const int val = side ^ 1;
+                //find the starting corner of the face and use the direction
+                Octant face_cornerA;
+                Octant face_cornerB;
+                const int val = side ^ 1;
+
+                if (dir == 0)
+                {
+                    face_cornerA.x = oc.x + val;
+                    face_cornerA.y = oc.y;
+                }
+                if (dir == 1)
+                {
+                    face_cornerA.x = oc.x;
+                    face_cornerA.y = oc.y + val;
+                }
+
+                Octant o;
+                for (int j = 0; j < face_nodes; j++)
+                {
                     if (dir == 0)
                     {
-                        face_cornerA.x = oc.x + val;
-                        face_cornerA.y = oc.y;
-                        /* face_cornerB.x = oc.x + val;
-                        face_cornerB.y = ocy + 1; */
+                        o.x = degree * face_cornerA.x;
+                        o.y = degree * face_cornerA.y + j + 1;
                     }
                     if (dir == 1)
                     {
-                        face_cornerA.x = oc.x;
-                        face_cornerA.y = oc.y + val;
-                        /* face_cornerB.x = oc.x + 1;
-                        face_cornerB.y = oc.y + val; */
+                        o.x = degree * face_cornerA.x + j + 1;
+                        o.y = degree * face_cornerA.y;
                     }
-
-                    Octant o;
-                    for (int j = 0; j < face_nodes; j++)
-                    {
-                        if (dir == 0)
-                        {
-                            o.x = degree * face_cornerA.x;
-                            o.y = degree * face_cornerA.y + j + 1;
-                        }
-                        if (dir == 1)
-                        {
-                            o.x = degree * face_cornerA.x + j + 1;
-                            o.y = degree * face_cornerA.y;
-                        }
-
-                        Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
-                        /* if the face neighbor element is ghost then check if the processor
+                    Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
+                    /* if the face neighbor element is ghost then check if the processor
                          is less than the owner. This is how the dofs are partitioned*/
-                        if (proc >= owner_proc)
-                        {
-                            global_predicate(enc_oc) = 1;
-                        }
-                        local_predicate(enc_oc) = 1;
-                    /* } */
-                    /* printf("Index: %li, o.x: %li, y: %li, elem-index: %li, owner_proc:
-           * %li, proc: %li , o.x: %li, y: %li, index: %li, ghost: %i\n", index,
-           * ref_octant.x, ref_octant.y, elem_index(ref_octant.x, ref_octant.y,
-           * ref_octant.z, xDim, yDim), owner_proc, proc, o.x, o.y,
-           * elem_index(o.x, o.y, o.z, xDim, yDim),
-           * face.get_second_side().is_ghost()); */
+                    if (proc >= owner_proc)
+                    {
+                        global_predicate(enc_oc) = 1;
+                    }
+                    local_predicate(enc_oc) = 1;
                 }
             }
         }
