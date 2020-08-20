@@ -16,27 +16,36 @@
 #include "mars_benchmark.hpp"
 #include "mars_lepp_benchmark.hpp"
 #include "mars_prelepp_benchmark.hpp"
-#include "generation/mars_lepp_benchmark_kokkos.hpp"
 
 #include "mars_test.hpp"
 #include "mars_ranked_edge.hpp"
 #include "mars_oldest_edge.hpp"
 #include "mars_longest_edge.hpp"
-#include "generation/mars_memory.hpp"
+#include "mars_memory.hpp"
 #include "mars_mesh_reader.hpp"
 #include "mars_mesh_writer.hpp"
 #include <err.h>
 
 
-#include "generation/mars_mesh_generation.hpp"
+#include "mars_mesh_generation.hpp"
 
 #ifdef WITH_KOKKOS
-#include "generation/mars_test_kokkos.hpp"
+#include "mars_test_kokkos.hpp"
+#include "mars_lepp_benchmark_kokkos.hpp"
 #endif //WITH_KOKKOS
+
+#ifdef WITH_PAR_MOONOLITH
+#include "mars_moonolith_test.hpp"
+#include <mpi.h>
+#endif //WITH_PAR_MOONOLITH
+
 
 #ifdef WITH_MPI
 #include "mars_par_bisection.hpp"
 #include "mars_par_mesh.hpp"
+#include "mars_test_mpi.hpp"
+#include "mars_advection.hpp"
+#include "mars_distributed_mesh_generation.hpp"
 #endif //WITH_MPI
 #include <chrono>
 
@@ -96,6 +105,62 @@ mars::Mesh2 test_mars_mesh_generation_2D(const int x,
 	return mesh;
 }
 
+
+mars::Quad4_Mesh test_mars_quad_mesh_generation_2D(const int x,
+		const int y) {
+
+	using namespace mars;
+
+	high_resolution_clock::time_point t1 = high_resolution_clock::now();
+
+	Quad4_Mesh mesh;
+	generate_square(mesh, x, y);
+
+	high_resolution_clock::time_point t2 = high_resolution_clock::now();
+	auto duration = duration_cast < seconds > (t2 - t1).count();
+
+	std::cout << "Generation took: "<< duration<<" seconds."<<std::endl;
+
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
+
+
+	if (x <= 100) {
+		VTKMeshWriter<Quad4_Mesh> w;
+		w.write("build_quad4" + std::to_string(x) + std::to_string(y) + ".vtu", mesh);
+	}
+
+	return mesh;
+}
+
+mars::Hex8_Mesh test_mars_hex8_mesh_generation_3D(const int x,
+		const int y, const int z) {
+
+	using namespace mars;
+
+	high_resolution_clock::time_point t1 = high_resolution_clock::now();
+
+	Hex8_Mesh mesh;
+	generate_cube(mesh, x, y, z);
+
+	high_resolution_clock::time_point t2 = high_resolution_clock::now();
+	auto duration = duration_cast < seconds > (t2 - t1).count();
+
+	std::cout << "Generation took: "<< duration<<" seconds."<<std::endl;
+
+	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
+
+
+	if (x <= 100) {
+		VTKMeshWriter<Hex8_Mesh> w;
+		w.write("build_hex8" + std::to_string(x) + std::to_string(y) + ".vtu", mesh);
+	}
+
+	return mesh;
+}
+
+
 mars::Mesh3 test_mars_mesh_generation_3D(const int x,
 		const int y, const int z) {
 
@@ -113,7 +178,7 @@ mars::Mesh3 test_mars_mesh_generation_3D(const int x,
 	std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 	std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
 
-	if (z < 102) {
+	if (z < 100) {
 		std::cout<<"build_cube" + std::to_string(x) + std::to_string(y) + ".vtu"<<std::endl;
 		VTKMeshWriter<Mesh3> w;
 		w.write("build_cube" + std::to_string(x) + std::to_string(y) + ".vtu", mesh);
@@ -849,11 +914,14 @@ void test_partition_4D()
 	}
 }
 
-void run_benchmarks(int level)
+void run_benchmarks(int level, int refine_level)
 {
 	using namespace mars;
 
-	/*Mesh2 m;
+	std::cout<<"Generation level:"<<level<<std::endl;
+	std::cout<<"Refinement level:"<<refine_level<<std::endl;
+
+    /*Mesh2 m;
 	read_mesh("../data/square_2_def.MFEM", m);
 
 	LeppBenchmark<Mesh2> lb;
@@ -931,29 +999,52 @@ void run_benchmarks(int level)
 	b.run(level, pMesh2, "pb");*/
 
 
-	/*ParallelMesh2 pMesh2;
-	generate_cube(pMesh2, level, level,0);
+	/*Mesh2 m;
+	read_mesh("../data/square_2_def.MFEM", m);
 
+	ParallelMesh2 pMesh2;
+	convert_serial_mesh_to_parallel(pMesh2, m);
+
+	ParallelLeppBenchmark<ParallelMesh2> pb;
+	pb.run(level,pMesh2, "pb");
+
+	PreLeppBenchmark<Mesh2> b;
+	b.run(level, m, "b");*/
+
+
+#ifdef WITH_KOKKOS
+
+	/*	ParallelMesh2 pMesh2;
+	//generate_cube(pMesh2, level +6, level + 20 , 0);
+	generate_cube(pMesh2, level, level, 0);
 	ParallelLeppBenchmark<ParallelMesh2> b;
-	b.run(level,pMesh2, "pb");
+	b.run(refine_level, pMesh2, "pb");*/
 
-	Mesh2 sMesh;
+	/*Mesh2 sMesh;
 	convert_parallel_mesh_to_serial(sMesh, pMesh2);
 
 	PreLeppBenchmark<Mesh2> b2;
-	b2.run(level, sMesh, "b2");*/
+	b2.run(refine_level, sMesh, "b2");*/
+	//test_mars_mesh_generation_kokkos_3D(level,refine_level, level);
+	//test_mars_nonsimplex_mesh_generation_kokkos_2D(level, refine_level);
 
-	ParallelMesh3 pMesh3;
-	generate_cube(pMesh3, level, level,level);
+	//test_mars_nonsimplex_mesh_generation_kokkos_3D(level, refine_level, refine_level);
+
+	ParallelQuad4Mesh nsm;
+	generate_cube(nsm, level, refine_level, 0);
+	/*ParallelMesh3 pMesh3;
+	generate_cube(pMesh3, level, level, level);
 
 	ParallelLeppBenchmark<ParallelMesh3> b;
-	b.run(level,pMesh3, "pb");
+	b.run(refine_level,pMesh3, "pb");*/
 
-	Mesh3 sMesh3;
+	/*	Mesh3 sMesh3;
 	convert_parallel_mesh_to_serial(sMesh3, pMesh3);
 
 	PreLeppBenchmark<Mesh3> b3;
-	b3.run(level, sMesh3, "b3");
+	b3.run(refine_level, sMesh3, "b3");*/
+#endif
+
 }
 
 void test_incomplete_2D()
@@ -1122,8 +1213,8 @@ void read_file()
 	// read("../data/square_2.MFEM", mesh);
 	// read_msh("../data/test_3D.msh", mesh, true);
 	mesh.describe(std::cout);
-	std::cout << mesh.n_elements() << std::endl; 
-	std::cout << mesh.n_nodes() << std::endl; 
+	std::cout << mesh.n_elements() << std::endl;
+	std::cout << mesh.n_nodes() << std::endl;
 }
 
 
@@ -1137,7 +1228,7 @@ void write_file()
 	// read("../data/square_2.MFEM", mesh, true);
 	mesh.describe(std::cout);
 	write("../data/test_write_tetra3.msh", mesh);
-	// write("../data/test_write_square2.MFEM", mesh); 
+	// write("../data/test_write_square2.MFEM", mesh);
 
 }
 
@@ -1170,9 +1261,11 @@ int main(int argc, char *argv[])
 {
 	using namespace mars;
 
-#ifdef WITH_MPI
+
+#ifdef WITH_PAR_MOONOLITH
 	MPI_Init(&argc, &argv);
-#endif //WITH_MPI
+#endif
+
 	// test_bisection_2D();
 	 //test_bisection_3D(atoi(argv[1]));
 	// test_bisection_4D();
@@ -1187,15 +1280,26 @@ int main(int argc, char *argv[])
 	// test_incomplete_6D();
 	// test_incomplete_bad_4D();
 	// read_file();
-	// write_file(); 
+	// write_file();
 
 	int level = 1;
+	int refine_level =1;
 	std::string filename = "../data/write/tetrakis.MFEM";
 	if (argc > 1) {
 		char *end_ptr = argv[1];
 		level = strtol(argv[1], &end_ptr, 10);
 		if (*end_ptr != '\0' || end_ptr == argv[1])
 			warnx("'%s' could not be (completely) converted to long", argv[1]);
+
+		if(argc==3)
+		{
+			char *end_ptr = argv[2];
+			refine_level = strtol(argv[2], &end_ptr, 10);
+			if (*end_ptr != '\0' || end_ptr == argv[1])
+				warnx("'%s' could not be (completely) converted to long",
+						argv[1]);
+		}
+
 	} else
 		std::cout
 				<< "No level of refinement was specified. Setting the default to 1!"
@@ -1240,8 +1344,16 @@ int main(int argc, char *argv[])
 		cudaDeviceSetLimit(cudaLimitStackSize, 32768); // set stack to 32KB only for cuda since it is not yet supported in kokkos.
 #endif
 
-		run_benchmarks(level);
+		//run_benchmarks(level, refine_level);
 
+		//test_mars_nonsimplex_mesh_generation_kokkos_2D(level, level);
+		//test_mars_nonsimplex_mesh_generation_kokkos_3D(level, level, level);
+        /* test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(argc, argv, level); */
+
+        advection(argc, argv, level);
+        /* test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(argc, argv, level); */
+
+		//test_mpi_context(argc, argv);
 		//test_mars_mesh_generation_kokkos_2D(2,4);
 
 		//test_mars_mesh_generation_kokkos_2D(level + 4,level);
@@ -1253,6 +1365,11 @@ int main(int argc, char *argv[])
 
 #endif
 
+
+#ifdef WITH_PAR_MOONOLITH
+	run_mars_moonolith_test();
+#endif //WITH_PAR_MOONOLITH
+
 	if (level < 100) {
 		//test_mars_mesh_generation_3D(level , level, level );
 
@@ -1262,11 +1379,9 @@ int main(int argc, char *argv[])
 
 
 
-#ifdef WITH_MPI
-	// par_mesh_test();
-	return MPI_Finalize();
-#else
-
-	return 0;
-#endif //WITH_MPI
+	#ifdef WITH_PAR_MOONOLITH
+		return MPI_Finalize();
+	#else
+		return 0;
+	#endif
 }
