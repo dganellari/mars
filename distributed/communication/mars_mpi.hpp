@@ -207,18 +207,21 @@ inline void wait_all_send_recv(const int count, std::vector<MPI_Request> &array_
 
 template <typename T>
 void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count,
-                     const Integer proc_count, MPI_Comm comm)
+                     MPI_Comm comm)
 {
-    /*     Integer proc_count = std::count_if(send_count.begin(), send_count.end(),
-                                       [](T i) { return i > 0; }); */
+    Integer proc_count = std::count_if(send_count.begin(), send_count.end(),
+                                       [](T count) { return count > 0; });
+
+    Integer proc_count_r = std::count_if(receive_count.begin(), receive_count.end(),
+                                       [](T count) { return count > 0; });
 
     std::vector<MPI_Request> send_req(proc_count);
-    std::vector<MPI_Request> receive_req(proc_count);
+    std::vector<MPI_Request> receive_req(proc_count_r);
 
     int recv_proc = 0;
-    for (int i = 0; i < send_count.size(); ++i)
+    for (int i = 0; i < receive_count.size(); ++i)
     {
-        if (send_count[i] > 0)
+        if (receive_count[i] > 0)
         {
             i_receive_v(receive_count, i, 1, i, 0, comm, &receive_req[recv_proc++]);
         }
@@ -235,18 +238,37 @@ void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_c
 
     if (proc_count > 0)
     {
-        wait_all_send_recv(proc_count, receive_req);
         wait_all_send_recv(proc_count, send_req);
+    }
+    if(proc_count_r > 0)
+    {
+        wait_all_send_recv(proc_count_r, receive_req);
     }
 }
 
 template <typename T>
 void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ,
                       const ViewVectorType<T> &src, const Integer* src_displ,
-                      const Integer proc_count, MPI_Comm comm)
+                      MPI_Comm comm)
 {
+    int proc_count= 0;
+    int proc_count_r = 0;
+    for (int i = 0; i < nranks; ++i)
+    {
+        Integer count_r = dest_displ[i + 1] - dest_displ[i];
+        Integer count = src_displ[i + 1] - src_displ[i];
+        if (count > 0)
+        {
+            ++proc_count;
+        }
+        if(count_r > 0)
+        {
+            ++proc_count_r;
+        }
+    }
+
     std::vector<MPI_Request> send_req(proc_count);
-    std::vector<MPI_Request> receive_req(proc_count);
+    std::vector<MPI_Request> receive_req(proc_count_r);
 
     auto nranks = size(comm);
 
@@ -272,8 +294,11 @@ void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ,
 
     if (proc_count > 0)
     {
-        wait_all_send_recv(proc_count, receive_req);
         wait_all_send_recv(proc_count, send_req);
+    }
+    if(proc_count_r > 0)
+    {
+        wait_all_send_recv(proc_count_r, receive_req);
     }
 }
 

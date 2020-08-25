@@ -122,14 +122,14 @@ public:
             if (count > 0)
             {
                 send_count[i] = count;
+                receive_count[i] = count;
                 ++proc_count;
                 std::cout << "****ToProc: " << i << " count:" << count
                           << " Proc: " << proc_num << std::endl;
             }
         }
 
-        context->distributed->i_send_recv_vec(send_count, receive_count,
-                                              proc_count);
+        context->distributed->i_send_recv_vec(send_count, receive_count);
 
         for (int i = 0; i < size; ++i)
         {
@@ -168,7 +168,7 @@ public:
         std::cout << "Starting mpi send receive for the ghost layer" << std::endl;
         context->distributed->i_send_recv_view(
             get_view_ghost(), scan_recv_mirror.data(),
-            host_mesh->get_view_boundary(), scan_send_mirror.data(), proc_count);
+            host_mesh->get_view_boundary(), scan_send_mirror.data());
         std::cout << "Ending mpi send receive for the ghost layer" << std::endl;
         /*
             parallel_for(
@@ -186,18 +186,16 @@ public:
     {
         exchange_ghost_data_functor(const context &c,
                                     ViewVectorType<Integer>::HostMirror sr,
-                                    ViewVectorType<Integer>::HostMirror ss,
-                                    Integer p)
-            : con(c), sc_rcv_mirror(sr), sc_snd_mirror(ss), proc(p) {}
+                                    ViewVectorType<Integer>::HostMirror ss)
+            : con(c), sc_rcv_mirror(sr), sc_snd_mirror(ss) {}
 
         template <typename ElementType>
         void operator()(ElementType &el_1, ElementType &el_2) const
         {
             con->distributed->i_send_recv_view(el_1, sc_rcv_mirror.data(), el_2,
-                                               sc_snd_mirror.data(), proc);
+                                               sc_snd_mirror.data());
         }
 
-        Integer proc;
         ViewVectorType<Integer>::HostMirror sc_rcv_mirror;
         ViewVectorType<Integer>::HostMirror sc_snd_mirror;
 
@@ -224,8 +222,7 @@ public:
         fill_buffer_data(buffer_data);
 
         apply_impl(exchange_ghost_data_functor(context, scan_recv_mirror,
-                                               scan_send_mirror, proc_count),
-                   ghost_user_data_, buffer_data);
+                    scan_send_mirror, ghost_user_data_, buffer_data);
 
         /* print_nth_tuple<1>(proc_num); */
     }
