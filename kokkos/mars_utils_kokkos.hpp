@@ -235,6 +235,22 @@ void remove_extra_nodes(Mesh<Dim, ManifoldDim, Point_>& mesh,
 }*/
 
 template<typename T>
+void compact_scan(const ViewVectorType<bool> &pred, const ViewVectorType<T> &scan, const ViewVectorType<T> &out)
+{
+    using namespace Kokkos;
+    const Integer size = pred.extent(0);
+
+    parallel_for(
+        "compact scan", size,
+        KOKKOS_LAMBDA(const Integer i) {
+            if (pred(i) == 1)
+            {
+                out(scan(i)) = i;
+            }
+        });
+}
+
+template<typename T>
 void inclusive_scan(const Integer start, const Integer end,
 			ViewVectorType<T> in_)
 {

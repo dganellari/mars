@@ -77,17 +77,16 @@ struct mpi_context_impl
     }
 
     template <typename T>
-    void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count,
-                         const Integer proc_count) const
+    void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count) const
     {
-        mpi::i_send_recv_vec(send_count, receive_count, proc_count, comm_);
+        mpi::i_send_recv_vec(send_count, receive_count, comm_);
     }
 
     template <typename T>
     void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ,
-                          const ViewVectorType<T> &src, const Integer* src_displ, const Integer proc_count) const
+                          const ViewVectorType<T> &src, const Integer* src_displ) const
     {
-        mpi::i_send_recv_view(dest, dest_displ, src, src_displ, proc_count, comm_);
+        mpi::i_send_recv_view(dest, dest_displ, src, src_displ, comm_);
     }
 
     void broadcast(const ViewVectorType<Integer> global) const
