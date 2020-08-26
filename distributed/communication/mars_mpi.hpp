@@ -251,6 +251,8 @@ void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ,
                       const ViewVectorType<T> &src, const Integer* src_displ,
                       MPI_Comm comm)
 {
+    auto nranks = size(comm);
+
     int proc_count= 0;
     int proc_count_r = 0;
     for (int i = 0; i < nranks; ++i)
@@ -270,7 +272,6 @@ void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ,
     std::vector<MPI_Request> send_req(proc_count);
     std::vector<MPI_Request> receive_req(proc_count_r);
 
-    auto nranks = size(comm);
 
     int recv_proc = 0;
     for (int i = 0; i < nranks; ++i)

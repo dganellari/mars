@@ -66,8 +66,7 @@ public:
 
                     Integer max_proc = -1;
                     Octant one_ring[simplex_type::ElemType];
-                    o.one_ring_nbh<simplex_type::ElemType, Mesh::ManifoldDim>
-                        (one_ring, xDim, yDim, zDim, mesh->is_periodic());
+                    o.one_ring_nbh<simplex_type::ElemType, Mesh::ManifoldDim>(one_ring, xDim, yDim, zDim, mesh->is_periodic());
 
                     for (int k = 0; k < simplex_type::ElemType; k++)
                     {
@@ -82,7 +81,7 @@ public:
                                 find_owner_processor(mesh->get_view_gp(), enc_oc, 2, proc);
                             assert(owner_proc >= 0);
 
-                            if(owner_proc > max_proc)
+                            if (owner_proc > max_proc)
                                 max_proc = owner_proc;
                         }
                     }
@@ -95,7 +94,7 @@ public:
                     //if the owner is strictly smaller than the larger should send some data to it
                     if (proc > max_proc)
                     {
-                        Integer index = locally_owned(enc_oc);
+                        Integer index = sfc_to_locally_owned(enc_oc);
                         rank_boundary(map(max_proc), index) = 1;
                     }
                 }
@@ -154,11 +153,11 @@ public:
                     }
                     Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
 
-                   //if the owner is strictly smaller than the larger should send some data to it
-                    if(proc >  owner_proc)
+                    //if the owner is strictly smaller than the larger should send some data to it
+                    if (proc > owner_proc && owner_proc >= 0)
                     {
                         Integer index = sfc_to_locally_owned(enc_oc);
-                        rank_boundary(map(max_proc), index) = 1;
+                        rank_boundary(map(owner_proc), index) = 1;
                     }
                 }
             }
@@ -174,9 +173,9 @@ public:
             // TODO: 3D part
         }
 
-        IdentifyBoundaryDofPerRank(Mesh *m, ViewMatrixType<bool> npb, ViewVectorType<Integer> m,
-                                  ViewVectorTypeC<Integer> l, Integer p, Integer x, Integer y, Integer z)
-            : mesh(m), rank_boundary(npb), map(m), sfc_to_locally_owned(l), proc(p), xDim(x), yDim(y), zDim(z) {}
+        IdentifyBoundaryDofPerRank(Mesh *m, ViewMatrixType<bool> npb, ViewVectorType<Integer> mp,
+                                   ViewVectorType<Integer> l, Integer p, Integer x, Integer y, Integer z)
+            : mesh(m), rank_boundary(npb), map(mp), sfc_to_locally_owned(l), proc(p), xDim(x), yDim(y), zDim(z) {}
 
         Mesh *mesh;
 
@@ -231,8 +230,7 @@ public:
 
                     Integer max_proc = -1;
                     Octant one_ring[simplex_type::ElemType];
-                    o.one_ring_nbh<simplex_type::ElemType, Mesh::ManifoldDim>
-                        (one_ring, xDim, yDim, zDim, mesh->is_periodic());
+                    o.one_ring_nbh<simplex_type::ElemType, Mesh::ManifoldDim>(one_ring, xDim, yDim, zDim, mesh->is_periodic());
 
                     for (int k = 0; k < simplex_type::ElemType; k++)
                     {
@@ -247,7 +245,7 @@ public:
                                 find_owner_processor(mesh->get_view_gp(), enc_oc, 2, proc);
                             assert(owner_proc >= 0);
 
-                            if(owner_proc > max_proc)
+                            if (owner_proc > max_proc)
                                 max_proc = owner_proc;
                         }
                     }
@@ -378,7 +376,7 @@ public:
         Integer zDim;
     };
 
-    void build_lg_predicate(ViewVectorType<bool>& npbs, ViewVectorType<bool>& npbr)
+    void build_lg_predicate(ViewVectorType<bool> &npbs, ViewVectorType<bool> &npbr)
     {
         Integer xDim = data.get_host_mesh()->get_XDim();
         Integer yDim = data.get_host_mesh()->get_YDim();
@@ -407,12 +405,20 @@ public:
 
         local_dof_enum.compact_elements(local_predicate);
         global_dof_enum.compact_elements(global_predicate);
-   }
+    }
 
-    void build_boundary_dof_sets(ViewVectorType<Integer>& nbh_proc_scan, const Integer rank_size)
+    void build_boundary_dof_sets(ViewVectorType<Integer> &scan_boundary, ViewVectorType<Integer> &boundary_sfc, ViewVectorType<Integer> &boundary_lsfc_index, ViewVectorType<Integer> &sender_ranks_scan)
     {
+        using namespace Kokkos;
 
-        const Integer nbh_rank_size = nbh_proc_scan(rank_size);
+        const Integer size = data.get_host_mesh()->get_chunk_size();
+
+        Integer xDim = data.get_host_mesh()->get_XDim();
+        Integer yDim = data.get_host_mesh()->get_YDim();
+        Integer zDim = data.get_host_mesh()->get_ZDim();
+
+        //scan is always rank_scan +1 so we need rank scan size
+        const Integer nbh_rank_size = sender_ranks_scan(sender_ranks_scan.extent(0) -1);
         const Integer chunk_size_ = global_dof_enum.get_elem_size();
 
         ViewMatrixType<bool> rank_boundary("count_per_proc", nbh_rank_size, chunk_size_);
@@ -420,62 +426,59 @@ public:
         for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
         Kokkos::parallel_for(
             "identify_boundary_predicate", size,
-            IdentifyBoundaryDofPerRank(data.get_mesh(), rank_boundary, nbh_proc_scan,
+            IdentifyBoundaryDofPerRank(data.get_mesh(), rank_boundary, sender_ranks_scan,
                                        global_dof_enum.get_view_sfc_to_local(), data.get_host_mesh()->get_proc(),
                                        xDim, yDim, zDim));
-
 
         /* perform a scan for each row with the sum at the end for each rank */
         ViewMatrixType<Integer> rank_scan("rank_scan", nbh_rank_size, chunk_size_ + 1);
         for (int i = 0; i < nbh_rank_size; ++i)
         {
-            const Integer remote_proc = nbh_proc_scan(i);
-            if (remote_proc != proc)
-            {
+            /* const Integer remote_proc = sender_ranks(i);
+            if (remote_proc != data.get_host_mesh()->get_proc())
+            { */
                 auto row_predicate = subview(rank_boundary, i, ALL);
                 auto row_scan = subview(rank_scan, i, ALL);
                 incl_excl_scan(0, chunk_size_, row_predicate, row_scan);
-/*
+                /*
                 parallel_for(
                     "print scan", chunk_size_, KOKKOS_LAMBDA(const int i) {
                         printf(" boundary -inside: %i-%i", i, row_predicate(i));
                     });
 
                 printf("\n"); */
-
-            }
+            /* } */
         }
 
-
-        ViewVectorType<Integer> scan_boundary_("scan_boundary_", nbh_rank_size + 1);
+        scan_boundary = ViewVectorType<Integer>("scan_boundary_dof", nbh_rank_size + 1);
         //perform a scan on the last column to get the total sum.
-        column_scan(nbh_rank_size, chunk_size_, rank_scan, scan_boundary_);
+        column_scan(nbh_rank_size, chunk_size_, rank_scan, scan_boundary);
 
-        auto index_subview = subview(scan_boundary_, nbh_rank_size);
+        auto index_subview = subview(scan_boundary, nbh_rank_size);
         auto h_ic = create_mirror_view(index_subview);
 
         // Deep copy device view to host view.
         deep_copy(h_ic, index_subview);
-        std::cout << "boundary_ count result: " << h_ic() << std::endl;
+        std::cout << "DM: boundary_ count result: " << h_ic() << std::endl;
 
-        ViewVectorType<Integer> boundary_sfc("boundary_", h_ic());
-        ViewVectorType<Integer> boundary_lsfc_index("boundary_lsfc_index_", h_ic());
+        boundary_sfc = ViewVectorType<Integer>("boundary_sfc_dofs", h_ic());
+        boundary_lsfc_index = ViewVectorType<Integer>("boundary_lsfc_index_dofs", h_ic());
 
         /*   parallel_for(
             "print scan", rank_size + 1, KOKKOS_LAMBDA(const int i) {
-                printf(" scan boundary: %i-%li\n", i, scan_boundary_(i));
+                printf(" scan boundary: %i-%li\n", i, scan_boundary(i));
             }); */
 
         /* We use this strategy so that the compacted elements from the local_sfc
         would still be sorted and unique. */
-        /* compact_boundary_elements(scan_boundary_, rank_boundary, rank_scan, nbh_rank_size); */
+        /* compact_boundary_elements(scan_boundary, rank_boundary, rank_scan, nbh_rank_size); */
         parallel_for(
             MDRangePolicy<Rank<2>>({0, 0}, {nbh_rank_size, chunk_size_}),
             KOKKOS_LAMBDA(const Integer i, const Integer j) {
                 if (rank_boundary(i, j) == 1)
                 {
-                    Integer index = scan_boundary_(i) + rank_scan(i, j);
-                    boundary_sfc(index) = global_dof_enum.get_view_elements(j);
+                    Integer index = scan_boundary(i) + rank_scan(i, j);
+                    boundary_sfc(index) = global_dof_enum.get_view_elements()(j);
                     boundary_lsfc_index(index) = j;
                 }
             });
@@ -491,8 +494,7 @@ public:
             }); */
     }
 
-    void exchange_ghost_counts(const context &context, ViewVectorType<Integer>&
-            scan_boundary, ViewVectorType<Integer>& nbh_rank_scan, ViewVectorType<Integer>& nbh_rank_scan_recv, std::vector<Integer>& send_count, std::vector<Integer>& receive_count)
+    void exchange_ghost_counts(const context &context, ViewVectorType<Integer> &scan_boundary, ViewVectorType<Integer> &sender_ranks, ViewVectorType<Integer> &recver_ranks, std::vector<Integer> &send_count, std::vector<Integer> &receive_count)
 
     {
         using namespace Kokkos;
@@ -505,9 +507,9 @@ public:
         auto scan_send_mirror = create_mirror_view(scan_boundary);
         Kokkos::deep_copy(scan_send_mirror, scan_boundary);
 
-        auto nbh_rank_scan_mirror = create_mirror_view(nbh_rank_scan);
-        Kokkos::deep_copy(nbh_rank_scan_mirror, nbh_rank_scan);
-        const Integer nbh_rank_size = nbh_rank_scan.extent(0);
+        auto s_rank_mirror = create_mirror_view(sender_ranks);
+        Kokkos::deep_copy(s_rank_mirror, sender_ranks);
+        const Integer nbh_rank_size = sender_ranks.extent(0);
 
         /* Integer proc_count = 0; */
         for (int i = 0; i < nbh_rank_size; ++i)
@@ -515,56 +517,54 @@ public:
             Integer count = scan_send_mirror(i + 1) - scan_send_mirror(i);
             if (count > 0)
             {
-                send_count[nbh_rank_scan_mirror(i)] = count;
+                send_count[s_rank_mirror(i)] = count;
                 /* ++proc_count; */
-                std::cout << "****ToProc: " << i << " count:" << count
+                std::cout << "DM:****ToProc: " << i << " count:" << count
                           << " Proc: " << proc_num << std::endl;
             }
         }
 
-        auto nbh_rank_scan_recv_mirror = create_mirror_view(nbh_rank_scan_recv);
-        Kokkos::deep_copy(nbh_rank_scan_recv_mirror, nbh_rank_scan_recv);
-        const Integer nbh_rank_recv_size = nbh_rank_scan_recv.extent(0);
+        auto r_rank_mirror = create_mirror_view(recver_ranks);
+        Kokkos::deep_copy(r_rank_mirror, recver_ranks);
+        const Integer nbh_rank_recv_size = recver_ranks.extent(0);
 
         /* Integer proc_count_r = 0; */
         for (int i = 0; i < nbh_rank_recv_size; ++i)
         {
-                receive_count[nbh_rank_scan_recv_mirror(i)] = 1;
-                /* ++proc_count_r; */
-                std::cout << "****ToProc: " << i << " count:" << 1
-                          << " Proc: " << proc_num << std::endl;
+            receive_count[r_rank_mirror(i)] = 1;
+            /* ++proc_count_r; */
+            std::cout << "DM:****ToProc: " << i << " count:" << 1
+                      << " Proc: " << proc_num << std::endl;
         }
 
         context->distributed->i_send_recv_vec(send_count, receive_count);
-
 
         for (int i = 0; i < size; ++i)
         {
             if (receive_count[i] > 0)
             {
-                std::cout << "-----FromProc: " << i << " count:" << receive_count[i]
+                std::cout << "DM:-----FromProc: " << i << " count:" << receive_count[i]
                           << " Proc: " << proc_num << std::endl;
             }
         }
-
     }
-             void exchange_ghost_dofs(const context &context, ViewVectorType<Integer> boundary, ViewVectorType<Integer> boundary_lsfc_index, ViewVectorType<Integer>& ghost_dofs, ViewVectorType<Integer>& ghost_local_ID, const Integer* recv_scan, const Integer* send_scan)
+    void exchange_ghost_dofs(const context &context, ViewVectorType<Integer> boundary, ViewVectorType<Integer> boundary_lsfc_index, ViewVectorType<Integer> &ghost_dofs, ViewVectorType<Integer> &ghost_dofs_index, const Integer *recv_scan, const Integer *send_scan)
     {
-            Integer ghost_size = scan_recv_mirror(size);
+        int rank_size = num_ranks(context);
+        Integer ghost_size = recv_scan[rank_size];
 
-            ghost_dofs = ViewVectorType<Integer>("ghost_dofs", ghost_size);
-            ghost_local_ID = ViewVectorType<Integer>("ghost_local_dofs", ghost_size);
-            //do it again to have all the process range to make it fit the i_send_recv_view
+        ghost_dofs = ViewVectorType<Integer>("ghost_dofs", ghost_size);
+        ghost_dofs_index = ViewVectorType<Integer>("ghost_dofs_index", ghost_size);
+        //do it again to have all the process range to make it fit the i_send_recv_view
 
+        context->distributed->i_send_recv_view(
+            ghost_dofs, recv_scan, boundary, send_scan);
+        std::cout << "DM:Ending mpi send receive for the ghost sfc dofs " << std::endl;
 
-            context->distributed->i_send_recv_view(
-                ghost_dof, recv_scan, boundary, send_scan);
-            std::cout << "Ending mpi send receive for the ghost sfc dofs " << std::endl;
-
-            context->distributed->i_send_recv_view(
-                ghost_local_ID, recv_scan, boundary_lsfc_index, send_scan);
-            std::cout << "Ending mpi send receive for the ghost local ID dofs " << std::endl;
-            /*
+        context->distributed->i_send_recv_view(
+            ghost_dofs_index, recv_scan, boundary_lsfc_index, send_scan);
+        std::cout << "DM:Ending mpi send receive for the ghost dofs local index" << std::endl;
+        /*
             parallel_for(
                     "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
                     const Integer rank =
@@ -574,11 +574,11 @@ public:
        get_view_ghost()(i), rank , proc_num);
                     });
     */
-        }
+    }
 
-    void enumerate_dofs(const context& context)
+    void enumerate_dofs(const context &context)
     {
-        const Integer rank_size = mesh->get_view_gp.extent(0) / 2 - 1;
+        const Integer rank_size = data.get_mesh()->get_view_gp().extent(0) / 2 - 1;
 
         ViewVectorType<bool> nbh_proc_predicate_send("send_to", rank_size);
         ViewVectorType<bool> nbh_proc_predicate_recv("receive_from", rank_size);
@@ -590,26 +590,33 @@ public:
         incl_excl_scan(0, rank_size, nbh_proc_predicate_send, proc_scan_send);
         incl_excl_scan(0, rank_size, nbh_proc_predicate_recv, proc_scan_recv);
 
-        build_boundary_dof_sets(nbh_proc_scan_send, rank_size);
+        ViewVectorType<Integer> sender_ranks("sender_ranks", proc_scan_send(rank_size));
+        ViewVectorType<Integer> recver_ranks("receiver_ranks", proc_scan_recv(rank_size));
+        compact_scan(nbh_proc_predicate_send, proc_scan_send, sender_ranks);
+        compact_scan(nbh_proc_predicate_recv, proc_scan_recv, recver_ranks);
+
+        ViewVectorType<Integer> scan_boundary, boundary_dofs, boundary_dofs_index;
+        build_boundary_dof_sets(scan_boundary, boundary_dofs, boundary_dofs_index, proc_scan_send);
 
         std::vector<Integer> s_count(rank_size, 0);
         std::vector<Integer> r_count(rank_size, 0);
 
-        exchange_ghost_counts(context, scan_boundary, proc_scan_send, proc_scan_recv, s_count, r_count);
+        exchange_ghost_counts(context, scan_boundary, sender_ranks, recver_ranks, s_count, r_count);
 
-        // create the scan recv mirror view from the receive count
-        ViewVectorType<Integer> scan_ghost("scan_ghost_", size+1);
+        /* create the scan recv mirror view from the receive count */
+        ViewVectorType<Integer> scan_ghost("scan_ghost_", rank_size + 1);
         auto scan_recv_mirror = create_mirror_view(scan_ghost);
 
         make_scan_index_mirror(scan_recv_mirror, r_count);
         Kokkos::deep_copy(scan_ghost, scan_recv_mirror);
 
-        // create the scan recv mirror view from the receive count
+        /* create the scan recv mirror view from the receive count */
         auto scan_send_mirror = make_scan_index(s_count);
 
-
-        exchange_ghost_dofs(context, boundary, boundary_lsfc_index, ghost_dofs, ghost_local_ID,
-                scan_recv_mirror.data(), scan_send_mirror.data());
+        ViewVectorType<Integer> ghost_dofs;
+        ViewVectorType<Integer> ghost_dofs_index;
+        exchange_ghost_dofs(context, boundary_dofs, boundary_dofs_index, ghost_dofs, ghost_dofs_index,
+                            scan_recv_mirror.data(), scan_send_mirror.data());
         /* build_map();
         enum_elem_dof(); */
     }
@@ -624,7 +631,7 @@ public:
         return local_dof_enum;
     }
 
-    const SFC<simplex_type::ElemType>& get_global_dof_enum() const
+    const SFC<simplex_type::ElemType> &get_global_dof_enum() const
     {
         return global_dof_enum;
     }

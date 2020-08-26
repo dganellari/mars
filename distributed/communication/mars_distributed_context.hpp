@@ -65,27 +65,27 @@ namespace mars
 #define MARS_PUBLIC_PTOP_(T)                    \
     ViewObject<T> min(ViewObject<T> value) const { return impl_->min(value); } \
     ViewObject<T> max(ViewObject<T> value) const { return impl_->max(value); } \
-    void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, const Integer proc_count)  \
-                { impl_->i_send_recv_vec(send_count, receive_count, proc_count); } \
+    void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count)  \
+                { impl_->i_send_recv_vec(send_count, receive_count); } \
     void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ, \
-                const ViewVectorType<T> &src, const Integer* src_displ, const Integer proc_count) \
-                { impl_->i_send_recv_view(dest, dest_displ, src, src_displ, proc_count); }
+                const ViewVectorType<T> &src, const Integer* src_displ) \
+                { impl_->i_send_recv_view(dest, dest_displ, src, src_displ); }
 
 #define MARS_INTERFACE_PTOP_(T) \
     virtual ViewObject<T> min(ViewObject<T> value) const = 0; \
     virtual ViewObject<T> max(ViewObject<T> value) const = 0; \
-    virtual void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, const Integer proc_count) const = 0; \
+    virtual void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count) const = 0; \
     virtual void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ, \
-                const ViewVectorType<T> &src, const Integer* src_displ, const Integer proc_count) const = 0;
+                const ViewVectorType<T> &src, const Integer* src_displ) const = 0;
     
 #define MARS_WRAP_PTOP_(T)                                \
     ViewObject<T> min(ViewObject<T> value) const override { return wrapped.min(value); } \
     ViewObject<T> max(ViewObject<T> value) const override { return wrapped.max(value); } \
-    void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, const Integer proc_count) const override \
-                { wrapped.i_send_recv_vec(send_count, receive_count, proc_count); } \
+    void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count) const override \
+                { wrapped.i_send_recv_vec(send_count, receive_count); } \
     void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ, \
-                const ViewVectorType<T> &src, const Integer* src_displ, const Integer proc_count) const override \
-                { wrapped.i_send_recv_view(dest, dest_displ, src, src_displ, proc_count); }           
+                const ViewVectorType<T> &src, const Integer* src_displ) const override \
+                { wrapped.i_send_recv_view(dest, dest_displ, src, src_displ); }
     
 #define MARS_PTOP_TYPES_ double, Integer, float, int, unsigned, short
 
@@ -278,15 +278,13 @@ struct local_context
     }
 
     template <typename T>
-    void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count, 
-                const Integer proc_count) const
+    void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count) const
     {
     }
 
     template<typename T>
     void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ,
-                const ViewVectorType<T> &src, const Integer* src_displ,
-                const Integer proc_count) const
+                const ViewVectorType<T> &src, const Integer* src_displ) const
     {
     }
 

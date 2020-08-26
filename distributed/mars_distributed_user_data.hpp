@@ -222,7 +222,8 @@ public:
         fill_buffer_data(buffer_data);
 
         apply_impl(exchange_ghost_data_functor(context, scan_recv_mirror,
-                    scan_send_mirror, ghost_user_data_, buffer_data);
+                                               scan_send_mirror),
+                   ghost_user_data_, buffer_data);
 
         /* print_nth_tuple<1>(proc_num); */
     }

@@ -131,7 +131,7 @@ void poisson(int &argc, char **&argv, const int level)
         std::cout << "Type: " << Type << std::endl;
 
         DMQ2 dm(&mesh, context);
-        dm.enumerate_dofs();
+        dm.enumerate_dofs(context);
         print_dof<Type>(dm.get_global_dof_enum(), proc_num);
         /* print_dof<Type>(dm.get_local_dof_enum(), proc_num); */
 
