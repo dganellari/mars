@@ -362,7 +362,7 @@ public:
     }
 
     MARS_INLINE_FUNCTION
-    Integer get_chunk_size()
+    Integer get_chunk_size() const
     {
         return chunk_size_;
     }
@@ -374,7 +374,7 @@ public:
     }
 
     MARS_INLINE_FUNCTION
-    Integer get_proc()
+    Integer get_proc() const
     {
         return proc;
     }
@@ -1211,21 +1211,21 @@ public:
     }
 
     MARS_INLINE_FUNCTION
-    bool is_periodic()
+    bool is_periodic() const
     {
         return periodic;
     }
 
 
     MARS_INLINE_FUNCTION
-    Octant get_octant(const Integer sfc_index)
+    Octant get_octant(const Integer sfc_index) const
     {
         Integer sfc_code = local_sfc_(sfc_index);
         return get_octant_from_sfc<Elem::ElemType>(sfc_code);
     }
 
     MARS_INLINE_FUNCTION
-    Octant get_octant_face_nbh(const Integer sfc_index, const Integer face_nr)
+    Octant get_octant_face_nbh(const Integer sfc_index, const Integer face_nr) const
     {
         Octant oc = get_octant(sfc_index);
 
