@@ -44,6 +44,108 @@ public:
     }
  */
 
+    template <Integer Type, Integer ManifoldDim>
+    static MARS_INLINE_FUNCTION Integer process_corner(Integer &max_proc, Integer one_ring_owners[Type], const Mesh* mesh, const Octant& oc, const int i, const int j)
+    {
+        Integer xDim = mesh->get_XDim();
+        Integer yDim = mesh->get_YDim();
+        Integer zDim = mesh->get_ZDim();
+
+        Octant o;
+        //get the next corner using the elem sfc
+        o.x = oc.x + i;
+        o.y = oc.y + j;
+
+        Octant one_ring[simplex_type::ElemType];
+        o.one_ring_nbh<Type, ManifoldDim>(one_ring, xDim, yDim,
+                zDim, mesh->is_periodic());
+
+        for (int k = 0; k < Type; k++)
+        {
+            one_ring_owners[k] = -1;
+
+            if (one_ring[k].is_valid())
+            {
+                Integer enc_oc = get_sfc_from_octant<Type>(one_ring[k]);
+                /* check the proc that owns the corner and then decide on the predicate.
+                    This works because the corner defines an element and this element is
+                    always on the largest proc number due to the z order partitioning*/
+                Integer owner_proc = find_owner_processor(mesh->get_view_gp(),
+                        enc_oc, 2, mesh->get_proc());
+                assert(owner_proc >= 0);
+
+                one_ring_owners[k] = owner_proc;
+                if (owner_proc > max_proc)
+                {
+                    max_proc = owner_proc;
+                }
+            }
+        }
+
+
+        //convert the octant value into the new nodal sfc system
+        o.x *= degree;
+        o.y *= degree;
+        Integer sfc = get_sfc_from_octant<Type>(o);
+
+        return sfc;
+    }
+
+    template<Integer Type, Integer dir>
+    static MARS_INLINE_FUNCTION Integer process_face_corner(Octant& face_cornerA, const Mesh * mesh, const int side, const Integer i)
+    {
+        Octant oc = mesh->get_octant(i);
+
+        Integer face_nr;
+        if (side == 0)
+            face_nr = 2 * dir + 1;
+        else
+            face_nr = 2 * dir;
+
+        Octant nbh_oc = mesh->get_octant_face_nbh(i, face_nr);
+        /* if (nbh_oc.is_valid())
+                { */
+        Integer enc_oc = get_sfc_from_octant<Type>(nbh_oc);
+        Integer owner_proc =
+            find_owner_processor(mesh->get_view_gp(), enc_oc, 2, mesh->get_proc());
+        /* assert(owner_proc >= 0); */
+
+        //find the starting corner "face_cornerA" of the face and use the direction
+        const int val = side ^ 1;
+        if (dir == 0)
+        {
+            face_cornerA.x = oc.x + val;
+            face_cornerA.y = oc.y;
+        }
+        if (dir == 1)
+        {
+            face_cornerA.x = oc.x;
+            face_cornerA.y = oc.y + val;
+        }
+
+        return owner_proc;
+    }
+
+    template<Integer Type, Integer dir>
+    static MARS_INLINE_FUNCTION Integer process_face_node(const Octant& face_cornerA, const int j)
+    {
+        Octant o;
+        if (dir == 0)
+        {
+            o.x = degree * face_cornerA.x;
+            o.y = degree * face_cornerA.y + j + 1;
+        }
+        if (dir == 1)
+        {
+            o.x = degree * face_cornerA.x + j + 1;
+            o.y = degree * face_cornerA.y;
+        }
+
+        Integer sfc = get_sfc_from_octant<Type>(o);
+
+        return sfc;
+    }
+
     struct IdentifyBoundaryDofPerRank
     {
         static constexpr Integer volume_nodes = (degree - 1) ^ 2;
@@ -52,7 +154,6 @@ public:
 
         MARS_INLINE_FUNCTION void corner_iterate(const Integer sfc_index) const
         {
-            Octant o;
             Octant oc = mesh->get_octant(sfc_index);
             //go through all the corner dofs for the current element
             for (int i = 0; i < Mesh::ManifoldDim; i++)
@@ -60,48 +161,13 @@ public:
                 for (int j = 0; j < Mesh::ManifoldDim; j++)
                 /* for (int z = 0; z < Mesh::ManifoldDim; z++) // 3D case*/
                 {
-                    //get the next corner using the elem sfc
-                    o.x = oc.x + i;
-                    o.y = oc.y + j;
-
                     Integer max_proc = -1;
-                    Integer max_index = -1;
-                    Octant one_ring[simplex_type::ElemType];
-                    o.one_ring_nbh<simplex_type::ElemType, Mesh::ManifoldDim>(one_ring, xDim, yDim, zDim, mesh->is_periodic());
-
-                    //convert the octant value into the new nodal sfc system
-                    o.x *= degree;
-                    o.y *= degree;
-                    Integer sfc = get_sfc_from_octant<simplex_type::ElemType>(o);
-
                     Integer one_ring_owners[simplex_type::ElemType];
-                    for (int k = 0; k < simplex_type::ElemType; k++)
-                    {
-                        one_ring_owners[k] = -1;
-
-                        if (one_ring[k].is_valid())
-                        {
-                            Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(one_ring[k]);
-                            /* check the proc that owns the corner and then decide on the predicate.
-                    This works because the corner defines an element and this element is
-                    always on the largest proc number due to the z order partitioning*/
-                            Integer owner_proc =
-                                find_owner_processor(mesh->get_view_gp(), enc_oc, 2, proc);
-                            assert(owner_proc >= 0);
-
-                            one_ring_owners[k] = owner_proc;
-
-                            if (owner_proc > max_proc)
-                            {
-                                max_proc = owner_proc;
-                                max_index = k;
-                            }
-                        }
-                    }
+                    Integer sfc = process_corner<simplex_type::ElemType, Mesh::ManifoldDim>(max_proc,
+                            one_ring_owners, mesh, oc, i, j);
 
                     if (proc >= max_proc)
                     {
-
                         for (int k = 0; k < simplex_type::ElemType; k++)
                         {
                             //if the owner is strictly smaller than the larger should send some data to it
@@ -109,13 +175,6 @@ public:
                             {
                                 Integer index = sfc_to_locally_owned(sfc);
                                 rank_boundary(map(one_ring_owners[k]), index) = 1;
-
-
-                    double point[3];
-                    get_vertex_coordinates_from_sfc<simplex_type::ElemType>(sfc, point, degree*xDim, degree*yDim, degree*zDim);
-
-                    printf("ddddddoc: %li - (%lf, %lf) - rank: %i - %i\n", k, point[0], point[1], one_ring_owners[k], proc);
-
                             }
                         }
                     }
@@ -126,64 +185,20 @@ public:
         template <Integer dir>
         MARS_INLINE_FUNCTION void face_iterate(const Integer i) const
         {
-            Octant oc = mesh->get_octant(i);
             //side  0 means origin side and 1 destination side.
             for (int side = 0; side < 2; ++side)
             {
-                Integer face_nr;
-                if (side == 0)
-                    face_nr = 2 * dir + 1;
-                else
-                    face_nr = 2 * dir;
-
-                Octant nbh_oc = mesh->get_octant_face_nbh(i, face_nr);
-                /* if (nbh_oc.is_valid())
-                { */
-                Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(nbh_oc);
-                Integer owner_proc =
-                    find_owner_processor(mesh->get_view_gp(), enc_oc, 2, proc);
-                /* assert(owner_proc >= 0); */
-
-                //find the starting corner of the face and use the direction
                 Octant face_cornerA;
-                Octant face_cornerB;
-                const int val = side ^ 1;
+                Integer owner_proc = process_face_corner<simplex_type::ElemType, dir>(face_cornerA,
+                        mesh, side, i);
 
-                if (dir == 0)
-                {
-                    face_cornerA.x = oc.x + val;
-                    face_cornerA.y = oc.y;
-                }
-                if (dir == 1)
-                {
-                    face_cornerA.x = oc.x;
-                    face_cornerA.y = oc.y + val;
-                }
-
-                Octant o;
                 for (int j = 0; j < face_nodes; j++)
                 {
-                    if (dir == 0)
-                    {
-                        o.x = degree * face_cornerA.x;
-                        o.y = degree * face_cornerA.y + j + 1;
-                    }
-                    if (dir == 1)
-                    {
-                        o.x = degree * face_cornerA.x + j + 1;
-                        o.y = degree * face_cornerA.y;
-                    }
-                    Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
-
-                    /* double point[3];
-                    get_vertex_coordinates_from_sfc<simplex_type::ElemType>(enc_oc, point, degree*xDim, degree*yDim, degree*zDim);
-
-                    printf("ddddddof: %li - (%lf, %lf) - rank: %i - %i\n", i, point[0], point[1], proc, owner_proc);
- */
+                    Integer sfc = process_face_node<simplex_type::ElemType, dir>(face_cornerA, j);
                     //if the owner is strictly smaller than the larger should send some data to it
                     if (proc > owner_proc && owner_proc >= 0)
                     {
-                        Integer index = sfc_to_locally_owned(enc_oc);
+                        Integer index = sfc_to_locally_owned(sfc);
                         rank_boundary(map(owner_proc), index) = 1;
                     }
                 }
@@ -245,20 +260,9 @@ public:
         ViewMatrixType<Integer> rank_scan("rank_scan", nbh_rank_size, chunk_size_ + 1);
         for (int i = 0; i < nbh_rank_size; ++i)
         {
-            /* const Integer remote_proc = sender_ranks(i);
-            if (remote_proc != data.get_host_mesh()->get_proc())
-            { */
             auto row_predicate = subview(rank_boundary, i, ALL);
             auto row_scan = subview(rank_scan, i, ALL);
             incl_excl_scan(0, chunk_size_, row_predicate, row_scan);
-
-            parallel_for(
-                "print scan", chunk_size_, KOKKOS_LAMBDA(const int i) {
-                    printf(" boundary -inside: %i-%i", i, row_predicate(i));
-                });
-
-            printf("\n");
-            /* } */
         }
 
         scan_boundary = ViewVectorType<Integer>("scan_boundary_dof", nbh_rank_size + 1);
@@ -270,7 +274,7 @@ public:
 
         // Deep copy device view to host view.
         deep_copy(h_ic, index_subview);
-        std::cout << "DM: boundary_ count result: " << h_ic() << std::endl;
+        /* std::cout << "DM: boundary_ count result: " << h_ic() << std::endl; */
 
         boundary_sfc = ViewVectorType<Integer>("boundary_sfc_dofs", h_ic());
         boundary_lsfc_index = ViewVectorType<Integer>("boundary_lsfc_index_dofs", h_ic());
@@ -282,7 +286,6 @@ public:
 
         /* We use this strategy so that the compacted elements from the local_sfc
         would still be sorted and unique. */
-        /* compact_boundary_elements(scan_boundary, rank_boundary, rank_scan, nbh_rank_size); */
         parallel_for(
             MDRangePolicy<Rank<2>>({0, 0}, {nbh_rank_size, chunk_size_}),
             KOKKOS_LAMBDA(const Integer i, const Integer j) {
@@ -332,7 +335,6 @@ public:
 
         MARS_INLINE_FUNCTION void corner_iterate(const Integer sfc_index) const
         {
-            Octant o;
             Octant oc = mesh->get_octant(sfc_index);
             //go through all the corner dofs for the current element
             for (int i = 0; i < Mesh::ManifoldDim; i++)
@@ -340,54 +342,31 @@ public:
                 for (int j = 0; j < Mesh::ManifoldDim; j++)
                 /* for (int z = 0; z < Mesh::ManifoldDim; z++) // 3D case*/
                 {
-                    //get the next corner using the elem sfc
-                    o.x = oc.x + i;
-                    o.y = oc.y + j;
-
                     Integer max_proc = -1;
-                    Octant one_ring[simplex_type::ElemType];
-                    o.one_ring_nbh<simplex_type::ElemType, Mesh::ManifoldDim>(one_ring, xDim, yDim, zDim, mesh->is_periodic());
-
-                    for (int k = 0; k < simplex_type::ElemType; k++)
-                    {
-                        if (one_ring[k].is_valid())
-                        {
-                            Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(one_ring[k]);
-
-                            /* check the proc that owns the corner and then decide on the predicate.
-                    This works because the corner defines an element and this element is
-                    always on the largest proc number due to the z order partitioning*/
-                            Integer owner_proc =
-                                find_owner_processor(mesh->get_view_gp(), enc_oc, 2, proc);
-                            assert(owner_proc >= 0);
-
-                            if (owner_proc > max_proc)
-                                max_proc = owner_proc;
-                        }
-                    }
-
-                    //convert the octant value into the new nodal sfc system
-                    o.x *= degree;
-                    o.y *= degree;
-                    Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
+                    Integer one_ring_owners[simplex_type::ElemType];
+                    Integer sfc = process_corner<simplex_type::ElemType, Mesh::ManifoldDim>(max_proc,
+                            one_ring_owners, mesh, oc, i, j);
 
                     /* if the face neighbor element is ghost then check if the processor
                         is less than the owner. This is how the dofs are partitioned */
                     /* if (!o.shares_boundary() && proc >= owner_proc) */
                     if (proc >= max_proc)
                     {
-                        global_predicate(enc_oc) = 1;
-                    }
-                    //if the owner is strictly smaller than the larger should send some data to it
-                    if (proc > max_proc)
-                    {
-                        nbh_proc_predicate_send(max_proc) = 1;
+                        global_predicate(sfc) = 1;
+                        for (int k = 0; k < simplex_type::ElemType; k++)
+                        {
+                            //if the owner is strictly smaller than the larger should send some data to it
+                            if (proc > one_ring_owners[k] && one_ring_owners[k] >= 0)
+                            {
+                                nbh_proc_predicate_send(one_ring_owners[k]) = 1;
+                            }
+                        }
                     }
                     else if (proc < max_proc)
                     {
                         nbh_proc_predicate_recv(max_proc) = 1;
                     }
-                    local_predicate(enc_oc) = 1;
+                    local_predicate(sfc) = 1;
                 }
             }
         }
@@ -395,59 +374,21 @@ public:
         template <Integer dir>
         MARS_INLINE_FUNCTION void face_iterate(const Integer i) const
         {
-            Octant oc = mesh->get_octant(i);
             //side  0 means origin side and 1 destination side.
             for (int side = 0; side < 2; ++side)
             {
-                Integer face_nr;
-                if (side == 0)
-                    face_nr = 2 * dir + 1;
-                else
-                    face_nr = 2 * dir;
-
-                Octant nbh_oc = mesh->get_octant_face_nbh(i, face_nr);
-                /* if (nbh_oc.is_valid())
-                { */
-                Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(nbh_oc);
-                Integer owner_proc =
-                    find_owner_processor(mesh->get_view_gp(), enc_oc, 2, proc);
-                /* assert(owner_proc >= 0); */
-
-                //find the starting corner of the face and use the direction
                 Octant face_cornerA;
-                Octant face_cornerB;
-                const int val = side ^ 1;
+                Integer owner_proc = process_face_corner<simplex_type::ElemType, dir>(face_cornerA,
+                        mesh, side, i);
 
-                if (dir == 0)
+               for (int j = 0; j < face_nodes; j++)
                 {
-                    face_cornerA.x = oc.x + val;
-                    face_cornerA.y = oc.y;
-                }
-                if (dir == 1)
-                {
-                    face_cornerA.x = oc.x;
-                    face_cornerA.y = oc.y + val;
-                }
-
-                Octant o;
-                for (int j = 0; j < face_nodes; j++)
-                {
-                    if (dir == 0)
-                    {
-                        o.x = degree * face_cornerA.x;
-                        o.y = degree * face_cornerA.y + j + 1;
-                    }
-                    if (dir == 1)
-                    {
-                        o.x = degree * face_cornerA.x + j + 1;
-                        o.y = degree * face_cornerA.y;
-                    }
-                    Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
-                    /* if the face neighbor element is ghost then check if the processor
+                    Integer sfc = process_face_node<simplex_type::ElemType, dir>(face_cornerA, j);
+                   /* if the face neighbor element is ghost then check if the processor
                          is less than the owner. This is how the dofs are partitioned*/
                     if (proc >= owner_proc)
                     {
-                        global_predicate(enc_oc) = 1;
+                        global_predicate(sfc) = 1;
                     }
                     /* if the owner is strictly smaller than the larger should send some
                     data to it otherwise it should receive from it */
@@ -459,7 +400,7 @@ public:
                     {
                         nbh_proc_predicate_recv(owner_proc) = 1;
                     }
-                    local_predicate(enc_oc) = 1;
+                    local_predicate(sfc) = 1;
                 }
             }
         }
@@ -547,9 +488,9 @@ public:
             if (count > 0)
             {
                 send_count[s_rank_mirror(i)] = count;
-                /* ++proc_count; */
+                /* ++proc_count;
                 std::cout << "DM:****ToProc: " << i << " count:" << count
-                          << " Proc: " << proc_num << std::endl;
+                          << " Proc: " << proc_num << std::endl; */
             }
         }
 
@@ -561,26 +502,22 @@ public:
         for (int i = 0; i < nbh_rank_recv_size; ++i)
         {
             receive_count[r_rank_mirror(i)] = 1;
-            /* ++proc_count_r; */
+            /* ++proc_count_r;
             std::cout << "DM:****ToProc: " << i << " count:" << 1
-                      << " Proc: " << proc_num << std::endl;
+                      << " Proc: " << proc_num << std::endl; */
         }
+        context->distributed->i_send_recv_vec(send_count, receive_count);
 
-        if(proc_num == 3)
-        {
-            context->distributed->i_send_recv_vec(send_count, receive_count);
-
-        printf("finished ghosts count proc: %li\n", proc_num);
-        }
-        for (int i = 0; i < size; ++i)
+        /* for (int i = 0; i < size; ++i)
         {
             if (receive_count[i] > 0)
             {
                 std::cout << "DM:-----FromProc: " << i << " count:" << receive_count[i]
                           << " Proc: " << proc_num << std::endl;
             }
-        }
+        } */
     }
+
     void exchange_ghost_dofs(const context &context, ViewVectorType<Integer> boundary, ViewVectorType<Integer> boundary_lsfc_index, ViewVectorType<Integer> &ghost_dofs, ViewVectorType<Integer> &ghost_dofs_index, const Integer *recv_scan, const Integer *send_scan)
     {
         int rank_size = num_ranks(context);
@@ -627,14 +564,14 @@ public:
 
         exchange_ghost_counts(context, scan_boundary, sender_ranks, recver_ranks, s_count, r_count);
 
-        /* [>create the scan recv mirror view from the receive count<]
+        /* create the scan recv mirror view from the receive count */
         ViewVectorType<Integer> scan_ghost("scan_ghost_", rank_size + 1);
         auto scan_recv_mirror = create_mirror_view(scan_ghost);
 
         make_scan_index_mirror(scan_recv_mirror, r_count);
         Kokkos::deep_copy(scan_ghost, scan_recv_mirror);
 
-        [>create the scan recv mirror view from the receive count<]
+        /*create the scan recv mirror view from the receive count*/
         auto scan_send_mirror = make_scan_index(s_count);
 
         ViewVectorType<Integer> ghost_dofs;
@@ -651,7 +588,7 @@ public:
 
                 printf(" i: %li ghost: %i - %li - owner rank: %li - rank: %li\n", i,
                        ghost_dofs(i), ghost_dofs_index(i), rank, data.get_host_mesh()->get_proc());
-            }); */
+            });
         /* build_map();
         enum_elem_dof(); */
     }
