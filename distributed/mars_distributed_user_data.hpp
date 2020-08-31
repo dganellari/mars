@@ -124,21 +124,10 @@ public:
                 send_count[i] = count;
                 receive_count[i] = count;
                 ++proc_count;
-                std::cout << "****ToProc: " << i << " count:" << count
-                          << " Proc: " << proc_num << std::endl;
             }
         }
 
         context->distributed->i_send_recv_vec(send_count, receive_count);
-
-        for (int i = 0; i < size; ++i)
-        {
-            if (receive_count[i] > 0)
-            {
-                std::cout << "-----FromProc: " << i << " count:" << receive_count[i]
-                          << " Proc: " << proc_num << std::endl;
-            }
-        }
 
         // create the scan recv mirror view from the receive count
         reserve_scan_ghost(size + 1);
@@ -170,16 +159,15 @@ public:
             get_view_ghost(), scan_recv_mirror.data(),
             host_mesh->get_view_boundary(), scan_send_mirror.data());
         std::cout << "Ending mpi send receive for the ghost layer" << std::endl;
-        /*
-            parallel_for(
-                    "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
-                    const Integer rank =
-       host_mesh->find_owner_processor(get_view_scan_ghost(), i, 1, proc_num);
 
-                    printf(" ghost: %i - %li - proc: %li - rank: %li\n", i,
-       get_view_ghost()(i), rank , proc_num);
-                    });
-    */
+        parallel_for(
+            "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
+                const Integer rank =
+                    find_owner_processor(get_view_scan_ghost(), i, 1, proc_num);
+
+                printf(" ghost_sfc: %i - %li - proc: %li - rank: %li\n", i,
+                       get_view_ghost()(i), rank, proc_num);
+            });
     }
 
     struct exchange_ghost_data_functor

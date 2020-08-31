@@ -1,4 +1,5 @@
 #include "Kokkos_ArithTraits.hpp"
+#include <ostream>
 #include <tuple>
 #include <type_traits>
 
@@ -219,6 +220,17 @@ struct print_functor
         std::cout << el << std::endl;
     }
 };
+
+template <typename T>
+void print_view(const ViewVectorType<T> &view)
+{
+    using namespace Kokkos;
+
+    parallel_for(
+        "print view", view.extent(0), KOKKOS_LAMBDA(const Integer i) {
+        std::cout << "i: " << i << " value: " << view(i) << std::endl;
+        });
+}
 
 /* special implementation of the binary search considering found
 if an element is between current and next proc value. */
