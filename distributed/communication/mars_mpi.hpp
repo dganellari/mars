@@ -317,6 +317,21 @@ void broadcast(const ViewVectorType<T> global, MPI_Comm comm)
                  global.data(), count, traits::mpi_type(), 0, comm);
 }
 
+/* 
+Gather individual values of type T from each rank
+into a view on  the every rank.
+T must be trivially copyable */
+template <typename T>
+void gather_all_view(T value, const ViewVectorType<T>& buffer, MPI_Comm comm)
+{
+    using traits = mpi_traits<T>;
+
+    MPI_OR_THROW(MPI_Allgather,
+                 &value, traits::count(), traits::mpi_type(),        // send buffer
+                 buffer.data(), traits::count(), traits::mpi_type(), // receive buffer
+                 comm);
+}
+
 // Gather individual values of type T from each rank into a std::vector on
 // the every rank.
 // T must be trivially copyable

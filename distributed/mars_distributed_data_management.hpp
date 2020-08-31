@@ -433,7 +433,7 @@ public:
         Integer zDim;
     };
 
-    void build_lg_predicate(ViewVectorType<bool> &npbs, ViewVectorType<bool> &npbr)
+    void build_lg_predicate(const context &context, ViewVectorType<bool> &npbs, ViewVectorType<bool> &npbr)
     {
         Integer xDim = data.get_host_mesh()->get_XDim();
         Integer yDim = data.get_host_mesh()->get_YDim();
@@ -462,6 +462,18 @@ public:
 
         local_dof_enum.compact_elements(local_predicate);
         global_dof_enum.compact_elements(global_predicate);
+
+        const int rank_size = num_ranks(context);
+
+        ViewVectorType<Integer> global_dof_size_per_rank("global_dof_size_per_rank", rank_size);
+        global_dof_offset = ViewVectorType<Integer>("global_dof_offset", rank_size + 1);
+
+        const Integer global_size = global_dof_enum.get_elem_size();
+        context->distributed->gather_all_view(global_size, global_dof_size_per_rank);
+
+        incl_excl_scan(0, rank_size, global_dof_size_per_rank, global_dof_offset);
+
+        print_view(global_dof_offset);
     }
 
     void exchange_ghost_counts(const context &context, ViewVectorType<Integer> &scan_boundary, ViewVectorType<Integer> &sender_ranks, ViewVectorType<Integer> &recver_ranks, std::vector<Integer> &send_count, std::vector<Integer> &receive_count)
@@ -546,7 +558,7 @@ public:
         ViewVectorType<Integer> proc_scan_send("nbh_scan_send", rank_size + 1);
         ViewVectorType<Integer> proc_scan_recv("nbh_scan_recv", rank_size + 1);
 
-        build_lg_predicate(nbh_proc_predicate_send, nbh_proc_predicate_recv);
+        build_lg_predicate(context, nbh_proc_predicate_send, nbh_proc_predicate_recv);
 
         incl_excl_scan(0, rank_size, nbh_proc_predicate_send, proc_scan_send);
         incl_excl_scan(0, rank_size, nbh_proc_predicate_recv, proc_scan_recv);
@@ -613,6 +625,7 @@ private:
 
     SFC<simplex_type::ElemType> local_dof_enum;
     SFC<simplex_type::ElemType> global_dof_enum;
+    ViewVectorType<Integer> global_dof_offset;
 
     UnorderedMap<Integer, Integer> local_to_global_enum;
     ViewMatrixType<Integer> elem_dof_enum;

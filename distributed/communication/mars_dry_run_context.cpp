@@ -96,8 +96,14 @@ struct dry_run_context_impl {
                 const ViewVectorType<T> &src, const Integer* src_displ) const
     {
     }
+
     void
     broadcast(const ViewVectorType<Integer> global) const
+    {
+    }
+
+    template<typename T>
+    void gather_all_view(T value, const ViewVectorType<T> &buffer) const
     {
     }
 
