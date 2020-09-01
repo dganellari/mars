@@ -44,8 +44,70 @@ public:
     }
  */
 
+    template <Integer Type>
+    static MARS_INLINE_FUNCTION Integer enum_corner(const ViewVectorType<Integer> &sfc_to_local, const Octant &oc, const int i, const int j)
+    {
+        Octant o;
+        //get the next corner using the elem sfc
+        o.x = oc.x + i;
+        o.y = oc.y + j;
+        //convert the octant value into the new nodal sfc system
+        o.x *= degree;
+        o.y *= degree;
+        Integer sfc = get_sfc_from_octant<Type>(o);
+
+        return sfc_to_local(sfc);
+    }
+
+    template <Integer dir>
+    static MARS_INLINE_FUNCTION Octant enum_face_corner(Octant &oc, const int side)
+    {
+        Octant face_cornerA;
+        /*
+ * this is how the face nr is computed to get a topological order of the faces
+        Integer face_nr;
+        if (side == 0)
+            face_nr = 2 + dir;
+        else
+            face_nr = 1 - dir; */
+
+        //find the starting corner "face_cornerA" of the face and use the direction
+        //order topologically: dir = 0 in this case is lower and right faces. dir 1 the rest.
+        if (dir == 0)
+        {
+            face_cornerA.x = oc.x + side;
+            face_cornerA.y = oc.y;
+        }
+        if (dir == 1)
+        {
+            face_cornerA.x = oc.x;
+            face_cornerA.y = oc.y + (side ^ 1);
+        }
+
+        return face_cornerA;
+    }
+
+    template <Integer Type>
+    static MARS_INLINE_FUNCTION Integer enum_face_node(const ViewVectorType<Integer> &sfc_to_local, const Octant &face_cornerA, const int j, const int side)
+    {
+        Octant o;
+        if (side == 1)
+        {
+            o.x = degree * face_cornerA.x;
+            o.y = degree * face_cornerA.y + j + 1;
+        }
+        if (side == 0)
+        {
+            o.x = degree * face_cornerA.x + j + 1;
+            o.y = degree * face_cornerA.y;
+        }
+        Integer sfc = get_sfc_from_octant<Type>(o);
+
+        return sfc_to_local(sfc);
+    }
+
     template <Integer Type, Integer ManifoldDim>
-    static MARS_INLINE_FUNCTION Integer process_corner(Integer &max_proc, Integer one_ring_owners[Type], const Mesh* mesh, const Octant& oc, const int i, const int j)
+    static MARS_INLINE_FUNCTION Integer process_corner(Integer &max_proc, Integer one_ring_owners[Type], const Mesh *mesh, const Octant &oc, const int i, const int j)
     {
         Integer xDim = mesh->get_XDim();
         Integer yDim = mesh->get_YDim();
@@ -58,7 +120,7 @@ public:
 
         Octant one_ring[simplex_type::ElemType];
         o.one_ring_nbh<Type, ManifoldDim>(one_ring, xDim, yDim,
-                zDim, mesh->is_periodic());
+                                          zDim, mesh->is_periodic());
 
         for (int k = 0; k < Type; k++)
         {
@@ -71,7 +133,7 @@ public:
                     This works because the corner defines an element and this element is
                     always on the largest proc number due to the z order partitioning*/
                 Integer owner_proc = find_owner_processor(mesh->get_view_gp(),
-                        enc_oc, 2, mesh->get_proc());
+                                                          enc_oc, 2, mesh->get_proc());
                 assert(owner_proc >= 0);
 
                 one_ring_owners[k] = owner_proc;
@@ -82,7 +144,6 @@ public:
             }
         }
 
-
         //convert the octant value into the new nodal sfc system
         o.x *= degree;
         o.y *= degree;
@@ -91,8 +152,8 @@ public:
         return sfc;
     }
 
-    template<Integer Type, Integer dir>
-    static MARS_INLINE_FUNCTION Integer process_face_corner(Octant& face_cornerA, const Mesh * mesh, const int side, const Integer i)
+    template <Integer Type, Integer dir>
+    static MARS_INLINE_FUNCTION Integer process_face_corner(Octant &face_cornerA, const Mesh *mesh, const int side, const Integer i)
     {
         Octant oc = mesh->get_octant(i);
 
@@ -126,8 +187,8 @@ public:
         return owner_proc;
     }
 
-    template<Integer Type, Integer dir>
-    static MARS_INLINE_FUNCTION Integer process_face_node(const Octant& face_cornerA, const int j)
+    template <Integer Type, Integer dir>
+    static MARS_INLINE_FUNCTION Integer process_face_node(const Octant &face_cornerA, const int j)
     {
         Octant o;
         if (dir == 0)
@@ -164,7 +225,7 @@ public:
                     Integer max_proc = -1;
                     Integer one_ring_owners[simplex_type::ElemType];
                     Integer sfc = process_corner<simplex_type::ElemType, Mesh::ManifoldDim>(max_proc,
-                            one_ring_owners, mesh, oc, i, j);
+                                                                                            one_ring_owners, mesh, oc, i, j);
 
                     if (proc >= max_proc)
                     {
@@ -190,7 +251,7 @@ public:
             {
                 Octant face_cornerA;
                 Integer owner_proc = process_face_corner<simplex_type::ElemType, dir>(face_cornerA,
-                        mesh, side, i);
+                                                                                      mesh, side, i);
 
                 for (int j = 0; j < face_nodes; j++)
                 {
@@ -232,7 +293,7 @@ public:
     };
 
     void build_boundary_dof_sets(ViewVectorType<Integer> &scan_boundary, ViewVectorType<Integer> &boundary_sfc,
-            ViewVectorType<Integer> &boundary_lsfc_index, ViewVectorType<Integer> &sender_ranks_scan)
+                                 ViewVectorType<Integer> &boundary_lsfc_index, ViewVectorType<Integer> &sender_ranks_scan)
     {
         using namespace Kokkos;
 
@@ -345,7 +406,7 @@ public:
                     Integer max_proc = -1;
                     Integer one_ring_owners[simplex_type::ElemType];
                     Integer sfc = process_corner<simplex_type::ElemType, Mesh::ManifoldDim>(max_proc,
-                            one_ring_owners, mesh, oc, i, j);
+                                                                                            one_ring_owners, mesh, oc, i, j);
 
                     /* if the face neighbor element is ghost then check if the processor
                         is less than the owner. This is how the dofs are partitioned */
@@ -379,12 +440,12 @@ public:
             {
                 Octant face_cornerA;
                 Integer owner_proc = process_face_corner<simplex_type::ElemType, dir>(face_cornerA,
-                        mesh, side, i);
+                                                                                      mesh, side, i);
 
-               for (int j = 0; j < face_nodes; j++)
+                for (int j = 0; j < face_nodes; j++)
                 {
                     Integer sfc = process_face_node<simplex_type::ElemType, dir>(face_cornerA, j);
-                   /* if the face neighbor element is ghost then check if the processor
+                    /* if the face neighbor element is ghost then check if the processor
                          is less than the owner. This is how the dofs are partitioned*/
                     if (proc >= owner_proc)
                     {
@@ -472,8 +533,6 @@ public:
         context->distributed->gather_all_view(global_size, global_dof_size_per_rank);
 
         incl_excl_scan(0, rank_size, global_dof_size_per_rank, global_dof_offset);
-
-        print_view(global_dof_offset);
     }
 
     void exchange_ghost_counts(const context &context, ViewVectorType<Integer> &scan_boundary, ViewVectorType<Integer> &sender_ranks, ViewVectorType<Integer> &recver_ranks, std::vector<Integer> &send_count, std::vector<Integer> &receive_count)
@@ -548,6 +607,103 @@ public:
         std::cout << "DM:Ending mpi send receive for the ghost dofs local index" << std::endl;
     }
 
+    struct EnumLocalDofs
+    {
+        static constexpr Integer volume_nodes = (degree - 1) ^ 2;
+        static constexpr Integer face_nodes = (degree - 1);
+        static constexpr Integer corner_nodes = 1;
+        static constexpr Integer elem_nodes = (degree + 1) ^ 2;
+
+        MARS_INLINE_FUNCTION void volume_iterate(const Integer sfc_index, Integer &index) const
+        {
+            Octant o;
+            Octant oc = mesh->get_octant(sfc_index);
+            //go through all the inside dofs for the current element
+            //TODO: maybe a topolgical order would be neccessary
+            for (int j = 0; j < degree - 1; j++)
+            {
+                for (int i = 0; i < degree - 1; i++)
+                {
+                    o.x = degree * oc.x + i + 1;
+                    o.y = degree * oc.y + j + 1;
+                    Integer sfc = get_sfc_from_octant<simplex_type::ElemType>(o);
+                    Integer localid = sfc_to_local(sfc);
+                    elem_dof_enum(sfc_index, index++) = localid;
+                }
+            }
+        }
+
+        MARS_INLINE_FUNCTION void corner_iterate(const Integer sfc_index, Integer &index) const
+        {
+            Octant oc = mesh->get_octant(sfc_index);
+            //go through all the corner dofs for the current element
+            Integer localid = enum_corner<simplex_type::ElemType>(sfc_to_local, oc, 0, 0);
+            elem_dof_enum(sfc_index, index++) = localid;
+
+            Integer localid = enum_corner<simplex_type::ElemType>(sfc_to_local, oc, 0, 1);
+            elem_dof_enum(sfc_index, index++) = localid;
+
+            Integer localid = enum_corner<simplex_type::ElemType>(sfc_to_local, oc, 1, 1);
+            elem_dof_enum(sfc_index, index++) = localid;
+
+            Integer localid = enum_corner<simplex_type::ElemType>(sfc_to_local, oc, 1, 0);
+            elem_dof_enum(sfc_index, index++) = localid;
+        }
+
+        template <Integer dir>
+        MARS_INLINE_FUNCTION void face_iterate(const Integer sfc_index, Integer &index) const
+        {
+            Octant oc = mesh->get_octant(sfc_index);
+            //side  0 means origin side and 1 destination side.
+            for (int side = 0; side < 2; ++side)
+            {
+                Octant face_cornerA = enum_face_corner<dir>(oc, side);
+
+                for (int j = 0; j < face_nodes; j++)
+                {
+                    Integer localid = enum_face_node<simplex_type::ElemType>(sfc_to_local, face_cornerA, j, side);
+                    elem_dof_enum(sfc_index, index++) = localid;
+                }
+            }
+        }
+
+        MARS_INLINE_FUNCTION
+        void operator()(const Integer i) const
+        {
+            Integer index = 0;
+            //topological order within the element
+            corner_iterate(i, index);
+            face_iterate<0>(i, index);
+            face_iterate<1>(i, index);
+            volume_iterate(i, index);
+            // TODO: 3D part
+        }
+
+        EnumLocalDofs(Mesh *m, ViewMatrixType<Integer> ede, ViewVectorType<Integer> stl)
+            : mesh(m), elem_dof_enum(ede), sfc_to_local(stl) {}
+
+        Mesh *mesh;
+        ViewMatrixType<Integer> elem_dof_enum;
+        ViewVectorType<Integer> sfc_to_local;
+    };
+
+    void enumerate_local_dofs()
+    {
+        Integer xDim = data.get_host_mesh()->get_XDim();
+        Integer yDim = data.get_host_mesh()->get_YDim();
+        Integer zDim = data.get_host_mesh()->get_ZDim();
+
+        const Integer size = data.get_host_mesh()->get_chunk_size();
+        static constexpr Integer elem_nodes = (degree + 1) ^ 2;
+
+        elem_dof_enum = ViewMatrixType<Integer>("elem_dof_enum", size, elem_nodes);
+
+        /* enumerates the dofs within each element topologically */
+        Kokkos::parallel_for(
+            "enum_local_dofs", size,
+            EnumLocalDof(data.get_mesh(), elem_dof_enum, local_dof_enum.get_view_sfc_to_local()));
+    }
+
     void enumerate_dofs(const context &context)
     {
         const Integer rank_size = num_ranks(context);
@@ -601,6 +757,7 @@ public:
                 printf(" i: %li ghost: %i - %li - owner rank: %li - rank: %li\n", i,
                        ghost_dofs(i), ghost_dofs_index(i), rank, data.get_host_mesh()->get_proc());
             });
+        enumerate_local_dofs(
         /* build_map();
         enum_elem_dof(); */
     }
