@@ -228,7 +228,7 @@ public:
                     Integer sfc = process_corner<simplex_type::ElemType, Mesh::ManifoldDim>(max_proc,
                                                                                             one_ring_owners, mesh, oc, i, j);
 
-                    if (proc >= max_proc)
+                    if (proc >= max_proc) //Send it only if it is local to the proc
                     {
                         for (int k = 0; k < simplex_type::ElemType; k++)
                         {
@@ -709,7 +709,7 @@ public:
             });
     }
 
-    void enumerate_dofs(const context &context)
+void enumerate_dofs(const context &context)
     {
         const Integer rank_size = num_ranks(context);
         const int proc_num = rank(context);
@@ -763,8 +763,7 @@ public:
                        ghost_dofs(i), ghost_dofs_index(i), rank, data.get_host_mesh()->get_proc());
             }); */
         enumerate_local_dofs();
-        /* build_map();
-        enum_elem_dof(); */
+        build_ghost_local_global_map(context, scan_recv_mirror, ghost_dofs, ghost_dofs_index);
     }
 
     const Integer get_dof_size() const
@@ -782,6 +781,122 @@ public:
         return global_dof_enum;
     }
 
+    struct GhostDof
+    {
+        Integer gid;
+        Integer owner_proc;
+
+        GhostDof(Integer g, Integer p) : gid(g), owner_proc(p) {}
+        GhostDof() = default;
+
+        MARS_INLINE_FUNCTION
+        void set_gid(const Integer g)
+        {
+            gid = g;
+        }
+
+        MARS_INLINE_FUNCTION
+        Integer get_gid() const
+        {
+            return gid;
+        }
+
+        MARS_INLINE_FUNCTION
+        void set_proc(const Integer p)
+        {
+            owner_proc = p;
+        }
+
+        MARS_INLINE_FUNCTION
+        Integer get_proc() const
+        {
+            return owner_proc;
+        }
+    };
+
+    /* build a map only for the ghost dofs as for the local ones the global dof enum can be used */
+    struct BuildLocalToGlobalGhostMap
+    {
+        Mesh *mesh;
+        UnorderedMap<Integer, GhostDof> glgm;
+        ViewVectorType<Integer> global_dof_offset;
+        ViewVectorType<Integer> sfc_to_local;
+        ViewVectorType<Integer> scan_recv_mirror;
+
+        ViewVectorType<Integer> ghost_dofs;
+        ViewVectorType<Integer> ghost_dofs_index;
+
+        BuildLocalToGlobalGhostMap(Mesh* m, UnorderedMap<Integer, GhostDof> g, ViewVectorType<Integer> gdo,
+                ViewVectorType<Integer> stl, ViewVectorType<Integer> srm, ViewVectorType<Integer> gd,
+                ViewVectorType<Integer> gdi) : mesh(m), glgm(g), global_dof_offset(gdo), sfc_to_local(stl),
+                scan_recv_mirror(srm), ghost_dofs(gd), ghost_dofs_index(gdi) {}
+
+        MARS_INLINE_FUNCTION
+        void operator()(const Integer i) const
+        {
+            /* read the sfc and the local dof id from the ghost */
+            const Integer ghost_sfc = ghost_dofs(i);
+            const Integer ghost_sfc_lid = ghost_dofs_index(i);
+            /* using the ghost sfc the local_dof_enum sfc_to_local is used to get the local dof of the ghost */
+            const Integer lid = sfc_to_local(ghost_sfc);
+
+            /* find the process by binary search in the scan_recv_mirror view of size rank_size
+             * and calculate the global id by adding the ghost local id to the global offset for ghost process*/
+            const Integer owner_proc = find_owner_processor(scan_recv_mirror, i, 1, mesh->get_proc());
+            const Integer gid = ghost_sfc_lid + global_dof_offset(owner_proc);
+
+            printf("i: %li, lid: %li - gid: %li [%li - %li] owner_proc: %li - rank: %li\n", i, lid, gid, ghost_sfc_lid, global_dof_offset(owner_proc), owner_proc, mesh->get_proc());
+            //build the ghost dof object and insert into the map
+            const auto result = glgm.insert(lid, GhostDof(gid, owner_proc));
+            assert(result.success());
+        }
+    };
+
+
+    void build_ghost_local_global_map(const context& context, const ViewVectorType<Integer>&
+            scan_recv_mirror,  const ViewVectorType<Integer>& ghost_dofs,
+            const ViewVectorType<Integer>& ghost_dofs_index)
+    {
+        int rank_size = num_ranks(context);
+        Integer size = scan_recv_mirror(rank_size);
+
+        ghost_local_to_global_map = UnorderedMap<Integer, GhostDof>(size);
+        /* iterate through the unique ghost dofs and build the map */
+        Kokkos::parallel_for("BuildLocalGlobalPredicate", size, BuildLocalToGlobalGhostMap(
+                    data.get_mesh(), ghost_local_to_global_map, global_dof_offset, local_dof_enum.
+                    get_view_sfc_to_local(), scan_recv_mirror, ghost_dofs, ghost_dofs_index));
+        /* In the end the size of the map should be as the size of the ghost_dofs.
+         * Careful map size  is not capacity */
+        assert(size == ghost_local_to_global_map.size());
+        Kokkos::parallel_for(
+            ghost_local_to_global_map.capacity(), KOKKOS_LAMBDA(uint32_t i) {
+                if (ghost_local_to_global_map.valid_at(i))
+                {
+                    auto key = ghost_local_to_global_map.key_at(i);
+                    auto value = ghost_local_to_global_map.value_at(i);
+                    printf("local: %li, global: %li - proc: %li - rank: %li\n", key, value.get_gid(), value.get_proc(), data.get_mesh()->get_proc());
+
+                }
+            });
+    }
+
+    MARS_INLINE_FUNCTION
+    Integer get_global_dof()
+    {
+
+
+    }
+
+    Integer get_global_dof_id()
+    {
+
+    }
+
+    Integer get_global_dof_proc()
+    {
+
+    }
+
 private:
     UD data;
 
@@ -789,11 +904,10 @@ private:
     SFC<simplex_type::ElemType> global_dof_enum;
     ViewVectorType<Integer> global_dof_offset;
 
-    UnorderedMap<Integer, Integer> local_to_global_enum;
+    UnorderedMap<Integer, GhostDof> ghost_local_to_global_map;
     ViewMatrixType<Integer> elem_dof_enum;
 
     Integer dof_size;
-    /* Integer proc_count; */
 };
 
 } // namespace mars
