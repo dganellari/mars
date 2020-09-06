@@ -781,13 +781,14 @@ void enumerate_dofs(const context &context)
         return global_dof_enum;
     }
 
-    struct GhostDof
+    struct Dof
     {
         Integer gid;
         Integer owner_proc;
+        bool valid=true;
 
-        GhostDof(Integer g, Integer p) : gid(g), owner_proc(p) {}
-        GhostDof() = default;
+        Dof(Integer g, Integer p) : gid(g), owner_proc(p) {}
+        Dof() = default;
 
         MARS_INLINE_FUNCTION
         void set_gid(const Integer g)
@@ -812,13 +813,25 @@ void enumerate_dofs(const context &context)
         {
             return owner_proc;
         }
+
+        MARS_INLINE_FUNCTION
+        void set_invalid()
+        {
+            valid = false;
+        }
+
+        MARS_INLINE_FUNCTION
+        bool is_valid() const
+        {
+            return valid;
+        }
     };
 
     /* build a map only for the ghost dofs as for the local ones the global dof enum can be used */
     struct BuildLocalToGlobalGhostMap
     {
         Mesh *mesh;
-        UnorderedMap<Integer, GhostDof> glgm;
+        UnorderedMap<Integer, Dof> glgm;
         ViewVectorType<Integer> global_dof_offset;
         ViewVectorType<Integer> sfc_to_local;
         ViewVectorType<Integer> scan_recv_mirror;
@@ -826,7 +839,7 @@ void enumerate_dofs(const context &context)
         ViewVectorType<Integer> ghost_dofs;
         ViewVectorType<Integer> ghost_dofs_index;
 
-        BuildLocalToGlobalGhostMap(Mesh* m, UnorderedMap<Integer, GhostDof> g, ViewVectorType<Integer> gdo,
+        BuildLocalToGlobalGhostMap(Mesh* m, UnorderedMap<Integer, Dof> g, ViewVectorType<Integer> gdo,
                 ViewVectorType<Integer> stl, ViewVectorType<Integer> srm, ViewVectorType<Integer> gd,
                 ViewVectorType<Integer> gdi) : mesh(m), glgm(g), global_dof_offset(gdo), sfc_to_local(stl),
                 scan_recv_mirror(srm), ghost_dofs(gd), ghost_dofs_index(gdi) {}
@@ -847,7 +860,7 @@ void enumerate_dofs(const context &context)
 
             printf("i: %li, lid: %li - gid: %li [%li - %li] owner_proc: %li - rank: %li\n", i, lid, gid, ghost_sfc_lid, global_dof_offset(owner_proc), owner_proc, mesh->get_proc());
             //build the ghost dof object and insert into the map
-            const auto result = glgm.insert(lid, GhostDof(gid, owner_proc));
+            const auto result = glgm.insert(ghost_sfc, Dof(gid, owner_proc));
             assert(result.success());
         }
     };
@@ -860,7 +873,7 @@ void enumerate_dofs(const context &context)
         int rank_size = num_ranks(context);
         Integer size = scan_recv_mirror(rank_size);
 
-        ghost_local_to_global_map = UnorderedMap<Integer, GhostDof>(size);
+        ghost_local_to_global_map = UnorderedMap<Integer, Dof>(size);
         /* iterate through the unique ghost dofs and build the map */
         Kokkos::parallel_for("BuildLocalGlobalPredicate", size, BuildLocalToGlobalGhostMap(
                     data.get_mesh(), ghost_local_to_global_map, global_dof_offset, local_dof_enum.
@@ -874,29 +887,101 @@ void enumerate_dofs(const context &context)
                 {
                     auto key = ghost_local_to_global_map.key_at(i);
                     auto value = ghost_local_to_global_map.value_at(i);
-                    printf("local: %li, global: %li - proc: %li - rank: %li\n", key, value.get_gid(), value.get_proc(), data.get_mesh()->get_proc());
+                    printf("local: %li, global: %li - proc: %li - rank: %li\n", local_dof_enum.get_view_sfc_to_local()(key), value.get_gid(), value.get_proc(), data.get_mesh()->get_proc());
 
                 }
             });
     }
 
     MARS_INLINE_FUNCTION
-    Integer get_global_dof()
+    bool locally_owned_dof(const Integer sfc) const
     {
-
-
+        //use the sfc to local which the scan of the predicate. To get the predicate
+        //value the difference with the successive index is needed.
+        const Integer pred_value = global_dof_enum.get_view_sfc_to_local()(sfc + 1) -
+                                   global_dof_enum.get_view_sfc_to_local()(sfc);
+        return (pred_value > 0);
     }
 
-    Integer get_global_dof_id()
+    MARS_INLINE_FUNCTION
+    Dof sfc_to_global_dof(const Integer sfc) const
     {
-
+        Dof dof;
+        if(locally_owned_dof(sfc))
+        {
+            const Integer proc = data.get_mesh()->get_proc();
+            const Integer sfc_lid = global_dof_enum.get_view_sfc_to_local()(sfc);
+            const Integer gid = sfc_lid + global_dof_offset(proc);
+            dof.set_gid(gid);
+            dof.set_proc(proc);
+        }
+        else
+        {
+           const auto it = ghost_local_to_global_map.find(sfc);
+           if(!ghost_local_to_global_map.valid_at(it))
+           {
+               dof.set_invalid();
+           }
+           else
+           {
+               dof = ghost_local_to_global_map.value_at(it);
+           }
+        }
+        return dof;
     }
 
-    Integer get_global_dof_proc()
+    MARS_INLINE_FUNCTION
+    Dof local_to_global_dof(const Integer local) const
     {
-
+        //use the local to sfc view (elements) to get the sfc of the local numbering.
+        const Integer local_sfc = local_dof_enum.get_view_elements()(local);
+        return sfc_to_global_dof(local_sfc);
     }
 
+    MARS_INLINE_FUNCTION
+    Integer sfc_to_global(const Integer sfc) const
+    {
+        Dof dof = sfc_to_global_dof(sfc);
+        if(dof.is_valid)
+            return dof.get_gid();
+        else
+            return INVALID_INDEX;
+    }
+
+    MARS_INLINE_FUNCTION
+    Integer local_to_global(const Integer local) const
+    {
+        Dof dof = local_to_global_dof(local);
+        if(dof.is_valid())
+            return dof.get_gid();
+        else
+            return INVALID_INDEX;
+    }
+
+    MARS_INLINE_FUNCTION
+    Integer sfc_to_global_proc(const Integer sfc) const
+    {
+        Dof dof = sfc_to_global_dof(sfc);
+        if(dof.is_valid)
+            return dof.get_proc();
+        else
+            return INVALID_INDEX;
+    }
+
+    MARS_INLINE_FUNCTION
+    Integer local_to_global_proc(const Integer local) const
+    {
+        Dof dof = local_to_global_dof(local);
+        if(dof.is_valid())
+            return dof.get_proc();
+        else
+            return INVALID_INDEX;
+    }
+
+    /* :TODO stencil use the face iterate on the dof sfc. */
+    /* The face nbh will give an sfc code. To get the local code from it sfc_to_local can be used */
+
+    //Two way of iterations: face and element. You can also build your stencil yourself.
 private:
     UD data;
 
@@ -904,7 +989,7 @@ private:
     SFC<simplex_type::ElemType> global_dof_enum;
     ViewVectorType<Integer> global_dof_offset;
 
-    UnorderedMap<Integer, GhostDof> ghost_local_to_global_map;
+    UnorderedMap<Integer, Dof> ghost_local_to_global_map;
     ViewMatrixType<Integer> elem_dof_enum;
 
     Integer dof_size;
