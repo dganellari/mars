@@ -4,6 +4,7 @@
 #ifdef WITH_MPI
 #ifdef WITH_KOKKOS
 #include "mars_distributed_user_data.hpp"
+#include "mars_distributed_dof.hpp"
 
 namespace mars
 {
@@ -11,6 +12,7 @@ namespace mars
 template <class Mesh, Integer degree>
 class DM
 {
+public:
     /* using UD = UserData<Mesh, double>; */
     using UD = UserData<Mesh>;
     using simplex_type = typename Mesh::Elem;
@@ -20,7 +22,6 @@ class DM
     static constexpr Integer corner_nodes = 1;
     static constexpr Integer elem_nodes = (degree + 1) * (degree + 1);
 
-public:
     MARS_INLINE_FUNCTION
     DM(Mesh *mesh, const context &c) : data(UD(mesh))
     {
@@ -766,83 +767,21 @@ void enumerate_dofs(const context &context)
         build_ghost_local_global_map(context, scan_recv_mirror, ghost_dofs, ghost_dofs_index);
     }
 
-    const Integer get_dof_size() const
-    {
-        return dof_size;
-    }
-
-    const SFC<simplex_type::ElemType> &get_local_dof_enum() const
-    {
-        return local_dof_enum;
-    }
-
-    const SFC<simplex_type::ElemType> &get_global_dof_enum() const
-    {
-        return global_dof_enum;
-    }
-
-    struct Dof
-    {
-        Integer gid;
-        Integer owner_proc;
-        bool valid=true;
-
-        Dof(Integer g, Integer p) : gid(g), owner_proc(p) {}
-        Dof() = default;
-
-        MARS_INLINE_FUNCTION
-        void set_gid(const Integer g)
-        {
-            gid = g;
-        }
-
-        MARS_INLINE_FUNCTION
-        Integer get_gid() const
-        {
-            return gid;
-        }
-
-        MARS_INLINE_FUNCTION
-        void set_proc(const Integer p)
-        {
-            owner_proc = p;
-        }
-
-        MARS_INLINE_FUNCTION
-        Integer get_proc() const
-        {
-            return owner_proc;
-        }
-
-        MARS_INLINE_FUNCTION
-        void set_invalid()
-        {
-            valid = false;
-        }
-
-        MARS_INLINE_FUNCTION
-        bool is_valid() const
-        {
-            return valid;
-        }
-    };
-
     /* build a map only for the ghost dofs as for the local ones the global dof enum can be used */
     struct BuildLocalToGlobalGhostMap
     {
         Mesh *mesh;
         UnorderedMap<Integer, Dof> glgm;
         ViewVectorType<Integer> global_dof_offset;
-        ViewVectorType<Integer> sfc_to_local;
         ViewVectorType<Integer> scan_recv_mirror;
 
         ViewVectorType<Integer> ghost_dofs;
         ViewVectorType<Integer> ghost_dofs_index;
 
         BuildLocalToGlobalGhostMap(Mesh* m, UnorderedMap<Integer, Dof> g, ViewVectorType<Integer> gdo,
-                ViewVectorType<Integer> stl, ViewVectorType<Integer> srm, ViewVectorType<Integer> gd,
-                ViewVectorType<Integer> gdi) : mesh(m), glgm(g), global_dof_offset(gdo), sfc_to_local(stl),
-                scan_recv_mirror(srm), ghost_dofs(gd), ghost_dofs_index(gdi) {}
+                ViewVectorType<Integer> srm, ViewVectorType<Integer> gd, ViewVectorType<Integer> gdi) :
+                 mesh(m), glgm(g), global_dof_offset(gdo), scan_recv_mirror(srm), ghost_dofs(gd),
+                 ghost_dofs_index(gdi) {}
 
         MARS_INLINE_FUNCTION
         void operator()(const Integer i) const
@@ -850,15 +789,12 @@ void enumerate_dofs(const context &context)
             /* read the sfc and the local dof id from the ghost */
             const Integer ghost_sfc = ghost_dofs(i);
             const Integer ghost_sfc_lid = ghost_dofs_index(i);
-            /* using the ghost sfc the local_dof_enum sfc_to_local is used to get the local dof of the ghost */
-            const Integer lid = sfc_to_local(ghost_sfc);
 
             /* find the process by binary search in the scan_recv_mirror view of size rank_size
              * and calculate the global id by adding the ghost local id to the global offset for ghost process*/
             const Integer owner_proc = find_owner_processor(scan_recv_mirror, i, 1, mesh->get_proc());
             const Integer gid = ghost_sfc_lid + global_dof_offset(owner_proc);
 
-            printf("i: %li, lid: %li - gid: %li [%li - %li] owner_proc: %li - rank: %li\n", i, lid, gid, ghost_sfc_lid, global_dof_offset(owner_proc), owner_proc, mesh->get_proc());
             //build the ghost dof object and insert into the map
             const auto result = glgm.insert(ghost_sfc, Dof(gid, owner_proc));
             assert(result.success());
@@ -876,8 +812,8 @@ void enumerate_dofs(const context &context)
         ghost_local_to_global_map = UnorderedMap<Integer, Dof>(size);
         /* iterate through the unique ghost dofs and build the map */
         Kokkos::parallel_for("BuildLocalGlobalPredicate", size, BuildLocalToGlobalGhostMap(
-                    data.get_mesh(), ghost_local_to_global_map, global_dof_offset, local_dof_enum.
-                    get_view_sfc_to_local(), scan_recv_mirror, ghost_dofs, ghost_dofs_index));
+                    data.get_mesh(), ghost_local_to_global_map, global_dof_offset, scan_recv_mirror,
+                    ghost_dofs, ghost_dofs_index));
         /* In the end the size of the map should be as the size of the ghost_dofs.
          * Careful map size  is not capacity */
         assert(size == ghost_local_to_global_map.size());
@@ -982,6 +918,48 @@ void enumerate_dofs(const context &context)
     /* The face nbh will give an sfc code. To get the local code from it sfc_to_local can be used */
 
     //Two way of iterations: face and element. You can also build your stencil yourself.
+
+
+    const Integer get_dof_size() const
+    {
+        return dof_size;
+    }
+
+    const SFC<simplex_type::ElemType> &get_local_dof_enum() const
+    {
+        return local_dof_enum;
+    }
+
+    const SFC<simplex_type::ElemType> &get_global_dof_enum() const
+    {
+        return global_dof_enum;
+    }
+
+    const ViewVectorType<Integer> get_global_dof_offset() const
+    {
+        return global_dof_offset;
+    }
+
+    const UnorderedMap<Integer, Dof>& get_ghost_lg_map() const
+    {
+        return ghost_local_to_global_map;
+    }
+
+    const ViewMatrixType<Integer> get_elem_dof_enum() const
+    {
+        return elem_dof_enum;
+    }
+
+    const Integer get_elem_local_dof(const Integer elem_index, const Integer i) const
+    {
+        return elem_dof_enum(elem_index, i);
+    }
+
+    UD get_data() const
+    {
+        return data;
+    }
+
 private:
     UD data;
 

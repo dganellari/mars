@@ -79,6 +79,21 @@ MARS_INLINE_FUNCTION void print_dof(const SFC<Type> &dof, const int rank)
     });
 }
 
+//print thlocal and the global number of the dof within each element.
+MARS_INLINE_FUNCTION void print_global_dof_enumeration(const DMQ2 dm, const int rank)
+{
+    dm.get_data().elem_iterate(MARS_LAMBDA(const Integer elem_index) {
+        for (int i = 0; i < DMQ2::elem_nodes; i++)
+        {
+            const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+            Dof d = dm.local_to_global_dof(local_dof);
+
+            //do something. In this case we are printing.
+            printf("lgm: local: %li, global: %li, proc: %i, rank:%i\n",  local_dof, d.get_gid(), d.get_proc(), rank);
+        }
+    });
+}
+
 void poisson(int &argc, char **&argv, const int level)
 {
 
@@ -132,8 +147,10 @@ void poisson(int &argc, char **&argv, const int level)
 
         DMQ2 dm(&mesh, context);
         dm.enumerate_dofs(context);
-        print_dof<Type>(dm.get_global_dof_enum(), proc_num);
-        /* print_dof<Type>(dm.get_local_dof_enum(), proc_num); */
+        /* print_dof<Type>(dm.get_global_dof_enum(), proc_num); */
+        print_dof<Type>(dm.get_local_dof_enum(), proc_num);
+
+        print_global_dof_enumeration(dm, proc_num);
 
         /* ViewVectorType<Integer> sfc = mesh.get_view_sfc(); */
         Kokkos::Timer timer;
