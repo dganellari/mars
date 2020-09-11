@@ -9,13 +9,19 @@
 namespace mars
 {
 
-template <class Mesh, Integer degree>
+template <class Mesh, Integer degree, typename...T>
 class DM
 {
 public:
     /* using UD = UserData<Mesh, double>; */
     using UD = UserData<Mesh>;
     using simplex_type = typename Mesh::Elem;
+
+    using user_tuple = ViewsTuple<T...>;
+    using tuple = std::tuple<T...>;
+
+    template<Integer idx>
+    using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
     static constexpr Integer volume_nodes = (degree - 1) * (degree - 1);
     static constexpr Integer face_nodes = (degree - 1);
@@ -26,6 +32,32 @@ public:
     DM(Mesh *mesh, const context &c) : data(UD(mesh))
     {
         create_ghost_layer<UD, simplex_type::ElemType>(c, data);
+    }
+
+    template<Integer... dataidx>
+    MARS_INLINE_FUNCTION void reserve_user_data(user_tuple &tuple,
+            std::string view_desc, const Integer size)
+    {
+        if (sizeof...(dataidx) == 0)
+        {
+            //resize all the views within the tuple.
+            apply_impl(resize_view_functor(view_desc, size), tuple);
+        }
+        else
+        {
+            //resize only the views with idx specified in the dataidx.
+            for_each_arg(resize_view_functor(view_desc, size), tuple);
+        }
+    }
+
+    MARS_INLINE_FUNCTION
+    const user_tuple &get_user_data() const { return user_data; }
+
+    template <std::size_t idx, typename H = typename
+        std::tuple_element<idx, user_tuple>::type>
+    MARS_INLINE_FUNCTION const H get_data() const
+    {
+        return std::get<idx>(user_data);
     }
 
     /* template <typename H>
@@ -41,13 +73,18 @@ public:
         Kokkos::parallel_reduce("elem_reduce", size, f, s);
     }
 
+*/
     template <typename H>
-    MARS_INLINE_FUNCTION void elem_iterate(H f)
+    MARS_INLINE_FUNCTION void elem_iterate(H f) const
     {
-        const Integer size = host_mesh->get_chunk_size();
-        Kokkos::parallel_for("elem_iterate", size, f);
+        get_data().elem_iterate(f);
     }
- */
+
+    template <typename H>
+    MARS_INLINE_FUNCTION void face_iterate(H f) const
+    {
+        get_data().face_iterate(f);
+    }
 
     template <Integer Type>
     static MARS_INLINE_FUNCTION Integer enum_corner(const ViewVectorType<Integer> &sfc_to_local, const Octant &oc, const int i, const int j)
@@ -294,8 +331,7 @@ public:
         Integer zDim;
     };
 
-    void build_boundary_dof_sets(ViewVectorType<Integer> &scan_boundary, ViewVectorType<Integer> &boundary_sfc,
-                                 ViewVectorType<Integer> &boundary_lsfc_index, ViewVectorType<Integer> &sender_ranks_scan)
+    void build_boundary_dof_sets(ViewVectorType<Integer> &scan_boundary,                                 ViewVectorType<Integer> &boundary_lsfc_index, ViewVectorType<Integer> &sender_ranks_scan)
     {
         using namespace Kokkos;
 
@@ -339,7 +375,7 @@ public:
         deep_copy(h_ic, index_subview);
         /* std::cout << "DM: boundary_ count result: " << h_ic() << std::endl; */
 
-        boundary_sfc = ViewVectorType<Integer>("boundary_sfc_dofs", h_ic());
+        boundary_dofs_sfc = ViewVectorType<Integer>("boundary_sfc_dofs", h_ic());
         boundary_lsfc_index = ViewVectorType<Integer>("boundary_lsfc_index_dofs", h_ic());
 
         /*   parallel_for(
@@ -355,7 +391,7 @@ public:
                 if (rank_boundary(i, j) == 1)
                 {
                     Integer index = scan_boundary(i) + rank_scan(i, j);
-                    boundary_sfc(index) = global_dof_enum.get_view_elements()(j);
+                    boundary_dofs_sfc(index) = global_dof_enum.get_view_elements()(j);
                     boundary_lsfc_index(index) = j;
                 }
             });
@@ -365,8 +401,8 @@ public:
                 Integer proc = data.get_host_mesh()->get_proc();
                 const Integer rank = find_owner_processor(scan_boundary, i, 1, proc);
 
-                printf("i:%li - boundary_ : %i - %li (%li) - proc: %li - rank: %li\n", i, boundary_sfc(i), boundary_lsfc_index(i),
-                       get_octant_from_sfc<simplex_type::ElemType>(boundary_sfc(i)).template get_global_index<simplex_type::ElemType>(xDim, yDim),
+                printf("i:%li - boundary_ : %i - %li (%li) - proc: %li - rank: %li\n", i, boundary_dofs_sfc(i), boundary_lsfc_index(i),
+                       get_octant_from_sfc<simplex_type::ElemType>(boundary_dofs_sfc(i)).template get_global_index<simplex_type::ElemType>(xDim, yDim),
                        rank, proc);
             }); */
     }
@@ -543,8 +579,8 @@ public:
         int proc_num = rank(context);
         int size = num_ranks(context);
 
-        auto scan_send_mirror = create_mirror_view(scan_boundary);
-        Kokkos::deep_copy(scan_send_mirror, scan_boundary);
+        auto scan_send = create_mirror_view(scan_boundary);
+        Kokkos::deep_copy(scan_send, scan_boundary);
 
         auto s_rank_mirror = create_mirror_view(sender_ranks);
         Kokkos::deep_copy(s_rank_mirror, sender_ranks);
@@ -553,7 +589,7 @@ public:
         /* Integer proc_count = 0; */
         for (int i = 0; i < nbh_rank_size; ++i)
         {
-            Integer count = scan_send_mirror(i + 1) - scan_send_mirror(i);
+            Integer count = scan_send(i + 1) - scan_send(i);
             if (count > 0)
             {
                 send_count[s_rank_mirror(i)] = count;
@@ -587,22 +623,183 @@ public:
         } */
     }
 
-    void exchange_ghost_dofs(const context &context, ViewVectorType<Integer> boundary, ViewVectorType<Integer> boundary_lsfc_index, ViewVectorType<Integer> &ghost_dofs, ViewVectorType<Integer> &ghost_dofs_index, const Integer *recv_scan, const Integer *send_scan)
+    void exchange_ghost_dofs(const context &context, ViewVectorType<Integer> boundary_lsfc_index,
+            ViewVectorType<Integer> &ghost_dofs_index)
     {
         int rank_size = num_ranks(context);
-        Integer ghost_size = recv_scan[rank_size];
+        Integer ghost_size = scan_recv_mirror(rank_size);
 
-        ghost_dofs = ViewVectorType<Integer>("ghost_dofs", ghost_size);
+        ghost_dofs_sfc = ViewVectorType<Integer>("ghost_dofs", ghost_size);
         ghost_dofs_index = ViewVectorType<Integer>("ghost_dofs_index", ghost_size);
         //do it again to have all the process range to make it fit the i_send_recv_view
 
         context->distributed->i_send_recv_view(
-            ghost_dofs, recv_scan, boundary, send_scan);
+            ghost_dofs_sfc, scan_recv_mirror.data(), boundary_dofs_sfc, scan_send_mirror.data());
         std::cout << "DM:Ending mpi send receive for the ghost sfc dofs " << std::endl;
 
         context->distributed->i_send_recv_view(
-            ghost_dofs_index, recv_scan, boundary_lsfc_index, send_scan);
+            ghost_dofs_index, scan_recv_mirror.data(), boundary_lsfc_index, scan_send_mirror.data());
         std::cout << "DM:Ending mpi send receive for the ghost dofs local index" << std::endl;
+    }
+
+    template <typename F, Integer... dataidx>
+    MARS_INLINE_FUNCTION
+    void expand_tuple(const F &f, user_tuple &t, user_tuple &v)
+    {
+        if (sizeof...(dataidx) == 0)
+            apply_impl(f, t, v);
+        else
+            for_each_arg<F, dataidx...>(f, t, v);
+    }
+
+    template <typename ElementType>
+    struct FillBufferData
+    {
+        ElementType buffer_data;
+        ElementType user_data;
+        ViewVectorType<Integer> boundary_sfc;
+        ViewVectorType<Integer> sfc_to_local;
+
+        FillBufferData(ElementType bf, ElementType ud, ViewVectorType<Integer> bd,
+                ViewVectorType<Integer> stl) : buffer_data(bf), user_data(ud),
+        boundary_sfc(bd), sfc_to_local(stl) {}
+
+        MARS_INLINE_FUNCTION
+        void operator()(Integer i) const
+        {
+            const Integer sfc_index = sfc_to_local(boundary_sfc(i));
+            buffer_data(i) = user_data(sfc_index);
+        }
+    };
+
+    struct FillBufferDataFunctor
+    {
+        FillBufferDataFunctor(std::string d, size_t s, ViewVectorType<Integer> b,
+                ViewVectorType<Integer> stl) : desc(d), size(s), boundary_sfc(b),
+                sfc_to_local(stl) {}
+
+        template <typename ElementType>
+        void operator()(ElementType &el_1, ElementType &el_2) const
+        {
+            Kokkos::parallel_for(desc, size,
+                FillBufferData<ElementType>(el_1, el_2, boundary_sfc, sfc_to_local));
+        }
+
+        std::string desc;
+        size_t size;
+
+        ViewVectorType<Integer> boundary_sfc;
+        ViewVectorType<Integer>  sfc_to_local;
+    };
+
+    template<Integer... dataidx>
+    MARS_INLINE_FUNCTION void fill_buffer_data(user_tuple &buffer_data,
+            const ViewVectorType<Integer>& boundary)
+    {
+        const Integer size = boundary.extent(0);
+        reserve_user_data<dataidx...>(buffer_data, "buffer_data", size);
+
+        expand_tuple<FillBufferDataFunctor, dataidx...>(FillBufferDataFunctor("fill_buffer_data", size, boundary,
+                    local_dof_enum.get_view_sfc_to_local()), buffer_data, user_data);
+/*
+        apply_impl(
+            fill_buffer_data_functor("fill_buffer_data", size, boundary, local_dof_enum.get_view_sfc_to_local()),
+            buffer_data, user_data_); */
+    }
+
+    struct ExchangeGhostDofsData
+    {
+        ExchangeGhostDofsData(const context &c, ViewVectorType<Integer>::HostMirror sr,
+                std::vector<Integer> ss) : con(c), sc_rcv_mirror(sr), sc_snd_mirror(ss) {}
+
+        template <typename ElementType>
+        void operator()(ElementType &el_1, ElementType &el_2) const
+        {
+            con->distributed->i_send_recv_view(el_1, sc_rcv_mirror.data(), el_2,
+                    sc_snd_mirror.data());
+        }
+
+        ViewVectorType<Integer>::HostMirror sc_rcv_mirror;
+        std::vector<Integer> sc_snd_mirror;
+        const context &con;
+    };
+
+    template <typename ElementType>
+    struct FillUserData
+    {
+        ElementType ghost_data;
+        ElementType user_data;
+        ViewVectorType<Integer> ghost_sfc;
+        ViewVectorType<Integer> sfc_to_local;
+
+        FillUserData(ElementType gd, ElementType ud, ViewVectorType<Integer> gs,
+                       ViewVectorType<Integer> stl) : ghost_data(gd), user_data(ud),
+                                                      ghost_sfc(gs), sfc_to_local(stl) {}
+
+        MARS_INLINE_FUNCTION
+        void operator()(Integer i) const
+        {
+            const Integer local_sfc_index = sfc_to_local(ghost_sfc(i));
+            user_data(local_sfc_index) = ghost_data(i);
+        }
+    };
+
+    struct FillUserDataFunctor
+    {
+        FillUserDataFunctor(std::string d, size_t s, ViewVectorType<Integer> b,
+                                 ViewVectorType<Integer> stl) : desc(d), size(s), ghost_sfc(b),
+                                                                sfc_to_local(stl) {}
+
+        template <typename ElementType>
+        void operator()(ElementType &el_1, ElementType &el_2) const
+        {
+            Kokkos::parallel_for(desc, size,
+                FillUserData<ElementType>(el_1, el_2, ghost_sfc, sfc_to_local));
+        }
+
+        std::string desc;
+        size_t size;
+
+        ViewVectorType<Integer> ghost_sfc;
+        ViewVectorType<Integer> sfc_to_local;
+    };
+
+    template<Integer... dataidx>
+    MARS_INLINE_FUNCTION void fill_user_data(user_tuple &ghost_user_data, const ViewVectorType<Integer> &ghost_sfc)
+    {
+        const Integer size = ghost_sfc.extent(0);
+        expand_tuple<FillUserDataFunctor, dataidx...>(FillUserDataFunctor("fill_user_data", size, ghost_sfc,
+                    local_dof_enum.get_view_sfc_to_local()), ghost_user_data, user_data);
+    }
+
+    template<Integer... dataidx>
+    void gather_ghost_data(const context &context)
+    {
+        using namespace Kokkos;
+
+        Kokkos::Timer timer;
+
+        // exchange the ghost dofs first since it will be used to find the address
+        // of the userdata based on the sfc code.
+
+        int proc_num = rank(context);
+        int size = num_ranks(context);
+
+        Integer ghost_size = scan_recv_mirror(size);
+        user_tuple ghost_user_data;
+        reserve_user_data<dataidx...>(ghost_user_data, "ghost_user_data", ghost_size);
+
+        //prepare the buffer to send the boundary data
+        user_tuple buffer_data;
+        fill_buffer_data<dataidx...>(buffer_data, get_boundary_dofs());
+
+        expand_tuple<ExchangeGhostDofsData, dataidx...>(ExchangeGhostDofsData(context, scan_recv_mirror, scan_send_mirror),
+                   ghost_user_data, buffer_data);
+
+        //use the received ghost data and the sfc to put them to the unified local data
+        fill_user_data<dataidx...>(ghost_user_data, get_ghost_dofs());
+
+        /* print_nth_tuple<1>(proc_num); */
     }
 
     struct EnumLocalDofs
@@ -730,8 +927,9 @@ void enumerate_dofs(const context &context)
         compact_scan(nbh_proc_predicate_send, proc_scan_send, sender_ranks);
         compact_scan(nbh_proc_predicate_recv, proc_scan_recv, recver_ranks);
 
-        ViewVectorType<Integer> scan_boundary, boundary_dofs, boundary_dofs_index;
-        build_boundary_dof_sets(scan_boundary, boundary_dofs, boundary_dofs_index, proc_scan_send);
+        /* ViewVectorType<Integer> scan_boundary, boundary_dofs, boundary_dofs_index; */
+        ViewVectorType<Integer> scan_boundary, boundary_dofs_index;
+        build_boundary_dof_sets(scan_boundary, boundary_dofs_index, proc_scan_send);
 
         std::vector<Integer> s_count(rank_size, 0);
         std::vector<Integer> r_count(rank_size, 0);
@@ -740,18 +938,17 @@ void enumerate_dofs(const context &context)
 
         /* create the scan recv mirror view from the receive count */
         ViewVectorType<Integer> scan_ghost("scan_ghost_", rank_size + 1);
-        auto scan_recv_mirror = create_mirror_view(scan_ghost);
+        scan_recv_mirror = create_mirror_view(scan_ghost);
 
         make_scan_index_mirror(scan_recv_mirror, r_count);
         Kokkos::deep_copy(scan_ghost, scan_recv_mirror);
 
         /*create the scan recv mirror view from the receive count*/
-        auto scan_send_mirror = make_scan_index(s_count);
+        scan_send_mirror = make_scan_index(s_count);
 
-        ViewVectorType<Integer> ghost_dofs;
         ViewVectorType<Integer> ghost_dofs_index;
-        exchange_ghost_dofs(context, boundary_dofs, boundary_dofs_index, ghost_dofs, ghost_dofs_index,
-                            scan_recv_mirror.data(), scan_send_mirror.data());
+        exchange_ghost_dofs(context, boundary_dofs_index, ghost_dofs_index);
+
 
         /* using namespace Kokkos;
         Integer ghost_size = scan_recv_mirror(rank_size);
@@ -764,7 +961,7 @@ void enumerate_dofs(const context &context)
                        ghost_dofs(i), ghost_dofs_index(i), rank, data.get_host_mesh()->get_proc());
             }); */
         enumerate_local_dofs();
-        build_ghost_local_global_map(context, scan_recv_mirror, ghost_dofs, ghost_dofs_index);
+        build_ghost_local_global_map(context, ghost_dofs_index);
     }
 
     /* build a map only for the ghost dofs as for the local ones the global dof enum can be used */
@@ -802,18 +999,16 @@ void enumerate_dofs(const context &context)
     };
 
 
-    void build_ghost_local_global_map(const context& context, const ViewVectorType<Integer>&
-            scan_recv_mirror,  const ViewVectorType<Integer>& ghost_dofs,
-            const ViewVectorType<Integer>& ghost_dofs_index)
+    void build_ghost_local_global_map(const context& context, const ViewVectorType<Integer>& ghost_dofs_index)
     {
         int rank_size = num_ranks(context);
         Integer size = scan_recv_mirror(rank_size);
 
         ghost_local_to_global_map = UnorderedMap<Integer, Dof>(size);
         /* iterate through the unique ghost dofs and build the map */
-        Kokkos::parallel_for("BuildLocalGlobalPredicate", size, BuildLocalToGlobalGhostMap(
+        Kokkos::parallel_for("BuildLocalGlobalmap", size, BuildLocalToGlobalGhostMap(
                     data.get_mesh(), ghost_local_to_global_map, global_dof_offset, scan_recv_mirror,
-                    ghost_dofs, ghost_dofs_index));
+                    ghost_dofs_sfc, ghost_dofs_index));
         /* In the end the size of the map should be as the size of the ghost_dofs.
          * Careful map size  is not capacity */
         assert(size == ghost_local_to_global_map.size());
@@ -920,39 +1115,58 @@ void enumerate_dofs(const context &context)
     //Two way of iterations: face and element. You can also build your stencil yourself.
 
 
+    MARS_INLINE_FUNCTION
     const Integer get_dof_size() const
     {
         return dof_size;
     }
 
+    MARS_INLINE_FUNCTION
     const SFC<simplex_type::ElemType> &get_local_dof_enum() const
     {
         return local_dof_enum;
     }
 
+    MARS_INLINE_FUNCTION
     const SFC<simplex_type::ElemType> &get_global_dof_enum() const
     {
         return global_dof_enum;
     }
 
+    MARS_INLINE_FUNCTION
     const ViewVectorType<Integer> get_global_dof_offset() const
     {
         return global_dof_offset;
     }
 
+    MARS_INLINE_FUNCTION
     const UnorderedMap<Integer, Dof>& get_ghost_lg_map() const
     {
         return ghost_local_to_global_map;
     }
 
+    MARS_INLINE_FUNCTION
     const ViewMatrixType<Integer> get_elem_dof_enum() const
     {
         return elem_dof_enum;
     }
 
+    MARS_INLINE_FUNCTION
     const Integer get_elem_local_dof(const Integer elem_index, const Integer i) const
     {
         return elem_dof_enum(elem_index, i);
+    }
+
+    MARS_INLINE_FUNCTION
+    const ViewVectorType<Integer> &get_boundary_dofs() const
+    {
+        return boundary_dofs_sfc;
+    }
+
+    MARS_INLINE_FUNCTION
+    const ViewVectorType<Integer> &get_ghost_dofs() const
+    {
+        return ghost_dofs_sfc;
     }
 
     UD get_data() const
@@ -970,6 +1184,14 @@ private:
     UnorderedMap<Integer, Dof> ghost_local_to_global_map;
     ViewMatrixType<Integer> elem_dof_enum;
 
+    ViewVectorType<Integer> boundary_dofs_sfc;
+    ViewVectorType<Integer> ghost_dofs_sfc;
+    // mirror view on the dof scan boundary view used as offset for the mpi send dofs
+    std::vector<Integer> scan_send_mirror;
+    // mirror view on the scan_ghost view used as an offset to receive ghost dofs
+    ViewVectorType<Integer>::HostMirror scan_recv_mirror;
+
+    user_tuple user_data;
     Integer dof_size;
 };
 

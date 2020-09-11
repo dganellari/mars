@@ -184,6 +184,43 @@ template <typename F, std::size_t I = 0, typename... Tp>
     apply_impl<F, I + 1, Tp...>(f, t, v);
 }
 
+
+template <typename F, Integer I = 0, typename...Tp, Integer... Args>
+typename std::enable_if<I == sizeof...(Args), void>::type
+MARS_INLINE_FUNCTION
+for_each_arg(const F &f, std::tuple<Tp...> &t)
+{
+}
+
+template <typename F, Integer I = 0, typename...Tp, Integer... Args>
+typename std::enable_if < I<sizeof...(Args), void>::type
+MARS_INLINE_FUNCTION
+for_each_arg(const F &f, std::tuple<Tp...> &t)
+{
+    constexpr Integer dataIndex = NthValue<I, Args...>::value;
+
+    f(std::get<dataIndex>(t), dataIndex);
+    for_each_arg<F, I + 1, Args...>(f, t);
+}
+
+template <typename F, Integer I = 0, typename...Tp, Integer... Args>
+typename std::enable_if<I == sizeof...(Args), void>::type
+MARS_INLINE_FUNCTION
+for_each_arg(const F &f, std::tuple<Tp...> &t, std::tuple<Tp...> &v)
+{
+}
+
+template <typename F, Integer I = 0, typename...Tp, Integer... Args>
+typename std::enable_if < I<sizeof...(Args), void>::type
+MARS_INLINE_FUNCTION
+for_each_arg(const F &f, std::tuple<Tp...> &t, std::tuple<Tp...> &v)
+{
+    constexpr Integer dataIndex = NthValue<I, Args...>::value;
+
+    f(std::get<dataIndex>(t), std::get<dataIndex>(v));
+    for_each_arg<F, I + 1, Args...>(f, t, v);
+}
+
 /* *************************************************************************************** */
 
 /* other utils */

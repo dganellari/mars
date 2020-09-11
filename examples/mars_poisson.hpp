@@ -1,30 +1,37 @@
-/* Copyright (c) 2016, Eidgenössische Technische Hochschule Zürich
-All rights reserved.
+/* ---------------------
+ * Matrix free implementation of the Poisson equation
+ *
+//global to local
+vk = P^T v
 
-Redistribution and use in source and binary forms, with or without modification,
-are permitted provided that the following conditions are met:
+w_j := quadrature weight
+x_j := quadrature point
 
-1. Redistributions of source code must retain the above copyright notice, this
-   list of conditions and the following disclaimer.
+// Q is the number of quad points
+j=1,...,Q
+// L is the number of basis functions
+l,i=1,...,L
 
-2. Redistributions in binary form must reproduce the above copyright notice,
-   this list of conditions and the following disclaimer in the documentation
-   and/or other materials provided with the distribution.
+g_glob_lj :=  (J^-T grad \phi_l (x_j) ) \in R^2
 
-3. Neither the name of the copyright holder nor the names of its contributors
-   may be used to endorse or promote products derived from this software without
-   specific prior written permission.
+// linear number of basis functions
+g_j = sum_l g_glob_lj * v_l
 
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
-ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
-ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
+
+dX_j = det(J) * ref_vol * w_j
+
+
+// linear number of quadrature points
+ui = sum_j dot(g_j, (J^-T grad \phi_i (x_j) )) * dX_j
+
+// number of basis functions times number of quad points
+L * Q
+
+uk =[ u1, ... uL ], L = 4
+
+---------------------
+//local to global
+u = P uk */
 
 #include "Kokkos_ArithTraits.hpp"
 #include "Kokkos_Bitset.hpp"
@@ -51,23 +58,23 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 namespace mars
 {
 
-using DMQ2 = DM<DistributedQuad4Mesh, 2>;
-/* enum DataDesc : int
+using DMQ2 = DM<DistributedQuad4Mesh, 2, double, double>;
+/*
+enum class DMDataDesc
 {
-    u = 0,
-    du_0 = 1,
-    du_1 = 2,
-    dudt = 3
+    v = 0,
+    u = 1
 };
+ */
+
 template <Integer idx>
-using DataType = typename Data::UserDataType<idx>;
+using DMDataType = typename DMQ2::UserDataType<idx>;
 
 template <typename... T>
 using user_tuple = mars::ViewsTuple<T...>;
- */
 
 template<Integer Type>
-MARS_INLINE_FUNCTION void print_dof(const SFC<Type> &dof, const int rank)
+void print_dof(const SFC<Type> &dof, const int rank)
 {
     Kokkos::parallel_for("for", dof.get_elem_size(), MARS_LAMBDA(const int i) {
         Integer sfc_elem = dof.get_view_elements()(i);
@@ -80,9 +87,9 @@ MARS_INLINE_FUNCTION void print_dof(const SFC<Type> &dof, const int rank)
 }
 
 //print thlocal and the global number of the dof within each element.
-MARS_INLINE_FUNCTION void print_global_dof_enumeration(const DMQ2 dm, const int rank)
+void print_global_dof_enumeration(const DMQ2 dm, const int rank)
 {
-    dm.get_data().elem_iterate(MARS_LAMBDA(const Integer elem_index) {
+    dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
         for (int i = 0; i < DMQ2::elem_nodes; i++)
         {
             const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
@@ -90,6 +97,23 @@ MARS_INLINE_FUNCTION void print_global_dof_enumeration(const DMQ2 dm, const int 
 
             //do something. In this case we are printing.
             printf("lgm: local: %li, global: %li, proc: %i, rank:%i\n",  local_dof, d.get_gid(), d.get_proc(), rank);
+        }
+    });
+}
+
+void form_operator(const DMQ2 dm, const ViewVectorType<double> &u, const
+        ViewVectorType<double> &v, const int rank)
+{
+    dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
+        for (int i = 0; i < DMQ2::elem_nodes; i++)
+        {
+            const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+            /* Dof d = dm.local_to_global_dof(local_dof); */
+
+            double ui = v(local_dof) + 1;
+            //TODO: apply the operator
+
+            Kokkos::atomic_add(&u(local_dof), ui);
         }
     });
 }
@@ -151,6 +175,17 @@ void poisson(int &argc, char **&argv, const int level)
         print_dof<Type>(dm.get_local_dof_enum(), proc_num);
 
         print_global_dof_enumeration(dm, proc_num);
+
+        /* ViewVectorType<double> u("u", dm.get_local_dof_enum().get_elem_size());
+        ViewVectorType<double> v("v", dm.get_local_dof_enum().get_elem_size());
+
+ */
+        constexpr int u = 0;
+        constexpr int v = 1;
+        /* form_operator(dm, u, v, proc_num); */
+
+        dm.gather_ghost_data<u>(context);
+
 
         /* ViewVectorType<Integer> sfc = mesh.get_view_sfc(); */
         Kokkos::Timer timer;
