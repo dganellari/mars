@@ -38,16 +38,8 @@ public:
     MARS_INLINE_FUNCTION void reserve_user_data(user_tuple &tuple,
             std::string view_desc, const Integer size)
     {
-        if (sizeof...(dataidx) == 0)
-        {
-            //resize all the views within the tuple.
-            apply_impl(resize_view_functor(view_desc, size), tuple);
-        }
-        else
-        {
-            //resize only the views with idx specified in the dataidx.
-            for_each_arg(resize_view_functor(view_desc, size), tuple);
-        }
+        expand_tuple<resize_view_functor, dataidx...>(resize_view_functor
+                (view_desc, size), tuple);
     }
 
     MARS_INLINE_FUNCTION
@@ -376,6 +368,7 @@ public:
         /* std::cout << "DM: boundary_ count result: " << h_ic() << std::endl; */
 
         boundary_dofs_sfc = ViewVectorType<Integer>("boundary_sfc_dofs", h_ic());
+        printf("h_ic: %li, ext: %li  proc: %i\n", h_ic(), boundary_dofs_sfc.extent(0), data.get_host_mesh()->get_proc());
         boundary_lsfc_index = ViewVectorType<Integer>("boundary_lsfc_index_dofs", h_ic());
 
         /*   parallel_for(
@@ -558,6 +551,9 @@ public:
         local_dof_enum.compact_elements(local_predicate);
         global_dof_enum.compact_elements(global_predicate);
 
+        //reserve the user data tuple with the size as the local dof size.
+        reserve_user_data(user_data, "user_data tuple", local_dof_enum.get_elem_size());
+
         const int rank_size = num_ranks(context);
 
         ViewVectorType<Integer> global_dof_size_per_rank("global_dof_size_per_rank", rank_size);
@@ -644,12 +640,30 @@ public:
 
     template <typename F, Integer... dataidx>
     MARS_INLINE_FUNCTION
+    void expand_tuple(const F &f, user_tuple &t)
+    {
+        if (sizeof...(dataidx) == 0)
+        {
+            apply_impl(f, t);
+        }
+        else
+        {
+            for_each_arg<F, 0, dataidx...>(f, t);
+        }
+    }
+
+    template <typename F, Integer... dataidx>
+    MARS_INLINE_FUNCTION
     void expand_tuple(const F &f, user_tuple &t, user_tuple &v)
     {
         if (sizeof...(dataidx) == 0)
+        {
             apply_impl(f, t, v);
+        }
         else
-            for_each_arg<F, dataidx...>(f, t, v);
+        {
+            for_each_arg<F, 0, dataidx...>(f, t, v);
+        }
     }
 
     template <typename ElementType>
@@ -764,6 +778,7 @@ public:
         ViewVectorType<Integer> sfc_to_local;
     };
 
+    /* fill the user data views from the ghost data that were filled in FillBufferData and received through mpi. */
     template<Integer... dataidx>
     MARS_INLINE_FUNCTION void fill_user_data(user_tuple &ghost_user_data, const ViewVectorType<Integer> &ghost_sfc)
     {
@@ -793,8 +808,8 @@ public:
         user_tuple buffer_data;
         fill_buffer_data<dataidx...>(buffer_data, get_boundary_dofs());
 
-        expand_tuple<ExchangeGhostDofsData, dataidx...>(ExchangeGhostDofsData(context, scan_recv_mirror, scan_send_mirror),
-                   ghost_user_data, buffer_data);
+        expand_tuple<ExchangeGhostDofsData, dataidx...>(ExchangeGhostDofsData(context,
+                    scan_recv_mirror, scan_send_mirror), ghost_user_data, buffer_data);
 
         //use the received ghost data and the sfc to put them to the unified local data
         fill_user_data<dataidx...>(ghost_user_data, get_ghost_dofs());
