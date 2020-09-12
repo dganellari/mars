@@ -185,14 +185,14 @@ template <typename F, std::size_t I = 0, typename... Tp>
 }
 
 
-template <typename F, Integer I = 0, typename...Tp, Integer... Args>
+template <typename F, Integer I = 0, Integer... Args, typename...Tp>
 typename std::enable_if<I == sizeof...(Args), void>::type
 MARS_INLINE_FUNCTION
 for_each_arg(const F &f, std::tuple<Tp...> &t)
 {
 }
 
-template <typename F, Integer I = 0, typename...Tp, Integer... Args>
+template <typename F, Integer I = 0, Integer... Args, typename...Tp>
 typename std::enable_if < I<sizeof...(Args), void>::type
 MARS_INLINE_FUNCTION
 for_each_arg(const F &f, std::tuple<Tp...> &t)
@@ -203,14 +203,14 @@ for_each_arg(const F &f, std::tuple<Tp...> &t)
     for_each_arg<F, I + 1, Args...>(f, t);
 }
 
-template <typename F, Integer I = 0, typename...Tp, Integer... Args>
+template <typename F, Integer I = 0, Integer... Args, typename...Tp>
 typename std::enable_if<I == sizeof...(Args), void>::type
 MARS_INLINE_FUNCTION
 for_each_arg(const F &f, std::tuple<Tp...> &t, std::tuple<Tp...> &v)
 {
 }
 
-template <typename F, Integer I = 0, typename...Tp, Integer... Args>
+template <typename F, Integer I = 0, Integer... Args, typename...Tp>
 typename std::enable_if < I<sizeof...(Args), void>::type
 MARS_INLINE_FUNCTION
 for_each_arg(const F &f, std::tuple<Tp...> &t, std::tuple<Tp...> &v)

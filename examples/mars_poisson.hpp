@@ -182,10 +182,12 @@ void poisson(int &argc, char **&argv, const int level)
  */
         constexpr int u = 0;
         constexpr int v = 1;
+
+        dm.gather_ghost_data<v>(context);
+
         /* form_operator(dm, u, v, proc_num); */
 
-        dm.gather_ghost_data<u>(context);
-
+        /* dm.scatter_ghost_data<u>(context); */
 
         /* ViewVectorType<Integer> sfc = mesh.get_view_sfc(); */
         Kokkos::Timer timer;
