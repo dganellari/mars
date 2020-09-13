@@ -71,7 +71,9 @@ template <Integer idx>
 using DMDataType = typename DMQ2::UserDataType<idx>;
 
 template <typename... T>
-using user_tuple = mars::ViewsTuple<T...>;
+using tuple = mars::ViewsTuple<T...>;
+
+using dm_tuple = typename DMQ2::user_tuple;
 
 template<Integer Type>
 void print_dof(const SFC<Type> &dof, const int rank)
@@ -180,14 +182,19 @@ void poisson(int &argc, char **&argv, const int level)
         ViewVectorType<double> v("v", dm.get_local_dof_enum().get_elem_size());
 
  */
+        //use as more readable tuple index to identify the data
         constexpr int u = 0;
         constexpr int v = 1;
 
+        //specify the tuple indices of the tuplelements that are needed to gather.
+        //if no index specified it gathers all views of the tuple. All data.
         dm.gather_ghost_data<v>(context);
 
         /* form_operator(dm, u, v, proc_num); */
 
-        /* dm.scatter_ghost_data<u>(context); */
+        dm_tuple boundary_data = dm.scatter_ghost_data<u>(context);
+        dm.scatter_add<u>(boundary_data);
+        /* dm.scatter_max(boundary_data); */
 
         /* ViewVectorType<Integer> sfc = mesh.get_view_sfc(); */
         Kokkos::Timer timer;
