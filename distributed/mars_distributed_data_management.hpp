@@ -666,7 +666,7 @@ public:
         }
     }
 
-    template <typename ElementType>
+    template <typename ElementType, Integer Op=0>
     struct FillBufferData
     {
         ElementType buffer_data;
@@ -686,6 +686,68 @@ public:
         }
     };
 
+
+    template <typename ElementType>
+    struct FillBufferData<ElementType, 1>
+    {
+        ElementType buffer_data;
+        ElementType user_data;
+        ViewVectorType<Integer> boundary_sfc;
+        ViewVectorType<Integer> sfc_to_local;
+
+        FillBufferData(ElementType bf, ElementType ud, ViewVectorType<Integer> bd,
+                ViewVectorType<Integer> stl) : buffer_data(bf), user_data(ud),
+        boundary_sfc(bd), sfc_to_local(stl) {}
+
+        MARS_INLINE_FUNCTION
+        void operator()(Integer i) const
+        {
+            const Integer sfc_index = sfc_to_local(boundary_sfc(i));
+            Kokkos::atomic_add(&user_data(sfc_index), buffer_data(i));
+        }
+    };
+
+    template <typename ElementType>
+    struct FillBufferData<ElementType, 2>
+    {
+        ElementType buffer_data;
+        ElementType user_data;
+        ViewVectorType<Integer> boundary_sfc;
+        ViewVectorType<Integer> sfc_to_local;
+
+        FillBufferData(ElementType bf, ElementType ud, ViewVectorType<Integer> bd,
+                ViewVectorType<Integer> stl) : buffer_data(bf), user_data(ud),
+        boundary_sfc(bd), sfc_to_local(stl) {}
+
+        MARS_INLINE_FUNCTION
+        void operator()(Integer i) const
+        {
+            const Integer sfc_index = sfc_to_local(boundary_sfc(i));
+            Kokkos::atomic_fetch_max(&user_data(sfc_index), buffer_data(i));
+        }
+    };
+
+    template <typename ElementType>
+    struct FillBufferData<ElementType, 3>
+    {
+        ElementType buffer_data;
+        ElementType user_data;
+        ViewVectorType<Integer> boundary_sfc;
+        ViewVectorType<Integer> sfc_to_local;
+
+        FillBufferData(ElementType bf, ElementType ud, ViewVectorType<Integer> bd,
+                ViewVectorType<Integer> stl) : buffer_data(bf), user_data(ud),
+        boundary_sfc(bd), sfc_to_local(stl) {}
+
+        MARS_INLINE_FUNCTION
+        void operator()(Integer i) const
+        {
+            const Integer sfc_index = sfc_to_local(boundary_sfc(i));
+            Kokkos::atomic_fetch_min(&user_data(sfc_index), buffer_data(i));
+        }
+    };
+
+    template<Integer Op>
     struct FillBufferDataFunctor
     {
         FillBufferDataFunctor(std::string d, size_t s, ViewVectorType<Integer> b,
@@ -696,7 +758,7 @@ public:
         void operator()(ElementType &el_1, ElementType &el_2) const
         {
             Kokkos::parallel_for(desc, size,
-                FillBufferData<ElementType>(el_1, el_2, boundary_sfc, sfc_to_local));
+                FillBufferData<ElementType, Op>(el_1, el_2, boundary_sfc, sfc_to_local));
         }
 
         std::string desc;
@@ -706,39 +768,34 @@ public:
         ViewVectorType<Integer>  sfc_to_local;
     };
 
-    template<Integer... dataidx>
+    template<Integer Op, Integer... dataidx>
     MARS_INLINE_FUNCTION void fill_buffer_data(user_tuple &buffer_data,
             const ViewVectorType<Integer>& boundary)
     {
         const Integer size = boundary.extent(0);
-        reserve_user_data<dataidx...>(buffer_data, "buffer_data", size);
-
-        expand_tuple<FillBufferDataFunctor, dataidx...>(FillBufferDataFunctor("fill_buffer_data", size, boundary,
+        expand_tuple<FillBufferDataFunctor<Op>, dataidx...>(FillBufferDataFunctor<Op>("fill_buffer_data", size, boundary,
                     local_dof_enum.get_view_sfc_to_local()), buffer_data, user_data);
-/*
-        apply_impl(
-            fill_buffer_data_functor("fill_buffer_data", size, boundary, local_dof_enum.get_view_sfc_to_local()),
-            buffer_data, user_data_); */
     }
 
     struct ExchangeGhostDofsData
     {
-        ExchangeGhostDofsData(const context &c, ViewVectorType<Integer>::HostMirror sr,
-                std::vector<Integer> ss) : con(c), sc_rcv_mirror(sr), sc_snd_mirror(ss) {}
+        ExchangeGhostDofsData(const context &c, Integer* sr, Integer* ss) :
+            con(c), sc_rcv_mirror(sr), sc_snd_mirror(ss) {}
 
         template <typename ElementType>
         void operator()(ElementType &el_1, ElementType &el_2) const
         {
-            con->distributed->i_send_recv_view(el_1, sc_rcv_mirror.data(), el_2,
-                    sc_snd_mirror.data());
+            con->distributed->i_send_recv_view(el_1, sc_rcv_mirror, el_2,
+                    sc_snd_mirror);
         }
 
-        ViewVectorType<Integer>::HostMirror sc_rcv_mirror;
-        std::vector<Integer> sc_snd_mirror;
+        Integer* sc_rcv_mirror;
+        Integer* sc_snd_mirror;
         const context &con;
     };
 
-    template <typename ElementType>
+    //gather operation: fill the data from the received ghost data
+    template <typename ElementType, bool Op=0>
     struct FillUserData
     {
         ElementType ghost_data;
@@ -758,6 +815,28 @@ public:
         }
     };
 
+    //scatter operation: fill the to be sent ghost buffer from data
+    template <typename ElementType>
+    struct FillUserData<ElementType, 1>
+    {
+        ElementType ghost_data;
+        ElementType user_data;
+        ViewVectorType<Integer> ghost_sfc;
+        ViewVectorType<Integer> sfc_to_local;
+
+        FillUserData(ElementType gd, ElementType ud, ViewVectorType<Integer> gs,
+                       ViewVectorType<Integer> stl) : ghost_data(gd), user_data(ud),
+                                                      ghost_sfc(gs), sfc_to_local(stl) {}
+
+        MARS_INLINE_FUNCTION
+        void operator()(Integer i) const
+        {
+            const Integer local_sfc_index = sfc_to_local(ghost_sfc(i));
+            ghost_data(i) = user_data(local_sfc_index);
+        }
+    };
+
+    template<bool Op>
     struct FillUserDataFunctor
     {
         FillUserDataFunctor(std::string d, size_t s, ViewVectorType<Integer> b,
@@ -768,7 +847,7 @@ public:
         void operator()(ElementType &el_1, ElementType &el_2) const
         {
             Kokkos::parallel_for(desc, size,
-                FillUserData<ElementType>(el_1, el_2, ghost_sfc, sfc_to_local));
+                FillUserData<ElementType, Op>(el_1, el_2, ghost_sfc, sfc_to_local));
         }
 
         std::string desc;
@@ -779,11 +858,11 @@ public:
     };
 
     /* fill the user data views from the ghost data that were filled in FillBufferData and received through mpi. */
-    template<Integer... dataidx>
+    template<bool Op, Integer... dataidx>
     MARS_INLINE_FUNCTION void fill_user_data(user_tuple &ghost_user_data, const ViewVectorType<Integer> &ghost_sfc)
     {
         const Integer size = ghost_sfc.extent(0);
-        expand_tuple<FillUserDataFunctor, dataidx...>(FillUserDataFunctor("fill_user_data", size, ghost_sfc,
+        expand_tuple<FillUserDataFunctor<Op>, dataidx...>(FillUserDataFunctor<Op>("fill_user_data", size, ghost_sfc,
                     local_dof_enum.get_view_sfc_to_local()), ghost_user_data, user_data);
     }
 
@@ -805,16 +884,68 @@ public:
         reserve_user_data<dataidx...>(ghost_user_data, "ghost_user_data", ghost_size);
 
         //prepare the buffer to send the boundary data
+        const Integer buffer_size = get_boundary_dofs().extent(0);
         user_tuple buffer_data;
-        fill_buffer_data<dataidx...>(buffer_data, get_boundary_dofs());
+        reserve_user_data<dataidx...>(buffer_data, "buffer_data", buffer_size);
+
+        fill_buffer_data<0, dataidx...>(buffer_data, get_boundary_dofs());
 
         expand_tuple<ExchangeGhostDofsData, dataidx...>(ExchangeGhostDofsData(context,
-                    scan_recv_mirror, scan_send_mirror), ghost_user_data, buffer_data);
+                    scan_recv_mirror.data(), scan_send_mirror.data()), ghost_user_data, buffer_data);
 
         //use the received ghost data and the sfc to put them to the unified local data
-        fill_user_data<dataidx...>(ghost_user_data, get_ghost_dofs());
+        fill_user_data<0, dataidx...>(ghost_user_data, get_ghost_dofs());
 
         /* print_nth_tuple<1>(proc_num); */
+    }
+
+    template <Integer... dataidx>
+    user_tuple scatter_ghost_data(const context &context)
+    {
+        using namespace Kokkos;
+
+        Kokkos::Timer timer;
+
+        // exchange the ghost dofs first since it will be used to find the address
+        // of the userdata based on the sfc code.
+
+        int proc_num = rank(context);
+        int size = num_ranks(context);
+
+        Integer ghost_size = scan_recv_mirror(size);
+        user_tuple ghost_buffer_data;
+        reserve_user_data<dataidx...>(ghost_buffer_data, "ghost_user_data", ghost_size);
+
+        fill_user_data<1, dataidx...>(ghost_buffer_data, get_ghost_dofs());
+
+        const Integer boundary_size = get_boundary_dofs().extent(0);
+        user_tuple boundary_user_data;
+        reserve_user_data<dataidx...>(boundary_user_data, "boundary_user_data", boundary_size);
+
+        //prepare the buffer to send the boundary data
+        expand_tuple<ExchangeGhostDofsData, dataidx...>(ExchangeGhostDofsData(context,
+                    scan_send_mirror.data(), scan_recv_mirror.data()), boundary_user_data, ghost_buffer_data);
+        /* print_nth_tuple<1>(proc_num); */
+
+        return boundary_user_data;
+    }
+
+    template<Integer...dataidx>
+    void scatter_add(user_tuple& boundary_user_data)
+    {
+        fill_buffer_data<1, dataidx...>(boundary_user_data, get_boundary_dofs());
+    }
+
+    template<Integer...dataidx>
+    void scatter_max(user_tuple& boundary_user_data)
+    {
+        fill_buffer_data<2, dataidx...>(boundary_user_data, get_boundary_dofs());
+    }
+
+    template<Integer...dataidx>
+    void scatter_min(user_tuple& boundary_user_data)
+    {
+        fill_buffer_data<3, dataidx...>(boundary_user_data, get_boundary_dofs());
     }
 
     struct EnumLocalDofs
@@ -1129,11 +1260,16 @@ void enumerate_dofs(const context &context)
 
     //Two way of iterations: face and element. You can also build your stencil yourself.
 
-
     MARS_INLINE_FUNCTION
     const Integer get_dof_size() const
     {
-        return dof_size;
+        return local_dof_enum.get_elem_size();
+    }
+
+    MARS_INLINE_FUNCTION
+    const Integer get_locally_owned_dof_size() const
+    {
+        return global_dof_enum.get_elem_size();
     }
 
     MARS_INLINE_FUNCTION
@@ -1190,24 +1326,33 @@ void enumerate_dofs(const context &context)
     }
 
 private:
+    //data associated to the mesh elements (sfc).
     UD data;
 
+    //local dof enumeration containing the local to sfc and sfc to local views.
     SFC<simplex_type::ElemType> local_dof_enum;
+    //locally owned dof enumeration containing the global to sfc and sfc to global views.
     SFC<simplex_type::ElemType> global_dof_enum;
+    //global offset used to calc the global numbering of the dofs.
     ViewVectorType<Integer> global_dof_offset;
 
+    //the local to global mapp for the locally owned is mapped from the sfc_to global view
+    //for the ghost dofs is used the following kokkos unordered map.
     UnorderedMap<Integer, Dof> ghost_local_to_global_map;
+    //local enumeration of the dofs topologically foreach element
     ViewMatrixType<Integer> elem_dof_enum;
 
+    //dofs sfc for the boundary dofs.
     ViewVectorType<Integer> boundary_dofs_sfc;
+    //ghost dofs received from other procs's boundary sfcs.
     ViewVectorType<Integer> ghost_dofs_sfc;
-    // mirror view on the dof scan boundary view used as offset for the mpi send dofs
+    // mirror view on the dof scan boundary view used as offset for the mpi send dofs.
     std::vector<Integer> scan_send_mirror;
-    // mirror view on the scan_ghost view used as an offset to receive ghost dofs
+    // mirror view on the scan_ghost view used as an offset to receive ghost dofs.
     ViewVectorType<Integer>::HostMirror scan_recv_mirror;
 
+    //data associated to the dof data.
     user_tuple user_data;
-    Integer dof_size;
 };
 
 } // namespace mars
