@@ -47,25 +47,38 @@ public:
 
     template <std::size_t idx, typename H = typename
         std::tuple_element<idx, user_tuple>::type>
-    MARS_INLINE_FUNCTION const H get_data() const
+    MARS_INLINE_FUNCTION const H get_dof_data() const
     {
         return std::get<idx>(user_data);
     }
 
-    /* template <typename H>
+    template <std::size_t idx, typename H = typename
+        std::tuple_element<idx, tuple>::type>
+    MARS_INLINE_FUNCTION H &get_dof_data(const Integer i) const
+    {
+        return std::get<idx>(user_data)(i);
+    }
+
+    template <typename H>
     MARS_INLINE_FUNCTION void parallel_for_data(const Integer size, H f)
     {
         Kokkos::parallel_for("init_initial_cond", size, f);
     }
-
+/*
     template <typename H, typename S>
     MARS_INLINE_FUNCTION void elem_iterate_reduce(H f, S s)
     {
         const Integer size = host_mesh->get_chunk_size();
         Kokkos::parallel_reduce("elem_reduce", size, f, s);
+    } */
+
+    template <typename H>
+    MARS_INLINE_FUNCTION void dof_iterate(H f)
+    {
+        const Integer size = local_dof_enum.get_elem_size();
+        Kokkos::parallel_for("init_initial_cond", size, f);
     }
 
-*/
     template <typename H>
     MARS_INLINE_FUNCTION void elem_iterate(H f) const
     {
@@ -1036,21 +1049,6 @@ public:
         Kokkos::parallel_for(
             "enum_local_dofs", size, EnumLocalDofs(data.get_mesh(), elem_dof_enum,
                 local_dof_enum.get_view_sfc_to_local()));
-
-        Kokkos::parallel_for(
-            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {size, elem_nodes}),
-            KOKKOS_LAMBDA(const Integer i, const Integer j) {
-                Integer sfc_elem = data.get_mesh()->get_view_sfc()(i);
-                /* Integer sfc = local_dof_enum.get_view_elements */
-
-                double point[3];
-                get_vertex_coordinates_from_sfc<simplex_type::ElemType>(sfc_elem, point, data.get_mesh()->get_XDim(), data.get_mesh()->get_XDim(), data.get_mesh()->get_XDim());
-
-                if(j == 0)
-                    printf("row: %li - (%lf, %lf) - rank: %i\n\n", i, point[0], point[1], data.get_mesh()->get_proc());
-                printf(" col: %li local_dof: %li - rank: %i\n", j,
-                       elem_dof_enum(i,j), data.get_mesh()->get_proc());
-            });
     }
 
 void enumerate_dofs(const context &context)
@@ -1158,16 +1156,6 @@ void enumerate_dofs(const context &context)
         /* In the end the size of the map should be as the size of the ghost_dofs.
          * Careful map size  is not capacity */
         assert(size == ghost_local_to_global_map.size());
-        Kokkos::parallel_for(
-            ghost_local_to_global_map.capacity(), KOKKOS_LAMBDA(uint32_t i) {
-                if (ghost_local_to_global_map.valid_at(i))
-                {
-                    auto key = ghost_local_to_global_map.key_at(i);
-                    auto value = ghost_local_to_global_map.value_at(i);
-                    printf("local: %li, global: %li - proc: %li - rank: %li\n", local_dof_enum.get_view_sfc_to_local()(key), value.get_gid(), value.get_proc(), data.get_mesh()->get_proc());
-
-                }
-            });
     }
 
     MARS_INLINE_FUNCTION
@@ -1253,6 +1241,18 @@ void enumerate_dofs(const context &context)
             return dof.get_proc();
         else
             return INVALID_INDEX;
+    }
+
+    MARS_INLINE_FUNCTION
+    Integer local_to_sfc(const Integer local) const
+    {
+        return local_dof_enum.get_view_elements()(local);
+    }
+
+    MARS_INLINE_FUNCTION
+    Integer sfc_to_local(const Integer sfc) const
+    {
+        return local_dof_enum.get_view_sfc_to_local()(sfc);
     }
 
     /* :TODO stencil use the face iterate on the dof sfc. */
