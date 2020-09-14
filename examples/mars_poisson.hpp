@@ -35,6 +35,7 @@ u = P uk */
 
 #include "Kokkos_ArithTraits.hpp"
 #include "Kokkos_Bitset.hpp"
+#include "Kokkos_Parallel.hpp"
 #include "Kokkos_Parallel_Reduce.hpp"
 #include "mars_context.hpp"
 #include "mars_globals.hpp"
@@ -88,13 +89,32 @@ void print_dof(const SFC<Type> &dof, const int rank)
     });
 }
 
+template<Integer Type>
+void print_dofs(const DMQ2 &dm, const int rank)
+{
+    SFC<Type> dof = dm.get_local_dof_enum();
+    Kokkos::parallel_for("for", dof.get_elem_size(), MARS_LAMBDA(const int i) {
+        const Integer sfc_elem = dm.local_to_sfc(i);
+        const Integer global_dof = dm.local_to_global(i);
+
+        double point[3];
+        get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, dof.get_XDim(), dof.get_YDim(), dof.get_ZDim());
+
+        printf("dof: %li - gdof: %li --- (%lf, %lf) - rank: %i\n", i, global_dof, point[0], point[1], rank);
+    });
+}
+
 //print thlocal and the global number of the dof within each element.
-void print_global_dof_enumeration(const DMQ2 dm, const int rank)
+//the dof enumeration within eachlement is topological
+void print_elem_global_dof(const DMQ2 dm, const int rank)
 {
     dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
+        //go through all the dofs of the elem_index element
         for (int i = 0; i < DMQ2::elem_nodes; i++)
         {
+            //get the local dof of the i-th index within thelement
             const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+            //convert the local dof number to global dof number
             Dof d = dm.local_to_global_dof(local_dof);
 
             //do something. In this case we are printing.
@@ -103,19 +123,37 @@ void print_global_dof_enumeration(const DMQ2 dm, const int rank)
     });
 }
 
-void form_operator(const DMQ2 dm, const ViewVectorType<double> &u, const
-        ViewVectorType<double> &v, const int rank)
+//print the local and global numbering of the ghost dofs per process
+void print_ghost_dofs(const DMQ2 dm, const int rank)
 {
+    Kokkos::parallel_for(
+        dm.get_ghost_lg_map().capacity(), KOKKOS_LAMBDA(Integer i) {
+            if (dm.get_ghost_lg_map().valid_at(i))
+            {
+                auto sfc = dm.get_ghost_lg_map().key_at(i);
+                auto global_dof = dm.get_ghost_lg_map().value_at(i);
+                printf("local: %li, global: %li - proc: %li - rank: %li\n", dm.sfc_to_local(sfc), global_dof.get_gid(), global_dof.get_proc(), rank);
+            }
+        });
+}
+
+//form the matrix free operator
+template<Integer u, Integer v>
+void form_operator(const DMQ2 dm, const int rank)
+{
+    //go through each element and for each element iterate through its dofs
     dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
         for (int i = 0; i < DMQ2::elem_nodes; i++)
         {
+            //forach dof get the local number
             const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
-            /* Dof d = dm.local_to_global_dof(local_dof); */
 
-            double ui = v(local_dof) + 1;
+            //use the local number to read the corresponding user data
+            double ui = dm.get_dof_data<v>(local_dof) + 1;
             //TODO: apply the operator
 
-            Kokkos::atomic_add(&u(local_dof), ui);
+            //atomically updated the contributions to the same dof
+            Kokkos::atomic_add(&dm.get_dof_data<u>(local_dof), ui);
         }
     });
 }
@@ -156,6 +194,7 @@ void poisson(int &argc, char **&argv, const int level)
 
 #ifdef WITH_KOKKOS
 
+        //create the quad mesh distributed through the mpi procs.
         DistributedQuad4Mesh mesh;
         generate_distributed_cube(context, mesh, level, level, 0);
         /* mesh.set_periodic(); //set the domain to be periodic */
@@ -167,40 +206,67 @@ void poisson(int &argc, char **&argv, const int level)
         constexpr Integer Dim = DistributedQuad4Mesh::Dim;
 
         using Elem = typename DistributedQuad4Mesh::Elem;
+        //the type of the mesh elements. In this case quad4 (Type=4)
         constexpr Integer Type = Elem::ElemType;
 
-        std::cout << "Type: " << Type << std::endl;
-
+        //create the dm object
         DMQ2 dm(&mesh, context);
+        //enumerate the dofs locally and globally. The ghost dofs structures
+        //are now created and ready to use for the gather and scatter ops.
         dm.enumerate_dofs(context);
+        //print locally owned dof numbering
         /* print_dof<Type>(dm.get_global_dof_enum(), proc_num); */
+
+        //print local dof numbering
         print_dof<Type>(dm.get_local_dof_enum(), proc_num);
+        /* print_dofs<Type>(dm, proc_num); */
 
-        print_global_dof_enumeration(dm, proc_num);
+        //print the global dofs for each element's local dof
+        /* print_elem_global_dof(dm, proc_num); */
 
-        /* ViewVectorType<double> u("u", dm.get_local_dof_enum().get_elem_size());
-        ViewVectorType<double> v("v", dm.get_local_dof_enum().get_elem_size());
-
- */
         //use as more readable tuple index to identify the data
         constexpr int u = 0;
         constexpr int v = 1;
+        //local dof enum size
+        const Integer dof_size = dm.get_dof_size();
+
+        //initialize the values by iterating through local dofs
+        Kokkos::parallel_for("initdatavalues", dof_size,
+        MARS_LAMBDA(const Integer i){
+            dm.get_dof_data<u>(i) = 0;
+            dm.get_dof_data<v>(i) = i;
+         });
 
         //specify the tuple indices of the tuplelements that are needed to gather.
         //if no index specified it gathers all views of the tuple. All data.
         dm.gather_ghost_data<v>(context);
 
-        /* form_operator(dm, u, v, proc_num); */
+        form_operator<u, v>(dm, proc_num);
 
+        //iterate through the local dofs and print the local number and the data
+        dm.dof_iterate(
+            MARS_LAMBDA(const Integer i) {
+                printf("lid: %li, u: %lf, v: %lf, rank: %i\n", i,
+                        dm.get_dof_data<u>(i), dm.get_dof_data<v>(i), proc_num);
+         });
+
+        //scatter the data to the procs and keep them in a boundary data tuple
         dm_tuple boundary_data = dm.scatter_ghost_data<u>(context);
+        //use the scattered data to do ops like max, add or min in the dof contributions.
         dm.scatter_add<u>(boundary_data);
         /* dm.scatter_max(boundary_data); */
+
+        dm.dof_iterate(
+            MARS_LAMBDA(const Integer i) {
+                printf("ggid: %li, u: %lf, v: %lf, rank: %i\n", i,
+                        dm.get_dof_data<u>(i), dm.get_dof_data<v>(i), proc_num);
+            });
 
         /* ViewVectorType<Integer> sfc = mesh.get_view_sfc(); */
         Kokkos::Timer timer;
 
         double time = timer.seconds();
-        std::cout << "face iterate took: " << time << " seconds." << std::endl;
+        std::cout << "Matrix free took: " << time << " seconds." << std::endl;
 
         /* print_derivatives<Type, DataDesc::du_0, DataDesc::du_1>(data); */
 #endif

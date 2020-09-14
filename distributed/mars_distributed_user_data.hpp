@@ -159,7 +159,7 @@ public:
             get_view_ghost(), scan_recv_mirror.data(),
             host_mesh->get_view_boundary(), scan_send_mirror.data());
         std::cout << "Ending mpi send receive for the ghost layer" << std::endl;
-
+/*
         parallel_for(
             "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
                 const Integer rank =
@@ -167,7 +167,7 @@ public:
 
                 printf(" ghost_sfc: %i - %li - proc: %li - rank: %li\n", i,
                        get_view_ghost()(i), rank, proc_num);
-            });
+            }); */
     }
 
     struct exchange_ghost_data_functor
