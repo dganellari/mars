@@ -1081,18 +1081,19 @@ void enumerate_dofs(const context &context)
         exchange_ghost_counts(context, scan_boundary, sender_ranks, recver_ranks, s_count, r_count);
 
         /* create the scan recv mirror view from the receive count */
-        ViewVectorType<Integer> scan_ghost("scan_ghost_", rank_size + 1);
-        scan_recv_mirror = create_mirror_view(scan_ghost);
+        /* ViewVectorType<Integer> scan_ghost("scan_ghost_", rank_size + 1); */
+        /* scan_recv_mirror = create_mirror_view(scan_ghost); */
 
+        scan_recv_mirror = ViewVectorHost<Integer>("scan_recv_mirror", rank_size + 1);
         make_scan_index_mirror(scan_recv_mirror, r_count);
-        Kokkos::deep_copy(scan_ghost, scan_recv_mirror);
+        /* Kokkos::deep_copy(scan_ghost, scan_recv_mirror); */
 
         /*create the scan recv mirror view from the receive count*/
-        scan_send_mirror = make_scan_index(s_count);
+        scan_send_mirror = ViewVectorHost<Integer>("scan_send_mirror", rank_size + 1);
+        make_scan_index_mirror(scan_send_mirror, s_count);
 
         ViewVectorType<Integer> ghost_dofs_index;
         exchange_ghost_dofs(context, boundary_dofs_index, ghost_dofs_index);
-
 
         /* using namespace Kokkos;
         Integer ghost_size = scan_recv_mirror(rank_size);
@@ -1104,6 +1105,7 @@ void enumerate_dofs(const context &context)
                 printf(" i: %li ghost: %i - %li - owner rank: %li - rank: %li\n", i,
                        ghost_dofs(i), ghost_dofs_index(i), rank, data.get_host_mesh()->get_proc());
             }); */
+
         enumerate_local_dofs();
         build_ghost_local_global_map(context, ghost_dofs_index);
     }
@@ -1347,9 +1349,9 @@ private:
     //ghost dofs received from other procs's boundary sfcs.
     ViewVectorType<Integer> ghost_dofs_sfc;
     // mirror view on the dof scan boundary view used as offset for the mpi send dofs.
-    std::vector<Integer> scan_send_mirror;
+    ViewVectorHost<Integer> scan_send_mirror;
     // mirror view on the scan_ghost view used as an offset to receive ghost dofs.
-    ViewVectorType<Integer>::HostMirror scan_recv_mirror;
+    ViewVectorHost<Integer> scan_recv_mirror;
 
     //data associated to the dof data.
     user_tuple user_data;
