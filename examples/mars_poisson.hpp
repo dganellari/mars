@@ -158,6 +158,25 @@ void form_operator(const DMQ2 dm, const int rank)
     });
 }
 
+template <Integer... dataidx>
+void scatter_add_ghost_data(DMQ2 &dm, const context &context)
+{
+    //scatter the data to the procs and keep them in a boundary data tuple
+    //again if no template argument is specified all the data is scattered.
+    //if not all of them then be careful since the tuple is not initialized on the others
+    //example: dm_tuple boundary_data = dm.scatter_ghost_data<1>(context);
+    dm_tuple boundary_data = dm.scatter_ghost_data<dataidx...>(context);
+
+    //use the scattered data "boundary_data" to do ops like max, add or min in the dof contributions.
+    //Otherwise you can use predifined features like scatter_add as following.
+    //careful to use the same template argument for specifing the data as in the scatter_ghost_data
+    //since otherwise you might try to access uninitialized tuplelement and get seg faults.
+    //example:: dm.scatter_add<1>(boundary_data); If: dm.scatter_add<0>(boundary_data) then seg faults.
+    dm.scatter_add<dataidx...>(boundary_data);
+    /* dm.scatter_max<u>(boundary_data); */
+    /* dm.scatter_min<u>(boundary_data); */
+}
+
 void poisson(int &argc, char **&argv, const int level)
 {
 
@@ -194,6 +213,7 @@ void poisson(int &argc, char **&argv, const int level)
 
 #ifdef WITH_KOKKOS
 
+        Kokkos::Timer timer;
         //create the quad mesh distributed through the mpi procs.
         DistributedQuad4Mesh mesh;
         generate_distributed_cube(context, mesh, level, level, 0);
@@ -218,7 +238,7 @@ void poisson(int &argc, char **&argv, const int level)
         /* print_dof<Type>(dm.get_global_dof_enum(), proc_num); */
 
         //print local dof numbering
-        print_dof<Type>(dm.get_local_dof_enum(), proc_num);
+        /* print_dof<Type>(dm.get_local_dof_enum(), proc_num); */
         /* print_dofs<Type>(dm, proc_num); */
 
         //print the global dofs for each element's local dof
@@ -232,10 +252,10 @@ void poisson(int &argc, char **&argv, const int level)
 
         //initialize the values by iterating through local dofs
         Kokkos::parallel_for("initdatavalues", dof_size,
-        MARS_LAMBDA(const Integer i){
-            dm.get_dof_data<u>(i) = 0;
-            dm.get_dof_data<v>(i) = i;
-         });
+            MARS_LAMBDA(const Integer i) {
+                dm.get_dof_data<u>(i) = 0;
+                dm.get_dof_data<v>(i) = i;
+            });
 
         //specify the tuple indices of the tuplelements that are needed to gather.
         //if no index specified it gathers all views of the tuple. All data.
@@ -244,31 +264,23 @@ void poisson(int &argc, char **&argv, const int level)
         form_operator<u, v>(dm, proc_num);
 
         //iterate through the local dofs and print the local number and the data
-        dm.dof_iterate(
+        /* dm.dof_iterate(
             MARS_LAMBDA(const Integer i) {
                 printf("lid: %li, u: %lf, v: %lf, rank: %i\n", i,
-                        dm.get_dof_data<u>(i), dm.get_dof_data<v>(i), proc_num);
-         });
+                       dm.get_dof_data<u>(i), dm.get_dof_data<v>(i), proc_num);
+            }); */
 
-        //scatter the data to the procs and keep them in a boundary data tuple
-        dm_tuple boundary_data = dm.scatter_ghost_data<u>(context);
-        //use the scattered data to do ops like max, add or min in the dof contributions.
-        dm.scatter_add<u>(boundary_data);
-        /* dm.scatter_max(boundary_data); */
+        scatter_add_ghost_data<u>(dm, context);
 
         dm.dof_iterate(
             MARS_LAMBDA(const Integer i) {
                 printf("ggid: %li, u: %lf, v: %lf, rank: %i\n", i,
-                        dm.get_dof_data<u>(i), dm.get_dof_data<v>(i), proc_num);
+                       dm.get_dof_data<u>(i), dm.get_dof_data<v>(i), proc_num);
             });
-
-        /* ViewVectorType<Integer> sfc = mesh.get_view_sfc(); */
-        Kokkos::Timer timer;
 
         double time = timer.seconds();
         std::cout << "Matrix free took: " << time << " seconds." << std::endl;
 
-        /* print_derivatives<Type, DataDesc::du_0, DataDesc::du_1>(data); */
 #endif
     }
     catch (std::exception &e)

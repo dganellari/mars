@@ -1,6 +1,7 @@
 #ifndef GENERATION_MARS_UTILS_KOKKOS_HPP_
 #define GENERATION_MARS_UTILS_KOKKOS_HPP_
 
+#include "Kokkos_Layout.hpp"
 #include "mars_globals.hpp"
 #include "mars_vector.hpp"
 
@@ -44,6 +45,9 @@ constexpr std::size_t arraySize(T (&)[N][M]) noexcept
 
 template<typename T>
 using ViewVectorTypeStride = Kokkos::View<T*, Kokkos::LayoutStride, KokkosSpace>;
+
+template<typename T>
+using ViewVectorHost = Kokkos::View<T*, Kokkos::LayoutRight, KokkosHostSpace>;
 
 template<typename T>
 using ViewVectorType = Kokkos::View<T*,KokkosLayout,KokkosSpace>;
