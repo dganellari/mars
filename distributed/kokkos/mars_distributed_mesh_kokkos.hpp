@@ -625,7 +625,7 @@ public:
                 const Integer allrange = encode_morton_2D(xDim + 1, yDim + 1); //TODO : check if enough. Test with xdim != ydim.
 
                 const Integer nr_points = compact_elements<Type>(local_to_global, allrange);
-                printf("nr_p: %u\n", nr_points);
+                /* printf("nr_p: %u\n", nr_points); */
 
                 reserve_points(nr_points);
 
@@ -674,7 +674,7 @@ public:
                 const Integer allrange = encode_morton_3D(xDim + 1, yDim + 1, zDim + 1); //TODO : check if enough. Test with xdim != ydim.
 
                 const Integer nr_points = compact_elements<Type>(local_to_global, allrange);
-                printf("nr_p 3D: %u\n", nr_points);
+                /* printf("nr_p 3D: %u\n", nr_points); */
 
                 reserve_points(nr_points);
 
@@ -1166,7 +1166,7 @@ public:
 
         // Deep copy device view to host view.
         deep_copy(h_ic, index_subview);
-        std::cout << "boundary_ count result: " << h_ic() << std::endl;
+        /* std::cout << "boundary_ count result: " << h_ic() << std::endl; */
 
         boundary_ = ViewVectorType<Integer>("boundary_", h_ic());
         boundary_lsfc_index_ = ViewVectorType<Integer>("boundary_lsfc_index_", h_ic());

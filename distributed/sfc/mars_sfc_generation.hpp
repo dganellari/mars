@@ -17,18 +17,25 @@ public:
 
         exclusive_bool_scan(0, get_all_range(), get_view_sfc_to_local(), all_elements);
 
-        const Integer elem_size =
-            all_elements(get_all_range() - 1) + get_view_sfc_to_local()(get_all_range() - 1);
+        auto sfc_subview = subview(get_view_sfc_to_local(), get_all_range()-1);
+        auto elm_subview = subview(all_elements, get_all_range()-1);
+        auto h_sfc = create_mirror_view(sfc_subview);
+        auto h_elm = create_mirror_view(elm_subview);
+        deep_copy(h_sfc, sfc_subview);
+        deep_copy(h_elm, elm_subview);
+
+        const Integer elem_size = h_sfc() + h_elm();
         reserve_elements(elem_size);
 
         //otherwise kokkos lambda will not work with CUDA
-        ViewVectorType<Integer> tmp = elements_;
+        ViewVectorType<Integer> el = elements_;
+        ViewVectorType<Integer> sfc_to_local = sfc_to_local_;
         parallel_for(
             get_all_range(), KOKKOS_LAMBDA(const Integer i) {
                 if (all_elements(i) == 1)
                 {
-                    Integer k = get_view_sfc_to_local()(i);
-                    tmp(k) = i;
+                    Integer k = sfc_to_local(i);
+                    el(k) = i;
                     //elements_(k) =i; It will not work with CUDA. this.elements_ is a host pointer.
                 }
             });

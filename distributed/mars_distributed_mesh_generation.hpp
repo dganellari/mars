@@ -132,12 +132,12 @@ void partition_mesh(const context &context, DMesh<Dim, ManifoldDim, Type> &mesh)
 
     context->distributed->scatterv_gids(morton.get_view_elements(), local, counts);
 
-    std::cout << "MPI Scatter ended!" << std::endl;
+    /* std::cout << "MPI Scatter ended!" << std::endl; */
 
-    std::cout << "Broadcasting the sfc_to_local..." << std::endl;
+    /* std::cout << "Broadcasting the sfc_to_local..." << std::endl; */
 
     context->distributed->broadcast(morton.get_view_sfc_to_local()); //broadcast to all processors.
-    std::cout << "Broadcasting the sfc_to_local ended!" << std::endl;
+    /* std::cout << "Broadcasting the sfc_to_local ended!" << std::endl; */
 
     /*  parallel_for(
         "print_elem_chunk",chunk_size, KOKKOS_LAMBDA(const int i) {
