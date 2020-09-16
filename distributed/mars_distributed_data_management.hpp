@@ -336,7 +336,8 @@ public:
         Integer zDim;
     };
 
-    void build_boundary_dof_sets(ViewVectorType<Integer> &scan_boundary,                                 ViewVectorType<Integer> &boundary_lsfc_index, ViewVectorType<Integer> &sender_ranks_scan)
+    void build_boundary_dof_sets(ViewVectorType<Integer> &scan_boundary, ViewVectorType<Integer> &boundary_lsfc_index,
+            ViewVectorType<Integer> &sender_ranks_scan, const Integer nbh_rank_size)
     {
         using namespace Kokkos;
 
@@ -346,11 +347,7 @@ public:
         Integer yDim = data.get_host_mesh()->get_YDim();
         Integer zDim = data.get_host_mesh()->get_ZDim();
 
-        //scan is always rank_scan +1 so we need rank scan size
-        const Integer nbh_rank_size = sender_ranks_scan(sender_ranks_scan.extent(0) - 1);
         const Integer chunk_size_ = global_dof_enum.get_elem_size();
-
-        printf("nbh rank size: %li - %li - %li\n", nbh_rank_size, chunk_size_, size);
         ViewMatrixType<bool> rank_boundary("count_per_proc", nbh_rank_size, chunk_size_);
         /* generate the sfc for the local and global dofs containing the generation locally
         for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
@@ -375,20 +372,18 @@ public:
 
         auto index_subview = subview(scan_boundary, nbh_rank_size);
         auto h_ic = create_mirror_view(index_subview);
-
         // Deep copy device view to host view.
         deep_copy(h_ic, index_subview);
-        /* std::cout << "DM: boundary_ count result: " << h_ic() << std::endl; */
 
         boundary_dofs_sfc = ViewVectorType<Integer>("boundary_sfc_dofs", h_ic());
-        printf("h_ic: %li, ext: %li  proc: %i\n", h_ic(), boundary_dofs_sfc.extent(0), data.get_host_mesh()->get_proc());
         boundary_lsfc_index = ViewVectorType<Integer>("boundary_lsfc_index_dofs", h_ic());
-
         /*   parallel_for(
             "print scan", rank_size + 1, KOKKOS_LAMBDA(const int i) {
                 printf(" scan boundary: %i-%li\n", i, scan_boundary(i));
             }); */
 
+        ViewVectorType<Integer> g_elems = global_dof_enum.get_view_elements();
+        ViewVectorType<Integer> boundary_ds = boundary_dofs_sfc;
         /* We use this strategy so that the compacted elements from the local_sfc
         would still be sorted and unique. */
         parallel_for(
@@ -397,7 +392,7 @@ public:
                 if (rank_boundary(i, j) == 1)
                 {
                     Integer index = scan_boundary(i) + rank_scan(i, j);
-                    boundary_dofs_sfc(index) = global_dof_enum.get_view_elements()(j);
+                    boundary_ds(index) = g_elems(j);
                     boundary_lsfc_index(index) = j;
                 }
             });
@@ -588,8 +583,8 @@ public:
         int proc_num = rank(context);
         int size = num_ranks(context);
 
-        auto scan_send = create_mirror_view(scan_boundary);
-        Kokkos::deep_copy(scan_send, scan_boundary);
+        auto scan_snd = create_mirror_view(scan_boundary);
+        Kokkos::deep_copy(scan_snd, scan_boundary);
 
         auto s_rank_mirror = create_mirror_view(sender_ranks);
         Kokkos::deep_copy(s_rank_mirror, sender_ranks);
@@ -598,7 +593,7 @@ public:
         /* Integer proc_count = 0; */
         for (int i = 0; i < nbh_rank_size; ++i)
         {
-            Integer count = scan_send(i + 1) - scan_send(i);
+            Integer count = scan_snd(i + 1) - scan_snd(i);
             if (count > 0)
             {
                 send_count[s_rank_mirror(i)] = count;
@@ -644,11 +639,11 @@ public:
 
         context->distributed->i_send_recv_view(
             ghost_dofs_sfc, scan_recv_mirror.data(), boundary_dofs_sfc, scan_send_mirror.data());
-        std::cout << "DM:Ending mpi send receive for the ghost sfc dofs " << std::endl;
+        /* std::cout << "DM:Ending mpi send receive for the ghost sfc dofs " << std::endl; */
 
         context->distributed->i_send_recv_view(
             ghost_dofs_index, scan_recv_mirror.data(), boundary_lsfc_index, scan_send_mirror.data());
-        std::cout << "DM:Ending mpi send receive for the ghost dofs local index" << std::endl;
+        std::cout << "DM:MPI send receive for the ghost dofs layer done." << std::endl;
     }
 
     template <typename F, Integer... dataidx>
@@ -1066,14 +1061,21 @@ void enumerate_dofs(const context &context)
         incl_excl_scan(0, rank_size, nbh_proc_predicate_send, proc_scan_send);
         incl_excl_scan(0, rank_size, nbh_proc_predicate_recv, proc_scan_recv);
 
-        ViewVectorType<Integer> sender_ranks("sender_ranks", proc_scan_send(rank_size));
-        ViewVectorType<Integer> recver_ranks("receiver_ranks", proc_scan_recv(rank_size));
+        auto ps = subview(proc_scan_send, rank_size);
+        auto pr = subview(proc_scan_recv, rank_size);
+        auto h_ps = create_mirror_view(ps);
+        auto h_pr = create_mirror_view(pr);
+        // Deep copy device view to host view.
+        deep_copy(h_ps, ps);
+        deep_copy(h_pr, pr);
+
+        ViewVectorType<Integer> sender_ranks("sender_ranks", h_ps());
+        ViewVectorType<Integer> recver_ranks("receiver_ranks", h_pr());
         compact_scan(nbh_proc_predicate_send, proc_scan_send, sender_ranks);
         compact_scan(nbh_proc_predicate_recv, proc_scan_recv, recver_ranks);
 
-        /* ViewVectorType<Integer> scan_boundary, boundary_dofs, boundary_dofs_index; */
         ViewVectorType<Integer> scan_boundary, boundary_dofs_index;
-        build_boundary_dof_sets(scan_boundary, boundary_dofs_index, proc_scan_send);
+        build_boundary_dof_sets(scan_boundary, boundary_dofs_index, proc_scan_send, h_ps());
 
         std::vector<Integer> s_count(rank_size, 0);
         std::vector<Integer> r_count(rank_size, 0);
@@ -1081,16 +1083,16 @@ void enumerate_dofs(const context &context)
         exchange_ghost_counts(context, scan_boundary, sender_ranks, recver_ranks, s_count, r_count);
 
         /* create the scan recv mirror view from the receive count */
-        /* ViewVectorType<Integer> scan_ghost("scan_ghost_", rank_size + 1); */
-        /* scan_recv_mirror = create_mirror_view(scan_ghost); */
-
-        scan_recv_mirror = ViewVectorHost<Integer>("scan_recv_mirror", rank_size + 1);
+        scan_recv = ViewVectorType<Integer>("scan_recv_", rank_size + 1);
+        scan_recv_mirror = create_mirror_view(scan_recv);
         make_scan_index_mirror(scan_recv_mirror, r_count);
-        /* Kokkos::deep_copy(scan_ghost, scan_recv_mirror); */
+        Kokkos::deep_copy(scan_recv, scan_recv_mirror);
 
-        /*create the scan recv mirror view from the receive count*/
-        scan_send_mirror = ViewVectorHost<Integer>("scan_send_mirror", rank_size + 1);
+        /*create the scan send mirror view from the send count*/
+        scan_send = ViewVectorType<Integer>("scan_send_", rank_size + 1);
+        scan_send_mirror = create_mirror_view(scan_send);
         make_scan_index_mirror(scan_send_mirror, s_count);
+        Kokkos::deep_copy(scan_send, scan_send_mirror);
 
         ViewVectorType<Integer> ghost_dofs_index;
         exchange_ghost_dofs(context, boundary_dofs_index, ghost_dofs_index);
@@ -1116,14 +1118,14 @@ void enumerate_dofs(const context &context)
         Mesh *mesh;
         UnorderedMap<Integer, Dof> glgm;
         ViewVectorType<Integer> global_dof_offset;
-        ViewVectorType<Integer> scan_recv_mirror;
+        ViewVectorType<Integer> scan_recv_proc;
 
         ViewVectorType<Integer> ghost_dofs;
         ViewVectorType<Integer> ghost_dofs_index;
 
         BuildLocalToGlobalGhostMap(Mesh* m, UnorderedMap<Integer, Dof> g, ViewVectorType<Integer> gdo,
                 ViewVectorType<Integer> srm, ViewVectorType<Integer> gd, ViewVectorType<Integer> gdi) :
-                 mesh(m), glgm(g), global_dof_offset(gdo), scan_recv_mirror(srm), ghost_dofs(gd),
+                 mesh(m), glgm(g), global_dof_offset(gdo), scan_recv_proc(srm), ghost_dofs(gd),
                  ghost_dofs_index(gdi) {}
 
         MARS_INLINE_FUNCTION
@@ -1133,9 +1135,9 @@ void enumerate_dofs(const context &context)
             const Integer ghost_sfc = ghost_dofs(i);
             const Integer ghost_sfc_lid = ghost_dofs_index(i);
 
-            /* find the process by binary search in the scan_recv_mirror view of size rank_size
+            /* find the process by binary search in the scan_recv_proc view of size rank_size
              * and calculate the global id by adding the ghost local id to the global offset for ghost process*/
-            const Integer owner_proc = find_owner_processor(scan_recv_mirror, i, 1, mesh->get_proc());
+            const Integer owner_proc = find_owner_processor(scan_recv_proc, i, 1, mesh->get_proc());
             const Integer gid = ghost_sfc_lid + global_dof_offset(owner_proc);
 
             //build the ghost dof object and insert into the map
@@ -1152,9 +1154,8 @@ void enumerate_dofs(const context &context)
 
         ghost_local_to_global_map = UnorderedMap<Integer, Dof>(size);
         /* iterate through the unique ghost dofs and build the map */
-        Kokkos::parallel_for("BuildLocalGlobalmap", size, BuildLocalToGlobalGhostMap(
-                    data.get_mesh(), ghost_local_to_global_map, global_dof_offset, scan_recv_mirror,
-                    ghost_dofs_sfc, ghost_dofs_index));
+        Kokkos::parallel_for("BuildLocalGlobalmap", size, BuildLocalToGlobalGhostMap(data.get_mesh(),
+                    ghost_local_to_global_map, global_dof_offset, scan_recv, ghost_dofs_sfc, ghost_dofs_index));
         /* In the end the size of the map should be as the size of the ghost_dofs.
          * Careful map size  is not capacity */
         assert(size == ghost_local_to_global_map.size());
@@ -1209,7 +1210,7 @@ void enumerate_dofs(const context &context)
     Integer sfc_to_global(const Integer sfc) const
     {
         Dof dof = sfc_to_global_dof(sfc);
-        if(dof.is_valid)
+        if(dof.is_valid())
             return dof.get_gid();
         else
             return INVALID_INDEX;
@@ -1229,7 +1230,7 @@ void enumerate_dofs(const context &context)
     Integer sfc_to_global_proc(const Integer sfc) const
     {
         Dof dof = sfc_to_global_dof(sfc);
-        if(dof.is_valid)
+        if(dof.is_valid())
             return dof.get_proc();
         else
             return INVALID_INDEX;
@@ -1341,17 +1342,21 @@ private:
     //the local to global mapp for the locally owned is mapped from the sfc_to global view
     //for the ghost dofs is used the following kokkos unordered map.
     UnorderedMap<Integer, Dof> ghost_local_to_global_map;
+
     //local enumeration of the dofs topologically foreach element
     ViewMatrixType<Integer> elem_dof_enum;
 
     //dofs sfc for the boundary dofs.
     ViewVectorType<Integer> boundary_dofs_sfc;
-    //ghost dofs received from other procs's boundary sfcs.
+   // mirror view on the dof scan boundary view used as offset for the mpi send dofs.
+    ViewVectorType<Integer> scan_send;
+    ViewVectorType<Integer>::HostMirror scan_send_mirror;
+
+     //ghost dofs received from other procs's boundary sfcs.
     ViewVectorType<Integer> ghost_dofs_sfc;
-    // mirror view on the dof scan boundary view used as offset for the mpi send dofs.
-    ViewVectorHost<Integer> scan_send_mirror;
     // mirror view on the scan_ghost view used as an offset to receive ghost dofs.
-    ViewVectorHost<Integer> scan_recv_mirror;
+    ViewVectorType<Integer> scan_recv;
+    ViewVectorType<Integer>::HostMirror scan_recv_mirror;
 
     //data associated to the dof data.
     user_tuple user_data;

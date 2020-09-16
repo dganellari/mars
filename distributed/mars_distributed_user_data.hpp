@@ -154,11 +154,11 @@ public:
 
         reserve_ghost(ghost_size);
 
-        std::cout << "Starting mpi send receive for the ghost layer" << std::endl;
+        /* std::cout << "Starting mpi send receive for the ghost layer" << std::endl; */
         context->distributed->i_send_recv_view(
             get_view_ghost(), scan_recv_mirror.data(),
             host_mesh->get_view_boundary(), scan_send_mirror.data());
-        std::cout << "Ending mpi send receive for the ghost layer" << std::endl;
+        std::cout << "MPI send receive for the mesh ghost layer done." << std::endl;
 /*
         parallel_for(
             "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
