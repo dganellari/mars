@@ -1244,11 +1244,19 @@ int main(int argc, char *argv[])
 // DUALContactLinearElasticity5<2,1>(argc,argv);
 // LSContact<2,0>(argc,argv);
 	
-DUALLinearElasticityCook<2,1>(argc,argv);//1,1,2);
+// DUALLinearElasticityCook<2,1>(argc,argv);//1,1,2);
+// SquareHoleDUALContactLinearElasticity<2,1>(argc,argv);
 // PROVALSFEM_ContactLinearElasticity<2,0,1>(1,5,6);
+// PrimalContactLinearElasticity<2>(argc,argv);
 // PROVALSFEM_ContactLinearElasticity2<2,0,1>(1,0,1,1);
+// CookLSFEM<2,0,1>(argc,argv);
 
-
+// LSFEM_Poisson<2,0,1>(argc,argv);
+// BeamLSFEM<2,0,1>(argc,argv);
+BeamImprovedMomentumLSFEM<2,0,1>(argc,argv);
+// ContactImprovedMomentumLSFEM<2,0,1>(argc,argv);
+// Poisson_Lagrange<2,1>(argc,argv);
+// FullDirichletElasticityLSFEM<2,0,1>(argc,argv);
 #ifdef WITH_KOKKOS
 	Kokkos::initialize(argc,argv);
 	{
@@ -1279,7 +1287,6 @@ Kokkos::View<Real **[3][4]> aaa("aaa",M,N);
 // Poisson_Lagrange<3,1>(10);
 // Poisson_Lagrange<3,2>(10);
 //// 2D RT0 P1
-// LSFEM_Poisson<2,0,1>(30);
 //// 2D RT1 P2
 // LSFEM_Poisson<2,1,2>(15);
 //// 3D RT0 P1

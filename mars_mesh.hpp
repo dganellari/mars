@@ -1265,22 +1265,22 @@ namespace mars {
 
 	  for(int b=0;b<side_nodes.size();b++)
 	  {
-	  	std::cout<<"---------------------assign_tags b=="<<b<<std::endl;
-	  	for(Integer n=0;n<side_nodes[b].size();n++)
-	  	{
-	  		std::cout<<side_nodes[b][n]<<" ";
-	  	}
-	  	std::cout<<std::endl;
+	  	// std::cout<<"---------------------assign_tags b=="<<b<<std::endl;
+	  	// for(Integer n=0;n<side_nodes[b].size();n++)
+	  	// {
+	  	// 	std::cout<<side_nodes[b][n]<<" ";
+	  	// }
+	  	// std::cout<<std::endl;
 
 	  	for(Integer n=0;n<side_nodes[b].size()-1;n++)
 	  	{
-	  		std::cout<<">>>>>>>>>>>>>side_nodes="<<side_nodes[b][n]<<std::endl;
+	  		// std::cout<<">>>>>>>>>>>>>side_nodes="<<side_nodes[b][n]<<std::endl;
 	  		// std::cout<<std::endl;
 	  		auto elems=node2elem[side_nodes[b][n]];;
 
 	  		for(Integer el=0;el<elems.size();el++)
 	  		{
-	  			std::cout<<"el=="<<elems[el]<<std::endl;
+	  			// std::cout<<"el=="<<elems[el]<<std::endl;
 
 		  			auto& elem=mesh.elem(elems[el]);
 		  			FE.init(elems[el]);
@@ -1309,7 +1309,7 @@ namespace mars {
 		  						found=false;
 		  					}
                         }
-                        std::cout<<std::endl;
+                        // std::cout<<std::endl;
 
                         // std::cout<<"found="<<found<<std::endl;
 
@@ -1321,13 +1321,13 @@ namespace mars {
 		  					elem.side_tags[s]=side_nodes[b][side_nodes[b].size()-1];
 
 		  				}
-		  				std::cout<<"after elem.side_tags[s]="<<elem.side_tags[s]<<std::endl;
+		  				// std::cout<<"after elem.side_tags[s]="<<elem.side_tags[s]<<std::endl;
 		  			}
 		  			// std::cout<<std::endl;
 
 		  		
 	  		}
-	  		std::cout<<std::endl;
+	  		// std::cout<<std::endl;
 
 
 

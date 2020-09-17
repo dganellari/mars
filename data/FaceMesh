@@ -1,0 +1,69 @@
+int n=1;
+
+
+real L=1;
+real M=1.0/6.0;
+real Mx=0.7;
+real My=0.7;
+
+real Nx=0.3-M;
+real Ny=0.7;
+
+ 
+real Px=M;
+real Py=M;
+real PPx=1-2*M;
+real PPy=0.1;
+
+
+real Q=0.1;
+real Qx=0.5;
+real Qy=0.5;
+
+
+border e1(t=0,L){x = L;   y = t;       label = 1;}
+border e2(t=0,L){x = L-t; y = L ;      label = 2;}
+border e3(t=0,L){x = 0;   y = L-t;     label = 3;}
+border e4(t=0,L){x = t;   y = 0 ;      label = 4;}
+
+border e5(t=0,M){x = Mx + t; y = My;     label = 3;}
+border e6(t=0,M){x = Mx+M;   y = My+t;   label = 3;}
+border e7(t=0,M){x = Mx+M-t; y = My+M ;  label = 3;}
+border e8(t=0,M){x = Mx;     y = My+M-t; label = 3;}
+
+border e9(t=0,M){x = Nx + t; y = Ny;     label = 3;}
+border e10(t=0,M){x = Nx+M;   y = Ny+t;   label = 3;}
+border e11(t=0,M){x = Nx+M-t; y = Ny+M ;  label = 3;}
+border e12(t=0,M){x = Nx;     y = Ny+M-t; label = 3;}
+
+border e13(t=0,PPx){x = Px + t; y = Py;     label = 3;}
+border e14(t=0,PPy){x = Px+PPx;   y = Py+t;   label = 3;}
+border e15(t=0,PPx){x = Px+PPx-t; y = Py+PPy ;  label = 3;}
+border e16(t=0,PPy){x = Px;     y = Py+PPy-t; label = 3;}
+
+border e17(t=0,Q){x = Qx -Q/2+ t; y = Qy;     label = 5;}
+border e18(t=0,Q){x = Qx + Q/2-t/2;   y = Qy+t;   label = 5;}
+border e19(t=0,Q){x = Qx -t/2; y = Qy+Q-t ;  label = 5;}
+
+border e20(t=0,Q){x = Qx -Q/2+ t; y = Qy-0.3;     label = 5;}
+border e21(t=0,Q){x = Qx + Q/2-t/2;   y = Qy+t-0.3;   label = 5;}
+border e22(t=0,Q){x = Qx -t/2; y = Qy+Q-t-0.3 ;  label = 5 ;}
+
+
+
+mesh Th=buildmesh( e1(2*n)+e2(2*n)+e3(2*n)+e4(2*n)+
+				   e5(-n)+e6(-n)+e7(-n)+e8(-n)+
+				   e9(-n)+e10(-n)+e11(-n)+e12(-n)+
+				   e13(-n)+e14(-n)+e15(-n)+e16(-n)+
+				   //e20(-n)+e21(-n)+e22(-n)+
+				   e17(-n)+e18(-n)+e19(-n));
+
+//mesh Th=buildmesh( e1(2*n)+e2(2*n)+e3(2*n)+e4(2*n)+e5(-n)+e6(-n)+e7(-n)+e8(-n)+e9(-n)+e10(-n)+e11(-n)+e12(-n)
+//+e13(-n)+e14(-n)+e15(-n)+e16(-n)+e17(-n)+e18(-n)+e19(-n));
+
+
+savemesh(Th,"FaceMesh.msh");
+
+plot(Th);
+
+

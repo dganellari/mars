@@ -3407,6 +3407,125 @@ void dofmap_fespace5(
     }
 
 
+
+
+   template<typename MeshT>
+   void build_halo_dofs(
+           std::vector<std::vector<std::vector<Integer>>>& entity2dofs,
+           Node2ElemMap<MeshT>& n2em,
+     const std::vector<Integer>& levels)
+   {
+     std::cout<<"build_halo_dofs"<<std::endl;
+     Integer n_levels=levels.size();
+
+     auto &mesh=spaces_ptr_->mesh();
+     std::array<Integer,entity_points> entity_nodes1;
+     std::array<Integer,entity_points> entity_nodes2;
+
+          for(int node=0;node<mesh.n_nodes();node++)
+          {     
+               entity_nodes1[0]=node;
+               auto& dofs1=map_[entity_nodes1];
+
+               for(int level=0;level<levels.size();level++)
+               {
+                   // std::cout<<node<<", "<<level<<std::endl;
+
+                    const Integer lev=levels[level];
+
+                    // const auto& n2e=n2em.get(node,levels[lev]);
+                    const auto& n2e=n2em.get(node,lev);
+                    for(Integer k=0;k<n2e.size();k++)
+                    {
+
+                          auto& elem=mesh.elem(n2e[k]);
+                          auto& nodes=elem.nodes;
+                          // std::cout<<node<<", "<<lev<<", "<<k<<", "<<std::endl;
+
+
+                           for(Integer n=0;n<nodes.size();n++)
+                           {
+                            // if(node==0&&lev==2&& k==1)
+                            // {
+                            //   std::cout<<"ci entro1"<<std::endl;
+                            // }  
+                              const auto& dofs2=entity2dofs[level][nodes[n]];
+                            // if(node==0&&lev==2&& k==1)
+                            // {
+                            //   std::cout<<"ci entro2"<<std::endl;
+                            // } 
+                            if(dofs1.size()==0)
+                            {
+                              // dofs1.resize(n_levels);
+                              dofs1.resize(levels[levels.size()-1]+1);
+                            }
+                            //  if(node==0&&lev==2&& k==1)
+                            // {
+                            //   std::cout<<"ci entro3"<<std::endl;
+                            // }                            
+                            // else if(dofs1.size()<n_levels)
+                            // {
+                            //   for(Integer i=dofs1.size();i<n_levels;i++)
+                            //       dofs1.push_back(std::vector<Integer>{});
+                            // }
+
+                            // std::cout<<n<<std::endl;
+                            // std::cout<<"size="<<dofs2.size()<<std::endl;
+                            // for(Integer m=0;m<dofs2.size();m++)
+                            //   {std::cout<<dofs2[m]<<std::endl;}
+
+                            // std::cout<<"size1="<<dofs1[lev].size()<<std::endl;
+
+                            // for(Integer m=0;m<dofs1[lev].size();m++)
+                            //   {std::cout<<dofs1[lev][m]<<std::endl;}
+
+                            // if(node==0&&lev==2&& k==1)
+                            // {
+                            //  std::cout<<"size1="<<dofs1[lev].size()<<std::endl;
+
+
+                            // for(Integer m=0;m<dofs1[lev].size();m++)
+                            //   {std::cout<<dofs1[lev][m]<<std::endl;}  
+
+                            // std::cout<<"size2="<<dofs2.size()<<std::endl;
+                            // for(Integer m=0;m<dofs2.size();m++)
+                            //   {std::cout<<dofs2[m]<<std::endl;}
+
+                         
+                            // }
+
+
+                            dofs1[lev].insert(dofs1[lev].end(), dofs2.begin(), dofs2.end() );
+                         }
+
+                         
+
+                    }
+               }
+          }
+
+
+          for(int node=0;node<mesh.n_nodes();node++)
+          {               
+               for(int level=0;level<levels.size();level++)
+               {
+                  // const Integer lev=levels[lev];
+                  entity_nodes1[0]=node;
+
+                  auto& tmp=map_[entity_nodes1][level];
+                  std::sort(std::begin(tmp), std::end(tmp)); 
+                  tmp.erase( std::unique( tmp.begin(),tmp.end() ), tmp.end() );
+               }
+          }
+
+          std::cout<<"end halo build "<<std::endl;
+ 
+ 
+
+   }
+
+
+
     void print()
     {
           for (auto it=map_.begin(); it!=map_.end(); ++it)
@@ -3466,7 +3585,6 @@ void dofmap_fespace5(
 
     auto& get(const Integer level)
     {
-
       auto& mesh=spaces_ptr_->mesh();
       auto& bisection=spaces_ptr_->bisection();
       auto& tracker=bisection.tracker();
@@ -3476,12 +3594,13 @@ void dofmap_fespace5(
         map_vec_.resize(tracker.current_iterate());
 
       auto& vec=map_vec_[level];
-    
+
       Integer max_nodes=n2e.max_n_nodes();
       // vec.reserve(mesh.n_elements()*NLocalDofs*max_nodes);
-
+      Integer cont=0;
           for (auto it=map_.begin(); it!=map_.end(); ++it)
               {
+              //  std::cout<<cont++<<", "<<vec.size()<<std::endl;
               // for(Integer i=0;i<it->first.size();i++)
               // {
               //     // std::cout<<it->first[i]<<" ";
@@ -3489,12 +3608,14 @@ void dofmap_fespace5(
               //   // std::cout<< std::endl;
                 vec.push_back(it->second[level]);
               }
+            
       return vec;
 
     }
 
     auto& get(const std::vector<Integer>& levels)
     {
+
       levels_vec_.clear();
       Integer size=levels.size();
       levels_vec_.resize(size);
@@ -3815,6 +3936,17 @@ void dofmap_fespace5(
 
   }
 
+  template<typename FullFunctionSpace, Integer EntityDim,typename MeshT>
+  void build_halo_dofs(
+             Entity2Dofs<FullFunctionSpace,EntityDim>& halo_entity2dofs,
+             std::vector<std::vector<std::vector<Integer>>>& entity2dofs,
+             Node2ElemMap<MeshT>& n2e,
+       const std::vector<Integer>& levels)
+  {
+
+    halo_entity2dofs.build_halo_dofs(entity2dofs,n2e,levels);
+
+  }
 
 
 

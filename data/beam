@@ -1,0 +1,24 @@
+int n=1;
+
+
+real Lx=1;
+real Ly=0.2;
+
+real Mx=1.0/2.0;
+real My=1.0/2.0;
+
+border e1(t=0,Ly){x = Lx;   y = t;       label = 1;}
+border e2(t=0,Lx){x = Lx-t; y = Ly ;     label = 2;}
+border e3(t=0,Ly){x = 0;   y = Ly-t;     label = 3;}
+border e4(t=0,Lx){x = t;   y = 0 ;       label = 4;}
+
+
+
+mesh Th=buildmesh( e1(n)+e2(5*n)+e3(n)+e4(5*n));
+
+
+savemesh(Th,"beam.msh");
+
+plot(Th);
+
+

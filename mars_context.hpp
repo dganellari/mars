@@ -146,6 +146,8 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
      // mesh.init_signed_normal();
      // auto& signed_normal=mesh.signed_normal();
      shape_coefficients_.init();
+
+     Integer cont_sides=0;
        // for(std::size_t el=0;el<mesh_ptr->n_elements();el++)
        for(std::size_t el=0;el<mesh.n_elements();el++)
        {
@@ -184,6 +186,8 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                 FE.init_boundary(s);
                 if(FE.is_side_on_boundary())
                 {
+                   // std::cout<<"------_______----- INIT BOUNDARY===="<<FE.side_tags()[s]<<", "<<(cont_sides++)<<std::endl;
+                 
                   // std::cout<<"------_______----- reference_maps_===="<<s<<std::endl;
                   reference_maps_.init_boundary(FE);
                   //std::cout<<"------_______----- shapefunctions_===="<<s<<std::endl;
@@ -223,7 +227,8 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                 if(FE.side_tags()[s]!=INVALID_INDEX)
                 {
                   // std::cout<<"------_______----- ELEM===="<<el<<std::endl;
-                  // std::cout<<"------_______----- INIT BOUNDARY===="<<FE.side_tags()[s]<<std::endl;
+                  std::cout<<"------_______----- INIT BOUNDARY===="<<FE.side_tags()[s]<<", "<<(cont_sides++)<<std::endl;
+
                   FE.init_boundary(s);
                   // std::cout<<"------_______----- END INIT BOUNDARY===="<<s<<std::endl;
                   bcs_.assembly(full_spaces_ptr(),constrained_dofs_,constrained_mat_,constrained_vec_,FE);

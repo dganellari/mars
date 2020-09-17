@@ -596,6 +596,7 @@ public:
         const auto& maps=maps_.tuple_map();
         // loop on all the bcs
         // std::cout<<"___--before apply_aux<Nbcs-1,0>="<<std::endl;
+        
         apply_aux<Nbcs-1,0>(constrained_dofs,constrained_mat,constrained_vec,FE,maps,dofmap);
         // const auto& n_nodes=n_sides(elem_);
         // for(std::size_t b=0;b<n_sides;b++)

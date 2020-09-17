@@ -1,0 +1,29 @@
+int n=1;
+
+
+real L=1;
+
+real Mx=1.0/2.0;
+real My=1.0/2.0;
+
+border e11(t=0,L*3.0/10.0){x = L;   y = t;       label = 1;}
+border e12(t=0,L*3.0/10.0){x = L;   y = t+L*3.0/10.0;       label = 1;}
+border e13(t=0,L*4.0/10.0){x = L;   y = t+L*6.0/10.0;       label = 1;}
+border e21(t=0,L*4.0/10){x = L-t; y = L ;      label = 2;}
+border e22(t=0,L*2.0/10){x = L-t-L*4.0/10.0; y = L ;      label = 2;}
+border e23(t=0,L*4.0/10){x = L-t-L*6.0/10.0; y = L ;      label = 2;}
+border e31(t=0,L*4.0/10.0){x = 0;   y = L-t;     label = 3;}
+border e32(t=0,L*3.0/10.0){x = 0;   y = L-t-L*4.0/10.0;     label = 3;}
+border e33(t=0,L*3.0/10.0){x = 0;   y = L-t-L*7.0/10.0;     label = 3;}
+border e4(t=0*L,L){x = t;   y = 0 ;      label = 4;}
+
+
+
+mesh Th=buildmesh( e11(n)+e12(n)+e13(n)+e21(n)+e22(20*n)+e23(n)+e31(n)+e32(n)+e33(n)+e4(5*n));
+
+
+savemesh(Th,"SquareForContact.msh");
+
+plot(Th);
+
+

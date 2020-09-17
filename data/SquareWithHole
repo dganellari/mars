@@ -1,0 +1,28 @@
+int n=1;
+
+
+real L=1;
+real Mx=1.0/2.0;
+real My=1.0/2.0;
+
+border e1(t=0,L){x = L;   y = t;       label = 1;}
+border e21(t=0,L*3.0/10){x = L-t; y = L ;      label = 2;}
+border e22(t=0,L*7.0/10){x = L-t-L*3.0/10.0; y = L ;      label = 2;}
+border e3(t=0,L){x = 0;   y = L-t;     label = 3;}
+border e4(t=0,L){x = t;   y = 0 ;      label = 4;}
+
+border e51(t=0,Mx*3.0/10){x = 0.5*Mx + t; y = My*0.5;     label = 5;}
+border e52(t=0,Mx*7.0/10){x = 0.5*Mx +3.0/10*Mx+ t; y = My*0.5;     label = 3;}
+border e6(t=0,My){x = 3.0/2*Mx;   y = 0.5*My+t;   label = 3;}
+border e7(t=0,Mx){x = 3.0/2*Mx-t; y = 3.0/2*My ;  label = 3;}
+border e8(t=0,My){x = 0.5*Mx;     y = 3.0/2*My-t; label = 3;}
+
+
+mesh Th=buildmesh( e1(n)+e21(8*n)+e22(3*n)+e3(n)+e4(3*n)+e51(-6*n)+e52(-3*n)+e6(-n)+e7(-n)+e8(-n));
+
+
+savemesh(Th,"SquareWithHole.msh");
+
+plot(Th);
+
+
