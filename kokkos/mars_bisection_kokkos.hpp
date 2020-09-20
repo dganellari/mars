@@ -611,7 +611,7 @@ public:
 			if (is_terminal(this->mapping.key_at(index), this->mapping.value_at(index)))
 			{
 				auto res = lepp_edge_map.insert(this->mapping.key_at(index), index);
-				assert(res.failed());
+				assert(!res.failed());
 
 				/*if (res.failed())
 					printf("Exceeded UnorderedMap: lepp_edge_map capacity\n");*/
@@ -622,7 +622,7 @@ public:
 					if (this->mesh->is_active(element))
 					{
 						auto result = lepp_incidents_map.insert(element, this->mapping.key_at(index));
-						assert(result.failed());
+						assert(!result.failed());
 
 						/*if (result.failed())
 							printf("Exceeded UnorderedMap: lepp_incidents_map capacity\n");*/
