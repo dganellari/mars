@@ -170,46 +170,6 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(int &argc, char 
 
         DistributedQuad4Mesh mesh;
         generate_distributed_cube(context, mesh, level, level, 0);
-
-        UserData<DistributedQuad4Mesh, double, Integer, double> data(&mesh);
-
-        /* first option and recommended one to init the init condition */
-        /* another option to use this one with a functor instead of the lamda.
-        just be careful what you use within the Lambda body since it is copied by value.
-        Kokkos views are no problem but the userdata object has other host containers which should not be used inside the lambda. */
-        data.set_init_cond(MARS_LAMBDA(const int i) {
-            data.get_elem_data<1>(i) = i;
-            /* data.get_ghost_elem_data<2>(i)i = ...; */
-        });
-
-
-        /******** second possibility to do it using a more general approach using a functor by coping the tuple directly instead of the UserData object*/
-        /* data.parallel_for_data(mesh.get_chunk_size(), functor<double, Integer, double>(data.get_user_data())); */
-
-        /********* the same as above but using a lambda instead of the functor. This way can be used for any UserData class member accessing it using the data object. */
-        /* data.parallel_for_data(
-            mesh.get_chunk_size(), MARS_LAMBDA(const int i) {
-                data.get_elem_data<1>(i) = 2;
-            });
- */
-        /* data.init_user_data(1.1, 2, 3.3); */
-        exchange_ghost_user_data(context, data);
-        /* int proc_num = rank(context);
-
-        ViewMatrixType<Real> poi = mesh.get_view_points();
-
-        parallel_for(
-            "print_elem_chunk1", mesh.get_view_points().extent(0), KOKKOS_LAMBDA(const int i) {
-                printf(" pt: [(%f, %f) - %i]\n", poi(i, 0), poi(i, 1), proc_num);
-            });
-
-        ViewMatrixType<Integer> eeel = mesh.get_view_elements();
-
-        parallel_for(
-            "print_elem_chunk", mesh.get_view_elements().extent(0), KOKKOS_LAMBDA(const int i) {
-                printf("el 3D: [(  %li, %li, %li, %li)] - %i]\n",
-                       eeel(i, 0), eeel(i, 1), eeel(i, 2), eeel(i, 3), proc_num);
-            }); */
 #endif
     }
     catch (std::exception &e)
@@ -259,28 +219,6 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char 
         DistributedHex8Mesh mesh;
         generate_distributed_cube(context, mesh, level, level, level);
 
-        /*UserData<3, 3, ElementType::Hex8, double, Integer, double> data(&mesh);*/
-        /* UserData<DistributedHex8Mesh, double, Integer, double> data(&mesh);
-        exchange_ghost_user_data(context, data);
-
-
-        int proc_num = rank(context);
-
-        ViewMatrixType<Real> poi = mesh.get_view_points();
-
-        parallel_for(
-            "print_elem_chunk1", mesh.get_view_points().extent(0), KOKKOS_LAMBDA(const int i) {
-                printf(" pt: [(%f, %f, %f) - %i]\n", poi(i, 0), poi(i, 1), poi(i, 2), proc_num);
-            });
-
-        ViewMatrixType<Integer> eeel = mesh.get_view_elements();
-
-        parallel_for(
-            "print_elem_chunk", mesh.get_view_elements().extent(0), KOKKOS_LAMBDA(const int i) {
-                printf("el 3D: [(  %li, %li, %li, %li, %li, %li, %li, %li )] - %i]\n",
-                        eeel(i, 0), eeel(i, 1), eeel(i, 2), eeel(i, 3), eeel(i, 4), eeel(i, 5),
-                                    eeel(i, 6), eeel(i, 7), proc_num);
-            });*/
 #endif
     }
     catch (std::exception &e)

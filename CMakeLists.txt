@@ -169,7 +169,7 @@ list(APPEND MARS_HEADERS
 	
 IF(Kokkos_FOUND)
 	list(APPEND MARS_HEADERS
-		kokkos/mars_imesh_kokkos.hpp	
+		kokkos/mars_imesh_kokkos.hpp
 	    kokkos/mars_mesh_kokkos.hpp
 	    kokkos/mars_test_kokkos.hpp
 	    kokkos/mars_utils_kokkos.hpp
@@ -190,6 +190,11 @@ ENDIF()
 
 IF(WITH_MPI)
 	list(APPEND MARS_HEADERS
+        distributed/mars_distributed_octant.hpp
+        distributed/mars_distributed_dof.hpp
+        distributed/mars_distributed_data_management.hpp
+        distributed/mars_distributed_user_data.hpp
+        distributed/mars_distributed_utils.hpp
 		distributed/kokkos/mars_distributed_mesh_kokkos.hpp
 		distributed/kokkos/mars_distributed_non_simplex_kokkos.hpp
 		distributed/kokkos/mars_distributed_simplex_kokkos.hpp
