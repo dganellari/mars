@@ -137,25 +137,38 @@ void print_ghost_dofs(const DMQ2 dm, const int rank)
         });
 }
 
-//form the matrix free operator
-template<Integer u, Integer v>
-void form_operator(const DMQ2 dm, const int rank)
-{
-    //go through each element and for each element iterate through its dofs
-    dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
-        for (int i = 0; i < DMQ2::elem_nodes; i++)
-        {
-            //forach dof get the local number
-            const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+template <Integer Type>
+MARS_INLINE_FUNCTION void
+get_elem_coordinates(const DMQ2 &dm, const Integer elem_index, double *points) {
 
-            //use the local number to read the corresponding user data
-            double ui = dm.get_dof_data<v>(local_dof) + 1;
-            //TODO: apply the operator
+  for (int i = 0; i < DMQ2::elem_nodes; i++) {
+    const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+    const Integer sfc_elem = dm.local_to_sfc(local_dof);
+    get_vertex_coordinates_from_sfc<Type>(sfc_elem, points + 3 * i,
+                                          dof.get_XDim(), dof.get_YDim(),
+                                          dof.get_ZDim());
+  }
+}
 
-            //atomically updated the contributions to the same dof
-            Kokkos::atomic_add(&dm.get_dof_data<u>(local_dof), ui);
-        }
-    });
+// form the matrix free operator
+template <Integer u, Integer v>
+void form_operator(const DMQ2 dm, const int rank) {
+  // go through each element and for each element iterate through its dofs
+  dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
+    double points[DMQ2::elem_nodes * 3];
+    get_elem_coordinates(dm, elem_index, points);
+    for (int i = 0; i < DMQ2::elem_nodes; i++) {
+      // forach dof get the local number
+      const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+
+      // use the local number to read the corresponding user data
+      double ui = dm.get_dof_data<v>(local_dof) + 1;
+      // TODO: apply the operator
+
+      // atomically updated the contributions to the same dof
+      Kokkos::atomic_add(&dm.get_dof_data<u>(local_dof), ui);
+    }
+  });
 }
 
 template <Integer... dataidx>
