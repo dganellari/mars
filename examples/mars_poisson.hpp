@@ -46,6 +46,8 @@ u = P uk */
 #include <type_traits>
 #include <utility>
 
+#include "mars_quad4.hpp"
+
 #ifdef WITH_MPI
 
 #include "mars_mpi_guard.hpp"
@@ -150,6 +152,36 @@ get_elem_coordinates(const DMQ2 &dm, const Integer elem_index, double *points) {
   }
 }
 
+template <typename T, typename Scalar>
+MARS_INLINE_FUNCTION bool invert2(const T *mat, T *mat_inv, const Scalar &det) {
+  mat_inv[0] = mat[3] / det;
+  mat_inv[1] = -mat[1] / det;
+  mat_inv[2] = -mat[2] / det;
+  mat_inv[3] = mat[0] / det;
+  return true;
+}
+
+// template <typename T, typename Scalar>
+// MARS_INLINE_FUNCTION bool invert3(const T *mat, T *mat_inv, const Scalar
+// &det) {
+//   assert(det != 0.);
+
+//   if (det == 0.) {
+//     return false;
+//   }
+
+//   mat_inv[0] = (mat[4] * mat[8] - mat[5] * mat[7]) / det;
+//   mat_inv[1] = (mat[2] * mat[7] - mat[1] * mat[8]) / det;
+//   mat_inv[2] = (mat[1] * mat[5] - mat[2] * mat[4]) / det;
+//   mat_inv[3] = (mat[5] * mat[6] - mat[3] * mat[8]) / det;
+//   mat_inv[4] = (mat[0] * mat[8] - mat[2] * mat[6]) / det;
+//   mat_inv[5] = (mat[2] * mat[3] - mat[0] * mat[5]) / det;
+//   mat_inv[6] = (mat[3] * mat[7] - mat[4] * mat[6]) / det;
+//   mat_inv[7] = (mat[1] * mat[6] - mat[0] * mat[7]) / det;
+//   mat_inv[8] = (mat[0] * mat[4] - mat[1] * mat[3]) / det;
+//   return true;
+// }
+
 // form the matrix free operator
 template <Integer u, Integer v>
 void form_operator(const DMQ2 dm, const int rank) {
@@ -158,17 +190,63 @@ void form_operator(const DMQ2 dm, const int rank) {
 
   dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
     double points[DMQ2::elem_nodes * 3];
+    double J[4 * 4], J_inv[4 * 4];
+    double sol[DMQ2::elem_nodes];
+    double gi[2], g[2];
+
     get_elem_coordinates<Elem::ElemType>(dm, elem_index, points);
+
+    const double x0 = points[0];
+    const double y0 = points[1];
+
+    // col 0
+    J[0] = points[3] - x0;
+    J[2] = points[4] - y0;
+
+    // col 1
+    J[1] = points[7] - x0;
+    J[3] = points[8] - y0;
+
+    // determinat
+    const double det_J = J[0] * J[3] - J[2] * J[1];
+
+    invert2(J, J_inv, det_J);
+
     for (int i = 0; i < DMQ2::elem_nodes; i++) {
       // forach dof get the local number
       const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
 
       // use the local number to read the corresponding user data
-      double ui = dm.get_dof_data<v>(local_dof) + 1;
-      // TODO: apply the operator
+      sol[i] = dm.get_dof_data<0>(local_dof);
+    }
 
-      // atomically updated the contributions to the same dof
-      Kokkos::atomic_add(&dm.get_dof_data<u>(local_dof), ui);
+    int n_qp = 1;
+    for (int k = 0; k < n_qp; ++k) {
+      // we need 2nd order quadrature rule for quads!
+      double q[2] = {0.5, 0.5};
+      double w = 1.0;
+
+      FEQuad4<double>::Grad::ref(q, sol, gi);
+
+      g[0] = J_inv[0] * gi[0] + J_inv[2] * gi[1];
+      g[1] = J_inv[1] * gi[0] + J_inv[3] * gi[1];
+
+      for (int i = 0; i < DMQ2::elem_nodes; i++) {
+        // forach dof get the local number
+        const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+        FEQuad4<double>::Grad::affine_f(i, J_inv, q, gi);
+
+        // dot(grad sol, grad phi_i)
+        const double dot_grads = (gi[0] * g[0] + gi[1] * g[1]);
+        const double integr = w * det_J * dot_grads;
+
+        // use the local number to read the corresponding user data
+        // double ui = dm.get_dof_data<0>(local_dof) + 1;
+        // TODO: apply the operator
+
+        // atomically updated the contributions to the same dof
+        // Kokkos::atomic_add(&dm.get_dof_data<1>(local_dof), ui);
+      }
     }
   });
 }
