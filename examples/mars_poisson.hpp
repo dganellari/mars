@@ -69,6 +69,9 @@ enum class DMDataDesc
 };
  */
 
+static constexpr int INPUT = 0;
+static constexpr int OUTPUT = 1;
+
 template <Integer idx> using DMDataType = typename DMQ2::UserDataType<idx>;
 
 template <typename... T> using tuple = mars::ViewsTuple<T...>;
@@ -182,6 +185,20 @@ MARS_INLINE_FUNCTION bool invert2(const T *mat, T *mat_inv, const Scalar &det) {
 //   return true;
 // }
 
+// q.points = {{0.5, 0.5},
+// {0.98304589153964795245728880523899, 0.5},
+// {0.72780186391809642112479237299488, 0.074042673347699754349082179816666},
+// {0.72780186391809642112479237299488, 0.92595732665230024565091782018333},
+// {0.13418502421343273531598225407969, 0.18454360551162298687829339850317},
+// {0.13418502421343273531598225407969, 0.81545639448837701312170660149683}};
+
+// q.weights = {0.28571428571428571428571428571428,
+// 0.10989010989010989010989010989011,
+// 0.14151805175188302631601261486295,
+// 0.14151805175188302631601261486295,
+// 0.16067975044591917148618518733485,
+// 0.16067975044591917148618518733485};
+
 // form the matrix free operator
 template <Integer u, Integer v>
 void form_operator(const DMQ2 dm, const int rank) {
@@ -192,39 +209,75 @@ void form_operator(const DMQ2 dm, const int rank) {
     double points[DMQ2::elem_nodes * 3];
     double J[4 * 4], J_inv[4 * 4];
     double sol[DMQ2::elem_nodes];
+    double res[DMQ2::elem_nodes];
     double gi[2], g[2];
 
+    ////////////////////////////////////////////////////////////////////////
+    //////////////////////// Uniform data ////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////
+
+    static const int n_qp = 6;
+    double q_points[n_qp][2] = {{0.5, 0.5},
+                                {0.98304589153964795245728880523899, 0.5},
+                                {0.72780186391809642112479237299488,
+                                 0.074042673347699754349082179816666},
+                                {0.72780186391809642112479237299488,
+                                 0.92595732665230024565091782018333},
+                                {0.13418502421343273531598225407969,
+                                 0.18454360551162298687829339850317},
+                                {0.13418502421343273531598225407969,
+                                 0.81545639448837701312170660149683}};
+
+    double q_weights[n_qp] = {
+        0.28571428571428571428571428571428, 0.10989010989010989010989010989011,
+        0.14151805175188302631601261486295, 0.14151805175188302631601261486295,
+        0.16067975044591917148618518733485, 0.16067975044591917148618518733485};
+
+    ////////////////////////////////////////////////////////////////////////
+    //////////////////////// Geometric data ////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////
     get_elem_coordinates<Elem::ElemType>(dm, elem_index, points);
 
+    // p0
     const double x0 = points[0];
     const double y0 = points[1];
 
-    // col 0
+    // col 0, p1
     J[0] = points[3] - x0;
     J[2] = points[4] - y0;
 
-    // col 1
-    J[1] = points[7] - x0;
-    J[3] = points[8] - y0;
+    // we skip p2
 
-    // determinat
+    // col 1, p3
+    J[1] = points[9] - x0;
+    J[3] = points[10] - y0;
+
+    // determinant
     const double det_J = J[0] * J[3] - J[2] * J[1];
 
     invert2(J, J_inv, det_J);
+
+    ////////////////////////////////////////////////////////////////////////
+    //////////////////////// Read solution (global 2 local) ////////////////
+    ////////////////////////////////////////////////////////////////////////
 
     for (int i = 0; i < DMQ2::elem_nodes; i++) {
       // forach dof get the local number
       const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
 
       // use the local number to read the corresponding user data
-      sol[i] = dm.get_dof_data<0>(local_dof);
+      sol[i] = dm.get_dof_data<INPUT>(local_dof);
+      res[i] = 0.0;
     }
 
-    int n_qp = 1;
+    ////////////////////////////////////////////////////////////////////////
+    //////////////////////// Integrate /////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////
+
     for (int k = 0; k < n_qp; ++k) {
       // we need 2nd order quadrature rule for quads!
-      double q[2] = {0.5, 0.5};
-      double w = 1.0;
+      double q[2] = {q_points[k][0], q_points[k][1]};
+      double w = q_weights[k];
 
       FEQuad4<double>::Grad::ref(q, sol, gi);
 
@@ -240,13 +293,19 @@ void form_operator(const DMQ2 dm, const int rank) {
         const double dot_grads = (gi[0] * g[0] + gi[1] * g[1]);
         const double integr = w * det_J * dot_grads;
 
-        // use the local number to read the corresponding user data
-        // double ui = dm.get_dof_data<0>(local_dof) + 1;
-        // TODO: apply the operator
-
-        // atomically updated the contributions to the same dof
-        // Kokkos::atomic_add(&dm.get_dof_data<1>(local_dof), ui);
+        res[i] += integr;
       }
+    }
+
+    ////////////////////////////////////////////////////////////////////////
+    //////////////////////// Local 2 global ////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////
+
+    for (int i = 0; i < DMQ2::elem_nodes; i++) {
+      const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+
+      // atomically updated the contributions to the same dof
+      Kokkos::atomic_add(&dm.get_dof_data<OUTPUT>(local_dof), res[i]);
     }
   });
 }
@@ -346,15 +405,15 @@ void poisson(int &argc, char **&argv, const int level) {
     // initialize the values by iterating through local dofs
     Kokkos::parallel_for(
         "initdatavalues", dof_size, MARS_LAMBDA(const Integer i) {
-          dm.get_dof_data<u>(i) = 0;
-          dm.get_dof_data<v>(i) = i;
+          dm.get_dof_data<INPUT>(i) = 1.0;
+          dm.get_dof_data<OUTPUT>(i) = 0.0;
         });
 
     // specify the tuple indices of the tuplelements that are needed to gather.
     // if no index specified it gathers all views of the tuple. All data.
-    dm.gather_ghost_data<v>(context);
+    dm.gather_ghost_data<INPUT>(context);
 
-    form_operator<u, v>(dm, proc_num);
+    form_operator<INPUT, OUTPUT>(dm, proc_num);
 
     // iterate through the local dofs and print the local number and the data
     /* dm.dof_iterate(
@@ -363,7 +422,7 @@ void poisson(int &argc, char **&argv, const int level) {
                    dm.get_dof_data<u>(i), dm.get_dof_data<v>(i), proc_num);
         }); */
 
-    scatter_add_ghost_data<u>(dm, context);
+    scatter_add_ghost_data<OUTPUT>(dm, context);
 
     dm.dof_iterate(MARS_LAMBDA(const Integer i) {
       printf("ggid: %li, u: %lf, v: %lf, rank: %i\n", i, dm.get_dof_data<u>(i),
