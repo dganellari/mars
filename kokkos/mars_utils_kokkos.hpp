@@ -1,9 +1,12 @@
 #ifndef GENERATION_MARS_UTILS_KOKKOS_HPP_
 #define GENERATION_MARS_UTILS_KOKKOS_HPP_
 
+#ifdef WITH_KOKKOS
 #include "Kokkos_Layout.hpp"
+#endif
 #include "mars_globals.hpp"
 #include "mars_vector.hpp"
+#include <err.h>
 
 namespace mars {
 

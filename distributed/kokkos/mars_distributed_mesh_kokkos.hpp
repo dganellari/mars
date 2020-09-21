@@ -12,13 +12,12 @@
 #include <sstream>
 #include <vector>
 
+#ifdef WITH_MPI
 #include "mars_distributed_non_simplex_kokkos.hpp"
 #include "mars_distributed_octant.hpp"
 #include "mars_distributed_simplex_kokkos.hpp"
 #include "mars_imesh_kokkos.hpp"
 #include "mars_distributed_utils.hpp"
-
-#ifdef WITH_MPI
 #include "mars_sfc_generation.hpp"
 #endif
 #include "mars_utils_kokkos.hpp"

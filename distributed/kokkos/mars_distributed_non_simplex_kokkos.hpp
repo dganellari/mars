@@ -1,6 +1,7 @@
 #ifndef MARS_DIST_NON_SIMPLEX_KOKKOS_HPP
 #define MARS_DIST_NON_SIMPLEX_KOKKOS_HPP
 
+#include "mars_fwd.hpp"
 #include "mars_base.hpp"
 #include "mars_imesh_kokkos.hpp"
 
