@@ -207,7 +207,7 @@ void form_operator(const DMQ2 dm, const int rank) {
 
   dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
     double points[DMQ2::elem_nodes * 3];
-    double J[4 * 4], J_inv[4 * 4];
+    double J[2 * 2], J_inv[2 * 2];
     double sol[DMQ2::elem_nodes];
     double res[DMQ2::elem_nodes];
     double gi[2], g[2];
@@ -294,6 +294,8 @@ void form_operator(const DMQ2 dm, const int rank) {
         const double integr = w * det_J * dot_grads;
 
         res[i] += integr;
+
+        assert(res[i] == res[i]);
       }
     }
 
@@ -406,6 +408,7 @@ void poisson(int &argc, char **&argv, const int level) {
     Kokkos::parallel_for(
         "initdatavalues", dof_size, MARS_LAMBDA(const Integer i) {
           dm.get_dof_data<INPUT>(i) = 1.0;
+          // dm.get_dof_data<INPUT>(i) = i;
           dm.get_dof_data<OUTPUT>(i) = 0.0;
         });
 
@@ -425,8 +428,8 @@ void poisson(int &argc, char **&argv, const int level) {
     scatter_add_ghost_data<OUTPUT>(dm, context);
 
     dm.dof_iterate(MARS_LAMBDA(const Integer i) {
-      printf("ggid: %li, u: %lf, v: %lf, rank: %i\n", i, dm.get_dof_data<u>(i),
-             dm.get_dof_data<v>(i), proc_num);
+      printf("ggid: %li, INPUT: %lf, OUTPUT: %lf, rank: %i\n", i,
+             dm.get_dof_data<INPUT>(i), dm.get_dof_data<OUTPUT>(i), proc_num);
     });
 
     double time = timer.seconds();
