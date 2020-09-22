@@ -58,6 +58,8 @@ u = P uk */
 #endif // WITH_KOKKOS
 #endif
 
+#include "mars_precon_conjugate_grad.hpp"
+
 namespace mars {
 
 using DMQ2 = DM<DistributedQuad4Mesh, 2, double, double>;
