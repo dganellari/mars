@@ -1,8 +1,8 @@
 int n=1;
 
 
-real Lx=1;
-real Ly=0.2;
+real Lx=5;
+real Ly=1;
 
 real Mx=1.0/2.0;
 real My=1.0/2.0;

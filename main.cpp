@@ -1246,14 +1246,15 @@ int main(int argc, char *argv[])
 	
 // DUALLinearElasticityCook<2,1>(argc,argv);//1,1,2);
 // SquareHoleDUALContactLinearElasticity<2,1>(argc,argv);
-// PROVALSFEM_ContactLinearElasticity<2,0,1>(1,5,6);
+PROVALSFEM_ContactLinearElasticity<2,0,1>(1,5,6);
+// PROVALSFEM_ContactLinearElasticity2<2,0,1>(argc,argv);
 // PrimalContactLinearElasticity<2>(argc,argv);
 // PROVALSFEM_ContactLinearElasticity2<2,0,1>(1,0,1,1);
 // CookLSFEM<2,0,1>(argc,argv);
 
 // LSFEM_Poisson<2,0,1>(argc,argv);
 // BeamLSFEM<2,0,1>(argc,argv);
-BeamImprovedMomentumLSFEM<2,0,1>(argc,argv);
+// BeamImprovedMomentumLSFEM<2,0,1>(argc,argv);
 // ContactImprovedMomentumLSFEM<2,0,1>(argc,argv);
 // Poisson_Lagrange<2,1>(argc,argv);
 // FullDirichletElasticityLSFEM<2,0,1>(argc,argv);
