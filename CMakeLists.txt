@@ -250,7 +250,8 @@ if(WITH_MPI)
         distributed/communication/mars_mpi_error.cpp
         distributed/communication/mars_mpi_context.cpp
         distributed/communication/mars_execution_context.cpp
-        distributed/communication/mars_dry_run_context.cpp)
+        distributed/communication/mars_dry_run_context.cpp
+        examples/mars_poisson_operator.cpp)
 endif()
 
 set(CMAKE_CXX_DEBUG "-g")

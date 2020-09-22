@@ -1,102 +1,102 @@
 #ifndef ST_OPERATOR_HPP
 #define ST_OPERATOR_HPP
 
+#include <mpi.h>
+
+#include <algorithm>
+#include <cassert>
 #include <cstdlib>
 #include <iostream>
-#include <cassert>
-#include <algorithm>
-#include <numeric>
 #include <map>
+#include <numeric>
 
-#include "mars_matrix.hpp"
-#include "mars_vector.hpp"
-#include "mars_utils.hpp"
-#include <err.h>
 #include "KokkosSparse_CrsMatrix.hpp"
 #include "KokkosSparse_spmv_spec.hpp"
-#include <Kokkos_Core.hpp>
+#include "mars_matrix.hpp"
+#include "mars_utils.hpp"
+#include "mars_vector.hpp"
+#include <KokkosBlas1_axpby.hpp>
+#include <KokkosBlas1_dot.hpp>
+#include <KokkosBlas1_mult.hpp>
+#include <KokkosBlas1_nrm1.hpp>
+#include <KokkosBlas1_nrm2.hpp>
+#include <KokkosBlas1_scal.hpp>
+#include <KokkosSparse_spadd.hpp>
 #include <KokkosSparse_spmv.hpp>
-#include<KokkosBlas1_axpby.hpp>
-#include<KokkosBlas1_mult.hpp>
-#include<KokkosBlas1_dot.hpp>
-#include<KokkosBlas1_scal.hpp>
-#include<KokkosBlas1_nrm2.hpp>
-#include<KokkosBlas1_nrm1.hpp>
-#include<KokkosSparse_spadd.hpp>
+#include <Kokkos_Core.hpp>
+#include <err.h>
 
+#include "mars_context.hpp"
 
-namespace mars{
-    using KokkosVector = Kokkos::View<Real*>;
-    using SparseMatrix = KokkosSparse::CrsMatrix<Real, Integer, Kokkos::Serial>;
+namespace mars {
+// using KokkosVector = Kokkos::View<Real *>;
+// using SparseMatrix = KokkosSparse::CrsMatrix<Real, Integer, Kokkos::Serial>;
 
-    class Operator{
-        public:
-        virtual ~Operator()  {};
+class Operator {
+public:
+  virtual ~Operator(){};
 
-        virtual void apply(const KokkosVector &a, KokkosVector &b)  =  0; // implementato in maniera obbligatoria  se creo una sottoclasse (metodo PURE VIRTUAL)  
-    }; 
+  virtual void apply(const ViewVectorType<Real> &x,
+                     ViewVectorType<Real> &op_x) = 0;
 
-    class ImplicitEulerOperator final: public Operator {
-        public: 
-        ImplicitEulerOperator(const SparseMatrix &stiffness_matrix, const SparseMatrix &mass_matrix, const Real &dt, const size_t &N)
-        : stiffness_matrix(stiffness_matrix), 
-        mass_matrix(mass_matrix),
-        dt(dt),
-        N(N)
-        {}
+  Operator(const context &ctx) : ctx_(ctx) {}
 
-        void apply(const KokkosVector &a, KokkosVector &b) override {
-            Kokkos::View<Real*> b0("b0", N );            
-            KokkosSparse::spmv("N", 1.0, stiffness_matrix, a, 0.0, b0); // A*x = b0 
+  const context &ctx() const { return ctx_; }
 
-            KokkosSparse::spmv("N", 1.0, mass_matrix, a, 0.0, b); // b = M*x
-            KokkosBlas::axpy(dt, b0, b); // b = b + dt*b1
-        }
+private:
+  const context &ctx_;
+};
 
-        private: 
-        const SparseMatrix &stiffness_matrix; 
-        const SparseMatrix &mass_matrix;
-        const Real &dt; 
-        const size_t &N;
-    };
+// class ImplicitEulerOperator final : public Operator {
+// public:
+//   ImplicitEulerOperator(const SparseMatrix &stiffness_matrix,
+//                         const SparseMatrix &mass_matrix, const Real &dt,
+//                         const size_t &N)
+//       : stiffness_matrix(stiffness_matrix), mass_matrix(mass_matrix), dt(dt),
+//         N(N) {}
 
-    class MatrixWrapper final: public Operator {
-    public:
-        // storare la matrice, sparse matrix vector multiplication
-        MatrixWrapper(const SparseMatrix &mat)
-        : mat(mat)
-        {}
+//   void apply(const KokkosVector &a, KokkosVector &b) override {
+//     Kokkos::View<Real *> b0("b0", N);
+//     KokkosSparse::spmv("N", 1.0, stiffness_matrix, a, 0.0, b0); // A*x = b0
 
-        void apply(const KokkosVector &a, KokkosVector &b) override
-        {
-            KokkosSparse::spmv("N", 1.0, mat, a, 0.0, b); // mat*a = b 
-        }
+//     KokkosSparse::spmv("N", 1.0, mass_matrix, a, 0.0, b); // b = M*x
+//     KokkosBlas::axpy(dt, b0, b);                          // b = b + dt*b1
+//   }
 
-        private: 
-            const SparseMatrix &mat;
-    };
+// private:
+//   const SparseMatrix &stiffness_matrix;
+//   const SparseMatrix &mass_matrix;
+//   const Real &dt;
+//   const size_t &N;
+// };
 
-    class VectorWrapper final: public Operator {
-    public:
-        // storare la matrice, sparse matrix vector multiplication
-        VectorWrapper(const KokkosVector &v)
-        : v(v)
-        {}  
+// class MatrixWrapper final : public Operator {
+// public:
+//   // storare la matrice, sparse matrix vector multiplication
+//   MatrixWrapper(const SparseMatrix &mat) : mat(mat) {}
 
-        void apply(const KokkosVector &a, KokkosVector &b) override
-        {
-            KokkosBlas::mult(0.0, b, 1.0, a, v); 
-        }
+//   void apply(const KokkosVector &a, KokkosVector &b) override {
+//     KokkosSparse::spmv("N", 1.0, mat, a, 0.0, b); // mat*a = b
+//   }
 
-        void apply2(double &nrm){
+// private:
+//   const SparseMatrix &mat;
+// };
 
-            nrm = KokkosBlas::nrm1(v); 
+// class VectorWrapper final : public Operator {
+// public:
+//   // storare la matrice, sparse matrix vector multiplication
+//   VectorWrapper(const KokkosVector &v) : v(v) {}
 
-        }
+//   void apply(const KokkosVector &a, KokkosVector &b) override {
+//     KokkosBlas::mult(0.0, b, 1.0, a, v);
+//   }
 
-        private: 
-            const KokkosVector &v;
-    };
-} 
+//   void apply2(double &nrm) { nrm = KokkosBlas::nrm1(v); }
 
-#endif //ST_OPERATOR_HPP
+// private:
+//   const KokkosVector &v;
+// };
+} // namespace mars
+
+#endif // ST_OPERATOR_HPP
