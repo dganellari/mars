@@ -72,9 +72,11 @@ enum class DMDataDesc
 static constexpr int INPUT = 0;
 static constexpr int OUTPUT = 1;
 
-template <Integer idx> using DMDataType = typename DMQ2::UserDataType<idx>;
+template <Integer idx>
+using DMDataType = typename DMQ2::UserDataType<idx>;
 
-template <typename... T> using tuple = mars::ViewsTuple<T...>;
+template <typename... T>
+using tuple = mars::ViewsTuple<T...>;
 
 using dm_tuple = typename DMQ2::user_tuple;
 
@@ -155,15 +157,6 @@ get_elem_coordinates(const DMQ2 &dm, const Integer elem_index, double *points) {
   }
 }
 
-template <typename T, typename Scalar>
-MARS_INLINE_FUNCTION bool invert2(const T *mat, T *mat_inv, const Scalar &det) {
-  mat_inv[0] = mat[3] / det;
-  mat_inv[1] = -mat[1] / det;
-  mat_inv[2] = -mat[2] / det;
-  mat_inv[3] = mat[0] / det;
-  return true;
-}
-
 // template <typename T, typename Scalar>
 // MARS_INLINE_FUNCTION bool invert3(const T *mat, T *mat_inv, const Scalar
 // &det) {
@@ -199,6 +192,133 @@ MARS_INLINE_FUNCTION bool invert2(const T *mat, T *mat_inv, const Scalar &det) {
 // 0.16067975044591917148618518733485,
 // 0.16067975044591917148618518733485};
 
+
+template <typename T, typename Scalar>
+MARS_INLINE_FUNCTION bool invert2(const T *mat, T *mat_inv, const Scalar &det) {
+  mat_inv[0] = mat[3] / det;
+  mat_inv[1] = -mat[1] / det;
+  mat_inv[2] = -mat[2] / det;
+  mat_inv[3] = mat[0] / det;
+  return true;
+}
+
+template<Integer Type>
+void compute_invJ_and_detJ(const DMQ2 &dm, ViewVectorType<double> detJ,
+                           ViewMatrixType<double> invJ) {
+
+  dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
+
+    double J[4];
+    double point_ref[2];
+    double next_point[2];
+
+    const Integer local_dof = dm.get_elem_local_dof(elem_index, 0);
+    dm.get_dof_coordinates_from_local<Type>(local_dof, point_ref);
+
+    const Integer local_dof = dm.get_elem_local_dof(elem_index, 1);
+    dm.get_dof_coordinates_from_local<Type>(local_dof, next_point);
+
+    // col 0, p1
+    J[0] = next_point[0] - point_ref[0];
+    J[2] = next_point[1] - point_ref[1];
+
+    // we skip p2
+
+    local_dof = dm.get_elem_local_dof(elem_index, 3);
+    dm.get_dof_coordinates_from_local<Type>(local_dof, next_point);
+
+    // col 1, p3
+    J[1] = next_point[0] - point_ref[0];
+    J[3] = next_point[1] - point_ref[1];
+
+    // determinant
+    const double det_J = J[0] * J[3] - J[2] * J[1];
+
+    //fill out the views
+    invert2(J, &invJ(elem_index, 0), det_J);
+    detJ(elem_index) = det_J;
+  });
+}
+
+
+MARS_INLINE_FUNCTION
+template<Integer INPUT>
+void gather_elem_data(const DMQ2& dm, const Integer elem_index,
+        DMDataType<INPUT>* sol)
+{
+  for (int i = 0; i < DMQ2::elem_nodes; i++)
+  {
+    // forach dof get the local number
+    const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+    // use the local number to read the corresponding user data
+    sol[i] = dm.get_dof_data<INPUT>(local_dof);
+  }
+}
+
+void integrate(const DMQ2 &dm, ViewVectorType<double> det_J,
+                           ViewMatrixType<double> J_inv) {
+
+
+  using q_points = FEQuad4<double>::q_p;
+  using q_weights = FEQuad4<double>::q_w;
+
+  dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
+
+    double gi[2], g[2];
+    double res[DMQ2::elem_nodes]={0};
+
+    double sol[DMQ2::elem_nodes];
+    gather_elem_data<INPUT>(dm, elem_index, sol);
+
+    for (int k = 0; k < n_qp; ++k) {
+      // we need 2nd order quadrature rule for quads!
+      /* double q[2] = {q_points[k][0], q_points[k][1]}; */
+      double w = q_weights[k];
+
+      FEQuad4<double>::Grad::ref(&q_points(k), sol, gi); // compute it once
+
+      g[0] = J_inv[0] * gi[0] + J_inv[2] * gi[1];
+      g[1] = J_inv[1] * gi[0] + J_inv[3] * gi[1];
+
+      for (int i = 0; i < DMQ2::elem_nodes; i++) {
+        // forach dof get the local number
+        const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+        FEQuad4<double>::Grad::affine_f(i, &J_inv(elem_index, 0), &q_points(k), gi);
+
+        // dot(grad sol, grad phi_i)
+        const double dot_grads = (gi[0] * g[0] + gi[1] * g[1]);
+        const double integr = w * det_J(elem_index) * dot_grads;
+
+        res[i] += integr;
+        Kokkos::atomic_add(&dm.get_dof_data<OUTPUT>(local_dof), integr);
+        assert(res[i] == res[i]);
+      }
+    }
+
+    //update output
+    /* for (int i = 0; i < DMQ2::elem_nodes; i++) {
+      const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+      // atomically updated the contributions to the same dof
+      Kokkos::atomic_add(&dm.get_dof_data<OUTPUT>(local_dof), res[i]);
+    } */
+
+  });
+}
+
+template<Integer INPUT, Integer OUTPUT>
+build_data_matrix
+// form the matrix free operator
+template <Integer u, Integer v>
+void form_operator(const DMQ2 dm, const int rank) {
+
+    ViewVectorType<double> detJ("detJ", dm.get_elem_size());
+    ViewMatrixType<double> invJ("J_inv", dm.get_elem_size(), 4);
+    compute_invJ_and_detJ<Type>(dm, detJ, invJ);
+
+    integrate(dm, detJ, invJ);
+
+}
+/*
 // form the matrix free operator
 template <Integer u, Integer v>
 void form_operator(const DMQ2 dm, const int rank) {
@@ -279,7 +399,7 @@ void form_operator(const DMQ2 dm, const int rank) {
       double q[2] = {q_points[k][0], q_points[k][1]};
       double w = q_weights[k];
 
-      FEQuad4<double>::Grad::ref(q, sol, gi);
+      FEQuad4<double>::Grad::ref(q, sol, gi); //compute it once
 
       g[0] = J_inv[0] * gi[0] + J_inv[2] * gi[1];
       g[1] = J_inv[1] * gi[0] + J_inv[3] * gi[1];
@@ -310,7 +430,7 @@ void form_operator(const DMQ2 dm, const int rank) {
       Kokkos::atomic_add(&dm.get_dof_data<OUTPUT>(local_dof), res[i]);
     }
   });
-}
+} */
 
 template <Integer... dataidx>
 void scatter_add_ghost_data(DMQ2 &dm, const context &context) {

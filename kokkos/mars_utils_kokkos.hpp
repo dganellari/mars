@@ -64,6 +64,9 @@ using ViewMatrixTexture = Kokkos::View<T*[YDim_],KokkosLayout,KokkosSpace,Kokkos
 template<typename T, Integer XDim_, Integer YDim_>
 using ViewMatrixTextureC = Kokkos::View<T[XDim_][YDim_],KokkosLayout,KokkosSpace,Kokkos::MemoryTraits<Kokkos::RandomAccess>>;
 
+template<typename T, Integer XDim_>
+using ViewVectorTextureC = Kokkos::View<T[XDim_],KokkosLayout,KokkosSpace,Kokkos::MemoryTraits<Kokkos::RandomAccess>>;
+
 template<typename T>
 using ViewVectorTexture = Kokkos::View<T*,KokkosLayout,KokkosSpace,Kokkos::MemoryTraits<Kokkos::RandomAccess>>;
 

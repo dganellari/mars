@@ -85,6 +85,11 @@ public:
         get_data().elem_iterate(f);
     }
 
+    MARS_INLINE_FUNCTION Integer get_elem_size() const
+    {
+        return get_data().get_host_mesh()->get_chunk_size();
+    }
+
     template <typename H>
     MARS_INLINE_FUNCTION void face_iterate(H f) const
     {
@@ -1256,6 +1261,23 @@ void enumerate_dofs(const context &context)
     Integer sfc_to_local(const Integer sfc) const
     {
         return local_dof_enum.get_view_sfc_to_local()(sfc);
+    }
+
+    template<Integer Type>
+    MARS_INLINE_FUNCTION
+    void get_dof_coordinates_from_sfc(const Integer sfc, double *point)
+    {
+        get_vertex_coordinates_from_sfc<Type>(sfc, point,
+                get_local_dof_enum().get_XDim(), get_local_dof_enum().get_YDim(),
+                get_local_dof_enum().get_ZDim());
+    }
+
+    template<Integer Type>
+    MARS_INLINE_FUNCTION
+    void get_dof_coordinates_from_local(const Integer local, double *point
+    {
+        const Integer sfc =  local_to_sfc(local);
+        return get_dof_coordinates_from_sfc<Type>(sfc);
     }
 
     /* :TODO stencil use the face iterate on the dof sfc. */

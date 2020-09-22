@@ -225,6 +225,33 @@ for_each_arg(const F &f, std::tuple<Tp...> &t, std::tuple<Tp...> &v)
 
 /* other utils */
 
+template <typename T, Integer Dim>
+void fill_view_vector(ViewVectorTextureC<T, Dim> v, const T value[Dim]) {
+  using namespace Kokkos;
+
+  typename ViewVectorTextureC<T, Dim>::HostMirror h_pt = create_mirror_view(v);
+
+  for (Integer i = 0; i < Dim; ++i)
+    h_pt(i) = value[i];
+
+  deep_copy(v, h_pt);
+}
+
+template <typename T, Integer XDim, Integer YDim>
+void fill_view_matrix(ViewMatrixTextureC<T, XDim, YDim> m, const T value[XDim][yDim]) {
+  using namespace Kokkos;
+
+  typename ViewMatrixTextureC<T, XDim, YDim>::HostMirror h_pt = create_mirror_view(m);
+
+  for (Integer i = 0; i < XDim; ++i) {
+    for (Integer j = 0; j < YDim; ++j) {
+      h_pt(i,j) = value[i][j];
+    }
+  }
+
+  deep_copy(m, h_pt);
+}
+
 struct resize_view_functor
 {
     resize_view_functor(std::string d, size_t s) : _desc(d), _size(s) {}
