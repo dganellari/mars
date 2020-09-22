@@ -30,7 +30,7 @@ namespace mars {
 // using SparseMatrix = KokkosSparse::CrsMatrix<Real, Integer, Kokkos::Serial>;
 using VecType = mars::ViewVectorType<Real>;
 
-void BiCGSTAB(Operator &A, Operator &P, const VecType &b, VecType &x_0,
+void bcg_stab(Operator &A, Operator &P, const VecType &b, VecType &x_0,
               const size_t &N, Integer max_iter, double &omega_precon,
               VecType &result, Real &num_iter
 
@@ -46,6 +46,7 @@ void BiCGSTAB(Operator &A, Operator &P, const VecType &b, VecType &x_0,
   // std::string iterations = "rel_error_zero.csv";
   std::cout << "Max iter: " << max_iter << std::endl;
 
+  // FIXME can any of these buffers be avoided?
   VecType r_0("r_0", N);
   VecType r_1("r_1", N);
   VecType p_0("p_0", N);
@@ -129,6 +130,8 @@ void BiCGSTAB(Operator &A, Operator &P, const VecType &b, VecType &x_0,
     A.apply(z, t); // t = A*z;
 
     P.apply(t, tP);
+
+    // FIXME make one reduce instead of two
     omega_1 =
         comm.sum(KokkosBlas::dot(tP, s)) / comm.sum(KokkosBlas::dot(tP, t));
 
@@ -219,8 +222,8 @@ void BiCGSTAB(Operator &A, Operator &P, const VecType &b, VecType &x_0,
 //     P.apply2(o1);
 //     // matrix_free_CG(S, P, b, x_0, N, result, num_iter);
 
-//     // BiCGSTAB(S, P, b, init_guess, N, max_iter, o1, result, num_iter);
-//     BiCGSTAB_new(S, P, b, init_guess, N, max_iter, o1, result, num_iter);
+//     // bcg_stab(S, P, b, init_guess, N, max_iter, o1, result, num_iter);
+//     bcg_stab_new(S, P, b, init_guess, N, max_iter, o1, result, num_iter);
 
 // }
 
