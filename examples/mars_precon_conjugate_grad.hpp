@@ -17,6 +17,7 @@
 #include <KokkosBlas1_dot.hpp>
 #include <KokkosBlas1_mult.hpp>
 #include <KokkosBlas1_nrm2.hpp>
+#include <KokkosBlas1_nrm2_squared.hpp>
 #include <KokkosBlas1_scal.hpp>
 #include <KokkosSparse_spmv.hpp>
 #include <Kokkos_Core.hpp>
@@ -27,13 +28,16 @@
 // KokkosBlas::mult(b, z, a, x, y);
 namespace mars {
 // using SparseMatrix = KokkosSparse::CrsMatrix<Real, Integer, Kokkos::Serial>;
-using KokkosVector = Kokkos::View<Real *>;
+using VecType = mars::ViewVectorType<Real>;
 
-void BiCGSTAB(Operator &A, Operator &P, const KokkosVector &b,
-              KokkosVector &x_0, const size_t &N, Integer max_iter,
-              double &omega_precon, KokkosVector &result, Real &num_iter
+void BiCGSTAB(Operator &A, Operator &P, const VecType &b, VecType &x_0,
+              const size_t &N, Integer max_iter, double &omega_precon,
+              VecType &result, Real &num_iter
 
 ) {
+
+  auto &ctx = A.ctx();
+  auto &comm = *ctx->distributed;
 
   // CSVWriter csv;
   // std::string path_error =
@@ -42,20 +46,20 @@ void BiCGSTAB(Operator &A, Operator &P, const KokkosVector &b,
   // std::string iterations = "rel_error_zero.csv";
   std::cout << "Max iter: " << max_iter << std::endl;
 
-  KokkosVector r_0("r_0", N);
-  KokkosVector r_1("r_1", N);
-  KokkosVector p_0("p_0", N);
-  KokkosVector p_1("p_1", N);
-  KokkosVector v_0("v_0", N);
-  KokkosVector v_1("v_1", N);
-  KokkosVector x_1("x_1", N);
-  KokkosVector r_hat("r_hat", N);
-  KokkosVector y("y", N);
-  KokkosVector z("z", N);
-  KokkosVector s("s", N);
-  KokkosVector h("h", N);
-  KokkosVector t("t", N);
-  KokkosVector tP("tP", N);
+  VecType r_0("r_0", N);
+  VecType r_1("r_1", N);
+  VecType p_0("p_0", N);
+  VecType p_1("p_1", N);
+  VecType v_0("v_0", N);
+  VecType v_1("v_1", N);
+  VecType x_1("x_1", N);
+  VecType r_hat("r_hat", N);
+  VecType y("y", N);
+  VecType z("z", N);
+  VecType s("s", N);
+  VecType h("h", N);
+  VecType t("t", N);
+  VecType tP("tP", N);
 
   Real rho_0 = 1.0;
   Real rho_1;
@@ -73,14 +77,14 @@ void BiCGSTAB(Operator &A, Operator &P, const KokkosVector &b,
 
   // Compute initial r_hat
   Kokkos::deep_copy(r_hat, r_0);
-  double eps2_d = KokkosBlas::nrm2(b);
+  double eps2_d = std::sqrt(comm.sum(KokkosBlas::nrm2_squared(b)));
 
-  std::vector<Real> rel_error;
+  // std::vector<Real> rel_error;
 
   double count = 0.0;
   while (count < max_iter) {
     count++;
-    rho_1 = KokkosBlas::dot(r_hat, r_0); // rho = (r_hat)' * r_0
+    rho_1 = comm.sum(KokkosBlas::dot(r_hat, r_0)); // rho = (r_hat)' * r_0
     if (rho_1 == 0) {
       std::cerr << "METHOD FAILS: rho = 0" << std::endl;
       break;
@@ -100,7 +104,9 @@ void BiCGSTAB(Operator &A, Operator &P, const KokkosVector &b,
     A.apply(y, v_1);
 
     Real alpha_1 = 0.0;
-    alpha_1 = rho_1 / KokkosBlas::dot(r_hat, v_1);
+    Real dot_rv = comm.sum(KokkosBlas::dot(r_hat, v_1));
+
+    alpha_1 = rho_1 / dot_rv;
 
     KokkosBlas::scal(h, alpha_1, y);
     KokkosBlas::axpby(1.0, x_0, 1.0, h);
@@ -109,20 +115,11 @@ void BiCGSTAB(Operator &A, Operator &P, const KokkosVector &b,
     KokkosBlas::scal(s, alpha_1, v_1);
     KokkosBlas::axpby(1.0, r_0, -1.0, s);
 
-    rel_error.push_back(KokkosBlas::nrm2(s));
+    // rel_error.push_back(std::sqrt(comm.sum(KokkosBlas::nrm2_squared(s))));
 
-    // if (max_iter == 6719) {
+    Real norm_s = std::sqrt(comm.sum(KokkosBlas::nrm2_squared(s)));
 
-    //   FILE *file =
-    //       fopen("/Users/liudmilakaragyaur/code/space_time_error_estimator/"
-    //             "test_3D/bicgstab/rel_error_close.csv",
-    //             "a");
-    //   fprintf(file, "%e \n", KokkosBlas::nrm2(s));
-    //   fclose(file);
-    // }
-
-    if (KokkosBlas::nrm2(s) < TOL) {
-
+    if (norm_s < TOL) {
       Kokkos::deep_copy(x_0, h);
 
       break;
@@ -132,7 +129,8 @@ void BiCGSTAB(Operator &A, Operator &P, const KokkosVector &b,
     A.apply(z, t); // t = A*z;
 
     P.apply(t, tP);
-    omega_1 = KokkosBlas::dot(tP, s) / KokkosBlas::dot(tP, t);
+    omega_1 =
+        comm.sum(KokkosBlas::dot(tP, s)) / comm.sum(KokkosBlas::dot(tP, t));
 
     // compute new x
     KokkosBlas::scal(x_1, omega_1, z);
@@ -141,13 +139,12 @@ void BiCGSTAB(Operator &A, Operator &P, const KokkosVector &b,
     KokkosBlas::scal(r_1, omega_1, t);
     KokkosBlas::axpby(1.0, s, -1.0, r_1);
 
-    Real stop_criteria = KokkosBlas::nrm2(r_1) / eps2_d;
+    Real stop_criteria =
+        std::sqrt(comm.sum(KokkosBlas::nrm2_squared(r_1))) / eps2_d;
     // rel_error.push_back(stop_criteria);
 
     if (stop_criteria < TOL) {
-
       Kokkos::deep_copy(x_0, x_1);
-
       break;
     }
 
@@ -166,7 +163,8 @@ void BiCGSTAB(Operator &A, Operator &P, const KokkosVector &b,
   num_iter = count;
   A.apply(result, r_0);                 // r_0 =  A*x_0
   KokkosBlas::axpby(1.0, b, -1.0, r_0); // r_0 = b - A*x_0
-  std::cout << "RESIDUE: " << KokkosBlas::nrm2(r_0) << std::endl;
+  std::cout << "RESIDUE: " << std::sqrt(comm.sum(KokkosBlas::nrm2_squared(r_0)))
+            << std::endl;
   // if (max_iter == 6719){
   //     csv.write_value(iterations,rel_error);
   // }
@@ -176,11 +174,11 @@ void BiCGSTAB(Operator &A, Operator &P, const KokkosVector &b,
 // void preconCG(
 // const SparseMatrix &A,
 // const SparseMatrix &M,
-// const KokkosVector &b,
+// const VecType &b,
 // std::vector<bool> &node_is_boundary,
 // const Real &dt,
-// KokkosVector &init_guess,
-// KokkosVector &result,
+// VecType &init_guess,
+// VecType &result,
 // Real &num_iter) {
 
 //     Integer N =  A.numRows();
