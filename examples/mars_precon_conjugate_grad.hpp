@@ -116,8 +116,6 @@ void bcg_stab(Operator &A, Operator &P, const VecType &b, VecType &x_0,
     KokkosBlas::scal(s, alpha_1, v_1);
     KokkosBlas::axpby(1.0, r_0, -1.0, s);
 
-    // rel_error.push_back(std::sqrt(comm.sum(KokkosBlas::nrm2_squared(s))));
-
     Real norm_s = std::sqrt(comm.sum(KokkosBlas::nrm2_squared(s)));
 
     if (norm_s < TOL) {
@@ -168,9 +166,6 @@ void bcg_stab(Operator &A, Operator &P, const VecType &b, VecType &x_0,
   KokkosBlas::axpby(1.0, b, -1.0, r_0); // r_0 = b - A*x_0
   std::cout << "RESIDUE: " << std::sqrt(comm.sum(KokkosBlas::nrm2_squared(r_0)))
             << std::endl;
-  // if (max_iter == 6719){
-  //     csv.write_value(iterations,rel_error);
-  // }
   std::cout << "Iter: " << count << std::endl;
 }
 
