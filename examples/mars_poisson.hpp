@@ -398,6 +398,9 @@ void poisson(int &argc, char **&argv, const int level) {
     // print the global dofs for each element's local dof
     /* print_elem_global_dof(dm, proc_num); */
 
+    double time = timer.seconds();
+    std::cout << "Setup took: " << time << " seconds." << std::endl;
+
     // use as more readable tuple index to identify the data
     constexpr int u = 0;
     constexpr int v = 1;
@@ -416,7 +419,15 @@ void poisson(int &argc, char **&argv, const int level) {
     // if no index specified it gathers all views of the tuple. All data.
     dm.gather_ghost_data<INPUT>(context);
 
+    if (proc_num == 0) {
+      std::cout << "form_operator..." << std::flush;
+    }
+
     form_operator<INPUT, OUTPUT>(dm, proc_num);
+
+    if (proc_num == 0) {
+      std::cout << "DONE" << std::endl;
+    }
 
     // iterate through the local dofs and print the local number and the data
     /* dm.dof_iterate(
@@ -427,12 +438,17 @@ void poisson(int &argc, char **&argv, const int level) {
 
     scatter_add_ghost_data<OUTPUT>(dm, context);
 
-    dm.dof_iterate(MARS_LAMBDA(const Integer i) {
-      printf("ggid: %li, INPUT: %lf, OUTPUT: %lf, rank: %i\n", i,
-             dm.get_dof_data<INPUT>(i), dm.get_dof_data<OUTPUT>(i), proc_num);
-    });
+    std::cout << "[" << proc_num
+              << "] ndofs : " << dm.get_local_dof_enum().get_elem_size()
+              << std::endl;
 
-    double time = timer.seconds();
+    // dm.dof_iterate(MARS_LAMBDA(const Integer i) {
+    //   printf("ggid: %li, INPUT: %lf, OUTPUT: %lf, rank: %i\n", i,
+    //          dm.get_dof_data<INPUT>(i), dm.get_dof_data<OUTPUT>(i),
+    //          proc_num);
+    // });
+
+    time = timer.seconds();
     std::cout << "Matrix free took: " << time << " seconds." << std::endl;
 
 #endif
