@@ -339,6 +339,8 @@ if(TRY_WITH_MOONOLITH)
     add_subdirectory(moonolith_adapter)
 endif()
 
+add_subdirectory(io)
+
 target_link_libraries(mars ${MARS_LIBRARIES})
 target_include_directories(mars PUBLIC ${CMAKE_BINARY_DIR})
 target_include_directories(mars PUBLIC ${MARS_INCLUDES})
