@@ -112,7 +112,7 @@ struct Octant
         {
             point[0] = static_cast<Real>(x) / static_cast<Real>(xDim);
             point[1] = static_cast<Real>(y) / static_cast<Real>(yDim);
-            point[2] = 0.;
+            /* point[2] = 0.; */
             break;
         }
         case ElementType::Hex8:
