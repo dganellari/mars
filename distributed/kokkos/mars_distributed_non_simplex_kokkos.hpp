@@ -172,7 +172,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        FaceSide<Type> * get_sides() const
+        const FaceSide<Type> * get_sides() const
         {
             return sides;
         }
