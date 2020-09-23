@@ -27,9 +27,9 @@ namespace mars{
 			// writePointData(mesh, mesh.points(), sol, 1, os, coord);
 		
 	        writePoints(dm, os);
-	        // writeCells(DM, os);
+	        writeCells(dm, os);
 
-	        // writeFooter(mesh, os);
+	        writeFooter(dm, os);
 	        os.close();
 	        // clear();
 	        return true;
@@ -37,6 +37,8 @@ namespace mars{
 
 
     	void writePoints(const DM &dm, std::ostream &os) {
+    		os << "vtkSmartPointer<vtkPoints> points = vtkSmartPointer<vtkPoints>::New();" << "\n";
+
     		SFC<Type> dof = dm.get_local_dof_enum();
 
 	    	Kokkos::parallel_for(
@@ -53,16 +55,57 @@ namespace mars{
 
 		        // std::cout << "points->InsertNextPoint(" << point[0] << "," << point[1] << std::endl;
 		        
-		        os << "points->InsertNextPoint(" << point[0] << "," << point[1] << "," << point[2] << ")" <<"\n";
+		        os << "points->InsertNextPoint(" << point[0] << "," << point[1] << "," << point[2] << ")" <<";\n";
 
-
-
-		      });
-
-
-	    	
+		    });
 
     	}
+
+
+    	void writeCells(const DM &dm, std::ostream &os) {
+
+    		SFC<Type> dof = dm.get_local_dof_enum();
+    		dm.elem_iterate([&](const Integer elem_index) {
+    			os <<"vtkSmartPointer<vtkQuad> quad"<<std::to_string(elem_index)<<"= vtkSmartPointer<vtkQuad>::New();" << "\n";
+
+    			for (int i = 0; i < DMQ2::elem_nodes; i++) {
+    				const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+    				Dof d = dm.local_to_global_dof(local_dof);
+
+    				int c = elem_index+i;
+
+    				os << "quad"+std::to_string(elem_index)+"->GetPointIds()->SetId("<< c <<","<< d.get_gid() <<");"<< "\n";
+
+    			}
+
+    		});
+
+    		os << "vtkSmartPointer<vtkCellArray> cellArray = vtkSmartPointer<vtkCellArray>::New();\n";
+
+    		dm.elem_iterate([&](const Integer elem_index) {
+
+    			os<< "cellArray->InsertNextCell(quad" << std::to_string(elem_index) << ");\n";
+    		});
+
+
+    	}
+
+
+    	void writeFooter(const DM &dm, std::ostream &os) {
+
+    		os << "vtkSmartPointer<vtkUnstructuredGrid> unstructuredGrid = vtkSmartPointer<vtkUnstructuredGrid>::New();\n";
+
+    		os << "unstructuredGrid->SetPoints(points);\n";
+
+    		os << "unstructuredGrid->SetCells(VTK_QUAD, cellArray);\n";
+
+
+
+
+
+    	}
+
+
 
 
 
