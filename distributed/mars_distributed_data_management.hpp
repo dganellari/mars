@@ -1258,6 +1258,54 @@ void enumerate_dofs(const context &context)
         return local_dof_enum.get_view_sfc_to_local()(sfc);
     }
 
+    template <Integer idx,
+              typename H = typename std::tuple_element<idx, tuple>::type>
+    void get_locally_owned_data(const ViewVectorType<H> &x) {
+      using namespace Kokkos;
+
+      Kokkos::Timer timer;
+
+      assert(get_global_dof_enum().get_elem_size() == x.extent(0));
+      const Integer size = get_global_dof_enum().get_elem_size();
+
+      ViewVectorType<Integer> global_to_sfc =
+          get_global_dof_enum().get_view_elements();
+      ViewVectorType<Integer> sfc_to_local =
+          get_local_dof_enum().get_view_sfc_to_local();
+      ViewVectorType<H> dof_data = get_dof_data<idx>();
+
+      Kokkos::parallel_for(
+          "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
+            const Integer sfc = global_to_sfc(i);
+            const Integer local = sfc_to_local(sfc);
+            x(i) = dof_data(local);
+          });
+    }
+
+    template <Integer idx,
+              typename H = typename std::tuple_element<idx, tuple>::type>
+    void set_locally_owned_data(const ViewVectorType<H> &x) {
+      using namespace Kokkos;
+
+      Kokkos::Timer timer;
+
+      assert(get_global_dof_enum().get_elem_size() == x.extent(0));
+      const Integer size = get_global_dof_enum().get_elem_size();
+
+      ViewVectorType<Integer> global_to_sfc =
+          get_global_dof_enum().get_view_elements();
+      ViewVectorType<Integer> sfc_to_local =
+          get_local_dof_enum().get_view_sfc_to_local();
+      ViewVectorType<H> dof_data = get_dof_data<idx>();
+
+      Kokkos::parallel_for(
+          "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
+            const Integer sfc = global_to_sfc(i);
+            const Integer local = sfc_to_local(sfc);
+            dof_data(local) = x(i);
+          });
+    }
+
     /* :TODO stencil use the face iterate on the dof sfc. */
     /* The face nbh will give an sfc code. To get the local code from it sfc_to_local can be used */
 
