@@ -238,7 +238,7 @@ void fill_view_vector(ViewVectorTextureC<T, Dim> v, const T value[Dim]) {
 }
 
 template <typename T, Integer XDim, Integer YDim>
-void fill_view_matrix(ViewMatrixTextureC<T, XDim, YDim> m, const T value[XDim][yDim]) {
+void fill_view_matrix(ViewMatrixTextureC<T, XDim, YDim> m, const T value[XDim][YDim]) {
   using namespace Kokkos;
 
   typename ViewMatrixTextureC<T, XDim, YDim>::HostMirror h_pt = create_mirror_view(m);

@@ -1265,7 +1265,7 @@ void enumerate_dofs(const context &context)
 
     template<Integer Type>
     MARS_INLINE_FUNCTION
-    void get_dof_coordinates_from_sfc(const Integer sfc, double *point)
+    void get_dof_coordinates_from_sfc(const Integer sfc, double *point) const
     {
         get_vertex_coordinates_from_sfc<Type>(sfc, point,
                 get_local_dof_enum().get_XDim(), get_local_dof_enum().get_YDim(),
@@ -1274,12 +1274,26 @@ void enumerate_dofs(const context &context)
 
     template<Integer Type>
     MARS_INLINE_FUNCTION
-    void get_dof_coordinates_from_local(const Integer local, double *point
+    void get_dof_coordinates_from_local(const Integer local, double *point) const
     {
         const Integer sfc =  local_to_sfc(local);
-        return get_dof_coordinates_from_sfc<Type>(sfc);
+        return get_dof_coordinates_from_sfc<Type>(sfc, point);
     }
 
+
+    template<Integer... dataidx>
+    void set_locally_owned_data(const ViewVectorType<)
+    {
+        using namespace Kokkos;
+
+        Kokkos::Timer timer;
+
+        // exchange the ghost dofs first since it will be used to find the address
+        // of the userdata based on the sfc code.
+
+        int proc_num = rank(context);
+        int size = num_ranks(context);
+    }
     /* :TODO stencil use the face iterate on the dof sfc. */
     /* The face nbh will give an sfc code. To get the local code from it sfc_to_local can be used */
 

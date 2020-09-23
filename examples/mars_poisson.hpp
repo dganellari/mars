@@ -60,7 +60,7 @@ u = P uk */
 
 namespace mars {
 
-using DMQ2 = DM<DistributedQuad4Mesh, 2, double, double>;
+using DMQ2 = DM<DistributedQuad4Mesh, 1, double, double>;
 /*
 enum class DMDataDesc
 {
@@ -69,6 +69,7 @@ enum class DMDataDesc
 };
  */
 
+// use as more readable tuple index to identify the data
 static constexpr int INPUT = 0;
 static constexpr int OUTPUT = 1;
 
@@ -212,10 +213,10 @@ void compute_invJ_and_detJ(const DMQ2 &dm, ViewVectorType<double> detJ,
     double point_ref[2];
     double next_point[2];
 
-    const Integer local_dof = dm.get_elem_local_dof(elem_index, 0);
+    Integer local_dof = dm.get_elem_local_dof(elem_index, 0);
     dm.get_dof_coordinates_from_local<Type>(local_dof, point_ref);
 
-    const Integer local_dof = dm.get_elem_local_dof(elem_index, 1);
+    local_dof = dm.get_elem_local_dof(elem_index, 1);
     dm.get_dof_coordinates_from_local<Type>(local_dof, next_point);
 
     // col 0, p1
@@ -241,8 +242,8 @@ void compute_invJ_and_detJ(const DMQ2 &dm, ViewVectorType<double> detJ,
 }
 
 
-MARS_INLINE_FUNCTION
 template<Integer INPUT>
+MARS_INLINE_FUNCTION
 void gather_elem_data(const DMQ2& dm, const Integer elem_index,
         DMDataType<INPUT>* sol)
 {
@@ -255,17 +256,22 @@ void gather_elem_data(const DMQ2& dm, const Integer elem_index,
   }
 }
 
+template<Integer INPUT, Integer OUTPUT>
+void build_data_matrix()
+{
+}
+
+template <Integer INPUT, Integer OUTPUT>
 void integrate(const DMQ2 &dm, ViewVectorType<double> det_J,
-                           ViewMatrixType<double> J_inv) {
+               ViewMatrixType<double> J_inv) {
 
-
-  using q_points = FEQuad4<double>::q_p;
-  using q_weights = FEQuad4<double>::q_w;
+  constexpr int n_qp = 6;
+  ViewVectorTextureC<double, n_qp> q_weights = FEQuad4<double>::Quad4::q_w;
+  ViewMatrixTextureC<double, n_qp, 2> q_points = FEQuad4<double>::Quad4::q_p;
 
   dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
-
     double gi[2], g[2];
-    double res[DMQ2::elem_nodes]={0};
+    double res[DMQ2::elem_nodes] = {0};
 
     double sol[DMQ2::elem_nodes];
     gather_elem_data<INPUT>(dm, elem_index, sol);
@@ -273,50 +279,48 @@ void integrate(const DMQ2 &dm, ViewVectorType<double> det_J,
     for (int k = 0; k < n_qp; ++k) {
       // we need 2nd order quadrature rule for quads!
       /* double q[2] = {q_points[k][0], q_points[k][1]}; */
-      double w = q_weights[k];
+      /* double w = q_weights[k]; */
 
-      FEQuad4<double>::Grad::ref(&q_points(k), sol, gi); // compute it once
+      FEQuad4<double>::Grad::ref(&q_points(k,0), sol, gi); // compute it once
 
-      g[0] = J_inv[0] * gi[0] + J_inv[2] * gi[1];
-      g[1] = J_inv[1] * gi[0] + J_inv[3] * gi[1];
+      g[0] = J_inv(elem_index, 0) * gi[0] + J_inv(elem_index, 2) * gi[1];
+      g[1] = J_inv(elem_index, 1) * gi[0] + J_inv(elem_index, 3) * gi[1];
 
       for (int i = 0; i < DMQ2::elem_nodes; i++) {
         // forach dof get the local number
         const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
-        FEQuad4<double>::Grad::affine_f(i, &J_inv(elem_index, 0), &q_points(k), gi);
+        FEQuad4<double>::Grad::affine_f(i, &J_inv(elem_index, 0), &q_points(k, 0),
+                                        gi);
 
         // dot(grad sol, grad phi_i)
         const double dot_grads = (gi[0] * g[0] + gi[1] * g[1]);
-        const double integr = w * det_J(elem_index) * dot_grads;
+        const double integr = q_weights(k) * det_J(elem_index) * dot_grads;
 
         res[i] += integr;
-        Kokkos::atomic_add(&dm.get_dof_data<OUTPUT>(local_dof), integr);
+        /* Kokkos::atomic_add(&dm.get_dof_data<OUTPUT>(local_dof), integr); */
         assert(res[i] == res[i]);
       }
     }
 
-    //update output
+    // update output
     /* for (int i = 0; i < DMQ2::elem_nodes; i++) {
       const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
       // atomically updated the contributions to the same dof
       Kokkos::atomic_add(&dm.get_dof_data<OUTPUT>(local_dof), res[i]);
     } */
-
   });
 }
 
-template<Integer INPUT, Integer OUTPUT>
-build_data_matrix
 // form the matrix free operator
-template <Integer u, Integer v>
 void form_operator(const DMQ2 dm, const int rank) {
 
-    ViewVectorType<double> detJ("detJ", dm.get_elem_size());
-    ViewMatrixType<double> invJ("J_inv", dm.get_elem_size(), 4);
-    compute_invJ_and_detJ<Type>(dm, detJ, invJ);
+  using Elem = DistributedQuad4Mesh::Elem;
 
-    integrate(dm, detJ, invJ);
+  ViewVectorType<double> detJ("detJ", dm.get_elem_size());
+  ViewMatrixType<double> invJ("J_inv", dm.get_elem_size(), 4);
+  compute_invJ_and_detJ<Elem::ElemType>(dm, detJ, invJ);
 
+  integrate<INPUT, OUTPUT>(dm, detJ, invJ);
 }
 /*
 // form the matrix free operator
@@ -518,9 +522,6 @@ void poisson(int &argc, char **&argv, const int level) {
     // print the global dofs for each element's local dof
     /* print_elem_global_dof(dm, proc_num); */
 
-    // use as more readable tuple index to identify the data
-    constexpr int u = 0;
-    constexpr int v = 1;
     // local dof enum size
     const Integer dof_size = dm.get_dof_size();
 
@@ -532,11 +533,13 @@ void poisson(int &argc, char **&argv, const int level) {
           dm.get_dof_data<OUTPUT>(i) = 0.0;
         });
 
+    FEQuad4<double>::Quad4::prepare_quadrature();
+
     // specify the tuple indices of the tuplelements that are needed to gather.
     // if no index specified it gathers all views of the tuple. All data.
     dm.gather_ghost_data<INPUT>(context);
 
-    form_operator<INPUT, OUTPUT>(dm, proc_num);
+    form_operator(dm, proc_num);
 
     // iterate through the local dofs and print the local number and the data
     /* dm.dof_iterate(
