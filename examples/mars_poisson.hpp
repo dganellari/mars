@@ -412,6 +412,20 @@ void poisson(int &argc, char **&argv, const int level) {
     // use as more readable tuple index to identify the data
     constexpr int u = 0;
     constexpr int v = 1;
+
+    const Integer locall_owned_dof_size = dm.get_locally_owned_dof_size();
+    ViewVectorType<double> x("x", locall_owned_dof_size);
+
+    Kokkos::parallel_for(
+        "initglobaldatavalues", locall_owned_dof_size,
+        MARS_LAMBDA(const Integer i) { x(i) = 2 * i; });
+
+    dm.set_locally_owned_data<INPUT>(x);
+
+    dm.dof_iterate(MARS_LAMBDA(const Integer i) {
+      printf("ggid: %li, INPUT: %lf, OUTPUT: %lf, rank: %i\n", i,
+             dm.get_dof_data<INPUT>(i), dm.get_dof_data<OUTPUT>(i), proc_num);
+    });
     // local dof enum size
     const Integer dof_size = dm.get_dof_size();
 
@@ -421,6 +435,14 @@ void poisson(int &argc, char **&argv, const int level) {
           dm.get_dof_data<INPUT>(i) = 1.0;
           // dm.get_dof_data<INPUT>(i) = i;
           dm.get_dof_data<OUTPUT>(i) = 0.0;
+        });
+
+    dm.get_locally_owned_data<INPUT>(x);
+
+    Kokkos::parallel_for(
+        "printglobaldatavalues", locall_owned_dof_size,
+        MARS_LAMBDA(const Integer i) {
+          printf("i: %li, gdata: %lf - rank: %i\n", x(i), proc_num);
         });
 
     // specify the tuple indices of the tuplelements that are needed to gather.
