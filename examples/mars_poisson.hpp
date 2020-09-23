@@ -60,7 +60,8 @@ u = P uk */
 
 namespace mars {
 
-using DMQ2 = DM<DistributedQuad4Mesh, 2, double, double>;
+/* using DMQ2 = DM<DistributedQuad4Mesh, 2, double, double>; */
+using DMQ1 = DM<DistributedQuad4Mesh, 1, double, double>;
 /*
 enum class DMDataDesc
 {

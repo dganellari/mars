@@ -1263,15 +1263,11 @@ void enumerate_dofs(const context &context)
     void get_locally_owned_data(const ViewVectorType<H> &x) {
       using namespace Kokkos;
 
-      Kokkos::Timer timer;
-
       assert(get_global_dof_enum().get_elem_size() == x.extent(0));
       const Integer size = get_global_dof_enum().get_elem_size();
 
-      ViewVectorType<Integer> global_to_sfc =
-          get_global_dof_enum().get_view_elements();
-      ViewVectorType<Integer> sfc_to_local =
-          get_local_dof_enum().get_view_sfc_to_local();
+      ViewVectorType<Integer> global_to_sfc = get_global_dof_enum().get_view_elements();
+      ViewVectorType<Integer> sfc_to_local = get_local_dof_enum().get_view_sfc_to_local();
       ViewVectorType<H> dof_data = get_dof_data<idx>();
 
       Kokkos::parallel_for(
@@ -1287,15 +1283,11 @@ void enumerate_dofs(const context &context)
     void set_locally_owned_data(const ViewVectorType<H> &x) {
       using namespace Kokkos;
 
-      Kokkos::Timer timer;
-
       assert(get_global_dof_enum().get_elem_size() == x.extent(0));
       const Integer size = get_global_dof_enum().get_elem_size();
 
-      ViewVectorType<Integer> global_to_sfc =
-          get_global_dof_enum().get_view_elements();
-      ViewVectorType<Integer> sfc_to_local =
-          get_local_dof_enum().get_view_sfc_to_local();
+      ViewVectorType<Integer> global_to_sfc = get_global_dof_enum().get_view_elements();
+      ViewVectorType<Integer> sfc_to_local = get_local_dof_enum().get_view_sfc_to_local();
       ViewVectorType<H> dof_data = get_dof_data<idx>();
 
       Kokkos::parallel_for(
@@ -1304,6 +1296,30 @@ void enumerate_dofs(const context &context)
             const Integer local = sfc_to_local(sfc);
             dof_data(local) = x(i);
           });
+    }
+
+    template <Integer idx, Integer face_nr, typename F>
+    void boundary_dof_iterate(F f)
+    {
+        using namespace Kokkos;
+        using Type = typename simplex_type::ElemType;
+
+        const Integer size = get_global_dof_enum().get_elem_size();
+
+        ViewVectorType<Integer> global_to_sfc = get_global_dof_enum().get_view_elements();
+        ViewVectorType<Integer> sfc_to_local = get_local_dof_enum().get_view_sfc_to_local();
+        ViewVectorType<H> dof_data = get_dof_data<idx>();
+
+        Kokkos::parallel_for(
+            "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
+                const Integer sfc = global_to_sfc(i);
+                const Integer local = sfc_to_local(sfc);
+                if (is_boundary_sfc<Type, face_nr>(sfc, get_local_dof_enum().get_XDim(),
+                            get_local_dof_enum().get_YDim(), get_local_dof_enum().get_ZDim()))
+                {
+                    f(local, dof_data(local));
+                }
+            });
     }
 
     /* :TODO stencil use the face iterate on the dof sfc. */
