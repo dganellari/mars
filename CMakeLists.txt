@@ -360,6 +360,11 @@ install(
 install(FILES ${MARS_HEADERS} DESTINATION include)
 install(FILES ${CMAKE_BINARY_DIR}/mars_config.hpp DESTINATION include)
 
+# ##############################################################################
+
+add_executable(st_example examples/mars_st_example.cpp)
+target_link_libraries(st_example mars)
+
 # add_definitions("-DWITH_MOONOLITH") set(MOONOLITH_DIR
 # "$ENV{INSTALL_DIR}/moon") target_include_directories(mars_exec PUBLIC
 # ${MOONOLITH_DIR}/include) target_link_libraries(mars_exec
