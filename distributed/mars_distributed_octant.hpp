@@ -59,27 +59,68 @@ struct Octant
         return (x == o.x && y == o.y && z == o.z);
     }
 
-    /* template <Integer Type>
-    MARS_INLINE_FUNCTION bool shares_boundary_side(const int xDim, const int yDim, const int zDim)
+    template <Integer Type, Integer Face = -1>
+    mars_inline_function bool is_boundary(const int xdim, const int ydim, const int zdim)
     {
-        switch (Type)
+        switch (Face)
         {
-        case ElementType::Quad4:
+        case 0:
         {
-            return (x == -1 || y == -1 || x == xDim || y == yDim);
+            return (x == 0);
         }
-        case ElementType::Hex8:
+        case 1:
         {
-            return (x == -1 || y == -1 || z == -1 || x == xDim || y == yDim || z == zDim);
+            return (x == xdim);
+        }
+        case 2:
+        {
+            return (y == 0);
+        }
+        case 3:
+        {
+            return (y == ydim);
+        }
+        case 4:
+        {
+            return (z == 0);
+        }
+        case 5:
+        {
+            return (z == zdim)
+        }
+        case -1:
+        {
+            return boundary<Type>(xdim, ydim, zdim);
         }
         default:
         {
-            printf("The element type is not valid\n");
+            printf("Invalid face number template argument!\n");
             return false;
         }
         }
     }
- */
+
+    template <integer type>
+    mars_inline_function bool boundary(const int xdim, const int ydim, const int zdim)
+    {
+        switch (type)
+        {
+        case elementtype::quad4:
+        {
+            return (x == 0 || y == 0 || x == xdim || y == ydim);
+        }
+        case elementtype::hex8:
+        {
+            return (x == 0 || y == 0 || z == 0 || x == xdim || y == ydim || z == zdim);
+        }
+        default:
+        {
+            printf("the element type is not valid\n");
+            return false;
+        }
+        }
+    }
+
     template <Integer Type>
     MARS_INLINE_FUNCTION
         Integer
@@ -270,6 +311,7 @@ struct Octant
     }
 };
 
+
 template <Integer Type>
 MARS_INLINE_FUNCTION Octant get_octant_from_sfc(const Integer gl_index)
 {
@@ -320,26 +362,18 @@ MARS_INLINE_FUNCTION Integer get_sfc_from_octant(const Octant &o)
     return enc_oc;
 }
 
-template <Integer Type>
-MARS_INLINE_FUNCTION void get_vertex_coordinates_from_sfc(const Integer gl_index, double *point, const Integer xDim, const Integer yDim, const Integer zDim)
+//-1 for all boundary. 0 left, 1 right, 2 down, 3 up and 4 and 5 for z dim.
+template <Integer Type, Integer Face = -1>
+mars_inline_function bool is_boundary_sfc(const Integer sfc, const int xdim, const int ydim, const int zdim)
 {
-    switch (Type)
-    {
-    case ElementType::Quad4:
-    {
-        point[0] = static_cast<Real>(decode_morton_2DX(gl_index)) / static_cast<Real>(xDim);
-        point[1] = static_cast<Real>(decode_morton_2DY(gl_index)) / static_cast<Real>(yDim);
-        point[2] = 0.;
-        break;
-    }
-    case ElementType::Hex8:
-    {
-        point[0] = static_cast<Real>(decode_morton_3DX(gl_index)) / static_cast<Real>(xDim);
-        point[1] = static_cast<Real>(decode_morton_3DY(gl_index)) / static_cast<Real>(yDim);
-        point[2] = static_cast<Real>(decode_morton_3DZ(gl_index)) / static_cast<Real>(zDim);
-        break;
-    }
-    }
+    Octant o = get_octant_from_sfc<Type>(sfc);
+    return o.is_boundary<Type, Face>(xdim, ydim, zdim);
+}
+template <Integer Type>
+MARS_INLINE_FUNCTION void get_vertex_coordinates_from_sfc(const Integer sfc, double *point, const Integer xDim, const Integer yDim, const Integer zDim)
+{
+    Octant o = get_octant_from_sfc<Type>(sfc);
+    o.get_vertex_coordinates(point, xDim, yDim, zDim);
 }
 
 } // namespace mars
