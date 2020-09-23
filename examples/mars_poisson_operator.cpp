@@ -4,5 +4,8 @@
 namespace mars {
 
 void PoissonOperator::apply(const ViewVectorType<Real> &x,
-                            ViewVectorType<Real> &op_x) {}
+                            ViewVectorType<Real> &op_x) {
+
+  // form_operator(dm, ...);
+}
 } // namespace mars
