@@ -261,6 +261,9 @@ void build_data_matrix()
 {
 }
 
+//if non-linear than the quad rule should be computed per quad point and not
+//anymore for each element so the coalescing of the Jinv will not matter.
+//In that case maybe a better way to go is parallel through the quad points.
 template <Integer INPUT, Integer OUTPUT>
 void integrate(const DMQ2 &dm, ViewVectorType<double> det_J,
                ViewMatrixType<double> J_inv) {
@@ -303,11 +306,11 @@ void integrate(const DMQ2 &dm, ViewVectorType<double> det_J,
     }
 
     // update output
-    /* for (int i = 0; i < DMQ2::elem_nodes; i++) {
+    for (int i = 0; i < DMQ2::elem_nodes; i++) {
       const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
-      // atomically updated the contributions to the same dof
+      /* atomically updated the contributions to the same dof */
       Kokkos::atomic_add(&dm.get_dof_data<OUTPUT>(local_dof), res[i]);
-    } */
+    }
   });
 }
 
@@ -322,6 +325,7 @@ void form_operator(const DMQ2 dm, const int rank) {
 
   integrate<INPUT, OUTPUT>(dm, detJ, invJ);
 }
+
 /*
 // form the matrix free operator
 template <Integer u, Integer v>
