@@ -333,13 +333,13 @@ void scatter_add_ghost_data(DMQ2 &dm, const context &context) {
   /* dm.scatter_min<u>(boundary_data); */
 }
 
-template <Integer Dim> struct BC {
-  template <Integer Type, Integer Dir>
-  MARS_INLINE_FUNCTION void operator()(Face<Type, Dir> &face) const {
-    std::cout << face.get_sides()[0].elem_id << " "
-              << face.get_sides()[0].is_boundary() << std::endl;
-  }
-};
+// template <Integer Dim> struct BC {
+//   template <Integer Type, Integer Dir>
+//   MARS_INLINE_FUNCTION void operator()(Face<Type, Dir> &face) const {
+//     std::cout << face.get_sides()[0].elem_id << " "
+//               << face.get_sides()[0].is_boundary() << std::endl;
+//   }
+// };
 
 void poisson(int &argc, char **&argv, const int level) {
 
@@ -437,8 +437,8 @@ void poisson(int &argc, char **&argv, const int level) {
       std::cout << "DONE" << std::endl;
     }
 
-    BC<2> bc;
-    dm.face_iterate(bc);
+    // BC<2> bc;
+    // dm.face_iterate(bc);
 
     // iterate through the local dofs and print the local number and the data
     /* dm.dof_iterate(
