@@ -46,7 +46,7 @@ int main(int argc, char *argv[]) {
     using PMesh = ParallelMesh2;
     using SMesh = Mesh2;
 
-    Integer nx = 10, ny = 10, nz = 0;
+    Integer nx = 100, ny = 100, nz = 0;
     PMesh mesh;
     generate_cube(mesh, nx, ny, nz);
 
@@ -61,7 +61,7 @@ int main(int argc, char *argv[]) {
 
     std::cout << "n_active_elements: " << serial_mesh.n_active_elements()
               << std::endl;
-    std::cout << "n_nodes: " << serial_mesh.n_nodes() << std::endl;
+    std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
 
     VTKMeshWriter<SMesh> w;
     w.write("mesh.vtu", serial_mesh);
