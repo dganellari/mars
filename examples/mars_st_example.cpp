@@ -51,19 +51,30 @@ namespace mars {
             : mesh_(mesh), det_J("det_J", mesh.n_elements()), J_inv("J_inv", mesh.n_elements(), Dim * Dim) {}
 
         void init() {
-            Mesh mesh = mesh_;
+            auto elems = mesh_.get_view_elements();
+            auto points = mesh_.get_view_points();
 
             Kokkos::parallel_for(
-                mesh.n_elements(), MARS_LAMBDA(const Integer i) {
-                    Elem e = mesh.elem(i);
-                    Point p0 = mesh.point(e.nodes[0]);
-                    Point pk;
+                "FEValues::init", mesh_.n_elements(), MARS_LAMBDA(const Integer i) {
+                    Integer idx[NFuns];
+
+                    for (int k = 0; k < NFuns; ++k) {
+                        idx[k] = elems(i, k);
+                    }
+
+                    Real p0[Dim], pk[Dim];
+
+                    for (int d = 0; d < Dim; ++d) {
+                        p0[d] = points(idx[0], d);
+                    }
 
                     Real J[Dim * Dim];
 
-                    for (int k = 1; k < e.n_nodes(); ++k) {
+                    for (int k = 1; k < NFuns; ++k) {
                         const int km1 = k - 1;
-                        pk = mesh.point(e.nodes[k]);
+                        for (int d = 0; d < Dim; ++d) {
+                            pk[d] = points(idx[k], d);
+                        }
 
                         for (int d = 0; d < Dim; ++d) {
                             J[d * Dim + km1] = pk[d] - p0[d];
@@ -72,7 +83,7 @@ namespace mars {
 
                     Real e_det_J = det(J);
                     invert(J, &J_inv(i, 0), e_det_J);
-                    det_J(i) = e_det_J;
+                    // det_J(i) = e_det_J;
                 });
         }
 
@@ -225,7 +236,9 @@ namespace mars {
         static constexpr int Dim = Mesh::Dim;
         static constexpr int NFuns = Mesh::Dim + 1;
 
-        UMeshLaplace(Mesh &mesh) : values_(mesh) { values_.init(); }
+        UMeshLaplace(Mesh &mesh) : values_(mesh) {}
+
+        void init() { values_.init(); }
 
         void apply(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) {
             // For Kokkos-Cuda
@@ -238,7 +251,7 @@ namespace mars {
                 n_nodes, MARS_LAMBDA(const Integer i) { op_x(i) = 0.0; });
 
             Kokkos::parallel_for(
-                mesh.n_elements(), MARS_LAMBDA(const Integer i) {
+                "UMeshLaplace::apply", mesh.n_elements(), MARS_LAMBDA(const Integer i) {
                     Real u[NFuns];
                     Real Au[NFuns];
 
@@ -305,25 +318,26 @@ int main(int argc, char *argv[]) {
             n_nodes, MARS_LAMBDA(const Integer i) { x(i) = 1.0; });
 
         UMeshLaplace<PMesh> op(mesh);
-        op.apply(x, Ax);
+        op.init();
+        //        op.apply(x, Ax);
 
-        ViewVectorType<Real>::HostMirror Ax_host("Ax_host", n_nodes);
-        Kokkos::deep_copy(Ax_host, Ax);
+        //        ViewVectorType<Real>::HostMirror Ax_host("Ax_host", n_nodes);
+        //        Kokkos::deep_copy(Ax_host, Ax);
 
-        for (Integer i = 0; i < n_nodes; ++i) {
-            std::cout << Ax_host(i) << std::endl;
-        }
+        //        for (Integer i = 0; i < n_nodes; ++i) {
+        //            std::cout << Ax_host(i) << std::endl;
+        //        }
 
         /////////////////////////////////////////////////////////////////////////////
 
-        SMesh serial_mesh;
-        convert_parallel_mesh_to_serial(serial_mesh, mesh);
+        //       SMesh serial_mesh;
+        //       convert_parallel_mesh_to_serial(serial_mesh, mesh);
 
-        std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
-        std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
+        //       std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
+        //       std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
 
-        VTKMeshWriter<SMesh> w;
-        w.write("mesh.vtu", serial_mesh);
+        //        VTKMeshWriter<SMesh> w;
+        //        w.write("mesh.vtu", serial_mesh);
     }
 
     Kokkos::finalize();
