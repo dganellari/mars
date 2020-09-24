@@ -253,6 +253,47 @@ namespace mars {
     };
 
     template <class Mesh>
+    class ZeroDirchletOnUnitCube {
+    public:
+        static const int Dim = Mesh::Dim;
+
+        MARS_INLINE_FUNCTION void operator()(const Real *p, Real &val) const {
+            for (int d = 0; d < Dim; ++d) {
+                if (p[d] <= 1e-16 || p[d] >= 1 + 1e-16) {
+                    val = 0.0;
+                }
+            }
+        }
+    };
+
+    template <class Mesh>
+    class BoundaryConditions {
+    public:
+        static const int Dim = Mesh::Dim;
+
+        BoundaryConditions(Mesh &mesh) : mesh_(mesh) {}
+
+        template <typename F>
+        void apply(ViewVectorType<Real> &v, F fun) {
+            ViewMatrixType<Real> points = mesh_.get_view_points();
+
+            Kokkos::parallel_for(
+                "BoundaryConditions::apply", mesh_.n_nodes(), MARS_LAMBDA(const Integer i) {
+                    Real p[Dim];
+
+                    for (int d = 0; d < Dim; ++d) {
+                        p[d] = points(i, d);
+                    }
+
+                    fun(p, v(i));
+                });
+        }
+
+    private:
+        Mesh &mesh_;
+    };
+
+    template <class Mesh>
     class UMeshLaplace final {
     public:
         using Elem = typename Mesh::Elem;
@@ -322,7 +363,7 @@ int main(int argc, char *argv[]) {
 
         using SMesh = Mesh2;
 
-        Integer nx = 60, ny = 60, nz = 0;
+        Integer nx = 6, ny = 6, nz = 0;
         PMesh mesh;
         generate_cube(mesh, nx, ny, nz);
 
@@ -345,15 +386,19 @@ int main(int argc, char *argv[]) {
             n_nodes, MARS_LAMBDA(const Integer i) { x(i) = 1.0; });
 
         UMeshLaplace<PMesh> op(mesh);
+        BoundaryConditions<PMesh> bc(mesh);
+
         op.init();
         op.apply(x, Ax);
+
+        bc.apply(Ax, ZeroDirchletOnUnitCube<PMesh>());
 
         ViewVectorType<Real>::HostMirror Ax_host("Ax_host", n_nodes);
         Kokkos::deep_copy(Ax_host, Ax);
 
-        // for (Integer i = 0; i < n_nodes; ++i) {
-        //     std::cout << Ax_host(i) << std::endl;
-        // }
+        for (Integer i = 0; i < n_nodes; ++i) {
+            std::cout << Ax_host(i) << std::endl;
+        }
 
         ///////////////////////////////////////////////////////////////////////////
 
