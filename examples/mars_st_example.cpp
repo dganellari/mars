@@ -369,7 +369,7 @@ namespace mars {
             is_boundary_ = is_boundary;
         }
 
-        bool apply(const ViewVectorType<Real> &input, ViewVectorType<Real> &x) {
+        void apply(const ViewVectorType<Real> &input, ViewVectorType<Real> &x) {
             auto is_boundary = is_boundary_;
 
             Kokkos::parallel_for(
