@@ -36,6 +36,8 @@
 #include "mars_matrix_free_operator.hpp"
 #include "mars_poisson.hpp"
 
+#include "mars_precon_conjugate_grad.hpp"
+
 namespace mars {
 
     template <class Mesh>
@@ -195,6 +197,49 @@ namespace mars {
         static constexpr int Dim = Mesh::Dim;
         static constexpr int NFuns = Mesh::Dim + 1;
 
+        MARS_INLINE_FUNCTION static void m_t_v_mult(const Real *A, const Real *x, Real *y) {
+            for (int d1 = 0; d1 < Dim; ++d1) {
+                y[d1] = 0;
+
+                for (int d2 = 0; d2 < Dim; ++d2) {
+                    y[d1] += A[d1 + d2 * Dim] * x[d2];
+                }
+            }
+        }
+
+        MARS_INLINE_FUNCTION static Real dot(const Real *l, const Real *r) {
+            Real ret = 0.0;
+            for (Integer i = 0; i < Dim; ++i) {
+                ret += l[i] * r[i];
+            }
+
+            return ret;
+        }
+
+        MARS_INLINE_FUNCTION static void one_thread_eval_diag(const Real *J_inv, const Real &det_J, Real *val) {
+            Real g_ref[Dim], g[Dim];
+
+            for (int d = 0; d < Dim; ++d) {
+                g_ref[d] = -1;
+            }
+
+            m_t_v_mult(J_inv, g_ref, g);
+            val[0] += dot(g, g) * det_J;
+
+            for (int d = 0; d < Dim; ++d) {
+                g_ref[d] = 0;
+            }
+
+            for (int d = 0; d < Dim; ++d) {
+                g_ref[d] = 1;
+                m_t_v_mult(J_inv, g_ref, g);
+
+                val[d + 1] = dot(g, g) * det_J;
+
+                g_ref[d] = 0;
+            }
+        }
+
         MARS_INLINE_FUNCTION static void one_thread_eval(const Real *J_inv,
                                                          const Real &det_J,
                                                          const Real *u,
@@ -215,13 +260,15 @@ namespace mars {
             ///////////////////////////////////////////////////////////////////
             ////////////////// Transform gradient to physical coordinates //////
 
-            for (int d1 = 0; d1 < Dim; ++d1) {
-                g[d1] = 0;
+            // for (int d1 = 0; d1 < Dim; ++d1) {
+            //     g[d1] = 0;
 
-                for (int d2 = 0; d2 < Dim; ++d2) {
-                    g[d1] += J_inv[d1 + d2 * Dim] * g_ref[d2];
-                }
-            }
+            //     for (int d2 = 0; d2 < Dim; ++d2) {
+            //         g[d1] += J_inv[d1 + d2 * Dim] * g_ref[d2];
+            //     }
+            // }
+
+            m_t_v_mult(J_inv, g_ref, g);
 
             ///////////////////////////////////////////////////////////////////
             ////////////////// evaluate bilinear form ////////////////////////
@@ -267,6 +314,29 @@ namespace mars {
     };
 
     template <class Mesh>
+    class One {
+    public:
+        static const int Dim = Mesh::Dim;
+        MARS_INLINE_FUNCTION Real operator()(const Real *) const { return 1.0; }
+    };
+
+    template <class Mesh>
+    class Norm2Squared {
+    public:
+        static const int Dim = Mesh::Dim;
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const {
+            Real ret = 0.0;
+
+            for (int i = 0; i < Dim; ++i) {
+                const Real x = p[i];
+                ret += x * x;
+            }
+
+            return ret;
+        }
+    };
+
+    template <class Mesh>
     class BoundaryConditions {
     public:
         static const int Dim = Mesh::Dim;
@@ -304,7 +374,17 @@ namespace mars {
 
         UMeshLaplace(Mesh &mesh) : values_(mesh) {}
 
-        void init() { values_.init(); }
+        class FakeComm {
+        public:
+            static Real sum(const Real &v) { return v; }
+        };
+
+        FakeComm comm() { return FakeComm(); }
+
+        void init() {
+            values_.init();
+            preconditioner_.init(values_);
+        }
 
         void apply(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) {
             // For Kokkos-Cuda
@@ -315,8 +395,6 @@ namespace mars {
             ViewMatrixType<Integer> elems = mesh.get_view_elements();
 
             const Integer n_nodes = mesh.n_nodes();
-
-            // std::cout << x.extent(0) << " == " << n_nodes << std::endl;
 
             Kokkos::parallel_for(
                 n_nodes, MARS_LAMBDA(const Integer i) { op_x(i) = 0.0; });
@@ -342,7 +420,76 @@ namespace mars {
                 });
         }
 
+        template <class F>
+        void assemble_rhs(ViewVectorType<Real> &rhs, F f) {
+            auto det_J = values_.det_J();
+
+            ViewMatrixType<Integer> elems = values_.mesh().get_view_elements();
+            ViewMatrixType<Real> points = values_.mesh().get_view_points();
+
+            auto mesh = values_.mesh();
+
+            Kokkos::parallel_for(
+                "UMeshLaplace::assemble_rhs", mesh.n_elements(), MARS_LAMBDA(const Integer i) {
+                    Integer idx[NFuns];
+                    Real det_J_e = det_J(i);
+
+                    for (Integer k = 0; k < NFuns; ++k) {
+                        idx[k] = elems(i, k);
+                    }
+
+                    for (Integer k = 0; k < NFuns; ++k) {
+                        const Real val = f(&points(idx[k], 0));
+                        Kokkos::atomic_add(&rhs(idx[k]), val * det_J_e);
+                    }
+                });
+        }
+
+        class JacobiPreconditioner {
+        public:
+            void init(FEValues<Mesh> &values) {
+                auto mesh = values.mesh();
+                ViewMatrixType<Integer> elems = values.mesh().get_view_elements();
+                auto det_J = values.det_J();
+                auto J_inv = values.J_inv();
+
+                ViewVectorType<Real> inv_diag("inv_diag", mesh.n_nodes());
+
+                Kokkos::parallel_for(
+                    "JacobiPreconditioner::init", mesh.n_elements(), MARS_LAMBDA(const Integer i) {
+                        Integer idx[NFuns];
+                        Real val[NFuns];
+
+                        for (Integer k = 0; k < NFuns; ++k) {
+                            idx[k] = elems(i, k);
+                        }
+
+                        SimplexLaplacian<Mesh>::one_thread_eval_diag(&J_inv(i, 0), det_J(i), val);
+
+                        for (Integer k = 0; k < NFuns; ++k) {
+                            Kokkos::atomic_add(&inv_diag(idx[k]), 1. / val[i]);
+                        }
+                    });
+
+                inv_diag_ = inv_diag;
+            }
+
+            void apply(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) {
+                auto n = inv_diag_.extent(0);
+                auto inv_diag = inv_diag_;
+
+                Kokkos::parallel_for(
+                    "JacobiPreconditioner::apply", n, MARS_LAMBDA(const Integer i) { op_x(i) = inv_diag(i) * x(i); });
+            }
+
+        private:
+            ViewVectorType<Real> inv_diag_;
+        };
+
+        inline JacobiPreconditioner &preconditioner() { return preconditioner_; }
+
         FEValues<Mesh> values_;
+        JacobiPreconditioner preconditioner_;
     };
 }  // namespace mars
 
@@ -380,24 +527,27 @@ int main(int argc, char *argv[]) {
         const Integer n_nodes = mesh.n_nodes();
 
         ViewVectorType<Real> x("X", n_nodes);
+        ViewVectorType<Real> rhs("rhs", n_nodes);
         ViewVectorType<Real> Ax("Ax", n_nodes);
-
-        Kokkos::parallel_for(
-            n_nodes, MARS_LAMBDA(const Integer i) { x(i) = 1.0; });
 
         UMeshLaplace<PMesh> op(mesh);
         BoundaryConditions<PMesh> bc(mesh);
-
         op.init();
-        op.apply(x, Ax);
+        auto prec = op.preconditioner();
 
-        bc.apply(Ax, ZeroDirchletOnUnitCube<PMesh>());
+        op.assemble_rhs(rhs, Norm2Squared<PMesh>());
 
-        ViewVectorType<Real>::HostMirror Ax_host("Ax_host", n_nodes);
-        Kokkos::deep_copy(Ax_host, Ax);
+        bc.apply(rhs, ZeroDirchletOnUnitCube<PMesh>());
+        bc.apply(x, ZeroDirchletOnUnitCube<PMesh>());
+
+        Integer num_iter = 0;
+        bcg_stab(op, prec, rhs, 1, x, num_iter);
+
+        ViewVectorType<Real>::HostMirror x_host("x_host", n_nodes);
+        Kokkos::deep_copy(x_host, x);
 
         for (Integer i = 0; i < n_nodes; ++i) {
-            std::cout << Ax_host(i) << std::endl;
+            std::cout << x_host(i) << std::endl;
         }
 
         ///////////////////////////////////////////////////////////////////////////
