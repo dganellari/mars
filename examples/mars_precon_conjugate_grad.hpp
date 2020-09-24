@@ -34,15 +34,8 @@ namespace mars {
     template <class OperatorA, class OperatorP>
     void bcg_stab(OperatorA &A, OperatorP &P, const VecType &b, Integer max_iter, VecType &x_0, Integer &num_iter) {
         auto comm = A.comm();
-        // auto &comm = *ctx->distributed;
-
         const size_t N = x_0.extent(0);
 
-        // CSVWriter csv;
-        // std::string path_error =
-        // "/Users/liudmilakaragyaur/code/space_time_error_estimator/results/csv/error_bcgstab/rel_err_init_zero.csv";
-        // std::string path_error = "err_70.csv";
-        // std::string iterations = "rel_error_zero.csv";
         std::cout << "Max iter: " << max_iter << std::endl;
 
         // FIXME can any of these buffers be avoided?
@@ -71,7 +64,6 @@ namespace mars {
         Real TOL = 1.0e-10;
 
         // Compute initial residual
-
         A.apply(x_0, r_0);                     // r_0 =  A*x_0
         KokkosBlas::axpby(1.0, b, -1.0, r_0);  // r_0 = b - A*x_0
 
@@ -80,8 +72,6 @@ namespace mars {
         double eps2_d = std::sqrt(comm.sum(KokkosBlas::nrm2_squared(b)));
 
         assert(!std::isnan(eps2_d));
-
-        // std::vector<Real> rel_error;
 
         double count = 0.0;
         while (count < max_iter) {
@@ -167,7 +157,6 @@ namespace mars {
             omega_0 = omega_1;
             rho_0 = rho_1;
         }
-        // Kokkos::deep_copy(result, x_0);
 
         num_iter = count;
         A.apply(x_0, r_0);                     // r_0 =  A*x_0
@@ -175,59 +164,6 @@ namespace mars {
         std::cout << "RESIDUE: " << std::sqrt(comm.sum(KokkosBlas::nrm2_squared(r_0))) << std::endl;
         std::cout << "Iter: " << count << std::endl;
     }
-
-    // void preconCG(
-    // const SparseMatrix &A,
-    // const SparseMatrix &M,
-    // const VecType &b,
-    // std::vector<bool> &node_is_boundary,
-    // const Real &dt,
-    // VecType &init_guess,
-    // VecType &result,
-    // Real &num_iter) {
-
-    //     Integer N =  A.numRows();
-    //     // Kokkos::View<Real*> x_0("x_0", N );
-    //     Kokkos::View<Real*> a("diag_A", N );
-    //     Kokkos::View<Real*> Precon("precond", N );
-
-    //     // ImplicitEulerOperator S(A,M,dt,N);
-    //     MatrixWrapper S(A);
-
-    //     for(Integer i = 0; i < N; ++i) {
-    //         auto row = A.row(i);
-    //         auto n_vals = row.length;
-    //         for(Integer k = 0; k < n_vals; ++k) {
-    //             auto j = row.colidx(k);
-    //             if (i==j){
-    //                 a(i) = 1./row.value(k);
-    //                 // a(i) = row.value(k);
-    //                 // std::cout << a(i) <<  std::endl;
-    //             }
-    //         }
-    //     }
-
-    //     // for(int i=0;i<N;i++){
-    //     //     if (node_is_boundary[i]  == 1){
-    //     //         init_guess(i)=b(i);
-    //     //     } else {
-    //     //         init_guess(i)=1.0;
-    //     //     }
-    //     // }
-
-    //     // display_vector(init_guess, N);
-
-    //     Integer  max_iter = N;
-    //     VectorWrapper P(a);
-
-    //     double o1;
-    //     P.apply2(o1);
-    //     // matrix_free_CG(S, P, b, x_0, N, result, num_iter);
-
-    //     // bcg_stab(S, P, b, init_guess, N, max_iter, o1, result, num_iter);
-    //     bcg_stab_new(S, P, b, init_guess, N, max_iter, o1, result, num_iter);
-
-    // }
 
 }  // namespace mars
 
