@@ -1,7 +1,7 @@
+#include <err.h>
 #include <algorithm>
 #include <cassert>
 #include <cstdlib>
-#include <err.h>
 #include <iostream>
 #include <numeric>
 
@@ -31,41 +31,116 @@
 #ifdef WITH_KOKKOS
 #include "mars_lepp_benchmark_kokkos.hpp"
 #include "mars_test_kokkos.hpp"
-#endif // WITH_KOKKOS
+#endif  // WITH_KOKKOS
+
+#include "mars_matrix_free_operator.hpp"
+#include "mars_poisson.hpp"
+
+namespace mars {
+
+    template <class Mesh>
+    class FEValues {
+    public:
+        static constexpr int Dim = Mesh::Dim;
+        static constexpr int NFuns = Mesh::Dim + 1;
+        static constexpr int NQPoints = 1;
+        // template <class Quadrature>
+        FEValues(const Mesh &mesh)
+            : mesh(mesh), det_J("det_J", mesh.n_elements()), J_inv("J_inv", mesh.n_elements(), Dim * Dim) {}
+
+        Mesh mesh;
+
+        ViewMatrixType<Real> grad;
+        ViewMatrixType<Real> J_inv;
+        ViewVectorType<Real> det_J;
+    };
+
+    template <class Mesh>
+    class UMeshLaplace final {
+    public:
+        using Elem = typename Mesh::Elem;
+        using SideElem = typename Mesh::SideElem;
+
+        UMeshLaplace(Mesh &mesh) : mesh_(mesh) {}
+
+        void apply(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) {
+            const Integer n_nodes = mesh_.n_nodes();
+
+            // Avoid capturing this
+            Mesh mesh = mesh_;
+
+            Kokkos::parallel_for(
+                n_nodes, MARS_LAMBDA(const Integer i) { op_x(i) = 0.0; });
+
+            Kokkos::parallel_for(
+                mesh.n_elements(), MARS_LAMBDA(const Integer i) {
+                    Elem e = mesh.elem(i);
+                    for (Integer i = 0; i < e.n_nodes(); ++i) {
+                        Kokkos::atomic_add(&op_x(e.nodes[i]), 1.0);
+                    }
+                });
+        }
+
+        Mesh mesh_;
+    };
+}  // namespace mars
+
 int main(int argc, char *argv[]) {
-  using namespace mars;
-  Kokkos::initialize(argc, argv);
+    using namespace mars;
+    Kokkos::initialize(argc, argv);
 
 #ifdef MARS_USE_CUDA
-  cudaDeviceSetLimit(cudaLimitStackSize,
-                     32768); // set stack to 32KB only for cuda since it is
-                             // not yet supported in kokkos.
+    cudaDeviceSetLimit(cudaLimitStackSize,
+                       32768);  // set stack to 32KB only for cuda since it is
+                                // not yet supported in kokkos.
 #endif
 
-  {
-    using PMesh = ParallelMesh2;
-    using SMesh = Mesh2;
+    {
+        using PMesh = ParallelMesh2;
+        using Elem = typename PMesh::Elem;
+        using SideElem = typename PMesh::SideElem;
 
-    Integer nx = 100, ny = 100, nz = 0;
-    PMesh mesh;
-    generate_cube(mesh, nx, ny, nz);
+        using SMesh = Mesh2;
 
-    ParallelBisection<PMesh> bisection(&mesh);
+        Integer nx = 20, ny = 20, nz = 0;
+        PMesh mesh;
+        generate_cube(mesh, nx, ny, nz);
 
-    ViewVectorType<Integer> marked("marked", 1);
+        ParallelBisection<PMesh> bisection(&mesh);
 
-    bisection.refine(marked);
+        ViewVectorType<Integer> marked("marked", 1);
 
-    SMesh serial_mesh;
-    convert_parallel_mesh_to_serial(serial_mesh, mesh);
+        bisection.refine(marked);
 
-    std::cout << "n_active_elements: " << serial_mesh.n_active_elements()
-              << std::endl;
-    std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
+        const Integer n_nodes = mesh.n_nodes();
 
-    VTKMeshWriter<SMesh> w;
-    w.write("mesh.vtu", serial_mesh);
-  }
+        ViewVectorType<Real> x("X", n_nodes);
+        ViewVectorType<Real> Ax("Ax", n_nodes);
 
-  Kokkos::finalize();
+        Kokkos::parallel_for(
+            n_nodes, MARS_LAMBDA(const Integer i) { x(i) = 0.0; });
+
+        UMeshLaplace<PMesh> op(mesh);
+        op.apply(x, Ax);
+
+        ViewVectorType<Real>::HostMirror Ax_host("Ax_host", n_nodes);
+        Kokkos::deep_copy(Ax_host, Ax);
+
+        for (Integer i = 0; i < n_nodes; ++i) {
+            std::cout << Ax_host(i) << std::endl;
+        }
+
+        /////////////////////////////////////////////////////////////////////////////
+
+        SMesh serial_mesh;
+        convert_parallel_mesh_to_serial(serial_mesh, mesh);
+
+        std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
+        std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
+
+        VTKMeshWriter<SMesh> w;
+        w.write("mesh.vtu", serial_mesh);
+    }
+
+    Kokkos::finalize();
 }
