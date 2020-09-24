@@ -54,24 +54,26 @@ namespace mars {
             auto elems = mesh_.get_view_elements();
             auto points = mesh_.get_view_points();
 
+            const Integer n_nodes = mesh_.n_nodes();
+
             Kokkos::parallel_for(
                 "FEValues::init", mesh_.n_elements(), MARS_LAMBDA(const Integer i) {
                     Integer idx[NFuns];
+                    Real J[Dim * Dim];
+                    Real p0[Dim], pk[Dim];
 
                     for (int k = 0; k < NFuns; ++k) {
                         idx[k] = elems(i, k);
+                        assert(idx[k] < n_nodes);
                     }
-
-                    Real p0[Dim], pk[Dim];
 
                     for (int d = 0; d < Dim; ++d) {
                         p0[d] = points(idx[0], d);
                     }
 
-                    Real J[Dim * Dim];
-
                     for (int k = 1; k < NFuns; ++k) {
                         const int km1 = k - 1;
+
                         for (int d = 0; d < Dim; ++d) {
                             pk[d] = points(idx[k], d);
                         }
@@ -82,8 +84,8 @@ namespace mars {
                     }
 
                     Real e_det_J = det(J);
-                    invert(J, &J_inv(i, 0), e_det_J);
-                    // det_J(i) = e_det_J;
+                    // invert(J, &J_inv(i, 0), e_det_J);
+                    det_J(i) = e_det_J;
                 });
         }
 
@@ -309,16 +311,16 @@ int main(int argc, char *argv[]) {
         // Kokkos::parallel_for(
         //     mesh.n_elements(), MARS_LAMBDA(const Integer i) { printf("%g\n", values.det_J[i]); });
 
-        const Integer n_nodes = mesh.n_nodes();
+        // const Integer n_nodes = mesh.n_nodes();
 
-        ViewVectorType<Real> x("X", n_nodes);
-        ViewVectorType<Real> Ax("Ax", n_nodes);
+        // ViewVectorType<Real> x("X", n_nodes);
+        // ViewVectorType<Real> Ax("Ax", n_nodes);
 
-        Kokkos::parallel_for(
-            n_nodes, MARS_LAMBDA(const Integer i) { x(i) = 1.0; });
+        // Kokkos::parallel_for(
+        //     n_nodes, MARS_LAMBDA(const Integer i) { x(i) = 1.0; });
 
-        UMeshLaplace<PMesh> op(mesh);
-        op.init();
+        // UMeshLaplace<PMesh> op(mesh);
+        // op.init();
         //        op.apply(x, Ax);
 
         //        ViewVectorType<Real>::HostMirror Ax_host("Ax_host", n_nodes);
