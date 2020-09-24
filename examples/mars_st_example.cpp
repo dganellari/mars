@@ -37,6 +37,7 @@
 #include "mars_poisson.hpp"
 
 #include "mars_precon_conjugate_grad.hpp"
+#include "vtu_writer.hpp"
 
 namespace mars {
 
@@ -628,8 +629,8 @@ int main(int argc, char *argv[]) {
         std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
         std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
 
-        VTKMeshWriter<SMesh> w;
-        w.write("mesh.vtu", serial_mesh);
+        VTUMeshWriter<SMesh> w;
+        w.write("mesh.vtu", serial_mesh, x_host);
     }
 
     Kokkos::finalize();
