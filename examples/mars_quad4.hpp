@@ -113,11 +113,12 @@ public:
     }
   };
 
-  class Quad4 final {
+
+  class Quadrature final {
   public:
     static constexpr int n_qp = 6;
-    static T_ q_points[n_qp][PhysicalDim_];
     static T_ q_weights[n_qp];
+    static T_ q_points[n_qp][PhysicalDim_];
 
     static ViewMatrixTextureC<T_, n_qp, PhysicalDim_> q_p;
     static ViewVectorTextureC<T_, n_qp> q_w;
@@ -130,8 +131,10 @@ public:
 
 }; // namespace mars
 
-template<typename T>
-double FEQuad4<T>::Quad4::q_points = {
+//a singleton pattern might be a better solution
+
+template<typename T_, int PhysicalDim_>
+T_ FEQuad4<T_, PhysicalDim_>::Quadrature::q_points[6][PhysicalDim_] = {
     {0.5, 0.5},
     {0.98304589153964795245728880523899, 0.5},
     {0.72780186391809642112479237299488, 0.074042673347699754349082179816666},
@@ -140,14 +143,17 @@ double FEQuad4<T>::Quad4::q_points = {
     {0.13418502421343273531598225407969, 0.81545639448837701312170660149683}};
 
 
-double FEQuad4<double>::Quad4::q_weights = {
+template<typename T_, int PhysicalDim_>
+T_ FEQuad4<T_, PhysicalDim_>::Quadrature::q_weights[6] = {
     0.28571428571428571428571428571428, 0.10989010989010989010989010989011,
     0.14151805175188302631601261486295, 0.14151805175188302631601261486295,
     0.16067975044591917148618518733485, 0.16067975044591917148618518733485};
 
-ViewMatrixTextureC<double, 6, 2> Quad4::q_p;
+template<typename T_, int PhysicalDim_>
+ViewMatrixTextureC<T_, 6, PhysicalDim_> FEQuad4<T_, PhysicalDim_>::Quadrature::q_p;
 
-ViewVectorTextureC<double, 6> Quad4::q_w;
+template<typename T_, int PhysicalDim_>
+ViewVectorTextureC<T_, 6> FEQuad4<T_, PhysicalDim_>::Quadrature::q_w;
 
 } // namespace mars
 

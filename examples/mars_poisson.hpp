@@ -256,25 +256,19 @@ void gather_elem_data(const DMQ2& dm, const Integer elem_index,
   }
 }
 
-template<Integer INPUT, Integer OUTPUT>
-void build_data_matrix()
-{
-}
-
 //if non-linear than the quad rule should be computed per quad point and not
 //anymore for each element so the coalescing of the Jinv will not matter.
 //In that case maybe a better way to go is parallel through the quad points.
-template <Integer INPUT, Integer OUTPUT>
+template <Integer INPUT>
 void integrate(const DMQ2 &dm, ViewVectorType<double> det_J,
-               ViewMatrixType<double> J_inv) {
+               ViewMatrixType<double> J_inv, ViewMatrixType<double> res) {
 
   constexpr int n_qp = 6;
-  ViewVectorTextureC<double, n_qp> q_weights = FEQuad4<double>::Quad4::q_w;
-  ViewMatrixTextureC<double, n_qp, 2> q_points = FEQuad4<double>::Quad4::q_p;
+  ViewVectorTextureC<double, n_qp> q_weights = FEQuad4<double>::Quadrature::q_w;
+  ViewMatrixTextureC<double, n_qp, 2> q_points = FEQuad4<double>::Quadrature::q_p;
 
   dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
     double gi[2], g[2];
-    double res[DMQ2::elem_nodes] = {0};
 
     double sol[DMQ2::elem_nodes];
     gather_elem_data<INPUT>(dm, elem_index, sol);
@@ -289,27 +283,32 @@ void integrate(const DMQ2 &dm, ViewVectorType<double> det_J,
       g[0] = J_inv(elem_index, 0) * gi[0] + J_inv(elem_index, 2) * gi[1];
       g[1] = J_inv(elem_index, 1) * gi[0] + J_inv(elem_index, 3) * gi[1];
 
+      const double detj = det_J(elem_index);
+
       for (int i = 0; i < DMQ2::elem_nodes; i++) {
         // forach dof get the local number
         const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
-        FEQuad4<double>::Grad::affine_f(i, &J_inv(elem_index, 0), &q_points(k, 0),
-                                        gi);
+        FEQuad4<double>::Grad::affine_f(i, &J_inv(elem_index, 0), &q_points(k, 0), gi);
 
         // dot(grad sol, grad phi_i)
         const double dot_grads = (gi[0] * g[0] + gi[1] * g[1]);
-        const double integr = q_weights(k) * det_J(elem_index) * dot_grads;
+        const double integr = q_weights(k) * detj * dot_grads;
 
-        res[i] += integr;
-        /* Kokkos::atomic_add(&dm.get_dof_data<OUTPUT>(local_dof), integr); */
-        assert(res[i] == res[i]);
+        res(elem_index, i) += integr;
+        assert(res(elem_index, i) == res(elem_index, i));
       }
     }
+  });
+}
 
+template <Integer OUTPUT>
+void add_dof_contributions(const DMQ2& dm, const ViewMatrixType<double> &res) {
+  dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
     // update output
     for (int i = 0; i < DMQ2::elem_nodes; i++) {
       const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
       /* atomically updated the contributions to the same dof */
-      Kokkos::atomic_add(&dm.get_dof_data<OUTPUT>(local_dof), res[i]);
+      Kokkos::atomic_add(&dm.get_dof_data<OUTPUT>(local_dof), res(elem_index, i));
     }
   });
 }
@@ -323,7 +322,10 @@ void form_operator(const DMQ2 dm, const int rank) {
   ViewMatrixType<double> invJ("J_inv", dm.get_elem_size(), 4);
   compute_invJ_and_detJ<Elem::ElemType>(dm, detJ, invJ);
 
-  integrate<INPUT, OUTPUT>(dm, detJ, invJ);
+  ViewMatrixType<double> res("res", dm.get_elem_size(), DMQ2::elem_nodes);
+  integrate<INPUT>(dm, detJ, invJ, res);
+
+  add_dof_contributions<OUTPUT>(dm, res);
 }
 
 /*
@@ -537,7 +539,7 @@ void poisson(int &argc, char **&argv, const int level) {
           dm.get_dof_data<OUTPUT>(i) = 0.0;
         });
 
-    FEQuad4<double>::Quad4::prepare_quadrature();
+    FEQuad4<double>::Quadrature::prepare_quadrature();
 
     // specify the tuple indices of the tuplelements that are needed to gather.
     // if no index specified it gathers all views of the tuple. All data.
