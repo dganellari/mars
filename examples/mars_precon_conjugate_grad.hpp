@@ -140,7 +140,8 @@ namespace mars {
             Real stop_criteria = std::sqrt(comm.sum(KokkosBlas::nrm2_squared(r_1))) / eps2_d;
 
             assert(!std::isnan(stop_criteria));
-            // rel_error.push_back(stop_criteria);
+
+            std::cout << count << " " << stop_criteria << std::endl;
 
             if (stop_criteria < TOL) {
                 Kokkos::deep_copy(x_0, x_1);

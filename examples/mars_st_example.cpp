@@ -305,11 +305,21 @@ namespace mars {
         static const int Dim = Mesh::Dim;
 
         MARS_INLINE_FUNCTION void operator()(const Real *p, Real &val) const {
+            if (is_boundary(p)) {
+                val = 0.0;
+            }
+        }
+
+        MARS_INLINE_FUNCTION static bool is_boundary(const Real *p) {
+            bool ret = false;
             for (int d = 0; d < Dim; ++d) {
                 if (p[d] <= 1e-16 || p[d] >= 1 + 1e-16) {
-                    val = 0.0;
+                    ret = true;
+                    break;
                 }
             }
+
+            return ret;
         }
     };
 
@@ -334,6 +344,41 @@ namespace mars {
 
             return ret;
         }
+    };
+
+    class IdentityOperator {
+    public:
+        template <class Mesh, class BC>
+        void init(Mesh &mesh, BC bc) {
+            static const int Dim = Mesh::Dim;
+
+            auto points = mesh.points();
+            ViewVectorType<bool> is_boundary("is_boundary", mesh.n_nodes());
+
+            Kokkos::parallel_for(
+                "IdentityOperator::init", mesh.n_nodes(), MARS_LAMBDA(const Integer i) {
+                    Real p[Dim];
+
+                    for (int d = 0; d < Dim; ++d) {
+                        p[d] = points(i, d);
+                    }
+                    is_boundary(i) = bc.is_boundary(p);
+                });
+
+            is_boundary_ = is_boundary;
+        }
+
+        bool apply(const ViewVectorType<Real> &input, ViewVectorType<Real> &x) {
+            auto is_boundary = is_boundary_;
+
+            Kokkos::parallel_for(
+                "IdentityOperator::apply", is_boundary_.extent(0), MARS_LAMBDA(const Integer i) {
+                    x(i) = x(i) * (!is_boundary(i)) + input(i) * is_boundary(i);
+                });
+        }
+
+    private:
+        ViewVectorType<bool> is_boundary_;
     };
 
     template <class Mesh>
@@ -418,6 +463,8 @@ namespace mars {
                         Kokkos::atomic_add(&op_x(idx[k]), Au[k]);
                     }
                 });
+
+            id_->apply(x, op_x);
         }
 
         template <class F>
@@ -467,7 +514,8 @@ namespace mars {
                         SimplexLaplacian<Mesh>::one_thread_eval_diag(&J_inv(i, 0), det_J(i), val);
 
                         for (Integer k = 0; k < NFuns; ++k) {
-                            Kokkos::atomic_add(&inv_diag(idx[k]), 1. / val[i]);
+                            assert(val[k] != 0.0);
+                            Kokkos::atomic_add(&inv_diag(idx[k]), 1. / val[k]);
                         }
                     });
 
@@ -480,16 +528,27 @@ namespace mars {
 
                 Kokkos::parallel_for(
                     "JacobiPreconditioner::apply", n, MARS_LAMBDA(const Integer i) { op_x(i) = inv_diag(i) * x(i); });
+
+                id_->apply(x, op_x);
             }
+
+            void set_identity(std::shared_ptr<IdentityOperator> id) { id_ = id; }
 
         private:
             ViewVectorType<Real> inv_diag_;
+            std::shared_ptr<IdentityOperator> id_;
         };
+
+        void set_identity(const std::shared_ptr<IdentityOperator> &id) {
+            id_ = id;
+            preconditioner_.set_identity(id);
+        }
 
         inline JacobiPreconditioner &preconditioner() { return preconditioner_; }
 
         FEValues<Mesh> values_;
         JacobiPreconditioner preconditioner_;
+        std::shared_ptr<IdentityOperator> id_;
     };
 }  // namespace mars
 
@@ -511,6 +570,11 @@ int main(int argc, char *argv[]) {
         using SMesh = Mesh2;
 
         Integer nx = 6, ny = 6, nz = 0;
+        if (argc > 1) {
+            nx = atol(argv[1]);
+            ny = atol(argv[1]);
+        }
+
         PMesh mesh;
         generate_cube(mesh, nx, ny, nz);
 
@@ -533,22 +597,28 @@ int main(int argc, char *argv[]) {
         UMeshLaplace<PMesh> op(mesh);
         BoundaryConditions<PMesh> bc(mesh);
         op.init();
-        auto prec = op.preconditioner();
 
+        ZeroDirchletOnUnitCube<PMesh> bc_fun;
+        auto id = std::make_shared<IdentityOperator>();
+        id->init(mesh, bc_fun);
+
+        op.set_identity(id);
         op.assemble_rhs(rhs, Norm2Squared<PMesh>());
 
-        bc.apply(rhs, ZeroDirchletOnUnitCube<PMesh>());
-        bc.apply(x, ZeroDirchletOnUnitCube<PMesh>());
+        bc.apply(rhs, bc_fun);
+        bc.apply(x, bc_fun);
+
+        auto prec = op.preconditioner();
 
         Integer num_iter = 0;
-        bcg_stab(op, prec, rhs, 1, x, num_iter);
+        bcg_stab(op, prec, rhs, rhs.extent(0), x, num_iter);
 
         ViewVectorType<Real>::HostMirror x_host("x_host", n_nodes);
         Kokkos::deep_copy(x_host, x);
 
-        for (Integer i = 0; i < n_nodes; ++i) {
-            std::cout << x_host(i) << std::endl;
-        }
+        // for (Integer i = 0; i < n_nodes; ++i) {
+        //     std::cout << x_host(i) << std::endl;
+        // }
 
         ///////////////////////////////////////////////////////////////////////////
 
