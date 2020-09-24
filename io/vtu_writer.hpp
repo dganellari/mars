@@ -14,7 +14,7 @@ namespace mars {
     template <class Mesh>
     class VTUMeshWriter {
     private:
-        using KokkosVector = mars::ViewVectorType<Real>;
+        using KokkosVector = mars::ViewVectorType<Real>::HostMirror;
         // typedef typename Mesh::Matrix Matrix;
         static const Integer Dim = Mesh::Dim;
         static const Integer ManifoldDim = Mesh::ManifoldDim;

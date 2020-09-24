@@ -285,6 +285,7 @@ target_include_directories(mars PUBLIC distributed/mars_env)
 target_include_directories(mars PUBLIC distributed/communication)
 target_include_directories(mars PUBLIC distributed/communication/util)
 target_include_directories(mars PUBLIC examples)
+target_include_directories(mars PUBLIC io)
 
 if(Kokkos_FOUND)
     message(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
