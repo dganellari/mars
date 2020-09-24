@@ -1280,22 +1280,9 @@ void enumerate_dofs(const context &context)
         return get_dof_coordinates_from_sfc<Type>(sfc, point);
     }
 
-
-    template<Integer... dataidx>
-    void set_locally_owned_data(const ViewVectorType<)
-    {
-        using namespace Kokkos;
-
-        Kokkos::Timer timer;
-
-        // exchange the ghost dofs first since it will be used to find the address
-        // of the userdata based on the sfc code.
-
-        int proc_num = rank(context);
-        int size = num_ranks(context);
-    }
     /* :TODO stencil use the face iterate on the dof sfc. */
-    /* The face nbh will give an sfc code. To get the local code from it sfc_to_local can be used */
+    /* The face nbh will give an sfc code. To get the local code from it
+     * sfc_to_local can be used */
 
     //Two way of iterations: face and element. You can also build your stencil yourself.
 
