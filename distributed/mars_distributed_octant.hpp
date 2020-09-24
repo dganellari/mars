@@ -60,7 +60,8 @@ struct Octant
     }
 
     template <Integer Type, Integer Face = -1>
-    mars_inline_function bool is_boundary(const int xdim, const int ydim, const int zdim)
+    MARS_INLINE_FUNCTION
+    bool is_boundary(const int xdim, const int ydim, const int zdim)
     {
         switch (Face)
         {
@@ -86,7 +87,7 @@ struct Octant
         }
         case 5:
         {
-            return (z == zdim)
+            return (z == zdim);
         }
         case -1:
         {
@@ -100,16 +101,16 @@ struct Octant
         }
     }
 
-    template <integer type>
-    mars_inline_function bool boundary(const int xdim, const int ydim, const int zdim)
+    template <Integer Type>
+    MARS_INLINE_FUNCTION bool boundary(const int xdim, const int ydim, const int zdim)
     {
-        switch (type)
+        switch (Type)
         {
-        case elementtype::quad4:
+        case ElementType::Quad4:
         {
             return (x == 0 || y == 0 || x == xdim || y == ydim);
         }
-        case elementtype::hex8:
+        case ElementType::Hex8:
         {
             return (x == 0 || y == 0 || z == 0 || x == xdim || y == ydim || z == zdim);
         }
@@ -364,16 +365,18 @@ MARS_INLINE_FUNCTION Integer get_sfc_from_octant(const Octant &o)
 
 //-1 for all boundary. 0 left, 1 right, 2 down, 3 up and 4 and 5 for z dim.
 template <Integer Type, Integer Face = -1>
-mars_inline_function bool is_boundary_sfc(const Integer sfc, const int xdim, const int ydim, const int zdim)
+MARS_INLINE_FUNCTION
+bool is_boundary_sfc(const Integer sfc, const int xdim, const int ydim, const int zdim)
 {
     Octant o = get_octant_from_sfc<Type>(sfc);
     return o.is_boundary<Type, Face>(xdim, ydim, zdim);
 }
 template <Integer Type>
-MARS_INLINE_FUNCTION void get_vertex_coordinates_from_sfc(const Integer sfc, double *point, const Integer xDim, const Integer yDim, const Integer zDim)
+MARS_INLINE_FUNCTION
+void get_vertex_coordinates_from_sfc(const Integer sfc, double *point, const Integer xDim, const Integer yDim, const Integer zDim)
 {
     Octant o = get_octant_from_sfc<Type>(sfc);
-    o.get_vertex_coordinates(point, xDim, yDim, zDim);
+    o.get_vertex_coordinates<Type>(point, xDim, yDim, zDim);
 }
 
 } // namespace mars

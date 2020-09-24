@@ -1258,6 +1258,18 @@ void enumerate_dofs(const context &context)
         return local_dof_enum.get_view_sfc_to_local()(sfc);
     }
 
+    template<Integer Type, Integer FaceNr = -1>
+    MARS_INLINE_FUNCTION
+    bool is_boundary(const Integer local) const
+    {
+        const Integer sfc = local_to_sfc(local);
+        const Integer xdim = get_local_dof_enum().get_XDim();
+        const Integer ydim = get_local_dof_enum().get_YDim();
+        const Integer zdim = get_local_dof_enum().get_ZDim();
+
+        return is_boundary_sfc<Type, FaceNr>(sfc, xdim, ydim, zdim);
+    }
+
     template <Integer idx,
               typename H = typename std::tuple_element<idx, tuple>::type>
     void get_locally_owned_data(const ViewVectorType<H> &x) {
@@ -1298,11 +1310,12 @@ void enumerate_dofs(const context &context)
           });
     }
 
-    template <Integer idx, Integer face_nr, typename F>
+    template <Integer idx, Integer face_nr = -1, typename F,
+             typename H = typename std::tuple_element<idx, tuple>::type>
     void boundary_dof_iterate(F f)
     {
         using namespace Kokkos;
-        using Type = typename simplex_type::ElemType;
+        constexpr Integer Type = simplex_type::ElemType;
 
         const Integer size = get_global_dof_enum().get_elem_size();
 
@@ -1310,12 +1323,16 @@ void enumerate_dofs(const context &context)
         ViewVectorType<Integer> sfc_to_local = get_local_dof_enum().get_view_sfc_to_local();
         ViewVectorType<H> dof_data = get_dof_data<idx>();
 
+        const Integer xdim = get_local_dof_enum().get_XDim();
+        const Integer ydim = get_local_dof_enum().get_YDim();
+        const Integer zdim = get_local_dof_enum().get_ZDim();
+
         Kokkos::parallel_for(
             "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
                 const Integer sfc = global_to_sfc(i);
                 const Integer local = sfc_to_local(sfc);
-                if (is_boundary_sfc<Type, face_nr>(sfc, get_local_dof_enum().get_XDim(),
-                            get_local_dof_enum().get_YDim(), get_local_dof_enum().get_ZDim()))
+
+                if (is_boundary_sfc<Type, face_nr>(sfc, xdim, ydim, zdim))
                 {
                     f(local, dof_data(local));
                 }

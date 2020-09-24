@@ -61,7 +61,7 @@ u = P uk */
 namespace mars {
 
 /* using DMQ2 = DM<DistributedQuad4Mesh, 2, double, double>; */
-using DMQ1 = DM<DistributedQuad4Mesh, 1, double, double>;
+using DMQ2 = DM<DistributedQuad4Mesh, 2, double, double>;
 /*
 enum class DMDataDesc
 {
@@ -73,7 +73,8 @@ enum class DMDataDesc
 static constexpr int INPUT = 0;
 static constexpr int OUTPUT = 1;
 
-template <Integer idx> using DMDataType = typename DMQ2::UserDataType<idx>;
+template <Integer idx>
+using DMDataType = typename DMQ2::UserDataType<idx>;
 
 template <typename... T> using tuple = mars::ViewsTuple<T...>;
 
@@ -423,9 +424,22 @@ void poisson(int &argc, char **&argv, const int level) {
 
     dm.set_locally_owned_data<INPUT>(x);
 
+    constexpr Integer left = 0; // 0 for the left face, 1 for the right, 2 and 3 for down and up.
+    constexpr Integer up = 3;
+    //if no facenr specified all the boundary is processed. If more than one and less than all
+    //is needed than choose all (do not provide face number) and check manually within the lambda
+    dm.boundary_dof_iterate<INPUT>(
+        MARS_LAMBDA(const Integer local_dof, DMDataType<INPUT> &value) {
+            //do something with the local dof number if needed.
+            //For example: If no face nr is specified at the boundary dof iterate:
+            if (dm.is_boundary<Type, left>(local_dof) || dm.is_boundary<Type, up>(local_dof))
+                value = -1;
+        });
+
     dm.dof_iterate(MARS_LAMBDA(const Integer i) {
-      printf("ggid: %li, INPUT: %lf, OUTPUT: %lf, rank: %i\n", i,
-             dm.get_dof_data<INPUT>(i), dm.get_dof_data<OUTPUT>(i), proc_num);
+        const Integer gd= dm.local_to_global(i);
+        printf("llid: %li, ggid: %li, INPUT: %lf, OUTPUT: %lf, rank: %i\n", i, gd,
+               dm.get_dof_data<INPUT>(i), dm.get_dof_data<OUTPUT>(i), proc_num);
     });
     // local dof enum size
     const Integer dof_size = dm.get_dof_size();
