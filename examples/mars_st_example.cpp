@@ -102,8 +102,8 @@ namespace mars {
                     det_J(i) = e_det_J;
                 });
 
-            Kokkos::parallel_for(
-                "print_det_J", mesh_.n_elements(), MARS_LAMBDA(const Integer i) { printf("%g\n", det_J(i)); });
+            // Kokkos::parallel_for(
+            //     "print_det_J", mesh_.n_elements(), MARS_LAMBDA(const Integer i) { printf("%g\n", det_J(i)); });
         }
 
         MARS_INLINE_FUNCTION Real det1(const Real *m) { return m[0]; }
@@ -322,7 +322,7 @@ int main(int argc, char *argv[]) {
 
         using SMesh = Mesh2;
 
-        Integer nx = 6, ny = 6, nz = 0;
+        Integer nx = 60, ny = 60, nz = 0;
         PMesh mesh;
         generate_cube(mesh, nx, ny, nz);
 
@@ -351,9 +351,9 @@ int main(int argc, char *argv[]) {
         ViewVectorType<Real>::HostMirror Ax_host("Ax_host", n_nodes);
         Kokkos::deep_copy(Ax_host, Ax);
 
-        for (Integer i = 0; i < n_nodes; ++i) {
-            std::cout << Ax_host(i) << std::endl;
-        }
+        // for (Integer i = 0; i < n_nodes; ++i) {
+        //     std::cout << Ax_host(i) << std::endl;
+        // }
 
         ///////////////////////////////////////////////////////////////////////////
 
