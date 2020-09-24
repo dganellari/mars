@@ -43,18 +43,32 @@ namespace mars {
     public:
         using Elem = typename Mesh::Elem;
         using Point = typename Mesh::Point;
-        static constexpr int Dim = Mesh::Dim;
-        static constexpr int NFuns = Mesh::Dim + 1;
-        static constexpr int NQPoints = 1;
+        static const int Dim = Mesh::Dim;
+        static const int ManifoldDim = Mesh::ManifoldDim;
+        static const int NFuns = Elem::ElemType;
+        static const int NQPoints = 1;
         // template <class Quadrature>
-        FEValues(const Mesh &mesh)
-            : mesh_(mesh), det_J("det_J", mesh.n_elements()), J_inv("J_inv", mesh.n_elements(), Dim * Dim) {}
+        FEValues(const Mesh &mesh) : mesh_(mesh) {}
 
         void init() {
-            auto elems = mesh_.get_view_elements();
-            auto points = mesh_.get_view_points();
+            ViewMatrixType<Integer> elems = mesh_.get_view_elements();
+            ViewMatrixType<Real> points = mesh_.get_view_points();
+
+            auto ne = elems.extent(0);
+            auto nen = elems.extent(1);
+
+            det_J_ = ViewVectorType<Real>("det_J", mesh_.n_elements());
+            J_inv_ = ViewMatrixType<Real>("J_inv", mesh_.n_elements(), Dim * Dim);
+
+            auto det_J = det_J_;
+            auto J_inv = J_inv_;
+
+            // std::cout << ne << " == " << mesh_.n_elements() << std::endl;
+            // std::cout << nen << " == " << NFuns << std::endl;
 
             const Integer n_nodes = mesh_.n_nodes();
+
+            // std::cout << points.extent(0) << " == " << n_nodes << std::endl;
 
             Kokkos::parallel_for(
                 "FEValues::init", mesh_.n_elements(), MARS_LAMBDA(const Integer i) {
@@ -84,9 +98,12 @@ namespace mars {
                     }
 
                     Real e_det_J = det(J);
-                    // invert(J, &J_inv(i, 0), e_det_J);
+                    invert(J, &J_inv(i, 0), e_det_J);
                     det_J(i) = e_det_J;
                 });
+
+            Kokkos::parallel_for(
+                "print_det_J", mesh_.n_elements(), MARS_LAMBDA(const Integer i) { printf("%g\n", det_J(i)); });
         }
 
         MARS_INLINE_FUNCTION Real det1(const Real *m) { return m[0]; }
@@ -156,12 +173,18 @@ namespace mars {
         MARS_INLINE_FUNCTION Mesh &mesh() { return mesh_; }
         MARS_INLINE_FUNCTION const Mesh &mesh() const { return mesh_; }
 
+        // MARS_INLINE_FUNCTION Real det_J(const Integer &i) const { return det_J_(i); }
+        // MARS_INLINE_FUNCTION Real *J_inv_ptr(const Integer &i) const { return &J_inv_(i, 0); }
+
+        MARS_INLINE_FUNCTION ViewVectorType<Real> det_J() const { return det_J_; }
+        MARS_INLINE_FUNCTION ViewMatrixType<Real> J_inv() const { return J_inv_; }
+
     private:
         Mesh mesh_;
 
     public:
-        ViewMatrixType<Real> J_inv;
-        ViewVectorType<Real> det_J;
+        ViewMatrixType<Real> J_inv_;
+        ViewVectorType<Real> det_J_;
     };
 
     template <class Mesh>
@@ -244,28 +267,36 @@ namespace mars {
 
         void apply(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) {
             // For Kokkos-Cuda
-            FEValues<Mesh> values = values_;
+            auto det_J = values_.det_J();
+            auto J_inv = values_.J_inv();
+            auto mesh = values_.mesh();
 
-            Mesh mesh = values.mesh();
+            ViewMatrixType<Integer> elems = mesh.get_view_elements();
+
             const Integer n_nodes = mesh.n_nodes();
+
+            // std::cout << x.extent(0) << " == " << n_nodes << std::endl;
 
             Kokkos::parallel_for(
                 n_nodes, MARS_LAMBDA(const Integer i) { op_x(i) = 0.0; });
+
+            // Kokkos::Cuda().fence()
 
             Kokkos::parallel_for(
                 "UMeshLaplace::apply", mesh.n_elements(), MARS_LAMBDA(const Integer i) {
                     Real u[NFuns];
                     Real Au[NFuns];
+                    Integer idx[NFuns];
 
-                    Elem e = mesh.elem(i);
-                    for (Integer i = 0; i < e.n_nodes(); ++i) {
-                        u[i] = x(e.nodes[i]);
+                    for (Integer k = 0; k < NFuns; ++k) {
+                        idx[k] = elems(i, k);
+                        u[k] = x(idx[k]);
                     }
 
-                    SimplexLaplacian<Mesh>::one_thread_eval(&values.J_inv(i, 0), values.det_J(i), u, Au);
+                    SimplexLaplacian<Mesh>::one_thread_eval(&J_inv(i, 0), det_J(i), u, Au);
 
-                    for (Integer i = 0; i < e.n_nodes(); ++i) {
-                        Kokkos::atomic_add(&op_x(e.nodes[i]), Au[i]);
+                    for (Integer k = 0; k < NFuns; ++k) {
+                        Kokkos::atomic_add(&op_x(idx[k]), Au[k]);
                     }
                 });
         }
@@ -305,41 +336,35 @@ int main(int argc, char *argv[]) {
 
         bisection.refine(marked);
 
-        FEValues<PMesh> values(mesh);
-        values.init();
+        const Integer n_nodes = mesh.n_nodes();
 
-        // Kokkos::parallel_for(
-        //     mesh.n_elements(), MARS_LAMBDA(const Integer i) { printf("%g\n", values.det_J[i]); });
+        ViewVectorType<Real> x("X", n_nodes);
+        ViewVectorType<Real> Ax("Ax", n_nodes);
 
-        // const Integer n_nodes = mesh.n_nodes();
+        Kokkos::parallel_for(
+            n_nodes, MARS_LAMBDA(const Integer i) { x(i) = 1.0; });
 
-        // ViewVectorType<Real> x("X", n_nodes);
-        // ViewVectorType<Real> Ax("Ax", n_nodes);
+        UMeshLaplace<PMesh> op(mesh);
+        op.init();
+        op.apply(x, Ax);
 
-        // Kokkos::parallel_for(
-        //     n_nodes, MARS_LAMBDA(const Integer i) { x(i) = 1.0; });
+        ViewVectorType<Real>::HostMirror Ax_host("Ax_host", n_nodes);
+        Kokkos::deep_copy(Ax_host, Ax);
 
-        // UMeshLaplace<PMesh> op(mesh);
-        // op.init();
-        //        op.apply(x, Ax);
+        for (Integer i = 0; i < n_nodes; ++i) {
+            std::cout << Ax_host(i) << std::endl;
+        }
 
-        //        ViewVectorType<Real>::HostMirror Ax_host("Ax_host", n_nodes);
-        //        Kokkos::deep_copy(Ax_host, Ax);
+        ///////////////////////////////////////////////////////////////////////////
 
-        //        for (Integer i = 0; i < n_nodes; ++i) {
-        //            std::cout << Ax_host(i) << std::endl;
-        //        }
+        SMesh serial_mesh;
+        convert_parallel_mesh_to_serial(serial_mesh, mesh);
 
-        /////////////////////////////////////////////////////////////////////////////
+        std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
+        std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
 
-        //       SMesh serial_mesh;
-        //       convert_parallel_mesh_to_serial(serial_mesh, mesh);
-
-        //       std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
-        //       std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
-
-        //        VTKMeshWriter<SMesh> w;
-        //        w.write("mesh.vtu", serial_mesh);
+        VTKMeshWriter<SMesh> w;
+        w.write("mesh.vtu", serial_mesh);
     }
 
     Kokkos::finalize();
