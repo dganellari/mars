@@ -5,6 +5,8 @@
 #include <iostream>
 #include <numeric>
 
+#include <KokkosBlas1_nrm1.hpp>
+
 #include "mars_benchmark.hpp"
 #include "mars_bisection.hpp"
 #include "mars_lagrange_element.hpp"
@@ -103,6 +105,10 @@ namespace mars {
                     Real e_det_J = det(J);
                     invert(J, &J_inv(i, 0), e_det_J);
                     det_J(i) = e_det_J;
+
+                    assert(e_det_J == e_det_J);
+                    assert(e_det_J != 0.0);
+                    assert(e_det_J > 0.0);
                 });
 
             // Kokkos::parallel_for(
@@ -225,7 +231,7 @@ namespace mars {
             }
 
             m_t_v_mult(J_inv, g_ref, g);
-            val[0] += dot(g, g) * det_J;
+            val[0] = dot(g, g) * det_J;
 
             for (int d = 0; d < Dim; ++d) {
                 g_ref[d] = 0;
@@ -245,7 +251,7 @@ namespace mars {
                                                          const Real &det_J,
                                                          const Real *u,
                                                          Real *val) {
-            Real g_ref[Dim], g[Dim];
+            Real g_ref[Dim], g[Dim], g_fe[Dim];
 
             ///////////////////////////////////////////////////////////////////
             ////////////////// Gradient with local basis function /////////////
@@ -267,27 +273,30 @@ namespace mars {
             ////////////////// evaluate bilinear form ////////////////////////
 
             ///////////// Evaluate for Phi_0(x) = 1 - x_0 - ... x_n
-            val[0] = 0.0;
-            for (int d1 = 0; d1 < Dim; ++d1) {
-                Real temp = 0.0;
 
-                for (int d2 = 0; d2 < Dim; ++d2) {
-                    temp += J_inv[d1 + d2 * Dim];
-                }
+            for (int d = 0; d < Dim; ++d) {
+                g_ref[d] = -1;
+            }
 
-                val[0] += g[d1] * -temp;
+            m_t_v_mult(J_inv, g_ref, g_fe);
+
+            val[0] += dot(g, g_fe) * det_J;
+
+            for (int d = 0; d < Dim; ++d) {
+                g_ref[d] = 0;
             }
 
             ///////////// Evaluate for Phi_i(x) = x_{i-1}
             for (int i = 1; i < NFuns; ++i) {
                 int d = i - 1;
-                val[i] = 0.0;
 
-                for (int d1 = 0; d1 < Dim; ++d1) {
-                    val[i] += J_inv[d * Dim + d1] * g[d1];
-                }
+                g_ref[d] = 1.0;
 
-                val[i] *= det_J;
+                m_t_v_mult(J_inv, g_ref, g_fe);
+
+                val[i] += dot(g, g_fe) * det_J;
+
+                g_ref[d] = 0.0;
             }
         }
     };
@@ -508,7 +517,11 @@ namespace mars {
 
                         for (Integer k = 0; k < NFuns; ++k) {
                             assert(val[k] != 0.0);
-                            Kokkos::atomic_add(&inv_diag(idx[k]), 1. / val[k]);
+                            Real inv_val = 1. / val[k];
+
+                            assert(inv_val == inv_val);
+
+                            Kokkos::atomic_add(&inv_diag(idx[k]), inv_val);
                         }
                     });
 
@@ -597,6 +610,10 @@ int main(int argc, char *argv[]) {
 
         op.set_identity(id);
         op.assemble_rhs(rhs, Norm2Squared<PMesh>());
+
+        Real nrm_rhs = KokkosBlas::nrm1(rhs);
+
+        std::cout << "nrm_rhs : " << nrm_rhs << std::endl;
 
         bc.apply(rhs, bc_fun);
         bc.apply(x, bc_fun);
