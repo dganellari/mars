@@ -40,12 +40,13 @@ namespace mars {
             Integer ns[4] = {0, 0, 0, 0};
 
             Integer n = 6;
+
             if (argc > 1) {
                 n = atol(argv[1]);
+            }
 
-                for (int i = 0; i < 4; ++i) {
-                    ns[i] = n;
-                }
+            for (int i = 0; i < 4; ++i) {
+                ns[i] = n;
             }
 
             PMesh mesh;
