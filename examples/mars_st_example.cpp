@@ -584,7 +584,8 @@ namespace mars {
 
                     for (Integer k = 0; k < NFuns; ++k) {
                         const Real val = f(&points(idx[k], 0));
-                        Kokkos::atomic_add(&rhs(idx[k]), val * det_J_e / NFuns);
+                        const Real scaled_val = val * det_J_e / NFuns;
+                        Kokkos::atomic_add(&rhs(idx[k]), scaled_val);
                     }
                 });
         }
