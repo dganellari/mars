@@ -24,8 +24,10 @@ namespace mars {
 
     // Peak solution
     MARS_INLINE_FUNCTION Real ex2_exact(const Real *points) {
-        return Kokkos::ArithTraits<Real>::exp(
-            -1000 * ((points[0] - 0.5) * (points[0] - 0.5) + (points[1] - 0.5) * (points[1] - 0.5)));
+        const Real x = points[0];
+        const Real y = points[1];
+
+        return Kokkos::ArithTraits<Real>::exp(-1000 * ((x - 0.5) * (x - 0.5) + (y - 0.5) * (y - 0.5)));
     }
 
     MARS_INLINE_FUNCTION Real ex2_laplacian(const Real *x) {

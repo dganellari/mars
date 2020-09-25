@@ -454,12 +454,12 @@ namespace mars {
     template <class Mesh>
     class Interpolate {
     public:
-        static const int Dim = Mesh::Dim;
-
         Interpolate(Mesh &mesh) : mesh_(mesh) {}
 
         template <typename F>
         void apply(ViewVectorType<Real> &v, F fun) {
+            static const int Dim = Mesh::Dim;
+
             ViewMatrixType<Real> points = mesh_.get_view_points();
 
             Kokkos::parallel_for(
@@ -781,7 +781,7 @@ int main(int argc, char *argv[]) {
         ViewVectorType<Real> diff("Diff", n_nodes);
 
         Interpolate<PMesh> interp(mesh);
-        interp.apply(x_exact, ex2_exact);
+        interp.apply(x_exact, an_fun);
 
         Kokkos::deep_copy(diff, x_exact);
 
