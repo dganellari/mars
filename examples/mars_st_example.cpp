@@ -105,6 +105,14 @@ namespace mars {
                     assert(e_det_J == e_det_J);
                     assert(e_det_J != 0.0);
                     assert(e_det_J > 0.0);
+
+                    if (e_det_J < 0) {
+                        static const int dim = Dim;
+                        printf("found element with wrong orientation\n");
+                        Integer temp = elems(i, dim);
+                        elems(i, dim) = elems(i, dim - 1);
+                        elems(i, dim - 1) = temp;
+                    }
                 });
 
             //     Kokkos::parallel_for(
