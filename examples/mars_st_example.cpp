@@ -412,6 +412,8 @@ namespace mars {
         MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex2_laplacian(p); }
     };
 
+    ////////////////////////////////
+
     class Example3Dirichlet {
     public:
         MARS_INLINE_FUNCTION void operator()(const Real *p, Real &val) const {
@@ -785,7 +787,7 @@ int main(int argc, char *argv[]) {
 
         Kokkos::deep_copy(diff, x_exact);
 
-        KokkosBlas::axpby(1.0, x, -1.0, diff);
+        KokkosBlas::axpy(-1.0, x, diff);
         Real err = KokkosBlas::nrminf(diff);
         std::cout << "err : " << err << std::endl;
 
