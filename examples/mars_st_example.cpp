@@ -6,6 +6,7 @@
 #include <numeric>
 
 #include <KokkosBlas1_nrm1.hpp>
+#include <KokkosBlas1_nrminf.hpp>
 
 #include "mars_benchmark.hpp"
 #include "mars_bisection.hpp"
@@ -771,30 +772,36 @@ int main(int argc, char *argv[]) {
 
         // Compute Error
         ViewVectorType<Real> x_exact("X_exact", n_nodes);
+        ViewVectorType<Real> diff("Diff", n_nodes);
+
         Interpolate<PMesh> interp(mesh);
         interp.apply(x_exact, ex3_exact);
-        KokkosBlas::axpby(1.0, x_exact, -1.0, x);
-        Real err = KokkosBlas::nrm2(x);
+
+        Kokkos::deep_copy(diff, x_exact);
+
+        KokkosBlas::axpby(1.0, x, -1.0, diff);
+        Real err = KokkosBlas::nrminf(diff);
         std::cout << "err : " << err << std::endl;
 
         ///////////////////////////////////////////////////////////////////////////
 
-        // ViewVectorType<Real>::HostMirror x_host("x_host", n_nodes);
-        // ViewVectorType<Real>::HostMirror rhs_host("rhs_host", n_nodes);
-        // Kokkos::deep_copy(x_host, x);
-        // Kokkos::deep_copy(rhs_host, rhs);
+        ViewVectorType<Real>::HostMirror x_host("x_host", n_nodes);
+        ViewVectorType<Real>::HostMirror rhs_host("rhs_host", n_nodes);
+        Kokkos::deep_copy(x_host, x);
+        Kokkos::deep_copy(rhs_host, rhs);
 
-        // SMesh serial_mesh;
-        // convert_parallel_mesh_to_serial(serial_mesh, mesh);
+        SMesh serial_mesh;
+        convert_parallel_mesh_to_serial(serial_mesh, mesh);
 
-        // std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
-        // std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
+        std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
+        std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
 
-        // VTUMeshWriter<SMesh> w;
-        // w.write("mesh.vtu", serial_mesh, x_host);
-        // w.write("mesh_rhs.vtu", serial_mesh, rhs_host);
-        // Kokkos::deep_copy(x_host, x_exact);
-        // w.write("analitic.vtu", serial_mesh, x_host);
+        VTUMeshWriter<SMesh> w;
+        w.write("mesh.vtu", serial_mesh, x_host);
+        w.write("mesh_rhs.vtu", serial_mesh, rhs_host);
+
+        Kokkos::deep_copy(x_host, x_exact);
+        w.write("analitic.vtu", serial_mesh, x_host);
     }
 
     Kokkos::finalize();
