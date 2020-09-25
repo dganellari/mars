@@ -668,12 +668,20 @@ namespace mars {
                     "JacobiPreconditioner::init", mesh.n_elements(), MARS_LAMBDA(const Integer i) {
                         Integer idx[NFuns];
                         Real val[NFuns];
+                        Real J_inv_e[Dim * Dim];
+                        const Real det_J_e = det_J(i);
+
+                        assert(det_J_e > 0.0);
+
+                        for (Integer k = 0; k < Dim * Dim; ++k) {
+                            J_inv_e[k] = J_inv(i, k);
+                        }
 
                         for (Integer k = 0; k < NFuns; ++k) {
                             idx[k] = elems(i, k);
                         }
 
-                        SimplexLaplacian<Mesh>::one_thread_eval_diag(&J_inv(i, 0), det_J(i), val);
+                        SimplexLaplacian<Mesh>::one_thread_eval_diag(J_inv_e, det_J_e, val);
 
                         for (Integer k = 0; k < NFuns; ++k) {
                             assert(val[k] != 0.0);
