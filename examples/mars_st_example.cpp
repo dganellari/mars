@@ -88,7 +88,7 @@ namespace mars {
             Kokkos::parallel_for(
                 "FEValues::init", mesh_.n_elements(), MARS_LAMBDA(const Integer i) {
                     Integer idx[NFuns];
-                    Real J[Dim * Dim];
+                    Real J[Dim * Dim], J_inv_e[Dim * Dim];
                     Real p0[Dim], pk[Dim];
 
                     for (int k = 0; k < NFuns; ++k) {
@@ -113,8 +113,12 @@ namespace mars {
                     }
 
                     Real e_det_J = det(J);
-                    invert(J, &J_inv(i, 0), e_det_J);
+                    invert(J, J_inv_e, e_det_J);
                     det_J(i) = Kokkos::ArithTraits<Real>::abs(e_det_J);
+
+                    for (int k = 0; k < (Dim * Dim); ++k) {
+                        J_inv(i, k) = J_inv_e[k];
+                    }
 
                     assert(has_non_zero<Dim>(&J_inv(i, 0)));
 
