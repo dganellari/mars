@@ -45,6 +45,7 @@
 #include "mars_interpolate.hpp"
 #include "mars_invert.hpp"
 #include "mars_laplace_ex.hpp"
+#include "mars_model_test.hpp"
 #include "mars_precon_conjugate_grad.hpp"
 #include "mars_simplex_laplacian.hpp"
 #include "mars_umesh_laplace.hpp"
@@ -127,111 +128,16 @@ int main(int argc, char *argv[]) {
 #endif
 
     {
-        // using PMesh = ParallelMesh2;
-        // using SMesh = Mesh2;
+        // ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example2Dirichlet, Example2RHS,
+        // Example2Analitcal>().run(
+        //     argc, argv);
 
-        using PMesh = ParallelMesh3;
-        using SMesh = Mesh3;
-
-        using Elem = typename PMesh::Elem;
-        using SideElem = typename PMesh::SideElem;
-
-        Integer nx = 6, ny = 6, nz = (PMesh::Dim > 2) ? 6 : 0;
-        if (argc > 1) {
-            nx = atol(argv[1]);
-            ny = atol(argv[1]);
-            nz = atol(argv[1]);
-
-            if (PMesh::Dim <= 2) nz = 0;
-        }
-
-        PMesh mesh;
-        generate_cube(mesh, nx, ny, nz);
-
-        // ParallelBisection<PMesh> bisection(&mesh);
-
-        // Integer n_marked = 3;
-        // ViewVectorType<Integer> marked("marked", n_marked);
-
-        // Kokkos::parallel_for(
-        //     n_marked, MARS_LAMBDA(const Integer i) { marked(i) = i; });
-
-        // bisection.refine(marked);
-
-        ZeroDirchletOnUnitCube<PMesh> bc_fun;
-        One<PMesh> rhs_fun;
-        One<PMesh> an_fun;  // FIXME
-
-        // ZeroDirchletOnUnitCube<PMesh> bc_fun;
-        // Norm2Squared<PMesh> rhs_fun;
-
-        // Example1Dirichlet bc_fun;
-        // Example1RHS rhs_fun;
-
-        // Example2Dirichlet bc_fun;
-        // Example2RHS rhs_fun;
-        // Example2Analitcal an_fun;
-
-        const Integer n_nodes = mesh.n_nodes();
-
-        ViewVectorType<Real> x("X", n_nodes);
-        ViewVectorType<Real> rhs("rhs", n_nodes);
-        ViewVectorType<Real> Ax("Ax", n_nodes);
-
-        UMeshLaplace<PMesh> op(mesh);
-        BoundaryConditions<PMesh> bc(mesh);
-        op.init();
-
-        auto id = std::make_shared<IdentityOperator>();
-        id->init(mesh, bc_fun);
-
-        op.set_identity(id);
-        op.assemble_rhs(rhs, rhs_fun);
-
-        Real nrm_rhs = KokkosBlas::nrm1(rhs);
-
-        std::cout << "nrm_rhs : " << nrm_rhs << std::endl;
-
-        bc.apply(rhs, bc_fun);
-        bc.apply(x, bc_fun);
-
-        auto prec = op.preconditioner();
-
-        Integer num_iter = 0;
-        bcg_stab(op, prec, rhs, rhs.extent(0), x, num_iter);
-
-        // Compute Error
-        ViewVectorType<Real> x_exact("X_exact", n_nodes);
-        ViewVectorType<Real> diff("Diff", n_nodes);
-
-        Interpolate<PMesh> interp(mesh);
-        interp.apply(x_exact, an_fun);
-
-        Kokkos::deep_copy(diff, x_exact);
-
-        KokkosBlas::axpy(-1.0, x, diff);
-        Real err = KokkosBlas::nrminf(diff);
-        std::cout << "err : " << err << std::endl;
-
-        ///////////////////////////////////////////////////////////////////////////
-
-        ViewVectorType<Real>::HostMirror x_host("x_host", n_nodes);
-        ViewVectorType<Real>::HostMirror rhs_host("rhs_host", n_nodes);
-        Kokkos::deep_copy(x_host, x);
-        Kokkos::deep_copy(rhs_host, rhs);
-
-        SMesh serial_mesh;
-        convert_parallel_mesh_to_serial(serial_mesh, mesh);
-
-        std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
-        std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
-
-        VTUMeshWriter<SMesh> w;
-        w.write("mesh.vtu", serial_mesh, x_host);
-        w.write("mesh_rhs.vtu", serial_mesh, rhs_host);
-
-        Kokkos::deep_copy(x_host, x_exact);
-        w.write("analitic.vtu", serial_mesh, x_host);
+        ModelTest<ParallelMesh3,
+                  UMeshLaplace<ParallelMesh3>,
+                  ZeroDirchletOnUnitCube<ParallelMesh3>,
+                  One<ParallelMesh3>,
+                  One<ParallelMesh3>>()
+            .run(argc, argv);
     }
 
     Kokkos::finalize();
