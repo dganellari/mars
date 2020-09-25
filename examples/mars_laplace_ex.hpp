@@ -50,9 +50,10 @@ namespace mars {
         Real y_c = -0.05;
         Real r_0 = 0.7;
 
-        Real r = sqrt((points[0] - x_c) * (points[0] - x_c) + (points[1] - y_c) * (points[1] - y_c));
+        Real r = Kokkos::ArithTraits<Real>::sqrt((points[0] - x_c) * (points[0] - x_c) +
+                                                 (points[1] - y_c) * (points[1] - y_c));
 
-        return atan(alpha * (r - r_0));
+        return Kokkos::ArithTraits<Real>::atan(alpha * (r - r_0));
     }
 
     MARS_INLINE_FUNCTION Real ex3_laplacian(const Real *points) {
