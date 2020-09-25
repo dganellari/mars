@@ -39,6 +39,7 @@
 #include "mars_matrix_free_operator.hpp"
 #include "mars_poisson.hpp"
 
+#include "mars_invert.hpp"
 #include "mars_laplace_ex.hpp"
 #include "mars_precon_conjugate_grad.hpp"
 #include "vtu_writer.hpp"
@@ -112,8 +113,8 @@ namespace mars {
                         }
                     }
 
-                    Real e_det_J = det(J);
-                    invert(J, J_inv_e, e_det_J);
+                    Real e_det_J = 0.0;
+                    Invert<Dim>::apply(J, J_inv_e, e_det_J);
                     det_J(i) = Kokkos::ArithTraits<Real>::abs(e_det_J);
 
                     for (int k = 0; k < (Dim * Dim); ++k) {
@@ -142,70 +143,6 @@ namespace mars {
             Real measure = KokkosBlas::nrm1(det_J_);
 
             std::cout << "measure: " << measure << std::endl;
-        }
-
-        MARS_INLINE_FUNCTION Real det1(const Real *m) { return m[0]; }
-
-        MARS_INLINE_FUNCTION Real det2(const Real *m) { return m[0] * m[3] - m[2] * m[1]; }
-
-        MARS_INLINE_FUNCTION Real det3(const Real *m) {
-            return m[0] * m[4] * m[8] + m[1] * m[5] * m[6] + m[2] * m[3] * m[7] - m[0] * m[5] * m[7] -
-                   m[1] * m[3] * m[8] - m[2] * m[4] * m[6];
-        }
-
-        MARS_INLINE_FUNCTION Real det(const Real *m) {
-            switch (Dim) {
-                case 1:
-                    return det1(m);
-                case 2:
-                    return det2(m);
-                case 3:
-                    return det3(m);
-                default:
-                    return 0.0;
-            }
-        }
-
-        MARS_INLINE_FUNCTION static bool invert(const Real *mat, Real *mat_inv, const Real &det) {
-            switch (Dim) {
-                case 2: {
-                    return invert2(mat, mat_inv, det);
-                }
-
-                case 3: {
-                    return invert3(mat, mat_inv, det);
-                }
-
-                default:
-                    return false;
-            }
-        }
-
-        MARS_INLINE_FUNCTION static bool invert2(const Real *mat, Real *mat_inv, const Real &det) {
-            mat_inv[0] = mat[3] / det;
-            mat_inv[1] = -mat[1] / det;
-            mat_inv[2] = -mat[2] / det;
-            mat_inv[3] = mat[0] / det;
-            return true;
-        }
-
-        MARS_INLINE_FUNCTION static bool invert3(const Real *mat, Real *mat_inv, const Real &det) {
-            assert(det != 0.);
-
-            if (det == 0.) {
-                return false;
-            }
-
-            mat_inv[0] = (mat[4] * mat[8] - mat[5] * mat[7]) / det;
-            mat_inv[1] = (mat[2] * mat[7] - mat[1] * mat[8]) / det;
-            mat_inv[2] = (mat[1] * mat[5] - mat[2] * mat[4]) / det;
-            mat_inv[3] = (mat[5] * mat[6] - mat[3] * mat[8]) / det;
-            mat_inv[4] = (mat[0] * mat[8] - mat[2] * mat[6]) / det;
-            mat_inv[5] = (mat[2] * mat[3] - mat[0] * mat[5]) / det;
-            mat_inv[6] = (mat[3] * mat[7] - mat[4] * mat[6]) / det;
-            mat_inv[7] = (mat[1] * mat[6] - mat[0] * mat[7]) / det;
-            mat_inv[8] = (mat[0] * mat[4] - mat[1] * mat[3]) / det;
-            return true;
         }
 
         MARS_INLINE_FUNCTION Mesh &mesh() { return mesh_; }
