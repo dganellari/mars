@@ -213,6 +213,30 @@ namespace mars {
         static constexpr int Dim = Mesh::Dim;
         static constexpr int NFuns = Mesh::Dim + 1;
 
+        MARS_INLINE_FUNCTION static void one_thread_eval_diag_add(const Real *J_inv, const Real &det_J, Real *val) {
+            // Real g_ref[Dim], g[Dim];
+
+            // for (int d = 0; d < Dim; ++d) {
+            //     g_ref[d] = -1;
+            // }
+
+            // m_t_v_mult(J_inv, g_ref, g);
+            // val[0] = dot(g, g) * det_J;
+
+            // for (int d = 0; d < Dim; ++d) {
+            //     g_ref[d] = 0;
+            // }
+
+            // for (int d = 0; d < Dim; ++d) {
+            //     g_ref[d] = 1;
+            //     m_t_v_mult(J_inv, g_ref, g);
+
+            //     val[d + 1] = dot(g, g) * det_J;
+
+            //     g_ref[d] = 0;
+            // }
+        }
+
         MARS_INLINE_FUNCTION static void one_thread_eval_add(const Real *J_inv,
                                                              const Real &det_J,
                                                              const Real *u,
@@ -746,10 +770,6 @@ int main(int argc, char *argv[]) {
         Example2RHS rhs_fun;
         Example2Analitcal an_fun;
 
-        // Example3Dirichlet bc_fun;
-        // Example3RHS rhs_fun;
-        // using exact_fun = ex3_exact;
-
         const Integer n_nodes = mesh.n_nodes();
 
         ViewVectorType<Real> x("X", n_nodes);
@@ -764,7 +784,7 @@ int main(int argc, char *argv[]) {
         id->init(mesh, bc_fun);
 
         op.set_identity(id);
-        op.assemble_rhs(rhs, an_fun);
+        op.assemble_rhs(rhs, rhs_fun);
 
         Real nrm_rhs = KokkosBlas::nrm1(rhs);
 
