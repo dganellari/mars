@@ -38,6 +38,7 @@
 #include "mars_matrix_free_operator.hpp"
 #include "mars_poisson.hpp"
 
+#include "mars_laplace_ex.hpp"
 #include "mars_precon_conjugate_grad.hpp"
 #include "vtu_writer.hpp"
 
@@ -296,6 +297,19 @@ namespace mars {
         }
     };
 
+    template <int Dim>
+    MARS_INLINE_FUNCTION bool is_boundary_of_unit_cube(const Real *p) {
+        bool ret = false;
+        for (int d = 0; d < Dim; ++d) {
+            if (p[d] <= 1e-16 || p[d] >= 1 - 1e-16) {
+                ret = true;
+                break;
+            }
+        }
+
+        return ret;
+    }
+
     template <class Mesh>
     class ZeroDirchletOnUnitCube {
     public:
@@ -307,17 +321,55 @@ namespace mars {
             }
         }
 
-        MARS_INLINE_FUNCTION static bool is_boundary(const Real *p) {
-            bool ret = false;
-            for (int d = 0; d < Dim; ++d) {
-                if (p[d] <= 1e-16 || p[d] >= 1 - 1e-16) {
-                    ret = true;
-                    break;
-                }
-            }
+        MARS_INLINE_FUNCTION static bool is_boundary(const Real *p) { return is_boundary_of_unit_cube<Dim>(p); }
+    };
 
-            return ret;
+    class Example1Dirichlet {
+    public:
+        MARS_INLINE_FUNCTION void operator()(const Real *p, Real &val) const {
+            if (is_boundary(p)) {
+                val = ex1_exact(p);
+            }
         }
+
+        MARS_INLINE_FUNCTION static bool is_boundary(const Real *p) { return is_boundary_of_unit_cube<2>(p); }
+    };
+
+    class Example1RHS {
+    public:
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex1_laplacian(p); }
+    };
+
+    class Example2Dirichlet {
+    public:
+        MARS_INLINE_FUNCTION void operator()(const Real *p, Real &val) const {
+            if (is_boundary(p)) {
+                val = ex2_exact(p);
+            }
+        }
+
+        MARS_INLINE_FUNCTION static bool is_boundary(const Real *p) { return is_boundary_of_unit_cube<2>(p); }
+    };
+
+    class Example2RHS {
+    public:
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex2_laplacian(p); }
+    };
+
+    class Example3Dirichlet {
+    public:
+        MARS_INLINE_FUNCTION void operator()(const Real *p, Real &val) const {
+            if (is_boundary(p)) {
+                val = ex3_exact(p);
+            }
+        }
+
+        MARS_INLINE_FUNCTION static bool is_boundary(const Real *p) { return is_boundary_of_unit_cube<2>(p); }
+    };
+
+    class Example3RHS {
+    public:
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex3_laplacian(p); }
     };
 
     template <class Mesh>
@@ -590,6 +642,18 @@ int main(int argc, char *argv[]) {
 
         // bisection.refine(marked);
 
+        // ZeroDirchletOnUnitCube<PMesh> bc_fun;
+        // Norm2Squared<PMesh> rhs_fun;
+
+        // Example1Dirichlet bc_fun;
+        // Example1RHS rhs_fun;
+
+        // Example2Dirichlet bc_fun;
+        // Example2RHS rhs_fun;
+
+        Example3Dirichlet bc_fun;
+        Example3RHS rhs_fun;
+
         const Integer n_nodes = mesh.n_nodes();
 
         ViewVectorType<Real> x("X", n_nodes);
@@ -600,12 +664,11 @@ int main(int argc, char *argv[]) {
         BoundaryConditions<PMesh> bc(mesh);
         op.init();
 
-        ZeroDirchletOnUnitCube<PMesh> bc_fun;
         auto id = std::make_shared<IdentityOperator>();
         id->init(mesh, bc_fun);
 
         op.set_identity(id);
-        op.assemble_rhs(rhs, Norm2Squared<PMesh>());
+        op.assemble_rhs(rhs, rhs_fun);
 
         Real nrm_rhs = KokkosBlas::nrm1(rhs);
 
