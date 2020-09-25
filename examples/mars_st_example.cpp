@@ -121,7 +121,7 @@ namespace mars {
                     }
 
                     assert(has_non_zero<Dim>(J_inv_e));
-                    assert(has_non_zero<Dim>(&J_inv(i, 0)));
+                    // assert(has_non_zero<Dim>(&J_inv(i, 0)));
 
                     assert(e_det_J == e_det_J);
                     assert(e_det_J != 0.0);
