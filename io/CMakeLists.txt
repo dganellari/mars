@@ -16,8 +16,8 @@ else(VTK_FOUND)
                        LOCAL_SOURCES)
 
     add_library(mars_io STATIC ${LOCAL_HEADERS} ${LOCAL_SOURCES})
-    # target_link_libraries(mars_io ${VTK_LIBRARIES})
-    add_dependencies(mars_io par_moonolith)
+    # target_link_libraries(mars_io ${VTK_LIBRARIES}) add_dependencies(mars_io
+    # par_moonolith)
     target_include_directories(mars_io PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     target_include_directories(mars_io PUBLIC ${CMAKE_BINARY_DIR})
     target_include_directories(mars_io PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)

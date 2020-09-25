@@ -129,7 +129,10 @@ namespace mars {
         MARS_INLINE_FUNCTION Real det2(const Real *m) { return m[0] * m[3] - m[2] * m[1]; }
 
         MARS_INLINE_FUNCTION Real det3(const Real *m) {
-            return m[0] * m[4] * m[8] + m[1] * m[5] * m[6] + m[2] * m[3] * m[4] - m[0] * m[5] * m[4] -
+            // return m[0] * m[4] * m[8] + m[1] * m[5] * m[6] + m[2] * m[3] * m[4] - m[0] * m[5] * m[4] -
+            //        m[1] * m[3] * m[8] - m[2] * m[4] * m[6];
+
+            return m[0] * m[4] * m[8] + m[1] * m[5] * m[6] + m[2] * m[3] * m[7] - m[0] * m[5] * m[7] -
                    m[1] * m[3] * m[8] - m[2] * m[4] * m[6];
         }
 
@@ -732,16 +735,22 @@ int main(int argc, char *argv[]) {
 #endif
 
     {
-        using PMesh = ParallelMesh2;
+        // using PMesh = ParallelMesh2;
+        // using SMesh = Mesh2;
+
+        using PMesh = ParallelMesh3;
+        using SMesh = Mesh3;
+
         using Elem = typename PMesh::Elem;
         using SideElem = typename PMesh::SideElem;
 
-        using SMesh = Mesh2;
-
-        Integer nx = 6, ny = 6, nz = 0;
+        Integer nx = 6, ny = 6, nz = (PMesh::Dim > 2) ? 6 : 0;
         if (argc > 1) {
             nx = atol(argv[1]);
             ny = atol(argv[1]);
+            nz = atol(argv[1]);
+
+            if (PMesh::Dim <= 2) nz = 0;
         }
 
         PMesh mesh;
@@ -757,8 +766,9 @@ int main(int argc, char *argv[]) {
 
         // bisection.refine(marked);
 
-        // ZeroDirchletOnUnitCube<PMesh> bc_fun;
-        // One<PMesh> rhs_fun;
+        ZeroDirchletOnUnitCube<PMesh> bc_fun;
+        One<PMesh> rhs_fun;
+        One<PMesh> an_fun;  // FIXME
 
         // ZeroDirchletOnUnitCube<PMesh> bc_fun;
         // Norm2Squared<PMesh> rhs_fun;
@@ -766,9 +776,9 @@ int main(int argc, char *argv[]) {
         // Example1Dirichlet bc_fun;
         // Example1RHS rhs_fun;
 
-        Example2Dirichlet bc_fun;
-        Example2RHS rhs_fun;
-        Example2Analitcal an_fun;
+        // Example2Dirichlet bc_fun;
+        // Example2RHS rhs_fun;
+        // Example2Analitcal an_fun;
 
         const Integer n_nodes = mesh.n_nodes();
 
