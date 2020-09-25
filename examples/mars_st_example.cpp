@@ -36,20 +36,9 @@
 #include "mars_test_kokkos.hpp"
 #endif  // WITH_KOKKOS
 
-#include "mars_matrix_free_operator.hpp"
-#include "mars_poisson.hpp"
-
-#include "mars_boundary_conditions.hpp"
-#include "mars_fe_values.hpp"
-#include "mars_identity_operator.hpp"
-#include "mars_interpolate.hpp"
-#include "mars_invert.hpp"
-#include "mars_laplace_ex.hpp"
+#include "mars_mesh_kokkos.hpp"
 #include "mars_model_test.hpp"
-#include "mars_precon_conjugate_grad.hpp"
-#include "mars_simplex_laplacian.hpp"
 #include "mars_umesh_laplace.hpp"
-#include "vtu_writer.hpp"
 
 namespace mars {
 
