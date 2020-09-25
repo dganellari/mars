@@ -117,6 +117,10 @@ namespace mars {
 
             //     Kokkos::parallel_for(
             //         "print_det_J", mesh_.n_elements(), MARS_LAMBDA(const Integer i) { printf("%g\n", det_J(i)); });
+
+            Real measure = KokkosBlas::nrm1(det_J_);
+
+            std::cout << "measure: " << measure << std::endl;
         }
 
         MARS_INLINE_FUNCTION Real det1(const Real *m) { return m[0]; }
@@ -580,7 +584,7 @@ namespace mars {
 
                     for (Integer k = 0; k < NFuns; ++k) {
                         const Real val = f(&points(idx[k], 0));
-                        Kokkos::atomic_add(&rhs(idx[k]), val * det_J_e);
+                        Kokkos::atomic_add(&rhs(idx[k]), val * det_J_e / NFuns);
                     }
                 });
         }
@@ -688,6 +692,9 @@ int main(int argc, char *argv[]) {
 
         // bisection.refine(marked);
 
+        ZeroDirchletOnUnitCube<PMesh> bc_fun;
+        One<PMesh> rhs_fun;
+
         // ZeroDirchletOnUnitCube<PMesh> bc_fun;
         // Norm2Squared<PMesh> rhs_fun;
 
@@ -697,8 +704,8 @@ int main(int argc, char *argv[]) {
         // Example2Dirichlet bc_fun;
         // Example2RHS rhs_fun;
 
-        Example3Dirichlet bc_fun;
-        Example3RHS rhs_fun;
+        // Example3Dirichlet bc_fun;
+        // Example3RHS rhs_fun;
 
         const Integer n_nodes = mesh.n_nodes();
 
