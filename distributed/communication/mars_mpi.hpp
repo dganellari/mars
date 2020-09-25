@@ -161,16 +161,34 @@ void i_send(const ViewVectorType<T> local, const Integer offset, const Integer c
 {
     using traits = mpi_traits<T>;
 
+    assert(local.size()>=offset+count);
+
+    ViewVectorHost<T> hostData("mpiHost", local.size());
+    Kokkos::deep_copy(hostData, local);
     MPI_OR_THROW(MPI_Isend,
-                 local.data() + offset, count, traits::mpi_type(), // send buffer
+                 hostData.data()+offset, count, traits::mpi_type(), // send buffer
                  remote_proc, tag, comm, request);
 }
 
+template <typename T>
+void i_receive(const ViewVectorHost<T> local, const Integer offset, const Integer count,
+               const Integer source_proc, int tag, MPI_Comm comm, MPI_Request *request)
+{
+    using traits = mpi_traits<T>;
+
+    assert(local.size()>=offset+count);
+
+    MPI_OR_THROW(MPI_Irecv,
+                 local.data() + offset, count, traits::mpi_type(), // send buffer
+                 source_proc, tag, comm, request);
+}
 template <typename T>
 void i_receive(const ViewVectorType<T> local, const Integer offset, const Integer count,
                const Integer source_proc, int tag, MPI_Comm comm, MPI_Request *request)
 {
     using traits = mpi_traits<T>;
+
+    assert(local.size()>=offset+count);
 
     MPI_OR_THROW(MPI_Irecv,
                  local.data() + offset, count, traits::mpi_type(), // send buffer
@@ -275,12 +293,13 @@ void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ,
 
 
     int recv_proc = 0;
+    ViewVectorHost<T> destHost("mpiRecv", dest.size());
     for (int i = 0; i < nranks; ++i)
     {
         Integer count = dest_displ[i + 1] - dest_displ[i];
         if (count > 0)
         {
-            i_receive(dest, dest_displ[i], count, i, 0, comm, &receive_req[recv_proc++]);
+            i_receive(destHost, dest_displ[i], count, i, 0, comm, &receive_req[recv_proc++]);
         }
     }
 
@@ -301,6 +320,7 @@ void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ,
     if(proc_count_r > 0)
     {
         wait_all_send_recv(proc_count_r, receive_req);
+        Kokkos::deep_copy(dest, destHost);
     }
 }
 
