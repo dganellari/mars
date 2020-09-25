@@ -634,13 +634,18 @@ namespace mars {
                     Real u[NFuns];
                     Real Au[NFuns];
                     Integer idx[NFuns];
+                    Real J_inv_e[Dim * Dim];
+
+                    for (int k = 0; k < (Dim * Dim); ++k) {
+                        J_inv_e[k] = J_inv(i, k);
+                    }
 
                     for (Integer k = 0; k < NFuns; ++k) {
                         idx[k] = elems(i, k);
                         u[k] = x(idx[k]);
                     }
 
-                    SimplexLaplacian<Mesh>::one_thread_eval(&J_inv(i, 0), det_J(i), u, Au);
+                    SimplexLaplacian<Mesh>::one_thread_eval(J_inv_e, det_J(i), u, Au);
 
                     for (Integer k = 0; k < NFuns; ++k) {
                         Kokkos::atomic_add(&op_x(idx[k]), Au[k]);
