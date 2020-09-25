@@ -402,6 +402,11 @@ namespace mars {
         MARS_INLINE_FUNCTION static bool is_boundary(const Real *p) { return is_boundary_of_unit_cube<2>(p); }
     };
 
+    class Example2Analitcal {
+    public:
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex2_exact(p); }
+    };
+
     class Example2RHS {
     public:
         MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex2_laplacian(p); }
@@ -737,6 +742,7 @@ int main(int argc, char *argv[]) {
 
         Example2Dirichlet bc_fun;
         Example2RHS rhs_fun;
+        Example2Analitcal an_fun;
 
         // Example3Dirichlet bc_fun;
         // Example3RHS rhs_fun;
@@ -756,7 +762,7 @@ int main(int argc, char *argv[]) {
         id->init(mesh, bc_fun);
 
         op.set_identity(id);
-        op.assemble_rhs(rhs, rhs_fun);
+        op.assemble_rhs(rhs, an_fun);
 
         Real nrm_rhs = KokkosBlas::nrm1(rhs);
 

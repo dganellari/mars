@@ -57,86 +57,85 @@ namespace mars {
     }
 
     MARS_INLINE_FUNCTION Real ex3_laplacian(const Real *points) {
-        return -(20 / (((20 * Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                              (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)) -
+        const Real x = points[0];
+        const Real y = points[1];
+
+        return -(20 / (((20 * Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                              (y + 1 / 20.0) * (y + 1 / 20.0)) -
                          14) *
-                            (20 * Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                                  (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)) -
+                            (20 * Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                                  (y + 1 / 20.0) * (y + 1 / 20.0)) -
                              14) +
                         1) *
-                       Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                       (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0))) -
-                 (5 * (2 * points[0] + 1 / 10) * (2 * points[0] + 1 / 10)) /
-                     (((20 * Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                             (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)) -
+                       Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                       (y + 1 / 20.0) * (y + 1 / 20.0))) -
+                 (5 * (2 * x + 1 / 10) * (2 * x + 1 / 10)) /
+                     (((20 * Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                             (y + 1 / 20.0) * (y + 1 / 20.0)) -
                         14) *
-                           (20 * Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                                 (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)) -
+                           (20 * Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                                 (y + 1 / 20.0) * (y + 1 / 20.0)) -
                             14) +
                        1) *
-                      Kokkos::ArithTraits<Real>::pow(((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                      (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)),
-                                                     (3 / 2))) -
-                 (200 * (2 * points[0] + 1 / 10) * (2 * points[0] + 1 / 10) *
-                  (20 * Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                        (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)) -
+                      Kokkos::ArithTraits<Real>::pow(
+                          ((x + 1 / 20.0) * (x + 1 / 20.0) + (y + 1 / 20.0) * (y + 1 / 20.0)), (3 / 2))) -
+                 (200 * (2 * x + 1 / 10) * (2 * x + 1 / 10) *
+                  (20 * Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                        (y + 1 / 20.0) * (y + 1 / 20.0)) -
                    14)) /
-                     (((20 * Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                             (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)) -
+                     (((20 * Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                             (y + 1 / 20.0) * (y + 1 / 20.0)) -
                         14) *
-                           (20 * Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                                 (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)) -
+                           (20 * Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                                 (y + 1 / 20.0) * (y + 1 / 20.0)) -
                             14) +
                        1) *
-                      ((20 * Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                             (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)) -
+                      ((20 * Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                             (y + 1 / 20.0) * (y + 1 / 20.0)) -
                         14) *
-                           (20 * Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                                 (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)) -
+                           (20 * Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                                 (y + 1 / 20.0) * (y + 1 / 20.0)) -
                             14) +
                        1) *
-                      ((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                       (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)))) -
-               (20 / (((20 * Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                             (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)) -
+                      ((x + 1 / 20.0) * (x + 1 / 20.0) + (y + 1 / 20.0) * (y + 1 / 20.0)))) -
+               (20 / (((20 * Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                             (y + 1 / 20.0) * (y + 1 / 20.0)) -
                         14) *
-                           (20 * Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                                 (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)) -
+                           (20 * Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                                 (y + 1 / 20.0) * (y + 1 / 20.0)) -
                             14) +
                        1) *
-                      Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                      (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0))) -
-                (5 * (2 * points[1] + 1 / 10) * (2 * points[1] + 1 / 10)) /
-                    (((20 * Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                            (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)) -
+                      Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                      (y + 1 / 20.0) * (y + 1 / 20.0))) -
+                (5 * (2 * y + 1 / 10) * (2 * y + 1 / 10)) /
+                    (((20 * Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                            (y + 1 / 20.0) * (y + 1 / 20.0)) -
                        14) *
-                          (20 * Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                                (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)) -
+                          (20 * Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                                (y + 1 / 20.0) * (y + 1 / 20.0)) -
                            14) +
                       1) *
-                     Kokkos::ArithTraits<Real>::pow(((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                     (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)),
+                     Kokkos::ArithTraits<Real>::pow(((x + 1 / 20.0) * (x + 1 / 20.0) + (y + 1 / 20.0) * (y + 1 / 20.0)),
                                                     (3 / 2))) -
-                (200 * (2 * points[1] + 1 / 10) * (2 * points[1] + 1 / 10) *
-                 (20 * Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                       (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)) -
+                (200 * (2 * y + 1 / 10) * (2 * y + 1 / 10) *
+                 (20 * Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                       (y + 1 / 20.0) * (y + 1 / 20.0)) -
                   14)) /
-                    (((20 * Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                            (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)) -
+                    (((20 * Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                            (y + 1 / 20.0) * (y + 1 / 20.0)) -
                        14) *
-                          (20 * Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                                (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)) -
+                          (20 * Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                                (y + 1 / 20.0) * (y + 1 / 20.0)) -
                            14) +
                       1) *
-                     ((20 * Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                            (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)) -
+                     ((20 * Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                            (y + 1 / 20.0) * (y + 1 / 20.0)) -
                        14) *
-                          (20 * Kokkos::ArithTraits<Real>::sqrt((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                                                                (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0)) -
+                          (20 * Kokkos::ArithTraits<Real>::sqrt((x + 1 / 20.0) * (x + 1 / 20.0) +
+                                                                (y + 1 / 20.0) * (y + 1 / 20.0)) -
                            14) +
                       1) *
-                     ((points[0] + 1 / 20.0) * (points[0] + 1 / 20.0) +
-                      (points[1] + 1 / 20.0) * (points[1] + 1 / 20.0))));
+                     ((x + 1 / 20.0) * (x + 1 / 20.0) + (y + 1 / 20.0) * (y + 1 / 20.0))));
     }
 
 }  // namespace mars
