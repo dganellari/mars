@@ -692,8 +692,8 @@ int main(int argc, char *argv[]) {
 
         // bisection.refine(marked);
 
-        ZeroDirchletOnUnitCube<PMesh> bc_fun;
-        One<PMesh> rhs_fun;
+        // ZeroDirchletOnUnitCube<PMesh> bc_fun;
+        // One<PMesh> rhs_fun;
 
         // ZeroDirchletOnUnitCube<PMesh> bc_fun;
         // Norm2Squared<PMesh> rhs_fun;
@@ -704,8 +704,8 @@ int main(int argc, char *argv[]) {
         // Example2Dirichlet bc_fun;
         // Example2RHS rhs_fun;
 
-        // Example3Dirichlet bc_fun;
-        // Example3RHS rhs_fun;
+        Example3Dirichlet bc_fun;
+        Example3RHS rhs_fun;
 
         const Integer n_nodes = mesh.n_nodes();
 
