@@ -100,7 +100,7 @@ namespace mars {
 
                     Real e_det_J = det(J);
                     invert(J, &J_inv(i, 0), e_det_J);
-                    det_J(i) = e_det_J;
+                    det_J(i) = Kokkos::ArithTraits<Real>::abs(e_det_J);
 
                     assert(e_det_J == e_det_J);
                     assert(e_det_J != 0.0);
@@ -190,6 +190,44 @@ namespace mars {
     public:
         ViewMatrixType<Real> J_inv_;
         ViewVectorType<Real> det_J_;
+    };
+
+    template <class Mesh>
+    class SpaceTimeMixed {
+    public:
+        using Elem = typename Mesh::Elem;
+        using Point = typename Mesh::Point;
+        static constexpr int Dim = Mesh::Dim;
+        static constexpr int NFuns = Mesh::Dim + 1;
+
+        MARS_INLINE_FUNCTION static void one_thread_eval_add(const Real *J_inv,
+                                                             const Real &det_J,
+                                                             const Real *u,
+                                                             Real *val) {
+            Real g_ref[Dim], g[Dim], g_fe[Dim];
+
+            ///////////////////////////////////////////////////////////////////
+            ////////////////// Gradient with local basis function /////////////
+
+            for (int d = 0; d < Dim; ++d) {
+                g_ref[d] = -1 * u[0];
+            }
+
+            for (int i = 1; i < NFuns; ++i) {
+                g_ref[i - 1] += u[i];
+            }
+
+            ///////////////////////////////////////////////////////////////////
+            ////////////////// Transform gradient to physical coordinates //////
+
+            m_t_v_mult(J_inv, g_ref, g);
+
+            Real ut = g[Dim - 1];
+
+            for (int i = 0; i < NFuns; ++i) {
+                val[i] += ut * det_J * 1. / NFuns;
+            }
+        }
     };
 
     template <class Mesh>
