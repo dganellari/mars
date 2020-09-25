@@ -445,6 +445,33 @@ namespace mars {
         }
     };
 
+    template <class Mesh>
+    class Interpolate {
+    public:
+        static const int Dim = Mesh::Dim;
+
+        Interpolate(Mesh &mesh) : mesh_(mesh) {}
+
+        template <typename F>
+        void apply(ViewVectorType<Real> &v, F fun) {
+            ViewMatrixType<Real> points = mesh_.get_view_points();
+
+            Kokkos::parallel_for(
+                "Interpolate::apply", mesh_.n_nodes(), MARS_LAMBDA(const Integer i) {
+                    Real p[Dim];
+
+                    for (int d = 0; d < Dim; ++d) {
+                        p[d] = points(i, d);
+                    }
+
+                    v(i) = fun(p);
+                });
+        }
+
+    private:
+        Mesh &mesh_;
+    };
+
     class IdentityOperator {
     public:
         template <class Mesh, class BC>
@@ -576,6 +603,7 @@ namespace mars {
             Kokkos::parallel_for(
                 "UMeshLaplace::assemble_rhs", mesh.n_elements(), MARS_LAMBDA(const Integer i) {
                     Integer idx[NFuns];
+                    Real p[Dim];
                     Real det_J_e = det_J(i);
 
                     for (Integer k = 0; k < NFuns; ++k) {
@@ -583,7 +611,11 @@ namespace mars {
                     }
 
                     for (Integer k = 0; k < NFuns; ++k) {
-                        const Real val = f(&points(idx[k], 0));
+                        for (Integer d = 0; d < Dim; ++d) {
+                            p[d] = points(idx[k], d);
+                        }
+
+                        const Real val = f(p);
                         const Real scaled_val = val * det_J_e / NFuns;
                         Kokkos::atomic_add(&rhs(idx[k]), scaled_val);
                     }
@@ -707,6 +739,7 @@ int main(int argc, char *argv[]) {
 
         Example3Dirichlet bc_fun;
         Example3RHS rhs_fun;
+        // using exact_fun = ex3_exact;
 
         const Integer n_nodes = mesh.n_nodes();
 
@@ -736,26 +769,32 @@ int main(int argc, char *argv[]) {
         Integer num_iter = 0;
         bcg_stab(op, prec, rhs, rhs.extent(0), x, num_iter);
 
-        ViewVectorType<Real>::HostMirror x_host("x_host", n_nodes);
-        ViewVectorType<Real>::HostMirror rhs_host("rhs_host", n_nodes);
-        Kokkos::deep_copy(x_host, x);
-        Kokkos::deep_copy(rhs_host, rhs);
-
-        // for (Integer i = 0; i < n_nodes; ++i) {
-        //     std::cout << x_host(i) << std::endl;
-        // }
+        // Compute Error
+        ViewVectorType<Real> x_exact("X_exact", n_nodes);
+        Interpolate<PMesh> interp(mesh);
+        interp.apply(x_exact, ex3_exact);
+        KokkosBlas::axpby(1.0, x_exact, -1.0, x);
+        Real err = KokkosBlas::nrm2(x);
+        std::cout << "err : " << err << std::endl;
 
         ///////////////////////////////////////////////////////////////////////////
 
-        SMesh serial_mesh;
-        convert_parallel_mesh_to_serial(serial_mesh, mesh);
+        // ViewVectorType<Real>::HostMirror x_host("x_host", n_nodes);
+        // ViewVectorType<Real>::HostMirror rhs_host("rhs_host", n_nodes);
+        // Kokkos::deep_copy(x_host, x);
+        // Kokkos::deep_copy(rhs_host, rhs);
 
-        std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
-        std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
+        // SMesh serial_mesh;
+        // convert_parallel_mesh_to_serial(serial_mesh, mesh);
 
-        VTUMeshWriter<SMesh> w;
-        w.write("mesh.vtu", serial_mesh, x_host);
-        w.write("mesh_rhs.vtu", serial_mesh, rhs_host);
+        // std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
+        // std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
+
+        // VTUMeshWriter<SMesh> w;
+        // w.write("mesh.vtu", serial_mesh, x_host);
+        // w.write("mesh_rhs.vtu", serial_mesh, rhs_host);
+        // Kokkos::deep_copy(x_host, x_exact);
+        // w.write("analitic.vtu", serial_mesh, x_host);
     }
 
     Kokkos::finalize();
