@@ -352,7 +352,7 @@ namespace mars {
     MARS_INLINE_FUNCTION bool is_boundary_of_unit_cube(const Real *p) {
         bool ret = false;
         for (int d = 0; d < Dim; ++d) {
-            if (p[d] <= 1e-16 || p[d] >= 1 - 1e-16) {
+            if (p[d] <= 1e-14 || p[d] >= 1 - 1e-14) {
                 ret = true;
                 break;
             }
@@ -735,11 +735,11 @@ int main(int argc, char *argv[]) {
         // Example1Dirichlet bc_fun;
         // Example1RHS rhs_fun;
 
-        // Example2Dirichlet bc_fun;
-        // Example2RHS rhs_fun;
+        Example2Dirichlet bc_fun;
+        Example2RHS rhs_fun;
 
-        Example3Dirichlet bc_fun;
-        Example3RHS rhs_fun;
+        // Example3Dirichlet bc_fun;
+        // Example3RHS rhs_fun;
         // using exact_fun = ex3_exact;
 
         const Integer n_nodes = mesh.n_nodes();
@@ -775,7 +775,7 @@ int main(int argc, char *argv[]) {
         ViewVectorType<Real> diff("Diff", n_nodes);
 
         Interpolate<PMesh> interp(mesh);
-        interp.apply(x_exact, ex3_exact);
+        interp.apply(x_exact, ex2_exact);
 
         Kokkos::deep_copy(diff, x_exact);
 
