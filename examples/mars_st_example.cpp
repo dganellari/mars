@@ -261,14 +261,6 @@ namespace mars {
             ///////////////////////////////////////////////////////////////////
             ////////////////// Transform gradient to physical coordinates //////
 
-            // for (int d1 = 0; d1 < Dim; ++d1) {
-            //     g[d1] = 0;
-
-            //     for (int d2 = 0; d2 < Dim; ++d2) {
-            //         g[d1] += J_inv[d1 + d2 * Dim] * g_ref[d2];
-            //     }
-            // }
-
             m_t_v_mult(J_inv, g_ref, g);
 
             ///////////////////////////////////////////////////////////////////
@@ -443,7 +435,7 @@ namespace mars {
             const Integer n_nodes = mesh.n_nodes();
 
             Kokkos::parallel_for(
-                n_nodes, MARS_LAMBDA(const Integer i) { op_x(i) = 0.0; });
+                op_x.extent(0), MARS_LAMBDA(const Integer i) { op_x(i) = 0.0; });
 
             // Kokkos::Cuda().fence()
 
@@ -579,15 +571,15 @@ int main(int argc, char *argv[]) {
         PMesh mesh;
         generate_cube(mesh, nx, ny, nz);
 
-        ParallelBisection<PMesh> bisection(&mesh);
+        // ParallelBisection<PMesh> bisection(&mesh);
 
-        Integer n_marked = 3;
-        ViewVectorType<Integer> marked("marked", n_marked);
+        // Integer n_marked = 3;
+        // ViewVectorType<Integer> marked("marked", n_marked);
 
-        Kokkos::parallel_for(
-            n_marked, MARS_LAMBDA(const Integer i) { marked(i) = i; });
+        // Kokkos::parallel_for(
+        //     n_marked, MARS_LAMBDA(const Integer i) { marked(i) = i; });
 
-        bisection.refine(marked);
+        // bisection.refine(marked);
 
         const Integer n_nodes = mesh.n_nodes();
 
