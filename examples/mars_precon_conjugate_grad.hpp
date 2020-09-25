@@ -61,7 +61,7 @@ namespace mars {
         Real omega_0 = 1.0;
         Real omega_1;
 
-        Real TOL = 1.0e-10;
+        Real TOL = 1.0e-8;
 
         // Compute initial residual
         A.apply(x_0, r_0);                     // r_0 =  A*x_0

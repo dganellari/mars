@@ -68,12 +68,7 @@ namespace mars {
             auto det_J = det_J_;
             auto J_inv = J_inv_;
 
-            // std::cout << ne << " == " << mesh_.n_elements() << std::endl;
-            // std::cout << nen << " == " << NFuns << std::endl;
-
             const Integer n_nodes = mesh_.n_nodes();
-
-            // std::cout << points.extent(0) << " == " << n_nodes << std::endl;
 
             Kokkos::parallel_for(
                 "FEValues::init", mesh_.n_elements(), MARS_LAMBDA(const Integer i) {
@@ -111,8 +106,8 @@ namespace mars {
                     assert(e_det_J > 0.0);
                 });
 
-            // Kokkos::parallel_for(
-            //     "print_det_J", mesh_.n_elements(), MARS_LAMBDA(const Integer i) { printf("%g\n", det_J(i)); });
+            //     Kokkos::parallel_for(
+            //         "print_det_J", mesh_.n_elements(), MARS_LAMBDA(const Integer i) { printf("%g\n", det_J(i)); });
         }
 
         MARS_INLINE_FUNCTION Real det1(const Real *m) { return m[0]; }
@@ -280,7 +275,7 @@ namespace mars {
 
             m_t_v_mult(J_inv, g_ref, g_fe);
 
-            val[0] += dot(g, g_fe) * det_J;
+            val[0] = dot(g, g_fe) * det_J;
 
             for (int d = 0; d < Dim; ++d) {
                 g_ref[d] = 0;
@@ -294,7 +289,7 @@ namespace mars {
 
                 m_t_v_mult(J_inv, g_ref, g_fe);
 
-                val[i] += dot(g, g_fe) * det_J;
+                val[i] = dot(g, g_fe) * det_J;
 
                 g_ref[d] = 0.0;
             }
@@ -315,7 +310,7 @@ namespace mars {
         MARS_INLINE_FUNCTION static bool is_boundary(const Real *p) {
             bool ret = false;
             for (int d = 0; d < Dim; ++d) {
-                if (p[d] <= 1e-16 || p[d] >= 1 + 1e-16) {
+                if (p[d] <= 1e-16 || p[d] >= 1 - 1e-16) {
                     ret = true;
                     break;
                 }
@@ -444,9 +439,7 @@ namespace mars {
             const Integer n_nodes = mesh.n_nodes();
 
             Kokkos::parallel_for(
-                op_x.extent(0), MARS_LAMBDA(const Integer i) { op_x(i) = 0.0; });
-
-            // Kokkos::Cuda().fence()
+                n_nodes, MARS_LAMBDA(const Integer i) { op_x(i) = 0.0; });
 
             Kokkos::parallel_for(
                 "UMeshLaplace::apply", mesh.n_elements(), MARS_LAMBDA(const Integer i) {
@@ -534,6 +527,9 @@ namespace mars {
 
                 Kokkos::parallel_for(
                     "JacobiPreconditioner::apply", n, MARS_LAMBDA(const Integer i) { op_x(i) = inv_diag(i) * x(i); });
+
+                // Kokkos::parallel_for(
+                //     "JacobiPreconditioner::copy", n, MARS_LAMBDA(const Integer i) { op_x(i) = x(i); });
 
                 id_->apply(x, op_x);
             }
@@ -624,7 +620,9 @@ int main(int argc, char *argv[]) {
         bcg_stab(op, prec, rhs, rhs.extent(0), x, num_iter);
 
         ViewVectorType<Real>::HostMirror x_host("x_host", n_nodes);
+        ViewVectorType<Real>::HostMirror rhs_host("rhs_host", n_nodes);
         Kokkos::deep_copy(x_host, x);
+        Kokkos::deep_copy(rhs_host, rhs);
 
         // for (Integer i = 0; i < n_nodes; ++i) {
         //     std::cout << x_host(i) << std::endl;
@@ -640,6 +638,7 @@ int main(int argc, char *argv[]) {
 
         VTUMeshWriter<SMesh> w;
         w.write("mesh.vtu", serial_mesh, x_host);
+        w.write("mesh_rhs.vtu", serial_mesh, rhs_host);
     }
 
     Kokkos::finalize();
