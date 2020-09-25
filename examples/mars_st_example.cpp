@@ -45,6 +45,19 @@
 
 namespace mars {
 
+    template <int Dim>
+    MARS_INLINE_FUNCTION bool has_non_zero(const Real *J_inv) {
+        bool ret = false;
+        for (int k = 0; k < (Dim * Dim); ++k) {
+            if (J_inv[k] * J_inv[k] > 0.0) {
+                ret = true;
+                break;
+            }
+        }
+
+        return ret;
+    }
+
     template <class Mesh>
     class FEValues {
     public:
@@ -102,6 +115,8 @@ namespace mars {
                     Real e_det_J = det(J);
                     invert(J, &J_inv(i, 0), e_det_J);
                     det_J(i) = Kokkos::ArithTraits<Real>::abs(e_det_J);
+
+                    assert(has_non_zero<Dim>(&J_inv(i, 0)));
 
                     assert(e_det_J == e_det_J);
                     assert(e_det_J != 0.0);
@@ -294,18 +309,6 @@ namespace mars {
             return ret;
         }
 
-        MARS_INLINE_FUNCTION static bool has_non_zero(const Real *J_inv) {
-            bool ret = false;
-            for (int k = 0; k < Dim * Dim; ++k) {
-                if (J_inv[k] * J_inv[k] > 0.0) {
-                    ret = true;
-                    break;
-                }
-            }
-
-            return ret;
-        }
-
         MARS_INLINE_FUNCTION static void one_thread_eval_diag(const Real *J_inv, const Real &det_J, Real *val) {
             Real g_ref[Dim], g[Dim];
 
@@ -314,7 +317,7 @@ namespace mars {
             }
 
             assert(det_J > 0.0);
-            assert(has_non_zero(J_inv));
+            assert(has_non_zero<Dim>(J_inv));
 
             m_t_v_mult(J_inv, g_ref, g);
             val[0] = dot(g, g) * det_J;
@@ -692,7 +695,7 @@ namespace mars {
 
                         assert(det_J_e > 0.0);
 
-                        for (Integer k = 0; k < Dim * Dim; ++k) {
+                        for (Integer k = 0; k < (Dim * Dim); ++k) {
                             J_inv_e[k] = J_inv(i, k);
                         }
 
