@@ -304,6 +304,8 @@ namespace mars {
             m_t_v_mult(J_inv, g_ref, g);
             val[0] = dot(g, g) * det_J;
 
+            assert(val[0] > 0.0);
+
             for (int d = 0; d < Dim; ++d) {
                 g_ref[d] = 0;
             }
@@ -313,6 +315,8 @@ namespace mars {
                 m_t_v_mult(J_inv, g_ref, g);
 
                 val[d + 1] = dot(g, g) * det_J;
+
+                assert(val[d + 1] > 0.0);
 
                 g_ref[d] = 0;
             }
