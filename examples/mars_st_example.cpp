@@ -294,12 +294,27 @@ namespace mars {
             return ret;
         }
 
+        MARS_INLINE_FUNCTION static bool has_non_zero(const Real *J_inv) {
+            bool ret = false;
+            for (int k = 0; k < Dim * Dim; ++k) {
+                if (J_inv[k] * J_inv[k] > 0.0) {
+                    ret = true;
+                    break;
+                }
+            }
+
+            return ret;
+        }
+
         MARS_INLINE_FUNCTION static void one_thread_eval_diag(const Real *J_inv, const Real &det_J, Real *val) {
             Real g_ref[Dim], g[Dim];
 
             for (int d = 0; d < Dim; ++d) {
                 g_ref[d] = -1;
             }
+
+            assert(det_J > 0.0);
+            assert(has_non_zero(J_inv));
 
             m_t_v_mult(J_inv, g_ref, g);
             val[0] = dot(g, g) * det_J;
