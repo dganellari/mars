@@ -6,14 +6,9 @@
 
 namespace mars {
 
-    template <class Mesh>
-    class SimplexLaplacian {
+    template <int Dim>
+    class Algebra {
     public:
-        using Elem = typename Mesh::Elem;
-        using Point = typename Mesh::Point;
-        static constexpr int Dim = Mesh::Dim;
-        static constexpr int NFuns = Mesh::Dim + 1;
-
         MARS_INLINE_FUNCTION static void m_t_v_mult(const Real *A, const Real *x, Real *y) {
             for (int d1 = 0; d1 < Dim; ++d1) {
                 y[d1] = 0;
@@ -32,6 +27,15 @@ namespace mars {
 
             return ret;
         }
+    };
+
+    template <class Mesh>
+    class SimplexLaplacian {
+    public:
+        using Elem = typename Mesh::Elem;
+        using Point = typename Mesh::Point;
+        static constexpr int Dim = Mesh::Dim;
+        static constexpr int NFuns = Mesh::Dim + 1;
 
         MARS_INLINE_FUNCTION static void one_thread_eval_diag(const Real *J_inv, const Real &det_J, Real *val) {
             Real g_ref[Dim], g[Dim];
@@ -43,8 +47,8 @@ namespace mars {
             assert(det_J > 0.0);
             assert(has_non_zero<Dim>(J_inv));
 
-            m_t_v_mult(J_inv, g_ref, g);
-            val[0] = dot(g, g) * det_J;
+            Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g);
+            val[0] = Algebra<Dim>::dot(g, g) * det_J;
 
             assert(val[0] > 0.0);
 
@@ -54,9 +58,9 @@ namespace mars {
 
             for (int d = 0; d < Dim; ++d) {
                 g_ref[d] = 1;
-                m_t_v_mult(J_inv, g_ref, g);
+                Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g);
 
-                val[d + 1] = dot(g, g) * det_J;
+                val[d + 1] = Algebra<Dim>::dot(g, g) * det_J;
 
                 assert(val[d + 1] > 0.0);
 
@@ -84,7 +88,7 @@ namespace mars {
             ///////////////////////////////////////////////////////////////////
             ////////////////// Transform gradient to physical coordinates //////
 
-            m_t_v_mult(J_inv, g_ref, g);
+            Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g);
 
             ///////////////////////////////////////////////////////////////////
             ////////////////// evaluate bilinear form ////////////////////////
@@ -95,9 +99,9 @@ namespace mars {
                 g_ref[d] = -1;
             }
 
-            m_t_v_mult(J_inv, g_ref, g_fe);
+            Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g_fe);
 
-            val[0] = dot(g, g_fe) * det_J;
+            val[0] = Algebra<Dim>::dot(g, g_fe) * det_J;
 
             for (int d = 0; d < Dim; ++d) {
                 g_ref[d] = 0;
@@ -109,9 +113,9 @@ namespace mars {
 
                 g_ref[d] = 1.0;
 
-                m_t_v_mult(J_inv, g_ref, g_fe);
+                Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g_fe);
 
-                val[i] = dot(g, g_fe) * det_J;
+                val[i] = Algebra<Dim>::dot(g, g_fe) * det_J;
 
                 g_ref[d] = 0.0;
             }
