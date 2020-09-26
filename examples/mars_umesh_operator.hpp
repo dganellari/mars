@@ -37,24 +37,22 @@ namespace mars {
     };
 
     template <class Mesh>
-    class JacobiPreconditioner : public UMeshPreconditioner<Mesh> {
+    class UMeshJacobiPreconditioner : public UMeshPreconditioner<Mesh> {
     public:
         void apply(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) override {
             auto n = inv_diag_.extent(0);
             auto inv_diag = inv_diag_;
 
             Kokkos::parallel_for(
-                "JacobiPreconditioner::apply", n, MARS_LAMBDA(const Integer i) { op_x(i) = inv_diag(i) * x(i); });
+                "UMeshJacobiPreconditioner::apply", n, MARS_LAMBDA(const Integer i) { op_x(i) = inv_diag(i) * x(i); });
 
             // Kokkos::parallel_for(
-            //     "JacobiPreconditioner::copy", n, MARS_LAMBDA(const Integer i) { op_x(i) = x(i); });
+            //     "UMeshJacobiPreconditioner::copy", n, MARS_LAMBDA(const Integer i) { op_x(i) = x(i); });
 
             this->identity()->apply(x, op_x);
         }
 
-        void set_identity(std::shared_ptr<IdentityOperator> id) { id_ = id; }
-
-    private:
+    protected:
         ViewVectorType<Real> inv_diag_;
     };
 
@@ -106,15 +104,20 @@ namespace mars {
                 });
         }
 
-        void set_identity(const std::shared_ptr<IdentityOperator> &id) {
+        inline void set_identity(const std::shared_ptr<IdentityOperator> &id) {
             id_ = id;
             preconditioner_->set_identity(id);
         }
 
-        inline UMeshPreconditioner<Mesh> &preconditioner() { return preconditioner_; }
+        inline void set_precontitioner(const std::shared_ptr<UMeshPreconditioner<Mesh>> &p) { preconditioner_ = p; }
+
+        inline std::shared_ptr<UMeshPreconditioner<Mesh>> &preconditioner() { return preconditioner_; }
         inline const std::shared_ptr<IdentityOperator> &identity() const { return id_; }
 
-    protected:
+        inline FEValues<Mesh> &values() { return values_; }
+        inline const FEValues<Mesh> &values() const { return values_; }
+
+    private:
         FEValues<Mesh> values_;
         std::shared_ptr<UMeshPreconditioner<Mesh>> preconditioner_;
         std::shared_ptr<IdentityOperator> id_;

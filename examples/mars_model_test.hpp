@@ -95,10 +95,10 @@ namespace mars {
             bc.apply(rhs, bc_fun);
             bc.apply(x, bc_fun);
 
-            auto prec = op.preconditioner();
+            auto prec_ptr = op.preconditioner();
 
             Integer num_iter = 0;
-            bcg_stab(op, prec, rhs, rhs.extent(0), x, num_iter);
+            bcg_stab(op, *prec_ptr, rhs, rhs.extent(0), x, num_iter);
 
             // Compute Error
             ViewVectorType<Real> x_exact("X_exact", n_nodes);
