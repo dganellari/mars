@@ -101,8 +101,49 @@ namespace mars {
         }
     };
 
+    template <typename T, int N>
+    using ViewQWeights =
+        Kokkos::View<T[N], Kokkos::LayoutRight, KokkosSpace, Kokkos::MemoryTraits<Kokkos::RandomAccess>>;
+
+    template <typename T, Integer XDim_, Integer YDim_>
+    using ViewQPoints =
+        Kokkos::View<T[XDim_][YDim_], Kokkos::LayoutRight, KokkosSpace, Kokkos::MemoryTraits<Kokkos::RandomAccess>>;
+
     template <int Dim, int Order>
     class SimplexQuadrature {};
+
+    template <int Dim>
+    class SimplexQuadrature<Dim, 1> {
+    public:
+        static SimplexQuadrature make() {
+            SimplexQuadrature ret;
+            ret.init();
+            return ret;
+        }
+
+        ViewQPoints<Real, Dim + 1, 2> points;
+        ViewQWeights<Real, Dim + 1> weights;
+
+        MARS_INLINE_FUNCTION static constexpr int n_points() { return 6; }
+        MARS_INLINE_FUNCTION static constexpr int dim() { return 2; }
+
+        SimplexQuadrature() : points("q_points"), weights("q_weights") {}
+
+        void init() {
+            auto points_tmp = points;
+            auto weights_tmp = weights;
+
+            Kokkos::parallel_for(
+                1, MARS_LAMBDA(const int &) {
+                    weights_tmp(0) = 1. / (Dim + 1);
+
+                    for (int p = 0; p < Dim; ++p) {
+                        weights_tmp(p + 1) = 1. / (Dim + 1);
+                        points_tmp(p + 1, p) = 1.0;
+                    }
+                });
+        }
+    };
 
     template <>
     class SimplexQuadrature<2, 2> {
@@ -113,16 +154,8 @@ namespace mars {
             return ret;
         }
 
-        template <typename T, int N>
-        using ViewVectorTextureC =
-            Kokkos::View<T[N], Kokkos::LayoutRight, KokkosSpace, Kokkos::MemoryTraits<Kokkos::RandomAccess>>;
-
-        template <typename T, Integer XDim_, Integer YDim_>
-        using ViewMatrixTextureC =
-            Kokkos::View<T[XDim_][YDim_], Kokkos::LayoutRight, KokkosSpace, Kokkos::MemoryTraits<Kokkos::RandomAccess>>;
-
-        ViewMatrixTextureC<Real, 6, 2> points;
-        ViewVectorTextureC<Real, 6> weights;
+        ViewQPoints<Real, 6, 2> points;
+        ViewQWeights<Real, 6> weights;
 
         MARS_INLINE_FUNCTION static constexpr int n_points() { return 6; }
         MARS_INLINE_FUNCTION static constexpr int dim() { return 2; }
@@ -156,7 +189,7 @@ namespace mars {
     };
 
     template <int Dim>
-    using SimplexQuadratureLinear = mars::SimplexQuadrature<Dim, 2>;
+    using SimplexQuadratureLinear = mars::SimplexQuadrature<Dim, 1>;
 
     template <class Mesh>
     class UMeshSTHeatEquation final : public UMeshOperator<Mesh> {
