@@ -152,6 +152,9 @@ namespace mars {
         }
     };
 
+    template <int Dim>
+    using SimplexQuadratureLinear = mars::SimplexQuadrature<Dim, 2>;
+
     template <class Mesh>
     class UMeshSTHeatEquation final : public UMeshOperator<Mesh> {
     public:
@@ -164,12 +167,12 @@ namespace mars {
 
         UMeshSTHeatEquation(Mesh &mesh) : Super(mesh) {}
 
-        SimplexQuadrature<Dim, 2> quad_;
+        SimplexQuadratureLinear<Dim> quad_;
 
         void init() override {
             this->values().init();
 
-            quad_ = SimplexQuadrature<Dim, 2>::make();
+            quad_ = SimplexQuadratureLinear<Dim>::make();
             auto prec = std::make_shared<JacobiPreconditioner>();
             prec->quad_ = quad_;
 
@@ -265,7 +268,7 @@ namespace mars {
                 this->inv_diag_ = inv_diag;
             }
 
-            SimplexQuadrature<Dim, 2> quad_;
+            SimplexQuadratureLinear<Dim> quad_;
         };
     };
 
