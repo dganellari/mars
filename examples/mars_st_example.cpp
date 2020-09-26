@@ -38,71 +38,76 @@
 
 #include "mars_mesh_kokkos.hpp"
 #include "mars_model_test.hpp"
+#include "mars_spacetime_ex.hpp"
 #include "mars_umesh_laplace.hpp"
+#include "mars_umesh_st_heat_equation.hpp"
 
 namespace mars {
+    class ST1Analitcal {
+    public:
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex1_st_exact(p); }
+    };
+
+    class ST1RHS {
+    public:
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex1_st_spacetime(p); }
+    };
+
+    /////////////////////////////////////////////////////////////////////////////////////////////
+
+    class ST2Analitcal {
+    public:
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex2_st_exact(p); }
+    };
+
+    class ST2RHS {
+    public:
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex2_st_spacetime(p); }
+    };
 
     template <class Mesh>
-    class SpaceTimeMixed {
+    class ST2BC {
     public:
-        using Elem = typename Mesh::Elem;
-        using Point = typename Mesh::Point;
-        static constexpr int Dim = Mesh::Dim;
-        static constexpr int NFuns = Mesh::Dim + 1;
+        /* BC --> zero dirichlet + natural neumann on upper bound */
+        static const int Dim = Mesh::Dim;
 
-        MARS_INLINE_FUNCTION static void one_thread_eval_diag_add(const Real *J_inv, const Real &det_J, Real *val) {
-            // Real g_ref[Dim], g[Dim];
-
-            // for (int d = 0; d < Dim; ++d) {
-            //     g_ref[d] = -1;
-            // }
-
-            // m_t_v_mult(J_inv, g_ref, g);
-            // val[0] = dot(g, g) * det_J;
-
-            // for (int d = 0; d < Dim; ++d) {
-            //     g_ref[d] = 0;
-            // }
-
-            // for (int d = 0; d < Dim; ++d) {
-            //     g_ref[d] = 1;
-            //     m_t_v_mult(J_inv, g_ref, g);
-
-            //     val[d + 1] = dot(g, g) * det_J;
-
-            //     g_ref[d] = 0;
-            // }
+        MARS_INLINE_FUNCTION void operator()(const Real *p, Real &val) const {
+            if (is_boundary(p)) {
+                val = ex2_st_exact(p);
+            }
         }
 
-        MARS_INLINE_FUNCTION static void one_thread_eval_add(const Real *J_inv,
-                                                             const Real &det_J,
-                                                             const Real *u,
-                                                             Real *val) {
-            Real g_ref[Dim], g[Dim], g_fe[Dim];
-
-            ///////////////////////////////////////////////////////////////////
-            ////////////////// Gradient with local basis function /////////////
-
+        MARS_INLINE_FUNCTION static bool is_boundary(const Real *p) {
+            bool ret = false;
             for (int d = 0; d < Dim; ++d) {
-                g_ref[d] = -1 * u[0];
+                if (p[d] <= 1e-14) {
+                    ret = true;
+                    break;
+                }
+
+                if (d < Dim - 1 && p[d] >= 1 - 1e-14) {
+                    ret = true;
+                    break;
+                }
             }
 
-            for (int i = 1; i < NFuns; ++i) {
-                g_ref[i - 1] += u[i];
-            }
-
-            ///////////////////////////////////////////////////////////////////
-            ////////////////// Transform gradient to physical coordinates //////
-
-            m_t_v_mult(J_inv, g_ref, g);
-
-            Real ut = g[Dim - 1];
-
-            for (int i = 0; i < NFuns; ++i) {
-                val[i] += ut * det_J * 1. / NFuns;
-            }
+            return ret;
         }
     };
+
+    /////////////////////////////////////////////////////////////////////////////////////////////
+
+    class ST3Analitcal {
+    public:
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex3_st_exact(p); }
+    };
+
+    class ST3RHS {
+    public:
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex3_st_spacetime(p); }
+    };
+
+    /////////////////////////////////////////////////////////////////////////////////////////////
 
 }  // namespace mars
 
@@ -121,12 +126,23 @@ int main(int argc, char *argv[]) {
         // Example2Analitcal>().run(
         //     argc, argv);
 
-        ModelTest<ParallelMesh3,
-                  UMeshLaplace<ParallelMesh3>,
-                  ZeroDirchletOnUnitCube<ParallelMesh3>,
-                  One<ParallelMesh3>,
-                  One<ParallelMesh3>>()
+        // ModelTest<ParallelMesh2, UMeshSTHeatEquation<ParallelMesh2>, ST2BC<ParallelMesh2>, ST2RHS,
+        // ST2Analitcal>().run(
+        //     argc, argv);
+
+        ModelTest<ParallelMesh2,
+                  UMeshSTHeatEquation<ParallelMesh2>,
+                  ZeroDirchletOnUnitCube<ParallelMesh2>,
+                  ST3RHS,
+                  ST3Analitcal>()
             .run(argc, argv);
+
+        // ModelTest<ParallelMesh3,
+        //           UMeshLaplace<ParallelMesh3>,
+        //           ZeroDirchletOnUnitCube<ParallelMesh3>,
+        //           One<ParallelMesh3>,
+        //           One<ParallelMesh3>>()
+        //     .run(argc, argv);
     }
 
     Kokkos::finalize();
