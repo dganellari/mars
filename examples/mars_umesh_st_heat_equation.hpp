@@ -21,34 +21,41 @@ namespace mars {
         static constexpr int NFuns = Mesh::Dim + 1;
 
         MARS_INLINE_FUNCTION static void one_thread_eval_diag_add(const Real *J_inv, const Real &det_J, Real *val) {
-            // Real g_ref[Dim], g[Dim];
+            Real g_ref[Dim], g[Dim];
 
-            // for (int d = 0; d < Dim; ++d) {
-            //     g_ref[d] = -1;
-            // }
+            for (int d = 0; d < Dim; ++d) {
+                g_ref[d] = -1;
+            }
 
-            // m_t_v_mult(J_inv, g_ref, g);
-            // val[0] = dot(g, g) * det_J;
+            Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g);
 
-            // for (int d = 0; d < Dim; ++d) {
-            //     g_ref[d] = 0;
-            // }
+            Real fun_t = g[Dim - 1];
+            // assert(fun_t > 0.0);
 
-            // for (int d = 0; d < Dim; ++d) {
-            //     g_ref[d] = 1;
-            //     m_t_v_mult(J_inv, g_ref, g);
+            val[0] += fun_t * det_J * 1. / NFuns;
 
-            //     val[d + 1] = dot(g, g) * det_J;
+            for (int d = 0; d < Dim; ++d) {
+                g_ref[d] = 0;
+            }
 
-            //     g_ref[d] = 0;
-            // }
+            for (int d = 0; d < Dim; ++d) {
+                g_ref[d] = 1;
+
+                Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g);
+
+                fun_t = g[Dim - 1];
+
+                val[d + 1] += fun_t * det_J * 1. / NFuns;
+
+                g_ref[d] = 0;
+            }
         }
 
         MARS_INLINE_FUNCTION static void one_thread_eval_add(const Real *J_inv,
                                                              const Real &det_J,
                                                              const Real *u,
                                                              Real *val) {
-            Real g_ref[Dim], g[Dim], g_fe[Dim];
+            Real g_ref[Dim], g[Dim];
 
             ///////////////////////////////////////////////////////////////////
             ////////////////// Gradient with local basis function /////////////
