@@ -8,37 +8,34 @@
 #include "mars_globals.hpp"
 #include "mars_identity_operator.hpp"
 #include "mars_simplex_laplacian.hpp"
+#include "mars_umesh_operator.hpp"
 
 namespace mars {
 
     template <class Mesh>
-    class UMeshLaplace final {
+    class UMeshLaplace final : public UMeshOperator<Mesh> {
     public:
         using Elem = typename Mesh::Elem;
         using SideElem = typename Mesh::SideElem;
+        using Super = mars::UMeshOperator<Mesh>;
 
         static constexpr int Dim = Mesh::Dim;
         static constexpr int NFuns = Mesh::Dim + 1;
 
-        UMeshLaplace(Mesh &mesh) : values_(mesh) {}
+        UMeshLaplace(Mesh &mesh) : Super(mesh) {}
 
-        class FakeComm {
-        public:
-            static Real sum(const Real &v) { return v; }
-        };
-
-        FakeComm comm() { return FakeComm(); }
-
-        void init() {
-            values_.init();
-            preconditioner_.init(values_);
+        void init() override {
+            this->values().init();
+            this->set_precontitioner(std::make_shared<JacobiPreconditioner>());
+            this->preconditioner()->init(this->values());
         }
 
-        void apply(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) {
+        void apply(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) override {
             // For Kokkos-Cuda
-            auto det_J = values_.det_J();
-            auto J_inv = values_.J_inv();
-            auto mesh = values_.mesh();
+            auto values = this->values();
+            auto det_J = values.det_J();
+            auto J_inv = values.J_inv();
+            auto mesh = values.mesh();
 
             ViewMatrixType<Integer> elems = mesh.get_view_elements();
 
@@ -70,43 +67,12 @@ namespace mars {
                     }
                 });
 
-            id_->apply(x, op_x);
+            this->identity()->apply(x, op_x);
         }
 
-        template <class F>
-        void assemble_rhs(ViewVectorType<Real> &rhs, F f) {
-            auto det_J = values_.det_J();
-
-            ViewMatrixType<Integer> elems = values_.mesh().get_view_elements();
-            ViewMatrixType<Real> points = values_.mesh().get_view_points();
-
-            auto mesh = values_.mesh();
-
-            Kokkos::parallel_for(
-                "UMeshLaplace::assemble_rhs", mesh.n_elements(), MARS_LAMBDA(const Integer i) {
-                    Integer idx[NFuns];
-                    Real p[Dim];
-                    Real det_J_e = det_J(i);
-
-                    for (Integer k = 0; k < NFuns; ++k) {
-                        idx[k] = elems(i, k);
-                    }
-
-                    for (Integer k = 0; k < NFuns; ++k) {
-                        for (Integer d = 0; d < Dim; ++d) {
-                            p[d] = points(idx[k], d);
-                        }
-
-                        const Real val = f(p);
-                        const Real scaled_val = val * det_J_e / NFuns;
-                        Kokkos::atomic_add(&rhs(idx[k]), scaled_val);
-                    }
-                });
-        }
-
-        class JacobiPreconditioner {
+        class JacobiPreconditioner final : public UMeshJacobiPreconditioner<Mesh> {
         public:
-            void init(FEValues<Mesh> &values) {
+            void init(FEValues<Mesh> &values) override {
                 auto mesh = values.mesh();
                 ViewMatrixType<Integer> elems = values.mesh().get_view_elements();
                 auto det_J = values.det_J();
@@ -143,39 +109,9 @@ namespace mars {
                         }
                     });
 
-                inv_diag_ = inv_diag;
+                this->inv_diag_ = inv_diag;
             }
-
-            void apply(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) {
-                auto n = inv_diag_.extent(0);
-                auto inv_diag = inv_diag_;
-
-                Kokkos::parallel_for(
-                    "JacobiPreconditioner::apply", n, MARS_LAMBDA(const Integer i) { op_x(i) = inv_diag(i) * x(i); });
-
-                // Kokkos::parallel_for(
-                //     "JacobiPreconditioner::copy", n, MARS_LAMBDA(const Integer i) { op_x(i) = x(i); });
-
-                id_->apply(x, op_x);
-            }
-
-            void set_identity(std::shared_ptr<IdentityOperator> id) { id_ = id; }
-
-        private:
-            ViewVectorType<Real> inv_diag_;
-            std::shared_ptr<IdentityOperator> id_;
         };
-
-        void set_identity(const std::shared_ptr<IdentityOperator> &id) {
-            id_ = id;
-            preconditioner_.set_identity(id);
-        }
-
-        inline JacobiPreconditioner &preconditioner() { return preconditioner_; }
-
-        FEValues<Mesh> values_;
-        JacobiPreconditioner preconditioner_;
-        std::shared_ptr<IdentityOperator> id_;
     };
 
 }  // namespace mars
