@@ -109,6 +109,7 @@ namespace mars {
     public:
         static SimplexQuadrature make() {
             SimplexQuadrature ret;
+            ret.init();
             return ret;
         }
 
@@ -126,7 +127,9 @@ namespace mars {
         MARS_INLINE_FUNCTION static constexpr int n_points() { return 6; }
         MARS_INLINE_FUNCTION static constexpr int dim() { return 2; }
 
-        SimplexQuadrature() : points("q_points"), weights("q_weights") {
+        SimplexQuadrature() : points("q_points"), weights("q_weights") {}
+
+        void init() {
             auto points_tmp = points;
             auto weights_tmp = weights;
 
