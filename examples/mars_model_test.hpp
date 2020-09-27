@@ -114,7 +114,13 @@ namespace mars {
             Real err = KokkosBlas::nrminf(diff);
             std::cout << "err : " << err << std::endl;
 
+            ViewVectorType<Real> error;
+            GradientRecovery<PMesh> grad_rec;
+            grad_rec.estimate(op.values(), x, error);
+
             ///////////////////////////////////////////////////////////////////////////
+
+            std::cout << "Writing results to disk..." << std::endl;
 
             ViewVectorType<Real>::HostMirror x_host("x_host", n_nodes);
             ViewVectorType<Real>::HostMirror rhs_host("rhs_host", n_nodes);
@@ -133,10 +139,6 @@ namespace mars {
 
             Kokkos::deep_copy(x_host, x_exact);
             w.write("analitic.vtu", serial_mesh, x_host);
-
-            ViewVectorType<Real> error;
-            GradientRecovery<PMesh> grad_rec;
-            grad_rec.estimate(op.values(), x, error);
 
             ViewVectorType<Real>::HostMirror error_host("error_host", mesh.n_elements());
             Kokkos::deep_copy(error_host, error);

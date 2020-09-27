@@ -130,19 +130,19 @@ int main(int argc, char *argv[]) {
         // ST2Analitcal>().run(
         //     argc, argv);
 
-        // ModelTest<ParallelMesh2,
-        //           UMeshSTHeatEquation<ParallelMesh2>,
-        //           ZeroDirchletOnUnitCube<ParallelMesh2>,
-        //           ST3RHS,
-        //           ST3Analitcal>()
-        //     .run(argc, argv);
-
-        ModelTest<ParallelMesh3,
-                  UMeshLaplace<ParallelMesh3>,
-                  ZeroDirchletOnUnitCube<ParallelMesh3>,
-                  One<ParallelMesh3>,
-                  One<ParallelMesh3>>()
+        ModelTest<ParallelMesh2,
+                  UMeshSTHeatEquation<ParallelMesh2>,
+                  ZeroDirchletOnUnitCube<ParallelMesh2>,
+                  ST3RHS,
+                  ST3Analitcal>()
             .run(argc, argv);
+
+        // ModelTest<ParallelMesh3,
+        //           UMeshLaplace<ParallelMesh3>,
+        //           ZeroDirchletOnUnitCube<ParallelMesh3>,
+        //           One<ParallelMesh3>,
+        //           One<ParallelMesh3>>()
+        //     .run(argc, argv);
     }
 
     Kokkos::finalize();
