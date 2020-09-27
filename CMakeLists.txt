@@ -68,6 +68,7 @@ if(MPI_FOUND)
 endif()
 
 option(MARS_USE_CUDA "Build mars with cuda support" OFF)
+option(MARS_NO_RDMA "Build mars with NO RDMA support" OFF)
 
 if(TRY_WITH_KOKKOS)
     if(NOT TRILINOS_DIR)
