@@ -61,7 +61,7 @@ u = P uk */
 namespace mars {
 
 /* using DMQ2 = DM<DistributedQuad4Mesh, 2, double, double>; */
-using DMQ2 = DM<DistributedQuad4Mesh, 2, double, double>;
+using DMQ2 = DM<DistributedQuad4Mesh, 1, double, double>;
 /*
 enum class DMDataDesc
 {
@@ -112,7 +112,7 @@ template <Integer Type> void print_dofs(const DMQ2 &dm, const int rank) {
 
 // print thlocal and the global number of the dof within each element.
 // the dof enumeration within eachlement is topological
-void print_elem_global_dof(const DMQ2 dm, const int rank) {
+void print_elem_global_dof(const DMQ2 dm) {
   dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
     // go through all the dofs of the elem_index element
     for (int i = 0; i < DMQ2::elem_nodes; i++) {
@@ -122,22 +122,22 @@ void print_elem_global_dof(const DMQ2 dm, const int rank) {
       Dof d = dm.local_to_global_dof(local_dof);
 
       // do something. In this case we are printing.
-      printf("lgm: local: %li, global: %li, proc: %i, rank:%i\n", local_dof,
-             d.get_gid(), d.get_proc(), rank);
+      printf("lgm: i: %li, local: %li, global: %li, proc: %li\n",i, local_dof,
+             d.get_gid(), d.get_proc());
     }
   });
 }
 
 // print the local and global numbering of the ghost dofs per process
-void print_ghost_dofs(const DMQ2 dm, const int rank) {
+void print_ghost_dofs(const DMQ2 dm) {
   Kokkos::parallel_for(
       dm.get_ghost_lg_map().capacity(), KOKKOS_LAMBDA(Integer i) {
         if (dm.get_ghost_lg_map().valid_at(i)) {
           auto sfc = dm.get_ghost_lg_map().key_at(i);
           auto global_dof = dm.get_ghost_lg_map().value_at(i);
-          printf("local: %li, global: %li - proc: %li - rank: %li\n",
+          printf("local: %li, global: %li - proc: %li \n",
                  dm.sfc_to_local(sfc), global_dof.get_gid(),
-                 global_dof.get_proc(), rank);
+                 global_dof.get_proc());
         }
       });
 }
@@ -406,8 +406,9 @@ void poisson(int &argc, char **&argv, const int level) {
     /* print_dofs<Type>(dm, proc_num); */
 
     // print the global dofs for each element's local dof
-    /* print_elem_global_dof(dm, proc_num); */
+    /* print_elem_global_dof(dm); */
 
+    /* print_ghost_dofs(dm); */
     double time = timer.seconds();
     std::cout << "Setup took: " << time << " seconds." << std::endl;
 
@@ -436,11 +437,11 @@ void poisson(int &argc, char **&argv, const int level) {
                 value = -1;
         });
 
-    dm.dof_iterate(MARS_LAMBDA(const Integer i) {
+    /* dm.dof_iterate(MARS_LAMBDA(const Integer i) {
         const Integer gd= dm.local_to_global(i);
         printf("llid: %li, ggid: %li, INPUT: %lf, OUTPUT: %lf, rank: %i\n", i, gd,
                dm.get_dof_data<INPUT>(i), dm.get_dof_data<OUTPUT>(i), proc_num);
-    });
+    }); */
     // local dof enum size
     const Integer dof_size = dm.get_dof_size();
 
@@ -454,11 +455,11 @@ void poisson(int &argc, char **&argv, const int level) {
 
     dm.get_locally_owned_data<INPUT>(x);
 
-    Kokkos::parallel_for(
+    /* Kokkos::parallel_for(
         "printglobaldatavalues", locall_owned_dof_size,
         MARS_LAMBDA(const Integer i) {
-          printf("i: %li, gdata: %lf - rank: %i\n", x(i), proc_num);
-        });
+          printf("i: %li, gdata: %lf - rank: %i\n", i, x(i), proc_num);
+        }); */
 
     // specify the tuple indices of the tuplelements that are needed to gather.
     // if no index specified it gathers all views of the tuple. All data.
