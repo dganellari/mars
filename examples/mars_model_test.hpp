@@ -41,9 +41,14 @@ namespace mars {
             Integer ns[4] = {0, 0, 0, 0};
 
             Integer n = 6;
+            bool write_output = true;
 
             if (argc > 1) {
                 n = atol(argv[1]);
+            }
+
+            if (argc > 2) {
+                write_output = atoi(argv[2]);
             }
 
             for (int i = 0; i < 4; ++i) {
@@ -120,29 +125,31 @@ namespace mars {
 
             ///////////////////////////////////////////////////////////////////////////
 
-            std::cout << "Writing results to disk..." << std::endl;
+            if (write_output) {
+                std::cout << "Writing results to disk..." << std::endl;
 
-            ViewVectorType<Real>::HostMirror x_host("x_host", n_nodes);
-            ViewVectorType<Real>::HostMirror rhs_host("rhs_host", n_nodes);
-            Kokkos::deep_copy(x_host, x);
-            Kokkos::deep_copy(rhs_host, rhs);
+                ViewVectorType<Real>::HostMirror x_host("x_host", n_nodes);
+                ViewVectorType<Real>::HostMirror rhs_host("rhs_host", n_nodes);
+                Kokkos::deep_copy(x_host, x);
+                Kokkos::deep_copy(rhs_host, rhs);
 
-            SMesh serial_mesh;
-            convert_parallel_mesh_to_serial(serial_mesh, mesh);
+                SMesh serial_mesh;
+                convert_parallel_mesh_to_serial(serial_mesh, mesh);
 
-            std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
-            std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
+                std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
+                std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
 
-            VTUMeshWriter<SMesh> w;
-            w.write("mesh.vtu", serial_mesh, x_host);
-            w.write("mesh_rhs.vtu", serial_mesh, rhs_host);
+                VTUMeshWriter<SMesh> w;
+                w.write("mesh.vtu", serial_mesh, x_host);
+                w.write("mesh_rhs.vtu", serial_mesh, rhs_host);
 
-            Kokkos::deep_copy(x_host, x_exact);
-            w.write("analitic.vtu", serial_mesh, x_host);
+                Kokkos::deep_copy(x_host, x_exact);
+                w.write("analitic.vtu", serial_mesh, x_host);
 
-            ViewVectorType<Real>::HostMirror error_host("error_host", mesh.n_elements());
-            Kokkos::deep_copy(error_host, error);
-            w.write("error.vtu", serial_mesh, error_host, true);
+                ViewVectorType<Real>::HostMirror error_host("error_host", mesh.n_elements());
+                Kokkos::deep_copy(error_host, error);
+                w.write("error.vtu", serial_mesh, error_host, true);
+            }
         }
     };
 }  // namespace mars
