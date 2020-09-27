@@ -2,32 +2,10 @@
 #define MARS_SIMPLEX_LAPLACIAN_HPP
 
 #include "mars_base.hpp"
+#include "mars_fe_simplex.hpp"
 #include "mars_globals.hpp"
 
 namespace mars {
-
-    template <int Dim>
-    class Algebra {
-    public:
-        MARS_INLINE_FUNCTION static void m_t_v_mult(const Real *A, const Real *x, Real *y) {
-            for (int d1 = 0; d1 < Dim; ++d1) {
-                y[d1] = 0;
-
-                for (int d2 = 0; d2 < Dim; ++d2) {
-                    y[d1] += A[d1 + d2 * Dim] * x[d2];
-                }
-            }
-        }
-
-        MARS_INLINE_FUNCTION static Real dot(const Real *l, const Real *r) {
-            Real ret = 0.0;
-            for (Integer i = 0; i < Dim; ++i) {
-                ret += l[i] * r[i];
-            }
-
-            return ret;
-        }
-    };
 
     template <class Mesh>
     class SimplexLaplacian {
