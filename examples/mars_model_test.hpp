@@ -16,6 +16,7 @@
 
 #include "mars_boundary_conditions.hpp"
 #include "mars_fe_values.hpp"
+#include "mars_gradient_recovery.hpp"
 #include "mars_identity_operator.hpp"
 #include "mars_interpolate.hpp"
 #include "mars_invert.hpp"
@@ -132,6 +133,14 @@ namespace mars {
 
             Kokkos::deep_copy(x_host, x_exact);
             w.write("analitic.vtu", serial_mesh, x_host);
+
+            ViewVectorType<Real> error;
+            GradientRecovery<PMesh> grad_rec;
+            grad_rec.estimate(op.values(), x, error);
+
+            ViewVectorType<Real>::HostMirror error_host("error_host", mesh.n_elements());
+            Kokkos::deep_copy(error_host, error);
+            w.write("error.vtu", serial_mesh, error_host, true);
         }
     };
 }  // namespace mars
