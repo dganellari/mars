@@ -72,7 +72,7 @@ namespace mars {
         double eps2_d = std::sqrt(comm.sum(KokkosBlas::nrm2_squared(b)));
         assert(!std::isnan(eps2_d));
 
-        double count = 0.0;
+        long count = 0;
         while (count < max_iter) {
             count++;
             rho_1 = comm.sum(KokkosBlas::dot(r_hat, r_0));  // rho = (r_hat)' * r_0
@@ -142,7 +142,9 @@ namespace mars {
 
             assert(!std::isnan(stop_criteria));
 
-            std::cout << count << " " << stop_criteria << std::endl;
+            if (count == 1 || count % 10 == 0) {
+                std::cout << count << " " << stop_criteria << std::endl;
+            }
 
             if (stop_criteria < TOL) {
                 Kokkos::deep_copy(x_0, x_1);
