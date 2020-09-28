@@ -11,7 +11,7 @@
 #include <KokkosBlas1_nrm1.hpp>
 #include <KokkosBlas1_nrminf.hpp>
 #include <KokkosBlas1_sum.hpp>
-#include <Kokkos_sort.hpp>
+// #include <Kokkos_sort.hpp>
 
 #include "mars_base.hpp"
 #include "mars_globals.hpp"
