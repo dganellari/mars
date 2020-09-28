@@ -38,7 +38,7 @@ namespace mars {
             Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g_fe);
 
             Real u_t = g_fe[Dim - 1];
-            val[0] = u_t * dx_P0 + Algebra<Dim - 1>::dot(g_fe, g_fe) * dx_P1;
+            val[0] = u_t * dx_P1 + Algebra<Dim - 1>::dot(g_fe, g_fe) * dx_P0;
 
             for (int d = 0; d < Dim; ++d) {
                 g_ref[d] = 0;
@@ -50,7 +50,7 @@ namespace mars {
                 Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g_fe);
 
                 u_t = g_fe[Dim - 1];
-                val[d + 1] = u_t * dx_P0 + Algebra<Dim - 1>::dot(g_fe, g_fe) * dx_P1;
+                val[d + 1] = u_t * dx_P1 + Algebra<Dim - 1>::dot(g_fe, g_fe) * dx_P0;
 
                 g_ref[d] = 0;
             }
