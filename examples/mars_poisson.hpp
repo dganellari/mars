@@ -260,15 +260,18 @@ void gather_elem_data(const DMQ2& dm, const Integer elem_index,
 //anymore for each element so the coalescing of the Jinv will not matter.
 //In that case maybe a better way to go is parallel through the quad points.
 template <Integer INPUT>
-void integrate(const DMQ2 &dm, ViewVectorType<double> det_J,
-               ViewMatrixType<double> J_inv, ViewMatrixType<double> res) {
+void integrate(const DMQ2 &dm, const FEQuad4<double>::Quadrature& quad,
+        ViewVectorType<double> det_J, ViewMatrixType<double> J_inv,
+        ViewMatrixType<double> res) {
 
-  constexpr int n_qp = 6;
-  ViewVectorTextureC<double, n_qp> q_weights = FEQuad4<double>::Quadrature::q_w;
-  ViewMatrixTextureC<double, n_qp, 2> q_points = FEQuad4<double>::Quadrature::q_p;
+  constexpr int n_qp = FEQuad4<double>::Quadrature::n_points();
+  constexpr int dim = FEQuad4<double>::Quadrature::dim();
+
+  ViewVectorTextureC<double, n_qp> q_weights = quad.q_w;
+  ViewMatrixTextureC<double, n_qp, dim> q_points = quad.q_p;
 
   dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
-    double gi[2], g[2];
+    double gi[dim], g[dim];
 
     double sol[DMQ2::elem_nodes];
     gather_elem_data<INPUT>(dm, elem_index, sol);
@@ -314,7 +317,7 @@ void add_dof_contributions(const DMQ2& dm, const ViewMatrixType<double> &res) {
 }
 
 // form the matrix free operator
-void form_operator(const DMQ2 dm, const int rank) {
+void form_operator(const DMQ2 dm, const FEQuad4<double>::Quadrature& quad) {
 
   using Elem = DistributedQuad4Mesh::Elem;
 
@@ -323,7 +326,7 @@ void form_operator(const DMQ2 dm, const int rank) {
   compute_invJ_and_detJ<Elem::ElemType>(dm, detJ, invJ);
 
   ViewMatrixType<double> res("res", dm.get_elem_size(), DMQ2::elem_nodes);
-  integrate<INPUT>(dm, detJ, invJ, res);
+  integrate<INPUT>(dm, quad, detJ, invJ, res);
 
   add_dof_contributions<OUTPUT>(dm, res);
 }
@@ -539,13 +542,13 @@ void poisson(int &argc, char **&argv, const int level) {
           dm.get_dof_data<OUTPUT>(i) = 0.0;
         });
 
-    FEQuad4<double>::Quadrature::prepare_quadrature();
+    const FEQuad4<double>::Quadrature quad = FEQuad4<double>::Quadrature::make();
 
     // specify the tuple indices of the tuplelements that are needed to gather.
     // if no index specified it gathers all views of the tuple. All data.
     dm.gather_ghost_data<INPUT>(context);
 
-    form_operator(dm, proc_num);
+    form_operator(dm, quad);
 
     // iterate through the local dofs and print the local number and the data
     /* dm.dof_iterate(
