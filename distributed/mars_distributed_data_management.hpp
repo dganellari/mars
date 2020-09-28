@@ -284,7 +284,7 @@ public:
                             if (proc > one_ring_owners[k] && one_ring_owners[k] >= 0)
                             {
                                 Integer index = sfc_to_locally_owned(sfc);
-                                rank_boundary(map(one_ring_owners[k]), index) = 1;
+                                rank_boundary(index, map(one_ring_owners[k])) = 1;
                             }
                         }
                     }
@@ -309,7 +309,7 @@ public:
                     if (proc > owner_proc && owner_proc >= 0)
                     {
                         Integer index = sfc_to_locally_owned(sfc);
-                        rank_boundary(map(owner_proc), index) = 1;
+                        rank_boundary(index, map(owner_proc)) = 1;
                     }
                 }
             }
@@ -353,7 +353,7 @@ public:
         Integer zDim = data.get_host_mesh()->get_ZDim();
 
         const Integer chunk_size_ = global_dof_enum.get_elem_size();
-        ViewMatrixType<bool> rank_boundary("count_per_proc", nbh_rank_size, chunk_size_);
+        ViewMatrixType<bool> rank_boundary("count_per_proc", chunk_size_, nbh_rank_size);
         /* generate the sfc for the local and global dofs containing the generation locally
         for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
         Kokkos::parallel_for(
@@ -363,17 +363,17 @@ public:
                                        xDim, yDim, zDim));
 
         /* perform a scan for each row with the sum at the end for each rank */
-        ViewMatrixType<Integer> rank_scan("rank_scan", nbh_rank_size, chunk_size_ + 1);
+        ViewMatrixType<Integer> rank_scan("rank_scan", chunk_size_ + 1, nbh_rank_size);
         for (int i = 0; i < nbh_rank_size; ++i)
         {
-            auto row_predicate = subview(rank_boundary, i, ALL);
-            auto row_scan = subview(rank_scan, i, ALL);
-            incl_excl_scan(0, chunk_size_, row_predicate, row_scan);
+            auto subpredicate = subview(rank_boundary, ALL, i);
+            auto subscan = subview(rank_scan, ALL, i);
+            incl_excl_scan(0, chunk_size_, subpredicate, subscan);
         }
 
         scan_boundary = ViewVectorType<Integer>("scan_boundary_dof", nbh_rank_size + 1);
         //perform a scan on the last column to get the total sum.
-        column_scan(nbh_rank_size, chunk_size_, rank_scan, scan_boundary);
+        row_scan(nbh_rank_size, chunk_size_, rank_scan, scan_boundary);
 
         auto index_subview = subview(scan_boundary, nbh_rank_size);
         auto h_ic = create_mirror_view(index_subview);
@@ -392,13 +392,13 @@ public:
         /* We use this strategy so that the compacted elements from the local_sfc
         would still be sorted and unique. */
         parallel_for(
-            MDRangePolicy<Rank<2>>({0, 0}, {nbh_rank_size, chunk_size_}),
+            MDRangePolicy<Rank<2>>({0, 0}, {chunk_size_, nbh_rank_size}),
             KOKKOS_LAMBDA(const Integer i, const Integer j) {
                 if (rank_boundary(i, j) == 1)
                 {
-                    Integer index = scan_boundary(i) + rank_scan(i, j);
-                    boundary_ds(index) = g_elems(j);
-                    boundary_lsfc_index(index) = j;
+                    Integer index = scan_boundary(j) + rank_scan(i, j);
+                    boundary_ds(index) = g_elems(i);
+                    boundary_lsfc_index(index) = i;
                 }
             });
 
@@ -1102,17 +1102,6 @@ void enumerate_dofs(const context &context)
         ViewVectorType<Integer> ghost_dofs_index;
         exchange_ghost_dofs(context, boundary_dofs_index, ghost_dofs_index);
 
-        /* using namespace Kokkos;
-        Integer ghost_size = scan_recv_mirror(rank_size);
-        parallel_for(
-            "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
-                const Integer rank =
-                    find_owner_processor(scan_ghost, i, 1, data.get_host_mesh()->get_proc());
-
-                printf(" i: %li ghost: %i - %li - owner rank: %li - rank: %li\n", i,
-                       ghost_dofs(i), ghost_dofs_index(i), rank, data.get_host_mesh()->get_proc());
-            }); */
-
         enumerate_local_dofs();
         build_ghost_local_global_map(context, ghost_dofs_index);
     }
@@ -1278,6 +1267,87 @@ void enumerate_dofs(const context &context)
     {
         const Integer sfc =  local_to_sfc(local);
         return get_dof_coordinates_from_sfc<Type>(sfc, point);
+    }
+
+    template<Integer Type, Integer FaceNr = -1>
+    MARS_INLINE_FUNCTION
+    bool is_boundary(const Integer local) const
+    {
+        const Integer sfc = local_to_sfc(local);
+        const Integer xdim = get_local_dof_enum().get_XDim();
+        const Integer ydim = get_local_dof_enum().get_YDim();
+        const Integer zdim = get_local_dof_enum().get_ZDim();
+
+        return is_boundary_sfc<Type, FaceNr>(sfc, xdim, ydim, zdim);
+    }
+
+    template <Integer idx,
+              typename H = typename std::tuple_element<idx, tuple>::type>
+    void get_locally_owned_data(const ViewVectorType<H> &x) {
+      using namespace Kokkos;
+
+      assert(get_global_dof_enum().get_elem_size() == x.extent(0));
+      const Integer size = get_global_dof_enum().get_elem_size();
+
+      ViewVectorType<Integer> global_to_sfc = get_global_dof_enum().get_view_elements();
+      ViewVectorType<Integer> sfc_to_local = get_local_dof_enum().get_view_sfc_to_local();
+      ViewVectorType<H> dof_data = get_dof_data<idx>();
+
+      Kokkos::parallel_for(
+          "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
+            const Integer sfc = global_to_sfc(i);
+            const Integer local = sfc_to_local(sfc);
+            x(i) = dof_data(local);
+          });
+    }
+
+    template <Integer idx,
+              typename H = typename std::tuple_element<idx, tuple>::type>
+    void set_locally_owned_data(const ViewVectorType<H> &x) {
+      using namespace Kokkos;
+
+      assert(get_global_dof_enum().get_elem_size() == x.extent(0));
+      const Integer size = get_global_dof_enum().get_elem_size();
+
+      ViewVectorType<Integer> global_to_sfc = get_global_dof_enum().get_view_elements();
+      ViewVectorType<Integer> sfc_to_local = get_local_dof_enum().get_view_sfc_to_local();
+      ViewVectorType<H> dof_data = get_dof_data<idx>();
+
+      Kokkos::parallel_for(
+          "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
+            const Integer sfc = global_to_sfc(i);
+            const Integer local = sfc_to_local(sfc);
+            dof_data(local) = x(i);
+          });
+    }
+
+    template <Integer idx, Integer face_nr = -1, typename F,
+             typename H = typename std::tuple_element<idx, tuple>::type>
+    void boundary_dof_iterate(F f)
+    {
+        using namespace Kokkos;
+        constexpr Integer Type = simplex_type::ElemType;
+
+        const Integer size = get_global_dof_enum().get_elem_size();
+
+        ViewVectorType<Integer> global_to_sfc = get_global_dof_enum().get_view_elements();
+        ViewVectorType<Integer> sfc_to_local = get_local_dof_enum().get_view_sfc_to_local();
+        ViewVectorType<H> dof_data = get_dof_data<idx>();
+
+        const Integer xdim = get_local_dof_enum().get_XDim();
+        const Integer ydim = get_local_dof_enum().get_YDim();
+        const Integer zdim = get_local_dof_enum().get_ZDim();
+
+        Kokkos::parallel_for(
+            "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
+                const Integer sfc = global_to_sfc(i);
+                const Integer local = sfc_to_local(sfc);
+
+                if (is_boundary_sfc<Type, face_nr>(sfc, xdim, ydim, zdim))
+                {
+                    f(local, dof_data(local));
+                }
+            });
     }
 
     /* :TODO stencil use the face iterate on the dof sfc. */
