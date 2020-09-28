@@ -156,9 +156,9 @@ namespace mars {
             op.set_identity(id);
             op.assemble_rhs(rhs, rhs_fun);
 
-            Real nrm_rhs = KokkosBlas::sum(rhs);
+            Real sum_rhs = KokkosBlas::sum(rhs);
 
-            std::cout << "nrm_rhs : " << nrm_rhs << std::endl;
+            std::cout << "sum_rhs : " << sum_rhs << std::endl;
 
             bc.apply(rhs, bc_fun);
             bc.apply(x, bc_fun);
@@ -168,6 +168,7 @@ namespace mars {
             Integer num_iter = 0;
             bcg_stab(op, *prec_ptr, rhs, 10 * rhs.extent(0), x, num_iter);
 
+            /////////////////////////////////////////////////////////////////////////////
             // Compute Error
             VectorReal x_exact("X_exact", n_nodes);
             VectorReal diff("Diff", n_nodes);
@@ -181,21 +182,27 @@ namespace mars {
             Real err = KokkosBlas::nrm2(diff) / KokkosBlas::nrm2(x_exact);
             std::cout << "err : " << err << std::endl;
 
+            ////////////////////////////////////////////////////////////////////////////
+            // Compute op (x_exact) - rhs
+
+            op.apply(x_exact, diff);
+
+            sum_rhs = KokkosBlas::sum(rhs);
+
+            Real norm_lapl_x = KokkosBlas::sum(diff);
+            std::cout << "norm_lapl_x: " << norm_lapl_x << " == " << sum_rhs << std::endl;
+
+            // Diff
+
+            KokkosBlas::axpy(-1.0, rhs, diff);
+            err = KokkosBlas::nrm2(diff) / KokkosBlas::nrm2(rhs);
+            std::cout << "Op error : " << err << std::endl;
+
+            ///////////////////////////////////////////////////////////////////////////
+
             VectorReal error;
             GradientRecovery<PMesh> grad_rec;
             grad_rec.estimate(op.values(), x, error);
-
-            VectorReal lapl_x("Lapl_x", n_nodes);
-            op.assemble_rhs(lapl_x, rhs_fun);
-            op.apply(x_exact, diff);
-
-            Real norm_lapl_x = KokkosBlas::sum(diff);
-            std::cout << "norm_lapl_x: " << norm_lapl_x << std::endl;
-
-            KokkosBlas::axpy(-1.0, rhs, diff);
-
-            err = KokkosBlas::nrm2(diff) / KokkosBlas::nrm2(lapl_x);
-            std::cout << "Op error : " << err << std::endl;
 
             ///////////////////////////////////////////////////////////////////////////
 
