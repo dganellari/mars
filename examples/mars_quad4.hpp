@@ -113,17 +113,28 @@ public:
     }
   };
 
+  static constexpr int n_qp = 6;
+  static T_ q_weights[n_qp];
+  static T_ q_points[n_qp][PhysicalDim_];
 
   class Quadrature final {
   public:
-    static constexpr int n_qp = 6;
-    static T_ q_weights[n_qp];
-    static T_ q_points[n_qp][PhysicalDim_];
 
-    static ViewMatrixTextureC<T_, n_qp, PhysicalDim_> q_p;
-    static ViewVectorTextureC<T_, n_qp> q_w;
+    static Quadrature make() {
+        Quadrature q;
+        q.init();
+        return q;
+    }
 
-    static void prepare_quadrature() {
+    MARS_INLINE_FUNCTION static constexpr int n_points() { return n_qp;}
+    MARS_INLINE_FUNCTION static constexpr int dim() { return PhysicalDim_;}
+
+    ViewMatrixTextureC<T_, n_qp, PhysicalDim_> q_p;
+    ViewVectorTextureC<T_, n_qp> q_w;
+
+    Quadrature() : q_p("q_p"), q_w("q_w") {}
+
+    void init() {
       fill_view_matrix(q_p, q_points);
       fill_view_vector(q_w, q_weights);
     }
@@ -134,7 +145,7 @@ public:
 //a singleton pattern might be a better solution
 
 template<typename T_, int PhysicalDim_>
-T_ FEQuad4<T_, PhysicalDim_>::Quadrature::q_points[6][PhysicalDim_] = {
+T_ FEQuad4<T_, PhysicalDim_>::q_points[6][PhysicalDim_] = {
     {0.5, 0.5},
     {0.98304589153964795245728880523899, 0.5},
     {0.72780186391809642112479237299488, 0.074042673347699754349082179816666},
@@ -144,16 +155,16 @@ T_ FEQuad4<T_, PhysicalDim_>::Quadrature::q_points[6][PhysicalDim_] = {
 
 
 template<typename T_, int PhysicalDim_>
-T_ FEQuad4<T_, PhysicalDim_>::Quadrature::q_weights[6] = {
+T_ FEQuad4<T_, PhysicalDim_>::q_weights[6] = {
     0.28571428571428571428571428571428, 0.10989010989010989010989010989011,
     0.14151805175188302631601261486295, 0.14151805175188302631601261486295,
     0.16067975044591917148618518733485, 0.16067975044591917148618518733485};
-
+/*
 template<typename T_, int PhysicalDim_>
 ViewMatrixTextureC<T_, 6, PhysicalDim_> FEQuad4<T_, PhysicalDim_>::Quadrature::q_p;
 
 template<typename T_, int PhysicalDim_>
-ViewVectorTextureC<T_, 6> FEQuad4<T_, PhysicalDim_>::Quadrature::q_w;
+ViewVectorTextureC<T_, 6> FEQuad4<T_, PhysicalDim_>::Quadrature::q_w; */
 
 } // namespace mars
 
