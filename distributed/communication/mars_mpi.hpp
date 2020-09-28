@@ -155,16 +155,36 @@ void scatterv(const ViewVectorType<T> global,
                  0, comm);
 }
 
+
+#ifdef MARS_NO_RDMA
+
 template <typename T>
-void i_send(const ViewVectorType<T> local, const Integer offset, const Integer count,
+void i_send(const ViewVectorHost<T> local, const Integer offset, const Integer count,
             const Integer remote_proc, int tag, MPI_Comm comm, MPI_Request *request)
 {
     using traits = mpi_traits<T>;
+    assert(local.size() >= offset + count);
 
     MPI_OR_THROW(MPI_Isend,
                  local.data() + offset, count, traits::mpi_type(), // send buffer
                  remote_proc, tag, comm, request);
 }
+
+#else
+
+template <typename T>
+void i_send(const ViewVectorType<T> local, const Integer offset, const Integer count,
+            const Integer remote_proc, int tag, MPI_Comm comm, MPI_Request *request)
+{
+    using traits = mpi_traits<T>;
+    assert(local.size() >= offset + count);
+
+    MPI_OR_THROW(MPI_Isend,
+                 local.data() + offset, count, traits::mpi_type(), // send buffer
+                 remote_proc, tag, comm, request);
+}
+
+#endif
 
 template <typename T>
 void i_receive(const ViewVectorType<T> local, const Integer offset, const Integer count,
@@ -284,13 +304,23 @@ void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ,
         }
     }
 
+#ifdef MARS_NO_RDMA
+    //to avoid the bug in MPICH RDMA during the hackathon 2020
+    ViewVectorHost<T> host_src = Kokkos::create_mirror_view(src);
+    Kokkos::deep_copy(host_src, src);
+#endif
+
     int send_proc = 0;
     for (int i = 0; i < nranks; ++i)
     {
         Integer count = src_displ[i + 1] - src_displ[i];
         if (count > 0)
         {
+#ifdef MARS_NO_RDMA
+            i_send(host_src, src_displ[i], count, i, 0, comm, &send_req[send_proc++]);
+#else
             i_send(src, src_displ[i], count, i, 0, comm, &send_req[send_proc++]);
+#endif
         }
     }
 
@@ -317,7 +347,7 @@ void broadcast(const ViewVectorType<T> global, MPI_Comm comm)
                  global.data(), count, traits::mpi_type(), 0, comm);
 }
 
-/* 
+/*
 Gather individual values of type T from each rank
 into a view on  the every rank.
 T must be trivially copyable */

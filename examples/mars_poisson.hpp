@@ -60,6 +60,7 @@ u = P uk */
 
 namespace mars {
 
+/* using DMQ2 = DM<DistributedQuad4Mesh, 2, double, double>; */
 using DMQ2 = DM<DistributedQuad4Mesh, 1, double, double>;
 /*
 enum class DMDataDesc
@@ -113,7 +114,7 @@ template <Integer Type> void print_dofs(const DMQ2 &dm, const int rank) {
 
 // print thlocal and the global number of the dof within each element.
 // the dof enumeration within eachlement is topological
-void print_elem_global_dof(const DMQ2 dm, const int rank) {
+void print_elem_global_dof(const DMQ2 dm) {
   dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
     // go through all the dofs of the elem_index element
     for (int i = 0; i < DMQ2::elem_nodes; i++) {
@@ -123,22 +124,22 @@ void print_elem_global_dof(const DMQ2 dm, const int rank) {
       Dof d = dm.local_to_global_dof(local_dof);
 
       // do something. In this case we are printing.
-      printf("lgm: local: %li, global: %li, proc: %i, rank:%i\n", local_dof,
-             d.get_gid(), d.get_proc(), rank);
+      printf("lgm: i: %li, local: %li, global: %li, proc: %li\n",i, local_dof,
+             d.get_gid(), d.get_proc());
     }
   });
 }
 
 // print the local and global numbering of the ghost dofs per process
-void print_ghost_dofs(const DMQ2 dm, const int rank) {
+void print_ghost_dofs(const DMQ2 dm) {
   Kokkos::parallel_for(
       dm.get_ghost_lg_map().capacity(), KOKKOS_LAMBDA(Integer i) {
         if (dm.get_ghost_lg_map().valid_at(i)) {
           auto sfc = dm.get_ghost_lg_map().key_at(i);
           auto global_dof = dm.get_ghost_lg_map().value_at(i);
-          printf("local: %li, global: %li - proc: %li - rank: %li\n",
+          printf("local: %li, global: %li - proc: %li \n",
                  dm.sfc_to_local(sfc), global_dof.get_gid(),
-                 global_dof.get_proc(), rank);
+                 global_dof.get_proc());
         }
       });
 }
@@ -466,6 +467,14 @@ void scatter_add_ghost_data(DMQ2 &dm, const context &context) {
   /* dm.scatter_min<u>(boundary_data); */
 }
 
+// template <Integer Dim> struct BC {
+//   template <Integer Type, Integer Dir>
+//   MARS_INLINE_FUNCTION void operator()(Face<Type, Dir> &face) const {
+//     std::cout << face.get_sides()[0].elem_id << " "
+//               << face.get_sides()[0].is_boundary() << std::endl;
+//   }
+// };
+
 void poisson(int &argc, char **&argv, const int level) {
 
   using namespace mars;
@@ -529,7 +538,42 @@ void poisson(int &argc, char **&argv, const int level) {
     /* print_dofs<Type>(dm, proc_num); */
 
     // print the global dofs for each element's local dof
-    /* print_elem_global_dof(dm, proc_num); */
+    /* print_elem_global_dof(dm); */
+
+    /* print_ghost_dofs(dm); */
+    double time = timer.seconds();
+    std::cout << "Setup took: " << time << " seconds." << std::endl;
+
+    // use as more readable tuple index to identify the data
+    constexpr int u = 0;
+    constexpr int v = 1;
+
+    const Integer locall_owned_dof_size = dm.get_locally_owned_dof_size();
+    ViewVectorType<double> x("x", locall_owned_dof_size);
+
+    Kokkos::parallel_for(
+        "initglobaldatavalues", locall_owned_dof_size,
+        MARS_LAMBDA(const Integer i) { x(i) = 2 * i; });
+
+    dm.set_locally_owned_data<INPUT>(x);
+
+    constexpr Integer left = 0; // 0 for the left face, 1 for the right, 2 and 3 for down and up.
+    constexpr Integer up = 3;
+    //if no facenr specified all the boundary is processed. If more than one and less than all
+    //is needed than choose all (do not provide face number) and check manually within the lambda
+    dm.boundary_dof_iterate<INPUT>(
+        MARS_LAMBDA(const Integer local_dof, DMDataType<INPUT> &value) {
+            //do something with the local dof number if needed.
+            //For example: If no face nr is specified at the boundary dof iterate:
+            if (dm.is_boundary<Type, left>(local_dof) || dm.is_boundary<Type, up>(local_dof))
+                value = -1;
+        });
+
+    /* dm.dof_iterate(MARS_LAMBDA(const Integer i) {
+        const Integer gd= dm.local_to_global(i);
+        printf("llid: %li, ggid: %li, INPUT: %lf, OUTPUT: %lf, rank: %i\n", i, gd,
+               dm.get_dof_data<INPUT>(i), dm.get_dof_data<OUTPUT>(i), proc_num);
+    }); */
 
     // local dof enum size
     const Integer dof_size = dm.get_dof_size();
@@ -542,13 +586,32 @@ void poisson(int &argc, char **&argv, const int level) {
           dm.get_dof_data<OUTPUT>(i) = 0.0;
         });
 
-    const FEQuad4<double>::Quadrature quad = FEQuad4<double>::Quadrature::make();
+
+    dm.get_locally_owned_data<INPUT>(x);
+
+    /* Kokkos::parallel_for(
+        "printglobaldatavalues", locall_owned_dof_size,
+        MARS_LAMBDA(const Integer i) {
+          printf("i: %li, gdata: %lf - rank: %i\n", i, x(i), proc_num);
+        }); */
 
     // specify the tuple indices of the tuplelements that are needed to gather.
     // if no index specified it gathers all views of the tuple. All data.
     dm.gather_ghost_data<INPUT>(context);
 
+    if (proc_num == 0) {
+      std::cout << "form_operator..." << std::flush;
+    }
+
+    const FEQuad4<double>::Quadrature quad = FEQuad4<double>::Quadrature::make();
     form_operator(dm, quad);
+
+    if (proc_num == 0) {
+      std::cout << "DONE" << std::endl;
+    }
+
+    // BC<2> bc;
+    // dm.face_iterate(bc);
 
     // iterate through the local dofs and print the local number and the data
     /* dm.dof_iterate(
@@ -559,12 +622,17 @@ void poisson(int &argc, char **&argv, const int level) {
 
     scatter_add_ghost_data<OUTPUT>(dm, context);
 
-    dm.dof_iterate(MARS_LAMBDA(const Integer i) {
-      printf("ggid: %li, INPUT: %lf, OUTPUT: %lf, rank: %i\n", i,
-             dm.get_dof_data<INPUT>(i), dm.get_dof_data<OUTPUT>(i), proc_num);
-    });
+    std::cout << "[" << proc_num
+              << "] ndofs : " << dm.get_local_dof_enum().get_elem_size()
+              << std::endl;
 
-    double time = timer.seconds();
+    // dm.dof_iterate(MARS_LAMBDA(const Integer i) {
+    //   printf("ggid: %li, INPUT: %lf, OUTPUT: %lf, rank: %i\n", i,
+    //          dm.get_dof_data<INPUT>(i), dm.get_dof_data<OUTPUT>(i),
+    //          proc_num);
+    // });
+
+    time = timer.seconds();
     std::cout << "Matrix free took: " << time << " seconds." << std::endl;
 
 #endif

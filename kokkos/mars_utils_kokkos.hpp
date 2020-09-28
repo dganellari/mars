@@ -369,6 +369,28 @@ void column_scan(const Integer end, const Integer col_idx,
 	});
 }
 
+// not a very performant scan since its access is not coalesced. However OK for small arrays.
+template<typename T, typename U>
+void row_scan(const Integer end, const Integer row_idx,
+			const ViewMatrixType<U>& in_, ViewVectorType<T>& out_)
+{
+	using namespace Kokkos;
+
+	parallel_scan (RangePolicy<>(0 , end ),	KOKKOS_LAMBDA (const int& i,
+				T& upd, const bool& final)
+	{
+		// Load old value in case we update it before accumulating
+		const T val_i = in_(row_idx, i);
+
+		upd += val_i;
+
+		if (final)
+		{
+			out_(i+1) = upd; // To have both ex and inclusive in the same output.
+		}
+	});
+}
+
 template<typename T>
 void complex_inclusive_scan(const Integer start, const Integer end,
 			ViewVectorType<T> index_count_,
