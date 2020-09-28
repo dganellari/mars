@@ -14,18 +14,28 @@ class SubView {
 public:
 	const ViewMatrixType<T> *view; //to avoid the frequent view constructors calls. Subview is built very often.
 	Integer index;
+    bool valid;
 
 	MARS_INLINE_FUNCTION SubView()
 	{
-
+        valid = true;
 	}
 
 	MARS_INLINE_FUNCTION SubView(const ViewMatrixType<T> *v, Integer id) :
 			view(v), index(id)
 	{
-
+        valid =true;
 	}
 
+    MARS_INLINE_FUNCTION void set_valid(bool v = true)
+    {
+        valid = v;
+    }
+
+    MARS_INLINE_FUNCTION bool is_valid() const
+    {
+        return valid;
+    }
 
 	SubView operator+=(const SubView &right)
 	{

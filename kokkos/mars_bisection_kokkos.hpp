@@ -785,7 +785,7 @@ public:
 		{
 
 			Elem new_el = mesh->elem(elem_new_id);
-			new_el.parent_id = old_el.id;
+			/* new_el.set_parent_id(old_el.id); */
 
 			//in order to keep the counterclockwise ordering of the element nodes.
 			for (Integer i = 0; i < ManifoldDim + 1; ++i)
@@ -901,6 +901,9 @@ public:
 
 			old_el.children(0) = elem_new_id;
 			old_el.children(1) = ++elem_new_id;
+            const auto result = mesh->get_elem_children_map().insert(element_id, childrens_id);
+            assert(result.success());
+
 		}
 	};
 
@@ -1263,6 +1266,7 @@ public:
 			const Integer elem_start_index = host_mesh->n_elements();
 			const Integer child_start_index = host_mesh->n_childrens();
 
+            host_mesh->reserve_elem_children_map(elem_start_index);
 			resize_mesh_and_update_map(lip_size, pt_size);
 
 			bisect_elements(lip_size, pt_size, lepp_incidents_map,

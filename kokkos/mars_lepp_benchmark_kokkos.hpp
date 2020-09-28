@@ -18,13 +18,13 @@ namespace mars {
 
 		static constexpr Integer Dim 		 = Mesh::Dim;
 		static constexpr Integer ManifoldDim = Mesh::ManifoldDim;
+		using Elem = mars::Simplex<Dim, ManifoldDim,KokkosImplementation>;
 
 		void run(
 			const Integer n_levels,
 			const Mesh &mesh_in,
 			const std::string &output_path)
 		{
-			using Elem = mars::Simplex<Dim, ManifoldDim,KokkosImplementation>;
 			auto mesh = mesh_in;
 
 			ParallelBisection<Mesh> b(&mesh);
@@ -91,6 +91,25 @@ namespace mars {
 
 			//std::cout << "volume: " << sMesh.volume() << std::endl;
 			std::cout << "n_active_elements: " << sMesh.n_active_elements() << std::endl;
+
+
+
+            /* const Integer meshsize = mesh.get_view_elements().extent(0);
+            Kokkos::parallel_for("p", meshsize,
+                    MARS_LAMBDA(const Integer i){
+                    [>Elem e = mesh.elem_with_children(i);<]
+                    [>SubView<Integer, 2> children = e.children;<]
+                    [>SubView<Integer, 3> nodes = e.nodes;<]
+                    Integer children[2];
+
+                        [>printf("eid: %li, nodes: %li, %li, %li\n", i, nodes(0), nodes(1), nodes(2));<]
+                    [>if(children.is_valid())<]
+                    if(mesh.get_children(children, i))
+                    {
+                        [>printf("eid: %li, children: %li, %li\n", i, children(0), children(1));<]
+                        printf("eid: %li, children: %li, %li\n", i, children[0], children[1]);
+                        }
+                        }); */
 /*
 			if(n_levels <= 20 && mesh.ManifoldDim <4){
 				VTKMeshWriter<typename Mesh::SerialMesh> w;
