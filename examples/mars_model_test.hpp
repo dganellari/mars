@@ -10,6 +10,7 @@
 
 #include <KokkosBlas1_nrm1.hpp>
 #include <KokkosBlas1_nrminf.hpp>
+#include <KokkosBlas1_sum.hpp>
 
 #include "mars_base.hpp"
 #include "mars_globals.hpp"
@@ -94,7 +95,7 @@ namespace mars {
             op.set_identity(id);
             op.assemble_rhs(rhs, rhs_fun);
 
-            Real nrm_rhs = KokkosBlas::nrm1(rhs);
+            Real nrm_rhs = KokkosBlas::sum(rhs);
 
             std::cout << "nrm_rhs : " << nrm_rhs << std::endl;
 
@@ -104,7 +105,7 @@ namespace mars {
             auto prec_ptr = op.preconditioner();
 
             Integer num_iter = 0;
-            bcg_stab(op, *prec_ptr, rhs, rhs.extent(0), x, num_iter);
+            bcg_stab(op, *prec_ptr, rhs, 10 * rhs.extent(0), x, num_iter);
 
             // Compute Error
             ViewVectorType<Real> x_exact("X_exact", n_nodes);
@@ -116,12 +117,26 @@ namespace mars {
             Kokkos::deep_copy(diff, x_exact);
 
             KokkosBlas::axpy(-1.0, x, diff);
-            Real err = KokkosBlas::nrminf(diff);
+            Real err = KokkosBlas::nrm2(diff) / KokkosBlas::nrm2(x_exact);
             std::cout << "err : " << err << std::endl;
 
             ViewVectorType<Real> error;
             GradientRecovery<PMesh> grad_rec;
             grad_rec.estimate(op.values(), x, error);
+
+            ViewVectorType<Real> lapl_x("Lapl_x", n_nodes);
+            op.assemble_rhs(lapl_x, rhs_fun);
+
+            op.set_identity(nullptr);
+            op.apply(x_exact, diff);
+
+            Real norm_lapl_x = KokkosBlas::sum(diff);
+            std::cout << "norm_lapl_x: " << norm_lapl_x << std::endl;
+
+            KokkosBlas::axpy(-1.0, lapl_x, diff);
+
+            err = KokkosBlas::nrm2(diff) / KokkosBlas::nrm2(lapl_x);
+            std::cout << "Op error : " << err << std::endl;
 
             ///////////////////////////////////////////////////////////////////////////
 
@@ -149,6 +164,10 @@ namespace mars {
                 ViewVectorType<Real>::HostMirror error_host("error_host", mesh.n_elements());
                 Kokkos::deep_copy(error_host, error);
                 w.write("error.vtu", serial_mesh, error_host, true);
+
+                ViewVectorType<Real>::HostMirror diff_host("lapl_x_host", mesh.n_nodes());
+                Kokkos::deep_copy(diff_host, diff);
+                w.write("lapl_x.vtu", serial_mesh, diff_host);
             }
         }
     };

@@ -157,14 +157,22 @@ namespace mars {
             Kokkos::deep_copy(v_0, v_1);
             Kokkos::deep_copy(x_0, x_1);
 
+            // std::swap(r_hat, r_1);
+            // std::swap(p_0, p_1);
+            // std::swap(r_0, r_1);
+            // std::swap(v_0, v_1);
+            // std::swap(x_0, x_1);
+
             alpha_0 = alpha_1;
             omega_0 = omega_1;
             rho_0 = rho_1;
         }
 
+        // std::swap(x_0, x_1);
+
         num_iter = count;
-        A.apply(x_0, r_0);                     // r_0 =  A*x_0
-        KokkosBlas::axpby(1.0, b, -1.0, r_0);  // r_0 = b - A*x_0
+        A.apply(x_0, r_0);               // r_0 =  A*x_0
+        KokkosBlas::axpy(-1.0, b, r_0);  // r_0 = b - A*x_0
         std::cout << "RESIDUE: " << std::sqrt(comm.sum(KokkosBlas::nrm2_squared(r_0))) << std::endl;
         std::cout << "Iter: " << count << std::endl;
     }
