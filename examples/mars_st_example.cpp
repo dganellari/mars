@@ -53,6 +53,36 @@ namespace mars {
         MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex1_st_spacetime(p); }
     };
 
+    template <class Mesh>
+    class ST1BC {
+    public:
+        /* BC --> zero dirichlet + natural neumann on upper bound */
+        static const int Dim = Mesh::Dim;
+
+        MARS_INLINE_FUNCTION void operator()(const Real *p, Real &val) const {
+            if (is_boundary(p)) {
+                val = ex1_st_exact(p);
+            }
+        }
+
+        MARS_INLINE_FUNCTION static bool is_boundary(const Real *p) {
+            bool ret = false;
+            for (int d = 0; d < Dim; ++d) {
+                if (p[d] <= 1e-14) {
+                    ret = true;
+                    break;
+                }
+
+                if (d < Dim - 1 && p[d] >= 1 - 1e-14) {
+                    ret = true;
+                    break;
+                }
+            }
+
+            return ret;
+        }
+    };
+
     /////////////////////////////////////////////////////////////////////////////////////////////
 
     class ST2Analitcal {
@@ -122,12 +152,9 @@ int main(int argc, char *argv[]) {
 #endif
 
     {
-        // ModelTest<ParallelMesh2,
-        //           UMeshSTHeatEquation<ParallelMesh2>,
-        //           ZeroDirchletOnUnitCube<ParallelMesh2>,
-        //           ST1RHS,
-        //           ST1Analitcal>()
-        //     .run(argc, argv);
+        // ModelTest<ParallelMesh2, UMeshSTHeatEquation<ParallelMesh2>, ST1BC<ParallelMesh2>, ST1RHS,
+        // ST1Analitcal>().run(
+        //     argc, argv);
 
         // ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example2Dirichlet, Example2RHS,
         // Example2Analitcal>().run(
