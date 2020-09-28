@@ -28,7 +28,8 @@ namespace mars {
                                                               const Quadrature &q,
                                                               Real *val) {
             Real g_ref[Dim], g_fe[Dim];
-            const Real dx = det_J / NFuns;
+            const Real dx_P1 = det_J / NFuns;
+            const Real dx_P0 = det_J;
 
             for (int d = 0; d < Dim; ++d) {
                 g_ref[d] = -1;
@@ -37,7 +38,7 @@ namespace mars {
             Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g_fe);
 
             Real u_t = g_fe[Dim - 1];
-            val[0] = (u_t + Algebra<Dim - 1>::dot(g_fe, g_fe)) * dx;
+            val[0] = u_t * dx_P0 + Algebra<Dim - 1>::dot(g_fe, g_fe) * dx_P1;
 
             for (int d = 0; d < Dim; ++d) {
                 g_ref[d] = 0;
@@ -49,7 +50,7 @@ namespace mars {
                 Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g_fe);
 
                 u_t = g_fe[Dim - 1];
-                val[d + 1] = (u_t + Algebra<Dim - 1>::dot(g_fe, g_fe)) * dx;
+                val[d + 1] = u_t * dx_P0 + Algebra<Dim - 1>::dot(g_fe, g_fe) * dx_P1;
 
                 g_ref[d] = 0;
             }
@@ -62,7 +63,8 @@ namespace mars {
                                                          const Real *u,
                                                          Real *val) {
             Real g_ref[Dim], g_fe[Dim], u_x[Dim - 1];
-            const Real dx = det_J / NFuns;
+            const Real dx_P1 = det_J / NFuns;
+            const Real dx_P0 = det_J;
 
             ///////////////////////////////////////////////////////////////////
             ////////////////// Gradient with local basis function /////////////
@@ -109,7 +111,7 @@ namespace mars {
             ////////////////////////////////////////////////////////////////////////
             // Integrate (u_t, v) [Set]
             for (int i = 0; i < NFuns; ++i) {
-                val[i] = ut * dx;
+                val[i] = ut * dx_P1;
             }
 
             ///////////////////////////////////////////////////////////////////////
@@ -121,7 +123,7 @@ namespace mars {
 
             Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g_fe);
 
-            val[0] += Algebra<Dim - 1>::dot(u_x, g_fe) * dx;
+            val[0] += Algebra<Dim - 1>::dot(u_x, g_fe) * dx_P0;
 
             //////////////////////////////////////////////////
 
@@ -134,7 +136,7 @@ namespace mars {
 
                 Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g_fe);
 
-                val[i] += Algebra<Dim - 1>::dot(u_x, g_fe) * dx;
+                val[i] += Algebra<Dim - 1>::dot(u_x, g_fe) * dx_P0;
 
                 g_ref[i - 1] = 0;
             }
