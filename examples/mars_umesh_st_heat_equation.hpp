@@ -9,6 +9,7 @@
 #include "mars_globals.hpp"
 #include "mars_identity_operator.hpp"
 #include "mars_simplex_laplacian.hpp"
+#include "mars_simplex_quadrature.hpp"
 #include "mars_umesh_operator.hpp"
 
 namespace mars {
@@ -139,96 +140,6 @@ namespace mars {
             }
         }
     };
-
-    template <typename T, int N>
-    using ViewQWeights =
-        Kokkos::View<T[N], Kokkos::LayoutRight, KokkosSpace, Kokkos::MemoryTraits<Kokkos::RandomAccess>>;
-
-    template <typename T, Integer XDim_, Integer YDim_>
-    using ViewQPoints =
-        Kokkos::View<T[XDim_][YDim_], Kokkos::LayoutRight, KokkosSpace, Kokkos::MemoryTraits<Kokkos::RandomAccess>>;
-
-    template <int Dim, int Order>
-    class SimplexQuadrature {};
-
-    template <int Dim>
-    class SimplexQuadrature<Dim, 1> {
-    public:
-        static SimplexQuadrature make() {
-            SimplexQuadrature ret;
-            ret.init();
-            return ret;
-        }
-
-        ViewQPoints<Real, Dim + 1, 2> points;
-        ViewQWeights<Real, Dim + 1> weights;
-
-        MARS_INLINE_FUNCTION static constexpr int n_points() { return 6; }
-        MARS_INLINE_FUNCTION static constexpr int dim() { return 2; }
-
-        SimplexQuadrature() : points("q_points"), weights("q_weights") {}
-
-        void init() {
-            auto points_tmp = points;
-            auto weights_tmp = weights;
-
-            Kokkos::parallel_for(
-                1, MARS_LAMBDA(const int &) {
-                    weights_tmp(0) = 1. / (Dim + 1);
-
-                    for (int p = 0; p < Dim; ++p) {
-                        weights_tmp(p + 1) = 1. / (Dim + 1);
-                        points_tmp(p + 1, p) = 1.0;
-                    }
-                });
-        }
-    };
-
-    template <>
-    class SimplexQuadrature<2, 2> {
-    public:
-        static SimplexQuadrature make() {
-            SimplexQuadrature ret;
-            ret.init();
-            return ret;
-        }
-
-        ViewQPoints<Real, 6, 2> points;
-        ViewQWeights<Real, 6> weights;
-
-        MARS_INLINE_FUNCTION static constexpr int n_points() { return 6; }
-        MARS_INLINE_FUNCTION static constexpr int dim() { return 2; }
-
-        SimplexQuadrature() : points("q_points"), weights("q_weights") {}
-
-        void init() {
-            auto points_tmp = points;
-            auto weights_tmp = weights;
-
-            Kokkos::parallel_for(
-                1, MARS_LAMBDA(const int &) {
-                    Real pts[6][2] = {{0.5, 0.5},
-                                      {0.5, 0.0},
-                                      {0.0, 0.5},
-                                      {1.0 / 6.0, 1.0 / 6.0},
-                                      {1.0 / 6.0, 2.0 / 3.0},
-                                      {2.0 / 3.0, 1.0 / 6.0}};
-
-                    Real w[6] = {1.0 / 30.0, 1.0 / 30.0, 1.0 / 30.0, 0.3, 0.3, 0.3};
-
-                    for (int p = 0; p < n_points(); ++p) {
-                        weights_tmp(p) = w[p];
-
-                        for (int d = 0; d < dim(); ++d) {
-                            points_tmp(p, d) = pts[p][d];
-                        }
-                    }
-                });
-        }
-    };
-
-    template <int Dim>
-    using SimplexQuadratureLinear = mars::SimplexQuadrature<Dim, 1>;
 
     template <class Mesh>
     class UMeshSTHeatEquation final : public UMeshOperator<Mesh> {

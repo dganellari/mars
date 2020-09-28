@@ -11,6 +11,7 @@
 #include <KokkosBlas1_nrm1.hpp>
 #include <KokkosBlas1_nrminf.hpp>
 #include <KokkosBlas1_sum.hpp>
+#include <Kokkos_sort.hpp>
 
 #include "mars_base.hpp"
 #include "mars_globals.hpp"
@@ -34,6 +35,76 @@ namespace mars {
     public:
         static const int Dim = PMesh::Dim;
         using SMesh = mars::Mesh<Dim, PMesh::ManifoldDim>;
+        using VectorReal = mars::ViewVectorType<Real>;
+        using VectorInt = mars::ViewVectorType<Integer>;
+
+        void adaptive_refinement(FEValues<PMesh> &values, VectorReal &x) {
+            auto mesh = values.mesh();
+
+            ParallelBisection<PMesh> bisection(&mesh);
+
+            VectorReal error;
+            GradientRecovery<PMesh> grad_rec;
+            grad_rec.estimate(values, x, error);
+
+            const Real alpha = 0.3;
+            const Real max_error = KokkosBlas::nrminf(error);
+            const Real low_bound_err = alpha * max_error;
+
+            VectorInt marked("marked", mesh.n_elements());
+
+            Integer n_elements = mesh.n_elements();
+
+            Kokkos::parallel_for(
+                n_elements, MARS_LAMBDA(const Integer &i) { marked(i) = (error(i) >= low_bound_err) * i; });
+
+            Integer n_marked = 0;
+
+            Kokkos::parallel_reduce(
+                n_elements, MARS_LAMBDA(const Integer &i, Integer &val) { val += marked(i) > 0; }, n_marked);
+
+            VectorInt marked_list("maked_list", n_marked);
+
+            Kokkos::sort(marked);
+
+            // Kokkos::parallel_for(
+            //     n_elements, MARS_LAMBDA(const Integer &i) { printf("%ld ", marked(i)); });
+            Integer offset = n_elements - n_marked;
+
+            Kokkos::parallel_for(
+                n_marked, MARS_LAMBDA(const Integer i) { marked_list(i) = marked(offset + i); });
+
+            // Kokkos::parallel_for(
+            //     n_marked, MARS_LAMBDA(const Integer &i) { printf("%ld ", marked_list(i)); });
+
+            bisection.refine(marked_list);
+
+            auto children = mesh.get_view_children();
+
+            std::cout << "nc: " << children.extent(0) << "," << children.extent(1) << std::endl;
+
+            Kokkos::parallel_for(
+                children.extent(0),
+                MARS_LAMBDA(const Integer &i) { printf("(%ld, %ld)\n", children(i, 0), children(i, 1)); });
+
+            VectorInt out("marked", mesh.n_nodes());
+            Kokkos::parallel_for(
+                mesh.n_nodes(), MARS_LAMBDA(const Integer &i) { out(i) = i; });
+
+            VectorReal::HostMirror out_host("out_host", mesh.n_nodes());
+            Kokkos::deep_copy(out_host, out);
+
+            std::cout << "n_elements: " << n_elements << " < " << mesh.n_elements() << std::endl;
+
+            SMesh serial_mesh;
+            convert_parallel_mesh_to_serial(serial_mesh, mesh);
+
+            std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
+            std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
+
+            VTUMeshWriter<SMesh> w;
+            w.write("mesh_refined.vtu", serial_mesh, out_host);
+        }
 
         void run(int argc, char *argv[]) {
             using Elem = typename PMesh::Elem;
@@ -65,25 +136,15 @@ namespace mars {
                 return;
             }
 
-            // ParallelBisection<PMesh> bisection(&mesh);
-
-            // Integer n_marked = 3;
-            // ViewVectorType<Integer> marked("marked", n_marked);
-
-            // Kokkos::parallel_for(
-            //     n_marked, MARS_LAMBDA(const Integer i) { marked(i) = i; });
-
-            // bisection.refine(marked);
-
             BC bc_fun;
             RHS rhs_fun;
             AnalyticalFun an_fun;
 
             const Integer n_nodes = mesh.n_nodes();
 
-            ViewVectorType<Real> x("X", n_nodes);
-            ViewVectorType<Real> rhs("rhs", n_nodes);
-            ViewVectorType<Real> Ax("Ax", n_nodes);
+            VectorReal x("X", n_nodes);
+            VectorReal rhs("rhs", n_nodes);
+            VectorReal Ax("Ax", n_nodes);
 
             Op op(mesh);
             BoundaryConditions<PMesh> bc(mesh);
@@ -108,8 +169,8 @@ namespace mars {
             bcg_stab(op, *prec_ptr, rhs, 10 * rhs.extent(0), x, num_iter);
 
             // Compute Error
-            ViewVectorType<Real> x_exact("X_exact", n_nodes);
-            ViewVectorType<Real> diff("Diff", n_nodes);
+            VectorReal x_exact("X_exact", n_nodes);
+            VectorReal diff("Diff", n_nodes);
 
             Interpolate<PMesh> interp(mesh);
             interp.apply(x_exact, an_fun);
@@ -120,20 +181,18 @@ namespace mars {
             Real err = KokkosBlas::nrm2(diff) / KokkosBlas::nrm2(x_exact);
             std::cout << "err : " << err << std::endl;
 
-            ViewVectorType<Real> error;
+            VectorReal error;
             GradientRecovery<PMesh> grad_rec;
             grad_rec.estimate(op.values(), x, error);
 
-            ViewVectorType<Real> lapl_x("Lapl_x", n_nodes);
+            VectorReal lapl_x("Lapl_x", n_nodes);
             op.assemble_rhs(lapl_x, rhs_fun);
-
-            op.set_identity(nullptr);
             op.apply(x_exact, diff);
 
             Real norm_lapl_x = KokkosBlas::sum(diff);
             std::cout << "norm_lapl_x: " << norm_lapl_x << std::endl;
 
-            KokkosBlas::axpy(-1.0, lapl_x, diff);
+            KokkosBlas::axpy(-1.0, rhs, diff);
 
             err = KokkosBlas::nrm2(diff) / KokkosBlas::nrm2(lapl_x);
             std::cout << "Op error : " << err << std::endl;
@@ -143,8 +202,8 @@ namespace mars {
             if (write_output) {
                 std::cout << "Writing results to disk..." << std::endl;
 
-                ViewVectorType<Real>::HostMirror x_host("x_host", n_nodes);
-                ViewVectorType<Real>::HostMirror rhs_host("rhs_host", n_nodes);
+                VectorReal::HostMirror x_host("x_host", n_nodes);
+                VectorReal::HostMirror rhs_host("rhs_host", n_nodes);
                 Kokkos::deep_copy(x_host, x);
                 Kokkos::deep_copy(rhs_host, rhs);
 
@@ -161,14 +220,16 @@ namespace mars {
                 Kokkos::deep_copy(x_host, x_exact);
                 w.write("analitic.vtu", serial_mesh, x_host);
 
-                ViewVectorType<Real>::HostMirror error_host("error_host", mesh.n_elements());
+                VectorReal::HostMirror error_host("error_host", mesh.n_elements());
                 Kokkos::deep_copy(error_host, error);
                 w.write("error.vtu", serial_mesh, error_host, true);
 
-                ViewVectorType<Real>::HostMirror diff_host("lapl_x_host", mesh.n_nodes());
+                VectorReal::HostMirror diff_host("lapl_x_host", mesh.n_nodes());
                 Kokkos::deep_copy(diff_host, diff);
                 w.write("lapl_x.vtu", serial_mesh, diff_host);
             }
+
+            // adaptive_refinement(op.values(), x);
         }
     };
 }  // namespace mars
