@@ -67,7 +67,9 @@ namespace mars {
                     }
                 });
 
-            this->identity()->apply(x, op_x);
+            if (this->identity()) {
+                this->identity()->apply(x, op_x);
+            }
         }
 
         class JacobiPreconditioner final : public UMeshJacobiPreconditioner<Mesh> {

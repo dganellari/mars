@@ -22,22 +22,21 @@ namespace mars {
         static constexpr int NFuns = Mesh::Dim + 1;
 
         template <class Quadrature>
-        MARS_INLINE_FUNCTION static void one_thread_eval_diag_add(const Real *J_inv,
-                                                                  const Real &det_J,
-                                                                  const Quadrature &q,
-                                                                  Real *val) {
-            Real g_ref[Dim], g[Dim];
+        MARS_INLINE_FUNCTION static void one_thread_eval_diag(const Real *J_inv,
+                                                              const Real &det_J,
+                                                              const Quadrature &q,
+                                                              Real *val) {
+            Real g_ref[Dim], g_fe[Dim];
+            const Real dx = det_J / NFuns;
 
             for (int d = 0; d < Dim; ++d) {
                 g_ref[d] = -1;
             }
 
-            Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g);
+            Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g_fe);
 
-            Real fun_t = g[Dim - 1];
-            // assert(fun_t > 0.0);
-
-            val[0] += fun_t * det_J * 1. / NFuns;
+            Real u_t = g_fe[Dim - 1];
+            val[0] = (u_t + Algebra<Dim - 1>::dot(g_fe, g_fe)) * dx;
 
             for (int d = 0; d < Dim; ++d) {
                 g_ref[d] = 0;
@@ -46,39 +45,51 @@ namespace mars {
             for (int d = 0; d < Dim; ++d) {
                 g_ref[d] = 1;
 
-                Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g);
+                Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g_fe);
 
-                fun_t = g[Dim - 1];
-
-                for (int k = 0; k < q.n_points(); ++k) {
-                    val[d + 1] += FESimplex<Dim>::fun(d + 1, &q.points(k, 0)) * fun_t * det_J * q.weights(k);
-                }
+                u_t = g_fe[Dim - 1];
+                val[d + 1] = (u_t + Algebra<Dim - 1>::dot(g_fe, g_fe)) * dx;
 
                 g_ref[d] = 0;
             }
         }
 
         template <class Quadrature>
-        MARS_INLINE_FUNCTION static void one_thread_eval_add(const Real *J_inv,
-                                                             const Real &det_J,
-                                                             const Quadrature &q,
-                                                             const Real *u,
-                                                             Real *val) {
-            Real g_ref[Dim], g_fe[Dim];
+        MARS_INLINE_FUNCTION static void one_thread_eval(const Real *J_inv,
+                                                         const Real &det_J,
+                                                         const Quadrature &,
+                                                         const Real *u,
+                                                         Real *val) {
+            Real g_ref[Dim], g_fe[Dim], u_x[Dim - 1];
+            const Real dx = det_J / NFuns;
 
             ///////////////////////////////////////////////////////////////////
             ////////////////// Gradient with local basis function /////////////
+            // First basis function
 
             for (int d = 0; d < Dim; ++d) {
                 g_ref[d] = -1;
             }
 
+            // Transform
             Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g_fe);
+
+            // The real u_t
             Real ut = g_fe[Dim - 1] * u[0];
+
+            for (int d = 0; d < Dim - 1; ++d) {
+                u_x[d] = g_fe[d] * u[0];
+            }
+
+            ///////////////////////////////////////////////////////////////
+            // Reset to 0
 
             for (int d = 0; d < Dim; ++d) {
                 g_ref[d] = 0;
             }
+
+            ///////////////////////////////////////////////////////////////
+            // The real \nabla_x u
 
             for (int i = 1; i < NFuns; ++i) {
                 g_ref[i - 1] = 1;
@@ -87,16 +98,44 @@ namespace mars {
 
                 ut += g_fe[Dim - 1] * u[i];
 
+                for (int d = 0; d < Dim - 1; ++d) {
+                    u_x[d] += g_fe[d] * u[i];
+                }
+
                 g_ref[i - 1] = 0;
             }
 
-            ///////////////////////////////////////////////////////////////////
-            ////////////////// Transform gradient to physical coordinates //////
-
+            ////////////////////////////////////////////////////////////////////////
+            // Integrate (u_t, v) [Set]
             for (int i = 0; i < NFuns; ++i) {
-                for (int k = 0; k < q.n_points(); ++k) {
-                    val[i] += FESimplex<Dim>::fun(i, &q.points(k, 0)) * ut * det_J * q.weights(k);
-                }
+                val[i] = ut * dx;
+            }
+
+            ///////////////////////////////////////////////////////////////////////
+            // (u_x, v_x)  [Add]
+
+            for (int d = 0; d < Dim; ++d) {
+                g_ref[d] = -1;
+            }
+
+            Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g_fe);
+
+            val[0] += Algebra<Dim - 1>::dot(u_x, g_fe) * dx;
+
+            //////////////////////////////////////////////////
+
+            for (int d = 0; d < Dim; ++d) {
+                g_ref[d] = 0.0;
+            }
+
+            for (int i = 1; i < NFuns; ++i) {
+                g_ref[i - 1] = 1;
+
+                Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g_fe);
+
+                val[i] += Algebra<Dim - 1>::dot(u_x, g_fe) * dx;
+
+                g_ref[i - 1] = 0;
             }
         }
     };
@@ -248,15 +287,16 @@ namespace mars {
                         u[k] = x(idx[k]);
                     }
 
-                    SimplexLaplacian<Mesh>::one_thread_eval(J_inv_e, det_J(i), u, Au);
-                    SpaceTimeMixed<Mesh>::one_thread_eval_add(J_inv_e, det_J(i), quad, u, Au);
+                    SpaceTimeMixed<Mesh>::one_thread_eval(J_inv_e, det_J(i), quad, u, Au);
 
                     for (Integer k = 0; k < NFuns; ++k) {
                         Kokkos::atomic_add(&op_x(idx[k]), Au[k]);
                     }
                 });
 
-            this->identity()->apply(x, op_x);
+            if (this->identity()) {
+                this->identity()->apply(x, op_x);
+            }
         }
 
         class JacobiPreconditioner final : public UMeshJacobiPreconditioner<Mesh> {
@@ -288,8 +328,7 @@ namespace mars {
                             idx[k] = elems(i, k);
                         }
 
-                        SimplexLaplacian<Mesh>::one_thread_eval_diag(J_inv_e, det_J_e, val);
-                        SpaceTimeMixed<Mesh>::one_thread_eval_diag_add(J_inv_e, det_J_e, quad, val);
+                        SpaceTimeMixed<Mesh>::one_thread_eval_diag(J_inv_e, det_J_e, quad, val);
 
                         for (Integer k = 0; k < NFuns; ++k) {
                             assert(val[k] != 0.0);
