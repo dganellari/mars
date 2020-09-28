@@ -19,6 +19,16 @@ namespace mars {
             }
         }
 
+        MARS_INLINE_FUNCTION static void mv_mult(const Real *A, const Real *x, Real *y) {
+            for (int d1 = 0; d1 < Dim; ++d1) {
+                y[d1] = 0;
+
+                for (int d2 = 0; d2 < Dim; ++d2) {
+                    y[d1] += A[d1 * Dim + d2] * x[d2];
+                }
+            }
+        }
+
         MARS_INLINE_FUNCTION static Real dot(const Real *l, const Real *r) {
             Real ret = 0.0;
             for (Integer i = 0; i < Dim; ++i) {
@@ -59,6 +69,30 @@ namespace mars {
 
             for (int i = 1; i < Dim + 1; ++i) {
                 g_ref[i - 1] += u[i];
+            }
+
+            ///////////////////////////////////////////////////////////////////
+            ////////////////// Transform gradient to physical coordinates //////
+
+            Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g);
+        }
+
+        MARS_INLINE_FUNCTION static void grad(const int i, const Real *J_inv, Real *g) {
+            Real g_ref[Dim];
+
+            ///////////////////////////////////////////////////////////////////
+            ////////////////// Gradient with local basis function /////////////
+
+            if (i == 0) {
+                for (int d = 0; d < Dim; ++d) {
+                    g_ref[d] = -1;
+                }
+            } else {
+                for (int d = 0; d < Dim; ++d) {
+                    g_ref[d] = 0.0;
+                }
+
+                g_ref[i - 1] = 1.0;
             }
 
             ///////////////////////////////////////////////////////////////////
