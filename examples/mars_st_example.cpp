@@ -152,12 +152,12 @@ int main(int argc, char *argv[]) {
 #endif
 
     {
-        ModelTest<ParallelMesh2, UMeshSTHeatEquation<ParallelMesh2>, ST1BC<ParallelMesh2>, ST1RHS, ST1Analitcal>().run(
-            argc, argv);
-
-        // ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example2Dirichlet, Example2RHS,
-        // Example2Analitcal>().run(
+        // ModelTest<ParallelMesh2, UMeshSTHeatEquation<ParallelMesh2>, ST1BC<ParallelMesh2>, ST1RHS,
+        // ST1Analitcal>().run(
         //     argc, argv);
+
+        ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example2Dirichlet, Example2RHS, Example2Analitcal>().run(
+            argc, argv);
 
         // ModelTest<ParallelMesh2, UMeshSTHeatEquation<ParallelMesh2>, ST2BC<ParallelMesh2>, ST2RHS,
         // ST2Analitcal>().run(
