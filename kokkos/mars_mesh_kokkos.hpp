@@ -66,6 +66,18 @@ public:
 		active_ = ViewVectorType<bool>("active_", n_elements);
 	}
 
+    void reserve_elem_children_map(const Integer size)
+    {
+        if(elem_children_map_.is_allocated())
+        {
+            elem_children_map_.rehash(size);
+        }
+        else
+        {
+            elem_children_map_ = UnorderedMap<Integer, Integer>(size);
+        }
+    }
+
 	/*inline Elem &elem(const Integer id) override
 	{
 		assert(id >= 0);
@@ -98,7 +110,54 @@ public:
 		return e;
 	}
 
-	/*MARS_INLINE_FUNCTION
+
+    MARS_INLINE_FUNCTION const Elem elem_with_children(const Integer id) const //override
+	{
+		assert(id >= 0);
+		assert(id < n_elements());
+
+        auto children = get_children(id);
+		Elem e = Elem(SubView<Integer,Elem::ElemType>(&elements_,id), children);
+		e.id = id;
+		return e;
+	}
+
+
+    MARS_INLINE_FUNCTION
+    const SubView<Integer, 2> get_children(const Integer element_id) const
+    {
+        SubView<Integer, 2> sv;
+
+        const auto it = get_elem_children_map().find(element_id);
+        if (get_elem_children_map().valid_at(it))
+        {
+            const Integer childrens_id = get_elem_children_map().value_at(it);
+            sv = SubView<Integer, 2>(&children_, childrens_id);
+        }
+        else
+        {
+            sv.set_valid(false);
+        }
+
+        return sv;
+    }
+
+    MARS_INLINE_FUNCTION
+    bool get_children(Integer children[2], const Integer element_id) const
+    {
+        SubView<Integer, 2> sv = get_children(element_id);
+        if(sv.is_valid())
+        {
+            children[0] = sv(0);
+            children[1] = sv(1);
+            return true;
+        }
+        else
+        {
+            return false;
+        }
+    }
+        /*MARS_INLINE_FUNCTION
 	Elem elem(const Integer id,
 			ViewMatrixTextureC<Integer, Comb::value, 2> combs)
 	{
@@ -245,6 +304,12 @@ public:
 	{
 		return children_;
 	}
+
+    MARS_INLINE_FUNCTION
+    const UnorderedMap<Integer, Integer>& get_elem_children_map() const
+    {
+        return elem_children_map_;
+    }
 
 	void resize_points(const Integer size)
 	{
@@ -1212,14 +1277,14 @@ public:
 		void operator()(int j, int i) const {
 
 			int index = j * (xDim + 1) + i;
-			
+
 			points(index, 0) = static_cast<Real>(i) / static_cast<Real>(xDim);
 			points(index, 1) = static_cast<Real>(j) / static_cast<Real>(yDim);
 		}
 
 		KOKKOS_INLINE_FUNCTION
 		void operator()(int z, int y, int x) const {
-			
+
 			int index =  (xDim + 1) * (yDim +1) * z + (xDim +1) * y + x;
 
 			points(index, 0) = static_cast<Real>(x)
@@ -1229,10 +1294,10 @@ public:
 			points(index, 2) = static_cast<Real>(z)
 					/ static_cast<Real>(zDim);
 		}
-	
+
 	};
 
-	inline bool generate_points(const int xDim, const int yDim, const int zDim, 
+	inline bool generate_points(const int xDim, const int yDim, const int zDim,
 				Integer type) {
 
 		using namespace Kokkos;
@@ -1306,20 +1371,20 @@ public:
 
 		AddElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
 				Integer xdm) :
-				elem(el), active(ac), xDim(xdm) 
+				elem(el), active(ac), xDim(xdm)
 		{
 		}
 
 		AddElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
 				Integer xdm, Integer ydm) :
-				elem(el), active(ac), xDim(xdm), yDim(ydm) 
+				elem(el), active(ac), xDim(xdm), yDim(ydm)
 		{
 		}
 
 		AddElem(ViewMatrixType<Integer> el, ViewVectorType<bool> ac,
 				ViewMatrixTexture<Integer,hex_n_nodes> hxs, ViewMatrixTextureC<unsigned int,hex_n_sides, hex_side_n_nodes> map,
 				Integer xdm, Integer ydm, Integer zdm) :
-				elem(el), active(ac), hexes(hxs), map_side_nodes(map), xDim(xdm), yDim(ydm), zDim(zdm) 
+				elem(el), active(ac), hexes(hxs), map_side_nodes(map), xDim(xdm), yDim(ydm), zDim(zdm)
 				{
 				}
 
@@ -1419,7 +1484,7 @@ public:
 		 */
 
 		KOKKOS_INLINE_FUNCTION
-		void operator()(int z, int y, int x) const 
+		void operator()(int z, int y, int x) const
 		{
 			Integer cube_index = xDim * yDim * z + xDim * y + x;
 			//build the hex27 element which serves to generalize the idea to many hex27.
@@ -1533,7 +1598,7 @@ public:
 		void operator()(int k, int j, int i) const
 		{
 			int index = k * xDim * yDim + j * xDim + i;
-			
+
 			elem(index, 0) = elem_index(i, j, k, xDim, yDim);
 			elem(index, 1) = elem_index(i + 1, j, k, xDim, yDim);
 			elem(index, 2) = elem_index(i + 1, j + 1, k, xDim, yDim);
@@ -1563,7 +1628,7 @@ public:
 				reserve_elements(n_elements);
 
 				parallel_for(MDRangePolicy<Rank<2> >( { 0, 0 }, {yDim, xDim}),
-			 				AddNonSimplexElem(elements_, active_, xDim, yDim));							 
+			 				AddNonSimplexElem(elements_, active_, xDim, yDim));
 				return true;
 			}
 			default: {
@@ -1580,7 +1645,7 @@ public:
 				reserve_elements(n_elements);
 
 				parallel_for(MDRangePolicy<Rank<3> >( { 0, 0, 0 }, {zDim, yDim, xDim}),
-							AddNonSimplexElem(elements_, active_, xDim, yDim, zDim));								
+							AddNonSimplexElem(elements_, active_, xDim, yDim, zDim));
 				return true;
 			}
 			default: {
@@ -1653,8 +1718,9 @@ private:
 
 	ViewMatrixType<Integer> side_tags_;
 	ViewMatrixType<Integer> children_;
-
 	Integer children_size_;
+    UnorderedMap<Integer, Integer> elem_children_map_;
+    ViewVectorType<Integer> parent_;
 
 	ViewVectorType<Integer> tags_;
 //	DualGraph<ManifoldDim> dual_graph_;

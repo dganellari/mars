@@ -38,8 +38,20 @@ namespace mars {
         SubView<Integer,ManifoldDim+1> side_tags;
 
         Integer id = INVALID_INDEX;
-        Integer parent_id = INVALID_INDEX;
+        Integer *parent_id = nullptr;
         Integer block = INVALID_INDEX;
+
+        MARS_INLINE_FUNCTION
+        void set_parent_id(const Integer id)
+        {
+            *parent_id = id;
+        }
+
+        MARS_INLINE_FUNCTION
+        Integer get_parent_id()
+        {
+            return *parent_id;
+        }
 
         MARS_INLINE_FUNCTION Simplex() {}
 

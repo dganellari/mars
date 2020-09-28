@@ -46,7 +46,6 @@ u = P uk */
 #include <type_traits>
 #include <utility>
 
-#include "mars_quad4.hpp"
 
 #ifdef WITH_MPI
 
@@ -55,8 +54,10 @@ u = P uk */
 #ifdef WITH_KOKKOS
 #include "mars_distributed_data_management.hpp"
 #include "mars_distributed_mesh_generation.hpp"
+#include "mars_quad4.hpp"
 #endif // WITH_KOKKOS
 #endif
+
 
 namespace mars {
 
@@ -626,11 +627,11 @@ void poisson(int &argc, char **&argv, const int level) {
               << "] ndofs : " << dm.get_local_dof_enum().get_elem_size()
               << std::endl;
 
-    // dm.dof_iterate(MARS_LAMBDA(const Integer i) {
-    //   printf("ggid: %li, INPUT: %lf, OUTPUT: %lf, rank: %i\n", i,
-    //          dm.get_dof_data<INPUT>(i), dm.get_dof_data<OUTPUT>(i),
-    //          proc_num);
-    // });
+    dm.dof_iterate(MARS_LAMBDA(const Integer i) {
+      printf("ggid: %li, INPUT: %lf, OUTPUT: %lf, rank: %i\n", i,
+             dm.get_dof_data<INPUT>(i), dm.get_dof_data<OUTPUT>(i),
+             proc_num);
+    });
 
     time = timer.seconds();
     std::cout << "Matrix free took: " << time << " seconds." << std::endl;
