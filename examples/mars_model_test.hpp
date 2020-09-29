@@ -169,57 +169,23 @@ namespace mars {
             bool write_output;
         };
 
-        bool refine(Problem &problem, const Real tol, VectorReal &x) {
-            FEValues<PMesh> &values = problem.op.values();
-            auto &mesh = problem.mesh;
+        bool interpolate(PMesh &mesh, FEValues<PMesh> &values, const Integer &new_elem_offset, VectorReal &x) {
+            VectorReal refined_x("refined_x", mesh.n_nodes());
+            interpolate(mesh, values, new_elem_offset, x, refined_x);
+            x = refined_x;
+        }
 
-            ParallelBisection<PMesh> bisection(&mesh);
-
-            VectorReal error;
-            GradientRecovery<PMesh> grad_rec;
-            grad_rec.estimate(values, x, error);
-
-            if (KokkosBlas::sum(error) < tol) {
-                std::cout << "[Status] Reached desired tolerance" << std::endl;
-                return false;
-            }
-
-            const Real alpha = 0.3;
-            const Real max_error = KokkosBlas::nrminf(error);
-            const Real low_bound_err = alpha * max_error;
-
-            Integer old_n_elements = mesh.n_elements();
-
-            VectorBool marked("marked", mesh.n_elements());
-
-            Kokkos::parallel_for(
-                mesh.n_elements(), MARS_LAMBDA(const Integer &i) { marked(i) = (error(i) >= low_bound_err) * i; });
-
-            VectorInt marked_list = mark_active(marked);
-
-            Kokkos::parallel_for(
-                marked_list.extent(0), MARS_LAMBDA(const Integer &i) {
-                    assert(mesh.is_active(marked_list(i)));
-                    assert(marked_list(i) < mesh.n_elements());
-                });
-
-            bisection.refine(marked_list);
-
-            Integer n_new = mesh.n_elements() - old_n_elements;
+        bool interpolate(PMesh &mesh,
+                         FEValues<PMesh> &values,
+                         const Integer &new_elem_offset,
+                         const VectorReal &x,
+                         VectorReal &refined_x) {
+            Integer n_new = mesh.n_elements() - new_elem_offset;
             if (n_new == 0) return false;
 
-            VectorInt parents("parents", mesh.n_elements(), -1);
+            auto parents = mesh.parent_map();
 
-            Kokkos::parallel_for(
-                old_n_elements, MARS_LAMBDA(const Integer &i) {
-                    auto c = mesh.get_children(i);
-                    if (c.is_valid()) {
-                        parents(c(0)) = i;
-                        parents(c(1)) = i;
-                    }
-                });
-
-            VectorReal refined_x("refined_x", mesh.n_nodes());
+            refined_x = VectorReal("refined_x", mesh.n_nodes());
 
             Kokkos::parallel_for(
                 x.extent(0), MARS_LAMBDA(const Integer &i) { refined_x(i) = x(i); });
@@ -231,7 +197,7 @@ namespace mars {
 
                 Kokkos::parallel_for(
                     n_new, MARS_LAMBDA(const Integer &iter) {
-                        const Integer elem_id = old_n_elements + iter;
+                        const Integer elem_id = new_elem_offset + iter;
                         Integer parent = parents(elem_id);
 
                         Real J_inv_e[Dim * Dim];
@@ -273,9 +239,49 @@ namespace mars {
                             refined_x(c_n_id) = val;
                         }
                     });
-
-                x = refined_x;
             }
+        }
+
+        bool refine(Problem &problem, const Real tol, VectorReal &x) {
+            FEValues<PMesh> &values = problem.op.values();
+            auto &mesh = problem.mesh;
+
+            ParallelBisection<PMesh> bisection(&mesh);
+
+            VectorReal error;
+            GradientRecovery<PMesh> grad_rec;
+            grad_rec.estimate(values, x, error);
+
+            if (KokkosBlas::sum(error) < tol) {
+                std::cout << "[Status] Reached desired tolerance" << std::endl;
+                return false;
+            }
+
+            const Real alpha = 0.3;
+            const Real max_error = KokkosBlas::nrminf(error);
+            const Real low_bound_err = alpha * max_error;
+
+            Integer old_n_elements = mesh.n_elements();
+
+            VectorBool marked("marked", mesh.n_elements());
+
+            Kokkos::parallel_for(
+                mesh.n_elements(), MARS_LAMBDA(const Integer &i) { marked(i) = (error(i) >= low_bound_err) * i; });
+
+            VectorInt marked_list = mark_active(marked);
+
+            Kokkos::parallel_for(
+                marked_list.extent(0), MARS_LAMBDA(const Integer &i) {
+                    assert(mesh.is_active(marked_list(i)));
+                    assert(marked_list(i) < mesh.n_elements());
+                });
+
+            bisection.refine(marked_list);
+
+            Integer n_new = mesh.n_elements() - old_n_elements;
+            if (n_new == 0) return false;
+
+            interpolate(mesh, values, old_n_elements, x);
 
             std::cout << "n_elements:        " << mesh.n_elements() << std::endl;
             std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
@@ -284,13 +290,10 @@ namespace mars {
             //////////////////////////////////////////////////////////////////////////////////////////////////////////////
             if (problem.write_output) {
                 VectorReal::HostMirror refined_x_host("refined_x_host", mesh.n_nodes());
-                Kokkos::deep_copy(refined_x_host, refined_x);
+                Kokkos::deep_copy(refined_x_host, x);
 
                 SMesh serial_mesh;
                 convert_parallel_mesh_to_serial(serial_mesh, mesh);
-
-                // std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
-                // std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
 
                 VTUMeshWriter<SMesh> w;
                 w.write("mesh_refined.vtu", serial_mesh, refined_x_host);
@@ -307,6 +310,8 @@ namespace mars {
             Integer max_refinements = 3;
             Integer refs = 0;
             bool refined = false;
+            bool use_adaptive_refinement = false;
+            bool reset_x_to_zero = false;
 
             do {
                 Problem problem(mesh);
@@ -319,15 +324,21 @@ namespace mars {
                     return false;
                 }
 
-                // refined = refine(problem, tol, x);
-                // mesh.clean_up();
+                if (use_adaptive_refinement) {
+                    refined = refine(problem, tol, x);
+                    mesh.clean_up();
+                } else {
+                    Integer elem_offset = mesh.n_elements();
+                    ParallelBisection<PMesh>(&mesh).uniform_refine(1);
+                    interpolate(mesh, problem.op.values(), elem_offset, x);
+                    refined = true;
+                }
 
-                refined = true;
-                ParallelBisection<PMesh>(&mesh).uniform_refine(1);
-
-                // reset x to 0
-                // Kokkos::parallel_for(
-                //     x.extent(0), MARS_LAMBDA(const Integer &i) { x(i) = 0.0; });
+                if (reset_x_to_zero) {
+                    // reset x to 0
+                    Kokkos::parallel_for(
+                        x.extent(0), MARS_LAMBDA(const Integer &i) { x(i) = 0.0; });
+                }
 
                 if (!refined) {
                     std::cout << "Did not refine" << std::endl;
