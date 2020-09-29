@@ -64,7 +64,17 @@ public:
 		elements_ = ViewMatrixType<Integer>("elems", n_elements,
 				Elem::ElemType);
 		active_ = ViewVectorType<bool>("active_", n_elements);
+        reserve_parents(n_elements);
 	}
+
+    void reserve_parents(const Integer n_elements)
+    {
+        parent_ = ViewVectorType<Integer>("parent_", n_elements);
+        Kokkos::parallel_for("init_parent", n_elements,
+                MARS_LAMBDA(const Integer i){
+                    parent_(i) = -1;
+                });
+    }
 
     void reserve_elem_children_map(const Integer size)
     {
@@ -97,6 +107,7 @@ public:
 		assert(id >= 0);
 		assert(id < n_elements());
 		Elem e = Elem(SubView<Integer,Elem::ElemType>(&elements_,id), combinations);
+        e.set_view_parent(parent_);
 		e.id = id;
 		return e;
 	}
@@ -106,6 +117,7 @@ public:
 		assert(id >= 0);
 		assert(id < n_elements());
 		Elem e = Elem(SubView<Integer,Elem::ElemType>(&elements_,id), combinations);
+        e.set_view_parent(parent_);
 		e.id = id;
 		return e;
 	}
@@ -118,6 +130,7 @@ public:
 
         auto children = get_children(id);
 		Elem e = Elem(SubView<Integer,Elem::ElemType>(&elements_,id), children);
+        e.set_view_parent(parent_);
 		e.id = id;
 		return e;
 	}
@@ -184,6 +197,7 @@ public:
 		assert(el_id >= 0 && ch_id >=0);
 		assert(el_id < n_elements()); // no assert for the children since children nr is not yet updated.
 		Elem e = Elem(SubView<Integer,Elem::ElemType>(&elements_,el_id), SubView<Integer,2>(&children_,ch_id));
+        e.set_view_parent(parent_);
 		e.id = el_id;
 		return e;
 	}
@@ -193,6 +207,7 @@ public:
 		assert(el_id >= 0 && ch_id >=0);
 		assert(el_id < n_elements()); // no assert for the children since children nr is not yet updated.
 		Elem e = Elem(SubView<Integer,Elem::ElemType>(&elements_,el_id), SubView<Integer,2>(&children_,ch_id));
+        e.set_view_parent(parent_);
 		e.id = el_id;
 		return e;
 	}
@@ -323,6 +338,7 @@ public:
 		elements_size_+= size;
 		resize(elements_, elements_size_, Elem::ElemType);
 		resize(active_, elements_size_);
+		resize(parent_, elements_size_);
 	}
 
 	void resize_active(const Integer size)
