@@ -6,13 +6,17 @@
 
 namespace mars {
 
-    class PoissonOperator final : public Operator {
+    template<class DM, Integer INPUT, Integer OUTPUT>
+    class PoissonOperator final : public Operator<DM> {
     public:
-        using DMType = mars::DMQ2;
+        PoissonOperator(const context &c, DM &dm) : Super(c, dm) {}
 
-        PoissonOperator(DMType &dm, const context &c) : Operator(c) {}
+        void init() override {
+            this.values().init();
+        }
 
         void apply(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) override;
+
     };
 
     class CopyOperator final {
