@@ -123,6 +123,11 @@ namespace mars {
                         }
 
                         for (int k = 0; k < NFuns; ++k) {
+                            for (int d = 0; d < Dim; ++d) {
+                                p[d] = points(n0, d) - tr[d];
+                            }
+
+                            Algebra<Dim>::mv_mult(J_inv_e, p, p_ref);
                         }
 
                         // printf("%ld/%ld\n", old_n_elements + i, old_n_elements + n_new);
