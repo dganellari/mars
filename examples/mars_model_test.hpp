@@ -34,7 +34,10 @@ namespace mars {
     class ModelTest {
     public:
         static const int Dim = PMesh::Dim;
-        using SMesh = mars::Mesh<Dim, PMesh::ManifoldDim>;
+        static const int ManifoldDim = PMesh::ManifoldDim;
+        static const int NFuns = ManifoldDim + 1;
+
+        using SMesh = mars::Mesh<Dim, ManifoldDim>;
         using VectorReal = mars::ViewVectorType<Real>;
         using VectorInt = mars::ViewVectorType<Integer>;
         using VectorBool = mars::ViewVectorType<bool>;
@@ -85,14 +88,43 @@ namespace mars {
 
             Integer n_new = mesh.n_elements() - old_n_elements;
 
-            Kokkos::parallel_for(
-                n_new,
-                MARS_LAMBDA(const Integer &i) { printf("%ld/%ld\n", old_n_elements + i, old_n_elements + n_new); });
-
-            // VectorInt inactive_list = mark_active(inactive, inactive.extent(0));
-
             // Kokkos::parallel_for(
-            //     inactive_list.extent(0), MARS_LAMBDA(const Integer &i) { printf("%ld\n", inactive_list(i)); });
+            //     n_new,
+            //     MARS_LAMBDA(const Integer &i) { printf("%ld/%ld\n", old_n_elements + i, old_n_elements + n_new); });
+
+            VectorReal refined_x("refined_x", mesh.n_nodes());
+
+            {
+                auto elems = mesh.get_view_elements();
+                auto points = mesh.get_view_points();
+                auto J_inv = values.J_inv();
+
+                Kokkos::parallel_for(
+                    n_new, MARS_LAMBDA(const Integer &iter) {
+                        const Integer elem_id = old_n_elements + iter;
+                        Integer parent = parents(elem_id);
+
+                        Real J_inv_e[Dim * Dim];
+                        Real tr[Dim];
+                        Integer idx[NFuns];
+
+                        for (int k = 0; k < Dim * Dim; ++k) {
+                            J_inv_e[k] = J_inv(parent, k);
+                        }
+
+                        for (int k = 0; k < NFuns; ++k) {
+                            idx[k] = elems(elem_id, k);
+                        }
+
+                        Integer n0 = elems(parent, 0);
+
+                        for (int d = 0; d < Dim; ++d) {
+                            tr[d] = points(n0, d);
+                        }
+
+                        // printf("%ld/%ld\n", old_n_elements + i, old_n_elements + n_new);
+                    });
+            }
 
             //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -250,7 +282,7 @@ namespace mars {
                 w.write("lapl_x.vtu", serial_mesh, diff_host);
             }
 
-            adaptive_refinement(op.values(), x);
+            // adaptive_refinement(op.values(), x);
         }
     };
 }  // namespace mars
