@@ -57,6 +57,22 @@ namespace mars {
             return ret;
         }
 
+        MARS_INLINE_FUNCTION static Real fun(const Real *p, const Real *u) {
+            Real ret = 1;
+
+            for (int i = 0; i < Dim; ++i) {
+                ret -= p[i];
+            }
+
+            ret *= u[0];
+
+            for (int i = 0; i < Dim; ++i) {
+                ret += p[i] * u[i + 1];
+            }
+
+            return ret;
+        }
+
         MARS_INLINE_FUNCTION static void grad(const Real *J_inv, const Real *u, Real *g) {
             Real g_ref[Dim];
 
