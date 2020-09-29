@@ -171,13 +171,18 @@ namespace mars {
 
         bool refine(Problem &problem, const Real tol, VectorReal &x) {
             FEValues<PMesh> &values = problem.op.values();
-            auto mesh = values.mesh();
+            auto &mesh = problem.mesh;
 
             ParallelBisection<PMesh> bisection(&mesh);
 
             VectorReal error;
             GradientRecovery<PMesh> grad_rec;
             grad_rec.estimate(values, x, error);
+
+            if (KokkosBlas::sum(error) < tol) {
+                std::cout << "[Status] Reached desired tolerance" << std::endl;
+                return false;
+            }
 
             const Real alpha = 0.3;
             const Real max_error = KokkosBlas::nrminf(error);
@@ -191,7 +196,17 @@ namespace mars {
                 mesh.n_elements(), MARS_LAMBDA(const Integer &i) { marked(i) = (error(i) >= low_bound_err) * i; });
 
             VectorInt marked_list = mark_active(marked);
+
+            Kokkos::parallel_for(
+                marked_list.extent(0), MARS_LAMBDA(const Integer &i) {
+                    assert(mesh.is_active(marked_list(i)));
+                    assert(marked_list(i) < mesh.n_elements());
+                });
+
             bisection.refine(marked_list);
+
+            Integer n_new = mesh.n_elements() - old_n_elements;
+            if (n_new == 0) return false;
 
             VectorInt parents("parents", mesh.n_elements(), -1);
 
@@ -203,8 +218,6 @@ namespace mars {
                         parents(c(1)) = i;
                     }
                 });
-
-            Integer n_new = mesh.n_elements() - old_n_elements;
 
             VectorReal refined_x("refined_x", mesh.n_nodes());
 
@@ -264,6 +277,10 @@ namespace mars {
                 x = refined_x;
             }
 
+            std::cout << "n_elements:        " << mesh.n_elements() << std::endl;
+            std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+            std::cout << "n_nodes:           " << mesh.n_nodes() << std::endl;
+
             //////////////////////////////////////////////////////////////////////////////////////////////////////////////
             if (problem.write_output) {
                 VectorReal::HostMirror refined_x_host("refined_x_host", mesh.n_nodes());
@@ -272,20 +289,22 @@ namespace mars {
                 SMesh serial_mesh;
                 convert_parallel_mesh_to_serial(serial_mesh, mesh);
 
-                std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
-                std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
+                // std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
+                // std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
 
                 VTUMeshWriter<SMesh> w;
                 w.write("mesh_refined.vtu", serial_mesh, refined_x_host);
             }
+
+            return true;
         }
 
         bool solve(PMesh &mesh, const bool write_output) {
             const Integer n_nodes = mesh.n_nodes();
             VectorReal x("X", n_nodes);
 
-            Real tol = 1e-4;
-            Integer max_refinements = 0;
+            Real tol = 1e-6;
+            Integer max_refinements = 3;
             Integer refs = 0;
             bool refined = false;
 
@@ -300,9 +319,22 @@ namespace mars {
                     return false;
                 }
 
-                refined = refine(problem, tol, x);
+                // refined = refine(problem, tol, x);
+                // mesh.clean_up();
 
-            } while (refs++ <= max_refinements && refined);
+                refined = true;
+                ParallelBisection<PMesh>(&mesh).uniform_refine(1);
+
+                // reset x to 0
+                // Kokkos::parallel_for(
+                //     x.extent(0), MARS_LAMBDA(const Integer &i) { x(i) = 0.0; });
+
+                if (!refined) {
+                    std::cout << "Did not refine" << std::endl;
+                    break;
+                }
+
+            } while (++refs <= max_refinements);
         }
 
         void run(int argc, char *argv[]) {
@@ -338,11 +370,6 @@ namespace mars {
             } else {
                 SMesh smesh;
                 read_mesh("../data/cube4d_24.MFEM", smesh);
-
-                // Bisection<SMesh> b(smesh);
-                // b.uniform_refine(n);
-                // b.clear();
-                // smesh.clean_up();
                 convert_serial_mesh_to_parallel(mesh, smesh);
 
                 ParallelBisection<PMesh>(&mesh).uniform_refine(3);

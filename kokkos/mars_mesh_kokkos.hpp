@@ -589,6 +589,38 @@ namespace mars {
             return result;
         }
 
+        void clean_up() {
+            std::cerr << "Mesh::clean_up() IMPLEMENT ME " << std::endl;
+            // std::vector<Elem> elements;
+            // std::vector<Integer> tags;
+
+            // elements.reserve(n_active_elements());
+            // tags.reserve(elements.capacity());
+
+            // for (Integer i = 0; i < n_elements(); ++i) {
+            //     if (!is_active(i)) continue;
+
+            //     assert(elem(i).children.empty());
+
+            //     elements.push_back(elem(i));
+            //     elements.back().id = elements.size() - 1;
+            //     elements.back().parent_id = INVALID_INDEX;
+
+            //     if (!tags_.empty()) {
+            //         tags.push_back(tags_[i]);
+            //     }
+            // }
+
+            // elements_ = std::move(elements);
+            // tags_ = std::move(tags);
+
+            // dual_graph_.clear();
+            // active_.resize(n_elements());
+            // std::fill(active_.begin(), active_.end(), true);
+
+            // update_dual_graph();
+        }
+
         /*bool have_common_sub_surface(
          const Integer e_index_1,
          const Integer e_index_2,
@@ -866,37 +898,6 @@ namespace mars {
          }
 
 
-         void clean_up()
-         {
-         std::vector< Elem > elements;
-         std::vector<Integer> tags;
-
-         elements.reserve(n_active_elements());
-         tags.reserve(elements.capacity());
-
-         for(Integer i = 0; i < n_elements(); ++i) {
-         if(!is_active(i)) continue;
-
-         assert(elem(i).children.empty());
-
-         elements.push_back(elem(i));
-         elements.back().id        = elements.size() - 1;
-         elements.back().parent_id = INVALID_INDEX;
-
-         if(!tags_.empty()) {
-         tags.push_back(tags_[i]);
-         }
-         }
-
-         elements_ = std::move(elements);
-         tags_  	  = std::move(tags);
-
-         dual_graph_.clear();
-         active_.resize(n_elements());
-         std::fill(active_.begin(), active_.end(), true);
-
-         update_dual_graph();
-         }
 
          void clear()
          {

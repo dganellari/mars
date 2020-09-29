@@ -176,7 +176,7 @@ namespace mars {
         std::cout << "RESIDUE: " << std::sqrt(comm.sum(KokkosBlas::nrm2_squared(r_0))) << std::endl;
         std::cout << "Iter: " << count << std::endl;
 
-        return num_iter <= max_iter;
+        return num_iter < max_iter;
     }
 
 }  // namespace mars
