@@ -38,19 +38,27 @@ namespace mars {
         SubView<Integer,ManifoldDim+1> side_tags;
 
         Integer id = INVALID_INDEX;
-        Integer *parent_id = nullptr;
+        //It will a view of one element basically. Think of it as pointer to the parent view.
+        //It will actually get a subview.
+        ViewVectorType<Integer> parent;
         Integer block = INVALID_INDEX;
 
         MARS_INLINE_FUNCTION
-        void set_parent_id(const Integer id)
+        void set_view_parent(const ViewVectorType<Integer> p)
         {
-            *parent_id = id;
+            parent = p;
         }
 
         MARS_INLINE_FUNCTION
-        Integer get_parent_id()
+        void set_parent_id(const Integer pid)
         {
-            return *parent_id;
+            parent(id) = pid;
+        }
+
+        MARS_INLINE_FUNCTION
+        Integer get_parent_id() const
+        {
+            return parent(id);
         }
 
         MARS_INLINE_FUNCTION Simplex() {}
