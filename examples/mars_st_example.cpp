@@ -344,6 +344,13 @@ int main(int argc, char *argv[]) {
         // 4D example 1
         ModelTest<ParallelMesh4, UMeshSTHeatEquation<ParallelMesh4>, ST4D1BC<ParallelMesh4>, ST4D1RHS, ST4D1Analitcal>()
             .run(argc, argv);
+
+        // ModelTest<ParallelMesh4,
+        //           UMeshLaplace<ParallelMesh4>,
+        //           ZeroDirchletOnUnitCube<ParallelMesh4>,
+        //           One<ZeroDirchletOnUnitCube<ParallelMesh4>>,
+        //           One<ZeroDirchletOnUnitCube<ParallelMesh4>>>()
+        //     .run(argc, argv);
     }
 
     Kokkos::finalize();

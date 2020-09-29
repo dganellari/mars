@@ -105,7 +105,7 @@ namespace mars {
                         Integer parent = parents(elem_id);
 
                         Real J_inv_e[Dim * Dim];
-                        Real tr[Dim];
+                        Real tr[Dim], p[Dim], p_ref[Dim];
                         Integer idx[NFuns];
 
                         for (int k = 0; k < Dim * Dim; ++k) {
@@ -120,6 +120,9 @@ namespace mars {
 
                         for (int d = 0; d < Dim; ++d) {
                             tr[d] = points(n0, d);
+                        }
+
+                        for (int k = 0; k < NFuns; ++k) {
                         }
 
                         // printf("%ld/%ld\n", old_n_elements + i, old_n_elements + n_new);
@@ -149,7 +152,7 @@ namespace mars {
             using Elem = typename PMesh::Elem;
             using SideElem = typename PMesh::SideElem;
 
-            Integer ns[4] = {0, 0, 0, 0};
+            PMesh mesh;
 
             Integer n = 6;
             bool write_output = true;
@@ -162,24 +165,29 @@ namespace mars {
                 write_output = atoi(argv[2]);
             }
 
-            for (int i = 0; i < 4; ++i) {
-                ns[i] = n;
-            }
-
-            if (argc > 3) {
-                Integer mult = atoi(argv[3]);
-                if (mult) {
-                    ns[Dim - 1] *= mult;
-                }
-            }
-
-            PMesh mesh;
-
             if (Dim <= 3) {
+                Integer ns[4] = {0, 0, 0, 0};
+                for (int i = 0; i < 4; ++i) {
+                    ns[i] = n;
+                }
+
+                if (argc > 3) {
+                    Integer mult = atoi(argv[3]);
+                    if (mult) {
+                        ns[Dim - 1] *= mult;
+                    }
+                }
                 generate_cube(mesh, ns[0], ns[1], ns[2]);
             } else {
-                std::cerr << "[Error] 4D not supported yet" << std::endl;
-                return;
+                SMesh smesh;
+                read_mesh("../data/cube4d_24.MFEM", smesh);
+
+                Bisection<SMesh> b(smesh);
+                b.uniform_refine(n);
+                b.clear();
+                smesh.clean_up();
+                convert_serial_mesh_to_parallel(mesh, smesh);
+                write_output = false;
             }
 
             BC bc_fun;
@@ -284,7 +292,7 @@ namespace mars {
 
             // adaptive_refinement(op.values(), x);
         }
-    };
+    };  // namespace mars
 }  // namespace mars
 
 #endif  // MARS_MODEL_TEST_HPP
