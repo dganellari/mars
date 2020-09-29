@@ -1,6 +1,7 @@
 #ifndef MARS_BISECTION_KOKKOS_HPP
 #define MARS_BISECTION_KOKKOS_HPP
 
+#include "mars_mark_kokkos.hpp"
 #include "mars_dof_map.hpp"
 #include "mars_tracker.hpp"
 #include "mars_edge_select_kokkos.hpp"
@@ -785,7 +786,7 @@ public:
 		{
 
 			Elem new_el = mesh->elem(elem_new_id);
-			/* new_el.set_parent_id(old_el.id); */
+			new_el.set_parent_id(old_el.id);
 
 			//in order to keep the counterclockwise ordering of the element nodes.
 			for (Integer i = 0; i < ManifoldDim + 1; ++i)
@@ -1154,8 +1155,7 @@ public:
 
 		if (it_count == 0)
 		{
-			ViewVectorType<Integer> active_elems = mark_active(mesh,
-			host_mesh->get_view_active(), host_mesh->n_elements());
+			ViewVectorType<Integer> active_elems = mark_active(host_mesh->get_view_active());
 
 			const Integer nr_active_elements = active_elems.extent(0);
 
@@ -1306,8 +1306,7 @@ public:
 
 		for (Integer i = 0; i < n_levels; ++i){
 
-			ViewVectorType<Integer> elements = mark_active(mesh,
-					host_mesh->get_view_active(), host_mesh->n_elements());
+			ViewVectorType<Integer> elements = mark_active(host_mesh->get_view_active());
 
 			std::cout <<"\nn_marked(" << (i + 1) << "/" << n_levels << ") : "
 									<< elements.extent(0) << std::endl;

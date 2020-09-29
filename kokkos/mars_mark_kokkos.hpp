@@ -156,31 +156,21 @@ ViewVectorType<Integer> mark_hypersphere_for_refinement(Mesh_* mesh,
 }
 
 //mesh is a device pointer and can not be used here for getting the nr_elements.
-template<class Mesh_>
-ViewVectorType<Integer> mark_active(const Mesh_* mesh,
-		const ViewVectorType<bool> active, const Integer nr_elements)
+ViewVectorType<Integer> mark_active(const ViewVectorType<bool> active)
 {
 	using namespace Kokkos;
 
-
-//	Timer timer2;
-
+    const Integer nr_elements = active.extent(0);
 	ViewVectorType<Integer> scan = ViewVectorType<Integer>("count_hypers",
 		nr_elements + 1);
 
 	incl_excl_scan(0, nr_elements, active, scan);
-
-/*
-	double time2 = timer2.seconds();
-	std::cout << "Inclusive_scan took: " << time2 << " seconds." << std::endl;
-*/
 
 	auto index_subview = subview(scan, nr_elements);
 	auto h_ic = create_mirror_view(index_subview);
 
 	// Deep copy device view to host view.
 	deep_copy(h_ic, index_subview);
-	//std::cout << "Hyper count result: " << h_ic(0)<< std::endl;
 
 	Timer timer3;
 
@@ -189,16 +179,13 @@ ViewVectorType<Integer> mark_active(const Mesh_* mesh,
 
 	parallel_for(nr_elements, KOKKOS_LAMBDA(const Integer element_id){
 
-		if (mesh->is_active(element_id))
+		if (active(element_id))
 		{
 			elements(scan(element_id)) = element_id;
 		}
 	});
 
 	double time3 = timer3.seconds();
-	//std::cout << "Mark_active took: " << time3 << " seconds." << std::endl;
-
-	fence();
 
 	return elements;
 }
