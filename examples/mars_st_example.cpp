@@ -169,6 +169,89 @@ namespace mars {
 
     /////////////////////////////////////////////////////////////////////////////////////////////
 
+    class ST3D1Analitcal {
+    public:
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex4_3D_st_exact(p); }
+    };
+
+    class ST3D1RHS {
+    public:
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex4_3D_st_spacetime(p); }
+    };
+
+    template <class Mesh>
+    class ST3D1BC {
+    public:
+        /* BC --> zero dirichlet + natural neumann on upper bound */
+        static const int Dim = Mesh::Dim;
+
+        MARS_INLINE_FUNCTION void operator()(const Real *p, Real &val) const {
+            if (is_boundary(p)) {
+                val = ex4_3D_st_exact(p);
+            }
+        }
+
+        MARS_INLINE_FUNCTION static bool is_boundary(const Real *p) {
+            bool ret = false;
+            for (int d = 0; d < Dim; ++d) {
+                if (p[d] <= 1e-14) {
+                    ret = true;
+                    break;
+                }
+
+                if (d < Dim - 1 && p[d] >= 1 - 1e-14) {
+                    ret = true;
+                    break;
+                }
+            }
+
+            return ret;
+        }
+    };
+
+    /////////////////////////////////////////////////////////////////////////////////////////////
+    class ST3D2Analitcal {
+    public:
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex5_3D_st_exact(p); }
+    };
+
+    class ST3D2RHS {
+    public:
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex5_3D_st_spacetime(p); }
+    };
+
+    template <class Mesh>
+    class ST3D2BC {
+    public:
+        /* BC --> zero dirichlet + natural neumann on upper bound */
+        static const int Dim = Mesh::Dim;
+
+        MARS_INLINE_FUNCTION void operator()(const Real *p, Real &val) const {
+            if (is_boundary(p)) {
+                val = ex4_3D_st_exact(p);
+            }
+        }
+
+        MARS_INLINE_FUNCTION static bool is_boundary(const Real *p) {
+            bool ret = false;
+            for (int d = 0; d < Dim; ++d) {
+                if (p[d] <= 1e-14) {
+                    ret = true;
+                    break;
+                }
+
+                if (d < Dim - 1 && p[d] >= 1 - 1e-14) {
+                    ret = true;
+                    break;
+                }
+            }
+
+            return ret;
+        }
+    };
+
+    /////////////////////////////////////////////////////////////////////////////////////////////
+
 }  // namespace mars
 
 int main(int argc, char *argv[]) {
@@ -194,14 +277,24 @@ int main(int argc, char *argv[]) {
         // ST2Analitcal>().run(
         //     argc, argv);
 
-        ModelTest<ParallelMesh2, UMeshSTHeatEquation<ParallelMesh2>, ST3BC<ParallelMesh2>, ST3RHS, ST3Analitcal>().run(
-            argc, argv);
+        // ModelTest<ParallelMesh2, UMeshSTHeatEquation<ParallelMesh2>, ST3BC<ParallelMesh2>, ST3RHS,
+        // ST3Analitcal>().run(
+        //     argc, argv);
 
         // ModelTest<ParallelMesh3,
         //           UMeshLaplace<ParallelMesh3>,
         //           ZeroDirchletOnUnitCube<ParallelMesh3>,
         //           One<ParallelMesh3>,
         //           One<ParallelMesh3>>()
+        //     .run(argc, argv);
+
+        // 3D example 1
+        ModelTest<ParallelMesh3, UMeshSTHeatEquation<ParallelMesh3>, ST3D1BC<ParallelMesh3>, ST3D1RHS, ST3D1Analitcal>()
+            .run(argc, argv);
+
+        // 3D example 2
+        // ModelTest<ParallelMesh3, UMeshSTHeatEquation<ParallelMesh3>, ST3D2BC<ParallelMesh3>, ST3D2RHS,
+        // ST3D2Analitcal>()
         //     .run(argc, argv);
     }
 

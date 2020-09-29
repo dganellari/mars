@@ -34,77 +34,116 @@ namespace mars {
     class ModelTest {
     public:
         static const int Dim = PMesh::Dim;
-        using SMesh = mars::Mesh<Dim, PMesh::ManifoldDim>;
+        static const int ManifoldDim = PMesh::ManifoldDim;
+        static const int NFuns = ManifoldDim + 1;
+
+        using SMesh = mars::Mesh<Dim, ManifoldDim>;
         using VectorReal = mars::ViewVectorType<Real>;
         using VectorInt = mars::ViewVectorType<Integer>;
+        using VectorBool = mars::ViewVectorType<bool>;
 
-        // void adaptive_refinement(FEValues<PMesh> &values, VectorReal &x) {
-        //     auto mesh = values.mesh();
+        void adaptive_refinement(FEValues<PMesh> &values, VectorReal &x) {
+            auto mesh = values.mesh();
 
-        //     ParallelBisection<PMesh> bisection(&mesh);
+            ParallelBisection<PMesh> bisection(&mesh);
 
-        //     VectorReal error;
-        //     GradientRecovery<PMesh> grad_rec;
-        //     grad_rec.estimate(values, x, error);
+            VectorReal error;
+            GradientRecovery<PMesh> grad_rec;
+            grad_rec.estimate(values, x, error);
 
-        //     const Real alpha = 0.3;
-        //     const Real max_error = KokkosBlas::nrminf(error);
-        //     const Real low_bound_err = alpha * max_error;
+            const Real alpha = 0.3;
+            const Real max_error = KokkosBlas::nrminf(error);
+            const Real low_bound_err = alpha * max_error;
 
-        //     VectorInt marked("marked", mesh.n_elements());
+            Integer old_n_elements = mesh.n_elements();
 
-        //     Integer n_elements = mesh.n_elements();
+            VectorBool marked("marked", mesh.n_elements());
 
-        //     Kokkos::parallel_for(
-        //         n_elements, MARS_LAMBDA(const Integer &i) { marked(i) = (error(i) >= low_bound_err) * i; });
+            Kokkos::parallel_for(
+                mesh.n_elements(), MARS_LAMBDA(const Integer &i) { marked(i) = (error(i) >= low_bound_err) * i; });
 
-        //     Integer n_marked = 0;
+            VectorInt marked_list = mark_active(marked);
 
-        //     Kokkos::parallel_reduce(
-        //         n_elements, MARS_LAMBDA(const Integer &i, Integer &val) { val += marked(i) > 0; }, n_marked);
+            // Kokkos::parallel_for(
+            //     marked_list.extent(0), MARS_LAMBDA(const Integer &i) { printf("%ld ", marked_list(i)); });
 
-        //     VectorInt marked_list("maked_list", n_marked);
+            bisection.refine(marked_list);
 
-        //     Kokkos::sort(marked);
+            // VectorBool active = mesh.get_view_active();
+            // VectorBool inactive("inactive", active.extent(0));
 
-        //     // Kokkos::parallel_for(
-        //     //     n_elements, MARS_LAMBDA(const Integer &i) { printf("%ld ", marked(i)); });
-        //     Integer offset = n_elements - n_marked;
+            // Kokkos::parallel_for(
+            //     active.extent(0), MARS_LAMBDA(const Integer &i) { inactive(i) = !active(i); });
 
-        //     Kokkos::parallel_for(
-        //         n_marked, MARS_LAMBDA(const Integer i) { marked_list(i) = marked(offset + i); });
+            VectorInt parents("parents", mesh.n_elements(), -1);
 
-        //     // Kokkos::parallel_for(
-        //     //     n_marked, MARS_LAMBDA(const Integer &i) { printf("%ld ", marked_list(i)); });
+            Kokkos::parallel_for(
+                old_n_elements, MARS_LAMBDA(const Integer &i) {
+                    auto c = mesh.get_children(i);
+                    if (c.is_valid()) {
+                        parents(c(0)) = i;
+                        parents(c(1)) = i;
+                    }
+                });
 
-        //     bisection.refine(marked_list);
+            Integer n_new = mesh.n_elements() - old_n_elements;
 
-        //     auto children = mesh.get_view_children();
+            // Kokkos::parallel_for(
+            //     n_new,
+            //     MARS_LAMBDA(const Integer &i) { printf("%ld/%ld\n", old_n_elements + i, old_n_elements + n_new); });
 
-        //     std::cout << "nc: " << children.extent(0) << "," << children.extent(1) << std::endl;
+            VectorReal refined_x("refined_x", mesh.n_nodes());
 
-        //     Kokkos::parallel_for(
-        //         children.extent(0),
-        //         MARS_LAMBDA(const Integer &i) { printf("(%ld, %ld)\n", children(i, 0), children(i, 1)); });
+            {
+                auto elems = mesh.get_view_elements();
+                auto points = mesh.get_view_points();
+                auto J_inv = values.J_inv();
 
-        //     VectorInt out("marked", mesh.n_nodes());
-        //     Kokkos::parallel_for(
-        //         mesh.n_nodes(), MARS_LAMBDA(const Integer &i) { out(i) = i; });
+                Kokkos::parallel_for(
+                    n_new, MARS_LAMBDA(const Integer &iter) {
+                        const Integer elem_id = old_n_elements + iter;
+                        Integer parent = parents(elem_id);
 
-        //     VectorReal::HostMirror out_host("out_host", mesh.n_nodes());
-        //     Kokkos::deep_copy(out_host, out);
+                        Real J_inv_e[Dim * Dim];
+                        Real tr[Dim];
+                        Integer idx[NFuns];
 
-        //     std::cout << "n_elements: " << n_elements << " < " << mesh.n_elements() << std::endl;
+                        for (int k = 0; k < Dim * Dim; ++k) {
+                            J_inv_e[k] = J_inv(parent, k);
+                        }
 
-        //     SMesh serial_mesh;
-        //     convert_parallel_mesh_to_serial(serial_mesh, mesh);
+                        for (int k = 0; k < NFuns; ++k) {
+                            idx[k] = elems(elem_id, k);
+                        }
 
-        //     std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
-        //     std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
+                        Integer n0 = elems(parent, 0);
 
-        //     VTUMeshWriter<SMesh> w;
-        //     w.write("mesh_refined.vtu", serial_mesh, out_host);
-        // }
+                        for (int d = 0; d < Dim; ++d) {
+                            tr[d] = points(n0, d);
+                        }
+
+                        // printf("%ld/%ld\n", old_n_elements + i, old_n_elements + n_new);
+                    });
+            }
+
+            //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+            VectorInt out("marked", mesh.n_nodes());
+            Kokkos::parallel_for(
+                mesh.n_nodes(), MARS_LAMBDA(const Integer &i) { out(i) = i; });
+
+            VectorReal::HostMirror out_host("out_host", mesh.n_nodes());
+            Kokkos::deep_copy(out_host, out);
+
+            SMesh serial_mesh;
+            convert_parallel_mesh_to_serial(serial_mesh, mesh);
+
+            std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
+            std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
+
+            VTUMeshWriter<SMesh> w;
+            w.write("mesh_refined.vtu", serial_mesh, out_host);
+        }
 
         void run(int argc, char *argv[]) {
             using Elem = typename PMesh::Elem;

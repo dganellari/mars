@@ -1,6 +1,10 @@
 #ifndef MARS_SFC_CODE_HPP
 #define MARS_SFC_CODE_HPP
 
+#include "mars_config.hpp"
+#include "mars_base.hpp"
+#include "mars_globals.hpp"
+
 namespace mars
 {
 
