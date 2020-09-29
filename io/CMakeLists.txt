@@ -34,11 +34,11 @@ else(VTK_FOUND)
         # old system
         include(${VTK_USE_FILE})
         # add_executable(WriteVTU MACOSX_BUNDLE WriteVTU.cxx)
-        target_link_libraries(mars_io PRIVATE ${VTK_LIBRARIES})
+        target_link_libraries(mars_io PUBLIC ${VTK_LIBRARIES})
     else()
         # include all components add_executable(mars_io MACOSX_BUNDLE
         # mars_io.cxx)
-        target_link_libraries(mars_io PRIVATE ${VTK_LIBRARIES})
+        target_link_libraries(mars_io PUBLIC ${VTK_LIBRARIES})
         # vtk_module_autoinit is needed
         vtk_module_autoinit(TARGETS mars_io MODULES ${VTK_LIBRARIES})
     endif()
