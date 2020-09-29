@@ -42,127 +42,6 @@ namespace mars {
         using VectorInt = mars::ViewVectorType<Integer>;
         using VectorBool = mars::ViewVectorType<bool>;
 
-        void adaptive_refinement(FEValues<PMesh> &values, VectorReal &x) {
-            auto mesh = values.mesh();
-
-            ParallelBisection<PMesh> bisection(&mesh);
-
-            VectorReal error;
-            GradientRecovery<PMesh> grad_rec;
-            grad_rec.estimate(values, x, error);
-
-            const Real alpha = 0.3;
-            const Real max_error = KokkosBlas::nrminf(error);
-            const Real low_bound_err = alpha * max_error;
-
-            Integer old_n_elements = mesh.n_elements();
-
-            VectorBool marked("marked", mesh.n_elements());
-
-            Kokkos::parallel_for(
-                mesh.n_elements(), MARS_LAMBDA(const Integer &i) { marked(i) = (error(i) >= low_bound_err) * i; });
-
-            VectorInt marked_list = mark_active(marked);
-
-            // Kokkos::parallel_for(
-            //     marked_list.extent(0), MARS_LAMBDA(const Integer &i) { printf("%ld ", marked_list(i)); });
-
-            bisection.refine(marked_list);
-
-            // VectorBool active = mesh.get_view_active();
-            // VectorBool inactive("inactive", active.extent(0));
-
-            // Kokkos::parallel_for(
-            //     active.extent(0), MARS_LAMBDA(const Integer &i) { inactive(i) = !active(i); });
-
-            VectorInt parents("parents", mesh.n_elements(), -1);
-
-            Kokkos::parallel_for(
-                old_n_elements, MARS_LAMBDA(const Integer &i) {
-                    auto c = mesh.get_children(i);
-                    if (c.is_valid()) {
-                        parents(c(0)) = i;
-                        parents(c(1)) = i;
-                    }
-                });
-
-            Integer n_new = mesh.n_elements() - old_n_elements;
-
-            // Kokkos::parallel_for(
-            //     n_new,
-            //     MARS_LAMBDA(const Integer &i) { printf("%ld/%ld\n", old_n_elements + i, old_n_elements + n_new); });
-
-            VectorReal refined_x("refined_x", mesh.n_nodes());
-
-            Kokkos::parallel_for(
-                x.extent(0), MARS_LAMBDA(const Integer &i) { refined_x(i) = x(i); });
-
-            {
-                auto elems = mesh.get_view_elements();
-                auto points = mesh.get_view_points();
-                auto J_inv = values.J_inv();
-
-                Kokkos::parallel_for(
-                    n_new, MARS_LAMBDA(const Integer &iter) {
-                        const Integer elem_id = old_n_elements + iter;
-                        Integer parent = parents(elem_id);
-
-                        Real J_inv_e[Dim * Dim];
-                        Real tr[Dim], p[Dim], p_ref[Dim];
-                        Integer idx[NFuns];
-                        Real u_e[NFuns];
-
-                        for (int k = 0; k < Dim * Dim; ++k) {
-                            J_inv_e[k] = J_inv(parent, k);
-                        }
-
-                        for (int k = 0; k < NFuns; ++k) {
-                            idx[k] = elems(parent, k);
-                        }
-
-                        for (int k = 0; k < NFuns; ++k) {
-                            u_e[k] = x(idx[k]);
-                        }
-
-                        Integer n0 = elems(parent, 0);
-
-                        for (int d = 0; d < Dim; ++d) {
-                            tr[d] = points(n0, d);
-                        }
-
-                        for (int k = 0; k < NFuns; ++k) {
-                            Integer c_n_id = elems(elem_id, k);
-
-                            for (int d = 0; d < Dim; ++d) {
-                                p[d] = points(c_n_id, d) - tr[d];
-                            }
-
-                            Algebra<Dim>::mv_mult(J_inv_e, p, p_ref);
-
-                            assert(p_ref[0] >= -1e-14);
-                            assert(p_ref[1] >= -1e-14);
-
-                            Real val = FESimplex<Dim>::fun(p_ref, u_e);
-                            refined_x(c_n_id) = val;
-                        }
-                    });
-            }
-
-            //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-            VectorReal::HostMirror refined_x_host("refined_x_host", mesh.n_nodes());
-            Kokkos::deep_copy(refined_x_host, refined_x);
-
-            SMesh serial_mesh;
-            convert_parallel_mesh_to_serial(serial_mesh, mesh);
-
-            std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
-            std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
-
-            VTUMeshWriter<SMesh> w;
-            w.write("mesh_refined.vtu", serial_mesh, refined_x_host);
-        }
-
         class Problem {
         public:
             Problem(PMesh &mesh) : mesh(mesh), op(mesh), bc(mesh), rhs("rhs", mesh.n_nodes()), write_output(true) {}
@@ -286,19 +165,139 @@ namespace mars {
             bool write_output;
         };
 
-        bool solve(PMesh &mesh) {
-            Problem problem(mesh);
-            problem.init();
+        bool refine(Problem &problem, const Real tol, VectorReal &x) {
+            FEValues<PMesh> &values = problem.op.values();
+            auto mesh = values.mesh();
 
+            ParallelBisection<PMesh> bisection(&mesh);
+
+            VectorReal error;
+            GradientRecovery<PMesh> grad_rec;
+            grad_rec.estimate(values, x, error);
+
+            const Real alpha = 0.3;
+            const Real max_error = KokkosBlas::nrminf(error);
+            const Real low_bound_err = alpha * max_error;
+
+            Integer old_n_elements = mesh.n_elements();
+
+            VectorBool marked("marked", mesh.n_elements());
+
+            Kokkos::parallel_for(
+                mesh.n_elements(), MARS_LAMBDA(const Integer &i) { marked(i) = (error(i) >= low_bound_err) * i; });
+
+            VectorInt marked_list = mark_active(marked);
+            bisection.refine(marked_list);
+
+            VectorInt parents("parents", mesh.n_elements(), -1);
+
+            Kokkos::parallel_for(
+                old_n_elements, MARS_LAMBDA(const Integer &i) {
+                    auto c = mesh.get_children(i);
+                    if (c.is_valid()) {
+                        parents(c(0)) = i;
+                        parents(c(1)) = i;
+                    }
+                });
+
+            Integer n_new = mesh.n_elements() - old_n_elements;
+
+            VectorReal refined_x("refined_x", mesh.n_nodes());
+
+            Kokkos::parallel_for(
+                x.extent(0), MARS_LAMBDA(const Integer &i) { refined_x(i) = x(i); });
+
+            {
+                auto elems = mesh.get_view_elements();
+                auto points = mesh.get_view_points();
+                auto J_inv = values.J_inv();
+
+                Kokkos::parallel_for(
+                    n_new, MARS_LAMBDA(const Integer &iter) {
+                        const Integer elem_id = old_n_elements + iter;
+                        Integer parent = parents(elem_id);
+
+                        Real J_inv_e[Dim * Dim];
+                        Real tr[Dim], p[Dim], p_ref[Dim];
+                        Integer idx[NFuns];
+                        Real u_e[NFuns];
+
+                        for (int k = 0; k < Dim * Dim; ++k) {
+                            J_inv_e[k] = J_inv(parent, k);
+                        }
+
+                        for (int k = 0; k < NFuns; ++k) {
+                            idx[k] = elems(parent, k);
+                        }
+
+                        for (int k = 0; k < NFuns; ++k) {
+                            u_e[k] = x(idx[k]);
+                        }
+
+                        Integer n0 = elems(parent, 0);
+
+                        for (int d = 0; d < Dim; ++d) {
+                            tr[d] = points(n0, d);
+                        }
+
+                        for (int k = 0; k < NFuns; ++k) {
+                            Integer c_n_id = elems(elem_id, k);
+
+                            for (int d = 0; d < Dim; ++d) {
+                                p[d] = points(c_n_id, d) - tr[d];
+                            }
+
+                            Algebra<Dim>::mv_mult(J_inv_e, p, p_ref);
+
+                            assert(p_ref[0] >= -1e-14);
+                            assert(p_ref[1] >= -1e-14);
+
+                            Real val = FESimplex<Dim>::fun(p_ref, u_e);
+                            refined_x(c_n_id) = val;
+                        }
+                    });
+
+                x = refined_x;
+            }
+
+            //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+            VectorReal::HostMirror refined_x_host("refined_x_host", mesh.n_nodes());
+            Kokkos::deep_copy(refined_x_host, refined_x);
+
+            SMesh serial_mesh;
+            convert_parallel_mesh_to_serial(serial_mesh, mesh);
+
+            std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
+            std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
+
+            VTUMeshWriter<SMesh> w;
+            w.write("mesh_refined.vtu", serial_mesh, refined_x_host);
+        }
+
+        bool solve(PMesh &mesh, const bool write_output) {
             const Integer n_nodes = mesh.n_nodes();
             VectorReal x("X", n_nodes);
 
-            if (problem.solve(x)) {
-                problem.measure_actual_error(x);
-                // adaptive_refinement(op.values(), x);
-            } else {
-                return false;
-            }
+            Real tol = 1e-4;
+            Integer max_refinements = 0;
+            Integer refs = 0;
+            bool refined = false;
+
+            do {
+                Problem problem(mesh);
+                problem.write_output = write_output;
+                problem.init();
+
+                if (problem.solve(x)) {
+                    problem.measure_actual_error(x);
+                } else {
+                    return false;
+                }
+
+                refined = refine(problem, tol, x);
+
+            } while (refs++ <= max_refinements && refined);
         }
 
         void run(int argc, char *argv[]) {
@@ -343,7 +342,7 @@ namespace mars {
                 write_output = false;
             }
 
-            solve(mesh);
+            solve(mesh, write_output);
         }
     };  // namespace mars
 }  // namespace mars
