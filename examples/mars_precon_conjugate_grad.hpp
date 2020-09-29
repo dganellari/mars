@@ -32,7 +32,7 @@ namespace mars {
     using VecType = mars::ViewVectorType<Real>;
 
     template <class OperatorA, class OperatorP>
-    void bcg_stab(OperatorA &A, OperatorP &P, const VecType &b, Integer max_iter, VecType &x_0, Integer &num_iter) {
+    bool bcg_stab(OperatorA &A, OperatorP &P, const VecType &b, Integer max_iter, VecType &x_0, Integer &num_iter) {
         auto comm = A.comm();
         const size_t N = x_0.extent(0);
 
@@ -175,6 +175,8 @@ namespace mars {
         KokkosBlas::axpy(-1.0, b, r_0);  // r_0 = b - A*x_0
         std::cout << "RESIDUE: " << std::sqrt(comm.sum(KokkosBlas::nrm2_squared(r_0))) << std::endl;
         std::cout << "Iter: " << count << std::endl;
+
+        return num_iter <= max_iter;
     }
 
 }  // namespace mars

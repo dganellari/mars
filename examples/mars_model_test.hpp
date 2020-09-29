@@ -94,6 +94,9 @@ namespace mars {
 
             VectorReal refined_x("refined_x", mesh.n_nodes());
 
+            Kokkos::parallel_for(
+                x.extent(0), MARS_LAMBDA(const Integer &i) { refined_x(i) = x(i); });
+
             {
                 auto elems = mesh.get_view_elements();
                 auto points = mesh.get_view_points();
@@ -114,7 +117,7 @@ namespace mars {
                         }
 
                         for (int k = 0; k < NFuns; ++k) {
-                            idx[k] = elems(elem_id, k);
+                            idx[k] = elems(parent, k);
                         }
 
                         for (int k = 0; k < NFuns; ++k) {
@@ -128,28 +131,27 @@ namespace mars {
                         }
 
                         for (int k = 0; k < NFuns; ++k) {
+                            Integer c_n_id = elems(elem_id, k);
+
                             for (int d = 0; d < Dim; ++d) {
-                                p[d] = points(n0, d) - tr[d];
+                                p[d] = points(c_n_id, d) - tr[d];
                             }
 
                             Algebra<Dim>::mv_mult(J_inv_e, p, p_ref);
+
+                            assert(p_ref[0] >= -1e-14);
+                            assert(p_ref[1] >= -1e-14);
+
                             Real val = FESimplex<Dim>::fun(p_ref, u_e);
-
-                            // Kokkos::atomic_store(refined_x())
+                            refined_x(c_n_id) = val;
                         }
-
-                        // printf("%ld/%ld\n", old_n_elements + i, old_n_elements + n_new);
                     });
             }
 
             //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-            VectorInt out("marked", mesh.n_nodes());
-            Kokkos::parallel_for(
-                mesh.n_nodes(), MARS_LAMBDA(const Integer &i) { out(i) = i; });
-
-            VectorReal::HostMirror out_host("out_host", mesh.n_nodes());
-            Kokkos::deep_copy(out_host, out);
+            VectorReal::HostMirror refined_x_host("refined_x_host", mesh.n_nodes());
+            Kokkos::deep_copy(refined_x_host, refined_x);
 
             SMesh serial_mesh;
             convert_parallel_mesh_to_serial(serial_mesh, mesh);
@@ -158,7 +160,145 @@ namespace mars {
             std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
 
             VTUMeshWriter<SMesh> w;
-            w.write("mesh_refined.vtu", serial_mesh, out_host);
+            w.write("mesh_refined.vtu", serial_mesh, refined_x_host);
+        }
+
+        class Problem {
+        public:
+            Problem(PMesh &mesh) : mesh(mesh), op(mesh), bc(mesh), rhs("rhs", mesh.n_nodes()), write_output(true) {}
+
+            bool solve(VectorReal &x) {
+                x = VectorReal("x", mesh.n_nodes());
+                bc.apply(x, bc_fun);
+
+                auto prec_ptr = op.preconditioner();
+
+                Integer num_iter = 0;
+                if (bcg_stab(op, *prec_ptr, rhs, 10 * rhs.extent(0), x, num_iter)) {
+                    if (write_output) {
+                        return write(x);
+                    }
+
+                } else {
+                    return false;
+                }
+            }
+
+            bool write(VectorReal &x) {
+                std::cout << "Writing results to disk..." << std::endl;
+
+                Integer n_nodes = mesh.n_nodes();
+
+                VectorReal::HostMirror x_host("x_host", n_nodes);
+                VectorReal::HostMirror rhs_host("rhs_host", n_nodes);
+                Kokkos::deep_copy(x_host, x);
+                Kokkos::deep_copy(rhs_host, rhs);
+
+                SMesh serial_mesh;
+                convert_parallel_mesh_to_serial(serial_mesh, mesh);
+
+                std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
+                std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
+
+                VTUMeshWriter<SMesh> w;
+
+                if (!w.write("solution.vtu", serial_mesh, x_host)) {
+                    return false;
+                }
+
+                if (!w.write("rhs.vtu", serial_mesh, rhs_host)) {
+                    return false;
+                }
+
+                return true;
+            }
+
+            bool measure_actual_error(VectorReal &x) {
+                /////////////////////////////////////////////////////////////////////////////
+                // Compute Error
+                Integer n_nodes = mesh.n_nodes();
+
+                VectorReal x_exact("X_exact", n_nodes);
+                VectorReal diff("Diff", n_nodes);
+                VectorReal Ax("Ax", n_nodes);
+
+                Interpolate<PMesh> interp(mesh);
+                interp.apply(x_exact, an_fun);
+
+                Kokkos::deep_copy(diff, x_exact);
+
+                KokkosBlas::axpy(-1.0, x, diff);
+                Real err = KokkosBlas::nrm2(diff) / KokkosBlas::nrm2(x_exact);
+
+                std::cout << "=====================================" << std::endl;
+                std::cout << "err : " << err << std::endl;
+
+                ////////////////////////////////////////////////////////////////////////////
+                // Compute op (x_exact) - rhs
+
+                op.apply(x_exact, diff);
+
+                Real sum_rhs = KokkosBlas::sum(rhs);
+
+                Real norm_lapl_x = KokkosBlas::sum(diff);
+                std::cout << "sum(Op(x)): " << norm_lapl_x << " == " << sum_rhs << std::endl;
+
+                // Diff
+                KokkosBlas::axpy(-1.0, rhs, diff);
+                err = KokkosBlas::nrm2(diff) / KokkosBlas::nrm2(rhs);
+                std::cout << "Op(x_exact) - rhs : " << err << std::endl;
+
+                std::cout << "=====================================" << std::endl;
+
+                if (write_output) {
+                    VTUMeshWriter<SMesh> w;
+                    VectorReal::HostMirror x_exact_host("x_exact_host", mesh.n_nodes());
+                    Kokkos::deep_copy(x_exact_host, x_exact);
+                    return w.write("x_exact.vtu", serial_mesh, x_exact_host);
+                }
+
+                return true;
+            }
+
+            void init() {
+                op.init();
+                auto id = std::make_shared<IdentityOperator>();
+                id->init(mesh, bc_fun);
+                op.set_identity(id);
+                op.assemble_rhs(rhs, rhs_fun);
+                bc.apply(rhs, bc_fun);
+
+                if (write_output) {
+                    convert_parallel_mesh_to_serial(serial_mesh, mesh);
+                }
+            }
+
+            BC bc_fun;
+            RHS rhs_fun;
+            AnalyticalFun an_fun;
+
+            PMesh &mesh;
+            Op op;
+            BoundaryConditions<PMesh> bc;
+            VectorReal rhs;
+
+            SMesh serial_mesh;
+            bool write_output;
+        };
+
+        bool solve(PMesh &mesh) {
+            Problem problem(mesh);
+            problem.init();
+
+            const Integer n_nodes = mesh.n_nodes();
+            VectorReal x("X", n_nodes);
+
+            if (problem.solve(x)) {
+                problem.measure_actual_error(x);
+                // adaptive_refinement(op.values(), x);
+            } else {
+                return false;
+            }
         }
 
         void run(int argc, char *argv[]) {
@@ -203,107 +343,7 @@ namespace mars {
                 write_output = false;
             }
 
-            BC bc_fun;
-            RHS rhs_fun;
-            AnalyticalFun an_fun;
-
-            const Integer n_nodes = mesh.n_nodes();
-
-            VectorReal x("X", n_nodes);
-            VectorReal rhs("rhs", n_nodes);
-            VectorReal Ax("Ax", n_nodes);
-
-            Op op(mesh);
-            BoundaryConditions<PMesh> bc(mesh);
-            op.init();
-
-            auto id = std::make_shared<IdentityOperator>();
-            id->init(mesh, bc_fun);
-
-            op.set_identity(id);
-            op.assemble_rhs(rhs, rhs_fun);
-
-            Real sum_rhs = KokkosBlas::sum(rhs);
-
-            std::cout << "sum_rhs : " << sum_rhs << std::endl;
-
-            bc.apply(rhs, bc_fun);
-            bc.apply(x, bc_fun);
-
-            auto prec_ptr = op.preconditioner();
-
-            Integer num_iter = 0;
-            bcg_stab(op, *prec_ptr, rhs, 10 * rhs.extent(0), x, num_iter);
-
-            /////////////////////////////////////////////////////////////////////////////
-            // Compute Error
-            VectorReal x_exact("X_exact", n_nodes);
-            VectorReal diff("Diff", n_nodes);
-
-            Interpolate<PMesh> interp(mesh);
-            interp.apply(x_exact, an_fun);
-
-            Kokkos::deep_copy(diff, x_exact);
-
-            KokkosBlas::axpy(-1.0, x, diff);
-            Real err = KokkosBlas::nrm2(diff) / KokkosBlas::nrm2(x_exact);
-            std::cout << "err : " << err << std::endl;
-
-            ////////////////////////////////////////////////////////////////////////////
-            // Compute op (x_exact) - rhs
-
-            op.apply(x_exact, diff);
-
-            sum_rhs = KokkosBlas::sum(rhs);
-
-            Real norm_lapl_x = KokkosBlas::sum(diff);
-            std::cout << "norm_lapl_x: " << norm_lapl_x << " == " << sum_rhs << std::endl;
-
-            // Diff
-
-            KokkosBlas::axpy(-1.0, rhs, diff);
-            err = KokkosBlas::nrm2(diff) / KokkosBlas::nrm2(rhs);
-            std::cout << "Op error : " << err << std::endl;
-
-            ///////////////////////////////////////////////////////////////////////////
-
-            VectorReal error;
-            GradientRecovery<PMesh> grad_rec;
-            grad_rec.estimate(op.values(), x, error);
-
-            ///////////////////////////////////////////////////////////////////////////
-
-            if (write_output) {
-                std::cout << "Writing results to disk..." << std::endl;
-
-                VectorReal::HostMirror x_host("x_host", n_nodes);
-                VectorReal::HostMirror rhs_host("rhs_host", n_nodes);
-                Kokkos::deep_copy(x_host, x);
-                Kokkos::deep_copy(rhs_host, rhs);
-
-                SMesh serial_mesh;
-                convert_parallel_mesh_to_serial(serial_mesh, mesh);
-
-                std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
-                std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
-
-                VTUMeshWriter<SMesh> w;
-                w.write("mesh.vtu", serial_mesh, x_host);
-                w.write("mesh_rhs.vtu", serial_mesh, rhs_host);
-
-                Kokkos::deep_copy(x_host, x_exact);
-                w.write("analitic.vtu", serial_mesh, x_host);
-
-                VectorReal::HostMirror error_host("error_host", mesh.n_elements());
-                Kokkos::deep_copy(error_host, error);
-                w.write("error.vtu", serial_mesh, error_host, true);
-
-                VectorReal::HostMirror diff_host("lapl_x_host", mesh.n_nodes());
-                Kokkos::deep_copy(diff_host, diff);
-                w.write("lapl_x.vtu", serial_mesh, diff_host);
-            }
-
-            // adaptive_refinement(op.values(), x);
+            solve(mesh);
         }
     };  // namespace mars
 }  // namespace mars
