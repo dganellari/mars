@@ -142,7 +142,7 @@ namespace mars {
 
             assert(!std::isnan(stop_criteria));
 
-            if (count == 1 || count % 10 == 0) {
+            if (count == 1 || count % 100 == 0) {
                 std::cout << count << " " << stop_criteria << std::endl;
             }
 

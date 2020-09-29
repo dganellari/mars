@@ -71,6 +71,9 @@ namespace mars {
                 "init_parent", n_elements, MARS_LAMBDA(const Integer i) { parent(i) = -1; });
         }
 
+        MARS_INLINE_FUNCTION ViewVectorType<Integer> &parent_map() { return parent_; }
+        MARS_INLINE_FUNCTION const ViewVectorType<Integer> &parent_map() const { return parent_; }
+
         void reserve_elem_children_map(const Integer size) {
             if (elem_children_map_.is_allocated()) {
                 elem_children_map_.rehash(size);
