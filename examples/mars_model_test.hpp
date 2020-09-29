@@ -56,6 +56,8 @@ namespace mars {
                 if (bcg_stab(op, *prec_ptr, rhs, 10 * rhs.extent(0), x, num_iter)) {
                     if (write_output) {
                         return write(x);
+                    } else {
+                        return true;
                     }
 
                 } else {
@@ -75,9 +77,6 @@ namespace mars {
 
                 SMesh serial_mesh;
                 convert_parallel_mesh_to_serial(serial_mesh, mesh);
-
-                std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
-                std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
 
                 VTUMeshWriter<SMesh> w;
 
@@ -110,6 +109,11 @@ namespace mars {
                 Real err = KokkosBlas::nrm2(diff) / KokkosBlas::nrm2(x_exact);
 
                 std::cout << "=====================================" << std::endl;
+
+                std::cout << "n_elements:        " << mesh.n_elements() << std::endl;
+                std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+                std::cout << "n_nodes:           " << mesh.n_nodes() << std::endl;
+
                 std::cout << "err : " << err << std::endl;
 
                 ////////////////////////////////////////////////////////////////////////////
@@ -261,18 +265,19 @@ namespace mars {
             }
 
             //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+            if (problem.write_output) {
+                VectorReal::HostMirror refined_x_host("refined_x_host", mesh.n_nodes());
+                Kokkos::deep_copy(refined_x_host, refined_x);
 
-            VectorReal::HostMirror refined_x_host("refined_x_host", mesh.n_nodes());
-            Kokkos::deep_copy(refined_x_host, refined_x);
+                SMesh serial_mesh;
+                convert_parallel_mesh_to_serial(serial_mesh, mesh);
 
-            SMesh serial_mesh;
-            convert_parallel_mesh_to_serial(serial_mesh, mesh);
+                std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
+                std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
 
-            std::cout << "n_active_elements: " << serial_mesh.n_active_elements() << std::endl;
-            std::cout << "n_nodes:           " << serial_mesh.n_nodes() << std::endl;
-
-            VTUMeshWriter<SMesh> w;
-            w.write("mesh_refined.vtu", serial_mesh, refined_x_host);
+                VTUMeshWriter<SMesh> w;
+                w.write("mesh_refined.vtu", serial_mesh, refined_x_host);
+            }
         }
 
         bool solve(PMesh &mesh, const bool write_output) {
@@ -334,13 +339,18 @@ namespace mars {
                 SMesh smesh;
                 read_mesh("../data/cube4d_24.MFEM", smesh);
 
-                Bisection<SMesh> b(smesh);
-                b.uniform_refine(n);
-                b.clear();
-                smesh.clean_up();
+                // Bisection<SMesh> b(smesh);
+                // b.uniform_refine(n);
+                // b.clear();
+                // smesh.clean_up();
                 convert_serial_mesh_to_parallel(mesh, smesh);
+
+                ParallelBisection<PMesh>(&mesh).uniform_refine(3);
                 write_output = false;
             }
+
+            // ParallelBisection<PMesh> bisection(&mesh);
+            // bisection.uniform_refine(5);
 
             solve(mesh, write_output);
         }
