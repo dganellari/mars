@@ -17,7 +17,7 @@ namespace mars {
 
     class CopyOperator final {
     public:
-        void apply(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) { Kokkos::deep_copy(op_x, x); }
+        static void apply(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) { Kokkos::deep_copy(op_x, x); }
     };
 
 }  // namespace mars
