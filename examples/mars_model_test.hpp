@@ -209,6 +209,8 @@ namespace mars {
                 Kokkos::parallel_for(
                     n_new, MARS_LAMBDA(const Integer &iter) {
                         const Integer elem_id = new_elem_offset + iter;
+                        assert(elem_id < parents.extent(0));
+
                         Integer parent = parents(elem_id);
                         assert(parent != -1);
 
@@ -218,11 +220,15 @@ namespace mars {
                         Real u_e[NFuns];
 
                         for (int k = 0; k < Dim * Dim; ++k) {
+                            assert(parent < J_inv.extent(0));
+
                             J_inv_e[k] = J_inv(parent, k);
                             assert(J_inv_e[k] == J_inv_e[k]);
                         }
 
                         for (int k = 0; k < NFuns; ++k) {
+                            assert(parent < elems.extent(0));
+
                             idx[k] = elems(parent, k);
                         }
 
@@ -231,15 +237,20 @@ namespace mars {
                         }
 
                         Integer n0 = elems(parent, 0);
+                        assert(n0 < points.extent(0));
 
                         for (int d = 0; d < Dim; ++d) {
                             tr[d] = points(n0, d);
                         }
 
                         for (int k = 0; k < NFuns; ++k) {
+                            assert(elem_id < elems.extent(0));
+
                             Integer c_n_id = elems(elem_id, k);
 
                             for (int d = 0; d < Dim; ++d) {
+                                assert(c_n_id < points.extent(0));
+
                                 p[d] = points(c_n_id, d) - tr[d];
                             }
 
@@ -366,10 +377,10 @@ namespace mars {
             Integer n_new = mesh.n_elements() - old_n_elements;
             if (n_new == 0) return false;
 
-            x = VectorReal("x", mesh.n_nodes());
+            // x = VectorReal("x", mesh.n_nodes());
 
             // FIXME
-            // interpolate(mesh, values, old_n_elements, x);
+            interpolate(mesh, values, old_n_elements, x);
 
             std::cout << "n_elements:        " << mesh.n_elements() << std::endl;
             std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
@@ -395,7 +406,7 @@ namespace mars {
             VectorReal x("X", n_nodes);
 
             Real tol = 1e-6;
-            Integer max_refinements = (Dim == 2) ? 8 : 5;
+            Integer max_refinements = (Dim == 2) ? 10 : 5;
             Integer refs = 0;
             bool refined = false;
             bool use_adaptive_refinement = true;
