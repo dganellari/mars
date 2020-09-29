@@ -70,9 +70,11 @@ public:
     void reserve_parents(const Integer n_elements)
     {
         parent_ = ViewVectorType<Integer>("parent_", n_elements);
+        //it will fail in cuda unless we make a copy of the view locally
+        ViewVectorType<Integer> parent = parent_;
         Kokkos::parallel_for("init_parent", n_elements,
                 MARS_LAMBDA(const Integer i){
-                    parent_(i) = -1;
+                    parent(i) = -1;
                 });
     }
 
