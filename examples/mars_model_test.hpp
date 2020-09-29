@@ -107,6 +107,7 @@ namespace mars {
                         Real J_inv_e[Dim * Dim];
                         Real tr[Dim], p[Dim], p_ref[Dim];
                         Integer idx[NFuns];
+                        Real u_e[NFuns];
 
                         for (int k = 0; k < Dim * Dim; ++k) {
                             J_inv_e[k] = J_inv(parent, k);
@@ -114,6 +115,10 @@ namespace mars {
 
                         for (int k = 0; k < NFuns; ++k) {
                             idx[k] = elems(elem_id, k);
+                        }
+
+                        for (int k = 0; k < NFuns; ++k) {
+                            u_e[k] = x(idx[k]);
                         }
 
                         Integer n0 = elems(parent, 0);
@@ -128,6 +133,9 @@ namespace mars {
                             }
 
                             Algebra<Dim>::mv_mult(J_inv_e, p, p_ref);
+                            Real val = FESimplex<Dim>::fun(p_ref, u_e);
+
+                            // Kokkos::atomic_store(refined_x())
                         }
 
                         // printf("%ld/%ld\n", old_n_elements + i, old_n_elements + n_new);
