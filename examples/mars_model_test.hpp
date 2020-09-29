@@ -127,6 +127,13 @@ namespace mars {
                 ns[i] = n;
             }
 
+            if (argc > 3) {
+                Integer mult = atoi(argv[3]);
+                if (mult) {
+                    ns[Dim - 1] *= mult;
+                }
+            }
+
             PMesh mesh;
 
             if (Dim <= 3) {

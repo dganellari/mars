@@ -18,7 +18,7 @@ namespace mars {
         FitzHughNagumo(FEValues<Mesh> &values) : values_(values) {}
 
         void init() { quad_ = SimplexQuadratureQuartic<Dim>::make(); }
-        void hessian(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) {
+        void jacobian(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) {
             // Kokkos::parallel_for(
             //     "UMeshOperator::assemble_rhs", mesh.n_elements(), MARS_LAMBDA(const Integer i) {
             //         Integer idx[NFuns];
@@ -41,7 +41,7 @@ namespace mars {
             //     });
         }
 
-        void gradient(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) {
+        void fun(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) {
             // Kokkos::parallel_for(
             //     "UMeshOperator::assemble_rhs", mesh.n_elements(), MARS_LAMBDA(const Integer i) {
             //         Integer idx[NFuns];
