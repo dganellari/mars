@@ -409,7 +409,8 @@ namespace mars {
             Integer max_refinements = (Dim == 2) ? 10 : 5;
             Integer refs = 0;
             bool refined = false;
-            bool use_adaptive_refinement = true;
+            // bool use_adaptive_refinement = true;
+            bool use_adaptive_refinement = false;
             bool reset_x_to_zero = false;
 
             do {
