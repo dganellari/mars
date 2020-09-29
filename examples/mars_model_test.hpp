@@ -245,15 +245,90 @@ namespace mars {
 
                             Algebra<Dim>::mv_mult(J_inv_e, p, p_ref);
 
-                            assert(p_ref[0] >= -1e-14);
-                            assert(p_ref[1] >= -1e-14);
-
                             Real val = FESimplex<Dim>::fun(p_ref, u_e);
                             refined_x(c_n_id) = val;
                         }
                     });
             }
         }
+
+        // bool refine(PMesh &mesh, FEValues<PMesh> &values, const Real tol, VectorReal &x, const bool write_output) {
+        //     VectorReal error;
+        //     GradientRecovery<PMesh> grad_rec;
+        //     grad_rec.estimate(values, x, error);
+
+        //     if (KokkosBlas::sum(error) < tol) {
+        //         std::cout << "[Status] Reached desired tolerance" << std::endl;
+        //         return false;
+        //     }
+
+        //     const Real alpha = 0.3;
+        //     const Real max_error = KokkosBlas::nrminf(error);
+        //     const Real low_bound_err = alpha * max_error;
+
+        //     Integer old_n_elements = mesh.n_elements();
+
+        //     VectorBool marked("marked", mesh.n_elements());
+
+        //     Kokkos::parallel_for(
+        //         mesh.n_elements(), MARS_LAMBDA(const Integer &i) { marked(i) = (error(i) >= low_bound_err) * i; });
+
+        //     VectorInt marked_list = mark_active(marked);
+        //     VectorInt::HostMirror marked_host("marked_host", marked_list.extent(0));
+        //     Kokkos::deep_copy(marked_host, marked_list);
+
+        //     std::vector<Integer> elems(marked_host.extent(0));
+
+        //     for (Integer i = 0; i < marked_host.extent(0); ++i) {
+        //         elems[i] = marked_host[i];
+        //     }
+
+        //     SMesh serial_mesh;
+        //     convert_parallel_mesh_to_serial(serial_mesh, mesh);
+
+        //     Bisection<SMesh> b(serial_mesh);
+        //     b.refine(elems);
+
+        //     serial_mesh.clean_up();
+        //     convert_serial_mesh_to_parallel(mesh, serial_mesh);
+
+        //     assert(serial_mesh.is_valid(true));
+
+        //     x = VectorReal("x", mesh.n_nodes());
+
+        //     // Kokkos::parallel_for(
+        //     //     marked_list.extent(0), MARS_LAMBDA(const Integer &i) {
+        //     //         assert(mesh.is_active(marked_list(i)));
+        //     //         assert(marked_list(i) < mesh.n_elements());
+        //     //     });
+
+        //     // ParallelBisection<PMesh> bisection(&mesh);
+        //     // bisection.refine(marked_list);
+
+        //     // Integer n_new = mesh.n_elements() - old_n_elements;
+        //     // if (n_new == 0) return false;
+
+        //     // interpolate(mesh, values, old_n_elements, x);
+
+        //     std::cout << "n_elements:        " << mesh.n_elements() << std::endl;
+        //     std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+        //     std::cout << "n_nodes:           " << mesh.n_nodes() << std::endl;
+
+        //     //
+        //     //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        //     // if (write_output) {
+        //     //     VectorReal::HostMirror refined_x_host("refined_x_host", mesh.n_nodes());
+        //     //     Kokkos::deep_copy(refined_x_host, x);
+
+        //     //     SMesh serial_mesh;
+        //     //     convert_parallel_mesh_to_serial(serial_mesh, mesh);
+
+        //     //     VTUMeshWriter<SMesh> w;
+        //     //     w.write("mesh_refined.vtu", serial_mesh, refined_x_host);
+        //     // }
+
+        //     return true;
+        // }
 
         bool refine(PMesh &mesh, FEValues<PMesh> &values, const Real tol, VectorReal &x, const bool write_output) {
             ParallelBisection<PMesh> bisection(&mesh);
@@ -291,7 +366,10 @@ namespace mars {
             Integer n_new = mesh.n_elements() - old_n_elements;
             if (n_new == 0) return false;
 
-            interpolate(mesh, values, old_n_elements, x);
+            x = VectorReal("x", mesh.n_nodes());
+
+            // FIXME
+            // interpolate(mesh, values, old_n_elements, x);
 
             std::cout << "n_elements:        " << mesh.n_elements() << std::endl;
             std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
@@ -317,10 +395,10 @@ namespace mars {
             VectorReal x("X", n_nodes);
 
             Real tol = 1e-6;
-            Integer max_refinements = 3;
+            Integer max_refinements = (Dim == 2) ? 8 : 5;
             Integer refs = 0;
             bool refined = false;
-            bool use_adaptive_refinement = false;
+            bool use_adaptive_refinement = true;
             bool reset_x_to_zero = false;
 
             do {

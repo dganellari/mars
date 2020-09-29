@@ -57,7 +57,22 @@ namespace mars {
             return ret;
         }
 
+        MARS_INLINE_FUNCTION static bool inside(const Real *p, const Real &tol) {
+            Real sum_p = 0.0;
+            for (int i = 0; i < Dim; ++i) {
+                if (p[i] <= -tol) {
+                    return false;
+                }
+
+                sum_p += p[i];
+            }
+
+            return sum_p <= 1.0 + tol;
+        }
+
         MARS_INLINE_FUNCTION static Real fun(const Real *p, const Real *u) {
+            assert(inside(p, 1e-8));
+
             Real ret = 1;
 
             for (int i = 0; i < Dim; ++i) {
