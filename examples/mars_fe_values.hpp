@@ -79,7 +79,8 @@ namespace mars {
                     Invert<Dim>::apply(J, J_inv_e, e_det_J);
 
                     // Turn off inactive contributions
-                    det_J(i) = Kokkos::ArithTraits<Real>::abs(e_det_J) * active(i);
+                    // det_J(i) = Kokkos::ArithTraits<Real>::abs(e_det_J) * active(i);
+                    det_J(i) = Kokkos::ArithTraits<Real>::abs(e_det_J);
 
                     for (int k = 0; k < (Dim * Dim); ++k) {
                         J_inv(i, k) = J_inv_e[k];

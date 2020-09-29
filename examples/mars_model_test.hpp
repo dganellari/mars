@@ -183,7 +183,18 @@ namespace mars {
             Integer n_new = mesh.n_elements() - new_elem_offset;
             if (n_new == 0) return false;
 
-            auto parents = mesh.parent_map();
+            // auto parents = mesh.parent_map();
+
+            VectorInt parents("parents", mesh.n_elements(), -1);
+
+            Kokkos::parallel_for(
+                new_elem_offset, MARS_LAMBDA(const Integer &i) {
+                    auto c = mesh.get_children(i);
+                    if (c.is_valid()) {
+                        parents(c(0)) = i;
+                        parents(c(1)) = i;
+                    }
+                });
 
             refined_x = VectorReal("refined_x", mesh.n_nodes());
 
@@ -199,6 +210,7 @@ namespace mars {
                     n_new, MARS_LAMBDA(const Integer &iter) {
                         const Integer elem_id = new_elem_offset + iter;
                         Integer parent = parents(elem_id);
+                        assert(parent != -1);
 
                         Real J_inv_e[Dim * Dim];
                         Real tr[Dim], p[Dim], p_ref[Dim];
@@ -207,6 +219,7 @@ namespace mars {
 
                         for (int k = 0; k < Dim * Dim; ++k) {
                             J_inv_e[k] = J_inv(parent, k);
+                            assert(J_inv_e[k] == J_inv_e[k]);
                         }
 
                         for (int k = 0; k < NFuns; ++k) {
@@ -242,10 +255,7 @@ namespace mars {
             }
         }
 
-        bool refine(Problem &problem, const Real tol, VectorReal &x) {
-            FEValues<PMesh> &values = problem.op.values();
-            auto &mesh = problem.mesh;
-
+        bool refine(PMesh &mesh, FEValues<PMesh> &values, const Real tol, VectorReal &x, const bool write_output) {
             ParallelBisection<PMesh> bisection(&mesh);
 
             VectorReal error;
@@ -288,7 +298,7 @@ namespace mars {
             std::cout << "n_nodes:           " << mesh.n_nodes() << std::endl;
 
             //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-            if (problem.write_output) {
+            if (write_output) {
                 VectorReal::HostMirror refined_x_host("refined_x_host", mesh.n_nodes());
                 Kokkos::deep_copy(refined_x_host, x);
 
@@ -325,7 +335,7 @@ namespace mars {
                 }
 
                 if (use_adaptive_refinement) {
-                    refined = refine(problem, tol, x);
+                    refined = refine(mesh, problem.op.values(), tol, x, write_output);
                     mesh.clean_up();
                 } else {
                     Integer elem_offset = mesh.n_elements();
