@@ -36,6 +36,7 @@
 #include "mars_test_kokkos.hpp"
 #endif  // WITH_KOKKOS
 
+// #include "mars_fitzhugh_nagumo.hpp"
 #include "mars_mesh_kokkos.hpp"
 #include "mars_model_test.hpp"
 #include "mars_spacetime_ex.hpp"
@@ -252,6 +253,48 @@ namespace mars {
 
     /////////////////////////////////////////////////////////////////////////////////////////////
 
+    class ST4D1Analitcal {
+    public:
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex7_4D_st_exact(p); }
+    };
+
+    class ST4D1RHS {
+    public:
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex7_4D_st_spacetime(p); }
+    };
+
+    template <class Mesh>
+    class ST4D1BC {
+    public:
+        /* BC --> zero dirichlet + natural neumann on upper bound */
+        static const int Dim = Mesh::Dim;
+
+        MARS_INLINE_FUNCTION void operator()(const Real *p, Real &val) const {
+            if (is_boundary(p)) {
+                val = ex4_3D_st_exact(p);
+            }
+        }
+
+        MARS_INLINE_FUNCTION static bool is_boundary(const Real *p) {
+            bool ret = false;
+            for (int d = 0; d < Dim; ++d) {
+                if (p[d] <= 1e-14) {
+                    ret = true;
+                    break;
+                }
+
+                if (d < Dim - 1 && p[d] >= 1 - 1e-14) {
+                    ret = true;
+                    break;
+                }
+            }
+
+            return ret;
+        }
+    };
+
+    /////////////////////////////////////////////////////////////////////////////////////////////
+
 }  // namespace mars
 
 int main(int argc, char *argv[]) {
@@ -289,13 +332,18 @@ int main(int argc, char *argv[]) {
         //     .run(argc, argv);
 
         // 3D example 1
-        ModelTest<ParallelMesh3, UMeshSTHeatEquation<ParallelMesh3>, ST3D1BC<ParallelMesh3>, ST3D1RHS, ST3D1Analitcal>()
-            .run(argc, argv);
+        // ModelTest<ParallelMesh3, UMeshSTHeatEquation<ParallelMesh3>, ST3D1BC<ParallelMesh3>, ST3D1RHS,
+        // ST3D1Analitcal>()
+        //     .run(argc, argv);
 
         // 3D example 2
         // ModelTest<ParallelMesh3, UMeshSTHeatEquation<ParallelMesh3>, ST3D2BC<ParallelMesh3>, ST3D2RHS,
         // ST3D2Analitcal>()
         //     .run(argc, argv);
+
+        // 4D example 1
+        ModelTest<ParallelMesh4, UMeshSTHeatEquation<ParallelMesh4>, ST4D1BC<ParallelMesh4>, ST4D1RHS, ST4D1Analitcal>()
+            .run(argc, argv);
     }
 
     Kokkos::finalize();
