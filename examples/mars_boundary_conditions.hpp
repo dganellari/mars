@@ -113,6 +113,11 @@ namespace mars {
         MARS_INLINE_FUNCTION static bool is_boundary(const Real *p) { return is_boundary_of_unit_cube<2>(p); }
     };
 
+    class Example3Analitcal {
+    public:
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex3_exact(p); }
+    };
+
     class Example3RHS {
     public:
         MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex3_laplacian(p); }
