@@ -71,7 +71,7 @@ namespace mars {
         mat_inv[3] = mat[0] / det;
         return true;
     }
-/*
+
     template <class DM, Integer... dataidx>
     void scatter_add_ghost_data(DM &dm, const context &context) {
         // scatter the data to the procs and keep them in a boundary data tuple
@@ -80,7 +80,7 @@ namespace mars {
         // the others example: dm_tuple boundary_data =
         // dm.scatter_ghost_data<1>(context);
         using dm_tuple = typename DM::user_tuple;
-        dm_tuple boundary_data = dm.scatter_ghost_data<dataidx...>(context);
+        dm_tuple boundary_data = dm.template scatter_ghost_data<dataidx...>(context);
 
         // use the scattered data "boundary_data" to do ops like max, add or min in
         // the dof contributions. Otherwise you can use predifined features like
@@ -89,19 +89,19 @@ namespace mars {
         // try to access uninitialized tuplelement and get seg faults. example::
         // dm.scatter_add<1>(boundary_data); If: dm.scatter_add<0>(boundary_data) then
         // seg faults.
-        dm.scatter_add<dataidx...>(boundary_data);
-        [>dm.scatter_max<u>(boundary_data);<]
-        [>dm.scatter_min<u>(boundary_data);<]
-    } */
+        dm.template scatter_add<dataidx...>(boundary_data);
+        /*dm.scatter_max<u>(boundary_data);*/
+        /*dm.scatter_min<u>(boundary_data);*/
+    }
 
     template <class DMQ2>
     class FEDMValues {
     public:
-        /* template <Integer idx>
-        using DMDataType = typename DMQ2::UserDataType<idx>; */
+        template <Integer idx>
+        using DMDataType = typename DMQ2::template UserDataType<idx>;
 
         // use as more readable tuple index to identify the data
-        FEDMValues(const DMQ2 &d) : dm_(d) {}
+        FEDMValues(DMQ2 &d) : dm_(d) {}
 
         template <Integer Type>
         void compute_invJ_and_detJ(const DMQ2 &dm, ViewVectorType<double> detJ, ViewMatrixType<double> invJ) {
@@ -111,10 +111,10 @@ namespace mars {
                 double next_point[2];
 
                 Integer local_dof = dm.get_elem_local_dof(elem_index, 0);
-                dm.get_dof_coordinates_from_local<Type>(local_dof, point_ref);
+                dm.template get_dof_coordinates_from_local<Type>(local_dof, point_ref);
 
                 local_dof = dm.get_elem_local_dof(elem_index, 1);
-                dm.get_dof_coordinates_from_local<Type>(local_dof, next_point);
+                dm.template get_dof_coordinates_from_local<Type>(local_dof, next_point);
 
                 // col 0, p1
                 J[0] = next_point[0] - point_ref[0];
@@ -123,7 +123,7 @@ namespace mars {
                 // we skip p2
 
                 local_dof = dm.get_elem_local_dof(elem_index, 3);
-                dm.get_dof_coordinates_from_local<Type>(local_dof, next_point);
+                dm.template get_dof_coordinates_from_local<Type>(local_dof, next_point);
 
                 // col 1, p3
                 J[1] = next_point[0] - point_ref[0];
@@ -139,12 +139,12 @@ namespace mars {
         }
 
         template <Integer INPUT>
-        MARS_INLINE_FUNCTION void gather_elem_data(const DMQ2 &dm, const Integer elem_index, double *sol) { //DMDataType<INPUT> *sol) {
+        MARS_INLINE_FUNCTION void gather_elem_data(const DMQ2 &dm, const Integer elem_index, DMDataType<INPUT> *sol) {
             for (int i = 0; i < DMQ2::elem_nodes; i++) {
                 // forach dof get the local number
                 const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
                 // use the local number to read the corresponding user data
-                sol[i] = dm.get_dof_data<INPUT>(local_dof);
+                sol[i] = dm.template get_dof_data<INPUT>(local_dof);
             }
         }
 
@@ -198,34 +198,57 @@ namespace mars {
         }
 
         template <Integer OUTPUT>
-        void add_dof_contributions(const DMQ2 &dm, const ViewMatrixType<double> &res) {
-            dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
+        void add_dof_contributions(const ViewMatrixType<double> &res) {
+            dm_.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
                 // update output
                 for (int i = 0; i < DMQ2::elem_nodes; i++) {
-                    const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+                    const Integer local_dof = dm_.get_elem_local_dof(elem_index, i);
                     /* atomically updated the contributions to the same dof */
-                    Kokkos::atomic_add(&dm.get_dof_data<OUTPUT>(local_dof), res(elem_index, i));
+                    Kokkos::atomic_add(&dm_.template get_dof_data<OUTPUT>(local_dof), res(elem_index, i));
                 }
             });
         }
 
         // form the matrix free operator
         template<Integer INPUT, Integer OUTPUT>
-        void form_operator(const DMQ2 dm)
+        void form_operator()
         {
-            using Elem = DistributedQuad4Mesh::Elem;
+            using Elem = typename DMQ2::simplex_type;
 
-            ViewMatrixType<double> res("res", dm.get_elem_size(), DMQ2::elem_nodes);
-            integrate<INPUT>(dm, quad, det_J_, inv_J_, res);
+            ViewMatrixType<double> res("res", dm_.get_elem_size(), DMQ2::elem_nodes);
+            integrate<INPUT>(dm_, quad, det_J_, inv_J_, res);
 
-            add_dof_contributions<OUTPUT>(dm, res);
+            add_dof_contributions<OUTPUT>(res);
+        }
+
+        template <class F, typename T>
+        void assemble_rhs(ViewVectorType<T> &rhs, F f) {
+            dm_.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
+                using Elem = typename DMQ2::simplex_type;
+                double p[2];
+
+                /* gather_elem_data<INPUT>(dm, elem_index, sol); */
+                const T detj = det_J_(elem_index);
+
+                for (int i = 0; i < DMQ2::elem_nodes; i++) {
+                    // forach dof get the local number
+                    const Integer local_dof = dm_.get_elem_local_dof(elem_index, i);
+                    dm_.template get_dof_coordinates_from_local<Elem::ElemType>(local_dof, p);
+
+                    const T val = f(p);
+                    const T scaled_val = val * detj / DMQ2::elem_nodes;
+                    Kokkos::atomic_add(&rhs(local_dof), scaled_val);
+                }
+            });
         }
 
         void init()
         {
+            using Elem = typename DMQ2::simplex_type;
+
             det_J_ = ViewVectorType<double>("detJ", dm_.get_elem_size());
             inv_J_ = ViewMatrixType<double>("J_inv", dm_.get_elem_size(), 4);
-            compute_invJ_and_detJ<Elem::ElemType>(dm_, detJ, invJ);
+            compute_invJ_and_detJ<Elem::ElemType>(dm_, det_J_, inv_J_);
 
             quad = FEQuad4<double>::Quadrature::make();
         }
@@ -238,7 +261,7 @@ namespace mars {
         /* MARS_INLINE_FUNCTION FEQuad4<double>::Quadrature quad() const { return quad; } */
 
     private:
-        DMQ2 dm_;
+        DMQ2& dm_;
 
         ViewVectorType<double> det_J_;
         ViewMatrixType<double> inv_J_;
