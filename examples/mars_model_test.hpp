@@ -4,6 +4,7 @@
 #include <err.h>
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <numeric>
@@ -27,6 +28,8 @@
 #include "mars_simplex_laplacian.hpp"
 #include "mars_umesh_laplace.hpp"
 #include "vtu_writer.hpp"
+
+using namespace std::chrono;
 
 namespace mars {
 
@@ -53,10 +56,21 @@ namespace mars {
                 auto prec_ptr = op.preconditioner();
 
                 Integer num_iter = 0;
+
+                auto start = steady_clock::now();
+
                 if (bcg_stab(op, *prec_ptr, rhs, 10 * rhs.extent(0), x, num_iter)) {
                     if (write_output) {
                         return write(x);
                     } else {
+                        auto end = steady_clock::now();
+                        auto diff = end - start;
+
+                        std::cout << "DURATION: " << std::chrono::duration<double>(diff).count() << " s" << std::endl;
+
+                        FILE *file_time = fopen("timing.csv", "a");
+                        fprintf(file_time, "%ld, %.4fs\n", mesh.n_nodes(), std::chrono::duration<double>(diff).count());
+                        fclose(file_time);
                         return true;
                     }
 
@@ -410,8 +424,8 @@ namespace mars {
             Integer max_refinements = 0;
             Integer refs = 0;
             bool refined = false;
-            bool use_adaptive_refinement = true;
-            // bool use_adaptive_refinement = false;
+            // bool use_adaptive_refinement = true;
+            bool use_adaptive_refinement = false;
             bool reset_x_to_zero = false;
 
             do {
