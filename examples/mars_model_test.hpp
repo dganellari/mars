@@ -446,6 +446,7 @@ namespace mars {
                 }
 
             } while (++refs <= max_refinements);
+            return true;
         }
 
         void run(int argc, char *argv[]) {
@@ -483,7 +484,8 @@ namespace mars {
                 read_mesh("../data/cube4d_24.MFEM", smesh);
                 convert_serial_mesh_to_parallel(mesh, smesh);
 
-                ParallelBisection<PMesh>(&mesh).uniform_refine(3);
+                // ParallelBisection<PMesh>(&mesh).uniform_refine(3);
+                ParallelBisection<PMesh>(&mesh).uniform_refine(4);
                 write_output = false;
             }
 
