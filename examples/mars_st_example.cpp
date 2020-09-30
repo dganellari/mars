@@ -328,12 +328,12 @@ int main(int argc, char *argv[]) {
         // ST3Analitcal>().run(
         //     argc, argv);
 
-        ModelTest<ParallelMesh3,
-                  UMeshLaplace<ParallelMesh3>,
-                  ZeroDirchletOnUnitCube<ParallelMesh3>,
-                  One<ParallelMesh3>,
-                  One<ParallelMesh3>>()
-            .run(argc, argv);
+        // ModelTest<ParallelMesh3,
+        //           UMeshLaplace<ParallelMesh3>,
+        //           ZeroDirchletOnUnitCube<ParallelMesh3>,
+        //           One<ParallelMesh3>,
+        //           One<ParallelMesh3>>()
+        //     .run(argc, argv);
 
         // 3D example 1
         ModelTest<ParallelMesh3, UMeshSTHeatEquation<ParallelMesh3>, ST3D1BC<ParallelMesh3>, ST3D1RHS, ST3D1Analitcal>()
