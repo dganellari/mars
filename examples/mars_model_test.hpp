@@ -425,6 +425,8 @@ namespace mars {
                     return false;
                 }
 
+                if (max_refinements == 0) return true;
+
                 if (use_adaptive_refinement) {
                     refined = refine(mesh, problem.op.values(), tol, x, write_output);
                     mesh.clean_up();
