@@ -42,7 +42,8 @@ class DirichletBoundaryCondition //<FullSpace_,N,Func,-1>
     static constexpr Integer value=GetType<typename FunctionSpace::FromElementFunctionSpacesToUniqueNumbersTupleType,N>::value;
     using UniqueElementFunctionSpacesTupleType=typename FunctionSpace::UniqueElementFunctionSpacesTupleType;
     using SpacesToUniqueFEFamilies=SpacesToUniqueFEFamilies2<UniqueElementFunctionSpacesTupleType>;
-    static constexpr Integer map_value=GetType<SpacesToUniqueFEFamilies,N>::value;
+    // static constexpr Integer map_value=GetType<SpacesToUniqueFEFamilies,N>::value;
+    static constexpr Integer map_value=GetType<SpacesToUniqueFEFamilies,value>::value;
     
     using SingleFunctionSpace=GetType<UniqueElementFunctionSpacesTupleType,value>;
     static constexpr bool build_on_reference=BuildOnReferenceElement<SingleFunctionSpace>::value;
