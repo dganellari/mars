@@ -547,10 +547,10 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
   // todo fixme
   eval_left_.apply(left_value_,J,shape_functions.template tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
   eval_right_.apply(right_value_,J,shape_functions.template tuple<VolumeIntegral>(),shape_functions.template composite_tensor<VolumeIntegral>(),shape_functions.template composite_shapes<VolumeIntegral>());
-  // // std::cout<<"left_value_"<<std::endl;
-  // // std::cout<<left_value_<<std::endl;
-  // // std::cout<<"right_value_"<<std::endl;
-  // // std::cout<<right_value_<<std::endl;
+  // std::cout<<"left_value_"<<std::endl;
+  // std::cout<<left_value_<<std::endl;
+  // std::cout<<"right_value_"<<std::endl;
+  // std::cout<<right_value_<<std::endl;
   // // std::cout<<"qp_weights"<<std::endl;
   // // std::cout<<qp_weights<<std::endl;
 
@@ -580,11 +580,15 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
   //   {   
   //       mat(ii,jj)=detJ*dotofdots(left_value_[jj],right_value_[ii]);//,QRule::qp_weights);
   //   }
+    // std::cout<<"mat.rows()="<<mat.rows()<<std::endl;
+    // std::cout<<"mat.cols()="<<mat.cols()<<std::endl;
 
-    // // std::cout<<"detJ="<<std::endl;
-    // // std::cout<<detJ<<std::endl;
-    // // std::cout<<"mat="<<std::endl;
-    // // std::cout<<mat<<std::endl;
+
+
+    // std::cout<<"detJ="<<std::endl;
+    // std::cout<<detJ<<std::endl;
+    std::cout<<"mat="<<std::endl;
+    std::cout<<mat<<std::endl;
  }
 
 
@@ -616,7 +620,6 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
   //       for(std::size_t qp=1; qp<NQPoints; qp++)
   //       vec(n_dof,0)+=detJ*apply_qp_weight(qp_values[qp], fqp_values[n_dof][qp], qp_weights[qp]);
   //   }
-
 
 
   for(Integer ii=0;ii<mat.rows();ii++)

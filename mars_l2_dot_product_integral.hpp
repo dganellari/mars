@@ -137,6 +137,11 @@ L2InnerProduct(const Expression<Left>& left,const Expression<Right>& right, cons
 {return L2DotProductIntegral<Left,Right,VolumeIntegral,QR>(left,right,label);}
 
 
+template<typename Left,typename Right,bool VolumeIntegral=true,Integer QR=GaussianQuadrature>
+auto
+L2Inner(const Expression<Left>& left,const Expression<Right>& right, const Integer label)
+{return L2DotProductIntegral<Left,Right,VolumeIntegral,QR>(left,right,label);}
+
 
 
 

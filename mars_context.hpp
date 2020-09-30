@@ -195,7 +195,8 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                   // std::cout<<"------_______----- FE.elem_id="<<FE.elem_id()<<std::endl;                  
                   // std::cout<<"------_______----- BILINEAR BEGIN SIDE EVAL===="<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
                   eval_bilinear_form_.apply_boundary(A,FE);
-                  // A.print_val();
+                  if(FE.side_tag()==2)
+                  A.print_val();
                   // std::cout<<"------_______----- LINEAR BEGIN SIDE EVAL===="<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
                   // auto&elem =mesh.elem(el);
                   // auto&nodes=elem.nodes;
@@ -778,6 +779,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
      {       
         if(abs(A(i,i))<toll)
         {
+          std::cout<<"null diagonal i="<<i<<std::endl;
            A.equal(one,i,i);
            b[i]=0.0;
         }
@@ -803,6 +805,35 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
            A.equal(big,i,i);
            b[i]=0.0;
         }
+     }
+    }
+
+
+    template<typename SystemMat, typename Rhs>
+    void apply_zero_bc_for_null_diagonal_element_FOSLS(SystemMat& A, Rhs& b, const std::vector<bool>& w)const
+    {
+
+     Real toll=1e-10;
+     Real big=1.0/toll;
+     Real tmp;
+     Real one=1.0;
+
+     for(Integer i=0;i<b.size();++i)
+     {  
+
+      tmp=0.0;
+
+
+        if(w[i]==1)
+        {      
+        A.set_zero_row(i);
+        A.equal(one,i,i);
+        b[i]=0;
+        }
+        else
+        {
+        A.row_static_condensation(i,w);
+        }     
      }
     }
 

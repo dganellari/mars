@@ -19,6 +19,9 @@ class CurlOperator: public Expression<CurlOperator>
 class TraceOperator: public Expression<TraceOperator>  
 {public: TraceOperator(){}};
 
+class TraceGradientOperator: public Expression<TraceGradientOperator>  
+{public: TraceGradientOperator(){}};
+
 template<Integer N_>
 class ComponentOperator: public Expression<ComponentOperator<N_>>  
  {public: static constexpr Integer N=N_;

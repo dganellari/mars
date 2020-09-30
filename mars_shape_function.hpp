@@ -2028,6 +2028,30 @@ class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, TraceOperator, Lagra
   }
 };
 
+
+
+
+template<Integer Dim,Integer ManifoldDim>
+class ReferenceShapeFunctionValue<Simplex<Dim,ManifoldDim>, TraceGradientOperator, LagrangeFE, 1>
+{
+ public: 
+ using Output=Vector<Matrix<Real, ManifoldDim, 1>,ManifoldDim+1>;
+
+ constexpr inline static void 
+ apply(const Vector<Real,ManifoldDim-1>& point, Output & func, Real alpha=1.0)
+  {
+      for(Integer i=0;i<ManifoldDim;i++)
+        func[0](i,0)=-1 * alpha;
+
+      for(Integer i=0;i<ManifoldDim;i++)
+        for(Integer j=0;j<ManifoldDim;j++)
+            if(i==j)
+                func[i+1](i,0)= 1.0 * alpha;
+            else
+                func[i+1](j,0)=0.0;
+
+   }
+};
 // template<Integer Dim>
 // class ReferenceShapeFunctionValue<Simplex<Dim,2>, TraceOperator, LagrangeFE, 1>
 // {
@@ -4881,6 +4905,26 @@ public:
     // Matrix<Real, ShapeFunctionDim1 * NComponents, ShapeFunctionDim2 * Dim >;
 };
 
+template<typename FunctionSpace>
+class SingleTypeShapeFunction<FunctionSpace,TraceGradientOperator>
+{
+public:
+    static constexpr Integer NComponents=FunctionSpace::NComponents;
+    static constexpr Integer ShapeFunctionDim1=FunctionSpace::ShapeFunctionDim1;
+    static constexpr Integer ShapeFunctionDim2=FunctionSpace::ShapeFunctionDim2;
+    static constexpr Integer Dim=FunctionSpace::Elem::Dim;
+    using SingleType= typename
+    std::conditional_t<(1==ShapeFunctionDim1 && 1==ShapeFunctionDim2),
+    Matrix<Real, Dim , 1 >,
+    Matrix<Real, ShapeFunctionDim1 , ShapeFunctionDim2 * Dim>
+    >;
+    using TotType=typename
+    std::conditional_t<(1==ShapeFunctionDim1 && 1==ShapeFunctionDim2 && NComponents==1),
+    Matrix<Real, Dim , 1 >,
+    Matrix<Real, ShapeFunctionDim1 * NComponents, ShapeFunctionDim2 * Dim >
+    >;
+    };
+
 
 template<typename FunctionSpace>
 class SingleTypeShapeFunction<FunctionSpace,DivergenceOperator>
@@ -5607,6 +5651,164 @@ private:
 
 
 
+template< typename Elem_,typename BaseFunctionSpace, typename QuadratureRule>
+class ShapeFunction<Elem_,BaseFunctionSpace,TraceGradientOperator,QuadratureRule>
+: public Expression<ShapeFunction<Elem_,BaseFunctionSpace,TraceGradientOperator,QuadratureRule>> 
+{ 
+public:
+    using Elem=Elem_;
+    using QuadratureElem=typename QuadratureRule::Elem;
+    
+    using Operator=TraceGradientOperator;
+    
+    using FunctionSpace=ElemFunctionSpace<Elem,BaseFunctionSpace>;
+    static constexpr Integer Dim=Elem::Dim;
+    static constexpr Integer ManifoldDim=Elem::ManifoldDim;
+    static constexpr Integer NComponents=BaseFunctionSpace::NComponents;
+    static constexpr Integer NQPoints=QuadratureRule::NQPoints;
+    static constexpr Integer FEFamily=BaseFunctionSpace::FEFamily;
+    static constexpr Integer Order=BaseFunctionSpace::Order;
+    static constexpr Integer Continuity=BaseFunctionSpace::Continuity;
+
+    using SingleFunctionSpace=ElementFunctionSpace<Elem,FEFamily,Order,Continuity,1>;
+
+
+    // static constexpr Integer Ntot=FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,BaseFunctionSpace>>::value;
+    // if QuadratureElem==Elem, then FunctionSpaceDofsPerSubEntityElem==FunctionSpaceDofsPerElem
+    // if QuadratureElem::ManifoldDim=Elem::ManifoldDim-1, 
+    // then FunctionSpaceDofsPerSubEntityElem counts the total number of dofs on a boundary face
+    // static constexpr Integer Ntot=FunctionSpaceDofsPerElem<ElemFunctionSpace<Elem,BaseFunctionSpace>>::value;
+    static constexpr Integer NtotVolume=FunctionSpaceDofsPerSubEntityElem<FunctionSpace,Elem::ManifoldDim>::value;
+    static constexpr Integer NdofsVolume=NtotVolume/NComponents;
+    static constexpr Integer Ntot=NtotVolume;//FunctionSpaceDofsPerSubEntityElem<ElemFunctionSpace<Elem,BaseFunctionSpace>,QuadratureElem::ManifoldDim>::value;
+    static constexpr Integer Ndofs=Ntot/NComponents;
+
+    // static constexpr auto trace=TraceDofs<FunctionSpace>::dofs();//trace_dofs<FunctionSpace>();
+    static constexpr auto trace=TraceDofs<SingleFunctionSpace>::dofs();
+    
+    using SingleType   = typename SingleTypeShapeFunction<FunctionSpace,Operator>::SingleType;
+    using VectorSingleType   = Vector<SingleType,Ndofs>;
+    using tot_type= typename SingleTypeShapeFunction<FunctionSpace,Operator>::TotType;
+    using qpvalues_type= QPValues<tot_type,NQPoints>;
+    using type= FQPValues<tot_type,NQPoints,Ntot>;
+    using Point = Vector<Real,Dim>;
+    using QP = Matrix<Real,NQPoints,Dim>;
+    using qp_points_type=typename QuadratureRule::qp_points_type;
+    // it can be Elem<dim,manifolddim> for volumetric quadrature rule
+    //           Elem<dim,manifolddim-1> for surface quadrature rule
+    using Map=MapFromReference<Operator,QuadratureElem,BaseFunctionSpace::FEFamily>;
+    
+    static constexpr Integer ShapeFunctionDim1=SingleTypeShapeFunction<FunctionSpace,Operator>::ShapeFunctionDim1;
+    static constexpr Integer ShapeFunctionDim2=SingleTypeShapeFunction<FunctionSpace,Operator>::ShapeFunctionDim2;
+    
+    static constexpr FQPValues<SingleType,NQPoints,Ndofs>
+    reference_values{reference_shape_function_init<Elem,Operator,FEFamily,Order,SingleType,Ndofs>(QuadratureRule::qp_points)};
+    static constexpr bool build_on_reference=BuildOnReferenceElement<FunctionSpace>::value;
+    
+    using trace_type_tmp=typename decltype(trace)::value_type;
+    using trace_type=ArrayChangeType<Real,trace_type_tmp>;
+    // static constexpr FQPValues<SingleType,NQPoints,Ndofs>
+    // weighted_reference_values{  weighted_reference_shape_function_init(reference_values,QuadratureRule::qp_sqrt_abs_weights)};
+    
+    constexpr const type& eval()const{return func_values_;}
+    
+    
+    void init(const Integer face, FiniteElem<Elem>&FE)
+    {
+        const auto& map=(*map_ptr);
+        const auto& mapping=map();
+      // std::cout<<"------------------------------------------------------------"<<std::endl;
+        // std::cout<<"reference_values="<<reference_values<<std::endl;
+        // std::cout<<"FE.elem_id()="<<FE.elem_id()<<std::endl;
+        // std::cout<<"FE.side_id()="<<FE.side_id()<<std::endl;
+        // std::cout<<"FE.side_tag()="<<FE.side_tag()<<std::endl;
+
+      //   std::cout<<"FE()="<<FE()<<std::endl;
+        auto& nodes=FE.mesh_ptr()->elem(FE.elem_id()).nodes;
+        // for(Integer i=0;i<nodes.size();i++)
+        //   std::cout<<FE.mesh_ptr()->points()[nodes[i]]<<" ";
+        // std::cout<<std::endl;
+        // std::cout<<"[face]="<<face<<std::endl;
+
+        // std::cout<<"trace[face]="<<trace[face]<<std::endl;
+        const auto& trace_face=trace[face];
+
+        // subarray(alpha_,reference_values,trace[face]);
+        Integer n_tot_trace;
+
+// std::cout<<"Ndofs="<<Ndofs<<std::endl;
+
+        for(Integer n_dof=0;n_dof<trace_type::Dim;n_dof++)
+        {
+
+          // std::cout<<"n_dof="<<n_dof<<"/"<<trace_type::Dim<<std::endl;
+
+
+            for(Integer n_comp=0;n_comp<NComponents;n_comp++)
+            {
+                n_tot_trace=trace_face[n_dof] * NComponents +  n_comp ;
+                n_tot_=n_dof * NComponents +  n_comp ;
+                n_=n_comp;
+          // std::cout<<"n_tot_trace="<<n_tot_trace<<std::endl;
+          // std::cout<<"n_tot_="<<n_tot_<<std::endl;
+
+                for(Integer qp=0;qp<NQPoints;qp++)
+                {
+          // std::cout<<"qp="<<qp<<"/"<<NQPoints<<std::endl;
+
+                    // std::cout<<n_dof<<", "<<n_comp<<", " <<qp<<std::endl;
+                    func_values_[n_tot_][qp].zero();
+                    // std::cout<<"qui1"<<std::endl;
+                    // func_tmp_=  mapping * weighted_reference_values[n_dof][qp];
+                    func_tmp_=  mapping * reference_values[trace_face[n_dof]][qp];
+                    // std::cout<<"mapping="<<mapping<<std::endl;
+                    // std::cout<<"reference_values[n_dof][qp]="<<reference_values[n_dof][qp]<<std::endl;
+                    // std::cout<<"func_tmp="<<func_tmp_<<std::endl;
+                    // std::cout<<"qui2"<<std::endl;
+                    
+                    // se ncompontensts >1, allora assegni alla riga
+                    assign<NComponents>(func_values_[n_tot_][qp],func_tmp_,n_,0);
+                    // std::cout<<"qui3"<<std::endl;
+                   // // std::cout<<"func_tmp_="<<mapping<<" "<<reference_values[n_dof][qp]<<std::endl;
+                }
+                
+            }
+        }
+        
+     // std::cout<<"TraceGradientOperator end"<<std::endl;
+     // std::cout<<func_values_<<std::endl;
+
+    }
+
+  
+
+
+    constexpr void init_map(const Map& map){map_ptr=std::make_shared<Map>(map);}
+    
+    ShapeFunction(const Map& map):
+    map_ptr(std::make_shared<Map>(map))
+    {}
+    
+    ShapeFunction(const ShapeFunction& shape):
+    map_ptr(std::make_shared<Map>(shape.map()))
+    {}
+    
+    
+    ShapeFunction(){}
+    
+    const auto& map()const{return (*map_ptr);}
+    
+private:
+    SingleType func_tmp_;
+    VectorSingleType func_;
+    Point qp_point_;
+    FQPValues<SingleType,NQPoints,Ndofs> component_func_values_;
+    type func_values_;
+    std::shared_ptr<Map> map_ptr;
+    Integer n_tot_;
+    Integer n_;
+    trace_type alpha_;
+};
 
 
 

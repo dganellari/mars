@@ -1313,6 +1313,12 @@ constexpr auto
 Trace(const Function<FullSpace,N,IdentityOperator,FuncType>& t)
 {return Function<FullSpace,N,TraceOperator,FuncType> (t.spaces_ptr(),t.global_dofs_ptr());}
 
+
+template<typename FullSpace,Integer N,typename FuncType>
+constexpr auto 
+TraceGrad(const Function<FullSpace,N,IdentityOperator,FuncType>& t)
+{return Function<FullSpace,N,TraceGradientOperator,FuncType> (t.spaces_ptr(),t.global_dofs_ptr());}
+
 template<typename FullSpace,Integer N,typename FuncType>
 constexpr auto 
 Div(const Function<FullSpace,N,IdentityOperator,FuncType>& t)

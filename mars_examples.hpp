@@ -6565,7 +6565,7 @@ void patch_active_set_gauss_seidel_aux( std::vector<Real>& local_b,std::vector<R
 
 
 
-
+					
 
 						for(Integer j=0;j<e2d_size;j++)
 							x[e2d[j]]=x[e2d[j]]+local_correction[j];
@@ -7412,6 +7412,8 @@ Real patch_active_set_gauss_seidel_compute_energy_aux( std::vector<Real>& local_
                 std::vector<Real> local_c_sup(n);
                 std::vector<Real> local_correction(n);
                 std::vector<Real> local_rhs(n);
+                std::vector<Real> res(n);
+                std::vector<bool> working_set(n);
                 Integer e2d_size;
                 std::cout << "patch_active_set_gauss_seidel inf sup "<< std::endl;
 				for(std::size_t it=0;it<max_iter;it++)
@@ -7423,6 +7425,14 @@ Real patch_active_set_gauss_seidel_compute_energy_aux( std::vector<Real>& local_
  						x,A,b,c_inf,c_sup,entity2dofs,
  						local_mat,A_tmp,H_tmp,b_tmp,mu_tmp,lambda_tmp,y_tmp,c_tmp,max_iter,toll);
 					}
+					compute_working_set(working_set,x,c_inf,c_sup);
+
+					A.multiply_and_add(res,-1.0,x,b);
+
+
+
+					if(l2_norm(res,working_set)<0.000000001)
+						break;
 				}
 			}
 
@@ -16266,6 +16276,7 @@ template<typename FunctionSpace_>
    	                     	   DenseMatrix<Real>& A_tmp,
    	                     	   DenseMatrix<Real>& H_tmp,
    	                     	   std::vector<Real>& b_tmp,
+   	                     	   std::vector<Real>& mu_tmp,
    	                     	   std::vector<Real>& lambda_tmp,
    	                     	   std::vector<Real>& y_tmp,
    	                     	   std::vector<Real>& c_tmp,
@@ -16295,13 +16306,40 @@ template<typename FunctionSpace_>
     std::cout<<"n_dofs_RT0=="<<n_dofs_RT0<<std::endl;
    	if(level==0)
    	{
-        truncated_A_levels[level].save_mat("A"+std::to_string(level)+"_false.dat");
-        A_levels[level].save_mat("B"+std::to_string(level)+"_false.dat");
+
+        A_levels[level].save_mat("B"+std::to_string(level)+"_"+std::to_string(max_level)+"_false.dat");
         context.apply_zero_bc_for_null_diagonal_element(truncated_A_levels[level],b);
-   		patch_active_set_gauss_seidel(x,truncated_A_levels[level],b,F_constraint_sup,nodes2entity[0],
-                              		 local_mat,A_tmp,H_tmp,b_tmp,lambda_tmp,y_tmp,c_tmp,1);
+        truncated_A_levels[level].save_mat("A"+std::to_string(level)+"_"+std::to_string(max_level)+"_false.dat");
 
 
+   		patch_active_set_gauss_seidel(x,truncated_A_levels[level],b,F_constraint_inf,F_constraint_sup,nodes2entity[0],
+                              		 local_mat,A_tmp,H_tmp,b_tmp,mu_tmp,lambda_tmp,y_tmp,c_tmp,3000);
+
+         save_vector("c_sup"+std::to_string(level)+"_"+std::to_string(max_level)+".dat",F_constraint_sup);
+         save_vector("x"+std::to_string(level)+"_"+std::to_string(max_level)+".dat",x);
+         save_vector("b"+std::to_string(level)+"_"+std::to_string(max_level)+".dat",b);
+
+		// if(levels[level]==3)
+		// {
+		//       std::cout<<std::endl;
+		//       std::cout<<"levels[level]="<<levels[level]<<std::endl;
+		//       std::cout<<"x[5]="<<x[5]<<std::endl;
+		//       std::cout<<"x[23]="<<x[23]<<std::endl;
+		//       std::cout<<"x[69]="<<x[69]<<std::endl;
+
+
+		// }
+		// x[5]=0;
+		// x[23]=0;
+		// x[69]=0;
+          // std::cout<<"F_constraint_sup[93]="<<F_constraint_sup[93]<<std::endl;
+          // std::cout<<"F_constraint_sup[83]="<<F_constraint_sup[83]<<std::endl;
+          // std::cout<<"F_constraint_sup[221]="<<F_constraint_sup[221]<<std::endl;
+          
+          // std::cout<<"x_coarse[93]="<<x[93]<<std::endl;
+          // std::cout<<"x_coarse[83]="<<x[83]<<std::endl;
+          // std::cout<<"x_coarse[221]="<<x[221]<<std::endl;
+			
 	   	truncated_A_levels[level]. multiply_and_add(F_rhs,-1.0,x,b);
 	   	std::cout<<"C res="<<l2_norm(F_rhs,working_set[level])<<std::endl;
  
@@ -16309,8 +16347,11 @@ template<typename FunctionSpace_>
    	else 
    	{
    		context.apply_zero_bc_for_null_diagonal_element(truncated_A_levels[level],b);
-   		  patch_active_set_gauss_seidel(x,truncated_A_levels[level],b,F_constraint_sup,nodes2entity[level],
-                              		  local_mat,A_tmp,H_tmp,b_tmp,lambda_tmp,y_tmp,c_tmp,pre_smoothing);    
+
+
+   		// if(level==1)
+   		  patch_active_set_gauss_seidel(x,truncated_A_levels[level],b,F_constraint_inf,F_constraint_sup,nodes2entity[level],
+                              		  local_mat,A_tmp,H_tmp,b_tmp,mu_tmp,lambda_tmp,y_tmp,c_tmp,pre_smoothing);    
           compute_working_set(working_set[level],x,F_constraint_sup);
          
          if(level == max_level) 
@@ -16349,26 +16390,143 @@ template<typename FunctionSpace_>
 
          std::cout<<std::endl;
          auto F_truncate=working_set[level];
+         // F_truncate[532]=0;
+         // F_truncate[533]=0;
+         // F_truncate[534]=0;
+         // F_truncate[535]=0;
+
+         // F_truncate[288]=0;
+         // F_truncate[289]=0;
+         // F_truncate[290]=0;
+         // F_truncate[291]=0;
+// 	      std::cout<<std::endl;
+// 	      std::cout<<"levels[level]="<<levels[level]<<std::endl;
+// if(levels[level]==6)
+// {
+//           std::cout<<"F_truncate[343]="<<F_truncate[343]<<std::endl;
+//           std::cout<<"F_truncate[345]="<<F_truncate[345]<<std::endl;
+//           std::cout<<"F_truncate[93]="<<F_truncate[93]<<std::endl;
+//           std::cout<<"F_truncate[367]="<<F_truncate[367]<<std::endl;
+//           std::cout<<"F_truncate[429]="<<F_truncate[429]<<std::endl;
+// }
+// if(levels[level]==5)
+// {
+   
+//           std::cout<<"F_truncate[5]="<<F_truncate[5]<<std::endl;
+//           std::cout<<"F_truncate[91]="<<F_truncate[91]<<std::endl;
+//           std::cout<<"F_truncate[93]="<<F_truncate[93]<<std::endl;
+//           std::cout<<"F_truncate[83]="<<F_truncate[83]<<std::endl;
+//           std::cout<<"F_truncate[221]="<<F_truncate[221]<<std::endl;
+// }
+// if(levels[level]==4)
+// {
+   
+//           std::cout<<"F_truncate[5]="<<F_truncate[5]<<std::endl;
+//           std::cout<<"F_truncate[91]="<<F_truncate[91]<<std::endl;
+//           std::cout<<"F_truncate[93]="<<F_truncate[93]<<std::endl;
+//           std::cout<<"F_truncate[83]="<<F_truncate[83]<<std::endl;
+//           std::cout<<"F_truncate[125]="<<F_truncate[125]<<std::endl;
+// }
+//  if(levels[level]==3)
+// {
+   
+//           std::cout<<"F_truncate[5]="<<F_truncate[5]<<std::endl;
+//           std::cout<<"F_truncate[23]="<<F_truncate[23]<<std::endl;
+//           std::cout<<"F_truncate[69]="<<F_truncate[69]<<std::endl;
+// }
+
+
+
+
+
+
+
+
+
+
 
          mixed_bc_truncation(context.full_spaces_ptr(),levels[level-1],levels[level],1,working_set[level],F_truncate);
-         save_vector("truncate_false.dat",F_truncate);
-         truncated_A_levels[level].save_mat("A"+std::to_string(level)+"_false.dat");
-         A_levels[level].save_mat("B"+std::to_string(level)+"_false.dat");
+ 
+
+
+
+ 
+
+
+
+// 	      std::cout<<std::endl;
+// 	      std::cout<<"levels[level]="<<levels[level]<<std::endl;
+// if(levels[level]==6)
+// {
+//           std::cout<<"F_truncate[343]="<<F_truncate[343]<<std::endl;
+//           std::cout<<"F_truncate[345]="<<F_truncate[345]<<std::endl;
+//           std::cout<<"F_truncate[93]="<<F_truncate[93]<<std::endl;
+//           std::cout<<"F_truncate[367]="<<F_truncate[367]<<std::endl;
+//           std::cout<<"F_truncate[429]="<<F_truncate[429]<<std::endl;
+// }
+// if(levels[level]==5)
+// {
+
+   
+//           std::cout<<"F_truncate[5]="<<F_truncate[5]<<std::endl;
+//           std::cout<<"F_truncate[91]="<<F_truncate[91]<<std::endl;
+//           std::cout<<"F_truncate[93]="<<F_truncate[93]<<std::endl;
+//           std::cout<<"F_truncate[83]="<<F_truncate[83]<<std::endl;
+//           std::cout<<"F_truncate[221]="<<F_truncate[221]<<std::endl;
+// }
+// if(levels[level]==4)
+// {
+   
+//           std::cout<<"F_truncate[5]="<<F_truncate[5]<<std::endl;
+//           std::cout<<"F_truncate[91]="<<F_truncate[91]<<std::endl;
+//           std::cout<<"F_truncate[93]="<<F_truncate[93]<<std::endl;
+//           std::cout<<"F_truncate[83]="<<F_truncate[83]<<std::endl;
+//           std::cout<<"F_truncate[125]="<<F_truncate[125]<<std::endl;
+// }
+//  if(levels[level]==3)
+// {
+   
+//           std::cout<<"F_truncate[5]="<<F_truncate[5]<<std::endl;
+//           std::cout<<"F_truncate[23]="<<F_truncate[23]<<std::endl;
+//           std::cout<<"F_truncate[69]="<<F_truncate[69]<<std::endl;
+// }
+
+
+         //  F_truncate[343]=0;
+ 
+
+         //  F_truncate[345]=0;
+         // F_truncate[93]=0;
+         // F_truncate[367]=0;
+        
+         // F_truncate[429]=1;
+
+         // save_vector("w_false.dat",working_set[level]);
+
+
 
          // for(Integer i=0;i<F_truncate.size();i++)
         	// working_set[working_set.size()-1][i]=F_truncate[i];
 
-        std::cout<<"qui1"<<std::endl;
 
 	   	 truncated_A_levels[level]. multiply_and_add(F_rhs,-1.0,x,b);
 	   	 interpolation.matrix(level-1).transpose_and_multiply(C_rhs,F_rhs,working_set[level]);
 
-	   	 std::cout<<"qui2"<<std::endl;
+
 
 
 
 	   	 for(Integer i=0;i<x.size();i++)
 	   		 {
+	   		 	// if(F_truncate[i] && abs(F_constraint_sup[i]-x[i]) < toll)
+	   		 	// 	F_constraint_sup_tmp[i]=inf;
+	   		 	// else
+	   		 	// F_constraint_sup_tmp[i]=F_constraint_sup[i]-x[i];
+
+	   		 	// if(F_truncate[i] && abs(F_constraint_inf[i]-x[i]) < toll)
+	   		 	// 	F_constraint_inf_tmp[i]=-inf;
+	   		 	// else
+	   		 	// F_constraint_inf_tmp[i]=F_constraint_inf[i]-x[i];
 	   		 	if(working_set[level][i] && abs(F_constraint_sup[i]-x[i]) < toll)
 	   		 		F_constraint_sup_tmp[i]=inf;
 	   		 	else
@@ -16381,52 +16539,200 @@ template<typename FunctionSpace_>
 
 	   		 }
 
+
+
 	   	C_correction.resize(C_rhs.size(),0.0);
 	   	C_constraint_inf.resize(C_rhs.size(),0.0);
 	   	C_constraint_sup.resize(C_rhs.size(),0.0);
 
 
-	    std::cout<<"qui3"<<std::endl;
 
 	   	contact_constraints.compute_sup_constraints(C_constraint_sup,F_constraint_sup_tmp,levels[level-1],levels[level]);
-
-
 	   	contact_constraints.compute_inf_constraints(C_constraint_inf,F_constraint_inf_tmp,levels[level-1],levels[level]);
-        std::cout<<"qui5"<<std::endl;
+        // if(level<max_level)
+        // {
+        // 	for(Integer i=0;i<x.size();i++)
+        // 	{F_truncate[i]=0;
+        // 		working_set[level][i]=0;
+        // 	}
+
+        // }
+
+
+
+
 	   	 if(max_level==level)
     	    {
     	    	std::cout<<"change_coarser_matrix="<<change_coarser_matrix<<" on level "<<level<<std::endl;
-    	    	// truncate_matrix(truncated_A_levels[level-1],A_levels[level],interpolation.matrix(level-1),working_set[level],working_set_old[level]);
     	    	if(change_coarser_matrix)
- 	   	 		truncated_A_levels[level-1]=A_levels[level].multiply_left_transpose_and_multiply_right(interpolation.matrix(level-1),F_truncate);
-
+ 	   	 		// truncated_A_levels[level-1]=truncated_A_levels[level].multiply_left_transpose_and_multiply_right(interpolation.matrix(level-1),F_truncate);
+ 	
+ 	   	 		A_levels[level-1]=A_levels[level].multiply_left_transpose_and_multiply_right(interpolation.matrix(level-1),F_truncate);
+                truncated_A_levels[level-1]=A_levels[level-1];
     	    }
 	   	 else 
 	   	 {
     	    	std::cout<<"change_coarser_matrix="<<change_coarser_matrix<<" on level "<<level<<std::endl;
     	    	if(change_coarser_matrix)
-	   	 		truncated_A_levels[level-1]=A_levels[level].multiply_left_transpose_and_multiply_right(interpolation.matrix(level-1),F_truncate);
+ 	   	 		// truncated_A_levels[level-1]=truncated_A_levels[level].multiply_left_transpose_and_multiply_right(interpolation.matrix(level-1),F_truncate);
+   	    		
+ 	   	 		A_levels[level-1]=A_levels[level].multiply_left_transpose_and_multiply_right(interpolation.matrix(level-1),F_truncate);	   	 		
+	   	 		truncated_A_levels[level-1]=A_levels[level-1];
 	   	 }
 
         std::vector<Integer> vec_remove_diag(C_constraint_sup.size(),-1);
-
+        std::vector<bool> vec_remove_bool(C_constraint_sup.size(),-1);
    	   	contact_constraints.find_fully_truncated_coarse_dofs(vec_remove_diag,working_set[level],F_constraint_inf,F_constraint_sup,levels[level-1],levels[level]);
+         for(Integer i=0;i<working_set[level-1].size();i++)
+         {
+         	if(vec_remove_diag[i]==0 )
+         		{
+         			vec_remove_bool[i]=1;
+         			// working_set[level-1][i]=1;
+         			// C_constraint_inf[i]=0;
+         			// C_constraint_sup[i]=0;
+         			C_rhs[i]=0;
+         		}
+			 else
+				vec_remove_bool[i]=0;
 
-   	   	context.apply_zero_bc_for_null_diagonal_element(truncated_A_levels[level-1],C_rhs,vec_remove_diag);
+		}
+   	   	context.apply_zero_bc_for_null_diagonal_element_FOSLS(truncated_A_levels[level-1],C_rhs,vec_remove_bool);
+
+
+
+
+
+         interpolation.matrix(level-1).save_mat("P"+std::to_string(level)+"_"+std::to_string(max_level)+"_false.dat");
+
+         // for(Integer i=0;i<working_set[level-1].size();i++)
+         // {
+         // 	if(vec_remove_diag[i]==0)
+         // 		{
+         // 			C_constraint_sup[i]=0;
+         // 			working_set[level-1][i]=1;
+         // 		}
+         // 	if(truncated_A_levels[level-1](i,i)==0)
+         //  	if(vec_remove_diag[i]==0)
+         // 		{
+         // 			C_constraint_sup[i]=0;
+         // 			working_set[level-1][i]=1;
+         // 		}        		
+
+         // }
    	   	context.apply_zero_bc_for_null_diagonal_element(truncated_A_levels[level-1],C_rhs);
 
+		truncated_A_levels[level].multiply_and_add(F_correction,-1.0,x,b);
+
+
+
+         truncated_A_levels[level].save_mat("A"+std::to_string(level)+"_"+std::to_string(max_level)+"_false.dat");
+         A_levels[level].save_mat("B"+std::to_string(level)+"_"+std::to_string(max_level)+"_false.dat");
+         save_vector("F_truncate"+std::to_string(level)+"_"+std::to_string(max_level)+"_false.dat",F_truncate);
+         save_vector("w"+std::to_string(level)+"_"+std::to_string(max_level)+"_false.dat",working_set[level]);
+         save_vector("c_sup"+std::to_string(level)+"_"+std::to_string(max_level)+".dat",F_constraint_sup);
+         save_vector("b"+std::to_string(level)+"_"+std::to_string(max_level)+".dat",b);
+         save_vector("x"+std::to_string(level)+"_"+std::to_string(max_level)+".dat",x);
+
+
+		std::cout<<"level="<<level<<", pre res="<<l2_norm(F_correction,working_set[level])<<std::endl;
 
 
 	     patch_vcycle_active_set_contact(context, C_correction,A_levels,truncated_A_levels,C_rhs,C_constraint_inf,C_constraint_sup,contact_constraints,levels,working_set,working_set_old,interpolation,nodes2entity,
-	     						 local_mat,A_tmp,H_tmp,b_tmp,lambda_tmp,y_tmp,c_tmp,pre_smoothing,post_smoothing,level-1,max_level,change_coarser_matrix);
+	     						 local_mat,A_tmp,H_tmp,b_tmp,mu_tmp,lambda_tmp,y_tmp,c_tmp,pre_smoothing,post_smoothing,level-1,max_level,change_coarser_matrix);
  
 	     interpolation.matrix(level-1).multiply(F_correction,C_correction,working_set[level]);
+
+// 	      std::cout<<std::endl;
+// 	      std::cout<<"levels[level]="<<levels[level]<<std::endl;
+// if(levels[level]==6)
+// {
+//           std::cout<<"F_correction[343]="<<F_correction[343]<<std::endl;
+//           std::cout<<"F_correction[345]="<<F_correction[345]<<std::endl;
+//           std::cout<<"F_correction[93]="<<F_correction[93]<<std::endl;
+//           std::cout<<"F_correction[367]="<<F_correction[367]<<std::endl;
+//           std::cout<<"F_correction[429]="<<F_correction[429]<<std::endl;
+// }
+// if(levels[level]==5)
+// {
+   
+//           std::cout<<"F_correction[5]="<<F_correction[5]<<std::endl;
+//           std::cout<<"F_correction[91]="<<F_correction[91]<<std::endl;
+//           std::cout<<"F_correction[93]="<<F_correction[93]<<std::endl;
+//           std::cout<<"F_correction[83]="<<F_correction[83]<<std::endl;
+//           std::cout<<"F_correction[221]="<<F_correction[221]<<std::endl;
+// }
+// if(levels[level]==4)
+// {
+   
+//           std::cout<<"F_correction[5]="<<F_correction[5]<<std::endl;
+//           std::cout<<"F_correction[91]="<<F_correction[91]<<std::endl;
+//           std::cout<<"F_correction[93]="<<F_correction[93]<<std::endl;
+//           std::cout<<"F_correction[83]="<<F_correction[83]<<std::endl;
+//           std::cout<<"F_correction[125]="<<F_correction[125]<<std::endl;
+// }
+// if(levels[level]==3)
+// {
+   
+//           std::cout<<"F_correction[5]="<<F_correction[5]<<std::endl;
+//           std::cout<<"F_correction[23]="<<F_correction[23]<<std::endl;
+//           std::cout<<"F_correction[69]="<<F_correction[69]<<std::endl;
+// }
+
 	     for(Integer i=0;i<working_set_old[level].size();i++)
 	     	working_set_old[level][i]=working_set[level][i];
 
         plus_equal(x,F_correction);
-   		patch_active_set_gauss_seidel(x,truncated_A_levels[level],b,F_constraint_sup,nodes2entity[level],
-                              		  local_mat,A_tmp,H_tmp,b_tmp,lambda_tmp,y_tmp,c_tmp,post_smoothing);    
+
+
+
+		compute_working_set(working_set[level],x,F_constraint_inf,F_constraint_sup);
+
+		truncated_A_levels[level].multiply_and_add(F_correction,-1.0,x,b);
+
+		std::cout<<"level="<<level<<", after res="<<l2_norm(F_correction,working_set[level])<<std::endl;
+
+
+// if(levels[level]==6)
+// {
+   
+//           std::cout<<"x[343]="<<x[343]<<std::endl;
+//           std::cout<<"x[345]="<<x[345]<<std::endl;
+//           std::cout<<"x[93]="<<x[93]<<std::endl;
+//           std::cout<<"x[367]="<<x[367]<<std::endl;
+//           std::cout<<"x[429]="<<x[429]<<std::endl;
+// }
+// if(levels[level]==5)
+// {
+   
+//           std::cout<<"x[5]="<<x[5]<<std::endl;
+//           std::cout<<"x[91]="<<x[91]<<std::endl;
+//           std::cout<<"x[93]="<<x[93]<<std::endl;
+//           std::cout<<"x[83]="<<x[83]<<std::endl;
+//           std::cout<<"x[221]="<<x[221]<<std::endl;
+// }
+// if(levels[level]==4)
+// {
+   
+//           std::cout<<"x[5]="<<x[5]<<std::endl;
+//           std::cout<<"x[91]="<<x[91]<<std::endl;
+//           std::cout<<"x[93]="<<x[93]<<std::endl;
+//           std::cout<<"x[83]="<<x[83]<<std::endl;
+//           std::cout<<"x[125]="<<x[125]<<std::endl;
+// }
+// if(levels[level]==3)
+// {
+   
+//           std::cout<<"x[5]="<<x[5]<<std::endl;
+//           std::cout<<"x[23]="<<x[23]<<std::endl;
+//           std::cout<<"x[69]="<<x[69]<<std::endl;
+// }
+
+		// if(level==1)
+   		patch_active_set_gauss_seidel(x,truncated_A_levels[level],b,F_constraint_inf,F_constraint_sup,nodes2entity[level],
+                              		  local_mat,A_tmp,H_tmp,b_tmp,mu_tmp,lambda_tmp,y_tmp,c_tmp,post_smoothing);    
+   	
+
    	}
    }
 
@@ -19545,13 +19851,8 @@ Ac0diff2=(Ac0Ac0+Ac1Ac1-2*Ac0Ac1);
    {
    	std::vector<Real> rhs;
    	Real norm_rhs;
-   	DenseMatrix<Real> local_mat;
-   	DenseMatrix<Real> A_tmp;
-   	DenseMatrix<Real> H_tmp;
-   	std::vector<Real> b_tmp;
-   	std::vector<Real> lambda_tmp;
-   	std::vector<Real> y_tmp;
-   	std::vector<Real> c_tmp;
+   	DenseMatrix<Real> local_mat, A_tmp, H_tmp;
+   	std::vector<Real> b_tmp, mu_tmp,lambda_tmp, y_tmp, c_tmp;
    
      
     std::size_t max_rows=0;
@@ -19561,6 +19862,7 @@ Ac0diff2=(Ac0Ac0+Ac1Ac1-2*Ac0Ac1);
    	A_tmp.resize(max_rows,max_rows);
    	H_tmp.resize(max_rows,max_rows);
    	b_tmp.resize(max_rows);
+   	mu_tmp.resize(max_rows);
    	lambda_tmp.resize(max_rows);
    	y_tmp.resize(max_rows);
    	c_tmp.resize(max_rows);
@@ -19610,7 +19912,7 @@ Ac0diff2=(Ac0Ac0+Ac1Ac1-2*Ac0Ac1);
 
 
    	 patch_vcycle_active_set_contact(context,x,A_levels,truncated_A_levels,b,c_inf,c_sup,contact_constraints,levels,working_set,working_set_old,interpolation,entity2dofs,
-   	 						 local_mat,A_tmp,H_tmp,b_tmp,lambda_tmp,y_tmp,c_tmp,pre_smoothing,post_smoothing,level,level,change_matrix);
+   	 						 local_mat,A_tmp,H_tmp,b_tmp,mu_tmp,lambda_tmp,y_tmp,c_tmp,pre_smoothing,post_smoothing,level,level,change_matrix);
 
      M.multiply_and_add(rhs,-1.0,x,b);
 
@@ -19849,9 +20151,9 @@ Ac0diff2=(Ac0Ac0+Ac1Ac1-2*Ac0Ac1);
             // return 1000.0;
             // return 0.00;
             
-            if(point[0]<0.375 ||point[0]>0.625)
-               return 10000; 
-           return 0;
+           //  if(point[0]<0.375 ||point[0]>0.625)
+           //     return 10000; 
+           // return 0;
 
 			return +1.* 0.5*(1-sin(acos((point[0]-0.5)/0.5)));
           // return 0.00; 
@@ -25445,7 +25747,8 @@ void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr,
 
 	    	if(lev==C_level)
 	    	{
-
+			set_bool0=false;
+			set_bool1=false;
 	    		// here we must act on the boundary, the element is not correct
 	    		// indeed one coarse element can share two edges belonging to GammaD and GammaN
 	    		//
@@ -25460,7 +25763,7 @@ void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr,
 		            for(std::size_t s=0;s<FE.n_side();s++)
 		              { 
 		              	FE.init_boundary(s);
-		                if(FE.side_tags()[s]!=INVALID_INDEX)
+		                if(FE.side_tags()[s]==2)//!=INVALID_INDEX)
 		                {
 		                  
 		                  const auto& tr_rt0=RT0trace[FE.side_id()];
@@ -25473,8 +25776,7 @@ void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr,
  
    						  size0=rt0_tr.size();
 						  size1=p1_tr.size();
-						  set_bool0=false;
-						  set_bool1=false;
+
 
     					  for (Integer m0 = comp; m0< size0; m0+=ManifoldDim) 
 						  	{
@@ -25487,61 +25789,48 @@ void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr,
 							if(F_working_set[p1_tr[m1]]==1)
 								set_bool1=true;
 							}
-
-
-       //                    if(F_el==179 || F_el==197 ||  F_el==202 || F_el==232 )
-       //                    {
-       //                    std::cout<<"F_el="<<F_el <<std::endl;
-						 //  std::cout<<"FE.side_id()="<<FE.side_id() <<std::endl;
-
-						 //  for (Integer m0 = 0; m0< elemdm0.size(); m0++) 
-							// {		
-							// std::cout<<elemdm0[m0] <<std::endl;		
-							// }
-							// std::cout<<std::endl;		
-
-						 //  for (Integer m0 = comp; m0< size0; m0+=ManifoldDim) 
-							// {		
-							// std::cout<<rt0_tr[m0] <<std::endl;		
-							// }
-							// std::cout<<std::endl;		
-
-						 //  for (Integer m1 = 0; m1< elemdm1.size(); m1++) 
-							// {		
-							// std::cout<<elemdm1[m1] <<std::endl;		
-							// }
-							// std::cout<<std::endl;		
-
-						 //  for (Integer m1 = comp; m1< size1; m1+=ManifoldDim) 
-							// {		
-							// std::cout<<p1_tr[m1] <<std::endl;		
-							// }
-							// std::cout<<std::endl;		
-       //                    }
 			
 
 						   if(set_bool0*set_bool1)
 							{
-
-							// std::cout<<"set_bool0="<<set_bool0 <<std::endl;
-							// std::cout<<"set_bool1="<<set_bool1 <<std::endl;
-							// std::cout<<"F_el="<<F_el <<std::endl;
-
-							auto& F_elem=mesh.elem(F_el);
-							auto& F_nodes=F_elem.nodes;
-
-							for(Integer i=0;i<F_nodes.size();i++)
-								std::cout<<mesh.points()[F_nodes[i]]<<" ";
-							std::cout<<std::endl;		
+            				    
+             				 goto dont_truncate_RT;
+             			
 
 
 
 
-	    					  for (Integer m0 = comp; m0< size0; m0+=ManifoldDim) 
-							  	{
-							  		std::cout<<"rt0_tr[m0]="<<rt0_tr[m0] <<std::endl;
-							  		F_truncated[rt0_tr[m0]]=0;
-								}							
+
+
+
+
+							// // std::cout<<"set_bool0="<<set_bool0 <<std::endl;
+							// // std::cout<<"set_bool1="<<set_bool1 <<std::endl;
+							// // std::cout<<"F_el="<<F_el <<std::endl;
+
+							// auto& F_elem=mesh.elem(F_el);
+							// auto& F_nodes=F_elem.nodes;
+
+							// for(Integer i=0;i<F_nodes.size();i++)
+							// 	std::cout<<mesh.points()[F_nodes[i]]<<" ";
+							// std::cout<<std::endl;		
+
+
+
+
+	    		// 			  for (Integer m0 = comp; m0< size0; m0+=ManifoldDim) 
+							//   	{
+							//   		std::cout<<"rt0_tr[m0]="<<rt0_tr[m0] <<std::endl;
+							//   		F_truncated[rt0_tr[m0]]=0;
+							// 	}
+
+	    		// 			  for (Integer m1 = comp; m1< size0; m1+=ManifoldDim) 
+							//   	{
+							//   		// std::cout<<"p1_tr[m1]="<<p1_tr[m1] <<std::endl;
+							//   		// F_truncated[p1_tr[m1]]=0;
+							// 	}
+
+
 							}
 
 		                }
@@ -25550,21 +25839,34 @@ void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr,
 				
 				}	 
 
-			   //  dont_truncate_RT:
-			   //  {
-						// for (auto it = begin (children); it != end (children); ++it) 
-						// {
-						// 	auto& F_el=*it;
-						// 	FE.init(F_el,F_level);
-						// 	dofsdofmap.template dofmap_get<RT0_n>(elemdm0,F_el,F_level);
-						// 	for (Integer m0 = comp; m0< elemdm0.size(); m0+=ManifoldDim) 
-						// 	{
-						// 		F_truncated[elemdm0[m0]]=0;
-						// 	}							
+			    dont_truncate_RT:
+			    {
+			   		if(set_bool0*set_bool1)
+						for (auto it = begin (children); it != end (children); ++it) 
+						{
+							auto& F_el=*it;
+							FE.init(F_el,F_level);
+							dofsdofmap.template dofmap_get<RT0_n>(elemdm0,F_el,F_level);
+				            for(std::size_t s=0;s<FE.n_side();s++)
+				              { 
+				              	FE.init_boundary(s);
+				                if(FE.side_tags()[s]!=INVALID_INDEX)
+				                {				                  
+				                  const auto& tr_rt0=RT0trace[FE.side_id()];
+				                  subarray(rt0_tr,elemdm0,tr_rt0);
+		   						  size0=rt0_tr.size();
+		    					  for (Integer m0 = comp; m0< size0; m0+=ManifoldDim) 
+									F_truncated[rt0_tr[m0]]=0;
+								for (Integer m0 = comp; m0< size0; m0+=ManifoldDim) 
+									std::cout<<"rt0_tr="<<rt0_tr[m0]<<std::endl;
+
+									
+								 }
+							    }				
 
 				
-						// }		    		    	
-			   //  }
+						}		    		    	
+			    }
 	    	}
 	    }
 }
@@ -25667,7 +25969,12 @@ void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr,
 			}
 
 
+        std::vector<Integer> levels(n_levels+1-level);
 
+        for(Integer i=0;i<n_levels+1-level;i++)
+        {
+        	levels[i]=i+level;
+        }
 
 
 
@@ -25912,9 +26219,7 @@ void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr,
 			}
 
 
-	    GetType<typename decltype(W)::DofsDM::ElemDofMap,0> elemdm0;
-	    GetType<typename decltype(W)::DofsDM::ElemDofMap,1> elemdm1;
-	    auto &dofsdofmap=W_ptr->dofsdofmap();
+
 
 
 
@@ -25994,46 +26299,107 @@ void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr,
 
 
 
+	    GetType<typename decltype(W)::DofsDM::ElemDofMap,0> elemdm0;
+	    GetType<typename decltype(W)::DofsDM::ElemDofMap,1> elemdm1;
+	    auto &dofsdofmap=W_ptr->dofsdofmap();
+
+
+	    using RTnSpace=ElementFunctionSpace<Elem,RaviartThomasFE,Order1,1,ManifoldDim>;
+	    using PnSpace=ElementFunctionSpace<Elem,LagrangeFE,Order2,1,ManifoldDim>;
+	
+	    static constexpr auto RTntrace=TraceDofs<RTnSpace>::dofs();
+	    static constexpr auto Pntrace=TraceDofs<PnSpace>::dofs();
+
+	    using RTntrace_single=remove_all_t<decltype(TraceDofs<RTnSpace>::dofs()[0])>;
+	    using Pntrace_single=remove_all_t<decltype(TraceDofs<PnSpace>::dofs()[0])>;
 
 
 
-
-
-
-
+	    RTntrace_single rtn_tr;
+	    Pntrace_single pn_tr;
 
 
 	    for(Integer el=0;el<mesh.n_elements();el++)
 	    {
 	    	auto& elem=mesh.elem(el);
 			auto& tags=elem.side_tags;
-			bool boundary2=false;
+			auto lev=bisection.tracker().get_level(el);
+			auto& nodes=elem.nodes;		
+
+			if(lev==3)
+			{
+				bool boundary2or5=false;
+
+				
+				for(Integer m=0;m<tags.size();m++)
+				{
+					if(tags[m]==2||tags[m]==5)
+						boundary2or5=true;
+
+					for(Integer i=0;i<nodes.size();i++)
+					{
+
+						if(tags[m]==1 &&mesh.points()[nodes[i]][1]==1.0)
+							boundary2or5=true;
+
+					}					
+				}
+
+
+
+
+				if(boundary2or5 )
+				{
+		    	// auto lev=bisection.tracker().get_level(el);
+				// FE.init(el,lev);
+				
+							
+					std::cout<<std::endl;
+					std::cout<<"boundary2 el = "<<el<<std::endl;
+					for(Integer i=0;i<nodes.size();i++)
+					{
+						std::cout<<nodes[i]<<" ";
+						std::cout<<mesh.points()[nodes[i]]<<" ";
+
+					}
+					std::cout<<std::endl;
+			    	
+
+		            for(std::size_t s=0;s<3;s++)
+		              { 
+		              	if(tags[s]==2||tags[s]==5||tags[s]==1)
+		              	{
+		              	dofsdofmap.template dofmap_get<0>(elemdm0,el,lev);
+		              	dofsdofmap.template dofmap_get<1>(elemdm1,el,lev);
+		              	const auto& tr_rtn=RTntrace[s];
+		                subarray(rtn_tr,elemdm0,tr_rtn);
+		                const auto& tr_pn=Pntrace[s];
+		                subarray(pn_tr,elemdm1,tr_pn);
+ 
+				
+
+						std::cout<<"rtn_tr"<<std::endl;
+						std::cout<<rtn_tr<<std::endl;
+						std::cout<<"pn_tr"<<std::endl;
+						std::cout<<pn_tr<<std::endl;
+		              	}
+
+
+
+    				
+					
+					}
+				}
+
+
+			}
+
+
+
+
+
 
 			
-			for(Integer m=0;m<tags.size();m++)
-			{
-				if(tags[m]==2)
-					boundary2=true;
-			}
-
-
-			if(boundary2)
-			{
-	    	// auto lev=bisection.tracker().get_level(el);
-			// FE.init(el,lev);
-			auto& nodes=elem.nodes;				
-			std::cout<<std::endl;
-			std::cout<<"boundary2 el = "<<el<<std::endl;
-			for(Integer i=0;i<nodes.size();i++)
-			{
-				std::cout<<nodes[i]<<" ";
-				std::cout<<mesh.points()[nodes[i]]<<" ";
-
-				 
-
-			}
-			std::cout<<std::endl;
-			}
 		}
 			
 
@@ -26060,12 +26426,7 @@ void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr,
 
 	    FullFunctionSpaceLevelsInterpolation<W_type> levels_interp(W_ptr);
         
-        std::vector<Integer> levels(n_levels+1-level);
 
-        for(Integer i=0;i<n_levels+1-level;i++)
-        {
-        	levels[i]=i+level;
-        }
 
         context.build_boundary_info(levels);
 
@@ -26167,7 +26528,7 @@ void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr,
 
         auto F_truncate=working_set[working_set.size()-1];
 
-        mixed_bc_truncation(W_ptr,levels[0],levels[1],1,working_set[working_set.size()-1],F_truncate);
+        // mixed_bc_truncation(W_ptr,levels[0],levels[1],1,working_set[working_set.size()-1],F_truncate);
         save_vector("truncate_true.dat",F_truncate);
 
         for(Integer i=0;i<F_truncate.size();i++)
@@ -26267,7 +26628,7 @@ void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr,
 		Integer pre_smooth=5;
 		Integer post_smooth=0;
 
-		patch_multigrid_active_set2(Ant_levels[levels.size()-1],bnotruncation ,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,constraints(),contact_constraints,levels,working_set,levels_interp,e2d,pre_smooth,post_smooth,levels.size()-1,max_iter,0.000000001,residual);
+		// patch_multigrid_active_set2(Ant_levels[levels.size()-1],bnotruncation ,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,constraints(),contact_constraints,levels,working_set,levels_interp,e2d,pre_smooth,post_smooth,levels.size()-1,max_iter,0.000000001,residual);
 
         std::vector<Real> active_solution(Ant_levels[levels.size()-1].max_rows(),0);
         level_global_house_holder[levels[levels.size()-1]].transpose_and_multiply(active_solution,active_x);
@@ -32196,8 +32557,11 @@ template<Integer ManifoldDim, Integer Dim1, Integer Dim2>
 		auto Waux=AuxFunctionSpacesBuild(p1,p1_1);
 		auto W=FullSpaceBuild(Wtrial,Waux);
 
+
+
 		using W_type=decltype(W);
 		auto W_ptr=std::make_shared<W_type>(W);
+
 
 		if(argc==4)
 		{
@@ -32259,10 +32623,17 @@ template<Integer ManifoldDim, Integer Dim1, Integer Dim2>
 
 	    constexpr auto C_coeff2=Constant<Scalar>((1.0/Real(2.0*mu))*(-lambda/(Real(ManifoldDim)*lambda+ 2.0 * mu)));	
 	    constexpr auto identity=Constant<Identity<ManifoldDim>>();		
-	    constexpr auto fixed_normal=Constant<Mat<2,1>>(1.,0);			
+	    constexpr auto fixed_normal=Constant<Mat<2,1>>(1.,0);	
+	    constexpr auto rotation_mat=Constant<Mat<2,2>>(0.0,1.0,-1.0,0.0);
+	    constexpr auto transposed_rotation_mat=Constant<Mat<2,2>>(0.0,-1.0,+1.0,0.0);
+
+
 
 	    auto Epsilon=NewOperator(halp*((GradientOperator()+Transpose(GradientOperator()))));
 		auto C_inverse=NewOperator(C_coeff1*IdentityOperator() + C_coeff2*identity* MatTrace(IdentityOperator()) );
+		auto Curl2D=NewOperator(TraceGradientOperator()*transposed_rotation_mat ) ;
+		auto C_inverseCurl=NewOperator(C_coeff1*rotation_mat*GradientOperator() + C_coeff2*identity* MatTrace(rotation_mat*GradientOperator())) ;
+
 		auto normal_values=MakeNodeNormalValues(W_ptr);
         W_ptr->update();
 		normal_values.compute_node_normals();
@@ -32301,15 +32672,29 @@ template<Integer ManifoldDim, Integer Dim1, Integer Dim2>
 		auto bilinearform=
 		L2Inner( C_eq*Div(sigma),Div(tau))
 		+L2Inner(C_inverse(sigma)-Epsilon(u),C_inverse(tau)-Epsilon(v))
-		+surface_integral(contact_boundary,C_compl*Inner(Trace(sigma),node_normal),Inner(Trace(v),node_normal))+
-		+surface_integral(contact_boundary,C_compl*Inner(Trace(tau),node_normal),  Inner(Trace(u),node_normal))
+		// +surface_integral(contact_boundary,C_compl*Inner(Trace(sigma),node_normal),Inner(Trace(v),node_normal))+
+		// +surface_integral(contact_boundary,C_compl*Inner(Trace(tau),node_normal),  Inner(Trace(u),node_normal))
 		;
 
 		auto linearform=
 		L2Inner(-C_eq*Div(tau),f1)
-		+surface_integral(contact_boundary,C_compl*Inner(Trace(tau),node_normal),gap)
+		// +surface_integral(contact_boundary,C_compl*Inner(Trace(tau),node_normal),gap)
 		;
 
+
+        auto linear_elasticity=
+		L2Inner( C_eq*Div(sigma),Div(tau))
+		+L2Inner(C_inverse(sigma)-Epsilon(u),C_inverse(tau)-Epsilon(v))
+		;
+
+
+		auto divdiv=L2Inner( C_eq*Div(sigma),Div(tau));
+
+        auto complementarity=
+        L2Inner( C_eq*Div(sigma),Div(tau));
+		// +surface_integral(contact_boundary,C_compl*Inner(Trace(sigma),node_normal),Inner(Trace(v),node_normal))+
+		// +surface_integral(contact_boundary,C_compl*Inner(Trace(tau),node_normal),  Inner(Trace(u),node_normal))
+		;
 
 
 
@@ -32319,19 +32704,87 @@ template<Integer ManifoldDim, Integer Dim1, Integer Dim2>
 		auto bcs4=DirichletBC<1,FunctionNthComponent<ManifoldDim,1,Func001>>(W_ptr,4);
 
 		auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4);
+		auto compl_context=create_context(complementarity,linearform);
+		auto elastcity_context=create_context(linear_elasticity,linearform);
+		auto divdiv_context=create_context(divdiv,linearform);
 
 	    W_ptr->update();
 	    
 
+		auto WCurlmixed=MixedFunctionSpace(p1,p1);
+		auto WCurlaux=AuxFunctionSpacesBuild(p1);
+		auto WCurl=FullSpaceBuild(WCurlmixed,WCurlaux);
+		using WCurl_type=decltype(WCurl);
+		auto WCurl_ptr=std::make_shared<WCurl_type>(WCurl);
+
+		auto phi = MakeTrial<0>(WCurl_ptr);
+		auto psi = MakeTest<0>(WCurl_ptr);
+		auto u_h = MakeTrial<1>(WCurl_ptr);
+		auto v_h = MakeTest<1>(WCurl_ptr);		
+		auto node_normal_curl = MakeTraceFunction<0>(WCurl_ptr);
+		auto fcurl = MakeFunction<0,FunctionZero<ManifoldDim>>(WCurl_ptr);
+
+
+		auto normal_values_curl=MakeNodeNormalValues(WCurl_ptr);
+        WCurl_ptr->update();
+
+   		normal_values_curl.compute_node_normals();
+		normal_values_curl.compute_face_normals();
+        
+		auto& nnv_curl=normal_values.node_normals();
+		auto& nf_curl=normal_values.face_normals();
+
+		for(Integer i=0;i<nnv.size();i++)
+		{
+			for(Integer j=0;j<nnv[i].size();j++)
+				nnv_curl[i][j]=nn2;
+		}
+		for(Integer i=0;i<nf.size();i++)
+		{
+			for(Integer j=0;j<nf[i].size();j++)
+				nf_curl[i][j]=nn2;
+		}
+
+
+		std::vector<Real> y_p1;
+		normal_values.compute_dofs(y_p1);
+		node_normal_curl.global_dofs_update(y_p1);
+
+
+		auto bilinearformCurl=		
+		+surface_integral(contact_boundary,Inner(node_normal_curl,Curl2D(phi)*node_normal_curl),Inner(node_normal_curl,Trace(v_h)))
+		// +L2Inner(C_inverseCurl(phi),C_inverseCurl(psi))
+		// +		surface_integral(contact_boundary,Inner(TraceGrad(phi),node_normal_curl),Trace(v_h))
+		// +		surface_integral(contact_boundary,Inner(node_normal_curl,Trace(u_h)),Inner(node_normal_curl,Trace(v_h)))
+
+		;
+		auto linearformCurl=		
+		+L2Inner(fcurl,psi)
+		;
+
+		auto curl_context=create_context(bilinearformCurl,linearformCurl);
+
+
+		WCurl_ptr->update();
+
 		auto var_names=variables_names("stress","disp");
 
-		SparseMatrix<Real> AL;
-		std::vector<Real> bL,xL;
+		SparseMatrix<Real> AL,CL,DL,ACurlL,DivDivL;
+		std::vector<Real> bL,xL,fakeL;
+
+
+		curl_context.assembly(ACurlL,fakeL,levelL);
+		// divdiv_context.assembly(DivDivL,fakeL,levelL);
 
 		
 
         std::cout<<"assembly "<<std::endl;
-		context.assembly(AL,bL,levelL);
+		// context.assembly(AL,bL,levelL);
+		// compl_context.assembly(CL,fakeL,levelL);
+		// elastcity_context.assembly(DL,fakeL,levelL);
+
+
+
 		std::vector<Real> b_transformed(bL), active_x(bL.size(),0);
 		context.build_boundary_info(levels);
 
@@ -32357,10 +32810,16 @@ template<Integer ManifoldDim, Integer Dim1, Integer Dim2>
 
   		std::vector<SparseMatrix<Real>> Ant_levels(levels.size());
   		std::vector<SparseMatrix<Real>> truncated_Ant_levels(levels.size());
+  		std::vector<SparseMatrix<Real>> C_levels(levels.size());
+  		std::vector<SparseMatrix<Real>> ACurl_levels(levels.size());
 
 
   		Ant_levels[levels.size()-1]=AL;
+  		// Ant_levels[levels.size()-1]=DL;
         truncated_Ant_levels[levels.size()-1]=AL;
+        C_levels[levels.size()-1]=CL;
+        ACurl_levels[levels.size()-1]=ACurlL;
+        CL.save_mat("C"+std::to_string(levels.size()-1)+"_"+std::to_string(levels.size()-1)+".dat");
 
 
 
@@ -32399,6 +32858,9 @@ template<Integer ManifoldDim, Integer Dim1, Integer Dim2>
         { 
             Ant_levels[i]=Ant_levels[i+1].multiply_left_transpose_and_multiply_right(levels_interp.matrix(i));
             truncated_Ant_levels[i]=Ant_levels[i+1].multiply_left_transpose_and_multiply_right(levels_interp.matrix(i),working_set[i+1]);
+            C_levels[i]=C_levels[i+1].multiply_left_transpose_and_multiply_right(levels_interp.matrix(i));
+             C_levels[i].save_mat("C"+std::to_string(i)+"_"+std::to_string(levels.size()-1)+".dat");
+
          }
 
 
@@ -32407,6 +32869,10 @@ template<Integer ManifoldDim, Integer Dim1, Integer Dim2>
         { 
             Ant_levels[i]=Ant_levels[i+1].multiply_left_transpose_and_multiply_right(levels_interp.matrix(i));
             truncated_Ant_levels[i]=truncated_Ant_levels[i+1].multiply_left_transpose_and_multiply_right(levels_interp.matrix(i));
+            C_levels[i]=C_levels[i+1].multiply_left_transpose_and_multiply_right(levels_interp.matrix(i));
+            C_levels[i].save_mat("C"+std::to_string(i)+"_"+std::to_string(levels.size()-1)+".dat");
+
+           
         }
 
 
@@ -32420,11 +32886,12 @@ template<Integer ManifoldDim, Integer Dim1, Integer Dim2>
 
 
 
-        truncated_Ant_levels[0].save_mat("A0.dat");
-        truncated_Ant_levels[1].save_mat("A1.dat");
         save_vector("c_dofs.dat",constrained_dofs_levels[working_set.size()-1]);
 
         save_vector("c_sup.dat",constraints_sup());
+
+
+
 
 
 
@@ -32459,13 +32926,13 @@ template<Integer ManifoldDim, Integer Dim1, Integer Dim2>
 		// patch_multigrid_active_set(os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,constraints(),contact_constraints,levels,working_set,levels_interp,e2d,0,0,levels.size()-1,2,0.000000001);
 
 		std::vector<Real>residual;
-		Integer max_iter=1;
+		Integer max_iter=10;
 		Integer pre_smooth=5;
-		Integer post_smooth=0;
+		Integer post_smooth=5;
+        save_vector("0sup.dat",constraints_sup());
 
 
-
-		patch_multigrid_active_set_contact(Ant_levels[levels.size()-1],b_transformed ,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,constraints_inf(),constraints_sup(),contact_constraints,levels,working_set,levels_interp,e2d,pre_smooth,post_smooth,levels.size()-1,max_iter,0.000000001,residual);
+		// patch_multigrid_active_set_contact(Ant_levels[levels.size()-1],b_transformed ,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,constraints_inf(),constraints_sup(),contact_constraints,levels,working_set,levels_interp,e2d,pre_smooth,post_smooth,levels.size()-1,max_iter,0.000000001,residual);
        
         os2.close();
 
@@ -32478,7 +32945,114 @@ template<Integer ManifoldDim, Integer Dim1, Integer Dim2>
 		os.close();
 		os.open(output_fileACTIVESET.c_str());
 		write_wtk_isoparametric(os,W_ptr,active_x,var_names,levelL);
+ 
+ 	    auto& level_cumultive_n_dofs=context.full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
+        const Integer n0=level_cumultive_n_dofs[levels[0]];
+        const Integer n1=level_cumultive_n_dofs[levels[levels.size()-1]];
+        std::cout<<" n0= "<<n0<<std::endl;
+        std::cout<<" n1= "<<n1<<std::endl;       
+        save_vector("residual_n0_"+std::to_string(n0)+"_n1_"+std::to_string(n1)+"_n_lev_"+std::to_string(n_levels)+".dat",residual);
         
+        
+
+
+
+        std::vector<SparseMatrix<Real>> Nedelec2RT2D(levels.size());
+
+
+
+
+
+        Integer edge_nodes_array[2];
+	    GetType<typename decltype(W)::DofsDM::ElemDofMap,0> elemdmRT0;
+	    GetType<typename decltype(WCurl)::DofsDM::ElemDofMap,0> elemdmND;
+	    auto &dofsdofmap=W_ptr->dofsdofmap();
+	    FiniteElem<Elem> FE(mesh);
+
+
+
+        for(Integer lev=0;lev<levels.size();lev++)
+        {
+
+  			   	std::cout<<" lev="<<lev<<std::endl;
+
+    		Integer n_dofs_RT0=tuple_get<0>(context.full_spaces_ptr()->tuple_reference_spaces()).level_n_dofs_array()[0][levels[lev]];
+    		Integer n_dofs_ND0=tuple_get<0>(curl_context.full_spaces_ptr()->tuple_reference_spaces()).level_n_dofs_array()[0][levels[lev]];
+
+    		std::cout<<" n_dofs_RT0="<<n_dofs_RT0<<std::endl;
+    		std::cout<<" n_dofs_ND0="<<n_dofs_ND0<<std::endl;
+
+        	Nedelec2RT2D[lev].init(n_dofs_RT0, n_dofs_ND0 , 2);
+        	static constexpr Integer NComponents=ManifoldDim;
+
+
+	        for(Integer el=0;el<mesh.n_elements();el++)
+	        {
+	            auto &elem = mesh.elem(el);
+	            const auto &nodes = elem.nodes;
+
+	            if(!elem_belongs_to_level(mesh,el,lev,bisection.tracker()))continue;
+			   	std::cout<<"el="<<el<<", lev="<<lev<<std::endl;
+
+	            FE.init(el,level);
+			    context.full_spaces_ptr()->dofsdofmap().template dofmap_get<0>(elemdmRT0,el,lev);
+			   	curl_context.full_spaces_ptr()->dofsdofmap().template dofmap_get<0>(elemdmND,el,lev);
+			   	std::cout<<"elemdmRT0="<<elemdmRT0<<std::endl;
+			   	std::cout<<"elemdmND="<<elemdmND<<std::endl;
+	            for(Integer j=0;j<nodes.size(); j++)
+	            {
+	            	std::cout<<nodes[j]<<" "<<mesh.points()[nodes[j]]<<" ";
+	            }
+	            std::cout<<std::endl;
+
+	            for(Integer i=0;i<ElemEntityCombinations<Elem,1>::value;i++)
+	            {
+	                ElemEntityCombinations<Elem,1>::generate(i,edge_nodes_array);  
+
+
+	            if(nodes[edge_nodes_array[0]]<nodes[edge_nodes_array[1]])
+	                {
+			     		for(Integer k=0;k<NComponents;k++)
+			     		{
+			              Nedelec2RT2D[lev].equal(-1,elemdmRT0[i*NComponents+k],elemdmND[edge_nodes_array[0]*NComponents+k]);
+			              Nedelec2RT2D[lev].equal(+1,elemdmRT0[i*NComponents+k],elemdmND[edge_nodes_array[1]*NComponents+k]);
+			     		}
+
+	                }   
+	            else
+	            if(nodes[edge_nodes_array[0]]>nodes[edge_nodes_array[1]])
+	                {
+			     		for(Integer k=0;k<NComponents;k++)
+			     		{
+			              Nedelec2RT2D[lev].equal(+1,elemdmRT0[i*NComponents+k],elemdmND[edge_nodes_array[0]*NComponents+k]);
+			              Nedelec2RT2D[lev].equal(-1,elemdmRT0[i*NComponents+k],elemdmND[edge_nodes_array[1]*NComponents+k]);
+			     		}
+
+	                }          
+	            }
+
+	        }
+            Nedelec2RT2D[lev].save_mat("ND2RT"+std::to_string(lev)+"_"+std::to_string(levels.size()-1)+".dat");
+
+
+        }
+
+
+
+	        DivDivL.save_mat("DivDivL"+std::to_string(levels.size()-1)+"_"+std::to_string(levels.size()-1)+".dat");
+ 
+  	    auto& curl_level_cumultive_n_dofs=curl_context.full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
+        const Integer n0curl=curl_level_cumultive_n_dofs[levels[0]];
+        const Integer n1curl=curl_level_cumultive_n_dofs[levels[levels.size()-1]];
+        std::cout<<"curl n0= "<<n0curl<<std::endl;
+        std::cout<<"curl n1= "<<n1curl<<std::endl; 
+
+        std::cout<<"levelL="<<levelL<<std::endl;
+        std::cout<<"ACurlL.rows()="<<ACurlL.rows()<<std::endl;
+        std::cout<<"ACurlL.cols()="<<ACurlL.cols()<<std::endl;
+        ACurlL.print_val();
+        
+        ACurlL.save_mat("ACurlL"+std::to_string(levels.size()-1)+"_"+std::to_string(levels.size()-1)+".dat");
 
 }
 

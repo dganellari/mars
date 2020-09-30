@@ -136,6 +136,12 @@ class QuadratureOrder<TraceOperator, BaseFunctionSpace<LagrangeFE,Order,Continui
 };
 
 template<Integer Order,Integer Continuity, Integer NComponents>
+class QuadratureOrder<TraceGradientOperator, BaseFunctionSpace<LagrangeFE,Order,Continuity,NComponents> >
+{ public:
+  static constexpr Integer value=Order-1;
+};
+
+template<Integer Order,Integer Continuity, Integer NComponents>
 class QuadratureOrder<GradientOperator, BaseFunctionSpace<LagrangeFE,Order,Continuity,NComponents> >
 { public:
   static constexpr Integer value=Order-1;

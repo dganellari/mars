@@ -1246,8 +1246,8 @@ int main(int argc, char *argv[])
 	
 // DUALLinearElasticityCook<2,1>(argc,argv);//1,1,2);
 // SquareHoleDUALContactLinearElasticity<2,1>(argc,argv);
-PROVALSFEM_ContactLinearElasticity<2,0,1>(1,5,6);
-// PROVALSFEM_ContactLinearElasticity2<2,0,1>(argc,argv);
+// PROVALSFEM_ContactLinearElasticity<2,0,1>(1,5,6);
+PROVALSFEM_ContactLinearElasticity2<2,0,1>(argc,argv);
 // PrimalContactLinearElasticity<2>(argc,argv);
 // PROVALSFEM_ContactLinearElasticity2<2,0,1>(1,0,1,1);
 // CookLSFEM<2,0,1>(argc,argv);

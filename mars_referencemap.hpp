@@ -58,7 +58,19 @@ class MapFromReference<TraceOperator, Simplex<Dim,ManifoldDim>,LagrangeFE>
   Real id_;
 };
 
-
+template<Integer Dim, Integer ManifoldDim> 
+class MapFromReference<TraceGradientOperator, Simplex<Dim,ManifoldDim>,LagrangeFE> 
+{
+ public:
+ using Operator=TraceGradientOperator;
+ using Elem=Simplex<Dim,ManifoldDim+1>;
+ inline constexpr void  init(const FiniteElem<Simplex<Dim,ManifoldDim+1>>& FE){grad_=  transpose(inverse(FE()));}
+ inline constexpr const auto&  operator() ()const{return grad_;}
+ private:
+  Matrix<Real, Dim, ManifoldDim+1> grad_; 
+ private:
+  Real id_;
+};
 
 
 template<Integer Dim, Integer ManifoldDim> 

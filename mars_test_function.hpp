@@ -140,6 +140,11 @@ Test<MixedSpace,N,TraceOperator>
 Trace(const Test<MixedSpace,N,IdentityOperator>& t)
 {return Test<MixedSpace,N,TraceOperator> (t.spaces_ptr());}
 
+template<typename MixedSpace,Integer N>
+Test<MixedSpace,N,TraceGradientOperator> 
+TraceGrad(const Test<MixedSpace,N,IdentityOperator>& t)
+{return Test<MixedSpace,N,TraceGradientOperator> (t.spaces_ptr());}
+
 
 
 

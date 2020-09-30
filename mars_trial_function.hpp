@@ -122,6 +122,11 @@ Trial<MixedSpace,N,TraceOperator>
 Trace(const Trial<MixedSpace,N,IdentityOperator>& t)
 {return Trial<MixedSpace,N,TraceOperator> (t.spaces_ptr());}
 
+template<typename MixedSpace,Integer N>
+Trial<MixedSpace,N,TraceGradientOperator> 
+TraceGrad(const Trial<MixedSpace,N,IdentityOperator>& t)
+{return Trial<MixedSpace,N,TraceGradientOperator> (t.spaces_ptr());}
+
 
 
 
