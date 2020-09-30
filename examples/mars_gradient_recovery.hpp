@@ -20,6 +20,7 @@ namespace mars {
             ViewMatrixType<Integer> elems = values.mesh().get_view_elements();
 
             auto mesh = values.mesh();
+            auto active = mesh.get_view_active();
 
             if (grad_u.extent(0) != mesh.n_elements()) {
                 grad_u = ViewMatrixType<Real>("grad_u", mesh.n_elements(), Dim);
@@ -30,6 +31,8 @@ namespace mars {
                     Real u_e[NFuns];
                     Real J_inv_e[Dim * Dim];
                     Real grad_u_e[Dim];
+
+                    if (!active(i)) return;  // ACTIVE
 
                     for (Integer k = 0; k < NFuns; ++k) {
                         u_e[k] = u(elems(i, k));
@@ -55,6 +58,7 @@ namespace mars {
             ViewMatrixType<Integer> elems = values.mesh().get_view_elements();
 
             auto mesh = values.mesh();
+            auto active = mesh.get_view_active();
 
             ViewVectorType<Real> lumped_mass("lumped_mass", mesh.n_nodes());
 
@@ -66,6 +70,8 @@ namespace mars {
                 "GradientRecovery::project", mesh.n_elements(), MARS_LAMBDA(const Integer i) {
                     Integer idx[NFuns];
                     Real grad_p[Dim];
+
+                    if (!active(i)) return;  // ACTIVE
 
                     for (int k = 0; k < NFuns; ++k) {
                         idx[k] = elems(i, k);
@@ -103,6 +109,7 @@ namespace mars {
             ViewMatrixType<Integer> elems = values.mesh().get_view_elements();
 
             auto mesh = values.mesh();
+            auto active = mesh.get_view_active();
 
             if (error.extent(0) != mesh.n_elements()) {
                 error = ViewVectorType<Real>("grad_p1", mesh.n_elements());
@@ -112,6 +119,8 @@ namespace mars {
                 "GradientRecovery::estimate", mesh.n_elements(), MARS_LAMBDA(const Integer i) {
                     Integer idx[NFuns];
                     Real grad_p0_e[Dim];
+
+                    if (!active(i)) return;  // ACTIVE
 
                     for (int d = 0; d < Dim; ++d) {
                         grad_p0_e[d] = grad_p0(i, d);

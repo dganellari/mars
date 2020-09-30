@@ -30,11 +30,12 @@ namespace mars {
         static const int NFuns = Elem::ElemType;
         static const int NQPoints = 1;
         // template <class Quadrature>
-        FEValues(const Mesh &mesh) : mesh_(mesh) {}
+        FEValues(Mesh &mesh) : mesh_(mesh) {}
 
         void init() {
             ViewMatrixType<Integer> elems = mesh_.get_view_elements();
             ViewMatrixType<Real> points = mesh_.get_view_points();
+            auto active = mesh_.get_view_active();
 
             auto ne = elems.extent(0);
             auto nen = elems.extent(1);
@@ -76,6 +77,9 @@ namespace mars {
 
                     Real e_det_J = 0.0;
                     Invert<Dim>::apply(J, J_inv_e, e_det_J);
+
+                    // Turn off inactive contributions
+                    // det_J(i) = Kokkos::ArithTraits<Real>::abs(e_det_J) * active(i);
                     det_J(i) = Kokkos::ArithTraits<Real>::abs(e_det_J);
 
                     for (int k = 0; k < (Dim * Dim); ++k) {
@@ -113,7 +117,7 @@ namespace mars {
         MARS_INLINE_FUNCTION ViewMatrixType<Real> J_inv() const { return J_inv_; }
 
     private:
-        Mesh mesh_;
+        Mesh &mesh_;
 
     public:
         ViewMatrixType<Real> J_inv_;

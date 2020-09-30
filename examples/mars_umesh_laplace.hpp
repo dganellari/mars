@@ -38,6 +38,7 @@ namespace mars {
             auto mesh = values.mesh();
 
             ViewMatrixType<Integer> elems = mesh.get_view_elements();
+            auto active = mesh.get_view_active();
 
             const Integer n_nodes = mesh.n_nodes();
 
@@ -50,6 +51,8 @@ namespace mars {
                     Real Au[NFuns];
                     Integer idx[NFuns];
                     Real J_inv_e[Dim * Dim];
+
+                    if (!active(i)) return;  // ACTIVE
 
                     for (int k = 0; k < (Dim * Dim); ++k) {
                         J_inv_e[k] = J_inv(i, k);
@@ -81,12 +84,16 @@ namespace mars {
                 auto J_inv = values.J_inv();
 
                 ViewVectorType<Real> inv_diag("inv_diag", mesh.n_nodes());
+                auto active = mesh.get_view_active();
 
                 Kokkos::parallel_for(
                     "JacobiPreconditioner::init", mesh.n_elements(), MARS_LAMBDA(const Integer i) {
                         Integer idx[NFuns];
                         Real val[NFuns];
                         Real J_inv_e[Dim * Dim];
+
+                        if (!active(i)) return;  // ACTIVE
+
                         const Real det_J_e = det_J(i);
 
                         assert(det_J_e > 0.0);

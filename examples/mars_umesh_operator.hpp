@@ -81,11 +81,15 @@ namespace mars {
             ViewMatrixType<Real> points = values_.mesh().get_view_points();
 
             auto mesh = values_.mesh();
+            auto active = mesh.get_view_active();
 
             Kokkos::parallel_for(
                 "UMeshOperator::assemble_rhs", mesh.n_elements(), MARS_LAMBDA(const Integer i) {
                     Integer idx[NFuns];
                     Real p[Dim];
+
+                    if (!active(i)) return;  // ACTIVE
+
                     Real det_J_e = det_J(i);
 
                     for (Integer k = 0; k < NFuns; ++k) {
