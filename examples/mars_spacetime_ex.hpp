@@ -177,36 +177,36 @@ namespace mars {
         const Real y = points[1];
         const Real z = points[2];
 
-        return (-Kokkos::ArithTraits<Real>::exp(-200 * (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5) / 2) *
-                                                    (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5) / 2) -
-                                                200 * (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5) / 2) *
-                                                    (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5) / 2)) *
-                (80 * M_PI * Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5) *
-                     (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5) / 2) -
-                 80 * M_PI * Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5) *
-                     (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5) / 2))) -
-               ((Kokkos::ArithTraits<Real>::exp(-200 * (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5) / 2) *
-                                                    (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5) / 2) -
-                                                200 * (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5) / 2) *
-                                                    (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5) / 2)) *
-                     (400 * x - 200 * Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5)) *
-                     (400 * x - 200 * Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5)) -
+        return (-Kokkos::ArithTraits<Real>::exp(-200 * (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5.0) / 2.) *
+                                                    (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5.0) / 2.) -
+                                                200 * (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5.0) / 2.) *
+                                                    (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5.0) / 2.)) *
+                (80 * M_PI * Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5.0) *
+                     (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5.0) / 2.) -
+                 80 * M_PI * Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5.0) *
+                     (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5.0) / 2.))) -
+               ((Kokkos::ArithTraits<Real>::exp(-200 * (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5.0) / 2.) *
+                                                    (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5.0) / 2.) -
+                                                200 * (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5.0) / 2.) *
+                                                    (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5.0) / 2.)) *
+                     (400 * x - 200 * Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5.0)) *
+                     (400 * x - 200 * Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5.0)) -
                  400 * Kokkos::ArithTraits<Real>::exp(
-                           -200 * (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5) / 2) *
-                               (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5) / 2) -
-                           200 * (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5) / 2) *
-                               (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5) / 2))) +
-                (Kokkos::ArithTraits<Real>::exp(-200 * (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5) / 2) *
-                                                    (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5) / 2) -
-                                                200 * (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5) / 2) *
-                                                    (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5) / 2)) *
-                     (400 * y - 200 * Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5)) *
-                     (400 * y - 200 * Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5)) -
+                           -200 * (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5.0) / 2.) *
+                               (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5.0) / 2.) -
+                           200 * (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5.0) / 2.) *
+                               (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5.0) / 2.))) +
+                (Kokkos::ArithTraits<Real>::exp(-200 * (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5.0) / 2.) *
+                                                    (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5.0) / 2.) -
+                                                200 * (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5.0) / 2.) *
+                                                    (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5.0) / 2.)) *
+                     (400 * y - 200 * Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5.0)) *
+                     (400 * y - 200 * Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5.0)) -
                  400 * Kokkos::ArithTraits<Real>::exp(
-                           -200 * (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5) / 2) *
-                               (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5) / 2) -
-                           200 * (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5) / 2) *
-                               (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5) / 2))));
+                           -200 * (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5.0) / 2.) *
+                               (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * z) / 5.0) / 2.) -
+                           200 * (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5.0) / 2.) *
+                               (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * z) / 5.0) / 2.))));
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -290,11 +290,39 @@ namespace mars {
                      (-w * w + w) * (-y * y + y) * (-100.0 * x * x + 100.0 * x)));
     }
     /* ---------------------------------------------------------------------------- */
-    // Moving Gaussian peak --> Domain (-1,1)^3 x (O,5)
+    // Smooth
 
     /* BC -->  zero dirichlet + natural neumann on upper bound */
 
     MARS_INLINE_FUNCTION Real ex8_4D_st_exact(const Real *points) {
+        const Real x = points[0];
+        const Real y = points[1];
+        const Real z = points[2];
+        const Real w = points[3];
+
+        return (1.0 - x) * x * x * (1.0 - y) * y * y * (1.0 - z) * z * z * (1.0 - w) * w * w;
+    }
+    MARS_INLINE_FUNCTION Real ex8_4D_st_spacetime(const Real *points) {
+        const Real x = points[0];
+        const Real y = points[1];
+        const Real z = points[2];
+        const Real w = points[3];
+
+        return (w * w * x * x * y * y * z * z * (x - 1.0) * (y - 1.0) * (z - 1.0) +
+                2.0 * w * x * x * y * y * z * z * (w - 1.0) * (x - 1.0) * (y - 1.0) * (z - 1.0)) -
+               ((2.0 * w * w * y * y * z * z * (w - 1.0) * (x - 1.0) * (y - 1.0) * (z - 1.0) +
+                 4.0 * w * w * x * y * y * z * z * (w - 1.0) * (y - 1.0) * (z - 1.0)) +
+                (2.0 * w * w * x * x * z * z * (w - 1.0) * (x - 1.0) * (y - 1.0) * (z - 1.0) +
+                 4.0 * w * w * x * x * y * z * z * (w - 1.0) * (x - 1.0) * (z - 1.0)) +
+                (2.0 * w * w * x * x * y * y * (w - 1.0) * (x - 1.0) * (y - 1.0) * (z - 1.0) +
+                 4.0 * w * w * x * x * y * y * z * (w - 1.0) * (x - 1.0) * (y - 1.0)));
+    }
+    /* ---------------------------------------------------------------------------- */
+    // Moving Gaussian peak --> Domain (-1,1)^3 x (O,5)
+
+    /* BC -->  zero dirichlet + natural neumann on upper bound */
+
+    MARS_INLINE_FUNCTION Real ex9_4D_st_exact(const Real *points) {
         const Real x = points[0];
         const Real y = points[1];
         const Real z = points[2];
@@ -314,69 +342,73 @@ namespace mars {
         return A * Kokkos::ArithTraits<Real>::exp(-num / (2.0 * sigma * sigma));
     }
 
-    MARS_INLINE_FUNCTION Real ex8_4D_st_spacetime(const Real *points) {
+    MARS_INLINE_FUNCTION Real ex9_4D_st_spacetime(const Real *points) {
         const Real x = points[0];
         const Real y = points[1];
         const Real z = points[2];
         const Real w = points[3];
 
-        return (-Kokkos::ArithTraits<Real>::exp(-200 * (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) *
-                                                    (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) -
-                                                200 * (z - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) *
-                                                    (z - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) -
-                                                200 * (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * w) / 5) / 2) *
-                                                    (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * w) / 5) / 2)) *
-                (80 * M_PI * Kokkos::ArithTraits<Real>::sin((2 * M_PI * w) / 5) *
-                     (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) -
-                 80 * M_PI * Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) *
-                     (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * w) / 5) / 2) +
-                 80 * M_PI * Kokkos::ArithTraits<Real>::sin((2 * M_PI * w) / 5) *
-                     (z - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2))) -
-               ((Kokkos::ArithTraits<Real>::exp(-200 * (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) *
-                                                    (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) -
-                                                200 * (z - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) *
-                                                    (z - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) -
-                                                200 * (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * w) / 5) / 2) *
-                                                    (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * w) / 5) / 2)) *
-                     (400 * x - 200 * Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5)) *
-                     (400 * x - 200 * Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5)) -
+        return (-Kokkos::ArithTraits<Real>::exp(-200 *
+                                                    (x - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) *
+                                                    (x - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) -
+                                                200 * (z - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) *
+                                                    (z - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) -
+                                                200 * (y - Kokkos::ArithTraits<Real>::sin((2. * M_PI * w) / 5.0) / 2.) *
+                                                    (y - Kokkos::ArithTraits<Real>::sin((2. * M_PI * w) / 5.0) / 2.)) *
+                (80 * M_PI * Kokkos::ArithTraits<Real>::sin((2. * M_PI * w) / 5.0) *
+                     (x - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) -
+                 80 * M_PI * Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) *
+                     (y - Kokkos::ArithTraits<Real>::sin((2. * M_PI * w) / 5.0) / 2.) +
+                 80 * M_PI * Kokkos::ArithTraits<Real>::sin((2. * M_PI * w) / 5.0) *
+                     (z - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.))) -
+               ((Kokkos::ArithTraits<Real>::exp(-200 *
+                                                    (x - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) *
+                                                    (x - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) -
+                                                200 * (z - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) *
+                                                    (z - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) -
+                                                200 * (y - Kokkos::ArithTraits<Real>::sin((2. * M_PI * w) / 5.0) / 2.) *
+                                                    (y - Kokkos::ArithTraits<Real>::sin((2. * M_PI * w) / 5.0) / 2.)) *
+                     (400 * x - 200 * Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0)) *
+                     (400 * x - 200 * Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0)) -
                  400 * Kokkos::ArithTraits<Real>::exp(
-                           -200 * (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) *
-                               (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) -
-                           200 * (z - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) *
-                               (z - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) -
-                           200 * (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * w) / 5) / 2) *
-                               (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * w) / 5) / 2))) +
-                (Kokkos::ArithTraits<Real>::exp(-200 * (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) *
-                                                    (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) -
-                                                200 * (z - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) *
-                                                    (z - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) -
-                                                200 * (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * w) / 5) / 2) *
-                                                    (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * w) / 5) / 2)) *
-                     (400 * y - 200 * Kokkos::ArithTraits<Real>::sin((2 * M_PI * w) / 5)) *
-                     (400 * y - 200 * Kokkos::ArithTraits<Real>::sin((2 * M_PI * w) / 5)) -
+                           -200 * (x - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) *
+                               (x - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) -
+                           200 * (z - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) *
+                               (z - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) -
+                           200 * (y - Kokkos::ArithTraits<Real>::sin((2. * M_PI * w) / 5.0) / 2.) *
+                               (y - Kokkos::ArithTraits<Real>::sin((2. * M_PI * w) / 5.0) / 2.))) +
+                (Kokkos::ArithTraits<Real>::exp(-200 *
+                                                    (x - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) *
+                                                    (x - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) -
+                                                200 * (z - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) *
+                                                    (z - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) -
+                                                200 * (y - Kokkos::ArithTraits<Real>::sin((2. * M_PI * w) / 5.0) / 2.) *
+                                                    (y - Kokkos::ArithTraits<Real>::sin((2. * M_PI * w) / 5.0) / 2.)) *
+                     (400 * y - 200 * Kokkos::ArithTraits<Real>::sin((2. * M_PI * w) / 5.0)) *
+                     (400 * y - 200 * Kokkos::ArithTraits<Real>::sin((2. * M_PI * w) / 5.0)) -
                  400 * Kokkos::ArithTraits<Real>::exp(
-                           -200 * (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) *
-                               (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) -
-                           200 * (z - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) *
-                               (z - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) -
-                           200 * (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * w) / 5) / 2) *
-                               (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * w) / 5) / 2))) +
-                (Kokkos::ArithTraits<Real>::exp(-200 * (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) *
-                                                    (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) -
-                                                200 * (z - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) *
-                                                    (z - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) -
-                                                200 * (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * w) / 5) / 2) *
-                                                    (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * w) / 5) / 2)) *
-                     (400 * z - 200 * Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5)) *
-                     (400 * z - 200 * Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5)) -
+                           -200 * (x - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) *
+                               (x - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) -
+                           200 * (z - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) *
+                               (z - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) -
+                           200 * (y - Kokkos::ArithTraits<Real>::sin((2. * M_PI * w) / 5.0) / 2.) *
+                               (y - Kokkos::ArithTraits<Real>::sin((2. * M_PI * w) / 5.0) / 2.))) +
+                (Kokkos::ArithTraits<Real>::exp(-200 *
+                                                    (x - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) *
+                                                    (x - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) -
+                                                200 * (z - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) *
+                                                    (z - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) -
+                                                200 * (y - Kokkos::ArithTraits<Real>::sin((2. * M_PI * w) / 5.0) / 2.) *
+                                                    (y - Kokkos::ArithTraits<Real>::sin((2. * M_PI * w) / 5.0) / 2.)) *
+                     (400 * z - 200 * Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0)) *
+                     (400 * z - 200 * Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0)) -
                  400 * Kokkos::ArithTraits<Real>::exp(
-                           -200 * (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) *
-                               (x - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) -
-                           200 * (z - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) *
-                               (z - Kokkos::ArithTraits<Real>::cos((2 * M_PI * w) / 5) / 2) -
-                           200 * (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * w) / 5) / 2) *
-                               (y - Kokkos::ArithTraits<Real>::sin((2 * M_PI * w) / 5) / 2))));
+                           -200 * (x - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) *
+                               (x - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) -
+                           200 * (z - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) *
+                               (z - Kokkos::ArithTraits<Real>::cos((2. * M_PI * w) / 5.0) / 2.) -
+                           200 * (y - Kokkos::ArithTraits<Real>::sin((2. * M_PI * w) / 5.0) / 2.) *
+                               (y - Kokkos::ArithTraits<Real>::sin((2. * M_PI * w) / 5.0) / 2.))));
     }
 
 }  // namespace mars
