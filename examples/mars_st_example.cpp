@@ -316,9 +316,8 @@ int main(int argc, char *argv[]) {
         // Example2Analitcal>().run(
         //     argc, argv);
 
-        // ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example3Dirichlet, Example3RHS,
-        // Example3Analitcal>().run(
-        //     argc, argv);
+        ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example3Dirichlet, Example3RHS, Example3Analitcal>().run(
+            argc, argv);
 
         // ModelTest<ParallelMesh2, UMeshSTHeatEquation<ParallelMesh2>, ST2BC<ParallelMesh2>, ST2RHS,
         // ST2Analitcal>().run(
@@ -350,12 +349,12 @@ int main(int argc, char *argv[]) {
         // ST4D1Analitcal>()
         //     .run(argc, argv);
 
-        ModelTest<ParallelMesh4,
-                  UMeshLaplace<ParallelMesh4>,
-                  ZeroDirchletOnUnitCube<ParallelMesh4>,
-                  One<ZeroDirchletOnUnitCube<ParallelMesh4>>,
-                  One<ZeroDirchletOnUnitCube<ParallelMesh4>>>()
-            .run(argc, argv);
+        // ModelTest<ParallelMesh4,
+        //           UMeshLaplace<ParallelMesh4>,
+        //           ZeroDirchletOnUnitCube<ParallelMesh4>,
+        //           One<ZeroDirchletOnUnitCube<ParallelMesh4>>,
+        //           One<ZeroDirchletOnUnitCube<ParallelMesh4>>>()
+        //     .run(argc, argv);
     }
 
     Kokkos::finalize();
