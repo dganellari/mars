@@ -406,7 +406,8 @@ namespace mars {
             VectorReal x("X", n_nodes);
 
             Real tol = 1e-6;
-            Integer max_refinements = (Dim == 2) ? 10 : 5;
+            // Integer max_refinements = (Dim == 2) ? 10 : 5;
+            Integer max_refinements = 0;
             Integer refs = 0;
             bool refined = false;
             bool use_adaptive_refinement = true;
