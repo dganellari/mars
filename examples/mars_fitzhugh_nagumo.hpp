@@ -63,6 +63,11 @@ namespace mars {
                     Integer idx[NFuns];
                     Real J_inv_e[Dim * Dim];
 
+                    Real u_rest = -1.0;
+                    Real u_thresh = -0.8;
+                    Real u_depol = 1.0;
+                    Real a = = 1.0;
+
                     for (int k = 0; k < (Dim * Dim); ++k) {
                         s J_inv_e[k] = J_inv(i, k);
                     }
@@ -72,19 +77,22 @@ namespace mars {
                         u[k] = x(idx[k]);
                     }
 
-                    Real u_elem;
+                    for (int k = 0; k < quad.n_points(); ++k) {
+                        Real u_elem = 0.0;
+                        for (Integer d = 0; d < NFuns; ++d) {
+                            u_elem += FESimplex<Dim>::fun(d, &quad.points(k, 0)) * u[d];
+                        }
 
-                    // for (Integer i = 0; i < quad.n_points(); ++i) {
-                    //     for (Integer k = 0; k < NFuns; ++k) {
-                    //         u_elem += FESimplex::fun(k, quad.points[i])
-                    //     }
-                    // }
+                        Real i_ion = a * (u_elem - u_rest) * (u_elem - u_thresh) * (u_elem - u_depol);
 
-                    // SpaceTimeMixed<Mesh>::one_thread_eval(J_inv_e, det_J(i), quad, u, Au);
+                        for (Integer d = 0; d < NFuns; ++d) {
+                            I_ion[d] += FESimplex<Dim>::fun(d, &quad.points(k, 0)) * quad.weights(k) * det_J(i);
+                        }
+                    }
 
-                    // for (Integer k = 0; k < NFuns; ++k) {
-                    //     Kokkos::atomic_add(&op_x(idx[k]), Au[k]);
-                    // }
+                    for (Integer k = 0; k < NFuns; ++k) {
+                        Kokkos::atomic_add(&op_x(idx[k]), I_ion[k]);
+                    }
                 });
 
             // Kokkos::parallel_for(
