@@ -55,6 +55,9 @@ u = P uk */
 #include "mars_distributed_data_management.hpp"
 #include "mars_distributed_mesh_generation.hpp"
 #include "mars_quad4.hpp"
+#include "mars_laplace_ex.hpp"
+#include "mars_boundary_conditions.hpp"
+#include  "mars_poisson_operator.hpp"
 #endif // WITH_KOKKOS
 #endif
 
@@ -195,7 +198,7 @@ get_elem_coordinates(const DMQ2 &dm, const Integer elem_index, double *points) {
 // 0.16067975044591917148618518733485,
 // 0.16067975044591917148618518733485};
 
-
+/*
 template <typename T, typename Scalar>
 MARS_INLINE_FUNCTION bool invert2(const T *mat, T *mat_inv, const Scalar &det) {
   mat_inv[0] = mat[3] / det;
@@ -203,7 +206,7 @@ MARS_INLINE_FUNCTION bool invert2(const T *mat, T *mat_inv, const Scalar &det) {
   mat_inv[2] = -mat[2] / det;
   mat_inv[3] = mat[0] / det;
   return true;
-}
+} */
 
 template<Integer Type>
 void compute_invJ_and_detJ(const DMQ2 &dm, ViewVectorType<double> detJ,
@@ -476,6 +479,119 @@ void scatter_add_ghost_data(DMQ2 &dm, const context &context) {
 //   }
 // };
 
+template<class BC, class RHS, class AnalyticalFun>
+void poisson_2D(int &argc, char **&argv, const int level) {
+
+  using namespace mars;
+  try {
+    mars::proc_allocation resources;
+#ifdef WITH_MPI
+    // initialize MPI
+    marsenv::mpi_guard guard(argc, argv, false);
+
+   // create a distributed context
+    auto context = mars::make_context(resources, MPI_COMM_WORLD);
+    int proc_num = mars::rank(context);
+#else
+    // resources.gpu_id = marsenv::default_gpu();
+    // // create a local context
+    // auto context = mars::make_context(resources);
+#endif
+
+#ifdef WITH_KOKKOS
+
+    Kokkos::Timer timer;
+    // create the quad mesh distributed through the mpi procs.
+    DistributedQuad4Mesh mesh;
+    generate_distributed_cube(context, mesh, level, level, 0);
+
+    constexpr Integer Dim = DistributedQuad4Mesh::Dim;
+
+    using Elem = typename DistributedQuad4Mesh::Elem;
+    // the type of the mesh elements. In this case quad4 (Type=4)
+    constexpr Integer Type = Elem::ElemType;
+
+    // create the dm object
+    DMQ2 dm(&mesh, context);
+    // enumerate the dofs locally and globally. The ghost dofs structures
+    // are now created and ready to use for the gather and scatter ops.
+    dm.enumerate_dofs(context);
+    // print locally owned dof numbering
+    /* print_dof<Type>(dm.get_global_dof_enum(), proc_num); */
+
+    // print local dof numbering
+    /* print_dof<Type>(dm.get_local_dof_enum(), proc_num); */
+    /* print_dofs<Type>(dm, proc_num); */
+
+    // print the global dofs for each element's local dof
+    /* print_elem_global_dof(dm); */
+
+    /* using SMesh = mars::Mesh<Dim, PMesh::ManifoldDim>; */
+    using VectorReal = mars::ViewVectorType<Real>;
+    using VectorInt = mars::ViewVectorType<Integer>;
+    using VectorBool = mars::ViewVectorType<bool>;
+
+    BC bc_fun;
+    RHS rhs_fun;
+    AnalyticalFun an_fun;
+
+    const Integer dof_size = dm.get_dof_size();
+
+    VectorReal x("X", dof_size);
+    VectorReal rhs("rhs", dof_size);
+
+    if (proc_num == 0) {
+        std::cout << "form_operator..." << std::flush;
+    }
+
+    PoissonOperator<DMQ2, INPUT, OUTPUT> pop(context, dm);
+    pop.init();
+
+    if (proc_num == 0) {
+        std::cout << "DONE" << std::endl;
+    }
+
+    pop.assemble_rhs(rhs, rhs_fun);
+
+    /* print_ghost_dofs(dm); */
+    double time = timer.seconds();
+    std::cout << "Setup took: " << time << " seconds." << std::endl;
+
+    //if no facenr specified all the boundary is processed. If more than one and less than all
+    //is needed than choose all (do not provide face number) and check manually within the lambda
+    dm.boundary_dof_iterate<INPUT>(
+        MARS_LAMBDA(const Integer local_dof, DMDataType<INPUT> &value) {
+            /* do something with the local dof number if needed.
+            For example: If no face nr is specified at the boundary dof iterate: */
+            /*if (dm.is_boundary<Type, left>(local_dof) || dm.is_boundary<Type, up>(local_dof))*/
+            double point[2];
+            dm.get_dof_coordinates_from_local<Type>(local_dof, point);
+            /* bc_fun(point, value); */
+            bc_fun(point, x(local_dof));
+            bc_fun(point, rhs(local_dof));
+        });
+
+    /* Integer num_iter = 0;
+    bcg_stab(pop, *prec_ptr, rhs, 10 * rhs.extent(0), x, num_iter); */
+
+    std::cout << "[" << proc_num
+              << "] ndofs : " << dm.get_local_dof_enum().get_elem_size()
+              << std::endl;
+
+    /* dm.dof_iterate(MARS_LAMBDA(const Integer i) {
+      printf("ggid: %li, INPUT: %lf, OUTPUT: %lf, rank: %i\n", i,
+             dm.get_dof_data<INPUT>(i), dm.get_dof_data<OUTPUT>(i),
+             proc_num);
+    });
+ */
+    time = timer.seconds();
+    std::cout << "Matrix free took: " << time << " seconds." << std::endl;
+
+#endif
+  } catch (std::exception &e) {
+    std::cerr << "exception caught in ring miniapp: " << e.what() << "\n";
+  }
+}
 void poisson(int &argc, char **&argv, const int level) {
 
   using namespace mars;
@@ -549,14 +665,14 @@ void poisson(int &argc, char **&argv, const int level) {
     constexpr int u = 0;
     constexpr int v = 1;
 
-    const Integer locall_owned_dof_size = dm.get_locally_owned_dof_size();
+    /* const Integer locall_owned_dof_size = dm.get_locally_owned_dof_size();
     ViewVectorType<double> x("x", locall_owned_dof_size);
 
     Kokkos::parallel_for(
         "initglobaldatavalues", locall_owned_dof_size,
         MARS_LAMBDA(const Integer i) { x(i) = 2 * i; });
 
-    dm.set_locally_owned_data<INPUT>(x);
+    dm.set_locally_owned_data<INPUT>(x); */
 
     constexpr Integer left = 0; // 0 for the left face, 1 for the right, 2 and 3 for down and up.
     constexpr Integer up = 3;
@@ -566,8 +682,12 @@ void poisson(int &argc, char **&argv, const int level) {
         MARS_LAMBDA(const Integer local_dof, DMDataType<INPUT> &value) {
             //do something with the local dof number if needed.
             //For example: If no face nr is specified at the boundary dof iterate:
-            if (dm.is_boundary<Type, left>(local_dof) || dm.is_boundary<Type, up>(local_dof))
-                value = -1;
+            /* if (dm.is_boundary<Type, left>(local_dof) || dm.is_boundary<Type, up>(local_dof)) */
+            Example2Dirichlet func;
+
+            double point[2];
+            dm.get_dof_coordinates_from_local<Type>(local_dof, point);
+            func(point, value);
         });
 
     /* dm.dof_iterate(MARS_LAMBDA(const Integer i) {
@@ -588,7 +708,7 @@ void poisson(int &argc, char **&argv, const int level) {
         });
 
 
-    dm.get_locally_owned_data<INPUT>(x);
+    /* dm.get_locally_owned_data<INPUT>(x); */
 
     /* Kokkos::parallel_for(
         "printglobaldatavalues", locall_owned_dof_size,
@@ -627,12 +747,12 @@ void poisson(int &argc, char **&argv, const int level) {
               << "] ndofs : " << dm.get_local_dof_enum().get_elem_size()
               << std::endl;
 
-    dm.dof_iterate(MARS_LAMBDA(const Integer i) {
+    /* dm.dof_iterate(MARS_LAMBDA(const Integer i) {
       printf("ggid: %li, INPUT: %lf, OUTPUT: %lf, rank: %i\n", i,
              dm.get_dof_data<INPUT>(i), dm.get_dof_data<OUTPUT>(i),
              proc_num);
     });
-
+ */
     time = timer.seconds();
     std::cout << "Matrix free took: " << time << " seconds." << std::endl;
 
