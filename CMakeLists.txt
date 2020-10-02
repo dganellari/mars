@@ -99,13 +99,20 @@ if(TRY_WITH_KOKKOS)
 
     if(Kokkos_FOUND)
         message("\nFound Kokkos!  Here are the details: ")
-        message("   Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
-        message("   Kokkos_C_COMPILER = ${Kokkos_C_COMPILER}")
+        message(" Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
+        message(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
+        message(" Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
+        message(" Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
+        message(" Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
+
+        # message("   Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}") message("
+        # Kokkos_C_COMPILER = ${Kokkos_C_COMPILER}")
 
         if(Kokkos_CXX_COMPILER)
             set(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
             set(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
-            message("Setting CMAKE_CXX_COMPILER to Kokkos_CXX_COMPILER")
+            # message( "Setting CMAKE_CXX_COMPILER to
+            # Kokkos_CXX_COMPILER=${Kokkos_CXX_COMPILER}" )
         endif()
 
         set(WITH_KOKKOS ON)
@@ -123,8 +130,10 @@ if(TRY_WITH_KOKKOS)
             HINTS
             ${KOKKOS_DIR}
             ${KOKKOS_DIR}/lib/CMake/KokkosKernels
+            ${KOKKOS_DIR}/lib64/cmake/KokkosKernels
             ${TRILINOS_DIR}
             ${TRILINOS_DIR}/lib/cmake/KokkosKernels
+            ${TRILINOS_DIR}/lib64/cmake/KokkosKernels
             QUIET)
 
         find_package(OpenMP)
@@ -303,10 +312,7 @@ target_include_directories(mars PUBLIC examples)
 target_include_directories(mars PUBLIC io)
 
 if(Kokkos_FOUND)
-    message(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
-    message(" Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
-    message(" Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
-    message(" Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
+    target_link_libraries(mars PUBLIC Kokkos::kokkos)
 
     if(MARS_USE_CUDA AND NOT Kokkos_TPL_LIBRARIES MATCHES "cuda")
         message(
@@ -332,7 +338,7 @@ if(Kokkos_FOUND)
 
     if(KokkosKernels_FOUND)
         message(STATUS "KokkosKernels_FOUND=${KokkosKernels_FOUND}")
-        # target_link_libraries(mars PUBLIC Kokkos::Kokkos)
+        target_link_libraries(mars PUBLIC Kokkos::kokkoskernels)
 
         target_include_directories(mars PUBLIC ${KokkosKernels_TPL_INCLUDE_DIRS}
                                                ${KokkosKernels_INCLUDE_DIRS})
