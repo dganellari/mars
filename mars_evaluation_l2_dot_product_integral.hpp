@@ -51,7 +51,7 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>
 
  template<bool VolumeIntegralAux,typename Elem, typename...DofMaps>
  std::enable_if_t<(VolumeIntegralAux==false),void>
-  apply_aux(subtype& mat, FiniteElem<Elem>& J, const DofMaps&...dofmaps)
+  apply_aux(subtype& mat, FiniteElem<Elem>& FE, const DofMaps&...dofmaps)
  {
 
   // changed todo fixme
@@ -64,10 +64,10 @@ class Evaluation<Expression<L2DotProductIntegral<Left_,Right_,VolumeIntegral,QR>
   // std::cout<<"not evaluated yet"<<mat<<std::endl;
   // // 
 
-  if(J.side_tag()==label_)
+  if(FE.side_tag()==label_)
    { 
     // std::cout<<"Evaluation<Expression<L2DotProductIntegral-----------------VALUTO IL BOUNDARY "<<label_<<std::endl;
-    local_tensor_.apply(mat,J,shape_functions_, dofmaps...);//(),shape_functions_.composite_tensor(),shape_functions_.composite_shapes());
+    local_tensor_.apply(mat,FE,shape_functions_, dofmaps...);//(),shape_functions_.composite_tensor(),shape_functions_.composite_shapes());
     // std::cout<<"after BOUNDAR Evaluation<Expression<L2DotProductIntegral local tensor="<<std::endl;
     // std::cout<<mat<<std::endl;
     }

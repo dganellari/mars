@@ -25,6 +25,7 @@ class MapFromReference<IdentityOperator, Simplex<Dim,ManifoldDim>,LagrangeFE>
  public:
  using Operator=IdentityOperator;
  using Elem=Simplex<Dim,ManifoldDim>;
+ static constexpr Integer FEFamily=LagrangeFE;
  // using type=Real;
         // if we have functions defined on manifolddim-d, d>0
         MapFromReference():
@@ -46,6 +47,8 @@ class MapFromReference<TraceOperator, Simplex<Dim,ManifoldDim>,LagrangeFE>
  public:
  using Operator=TraceOperator;
  using Elem=Simplex<Dim,ManifoldDim+1>;
+ static constexpr Integer FEFamily=LagrangeFE;
+
  // todo fixme. check if it is correct to put +1
  // indeed the element is Simplex<Dim,ManifoldDim+1> and we pass FiniteElem<Simplex<Dim,ManifoldDim+1>>
         MapFromReference():
@@ -64,6 +67,8 @@ class MapFromReference<TraceGradientOperator, Simplex<Dim,ManifoldDim>,LagrangeF
  public:
  using Operator=TraceGradientOperator;
  using Elem=Simplex<Dim,ManifoldDim+1>;
+ static constexpr Integer FEFamily=LagrangeFE;
+
  inline constexpr void  init(const FiniteElem<Simplex<Dim,ManifoldDim+1>>& FE){grad_=  transpose(inverse(FE()));}
  inline constexpr const auto&  operator() ()const{return grad_;}
  private:
@@ -79,6 +84,8 @@ class MapFromReference<GradientOperator, Simplex<Dim,ManifoldDim>,LagrangeFE>
  public:
  using Operator=GradientOperator;
  using Elem=Simplex<Dim,ManifoldDim>;
+ static constexpr Integer FEFamily=LagrangeFE;
+
  // using type=Matrix<Real, Dim, ManifoldDim>;
         inline constexpr void  init(const FiniteElem<Simplex<Dim,ManifoldDim>>& FE){grad_=  transpose(inverse(FE()));}
         inline constexpr const auto&  operator() ()const{return grad_;}
@@ -94,6 +101,8 @@ class MapFromReference<IdentityOperator,Simplex<Dim,ManifoldDim>,RaviartThomasFE
  public:
  using Operator=IdentityOperator;
  using Elem=Simplex<Dim,ManifoldDim>;
+ static constexpr Integer FEFamily=RaviartThomasFE;
+
  // using type=Matrix<Real, Dim, ManifoldDim>;
          inline constexpr void init(const FiniteElem<Simplex<Dim,ManifoldDim>> &FE){id_=FE();id_/=FE.get_det();}
          inline constexpr const auto&  operator()()const {return id_;}
@@ -107,6 +116,8 @@ class MapFromReference<DivergenceOperator,Simplex<Dim,ManifoldDim>,RaviartThomas
  public:
  using Operator=DivergenceOperator;
  using Elem=Simplex<Dim,ManifoldDim>;
+ static constexpr Integer FEFamily=RaviartThomasFE;
+
          inline constexpr void init(const FiniteElem<Simplex<Dim,ManifoldDim>> &FE){div_= 1.0/FE.get_det();}
          inline constexpr const auto&  operator()()const{return div_;}
  private:
@@ -132,6 +143,7 @@ class MapFromReference<TraceOperator,Simplex<Dim,ManifoldDim>,RaviartThomasFE>
  public:
  using Operator=TraceOperator;
  using Elem=Simplex<Dim,ManifoldDim+1>;
+ static constexpr Integer FEFamily=RaviartThomasFE;
 
  // todo fixme. check if it is correct to put +1
  // indeed the element is Simplex<Dim,ManifoldDim+1> and we pass FiniteElem<Simplex<Dim,ManifoldDim+1>>
@@ -149,13 +161,15 @@ class MapFromReference<TraceOperator,Simplex<Dim,ManifoldDim>,RaviartThomasFE>
 
 
 
-template<template<class>class Unary,typename T, typename Elem_, Integer FEFamily>
-class MapFromReference<Unary<Expression<T>>,Elem_,FEFamily> 
+template<template<class>class Unary,typename T, typename Elem_, Integer FEFamily_>
+class MapFromReference<Unary<Expression<T>>,Elem_,FEFamily_> 
 {
  public:
  using Operator=T;
  using Elem=Elem_;
- using Map=MapFromReference<T,Elem_,FEFamily>;
+ using Map=MapFromReference<T,Elem_,FEFamily_>;
+ static constexpr Integer FEFamily=FEFamily_;
+
          inline constexpr void init(const FiniteElem<Elem> &FE){map_.init(FE);}
          inline constexpr const auto&  operator()()const{return map_;}
  private:

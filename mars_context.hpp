@@ -195,8 +195,8 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                   // std::cout<<"------_______----- FE.elem_id="<<FE.elem_id()<<std::endl;                  
                   // std::cout<<"------_______----- BILINEAR BEGIN SIDE EVAL===="<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
                   eval_bilinear_form_.apply_boundary(A,FE);
-                  if(FE.side_tag()==2)
-                  A.print_val();
+                  // if(FE.side_tag()==2)
+                  // A.print_val();
                   // std::cout<<"------_______----- LINEAR BEGIN SIDE EVAL===="<<s<<" tag="<<FE.side_tags()[s]<<std::endl;
                   // auto&elem =mesh.elem(el);
                   // auto&nodes=elem.nodes;
@@ -228,7 +228,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
                 if(FE.side_tags()[s]!=INVALID_INDEX)
                 {
                   // std::cout<<"------_______----- ELEM===="<<el<<std::endl;
-                  std::cout<<"------_______----- INIT BOUNDARY===="<<FE.side_tags()[s]<<", "<<(cont_sides++)<<std::endl;
+                  // std::cout<<"------_______----- INIT BOUNDARY===="<<FE.side_tags()[s]<<", "<<(cont_sides++)<<std::endl;
 
                   FE.init_boundary(s);
                   // std::cout<<"------_______----- END INIT BOUNDARY===="<<s<<std::endl;

@@ -316,6 +316,15 @@ public:
     static constexpr Integer Nbcs=sizeof...(BCs)+1;
     using BCsTuple=std::tuple<BC,BCs...>;
     using FunctionSpace=typename BC::FunctionSpace;
+
+    using TupleOfSpaces=typename FunctionSpace::TupleOfSpaces;
+    using BCsTupleOfSpaces=std::tuple<GetType<TupleOfSpaces,BC::number>,
+                                      GetType<TupleOfSpaces,BCs::number>...>;
+
+    using UniqueBCsTupleOfSpaces=RemoveTupleDuplicates<BCsTupleOfSpaces>;                                 
+
+
+
     using DofsDM= typename FunctionSpace::DofsDM;
     using ElemDofMap= typename DofsDM::ElemDofMap;
     using Elem=typename FunctionSpace::Elem;
@@ -350,8 +359,10 @@ public:
       // std::cout<<"i*BC_N::NComponents+BC_N::Component 1="<< i*BC_N::NComponents+BC_N::Component <<std::endl;
           constrained_dofs[dofmap_trace[i*BC_N::NComponents+comp]]=true;
           constrained_mat[dofmap_trace[i*BC_N::NComponents+comp]]=1;   
-          constrained_vec[dofmap_trace[i*BC_N::NComponents+comp]]= rhs_local(comp,0)/map;      
-       // std::cout<< " compute_constraints end 1" <<constrained_vec[dofmap_trace[i*BC_N::NComponents+comp]]<<std::endl;   
+          constrained_vec[dofmap_trace[i*BC_N::NComponents+comp]]= rhs_local(comp,0)/map;
+          // std::cout<<dofmap_trace<<std::endl;
+       //    std::cout<< " dofmap_trace[i*BC_N::NComponents+comp]    = " <<dofmap_trace[i*BC_N::NComponents+comp]      <<std::endl;  
+       // std::cout<< " compute_constraints end 1 " <<constrained_vec[dofmap_trace[i*BC_N::NComponents+comp]]<<std::endl;   
 
          }
     }
@@ -392,6 +403,7 @@ public:
                                                 const Maps& tuple_map,
                                                 const DofMap&dm)
     {
+    // std::cout<<"DirichletBoundaryConditionCollection N="<<N<<"/"<<Nmax<<std::endl;
     // std::cout<<"side tag= "<<FE.side_tag()<<std::endl;
     // std::cout<<"apply_aux labels_array = "<<labels_array_[N]<<std::endl;
     
@@ -399,23 +411,29 @@ public:
     if(FE.side_tag()==labels_array_[N])
     {
     using BC_N=GetType<BCsTuple,N>;
+    constexpr Integer BCmap_value=TypeToTupleElementPosition<typename BC_N::SingleFunctionSpace,UniqueBCsTupleOfSpaces>::value;
     // typename BC_N::SingleFunctionSpace fe3(6);
-    const auto& map=tuple_get<BC_N::map_value>(tuple_map);
+    // const auto& map=tuple_get<BC_N::map_value>(tuple_map);
+    const auto& map=tuple_get<BCmap_value>(tuple_map);
     const auto& bc=tuple_get<N>(bcs_tuple_);
 
 
 
     auto& dofmap=tuple_get<BC_N::value>(dofmap_); 
     const auto& level=FE.level();
-    dm.template dofmap_get<BC_N::value>(dofmap,FE.elem_id(),level);
+
+    // std::cout<<"BC_N::value==========="<<BC_N::value<<std::endl;
+    // std::cout<<"BC_N::number==========="<<BC_N::number<<std::endl;
+
+    dm.template dofmap_get<BC_N::number>(dofmap,FE.elem_id(),level);
    
 
     // const auto& dofmap=tuple_get<BC_N::value>(dm)[FE.elem_id()];
-    const auto& tr=tuple_get<BC_N::value>(trace)[FE.side_id()];
+    const auto& tr=tuple_get<BC_N::number>(trace)[FE.side_id()];
     auto NComponents=BC_N::NComponents;
     // todo fixme, definisci dofmap_trace_ come variabile privata
     // const auto& dofmap_trace=subarray(dofmap,tr);
-    auto& dofmap_trace=std::get<GetType<BCsTuple,N>::value>(tuple_dofmap_trace_);
+    auto& dofmap_trace=std::get<GetType<BCsTuple,N>::number>(tuple_dofmap_trace_);
     // decltype(tuple_dofmap_trace_) mmm(56,7,8,9,8,8,8,8,8);
     // std::remove_reference<decltype(tr)> kmnbvv(5,6,66,66,6);
     // decltype(dofmap_trace) mmm=4;

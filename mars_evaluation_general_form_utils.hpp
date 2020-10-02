@@ -587,8 +587,8 @@ class LocalTensor<true,TestTrialSpaces,L2DotProductIntegral<Left,Right,VolumeInt
 
     // std::cout<<"detJ="<<std::endl;
     // std::cout<<detJ<<std::endl;
-    std::cout<<"mat="<<std::endl;
-    std::cout<<mat<<std::endl;
+    // std::cout<<"mat="<<std::endl;
+    // std::cout<<mat<<std::endl;
  }
 
 
