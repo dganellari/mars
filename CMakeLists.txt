@@ -86,8 +86,14 @@ if(TRY_WITH_KOKKOS)
     endif()
 
     # FIND_PACKAGE(Trilinos PATHS ${TRILINOS_DIR}/lib/cmake/Trilinos QUIET)
-    find_package(Kokkos HINTS ${KOKKOS_DIR}/lib/CMake/Kokkos
-                 ${TRILINOS_DIR}/lib/cmake/Kokkos QUIET)
+    find_package(
+        Kokkos
+        HINTS
+        ${KOKKOS_DIR}/lib/CMake/Kokkos
+        ${KOKKOS_DIR}/lib64/CMake/Kokkos
+        ${TRILINOS_DIR}/lib/cmake/Kokkos
+        ${TRILINOS_DIR}/lib64/cmake/Kokkos
+        QUIET)
 
     if(Kokkos_FOUND)
         message("\nFound Kokkos!  Here are the details: ")
