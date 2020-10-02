@@ -89,8 +89,10 @@ if(TRY_WITH_KOKKOS)
     find_package(
         Kokkos
         HINTS
+        ${KOKKOS_DIR}
         ${KOKKOS_DIR}/lib/CMake/Kokkos
         ${KOKKOS_DIR}/lib64/CMake/Kokkos
+        ${TRILINOS_DIR}
         ${TRILINOS_DIR}/lib/cmake/Kokkos
         ${TRILINOS_DIR}/lib64/cmake/Kokkos
         QUIET)
