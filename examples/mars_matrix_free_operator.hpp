@@ -27,25 +27,32 @@
 #include "mars_vector.hpp"
 
 #include "mars_context.hpp"
+#include "mars_fedm_values.hpp"
 
 namespace mars {
     // using KokkosVector = Kokkos::View<Real *>;
     // using SparseMatrix = KokkosSparse::CrsMatrix<Real, Integer, Kokkos::Serial>;
 
+    template<class DM>
     class Operator {
     public:
         virtual ~Operator(){};
 
         virtual void apply(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) = 0;
+        virtual void init() = 0;
 
-        Operator(const context &ctx) : ctx_(ctx) {}
+        Operator(const context &ctx, DM &dm) : ctx_(ctx), values_(dm) {}
 
         const context &ctx() const { return ctx_; }
         // TODO needs a comm
         // const context &comm() const { return ctx_; }
 
+        MARS_INLINE_FUNCTION FEDMValues<DM> &values() { return values_; }
+        MARS_INLINE_FUNCTION const FEDMValues<DM> &values() const { return values_; }
+
     private:
         const context &ctx_;
+        FEDMValues<DM> values_;
     };
 
     // class ImplicitEulerOperator final : public Operator {
