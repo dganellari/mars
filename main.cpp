@@ -1,3 +1,5 @@
+#include <err.h>
+
 #include <algorithm>
 #include <cassert>
 #include <cstdlib>
@@ -8,35 +10,33 @@
 #include "mars_bisection.hpp"
 #include "mars_lagrange_element.hpp"
 #include "mars_lepp_benchmark.hpp"
-#include "mars_mesh.hpp"
-#include "mars_mesh_partition.hpp"
-#include "mars_partitioned_bisection.hpp"
-#include "mars_prelepp_benchmark.hpp"
-#include "mars_quality.hpp"
-#include "mars_simplex.hpp"
-#include "mars_utils.hpp"
-#include "mars_vtk_writer.hpp"
-
 #include "mars_longest_edge.hpp"
 #include "mars_memory.hpp"
+#include "mars_mesh.hpp"
+#include "mars_mesh_generation.hpp"
+#include "mars_mesh_partition.hpp"
 #include "mars_mesh_reader.hpp"
 #include "mars_mesh_writer.hpp"
 #include "mars_oldest_edge.hpp"
+#include "mars_partitioned_bisection.hpp"
+#include "mars_prelepp_benchmark.hpp"
+#include "mars_quality.hpp"
 #include "mars_ranked_edge.hpp"
+#include "mars_simplex.hpp"
 #include "mars_test.hpp"
-#include <err.h>
-
-#include "mars_mesh_generation.hpp"
+#include "mars_utils.hpp"
+#include "mars_vtk_writer.hpp"
 
 #ifdef WITH_KOKKOS
 #include "mars_lepp_benchmark_kokkos.hpp"
 #include "mars_test_kokkos.hpp"
-#endif // WITH_KOKKOS
+#endif  // WITH_KOKKOS
 
 #ifdef WITH_PAR_MOONOLITH
-#include "mars_moonolith_test.hpp"
 #include <mpi.h>
-#endif // WITH_PAR_MOONOLITH
+
+#include "mars_moonolith_test.hpp"
+#endif  // WITH_PAR_MOONOLITH
 
 #ifdef WITH_MPI
 #include "mars_advection.hpp"
@@ -45,13 +45,12 @@
 #include "mars_par_mesh.hpp"
 #include "mars_poisson.hpp"
 #include "mars_test_mpi.hpp"
-#endif // WITH_MPI
+#endif  // WITH_MPI
 #include <chrono>
 
 using namespace std::chrono;
 
 mars::Mesh1 test_mars_mesh_generation_1D(const int x) {
-
   using namespace mars;
 
   high_resolution_clock::time_point t1 = high_resolution_clock::now();
@@ -76,7 +75,6 @@ mars::Mesh1 test_mars_mesh_generation_1D(const int x) {
 }
 
 mars::Mesh2 test_mars_mesh_generation_2D(const int x, const int y) {
-
   using namespace mars;
 
   high_resolution_clock::time_point t1 = high_resolution_clock::now();
@@ -93,7 +91,6 @@ mars::Mesh2 test_mars_mesh_generation_2D(const int x, const int y) {
   std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
 
   if (x <= 1000) {
-
     VTKMeshWriter<Mesh2> w;
     w.write("build_square" + std::to_string(x) + std::to_string(y) + ".vtu",
             mesh);
@@ -103,7 +100,6 @@ mars::Mesh2 test_mars_mesh_generation_2D(const int x, const int y) {
 }
 
 mars::Quad4_Mesh test_mars_quad_mesh_generation_2D(const int x, const int y) {
-
   using namespace mars;
 
   high_resolution_clock::time_point t1 = high_resolution_clock::now();
@@ -130,7 +126,6 @@ mars::Quad4_Mesh test_mars_quad_mesh_generation_2D(const int x, const int y) {
 
 mars::Hex8_Mesh test_mars_hex8_mesh_generation_3D(const int x, const int y,
                                                   const int z) {
-
   using namespace mars;
 
   high_resolution_clock::time_point t1 = high_resolution_clock::now();
@@ -157,7 +152,6 @@ mars::Hex8_Mesh test_mars_hex8_mesh_generation_3D(const int x, const int y,
 
 mars::Mesh3 test_mars_mesh_generation_3D(const int x, const int y,
                                          const int z) {
-
   using namespace mars;
 
   high_resolution_clock::time_point t1 = high_resolution_clock::now();
@@ -183,7 +177,6 @@ mars::Mesh3 test_mars_mesh_generation_3D(const int x, const int y,
 }
 
 void test_mars_mesh_generation_unit_cube() {
-
   using namespace mars;
 
   Mesh3 mesh = generate_unit_cube();
@@ -534,8 +527,7 @@ bool test_incomplete(Mesh<Dim, ManifoldDim> &mesh, Map &map,
   } else {
     Integer element_index = 0;
     for (Integer i = 0; i < mesh.n_elements(); ++i) {
-      if (!mesh.is_active(i))
-        continue;
+      if (!mesh.is_active(i)) continue;
 
       if (((element_index++ % each_element) == 0) &&
           !edge_select->can_refine(mesh, i)) {
@@ -748,7 +740,7 @@ void test_bisection(const Integer n_levels,
     std::cout << "xxxxxxxxxxxxxxxxxxxxxx\n";
   }
 }
-} // namespace mars
+}  // namespace mars
 
 void test_partition_2D() {
   using namespace mars;
@@ -1174,7 +1166,7 @@ void par_mesh_test() {
 
   std::vector<Integer> partitioning = {0, 1};
 
-  Communicator world; // world.set_verbose(true);
+  Communicator world;  // world.set_verbose(true);
   ParMesh2 mesh(world);
   mesh.init(serial_mesh, partitioning);
 
@@ -1183,7 +1175,7 @@ void par_mesh_test() {
   // ParBisection<ParMesh2> b(mesh);
   // b.uniform_refine(1);
 
-#endif // WITH_MPI
+#endif  // WITH_MPI
 }
 
 int main(int argc, char *argv[]) {
@@ -1263,11 +1255,10 @@ int main(int argc, char *argv[]) {
 #ifdef WITH_KOKKOS
   Kokkos::initialize(argc, argv);
   {
-
 #ifdef MARS_USE_CUDA
     cudaDeviceSetLimit(cudaLimitStackSize,
-                       32768); // set stack to 32KB only for cuda since it is
-                               // not yet supported in kokkos.
+                       32768);  // set stack to 32KB only for cuda since it is
+                                // not yet supported in kokkos.
 #endif
 
     // run_benchmarks(level, refine_level);
@@ -1277,8 +1268,10 @@ int main(int argc, char *argv[]) {
     /* test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(argc, argv,
      * level); */
 
+#ifdef WITH_MPI
     /* advection(argc, argv, level); */
     poisson(argc, argv, level);
+#endif
     /* test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(argc, argv,
      * level); */
 
@@ -1296,7 +1289,7 @@ int main(int argc, char *argv[]) {
 
 #ifdef WITH_PAR_MOONOLITH
   run_mars_moonolith_test();
-#endif // WITH_PAR_MOONOLITH
+#endif  // WITH_PAR_MOONOLITH
 
   if (level < 100) {
     // test_mars_mesh_generation_3D(level , level, level );
