@@ -116,8 +116,14 @@ if(TRY_WITH_KOKKOS)
         # "KokkosContainers_TPL_LIBRARIES=${KokkosContainers_TPL_LIBRARIES}" )
         # link_libraries(${KokkosContainers_TPL_LIBRARIES}) endif()
 
-        find_package(KokkosKernels HINTS ${KOKKOS_DIR}/lib/CMake/KokkosKernels
-                     ${TRILINOS_DIR}/lib/cmake/KokkosKernels QUIET)
+        find_package(
+            KokkosKernels
+            HINTS
+            ${KOKKOS_DIR}
+            ${KOKKOS_DIR}/lib/CMake/KokkosKernels
+            ${TRILINOS_DIR}
+            ${TRILINOS_DIR}/lib/cmake/KokkosKernels
+            QUIET)
 
         find_package(OpenMP)
 
