@@ -33,7 +33,7 @@ namespace mars {
 
     template <class OperatorA, class OperatorP>
     bool bcg_stab(OperatorA &A, OperatorP &P, const VecType &b, Integer max_iter, VecType &x_0, Integer &num_iter) {
-        auto comm = A.comm();
+        const auto &comm = A.comm();
         const size_t N = x_0.extent(0);
 
         std::cout << "Max iter: " << max_iter << std::endl;

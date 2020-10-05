@@ -1270,7 +1270,8 @@ int main(int argc, char *argv[]) {
 
 #ifdef WITH_MPI
     /* advection(argc, argv, level); */
-    poisson(argc, argv, level);
+    /* poisson(argc, argv, level); */
+    poisson_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(argc, argv, level);
 #endif
     /* test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(argc, argv,
      * level); */

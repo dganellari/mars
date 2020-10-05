@@ -58,6 +58,7 @@ u = P uk */
 #include "mars_laplace_ex.hpp"
 #include "mars_boundary_conditions.hpp"
 #include  "mars_poisson_operator.hpp"
+#include "mars_precon_conjugate_grad.hpp"
 #endif // WITH_KOKKOS
 #endif
 
@@ -535,10 +536,11 @@ void poisson_2D(int &argc, char **&argv, const int level) {
     RHS rhs_fun;
     AnalyticalFun an_fun;
 
-    const Integer dof_size = dm.get_dof_size();
+    const Integer locally_owned_dof_size = dm.get_locally_owned_dof_size();
+    printf("dof size: %li\n", locally_owned_dof_size);
 
-    VectorReal x("X", dof_size);
-    VectorReal rhs("rhs", dof_size);
+    VectorReal x("X", locally_owned_dof_size);
+    VectorReal rhs("rhs", locally_owned_dof_size);
 
     if (proc_num == 0) {
         std::cout << "form_operator..." << std::flush;
@@ -559,20 +561,26 @@ void poisson_2D(int &argc, char **&argv, const int level) {
 
     //if no facenr specified all the boundary is processed. If more than one and less than all
     //is needed than choose all (do not provide face number) and check manually within the lambda
-    dm.boundary_dof_iterate<INPUT>(
-        MARS_LAMBDA(const Integer local_dof, DMDataType<INPUT> &value) {
+    dm.boundary_owned_dof_iterate(
+        MARS_LAMBDA(const Integer owned_dof_index, const Integer sfc){
             /* do something with the local dof number if needed.
             For example: If no face nr is specified at the boundary dof iterate: */
             /*if (dm.is_boundary<Type, left>(local_dof) || dm.is_boundary<Type, up>(local_dof))*/
             double point[2];
-            dm.get_dof_coordinates_from_local<Type>(local_dof, point);
+            dm.get_dof_coordinates_from_sfc<Type>(sfc, point);
             /* bc_fun(point, value); */
-            bc_fun(point, x(local_dof));
-            bc_fun(point, rhs(local_dof));
+            bc_fun(point, x(owned_dof_index));
+            bc_fun(point, rhs(owned_dof_index));
         });
 
-    /* Integer num_iter = 0;
-    bcg_stab(pop, *prec_ptr, rhs, 10 * rhs.extent(0), x, num_iter); */
+    /* dm.boundary_dof_iterate<INPUT> does the same except that provides the local_dof num and the reference
+     * on the INPUT data to be updated. Suitable when working with the internal data tuple directly */
+
+    CopyOperator preconditioner;
+    Integer num_iter = 0;
+    Integer max_iter = pop.comm().sum(rhs.extent(0));
+    std::cout << "Starting bcg on proc:" << proc_num<<std::endl;
+    bcg_stab(pop, preconditioner, rhs, max_iter, x, num_iter);
 
     std::cout << "[" << proc_num
               << "] ndofs : " << dm.get_local_dof_enum().get_elem_size()

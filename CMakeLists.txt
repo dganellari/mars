@@ -319,7 +319,7 @@ target_include_directories(mars PUBLIC examples/distributed_dm)
 target_include_directories(mars PUBLIC io)
 
 if(Kokkos_FOUND)
-    target_link_libraries(mars PUBLIC Kokkos::kokkos)
+    # target_link_libraries(mars PUBLIC Kokkos::kokkos)
 
     if(MARS_USE_CUDA AND NOT Kokkos_TPL_LIBRARIES MATCHES "cuda")
         message(
@@ -345,7 +345,7 @@ if(Kokkos_FOUND)
 
     if(KokkosKernels_FOUND)
         message(STATUS "KokkosKernels_FOUND=${KokkosKernels_FOUND}")
-        target_link_libraries(mars PUBLIC Kokkos::kokkoskernels)
+        # target_link_libraries(mars PUBLIC Kokkos::kokkoskernels)
 
         target_include_directories(mars PUBLIC ${KokkosKernels_TPL_INCLUDE_DIRS}
                                                ${KokkosKernels_INCLUDE_DIRS})

@@ -1211,6 +1211,16 @@ void enumerate_dofs(const context &context)
     }
 
     MARS_INLINE_FUNCTION
+    Integer local_to_owned(const Integer local) const
+    {
+        Dof dof = local_to_global_dof(local);
+        if(dof.is_valid())
+            return dof.get_gid() - global_dof_offset(dof.get_proc());
+        else
+            return INVALID_INDEX;
+    }
+
+    MARS_INLINE_FUNCTION
     Integer local_to_global(const Integer local) const
     {
         Dof dof = local_to_global_dof(local);
@@ -1321,6 +1331,29 @@ void enumerate_dofs(const context &context)
           });
     }
 
+    template <Integer face_nr = -1, typename F>
+    void boundary_owned_dof_iterate(F f)
+    {
+        using namespace Kokkos;
+        constexpr Integer Type = simplex_type::ElemType;
+
+        const Integer size = get_global_dof_enum().get_elem_size();
+        ViewVectorType<Integer> global_to_sfc = get_global_dof_enum().get_view_elements();
+
+        const Integer xdim = get_local_dof_enum().get_XDim();
+        const Integer ydim = get_local_dof_enum().get_YDim();
+        const Integer zdim = get_local_dof_enum().get_ZDim();
+
+        Kokkos::parallel_for(
+            "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
+                const Integer sfc = global_to_sfc(i);
+                if (is_boundary_sfc<Type, face_nr>(sfc, xdim, ydim, zdim))
+                {
+                    f(i, sfc);
+                }
+            });
+    }
+
     template <Integer idx, Integer face_nr = -1, typename F,
              typename H = typename std::tuple_element<idx, tuple>::type>
     void boundary_dof_iterate(F f)
@@ -1419,6 +1452,11 @@ void enumerate_dofs(const context &context)
     UD get_data() const
     {
         return data;
+    }
+
+    const Integer get_proc()
+    {
+        return data.get_host_mesh->get_proc();
     }
 
 private:

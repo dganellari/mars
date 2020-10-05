@@ -48,8 +48,12 @@ class Operator {
   Operator(const context &ctx, DM &dm) : ctx_(ctx), values_(dm) {}
 
   const context &ctx() const { return ctx_; }
-  // TODO needs a comm
-  // const context &comm() const { return ctx_; }
+
+  const distributed_context &comm() const
+  {
+      auto commctx = ctx_->distributed;
+      return *commctx;
+  }
 
   MARS_INLINE_FUNCTION FEDMValues<DM> &values() { return values_; }
   MARS_INLINE_FUNCTION const FEDMValues<DM> &values() const { return values_; }
