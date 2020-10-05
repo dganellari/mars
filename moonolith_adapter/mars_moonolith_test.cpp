@@ -1,5 +1,8 @@
 #include "mars_moonolith_test.hpp"
-#include "mars.hpp"
+#include "mars_base.hpp"
+#include "mars_mesh.hpp"
+#include "mars_bisection.hpp"
+#include "mars_utils.hpp"
 
 #include "moonolith_mesh_adapter.hpp"
 #include "moonolith_polygon.hpp"
@@ -53,7 +56,7 @@ namespace mars {
     public:
         moonolith::Polygon<double, Dim> poly_m, poly_s, poly_isect;
         moonolith::IntersectConvexPolygons<double, Dim> isect;
-        
+
         template<class Adapter>
         inline double compute(const Adapter &master, const Adapter &slave)
         {
@@ -151,7 +154,7 @@ namespace mars {
 
         template<class Adapter>
         inline double compute_aux(const moonolith::Storage<Adapter> &masters, const Adapter &slave)
-        {   
+        {
             auto n = masters.size();
             algo.master_poly.resize(n);
 
@@ -234,7 +237,7 @@ namespace mars {
 
         template<class Adapter>
         inline double compute(const moonolith::Storage<Adapter> &masters, const Adapter &slave)
-        {   
+        {
             return this->compute_aux(masters, slave);
         }
 
@@ -277,7 +280,7 @@ namespace mars {
         double elapsed = MPI_Wtime();
 
         AlgorithmT algo(comm, moonolith::make_unique<moonolith::CollectionManager<MeshT>>());
-        
+
         algo.init_simple(
             mesh_master,
             mesh_slave,
@@ -294,7 +297,7 @@ namespace mars {
         ////////////////////////////////////////////////////
         /////////////////// pair-wise method ///////////////////////
         elapsed = MPI_Wtime();
-        
+
         algo.compute([&](const Adapter &master, const Adapter &slave) -> bool {
             auto v = isect.compute(master, slave);
 
@@ -325,7 +328,7 @@ namespace mars {
         double elapsed = MPI_Wtime();
 
         moonolith::ManyMastersOneSlaveAlgorithm<Dim, MeshT> algo(comm, moonolith::make_unique<moonolith::CollectionManager<MeshT>>());
-        
+
         algo.init_simple(
             mesh_master,
             mesh_slave,
@@ -508,7 +511,7 @@ namespace mars {
         if(comm.rank() == 1 || comm.is_alone()) {
             read_mesh("../data/square_2.MFEM", mesh_slave);
             mars::mark_boundary(mesh_slave);
-            
+
             mars::Bisection<mars::Mesh2> b(mesh_slave);
             b.uniform_refine(res * 3);
             mesh_slave.clean_up();
@@ -516,11 +519,11 @@ namespace mars {
             mars::write_mesh("mesh_s", mesh_slave);
 
             mesh_slave.update_dual_graph(true);
-            
+
             mars::extract_surface(mesh_slave, surf_mesh_slave);
         }
 
-        
+
         moonolith::logger() << "n_master " << surf_mesh_master.n_elements() << " n_slave " << surf_mesh_slave.n_elements() << " " << std::endl;
         double arclen = mars_compute_isect_measure(comm, surf_mesh_master, surf_mesh_slave);
 
@@ -606,7 +609,7 @@ namespace mars {
         if(comm.rank() == 1 || comm.is_alone()) {
             read_mesh("../data/cube_6.MFEM", mesh_slave);
             mars::mark_boundary(mesh_slave);
-            
+
             mars::Bisection<mars::Mesh3> b(mesh_slave);
             b.uniform_refine(res * 3);
             mesh_slave.clean_up();
@@ -614,13 +617,13 @@ namespace mars {
             mars::write_mesh("mesh_s", mesh_slave);
 
             mesh_slave.update_dual_graph(true);
-            
+
             extract_surface(mesh_slave, surf_mesh_slave);
 
             // surf_mesh_slave.describe(logger());
         }
 
-        
+
         moonolith::logger() << "n_master " << surf_mesh_master.n_elements() << " n_slave " << surf_mesh_slave.n_elements() << " " << std::endl;
         double area = mars_compute_isect_measure(comm, surf_mesh_master, surf_mesh_slave);
 
@@ -708,13 +711,13 @@ namespace mars {
         if(comm.rank() == 1 || comm.is_alone()) {
             read_mesh("../data/pentatope_1.MFEM", mesh_slave);
             mars::mark_boundary(mesh_slave);
-            
+
             mars::Bisection<mars::Mesh4> b(mesh_slave);
             b.uniform_refine(res*3);
             mesh_slave.clean_up();
 
             mesh_slave.update_dual_graph(true);
-            
+
             extract_surface(mesh_slave, surf_mesh_slave);
 
             // mesh_slave.describe(logger());
@@ -765,7 +768,7 @@ namespace mars {
         double elapsed = MPI_Wtime();
 
         AlgorithmT algo(comm, moonolith::make_unique<moonolith::CollectionManager<MeshT>>());
-        
+
         algo.init(
             mesh,
             {{1, 2}},
@@ -782,7 +785,7 @@ namespace mars {
         ////////////////////////////////////////////////////
         /////////////////// pair-wise method ///////////////////////
         elapsed = MPI_Wtime();
-        
+
         algo.compute([&](const Adapter &master, const Adapter &slave) -> bool {
             auto v = isect.compute(master, slave);
 
@@ -802,7 +805,7 @@ namespace mars {
     }
 
     void run_mars_moonolith_test()
-    {   
+    {
         // //volume-to-volume
         run_mars_intersect_1();
         run_mars_intersect_2();

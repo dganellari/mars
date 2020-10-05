@@ -1,6 +1,8 @@
 #include "mars_moonolith_quadrature_test.hpp"
 
-#include "mars.hpp"
+#include "mars_base.hpp"
+#include "mars_mesh.hpp"
+#include "mars_bisection.hpp"
 
 #include "moonolith_mesh_adapter.hpp"
 #include "moonolith_polygon.hpp"
@@ -30,7 +32,7 @@ namespace mars {
         double elapsed = MPI_Wtime();
 
         AlgorithmT algo(comm, moonolith::make_unique<moonolith::CollectionManager<MeshT>>());
-        
+
         algo.init_simple(
             mesh_master,
             mesh_slave,
@@ -51,7 +53,7 @@ namespace mars {
         moonolith::Quadrature2<double> q_out;
 
         moonolith::BuildQuadrature<moonolith::Polygon<double, 2>> q_builder;
-        
+
         algo.compute([&](const Adapter &master, const Adapter &slave) -> bool {
             const auto &mm = master.collection();
             const auto &me = master.elem();
@@ -65,7 +67,7 @@ namespace mars {
             if(q_builder.apply(q_ref, poly_m, poly_s, q_out)) {
                 vol += std::accumulate(std::begin(q_out.weights), std::end(q_out.weights), 0.);
                 return true;
-            } 
+            }
 
             return false;
         });
@@ -107,7 +109,7 @@ namespace mars {
         }
 
         moonolith::logger() << "n_master " << mesh_master.n_elements() << " n_slave " << mesh_slave.n_elements() << " " << std::endl;
-        
+
         moonolith::Quadrature2<double> q_ref;
         q_ref.points = {{std::sqrt(2.)/2., std::sqrt(2.)/2.}};
         q_ref.weights = {1.};
