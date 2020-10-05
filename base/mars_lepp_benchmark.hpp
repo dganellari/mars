@@ -11,7 +11,7 @@ namespace mars {
 	template<class Mesh>
 	class LeppBenchmark {
 	public:
-		using EdgeSelectPtr = std::shared_ptr<ParallelEdgeSelect<Mesh>>;
+		// using EdgeSelectPtr = std::shared_ptr<ParallelEdgeSelect<Mesh>>;
 
 		static const Integer Dim 		 = Mesh::Dim;
 		static const Integer ManifoldDim = Mesh::ManifoldDim;
@@ -36,6 +36,7 @@ namespace mars {
 			run_benchmark(n_levels, es, mesh, output_path, exp_num++);
 		}
 
+		template<class EdgeSelectPtr>
 		void run_benchmark(
 			const Integer n_levels,
 			const EdgeSelectPtr &edge_select,
@@ -46,7 +47,7 @@ namespace mars {
 		{
 			using namespace mars;
 			std::cout << "======================================\n";
-			
+
 			//copy mesh
 			auto mesh = mesh_in;
 
@@ -68,7 +69,7 @@ namespace mars {
 
 			for(Integer i = 0; i < n_levels; ++i) {
 				std::vector<mars::Integer> elements;
-				
+
 				Vector<Real, Dim> center;
 				center.set(0.5);
 

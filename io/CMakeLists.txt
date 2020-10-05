@@ -6,7 +6,8 @@ find_package(
     QUIET)
 if(NOT VTK_FOUND)
     message("Skipping IO: ${VTK_NOT_FOUND_MESSAGE}")
-    return()
+    add_library(mars_io INTERFACE)
+    target_include_directories(mars_io INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 
 else(VTK_FOUND)
 
@@ -16,8 +17,6 @@ else(VTK_FOUND)
                        LOCAL_SOURCES)
 
     add_library(mars_io STATIC ${LOCAL_HEADERS} ${LOCAL_SOURCES})
-    # target_link_libraries(mars_io ${VTK_LIBRARIES}) add_dependencies(mars_io
-    # par_moonolith)
     target_include_directories(mars_io PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     target_include_directories(mars_io PUBLIC ${CMAKE_BINARY_DIR})
     target_include_directories(mars_io PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
@@ -43,14 +42,15 @@ else(VTK_FOUND)
         vtk_module_autoinit(TARGETS mars_io MODULES ${VTK_LIBRARIES})
     endif()
 
-    set(MARS_LIBRARIES
-        "${MARS_LIBRARIES};mars_io"
-        PARENT_SCOPE)
-    set(MARS_INCLUDES
-        "${MARS_INCLUDES};${VTK_INCLUDES}"
-        PARENT_SCOPE)
-
     set(MARS_WITH_VTK
         ON
         PARENT_SCOPE)
+
 endif()
+
+set(MARS_LIBRARIES
+    "${MARS_LIBRARIES};mars_io"
+    PARENT_SCOPE)
+# set(MARS_INCLUDES "${MARS_INCLUDES};${VTK_INCLUDES}" PARENT_SCOPE)
+
+#

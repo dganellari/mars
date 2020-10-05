@@ -20,6 +20,16 @@ MARS targets multi-core CPUs and GPUs using the C++ Kokkos programming model. Th
 
 A distributed memory, parallel implementation based on MPI is ongoing work, and forest of octrees and space filling curves algorithms for efficient mesh partitioning are being planned.
 
+## Downloading MARS and its dependencies ##
+
+Clone the repository and its submodules. MARS relies on googletest and google/benchmark.
+
+`git clone --recurse-submodules https://bitbucket.org/zulianp/mars.git`
+or for older git versions
+
+`git clone https://bitbucket.org/zulianp/mars.git`
+`cd mars`
+`git submodule update --init --recursive`
 
 Compiling M.A.R.S for serial usage:
 
@@ -38,5 +48,38 @@ To compile for CUDA the Cmake flag needs to be set: MARS_USE_CUDA=ON. An example
 cmake -DCMAKE_VERBOSE_MAKEFILE=ON -DCMAKE_BUILD_TYPE=Release -DTRY_WITH_KOKKOS=ON -DMARS_USE_CUDA=ON ..
 In this case Kokkos should also be compiled with CUDA support.
 To disable RDMA set MARS_NO_RDMA=ON.
+
+
+## Cite MARS ##
+
+If you use MARS CPU please use the following bibliographic entry
+
+
+```
+#!bibtex
+
+@misc{marscpu,
+    author = {Zulian, Patrick and Ganellari, Daniel and Rovi, Gabriele},
+    title = {{MARS} - {M}esh {A}daptive {R}efinement for {S}upercomputing. {G}it repository},
+    url = {https://bitbucket.org/zulianp/mars},
+    year = {2018}
+}
+```
+
+If you use MARS GPU please use the following bibliographic entry
+
+
+```
+#!bibtex
+
+@misc{marsgpu,
+    author = {Ganellari, Daniel and Zulian, Patrick and Rovi, Gabriele},
+    title = {{MARS} - {M}esh {A}daptive {R}efinement for {S}upercomputing. {G}it repository},
+    url = {https://bitbucket.org/zulianp/mars},
+    year = {2018}
+}
+```
+
+
 
 
