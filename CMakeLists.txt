@@ -260,7 +260,13 @@ if(WITH_MPI)
         distributed/communication/mars_distributed_context.hpp
         distributed/communication/mars_execution_context.hpp
         distributed/mars_env/mars_mpi_guard.hpp
-        examples/mars_advection.hpp)
+        examples/distributed_dm/mars_advection.hpp
+        examples/distributed_dm/mars_poisson.hpp
+        examples/distributed_dm/mars_poisson_operator.hpp
+        examples/distributed_dm/mars_quad4.hpp
+        examples/distributed_dm/mars_fedm_values.hpp
+        examples/distributed_dm/mars_matrix_free_operator.hpp
+        )
 endif()
 
 list(APPEND MARS_SOURCES base/mars_communicator.cpp base/mars_simplex.cpp
@@ -275,7 +281,7 @@ if(WITH_MPI)
         distributed/communication/mars_mpi_context.cpp
         distributed/communication/mars_execution_context.cpp
         distributed/communication/mars_dry_run_context.cpp
-        examples/mars_poisson_operator.cpp)
+        examples/distributed_dm/mars_poisson_operator.cpp)
 endif()
 
 set(CMAKE_CXX_DEBUG "-g")
@@ -309,6 +315,7 @@ target_include_directories(mars PUBLIC distributed/mars_env)
 target_include_directories(mars PUBLIC distributed/communication)
 target_include_directories(mars PUBLIC distributed/communication/util)
 target_include_directories(mars PUBLIC examples)
+target_include_directories(mars PUBLIC examples/distributed_dm)
 target_include_directories(mars PUBLIC io)
 
 if(Kokkos_FOUND)
