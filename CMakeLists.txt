@@ -294,7 +294,7 @@ install(FILES ${CMAKE_BINARY_DIR}/mars_config.hpp DESTINATION include)
 
 if(Kokkos_FOUND)
     add_executable(st_example examples/mars_st_example.cpp)
-    target_link_libraries(st_example mars)
+    target_link_libraries(st_example mars mars_io)
 endif()
 
 include(tests/tests.cmake)

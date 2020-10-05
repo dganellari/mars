@@ -2059,8 +2059,8 @@ void write_file() {
   // test_mars_mesh_generation_kokkos_3D(level,refine_level, level);
   // test_mars_nonsimplex_mesh_generation_kokkos_2D(level, refine_level);
 
-  test_mars_nonsimplex_mesh_generation_kokkos_3D(level, refine_level,
-                                                 refine_level);
+  // test_mars_nonsimplex_mesh_generation_kokkos_3D(level, refine_level,
+  //                                                refine_level);
 
   /*ParallelMesh3 pMesh3;
   generate_cube(pMesh3, level, level, level);
@@ -2076,223 +2076,199 @@ void write_file() {
   // #endif
 }  // namespace mars
 
-void test_incomplete_2D() {
-  using namespace mars;
+// void test_incomplete_2D() {
+//   using namespace mars;
 
-  Mesh2 mesh(true);
-  read_mesh("../data/square_2.MFEM", mesh);
-  // read_mesh("../data/square_2_def.MFEM", mesh);
-  test_incomplete_ND(mesh, 8, true);
-}
+//   Mesh2 mesh(true);
+//   read_mesh("../data/square_2.MFEM", mesh);
+//   // read_mesh("../data/square_2_def.MFEM", mesh);
+//   test_incomplete_ND(mesh, 8, true);
+// }
 
-void test_incomplete_3D() {
-  using namespace mars;
+// void test_incomplete_3D() {
+//   using namespace mars;
 
-  Mesh3 mesh(true);
-  read_mesh("../data/cube_6.MFEM", mesh);
-  // test_incomplete_ND(mesh, 10, false);
-  test_incomplete_ND(mesh, 10, true);
-}
+//   Mesh3 mesh(true);
+//   read_mesh("../data/cube_6.MFEM", mesh);
+//   // test_incomplete_ND(mesh, 10, false);
+//   test_incomplete_ND(mesh, 10, true);
+// }
 
-void test_incomplete_4D() {
-  using namespace mars;
+// void test_incomplete_4D() {
+//   using namespace mars;
 
-  Mesh4 mesh(true);
-  read_mesh("../data/cube4d_24.MFEM", mesh);
-  // test_incomplete_ND(mesh, 8, false);
-  test_incomplete_ND(mesh, 8, true);
-}
+//   Mesh4 mesh(true);
+//   read_mesh("../data/cube4d_24.MFEM", mesh);
+//   // test_incomplete_ND(mesh, 8, false);
+//   test_incomplete_ND(mesh, 8, true);
+// }
 
-void test_incomplete_5D() {
-  using namespace mars;
-  using Mesh = mars::Mesh5;
-  using NVES = mars::GlobalNewestVertexEdgeSelect<Mesh>;
-  using LEES = mars::GloballyUniqueLongestEdgeSelect<Mesh>;
+// void test_incomplete_5D() {
+//   using namespace mars;
+//   using Mesh = mars::Mesh5;
+//   using NVES = mars::GlobalNewestVertexEdgeSelect<Mesh>;
+//   using LEES = mars::GloballyUniqueLongestEdgeSelect<Mesh>;
 
-  std::cout << "======================================\n";
-  Mesh mesh(true);
-  read_mesh("../data/hexateron_1.MFEM", mesh);
-  mesh.renumber_nodes();
+//   std::cout << "======================================\n";
+//   Mesh mesh(true);
+//   read_mesh("../data/hexateron_1.MFEM", mesh);
+//   mesh.renumber_nodes();
 
-  Quality<Mesh> q(mesh);
-  q.compute();
-  mark_boundary(mesh);
+//   Quality<Mesh> q(mesh);
+//   q.compute();
+//   mark_boundary(mesh);
 
-  Bisection<Mesh> b(mesh);
-  b.uniform_refine(2);
+//   Bisection<Mesh> b(mesh);
+//   b.uniform_refine(2);
 
-  Integer n_tests = 5;
-  for (Integer i = 0; i < n_tests; ++i) {
-    std::cout << "-----------------\n";
-    std::cout << "test_incomplete : " << (i + 1) << "/" << n_tests << std::endl;
-    test_incomplete<NVES>(mesh, true);
-    q.compute();
-    std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
-    std::cout << "-----------------\n";
-  }
+//   Integer n_tests = 5;
+//   for (Integer i = 0; i < n_tests; ++i) {
+//     std::cout << "-----------------\n";
+//     std::cout << "test_incomplete : " << (i + 1) << "/" << n_tests <<
+//     std::endl; test_incomplete<NVES>(mesh, true); q.compute(); std::cout <<
+//     "n_active_elements: " << mesh.n_active_elements() << std::endl; std::cout
+//     << "-----------------\n";
+//   }
 
-  q.save_csv("glob_long_edge", "5D.csv", true);
-  q.save_report("5D.svg");
+//   q.save_csv("glob_long_edge", "5D.csv", true);
+//   q.save_report("5D.svg");
 
-  std::ofstream m_os("mesh5.MFEM");
-  export_mesh(mesh, m_os);
-  m_os.close();
-}
+//   std::ofstream m_os("mesh5.MFEM");
+//   export_mesh(mesh, m_os);
+//   m_os.close();
+// }
 
-void test_incomplete_6D() {
-  using namespace mars;
-  using Mesh = mars::Mesh6;
-  using NVES = mars::GlobalNewestVertexEdgeSelect<Mesh6>;
-  using LEES = mars::GloballyUniqueLongestEdgeSelect<Mesh6>;
+// void test_incomplete_6D() {
+//   using namespace mars;
+//   using Mesh = mars::Mesh6;
+//   using NVES = mars::GlobalNewestVertexEdgeSelect<Mesh6>;
+//   using LEES = mars::GloballyUniqueLongestEdgeSelect<Mesh6>;
 
-  std::cout << "======================================\n";
-  Mesh mesh(true);
-  read_mesh("../data/uniform_polypeton_1.MFEM", mesh);
-  mesh.renumber_nodes();
+//   std::cout << "======================================\n";
+//   Mesh mesh(true);
+//   read_mesh("../data/uniform_polypeton_1.MFEM", mesh);
+//   mesh.renumber_nodes();
 
-  Quality<Mesh> q(mesh);
-  q.compute();
-  mark_boundary(mesh);
+//   Quality<Mesh> q(mesh);
+//   q.compute();
+//   mark_boundary(mesh);
 
-  Bisection<Mesh> b(mesh);
-  b.uniform_refine(2);
+//   Bisection<Mesh> b(mesh);
+//   b.uniform_refine(2);
 
-  Integer n_tests = 5;
-  for (Integer i = 0; i < n_tests; ++i) {
-    std::cout << "-----------------\n";
-    std::cout << "test_incomplete : " << (i + 1) << "/" << n_tests << std::endl;
-    test_incomplete<NVES>(mesh, true);
-    q.compute();
-    std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
-    std::cout << "-----------------\n";
-  }
+//   Integer n_tests = 5;
+//   for (Integer i = 0; i < n_tests; ++i) {
+//     std::cout << "-----------------\n";
+//     std::cout << "test_incomplete : " << (i + 1) << "/" << n_tests <<
+//     std::endl; test_incomplete<NVES>(mesh, true); q.compute(); std::cout <<
+//     "n_active_elements: " << mesh.n_active_elements() << std::endl; std::cout
+//     << "-----------------\n";
+//   }
 
-  q.save_csv("glob_long_edge", "6D.csv", true);
-  q.save_report("6D.svg");
+//   q.save_csv("glob_long_edge", "6D.csv", true);
+//   q.save_report("6D.svg");
 
-  std::ofstream m_os("mesh6.MFEM");
-  export_mesh(mesh, m_os);
-  m_os.close();
-  // mesh.describe(std::cout);
-}
+//   std::ofstream m_os("mesh6.MFEM");
+//   export_mesh(mesh, m_os);
+//   m_os.close();
+//   // mesh.describe(std::cout);
+// }
 
-void test_incomplete_bad_4D() {
-  using namespace mars;
-  using Mesh = mars::Mesh4;
-  using NVES = mars::GlobalNewestVertexEdgeSelect<Mesh>;
-  using LEES = mars::GloballyUniqueLongestEdgeSelect<Mesh>;
+// void test_incomplete_bad_4D() {
+//   using namespace mars;
+//   using Mesh = mars::Mesh4;
+//   using NVES = mars::GlobalNewestVertexEdgeSelect<Mesh>;
+//   using LEES = mars::GloballyUniqueLongestEdgeSelect<Mesh>;
 
-  std::cout << "======================================\n";
-  Mesh mesh(true);
-  // read_mesh("../data/bad_mesh_p_wn.MFEM", mesh);
-  read_mesh("../data/big_mesh_2.MFEM", mesh);
-  mesh.renumber_nodes();
+//   std::cout << "======================================\n";
+//   Mesh mesh(true);
+//   // read_mesh("../data/bad_mesh_p_wn.MFEM", mesh);
+//   read_mesh("../data/big_mesh_2.MFEM", mesh);
+//   mesh.renumber_nodes();
 
-  Quality<Mesh> q(mesh);
-  q.compute();
-  mark_boundary(mesh);
+//   Quality<Mesh> q(mesh);
+//   q.compute();
+//   mark_boundary(mesh);
 
-  // mesh.describe(std::cout);
+//   // mesh.describe(std::cout);
 
-  Bisection<Mesh> b(mesh);
-  // b.uniform_refine(2);
+//   Bisection<Mesh> b(mesh);
+//   // b.uniform_refine(2);
 
-  Integer n_tests = 4;
-  for (Integer i = 0; i < n_tests; ++i) {
-    std::cout << "-----------------\n";
-    std::cout << "test_incomplete : " << (i + 1) << "/" << n_tests << std::endl;
-    test_incomplete<LEES>(mesh, true);
-    q.compute();
-    std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
-    std::cout << "-----------------\n";
-  }
+//   Integer n_tests = 4;
+//   for (Integer i = 0; i < n_tests; ++i) {
+//     std::cout << "-----------------\n";
+//     std::cout << "test_incomplete : " << (i + 1) << "/" << n_tests <<
+//     std::endl; test_incomplete<LEES>(mesh, true); q.compute(); std::cout <<
+//     "n_active_elements: " << mesh.n_active_elements() << std::endl; std::cout
+//     << "-----------------\n";
+//   }
 
-  q.save_csv("glob_long_edge_big", "4D_b.csv", true);
-  q.save_report("glob_long_edge_big.svg");
+//   q.save_csv("glob_long_edge_big", "4D_b.csv", true);
+//   q.save_report("glob_long_edge_big.svg");
 
-  std::ofstream m_os("big_mesh_3.MFEM");
-  export_mesh(mesh, m_os);
-  m_os.close();
+//   std::ofstream m_os("big_mesh_3.MFEM");
+//   export_mesh(mesh, m_os);
+//   m_os.close();
 
-  std::ofstream os("bad_mesh.MFEM");
-  export_elems_with_bad_tags(mesh, os);
-  os.close();
+//   std::ofstream os("bad_mesh.MFEM");
+//   export_elems_with_bad_tags(mesh, os);
+//   os.close();
 
-  std::ofstream os_p("bad_mesh_p.MFEM");
-  export_elems_with_bad_tags(mesh, os_p, true);
-  os_p.close();
-}
+//   std::ofstream os_p("bad_mesh_p.MFEM");
+//   export_elems_with_bad_tags(mesh, os_p, true);
+//   os_p.close();
+// }
 
-void read_file() {
-  using namespace mars;
-  std::cout << "======================================\n";
-  mars::Mesh<3, 3> mesh;
-  // mars::Mesh<2, 2> mesh;
-  read("../data/test_3D.msh", mesh, true);
-  // read("../data/square_2.MFEM", mesh);
-  // read_msh("../data/test_3D.msh", mesh, true);
-  mesh.describe(std::cout);
-  std::cout << mesh.n_elements() << std::endl;
-  std::cout << mesh.n_nodes() << std::endl;
-}
+// void read_file() {
+//   using namespace mars;
+//   std::cout << "======================================\n";
+//   mars::Mesh<3, 3> mesh;
+//   // mars::Mesh<2, 2> mesh;
+//   read("../data/test_3D.msh", mesh, true);
+//   // read("../data/square_2.MFEM", mesh);
+//   // read_msh("../data/test_3D.msh", mesh, true);
+//   mesh.describe(std::cout);
+//   std::cout << mesh.n_elements() << std::endl;
+//   std::cout << mesh.n_nodes() << std::endl;
+// }
 
-void write_file() {
-  using namespace mars;
-  std::cout << "======================================\n";
-  mars::Mesh<3, 3> mesh;
-  // mars::Mesh<2, 2> mesh;
-  read("../data/test_3D.msh", mesh, true);
-  // read("../data/square_2.MFEM", mesh, true);
-  mesh.describe(std::cout);
-  write("../data/test_write_tetra3.msh", mesh);
-  // write("../data/test_write_square2.MFEM", mesh);
->>>>>>> remotes/origin/development
-}
+// void write_file() {
+//   using namespace mars;
+//   std::cout << "======================================\n";
+//   mars::Mesh<3, 3> mesh;
+//   // mars::Mesh<2, 2> mesh;
+//   read("../data/test_3D.msh", mesh, true);
+//   // read("../data/square_2.MFEM", mesh, true);
+//   mesh.describe(std::cout);
+//   write("../data/test_write_tetra3.msh", mesh);
+//   // write("../data/test_write_square2.MFEM", mesh);
+// >>>>>>> remotes/origin/development
+// }
 
-void par_mesh_test() {
-#ifdef WITH_MPI
-<<<<<<< HEAD
-  using namespace mars;
+// void par_mesh_test() {
+// #ifdef WITH_MPI
 
-  using ParMesh2 = mars::ParMesh<2, 2>;
+//   using namespace mars;
 
-  Mesh2 serial_mesh(true);
-  read_mesh("../data/square_2.MFEM", serial_mesh);
-  mark_boundary(serial_mesh);
+//   using ParMesh2 = mars::ParMesh<2, 2>;
 
-  std::vector<Integer> partitioning = {0, 1};
+//   Mesh2 serial_mesh(true);
+//   read_mesh("../data/square_2.MFEM", serial_mesh);
+//   mark_boundary(serial_mesh);
 
-  Communicator world;  // world.set_verbose(true);
-  ParMesh2 mesh(world);
-  mesh.init(serial_mesh, partitioning);
+//   std::vector<Integer> partitioning = {0, 1};
 
-  assert(mesh.is_conforming());
+//   Communicator world;  // world.set_verbose(true);
+//   ParMesh2 mesh(world);
+//   mesh.init(serial_mesh, partitioning);
 
-  // ParBisection<ParMesh2> b(mesh);
-  // b.uniform_refine(1);
-=======
-  using namespace mars;
+//   assert(mesh.is_conforming());
 
-  using ParMesh2 = mars::ParMesh<2, 2>;
-
-  Mesh2 serial_mesh(true);
-  read_mesh("../data/square_2.MFEM", serial_mesh);
-  mark_boundary(serial_mesh);
-
-  std::vector<Integer> partitioning = {0, 1};
-
-  Communicator world;  // world.set_verbose(true);
-  ParMesh2 mesh(world);
-  mesh.init(serial_mesh, partitioning);
-
-  assert(mesh.is_conforming());
-
-  // ParBisection<ParMesh2> b(mesh);
-  // b.uniform_refine(1);
->>>>>>> remotes/origin/development
-
-#endif  // WITH_MPI
-}
+//   // ParBisection<ParMesh2> b(mesh);
+//   // b.uniform_refine(1);
+// #endif  // WITH_MPI
+// }
 
 int main(int argc, char *argv[]) {
   using namespace mars;

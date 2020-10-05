@@ -7,6 +7,8 @@ add_library(mars_examples STATIC ${LOCAL_HEADERS} ${LOCAL_SOURCES})
 target_compile_features(mars_examples PUBLIC cxx_std_14)
 target_link_libraries(mars_examples mars_kokkos mars_core mars_mpi)
 
+target_link_libraries(mars_examples mars_io)
+
 target_include_directories(mars_examples PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(mars_examples PUBLIC ${CMAKE_BINARY_DIR})
 target_include_directories(mars_examples PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
