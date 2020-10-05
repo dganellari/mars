@@ -206,15 +206,16 @@ class FEDMValues {
 
   template <Integer OUTPUT>
   void add_dof_contributions(const ViewMatrixType<double> &res) {
-    dm_.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
-      // update output
-      for (int i = 0; i < DMQ2::elem_nodes; i++) {
-        const Integer local_dof = dm_.get_elem_local_dof(elem_index, i);
-        /* atomically updated the contributions to the same dof */
-        Kokkos::atomic_add(&dm_.template get_dof_data<OUTPUT>(local_dof),
-                           res(elem_index, i));
-      }
-    });
+      auto eld = dm_.get_elem_dof_enum();
+      auto dof_data = dm_.template get_dof_data<OUTPUT>();
+      dm_.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
+          // update output
+          for (int i = 0; i < DMQ2::elem_nodes; i++) {
+              const Integer local_dof = eld(elem_index, i);
+              /* atomically updated the contributions to the same dof */
+              Kokkos::atomic_add(&dof_data(local_dof), res(elem_index, i));
+          }
+      });
   }
 
   // form the matrix free operator
@@ -230,24 +231,26 @@ class FEDMValues {
 
   template <class F, typename T>
   void assemble_rhs(ViewVectorType<T> &rhs, F f) {
-    dm_.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
-      using Elem = typename DMQ2::simplex_type;
-      double p[2];
+      auto det_J = det_J_;
+      auto dm = dm_;
 
-      /* gather_elem_data<INPUT>(dm, elem_index, sol); */
-      const T detj = det_J_(elem_index);
+      dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
+          using Elem = typename DMQ2::simplex_type;
+          double p[2];
 
-      for (int i = 0; i < DMQ2::elem_nodes; i++) {
-        // forach dof get the local number
-        const Integer local_dof = dm_.get_elem_local_dof(elem_index, i);
-        dm_.template get_dof_coordinates_from_local<Elem::ElemType>(local_dof,
-                                                                    p);
+          const T detj = det_J(elem_index);
 
-        const T val = f(p);
-        const T scaled_val = val * detj / DMQ2::elem_nodes;
-        Kokkos::atomic_add(&rhs(local_dof), scaled_val);
-      }
-    });
+          for (int i = 0; i < DMQ2::elem_nodes; i++) {
+              // forach dof get the local number
+              const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+              dm.template get_dof_coordinates_from_local<Elem::ElemType>(local_dof, p);
+
+              const T val = f(p);
+              const T scaled_val = val * detj / DMQ2::elem_nodes;
+              const Integer owned_index = dm.local_to_owned(local_dof);
+              Kokkos::atomic_add(&rhs(owned_index), scaled_val);
+          }
+      });
   }
 
   void init() {
