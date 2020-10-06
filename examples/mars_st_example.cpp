@@ -29,6 +29,8 @@
 #include "mars_ranked_edge.hpp"
 #include "mars_test.hpp"
 
+#include "mars_env.hpp"
+
 #include "mars_mesh_generation.hpp"
 
 #ifdef WITH_KOKKOS
@@ -299,13 +301,8 @@ namespace mars {
 
 int main(int argc, char *argv[]) {
     using namespace mars;
-    Kokkos::initialize(argc, argv);
 
-#ifdef MARS_USE_CUDA
-    cudaDeviceSetLimit(cudaLimitStackSize,
-                       32768);  // set stack to 32KB only for cuda since it is
-                                // not yet supported in kokkos.
-#endif
+    Env env(argc, argv);
 
     {
         using namespace cxxopts;
@@ -376,5 +373,5 @@ int main(int argc, char *argv[]) {
         //     .run(args);
     }
 
-    Kokkos::finalize();
+    return env.exit_code();
 }
