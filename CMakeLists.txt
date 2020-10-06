@@ -248,7 +248,7 @@ add_executable(mars_exec main.cpp)
 target_link_libraries(mars_exec mars)
 
 target_include_directories(
-    mars_exec PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/cxxopts/include)
+    mars PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/cxxopts/include)
 
 if(TRY_WITH_MOONOLITH)
     add_subdirectory(moonolith_adapter)

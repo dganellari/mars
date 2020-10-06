@@ -308,53 +308,72 @@ int main(int argc, char *argv[]) {
 #endif
 
     {
+        using namespace cxxopts;
+        Options options("./st_example", "Run M.A.R.S. based applications.");
+
+        options.add_options()("d,debug", "Enable debugging")                                     //
+            ("l,level", "Number of levels", value<Integer>()->default_value("1"))                //
+            ("x,nx", "Number of elements in x direction", value<Integer>()->default_value("6"))  //
+            ("y,ny", "Number of elements in y direction", value<Integer>()->default_value("6"))  //
+            ("z,nz", "Number of elements in z direction", value<Integer>()->default_value("6"))  //
+            ("t,nt", "Number of elements in t direction", value<Integer>()->default_value("6"))  //
+            ("a,adaptive", "Adaptivity", value<bool>()->default_value("false"))                  //
+            ("o,output", "Enable output", value<bool>()->default_value("true"))                  //
+            ("r,refine_level",
+             "Number of refinements",
+             value<Integer>()->default_value("1"))                                  //
+            ("v,verbose", "Verbose output", value<bool>()->default_value("false"))  //
+            ("h,help", "Print usage");
+
+        auto args = options.parse(argc, argv);
+
         // ModelTest<ParallelMesh2, UMeshSTHeatEquation<ParallelMesh2>, ST1BC<ParallelMesh2>, ST1RHS,
         // ST1Analitcal>().run(
-        //     argc, argv);
+        //     options);
 
         // ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example2Dirichlet, Example2RHS,
         // Example2Analitcal>().run(
-        //     argc, argv);
+        //     options);
 
         // ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example3Dirichlet, Example3RHS,
         // Example3Analitcal>().run(
-        //     argc, argv);
+        //     options);
 
         // ModelTest<ParallelMesh2, UMeshSTHeatEquation<ParallelMesh2>, ST2BC<ParallelMesh2>, ST2RHS,
         // ST2Analitcal>().run(
-        //     argc, argv);
+        //     options);
 
         // ModelTest<ParallelMesh2, UMeshSTHeatEquation<ParallelMesh2>, ST3BC<ParallelMesh2>, ST3RHS,
         // ST3Analitcal>().run(
-        //     argc, argv);
+        //     options);
 
         // ModelTest<ParallelMesh3,
         //           UMeshLaplace<ParallelMesh3>,
         //           ZeroDirchletOnUnitCube<ParallelMesh3>,
         //           One<ParallelMesh3>,
         //           One<ParallelMesh3>>()
-        //     .run(argc, argv);
+        //     .run(args);
 
         // 3D example 1
         ModelTest<ParallelMesh3, UMeshSTHeatEquation<ParallelMesh3>, ST3D1BC<ParallelMesh3>, ST3D1RHS, ST3D1Analitcal>()
-            .run(argc, argv);
+            .run(args);
 
         // 3D example 2
         // ModelTest<ParallelMesh3, UMeshSTHeatEquation<ParallelMesh3>, ST3D2BC<ParallelMesh3>, ST3D2RHS,
         // ST3D2Analitcal>()
-        //     .run(argc, argv);
+        //     .run(args);
 
         // 4D example 1
         // ModelTest<ParallelMesh4, UMeshSTHeatEquation<ParallelMesh4>, ST4D1BC<ParallelMesh4>, ST4D1RHS,
         // ST4D1Analitcal>()
-        //     .run(argc, argv);
+        //     .run(args);
 
         // ModelTest<ParallelMesh4,
         //           UMeshLaplace<ParallelMesh4>,
         //           ZeroDirchletOnUnitCube<ParallelMesh4>,
         //           One<ZeroDirchletOnUnitCube<ParallelMesh4>>,
         //           One<ZeroDirchletOnUnitCube<ParallelMesh4>>>()
-        //     .run(argc, argv);
+        //     .run(args);
     }
 
     Kokkos::finalize();
