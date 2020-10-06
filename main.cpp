@@ -1253,7 +1253,10 @@ int main(int argc, char *argv[])
 // CookLSFEM<2,0,1>(argc,argv);
 
 // DivDivHiptmair<2>(argc,argv);
-LSFEMPoissonHiptmair<2>(argc,argv);
+// LSFEMPoissonHiptmair<2>(argc,argv);
+// LSFEMElasticityHiptmair<2>(argc,argv);
+LSFEMContactHiptmair<2>(argc,argv);
+
 // LSFEM_Poisson<2,0,1>(argc,argv);
 // BeamLSFEM<2,0,1>(argc,argv);
 // BeamImprovedMomentumLSFEM<2,0,1>(argc,argv);

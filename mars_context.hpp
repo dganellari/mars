@@ -619,6 +619,8 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
     // }
 
 
+    auto& levels(){return levels_;}
+
     auto& constrained_dofs_levels(){return constrained_dofs_levels_;}
 
     auto& constrained_dofs_levels()const {return constrained_dofs_levels_;}
@@ -672,14 +674,17 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
      // {
      //  //std::cout<<constrained_mat_[i] << ", "   <<std::endl;
      // }
+      // print_vec(constrained_vec_[level],constrained_vec_[level].size(),"constrained_vec_");
      for(Integer i=0;i<n_dofs_;++i)
      {
       // std::cout<<"i="<<i<<"/"<<n_dofs_<<std::endl;
       if(constrained_dofs_[i])
       {
         // std::cout<<"constrained = "<< constrained_vec_[i] << std::endl;
+        // std::cout<<"constrained_dofs_ = "<< constrained_dofs_[i] << std::endl;
         
         b[i]=constrained_vec_[i];
+        // std::cout<<"b[i] = "<< b[i] << std::endl;
 
         // for(Integer j=0;j<i;++j)
         //     { 
@@ -698,8 +703,11 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
       }
       else
       {
-        // //std::cout<<"not constrained = "<< constrained_vec_[i] << std::endl;
+        // std::cout<<"not constrained = "<< constrained_vec_[i] << std::endl;
+        // std::cout<<"b[i] = "<< b[i] << std::endl;
         A.row_static_condensation(i,constrained_vec_,constrained_dofs_,b[i]);
+         // std::cout<<"b[i] = "<< b[i] << std::endl;
+       
         // for(Integer j=0;j<n_dofs_;++j)
         //   if(constrained_dofs_[j])
         //   {
@@ -753,6 +761,10 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
      for(Integer i=0;i<n_dofs;++i)
      {
+      std::cout<<"i="<<i<<"/"<<n_dofs<<std::endl;
+      std::cout<<"level="<<level<<std::endl;
+
+      std::cout<<constrained_dofs_levels_.size()<<std::endl;
       if(constrained_dofs_levels_[level][i])
       {        
         b[i]=constrained_vec_levels_[level][i];
