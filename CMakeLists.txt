@@ -81,7 +81,7 @@ if(NOT DEFINED CMAKE_CXX_STANDARD_REQUIRED)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
 endif()
 if(NOT DEFINED CMAKE_CXX_STANDARD)
-    set(CMAKE_CXX_STANDARD 11)
+    set(CMAKE_CXX_STANDARD 14)
 endif()
 
 if(TRY_WITH_KOKKOS)
@@ -165,8 +165,8 @@ endif()
 
 # ##############################################################################
 
-list(APPEND MARS_HEADERS mars.hpp)
-list(APPEND MARS_SOURCES mars.cpp)
+list(APPEND MARS_HEADERS mars.hpp mars_env.hpp)
+list(APPEND MARS_SOURCES mars.cpp mars_env.cpp)
 
 add_subdirectory(base)
 add_subdirectory(core)
@@ -248,7 +248,7 @@ add_executable(mars_exec main.cpp)
 target_link_libraries(mars_exec mars)
 
 target_include_directories(
-    mars_exec PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/cxxopts/include)
+    mars PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/cxxopts/include)
 
 if(TRY_WITH_MOONOLITH)
     add_subdirectory(moonolith_adapter)
