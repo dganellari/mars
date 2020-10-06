@@ -11,6 +11,10 @@ option(TRY_WITH_MOONOLITH
 option(TRY_WITH_KOKKOS
        "Use -DTRY_WITH_KOKKOS=ON for enabling mesh transfer functions." OFF)
 
+option(MARS_USE_CUDA "Build mars with cuda support" OFF)
+option(MARS_NO_RDMA "Build mars with NO RDMA support" OFF)
+option(MARS_USE_CUDA "Build mars with cuda support" OFF)
+
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 if(NOT CMAKE_BUILD_TYPE)
@@ -69,20 +73,9 @@ endfunction()
 
 find_package(MPIExtended)
 
-# <<<<<<< HEAD
 if(MPI_FOUND)
-    # set(CMAKE_CXX_COMPILER ${MPI_CXX_COMPILER}) set(CMAKE_CXX_COMPILER_DEBUG
-    # ${MPI_CXX_COMPILER})
     set(WITH_MPI ON)
 endif()
-
-option(MARS_USE_CUDA "Build mars with cuda support" OFF)
-option(MARS_NO_RDMA "Build mars with NO RDMA support" OFF)
-# =======
-# if(MPI_FOUND) set(CMAKE_CXX_COMPILER ${MPI_CXX_COMPILER})
-# set(CMAKE_CXX_COMPILER_DEBUG ${MPI_CXX_COMPILER}) set(WITH_MPI ON) endif()
-
-option(MARS_USE_CUDA "Build mars with cuda support" OFF)
 
 if(NOT DEFINED CMAKE_CXX_STANDARD_REQUIRED)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -198,14 +191,8 @@ target_compile_options(
     # $<$<CONFIG:RelWithDebInfo>:-fsanitize=memory
     # -fsanitize-memory-track-origins>
 )
+
 target_link_libraries(mars ${MPI_LIBRARIES})
-# target_compile_features(mars PUBLIC cxx_std_11)
-
-if(WITH_MPI)
-    target_compile_definitions(mars PUBLIC MARS_HAVE_MPI)
-endif()
-
-add_definitions("-std=c++11")
 target_compile_features(mars PUBLIC cxx_std_14)
 target_include_directories(mars PUBLIC .)
 
