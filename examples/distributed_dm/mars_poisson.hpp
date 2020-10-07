@@ -59,6 +59,8 @@ u = P uk */
 #include "mars_boundary_conditions.hpp"
 #include  "mars_poisson_operator.hpp"
 #include "mars_precon_conjugate_grad.hpp"
+#include <KokkosBlas1_sum.hpp>
+#include "mars_dm_interpolate.hpp"
 #endif // WITH_KOKKOS
 #endif
 
@@ -66,7 +68,7 @@ u = P uk */
 namespace mars {
 
 /* using DMQ2 = DM<DistributedQuad4Mesh, 2, double, double>; */
-using DMQ2 = DM<DistributedQuad4Mesh, 1, double, double>;
+using DMQ2 = DM<DistributedQuad4Mesh, 1, double, double, double>;
 /*
 enum class DMDataDesc
 {
@@ -78,6 +80,7 @@ enum class DMDataDesc
 // use as more readable tuple index to identify the data
 static constexpr int INPUT = 0;
 static constexpr int OUTPUT = 1;
+static constexpr int RHSD = 2;
 
 template <Integer idx>
 using DMDataType = typename DMQ2::UserDataType<idx>;
@@ -480,17 +483,13 @@ void scatter_add_ghost_data(DMQ2 &dm, const context &context) {
 //   }
 // };
 
-template<class BC, class RHS, class AnalyticalFun>
-void poisson_2D(int &argc, char **&argv, const int level) {
-
-  using namespace mars;
-  try {
+template <class BC, class RHS, class AnalyticalFun>
+void poisson_2D(const int level) {
+    using namespace mars;
     mars::proc_allocation resources;
-#ifdef WITH_MPI
-    // initialize MPI
-    marsenv::mpi_guard guard(argc, argv, false);
 
-   // create a distributed context
+#ifdef WITH_MPI
+    // create a distributed context
     auto context = mars::make_context(resources, MPI_COMM_WORLD);
     int proc_num = mars::rank(context);
 #else
@@ -540,51 +539,66 @@ void poisson_2D(int &argc, char **&argv, const int level) {
     printf("dof size: %li\n", locally_owned_dof_size);
 
     VectorReal x("X", locally_owned_dof_size);
+    VectorReal x_exact("X_E", locally_owned_dof_size);
     VectorReal rhs("rhs", locally_owned_dof_size);
 
     if (proc_num == 0) {
         std::cout << "form_operator..." << std::flush;
     }
 
-    PoissonOperator<DMQ2, INPUT, OUTPUT> pop(context, dm);
+    PoissonOperator<DMQ2, INPUT, OUTPUT, RHSD> pop(context, dm);
     pop.init();
 
     if (proc_num == 0) {
         std::cout << "DONE" << std::endl;
     }
 
-    pop.assemble_rhs(rhs, rhs_fun);
+    pop.assemble_rhs(rhs_fun, rhs);
+
+    Real sum_rhs = KokkosBlas::sum(rhs);
+    Real tot = context->distributed->sum(sum_rhs);
+    printf("sum_rh****: %lf\n", tot);
 
     /* print_ghost_dofs(dm); */
     double time = timer.seconds();
     std::cout << "Setup took: " << time << " seconds." << std::endl;
 
-    //if no facenr specified all the boundary is processed. If more than one and less than all
-    //is needed than choose all (do not provide face number) and check manually within the lambda
-    dm.boundary_owned_dof_iterate(
-        MARS_LAMBDA(const Integer owned_dof_index, const Integer sfc){
-            /* do something with the local dof number if needed.
-            For example: If no face nr is specified at the boundary dof iterate: */
-            /*if (dm.is_boundary<Type, left>(local_dof) || dm.is_boundary<Type, up>(local_dof))*/
-            double point[2];
-            dm.get_dof_coordinates_from_sfc<Type>(sfc, point);
-            /* bc_fun(point, value); */
-            bc_fun(point, x(owned_dof_index));
-            bc_fun(point, rhs(owned_dof_index));
-        });
+    // if no facenr specified all the boundary is processed. If more than one and less than all
+    // is needed than choose all (do not provide face number) and check manually within the lambda
+    dm.boundary_owned_dof_iterate(MARS_LAMBDA(const Integer owned_dof_index, const Integer sfc) {
+        /* do something with the local dof number if needed.
+        For example: If no face nr is specified at the boundary dof iterate: */
+        /*if (dm.is_boundary<Type, left>(local_dof) || dm.is_boundary<Type, up>(local_dof))*/
+        double point[2];
+        dm.get_dof_coordinates_from_sfc<Type>(sfc, point);
+        /* bc_fun(point, value); */
+        bc_fun(point, x(owned_dof_index));
+        bc_fun(point, rhs(owned_dof_index));
+    });
 
+    sum_rhs = KokkosBlas::sum(rhs);
+    tot = context->distributed->sum(sum_rhs);
+    printf("sum_rh2****: %lf\n", tot);
+
+    DMInterpolate<DMQ2> ip(dm);
+    ip.apply(an_fun, x_exact);
+
+    VectorReal diff("diff", locally_owned_dof_size);
+    pop.apply(x_exact, diff);
+
+    Real sum_diff = KokkosBlas::sum(diff);
+    Real diffT = context->distributed->sum(sum_diff);
+    printf("diff****: %lf\n", diffT);
     /* dm.boundary_dof_iterate<INPUT> does the same except that provides the local_dof num and the reference
      * on the INPUT data to be updated. Suitable when working with the internal data tuple directly */
 
     CopyOperator preconditioner;
     Integer num_iter = 0;
     Integer max_iter = pop.comm().sum(rhs.extent(0));
-    std::cout << "Starting bcg on proc:" << proc_num<<std::endl;
+    std::cout << "Starting bcg on proc:" << proc_num << std::endl;
     bcg_stab(pop, preconditioner, rhs, max_iter, x, num_iter);
 
-    std::cout << "[" << proc_num
-              << "] ndofs : " << dm.get_local_dof_enum().get_elem_size()
-              << std::endl;
+    std::cout << "[" << proc_num << "] ndofs : " << dm.get_local_dof_enum().get_elem_size() << std::endl;
 
     /* dm.dof_iterate(MARS_LAMBDA(const Integer i) {
       printf("ggid: %li, INPUT: %lf, OUTPUT: %lf, rank: %i\n", i,
@@ -596,10 +610,8 @@ void poisson_2D(int &argc, char **&argv, const int level) {
     std::cout << "Matrix free took: " << time << " seconds." << std::endl;
 
 #endif
-  } catch (std::exception &e) {
-    std::cerr << "exception caught in ring miniapp: " << e.what() << "\n";
-  }
 }
+
 void poisson(int &argc, char **&argv, const int level) {
 
   using namespace mars;
