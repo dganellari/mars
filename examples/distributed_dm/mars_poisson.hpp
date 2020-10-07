@@ -63,6 +63,8 @@ u = P uk */
 #endif  // WITH_KOKKOS
 #endif
 
+// #include "mars_pvtu_writer.hpp"  // VTK
+
 namespace mars {
 
     /* using DMQ2 = DM<DistributedQuad4Mesh, 2, double, double>; */
@@ -568,6 +570,10 @@ namespace mars {
         DMInterpolate<DMQ2> ip(dm);
         ip.apply(an_fun, x_exact);
 
+        // PVTUMeshWriter<DMQ2, Type> w;            // VTK
+        // std::string path = "poisson_exact.vtu";  // VTK
+        // w.write_vtu(path, dm, x_exact);          // VTK
+
         VectorReal diff("diff", locally_owned_dof_size);
         pop.apply(x_exact, diff);
 
@@ -579,7 +585,7 @@ namespace mars {
 
         CopyOperator preconditioner;
         Integer num_iter = 0;
-        Integer max_iter = pop.comm().sum(rhs.extent(0)) * 20;
+        Integer max_iter = pop.comm().sum(rhs.extent(0));
         std::cout << "Starting bcg on proc:" << proc_num << std::endl;
         bcg_stab(pop, preconditioner, rhs, max_iter, x, num_iter);
 

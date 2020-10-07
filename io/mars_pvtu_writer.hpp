@@ -4,106 +4,131 @@
 #include <fstream>
 #include <string>
 
-
 #include <vtkSmartPointer.h>
 // #include <vtkTetra.h>
-#include <vtkQuad.h>
 #include <vtkCellArray.h>
+#include <vtkDoubleArray.h>
+#include <vtkPointData.h>
+#include <vtkQuad.h>
 // #include <vtkXMLUnstructuredGridReader.h>
 // #include <vtkDataSetMapper.h>
 // #include <vtkActor.h>
 // #include <vtkRenderer.h>
 // #include <vtkRenderWindow.h>
 // #include <vtkRenderWindowInteractor.h>
-#include <vtkXMLUnstructuredGridWriter.h>
-#include <vtkUnstructuredGrid.h>
 #include <vtkPointData.h>
+#include <vtkUnstructuredGrid.h>
+#include <vtkXMLUnstructuredGridWriter.h>
 // #include <vtkVertexGlyphFilter.h>
 
-
-#include "mars_config.hpp"
 #include "mars_base.hpp"
-#include "mars_sfc_code.hpp"
-#include "mars_globals.hpp"
-#include "mars_sfc_generation.hpp"
-#include "mars_distributed_octant.hpp"
+#include "mars_config.hpp"
 #include "mars_distributed_data_management.hpp"
+#include "mars_distributed_octant.hpp"
+#include "mars_globals.hpp"
+#include "mars_sfc_code.hpp"
+#include "mars_sfc_generation.hpp"
 
+namespace mars {
 
+    template <class DM, Integer Type>
+    class PVTUMeshWriter {
+    private:
+        static const int VTU_TRIANGLE = 5;
+        static const int VTU_QUAD = 9;
 
-namespace mars{
+    public:
+        bool write_vtu(const std::string &path, const DM &dm) {
+            vtkSmartPointer<vtkXMLUnstructuredGridWriter> writer = vtkSmartPointer<vtkXMLUnstructuredGridWriter>::New();
 
+            vtkSmartPointer<vtkUnstructuredGrid> unstructuredGrid = vtkSmartPointer<vtkUnstructuredGrid>::New();
 
-	template<class DM,  Integer Type>
-	class PVTUMeshWriter {
+            convert_points(dm, *unstructuredGrid);
+            convert_cells(dm, *unstructuredGrid);
 
-	private: 
-		static const int VTU_TRIANGLE = 5;
-		static const int VTU_QUAD = 9;
+            writer->SetFileName(path.c_str());
+            writer->SetInputData(unstructuredGrid);
+            writer->Write();
+            return true;
+        }
 
-	public:
+        bool write_vtu(const std::string &path, const DM &dm, const ViewVectorType<Real> &data) {
+            vtkSmartPointer<vtkXMLUnstructuredGridWriter> writer = vtkSmartPointer<vtkXMLUnstructuredGridWriter>::New();
 
-		bool write_vtu(const std::string &path, const DM &dm) {
-			vtkSmartPointer<vtkXMLUnstructuredGridWriter> writer =
-			vtkSmartPointer<vtkXMLUnstructuredGridWriter>::New();
+            vtkSmartPointer<vtkUnstructuredGrid> unstructuredGrid = vtkSmartPointer<vtkUnstructuredGrid>::New();
 
-			vtkSmartPointer<vtkUnstructuredGrid> unstructuredGrid = vtkSmartPointer<vtkUnstructuredGrid>::New();
+            convert_points(dm, *unstructuredGrid);
+            convert_cells(dm, *unstructuredGrid);
 
-			convert_points(dm, *unstructuredGrid);
-			convert_cells(dm, *unstructuredGrid);
+            auto fun = vtkSmartPointer<vtkDoubleArray>::New();
 
-			writer->SetFileName(path.c_str());
-			writer->SetInputData(unstructuredGrid);
-			writer->Write();
-			return true;
-		}
+            // SFC<Type> dof = dm.get_local_dof_enum();
 
-		void convert_points(const DM &dm, vtkUnstructuredGrid &unstructuredGrid)
-		{
-			vtkSmartPointer<vtkPoints> points = vtkSmartPointer<vtkPoints>::New();
+            Integer n = data.extent(0);
+            fun->SetNumberOfValues(n);
 
-			SFC<Type> dof = dm.get_local_dof_enum();
+            Kokkos::parallel_for("write_vtu", n, [&](const int i) { fun->SetValue(i, data(i)); });
 
-			Kokkos::parallel_for(
-				"for", dof.get_elem_size(), [&](const int i) {
-					const Integer sfc_elem = dm.local_to_sfc(i);
-					const Integer global_dof = dm.local_to_global(i);
+            // Kokkos::parallel_for("for", dof.get_elem_size(), [&](const int i) {
+            //     const Integer sfc_elem = dm.local_to_sfc(i);
+            //     const Integer global_dof = dm.local_to_global(i);
 
-					double point[3];
-					get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, dof.get_XDim(),
-						dof.get_YDim(), dof.get_ZDim());
+            //     double point[3];
+            //     get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, dof.get_XDim(), dof.get_YDim(),
+            //     dof.get_ZDim());
 
-					points->InsertNextPoint(point[0] , point[1] , point[2]);
-				});
+            //     fun->SetValue(global_dof, point[0] * point[1]);
+            // });
 
-			unstructuredGrid.SetPoints(points);
-		}
+            unstructuredGrid->GetPointData()->SetScalars(fun);
+            // unstructuredGrid->GetPointData()->SetFi
 
-		void convert_cells(const DM &dm, vtkUnstructuredGrid &unstructuredGrid) {
+            writer->SetFileName(path.c_str());
+            writer->SetInputData(unstructuredGrid);
+            writer->Write();
+            return true;
+        }
 
-			SFC<Type> dof = dm.get_local_dof_enum();
+        void convert_points(const DM &dm, vtkUnstructuredGrid &unstructuredGrid) {
+            vtkSmartPointer<vtkPoints> points = vtkSmartPointer<vtkPoints>::New();
 
-			vtkSmartPointer<vtkCellArray> cell_array = vtkSmartPointer<vtkCellArray>::New();
+            SFC<Type> dof = dm.get_local_dof_enum();
 
-			dm.elem_iterate([&](const Integer elem_index) {
-				vtkSmartPointer<vtkQuad> quad = vtkSmartPointer<vtkQuad>::New();
+            Kokkos::parallel_for("for", dof.get_elem_size(), [&](const int i) {
+                const Integer sfc_elem = dm.local_to_sfc(i);
+                const Integer global_dof = dm.local_to_global(i);
 
-				for (int i = 0; i < DM::elem_nodes; i++) {
-					const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
-					Dof d = dm.local_to_global_dof(local_dof);
+                double point[3];
+                get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, dof.get_XDim(), dof.get_YDim(), dof.get_ZDim());
 
-					const Integer g_id = d.get_gid();
-					quad->GetPointIds()->SetId(i, g_id);
-				}
+                points->InsertNextPoint(point[0], point[1], point[2]);
+            });
 
-				cell_array->InsertNextCell(quad);
-			});
+            unstructuredGrid.SetPoints(points);
+        }
 
-			unstructuredGrid.SetCells(VTK_QUAD, cell_array);
-		}
-	};
-}
+        void convert_cells(const DM &dm, vtkUnstructuredGrid &unstructuredGrid) {
+            SFC<Type> dof = dm.get_local_dof_enum();
 
+            vtkSmartPointer<vtkCellArray> cell_array = vtkSmartPointer<vtkCellArray>::New();
+
+            dm.elem_iterate([&](const Integer elem_index) {
+                vtkSmartPointer<vtkQuad> quad = vtkSmartPointer<vtkQuad>::New();
+
+                for (int i = 0; i < DM::elem_nodes; i++) {
+                    const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+                    Dof d = dm.local_to_global_dof(local_dof);
+
+                    const Integer g_id = d.get_gid();
+                    quad->GetPointIds()->SetId(i, g_id);
+                }
+
+                cell_array->InsertNextCell(quad);
+            });
+
+            unstructuredGrid.SetCells(VTK_QUAD, cell_array);
+        }
+    };
+}  // namespace mars
 
 #endif MARS_PVTU_WRITER
-
