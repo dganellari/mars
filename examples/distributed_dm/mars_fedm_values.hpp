@@ -184,7 +184,7 @@ namespace mars {
 
                 for (int k = 0; k < n_qp; ++k) {
                     for (int d = 0; d < dim; ++d) {
-                        pk[k] = q_points(k, d);
+                        pk[d] = q_points(k, d);
                     }
 
                     ////////////////////////
