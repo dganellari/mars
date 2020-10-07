@@ -30,6 +30,8 @@
 #include "mars_utils.hpp"
 #include "mars_vtk_writer.hpp"
 
+#include "mars_env.hpp"
+
 #ifdef WITH_KOKKOS
 #include "mars_lepp_benchmark_kokkos.hpp"
 #include "mars_test_kokkos.hpp"
@@ -2274,7 +2276,9 @@ int main(int argc, char *argv[]) {
   using namespace mars;
   using namespace cxxopts;
 
-  MARS::init(argc, argv);
+  /* MARS::init(argc, argv); */
+
+  Env env(argc, argv);
 
   Options options("./mars_exec", "Run M.A.R.S. based applications.");
 
@@ -2368,6 +2372,12 @@ int main(int argc, char *argv[]) {
     apps["mars_mesh_generation_kokkos_1D"] = [=]() {
       test_mars_mesh_generation_kokkos_1D(level);
     };
+
+#ifdef WITH_MPI
+    apps["matrix_free_poisson2D"] = [=]() {
+        poisson_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(level);
+    };
+#endif
 #endif  // WITH_KOKKOS
 
     if (!app.empty()) {
@@ -2390,5 +2400,5 @@ int main(int argc, char *argv[]) {
     std::cout << options.help() << std::endl;
   }
 
-  return MARS::finalize();
+  return env.exit_code();
 }

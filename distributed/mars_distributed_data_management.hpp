@@ -73,6 +73,13 @@ public:
     } */
 
     template <typename H>
+    MARS_INLINE_FUNCTION void owned_dof_iterate(H f)
+    {
+        const Integer size = global_dof_enum.get_elem_size();
+        Kokkos::parallel_for("init_initial_cond", size, f);
+    }
+
+    template <typename H>
     MARS_INLINE_FUNCTION void dof_iterate(H f)
     {
         const Integer size = local_dof_enum.get_elem_size();

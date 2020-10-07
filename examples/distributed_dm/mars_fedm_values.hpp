@@ -221,16 +221,14 @@ class FEDMValues {
   // form the matrix free operator
   template <Integer INPUT, Integer OUTPUT>
   void form_operator() {
-    using Elem = typename DMQ2::simplex_type;
+      ViewMatrixType<double> res("res", dm_.get_elem_size(), DMQ2::elem_nodes);
 
-    ViewMatrixType<double> res("res", dm_.get_elem_size(), DMQ2::elem_nodes);
-    integrate<INPUT>(dm_, quad, det_J_, inv_J_, res);
-
-    add_dof_contributions<OUTPUT>(res);
+      integrate<INPUT>(dm_, quad, det_J_, inv_J_, res);
+      add_dof_contributions<OUTPUT>(res);
   }
 
   template <class F, typename T>
-  void assemble_rhs(ViewVectorType<T> &rhs, F f) {
+  void integrate_rhs(F f, ViewMatrixType<T> &res) {
       auto det_J = det_J_;
       auto dm = dm_;
 
@@ -247,10 +245,20 @@ class FEDMValues {
 
               const T val = f(p);
               const T scaled_val = val * detj / DMQ2::elem_nodes;
-              const Integer owned_index = dm.local_to_owned(local_dof);
-              Kokkos::atomic_add(&rhs(owned_index), scaled_val);
+              res(elem_index, i) += scaled_val;
+              /* const Integer owned_index = dm.local_to_owned(local_dof);
+              Kokkos::atomic_add(&rhs(owned_index), scaled_val); */
           }
       });
+  }
+
+  template <class F, Integer RHS>
+  void assemble_local_rhs(F f) {
+      ViewMatrixType<DMDataType<RHS>> res("res", dm_.get_elem_size(),
+              DMQ2::elem_nodes);
+
+      integrate_rhs(f, res);
+      add_dof_contributions<RHS>(res);
   }
 
   void init() {

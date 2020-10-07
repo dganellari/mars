@@ -5,7 +5,7 @@
 
 namespace mars {
 
-    template<class DM, Integer INPUT, Integer OUTPUT>
+    template<class DM, Integer INPUT, Integer OUTPUT, Integer RHS>
     class PoissonOperator final : public Operator<DM> {
     public:
 
@@ -18,7 +18,11 @@ namespace mars {
             this->values().init();
         }
 
-        void apply(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) override {
+        using InputVector = ViewVectorType<DMDataType<INPUT>>;
+        using OutputVector = ViewVectorType<DMDataType<OUTPUT>>;
+        using RhsVector = ViewVectorType<DMDataType<RHS>>;
+
+        void apply(const InputVector &x, OutputVector &op_x) override {
 
             /* auto context = this->ctx(); */
             auto fe_values = this->values();
@@ -26,28 +30,11 @@ namespace mars {
 
             dm.template set_locally_owned_data<INPUT>(x);
 
-            /* Kokkos::parallel_for(
-                "printglobaldatavalues", locall_owned_dof_size,
-                MARS_LAMBDA(const Integer i) {
-                  printf("i: %li, gdata: %lf - rank: %i\n", i, x(i), proc_num);
-                }); */
-
             // specify the tuple indices of the tuplelements that are needed to gather.
             // if no index specified it gathers all views of the tuple. All data.
             dm.template gather_ghost_data<INPUT>(this->ctx());
 
             fe_values.template form_operator<INPUT, OUTPUT>();
-
-            // iterate through the local dofs and print the local number and the data
-            /* dm.dof_iterate(
-                MARS_LAMBDA(const Integer i) {
-                    printf("lid: %li, u: %lf, v: %lf, rank: %i\n", i,
-                           dm.get_dof_data<u>(i), dm.get_dof_data<v>(i), proc_num);
-                }); */
-            /* using dm_tuple = typename DM::user_tuple;
-            dm_tuple boundary_data = dm.template scatter_ghost_data<OUTPUT>(this->ctx());
-
-            dm.template scatter_add<OUTPUT>(boundary_data); */
 
             scatter_add_ghost_data<DM, OUTPUT>(dm, this->ctx());
 
@@ -62,10 +49,16 @@ namespace mars {
         }
 
 
-        template <class F, typename T>
-        void assemble_rhs(ViewVectorType<T> &rhs, F f) {
+        template <class F>
+        void assemble_rhs(F f, RhsVector &rhs) {
             auto fe_values = this->values();
-            fe_values.template assemble_rhs<F>(rhs, f);
+            auto dm = fe_values.dm();
+
+            fe_values.template assemble_local_rhs<F, RHS>(f);
+
+            scatter_add_ghost_data<DM, RHS>(dm, this->ctx());
+
+            dm.template get_locally_owned_data<RHS>(rhs);
         }
 
     };
