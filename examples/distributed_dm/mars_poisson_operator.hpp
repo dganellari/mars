@@ -1,29 +1,26 @@
 #ifndef MARS_POISSON_OPERATOR_HPP
 #define MARS_POISSON_OPERATOR_HPP
 
+#include "mars_copy_operator.hpp"
 #include "mars_matrix_free_operator.hpp"
 
 namespace mars {
 
-    template<class DM, Integer INPUT, Integer OUTPUT, Integer RHS>
+    template <class DM, Integer INPUT, Integer OUTPUT, Integer RHS>
     class PoissonOperator final : public Operator<DM> {
     public:
-
         template <Integer idx>
         using DMDataType = typename DM::template UserDataType<idx>;
 
         PoissonOperator(const context &c, DM &dm) : Operator<DM>(c, dm) {}
 
-        void init() override {
-            this->values().init();
-        }
+        void init() override { this->values().init(); }
 
         using InputVector = ViewVectorType<DMDataType<INPUT>>;
         using OutputVector = ViewVectorType<DMDataType<OUTPUT>>;
         using RhsVector = ViewVectorType<DMDataType<RHS>>;
 
         void apply(const InputVector &x, OutputVector &op_x) override {
-
             /* auto context = this->ctx(); */
             auto fe_values = this->values();
             auto dm = fe_values.dm();
@@ -40,14 +37,12 @@ namespace mars {
 
             // cleanup
             /* dm.boundary_dof_iterate<INPUT>(MARS_LAMBDA(const Integer local_dof, INPUTDT &value) { */
-            dm.template boundary_dof_iterate<INPUT>(
-                    MARS_LAMBDA(const Integer local_dof, DMDataType<INPUT> &value) {
+            dm.template boundary_dof_iterate<INPUT>(MARS_LAMBDA(const Integer local_dof, DMDataType<INPUT> &value) {
                 dm.template get_dof_data<OUTPUT>(local_dof) = value;
             });
 
             dm.template get_locally_owned_data<OUTPUT>(op_x);
         }
-
 
         template <class F>
         void assemble_rhs(F f, RhsVector &rhs) {
@@ -60,12 +55,6 @@ namespace mars {
 
             dm.template get_locally_owned_data<RHS>(rhs);
         }
-
-    };
-
-    class CopyOperator final {
-    public:
-        static void apply(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) { Kokkos::deep_copy(op_x, x); }
     };
 
 }  // namespace mars

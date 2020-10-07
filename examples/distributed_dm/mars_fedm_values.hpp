@@ -174,43 +174,35 @@ namespace mars {
                 Real gi[dim], g[dim];
                 Real J_inv_e[dim * dim];
                 Real pk[dim];
+                Real sol[DMQ2::elem_nodes];
 
                 for (int k = 0; k < dim * dim; ++k) {
                     J_inv_e[k] = J_inv(elem_index, k);
                 }
 
-                Real sol[DMQ2::elem_nodes];
                 gather_elem_data<INPUT>(dm, elem_index, sol);
 
-                // for (int i = 0; i < DMQ2::elem_nodes; ++i) {
-                //     assert(res(elem_index, i) == 0.0);
-                // }
-
                 for (int k = 0; k < n_qp; ++k) {
-                    // we need 2nd order quadrature rule for quads!
-                    /* Real q[2] = {q_points[k][0], q_points[k][1]}; */
-                    /* Real w = q_weights[k]; */
-
                     for (int d = 0; d < dim; ++d) {
                         pk[k] = q_points(k, d);
                     }
 
-                    FEQuad4<Real>::Grad::ref(pk, sol,
-                                             gi);  // compute it once
-
+                    ////////////////////////
+                    // Compute physical gradient of solution once per quadrature point
+                    FEQuad4<Real>::Grad::ref(pk, sol, gi);
                     Algebra<dim>::m_t_v_mult(J_inv_e, gi, g);
+                    ////////////////////////
 
-                    const Real detj = det_J(elem_index);
-                    assert(detj > 0.0);
+                    assert(det_J(elem_index) > 0.0);
+                    const Real dx = det_J(elem_index) * q_weights(k);
 
                     for (int i = 0; i < DMQ2::elem_nodes; i++) {
-                        // forach dof get the local number
+                        // for each dof get the local number
                         const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
                         FEQuad4<Real>::Grad::affine_f(i, J_inv_e, pk, gi);
 
-                        const Real integr = q_weights(k) * detj * Algebra<dim>::dot(g, gi);
+                        res(elem_index, i) += Algebra<dim>::dot(g, gi) * dx;
 
-                        res(elem_index, i) += integr;
                         assert(res(elem_index, i) == res(elem_index, i));
                     }
                 }

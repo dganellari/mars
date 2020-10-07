@@ -18,6 +18,7 @@
 
 #include "mars_base.hpp"
 #include "mars_boundary_conditions.hpp"
+#include "mars_copy_operator.hpp"
 #include "mars_fe_values.hpp"
 #include "mars_globals.hpp"
 #include "mars_gradient_recovery.hpp"
@@ -54,7 +55,8 @@ namespace mars {
                 x = VectorReal("x", mesh.n_nodes());
                 bc.apply(x, bc_fun);
 
-                auto prec_ptr = op.preconditioner();
+                // auto prec_ptr = op.preconditioner();
+                auto prec_ptr = std::make_shared<CopyOperator>();
 
                 Integer num_iter = 0;
 
@@ -361,7 +363,7 @@ namespace mars {
                     return false;
                 }
 
-                if (max_refinements == 0) return true;
+                if (max_refinements == 0 || !use_adaptive_refinement) return true;
 
                 if (use_adaptive_refinement) {
                     refined = refine(mesh, problem.op.values(), tol, x, write_output);
