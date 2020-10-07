@@ -143,6 +143,9 @@ namespace mars {
                 invert2(J, &invJ(elem_index, 0), det_J);
                 detJ(elem_index) = det_J;
             });
+
+            Real measure = KokkosBlas::nrm1(det_J_);
+            std::cout << "measure: " << measure << std::endl;
         }
 
         template <Integer INPUT>
