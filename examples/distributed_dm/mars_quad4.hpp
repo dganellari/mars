@@ -1,6 +1,7 @@
 #ifndef MARS_QUAD4_HPP
 #define MARS_QUAD4_HPP
 
+#include "mars_fe_simplex.hpp"
 #include "mars_globals.hpp"
 
 namespace mars {
@@ -80,8 +81,7 @@ namespace mars {
                     }
                 }
 
-                g[0] = J_inv[0] * gi[0] + J_inv[2] * gi[1];
-                g[1] = J_inv[1] * gi[0] + J_inv[3] * gi[1];
+                Algebra<2>::m_t_v_mult(J_inv, gi, g);
             }
 
             MARS_INLINE_FUNCTION static void ref(const T *q, const T *u, Vector &g) {
