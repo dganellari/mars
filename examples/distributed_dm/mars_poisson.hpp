@@ -570,9 +570,9 @@ namespace mars {
         DMInterpolate<DMQ2> ip(dm);
         ip.apply(an_fun, x_exact);
 
-        // PVTUMeshWriter<DMQ2, Type> w;            // VTK
-        // std::string path = "poisson_exact.vtu";  // VTK
-        // w.write_vtu(path, dm, x_exact);          // VTK
+        // PVTUMeshWriter<DMQ2, Type> w;                   // VTK
+        // w.write_vtu("poisson_exact.vtu", dm, x_exact);  // VTK
+        // w.write_vtu("poisson_rhs.vtu", dm, rhs);        // VTK
 
         VectorReal diff("diff", locally_owned_dof_size);
         pop.apply(x_exact, diff);
