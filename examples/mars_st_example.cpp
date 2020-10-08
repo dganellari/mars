@@ -50,7 +50,7 @@
 
 namespace mars {
 
-    using MeshQuad4 = mars::ParallelQuad4Mesh;
+    // using MeshQuad4 = mars::ParallelQuad4Mesh;
     // using DMQuad4 = mars::DM<MeshQuad4, 1, Real, Real, Real>;
 
     // template <>
@@ -348,7 +348,12 @@ int main(int argc, char *argv[]) {
         // Example2Analitcal>().run(
         //     args);
 
-        ModelTest<MeshQuad4, UMeshLaplace<MeshQuad4>, Example2Dirichlet, Example2RHS, Example2Analitcal>().run(args);
+        ModelTest<ParallelQuad4Mesh,
+                  UMeshLaplace<ParallelQuad4Mesh>,
+                  Example2Dirichlet,
+                  Example2RHS,
+                  Example2Analitcal>()
+            .run(args);
 
         // ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example3Dirichlet, Example3RHS,
         // Example3Analitcal>().run(
