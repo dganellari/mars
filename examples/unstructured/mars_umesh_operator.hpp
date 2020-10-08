@@ -28,6 +28,8 @@ namespace mars {
 
         virtual ~UMeshPreconditioner() {}
         virtual void apply(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) = 0;
+        virtual void precondition_left(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) = 0;
+        virtual void precondition_right(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) = 0;
         virtual void init(FEValues<Mesh> &values) = 0;
 
         void set_identity(std::shared_ptr<IdentityOperator> id) { id_ = id; }
@@ -51,6 +53,22 @@ namespace mars {
             //     "UMeshJacobiPreconditioner::copy", n, MARS_LAMBDA(const Integer i) { op_x(i) = x(i); });
 
             this->identity()->apply(x, op_x);
+        }
+
+        void precondition_left(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) override {
+            auto n = inv_diag_.extent(0);
+            auto inv_diag = inv_diag_;
+
+            Kokkos::parallel_for(
+                "UMeshJacobiPreconditioner::precondition_left", n, MARS_LAMBDA(const Integer i) {
+                    op_x(i) = Kokkos::ArithTraits<Real>::sqrt(inv_diag(i)) * x(i);
+                });
+
+            this->identity()->apply(x, op_x);
+        }
+
+        void precondition_right(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) override {
+            precondition_left(x, op_x);
         }
 
     protected:
