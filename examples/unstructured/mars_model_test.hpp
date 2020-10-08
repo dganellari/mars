@@ -77,25 +77,28 @@ namespace mars {
                 x = VectorReal("x", mesh.n_nodes());
                 bc.apply(x, bc_fun);
 
-                // auto prec_ptr = op.preconditioner();
-                auto prec_ptr = std::make_shared<CopyOperator>();
+                auto prec_ptr = op.preconditioner();
+                // auto prec_ptr = std::make_shared<CopyOperator>();
 
                 Integer num_iter = 0;
 
                 auto start = steady_clock::now();
 
-                if (bcg_stab(op, *prec_ptr, rhs, rhs.extent(0), x, num_iter)) {
+                bool ok = bcg_stab(op, *prec_ptr, rhs, rhs.extent(0), x, num_iter);
+
+                auto end = steady_clock::now();
+                auto diff = end - start;
+
+                std::cout << "bcg_stab/time: " << std::chrono::duration<double>(diff).count() << " s" << std::endl;
+
+                // FILE *file_time = fopen("timing.csv", "a");
+                // fprintf(file_time, "%ld, %.4fs\n", mesh.n_nodes(), std::chrono::duration<double>(diff).count());
+                // fclose(file_time);
+
+                if (ok) {
                     if (write_output) {
                         return write(x);
                     } else {
-                        auto end = steady_clock::now();
-                        auto diff = end - start;
-
-                        std::cout << "DURATION: " << std::chrono::duration<double>(diff).count() << " s" << std::endl;
-
-                        FILE *file_time = fopen("timing.csv", "a");
-                        fprintf(file_time, "%ld, %.4fs\n", mesh.n_nodes(), std::chrono::duration<double>(diff).count());
-                        fclose(file_time);
                         return true;
                     }
 

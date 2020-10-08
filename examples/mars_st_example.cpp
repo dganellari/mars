@@ -344,16 +344,15 @@ int main(int argc, char *argv[]) {
         // ST1Analitcal>().run(
         //     args);
 
-        // ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example2Dirichlet, Example2RHS,
-        // Example2Analitcal>().run(
-        //     args);
+        ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example2Dirichlet, Example2RHS, Example2Analitcal>().run(
+            args);
 
-        ModelTest<ParallelQuad4Mesh,
-                  UMeshLaplace<ParallelQuad4Mesh>,
-                  Example2Dirichlet,
-                  Example2RHS,
-                  Example2Analitcal>()
-            .run(args);
+        // ModelTest<ParallelQuad4Mesh,
+        //           UMeshLaplace<ParallelQuad4Mesh>,
+        //           Example2Dirichlet,
+        //           Example2RHS,
+        //           Example2Analitcal>()
+        //     .run(args);
 
         // ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example3Dirichlet, Example3RHS,
         // Example3Analitcal>().run(
