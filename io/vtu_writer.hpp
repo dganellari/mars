@@ -18,6 +18,7 @@ namespace mars {
         // typedef typename Mesh::Matrix Matrix;
         static const Integer Dim = Mesh::Dim;
         static const Integer ManifoldDim = Mesh::ManifoldDim;
+        static const Integer NNodes = Mesh::Elem::NNodes;
 
         static const int VTU_TETRA = 10;
         static const int VTU_TRIANGLE = 5;
@@ -233,10 +234,10 @@ namespace mars {
             for (Integer k = 0; k < mesh.n_elements(); ++k) {
                 if (!mesh.is_active(k)) continue;
 
-                for (Integer i = 0; i < ManifoldDim + 1; ++i) {
+                for (Integer i = 0; i < NNodes; ++i) {
                     const Integer v = mesh.elem(k).nodes[i];
                     os << v;
-                    if (i < ManifoldDim) {
+                    if (i < NNodes - 1) {
                         os << " ";
                     }
                 }
@@ -247,35 +248,35 @@ namespace mars {
             /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
             int minTag, maxTag;
             if (ManifoldDim == 1) {
-                minTag = VTKTag(ManifoldDim + 1);
-                maxTag = VTKTag(ManifoldDim + 1);
+                minTag = VTKTag(NNodes);
+                maxTag = VTKTag(NNodes);
             } else if (ManifoldDim == 2) {
-                minTag = VTKTagPlanar(ManifoldDim + 1);
-                maxTag = VTKTagPlanar(ManifoldDim + 1);
+                minTag = VTKTagPlanar(NNodes);
+                maxTag = VTKTagPlanar(NNodes);
             } else {
-                minTag = VTKTagVolume(ManifoldDim + 1);
-                maxTag = VTKTagVolume(ManifoldDim + 1);
+                minTag = VTKTagVolume(NNodes);
+                maxTag = VTKTagVolume(NNodes);
             }
 
             os << "<DataArray type=\"Int32\" Name=\"types\" format=\"ascii\" RangeMin=\"" << minTag << "\" RangeMax=\""
                << maxTag << "\">\n";
             for (Integer i = 0; i < n_active_elements; ++i) {
                 if (ManifoldDim == 3) {
-                    os << VTKTagVolume(ManifoldDim + 1) << "\n";
+                    os << VTKTagVolume(NNodes) << "\n";
                 } else if (ManifoldDim == 2) {
-                    os << VTKTagPlanar(ManifoldDim + 1) << "\n";
+                    os << VTKTagPlanar(NNodes) << "\n";
                 } else
-                    os << VTKTag(ManifoldDim + 1) << "\n";
+                    os << VTKTag(NNodes) << "\n";
             }
 
             os << "</DataArray>\n";
 
             ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-            os << "<DataArray type=\"UInt64\" Name=\"offsets\" format=\"ascii\" RangeMin=\"" << (ManifoldDim + 1)
-               << "\" RangeMax=\"" << (n_active_elements * (ManifoldDim + 1)) << "\">\n";
+            os << "<DataArray type=\"UInt64\" Name=\"offsets\" format=\"ascii\" RangeMin=\"" << (NNodes)
+               << "\" RangeMax=\"" << (n_active_elements * (NNodes)) << "\">\n";
 
-            for (Integer i = 0, offset = (ManifoldDim + 1); i < n_active_elements; ++i, offset += (ManifoldDim + 1)) {
+            for (Integer i = 0, offset = (NNodes); i < n_active_elements; ++i, offset += (NNodes)) {
                 os << offset << "\n";
             }
 
