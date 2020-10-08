@@ -362,7 +362,7 @@ namespace mars {
                 } else {
                     return false;
                 }
-
+/*
                 if (max_refinements == 0 || !use_adaptive_refinement) return true;
 
                 if (use_adaptive_refinement) {
@@ -384,7 +384,7 @@ namespace mars {
                 if (!refined) {
                     std::cout << "Did not refine" << std::endl;
                     break;
-                }
+                } */
 
             } while (++refs <= max_refinements);
             return true;
@@ -411,8 +411,8 @@ namespace mars {
                 convert_serial_mesh_to_parallel(mesh, smesh);
 
                 // ParallelBisection<PMesh>(&mesh).uniform_refine(3);
-                ParallelBisection<PMesh>(&mesh).uniform_refine(4);
-                write_output = false;
+                /* ParallelBisection<PMesh>(&mesh).uniform_refine(4); */
+                /* write_output = false; */
             }
 
             // ParallelBisection<PMesh> bisection(&mesh);
