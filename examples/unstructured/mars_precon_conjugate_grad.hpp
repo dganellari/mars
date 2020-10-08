@@ -173,7 +173,7 @@ namespace mars {
         num_iter = count;
         A.apply(x_0, r_0);               // r_0 =  A*x_0
         KokkosBlas::axpy(-1.0, b, r_0);  // r_0 = b - A*x_0
-        std::cout << "RESIDUE: " << std::sqrt(comm.sum(KokkosBlas::nrm2_squared(r_0))) << std::endl;
+        std::cout << "norm(Residual): " << std::sqrt(comm.sum(KokkosBlas::nrm2_squared(r_0))) << std::endl;
         std::cout << "Iter: " << count << std::endl;
 
         return num_iter < max_iter;

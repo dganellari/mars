@@ -84,7 +84,7 @@ namespace mars {
 
                 auto start = steady_clock::now();
 
-                if (bcg_stab(op, *prec_ptr, rhs, 10 * rhs.extent(0), x, num_iter)) {
+                if (bcg_stab(op, *prec_ptr, rhs, rhs.extent(0), x, num_iter)) {
                     if (write_output) {
                         return write(x);
                     } else {
