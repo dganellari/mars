@@ -77,8 +77,8 @@ namespace mars {
                 x = VectorReal("x", mesh.n_nodes());
                 bc.apply(x, bc_fun);
 
-                auto prec_ptr = op.preconditioner();
-                // auto prec_ptr = std::make_shared<CopyOperator>();
+                // auto prec_ptr = op.preconditioner();
+                auto prec_ptr = std::make_shared<CopyOperator>();
 
                 Integer num_iter = 0;
 
@@ -377,43 +377,43 @@ namespace mars {
 
             Integer refs{0};
 
-            do {
-                Problem problem(mesh);
-                problem.write_output = write_output;
-                problem.init();
+            // do {
+            Problem problem(mesh);
+            problem.write_output = write_output;
+            problem.init();
 
-                if (problem.solve(x)) {
-                    problem.measure_actual_error(x);
-                } else {
-                    return false;
-                }
+            if (problem.solve(x)) {
+                problem.measure_actual_error(x);
+            } else {
+                return false;
+            }
 
-                if (max_refinements == 0 || !use_adaptive_refinement) return true;
-                /*
+            // if (max_refinements == 0 || !use_adaptive_refinement) return true;
+            /*
 
 
-                                if (use_adaptive_refinement) {
-                                    refined = refine(mesh, problem.op.values(), tol, x, write_output);
-                                    mesh.clean_up();
-                                } else {
-                                    Integer elem_offset = mesh.n_elements();
-                                    ParallelBisection<PMesh>(&mesh).uniform_refine(1);
-                                    interpolate(mesh, problem.op.values(), elem_offset, x);
-                                    refined = true;
-                                }
+                            if (use_adaptive_refinement) {
+                                refined = refine(mesh, problem.op.values(), tol, x, write_output);
+                                mesh.clean_up();
+                            } else {
+                                Integer elem_offset = mesh.n_elements();
+                                ParallelBisection<PMesh>(&mesh).uniform_refine(1);
+                                interpolate(mesh, problem.op.values(), elem_offset, x);
+                                refined = true;
+                            }
 
-                                if (reset_x_to_zero) {
-                                    // reset x to 0
-                                    Kokkos::parallel_for(
-                                        x.extent(0), MARS_LAMBDA(const Integer &i) { x(i) = 0.0; });
-                                }
+                            if (reset_x_to_zero) {
+                                // reset x to 0
+                                Kokkos::parallel_for(
+                                    x.extent(0), MARS_LAMBDA(const Integer &i) { x(i) = 0.0; });
+                            }
 
-                                if (!refined) {
-                                    std::cout << "Did not refine" << std::endl;
-                                    break;
-                                } */
+                            if (!refined) {
+                                std::cout << "Did not refine" << std::endl;
+                                break;
+                            } */
 
-            } while (++refs <= max_refinements);
+            // } while (++refs <= max_refinements);
             return true;
         }
 
