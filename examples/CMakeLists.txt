@@ -12,6 +12,10 @@ target_link_libraries(mars_examples mars_io)
 target_include_directories(mars_examples PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(mars_examples PUBLIC ${CMAKE_BINARY_DIR})
 target_include_directories(mars_examples PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_include_directories(mars_examples
+                           PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/unstructured)
+target_include_directories(mars_examples
+                           PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/distributed_dm)
 
 foreach(MODULE ${MARS_EXAMPLES})
     target_include_directories(mars_examples BEFORE PUBLIC ${MODULE})
