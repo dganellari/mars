@@ -11,7 +11,7 @@
 namespace mars {
 
     template <Integer Type, class Implementation>
-    class Laplacian<NonSimplex<Type, Implementation> > {
+    class Laplacian<NonSimplex<Type, Implementation>> {
     public:
         using Elem = mars::NonSimplex<Type, Implementation>;
         static constexpr int NFuns = Elem::NNodes;
@@ -67,7 +67,7 @@ namespace mars {
     };
 
     template <Integer Type, class Implementation>
-    class Jacobian<NonSimplex<Type, Implementation> > {
+    class Jacobian<NonSimplex<Type, Implementation>> {
     public:
         using Elem = mars::NonSimplex<Type, Implementation>;
         static const int Dim = Elem::Dim;
@@ -105,6 +105,9 @@ namespace mars {
             assert(has_non_zero<Dim>(J_inv));
         }
     };
+
+    using LaplacianQuad4 = Laplacian<NonSimplex<4, KokkosImplementation>>;
+    using JacobianQuad4 = Jacobian<NonSimplex<4, KokkosImplementation>>;
 
 }  // namespace mars
 
