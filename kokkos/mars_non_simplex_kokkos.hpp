@@ -61,11 +61,8 @@ namespace mars {
         return Type;
     }
 
-    // using Quad4PElem = NonSimplex<ElementType::Quad4, KokkosImplementation>;
-    // using Hex8PElem = NonSimplex<ElementType::Hex8, KokkosImplementation>;
-
-    using Quad4PElem = mars::NonSimplex<4, KokkosImplementation>;
-    using Hex8PElem = mars::NonSimplex<8, KokkosImplementation>;
+    using Quad4PElem = mars::NonSimplex<ElementType::Quad4, KokkosImplementation>;
+    using Hex8PElem = mars::NonSimplex<ElementType::Hex8, KokkosImplementation>;
 }  // namespace mars
 
 #endif  // MARS_NONSIMPLEX_HPP
