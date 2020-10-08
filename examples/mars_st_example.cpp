@@ -45,7 +45,23 @@
 #include "mars_umesh_laplace.hpp"
 #include "mars_umesh_st_heat_equation.hpp"
 
+#include "mars_poisson.hpp"
+#include "mars_poisson_operator.hpp"
+
 namespace mars {
+
+    // template <>
+    // class FEValues<DM<DistributedQuad4Mesh, 1, Real, Real>>
+    //     : public FEDMValues<DM<DistributedQuad4Mesh, 1, Real, Real>> {};
+
+    // template <>
+    // class UMeshLaplace<DM<DistributedQuad4Mesh, 1, Real, Real>>
+    //     : public PoissonOperator<DM<DistributedQuad4Mesh, 1, Real, Real, Real>, INPUT, OUTPUT, RHSD> {};
+
+    // template <>
+    // class Interpolate<DM<DistributedQuad4Mesh, 1, Real, Real, Real>>
+    //     : public DMInterpolate<DM<DistributedQuad4Mesh, 1, Real, Real, Real>> {};
+
     class ST1Analitcal {
     public:
         MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex1_st_exact(p); }
@@ -328,11 +344,15 @@ int main(int argc, char *argv[]) {
         // ST1Analitcal>().run(
         //     args);
 
-        /* ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example2Dirichlet, Example2RHS, Example2Analitcal>().run(
-            args);
+        /* ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example2Dirichlet, Example2RHS,
+           Example2Analitcal>().run( args);
  */
-        ModelTest<ParallelQuad4Mesh, UMeshLaplace<ParallelQuad4Mesh>, Example2Dirichlet, Example2RHS, Example2Analitcal>().run(
-            args);
+        ModelTest<ParallelQuad4Mesh,
+                  UMeshLaplace<ParallelQuad4Mesh>,
+                  Example2Dirichlet,
+                  Example2RHS,
+                  Example2Analitcal>()
+            .run(args);
 
         // ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example3Dirichlet, Example3RHS,
         // Example3Analitcal>().run(

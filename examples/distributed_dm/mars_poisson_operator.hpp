@@ -7,7 +7,7 @@
 namespace mars {
 
     template <class DM, Integer INPUT, Integer OUTPUT, Integer RHS>
-    class PoissonOperator final : public Operator<DM> {
+    class PoissonOperator /*final*/ : public Operator<DM> {
     public:
         template <Integer idx>
         using DMDataType = typename DM::template UserDataType<idx>;

@@ -1,8 +1,10 @@
 #ifndef MARS_QUAD4_HPP
 #define MARS_QUAD4_HPP
 
-#include "mars_fe_simplex.hpp"
 #include "mars_globals.hpp"
+
+#include "mars_distributed_utils.hpp"
+#include "mars_fe_simplex.hpp"
 
 namespace mars {
 
