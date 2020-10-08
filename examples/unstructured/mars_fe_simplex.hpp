@@ -4,7 +4,23 @@
 #include "mars_base.hpp"
 #include "mars_globals.hpp"
 
+#include "mars_invert.hpp"
+#include "mars_jacobian.hpp"
+
 namespace mars {
+
+    template <int Dim>
+    MARS_INLINE_FUNCTION bool has_non_zero(const Real *J_inv) {
+        bool ret = false;
+        for (int k = 0; k < (Dim * Dim); ++k) {
+            if (J_inv[k] * J_inv[k] > 0.0) {
+                ret = true;
+                break;
+            }
+        }
+
+        return ret;
+    }
 
     template <int Dim>
     class Algebra {
@@ -36,6 +52,42 @@ namespace mars {
             }
 
             return ret;
+        }
+    };
+
+    template <Integer Dim, Integer ManifoldDim, class Implementation>
+    class Jacobian<Simplex<Dim, ManifoldDim, Implementation> > {
+    public:
+        using Elem = mars::Simplex<Dim, ManifoldDim, Implementation>;
+        static const int NFuns = Elem::NNodes;
+
+        template <class View>
+        MARS_INLINE_FUNCTION void static compute(const Integer *idx,
+                                                 const View &points,
+                                                 Real *J,
+                                                 Real *J_inv,
+                                                 Real &det_J) {
+            Real p0[Dim], pk[Dim];
+
+            for (int d = 0; d < Dim; ++d) {
+                p0[d] = points(idx[0], d);
+            }
+
+            for (int k = 1; k < NFuns; ++k) {
+                const int km1 = k - 1;
+
+                for (int d = 0; d < Dim; ++d) {
+                    pk[d] = points(idx[k], d);
+                }
+
+                for (int d = 0; d < Dim; ++d) {
+                    J[d * Dim + km1] = pk[d] - p0[d];
+                }
+            }
+
+            Invert<Dim>::apply(J, J_inv, det_J);
+
+            assert(has_non_zero<Dim>(J_inv));
         }
     };
 

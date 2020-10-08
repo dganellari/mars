@@ -8,6 +8,7 @@
 #include "mars_globals.hpp"
 #include "mars_identity_operator.hpp"
 #include "mars_simplex_laplacian.hpp"
+#include "mars_tensor_laplacian.hpp"
 
 namespace mars {
 
@@ -23,7 +24,7 @@ namespace mars {
         using SideElem = typename Mesh::SideElem;
 
         static constexpr int Dim = Mesh::Dim;
-        static constexpr int NFuns = Mesh::Dim + 1;
+        static constexpr int NFuns = Elem::NNodes;
 
         virtual ~UMeshPreconditioner() {}
         virtual void apply(const ViewVectorType<Real> &x, ViewVectorType<Real> &op_x) = 0;
@@ -63,7 +64,7 @@ namespace mars {
         using SideElem = typename Mesh::SideElem;
 
         static constexpr int Dim = Mesh::Dim;
-        static constexpr int NFuns = Mesh::Dim + 1;
+        static constexpr int NFuns = Elem::NNodes;
 
         UMeshOperator(Mesh &mesh) : values_(mesh) {}
         virtual ~UMeshOperator() {}

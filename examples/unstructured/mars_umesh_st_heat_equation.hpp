@@ -10,6 +10,7 @@
 #include "mars_identity_operator.hpp"
 #include "mars_simplex_laplacian.hpp"
 #include "mars_simplex_quadrature.hpp"
+#include "mars_tensor_laplacian.hpp"
 #include "mars_umesh_operator.hpp"
 
 namespace mars {
