@@ -31,6 +31,8 @@
 #include "mars_umesh_laplace.hpp"
 #include "vtu_writer.hpp"
 
+#include "mars_mesh_kokkos.hpp"
+
 using namespace std::chrono;
 
 namespace mars {
@@ -48,6 +50,11 @@ namespace mars {
     struct SerialMeshType<
         mars::Mesh<Dim, ManifoldDim, KokkosImplementation, NonSimplex<ElemType, KokkosImplementation>>> {
         using Type = mars::Mesh<Dim, ManifoldDim, DefaultImplementation, NonSimplex<ElemType>>;
+    };
+
+    template <>
+    struct SerialMeshType<mars::ParallelQuad4Mesh> {
+        using Type = mars::Mesh<2, 2, DefaultImplementation, NonSimplex<4>>;
     };
 
     template <class PMesh, class Op, class BC, class RHS, class AnalyticalFun>
