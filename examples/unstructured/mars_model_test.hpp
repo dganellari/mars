@@ -35,6 +35,21 @@ using namespace std::chrono;
 
 namespace mars {
 
+    template <class Mesh>
+    struct SerialMeshType {};
+
+    template <int Dim, int ManifoldDim>
+    struct SerialMeshType<
+        mars::Mesh<Dim, ManifoldDim, KokkosImplementation, Simplex<Dim, ManifoldDim, KokkosImplementation>>> {
+        using Type = mars::Mesh<Dim, ManifoldDim>;
+    };
+
+    template <int Dim, int ManifoldDim, int ElemType>
+    struct SerialMeshType<
+        mars::Mesh<Dim, ManifoldDim, KokkosImplementation, NonSimplex<ElemType, KokkosImplementation>>> {
+        using Type = mars::Mesh<Dim, ManifoldDim, DefaultImplementation, NonSimplex<ElemType>>;
+    };
+
     template <class PMesh, class Op, class BC, class RHS, class AnalyticalFun>
     class ModelTest {
     public:
@@ -42,7 +57,7 @@ namespace mars {
         static const int ManifoldDim = PMesh::ManifoldDim;
         static const int NFuns = ManifoldDim + 1;
 
-        using SMesh = mars::Mesh<Dim, ManifoldDim>;
+        using SMesh = typename SerialMeshType<PMesh>::Type;
         using VectorReal = mars::ViewVectorType<Real>;
         using VectorInt = mars::ViewVectorType<Integer>;
         using VectorBool = mars::ViewVectorType<bool>;
@@ -409,9 +424,10 @@ namespace mars {
             if (Dim <= 3) {
                 generate_cube(mesh, ns[0], ns[1], ns[2]);
             } else {
-                SMesh smesh;
-                read_mesh("../data/cube4d_24.MFEM", smesh);
-                convert_serial_mesh_to_parallel(mesh, smesh);
+                assert(false);
+                // SMesh smesh;
+                // read_mesh("../data/cube4d_24.MFEM", smesh);
+                // convert_serial_mesh_to_parallel(mesh, smesh);
 
                 // ParallelBisection<PMesh>(&mesh).uniform_refine(3);
                 /* ParallelBisection<PMesh>(&mesh).uniform_refine(4); */
