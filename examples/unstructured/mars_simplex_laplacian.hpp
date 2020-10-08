@@ -5,15 +5,15 @@
 #include "mars_fe_simplex.hpp"
 #include "mars_globals.hpp"
 
+#include "mars_laplacian.hpp"
+
 namespace mars {
 
-    template <class Mesh>
-    class SimplexLaplacian {
+    template <Integer Dim, Integer ManifoldDim, class Implementation>
+    class Laplacian<Simplex<Dim, ManifoldDim, Implementation> > {
     public:
-        using Elem = typename Mesh::Elem;
-        using Point = typename Mesh::Point;
-        static constexpr int Dim = Mesh::Dim;
-        static constexpr int NFuns = Mesh::Dim + 1;
+        using Elem = mars::Simplex<Dim, ManifoldDim, Implementation>;
+        static constexpr int NFuns = Elem::NNodes;
 
         MARS_INLINE_FUNCTION static void one_thread_eval_diag(const Real *J_inv, const Real &det_J, Real *val) {
             Real g_ref[Dim], g[Dim];

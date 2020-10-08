@@ -50,17 +50,17 @@
 
 namespace mars {
 
-    // template <>
-    // class FEValues<DM<DistributedQuad4Mesh, 1, Real, Real>>
-    //     : public FEDMValues<DM<DistributedQuad4Mesh, 1, Real, Real>> {};
+    using MeshQuad4 = mars::ParallelQuad4Mesh;
+    // using DMQuad4 = mars::DM<MeshQuad4, 1, Real, Real, Real>;
 
     // template <>
-    // class UMeshLaplace<DM<DistributedQuad4Mesh, 1, Real, Real>>
-    //     : public PoissonOperator<DM<DistributedQuad4Mesh, 1, Real, Real, Real>, INPUT, OUTPUT, RHSD> {};
+    // class FEValues<MeshQuad4> : public FEDMValues<DMQuad4> {};
 
     // template <>
-    // class Interpolate<DM<DistributedQuad4Mesh, 1, Real, Real, Real>>
-    //     : public DMInterpolate<DM<DistributedQuad4Mesh, 1, Real, Real, Real>> {};
+    // class UMeshLaplace<MeshQuad4> : public PoissonOperator<DMQuad4, INPUT, OUTPUT, RHSD> {};
+
+    // template <>
+    // class Interpolate<MeshQuad4> : public DMInterpolate<DMQuad4> {};
 
     class ST1Analitcal {
     public:
@@ -344,15 +344,11 @@ int main(int argc, char *argv[]) {
         // ST1Analitcal>().run(
         //     args);
 
-        /* ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example2Dirichlet, Example2RHS,
-           Example2Analitcal>().run( args);
- */
-        ModelTest<ParallelQuad4Mesh,
-                  UMeshLaplace<ParallelQuad4Mesh>,
-                  Example2Dirichlet,
-                  Example2RHS,
-                  Example2Analitcal>()
-            .run(args);
+        // ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example2Dirichlet, Example2RHS,
+        // Example2Analitcal>().run(
+        //     args);
+
+        ModelTest<MeshQuad4, UMeshLaplace<MeshQuad4>, Example2Dirichlet, Example2RHS, Example2Analitcal>().run(args);
 
         // ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example3Dirichlet, Example3RHS,
         // Example3Analitcal>().run(

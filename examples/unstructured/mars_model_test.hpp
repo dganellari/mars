@@ -362,38 +362,37 @@ namespace mars {
                 } else {
                     return false;
                 }
-/*
+
                 if (max_refinements == 0 || !use_adaptive_refinement) return true;
+                /*
 
-                if (use_adaptive_refinement) {
-                    refined = refine(mesh, problem.op.values(), tol, x, write_output);
-                    mesh.clean_up();
-                } else {
-                    Integer elem_offset = mesh.n_elements();
-                    ParallelBisection<PMesh>(&mesh).uniform_refine(1);
-                    interpolate(mesh, problem.op.values(), elem_offset, x);
-                    refined = true;
-                }
 
-                if (reset_x_to_zero) {
-                    // reset x to 0
-                    Kokkos::parallel_for(
-                        x.extent(0), MARS_LAMBDA(const Integer &i) { x(i) = 0.0; });
-                }
+                                if (use_adaptive_refinement) {
+                                    refined = refine(mesh, problem.op.values(), tol, x, write_output);
+                                    mesh.clean_up();
+                                } else {
+                                    Integer elem_offset = mesh.n_elements();
+                                    ParallelBisection<PMesh>(&mesh).uniform_refine(1);
+                                    interpolate(mesh, problem.op.values(), elem_offset, x);
+                                    refined = true;
+                                }
 
-                if (!refined) {
-                    std::cout << "Did not refine" << std::endl;
-                    break;
-                } */
+                                if (reset_x_to_zero) {
+                                    // reset x to 0
+                                    Kokkos::parallel_for(
+                                        x.extent(0), MARS_LAMBDA(const Integer &i) { x(i) = 0.0; });
+                                }
+
+                                if (!refined) {
+                                    std::cout << "Did not refine" << std::endl;
+                                    break;
+                                } */
 
             } while (++refs <= max_refinements);
             return true;
         }
 
         void run(cxxopts::ParseResult &args) {
-            using Elem = typename PMesh::Elem;
-            using SideElem = typename PMesh::SideElem;
-
             Integer ns[4] = {
                 args["nx"].as<Integer>(), args["ny"].as<Integer>(), args["nz"].as<Integer>(), args["nt"].as<Integer>()};
 
@@ -402,6 +401,10 @@ namespace mars {
             max_refinements = args["refine_level"].as<Integer>();
 
             PMesh mesh;
+
+            for (int d = Dim; d < 3; ++d) {
+                ns[d] = 0;
+            }
 
             if (Dim <= 3) {
                 generate_cube(mesh, ns[0], ns[1], ns[2]);

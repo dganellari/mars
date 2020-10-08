@@ -7,24 +7,25 @@
 #include <array>
 #include <vector>
 
-#include <cmath>
-#include <cassert>
-#include <initializer_list>
 #include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <initializer_list>
 
 #include "mars_sub_view.hpp"
 #include "mars_utils_kokkos.hpp"
 
 namespace mars {
 
-    template<Integer Type>
+    template <Integer Type>
     class NonSimplex<Type, KokkosImplementation> final : public ParallelIElem {
     public:
-
         static constexpr Integer ElemType = Type;
+        static constexpr Integer NNodes = Type;
+        static constexpr Integer Dim = (Type == 4) ? 2 : 3;
 
-    	SubView<Integer, Type> nodes;
-        //SubView<Integer,2> children; //TODO: templatize for the number of children based onthe select algorithm
+        SubView<Integer, Type> nodes;
+        // SubView<Integer,2> children; //TODO: templatize for the number of children based onthe select algorithm
         SubView<Integer, Type> side_tags;
 
         Integer id = INVALID_INDEX;
@@ -33,49 +34,35 @@ namespace mars {
 
         MARS_INLINE_FUNCTION NonSimplex() {}
 
-        MARS_INLINE_FUNCTION NonSimplex(SubView<Integer, Type> n) :
-        	nodes(n)
-        {
-    	}
+        MARS_INLINE_FUNCTION NonSimplex(SubView<Integer, Type> n) : nodes(n) {}
 
-        MARS_INLINE_FUNCTION Integer get_block() const //override
+        MARS_INLINE_FUNCTION Integer get_block() const  // override
         {
             return block;
         }
 
-        MARS_INLINE_FUNCTION void set_block(const Integer block_id) //override
+        MARS_INLINE_FUNCTION void set_block(const Integer block_id)  // override
         {
             block = block_id;
         }
 
+        MARS_INLINE_FUNCTION Integer n_nodes() const override { return Type; }
 
-        MARS_INLINE_FUNCTION Integer n_nodes() const override 
-        { 
-            return Type; 
+        MARS_INLINE_FUNCTION Integer node(const Integer idx) const override {
+            assert(idx < Type);
+            return nodes[idx];
         }
 
-
-        MARS_INLINE_FUNCTION Integer node(const Integer idx) const override 
-        {
-             assert(idx < Type); 
-             return nodes[idx]; 
-        }
-
-        MARS_INLINE_FUNCTION Integer type() const override {
-            return Type;
-        }
-        
+        MARS_INLINE_FUNCTION Integer type() const override { return Type; }
     };
 
-    
-    template<Integer Type>
-    MARS_INLINE_FUNCTION constexpr static Integer n_nodes(const NonSimplex<Type, KokkosImplementation> &)
-    {
+    template <Integer Type>
+    MARS_INLINE_FUNCTION constexpr static Integer n_nodes(const NonSimplex<Type, KokkosImplementation> &) {
         return Type;
     }
 
-	using Quad4PElem = NonSimplex<ElementType::Quad4, KokkosImplementation>;
-	using Hex8PElem  = NonSimplex<ElementType::Hex8, KokkosImplementation>;
-}
+    using Quad4PElem = NonSimplex<ElementType::Quad4, KokkosImplementation>;
+    using Hex8PElem = NonSimplex<ElementType::Hex8, KokkosImplementation>;
+}  // namespace mars
 
-#endif //MARS_NONSIMPLEX_HPP
+#endif  // MARS_NONSIMPLEX_HPP
