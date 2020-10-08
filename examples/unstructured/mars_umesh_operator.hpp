@@ -61,7 +61,10 @@ namespace mars {
 
             Kokkos::parallel_for(
                 "UMeshJacobiPreconditioner::precondition_left", n, MARS_LAMBDA(const Integer i) {
-                    op_x(i) = Kokkos::ArithTraits<Real>::sqrt(inv_diag(i)) * x(i);
+                    // const Real inv_diag_i = Kokkos::ArithTraits<Real>::abs(inv_diag(i));
+                    const Real inv_diag_i = inv_diag(i);
+                    assert(inv_diag_i > 0.0);
+                    op_x(i) = Kokkos::ArithTraits<Real>::sqrt(inv_diag_i) * x(i);
                 });
 
             this->identity()->apply(x, op_x);
