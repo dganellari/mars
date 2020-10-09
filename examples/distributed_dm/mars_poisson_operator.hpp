@@ -25,6 +25,9 @@ namespace mars {
             auto fe_values = this->values();
             auto dm = fe_values.dm();
 
+            dm.dof_iterate(MARS_LAMBDA(const Integer i) {
+                    dm.template get_dof_data<OUTPUT>(i) = 0.0; });
+
             dm.template set_locally_owned_data<INPUT>(x);
 
             // specify the tuple indices of the tuplelements that are needed to gather.
