@@ -57,6 +57,21 @@ namespace mars {
         using Type = mars::Mesh<2, 2, DefaultImplementation, NonSimplex<4>>;
     };
 
+    template <>
+    struct SerialMeshType<mars::ParallelMesh2> {
+        using Type = mars::Mesh<2, 2>;
+    };
+
+    template <>
+    struct SerialMeshType<mars::ParallelMesh3> {
+        using Type = mars::Mesh<3, 3>;
+    };
+
+    template <>
+    struct SerialMeshType<mars::ParallelMesh4> {
+        using Type = mars::Mesh<4, 4>;
+    };
+
     template <class PMesh, class Op, class BC, class RHS, class AnalyticalFun>
     class ModelTest {
     public:
