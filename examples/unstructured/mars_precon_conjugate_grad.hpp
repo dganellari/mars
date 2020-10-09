@@ -94,7 +94,7 @@ namespace mars {
                 KokkosBlas::axpby(1.0, r_0, beta, p_1);
             }
 
-            P.apply(p_1, y);  // y = P*p_0
+            P.precondition_right(p_1, y);  // y = P*p_0
             A.apply(y, v_1);
 
             Real alpha_1 = 0.0;
@@ -121,10 +121,11 @@ namespace mars {
                 break;
             }
 
-            P.apply(s, z);  // z = P*s;
-            A.apply(z, t);  // t = A*z;
+            // P.apply(s, z);  // z = P*s;
+            P.precondition_left(s, z);  // z = P*s;
+            A.apply(z, t);              // t = A*z;
 
-            P.apply(t, tP);
+            P.precondition_right(t, tP);
 
             // FIXME make one reduce instead of two
             omega_1 = comm.sum(KokkosBlas::dot(tP, s)) / comm.sum(KokkosBlas::dot(tP, t));
