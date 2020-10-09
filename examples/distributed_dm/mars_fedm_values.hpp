@@ -108,10 +108,12 @@ namespace mars {
         // use as more readable tuple index to identify the data
         FEDMValues(DMQ2 &d) : dm_(d) {}
 
+        //OK as long as we are doing affine meshes in 2D
         template <Integer Type>
         void compute_invJ_and_detJ(const DMQ2 &dm, ViewVectorType<Real> detJ, ViewMatrixType<Real> invJ) {
             dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
                 Real J[4];
+                Real J_inv[4];
                 Real point_ref[2];
                 Real next_point[2];
 
@@ -125,8 +127,7 @@ namespace mars {
                 J[0] = next_point[0] - point_ref[0];
                 J[2] = next_point[1] - point_ref[1];
 
-                // we skip p2
-
+                // we skip p2 and get p3
                 local_dof = dm.get_elem_local_dof(elem_index, 3);
                 dm.template get_dof_coordinates_from_local<Type>(local_dof, next_point);
 
@@ -134,14 +135,13 @@ namespace mars {
                 J[1] = next_point[0] - point_ref[0];
                 J[3] = next_point[1] - point_ref[1];
 
-                // determinant
-                const Real det_J = J[0] * J[3] - J[2] * J[1];
-
-                assert(det_J > 0.0);
-
-                // fill out the views
-                invert2(J, &invJ(elem_index, 0), det_J);
-                detJ(elem_index) = det_J;
+                // compute the determinant and the inverse of the Jacobian
+                Real det_J;
+                Invert<2>::apply(J, J_inv, det_J);
+                detJ(elem_index) = Kokkos::ArithTraits<Real>::abs(det_J);
+                for (int i = 0; i < 4; i++) {
+                    invJ(elem_index, i) = J_inv[i];
+                }
             });
 
             Real measure = KokkosBlas::nrm1(det_J_);
