@@ -84,18 +84,21 @@ namespace mars {
 
                 auto start = steady_clock::now();
 
-                if (bcg_stab(op, *prec_ptr, rhs, rhs.extent(0), x, num_iter)) {
+                bool ok = bcg_stab(op, *prec_ptr, rhs, rhs.extent(0), x, num_iter);
+
+                auto end = steady_clock::now();
+                auto diff = end - start;
+
+                std::cout << "bcg_stab/time: " << std::chrono::duration<double>(diff).count() << " s" << std::endl;
+
+                // FILE *file_time = fopen("timing.csv", "a");
+                // fprintf(file_time, "%ld, %.4fs\n", mesh.n_nodes(), std::chrono::duration<double>(diff).count());
+                // fclose(file_time);
+
+                if (ok) {
                     if (write_output) {
                         return write(x);
                     } else {
-                        auto end = steady_clock::now();
-                        auto diff = end - start;
-
-                        std::cout << "DURATION: " << std::chrono::duration<double>(diff).count() << " s" << std::endl;
-
-                        FILE *file_time = fopen("timing.csv", "a");
-                        fprintf(file_time, "%ld, %.4fs\n", mesh.n_nodes(), std::chrono::duration<double>(diff).count());
-                        fclose(file_time);
                         return true;
                     }
 
@@ -374,43 +377,43 @@ namespace mars {
 
             Integer refs{0};
 
-            do {
-                Problem problem(mesh);
-                problem.write_output = write_output;
-                problem.init();
+            // do {
+            Problem problem(mesh);
+            problem.write_output = write_output;
+            problem.init();
 
-                if (problem.solve(x)) {
-                    problem.measure_actual_error(x);
-                } else {
-                    return false;
-                }
+            if (problem.solve(x)) {
+                problem.measure_actual_error(x);
+            } else {
+                return false;
+            }
 
-                if (max_refinements == 0 || !use_adaptive_refinement) return true;
-                /*
+            // if (max_refinements == 0 || !use_adaptive_refinement) return true;
+            /*
 
 
-                                if (use_adaptive_refinement) {
-                                    refined = refine(mesh, problem.op.values(), tol, x, write_output);
-                                    mesh.clean_up();
-                                } else {
-                                    Integer elem_offset = mesh.n_elements();
-                                    ParallelBisection<PMesh>(&mesh).uniform_refine(1);
-                                    interpolate(mesh, problem.op.values(), elem_offset, x);
-                                    refined = true;
-                                }
+                            if (use_adaptive_refinement) {
+                                refined = refine(mesh, problem.op.values(), tol, x, write_output);
+                                mesh.clean_up();
+                            } else {
+                                Integer elem_offset = mesh.n_elements();
+                                ParallelBisection<PMesh>(&mesh).uniform_refine(1);
+                                interpolate(mesh, problem.op.values(), elem_offset, x);
+                                refined = true;
+                            }
 
-                                if (reset_x_to_zero) {
-                                    // reset x to 0
-                                    Kokkos::parallel_for(
-                                        x.extent(0), MARS_LAMBDA(const Integer &i) { x(i) = 0.0; });
-                                }
+                            if (reset_x_to_zero) {
+                                // reset x to 0
+                                Kokkos::parallel_for(
+                                    x.extent(0), MARS_LAMBDA(const Integer &i) { x(i) = 0.0; });
+                            }
 
-                                if (!refined) {
-                                    std::cout << "Did not refine" << std::endl;
-                                    break;
-                                } */
+                            if (!refined) {
+                                std::cout << "Did not refine" << std::endl;
+                                break;
+                            } */
 
-            } while (++refs <= max_refinements);
+            // } while (++refs <= max_refinements);
             return true;
         }
 
