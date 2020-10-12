@@ -392,54 +392,154 @@ namespace mars {
                 }); */
         }
 
-        struct BuildLocalGlobalPredicate {
-            MARS_INLINE_FUNCTION void volume_iterate(const Integer sfc_index) const {
-                Octant o;
-                Octant oc = mesh->get_octant(sfc_index);
-                // go through all the inside dofs for the current element
-                for (int i = 0; i < degree - 1; i++) {
-                    for (int j = 0; j < degree - 1; j++) {
-                        o.x = degree * oc.x + i + 1;
-                        o.y = degree * oc.y + j + 1;
-                        Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
+        /*
+        template <bool Ghost>
+        static typename std::enable_if<Ghost == false, void>::type MARS_INLINE_FUNCTION
+        set_volume_predicate(ViewVectorType<bool> local_predicate,
+                ViewVectorType<bool> global_predicate, const Integer enc_oc) {
+            local_predicate(enc_oc) = 1;
+            global_predicate(enc_oc) = 1;
+        }
 
-                        local_predicate(enc_oc) = 1;
-                        global_predicate(enc_oc) = 1;
-                    }
-                }
-            }
 
-            MARS_INLINE_FUNCTION void corner_iterate(const Integer sfc_index) const {
-                Octant oc = mesh->get_octant(sfc_index);
-                // go through all the corner dofs for the current element
-                for (int i = 0; i < Mesh::ManifoldDim; i++) {
-                    for (int j = 0; j < Mesh::ManifoldDim; j++)
-                    /* for (int z = 0; z < Mesh::ManifoldDim; z++) // 3D case*/
-                    {
-                        Integer max_proc = -1;
-                        Integer one_ring_owners[simplex_type::ElemType];
-                        Integer sfc = process_corner<simplex_type::ElemType, Mesh::ManifoldDim>(
-                            max_proc, one_ring_owners, mesh, oc, i, j);
+        template <bool Ghost>
+        static typename std::enable_if<Ghost == true, void>::type MARS_INLINE_FUNCTION
+        set_volume_predicate(ViewVectorType<bool> local_predicate,
+                ViewVectorType<bool> global_predicate, const Integer enc_oc) {
+            local_predicate(enc_oc) = 1;
+        } */
 
-                        /* if the face neighbor element is ghost then check if the processor
-                            is less than the owner. This is how the dofs are partitioned */
-                        /* if (!o.shares_boundary() && proc >= owner_proc) */
-                        if (proc >= max_proc) {
-                            global_predicate(sfc) = 1;
-                            for (int k = 0; k < simplex_type::ElemType; k++) {
-                                // if the owner is strictly smaller than the larger should send some data to it
-                                if (proc > one_ring_owners[k] && one_ring_owners[k] >= 0) {
-                                    nbh_proc_predicate_send(one_ring_owners[k]) = 1;
-                                }
-                            }
-                        } else if (proc < max_proc) {
-                            nbh_proc_predicate_recv(max_proc) = 1;
+        template <bool Ghost>
+        struct CornerPredicate {
+            Mesh *mesh;
+            ViewVectorType<bool> local_predicate;
+            ViewVectorType<bool> global_predicate;
+            ViewVectorType<bool> nbh_proc_predicate_send;
+            ViewVectorType<bool> nbh_proc_predicate_recv;
+            Integer proc;
+
+            CornerPredicate(ViewVectorType<bool> lp,
+                            ViewVectorType<bool> gp,
+                            ViewVectorType<bool> npps,
+                            ViewVectorType<bool> nppr,
+                            Integer p)
+                : local_predicate(lp),
+                  global_predicate(gp),
+                  nbh_proc_predicate_send(npps),
+                  nbh_proc_predicate_recv(nppr),
+                  proc(p) {}
+
+            void corner_predicate(const Integer elem_sfc_proc,
+                                  const Integer sfc,
+                                  const Integer max_proc,
+                                  Integer one_ring_owners[simplex_type::ElemType],
+                                  std::true_type) const {
+                local_predicate(sfc) = 1;
+
+                // elem_sfc in this case the elem_sfc_proc is the proc of the ghost element
+                if (proc == max_proc && proc >= elem_sfc_proc) {
+                    global_predicate(sfc) = 1;
+                    for (int k = 0; k < simplex_type::ElemType; k++) {
+                        // if the owner is strictly smaller than the larger should send some data to it
+                        if (proc > one_ring_owners[k] && one_ring_owners[k] >= 0) {
+                            nbh_proc_predicate_send(one_ring_owners[k]) = 1;
                         }
-                        local_predicate(sfc) = 1;
                     }
+                } else {
+                    nbh_proc_predicate_recv(elem_sfc_proc) = 1;
                 }
             }
 
+            void corner_predicate(const Integer elem_sfc_proc,
+                                  const Integer sfc,
+                                  const Integer max_proc,
+                                  Integer one_ring_owners[simplex_type::ElemType],
+                                  std::false_type) const {
+                local_predicate(sfc) = 1;
+
+                if (proc >= max_proc) {
+                    global_predicate(sfc) = 1;
+                    for (int k = 0; k < simplex_type::ElemType; k++) {
+                        // if the owner is strictly smaller than the larger should send some data to it
+                        if (proc > one_ring_owners[k] && one_ring_owners[k] >= 0) {
+                            nbh_proc_predicate_send(one_ring_owners[k]) = 1;
+                        }
+                    }
+                } else if (proc < max_proc) {
+                    nbh_proc_predicate_recv(max_proc) = 1;
+                }
+            }
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Integer elem_sfc_proc, const Integer dof_sfc, const Integer max_proc,
+                    Integer oro[simplex_type::ElemType]) const {
+                corner_predicate(elem_sfc_proc, dof_sfc, max_proc, oro, std::integral_constant<bool, Ghost>{});
+            }
+        };
+
+        template <bool Ghost, typename F>
+        static MARS_INLINE_FUNCTION void
+        corner_iterate(const Integer sfc_index, const Mesh *mesh, F f) {
+            Octant oc = mesh->get_octant(sfc_index);
+            // go through all the corner dofs for the current element
+            for (int i = 0; i < Mesh::ManifoldDim; i++) {
+                for (int j = 0; j < Mesh::ManifoldDim; j++)
+                /* for (int z = 0; z < Mesh::ManifoldDim; z++) // 3D case*/
+                {
+                    Integer max_proc = -1;
+                    Integer one_ring_owners[simplex_type::ElemType];
+                    Integer sfc = process_corner<simplex_type::ElemType, Mesh::ManifoldDim>(
+                        max_proc, one_ring_owners, mesh, oc, i, j);
+
+                    Integer elem_sfc_proc = find_owner_processor(mesh->get_view_gp(), sfc_index,
+                            2, mesh->get_proc());
+                    f(elem_sfc_proc, sfc, max_proc, one_ring_owners);
+                }
+            }
+        }
+
+        template <bool Ghost>
+        struct VolumePredicate {
+            ViewVectorType<bool> local_predicate;
+            ViewVectorType<bool> global_predicate;
+
+            VolumePredicate(ViewVectorType<bool> lp, ViewVectorType<bool> gp)
+                : local_predicate(lp), global_predicate(gp) {}
+
+            void volume_predicate(const Integer sfc, std::true_type) const {
+                local_predicate(sfc) = 1; }
+
+            void volume_predicate(const Integer sfc, std::false_type) const {
+                local_predicate(sfc) = 1;
+                global_predicate(sfc) = 1;
+            }
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Integer enc_oc) const {
+                volume_predicate(enc_oc, std::integral_constant<bool, Ghost>{});
+            }
+        };
+
+        template <bool Ghost, typename F>
+        static MARS_INLINE_FUNCTION void volume_iterate(const Integer sfc_index,
+                const Mesh* mesh,  F f){
+            Octant o;
+            Octant oc = mesh->get_octant(sfc_index);
+            // go through all the inside dofs for the current element
+            for (int i = 0; i < degree - 1; i++) {
+                for (int j = 0; j < degree - 1; j++) {
+                    o.x = degree * oc.x + i + 1;
+                    o.y = degree * oc.y + j + 1;
+                    Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
+
+                    f(enc_oc);
+                    /* set_volume_predicate<Ghost>(global_predicate, enc_oc); */
+                }
+            }
+        }
+
+        template <bool Ghost>
+        struct BuildLocalGlobalPredicate {
             template <Integer dir>
             MARS_INLINE_FUNCTION void face_iterate(const Integer i) const {
                 // side  0 means origin side and 1 destination side.
@@ -469,10 +569,19 @@ namespace mars {
             MARS_INLINE_FUNCTION
             void operator()(const Integer i) const {
                 // topological order within the element
-                corner_iterate(i);
+                /* corner_iterate<Ghost>(i, mesh, proc, local_predicate,
+                        global_predicate,
+                        nbh_proc_predicate_send,
+                        nbh_proc_predicate_recv); */
+
+                corner_iterate<Ghost>(i, mesh,
+                        CornerPredicate<Ghost>(local_predicate, global_predicate,
+                            nbh_proc_predicate_send, nbh_proc_predicate_recv, proc));
+
                 face_iterate<0>(i);
                 face_iterate<1>(i);
-                volume_iterate(i);
+                volume_iterate<Ghost>(i, mesh,
+                        VolumePredicate<Ghost>(local_predicate, global_predicate));
                 // TODO: 3D part
             }
 
@@ -530,17 +639,39 @@ namespace mars {
             for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
             Kokkos::parallel_for("lg_predicate",
                                  size,
-                                 BuildLocalGlobalPredicate(data.get_mesh(),
-                                                           local_predicate,
-                                                           global_predicate,
-                                                           npbs,
-                                                           npbr,
-                                                           data.get_host_mesh()->get_proc(),
-                                                           xDim,
-                                                           yDim,
-                                                           zDim));
+                                 BuildLocalGlobalPredicate<false>(data.get_mesh(),
+                                                                  local_predicate,
+                                                                  global_predicate,
+                                                                  npbs,
+                                                                  npbr,
+                                                                  data.get_host_mesh()->get_proc(),
+                                                                  xDim,
+                                                                  yDim,
+                                                                  zDim));
+            Kokkos::parallel_for("lg_predicate",
+                                 size,
+                                 BuildLocalGlobalPredicate<true>(data.get_mesh(),
+                                                                  local_predicate,
+                                                                  global_predicate,
+                                                                  npbs,
+                                                                  npbr,
+                                                                  data.get_host_mesh()->get_proc(),
+                                                                  xDim,
+                                                                  yDim,
+                                                                  zDim));
+            /* Kokkos::parallel_for("lg_predicate",
+                                 size,
+                                 BuildLocalGlobalPredicate<true>(data.get_mesh(),
+                                                                  local_predicate,
+                                                                  global_predicate,
+                                                                  npbs,
+                                                                  npbr,
+                                                                  data.get_host_mesh()->get_proc(),
+                                                                  xDim,
+                                                                  yDim,
+                                                                  zDim));
 
-            local_dof_enum.compact_elements(local_predicate);
+            local_dof_enum.compact_elements(local_predicate); */
             global_dof_enum.compact_elements(global_predicate);
 
             // reserve the user data tuple with the size as the local dof size.
