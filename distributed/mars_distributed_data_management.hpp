@@ -238,81 +238,116 @@ namespace mars {
             return sfc;
         }
 
-        struct IdentifyBoundaryDofPerRank {
-            MARS_INLINE_FUNCTION void corner_iterate(const Integer sfc_index) const {
-                Octant oc = mesh->get_octant(sfc_index);
-                // go through all the corner dofs for the current element
-                for (int i = 0; i < Mesh::ManifoldDim; i++) {
-                    for (int j = 0; j < Mesh::ManifoldDim; j++)
-                    /* for (int z = 0; z < Mesh::ManifoldDim; z++) // 3D case*/
-                    {
-                        Integer max_proc = -1;
-                        Integer one_ring_owners[simplex_type::ElemType];
-                        Integer sfc = process_corner<simplex_type::ElemType, Mesh::ManifoldDim>(
-                            max_proc, one_ring_owners, mesh, oc, i, j);
 
-                        if (proc >= max_proc)  // Send it only if it is local to the proc
-                        {
-                            for (int k = 0; k < simplex_type::ElemType; k++) {
-                                // if the owner is strictly smaller than the larger should send some data to it
-                                if (proc > one_ring_owners[k] && one_ring_owners[k] >= 0) {
-                                    Integer index = sfc_to_locally_owned(sfc);
-                                    rank_boundary(index, map(one_ring_owners[k])) = 1;
-                                }
-                            }
-                        }
-                    }
-                }
+        template <bool Ghost>
+        struct CornerRankBoundary {
+            ViewMatrixType<bool> rank_boundary;
+            ViewVectorType<Integer> sfc_to_locally_owned;
+            ViewVectorType<Integer> map;
+            Integer proc;
+
+            CornerRankBoundary(ViewMatrixType<bool> rb,
+                               ViewVectorType<Integer> sl,
+                               ViewVectorType<Integer> m,
+                               Integer p)
+                : rank_boundary(rb), sfc_to_locally_owned(sl), map(m), proc(p) {}
+
+            void corner_predicate(const Integer elem_sfc_proc,
+                                  const Integer sfc,
+                                  const Integer max_proc,
+                                  Integer one_ring_owners[simplex_type::ElemType],
+                                  std::true_type) const {
+
             }
 
-            template <Integer dir>
-            MARS_INLINE_FUNCTION void face_iterate(const Integer i) const {
-                // side  0 means origin side and 1 destination side.
-                Octant oc = mesh->get_octant(i);
-                for (int side = 0; side < 2; ++side) {
-                    Octant face_cornerA;
-                    Integer owner_proc = process_face_corner<simplex_type::ElemType, dir>(face_cornerA, mesh, side, oc);
-
-                    for (int j = 0; j < face_nodes; j++) {
-                        Integer sfc = process_face_node<simplex_type::ElemType, dir>(face_cornerA, j);
+            void corner_predicate(const Integer elem_sfc_proc,
+                                  const Integer sfc,
+                                  const Integer max_proc,
+                                  Integer one_ring_owners[simplex_type::ElemType],
+                                  std::false_type) const {
+                if (proc >= max_proc)  // Send it only if it is local to the proc
+                {
+                    for (int k = 0; k < simplex_type::ElemType; k++) {
                         // if the owner is strictly smaller than the larger should send some data to it
-                        if (proc > owner_proc && owner_proc >= 0) {
+                        if (proc > one_ring_owners[k] && one_ring_owners[k] >= 0) {
                             Integer index = sfc_to_locally_owned(sfc);
-                            rank_boundary(index, map(owner_proc)) = 1;
+                            rank_boundary(index, map(one_ring_owners[k])) = 1;
                         }
                     }
                 }
             }
 
             MARS_INLINE_FUNCTION
+            void operator()(const Integer elem_sfc_proc, const Integer dof_sfc, const Integer max_proc,
+                    Integer oro[simplex_type::ElemType]) const {
+                corner_predicate(elem_sfc_proc, dof_sfc, max_proc, oro, std::integral_constant<bool, Ghost>{});
+            }
+        };
+
+
+        template <bool Ghost>
+        struct FaceRankBoundary {
+            ViewMatrixType<bool> rank_boundary;
+            ViewVectorType<Integer> sfc_to_locally_owned;
+            ViewVectorType<Integer> map;
+            Integer proc;
+
+            FaceRankBoundary(ViewMatrixType<bool> rb,
+                               ViewVectorType<Integer> sl,
+                               ViewVectorType<Integer> m,
+                               Integer p)
+                : rank_boundary(rb), sfc_to_locally_owned(sl), map(m), proc(p) {}
+
+            void face_predicate(const Integer elem_sfc_proc,
+                                const Integer sfc,
+                                const Integer owner_proc,
+                                std::true_type) const {}
+
+            void face_predicate(const Integer elem_sfc_proc,
+                                const Integer sfc,
+                                const Integer owner_proc,
+                                std::false_type) const {
+                if (proc > owner_proc && owner_proc >= 0) {
+                    Integer index = sfc_to_locally_owned(sfc);
+                    rank_boundary(index, map(owner_proc)) = 1;
+                }
+            }
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Integer elem_sfc_proc, const Integer dof_sfc, const Integer owner_proc) const {
+                face_predicate(elem_sfc_proc, dof_sfc, owner_proc, std::integral_constant<bool, Ghost>{});
+            }
+        };
+
+        struct IdentifyBoundaryDofPerRank {
+            MARS_INLINE_FUNCTION
             void operator()(const Integer i) const {
-                // topological order within the element
-                corner_iterate(i);
-                face_iterate<0>(i);
-                face_iterate<1>(i);
+                /* const Integer sfc = mesh->get_boundary_sfc(i); */
+                const Integer sfc = mesh->get_sfc(i);
+                const Integer proc = mesh->get_proc();
+
+                constexpr bool BoundaryIter = false;
+                corner_iterate<BoundaryIter>(
+                    sfc, mesh, CornerRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc));
+
+                FaceRankBoundary<BoundaryIter> fp =
+                    FaceRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc);
+                face_iterate<BoundaryIter, 0>(sfc, mesh, fp);
+                face_iterate<BoundaryIter, 1>(sfc, mesh, fp);
                 // TODO: 3D part
             }
 
             IdentifyBoundaryDofPerRank(Mesh *m,
                                        ViewMatrixType<bool> npb,
                                        ViewVectorType<Integer> mp,
-                                       ViewVectorType<Integer> l,
-                                       Integer p,
-                                       Integer x,
-                                       Integer y,
-                                       Integer z)
-                : mesh(m), rank_boundary(npb), map(mp), sfc_to_locally_owned(l), proc(p), xDim(x), yDim(y), zDim(z) {}
+                                       ViewVectorType<Integer> l)
+                : mesh(m), rank_boundary(npb), map(mp), sfc_to_locally_owned(l) {}
 
             Mesh *mesh;
 
             ViewMatrixType<bool> rank_boundary;
             ViewVectorType<Integer> map;
             ViewVectorType<Integer> sfc_to_locally_owned;
-
-            Integer proc;
-            Integer xDim;
-            Integer yDim;
-            Integer zDim;
         };
 
         void build_boundary_dof_sets(ViewVectorType<Integer> &scan_boundary,
@@ -331,16 +366,11 @@ namespace mars {
             ViewMatrixType<bool> rank_boundary("count_per_proc", chunk_size_, nbh_rank_size);
             /* generate the sfc for the local and global dofs containing the generation locally
             for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
-            Kokkos::parallel_for("identify_boundary_predicate",
-                                 size,
-                                 IdentifyBoundaryDofPerRank(data.get_mesh(),
-                                                            rank_boundary,
-                                                            sender_ranks_scan,
-                                                            global_dof_enum.get_view_sfc_to_local(),
-                                                            data.get_host_mesh()->get_proc(),
-                                                            xDim,
-                                                            yDim,
-                                                            zDim));
+            Kokkos::parallel_for(
+                "identify_boundary_predicate",
+                size,
+                IdentifyBoundaryDofPerRank(
+                    data.get_mesh(), rank_boundary, sender_ranks_scan, global_dof_enum.get_view_sfc_to_local()));
 
             /* perform a scan for each row with the sum at the end for each rank */
             ViewMatrixType<Integer> rank_scan("rank_scan", chunk_size_ + 1, nbh_rank_size);
