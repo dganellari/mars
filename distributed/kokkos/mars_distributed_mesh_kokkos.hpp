@@ -1215,12 +1215,35 @@ public:
         return periodic;
     }
 
+    MARS_INLINE_FUNCTION
+    Integer get_sfc(const Integer sfc_index) const
+    {
+        return local_sfc_(sfc_index);
+    }
 
     MARS_INLINE_FUNCTION
     Octant get_octant(const Integer sfc_index) const
     {
         Integer sfc_code = local_sfc_(sfc_index);
         return get_octant_from_sfc<Elem::ElemType>(sfc_code);
+    }
+
+    MARS_INLINE_FUNCTION
+    Octant octant_from_sfc(const Integer sfc) const
+    {
+        return get_octant_from_sfc<Elem::ElemType>(sfc);
+    }
+
+    MARS_INLINE_FUNCTION
+    Octant get_octant_face_nbh(const Octant& oc, const Integer face_nr) const
+    {
+        return oc.face_nbh<Elem::ElemType>(face_nr, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
+    }
+
+    MARS_INLINE_FUNCTION
+    Octant get_octant_corner_nbh(const Octant& oc, const Integer corner_nr)
+    {
+        return oc.corner_nbh<Elem::ElemType>(corner_nr, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
     }
 
     MARS_INLINE_FUNCTION
