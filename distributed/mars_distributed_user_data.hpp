@@ -589,6 +589,17 @@ public:
                     // not neccessary anymore
     }
 
+    //return the sfc from the sfc index from either ghost or local index
+    template <bool Ghost>
+    MARS_INLINE_FUNCTION
+    Integer get_sfc(const Integer sfc_index)
+    {
+        if(Ghost)
+            return get_ghost_elem(sfc_index);
+        else
+            return mesh->get_sfc(sfc_index);
+    }
+
 private:
     Mesh *mesh;      // device mesh
     Mesh *host_mesh; // host mesh that is copied to device.
