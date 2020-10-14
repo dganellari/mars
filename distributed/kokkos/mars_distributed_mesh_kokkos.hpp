@@ -247,6 +247,12 @@ public:
     }
 
     MARS_INLINE_FUNCTION
+    Integer get_boundary_sfc(const Integer sfc_index) const
+    {
+        return boundary_(sfc_index);
+    }
+
+    MARS_INLINE_FUNCTION
     void set_view_boundary(const ViewVectorType<Integer> &b)
     {
         boundary_ = b;
