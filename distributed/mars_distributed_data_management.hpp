@@ -322,8 +322,8 @@ namespace mars {
         struct IdentifyBoundaryDofPerRank {
             MARS_INLINE_FUNCTION
             void operator()(const Integer i) const {
-                /* const Integer sfc = mesh->get_boundary_sfc(i); */
-                const Integer sfc = mesh->get_sfc(i);
+                const Integer sfc = mesh->get_boundary_sfc(i);
+                /* const Integer sfc = mesh->get_sfc(i); */
                 const Integer proc = mesh->get_proc();
 
                 constexpr bool BoundaryIter = false;
@@ -356,7 +356,8 @@ namespace mars {
                                      const Integer nbh_rank_size) {
             using namespace Kokkos;
 
-            const Integer size = data.get_host_mesh()->get_chunk_size();
+            /* const Integer size = data.get_host_mesh()->get_chunk_size(); */
+            const Integer size = data.get_host_mesh()->get_view_boundary().extent(0);
 
             Integer xDim = data.get_host_mesh()->get_XDim();
             Integer yDim = data.get_host_mesh()->get_YDim();
@@ -476,8 +477,19 @@ namespace mars {
                                   Integer one_ring_owners[simplex_type::ElemType],
                                   std::false_type) const {
                 local_predicate(sfc) = 1;
-
                 if (proc >= max_proc) {
+                    global_predicate(sfc) = 1;
+                    for (int k = 0; k < simplex_type::ElemType; k++) {
+                        // if the owner is strictly smaller than the larger should send some data to it
+                        if (proc > one_ring_owners[k] && one_ring_owners[k] >= 0) {
+                            nbh_proc_predicate_send(one_ring_owners[k]) = 1;
+                        }
+                    }
+                } else if (proc < max_proc) {
+                    nbh_proc_predicate_recv(max_proc) = 1;
+                }
+
+                /* if (proc >= max_proc) {
                     global_predicate(sfc) = 1;
                     for (int k = 0; k < simplex_type::ElemType; k++) {
                         // if the owner is strictly smaller than the larger should send some data to it
@@ -487,7 +499,7 @@ namespace mars {
                             nbh_proc_predicate_recv(oro) = 1;
                         }
                     }
-                }
+                } */
             }
 
             MARS_INLINE_FUNCTION
@@ -598,11 +610,19 @@ namespace mars {
                 }
                 /* if the owner is strictly smaller than the larger should send some
                 data to it otherwise it should receive from it */
-                if (proc != owner_proc) {
+                /* if (proc != owner_proc) {
                     nbh_proc_predicate_send(owner_proc) = 1;
                     nbh_proc_predicate_recv(owner_proc) = 1;
-                }
+                } */
                 local_predicate(sfc) = 1;
+
+                /* if the owner is strictly smaller than the larger should send some
+                data to it otherwise it should receive from it */
+                if (proc > owner_proc) {
+                    nbh_proc_predicate_send(owner_proc) = 1;
+                } else if (proc < owner_proc) {
+                    nbh_proc_predicate_recv(owner_proc) = 1;
+                }
             }
 
             MARS_INLINE_FUNCTION
@@ -631,8 +651,28 @@ namespace mars {
         template <bool Ghost>
         struct BuildLocalGlobalPredicate {
 
-            MARS_INLINE_FUNCTION Integer get_ghost_sfc(const Integer index) const { return ghost_sfc(index); }
+            BuildLocalGlobalPredicate(Mesh *m,
+                                      ViewVectorType<Integer> gs,
+                                      ViewVectorType<bool> lp,
+                                      ViewVectorType<bool> gp,
+                                      ViewVectorType<bool> npbs,
+                                      ViewVectorType<bool> npbr)
+                : mesh(m),
+                  ghost_sfc(gs),
+                  local_predicate(lp),
+                  global_predicate(gp),
+                  nbh_proc_predicate_send(npbs),
+                  nbh_proc_predicate_recv(npbr) {}
 
+            Mesh *mesh;
+            ViewVectorType<Integer> ghost_sfc;
+
+            ViewVectorType<bool> local_predicate;
+            ViewVectorType<bool> global_predicate;
+            ViewVectorType<bool> nbh_proc_predicate_send;
+            ViewVectorType<bool> nbh_proc_predicate_recv;
+
+            MARS_INLINE_FUNCTION Integer get_ghost_sfc(const Integer index) const { return ghost_sfc(index); }
             MARS_INLINE_FUNCTION Integer get_local_sfc(const Integer index) const { return mesh->get_sfc(index); }
 
             template <bool G>
@@ -666,27 +706,6 @@ namespace mars {
                 volume_iterate<Ghost>(sfc, mesh, VolumePredicate<Ghost>(local_predicate, global_predicate));
                 // TODO: 3D part
             }
-
-            BuildLocalGlobalPredicate(Mesh *m,
-                                      ViewVectorType<Integer> gs,
-                                      ViewVectorType<bool> lp,
-                                      ViewVectorType<bool> gp,
-                                      ViewVectorType<bool> npbs,
-                                      ViewVectorType<bool> npbr)
-                : mesh(m),
-                  ghost_sfc(gs),
-                  local_predicate(lp),
-                  global_predicate(gp),
-                  nbh_proc_predicate_send(npbs),
-                  nbh_proc_predicate_recv(npbr) {}
-
-            Mesh *mesh;
-            ViewVectorType<Integer> ghost_sfc;
-
-            ViewVectorType<bool> local_predicate;
-            ViewVectorType<bool> global_predicate;
-            ViewVectorType<bool> nbh_proc_predicate_send;
-            ViewVectorType<bool> nbh_proc_predicate_recv;
         };
 
         void build_lg_predicate(const context &context, ViewVectorType<bool> &npbs, ViewVectorType<bool> &npbr) {
@@ -717,11 +736,11 @@ namespace mars {
                     data.get_mesh(), data.get_view_ghost(), local_predicate, global_predicate, npbs, npbr));
 
             //Iterate through ghost sfc and enumerate
-            Kokkos::parallel_for(
+            /* Kokkos::parallel_for(
                 "lg_predicate_from_ghost",
                 ghost_size,
                 BuildLocalGlobalPredicate<true>(
-                    data.get_mesh(), data.get_view_ghost(), local_predicate, global_predicate, npbs, npbr));
+                    data.get_mesh(), data.get_view_ghost(), local_predicate, global_predicate, npbs, npbr)); */
 
             local_dof_enum.compact_elements(local_predicate);
             global_dof_enum.compact_elements(global_predicate);

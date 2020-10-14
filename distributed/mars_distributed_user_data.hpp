@@ -627,6 +627,7 @@ void create_ghost_layer(const context &context, UserData &data)
     std::cout << "Building the ghost layer (boundary element set)..."
               << std::endl;
     data.get_host_mesh()->template build_boundary_element_sets<Type>();
+    data.copy_mesh_to_device(); //update the boundary device pointers
 
     data.exchange_ghost_counts(context);
     data.exchange_ghost_layer(context);
