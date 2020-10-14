@@ -10,7 +10,7 @@
 #include "mars_identity_operator.hpp"
 #include "mars_simplex_laplacian.hpp"
 #include "mars_simplex_quadrature.hpp"
-#include "mars_tensor_laplacian.hpp"
+#include "mars_tensor_spacetime.hpp"
 #include "mars_umesh_operator.hpp"
 
 namespace mars {
@@ -152,7 +152,8 @@ namespace mars {
         using Super = mars::UMeshOperator<Mesh>;
 
         static constexpr int Dim = Mesh::Dim;
-        static constexpr int NFuns = Mesh::Dim + 1;
+        // static constexpr int NFuns = Mesh::Dim + 1;
+        static constexpr int NFuns = Elem::NNodes;
 
         UMeshSTHeatEquation(Mesh &mesh) : Super(mesh) {}
 
@@ -186,6 +187,8 @@ namespace mars {
 
             auto quad = quad_;
 
+            SpaceTime<Elem> st;
+
             Kokkos::parallel_for(
                 "UMeshSTHeatEquation::apply", mesh.n_elements(), MARS_LAMBDA(const Integer i) {
                     Real u[NFuns];
@@ -205,6 +208,7 @@ namespace mars {
                     }
 
                     SpaceTimeMixed<Mesh>::one_thread_eval(J_inv_e, det_J(i), quad, u, Au);
+                    // st.one_thread_eval(J_inv_e, det_J(i), u, Au);
 
                     for (Integer k = 0; k < NFuns; ++k) {
                         Kokkos::atomic_add(&op_x(idx[k]), Au[k]);
@@ -230,6 +234,8 @@ namespace mars {
 
                 auto quad = quad_;
 
+                SpaceTime<Elem> st;
+
                 Kokkos::parallel_for(
                     "JacobiPreconditioner::init", mesh.n_elements(), MARS_LAMBDA(const Integer i) {
                         Integer idx[NFuns];
@@ -251,6 +257,7 @@ namespace mars {
                         }
 
                         SpaceTimeMixed<Mesh>::one_thread_eval_diag(J_inv_e, det_J_e, quad, val);
+                        // st.one_thread_eval_diag(J_inv_e, det_J_e, val);
 
                         for (Integer k = 0; k < NFuns; ++k) {
                             assert(val[k] != 0.0);
