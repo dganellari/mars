@@ -264,15 +264,14 @@ namespace mars {
                                   const Integer max_proc,
                                   Integer one_ring_owners[simplex_type::ElemType],
                                   std::false_type) const {
+                const Integer ghost_proc =
+                    find_owner_processor(mesh->get_view_scan_boundary(), i, 1, proc);
+
+                printf("ghost_proc: %li, max_proc: %li, rank: %li\n", ghost_proc, max_proc, proc);
                 if (proc >= max_proc)  // Send it only if it is local to the proc
                 {
-                    for (int k = 0; k < simplex_type::ElemType; k++) {
-                        // if the owner is strictly smaller than the larger should send some data to it
-                        if (proc > one_ring_owners[k] && one_ring_owners[k] >= 0) {
-                            Integer index = sfc_to_locally_owned(sfc);
-                            rank_boundary(index, map(one_ring_owners[k])) = 1;
-                        }
-                    }
+                    Integer index = sfc_to_locally_owned(sfc);
+                    rank_boundary(index, map(ghost_proc)) = 1;
                 }
             }
 
@@ -307,17 +306,52 @@ namespace mars {
                                 const Integer sfc,
                                 const Integer owner_proc,
                                 std::false_type) const {
-                /* const Integer ghost_proc = find_owner_processor(mesh->get_view_scan_boundary(), 1, mesh->get_boundary_sfc(i); */
+                const Integer ghost_proc =
+                    find_owner_processor(mesh->get_view_scan_boundary(), i, 1, proc);
 
-                if (proc > owner_proc && owner_proc >= 0) {
+                if (proc >= owner_proc && owner_proc >= 0) {
                     Integer index = sfc_to_locally_owned(sfc);
-                    rank_boundary(index, map(owner_proc)) = 1;
+                    rank_boundary(index, map(ghost_proc)) = 1;
                 }
             }
 
             MARS_INLINE_FUNCTION
             void operator()(const Mesh* mesh, const Integer i, const Integer dof_sfc, const Integer owner_proc) const {
                 face_predicate(mesh, i, dof_sfc, owner_proc, std::integral_constant<bool, Ghost>{});
+            }
+        };
+
+        template <bool Ghost>
+        struct VolumeRankBoundary {
+            ViewMatrixType<bool> rank_boundary;
+            ViewVectorType<Integer> sfc_to_locally_owned;
+            ViewVectorType<Integer> map;
+            Integer proc;
+
+            VolumeRankBoundary(ViewMatrixType<bool> rb,
+                               ViewVectorType<Integer> sl,
+                               ViewVectorType<Integer> m,
+                               Integer p)
+                : rank_boundary(rb), sfc_to_locally_owned(sl), map(m), proc(p) {}
+
+            /* void face_predicate(const Integer elem_sfc_proc,
+                                const Integer sfc,
+                                const Integer owner_proc,
+                                std::true_type) const {}
+ */
+            void volume_predicate(const Mesh *mesh,
+                                const Integer i,
+                                const Integer sfc,
+                                std::false_type) const {
+                const Integer ghost_proc =
+                    find_owner_processor(mesh->get_view_scan_boundary(), i, 1, proc);
+                    Integer index = sfc_to_locally_owned(sfc);
+                    rank_boundary(index, map(ghost_proc)) = 1;
+            }
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Mesh* mesh, const Integer i, const Integer dof_sfc) const {
+                volume_predicate(mesh, i, dof_sfc, std::integral_constant<bool, Ghost>{});
             }
         };
 
@@ -336,6 +370,9 @@ namespace mars {
                     FaceRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc);
                 face_iterate<BoundaryIter, 0>(sfc, mesh, i, fp);
                 face_iterate<BoundaryIter, 1>(sfc, mesh, i, fp);
+
+                volume_iterate<BoundaryIter>(
+                    sfc, mesh, i, VolumeRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc));
                 // TODO: 3D part
             }
 
@@ -468,7 +505,7 @@ namespace mars {
                                   std::true_type) const {
                 local_predicate(sfc) = 1;
                 Integer elem_sfc_proc =
-                    find_owner_processor(mesh->get_view_gp(), mesh->get_ghost_sfc(index), 2, mesh->get_proc());
+                    find_owner_processor(mesh->get_view_gp(), mesh->get_ghost_sfc(i), 2, mesh->get_proc());
 
                 // elem_sfc in this case the elem_sfc_proc is the proc of the ghost element
                 if (proc == max_proc && proc >= elem_sfc_proc) {
@@ -483,7 +520,7 @@ namespace mars {
                                   Integer one_ring_owners[simplex_type::ElemType],
                                   std::false_type) const {
                 local_predicate(sfc) = 1;
-                if (proc >= max_proc) {
+                /* if (proc >= max_proc) {
                     global_predicate(sfc) = 1;
                     for (int k = 0; k < simplex_type::ElemType; k++) {
                         // if the owner is strictly smaller than the larger should send some data to it
@@ -493,19 +530,20 @@ namespace mars {
                     }
                 } else if (proc < max_proc) {
                     nbh_proc_predicate_recv(max_proc) = 1;
+                } */
+
+                if (proc >= max_proc) {
+                    global_predicate(sfc) = 1;
                 }
 
-                /* if (proc >= max_proc) {
-                    global_predicate(sfc) = 1;
-                    for (int k = 0; k < simplex_type::ElemType; k++) {
-                        // if the owner is strictly smaller than the larger should send some data to it
-                        const Integer oro = one_ring_owners[k];
-                        if (proc != oro && oro >= 0) {
-                            nbh_proc_predicate_send(oro) = 1;
-                            nbh_proc_predicate_recv(oro) = 1;
-                        }
+                for (int k = 0; k < simplex_type::ElemType; k++) {
+                    /* if the owner is strictly smaller than the larger should send some data to it */
+                    const Integer oro = one_ring_owners[k];
+                    if (proc != oro && oro >= 0) {
+                        nbh_proc_predicate_send(oro) = 1;
+                        nbh_proc_predicate_recv(oro) = 1;
                     }
-                } */
+                }
             }
 
             MARS_INLINE_FUNCTION
@@ -517,7 +555,7 @@ namespace mars {
 
         template <bool Ghost, typename F>
         static MARS_INLINE_FUNCTION void
-        corner_iterate(const Integer sfc, const Mesh *mesh, const Integer i, F f) {
+        corner_iterate(const Integer sfc, const Mesh *mesh, const Integer index, F f) {
             Octant oc = mesh->octant_from_sfc(sfc);
             // go through all the corner dofs for the current element
             for (int i = 0; i < Mesh::ManifoldDim; i++) {
@@ -529,7 +567,7 @@ namespace mars {
                     Integer dof_sfc = process_corner<simplex_type::ElemType, Mesh::ManifoldDim>(
                         max_proc, one_ring_owners, mesh, oc, i, j);
 
-                    f(mesh, i, dof_sfc, max_proc, one_ring_owners);
+                    f(mesh, index, dof_sfc, max_proc, one_ring_owners);
                 }
             }
         }
@@ -557,7 +595,7 @@ namespace mars {
         };
 
         template <bool Ghost, typename F>
-        static MARS_INLINE_FUNCTION void volume_iterate(const Integer sfc, const Mesh *mesh, const Integer i, F f) {
+        static MARS_INLINE_FUNCTION void volume_iterate(const Integer sfc, const Mesh *mesh, const Integer index, F f) {
             Octant o;
             Octant oc = mesh->octant_from_sfc(sfc);
             // go through all the inside dofs for the current element
@@ -566,7 +604,7 @@ namespace mars {
                     o.x = degree * oc.x + i + 1;
                     o.y = degree * oc.y + j + 1;
                     Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
-                    f(mesh, i, enc_oc);
+                    f(mesh, index, enc_oc);
                     /* set_volume_predicate<Ghost>(global_predicate, enc_oc); */
                 }
             }
@@ -592,14 +630,14 @@ namespace mars {
                   proc(p) {}
 
             void face_predicate(const Mesh *mesh,
-                                const Integer index,
+                                const Integer i,
                                 const Integer sfc,
                                 const Integer owner_proc,
                                 std::true_type) const {
                 local_predicate(sfc) = 1;
 
                 Integer elem_sfc_proc =
-                    find_owner_processor(mesh->get_view_gp(), mesh->get_ghost_sfc(index), 2, mesh->get_proc());
+                    find_owner_processor(mesh->get_view_gp(), mesh->get_ghost_sfc(i), 2, mesh->get_proc());
                 //It seems that this is not needed. Check it and FIXME
                 if (proc == owner_proc && proc >= elem_sfc_proc) {
                     global_predicate(sfc) = 1;
@@ -607,7 +645,7 @@ namespace mars {
             }
 
             void face_predicate(const Mesh *mesh,
-                                const Integer index,
+                                const Integer i,
                                 const Integer sfc,
                                 const Integer owner_proc,
                                 std::false_type) const {
@@ -616,29 +654,27 @@ namespace mars {
                 if (proc >= owner_proc) {
                     global_predicate(sfc) = 1;
                 }
-                /* if the owner is strictly smaller than the larger should send some
-                data to it otherwise it should receive from it */
-                /* if (proc != owner_proc) {
+                if (proc != owner_proc) {
                     nbh_proc_predicate_send(owner_proc) = 1;
                     nbh_proc_predicate_recv(owner_proc) = 1;
-                } */
+                }
                 local_predicate(sfc) = 1;
 
                 /* if the owner is strictly smaller than the larger should send some
                 data to it otherwise it should receive from it */
-                if (proc > owner_proc) {
+                /* if (proc > owner_proc) {
                     nbh_proc_predicate_send(owner_proc) = 1;
                 } else if (proc < owner_proc) {
                     nbh_proc_predicate_recv(owner_proc) = 1;
-                }
+                } */
             }
 
             MARS_INLINE_FUNCTION
             void operator()(const Mesh *mesh,
-                            const Integer index,
+                            const Integer i,
                             const Integer dof_sfc,
                             const Integer owner_proc) const {
-                face_predicate(mesh, index, dof_sfc, owner_proc, std::integral_constant<bool, Ghost>{});
+                face_predicate(mesh, i, dof_sfc, owner_proc, std::integral_constant<bool, Ghost>{});
             }
         };
 
@@ -717,6 +753,22 @@ namespace mars {
             }
         };
 
+        template <Integer Type>
+        void print_dofs(const int rank) {
+            SFC<Type> dof = get_local_dof_enum();
+            Kokkos::parallel_for(
+                "for", dof.get_elem_size(), MARS_LAMBDA(const int i) {
+                    const Integer sfc_elem = local_to_sfc(i);
+                    const Integer global_dof = local_to_global(i);
+
+                    double point[3];
+                    get_vertex_coordinates_from_sfc<Type>(
+                        sfc_elem, point, dof.get_XDim(), dof.get_YDim(), dof.get_ZDim());
+
+                    printf("dof: %li - gdof: %li --- (%lf, %lf) - rank: %i\n", i, global_dof, point[0], point[1], rank);
+                });
+        }
+
         void build_lg_predicate(const context &context, ViewVectorType<bool> &npbs, ViewVectorType<bool> &npbr) {
             Integer xDim = data.get_host_mesh()->get_XDim();
             Integer yDim = data.get_host_mesh()->get_YDim();
@@ -745,11 +797,11 @@ namespace mars {
                     data.get_mesh(), local_predicate, global_predicate, npbs, npbr));
 
             //Iterate through ghost sfc and enumerate
-            /* Kokkos::parallel_for(
+            Kokkos::parallel_for(
                 "lg_predicate_from_ghost",
                 ghost_size,
                 BuildLocalGlobalPredicate<true>(
-                    data.get_mesh(), local_predicate, global_predicate, npbs, npbr)); */
+                    data.get_mesh(), local_predicate, global_predicate, npbs, npbr));
 
             local_dof_enum.compact_elements(local_predicate);
             global_dof_enum.compact_elements(global_predicate);
@@ -795,9 +847,9 @@ namespace mars {
                 Integer count = scan_snd(i + 1) - scan_snd(i);
                 if (count > 0) {
                     send_count[s_rank_mirror(i)] = count;
-                    /* ++proc_count;
-                    std::cout << "DM:****ToProc: " << i << " count:" << count
-                              << " Proc: " << proc_num << std::endl; */
+                    /* ++proc_count; */
+                    std::cout << "DM:****ToProc: " << s_rank_mirror(i) << " count:" << count
+                              << " Proc: " << proc_num << std::endl;
                 }
             }
 
@@ -808,20 +860,18 @@ namespace mars {
             /* Integer proc_count_r = 0; */
             for (int i = 0; i < nbh_rank_recv_size; ++i) {
                 receive_count[r_rank_mirror(i)] = 1;
-                /* ++proc_count_r;
-                std::cout << "DM:****ToProc: " << i << " count:" << 1
-                          << " Proc: " << proc_num << std::endl; */
             }
+
             context->distributed->i_send_recv_vec(send_count, receive_count);
 
-            /* for (int i = 0; i < size; ++i)
+            for (int i = 0; i < size; ++i)
             {
                 if (receive_count[i] > 0)
                 {
                     std::cout << "DM:-----FromProc: " << i << " count:" << receive_count[i]
                               << " Proc: " << proc_num << std::endl;
                 }
-            } */
+            }
         }
 
         void exchange_ghost_dofs(const context &context,
@@ -1207,6 +1257,8 @@ namespace mars {
 
             build_lg_predicate(context, nbh_proc_predicate_send, nbh_proc_predicate_recv);
 
+            /* print_dofs<simplex_type::ElemType>(proc_num); */
+
             incl_excl_scan(0, rank_size, nbh_proc_predicate_send, proc_scan_send);
             incl_excl_scan(0, rank_size, nbh_proc_predicate_recv, proc_scan_recv);
 
@@ -1218,6 +1270,7 @@ namespace mars {
             deep_copy(h_ps, ps);
             deep_copy(h_pr, pr);
 
+            std::cout<<"finshed build_lg_predicate: "<< h_ps() << " - "<< h_pr()<< " "<<proc_num<< std::endl;
             ViewVectorType<Integer> sender_ranks("sender_ranks", h_ps());
             ViewVectorType<Integer> recver_ranks("receiver_ranks", h_pr());
             compact_scan(nbh_proc_predicate_send, proc_scan_send, sender_ranks);
@@ -1229,8 +1282,10 @@ namespace mars {
             std::vector<Integer> s_count(rank_size, 0);
             std::vector<Integer> r_count(rank_size, 0);
 
+            std::cout<<"finshed build_boundary_dof_sets"<< rank_size<< proc_num<< std::endl;
             exchange_ghost_counts(context, scan_boundary, sender_ranks, recver_ranks, s_count, r_count);
 
+            std::cout<<"finshed "<< rank_size<< proc_num<< std::endl;
             /* create the scan recv mirror view from the receive count */
             scan_recv = ViewVectorType<Integer>("scan_recv_", rank_size + 1);
             scan_recv_mirror = create_mirror_view(scan_recv);
