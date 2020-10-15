@@ -141,13 +141,17 @@ namespace mars {
 
                         for (Integer k = 0; k < NFuns; ++k) {
                             assert(val[k] != 0.0);
-                            Real inv_val = 1. / val[k];
+                            Real inv_val = val[k];
 
                             assert(inv_val == inv_val);
 
                             Kokkos::atomic_add(&inv_diag(idx[k]), inv_val);
                         }
                     });
+
+                for (int d = 0; d < mesh.n_nodes(); ++d) {
+                    inv_diag(d) = 1. / inv_diag(d);
+                }
 
                 this->inv_diag_ = inv_diag;
             }
