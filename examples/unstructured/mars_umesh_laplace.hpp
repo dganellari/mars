@@ -149,9 +149,8 @@ namespace mars {
                         }
                     });
 
-                for (int d = 0; d < mesh.n_nodes(); ++d) {
-                    inv_diag(d) = 1. / inv_diag(d);
-                }
+                Kokkos::parallel_for(
+                    mesh.n_nodes(), MARS_LAMBDA(const Integer d) { inv_diag(d) = 1. / inv_diag(d); });
 
                 this->inv_diag_ = inv_diag;
             }
