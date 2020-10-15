@@ -253,10 +253,10 @@ namespace mars {
                     }
 
                     /* Uncomment this for Simplex*/
-                    // SpaceTimeMixed<Mesh>::one_thread_eval(J_inv_e, det_J(i), quad, u, Au);
+                    SpaceTimeMixed<Mesh>::one_thread_eval(J_inv_e, det_J(i), quad, u, Au);
 
                     /* Uncomment this for Quads*/
-                    st.one_thread_eval(J_inv_e, det_J(i), u, Au);
+                    // st.one_thread_eval(J_inv_e, det_J(i), u, Au);
 
                     for (Integer k = 0; k < NFuns; ++k) {
                         Kokkos::atomic_add(&op_x(idx[k]), Au[k]);
@@ -305,10 +305,10 @@ namespace mars {
                         }
 
                         /* Uncomment this for Simplex*/
-                        // SpaceTimeMixed<Mesh>::one_thread_eval_diag(J_inv_e, det_J_e, quad, val);
+                        SpaceTimeMixed<Mesh>::one_thread_eval_diag(J_inv_e, det_J_e, quad, val);
 
                         /* Uncomment this for Quads*/
-                        st.one_thread_eval_diag(J_inv_e, det_J_e, val);
+                        // st.one_thread_eval_diag(J_inv_e, det_J_e, val);
 
                         for (Integer k = 0; k < NFuns; ++k) {
                             assert(val[k] != 0.0);
@@ -320,9 +320,13 @@ namespace mars {
                         }
                     });
 
-                for (int d = 0; d < mesh.n_nodes(); ++d) {
-                    inv_diag(d) = 1. / inv_diag(d);
-                }
+                Kokkos::parallel_for(
+
+                    mesh.n_nodes(), MARS_LAMBDA(const Integer d) {
+                        std::cout << d << std::endl;
+                        inv_diag(d) = 1. / inv_diag(d);
+                    });
+
                 this->inv_diag_ = inv_diag;
             }
 
