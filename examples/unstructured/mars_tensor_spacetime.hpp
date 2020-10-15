@@ -19,8 +19,41 @@ namespace mars {
 
         MARS_INLINE_FUNCTION void one_thread_eval_diag(const Real *J_inv, const Real &det_J, Real *val) const {
             // assert(false);
+            // for (int i = 0; i < NFuns; ++i) {
+            //     val[i] = 1.0;
+            // }
+
+            Real gi[Dim], g[Dim], g_x[Dim - 1];
+            Real pk[Dim];
+
+            auto &q_points = q.q_p;
+            auto &q_weights = q.q_w;
+            int n_qp = q.n_points();
+
             for (int i = 0; i < NFuns; ++i) {
-                val[i] = 1.0;
+                val[i] = 0.0;
+            }
+
+            for (int k = 0; k < n_qp; ++k) {
+                for (int d = 0; d < Dim; ++d) {
+                    pk[d] = q_points(k, d);
+                }
+
+                // Separate time and space dimensions
+
+                assert(det_J > 0.0);
+                const Real dx = det_J * q_weights(k);
+
+                for (int i = 0; i < NFuns; i++) {
+                    // for each dof get the local number
+                    FEQuad4<Real>::Grad::affine_f(i, J_inv, pk, gi);
+                    Real g_t = gi[Dim - 1];
+
+                    for (int d = 0; d < Dim - 1; ++d) {
+                        g_x[d] = gi[d];
+                    }
+                    val[i] += (g_t * FEQuad4<Real>::Fun::f(i, pk) + Algebra<Dim - 1>::dot(g_x, g_x)) * dx;
+                }
             }
         }
 

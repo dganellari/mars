@@ -30,6 +30,23 @@ namespace mars {
             MARS_INLINE_FUNCTION static auto f1(const Point &p) -> T { return p[0] * (1.0 - p[1]); }
             MARS_INLINE_FUNCTION static auto f2(const Point &p) -> T { return p[0] * p[1]; }
             MARS_INLINE_FUNCTION static auto f3(const Point &p) -> T { return (1.0 - p[0]) * p[1]; }
+
+            MARS_INLINE_FUNCTION static Real f(const int i, Vector &p) {
+                switch (i) {
+                    case 0: {
+                        return (1.0 - p[0]) * (1.0 - p[1]);
+                    }
+                    case 1: {
+                        return p[0] * (1.0 - p[1]);
+                    }
+                    case 2: {
+                        return p[0] * p[1];
+                    }
+                    case 3: {
+                        return (1.0 - p[0]) * p[1];
+                    }
+                }
+            }
         };
 
         class Grad final {
