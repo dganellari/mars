@@ -252,17 +252,16 @@ namespace mars {
                                Integer p)
                 : rank_boundary(rb), sfc_to_locally_owned(sl), map(m), proc(p) {}
 
-            /* void corner_predicate(const Integer elem_sfc_proc,
+            /* void corner_predicate(const Mesh *mesh,
+                                  const Integer i,
                                   const Integer sfc,
                                   const Integer max_proc,
-                                  Integer one_ring_owners[simplex_type::ElemType],
                                   std::true_type) const {} */
 
             void corner_predicate(const Mesh *mesh,
                                   const Integer i,
                                   const Integer sfc,
                                   const Integer max_proc,
-                                  Integer one_ring_owners[simplex_type::ElemType],
                                   std::false_type) const {
                 const Integer ghost_proc =
                     find_owner_processor(mesh->get_view_scan_boundary(), i, 1, proc);
@@ -277,7 +276,7 @@ namespace mars {
             MARS_INLINE_FUNCTION
             void operator()(const Mesh* mesh, const Integer i, const Integer dof_sfc, const Integer max_proc,
                     Integer oro[simplex_type::ElemType]) const {
-                corner_predicate(mesh, i, dof_sfc, max_proc, oro, std::integral_constant<bool, Ghost>{});
+                corner_predicate(mesh, i, dof_sfc, max_proc, std::integral_constant<bool, Ghost>{});
             }
         };
 
@@ -366,13 +365,17 @@ namespace mars {
                 corner_iterate<BoundaryIter>(
                     sfc, mesh, i, CornerRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc));
 
-                FaceRankBoundary<BoundaryIter> fp =
-                    FaceRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc);
-                face_iterate<BoundaryIter, 0>(sfc, mesh, i, fp);
-                face_iterate<BoundaryIter, 1>(sfc, mesh, i, fp);
+                if (face_nodes > 0) {
+                    FaceRankBoundary<BoundaryIter> fp =
+                        FaceRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc);
+                    face_iterate<BoundaryIter, 0>(sfc, mesh, i, fp);
+                    face_iterate<BoundaryIter, 1>(sfc, mesh, i, fp);
+                }
 
-                volume_iterate<BoundaryIter>(
-                    sfc, mesh, i, VolumeRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc));
+                if (volume_nodes > 0) {
+                    volume_iterate<BoundaryIter>(
+                        sfc, mesh, i, VolumeRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc));
+                }
                 // TODO: 3D part
             }
 
@@ -523,6 +526,8 @@ namespace mars {
                     global_predicate(sfc) = 1;
                 }
 
+                //is the one ring owners needed here? Maybe using max proc is enough?
+                //It will end up to be a cleaner code as well! FIXME
                 for (int k = 0; k < simplex_type::ElemType; k++) {
                     /* if the owner is strictly smaller than the larger should send some data to it */
                     const Integer oro = one_ring_owners[k];
@@ -721,12 +726,16 @@ namespace mars {
                     CornerPredicate<Ghost>(
                         local_predicate, global_predicate, nbh_proc_predicate_send, nbh_proc_predicate_recv, proc));
 
-                FacePredicate<Ghost> fp = FacePredicate<Ghost>(
-                    local_predicate, global_predicate, nbh_proc_predicate_send, nbh_proc_predicate_recv, proc);
-                face_iterate<Ghost, 0>(sfc, mesh, i, fp);
-                face_iterate<Ghost, 1>(sfc, mesh, i, fp);
+                if (face_nodes > 0) {
+                    FacePredicate<Ghost> fp = FacePredicate<Ghost>(
+                        local_predicate, global_predicate, nbh_proc_predicate_send, nbh_proc_predicate_recv, proc);
+                    face_iterate<Ghost, 0>(sfc, mesh, i, fp);
+                    face_iterate<Ghost, 1>(sfc, mesh, i, fp);
+                }
 
-                volume_iterate<Ghost>(sfc, mesh, i, VolumePredicate<Ghost>(local_predicate, global_predicate));
+                if (volume_nodes > 0) {
+                    volume_iterate<Ghost>(sfc, mesh, i, VolumePredicate<Ghost>(local_predicate, global_predicate));
+                }
                 // TODO: 3D part
             }
         };
