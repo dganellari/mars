@@ -10,7 +10,7 @@
 #include "mars_identity_operator.hpp"
 #include "mars_simplex_laplacian.hpp"
 #include "mars_simplex_quadrature.hpp"
-#include "mars_tensor_laplacian.hpp"
+#include "mars_tensor_spacetime.hpp"
 #include "mars_umesh_operator.hpp"
 
 namespace mars {
@@ -23,37 +23,82 @@ namespace mars {
         static constexpr int Dim = Mesh::Dim;
         static constexpr int NFuns = Mesh::Dim + 1;
 
+        // template <class Quadrature>
+        // MARS_INLINE_FUNCTION static void one_thread_eval_diag(const Real *J_inv,
+        //                                                       const Real &det_J,
+        //                                                       const Quadrature &q,
+        //                                                       Real *val) {
+        //     Real g_ref[Dim], g_fe[Dim];
+        //     const Real dx_P1 = det_J / NFuns;
+        //     const Real dx_P0 = det_J;
+
+        //     for (int d = 0; d < Dim; ++d) {
+        //         g_ref[d] = -1;
+        //     }
+
+        //     Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g_fe);
+
+        //     Real u_t = g_fe[Dim - 1];
+        //     val[0] = u_t * dx_P1 + Algebra<Dim - 1>::dot(g_fe, g_fe) * dx_P0;
+
+        //     for (int d = 0; d < Dim; ++d) {
+        //         g_ref[d] = 0;
+        //     }
+
+        //     for (int d = 0; d < Dim; ++d) {
+        //         g_ref[d] = 1;
+
+        //         Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g_fe);
+
+        //         u_t = g_fe[Dim - 1];
+        //         val[d + 1] = u_t * dx_P1 + Algebra<Dim - 1>::dot(g_fe, g_fe) * dx_P0;
+
+        //         g_ref[d] = 0;
+        //     }
+
+        //     for (int d = 0; d < Dim; ++d) {
+        //         std::cout << val[d] << std::endl;
+        //     }
+        // }
+
         template <class Quadrature>
         MARS_INLINE_FUNCTION static void one_thread_eval_diag(const Real *J_inv,
                                                               const Real &det_J,
                                                               const Quadrature &q,
                                                               Real *val) {
-            Real g_ref[Dim], g_fe[Dim];
-            const Real dx_P1 = det_J / NFuns;
-            const Real dx_P0 = det_J;
+            // assert(false);
 
-            for (int d = 0; d < Dim; ++d) {
-                g_ref[d] = -1;
+            Real gi[Dim], g[Dim], g_x[Dim - 1], gj[Dim];
+            Real pk[Dim];
+
+            auto &q_points = q.points;
+            auto &q_weights = q.weights;
+            int n_qp = 3;  // q.n_points();
+
+            for (int i = 0; i < NFuns; ++i) {
+                val[i] = 0.0;
             }
 
-            Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g_fe);
+            for (int k = 0; k < n_qp; ++k) {
+                for (int d = 0; d < Dim; ++d) {
+                    pk[d] = q_points(k, d);
+                }
+                // Separate time and space dimensions
 
-            Real u_t = g_fe[Dim - 1];
-            val[0] = u_t * dx_P1 + Algebra<Dim - 1>::dot(g_fe, g_fe) * dx_P0;
+                assert(det_J > 0.0);
+                const Real dx = det_J * q_weights(k) * 0.5;
+                for (int i = 0; i < NFuns; i++) {
+                    // for each dof get the local number
+                    FESimplex<Dim>::grad(i, J_inv, gi);
 
-            for (int d = 0; d < Dim; ++d) {
-                g_ref[d] = 0;
-            }
+                    Real g_t = gi[Dim - 1];
 
-            for (int d = 0; d < Dim; ++d) {
-                g_ref[d] = 1;
+                    for (int d = 0; d < Dim - 1; ++d) {
+                        g_x[d] = gi[d];
+                    }
 
-                Algebra<Dim>::m_t_v_mult(J_inv, g_ref, g_fe);
-
-                u_t = g_fe[Dim - 1];
-                val[d + 1] = u_t * dx_P1 + Algebra<Dim - 1>::dot(g_fe, g_fe) * dx_P0;
-
-                g_ref[d] = 0;
+                    val[i] += (g_t * FESimplex<Dim>::fun(i, pk) + Algebra<Dim - 1>::dot(g_x, g_x)) * dx;
+                }
             }
         }
 
@@ -152,7 +197,8 @@ namespace mars {
         using Super = mars::UMeshOperator<Mesh>;
 
         static constexpr int Dim = Mesh::Dim;
-        static constexpr int NFuns = Mesh::Dim + 1;
+        // static constexpr int NFuns = Mesh::Dim + 1;
+        static constexpr int NFuns = Elem::NNodes;
 
         UMeshSTHeatEquation(Mesh &mesh) : Super(mesh) {}
 
@@ -186,6 +232,8 @@ namespace mars {
 
             auto quad = quad_;
 
+            SpaceTime<Elem> st;
+
             Kokkos::parallel_for(
                 "UMeshSTHeatEquation::apply", mesh.n_elements(), MARS_LAMBDA(const Integer i) {
                     Real u[NFuns];
@@ -204,7 +252,11 @@ namespace mars {
                         u[k] = x(idx[k]);
                     }
 
+                    /* Uncomment this for Simplex*/
                     SpaceTimeMixed<Mesh>::one_thread_eval(J_inv_e, det_J(i), quad, u, Au);
+
+                    /* Uncomment this for Quads*/
+                    // st.one_thread_eval(J_inv_e, det_J(i), u, Au);
 
                     for (Integer k = 0; k < NFuns; ++k) {
                         Kokkos::atomic_add(&op_x(idx[k]), Au[k]);
@@ -230,6 +282,8 @@ namespace mars {
 
                 auto quad = quad_;
 
+                SpaceTime<Elem> st;
+
                 Kokkos::parallel_for(
                     "JacobiPreconditioner::init", mesh.n_elements(), MARS_LAMBDA(const Integer i) {
                         Integer idx[NFuns];
@@ -250,17 +304,25 @@ namespace mars {
                             idx[k] = elems(i, k);
                         }
 
+                        /* Uncomment this for Simplex*/
                         SpaceTimeMixed<Mesh>::one_thread_eval_diag(J_inv_e, det_J_e, quad, val);
+
+                        /* Uncomment this for Quads*/
+                        // st.one_thread_eval_diag(J_inv_e, det_J_e, val);
 
                         for (Integer k = 0; k < NFuns; ++k) {
                             assert(val[k] != 0.0);
-                            Real inv_val = 1. / val[k];
-
+                            Real inv_val = val[k];
                             assert(inv_val == inv_val);
+                            // inv_diag(idx[k]) += inv_val;
 
                             Kokkos::atomic_add(&inv_diag(idx[k]), inv_val);
                         }
                     });
+
+                Kokkos::parallel_for(
+
+                    mesh.n_nodes(), MARS_LAMBDA(const Integer d) { inv_diag(d) = 1. / inv_diag(d); });
 
                 this->inv_diag_ = inv_diag;
             }
