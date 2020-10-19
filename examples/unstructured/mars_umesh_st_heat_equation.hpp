@@ -322,10 +322,7 @@ namespace mars {
 
                 Kokkos::parallel_for(
 
-                    mesh.n_nodes(), MARS_LAMBDA(const Integer d) {
-                        std::cout << d << std::endl;
-                        inv_diag(d) = 1. / inv_diag(d);
-                    });
+                    mesh.n_nodes(), MARS_LAMBDA(const Integer d) { inv_diag(d) = 1. / inv_diag(d); });
 
                 this->inv_diag_ = inv_diag;
             }
