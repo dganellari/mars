@@ -621,8 +621,6 @@ namespace mars {
                                 const Integer sfc,
                                 const Integer owner_proc,
                                 std::true_type) const {
-                local_predicate(sfc) = 1;
-
                 Integer elem_sfc_proc =
                     find_owner_processor(mesh->get_view_gp(), mesh->get_ghost_sfc(i), 2, mesh->get_proc());
 
