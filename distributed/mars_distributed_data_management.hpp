@@ -246,19 +246,21 @@ namespace mars {
             ViewVectorType<Integer> map;
             Integer proc;
 
+            MARS_INLINE_FUNCTION
             CornerRankBoundary(ViewMatrixType<bool> rb,
                                ViewVectorType<Integer> sl,
                                ViewVectorType<Integer> m,
                                Integer p)
                 : rank_boundary(rb), sfc_to_locally_owned(sl), map(m), proc(p) {}
 
-            /* void corner_predicate(const Mesh *mesh,
+            /* void corner_rank_boundary(const Mesh *mesh,
                                   const Integer i,
                                   const Integer sfc,
                                   const Integer max_proc,
                                   std::true_type) const {} */
 
-            void corner_predicate(const Mesh *mesh,
+            MARS_INLINE_FUNCTION
+            void corner_rank_boundary(const Mesh *mesh,
                                   const Integer i,
                                   const Integer sfc,
                                   const Integer max_proc,
@@ -276,7 +278,7 @@ namespace mars {
             MARS_INLINE_FUNCTION
             void operator()(const Mesh* mesh, const Integer i, const Integer dof_sfc, const Integer max_proc,
                     Integer oro[simplex_type::ElemType]) const {
-                corner_predicate(mesh, i, dof_sfc, max_proc, std::integral_constant<bool, Ghost>{});
+                corner_rank_boundary(mesh, i, dof_sfc, max_proc, std::integral_constant<bool, Ghost>{});
             }
         };
 
@@ -288,18 +290,15 @@ namespace mars {
             ViewVectorType<Integer> map;
             Integer proc;
 
+            MARS_INLINE_FUNCTION
             FaceRankBoundary(ViewMatrixType<bool> rb,
                                ViewVectorType<Integer> sl,
                                ViewVectorType<Integer> m,
                                Integer p)
                 : rank_boundary(rb), sfc_to_locally_owned(sl), map(m), proc(p) {}
 
-            /* void face_predicate(const Integer elem_sfc_proc,
-                                const Integer sfc,
-                                const Integer owner_proc,
-                                std::true_type) const {}
- */
-            void face_predicate(const Mesh *mesh,
+            MARS_INLINE_FUNCTION
+            void face_rank_boundary(const Mesh *mesh,
                                 const Integer i,
                                 const Integer sfc,
                                 const Integer owner_proc,
@@ -316,7 +315,7 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void operator()(const Mesh* mesh, const Integer i, const Integer dof_sfc, const Integer owner_proc) const {
-                face_predicate(mesh, i, dof_sfc, owner_proc, std::integral_constant<bool, Ghost>{});
+                face_rank_boundary(mesh, i, dof_sfc, owner_proc, std::integral_constant<bool, Ghost>{});
             }
         };
 
@@ -327,18 +326,15 @@ namespace mars {
             ViewVectorType<Integer> map;
             Integer proc;
 
+            MARS_INLINE_FUNCTION
             VolumeRankBoundary(ViewMatrixType<bool> rb,
                                ViewVectorType<Integer> sl,
                                ViewVectorType<Integer> m,
                                Integer p)
                 : rank_boundary(rb), sfc_to_locally_owned(sl), map(m), proc(p) {}
 
-            /* void face_predicate(const Integer elem_sfc_proc,
-                                const Integer sfc,
-                                const Integer owner_proc,
-                                std::true_type) const {}
- */
-            void volume_predicate(const Mesh *mesh,
+            MARS_INLINE_FUNCTION
+            void volume_rank_boundary(const Mesh *mesh,
                                 const Integer i,
                                 const Integer sfc,
                                 std::false_type) const {
@@ -350,7 +346,7 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void operator()(const Mesh* mesh, const Integer i, const Integer dof_sfc) const {
-                volume_predicate(mesh, i, dof_sfc, std::integral_constant<bool, Ghost>{});
+                volume_rank_boundary(mesh, i, dof_sfc, std::integral_constant<bool, Ghost>{});
             }
         };
 
@@ -489,6 +485,7 @@ namespace mars {
             ViewVectorType<bool> nbh_proc_predicate_recv;
             Integer proc;
 
+            MARS_INLINE_FUNCTION
             CornerPredicate(ViewVectorType<bool> lp,
                             ViewVectorType<bool> gp,
                             ViewVectorType<bool> npps,
@@ -500,6 +497,7 @@ namespace mars {
                   nbh_proc_predicate_recv(nppr),
                   proc(p) {}
 
+            MARS_INLINE_FUNCTION
             void corner_predicate(const Mesh *mesh,
                                   const Integer i,
                                   const Integer sfc,
@@ -514,6 +512,7 @@ namespace mars {
                 }
             }
 
+            MARS_INLINE_FUNCTION
             void corner_predicate(const Mesh *mesh,
                                   const Integer i,
                                   const Integer sfc,
@@ -521,6 +520,7 @@ namespace mars {
                                   Integer one_ring_owners[simplex_type::ElemType],
                                   std::false_type) const {
                 local_predicate(sfc) = 1;
+
 
                 if (proc >= max_proc) {
                     global_predicate(sfc) = 1;
@@ -569,12 +569,15 @@ namespace mars {
             ViewVectorType<bool> local_predicate;
             ViewVectorType<bool> global_predicate;
 
+            MARS_INLINE_FUNCTION
             VolumePredicate(ViewVectorType<bool> lp, ViewVectorType<bool> gp)
                 : local_predicate(lp), global_predicate(gp) {}
 
+            MARS_INLINE_FUNCTION
             void volume_predicate(const Integer sfc, std::true_type) const {
                 local_predicate(sfc) = 1; }
 
+            MARS_INLINE_FUNCTION
             void volume_predicate(const Integer sfc, std::false_type) const {
                 local_predicate(sfc) = 1;
                 global_predicate(sfc) = 1;
@@ -610,6 +613,7 @@ namespace mars {
             ViewVectorType<bool> nbh_proc_predicate_recv;
             Integer proc;
 
+            MARS_INLINE_FUNCTION
             FacePredicate(ViewVectorType<bool> lp,
                           ViewVectorType<bool> gp,
                           ViewVectorType<bool> npps,
@@ -621,6 +625,7 @@ namespace mars {
                   nbh_proc_predicate_recv(nppr),
                   proc(p) {}
 
+            MARS_INLINE_FUNCTION
             void face_predicate(const Mesh *mesh,
                                 const Integer i,
                                 const Integer sfc,
@@ -635,6 +640,7 @@ namespace mars {
                 }
             }
 
+            MARS_INLINE_FUNCTION
             void face_predicate(const Mesh *mesh,
                                 const Integer i,
                                 const Integer sfc,
@@ -717,7 +723,6 @@ namespace mars {
             MARS_INLINE_FUNCTION
             void operator()(const Integer i) const {
                 const Integer sfc = get_sfc_ghost_or_local<Ghost>(i);
-
                 const Integer proc = mesh->get_proc();
                 corner_iterate<Ghost>(
                     sfc,
