@@ -25,7 +25,9 @@ namespace mars {
 
             auto &q_points = q.points;
             auto &q_weights = q.weights;
-            int n_qp = 3;  // q.n_points();
+            int n_qp = q.n_points();
+
+            std::cout << "n_points -> " << n_qp << std::endl;
 
             for (int i = 0; i < NFuns; ++i) {
                 val[i] = 0.0;

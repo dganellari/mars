@@ -29,8 +29,8 @@ namespace mars {
         ViewQPoints<Real, Dim + 1, 2> points;
         ViewQWeights<Real, Dim + 1> weights;
 
-        MARS_INLINE_FUNCTION static constexpr int n_points() { return 6; }
-        MARS_INLINE_FUNCTION static constexpr int dim() { return 2; }
+        MARS_INLINE_FUNCTION static constexpr int n_points() { return Dim + 1; }
+        MARS_INLINE_FUNCTION static constexpr int dim() { return Dim; }
 
         SimplexQuadrature() : points("q_points"), weights("q_weights") {}
 
