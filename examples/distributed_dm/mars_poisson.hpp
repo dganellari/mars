@@ -112,8 +112,7 @@ namespace mars {
                 const Integer global_dof = dm.local_to_global(i);
 
                 double point[3];
-                get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, dof.get_XDim(), dof.get_YDim(), dof.get_ZDim());
-
+                dm.get_dof_coordinates_from_sfc<Type>(sfc_elem, point);
                 printf("dof: %li - gdof: %li --- (%lf, %lf) - rank: %i\n", i, global_dof, point[0], point[1], rank);
             });
     }
@@ -209,7 +208,7 @@ namespace mars {
         VectorReal rhs("rhs", locally_owned_dof_size);
 
         if (proc_num == 0) {
-            std::cout << "Init PoissonOperator..." << std::flush;
+            std::cout << "Init PoissonOperator..." << std::endl;
         }
 
         PoissonOperator<DMQ2, INPUT, OUTPUT, RHSD> pop(context, dm);
