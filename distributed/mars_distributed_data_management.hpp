@@ -126,10 +126,7 @@ namespace mars {
         }
 
         template <Integer part, Integer Type>
-        static MARS_INLINE_FUNCTION Integer enum_face_node(const ViewVectorType<Integer> &sfc_to_local,
-                                                           const Octant &face_cornerA,
-                                                           const int j,
-                                                           const int dir) {
+        static MARS_INLINE_FUNCTION Integer sfc_face_node(const Octant &face_cornerA, const int j, const int dir) {
             int sign = (part == 1) ? -1 : 1;
             // dir is 1 for y direction and 0 for x direction
             Octant o;
@@ -143,7 +140,15 @@ namespace mars {
             }
             Integer sfc = get_sfc_from_octant<Type>(o);
 
-            return sfc_to_local(sfc);
+            return sfc;
+        }
+
+        template <Integer part, Integer Type>
+        static MARS_INLINE_FUNCTION Integer enum_face_node(const ViewVectorType<Integer> &sfc_to_local,
+                                                           const Octant &face_cornerA,
+                                                           const int j,
+                                                           const int dir) {
+            return sfc_to_local(sfc_face_node<part, Type>(face_cornerA, j, dir);
         }
 
         template <Integer Type, Integer ManifoldDim>
@@ -667,6 +672,8 @@ namespace mars {
             }
         };
 
+        //careful: do not use this function for face iteration when expensive operations are involved. Useful mainly for predicate builder.
+        //instead use the locally_owned_face_dof array to iterate over face dof sfcs.
         template <bool Ghost, Integer dir, typename F>
         static MARS_INLINE_FUNCTION void face_iterate(const Integer sfc, const Mesh *mesh, const Integer index, F f) {
             // side  0 means origin side and 1 destination side.

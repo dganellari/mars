@@ -55,8 +55,12 @@ using ViewVectorHost = Kokkos::View<T*, Kokkos::LayoutRight, KokkosHostSpace>;
 template<typename T>
 using ViewVectorType = Kokkos::View<T*,KokkosLayout,KokkosSpace>;
 
+
 template<typename T>
 using ViewMatrixType = Kokkos::View<T**,KokkosLayout,KokkosSpace>;
+
+template<typename T, Integer yDim_>
+using ViewMatrixTypeRC = Kokkos::View<T*[yDim_],KokkosLayout,KokkosSpace>;
 
 template<typename T, Integer YDim_>
 using ViewMatrixTexture = Kokkos::View<T*[YDim_],KokkosLayout,KokkosSpace,Kokkos::MemoryTraits<Kokkos::RandomAccess>>;
