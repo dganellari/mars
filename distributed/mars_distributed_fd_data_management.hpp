@@ -20,6 +20,8 @@ namespace mars {
         template <Integer idx>
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
+        using SuperDM = DM<Mesh, degree, T...>;
+
         static constexpr Integer Dim = Mesh::Dim;
         static constexpr Integer ManifoldDim = Mesh::ManifoldDim;
 
@@ -29,8 +31,7 @@ namespace mars {
         static constexpr Integer elem_nodes = (degree + 1) * (degree + 1);
 
         MARS_INLINE_FUNCTION
-        FDDM(Mesh *mesh, const context &c) : DM(mesh, c) {}
-
+        FDDM(Mesh *mesh, const context &c) : DM<Mesh, degree, T...>(mesh, c) {}
 
         /* template <bool Ghost>
         struct VolumeRankBoundary {
@@ -64,17 +65,14 @@ namespace mars {
         };
  */
         template <bool Ghost>
-        struct FaceOwnedDof{
+        struct FaceOwnedDof {
             ViewVectorType<bool> predicate;
             ViewVectorType<Integer> dir;
             ViewVectorType<Integer> sfc_to_local;
             Integer proc;
 
             MARS_INLINE_FUNCTION
-            FaceOwnedDof(ViewVectorType<bool> rp,
-                               ViewVectorType<Integer> d,
-                               ViewVectorType<Integer> l,
-                               Integer p)
+            FaceOwnedDof(ViewVectorType<bool> rp, ViewVectorType<Integer> d, ViewVectorType<Integer> l, Integer p)
                 : predicate(rp), dir(d), sfc_to_local(l), proc(p) {}
 
             MARS_INLINE_FUNCTION
@@ -84,7 +82,6 @@ namespace mars {
                                 const Integer owner_proc,
                                 const Integer d,
                                 std::false_type) const {
-
                 if (proc >= owner_proc) {
                     Integer index = sfc_to_local(sfc);
                     predicate(index) = 1;
@@ -101,40 +98,42 @@ namespace mars {
                 face_owned_dof(mesh, i, dof_sfc, owner_proc, dir, std::integral_constant<bool, Ghost>{});
             }
         };
-/* 
-        template <bool Ghost, Integer part, typename F>
-        static MARS_INLINE_FUNCTION void face_dof_iterate(const Octant &oc) const {
-            [>Octant oc = mesh->get_octant(sfc_index);<]
-            // side  0 means origin side and 1 destination side.
-            for (int dir = 0; dir < 2; ++dir) {
-                Octant face_cornerA = enum_face_corner<part>(oc, dir);
+        /*
+                template <bool Ghost, Integer part, typename F>
+                static MARS_INLINE_FUNCTION void face_dof_iterate(const Octant &oc) const {
+                    [>Octant oc = mesh->get_octant(sfc_index);<]
+                    // side  0 means origin side and 1 destination side.
+                    for (int dir = 0; dir < 2; ++dir) {
+                        Octant face_cornerA = enum_face_corner<part>(oc, dir);
 
-                for (int j = 0; j < face_nodes; j++) {
-                    Integer dof_sfc = sfc_face_node<part, simplex_type::ElemType>(face_cornerA, j, dir);
-                    f(dof_sfc, dir);
-                }
-            }
-        } */
+                        for (int j = 0; j < face_nodes; j++) {
+                            Integer dof_sfc = sfc_face_node<part, simplex_type::ElemType>(face_cornerA, j, dir);
+                            f(dof_sfc, dir);
+                        }
+                    }
+                } */
 
         template <bool Ghost, Integer dir, typename F>
-        static MARS_INLINE_FUNCTION void face_dof_iterate(const Integer sfc, const Mesh *mesh, const Integer index, F f) {
+        static MARS_INLINE_FUNCTION void face_dof_iterate(const Integer sfc,
+                                                          const Mesh *mesh,
+                                                          const Integer index,
+                                                          F f) {
             // side  0 means origin side and 1 destination side.
             Octant oc = mesh->octant_from_sfc(sfc);
 
             for (int side = 0; side < 2; ++side) {
                 Octant face_cornerA;
-                Integer owner_proc = process_face_corner<simplex_type::ElemType, dir>
-                    (face_cornerA, mesh, side, oc);
+                Integer owner_proc =
+                    SuperDM::template process_face_corner<simplex_type::ElemType, dir>(face_cornerA, mesh, side, oc);
 
                 for (int j = 0; j < face_nodes; j++) {
-                    Integer dof_sfc = process_face_node<simplex_type::ElemType, dir>
-                        (face_cornerA, j);
+                    Integer dof_sfc = SuperDM::template process_face_node<simplex_type::ElemType, dir>(face_cornerA, j);
                     f(mesh, index, dof_sfc, owner_proc, dir);
                 }
             }
         }
 
-       struct IdentifyFaceDofs{
+        struct IdentifyFaceDofs {
             MARS_INLINE_FUNCTION
             void operator()(const Integer i) const {
                 const Integer sfc = mesh->get_sfc(i);
@@ -142,10 +141,10 @@ namespace mars {
 
                 constexpr bool BoundaryIter = false;
                 if (face_nodes > 0) {
-                    FaceOwnedDof<BoundaryIter> fp =
+                    FaceOwnedDof<BoundaryIter> fo =
                         FaceOwnedDof<BoundaryIter>(face_predicate, face_dir, sfc_to_local, proc);
-                    face_iterate<BoundaryIter, 0>(sfc, mesh, i, fp);
-                    face_iterate<BoundaryIter, 1>(sfc, mesh, i, fp);
+                    face_dof_iterate<BoundaryIter, 0>(sfc, mesh, i, fo);
+                    face_dof_iterate<BoundaryIter, 1>(sfc, mesh, i, fo);
                 }
 
                 /* if (volume_nodes > 0) {
@@ -164,30 +163,27 @@ namespace mars {
             ViewVectorType<Integer> sfc_to_local;
         };
 
-
-        void build_locally_owned_face_dofs(ViewVectorType<Integer> &scan_boundary,
-                                     ViewVectorType<Integer> &boundary_lsfc_index,
-                                     ViewVectorType<Integer> &sender_ranks_scan,
-                                     const Integer nbh_rank_size) {
+        void build_locally_owned_face_dofs() {
             using namespace Kokkos;
 
-            const Integer size = data.get_host_mesh()->get_chunk_size();
+            const Integer size = SuperDM::get_data().get_host_mesh()->get_chunk_size();
 
-            Integer xDim = data.get_host_mesh()->get_XDim();
-            Integer yDim = data.get_host_mesh()->get_YDim();
-            Integer zDim = data.get_host_mesh()->get_ZDim();
+            Integer xDim = SuperDM::get_data().get_host_mesh()->get_XDim();
+            Integer yDim = SuperDM::get_data().get_host_mesh()->get_YDim();
+            Integer zDim = SuperDM::get_data().get_host_mesh()->get_ZDim();
 
-            const Integer local_size = local_dof_enum.get_elem_size();
+            const Integer local_size = SuperDM::get_local_dof_enum().get_elem_size();
 
-            ViewMatrixType<bool> face_dof_predicate("stencil_predicate", local_size);
-            ViewMatrixType<Integer> face_dof_dir("stencil_predicate", local_size);
+            ViewVectorType<bool> face_dof_predicate("stencil_predicate", local_size);
+            ViewVectorType<Integer> face_dof_dir("stencil_predicate", local_size);
             /* generate the sfc for the local and global dofs containing the generation locally
             for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
-            Kokkos::parallel_for(
-                "identify_face_dofs",
-                size,
-                IdentifyFaceDofs(
-                    data.get_mesh(), face_dof_predicate, face_dof_dir, local_dof_enum.get_view_sfc_to_local()));
+            Kokkos::parallel_for("identify_face_dofs",
+                                 size,
+                                 IdentifyFaceDofs(SuperDM::get_data().get_mesh(),
+                                                  face_dof_predicate,
+                                                  face_dof_dir,
+                                                  SuperDM::get_local_dof_enum().get_view_sfc_to_local()));
 
             /* perform a scan for each row with the sum at the end for each rank */
             ViewVectorType<Integer> face_dof_scan("face_dof_scan", local_size + 1);
@@ -204,11 +200,12 @@ namespace mars {
                     printf(" scan boundary: %i-%li\n", i, scan_boundary(i));
                 }); */
 
-            ViewMatrixTypeRC<Integer, 2> lofd = locally_owned_face_dofs;;
+            ViewMatrixTypeRC<Integer, 2> lofd = locally_owned_face_dofs;
+            ;
             /* We use this strategy so that the compacted elements from the local_sfc
             would still be sorted and unique. */
-            parallel_for(local_size,
-                KOKKOS_LAMBDA(const Integer i) {
+            parallel_for(
+                local_size, KOKKOS_LAMBDA(const Integer i) {
                     if (face_dof_predicate(i) == 1) {
                         Integer index = face_dof_scan(i);
                         lofd(index, 0) = i;
@@ -227,20 +224,24 @@ namespace mars {
                 }); */
         }
 
-        void enumerate_dofs(const context &context) {
-            this->enumerate_dofs(context);
+        virtual void enumerate_dofs(const context &context) override {
+            SuperDM::enumerate_dofs(context);
             build_locally_owned_face_dofs();
         }
-
 
         MARS_INLINE_FUNCTION
         const ViewMatrixTypeRC<Integer, 2> get_locally_owned_face_dofs() const { return locally_owned_face_dofs; }
 
-    private:
+        MARS_INLINE_FUNCTION
+        const Integer get_locally_owned_face_dof(const Integer i) const { return locally_owned_face_dofs(i, 0); }
 
+        MARS_INLINE_FUNCTION
+        const Integer get_locally_owned_face_dof_dir(const Integer i) const { return locally_owned_face_dofs(i, 1); }
+
+    private:
         // local enumeration of the dofs topologically foreach element
         ViewMatrixType<Integer> elem_dof_enum;
-        Stencil<Dim, degree> stencil;
+        /* Stencil<Dim, degree> stencil; */
         ViewMatrixTypeRC<Integer, 2> locally_owned_face_dofs;
     };
 
