@@ -16,6 +16,8 @@ target_include_directories(mars_examples
                            PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/unstructured)
 target_include_directories(mars_examples
                            PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/distributed_dm)
+target_include_directories(mars_examples
+                           PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/distributed_dm/staggered)
 
 foreach(MODULE ${MARS_EXAMPLES})
     target_include_directories(mars_examples BEFORE PUBLIC ${MODULE})

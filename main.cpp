@@ -49,6 +49,7 @@
 #include "mars_par_bisection.hpp"
 #include "mars_par_mesh.hpp"
 #include "mars_poisson.hpp"
+#include "mars_fd_poisson.hpp"
 #include "mars_test_mpi.hpp"
 #endif  // WITH_MPI
 #include <chrono>
@@ -2376,6 +2377,10 @@ int main(int argc, char *argv[]) {
 #ifdef WITH_MPI
     apps["matrix_free_poisson2D"] = [=]() {
         poisson_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(level);
+    };
+
+    apps["stag_poisson2D"] = [=]() {
+        staggered_poisson_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(level);
     };
 #endif
 #endif  // WITH_KOKKOS

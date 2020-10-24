@@ -148,7 +148,7 @@ namespace mars {
                                                            const Octant &face_cornerA,
                                                            const int j,
                                                            const int dir) {
-            return sfc_to_local(sfc_face_node<part, Type>(face_cornerA, j, dir);
+            return sfc_to_local(sfc_face_node<part, Type>(face_cornerA, j, dir));
         }
 
         template <Integer Type, Integer ManifoldDim>
@@ -1245,7 +1245,7 @@ namespace mars {
                                  EnumLocalDofs(data.get_mesh(), elem_dof_enum, local_dof_enum.get_view_sfc_to_local()));
         }
 
-        void enumerate_dofs(const context &context) {
+        virtual void enumerate_dofs(const context &context) {
             const Integer rank_size = num_ranks(context);
             const int proc_num = rank(context);
 
