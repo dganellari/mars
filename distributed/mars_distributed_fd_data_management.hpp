@@ -64,6 +64,29 @@ namespace mars {
             }
         };
  */
+
+        template <bool Ghost>
+        struct VolumeOwnedDof {
+            ViewVectorType<bool> predicate;
+            ViewVectorType<Integer> sfc_to_local;
+            Integer proc;
+
+            MARS_INLINE_FUNCTION
+            VolumeOwnedDof(ViewVectorType<bool> rp, ViewVectorType<Integer> l, Integer p)
+                : predicate(rp), sfc_to_local(l), proc(p) {}
+
+            MARS_INLINE_FUNCTION
+            void volume_owned_dof(const Mesh *mesh, const Integer i, const Integer sfc, std::false_type) const {
+                Integer index = sfc_to_local(sfc);
+                predicate(index) = 1;
+            }
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Mesh *mesh, const Integer i, const Integer dof_sfc) const {
+                volume_owned_dof(mesh, i, dof_sfc, std::integral_constant<bool, Ghost>{});
+            }
+        };
+
         template <bool Ghost>
         struct FaceOwnedDof {
             ViewVectorType<bool> predicate;
@@ -147,18 +170,19 @@ namespace mars {
                     face_dof_iterate<BoundaryIter, 1>(sfc, mesh, i, fo);
                 }
 
-                /* if (volume_nodes > 0) {
-                    volume_iterate<BoundaryIter>(
-                        sfc, mesh, i, VolumeRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc));
-                } */
+                if (volume_nodes > 0) {
+                    SuperDM::template volume_iterate<BoundaryIter>(
+                        sfc, mesh, i, VolumeOwnedDof<BoundaryIter>(volume_predicate, sfc_to_local, proc));
+                }
                 // TODO: 3D part
             }
 
-            IdentifyFaceDofs(Mesh *m, ViewVectorType<bool> sp, ViewVectorType<Integer> sd, ViewVectorType<Integer> sl)
-                : mesh(m), face_predicate(sp), face_dir(sd), sfc_to_local(sl) {}
+            IdentifyFaceDofs(Mesh *m, ViewVectorType<bool> sp, ViewVectorType<bool> vp, ViewVectorType<Integer> sd, ViewVectorType<Integer> sl)
+                : mesh(m), face_predicate(sp), volume_predicate(vp), face_dir(sd), sfc_to_local(sl) {}
 
             Mesh *mesh;
             ViewVectorType<bool> face_predicate;
+            ViewVectorType<bool> volume_predicate;
             ViewVectorType<Integer> face_dir;
             ViewVectorType<Integer> sfc_to_local;
         };
@@ -174,36 +198,46 @@ namespace mars {
 
             const Integer local_size = SuperDM::get_local_dof_enum().get_elem_size();
 
-            ViewVectorType<bool> face_dof_predicate("stencil_predicate", local_size);
-            ViewVectorType<Integer> face_dof_dir("stencil_predicate", local_size);
+            ViewVectorType<bool> volume_dof_predicate("volume_predicate", local_size);
+
+            ViewVectorType<bool> face_dof_predicate("face_predicate", local_size);
+            ViewVectorType<Integer> face_dof_dir("face_dir_predicate", local_size);
             /* generate the sfc for the local and global dofs containing the generation locally
             for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
             Kokkos::parallel_for("identify_face_dofs",
                                  size,
                                  IdentifyFaceDofs(SuperDM::get_data().get_mesh(),
                                                   face_dof_predicate,
+                                                  volume_dof_predicate,
                                                   face_dof_dir,
                                                   SuperDM::get_local_dof_enum().get_view_sfc_to_local()));
 
-            /* perform a scan for each row with the sum at the end for each rank */
+            /* perform a scan on the face_dof_predicate*/
             ViewVectorType<Integer> face_dof_scan("face_dof_scan", local_size + 1);
             incl_excl_scan(0, local_size, face_dof_predicate, face_dof_scan);
 
-            auto index_subview = subview(face_dof_scan, local_size);
-            auto h_ic = create_mirror_view(index_subview);
+            auto face_subview = subview(face_dof_scan, local_size);
+            auto h_fs = create_mirror_view(face_subview);
             // Deep copy device view to host view.
-            deep_copy(h_ic, index_subview);
+            deep_copy(h_fs, face_subview);
 
-            locally_owned_face_dofs = ViewMatrixTypeRC<Integer, 2>("locally_owned_face_dofs", h_ic());
-            /*   parallel_for(
-                "print scan", rank_size + 1, KOKKOS_LAMBDA(const int i) {
-                    printf(" scan boundary: %i-%li\n", i, scan_boundary(i));
-                }); */
+            locally_owned_face_dofs = ViewMatrixTypeRC<Integer, 2>("locally_owned_face_dofs", h_fs());
+
+            /* perform a scan on the volume dof predicate*/
+            ViewVectorType<Integer> volume_dof_scan("volume_dof_scan", local_size + 1);
+            incl_excl_scan(0, local_size, volume_dof_predicate, volume_dof_scan);
+
+            auto vol_subview = subview(volume_dof_scan, local_size);
+            auto h_vs = create_mirror_view(vol_subview);
+            // Deep copy device view to host view.
+            deep_copy(h_vs, vol_subview);
+
+            locally_owned_volume_dofs = ViewVectorType<Integer>("locally_owned_volume_dofs", h_vs());
 
             ViewMatrixTypeRC<Integer, 2> lofd = locally_owned_face_dofs;
-            ;
-            /* We use this strategy so that the compacted elements from the local_sfc
-            would still be sorted and unique. */
+            ViewVectorType<Integer> lovd = locally_owned_volume_dofs;
+
+            /* Compact the predicate into the volume and face dofs views */
             parallel_for(
                 local_size, KOKKOS_LAMBDA(const Integer i) {
                     if (face_dof_predicate(i) == 1) {
@@ -211,23 +245,24 @@ namespace mars {
                         lofd(index, 0) = i;
                         lofd(index, 1) = face_dof_dir(i);
                     }
+
+                    if(volume_dof_predicate(i) == 1 ) {
+                        Integer vindex = volume_dof_scan(i);
+                        lovd(vindex) = i;
+                    }
                 });
-
-            /* parallel_for(
-                "print set", h_ic(), KOKKOS_LAMBDA(const Integer i) {
-                    Integer proc = data.get_host_mesh()->get_proc();
-                    const Integer rank = find_owner_processor(scan_boundary, i, 1, proc);
-
-                    printf("i:%li - boundary_ : %i - %li (%li) - proc: %li - rank: %li\n", i, boundary_dofs_sfc(i),
-               boundary_lsfc_index(i), get_octant_from_sfc<simplex_type::ElemType>(boundary_dofs_sfc(i)).template
-               get_global_index<simplex_type::ElemType>(xDim, yDim), rank, proc);
-                }); */
         }
 
         virtual void enumerate_dofs(const context &context) override {
             SuperDM::enumerate_dofs(context);
             build_locally_owned_face_dofs();
         }
+
+        MARS_INLINE_FUNCTION
+        const ViewVectorType<Integer> get_locally_owned_volume_dofs() const { return locally_owned_volume_dofs; }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_locally_owned_volume_dof(const Integer i) const { return locally_owned_volume_dofs(i); }
 
         MARS_INLINE_FUNCTION
         const ViewMatrixTypeRC<Integer, 2> get_locally_owned_face_dofs() const { return locally_owned_face_dofs; }
@@ -243,6 +278,7 @@ namespace mars {
         ViewMatrixType<Integer> elem_dof_enum;
         /* Stencil<Dim, degree> stencil; */
         ViewMatrixTypeRC<Integer, 2> locally_owned_face_dofs;
+        ViewVectorType<Integer> locally_owned_volume_dofs;
     };
 
 }  // namespace mars
