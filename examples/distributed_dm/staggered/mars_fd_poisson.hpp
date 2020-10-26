@@ -76,6 +76,21 @@ namespace mars {
             });
     }
 
+    void print_volume_locally_owned(const SDM dm) {
+        const Integer size = dm.get_locally_owned_volume_dofs().extent(0);
+        Kokkos::parallel_for(
+            "for", size, MARS_LAMBDA(const int index) {
+                // go through all the dofs of the elem_index element
+                const Integer local_dof = dm.get_locally_owned_volume_dof(index);
+                // convert the local dof number to global dof number
+                Dof d = dm.local_to_global_dof(local_dof);
+
+                // do something. In this case we are printing.
+                printf(
+                    "lovd: i: %li, local: %li, global: %li, proc: %li\n", index, local_dof, d.get_gid(), d.get_proc());
+            });
+    }
+
     // print thlocal and the global number of the dof within each element.
     // the dof enumeration within eachlement is topological
     void print_elem_global_dof(const SDM dm) {
@@ -152,6 +167,7 @@ namespace mars {
         print_elem_global_dof(dm);
 
         print_face_locally_owned(dm);
+        print_volume_locally_owned(dm);
         /* print_ghost_dofs(dm); */
 
         /* using VectorReal = mars::ViewVectorType<Real>;
