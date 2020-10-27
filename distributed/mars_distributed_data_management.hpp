@@ -363,18 +363,18 @@ namespace mars {
                 const Integer proc = mesh->get_proc();
 
                 constexpr bool BoundaryIter = false;
-                corner_iterate<BoundaryIter>(
+                corner_iterate(
                     sfc, mesh, i, CornerRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc));
 
                 if (face_nodes > 0) {
                     FaceRankBoundary<BoundaryIter> fp =
                         FaceRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc);
-                    face_iterate<BoundaryIter, 0>(sfc, mesh, i, fp);
-                    face_iterate<BoundaryIter, 1>(sfc, mesh, i, fp);
+                    face_iterate<0>(sfc, mesh, i, fp);
+                    face_iterate<1>(sfc, mesh, i, fp);
                 }
 
                 if (volume_nodes > 0) {
-                    volume_iterate<BoundaryIter>(
+                    volume_iterate(
                         sfc, mesh, i, VolumeRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc));
                 }
                 // TODO: 3D part
@@ -550,7 +550,7 @@ namespace mars {
             }
         };
 
-        template <bool Ghost, typename F>
+        template <typename F>
         static MARS_INLINE_FUNCTION void
         corner_iterate(const Integer sfc, const Mesh *mesh, const Integer index, F f) {
             Octant oc = mesh->octant_from_sfc(sfc);
@@ -594,7 +594,7 @@ namespace mars {
             }
         };
 
-        template <bool Ghost, typename F>
+        template <typename F>
         static MARS_INLINE_FUNCTION void volume_iterate(const Integer sfc, const Mesh *mesh, const Integer index, F f) {
             Octant o;
             Octant oc = mesh->octant_from_sfc(sfc);
@@ -605,7 +605,6 @@ namespace mars {
                     o.y = degree * oc.y + j + 1;
                     Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
                     f(mesh, index, enc_oc);
-                    /* set_volume_predicate<Ghost>(global_predicate, enc_oc); */
                 }
             }
         }
@@ -674,7 +673,7 @@ namespace mars {
 
         //careful: do not use this function for face iteration when expensive operations are involved. Useful mainly for predicate builder.
         //instead use the locally_owned_face_dof array to iterate over face dof sfcs.
-        template <bool Ghost, Integer dir, typename F>
+        template <Integer dir, typename F>
         static MARS_INLINE_FUNCTION void face_iterate(const Integer sfc, const Mesh *mesh, const Integer index, F f) {
             // side  0 means origin side and 1 destination side.
             Octant oc = mesh->octant_from_sfc(sfc);
@@ -731,7 +730,7 @@ namespace mars {
             void operator()(const Integer i) const {
                 const Integer sfc = get_sfc_ghost_or_local<Ghost>(i);
                 const Integer proc = mesh->get_proc();
-                corner_iterate<Ghost>(
+                corner_iterate(
                     sfc,
                     mesh,
                     i,
@@ -741,12 +740,12 @@ namespace mars {
                 if (face_nodes > 0) {
                     FacePredicate<Ghost> fp = FacePredicate<Ghost>(
                         local_predicate, global_predicate, nbh_proc_predicate_send, nbh_proc_predicate_recv, proc);
-                    face_iterate<Ghost, 0>(sfc, mesh, i, fp);
-                    face_iterate<Ghost, 1>(sfc, mesh, i, fp);
+                    face_iterate<0>(sfc, mesh, i, fp);
+                    face_iterate<1>(sfc, mesh, i, fp);
                 }
 
                 if (volume_nodes > 0) {
-                    volume_iterate<Ghost>(sfc, mesh, i, VolumePredicate<Ghost>(local_predicate, global_predicate));
+                    volume_iterate(sfc, mesh, i, VolumePredicate<Ghost>(local_predicate, global_predicate));
                 }
                 // TODO: 3D part
             }
