@@ -136,7 +136,7 @@ namespace mars {
                     }
                 } */
 
-        template <bool Ghost, Integer dir, typename F>
+        template <Integer dir, typename F>
         static MARS_INLINE_FUNCTION void face_dof_iterate(const Integer sfc,
                                                           const Mesh *mesh,
                                                           const Integer index,
@@ -166,12 +166,12 @@ namespace mars {
                 if (face_nodes > 0) {
                     FaceOwnedDof<BoundaryIter> fo =
                         FaceOwnedDof<BoundaryIter>(face_predicate, face_dir, sfc_to_local, proc);
-                    face_dof_iterate<BoundaryIter, 0>(sfc, mesh, i, fo);
-                    face_dof_iterate<BoundaryIter, 1>(sfc, mesh, i, fo);
+                    face_dof_iterate<0>(sfc, mesh, i, fo);
+                    face_dof_iterate<1>(sfc, mesh, i, fo);
                 }
 
                 if (volume_nodes > 0) {
-                    SuperDM::template volume_iterate<BoundaryIter>(
+                    SuperDM::template volume_iterate(
                         sfc, mesh, i, VolumeOwnedDof<BoundaryIter>(volume_predicate, sfc_to_local, proc));
                 }
                 // TODO: 3D part
@@ -274,11 +274,16 @@ namespace mars {
         const Integer get_locally_owned_face_dof_dir(const Integer i) const { return locally_owned_face_dofs(i, 1); }
 
     private:
-        // local enumeration of the dofs topologically foreach element
-        ViewMatrixType<Integer> elem_dof_enum;
         /* Stencil<Dim, degree> stencil; */
         ViewMatrixTypeRC<Integer, 2> locally_owned_face_dofs;
         ViewVectorType<Integer> locally_owned_volume_dofs;
+
+        //build corner only when degree = 1
+        Stencil<Dim, degree, 1, false> corner_stencil;
+        //build if face node and volume node > 0
+        /* Stencil<Dim, degree, 1, false> volume_stencil;
+        Stencil<Dim, degree, 1, false> face_stencil; */
+
     };
 
 }  // namespace mars
