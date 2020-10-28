@@ -20,7 +20,7 @@
 
 #ifdef WITH_KOKKOS
 #include <KokkosBlas1_sum.hpp>
-#include "mars_distributed_fd_data_management.hpp"
+#include "mars_distributed_staggered_data_management.hpp"
 #endif  // WITH_KOKKOS
 #endif
 
@@ -28,7 +28,8 @@
 
 namespace mars {
 
-    using SDM = FDDM<DistributedQuad4Mesh, 2, double, double>;
+    /* using SDM = FDDM<DistributedQuad4Mesh, 2, double, double>; */
+    using SDM = StagDM<DistributedQuad4Mesh, true, double, double>;
     /*
     enum class DMDataDesc
     {

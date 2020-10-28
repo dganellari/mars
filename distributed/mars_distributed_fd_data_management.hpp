@@ -273,13 +273,17 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const Integer get_locally_owned_face_dof_dir(const Integer i) const { return locally_owned_face_dofs(i, 1); }
 
+        template <typename F>
+        void volume_dof_iterate(F f) {
+            Kokkos::parallel_for("volume_dof_iter", locally_owned_volume_dofs.extent(0), f);
+        }
+
     private:
         /* Stencil<Dim, degree> stencil; */
-        ViewMatrixTypeRC<Integer, 2> locally_owned_face_dofs;
         ViewVectorType<Integer> locally_owned_volume_dofs;
-
+        ViewMatrixTypeRC<Integer, 2> locally_owned_face_dofs;
         //build corner only when degree = 1
-        Stencil<Dim, degree, 1, false> corner_stencil;
+        /* Stencil<Dim, degree, 1, false> corner_stencil; */
         //build if face node and volume node > 0
         /* Stencil<Dim, degree, 1, false> volume_stencil;
         Stencil<Dim, degree, 1, false> face_stencil; */

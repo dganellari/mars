@@ -86,6 +86,12 @@ namespace mars {
             get_data().face_iterate(f);
         }
 
+        MARS_INLINE_FUNCTION
+        Integer get_sfc_face_nbh(const Octant &oc, const Integer face_nr) const {
+            Octant o = oc.sfc_face_nbh<simplex_type::ElemType>(face_nr);
+            return get_sfc_from_octant<simplex_type::ElemType>(o);
+        }
+
         template <Integer Type>
         static MARS_INLINE_FUNCTION Integer
         enum_corner(const ViewVectorType<Integer> &sfc_to_local, const Octant &oc, const int i, const int j) {
@@ -1357,6 +1363,15 @@ namespace mars {
             /* In the end the size of the map should be as the size of the ghost_dofs.
              * Careful map size  is not capacity */
             assert(size == ghost_local_to_global_map.size());
+        }
+
+        MARS_INLINE_FUNCTION
+        bool is_local(const Integer sfc) const {
+            // use the sfc to local which the scan of the predicate. To get the predicate
+            // value the difference with the successive index is needed.
+            const Integer pred_value =
+                local_dof_enum.get_view_sfc_to_local()(sfc + 1) - local_dof_enum.get_view_sfc_to_local()(sfc);
+            return (pred_value > 0);
         }
 
         MARS_INLINE_FUNCTION

@@ -1,7 +1,6 @@
 #ifndef MARS_STENCIL_HPP
 #define MARS_STENCIL_HPP
 
-
 #include "mars_base.hpp"
 
 namespace mars {
@@ -10,13 +9,11 @@ namespace mars {
     template <Integer Dim, Integer Degree, Integer Width, bool Fill = false>
     class Stencil {
     public:
-        ViewMatrixTypeRC<Integer> stencil;
+        static constexpr Integer Length = 2 * Dim * Width + 1;
 
-        constexpr Integer Length = 2 * Dim * Width + 1;
+        ViewMatrixTypeRC<Integer, Length> stencil;
 
-        void reserve_stencil(const Integer size) {
-            stencil = ViewMatrixTypeRC<Integer, Length>(size);
-        }
+        void reserve_stencil(const Integer size) { stencil = ViewMatrixTypeRC<Integer, Length>("stencil", size); }
     };
 
     /* template <>
@@ -24,15 +21,16 @@ namespace mars {
     public:
     };
  */
-    //stokes fd stencil used ex: variable viscosity
-    template<>
-    class Stencil<2, 2, 2, true>
-    {
-        public:
+    // stokes fd stencil used ex: variable viscosity
+    template <>
+    class Stencil<2, 2, 2, true> {
+    public:
         /* constexpr Integer length = 4^Dim + 1; */
-        constexpr Integer Length = 2 * Dim * Width + 1;
-        constexpr Integer Face_Length = 2 * Width;
-        constexpr Integer Corner_Length = 2 * Width;
+        static constexpr Integer Dim = 2;
+        static constexpr Integer Width = 2;
+        static constexpr Integer Length = 2 * Dim * Width + 1;
+        static constexpr Integer Face_Length = 2 * Width;
+        static constexpr Integer Corner_Length = 2 * Width;
 
         /* constexpr Integer Length = core_Length + face_Length + corner_Length; */
 
@@ -40,15 +38,18 @@ namespace mars {
         ViewMatrixTypeRC<Integer, Face_Length> face_extension;
         ViewMatrixTypeRC<Integer, Corner_Length> corner_extension;
 
-        void reserve_stencil(const Integer size) {
-            stencil = ViewMatrixTypeRC<Integer,Length>(size);
-            face_extension = ViewMatrixTypeRC<Integer,Face_Length>(size);
-            corner_extension = ViewMatrixTypeRC<Integer,Corner_Length>(size);
+        void reserve_stencil(const Integer size) { stencil = ViewMatrixTypeRC<Integer, Length>("stencil", size); }
+
+        void reserve_stencil_face_extension(const Integer size) {
+            face_extension = ViewMatrixTypeRC<Integer, Face_Length>("stencil_face_ext", size);
+        }
+
+        void reserve_stencil_corner_extension(const Integer size) {
+            corner_extension = ViewMatrixTypeRC<Integer, Corner_Length>("stencil_corner_ext", size);
         }
     };
 
+    // TODO: specialize without the corners just facextension
+}  // namespace mars
 
-    //TODO: specialize without the corners just facextension
-}
-
-#endif //mars_stencil
+#endif  // mars_stencil
