@@ -124,6 +124,32 @@ namespace mars {
             });
     }
 
+    // print thlocal and the global number of the dof within each element.
+    // the dof enumeration within eachlement is topological
+
+    template <typename Stencil>
+    void print_stencil(const SDM dm, const Stencil stencil) {
+        stencil.iterate(MARS_LAMBDA(const Integer stencil_index) {
+            // go through all the dofs of the elem_index element
+            for (int i = 0; i < stencil.get_length(); i++) {
+                // get the local dof of the i-th index within thelement
+                const Integer local_dof = stencil.get_value(stencil_index, i);
+
+                if (local_dof > -1) {
+                    // convert the local dof number to global dof number
+                    Dof d = dm.local_to_global_dof(local_dof);
+
+                    // do something. In this case we are printing.
+                    printf(
+                        "Stencil: i: %li, local: %li, global: %li, proc: %li\n", i, local_dof, d.get_gid(), d.get_proc());
+                } else {
+                    printf("Stencil: i: %li, local: %li\n", i, local_dof);
+                }
+            }
+            printf("\n\n");
+        });
+    }
+
     template <class BC, class RHS, class AnalyticalFun>
     void staggered_poisson_2D(const int level) {
         using namespace mars;
@@ -170,6 +196,7 @@ namespace mars {
         print_face_locally_owned(dm);
         print_volume_locally_owned(dm);
         /* print_ghost_dofs(dm); */
+        print_stencil(dm, dm.get_volume_stencil());
 
         /* using VectorReal = mars::ViewVectorType<Real>;
         using VectorInt = mars::ViewVectorType<Integer>;

@@ -10,10 +10,35 @@ namespace mars {
     class Stencil {
     public:
         static constexpr Integer Length = 2 * Dim * Width + 1;
+        Integer stencil_size;
 
+        MARS_INLINE_FUNCTION
+        Stencil() = default;
+
+        MARS_INLINE_FUNCTION
+        ViewMatrixTypeRC<Integer, Length> get_stencil() const { return stencil; }
+
+        MARS_INLINE_FUNCTION
+        constexpr Integer get_length() const { return Length; }
+
+        MARS_INLINE_FUNCTION
+        Integer get_value(const Integer row, const Integer col) const { return stencil(row, col); }
+
+        MARS_INLINE_FUNCTION
+        Integer set_value(const Integer row, const Integer col, const Integer value) const { return stencil(row, col) = value; }
+
+        template <typename F>
+        void iterate(F f) const {
+            Kokkos::parallel_for("stencil_dof_iter", stencil_size, f);
+        }
+
+        void reserve_stencil(const Integer size) {
+            stencil_size = size;
+            stencil = ViewMatrixTypeRC<Integer, Length>("stencil", size);
+        }
+
+    private:
         ViewMatrixTypeRC<Integer, Length> stencil;
-
-        void reserve_stencil(const Integer size) { stencil = ViewMatrixTypeRC<Integer, Length>("stencil", size); }
     };
 
     /* template <>
