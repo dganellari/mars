@@ -8,7 +8,7 @@
 
 namespace mars {
 
-    template <class Mesh, Integer Complete = true, typename... T>
+    template <class Mesh, bool Complete = true, typename... T>
     class StagDM : public FDDM<Mesh, 2, T...> {
     public:
         /* using UD = UserData<Mesh, double>; */
@@ -20,10 +20,18 @@ namespace mars {
 
         template <Integer idx>
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
+
         static constexpr Integer Degree = 2;
+        static constexpr Integer Dim = Mesh::Dim;
+        static constexpr Integer VWidth = 1;
+        static constexpr Integer FWidth = 2;
+        static constexpr bool VComplete = false;
 
         using SuperFDDM = FDDM<Mesh, Degree, T...>;
         using SuperDM = DM<Mesh, Degree, T...>;
+
+        using VolumeStencil = Stencil<SuperFDDM::Dim, Degree, VWidth, VComplete>;
+        using FaceStencil = Stencil<SuperFDDM::Dim, Degree, FWidth, Complete>;
 
         MARS_INLINE_FUNCTION
         StagDM(Mesh *mesh, const context &c) : FDDM<Mesh, Degree, T...>(mesh, c) {}
@@ -55,15 +63,15 @@ namespace mars {
             ViewVectorType<Integer> lovd = SuperFDDM::get_locally_owned_volume_dofs();
             volume_stencil.reserve_stencil(lovd.extent(0));
 
+            auto vstencil = volume_stencil.get_stencil();
+            auto dm = *this;
             volume_dof_iterate(MARS_LAMBDA(const Integer i) {
                 const Integer localid = lovd(i);
-                Dof d = SuperDM::local_to_global_dof(localid);
-                printf("localid: i: %li, local: %li, global: %li, proc: %li\n", i, localid, d.get_gid(), d.get_proc());
 
-                const Integer sfc = SuperDM::local_to_sfc(localid);
+                const Integer sfc = dm.local_to_sfc(localid);
                 Octant oc = get_octant_from_sfc<simplex_type::ElemType>(sfc);
 
-                volume_stencil.stencil(i, 0) = localid;
+                vstencil(i, 0) = localid;
 
                 Integer face_nr;
                 for (int dir = 0; dir < 2; ++dir) {
@@ -73,10 +81,11 @@ namespace mars {
                         else
                             face_nr = 2 * dir;
 
-                        const Integer nbh_sfc = SuperDM::get_sfc_face_nbh(oc, face_nr);
-                        Integer nbh_id = SuperDM::is_local(nbh_sfc) ? SuperDM::sfc_to_local(nbh_sfc) : -1;
-                        Integer index = 2 * dir + side;
-                        volume_stencil.stencil(i, index) = nbh_id;
+                        Integer index = 2 * dir + side + 1;
+
+                        const Integer nbh_sfc = dm.get_sfc_face_nbh(oc, face_nr);
+                        Integer nbh_id = dm.is_local(nbh_sfc) ? dm.sfc_to_local(nbh_sfc) : -1;
+                        vstencil(i, index) = nbh_id;
                     }
                 }
             });
@@ -86,11 +95,17 @@ namespace mars {
 
         void build_stencils() { build_volume_stencil(); }
 
+        MARS_INLINE_FUNCTION
+        const VolumeStencil get_volume_stencil() const { return volume_stencil; }
+
+        MARS_INLINE_FUNCTION
+        const VolumeStencil get_face_stencil() const { return face_stencil; }
+
     private:
         // the pressure stencil for the continuity equation
-        Stencil<SuperFDDM::Dim, Degree, 1, false> volume_stencil;
+        VolumeStencil volume_stencil;
         // the stokes stencil for the stokes equation
-        Stencil<SuperFDDM::Dim, Degree, 2, Complete> face_stencil;
+        FaceStencil face_stencil;
     };
 
 }  // namespace mars
