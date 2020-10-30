@@ -19,6 +19,9 @@ namespace mars {
         ViewMatrixTypeRC<Integer, Length> get_stencil() const { return stencil; }
 
         MARS_INLINE_FUNCTION
+        constexpr Integer get_width() const { return Width; }
+
+        MARS_INLINE_FUNCTION
         constexpr Integer get_length() const { return Length; }
 
         MARS_INLINE_FUNCTION

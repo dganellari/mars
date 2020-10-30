@@ -51,6 +51,7 @@ namespace mars {
             Kokkos::parallel_for("volume_dof_iter", SuperFDDM::get_locally_owned_volume_dofs().extent(0), f);
         }
 
+
         /*
          * Face numbering on the stencil => ordering in the stencil stencil[1,0,3,2]
                 ----3----
@@ -60,46 +61,39 @@ namespace mars {
                 ----2---- */
         // building the stencil is the responsibility of the specialized DM.
         void build_volume_stencil() {
-            ViewVectorType<Integer> lovd = SuperFDDM::get_locally_owned_volume_dofs();
-            volume_stencil.reserve_stencil(lovd.extent(0));
+            volume_stencil.reserve_stencil(SuperFDDM::get_volume_dof_size());
 
-            auto vstencil = volume_stencil.get_stencil();
+            auto vstencil = volume_stencil;
             auto dm = *this;
             volume_dof_iterate(MARS_LAMBDA(const Integer i) {
-                const Integer localid = lovd(i);
-
-                const Integer sfc = dm.local_to_sfc(localid);
-                Octant oc = get_octant_from_sfc<simplex_type::ElemType>(sfc);
-
-                vstencil(i, 0) = localid;
-
-                Integer face_nr;
-                for (int dir = 0; dir < 2; ++dir) {
-                    for (int side = 0; side < 2; ++side) {
-                        if (side == 0)
-                            face_nr = 2 * dir + 1;
-                        else
-                            face_nr = 2 * dir;
-
-                        Integer index = 2 * dir + side + 1;
-
-                        const Integer nbh_sfc = dm.get_sfc_face_nbh(oc, face_nr);
-                        Integer nbh_id = dm.is_local(nbh_sfc) ? dm.sfc_to_local(nbh_sfc) : -1;
-                        vstencil(i, index) = nbh_id;
-                    }
-                }
+                const Integer localid = dm.get_volume_dof(i);
+                SuperFDDM::fill_stencil(dm, vstencil, localid, i);
             });
         }
 
-        void build_face_stencil() {}
+        void build_face_stencil() {
+            face_stencil.reserve_stencil(SuperFDDM::get_face_dof_size());
 
-        void build_stencils() { build_volume_stencil(); }
+            auto fstencil = face_stencil;
+            auto dm = *this;
+            face_dof_iterate(MARS_LAMBDA(const Integer i) {
+                const Integer localid = dm.get_face_dof(i);
+                SuperFDDM::fill_stencil(dm, fstencil, localid, i);
+            });
+        }
+
+        void build_stencils() {
+            build_volume_stencil();
+            build_face_stencil();
+        }
 
         MARS_INLINE_FUNCTION
-        const VolumeStencil get_volume_stencil() const { return volume_stencil; }
+        const VolumeStencil get_volume_stencil() const {
+                return volume_stencil; }
 
         MARS_INLINE_FUNCTION
-        const VolumeStencil get_face_stencil() const { return face_stencil; }
+        const FaceStencil get_face_stencil() const {
+                return face_stencil; }
 
     private:
         // the pressure stencil for the continuity equation
