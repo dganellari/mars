@@ -1367,10 +1367,12 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         bool is_local(const Integer sfc) const {
-            // use the sfc to local which the scan of the predicate. To get the predicate
-            // value the difference with the successive index is needed.
-            const Integer pred_value =
-                local_dof_enum.get_view_sfc_to_local()(sfc + 1) - local_dof_enum.get_view_sfc_to_local()(sfc);
+            auto stl = local_dof_enum.get_view_sfc_to_local();
+            if((sfc + 1) >= stl.extent(0))
+                    return false;
+            /* use the sfc to local which is the scan of the predicate.
+             * To get the predicate value the difference with the successive index is needed. */
+            const Integer pred_value = stl(sfc + 1) - stl(sfc);
             return (pred_value > 0);
         }
 

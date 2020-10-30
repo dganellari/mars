@@ -29,7 +29,8 @@
 namespace mars {
 
     /* using SDM = FDDM<DistributedQuad4Mesh, 2, double, double>; */
-    using SDM = StagDM<DistributedQuad4Mesh, true, double, double>;
+    /* using SDM = StagDM<DistributedQuad4Mesh, true, double, double>; */
+    using SDM = StagDM<DistributedQuad4Mesh, false, double, double>;
     /*
     enum class DMDataDesc
     {
@@ -68,7 +69,7 @@ namespace mars {
         Kokkos::parallel_for(
             "for", size, MARS_LAMBDA(const int index) {
                 // go through all the dofs of the elem_index element
-                const Integer local_dof = dm.get_locally_owned_face_dof(index);
+                const Integer local_dof = dm.get_face_dof(index);
                 // convert the local dof number to global dof number
                 Dof d = dm.local_to_global_dof(local_dof);
 
@@ -82,7 +83,7 @@ namespace mars {
         Kokkos::parallel_for(
             "for", size, MARS_LAMBDA(const int index) {
                 // go through all the dofs of the elem_index element
-                const Integer local_dof = dm.get_locally_owned_volume_dof(index);
+                const Integer local_dof = dm.get_volume_dof(index);
                 // convert the local dof number to global dof number
                 Dof d = dm.local_to_global_dof(local_dof);
 
@@ -197,6 +198,7 @@ namespace mars {
         print_volume_locally_owned(dm);
         /* print_ghost_dofs(dm); */
         print_stencil(dm, dm.get_volume_stencil());
+        print_stencil(dm, dm.get_face_stencil());
 
         /* using VectorReal = mars::ViewVectorType<Real>;
         using VectorInt = mars::ViewVectorType<Integer>;

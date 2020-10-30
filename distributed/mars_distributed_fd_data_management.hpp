@@ -258,25 +258,66 @@ namespace mars {
             build_locally_owned_face_dofs();
         }
 
+        template <typename Stencil>
+        static MARS_INLINE_FUNCTION void fill_stencil(const SuperDM &dm,
+                                                      Stencil stencil,
+                                                      const Integer localid,
+                                                      const Integer stencil_index) {
+            /* stencil(stencil_index, 0) = localid; */
+            stencil.set_value(stencil_index, 0, localid);
+            const Integer sfc = dm.local_to_sfc(localid);
+
+            Octant oc = get_octant_from_sfc<simplex_type::ElemType>(sfc);
+
+            Integer face_nr;
+            for (int dir = 0; dir < 2; ++dir) {
+                for (int side = 0; side < 2; ++side) {
+                    if (side == 0)
+                        face_nr = 2 * dir + 1;
+                    else
+                        face_nr = 2 * dir;
+
+                    Integer index = 2 * dir + side + 1;
+
+                    Octant o = oc;
+                    printf("Width stencil: %li\n", stencil.get_width());
+                    for (int w = 0; w < stencil.get_width(); ++w) {
+                        /* const Integer nbh_sfc = dm.get_sfc_face_nbh(oc, face_nr); */
+
+                        o = o.sfc_face_nbh<simplex_type::ElemType>(face_nr);
+                        const Integer nbh_sfc = get_sfc_from_octant<simplex_type::ElemType>(o);
+                        Integer nbh_id = dm.is_local(nbh_sfc) ? dm.sfc_to_local(nbh_sfc) : -1;
+                        Integer offset = w * 2 * Dim;
+                        /* stencil(stencil_index, index + offset) = nbh_id; */
+                        stencil.set_value(stencil_index, index + offset, nbh_id);
+                    }
+                }
+            }
+        }
+
+        /* template <typename F>
+        void volume_dof_iterate(F f) {
+            Kokkos::parallel_for("volume_dof_iter", locally_owned_volume_dofs.extent(0), f);
+        }
+ */
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_locally_owned_volume_dofs() const { return locally_owned_volume_dofs; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_locally_owned_volume_dof(const Integer i) const { return locally_owned_volume_dofs(i); }
+        const Integer get_volume_dof(const Integer i) const { return locally_owned_volume_dofs(i); }
 
         MARS_INLINE_FUNCTION
         const ViewMatrixTypeRC<Integer, 2> get_locally_owned_face_dofs() const { return locally_owned_face_dofs; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_locally_owned_face_dof(const Integer i) const { return locally_owned_face_dofs(i, 0); }
+        const Integer get_face_dof(const Integer i) const { return locally_owned_face_dofs(i, 0); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_locally_owned_face_dof_dir(const Integer i) const { return locally_owned_face_dofs(i, 1); }
+        const Integer get_face_dof_dir(const Integer i) const { return locally_owned_face_dofs(i, 1); }
 
-        template <typename F>
-        void volume_dof_iterate(F f) {
-            Kokkos::parallel_for("volume_dof_iter", locally_owned_volume_dofs.extent(0), f);
-        }
+        MARS_INLINE_FUNCTION const Integer get_volume_dof_size() { return locally_owned_volume_dofs.extent(0); }
+
+        MARS_INLINE_FUNCTION const Integer get_face_dof_size() { return locally_owned_face_dofs.extent(0); }
 
     private:
         /* Stencil<Dim, degree> stencil; */
