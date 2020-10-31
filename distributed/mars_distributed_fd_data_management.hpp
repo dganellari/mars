@@ -4,8 +4,56 @@
 #ifdef WITH_MPI
 #ifdef WITH_KOKKOS
 #include "mars_distributed_data_management.hpp"
+#include "mars_distributed_stencil.hpp"
 
 namespace mars {
+
+    template <Integer Width, typename DM>
+    using FDDMStencil = Stencil<DM::Dim, DM::Degree, Width, false>;
+
+    /*
+     * Face numbering on the stencil => ordering in the stencil stencil[1,0,3,2]
+            ----3----
+            |       |
+            0   x   1
+            |       |
+            ----2---- */
+    // building the stencil is the responsibility of the specialized DM.
+    template <Integer Width = 1, typename DM>
+    FDDMStencil<Width, DM> build_volume_stencil(const DM &dm) {
+        FDDMStencil<Width, DM> vstencil;
+        vstencil.reserve_stencil(dm.get_volume_dof_size());
+
+        dm.volume_dof_iterate(MARS_LAMBDA(const Integer i) {
+            const Integer localid = dm.get_volume_dof(i);
+            DM::fill_stencil(dm, vstencil, localid, i);
+        });
+        return vstencil;
+    }
+
+    template <Integer Width = 1, typename DM>
+    FDDMStencil<Width, DM> build_face_stencil(const DM &dm) {
+        FDDMStencil<Width, DM> fstencil;
+        fstencil.reserve_stencil(dm.get_face_dof_size());
+
+        dm.face_dof_iterate(MARS_LAMBDA(const Integer i) {
+            const Integer localid = dm.get_face_dof(i);
+            DM::fill_stencil(dm, fstencil, localid, i);
+        });
+        return fstencil;
+    }
+
+    template <Integer Width = 1 , typename DM>
+    FDDMStencil<Width, DM> build_corner_stencil(const DM &dm) {
+        FDDMStencil<Width, DM> cstencil;
+        cstencil.reserve_stencil(dm.get_corner_dof_size());
+
+        dm.corner_dof_iterate(MARS_LAMBDA(const Integer i) {
+            const Integer localid = dm.get_corner_dof(i);
+            DM::fill_stencil(dm, cstencil, localid, i);
+        });
+        return cstencil;
+    }
 
     template <class Mesh, Integer degree, typename... T>
     class FDDM : public DM<Mesh, degree, T...> {
@@ -24,6 +72,8 @@ namespace mars {
 
         static constexpr Integer Dim = Mesh::Dim;
         static constexpr Integer ManifoldDim = Mesh::ManifoldDim;
+
+        static constexpr Integer Degree = degree;
 
         static constexpr Integer volume_nodes = (degree - 1) * (degree - 1);
         static constexpr Integer face_nodes = (degree - 1);
@@ -177,7 +227,11 @@ namespace mars {
                 // TODO: 3D part
             }
 
-            IdentifyFaceDofs(Mesh *m, ViewVectorType<bool> sp, ViewVectorType<bool> vp, ViewVectorType<Integer> sd, ViewVectorType<Integer> sl)
+            IdentifyFaceDofs(Mesh *m,
+                             ViewVectorType<bool> sp,
+                             ViewVectorType<bool> vp,
+                             ViewVectorType<Integer> sd,
+                             ViewVectorType<Integer> sl)
                 : mesh(m), face_predicate(sp), volume_predicate(vp), face_dir(sd), sfc_to_local(sl) {}
 
             Mesh *mesh;
@@ -246,7 +300,7 @@ namespace mars {
                         lofd(index, 1) = face_dof_dir(i);
                     }
 
-                    if(volume_dof_predicate(i) == 1 ) {
+                    if (volume_dof_predicate(i) == 1) {
                         Integer vindex = volume_dof_scan(i);
                         lovd(vindex) = i;
                     }
@@ -295,11 +349,21 @@ namespace mars {
             }
         }
 
-        /* template <typename F>
-        void volume_dof_iterate(F f) {
+        template <typename F>
+        void volume_dof_iterate(F f) const {
             Kokkos::parallel_for("volume_dof_iter", locally_owned_volume_dofs.extent(0), f);
         }
- */
+
+        template <typename F>
+        void face_dof_iterate(F f) const {
+            Kokkos::parallel_for("face_dof_iter", locally_owned_face_dofs.extent(0), f);
+        }
+
+        template <typename F>
+        void corner_dof_iterate(F f) const {
+            Kokkos::parallel_for("corner_dof_iter", locally_owned_corner_dofs.extent(0), f);
+        }
+
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_locally_owned_volume_dofs() const { return locally_owned_volume_dofs; }
 
@@ -315,20 +379,15 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const Integer get_face_dof_dir(const Integer i) const { return locally_owned_face_dofs(i, 1); }
 
-        MARS_INLINE_FUNCTION const Integer get_volume_dof_size() { return locally_owned_volume_dofs.extent(0); }
+        MARS_INLINE_FUNCTION const Integer get_volume_dof_size() const { return locally_owned_volume_dofs.extent(0); }
 
-        MARS_INLINE_FUNCTION const Integer get_face_dof_size() { return locally_owned_face_dofs.extent(0); }
+        MARS_INLINE_FUNCTION const Integer get_face_dof_size() const { return locally_owned_face_dofs.extent(0); }
 
     private:
         /* Stencil<Dim, degree> stencil; */
+        ViewVectorType<Integer> locally_owned_corner_dofs;
         ViewVectorType<Integer> locally_owned_volume_dofs;
         ViewMatrixTypeRC<Integer, 2> locally_owned_face_dofs;
-        //build corner only when degree = 1
-        /* Stencil<Dim, degree, 1, false> corner_stencil; */
-        //build if face node and volume node > 0
-        /* Stencil<Dim, degree, 1, false> volume_stencil;
-        Stencil<Dim, degree, 1, false> face_stencil; */
-
     };
 
 }  // namespace mars
