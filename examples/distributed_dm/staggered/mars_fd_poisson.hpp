@@ -197,8 +197,18 @@ namespace mars {
         print_face_locally_owned(dm);
         print_volume_locally_owned(dm);
         /* print_ghost_dofs(dm); */
+
+        /* //classic width 1 stencil on volume nodes.
+        auto volume_stencil = mars::build_volume_stencil(dm);
+        //classic width 2 stencil on face nodes.
+        auto face_stencil = mars::build_face_stencil<2>(dm);
+
+        print_stencil(dm, volume_stencil);
+        print_stencil(dm, face_stencil); */
+
         print_stencil(dm, dm.get_volume_stencil());
         print_stencil(dm, dm.get_face_stencil());
+
 
         /* using VectorReal = mars::ViewVectorType<Real>;
         using VectorInt = mars::ViewVectorType<Integer>;
