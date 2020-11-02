@@ -31,8 +31,21 @@ namespace mars {
         return vstencil;
     }
 
-    template <Integer Width = 1, typename DM>
-    FDDMStencil<Width, DM> build_face_stencil(const DM &dm) {
+    template <bool O, Integer Width = 1, typename DM>
+    typename std::enable_if<O == true, FDDMStencil<Width, DM>>::type build_face_stencils(const DM &dm) {
+        FDDMStencil<Width, DM> fstencil;
+        fstencil.reserve_stencil(dm.get_face_dof_size());
+
+        dm.face_dof_iterate(MARS_LAMBDA(const Integer i) {
+            const Integer localid = dm.get_face_dof(i);
+            const Integer dir = dm.get_face_dof_dir(i);
+            DM::fill_stencil(dm, fstencil, localid, i, dir);
+        });
+        return fstencil;
+    }
+
+    template <bool O, Integer Width = 1, typename DM>
+    typename std::enable_if<O == false, FDDMStencil<Width, DM>>::type build_face_stencils(const DM &dm) {
         FDDMStencil<Width, DM> fstencil;
         fstencil.reserve_stencil(dm.get_face_dof_size());
 
@@ -41,6 +54,11 @@ namespace mars {
             DM::fill_stencil(dm, fstencil, localid, i);
         });
         return fstencil;
+    }
+
+    template <Integer Width = 1, bool Orient = false, typename DM>
+    FDDMStencil<Width, DM> build_face_stencil(const DM &dm) {
+        return build_face_stencils<Orient, Width, DM>(dm);
     }
 
     template <Integer Width = 1, typename DM>
@@ -359,7 +377,8 @@ namespace mars {
         static MARS_INLINE_FUNCTION void fill_stencil(const SuperDM &dm,
                                                       Stencil stencil,
                                                       const Integer localid,
-                                                      const Integer stencil_index) {
+                                                      const Integer stencil_index,
+                                                      const Integer Orientation = 1) {
             /* stencil(stencil_index, 0) = localid; */
             stencil.set_value(stencil_index, 0, localid);
             const Integer sfc = dm.local_to_sfc(localid);
@@ -374,7 +393,10 @@ namespace mars {
                     else
                         face_nr = 2 * dir;
 
-                    Integer index = 2 * dir + side + 1;
+                    //this gives the index for different face orientation. Corner and volume have no
+                    //extra orientation and the default  is 1. Orientation=0 -> x orientation).
+                    const Integer dir_dim = !(Orientation ^ dir);
+                    Integer index = 2 * dir_dim + side + 1;
 
                     Octant o = oc;
                     for (int w = 0; w < stencil.get_width(); ++w) {

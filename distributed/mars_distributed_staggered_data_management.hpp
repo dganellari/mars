@@ -42,7 +42,7 @@ namespace mars {
 
         void build_stencils() {
             volume_stencil = mars::build_volume_stencil<VWidth>(*this);
-            face_stencil = mars::build_face_stencil<FWidth>(*this);
+            face_stencil = mars::build_face_stencil<FWidth, true>(*this);
         }
 
         MARS_INLINE_FUNCTION
