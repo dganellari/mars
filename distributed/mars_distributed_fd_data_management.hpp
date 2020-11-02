@@ -43,7 +43,7 @@ namespace mars {
         return fstencil;
     }
 
-    template <Integer Width = 1 , typename DM>
+    template <Integer Width = 1, typename DM>
     FDDMStencil<Width, DM> build_corner_stencil(const DM &dm) {
         FDDMStencil<Width, DM> cstencil;
         cstencil.reserve_stencil(dm.get_corner_dof_size());
@@ -114,6 +114,33 @@ namespace mars {
             }
         };
  */
+        template <bool Ghost>
+        struct CornerOwnedDof {
+            ViewVectorType<bool> predicate;
+            ViewVectorType<Integer> sfc_to_local;
+            Integer proc;
+
+            MARS_INLINE_FUNCTION
+            CornerOwnedDof(ViewVectorType<bool> rp, ViewVectorType<Integer> l, Integer p)
+                : predicate(rp), sfc_to_local(l), proc(p) {}
+
+            MARS_INLINE_FUNCTION
+            void corner_owned_dof(const Integer sfc, const Integer max_proc, std::false_type) const {
+                if (proc >= max_proc) {
+                    Integer index = sfc_to_local(sfc);
+                    predicate(index) = 1;
+                }
+            }
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Mesh *mesh,
+                            const Integer i,
+                            const Integer dof_sfc,
+                            const Integer max_proc,
+                            Integer oro[simplex_type::ElemType]) const {
+                corner_owned_dof(dof_sfc, max_proc, std::integral_constant<bool, Ghost>{});
+            }
+        };
 
         template <bool Ghost>
         struct VolumeOwnedDof {
@@ -149,12 +176,7 @@ namespace mars {
                 : predicate(rp), dir(d), sfc_to_local(l), proc(p) {}
 
             MARS_INLINE_FUNCTION
-            void face_owned_dof(const Mesh *mesh,
-                                const Integer i,
-                                const Integer sfc,
-                                const Integer owner_proc,
-                                const Integer d,
-                                std::false_type) const {
+            void face_owned_dof(const Integer sfc, const Integer owner_proc, const Integer d, std::false_type) const {
                 if (proc >= owner_proc) {
                     Integer index = sfc_to_local(sfc);
                     predicate(index) = 1;
@@ -163,12 +185,8 @@ namespace mars {
             }
 
             MARS_INLINE_FUNCTION
-            void operator()(const Mesh *mesh,
-                            const Integer i,
-                            const Integer dof_sfc,
-                            const Integer owner_proc,
-                            const Integer dir) const {
-                face_owned_dof(mesh, i, dof_sfc, owner_proc, dir, std::integral_constant<bool, Ghost>{});
+            void operator()(const Integer dof_sfc, const Integer owner_proc, const Integer dir) const {
+                face_owned_dof(dof_sfc, owner_proc, dir, std::integral_constant<bool, Ghost>{});
             }
         };
         /*
@@ -187,10 +205,7 @@ namespace mars {
                 } */
 
         template <Integer dir, typename F>
-        static MARS_INLINE_FUNCTION void face_dof_iterate(const Integer sfc,
-                                                          const Mesh *mesh,
-                                                          const Integer index,
-                                                          F f) {
+        static MARS_INLINE_FUNCTION void face_dof_iterate(const Integer sfc, const Mesh *mesh, F f) {
             // side  0 means origin side and 1 destination side.
             Octant oc = mesh->octant_from_sfc(sfc);
 
@@ -201,12 +216,12 @@ namespace mars {
 
                 for (int j = 0; j < face_nodes; j++) {
                     Integer dof_sfc = SuperDM::template process_face_node<simplex_type::ElemType, dir>(face_cornerA, j);
-                    f(mesh, index, dof_sfc, owner_proc, dir);
+                    f(dof_sfc, owner_proc, dir);
                 }
             }
         }
 
-        struct IdentifyFaceDofs {
+        struct SeperateDofs {
             MARS_INLINE_FUNCTION
             void operator()(const Integer i) const {
                 const Integer sfc = mesh->get_sfc(i);
@@ -216,27 +231,37 @@ namespace mars {
                 if (face_nodes > 0) {
                     FaceOwnedDof<BoundaryIter> fo =
                         FaceOwnedDof<BoundaryIter>(face_predicate, face_dir, sfc_to_local, proc);
-                    face_dof_iterate<0>(sfc, mesh, i, fo);
-                    face_dof_iterate<1>(sfc, mesh, i, fo);
+                    face_dof_iterate<0>(sfc, mesh, fo);
+                    face_dof_iterate<1>(sfc, mesh, fo);
                 }
 
                 if (volume_nodes > 0) {
                     SuperDM::template volume_iterate(
                         sfc, mesh, i, VolumeOwnedDof<BoundaryIter>(volume_predicate, sfc_to_local, proc));
                 }
+
+                SuperDM::template corner_iterate(
+                    sfc, mesh, i, CornerOwnedDof<BoundaryIter>(corner_predicate, sfc_to_local, proc));
                 // TODO: 3D part
             }
 
-            IdentifyFaceDofs(Mesh *m,
-                             ViewVectorType<bool> sp,
-                             ViewVectorType<bool> vp,
-                             ViewVectorType<Integer> sd,
-                             ViewVectorType<Integer> sl)
-                : mesh(m), face_predicate(sp), volume_predicate(vp), face_dir(sd), sfc_to_local(sl) {}
+            SeperateDofs(Mesh *m,
+                         ViewVectorType<bool> sp,
+                         ViewVectorType<bool> vp,
+                         ViewVectorType<bool> cp,
+                         ViewVectorType<Integer> sd,
+                         ViewVectorType<Integer> sl)
+                : mesh(m),
+                  face_predicate(sp),
+                  volume_predicate(vp),
+                  corner_predicate(cp),
+                  face_dir(sd),
+                  sfc_to_local(sl) {}
 
             Mesh *mesh;
             ViewVectorType<bool> face_predicate;
             ViewVectorType<bool> volume_predicate;
+            ViewVectorType<bool> corner_predicate;
             ViewVectorType<Integer> face_dir;
             ViewVectorType<Integer> sfc_to_local;
         };
@@ -253,18 +278,19 @@ namespace mars {
             const Integer local_size = SuperDM::get_local_dof_enum().get_elem_size();
 
             ViewVectorType<bool> volume_dof_predicate("volume_predicate", local_size);
-
+            ViewVectorType<bool> corner_dof_predicate("corner_predicate", local_size);
             ViewVectorType<bool> face_dof_predicate("face_predicate", local_size);
             ViewVectorType<Integer> face_dof_dir("face_dir_predicate", local_size);
             /* generate the sfc for the local and global dofs containing the generation locally
             for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
-            Kokkos::parallel_for("identify_face_dofs",
+            Kokkos::parallel_for("separatedofs",
                                  size,
-                                 IdentifyFaceDofs(SuperDM::get_data().get_mesh(),
-                                                  face_dof_predicate,
-                                                  volume_dof_predicate,
-                                                  face_dof_dir,
-                                                  SuperDM::get_local_dof_enum().get_view_sfc_to_local()));
+                                 SeperateDofs(SuperDM::get_data().get_mesh(),
+                                              face_dof_predicate,
+                                              volume_dof_predicate,
+                                              corner_dof_predicate,
+                                              face_dof_dir,
+                                              SuperDM::get_local_dof_enum().get_view_sfc_to_local()));
 
             /* perform a scan on the face_dof_predicate*/
             ViewVectorType<Integer> face_dof_scan("face_dof_scan", local_size + 1);
@@ -288,8 +314,20 @@ namespace mars {
 
             locally_owned_volume_dofs = ViewVectorType<Integer>("locally_owned_volume_dofs", h_vs());
 
+            /* perform a scan on the corner dof predicate*/
+            ViewVectorType<Integer> corner_dof_scan("corner_dof_scan", local_size + 1);
+            incl_excl_scan(0, local_size, corner_dof_predicate, corner_dof_scan);
+
+            auto cor_subview = subview(corner_dof_scan, local_size);
+            auto h_cs = create_mirror_view(cor_subview);
+            // Deep copy device view to host view.
+            deep_copy(h_cs, cor_subview);
+
+            locally_owned_corner_dofs = ViewVectorType<Integer>("locally_owned_corner_dofs", h_cs());
+
             ViewMatrixTypeRC<Integer, 2> lofd = locally_owned_face_dofs;
             ViewVectorType<Integer> lovd = locally_owned_volume_dofs;
+            ViewVectorType<Integer> locd = locally_owned_corner_dofs;
 
             /* Compact the predicate into the volume and face dofs views */
             parallel_for(
@@ -303,6 +341,11 @@ namespace mars {
                     if (volume_dof_predicate(i) == 1) {
                         Integer vindex = volume_dof_scan(i);
                         lovd(vindex) = i;
+                    }
+
+                    if (corner_dof_predicate(i) == 1) {
+                        Integer cindex = corner_dof_scan(i);
+                        locd(cindex) = i;
                     }
                 });
         }
@@ -334,7 +377,6 @@ namespace mars {
                     Integer index = 2 * dir + side + 1;
 
                     Octant o = oc;
-                    printf("Width stencil: %li\n", stencil.get_width());
                     for (int w = 0; w < stencil.get_width(); ++w) {
                         /* const Integer nbh_sfc = dm.get_sfc_face_nbh(oc, face_nr); */
 
@@ -365,6 +407,12 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
+        const ViewVectorType<Integer> get_locally_owned_corner_dofs() const { return locally_owned_corner_dofs; }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_corner_dof(const Integer i) const { return locally_owned_corner_dofs(i); }
+
+        MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_locally_owned_volume_dofs() const { return locally_owned_volume_dofs; }
 
         MARS_INLINE_FUNCTION
@@ -380,6 +428,7 @@ namespace mars {
         const Integer get_face_dof_dir(const Integer i) const { return locally_owned_face_dofs(i, 1); }
 
         MARS_INLINE_FUNCTION const Integer get_volume_dof_size() const { return locally_owned_volume_dofs.extent(0); }
+        MARS_INLINE_FUNCTION const Integer get_corner_dof_size() const { return locally_owned_corner_dofs.extent(0); }
 
         MARS_INLINE_FUNCTION const Integer get_face_dof_size() const { return locally_owned_face_dofs.extent(0); }
 
