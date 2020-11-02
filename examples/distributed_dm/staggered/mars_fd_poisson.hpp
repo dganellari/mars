@@ -215,21 +215,20 @@ namespace mars {
         /* print_ghost_dofs(dm); */
 
         /* classic width 1 stencil on volume nodes. */
-        auto volume_stencil = mars::build_volume_stencil(dm);
-        print_stencil(dm, volume_stencil);
+        /* auto volume_stencil = mars::build_volume_stencil(dm);
+        print_stencil(dm, volume_stencil); */
 
         /* classic width 2 stencil on face nodes. */
         auto face_stencil = mars::build_face_stencil<2>(dm);
         print_stencil(dm, face_stencil);
 
         /* classic width 2 stencil on face nodes. */
-        auto corner_stencil = mars::build_corner_stencil<1>(dm);
-        print_stencil(dm, corner_stencil);
+        /* auto corner_stencil = mars::build_corner_stencil<1>(dm);
+        print_stencil(dm, corner_stencil); */
 
 
-        /* print_stencil(dm, dm.get_volume_stencil());
-        print_stencil(dm, dm.get_face_stencil());
- */
+        /* print_stencil(dm, dm.get_volume_stencil()); */
+        /* print_stencil(dm, dm.get_face_stencil()); */
 
         /* using VectorReal = mars::ViewVectorType<Real>;
         using VectorInt = mars::ViewVectorType<Integer>;
