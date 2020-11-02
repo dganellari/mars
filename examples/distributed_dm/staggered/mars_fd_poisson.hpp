@@ -28,9 +28,9 @@
 
 namespace mars {
 
-    /* using SDM = FDDM<DistributedQuad4Mesh, 2, double, double>; */
+    using SDM = FDDM<DistributedQuad4Mesh, 2, double, double>;
     /* using SDM = StagDM<DistributedQuad4Mesh, true, double, double>; */
-    using SDM = StagDM<DistributedQuad4Mesh, false, double, double>;
+    /* using SDM = StagDM<DistributedQuad4Mesh, false, double, double>; */
     /*
     enum class DMDataDesc
     {
@@ -90,6 +90,21 @@ namespace mars {
                 // do something. In this case we are printing.
                 printf(
                     "lovd: i: %li, local: %li, global: %li, proc: %li\n", index, local_dof, d.get_gid(), d.get_proc());
+            });
+    }
+
+    void print_corner_locally_owned(const SDM dm) {
+        const Integer size = dm.get_locally_owned_corner_dofs().extent(0);
+        Kokkos::parallel_for(
+            "for", size, MARS_LAMBDA(const int index) {
+                // go through all the dofs of the elem_index element
+                const Integer local_dof = dm.get_corner_dof(index);
+                // convert the local dof number to global dof number
+                Dof d = dm.local_to_global_dof(local_dof);
+
+                // do something. In this case we are printing.
+                printf(
+                    "locd: i: %li, local: %li, global: %li, proc: %li\n", index, local_dof, d.get_gid(), d.get_proc());
             });
     }
 
@@ -196,19 +211,25 @@ namespace mars {
 
         print_face_locally_owned(dm);
         print_volume_locally_owned(dm);
+        print_corner_locally_owned(dm);
         /* print_ghost_dofs(dm); */
 
-        /* //classic width 1 stencil on volume nodes.
+        /* classic width 1 stencil on volume nodes. */
         auto volume_stencil = mars::build_volume_stencil(dm);
-        //classic width 2 stencil on face nodes.
-        auto face_stencil = mars::build_face_stencil<2>(dm);
-
         print_stencil(dm, volume_stencil);
-        print_stencil(dm, face_stencil); */
 
-        print_stencil(dm, dm.get_volume_stencil());
+        /* classic width 2 stencil on face nodes. */
+        auto face_stencil = mars::build_face_stencil<2>(dm);
+        print_stencil(dm, face_stencil);
+
+        /* classic width 2 stencil on face nodes. */
+        auto corner_stencil = mars::build_corner_stencil<1>(dm);
+        print_stencil(dm, corner_stencil);
+
+
+        /* print_stencil(dm, dm.get_volume_stencil());
         print_stencil(dm, dm.get_face_stencil());
-
+ */
 
         /* using VectorReal = mars::ViewVectorType<Real>;
         using VectorInt = mars::ViewVectorType<Integer>;
