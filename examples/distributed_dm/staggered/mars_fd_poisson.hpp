@@ -28,9 +28,9 @@
 
 namespace mars {
 
-    using SDM = FDDM<DistributedQuad4Mesh, 2, double, double>;
+    /* using SDM = FDDM<DistributedQuad4Mesh, 2, double, double>; */
     /* using SDM = StagDM<DistributedQuad4Mesh, true, double, double>; */
-    /* using SDM = StagDM<DistributedQuad4Mesh, false, double, double>; */
+    using SDM = StagDM<DistributedQuad4Mesh, false, double, double>;
     /*
     enum class DMDataDesc
     {
@@ -41,6 +41,7 @@ namespace mars {
 
     // use as more readable tuple index to identify the data
     static constexpr int IN = 0;
+    static constexpr int OU = 1;
 
     template <Integer idx>
     using SDMDataType = typename SDM::UserDataType<idx>;
@@ -207,11 +208,11 @@ namespace mars {
         /* print_dofs<Type>(dm, proc_num); */
 
         // print the global dofs for each element's local dof
-        print_elem_global_dof(dm);
+        /* print_elem_global_dof(dm);
 
         print_face_locally_owned(dm);
         print_volume_locally_owned(dm);
-        print_corner_locally_owned(dm);
+        print_corner_locally_owned(dm); */
         /* print_ghost_dofs(dm); */
 
         /* classic width 1 stencil on volume nodes. */
@@ -219,8 +220,8 @@ namespace mars {
         print_stencil(dm, volume_stencil); */
 
         /* classic width 2 stencil on face nodes. */
-        auto face_stencil = mars::build_face_stencil<2>(dm);
-        print_stencil(dm, face_stencil);
+        /* auto face_stencil = mars::build_face_stencil<2>(dm);
+        print_stencil(dm, face_stencil); */
 
         /* classic width 2 stencil on face nodes. */
         /* auto corner_stencil = mars::build_corner_stencil<1>(dm);
@@ -228,7 +229,27 @@ namespace mars {
 
 
         /* print_stencil(dm, dm.get_volume_stencil()); */
-        /* print_stencil(dm, dm.get_face_stencil()); */
+        print_stencil(dm, dm.get_face_stencil());
+
+
+        const Integer dof_size = dm.get_dof_size();
+
+           // initialize the values by iterating through local dofs
+        Kokkos::parallel_for(
+            "initdatavalues", dof_size, MARS_LAMBDA(const Integer i) {
+                dm.get_dof_data<IN>(i) = 1.0;
+                // dm.get_dof_data<INPUT>(i) = i;
+                dm.get_dof_data<OU>(i) = i;
+            });
+
+        dm.gather_ghost_data<OU>(context);
+        // iterate through the local dofs and print the local number and the data
+        dm.dof_iterate(MARS_LAMBDA(const Integer i) {
+            Dof d = dm.local_to_global_dof(i);
+
+            printf("lid: %li, u: %lf, v: %lf, global: %li, rank: %i\n",
+                    i, dm.get_dof_data<IN>(i), dm.get_dof_data<OU>(i), d.get_gid(), d.get_proc());
+        });
 
         /* using VectorReal = mars::ViewVectorType<Real>;
         using VectorInt = mars::ViewVectorType<Integer>;

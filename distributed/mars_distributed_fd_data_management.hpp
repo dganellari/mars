@@ -31,8 +31,8 @@ namespace mars {
         return vstencil;
     }
 
-    template <bool O, Integer Width = 1, typename DM>
-    typename std::enable_if<O == true, FDDMStencil<Width, DM>>::type build_face_stencils(const DM &dm) {
+    template <bool Orient, Integer Width = 1, typename DM>
+    typename std::enable_if<Orient == true, FDDMStencil<Width, DM>>::type build_face_stencils(const DM &dm) {
         FDDMStencil<Width, DM> fstencil;
         fstencil.reserve_stencil(dm.get_face_dof_size());
 
@@ -44,8 +44,8 @@ namespace mars {
         return fstencil;
     }
 
-    template <bool O, Integer Width = 1, typename DM>
-    typename std::enable_if<O == false, FDDMStencil<Width, DM>>::type build_face_stencils(const DM &dm) {
+    template <bool Orient, Integer Width = 1, typename DM>
+    typename std::enable_if<Orient == false, FDDMStencil<Width, DM>>::type build_face_stencils(const DM &dm) {
         FDDMStencil<Width, DM> fstencil;
         fstencil.reserve_stencil(dm.get_face_dof_size());
 
@@ -101,37 +101,6 @@ namespace mars {
         MARS_INLINE_FUNCTION
         FDDM(Mesh *mesh, const context &c) : DM<Mesh, degree, T...>(mesh, c) {}
 
-        /* template <bool Ghost>
-        struct VolumeRankBoundary {
-            ViewMatrixType<bool> rank_boundary;
-            ViewVectorType<Integer> sfc_to_locally_owned;
-            ViewVectorType<Integer> map;
-            Integer proc;
-
-            MARS_INLINE_FUNCTION
-            VolumeRankBoundary(ViewMatrixType<bool> rb,
-                               ViewVectorType<Integer> sl,
-                               ViewVectorType<Integer> m,
-                               Integer p)
-                : rank_boundary(rb), sfc_to_locally_owned(sl), map(m), proc(p) {}
-
-            MARS_INLINE_FUNCTION
-            void volume_rank_boundary(const Mesh *mesh,
-                                const Integer i,
-                                const Integer sfc,
-                                std::false_type) const {
-                const Integer ghost_proc =
-                    find_owner_processor(mesh->get_view_scan_boundary(), i, 1, proc);
-                    Integer index = sfc_to_locally_owned(sfc);
-                    rank_boundary(index, map(ghost_proc)) = 1;
-            }
-
-            MARS_INLINE_FUNCTION
-            void operator()(const Mesh* mesh, const Integer i, const Integer dof_sfc) const {
-                volume_rank_boundary(mesh, i, dof_sfc, std::integral_constant<bool, Ghost>{});
-            }
-        };
- */
         template <bool Ghost>
         struct CornerOwnedDof {
             ViewVectorType<bool> predicate;
@@ -207,20 +176,6 @@ namespace mars {
                 face_owned_dof(dof_sfc, owner_proc, dir, std::integral_constant<bool, Ghost>{});
             }
         };
-        /*
-                template <bool Ghost, Integer part, typename F>
-                static MARS_INLINE_FUNCTION void face_dof_iterate(const Octant &oc) const {
-                    [>Octant oc = mesh->get_octant(sfc_index);<]
-                    // side  0 means origin side and 1 destination side.
-                    for (int dir = 0; dir < 2; ++dir) {
-                        Octant face_cornerA = enum_face_corner<part>(oc, dir);
-
-                        for (int j = 0; j < face_nodes; j++) {
-                            Integer dof_sfc = sfc_face_node<part, simplex_type::ElemType>(face_cornerA, j, dir);
-                            f(dof_sfc, dir);
-                        }
-                    }
-                } */
 
         template <Integer dir, typename F>
         static MARS_INLINE_FUNCTION void face_dof_iterate(const Integer sfc, const Mesh *mesh, F f) {
@@ -393,8 +348,8 @@ namespace mars {
                     else
                         face_nr = 2 * dir;
 
-                    //this gives the index for different face orientation. Corner and volume have no
-                    //extra orientation and the default  is 1. Orientation=0 -> x orientation).
+                    // this gives the index for different face orientation. Corner and volume have no
+                    // extra orientation and the default  is 1. Orientation=0 -> x orientation).
                     const Integer dir_dim = !(Orientation ^ dir);
                     Integer index = 2 * dir_dim + side + 1;
 
