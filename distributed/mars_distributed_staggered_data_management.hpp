@@ -7,7 +7,7 @@
 
 namespace mars {
 
-    template <class Mesh, bool Complete = true, typename... T>
+    template <class Mesh, class FaceStencil, typename... T>
     class StagDM : public FDDM<Mesh, 2, T...> {
     public:
         /* using UD = UserData<Mesh, double>; */
@@ -24,13 +24,12 @@ namespace mars {
         static constexpr Integer Degree = 2;
         static constexpr Integer VWidth = 1;
         static constexpr Integer FWidth = 2;
-        static constexpr bool VComplete = false;
 
         using SuperFDDM = FDDM<Mesh, Degree, T...>;
         using SuperDM = DM<Mesh, Degree, T...>;
 
-        using VolumeStencil = Stencil<SuperFDDM::Dim, Degree, VWidth, VComplete>;
-        using FaceStencil = Stencil<SuperFDDM::Dim, Degree, FWidth, Complete>;
+        using VolumeStencil = Stencil<SuperFDDM::Dim, Degree, VWidth>;
+        /* using FaceStencil = Stencil<SuperFDDM::Dim, Degree, FWidth, StencilType>; */
 
         MARS_INLINE_FUNCTION
         StagDM(Mesh *mesh, const context &c) : SuperFDDM(mesh, c) {}

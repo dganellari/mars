@@ -9,7 +9,8 @@
 namespace mars {
 
     template <Integer Width, typename DM>
-    using FDDMStencil = Stencil<DM::Dim, DM::Degree, Width, false>;
+    using FDDMStencil = Stencil<DM::Dim, DM::Degree, Width>;
+    /* using FDDMStencil = Stencil<DM::Dim, DM::Degree, Width, false>; */
 
     /*
      * Face numbering on the stencil => ordering in the stencil stencil[1,0,3,2]
@@ -26,7 +27,7 @@ namespace mars {
 
         dm.volume_dof_iterate(MARS_LAMBDA(const Integer i) {
             const Integer localid = dm.get_volume_dof(i);
-            DM::fill_stencil(dm, vstencil, localid, i);
+            vstencil.build_stencil(dm, localid, i);
         });
         return vstencil;
     }
