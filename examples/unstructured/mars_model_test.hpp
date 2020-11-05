@@ -28,6 +28,8 @@
 #include "mars_laplace_ex.hpp"
 #include "mars_precon_conjugate_grad.hpp"
 #include "mars_simplex_laplacian.hpp"
+#include "mars_simplex_quadrature.hpp"
+
 #include "mars_umesh_laplace.hpp"
 #include "vtu_writer.hpp"
 
@@ -79,11 +81,11 @@ namespace mars {
         static const int ManifoldDim = PMesh::ManifoldDim;
         static const int NFuns = ManifoldDim + 1;
 
+        using Elem = typename PMesh::Elem;
         using SMesh = typename SerialMeshType<PMesh>::Type;
         using VectorReal = mars::ViewVectorType<Real>;
         using VectorInt = mars::ViewVectorType<Integer>;
         using VectorBool = mars::ViewVectorType<bool>;
-
         class Problem {
         public:
             Problem(PMesh &mesh) : mesh(mesh), op(mesh), bc(mesh), rhs("rhs", mesh.n_nodes()), write_output(true) {}
@@ -92,8 +94,8 @@ namespace mars {
                 x = VectorReal("x", mesh.n_nodes());
                 bc.apply(x, bc_fun);
 
-                // auto prec_ptr = op.preconditioner();
-                auto prec_ptr = std::make_shared<CopyOperator>();
+                auto prec_ptr = op.preconditioner();
+                // auto prec_ptr = std::make_shared<CopyOperator>();
 
                 Integer num_iter = 0;
 
@@ -216,7 +218,6 @@ namespace mars {
             BC bc_fun;
             RHS rhs_fun;
             AnalyticalFun an_fun;
-
             PMesh &mesh;
             Op op;
             BoundaryConditions<PMesh> bc;
@@ -225,6 +226,76 @@ namespace mars {
             SMesh serial_mesh;
             bool write_output;
         };
+
+        /////////////////////////////////////////
+        bool measure_L2_error(PMesh &mesh,
+                              FEValues<PMesh> &values,
+                              VectorReal &num_sol,
+                              AnalyticalFun an_fun,
+                              Real &L2_err) {
+            Integer n_nodes = mesh.n_nodes();
+
+            auto &q_points = q.points;
+            auto &q_weights = q.weights;
+            int n_qp = q.n_points();
+
+            auto mesh_val = values.mesh();
+            ViewMatrixType<Integer> elems = mesh_val.get_view_elements();
+            ViewMatrixType<Real> points = mesh_val.get_view_points();
+            auto active = mesh_val.get_view_active();
+
+            // auto det_J = values.det_J();
+            // auto J_inv = values.J_inv();
+            VectorReal L2("L2", mesh.n_elements());
+
+            Kokkos::parallel_for(
+
+                mesh.n_elements(), MARS_LAMBDA(const Integer i) {
+                    Integer idx[NFuns];
+                    Real u[NFuns];
+                    Real pk[Dim];
+                    Real pk_new[Dim];
+                    Real J[Dim * Dim], J_inv_e[Dim * Dim];
+
+                    for (Integer k = 0; k < NFuns; ++k) {
+                        idx[k] = elems(i, k);
+                        u[k] = num_sol(idx[k]);
+                    }
+
+                    Real det_J_e;
+                    Jacobian<Elem>::compute(idx, points, J, J_inv_e, det_J_e);
+                    Real error = 0;
+                    for (int k = 0; k < n_qp; ++k) {
+                        for (int d = 0; d < Dim; ++d) {
+                            pk[d] = q_points(k, d);
+                            // std::cout << "q_ points " << d << ": " << pk[d] << std::endl;
+                        }
+                        Algebra<Dim>::mv_mult(J, pk, pk_new);
+
+                        for (int d = 0; d < Dim; ++d) {
+                            pk_new[d] += points(idx[0], d);
+                        }
+
+                        Real my_res = 0;
+                        for (int k = 0; k < NFuns; ++k) {
+                            my_res += (u[k] * FESimplex<Dim>::fun(k, pk));
+                        }
+
+                        Real diff = an_fun(pk_new) - my_res;
+                        error += det_J_e * q_weights[k] * 0.5 * diff * diff;
+                    }
+
+                    L2(i) = error;
+                });
+
+            L2_err = std::sqrt(KokkosBlas::nrm1(L2));
+            std::cout << "L2-norm error -> " << L2_err << std::endl;
+            FILE *file = fopen("/Users/liudmilakaragyaur/Documents/Eurohack2020_local/output.csv", "a");
+            fprintf(file, "%ld, %e\n", mesh.n_nodes(), L2_err);
+            fclose(file);
+        }
+
+        /////////////////////////////////////////
 
         bool interpolate(PMesh &mesh, FEValues<PMesh> &values, const Integer &new_elem_offset, VectorReal &x) {
             VectorReal refined_x("refined_x", mesh.n_nodes());
@@ -397,8 +468,11 @@ namespace mars {
             problem.write_output = write_output;
             problem.init();
 
+            Real L2_err;
+
             if (problem.solve(x)) {
                 problem.measure_actual_error(x);
+                measure_L2_error(mesh, problem.op.values(), x, problem.an_fun, L2_err);
             } else {
                 return false;
             }
@@ -464,6 +538,9 @@ namespace mars {
 
             solve(mesh);
         }
+
+        ModelTest() : q(SimplexQuadrature<Dim, 1>::make()) {}
+        SimplexQuadrature<Dim, 1> q;
 
     private:
         Real tol{1e-6};
