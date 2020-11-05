@@ -9,7 +9,7 @@
 namespace mars {
 
     template <Integer Width, typename DM>
-    using FDDMStencil = Stencil<DM::Dim, DM::Degree, Width>;
+    using FDDMStencil = Stencil<DM::Dim, Width>;
     /* using FDDMStencil = Stencil<DM::Dim, DM::Degree, Width, false>; */
 
     /*
@@ -20,10 +20,9 @@ namespace mars {
             |       |
             ----2---- */
     // building the stencil is the responsibility of the specialized DM.
-    template <Integer Width = 1, typename DM>
-    FDDMStencil<Width, DM> build_volume_stencil(const DM &dm) {
-        FDDMStencil<Width, DM> vstencil;
-        vstencil.reserve_stencil(dm.get_volume_dof_size());
+    template <typename ST, typename DM>
+    auto build_volume_stencil(const DM &dm) {
+        ST vstencil(dm.get_volume_dof_size());
 
         dm.volume_dof_iterate(MARS_LAMBDA(const Integer i) {
             const Integer localid = dm.get_volume_dof(i);
@@ -32,44 +31,44 @@ namespace mars {
         return vstencil;
     }
 
-    template <bool Orient, Integer Width = 1, typename DM>
-    typename std::enable_if<Orient == true, FDDMStencil<Width, DM>>::type build_face_stencils(const DM &dm) {
-        FDDMStencil<Width, DM> fstencil;
-        fstencil.reserve_stencil(dm.get_face_dof_size());
+    template <bool Orient, typename ST, typename DM>
+    typename std::enable_if<Orient == true, ST>::type build_face_stencils(const DM &dm) {
+        ST fstencil(dm.get_face_dof_size());
 
         dm.face_dof_iterate(MARS_LAMBDA(const Integer i) {
             const Integer localid = dm.get_face_dof(i);
             const Integer dir = dm.get_face_dof_dir(i);
-            DM::fill_stencil(dm, fstencil, localid, i, dir);
+            /* DM::fill_stencil(dm, fstencil, localid, i, dir); */
+            fstencil.build_stencil(dm, localid, i, dir);
         });
         return fstencil;
     }
 
-    template <bool Orient, Integer Width = 1, typename DM>
-    typename std::enable_if<Orient == false, FDDMStencil<Width, DM>>::type build_face_stencils(const DM &dm) {
-        FDDMStencil<Width, DM> fstencil;
-        fstencil.reserve_stencil(dm.get_face_dof_size());
+    template <bool Orient, typename ST, typename DM>
+    typename std::enable_if<Orient == false, ST>::type build_face_stencils(const DM &dm) {
+        ST fstencil(dm.get_face_dof_size());
 
         dm.face_dof_iterate(MARS_LAMBDA(const Integer i) {
             const Integer localid = dm.get_face_dof(i);
-            DM::fill_stencil(dm, fstencil, localid, i);
+            /* DM::fill_stencil(dm, fstencil, localid, i); */
+            fstencil.build_stencil(dm, localid, i);
         });
         return fstencil;
     }
 
-    template <Integer Width = 1, bool Orient = false, typename DM>
-    FDDMStencil<Width, DM> build_face_stencil(const DM &dm) {
-        return build_face_stencils<Orient, Width, DM>(dm);
+    template <typename ST, bool Orient = false, typename DM>
+    auto build_face_stencil(const DM &dm) {
+        return build_face_stencils<Orient, ST, DM>(dm);
     }
 
-    template <Integer Width = 1, typename DM>
-    FDDMStencil<Width, DM> build_corner_stencil(const DM &dm) {
-        FDDMStencil<Width, DM> cstencil;
-        cstencil.reserve_stencil(dm.get_corner_dof_size());
+    template <typename ST, typename DM>
+    auto build_corner_stencil(const DM &dm) {
+        ST cstencil(dm.get_corner_dof_size());
 
         dm.corner_dof_iterate(MARS_LAMBDA(const Integer i) {
             const Integer localid = dm.get_corner_dof(i);
-            DM::fill_stencil(dm, cstencil, localid, i);
+            /* DM::fill_stencil(dm, cstencil, localid, i); */
+            cstencil.build_stencil(dm, localid, i);
         });
         return cstencil;
     }

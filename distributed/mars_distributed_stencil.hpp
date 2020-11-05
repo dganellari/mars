@@ -5,23 +5,25 @@
 
 namespace mars {
 
-    enum StencilType : int {
+    /* enum StencilType : int {
         // 1D
         Classic = 0,
         // 2D
         FaceComplete = 1,
         CornerComplete = 2,
         InvalidType = -1
-    };
+    }; */
 
-    /* template <Integer Dim, Integer Degree, Integer Width, Integer Type = StencilType::Classic> */
-    template <Integer Dim, Integer Degree, Integer Width>
+    template <Integer Dim, Integer Width = 1>
     class Stencil {
     public:
         static constexpr Integer Length = 2 * Dim * Width + 1;
 
         MARS_INLINE_FUNCTION
         Stencil() = default;
+
+        MARS_INLINE_FUNCTION
+        Stencil(const Integer size) { stencil = ViewMatrixTypeRC<Integer, Length>("stencil", size); }
 
         MARS_INLINE_FUNCTION
         ViewMatrixTypeRC<Integer, Length> get_stencil() const { return stencil; }
@@ -40,15 +42,28 @@ namespace mars {
             return stencil(row, col) = value;
         }
 
+        Integer get_stencil_size() const { return stencil.extent(0); }
+
+        template <typename F>
+        void dof_iterate(F f) const {
+            Kokkos::parallel_for(
+                "stencil_dof_iter", get_stencil_size(), MARS_LAMBDA(const Integer stencil_index) {
+                    for (int i = 0; i < get_length(); i++) {
+                        // get the local dof of the i-th index within thelement
+                        const Integer local_dof = get_value(stencil_index, i);
+                        f(stencil_index, local_dof);
+                    }
+                });
+        }
+
         template <typename F>
         void iterate(F f) const {
             Kokkos::parallel_for("stencil_dof_iter", get_stencil_size(), f);
         }
 
-        virtual void reserve_stencil(const Integer size) { stencil = ViewMatrixTypeRC<Integer, Length>("stencil", size); }
-
-        Integer get_stencil_size() const { return stencil.extent(0); }
-
+        virtual void reserve_stencil(const Integer size) {
+            stencil = ViewMatrixTypeRC<Integer, Length>("stencil", size);
+        }
         template <typename DM>
         MARS_INLINE_FUNCTION void build_stencil(const DM &dm,
                                                 const Integer localid,
@@ -90,17 +105,74 @@ namespace mars {
         ViewMatrixTypeRC<Integer, Length> stencil;
     };
 
-    /* template <Integer Dim, Integer degree, Integer Type = Star> */
-    template <Integer Dim, Integer Degree, Integer Width>
-    class StokesStencil: public Stencil<Dim, Degree, 2> {
+    template <Integer Dim>
+    class StokesStencil : public Stencil<Dim, 2> {
     public:
-        static constexpr Integer Face_Length = 2 * Width;
+        static constexpr Integer Face_Length = 2 * Dim;
 
-        using SuperStencil = Stencil<Dim, Degree, 2>;
+        using SuperStencil = Stencil<Dim, 2>;
 
-        virtual void reserve_stencil_face_extension(const Integer size) override {
+        MARS_INLINE_FUNCTION
+        StokesStencil() = default;
+
+        MARS_INLINE_FUNCTION
+        StokesStencil(const Integer size) : SuperStencil(size) {
+            face_extension = ViewMatrixTypeRC<Integer, Face_Length>("face_ext", size);
+        }
+
+        virtual void reserve_stencil(const Integer size) override {
             SuperStencil::reserve_stencil(size);
             face_extension = ViewMatrixTypeRC<Integer, Face_Length>("stencil_face_ext", size);
+        }
+
+        MARS_INLINE_FUNCTION
+        Integer get_face_value(const Integer row, const Integer col) const { return face_extension(row, col); }
+
+        MARS_INLINE_FUNCTION
+        Integer set_face_value(const Integer row, const Integer col, const Integer value) const {
+            return face_extension(row, col) = value;
+        }
+
+        template <typename F>
+        void dof_iterate(F f) const {
+            Kokkos::parallel_for(
+                "stencil_dof_iter", SuperStencil::get_stencil_size(), MARS_LAMBDA(const Integer stencil_index) {
+                    for (int i = 0; i < SuperStencil::get_length(); i++) {
+                        // get the local dof of the i-th index within thelement
+                        const Integer local_dof = SuperStencil::get_value(stencil_index, i);
+                        f(stencil_index, local_dof);
+                    }
+
+                    for (int i = 0; i < get_face_length(); i++) {
+                        // get the local dof of the i-th index within thelement
+                        const Integer local_dof = get_face_value(stencil_index, i);
+                        f(stencil_index, local_dof);
+                    }
+                });
+        }
+
+        template <typename DM>
+        MARS_INLINE_FUNCTION void build_diagonal_stencil(const DM &dm,
+                                                         const Integer localid,
+                                                         const Integer stencil_index,
+                                                         const Integer Orientation = 1) const {
+            const Integer sfc = dm.local_to_sfc(localid);
+
+            Octant oc = get_octant_from_sfc<DM::simplex_type::ElemType>(sfc);
+
+            for (int corner = power_of_2(DM::ManifoldDim) - 1; corner != -1; --corner) {
+                Octant o = oc.sfc_corner_nbh<DM::simplex_type::ElemType>(corner);
+                const Integer nbh_sfc = get_sfc_from_octant<DM::simplex_type::ElemType>(o);
+                Integer nbh_id = dm.is_local(nbh_sfc) ? dm.sfc_to_local(nbh_sfc) : -1;
+                set_face_value(stencil_index, corner, nbh_id);
+            }
+
+            /*FIXME for 3D.*/
+            if (Orientation == 0) {
+                const Integer tmp = face_extension(stencil_index, 1);
+                face_extension(stencil_index, 1) = face_extension(stencil_index, 2);
+                face_extension(stencil_index, 2) = tmp;
+            }
         }
 
         template <typename DM>
@@ -108,64 +180,22 @@ namespace mars {
                                                 const Integer localid,
                                                 const Integer stencil_index,
                                                 const Integer Orientation = 1) const {
-            const Integer sfc = dm.local_to_sfc(localid);
+            SuperStencil::build_stencil(dm, localid, stencil_index, Orientation);
 
-            Octant oc = get_octant_from_sfc<DM::simplex_type::ElemType>(sfc);
-
-            for (int corner = 0; corner < power_of_2(DM::Mesh::ManifoldDim); ++corner) {
-                // this gives the index for different face orientation. Corner and volume have no
-                // extra orientation and the default  is 1. Orientation=0 -> x orientation).
-                const Integer dir_dim = !(Orientation ^ dir);
-                Integer index = 2 * dir_dim + side + 1;
-
-                Octant o = oc.sfc_corner_nbh<DM::simplex_type::ElemType>(corner);
-                const Integer nbh_sfc = get_sfc_from_octant<DM::simplex_type::ElemType>(o);
-                Integer nbh_id = dm.is_local(nbh_sfc) ? dm.sfc_to_local(nbh_sfc) : -1;
-                set_value(stencil_index, index, nbh_id);
-            }
+            build_diagonal_stencil(dm, localid, stencil_index, Orientation);
         }
+
+        MARS_INLINE_FUNCTION
+        ViewMatrixTypeRC<Integer, Face_Length> get_face_stencil() const { return face_extension; }
+
+        MARS_INLINE_FUNCTION
+        constexpr Integer get_face_length() const { return Face_Length; }
+
 
     private:
         ViewMatrixTypeRC<Integer, Face_Length> face_extension;
     };
 
-    /* template <>
-    class Stencil<2, 2, 1, true> {
-    public:
-    };
- */
-    // stokes fd stencil used ex: variable viscosity
-    /* template <>
-    class Stencil<2, 2, 2, StencilType::FaceComplete> {
-    public:
-        [>constexpr Integer length = 4^Dim + 1;<]
-        static constexpr Integer Dim = 2;
-        static constexpr Integer Width = 2;
-        static constexpr Integer Length = 2 * Dim * Width + 1;
-        static constexpr Integer Face_Length = 2 * Width;
-        static constexpr Integer Corner_Length = 2 * Width;
-
-        [>constexpr Integer Length = core_Length + face_Length + corner_Length;<]
-
-        void reserve_stencil(const Integer size) { stencil = ViewMatrixTypeRC<Integer, Length>("stencil", size); }
-
-        void reserve_stencil_face_extension(const Integer size) {
-            face_extension = ViewMatrixTypeRC<Integer, Face_Length>("stencil_face_ext", size);
-        }
-
-        void reserve_stencil_corner_extension(const Integer size) {
-            corner_extension = ViewMatrixTypeRC<Integer, Corner_Length>("stencil_corner_ext", size);
-        }
-
-
-    private:
-        ViewMatrixTypeRC<Integer, Length> stencil;
-        ViewMatrixTypeRC<Integer, Face_Length> face_extension;
-        ViewMatrixTypeRC<Integer, Corner_Length> corner_extension;
-
-    }; */
-
-    // TODO: specialize without the corners just facextension
 }  // namespace mars
 
 #endif  // mars_stencil

@@ -28,9 +28,12 @@
 
 namespace mars {
 
+    static constexpr  Integer DIM = DistributedQuad4Mesh::Dim;
+    using SStencil = StokesStencil<DIM>;
+    /* using SStencil = Stencil<DIM, 2>; */
+
     /* using SDM = FDDM<DistributedQuad4Mesh, 2, double, double>; */
-    /* using SDM = StagDM<DistributedQuad4Mesh, true, double, double>; */
-    using SDM = StagDM<DistributedQuad4Mesh, false, double, double>;
+    using SDM = StagDM<DistributedQuad4Mesh, SStencil, double, double>;
     /*
     enum class DMDataDesc
     {
@@ -146,24 +149,16 @@ namespace mars {
 
     template <typename Stencil>
     void print_stencil(const SDM dm, const Stencil stencil) {
-        stencil.iterate(MARS_LAMBDA(const Integer stencil_index) {
-            // go through all the dofs of the elem_index element
-            for (int i = 0; i < stencil.get_length(); i++) {
-                // get the local dof of the i-th index within thelement
-                const Integer local_dof = stencil.get_value(stencil_index, i);
+        stencil.dof_iterate(MARS_LAMBDA(const Integer stencil_index, const Integer local_dof) {
+            if (local_dof > -1) {
+                // convert the local dof number to global dof number
+                Dof d = dm.local_to_global_dof(local_dof);
 
-                if (local_dof > -1) {
-                    // convert the local dof number to global dof number
-                    Dof d = dm.local_to_global_dof(local_dof);
-
-                    // do something. In this case we are printing.
-                    printf(
-                        "Stencil: i: %li, local: %li, global: %li, proc: %li\n", i, local_dof, d.get_gid(), d.get_proc());
-                } else {
-                    printf("Stencil: i: %li, local: %li\n", i, local_dof);
-                }
+                printf(
+                    "Stencil: i: %li, local: %li, global: %li, proc: %li\n", stencil_index, local_dof, d.get_gid(), d.get_proc());
+            } else {
+                printf("Stencil: i: %li, local: %li\n", stencil_index, local_dof);
             }
-            printf("\n\n");
         });
     }
 
@@ -231,11 +226,10 @@ namespace mars {
         /* print_stencil(dm, dm.get_volume_stencil()); */
         print_stencil(dm, dm.get_face_stencil());
 
-
         const Integer dof_size = dm.get_dof_size();
 
            // initialize the values by iterating through local dofs
-        Kokkos::parallel_for(
+        /* Kokkos::parallel_for(
             "initdatavalues", dof_size, MARS_LAMBDA(const Integer i) {
                 dm.get_dof_data<IN>(i) = 1.0;
                 // dm.get_dof_data<INPUT>(i) = i;
@@ -250,7 +244,7 @@ namespace mars {
             printf("lid: %li, u: %lf, v: %lf, global: %li, rank: %i\n",
                     i, dm.get_dof_data<IN>(i), dm.get_dof_data<OU>(i), d.get_gid(), d.get_proc());
         });
-
+ */
         /* using VectorReal = mars::ViewVectorType<Real>;
         using VectorInt = mars::ViewVectorType<Integer>;
         using VectorBool = mars::ViewVectorType<bool>; */
