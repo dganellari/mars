@@ -264,6 +264,8 @@ namespace mars {
 
                     Real det_J_e;
                     Jacobian<Elem>::compute(idx, points, J, J_inv_e, det_J_e);
+                    assert(det_J_e > 0);
+
                     Real error = 0;
                     for (int k = 0; k < n_qp; ++k) {
                         for (int d = 0; d < Dim; ++d) {
@@ -286,6 +288,7 @@ namespace mars {
                     }
 
                     L2(i) = error;
+                    assert(L2(i) >= 0);
                 });
 
             L2_err = std::sqrt(KokkosBlas::nrm1(L2));
