@@ -7,7 +7,10 @@
 
 namespace mars {
 
-    template <class Mesh, class FaceStencil, typename... T>
+    template <Integer Dim>
+    using StagStencil = Stencil<Dim, 2>;
+
+    template <class Mesh, typename FaceStencil = StagStencil<Mesh::Dim>, typename... T>
     class StagDM : public FDDM<Mesh, 2, T...> {
     public:
         /* using UD = UserData<Mesh, double>; */
@@ -28,8 +31,7 @@ namespace mars {
         using SuperFDDM = FDDM<Mesh, Degree, T...>;
         using SuperDM = DM<Mesh, Degree, T...>;
 
-        using VolumeStencil = Stencil<SuperFDDM::Dim, Degree, VWidth>;
-        /* using FaceStencil = Stencil<SuperFDDM::Dim, Degree, FWidth, StencilType>; */
+        using VolumeStencil = Stencil<SuperFDDM::Dim, VWidth>;
 
         MARS_INLINE_FUNCTION
         StagDM(Mesh *mesh, const context &c) : SuperFDDM(mesh, c) {}
@@ -40,8 +42,8 @@ namespace mars {
         }
 
         void build_stencils() {
-            volume_stencil = mars::build_volume_stencil<VWidth>(*this);
-            face_stencil = mars::build_face_stencil<FWidth, true>(*this);
+            volume_stencil = mars::build_volume_stencil<VolumeStencil>(*this);
+            face_stencil = mars::build_face_stencil<FaceStencil, true>(*this);
         }
 
         MARS_INLINE_FUNCTION
