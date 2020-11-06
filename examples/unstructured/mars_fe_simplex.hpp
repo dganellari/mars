@@ -67,6 +67,15 @@ namespace mars {
                                                  Real *J,
                                                  Real *J_inv,
                                                  Real &det_J) {
+            compute(idx, points, J);
+
+            Invert<Dim>::apply(J, J_inv, det_J);
+
+            assert(has_non_zero<Dim>(J_inv));
+        }
+
+        template <class View>
+        MARS_INLINE_FUNCTION void static compute(const Integer *idx, const View &points, Real *J) {
             Real p0[Dim], pk[Dim];
 
             for (int d = 0; d < Dim; ++d) {
@@ -84,10 +93,6 @@ namespace mars {
                     J[d * Dim + km1] = pk[d] - p0[d];
                 }
             }
-
-            Invert<Dim>::apply(J, J_inv, det_J);
-
-            assert(has_non_zero<Dim>(J_inv));
         }
     };
 

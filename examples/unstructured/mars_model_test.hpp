@@ -228,21 +228,17 @@ namespace mars {
         };
 
         /////////////////////////////////////////
-        bool measure_L2_error(PMesh &mesh,
-                              FEValues<PMesh> &values,
-                              VectorReal &num_sol,
-                              AnalyticalFun an_fun,
-                              Real &L2_err) {
-            Integer n_nodes = mesh.n_nodes();
-
+        bool measure_L2_error(FEValues<PMesh> &values, VectorReal &num_sol, AnalyticalFun an_fun, Real &L2_err) {
             auto &q_points = q.points;
             auto &q_weights = q.weights;
             int n_qp = q.n_points();
 
-            auto mesh_val = values.mesh();
-            ViewMatrixType<Integer> elems = mesh_val.get_view_elements();
-            ViewMatrixType<Real> points = mesh_val.get_view_points();
-            auto active = mesh_val.get_view_active();
+            auto mesh = values.mesh();
+            Integer n_nodes = mesh.n_nodes();
+
+            ViewMatrixType<Integer> elems = mesh.get_view_elements();
+            ViewMatrixType<Real> points = mesh.get_view_points();
+            auto active = mesh.get_view_active();
 
             // auto det_J = values.det_J();
             // auto J_inv = values.J_inv();
@@ -263,7 +259,8 @@ namespace mars {
                     }
 
                     Real det_J_e;
-                    Jacobian<Elem>::compute(idx, points, J, J_inv_e, det_J_e);
+                    Jacobian<Elem>::compute(idx, points, J);
+                    det_J_e = Invert<Dim>::det(J);
                     assert(det_J_e > 0);
 
                     Real error = 0;
@@ -291,9 +288,9 @@ namespace mars {
                     assert(L2(i) >= 0);
                 });
 
-            L2_err = std::sqrt(KokkosBlas::nrm1(L2));
+            L2_err = std::sqrt(KokkosBlas::sum(L2));
             std::cout << "L2-norm error -> " << L2_err << std::endl;
-            FILE *file = fopen("/Users/liudmilakaragyaur/Documents/Eurohack2020_local/output.csv", "a");
+            FILE *file = fopen("L2_error_output.csv", "a");
             fprintf(file, "%ld, %e\n", mesh.n_nodes(), L2_err);
             fclose(file);
         }
@@ -475,7 +472,7 @@ namespace mars {
 
             if (problem.solve(x)) {
                 problem.measure_actual_error(x);
-                measure_L2_error(mesh, problem.op.values(), x, problem.an_fun, L2_err);
+                measure_L2_error(problem.op.values(), x, problem.an_fun, L2_err);
             } else {
                 return false;
             }
