@@ -251,7 +251,7 @@ namespace mars {
                     Real u[NFuns];
                     Real pk[Dim];
                     Real pk_new[Dim];
-                    Real J[Dim * Dim], J_inv_e[Dim * Dim];
+                    Real J[Dim * Dim];
 
                     for (Integer k = 0; k < NFuns; ++k) {
                         idx[k] = elems(i, k);
