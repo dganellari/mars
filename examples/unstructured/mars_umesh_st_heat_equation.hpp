@@ -62,46 +62,46 @@ namespace mars {
         //     }
         // }
 
-        template <class Quadrature>
-        MARS_INLINE_FUNCTION static void one_thread_eval_diag(const Real *J_inv,
-                                                              const Real &det_J,
-                                                              const Quadrature &q,
-                                                              Real *val) {
-            // assert(false);
+        // template <class Quadrature>
+        // MARS_INLINE_FUNCTION static void one_thread_eval_diag(const Real *J_inv,
+        //                                                       const Real &det_J,
+        //                                                       const Quadrature &q,
+        //                                                       Real *val) {
+        //     // assert(false);
 
-            Real gi[Dim], g[Dim], g_x[Dim - 1], gj[Dim];
-            Real pk[Dim];
+        //     Real gi[Dim], g[Dim], g_x[Dim - 1], gj[Dim];
+        //     Real pk[Dim];
 
-            auto &q_points = q.points;
-            auto &q_weights = q.weights;
-            int n_qp = 3;  // q.n_points();
+        //     auto &q_points = q.points;
+        //     auto &q_weights = q.weights;
+        //     int n_qp = 3;  // q.n_points();
 
-            for (int i = 0; i < NFuns; ++i) {
-                val[i] = 0.0;
-            }
+        //     for (int i = 0; i < NFuns; ++i) {
+        //         val[i] = 0.0;
+        //     }
 
-            for (int k = 0; k < n_qp; ++k) {
-                for (int d = 0; d < Dim; ++d) {
-                    pk[d] = q_points(k, d);
-                }
-                // Separate time and space dimensions
+        //     for (int k = 0; k < n_qp; ++k) {
+        //         for (int d = 0; d < Dim; ++d) {
+        //             pk[d] = q_points(k, d);
+        //         }
+        //         // Separate time and space dimensions
 
-                assert(det_J > 0.0);
-                const Real dx = det_J * q_weights(k) * 0.5;
-                for (int i = 0; i < NFuns; i++) {
-                    // for each dof get the local number
-                    FESimplex<Dim>::grad(i, J_inv, gi);
+        //         assert(det_J > 0.0);
+        //         const Real dx = det_J * q_weights(k) * 0.5;
+        //         for (int i = 0; i < NFuns; i++) {
+        //             // for each dof get the local number
+        //             FESimplex<Dim>::grad(i, J_inv, gi);
 
-                    Real g_t = gi[Dim - 1];
+        //             Real g_t = gi[Dim - 1];
 
-                    for (int d = 0; d < Dim - 1; ++d) {
-                        g_x[d] = gi[d];
-                    }
+        //             for (int d = 0; d < Dim - 1; ++d) {
+        //                 g_x[d] = gi[d];
+        //             }
 
-                    val[i] += (g_t * FESimplex<Dim>::fun(i, pk) + Algebra<Dim - 1>::dot(g_x, g_x)) * dx;
-                }
-            }
-        }
+        //             val[i] += (g_t * FESimplex<Dim>::fun(i, pk) + Algebra<Dim - 1>::dot(g_x, g_x)) * dx;
+        //         }
+        //     }
+        // }
 
         template <class Quadrature>
         MARS_INLINE_FUNCTION static void one_thread_eval(const Real *J_inv,
@@ -303,7 +303,7 @@ namespace mars {
                         }
                         // SpaceTimeMixed<Mesh>::one_thread_eval_diag(J_inv_e, det_J_e, quad, val);
                         st.one_thread_eval_diag(J_inv_e, det_J_e, val);
-
+                        //
                         for (Integer k = 0; k < NFuns; ++k) {
                             assert(val[k] != 0.0);
                             Real inv_val = val[k];
@@ -316,7 +316,10 @@ namespace mars {
 
                 Kokkos::parallel_for(
 
-                    mesh.n_nodes(), MARS_LAMBDA(const Integer d) { inv_diag(d) = 1. / inv_diag(d); });
+                    mesh.n_nodes(), MARS_LAMBDA(const Integer d) {
+                        inv_diag(d) = 1. / std::sqrt(inv_diag(d));
+                        // std::cout << inv_diag(d) << std::endl;
+                    });
 
                 this->inv_diag_ = inv_diag;
             }
