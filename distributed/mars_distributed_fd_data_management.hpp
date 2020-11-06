@@ -21,7 +21,7 @@ namespace mars {
             ----2---- */
     // building the stencil is the responsibility of the specialized DM.
     template <typename ST, typename DM>
-    auto build_volume_stencil(const DM &dm) {
+    ST build_volume_stencil(const DM &dm) {
         ST vstencil(dm.get_volume_dof_size());
 
         dm.volume_dof_iterate(MARS_LAMBDA(const Integer i) {
@@ -57,12 +57,12 @@ namespace mars {
     }
 
     template <typename ST, bool Orient = false, typename DM>
-    auto build_face_stencil(const DM &dm) {
+    ST build_face_stencil(const DM &dm) {
         return build_face_stencils<Orient, ST, DM>(dm);
     }
 
     template <typename ST, typename DM>
-    auto build_corner_stencil(const DM &dm) {
+    ST build_corner_stencil(const DM &dm) {
         ST cstencil(dm.get_corner_dof_size());
 
         dm.corner_dof_iterate(MARS_LAMBDA(const Integer i) {

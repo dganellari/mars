@@ -30,7 +30,8 @@ namespace mars {
 
     static constexpr  Integer DIM = DistributedQuad4Mesh::Dim;
     using SStencil = StokesStencil<DIM>;
-    /* using SStencil = Stencil<DIM, 2>; */
+    using FStencil = Stencil<DIM, 2>;
+    using VCStencil = Stencil<DIM, 1>;
 
     /* using SDM = FDDM<DistributedQuad4Mesh, 2, double, double>; */
     using SDM = StagDM<DistributedQuad4Mesh, SStencil, double, double>;
@@ -211,15 +212,15 @@ namespace mars {
         /* print_ghost_dofs(dm); */
 
         /* classic width 1 stencil on volume nodes. */
-        /* auto volume_stencil = mars::build_volume_stencil(dm);
-        print_stencil(dm, volume_stencil); */
-
+        /* auto volume_stencil = mars::build_volume_stencil<VCStencil>(dm);
+        print_stencil(dm, volume_stencil);
+ */
         /* classic width 2 stencil on face nodes. */
-        /* auto face_stencil = mars::build_face_stencil<2>(dm);
+        /* auto face_stencil = mars::build_face_stencil<FStencil>(dm);
         print_stencil(dm, face_stencil); */
 
         /* classic width 2 stencil on face nodes. */
-        /* auto corner_stencil = mars::build_corner_stencil<1>(dm);
+        /* auto corner_stencil = mars::build_corner_stencil<VCStencil>(dm);
         print_stencil(dm, corner_stencil); */
 
 
