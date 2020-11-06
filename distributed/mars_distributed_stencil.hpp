@@ -46,11 +46,12 @@ namespace mars {
 
         template <typename F>
         void dof_iterate(F f) const {
+            auto st = get_stencil();
             Kokkos::parallel_for(
                 "stencil_dof_iter", get_stencil_size(), MARS_LAMBDA(const Integer stencil_index) {
                     for (int i = 0; i < get_length(); i++) {
                         // get the local dof of the i-th index within thelement
-                        const Integer local_dof = get_value(stencil_index, i);
+                        const Integer local_dof = st(stencil_index, i);
                         f(stencil_index, local_dof);
                     }
                 });
@@ -135,17 +136,20 @@ namespace mars {
 
         template <typename F>
         void dof_iterate(F f) const {
+            auto st = SuperStencil::get_stencil();
+            auto fe = get_face_stencil();
+            auto length = SuperStencil::get_length();
             Kokkos::parallel_for(
                 "stencil_dof_iter", SuperStencil::get_stencil_size(), MARS_LAMBDA(const Integer stencil_index) {
-                    for (int i = 0; i < SuperStencil::get_length(); i++) {
+                    for (int i = 0; i < length; i++) {
                         // get the local dof of the i-th index within thelement
-                        const Integer local_dof = SuperStencil::get_value(stencil_index, i);
+                        const Integer local_dof = st(stencil_index, i);
                         f(stencil_index, local_dof);
                     }
 
                     for (int i = 0; i < get_face_length(); i++) {
                         // get the local dof of the i-th index within thelement
-                        const Integer local_dof = get_face_value(stencil_index, i);
+                        const Integer local_dof = fe(stencil_index, i);
                         f(stencil_index, local_dof);
                     }
                 });
