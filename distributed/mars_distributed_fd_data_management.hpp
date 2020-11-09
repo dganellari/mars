@@ -31,14 +31,26 @@ namespace mars {
         return vstencil;
     }
 
-    template <bool Orient, typename ST, typename DM>
+    template <typename ST, typename DM>
+    ST build_face_stencil(const DM &dm) {
+        ST fstencil(dm.get_face_dof_size());
+
+        dm.face_dof_iterate(MARS_LAMBDA(const Integer i) {
+            const Integer localid = dm.get_face_dof(i);
+            const Integer dir = dm.get_face_dof_dir(i);
+            fstencil.build_stencil(dm, localid, i, dir);
+        });
+        return fstencil;
+    }
+
+    /* template <bool Orient, typename ST, typename DM>
     typename std::enable_if<Orient == true, ST>::type build_face_stencils(const DM &dm) {
         ST fstencil(dm.get_face_dof_size());
 
         dm.face_dof_iterate(MARS_LAMBDA(const Integer i) {
             const Integer localid = dm.get_face_dof(i);
             const Integer dir = dm.get_face_dof_dir(i);
-            /* DM::fill_stencil(dm, fstencil, localid, i, dir); */
+            [>DM::fill_stencil(dm, fstencil, localid, i, dir);<]
             fstencil.build_stencil(dm, localid, i, dir);
         });
         return fstencil;
@@ -50,7 +62,7 @@ namespace mars {
 
         dm.face_dof_iterate(MARS_LAMBDA(const Integer i) {
             const Integer localid = dm.get_face_dof(i);
-            /* DM::fill_stencil(dm, fstencil, localid, i); */
+            [>DM::fill_stencil(dm, fstencil, localid, i);<]
             fstencil.build_stencil(dm, localid, i);
         });
         return fstencil;
@@ -59,7 +71,7 @@ namespace mars {
     template <typename ST, bool Orient = false, typename DM>
     ST build_face_stencil(const DM &dm) {
         return build_face_stencils<Orient, ST, DM>(dm);
-    }
+    } */
 
     template <typename ST, typename DM>
     ST build_corner_stencil(const DM &dm) {
