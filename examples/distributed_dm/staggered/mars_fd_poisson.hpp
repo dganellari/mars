@@ -29,12 +29,21 @@
 namespace mars {
 
     static constexpr  Integer DIM = DistributedQuad4Mesh::Dim;
+    static constexpr  bool Orient = true;
+
     using SStencil = StokesStencil<DIM>;
+    using FSStencil = FullStokesStencil<DIM, true>;
+    //general width 2 stencil used as constant viscosity stokes.
     using FStencil = Stencil<DIM, 2>;
+    //general width 1 stencil used as pressure stencil.
     using VCStencil = Stencil<DIM, 1>;
 
+    //use the FDDM (finite difference DM object). In this case build your stencil manually!
     /* using SDM = FDDM<DistributedQuad4Mesh, 2, double, double>; */
-    using SDM = StagDM<DistributedQuad4Mesh, SStencil, double, double>;
+
+    //Or use the staggered DM object which builds needed staggered stencils for you!
+    using SDM = StagDM<DistributedQuad4Mesh, FSStencil, double, double>;
+
     /*
     enum class DMDataDesc
     {
@@ -45,7 +54,7 @@ namespace mars {
 
     // use as more readable tuple index to identify the data
     static constexpr int IN = 0;
-    static constexpr int OU = 1;
+    static constexpr int OUT = 1;
 
     template <Integer idx>
     using SDMDataType = typename SDM::UserDataType<idx>;
@@ -224,8 +233,10 @@ namespace mars {
         print_stencil(dm, corner_stencil); */
 
 
-        /* print_stencil(dm, dm.get_volume_stencil()); */
-        print_stencil(dm, dm.get_face_stencil());
+        dm.build_pressure_stencil();
+        /* dm.build_stokes_stencil(); */
+        print_stencil(dm, dm.get_volume_stencil());
+        /* print_stencil(dm, dm.get_face_stencil()); */
 
         const Integer dof_size = dm.get_dof_size();
 
@@ -234,16 +245,16 @@ namespace mars {
             "initdatavalues", dof_size, MARS_LAMBDA(const Integer i) {
                 dm.get_dof_data<IN>(i) = 1.0;
                 // dm.get_dof_data<INPUT>(i) = i;
-                dm.get_dof_data<OU>(i) = i;
+                dm.get_dof_data<OUT>(i) = i;
             });
 
-        dm.gather_ghost_data<OU>(context);
+        dm.gather_ghost_data<OUT>(context);
         // iterate through the local dofs and print the local number and the data
         dm.dof_iterate(MARS_LAMBDA(const Integer i) {
             Dof d = dm.local_to_global_dof(i);
 
             printf("lid: %li, u: %lf, v: %lf, global: %li, rank: %i\n",
-                    i, dm.get_dof_data<IN>(i), dm.get_dof_data<OU>(i), d.get_gid(), d.get_proc());
+                    i, dm.get_dof_data<IN>(i), dm.get_dof_data<OUT>(i), d.get_gid(), d.get_proc());
         });
  */
         /* using VectorReal = mars::ViewVectorType<Real>;

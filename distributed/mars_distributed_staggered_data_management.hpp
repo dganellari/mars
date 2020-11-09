@@ -26,7 +26,7 @@ namespace mars {
         static constexpr Integer Dim = Mesh::Dim;
         static constexpr Integer Degree = 2;
         static constexpr Integer VWidth = 1;
-        static constexpr Integer FWidth = 2;
+        /* static constexpr Integer FWidth = 2; */
 
         using SuperFDDM = FDDM<Mesh, Degree, T...>;
         using SuperDM = DM<Mesh, Degree, T...>;
@@ -38,13 +38,14 @@ namespace mars {
 
         virtual void enumerate_dofs(const context &context) override {
             SuperFDDM::enumerate_dofs(context);
-            build_stencils();
+            /* build_stencils(); */
         }
 
-        void build_stencils() {
-            volume_stencil = mars::build_volume_stencil<VolumeStencil>(*this);
-            face_stencil = mars::build_face_stencil<FaceStencil, true>(*this);
-        }
+        void build_pressure_stencil() { volume_stencil = mars::build_volume_stencil<VolumeStencil>(*this); }
+
+        //TODO: remove the orientation dependency on the corner extension then add the template here.
+        /* template<typename Orient = false> */
+        void build_stokes_stencil() { face_stencil = mars::build_face_stencil<FaceStencil>(*this); }
 
         MARS_INLINE_FUNCTION
         const VolumeStencil get_volume_stencil() const {
