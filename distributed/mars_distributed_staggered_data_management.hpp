@@ -43,16 +43,17 @@ namespace mars {
 
         void build_pressure_stencil() { volume_stencil = mars::build_volume_stencil<VolumeStencil>(*this); }
 
-        //TODO: remove the orientation dependency on the corner extension then add the template here.
-        /* template<typename Orient = false> */
-        void build_stokes_stencil() { face_stencil = mars::build_face_stencil<FaceStencil>(*this); }
+        template <bool Orient = false>
+        void build_stokes_stencil() {
+            face_stencil = mars::build_face_stencil<FaceStencil, Orient>(*this);
+        }
 
         MARS_INLINE_FUNCTION
-        const VolumeStencil get_volume_stencil() const {
+        const VolumeStencil get_pressure_stencil() const {
                 return volume_stencil; }
 
         MARS_INLINE_FUNCTION
-        const FaceStencil get_face_stencil() const {
+        const FaceStencil get_stokes_stencil() const {
                 return face_stencil; }
 
     private:
