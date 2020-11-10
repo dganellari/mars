@@ -22,6 +22,8 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
     using Coefficients=ShapeFunctionCoefficientsCollection<Bilinear,Linear>;
     using Maps=MapFromReferenceCollection<Bilinear,Linear>;
     using ShapeFunctions=ShapeFunctionsCollection<Bilinear,Linear>;
+    using EvalBilinear=Evaluation<Expression<Bilinear>,ShapeFunctions>;
+    using EvalLinear=Evaluation<Expression<Linear>,ShapeFunctions>;
     using BCs=DirichletBoundaryConditionCollection<DirichletBCs...>;
     using MeshT=typename Bilinear::FunctionSpace::MeshT;
     using Elem= typename MeshT::Elem;
@@ -620,6 +622,8 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
 
     auto& levels(){return levels_;}
+
+    const auto& levels()const{return levels_;}
 
     auto& constrained_dofs_levels(){return constrained_dofs_levels_;}
 

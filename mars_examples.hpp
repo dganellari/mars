@@ -7695,29 +7695,185 @@ Real patch_active_set_gauss_seidel_compute_energy_aux( std::vector<Real>& local_
 
 
 
-	template<typename Mat,typename Vec,typename VecBool,typename CurlContext>
-			void projected_hybrid_gauss_seidel(Vec& x, const Mat& A, const Vec& b,const Vec& c_inf,const Vec& c_sup,
-				                               VecBool& working_set, Vec& F_res, const Mat& NDinterp, Vec& ND_b, Vec& ND_c,
-				                               const CurlContext& curl_context, const Integer level,
-				                               Mat& C,Vec& F_c,const Integer max_iter)
+
+	template<typename Mat,typename Vec>
+			void projected_hybrid_gauss_seidel(Vec& y, Vec& x, const Mat& A, const Vec& b,const Vec& primal_c,
+											   Vec& c,const Mat& curl_interp,const Integer max_iter)
 			{
+
+				const int n=b.size();
+				Real tmp2=0;
+				bool sign;
+
+				for(std::size_t it=0;it<max_iter;it++)
+				{
+					for(std::size_t i=0; i<n;i++)
+					{
+						auto tmp=b[i];
+						const auto& map=A.cols_idx()[i]; 
+						for (auto it=map.begin(); it!=map.end(); ++it)
+						{
+							const auto& j=it->first;
+							if(j!=i)
+								tmp-=A(i,j)*x[j];
+						}
+						tmp=(tmp)/A(i,i);
+
+
+						const auto& curl_map_col=curl_interp.rows_idx()[i];
+
+						for (auto it=curl_map_col.begin(); it!=curl_map_col.end(); ++it)
+							{
+								const auto& j=it->first;
+								const auto& curl_map_row=curl_interp.cols_idx()[j];
+								tmp2=primal_c[j];
+								sign=true;
+								for (auto it_c=curl_map_row.begin(); it_c!=curl_map_row.end(); ++it_c)
+								{
+									const auto& j_c=it_c->first;
+									if(j_c==i) 
+									 {
+									 	if(curl_interp(j,j_c)==-1)
+									 		sign=false;								 	
+									 }
+									else
+									{
+										tmp2+=curl_interp(j,j_c)*x[j_c];
+									}
+									
+								}
+							 if(sign)
+							 	x[i]=min(tmp, tmp2);
+							 else
+							 	x[i]=max(tmp, -tmp2);
+							}
+
+					}
+				}
+
+
+				curl_interp.multiply(c,x);
+				plus_equal(y,c);	
+
+			}
+
+
+	template<typename Mat,typename Vec,typename VecBool,typename Context,typename CurlContext>
+			void projected_hybrid_gauss_seidel(Vec& x, const Mat& A, const Vec& b,const Vec& c_inf,const Vec& c_sup,
+				                               VecBool& working_set,VecBool& curl_working_set, Vec& F_res, 
+				                               const Mat& curl_interp, Vec& curl_b, Vec& curl_c,
+				                               const Context& context,const CurlContext& curl_context, const Integer level,
+				                               Mat& C,Vec& F_c,
+				                               Vec& curl_c_inf,Vec& curl_c_sup, const Integer max_iter)
+			{
+				Real inf= std::numeric_limits<double>::infinity();
+
 				projected_gauss_seidel(x,A,b,c_inf,c_sup,max_iter);
 		   		compute_working_set(working_set,x,c_sup);
 		        A.multiply_and_add(F_res,-1.0,x,b);
 
 
-		        Nedelec_interpolation[level].NedelecTruncation2D(curl_working_set,working_set);
+		        const auto& levels=context.levels();
+
+           		const Integer rt_n_dofs=context.full_spaces_ptr()->dofsdofmap().level_cumulative_dofs_array()[1][levels[level]];
+           		const Integer curl_n_dofs=curl_context.full_spaces_ptr()->dofsdofmap().level_cumulative_dofs_array()[1][levels[level]];
+
+                std::cout<<"rt_n_dofs="<<rt_n_dofs<<std::endl;
+                std::cout<<"curl_n_dofs="<<curl_n_dofs<<std::endl;
+                std::cout<<"curl_working_set.size()="<<curl_working_set.size()<<std::endl;
+                std::cout<<"curl_working_set.size()-curl_n_dofs="<<curl_working_set.size()-curl_n_dofs<<std::endl;
+ 
+            	Real tmp=0;
+		        for(Integer j=0;j<curl_n_dofs;j++)
+		        {
+					    tmp=0;
+						const auto& map=curl_interp.rows_idx()[j]; 
+
+						for (auto it=map.begin(); it!=map.end(); ++it)
+						{
+							const auto& i=it->first;
+							if(curl_interp(i,j)==1)
+								curl_c_sup[j]=min(curl_c_sup[j],0.5 *(c_sup[i]-x[i]));
+							else if(curl_interp(i,j)==-1)
+								curl_c_inf[j]=max(curl_c_inf[j],0.5 *(x[i]-c_sup[i]));
+
+						}
+		        }
+		        for(Integer i=0;i<curl_working_set.size()-curl_n_dofs;i++)
+		        {
+		        	curl_c_inf[i+curl_n_dofs]=-inf;
+		        	curl_c_sup[i+curl_n_dofs]=c_sup[i+rt_n_dofs]-x[i+rt_n_dofs];
+
+		        }		        
+
+		        std::cout<<"c_sup-x "<<std::endl;
+		        for(Integer i=0;i<x.size();i++)
+		        	{
+		        		// std::cout<<c_sup[i]-x[i]<<std::endl;
+		        	}
+
+
+		        std::cout<<"curl_c_sup "<<std::endl;
+		        for(Integer i=0;i<curl_c_sup.size();i++)
+		        	{
+		        		// std::cout<<curl_c_sup[i]<<std::endl;
+		        	}
+
+
+		        			        std::cout<<"pre "<<std::endl;
+		        for(Integer i=0;i<x.size();i++)
+		        	{if(abs(c_sup[i]-x[i])<0.00000001)
+		        		{}//std::cout<<i<<std::endl;
+		        	}
+		        	
+
+
+		        // print_vec(curl_c_sup,curl_c_sup.size(),"curl_c_sup");
+
+
+
+
+
+
+
+
 
 		        
-		        NDinterp.transpose_and_multiply(ND_b,F_res,working_set);
-		        ND_c.resize(ND_b.size(),0);
+		        curl_interp.transpose_and_multiply(curl_b,F_res,working_set);
+		        curl_c.resize(curl_b.size(),0);
 		   
-		        curl_context.apply_zero_bc(C,ND_b,level);
-		        gauss_seidel(ND_c,C,ND_b,max_iter);
-		        // C.multiply_and_add(ND_res,-1.0,ND_c,ND_b);
-		        // std::cout<<"ND_res="<<l2_norm(ND_res)<<std::endl;
-		        NDinterp.multiply(F_c,ND_c,working_set);
-		        plus_equal(x,F_c);				
+
+		        curl_interp.NedelecTruncation2D(curl_working_set,working_set);
+		        // print_vec(curl_working_set,curl_working_set.size(),"curl_working_set");
+		        std::cout<<"C pre="<<std::endl;
+		        // C.print_val();
+		        curl_context.apply_zero_bc_for_null_diagonal_element_FOSLS(C,curl_b,curl_working_set);
+		        std::cout<<"C post="<<std::endl;
+		        // C.print_val();
+
+		        curl_context.apply_zero_bc(C,curl_b,level);
+		        // // gauss_seidel(curl_c,C,curl_b,max_iter);
+		        // projected_gauss_seidel(curl_c,C,curl_b,curl_c_inf,curl_c_sup,max_iter);
+		        // std::cout<<"post "<<std::endl;
+		        // for(Integer i=0;i<x.size();i++)
+		        // 	{if(abs(c_sup[i]-x[i])<0.00000001)
+		        // 		{}//std::cout<<i<<std::endl;
+		        // 	}
+
+		        // compute_working_set(curl_working_set,curl_c,curl_c_sup);
+
+		        // std::vector<Real> curl_res;
+
+		        // curl_interp.multiply(F_c,curl_c,working_set);
+		        // C.multiply_and_add(curl_res,-1.0,curl_c,curl_b);
+
+		        // std::cout<<"curl_res="<<l2_norm(curl_res,curl_working_set)<<std::endl;
+		        // plus_equal(x,F_c);				
+                std::vector<Real> primal_c(b.size());
+		        for(Integer i=0;i<x.size();i++)
+		        	primal_c[i]=c_sup[i]-x[i];
+		        	
+		        projected_hybrid_gauss_seidel(x,curl_c,C,curl_b,primal_c,F_c,curl_interp,max_iter);
 
 			}
 
@@ -14507,6 +14663,7 @@ template<typename FunctionSpace_>
    	                     const std::vector<Real>& c_inf,
    	                     const std::vector<Real>& c_sup,
    	                     	   ProjectedContactConstraints<FunctionSpace>& contact_constraints,
+   	                     	   ProjectedContactConstraints<CurlFunctionSpace>& curl_contact_constraints,
    	                     const std::vector<Integer>& levels,	   
    	                     const FullFunctionSpaceLevelsInterpolation<FunctionSpace>& interpolation,
    	                     const FullFunctionSpaceLevelsInterpolation<CurlFunctionSpace>& curl_interpolation,
@@ -14528,14 +14685,20 @@ template<typename FunctionSpace_>
    	                     const Integer max_level,
    	                           bool& change_matrix)
    {
+   	const Integer n_dofs=working_set[level].size();
+   	const Integer curl_n_dofs=curl_working_set[level].size();
+
+   	Real inf= std::numeric_limits<double>::infinity();
+
     std::vector<Real> F_res,ND_res,ND_b,ND_c,CND_res;
     std::vector<Real> C_rhs;
     std::vector<Real> C_correction;
     std::vector<Real> F_correction,c_inf_tmp,c_sup_tmp;
     std::vector<Real> C_c_inf,C_c_sup;
+    std::vector<Real> curl_c_inf(curl_n_dofs,-inf),curl_c_sup(curl_n_dofs,+inf);
+    std::vector<Real> C_curl_c_inf,C_curl_c_sup,curl_c_sup_tmp(curl_n_dofs,+inf);
 
     Real toll=1e-10;
-    Real inf= std::numeric_limits<double>::infinity();
     bool change_coarser_matrix;
 
 
@@ -14548,12 +14711,14 @@ template<typename FunctionSpace_>
         // context.apply_zero_bc(truncated_A_levels[level],b,level);
         // context.apply_zero_bc_for_null_diagonal_element(truncated_A_levels[level],b);
    		patch_gauss_seidel(x,truncated_A_levels[level],b,nodes2entity[0],
-                              		 local_mat,A_tmp,H_tmp,b_tmp,y_tmp,c_tmp,0);
+                              		 local_mat,A_tmp,H_tmp,b_tmp,y_tmp,c_tmp,1000);
 
         compute_working_set(working_set[level],x,c_sup);
         // print_vec(b,b.size(),"c rhs");
 
         // print_vec(x,x.size(),"c sol");
+	   	 truncated_A_levels[level]. multiply_and_add(F_res,-1.0,x,b);
+
         std::cout<<"F_res="<<l2_norm(F_res,working_set[level])<<std::endl;
 
 
@@ -14564,9 +14729,9 @@ template<typename FunctionSpace_>
 
 
 		projected_hybrid_gauss_seidel(x,truncated_A_levels[level],b,c_inf,c_sup,
-				                      working_set[level],F_res,Nedelec2RT2D[level],ND_b,ND_c,
-		                              curl_context, level,
-				                      truncated_Curl_levels[level],F_correction,pre_smoothing);
+				                      working_set[level],curl_working_set[level],F_res,Nedelec2RT2D[level],ND_b,ND_c,
+		                              context,curl_context, level,truncated_Curl_levels[level],
+		                              F_correction,curl_c_inf,curl_c_sup,pre_smoothing);
 
 
 
@@ -14609,90 +14774,191 @@ template<typename FunctionSpace_>
 	   	// print_vec(C_c_sup,C_c_sup.size(),"C_c_sup");
 
 
-         // if(level == max_level) 
-         // {
-         // 	change_matrix=false;
-         // 	change_coarser_matrix=false;         	
-         // for(Integer i=0;i<working_set[level].size();i++)
-         // 	{
-         // 	 if(working_set[level][i]!=working_set_old[level][i])
-         // 		{
-         // 			change_coarser_matrix=true;
-         // 			change_matrix=true;
-         // 			break;
-         // 		}
-         // 	}
-         // }
-         // else
-         // {
-         // 	if(change_matrix)
-         // 		change_coarser_matrix=true;
-         // 	else
-         // 	{
-	        //  for(Integer i=0;i<working_set[level].size();i++)
-	        //  	{
-	        //  	 if(working_set[level][i]!=working_set_old[level][i])
-	        //  		{
-	        //  			change_coarser_matrix=true;
-	        //  			break;
-	        //  		}
-	        //  	}         		
-         // 	}
-         // }
+        if(level == max_level) 
+         {
+         	change_matrix=false;
+         	change_coarser_matrix=false;         	
+         for(Integer i=0;i<working_set[level].size();i++)
+         	{
+         	 if(working_set[level][i]!=working_set_old[level][i])
+         		{
+         			change_coarser_matrix=true;
+         			change_matrix=true;
+         			break;
+         		}
+         	}
+         }
+         else
+         {
+         	if(change_matrix)
+         		change_coarser_matrix=true;
+         	else
+         	{
+	         for(Integer i=0;i<working_set[level].size();i++)
+	         	{
+	         	 if(working_set[level][i]!=working_set_old[level][i])
+	         		{
+	         			change_coarser_matrix=true;
+	         			break;
+	         		}
+	         	}         		
+         	}
 
-    	// if(1)//change_coarser_matrix)
-    	// {
+
+         }
+
    	 	A_levels[level-1]=A_levels[level].multiply_left_transpose_and_multiply_right(interpolation.matrix(level-1),working_set[level]);
         truncated_A_levels[level-1]=A_levels[level-1];
-    	// }
-
-        // std::vector<Integer> vec_remove_diag(C_c_sup.size(),-1);
-        // std::vector<bool> vec_remove_bool(C_c_sup.size(),-1);
-   	   	// contact_constraints.find_fully_truncated_coarse_dofs(vec_remove_diag,working_set[level],c_inf,c_sup,levels[level-1],levels[level]);
-
+   
    	   	context.apply_zero_bc(truncated_A_levels[level-1],C_rhs,level-1);
 
    	   	context.apply_zero_bc_for_null_diagonal_element(truncated_A_levels[level-1],C_rhs);
 
 
+	   	 truncated_A_levels[level]. multiply_and_add(F_res,-1.0,x,b);
+	   	 interpolation.matrix(level-1).transpose_and_multiply(C_rhs,F_res,working_set[level]);
 
-	    hiptmair_vcycle_contact(context,curl_context, C_correction,
+
+
+
+
+
+
+
+
+	   	contact_constraints.compute_sup_constraints(C_c_sup,c_sup_tmp,levels[level-1],levels[level]);
+	   	contact_constraints.compute_inf_constraints(C_c_inf,c_inf_tmp,levels[level-1],levels[level]);
+    
+	   	 if(max_level==level)
+    	    {
+    	    	std::cout<<"change_coarser_matrix="<<change_coarser_matrix<<" on level "<<level<<std::endl;
+    	    	if(change_coarser_matrix) 	
+ 	   	 		A_levels[level-1]=A_levels[level].multiply_left_transpose_and_multiply_right(interpolation.matrix(level-1),working_set[level]);
+                truncated_A_levels[level-1]=A_levels[level-1];
+    	    }
+	   	 else 
+	   	 {
+    	    	std::cout<<"change_coarser_matrix="<<change_coarser_matrix<<" on level "<<level<<std::endl;
+    	    	if(change_coarser_matrix)   	    		
+ 	   	 		A_levels[level-1]=A_levels[level].multiply_left_transpose_and_multiply_right(interpolation.matrix(level-1),working_set[level]);	   	 		
+	   	 		truncated_A_levels[level-1]=A_levels[level-1];
+	   	 }
+
+        std::vector<Integer> vec_remove_diag(C_c_sup.size(),-1);
+        std::vector<bool> vec_remove_bool(C_c_sup.size(),-1);
+   	   	contact_constraints.find_fully_truncated_coarse_dofs(vec_remove_diag,working_set[level],c_inf,c_sup,levels[level-1],levels[level]);
+  //        for(Integer i=0;i<working_set[level-1].size();i++)
+  //        {
+  //        	if(vec_remove_diag[i]==0 )
+  //        		{
+  //        			vec_remove_bool[i]=1;
+  //        			// working_set[level-1][i]=1;
+  //        			// C_constraint_inf[i]=0;
+  //        			// C_constraint_sup[i]=0;
+  //        			C_rhs[i]=0;
+  //        		}
+		// 	 else
+		// 		vec_remove_bool[i]=0;
+
+		// }
+  //  	   	context.apply_zero_bc_for_null_diagonal_element_FOSLS(truncated_A_levels[level-1],C_rhs,vec_remove_bool);
+   	   	context.apply_zero_bc_for_null_diagonal_element(truncated_A_levels[level-1],C_rhs);
+
+
+
+
+
+
+
+	   	if(level==1)
+	   	{
+
+// 	   	   compute_working_set(curl_working_set[level],ND_c,curl_c_sup);
+//  	   	   C_curl_c_sup.resize(curl_working_set[level-1].size(),+inf);
+//  	   	   C_curl_c_inf.resize(curl_working_set[level-1].size(),-inf);
+
+// 	 	   	 for(Integer i=0;i<x.size();i++)
+// 		   		 {
+
+
+// 		   	     	if(curl_working_set[level][i] && abs(curl_c_sup[i]-F_correction[i]) < toll)
+// 		   		 		curl_c_sup_tmp[i]=+inf;
+// 		   		 	else
+// 		   		 		curl_c_sup_tmp[i]=curl_c_sup[i]-F_correction[i];
+// 		   		 }
+	   	   
+
+// 	   	   curl_contact_constraints.compute_sup_constraints(C_curl_c_sup,curl_c_sup_tmp,levels[level-1],levels[level]);
+
+	        const auto& levels=context.levels();
+
+       		const Integer rt_n_dofs=context.full_spaces_ptr()->dofsdofmap().level_cumulative_dofs_array()[1][levels[level]];
+       		const Integer curl_n_dofs=curl_context.full_spaces_ptr()->dofsdofmap().level_cumulative_dofs_array()[1][levels[level]];
+            std::cout<<"qui3"<<std::endl;
+
+	        for(Integer i=0;i<curl_n_dofs;i++)
+	        {
+        	curl_working_set[level][i]=curl_context.constrained_dofs_levels()[level][i];
+	        }
+	        std::cout<<"qui4"<<std::endl;
+
+
+
+	        for(Integer i=0;i<curl_working_set[level].size()-curl_n_dofs;i++)
+	        {
+	        	curl_working_set[level][i+curl_n_dofs]=working_set[level][i+rt_n_dofs];
+
+	        }	
+	        std::cout<<"qui5"<<std::endl;
+
+   	       Curl_levels[level-1]=Curl_levels[level].multiply_left_transpose_and_multiply_right(curl_interpolation.matrix(level-1),curl_working_set[level]);
+       	   truncated_Curl_levels[level-1]=Curl_levels[level-1];
+
+           truncated_Curl_levels[level].multiply_and_add(ND_res,-1.0,ND_c,ND_b);
+	       curl_interpolation.matrix(level-1).transpose_and_multiply(CND_res,ND_res,curl_working_set[level]);
+    	   context.apply_zero_bc_for_null_diagonal_element(truncated_Curl_levels[level-1],CND_res);
+
+	   	   C_correction.resize(truncated_Curl_levels[level-1].rows(),0.0);
+           gauss_seidel(C_correction,truncated_Curl_levels[level-1],CND_res,1000);
+        
+//            projected_gauss_seidel(C_correction,truncated_Curl_levels[level-1],CND_res,C_curl_c_inf,C_curl_c_sup,1000);
+//      //    std::cout<<"C_correction="<<l2_norm(C_correction)<<std::endl;
+//            std::vector<Real> curl_res;
+	        
+// 	        truncated_Curl_levels[level-1].multiply_and_add(curl_res,-1.0,C_correction,CND_res);
+//             compute_working_set(curl_working_set[level-1],C_correction,C_curl_c_sup);
+// 	        std::cout<<"coarse curl_res="<<l2_norm(curl_res,curl_working_set[level-1])<<std::endl;
+
+        
+
+           curl_interpolation.matrix(level-1).multiply(ND_c,C_correction,curl_working_set[level]);
+           Nedelec2RT2D[level].multiply(F_correction,ND_c,working_set[level]);
+// // 
+           plus_equal(x,F_correction);
+
+	   	}
+ 	    hiptmair_vcycle_contact(context,curl_context, C_correction,
 	    				 A_levels,truncated_A_levels,Curl_levels,truncated_Curl_levels,
-	     	             C_rhs,C_c_inf,C_c_sup,contact_constraints,levels,
+	     	             C_rhs,C_c_inf,C_c_sup,contact_constraints,curl_contact_constraints,levels,
 	     	             interpolation,curl_interpolation,Nedelec2RT2D,
 	     	             working_set,working_set_old,curl_working_set,curl_working_set_old,
 	     	             nodes2entity,local_mat,A_tmp,H_tmp,b_tmp,y_tmp,c_tmp,pre_smoothing,post_smoothing,level-1,max_level,change_matrix);
        
 	    interpolation.matrix(level-1).multiply(F_correction,C_correction,working_set[level]); 
-	   	// plus_equal(x,F_correction);
+	   	plus_equal(x,F_correction);
 
-	   	if(level==1)
-	   	{
-     //    truncated_Curl_levels[level]. multiply_and_add(ND_res,-1.0,ND_c,ND_b);
-	   	// curl_interpolation.matrix(level-1).transpose_and_multiply(CND_res,ND_res,curl_working_set[level]);
-	   	// C_correction.resize(truncated_Curl_levels[level].rows(),0.0);
-        
-     //    gauss_seidel(C_correction,truncated_Curl_levels[level-1],CND_res,10000);
-     //    std::cout<<"C_correction="<<l2_norm(C_correction)<<std::endl;
 
-        
-
-     //    curl_interpolation.matrix(level-1).multiply(ND_c,C_correction,curl_working_set[level]);
-     //    Nedelec2RT2D[level].multiply(F_correction,ND_c,working_set[level]);
-
-     //    plus_equal(x,F_correction);
-
-	   	}
-        for(Integer i=0;i<x.size();i++)
-        	if(x[i]>c_sup[i])
-        		std::cout<<"post i="<<i<<" "<<x[i]<<", "<<c_sup[i]<<std::endl;
+        // for(Integer i=0;i<x.size();i++)
+        // 	if(x[i]>c_sup[i])
+        // 		std::cout<<"post i="<<i<<" "<<x[i]<<", "<<c_sup[i]<<std::endl;
 
    		// projected_gauss_seidel(x,truncated_A_levels[level],b,c_inf,c_sup,pre_smoothing);
 
 		projected_hybrid_gauss_seidel(x,truncated_A_levels[level],b,c_inf,c_sup,
-				                      working_set[level],F_res,Nedelec2RT2D[level],ND_b,ND_c,
-		                              curl_context, level,
-				                      truncated_Curl_levels[level],F_correction,post_smoothing);
+				                      working_set[level],curl_working_set[level],F_res,Nedelec2RT2D[level],ND_b,ND_c,
+		                              context,curl_context, level,
+				                      truncated_Curl_levels[level],F_correction,
+				                      curl_c_inf,curl_c_sup,post_smoothing);
 
    	}
    }
@@ -17197,7 +17463,8 @@ template<typename FunctionSpace_>
 
 
          std::cout<<std::endl;
-         auto F_truncate=working_set[level];
+         // auto F_truncate=working_set[level];
+         // auto F_truncate2=working_set[level];
          // F_truncate[532]=0;
          // F_truncate[533]=0;
          // F_truncate[534]=0;
@@ -17246,15 +17513,29 @@ template<typename FunctionSpace_>
 
 
 
+         // for(Integer i=0;i<F_truncate.size();i++)
+         // {
+
+         // 	if(i<n_dofs_RT0)
+         // 		F_truncate[i]=0;
+
+         // 	F_truncate[i]=context.constrained_dofs_levels()[level][i];
+
+
+         // }
+         // save_vector("c_dofs_"+std::to_string(level)+"_"+std::to_string(max_level)+".dat",context.constrained_dofs_levels()[level]);
+
+         // save_vector("F_truncate_f_"+std::to_string(level)+"_"+std::to_string(max_level)+".dat",F_truncate);
 
 
 
 
 
-
-
+         auto F_truncate=working_set[level];
          mixed_bc_truncation(context.full_spaces_ptr(),levels[level-1],levels[level],1,working_set[level],F_truncate);
  
+         // save_vector("F_truncate_t_"+std::to_string(level)+"_"+std::to_string(max_level)+".dat",F_truncate);
+         // save_vector("w_"+std::to_string(level)+"_"+std::to_string(max_level)+".dat",working_set[level]);
 
 
 
@@ -17348,6 +17629,16 @@ template<typename FunctionSpace_>
 	   		 }
 
 
+       
+     //    save_vector("F_constraint_sup_pre_"+std::to_string(level)+"_"+std::to_string(max_level)+".dat",F_constraint_sup_tmp);
+     //    F_truncate2=working_set[level];
+     //    mixed_bc_truncation(context.full_spaces_ptr(),levels[level-1],levels[level],1,working_set[level],F_truncate2);
+     //    save_vector("F2_truncate_f_"+std::to_string(level)+"_"+std::to_string(max_level)+".dat",F_truncate2);
+	
+	    // mixed_constraint_truncation(context.full_spaces_ptr(),levels[level-1],levels[level],1,working_set[level],x,F_constraint_sup,F_constraint_sup_tmp,F_truncate);
+     //    save_vector("F_constraint_sup_post_"+std::to_string(level)+"_"+std::to_string(max_level)+".dat",F_constraint_sup_tmp);
+
+
 
 	   	C_correction.resize(C_rhs.size(),0.0);
 	   	C_constraint_inf.resize(C_rhs.size(),0.0);
@@ -17391,27 +17682,35 @@ template<typename FunctionSpace_>
         std::vector<Integer> vec_remove_diag(C_constraint_sup.size(),-1);
         std::vector<bool> vec_remove_bool(C_constraint_sup.size(),-1);
    	   	contact_constraints.find_fully_truncated_coarse_dofs(vec_remove_diag,working_set[level],F_constraint_inf,F_constraint_sup,levels[level-1],levels[level]);
-         for(Integer i=0;i<working_set[level-1].size();i++)
-         {
-         	if(vec_remove_diag[i]==0 )
-         		{
-         			vec_remove_bool[i]=1;
-         			// working_set[level-1][i]=1;
-         			// C_constraint_inf[i]=0;
-         			// C_constraint_sup[i]=0;
-         			C_rhs[i]=0;
-         		}
-			 else
-				vec_remove_bool[i]=0;
+  //        for(Integer i=0;i<working_set[level-1].size();i++)
+  //        {
+  //        	if(vec_remove_diag[i]==0 )
+  //        		{
+  //        			vec_remove_bool[i]=1;
+  //        			// working_set[level-1][i]=1;
+  //        			// C_constraint_inf[i]=0;
+  //        			// C_constraint_sup[i]=0;
+  //        			C_rhs[i]=0;
+  //        		}
+		// 	 else
+		// 		vec_remove_bool[i]=0;
 
-		}
-   	   	context.apply_zero_bc_for_null_diagonal_element_FOSLS(truncated_A_levels[level-1],C_rhs,vec_remove_bool);
+		// }
+   	   	// context.apply_zero_bc_for_null_diagonal_element_FOSLS(truncated_A_levels[level-1],C_rhs,vec_remove_bool);
 
 
 
 
 
          interpolation.matrix(level-1).save_mat("P"+std::to_string(level)+"_"+std::to_string(max_level)+"_false.dat");
+
+   	 // 	A_levels[level-1]=A_levels[level].multiply_left_transpose_and_multiply_right(interpolation.matrix(level-1),F_truncate);
+     //    truncated_A_levels[level-1]=A_levels[level-1];
+
+	   	// truncated_A_levels[level-1]=A_levels[level-1];
+	   	// context.apply_zero_bc(truncated_A_levels[level-1],C_rhs,level-1);
+
+
 
          // for(Integer i=0;i<working_set[level-1].size();i++)
          // {
@@ -18204,7 +18503,8 @@ template<typename FunctionSpace_>
    	                           std::vector<Real>& b,
     	                 const std::vector<Real>& c_inf,
    	                     const std::vector<Real>& c_sup,
-   	                           ProjectedContactConstraints<FunctionSpace>& contact_constraints,               
+   	                           ProjectedContactConstraints<FunctionSpace>& contact_constraints,       
+   	                           ProjectedContactConstraints<CurlFunctionSpace>& curl_contact_constraints,               
    	                     const std::vector<Integer>& levels,
    	                     const FullFunctionSpaceLevelsInterpolation<FunctionSpace>& interpolation,
    	                     const FullFunctionSpaceLevelsInterpolation<CurlFunctionSpace>& curl_interpolation,
@@ -18256,7 +18556,7 @@ template<typename FunctionSpace_>
    	for(Integer i=0;i<max_iter;i++)
    	{
      hiptmair_vcycle_contact(context,curl_context,x,A_levels,truncated_A_levels,Curl_levels,truncated_Curl_levels,
-     	b,c_inf,c_sup,contact_constraints,levels,
+     	b,c_inf,c_sup,contact_constraints,curl_contact_constraints,levels,
      	interpolation,curl_interpolation,Nedelec2RT2D,
      	working_set,working_set_old,curl_working_set,curl_working_set_old,
      	entity2dofs,local_mat,A_tmp,H_tmp,b_tmp,y_tmp,c_tmp,pre_smoothing,post_smoothing,level,level,change_matrix);
@@ -20063,6 +20363,7 @@ delta= (resAc0-resAc1-Ac0Ac1+Ac1Ac1)/Ac0diff2;
     truncated_A_levels[level]. multiply_and_add(F_rhs,-1.0,x,b);
     compute_working_set(working_set[level],x,F_constraint_inf,F_constraint_sup);
     std::cout<<"||RES||="<<log10(l2_norm(F_rhs,working_set[level]))<<std::endl;
+    std::cout<<"alpha0_max="<<alpha0_max<<", alpha1_max="<<alpha1_max<<std::endl;
 
     std::cout<<"pre smoothing-----------delta="<<delta<<", gamma="<<gamma<<", a0="<<alpha0<<", a1="<<alpha1<<std::endl;
 // }
@@ -20072,7 +20373,7 @@ delta= (resAc0-resAc1-Ac0Ac1+Ac1Ac1)/Ac0diff2;
 
    	if(level==0)
    	{
-   		Real alpha_coarse=0.5;
+   		Real alpha_coarse=gamma;//0.5;
    		Integer max_iter_coarse=1000;
 
    		uzawa_patch_active_set_gauss_seidel_optimal(Anobc,bnobc,x,truncated_A_levels[level],b,F_constraint_inf,F_constraint_sup,
@@ -20207,100 +20508,101 @@ delta= (resAc0-resAc1-Ac0Ac1+Ac1Ac1)/Ac0diff2;
 
          plus_equal(x,F_correction);
 
+Real minus_postmooth=0;
 
 
-Real minus_postmooth=1;
-x0=x;
-x1=x;   
- std::cout<<"alpha0="<<alpha0<<std::endl;
+ // minus_postmooth=1;
+// x0=x;
+// x1=x;   
+//  std::cout<<"alpha0="<<alpha0<<std::endl;
 
-uzawa_patch_active_set_gauss_seidel_optimal(Anobc,bnobc,x0,truncated_A_levels[level], b,F_constraint_inf,F_constraint_sup,patch_dofs[level],constraint_dofs[level],border_dofs[level], alpha0, 
-	w0,residual,u_local1,lambda_local,b_local,g_local,A_local1,
-B_local,c_inf_local,c_sup_local,L_local,U_local,P_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,1,toll,residuals,RT1_n_dofs,false);
+// uzawa_patch_active_set_gauss_seidel_optimal(Anobc,bnobc,x0,truncated_A_levels[level], b,F_constraint_inf,F_constraint_sup,patch_dofs[level],constraint_dofs[level],border_dofs[level], alpha0, 
+// 	w0,residual,u_local1,lambda_local,b_local,g_local,A_local1,
+// B_local,c_inf_local,c_sup_local,L_local,U_local,P_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,1,toll,residuals,RT1_n_dofs,false);
 
-std::cout<<"alpha1="<<alpha1<<std::endl;
+// std::cout<<"alpha1="<<alpha1<<std::endl;
 
-uzawa_patch_active_set_gauss_seidel_optimal(Anobc,bnobc,x1,truncated_A_levels[level], b,F_constraint_inf,F_constraint_sup,patch_dofs[level],constraint_dofs[level],border_dofs[level], alpha1,
-	w1,residual,u_local1,lambda_local,b_local,g_local,A_local1,B_local,c_inf_local,c_sup_local,L_local,U_local,P_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,1,toll,residuals,RT1_n_dofs,false);
-
-
-for(Integer i=0;i<x.size();i++)
-{
-c0[i]=x0[i]-x[i];
-c1[i]=x1[i]-x[i];
-}
-
-truncated_A_levels[level].multiply(Ac0,c0);
-truncated_A_levels[level].multiply(Ac1,c1);
-
-Ac1Ac1=l2_dot_product(Ac1,Ac1,w1);
-Ac0Ac0=l2_dot_product(Ac0,Ac0,w0);
-Ac0Ac1=l2_dot_product(Ac0,Ac1,w0,w1);
-resAc0=l2_dot_product(F_rhs,Ac0,w0);
-resAc1=l2_dot_product(F_rhs,Ac1,w1);
-Ac0diff2=(Ac0Ac0+Ac1Ac1-2*Ac0Ac1);
-// delta= (resAc0-resAc1-Ac0Ac1+Ac1Ac1)/Ac0diff2;
-// std::cout<<"delta="<<delta<<std::endl;
-// if(std::isnan(delta))
-// delta=1.0;
+// uzawa_patch_active_set_gauss_seidel_optimal(Anobc,bnobc,x1,truncated_A_levels[level], b,F_constraint_inf,F_constraint_sup,patch_dofs[level],constraint_dofs[level],border_dofs[level], alpha1,
+// 	w1,residual,u_local1,lambda_local,b_local,g_local,A_local1,B_local,c_inf_local,c_sup_local,L_local,U_local,P_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,1,toll,residuals,RT1_n_dofs,false);
 
 
-// if(delta<0 || delta >1)
-// 	{
-// 	   Real gamma0=-2*resAc0+Ac0Ac0;
-// 	   Real gamma1=-2*resAc1+Ac1Ac1;
+// for(Integer i=0;i<x.size();i++)
+// {
+// c0[i]=x0[i]-x[i];
+// c1[i]=x1[i]-x[i];
+// }
 
-// 	   std::cout<<"gamma0="<<gamma0<<std::endl;
-// 	   std::cout<<"gamma1="<<gamma1<<std::endl;
+// truncated_A_levels[level].multiply(Ac0,c0);
+// truncated_A_levels[level].multiply(Ac1,c1);
+
+// Ac1Ac1=l2_dot_product(Ac1,Ac1,w1);
+// Ac0Ac0=l2_dot_product(Ac0,Ac0,w0);
+// Ac0Ac1=l2_dot_product(Ac0,Ac1,w0,w1);
+// resAc0=l2_dot_product(F_rhs,Ac0,w0);
+// resAc1=l2_dot_product(F_rhs,Ac1,w1);
+// Ac0diff2=(Ac0Ac0+Ac1Ac1-2*Ac0Ac1);
+// // delta= (resAc0-resAc1-Ac0Ac1+Ac1Ac1)/Ac0diff2;
+// // std::cout<<"delta="<<delta<<std::endl;
+// // if(std::isnan(delta))
+// // delta=1.0;
+
+
+// // if(delta<0 || delta >1)
+// // 	{
+// // 	   Real gamma0=-2*resAc0+Ac0Ac0;
+// // 	   Real gamma1=-2*resAc1+Ac1Ac1;
+
+// // 	   std::cout<<"gamma0="<<gamma0<<std::endl;
+// // 	   std::cout<<"gamma1="<<gamma1<<std::endl;
+
+// // 	   if(gamma0<gamma1)
+// // 	      delta=1;
+// // 	   else
+// // 	      delta=0;	
+// // 	}
+
+// // gamma= alpha0*delta+alpha1*(1-delta);
+// // alpha_vec.push_back(gamma);
+
+
+// //     for(Integer i=0;i<x.size();i++)
+// //     {
+// //         x[i]+=(delta *c0[i]+(1-delta)*c1[i]);
+// //     }
+// //     truncated_A_levels[level]. multiply_and_add(F_rhs,-1.0,x,b);
+// //     compute_working_set(working_set[level],x,F_constraint_inf,F_constraint_sup);
+// //     std::cout<<"||RES||="<<log10(l2_norm(F_rhs,working_set[level]))<<std::endl;
+
+
+// 	   gamma0=-2*resAc0+Ac0Ac0;
+// 	   gamma1=-2*resAc1+Ac1Ac1;
+// 	   alpha_mean=0.5*(alpha0+alpha1);
+//     std::cout<<"a0="<<alpha0<<", a1="<<alpha1<<", a_mean="<<alpha_mean <<std::endl;
 
 // 	   if(gamma0<gamma1)
-// 	      delta=1;
+// 	   {
+// 	   	gamma=alpha0;
+// 	   	alpha0=max(0.5*alpha0,alpha0_max);
+// 	   	alpha1=min(alpha0+alpha_mean,alpha1_max);
+// 	    for(Integer i=0;i<x.size();i++)
+// 	        x[i]+=c0[i];
+	    
+// 	   }
 // 	   else
-// 	      delta=0;	
-// 	}
-
-// gamma= alpha0*delta+alpha1*(1-delta);
-// alpha_vec.push_back(gamma);
-
-
-//     for(Integer i=0;i<x.size();i++)
-//     {
-//         x[i]+=(delta *c0[i]+(1-delta)*c1[i]);
-//     }
+// 	   {
+// 	   	gamma=alpha1;
+// 	   	alpha0=max(alpha1-alpha_mean,alpha0_max);
+// 	   	alpha1=min(alpha1+alpha_mean,alpha1_max);
+// 	    for(Integer i=0;i<x.size();i++)
+// 	        x[i]+=c1[i];	   	
+// 	   }
+// 	alpha_vec.push_back(gamma);
 //     truncated_A_levels[level]. multiply_and_add(F_rhs,-1.0,x,b);
 //     compute_working_set(working_set[level],x,F_constraint_inf,F_constraint_sup);
 //     std::cout<<"||RES||="<<log10(l2_norm(F_rhs,working_set[level]))<<std::endl;
 
 
-	   gamma0=-2*resAc0+Ac0Ac0;
-	   gamma1=-2*resAc1+Ac1Ac1;
-	   alpha_mean=0.5*(alpha0+alpha1);
-    std::cout<<"a0="<<alpha0<<", a1="<<alpha1<<", a_mean="<<alpha_mean <<std::endl;
-
-	   if(gamma0<gamma1)
-	   {
-	   	gamma=alpha0;
-	   	alpha0=max(0.5*alpha0,alpha0_max);
-	   	alpha1=min(alpha0+alpha_mean,alpha1_max);
-	    for(Integer i=0;i<x.size();i++)
-	        x[i]+=c0[i];
-	    
-	   }
-	   else
-	   {
-	   	gamma=alpha1;
-	   	alpha0=max(alpha1-alpha_mean,alpha0_max);
-	   	alpha1=min(alpha1+alpha_mean,alpha1_max);
-	    for(Integer i=0;i<x.size();i++)
-	        x[i]+=c1[i];	   	
-	   }
-	alpha_vec.push_back(gamma);
-    truncated_A_levels[level]. multiply_and_add(F_rhs,-1.0,x,b);
-    compute_working_set(working_set[level],x,F_constraint_inf,F_constraint_sup);
-    std::cout<<"||RES||="<<log10(l2_norm(F_rhs,working_set[level]))<<std::endl;
-
-
-    std::cout<<"post smoothing-----------delta="<<delta<<", gamma="<<gamma<<", a0="<<alpha0<<", a1="<<alpha1<<std::endl;
+//     std::cout<<"post smoothing-----------delta="<<delta<<", gamma="<<gamma<<", a0="<<alpha0<<", a1="<<alpha1<<std::endl;
 
 
 
@@ -20327,6 +20629,382 @@ Ac0diff2=(Ac0Ac0+Ac1Ac1-2*Ac0Ac1);
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+ template<typename FunctionSpace,typename VecVecVec,typename...Ts>
+   inline void uzawa_patch_vcycle_active_set_optimal2(
+                SparseMatrix<Real> Anobc,
+              std::vector<Real> bnobc,    
+                         const Context<Ts...>& context, 
+                   std::vector<Real>& x,
+                               std::vector<SparseMatrix<Real>>& A_levels,
+                               std::vector<SparseMatrix<Real>>& truncated_A_levels,
+                               std::vector<Real>& b,
+                         const std::vector<Real>& F_constraint_inf,
+                         const std::vector<Real>& F_constraint_sup,
+                             ProjectedContactConstraints<FunctionSpace>& contact_constraints,
+                         const std::vector<Integer>& levels,     
+                         std::vector<std::vector<bool>>& working_set,
+                         std::vector<std::vector<bool>>& working_set_old,
+                         const FullFunctionSpaceLevelsInterpolation<FunctionSpace>& interpolation,
+                         const VecVecVec& patch_dofs,
+                         const VecVecVec& constraint_dofs,
+                         const VecVecVec& border_dofs,
+                         const Real alpha0_min,
+                         const Real alpha1_max,                          
+                               Real& alpha0,
+                               Real& alpha1,
+                               Real& gamma,
+                               Integer& sign,
+                         const Integer pre_smoothing,
+                         const Integer post_smoothing,
+                         const Integer level,
+                         const Integer max_level,
+                             bool& change_matrix,
+               std::vector<Real>& u_local1,
+               std::vector<Real>& lambda_local,std::vector<Real>& b_local, std::vector<Real>& g_local, 
+                 DenseMatrix<Real>& A_local1,
+                 DenseMatrix<Real>& B_local,
+                 std::vector<Real>& c_inf_local,std::vector<Real>& c_sup_local,
+                 DenseMatrix<Real>& L_local,
+                 DenseMatrix<Real>& U_local,
+                 std::vector<Integer>& P_local,
+                 std::vector<Real>& y,
+                 std::vector<Real>& tmp,
+                 std::vector<Real>& h,
+                 std::vector<Real>& d,
+                 std::vector<Real>& p,
+                 std::vector<Real>& q,
+                 std::vector<Real>& q_new,
+                 std::vector<Integer>& lambda_inf_check,
+                 std::vector<Integer>& lambda_sup_check,              
+                 Array<std::vector<Real>,3>& residuals,
+                 std::vector<Real>& alpha_vec
+                 )
+   {
+    std::vector<Real> F_rhs;
+    std::vector<Real> C_rhs;
+    std::vector<Real> C_correction;
+    std::vector<Real> F_correction;
+    std::vector<Real> F_constraint_sup_tmp(F_constraint_sup.size());
+    std::vector<Real> F_constraint_inf_tmp(F_constraint_sup.size());
+    std::vector<Real> C_constraint_sup;
+    std::vector<Real> C_constraint_inf;
+    std::vector<Real> residual(x.size());
+
+
+    Real Ac1Ac1,Ac0Ac0,Ac2Ac2,Ac0Ac1,resAc0,resAc1,resAc2,delta,Ac0diff2;
+
+
+
+    Real toll=1e-10;
+    Integer max_active_set_iter=100;
+    Real inf= std::numeric_limits<double>::infinity();
+    bool change_coarser_matrix=false;
+    auto& RT1_n_dofs=context.full_spaces_ptr()->dofsdofmap().level_n_dofs_array()[0][level];
+
+    std::cout<<"uzawa_patch_vcycle_active_set_optimal level="<<level<<std::endl;
+
+
+
+  // Real minus_presmooth=0;
+
+  // gamma=pow(10.0,0.5*(log10(alpha0)+log10(alpha1)));
+  // Real alpha2=gamma;
+
+
+    
+
+    if(level==0)
+    {
+      Real alpha_coarse=gamma;
+      Integer max_iter_coarse=1000;
+
+      uzawa_patch_active_set_gauss_seidel_optimal(Anobc,bnobc,x,truncated_A_levels[level],b,F_constraint_inf,F_constraint_sup,
+                      patch_dofs[level],constraint_dofs[level],border_dofs[level],gamma,//alpha2,
+                      working_set[level],residual,
+                      u_local1,lambda_local,b_local,g_local,
+                      A_local1,B_local,c_inf_local,c_sup_local,
+                      L_local,U_local,P_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,max_iter_coarse,toll,residuals,RT1_n_dofs,false);
+
+        compute_working_set(working_set[level],x,F_constraint_inf,F_constraint_sup);
+    }
+    else 
+    {
+      uzawa_patch_active_set_gauss_seidel_optimal(Anobc,bnobc,x,truncated_A_levels[level],b,F_constraint_inf,F_constraint_sup,
+                      patch_dofs[level],constraint_dofs[level],border_dofs[level],gamma,
+                      working_set[level],residual,
+                      u_local1,lambda_local,b_local,g_local,
+                      A_local1,B_local,c_inf_local,c_sup_local,
+                      L_local,U_local,P_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,
+                      pre_smoothing,toll,residuals,RT1_n_dofs,false);
+
+         if(pre_smoothing>0)
+          compute_working_set(working_set[level],x,F_constraint_inf,F_constraint_sup);
+
+         if(level == max_level) 
+         {
+          auto& constrained_dofs=context.constrained_dofs_levels()[level];
+          change_matrix=false;
+          change_coarser_matrix=false;          
+         for(Integer i=0;i<working_set[level].size();i++)
+          {
+           if(!constrained_dofs[i] && working_set[level][i]!=working_set_old[level][i])
+            {
+              change_coarser_matrix=true;
+              change_matrix=true;
+              break;
+            }
+          }
+         }
+         else
+         {
+          if(change_matrix)
+            change_coarser_matrix=true;
+          else
+          {
+           for(Integer i=0;i<working_set[level].size();i++)
+            {
+             if(working_set[level][i]!=working_set_old[level][i])
+              {
+                change_coarser_matrix=true;
+                break;
+              }
+            }             
+          }
+         }
+
+       truncated_A_levels[level]. multiply_and_add(F_rhs,-1.0,x,b);
+
+       interpolation.matrix(level-1).transpose_and_multiply(C_rhs,F_rhs,working_set[level]);
+
+       C_correction.resize(C_rhs.size(),0.0);
+
+       C_constraint_sup.resize(C_rhs.size(),0.0);
+
+       C_constraint_inf.resize(C_rhs.size(),0.0);
+
+       for(Integer i=0;i<x.size();i++)
+         {
+          if(working_set[level][i] && abs(F_constraint_sup[i]-x[i]) < toll)
+            F_constraint_sup_tmp[i]=inf;
+          else
+          F_constraint_sup_tmp[i]=F_constraint_sup[i]-x[i];
+
+          if(working_set[level][i] && abs(F_constraint_inf[i]-x[i]) < toll)
+            F_constraint_inf_tmp[i]=-inf;
+          else
+          F_constraint_inf_tmp[i]=F_constraint_inf[i]-x[i];
+
+         }
+
+      contact_constraints.compute_sup_constraints(C_constraint_sup,F_constraint_sup_tmp,levels[level-1],levels[level]);
+      contact_constraints.compute_inf_constraints(C_constraint_inf,F_constraint_inf_tmp,levels[level-1],levels[level]);
+
+       if(max_level==level)
+          {
+            std::cout<<"change_coarser_matrix="<<change_coarser_matrix<<" on level "<<level<<std::endl;
+            if(change_coarser_matrix)
+          truncated_A_levels[level-1]=truncated_A_levels[level].multiply_left_transpose_and_multiply_right(interpolation.matrix(level-1),working_set[level]);
+
+          }
+       else 
+       {
+            std::cout<<"change_coarser_matrix="<<change_coarser_matrix<<" on level "<<level<<std::endl;
+            if(change_coarser_matrix)
+          truncated_A_levels[level-1]=truncated_A_levels[level].multiply_left_transpose_and_multiply_right(interpolation.matrix(level-1),working_set[level]);
+       }
+ 
+        std::vector<Integer> vec_remove_diag(C_constraint_sup.size(),-1);
+
+        contact_constraints.find_fully_truncated_coarse_dofs(vec_remove_diag,working_set[level],F_constraint_inf,F_constraint_sup,levels[level-1],levels[level]);
+
+        context.apply_zero_bc_for_null_diagonal_element(truncated_A_levels[level-1],C_rhs,vec_remove_diag);
+
+
+        uzawa_patch_vcycle_active_set_optimal2(Anobc,bnobc,context,C_correction,A_levels,truncated_A_levels,C_rhs,C_constraint_inf,C_constraint_sup,
+                   contact_constraints,levels,working_set,working_set_old,interpolation,
+                   patch_dofs,constraint_dofs,border_dofs,
+                   alpha0_min,alpha1_max,alpha0,alpha1,gamma,sign,
+                   pre_smoothing,post_smoothing,level-1,max_level,change_matrix,
+                   u_local1,lambda_local,b_local,g_local,
+                   A_local1,B_local,c_inf_local,c_sup_local,
+                   L_local,U_local,P_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,
+                   residuals,alpha_vec);
+
+       interpolation.matrix(level-1).multiply(F_correction,C_correction,working_set[level]);
+       for(Integer i=0;i<working_set_old[level].size();i++)
+        working_set_old[level][i]=working_set[level][i];
+
+      plus_equal(x,F_correction);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    // Integer minus_postmooth=1;
+    // Real alpha2=pow(10.0,0.5*(log10(alpha0)+log10(alpha1)));
+  
+    // std::cout<<"alpha0="<<alpha0<<", alpha1="<<alpha1<<", alpha2="<<alpha2<<std::endl;
+
+    // std::vector<Real> x0(x);
+    // std::vector<Real> x1(x);
+    // std::vector<Real> x2(x);
+
+    // std::vector<Real> c0(x);
+    // std::vector<Real> c1(x);    
+    // std::vector<Real> c2(x);  
+
+    // std::vector<Real> Ac0(x);
+    // std::vector<Real> Ac1(x);
+    // std::vector<Real> Ac2(x);
+
+    // std::vector<bool> w0(working_set[level]);
+    // std::vector<bool> w1(working_set[level]);
+    // std::vector<bool> w2(working_set[level]);
+
+
+
+	// uzawa_patch_active_set_gauss_seidel_optimal(Anobc,bnobc,x0,truncated_A_levels[level], b,F_constraint_inf,F_constraint_sup,patch_dofs[level],constraint_dofs[level],border_dofs[level], alpha0, 
+	//   w0,residual,u_local1,lambda_local,b_local,g_local,A_local1,B_local,c_inf_local,c_sup_local,L_local,U_local,P_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,1,toll,residuals,RT1_n_dofs,false);
+
+
+	// uzawa_patch_active_set_gauss_seidel_optimal(Anobc,bnobc,x1,truncated_A_levels[level], b,F_constraint_inf,F_constraint_sup,patch_dofs[level],constraint_dofs[level],border_dofs[level], alpha1,
+	//   w1,residual,u_local1,lambda_local,b_local,g_local,A_local1,B_local,c_inf_local,c_sup_local,L_local,U_local,P_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,1,toll,residuals,RT1_n_dofs,false);
+
+
+	// uzawa_patch_active_set_gauss_seidel_optimal(Anobc,bnobc,x2,truncated_A_levels[level], b,F_constraint_inf,F_constraint_sup,patch_dofs[level],constraint_dofs[level],border_dofs[level], alpha2,
+	//   w2,residual,u_local1,lambda_local,b_local,g_local,A_local1,B_local,c_inf_local,c_sup_local,L_local,U_local,P_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,1,toll,residuals,RT1_n_dofs,false);
+
+  //  std::vector<Real> residual0,residual1,residual2;
+	// for(Integer i=0;i<x.size();i++)
+	// {
+	// c0[i]=x0[i]-x[i];
+	// c1[i]=x1[i]-x[i];
+	// c2[i]=x2[i]-x[i];
+	// }
+
+
+	// truncated_A_levels[level]. multiply_and_add(residual0,-1.0,x0,b);
+	// truncated_A_levels[level]. multiply_and_add(residual1,-1.0,x1,b);
+	// truncated_A_levels[level]. multiply_and_add(residual2,-1.0,x2,b);
+
+ //    Real res0=l2_dot_product(residual0,residual0,w0);
+ //    Real res1=l2_dot_product(residual1,residual1,w1);
+ //    Real res2=l2_dot_product(residual2,residual2,w2);
+
+ 
+	// Real s,eta;
+
+
+     // if((alpha1-alpha0)<0.1*(alpha1_max-alpha0_min))
+     //     s=0.1*(alpha1_max-alpha0_min);
+     // else
+    	 // s= log10(alpha1)
+    	 // 0.5*(alpha1-alpha0);
+
+
+
+    	 // ;
+
+	// if(level>0)
+	// {
+	// if(res0<res1 && res0<res2)
+	// {
+	//   gamma=alpha0;
+ //      alpha0=max(alpha0_min,pow(10.0,0.5*(log10(alpha0_min)+log10(alpha0))));
+ //      alpha1=alpha2;
+ //      sign =-1;
+
+ //      for(Integer i=0;i<x.size();i++)
+ //          x[i]=x0[i];
+
+      
+	// }
+	// else if(res1<res0 && res1<res2)
+	// {
+	//   gamma=alpha1;
+ //      alpha0=alpha2;
+ //      alpha1=min(alpha1_max,pow(10.0,0.5*(log10(alpha1)+log10(alpha1_max))));
+ //      sign =1;
+
+ //      for(Integer i=0;i<x.size();i++)
+ //          x[i]=x1[i];
+	// }
+	// else if(res2<res0 && res2<res1)
+	// {
+	//   gamma=alpha2;
+ //      s=(alpha1_max-alpha0_min);
+
+ //      if(alpha1-alpha0>0.1*s)
+ //      {
+ //        alpha0=pow(10.0,0.5*(log10(alpha0)+log10(alpha2)));
+ //        alpha1=pow(10.0,0.5*(log10(alpha1)+log10(alpha2)));
+
+ //        // alpha0=max(alpha0_min,alpha2-0.1*s);
+ //        // alpha1=min(alpha1_max,alpha2+0.1*s);
+
+ //        alpha2=pow(10.0,0.5*(log10(alpha0)+log10(alpha1)));
+ //        std::cout<<"insideeeee"<<std::endl;     	
+ //      }
+
+ //      std::cout<<"alpha0="<<alpha0<<", alpha1="<<alpha1<<", alpha2="<<alpha2<<std::endl;
+      
+ //      for(Integer i=0;i<x.size();i++)
+ //          x[i]=x2[i];
+	// }
+	// }
+
+
+
+    
+
+
+
+
+    // alpha_vec.push_back(gamma);
+    // truncated_A_levels[level]. multiply_and_add(F_rhs,-1.0,x,b);
+    // compute_working_set(working_set[level],x,F_constraint_inf,F_constraint_sup);
+    // std::cout<<"||RES||="<<log10(l2_norm(F_rhs,working_set[level]))<<std::endl;
+    // std::cout<<"alpha0_min="<<alpha0_min<<", alpha1_max="<<alpha1_max<<std::endl;
+
+    // std::cout<<"pre smoothing-----------delta="<<delta<<", gamma="<<gamma<<", a0="<<alpha0<<", a1="<<alpha1<<std::endl;
+
+    // std::cout<<"res0="<<res0<<",  res1="<<res1<<",  res2="<<res2<<std::endl;
+
+    // std::cout<<"alpha0="<<alpha0<<", alpha1="<<alpha1<<", alpha2="<<alpha2<<std::endl;
+    // std::cout<<"gamma="<<gamma<<std::endl;
+      uzawa_patch_active_set_gauss_seidel_optimal(Anobc,bnobc,x,truncated_A_levels[level],b,F_constraint_inf,F_constraint_sup,
+                        patch_dofs[level],constraint_dofs[level],border_dofs[level],gamma,
+                        working_set[level],residual,
+                      u_local1,lambda_local,b_local,g_local,
+                      A_local1,B_local,c_inf_local,c_sup_local,
+                      L_local,U_local,P_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,
+                      post_smoothing,toll,residuals,RT1_n_dofs,false);
+
+     }
+
+
+   }
 
 
 
@@ -20532,6 +21210,497 @@ Ac0diff2=(Ac0Ac0+Ac1Ac1-2*Ac0Ac1);
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   template<typename FunctionSpace,typename VecVecVec,typename ...Ts>
+   inline void uzawa_patch_multigrid_active_set_optimal2(
+   						SparseMatrix<Real> Anobc,
+   						std::vector<Real> bnobc,
+   					   	std::ostream &os_residual,
+   					   	std::ostream &os_active_set,
+                               Context<Ts...>& context,
+   	                     std::vector<Real>& x,
+   	                           std::vector<SparseMatrix<Real>>& A_levels,
+   	                   		   std::vector<SparseMatrix<Real>>& truncated_A_levels,
+   	                           std::vector<Real>& b,
+   	                     const std::vector<Real>& c_inf,
+   	                     const std::vector<Real>& c_sup,
+   	                           ProjectedContactConstraints<FunctionSpace>& contact_constraints,
+   	                     const std::vector<Integer>& levels,
+   	                     std::vector<std::vector<bool>>& working_set,
+   	                     const FullFunctionSpaceLevelsInterpolation<FunctionSpace>& interpolation,
+   	                     // const VecVecVec& halo_dofs,
+   	                     const VecVecVec& patch_dofs,
+   	                     const VecVecVec& constraint_dofs,
+   	                     const VecVecVec& border_dofs,
+   	                    	   Real& alpha0,
+   	                    	   Real& alpha1,
+   	                     const Integer pre_smoothing,
+   	                     const Integer post_smoothing,
+   	                     const Integer level,
+   	                     const Integer max_iter,
+   	                     const Real toll,
+   	                     Array<std::vector<Real>,3>& residuals,
+   	                     std::vector<Real>& alpha_vec,
+   	                     std::vector<Real>& rate_vec
+   	                     )
+   {
+   	std::vector<Real> rhs;
+   	Real norm_rhs;
+   	DenseMatrix<Real> A_local_rectangular,A_local1,A_local2,B_local,L_local,U_local;
+   	std::vector<Real> u_local1,u_local2,lambda_local,b_local,g_local,c_inf_local,c_sup_local;
+	std::vector<Real> y,tmp,h,d,p,q,q_new;
+	std::vector<Integer> P_local,lambda_inf_check,lambda_sup_check;
+	Integer sign=0;
+	Real gamma;
+	// Array<std::vector<Real>,4> p0,d0;
+ 
+
+
+    std::size_t halo_max_rows=0;
+    std::size_t patch_max_rows=0;
+    std::size_t constrained_max_rows=0;
+    std::size_t constrained_patch_max_rows=0;
+
+    // for(Integer i=0;i<halo_dofs[level].size();i++)
+    // 	halo_max_rows=max(halo_max_rows,halo_dofs[level][i].size());
+
+    // halo_max_rows*=2;
+   
+    for(Integer i=0;i<patch_dofs[level].size();i++)
+    	patch_max_rows=max(patch_max_rows,patch_dofs[level][i].size());
+
+    halo_max_rows=2*patch_max_rows;
+    
+    for(Integer i=0;i<constraint_dofs[level].size();i++)
+    	constrained_max_rows=max(constrained_max_rows,constraint_dofs[level][i].size());
+
+    constrained_patch_max_rows=patch_max_rows+constrained_max_rows;
+
+    Real inf=std::numeric_limits<double>::infinity();
+
+    A_local_rectangular.resize(halo_max_rows,halo_max_rows);
+   	A_local1.resize(halo_max_rows,halo_max_rows);
+   	A_local2.resize(halo_max_rows,halo_max_rows);
+   	B_local.resize(halo_max_rows,halo_max_rows);
+   	L_local.resize(halo_max_rows,halo_max_rows);
+   	U_local.resize(halo_max_rows,halo_max_rows);
+   	P_local.resize(halo_max_rows);
+   	u_local1.resize(halo_max_rows);
+   	u_local2.resize(halo_max_rows);
+   	lambda_local.resize(halo_max_rows);
+   	b_local.resize(halo_max_rows);
+   	g_local.resize(halo_max_rows);
+   	c_inf_local.resize(halo_max_rows,-inf);
+   	c_sup_local.resize(halo_max_rows,inf);
+   	y.resize(halo_max_rows);
+   	tmp.resize(halo_max_rows);
+   	h.resize(halo_max_rows);
+   	d.resize(halo_max_rows);
+   	p.resize(halo_max_rows);
+   	q.resize(halo_max_rows);
+   	q_new.resize(halo_max_rows);
+   	lambda_inf_check.resize(halo_max_rows);
+   	lambda_sup_check.resize(halo_max_rows);
+
+   	// for(Integer i=0;i<4;i++)
+   	// {
+   	// 	p0[i].resize(halo_max_rows);
+   	// 	d0[i].resize(halo_max_rows);
+   	// }
+
+   	// B has to be large enough to contain:
+   	// the multiplier part related to the dual formulation (max_rows1)
+   	// then it could also contain all inferior and superior constraints
+   	// which have the same dimension as max_rows0, respectively.
+
+   	Integer levels_size=levels.size();
+
+   	context.build_boundary_info(levels);
+
+   	auto& constrained_dofs_levels=context.constrained_dofs_levels();
+
+   	std::vector<std::vector<bool>> working_set_old(working_set);
+
+    std::vector<Real> norm_rhs_vec;
+   
+    auto M=truncated_A_levels[level];
+
+    compute_working_set(working_set[level],x,c_inf,c_sup);
+
+    M.multiply_and_add(rhs,-1.0,x,b);
+
+    norm_rhs=l2_norm(rhs,working_set[level]);
+
+    norm_rhs_vec.push_back(log10(norm_rhs));
+
+    bool change_matrix=false;
+
+    auto& RT1_n_dofs=context.full_spaces_ptr()->dofsdofmap().level_n_dofs_array()[0][level];
+
+	compute_working_set(working_set[level],x,c_inf,c_sup);
+
+	M.multiply_and_add(rhs,-1.0,x,b);
+
+    Real norm_res=l2_norm(rhs,working_set[level]);
+
+    residuals[0].push_back(log10(l2_norm(rhs,working_set[level])));
+    residuals[1].push_back(log10(l2_norm(rhs,working_set[level],0,RT1_n_dofs)));
+    residuals[2].push_back(log10(l2_norm(rhs,working_set[level],RT1_n_dofs,x.size())));
+
+    // std::vector<Real> rate_vec;
+    std::map<Real,Real> alpha_rate;
+
+    gamma=pow(10.0,0.5*(log10(alpha0)+log10(alpha1)));
+
+   	for(Integer i=0;i<max_iter;i++)
+   	{
+     M.multiply_and_add(rhs,-1.0,x,b);
+
+     compute_working_set(working_set[level],x,c_inf,c_sup);
+
+     norm_rhs=l2_norm(rhs,working_set[level]);
+
+     alpha_vec.push_back(gamma);
+  
+     uzawa_patch_vcycle_active_set_optimal2(Anobc,bnobc,context,x,A_levels,truncated_A_levels,b,c_inf,c_sup,
+     						 	   contact_constraints,levels,working_set,working_set_old,interpolation,
+     						 	   // halo_dofs,patch_dofs,constraint_dofs,border_dofs,alpha1,alpha2,sign,
+     						 	   patch_dofs,constraint_dofs,border_dofs,
+     						 	   alpha0,alpha1,alpha0,alpha1,gamma,sign,
+     						 	   pre_smoothing,post_smoothing,level,level,change_matrix,
+     							   // u_local1,u_local2,lambda_local,b_local,g_local,
+     							   u_local1,lambda_local,b_local,g_local,
+								   // A_local_rectangular,A_local1,A_local2,B_local,c_inf_local,c_sup_local,
+								   A_local1,B_local,c_inf_local,c_sup_local,
+								   L_local,U_local,P_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,
+								   residuals,alpha_vec);
+								   // L_local,U_local,P_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,p0,d0,residuals);
+
+		compute_working_set(working_set[level],x,c_inf,c_sup);
+
+		M.multiply_and_add(rhs,-1.0,x,b);
+
+        Real norm_res=l2_norm(rhs,working_set[level]);
+
+        residuals[0].push_back(log10(l2_norm(rhs,working_set[level])));
+        residuals[1].push_back(log10(l2_norm(rhs,working_set[level],0,RT1_n_dofs)));
+        residuals[2].push_back(log10(l2_norm(rhs,working_set[level],RT1_n_dofs,x.size())));
+        
+
+
+        rate_vec.push_back(residuals[0][i+1]-residuals[0][i]);
+        std::cout<<"res->"<<residuals[0][i+1]-residuals[0][i]<<std::endl;
+
+
+        if(alpha_rate.find(gamma)==alpha_rate.end())
+	        {
+	        	alpha_rate[gamma]=rate_vec[rate_vec.size()-1];
+                std::cout<<"uno->"<<gamma<<", "<<alpha_rate[gamma]<<std::endl;
+	        }
+        else
+        	{
+        		alpha_rate[gamma]=max(alpha_rate[gamma],rate_vec[rate_vec.size()-1]); 
+        		std::cout<<"due->"<<gamma<<", "<<alpha_rate[gamma]<<std::endl;
+
+        	}
+        if(i==0)
+        {
+        	// if(residual[0][0]<residual[0][1])
+        	gamma=0.1*alpha_vec[0];
+        	
+        }
+        if(i==1)
+        {
+	     	Real r0=(rate_vec[0]);
+	    	Real r1=(rate_vec[1]);
+	    	const auto& a0=alpha_vec[0];
+	    	const auto& a1=alpha_vec[1];
+
+	    	if(r0<r1)
+	    		{
+	    			gamma=alpha_vec[i-1]*3;
+	    			// sign=1;
+	    		}
+	    	else
+	    		{
+	    			gamma=alpha_vec[i]*1.0/.3;
+	    			// sign=-1;
+	    		}
+
+       	
+        }
+        if(i>1)
+        {
+        	Real min_value=10000000000.0;
+        	Integer alpha_opt_pos=-1;
+        	Real alpha_min=*std::min_element(alpha_vec.begin(),alpha_vec.end());
+        	Real alpha_max=*std::max_element(alpha_vec.begin(),alpha_vec.end());
+
+        	Real alpha_left=-1.0;
+        	Real alpha_right=100000000000.0;
+        	Integer left_pos=-1;
+        	Integer right_pos=-1;
+
+
+        	for(Integer k=rate_vec.size()-1;k>=0;k--)
+        	{
+        		if(alpha_rate[alpha_vec[k]]<min_value)
+        		{
+        			
+        			alpha_opt_pos=k;
+        			min_value=alpha_rate[alpha_vec[k]];
+        		}      		
+        	}
+        	const auto& alpha_opt=alpha_vec[alpha_opt_pos];
+
+            // we must increase alpha
+        	if(alpha_opt==alpha_max)
+        	{
+        		gamma=gamma*3;
+        	}
+            // we must decrease alpha
+        	else if(alpha_opt==alpha_min)
+        	{
+        		gamma=gamma*1.0/3.0;
+        	}
+        	else
+        	{
+
+        		for(Integer k=rate_vec.size()-1;k>=0;k--)
+        		{
+        			if(alpha_vec[k]>alpha_opt && alpha_vec[k]<alpha_right)
+        			{
+        				alpha_right=alpha_vec[k];
+        				right_pos=k;
+        			}
+
+        			if(alpha_vec[k]<alpha_opt && alpha_vec[k]>alpha_left)
+        			{
+        				alpha_left=alpha_vec[k];
+        				left_pos=k;
+        			}
+        		}
+
+    			const auto& r_l=alpha_rate[alpha_left];
+    			const auto& r_o=alpha_rate[alpha_opt];
+    			const auto& r_r=alpha_rate[alpha_right];
+    			
+    			const auto& a_l=alpha_left;
+    			const auto& a_o=alpha_opt;
+    			const auto& a_r=alpha_right;
+
+        		Matrix<Real,3,3> c{a_l*a_l,a_l,1.0,
+        						   a_o*a_o,a_o,1.0,
+        						   a_r*a_r,a_r,1.0,};
+
+        		Matrix<Real,3,1> b{r_l,r_o,r_r};
+
+        		auto s=inverse(c)*b;
+
+        		std::cout<<"c" <<std::endl;
+        		std::cout<<c <<std::endl;
+        		std::cout<<"b" <<std::endl;
+        		std::cout<< b<<std::endl;
+        		std::cout<<"s" <<std::endl;
+        		std::cout<<s <<std::endl;
+
+        		gamma= -0.5*s[1]/s[0];
+
+        		// if(alpha_rate[alpha_left]<alpha_rate[alpha_right])
+        		// {
+        		// 	const auto& r0=alpha_rate[alpha_opt];
+        		// 	const auto& r1=alpha_rate[alpha_left];
+
+        		// 	Real a=abs(r0)/(abs(r1)+abs(r0));
+         	// 		Real b=abs(r1)/(abs(r1)+abs(r0));
+        			
+        		// 	gamma=pow(10.0,a*log10(alpha_opt)+
+        		// 			       b*log10(alpha_left));
+        		// }
+        		// else
+        		// {
+        		// 	const auto& r0=alpha_rate[alpha_opt];
+        		// 	const auto& r1=alpha_rate[alpha_right];
+
+        		// 	Real a=abs(r0)/(abs(r1)+abs(r0));
+         	// 		Real b=abs(r1)/(abs(r1)+abs(r0));
+        			
+        		// 	gamma=pow(10.0,a*log10(alpha_opt)+
+        		// 			       b*log10(alpha_right));
+        		// }
+            std::cout<<"alpha_left="<<a_l<<std::endl;
+            std::cout<<"alpha_opt="<<a_o<<std::endl;
+            std::cout<<"alpha_right="<<a_r<<std::endl;
+
+        	}
+
+ 
+        
+
+
+           
+        	// Real r0=(residuals[0][i-2]-residuals[0][i-3]);
+        	// Real r1=(residuals[0][i-1]-residuals[0][i-2]);
+        	// Real r2=(residuals[0][i]-residuals[0][i-1]);
+        	// const auto& a0=alpha_vec[i-2];
+        	// const auto& a1=alpha_vec[i-1];
+        	// const auto& a2=alpha_vec[i];
+
+        	
+
+
+        	// if( r2< r1)
+        	// {
+        	// 	if(sign<0)
+        	// 	{
+        	// 			gamma=gamma/abs(sign);
+        	// 			sign--;
+        	// 	}
+        	// 	else
+        	// 	{
+        	// 			gamma=gamma*sign;
+        	// 			sign++;
+        	// 	}
+        	// }
+        	// else 
+        	// {
+        	// 	// r1<r0<r2
+        	// 	if(r1<r0 && r0<r2)
+        	// 	{
+         // 			Real a=abs(r1)/(abs(r1)+abs(r0));
+        	// 		Real b=abs(r0)/(abs(r1)+abs(r0));
+
+        	// 		gamma=pow(10.0,a*log10(alpha_vec[i-1])+
+        	// 				       b*log10(alpha_vec[i-2]));
+        	// 	}
+        	// 	// r1<r2<r0
+        	// 	else if(r1<r2 && r2< r0)
+        	// 	{
+        	// 		Real a=abs(r1)/(abs(r1)+abs(r2));
+        	// 		Real b=abs(r2)/(abs(r1)+abs(r2));
+
+        	// 		gamma=pow(10.0,a*log10(alpha_vec[i-1])+
+        	// 				       b*log10(alpha_vec[i]));
+        	// 	}
+        	// 	// r0<r1<r2
+        	// 	else if(r0<r1 && r1<r2)
+        	// 	{
+         // 			Real a=abs(r1)/(abs(r1)+abs(r0));
+        	// 		Real b=abs(r0)/(abs(r1)+abs(r0));
+
+        	// 		gamma=pow(10.0,a*log10(alpha_vec[i-1])+
+        	// 				       b*log10(alpha_vec[i-2]));
+
+
+        	// 	}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        		// if( r1< r0 && r2<r0)
+        		// 		gamma=pow(10.0,0.5*(log10(alpha_vec[i])+log10(alpha_vec[i-1])));
+        		// if( r0< r1 && r2<r1)
+        		// 	    gamma=pow(10.0,0.5*(log10(alpha_vec[i])+log10(alpha_vec[i-2])));
+        		// if( r0< r2 && r1<r2)
+        		// 	    gamma=pow(10.0,0.5*(log10(alpha_vec[i-2])+log10(alpha_vec[i-1])));
+
+        	// }
+
+        
+    	// std::cout<<"rate= "<<r0 <<", " <<r1 <<", "<<r2<<std::endl;
+
+
+
+    	// std::cout<<"alpha= "<<a0 <<", " <<a1 <<", "<<a2<<std::endl;
+
+        }
+
+
+
+       	std::cout<<"(alpha_opt,rate)"<<std::endl;
+
+
+        	for(auto it = alpha_rate.begin();it != alpha_rate.end(); ++it)
+			{
+			    std::cout << it->first << ", " << it->second << "\n";
+			}
+        	std::cout<<"Rate Vec"<<std::endl;
+
+        	for(Integer k=0;k<rate_vec.size();k++)
+        		std::cout<<rate_vec[k]<<" ";
+        	std::cout<<std::endl;
+
+        	std::cout<<"Alpha Vec"<<std::endl;
+
+        	for(Integer k=0;k<alpha_vec.size();k++)
+        		std::cout<<alpha_vec[k]<<" ";
+        	std::cout<<std::endl;
+
+
+        
+        std::cout<<"new gamma="<<gamma<<std::endl;
+
+        std::cout<<"after correction, log10(norm_res)="<<log10(norm_res)<<std::endl;
+
+
+     M.multiply_and_add(rhs,-1.0,x,b);
+
+     norm_rhs=l2_norm(rhs,working_set[level]);
+
+     compute_working_set(working_set[level],x,c_inf,c_sup);
+
+     norm_rhs_vec.push_back(log10(norm_rhs));
+     std::cout<<"PATCH multigrid iteration == "<< i<<"  after norm_rhs="<<norm_rhs<<std::endl;
+
+     os_residual<<norm_rhs; 
+     os_residual <<"\n"; 
+     std::cout<<"outside change_matrix="<<change_matrix<<std::endl;
+     os_active_set<< change_matrix;
+     os_active_set <<"\n"; 
+
+     if(norm_rhs<toll)
+     	break;
+   	}
+
+   }
 
 
 
@@ -27076,7 +28245,132 @@ void truncate_matrix(SparseMatrix<Real>& AC,const SparseMatrix<Real>& A,const Sp
 
 
 
+template<typename FunctionSpace>
+void mixed_constraint_truncation(std::shared_ptr<FunctionSpace> W_ptr, 
+	                     const Integer C_level,const Integer F_level, const Integer comp,
+	                     const std::vector<bool>& F_working_set, 
+	                     const std::vector<Real>& x,const std::vector<Real>& c_sup,
+	                     std::vector<Real>& c_sup_tmp,std::vector<bool>& F_truncate)
+{
+	    using MeshT=typename FunctionSpace::MeshT;
+	    using Elem=typename MeshT::Elem;
+	    static constexpr Integer ManifoldDim=MeshT::ManifoldDim;	
 
+	    using TupleOfSpaces=typename FunctionSpace::TupleOfSpaces;
+	    using RT0Space=ElementFunctionSpace<Elem,RaviartThomasFE,0,1,ManifoldDim>;
+	    using P1Space=ElementFunctionSpace<Elem,LagrangeFE,1,1,ManifoldDim>;
+	    static constexpr Integer RT0_n=TypeToTupleElementPosition<RT0Space,TupleOfSpaces>::value;
+	    static constexpr Integer P1_n=TypeToTupleElementPosition<P1Space,TupleOfSpaces>::value;
+
+	    static constexpr auto RT0trace=TraceDofs<RT0Space>::dofs();
+	    static constexpr auto P1trace=TraceDofs<P1Space>::dofs();
+
+	    using RT0trace_single=remove_all_t<decltype(TraceDofs<RT0Space>::dofs()[0])>;
+	    using P1trace_single=remove_all_t<decltype(TraceDofs<P1Space>::dofs()[0])>;
+
+	    RT0trace_single rt0_tr;
+	    P1trace_single p1_tr;
+
+	    const auto& mesh=W_ptr->mesh();
+	    const auto& bisection=W_ptr->bisection();
+	    auto &dofsdofmap=W_ptr->dofsdofmap();
+
+		GetType<typename FunctionSpace::DofsDM::ElemDofMap,RT0_n> elemdm0;
+	    GetType<typename FunctionSpace::DofsDM::ElemDofMap,P1_n> elemdm1;
+	    FiniteElem<Elem> FE(mesh);
+
+	    bool set_bool0,set_bool1;
+	    Integer size0, size1;
+
+	
+
+
+	    for(Integer C_el=0;C_el<mesh.n_elements();C_el++)
+	    {
+	    	auto& C_elem=mesh.elem(C_el);
+	    	auto lev=bisection.tracker().get_level(C_el);
+
+	    	if(lev==C_level)
+	    	{
+			set_bool0=true;
+	    		// here we must act on the boundary, the element is not correct
+	    		// indeed one coarse element can share two edges belonging to GammaD and GammaN
+	    		//
+	    		auto& children=C_elem.children;
+				for (auto it = begin (children); it != end (children); ++it) 
+				{
+					auto& F_el=*it;
+					FE.init(F_el,F_level);
+					dofsdofmap.template dofmap_get<RT0_n>(elemdm0,F_el,F_level);
+					dofsdofmap.template dofmap_get<P1_n>(elemdm1,F_el,F_level);
+
+		            for(std::size_t s=0;s<FE.n_side();s++)
+		              { 
+		              	FE.init_boundary(s);
+		                if(FE.side_tags()[s]==2)//!=INVALID_INDEX)
+		                {
+		                  
+		                  const auto& tr_rt0=RT0trace[FE.side_id()];
+		                  subarray(rt0_tr,elemdm0,tr_rt0);
+
+
+
+		                  const auto& tr_p1=P1trace[FE.side_id()];
+		                  subarray(p1_tr,elemdm1,tr_p1);
+ 
+   						  size0=rt0_tr.size();
+						  size1=p1_tr.size();
+
+
+    					  for (Integer m0 = comp; m0< size0; m0+=ManifoldDim) 
+						  	{
+							if(F_working_set[rt0_tr[m0]]==0)
+								{
+									set_bool0=false;
+									goto constraint_coarse_RT;
+									
+								}
+							}
+
+
+
+		                }
+		              }
+
+				
+				}	 
+
+			    constraint_coarse_RT:
+			    {
+			   		if(set_bool0)
+						for (auto it = begin (children); it != end (children); ++it) 
+						{
+							auto& F_el=*it;
+							FE.init(F_el,F_level);
+							dofsdofmap.template dofmap_get<RT0_n>(elemdm0,F_el,F_level);
+				            for(std::size_t s=0;s<FE.n_side();s++)
+				              { 
+				              	FE.init_boundary(s);
+				                if(FE.side_tags()[s]!=INVALID_INDEX)
+				                {				                  
+				                  const auto& tr_rt0=RT0trace[FE.side_id()];
+				                  subarray(rt0_tr,elemdm0,tr_rt0);
+		   						  size0=rt0_tr.size();
+		   						  
+		    					  for (Integer m0 = comp; m0< size0; m0+=ManifoldDim) 
+									{
+										c_sup_tmp[rt0_tr[m0]]=min(c_sup_tmp[rt0_tr[m0]],c_sup[rt0_tr[m0]]-x[rt0_tr[m0]]);
+										F_truncate[rt0_tr[m0]]=0;
+									}
+								
+									
+								 }
+							    }							
+						}		    		    	
+			    }
+	    	}
+	    }
+}
 
 template<typename FunctionSpace>
 void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr, 
@@ -28669,18 +29963,22 @@ void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr,
         std::vector<Real> active_solution(Ant_levels[levels.size()-1].max_rows(),0);
         level_global_house_holder[levels[levels.size()-1]].transpose_and_multiply(active_solution,active_x);
 
-		std::string output_fileACTIVESET ="primal_contact/PrimalContactLinearElasticity"+ std::to_string(ManifoldDim) +
+ 		auto& level_cumultive_n_dofs=context.full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
+        const Integer n0=level_cumultive_n_dofs[levels[0]];
+        const Integer n1=level_cumultive_n_dofs[levels[levels.size()-1]];
+        std::cout<<" n0= "<<n0<<std::endl;
+        std::cout<<" n1= "<<n1<<std::endl;
+        
+		std::string output_fileACTIVESET ="primal_contact/PrimalContactLinearElasticity"+ std::to_string(lambda)+"_mu_"+ std::to_string(mu)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)
+			+"_presmooth_"+ std::to_string(presmooth)
+			+"_postsmooth_"+ std::to_string(postsmooth)
 		+"_output.vtk";
 
 		os.close();
 		os.open(output_fileACTIVESET.c_str());
 		write_wtk_isoparametric(os,W_ptr,active_solution,var_names,levelL);
 
- 		auto& level_cumultive_n_dofs=context.full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
-        const Integer n0=level_cumultive_n_dofs[levels[0]];
-        const Integer n1=level_cumultive_n_dofs[levels[levels.size()-1]];
-        std::cout<<" n0= "<<n0<<std::endl;
-        std::cout<<" n1= "<<n1<<std::endl;
+
 		save_vector("primal_contact/primal_lambda_" + std::to_string(lambda)+"_mu_"+ std::to_string(mu)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)
 			+"_presmooth_"+ std::to_string(presmooth)
 			+"_postsmooth_"+ std::to_string(postsmooth)
@@ -29592,18 +30890,18 @@ void dofs_external_patch(Patch& dofs_2externald,  Patch& dofs_2externald_local_p
 		std::cout<<"n_levels="<<n_levels<<std::endl;
 		std::cout<<"refinement_jump="<<refinement_jump<<std::endl;
 
-			read_freefem_mesh("../data/SquareForContact.msh", mesh);
-			// read_freefem_mesh("../data/deformed.msh", mesh);
-			// std::cout<<"before assign_tags= "<<std::endl;
-			
-			assign_tags(mesh);
-			// std::cout<<"after assign_tags= "<<std::endl;
+		// read_freefem_mesh("../data/SquareForContact.msh", mesh);
+		// read_freefem_mesh("../data/deformed.msh", mesh);
+		// std::cout<<"before assign_tags= "<<std::endl;
+		
+		// assign_tags(mesh);
+		// std::cout<<"after assign_tags= "<<std::endl;
 
-			// generate_cube(mesh,n,n,0);
-			// mesh.build_dual_graph();
-			// mark_boundary(mesh);
+		generate_cube(mesh,n,n,0);
+		mesh.build_dual_graph();
+		mark_boundary(mesh);
 
-			std::cout<<"build_dual_graph= "<<std::endl;
+		std::cout<<"build_dual_graph= "<<std::endl;
 
 
 		Bisection<MeshT> bisection(mesh);
@@ -29625,7 +30923,6 @@ void dofs_external_patch(Patch& dofs_2externald,  Patch& dofs_2externald_local_p
 		AuxP_0 p0(mesh,bisection,n2em);
 
 	    auto Wtrial=MixedFunctionSpace(rtn,dgp1,p1_1);
-
 		auto Waux=AuxFunctionSpacesBuild(p1,p1_1);
 		auto W=FullSpaceBuild(Wtrial,Waux);
 
@@ -29782,6 +31079,48 @@ void dofs_external_patch(Patch& dofs_2externald,  Patch& dofs_2externald_local_p
 
 		auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3);		
 
+
+
+
+
+
+
+
+
+
+
+  auto Htrial=MixedFunctionSpace(p1,p1,p1,p1_1);
+		auto Haux=AuxFunctionSpacesBuild(p1_1);
+		auto H=FullSpaceBuild(Htrial,Haux);
+		using H_type=decltype(H);
+		auto H_ptr=std::make_shared<H_type>(H);
+		auto u0 = MakeTrial<0>(H_ptr);
+		auto u1 = MakeTrial<1>(H_ptr);
+		auto u2 = MakeTrial<2>(H_ptr);
+		auto u3 = MakeTrial<3>(H_ptr);
+		auto v0 = MakeTest<0>(H_ptr);
+		auto v1 = MakeTest<1>(H_ptr);
+		auto v2 = MakeTest<2>(H_ptr);
+		auto v3 = MakeTest<3>(H_ptr);		
+		auto bilinearform1=
+		// +L2Inner(Grad(u0),Grad(v0))
+		// +surface_integral(3,Trace(u0),Trace(v0))
+		// +L2Inner(Grad(u1),Grad(v1))
+		// +L2Inner(Grad(u2),Grad(v2))
+		+L2Inner((u1),(v1))
+		+L2Inner((u3),(v3))
+		;
+		auto linearform1=
+		+L2Inner(fixed_normal,Grad(v0));
+		auto context1=create_context(bilinearform1,linearform1);
+
+	    // typename decltype(context1)::EvalBilinear::EvaluationOfL2InnersVolume::EvalOfL2InnersType frff444rr(5);
+	    // typename decltype(context)::EvalLinear::EvaluationOfL2InnersSurface::EvalOfL2InnersType frff33444rr(5);
+
+	    // typename decltype(context)::Maps::UniqueMappingSurface freeeeff444rr(5);
+
+	    // typename decltype(context)::ShapeFunctions::TupleOfTupleCompositeShapeFunctionSurface frff444r(5);
+	    // typename decltype(context)::Bilinear::FunctionSpace::FromElementFunctionSpacesToUniqueNumbersTupleType frfr(5);
 
 
 		// auto bilinearform=
@@ -30219,7 +31558,7 @@ void dofs_external_patch(Patch& dofs_2externald,  Patch& dofs_2externald_local_p
 
   //       AL.print_val();
 
-		Real toll=0.00001;
+		Real toll=0.000000001;
 		Integer max_iter=10;
 		Integer pre_smoothing=5;
 		Integer post_smoothing=5;
@@ -31010,19 +32349,19 @@ void dofs_external_patch(Patch& dofs_2externald,  Patch& dofs_2externald_local_p
         // std::cout<<" "<<std::endl;
         Array<std::vector<Real>,3> residuals;
 
-		uzawa_patch_multigrid_active_set_average(AL,bL,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,
-										 constraints_inf(),constraints_sup(),contact_constraints,
-										 levels,working_set,levels_interp,
-										 enriched_all_e2alld,enriched_RT1_e2alld,RT1_2externald_local_position,alpha_avg,pre_smoothing,post_smoothing,number_of_levels,max_iter,toll,residuals);
+		// uzawa_patch_multigrid_active_set_average(AL,bL,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,
+		// 								 constraints_inf(),constraints_sup(),contact_constraints,
+		// 								 levels,working_set,levels_interp,
+		// 								 enriched_all_e2alld,enriched_RT1_e2alld,RT1_2externald_local_position,alpha_avg,pre_smoothing,post_smoothing,number_of_levels,max_iter,toll,residuals);
 		
 		Real alpha0=0.01;
 		Real alpha1=1.0;
-		std::vector<Real> alpha_vec;
-		// uzawa_patch_multigrid_active_set_optimal(AL,bL,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,
-		// 								 constraints_inf(),constraints_sup(),contact_constraints,
-		// 								 levels,working_set,levels_interp,
-		// 								 enriched_all_e2alld,enriched_RT1_e2alld,RT1_2externald_local_position,alpha0,alpha1,
-		// 								 pre_smoothing,post_smoothing,number_of_levels,max_iter,toll,residuals,alpha_vec);
+		std::vector<Real> alpha_vec,rate_vec;
+		uzawa_patch_multigrid_active_set_optimal2(AL,bL,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,
+										 constraints_inf(),constraints_sup(),contact_constraints,
+										 levels,working_set,levels_interp,
+										 enriched_all_e2alld,enriched_RT1_e2alld,RT1_2externald_local_position,alpha0,alpha1,
+										 pre_smoothing,post_smoothing,number_of_levels,max_iter,toll,residuals,alpha_vec,rate_vec);
 
 
         auto& level_cumultive_n_dofs=context.full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
@@ -31036,7 +32375,7 @@ void dofs_external_patch(Patch& dofs_2externald,  Patch& dofs_2externald_local_p
          lambda_txt=std::numeric_limits<double>::infinity();
 
      	// save_3vectors("double_res_lambda_" + std::to_string(lambda_txt)+"_mu_"+ std::to_string(mu)+"_alpha0_" + std::to_string(alpha0)+"_alpha1_" + std::to_string(alpha1)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+"pre_smooth_"+std::to_string(pre_smoothing)+"post_smooth_"+ std::to_string(pre_smoothing)+".txt",residuals[0],residuals[1],residuals[2]);
-     	// save_vector("../residual_contact/double_alpha_vec_lambda_" + std::to_string(lambda_txt)+"_mu_"+ std::to_string(mu)+"_alpha0_" + std::to_string(alpha0)+"_alpha1_" + std::to_string(alpha1)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+"pre_smooth_"+std::to_string(pre_smoothing)+"post_smooth_"+ std::to_string(pre_smoothing)+".txt",alpha_vec);
+     	save_vector("MoreRefinecontact_double_alpha_vec_lambda_" + std::to_string(lambda_txt)+"_mu_"+ std::to_string(mu)+"_alpha0_" + std::to_string(alpha0)+"_alpha1_" + std::to_string(alpha1)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+"pre_smooth_"+std::to_string(pre_smoothing)+"post_smooth_"+ std::to_string(pre_smoothing)+".txt",alpha_vec);
 
         // save_vector("../residual_contact/res_lambda_" + std::to_string(lambda_txt)+"_mu_"+ std::to_string(mu)+"_alpha_" + std::to_string(alpha_avg)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+"pre_smooth_"+std::to_string(pre_smoothing)+"post_smooth_"+ std::to_string(pre_smoothing)+".txt",residuals[0]);
         // save_vector("../residual_contact/res1_lambda_"+ std::to_string(lambda_txt)+"_mu_"+ std::to_string(mu)+"_alpha_" + std::to_string(alpha_avg)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+ std::to_string(n1)+"pre_smooth_"+std::to_string(pre_smoothing)+"post_smooth_"+ std::to_string(pre_smoothing)+".txt",residuals[1]);
@@ -31734,7 +33073,6 @@ void dofs_external_patch(Patch& dofs_2externald,  Patch& dofs_2externald_local_p
 		auto bcs3=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,neumann_boundary3);
 
 		auto context=create_context(bilinearform,linearform,bcs1,bc_contact_1,bc_contact_2,bcs3);		
-
 	    W_ptr->update();
 
 	    Integer levelL=bisection.tracker().current_iterate()-1;
@@ -31936,10 +33274,10 @@ void dofs_external_patch(Patch& dofs_2externald,  Patch& dofs_2externald_local_p
 
         std::cout<<"alpha_avg"<<alpha_avg<<std::endl;
 
-		uzawa_patch_multigrid_active_set_average(AL,bL,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,
-										 constraints_inf(),constraints_sup(),contact_constraints,
-										 levels,working_set,levels_interp,
-										 enriched_all_e2alld,enriched_RT1_e2alld,RT1_2externald_local_position,alpha_avg,pre_smoothing,post_smoothing,number_of_levels,max_iter,toll,residuals);
+		// uzawa_patch_multigrid_active_set_average(AL,bL,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,
+		// 								 constraints_inf(),constraints_sup(),contact_constraints,
+		// 								 levels,working_set,levels_interp,
+		// 								 enriched_all_e2alld,enriched_RT1_e2alld,RT1_2externald_local_position,alpha_avg,pre_smoothing,post_smoothing,number_of_levels,max_iter,toll,residuals);
 		
 		// Real alpha0=0.01;
 		// Real alpha1=1.0;
@@ -31950,6 +33288,14 @@ void dofs_external_patch(Patch& dofs_2externald,  Patch& dofs_2externald_local_p
 		// 								 enriched_all_e2alld,enriched_RT1_e2alld,RT1_2externald_local_position,alpha0,alpha1,
 		// 								 pre_smoothing,post_smoothing,number_of_levels,max_iter,toll,residuals,alpha_vec);
 
+		Real alpha0=0.01;
+		Real alpha1=1.0;
+		std::vector<Real> alpha_vec,rate_vec;
+		uzawa_patch_multigrid_active_set_optimal2(AL,bL,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,
+										 constraints_inf(),constraints_sup(),contact_constraints,
+										 levels,working_set,levels_interp,
+										 enriched_all_e2alld,enriched_RT1_e2alld,RT1_2externald_local_position,alpha0,alpha1,
+										 pre_smoothing,post_smoothing,number_of_levels,max_iter,toll,residuals,alpha_vec,rate_vec);
 
         auto& level_cumultive_n_dofs=context.full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
 
@@ -34091,6 +35437,33 @@ template<Integer ManifoldDim, Integer Dim1, Integer Dim2>
 		auto divdiv_context=create_context(divdiv,linearform);
 
 	    W_ptr->update();
+
+
+	 //    auto Htrial=MixedFunctionSpace(pn,pn,pn,pn);
+		// auto Haux=AuxFunctionSpacesBuild(p1);
+		// auto H=FullSpaceBuild(Htrial,Haux);
+		// using H_type=decltype(H);
+		// auto H_ptr=std::make_shared<H_type>(H);
+		// auto u0 = MakeTrial<0>(H_ptr);
+		// auto u1 = MakeTrial<1>(H_ptr);
+		// auto u2 = MakeTrial<2>(H_ptr);
+		// auto u3 = MakeTrial<3>(H_ptr);
+		// auto v0 = MakeTest<0>(H_ptr);
+		// auto v1 = MakeTest<1>(H_ptr);
+		// auto v2 = MakeTest<2>(H_ptr);
+		// auto v3 = MakeTest<3>(H_ptr);		
+		// auto bilinearform1=
+		// +L2Inner(Grad(u0),Grad(v0))
+		// +L2Inner(Grad(u1),Grad(v1))
+		// +L2Inner(Grad(u2),Grad(v2))
+		// +L2Inner(Grad(u3),Grad(v3))
+		// ;
+		// auto linearform1=
+		// +L2Inner(fixed_normal,Grad(v0));
+		// auto context1=create_context(bilinearform1,linearform1);
+
+	    // typename decltype(context)::Maps::UniqueMappingVolumetric frffr(5);
+	    // typename decltype(context)::ShapeFunctions::TupleOfTupleShapeFunctionVolumetric frff444r(5);
 	    
 
 		auto WCurlmixed=MixedFunctionSpace(p1,p1);
@@ -34351,7 +35724,7 @@ template<Integer ManifoldDim, Integer Dim1, Integer Dim2>
         save_vector("0sup.dat",constraints_sup());
 
 
-		// patch_multigrid_active_set_contact(Ant_levels[levels.size()-1],b_transformed ,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,constraints_inf(),constraints_sup(),contact_constraints,levels,working_set,levels_interp,e2d,pre_smooth,post_smooth,levels.size()-1,max_iter,0.000000001,residual);
+		patch_multigrid_active_set_contact(Ant_levels[levels.size()-1],b_transformed ,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,constraints_inf(),constraints_sup(),contact_constraints,levels,working_set,levels_interp,e2d,pre_smooth,post_smooth,levels.size()-1,max_iter,0.000000001,residual);
        
         os2.close();
 
@@ -34377,7 +35750,7 @@ template<Integer ManifoldDim, Integer Dim1, Integer Dim2>
 
 
 
-        auto Nedelec2RT2D=InterpolationFromPotentialSpace(mesh,context,curl_context,levels);
+  //       auto Nedelec2RT2D=InterpolationFromPotentialSpace(mesh,context,curl_context,levels);
 
 
 
@@ -34388,29 +35761,29 @@ template<Integer ManifoldDim, Integer Dim1, Integer Dim2>
 
 
 
-        for(Integer lev=0;lev<levels.size();lev++)
-        {
-        	// std::cout<<"lev="<<lev<<std::endl;
-        	// print_vec(working_set[lev],working_set[lev].size(),"working_set[lev]");
-        	// Nedelec2RT2D[lev].print_val();
-        	std::vector<bool> r(Nedelec2RT2D[lev].cols());
+  //       for(Integer lev=0;lev<levels.size();lev++)
+  //       {
+  //       	// std::cout<<"lev="<<lev<<std::endl;
+  //       	// print_vec(working_set[lev],working_set[lev].size(),"working_set[lev]");
+  //       	// Nedelec2RT2D[lev].print_val();
+  //       	std::vector<bool> r(Nedelec2RT2D[lev].cols());
 
-        	Nedelec2RT2D[lev].NedelecTruncation2D(r,working_set[lev]);
-        }
+  //       	Nedelec2RT2D[lev].NedelecTruncation2D(r,working_set[lev]);
+  //       }
 
  
 
 
-        curl_context.apply_bc(truncated_ACurl_levels[levels.size()-1],fakeL);
+  //       curl_context.apply_bc(truncated_ACurl_levels[levels.size()-1],fakeL);
 
 
-        max_iter=10;
-		hiptmair_multigrid_active_set_contact(
-	    context,curl_context,active_x,Ant_levels,truncated_Ant_levels,
-		ACurl_levels,truncated_ACurl_levels,   
-		b_transformed,constraints_inf(),constraints_sup(),contact_constraints,levels,
-		working_set,curl_working_set,levels_interp,curl_interp,Nedelec2RT2D,e2d,
-		pre_smooth,post_smooth,levels.size()-1,max_iter,0.000000001,residual);
+  //       max_iter=10;
+		// hiptmair_multigrid_active_set_contact(
+	 //    context,curl_context,active_x,Ant_levels,truncated_Ant_levels,
+		// ACurl_levels,truncated_ACurl_levels,   
+		// b_transformed,constraints_inf(),constraints_sup(),contact_constraints,levels,
+		// working_set,curl_working_set,levels_interp,curl_interp,Nedelec2RT2D,e2d,
+		// pre_smooth,post_smooth,levels.size()-1,max_iter,0.000000001,residual);
        
 
 
@@ -34421,32 +35794,32 @@ template<Integer ManifoldDim, Integer Dim1, Integer Dim2>
 
 
 
-	    // DivDivL.save_mat("DivDivL"+std::to_string(levels.size()-1)+"_"+std::to_string(levels.size()-1)+".dat");
+	 //    // DivDivL.save_mat("DivDivL"+std::to_string(levels.size()-1)+"_"+std::to_string(levels.size()-1)+".dat");
  
-  	    auto& curl_level_cumultive_n_dofs=curl_context.full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
-        const Integer n0curl=curl_level_cumultive_n_dofs[levels[0]];
-        const Integer n1curl=curl_level_cumultive_n_dofs[levels[levels.size()-1]];
-        std::cout<<"curl n0= "<<n0curl<<std::endl;
-        std::cout<<"curl n1= "<<n1curl<<std::endl; 
+  // 	    auto& curl_level_cumultive_n_dofs=curl_context.full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
+  //       const Integer n0curl=curl_level_cumultive_n_dofs[levels[0]];
+  //       const Integer n1curl=curl_level_cumultive_n_dofs[levels[levels.size()-1]];
+  //       std::cout<<"curl n0= "<<n0curl<<std::endl;
+  //       std::cout<<"curl n1= "<<n1curl<<std::endl; 
 
-        std::cout<<"levelL="<<levelL<<std::endl;
-        std::cout<<"ACurlL.rows()="<<ACurlL.rows()<<std::endl;
-        std::cout<<"ACurlL.cols()="<<ACurlL.cols()<<std::endl;
+  //       std::cout<<"levelL="<<levelL<<std::endl;
+  //       std::cout<<"ACurlL.rows()="<<ACurlL.rows()<<std::endl;
+  //       std::cout<<"ACurlL.cols()="<<ACurlL.cols()<<std::endl;
         
 
-        fakeL.resize(n1curl);
+  //       fakeL.resize(n1curl);
 
-        // ACurlL.print_val();
+  //       // ACurlL.print_val();
         
 
-        curl_context.apply_bc(ACurlL,fakeL);
+  //       curl_context.apply_bc(ACurlL,fakeL);
 
-        // ACurlL.print_val();
+  //       // ACurlL.print_val();
         
-        ACurlL.save_mat("ACurlL"+std::to_string(levels.size()-1)+"_"+std::to_string(levels.size()-1)+".dat");
+  //       ACurlL.save_mat("ACurlL"+std::to_string(levels.size()-1)+"_"+std::to_string(levels.size()-1)+".dat");
 
-        print_vec(curl_constrained_dofs_levels[curl_constrained_dofs_levels.size()-1],curl_constrained_dofs_levels[curl_constrained_dofs_levels.size()-1].size(),"curl bc");
-        // Number< decltype(curl_context)::BCs::Nbcs> fefee(5);
+  //       print_vec(curl_constrained_dofs_levels[curl_constrained_dofs_levels.size()-1],curl_constrained_dofs_levels[curl_constrained_dofs_levels.size()-1].size(),"curl bc");
+  //       // Number< decltype(curl_context)::BCs::Nbcs> fefee(5);
 }
 
 
@@ -38194,10 +39567,13 @@ void LSFEMContactHiptmair(int argc, char *argv[])
 		compute_constraint<0>(constraints_sup,context,zero,contact_boundary,1);
 		compute_constraint<1>(constraints_sup,context,gap,contact_boundary,1);
 
+		auto curl_contact_constraints=ProjectContactConstraints(WCurl_ptr);
+
 
 		print_vec(curl_working_set[curl_working_set.size()-1],curl_working_set[curl_working_set.size()-1].size(),"curl ws");
 
-
+        max_iter=10;
+		// patch_multigrid_active_set_contact(Ant_levels[levels.size()-1],b_transformed ,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,constraints_inf(),constraints_sup(),contact_constraints,levels,working_set,levels_interp,e2d,pre_smooth,post_smooth,levels.size()-1,max_iter,0.000000001,residual);
 
         // patch_multigrid(context,active_x,truncated_Ant_levels,b_transformed,levels,levels_interp,e2d,pre_smooth,post_smooth,levels.size()-1,max_iter,toll,residual);
         // hiptmair_multigrid(context,curl_context,active_x,
@@ -38206,7 +39582,8 @@ void LSFEMContactHiptmair(int argc, char *argv[])
         // 	 			   pre_smooth,post_smooth,levels.size()-1,max_iter,toll,residual);
         hiptmair_multigrid_contact(context,curl_context,active_x,
         	 			   Ant_levels,truncated_Ant_levels,ACurl_levels,truncated_ACurl_levels,
-        	 			   b_transformed,constraints_inf(),constraints_sup(),contact_constraints,
+        	 			   b_transformed,constraints_inf(),constraints_sup(),
+        	 			   contact_constraints,curl_contact_constraints,
         	 			   levels,levels_interp,curl_interp,Nedelec2RT2D,
         	 			   working_set,curl_working_set,e2d,
         	 			   pre_smooth,post_smooth,levels.size()-1,max_iter,toll,residual);
