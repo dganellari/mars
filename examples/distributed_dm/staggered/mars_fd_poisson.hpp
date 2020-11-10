@@ -32,7 +32,7 @@ namespace mars {
     static constexpr  bool Orient = true;
 
     using SStencil = StokesStencil<DIM>;
-    using FSStencil = FullStokesStencil<DIM, true>;
+    using FSStencil = FullStokesStencil<DIM>;
     //general width 2 stencil used as constant viscosity stokes.
     using FStencil = Stencil<DIM, 2>;
     //general width 1 stencil used as pressure stencil.
@@ -225,7 +225,7 @@ namespace mars {
         print_stencil(dm, volume_stencil);
  */
         /* classic width 2 stencil on face nodes. */
-        /* auto face_stencil = mars::build_face_stencil<FStencil>(dm);
+        /* auto face_stencil = mars::build_face_stencil<FStencil, Orient>(dm);
         print_stencil(dm, face_stencil); */
 
         /* classic width 2 stencil on face nodes. */
@@ -233,10 +233,10 @@ namespace mars {
         print_stencil(dm, corner_stencil); */
 
 
-        dm.build_pressure_stencil();
-        /* dm.build_stokes_stencil(); */
-        print_stencil(dm, dm.get_volume_stencil());
-        /* print_stencil(dm, dm.get_face_stencil()); */
+        /* dm.build_pressure_stencil();
+        print_stencil(dm, dm.get_pressure_stencil()); */
+        dm.build_stokes_stencil<Orient>();
+        print_stencil(dm, dm.get_stokes_stencil());
 
         const Integer dof_size = dm.get_dof_size();
 

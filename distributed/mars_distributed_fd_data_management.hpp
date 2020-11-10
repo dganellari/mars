@@ -31,14 +31,14 @@ namespace mars {
         return vstencil;
     }
 
-    template <typename ST, typename DM>
+    template <typename ST, bool Orient = false, typename DM>
     ST build_face_stencil(const DM &dm) {
         ST fstencil(dm.get_face_dof_size());
 
         dm.face_dof_iterate(MARS_LAMBDA(const Integer i) {
             const Integer localid = dm.get_face_dof(i);
             const Integer dir = dm.get_face_dof_dir(i);
-            fstencil.build_stencil(dm, localid, i, dir);
+            fstencil.template build_stencil<Orient>(dm, localid, i, dir);
         });
         return fstencil;
     }
