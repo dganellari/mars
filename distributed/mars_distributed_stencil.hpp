@@ -5,20 +5,10 @@
 
 namespace mars {
 
-    /* enum StencilType : int {
-        // 1D
-        Classic = 0,
-        // 2D
-        FaceComplete = 1,
-        CornerComplete = 2,
-        InvalidType = -1
-    }; */
-
-    template <Integer Dim, Integer Width = 1, bool Orient = false>
+    template <Integer Dim, Integer Width = 1>
     class Stencil {
     public:
         static constexpr Integer Length = 2 * Dim * Width + 1;
-        static constexpr bool Orientation = Orient;
 
         MARS_INLINE_FUNCTION
         Stencil() = default;
@@ -66,7 +56,8 @@ namespace mars {
         virtual void reserve_stencil(const Integer size) {
             stencil = ViewMatrixTypeRC<Integer, Length>("stencil", size);
         }
-        template <typename DM>
+
+        template <bool Orient = false, typename DM>
         MARS_INLINE_FUNCTION void build_stencil(const DM &dm,
                                                 const Integer localid,
                                                 const Integer stencil_index,
@@ -84,7 +75,9 @@ namespace mars {
                     else
                         face_nr = 2 * dir;
 
-                    //if the user chooses no orientation then Orientation 1 leaves the dir_dim as if without it!
+                    // if the user chooses no orientation then Orientation 1
+                    // means discard the orientation values and do
+                    // not use them. !(x ^ y) leaves y the same when x == 1.
                     if (!Orient) Orientation = 1;
                     // this gives the index for different face orientation. Corner and volume have no
                     // extra orientation and the default  is 1. Orientation=0 -> x orientation).
@@ -109,12 +102,12 @@ namespace mars {
         ViewMatrixTypeRC<Integer, Length> stencil;
     };
 
-    template <Integer Dim, bool Orient = false>
-    class StokesStencil : public Stencil<Dim, 2, Orient> {
+    template <Integer Dim>
+    class StokesStencil : public Stencil<Dim, 2> {
     public:
         static constexpr Integer Face_Length = 2 * Dim;
 
-        using SuperStencil = Stencil<Dim, 2, Orient>;
+        using SuperStencil = Stencil<Dim, 2>;
 
         MARS_INLINE_FUNCTION
         StokesStencil() = default;
@@ -158,7 +151,7 @@ namespace mars {
                 });
         }
 
-        template <typename DM>
+        template <bool Orient = false, typename DM>
         MARS_INLINE_FUNCTION void build_diagonal_stencil(const DM &dm,
                                                          const Integer localid,
                                                          const Integer stencil_index,
@@ -182,14 +175,14 @@ namespace mars {
             }
         }
 
-        template <typename DM>
+        template <bool Orient = false, typename DM>
         MARS_INLINE_FUNCTION void build_stencil(const DM &dm,
                                                 const Integer localid,
                                                 const Integer stencil_index,
                                                 const Integer Orientation = 1) const {
-            SuperStencil::build_stencil(dm, localid, stencil_index, Orientation);
+            SuperStencil::template build_stencil<Orient>(dm, localid, stencil_index, Orientation);
 
-            build_diagonal_stencil(dm, localid, stencil_index, Orientation);
+            build_diagonal_stencil<Orient>(dm, localid, stencil_index, Orientation);
         }
 
         MARS_INLINE_FUNCTION
@@ -202,14 +195,14 @@ namespace mars {
         ViewMatrixTypeRC<Integer, Face_Length> face_extension;
     };
 
-    template <Integer Dim, bool Orient = false>
-    class FullStokesStencil : StokesStencil<Dim, Orient> {
+    template <Integer Dim>
+    class FullStokesStencil : StokesStencil<Dim> {
     public:
         static constexpr Integer Width = 2;
         static constexpr Integer Corner_Length = 2 * Dim;
 
-        using SuperStencil = Stencil<Dim, Width, Orient>;
-        using SuperStokesStencil = StokesStencil<Dim, Orient>;
+        using SuperStencil = Stencil<Dim, Width>;
+        using SuperStokesStencil = StokesStencil<Dim>;
 
         MARS_INLINE_FUNCTION
         FullStokesStencil() = default;
@@ -261,7 +254,7 @@ namespace mars {
                 });
         }
 
-        template <typename DM>
+        template <bool Orient = false, typename DM>
         MARS_INLINE_FUNCTION void build_corner_face_stencil(const DM &dm,
                                                          const Integer localid,
                                                          const Integer stencil_index,
@@ -304,13 +297,13 @@ namespace mars {
             }
         }
 
-        template <typename DM>
+        template <bool Orient = false, typename DM>
         MARS_INLINE_FUNCTION void build_stencil(const DM &dm,
                                                 const Integer localid,
                                                 const Integer stencil_index,
                                                 const Integer Orientation = 1) const {
-            SuperStokesStencil::build_stencil(dm, localid, stencil_index, Orientation);
-            build_corner_face_stencil(dm, localid, stencil_index, Orientation);
+            SuperStokesStencil::template build_stencil<Orient>(dm, localid, stencil_index, Orientation);
+            build_corner_face_stencil<Orient>(dm, localid, stencil_index, Orientation);
         }
 
         MARS_INLINE_FUNCTION
