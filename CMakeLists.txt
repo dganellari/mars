@@ -113,6 +113,12 @@ if(TRY_WITH_KOKKOS)
         QUIET)
 
     if(Kokkos_FOUND)
+        if (TARGET Kokkos::kokkos)
+            message(STATUS "Kokkos::kokkos is a target, get include directories from the target")
+            get_target_property(Kokkos_INCLUDE_DIRS Kokkos::kokkos INTERFACE_INCLUDE_DIRECTORIES)
+            get_target_property(Kokkos_LIBRARIES Kokkos::kokkos INTERFACE_LINK_LIBRARIES)
+            get_target_property(Kokkos_LIBRARY_DIRS Kokkos::kokkos INTERFACE_LINK_DIRECTORIES)
+        endif()
         message("\nFound Kokkos!  Here are the details: ")
         message(" Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
         message(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
@@ -226,20 +232,19 @@ if(Kokkos_FOUND)
     endif()
 
     if(KokkosKernels_FOUND)
-        message(STATUS "KokkosKernels_FOUND=${KokkosKernels_FOUND}")
-        # target_link_libraries(mars PUBLIC Kokkos::kokkoskernels)
+        target_link_libraries(mars Kokkos::kokkoskernels)
 
-        target_include_directories(mars PUBLIC ${KokkosKernels_TPL_INCLUDE_DIRS}
-                                               ${KokkosKernels_INCLUDE_DIRS})
+        #target_include_directories(mars PUBLIC ${KokkosKernels_TPL_INCLUDE_DIRS}
+        #                                               ${KokkosKernels_INCLUDE_DIRS})
 
-        if(Kokkos_CXX_COMPILER)
-            target_link_libraries(mars ${KokkosKernels_LIBRARIES}
-                                  ${KokkosKernels_TPL_LIBRARIES})
-        else()
-            target_link_libraries(
-                mars ${KokkosKernels_LIBRARIES} ${KokkosKernels_TPL_LIBRARIES}
-                -L${KokkosKernels_LIBRARY_DIRS})
-        endif()
+        #if(Kokkos_CXX_COMPILER)
+        #    target_link_libraries(mars ${KokkosKernels_LIBRARIES}
+        #                          ${KokkosKernels_TPL_LIBRARIES})
+        #else()
+        #    target_link_libraries(
+        #        mars ${KokkosKernels_LIBRARIES} ${KokkosKernels_TPL_LIBRARIES}
+        #        -L${KokkosKernels_LIBRARY_DIRS})
+        #endif()
     endif()
 
 endif()
