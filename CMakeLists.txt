@@ -147,7 +147,7 @@ if(TRY_WITH_KOKKOS)
             ${TRILINOS_DIR}
             ${TRILINOS_DIR}/lib/cmake/KokkosKernels
             ${TRILINOS_DIR}/lib64/cmake/KokkosKernels
-            QUIET)
+            REQUIRED)
 
         find_package(OpenMP)
 
@@ -232,19 +232,21 @@ if(Kokkos_FOUND)
     endif()
 
     if(KokkosKernels_FOUND)
-        target_link_libraries(mars Kokkos::kokkoskernels)
+        if (TARGET Kokkos::kokkoskernels)
+            target_link_libraries(mars Kokkos::kokkoskernels)
+        else()
+            target_include_directories(mars PUBLIC ${KokkosKernels_TPL_INCLUDE_DIRS}
+                                                           ${KokkosKernels_INCLUDE_DIRS})
 
-        #target_include_directories(mars PUBLIC ${KokkosKernels_TPL_INCLUDE_DIRS}
-        #                                               ${KokkosKernels_INCLUDE_DIRS})
-
-        #if(Kokkos_CXX_COMPILER)
-        #    target_link_libraries(mars ${KokkosKernels_LIBRARIES}
-        #                          ${KokkosKernels_TPL_LIBRARIES})
-        #else()
-        #    target_link_libraries(
-        #        mars ${KokkosKernels_LIBRARIES} ${KokkosKernels_TPL_LIBRARIES}
-        #        -L${KokkosKernels_LIBRARY_DIRS})
-        #endif()
+            if(Kokkos_CXX_COMPILER)
+                target_link_libraries(mars ${KokkosKernels_LIBRARIES}
+                                      ${KokkosKernels_TPL_LIBRARIES})
+            else()
+                target_link_libraries(
+                    mars ${KokkosKernels_LIBRARIES} ${KokkosKernels_TPL_LIBRARIES}
+                    -L${KokkosKernels_LIBRARY_DIRS})
+            endif()
+        endif()
     endif()
 
 endif()
