@@ -29,9 +29,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 /* This example tries to do the same and compare to the step3 p4est example
  * using MARS instead */
 
-#include "Kokkos_ArithTraits.hpp"
-#include "Kokkos_Bitset.hpp"
-#include "Kokkos_Parallel_Reduce.hpp"
 #include "mars_context.hpp"
 #include "mars_globals.hpp"
 // #include <bits/c++config.h>
@@ -46,6 +43,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 #include "mars_mpi_guard.hpp"
 
 #ifdef WITH_KOKKOS
+#include "Kokkos_ArithTraits.hpp"
+#include "Kokkos_Bitset.hpp"
+#include "Kokkos_Parallel_Reduce.hpp"
 #include "mars_distributed_mesh_generation.hpp"
 #include "mars_distributed_user_data.hpp"
 #endif // WITH_KOKKOS

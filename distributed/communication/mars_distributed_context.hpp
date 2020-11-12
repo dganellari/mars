@@ -36,7 +36,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 #include <mars_pp_util.hpp>
 
 #include "mars_gathered_vector.hpp"
+#ifdef WITH_KOKKOS
 #include "mars_utils_kokkos.hpp"
+#endif
 
 namespace mars
 {
@@ -61,7 +63,7 @@ namespace mars
 
 #define MARS_COLLECTIVE_TYPES_ float, double, int, unsigned, long, unsigned long, long long, unsigned long long
 
-
+#ifdef WITH_KOKKOS
 #define MARS_PUBLIC_PTOP_(T)                    \
     ViewObject<T> min(ViewObject<T> value) const { return impl_->min(value); } \
     ViewObject<T> max(ViewObject<T> value) const { return impl_->max(value); } \
@@ -93,7 +95,7 @@ namespace mars
                 { wrapped.gather_all_view(value, buffer); }
     
 #define MARS_PTOP_TYPES_ double, Integer, float, int, unsigned, short
-
+#endif
 
 // Defines the concept/interface for a distributed communication context.
 //
@@ -109,8 +111,9 @@ class distributed_context
 public:
     using gid_vector = std::vector<Integer>;
 
+#ifdef WITH_KOKKOS
     using local_sfc = ViewVectorType<Integer>;
-
+#endif
     // default constructor uses a local context: see below.
     distributed_context();
 
@@ -127,6 +130,7 @@ public:
         return impl_->gather_gids(local_gids);
     }
 
+#ifdef WITH_KOKKOS
     local_sfc scatter_gids(const local_sfc global, const local_sfc local) const
     {
         return impl_->scatter_gids(global, local);
@@ -141,6 +145,7 @@ public:
     {
         impl_->broadcast(global);
     }
+#endif
 
     int id() const
     {
@@ -163,7 +168,10 @@ public:
     }
 
     MARS_PP_FOREACH(MARS_PUBLIC_COLLECTIVES_, MARS_COLLECTIVE_TYPES_);
+
+#ifdef WITH_KOKKOS
     MARS_PP_FOREACH(MARS_PUBLIC_PTOP_, MARS_PTOP_TYPES_);
+#endif
 
     std::vector<std::string> gather(std::string value, int root) const
     {
@@ -173,23 +181,26 @@ public:
 private:
     struct interface
     {
+        virtual int id() const = 0;
+        virtual int size() const = 0;
+        virtual void barrier() const = 0;
+        virtual std::string name() const = 0;
+
         virtual gathered_vector<Integer>
         gather_gids(const gid_vector &local_gids) const = 0;
+
+        MARS_PP_FOREACH(MARS_INTERFACE_COLLECTIVES_, MARS_COLLECTIVE_TYPES_)
+
+#ifdef WITH_KOKKOS
         virtual local_sfc
         scatter_gids(const local_sfc global, const local_sfc local) const = 0;
         virtual void
         scatterv_gids(const local_sfc global, const local_sfc local, const std::vector<int> &counts) const = 0;
         virtual void
         broadcast(const ViewVectorType<Integer> global) const = 0;
-
-        virtual int id() const = 0;
-        virtual int size() const = 0;
-        virtual void barrier() const = 0;
-        virtual std::string name() const = 0;
-
-        MARS_PP_FOREACH(MARS_INTERFACE_COLLECTIVES_, MARS_COLLECTIVE_TYPES_)
         MARS_PP_FOREACH(MARS_INTERFACE_PTOP_, MARS_PTOP_TYPES_)
 
+#endif
         virtual std::vector<std::string> gather(std::string value, int root) const = 0;
 
         virtual ~interface() {}
@@ -201,15 +212,8 @@ private:
         explicit wrap(const Impl &impl) : wrapped(impl) {}
         explicit wrap(Impl &&impl) : wrapped(std::move(impl)) {}
 
-        virtual gathered_vector<Integer>
-        gather_gids(const gid_vector &local_gids) const override
-        {
-            return wrapped.gather_gids(local_gids);
-        }
-
-        virtual local_sfc
-        scatter_gids(const local_sfc global, const local_sfc local) const override
-        {
+#ifdef WITH_KOKKOS
+        virtual local_sfc scatter_gids(const local_sfc global, const local_sfc local) const override {
             return wrapped.scatter_gids(global, local);
         }
         virtual void
@@ -218,11 +222,16 @@ private:
         {
             wrapped.scatterv_gids(global, local, counts);
         }
-
         virtual void
         broadcast(const ViewVectorType<Integer> global) const override
         {
             wrapped.broadcast(global);
+        }
+
+        MARS_PP_FOREACH(MARS_WRAP_PTOP_, MARS_PTOP_TYPES_)
+#endif
+        virtual gathered_vector<Integer> gather_gids(const gid_vector &local_gids) const override {
+            return wrapped.gather_gids(local_gids);
         }
 
         int id() const override
@@ -243,7 +252,6 @@ private:
         }
 
         MARS_PP_FOREACH(MARS_WRAP_COLLECTIVES_, MARS_COLLECTIVE_TYPES_)
-        MARS_PP_FOREACH(MARS_WRAP_PTOP_, MARS_PTOP_TYPES_)
 
         std::vector<std::string> gather(std::string value, int root) const override
         {
@@ -258,18 +266,9 @@ private:
 
 struct local_context
 {
-    using local_sfc = ViewVectorType<Integer>;
     using gid_vector = std::vector<Integer>;
-
-    gathered_vector<Integer>
-    gather_gids(const std::vector<Integer> &local_gids) const
-    {
-        using count_type = typename gathered_vector<Integer>::count_type;
-        return gathered_vector<Integer>(
-            std::vector<Integer>(local_gids),
-            {0u, static_cast<count_type>(local_gids.size())});
-    }
-
+#ifdef WITH_KOKKOS
+    using local_sfc = ViewVectorType<Integer>;
     local_sfc
     scatter_gids(const local_sfc global, const local_sfc local) const
     {
@@ -303,17 +302,27 @@ struct local_context
     {
     }
 
-    int id() const { return 0; }
-
-    int size() const { return 1; }
-
     template <typename T>
     ViewObject<T> min(ViewObject<T> value) const { return value; }
 
     template <typename T>
     ViewObject<T> max(ViewObject<T> value) const { return value; }
 
-    template <typename T>
+#endif
+    gathered_vector<Integer>
+    gather_gids(const std::vector<Integer> &local_gids) const
+    {
+        using count_type = typename gathered_vector<Integer>::count_type;
+        return gathered_vector<Integer>(
+            std::vector<Integer>(local_gids),
+            {0u, static_cast<count_type>(local_gids.size())});
+    }
+
+    int id() const { return 0; }
+
+    int size() const { return 1; }
+
+        template <typename T>
     T min(T value) const { return value; }
 
     template <typename T>

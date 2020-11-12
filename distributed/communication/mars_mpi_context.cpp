@@ -62,6 +62,7 @@ struct mpi_context_impl {
     return mpi::gather_all_with_partition(local_gids, comm_);
   }
 
+#ifdef WITH_KOKKOS
   ViewVectorType<Integer> scatter_gids(
       const ViewVectorType<Integer> global,
       const ViewVectorType<Integer> local) const {
@@ -95,6 +96,7 @@ struct mpi_context_impl {
   void gather_all_view(T value, const ViewVectorType<T> &buffer) const {
     mpi::gather_all_view(value, buffer, comm_);
   }
+#endif
 
   std::string name() const { return "MPI"; }
   int id() const { return rank_; }
@@ -109,7 +111,7 @@ struct mpi_context_impl {
   T max(T value) const {
     return mpi::reduce(value, MPI_MAX, comm_);
   }
-
+#ifdef WITH_KOKKOS
   template <typename T>
   ViewObject<T> min(ViewObject<T> value) const {
     return mpi::reduce(value, MPI_MIN, comm_);
@@ -119,6 +121,7 @@ struct mpi_context_impl {
   ViewObject<T> max(ViewObject<T> value) const {
     return mpi::reduce(value, MPI_MAX, comm_);
   }
+#endif
 
   template <typename T>
   T sum(T value) const {

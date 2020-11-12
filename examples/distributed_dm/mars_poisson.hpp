@@ -33,10 +33,6 @@ uk =[ u1, ... uL ], L = 4
 //local to global
 u = P uk */
 
-#include "Kokkos_ArithTraits.hpp"
-#include "Kokkos_Bitset.hpp"
-#include "Kokkos_Parallel.hpp"
-#include "Kokkos_Parallel_Reduce.hpp"
 #include "mars_context.hpp"
 #include "mars_globals.hpp"
 // #include <bits/c++config.h>
