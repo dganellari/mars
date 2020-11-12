@@ -15,7 +15,12 @@ if(MPI_FOUND)
 
     add_library(mars_mpi STATIC ${LOCAL_HEADERS} ${LOCAL_SOURCES})
     target_compile_features(mars_mpi PUBLIC cxx_std_14)
-    target_link_libraries(mars_mpi mars_kokkos mars_core)
+
+    if(Kokkos_FOUND)
+        target_link_libraries(mars_mpi mars_kokkos mars_core)
+    else()
+        target_link_libraries(mars_mpi mars_core)
+    endif()
 
     target_include_directories(mars_mpi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     target_include_directories(mars_mpi PUBLIC ${CMAKE_BINARY_DIR})

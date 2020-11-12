@@ -1,10 +1,6 @@
 #ifndef MARS_FD_POISSON_
 #define MARS_FD_POISSON_
 
-#include "Kokkos_ArithTraits.hpp"
-#include "Kokkos_Bitset.hpp"
-#include "Kokkos_Parallel.hpp"
-#include "Kokkos_Parallel_Reduce.hpp"
 #include "mars_context.hpp"
 #include "mars_globals.hpp"
 // #include <bits/c++config.h>
@@ -19,6 +15,7 @@
 #include "mars_mpi_guard.hpp"
 
 #ifdef WITH_KOKKOS
+#include "Kokkos_ArithTraits.hpp"
 #include <KokkosBlas1_sum.hpp>
 #include "mars_distributed_staggered_data_management.hpp"
 #endif  // WITH_KOKKOS

@@ -14,9 +14,7 @@
 #include "mars_lagrange_element.hpp"
 #include "mars_lepp_benchmark.hpp"
 #include "mars_longest_edge.hpp"
-#include "mars_memory.hpp"
 #include "mars_mesh.hpp"
-#include "mars_mesh_generation.hpp"
 #include "mars_mesh_partition.hpp"
 #include "mars_mesh_reader.hpp"
 #include "mars_mesh_writer.hpp"
@@ -31,6 +29,7 @@
 #include "mars_vtk_writer.hpp"
 
 #include "mars_env.hpp"
+#include "mars_mesh_generation.hpp"
 
 #ifdef WITH_KOKKOS
 #include "mars_lepp_benchmark_kokkos.hpp"
@@ -44,6 +43,7 @@
 #endif  // WITH_PAR_MOONOLITH
 
 #ifdef WITH_MPI
+#ifdef WITH_KOKKOS
 #include "mars_advection.hpp"
 #include "mars_distributed_mesh_generation.hpp"
 #include "mars_par_bisection.hpp"
@@ -51,6 +51,7 @@
 #include "mars_poisson.hpp"
 #include "mars_fd_poisson.hpp"
 #include "mars_test_mpi.hpp"
+#endif  // WITH_Kokkos
 #endif  // WITH_MPI
 #include <chrono>
 
