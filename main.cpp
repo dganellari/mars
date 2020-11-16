@@ -32,6 +32,7 @@
 #include "mars_mesh_generation.hpp"
 
 #ifdef WITH_KOKKOS
+#include "mars_longest_edge_kokkos.hpp"
 #include "mars_lepp_benchmark_kokkos.hpp"
 #include "mars_test_kokkos.hpp"
 #endif  // WITH_KOKKOS
@@ -1335,546 +1336,45 @@ void run_benchmarks(int level, int refine_level) {
   std::cout << "Generation level:" << level << std::endl;
   std::cout << "Refinement level:" << refine_level << std::endl;
 
-  /*Mesh2 m;
-      read_mesh("../data/square_2_def.MFEM", m);
-
-      LeppBenchmark<Mesh2> lb;
-      lb.run(level, m, "lb");
-
-      PreLeppBenchmark<Mesh2> b;
-      b.run(level, m, "b");
-*/
-
-  /*Mesh3 m3;
+  /* Mesh3 m3;
   read_mesh("../data/cube_6.MFEM", m3);
 
   LeppBenchmark<Mesh3> lb3;
   lb3.run(level, m3, "lb3");
 
-  PreLeppBenchmark<Mesh3> b3;
-  b3.run(level, m3, "b3");*/
-
-  /*ParallelMesh2 pMesh;
-  generate_square(pMesh, 97, 10);
-
-  Mesh2 sMesh;
-  convert_parallel_mesh_to_serial(sMesh, pMesh);
-
-  std::cout << "n_active_elements: " << sMesh.n_active_elements()
-                  << std::endl;
-  std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
-
-  VTKMeshWriter<Mesh2> w;
-  w.write("build_square_parallel.vtu", sMesh);
-
-  Benchmark<Mesh2> b1;
-  //b1.run(level, sMesh, "b1");
-
-  Mesh2 Mesh;
-  generate_square(Mesh, 97, 10);
-
-  std::cout << "n_active_elements: " << Mesh.n_active_elements() << std::endl;
-  std::cout << "n_nodes: " << Mesh.n_nodes() << std::endl;
-
-  VTKMeshWriter<Mesh2> w2;
-  w2.write("build_square_serial.vtu", Mesh);
-=======
-    template <class GlobalEdgeSelect, Integer Dim, Integer ManifoldDim>
-    bool test_incomplete(Mesh<Dim, ManifoldDim> &mesh,
-                         Map &map,
-                         const std::shared_ptr<GlobalEdgeSelect> &edge_select,
-                         const bool use_uniform_refinement = false) {
-        using MeshD = mars::Mesh<Dim, ManifoldDim>;
-
-        Integer each_element = 11;
-        bool bypass_incomplete = true;
-
-        if (bypass_incomplete) {
-            map.resize(mesh.n_nodes(), 0);
-            map.identity();
-        } else {
-            Integer element_index = 0;
-            for (Integer i = 0; i < mesh.n_elements(); ++i) {
-                if (!mesh.is_active(i)) continue;
-
-                if (((element_index++ % each_element) == 0) &&
-!edge_select->can_refine(mesh, i)) {
-                    // repair global index
-                    for (auto n : mesh.elem(i).nodes) {
-                        map.set_global(n, n);
-                    }
-                }
-            }
-        }
-
-        Bisection<MeshD, EdgeSelect<MeshD>> b(mesh, edge_select);
-        b.set_edge_select(edge_select);
-        b.tracking_begin();
-
-        edge_select->update(mesh);
-
-        if (use_uniform_refinement) {
-            b.uniform_refine(1);
-        } else {
-            Vector<Real, Dim> center;
-            center.set(0.5);
-            std::vector<Integer> elements;
-            mark_hypersphere_for_refinement(mesh, center, 0.25, elements);
-
-            b.refine(elements);
-        }
-
-        write_mesh("m2_inc.eps", mesh);
-
-        ///////////////////////////////////////////////////
-
-        Integer max_iter = 20;
-        for (Integer i = 0; i < max_iter; ++i) {
-            std::cout << "iter: " << (i + 1) << "/" << max_iter << std::endl;
-            map.resize(mesh.n_nodes(), 0);
-            map.identity();
-
-            b.set_fail_if_not_refine(i == max_iter - 1);
-
-            edge_select->update(mesh);
-            // edge_select->describe(std::cout);
-
-            std::cout << "n_nodes " << mesh.n_nodes() << std::endl;
-
-            if (b.refine_incomplete()) {
-                break;
-            }
-        }
-
-        write_mesh("m2.eps", mesh);
-
-        print_boundary_info(mesh, true, true);
-
-        if (ManifoldDim <= 4) {
-            print_boundary_points(mesh, std::cout, true);
-        }
-
-        b.tracking_end();
-        if (!mesh.is_conforming()) {
-            b.undo();
-            std::cerr << "[Warning] encountered non-conforming mesh undoing
-refinement" << std::endl; return false;
-        }
-
-        return true;
-    }
-
-    template <class GlobalEdgeSelect, Integer Dim, Integer ManifoldDim>
-    bool test_incomplete(Mesh<Dim, ManifoldDim> &mesh, const bool
-use_uniform_refinement = false) { Map map(0, 1); map.resize(mesh.n_nodes(), 0);
-        auto edge_select = std::make_shared<GlobalEdgeSelect>(map);
-        return test_incomplete(mesh, map, edge_select, use_uniform_refinement);
-    }
-
-    template <Integer Dim, Integer ManifoldDim>
-    bool test_incomplete_with_edge_rank(Mesh<Dim, ManifoldDim> &mesh,
-                                        const Integer n_tests,
-                                        const bool use_uniform_refinement =
-false, const bool online_update = true, const std::shared_ptr<NodeRank>
-&node_rank = std::make_shared<NodeRank>()) { using MeshD = mars::Mesh<Dim,
-ManifoldDim>;
-
-        Map map(0, 1);
-        map.resize(mesh.n_nodes(), 0);
-        map.identity();
-
-        Quality<MeshD> q(mesh);
-        q.compute();
-
-        // auto edge_select = std::make_shared<RankedEdgeSelect<MeshD>>(map,
-online_update); auto edge_select =
-std::make_shared<OldestEdgeSelect<MeshD>>(map, node_rank);
-
-        for (Integer i = 0; i < n_tests; ++i) {
-            std::cout << "test_incomplete : " << (i + 1) << "/" << n_tests <<
-std::endl; const bool ok = test_incomplete(mesh, map, edge_select,
-use_uniform_refinement); if (!ok) { assert(false); return false;
-            }
-
-            mesh.clean_up();
-            q.compute();
-            std::cout << "n_active_elements: " << mesh.n_active_elements() <<
-"/" << mesh.n_elements() << std::endl;
-        }
-
-        // edge_select->describe(std::cout);
-
-        q.save_csv("edge_rank", std::to_string(ManifoldDim) + "D_er.csv", true);
-        q.save_report(std::to_string(ManifoldDim) + "D_er.svg");
-        return true;
-    }
-
-    template <Integer Dim, Integer ManifoldDim>
-    void test_incomplete_ND(Mesh<Dim, ManifoldDim> &mesh, const Integer n_tests,
-const bool use_edge_rank) { using MeshD = mars::Mesh<Dim, ManifoldDim>; using
-NVES = mars::GlobalNewestVertexEdgeSelect<MeshD>; using LEES =
-mars::GloballyUniqueLongestEdgeSelect<MeshD>;
-
-        std::cout << "======================================\n";
-        mesh.renumber_nodes();
-        mark_boundary(mesh);
-
-        Integer n_serial_ref = 3;
-        Bisection<MeshD> b(mesh);
-        b.uniform_refine(n_serial_ref);
-
-        Map map(0, 1);
-        map.resize(mesh.n_nodes(), 0);
-
-        auto edge_select = std::make_shared<LEES>(map);
-        auto node_rank = std::make_shared<NodeRank>();
-        edge_select->set_node_rank(node_rank);
-
-        if (use_edge_rank) {
-            test_incomplete_with_edge_rank(mesh, n_tests, false, true);
-        } else {
-            Quality<MeshD> q(mesh);
-            q.compute();
-
-            for (Integer i = 0; i < n_tests; ++i) {
-                std::cout << "test_incomplete : " << (i + 1) << "/" << n_tests
-<< std::endl;
-
-                if (!test_incomplete<LEES>(mesh, map, edge_select, false)) {
-                    std::cout << "using edge_rank" << std::endl;
-                    if (!test_incomplete_with_edge_rank(mesh, 1, false, true,
-node_rank)) { assert(false); std::cout << "edge_rank failed" << std::endl;
-                    }
-                }
-
-                mesh.clean_up();
-                std::cout << "n_active_elements: " << mesh.n_active_elements()
-<< "/" << mesh.n_elements() << std::endl; q.compute();
-            }
-
-            q.save_csv("ref", std::to_string(ManifoldDim) + "D.csv", true);
-            q.save_report(std::to_string(ManifoldDim) + "D.svg");
-        }
-    }
-
-    template <class Mesh>
-    void test_bisection(const Integer n_levels,
-                        std::vector<std::shared_ptr<MeshPartition<Mesh>>>
-&parts, const bool uniform_refine = false) { static const Integer Dim =
-Mesh::Dim; using Point = typename Mesh::Point;
-
-        auto edge_select = std::make_shared<UniqueLongestEdgeSelect<Mesh>>();
-        edge_select->set_recursive(true);
-
-        PartitionedBisection<Mesh, EdgeSelect<Mesh>> b(parts, edge_select);
-        // b.set_edge_select(edge_select);
-
-        std::vector<std::vector<mars::Integer>> elements(parts.size());
-
-        for (Integer i = 0; i < n_levels; ++i) {
-            std::cout << "xxxxxxxxxxxxxxxxxxxxxx\n";
-            std::cout << "level " << (i + 1) << "/" << n_levels << std::endl;
-            b.verbose = i == n_levels - 1;
-            // b.verbose = true;
-            if (uniform_refine) {
-                b.uniform_refine(1);
-            } else {
-                for (Integer k = 0; k < parts.size(); ++k) {
-                    // if(k % 2 == 1) {
-                    Vector<Real, Dim> center;
-                    center.set(0.5);
-                    mark_hypersphere_for_refinement(parts[k]->get_mesh(),
-center, 0.25, elements[k]);
-                    // }
-                }
-
-                b.refine(elements);
-            }
-
-            for (auto p : parts) {
-                p->get_mesh().update_dual_graph();
-                print_boundary_info(p->get_mesh(), true);
-            }
-
-            std::cout << "xxxxxxxxxxxxxxxxxxxxxx\n";
-        }
-    }
-}  // namespace mars
-
-void test_partition_2D() {
-    using namespace mars;
-    std::cout << "======================================\n";
-    Mesh2 mesh;
-    // read_mesh("../data/square_2.MFEM", mesh);
-    read_mesh("../data/square_2_def.MFEM", mesh);
-    mark_boundary(mesh);
-
-    Bisection<Mesh2> b(mesh);
-    b.uniform_refine(3);
-
-    std::vector<Integer> partitioning(mesh.n_elements());
-
-    Integer n_parts = 7;
-    for (Integer i = 0; i < mesh.n_elements(); ++i) {
-        partitioning[i] = i % n_parts;
-    }
-
-    std::vector<std::shared_ptr<MeshPartition<Mesh2>>> parts;
-    partition_mesh(mesh, n_parts, partitioning, parts);
-
-    write_mesh_partitions("par2_in.eps", parts, PLOT_UNIFORM);
-
-    test_bisection(12, parts);
-
-    write_mesh_partitions("par2.eps", parts, PLOT_UNIFORM);
-
-    for (const auto &p : parts) {
-        std::cout << p->partition_id() << " n_active_elements: " <<
-p->get_mesh().n_active_elements() << std::endl;
-        p->get_mesh().update_dual_graph();
-        print_boundary_info(p->get_mesh(), true);
-    }
-}
-
-void test_partition_3D() {
-    using namespace mars;
-    using Mesh = mars::Mesh<3, 3>;
-
-    std::cout << "======================================\n";
-    Mesh mesh;
-    // read_mesh("../data/square_2.MFEM", mesh);
-    read_mesh("../data/cube_6.MFEM", mesh, true);
-    mark_boundary(mesh);
-
-    Bisection<Mesh> b(mesh);
-    b.uniform_refine(1);
-    // b.set_edge_select(std::make_shared<UniqueLongestEdgeSelect<Mesh>>());
-
-    std::vector<Integer> partitioning(mesh.n_elements(), 0);
-
-    Integer n_parts = mesh.n_active_elements();
-    Integer element_index = 0;
-    for (Integer i = 0; i < mesh.n_elements(); ++i) {
-        if (mesh.is_active(i)) {
-            partitioning[i] = (element_index++) % n_parts;
-        }
-    }
-
-    std::vector<std::shared_ptr<MeshPartition<Mesh>>> parts;
-    partition_mesh(mesh, n_parts, partitioning, parts);
-
-    write_mesh_partitions("before_par3_", parts, PLOT_UNIFORM);
-
-    test_bisection(5, parts, false);
-
-    write_mesh_partitions("after_par3_", parts, PLOT_UNIFORM);
-
-    for (const auto &p : parts) {
-        std::cout << "---------------------\n";
-        std::cout << p->partition_id() << " n_active_elements: " <<
-p->get_mesh().n_active_elements() << std::endl;
-        p->get_mesh().update_dual_graph();
-        print_boundary_info(p->get_mesh(), true);
-    }
-}
-
-void test_partition_4D() {
-    using namespace mars;
-    using Mesh = mars::Mesh<4, 4>;
-
-    std::cout << "======================================\n";
-    Mesh mesh;
-    read_mesh("../data/cube4d_24.MFEM", mesh);
-    mark_boundary(mesh);
-
-    Bisection<Mesh> b(mesh);
-    b.uniform_refine(1);
-
-    std::vector<Integer> partitioning(mesh.n_elements());
-
-    Integer n_parts = mesh.n_active_elements();
-    Integer element_index = 0;
-    for (Integer i = 0; i < mesh.n_elements(); ++i) {
-        if (mesh.is_active(i)) {
-            partitioning[i] = (element_index++) % n_parts;
-        }
-    }
-
-    std::vector<std::shared_ptr<MeshPartition<Mesh>>> parts;
-    partition_mesh(mesh, n_parts, partitioning, parts);
-
-    test_bisection(3, parts, false);
-
-    for (const auto &p : parts) {
-        std::cout << p->partition_id() << " n_active_elements: " <<
-p->get_mesh().n_active_elements() << std::endl;
-        p->get_mesh().update_dual_graph();
-        print_boundary_info(p->get_mesh(), true);
-    }
-}
-
-void run_benchmarks(int level, int refine_level) {
-    using namespace mars;
-
-    std::cout << "Generation level:" << level << std::endl;
-    std::cout << "Refinement level:" << refine_level << std::endl;
-
-    /*Mesh2 m;
-        read_mesh("../data/square_2_def.MFEM", m);
-
-        LeppBenchmark<Mesh2> lb;
-        lb.run(level, m, "lb");
-
-        PreLeppBenchmark<Mesh2> b;
-        b.run(level, m, "b");
-*/
-
-  /*Mesh3 m3;
-  read_mesh("../data/cube_6.MFEM", m3);
-
-  LeppBenchmark<Mesh3> lb3;
-  lb3.run(level, m3, "lb3");
-
-  PreLeppBenchmark<Mesh3> b3;
-  b3.run(level, m3, "b3");*/
-
-  /*ParallelMesh2 pMesh;
-  generate_square(pMesh, 97, 10);
-
-  Mesh2 sMesh;
-  convert_parallel_mesh_to_serial(sMesh, pMesh);
-
-  std::cout << "n_active_elements: " << sMesh.n_active_elements()
-                  << std::endl;
-  std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
-
-  VTKMeshWriter<Mesh2> w;
-  w.write("build_square_parallel.vtu", sMesh);
-
-  Benchmark<Mesh2> b1;
-  //b1.run(level, sMesh, "b1");
-
-  Mesh2 Mesh;
-  generate_square(Mesh, 97, 10);
-
-  std::cout << "n_active_elements: " << Mesh.n_active_elements() << std::endl;
-  std::cout << "n_nodes: " << Mesh.n_nodes() << std::endl;
-
-  VTKMeshWriter<Mesh2> w2;
-  w2.write("build_square_serial.vtu", Mesh);
-
-  LeppBenchmark<Mesh2> b2;
-  b2.run(level, Mesh, "b2");*/
-
-  /*
-  LeppBenchmark<Mesh3> lb3;
-  lb3.run(level, sMesh3, "lb3");*/
-
-  /*ParallelLeppBenchmark<ParallelMesh3> b4;
-  b4.run(level, pMesh3, "lb4");*/
-
-  /*ParallelLeppBenchmark<Mesh3> b5;
-  b5.run(level, sMesh3, "b5");
-*/
-  /*	Benchmark<Mesh4> b4;
-          Mesh4 m4;
-          read_mesh("../data/cube4d_24.MFEM", m4);
-
-          b4.run(level, m4, "b4");
-
-          LeppBenchmark<Mesh4> lb4;
-          lb4.run(level, m4, "lb4");*/
-
-  /*ParallelMesh2 pMesh2;
-  generate_cube(pMesh2, level, level, 0);
-
-  ParallelLeppBenchmark<ParallelMesh2> b;
-  b.run(level, pMesh2, "pb");*/
-
-  /*Mesh2 m;
-  read_mesh("../data/square_2_def.MFEM", m);
-
-  ParallelMesh2 pMesh2;
-  convert_serial_mesh_to_parallel(pMesh2, m);
-
-  ParallelLeppBenchmark<ParallelMesh2> pb;
-  pb.run(level,pMesh2, "pb");
-
-  PreLeppBenchmark<Mesh2> b;
-  b.run(level, m, "b");*/
-
-  // LeppBenchmark<Mesh2> b2;
-  // b2.run(level, Mesh, "b2");
-
-  /*
-  LeppBenchmark<Mesh3> lb3;
-  lb3.run(level, sMesh3, "lb3");*/
-
-  /*ParallelLeppBenchmark<ParallelMesh3> b4;
-  b4.run(level, pMesh3, "lb4");*/
-
-  /*ParallelLeppBenchmark<Mesh3> b5;
-  b5.run(level, sMesh3, "b5");
-*/
-  /*	Benchmark<Mesh4> b4;
-          Mesh4 m4;
-          read_mesh("../data/cube4d_24.MFEM", m4);
-
-          b4.run(level, m4, "b4");
-
-          LeppBenchmark<Mesh4> lb4;
-          lb4.run(level, m4, "lb4");*/
-
-  /*ParallelMesh2 pMesh2;
-  generate_cube(pMesh2, level, level, 0);
-
-  ParallelLeppBenchmark<ParallelMesh2> b;
-  b.run(level, pMesh2, "pb");*/
-
-  /*Mesh2 m;
-  read_mesh("../data/square_2_def.MFEM", m);
-
-  ParallelMesh2 pMesh2;
-  convert_serial_mesh_to_parallel(pMesh2, m);
-
-  ParallelLeppBenchmark<ParallelMesh2> pb;
-  pb.run(level,pMesh2, "pb");
-
-  PreLeppBenchmark<Mesh2> b;
-  b.run(level, m, "b");*/
+  Benchmark<Mesh4> b4;
+  Mesh4 m4;
+  read_mesh("../data/cube4d_24.MFEM", m4);
+
+  b4.run(level, m4, "b4");
+
+  LeppBenchmark<Mesh4> lb4;
+  lb4.run(level, m4, "lb4"); */
+
+  Mesh2 mesh2;
+  generate_cube(mesh2, level, level, 0);
+
+  Benchmark<Mesh2> b;
+  b.run(refine_level, mesh2, "pb");
+/*
+  PreLeppBenchmark<Mesh2> prb;
+  b.run(refine_level, mesh2, "prb"); */
 
 #ifdef WITH_KOKKOS
 
-  /*	ParallelMesh2 pMesh2;
-  //generate_cube(pMesh2, level +6, level + 20 , 0);
-  generate_cube(pMesh2, level, level, 0);
-  ParallelLeppBenchmark<ParallelMesh2> b;
-  b.run(refine_level, pMesh2, "pb");*/
-
-  /*Mesh2 sMesh;
-  convert_parallel_mesh_to_serial(sMesh, pMesh2);
-
-  PreLeppBenchmark<Mesh2> b2;
-  b2.run(refine_level, sMesh, "b2");*/
-  // test_mars_mesh_generation_kokkos_3D(level,refine_level, level);
-  // test_mars_nonsimplex_mesh_generation_kokkos_2D(level, refine_level);
-
-  // test_mars_nonsimplex_mesh_generation_kokkos_3D(level, refine_level,
-  // refine_level);
-
-  ParallelQuad4Mesh nsm;
-  generate_cube(nsm, level, refine_level, 0);
-  /*ParallelMesh3 pMesh3;
+  /* ParallelQuad4Mesh nsm;
+  generate_cube(nsm, level, refine_level, 0); */
+  ParallelMesh3 pMesh3;
   generate_cube(pMesh3, level, level, level);
 
-  ParallelLeppBenchmark<ParallelMesh3> b;
-  b.run(refine_level,pMesh3, "pb");*/
+  ParallelLeppBenchmark<ParallelMesh3> pb;
+  pb.run(refine_level, pMesh3, "pb");
 
-  /*	Mesh3 sMesh3;
+  /* Mesh3 sMesh3;
   convert_parallel_mesh_to_serial(sMesh3, pMesh3);
 
   PreLeppBenchmark<Mesh3> b3;
-  b3.run(refine_level, sMesh3, "b3");*/
+  b3.run(refine_level, sMesh3, "b3"); */
 #endif
 }
 
@@ -2358,8 +1858,9 @@ int main(int argc, char *argv[]) {
       test_mars_mesh_generation_3D(level, level, level);
     };
 
-#ifdef WITH_KOKKOS
     apps["benchmarks"] = [=]() { run_benchmarks(level, refine_level); };
+
+#ifdef WITH_KOKKOS
 
     apps["mars_mesh_generation_kokkos_2D_a"] = [=]() {
       test_mars_mesh_generation_kokkos_2D(2, 4);
