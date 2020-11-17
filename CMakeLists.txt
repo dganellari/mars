@@ -125,6 +125,7 @@ if(TRY_WITH_KOKKOS)
         message(" Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
         message(" Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
         message(" Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
+        message(" Kokkos CUDA Enabled = ${Kokkos_ENABLE_CUDA}")
 
         # message("   Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}") message("
         # Kokkos_C_COMPILER = ${Kokkos_C_COMPILER}")
@@ -209,11 +210,11 @@ if(Kokkos_FOUND)
     message(" Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
     message(" Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
 
-    if(MARS_USE_CUDA AND NOT Kokkos_TPL_LIBRARIES MATCHES "cuda")
-        message(
-            FATAL_ERROR
-                "Enable Kokkos Cuda or unset MARS_USE_CUDA to continue with OpenMP!"
-        )
+    if(MARS_USE_CUDA AND (NOT DEFINED Kokkos_ENABLE_CUDA OR NOT ${Kokkos_ENABLE_CUDA}))
+            message(
+                FATAL_ERROR
+                    "Enable Kokkos Cuda or unset MARS_USE_CUDA to continue with OpenMP!"
+            )
     endif()
 
     target_include_directories(mars SYSTEM PUBLIC ${Kokkos_TPL_INCLUDE_DIRS}
