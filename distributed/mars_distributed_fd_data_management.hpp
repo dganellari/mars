@@ -86,7 +86,8 @@ namespace mars {
     }
 
     template <class Mesh, Integer degree, typename... T>
-    class FDDM : public DM<Mesh, degree, T...> {
+    /* class VDM : public DOFM<Mesh, degree> { */
+    class FDDM : public DOFM<Mesh, degree> {
     public:
         /* using UD = UserData<Mesh, double>; */
         using UD = UserData<Mesh>;
@@ -98,7 +99,7 @@ namespace mars {
         template <Integer idx>
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
-        using SuperDM = DM<Mesh, degree, T...>;
+        using SuperDM = DOFM<Mesh, degree>;
 
         static constexpr Integer Dim = Mesh::Dim;
         static constexpr Integer ManifoldDim = Mesh::ManifoldDim;
@@ -111,7 +112,7 @@ namespace mars {
         static constexpr Integer elem_nodes = (degree + 1) * (degree + 1);
 
         MARS_INLINE_FUNCTION
-        FDDM(Mesh *mesh, const context &c) : DM<Mesh, degree, T...>(mesh, c) {}
+        FDDM(Mesh *mesh, const context &c) : SuperDM(mesh, c) {}
 
         template <bool Ghost>
         struct CornerOwnedDof {
@@ -338,6 +339,7 @@ namespace mars {
         virtual void enumerate_dofs(const context &context) override {
             SuperDM::enumerate_dofs(context);
             build_locally_owned_face_dofs();
+            //reserve TODO
         }
 
         template <typename Stencil>
@@ -426,7 +428,8 @@ namespace mars {
         ViewVectorType<Integer> locally_owned_corner_dofs;
         ViewVectorType<Integer> locally_owned_volume_dofs;
         ViewMatrixTypeRC<Integer, 2> locally_owned_face_dofs;
-    };
+        /* user_tuple vdata; */
+   };
 
 }  // namespace mars
 
