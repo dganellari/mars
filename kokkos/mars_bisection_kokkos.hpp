@@ -843,7 +843,7 @@ namespace mars {
                 });
 
                 double time = timer.seconds();
-                std::cout << "compact_map_to_view took: " << time << " seconds." << std::endl;
+                if (verbose) std::cout << "compact_map_to_view took: " << time << " seconds." << std::endl;
 
         }*/
 
@@ -878,7 +878,7 @@ namespace mars {
                 });
 
             double time = timer.seconds();
-            std::cout << "compact_map_to_view took: " << time << " seconds." << std::endl;
+            if (verbose) std::cout << "compact_map_to_view took: " << time << " seconds." << std::endl;
         }
 
         template <typename U>
@@ -911,7 +911,7 @@ namespace mars {
                 });
 
             double time = timer.seconds();
-            std::cout << "compact_map_to_view took: " << time << " seconds." << std::endl;
+            if (verbose) std::cout << "compact_map_to_view took: " << time << " seconds." << std::endl;
         }
 
         inline std::array<Integer, 2> count_lepp(const ViewVectorType<Integer> elements) {
@@ -1100,9 +1100,9 @@ namespace mars {
                                     lip_size));
 
             double time2 = timer2.seconds();
-            if (verbose) std::cout << "BisectElem took: " << time2 << " seconds." << std::endl;
+            if (verbose) std::cout << "BisectElem took: " << time2 << " seconds." << std::endl<<std::endl;
 
-            std::cout << "------------------------------------------------------------" << std::endl;
+            /* std::cout << "------------------------------------------------------------" << std::endl; */
         }
 
         inline void refine_elements(ViewVectorType<Integer>& elements) {
