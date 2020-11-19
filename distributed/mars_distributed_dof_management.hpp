@@ -648,6 +648,23 @@ namespace mars {
             }
         }
 
+        static MARS_INLINE_FUNCTION Integer get_ghost_sfc(const Mesh* mesh, const Integer index) { return mesh->get_ghost_sfc(index); }
+        static MARS_INLINE_FUNCTION Integer get_local_sfc(const Mesh *mesh, const Integer index) { return mesh->get_sfc(index); }
+
+        template <bool G>
+        static MARS_INLINE_FUNCTION typename std::enable_if<G == true, Integer>::type get_sfc_ghost_or_local(
+            const Mesh *mesh,
+            const Integer index) {
+            return get_ghost_sfc(mesh, index);
+        }
+
+        template <bool G>
+        static MARS_INLINE_FUNCTION typename std::enable_if<G == false, Integer>::type get_sfc_ghost_or_local(
+            const Mesh *mesh,
+            const Integer index) {
+            return get_local_sfc(mesh, index);
+        }
+
         template <bool Ghost>
         struct BuildLocalGlobalPredicate {
             BuildLocalGlobalPredicate(Mesh *m,
@@ -667,24 +684,9 @@ namespace mars {
             ViewVectorType<bool> nbh_proc_predicate_send;
             ViewVectorType<bool> nbh_proc_predicate_recv;
 
-            MARS_INLINE_FUNCTION Integer get_ghost_sfc(const Integer index) const { return mesh->get_ghost_sfc(index); }
-            MARS_INLINE_FUNCTION Integer get_local_sfc(const Integer index) const { return mesh->get_sfc(index); }
-
-            template <bool G>
-            MARS_INLINE_FUNCTION typename std::enable_if<G == true, Integer>::type get_sfc_ghost_or_local(
-                const Integer index) const {
-                return get_ghost_sfc(index);
-            }
-
-            template <bool G>
-            MARS_INLINE_FUNCTION typename std::enable_if<G == false, Integer>::type get_sfc_ghost_or_local(
-                const Integer index) const {
-                return get_local_sfc(index);
-            }
-
             MARS_INLINE_FUNCTION
             void operator()(const Integer i) const {
-                const Integer sfc = get_sfc_ghost_or_local<Ghost>(i);
+                const Integer sfc = get_sfc_ghost_or_local<Ghost>(mesh, i);
                 const Integer proc = mesh->get_proc();
                 corner_iterate(
                     sfc,
