@@ -1,5 +1,5 @@
-#ifndef GENERATION_MARS_DISTRIBUTED_FDDM_HPP_
-#define GENERATION_MARS_DISTRIBUTED_FDDM_HPP_
+#ifndef GENERATION_MARS_DISTRIBUTED_VDM_HPP_
+#define GENERATION_MARS_DISTRIBUTED_VDM_HPP_
 
 #ifdef WITH_MPI
 #ifdef WITH_KOKKOS
@@ -9,7 +9,7 @@
 namespace mars {
 
     // building the stencil is the responsibility of the specialized DM.
-    template <typename ST, typename DM>
+    /* template <typename ST, typename DM>
     ST build_volume_stencil(const DM &dm) {
         ST vstencil(dm.get_volume_dof_size());
 
@@ -18,7 +18,7 @@ namespace mars {
             vstencil.build_stencil(dm, localid, i);
         });
         return vstencil;
-    }
+    } */
 
     template <class Mesh, Integer degree, typename... T>
     class VDM : public DOFM<Mesh, degree> {
@@ -58,7 +58,7 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             VolumeOwnedDof(ViewVectorType<bool> rp, ViewVectorType<bool> lp, ViewVectorType<Integer> l, Integer p)
-                : predicate(rp), g_predicate(lp), sfc_to_local(l), proc(p) {}
+                : predicate(rp), l_predicate(lp), sfc_to_local(l), proc(p) {}
 
             MARS_INLINE_FUNCTION
             void volume_owned_dof(const Mesh *mesh, const Integer i, const Integer sfc, std::true_type) const {
@@ -80,9 +80,17 @@ namespace mars {
 
         template <bool Ghost>
         struct SeperateVolumeDofs {
+            SeperateVolumeDofs(Mesh *m, ViewVectorType<bool> vp, ViewVectorType<bool> lvp, ViewVectorType<Integer> sl)
+                : mesh(m), volume_predicate(vp), local_volume_predicate(lvp), sfc_to_local(sl) {}
+
+            Mesh *mesh;
+            ViewVectorType<bool> volume_predicate;
+            ViewVectorType<bool> local_volume_predicate;
+            ViewVectorType<Integer> sfc_to_local;
+
             MARS_INLINE_FUNCTION
             void operator()(const Integer i) const {
-                const Integer sfc = SuperDM::get_sfc_ghost_or_local<Ghost>(mesh, i);
+                const Integer sfc = SuperDM::template get_sfc_ghost_or_local<Ghost>(mesh, i);
                 const Integer proc = mesh->get_proc();
 
                 if (volume_nodes > 0) {
@@ -95,20 +103,6 @@ namespace mars {
 
                 // TODO: 3D part
             }
-
-            SeperateVolumeDofs(Mesh *m,
-                         ViewVectorType<bool> vp,
-                         ViewVectorType<bool> lvp,
-                         ViewVectorType<Integer> sl)
-                : mesh(m),
-                  volume_predicate(vp),
-                  local_volume_predicate(lvp),
-                  sfc_to_local(sl) {}
-
-            Mesh *mesh;
-            ViewVectorType<bool> volume_predicate;
-            ViewVectorType<bool> local_volume_predicate;
-            ViewVectorType<Integer> sfc_to_local;
         };
 
         void build_volume_dofs() {
@@ -129,13 +123,13 @@ namespace mars {
             Kokkos::parallel_for("separatedofs",
                                  size,
                                  SeperateVolumeDofs<false>(SuperDM::get_data().get_mesh(),
-                                              volume_dof_predicate, local_volume_predicate,
+                                              volume_dof_predicate, local_volume_dof_predicate,
                                               SuperDM::get_local_dof_enum().get_view_sfc_to_local()));
 
             Kokkos::parallel_for("separatedofs",
                                  size,
                                  SeperateVolumeDofs<true>(SuperDM::get_data().get_mesh(),
-                                                    volume_dof_predicate, local_volume_predicate,
+                                                    volume_dof_predicate, local_volume_dof_predicate,
                                                     SuperDM::get_local_dof_enum().get_view_sfc_to_local()));
 
             /* perform a scan on the volume dof predicate*/

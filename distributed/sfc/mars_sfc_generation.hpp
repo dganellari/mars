@@ -36,7 +36,7 @@ namespace mars {
         }
 
         inline void compact_element_labels(const ViewVectorType<bool> all_elements,
-                                           const ViewVectorType<bool> all_labels) {
+                                           const ViewVectorType<Integer> all_labels) {
             using namespace Kokkos;
 
             reserve_element_labels(get_elem_size());
@@ -55,7 +55,7 @@ namespace mars {
         }
 
         inline void compact_element_and_labels(const ViewVectorType<bool> all_elements,
-                                               const ViewVectorType<bool> all_labels) {
+                                               const ViewVectorType<Integer> all_labels) {
             compact_elements(all_elements);  // this should come first!
             compact_element_labels(all_elements, all_labels);
         }
@@ -117,6 +117,7 @@ namespace mars {
                     n__anchor_nodes = xDim * yDim;
 
                     parallel_for(MDRangePolicy<Rank<2>>({0, 0}, {yDim, xDim}), GenerateSFC(all_elements, xDim, yDim));
+                    break;
                 }
                 case ElementType::Hex8: {
                     assert(xDim != 0);
@@ -126,6 +127,7 @@ namespace mars {
                     n__anchor_nodes = xDim * yDim * zDim;
                     parallel_for(MDRangePolicy<Rank<3>>({0, 0, 0}, {zDim, yDim, xDim}),
                                  GenerateSFC(all_elements, xDim, yDim, zDim));
+                    break;
                 }
                 default: {
                     return false;
@@ -164,6 +166,16 @@ namespace mars {
         const ViewVectorType<Integer> &get_view_elements() const  // override
         {
             return elements_;
+        }
+
+        const Integer get_sfc(const Integer i) const  // override
+        {
+            return elements_(i);
+        }
+
+        const Integer get_label(const Integer i) const  // override
+        {
+            return element_labels_(i);
         }
 
         void set_elem_size(const Integer size) { elements_size_ = size; }
