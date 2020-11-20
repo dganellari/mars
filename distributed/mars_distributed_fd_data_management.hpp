@@ -86,8 +86,7 @@ namespace mars {
     }
 
     template <class Mesh, Integer degree, typename... T>
-    /* class VDM : public DOFM<Mesh, degree> { */
-    class FDDM : public DOFM<Mesh, degree> {
+    class FDDM : public DM<Mesh, degree, T...> {
     public:
         /* using UD = UserData<Mesh, double>; */
         using UD = UserData<Mesh>;
@@ -99,7 +98,7 @@ namespace mars {
         template <Integer idx>
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
-        using SuperDM = DOFM<Mesh, degree>;
+        using SuperDM = DM<Mesh, degree, T...>;
 
         static constexpr Integer Dim = Mesh::Dim;
         static constexpr Integer ManifoldDim = Mesh::ManifoldDim;

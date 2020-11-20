@@ -447,19 +447,25 @@ namespace mars {
         template <bool Ghost>
         struct CornerPredicate {
             ViewVectorType<bool> local_predicate;
+            ViewVectorType<Integer> local_label;
             ViewVectorType<bool> global_predicate;
+            ViewVectorType<Integer> global_label;
             ViewVectorType<bool> nbh_proc_predicate_send;
             ViewVectorType<bool> nbh_proc_predicate_recv;
             Integer proc;
 
             MARS_INLINE_FUNCTION
             CornerPredicate(ViewVectorType<bool> lp,
+                            ViewVectorType<Integer> llp,
                             ViewVectorType<bool> gp,
+                            ViewVectorType<Integer> lgp,
                             ViewVectorType<bool> npps,
                             ViewVectorType<bool> nppr,
                             Integer p)
                 : local_predicate(lp),
+                  local_label(llp),
                   global_predicate(gp),
+                  global_label(lgp),
                   nbh_proc_predicate_send(npps),
                   nbh_proc_predicate_recv(nppr),
                   proc(p) {}
@@ -476,6 +482,7 @@ namespace mars {
 
                 if (elem_sfc_proc >= max_proc) {
                     local_predicate(sfc) = 1;
+                    local_label(sfc) = DofLabel::lCorner;
                 }
             }
 
@@ -487,9 +494,11 @@ namespace mars {
                                   Integer one_ring_owners[simplex_type::ElemType],
                                   std::false_type) const {
                 local_predicate(sfc) = 1;
+                local_label(sfc) = DofLabel::lCorner;
 
                 if (proc >= max_proc) {
                     global_predicate(sfc) = 1;
+                    global_label(sfc) = DofLabel::lCorner;
                 }
 
                 // is the one ring owners needed here? Maybe using max proc is enough?
@@ -535,19 +544,29 @@ namespace mars {
         template <bool Ghost>
         struct VolumePredicate {
             ViewVectorType<bool> local_predicate;
+            ViewVectorType<Integer> local_label;
             ViewVectorType<bool> global_predicate;
+            ViewVectorType<Integer> global_label;
 
             MARS_INLINE_FUNCTION
-            VolumePredicate(ViewVectorType<bool> lp, ViewVectorType<bool> gp)
-                : local_predicate(lp), global_predicate(gp) {}
+            VolumePredicate(ViewVectorType<bool> lp,
+                            ViewVectorType<Integer> llp,
+                            ViewVectorType<bool> gp,
+                            ViewVectorType<Integer> lgp)
+                : local_predicate(lp), local_label(llp), global_predicate(gp), global_label(lgp) {}
 
             MARS_INLINE_FUNCTION
-            void volume_predicate(const Integer sfc, std::true_type) const { local_predicate(sfc) = 1; }
+            void volume_predicate(const Integer sfc, std::true_type) const {
+                local_predicate(sfc) = 1;
+                local_label(sfc) = DofLabel::lVolume;
+            }
 
             MARS_INLINE_FUNCTION
             void volume_predicate(const Integer sfc, std::false_type) const {
                 local_predicate(sfc) = 1;
+                local_label(sfc) = DofLabel::lVolume;
                 global_predicate(sfc) = 1;
+                global_label(sfc) = DofLabel::lVolume;
             }
 
             MARS_INLINE_FUNCTION
@@ -574,19 +593,25 @@ namespace mars {
         template <bool Ghost>
         struct FacePredicate {
             ViewVectorType<bool> local_predicate;
+            ViewVectorType<Integer> local_label;
             ViewVectorType<bool> global_predicate;
+            ViewVectorType<Integer> global_label;
             ViewVectorType<bool> nbh_proc_predicate_send;
             ViewVectorType<bool> nbh_proc_predicate_recv;
             Integer proc;
 
             MARS_INLINE_FUNCTION
             FacePredicate(ViewVectorType<bool> lp,
+                          ViewVectorType<Integer> llp,
                           ViewVectorType<bool> gp,
+                          ViewVectorType<Integer> lgp,
                           ViewVectorType<bool> npps,
                           ViewVectorType<bool> nppr,
                           Integer p)
                 : local_predicate(lp),
+                  local_label(llp),
                   global_predicate(gp),
+                  global_label(lgp),
                   nbh_proc_predicate_send(npps),
                   nbh_proc_predicate_recv(nppr),
                   proc(p) {}
@@ -603,6 +628,7 @@ namespace mars {
                 // if the ghost elem owns the dof then he is able to send it.
                 if (elem_sfc_proc >= owner_proc) {
                     local_predicate(sfc) = 1;
+                    local_label(sfc) = DofLabel::lFace;
                 }
             }
 
@@ -616,12 +642,14 @@ namespace mars {
                     is less than the owner. This is how the dofs are partitioned*/
                 if (proc >= owner_proc) {
                     global_predicate(sfc) = 1;
+                    global_label(sfc) = DofLabel::lFace;
                 }
                 if (proc != owner_proc) {
                     nbh_proc_predicate_send(owner_proc) = 1;
                     nbh_proc_predicate_recv(owner_proc) = 1;
                 }
                 local_predicate(sfc) = 1;
+                local_label(sfc) = DofLabel::lFace;
             }
 
             MARS_INLINE_FUNCTION
@@ -669,18 +697,24 @@ namespace mars {
         struct BuildLocalGlobalPredicate {
             BuildLocalGlobalPredicate(Mesh *m,
                                       ViewVectorType<bool> lp,
+                                      ViewVectorType<Integer> llp,
                                       ViewVectorType<bool> gp,
+                                      ViewVectorType<Integer> lgp,
                                       ViewVectorType<bool> npbs,
                                       ViewVectorType<bool> npbr)
                 : mesh(m),
                   local_predicate(lp),
+                  local_label(llp),
                   global_predicate(gp),
+                  global_label(lgp),
                   nbh_proc_predicate_send(npbs),
                   nbh_proc_predicate_recv(npbr) {}
 
             Mesh *mesh;
             ViewVectorType<bool> local_predicate;
+            ViewVectorType<Integer> local_label;
             ViewVectorType<bool> global_predicate;
+            ViewVectorType<Integer> global_label;
             ViewVectorType<bool> nbh_proc_predicate_send;
             ViewVectorType<bool> nbh_proc_predicate_recv;
 
@@ -688,22 +722,35 @@ namespace mars {
             void operator()(const Integer i) const {
                 const Integer sfc = get_sfc_ghost_or_local<Ghost>(mesh, i);
                 const Integer proc = mesh->get_proc();
-                corner_iterate(
-                    sfc,
-                    mesh,
-                    i,
-                    CornerPredicate<Ghost>(
-                        local_predicate, global_predicate, nbh_proc_predicate_send, nbh_proc_predicate_recv, proc));
+                corner_iterate(sfc,
+                               mesh,
+                               i,
+                               CornerPredicate<Ghost>(local_predicate,
+                                                      local_label,
+                                                      global_predicate,
+                                                      global_label,
+                                                      nbh_proc_predicate_send,
+                                                      nbh_proc_predicate_recv,
+                                                      proc));
 
                 if (face_nodes > 0) {
-                    FacePredicate<Ghost> fp = FacePredicate<Ghost>(
-                        local_predicate, global_predicate, nbh_proc_predicate_send, nbh_proc_predicate_recv, proc);
+                    FacePredicate<Ghost> fp = FacePredicate<Ghost>(local_predicate,
+                                                                   local_label,
+                                                                   global_predicate,
+                                                                   global_label,
+                                                                   nbh_proc_predicate_send,
+                                                                   nbh_proc_predicate_recv,
+                                                                   proc);
                     face_iterate<0>(sfc, mesh, i, fp);
                     face_iterate<1>(sfc, mesh, i, fp);
                 }
 
                 if (volume_nodes > 0) {
-                    volume_iterate(sfc, mesh, i, VolumePredicate<Ghost>(local_predicate, global_predicate));
+                    volume_iterate(
+                        sfc,
+                        mesh,
+                        i,
+                        VolumePredicate<Ghost>(local_predicate, local_label, global_predicate, global_label));
                 }
                 // TODO: 3D part
             }
@@ -742,23 +789,27 @@ namespace mars {
             const Integer gall_range = global_dof_enum.get_all_range();
 
             ViewVectorType<bool> local_predicate("lpred", lall_range);
+            ViewVectorType<Integer> local_label("llabel", lall_range);
             ViewVectorType<bool> global_predicate("gpred", gall_range);
+            ViewVectorType<Integer> global_label("glabel", gall_range);
 
             /* generate the sfc for the local and global dofs containing the generation locally
             for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
             Kokkos::parallel_for(
                 "lg_predicate",
                 size,
-                BuildLocalGlobalPredicate<false>(data.get_mesh(), local_predicate, global_predicate, npbs, npbr));
+                BuildLocalGlobalPredicate<false>(
+                    data.get_mesh(), local_predicate, local_label, global_predicate, global_label, npbs, npbr));
 
             // Iterate through ghost sfc and enumerate
             Kokkos::parallel_for(
                 "lg_predicate_from_ghost",
                 ghost_size,
-                BuildLocalGlobalPredicate<true>(data.get_mesh(), local_predicate, global_predicate, npbs, npbr));
+                BuildLocalGlobalPredicate<true>(
+                    data.get_mesh(), local_predicate, local_label, global_predicate, global_label, npbs, npbr));
 
-            local_dof_enum.compact_elements(local_predicate);
-            global_dof_enum.compact_elements(global_predicate);
+            local_dof_enum.compact_element_and_labels(local_predicate, local_label);
+            global_dof_enum.compact_element_and_labels(global_predicate, global_label);
 
             const int rank_size = num_ranks(context);
 
@@ -1130,6 +1181,9 @@ namespace mars {
             else
                 return INVALID_INDEX;
         }
+
+        MARS_INLINE_FUNCTION
+        Integer get_local_label(const Integer local) const { return local_dof_enum.get_view_element_labels()(local); }
 
         MARS_INLINE_FUNCTION
         Integer local_to_sfc(const Integer local) const { return local_dof_enum.get_view_elements()(local); }
