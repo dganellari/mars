@@ -18,6 +18,7 @@
 #include "Kokkos_ArithTraits.hpp"
 #include <KokkosBlas1_sum.hpp>
 #include "mars_distributed_staggered_data_management.hpp"
+#include "mars_distributed_volume_data_management.hpp"
 #endif  // WITH_KOKKOS
 #endif
 
@@ -39,7 +40,7 @@ namespace mars {
     /* using SDM = FDDM<DistributedQuad4Mesh, 2, double, double>; */
 
     //Or use the staggered DM object which builds needed staggered stencils for you!
-    using SDM = StagDM<DistributedQuad4Mesh, FSStencil, double, double>;
+    /* using SDM = StagDM<DistributedQuad4Mesh, FSStencil, double, double>; */
 
     /*
     enum class DMDataDesc
@@ -48,6 +49,8 @@ namespace mars {
         u = 1
     };
      */
+
+    using SDM = VDM<DistributedQuad4Mesh, 2, double, double>;
 
     // use as more readable tuple index to identify the data
     static constexpr int IN = 0;
@@ -67,30 +70,17 @@ namespace mars {
         Kokkos::parallel_for(
             "for", dof.get_elem_size(), MARS_LAMBDA(const int i) {
                 const Integer sfc_elem = dm.local_to_sfc(i);
-                const Integer global_dof = dm.local_to_global(i);
+                const Integer label = dof.get_label(i);
+                Dof d = dm.local_to_global_dof(i);
 
                 double point[3];
                 dm.get_dof_coordinates_from_sfc<Type>(sfc_elem, point);
-                printf("dof: %li - gdof: %li --- (%lf, %lf) - rank: %i\n", i, global_dof, point[0], point[1], rank);
+                printf("dof: %li - gdof: %li - label: %li --- (%lf, %lf) - rank: %i\n", i, d.get_gid(), label, point[0], point[1], d.get_proc());
             });
     }
 
-    void print_face_locally_owned(const SDM dm) {
-        const Integer size = dm.get_locally_owned_face_dofs().extent(0);
-        Kokkos::parallel_for(
-            "for", size, MARS_LAMBDA(const int index) {
-                // go through all the dofs of the elem_index element
-                const Integer local_dof = dm.get_face_dof(index);
-                // convert the local dof number to global dof number
-                Dof d = dm.local_to_global_dof(local_dof);
-
-                // do something. In this case we are printing.
-                printf("lofd: i: %li, local: %li, global: %li, proc: %li\n", index, local_dof, d.get_gid(), d.get_proc());
-            });
-    }
-
-    void print_volume_locally_owned(const SDM dm) {
-        const Integer size = dm.get_locally_owned_volume_dofs().extent(0);
+    void print_volume_dofs(const SDM dm) {
+        const Integer size = dm.get_volume_dofs().extent(0);
         Kokkos::parallel_for(
             "for", size, MARS_LAMBDA(const int index) {
                 // go through all the dofs of the elem_index element
@@ -100,9 +90,39 @@ namespace mars {
 
                 // do something. In this case we are printing.
                 printf(
-                    "lovd: i: %li, local: %li, global: %li, proc: %li\n", index, local_dof, d.get_gid(), d.get_proc());
+                    "Volume dof: i: %li, local: %li, global: %li, proc: %li\n", index, local_dof, d.get_gid(), d.get_proc());
             });
     }
+
+    void print_owned_volume_dofs(const SDM dm) {
+        const Integer size = dm.get_owned_volume_dofs().extent(0);
+        Kokkos::parallel_for(
+            "for", size, MARS_LAMBDA(const int index) {
+                // go through all the dofs of the elem_index element
+                const Integer local_dof = dm.get_owned_volume_dof(index);
+                // convert the local dof number to global dof number
+                Dof d = dm.local_to_global_dof(local_dof);
+
+                // do something. In this case we are printing.
+                printf(
+                    "Owned voluem dof: i: %li, local: %li, global: %li, proc: %li\n", index, local_dof, d.get_gid(), d.get_proc());
+            });
+    }
+    /* void print_face_locally_owned(const SDM dm) {
+        const Integer size = dm.get_locally_owned_face_dofs().extent(0);
+        Kokkos::parallel_for(
+            "for", size, MARS_LAMBDA(const int index) {
+                // go through all the dofs of the elem_index element
+                const Integer local_dof = dm.get_face_dof(index);
+                // convert the local dof number to global dof number
+                Dof d = dm.local_to_global_dof(local_dof);
+
+                // do something. In this case we are printing.
+                printf("lofd: i: %li, local: %li, global: %li, proc: %li\n", index, local_dof, d.get_gid(),
+    d.get_proc());
+            });
+    }
+
 
     void print_corner_locally_owned(const SDM dm) {
         const Integer size = dm.get_locally_owned_corner_dofs().extent(0);
@@ -117,7 +137,7 @@ namespace mars {
                 printf(
                     "locd: i: %li, local: %li, global: %li, proc: %li\n", index, local_dof, d.get_gid(), d.get_proc());
             });
-    }
+    } */
 
     // print thlocal and the global number of the dof within each element.
     // the dof enumeration within eachlement is topological
@@ -208,6 +228,8 @@ namespace mars {
         // print local dof numbering
         /* print_dof<Type>(dm.get_local_dof_enum(), proc_num); */
         /* print_dofs<Type>(dm, proc_num); */
+        print_volume_dofs(dm);
+        print_owned_volume_dofs(dm);
 
         // print the global dofs for each element's local dof
         /* print_elem_global_dof(dm);
@@ -218,9 +240,10 @@ namespace mars {
         /* print_ghost_dofs(dm); */
 
         /* classic width 1 stencil on volume nodes. */
-        /* auto volume_stencil = mars::build_volume_stencil<VCStencil>(dm);
+        /* auto volume_stencil = mars::build_volume_stencil<VCStencil>(dm); */
+        auto volume_stencil = dm.build_stencil<VCStencil>();
         print_stencil(dm, volume_stencil);
- */
+
         /* classic width 2 stencil on face nodes. */
         /* auto face_stencil = mars::build_face_stencil<FStencil, Orient>(dm);
         print_stencil(dm, face_stencil); */
@@ -232,8 +255,8 @@ namespace mars {
 
         /* dm.build_pressure_stencil();
         print_stencil(dm, dm.get_pressure_stencil()); */
-        dm.build_stokes_stencil<Orient>();
-        print_stencil(dm, dm.get_stokes_stencil());
+        /* dm.build_stokes_stencil<Orient>(); */
+        /* print_stencil(dm, dm.get_stokes_stencil()); */
 
         const Integer dof_size = dm.get_dof_size();
 
