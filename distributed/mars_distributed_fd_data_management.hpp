@@ -22,10 +22,10 @@ namespace mars {
     // building the stencil is the responsibility of the specialized DM.
     template <typename ST, typename DM>
     ST build_volume_stencil(const DM &dm) {
-        ST vstencil(dm.get_volume_dof_size());
+        ST vstencil(dm.get_owned_volume_dof_size());
 
-        dm.volume_dof_iterate(MARS_LAMBDA(const Integer i) {
-            const Integer localid = dm.get_volume_dof(i);
+        dm.owned_volume_dof_iterate(MARS_LAMBDA(const Integer i) {
+            const Integer localid = dm.get_owned_volume_dof(i);
             vstencil.build_stencil(dm, localid, i);
         });
         return vstencil;
@@ -33,11 +33,11 @@ namespace mars {
 
     template <typename ST, bool Orient = false, typename DM>
     ST build_face_stencil(const DM &dm) {
-        ST fstencil(dm.get_face_dof_size());
+        ST fstencil(dm.get_owned_face_dof_size());
 
-        dm.face_dof_iterate(MARS_LAMBDA(const Integer i) {
-            const Integer localid = dm.get_face_dof(i);
-            const Integer dir = dm.get_face_dof_dir(i);
+        dm.owned_face_dof_iterate(MARS_LAMBDA(const Integer i) {
+            const Integer localid = dm.get_owned_face_dof(i);
+            const Integer dir = dm.get_owned_face_dof_dir(i);
             fstencil.template build_stencil<Orient>(dm, localid, i, dir);
         });
         return fstencil;
@@ -75,11 +75,10 @@ namespace mars {
 
     template <typename ST, typename DM>
     ST build_corner_stencil(const DM &dm) {
-        ST cstencil(dm.get_corner_dof_size());
+        ST cstencil(dm.get_owned_corner_dof_size());
 
-        dm.corner_dof_iterate(MARS_LAMBDA(const Integer i) {
-            const Integer localid = dm.get_corner_dof(i);
-            /* DM::fill_stencil(dm, cstencil, localid, i); */
+        dm.owned_corner_dof_iterate(MARS_LAMBDA(const Integer i) {
+            const Integer localid = dm.get_owned_corner_dof(i);
             cstencil.build_stencil(dm, localid, i);
         });
         return cstencil;
@@ -382,17 +381,17 @@ namespace mars {
         }
 
         template <typename F>
-        void volume_dof_iterate(F f) const {
+        void owned_volume_dof_iterate(F f) const {
             Kokkos::parallel_for("volume_dof_iter", locally_owned_volume_dofs.extent(0), f);
         }
 
         template <typename F>
-        void face_dof_iterate(F f) const {
+        void owned_face_dof_iterate(F f) const {
             Kokkos::parallel_for("face_dof_iter", locally_owned_face_dofs.extent(0), f);
         }
 
         template <typename F>
-        void corner_dof_iterate(F f) const {
+        void owned_corner_dof_iterate(F f) const {
             Kokkos::parallel_for("corner_dof_iter", locally_owned_corner_dofs.extent(0), f);
         }
 
@@ -400,27 +399,27 @@ namespace mars {
         const ViewVectorType<Integer> get_locally_owned_corner_dofs() const { return locally_owned_corner_dofs; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_corner_dof(const Integer i) const { return locally_owned_corner_dofs(i); }
+        const Integer get_owned_corner_dof(const Integer i) const { return locally_owned_corner_dofs(i); }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_locally_owned_volume_dofs() const { return locally_owned_volume_dofs; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_volume_dof(const Integer i) const { return locally_owned_volume_dofs(i); }
+        const Integer get_owned_volume_dof(const Integer i) const { return locally_owned_volume_dofs(i); }
 
         MARS_INLINE_FUNCTION
         const ViewMatrixTypeRC<Integer, 2> get_locally_owned_face_dofs() const { return locally_owned_face_dofs; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_face_dof(const Integer i) const { return locally_owned_face_dofs(i, 0); }
+        const Integer get_owned_face_dof(const Integer i) const { return locally_owned_face_dofs(i, 0); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_face_dof_dir(const Integer i) const { return locally_owned_face_dofs(i, 1); }
+        const Integer get_owned_face_dof_dir(const Integer i) const { return locally_owned_face_dofs(i, 1); }
 
-        MARS_INLINE_FUNCTION const Integer get_volume_dof_size() const { return locally_owned_volume_dofs.extent(0); }
-        MARS_INLINE_FUNCTION const Integer get_corner_dof_size() const { return locally_owned_corner_dofs.extent(0); }
+        MARS_INLINE_FUNCTION const Integer get_owned_volume_dof_size() const { return locally_owned_volume_dofs.extent(0); }
+        MARS_INLINE_FUNCTION const Integer get_owned_corner_dof_size() const { return locally_owned_corner_dofs.extent(0); }
 
-        MARS_INLINE_FUNCTION const Integer get_face_dof_size() const { return locally_owned_face_dofs.extent(0); }
+        MARS_INLINE_FUNCTION const Integer get_owned_face_dof_size() const { return locally_owned_face_dofs.extent(0); }
 
     private:
         /* Stencil<Dim, degree> stencil; */
