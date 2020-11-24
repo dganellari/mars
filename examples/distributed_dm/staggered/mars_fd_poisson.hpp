@@ -79,6 +79,39 @@ namespace mars {
             });
     }
 
+
+    void print_boundary_volume_dofs(const SDM dm) {
+        const Integer size = dm.get_boundary_volume_dofs().extent(0);
+        Kokkos::parallel_for(
+            "for", size, MARS_LAMBDA(const int index) {
+                // go through all the dofs of the elem_index element
+                const Integer sfc = dm.get_boundary_volume_dofs()(index);
+                const Integer local_dof = dm.sfc_to_local(sfc);
+                // convert the local dof number to global dof number
+                Dof d = dm.local_to_global_dof(local_dof);
+
+                // do something. In this case we are printing.
+                printf(
+                    "Bounary Volume dof: i: %li, local: %li, global: %li, proc: %li\n", index, local_dof, d.get_gid(), d.get_proc());
+            });
+    }
+
+    void print_ghost_volume_dofs(const SDM dm) {
+        const Integer size = dm.get_ghost_volume_dofs().extent(0);
+        Kokkos::parallel_for(
+            "for", size, MARS_LAMBDA(const int index) {
+                // go through all the dofs of the elem_index element
+                const Integer sfc = dm.get_ghost_volume_dofs()(index);
+                const Integer local_dof = dm.sfc_to_local(sfc);
+                // convert the local dof number to global dof number
+                Dof d = dm.local_to_global_dof(local_dof);
+
+                // do something. In this case we are printing.
+                printf(
+                    "Ghost Volume dof: i: %li, local: %li, global: %li, proc: %li\n", index, local_dof, d.get_gid(), d.get_proc());
+            });
+    }
+
     void print_volume_dofs(const SDM dm) {
         const Integer size = dm.get_volume_dofs().extent(0);
         Kokkos::parallel_for(
@@ -231,6 +264,8 @@ namespace mars {
         print_volume_dofs(dm);
         print_owned_volume_dofs(dm);
 
+        print_boundary_volume_dofs(dm);
+        print_ghost_volume_dofs(dm);
         // print the global dofs for each element's local dof
         /* print_elem_global_dof(dm);
 
@@ -241,8 +276,8 @@ namespace mars {
 
         /* classic width 1 stencil on volume nodes. */
         /* auto volume_stencil = mars::build_volume_stencil<VCStencil>(dm); */
-        auto volume_stencil = dm.build_stencil<VCStencil>();
-        print_stencil(dm, volume_stencil);
+        /* auto volume_stencil = dm.build_stencil<VCStencil>();
+        print_stencil(dm, volume_stencil); */
 
         /* classic width 2 stencil on face nodes. */
         /* auto face_stencil = mars::build_face_stencil<FStencil, Orient>(dm);
