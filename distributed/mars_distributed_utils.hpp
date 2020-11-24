@@ -184,6 +184,58 @@ namespace mars {
         for_each_arg<F, I + 1, Args...>(f, t, v);
     }
 
+//**********************************dof handler utils******************************************
+
+    template <typename DH, typename F>
+    ViewVectorType<bool> build_sfc_to_local_predicate(DH dofhandler,
+                                                         F f,
+                                                         const Integer local_size,
+                                                         const ViewVectorType<Integer> in) {
+        ViewVectorType<bool> predicate("volume_predicate", local_size);
+
+        Kokkos::parallel_for(
+            "separatedoflabelss", local_size, KOKKOS_LAMBDA(const Integer i) {
+                const Integer sfc = in(i);
+                if (f(dofhandler.sfc_to_local(sfc))) {
+                    predicate(i) = 1;
+                }
+            });
+
+        return predicate;
+    }
+
+        template <typename DH, typename F>
+        void compact_sfc_to_local(DH dofhandler,
+                                          F f,
+                                          const ViewVectorType<Integer> in,
+                                          ViewVectorType<Integer> &out) {
+            using namespace Kokkos;
+
+            auto local_size = in.extent(0);
+            auto in_predicate = build_sfc_to_local_predicate<DH, F>(dofhandler, f, local_size, in);
+
+            /* perform a scan on the volume dof predicate*/
+            auto bscan = ViewVectorType<Integer>("boudnary_volume_scan", local_size + 1);
+            incl_excl_scan(0, local_size, in_predicate, bscan);
+
+            auto vol_subview = subview(bscan, local_size);
+            auto h_vs = create_mirror_view(vol_subview);
+            // Deep copy device view to host view.
+            deep_copy(h_vs, vol_subview);
+
+            out = ViewVectorType<Integer>("local_volume_dofs", h_vs());
+            /* ViewVectorType<Integer> bvds = out; */
+
+            /* Compact the predicate into the volume and face dofs views */
+            parallel_for(
+                local_size, KOKKOS_LAMBDA(const Integer i) {
+                    if (in_predicate(i) == 1) {
+                        Integer vindex = bscan(i);
+                        out(vindex) = in(i);
+                    }
+                });
+        }
+
     /* *************************************************************************************** */
 
     /* other utils */
