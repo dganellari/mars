@@ -93,12 +93,13 @@ namespace mars {
 
             local_volume_dofs = ViewVectorType<Integer>("local_volume_dofs", h_vs());
             ViewVectorType<Integer> lovd = local_volume_dofs;
+            ViewVectorType<Integer> map = local_volume_dof_map;
 
             /* Compact the predicate into the volume and face dofs views */
             parallel_for(
                 local_size, KOKKOS_LAMBDA(const Integer i) {
                     if (volume_dof_predicate(i) == 1) {
-                        Integer vindex = local_volume_dof_map(i);
+                        Integer vindex = map(i);
                         lovd(vindex) = i;
                     }
                 });
