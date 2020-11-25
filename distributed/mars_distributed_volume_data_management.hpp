@@ -126,9 +126,20 @@ namespace mars {
             compact_volume_dofs();
             compact_owned_volume_dofs();
             //reserve TODO
+
             auto is_volume = IsVolumeDof(local_volume_dof_map);
-            compact_sfc_to_local(*this, is_volume, SuperDM::get_boundary_dofs(), boundary_volume_dofs_sfc);
-            compact_sfc_to_local(*this, is_volume, SuperDM::get_ghost_dofs(), ghost_volume_dofs_sfc);
+            //building the counts for boundary and ghost separations to use for gather and scatter volume data only!
+            auto boundary_predicate =
+                compact_sfc_to_local(*this, is_volume, SuperDM::get_boundary_dofs(), boundary_volume_dofs_sfc);
+            auto boundary_scan = count_sfc_to_local(SuperDM::get_view_scan_send(), boundary_predicate);
+            volume_scan_send_mirror = create_mirror_view(boundary_scan);
+            Kokkos::deep_copy(volume_scan_send_mirror, boundary_scan);
+
+            auto ghost_predicate =
+                compact_sfc_to_local(*this, is_volume, SuperDM::get_ghost_dofs(), ghost_volume_dofs_sfc);
+            auto ghost_scan = count_sfc_to_local(SuperDM::get_view_scan_recv(), ghost_predicate);
+            volume_scan_recv_mirror = create_mirror_view(ghost_scan);
+            Kokkos::deep_copy(volume_scan_recv_mirror, ghost_scan);
         }
 
         template <typename F>
@@ -170,6 +181,13 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_ghost_volume_dofs() const { return ghost_volume_dofs_sfc; }
 
+        MARS_INLINE_FUNCTION
+        const ViewVectorType<Integer>::HostMirror &get_volume_scan_recv_mirror() const { return volume_scan_recv_mirror; }
+
+        MARS_INLINE_FUNCTION
+        const ViewVectorType<Integer>::HostMirror &get_volume_scan_send_mirror() const { return volume_scan_send_mirror; }
+
+
     private:
         //needed to build the stencils (only on the owned local dofs).
         ViewVectorType<Integer> locally_owned_volume_dofs;
@@ -180,7 +198,10 @@ namespace mars {
 
         //boundary and ghost sfc predicated for the volume dm.
         ViewVectorType<Integer> boundary_volume_dofs_sfc;
+        ViewVectorType<Integer>::HostMirror volume_scan_send_mirror;
+
         ViewVectorType<Integer> ghost_volume_dofs_sfc;
+        ViewVectorType<Integer>::HostMirror volume_scan_recv_mirror;
 
         user_tuple vdata;
    };

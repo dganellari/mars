@@ -1307,10 +1307,17 @@ namespace mars {
         const Integer get_proc() { return data.get_host_mesh->get_proc(); }
 
         MARS_INLINE_FUNCTION
+        const ViewVectorType<Integer> &get_view_scan_recv() const { return scan_recv; }
+
+        MARS_INLINE_FUNCTION
+        const ViewVectorType<Integer> &get_view_scan_send() const { return scan_send; }
+
+        MARS_INLINE_FUNCTION
         const ViewVectorType<Integer>::HostMirror &get_view_scan_recv_mirror() const { return scan_recv_mirror; }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer>::HostMirror &get_view_scan_send_mirror() const { return scan_send_mirror; }
+
     private:
         // data associated to the mesh elements (sfc).
         UD data;
