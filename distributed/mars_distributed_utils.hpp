@@ -4,7 +4,10 @@
 #include <ostream>
 #include <tuple>
 #include <type_traits>
+#include "mars_globals.hpp"
+#ifdef WITH_KOKKOS
 #include "Kokkos_ArithTraits.hpp"
+#endif
 
 namespace mars {
 
@@ -184,61 +187,9 @@ namespace mars {
         for_each_arg<F, I + 1, Args...>(f, t, v);
     }
 
-//**********************************dof handler utils******************************************
+    /* ***************************general utils************************************************** */
 
-    template <typename DH, typename F>
-    ViewVectorType<bool> build_sfc_to_local_predicate(DH dofhandler,
-                                                         F f,
-                                                         const Integer local_size,
-                                                         const ViewVectorType<Integer> in) {
-        ViewVectorType<bool> predicate("volume_predicate", local_size);
-
-        Kokkos::parallel_for(
-            "separatedoflabelss", local_size, KOKKOS_LAMBDA(const Integer i) {
-                const Integer sfc = in(i);
-                if (f(dofhandler.sfc_to_local(sfc))) {
-                    predicate(i) = 1;
-                }
-            });
-
-        return predicate;
-    }
-
-        template <typename DH, typename F>
-        void compact_sfc_to_local(DH dofhandler,
-                                          F f,
-                                          const ViewVectorType<Integer> in,
-                                          ViewVectorType<Integer> &out) {
-            using namespace Kokkos;
-
-            auto local_size = in.extent(0);
-            auto in_predicate = build_sfc_to_local_predicate<DH, F>(dofhandler, f, local_size, in);
-
-            /* perform a scan on the volume dof predicate*/
-            auto bscan = ViewVectorType<Integer>("boudnary_volume_scan", local_size + 1);
-            incl_excl_scan(0, local_size, in_predicate, bscan);
-
-            auto vol_subview = subview(bscan, local_size);
-            auto h_vs = create_mirror_view(vol_subview);
-            // Deep copy device view to host view.
-            deep_copy(h_vs, vol_subview);
-
-            out = ViewVectorType<Integer>("local_volume_dofs", h_vs());
-            /* ViewVectorType<Integer> bvds = out; */
-
-            /* Compact the predicate into the volume and face dofs views */
-            parallel_for(
-                local_size, KOKKOS_LAMBDA(const Integer i) {
-                    if (in_predicate(i) == 1) {
-                        Integer vindex = bscan(i);
-                        out(vindex) = in(i);
-                    }
-                });
-        }
-
-    /* *************************************************************************************** */
-
-    /* other utils */
+#ifdef WITH_KOKKOS
 
     template <typename T, Integer Dim>
     void fill_view_vector(ViewVectorTextureC<T, Dim> v, const T value[Dim]) {
@@ -264,6 +215,16 @@ namespace mars {
         }
 
         deep_copy(m, h_pt);
+    }
+
+    template <typename T>
+    void print_view(const ViewVectorType<T> &view) {
+        using namespace Kokkos;
+
+        parallel_for(
+            "print view", view.extent(0), KOKKOS_LAMBDA(const Integer i) {
+                std::cout << "i: " << i << " value: " << view(i) << std::endl;
+            });
     }
 
     struct resize_view_functor {
@@ -292,16 +253,6 @@ namespace mars {
             std::cout << el << std::endl;
         }
     };
-
-    template <typename T>
-    void print_view(const ViewVectorType<T> &view) {
-        using namespace Kokkos;
-
-        parallel_for(
-            "print view", view.extent(0), KOKKOS_LAMBDA(const Integer i) {
-                std::cout << "i: " << i << " value: " << view(i) << std::endl;
-            });
-    }
 
     /* special implementation of the binary search considering found
     if an element is between current and next proc value. */
@@ -443,6 +394,84 @@ namespace mars {
     private:
         ViewVectorType<T> x_;
     };
+
+//**********************************dof handler utils******************************************
+
+    template <typename DH, typename F>
+    ViewVectorType<bool> build_sfc_to_local_predicate(DH dofhandler,
+                                                         F f,
+                                                         const Integer local_size,
+                                                         const ViewVectorType<Integer> in) {
+        ViewVectorType<bool> predicate("volume_predicate", local_size);
+
+        Kokkos::parallel_for(
+            "separatedoflabelss", local_size, KOKKOS_LAMBDA(const Integer i) {
+                const Integer sfc = in(i);
+                if (f(dofhandler.sfc_to_local(sfc))) {
+                    predicate(i) = 1;
+                }
+            });
+
+        return predicate;
+    }
+
+    template <typename DH, typename F>
+    ViewVectorType<bool> compact_sfc_to_local(DH dofhandler,
+                                              F f,
+                                              const ViewVectorType<Integer> in,
+                                              ViewVectorType<Integer> &out) {
+        using namespace Kokkos;
+
+        auto local_size = in.extent(0);
+        auto in_predicate = build_sfc_to_local_predicate<DH, F>(dofhandler, f, local_size, in);
+
+        /* perform a scan on the volume dof predicate*/
+        auto bscan = ViewVectorType<Integer>("boudnary_volume_scan", local_size + 1);
+        incl_excl_scan(0, local_size, in_predicate, bscan);
+
+        auto vol_subview = subview(bscan, local_size);
+        auto h_vs = create_mirror_view(vol_subview);
+        // Deep copy device view to host view.
+        deep_copy(h_vs, vol_subview);
+
+        out = ViewVectorType<Integer>("local_volume_dofs", h_vs());
+        /* ViewVectorType<Integer> bvds = out; */
+
+        /* Compact the predicate into the volume and face dofs views */
+        parallel_for(
+            local_size, KOKKOS_LAMBDA(const Integer i) {
+                if (in_predicate(i) == 1) {
+                    Integer vindex = bscan(i);
+                    out(vindex) = in(i);
+                }
+            });
+        return in_predicate;
+    }
+
+    ViewVectorType<Integer> count_sfc_to_local(const ViewVectorType<Integer> in_scan,
+                                               const ViewVectorType<bool> in_predicate) {
+        using namespace Kokkos;
+
+        const Integer count_size = in_scan.extent(0) - 1;
+
+        ViewVectorType<Integer> count("count_to_local", count_size);
+        ViewVectorType<Integer> scan("scan_to_local", count_size + 1);
+        /* Compact the predicate into the volume and face dofs views */
+        parallel_for(
+            in_predicate.extent(0), KOKKOS_LAMBDA(const Integer i) {
+                if (in_predicate(i) == 1) {
+                    Integer proc = find_owner_processor(in_scan, i, 1, 0);
+                    atomic_increment(&count(proc));
+
+                    printf("Proc: %li, i: %li\n", proc, i);
+                }
+            });
+
+        incl_excl_scan(0, count_size, count, scan);
+
+        return scan;
+    }
+#endif
 }  // namespace mars
 
 #endif  // MARS_DISTRIBUTED_UTILS_HPP
