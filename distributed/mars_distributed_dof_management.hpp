@@ -1,5 +1,5 @@
-#ifndef GENERATION_MARS_DISTRIBUTED_DOFM_HPP_
-#define GENERATION_MARS_DISTRIBUTED_DOFM_HPP_
+#ifndef GENERATION_MARS_DISTRIBUTED_DofHandler_HPP_
+#define GENERATION_MARS_DISTRIBUTED_DofHandler_HPP_
 
 #ifdef WITH_MPI
 #ifdef WITH_KOKKOS
@@ -9,7 +9,7 @@
 namespace mars {
 
     template <class Mesh, Integer degree>
-    class DOFM {
+    class DofHandler {
     public:
         /* using UD = UserData<Mesh, double>; */
         using UD = UserData<Mesh>;
@@ -24,7 +24,7 @@ namespace mars {
         static constexpr Integer elem_nodes = (degree + 1) * (degree + 1);
 
         MARS_INLINE_FUNCTION
-        DOFM(Mesh *mesh, const context &c) : data(UD(mesh)) { create_ghost_layer<UD, simplex_type::ElemType>(c, data); }
+        DofHandler(Mesh *mesh, const context &c) : data(UD(mesh)) { create_ghost_layer<UD, simplex_type::ElemType>(c, data); }
 
         template <typename H>
         MARS_INLINE_FUNCTION void owned_dof_iterate(H f) {
@@ -892,7 +892,7 @@ namespace mars {
 
             context->distributed->i_send_recv_view(
                 ghost_dofs_index, scan_recv_mirror.data(), boundary_lsfc_index, scan_send_mirror.data());
-            std::cout << "DOFM:MPI send receive for the ghost dofs layer done." << std::endl;
+            std::cout << "DofHandler:MPI send receive for the ghost dofs layer done." << std::endl;
         }
 
         struct EnumLocalDofs {

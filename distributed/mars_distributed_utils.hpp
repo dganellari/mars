@@ -462,8 +462,6 @@ namespace mars {
                 if (in_predicate(i) == 1) {
                     Integer proc = find_owner_processor(in_scan, i, 1, 0);
                     atomic_increment(&count(proc));
-
-                    printf("Proc: %li, i: %li\n", proc, i);
                 }
             });
 
