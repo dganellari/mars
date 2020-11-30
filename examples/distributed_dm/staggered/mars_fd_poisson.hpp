@@ -51,6 +51,7 @@ namespace mars {
      */
 
     using SDM = VDM<DistributedQuad4Mesh, 2, double, double>;
+    using DOFH = DofHandler<DistributedQuad4Mesh, 2>;
 
     // use as more readable tuple index to identify the data
     static constexpr int IN = 0;
@@ -65,7 +66,8 @@ namespace mars {
     using dm_tuple = typename SDM::user_tuple; */
 
     template <Integer Type>
-    void print_dofs(const SDM &dm, const int rank) {
+    void print_dofs(const SDM &data, const int rank) {
+        auto dm = data.get_dof_handler();
         SFC<Type> dof = dm.get_local_dof_enum();
         Kokkos::parallel_for(
             "for", dof.get_elem_size(), MARS_LAMBDA(const int i) {
@@ -85,10 +87,10 @@ namespace mars {
         Kokkos::parallel_for(
             "for", size, MARS_LAMBDA(const int index) {
                 // go through all the dofs of the elem_index element
-                const Integer sfc = dm.get_boundary_volume_dofs()(index);
-                const Integer local_dof = dm.sfc_to_local(sfc);
+                const Integer local_dof= dm.get_boundary_volume_dofs()(index);
+                /* const Integer local_dof = dm.sfc_to_local(sfc); */
                 // convert the local dof number to global dof number
-                Dof d = dm.local_to_global_dof(local_dof);
+                Dof d = dm.get_dof_handler().local_to_global_dof(local_dof);
 
                 // do something. In this case we are printing.
                 printf(
@@ -101,10 +103,10 @@ namespace mars {
         Kokkos::parallel_for(
             "for", size, MARS_LAMBDA(const int index) {
                 // go through all the dofs of the elem_index element
-                const Integer sfc = dm.get_ghost_volume_dofs()(index);
-                const Integer local_dof = dm.sfc_to_local(sfc);
+                const Integer local_dof = dm.get_ghost_volume_dofs()(index);
+                /* const Integer local_dof = dm.sfc_to_local(sfc); */
                 // convert the local dof number to global dof number
-                Dof d = dm.local_to_global_dof(local_dof);
+                Dof d = dm.get_dof_handler().local_to_global_dof(local_dof);
 
                 // do something. In this case we are printing.
                 printf(
@@ -119,7 +121,7 @@ namespace mars {
                 // go through all the dofs of the elem_index element
                 const Integer local_dof = dm.get_volume_dof(index);
                 // convert the local dof number to global dof number
-                Dof d = dm.local_to_global_dof(local_dof);
+                Dof d = dm.get_dof_handler().local_to_global_dof(local_dof);
 
                 // do something. In this case we are printing.
                 printf(
@@ -134,7 +136,7 @@ namespace mars {
                 // go through all the dofs of the elem_index element
                 const Integer local_dof = dm.get_owned_volume_dof(index);
                 // convert the local dof number to global dof number
-                Dof d = dm.local_to_global_dof(local_dof);
+                Dof d = dm.get_dof_handler().local_to_global_dof(local_dof);
 
                 // do something. In this case we are printing.
                 printf(
@@ -174,7 +176,8 @@ namespace mars {
 
     // print thlocal and the global number of the dof within each element.
     // the dof enumeration within eachlement is topological
-    void print_elem_global_dof(const SDM dm) {
+    void print_elem_global_dof(const SDM data) {
+        auto dm = data.get_dof_handler();
         dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
             // go through all the dofs of the elem_index element
             for (int i = 0; i < SDM::elem_nodes; i++) {
@@ -190,7 +193,8 @@ namespace mars {
     }
 
     // print the local and global numbering of the ghost dofs per process
-    void print_ghost_dofs(const SDM dm) {
+    void print_ghost_dofs(const SDM data) {
+        auto dm = data.get_dof_handler();
         Kokkos::parallel_for(
             dm.get_ghost_lg_map().capacity(), KOKKOS_LAMBDA(Integer i) {
                 if (dm.get_ghost_lg_map().valid_at(i)) {
@@ -208,7 +212,8 @@ namespace mars {
     // the dof enumeration within eachlement is topological
 
     template <typename Stencil>
-    void print_stencil(const SDM dm, const Stencil stencil) {
+    void print_stencil(const SDM data, const Stencil stencil) {
+        auto dm = data.get_dof_handler();
         stencil.dof_iterate(MARS_LAMBDA(const Integer stencil_index, const Integer local_dof) {
             if (local_dof > -1) {
                 // convert the local dof number to global dof number
@@ -251,10 +256,12 @@ namespace mars {
         constexpr Integer Type = Elem::ElemType;
 
         // create the dm object
-        SDM dm(&mesh, context);
+        DOFH dof_handler(&mesh, context);
+        dof_handler.enumerate_dofs(context);
+
+        SDM dm(dof_handler);
         // enumerate the dofs locally and globally. The ghost dofs structures
         // are now created and ready to use for the gather and scatter ops.
-        dm.enumerate_dofs(context);
         // print locally owned dof numbering
         /* print_dof<Type>(dm.get_global_dof_enum(), proc_num); */
 
@@ -265,7 +272,7 @@ namespace mars {
         print_owned_volume_dofs(dm);
 
         print_boundary_volume_dofs(dm);
-        print_ghost_volume_dofs(dm);
+        /* print_ghost_volume_dofs(dm); */
         // print the global dofs for each element's local dof
         /* print_elem_global_dof(dm);
 
@@ -293,7 +300,7 @@ namespace mars {
         /* dm.build_stokes_stencil<Orient>(); */
         /* print_stencil(dm, dm.get_stokes_stencil()); */
 
-        const Integer dof_size = dm.get_dof_size();
+        const Integer dof_size = dof_handler.get_dof_size();
 
            // initialize the values by iterating through local dofs
         /* Kokkos::parallel_for(
