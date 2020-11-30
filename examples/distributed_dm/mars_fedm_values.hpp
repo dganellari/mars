@@ -110,7 +110,8 @@ namespace mars {
 
         //OK as long as we are doing affine meshes in 2D
         template <Integer Type>
-        void compute_invJ_and_detJ(const DMQ2 &dm, ViewVectorType<Real> detJ, ViewMatrixType<Real> invJ) {
+        void compute_invJ_and_detJ(const DMQ2 &data, ViewVectorType<Real> detJ, ViewMatrixType<Real> invJ) {
+            auto dm = data.get_dof_handler();
             dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
                 Real J[4];
                 Real J_inv[4];
@@ -152,7 +153,7 @@ namespace mars {
         MARS_INLINE_FUNCTION void gather_elem_data(const DMQ2 &dm, const Integer elem_index, DMDataType<INPUT> *sol) {
             for (int i = 0; i < DMQ2::elem_nodes; i++) {
                 // forach dof get the local number
-                const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+                const Integer local_dof = dm.get_dof_handler().get_elem_local_dof(elem_index, i);
                 // use the local number to read the corresponding user data
                 sol[i] = dm.template get_dof_data<INPUT>(local_dof);
             }
@@ -173,7 +174,7 @@ namespace mars {
             ViewVectorTextureC<Real, n_qp> q_weights = quad.q_w;
             ViewMatrixTextureC<Real, n_qp, dim> q_points = quad.q_p;
 
-            dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
+            dm.get_dof_handler().elem_iterate(MARS_LAMBDA(const Integer elem_index) {
                 Real gi[dim], g[dim];
                 Real J_inv_e[dim * dim];
                 Real pk[dim];
@@ -201,7 +202,7 @@ namespace mars {
 
                     for (int i = 0; i < DMQ2::elem_nodes; i++) {
                         // for each dof get the local number
-                        const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+                        const Integer local_dof = dm.get_dof_handler().get_elem_local_dof(elem_index, i);
                         FEQuad4<Real>::Grad::affine_f(i, J_inv_e, pk, gi);
 
                         res(elem_index, i) += Algebra<dim>::dot(g, gi) * dx;
@@ -214,9 +215,10 @@ namespace mars {
 
         template <Integer OUTPUT>
         void add_dof_contributions(const ViewMatrixType<Real> &res) {
-            auto eld = dm_.get_elem_dof_enum();
+            auto dof_handler = dm_.get_dof_handler();
+            auto eld = dof_handler.get_elem_dof_enum();
             auto dof_data = dm_.template get_dof_data<OUTPUT>();
-            dm_.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
+            dof_handler.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
                 // update output
                 for (int i = 0; i < DMQ2::elem_nodes; i++) {
                     const Integer local_dof = eld(elem_index, i);
@@ -229,7 +231,7 @@ namespace mars {
         // form the matrix free operator
         template <Integer INPUT, Integer OUTPUT>
         void form_operator() {
-            ViewMatrixType<Real> res("res", dm_.get_elem_size(), DMQ2::elem_nodes);
+            ViewMatrixType<Real> res("res", dm_.get_dof_handler().get_elem_size(), DMQ2::elem_nodes);
 
             integrate<INPUT>(dm_, quad, det_J_, inv_J_, res);
             add_dof_contributions<OUTPUT>(res);
@@ -238,7 +240,7 @@ namespace mars {
         template <class F, typename T>
         void integrate_rhs(F f, ViewMatrixType<T> &res) {
             auto det_J = det_J_;
-            auto dm = dm_;
+            auto dm = dm_.get_dof_handler();
 
             dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
                 using Elem = typename DMQ2::simplex_type;
@@ -262,7 +264,7 @@ namespace mars {
 
         template <class F, Integer RHS>
         void assemble_local_rhs(F f) {
-            ViewMatrixType<DMDataType<RHS>> res("res", dm_.get_elem_size(), DMQ2::elem_nodes);
+            ViewMatrixType<DMDataType<RHS>> res("res", dm_.get_dof_handler().get_elem_size(), DMQ2::elem_nodes);
 
             integrate_rhs(f, res);
             add_dof_contributions<RHS>(res);
@@ -271,8 +273,8 @@ namespace mars {
         void init() {
             using Elem = typename DMQ2::simplex_type;
 
-            det_J_ = ViewVectorType<Real>("detJ", dm_.get_elem_size());
-            inv_J_ = ViewMatrixType<Real>("J_inv", dm_.get_elem_size(), 4);
+            det_J_ = ViewVectorType<Real>("detJ", dm_.get_dof_handler().get_elem_size());
+            inv_J_ = ViewMatrixType<Real>("J_inv", dm_.get_dof_handler().get_elem_size(), 4);
             compute_invJ_and_detJ<Elem::ElemType>(dm_, det_J_, inv_J_);
 
             quad = FEQuad4<Real>::Quadrature::make();

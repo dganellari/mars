@@ -1237,10 +1237,8 @@ namespace mars {
                 });
         }
 
-        template <Integer idx,
-                  Integer face_nr = -1,
-                  typename F>
-        void boundary_iterate(F f) {
+        template <Integer face_nr = -1, typename F>
+        void boundary_dof_iterate(F f) {
             using namespace Kokkos;
             constexpr Integer Type = simplex_type::ElemType;
 

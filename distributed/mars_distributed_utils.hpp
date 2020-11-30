@@ -442,7 +442,7 @@ namespace mars {
             local_size, KOKKOS_LAMBDA(const Integer i) {
                 if (in_predicate(i) == 1) {
                     Integer vindex = bscan(i);
-                    out(vindex) = in(i);
+                    out(vindex) = dofhandler.sfc_to_local(in(i));
                 }
             });
         return in_predicate;
