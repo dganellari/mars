@@ -1272,7 +1272,7 @@ namespace mars {
         const Integer get_dof_size() const { return local_dof_enum.get_elem_size(); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_locally_owned_dof_size() const { return global_dof_enum.get_elem_size(); }
+        const Integer get_owned_dof_size() const { return global_dof_enum.get_elem_size(); }
 
         MARS_INLINE_FUNCTION
         const SFC<simplex_type::ElemType> &get_local_dof_enum() const { return local_dof_enum; }

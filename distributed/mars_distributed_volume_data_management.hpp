@@ -61,7 +61,7 @@ namespace mars {
             const ViewVectorType<Integer> global_to_sfc =
                 SuperDM::get_dof_handler().get_global_dof_enum().get_view_elements();
 
-            auto dofhandler =  SuperDM::get_dof_handler();
+            auto dofhandler = SuperDM::get_dof_handler();
             /* Compact the predicate into the volume and face dofs views */
             parallel_for(
                 local_size, KOKKOS_LAMBDA(const Integer i) {
@@ -127,15 +127,17 @@ namespace mars {
 
             auto is_volume = IsVolumeDof(local_volume_dof_map);
             // building the counts for boundary and ghost separations to use for gather and scatter volume data only!
-            auto boundary_predicate = compact_sfc_to_local(
-                SuperDM::get_dof_handler(), is_volume, SuperDM::get_dof_handler().get_boundary_dofs(), boundary_volume_dofs);
+            auto boundary_predicate = compact_sfc_to_local(SuperDM::get_dof_handler(),
+                                                           is_volume,
+                                                           SuperDM::get_dof_handler().get_boundary_dofs(),
+                                                           boundary_volume_dofs);
             auto boundary_scan =
                 count_sfc_to_local(SuperDM::get_dof_handler().get_view_scan_send(), boundary_predicate);
             volume_scan_send_mirror = create_mirror_view(boundary_scan);
             Kokkos::deep_copy(volume_scan_send_mirror, boundary_scan);
 
-            auto ghost_predicate =
-                compact_sfc_to_local(SuperDM::get_dof_handler(), is_volume, SuperDM::get_dof_handler().get_ghost_dofs(), ghost_volume_dofs);
+            auto ghost_predicate = compact_sfc_to_local(
+                SuperDM::get_dof_handler(), is_volume, SuperDM::get_dof_handler().get_ghost_dofs(), ghost_volume_dofs);
             auto ghost_scan = count_sfc_to_local(SuperDM::get_dof_handler().get_view_scan_recv(), ghost_predicate);
             volume_scan_recv_mirror = create_mirror_view(ghost_scan);
             Kokkos::deep_copy(volume_scan_recv_mirror, ghost_scan);
@@ -143,12 +145,26 @@ namespace mars {
 
         template <typename F>
         void owned_volume_dof_iterate(F f) const {
-            Kokkos::parallel_for("volume_dof_iter", locally_owned_volume_dofs.extent(0), f);
+            Kokkos::parallel_for("owned_volume_dof_iter", get_owned_volume_dofs().extent(0), f);
         }
 
         template <typename F>
         void volume_dof_iterate(F f) const {
-            Kokkos::parallel_for("volume_dof_iter", local_volume_dofs.extent(0), f);
+            Kokkos::parallel_for("volume_dof_iter", get_volume_dof_size(), f);
+        }
+
+        template <typename F>
+        void owned_dof_iterate(F f) const {
+            auto dofs = get_owned_volume_dofs();
+            Kokkos::parallel_for(
+                "volume_dof_iter", dofs.extent(0), MARS_LAMBDA(const Integer i) { f(dofs(i)); });
+        }
+
+        template <typename F>
+        void dof_iterate(F f) const {
+            auto dofs = get_volume_dofs();
+            Kokkos::parallel_for(
+                "volume_dof_iter", dofs.extent(0), MARS_LAMBDA(const Integer i) { f(dofs(i)); });
         }
 
         /* building the stencil is the responsibility of the specialized DM. */
@@ -179,6 +195,9 @@ namespace mars {
         const ViewVectorType<Integer> get_boundary_volume_map() const { return local_volume_dof_map; }
 
         MARS_INLINE_FUNCTION
+        const Integer get_boundary_volume_map(const Integer local_dof) const { return local_volume_dof_map(local_dof); }
+
+        MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_boundary_volume_dofs() const { return boundary_volume_dofs; }
 
         MARS_INLINE_FUNCTION
@@ -202,8 +221,17 @@ namespace mars {
             return std::get<idx>(vdata);
         }
 
+        MARS_INLINE_FUNCTION Integer get_dof_index(const Integer local_dof) const {
+            return get_boundary_volume_map(local_dof);
+        }
+
         template <std::size_t idx, typename H = typename std::tuple_element<idx, tuple>::type>
-        MARS_INLINE_FUNCTION H &get_dof_data(const Integer i) const {
+        MARS_INLINE_FUNCTION H &get_dof_data(const Integer local_dof) const {
+            return std::get<idx>(vdata)(get_dof_index(local_dof));
+        }
+
+        template <std::size_t idx, typename H = typename std::tuple_element<idx, tuple>::type>
+        MARS_INLINE_FUNCTION H &get_volume_data(const Integer i) const {
             return std::get<idx>(vdata)(i);
         }
 
@@ -262,39 +290,46 @@ namespace mars {
 
             /* print_nth_tuple<1>(proc_num); */
         }
-/*
-        template <Integer... dataidx>
-        user_tuple scatter_ghost_data(const context &context) {
-            using namespace Kokkos;
+        /*
+                template <Integer... dataidx>
+                user_tuple scatter_ghost_data(const context &context) {
+                    using namespace Kokkos;
 
-            Kokkos::Timer timer;
+                    Kokkos::Timer timer;
 
-            // exchange the ghost dofs first since it will be used to find the address
-            // of the userdata based on the sfc code.
+                    // exchange the ghost dofs first since it will be used to find the address
+                    // of the userdata based on the sfc code.
 
-            int proc_num = rank(context);
-            int size = num_ranks(context);
+                    int proc_num = rank(context);
+                    int size = num_ranks(context);
 
-            Integer ghost_size = get_volume_scan_recv_mirror()(size);
-            user_tuple ghost_buffer_data;
-            SuperDM::template reserve_user_data<dataidx...>(ghost_buffer_data, "ghost_user_data", ghost_size);
+                    Integer ghost_size = get_volume_scan_recv_mirror()(size);
+                    user_tuple ghost_buffer_data;
+                    SuperDM::template reserve_user_data<dataidx...>(ghost_buffer_data, "ghost_user_data", ghost_size);
 
-            fill_user_data<1, dataidx...>(ghost_buffer_data, get_ghost_volume_dofs());
+                    fill_user_data<1, dataidx...>(ghost_buffer_data, get_ghost_volume_dofs());
 
-            const Integer boundary_size = get_boundary_volume_dofs().extent(0);
-            user_tuple boundary_user_data;
-            SuperDM::template reserve_user_data<dataidx...>(boundary_user_data, "boundary_user_data", boundary_size);
+                    const Integer boundary_size = get_boundary_volume_dofs().extent(0);
+                    user_tuple boundary_user_data;
+                    SuperDM::template reserve_user_data<dataidx...>(boundary_user_data, "boundary_user_data",
+           boundary_size);
 
-            // prepare the buffer to send the boundary data
-            expand_tuple<ExchangeGhostDofsData, dataidx...>(
-                ExchangeGhostDofsData(
-                    context, get_volume_scan_send_mirror().data(), get_volume_scan_recv_mirror().data()),
-                boundary_user_data,
-                ghost_buffer_data);
-            [>print_nth_tuple<1>(proc_num);<]
+                    // prepare the buffer to send the boundary data
+                    expand_tuple<ExchangeGhostDofsData, dataidx...>(
+                        ExchangeGhostDofsData(
+                            context, get_volume_scan_send_mirror().data(), get_volume_scan_recv_mirror().data()),
+                        boundary_user_data,
+                        ghost_buffer_data);
+                    [>print_nth_tuple<1>(proc_num);<]
 
-            return boundary_user_data;
-        } */
+                    return boundary_user_data;
+                } */
+
+        MARS_INLINE_FUNCTION
+        virtual Integer get_dof_size() const override { return get_volume_dofs().extent(0); }
+
+        MARS_INLINE_FUNCTION
+        virtual Integer get_owned_dof_size() const override { return get_owned_volume_dofs().extent(0); }
 
     private:
         // needed to build the stencils (only on the owned local dofs).

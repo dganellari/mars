@@ -203,7 +203,7 @@ namespace mars {
         RHS rhs_fun;
         AnalyticalFun an_fun;
 
-        const Integer locally_owned_dof_size = dof_handler.get_locally_owned_dof_size();
+        const Integer locally_owned_dof_size = dof_handler.get_owned_dof_size();
         printf("Locally owned dof size: %li\n", locally_owned_dof_size);
 
         VectorReal x("X", locally_owned_dof_size);
