@@ -5,6 +5,61 @@
 
 namespace mars {
 
+    /*
+         * Face numbering on the stencil => ordering in the stencil stencil[1,0,3,2]
+                ----3----
+                |       |
+                0   x   1
+                |       |
+                ----2---- */
+    // building the stencil is the responsibility of the specialized DM.
+    template <typename ST, typename DM>
+    ST build_volume_stencil(const DM &dm) {
+        ST vstencil(dm.get_owned_volume_dof_size());
+
+        dm.owned_volume_dof_iterate(MARS_LAMBDA(const Integer i) {
+            const Integer localid = dm.get_owned_volume_dof(i);
+            vstencil.build_stencil(dm.get_dof_handler(), localid, i);
+        });
+        return vstencil;
+    }
+
+    template <typename ST, bool Orient = false, typename DM>
+    ST build_face_stencil(const DM &dm) {
+        ST fstencil(dm.get_owned_face_dof_size());
+
+        dm.owned_face_dof_iterate(MARS_LAMBDA(const Integer i) {
+            const Integer localid = dm.get_owned_face_dof(i);
+            const Integer dir = dm.get_owned_face_dof_dir(i);
+            fstencil.template build_stencil<Orient>(dm.get_dof_handler(), localid, i, dir);
+        });
+        return fstencil;
+    }
+
+    /* template <bool Orient, typename ST, typename DM>
+    typename std::enable_if<Orient == true, ST>::type build_face_stencils(const DM &dm) {
+        ST fstencil(dm.get_face_dof_size());
+
+        dm.face_dof_iterate(MARS_LAMBDA(const Integer i) {
+            const Integer localid = dm.get_face_dof(i);
+            const Integer dir = dm.get_face_dof_dir(i);
+            [>DM::fill_stencil(dm, fstencil, localid, i, dir);<]
+            fstencil.build_stencil(dm, localid, i, dir);
+        });
+        return fstencil;
+    }*/
+
+    template <typename ST, typename DM>
+    ST build_corner_stencil(const DM &dm) {
+        ST cstencil(dm.get_owned_corner_dof_size());
+
+        dm.owned_corner_dof_iterate(MARS_LAMBDA(const Integer i) {
+            const Integer localid = dm.get_owned_corner_dof(i);
+            cstencil.build_stencil(dm.get_dof_handler(), localid, i);
+        });
+        return cstencil;
+    }
+
     template <Integer Dim, Integer Width = 1>
     class Stencil {
     public:
@@ -256,9 +311,9 @@ namespace mars {
 
         template <bool Orient = false, typename DM>
         MARS_INLINE_FUNCTION void build_corner_face_stencil(const DM &dm,
-                                                         const Integer localid,
-                                                         const Integer stencil_index,
-                                                         const Integer Orientation) const {
+                                                            const Integer localid,
+                                                            const Integer stencil_index,
+                                                            const Integer Orientation) const {
             const Integer sfc = dm.local_to_sfc(localid);
 
             Octant oc = get_octant_from_sfc<DM::simplex_type::ElemType>(sfc);
@@ -276,12 +331,11 @@ namespace mars {
                         face_nr = 2;  // sfc face nbh downwards direction
                     else
                         face_nr = 3;  // sfc face nbh upwards direction
-                }
-                else {
+                } else {
                     face_nr = corner % 2;
                 }
 
-                //after locating the corner octant co, use it to find the stokes corner.
+                // after locating the corner octant co, use it to find the stokes corner.
                 Octant o = co.sfc_face_nbh<DM::simplex_type::ElemType>(face_nr);
                 const Integer nbh_sfc = get_sfc_from_octant<DM::simplex_type::ElemType>(o);
                 Integer nbh_id = dm.is_local(nbh_sfc) ? dm.sfc_to_local(nbh_sfc) : -1;
@@ -289,7 +343,7 @@ namespace mars {
             }
 
             /*FIXME for 3D.*/
-            //Reorder only if Orient set.
+            // Reorder only if Orient set.
             if (Orient && Orientation == 0) {
                 const Integer tmp = corner_extension(stencil_index, 1);
                 corner_extension(stencil_index, 1) = corner_extension(stencil_index, 2);

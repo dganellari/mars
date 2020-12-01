@@ -50,22 +50,22 @@ namespace mars {
     };
      */
 
-    using SDM = VDM<DistributedQuad4Mesh, 2, double, double>;
-    using DOFH = DofHandler<DistributedQuad4Mesh, 2>;
+    using VolumeDM = VDM<DistributedQuad4Mesh, 2, double, double>;
+    using DofH = DofHandler<DistributedQuad4Mesh, 2>;
 
     // use as more readable tuple index to identify the data
     static constexpr int IN = 0;
     static constexpr int OUT = 1;
 
     template <Integer idx>
-    using SDMDataType = typename SDM::UserDataType<idx>;
+    using VDMDataType = typename VolumeDM::UserDataType<idx>;
 
     /* template <typename... T>
     using tuple = mars::ViewsTuple<T...>;
 
     using dm_tuple = typename SDM::user_tuple; */
 
-    template <Integer Type>
+    template <class SDM, Integer Type>
     void print_dofs(const SDM &data, const int rank) {
         auto dm = data.get_dof_handler();
         SFC<Type> dof = dm.get_local_dof_enum();
@@ -82,6 +82,7 @@ namespace mars {
     }
 
 
+    template<typename SDM>
     void print_boundary_volume_dofs(const SDM dm) {
         const Integer size = dm.get_boundary_volume_dofs().extent(0);
         Kokkos::parallel_for(
@@ -98,6 +99,7 @@ namespace mars {
             });
     }
 
+    template <typename SDM>
     void print_ghost_volume_dofs(const SDM dm) {
         const Integer size = dm.get_ghost_volume_dofs().extent(0);
         Kokkos::parallel_for(
@@ -114,6 +116,7 @@ namespace mars {
             });
     }
 
+    template <typename SDM>
     void print_volume_dofs(const SDM dm) {
         const Integer size = dm.get_volume_dofs().extent(0);
         Kokkos::parallel_for(
@@ -129,6 +132,7 @@ namespace mars {
             });
     }
 
+    template <typename SDM>
     void print_owned_volume_dofs(const SDM dm) {
         const Integer size = dm.get_owned_volume_dofs().extent(0);
         Kokkos::parallel_for(
@@ -143,6 +147,7 @@ namespace mars {
                     "Owned voluem dof: i: %li, local: %li, global: %li, proc: %li\n", index, local_dof, d.get_gid(), d.get_proc());
             });
     }
+
     /* void print_face_locally_owned(const SDM dm) {
         const Integer size = dm.get_locally_owned_face_dofs().extent(0);
         Kokkos::parallel_for(
@@ -176,6 +181,8 @@ namespace mars {
 
     // print thlocal and the global number of the dof within each element.
     // the dof enumeration within eachlement is topological
+
+    template <typename SDM>
     void print_elem_global_dof(const SDM data) {
         auto dm = data.get_dof_handler();
         dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
@@ -193,6 +200,7 @@ namespace mars {
     }
 
     // print the local and global numbering of the ghost dofs per process
+    template <typename SDM>
     void print_ghost_dofs(const SDM data) {
         auto dm = data.get_dof_handler();
         Kokkos::parallel_for(
@@ -211,7 +219,7 @@ namespace mars {
     // print thlocal and the global number of the dof within each element.
     // the dof enumeration within eachlement is topological
 
-    template <typename Stencil>
+    template <typename SDM, typename Stencil>
     void print_stencil(const SDM data, const Stencil stencil) {
         auto dm = data.get_dof_handler();
         stencil.dof_iterate(MARS_LAMBDA(const Integer stencil_index, const Integer local_dof) {
@@ -256,10 +264,10 @@ namespace mars {
         constexpr Integer Type = Elem::ElemType;
 
         // create the dm object
-        DOFH dof_handler(&mesh, context);
+        DofH dof_handler(&mesh, context);
         dof_handler.enumerate_dofs(context);
 
-        SDM dm(dof_handler);
+        VolumeDM vdm(dof_handler);
         // enumerate the dofs locally and globally. The ghost dofs structures
         // are now created and ready to use for the gather and scatter ops.
         // print locally owned dof numbering
@@ -268,23 +276,19 @@ namespace mars {
         // print local dof numbering
         /* print_dof<Type>(dm.get_local_dof_enum(), proc_num); */
         /* print_dofs<Type>(dm, proc_num); */
-        print_volume_dofs(dm);
-        print_owned_volume_dofs(dm);
+        print_volume_dofs(vdm);
+        print_owned_volume_dofs(vdm);
 
-        print_boundary_volume_dofs(dm);
-        /* print_ghost_volume_dofs(dm); */
-        // print the global dofs for each element's local dof
-        /* print_elem_global_dof(dm);
-
-        print_face_locally_owned(dm);
-        print_volume_locally_owned(dm);
-        print_corner_locally_owned(dm); */
-        /* print_ghost_dofs(dm); */
+        print_boundary_volume_dofs(vdm);
+        print_ghost_volume_dofs(vdm);
 
         /* classic width 1 stencil on volume nodes. */
-        /* auto volume_stencil = mars::build_volume_stencil<VCStencil>(dm); */
-        /* auto volume_stencil = dm.build_stencil<VCStencil>();
-        print_stencil(dm, volume_stencil); */
+        //If finite difference DM fd_dm object is used then:
+        /* auto volume_stencil = mars::build_volume_stencil<VCStencil>(vdm); */
+
+        //Recommended: if separated volume dm is used then use as follow:
+        auto volume_stencil = vdm.build_stencil<VCStencil>();
+        print_stencil(vdm, volume_stencil);
 
         /* classic width 2 stencil on face nodes. */
         /* auto face_stencil = mars::build_face_stencil<FStencil, Orient>(dm);
@@ -300,25 +304,34 @@ namespace mars {
         /* dm.build_stokes_stencil<Orient>(); */
         /* print_stencil(dm, dm.get_stokes_stencil()); */
 
-        const Integer dof_size = dof_handler.get_dof_size();
+        //it gives the size of the local dofs of the dm. If volume then only volume dofs.
+        const Integer dof_size = vdm.get_volume_dof_size();
 
            // initialize the values by iterating through local dofs
-        /* Kokkos::parallel_for(
+        Kokkos::parallel_for(
             "initdatavalues", dof_size, MARS_LAMBDA(const Integer i) {
-                dm.get_dof_data<IN>(i) = 1.0;
-                // dm.get_dof_data<INPUT>(i) = i;
-                dm.get_dof_data<OUT>(i) = i;
+                vdm.get_volume_data<IN>(i) = 1.0;
+                vdm.get_volume_data<OUT>(i) = i;
             });
 
-        dm.gather_ghost_data<OUT>(context);
-        // iterate through the local dofs and print the local number and the data
-        dm.dof_iterate(MARS_LAMBDA(const Integer i) {
-            Dof d = dm.local_to_global_dof(i);
+
+        /* dm.gather_ghost_data<OUT>(context); */
+        /* iterate through the local dofs and print the local number and the data */
+        vdm.volume_dof_iterate(MARS_LAMBDA(const Integer i) {
+            const Integer local_dof = vdm.get_volume_dof(i);
+            /*get the data using the index by iterating on all the data.*/
+            const auto idata = vdm.get_volume_data<IN>(i);
+            const auto odata = vdm.get_volume_data<OUT>(i);
+
+            /* the other way around. Getting the data from localdof */
+            /* const Integer indata = dm.get_dof_data<IN>(local_dof); */
+
+            Dof d = vdm.get_dof_handler().local_to_global_dof(local_dof);
 
             printf("lid: %li, u: %lf, v: %lf, global: %li, rank: %i\n",
-                    i, dm.get_dof_data<IN>(i), dm.get_dof_data<OUT>(i), d.get_gid(), d.get_proc());
+                    i, idata, odata, d.get_gid(), d.get_proc());
         });
- */
+
         /* using VectorReal = mars::ViewVectorType<Real>;
         using VectorInt = mars::ViewVectorType<Integer>;
         using VectorBool = mars::ViewVectorType<bool>; */
