@@ -256,13 +256,6 @@ namespace mars {
         // gather operation: fill the data from the received ghost data
         template <Integer... dataidx>
         void gather_ghost_data(const context &context) {
-            using namespace Kokkos;
-
-            Kokkos::Timer timer;
-
-            // exchange the ghost dofs first since it will be used to find the address
-            // of the userdata based on the sfc code.
-
             int proc_num = rank(context);
             int size = num_ranks(context);
 
@@ -275,10 +268,6 @@ namespace mars {
             user_tuple buffer_data;
             SuperDM::template reserve_user_data<dataidx...>(buffer_data, "buffer_data", buffer_size);
 
-            /* : create a view with local dofs corrensponding to the boundary_volume dofs sfc then do
-            auto boundary_volume_local_dofs = translate_to_local(get_boundary_volume_dofs());
-            fill_buffer_data<0, dataidx...>(buffer_data, boundary_volume_local_dofs, local_volume_dof_map); */
-
             SuperDM::template fill_buffer_data<0, dataidx...>(
                 vdata, buffer_data, get_boundary_volume_dofs(), get_boundary_volume_map());
 
@@ -290,43 +279,33 @@ namespace mars {
 
             SuperDM::template fill_user_data<0, dataidx...>(
                 vdata, ghost_user_data, get_ghost_volume_dofs(), get_boundary_volume_map());
-
-            /* print_nth_tuple<1>(proc_num); */
         }
-        /*
-                template <Integer... dataidx>
-                user_tuple scatter_ghost_data(const context &context) {
-                    using namespace Kokkos;
 
-                    Kokkos::Timer timer;
+        template <Integer... dataidx>
+        user_tuple scatter_ghost_data(const context &context) {
+            int proc_num = rank(context);
+            int size = num_ranks(context);
 
-                    // exchange the ghost dofs first since it will be used to find the address
-                    // of the userdata based on the sfc code.
+            Integer ghost_size = get_volume_scan_recv_mirror()(size);
+            user_tuple ghost_buffer_data;
+            SuperDM::template reserve_user_data<dataidx...>(ghost_buffer_data, "ghost_user_data", ghost_size);
 
-                    int proc_num = rank(context);
-                    int size = num_ranks(context);
+            SuperDM::template fill_user_data<1, dataidx...>(
+                vdata, ghost_buffer_data, get_ghost_volume_dofs(), get_boundary_volume_map());
 
-                    Integer ghost_size = get_volume_scan_recv_mirror()(size);
-                    user_tuple ghost_buffer_data;
-                    SuperDM::template reserve_user_data<dataidx...>(ghost_buffer_data, "ghost_user_data", ghost_size);
+            const Integer boundary_size = get_boundary_volume_dofs().extent(0);
+            user_tuple boundary_user_data;
+            SuperDM::template reserve_user_data<dataidx...>(boundary_user_data, "boundary_user_data", boundary_size);
 
-                    fill_user_data<1, dataidx...>(ghost_buffer_data, get_ghost_volume_dofs());
+            // prepare the buffer to send the boundary data
+            SuperDM::template exchange_ghost_dofs_data<dataidx...>(context,
+                                                                   boundary_user_data,
+                                                                   ghost_buffer_data,
+                                                                   get_volume_scan_send_mirror().data(),
+                                                                   get_volume_scan_recv_mirror().data());
 
-                    const Integer boundary_size = get_boundary_volume_dofs().extent(0);
-                    user_tuple boundary_user_data;
-                    SuperDM::template reserve_user_data<dataidx...>(boundary_user_data, "boundary_user_data",
-           boundary_size);
-
-                    // prepare the buffer to send the boundary data
-                    expand_tuple<ExchangeGhostDofsData, dataidx...>(
-                        ExchangeGhostDofsData(
-                            context, get_volume_scan_send_mirror().data(), get_volume_scan_recv_mirror().data()),
-                        boundary_user_data,
-                        ghost_buffer_data);
-                    [>print_nth_tuple<1>(proc_num);<]
-
-                    return boundary_user_data;
-                } */
+            return boundary_user_data;
+        }
 
         MARS_INLINE_FUNCTION
         virtual Integer get_dof_size() const override { return get_volume_dofs().extent(0); }

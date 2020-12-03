@@ -81,7 +81,6 @@ namespace mars {
             });
     }
 
-
     template<typename SDM>
     void print_boundary_volume_dofs(const SDM dm) {
         const Integer size = dm.get_boundary_volume_dofs().extent(0);
@@ -315,6 +314,7 @@ namespace mars {
             });
 
         vdm.gather_ghost_data<OUT>(context);
+        scatter_add_ghost_data<VolumeDM, OUT>(vdm, context);
         /* iterate through the local dofs and print the local number and the data */
         vdm.volume_dof_iterate(MARS_LAMBDA(const Integer i) {
             const Integer local_dof = vdm.get_volume_dof(i);
