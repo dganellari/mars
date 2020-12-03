@@ -282,8 +282,11 @@ namespace mars {
             SuperDM::template fill_buffer_data<0, dataidx...>(
                 vdata, buffer_data, get_boundary_volume_dofs(), get_boundary_volume_map());
 
-            SuperDM::template exchange_ghost_dofs_data<dataidx...>(
-                context, ghost_user_data, buffer_data, get_volume_scan_recv_mirror(), get_volume_scan_send_mirror());
+            SuperDM::template exchange_ghost_dofs_data<dataidx...>(context,
+                                                                   ghost_user_data,
+                                                                   buffer_data,
+                                                                   get_volume_scan_recv_mirror().data(),
+                                                                   get_volume_scan_send_mirror().data());
 
             SuperDM::template fill_user_data<0, dataidx...>(
                 vdata, ghost_user_data, get_ghost_volume_dofs(), get_boundary_volume_map());

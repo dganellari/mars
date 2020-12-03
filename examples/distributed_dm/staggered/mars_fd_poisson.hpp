@@ -276,19 +276,19 @@ namespace mars {
         // print local dof numbering
         /* print_dof<Type>(dm.get_local_dof_enum(), proc_num); */
         /* print_dofs<Type>(dm, proc_num); */
-        print_volume_dofs(vdm);
-        print_owned_volume_dofs(vdm);
+        /* print_volume_dofs(vdm); */
+        /* print_owned_volume_dofs(vdm); */
 
-        print_boundary_volume_dofs(vdm);
-        print_ghost_volume_dofs(vdm);
+        /* print_boundary_volume_dofs(vdm);
+        print_ghost_volume_dofs(vdm); */
 
         /* classic width 1 stencil on volume nodes. */
         //If finite difference DM fd_dm object is used then:
         /* auto volume_stencil = mars::build_volume_stencil<VCStencil>(vdm); */
 
         //Recommended: if separated volume dm is used then use as follow:
-        auto volume_stencil = vdm.build_stencil<VCStencil>();
-        print_stencil(vdm, volume_stencil);
+        /* auto volume_stencil = vdm.build_stencil<VCStencil>(); */
+        /* print_stencil(vdm, volume_stencil); */
 
         /* classic width 2 stencil on face nodes. */
         /* auto face_stencil = mars::build_face_stencil<FStencil, Orient>(dm);
@@ -311,11 +311,10 @@ namespace mars {
         Kokkos::parallel_for(
             "initdatavalues", dof_size, MARS_LAMBDA(const Integer i) {
                 vdm.get_volume_data<IN>(i) = 1.0;
-                vdm.get_volume_data<OUT>(i) = i;
+                vdm.get_volume_data<OUT>(i) = proc_num;
             });
 
-
-        /* dm.gather_ghost_data<OUT>(context); */
+        vdm.gather_ghost_data<OUT>(context);
         /* iterate through the local dofs and print the local number and the data */
         vdm.volume_dof_iterate(MARS_LAMBDA(const Integer i) {
             const Integer local_dof = vdm.get_volume_dof(i);
