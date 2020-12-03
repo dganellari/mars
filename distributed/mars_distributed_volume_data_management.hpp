@@ -26,83 +26,6 @@ namespace mars {
         MARS_INLINE_FUNCTION
         VDM(DofHandler<Mesh, degree> d) : SuperDM(d) { prepare_volume_dofs(); }
 
-        ViewVectorType<bool> build_volume_predicate(const Integer local_size,
-                                                    const ViewVectorType<Integer> element_labels) {
-            ViewVectorType<bool> volume_dof_predicate("volume_predicate", local_size);
-            Kokkos::parallel_for(
-                "separatedoflabelss", local_size, KOKKOS_LAMBDA(const Integer i) {
-                    if (element_labels(i) == DofLabel::lVolume) {
-                        volume_dof_predicate(i) = 1;
-                    }
-                });
-
-            return volume_dof_predicate;
-        }
-
-        void compact_owned_volume_dofs() {
-            using namespace Kokkos;
-
-            const Integer local_size = SuperDM::get_dof_handler().get_global_dof_enum().get_elem_size();
-            auto volume_dof_predicate = build_volume_predicate(
-                local_size, SuperDM::get_dof_handler().get_global_dof_enum().get_view_element_labels());
-
-            /* perform a scan on the volume dof predicate*/
-            ViewVectorType<Integer> owned_volume_dof_scan("owned_volume_dof_scan", local_size + 1);
-            incl_excl_scan(0, local_size, volume_dof_predicate, owned_volume_dof_scan);
-
-            auto vol_subview = subview(owned_volume_dof_scan, local_size);
-            auto h_vs = create_mirror_view(vol_subview);
-            // Deep copy device view to host view.
-            deep_copy(h_vs, vol_subview);
-
-            locally_owned_volume_dofs = ViewVectorType<Integer>("local_volume_dofs", h_vs());
-            ViewVectorType<Integer> lovd = locally_owned_volume_dofs;
-
-            const ViewVectorType<Integer> global_to_sfc =
-                SuperDM::get_dof_handler().get_global_dof_enum().get_view_elements();
-
-            auto dofhandler = SuperDM::get_dof_handler();
-            /* Compact the predicate into the volume and face dofs views */
-            parallel_for(
-                local_size, KOKKOS_LAMBDA(const Integer i) {
-                    if (volume_dof_predicate(i) == 1) {
-                        Integer vindex = owned_volume_dof_scan(i);
-                        const Integer local = dofhandler.sfc_to_local(global_to_sfc(i));
-                        lovd(vindex) = local;
-                    }
-                });
-        }
-
-        void compact_volume_dofs() {
-            using namespace Kokkos;
-
-            const Integer local_size = SuperDM::get_dof_handler().get_local_dof_enum().get_elem_size();
-            auto volume_dof_predicate = build_volume_predicate(
-                local_size, SuperDM::get_dof_handler().get_local_dof_enum().get_view_element_labels());
-
-            /* perform a scan on the volume dof predicate*/
-            local_volume_dof_map = ViewVectorType<Integer>("volume_dof_scan", local_size + 1);
-            incl_excl_scan(0, local_size, volume_dof_predicate, local_volume_dof_map);
-
-            auto vol_subview = subview(local_volume_dof_map, local_size);
-            auto h_vs = create_mirror_view(vol_subview);
-            // Deep copy device view to host view.
-            deep_copy(h_vs, vol_subview);
-
-            local_volume_dofs = ViewVectorType<Integer>("local_volume_dofs", h_vs());
-            ViewVectorType<Integer> lovd = local_volume_dofs;
-            ViewVectorType<Integer> map = local_volume_dof_map;
-
-            /* Compact the predicate into the volume and face dofs views */
-            parallel_for(
-                local_size, KOKKOS_LAMBDA(const Integer i) {
-                    if (volume_dof_predicate(i) == 1) {
-                        Integer vindex = map(i);
-                        lovd(vindex) = i;
-                    }
-                });
-        }
-
         struct IsVolumeDof {
             ViewVectorType<Integer> local_volume_dof_map;
 
@@ -120,8 +43,8 @@ namespace mars {
         };
 
         void prepare_volume_dofs() {
-            compact_volume_dofs();
-            compact_owned_volume_dofs();
+            SuperDM::template compact_local_dofs<DofLabel::lVolume>(local_volume_dof_map, local_volume_dofs);
+            SuperDM::template compact_owned_dofs<DofLabel::lVolume>(locally_owned_volume_dofs);
 
             SuperDM::template reserve_user_data(vdata, "volume_user_data tuple", get_volume_dofs().extent(0));
 
