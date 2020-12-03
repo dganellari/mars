@@ -176,9 +176,7 @@ namespace mars {
                                                            Integer *recv_mirror,
                                                            Integer *send_mirror) {
             expand_tuple<ExchangeGhostDofsData, dataidx...>(
-                ExchangeGhostDofsData(c, recv_mirror, send_mirror),
-                recv_data,
-                send_data);
+                ExchangeGhostDofsData(c, recv_mirror, send_mirror), recv_data, send_data);
         }
 
         // gather operation: fill the data from the received ghost data
@@ -253,11 +251,94 @@ namespace mars {
         MARS_INLINE_FUNCTION
         virtual Integer get_owned_dof_size() const { return get_dof_handler().get_owned_dof_size(); }
 
-        template<typename F>
-        void owned_dof_iterate() const { return get_dof_handler().owned_dof_iterate(); }
+        template <typename F>
+        void owned_dof_iterate() const {
+            return get_dof_handler().owned_dof_iterate();
+        }
 
-        template<typename F>
-        void dof_iterate() const { return get_dof_handler().dof_iterate(); }
+        template <typename F>
+        void dof_iterate() const {
+            return get_dof_handler().dof_iterate();
+        }
+
+        template <Integer Label>
+        ViewVectorType<bool> build_label_dof_predicate(const ViewVectorType<Integer> element_labels) {
+            const Integer local_size = element_labels.extent(0);
+            ViewVectorType<bool> dof_predicate("label_dof_predicate", local_size);
+            Kokkos::parallel_for(
+                "separatedoflabelss", local_size, KOKKOS_LAMBDA(const Integer i) {
+                    if (element_labels(i) == Label) {
+                        dof_predicate(i) = 1;
+                    }
+                });
+
+            return dof_predicate;
+        }
+
+        template <Integer Label, typename V>
+        void compact_owned_dofs(V &locally_owned_dofs) {
+            using namespace Kokkos;
+
+            const Integer local_size = get_dof_handler().get_global_dof_enum().get_elem_size();
+            auto dof_predicate =
+                build_label_dof_predicate<Label>(get_dof_handler().get_global_dof_enum().get_view_element_labels());
+
+            assert(local_size == get_dof_handler().get_global_dof_enum().get_view_element_labels().extent(0));
+
+            /* perform a scan on the dof predicate*/
+            ViewVectorType<Integer> owned_dof_scan("owned_dof_scan", local_size + 1);
+            incl_excl_scan(0, local_size, dof_predicate, owned_dof_scan);
+
+            auto vol_subview = subview(owned_dof_scan, local_size);
+            auto h_vs = create_mirror_view(vol_subview);
+            // Deep copy device view to host view.
+            deep_copy(h_vs, vol_subview);
+
+            locally_owned_dofs = ViewVectorType<Integer>("locally_owned_dofs", h_vs());
+            const ViewVectorType<Integer> global_to_sfc = get_dof_handler().get_global_dof_enum().get_view_elements();
+
+            auto dofhandler = get_dof_handler();
+
+            parallel_for(
+                local_size, KOKKOS_LAMBDA(const Integer i) {
+                    if (dof_predicate(i) == 1) {
+                        Integer vindex = owned_dof_scan(i);
+                        const Integer local = dofhandler.sfc_to_local(global_to_sfc(i));
+                        locally_owned_dofs(vindex) = local;
+                    }
+                });
+        }
+
+        template <Integer Label, typename V>
+        void compact_local_dofs(V &local_dof_map, V &local_dofs) {
+            using namespace Kokkos;
+
+            const Integer local_size = get_dof_handler().get_local_dof_enum().get_elem_size();
+            auto dof_predicate =
+                build_label_dof_predicate<Label>(get_dof_handler().get_local_dof_enum().get_view_element_labels());
+
+            assert(local_size == get_dof_handler().get_local_dof_enum().get_view_element_labels().extent(0));
+
+            /* perform a scan on the dof predicate*/
+            local_dof_map = ViewVectorType<Integer>("local_dof_scan", local_size + 1);
+            incl_excl_scan(0, local_size, dof_predicate, local_dof_map);
+
+            auto vol_subview = subview(local_dof_map, local_size);
+            auto h_vs = create_mirror_view(vol_subview);
+            // Deep copy device view to host view.
+            deep_copy(h_vs, vol_subview);
+
+            local_dofs = ViewVectorType<Integer>("local_dofs", h_vs());
+
+            /* Compact the predicate into the volume and face dofs views */
+            parallel_for(
+                local_size, KOKKOS_LAMBDA(const Integer i) {
+                    if (dof_predicate(i) == 1) {
+                        Integer vindex = local_dof_map(i);
+                        local_dofs(vindex) = i;
+                    }
+                });
+        }
 
     private:
         DofHandler<Mesh, degree> dof_handler;
