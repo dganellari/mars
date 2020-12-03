@@ -71,13 +71,8 @@ namespace mars {
         // gather operation: fill the data from the received ghost data
         template <Integer... dataidx>
         void gather_ghost_data(const context &context) {
-            using namespace Kokkos;
-
-            Kokkos::Timer timer;
-
             // exchange the ghost dofs first since it will be used to find the address
             // of the userdata based on the sfc code.
-
             int proc_num = rank(context);
             int size = num_ranks(context);
 
@@ -96,13 +91,6 @@ namespace mars {
                 SuperDM::get_dof_handler().get_boundary_dofs(),
                 SuperDM::get_dof_handler().get_local_dof_enum().get_view_sfc_to_local());
 
-            /* SuperDM::template expand_tuple<SuperDM::ExchangeGhostDofsData, dataidx...>(
-                SuperDM::ExchangeGhostDofsData(context,
-                                               SuperDM::get_dof_handler().get_view_scan_recv_mirror().data(),
-                                               SuperDM::get_dof_handler().get_view_scan_send_mirror().data()),
-                ghost_user_data,
-                buffer_data); */
-
             SuperDM::template exchange_ghost_dofs_data<dataidx...>(
                 context,
                 ghost_user_data,
@@ -116,19 +104,12 @@ namespace mars {
                 ghost_user_data,
                 SuperDM::get_dof_handler().get_ghost_dofs(),
                 SuperDM::get_dof_handler().get_local_dof_enum().get_view_sfc_to_local());
-
-            /* print_nth_tuple<1>(proc_num); */
         }
 
         template <Integer... dataidx>
         user_tuple scatter_ghost_data(const context &context) {
-            using namespace Kokkos;
-
-            Kokkos::Timer timer;
-
             // exchange the ghost dofs first since it will be used to find the address
             // of the userdata based on the sfc code.
-
             int proc_num = rank(context);
             int size = num_ranks(context);
 
@@ -147,14 +128,6 @@ namespace mars {
             SuperDM::template reserve_user_data<dataidx...>(boundary_user_data, "boundary_user_data", boundary_size);
 
             // prepare the buffer to send the boundary data
-            /* SuperDM::template expand_tuple<typename SuperDM::ExchangeGhostDofsData, dataidx...>(
-                SuperDM::ExchangeGhostDofsData(context,
-                                               SuperDM::get_dof_handler().get_view_scan_send_mirror().data(),
-                                               SuperDM::get_dof_handler().get_view_scan_recv_mirror().data()),
-                boundary_user_data,
-                ghost_buffer_data); */
-            /* print_nth_tuple<1>(proc_num); */
-
             SuperDM::template exchange_ghost_dofs_data<dataidx...>(
                 context,
                 boundary_user_data,

@@ -77,28 +77,6 @@ namespace mars {
         return true;
     }
 
-    template <class DM, Integer... dataidx>
-    void scatter_add_ghost_data(DM &dm, const context &context) {
-        // scatter the data to the procs and keep them in a boundary data tuple
-        // again if no template argument is specified all the data is scattered.
-        // if not all of them then be careful since the tuple is not initialized on
-        // the others example: dm_tuple boundary_data =
-        // dm.scatter_ghost_data<1>(context);
-        using dm_tuple = typename DM::user_tuple;
-        dm_tuple boundary_data = dm.template scatter_ghost_data<dataidx...>(context);
-
-        // use the scattered data "boundary_data" to do ops like max, add or min in
-        // the dof contributions. Otherwise you can use predifined features like
-        // scatter_add as following. careful to use the same template argument for
-        // specifing the data as in the scatter_ghost_data since otherwise you might
-        // try to access uninitialized tuplelement and get seg faults. example::
-        // dm.scatter_add<1>(boundary_data); If: dm.scatter_add<0>(boundary_data) then
-        // seg faults.
-        dm.template scatter_add<dataidx...>(boundary_data);
-        /*dm.scatter_max<u>(boundary_data);*/
-        /*dm.scatter_min<u>(boundary_data);*/
-    }
-
     template <class DMQ2>
     class FEDMValues {
     public:
