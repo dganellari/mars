@@ -245,6 +245,27 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         const DofHandler<Mesh, degree> &get_dof_handler() const { return dof_handler; }
+
+        MARS_INLINE_FUNCTION
+        virtual Integer get_boundary_dof(const Integer i) const {
+            auto d = get_dof_handler();
+            return d.sfc_to_local(d.get_boundary_dofs()(i));
+        }
+
+        MARS_INLINE_FUNCTION
+        virtual Integer get_ghost_dof(const Integer i) const {
+            auto d = get_dof_handler();
+            return d.sfc_to_local(d.get_ghost_dofs()(i));
+        }
+
+
+        MARS_INLINE_FUNCTION
+        virtual const ViewVectorType<Integer> get_ghost_dofs() const { return get_dof_handler().get_ghost_dofs(); }
+
+        MARS_INLINE_FUNCTION
+        virtual const ViewVectorType<Integer> get_boundary_dofs() const { return get_dof_handler().get_boundary_dofs(); }
+
+
         MARS_INLINE_FUNCTION
         virtual Integer get_dof_size() const { return get_dof_handler().get_dof_size(); }
 
@@ -252,13 +273,18 @@ namespace mars {
         virtual Integer get_owned_dof_size() const { return get_dof_handler().get_owned_dof_size(); }
 
         template <typename F>
-        void owned_dof_iterate() const {
-            return get_dof_handler().owned_dof_iterate();
+        void owned_dof_iterate(F f) const {
+            get_dof_handler().owned_dof_iterate(f);
         }
 
         template <typename F>
-        void dof_iterate() const {
-            return get_dof_handler().dof_iterate();
+        void dof_iterate(F f) const {
+            get_dof_handler().dof_iterate(f);
+        }
+
+        template <typename F>
+        void ghost_iterate(F f) const {
+            Kokkos::parallel_for("ghost_dof_iter", get_dof_handler().get_ghost_dofs().extent(0), f);
         }
 
         template <Integer Label>

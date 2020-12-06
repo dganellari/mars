@@ -402,7 +402,7 @@ namespace mars {
                                                          F f,
                                                          const Integer local_size,
                                                          const ViewVectorType<Integer> in) {
-        ViewVectorType<bool> predicate("volume_predicate", local_size);
+        ViewVectorType<bool> predicate("separated_predicate", local_size);
 
         Kokkos::parallel_for(
             "separatedoflabelss", local_size, KOKKOS_LAMBDA(const Integer i) {
@@ -425,8 +425,8 @@ namespace mars {
         auto local_size = in.extent(0);
         auto in_predicate = build_sfc_to_local_predicate<DH, F>(dofhandler, f, local_size, in);
 
-        /* perform a scan on the volume dof predicate*/
-        auto bscan = ViewVectorType<Integer>("boudnary_volume_scan", local_size + 1);
+        /* perform a scan on the separated dof predicate*/
+        auto bscan = ViewVectorType<Integer>("boudnary_separated_scan", local_size + 1);
         incl_excl_scan(0, local_size, in_predicate, bscan);
 
         auto vol_subview = subview(bscan, local_size);
@@ -434,10 +434,10 @@ namespace mars {
         // Deep copy device view to host view.
         deep_copy(h_vs, vol_subview);
 
-        out = ViewVectorType<Integer>("local_volume_dofs", h_vs());
+        out = ViewVectorType<Integer>("local_separated_dofs", h_vs());
         /* ViewVectorType<Integer> bvds = out; */
 
-        /* Compact the predicate into the volume and face dofs views */
+        /* Compact the predicate into the separated and face dofs views */
         parallel_for(
             local_size, KOKKOS_LAMBDA(const Integer i) {
                 if (in_predicate(i) == 1) {
@@ -456,7 +456,7 @@ namespace mars {
 
         ViewVectorType<Integer> count("count_to_local", count_size);
         ViewVectorType<Integer> scan("scan_to_local", count_size + 1);
-        /* Compact the predicate into the volume and face dofs views */
+        /* Compact the predicate into the separated and face dofs views */
         parallel_for(
             in_predicate.extent(0), KOKKOS_LAMBDA(const Integer i) {
                 if (in_predicate(i) == 1) {
