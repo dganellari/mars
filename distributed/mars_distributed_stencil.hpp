@@ -17,7 +17,7 @@ namespace mars {
     ST build_stencil(const DM &dm) {
         ST stencil(dm.get_owned_dof_size());
 
-        dm.owned_data_iterate(MARS_LAMBDA(const Integer i) {
+        dm.owned_iterate(MARS_LAMBDA(const Integer i) {
             const Integer localid = dm.get_owned_dof(i);
             stencil.build_stencil(dm.get_dof_handler(), localid, i);
         });

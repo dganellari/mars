@@ -90,13 +90,30 @@ namespace mars {
             return std::get<idx>(vdata)(i);
         }
 
-        template <typename F>
+        template <Integer idx, typename F>
         void owned_data_iterate(F f) const {
+            Kokkos::parallel_for(
+                "owned_separated_dof_iter", get_owned_dofs().extent(0), MARS_LAMBDA(const Integer i) {
+                    const Integer local_dof = get_owned_dof(i);
+                    f(get_dof_data<idx>(local_dof));
+                });
+        }
+
+        template <Integer idx, typename F>
+        void data_iterate(F f) const {
+            Kokkos::parallel_for(
+                "owned_separated_dof_iter", get_dof_size(), MARS_LAMBDA(const Integer i) {
+                    f(get_data<idx>(i));
+                });
+        }
+
+        template <typename F>
+        void owned_iterate(F f) const {
             Kokkos::parallel_for("owned_separated_dof_iter", get_owned_dofs().extent(0), f);
         }
 
         template <typename F>
-        void data_iterate(F f) const {
+        void iterate(F f) const {
             Kokkos::parallel_for("separated_dof_iter", get_dof_size(), f);
         }
 
