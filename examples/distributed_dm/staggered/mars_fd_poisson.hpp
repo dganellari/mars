@@ -49,7 +49,7 @@ namespace mars {
     };
      */
 
-    using VolumeDM = CDM<DistributedQuad4Mesh, 2, double, double>;
+    using VolumeDM = VDM<DistributedQuad4Mesh, 2, double, double>;
     using DofH = DofHandler<DistributedQuad4Mesh, 2>;
 
     // use as more readable tuple index to identify the data
@@ -312,7 +312,7 @@ namespace mars {
                 vdm.get_volume_data<OUT>(i) = proc_num;
             });
  */
-        vdm.data_iterate(MARS_LAMBDA(const Integer i) {
+        vdm.iterate(MARS_LAMBDA(const Integer i) {
             vdm.get_data<IN>(i) = 1.0;
             vdm.get_data<OUT>(i) = proc_num;
         });
@@ -333,7 +333,7 @@ namespace mars {
         }); */
 
         //print using the data iterate
-        vdm.data_iterate(MARS_LAMBDA(const Integer i) {
+        vdm.iterate(MARS_LAMBDA(const Integer i) {
             const Integer local_dof = vdm.get_local_dof(i);
 
             const auto idata = vdm.get_data<IN>(i);
