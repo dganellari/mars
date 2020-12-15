@@ -35,14 +35,14 @@ namespace mars {
                 });
         }
 
-        inline void compact_element_labels(const ViewVectorType<bool> all_elements,
-                                           const ViewVectorType<Integer> all_labels) {
+        inline void compact_elements(const ViewVectorType<bool> all_elements,
+                                     const ViewVectorType<Integer> all_labels,
+                                     ViewVectorType<Integer> &elb) {
             using namespace Kokkos;
 
-            reserve_element_labels(get_elem_size());
+            elb = ViewVectorType<Integer>("compacted_elb", get_elem_size());
 
             // otherwise kokkos lambda will not work with CUDA
-            ViewVectorType<Integer> elb = element_labels_;
             ViewVectorType<Integer> sfc_to_local = sfc_to_local_;
             parallel_for(
                 get_all_range(), KOKKOS_LAMBDA(const Integer i) {
@@ -57,7 +57,13 @@ namespace mars {
         inline void compact_element_and_labels(const ViewVectorType<bool> all_elements,
                                                const ViewVectorType<Integer> all_labels) {
             compact_elements(all_elements);  // this should come first!
-            compact_element_labels(all_elements, all_labels);
+            /* compact_element_labels(all_elements, all_labels); */
+            compact_elements(all_elements, all_labels, element_labels_);
+        }
+
+        inline void compact_element_orientations(const ViewVectorType<bool> all_elements,
+                                                 const ViewVectorType<Integer> all_labels) {
+            compact_elements(all_elements, all_labels, element_orientations_);
         }
 
         struct GenerateSFC {
@@ -149,6 +155,10 @@ namespace mars {
             return (gen_sfc);
         }
 
+        void reserve_element_orientations(const Integer n_elements) {
+            element_orientations_ = ViewVectorType<Integer>("Orientation", n_elements);
+        }
+
         void reserve_element_labels(const Integer n_elements) {
             element_labels_ = ViewVectorType<Integer>("labels", n_elements);
         }
@@ -156,6 +166,11 @@ namespace mars {
         void reserve_elements(const Integer n_elements) {
             elements_size_ = n_elements;
             elements_ = ViewVectorType<Integer>("morton_code", n_elements);
+        }
+
+        const ViewVectorType<Integer> &get_view_element_orientations() const  // override
+        {
+            return element_orientations_;
         }
 
         const ViewVectorType<Integer> &get_view_element_labels() const  // override
@@ -171,6 +186,11 @@ namespace mars {
         const Integer get_sfc(const Integer i) const  // override
         {
             return elements_(i);
+        }
+
+        const Integer get_orientation(const Integer i) const  // override
+        {
+            return element_orientations_(i);
         }
 
         const Integer get_label(const Integer i) const  // override
@@ -220,6 +240,7 @@ namespace mars {
     private:
         ViewVectorType<Integer> elements_;
         ViewVectorType<Integer> element_labels_;
+        ViewVectorType<Integer> element_orientations_;
         Integer elements_size_;
 
         ViewVectorType<Integer> sfc_to_local_;
