@@ -84,13 +84,17 @@ using RT1DG=BaseFunctionSpace<RaviartThomasFE,1,Discontinuous,NComponents>;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////------- BASE ELEMENT SPACE -------- //////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-template <typename Elem, Integer FEFamily, Integer Order,Integer Continuity, Integer NComponents>
+template <typename Elem_, Integer FEFamily_, Integer Order_,Integer Continuity_, Integer NComponents_>
 class BaseElementFunctionSpace
 {
-    static const Integer family=FEFamily;
-    static const Integer order=Order;  
-    static const Integer n_components=NComponents;
-    static const Integer continuity=Continuity;  
+    using  Elem=Elem_;
+    static const Integer Dim=Elem::Dim; 
+    static const Integer ManifoldDim=Elem::ManifoldDim;
+    static const Integer FEFamily=FEFamily_;
+    static const Integer Order=Order_;  
+    static const Integer NComponents=NComponents_;
+    static const Integer Continuity=Continuity_;  
+
 };
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////------- BASE SIMPLEX SPACE ---------- ////////////////////////////

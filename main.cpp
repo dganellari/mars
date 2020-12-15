@@ -1240,13 +1240,19 @@ int main(int argc, char *argv[])
 
 	/*test_uniform_bisection_3D(3, test_mars_mesh_generation_3D(1,1,1));*/
 	//parallel with kokkos.
-
+char *p;
+auto fifth=std::strtol(argv[5], &p, 10);
+        if(fifth==0 || fifth==2)
+ DUALContactLinearElasticity5<2,1>(argc,argv);
+        else if(fifth==1)
+SquareHoleDUALContactLinearElasticity<2,1>(argc,argv);
 // DUALContactLinearElasticity5<2,1>(argc,argv);
 // LSContact<2,0>(argc,argv);
 	
 // DUALLinearElasticityCook<2,1>(argc,argv);//1,1,2);
 // SquareHoleDUALContactLinearElasticity<2,1>(argc,argv);
-// PROVALSFEM_ContactLinearElasticity<2,0,1>(1,5,6);
+// TestCaseDUALLinearElasticity<2,1>(argc,argv);
+// PROVALSFEM_ContactLinearElasticity<2,0,1>(1,0,6);
 // PROVALSFEM_ContactLinearElasticity2<2,0,1>(argc,argv);
 // PrimalContactLinearElasticity<2>(argc,argv);
 // PROVALSFEM_ContactLinearElasticity2<2,0,1>(1,0,1,1);
@@ -1255,7 +1261,7 @@ int main(int argc, char *argv[])
 // DivDivHiptmair<2>(argc,argv);
 // LSFEMPoissonHiptmair<2>(argc,argv);
 // LSFEMElasticityHiptmair<2>(argc,argv);
-LSFEMContactHiptmair<2>(argc,argv);
+// LSFEMContactHiptmair<2>(argc,argv);
 
 // LSFEM_Poisson<2,0,1>(argc,argv);
 // BeamLSFEM<2,0,1>(argc,argv);

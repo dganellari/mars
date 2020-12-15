@@ -1,7 +1,7 @@
 	#ifndef MARS_EXAMPLES_HPP
 	#define MARS_EXAMPLES_HPP
 
-
+    #include <unordered_map>
 	#include <fstream>
 	#include <sstream>
 	#include "mars_simplex.hpp"
@@ -16370,16 +16370,17 @@ template<typename FunctionSpace_>
 
     
 
-
+    truncated_A_levels[level].save_mat("AF.dat");
    	if(level==0)
    	{
 
-   		Real alpha_coarse=alpha;
-   		Integer max_iter_coarse=1000;
-   		// std::cout<<max_iter_coarse<<std::endl;
-   		// std::cout<<"save AC.dat"<<std::endl;
+   		Real alpha_coarse=0.1;
+   		Integer max_iter_coarse=15;
+   		std::cout<<max_iter_coarse<<std::endl;
+   		std::cout<<max_iter_coarse<<std::endl;
+   		std::cout<<"alpha_coarse="<<alpha_coarse<<std::endl;
 
-   		// truncated_A_levels[level].save_mat("AC.dat");
+   		truncated_A_levels[level].save_mat("AC.dat");
 
 
 
@@ -16392,6 +16393,7 @@ template<typename FunctionSpace_>
 											L_local,U_local,P_local,y,tmp,h,d,p,q,q_new,lambda_inf_check,lambda_sup_check,max_iter_coarse,toll,residuals,RT1_n_dofs,false);
  
         compute_working_set(working_set[level],x,F_constraint_inf,F_constraint_sup);
+
 
 
    	}
@@ -16521,20 +16523,7 @@ template<typename FunctionSpace_>
 	     	working_set_old[level][i]=working_set[level][i];
          plus_equal(x,F_correction);
 
-		// compute_working_set(working_set[level],x,F_constraint_inf,F_constraint_sup);
-
-		// truncated_A_levels[level].multiply_and_add(F_rhs,-1.0,x,b);
-
-  //       Real norm_res=l2_norm(F_rhs,working_set[level]);
-
-  //       residuals[0].push_back(log10(l2_norm(F_rhs,working_set[level])));
-  //       residuals[1].push_back(log10(l2_norm(F_rhs,working_set[level],0,RT1_n_dofs)));
-  //       residuals[2].push_back(log10(l2_norm(F_rhs,working_set[level],RT1_n_dofs,x.size())));
-
-
-  //       std::cout<<"after correction, log10(norm_res)="<<log10(norm_res)<<std::endl;
-
-
+		
 
    		uzawa_patch_active_set_gauss_seidel_average(Anobc,bnobc,x,truncated_A_levels[level],b,F_constraint_inf,F_constraint_sup,
    											A_entity2dofs[level],B_entity2dofs[level],C_entity2dofs[level],alpha,
@@ -21377,8 +21366,77 @@ Real minus_postmooth=0;
 
     // std::vector<Real> rate_vec;
     std::map<Real,Real> alpha_rate;
+    std::map<std::array<Integer,2>,Real> alpha_rate2;
+    std::array<Integer,2> pos_exp,pos_exp_left,pos_exp_right;
+    std::map<Real,Real> alpha_iter;
 
-    gamma=pow(10.0,0.5*(log10(alpha0)+log10(alpha1)));
+    gamma=alpha0;//pow(10.0,0.5*(log10(alpha0)+log10(alpha1)));
+
+
+    std::vector<Real> x_old(x);
+
+
+
+    if(gamma>1)
+    	gamma=1.0;
+
+
+
+    sign=-1;
+    Integer cont=0;
+    Integer detection=0;
+    Real dummy=inf;
+    Real gamma_left,gamma_right;
+    std::vector<Real> gamma_vec{0.1,0.25,0.5,0.75};
+
+    Integer position,position_left,position_right;
+    Integer exponent=-floor(abs(log10(gamma)));
+
+    std::cout<<"exponent="<<exponent<<std::endl;
+    for(Integer i=0;i<gamma_vec.size();i++)
+    {
+    	if(abs(gamma_vec[i]*pow(10,exponent)-gamma)<dummy)
+    	{
+    		position=i;
+    	    dummy=abs(gamma_vec[i]*pow(10,exponent)-gamma);
+    	}
+    	std::cout<<"dummy="<<dummy<<std::endl;
+    	std::cout<<"position="<<position<<std::endl;
+
+    }
+
+    Integer exponent_left=exponent;
+    Integer exponent_right=exponent;
+
+	position_left=position-1;
+	position_right=position+1;
+	 if(position_left<0)
+	 {
+		position_left=gamma_vec.size()-1;
+		exponent_left=exponent-1;
+	 }
+ 	 if(position_right>=gamma_vec.size())
+ 	 {
+		position_right=0;
+		exponent_right=exponent+1;
+	 }
+
+    gamma=gamma_vec[position]*pow(10,exponent);
+    gamma_left=gamma_vec[position_left]*pow(10,exponent_left);
+    gamma_right=gamma_vec[position_right]*pow(10,exponent_right);
+    Real gamma_pre=gamma;
+
+
+
+
+    std::cout<<"gamma="<<gamma<<std::endl;
+    std::cout<<"gamma_left="<<gamma_left<<std::endl;
+    std::cout<<"gamma_right="<<gamma_right<<std::endl;
+
+
+
+
+
 
    	for(Integer i=0;i<max_iter;i++)
    	{
@@ -21389,6 +21447,8 @@ Real minus_postmooth=0;
      norm_rhs=l2_norm(rhs,working_set[level]);
 
      alpha_vec.push_back(gamma);
+
+     x_old=x;
   
      uzawa_patch_vcycle_active_set_optimal2(Anobc,bnobc,context,x,A_levels,truncated_A_levels,b,c_inf,c_sup,
      						 	   contact_constraints,levels,working_set,working_set_old,interpolation,
@@ -21413,254 +21473,711 @@ Real minus_postmooth=0;
         residuals[0].push_back(log10(l2_norm(rhs,working_set[level])));
         residuals[1].push_back(log10(l2_norm(rhs,working_set[level],0,RT1_n_dofs)));
         residuals[2].push_back(log10(l2_norm(rhs,working_set[level],RT1_n_dofs,x.size())));
+
+
         
 
 
         rate_vec.push_back(residuals[0][i+1]-residuals[0][i]);
-        std::cout<<"res->"<<residuals[0][i+1]-residuals[0][i]<<std::endl;
+        alpha_rate[gamma]=rate_vec[rate_vec.size()-1];
+
+	    pos_exp[0]=position;
+	    pos_exp[1]=exponent;
+	    pos_exp_left[0]=position_left;
+	    pos_exp_left[1]=exponent_left;
+	    pos_exp_right[0]=position_right;
+	    pos_exp_right[1]=exponent_right;	
+
+        alpha_rate2[pos_exp]=rate_vec[rate_vec.size()-1];
+
+        std::cout<<"pos_exp="<<pos_exp[0]<<", "<<pos_exp[1]<<std::endl;
+		std::cout << gamma_vec[pos_exp[0]]*pow(10,pos_exp[1]) << "\n";
+
+		std::cout<<"alpha_rate2="<<alpha_rate2[pos_exp]<<std::endl;
 
 
-        if(alpha_rate.find(gamma)==alpha_rate.end())
-	        {
-	        	alpha_rate[gamma]=rate_vec[rate_vec.size()-1];
-                std::cout<<"uno->"<<gamma<<", "<<alpha_rate[gamma]<<std::endl;
-	        }
-        else
-        	{
-        		alpha_rate[gamma]=max(alpha_rate[gamma],rate_vec[rate_vec.size()-1]); 
-        		std::cout<<"due->"<<gamma<<", "<<alpha_rate[gamma]<<std::endl;
 
-        	}
-        if(i==0)
+
+
+
+
+        std::cout<<"detection="<<detection<<std::endl;
+
+
+
+   //      if(rate_vec[rate_vec.size()-1]<-0.6) 
+   //      {
+
+   //      	detection++;
+   //      }
+   //      else if(i>0 && (rate_vec[rate_vec.size()-1]<rate_vec[rate_vec.size()-2]-0.2))
+   //      {
+   //      	detection++;
+   //      }
+   //      else if(detection>1)
+   //      {
+   //      	detection=0;
+   //      	position--;
+			// if(position<0)
+			//  {
+			// 	position=gamma_vec.size()-1;
+			// 	exponent=exponent-1;
+			//  } 
+			//  gamma=gamma_vec[position]*pow(10,exponent);      	
+   //      }
+   //      else
+   //      {
+   //      	detection++;
+   //      }
+
+
+        
+   //      if(rate_vec[rate_vec.size()-1]>0)
+   //      {
+   //      	x=x_old;
+   //      	residuals[0][residuals[0].size()-1]=residuals[0][residuals[0].size()-2];
+   //      }
+
+
+        if(rate_vec[rate_vec.size()-1]<-0.6 || cont==0)
         {
-        	// if(residual[0][0]<residual[0][1])
-        	gamma=0.1*alpha_vec[0];
-        	
+        	cont++;      	
         }
-        if(i==1)
-        {
-	     	Real r0=(rate_vec[0]);
-	    	Real r1=(rate_vec[1]);
-	    	const auto& a0=alpha_vec[0];
-	    	const auto& a1=alpha_vec[1];
+   //      else if(cont==0)
+   //      {
+   //      	exponent=exponent-1;      	
+   //      	gamma=gamma*0.1;
+   //      	cont++;
+   //      }
+   //      else if(cont==1)
+   //      {
+   //      	pos_exp_left[0]=position;
+	  //       pos_exp_left[1]=exponent;
+	  //       pos_exp[0]=position;
+	  //       pos_exp[1]=exponent+1;
+	        
+   //      	if(alpha_rate2[pos_exp]<alpha_rate2[pos_exp_left])
+   //      	{
+   //      	sign=+1;
+   //      	exponent++;
+   //      	// move to the right
+   //      	position=position+1;
+		 // 	if(position>=gamma_vec.size())
+		 // 	 {
+			// 	position=0;
+			// 	exponent=exponent+1;
+			//  }    		      	
 
-	    	if(r0<r1)
-	    		{
-	    			gamma=alpha_vec[i-1]*3;
-	    			// sign=1;
-	    		}
-	    	else
-	    		{
-	    			gamma=alpha_vec[i]*1.0/.3;
-	    			// sign=-1;
-	    		}
+   //      	}
+   //      	else
+   //      	{
+   //      		position=position-1;
+ 		// 		if(position<0)
+			// 	 {
+			// 		position=gamma_vec.size()-1;
+			// 		exponent=exponent-1;
+			// 	 }
+   //      	}
+
+   //        	 exponent_left=exponent;
+   //      	 exponent_right=exponent;
+			//  position_left=position-1;
+			//  position_right=position+1;			      	
+
+			//  if(position_left<0)
+			//  {
+			// 	position_left=gamma_vec.size()-1;
+			// 	exponent_left=exponent_left-1;
+			//  }
+		 // 	 if(position_right>=gamma_vec.size())
+		 // 	 {
+			// 	position_right=0;
+			// 	exponent_right=exponent_right+1;
+			//  }
+			// gamma=gamma_vec[position]*pow(10,exponent);
+		 //    gamma_left=gamma_vec[position_left]*pow(10,exponent_left);
+		 //    gamma_right=gamma_vec[position_right]*pow(10,exponent_right);
+
+
+
+   //      	cont++;
+   //      }
+        else if(cont>0)
+        {
+         cont=0;
+
+        // if(rate_vec[rate_vec.size()-1]>-0.6)
+        // {
+
+        if(detection==2)
+        {
+        	pos_exp_left[0]=position_left;
+        	pos_exp_left[1]=exponent_left;
+        	pos_exp_right[0]=position_right;
+        	pos_exp_right[1]=exponent_right;        
+        	std::cout<<"detection2=="<<std::endl;
+         std::cout<<"pos_exp_left="<<pos_exp_left[0]<<", "<<pos_exp_left[1]<<std::endl;
+		std::cout << gamma_vec[pos_exp_left[0]]*pow(10,pos_exp_left[1]) << "\n";
+        std::cout<<"pos_exp_right="<<pos_exp_right[0]<<", "<<pos_exp_right[1]<<std::endl;
+		std::cout << gamma_vec[pos_exp_right[0]]*pow(10,pos_exp_right[1]) << "\n";
 
        	
-        }
-        if(i>1)
-        {
-        	Real min_value=10000000000.0;
-        	Integer alpha_opt_pos=-1;
-        	Real alpha_min=*std::min_element(alpha_vec.begin(),alpha_vec.end());
-        	Real alpha_max=*std::max_element(alpha_vec.begin(),alpha_vec.end());
+        	std::cout<<"alpha_rate2[pos_exp_left]="<<alpha_rate2[pos_exp_left]<<std::endl;
+        	std::cout<<"alpha_rate2[pos_exp_right]="<<alpha_rate2[pos_exp_right]<<std::endl;
 
-        	Real alpha_left=-1.0;
-        	Real alpha_right=100000000000.0;
-        	Integer left_pos=-1;
-        	Integer right_pos=-1;
-
-
-        	for(Integer k=rate_vec.size()-1;k>=0;k--)
-        	{
-        		if(alpha_rate[alpha_vec[k]]<min_value)
+        	if(alpha_rate2[pos_exp_left]<alpha_rate2[pos_exp_right])
         		{
-        			
-        			alpha_opt_pos=k;
-        			min_value=alpha_rate[alpha_vec[k]];
-        		}      		
-        	}
-        	const auto& alpha_opt=alpha_vec[alpha_opt_pos];
 
-            // we must increase alpha
-        	if(alpha_opt==alpha_max)
-        	{
-        		gamma=gamma*3;
-        	}
-            // we must decrease alpha
-        	else if(alpha_opt==alpha_min)
-        	{
-        		gamma=gamma*1.0/3.0;
+        			sign=-1;
+
+
+        			if(alpha_rate2[pos_exp_left]<alpha_rate2[pos_exp])
+ 			        	position=position_left-1;
+ 			        else
+ 			        	position=position_left;
+
+ 			        exponent=exponent_left;
+	 				if(position<0)
+					 {
+						position=gamma_vec.size()-1;
+						exponent=exponent-1;
+					 }
+        		}
+        	else
+        		{
+        			sign=+1;
+        			if(alpha_rate2[pos_exp_right]<alpha_rate2[pos_exp])
+        				position=position_right+1;
+        			else
+        				position=position_right;
+        			exponent=exponent_right;
+				 	if(position>=gamma_vec.size())
+				 	 {
+						position=0;
+						exponent=exponent+1;
+					 }  
+        		}
+
+			     exponent_left=exponent;
+			     exponent_right=exponent;
+
+				 position_left=position-1;
+				 position_right=position+1;
+				 if(position_left<0)
+				 {
+					position_left=gamma_vec.size()-1;
+					exponent_left=exponent_left-1;
+				 }
+			 	 if(position_right>=gamma_vec.size())
+			 	 {
+					position_right=0;
+					exponent_right=exponent_right+1;
+				 }
+
+
+
+				gamma=gamma_vec[position]*pow(10,exponent);
+			    gamma_left=gamma_vec[position_left]*pow(10,exponent_left);
+			    gamma_right=gamma_vec[position_right]*pow(10,exponent_right);
+
+
+
+        	detection=0;
+        }
+   		else if(detection==0)
+    		{
+
+    			 std::cout<<"detection0=="<<std::endl;
+
+			    if(sign<0)
+			    	{
+			    		gamma=gamma_left;
+			    		position=position_left;
+			    		exponent=exponent_left;
+			    	}
+			    else
+			    	{
+			    		gamma=gamma_right;
+				    	position=position_right;
+			    		exponent=exponent_right;		    		
+			    	}
+
+			   detection++;
+			    
+    		}
+    		else if(detection==1)
+    		{
+    			std::cout<<"detection1=="<<std::endl;
+    			if(sign<0)
+			    	{
+			    		gamma=gamma_right;
+				    	position=position_right;
+			    		exponent=exponent_right;		    		
+			    	}    			
+			    	else
+			    	{
+			    		gamma=gamma_left;
+			    		position=position_left;
+			    		exponent=exponent_left;
+			    	}
+			    detection++;
+    		}
+
+        }
+
+
+ 
+
+ 
+
+    	 
+        else if(0)
+        {
+
+
+
+        	std::cout<<"sign="<<sign<<std::endl;
+        	std::cout<<"alpha_rate[gamma]="<<alpha_rate[gamma]<<std::endl;
+        	std::cout<<"alpha_rate[gamma_pre]="<<alpha_rate[gamma_pre]<<std::endl;
+
+        	 if(alpha_rate[gamma]>alpha_rate[gamma_pre])
+        		sign=-1*sign;
+
+        	 gamma_pre=gamma;
+
+        	 if(sign<=0)
+         	 {
+
+        	 position=position_left;
+        	 exponent=exponent_left;
+        	 position_left=position-1;
+        	 if(position_left<0)
+        	 {
+        		position_left=gamma_vec.size()-1;
+        		exponent_left=exponent-1;
+        	 }
+        	 std::cout<<"position="<<position<<std::endl;
+        	 std::cout<<"position_left="<<position_left<<std::endl;
+        	 std::cout<<"exponent="<<exponent<<std::endl;
+        	 std::cout<<"exponent_left="<<exponent_left<<std::endl;
+
+        	 gamma=gamma_vec[position]*pow(10,exponent);
+        	 gamma_left=gamma_vec[position_left]*pow(10,exponent_left);
+        	 
+
+        	 
         	}
         	else
         	{
-
-        		for(Integer k=rate_vec.size()-1;k>=0;k--)
-        		{
-        			if(alpha_vec[k]>alpha_opt && alpha_vec[k]<alpha_right)
-        			{
-        				alpha_right=alpha_vec[k];
-        				right_pos=k;
-        			}
-
-        			if(alpha_vec[k]<alpha_opt && alpha_vec[k]>alpha_left)
-        			{
-        				alpha_left=alpha_vec[k];
-        				left_pos=k;
-        			}
-        		}
-
-    			const auto& r_l=alpha_rate[alpha_left];
-    			const auto& r_o=alpha_rate[alpha_opt];
-    			const auto& r_r=alpha_rate[alpha_right];
-    			
-    			const auto& a_l=alpha_left;
-    			const auto& a_o=alpha_opt;
-    			const auto& a_r=alpha_right;
-
-        		Matrix<Real,3,3> c{a_l*a_l,a_l,1.0,
-        						   a_o*a_o,a_o,1.0,
-        						   a_r*a_r,a_r,1.0,};
-
-        		Matrix<Real,3,1> b{r_l,r_o,r_r};
-
-        		auto s=inverse(c)*b;
-
-        		std::cout<<"c" <<std::endl;
-        		std::cout<<c <<std::endl;
-        		std::cout<<"b" <<std::endl;
-        		std::cout<< b<<std::endl;
-        		std::cout<<"s" <<std::endl;
-        		std::cout<<s <<std::endl;
-
-        		gamma= -0.5*s[1]/s[0];
-
-        		// if(alpha_rate[alpha_left]<alpha_rate[alpha_right])
-        		// {
-        		// 	const auto& r0=alpha_rate[alpha_opt];
-        		// 	const auto& r1=alpha_rate[alpha_left];
-
-        		// 	Real a=abs(r0)/(abs(r1)+abs(r0));
-         	// 		Real b=abs(r1)/(abs(r1)+abs(r0));
-        			
-        		// 	gamma=pow(10.0,a*log10(alpha_opt)+
-        		// 			       b*log10(alpha_left));
-        		// }
-        		// else
-        		// {
-        		// 	const auto& r0=alpha_rate[alpha_opt];
-        		// 	const auto& r1=alpha_rate[alpha_right];
-
-        		// 	Real a=abs(r0)/(abs(r1)+abs(r0));
-         	// 		Real b=abs(r1)/(abs(r1)+abs(r0));
-        			
-        		// 	gamma=pow(10.0,a*log10(alpha_opt)+
-        		// 			       b*log10(alpha_right));
-        		// }
-            std::cout<<"alpha_left="<<a_l<<std::endl;
-            std::cout<<"alpha_opt="<<a_o<<std::endl;
-            std::cout<<"alpha_right="<<a_r<<std::endl;
-
-        	}
+        	 position=position_right;
+        	 exponent=exponent_right;
+        	 position_right=position+1;
+         	 if(position_right>=gamma_vec.size())
+         	 {
+        		position_right=0;
+        		exponent_right=exponent+1;
+        	 }
+        	 std::cout<<"position="<<position<<std::endl;
+        	 std::cout<<"position_right="<<position_right<<std::endl;
+        	 std::cout<<"exponent="<<exponent<<std::endl;
+        	 std::cout<<"exponent_right="<<exponent_right<<std::endl;
 
  
+        	 gamma=gamma_vec[position]*pow(10,exponent);
+        	 gamma_right=gamma_vec[position_right]*pow(10,exponent_right);
+
+        	    	
+        	}
+
+	        
+
+        }  
+
+   	    std::cout<<"gamma="<<gamma<<", gamma_left="<<gamma_left<<", gamma_right="<<gamma_right<<std::endl;
         
+        std::cout<<"rate->"<<residuals[0][i+1]-residuals[0][i]<<std::endl;
 
+        // if(rate_vec[rate_vec.size()-1]>0)
+        // 	{
+        // 		// rate_vec[rate_vec.size()-1]=0;
+        // 		x=x_old;
+        // 	}
+   //      if(alpha_rate.find(gamma)==alpha_rate.end())
+	  //       {
+	  //       	alpha_rate[gamma]=rate_vec[rate_vec.size()-1];
+	  //       	alpha_iter[gamma]=Real(i+1);
+   //              std::cout<<"uno->"<<gamma<<", "<<alpha_rate[gamma]<<std::endl;
 
-           
-        	// Real r0=(residuals[0][i-2]-residuals[0][i-3]);
-        	// Real r1=(residuals[0][i-1]-residuals[0][i-2]);
-        	// Real r2=(residuals[0][i]-residuals[0][i-1]);
-        	// const auto& a0=alpha_vec[i-2];
-        	// const auto& a1=alpha_vec[i-1];
-        	// const auto& a2=alpha_vec[i];
+	  //       }
+   //      else
+   //      	{
+   //      		alpha_rate[gamma]=rate_vec[rate_vec.size()-1];//max(alpha_rate[gamma],rate_vec[rate_vec.size()-1]); 
+   //      		alpha_iter[gamma]=i+1;
+   //      		std::cout<<"due->"<<gamma<<", "<<alpha_rate[gamma]<<std::endl;
 
+   //      	}
+   //      std::cout<<"gamma="<<gamma<<", alpha_rate"<<alpha_rate[gamma]<<", alpha_iter="<< alpha_iter[gamma]<<std::endl;
+   //      if(i==0)
+   //      {
+   //      	// if(residual[0][0]<residual[0][1])
+   //      	// gamma=0.1*alpha_vec[0];
+   //      	gamma=0.2*alpha_vec[0];
         	
+   //      }
+   //      if(i==1)
+   //      {
+   //      	gamma=0.2*alpha_vec[1];
+	  //    // 	Real r0=(rate_vec[0]);
+	  //   	// Real r1=(rate_vec[1]);
+	  //   	// const auto& a0=alpha_vec[0];
+	  //   	// const auto& a1=alpha_vec[1];
+	  //   	// std::cout<<"r0="<<r0<<std::endl;
+	  //   	// std::cout<<"r1="<<r1<<std::endl;
+	  //   	// std::cout<<"a0="<<a0<<std::endl;
+	  //   	// std::cout<<"a1="<<a1<<std::endl;
+	  //   	// if(r0<r1)
+	  //   	// 	{
+	  //   	// 		if(a0<a1)
+	  //   	// 			{
+	  //   	// 				gamma=a0*1.0/3.0;
+	  //   	// 			}
+	  //   	// 	    else
+	  //   	// 	    {
+	  //   	// 		 	gamma=a0*3;
+	  //   	// 	    }
+	  //   	// 	}
+	  //   	// else
+	  //   	// 	{
+	  //   	// 		if(a1<a0)
+	  //   	// 		{
+	  //   	// 			gamma=a1*1.0/3.0;
+	  //   	// 		}
+	  //   	// 	    else
+	  //   	// 	    {
+	  //   	// 		 	gamma=a1*3;
+	  //   	// 	    }
+	  //   	// 	}
+
+       	
+   //      }
+   //      if(i>1)
+   //      {
+   //      	Real min_value=10000000000.0;
+   //      	Integer alpha_opt_pos=-1;
+   //      	Real alpha_min=*std::min_element(alpha_vec.begin(),alpha_vec.end());
+   //      	Real alpha_max=*std::max_element(alpha_vec.begin(),alpha_vec.end());
+
+   //      	Real alpha_left=-1.0;
+   //      	Real alpha_right=100000000000.0;
+   //      	Integer left_pos=-1;
+   //      	Integer right_pos=-1;
 
 
-        	// if( r2< r1)
-        	// {
-        	// 	if(sign<0)
-        	// 	{
-        	// 			gamma=gamma/abs(sign);
-        	// 			sign--;
-        	// 	}
-        	// 	else
-        	// 	{
-        	// 			gamma=gamma*sign;
-        	// 			sign++;
-        	// 	}
-        	// }
-        	// else 
-        	// {
-        	// 	// r1<r0<r2
-        	// 	if(r1<r0 && r0<r2)
-        	// 	{
-         // 			Real a=abs(r1)/(abs(r1)+abs(r0));
-        	// 		Real b=abs(r0)/(abs(r1)+abs(r0));
+   //      	for(Integer k=rate_vec.size()-1;k>=0;k--)
+   //      	{
+   //      		if(alpha_rate[alpha_vec[k]]<min_value)
+   //      		{
+        			
+   //      			alpha_opt_pos=k;
+   //      			min_value=alpha_rate[alpha_vec[k]];
+   //      		}      		
+   //      	}
 
-        	// 		gamma=pow(10.0,a*log10(alpha_vec[i-1])+
-        	// 				       b*log10(alpha_vec[i-2]));
-        	// 	}
-        	// 	// r1<r2<r0
-        	// 	else if(r1<r2 && r2< r0)
-        	// 	{
-        	// 		Real a=abs(r1)/(abs(r1)+abs(r2));
-        	// 		Real b=abs(r2)/(abs(r1)+abs(r2));
-
-        	// 		gamma=pow(10.0,a*log10(alpha_vec[i-1])+
-        	// 				       b*log10(alpha_vec[i]));
-        	// 	}
-        	// 	// r0<r1<r2
-        	// 	else if(r0<r1 && r1<r2)
-        	// 	{
-         // 			Real a=abs(r1)/(abs(r1)+abs(r0));
-        	// 		Real b=abs(r0)/(abs(r1)+abs(r0));
-
-        	// 		gamma=pow(10.0,a*log10(alpha_vec[i-1])+
-        	// 				       b*log10(alpha_vec[i-2]));
-
-
-        	// 	}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        		// if( r1< r0 && r2<r0)
-        		// 		gamma=pow(10.0,0.5*(log10(alpha_vec[i])+log10(alpha_vec[i-1])));
-        		// if( r0< r1 && r2<r1)
-        		// 	    gamma=pow(10.0,0.5*(log10(alpha_vec[i])+log10(alpha_vec[i-2])));
-        		// if( r0< r2 && r1<r2)
-        		// 	    gamma=pow(10.0,0.5*(log10(alpha_vec[i-2])+log10(alpha_vec[i-1])));
-
-        	// }
-
-        
-    	// std::cout<<"rate= "<<r0 <<", " <<r1 <<", "<<r2<<std::endl;
+   //      	const auto& alpha_opt=alpha_vec[alpha_opt_pos];
 
 
 
-    	// std::cout<<"alpha= "<<a0 <<", " <<a1 <<", "<<a2<<std::endl;
+   //      	std::cout<<"alpha_vec[i-1]="<<alpha_vec[i-1] <<std::endl;
+   //      	std::cout<<"alpha_rate[alpha_vec[i-1]]="<<alpha_rate[alpha_vec[i-1]] <<std::endl;
+   //      	std::cout<<"alpha_vec[i]="<<alpha_vec[i] <<std::endl;
+   //      	std::cout<<"alpha_rate[alpha_vec[i]]="<<alpha_rate[alpha_vec[i]] <<std::endl;
+
+
+   //      	const auto & last_rate_abs=abs(rate_vec[rate_vec.size()-1]);
+            
+   //          Real delta=min(Real(1.0),last_rate_abs);
+
+   //          std::cout<<"delta="<<delta<<std::endl;
+
+
+
+
+   //          if(alpha_opt==alpha_min)
+   //          {
+   //          	std::cout<<"alpha_opt==alpha_min"<<std::endl;
+   //          	// gamma = alpha_opt*delta;
+   //          	if(last_rate_abs>0.1)
+   //          		gamma=pow(10.0,delta*log10(alpha_opt)+(1-delta)*log10(alpha_opt*0.1));
+   //          	else
+   //          		gamma=0.1*alpha_opt;
+
+   //          	sign=0;
+
+   //          }
+   //          else if(alpha_opt==alpha_max)
+   //          {
+   //          	std::cout<<"alpha_opt==alpha_max"<<std::endl;
+   //          	// gamma = alpha_opt / delta;
+   //          	if(last_rate_abs>0.1)
+   //          		gamma = pow(10.0,delta*log10(alpha_opt)+(1-delta)*log10(alpha_opt*10.0));
+   //          	else
+   //          		gamma=10.0*alpha_opt;
+   //          	sign=0;
+   //          }
+   //      	else if(alpha_rate[alpha_vec[i]]<-0.7)
+   //      	{
+   //      		std::cout<<"alpha_rate[alpha_vec[i-1]]<-0.7"<<std::endl;
+
+	  //       	gamma = alpha_vec[i];
+	  //           sign=0;
+   //      	}
+   //  //     	else if( alpha_rate[alpha_vec[i]]>-0.3)
+   //  //     	{
+   //  //     		std::cout<<"alpha_rate[alpha_vec[i]]>-0.3"<<std::endl;
+   //  //     		std::cout<<"sign="<<sign<<std::endl;
+   //  //     		sign++;
+
+
+
+
+
+
+   //  //             if(rate_vec[i] > rate_vec[i-1])
+			// 	// {
+   //  //             	if(alpha_vec[i]>alpha_vec[i-1])
+   //  //             		gamma= alpha_vec[i-1]*1.0/(3.0 *Real(sign));
+   //  //             	else
+   //  //             		gamma=alpha_vec[i-1]*3.0*Real(sign);
+   //  //             }
+   //  //             else
+   //  //             {
+   //  //             	if(alpha_vec[i]>alpha_vec[i-1])
+   //  //             		gamma=alpha_vec[i]*1.0/(3.0*Real(sign));
+   //  //             	else
+   //  //             		gamma=alpha_vec[i]*3.0*Real(sign);
+   //  //             }
+
+   //  // //             if(rate_vec[i] > rate_vec[i-1])
+			// 	// // {
+   //  // //             	if(alpha_vec[i]>alpha_vec[i-1])
+   //  // //             		gamma= alpha_vec[i-1]*1.0/(3.0 *Real(sign));
+   //  // //             	else
+   //  // //             		gamma=alpha_vec[i-1]*3.0*Real(sign);
+   //  // //             }
+   //  // //             else
+   //  // //             {
+   //  // //             	if(alpha_vec[i]>alpha_vec[i-1])
+   //  // //             		gamma=alpha_vec[i]*1.0/(3.0*Real(sign));
+   //  // //             	else
+   //  // //             		gamma=alpha_vec[i]*3.0*Real(sign);
+   //  // //             }
+			// 	// // std::vector<Real> argsort_vec(alpha_vec.size());
+			// 	// // std::vector<Real> sort_vec(alpha_vec);
+			// 	// // Integer inc=0;
+			// 	// // std::iota(argsort_vec.begin(),argsort_vec.end(),inc++); //Initializing
+			// 	// // std::sort(argsort_vec.begin(),argsort_vec.end(), [&](int i,int j){return alpha_rate[alpha_vec[i]]<alpha_rate[alpha_vec[j]];} );  
+	 	//  // //    	const auto& a0=alpha_vec[argsort_vec[0]];
+		 //  // //   	const auto& a1=alpha_vec[argsort_vec[1]];            
+   //  // //             sign++;
+   //  // // 			if(a0<a1)
+   //  // // 				gamma=a0*Real(sign)*1.0/3.0;
+   //  // // 		    else
+   //  // // 			 	gamma=a0*3.0;
+
+   //  //     	}
+   // //          else
+   // //      	{
+
+
+
+     
+
+   // //      	sign=0;
+
+   // //      	Real n=0;
+   // //      	Real sum_a_1=0.0;
+   // //      	Real sum_a_2=0.0;
+   // //      	Real sum_a_3=0.0;
+   // //      	Real sum_a_4=0.0;
+   // //      	Real sum_y=0.0;
+   // //      	Real sum_a_y=0.0;
+   // //      	Real sum_a_2_y=0.0;
+
+
+   // //       	for(auto it = alpha_rate.begin();it != alpha_rate.end(); ++it)
+			// // {
+
+
+			// // 	const auto & alpha_i=it->first;
+			// // 	const auto & rate_i=it->second;
+			// // 	// if(rate_i<0)
+			// // 	// {
+			// // 	n++;
+			// // 	Real alpha_i_2=alpha_i*alpha_i;
+
+				
+			// // 	Real coeff=sqrt(alpha_iter[alpha_i]);
+			// // 	sum_a_1+=coeff*alpha_i;
+			// // 	sum_a_2+=coeff*alpha_i_2;
+			// // 	sum_a_3+=coeff*alpha_i_2*alpha_i;
+			// // 	sum_a_4+=coeff*alpha_i_2*alpha_i_2;
+			// // 	sum_y+=coeff*rate_i;
+			// // 	sum_a_y+=coeff*rate_i*alpha_i;
+			// // 	sum_a_2_y+=coeff*rate_i*alpha_i_2;
+			// // 	// }
+
+			// // }
+			// // // all alpha found increase the residual 
+			// // // if(n<=1)
+			// // // {
+			// // //  std::cout<<"alpha_min="<<alpha_min<<std::endl;	
+			// // //  std::cout<<"alpha_rate[alpha_min]="<<alpha_rate[alpha_min]<<std::endl;
+			// // //  std::cout<<"alpha_max="<<alpha_max<<std::endl;	
+			// // //  std::cout<<"alpha_rate[alpha_max]="<<alpha_rate[alpha_max]<<std::endl;
+
+			// // // 	if(alpha_rate[alpha_min]<alpha_rate[alpha_max])
+			// // // 		gamma=alpha_min*1.0/3.0;
+			// // // 	else
+			// // // 		gamma=alpha_min*3.0;
+
+			// // // }
+			// // // if(n>1)
+			// // // {
+			// // std::cout<<"quadratic approximation n>1"<<std::endl;
+			// // Matrix<Real,3,3> c{sum_a_4,sum_a_3,sum_a_2,sum_a_3,sum_a_2,sum_a_1,sum_a_2,sum_a_1,n};
+			// // Matrix<Real,3,1> b{sum_a_2_y,sum_a_y,sum_y};      		
+
+
+   // //  		auto s=inverse(c)*b;
+
+   // //  		// std::cout<<"c" <<std::endl;
+   // //  		// std::cout<<c <<std::endl;
+   // //  		// std::cout<<"b" <<std::endl;
+   // //  		// std::cout<< b<<std::endl;
+   // //  		// std::cout<<"s" <<std::endl;
+   // //  		// std::cout<<s <<std::endl;
+
+   // //  		gamma= -0.5*s[1]/s[0];
+			// // // }
+			// // // else 
+			// // // {
+
+			// // // }
+
+   // //      	}
+   //      	else if(alpha_rate[alpha_vec[i]]<-0.3 && alpha_rate[alpha_opt]<-0.5)
+   //      	{
+   //      		gamma=alpha_opt;
+   //      	}
+   //       	else if(alpha_rate[alpha_vec[i]]<-0.3 && alpha_rate[alpha_opt]>-0.5)
+   //      	{
+   //      		gamma=alpha_min*0.5;
+   //      	}
+   //      	else
+   //      	{
+
+   //       	for(Integer k=rate_vec.size()-1;k>=0;k--)
+   //      	{
+   //      		if(alpha_rate[alpha_vec[k]]<alpha_opt && alpha_rate[alpha_vec[k]]>alpha_left)
+   //      		{       			
+   //      			alpha_left=alpha_vec[k];
+   //      		} 
+   //      		if(alpha_rate[alpha_vec[k]]>alpha_opt && alpha_rate[alpha_vec[k]]<alpha_right)
+   //      		{       			
+   //      			alpha_right=alpha_vec[k];
+   //      		}         		     		
+   //      	}  
+
+   //      	if(alpha_opt/alpha_left>alpha_right/alpha_opt)  
+   //      	{
+            
+   //          gamma=pow(10.0,0.5*log10(alpha_opt)+0.5*log10(alpha_left));
+
+   //      	}   
+   //      	else
+   //      	{
+   //          gamma=pow(10.0,0.5*log10(alpha_opt)+0.5*log10(alpha_right));
+
+   //      	}		
+
+   //      	}
+   //      }
+
+        if(gamma>1)
+        {
+
+	        gamma=0.1;
+	        position=0;
+	        exponent=0;
+
+
+	        gamma_right=0.25;
+	        position_right=1;
+	        exponent_right=0;
+
+	        gamma_left=0.075;
+	        position_left=3;
+	        exponent_left=-1;
+	        std::cout<<"gamma>1"<<std::endl;
+	        std::cout<<gamma<<", "<<position<<", "<<exponent<<std::endl;
+	        std::cout<<gamma_left<<", "<<position_left<<", "<<exponent_left<<std::endl;
+	        std::cout<<gamma_right<<", "<<position_right<<", "<<exponent_right<<std::endl;
 
         }
+        if(0)//rate_vec[rate_vec.size()-1]>-0.3)
+        {
 
+        	std::cout<<"rate_vec[rate_vec.size()-1]<-0.3"<<std::endl;
+        	Real min=10000000.0;
+         	for(auto it = alpha_rate2.begin();it != alpha_rate2.end(); ++it)
+			{
+				if(it->second<min)
+				{
+					min=it->second;
+					const auto & arr=it->first;
+					gamma=gamma_vec[arr[0]]*pow(10,arr[1]);
+					position=arr[0];
+					exponent=arr[1];
+				}
+			}     
+
+
+			position_left=position-1;
+			exponent_left=exponent;
+			position_right=position+1;
+			exponent_right=exponent;
+        	if(position_left<0)
+        	 {
+        		position_left=gamma_vec.size()-1;
+        		exponent_left=exponent-1;
+        	 }
+         	if(position_right>=gamma_vec.size())
+         	 {
+        		position_right=0;
+        		exponent_right=exponent+1;
+        	 }
+
+	        std::cout<<gamma<<", "<<position<<", "<<exponent<<std::endl;
+	        std::cout<<gamma_left<<", "<<position_left<<", "<<exponent_left<<std::endl;
+	        std::cout<<gamma_right<<", "<<position_right<<", "<<exponent_right<<std::endl;
+        }
+
+
+
+        // gamma=max(gamma,0.00001);
 
 
        	std::cout<<"(alpha_opt,rate)"<<std::endl;
 
-
-        	for(auto it = alpha_rate.begin();it != alpha_rate.end(); ++it)
+   //      	for(auto it = alpha_rate.begin();it != alpha_rate.end(); ++it)
+			// {
+			//     std::cout << it->first << ", " << it->second << "\n";
+			// }
+        	for(auto it = alpha_rate2.begin();it != alpha_rate2.end(); ++it)
 			{
-			    std::cout << it->first << ", " << it->second << "\n";
+				const auto & arr=it->first;
+				std::cout << arr[0] << ", " << arr[1] << "\n";
+			    std::cout << gamma_vec[arr[0]]*pow(10,arr[1]) << ", " << it->second << "\n";
 			}
         	std::cout<<"Rate Vec"<<std::endl;
 
@@ -28561,6 +29078,9 @@ void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr,
 		MeshT mesh;
 		FiniteElem<Elem> FE(mesh);
 
+		std::cout<<"level="<<level<<std::endl;
+		std::cout<<"n_levels="<<n_levels<<std::endl;
+		std::cout<<"n="<<n<<std::endl;
 
 			std::cout<<"2D PROVALSFEM_ContactLinearElasticity"<<std::endl;
 			// read_freefem_mesh("../data/SquareMoreBoundaries.msh", mesh);
@@ -28576,6 +29096,7 @@ void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr,
 			bisection.uniform_refine(1);
 			bisection.tracking_end();			
 			}
+			std::cout<<"mesh.n_elements()="<<mesh.n_elements()<<std::endl;
 
 
 			// std::vector<Integer> boundary4_changeto5{133,179,197,251};
@@ -28824,18 +29345,17 @@ void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr,
 
 
 		// auto bcs1=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,1);
-		// auto bcs2=DirichletBC<1,FunctionLastComponent<ManifoldDim>>(W_ptr,2);
+		// auto bcs4=DirichletBC<1,FunctionLastComponent<ManifoldDim,Func001>>(W_ptr,4);
 		// auto bcs3=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,3);
-		// auto bcs41=DirichletBC<1,FunctionZero<1>,1>(W_ptr,4);
-		// auto bcs42=DirichletBC<0,FunctionZero<1>,0>(W_ptr,4);
+		// auto bcs21=DirichletBC<1,FunctionZero<1>,1>(W_ptr,2);
+		// auto bcs22=DirichletBC<0,FunctionZero<1>,0>(W_ptr,2);
 		// auto bcs5=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,5);
+
 		auto bcs1=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,1);
 		auto bcs4=DirichletBC<1,FunctionLastComponent<ManifoldDim,Func001>>(W_ptr,4);
 		auto bcs3=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,3);
-		auto bcs21=DirichletBC<1,FunctionZero<1>,1>(W_ptr,2);
-		auto bcs22=DirichletBC<0,FunctionZero<1>,0>(W_ptr,2);
+		auto bcs2=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,2);
 		auto bcs5=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,5);
-
 
 				// auto bcs5=DirichletBC<0,FunctionZero<1>,2>(W_ptr,5);
 
@@ -28859,8 +29379,8 @@ void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr,
 		// auto bcs7=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,5);
 		// auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4,bcs51,bcs52);
 
-		// auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs41,bcs42,bcs5);
-		auto context=create_context(bilinearform,linearform,bcs1,bcs21,bcs22,bcs3,bcs4,bcs5);
+		// auto context=create_context(bilinearform,linearform,bcs1,bcs21,bcs22,bcs3,bcs4,bcs5);
+		auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4,bcs5);
 
 		// auto context_weak=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs41,bcs42);
 
@@ -29300,12 +29820,19 @@ void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr,
 
 		// patch_multigrid_active_set(os1,os2,context,active_x,Ant_levels,truncated_Ant_levels,bL,constraints(),contact_constraints,levels,working_set,levels_interp,e2d,1000,0,levels.size()-1,1,0.00000001);
 		// patch_multigrid_active_set(os1,os2,context,active_x,Ant_levels,truncated_Ant_levels,bL,constraints(),contact_constraints,levels,working_set,levels_interp,e2d,0,0,levels.size()-1,3,0.00000001);
-		Integer max_iter=1;
+		Integer max_iter=10;
 		Real toll=0.000000001;
-		Integer pre_smooth=5;
-		Integer post_smooth=0;
+		Integer pre_smooth=3;
+		Integer post_smooth=3;
+        auto& level_cumultive_n_dofs=context.full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
 
-		// patch_multigrid_active_set2(Ant_levels[levels.size()-1],bnotruncation ,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,constraints(),contact_constraints,levels,working_set,levels_interp,e2d,pre_smooth,post_smooth,levels.size()-1,max_iter,0.000000001,residual);
+        const Integer n0=level_cumultive_n_dofs[levels[0]];
+        const Integer n1=level_cumultive_n_dofs[levels[levels.size()-1]];
+        std::cout<<" n0= "<<n0<<std::endl;
+        std::cout<<" n1= "<<n1<<std::endl;
+
+
+		patch_multigrid_active_set2(Ant_levels[levels.size()-1],bnotruncation ,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,constraints(),contact_constraints,levels,working_set,levels_interp,e2d,pre_smooth,post_smooth,levels.size()-1,max_iter,0.000000001,residual);
 
         std::vector<Real> active_solution(Ant_levels[levels.size()-1].max_rows(),0);
         level_global_house_holder[levels[levels.size()-1]].transpose_and_multiply(active_solution,active_x);
@@ -29318,8 +29845,11 @@ void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr,
 		os.open(output_fileACTIVESET.c_str());
 		write_wtk_isoparametric(os,W_ptr,active_solution,var_names,levelL);
 
-	    		save_vector("res_5_6_fosls.txt",residual);
-
+	    save_vector("test_case_fosls_residual_lambda_inf_mu_1_lev_"+std::to_string(levels.size())+
+	    			"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+
+	    			"pre_smooth_"+std::to_string(pre_smooth)+
+	    			"post_smooth_"+ std::to_string(post_smooth)+
+	    			".txt",residual);
 
 }
 
@@ -30854,6 +31384,7 @@ void dofs_external_patch(Patch& dofs_2externald,  Patch& dofs_2externald_local_p
 	template<Integer ManifoldDim,Integer Order>
 	void DUALContactLinearElasticity5(int argc, char *argv[])
 	{
+		
 		constexpr Integer Dim=ManifoldDim;
 		using MeshT=Mesh<Dim, ManifoldDim>;
 		using Elem=typename MeshT::Elem;
@@ -30862,9 +31393,10 @@ void dofs_external_patch(Patch& dofs_2externald,  Patch& dofs_2externald_local_p
 
 		Integer n=1;
 		char *p;
-		Integer level,n_levels,refinement_jump, starting_refinement;
+		Integer level,n_levels,refinement_jump, starting_refinement,mesh_problem;
 
 		Real alpha_run;
+		
 
 
         if(argc==4)
@@ -30881,7 +31413,7 @@ void dofs_external_patch(Patch& dofs_2externald,  Patch& dofs_2externald_local_p
 		 n_levels=std::strtol(argv[2], &p, 10);
 		 refinement_jump=std::strtol(argv[3], &p, 10);
 		 alpha_run=atof(argv[4]);
-		}
+		 mesh_problem=std::strtol(argv[5], &p, 10);		}
 
 
 		
@@ -30889,17 +31421,21 @@ void dofs_external_patch(Patch& dofs_2externald,  Patch& dofs_2externald_local_p
 		std::cout<<"level="<<level<<std::endl;
 		std::cout<<"n_levels="<<n_levels<<std::endl;
 		std::cout<<"refinement_jump="<<refinement_jump<<std::endl;
+        if(mesh_problem==0)
+        {
+		read_freefem_mesh("../data/SquareForContact.msh", mesh);
+		assign_tags(mesh);
+	    }
 
-		// read_freefem_mesh("../data/SquareForContact.msh", mesh);
-		// read_freefem_mesh("../data/deformed.msh", mesh);
-		// std::cout<<"before assign_tags= "<<std::endl;
-		
-		// assign_tags(mesh);
-		// std::cout<<"after assign_tags= "<<std::endl;
-
+		if(mesh_problem==2)
+		{
 		generate_cube(mesh,n,n,0);
 		mesh.build_dual_graph();
 		mark_boundary(mesh);
+		}
+		std::cout<<"mesh_problem="<<mesh_problem<<std::endl;
+
+
 
 		std::cout<<"build_dual_graph= "<<std::endl;
 
@@ -31445,6 +31981,7 @@ void dofs_external_patch(Patch& dofs_2externald,  Patch& dofs_2externald_local_p
         // DenseMatrix<Real>Alocal;
         // DenseMatrix<Real>Blocal;
         // DenseMatrix<Real>Hlocal;
+
 
 
         // Alocal.init(AL.rows(),AL.rows());
@@ -32354,8 +32891,8 @@ void dofs_external_patch(Patch& dofs_2externald,  Patch& dofs_2externald_local_p
 		// 								 levels,working_set,levels_interp,
 		// 								 enriched_all_e2alld,enriched_RT1_e2alld,RT1_2externald_local_position,alpha_avg,pre_smoothing,post_smoothing,number_of_levels,max_iter,toll,residuals);
 		
-		Real alpha0=0.01;
-		Real alpha1=1.0;
+		Real alpha0=alpha_avg;
+		Real alpha1=alpha_avg;
 		std::vector<Real> alpha_vec,rate_vec;
 		uzawa_patch_multigrid_active_set_optimal2(AL,bL,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,
 										 constraints_inf(),constraints_sup(),contact_constraints,
@@ -33288,8 +33825,8 @@ void dofs_external_patch(Patch& dofs_2externald,  Patch& dofs_2externald_local_p
 		// 								 enriched_all_e2alld,enriched_RT1_e2alld,RT1_2externald_local_position,alpha0,alpha1,
 		// 								 pre_smoothing,post_smoothing,number_of_levels,max_iter,toll,residuals,alpha_vec);
 
-		Real alpha0=0.01;
-		Real alpha1=1.0;
+		Real alpha0=alpha_avg;
+		Real alpha1=alpha_avg;
 		std::vector<Real> alpha_vec,rate_vec;
 		uzawa_patch_multigrid_active_set_optimal2(AL,bL,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,
 										 constraints_inf(),constraints_sup(),contact_constraints,
@@ -37871,6 +38408,560 @@ std::vector<Real> rhs;
 
 
 
+	template<Integer ManifoldDim,Integer Order>
+	void TestCaseDUALLinearElasticity(int argc, char *argv[])
+	{
+		constexpr Integer Dim=ManifoldDim;
+		using MeshT=Mesh<Dim, ManifoldDim>;
+		using Elem=typename MeshT::Elem;
+		using BoundaryElem=FromVolumetricToBoundaryElem<Elem>;
+		MeshT mesh;
+
+		Integer n=1;
+		char *p;
+		Integer level,n_levels,refinement_jump, starting_refinement;
+		Real alpha_run;
+
+
+        if(argc==4)
+        {
+         starting_refinement=0;
+		 level=std::strtol(argv[1], &p, 10);
+		 n_levels=std::strtol(argv[2], &p, 10);
+		 refinement_jump=std::strtol(argv[3], &p, 10);		 
+
+        }
+        else
+        {
+		 level=std::strtol(argv[1], &p, 10);
+		 n_levels=std::strtol(argv[2], &p, 10);
+		 refinement_jump=std::strtol(argv[3], &p, 10);
+		 alpha_run=atof(argv[4]);
+
+        }        	
+
+		
+		std::cout<<"argc="<<argc<<std::endl;
+		std::cout<<"level="<<level<<std::endl;
+		std::cout<<"n_levels="<<n_levels<<std::endl;
+		std::cout<<"refinement_jump="<<refinement_jump<<std::endl;
+		std::cout<<"n="<<n<<std::endl;
+
+		generate_cube(mesh,n,n,0);
+		mesh.build_dual_graph();
+		mark_boundary(mesh);
+
+		
+
+
+		Bisection<MeshT> bisection(mesh);
+			// for(int i=0;i<n_levels;i++)
+			// {
+			// bisection.tracking_begin();
+			// bisection.uniform_refine(1);
+			// bisection.tracking_end();			
+			// }
+
+
+
+
+        std::vector<Integer> levels(n_levels+1-level);
+
+        for(Integer i=0;i<n_levels+1-level;i++)
+        {
+        	levels[i]=i+level;
+        }
+
+
+
+	    Node2ElemMap<MeshT> n2em(mesh,bisection);
+	    n2em.init();
+
+	    using AuxRT_n= FunctionSpace< MeshT, RT<Order,ManifoldDim>>;	      
+		using AuxP_1= FunctionSpace< MeshT, Lagrange<1,ManifoldDim>>;
+		using AuxDGP_1= FunctionSpace< MeshT, LagrangeDG<1,ManifoldDim>>;
+		using AuxP_1_single_component= FunctionSpace< MeshT, Lagrange<1,1>>;
+		using AuxP_0= FunctionSpace< MeshT, Lagrange<0,ManifoldDim>>;
+
+		AuxRT_n rtn(mesh,bisection,n2em);
+		AuxP_1 p1(mesh,bisection,n2em);
+		AuxDGP_1 dgp1(mesh,bisection,n2em);
+		AuxP_1_single_component p1_1(mesh,bisection,n2em);
+		AuxP_0 p0(mesh,bisection,n2em);
+
+	    auto Wtrial=MixedFunctionSpace(rtn,dgp1,p1_1);
+
+		auto Waux=AuxFunctionSpacesBuild(p1,p1_1);
+		auto W=FullSpaceBuild(Wtrial,Waux);
+
+		using W_type=decltype(W);
+		auto W_ptr=std::make_shared<W_type>(W);
+
+
+		if(argc==4)
+		{
+			for(int i=0;i<n_levels;i++)
+			{
+			bisection.tracking_begin();
+			bisection.uniform_refine(refinement_jump);
+			bisection.tracking_end();			
+			}
+		}
+		else
+		{
+			for(int i=0;i<level;i++)
+			{
+			bisection.tracking_begin();
+			bisection.uniform_refine(1);
+			bisection.tracking_end();			
+			}
+
+			for(int i=level;i<n_levels;i++)
+			{
+			bisection.tracking_begin();
+			bisection.uniform_refine(refinement_jump);
+			bisection.tracking_end();			
+			}
+		}
+
+
+			std::cout<<"mesh.n_elements()="<<mesh.n_elements()<<std::endl;
+
+
+			// std::vector<Integer> boundary4_changeto5{133,179,197,251};
+			// std::vector<Integer> boundary4_changeto1{132,250};
+			std::vector<Integer> boundary4_changeto5{205,211,225,230};
+			std::vector<Integer> boundary4_changeto1{204,231};
+
+			for(Integer i=0;i<boundary4_changeto5.size();i++)
+			{
+				Integer el=boundary4_changeto5[i];
+
+
+				auto&elem= mesh.elem(el);
+				auto& side_tags=elem.side_tags;
+				auto& nodes=elem.nodes;
+				std::cout<<"boundary4_changeto5 "<<el<<std::endl;
+				for(Integer s=0;s<nodes.size();s++)
+				std::cout<<mesh.points()[nodes[s]]<<" ";
+				std::cout<<std::endl;
+
+				for(Integer s=0;s<side_tags.size();s++)
+				std::cout<<side_tags[s]<<" ";
+				std::cout<<std::endl;
+
+				for(Integer s=0;s<side_tags.size();s++)
+				{
+					if(side_tags[s]==2)
+					{
+						side_tags[s]=5;
+					}
+
+				}
+				for(Integer s=0;s<side_tags.size();s++)
+				std::cout<<mesh.elem(el).side_tags[s]<<" ";
+				std::cout<<std::endl;
+
+			}
+
+			for(Integer i=0;i<boundary4_changeto1.size();i++)
+			{
+				Integer el=boundary4_changeto1[i];
+
+
+				auto&elem= mesh.elem(el);
+				auto& side_tags=elem.side_tags;
+				auto& nodes=elem.nodes;				
+				std::cout<<"boundary4_changeto1 "<<el<<std::endl;
+				for(Integer s=0;s<nodes.size();s++)
+				std::cout<<mesh.points()[nodes[s]]<<" ";
+				std::cout<<std::endl;
+
+				for(Integer s=0;s<side_tags.size();s++)
+				std::cout<<side_tags[s]<<" ";
+				std::cout<<std::endl;
+
+				for(Integer s=0;s<side_tags.size();s++)
+				{
+					if(side_tags[s]==2)
+					{
+						side_tags[s]=1;
+					}
+
+				}
+				for(Integer s=0;s<side_tags.size();s++)
+				std::cout<<mesh.elem(el).side_tags[s]<<" ";
+				std::cout<<std::endl;
+
+			}
+
+
+
+			
+
+		auto sigma = MakeTrial<0>(W_ptr);
+		auto tau = MakeTest<0>(W_ptr);
+		auto u = MakeTrial<1>(W_ptr);
+		auto v = MakeTest<1>(W_ptr);
+		auto theta = MakeTrial<2>(W_ptr);
+		auto rho = MakeTest<2>(W_ptr);
+
+		// auto f_ext = MakeFunction<0,ExactLinearElasticity<ManifoldDim>>(W_ptr);
+		auto f_ext = MakeFunction<0,FunctionZero<ManifoldDim>>(W_ptr);
+		// auto f1 = MakeFunction<0,FunctionZero<1>>(W_ptr);
+		// auto u_dirichlet=MakeTraceFunction<0,FunctionZero<ManifoldDim>>(W_ptr);
+		auto u_dirichlet=MakeTraceFunction<0,FunctionNthComponent<ManifoldDim,1,Func001>>(W_ptr);
+		
+		auto node_normal = MakeTraceFunction<0>(W_ptr);
+		auto f_neumann = MakeZeroTraceFunction<0>(W_ptr);
+		auto gap1 = MakeGapFunction<1,GapFunction1>(W_ptr);
+		auto gap2 = MakeGapFunction<1,GapFunction2>(W_ptr);
+		auto gap_inf = MakeGapFunction<1,GapInf>(W_ptr);
+		auto zero = MakeZeroTraceFunction<1>(W_ptr);
+		auto zero_func = MakeFunction<1,FunctionZero<1>>(W_ptr);
+
+		auto func001 = MakeTraceFunction<0,FunctionLastComponent<ManifoldDim,Func001>>(W_ptr);
+
+		
+
+
+		constexpr Real mu=1.0;
+		constexpr Real lambda=10000000000000000000000000.0;
+
+		constexpr auto TwoMu=Constant<Scalar>(2.0*mu);
+		constexpr auto Lambda=Constant<Scalar>(lambda);
+		constexpr auto Delta=Constant<Scalar>(100.0);
+
+
+		constexpr auto one1d=Constant<Scalar>(1.0);
+		constexpr auto one2d=Constant<Vec<2>>(1.0,1.0);
+		constexpr auto one_x=Constant<Vec<2>>(1.0,0.0);
+		constexpr auto one_y=Constant<Vec<2>>(0.0,1.0);
+
+
+
+		constexpr Real alpha=1.0/Real(2.0*mu);
+		constexpr Real beta=alpha*(-lambda/(Real(ManifoldDim)*lambda+ 2.0 * mu));
+
+		constexpr auto halp=Constant<Scalar>(0.5);
+
+		constexpr auto C_coeff1=Constant<Scalar>(1.0/Real(2.0*mu));
+		constexpr auto ZeroConstant=Constant<Scalar>(0.0);
+
+	    constexpr auto C_coeff2=Constant<Scalar>((1.0/Real(2.0*mu))*(-lambda/(Real(ManifoldDim)*lambda+ 2.0 * mu)));	
+	    constexpr auto identity=Constant<Identity<ManifoldDim>>();		
+	    constexpr auto asym_mat=Constant<Mat<2,2>>(0.0,1.0, 0.0,0.0);	
+	    constexpr auto fixed_normal=Constant<Mat<2,1>>(1.,0);			
+		auto C_inverse=NewOperator(C_coeff1*IdentityOperator() + C_coeff2*identity* MatTrace(IdentityOperator()) );
+	    auto Asym=NewOperator(Inner(asym_mat,(IdentityOperator()-Transpose(IdentityOperator()))));//+Transpose(GradientOperator())));
+
+	    std::cout<<"C_coeff1= "<<C_coeff1()<<std::endl;
+	    std::cout<<"C_coeff2= "<<C_coeff2()<<std::endl;
+
+
+
+		auto normal_values=MakeNodeNormalValues(W_ptr);
+        W_ptr->update();
+		normal_values.compute_node_normals();
+		normal_values.compute_face_normals();
+        
+        Vector<Real,2> nn2{0,+1};
+        Vector<Real,3> nn3{0,0,+1};
+
+		auto& nnv=normal_values.node_normals();
+		auto& nf=normal_values.face_normals();
+
+		for(Integer i=0;i<nnv.size();i++)
+		{
+			for(Integer j=0;j<nnv[i].size();j++)
+				nnv[i][j]=nn2;
+		}
+
+		for(Integer i=0;i<nf.size();i++)
+		{
+
+			for(Integer j=0;j<nf[i].size();j++)
+				nf[i][j]=nn2;
+		}
+
+
+		// Integer contact_boundary=5;
+		Integer contact_boundary1=2;
+		Integer contact_boundary2=5;
+		Integer neumann_boundary1=1;
+		Integer neumann_boundary3=3;
+		Integer dirichlet_boundary=4;
+
+
+		
+		std::vector<Real> x_p1;
+		normal_values.compute_dofs(x_p1);
+
+		node_normal.global_dofs_update(x_p1);
+
+		auto bilinearform=
+		+L2Inner( C_inverse(sigma),tau)
+		+L2Inner( Div(sigma),v)
+		+L2Inner( u, Div(tau))
+		+L2Inner( Asym(tau), theta)
+		+L2Inner( Asym(sigma),rho)
+		;
+
+		auto linearform=
+		+L2Inner(v,-f_ext)
+		+surface_integral(4,Trace(tau),func001)
+				;
+
+
+		auto bcs1=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,1);
+		auto bcs3=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,3);
+		auto bcs5=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,5);
+
+
+		auto context=create_context(bilinearform,linearform,bcs1,bcs3,bcs5);		
+	    W_ptr->update();
+
+	    Integer levelL=bisection.tracker().current_iterate()-1;
+
+		SparseMatrix<Real> AL;
+		std::vector<Real> bL;
+		std::vector<Real> xL;
+		std::vector<Real> rhs;
+  		std::ofstream os,os2;
+		auto var_names=variables_names("stress","disp","rotation");
+
+		std::cout<<"pre assembly"<<std::endl;
+
+		context.assembly(AL,bL,levelL);
+
+		std::cout<<"after assembly"<<std::endl;
+
+	    FullFunctionSpaceLevelsInterpolation<W_type> levels_interp(W_ptr);
+       
+
+        context.build_boundary_info(levels);
+	    levels_interp.init(levels);
+	    auto& level_cumulative_dofs_array= W_ptr->dofsdofmap().level_cumulative_dofs_array();
+
+	    Entity2Dofs<W_type,0> entity2RT1_dofs(W_ptr);
+	    Entity2Dofs<W_type,0> entity2multiplier_dofs(W_ptr);
+	    Entity2Dofs<W_type,0> entity2all_dofs(W_ptr);
+	    Entity2Dofs<W_type,0> entity2_all_RT1_dofs(W_ptr);
+	    Entity2Dofs<W_type,0> entity2_all_multiplier_dofs(W_ptr);
+	    Entity2Dofs<W_type,0> all_entity2all_dofs(W_ptr);
+
+
+	    Entity2Dofs<W_type,0> entity2all_disp_dofs(W_ptr);
+
+	    Entity2Dofs<W_type,0> halo_all_dofs(W_ptr);
+
+	    
+
+
+
+	    build<0>(entity2RT1_dofs);
+	    build<1,2>(entity2multiplier_dofs);
+	    build<0,1,2>(entity2all_dofs);
+
+	    build_all_element_dofs<1,2>(entity2_all_multiplier_dofs);
+	    build_all_element_dofs<0>(entity2_all_RT1_dofs);
+	    build_all_element_dofs<0,1,2>(all_entity2all_dofs);
+
+	    build_all_element_dofs<1>(entity2all_disp_dofs);
+
+
+        auto& all_e2d=entity2all_dofs.get(levels);
+	    auto& RT1_e2d=entity2RT1_dofs.get(levels);
+	    auto& multipliers_e2d=entity2multiplier_dofs.get(levels);
+
+	    auto& all_e2alld=all_entity2all_dofs.get(levels);
+	    auto& multipliers_e2alld=entity2_all_multiplier_dofs.get(levels);
+	    auto& RT1_e2alld=entity2_all_RT1_dofs.get(levels);
+
+
+	    auto& disp_e2alld=entity2all_disp_dofs.get(levels);
+        
+		// auto globalHH=MakeGlobalHouseHolder(W_ptr);
+
+  //       Integer new_contact_boundary=6;
+ 	// 	globalHH.compute(normal_values,new_contact_boundary);
+  //       auto& level_global_house_holder=globalHH.level_global_house_holder();
+
+  		std::vector<SparseMatrix<Real>> Ant_levels(levels.size());
+  		std::vector<SparseMatrix<Real>> truncated_Ant_levels(levels.size());
+
+        // Ant_levels[levels.size()-1]=AL.multiply_left_transpose_and_multiply_right(level_global_house_holder[levels[levels.size()-1]]);
+        Ant_levels[levels.size()-1]=AL;
+        truncated_Ant_levels[levels.size()-1]=Ant_levels[levels.size()-1];
+
+        std::vector<Real> b_transformed(bL);
+        // level_global_house_holder[levels[levels.size()-1]].multiply(b_transformed,bL);
+        std::vector<std::vector<bool>> working_set(levels.size(),std::vector<bool>{});           
+        auto& constrained_dofs_levels=context.constrained_dofs_levels();
+
+        std::cout<<"before working set"<<std::endl;
+
+
+	   	for(Integer i=0;i<working_set.size();i++)
+	   	{
+	   		working_set[i].resize(constrained_dofs_levels[i].size(),false);
+	   	}
+
+
+	   	for(Integer i=0;i< working_set[working_set.size()-1].size();i++)
+	   	{
+	   		working_set[working_set.size()-1][i]=constrained_dofs_levels[working_set.size()-1][i];
+
+	   	}
+        
+        // for(Integer i=levels.size()-2;i>=0;i--)
+        // { 
+        // 	auto& P=levels_interp.matrix(i);
+        //     auto tmp_P=P.multiply(level_global_house_holder[levels[i]]);
+        //     levels_interp.matrix(i)=level_global_house_holder[levels[i+1]].multiply(tmp_P);
+        // }
+        std::cout<<"before matrix levels assembly"<<std::endl;
+
+	    clock_t begin,end; 
+
+        for(Integer i=levels.size()-2;i>=(Integer(levels.size())-3)&& i>=0;i--)
+        { 
+        	std::cout<<"i=="<<i<<std::endl;
+        	std::cout<<"rows=="<<Ant_levels[i+1].rows()<<std::endl;
+        	std::cout<<"cols=="<<Ant_levels[i+1].cols()<<std::endl;
+        	std::cout<<"rows=="<<levels_interp.matrix(i).rows()<<std::endl;
+        	std::cout<<"cols=="<<levels_interp.matrix(i).cols()<<std::endl;
+
+            Ant_levels[i]=Ant_levels[i+1].multiply_left_transpose_and_multiply_right(levels_interp.matrix(i));
+            truncated_Ant_levels[i]=Ant_levels[i+1].multiply_left_transpose_and_multiply_right(levels_interp.matrix(i),working_set[i+1]);
+         }
+
+
+         
+        for(Integer i=levels.size()-3;i>=0;i--)
+        { 
+            Ant_levels[i]=Ant_levels[i+1].multiply_left_transpose_and_multiply_right(levels_interp.matrix(i));
+            truncated_Ant_levels[i]=truncated_Ant_levels[i+1].multiply_left_transpose_and_multiply_right(levels_interp.matrix(i));
+        }
+        std::cout<<"after matrix levels assembly"<<std::endl;
+
+
+        std::vector<Real> bnotruncation(b_transformed);
+                std::cout<<"qui0"<<std::endl;
+
+        // context.build_boundary_info();
+        std::cout<<"qui1"<<std::endl;
+        std::cout<<"levels.size()="<<levels.size()<<std::endl;
+        std::cout<<"truncated_Ant_levels.size()="<<truncated_Ant_levels.size()<<std::endl;
+        std::cout<<"b_transformed.size()="<<b_transformed.size()<<std::endl;
+        std::cout<<truncated_Ant_levels[levels.size()-1].rows()<<std::endl;
+        std::cout<<truncated_Ant_levels[levels.size()-1].cols()<<std::endl;
+
+        context.apply_bc(truncated_Ant_levels[levels.size()-1],b_transformed);
+        std::cout<<"qui2"<<std::endl;
+        std::vector<bool> working_set_old(working_set[working_set.size()-1].size(),false);
+        std::cout<<"qui3"<<std::endl;
+
+        std::vector<Real> active_x(Ant_levels[levels.size()-1].max_rows(),0);
+        std::cout<<"qui4"<<std::endl;
+        auto contact_constraints=ProjectContactConstraints(W_ptr);
+        std::cout<<"qui5"<<std::endl;
+
+	
+
+		auto constraints_sup=MakeConstraints(W_ptr);
+		std::cout<<"qui6"<<std::endl;
+		auto constraints_inf=MakeConstraints(W_ptr);
+		std::cout<<"qui7"<<std::endl;
+
+		constraints_inf.set_minus_infty_constraints();
+		std::cout<<"qui8"<<std::endl;
+		constraints_sup.set_plus_infty_constraints();
+		std::cout<<"qui9"<<std::endl;
+
+
+		// compute_constraint(constraints_sup,context,zero_func,contact_boundary1,1);
+		// compute_constraint(constraints_sup,context,zero_func,contact_boundary2,1);
+
+
+
+
+		Real toll=0.000000001;
+		Integer max_iter=10;
+		Integer pre_smoothing=5;
+		Integer post_smoothing=5;
+		Integer number_of_levels=levels.size()-1;
+
+
+
+	
+        std::cout<<"before enlarge patches "<<std::endl;
+
+
+	     std::vector<std::vector<std::vector<Integer>>> enriched_RT1_e2d,enriched_RT1_e2alld,enriched_all_e2alld;
+	     enlarge_patches(enriched_RT1_e2d,enriched_RT1_e2alld,enriched_all_e2alld,
+		                 RT1_e2d,RT1_e2alld,all_e2alld,mesh,n2em,levels);
+
+
+
+	    std::vector<std::vector<std::vector<Integer>>> RT1_2externald;
+	    std::vector<std::vector<std::vector<Integer>>> RT1_2externald_local_position;
+
+	    dofs_external_patch(RT1_2externald,RT1_2externald_local_position,enriched_RT1_e2alld,enriched_RT1_e2d,mesh,levels);
+
+
+        std::cout<<"after enlarge patches "<<std::endl;
+
+       
+        Real alpha_avg;
+
+        if(argc==4)
+        	alpha_avg=1.0;
+        else
+        	alpha_avg=alpha_run;
+
+
+        max_iter=50;
+        pre_smoothing=3;
+        post_smoothing=3;
+        auto& level_n_dofs_array=context.full_spaces_ptr()->dofsdofmap().level_n_dofs_array();
+        Array<std::vector<Real>,3> residuals;
+
+        std::cout<<"alpha_run"<<alpha_run<<std::endl;
+
+        std::cout<<"alpha_avg"<<alpha_avg<<std::endl;
+
+		uzawa_patch_multigrid_active_set_average(AL,bL,os,os2,context,active_x,Ant_levels,truncated_Ant_levels,b_transformed,
+										 constraints_inf(),constraints_sup(),contact_constraints,
+										 levels,working_set,levels_interp,
+										 enriched_all_e2alld,enriched_RT1_e2alld,RT1_2externald_local_position,alpha_avg,pre_smoothing,post_smoothing,number_of_levels,max_iter,toll,residuals);
+		
+        auto& level_cumultive_n_dofs=context.full_spaces_ptr()->dofsdofmap().level_cumultive_n_dofs();
+
+        const Integer n0=level_cumultive_n_dofs[levels[0]];
+        const Integer n1=level_cumultive_n_dofs[levels[levels.size()-1]];
+        std::cout<<" n0= "<<n0<<std::endl;
+        std::cout<<" n1= "<<n1<<std::endl;
+        Real lambda_txt(lambda);
+        if(lambda>10000000000000)
+         lambda_txt=std::numeric_limits<double>::infinity();
+
+     	save_3vectors("test_case_dual_residual_lambda_" + std::to_string(lambda_txt)+"_mu_"+ std::to_string(mu)+"_alpha_" + std::to_string(alpha_avg)+"_lev_"+std::to_string(levels.size())+"_C"+ std::to_string(n0)+"_F"+ std::to_string(n1)+"pre_smooth_"+std::to_string(pre_smoothing)+"post_smooth_"+ std::to_string(pre_smoothing)+".txt",residuals[0],residuals[1],residuals[2]);
+
+
+        
+
+        std::vector<Real> active_solution(Ant_levels[levels.size()-1].max_rows(),0);
+        // level_global_house_holder[levels[levels.size()-1]].transpose_and_multiply(active_solution,active_x);
+
+		std::string output_fileACTIVESET ="TestCaseDual_dim"+ std::to_string(ManifoldDim) +"_order"+ std::to_string(Order)+
+		+"_ndofs"+ std::to_string(n1) +"_output.vtk";
+
+
+		os.close();
+		os.open(output_fileACTIVESET.c_str());
+		write_wtk_isoparametric(os,W_ptr,active_x,var_names,levelL);
+}
 
 
 
