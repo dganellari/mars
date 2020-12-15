@@ -285,7 +285,7 @@ namespace mars {
             }
 
             MARS_INLINE_FUNCTION
-            void operator()(const Mesh *mesh, const Integer i, const Integer dof_sfc, const Integer owner_proc) const {
+            void operator()(const Mesh *mesh, const Integer i, const Integer dof_sfc, const Integer owner_proc, const Integer dir) const {
                 face_rank_boundary(mesh, i, dof_sfc, owner_proc, std::integral_constant<bool, Ghost>{});
             }
         };
@@ -653,7 +653,7 @@ namespace mars {
             }
 
             MARS_INLINE_FUNCTION
-            void operator()(const Mesh *mesh, const Integer i, const Integer dof_sfc, const Integer owner_proc) const {
+            void operator()(const Mesh *mesh, const Integer i, const Integer dof_sfc, const Integer owner_proc, const Integer dir) const {
                 face_predicate(mesh, i, dof_sfc, owner_proc, std::integral_constant<bool, Ghost>{});
             }
         };
@@ -671,7 +671,23 @@ namespace mars {
 
                 for (int j = 0; j < face_nodes; j++) {
                     Integer dof_sfc = process_face_node<simplex_type::ElemType, dir>(face_cornerA, j);
-                    f(mesh, index, dof_sfc, owner_proc);
+                    f(mesh, index, dof_sfc, owner_proc, dir);
+                }
+            }
+        }
+
+        template <Integer dir, typename F>
+        static MARS_INLINE_FUNCTION void face_iterate(const Integer sfc, const Mesh *mesh, F f) {
+            // side  0 means origin side and 1 destination side.
+            Octant oc = mesh->octant_from_sfc(sfc);
+
+            for (int side = 0; side < 2; ++side) {
+                Octant face_cornerA;
+                Integer owner_proc = process_face_corner<simplex_type::ElemType, dir>(face_cornerA, mesh, side, oc);
+
+                for (int j = 0; j < face_nodes; j++) {
+                    Integer dof_sfc = process_face_node<simplex_type::ElemType, dir>(face_cornerA, j);
+                    f(dof_sfc, owner_proc, dir);
                 }
             }
         }
@@ -976,6 +992,96 @@ namespace mars {
                                  EnumLocalDofs(data.get_mesh(), elem_dof_enum, local_dof_enum.get_view_sfc_to_local()));
         }
 
+        template <bool Ghost>
+        struct FaceOrientDof {
+            ViewVectorType<Integer> dir;
+            ViewVectorType<Integer> sfc_to_local;
+            Integer proc;
+
+            MARS_INLINE_FUNCTION
+            FaceOrientDof(ViewVectorType<Integer> d, ViewVectorType<Integer> l, Integer p)
+                : dir(d), sfc_to_local(l), proc(p) {}
+
+            MARS_INLINE_FUNCTION
+            void face_orient_dof(const Mesh *mesh,
+                                 const Integer i,
+                                 const Integer sfc,
+                                 const Integer owner_proc,
+                                 const Integer d,
+                                 std::true_type) const {
+                Integer elem_sfc_proc =
+                    find_owner_processor(mesh->get_view_gp(), mesh->get_ghost_sfc(i), 2, mesh->get_proc());
+
+                // if the ghost elem owns the dof then he is able to send it.
+                if (elem_sfc_proc >= owner_proc) {
+                    Integer index = sfc_to_local(sfc);
+                    dir(index) = d;
+                }
+            }
+
+            MARS_INLINE_FUNCTION
+            void face_orient_dof(const Mesh *mesh,
+                                 const Integer i,
+                                 const Integer sfc,
+                                 const Integer owner_proc,
+                                 const Integer d,
+                                 std::false_type) const {
+                Integer index = sfc_to_local(sfc);
+                dir(index) = d;
+            }
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Mesh *mesh, const Integer i, const Integer dof_sfc, const Integer owner_proc, const Integer dir) const {
+                face_orient_dof(mesh, i, dof_sfc, owner_proc, dir, std::integral_constant<bool, Ghost>{});
+            }
+        };
+
+        template <bool Ghost>
+        struct OrientDofs {
+            MARS_INLINE_FUNCTION
+            void operator()(const Integer i) const {
+                const Integer sfc = get_sfc_ghost_or_local<Ghost>(mesh, i);
+                const Integer proc = mesh->get_proc();
+
+                if (face_nodes > 0) {
+                    FaceOrientDof<Ghost> fp =
+                        FaceOrientDof<Ghost>(face_dir, sfc_to_local, proc);
+                    face_iterate<0>(sfc, mesh, i, fp);
+                    face_iterate<1>(sfc, mesh, i, fp);
+                }
+            }
+
+            OrientDofs(Mesh *m, ViewVectorType<Integer> sd, ViewVectorType<Integer> sl)
+                : mesh(m), face_dir(sd), sfc_to_local(sl) {}
+
+            Mesh *mesh;
+            ViewVectorType<Integer> face_dir;
+            ViewVectorType<Integer> sfc_to_local;
+        };
+
+        void build_local_orientation() {
+            const Integer size = data.get_host_mesh()->get_chunk_size();
+            const Integer ghost_size = data.get_view_ghost().extent(0);
+
+            const Integer local_size = get_local_dof_enum().get_elem_size();
+
+            local_dof_enum.reserve_element_orientations(local_size);
+
+            /* generate the sfc for the local and global dofs containing the generation locally
+                     for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
+            Kokkos::parallel_for("orient_dofs",
+                                 size,
+                                 OrientDofs<false>(data.get_mesh(),
+                                                   local_dof_enum.get_view_element_orientations(),
+                                                   get_local_dof_enum().get_view_sfc_to_local()));
+
+            Kokkos::parallel_for("orient_ghost_dofs",
+                                 ghost_size,
+                                 OrientDofs<true>(data.get_mesh(),
+                                                  local_dof_enum.get_view_element_orientations(),
+                                                  get_local_dof_enum().get_view_sfc_to_local()));
+        }
+
         virtual void enumerate_dofs(const context &context) {
             const Integer rank_size = num_ranks(context);
             const int proc_num = rank(context);
@@ -986,6 +1092,7 @@ namespace mars {
             ViewVectorType<Integer> proc_scan_recv("nbh_scan_recv", rank_size + 1);
 
             build_lg_predicate(context, nbh_proc_predicate_send, nbh_proc_predicate_recv);
+            build_local_orientation();
 
             /* print_dofs<simplex_type::ElemType>(proc_num); */
 
@@ -1315,6 +1422,16 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer>::HostMirror &get_view_scan_send_mirror() const { return scan_send_mirror; }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_orientation(const Integer local_dof) const {
+            return get_local_dof_enum().get_orientation(local_dof);
+        }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_label(const Integer local_dof) const {
+            return get_local_dof_enum().get_label(local_dof);
+        }
 
     private:
         // data associated to the mesh elements (sfc).

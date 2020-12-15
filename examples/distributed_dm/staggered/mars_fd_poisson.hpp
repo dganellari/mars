@@ -49,7 +49,7 @@ namespace mars {
     };
      */
 
-    using VolumeDM = VDM<DistributedQuad4Mesh, 2, double, double>;
+    using VolumeDM = FDM<DistributedQuad4Mesh, 2, double, double>;
     using DofH = DofHandler<DistributedQuad4Mesh, 2>;
 
     // use as more readable tuple index to identify the data
@@ -121,12 +121,13 @@ namespace mars {
             "for", size, MARS_LAMBDA(const int index) {
                 // go through all the dofs of the elem_index element
                 const Integer local_dof = dm.get_local_dof(index);
+                const Integer dir = dm.get_dof_handler().get_orientation(local_dof);
                 // convert the local dof number to global dof number
                 Dof d = dm.get_dof_handler().local_to_global_dof(local_dof);
 
                 // do something. In this case we are printing.
                 printf(
-                    "Dof: i: %li, local: %li, global: %li, proc: %li\n", index, local_dof, d.get_gid(), d.get_proc());
+                    "Dof: i: %li, local: %li, Dir: %li, global: %li, proc: %li\n", index, local_dof, dir, d.get_gid(), d.get_proc());
             });
     }
 

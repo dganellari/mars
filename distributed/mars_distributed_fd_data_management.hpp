@@ -166,7 +166,7 @@ namespace mars {
                 face_owned_dof(dof_sfc, owner_proc, dir, std::integral_constant<bool, Ghost>{});
             }
         };
-
+/*
         template <Integer dir, typename F>
         static MARS_INLINE_FUNCTION void face_dof_iterate(const Integer sfc, const Mesh *mesh, F f) {
             // side  0 means origin side and 1 destination side.
@@ -182,7 +182,7 @@ namespace mars {
                     f(dof_sfc, owner_proc, dir);
                 }
             }
-        }
+        } */
 
         struct SeperateDofs {
             MARS_INLINE_FUNCTION
@@ -194,8 +194,8 @@ namespace mars {
                 if (face_nodes > 0) {
                     FaceOwnedDof<BoundaryIter> fo =
                         FaceOwnedDof<BoundaryIter>(face_predicate, face_dir, sfc_to_local, proc);
-                    face_dof_iterate<0>(sfc, mesh, fo);
-                    face_dof_iterate<1>(sfc, mesh, fo);
+                    face_iterate<0>(sfc, mesh, fo);
+                    face_iterate<1>(sfc, mesh, fo);
                 }
 
                 if (volume_nodes > 0) {
