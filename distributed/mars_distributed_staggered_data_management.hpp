@@ -137,9 +137,9 @@ namespace mars {
         }
 
         /* building the stencil is the responsibility of the specialized DM. */
-        template <typename ST>
+        template <typename ST, bool Orient = false>
         ST build_stencil() {
-            return mars::build_stencil<ST>(*this);
+            return mars::build_stencil<ST, Orient>(*this);
         }
 
         MARS_INLINE_FUNCTION

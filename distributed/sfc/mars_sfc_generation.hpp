@@ -155,8 +155,15 @@ namespace mars {
             return (gen_sfc);
         }
 
-        void reserve_element_orientations(const Integer n_elements) {
-            element_orientations_ = ViewVectorType<Integer>("Orientation", n_elements);
+        void init_element_orientations(const Integer n_elements) {
+            // reserve the view then init
+            element_orientations_ = ViewVectorType<Integer>("Orientation", get_elem_size());
+
+            // remove the shallow copy when switching to c++17.
+            // Currently needed for the cuda code.
+            auto orient = element_orientations_;
+            Kokkos::parallel_for(
+                "init_orientation", get_elem_size(), MARS_LAMBDA(const Integer i) { orient(i) = DofOrient::yDir; });
         }
 
         void reserve_element_labels(const Integer n_elements) {

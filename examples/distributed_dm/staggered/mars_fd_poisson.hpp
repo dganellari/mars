@@ -286,10 +286,11 @@ namespace mars {
         /* auto volume_stencil = mars::build_volume_stencil<VCStencil>(vdm); */
 
         //Recommended: if separated volume dm is used then use as follow:
-        auto volume_stencil = vdm.build_stencil<VCStencil>();
+        /* auto volume_stencil = vdm.build_stencil<SStencil, Orient>(); */
+        auto volume_stencil = vdm.build_stencil<SStencil>();
         print_stencil(vdm, volume_stencil);
 
-        /* classic width 2 stencil on face nodes. */
+        /* classic width 2 stencil on face nodes in case the fddm object is used.*/
         /* auto face_stencil = mars::build_face_stencil<FStencil, Orient>(dm);
         print_stencil(dm, face_stencil); */
 
