@@ -1065,7 +1065,7 @@ namespace mars {
 
             const Integer local_size = get_local_dof_enum().get_elem_size();
 
-            local_dof_enum.reserve_element_orientations(local_size);
+            local_dof_enum.init_element_orientations(local_size);
 
             /* generate the sfc for the local and global dofs containing the generation locally
                      for each partition of the mesh using the existing elem sfc to build this nodal sfc. */

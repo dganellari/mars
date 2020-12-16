@@ -13,13 +13,13 @@ namespace mars {
                 |       |
                 ----2---- */
     // building the stencil is the responsibility of the specialized DM.
-    template <typename ST, typename DM>
+    template <typename ST, bool Orient = false, typename DM>
     ST build_stencil(const DM &dm) {
         ST stencil(dm.get_owned_dof_size());
 
         dm.owned_iterate(MARS_LAMBDA(const Integer i) {
             const Integer localid = dm.get_owned_dof(i);
-            stencil.build_stencil(dm.get_dof_handler(), localid, i);
+            stencil.template build_stencil<Orient>(dm.get_dof_handler(), localid, i);
         });
         return stencil;
     }
@@ -76,11 +76,21 @@ namespace mars {
             stencil = ViewMatrixTypeRC<Integer, Length>("stencil", size);
         }
 
+
         template <bool Orient = false, typename DM>
         MARS_INLINE_FUNCTION void build_stencil(const DM &dm,
                                                 const Integer localid,
+                                                const Integer stencil_index) const {
+
+            const Integer orientation = dm.get_orientation(localid);
+            generate_stencil<Orient>(dm, localid, stencil_index, orientation);
+        }
+
+        template <bool Orient = false, typename DM>
+        MARS_INLINE_FUNCTION void generate_stencil(const DM &dm,
+                                                const Integer localid,
                                                 const Integer stencil_index,
-                                                Integer Orientation = 1) const {
+                                                Integer orientation) const {
             set_value(stencil_index, 0, localid);
             const Integer sfc = dm.local_to_sfc(localid);
 
@@ -94,13 +104,13 @@ namespace mars {
                     else
                         face_nr = 2 * dir;
 
-                    // if the user chooses no orientation then Orientation 1
+                    // if the user chooses no orientation then orientation 1
                     // means discard the orientation values and do
                     // not use them. !(x ^ y) leaves y the same when x == 1.
-                    if (!Orient) Orientation = 1;
+                    if (!Orient) orientation = DofOrient::yDir;
                     // this gives the index for different face orientation. Corner and volume have no
                     // extra orientation and the default  is 1. Orientation=0 -> x orientation).
-                    const Integer dir_dim = !(Orientation ^ dir);
+                    const Integer dir_dim = !(orientation ^ dir);
                     Integer index = 2 * dir_dim + side + 1;
 
                     Octant o = oc;
@@ -174,7 +184,7 @@ namespace mars {
         MARS_INLINE_FUNCTION void build_diagonal_stencil(const DM &dm,
                                                          const Integer localid,
                                                          const Integer stencil_index,
-                                                         const Integer Orientation) const {
+                                                         const Integer orientation) const {
             const Integer sfc = dm.local_to_sfc(localid);
 
             Octant oc = get_octant_from_sfc<DM::simplex_type::ElemType>(sfc);
@@ -187,21 +197,29 @@ namespace mars {
             }
 
             /*FIXME for 3D.*/
-            if (Orient && Orientation == 0) {
+            if (Orient && orientation == DofOrient::xDir) {
                 const Integer tmp = face_extension(stencil_index, 1);
                 face_extension(stencil_index, 1) = face_extension(stencil_index, 2);
                 face_extension(stencil_index, 2) = tmp;
             }
         }
 
+
         template <bool Orient = false, typename DM>
         MARS_INLINE_FUNCTION void build_stencil(const DM &dm,
                                                 const Integer localid,
-                                                const Integer stencil_index,
-                                                const Integer Orientation = 1) const {
-            SuperStencil::template build_stencil<Orient>(dm, localid, stencil_index, Orientation);
+                                                const Integer stencil_index) const {
+            const Integer orientation = dm.get_orientation(localid);
+            generate_stencil<Orient>(dm, localid, stencil_index, orientation);
+        }
 
-            build_diagonal_stencil<Orient>(dm, localid, stencil_index, Orientation);
+        template <bool Orient = false, typename DM>
+        MARS_INLINE_FUNCTION void generate_stencil(const DM &dm,
+                                                const Integer localid,
+                                                const Integer stencil_index,
+                                                const Integer orientation) const {
+            SuperStencil::template generate_stencil<Orient>(dm, localid, stencil_index, orientation);
+            build_diagonal_stencil<Orient>(dm, localid, stencil_index, orientation);
         }
 
         MARS_INLINE_FUNCTION
@@ -277,7 +295,7 @@ namespace mars {
         MARS_INLINE_FUNCTION void build_corner_face_stencil(const DM &dm,
                                                             const Integer localid,
                                                             const Integer stencil_index,
-                                                            const Integer Orientation) const {
+                                                            const Integer orientation) const {
             const Integer sfc = dm.local_to_sfc(localid);
 
             Octant oc = get_octant_from_sfc<DM::simplex_type::ElemType>(sfc);
@@ -290,7 +308,7 @@ namespace mars {
                 /* The orientation needed here anyway. However the reorder only if Orient true.
                 This needs the orientation unlike the previous stencil impl.which can be computed
                 without the orientation as only dependend on sfc. ex: face or corner nbh. */
-                if (Orientation == 1) {
+                if (orientation == DofOrient::yDir) {
                     if (corner < 2)
                         face_nr = 2;  // sfc face nbh downwards direction
                     else
@@ -308,7 +326,7 @@ namespace mars {
 
             /*FIXME for 3D.*/
             // Reorder only if Orient set.
-            if (Orient && Orientation == 0) {
+            if (Orient && orientation == DofOrient::xDir) {
                 const Integer tmp = corner_extension(stencil_index, 1);
                 corner_extension(stencil_index, 1) = corner_extension(stencil_index, 2);
                 corner_extension(stencil_index, 2) = tmp;
@@ -318,10 +336,10 @@ namespace mars {
         template <bool Orient = false, typename DM>
         MARS_INLINE_FUNCTION void build_stencil(const DM &dm,
                                                 const Integer localid,
-                                                const Integer stencil_index,
-                                                const Integer Orientation = 1) const {
-            SuperStokesStencil::template build_stencil<Orient>(dm, localid, stencil_index, Orientation);
-            build_corner_face_stencil<Orient>(dm, localid, stencil_index, Orientation);
+                                                const Integer stencil_index) const {
+            const Integer orientation = dm.get_orientation(localid);
+            SuperStokesStencil::template generate_stencil<Orient>(dm, localid, stencil_index, orientation);
+            build_corner_face_stencil<Orient>(dm, localid, stencil_index, orientation);
         }
 
         MARS_INLINE_FUNCTION

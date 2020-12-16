@@ -12,6 +12,8 @@ namespace mars {
     using Integer = long;
     static const long INVALID_INDEX = -1;
 
+    enum DofOrient : int { xDir = 0, yDir= 1, zDir= 2 };
+
     enum DofLabel : int { noLabel = 0, lVolume = 1, lCorner = 2, lFace = 3 };
 
     enum ElementType : int {
