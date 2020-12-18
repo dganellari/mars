@@ -35,12 +35,6 @@ namespace mars {
     //general width 1 stencil used as pressure stencil.
     using VCStencil = Stencil<DIM, 1>;
 
-    //use the FDDM (finite difference DM object). In this case build your stencil manually!
-    /* using SDM = FDDM<DistributedQuad4Mesh, 2, double, double>; */
-
-    //Or use the staggered DM object which builds needed staggered stencils for you!
-    /* using SDM = StagDM<DistributedQuad4Mesh, FSStencil, double, double>; */
-
     /*
     enum class DMDataDesc
     {
@@ -49,7 +43,10 @@ namespace mars {
     };
      */
 
-    using VolumeDM = FDM<DistributedQuad4Mesh, 2, double, double>;
+    using VolumeDM = VDM<DistributedQuad4Mesh, 2, double, double>;
+    /* using FaceDM = FDM<DistributedQuad4Mesh, 2, double, double>; */
+    /* using CornerDM = CDM<DistributedQuad4Mesh, 1, double>; */
+
     using DofH = DofHandler<DistributedQuad4Mesh, 2>;
 
     // use as more readable tuple index to identify the data
@@ -147,37 +144,6 @@ namespace mars {
             });
     }
 
-    /* void print_face_locally_owned(const SDM dm) {
-        const Integer size = dm.get_locally_owned_face_dofs().extent(0);
-        Kokkos::parallel_for(
-            "for", size, MARS_LAMBDA(const int index) {
-                // go through all the dofs of the elem_index element
-                const Integer local_dof = dm.get_face_dof(index);
-                // convert the local dof number to global dof number
-                Dof d = dm.local_to_global_dof(local_dof);
-
-                // do something. In this case we are printing.
-                printf("lofd: i: %li, local: %li, global: %li, proc: %li\n", index, local_dof, d.get_gid(),
-    d.get_proc());
-            });
-    }
-
-
-    void print_corner_locally_owned(const SDM dm) {
-        const Integer size = dm.get_locally_owned_corner_dofs().extent(0);
-        Kokkos::parallel_for(
-            "for", size, MARS_LAMBDA(const int index) {
-                // go through all the dofs of the elem_index element
-                const Integer local_dof = dm.get_corner_dof(index);
-                // convert the local dof number to global dof number
-                Dof d = dm.local_to_global_dof(local_dof);
-
-                // do something. In this case we are printing.
-                printf(
-                    "locd: i: %li, local: %li, global: %li, proc: %li\n", index, local_dof, d.get_gid(), d.get_proc());
-            });
-    } */
-
     // print thlocal and the global number of the dof within each element.
     // the dof enumeration within eachlement is topological
 
@@ -262,49 +228,28 @@ namespace mars {
         // the type of the mesh elements. In this case quad4 (Type=4)
         constexpr Integer Type = Elem::ElemType;
 
-        // create the dm object
+        // enumerate the dofs locally and globally. The ghost dofs structures
+        // are now created and ready to use for the gather and scatter ops.
         DofH dof_handler(&mesh, context);
         dof_handler.enumerate_dofs(context);
 
+        //create the DM object from the dof handler
         VolumeDM vdm(dof_handler);
-        // enumerate the dofs locally and globally. The ghost dofs structures
-        // are now created and ready to use for the gather and scatter ops.
-        // print locally owned dof numbering
-        /* print_dof<Type>(dm.get_global_dof_enum(), proc_num); */
+        /* FaceDM fdm(dof_handler); */
 
-        // print local dof numbering
-        /* print_dof<Type>(dm.get_local_dof_enum(), proc_num); */
-        /* print_dofs<Type>(dm, proc_num); */
         print_local_dofs(vdm);
         print_owned_dofs(vdm);
 
         print_partition_boundary_dofs(vdm);
         print_ghost_dofs(vdm);
 
-        /* classic width 1 stencil on volume nodes. */
-        //If finite difference DM fd_dm object is used then:
-        /* auto volume_stencil = mars::build_volume_stencil<VCStencil>(vdm); */
-
-        //Recommended: if separated volume dm is used then use as follow:
+        /* If you Orient then the same order is applied through all stencil
+         * based on the orientation. Otherwise no order but just a normal stencil. */
         /* auto volume_stencil = vdm.build_stencil<SStencil, Orient>(); */
         auto volume_stencil = vdm.build_stencil<SStencil>();
         print_stencil(vdm, volume_stencil);
 
-        /* classic width 2 stencil on face nodes in case the fddm object is used.*/
-        /* auto face_stencil = mars::build_face_stencil<FStencil, Orient>(dm);
-        print_stencil(dm, face_stencil); */
-
-        /* classic width 2 stencil on face nodes. */
-        /* auto corner_stencil = mars::build_corner_stencil<VCStencil>(dm);
-        print_stencil(dm, corner_stencil); */
-
-
-        /* dm.build_pressure_stencil();
-        print_stencil(dm, dm.get_pressure_stencil()); */
-        /* dm.build_stokes_stencil<Orient>(); */
-        /* print_stencil(dm, dm.get_stokes_stencil()); */
-
-        //it gives the size of the local dofs of the dm. If volume then only volume dofs.
+        // it gives the size of the local dofs of the dm. If volume then only volume dofs.
         const Integer dof_size = vdm.get_dof_size();
 
            // initialize the values by iterating through local dofs
@@ -334,7 +279,7 @@ namespace mars {
                     i, idata, odata, d.get_gid(), d.get_proc());
         }); */
 
-        //print using the data iterate
+        //print using the index iterate
         vdm.iterate(MARS_LAMBDA(const Integer i) {
             const Integer local_dof = vdm.get_local_dof(i);
 
@@ -346,30 +291,6 @@ namespace mars {
             printf("lid: %li, u: %lf, v: %lf, global: %li, rank: %i\n",
                     i, idata, odata, d.get_gid(), d.get_proc());
         });
-
-        /* using VectorReal = mars::ViewVectorType<Real>;
-        using VectorInt = mars::ViewVectorType<Integer>;
-        using VectorBool = mars::ViewVectorType<bool>; */
-
-        // if no facenr specified all the boundary is processed. If more than one and less than all
-        // is needed than choose all (do not provide face number) and check manually within the lambda
-        /* dm.boundary_owned_dof_iterate(MARS_LAMBDA(const Integer owned_dof_index, const Integer sfc) { */
-        /* do something with the local dof number if needed.
-        For example: If no face nr is specified at the boundary dof iterate: */
-        /*if (dm.is_boundary<Type, left>(local_dof) || dm.is_boundary<Type, up>(local_dof))*/
-        /* double point[2];
-        dm.get_dof_coordinates_from_sfc<Type>(sfc, point);
-        [>bc_fun(point, value);<]
-        bc_fun(point, x(owned_dof_index));
-        bc_fun(point, rhs(owned_dof_index));
-    }); */
-        /* dm.boundary_dof_iterate<INPUT> does the same except that provides the local_dof num and the reference
-         * on the INPUT data to be updated. Suitable when working with the internal data tuple directly */
-
-        /* setting boundary BoundaryConditions */
-        /* if (proc_num == 0) {
-            std::cout << "Boundary conditions set." << std::flush;
-        } */
 
         double time = timer.seconds();
         std::cout << "Stag DM Setup took: " << time << " seconds." << std::endl;
