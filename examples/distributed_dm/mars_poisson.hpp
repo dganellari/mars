@@ -33,10 +33,6 @@ uk =[ u1, ... uL ], L = 4
 //local to global
 u = P uk */
 
-#include "Kokkos_ArithTraits.hpp"
-#include "Kokkos_Bitset.hpp"
-#include "Kokkos_Parallel.hpp"
-#include "Kokkos_Parallel_Reduce.hpp"
 #include "mars_context.hpp"
 #include "mars_globals.hpp"
 // #include <bits/c++config.h>
@@ -69,6 +65,7 @@ namespace mars {
 
     /* using DMQ2 = DM<DistributedQuad4Mesh, 2, double, double>; */
     using DMQ2 = DM<DistributedQuad4Mesh, 1, double, double, double>;
+    using DOFHandler = DofHandler<DistributedQuad4Mesh, 1>;
     /*
     enum class DMDataDesc
     {
@@ -105,15 +102,15 @@ namespace mars {
 
     template <Integer Type>
     void print_dofs(const DMQ2 &dm, const int rank) {
-        SFC<Type> dof = dm.get_local_dof_enum();
+        auto dofhandler = dm.get_dof_handler();
+        SFC<Type> dof = dofhandler.get_local_dof_enum();
         Kokkos::parallel_for(
             "for", dof.get_elem_size(), MARS_LAMBDA(const int i) {
-                const Integer sfc_elem = dm.local_to_sfc(i);
-                const Integer global_dof = dm.local_to_global(i);
+                const Integer sfc_elem = dm.get_dof_handler().local_to_sfc(i);
+                const Integer global_dof = dm.get_dof_handler().local_to_global(i);
 
                 double point[3];
-                get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, dof.get_XDim(), dof.get_YDim(), dof.get_ZDim());
-
+                dofhandler.get_dof_coordinates_from_sfc<Type>(sfc_elem, point);
                 printf("dof: %li - gdof: %li --- (%lf, %lf) - rank: %i\n", i, global_dof, point[0], point[1], rank);
             });
     }
@@ -121,13 +118,14 @@ namespace mars {
     // print thlocal and the global number of the dof within each element.
     // the dof enumeration within eachlement is topological
     void print_elem_global_dof(const DMQ2 dm) {
-        dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
+        auto dof_handler = dm.get_dof_handler();
+        dof_handler.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
             // go through all the dofs of the elem_index element
             for (int i = 0; i < DMQ2::elem_nodes; i++) {
                 // get the local dof of the i-th index within thelement
-                const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+                const Integer local_dof = dof_handler.get_elem_local_dof(elem_index, i);
                 // convert the local dof number to global dof number
-                Dof d = dm.local_to_global_dof(local_dof);
+                Dof d = dof_handler.local_to_global_dof(local_dof);
 
                 // do something. In this case we are printing.
                 printf("lgm: i: %li, local: %li, global: %li, proc: %li\n", i, local_dof, d.get_gid(), d.get_proc());
@@ -136,7 +134,8 @@ namespace mars {
     }
 
     // print the local and global numbering of the ghost dofs per process
-    void print_ghost_dofs(const DMQ2 dm) {
+    void print_ghost_dofs(const DMQ2 datamanager) {
+        auto dm = datamanager.get_dof_handler();
         Kokkos::parallel_for(
             dm.get_ghost_lg_map().capacity(), KOKKOS_LAMBDA(Integer i) {
                 if (dm.get_ghost_lg_map().valid_at(i)) {
@@ -178,11 +177,13 @@ namespace mars {
         // the type of the mesh elements. In this case quad4 (Type=4)
         constexpr Integer Type = Elem::ElemType;
 
+        DOFHandler dof_handler(&mesh, context);
+        dof_handler.enumerate_dofs(context);
         // create the dm object
-        DMQ2 dm(&mesh, context);
+        DMQ2 dm(dof_handler);
         // enumerate the dofs locally and globally. The ghost dofs structures
         // are now created and ready to use for the gather and scatter ops.
-        dm.enumerate_dofs(context);
+        //
         // print locally owned dof numbering
         /* print_dof<Type>(dm.get_global_dof_enum(), proc_num); */
 
@@ -202,14 +203,14 @@ namespace mars {
         RHS rhs_fun;
         AnalyticalFun an_fun;
 
-        const Integer locally_owned_dof_size = dm.get_locally_owned_dof_size();
+        const Integer locally_owned_dof_size = dof_handler.get_owned_dof_size();
         printf("Locally owned dof size: %li\n", locally_owned_dof_size);
 
         VectorReal x("X", locally_owned_dof_size);
         VectorReal rhs("rhs", locally_owned_dof_size);
 
         if (proc_num == 0) {
-            std::cout << "Init PoissonOperator..." << std::flush;
+            std::cout << "Init PoissonOperator..." << std::endl;
         }
 
         PoissonOperator<DMQ2, INPUT, OUTPUT, RHSD> pop(context, dm);
@@ -223,12 +224,12 @@ namespace mars {
 
                 // if no facenr specified all the boundary is processed. If more than one and less than all
         // is needed than choose all (do not provide face number) and check manually within the lambda
-        dm.boundary_owned_dof_iterate(MARS_LAMBDA(const Integer owned_dof_index, const Integer sfc) {
+        dof_handler.boundary_owned_dof_iterate(MARS_LAMBDA(const Integer owned_dof_index, const Integer sfc) {
             /* do something with the local dof number if needed.
             For example: If no face nr is specified at the boundary dof iterate: */
             /*if (dm.is_boundary<Type, left>(local_dof) || dm.is_boundary<Type, up>(local_dof))*/
             double point[2];
-            dm.get_dof_coordinates_from_sfc<Type>(sfc, point);
+            dm.get_dof_handler().get_dof_coordinates_from_sfc<Type>(sfc, point);
             /* bc_fun(point, value); */
             bc_fun(point, x(owned_dof_index));
             bc_fun(point, rhs(owned_dof_index));
@@ -256,7 +257,7 @@ namespace mars {
         double time_bcg = timer_bcg.seconds();
         std::cout << "Bicgstab took: " << time_bcg << " seconds on proc: " << proc_num <<std::endl;
 
-        std::cout << "[" << proc_num << "] ndofs : " << dm.get_local_dof_enum().get_elem_size() << std::endl;
+        std::cout << "[" << proc_num << "] ndofs : " << dm.get_dof_handler().get_local_dof_enum().get_elem_size() << std::endl;
 
         /* dm.dof_iterate(MARS_LAMBDA(const Integer i) {
           printf("ggid: %li, INPUT: %lf, OUTPUT: %lf, rank: %i\n", i,

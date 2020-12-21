@@ -31,9 +31,9 @@ namespace mars {
     template <Integer N, class Implementation_ = DefaultImplementation>
     class Side;
 
-    template <class>
+    template <class Mesh, class Implementation_ = DefaultImplementation>
+    class EdgeSelect;
+
+    template <class Mesh, class Implementation_ = DefaultImplementation>
     class LongestEdgeSelect;
-    /*
-            template<class Implementation_= DefaultImplementation>
-            class Edge;*/
 }  // namespace mars

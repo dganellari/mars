@@ -124,6 +124,7 @@ std::vector<T> gather(T value, int root, MPI_Comm comm)
     return buffer;
 }
 
+#ifdef WITH_KOKKOS
 // Scatter sfc values of type T from root into each rank
 template <typename T>
 ViewVectorType<T> scatter(const ViewVectorType<T> global,
@@ -362,6 +363,7 @@ void gather_all_view(T value, const ViewVectorType<T>& buffer, MPI_Comm comm)
                  comm);
 }
 
+#endif
 // Gather individual values of type T from each rank into a std::vector on
 // the every rank.
 // T must be trivially copyable
@@ -467,6 +469,7 @@ gathered_vector<T> gather_all_with_partition(const std::vector<T> &values, MPI_C
         std::vector<count_type>(displs.begin(), displs.end()));
 }
 
+#ifdef WITH_KOKKOS
 template <typename T>
 ViewObject<T> reduce(const ViewObject<T> value, MPI_Op op, MPI_Comm comm)
 {
@@ -477,6 +480,7 @@ ViewObject<T> reduce(const ViewObject<T> value, MPI_Op op, MPI_Comm comm)
 
     return result;
 }
+#endif
 
 template <typename T>
 T reduce(T value, MPI_Op op, int root, MPI_Comm comm)
