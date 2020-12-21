@@ -130,7 +130,7 @@ public:
         context->distributed->i_send_recv_vec(send_count, receive_count);
 
         // create the scan recv mirror view from the receive count
-        reserve_scan_ghost(size + 1);
+        get_host_mesh()->reserve_scan_ghost(size + 1);
 
         scan_recv_mirror = create_mirror_view(get_view_scan_ghost());
         make_scan_index_mirror(scan_recv_mirror, receive_count);
@@ -152,11 +152,11 @@ public:
 
         Integer ghost_size = scan_recv_mirror(size);
 
-        reserve_ghost(ghost_size);
+        get_host_mesh()->reserve_ghost(ghost_size);
 
         /* std::cout << "Starting mpi send receive for the ghost layer" << std::endl; */
         context->distributed->i_send_recv_view(
-            get_view_ghost(), scan_recv_mirror.data(),
+            host_mesh->get_view_ghost(), scan_recv_mirror.data(),
             host_mesh->get_view_boundary(), scan_send_mirror.data());
         std::cout << "MPI send receive for the mesh ghost layer done." << std::endl;
 /*
@@ -483,35 +483,19 @@ public:
 
     Mesh *get_host_mesh() const { return host_mesh; }
 
-    void reserve_ghost(const Integer n_elements)
-    {
-        ghost_ = ViewVectorType<Integer>("ghost_", n_elements);
-    }
-
-    void reserve_scan_ghost(const Integer n_elements)
-    {
-        scan_ghost_ = ViewVectorType<Integer>("scan_ghost_", n_elements);
-    }
+    MARS_INLINE_FUNCTION
+    Integer get_ghost_elem(const Integer i) const { return get_mesh()->get_ghost_sfc(i); }
 
     MARS_INLINE_FUNCTION
-    void set_view_ghost(const ViewVectorType<Integer> &b) { ghost_ = b; }
+    const ViewVectorType<Integer> &get_view_boundary() const { return get_host_mesh()->get_view_boundary(); }
 
     MARS_INLINE_FUNCTION
-    Integer get_ghost_elem(const Integer i) const { return ghost_(i); }
-
-    MARS_INLINE_FUNCTION
-    const ViewVectorType<Integer> &get_view_ghost() const { return ghost_; }
-
-    MARS_INLINE_FUNCTION
-    void set_view_scan_ghost(const ViewVectorType<Integer> &b)
-    {
-        scan_ghost_ = b;
-    }
+    const ViewVectorType<Integer> &get_view_ghost() const { return get_host_mesh()->get_view_ghost(); }
 
     MARS_INLINE_FUNCTION
     const ViewVectorType<Integer> &get_view_scan_ghost() const
     {
-        return scan_ghost_;
+        return get_host_mesh()->get_view_scan_ghost();
     }
 
     MARS_INLINE_FUNCTION
@@ -589,13 +573,20 @@ public:
                     // not neccessary anymore
     }
 
+    //return the sfc from the sfc index from either ghost or local index
+    template <bool Ghost>
+    MARS_INLINE_FUNCTION
+    Integer get_sfc(const Integer sfc_index)
+    {
+        if(Ghost)
+            return get_ghost_elem(sfc_index);
+        else
+            return mesh->get_sfc(sfc_index);
+    }
+
 private:
     Mesh *mesh;      // device mesh
     Mesh *host_mesh; // host mesh that is copied to device.
-
-    // ghost and boundary layers
-    ViewVectorType<Integer> ghost_;
-    ViewVectorType<Integer> scan_ghost_;
 
     // ghost data layer
     user_tuple user_data_;
@@ -613,12 +604,15 @@ private:
 template <class UserData, Integer Type>
 void create_ghost_layer(const context &context, UserData &data)
 {
-    std::cout << "Building the ghost layer (boundary element set)..."
-              << std::endl;
     data.get_host_mesh()->template build_boundary_element_sets<Type>();
 
     data.exchange_ghost_counts(context);
     data.exchange_ghost_layer(context);
+
+    data.copy_mesh_to_device(); //update the boundary device pointers
+
+    std::cout << "Finished building the ghost layer (boundary element set). Rank: "
+              << data.get_host_mesh()->get_proc()<< std::endl;
 }
 
 template <class UserData>
@@ -627,7 +621,7 @@ void exchange_ghost_user_data(const context &context, UserData &data)
     int size = num_ranks(context);
 
     if (data.get_view_scan_recv_mirror()(size) ==
-        data.get_view_ghost().extent(0))
+        data.get_host_mesh()->get_view_ghost().extent(0))
     {
         std::cout << "Exchange the ghost data..." << std::endl;
         data.exchange_ghost_data(context);

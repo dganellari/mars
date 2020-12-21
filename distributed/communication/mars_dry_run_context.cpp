@@ -32,8 +32,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 #include <string>
 #include <vector>
 
+#ifndef WITH_KOKKOS
 #include <mars_distributed_context.hpp>
 //#include <mars_threading.hpp>
+#endif
 
 namespace mars {
 
@@ -73,7 +75,7 @@ struct dry_run_context_impl {
 
         return gathered_vector<Integer>(std::move(gathered_gids), std::move(partition));
     }
-
+#ifdef WITH_KOKKOS
     ViewVectorType<Integer>
     scatter_gids(const ViewVectorType<Integer> global, const ViewVectorType<Integer> local) const
     {
@@ -107,6 +109,13 @@ struct dry_run_context_impl {
     {
     }
 
+    template <typename T>
+    ViewObject<T> min(ViewObject<T> value) const { return value; }
+
+    template <typename T>
+    ViewObject<T> max(ViewObject<T> value) const { return value; }
+
+#endif
     int id() const { return 0; }
 
     int size() const { return num_ranks_; }
@@ -116,12 +125,6 @@ struct dry_run_context_impl {
 
     template <typename T>
     T max(T value) const { return value; }
-
-    template <typename T>
-    ViewObject<T> min(ViewObject<T> value) const { return value; }
-
-    template <typename T>
-    ViewObject<T> max(ViewObject<T> value) const { return value; }
 
     template <typename T>
     T sum(T value) const { return value * num_ranks_; }

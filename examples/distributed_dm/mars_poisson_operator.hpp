@@ -24,9 +24,9 @@ namespace mars {
             /* auto context = this->ctx(); */
             auto fe_values = this->values();
             auto dm = fe_values.dm();
+            auto dof_handler = dm.get_dof_handler();
 
-            dm.dof_iterate(MARS_LAMBDA(const Integer i) {
-                    dm.template get_dof_data<OUTPUT>(i) = 0.0; });
+            dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) { dm.template get_dof_data<OUTPUT>(i) = 0.0; });
 
             dm.template set_locally_owned_data<INPUT>(x);
 
@@ -40,8 +40,8 @@ namespace mars {
 
             // cleanup
             /* dm.boundary_dof_iterate<INPUT>(MARS_LAMBDA(const Integer local_dof, INPUTDT &value) { */
-            dm.template boundary_dof_iterate<INPUT>(MARS_LAMBDA(const Integer local_dof, DMDataType<INPUT> &value) {
-                dm.template get_dof_data<OUTPUT>(local_dof) = value;
+            dof_handler.boundary_dof_iterate(MARS_LAMBDA(const Integer local_dof) {
+                dm.template get_dof_data<OUTPUT>(local_dof) = dm.template get_dof_data<INPUT>(local_dof);
             });
 
             dm.template get_locally_owned_data<OUTPUT>(op_x);
