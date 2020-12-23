@@ -10,7 +10,8 @@ namespace mars {
     template <class Mesh, Integer degree, typename... T>
     class DM : public BDM<Mesh, degree, T...> {
     public:
-        /* using UD = UserData<Mesh, double>; */
+        static constexpr Integer Degree = degree;
+
         using UD = UserData<Mesh>;
         using simplex_type = typename Mesh::Elem;
 
@@ -178,6 +179,17 @@ namespace mars {
                     const Integer local = sfc_to_local(sfc);
                     dof_data(local) = x(i);
                 });
+        }
+
+        /* building the stencil is the responsibility of the specialized DM. */
+        template <typename ST, bool Orient = false>
+        ST build_stencil() {
+            return SuperDM::get_dof_handler().build_stencil();
+        }
+
+        /* building the FE dof map*/
+        auto build_fe_dof_map() {
+            return SuperDM::get_dof_handler().build_fe_dof_map();
         }
 
     private:

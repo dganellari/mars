@@ -25,7 +25,7 @@
 #include "mars_distributed_data_management.hpp"
 #include "mars_distributed_mesh_generation.hpp"
 #include "mars_mpi_guard.hpp"
-
+#include "mars_distributed_finite_element.hpp"
 #endif
 
 #endif  // WITH_KOKKOS
@@ -77,18 +77,18 @@ namespace mars {
         return true;
     }
 
-    template <class DMQ2>
+    template <class DMQ2, class FEM = FEDofMap<DMQ2::Degree>>
     class FEDMValues {
     public:
         template <Integer idx>
         using DMDataType = typename DMQ2::template UserDataType<idx>;
 
         // use as more readable tuple index to identify the data
-        FEDMValues(DMQ2 &d) : dm_(d) {}
+        FEDMValues(DMQ2 &d, FEM &f) : dm_(d), fe_(f) {}
 
         //OK as long as we are doing affine meshes in 2D
         template <Integer Type>
-        void compute_invJ_and_detJ(const DMQ2 &data, ViewVectorType<Real> detJ, ViewMatrixType<Real> invJ) {
+        void compute_invJ_and_detJ(const DMQ2 &data, const FEM &fe, ViewVectorType<Real> detJ, ViewMatrixType<Real> invJ) {
             auto dm = data.get_dof_handler();
             dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
                 Real J[4];
@@ -96,10 +96,10 @@ namespace mars {
                 Real point_ref[2];
                 Real next_point[2];
 
-                Integer local_dof = dm.get_elem_local_dof(elem_index, 0);
+                Integer local_dof = fe.get_elem_local_dof(elem_index, 0);
                 dm.template get_dof_coordinates_from_local<Type>(local_dof, point_ref);
 
-                local_dof = dm.get_elem_local_dof(elem_index, 1);
+                local_dof = fe.get_elem_local_dof(elem_index, 1);
                 dm.template get_dof_coordinates_from_local<Type>(local_dof, next_point);
 
                 // col 0, p1
@@ -107,7 +107,7 @@ namespace mars {
                 J[2] = next_point[1] - point_ref[1];
 
                 // we skip p2 and get p3
-                local_dof = dm.get_elem_local_dof(elem_index, 3);
+                local_dof = fe.get_elem_local_dof(elem_index, 3);
                 dm.template get_dof_coordinates_from_local<Type>(local_dof, next_point);
 
                 // col 1, p3
@@ -128,10 +128,10 @@ namespace mars {
         }
 
         template <Integer INPUT>
-        MARS_INLINE_FUNCTION void gather_elem_data(const DMQ2 &dm, const Integer elem_index, DMDataType<INPUT> *sol) {
-            for (int i = 0; i < DMQ2::elem_nodes; i++) {
+        MARS_INLINE_FUNCTION void gather_elem_data(const DMQ2 &dm, const FEM &fe, const Integer elem_index, DMDataType<INPUT> *sol) {
+            for (int i = 0; i < FEM::elem_nodes; i++) {
                 // forach dof get the local number
-                const Integer local_dof = dm.get_dof_handler().get_elem_local_dof(elem_index, i);
+                const Integer local_dof = fe.get_elem_local_dof(elem_index, i);
                 // use the local number to read the corresponding user data
                 sol[i] = dm.template get_dof_data<INPUT>(local_dof);
             }
@@ -142,6 +142,7 @@ namespace mars {
         // In that case maybe a better way to go is parallel through the quad points.
         template <Integer INPUT>
         void integrate(const DMQ2 &dm,
+                       const FEM &fe,
                        const FEQuad4<Real>::Quadrature &quad,
                        ViewVectorType<Real> det_J,
                        ViewMatrixType<Real> J_inv,
@@ -162,7 +163,7 @@ namespace mars {
                     J_inv_e[k] = J_inv(elem_index, k);
                 }
 
-                gather_elem_data<INPUT>(dm, elem_index, sol);
+                gather_elem_data<INPUT>(dm, fe, elem_index, sol);
 
                 for (int k = 0; k < n_qp; ++k) {
                     for (int d = 0; d < dim; ++d) {
@@ -178,9 +179,9 @@ namespace mars {
                     assert(det_J(elem_index) > 0.0);
                     const Real dx = det_J(elem_index) * q_weights(k);
 
-                    for (int i = 0; i < DMQ2::elem_nodes; i++) {
+                    for (int i = 0; i < FEM::elem_nodes; i++) {
                         // for each dof get the local number
-                        const Integer local_dof = dm.get_dof_handler().get_elem_local_dof(elem_index, i);
+                        const Integer local_dof = fe.get_elem_local_dof(elem_index, i);
                         FEQuad4<Real>::Grad::affine_f(i, J_inv_e, pk, gi);
 
                         res(elem_index, i) += Algebra<dim>::dot(g, gi) * dx;
@@ -194,7 +195,7 @@ namespace mars {
         template <Integer OUTPUT>
         void add_dof_contributions(const ViewMatrixType<Real> &res) {
             auto dof_handler = dm_.get_dof_handler();
-            auto eld = dof_handler.get_elem_dof_enum();
+            auto eld = fe_.get_elem_dof_map();
             auto dof_data = dm_.template get_dof_data<OUTPUT>();
             dof_handler.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
                 // update output
@@ -211,7 +212,7 @@ namespace mars {
         void form_operator() {
             ViewMatrixType<Real> res("res", dm_.get_dof_handler().get_elem_size(), DMQ2::elem_nodes);
 
-            integrate<INPUT>(dm_, quad, det_J_, inv_J_, res);
+            integrate<INPUT>(dm_, fe_, quad, det_J_, inv_J_, res);
             add_dof_contributions<OUTPUT>(res);
         }
 
@@ -219,6 +220,7 @@ namespace mars {
         void integrate_rhs(F f, ViewMatrixType<T> &res) {
             auto det_J = det_J_;
             auto dm = dm_.get_dof_handler();
+            auto fe = fe_;
 
             dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
                 using Elem = typename DMQ2::simplex_type;
@@ -226,9 +228,9 @@ namespace mars {
 
                 const T detj = det_J(elem_index);
 
-                for (int i = 0; i < DMQ2::elem_nodes; i++) {
+                for (int i = 0; i < FEM::elem_nodes; i++) {
                     // forach dof get the local number
-                    const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+                    const Integer local_dof = fe.get_elem_local_dof(elem_index, i);
                     dm.template get_dof_coordinates_from_local<Elem::ElemType>(local_dof, p);
 
                     const T val = f(p);
@@ -253,7 +255,7 @@ namespace mars {
 
             det_J_ = ViewVectorType<Real>("detJ", dm_.get_dof_handler().get_elem_size());
             inv_J_ = ViewMatrixType<Real>("J_inv", dm_.get_dof_handler().get_elem_size(), 4);
-            compute_invJ_and_detJ<Elem::ElemType>(dm_, det_J_, inv_J_);
+            compute_invJ_and_detJ<Elem::ElemType>(dm_, fe_, det_J_, inv_J_);
 
             quad = FEQuad4<Real>::Quadrature::make();
         }
@@ -268,6 +270,7 @@ namespace mars {
 
     private:
         DMQ2 &dm_;
+        FEM &fe_;
 
         ViewVectorType<Real> det_J_;
         ViewMatrixType<Real> inv_J_;

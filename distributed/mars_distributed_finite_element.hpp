@@ -8,7 +8,7 @@
 namespace mars {
 
     template <Integer degree>
-    class FE {
+    class FEDofMap {
     public:
 
         static constexpr Integer volume_nodes = (degree - 1) * (degree - 1);
@@ -17,7 +17,7 @@ namespace mars {
         static constexpr Integer elem_nodes = (degree + 1) * (degree + 1);
 
         MARS_INLINE_FUNCTION
-        FE() = default;
+        FEDofMap() = default;
 
         template <class DofHandler>
         struct EnumLocalDofs {
@@ -26,7 +26,7 @@ namespace mars {
 
             MARS_INLINE_FUNCTION void volume_iterate(const Integer sfc_index, Integer &index) const {
                 Octant o;
-                Octant oc = dofHandler->get_data().get_mesh()->get_octant(sfc_index);
+                Octant oc = dofHandler.get_data().get_mesh()->get_octant(sfc_index);
                 // go through all the inside dofs for the current element
                 // Currently no topological order within the volume dofs if more than 1.
                 for (int j = 0; j < degree - 1; j++) {
@@ -34,14 +34,14 @@ namespace mars {
                         o.x = degree * oc.x + i + 1;
                         o.y = degree * oc.y + j + 1;
                         Integer sfc = get_sfc_from_octant<Type>(o);
-                        Integer localid = dofHandler->sfc_to_local(sfc);
+                        Integer localid = dofHandler.sfc_to_local(sfc);
                         elem_dof_enum(sfc_index, index++) = localid;
                     }
                 }
             }
 
             MARS_INLINE_FUNCTION void corner_iterate(const Integer sfc_index, Integer &index) const {
-                Octant oc = dofHandler->get_data().get_mesh()->get_octant(sfc_index);
+                Octant oc = dofHandler.get_data().get_mesh()->get_octant(sfc_index);
 
                 // go through all the corner dofs for the current element counterclockwise
                 /* for (const auto &x : {{0,0}, {1, 0}, {1, 1}, {0, 1}}) */
@@ -62,7 +62,7 @@ namespace mars {
 
             template <Integer part>
             MARS_INLINE_FUNCTION void face_iterate(const Integer sfc_index, Integer &index) const {
-                Octant oc = dofHandler->get_data().get_mesh()->get_octant(sfc_index);
+                Octant oc = dofHandler.get_data().get_mesh()->get_octant(sfc_index);
                 // side  0 means origin side and 1 destination side.
                 for (int dir = 0; dir < 2; ++dir) {
                     Octant face_cornerA = DofHandler::template enum_face_corner<part>(oc, dir);
@@ -86,10 +86,10 @@ namespace mars {
                 // TODO: 3D part
             }
 
-            EnumLocalDofs(DofHandler *d, ViewMatrixType<Integer> ede, ViewVectorType<Integer> stl)
+            EnumLocalDofs(DofHandler d, ViewMatrixType<Integer> ede, ViewVectorType<Integer> stl)
                 : dofHandler(d), elem_dof_enum(ede), sfc_to_local(stl) {}
 
-            DofHandler *dofHandler;
+            DofHandler dofHandler;
             ViewMatrixType<Integer> elem_dof_enum;
             ViewVectorType<Integer> sfc_to_local;
         };
@@ -103,12 +103,12 @@ namespace mars {
             Kokkos::parallel_for("enum_local_dofs",
                                  size,
                                  EnumLocalDofs<DofHandler>(
-                                     &handler, elem_dof_enum,
+                                     handler, elem_dof_enum,
                                      handler.get_local_dof_enum().get_view_sfc_to_local()));
         }
 
         MARS_INLINE_FUNCTION
-        const ViewMatrixType<Integer> get_elem_dof_enum() const { return elem_dof_enum; }
+        const ViewMatrixType<Integer> get_elem_dof_map() const { return elem_dof_enum; }
 
         MARS_INLINE_FUNCTION
         const Integer get_elem_local_dof(const Integer elem_index, const Integer i) const {
@@ -120,11 +120,9 @@ namespace mars {
         ViewMatrixType<Integer> elem_dof_enum;
     };
 
-    template <typename DofHandler>
-    auto build_fe(const DofHandler &dofHandler) {
-        FE<DofHandler::Degree> fe;
-        fe.enumerate_local_dofs(dofHandler);
-        return fe;
+    template <typename DM>
+    auto build_fe_dof_map(const DM &dofHandler) {
+        return dofHandler.build_fe_dof_map();
     }
 
 }  // namespace mars
