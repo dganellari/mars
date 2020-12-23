@@ -11,6 +11,7 @@
 #include <sstream>
 #include <vector>
 
+#include "mars_longest_edge_kokkos.hpp"
 #include "mars_imesh_kokkos.hpp"
 #include "mars_non_simplex_kokkos.hpp"
 #include "mars_simplex_kokkos.hpp"
@@ -1532,7 +1533,7 @@ namespace mars {
                     }*/
             KOKKOS_INLINE_FUNCTION
             void operator()(int x) const {
-                LongestEdgeSelect<Mesh> es;
+                LongestEdgeSelect<Mesh, KokkosImplementation> es;
                 es.select(*mesh, x);
             }
         };

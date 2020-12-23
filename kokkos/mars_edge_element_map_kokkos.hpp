@@ -11,7 +11,7 @@
 
 #include "mars_edge_kokkos.hpp"
 #include "mars_edge_select_kokkos.hpp"
-#include "mars_longest_edge.hpp"
+#include "mars_longest_edge_kokkos.hpp"
 #include "mars_fwd.hpp"
 
 namespace mars {

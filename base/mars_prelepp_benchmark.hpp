@@ -4,116 +4,102 @@
 #include "mars_longest_edge.hpp"
 #include "mars_prelepp_bisection.hpp"
 
-#include "mars_quality.hpp"
 #include <chrono>
-
+#include "mars_quality.hpp"
 
 namespace mars {
-	template<class Mesh>
-	class PreLeppBenchmark {
-	public:
-		// using EdgeSelectPtr = std::shared_ptr<ParallelEdgeSelect<Mesh>>;
+    template <class Mesh>
+    class PreLeppBenchmark {
+    public:
+        static const Integer Dim = Mesh::Dim;
+        static const Integer ManifoldDim = Mesh::ManifoldDim;
 
-		static const Integer Dim 		 = Mesh::Dim;
-		static const Integer ManifoldDim = Mesh::ManifoldDim;
+        void run(const Integer n_levels, const Mesh &mesh_in, const std::string &output_path) {
+            auto es = std::make_shared<LongestEdgeSelect<Mesh>>();
 
-		void run(
-			const Integer n_levels,
-			const Mesh &mesh_in,
-			const std::string &output_path)
-		{
+            // refine once for creating nice intial set-up for newest vertex algorithm
+            auto mesh = mesh_in;
 
+            PrecomputeLeppTreeBisection<Mesh> b(mesh);
+            // PrecomputeLeppBisection<Mesh> b(mesh);
+            b.uniform_refine(1);
 
-			auto es = std::make_shared<LongestEdgeSelect<Mesh>>();
+            Integer exp_num = 0;
+            run_benchmark(n_levels, es, mesh, output_path, exp_num++);
+        }
 
-			//refine once for creating nice intial set-up for newest vertex algorithm
-			auto mesh = mesh_in;
+        template <class EdgeSelectPtr>
+        void run_benchmark(const Integer n_levels,
+                           const EdgeSelectPtr &edge_select,
+                           const Mesh &mesh_in,
+                           const std::string &output_path,
+                           const Integer exp_num) {
+            using namespace mars;
+            std::cout << "======================================\n";
 
-			PrecomputeLeppTreeBisection<Mesh> b(mesh);
-			//PrecomputeLeppBisection<Mesh> b(mesh);
-			b.uniform_refine(1);
+            // copy mesh
+            auto mesh = mesh_in;
 
-			Integer exp_num = 0;
-			run_benchmark(n_levels, es, mesh, output_path, exp_num++);
-		}
+            Quality<Mesh> q(mesh);
+            q.compute();
 
-		template<class EdgeSelectPtr>
-		void run_benchmark(
-			const Integer n_levels,
-			const EdgeSelectPtr &edge_select,
-			const Mesh &mesh_in,
-			const std::string &output_path,
-			const Integer exp_num
-			)
-		{
-			using namespace mars;
-			std::cout << "======================================\n";
+            mark_boundary(mesh);
 
-			//copy mesh
-			auto mesh = mesh_in;
+            std::cout << mesh.n_boundary_sides() << std::endl;
+            std::cout << "volume: " << mesh.volume() << std::endl;
+            std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 
-			Quality<Mesh> q(mesh);
-			q.compute();
+            PrecomputeLeppTreeBisection<Mesh> b(mesh);
+            // PrecomputeLeppBisection<Mesh> b(mesh);
 
-			mark_boundary(mesh);
+            b.uniform_refine(2);
 
-			std::cout << mesh.n_boundary_sides() << std::endl;
-			std::cout << "volume: " << mesh.volume() << std::endl;
-			std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+            std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
 
-			PrecomputeLeppTreeBisection<Mesh> b(mesh);
-			//PrecomputeLeppBisection<Mesh> b(mesh);
+            for (Integer i = 0; i < n_levels; ++i) {
+                std::vector<mars::Integer> elements;
 
-			b.uniform_refine(2);
+                Vector<Real, Dim> center;
+                center.set(0.5);
 
-			std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
+                mark_hypersphere_for_refinement(mesh, center, 0.5, elements);
 
-			for(Integer i = 0; i < n_levels; ++i) {
-				std::vector<mars::Integer> elements;
+                std::cout << "n_marked(" << (i + 1) << "/" << n_levels << ") : " << elements.size() << std::endl;
 
-				Vector<Real, Dim> center;
-				center.set(0.5);
+                b.refine(elements);
 
-				mark_hypersphere_for_refinement(
-					mesh,
-					center,
-					0.5,
-					elements
-					);
+                q.compute();
+            }
 
-				std::cout << "n_marked(" << (i+1) << "/" << n_levels << ") : " << elements.size() << std::endl;
+            std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
 
-				b.refine(elements);
+            auto duration = std::chrono::duration_cast<std::chrono::seconds>(t2 - t1).count();
+            std::cout << "Lepp refinement took: " << duration << " seconds." << std::endl;
 
-				q.compute();
-			}
+            std::cout << "volume: " << mesh.volume() << std::endl;
+            std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
 
-			std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
+            if (n_levels <= 20 && mesh.ManifoldDim < 4) {
+                VTKMeshWriter<Mesh> w;
+                w.write("LEPP_" + edge_select->name() + std::to_string(n_levels) + ".vtu", mesh);
+            }
 
-			auto duration = std::chrono::duration_cast < std::chrono::seconds > (t2 - t1).count();
-			std::cout << "Lepp refinement took: "<< duration<<" seconds."<<std::endl;
+            mesh.update_dual_graph();
+            // q.report.normalize_data_points();
 
-			std::cout << "volume: " << mesh.volume() << std::endl;
-			std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+            std::string suffix;
+            if (edge_select->is_recursive()) {
+                suffix = "_Recursive";
+            }
 
-			if(n_levels <= 20 && mesh.ManifoldDim <4){
-				VTKMeshWriter<Mesh> w;
-				w.write("LEPP_" + edge_select->name() + std::to_string(n_levels) + ".vtu", mesh);
-			}
+            q.save_csv(
+                edge_select->name() + suffix,
+                output_path + "/Quality_" + std::to_string(exp_num) + "_" + edge_select->name() + suffix + "_lepp.csv",
+                true);  // exp_num == 0
+            q.save_report(output_path + "/Quality_" + edge_select->name() + suffix + "_lepp.svg");
+            std::cout << "======================================\n";
+        }
+    };
+}  // namespace mars
 
-			mesh.update_dual_graph();
-			// q.report.normalize_data_points();
-
-			std::string suffix;
-			if(edge_select->is_recursive()) {
-				suffix = "_Recursive";
-			}
-
-			q.save_csv(edge_select->name() + suffix, output_path + "/Quality_" + std::to_string(exp_num) + "_" + edge_select->name() + suffix + "_lepp.csv", true); //exp_num == 0
-			q.save_report(output_path + "/Quality_" + edge_select->name() + suffix + "_lepp.svg");
-			std::cout << "======================================\n";
-		}
-	};
-}
-
-#endif //MARS_BENCHMARK_HPP
+#endif  // MARS_BENCHMARK_HPP

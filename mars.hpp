@@ -34,6 +34,7 @@
 #include "mars_mesh_generation.hpp"
 
 #ifdef WITH_KOKKOS
+#include "mars_longest_edge_kokkos.hpp"
 #include "mars_mesh_kokkos.hpp"
 #include "mars_lepp_benchmark_kokkos.hpp"
 #include "mars_test_kokkos.hpp"

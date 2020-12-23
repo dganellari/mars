@@ -1,3 +1,5 @@
+if(Kokkos_FOUND)
+
 list(APPEND MARS_EXAMPLES distributed_dm unstructured)
 
 find_project_files(CMAKE_CURRENT_SOURCE_DIR MARS_EXAMPLES LOCAL_HEADERS
@@ -12,10 +14,17 @@ target_link_libraries(mars_examples mars_io)
 target_include_directories(mars_examples PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(mars_examples PUBLIC ${CMAKE_BINARY_DIR})
 target_include_directories(mars_examples PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
 target_include_directories(mars_examples
                            PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/unstructured)
+
+if(MPI_FOUND)
+
 target_include_directories(mars_examples
                            PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/distributed_dm)
+target_include_directories(mars_examples
+                           PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/distributed_dm/staggered)
+endif()
 
 foreach(MODULE ${MARS_EXAMPLES})
     target_include_directories(mars_examples BEFORE PUBLIC ${MODULE})
@@ -27,3 +36,5 @@ set(MARS_LIBRARIES
 set(MARS_INCLUDES
     "${MARS_INCLUDES};${DISTRIBUTED_INCLUDES}"
     PARENT_SCOPE)
+
+endif()

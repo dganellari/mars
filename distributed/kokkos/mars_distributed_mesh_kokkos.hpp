@@ -247,6 +247,12 @@ public:
     }
 
     MARS_INLINE_FUNCTION
+    Integer get_boundary_sfc(const Integer sfc_index) const
+    {
+        return boundary_(sfc_index);
+    }
+
+    MARS_INLINE_FUNCTION
     void set_view_boundary(const ViewVectorType<Integer> &b)
     {
         boundary_ = b;
@@ -1215,12 +1221,41 @@ public:
         return periodic;
     }
 
+    MARS_INLINE_FUNCTION
+    Integer get_ghost_sfc(const Integer index) const
+    {
+        return ghost_(index);
+    }
+
+    MARS_INLINE_FUNCTION
+    Integer get_sfc(const Integer sfc_index) const
+    {
+        return local_sfc_(sfc_index);
+    }
 
     MARS_INLINE_FUNCTION
     Octant get_octant(const Integer sfc_index) const
     {
         Integer sfc_code = local_sfc_(sfc_index);
         return get_octant_from_sfc<Elem::ElemType>(sfc_code);
+    }
+
+    MARS_INLINE_FUNCTION
+    Octant octant_from_sfc(const Integer sfc) const
+    {
+        return get_octant_from_sfc<Elem::ElemType>(sfc);
+    }
+
+    MARS_INLINE_FUNCTION
+    Octant get_octant_face_nbh(const Octant& oc, const Integer face_nr) const
+    {
+        return oc.face_nbh<Elem::ElemType>(face_nr, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
+    }
+
+    MARS_INLINE_FUNCTION
+    Octant get_octant_corner_nbh(const Octant& oc, const Integer corner_nr)
+    {
+        return oc.corner_nbh<Elem::ElemType>(corner_nr, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
     }
 
     MARS_INLINE_FUNCTION
@@ -1239,7 +1274,22 @@ public:
         return oc.corner_nbh<Elem::ElemType>(corner_nr, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
     }
 
+    void reserve_ghost(const Integer n_elements) { ghost_ = ViewVectorType<Integer>("ghost_", n_elements); }
 
+    void reserve_scan_ghost(const Integer n_elements) {
+        scan_ghost_ = ViewVectorType<Integer>("scan_ghost_", n_elements);
+    }
+
+    MARS_INLINE_FUNCTION
+    const ViewVectorType<Integer> &get_view_scan_ghost() const
+    {
+        return scan_ghost_;
+    }
+
+    MARS_INLINE_FUNCTION
+    const ViewVectorType<Integer> &get_view_ghost() const {
+        return ghost_;
+    }
 
 private:
     ViewMatrixTextureC<Integer, Comb::value, 2> combinations;
@@ -1264,6 +1314,10 @@ private:
     ViewVectorType<Integer> boundary_; //sfc code for the ghost layer
     ViewVectorType<Integer> boundary_lsfc_index_; // view index of the previous
     ViewVectorType<Integer> scan_boundary_;
+
+    // ghost and boundary layers
+    ViewVectorType<Integer> ghost_;
+    ViewVectorType<Integer> scan_ghost_;
 };
 
 using DistributedMesh1 = mars::Mesh<1, 1, DistributedImplementation, Simplex<1, 1, DistributedImplementation>>;
