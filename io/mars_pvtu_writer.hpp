@@ -31,20 +31,20 @@
 
 namespace mars {
 
-    template <class DM, Integer Type>
+    template <class DM, Integer Type, class FEM = FEDofMap<DM::Degree>>
     class PVTUMeshWriter {
     private:
         static const int VTU_TRIANGLE = 5;
         static const int VTU_QUAD = 9;
 
     public:
-        bool write_vtu(const std::string &path, const DM &dm) {
+        bool write_vtu(const std::string &path, const DM &dm, const FEM &fe) {
             vtkSmartPointer<vtkXMLUnstructuredGridWriter> writer = vtkSmartPointer<vtkXMLUnstructuredGridWriter>::New();
 
             vtkSmartPointer<vtkUnstructuredGrid> unstructuredGrid = vtkSmartPointer<vtkUnstructuredGrid>::New();
 
             convert_points(dm, *unstructuredGrid);
-            convert_cells(dm, *unstructuredGrid);
+            convert_cells(dm, fe, *unstructuredGrid);
 
             writer->SetFileName(path.c_str());
             writer->SetInputData(unstructuredGrid);
@@ -52,13 +52,13 @@ namespace mars {
             return true;
         }
 
-        bool write_vtu(const std::string &path, const DM &dm, const ViewVectorType<Real> &data) {
+        bool write_vtu(const std::string &path, const DM &dm, const FEM &fe, const ViewVectorType<Real> &data) {
             vtkSmartPointer<vtkXMLUnstructuredGridWriter> writer = vtkSmartPointer<vtkXMLUnstructuredGridWriter>::New();
 
             vtkSmartPointer<vtkUnstructuredGrid> unstructuredGrid = vtkSmartPointer<vtkUnstructuredGrid>::New();
 
             convert_points(dm, *unstructuredGrid);
-            convert_cells(dm, *unstructuredGrid);
+            convert_cells(dm, fe, *unstructuredGrid);
 
             auto fun = vtkSmartPointer<vtkDoubleArray>::New();
 
@@ -107,7 +107,7 @@ namespace mars {
             unstructuredGrid.SetPoints(points);
         }
 
-        void convert_cells(const DM &dm, vtkUnstructuredGrid &unstructuredGrid) {
+        void convert_cells(const DM &dm, const FEM &fe, vtkUnstructuredGrid &unstructuredGrid) {
             SFC<Type> dof = dm.get_local_dof_enum();
 
             vtkSmartPointer<vtkCellArray> cell_array = vtkSmartPointer<vtkCellArray>::New();
@@ -116,7 +116,7 @@ namespace mars {
                 vtkSmartPointer<vtkQuad> quad = vtkSmartPointer<vtkQuad>::New();
 
                 for (int i = 0; i < DM::elem_nodes; i++) {
-                    const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+                    const Integer local_dof = fe.get_elem_local_dof(elem_index, i);
                     Dof d = dm.local_to_global_dof(local_dof);
 
                     const Integer g_id = d.get_gid();

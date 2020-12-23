@@ -56,7 +56,7 @@ namespace mars {
     // class FEValues<MeshQuad4> : public FEDMValues<DMQuad4> {};
 
     // template <>
-    // class UMeshLaplace<MeshQuad4> : public PoissonOperator<DMQuad4, INPUT, OUTPUT, RHSD> {};
+    // class UMeshLaplace<MeshQuad4> : public PoissonOperator<INPUT, OUTPUT, RHSD, DMQuad4> {};
 
     // template <>
     // class Interpolate<MeshQuad4> : public DMInterpolate<DMQuad4> {};

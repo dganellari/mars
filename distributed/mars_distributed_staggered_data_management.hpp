@@ -136,10 +136,24 @@ namespace mars {
                 "separated_dof_iter", dofs.extent(0), MARS_LAMBDA(const Integer i) { f(dofs(i)); });
         }
 
-        /* building the stencil is the responsibility of the specialized DM. */
+        /* Face numbering on the stencil => ordering in the stencil stencil[1,0,3,2]
+               ----3----
+               |       |
+               0   x   1
+               |       |
+               ----2---- */
+        // building the stencil is the responsibility of the specialized DM.
         template <typename ST, bool Orient = false>
         ST build_stencil() {
-            return mars::build_stencil<ST, Orient>(*this);
+            ST stencil(get_owned_dof_size());
+            auto handler = SuperDM::get_dof_handler();
+            auto dm = *this;
+
+            dm.owned_iterate(MARS_LAMBDA(const Integer i) {
+                const Integer localid = dm.get_owned_dof(i);
+                stencil.template build_stencil<Orient>(handler, localid, i);
+            });
+            return stencil;
         }
 
         MARS_INLINE_FUNCTION
