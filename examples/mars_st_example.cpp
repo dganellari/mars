@@ -22,7 +22,6 @@
 #include "mars_vtk_writer.hpp"
 
 #include "mars_longest_edge.hpp"
-#include "mars_memory.hpp"
 #include "mars_mesh_reader.hpp"
 #include "mars_mesh_writer.hpp"
 #include "mars_oldest_edge.hpp"

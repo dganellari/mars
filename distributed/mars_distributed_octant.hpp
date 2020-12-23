@@ -110,7 +110,7 @@ namespace mars {
         MARS_INLINE_FUNCTION void get_vertex_coordinates(double *point,
                                                          const Integer xDim,
                                                          const Integer yDim,
-                                                         const Integer zDim) {
+                                                         const Integer zDim) const {
             switch (Type) {
                 case ElementType::Quad4: {
                     point[0] = static_cast<Real>(x) / static_cast<Real>(xDim);
@@ -128,7 +128,7 @@ namespace mars {
         }
 
         template <Integer Type>
-        MARS_INLINE_FUNCTION Octant sfc_face_nbh(const int face) {
+        MARS_INLINE_FUNCTION Octant sfc_face_nbh(const int face) const {
             switch (Type) {
                 case ElementType::Quad4: {
                     // adapted from the p4est corner neighbor for the mesh generation
@@ -193,7 +193,7 @@ namespace mars {
 
         template <Integer Type>
         MARS_INLINE_FUNCTION Octant
-        face_nbh(const int face, const Integer xDim, const Integer yDim, const Integer zDim, const bool periodic) {
+        face_nbh(const int face, const Integer xDim, const Integer yDim, const Integer zDim, const bool periodic) const {
             Octant nbh = sfc_face_nbh<Type>(face);
             nbh.validate_nbh<Type>(xDim, yDim, zDim, periodic);
             return nbh;
