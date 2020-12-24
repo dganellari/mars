@@ -34,16 +34,20 @@
 #include "mars_mesh_generation.hpp"
 
 #ifdef WITH_KOKKOS
+#include "mars_longest_edge_kokkos.hpp"
 #include "mars_mesh_kokkos.hpp"
 #include "mars_lepp_benchmark_kokkos.hpp"
 #include "mars_test_kokkos.hpp"
 #endif //WITH_KOKKOS
 
 #ifdef WITH_MPI
-#include "mars_communicator.hpp"
-#include "mars_par_bisection.hpp"
-#include "mars_par_edge_split_pool.hpp"
-#include "mars_par_mesh.hpp"
+#include "mars_mpi_guard.hpp"
+#ifdef WITH_KOKKOS
+#include "mars_test_mpi.hpp"
+#include "mars_distributed_mesh_generation.hpp"
+#include "mars_distributed_user_data.hpp"
+#include "mars_distributed_data_management.hpp"
+#endif //WITH_KOKKOS
 #endif //WITH_MPI
 
 #endif //MARS_HPP
