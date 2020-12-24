@@ -1,5 +1,5 @@
 # M.A.R.S #
-## Mesh Adaptive Refinement for Simplical Complexes ##
+## Mesh Adaptive Refinement for Supercomputing ##
 
 MARS is an open-source mesh management library designed to handle N-dimensional elements (N <= 4). 
 MARS is developed in C++ and makes use of template meta-programming to have compile time dimensions of elements and vectors, thus allowing for both compile time performance optimizations and concise and reusable code.
@@ -45,6 +45,7 @@ The default when compiling MARS with Kokkos without specifing any other CMAKE fl
 To compile for CUDA the Cmake flag needs to be set: MARS_USE_CUDA=ON. An example would be: 
 cmake -DCMAKE_VERBOSE_MAKEFILE=ON -DCMAKE_BUILD_TYPE=Release -DTRY_WITH_KOKKOS=ON -DMARS_USE_CUDA=ON ..
 In this case Kokkos should also be compiled with CUDA support.
+To disable RDMA set MARS_NO_RDMA=ON.
 
 
 ## Cite MARS ##
