@@ -246,7 +246,7 @@ namespace mars {
         /* If you Orient then the same order is applied through all stencil
          * based on the orientation. Otherwise no order but just a normal stencil. */
         /* auto volume_stencil = vdm.build_stencil<SStencil, Orient>(); */
-        auto volume_stencil = vdm.build_stencil<SStencil>();
+        auto volume_stencil = build_stencil<SStencil>(vdm);
         print_stencil(vdm, volume_stencil);
 
         // it gives the size of the local dofs of the dm. If volume then only volume dofs.

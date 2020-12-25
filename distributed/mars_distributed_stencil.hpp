@@ -5,17 +5,22 @@
 
 namespace mars {
 
-    /*
-         * Face numbering on the stencil => ordering in the stencil stencil[1,0,3,2]
-                ----3----
-                |       |
-                0   x   1
-                |       |
-                ----2---- */
+    /* Face numbering on the stencil => ordering in the stencil stencil[1,0,3,2]
+           ----3----
+           |       |
+           0   x   1
+           |       |
+           ----2---- */
     // building the stencil is the responsibility of the specialized DM.
     template <typename ST, bool Orient = false, typename DM>
     ST build_stencil(const DM &dm) {
-        return dm.build_stencil();
+        ST stencil(dm.get_owned_dof_size());
+
+        dm.owned_iterate(MARS_LAMBDA(const Integer i) {
+            const Integer localid = dm.get_owned_dof(i);
+            stencil.template build_stencil<Orient>(dm, localid, i);
+        });
+        return stencil;
     }
 
     template <Integer Dim, Integer Width = 1>
@@ -70,14 +75,20 @@ namespace mars {
             stencil = ViewMatrixTypeRC<Integer, Length>("stencil", size);
         }
 
+        template <bool Orient = false, typename Mesh, Integer Degree>
+        MARS_INLINE_FUNCTION void build_stencil(const DofHandler<Mesh, Degree> &handler,
+                                                const Integer localid,
+                                                const Integer stencil_index) const {
+            const Integer orientation = handler.get_orientation(localid);
+            generate_stencil<Orient>(handler, localid, stencil_index, orientation);
+        }
 
         template <bool Orient = false, typename DM>
         MARS_INLINE_FUNCTION void build_stencil(const DM &dm,
                                                 const Integer localid,
                                                 const Integer stencil_index) const {
-
-            const Integer orientation = dm.get_orientation(localid);
-            generate_stencil<Orient>(dm, localid, stencil_index, orientation);
+            auto handler = dm.get_dof_handler();
+            build_stencil(handler, localid, stencil_index);
         }
 
         template <bool Orient = false, typename DM>
@@ -198,13 +209,20 @@ namespace mars {
             }
         }
 
+        template <bool Orient = false, typename Mesh, Integer Degree>
+        MARS_INLINE_FUNCTION void build_stencil(const DofHandler<Mesh, Degree> &dm,
+                                                const Integer localid,
+                                                const Integer stencil_index) const {
+            const Integer orientation = dm.get_orientation(localid);
+            generate_stencil<Orient>(dm, localid, stencil_index, orientation);
+        }
 
         template <bool Orient = false, typename DM>
         MARS_INLINE_FUNCTION void build_stencil(const DM &dm,
                                                 const Integer localid,
                                                 const Integer stencil_index) const {
-            const Integer orientation = dm.get_orientation(localid);
-            generate_stencil<Orient>(dm, localid, stencil_index, orientation);
+            auto handler = dm.get_dof_handler();
+            build_stencil(handler, localid, stencil_index);
         }
 
         template <bool Orient = false, typename DM>
@@ -327,13 +345,21 @@ namespace mars {
             }
         }
 
-        template <bool Orient = false, typename DM>
-        MARS_INLINE_FUNCTION void build_stencil(const DM &dm,
+        template <bool Orient = false, typename Mesh, Integer Degree>
+        MARS_INLINE_FUNCTION void build_stencil(const DofHandler<Mesh, Degree> &dm,
                                                 const Integer localid,
                                                 const Integer stencil_index) const {
             const Integer orientation = dm.get_orientation(localid);
             SuperStokesStencil::template generate_stencil<Orient>(dm, localid, stencil_index, orientation);
             build_corner_face_stencil<Orient>(dm, localid, stencil_index, orientation);
+        }
+
+        template <bool Orient = false, typename DM>
+        MARS_INLINE_FUNCTION void build_stencil(const DM &dm,
+                                                const Integer localid,
+                                                const Integer stencil_index) const {
+            auto handler = dm.get_dof_handler();
+            build_stencil(handler, localid, stencil_index);
         }
 
         MARS_INLINE_FUNCTION

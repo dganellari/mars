@@ -145,15 +145,7 @@ namespace mars {
         // building the stencil is the responsibility of the specialized DM.
         template <typename ST, bool Orient = false>
         ST build_stencil() {
-            ST stencil(get_owned_dof_size());
-            auto handler = SuperDM::get_dof_handler();
-            auto dm = *this;
-
-            dm.owned_iterate(MARS_LAMBDA(const Integer i) {
-                const Integer localid = dm.get_owned_dof(i);
-                stencil.template build_stencil<Orient>(handler, localid, i);
-            });
-            return stencil;
+            return mars::build_stencil<ST, Orient>(*this);
         }
 
         MARS_INLINE_FUNCTION
