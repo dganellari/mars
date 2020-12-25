@@ -4,6 +4,8 @@
 #ifdef WITH_MPI
 #ifdef WITH_KOKKOS
 #include "mars_distributed_base_data_management.hpp"
+#include "mars_distributed_stencil.hpp"
+#include "mars_distributed_finite_element.hpp"
 
 namespace mars {
 
@@ -184,12 +186,12 @@ namespace mars {
         /* building the stencil is the responsibility of the specialized DM. */
         template <typename ST, bool Orient = false>
         ST build_stencil() {
-            return SuperDM::get_dof_handler().build_stencil();
+            return mars::build_stencil<ST, Orient>(SuperDM::get_dof_handler());
         }
 
         /* building the FE dof map*/
         auto build_fe_dof_map() {
-            return SuperDM::get_dof_handler().build_fe_dof_map();
+            return mars::build_fe_dof_map(SuperDM::get_dof_handler());
         }
 
     private:

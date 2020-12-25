@@ -120,9 +120,11 @@ namespace mars {
         ViewMatrixType<Integer> elem_dof_enum;
     };
 
-    template <typename DM>
-    auto build_fe_dof_map(const DM &dofHandler) {
-        return dofHandler.build_fe_dof_map();
+    template <typename DofHandler>
+    auto build_fe_dof_map(const DofHandler &handler) {
+        FEDofMap<DofHandler::Degree> fe;
+        fe.enumerate_local_dofs(handler);
+        return fe;
     }
 
 }  // namespace mars

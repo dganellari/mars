@@ -5,8 +5,6 @@
 #ifdef WITH_KOKKOS
 #include "mars_distributed_dof.hpp"
 #include "mars_distributed_user_data.hpp"
-#include "mars_distributed_finite_element.hpp"
-#include "mars_distributed_stencil.hpp"
 
 namespace mars {
 
@@ -30,18 +28,18 @@ namespace mars {
         DofHandler(Mesh *mesh, const context &c) : data(UD(mesh)) { create_ghost_layer<UD, simplex_type::ElemType>(c, data); }
 
         template <typename H>
-        MARS_INLINE_FUNCTION void owned_iterate(H f) {
+        MARS_INLINE_FUNCTION void owned_iterate(H f) const {
             owned_dof_iterate(f);
         }
 
         template <typename H>
-        MARS_INLINE_FUNCTION void owned_dof_iterate(H f) {
+        MARS_INLINE_FUNCTION void owned_dof_iterate(H f) const {
             const Integer size = global_dof_enum.get_elem_size();
             Kokkos::parallel_for("init_initial_cond", size, f);
         }
 
         template <typename H>
-        MARS_INLINE_FUNCTION void dof_iterate(H f) {
+        MARS_INLINE_FUNCTION void dof_iterate(H f) const {
             const Integer size = local_dof_enum.get_elem_size();
             Kokkos::parallel_for("init_initial_cond", size, f);
         }
@@ -1355,31 +1353,6 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const Integer get_label(const Integer local_dof) const {
             return get_local_dof_enum().get_label(local_dof);
-        }
-
-        /* Face numbering on the stencil => ordering in the stencil stencil[1,0,3,2]
-               ----3----
-               |       |
-               0   x   1
-               |       |
-               ----2---- */
-        // building the stencil is the responsibility of the specialized DM.
-        template <typename ST, bool Orient = false>
-        ST build_stencil() {
-            ST stencil(get_owned_dof_size());
-            auto handler = *this;
-
-            handler.owned_iterate(MARS_LAMBDA(const Integer i) {
-                const Integer localid = handler.get_owned_dof(i);
-                stencil.template build_stencil<Orient>(handler, localid, i);
-            });
-            return stencil;
-        }
-
-        auto build_fe_dof_map() const {
-            FEDofMap<Degree> fe;
-            fe.enumerate_local_dofs(*this);
-            return fe;
         }
 
     private:
