@@ -51,7 +51,7 @@ namespace mars {
             return stencil(row, col) = value;
         }
 
-        Integer get_stencil_size() const { return stencil.extent(0); }
+        const Integer get_stencil_size() const { return stencil.extent(0); }
 
         template <typename F>
         void dof_iterate(F f) const {

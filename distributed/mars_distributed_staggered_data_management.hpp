@@ -23,6 +23,9 @@ namespace mars {
         template <Integer idx>
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
+        static constexpr Integer dofLabel = Label;
+        static constexpr Integer Degree = degree;
+
         MARS_INLINE_FUNCTION
         SDM(DofHandler<Mesh, degree> d) : SuperDM(d) { prepare_separated_dofs(); }
 
@@ -146,6 +149,11 @@ namespace mars {
         template <typename ST, bool Orient = false>
         ST build_stencil() {
             return mars::build_stencil<ST, Orient>(*this);
+        }
+
+        /* building the FE dof map*/
+        auto build_fe_dof_map() {
+            return mars::build_fe_dof_map(*this);
         }
 
         MARS_INLINE_FUNCTION

@@ -7,10 +7,9 @@
 
 namespace mars {
 
-    template <Integer degree>
+    template <Integer degree, Integer Dim = 2>
     class FEDofMap {
     public:
-
         static constexpr Integer volume_nodes = (degree - 1) * (degree - 1);
         static constexpr Integer face_nodes = (degree - 1);
         static constexpr Integer corner_nodes = 1;
@@ -19,7 +18,7 @@ namespace mars {
         MARS_INLINE_FUNCTION
         FEDofMap() = default;
 
-        template <class DofHandler>
+        template <Integer Label, class DofHandler>
         struct EnumLocalDofs {
             using SimplexType = typename DofHandler::simplex_type;
             static constexpr Integer Type = SimplexType::ElemType;
@@ -79,11 +78,30 @@ namespace mars {
             void operator()(const Integer i) const {
                 Integer index = 0;
                 // topological order within the element
-                corner_iterate(i, index);
-                face_iterate<0>(i, index);
-                face_iterate<1>(i, index);
-                volume_iterate(i, index);
-                // TODO: 3D part
+                switch (Label) {
+                    case DofLabel::lAll: {
+                        corner_iterate(i, index);
+                        face_iterate<0>(i, index);
+                        face_iterate<1>(i, index);
+                        volume_iterate(i, index);
+                        break;
+                        // TODO: 3D part
+                    }
+                    case DofLabel::lCorner: {
+                        corner_iterate(i, index);
+                        break;
+                    }
+                    case DofLabel::lFace: {
+                        face_iterate<0>(i, index);
+                        face_iterate<1>(i, index);
+                        break;
+                    }
+
+                    case DofLabel::lVolume: {
+                        volume_iterate(i, index);
+                        break;
+                    }
+                }
             }
 
             EnumLocalDofs(DofHandler d, ViewMatrixType<Integer> ede, ViewVectorType<Integer> stl)
@@ -94,17 +112,35 @@ namespace mars {
             ViewVectorType<Integer> sfc_to_local;
         };
 
-        template <class DofHandler>
-        void enumerate_local_dofs(DofHandler &handler) {
+        template <Integer Label, class DofHandler>
+        void enumerate_local_dofs(const DofHandler &handler) {
             const Integer size = handler.get_data().get_host_mesh()->get_chunk_size();
-            elem_dof_enum = ViewMatrixType<Integer>("elem_dof_enum", size, elem_nodes);
+
+            Integer elem_size = elem_nodes;
+
+            switch (Label) {
+                case DofLabel::lCorner: {
+                    elem_size = corner_nodes * 2 ^ Dim;
+                    break;
+                }
+                case DofLabel::lFace: {
+                    elem_size = face_nodes * 2 * Dim;
+                    break;
+                }
+
+                case DofLabel::lVolume: {
+                    elem_size = volume_nodes;
+                    break;
+                }
+            }
+
+            elem_dof_enum = ViewMatrixType<Integer>("elem_dof_enum", size, elem_size);
 
             /* enumerates the dofs within each element topologically */
             Kokkos::parallel_for("enum_local_dofs",
                                  size,
-                                 EnumLocalDofs<DofHandler>(
-                                     handler, elem_dof_enum,
-                                     handler.get_local_dof_enum().get_view_sfc_to_local()));
+                                 EnumLocalDofs<Label, DofHandler>(
+                                     handler, elem_dof_enum, handler.get_local_dof_enum().get_view_sfc_to_local()));
         }
 
         MARS_INLINE_FUNCTION
@@ -115,15 +151,31 @@ namespace mars {
             return elem_dof_enum(elem_index, i);
         }
 
+        template <typename F>
+        void iterate(F f) const {
+            Kokkos::parallel_for("fedomap iterate", get_fe_dof_map_size(), f);
+        }
+
+        const Integer get_fe_dof_map_size() const { return elem_dof_enum.extent(0); }
+        const Integer get_fe_size() const { return elem_dof_enum.extent(1); }
+
     private:
         // local enumeration of the dofs topologically foreach element
         ViewMatrixType<Integer> elem_dof_enum;
     };
 
-    template <typename DofHandler>
-    auto build_fe_dof_map(const DofHandler &handler) {
-        FEDofMap<DofHandler::Degree> fe;
-        fe.enumerate_local_dofs(handler);
+    template <typename Mesh, Integer Degree>
+    auto build_fe_dof_map(const DofHandler<Mesh, Degree> &handler) {
+        FEDofMap<Degree> fe;
+        using H = DofHandler<Mesh, Degree>;
+        fe.template enumerate_local_dofs<H::dofLabel, H>(handler);
+        return fe;
+    }
+
+    template <typename DM>
+    auto build_fe_dof_map(const DM &dm) {
+        FEDofMap<DM::Degree> fe;
+        fe.template enumerate_local_dofs<DM::dofLabel>(dm.get_dof_handler());
         return fe;
     }
 
