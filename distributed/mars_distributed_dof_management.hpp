@@ -15,6 +15,8 @@ namespace mars {
         using UD = UserData<Mesh>;
         using simplex_type = typename Mesh::Elem;
 
+        static constexpr Integer dofLabel = DofLabel::lAll;
+
         static constexpr Integer Degree = degree;
         static constexpr Integer Dim = Mesh::Dim;
         static constexpr Integer ManifoldDim = Mesh::ManifoldDim;

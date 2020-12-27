@@ -147,16 +147,15 @@ namespace mars {
     // print thlocal and the global number of the dof within each element.
     // the dof enumeration within eachlement is topological
 
-    template <typename SDM>
-    void print_elem_global_dof(const SDM data) {
-        auto dm = data.get_dof_handler();
-        dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
+    template <typename H, typename FE>
+    void print_elem_global_dof(const H handler, const FE fe) {
+        fe.iterate(MARS_LAMBDA(const Integer elem_index) {
             // go through all the dofs of the elem_index element
-            for (int i = 0; i < SDM::elem_nodes; i++) {
+            for (int i = 0; i < fe.get_fe_size(); i++) {
                 // get the local dof of the i-th index within thelement
-                const Integer local_dof = dm.get_elem_local_dof(elem_index, i);
+                const Integer local_dof = fe.get_elem_local_dof(elem_index, i);
                 // convert the local dof number to global dof number
-                Dof d = dm.local_to_global_dof(local_dof);
+                Dof d = handler.local_to_global_dof(local_dof);
 
                 // do something. In this case we are printing.
                 printf("lgm: i: %li, local: %li, global: %li, proc: %li\n", i, local_dof, d.get_gid(), d.get_proc());
@@ -236,6 +235,10 @@ namespace mars {
         //create the DM object from the dof handler
         VolumeDM vdm(dof_handler);
         /* FaceDM fdm(dof_handler); */
+
+        /* auto fe = build_fe_dof_map(vdm);
+        print_elem_global_dof(dof_handler, fe);
+ */
 
         print_local_dofs(vdm);
         print_owned_dofs(vdm);
