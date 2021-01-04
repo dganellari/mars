@@ -4,8 +4,8 @@
 #ifdef WITH_MPI
 #ifdef WITH_KOKKOS
 #include "mars_distributed_base_data_management.hpp"
-#include "mars_distributed_stencil.hpp"
 #include "mars_distributed_finite_element.hpp"
+#include "mars_distributed_stencil.hpp"
 
 namespace mars {
 
@@ -71,7 +71,14 @@ namespace mars {
                 SuperDM::get_dof_handler().get_local_dof_enum().get_view_sfc_to_local());
         }
 
+
         // gather operation: fill the data from the received ghost data
+        template <Integer... dataidx>
+        void gather_ghost_data() {
+            // gather operation: fill the data from the received ghost data
+            mars::gather_ghost_data<SuperDM, dataidx...>(SuperDM::get_dof_handler(), user_data);
+        }
+/*
         template <Integer... dataidx>
         void gather_ghost_data() {
             const context &context = SuperDM::get_dof_handler().get_context();
@@ -108,7 +115,7 @@ namespace mars {
                 ghost_user_data,
                 SuperDM::get_dof_handler().get_ghost_dofs(),
                 SuperDM::get_dof_handler().get_local_dof_enum().get_view_sfc_to_local());
-        }
+        } */
 
         template <Integer... dataidx>
         user_tuple scatter_ghost_data() {
@@ -192,9 +199,7 @@ namespace mars {
         }
 
         /* building the FE dof map*/
-        auto build_fe_dof_map() {
-            return mars::build_fe_dof_map(SuperDM::get_dof_handler());
-        }
+        auto build_fe_dof_map() { return mars::build_fe_dof_map(SuperDM::get_dof_handler()); }
 
     private:
         // data associated to the dof data.
