@@ -118,7 +118,7 @@ void mesh_test(int &argc, char **&argv, const int level) {
 
     //     // specify the tuple indices of the tuplelements that are needed to gather.
     //     // if no index specified it gathers all views of the tuple. All data.
-    //     dm.gather_ghost_data<INPUT>(context);
+    //     dm.gather_ghost_data<INPUT>();
 
     //     if (proc_num == 0) {
     //       std::cout << "form_operator..." << std::flush;
