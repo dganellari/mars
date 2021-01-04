@@ -32,7 +32,9 @@ namespace mars {
         BDM(DofHandler<Mesh, degree> d) : dof_handler(d) {}
 
         template <Integer... dataidx>
-        MARS_INLINE_FUNCTION void reserve_user_data(user_tuple &tuple, std::string view_desc, const Integer size) {
+        MARS_INLINE_FUNCTION static void reserve_user_data(user_tuple &tuple,
+                                                           std::string view_desc,
+                                                           const Integer size) {
             expand_tuple<resize_view_functor, dataidx...>(resize_view_functor(view_desc, size), tuple);
         }
 
@@ -42,7 +44,7 @@ namespace mars {
         }
 
         template <typename F, Integer... dataidx>
-        MARS_INLINE_FUNCTION void expand_tuple(const F &f, user_tuple &t) {
+        MARS_INLINE_FUNCTION static void expand_tuple(const F &f, user_tuple &t) {
             if (sizeof...(dataidx) == 0) {
                 apply_impl(f, t);
             } else {
@@ -51,7 +53,7 @@ namespace mars {
         }
 
         template <typename F, Integer... dataidx>
-        MARS_INLINE_FUNCTION void expand_tuple(const F &f, user_tuple &t, user_tuple &v) {
+        MARS_INLINE_FUNCTION static void expand_tuple(const F &f, user_tuple &t, user_tuple &v) {
             if (sizeof...(dataidx) == 0) {
                 apply_impl(f, t, v);
             } else {
@@ -146,7 +148,7 @@ namespace mars {
         };
 
         template <Integer Op, Integer... dataidx>
-        MARS_INLINE_FUNCTION void fill_buffer_data(user_tuple &udata,
+        MARS_INLINE_FUNCTION static void fill_buffer_data(user_tuple &udata,
                                                    user_tuple &buffer_data,
                                                    const ViewVectorType<Integer> &boundary,
                                                    const ViewVectorType<Integer> &map) {
@@ -170,7 +172,7 @@ namespace mars {
         };
 
         template <Integer... dataidx>
-        MARS_INLINE_FUNCTION void exchange_ghost_dofs_data(const context &c,
+        MARS_INLINE_FUNCTION static void exchange_ghost_dofs_data(const context &c,
                                                            user_tuple &recv_data,
                                                            user_tuple &send_data,
                                                            Integer *recv_mirror,
@@ -234,10 +236,10 @@ namespace mars {
 
         /* fill the user data views from the ghost data that were filled in FillBufferData and received through mpi. */
         template <bool Op, Integer... dataidx>
-        MARS_INLINE_FUNCTION void fill_user_data(user_tuple &udata,
-                                                 user_tuple &ghost_user_data,
-                                                 const ViewVectorType<Integer> &ghost_sfc,
-                                                 const ViewVectorType<Integer> &map) {
+        MARS_INLINE_FUNCTION static void fill_user_data(user_tuple &udata,
+                                                        user_tuple &ghost_user_data,
+                                                        const ViewVectorType<Integer> &ghost_sfc,
+                                                        const ViewVectorType<Integer> &map) {
             const Integer size = ghost_sfc.extent(0);
             expand_tuple<FillUserDataFunctor<Op>, dataidx...>(
                 FillUserDataFunctor<Op>("fill_user_data", size, ghost_sfc, map), ghost_user_data, udata);
@@ -391,6 +393,55 @@ namespace mars {
         /*dm.scatter_max<u>(boundary_data);*/
         /*dm.scatter_min<u>(boundary_data);*/
     }
+
+    // gather operation: fill the data from the received ghost data
+    template <typename SuperDM, Integer... dataidx, typename H, typename user_tuple>
+    void gather_ghost_data(const H &dof_handler, user_tuple &user_data) {
+        const context &context = dof_handler.get_context();
+        // exchange the ghost dofs first since it will be used to find the address
+        // of the userdata based on the sfc code.
+        int proc_num = rank(context);
+        int size = num_ranks(context);
+
+        Integer ghost_size = dof_handler.get_view_scan_recv_mirror()(size);
+        user_tuple ghost_user_data;
+        SuperDM::template reserve_user_data<dataidx...>(ghost_user_data, "ghost_user_data", ghost_size);
+
+        /* prepare the buffer to send the boundary data */
+        const Integer buffer_size = dof_handler.get_boundary_dofs().extent(0);
+        user_tuple buffer_data;
+        SuperDM::template reserve_user_data<dataidx...>(buffer_data, "buffer_data", buffer_size);
+
+        SuperDM::template fill_buffer_data<0, dataidx...>(
+            user_data,
+            buffer_data,
+            dof_handler.get_boundary_dofs(),
+            dof_handler.get_local_dof_enum().get_view_sfc_to_local());
+
+        SuperDM::template exchange_ghost_dofs_data<dataidx...>(
+            context,
+            ghost_user_data,
+            buffer_data,
+            dof_handler.get_view_scan_recv_mirror().data(),
+            dof_handler.get_view_scan_send_mirror().data());
+
+        /* use the received ghost data and the sfc to put them to the unified local data */
+        SuperDM::template fill_user_data<0, dataidx...>(
+            user_data,
+            ghost_user_data,
+            dof_handler.get_ghost_dofs(),
+            dof_handler.get_local_dof_enum().get_view_sfc_to_local());
+    }
+
+    // gather operation: fill the data from the received ghost data
+    template <typename Mesh, Integer degree, typename T>
+    void gather_ghost_data(const DofHandler<Mesh, degree> &dof_handler, ViewVectorType<T> &data) {
+        assert(data.extent(0) == dof_handler.get_local_dof_enum().get_elem_size());
+        using SuperDM = BDM<Mesh, degree, T>;
+        auto tuple = std::make_tuple(data);
+        gather_ghost_data<SuperDM, 0>(dof_handler, tuple);
+    }
+
 }  // namespace mars
 
 #endif

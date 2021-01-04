@@ -45,7 +45,7 @@ namespace mars {
 
     using FEDM = DM<DistributedQuad4Mesh, 2, double, double>;
 
-    using VolumeDM = FDM<DistributedQuad4Mesh, 2, double, double>;
+    using VolumeDM = VDM<DistributedQuad4Mesh, 2, double, double>;
     /* using FaceDM = FDM<DistributedQuad4Mesh, 2, double, double>; */
     /* using CornerDM = CDM<DistributedQuad4Mesh, 1, double>; */
 
@@ -244,6 +244,23 @@ namespace mars {
         print_elem_global_dof(dof_handler, fe);
 
 
+        // it gives the size of the local dofs of the dm. If volume then only volume dofs.
+        const Integer dof_size = dof_handler.get_dof_size();
+
+        //if manually managed the data view should have the size of local dof size.
+        ViewVectorType<double> data("IN", dof_size);
+        dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) { data(i) = proc_num; });
+        gather_ghost_data(dof_handler, data);
+
+        dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) {
+            const auto idata = data(i);
+
+            Dof d = dof_handler.local_to_global_dof(i);
+
+            printf("vlid: %li, u: %lf, global: %li, rank: %i\n",
+                    i, idata, d.get_gid(), d.get_proc());
+        });
+
         print_local_dofs(vdm);
         print_owned_dofs(vdm);
 
@@ -255,12 +272,6 @@ namespace mars {
         /* auto volume_stencil = vdm.build_stencil<SStencil, Orient>(); */
         auto volume_stencil = build_stencil<SStencil>(vdm);
         print_stencil(vdm, volume_stencil);
-
-        // it gives the size of the local dofs of the dm. If volume then only volume dofs.
-        const Integer dof_size = vdm.get_dof_size();
-
-        /* ViewVectorType<double> data("IN", dof_size);
-        dm.gather_ghost_data(data); */
 
         // initialize the values by iterating through local dofs
         /* Kokkos::parallel_for(
