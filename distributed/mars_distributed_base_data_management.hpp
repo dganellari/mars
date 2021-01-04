@@ -371,14 +371,14 @@ namespace mars {
     };
 
     template <class DM, Integer... dataidx>
-    void scatter_add_ghost_data(DM &dm, const context &context) {
+    void scatter_add_ghost_data(DM &dm) {
         // scatter the data to the procs and keep them in a boundary data tuple
         // again if no template argument is specified all the data is scattered.
         // if not all of them then be careful since the tuple is not initialized on
         // the others example: dm_tuple boundary_data =
-        // dm.scatter_ghost_data<1>(context);
+        // dm.scatter_ghost_data<1>();
         using dm_tuple = typename DM::user_tuple;
-        dm_tuple boundary_data = dm.template scatter_ghost_data<dataidx...>(context);
+        dm_tuple boundary_data = dm.template scatter_ghost_data<dataidx...>();
 
         // use the scattered data "boundary_data" to do ops like max, add or min in
         // the dof contributions. Otherwise you can use predifined features like

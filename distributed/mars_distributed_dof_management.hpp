@@ -27,7 +27,9 @@ namespace mars {
         static constexpr Integer elem_nodes = (degree + 1) * (degree + 1);
 
         MARS_INLINE_FUNCTION
-        DofHandler(Mesh *mesh, const context &c) : data(UD(mesh)) { create_ghost_layer<UD, simplex_type::ElemType>(c, data); }
+        DofHandler(Mesh *mesh, const context &c) : data(UD(mesh)), ctx(c) {
+            create_ghost_layer<UD, simplex_type::ElemType>(c, data);
+        }
 
         template <typename H>
         MARS_INLINE_FUNCTION void owned_iterate(H f) const {
@@ -1009,7 +1011,9 @@ namespace mars {
                                                   get_local_dof_enum().get_view_sfc_to_local()));
         }
 
-        virtual void enumerate_dofs(const context &context) {
+        virtual void enumerate_dofs() {
+            const auto &context = get_context();
+
             const Integer rank_size = num_ranks(context);
             const int proc_num = rank(context);
 
@@ -1357,9 +1361,12 @@ namespace mars {
             return get_local_dof_enum().get_label(local_dof);
         }
 
+        const context &get_context() const { return ctx; }
+
     private:
-        // data associated to the mesh elements (sfc).
+        // data associated to the mesh elements (sfc) within the context.
         UD data;
+        const context  &ctx;
 
         // local dof enumeration containing the local to sfc and sfc to local views.
         SFC<simplex_type::ElemType> local_dof_enum;

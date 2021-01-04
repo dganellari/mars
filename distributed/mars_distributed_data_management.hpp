@@ -73,7 +73,8 @@ namespace mars {
 
         // gather operation: fill the data from the received ghost data
         template <Integer... dataidx>
-        void gather_ghost_data(const context &context) {
+        void gather_ghost_data() {
+            const context &context = SuperDM::get_dof_handler().get_context();
             // exchange the ghost dofs first since it will be used to find the address
             // of the userdata based on the sfc code.
             int proc_num = rank(context);
@@ -110,7 +111,8 @@ namespace mars {
         }
 
         template <Integer... dataidx>
-        user_tuple scatter_ghost_data(const context &context) {
+        user_tuple scatter_ghost_data() {
+            const context &context = SuperDM::get_dof_handler().get_context();
             // exchange the ghost dofs first since it will be used to find the address
             // of the userdata based on the sfc code.
             int proc_num = rank(context);

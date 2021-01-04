@@ -179,7 +179,7 @@ namespace mars {
         constexpr Integer Type = Elem::ElemType;
 
         DOFHandler dof_handler(&mesh, context);
-        dof_handler.enumerate_dofs(context);
+        dof_handler.enumerate_dofs();
         // create the dm object
         DMQ2 dm(dof_handler);
         // enumerate the dofs locally and globally. The ghost dofs structures

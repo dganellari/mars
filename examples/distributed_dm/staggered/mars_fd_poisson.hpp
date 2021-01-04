@@ -43,7 +43,9 @@ namespace mars {
     };
      */
 
-    using VolumeDM = VDM<DistributedQuad4Mesh, 2, double, double>;
+    using FEDM = DM<DistributedQuad4Mesh, 2, double, double>;
+
+    using VolumeDM = FDM<DistributedQuad4Mesh, 2, double, double>;
     /* using FaceDM = FDM<DistributedQuad4Mesh, 2, double, double>; */
     /* using CornerDM = CDM<DistributedQuad4Mesh, 1, double>; */
 
@@ -230,15 +232,17 @@ namespace mars {
         // enumerate the dofs locally and globally. The ghost dofs structures
         // are now created and ready to use for the gather and scatter ops.
         DofH dof_handler(&mesh, context);
-        dof_handler.enumerate_dofs(context);
+        dof_handler.enumerate_dofs();
 
         //create the DM object from the dof handler
         VolumeDM vdm(dof_handler);
         /* FaceDM fdm(dof_handler); */
 
-        /* auto fe = build_fe_dof_map(vdm);
+        FEDM fedm(dof_handler);
+
+        auto fe = build_fe_dof_map(dof_handler);
         print_elem_global_dof(dof_handler, fe);
- */
+
 
         print_local_dofs(vdm);
         print_owned_dofs(vdm);
@@ -255,7 +259,10 @@ namespace mars {
         // it gives the size of the local dofs of the dm. If volume then only volume dofs.
         const Integer dof_size = vdm.get_dof_size();
 
-           // initialize the values by iterating through local dofs
+        /* ViewVectorType<double> data("IN", dof_size);
+        dm.gather_ghost_data(data); */
+
+        // initialize the values by iterating through local dofs
         /* Kokkos::parallel_for(
             "initdatavalues", dof_size, MARS_LAMBDA(const Integer i) {
                 vdm.get_volume_data<IN>(i) = 1.0;
@@ -267,8 +274,8 @@ namespace mars {
             vdm.get_data<OUT>(i) = proc_num;
         });
 
-        vdm.gather_ghost_data<OUT>(context);
-        scatter_add_ghost_data<VolumeDM, OUT>(vdm, context);
+        vdm.gather_ghost_data<OUT>();
+        scatter_add_ghost_data<VolumeDM, OUT>(vdm);
 
 
         //print using the dof iterate
