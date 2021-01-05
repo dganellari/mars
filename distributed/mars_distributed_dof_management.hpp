@@ -1299,12 +1299,6 @@ namespace mars {
                 });
         }
 
-        /* :TODO stencil use the face iterate on the dof sfc. */
-        /* The face nbh will give an sfc code. To get the local code from it
-         * sfc_to_local can be used */
-
-        // Two way of iterations: face and element. You can also build your stencil yourself.
-
         MARS_INLINE_FUNCTION
         const Integer get_dof_size() const { return local_dof_enum.get_elem_size(); }
 
@@ -1330,10 +1324,37 @@ namespace mars {
         const UnorderedMap<Integer, Dof> &get_ghost_lg_map() const { return ghost_local_to_global_map; }
 
         MARS_INLINE_FUNCTION
-        const ViewVectorType<Integer> &get_boundary_dofs() const { return boundary_dofs_sfc; }
+        Integer get_boundary_dof(const Integer i) const {
+            return sfc_to_local(get_boundary_dofs()(i));
+        }
 
         MARS_INLINE_FUNCTION
-        const ViewVectorType<Integer> &get_ghost_dofs() const { return ghost_dofs_sfc; }
+        Integer boundary_dof_size(const Integer i) const {
+            return get_boundary_dofs().extent(0);
+        }
+
+        MARS_INLINE_FUNCTION
+        Integer get_ghost_dof(const Integer i) const {
+            return sfc_to_local(get_ghost_dofs()(i));
+        }
+
+        MARS_INLINE_FUNCTION
+        Integer ghost_dof_size(const Integer i) const {
+            return get_ghost_dofs().extent(0);
+        }
+
+        template <typename F>
+        void ghost_iterate(F f) const {
+            Kokkos::parallel_for("ghost_dof_iter", ghost_dof_size(), f);
+        }
+
+        MARS_INLINE_FUNCTION
+        const ViewVectorType<Integer> get_local_dof_map() const { return local_dof_enum.get_view_sfc_to_local(); }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_local_dof_map(const Integer local_dof) const {
+            return local_dof_enum.get_view_sfc_to_local()(local_dof);
+        }
 
         UD get_data() const { return data; }
 
@@ -1362,6 +1383,14 @@ namespace mars {
         }
 
         const context &get_context() const { return ctx; }
+
+    protected:
+        MARS_INLINE_FUNCTION
+        const ViewVectorType<Integer> &get_boundary_dofs() const { return boundary_dofs_sfc; }
+
+        MARS_INLINE_FUNCTION
+        const ViewVectorType<Integer> &get_ghost_dofs() const { return ghost_dofs_sfc; }
+
 
     private:
         // data associated to the mesh elements (sfc) within the context.
