@@ -7,29 +7,14 @@
 
 namespace mars {
 
-    template <class Mesh, Integer degree, typename... T>
+    template <typename... T>
     class BDM {
     public:
-        /* using UD = UserData<Mesh, double>; */
-        using UD = UserData<Mesh>;
-        using simplex_type = typename Mesh::Elem;
-
         using user_tuple = ViewsTuple<T...>;
         using tuple = std::tuple<T...>;
 
         template <Integer idx>
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
-
-        static constexpr Integer Dim = Mesh::Dim;
-        static constexpr Integer ManifoldDim = Mesh::ManifoldDim;
-
-        static constexpr Integer volume_nodes = (degree - 1) * (degree - 1);
-        static constexpr Integer face_nodes = (degree - 1);
-        static constexpr Integer corner_nodes = 1;
-        static constexpr Integer elem_nodes = (degree + 1) * (degree + 1);
-
-        MARS_INLINE_FUNCTION
-        BDM(DofHandler<Mesh, degree> d) : dof_handler(d) {}
 
         template <Integer... dataidx>
         MARS_INLINE_FUNCTION static void reserve_user_data(user_tuple &tuple,
@@ -149,9 +134,9 @@ namespace mars {
 
         template <Integer Op, Integer... dataidx>
         MARS_INLINE_FUNCTION static void fill_buffer_data(user_tuple &udata,
-                                                   user_tuple &buffer_data,
-                                                   const ViewVectorType<Integer> &boundary,
-                                                   const ViewVectorType<Integer> &map) {
+                                                          user_tuple &buffer_data,
+                                                          const ViewVectorType<Integer> &boundary,
+                                                          const ViewVectorType<Integer> &map) {
             const Integer size = boundary.extent(0);
             expand_tuple<FillBufferDataFunctor<Op>, dataidx...>(
                 FillBufferDataFunctor<Op>("fill_buffer_data", size, boundary, map), buffer_data, udata);
@@ -173,10 +158,10 @@ namespace mars {
 
         template <Integer... dataidx>
         MARS_INLINE_FUNCTION static void exchange_ghost_dofs_data(const context &c,
-                                                           user_tuple &recv_data,
-                                                           user_tuple &send_data,
-                                                           Integer *recv_mirror,
-                                                           Integer *send_mirror) {
+                                                                  user_tuple &recv_data,
+                                                                  user_tuple &send_data,
+                                                                  Integer *recv_mirror,
+                                                                  Integer *send_mirror) {
             expand_tuple<ExchangeGhostDofsData, dataidx...>(
                 ExchangeGhostDofsData(c, recv_mirror, send_mirror), recv_data, send_data);
         }
@@ -244,132 +229,6 @@ namespace mars {
             expand_tuple<FillUserDataFunctor<Op>, dataidx...>(
                 FillUserDataFunctor<Op>("fill_user_data", size, ghost_sfc, map), ghost_user_data, udata);
         }
-
-        MARS_INLINE_FUNCTION
-        const DofHandler<Mesh, degree> &get_dof_handler() const { return dof_handler; }
-
-        MARS_INLINE_FUNCTION
-        virtual Integer get_boundary_dof(const Integer i) const {
-            auto d = get_dof_handler();
-            return d.sfc_to_local(d.get_boundary_dofs()(i));
-        }
-
-        MARS_INLINE_FUNCTION
-        virtual Integer get_ghost_dof(const Integer i) const {
-            auto d = get_dof_handler();
-            return d.sfc_to_local(d.get_ghost_dofs()(i));
-        }
-
-
-        MARS_INLINE_FUNCTION
-        virtual const ViewVectorType<Integer> get_ghost_dofs() const { return get_dof_handler().get_ghost_dofs(); }
-
-        MARS_INLINE_FUNCTION
-        virtual const ViewVectorType<Integer> get_boundary_dofs() const { return get_dof_handler().get_boundary_dofs(); }
-
-
-        MARS_INLINE_FUNCTION
-        virtual Integer get_dof_size() const { return get_dof_handler().get_dof_size(); }
-
-        MARS_INLINE_FUNCTION
-        virtual Integer get_owned_dof_size() const { return get_dof_handler().get_owned_dof_size(); }
-
-        template <typename F>
-        void owned_dof_iterate(F f) const {
-            get_dof_handler().owned_dof_iterate(f);
-        }
-
-        template <typename F>
-        void dof_iterate(F f) const {
-            get_dof_handler().dof_iterate(f);
-        }
-
-        template <typename F>
-        void ghost_iterate(F f) const {
-            Kokkos::parallel_for("ghost_dof_iter", get_dof_handler().get_ghost_dofs().extent(0), f);
-        }
-
-        template <Integer Label>
-        ViewVectorType<bool> build_label_dof_predicate(const ViewVectorType<Integer> element_labels) {
-            const Integer local_size = element_labels.extent(0);
-            ViewVectorType<bool> dof_predicate("label_dof_predicate", local_size);
-            Kokkos::parallel_for(
-                "separatedoflabelss", local_size, KOKKOS_LAMBDA(const Integer i) {
-                    if (element_labels(i) == Label) {
-                        dof_predicate(i) = 1;
-                    }
-                });
-
-            return dof_predicate;
-        }
-
-        template <Integer Label, typename V>
-        void compact_owned_dofs(V &locally_owned_dofs) {
-            using namespace Kokkos;
-
-            const Integer local_size = get_dof_handler().get_global_dof_enum().get_elem_size();
-            auto dof_predicate =
-                build_label_dof_predicate<Label>(get_dof_handler().get_global_dof_enum().get_view_element_labels());
-
-            assert(local_size == get_dof_handler().get_global_dof_enum().get_view_element_labels().extent(0));
-
-            /* perform a scan on the dof predicate*/
-            ViewVectorType<Integer> owned_dof_scan("owned_dof_scan", local_size + 1);
-            incl_excl_scan(0, local_size, dof_predicate, owned_dof_scan);
-
-            auto vol_subview = subview(owned_dof_scan, local_size);
-            auto h_vs = create_mirror_view(vol_subview);
-            // Deep copy device view to host view.
-            deep_copy(h_vs, vol_subview);
-
-            locally_owned_dofs = ViewVectorType<Integer>("locally_owned_dofs", h_vs());
-            const ViewVectorType<Integer> global_to_sfc = get_dof_handler().get_global_dof_enum().get_view_elements();
-
-            auto dofhandler = get_dof_handler();
-
-            parallel_for(
-                local_size, KOKKOS_LAMBDA(const Integer i) {
-                    if (dof_predicate(i) == 1) {
-                        Integer vindex = owned_dof_scan(i);
-                        const Integer local = dofhandler.sfc_to_local(global_to_sfc(i));
-                        locally_owned_dofs(vindex) = local;
-                    }
-                });
-        }
-
-        template <Integer Label, typename V>
-        void compact_local_dofs(V &local_dof_map, V &local_dofs) {
-            using namespace Kokkos;
-
-            const Integer local_size = get_dof_handler().get_local_dof_enum().get_elem_size();
-            auto dof_predicate =
-                build_label_dof_predicate<Label>(get_dof_handler().get_local_dof_enum().get_view_element_labels());
-
-            assert(local_size == get_dof_handler().get_local_dof_enum().get_view_element_labels().extent(0));
-
-            /* perform a scan on the dof predicate*/
-            local_dof_map = ViewVectorType<Integer>("local_dof_scan", local_size + 1);
-            incl_excl_scan(0, local_size, dof_predicate, local_dof_map);
-
-            auto vol_subview = subview(local_dof_map, local_size);
-            auto h_vs = create_mirror_view(vol_subview);
-            // Deep copy device view to host view.
-            deep_copy(h_vs, vol_subview);
-
-            local_dofs = ViewVectorType<Integer>("local_dofs", h_vs());
-
-            /* Compact the predicate into the volume and face dofs views */
-            parallel_for(
-                local_size, KOKKOS_LAMBDA(const Integer i) {
-                    if (dof_predicate(i) == 1) {
-                        Integer vindex = local_dof_map(i);
-                        local_dofs(vindex) = i;
-                    }
-                });
-        }
-
-    private:
-        DofHandler<Mesh, degree> dof_handler;
     };
 
     template <class DM, Integer... dataidx>
@@ -413,31 +272,24 @@ namespace mars {
         SuperDM::template reserve_user_data<dataidx...>(buffer_data, "buffer_data", buffer_size);
 
         SuperDM::template fill_buffer_data<0, dataidx...>(
-            user_data,
-            buffer_data,
-            dof_handler.get_boundary_dofs(),
-            dof_handler.get_local_dof_enum().get_view_sfc_to_local());
+            user_data, buffer_data, dof_handler.get_boundary_dofs(), dof_handler.get_local_dof_map());
 
-        SuperDM::template exchange_ghost_dofs_data<dataidx...>(
-            context,
-            ghost_user_data,
-            buffer_data,
-            dof_handler.get_view_scan_recv_mirror().data(),
-            dof_handler.get_view_scan_send_mirror().data());
+        SuperDM::template exchange_ghost_dofs_data<dataidx...>(context,
+                                                               ghost_user_data,
+                                                               buffer_data,
+                                                               dof_handler.get_view_scan_recv_mirror().data(),
+                                                               dof_handler.get_view_scan_send_mirror().data());
 
         /* use the received ghost data and the sfc to put them to the unified local data */
         SuperDM::template fill_user_data<0, dataidx...>(
-            user_data,
-            ghost_user_data,
-            dof_handler.get_ghost_dofs(),
-            dof_handler.get_local_dof_enum().get_view_sfc_to_local());
+            user_data, ghost_user_data, dof_handler.get_ghost_dofs(), dof_handler.get_local_dof_map());
     }
 
     // gather operation: fill the data from the received ghost data
-    template <typename Mesh, Integer degree, typename T>
-    void gather_ghost_data(const DofHandler<Mesh, degree> &dof_handler, ViewVectorType<T> &data) {
+    template <typename H, typename T>
+    void gather_ghost_data(const H &dof_handler, ViewVectorType<T> &data) {
         assert(data.extent(0) == dof_handler.get_local_dof_enum().get_elem_size());
-        using SuperDM = BDM<Mesh, degree, T>;
+        using SuperDM = BDM<T>;
         auto tuple = std::make_tuple(data);
         gather_ghost_data<SuperDM, 0>(dof_handler, tuple);
     }
