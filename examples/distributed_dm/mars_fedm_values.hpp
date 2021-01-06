@@ -157,7 +157,7 @@ namespace mars {
                 Real gi[dim], g[dim];
                 Real J_inv_e[dim * dim];
                 Real pk[dim];
-                Real sol[DMQ2::elem_nodes];
+                Real sol[FEM::elem_nodes];
 
                 for (int k = 0; k < dim * dim; ++k) {
                     J_inv_e[k] = J_inv(elem_index, k);
@@ -199,7 +199,7 @@ namespace mars {
             auto dof_data = dm_.template get_dof_data<OUTPUT>();
             dof_handler.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
                 // update output
-                for (int i = 0; i < DMQ2::elem_nodes; i++) {
+                for (int i = 0; i < FEM::elem_nodes; i++) {
                     const Integer local_dof = eld(elem_index, i);
                     /* atomically updated the contributions to the same dof */
                     Kokkos::atomic_add(&dof_data(local_dof), res(elem_index, i));
@@ -210,7 +210,7 @@ namespace mars {
         // form the matrix free operator
         template <Integer INPUT, Integer OUTPUT>
         void form_operator() {
-            ViewMatrixType<Real> res("res", dm_.get_dof_handler().get_elem_size(), DMQ2::elem_nodes);
+            ViewMatrixType<Real> res("res", dm_.get_dof_handler().get_elem_size(), FEM::elem_nodes);
 
             integrate<INPUT>(dm_, fe_, quad, det_J_, inv_J_, res);
             add_dof_contributions<OUTPUT>(res);
@@ -234,7 +234,7 @@ namespace mars {
                     dm.template get_dof_coordinates_from_local<Elem::ElemType>(local_dof, p);
 
                     const T val = f(p);
-                    const T scaled_val = val * detj / DMQ2::elem_nodes;
+                    const T scaled_val = val * detj / FEM::elem_nodes;
                     res(elem_index, i) += scaled_val;
                     /* const Integer owned_index = dm.local_to_owned(local_dof);
                     Kokkos::atomic_add(&rhs(owned_index), scaled_val); */
@@ -244,7 +244,7 @@ namespace mars {
 
         template <class F, Integer RHS>
         void assemble_local_rhs(F f) {
-            ViewMatrixType<DMDataType<RHS>> res("res", dm_.get_dof_handler().get_elem_size(), DMQ2::elem_nodes);
+            ViewMatrixType<DMDataType<RHS>> res("res", dm_.get_dof_handler().get_elem_size(), FEM::elem_nodes);
 
             integrate_rhs(f, res);
             add_dof_contributions<RHS>(res);

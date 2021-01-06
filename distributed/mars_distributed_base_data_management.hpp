@@ -267,7 +267,7 @@ namespace mars {
         SuperDM::template reserve_user_data<dataidx...>(ghost_user_data, "ghost_user_data", ghost_size);
 
         /* prepare the buffer to send the boundary data */
-        const Integer buffer_size = dof_handler.get_boundary_dofs().extent(0);
+        const Integer buffer_size = dof_handler.get_boundary_dof_size();
         user_tuple buffer_data;
         SuperDM::template reserve_user_data<dataidx...>(buffer_data, "buffer_data", buffer_size);
 

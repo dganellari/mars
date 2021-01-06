@@ -115,7 +115,7 @@ namespace mars {
             dm.elem_iterate([&](const Integer elem_index) {
                 vtkSmartPointer<vtkQuad> quad = vtkSmartPointer<vtkQuad>::New();
 
-                for (int i = 0; i < DM::elem_nodes; i++) {
+                for (int i = 0; i < FEM::elem_nodes; i++) {
                     const Integer local_dof = fe.get_elem_local_dof(elem_index, i);
                     Dof d = dm.local_to_global_dof(local_dof);
 

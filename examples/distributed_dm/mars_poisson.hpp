@@ -122,7 +122,7 @@ namespace mars {
         auto dof_handler = dm.get_dof_handler();
         dof_handler.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
             // go through all the dofs of the elem_index element
-            for (int i = 0; i < DMQ2::elem_nodes; i++) {
+            for (int i = 0; i < FEDofMap<DMQ2::Degree>::elem_nodes; i++) {
                 // get the local dof of the i-th index within thelement
                 const Integer local_dof = fe.get_elem_local_dof(elem_index, i);
                 // convert the local dof number to global dof number
