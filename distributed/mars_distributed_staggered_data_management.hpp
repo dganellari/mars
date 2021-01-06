@@ -3,6 +3,7 @@
 
 #ifdef WITH_MPI
 #ifdef WITH_KOKKOS
+#include "mars_distributed_staggered_dof_management.hpp"
 #include "mars_distributed_base_data_management.hpp"
 #include "mars_distributed_stencil.hpp"
 
@@ -27,6 +28,11 @@ namespace mars {
         static constexpr Integer Degree = degree;
 
         MARS_INLINE_FUNCTION
+        SDM(DofHandler<Mesh, degree> d) : dof_handler(SDofHandler<Label, Mesh, degree>(d)) {
+            SuperDM::template reserve_user_data(vdata, "separated_user_data tuple", dof_handler.get_local_dofs().extent(0));
+        }
+
+        MARS_INLINE_FUNCTION
         SDM(SDofHandler<Label, Mesh, degree> d) : dof_handler(d) {
             SuperDM::template reserve_user_data(vdata, "separated_user_data tuple", dof_handler.get_local_dofs().extent(0));
         }
@@ -38,7 +44,7 @@ namespace mars {
 
         template <std::size_t idx, typename H = typename std::tuple_element<idx, tuple>::type>
         MARS_INLINE_FUNCTION H &get_dof_data(const Integer local_dof) const {
-            return std::get<idx>(vdata)(get_dof_index(local_dof));
+            return std::get<idx>(vdata)(get_dof_handler().get_dof_index(local_dof));
         }
 
         MARS_INLINE_FUNCTION
@@ -51,9 +57,10 @@ namespace mars {
 
         template <Integer idx, typename F>
         void owned_data_iterate(F f) const {
+            auto handler = get_dof_handler();
             Kokkos::parallel_for(
-                "owned_separated_dof_iter", get_owned_dofs().extent(0), MARS_LAMBDA(const Integer i) {
-                    const Integer local_dof = get_owned_dof(i);
+                "owned_separated_dof_iter", get_owned_dof_size(), MARS_LAMBDA(const Integer i) {
+                    const Integer local_dof = handler.get_owned_dof(i);
                     f(get_dof_data<idx>(local_dof));
                 });
         }
@@ -86,23 +93,23 @@ namespace mars {
        template <Integer... dataidx>
         void scatter_add(user_tuple &boundary_user_data) {
             SuperDM::template fill_buffer_data<1, dataidx...>(
-                vdata, boundary_user_data, get_boundary_dofs(), get_local_dof_map());
+                vdata, boundary_user_data, get_dof_handler().get_boundary_dofs(), get_dof_handler().get_local_dof_map());
         }
 
         template <Integer... dataidx>
         void scatter_max(user_tuple &boundary_user_data) {
             SuperDM::template fill_buffer_data<2, dataidx...>(
-                vdata, boundary_user_data, get_boundary_dofs(), get_local_dof_map());
+                vdata, boundary_user_data, get_dof_handler().get_boundary_dofs(), get_dof_handler().get_local_dof_map());
         }
 
         template <Integer... dataidx>
         void scatter_min(user_tuple &boundary_user_data) {
             SuperDM::template fill_buffer_data<3, dataidx...>(
-                vdata, boundary_user_data, get_boundary_dofs(), get_local_dof_map());
+                vdata, boundary_user_data, get_dof_handler().get_boundary_dofs(), get_dof_handler().get_local_dof_map());
         }
 
         // gather operation: fill the data from the received ghost data
-        template <Integer... dataidx>
+        /* template <Integer... dataidx>
         void gather_ghost_data() {
             const context &context = get_dof_handler().get_context();
 
@@ -154,16 +161,17 @@ namespace mars {
                                                                    get_view_scan_recv_mirror().data());
 
             return boundary_user_data;
-        }
-
-        MARS_INLINE_FUNCTION
-        virtual Integer get_dof_size() const override { return get_dof_handler().get_local_dofs().extent(0); }
-
-        MARS_INLINE_FUNCTION
-        virtual Integer get_owned_dof_size() const override { return get_dof_handler().get_owned_dofs().extent(0); }
+        } */
 
         MARS_INLINE_FUNCTION
         const SDofHandler<Label, Mesh, degree> &get_dof_handler() const { return dof_handler; }
+
+    protected:
+        MARS_INLINE_FUNCTION
+        Integer get_dof_size() const { return get_dof_handler().get_local_dofs().extent(0); }
+
+        MARS_INLINE_FUNCTION
+        Integer get_owned_dof_size() const { return get_dof_handler().get_owned_dofs().extent(0); }
 
     private:
         SDofHandler<Label, Mesh, degree> dof_handler;

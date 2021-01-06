@@ -17,6 +17,7 @@
 #ifdef WITH_KOKKOS
 #include "Kokkos_ArithTraits.hpp"
 #include <KokkosBlas1_sum.hpp>
+#include "mars_distributed_staggered_dof_management.hpp"
 #include "mars_distributed_staggered_data_management.hpp"
 #endif  // WITH_KOKKOS
 #endif
@@ -81,11 +82,11 @@ namespace mars {
 
     template<typename SDM>
     void print_partition_boundary_dofs(const SDM dm) {
-        const Integer size = dm.get_boundary_dofs().extent(0);
+        const Integer size = dm.get_dof_handler().get_boundary_dof_size();
         Kokkos::parallel_for(
             "for", size, MARS_LAMBDA(const int index) {
                 // go through all the dofs of the elem_index element
-                const Integer local_dof= dm.get_boundary_dof(index);
+                const Integer local_dof= dm.get_dof_handler().get_boundary_dof(index);
                 /* const Integer local_dof = dm.sfc_to_local(sfc); */
                 // convert the local dof number to global dof number
                 Dof d = dm.get_dof_handler().local_to_global_dof(local_dof);
@@ -98,11 +99,11 @@ namespace mars {
 
     template <typename SDM>
     void print_ghost_dofs(const SDM dm) {
-        const Integer size = dm.get_ghost_dofs().extent(0);
+        const Integer size = dm.get_dof_handler().get_ghost_dof_size();
         Kokkos::parallel_for(
             "for", size, MARS_LAMBDA(const int index) {
                 // go through all the dofs of the elem_index element
-                const Integer local_dof = dm.get_ghost_dof(index);
+                const Integer local_dof = dm.get_dof_handler().get_ghost_dof(index);
                 /* const Integer local_dof = dm.sfc_to_local(sfc); */
                 // convert the local dof number to global dof number
                 Dof d = dm.get_dof_handler().local_to_global_dof(local_dof);
@@ -115,11 +116,11 @@ namespace mars {
 
     template <typename SDM>
     void print_local_dofs(const SDM dm) {
-        const Integer size = dm.get_local_dofs().extent(0);
+        const Integer size = dm.get_dof_handler().get_dof_size();
         Kokkos::parallel_for(
             "for", size, MARS_LAMBDA(const int index) {
                 // go through all the dofs of the elem_index element
-                const Integer local_dof = dm.get_local_dof(index);
+                const Integer local_dof = dm.get_dof_handler().get_local_dof(index);
                 const Integer dir = dm.get_dof_handler().get_orientation(local_dof);
                 // convert the local dof number to global dof number
                 Dof d = dm.get_dof_handler().local_to_global_dof(local_dof);
@@ -132,11 +133,11 @@ namespace mars {
 
     template <typename SDM>
     void print_owned_dofs(const SDM dm) {
-        const Integer size = dm.get_owned_dofs().extent(0);
+        const Integer size = dm.get_dof_handler().get_owned_dof_size();
         Kokkos::parallel_for(
             "for", size, MARS_LAMBDA(const int index) {
                 // go through all the dofs of the elem_index element
-                const Integer local_dof = dm.get_owned_dof(index);
+                const Integer local_dof = dm.get_dof_handler().get_owned_dof(index);
                 // convert the local dof number to global dof number
                 Dof d = dm.get_dof_handler().local_to_global_dof(local_dof);
 
@@ -234,10 +235,6 @@ namespace mars {
         DofH dof_handler(&mesh, context);
         dof_handler.enumerate_dofs();
 
-        //create the DM object from the dof handler
-        VolumeDM vdm(dof_handler);
-        /* FaceDM fdm(dof_handler); */
-
         FEDM fedm(dof_handler);
 
         auto fe = build_fe_dof_map(dof_handler);
@@ -261,6 +258,14 @@ namespace mars {
                     i, idata, d.get_gid(), d.get_proc());
         });
 
+
+        //create the DM object from the dof handler
+        /* VolumeDofHandler vdh(dof_handler); */
+        /* FaceDofHandler fdh(dof_handler); */
+
+        VolumeDM vdm(dof_handler);
+        /* VolumeDM vdm(vdh); */
+
         print_local_dofs(vdm);
         print_owned_dofs(vdm);
 
@@ -270,7 +275,7 @@ namespace mars {
         /* If you Orient then the same order is applied through all stencil
          * based on the orientation. Otherwise no order but just a normal stencil. */
         /* auto volume_stencil = vdm.build_stencil<SStencil, Orient>(); */
-        auto volume_stencil = build_stencil<SStencil>(vdm);
+        auto volume_stencil = build_stencil<SStencil>(vdm.get_dof_handler());
         print_stencil(vdm, volume_stencil);
 
         // initialize the values by iterating through local dofs
@@ -280,13 +285,13 @@ namespace mars {
                 vdm.get_volume_data<OUT>(i) = proc_num;
             });
  */
-        vdm.iterate(MARS_LAMBDA(const Integer i) {
+        vdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
             vdm.get_data<IN>(i) = 1.0;
             vdm.get_data<OUT>(i) = proc_num;
         });
 
-        vdm.gather_ghost_data<OUT>();
-        scatter_add_ghost_data<VolumeDM, OUT>(vdm);
+        /* vdm.gather_ghost_data<OUT>(); */
+        /* scatter_add_ghost_data<VolumeDM, OUT>(vdm); */
 
 
         //print using the dof iterate
@@ -301,7 +306,7 @@ namespace mars {
         }); */
 
         //print using the index iterate
-        vdm.iterate(MARS_LAMBDA(const Integer i) {
+        /* vdm.iterate(MARS_LAMBDA(const Integer i) {
             const Integer local_dof = vdm.get_local_dof(i);
 
             const auto idata = vdm.get_data<IN>(i);
@@ -311,7 +316,7 @@ namespace mars {
 
             printf("lid: %li, u: %lf, v: %lf, global: %li, rank: %i\n",
                     i, idata, odata, d.get_gid(), d.get_proc());
-        });
+        }); */
 
         double time = timer.seconds();
         std::cout << "Stag DM Setup took: " << time << " seconds." << std::endl;

@@ -13,16 +13,12 @@ namespace mars {
     public:
         using simplex_type = typename Mesh::Elem;
 
-        template <Integer idx>
-        using UserDataType = typename std::tuple_element<idx, tuple>::type;
-
         static constexpr Integer dofLabel = Label;
         static constexpr Integer Degree = degree;
 
         MARS_INLINE_FUNCTION
         SDofHandler(DofHandler<Mesh, degree> d) : dof_handler(d) { prepare_separated_dofs(); }
 
-        template <Integer Label>
         ViewVectorType<bool> build_label_dof_predicate(const ViewVectorType<Integer> element_labels) {
             const Integer local_size = element_labels.extent(0);
             ViewVectorType<bool> dof_predicate("label_dof_predicate", local_size);
@@ -36,13 +32,13 @@ namespace mars {
             return dof_predicate;
         }
 
-        template <Integer Label, typename V>
+        template <typename V>
         void compact_owned_dofs(V &locally_owned_dofs) {
             using namespace Kokkos;
 
             const Integer local_size = get_dof_handler().get_global_dof_enum().get_elem_size();
             auto dof_predicate =
-                build_label_dof_predicate<Label>(get_dof_handler().get_global_dof_enum().get_view_element_labels());
+                build_label_dof_predicate(get_dof_handler().get_global_dof_enum().get_view_element_labels());
 
             assert(local_size == get_dof_handler().get_global_dof_enum().get_view_element_labels().extent(0));
 
@@ -70,13 +66,13 @@ namespace mars {
                 });
         }
 
-        template <Integer Label, typename V>
+        template <typename V>
         void compact_local_dofs(V &local_dof_map, V &local_dofs) {
             using namespace Kokkos;
 
             const Integer local_size = get_dof_handler().get_local_dof_enum().get_elem_size();
             auto dof_predicate =
-                build_label_dof_predicate<Label>(get_dof_handler().get_local_dof_enum().get_view_element_labels());
+                build_label_dof_predicate(get_dof_handler().get_local_dof_enum().get_view_element_labels());
 
             assert(local_size == get_dof_handler().get_local_dof_enum().get_view_element_labels().extent(0));
 
@@ -117,8 +113,8 @@ namespace mars {
         };
 
         void prepare_separated_dofs() {
-            compact_local_dofs<Label>(local_dof_map, local_dofs);
-            compact_owned_dofs<Label>(locally_owned_dofs);
+            compact_local_dofs(local_dof_map, local_dofs);
+            compact_owned_dofs(locally_owned_dofs);
 
             auto is_separated = IsSeparatedDof(local_dof_map);
             // building the counts for boundary and ghost separations to use for gather and scatter separated data only!
@@ -141,7 +137,7 @@ namespace mars {
 
         template <typename F>
         void owned_iterate(F f) const {
-            Kokkos::parallel_for("owned_separated_dof_iter", get_owned_dofs().extent(0), f);
+            Kokkos::parallel_for("owned_separated_dof_iter", get_owned_dof_size(), f);
         }
 
         template <typename F>
@@ -190,13 +186,13 @@ namespace mars {
         Integer get_boundary_dof(const Integer index) const { return boundary_dofs(index); }
 
         MARS_INLINE_FUNCTION
-        Integer boundary_dof_size(const Integer index) const { return boundary_dofs.extent(0); }
-
-        MARS_INLINE_FUNCTION
-        Integer ghost_dof_size(const Integer index) const { return ghost_dofs.extent(0); }
-
-        MARS_INLINE_FUNCTION
         Integer get_ghost_dof(const Integer index) const { return ghost_dofs(index); }
+
+        MARS_INLINE_FUNCTION
+        Integer get_boundary_dof_size() const { return boundary_dofs.extent(0); }
+
+        MARS_INLINE_FUNCTION
+        Integer get_ghost_dof_size() const { return ghost_dofs.extent(0); }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer>::HostMirror &get_view_scan_recv_mirror() const { return scan_recv_mirror; }
@@ -215,12 +211,26 @@ namespace mars {
 
         const context &get_context() const { return get_dof_handler().get_context(); }
 
-    protected:
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_boundary_dofs() const { return boundary_dofs; }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_ghost_dofs() const { return ghost_dofs; }
+
+
+        /* *******dof handler related functionalities for completing the handler.******* */
+
+        MARS_INLINE_FUNCTION
+        const Integer get_orientation(const Integer local_dof) const {
+            return get_dof_handler().get_orientation(local_dof);
+        }
+
+        MARS_INLINE_FUNCTION
+        Dof local_to_global_dof(const Integer local) const {
+            return get_dof_handler().local_to_global_dof(local);
+        }
+
+        /* *************************************************************************** */
 
     private:
         DofHandler<Mesh, degree> dof_handler;
