@@ -15,10 +15,10 @@
 #include "mars_mpi_guard.hpp"
 
 #ifdef WITH_KOKKOS
-#include "Kokkos_ArithTraits.hpp"
 #include <KokkosBlas1_sum.hpp>
-#include "mars_distributed_staggered_dof_management.hpp"
+#include "Kokkos_ArithTraits.hpp"
 #include "mars_distributed_staggered_data_management.hpp"
+#include "mars_distributed_staggered_dof_management.hpp"
 #endif  // WITH_KOKKOS
 #endif
 
@@ -26,14 +26,14 @@
 
 namespace mars {
 
-    static constexpr  Integer DIM = DistributedQuad4Mesh::Dim;
-    static constexpr  bool Orient = true;
+    static constexpr Integer DIM = DistributedQuad4Mesh::Dim;
+    static constexpr bool Orient = true;
 
     using SStencil = StokesStencil<DIM>;
     using FSStencil = FullStokesStencil<DIM>;
-    //general width 2 stencil used as constant viscosity stokes.
+    // general width 2 stencil used as constant viscosity stokes.
     using FStencil = Stencil<DIM, 2>;
-    //general width 1 stencil used as pressure stencil.
+    // general width 1 stencil used as pressure stencil.
     using VCStencil = Stencil<DIM, 1>;
 
     /*
@@ -76,24 +76,33 @@ namespace mars {
 
                 double point[3];
                 dm.get_dof_coordinates_from_sfc<Type>(sfc_elem, point);
-                printf("dof: %li - gdof: %li - label: %li --- (%lf, %lf) - rank: %i\n", i, d.get_gid(), label, point[0], point[1], d.get_proc());
+                printf("dof: %li - gdof: %li - label: %li --- (%lf, %lf) - rank: %i\n",
+                       i,
+                       d.get_gid(),
+                       label,
+                       point[0],
+                       point[1],
+                       d.get_proc());
             });
     }
 
-    template<typename SDM>
+    template <typename SDM>
     void print_partition_boundary_dofs(const SDM dm) {
         const Integer size = dm.get_dof_handler().get_boundary_dof_size();
         Kokkos::parallel_for(
             "for", size, MARS_LAMBDA(const int index) {
                 // go through all the dofs of the elem_index element
-                const Integer local_dof= dm.get_dof_handler().get_boundary_dof(index);
+                const Integer local_dof = dm.get_dof_handler().get_boundary_dof(index);
                 /* const Integer local_dof = dm.sfc_to_local(sfc); */
                 // convert the local dof number to global dof number
                 Dof d = dm.get_dof_handler().local_to_global_dof(local_dof);
 
                 // do something. In this case we are printing.
-                printf(
-                    "Bounary Volume dof: i: %li, local: %li, global: %li, proc: %li\n", index, local_dof, d.get_gid(), d.get_proc());
+                printf("Bounary Volume dof: i: %li, local: %li, global: %li, proc: %li\n",
+                       index,
+                       local_dof,
+                       d.get_gid(),
+                       d.get_proc());
             });
     }
 
@@ -109,8 +118,11 @@ namespace mars {
                 Dof d = dm.get_dof_handler().local_to_global_dof(local_dof);
 
                 // do something. In this case we are printing.
-                printf(
-                    "Ghost Volume dof: i: %li, local: %li, global: %li, proc: %li\n", index, local_dof, d.get_gid(), d.get_proc());
+                printf("Ghost Volume dof: i: %li, local: %li, global: %li, proc: %li\n",
+                       index,
+                       local_dof,
+                       d.get_gid(),
+                       d.get_proc());
             });
     }
 
@@ -126,8 +138,12 @@ namespace mars {
                 Dof d = dm.get_dof_handler().local_to_global_dof(local_dof);
 
                 // do something. In this case we are printing.
-                printf(
-                    "Dof: i: %li, local: %li, Dir: %li, global: %li, proc: %li\n", index, local_dof, dir, d.get_gid(), d.get_proc());
+                printf("Dof: i: %li, local: %li, Dir: %li, global: %li, proc: %li\n",
+                       index,
+                       local_dof,
+                       dir,
+                       d.get_gid(),
+                       d.get_proc());
             });
     }
 
@@ -142,8 +158,11 @@ namespace mars {
                 Dof d = dm.get_dof_handler().local_to_global_dof(local_dof);
 
                 // do something. In this case we are printing.
-                printf(
-                    "Owned Dof: i: %li, local: %li, global: %li, proc: %li\n", index, local_dof, d.get_gid(), d.get_proc());
+                printf("Owned Dof: i: %li, local: %li, global: %li, proc: %li\n",
+                       index,
+                       local_dof,
+                       d.get_gid(),
+                       d.get_proc());
             });
     }
 
@@ -194,8 +213,11 @@ namespace mars {
                 // convert the local dof number to global dof number
                 Dof d = dm.local_to_global_dof(local_dof);
 
-                printf(
-                    "Stencil: i: %li, local: %li, global: %li, proc: %li\n", stencil_index, local_dof, d.get_gid(), d.get_proc());
+                printf("Stencil: i: %li, local: %li, global: %li, proc: %li\n",
+                       stencil_index,
+                       local_dof,
+                       d.get_gid(),
+                       d.get_proc());
             } else {
                 printf("Stencil: i: %li, local: %li\n", stencil_index, local_dof);
             }
@@ -240,26 +262,24 @@ namespace mars {
         auto fe = build_fe_dof_map(dof_handler);
         print_elem_global_dof(dof_handler, fe);
 
-
         // it gives the size of the local dofs of the dm. If volume then only volume dofs.
         const Integer dof_size = dof_handler.get_dof_size();
 
-        //if manually managed the data view should have the size of local dof size.
+        // if manually managed the data view should have the size of local dof size.
         ViewVectorType<double> data("IN", dof_size);
         dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) { data(i) = proc_num; });
         gather_ghost_data(dof_handler, data);
+        scatter_add_ghost_data(dof_handler, data);
 
         dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) {
             const auto idata = data(i);
 
             Dof d = dof_handler.local_to_global_dof(i);
 
-            printf("vlid: %li, u: %lf, global: %li, rank: %i\n",
-                    i, idata, d.get_gid(), d.get_proc());
+            printf("vlid: %li, u: %lf, global: %li, rank: %i\n", i, idata, d.get_gid(), d.get_proc());
         });
 
-
-        //create the DM object from the dof handler
+        // create the DM object from the dof handler
         /* VolumeDofHandler vdh(dof_handler); */
         /* FaceDofHandler fdh(dof_handler); */
 
@@ -290,12 +310,11 @@ namespace mars {
             vdm.get_data<OUT>(i) = proc_num;
         });
 
-        /* vdm.gather_ghost_data<OUT>(); */
-        /* scatter_add_ghost_data<VolumeDM, OUT>(vdm); */
+        vdm.gather_ghost_data<OUT>();
+        scatter_add_ghost_data<VolumeDM, OUT>(vdm);
 
-
-        //print using the dof iterate
-        /* vdm.dof_iterate(MARS_LAMBDA(const Integer local_dof) {
+        // print using the dof iterate
+        /* vdm.get_dof_handler().dof_iterate(MARS_LAMBDA(const Integer local_dof) {
             const auto idata = vdm.get_dof_data<IN>(local_dof);
             const auto odata = vdm.get_dof_data<OUT>(local_dof);
 
@@ -305,18 +324,17 @@ namespace mars {
                     i, idata, odata, d.get_gid(), d.get_proc());
         }); */
 
-        //print using the index iterate
-        /* vdm.iterate(MARS_LAMBDA(const Integer i) {
-            const Integer local_dof = vdm.get_local_dof(i);
+        // print using the index iterate
+        vdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
+            const Integer local_dof = vdm.get_dof_handler().get_local_dof(i);
 
             const auto idata = vdm.get_data<IN>(i);
             const auto odata = vdm.get_data<OUT>(i);
 
             Dof d = vdm.get_dof_handler().local_to_global_dof(local_dof);
 
-            printf("lid: %li, u: %lf, v: %lf, global: %li, rank: %i\n",
-                    i, idata, odata, d.get_gid(), d.get_proc());
-        }); */
+            printf("lid: %li, u: %lf, v: %lf, global: %li, rank: %i\n", i, idata, odata, d.get_gid(), d.get_proc());
+        });
 
         double time = timer.seconds();
         std::cout << "Stag DM Setup took: " << time << " seconds." << std::endl;

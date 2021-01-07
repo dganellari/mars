@@ -219,6 +219,7 @@ namespace mars {
 
 
         /* *******dof handler related functionalities for completing the handler.******* */
+        /* chose this way to hide the full interface of the general handler. Inheritance is the other way*/
 
         MARS_INLINE_FUNCTION
         const Integer get_orientation(const Integer local_dof) const {
