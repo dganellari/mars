@@ -229,61 +229,103 @@ namespace mars {
             expand_tuple<FillUserDataFunctor<Op>, dataidx...>(
                 FillUserDataFunctor<Op>("fill_user_data", size, ghost_sfc, map), ghost_user_data, udata);
         }
+
+        // gather operation: fill the data from the received ghost data
+        template <Integer... dataidx, typename H>
+        static void gather_ghost_data(const H &dof_handler, user_tuple &user_data) {
+            const context &context = dof_handler.get_context();
+            // exchange the ghost dofs first since it will be used to find the address
+            // of the userdata based on the sfc code.
+            /* int proc_num = rank(context); */
+            int size = num_ranks(context);
+
+            Integer ghost_size = dof_handler.get_view_scan_recv_mirror()(size);
+            user_tuple ghost_user_data;
+            reserve_user_data<dataidx...>(ghost_user_data, "ghost_user_data", ghost_size);
+
+            /* prepare the buffer to send the boundary data */
+            const Integer buffer_size = dof_handler.get_boundary_dof_size();
+            user_tuple buffer_data;
+            reserve_user_data<dataidx...>(buffer_data, "buffer_data", buffer_size);
+
+            fill_buffer_data<0, dataidx...>(
+                user_data, buffer_data, dof_handler.get_boundary_dofs(), dof_handler.get_local_dof_map());
+
+            exchange_ghost_dofs_data<dataidx...>(context,
+                                                 ghost_user_data,
+                                                 buffer_data,
+                                                 dof_handler.get_view_scan_recv_mirror().data(),
+                                                 dof_handler.get_view_scan_send_mirror().data());
+
+            /* use the received ghost data and the sfc to put them to the unified local data */
+            fill_user_data<0, dataidx...>(
+                user_data, ghost_user_data, dof_handler.get_ghost_dofs(), dof_handler.get_local_dof_map());
+        }
+
+        template <Integer... dataidx, typename H>
+        static void scatter_add(const H &handler, user_tuple &boundary_user_data, user_tuple &user_data) {
+            fill_buffer_data<1, dataidx...>(
+                user_data, boundary_user_data, handler.get_boundary_dofs(), handler.get_local_dof_map());
+        }
+
+        template <Integer... dataidx, typename H>
+        void scatter_max(const H &handler, user_tuple &boundary_user_data, user_tuple &user_data) {
+            fill_buffer_data<2, dataidx...>(
+                user_data, boundary_user_data, handler.get_boundary_dofs(), handler.get_local_dof_map());
+        }
+
+        template <Integer... dataidx, typename H>
+        void scatter_min(const H &handler, user_tuple &boundary_user_data, user_tuple &user_data) {
+            fill_buffer_data<3, dataidx...>(
+                user_data, boundary_user_data, handler.get_boundary_dofs(), handler.get_local_dof_map());
+        }
+
+        template <Integer... dataidx, typename H>
+        static user_tuple scatter_ghost_data(const H &dof_handler, user_tuple &user_data) {
+            const context &context = dof_handler.get_context();
+            /* int proc_num = rank(context); */
+            int size = num_ranks(context);
+
+            Integer ghost_size = dof_handler.get_view_scan_recv_mirror()(size);
+            user_tuple ghost_buffer_data;
+            reserve_user_data<dataidx...>(ghost_buffer_data, "ghost_user_data", ghost_size);
+
+            fill_user_data<1, dataidx...>(
+                user_data, ghost_buffer_data, dof_handler.get_ghost_dofs(), dof_handler.get_local_dof_map());
+
+            const Integer boundary_size = dof_handler.get_boundary_dofs().extent(0);
+            user_tuple boundary_user_data;
+            reserve_user_data<dataidx...>(boundary_user_data, "boundary_user_data", boundary_size);
+
+            // prepare the buffer to send the boundary data
+            exchange_ghost_dofs_data<dataidx...>(context,
+                                                 boundary_user_data,
+                                                 ghost_buffer_data,
+                                                 dof_handler.get_view_scan_send_mirror().data(),
+                                                 dof_handler.get_view_scan_recv_mirror().data());
+
+            return boundary_user_data;
+        }
+
+        template <Integer idx, typename DM, typename F>
+        static void owned_data_iterate(const DM &dm, F f) {
+            auto handler = dm.get_dof_handler();
+            Kokkos::parallel_for(
+                "owned_separated_dof_iter", handler.get_owned_dof_size(), MARS_LAMBDA(const Integer i) {
+                    const Integer local_dof = handler.get_owned_dof(i);
+                    f(dm.get_dof_data<idx>(local_dof));
+                });
+        }
+
+        template <Integer idx, typename DM, typename F>
+        void data_iterate(const DM &dm, F f) {
+            auto handler = dm.get_dof_handler();
+            Kokkos::parallel_for(
+                "owned_separated_dof_iter", handler.get_dof_size(), MARS_LAMBDA(const Integer i) {
+                    f(dm.get_data<idx>(i));
+                });
+        }
     };
-
-    template <class DM, Integer... dataidx>
-    void scatter_add_ghost_data(DM &dm) {
-        // scatter the data to the procs and keep them in a boundary data tuple
-        // again if no template argument is specified all the data is scattered.
-        // if not all of them then be careful since the tuple is not initialized on
-        // the others example: dm_tuple boundary_data =
-        // dm.scatter_ghost_data<1>();
-        using dm_tuple = typename DM::user_tuple;
-        dm_tuple boundary_data = dm.template scatter_ghost_data<dataidx...>();
-
-        // use the scattered data "boundary_data" to do ops like max, add or min in
-        // the dof contributions. Otherwise you can use predifined features like
-        // scatter_add as following. careful to use the same template argument for
-        // specifing the data as in the scatter_ghost_data since otherwise you might
-        // try to access uninitialized tuplelement and get seg faults. example::
-        // dm.scatter_add<1>(boundary_data); If: dm.scatter_add<0>(boundary_data) then
-        // seg faults.
-        dm.template scatter_add<dataidx...>(boundary_data);
-        /*dm.scatter_max<u>(boundary_data);*/
-        /*dm.scatter_min<u>(boundary_data);*/
-    }
-
-    // gather operation: fill the data from the received ghost data
-    template <typename SuperDM, Integer... dataidx, typename H, typename user_tuple>
-    void gather_ghost_data(const H &dof_handler, user_tuple &user_data) {
-        const context &context = dof_handler.get_context();
-        // exchange the ghost dofs first since it will be used to find the address
-        // of the userdata based on the sfc code.
-        int proc_num = rank(context);
-        int size = num_ranks(context);
-
-        Integer ghost_size = dof_handler.get_view_scan_recv_mirror()(size);
-        user_tuple ghost_user_data;
-        SuperDM::template reserve_user_data<dataidx...>(ghost_user_data, "ghost_user_data", ghost_size);
-
-        /* prepare the buffer to send the boundary data */
-        const Integer buffer_size = dof_handler.get_boundary_dof_size();
-        user_tuple buffer_data;
-        SuperDM::template reserve_user_data<dataidx...>(buffer_data, "buffer_data", buffer_size);
-
-        SuperDM::template fill_buffer_data<0, dataidx...>(
-            user_data, buffer_data, dof_handler.get_boundary_dofs(), dof_handler.get_local_dof_map());
-
-        SuperDM::template exchange_ghost_dofs_data<dataidx...>(context,
-                                                               ghost_user_data,
-                                                               buffer_data,
-                                                               dof_handler.get_view_scan_recv_mirror().data(),
-                                                               dof_handler.get_view_scan_send_mirror().data());
-
-        /* use the received ghost data and the sfc to put them to the unified local data */
-        SuperDM::template fill_user_data<0, dataidx...>(
-            user_data, ghost_user_data, dof_handler.get_ghost_dofs(), dof_handler.get_local_dof_map());
-    }
 
     // gather operation: fill the data from the received ghost data
     template <typename H, typename T>
@@ -291,7 +333,22 @@ namespace mars {
         assert(data.extent(0) == dof_handler.get_local_dof_enum().get_elem_size());
         using SuperDM = BDM<T>;
         auto tuple = std::make_tuple(data);
-        gather_ghost_data<SuperDM, 0>(dof_handler, tuple);
+        SuperDM::template gather_ghost_data<0>(dof_handler, tuple);
+    }
+
+    // scatter add but using the handler and the view instead of a dm.
+    template <typename H, typename T>
+    void scatter_add_ghost_data(const H &dof_handler, ViewVectorType<T> &data) {
+        assert(data.extent(0) == dof_handler.get_local_dof_enum().get_elem_size());
+        using SuperDM = BDM<T>;
+        auto tuple = std::make_tuple(data);
+        auto boundary_data = SuperDM::template scatter_ghost_data<0>(dof_handler, tuple);
+        SuperDM::template scatter_add<0>(dof_handler, boundary_data, tuple);
+    }
+
+    template <class DM, Integer... dataidx>
+    void scatter_add_ghost_data(DM &dm) {
+        dm.template scatter_add_ghost_data<dataidx...>();
     }
 
 }  // namespace mars
