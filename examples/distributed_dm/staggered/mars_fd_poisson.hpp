@@ -283,8 +283,11 @@ namespace mars {
         /* VolumeDofHandler vdh(dof_handler); */
         /* FaceDofHandler fdh(dof_handler); */
 
+        //use a part of the dof handler (separate it and use only volume for example)
         VolumeDM vdm(dof_handler);
         /* VolumeDM vdm(vdh); */
+
+        /* FaceDM fdm(dof_handler); */
 
         print_local_dofs(vdm);
         print_owned_dofs(vdm);

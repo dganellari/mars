@@ -46,9 +46,17 @@ The default when compiling MARS with Kokkos without specifing any other CMAKE fl
 
 To compile for CUDA the Cmake flag needs to be set: MARS_USE_CUDA=ON. An example would be: 
 cmake -DCMAKE_VERBOSE_MAKEFILE=ON -DCMAKE_BUILD_TYPE=Release -DTRY_WITH_KOKKOS=ON -DMARS_USE_CUDA=ON ..
-In this case Kokkos should also be compiled with CUDA support.
-To disable RDMA set MARS_NO_RDMA=ON.
 
+# MARS Kokkos requirements#
+
+Mars depends on both:
+
+Kokkos library (standalone or from Trilinos) and
+Kokkos Kernels library (standalone or from Trilinos).
+
+If using Trilinos then it will find them from Trilinos in $TRILINOS_DIR otherwise it looks for kokkos and kokkos kernels installations at $KOKKOS_DIR.
+
+If compiled for CUDA then Kokkos should also be compiled with CUDA (Kokkos_ENABLE_CUDA=ON) and CUDA_LAMBDA (Kokkos_ENABLE_CUDA_LAMBDA=ON) support.
 
 ## Cite MARS ##
 
