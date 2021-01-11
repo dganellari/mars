@@ -14,7 +14,7 @@ The main features of MARS consist of:
 
 4. Mesh quality estimators to study the output of different mesh-refinement strategies
 
-5. Performance portable algorithms and data-structures targetting different accelerators.
+5. Performance portable algorithms and data-structures targetting different accelerators
 
 6. Performance portable space filling curves algorithms for efficient mesh management.
 
@@ -51,6 +51,7 @@ It will automatically find Kokkos if installed into your system. It can work wit
 
 Mars looks for KOKKOS_DIR or TRILINOS_DIR into the environment variables. 
 When using Trilinos it will find them from Trilinos in $TRILINOS_DIR otherwise it will look for kokkos and kokkos kernels installations at $KOKKOS_DIR.
+
 Use -DTRY_WITH_KOKKOS=ON to use the feature. For more details check CMakeLists.txt.
 
 The default when compiling MARS with Kokkos without specifing any other CMAKE flag is the Kokkos/OpenMP execution space. Kokkos should also be compiled with OpenMP support. Otherwise the default is the serial execution space.
