@@ -221,8 +221,7 @@ if(Kokkos_FOUND)
         kokkos_check(OPTIONS CUDA_LAMBDA)
     endif()
 
-    target_include_directories(mars SYSTEM PUBLIC ${Kokkos_TPL_INCLUDE_DIRS}
-                                                  ${Kokkos_INCLUDE_DIRS})
+    target_include_directories(mars SYSTEM PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
 
     message(
         STATUS
