@@ -354,6 +354,13 @@ int main(int argc, char *argv[]) {
         //           Example2Analitcal>()
         //     .run(args);
 
+        ModelTest<ParallelQuad4Mesh,
+                  UMeshSTHeatEquation<ParallelQuad4Mesh>,
+                  ST3BC<ParallelQuad4Mesh>,
+                  ST3RHS,
+                  ST3Analitcal>()
+            .run(args);
+
         // ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example3Dirichlet, Example3RHS,
         // Example3Analitcal>().run(
         //     args);
@@ -362,8 +369,9 @@ int main(int argc, char *argv[]) {
         // ST2Analitcal>().run(
         //     args);
 
-        ModelTest<ParallelMesh2, UMeshSTHeatEquation<ParallelMesh2>, ST3BC<ParallelMesh2>, ST3RHS, ST3Analitcal>().run(
-            args);
+        // ModelTest<ParallelMesh2, UMeshSTHeatEquation<ParallelMesh2>, ST3BC<ParallelMesh2>, ST3RHS,
+        // ST3Analitcal>().run(
+        //     args);
 
         // ModelTest<ParallelMesh3,
         //           UMeshLaplace<ParallelMesh3>,

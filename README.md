@@ -31,9 +31,7 @@ Clone the repository and its submodules. MARS relies on googletest and google/be
 `git clone --recurse-submodules https://bitbucket.org/zulianp/mars.git`
 or for older git versions
 
-`git clone https://bitbucket.org/zulianp/mars.git`
-`cd mars`
-`git submodule update --init --recursive`
+`git clone https://bitbucket.org/zulianp/mars.git && cd mars && git submodule update --init --recursive`
 
 Compiling M.A.R.S for serial usage:
 
