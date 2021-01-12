@@ -217,6 +217,10 @@ if(Kokkos_FOUND)
             )
     endif()
 
+    if(Kokkos_ENABLE_CUDA)
+        kokkos_check(OPTIONS CUDA_LAMBDA)
+    endif()
+
     target_include_directories(mars SYSTEM PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
 
     message(
