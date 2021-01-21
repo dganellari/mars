@@ -9,13 +9,12 @@
 
 namespace mars {
 
-    template <class Mesh, Integer degree, typename... T>
+    template <typename DHandler, typename... T>
     class DM : public BDM<T...> {
     public:
-        static constexpr Integer Degree = degree;
+        static constexpr Integer Degree = DHandler::Degree;
 
-        using UD = UserData<Mesh>;
-        using simplex_type = typename Mesh::Elem;
+        using DofHandler = DHandler;
 
         using user_tuple = ViewsTuple<T...>;
         using tuple = std::tuple<T...>;
@@ -26,7 +25,7 @@ namespace mars {
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
         MARS_INLINE_FUNCTION
-        DM(DofHandler<Mesh, degree> d) : dof_handler(d) {
+        DM(DofHandler d) : dof_handler(d) {
             SuperDM::template reserve_user_data(
                 user_data, "user_data tuple", get_dof_handler().get_local_dof_enum().get_elem_size());
         }
@@ -130,7 +129,7 @@ namespace mars {
         auto build_fe_dof_map() { return mars::build_fe_dof_map(get_dof_handler()); }
 
         MARS_INLINE_FUNCTION
-        const DofHandler<Mesh, degree> &get_dof_handler() const { return dof_handler; }
+        const DofHandler &get_dof_handler() const { return dof_handler; }
 
         template <Integer idx, typename F>
         void owned_data_iterate(F f) const {
@@ -143,7 +142,7 @@ namespace mars {
         }
 
     private:
-        DofHandler<Mesh, degree> dof_handler;
+        DofHandler dof_handler;
         // data associated to the dof data.
         user_tuple user_data;
     };

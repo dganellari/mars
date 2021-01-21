@@ -125,7 +125,10 @@ if(TRY_WITH_KOKKOS)
         message(" Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
         message(" Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
         message(" Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
-        message(" Kokkos CUDA Enabled = ${Kokkos_ENABLE_CUDA}")
+
+        if(MARS_USE_CUDA)
+            message(" Kokkos CUDA Enabled = ${Kokkos_ENABLE_CUDA}")
+        endif()
 
         # message("   Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}") message("
         # Kokkos_C_COMPILER = ${Kokkos_C_COMPILER}")

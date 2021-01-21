@@ -77,7 +77,7 @@ namespace mars {
         return true;
     }
 
-    template <class DMQ2, class FEM = FEDofMap<DMQ2::Degree>>
+    template <class DMQ2, class FEM>
     class FEDMValues {
     public:
         template <Integer idx>
@@ -223,7 +223,7 @@ namespace mars {
             auto fe = fe_;
 
             dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
-                using Elem = typename DMQ2::simplex_type;
+                using Elem = typename DMQ2::DofHandler::simplex_type;
                 Real p[2];
 
                 const T detj = det_J(elem_index);
@@ -251,7 +251,7 @@ namespace mars {
         }
 
         void init() {
-            using Elem = typename DMQ2::simplex_type;
+            using Elem = typename DMQ2::DofHandler::simplex_type;
 
             det_J_ = ViewVectorType<Real>("detJ", dm_.get_dof_handler().get_elem_size());
             inv_J_ = ViewMatrixType<Real>("J_inv", dm_.get_dof_handler().get_elem_size(), 4);

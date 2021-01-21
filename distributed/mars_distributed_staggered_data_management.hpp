@@ -9,12 +9,12 @@
 
 namespace mars {
 
-    template <Integer Label, class Mesh, Integer degree, typename... T>
+    template <typename DHandler, typename... T>
     class SDM : public BDM<T...> {
     public:
-        /* using UD = UserData<Mesh, double>; */
-        using UD = UserData<Mesh>;
-        using simplex_type = typename Mesh::Elem;
+        static constexpr Integer Degree = DHandler::Degree;
+
+        using SDofHandler = DHandler;
 
         using user_tuple = ViewsTuple<T...>;
         using tuple = std::tuple<T...>;
@@ -24,17 +24,15 @@ namespace mars {
         template <Integer idx>
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
-        static constexpr Integer dofLabel = Label;
-        static constexpr Integer Degree = degree;
 
         MARS_INLINE_FUNCTION
-        SDM(DofHandler<Mesh, degree> d) : dof_handler(SDofHandler<Label, Mesh, degree>(d)) {
+        SDM(DofHandler<typename SDofHandler::Mesh, SDofHandler::Degree> d) : dof_handler(SDofHandler(d)) {
             SuperDM::template reserve_user_data(
                 vdata, "separated_user_data tuple", dof_handler.get_local_dofs().extent(0));
         }
 
         MARS_INLINE_FUNCTION
-        SDM(SDofHandler<Label, Mesh, degree> d) : dof_handler(d) {
+        SDM(SDofHandler d) : dof_handler(d) {
             SuperDM::template reserve_user_data(
                 vdata, "separated_user_data tuple", dof_handler.get_local_dofs().extent(0));
         }
@@ -106,7 +104,7 @@ namespace mars {
         auto build_fe_dof_map() { return mars::build_fe_dof_map(*this); }
 
         MARS_INLINE_FUNCTION
-        const SDofHandler<Label, Mesh, degree> &get_dof_handler() const { return dof_handler; }
+        const SDofHandler &get_dof_handler() const { return dof_handler; }
 
         template <Integer idx, typename F>
         void owned_data_iterate(F f) const {
@@ -119,19 +117,19 @@ namespace mars {
         }
 
     private:
-        SDofHandler<Label, Mesh, degree> dof_handler;
+        SDofHandler dof_handler;
         // data assigned to each separated local dof
         user_tuple vdata;
     };
 
-    template <class Mesh, Integer degree, typename... T>
-    using VDM = SDM<DofLabel::lVolume, Mesh, degree, T...>;
+    template <class DofHandler, typename... T>
+    using VDM = SDM<VolumeDofHandler<typename DofHandler::Mesh, DofHandler::Degree>, T...>;
 
-    template <class Mesh, Integer degree, typename... T>
-    using FDM = SDM<DofLabel::lFace, Mesh, degree, T...>;
+    template <class DofHandler, typename... T>
+    using FDM = SDM<FaceDofHandler<typename DofHandler::Mesh, DofHandler::Degree>, T...>;
 
-    template <class Mesh, Integer degree, typename... T>
-    using CDM = SDM<DofLabel::lCorner, Mesh, degree, T...>;
+    template <class DofHandler, typename... T>
+    using CDM = SDM<CornerDofHandler<typename DofHandler::Mesh, DofHandler::Degree>, T...>;
 
 }  // namespace mars
 
