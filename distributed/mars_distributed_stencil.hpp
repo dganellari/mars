@@ -11,28 +11,34 @@ namespace mars {
            0   x   1
            |       |
            ----2---- */
-    // building the stencil is the responsibility of the specialized DM.
-    template <typename ST, bool Orient = false, typename DM>
-    ST build_stencil(const DM &dm) {
-        ST stencil(dm.get_owned_dof_size());
+    // building the stencil is the responsibility of the specialized DofHandler.
+    template <typename ST, bool Orient = false, typename DofHandler>
+    ST build_stencil(const DofHandler &handler) {
+        ST stencil(handler);
 
-        dm.owned_iterate(MARS_LAMBDA(const Integer i) {
-            const Integer localid = dm.get_owned_dof(i);
-            stencil.template build_stencil<Orient>(dm, localid, i);
+        handler.owned_iterate(MARS_LAMBDA(const Integer i) {
+            const Integer localid = handler.get_owned_dof(i);
+            stencil.template build_stencil<Orient>(localid, i);
         });
         return stencil;
     }
 
-    template <Integer Dim, Integer Width = 1>
+
+    template <typename DofHandler, Integer Width = 1>
     class Stencil {
     public:
+        static constexpr Integer Dim = DofHandler::ManifoldDim;
+
         static constexpr Integer Length = 2 * Dim * Width + 1;
 
         MARS_INLINE_FUNCTION
         Stencil() = default;
 
         MARS_INLINE_FUNCTION
-        Stencil(const Integer size) { stencil = ViewMatrixTypeRC<Integer, Length>("stencil", size); }
+        Stencil(DofHandler handler) : dof_handler(handler) {
+            const Integer size = get_dof_handler().get_owned_dof_size();
+            stencil = ViewMatrixTypeRC<Integer, Length>("stencil", size);
+        }
 
         MARS_INLINE_FUNCTION
         ViewMatrixTypeRC<Integer, Length> get_stencil() const { return stencil; }
@@ -75,21 +81,19 @@ namespace mars {
             stencil = ViewMatrixTypeRC<Integer, Length>("stencil", size);
         }
 
-        template <bool Orient = false, typename Mesh, Integer Degree>
-        MARS_INLINE_FUNCTION void build_stencil(const DofHandler<Mesh, Degree> &handler,
-                                                const Integer localid,
-                                                const Integer stencil_index) const {
-            const Integer orientation = handler.get_orientation(localid);
-            generate_stencil<Orient>(handler, localid, stencil_index, orientation);
+        template <bool Orient = false>
+        MARS_INLINE_FUNCTION void build_stencil(const Integer localid, const Integer stencil_index) const {
+            const Integer orientation = get_dof_handler().get_orientation(localid);
+            generate_stencil<Orient>(get_dof_handler(), localid, stencil_index, orientation);
         }
-
+/*
         template <bool Orient = false, typename DM>
         MARS_INLINE_FUNCTION void build_stencil(const DM &dm,
                                                 const Integer localid,
                                                 const Integer stencil_index) const {
             auto handler = dm.get_dof_handler();
             build_stencil(handler, localid, stencil_index);
-        }
+        } */
 
         template <bool Orient = false, typename DM>
         MARS_INLINE_FUNCTION void generate_stencil(const DM &dm,
@@ -132,22 +136,30 @@ namespace mars {
             }
         }
 
+        MARS_INLINE_FUNCTION
+        const DofHandler &get_dof_handler() const { return dof_handler; }
+
     private:
+        DofHandler dof_handler;
         ViewMatrixTypeRC<Integer, Length> stencil;
     };
 
-    template <Integer Dim>
-    class StokesStencil : public Stencil<Dim, 2> {
+    template <typename DofHandler>
+    class StokesStencil : public Stencil<DofHandler, 2> {
     public:
+
+        static constexpr Integer Dim = DofHandler::ManifoldDim;
+
         static constexpr Integer Face_Length = 2 * Dim;
 
-        using SuperStencil = Stencil<Dim, 2>;
+        using SuperStencil = Stencil<DofHandler, 2>;
 
         MARS_INLINE_FUNCTION
         StokesStencil() = default;
 
         MARS_INLINE_FUNCTION
-        StokesStencil(const Integer size) : SuperStencil(size) {
+        StokesStencil(DofHandler handler) : SuperStencil(handler) {
+            const Integer size = SuperStencil::get_dof_handler().get_owned_dof_size();
             face_extension = ViewMatrixTypeRC<Integer, Face_Length>("face_ext", size);
         }
 
@@ -209,21 +221,19 @@ namespace mars {
             }
         }
 
-        template <bool Orient = false, typename Mesh, Integer Degree>
-        MARS_INLINE_FUNCTION void build_stencil(const DofHandler<Mesh, Degree> &dm,
-                                                const Integer localid,
-                                                const Integer stencil_index) const {
-            const Integer orientation = dm.get_orientation(localid);
-            generate_stencil<Orient>(dm, localid, stencil_index, orientation);
+        template <bool Orient = false>
+        MARS_INLINE_FUNCTION void build_stencil(const Integer localid, const Integer stencil_index) const {
+            const Integer orientation = SuperStencil::get_dof_handler().get_orientation(localid);
+            generate_stencil<Orient>(SuperStencil::get_dof_handler(), localid, stencil_index, orientation);
         }
-
+/*
         template <bool Orient = false, typename DM>
         MARS_INLINE_FUNCTION void build_stencil(const DM &dm,
                                                 const Integer localid,
                                                 const Integer stencil_index) const {
             auto handler = dm.get_dof_handler();
             build_stencil(handler, localid, stencil_index);
-        }
+        } */
 
         template <bool Orient = false, typename DM>
         MARS_INLINE_FUNCTION void generate_stencil(const DM &dm,
@@ -244,20 +254,22 @@ namespace mars {
         ViewMatrixTypeRC<Integer, Face_Length> face_extension;
     };
 
-    template <Integer Dim>
-    class FullStokesStencil : StokesStencil<Dim> {
+    template <typename DofHandler>
+    class FullStokesStencil : StokesStencil<DofHandler> {
     public:
-        static constexpr Integer Width = 2;
+        static constexpr Integer Dim = DofHandler::ManifoldDim;
         static constexpr Integer Corner_Length = 2 * Dim;
+        static constexpr Integer Width = 2;
 
-        using SuperStencil = Stencil<Dim, Width>;
-        using SuperStokesStencil = StokesStencil<Dim>;
+        using SuperStencil = Stencil<DofHandler, Width>;
+        using SuperStokesStencil = StokesStencil<DofHandler>;
 
         MARS_INLINE_FUNCTION
         FullStokesStencil() = default;
 
         MARS_INLINE_FUNCTION
-        FullStokesStencil(const Integer size) : SuperStokesStencil(size) {
+        FullStokesStencil(DofHandler handler) : SuperStokesStencil(handler) {
+            const Integer size = SuperStencil::get_dof_handler().get_owned_dof_size();
             corner_extension = ViewMatrixTypeRC<Integer, Corner_Length>("corner_ext", size);
         }
 
@@ -345,22 +357,20 @@ namespace mars {
             }
         }
 
-        template <bool Orient = false, typename Mesh, Integer Degree>
-        MARS_INLINE_FUNCTION void build_stencil(const DofHandler<Mesh, Degree> &dm,
-                                                const Integer localid,
-                                                const Integer stencil_index) const {
-            const Integer orientation = dm.get_orientation(localid);
-            SuperStokesStencil::template generate_stencil<Orient>(dm, localid, stencil_index, orientation);
-            build_corner_face_stencil<Orient>(dm, localid, stencil_index, orientation);
+        template <bool Orient = false>
+        MARS_INLINE_FUNCTION void build_stencil(const Integer localid, const Integer stencil_index) const {
+            const Integer orientation = SuperStencil::get_dof_handler().get_orientation(localid);
+            SuperStokesStencil::template generate_stencil<Orient>(SuperStencil::get_dof_handler(), localid, stencil_index, orientation);
+            build_corner_face_stencil<Orient>(SuperStencil::get_dof_handler(), localid, stencil_index, orientation);
         }
 
-        template <bool Orient = false, typename DM>
+        /* template <bool Orient = false, typename DM>
         MARS_INLINE_FUNCTION void build_stencil(const DM &dm,
                                                 const Integer localid,
                                                 const Integer stencil_index) const {
             auto handler = dm.get_dof_handler();
             build_stencil(handler, localid, stencil_index);
-        }
+        } */
 
         MARS_INLINE_FUNCTION
         ViewMatrixTypeRC<Integer, Corner_Length> get_corner_stencil() const { return corner_extension; }

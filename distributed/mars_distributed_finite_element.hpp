@@ -247,11 +247,11 @@ namespace mars {
         const DofHandler &get_dof_handler() const { return dof_handler; }
 
     private:
+        DofHandler dof_handler;
         // local enumeration of the dofs topologically foreach element
         ViewMatrixType<Integer> elem_dof_enum;
         // owned dof to local dofs map (including ghosts). owned dof rows, (>), local dof columns. Sparse.
         /* ViewMatrixTypeRC<Integer, max_dof_to_dof_size> dof_to_dof_map; */
-        DofHandler dof_handler;
     };
 
     /* template <typename Mesh, Integer Degree>

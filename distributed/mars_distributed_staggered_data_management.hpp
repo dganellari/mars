@@ -123,13 +123,13 @@ namespace mars {
     };
 
     template <class DofHandler, typename... T>
-    using VDM = SDM<VolumeDofHandler<typename DofHandler::Mesh, DofHandler::Degree>, T...>;
+    using VDM = SDM<VolumeDofHandler<DofHandler>, T...>;
 
     template <class DofHandler, typename... T>
-    using FDM = SDM<FaceDofHandler<typename DofHandler::Mesh, DofHandler::Degree>, T...>;
+    using FDM = SDM < FaceDofHandler<DofHandler>, T...>;
 
     template <class DofHandler, typename... T>
-    using CDM = SDM<CornerDofHandler<typename DofHandler::Mesh, DofHandler::Degree>, T...>;
+    using CDM = SDM<CornerDofHandler<DofHandler>, T...>;
 
 }  // namespace mars
 
