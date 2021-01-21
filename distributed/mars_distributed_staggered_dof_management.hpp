@@ -8,13 +8,18 @@
 
 namespace mars {
 
-    template <Integer Label, class Mesh, Integer degree>
+    template <Integer Label, class Mesh_, Integer degree>
     class SDofHandler {
     public:
+        using Mesh = Mesh_;
+
+        using UD = UserData<Mesh>;
         using simplex_type = typename Mesh::Elem;
 
         static constexpr Integer dofLabel = Label;
         static constexpr Integer Degree = degree;
+        static constexpr Integer Dim = Mesh::Dim;
+        static constexpr Integer ManifoldDim = Mesh::ManifoldDim;
 
         MARS_INLINE_FUNCTION
         SDofHandler(DofHandler<Mesh, degree> d) : dof_handler(d) { prepare_separated_dofs(); }
@@ -231,6 +236,35 @@ namespace mars {
             return get_dof_handler().local_to_global_dof(local);
         }
 
+        MARS_INLINE_FUNCTION
+        UD get_data() const { return get_dof_handler().get_data(); }
+
+        MARS_INLINE_FUNCTION
+        const SFC<simplex_type::ElemType> &get_local_dof_enum() const { return get_dof_handler().get_local_dof_enum(); }
+
+
+        MARS_INLINE_FUNCTION
+        Integer sfc_to_local(const Integer sfc) const { return get_local_dof_enum().get_view_sfc_to_local()(sfc); }
+
+        template <Integer Type>
+        static MARS_INLINE_FUNCTION Integer
+        enum_corner(const ViewVectorType<Integer> &sfc_to_local, const Octant &oc, const int i, const int j) {
+            return DofHandler<Mesh, degree>::template enum_corner<Type>(sfc_to_local, oc, i, j);
+        }
+
+        template <Integer part>
+        static MARS_INLINE_FUNCTION Octant enum_face_corner(Octant &oc, const int dir) {
+            return DofHandler<Mesh, degree>::template enum_face_corner<part>(oc, dir);
+        }
+
+        template <Integer part, Integer Type>
+        static MARS_INLINE_FUNCTION Integer enum_face_node(const ViewVectorType<Integer> &sfc_to_local,
+                                                           const Octant &face_cornerA,
+                                                           const int j,
+                                                           const int dir) {
+            return DofHandler<Mesh, degree>::template enum_face_node<part, Type>(sfc_to_local, face_cornerA, j, dir);
+        }
+
         /* *************************************************************************** */
 
     private:
@@ -248,7 +282,7 @@ namespace mars {
 
         ViewVectorType<Integer> ghost_dofs;
         ViewVectorType<Integer>::HostMirror scan_recv_mirror;
-    };
+        };
 
     template <class Mesh, Integer degree>
     using VolumeDofHandler = SDofHandler<DofLabel::lVolume, Mesh, degree>;

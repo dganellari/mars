@@ -63,20 +63,20 @@ u = P uk */
 
 namespace mars {
 
-    /* using DMQ2 = DM<DistributedQuad4Mesh, 2, double, double>; */
-    using DMQ2 = DM<DistributedQuad4Mesh, 1, double, double, double>;
     using DOFHandler = DofHandler<DistributedQuad4Mesh, 1>;
+    /* using DMQ2 = DM<DistributedQuad4Mesh, 2, double, double>; */
+    using DMQ2 = DM<DOFHandler, double, double, double>;
+    using FE = FEDofMap<DOFHandler>;
+        /*
+        enum class DMDataDesc
+        {
+            v = 0,
+            u = 1
+        };
+         */
 
-    /*
-    enum class DMDataDesc
-    {
-        v = 0,
-        u = 1
-    };
-     */
-
-    // use as more readable tuple index to identify the data
-    static constexpr int INPUT = 0;
+        // use as more readable tuple index to identify the data
+        static constexpr int INPUT = 0;
     static constexpr int OUTPUT = 1;
     static constexpr int RHSD = 2;
 
@@ -118,11 +118,11 @@ namespace mars {
 
     // print thlocal and the global number of the dof within each element.
     // the dof enumeration within eachlement is topological
-    void print_elem_global_dof(const DMQ2 dm, const FEDofMap<DMQ2::Degree> &fe) {
+    void print_elem_global_dof(const DMQ2 dm, const FE &fe) {
         auto dof_handler = dm.get_dof_handler();
         dof_handler.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
             // go through all the dofs of the elem_index element
-            for (int i = 0; i < FEDofMap<DMQ2::Degree>::elem_nodes; i++) {
+            for (int i = 0; i < FE::elem_nodes; i++) {
                 // get the local dof of the i-th index within thelement
                 const Integer local_dof = fe.get_elem_local_dof(elem_index, i);
                 // convert the local dof number to global dof number
@@ -216,7 +216,7 @@ namespace mars {
             std::cout << "Init PoissonOperator..." << std::endl;
         }
 
-        PoissonOperator<INPUT, OUTPUT, RHSD, DMQ2> pop(context, dm, fe);
+        PoissonOperator<INPUT, OUTPUT, RHSD, DMQ2, FE> pop(context, dm, fe);
         pop.init();
 
         if (proc_num == 0) {

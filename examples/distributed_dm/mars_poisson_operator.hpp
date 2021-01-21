@@ -6,13 +6,13 @@
 
 namespace mars {
 
-    template <Integer INPUT, Integer OUTPUT, Integer RHS, class DM, class FEM = FEDofMap<DM::Degree>>
-    class PoissonOperator /*final*/ : public Operator<DM> {
+    template <Integer INPUT, Integer OUTPUT, Integer RHS, class DM, class FEM>
+    class PoissonOperator /*final*/ : public Operator<DM, FEM> {
     public:
         template <Integer idx>
         using DMDataType = typename DM::template UserDataType<idx>;
 
-        PoissonOperator(const context &c, DM &dm, FEM &fe) : Operator<DM>(c, dm, fe) {}
+        PoissonOperator(const context &c, DM &dm, FEM &fe) : Operator<DM, FEM>(c, dm, fe) {}
 
         void init() override { this->values().init(); }
 

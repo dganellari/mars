@@ -8,10 +8,11 @@
 
 namespace mars {
 
-    template <class Mesh, Integer degree>
+    template <class Mesh_, Integer degree>
     class DofHandler {
     public:
-        /* using UD = UserData<Mesh, double>; */
+        using Mesh = Mesh_;
+
         using UD = UserData<Mesh>;
         using simplex_type = typename Mesh::Elem;
 
@@ -1301,6 +1302,9 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         const Integer get_dof_size() const { return local_dof_enum.get_elem_size(); }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_local_dof(const Integer i) const { return i; }
 
         MARS_INLINE_FUNCTION
         const Integer get_owned_dof(const Integer i) const {
