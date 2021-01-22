@@ -28,24 +28,6 @@ namespace mars {
             Kokkos::parallel_for("init_initial_cond", size, f);
         }
 
-        template <typename F, Integer... dataidx>
-        MARS_INLINE_FUNCTION static void expand_tuple(const F &f, user_tuple &t) {
-            if (sizeof...(dataidx) == 0) {
-                apply_impl(f, t);
-            } else {
-                for_each_arg<F, 0, dataidx...>(f, t);
-            }
-        }
-
-        template <typename F, Integer... dataidx>
-        MARS_INLINE_FUNCTION static void expand_tuple(const F &f, user_tuple &t, user_tuple &v) {
-            if (sizeof...(dataidx) == 0) {
-                apply_impl(f, t, v);
-            } else {
-                for_each_arg<F, 0, dataidx...>(f, t, v);
-            }
-        }
-
         template <typename ElementType, Integer Op = 0>
         struct FillBufferData {
             ElementType buffer_data;

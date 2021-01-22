@@ -50,6 +50,12 @@ namespace mars {
         constexpr Integer get_length() const { return Length; }
 
         MARS_INLINE_FUNCTION
+        constexpr Integer get_face_length() const { return 0; }
+
+        MARS_INLINE_FUNCTION
+        constexpr Integer get_corner_length() const { return 0; }
+
+        MARS_INLINE_FUNCTION
         Integer get_value(const Integer row, const Integer col) const { return stencil(row, col); }
 
         MARS_INLINE_FUNCTION
@@ -249,6 +255,9 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         constexpr Integer get_face_length() const { return Face_Length; }
+
+        MARS_INLINE_FUNCTION
+        constexpr Integer get_corner_length() const { return 0; }
 
     private:
         ViewMatrixTypeRC<Integer, Face_Length> face_extension;

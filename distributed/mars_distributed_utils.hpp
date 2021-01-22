@@ -187,6 +187,24 @@ namespace mars {
         for_each_arg<F, I + 1, Args...>(f, t, v);
     }
 
+    template <typename F, typename T, Integer... dataidx>
+    MARS_INLINE_FUNCTION static void expand_tuple(const F &f, T &t) {
+        if (sizeof...(dataidx) == 0) {
+            apply_impl(f, t);
+        } else {
+            for_each_arg<F, 0, dataidx...>(f, t);
+        }
+    }
+
+    template <typename F, typename T, Integer... dataidx>
+    MARS_INLINE_FUNCTION static void expand_tuple(const F &f, T &t, T &v) {
+        if (sizeof...(dataidx) == 0) {
+            apply_impl(f, t, v);
+        } else {
+            for_each_arg<F, 0, dataidx...>(f, t, v);
+        }
+    }
+
     /* ***************************general utils************************************************** */
 
 #ifdef WITH_KOKKOS
