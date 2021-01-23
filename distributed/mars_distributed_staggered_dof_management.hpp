@@ -16,7 +16,10 @@ namespace mars {
         using UD = UserData<Mesh>;
         using simplex_type = typename Mesh::Elem;
 
+        static constexpr Integer ElemType = simplex_type::ElemType;
+
         static constexpr Integer dofLabel = Label;
+
         static constexpr Integer Degree = degree;
         static constexpr Integer Dim = Mesh::Dim;
         static constexpr Integer ManifoldDim = Mesh::ManifoldDim;
@@ -226,13 +229,41 @@ namespace mars {
         /* *******dof handler related functionalities for completing the handler.******* */
         /* chose this way to hide the full interface of the general handler. Inheritance is the other way*/
 
+
+        template <Integer Type, Integer FaceNr = -1>
+        MARS_INLINE_FUNCTION bool is_boundary(const Integer local) const {
+            return get_dof_handler().template is_boundary<Type, FaceNr>(local);
+        }
+
+        MARS_INLINE_FUNCTION
+        constexpr Integer get_elem_type() { return simplex_type::ElemType; }
+
+        MARS_INLINE_FUNCTION
+        const ViewVectorType<Integer> get_global_dof_offset() const {
+            return get_dof_handler().get_global_dof_offset();
+        }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_global_dof_size() const { return get_dof_handler().get_global_dof_size(); }
+
+
         MARS_INLINE_FUNCTION
         const Integer get_orientation(const Integer local_dof) const {
             return get_dof_handler().get_orientation(local_dof);
         }
 
         MARS_INLINE_FUNCTION
-        Dof local_to_global_dof(const Integer local) const {
+        const Integer get_label(const Integer local) const {
+            return get_dof_handler().get_label(local);
+        }
+
+        MARS_INLINE_FUNCTION
+        const Integer local_to_global(const Integer local) const {
+            return get_dof_handler().local_to_global(local);
+        }
+
+        MARS_INLINE_FUNCTION
+        const Dof local_to_global_dof(const Integer local) const {
             return get_dof_handler().local_to_global_dof(local);
         }
 

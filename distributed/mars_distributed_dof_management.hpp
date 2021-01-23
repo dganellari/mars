@@ -16,6 +16,8 @@ namespace mars {
         using UD = UserData<Mesh>;
         using simplex_type = typename Mesh::Elem;
 
+        static constexpr Integer ElemType = simplex_type::ElemType;
+
         static constexpr Integer dofLabel = DofLabel::lAll;
 
         static constexpr Integer Degree = degree;
@@ -26,6 +28,10 @@ namespace mars {
         static constexpr Integer face_nodes = (degree - 1);
         static constexpr Integer corner_nodes = 1;
         static constexpr Integer elem_nodes = (degree + 1) * (degree + 1);
+
+
+        MARS_INLINE_FUNCTION
+        constexpr Integer get_elem_type() { return simplex_type::ElemType; }
 
         MARS_INLINE_FUNCTION
         DofHandler(Mesh *mesh, const context &c) : data(UD(mesh)), ctx(c) {
@@ -1323,6 +1329,11 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_global_dof_offset() const { return global_dof_offset; }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_global_dof_size() const {
+            return get_global_dof_offset()(get_global_dof_offset().extent(0) - 1);
+        }
 
         MARS_INLINE_FUNCTION
         const UnorderedMap<Integer, Dof> &get_ghost_lg_map() const { return ghost_local_to_global_map; }
