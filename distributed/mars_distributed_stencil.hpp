@@ -62,11 +62,13 @@ namespace mars {
         MARS_INLINE_FUNCTION
         virtual Integer get_face_length() const { return 0; }
 
+        MARS_INLINE_FUNCTION
         virtual Integer get_face_value(const Integer row, const Integer col) const { return 0; }
 
         MARS_INLINE_FUNCTION
         virtual Integer get_corner_length() const { return 0; }
 
+        MARS_INLINE_FUNCTION
         virtual Integer get_corner_value(const Integer row, const Integer col) const { return 0; }
 
         const Integer get_stencil_size() const { return stencil.extent(0); }
@@ -195,6 +197,7 @@ namespace mars {
         MARS_INLINE_FUNCTION
         virtual Integer get_corner_length() const override { return 0; }
 
+        MARS_INLINE_FUNCTION
         virtual Integer get_corner_value(const Integer row, const Integer col) const override { return 0; }
 
 

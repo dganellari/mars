@@ -33,20 +33,17 @@ namespace mars {
 
         using stencil_tuple = std::tuple<ST...>;
 
+        template <typename H>
+        static MARS_INLINE_FUNCTION bool conditional(const Integer local_dof, const H &handler) {
+            return (local_dof > -1 && handler.get_label(local_dof) != ExLabel &&
+                    !handler.template is_boundary<H::ElemType>(local_dof));
+        }
+
         struct CountUniqueDofs {
             CountUniqueDofs(ViewVectorType<Integer> c) : counter(c) {}
 
-            template <typename H>
-            MARS_INLINE_FUNCTION bool conditional(const Integer local_dof,const H &handler) const {
-                return (local_dof > -1 && handler.get_label(local_dof) != ExLabel &&
-                        !handler.template is_boundary<H::ElemType>(local_dof));
-            }
-
             template <typename S>
-            MARS_INLINE_FUNCTION void count_dof(const S &st,
-                                                const Integer stencil_index,
-                                                Integer &count) const {
-
+            MARS_INLINE_FUNCTION void count_dof(const S &st, const Integer stencil_index, Integer &count) const {
                 for (int i = 0; i < st.get_length(); i++) {
                     const Integer local_dof = st.get_value(stencil_index, i);
                     if (conditional(local_dof, st.get_dof_handler())) {
@@ -93,16 +90,88 @@ namespace mars {
             ViewVectorType<Integer> counter;
         };
 
+        struct InsertSortedDofs {
+            InsertSortedDofs(ViewVectorType<Integer> r, ViewVectorType<Integer> c) : row_ptr(r), col_idx(c) {}
+
+            template <typename S>
+            MARS_INLINE_FUNCTION void insert_dof(const S &st, const Integer stencil_index, Integer dof) const {
+                Integer count = 0;
+
+                Integer index = row_ptr(st.get_dof_handler().local_to_global(dof));
+
+                for (int i = 0; i < st.get_length(); i++) {
+                    const Integer local_dof = st.get_value(stencil_index, i);
+                    if (conditional(local_dof, st.get_dof_handler())) {
+                        col_idx(index + count) = st.get_dof_handler().local_to_global(local_dof);
+                        count++;
+                    }
+                }
+
+                for (int i = 0; i < st.get_face_length(); i++) {
+                    // get the local dof of the i-th index within thelement
+                    const Integer local_dof = st.get_face_value(stencil_index, i);
+                    if (conditional(local_dof, st.get_dof_handler())) {
+                        col_idx(index + count) = st.get_dof_handler().local_to_global(local_dof);
+                        count++;
+                    }
+                }
+
+                for (int i = 0; i < st.get_corner_length(); i++) {
+                    // get the local dof of the i-th index within thelement
+                    const Integer local_dof = st.get_corner_value(stencil_index, i);
+                    if (conditional(local_dof, st.get_dof_handler())) {
+                        col_idx(index + count) = st.get_dof_handler().local_to_global(local_dof);
+                        count++;
+                    }
+                }
+            }
+
+            template <typename S>
+            MARS_INLINE_FUNCTION void insert_sorted(S st) const {
+                st.iterate(MARS_LAMBDA(const Integer stencil_index) {
+                    const Integer dof = st.get_value(stencil_index, 0);
+                    if (!st.get_dof_handler().template is_boundary<S::DHandler::ElemType>(dof)) {
+                        insert_dof(st, stencil_index, dof);
+                    }
+                });
+            }
+
+            template <typename S>
+            MARS_INLINE_FUNCTION void operator()(S &stencil, size_t I) const {
+                insert_sorted<S>(stencil);
+            }
+
+            ViewVectorType<Integer> row_ptr;
+            ViewVectorType<Integer> col_idx;
+        };
+
         template <Integer... dataidx>
         void generate_pattern() {
             auto handler = std::get<0>(stencils).get_dof_handler();
             ViewVectorType<Integer> counter("counter", handler.get_global_dof_size());
             expand_tuple<CountUniqueDofs, stencil_tuple, dataidx...>(CountUniqueDofs(counter), stencils);
-            /* scan(counter); */
+            ViewVectorType<Integer> row_ptr("counter_scan", handler.get_global_dof_size() + 1);
+            incl_excl_scan(0, handler.get_global_dof_size(), counter, row_ptr);
+
+            auto ss = subview(row_ptr, handler.get_global_dof_size());
+            auto h_ss = create_mirror_view(ss);
+            deep_copy(h_ss, ss);
+
+            ViewVectorType<Integer> col_idx("ColdIdx", h_ss());
+
+            expand_tuple<InsertSortedDofs, stencil_tuple, dataidx...>(InsertSortedDofs(row_ptr, col_idx), stencils);
+
+            /* segmented_sort(col_idx);
+            sparsity_pattern = graph_type(row_ptr, col_idx); */
+
+            Kokkos::parallel_for(
+                "sp:", handler.get_global_dof_size(), MARS_LAMBDA(const Integer i) {
+                    for (int j = row_ptr(i); j < row_ptr(i+1); j++) printf("spi: %li, global: %li\n", i, col_idx(j));
+                });
 
             Kokkos::parallel_for(
                 "test", handler.get_global_dof_size(), MARS_LAMBDA(const Integer i) {
-                    printf("i: %li, count: %li \n", i, counter(i));
+                    printf("i: %li, count: %li scan: %li\n", i, counter(i), row_ptr(i));
                 });
         }
 
