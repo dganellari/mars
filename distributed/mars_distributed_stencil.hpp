@@ -27,6 +27,8 @@ namespace mars {
     template <typename DofHandler, Integer Width = 1>
     class Stencil {
     public:
+        using DHandler = DofHandler;
+
         static constexpr Integer Dim = DofHandler::ManifoldDim;
 
         static constexpr Integer Length = 2 * Dim * Width + 1;
@@ -47,13 +49,7 @@ namespace mars {
         constexpr Integer get_width() const { return Width; }
 
         MARS_INLINE_FUNCTION
-        constexpr Integer get_length() const { return Length; }
-
-        MARS_INLINE_FUNCTION
-        constexpr Integer get_face_length() const { return 0; }
-
-        MARS_INLINE_FUNCTION
-        constexpr Integer get_corner_length() const { return 0; }
+        Integer get_length() const { return Length; }
 
         MARS_INLINE_FUNCTION
         Integer get_value(const Integer row, const Integer col) const { return stencil(row, col); }
@@ -62,6 +58,16 @@ namespace mars {
         Integer set_value(const Integer row, const Integer col, const Integer value) const {
             return stencil(row, col) = value;
         }
+
+        MARS_INLINE_FUNCTION
+        virtual Integer get_face_length() const { return 0; }
+
+        virtual Integer get_face_value(const Integer row, const Integer col) const { return 0; }
+
+        MARS_INLINE_FUNCTION
+        virtual Integer get_corner_length() const { return 0; }
+
+        virtual Integer get_corner_value(const Integer row, const Integer col) const { return 0; }
 
         const Integer get_stencil_size() const { return stencil.extent(0); }
 
@@ -153,6 +159,7 @@ namespace mars {
     template <typename DofHandler>
     class StokesStencil : public Stencil<DofHandler, 2> {
     public:
+        using DHandler = DofHandler;
 
         static constexpr Integer Dim = DofHandler::ManifoldDim;
 
@@ -169,13 +176,27 @@ namespace mars {
             face_extension = ViewMatrixTypeRC<Integer, Face_Length>("face_ext", size);
         }
 
+        MARS_INLINE_FUNCTION
+        ViewMatrixTypeRC<Integer, Face_Length> get_face_stencil() const { return face_extension; }
+
         virtual void reserve_stencil(const Integer size) override {
             SuperStencil::reserve_stencil(size);
             face_extension = ViewMatrixTypeRC<Integer, Face_Length>("stencil_face_ext", size);
         }
 
         MARS_INLINE_FUNCTION
-        Integer get_face_value(const Integer row, const Integer col) const { return face_extension(row, col); }
+        virtual Integer get_face_length() const override { return Face_Length; }
+
+        MARS_INLINE_FUNCTION
+        virtual Integer get_face_value(const Integer row, const Integer col) const override {
+            return face_extension(row, col);
+        }
+
+        MARS_INLINE_FUNCTION
+        virtual Integer get_corner_length() const override { return 0; }
+
+        virtual Integer get_corner_value(const Integer row, const Integer col) const override { return 0; }
+
 
         MARS_INLINE_FUNCTION
         Integer set_face_value(const Integer row, const Integer col, const Integer value) const {
@@ -250,22 +271,15 @@ namespace mars {
             build_diagonal_stencil<Orient>(dm, localid, stencil_index, orientation);
         }
 
-        MARS_INLINE_FUNCTION
-        ViewMatrixTypeRC<Integer, Face_Length> get_face_stencil() const { return face_extension; }
-
-        MARS_INLINE_FUNCTION
-        constexpr Integer get_face_length() const { return Face_Length; }
-
-        MARS_INLINE_FUNCTION
-        constexpr Integer get_corner_length() const { return 0; }
-
     private:
         ViewMatrixTypeRC<Integer, Face_Length> face_extension;
     };
 
     template <typename DofHandler>
-    class FullStokesStencil : StokesStencil<DofHandler> {
+    class FullStokesStencil : public StokesStencil<DofHandler> {
     public:
+        using DHandler = DofHandler;
+
         static constexpr Integer Dim = DofHandler::ManifoldDim;
         static constexpr Integer Corner_Length = 2 * Dim;
         static constexpr Integer Width = 2;
@@ -288,7 +302,15 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        Integer get_corner_value(const Integer row, const Integer col) const { return corner_extension(row, col); }
+        ViewMatrixTypeRC<Integer, Corner_Length> get_corner_stencil() const { return corner_extension; }
+
+        MARS_INLINE_FUNCTION
+        virtual Integer get_corner_length() const override { return Corner_Length; }
+
+        MARS_INLINE_FUNCTION
+        virtual Integer get_corner_value(const Integer row, const Integer col) const override {
+            return corner_extension(row, col);
+        }
 
         MARS_INLINE_FUNCTION
         Integer set_corner_value(const Integer row, const Integer col, const Integer value) const {
@@ -380,12 +402,6 @@ namespace mars {
             auto handler = dm.get_dof_handler();
             build_stencil(handler, localid, stencil_index);
         } */
-
-        MARS_INLINE_FUNCTION
-        ViewMatrixTypeRC<Integer, Corner_Length> get_corner_stencil() const { return corner_extension; }
-
-        MARS_INLINE_FUNCTION
-        constexpr Integer get_corner_length() const { return Corner_Length; }
 
     private:
         ViewMatrixTypeRC<Integer, Corner_Length> corner_extension;

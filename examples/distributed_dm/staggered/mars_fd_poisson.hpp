@@ -19,14 +19,13 @@
 #include "Kokkos_ArithTraits.hpp"
 #include "mars_distributed_staggered_data_management.hpp"
 #include "mars_distributed_staggered_dof_management.hpp"
+#include "mars_distributed_sparsity_pattern.hpp"
 #endif  // WITH_KOKKOS
 #endif
 
 // #include "mars_pvtu_writer.hpp"  // VTK
 
 namespace mars {
-
-    static constexpr Integer DIM = DistributedQuad4Mesh::ManifoldDim;
 
     using DHandler = DofHandler<DistributedQuad4Mesh, 2>;
 
@@ -40,7 +39,7 @@ namespace mars {
 
     // Staggered DMs
     using VolumeDM = SDM<VDH, double, double>;
-    using CornerDM = SDM<CDH, double, double>;
+    using CornerDM = SDM<CDH, double, double ,double>;
     using FaceDM = SDM<FDH, double, double>;
 
     /*
@@ -54,10 +53,12 @@ namespace mars {
     using SStencil = StokesStencil<FDH>;
     using FSStencil = FullStokesStencil<FDH>;
     // general width 2 stencil used as constant viscosity stokes.
-    using VStencil = Stencil<VDH, 2>;
+    using VStencil = Stencil<VDH, 1>;
     // general width 1 stencil used as pressure stencil.
     using CStencil = Stencil<CDH, 1>;
 
+    using SPattern = SparsityPattern<DofLabel::lCorner, VStencil, SStencil>;
+    /* using SPattern = SparsityPattern<DofLabel::lCorner, VStencil, FSStencil>; */
     // use as more readable tuple index to identify the data
     static constexpr int IN = 0;
     static constexpr int OUT = 1;
@@ -318,7 +319,7 @@ namespace mars {
         VolumeDM vdm(dof_handler);
         FaceDM fdm(dof_handler);
         CornerDM cdm(dof_handler);
-
+/*
         auto fe = build_fe_dof_map(vdm.get_dof_handler());
         print_elem_global_dof(vdm.get_dof_handler(), fe);
 
@@ -327,9 +328,9 @@ namespace mars {
 
         auto cfe = build_fe_dof_map(cdm.get_dof_handler());
         print_elem_global_dof(cdm.get_dof_handler(), cfe);
-
-        /* print_local_dofs(vdm); */
-        /* print_owned_dofs(vdm); */
+ */
+        print_local_dofs(vdm);
+        print_owned_dofs(vdm);
 
         /* print_partition_boundary_dofs(vdm); */
         /* print_ghost_dofs(vdm); */
@@ -338,11 +339,15 @@ namespace mars {
          * based on the orientation. Otherwise no order but just a normal stencil. */
         /* auto volume_stencil = vdm.build_stencil<VStencil, Orient>(); */
 
-        /* auto volume_stencil = build_stencil<VStencil>(vdm.get_dof_handler());
-        print_stencil(vdm, volume_stencil);
- */
+        auto volume_stencil = build_stencil<VStencil>(vdm.get_dof_handler());
+        /* print_stencil(vdm, volume_stencil); */
+
         auto face_stencil = build_stencil<SStencil>(fdm.get_dof_handler());
-        print_stencil(fdm, face_stencil);
+        /* print_stencil(fdm, face_stencil); */
+
+        /* using Pattern = SparsityPattern<DofLabel::lCorner, VStencil>;
+        Pattern sp(volume_stencil); */
+        SPattern sp(volume_stencil, face_stencil);
 
         /* auto corner_stencil = build_stencil<CStencil>(cdm.get_dof_handler()); */
         /* print_stencil(cdm, corner_stencil); */
@@ -360,7 +365,7 @@ namespace mars {
         });
 
         vdm.gather_ghost_data<OUT>();
-        scatter_add_ghost_data<VolumeDM, OUT>(vdm);
+        /* scatter_add_ghost_data<VolumeDM, OUT>(vdm); */
 
         // print using the dof iterate
         /* vdm.get_dof_handler().dof_iterate(MARS_LAMBDA(const Integer local_dof) {
@@ -382,8 +387,7 @@ namespace mars {
 
             Dof d = vdm.get_dof_handler().local_to_global_dof(local_dof);
 
-            /* printf("lid: %li, u: %lf, v: %lf, global: %li, rank: %i\n", i, idata, odata, d.get_gid(), d.get_proc());
-             */
+            printf("lid: %li, u: %lf, v: %lf, global: %li, rank: %i\n", i, idata, odata, d.get_gid(), d.get_proc());
         });
 
         double time = timer.seconds();

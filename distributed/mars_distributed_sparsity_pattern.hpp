@@ -22,71 +22,52 @@ namespace mars {
         Finite finite_item;
     };
  */
-    template <Integer ExLabel = DofLabel::lNone, typename... Stencil>
+    template <Integer ExLabel = DofLabel::lNone, typename... ST>
     class SparsityPattern {
     public:
         MARS_INLINE_FUNCTION
-        SparsityPattern(Stencil... f) : stencils(std::make_tuple(f...)) { generate_pattern(); }
+        SparsityPattern(ST... f) : stencils(std::make_tuple(f...)) { generate_pattern(); }
 
         MARS_INLINE_FUNCTION
         const graph_type get_sparsity_pattern() const { return sparsity_pattern; }
 
-        using stencil_tuple = std::tuple<Stencil...>;
+        using stencil_tuple = std::tuple<ST...>;
 
-        struct CountUnique {
-            CountUnique(ViewVectorType<Integer> c) : counter(c) {}
+        struct CountUniqueDofs {
+            CountUniqueDofs(ViewVectorType<Integer> c) : counter(c) {}
 
             template <typename H>
-            MARS_INLINE_FUNCTION void conditional_count(const Integer local_dof,const H &handler, Integer &count) const {
-                if (local_dof > -1 && handler.get_label(local_dof) != ExLabel &&
-                    !handler.template is_boundary<H::ElemType>(local_dof)) {
-                    count++;
-                }
+            MARS_INLINE_FUNCTION bool conditional(const Integer local_dof,const H &handler) const {
+                return (local_dof > -1 && handler.get_label(local_dof) != ExLabel &&
+                        !handler.template is_boundary<H::ElemType>(local_dof));
             }
 
             template <typename S>
-            MARS_INLINE_FUNCTION void count_dof(const S &st, const Integer stencil_index, Integer &count) const {
-                for (int i = 0; i < st.get_length(); i++) {
-                    const Integer local_dof = st.get_value(stencil_index, i);
-                    conditional_count(local_dof, st.get_dof_handler(), count);
-                }
-            }
-
-            template <typename DofHandler>
-            MARS_INLINE_FUNCTION void count_dof(const StokesStencil<DOFHandler> &st,
+            MARS_INLINE_FUNCTION void count_dof(const S &st,
                                                 const Integer stencil_index,
                                                 Integer &count) const {
+
                 for (int i = 0; i < st.get_length(); i++) {
                     const Integer local_dof = st.get_value(stencil_index, i);
-                    conditional_count(local_dof, st.get_dof_handler(), count);
+                    if (conditional(local_dof, st.get_dof_handler())) {
+                        count++;
+                    }
                 }
 
                 for (int i = 0; i < st.get_face_length(); i++) {
                     // get the local dof of the i-th index within thelement
                     const Integer local_dof = st.get_face_value(stencil_index, i);
-                    conditional_count(local_dof, st.get_dof_handler(), count);
-                }
-            }
-
-            template <typename DofHandler>
-            MARS_INLINE_FUNCTION void count_dof(const FullStokesStencil<DOFHandler> &st,
-                                                const Integer stencil_index,
-                                                Integer &count) const {
-                for (int i = 0; i < st.get_length(); i++) {
-                    const Integer local_dof = st.get_value(stencil_index, i);
-                    conditional_count(local_dof, st.get_dof_handler(), count);
-                }
-
-                for (int i = 0; i < st.get_face_length(); i++) {
-                    // get the local dof of the i-th index within thelement
-                    const Integer local_dof = st.get_face_value(stencil_index, i);
-                    conditional_count(local_dof, st.get_dof_handler(), count);
+                    if (conditional(local_dof, st.get_dof_handler())) {
+                        count++;
+                    }
                 }
 
                 for (int i = 0; i < st.get_corner_length(); i++) {
                     // get the local dof of the i-th index within thelement
                     const Integer local_dof = st.get_corner_value(stencil_index, i);
-                    conditional_count(local_dof, st.get_dof_handler(), count);
+                    if (conditional(local_dof, st.get_dof_handler())) {
+                        count++;
+                    }
                 }
             }
 
@@ -98,7 +79,9 @@ namespace mars {
                     count_dof(st, stencil_index, count);
 
                     const Integer dof = st.get_value(stencil_index, 0);
-                    counter(st.get_dof_handler().local_to_global(dof)) = count;
+                    const Integer total =
+                        st.get_dof_handler().template is_boundary<S::DHandler::ElemType>(dof) ? 0 : count;
+                    counter(st.get_dof_handler().local_to_global(dof)) = total;
                 });
             }
 
@@ -114,7 +97,7 @@ namespace mars {
         void generate_pattern() {
             auto handler = std::get<0>(stencils).get_dof_handler();
             ViewVectorType<Integer> counter("counter", handler.get_global_dof_size());
-            expand_tuple<CountUnique, stencil_tuple, dataidx...>(CountUnique(counter), stencils);
+            expand_tuple<CountUniqueDofs, stencil_tuple, dataidx...>(CountUniqueDofs(counter), stencils);
             /* scan(counter); */
 
             Kokkos::parallel_for(
