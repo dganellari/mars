@@ -19,6 +19,7 @@ namespace mars {
         static constexpr Integer elem_nodes = (degree + 1) * (degree + 1);
         /* static constexpr Integer elem_nodes = (degree + 1) ^ Dim; Should be in general. */
 
+        using DHandler = DofHandler;
         //! regular grids only. This can be a specialized version of the  non uniform impl.
         // Each node has max 2^Dim neighboring elements and  3^DIM neighboring nodes.
         // To account for the dofs we multiply with the degree.
