@@ -1332,7 +1332,13 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         const Integer get_global_dof_size() const {
-            return get_global_dof_offset()(get_global_dof_offset().extent(0) - 1);
+            const Integer rank_size = num_ranks(get_context());
+
+            auto ss = subview(global_dof_offset, rank_size);
+            auto h_ss = create_mirror_view(ss);
+            deep_copy(h_ss, ss);
+
+            return h_ss();
         }
 
         MARS_INLINE_FUNCTION
