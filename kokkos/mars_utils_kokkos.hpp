@@ -48,16 +48,6 @@ constexpr std::size_t arraySize(T (&)[N][M]) noexcept
 	#endif //KOKKOS_ENABLE_OPENMP
 #endif //MARS_USE_CUDA
 
-using Scalar = default_scalar;
-using Ordinal = default_lno_t;
-using Offset = default_size_type;
-using Layout = default_layout;
-
-using device_type =
-    typename Kokkos::Device<Kokkos::DefaultExecutionSpace, KokkosSpace>;
-using crs_matrix = typename KokkosSparse::CrsMatrix<Scalar, Ordinal, device_type, void, Offset>;
-using graph_type = typename crs_matrix::staticcrsgraph_type;
-
 template<typename T>
 using ViewVectorTypeStride = Kokkos::View<T*, Kokkos::LayoutStride, KokkosSpace>;
 

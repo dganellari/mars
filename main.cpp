@@ -1884,6 +1884,11 @@ int main(int argc, char *argv[]) {
     apps["stag_poisson2D"] = [=]() {
         staggered_poisson_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(level);
     };
+
+    /* apps["stokes2D"] = [=]() {
+        staggered_stokes_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(level);
+    };
+ */
 #endif
 #endif  // WITH_KOKKOS
 
