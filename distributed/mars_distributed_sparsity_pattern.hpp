@@ -93,6 +93,23 @@ namespace mars {
         struct InsertSortedDofs {
             InsertSortedDofs(ViewVectorType<Integer> r, ViewVectorType<Integer> c) : row_ptr(r), col_idx(c) {}
 
+            MARS_INLINE_FUNCTION
+            void insert_sorted(const ViewVectorType<Integer> &col,
+                               const Integer index,
+                               const Integer value,
+                               Integer &count) const {
+                Integer i = 0;
+                while (value > col(index + i) && i < count) {
+                    i++;
+                }
+
+                for (int j = count; j > i; --j) {
+                    col(index + j) = col(index + j - 1);
+                }
+                col(index + i) = value;
+                ++count;
+            }
+
             template <typename S>
             MARS_INLINE_FUNCTION void insert_dof(const S &st, const Integer stencil_index, Integer dof) const {
                 Integer count = 0;
@@ -102,8 +119,8 @@ namespace mars {
                 for (int i = 0; i < st.get_length(); i++) {
                     const Integer local_dof = st.get_value(stencil_index, i);
                     if (conditional(local_dof, st.get_dof_handler())) {
-                        col_idx(index + count) = st.get_dof_handler().local_to_global(local_dof);
-                        count++;
+                        const Integer global = st.get_dof_handler().local_to_global(local_dof);
+                        insert_sorted(col_idx, index, global, count);
                     }
                 }
 
@@ -111,8 +128,8 @@ namespace mars {
                     // get the local dof of the i-th index within thelement
                     const Integer local_dof = st.get_face_value(stencil_index, i);
                     if (conditional(local_dof, st.get_dof_handler())) {
-                        col_idx(index + count) = st.get_dof_handler().local_to_global(local_dof);
-                        count++;
+                        const Integer global = st.get_dof_handler().local_to_global(local_dof);
+                        insert_sorted(col_idx, index, global, count);
                     }
                 }
 
@@ -120,8 +137,8 @@ namespace mars {
                     // get the local dof of the i-th index within thelement
                     const Integer local_dof = st.get_corner_value(stencil_index, i);
                     if (conditional(local_dof, st.get_dof_handler())) {
-                        col_idx(index + count) = st.get_dof_handler().local_to_global(local_dof);
-                        count++;
+                        const Integer global = st.get_dof_handler().local_to_global(local_dof);
+                        insert_sorted(col_idx, index, global, count);
                     }
                 }
             }
@@ -148,12 +165,14 @@ namespace mars {
         template <Integer... dataidx>
         void generate_pattern() {
             auto handler = std::get<0>(stencils).get_dof_handler();
-            ViewVectorType<Integer> counter("counter", handler.get_global_dof_size());
-            expand_tuple<CountUniqueDofs, stencil_tuple, dataidx...>(CountUniqueDofs(counter), stencils);
-            ViewVectorType<Integer> row_ptr("counter_scan", handler.get_global_dof_size() + 1);
-            incl_excl_scan(0, handler.get_global_dof_size(), counter, row_ptr);
+            auto global_size = handler.get_global_dof_size();
 
-            auto ss = subview(row_ptr, handler.get_global_dof_size());
+            ViewVectorType<Integer> counter("counter", global_size);
+            expand_tuple<CountUniqueDofs, stencil_tuple, dataidx...>(CountUniqueDofs(counter), stencils);
+            ViewVectorType<Integer> row_ptr("counter_scan", global_size + 1);
+            incl_excl_scan(0, global_size, counter, row_ptr);
+
+            auto ss = subview(row_ptr, global_size);
             auto h_ss = create_mirror_view(ss);
             deep_copy(h_ss, ss);
 
@@ -165,14 +184,14 @@ namespace mars {
             sparsity_pattern = graph_type(row_ptr, col_idx); */
 
             Kokkos::parallel_for(
-                "sp:", handler.get_global_dof_size(), MARS_LAMBDA(const Integer i) {
-                    for (int j = row_ptr(i); j < row_ptr(i+1); j++) printf("spi: %li, global: %li\n", i, col_idx(j));
+                "sp:", global_size, MARS_LAMBDA(const Integer i) {
+                    for (int j = row_ptr(i); j < row_ptr(i + 1); j++) printf("spi: %li, global: %li\n", i, col_idx(j));
                 });
-
-            Kokkos::parallel_for(
-                "test", handler.get_global_dof_size(), MARS_LAMBDA(const Integer i) {
-                    printf("i: %li, count: %li scan: %li\n", i, counter(i), row_ptr(i));
-                });
+            /*
+                        Kokkos::parallel_for(
+                            "test", global_size, MARS_LAMBDA(const Integer i) {
+                                printf("i: %li, count: %li scan: %li\n", i, counter(i), row_ptr(i));
+                            }); */
         }
 
     private:
