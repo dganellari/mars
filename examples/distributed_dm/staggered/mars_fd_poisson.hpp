@@ -17,9 +17,9 @@
 #ifdef WITH_KOKKOS
 #include <KokkosBlas1_sum.hpp>
 #include "Kokkos_ArithTraits.hpp"
+#include "mars_distributed_sparsity_pattern.hpp"
 #include "mars_distributed_staggered_data_management.hpp"
 #include "mars_distributed_staggered_dof_management.hpp"
-#include "mars_distributed_sparsity_pattern.hpp"
 #endif  // WITH_KOKKOS
 #endif
 
@@ -39,7 +39,7 @@ namespace mars {
 
     // Staggered DMs
     using VolumeDM = SDM<VDH, double, double>;
-    using CornerDM = SDM<CDH, double, double ,double>;
+    using CornerDM = SDM<CDH, double, double, double>;
     using FaceDM = SDM<FDH, double, double>;
 
     /*
@@ -282,7 +282,7 @@ namespace mars {
         DHandler dof_handler(&mesh, context);
         dof_handler.enumerate_dofs();
 
-        FEDM fedm(dof_handler);
+        /* FEDM fedm(dof_handler); */
 
         /* print_ghost_dofs(fedm); */
 
@@ -296,11 +296,11 @@ namespace mars {
         const Integer dof_size = dof_handler.get_dof_size();
 
         // if manually managed the data view should have the size of local dof size.
-        ViewVectorType<double> data("IN", dof_size);
+        /* ViewVectorType<double> data("IN", dof_size);
         dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) { data(i) = proc_num; });
 
         gather_ghost_data(dof_handler, data);
-        scatter_add_ghost_data(dof_handler, data);
+        scatter_add_ghost_data(dof_handler, data); */
 
         /* dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) {
             const auto idata = data(i);
@@ -319,16 +319,16 @@ namespace mars {
         VolumeDM vdm(dof_handler);
         FaceDM fdm(dof_handler);
         CornerDM cdm(dof_handler);
-/*
-        auto fe = build_fe_dof_map(vdm.get_dof_handler());
-        print_elem_global_dof(vdm.get_dof_handler(), fe);
+        /*
+                auto fe = build_fe_dof_map(vdm.get_dof_handler());
+                print_elem_global_dof(vdm.get_dof_handler(), fe);
 
-        auto ffe = build_fe_dof_map(fdm.get_dof_handler());
-        print_elem_global_dof(fdm.get_dof_handler(), ffe);
+                auto ffe = build_fe_dof_map(fdm.get_dof_handler());
+                print_elem_global_dof(fdm.get_dof_handler(), ffe);
 
-        auto cfe = build_fe_dof_map(cdm.get_dof_handler());
-        print_elem_global_dof(cdm.get_dof_handler(), cfe);
- */
+                auto cfe = build_fe_dof_map(cdm.get_dof_handler());
+                print_elem_global_dof(cdm.get_dof_handler(), cfe);
+         */
         print_local_dofs(vdm);
         print_owned_dofs(vdm);
 
@@ -340,7 +340,7 @@ namespace mars {
         /* auto volume_stencil = vdm.build_stencil<VStencil, Orient>(); */
 
         auto volume_stencil = build_stencil<VStencil>(vdm.get_dof_handler());
-        /* print_stencil(vdm, volume_stencil); */
+        print_stencil(vdm, volume_stencil);
 
         auto face_stencil = build_stencil<SStencil>(fdm.get_dof_handler());
         /* print_stencil(fdm, face_stencil); */
@@ -348,6 +348,119 @@ namespace mars {
         /* using Pattern = SparsityPattern<DofLabel::lCorner, VStencil>;
         Pattern sp(volume_stencil); */
         SPattern sp(volume_stencil, face_stencil);
+        /* sp.exclude(DofLabel::lCorner); */
+
+        const Integer first_volume_dof = volume_stencil.get_dof_handler().get_local_dof(0);
+
+        volume_stencil.iterate(MARS_LAMBDA(const Integer stencil_index) {
+            const Integer diag_dof = volume_stencil.get_value(stencil_index, VSLabel::Diagonal);
+
+            if (proc_num == 0 && diag_dof == first_volume_dof) {
+                matrix.add(1, diag_dof, diag_dof);
+            } else {
+                const Integer right_dof = volume_stencil.get_value(stencil_index, VSLabel::Right);
+                matrix.add(1, diag_dof, right_dof);
+
+                const Integer left_dof = volume_stencil.get_value(stencil_index, VSLabel::Left);
+                matrix.add(-1, diag_dof, left_dof);
+
+                const Integer up_dof = volume_stencil.get_value(stencil_index, VSLabel::Up);
+                matrix.add(1, diag_dof, up_dof);
+
+                const Integer down_dof = volume_stencil.get_value(stencil_index, VSLabel::Down);
+                matrix.add(-1, diag_dof, down_dof);
+            }
+        });
+
+        face_stencil.iterate(MARS_LAMBDA(const Integer stencil_index) {
+            const Integer diag_dof = volume_stencil.get_value(stencil_index, VSLabel::Diagonal);
+
+            if (face_stencil.get_dof_handler().template is_boundary<FDH::ElemType>(diag_dof)) {
+                if (face_stencil.get_dof_handler().get_orientation(diag_dof) == DofOrient::xDir) {
+                    matrix.add(-4, diag_dof, diag_dof);
+
+                    const Integer pr = volume_stencil.get_value(stencil_index, SSLabel::PRight);
+                    matrix.add(-1, diag_dof, pr);
+
+                    const Integer pl = volume_stencil.get_value(stencil_index, SSLabel::PLight);
+                    matrix.add(1, diag_dof, pl);
+
+                    const Integer vxr = volume_stencil.get_value(stencil_index, SSLabel::VXRight);
+                    matrix.add(2, diag_dof, vxr);
+
+                    const Integer vxl = volume_stencil.get_value(stencil_index, SSLabel::VXLeft);
+                    matrix.add(2, diag_dof, vxl);
+
+                    const Integer vxu = volume_stencil.get_value(stencil_index, SSLabel::VXUp);
+                    if (vxu == -1) {
+                        matrix.add(1, diag_dof, diag_dof);
+                    } else {
+                        matrix.add(1, diag_dof, vxu);
+                    }
+
+                    const Integer vxd = volume_stencil.get_value(stencil_index, SSLabel::VXDown);
+                    if (vxd == -1) {
+                        matrix.add(1, diag_dof, diag_dof);
+                    } else {
+                        matrix.add(1, diag_dof, vxd);
+                    }
+
+                    const Integer vyur = volume_stencil.get_value(stencil_index, SSLabel::VYUpRight);
+                    matrix.add(1, diag_dof, vyur);
+
+                    const Integer vyul = volume_stencil.get_value(stencil_index, SSLabel::VYUpLeft);
+                    matrix.add(-1, diag_dof, vyul);
+
+                    const Integer vydr = volume_stencil.get_value(stencil_index, SSLabel::VYDownRight);
+                    matrix.add(-1, diag_dof, vydr);
+
+                    const Integer vydl = volume_stencil.get_value(stencil_index, SSLabel::VYDownLeft);
+                    matrix.add(1, diag_dof, vydl);
+
+                } else if (face_stencil.get_dof_handler().get_orientation(diag_dof) == DofOrient::yDir) {
+                    matrix.add(-4, diag_dof, diag_dof);
+
+                    const Integer pu = volume_stencil.get_value(stencil_index, SSLabel::PUp);
+                    matrix.add(-1, diag_dof, pu);
+
+                    const Integer pd = volume_stencil.get_value(stencil_index, SSLabel::PDown);
+                    matrix.add(1, diag_dof, pd);
+
+                    const Integer vyr = volume_stencil.get_value(stencil_index, SSLabel::VYRight);
+                    if (vyr == -1) {
+                        matrix.add(1, diag_dof, diag_dof);
+                    } else {
+                        matrix.add(1, diag_dof, vyr);
+                    }
+                    const Integer vyl = volume_stencil.get_value(stencil_index, SSLabel::VYLeft);
+                    if (vyl == -1) {
+                        matrix.add(1, diag_dof, diag_dof);
+                    } else {
+                        matrix.add(1, diag_dof, vyl);
+                    }
+
+                    const Integer vyu = volume_stencil.get_value(stencil_index, SSLabel::VyUp);
+                    matrix.add(2, diag_dof, vyu);
+
+                    const Integer vyd = volume_stencil.get_value(stencil_index, SSLabel::VYDown);
+                    matrix.add(2, diag_dof, vyd);
+
+                    const Integer vxur = volume_stencil.get_value(stencil_index, SSLabel::VXUpRight);
+                    matrix.add(1, diag_dof, vxur);
+
+                    const Integer vxul = volume_stencil.get_value(stencil_index, SSLabel::VXUpLeft);
+                    matrix.add(-1, diag_dof, vxul);
+
+                    const Integer vxdr = volume_stencil.get_value(stencil_index, SSLabel::VXDownRight);
+                    matrix.add(-1, diag_dof, vxdr);
+
+                    const Integer vxdl = volume_stencil.get_value(stencil_index, SSLabel::VXDownLeft);
+                    matrix.add(1, diag_dof, vxdl);
+                }
+            }
+        });
+
+        dof_handler.boundary_dof_iterate(MARS_LAMBDA(const Integer local_dof) { matrix.add(1, local_dof, local_dof); });
 
         /* auto corner_stencil = build_stencil<CStencil>(cdm.get_dof_handler()); */
         /* print_stencil(cdm, corner_stencil); */
@@ -360,12 +473,35 @@ namespace mars {
             });
  */
         vdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
-            vdm.get_data<IN>(i) = 1.0;
-            vdm.get_data<OUT>(i) = proc_num;
+            vdm.get_data<IN>(i) = 0.0;
+            vdm.get_data<OUT>(i) = 0.0;
         });
 
         vdm.gather_ghost_data<OUT>();
         /* scatter_add_ghost_data<VolumeDM, OUT>(vdm); */
+
+        ViewMatrixType<double> rhs("rhs", sp.get_num_rows());
+
+        /* auto volume_handler = vdm.get_dof_handler();
+        volume_handler.owned_dof_iterate(MARS_LAMBDA(const Integer local_dof) {
+                double point[3];
+                volume_handler.get_vertex_coordinates_from_local(local_dof, point);
+
+                const Integer index = volume_handler.local_to_global(local_dof);
+                rhs(index) = x;
+
+
+                });
+ */
+
+        auto face_handler = fdm.get_dof_handler();
+        face_handler.owned_dof_iterate(MARS_LAMBDA(const Integer local_dof) {
+            double point[3];
+            face_handler.get_vertex_coordinates_from_local(local_dof, point);
+
+            const Integer index = volume_handler.local_to_global(local_dof);
+            rhs(index) = x;
+        });
 
         // print using the dof iterate
         /* vdm.get_dof_handler().dof_iterate(MARS_LAMBDA(const Integer local_dof) {
@@ -396,6 +532,6 @@ namespace mars {
 #endif
     }
 
-}  // namespace mars
+    }  // namespace mars
 
 #endif
