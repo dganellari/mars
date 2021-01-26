@@ -229,10 +229,18 @@ namespace mars {
         /* *******dof handler related functionalities for completing the handler.******* */
         /* chose this way to hide the full interface of the general handler. Inheritance is the other way*/
 
+        MARS_INLINE_FUNCTION void get_local_dof_coordinates(const Integer local, double *point) const {
+            get_dof_handler().template get_dof_coordinates_from_local<ElemType>(local, point);
+        }
 
         template <Integer Type, Integer FaceNr = -1>
         MARS_INLINE_FUNCTION bool is_boundary(const Integer local) const {
             return get_dof_handler().template is_boundary<Type, FaceNr>(local);
+        }
+
+        template <Integer FaceNr = -1>
+        MARS_INLINE_FUNCTION bool is_boundary_dof(const Integer local) const {
+            return is_boundary<ElemType, FaceNr>(local);
         }
 
         MARS_INLINE_FUNCTION

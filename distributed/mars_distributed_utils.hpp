@@ -300,8 +300,8 @@ namespace mars {
     }
 
     // standard binary search
-    template <typename T>
-    MARS_INLINE_FUNCTION Integer binary_search(const ViewVectorType<T> view, Integer f, Integer l, const T enc_oc) {
+    template <typename V, typename T>
+    MARS_INLINE_FUNCTION Integer binary_search(const V view, Integer f, Integer l, const T enc_oc) {
         while (f <= l) {
             Integer guess = (l + f) / 2;
 
