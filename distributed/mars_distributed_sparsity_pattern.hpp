@@ -45,9 +45,6 @@ namespace mars {
         MARS_INLINE_FUNCTION
         SparsityPattern(ST... f) : stencils(std::make_tuple(f...)) { generate_pattern(); }
 
-        MARS_INLINE_FUNCTION
-        const crs_graph get_sparsity_pattern() const { return sparsity_pattern; }
-
         struct CompareLabel {
             MARS_INLINE_FUNCTION
             CompareLabel(ViewObject<bool> r, Integer l) : result(r), label(l) {}
@@ -249,10 +246,10 @@ namespace mars {
 
             matrix = crs_matrix("crs_matrix", global_size, values, sparsity_pattern);
 
-            Kokkos::parallel_for(
+            /* Kokkos::parallel_for(
                 "sp:", global_size, MARS_LAMBDA(const Integer i) {
                     for (int j = row_ptr(i); j < row_ptr(i + 1); j++) printf("spi: %li, global: %li\n", i, col_idx(j));
-                });
+                }); */
 
             /*
                         Kokkos::parallel_for(
@@ -260,6 +257,74 @@ namespace mars {
                                 printf("i: %li, count: %li scan: %li\n", i, counter(i), row_ptr(i));
                             }); */
         }
+
+        MARS_INLINE_FUNCTION
+        const crs_graph get_sparsity_pattern() const { return sparsity_pattern; }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_col(const Integer index) const {
+            return get_sparsity_pattern().entries(index);
+        }
+
+        MARS_INLINE_FUNCTION
+        const crs_col get_col() const { return get_sparsity_pattern().entries; }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_row_map(const Integer index) const {
+            return get_sparsity_pattern().row_map(index);
+        }
+
+        MARS_INLINE_FUNCTION
+        const crs_row get_row_map() {
+            return get_sparsity_pattern().row_map;
+        }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_col_index(const Integer local_row, const Integer local_col) const {
+            auto handler = std::get<0>(stencils).get_dof_handler();
+            auto row = handler.local_to_global(local_row);
+            auto col = handler.local_to_global(local_col);
+
+            return get_col_index_from_global(row, col);
+        }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_col_index_from_global(const Integer row, const Integer col) const {
+            const Integer row_idx = sparsity_pattern.row_map(row);
+            const Integer next_row_idx = sparsity_pattern.row_map(row + 1);
+
+            const Integer i = binary_search(sparsity_pattern.entries, row_idx, next_row_idx, col);
+            return i;
+        }
+
+        MARS_INLINE_FUNCTION
+        const V get_value(const Integer index) const { return matrix.values(index); }
+
+        MARS_INLINE_FUNCTION
+        const V get_value(const Integer row, const Integer col) const { return matrix.values(get_col_index(row, col)); }
+
+        MARS_INLINE_FUNCTION
+        const V get_value_from_global(const Integer row, const Integer col) const {
+            return matrix.values(get_col_index_from_global(row, col));
+        }
+
+        MARS_INLINE_FUNCTION
+        const void set_value(const Integer index, const V val) const { matrix.values(index) = val; }
+
+        MARS_INLINE_FUNCTION
+        const void set_value(const Integer row, const Integer col, const V val) const {
+            const Integer index = get_col_index(row, col);
+            if (index > -1) matrix.values(index) = val;
+        }
+
+        MARS_INLINE_FUNCTION
+        const void set_value_from_global(const Integer row, const Integer col, const V val) const {
+            const Integer index = get_col_index_from_global(row, col);
+            if (index > -1) matrix.values(index) = val;
+        }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_num_rows() const { return matrix.numRows(); }
 
     private:
         crs_graph sparsity_pattern;

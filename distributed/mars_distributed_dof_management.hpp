@@ -1250,6 +1250,10 @@ namespace mars {
             return get_dof_coordinates_from_sfc<Type>(sfc, point);
         }
 
+        MARS_INLINE_FUNCTION void get_local_dof_coordinates(const Integer local, double *point) const {
+            get_dof_coordinates_from_local<ElemType>(local, point);
+        }
+
         template <Integer Type, Integer FaceNr = -1>
         MARS_INLINE_FUNCTION bool is_boundary(const Integer local) const {
             const Integer sfc = local_to_sfc(local);
@@ -1258,6 +1262,11 @@ namespace mars {
             const Integer zdim = get_local_dof_enum().get_ZDim();
 
             return is_boundary_sfc<Type, FaceNr>(sfc, xdim, ydim, zdim);
+        }
+
+        template <Integer FaceNr = -1>
+        MARS_INLINE_FUNCTION bool is_boundary_dof(const Integer local) const {
+            return is_boundary<ElemType, FaceNr>(local);
         }
 
         template <Integer face_nr = -1, typename F>

@@ -197,6 +197,15 @@ namespace mars {
             return face_extension(row, col);
         }
 
+        /* MARS_INLINE_FUNCTION
+        virtual Integer get_value(const Integer row, const Integer col) const override {
+            const Integer index = col % SuperStencil::get_length();
+            if (index == 0)
+                SuperStencil::get_value(row, col);
+            else
+                return face_extension(row, index);
+        } */
+
         MARS_INLINE_FUNCTION
         virtual Integer get_corner_length() const override { return 0; }
 
@@ -322,6 +331,15 @@ namespace mars {
         Integer set_corner_value(const Integer row, const Integer col, const Integer value) const {
             return corner_extension(row, col) = value;
         }
+
+        /* MARS_INLINE_FUNCTION
+        virtual Integer get_value(const Integer row, const Integer col) const override {
+            const Integer index = col % (SuperStencil::get_length() + SuperStokesStencil::get_length());
+            if (index == 0)
+                SuperStokesStencil::get_value(row, col);
+            else
+                return corner_extension(row, index);
+        } */
 
         template <typename F>
         void dof_iterate(F f) const {
