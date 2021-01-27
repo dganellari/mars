@@ -203,6 +203,9 @@ namespace mars {
         Integer get_ghost_dof_size() const { return ghost_dofs.extent(0); }
 
         MARS_INLINE_FUNCTION
+        const Integer get_scan_recv_mirror_size() const { return scan_recv_mirror.extent(0); }
+
+        MARS_INLINE_FUNCTION
         const ViewVectorType<Integer>::HostMirror &get_view_scan_recv_mirror() const { return scan_recv_mirror; }
 
         MARS_INLINE_FUNCTION

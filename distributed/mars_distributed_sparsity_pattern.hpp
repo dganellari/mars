@@ -4,6 +4,7 @@
 #ifdef WITH_MPI
 #ifdef WITH_KOKKOS
 #include "mars_distributed_finite_element.hpp"
+#include "mars_distributed_staggered_dof_map.hpp"
 #include "mars_distributed_stencil.hpp"
 
 namespace mars {
@@ -26,6 +27,8 @@ namespace mars {
     class SparsityPattern {
     public:
         using stencil_tuple = std::tuple<ST...>;
+
+        using SHandler = typename std::tuple_element<0, stencil_tuple>::type;
 
         using Scalar = V;
         using Ordinal = default_lno_t;
@@ -79,7 +82,8 @@ namespace mars {
         } */
 
         struct CountUniqueDofs {
-            CountUniqueDofs(ViewVectorType<Integer> c, stencil_tuple s) : counter(c), sts(s) {}
+            CountUniqueDofs(ViewVectorType<Integer> c, stencil_tuple s, VFDofMap<SHandler> m)
+                : counter(c), sts(s), map(m) {}
 
             template <typename S>
             MARS_INLINE_FUNCTION void count_dof(const S &st, const Integer stencil_index, Integer &count) const {
@@ -130,7 +134,7 @@ namespace mars {
 
                     const Integer dof = st.get_value(stencil_index, 0);
                     const Integer total = get_total<S>(st, dof, count);
-                    counter(st.get_dof_handler().local_to_global(dof)) = total;
+                    counter(map.local_to_global(dof)) = total;
                 });
             }
 
@@ -141,10 +145,12 @@ namespace mars {
 
             ViewVectorType<Integer> counter;
             stencil_tuple sts;
+            VFDofMap<SHandler> map;
         };
 
         struct InsertSortedDofs {
-            InsertSortedDofs(crs_row r, crs_col c, stencil_tuple s) : row_ptr(r), col_idx(c), sts(s) {}
+            InsertSortedDofs(crs_row r, crs_col c, stencil_tuple s, VFDofMap<SHandler> m)
+                : row_ptr(r), col_idx(c), sts(s), map(m) {}
 
             MARS_INLINE_FUNCTION
             void insert_sorted(const crs_col &col, const Integer index, const Integer value, Integer &count) const {
@@ -164,12 +170,12 @@ namespace mars {
             MARS_INLINE_FUNCTION void insert_dof(const S &st, const Integer stencil_index, Integer dof) const {
                 Integer count = 0;
 
-                Integer index = row_ptr(st.get_dof_handler().local_to_global(dof));
+                Integer index = row_ptr(map.local_to_global(dof));
 
                 for (int i = 0; i < st.get_length(); i++) {
                     const Integer local_dof = st.get_value(stencil_index, i);
                     if (conditional(local_dof, st.get_dof_handler(), sts)) {
-                        const Integer global = st.get_dof_handler().local_to_global(local_dof);
+                        const Integer global = map.local_to_global(local_dof);
                         insert_sorted(col_idx, index, global, count);
                     }
                 }
@@ -178,7 +184,7 @@ namespace mars {
                     // get the local dof of the i-th index within thelement
                     const Integer local_dof = st.get_face_value(stencil_index, i);
                     if (conditional(local_dof, st.get_dof_handler(), sts)) {
-                        const Integer global = st.get_dof_handler().local_to_global(local_dof);
+                        const Integer global = map.local_to_global(local_dof);
                         insert_sorted(col_idx, index, global, count);
                     }
                 }
@@ -187,7 +193,7 @@ namespace mars {
                     // get the local dof of the i-th index within thelement
                     const Integer local_dof = st.get_corner_value(stencil_index, i);
                     if (conditional(local_dof, st.get_dof_handler(), sts)) {
-                        const Integer global = st.get_dof_handler().local_to_global(local_dof);
+                        const Integer global = map.local_to_global(local_dof);
                         insert_sorted(col_idx, index, global, count);
                     }
                 }
@@ -199,7 +205,7 @@ namespace mars {
                 st.iterate(MARS_LAMBDA(const Integer stencil_index) {
                     const Integer dof = st.get_value(stencil_index, 0);
                     if (st.get_dof_handler().template is_boundary<S::DHandler::ElemType>(dof)) {
-                        Integer global = st.get_dof_handler().local_to_global(dof);
+                        Integer global = map.local_to_global(dof);
                         Integer index = row_ptr(global);
                         col_idx(index) = global;
                     } else {
@@ -216,17 +222,22 @@ namespace mars {
             crs_row row_ptr;
             crs_col col_idx;
             stencil_tuple sts;
+            VFDofMap<SHandler> map;
         };
 
         template <Integer... dataidx>
         void generate_pattern() {
             auto handler = std::get<0>(stencils).get_dof_handler();
-            auto global_size = handler.get_global_dof_size();
+            owned_map = VFDofMap<SHandler>(handler);
+
+            /* auto global_size = handler.get_global_dof_size(); */
+            auto global_size = map.get_global_dof_size();
             /* TODO: Check if the global size is too much and maybe the sum of owned dof size for each of the stencils
              * dof handlers is OK. In this way some space is spared. */
 
             ViewVectorType<Integer> counter("counter", global_size);
-            expand_tuple<CountUniqueDofs, stencil_tuple, dataidx...>(CountUniqueDofs(counter, stencils), stencils);
+            expand_tuple<CountUniqueDofs, stencil_tuple, dataidx...>(CountUniqueDofs(counter, stencils, owned_map),
+                                                                     stencils);
             crs_row row_ptr("counter_scan", global_size + 1);
             incl_excl_scan(0, global_size, counter, row_ptr);
 
@@ -237,8 +248,8 @@ namespace mars {
             crs_col col_idx("ColdIdx", h_ss());
             crs_value values("values", h_ss());
 
-            expand_tuple<InsertSortedDofs, stencil_tuple, dataidx...>(InsertSortedDofs(row_ptr, col_idx, stencils),
-                                                                      stencils);
+            expand_tuple<InsertSortedDofs, stencil_tuple, dataidx...>(
+                InsertSortedDofs(row_ptr, col_idx, stencils, owned_map), stencils);
 
             /* segmented_sort(col_idx);*/
 
@@ -262,31 +273,16 @@ namespace mars {
         const crs_graph get_sparsity_pattern() const { return sparsity_pattern; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_col(const Integer index) const {
-            return get_sparsity_pattern().entries(index);
-        }
+        const Integer get_col(const Integer index) const { return get_sparsity_pattern().entries(index); }
 
         MARS_INLINE_FUNCTION
         const crs_col get_col() const { return get_sparsity_pattern().entries; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_row_map(const Integer index) const {
-            return get_sparsity_pattern().row_map(index);
-        }
+        const Integer get_row_map(const Integer index) const { return get_sparsity_pattern().row_map(index); }
 
         MARS_INLINE_FUNCTION
-        const crs_row get_row_map() {
-            return get_sparsity_pattern().row_map;
-        }
-
-        MARS_INLINE_FUNCTION
-        const Integer get_col_index(const Integer local_row, const Integer local_col) const {
-            auto handler = std::get<0>(stencils).get_dof_handler();
-            auto row = handler.local_to_global(local_row);
-            auto col = handler.local_to_global(local_col);
-
-            return get_col_index_from_global(row, col);
-        }
+        const crs_row get_row_map() { return get_sparsity_pattern().row_map; }
 
         MARS_INLINE_FUNCTION
         const Integer get_col_index_from_global(const Integer row, const Integer col) const {
@@ -298,16 +294,12 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const V get_value(const Integer index) const { return matrix.values(index); }
+        const Integer get_col_index(const Integer local_row, const Integer local_col) const {
+            auto row = get_owned_map().local_to_global(local_row);
+            auto col = get_owned_map().local_to_global(local_col);
 
-        MARS_INLINE_FUNCTION
-        const V get_value(const Integer row, const Integer col) const { return matrix.values(get_col_index(row, col)); }
-
-        MARS_INLINE_FUNCTION
-        const V get_value_from_global(const Integer row, const Integer col) const {
-            return matrix.values(get_col_index_from_global(row, col));
+            return get_col_index_from_global(row, col);
         }
-
         MARS_INLINE_FUNCTION
         const void set_value(const Integer index, const V val) const { matrix.values(index) = val; }
 
@@ -324,12 +316,27 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
+        const V get_value(const Integer index) const { return matrix.values(index); }
+
+        MARS_INLINE_FUNCTION
+        const V get_value(const Integer row, const Integer col) const { return matrix.values(get_col_index(row, col)); }
+
+        MARS_INLINE_FUNCTION
+        const V get_value_from_global(const Integer row, const Integer col) const {
+            return matrix.values(get_col_index_from_global(row, col));
+        }
+
+        MARS_INLINE_FUNCTION
         const Integer get_num_rows() const { return matrix.numRows(); }
+
+        MARS_INLINE_FUNCTION
+        const VFDofMap<SHandler> get_owned_map() const { return owned_map; }
 
     private:
         crs_graph sparsity_pattern;
         crs_matrix matrix;
 
+        VFDofMap<SHandler> owned_map;
         stencil_tuple stencils;
     };
 }  // namespace mars
