@@ -28,7 +28,7 @@ namespace mars {
     public:
         using stencil_tuple = std::tuple<ST...>;
 
-        using SHandler = typename std::tuple_element<0, stencil_tuple>::type;
+        using SHandler = typename std::tuple_element<0, stencil_tuple>::type::DHandler;
 
         using Scalar = V;
         using Ordinal = default_lno_t;
@@ -46,7 +46,10 @@ namespace mars {
         using crs_value = typename crs_matrix::values_type::non_const_type;
 
         MARS_INLINE_FUNCTION
-        SparsityPattern(ST... f) : stencils(std::make_tuple(f...)) { generate_pattern(); }
+        SparsityPattern(ST... f)
+            : stencils(std::make_tuple(f...)), owned_map(VFDofMap<SHandler>(std::get<0>(stencils).get_dof_handler())) {
+            generate_pattern();
+        }
 
         struct CompareLabel {
             MARS_INLINE_FUNCTION
@@ -227,11 +230,8 @@ namespace mars {
 
         template <Integer... dataidx>
         void generate_pattern() {
-            auto handler = std::get<0>(stencils).get_dof_handler();
-            owned_map = VFDofMap<SHandler>(handler);
-
             /* auto global_size = handler.get_global_dof_size(); */
-            auto global_size = map.get_global_dof_size();
+            auto global_size = owned_map.get_global_dof_size();
             /* TODO: Check if the global size is too much and maybe the sum of owned dof size for each of the stencils
              * dof handlers is OK. In this way some space is spared. */
 

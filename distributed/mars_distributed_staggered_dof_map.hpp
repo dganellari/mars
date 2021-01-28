@@ -8,22 +8,11 @@
 
 namespace mars {
 
-    template <Integer Label1, Integer Label2, class Mesh_, Integer degree>
+    template <Integer Label1, Integer Label2, typename DofHandler>
     class SDofMap {
     public:
-        using Mesh = Mesh_;
-
-        using UD = UserData<Mesh>;
-        using simplex_type = typename Mesh::Elem;
-
-        static constexpr Integer ElemType = simplex_type::ElemType;
-
-        static constexpr Integer Degree = degree;
-        static constexpr Integer Dim = Mesh::Dim;
-        static constexpr Integer ManifoldDim = Mesh::ManifoldDim;
-
         MARS_INLINE_FUNCTION
-        SDofHandler(DofHandler<Mesh, degree> d) : dof_handler(d) { prepare_separated_dofs(); }
+        SDofMap(DofHandler d) : dof_handler(d) { prepare_separated_dofs(); }
 
         ViewVectorType<bool> build_label_dof_predicate(const ViewVectorType<Integer> element_labels) {
             const Integer local_size = element_labels.extent(0);
@@ -75,7 +64,7 @@ namespace mars {
             global_dof_offset = ViewVectorType<Integer>("global_dof_offset", rank_size + 1);
 
             const Integer global_size = get_owned_dof_size();
-            context->distributed->gather_all_view(global_size, global_dof_size_per_rank);
+            get_dof_handler().get_context()->distributed->gather_all_view(global_size, global_dof_size_per_rank);
 
             incl_excl_scan(0, rank_size, global_dof_size_per_rank, global_dof_offset);
         }
@@ -130,15 +119,16 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const Dof local_to_separated_global_dof(const Integer local_dof) const {
             Dof dof;
-            if(handler.locally_owned_dof(handler.local_to_sfc(local_dof)) {
-                const Integer proc = handler.get_proc();
-                const Integer owned = get_dof_handler().local_to_owned_dof(local_dof);
+            const Integer proc = get_dof_handler().get_proc();
+            const Integer owned = get_dof_handler().local_to_owned_dof(local_dof);
 
-                const Integer index = map(owned) + global_dof_offset(proc);
+            if (owned != INVALID_INDEX) {
+                const Integer index = local_dof_map(owned) + global_dof_offset(proc);
                 dof.set_gid(index);
                 dof.set_proc(proc);
             } else {
-                const auto it = ghost_local_to_global_map.find(local_dof);
+                const Integer sfc = get_dof_handler().local_to_sfc(local_dof);
+                const auto it = ghost_local_to_global_map.find(sfc);
                 if (!ghost_local_to_global_map.valid_at(it)) {
                     dof.set_invalid();
                 } else {
@@ -181,7 +171,7 @@ namespace mars {
             auto handler = get_dof_handler();
 
             auto size = handler.get_boundary_dof_size();
-            boundary_dofs_index = ViewVectorType<Integer>(size);
+            boundary_dofs_index = ViewVectorType<Integer>("bounary_dofs_index", size);
             auto map = local_dof_map;
 
             Kokkos::parallel_for(
@@ -192,19 +182,20 @@ namespace mars {
                 });
         }
 
-        void build_ghost_local_global_map(const context &context, const ViewVectorType<Integer> &ghost_dofs_index) {
+        void build_ghost_local_global_map(const ViewVectorType<Integer> &ghost_dofs_index) {
             auto handler = get_dof_handler();
 
-            int rank_size = num_ranks(handler.context);
-            Integer size = handler.scan_recv_mirror(rank_size);
+            int rank_size = num_ranks(handler.get_context());
+            Integer size = handler.get_view_scan_recv_mirror()(rank_size);
 
             // TODO: when integrated into the staggered dof handler remove the handler because it is the handler itself.
-            ViewVectorType<integer> scan_recv_proc("scan_recv_device", handler.get_scan_recv_mirror_size());
+            ViewVectorType<Integer> scan_recv_proc("scan_recv_device", handler.get_scan_recv_mirror_size());
             Kokkos::deep_copy(scan_recv_proc, handler.get_view_scan_recv_mirror());
 
             auto gdoffset = global_dof_offset;
 
             ghost_local_to_global_map = UnorderedMap<Integer, Dof>(size);
+            auto glgm = ghost_local_to_global_map;
             /* iterate through the unique ghost dofs and build the map */
             Kokkos::parallel_for(
                 "BuildLocalGlobalmap", size, MARS_LAMBDA(const Integer i) {
@@ -234,21 +225,21 @@ namespace mars {
             build_boundary_dof_sets(boundary_dofs_index);
 
             ViewVectorType<Integer> ghost_dofs_index;
-            exchange_ghost_dofs(handler.get_context(), boundary_dofs_index, ghost_dofs_index);
-            handler.get_context()->distributed->i_send_recv_view(ghost_dofs_index,
-                                                                 handler.get_view_scan_recv_mirror().data(),
-                                                                 boundary_dofs_index,
-                                                                 handler.get_view_scan_send_mirror().data());
+            get_dof_handler().get_context()->distributed->i_send_recv_view(
+                ghost_dofs_index,
+                get_dof_handler().get_view_scan_recv_mirror().data(),
+                boundary_dofs_index,
+                get_dof_handler().get_view_scan_send_mirror().data());
             std::cout << "Separated DofHandler:MPI send receive for the ghost dofs layer done." << std::endl;
 
-            /* build_ghost_local_global_map(context, ghost_dofs_index); */
+            build_ghost_local_global_map(ghost_dofs_index);
         }
 
         MARS_INLINE_FUNCTION
-        const DofHandler<Mesh, degree> &get_dof_handler() const { return dof_handler; }
+        const DofHandler &get_dof_handler() const { return dof_handler; }
 
     private:
-        DofHandler<Mesh, degree> dof_handler;
+        DofHandler dof_handler;
         ViewVectorType<Integer> locally_owned_dofs;
         ViewVectorType<Integer> local_dof_map;
 
@@ -257,7 +248,7 @@ namespace mars {
     };
 
     template <class DofHandler>
-    using VFDofMap = SDofMap<DofLabel::lVolume, DofLabel::lFace, typename DofHandler::Mesh, DofHandler::Degree>;
+    using VFDofMap = SDofMap<DofLabel::lVolume, DofLabel::lFace, DofHandler>;
 
 }  // namespace mars
 

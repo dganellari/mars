@@ -1155,10 +1155,10 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        Integer local_to_owned_dof(const Integer local) {
+        Integer local_to_owned_dof(const Integer local) const {
             const Integer sfc = local_to_sfc(local);
             if (locally_owned_dof(sfc))
-                return get_global_dof_enum().sfc_to_local(sfc);
+                return get_global_dof_enum().get_view_sfc_to_local()(sfc);
             else
                 return INVALID_INDEX;
         }
@@ -1200,7 +1200,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        Integer local_to_owned(const Integer local) const {
+        const Integer local_to_owned(const Integer local) const {
             Dof dof = local_to_global_dof(local);
             if (dof.is_valid())
                 return dof.get_gid() - global_dof_offset(dof.get_proc());
@@ -1397,7 +1397,8 @@ namespace mars {
 
         UD get_data() const { return data; }
 
-        const Integer get_proc() { return data.get_host_mesh->get_proc(); }
+        MARS_INLINE_FUNCTION
+        const Integer get_proc() const { return data.get_mesh()->get_proc(); }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_scan_recv() const { return scan_recv; }
