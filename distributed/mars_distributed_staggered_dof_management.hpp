@@ -282,6 +282,15 @@ namespace mars {
         UD get_data() const { return get_dof_handler().get_data(); }
 
         MARS_INLINE_FUNCTION
+        const Integer get_proc() const { return get_dof_handler().get_proc(); }
+
+        MARS_INLINE_FUNCTION
+        const Integer local_to_owned_dof(const Integer local) const { return get_dof_handler().local_to_owned_dof(local); }
+
+        MARS_INLINE_FUNCTION
+        const SFC<simplex_type::ElemType> &get_global_dof_enum() const { return get_dof_handler().get_global_dof_enum(); }
+
+        MARS_INLINE_FUNCTION
         const SFC<simplex_type::ElemType> &get_local_dof_enum() const { return get_dof_handler().get_local_dof_enum(); }
 
         MARS_INLINE_FUNCTION
