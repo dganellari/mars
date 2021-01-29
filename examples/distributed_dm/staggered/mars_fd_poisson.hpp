@@ -57,7 +57,7 @@ namespace mars {
     // general width 1 stencil used as pressure stencil.
     using CStencil = Stencil<CDH, 1>;
 
-    using SPattern = SparsityPattern<double, VStencil, SStencil>;
+    using SPattern = SparsityPattern<double, DHandler, VStencil, SStencil>;
     /* using SPattern = SparsityPattern<double, VStencil, FSStencil>; */
     // use as more readable tuple index to identify the data
     static constexpr int IN = 0;
@@ -360,11 +360,12 @@ namespace mars {
         /* print_stencil(vdm, volume_stencil); */
 
         auto face_stencil = build_stencil<SStencil>(fdm.get_dof_handler());
-        print_stencil(fdm, face_stencil);
+        /* print_stencil(fdm, face_stencil); */
 
         /* using Pattern = SparsityPattern<DofLabel::lCorner, VStencil>;
         Pattern sp(volume_stencil); */
-        SPattern sp(volume_stencil, face_stencil);
+        VFDofMap<DHandler> map(dof_handler);
+        SPattern sp(map, volume_stencil, face_stencil);
 
         // get the first owned dof for the first process.
         const Integer first_volume_dof = volume_stencil.get_dof_handler().get_owned_dof(0);
@@ -486,16 +487,7 @@ namespace mars {
             MARS_LAMBDA(const Integer local_dof) { sp.set_value(local_dof, local_dof, 1); });
 
         print_sparsity_pattern(sp);
-        /* auto corner_stencil = build_stencil<CStencil>(cdm.get_dof_handler()); */
-        /* print_stencil(cdm, corner_stencil); */
 
-        // initialize the values by iterating through local dofs
-        /* Kokkos::parallel_for(
-            "initdatavalues", dof_size, MARS_LAMBDA(const Integer i) {
-                vdm.get_volume_data<IN>(i) = 1.0;
-                vdm.get_volume_data<OUT>(i) = proc_num;
-            });
- */
         vdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
             vdm.get_data<IN>(i) = 0.0;
             vdm.get_data<OUT>(i) = 0.0;
@@ -504,7 +496,7 @@ namespace mars {
         vdm.gather_ghost_data<OUT>();
         /* scatter_add_ghost_data<VolumeDM, OUT>(vdm); */
 
-        ViewVectorType<double> rhs("rhs", sp.get_num_rows());
+        /* ViewVectorType<double> rhs("rhs", sp.get_num_rows()); */
 
         /* auto volume_handler = vdm.get_dof_handler();
         volume_handler.owned_dof_iterate(MARS_LAMBDA(const Integer local_dof) {
@@ -517,16 +509,16 @@ namespace mars {
 
                 });
  */
-
+/*
         auto face_handler = fdm.get_dof_handler();
         face_handler.owned_dof_iterate(MARS_LAMBDA(const Integer local_dof) {
             double point[2];
             face_handler.get_local_dof_coordinates(local_dof, point);
 
             double rval = 0;
-            const Integer index = face_handler.local_to_global(local_dof);
+            const Integer index = map.local_to_global(local_dof);
             rhs(index) = rval;
-        });
+        }); */
 
         // print using the dof iterate
         /* vdm.get_dof_handler().dof_iterate(MARS_LAMBDA(const Integer local_dof) {

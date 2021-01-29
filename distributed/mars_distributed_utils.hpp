@@ -425,7 +425,8 @@ namespace mars {
         Kokkos::parallel_for(
             "separatedoflabelss", local_size, KOKKOS_LAMBDA(const Integer i) {
                 const Integer sfc = in(i);
-                if (f(dofhandler.sfc_to_local(sfc))) {
+                /* if (f(dofhandler.sfc_to_local(sfc))) { */
+                if (f(sfc)) {
                     predicate(i) = 1;
                 }
             });

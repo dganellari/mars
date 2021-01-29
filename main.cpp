@@ -1881,7 +1881,7 @@ int main(int argc, char *argv[]) {
         poisson_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(level);
     };
 
-    apps["stag_poisson2D"] = [=]() {
+    apps["stokes"] = [=]() {
         staggered_poisson_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(level);
     };
 

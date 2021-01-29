@@ -106,12 +106,15 @@ namespace mars {
         }
         struct IsSeparatedDof {
             ViewVectorType<Integer> local_separated_dof_map;
+            DofHandler<Mesh, degree> handler;
 
             MARS_INLINE_FUNCTION
-            IsSeparatedDof(ViewVectorType<Integer> map) : local_separated_dof_map(map) {}
+            IsSeparatedDof(ViewVectorType<Integer> map, DofHandler<Mesh, degree> d)
+                : local_separated_dof_map(map), handler(d) {}
 
             MARS_INLINE_FUNCTION
-            bool operator()(const Integer local_dof) const {
+            bool operator()(const Integer sfc) const {
+                const Integer local_dof = handler.sfc_to_local(sfc);
                 if ((local_dof + 1) >= local_separated_dof_map.extent(0)) return false;
                 /*use the map which is the scan of the predicate.
                  * To get the predicate value the difference with the successive index is needed.*/
@@ -124,7 +127,7 @@ namespace mars {
             compact_local_dofs(local_dof_map, local_dofs);
             compact_owned_dofs(locally_owned_dofs);
 
-            auto is_separated = IsSeparatedDof(local_dof_map);
+            auto is_separated = IsSeparatedDof(local_dof_map, get_dof_handler());
             // building the counts for boundary and ghost separations to use for gather and scatter separated data only!
             auto boundary_predicate = compact_sfc_to_local(
                 get_dof_handler(), is_separated, get_dof_handler().get_boundary_dofs(), boundary_dofs);
