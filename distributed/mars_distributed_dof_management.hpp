@@ -1242,6 +1242,9 @@ namespace mars {
         Integer local_to_sfc(const Integer local) const { return local_dof_enum.get_view_elements()(local); }
 
         MARS_INLINE_FUNCTION
+        Integer sfc_to_owned(const Integer sfc) const { return global_dof_enum.get_view_sfc_to_local()(sfc); }
+
+        MARS_INLINE_FUNCTION
         Integer sfc_to_local(const Integer sfc) const { return local_dof_enum.get_view_sfc_to_local()(sfc); }
 
         template <Integer Type>

@@ -23,12 +23,12 @@ namespace mars {
         Finite finite_item;
     };
  */
-    template <typename V, typename... ST>
+    template <typename V, typename SHandler, typename... ST>
     class SparsityPattern {
     public:
         using stencil_tuple = std::tuple<ST...>;
 
-        using SHandler = typename std::tuple_element<0, stencil_tuple>::type::DHandler;
+        /* using SHandler = typename std::tuple_element<0, stencil_tuple>::type::DHandler; */
 
         using Scalar = V;
         using Ordinal = default_lno_t;
@@ -46,8 +46,7 @@ namespace mars {
         using crs_value = typename crs_matrix::values_type::non_const_type;
 
         MARS_INLINE_FUNCTION
-        SparsityPattern(ST... f)
-            : stencils(std::make_tuple(f...)), owned_map(VFDofMap<SHandler>(std::get<0>(stencils).get_dof_handler())) {
+        SparsityPattern(VFDofMap<SHandler> om, ST... f) : owned_map(om), stencils(std::make_tuple(f...)) {
             generate_pattern();
         }
 
@@ -232,8 +231,7 @@ namespace mars {
         void generate_pattern() {
             /* auto global_size = handler.get_global_dof_size(); */
             auto global_size = owned_map.get_global_dof_size();
-            /* TODO: Check if the global size is too much and maybe the sum of owned dof size for each of the stencils
-             * dof handlers is OK. In this way some space is spared. */
+            printf("global_size %li\n", global_size);
 
             ViewVectorType<Integer> counter("counter", global_size);
             expand_tuple<CountUniqueDofs, stencil_tuple, dataidx...>(CountUniqueDofs(counter, stencils, owned_map),
