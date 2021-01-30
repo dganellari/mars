@@ -141,11 +141,20 @@ namespace mars {
                 const Integer start = sp.get_row_map(row);
                 const Integer end = sp.get_row_map(row + 1);
 
+                //print only if end - start > 0. Otherwise segfaults.
+                //The row index is not a global index of the current process!
                 for (int i = start; i < end; ++i) {
                     auto value = sp.get_value(i);
                     auto col = sp.get_col(i);
                     // do something. In this case we are printing.
-                    printf("row_dof: %li, col_dof: %li, value: %lf\n", row, col, value);
+
+                    const Integer local_dof = sp.get_owned_map().global_to_local(row);
+                    const Integer global_row = sp.get_owned_map().get_dof_handler().local_to_global(local_dof);
+
+                    const Integer local_col = sp.get_owned_map().global_to_local(col);
+                    const Integer global_col = sp.get_owned_map().get_dof_handler().local_to_global(local_col);
+
+                    printf("row_dof: %li - %li, col_dof: %li - %li, value: %lf\n", row, global_row, col, global_col, value);
                 }
             });
     }

@@ -135,6 +135,19 @@ namespace mars {
         Integer get_owned_dof_size() const { return get_owned_dofs().extent(0); }
 
         MARS_INLINE_FUNCTION
+        const Integer global_to_local(const Integer global_index) const {
+            const Integer proc = get_dof_handler().get_proc();
+            const auto it = ghost_global_to_local_map.find(global_index);
+
+            if (!ghost_global_to_local_map.valid_at(it)) {
+                const Integer owned_index = global_index - global_dof_offset(proc);
+                return get_owned_dof(owned_index);
+            } else {
+                return ghost_global_to_local_map.value_at(it);
+            }
+        }
+
+        MARS_INLINE_FUNCTION
         const Dof local_to_separated_global_dof(const Integer local_dof) const {
             Dof dof;
             const Integer proc = get_dof_handler().get_proc();
@@ -198,22 +211,27 @@ namespace mars {
             auto gdoffset = global_dof_offset;
 
             ghost_local_to_global_map = UnorderedMap<Integer, Dof>(size);
+            ghost_global_to_local_map = UnorderedMap<Integer, Integer>(size);
             auto glgm = ghost_local_to_global_map;
+            auto gglm = ghost_global_to_local_map;
             /* iterate through the unique ghost dofs and build the map */
             Kokkos::parallel_for(
                 "BuildLocalGlobalmap", size, MARS_LAMBDA(const Integer i) {
-                    const Integer ghost_sfc = handler.local_to_sfc(get_ghost_dof(i));
-                    const Integer ghost_lid = ghost_dofs_index(i);
+                    const Integer ghost_dof = get_ghost_dof(i);
+                    const Integer ghost_sfc = handler.local_to_sfc(ghost_dof);
+                    const Integer gid = ghost_dofs_index(i);
 
                     /* find the process by binary search in the scan_recv_proc view of size rank_size
                      * and calculate the global id by adding the ghost local id to the global offset for
                      * ghost process*/
                     const Integer owner_proc = find_owner_processor(scan_recv_proc, i, 1, 0);
-                    const Integer gid = ghost_lid + gdoffset(owner_proc);
+                    /* const Integer gid = ghost_gid + gdoffset(owner_proc); */
 
                     // build the ghost dof object and insert into the map
-                    const auto result = glgm.insert(ghost_sfc, Dof(gid, owner_proc));
-                    assert(result.success());
+                    const auto result1 = glgm.insert(ghost_sfc, Dof(gid, owner_proc));
+                    assert(result1.success());
+                    const auto result2 = gglm.insert(gid, ghost_dof);
+                    assert(result2.success());
                 });
 
             /* In the end the size of the map should be as the size of the ghost_dofs.
@@ -222,6 +240,8 @@ namespace mars {
         }
 
 
+        //build boundary dof sets as global indexes so that the ghost indices to be global and poissible
+        //therefor to go from a global index to a local one also for the ghosts.
         void build_boundary_dof_sets(ViewVectorType<Integer> &boundary_dofs_index) {
             auto handler = get_dof_handler();
 
@@ -229,11 +249,13 @@ namespace mars {
             boundary_dofs_index = ViewVectorType<Integer>("bounary_dofs_index", size);
             auto map = owned_dof_map;
 
+            auto gdoffset = global_dof_offset;
+
             Kokkos::parallel_for(
                 "boundary_iterate", size, MARS_LAMBDA(const Integer i) {
                     const Integer local_dof = get_boundary_dof(i);
                     const Integer owned_dof = handler.local_to_owned_dof(local_dof);
-                    boundary_dofs_index(i) = map(owned_dof);
+                    boundary_dofs_index(i) = map(owned_dof) + gdoffset(handler.get_proc());
                 });
         }
 
@@ -331,10 +353,11 @@ namespace mars {
             printf("boundary size: %li - %li\n", boundary_dofs_index.extent(0), get_boundary_dof_size());
 
             auto handler = get_dof_handler();
+            auto gdoffset = global_dof_offset;
 
             Kokkos::parallel_for(
                 "print", boundary_dofs_index.extent(0), MARS_LAMBDA(const Integer i) {
-                    const Integer index = boundary_dofs_index(i);
+                    const Integer index = boundary_dofs_index(i) - gdoffset(handler.get_proc());
                     const Integer local = owned_dofs(index);
                     const Integer global = handler.local_to_global(local);
                     printf("i: %li, boundary_dofs_index(i) %li, global: %li\n", i, index, global);
@@ -383,6 +406,7 @@ namespace mars {
         ViewVectorType<Integer>::HostMirror scan_recv_mirror;
 
         UnorderedMap<Integer, Dof> ghost_local_to_global_map;
+        UnorderedMap<Integer, Integer> ghost_global_to_local_map;
         ViewVectorType<Integer> global_dof_offset;
     };
 
