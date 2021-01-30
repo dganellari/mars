@@ -74,7 +74,9 @@ namespace mars {
         static MARS_INLINE_FUNCTION bool conditional(const Integer local_dof,
                                                      const H &handler,
                                                      const stencil_tuple &sts) {
-            return (local_dof > -1 && expand_conditional(sts, handler.get_label(local_dof)));
+            /* return (local_dof > -1 && expand_conditional(sts, handler.get_label(local_dof))); */
+            return (local_dof > -1 && (std::get<0>(sts).get_label() == handler.get_label(local_dof) ||
+                                       std::get<1>(sts).get_label() == handler.get_label(local_dof)));
         }
 
         /* template <typename H>
