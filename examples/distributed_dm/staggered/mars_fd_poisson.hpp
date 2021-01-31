@@ -369,6 +369,7 @@ namespace mars {
         /* print_stencil(vdm, volume_stencil); */
 
         auto face_stencil = build_stencil<SStencil>(fdm.get_dof_handler());
+
         /* print_stencil(fdm, face_stencil); */
 
         /* using Pattern = SparsityPattern<DofLabel::lCorner, VStencil>;
@@ -407,7 +408,7 @@ namespace mars {
         face_stencil.iterate(MARS_LAMBDA(const Integer stencil_index) {
             const Integer diag_dof = face_stencil.get_value(stencil_index, SLabel::Diagonal);
 
-            printf("Diag_dof: %li global: %li\n", diag_dof, dof_handler.local_to_global(diag_dof));
+            /* printf("Diag_dof: %li global: %li\n", diag_dof, dof_handler.local_to_global(diag_dof)); */
             if (!face_stencil.get_dof_handler().is_boundary_dof(diag_dof)) {
                 if (face_stencil.get_dof_handler().get_orientation(diag_dof) == DofOrient::xDir) {
                     sp.set_value(diag_dof, diag_dof, -4);

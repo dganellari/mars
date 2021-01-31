@@ -135,15 +135,34 @@ namespace mars {
         Integer get_owned_dof_size() const { return get_owned_dofs().extent(0); }
 
         MARS_INLINE_FUNCTION
+        Integer locally_owned_dof(const Integer local_dof) const {
+            const Integer owned = get_dof_handler().local_to_owned_dof(local_dof);
+            const Integer pred_value = owned_dof_map(owned + 1) - owned_dof_map(owned);
+            return (pred_value > 0);
+        }
+
+        MARS_INLINE_FUNCTION
+        Integer local_to_owned_dof(const Integer local_dof) const {
+            const Integer owned = get_dof_handler().local_to_owned_dof(local_dof);
+            const Integer pred_value = owned_dof_map(owned + 1) - owned_dof_map(owned);
+            if (pred_value > 0)
+                return owned;
+            else
+                return INVALID_INDEX;
+        }
+
+        MARS_INLINE_FUNCTION
         const Integer global_to_local(const Integer global_index) const {
+            if (global_index == INVALID_INDEX) return INVALID_INDEX;
+
             const Integer proc = get_dof_handler().get_proc();
             const auto it = ghost_global_to_local_map.find(global_index);
 
-            if (!ghost_global_to_local_map.valid_at(it)) {
+            if (ghost_global_to_local_map.valid_at(it)) {
+                return ghost_global_to_local_map.value_at(it);
+            } else {
                 const Integer owned_index = global_index - global_dof_offset(proc);
                 return get_owned_dof(owned_index);
-            } else {
-                return ghost_global_to_local_map.value_at(it);
             }
         }
 
@@ -151,7 +170,7 @@ namespace mars {
         const Dof local_to_separated_global_dof(const Integer local_dof) const {
             Dof dof;
             const Integer proc = get_dof_handler().get_proc();
-            const Integer owned = get_dof_handler().local_to_owned_dof(local_dof);
+            const Integer owned = local_to_owned_dof(local_dof);
 
             if (owned != INVALID_INDEX) {
                 const Integer index = owned_dof_map(owned) + global_dof_offset(proc);
@@ -254,7 +273,7 @@ namespace mars {
             Kokkos::parallel_for(
                 "boundary_iterate", size, MARS_LAMBDA(const Integer i) {
                     const Integer local_dof = get_boundary_dof(i);
-                    const Integer owned_dof = handler.local_to_owned_dof(local_dof);
+                    const Integer owned_dof = local_to_owned_dof(local_dof);
                     boundary_dofs_index(i) = map(owned_dof) + gdoffset(handler.get_proc());
                 });
         }
