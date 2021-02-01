@@ -32,7 +32,7 @@ namespace mars {
             ViewVectorType<bool> dof_predicate("label_dof_predicate", local_size);
             Kokkos::parallel_for(
                 "separatedoflabelss", local_size, KOKKOS_LAMBDA(const Integer i) {
-                    if (element_labels(i) == Label) {
+                    if (element_labels(i) & Label) {
                         dof_predicate(i) = 1;
                     }
                 });

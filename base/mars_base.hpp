@@ -10,11 +10,12 @@
 namespace mars {
     using Real = double;
     using Integer = long;
-    static const long INVALID_INDEX = -1;
+    static constexpr long INVALID_INDEX = -1;
 
     enum DofOrient : int { xDir = 0, yDir = 1, zDir = 2 };
 
-    enum DofLabel : int { lNone = -1, lAll = 0, lVolume = 1, lCorner = 2, lFace = 3 };
+    // 15 = 1111 binary which is enough if we have only 4 other label representations.
+    enum DofLabel : int { lNone = 0, lAll = 15, lVolume = 1, lCorner = 2, lFace = 4, lEdge = 8 };
 
     enum SLabel : int { Diagonal = 0, Right = 1, Left = 2, Up = 3, Down = 4 };
 
