@@ -37,6 +37,8 @@ namespace mars {
     using CDH = CornerDofHandler<DHandler>;
     using FDH = FaceDofHandler<DHandler>;
 
+    using FVDH = FaceVolumeDofHandler<DHandler>;
+
     // Staggered DMs
     using VolumeDM = SDM<VDH, double, double>;
     using CornerDM = SDM<CDH, double, double, double>;
@@ -50,12 +52,12 @@ namespace mars {
 
     static constexpr bool Orient = true;
 
-    using SStencil = StokesStencil<FDH>;
-    using FSStencil = FullStokesStencil<FDH>;
+    using SStencil = StokesStencil<DofLabel::lFace>;
+    using FSStencil = FullStokesStencil<DofLabel::lFace>;
     // general width 2 stencil used as constant viscosity stokes.
-    using VStencil = Stencil<VDH, 1>;
+    using VStencil = Stencil<DofLabel::lVolume>;
     // general width 1 stencil used as pressure stencil.
-    using CStencil = Stencil<CDH, 1>;
+    using CStencil = Stencil<DofLabel::lCorner>;
 
     using SPattern = SparsityPattern<double, DHandler, VStencil, SStencil>;
     /* using SPattern = SparsityPattern<double, VStencil, FSStencil>; */
@@ -141,8 +143,8 @@ namespace mars {
                 const Integer start = sp.get_row_map(row);
                 const Integer end = sp.get_row_map(row + 1);
 
-                //print only if end - start > 0. Otherwise segfaults.
-                //The row index is not a global index of the current process!
+                // print only if end - start > 0. Otherwise segfaults.
+                // The row index is not a global index of the current process!
                 for (int i = start; i < end; ++i) {
                     auto value = sp.get_value(i);
                     auto col = sp.get_col(i);
@@ -154,7 +156,12 @@ namespace mars {
                     const Integer local_col = sp.get_owned_map().global_to_local(col);
                     const Integer global_col = sp.get_owned_map().get_dof_handler().local_to_global(local_col);
 
-                    printf("row_dof: %li - %li, col_dof: %li - %li, value: %lf\n", row, global_row, col, global_col, value);
+                    printf("row_dof: %li - %li, col_dof: %li - %li, value: %lf\n",
+                           row,
+                           global_row,
+                           col,
+                           global_col,
+                           value);
                 }
             });
     }
@@ -261,8 +268,7 @@ namespace mars {
     // the dof enumeration within eachlement is topological
 
     template <typename SDM, typename Stencil>
-    void print_stencil(const SDM data, const Stencil stencil) {
-        auto dm = data.get_dof_handler();
+    void print_stencil(const SDM dm, const Stencil stencil) {
         stencil.dof_iterate(MARS_LAMBDA(const Integer stencil_index, const Integer local_dof) {
             if (local_dof > -1) {
                 // convert the local dof number to global dof number
@@ -365,22 +371,19 @@ namespace mars {
          * based on the orientation. Otherwise no order but just a normal stencil. */
         /* auto volume_stencil = vdm.build_stencil<VStencil, Orient>(); */
 
-        auto volume_stencil = build_stencil<VStencil>(vdm.get_dof_handler());
+        FVDH fv_dof_handler(dof_handler);
+
+        auto volume_stencil = build_stencil<VStencil>(fv_dof_handler);
         /* print_stencil(vdm, volume_stencil); */
 
-        auto face_stencil = build_stencil<SStencil>(fdm.get_dof_handler());
+        auto face_stencil = build_stencil<SStencil>(fv_dof_handler);
 
-        /* print_stencil(fdm, face_stencil); */
+        print_stencil(fv_dof_handler, face_stencil);
 
         /* using Pattern = SparsityPattern<DofLabel::lCorner, VStencil>;
         Pattern sp(volume_stencil); */
         VFDofMap<DHandler> map(dof_handler);
         SPattern sp(map, volume_stencil, face_stencil);
-
-        // get the first owned dof for the first process.
-        const Integer first_volume_dof = volume_stencil.get_dof_handler().get_owned_dof(0);
-        printf(
-            "First volume Dof: %li - %li\n", first_volume_dof, vdm.get_dof_handler().local_to_global(first_volume_dof));
 
         // TODO:: optimization idea. Iterate through the colidx instead of the stencil for better coalesing.
         // for each col idx (global dof) find the row pointer from the scan
@@ -388,7 +391,8 @@ namespace mars {
         volume_stencil.iterate(MARS_LAMBDA(const Integer stencil_index) {
             const Integer diag_dof = volume_stencil.get_value(stencil_index, SLabel::Diagonal);
 
-            if (proc_num == 0 && diag_dof == first_volume_dof) {
+            // first volume dof of the first process
+            if (proc_num == 0 && stencil_index == 0) {
                 sp.set_value(diag_dof, diag_dof, 1);
             } else {
                 const Integer right_dof = volume_stencil.get_value(stencil_index, SLabel::Right);
@@ -408,9 +412,9 @@ namespace mars {
         face_stencil.iterate(MARS_LAMBDA(const Integer stencil_index) {
             const Integer diag_dof = face_stencil.get_value(stencil_index, SLabel::Diagonal);
 
-            /* printf("Diag_dof: %li global: %li\n", diag_dof, dof_handler.local_to_global(diag_dof)); */
-            if (!face_stencil.get_dof_handler().is_boundary_dof(diag_dof)) {
-                if (face_stencil.get_dof_handler().get_orientation(diag_dof) == DofOrient::xDir) {
+            /*printf("Diag_dof: %li global: %li\n", diag_dof, dof_handler.local_to_global(diag_dof));*/
+            if (!fv_dof_handler.is_boundary_dof(diag_dof)) {
+                if (fv_dof_handler.get_orientation(diag_dof) == DofOrient::xDir) {
                     sp.set_value(diag_dof, diag_dof, -4);
 
                     const Integer pr = face_stencil.get_value(stencil_index, SSXLabel::PRight);
@@ -450,7 +454,7 @@ namespace mars {
                     const Integer vydl = face_stencil.get_face_value(stencil_index, SSXFLabel::VYDownLeft);
                     sp.set_value(diag_dof, vydl, 1);
 
-                } else if (face_stencil.get_dof_handler().get_orientation(diag_dof) == DofOrient::yDir) {
+                } else if (fv_dof_handler.get_orientation(diag_dof) == DofOrient::yDir) {
                     sp.set_value(diag_dof, diag_dof, -4);
 
                     const Integer pu = face_stencil.get_value(stencil_index, SSYLabel::PUp);
@@ -493,7 +497,7 @@ namespace mars {
             }
         });
 
-        dof_handler.boundary_dof_iterate(
+        fv_dof_handler.boundary_dof_iterate(
             MARS_LAMBDA(const Integer local_dof) { sp.set_value(local_dof, local_dof, 1); });
 
         print_sparsity_pattern(sp);
@@ -506,7 +510,7 @@ namespace mars {
         vdm.gather_ghost_data<OUT>();
         /* scatter_add_ghost_data<VolumeDM, OUT>(vdm); */
 
-        /* ViewVectorType<double> rhs("rhs", sp.get_num_rows()); */
+        ViewVectorType<double> rhs("rhs", sp.get_num_rows());
 
         /* auto volume_handler = vdm.get_dof_handler();
         volume_handler.owned_dof_iterate(MARS_LAMBDA(const Integer local_dof) {
@@ -519,7 +523,7 @@ namespace mars {
 
                 });
  */
-/*
+
         auto face_handler = fdm.get_dof_handler();
         face_handler.owned_dof_iterate(MARS_LAMBDA(const Integer local_dof) {
             double point[2];
@@ -528,7 +532,7 @@ namespace mars {
             double rval = 0;
             const Integer index = map.local_to_global(local_dof);
             rhs(index) = rval;
-        }); */
+        });
 
         // print using the dof iterate
         /* vdm.get_dof_handler().dof_iterate(MARS_LAMBDA(const Integer local_dof) {
