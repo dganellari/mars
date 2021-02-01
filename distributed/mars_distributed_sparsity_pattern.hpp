@@ -94,7 +94,7 @@ namespace mars {
             MARS_INLINE_FUNCTION void count_dof(const S &st, const Integer stencil_index, Integer &count) const {
                 for (int i = 0; i < st.get_length(); i++) {
                     const Integer local_dof = st.get_value(stencil_index, i);
-                    if (conditional(local_dof, st.get_dof_handler(), sts)) {
+                    if (conditional(local_dof, map.get_dof_handler(), sts)) {
                         count++;
                     }
                 }
@@ -102,7 +102,7 @@ namespace mars {
                 for (int i = 0; i < st.get_face_length(); i++) {
                     // get the local dof of the i-th index within thelement
                     const Integer local_dof = st.get_face_value(stencil_index, i);
-                    if (conditional(local_dof, st.get_dof_handler(), sts)) {
+                    if (conditional(local_dof, map.get_dof_handler(), sts)) {
                         count++;
                     }
                 }
@@ -110,7 +110,7 @@ namespace mars {
                 for (int i = 0; i < st.get_corner_length(); i++) {
                     // get the local dof of the i-th index within thelement
                     const Integer local_dof = st.get_corner_value(stencil_index, i);
-                    if (conditional(local_dof, st.get_dof_handler(), sts)) {
+                    if (conditional(local_dof, map.get_dof_handler(), sts)) {
                         count++;
                     }
                 }
@@ -120,8 +120,8 @@ namespace mars {
             // In this case the total would be 0 for the boundary and in the specialization 1.
             template <typename S>
             MARS_INLINE_FUNCTION Integer get_total(const S &st, const Integer dof, Integer &count) const {
-                return st.get_dof_handler().template is_boundary<S::DHandler::ElemType>(dof) ? 1 : count;
-                /* return st.get_dof_handler().template is_boundary<S::DHandler::ElemType>(dof) ? 0 : count; */
+                return map.get_dof_handler().template is_boundary<SHandler::ElemType>(dof) ? 1 : count;
+                /* return map.get_dof_handler().template is_boundary<S::DHandler::ElemType>(dof) ? 0 : count; */
             }
 
             // TODO:Specialize for stokes as below.
@@ -179,7 +179,7 @@ namespace mars {
 
                 for (int i = 0; i < st.get_length(); i++) {
                     const Integer local_dof = st.get_value(stencil_index, i);
-                    if (conditional(local_dof, st.get_dof_handler(), sts)) {
+                    if (conditional(local_dof, map.get_dof_handler(), sts)) {
                         const Integer global = map.local_to_global(local_dof);
                         insert_sorted(col_idx, index, global, count);
                     }
@@ -188,7 +188,7 @@ namespace mars {
                 for (int i = 0; i < st.get_face_length(); i++) {
                     // get the local dof of the i-th index within thelement
                     const Integer local_dof = st.get_face_value(stencil_index, i);
-                    if (conditional(local_dof, st.get_dof_handler(), sts)) {
+                    if (conditional(local_dof, map.get_dof_handler(), sts)) {
                         const Integer global = map.local_to_global(local_dof);
                         insert_sorted(col_idx, index, global, count);
                     }
@@ -197,7 +197,7 @@ namespace mars {
                 for (int i = 0; i < st.get_corner_length(); i++) {
                     // get the local dof of the i-th index within thelement
                     const Integer local_dof = st.get_corner_value(stencil_index, i);
-                    if (conditional(local_dof, st.get_dof_handler(), sts)) {
+                    if (conditional(local_dof, map.get_dof_handler(), sts)) {
                         const Integer global = map.local_to_global(local_dof);
                         insert_sorted(col_idx, index, global, count);
                     }
@@ -209,7 +209,7 @@ namespace mars {
             MARS_INLINE_FUNCTION void insert_sorted(S st) const {
                 st.iterate(MARS_LAMBDA(const Integer stencil_index) {
                     const Integer dof = st.get_value(stencil_index, 0);
-                    if (st.get_dof_handler().template is_boundary<S::DHandler::ElemType>(dof)) {
+                    if (map.get_dof_handler().template is_boundary<SHandler::ElemType>(dof)) {
                         Integer global = map.local_to_global(dof);
                         Integer index = row_ptr(global);
                         col_idx(index) = global;

@@ -27,83 +27,6 @@ namespace mars {
         MARS_INLINE_FUNCTION
         SDofHandler(DofHandler<Mesh, degree> d) : dof_handler(d) { prepare_separated_dofs(); }
 
-        ViewVectorType<bool> build_label_dof_predicate(const ViewVectorType<Integer> element_labels) {
-            const Integer local_size = element_labels.extent(0);
-            ViewVectorType<bool> dof_predicate("label_dof_predicate", local_size);
-            Kokkos::parallel_for(
-                "separatedoflabelss", local_size, KOKKOS_LAMBDA(const Integer i) {
-                    if (element_labels(i) & Label) {
-                        dof_predicate(i) = 1;
-                    }
-                });
-
-            return dof_predicate;
-        }
-
-        template <typename V>
-        void compact_owned_dofs(V &locally_owned_dofs) {
-            using namespace Kokkos;
-
-            const Integer local_size = get_dof_handler().get_global_dof_enum().get_elem_size();
-            auto dof_predicate =
-                build_label_dof_predicate(get_dof_handler().get_global_dof_enum().get_view_element_labels());
-
-            assert(local_size == get_dof_handler().get_global_dof_enum().get_view_element_labels().extent(0));
-
-            /* perform a scan on the dof predicate*/
-            ViewVectorType<Integer> owned_dof_scan("owned_dof_scan", local_size + 1);
-            incl_excl_scan(0, local_size, dof_predicate, owned_dof_scan);
-
-            auto vol_subview = subview(owned_dof_scan, local_size);
-            auto h_vs = create_mirror_view(vol_subview);
-            // Deep copy device view to host view.
-            deep_copy(h_vs, vol_subview);
-
-            locally_owned_dofs = ViewVectorType<Integer>("locally_owned_dofs", h_vs());
-            const ViewVectorType<Integer> global_to_sfc = get_dof_handler().get_global_dof_enum().get_view_elements();
-
-            auto dofhandler = get_dof_handler();
-
-            parallel_for(
-                local_size, KOKKOS_LAMBDA(const Integer i) {
-                    if (dof_predicate(i) == 1) {
-                        Integer vindex = owned_dof_scan(i);
-                        const Integer local = dofhandler.sfc_to_local(global_to_sfc(i));
-                        locally_owned_dofs(vindex) = local;
-                    }
-                });
-        }
-
-        template <typename V>
-        void compact_local_dofs(V &local_dof_map, V &local_dofs) {
-            using namespace Kokkos;
-
-            const Integer local_size = get_dof_handler().get_local_dof_enum().get_elem_size();
-            auto dof_predicate =
-                build_label_dof_predicate(get_dof_handler().get_local_dof_enum().get_view_element_labels());
-
-            assert(local_size == get_dof_handler().get_local_dof_enum().get_view_element_labels().extent(0));
-
-            /* perform a scan on the dof predicate*/
-            local_dof_map = ViewVectorType<Integer>("local_dof_scan", local_size + 1);
-            incl_excl_scan(0, local_size, dof_predicate, local_dof_map);
-
-            auto vol_subview = subview(local_dof_map, local_size);
-            auto h_vs = create_mirror_view(vol_subview);
-            // Deep copy device view to host view.
-            deep_copy(h_vs, vol_subview);
-
-            local_dofs = ViewVectorType<Integer>("local_dofs", h_vs());
-
-            /* Compact the predicate into the volume and face dofs views */
-            parallel_for(
-                local_size, KOKKOS_LAMBDA(const Integer i) {
-                    if (dof_predicate(i) == 1) {
-                        Integer vindex = local_dof_map(i);
-                        local_dofs(vindex) = i;
-                    }
-                });
-        }
         struct IsSeparatedDof {
             ViewVectorType<Integer> local_separated_dof_map;
             DofHandler<Mesh, degree> handler;
@@ -124,8 +47,8 @@ namespace mars {
         };
 
         void prepare_separated_dofs() {
-            compact_local_dofs(local_dof_map, local_dofs);
-            compact_owned_dofs(locally_owned_dofs);
+            compact_local_dofs<Label>(get_dof_handler(), local_dof_map, local_dofs);
+            compact_owned_dofs<Label>(get_dof_handler(), locally_owned_dofs);
 
             auto is_separated = IsSeparatedDof(local_dof_map, get_dof_handler());
             // building the counts for boundary and ghost separations to use for gather and scatter separated data only!
@@ -235,6 +158,9 @@ namespace mars {
         /* *******dof handler related functionalities for completing the handler.******* */
         /* chose this way to hide the full interface of the general handler. Inheritance is the other way*/
 
+
+
+
         MARS_INLINE_FUNCTION void get_local_dof_coordinates(const Integer local, double *point) const {
             get_dof_handler().template get_dof_coordinates_from_local<ElemType>(local, point);
         }
@@ -247,6 +173,21 @@ namespace mars {
         template <Integer FaceNr = -1>
         MARS_INLINE_FUNCTION bool is_boundary_dof(const Integer local) const {
             return is_boundary<ElemType, FaceNr>(local);
+        }
+
+        template <Integer face_nr = -1, typename F>
+        void boundary_dof_iterate(F f) {
+            using namespace Kokkos;
+            const Integer size = get_owned_dof_size();
+            auto owned = get_owned_dofs();
+
+            Kokkos::parallel_for(
+                "boundary_iterate", size, MARS_LAMBDA(const Integer i) {
+                    const Integer local = owned(i);
+                    if (is_boundary_dof<face_nr>(local)) {
+                        f(local);
+                    }
+                });
         }
 
         MARS_INLINE_FUNCTION
@@ -344,14 +285,18 @@ namespace mars {
         ViewVectorType<Integer>::HostMirror scan_recv_mirror;
         };
 
-    template <class DofHandler>
-    using VolumeDofHandler = SDofHandler<DofLabel::lVolume, typename DofHandler::Mesh, DofHandler::Degree>;
+        template <class DofHandler>
+        using FaceVolumeDofHandler =
+            SDofHandler<DofLabel::lVolume + DofLabel::lFace, typename DofHandler::Mesh, DofHandler::Degree>;
 
-    template <class DofHandler>
-    using FaceDofHandler = SDofHandler<DofLabel::lFace, typename DofHandler::Mesh, DofHandler::Degree>;
+        template <class DofHandler>
+        using VolumeDofHandler = SDofHandler<DofLabel::lVolume, typename DofHandler::Mesh, DofHandler::Degree>;
 
-    template <class DofHandler>
-    using CornerDofHandler = SDofHandler<DofLabel::lCorner, typename DofHandler::Mesh, DofHandler::Degree>;
+        template <class DofHandler>
+        using FaceDofHandler = SDofHandler<DofLabel::lFace, typename DofHandler::Mesh, DofHandler::Degree>;
+
+        template <class DofHandler>
+        using CornerDofHandler = SDofHandler<DofLabel::lCorner, typename DofHandler::Mesh, DofHandler::Degree>;
 
 }  // namespace mars
 
