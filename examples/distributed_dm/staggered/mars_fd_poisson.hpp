@@ -374,11 +374,11 @@ namespace mars {
         FVDH fv_dof_handler(dof_handler);
 
         auto volume_stencil = build_stencil<VStencil>(fv_dof_handler);
-        /* print_stencil(vdm, volume_stencil); */
+        /* print_stencil(fv_dof_handler, volume_stencil); */
 
         auto face_stencil = build_stencil<SStencil>(fv_dof_handler);
 
-        print_stencil(fv_dof_handler, face_stencil);
+        /* print_stencil(fv_dof_handler, face_stencil); */
 
         /* using Pattern = SparsityPattern<DofLabel::lCorner, VStencil>;
         Pattern sp(volume_stencil); */
@@ -501,6 +501,7 @@ namespace mars {
             MARS_LAMBDA(const Integer local_dof) { sp.set_value(local_dof, local_dof, 1); });
 
         print_sparsity_pattern(sp);
+        sp.write("SparsityPattern");
 
         vdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
             vdm.get_data<IN>(i) = 0.0;

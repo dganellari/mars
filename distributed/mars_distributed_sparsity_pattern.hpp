@@ -3,6 +3,7 @@
 
 #ifdef WITH_MPI
 #ifdef WITH_KOKKOS
+#include <sstream>
 #include "mars_distributed_finite_element.hpp"
 #include "mars_distributed_staggered_dof_map.hpp"
 #include "mars_distributed_stencil.hpp"
@@ -332,6 +333,51 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         const VFDofMap<SHandler> get_owned_map() const { return owned_map; }
+
+        /* ***************** print ******************************************** */
+
+        bool write(const std::string &file_path) {
+            auto proc = mars::rank(owned_map.get_dof_handler().get_context());
+            auto path = file_path + "_" + std::to_string(proc);
+
+            std::cout << "Writing SparsityPattern to " << path << " file." << std::endl;
+
+            std::ofstream os;
+            os.open(path.c_str());
+            if (!os.good()) {
+                os.close();
+                return false;
+            }
+
+            auto row_h = Kokkos::create_mirror_view(sparsity_pattern.row_map);
+            auto col_h = Kokkos::create_mirror_view(sparsity_pattern.entries);
+            auto val_h = Kokkos::create_mirror_view(matrix.values);
+            Kokkos::deep_copy(row_h, sparsity_pattern.row_map);
+            Kokkos::deep_copy(col_h, sparsity_pattern.entries);
+            Kokkos::deep_copy(val_h, matrix.values);
+
+            os << "Number of values: " << matrix.nnz() << " Number of Cols: " << matrix.numCols()
+               << " Number of Rows: " << matrix.numRows() << "\n";
+
+            for (int i = 0; i < matrix.nnz(); ++i) {
+                os << matrix.values(i) << " ";
+            }
+            os << "\n";
+
+            for (int i = 0; i < matrix.nnz(); ++i) {
+                os << sparsity_pattern.entries(i) << " ";
+            }
+            os << "\n";
+
+            for (int i = 0; i < matrix.numRows() + 1; ++i) {
+                os << sparsity_pattern.row_map(i) << " ";
+            }
+            os << "\n";
+
+            os.close();
+            return true;
+        }
+        /* ********************************************************************************* */
 
     private:
         crs_graph sparsity_pattern;
