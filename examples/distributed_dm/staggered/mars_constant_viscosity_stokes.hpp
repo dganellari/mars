@@ -59,7 +59,7 @@ namespace mars {
     // general width 1 stencil used as pressure stencil.
     using CStencil = Stencil<DofLabel::lCorner>;
 
-    using SPattern = SparsityPattern<double, DHandler, VStencil, SStencil>;
+    using SPattern = SparsityPattern<double, FVDH, VStencil, SStencil>;
     /* using SPattern = SparsityPattern<double, VStencil, FSStencil>; */
     // use as more readable tuple index to identify the data
     static constexpr int IN = 0;
@@ -150,11 +150,11 @@ namespace mars {
                     auto col = sp.get_col(i);
                     // do something. In this case we are printing.
 
-                    const Integer local_dof = sp.get_owned_map().global_to_local(row);
-                    const Integer global_row = sp.get_owned_map().get_dof_handler().local_to_global(local_dof);
+                    const Integer local_dof = sp.get_dof_handler().global_to_local(row);
+                    const Integer global_row = sp.get_dof_handler().get_dof_handler().local_to_global(local_dof);
 
-                    const Integer local_col = sp.get_owned_map().global_to_local(col);
-                    const Integer global_col = sp.get_owned_map().get_dof_handler().local_to_global(local_col);
+                    const Integer local_col = sp.get_dof_handler().global_to_local(col);
+                    const Integer global_col = sp.get_dof_handler().get_dof_handler().local_to_global(local_col);
 
                     printf("row_dof: %li - %li, col_dof: %li - %li, value: %lf\n",
                            row,
@@ -377,13 +377,10 @@ namespace mars {
         /* print_stencil(fv_dof_handler, volume_stencil); */
 
         auto face_stencil = build_stencil<SStencil>(fv_dof_handler);
-
         /* print_stencil(fv_dof_handler, face_stencil); */
 
-        /* using Pattern = SparsityPattern<DofLabel::lCorner, VStencil>;
-        Pattern sp(volume_stencil); */
-        VFDofMap<DHandler> map(dof_handler);
-        SPattern sp(map, volume_stencil, face_stencil);
+        SPattern sp(fv_dof_handler);
+        sp.build_pattern(volume_stencil, face_stencil);
 
         // TODO:: optimization idea. Iterate through the colidx instead of the stencil for better coalesing.
         // for each col idx (global dof) find the row pointer from the scan
@@ -530,7 +527,7 @@ namespace mars {
                 if (fv_dof_handler.get_orientation(local_dof) == DofOrient::yDir) {
                     rval = 1;
                 }
-                const Integer index = map.local_to_owned_index(local_dof);
+                const Integer index = fv_dof_handler.local_to_owned_index(local_dof);
                 rhs(index) = rval;
             }
         });
