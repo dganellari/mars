@@ -78,7 +78,6 @@ namespace mars {
             Kokkos::parallel_for("owned_separated_dof_iter", get_owned_dof_size(), f);
         }
 
-
         template <typename F>
         void ghost_iterate(F f) const {
             Kokkos::parallel_for("ghost_dof_iter", get_ghost_dofs().extent(0), f);
@@ -129,7 +128,6 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_ghost_dofs() const { return ghost_dofs; }
-
 
         MARS_INLINE_FUNCTION
         Integer get_owned_dof_size() const { return get_owned_dofs().extent(0); }
@@ -258,9 +256,8 @@ namespace mars {
             assert(size == ghost_local_to_global_map.size());
         }
 
-
-        //build boundary dof sets as global indexes so that the ghost indices to be global and poissible
-        //therefor to go from a global index to a local one also for the ghosts.
+        // build boundary dof sets as global indexes so that the ghost indices to be global and poissible
+        // therefor to go from a global index to a local one also for the ghosts.
         void build_boundary_dof_sets(ViewVectorType<Integer> &boundary_dofs_index) {
             auto handler = get_dof_handler();
 
@@ -296,7 +293,6 @@ namespace mars {
             }
         };
 
-
         template <typename V>
         void compact_local_dofs(V &local_dof_map) {
             using namespace Kokkos;
@@ -310,22 +306,22 @@ namespace mars {
             /* perform a scan on the dof predicate*/
             local_dof_map = ViewVectorType<Integer>("local_dof_scan", local_size + 1);
             incl_excl_scan(0, local_size, dof_predicate, local_dof_map);
-/*
-            auto vol_subview = subview(local_dof_map, local_size);
-            auto h_vs = create_mirror_view(vol_subview);
-            // Deep copy device view to host view.
-            deep_copy(h_vs, vol_subview);
+            /*
+                        auto vol_subview = subview(local_dof_map, local_size);
+                        auto h_vs = create_mirror_view(vol_subview);
+                        // Deep copy device view to host view.
+                        deep_copy(h_vs, vol_subview);
 
-            local_dofs = ViewVectorType<Integer>("local_dofs", h_vs());
+                        local_dofs = ViewVectorType<Integer>("local_dofs", h_vs());
 
-            [>Compact the predicate into the volume and face dofs views<]
-            parallel_for(
-                local_size, KOKKOS_LAMBDA(const Integer i) {
-                    if (dof_predicate(i) == 1) {
-                        Integer vindex = local_dof_map(i);
-                        local_dofs(vindex) = i;
-                    }
-                }); */
+                        [>Compact the predicate into the volume and face dofs views<]
+                        parallel_for(
+                            local_size, KOKKOS_LAMBDA(const Integer i) {
+                                if (dof_predicate(i) == 1) {
+                                    Integer vindex = local_dof_map(i);
+                                    local_dofs(vindex) = i;
+                                }
+                            }); */
         }
 
         struct IsSeparatedDof {
@@ -333,8 +329,7 @@ namespace mars {
             DofHandler handler;
 
             MARS_INLINE_FUNCTION
-            IsSeparatedDof(ViewVectorType<Integer> map, DofHandler d)
-                : local_separated_dof_map(map), handler(d) {}
+            IsSeparatedDof(ViewVectorType<Integer> map, DofHandler d) : local_separated_dof_map(map), handler(d) {}
 
             MARS_INLINE_FUNCTION
             bool operator()(const Integer sfc) const {
@@ -374,7 +369,7 @@ namespace mars {
             auto handler = get_dof_handler();
             auto gdoffset = global_dof_offset;
 
-            Kokkos::parallel_for(
+            /* Kokkos::parallel_for(
                 "print", boundary_dofs_index.extent(0), MARS_LAMBDA(const Integer i) {
                     const Integer index = boundary_dofs_index(i) - gdoffset(handler.get_proc());
                     const Integer local = owned_dofs(index);
@@ -394,16 +389,17 @@ namespace mars {
             for (int i = 0; i < proc_size; ++i) {
                 std::cout << "proc: " << i << "recv(i): " << scan_recv_mirror(i) << "send(i): " << scan_send_mirror(i)
                           << std::endl;
-            }
-                ViewVectorType<Integer> ghost_dofs_index("ghost_index_dof", get_ghost_dof_size());
-                get_dof_handler().get_context()->distributed->i_send_recv_view(ghost_dofs_index,
-                                                                               get_view_scan_recv_mirror().data(),
-                                                                               boundary_dofs_index,
-                                                                               get_view_scan_send_mirror().data());
+            } */
 
-                std::cout << "Separated DofHandler:MPI send receive for the ghost dofs layer done." << std::endl;
+            ViewVectorType<Integer> ghost_dofs_index("ghost_index_dof", get_ghost_dof_size());
+            get_dof_handler().get_context()->distributed->i_send_recv_view(ghost_dofs_index,
+                                                                           get_view_scan_recv_mirror().data(),
+                                                                           boundary_dofs_index,
+                                                                           get_view_scan_send_mirror().data());
 
-                build_ghost_local_global_map(ghost_dofs_index);
+            std::cout << "Separated DofHandler:MPI send receive for the ghost dofs layer done." << std::endl;
+
+            build_ghost_local_global_map(ghost_dofs_index);
         }
 
         MARS_INLINE_FUNCTION
