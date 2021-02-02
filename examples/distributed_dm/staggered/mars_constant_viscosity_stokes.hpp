@@ -511,7 +511,7 @@ namespace mars {
         vdm.gather_ghost_data<OUT>();
         [>scatter_add_ghost_data<VolumeDM, OUT>(vdm);<] */
 
-        ViewVectorType<double> rhs("rhs", sp.get_num_rows());
+        ViewVectorType<double> rhs("rhs", fv_dof_handler.get_owned_dof_size());
 
         /* fv_dof_handler.owned_dof_iterate<DofLabel::lVolume>(MARS_LAMBDA(const Integer local_dof) {
             double point[3];
@@ -525,10 +525,22 @@ namespace mars {
             double point[2];
             fv_dof_handler.get_local_dof_coordinates(local_dof, point);
 
-            double rval = 0;
-            const Integer index = map.local_to_global(local_dof);
-            rhs(index) = rval;
+            if (!fv_dof_handler.is_boundary_dof(local_dof)) {
+                double rval = 0;
+                if (fv_dof_handler.get_orientation(local_dof) == DofOrient::yDir) {
+                    rval = 1;
+                }
+                const Integer index = map.local_to_owned_index(local_dof);
+                rhs(index) = rval;
+            }
         });
+
+        /* fv_dof_handler.owned_iterate(MARS_LAMBDA(const Integer i) {
+            const Integer local_dof = fv_dof_handler.get_owned_dof(i);
+            const Integer global = fv_dof_handler.local_to_global(local_dof);
+
+            printf("i :%li, global: %li, rhs: %lf\n", i, global, rhs(i));
+        }); */
 
         // print using the dof iterate
         /* vdm.get_dof_handler().dof_iterate(MARS_LAMBDA(const Integer local_dof) {
