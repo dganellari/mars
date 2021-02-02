@@ -430,7 +430,7 @@ namespace mars {
     }
 
     template <Integer Label, typename H, typename V>
-    void compact_owned_dofs(const H &dof_handler, V &locally_owned_dofs) {
+    void compact_owned_dofs(const H &dof_handler, V &owned_dof_map, V &locally_owned_dofs) {
         using namespace Kokkos;
 
         const Integer local_size = dof_handler.get_global_dof_enum().get_elem_size();
@@ -439,10 +439,10 @@ namespace mars {
         assert(local_size == dof_handler.get_global_dof_enum().get_view_element_labels().extent(0));
 
         /* perform a scan on the dof predicate*/
-        ViewVectorType<Integer> owned_dof_scan("owned_dof_scan", local_size + 1);
-        incl_excl_scan(0, local_size, dof_predicate, owned_dof_scan);
+        owned_dof_map = ViewVectorType<Integer>("owned_dof_scan", local_size + 1);
+        incl_excl_scan(0, local_size, dof_predicate, owned_dof_map);
 
-        auto vol_subview = subview(owned_dof_scan, local_size);
+        auto vol_subview = subview(owned_dof_map, local_size);
         auto h_vs = create_mirror_view(vol_subview);
         // Deep copy device view to host view.
         deep_copy(h_vs, vol_subview);
@@ -453,7 +453,7 @@ namespace mars {
         parallel_for(
             local_size, KOKKOS_LAMBDA(const Integer i) {
                 if (dof_predicate(i) == 1) {
-                    Integer vindex = owned_dof_scan(i);
+                    Integer vindex = owned_dof_map(i);
                     const Integer local = dof_handler.sfc_to_local(global_to_sfc(i));
                     locally_owned_dofs(vindex) = local;
                 }
