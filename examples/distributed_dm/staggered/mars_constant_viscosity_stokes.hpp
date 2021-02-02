@@ -1,5 +1,5 @@
-#ifndef MARS_FD_POISSON_
-#define MARS_FD_POISSON_
+#ifndef MARS_CV_STOKES_
+#define MARS_CV_STOKES_
 
 #include "mars_context.hpp"
 #include "mars_globals.hpp"
@@ -286,7 +286,7 @@ namespace mars {
     }
 
     template <class BC, class RHS, class AnalyticalFun>
-    void staggered_poisson_2D(const int level) {
+    void staggered_constant_viscosty_stokes_2D(const int level) {
         using namespace mars;
         mars::proc_allocation resources;
 
@@ -503,32 +503,27 @@ namespace mars {
         print_sparsity_pattern(sp);
         sp.write("SparsityPattern");
 
-        vdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
+        /* vdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
             vdm.get_data<IN>(i) = 0.0;
             vdm.get_data<OUT>(i) = 0.0;
         });
 
         vdm.gather_ghost_data<OUT>();
-        /* scatter_add_ghost_data<VolumeDM, OUT>(vdm); */
+        [>scatter_add_ghost_data<VolumeDM, OUT>(vdm);<] */
 
         ViewVectorType<double> rhs("rhs", sp.get_num_rows());
 
-        /* auto volume_handler = vdm.get_dof_handler();
-        volume_handler.owned_dof_iterate(MARS_LAMBDA(const Integer local_dof) {
-                double point[3];
-                volume_handler.get_vertex_coordinates_from_local(local_dof, point);
+        /* fv_dof_handler.owned_dof_iterate<DofLabel::lVolume>(MARS_LAMBDA(const Integer local_dof) {
+            double point[3];
+            volume_handler.get_vertex_coordinates_from_local(local_dof, point);
 
-                const Integer index = volume_handler.local_to_global(local_dof);
-                rhs(index) = x;
+            const Integer index = volume_handler.local_to_global(local_dof);
+            rhs(index) = x;
+        }); */
 
-
-                });
- */
-
-        auto face_handler = fdm.get_dof_handler();
-        face_handler.owned_dof_iterate(MARS_LAMBDA(const Integer local_dof) {
+        fv_dof_handler.owned_dof_iterate<DofLabel::lFace>(MARS_LAMBDA(const Integer local_dof) {
             double point[2];
-            face_handler.get_local_dof_coordinates(local_dof, point);
+            fv_dof_handler.get_local_dof_coordinates(local_dof, point);
 
             double rval = 0;
             const Integer index = map.local_to_global(local_dof);

@@ -91,6 +91,15 @@ namespace mars {
                 "separated_dof_iter", dofs.extent(0), MARS_LAMBDA(const Integer i) { f(dofs(i)); });
         }
 
+        template <Integer FLabel, typename F>
+        void owned_dof_iterate(F f) const {
+            ViewVectorType<Integer> lowned_dofs;
+            compact_owned_dofs<FLabel>(get_dof_handler(), lowned_dofs);
+
+            Kokkos::parallel_for(
+                "separated_dof_iter", lowned_dofs.extent(0), MARS_LAMBDA(const Integer i) { f(lowned_dofs(i)); });
+        }
+
         template <typename F>
         void dof_iterate(F f) const {
             auto dofs = get_local_dofs();
