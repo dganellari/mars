@@ -50,7 +50,7 @@
 #include "mars_par_bisection.hpp"
 #include "mars_par_mesh.hpp"
 #include "mars_poisson.hpp"
-#include "mars_fd_poisson.hpp"
+#include "mars_constant_viscosity_stokes.hpp"
 #include "mars_test_mpi.hpp"
 #endif  // WITH_Kokkos
 #endif  // WITH_MPI
@@ -1882,7 +1882,7 @@ int main(int argc, char *argv[]) {
     };
 
     apps["stokes"] = [=]() {
-        staggered_poisson_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(level);
+        staggered_constant_viscosty_stokes_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(level);
     };
 
     /* apps["stokes2D"] = [=]() {
