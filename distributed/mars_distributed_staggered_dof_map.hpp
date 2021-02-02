@@ -140,6 +140,16 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
+        Integer local_to_owned_index(const Integer local_dof) const {
+            const Integer owned = get_dof_handler().local_to_owned_dof(local_dof);
+            const Integer pred_value = owned_dof_map(owned + 1) - owned_dof_map(owned);
+            if (pred_value > 0)
+                return owned_dof_map(owned);
+            else
+                return INVALID_INDEX;
+        }
+
+        MARS_INLINE_FUNCTION
         Integer local_to_owned_dof(const Integer local_dof) const {
             const Integer owned = get_dof_handler().local_to_owned_dof(local_dof);
             const Integer pred_value = owned_dof_map(owned + 1) - owned_dof_map(owned);
