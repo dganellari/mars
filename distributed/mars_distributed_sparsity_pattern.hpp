@@ -123,7 +123,7 @@ namespace mars {
 
                     const Integer dof = st.get_value(stencil_index, 0);
                     const Integer total = get_total(dof, count);
-                    counter(dhandler.local_to_global(dof)) = total;
+                    counter(dhandler.local_to_owned_index(dof)) = total;
                 });
             }
 
@@ -157,7 +157,7 @@ namespace mars {
             MARS_INLINE_FUNCTION void insert_dof(const S &st, const Integer stencil_index, Integer dof) const {
                 Integer count = 0;
 
-                Integer index = row_ptr(dhandler.local_to_global(dof));
+                Integer index = row_ptr(dhandler.local_to_owned_index(dof));
 
                 for (int i = 0; i < st.get_length(); i++) {
                     const Integer local_dof = st.get_value(stencil_index, i);
@@ -193,7 +193,8 @@ namespace mars {
                     const Integer dof = st.get_value(stencil_index, 0);
                     if (dhandler.template is_boundary<SHandler::ElemType>(dof)) {
                         Integer global = dhandler.local_to_global(dof);
-                        Integer index = row_ptr(global);
+                        Integer local = dhandler.local_to_owned_index(dof);
+                        Integer index = row_ptr(local);
                         col_idx(index) = global;
                     } else {
                         insert_dof(st, stencil_index, dof);
@@ -216,15 +217,17 @@ namespace mars {
             stencil_tuple stencils(std::make_tuple(s...));
 
             auto global_size = get_dof_handler().get_global_dof_size();
-            printf("global_size %li\n", global_size);
+            auto owned_size = get_dof_handler().get_owned_dof_size();
 
-            ViewVectorType<Integer> counter("counter", global_size);
+            printf("global_size: %li, owned_size: %li\n", owned_size, global_size);
+
+            ViewVectorType<Integer> counter("counter", owned_size);
             expand_tuple<CountUniqueDofs, stencil_tuple, dataidx...>(CountUniqueDofs(counter, get_dof_handler()),
                                                                      stencils);
-            crs_row row_ptr("counter_scan", global_size + 1);
-            incl_excl_scan(0, global_size, counter, row_ptr);
+            crs_row row_ptr("counter_scan", owned_size + 1);
+            incl_excl_scan(0, owned_size, counter, row_ptr);
 
-            auto ss = subview(row_ptr, global_size);
+            auto ss = subview(row_ptr, owned_size);
             auto h_ss = create_mirror_view(ss);
             deep_copy(h_ss, ss);
 
@@ -239,7 +242,7 @@ namespace mars {
 
             sparsity_pattern = crs_graph(col_idx, row_ptr);
 
-            matrix = crs_matrix("crs_matrix", global_size, values, sparsity_pattern);
+            matrix = crs_matrix("crs_matrix", owned_size, values, sparsity_pattern);
 
             /* Kokkos::parallel_for(
                 "sp:", global_size, MARS_LAMBDA(const Integer i) {
@@ -278,11 +281,13 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         const Integer get_col_index(const Integer local_row, const Integer local_col) const {
-            auto row = get_dof_handler().local_to_global(local_row);
+            //translate the row to the owned index and the col to the global index first.
+            auto row = get_dof_handler().local_to_owned_index(local_row);
             auto col = get_dof_handler().local_to_global(local_col);
 
             return get_col_index_from_global(row, col);
         }
+
         MARS_INLINE_FUNCTION
         const void set_value(const Integer index, const V val) const { matrix.values(index) = val; }
 
@@ -308,6 +313,12 @@ namespace mars {
         const V get_value_from_global(const Integer row, const Integer col) const {
             return matrix.values(get_col_index_from_global(row, col));
         }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_nnz() const { return matrix.nnz(); }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_num_cols() const { return matrix.numcols(); }
 
         MARS_INLINE_FUNCTION
         const Integer get_num_rows() const { return matrix.numRows(); }

@@ -150,7 +150,7 @@ namespace mars {
                     auto col = sp.get_col(i);
                     // do something. In this case we are printing.
 
-                    const Integer local_dof = sp.get_dof_handler().global_to_local(row);
+                    const Integer local_dof = sp.get_dof_handler().get_owned_dof(row);
                     const Integer global_row = sp.get_dof_handler().get_dof_handler().local_to_global(local_dof);
 
                     const Integer local_col = sp.get_dof_handler().global_to_local(col);
@@ -498,7 +498,7 @@ namespace mars {
             MARS_LAMBDA(const Integer local_dof) { sp.set_value(local_dof, local_dof, 1); });
 
         print_sparsity_pattern(sp);
-        sp.write("SparsityPattern");
+        sp.write("Spattern");
 
         /* vdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
             vdm.get_data<IN>(i) = 0.0;
