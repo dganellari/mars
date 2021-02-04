@@ -1425,6 +1425,11 @@ namespace mars {
             return get_local_dof_enum().get_label(local_dof);
         }
 
+        MARS_INLINE_FUNCTION
+        const Integer get_owned_label(const Integer owned_dof) const {
+            return get_global_dof_enum().get_label(owned_dof);
+        }
+
         const context &get_context() const { return ctx; }
 
         MARS_INLINE_FUNCTION
@@ -1433,13 +1438,13 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_ghost_dofs() const { return ghost_dofs_sfc; }
 
-        MARS_INLINE_FUNCTION const Octant get_octant_from_local(const Integer local) const {
+        MARS_INLINE_FUNCTION Octant get_octant_from_local(const Integer local) const {
             const Integer sfc = local_to_sfc(local);
-            return get_octant_from_sfc<ElemType>(sfc);
+            return get_octant_from_sfc(sfc);
         }
 
-        MARS_INLINE_FUNCTION const Octant get_octant_from_sfc(const Integer sfc) const {
-            return get_octant_from_sfc<ElemType>(sfc);
+        MARS_INLINE_FUNCTION Octant get_octant_from_sfc(const Integer sfc) const {
+            return mars::get_octant_from_sfc<ElemType>(sfc);
         }
 
     private:

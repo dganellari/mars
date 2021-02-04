@@ -374,7 +374,7 @@ namespace mars {
         FVDH fv_dof_handler(dof_handler);
 
         auto volume_stencil = build_stencil<VStencil>(fv_dof_handler);
-        /* print_stencil(fv_dof_handler, volume_stencil); */
+        print_stencil(fv_dof_handler, volume_stencil);
 
         auto face_stencil = build_stencil<SStencil>(fv_dof_handler);
         /* print_stencil(fv_dof_handler, face_stencil); */
@@ -521,6 +521,10 @@ namespace mars {
         fv_dof_handler.owned_dof_iterate<DofLabel::lFace>(MARS_LAMBDA(const Integer local_dof) {
             double point[2];
             fv_dof_handler.get_local_dof_coordinates(local_dof, point);
+
+            /* auto global = fv_dof_handler.get_dof_handler().local_to_global(local_dof);
+            auto o = fv_dof_handler.get_octant_from_local(local_dof);
+            printf("local_dof: %li, x, y, z %li, %li, %li, global: %li\n", local_dof, o.x, o.y, o.z, global); */
 
             if (!fv_dof_handler.is_boundary_dof(local_dof)) {
                 double rval = 0;

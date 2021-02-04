@@ -15,8 +15,7 @@ namespace mars {
     template <typename ST, bool Orient = false, typename DofHandler>
     ST build_stencil(const DofHandler &handler) {
         ViewVectorType<Integer> locally_owned_dofs;
-        ViewVectorType<Integer> map;
-        compact_owned_dofs<ST::dofLabel>(handler, map, locally_owned_dofs);
+        compact_owned_dofs<ST::dofLabel>(handler, locally_owned_dofs);
 
         const Integer size = locally_owned_dofs.extent(0);
         ST stencil(size);
@@ -28,7 +27,6 @@ namespace mars {
             });
         return stencil;
     }
-
 
     template <Integer Label, Integer Dim = 2, Integer Width = 1>
     class Stencil {
