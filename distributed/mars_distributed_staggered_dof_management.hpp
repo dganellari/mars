@@ -375,6 +375,14 @@ namespace mars {
         /* *******dof handler related functionalities for completing the handler.******* */
         /* chose this way to hide the full interface of the general handler. Inheritance is the other way*/
 
+        MARS_INLINE_FUNCTION const Octant get_octant_from_local(const Integer local) const {
+            return get_dof_handler().get_octant_from_local(loca);
+        }
+
+        MARS_INLINE_FUNCTION const octanct get_octant_from_sfc(const Integer sfc) const {
+            return get_dof_handler().get_octant_from_sfc(sfc);
+        }
+
         MARS_INLINE_FUNCTION void get_local_dof_coordinates(const Integer local, double *point) const {
             get_dof_handler().template get_dof_coordinates_from_local<ElemType>(local, point);
         }
