@@ -429,17 +429,28 @@ namespace mars {
         return dof_predicate;
     }
 
-    template <Integer Label, typename H, typename V>
-    void compact_owned_dofs(const H &dof_handler, V &owned_dof_map, V &locally_owned_dofs) {
+    template <Integer Label, typename H>
+    ViewVectorType<bool> build_owned_label_dof_predicate(const H &dof_handler, const Integer local_size) {
+        ViewVectorType<bool> dof_predicate("label_dof_predicate", local_size);
+        Kokkos::parallel_for(
+            "separatedoflabelss", local_size, KOKKOS_LAMBDA(const Integer i) {
+                if (dof_handler.get_owned_label(i) & Label) {
+                    dof_predicate(i) = 1;
+                }
+            });
+
+        return dof_predicate;
+    }
+
+    template <Integer Label, typename H>
+    ViewVectorType<Integer> compact_owned_dofs(const H &dof_handler, ViewVectorType<Integer> &locally_owned_dofs) {
         using namespace Kokkos;
 
-        const Integer local_size = dof_handler.get_global_dof_enum().get_elem_size();
-        auto dof_predicate = build_label_dof_predicate<Label>(dof_handler.get_global_dof_enum().get_view_element_labels());
-
-        assert(local_size == dof_handler.get_global_dof_enum().get_view_element_labels().extent(0));
+        const Integer local_size = dof_handler.get_owned_dof_size();
+        auto dof_predicate = build_owned_label_dof_predicate<Label>(dof_handler, local_size);
 
         /* perform a scan on the dof predicate*/
-        owned_dof_map = ViewVectorType<Integer>("owned_dof_scan", local_size + 1);
+        ViewVectorType<Integer> owned_dof_map("owned_dof_scan", local_size + 1);
         incl_excl_scan(0, local_size, dof_predicate, owned_dof_map);
 
         auto vol_subview = subview(owned_dof_map, local_size);
@@ -454,10 +465,12 @@ namespace mars {
             local_size, KOKKOS_LAMBDA(const Integer i) {
                 if (dof_predicate(i) == 1) {
                     Integer vindex = owned_dof_map(i);
-                    const Integer local = dof_handler.sfc_to_local(global_to_sfc(i));
+                    const Integer local = dof_handler.get_owned_dof(i);
                     locally_owned_dofs(vindex) = local;
                 }
             });
+
+        return owned_dof_map;
     }
 
     template <Integer Label, typename H, typename V>

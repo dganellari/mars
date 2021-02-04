@@ -76,7 +76,7 @@ namespace mars {
 
         void prepare_separated_dofs() {
             compact_local_dofs<Label>(get_dof_handler(), local_dof_map, local_dofs);
-            compact_owned_dofs<Label>(get_dof_handler(), owned_dof_map, locally_owned_dofs);
+            owned_dof_map = compact_owned_dofs<Label>(get_dof_handler(), locally_owned_dofs);
 
             compute_global_offset();
 
@@ -141,8 +141,7 @@ namespace mars {
         template <Integer FLabel, typename F>
         void owned_dof_iterate(F f) const {
             ViewVectorType<Integer> lowned_dofs;
-            ViewVectorType<Integer> map;
-            compact_owned_dofs<FLabel>(get_dof_handler(), map, lowned_dofs);
+            compact_owned_dofs<FLabel>(*this, lowned_dofs);
 
             Kokkos::parallel_for(
                 "separated_dof_iter", lowned_dofs.extent(0), MARS_LAMBDA(const Integer i) { f(lowned_dofs(i)); });
@@ -375,11 +374,11 @@ namespace mars {
         /* *******dof handler related functionalities for completing the handler.******* */
         /* chose this way to hide the full interface of the general handler. Inheritance is the other way*/
 
-        MARS_INLINE_FUNCTION const Octant get_octant_from_local(const Integer local) const {
-            return get_dof_handler().get_octant_from_local(loca);
+        MARS_INLINE_FUNCTION Octant get_octant_from_local(const Integer local) const {
+            return get_dof_handler().get_octant_from_local(local);
         }
 
-        MARS_INLINE_FUNCTION const octanct get_octant_from_sfc(const Integer sfc) const {
+        MARS_INLINE_FUNCTION Octant get_octant_from_sfc(const Integer sfc) const {
             return get_dof_handler().get_octant_from_sfc(sfc);
         }
 
@@ -431,11 +430,15 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         const Integer get_label(const Integer local) const { return get_dof_handler().get_label(local); }
-        /*
-                MARS_INLINE_FUNCTION
-                const Integer local_to_global(const Integer local) const {
-                    return get_dof_handler().local_to_global(local);
-                } */
+
+        MARS_INLINE_FUNCTION
+        const Integer get_owned_label(const Integer owned) const {
+            const Integer local_dof = get_owned_dof(owned);
+            return get_dof_handler().get_label(local_dof);
+        }
+
+        /* MARS_INLINE_FUNCTION
+        const Integer local_to_global(const Integer local) const { return get_dof_handler().local_to_global(local); } */
 
         MARS_INLINE_FUNCTION
         const Dof local_to_global_dof(const Integer local) const {
