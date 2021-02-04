@@ -1433,6 +1433,14 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_ghost_dofs() const { return ghost_dofs_sfc; }
 
+        MARS_INLINE_FUNCTION const Octant get_octant_from_local(const Integer local) const {
+            const Integer sfc = local_to_sfc(local);
+            return get_octant_from_sfc<ElemType>(sfc);
+        }
+
+        MARS_INLINE_FUNCTION const Octant get_octant_from_sfc(const Integer sfc) const {
+            return get_octant_from_sfc<ElemType>(sfc);
+        }
 
     private:
         // data associated to the mesh elements (sfc) within the context.
