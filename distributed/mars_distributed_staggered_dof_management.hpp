@@ -75,7 +75,7 @@ namespace mars {
         }
 
         void prepare_separated_dofs() {
-            compact_local_dofs<Label>(get_dof_handler(), local_dof_map, local_dofs);
+            local_dof_map = compact_local_dofs<Label>(get_dof_handler(), local_dofs);
             owned_dof_map = compact_owned_dofs<Label>(get_dof_handler(), locally_owned_dofs);
 
             compute_global_offset();
@@ -150,6 +150,15 @@ namespace mars {
         template <typename F>
         void dof_iterate(F f) const {
             auto dofs = get_local_dofs();
+            Kokkos::parallel_for(
+                "separated_dof_iter", dofs.extent(0), MARS_LAMBDA(const Integer i) { f(dofs(i)); });
+        }
+
+        template <Integer FLabel, typename F>
+        void dof_iterate(F f) const {
+            ViewVectorType<Integer> dofs;
+            compact_local_dofs<FLabel>(*this, dofs);
+
             Kokkos::parallel_for(
                 "separated_dof_iter", dofs.extent(0), MARS_LAMBDA(const Integer i) { f(dofs(i)); });
         }
@@ -429,12 +438,13 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_label(const Integer local) const { return get_dof_handler().get_label(local); }
+        const Integer get_label(const Integer local_dof) const {
+            return get_dof_handler().get_label(local_dof);
+        }
 
         MARS_INLINE_FUNCTION
-        const Integer get_owned_label(const Integer owned) const {
-            const Integer local_dof = get_owned_dof(owned);
-            return get_dof_handler().get_label(local_dof);
+        const Integer get_owned_label(const Integer owned_dof) const {
+            return get_dof_handler().get_owned_label(owned_dof);
         }
 
         /* MARS_INLINE_FUNCTION

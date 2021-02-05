@@ -1331,8 +1331,12 @@ namespace mars {
         const Integer get_dof_size() const { return local_dof_enum.get_elem_size(); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_local_dof(const Integer i) const { return i; }
+        const Integer get_local_dof(const Integer i) const {
+            assert(i < get_dof_size());
+            return i;
+        }
 
+        //get the local dof of the owned index.
         MARS_INLINE_FUNCTION
         const Integer get_owned_dof(const Integer i) const {
             const Integer sfc = get_global_dof_enum().get_view_elements()(i);
