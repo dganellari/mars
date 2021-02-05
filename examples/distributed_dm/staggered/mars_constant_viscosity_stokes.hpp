@@ -374,7 +374,7 @@ namespace mars {
         FVDH fv_dof_handler(dof_handler);
 
         auto volume_stencil = build_stencil<VStencil>(fv_dof_handler);
-        print_stencil(fv_dof_handler, volume_stencil);
+        /* print_stencil(fv_dof_handler, volume_stencil); */
 
         auto face_stencil = build_stencil<SStencil>(fv_dof_handler);
         /* print_stencil(fv_dof_handler, face_stencil); */
