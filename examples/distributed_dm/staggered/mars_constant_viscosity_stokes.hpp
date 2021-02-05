@@ -1,29 +1,7 @@
 #ifndef MARS_CV_STOKES_
 #define MARS_CV_STOKES_
 
-#include "mars_context.hpp"
-#include "mars_globals.hpp"
-// #include <bits/c++config.h>
-#include <exception>
-#include <iostream>
-#include <tuple>
-#include <type_traits>
-#include <utility>
-
-#ifdef WITH_MPI
-
-#include "mars_mpi_guard.hpp"
-
-#ifdef WITH_KOKKOS
-#include <KokkosBlas1_sum.hpp>
-#include "Kokkos_ArithTraits.hpp"
-#include "mars_distributed_sparsity_pattern.hpp"
-#include "mars_distributed_staggered_data_management.hpp"
-#include "mars_distributed_staggered_dof_management.hpp"
-#endif  // WITH_KOKKOS
-#endif
-
-// #include "mars_pvtu_writer.hpp"  // VTK
+#include "mars.hpp"
 
 namespace mars {
 
