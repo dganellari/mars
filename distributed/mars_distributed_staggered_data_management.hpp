@@ -126,7 +126,7 @@ namespace mars {
     using VDM = SDM<VolumeDofHandler<DofHandler>, T...>;
 
     template <class DofHandler, typename... T>
-    using FDM = SDM < FaceDofHandler<DofHandler>, T...>;
+    using FDM = SDM<FaceDofHandler<DofHandler>, T...>;
 
     template <class DofHandler, typename... T>
     using CDM = SDM<CornerDofHandler<DofHandler>, T...>;

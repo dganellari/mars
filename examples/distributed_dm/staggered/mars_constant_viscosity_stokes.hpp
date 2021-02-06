@@ -22,6 +22,8 @@ namespace mars {
     using CornerDM = SDM<CDH, double, double, double>;
     using FaceDM = SDM<FDH, double, double>;
 
+    using FaceVolumeDM = SDM<FVDH, double, double>;
+
     /*
         using VolumeDM = VDM<DHandler, double, double>;
         using CornerDM = CDM<DHandler, double>;
@@ -478,23 +480,7 @@ namespace mars {
         print_sparsity_pattern(sp);
         sp.write("Spattern");
 
-        /* vdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
-            vdm.get_data<IN>(i) = 0.0;
-            vdm.get_data<OUT>(i) = 0.0;
-        });
-
-        vdm.gather_ghost_data<OUT>();
-        [>scatter_add_ghost_data<VolumeDM, OUT>(vdm);<] */
-
         ViewVectorType<double> rhs("rhs", fv_dof_handler.get_owned_dof_size());
-
-        /* fv_dof_handler.owned_dof_iterate<DofLabel::lVolume>(MARS_LAMBDA(const Integer local_dof) {
-            double point[3];
-            volume_handler.get_vertex_coordinates_from_local(local_dof, point);
-
-            const Integer index = volume_handler.local_to_global(local_dof);
-            rhs(index) = x;
-        }); */
 
         fv_dof_handler.owned_dof_iterate<DofLabel::lFace>(MARS_LAMBDA(const Integer local_dof) {
             double point[2];
@@ -521,6 +507,18 @@ namespace mars {
             printf("i :%li, global: %li, rhs: %lf\n", i, global, rhs(i));
         }); */
 
+
+/* ********************************gather scatter ghost data**************************************** */
+
+        /* FaceVolumeDM fvdm(fv_dof_handler);
+        fvdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
+            fvdm.get_data<IN>(i) = 3.0;
+            fvdm.get_data<OUT>(i) = proc_num;
+        });
+
+        fvdm.gather_ghost_data<OUT>();
+        scatter_add_ghost_data<FaceVolumeDM, OUT>(fvdm); */
+
         // print using the dof iterate
         /* vdm.get_dof_handler().dof_iterate(MARS_LAMBDA(const Integer local_dof) {
             const auto idata = vdm.get_dof_data<IN>(local_dof);
@@ -533,16 +531,18 @@ namespace mars {
         }); */
 
         // print using the index iterate
-        /* vdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
-            const Integer local_dof = vdm.get_dof_handler().get_local_dof(i);
+        /* fvdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
+            const Integer local_dof = fvdm.get_dof_handler().get_local_dof(i);
 
-            const auto idata = vdm.get_data<IN>(i);
-            const auto odata = vdm.get_data<OUT>(i);
+            const auto idata = fvdm.get_data<IN>(i);
+            const auto odata = fvdm.get_data<OUT>(i);
 
-            Dof d = vdm.get_dof_handler().local_to_global_dof(local_dof);
+            Dof d = fvdm.get_dof_handler().local_to_global_dof(local_dof);
 
             printf("lid: %li, u: %lf, v: %lf, global: %li, rank: %i\n", i, idata, odata, d.get_gid(), d.get_proc());
         }); */
+
+/* ********************************end ghost data gather scatter************************************ */
 
         double time = timer.seconds();
         std::cout << "Stag DM Setup took: " << time << " seconds." << std::endl;
