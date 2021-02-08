@@ -75,55 +75,50 @@ namespace mars {
         struct CountUniqueDofs {
             CountUniqueDofs(ViewVectorType<Integer> c, SHandler h) : counter(c), dhandler(h) {}
 
-            template <typename S>
-            MARS_INLINE_FUNCTION void count_dof(const S &st, const Integer stencil_index, Integer &count) const {
-                for (int i = 0; i < st.get_length(); i++) {
-                    const Integer local_dof = st.get_value(stencil_index, i);
-                    if (conditional(local_dof, dhandler)) {
-                        count++;
-                    }
-                }
-
-                for (int i = 0; i < st.get_face_length(); i++) {
-                    // get the local dof of the i-th index within thelement
-                    const Integer local_dof = st.get_face_value(stencil_index, i);
-                    if (conditional(local_dof, dhandler)) {
-                        count++;
-                    }
-                }
-
-                for (int i = 0; i < st.get_corner_length(); i++) {
-                    // get the local dof of the i-th index within thelement
-                    const Integer local_dof = st.get_corner_value(stencil_index, i);
-                    if (conditional(local_dof, dhandler)) {
-                        count++;
-                    }
-                }
+            template <typename H>
+            MARS_INLINE_FUNCTION Integer get_total(const Integer dof, Integer &count, const H &handler) const {
+                return handler.template is_boundary<SHandler::ElemType>(dof) ? 1 : count;
             }
 
-            // TODO:Specialize for stokes as in the next method below since normally the boundary is excluded.
-            // In this case the total would be 0 for the boundary and in the specialization 1.
-            /* template <typename S> */
-            MARS_INLINE_FUNCTION Integer get_total(const Integer dof, Integer &count) const {
-                return dhandler.template is_boundary<SHandler::ElemType>(dof) ? 1 : count;
-                /* return handler.template is_boundary<SHandler::ElemType>(dof) ? 0 : count; */
-            }
-
+            // TODO:Specialize for normal stencils as in the method below since normally the boundary is excluded.
             /* template <>
-            MARS_INLINE_FUNCTION Integer get_total<StokesStencil<DHandler>>(const StokesStencil<DHandler> &st) const {
-                return dhandler.template is_boundary<SHandler::ElemType>(dof) ? 1 : count;
+            MARS_INLINE_FUNCTION Integer get_total<DofHandler<SHandler::Mesh, SHandler::Degree>>(const StokesStencil<DHandler> &st) const {
+                return dhandler.template is_boundary<SHandler::ElemType>(dof) ? 0 : count;
             } */
 
             template <typename S>
             MARS_INLINE_FUNCTION void count_unique(S st) const {
+                auto handler = dhandler;
+                auto cntr = counter;
                 st.iterate(MARS_LAMBDA(const Integer stencil_index) {
                     Integer count = 0;
 
-                    count_dof(st, stencil_index, count);
+                    for (int i = 0; i < st.get_length(); i++) {
+                        const Integer local_dof = st.get_value(stencil_index, i);
+                        if (conditional(local_dof, handler)) {
+                            count++;
+                        }
+                    }
+
+                    for (int i = 0; i < st.get_face_length(); i++) {
+                        // get the local dof of the i-th index within thelement
+                        const Integer local_dof = st.get_face_value(stencil_index, i);
+                        if (conditional(local_dof, handler)) {
+                            count++;
+                        }
+                    }
+
+                    for (int i = 0; i < st.get_corner_length(); i++) {
+                        // get the local dof of the i-th index within thelement
+                        const Integer local_dof = st.get_corner_value(stencil_index, i);
+                        if (conditional(local_dof, handler)) {
+                            count++;
+                        }
+                    }
 
                     const Integer dof = st.get_value(stencil_index, 0);
-                    const Integer total = get_total(dof, count);
-                    counter(dhandler.local_to_owned_index(dof)) = total;
+                    const Integer total = get_total(dof, count, handler);
+                    cntr(handler.local_to_owned_index(dof)) = total;
                 });
             }
 
@@ -153,51 +148,47 @@ namespace mars {
                 ++count;
             }
 
-            template <typename S>
-            MARS_INLINE_FUNCTION void insert_dof(const S &st, const Integer stencil_index, Integer dof) const {
-                Integer count = 0;
-
-                Integer index = row_ptr(dhandler.local_to_owned_index(dof));
-
-                for (int i = 0; i < st.get_length(); i++) {
-                    const Integer local_dof = st.get_value(stencil_index, i);
-                    if (conditional(local_dof, dhandler)) {
-                        const Integer global = dhandler.local_to_global(local_dof);
-                        insert_sorted(col_idx, index, global, count);
-                    }
-                }
-
-                for (int i = 0; i < st.get_face_length(); i++) {
-                    // get the local dof of the i-th index within thelement
-                    const Integer local_dof = st.get_face_value(stencil_index, i);
-                    if (conditional(local_dof, dhandler)) {
-                        const Integer global = dhandler.local_to_global(local_dof);
-                        insert_sorted(col_idx, index, global, count);
-                    }
-                }
-
-                for (int i = 0; i < st.get_corner_length(); i++) {
-                    // get the local dof of the i-th index within thelement
-                    const Integer local_dof = st.get_corner_value(stencil_index, i);
-                    if (conditional(local_dof, dhandler)) {
-                        const Integer global = dhandler.local_to_global(local_dof);
-                        insert_sorted(col_idx, index, global, count);
-                    }
-                }
-            }
-
             /* TODO:specialize for stokes because normally the boundary would be excluded. */
             template <typename S>
             MARS_INLINE_FUNCTION void insert_sorted(S st) const {
+                auto handler = dhandler;
+                auto rp = row_ptr;
+                auto ci = col_idx;
                 st.iterate(MARS_LAMBDA(const Integer stencil_index) {
                     const Integer dof = st.get_value(stencil_index, 0);
-                    if (dhandler.template is_boundary<SHandler::ElemType>(dof)) {
-                        Integer global = dhandler.local_to_global(dof);
-                        Integer local = dhandler.local_to_owned_index(dof);
-                        Integer index = row_ptr(local);
-                        col_idx(index) = global;
+                    Integer index = rp(handler.local_to_owned_index(dof));
+
+                    if (handler.template is_boundary<SHandler::ElemType>(dof)) {
+                        Integer global = handler.local_to_global(dof);
+                        ci(index) = global;
                     } else {
-                        insert_dof(st, stencil_index, dof);
+                        Integer count = 0;
+
+                        for (int i = 0; i < st.get_length(); i++) {
+                            const Integer local_dof = st.get_value(stencil_index, i);
+                            if (conditional(local_dof, handler)) {
+                                const Integer global = handler.local_to_global(local_dof);
+                                insert_sorted(ci, index, global, count);
+                            }
+                        }
+
+                        for (int i = 0; i < st.get_face_length(); i++) {
+                            // get the local dof of the i-th index within thelement
+                            const Integer local_dof = st.get_face_value(stencil_index, i);
+                            if (conditional(local_dof, handler)) {
+                                const Integer global = handler.local_to_global(local_dof);
+                                insert_sorted(ci, index, global, count);
+                            }
+                        }
+
+                        for (int i = 0; i < st.get_corner_length(); i++) {
+                            // get the local dof of the i-th index within thelement
+                            const Integer local_dof = st.get_corner_value(stencil_index, i);
+                            if (conditional(local_dof, handler)) {
+                                const Integer global = handler.local_to_global(local_dof);
+                                insert_sorted(ci, index, global, count);
+                            }
+                        }
                     }
                 });
             }
@@ -219,7 +210,7 @@ namespace mars {
             auto global_size = get_dof_handler().get_global_dof_size();
             auto owned_size = get_dof_handler().get_owned_dof_size();
 
-            printf("global_size: %li, owned_size: %li\n", owned_size, global_size);
+            printf("global_size: %li, owned_size: %li\n", global_size, owned_size);
 
             ViewVectorType<Integer> counter("counter", owned_size);
             expand_tuple<CountUniqueDofs, stencil_tuple, dataidx...>(CountUniqueDofs(counter, get_dof_handler()),
@@ -349,17 +340,17 @@ namespace mars {
                << " Number of Rows: " << matrix.numRows() << "\n";
 
             for (int i = 0; i < matrix.nnz(); ++i) {
-                os << matrix.values(i) << " ";
+                os << val_h(i) << " ";
             }
             os << "\n";
 
             for (int i = 0; i < matrix.nnz(); ++i) {
-                os << sparsity_pattern.entries(i) << " ";
+                os << col_h(i) << " ";
             }
             os << "\n";
 
             for (int i = 0; i < matrix.numRows() + 1; ++i) {
-                os << sparsity_pattern.row_map(i) << " ";
+                os << row_h(i) << " ";
             }
             os << "\n";
 

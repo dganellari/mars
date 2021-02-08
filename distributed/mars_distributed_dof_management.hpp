@@ -1353,6 +1353,9 @@ namespace mars {
         const SFC<simplex_type::ElemType> &get_global_dof_enum() const { return global_dof_enum; }
 
         MARS_INLINE_FUNCTION
+        const Integer get_global_dof_offset(const Integer proc) const { return global_dof_offset(proc); }
+
+        MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_global_dof_offset() const { return global_dof_offset; }
 
         MARS_INLINE_FUNCTION

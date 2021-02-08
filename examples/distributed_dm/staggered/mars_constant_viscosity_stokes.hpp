@@ -305,7 +305,7 @@ namespace mars {
         /* print_dof_to_dof_map(dof_handler, fed); */
 
         // it gives the size of the local dofs of the dm. If volume then only volume dofs.
-        const Integer dof_size = dof_handler.get_dof_size();
+        /* const Integer dof_size = dof_handler.get_dof_size(); */
 
         // if manually managed the data view should have the size of local dof size.
         /* ViewVectorType<double> data("IN", dof_size);
@@ -328,9 +328,9 @@ namespace mars {
 
         // use a part of the dof handler (separate it and use only volume for example)
         /* VolumeDM vdm(vdh); */
-        VolumeDM vdm(dof_handler);
+        /* VolumeDM vdm(dof_handler);
         FaceDM fdm(dof_handler);
-        CornerDM cdm(dof_handler);
+        CornerDM cdm(dof_handler); */
         /*
                 auto fe = build_fe_dof_map(vdm.get_dof_handler());
                 print_elem_global_dof(vdm.get_dof_handler(), fe);
