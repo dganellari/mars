@@ -42,4 +42,9 @@ if(MPI_FOUND)
         "${MARS_HEADERS};${LOCAL_HEADERS}"
         PARENT_SCOPE)
 
+    install(
+        TARGETS mars_mpi
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib)
 endif()
