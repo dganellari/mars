@@ -6,6 +6,7 @@
 #include <sstream>
 #include "mars_distributed_finite_element.hpp"
 #include "mars_distributed_stencil.hpp"
+#include "KokkosKernels_SparseUtils.hpp"
 
 namespace mars {
 
@@ -196,6 +197,57 @@ namespace mars {
             template <typename S>
             MARS_INLINE_FUNCTION void operator()(S &stencil, size_t I) const {
                 insert_sorted<S>(stencil);
+                /* //To be used with kokkos radix sort. Currently slower than the insert_sorted routine.
+                insert<S>(stencil); */
+            }
+
+
+            /* TODO:specialize for stokes because normally the boundary would be excluded. */
+            template <typename S>
+            MARS_INLINE_FUNCTION void insert(S st) const {
+                auto handler = dhandler;
+                auto rp = row_ptr;
+                auto ci = col_idx;
+                st.iterate(MARS_LAMBDA(const Integer stencil_index) {
+                    const Integer dof = st.get_value(stencil_index, 0);
+                    Integer index = rp(handler.local_to_owned_index(dof));
+
+                    if (handler.template is_boundary<SHandler::ElemType>(dof)) {
+                        Integer global = handler.local_to_global(dof);
+                        ci(index) = global;
+                    } else {
+                        Integer count = 0;
+
+                        for (int i = 0; i < st.get_length(); i++) {
+                            const Integer local_dof = st.get_value(stencil_index, i);
+                            if (conditional(local_dof, handler)) {
+                                const Integer global = handler.local_to_global(local_dof);
+                                ci(index + count) = global;
+                                ++count;
+                            }
+                        }
+
+                        for (int i = 0; i < st.get_face_length(); i++) {
+                            // get the local dof of the i-th index within thelement
+                            const Integer local_dof = st.get_face_value(stencil_index, i);
+                            if (conditional(local_dof, handler)) {
+                                const Integer global = handler.local_to_global(local_dof);
+                                ci(index + count) = global;
+                                ++count;
+                            }
+                        }
+
+                        for (int i = 0; i < st.get_corner_length(); i++) {
+                            // get the local dof of the i-th index within thelement
+                            const Integer local_dof = st.get_corner_value(stencil_index, i);
+                            if (conditional(local_dof, handler)) {
+                                const Integer global = handler.local_to_global(local_dof);
+                                ci(index + count) = global;
+                                ++count;
+                            }
+                        }
+                    }
+                });
             }
 
             crs_row row_ptr;
@@ -230,6 +282,7 @@ namespace mars {
 
             /* TODO: */
             /* segmented_sort(col_idx);*/
+            /* KokkosKernels::Impl::sort_crs_graph<Kokkos::DefaultExecutionSpace, crs_row, crs_col>(row_ptr, col_idx); */
 
             sparsity_pattern = crs_graph(col_idx, row_ptr);
 
