@@ -1454,6 +1454,11 @@ namespace mars {
             return mars::get_octant_from_sfc<ElemType>(sfc);
         }
 
+        MARS_INLINE_FUNCTION Integer get_local_from_octant(const Octant &o) const {
+            const Integer sfc = get_sfc_from_octant<ElemType>(o);
+            return sfc_to_local(sfc);
+        }
+
     private:
         // data associated to the mesh elements (sfc) within the context.
         UD data;
