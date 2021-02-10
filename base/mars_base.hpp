@@ -26,10 +26,10 @@ namespace mars {
         VXLeft = 6,
         VXUp = 7,
         VXDown = 8,
-        /* VYUpRight = 12,
+        VYUpRight = 12,
         VYUpLeft = 11,
         VYDownRight = 10,
-        VYDownLeft = 9 */
+        VYDownLeft = 9
     };
 
     enum SSYLabel : int {
@@ -39,12 +39,12 @@ namespace mars {
         VYLeft = 6,
         VYUp = 7,
         VYDown = 8,
-        /* VXUpRight = 12,
+        VXUpRight = 12,
         VXUpLeft = 11,
         VXDownRight = 10,
-        VXDownLeft = 9 */
+        VXDownLeft = 9
     };
-
+/*
     enum SSXFLabel : int {
         VYUpRight = 3,
         VYUpLeft = 2,
@@ -57,7 +57,7 @@ namespace mars {
         VXUpLeft = 2,
         VXDownRight = 1,
         VXDownLeft = 0
-    };
+    }; */
 
     enum ElementType : int {
         // 1D
