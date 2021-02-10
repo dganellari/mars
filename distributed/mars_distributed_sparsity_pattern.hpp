@@ -83,7 +83,8 @@ namespace mars {
 
             // TODO:Specialize for normal stencils as in the method below since normally the boundary is excluded.
             /* template <>
-            MARS_INLINE_FUNCTION Integer get_total<DofHandler<SHandler::Mesh, SHandler::Degree>>(const StokesStencil<DHandler> &st) const {
+            MARS_INLINE_FUNCTION Integer
+            get_total<DofHandler<SHandler::Mesh, SHandler::Degree>>(const StokesStencil<DHandler> &st) const {
                 return dhandler.template is_boundary<SHandler::ElemType>(dof) ? 0 : count;
             } */
 
@@ -100,23 +101,6 @@ namespace mars {
                             count++;
                         }
                     }
-
-                    for (int i = 0; i < st.get_face_length(); i++) {
-                        // get the local dof of the i-th index within thelement
-                        const Integer local_dof = st.get_face_value(stencil_index, i);
-                        if (conditional(local_dof, handler)) {
-                            count++;
-                        }
-                    }
-
-                    for (int i = 0; i < st.get_corner_length(); i++) {
-                        // get the local dof of the i-th index within thelement
-                        const Integer local_dof = st.get_corner_value(stencil_index, i);
-                        if (conditional(local_dof, handler)) {
-                            count++;
-                        }
-                    }
-
                     const Integer dof = st.get_value(stencil_index, 0);
                     const Integer total = get_total(dof, count, handler);
                     cntr(handler.local_to_owned_index(dof)) = total;
@@ -172,24 +156,6 @@ namespace mars {
                                 insert_sorted(ci, index, global, count);
                             }
                         }
-
-                        for (int i = 0; i < st.get_face_length(); i++) {
-                            // get the local dof of the i-th index within thelement
-                            const Integer local_dof = st.get_face_value(stencil_index, i);
-                            if (conditional(local_dof, handler)) {
-                                const Integer global = handler.local_to_global(local_dof);
-                                insert_sorted(ci, index, global, count);
-                            }
-                        }
-
-                        for (int i = 0; i < st.get_corner_length(); i++) {
-                            // get the local dof of the i-th index within thelement
-                            const Integer local_dof = st.get_corner_value(stencil_index, i);
-                            if (conditional(local_dof, handler)) {
-                                const Integer global = handler.local_to_global(local_dof);
-                                insert_sorted(ci, index, global, count);
-                            }
-                        }
                     }
                 });
             }
@@ -220,26 +186,6 @@ namespace mars {
 
                         for (int i = 0; i < st.get_length(); i++) {
                             const Integer local_dof = st.get_value(stencil_index, i);
-                            if (conditional(local_dof, handler)) {
-                                const Integer global = handler.local_to_global(local_dof);
-                                ci(index + count) = global;
-                                ++count;
-                            }
-                        }
-
-                        for (int i = 0; i < st.get_face_length(); i++) {
-                            // get the local dof of the i-th index within thelement
-                            const Integer local_dof = st.get_face_value(stencil_index, i);
-                            if (conditional(local_dof, handler)) {
-                                const Integer global = handler.local_to_global(local_dof);
-                                ci(index + count) = global;
-                                ++count;
-                            }
-                        }
-
-                        for (int i = 0; i < st.get_corner_length(); i++) {
-                            // get the local dof of the i-th index within thelement
-                            const Integer local_dof = st.get_corner_value(stencil_index, i);
                             if (conditional(local_dof, handler)) {
                                 const Integer global = handler.local_to_global(local_dof);
                                 ci(index + count) = global;
@@ -280,23 +226,13 @@ namespace mars {
             expand_tuple<InsertSortedDofs, stencil_tuple, dataidx...>(
                 InsertSortedDofs(row_ptr, col_idx, get_dof_handler()), stencils);
 
-            /* TODO: */
-            /* segmented_sort(col_idx);*/
-            /* KokkosKernels::Impl::sort_crs_graph<Kokkos::DefaultExecutionSpace, crs_row, crs_col>(row_ptr, col_idx); */
+            /* Alternatively: use the following kokkos segmented radix sort.
+            For that switching to the sort function instead of insert_sorted in the InsertSortedDofs struct is needed.
+            KokkosKernels::Impl::sort_crs_graph<Kokkos::DefaultExecutionSpace, crs_row, crs_col>(row_ptr, col_idx); */
 
             sparsity_pattern = crs_graph(col_idx, row_ptr);
 
             matrix = crs_matrix("crs_matrix", owned_size, values, sparsity_pattern);
-
-            /* Kokkos::parallel_for(
-                "sp:", global_size, MARS_LAMBDA(const Integer i) {
-                    for (int j = row_ptr(i); j < row_ptr(i + 1); j++) printf("spi: %li, global: %li\n", i, col_idx(j));
-                });
-
-            Kokkos::parallel_for(
-                "test", global_size, MARS_LAMBDA(const Integer i) {
-                    printf("i: %li, count: %li scan: %li\n", i, counter(i), row_ptr(i));
-                }); */
         }
 
         MARS_INLINE_FUNCTION
@@ -325,7 +261,7 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         const Integer get_col_index(const Integer local_row, const Integer local_col) const {
-            //translate the row to the owned index and the col to the global index first.
+            // translate the row to the owned index and the col to the global index first.
             auto row = get_dof_handler().local_to_owned_index(local_row);
             auto col = get_dof_handler().local_to_global(local_col);
 

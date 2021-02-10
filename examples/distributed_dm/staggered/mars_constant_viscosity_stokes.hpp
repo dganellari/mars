@@ -249,6 +249,7 @@ namespace mars {
 
     template <typename SDM, typename Stencil>
     void print_stencil(const SDM dm, const Stencil stencil) {
+        printf("Length: %li\n", stencil.get_length());
         stencil.dof_iterate(MARS_LAMBDA(const Integer stencil_index, const Integer local_dof) {
             if (local_dof > -1) {
                 // convert the local dof number to global dof number
@@ -357,7 +358,7 @@ namespace mars {
         /* print_stencil(fv_dof_handler, volume_stencil); */
 
         auto face_stencil = build_stencil<SStencil>(fv_dof_handler);
-        /* print_stencil(fv_dof_handler, face_stencil); */
+        print_stencil(fv_dof_handler, face_stencil);
 
         SPattern sp(fv_dof_handler);
         sp.build_pattern(volume_stencil, face_stencil);
@@ -368,7 +369,7 @@ namespace mars {
         volume_stencil.iterate(MARS_LAMBDA(const Integer stencil_index) {
             const Integer diag_dof = volume_stencil.get_value(stencil_index, SLabel::Diagonal);
 
-            // first volume dof of the first process
+            /* first volume dof of the first process */
             if (proc_num == 0 && stencil_index == 0) {
                 sp.set_value(diag_dof, diag_dof, 1);
             } else {
@@ -389,7 +390,6 @@ namespace mars {
         face_stencil.iterate(MARS_LAMBDA(const Integer stencil_index) {
             const Integer diag_dof = face_stencil.get_value(stencil_index, SLabel::Diagonal);
 
-            /*printf("Diag_dof: %li global: %li\n", diag_dof, dof_handler.local_to_global(diag_dof));*/
             if (!fv_dof_handler.is_boundary_dof(diag_dof)) {
                 if (fv_dof_handler.get_orientation(diag_dof) == DofOrient::xDir) {
                     sp.set_value(diag_dof, diag_dof, -4);
@@ -419,16 +419,16 @@ namespace mars {
                         sp.set_value(diag_dof, vxd, 1);
                     }
 
-                    const Integer vyur = face_stencil.get_face_value(stencil_index, SSXFLabel::VYUpRight);
+                    const Integer vyur = face_stencil.get_value(stencil_index, SSXLabel::VYUpRight);
                     sp.set_value(diag_dof, vyur, 1);
 
-                    const Integer vyul = face_stencil.get_face_value(stencil_index, SSXFLabel::VYUpLeft);
+                    const Integer vyul = face_stencil.get_value(stencil_index, SSXLabel::VYUpLeft);
                     sp.set_value(diag_dof, vyul, -1);
 
-                    const Integer vydr = face_stencil.get_face_value(stencil_index, SSXFLabel::VYDownRight);
+                    const Integer vydr = face_stencil.get_value(stencil_index, SSXLabel::VYDownRight);
                     sp.set_value(diag_dof, vydr, -1);
 
-                    const Integer vydl = face_stencil.get_face_value(stencil_index, SSXFLabel::VYDownLeft);
+                    const Integer vydl = face_stencil.get_value(stencil_index, SSXLabel::VYDownLeft);
                     sp.set_value(diag_dof, vydl, 1);
 
                 } else if (fv_dof_handler.get_orientation(diag_dof) == DofOrient::yDir) {
@@ -459,16 +459,16 @@ namespace mars {
                     const Integer vyd = face_stencil.get_value(stencil_index, SSYLabel::VYDown);
                     sp.set_value(diag_dof, vyd, 2);
 
-                    const Integer vxur = face_stencil.get_face_value(stencil_index, SSYFLabel::VXUpRight);
+                    const Integer vxur = face_stencil.get_value(stencil_index, SSYLabel::VXUpRight);
                     sp.set_value(diag_dof, vxur, 1);
 
-                    const Integer vxul = face_stencil.get_face_value(stencil_index, SSYFLabel::VXUpLeft);
+                    const Integer vxul = face_stencil.get_value(stencil_index, SSYLabel::VXUpLeft);
                     sp.set_value(diag_dof, vxul, -1);
 
-                    const Integer vxdr = face_stencil.get_face_value(stencil_index, SSYFLabel::VXDownRight);
+                    const Integer vxdr = face_stencil.get_value(stencil_index, SSYLabel::VXDownRight);
                     sp.set_value(diag_dof, vxdr, -1);
 
-                    const Integer vxdl = face_stencil.get_face_value(stencil_index, SSYFLabel::VXDownLeft);
+                    const Integer vxdl = face_stencil.get_value(stencil_index, SSYLabel::VXDownLeft);
                     sp.set_value(diag_dof, vxdl, 1);
                 }
             }
@@ -486,9 +486,9 @@ namespace mars {
             double point[2];
             fv_dof_handler.get_local_dof_coordinates(local_dof, point);
 
-            /* auto global = fv_dof_handler.get_dof_handler().local_to_global(local_dof);
+            /*auto global = fv_dof_handler.get_dof_handler().local_to_global(local_dof);
             auto o = fv_dof_handler.get_octant_from_local(local_dof);
-            printf("local_dof: %li, x, y, z %li, %li, %li, global: %li\n", local_dof, o.x, o.y, o.z, global); */
+            printf("local_dof: %li, x, y, z %li, %li, %li, global: %li\n", local_dof, o.x, o.y, o.z, global);*/
 
             if (!fv_dof_handler.is_boundary_dof(local_dof)) {
                 double rval = 0;
@@ -507,8 +507,7 @@ namespace mars {
             printf("i :%li, global: %li, rhs: %lf\n", i, global, rhs(i));
         }); */
 
-
-/* ********************************gather scatter ghost data**************************************** */
+        /* ********************************gather scatter ghost data**************************************** */
 
         /* FaceVolumeDM fvdm(fv_dof_handler);
         fvdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
@@ -542,7 +541,7 @@ namespace mars {
             printf("lid: %li, u: %lf, v: %lf, global: %li, rank: %i\n", i, idata, odata, d.get_gid(), d.get_proc());
         }); */
 
-/* ********************************end ghost data gather scatter************************************ */
+        /* ********************************end ghost data gather scatter************************************ */
 
         double time = timer.seconds();
         std::cout << "Stag DM Setup took: " << time << " seconds." << std::endl;
