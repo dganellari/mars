@@ -295,7 +295,7 @@ namespace mars {
             Kokkos::parallel_for(
                 "owned_separated_dof_iter", handler.get_owned_dof_size(), MARS_LAMBDA(const Integer i) {
                     const Integer local_dof = handler.get_owned_dof(i);
-                    f(dm.get_dof_data<idx>(local_dof));
+                    f(local_dof, dm.template get_dof_data<idx>(local_dof));
                 });
         }
 
