@@ -1459,6 +1459,21 @@ namespace mars {
             return sfc_to_local(sfc);
         }
 
+        MARS_INLINE_FUNCTION
+        const Integer get_XMax() const {
+            return Degree *  data.get_mesh()->get_XDim();
+        }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_YMax() const {
+            return Degree *  data.get_mesh()->get_YDim();
+        }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_ZMax() const {
+            return Degree *  data.get_mesh()->get_ZDim();
+        }
+
     private:
         // data associated to the mesh elements (sfc) within the context.
         UD data;

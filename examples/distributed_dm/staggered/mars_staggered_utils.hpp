@@ -7,7 +7,9 @@ namespace mars {
 
     namespace stag {
 
-        using DHandler = DofHandler<DistributedQuad4Mesh, 2>;
+        static constexpr Integer Degree = 2;
+
+        using DHandler = DofHandler<DistributedQuad4Mesh, Degree>;
 
         // Finite Element DM
         using FEDM = DM<DHandler, double, double>;
@@ -18,13 +20,15 @@ namespace mars {
         using FDH = FaceDofHandler<DHandler>;
 
         using FVDH = FaceVolumeDofHandler<DHandler>;
+        using CVDH = CornerVolumeDofHandler<DHandler>;
 
         // Staggered DMs
         using VolumeDM = SDM<VDH, double, double>;
-        using CornerDM = SDM<CDH, double, double, double>;
+        using CornerDM = SDM<CDH, double>;
         using FaceDM = SDM<FDH, double, double>;
 
         using FaceVolumeDM = SDM<FVDH, double, double>;
+        using CornerVolumeDM = SDM<FVDH, double>;
 
         /*
             using VolumeDM = VDM<DHandler, double, double>;

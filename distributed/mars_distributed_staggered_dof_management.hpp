@@ -497,6 +497,15 @@ namespace mars {
             return DofHandler<Mesh, degree>::template enum_face_node<part, Type>(sfc_to_local, face_cornerA, j, dir);
         }
 
+        MARS_INLINE_FUNCTION
+        const Integer get_XMax() const { return get_dof_handler().get_XMax(); }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_YMax() const { return get_dof_handler().get_YMax(); }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_ZMax() const { return get_dof_handler().get_ZMax(); }
+
         /* *************************************************************************** */
 
     private:
@@ -521,6 +530,10 @@ namespace mars {
         ViewVectorType<Integer> ghost_dofs;
         ViewVectorType<Integer>::HostMirror scan_recv_mirror;
     };
+
+    template <class DofHandler>
+    using CornerVolumeDofHandler =
+        SDofHandler<DofLabel::lVolume + DofLabel::lCorner, typename DofHandler::Mesh, DofHandler::Degree>;
 
     template <class DofHandler>
     using FaceVolumeDofHandler =
