@@ -51,6 +51,7 @@
 #include "mars_par_mesh.hpp"
 #include "mars_poisson.hpp"
 #include "mars_constant_viscosity_stokes.hpp"
+#include "mars_variable_viscosity_stokes.hpp"
 #include "mars_test_mpi.hpp"
 #endif  // WITH_Kokkos
 #endif  // WITH_MPI
@@ -1881,8 +1882,12 @@ int main(int argc, char *argv[]) {
         poisson_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(level);
     };
 
-    apps["stokes"] = [=]() {
+    apps["cstokes"] = [=]() {
         staggered_constant_viscosty_stokes_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(level);
+    };
+
+    apps["vstokes"] = [=]() {
+        staggered_variable_viscosty_stokes_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(level);
     };
 
     /* apps["stokes2D"] = [=]() {
