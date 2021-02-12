@@ -8,34 +8,6 @@
 namespace mars {
 
     using namespace stag;
-
-    template <typename S, typename SP>
-    void assemble_volume(S volume_stencil, SP sp, const Integer proc_num) {
-        // TODO:: optimization idea. Iterate through the colidx instead of the stencil for better coalesing.
-        // for each col idx (global dof) find the row pointer from the scan
-        // in this way you would know directly the value index to be add and you need to figure out the labels.
-        volume_stencil.iterate(MARS_LAMBDA(const Integer stencil_index) {
-            const Integer diag_dof = volume_stencil.get_value(stencil_index, SLabel::Diagonal);
-
-            /* first volume dof of the first process */
-            if (proc_num == 0 && stencil_index == 0) {
-                sp.set_value(diag_dof, diag_dof, 1);
-            } else {
-                const Integer right_dof = volume_stencil.get_value(stencil_index, SLabel::Right);
-                sp.set_value(diag_dof, right_dof, 1);
-
-                const Integer left_dof = volume_stencil.get_value(stencil_index, SLabel::Left);
-                sp.set_value(diag_dof, left_dof, -1);
-
-                const Integer up_dof = volume_stencil.get_value(stencil_index, SLabel::Up);
-                sp.set_value(diag_dof, up_dof, 1);
-
-                const Integer down_dof = volume_stencil.get_value(stencil_index, SLabel::Down);
-                sp.set_value(diag_dof, down_dof, -1);
-            }
-        });
-    }
-
     template <typename S, typename SP>
     void assemble_face(S face_stencil, SP sp) {
         auto fv_dof_handler = sp.get_dof_handler();
@@ -47,81 +19,81 @@ namespace mars {
                 if (fv_dof_handler.get_orientation(diag_dof) == DofOrient::xDir) {
                     sp.set_value(diag_dof, diag_dof, -4);
 
-                    const Integer pr = face_stencil.get_value(stencil_index, SSXLabel::PRight);
+                    const Integer pr = face_stencil.get_value(stencil_index, SSXLabel::VolumeRight);
                     sp.set_value(diag_dof, pr, -1);
 
-                    const Integer pl = face_stencil.get_value(stencil_index, SSXLabel::PLeft);
+                    const Integer pl = face_stencil.get_value(stencil_index, SSXLabel::VolumeLeft);
                     sp.set_value(diag_dof, pl, 1);
 
-                    const Integer vxr = face_stencil.get_value(stencil_index, SSXLabel::VXRight);
+                    const Integer vxr = face_stencil.get_value(stencil_index, SSXLabel::FaceXRight);
                     sp.set_value(diag_dof, vxr, 2);
 
-                    const Integer vxl = face_stencil.get_value(stencil_index, SSXLabel::VXLeft);
+                    const Integer vxl = face_stencil.get_value(stencil_index, SSXLabel::FaceXLeft);
                     sp.set_value(diag_dof, vxl, 2);
 
-                    const Integer vxu = face_stencil.get_value(stencil_index, SSXLabel::VXUp);
+                    const Integer vxu = face_stencil.get_value(stencil_index, SSXLabel::FaceXUp);
                     if (vxu == -1) {
                         sp.set_value(diag_dof, diag_dof, -3);
                     } else {
                         sp.set_value(diag_dof, vxu, 1);
                     }
-                    const Integer vxd = face_stencil.get_value(stencil_index, SSXLabel::VXDown);
+                    const Integer vxd = face_stencil.get_value(stencil_index, SSXLabel::FaceXDown);
                     if (vxd == -1) {
                         sp.set_value(diag_dof, diag_dof, -3);
                     } else {
                         sp.set_value(diag_dof, vxd, 1);
                     }
 
-                    const Integer vyur = face_stencil.get_value(stencil_index, SSXLabel::VYUpRight);
+                    const Integer vyur = face_stencil.get_value(stencil_index, SSXLabel::FaceYUpRight);
                     sp.set_value(diag_dof, vyur, 1);
 
-                    const Integer vyul = face_stencil.get_value(stencil_index, SSXLabel::VYUpLeft);
+                    const Integer vyul = face_stencil.get_value(stencil_index, SSXLabel::FaceYUpLeft);
                     sp.set_value(diag_dof, vyul, -1);
 
-                    const Integer vydr = face_stencil.get_value(stencil_index, SSXLabel::VYDownRight);
+                    const Integer vydr = face_stencil.get_value(stencil_index, SSXLabel::FaceYDownRight);
                     sp.set_value(diag_dof, vydr, -1);
 
-                    const Integer vydl = face_stencil.get_value(stencil_index, SSXLabel::VYDownLeft);
+                    const Integer vydl = face_stencil.get_value(stencil_index, SSXLabel::FaceYDownLeft);
                     sp.set_value(diag_dof, vydl, 1);
 
                 } else if (fv_dof_handler.get_orientation(diag_dof) == DofOrient::yDir) {
                     sp.set_value(diag_dof, diag_dof, -4);
 
-                    const Integer pu = face_stencil.get_value(stencil_index, SSYLabel::PUp);
+                    const Integer pu = face_stencil.get_value(stencil_index, SSYLabel::VolumeUp);
                     sp.set_value(diag_dof, pu, -1);
 
-                    const Integer pd = face_stencil.get_value(stencil_index, SSYLabel::PDown);
+                    const Integer pd = face_stencil.get_value(stencil_index, SSYLabel::VolumeDown);
                     sp.set_value(diag_dof, pd, 1);
 
-                    const Integer vyr = face_stencil.get_value(stencil_index, SSYLabel::VYRight);
+                    const Integer vyr = face_stencil.get_value(stencil_index, SSYLabel::FaceYRight);
                     if (vyr == -1) {
                         sp.set_value(diag_dof, diag_dof, -3);
                     } else {
                         sp.set_value(diag_dof, vyr, 1);
                     }
-                    const Integer vyl = face_stencil.get_value(stencil_index, SSYLabel::VYLeft);
+                    const Integer vyl = face_stencil.get_value(stencil_index, SSYLabel::FaceYLeft);
                     if (vyl == -1) {
                         sp.set_value(diag_dof, diag_dof, -3);
                     } else {
                         sp.set_value(diag_dof, vyl, 1);
                     }
 
-                    const Integer vyu = face_stencil.get_value(stencil_index, SSYLabel::VYUp);
+                    const Integer vyu = face_stencil.get_value(stencil_index, SSYLabel::FaceYUp);
                     sp.set_value(diag_dof, vyu, 2);
 
-                    const Integer vyd = face_stencil.get_value(stencil_index, SSYLabel::VYDown);
+                    const Integer vyd = face_stencil.get_value(stencil_index, SSYLabel::FaceYDown);
                     sp.set_value(diag_dof, vyd, 2);
 
-                    const Integer vxur = face_stencil.get_value(stencil_index, SSYLabel::VXUpRight);
+                    const Integer vxur = face_stencil.get_value(stencil_index, SSYLabel::FaceXUpRight);
                     sp.set_value(diag_dof, vxur, 1);
 
-                    const Integer vxul = face_stencil.get_value(stencil_index, SSYLabel::VXUpLeft);
+                    const Integer vxul = face_stencil.get_value(stencil_index, SSYLabel::FaceXUpLeft);
                     sp.set_value(diag_dof, vxul, -1);
 
-                    const Integer vxdr = face_stencil.get_value(stencil_index, SSYLabel::VXDownRight);
+                    const Integer vxdr = face_stencil.get_value(stencil_index, SSYLabel::FaceXDownRight);
                     sp.set_value(diag_dof, vxdr, -1);
 
-                    const Integer vxdl = face_stencil.get_value(stencil_index, SSYLabel::VXDownLeft);
+                    const Integer vxdl = face_stencil.get_value(stencil_index, SSYLabel::FaceXDownLeft);
                     sp.set_value(diag_dof, vxdl, 1);
                 }
             }

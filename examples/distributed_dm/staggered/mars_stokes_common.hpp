@@ -8,6 +8,33 @@ namespace mars {
 
     using namespace stag;
 
+    template <typename S, typename SP>
+    void assemble_volume(S volume_stencil, SP sp, const Integer proc_num) {
+        // TODO:: optimization idea. Iterate through the colidx instead of the stencil for better coalesing.
+        // for each col idx (global dof) find the row pointer from the scan
+        // in this way you would know directly the value index to be add and you need to figure out the labels.
+        volume_stencil.iterate(MARS_LAMBDA(const Integer stencil_index) {
+            const Integer diag_dof = volume_stencil.get_value(stencil_index, SLabel::Diagonal);
+
+            /* first volume dof of the first process */
+            if (proc_num == 0 && stencil_index == 0) {
+                sp.set_value(diag_dof, diag_dof, 1);
+            } else {
+                const Integer right_dof = volume_stencil.get_value(stencil_index, SLabel::Right);
+                sp.set_value(diag_dof, right_dof, 1);
+
+                const Integer left_dof = volume_stencil.get_value(stencil_index, SLabel::Left);
+                sp.set_value(diag_dof, left_dof, -1);
+
+                const Integer up_dof = volume_stencil.get_value(stencil_index, SLabel::Up);
+                sp.set_value(diag_dof, up_dof, 1);
+
+                const Integer down_dof = volume_stencil.get_value(stencil_index, SLabel::Down);
+                sp.set_value(diag_dof, down_dof, -1);
+            }
+        });
+    }
+
     template <typename H, typename DM>
     ViewVectorType<double> assemble_rhs(const H &fv_dof_handler, const DM &dm) {
         ViewVectorType<double> rhs("rhs", fv_dof_handler.get_owned_dof_size());
@@ -39,7 +66,7 @@ namespace mars {
                 rhs(index) = rval;
 
                 auto global = fv_dof_handler.get_dof_handler().local_to_global(local_dof);
-                printf("local_dof: %li, %li, global: %li - rval: %lf\n", local_dof, global, rval);
+                printf("local_dof: %li, global: %li - rval: %lf\n", local_dof, global, rval);
             }
         });
 

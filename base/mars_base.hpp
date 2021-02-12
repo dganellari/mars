@@ -20,44 +20,48 @@ namespace mars {
     enum SLabel : int { Diagonal = 0, Right = 1, Left = 2, Up = 3, Down = 4 };
 
     enum SSXLabel : int {
-        PRight = 1,
-        PLeft = 2,
-        VXRight = 5,
-        VXLeft = 6,
-        VXUp = 7,
-        VXDown = 8,
-        VYUpRight = 12,
-        VYUpLeft = 11,
-        VYDownRight = 10,
-        VYDownLeft = 9
+        VolumeRight = 1,
+        VolumeLeft = 2,
+        CornerUp = 3,
+        CornerDown = 4,
+        FaceXRight = 5,
+        FaceXLeft = 6,
+        FaceXUp = 7,
+        FaceXDown = 8,
+        FaceYUpRight = 12,
+        FaceYUpLeft = 11,
+        FaceYDownRight = 10,
+        FaceYDownLeft = 9
     };
 
     enum SSYLabel : int {
-        PUp = 3,
-        PDown = 4,
-        VYRight = 5,
-        VYLeft = 6,
-        VYUp = 7,
-        VYDown = 8,
-        VXUpRight = 12,
-        VXUpLeft = 11,
-        VXDownRight = 10,
-        VXDownLeft = 9
+        CornerRight = 1,
+        CornerLeft = 2,
+        VolumeUp = 3,
+        VolumeDown = 4,
+        FaceYRight = 5,
+        FaceYLeft = 6,
+        FaceYUp = 7,
+        FaceYDown = 8,
+        FaceXUpRight = 12,
+        FaceXUpLeft = 11,
+        FaceXDownRight = 10,
+        FaceXDownLeft = 9
     };
-/*
-    enum SSXFLabel : int {
-        VYUpRight = 3,
-        VYUpLeft = 2,
-        VYDownRight = 1,
-        VYDownLeft = 0
-    };
+    /*
+        enum SSXFLabel : int {
+            VYUpRight = 3,
+            VYUpLeft = 2,
+            VYDownRight = 1,
+            VYDownLeft = 0
+        };
 
-    enum SSYFLabel : int {
-        VXUpRight = 3,
-        VXUpLeft = 2,
-        VXDownRight = 1,
-        VXDownLeft = 0
-    }; */
+        enum SSYFLabel : int {
+            VXUpRight = 3,
+            VXUpLeft = 2,
+            VXDownRight = 1,
+            VXDownLeft = 0
+        }; */
 
     enum ElementType : int {
         // 1D

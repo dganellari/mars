@@ -9,13 +9,128 @@ namespace mars {
 
     using namespace stag;
 
+    template <typename S, typename SP, typename DM>
+    void assemble_face(S face_stencil, SP sp, const DM &dm) {
+        auto fv_dof_handler = sp.get_dof_handler();
+
+        face_stencil.iterate(MARS_LAMBDA(const Integer stencil_index) {
+            const Integer diag_dof = face_stencil.get_value(stencil_index, SLabel::Diagonal);
+
+            if (!fv_dof_handler.is_boundary_dof(diag_dof)) {
+                if (fv_dof_handler.get_orientation(diag_dof) == DofOrient::xDir) {
+                    auto eta_up_dof = face_stencil.get_value(stencil_index, SSXLabel::CornerUp);
+                    auto eta_up_data = dm.template get_dof_data<IN>(eta_up_dof);
+                    auto eta_down_dof = face_stencil.get_value(stencil_index, SSXLabel::CornerDown);
+                    auto eta_down_data = dm.template get_dof_data<IN>(eta_down_dof);
+
+                    auto eta_right_dof = face_stencil.get_value(stencil_index, SSXLabel::VolumeRight);
+                    auto eta_right_data = dm.template get_dof_data<IN>(eta_right_dof);
+                    auto eta_left_dof = face_stencil.get_value(stencil_index, SSXLabel::VolumeLeft);
+                    auto eta_left_data = dm.template get_dof_data<IN>(eta_left_dof);
+
+                    sp.set_value(
+                        diag_dof, diag_dof, -2 * (eta_left_data + eta_right_data) - eta_down_data - eta_up_data);
+
+                    const Integer pr = face_stencil.get_value(stencil_index, SSXLabel::VolumeRight);
+                    sp.set_value(diag_dof, pr, -1);
+
+                    const Integer pl = face_stencil.get_value(stencil_index, SSXLabel::VolumeLeft);
+                    sp.set_value(diag_dof, pl, 1);
+
+                    const Integer vxr = face_stencil.get_value(stencil_index, SSXLabel::FaceXRight);
+                    sp.set_value(diag_dof, vxr, 2 * eta_right_data);
+
+                    const Integer vxl = face_stencil.get_value(stencil_index, SSXLabel::FaceXLeft);
+                    sp.set_value(diag_dof, vxl, 2 * eta_left_data);
+
+                    const Integer vxu = face_stencil.get_value(stencil_index, SSXLabel::FaceXUp);
+                    if (vxu == -1) {
+                        sp.set_value(diag_dof, diag_dof, -2 * (eta_left_data + eta_right_data) - eta_down_data);
+                    } else {
+                        sp.set_value(diag_dof, vxu, eta_up_data);
+                    }
+
+                    const Integer vxd = face_stencil.get_value(stencil_index, SSXLabel::FaceXDown);
+                    if (vxd == -1) {
+                        sp.set_value(diag_dof, diag_dof, -2 * (eta_left_data + eta_right_data) - eta_up_data);
+                    } else {
+                        sp.set_value(diag_dof, vxd, eta_down_data);
+                    }
+
+                    const Integer vyur = face_stencil.get_value(stencil_index, SSXLabel::FaceYUpRight);
+                    sp.set_value(diag_dof, vyur, eta_up_data);
+
+                    const Integer vyul = face_stencil.get_value(stencil_index, SSXLabel::FaceYUpLeft);
+                    sp.set_value(diag_dof, vyul, -eta_up_data);
+
+                    const Integer vydr = face_stencil.get_value(stencil_index, SSXLabel::FaceYDownRight);
+                    sp.set_value(diag_dof, vydr, -eta_down_data);
+
+                    const Integer vydl = face_stencil.get_value(stencil_index, SSXLabel::FaceYDownLeft);
+                    sp.set_value(diag_dof, vydl, eta_down_data);
+
+                } else if (fv_dof_handler.get_orientation(diag_dof) == DofOrient::yDir) {
+                    auto eta_up_dof = face_stencil.get_value(stencil_index, SSYLabel::VolumeUp);
+                    auto eta_up_data = dm.template get_dof_data<IN>(eta_up_dof);
+                    auto eta_down_dof = face_stencil.get_value(stencil_index, SSYLabel::VolumeDown);
+                    auto eta_down_data = dm.template get_dof_data<IN>(eta_down_dof);
+
+                    auto eta_right_dof = face_stencil.get_value(stencil_index, SSYLabel::CornerRight);
+                    auto eta_right_data = dm.template get_dof_data<IN>(eta_right_dof);
+                    auto eta_left_dof = face_stencil.get_value(stencil_index, SSYLabel::CornerLeft);
+                    auto eta_left_data = dm.template get_dof_data<IN>(eta_left_dof);
+
+                    sp.set_value(
+                        diag_dof, diag_dof, -2 * (eta_up_data + eta_down_data) - eta_left_data - eta_right_data);
+
+                    const Integer pu = face_stencil.get_value(stencil_index, SSYLabel::VolumeUp);
+                    sp.set_value(diag_dof, pu, -1);
+
+                    const Integer pd = face_stencil.get_value(stencil_index, SSYLabel::VolumeDown);
+                    sp.set_value(diag_dof, pd, 1);
+
+                    const Integer vyr = face_stencil.get_value(stencil_index, SSYLabel::FaceYRight);
+                    if (vyr == -1) {
+                        sp.set_value(diag_dof, diag_dof, -2 * (eta_up_data + eta_down_data) - eta_left_data);
+                    } else {
+                        sp.set_value(diag_dof, vyr, eta_right_data);
+                    }
+                    const Integer vyl = face_stencil.get_value(stencil_index, SSYLabel::FaceYLeft);
+                    if (vyl == -1) {
+                        sp.set_value(diag_dof, diag_dof, -2 * (eta_up_data + eta_down_data) - eta_right_data);
+                    } else {
+                        sp.set_value(diag_dof, vyl, eta_left_data);
+                    }
+
+                    const Integer vyu = face_stencil.get_value(stencil_index, SSYLabel::FaceYUp);
+                    sp.set_value(diag_dof, vyu, 2 * eta_up_data);
+
+                    const Integer vyd = face_stencil.get_value(stencil_index, SSYLabel::FaceYDown);
+                    sp.set_value(diag_dof, vyd, 2 * eta_down_data);
+
+                    const Integer vxur = face_stencil.get_value(stencil_index, SSYLabel::FaceXUpRight);
+                    sp.set_value(diag_dof, vxur, eta_right_data);
+
+                    const Integer vxul = face_stencil.get_value(stencil_index, SSYLabel::FaceXUpLeft);
+                    sp.set_value(diag_dof, vxul, -eta_left_data);
+
+                    const Integer vxdr = face_stencil.get_value(stencil_index, SSYLabel::FaceXDownRight);
+                    sp.set_value(diag_dof, vxdr, -eta_right_data);
+
+                    const Integer vxdl = face_stencil.get_value(stencil_index, SSYLabel::FaceXDownLeft);
+                    sp.set_value(diag_dof, vxdl, eta_left_data);
+                }
+            }
+        });
+    }
+
     template <class BC, class RHS, class AnalyticalFun>
     void staggered_variable_viscosty_stokes_2D(const int level) {
         using namespace mars;
         mars::proc_allocation resources;
 
 #ifdef WITH_MPI
-       // create a distributed context
+        // create a distributed context
         auto context = mars::make_context(resources, MPI_COMM_WORLD);
         int proc_num = mars::rank(context);
 #else
@@ -47,11 +162,9 @@ namespace mars {
         SPattern sp(fv_dof_handler);
         sp.build_pattern(volume_stencil, face_stencil);
 
-
         CornerDM cdm(dof_handler);
         set_data_in_circle(cdm, 0, 1);
         cdm.gather_ghost_data<IN>();
-
 
         CornerVolumeDM cvdm(dof_handler);
         set_data_in_circle(cvdm, 1, 10);
@@ -76,13 +189,13 @@ namespace mars {
             printf("lid: %li, u: %lf, global: %li, rank: %i\n", i, idata, d.get_gid(), d.get_proc());
         });
 
-        /* assemble_volume(volume_stencil, sp, proc_num); */
-        /* assemble_face(face_stencil, sp); */
+        assemble_volume(volume_stencil, sp, proc_num);
+        assemble_face(face_stencil, sp, cvdm);
 
         fv_dof_handler.boundary_dof_iterate(
             MARS_LAMBDA(const Integer local_dof) { sp.set_value(local_dof, local_dof, 1); });
 
-        /* print_sparsity_pattern(sp); */
+        print_sparsity_pattern(sp);
         sp.write("Spattern");
 
         auto rhs = assemble_rhs(fv_dof_handler, cdm);
