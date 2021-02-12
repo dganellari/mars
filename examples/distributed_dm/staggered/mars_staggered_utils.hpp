@@ -28,7 +28,7 @@ namespace mars {
         using FaceDM = SDM<FDH, double, double>;
 
         using FaceVolumeDM = SDM<FVDH, double, double>;
-        using CornerVolumeDM = SDM<FVDH, double>;
+        using CornerVolumeDM = SDM<CVDH, double>;
 
         /*
             using VolumeDM = VDM<DHandler, double, double>;
