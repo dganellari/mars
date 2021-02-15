@@ -1,30 +1,11 @@
 #ifndef MARS_FEDM_VALUES_HPP
 #define MARS_FEDM_VALUES_HPP
 
-#include "Kokkos_ArithTraits.hpp"
-#include "Kokkos_Bitset.hpp"
-#include "Kokkos_Parallel.hpp"
-#include "Kokkos_Parallel_Reduce.hpp"
-#include "mars_context.hpp"
-#include "mars_fe_simplex.hpp"
-#include "mars_globals.hpp"
-// #include <bits/c++config.h>
-#include <exception>
-#include <iostream>
-#include <tuple>
-#include <type_traits>
-#include <utility>
-
-#include "mars_base.hpp"
+#include "mars.hpp"
 
 #ifdef WITH_KOKKOS
-
 #include "mars_quad4.hpp"
-
 #ifdef WITH_MPI
-#include "mars_distributed_data_management.hpp"
-#include "mars_distributed_mesh_generation.hpp"
-#include "mars_mpi_guard.hpp"
 #include "mars_distributed_finite_element.hpp"
 #endif
 
