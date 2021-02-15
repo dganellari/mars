@@ -12712,6 +12712,7 @@ private:
 
 
 
+   	  
 
 
 
@@ -12734,15 +12735,22 @@ private:
    	if(level==0)
    	{
    		// std::cout<<"vcycle coarse level = "<<level <<std::endl;
-     gauss_seidel(x,A_levels[0],b,10000);
+     gauss_seidel(x,A_levels[0],b,1000);
    	}
    	else
    	{
 
-   	//  std::cout<<"vcycle pre smoothing " <<std::endl;
+   	 // std::cout<<"vcycle pre smoothing " <<std::endl;
     // for(Integer i=0;i<x.size();i++)
    	//  	std::cout<<x[i]<<std::endl;
+   	// A_levels[level].multiply_and_add(F_rhs,-1.0,x,b);
+   	// std::cout<<"1 l2_norm(res)= " <<l2_norm(F_rhs)<<std::endl;
+   	
    	 gauss_seidel(x,A_levels[level],b,pre_smoothing);
+ 
+   	A_levels[level].multiply_and_add(F_rhs,-1.0,x,b);
+   	std::cout<<level<<" l2_norm(res)= " <<l2_norm(F_rhs)<<std::endl;
+
    	//  std::cout<<"vcycle post pre smoothing " <<std::endl;
     // for(Integer i=0;i<x.size();i++)
    	//  	std::cout<<x[i]<<std::endl;
@@ -12770,6 +12778,8 @@ private:
    	 // std::cout<<"vcycle post plus_equal " <<std::endl;
      // for(Integer i=0;i<x.size();i++)
    	 // 	std::cout<<x[i]<<std::endl;
+   	A_levels[level].multiply_and_add(F_rhs,-1.0,x,b);
+   	std::cout<<level<<" l2_norm(res)= " <<l2_norm(F_rhs)<<std::endl;
 
      // std::cout<<"vcycle pre post smoothing "<<std::endl;
      gauss_seidel(x,A_levels[level],b,post_smoothing);
@@ -14556,16 +14566,20 @@ template<typename FunctionSpace_>
    	}
    	else 
    	{
-   		std::cout<<"isnan(x)="<<isnan(x)<<std::endl;
-   		std::cout<<"isnan(b)="<<isnan(b)<<std::endl;
+   		// std::cout<<"isnan(x)="<<isnan(x)<<std::endl;
+   		// std::cout<<"isnan(b)="<<isnan(b)<<std::endl;
 
         truncated_A_levels[level]. multiply_and_add(F_res,-1.0,x,b);
 
         std::cout<<"pre F_res="<<l2_norm(F_res)<<std::endl; 
 
    		gauss_seidel(x,truncated_A_levels[level],b,3);
-   		std::cout<<"isnan(x)="<<isnan(x)<<std::endl;
- 
+   		// std::cout<<"isnan(x)="<<isnan(x)<<std::endl;
+
+
+         truncated_A_levels[level]. multiply_and_add(F_res,-1.0,x,b);  		
+         std::cout<<"post F_res="<<l2_norm(F_res)<<std::endl; 
+
    		// patch_gauss_seidel(x,truncated_A_levels[level],b,nodes2entity[level],
      //                          		 local_mat,A_tmp,H_tmp,b_tmp,y_tmp,c_tmp,pre_smoothing);
 
@@ -14575,14 +14589,18 @@ template<typename FunctionSpace_>
           ND_c.resize(ND_b.size(),0);
           // Nedelec_interpolation[level].NedelecTruncation2D(curl_working_set[level],working_set[level]);
           // curl_context.apply_zero_bc(truncated_Curl_levels[level],ND_res,level);
-
+          truncated_Curl_levels[level]. multiply_and_add(ND_res,-1.0,ND_c,ND_b);           
+          std::cout<<"pre ND_res="<<l2_norm(ND_res)<<std::endl;
           curl_context.apply_zero_bc(truncated_Curl_levels[level],ND_b,level);
           gauss_seidel(ND_c,truncated_Curl_levels[level],ND_b,3);
-   		std::cout<<"isnan(ND_c)="<<isnan(ND_c)<<std::endl;
 
+           Nedelec2RT2D[level].transpose_and_multiply(ND_b,F_res,working_set[level]);         
+          
+   		// std::cout<<"isnan(ND_c)="<<isnan(ND_c)<<std::endl;
 
+          
           truncated_Curl_levels[level]. multiply_and_add(ND_res,-1.0,ND_c,ND_b);
-
+          std::cout<<"post ND_res="<<l2_norm(ND_res)<<std::endl;
           // std::cout<<"ND_res="<<l2_norm(ND_res)<<std::endl;
 
           Nedelec2RT2D[level].multiply(F_correction,ND_c,working_set[level]);
@@ -14647,6 +14665,173 @@ template<typename FunctionSpace_>
 
 
    	}
+   }
+
+
+
+
+
+     template<typename FunctionSpace,typename CurlFunctionSpace,typename VecVecVec,typename...Ts,typename...CurlTs>
+   inline void hiptmair_vcycle2(
+                         const Context<Ts...>& context,
+                         const Context<CurlTs...>& curl_context, 	
+   							   std::vector<Real>& x,
+   	                           std::vector<SparseMatrix<Real>>& truncated_A_levels,
+   	                           std::vector<SparseMatrix<Real>>& truncated_Curl_levels,
+   	                           std::vector<Real>& b,
+   	                     const std::vector<Integer>& levels,	   
+   	                     const FullFunctionSpaceLevelsInterpolation<FunctionSpace>& interpolation,
+   	                     const FullFunctionSpaceLevelsInterpolation<CurlFunctionSpace>& curl_interpolation,   	                     
+   	                     const std::vector<SparseMatrix<Real>>& Nedelec2RT2D,
+   	                     	   std::vector<std::vector<bool>>& working_set,
+   	                     const VecVecVec& nodes2entity,
+   	                     	   DenseMatrix<Real>& local_mat,
+   	                     	   DenseMatrix<Real>& A_tmp,
+   	                     	   DenseMatrix<Real>& H_tmp,
+   	                     	   std::vector<Real>& b_tmp,
+   	                     	   std::vector<Real>& y_tmp,
+   	                     	   std::vector<Real>& c_tmp,
+   	                     const Integer pre_smoothing,
+   	                     const Integer post_smoothing,
+   	                     const Integer level,
+   	                     const Integer max_level)
+   {
+    std::vector<Real> F_res,ND_res,ND_b,ND_c;
+    std::vector<Real> C_rhs;
+    std::vector<Real> C_correction;
+    std::vector<Real> F_correction;
+
+    Real toll=1e-10;
+
+
+    multigrid(x,truncated_A_levels,b,interpolation,pre_smoothing,post_smoothing,level,1,toll);
+    truncated_A_levels[level]. multiply_and_add(F_res,-1.0,x,b);  		
+
+     std::cout<<"first="<<l2_norm(F_res,working_set[level])<<std::endl;
+    Nedelec2RT2D[level].transpose_and_multiply(ND_b,F_res,working_set[level]);
+    std::cout<<"second="<<std::endl; 
+    ND_c.resize(ND_b.size(),0);
+    std::cout<<"third="<<std::endl;
+
+
+ //    for(Integer j=0;j<=6;j++)
+	// truncated_Curl_levels[j].save_mat("CCurl"+std::to_string(j)+".dat");
+
+
+ //    for(Integer j=0;j<=5;j++)
+	// curl_interpolation.matrix(j).save_mat("PCurl"+std::to_string(j)+".dat");
+
+     
+    std::vector<Real> ND_residual;
+    truncated_Curl_levels[level]. multiply_and_add(ND_residual,-1.0,ND_c,ND_b);  		
+    std::cout<<"before nd res="<<l2_norm(ND_residual)<<std::endl;
+
+    multigrid(ND_c,truncated_Curl_levels,ND_b,curl_interpolation,pre_smoothing,post_smoothing,level,1,toll);
+    truncated_Curl_levels[level]. multiply_and_add(ND_residual,-1.0,ND_c,ND_b);  		
+    std::cout<<"before nd res="<<l2_norm(ND_residual)<<std::endl;
+
+   
+    // vcycle(ND_c,truncated_Curl_levels,ND_b,curl_interpolation,pre_smoothing,post_smoothing,level);
+    std::cout<<"fourth="<<std::endl; 
+    Nedelec2RT2D[level].multiply(F_correction,ND_c,working_set[level]);
+    std::cout<<"fifth="<<std::endl; 
+    plus_equal(x,F_correction);
+     truncated_A_levels[level]. multiply_and_add(F_res,-1.0,x,b);  		
+     std::cout<<"sixth="<<l2_norm(F_res,working_set[level])<<std::endl;
+    //     std::cout<<"pre F_res="<<l2_norm(F_res)<<std::endl; 
+
+   	// 	gauss_seidel(x,truncated_A_levels[level],b,3);
+   	// 	// std::cout<<"isnan(x)="<<isnan(x)<<std::endl;
+
+
+    //      truncated_A_levels[level]. multiply_and_add(F_res,-1.0,x,b);  		
+    //      std::cout<<"post F_res="<<l2_norm(F_res)<<std::endl; 
+
+   	// 	// patch_gauss_seidel(x,truncated_A_levels[level],b,nodes2entity[level],
+    //  //                          		 local_mat,A_tmp,H_tmp,b_tmp,y_tmp,c_tmp,pre_smoothing);
+
+	      
+    //       truncated_A_levels[level]. multiply_and_add(F_res,-1.0,x,b);
+    //       Nedelec2RT2D[level].transpose_and_multiply(ND_b,F_res,working_set[level]);
+    //       ND_c.resize(ND_b.size(),0);
+    //       // Nedelec_interpolation[level].NedelecTruncation2D(curl_working_set[level],working_set[level]);
+    //       // curl_context.apply_zero_bc(truncated_Curl_levels[level],ND_res,level);
+    //       truncated_Curl_levels[level]. multiply_and_add(ND_res,-1.0,ND_c,ND_b);           
+    //       std::cout<<"pre ND_res="<<l2_norm(ND_res)<<std::endl;
+    //       curl_context.apply_zero_bc(truncated_Curl_levels[level],ND_b,level);
+    //       gauss_seidel(ND_c,truncated_Curl_levels[level],ND_b,3);
+
+    //        Nedelec2RT2D[level].transpose_and_multiply(ND_b,F_res,working_set[level]);         
+          
+   	// 	// std::cout<<"isnan(ND_c)="<<isnan(ND_c)<<std::endl;
+
+          
+    //       truncated_Curl_levels[level]. multiply_and_add(ND_res,-1.0,ND_c,ND_b);
+    //       std::cout<<"post ND_res="<<l2_norm(ND_res)<<std::endl;
+    //       // std::cout<<"ND_res="<<l2_norm(ND_res)<<std::endl;
+
+    //       Nedelec2RT2D[level].multiply(F_correction,ND_c,working_set[level]);
+
+    //       plus_equal(x,F_correction);
+
+    //       truncated_A_levels[level]. multiply_and_add(F_res,-1.0,x,b);
+
+    //       std::cout<<"post F_res="<<l2_norm(F_res)<<std::endl;
+
+
+
+
+	   // 	 truncated_A_levels[level]. multiply_and_add(F_res,-1.0,x,b);
+
+
+
+
+
+	   // 	 interpolation.matrix(level-1).transpose_and_multiply(C_rhs,F_res);
+
+
+	   // 	 C_correction.resize(C_rhs.size(),0.0);
+
+
+
+ 
+	   //   hiptmair_vcycle(context,curl_context, C_correction,truncated_A_levels,truncated_Curl_levels,
+	   //   	             C_rhs,levels,interpolation,Nedelec2RT2D,working_set,nodes2entity,
+	   //   				 local_mat,A_tmp,H_tmp,b_tmp,y_tmp,c_tmp,pre_smoothing,post_smoothing,level-1,max_level);
+
+	   //    interpolation.matrix(level-1).multiply(F_correction,C_correction);
+
+ 
+	   // 	  context.apply_zero_bc_to_vector(F_correction,level);
+ 
+	   // 	  plus_equal(x,F_correction);
+
+
+	   //    gauss_seidel(x,truncated_A_levels[level],b,3);
+
+    //       truncated_A_levels[level]. multiply_and_add(F_res,-1.0,x,b);
+    //       Nedelec2RT2D[level].transpose_and_multiply(ND_b,F_res,working_set[level]);
+    //       ND_c.resize(ND_b.size(),0);
+    //       // Nedelec_interpolation[level].NedelecTruncation2D(curl_working_set[level],working_set[level]);
+    //       // curl_context.apply_zero_bc(truncated_Curl_levels[level],ND_res,level);
+
+    //       curl_context.apply_zero_bc(truncated_Curl_levels[level],ND_b,level);
+    //       gauss_seidel(ND_c,truncated_Curl_levels[level],ND_b,3);
+
+
+    //       truncated_Curl_levels[level]. multiply_and_add(ND_res,-1.0,ND_c,ND_b);
+
+    //       std::cout<<"ND_res="<<l2_norm(ND_res)<<std::endl;
+
+    //       Nedelec2RT2D[level].multiply(F_correction,ND_c,working_set[level]);
+
+    //       plus_equal(x,F_correction);
+
+   	// 	// patch_gauss_seidel_reverse(x,truncated_A_levels[level],b,nodes2entity[level],
+    //  //                          		 local_mat,A_tmp,H_tmp,b_tmp,y_tmp,c_tmp,post_smoothing);
+
+
+   	// }
    }
 
 
@@ -18473,7 +18658,77 @@ template<typename FunctionSpace_>
 
 
 
+  template<typename FunctionSpace,typename CurlFunctionSpace,
+           typename VecVecVec,typename ...Ts,typename ...CurlTs>
+   inline void hiptmair_multigrid2(
+                               Context<Ts...>& context,
+                               Context<CurlTs...>& curl_context,
+   	                     std::vector<Real>& x,
+   	                   		   std::vector<SparseMatrix<Real>>& truncated_A_levels,
+   	                   		   std::vector<SparseMatrix<Real>>& truncated_Curl_levels,
+   	                           std::vector<Real>& b,
+   	                     const std::vector<Integer>& levels,
+   	                     const FullFunctionSpaceLevelsInterpolation<FunctionSpace>& interpolation,
+   	                     const FullFunctionSpaceLevelsInterpolation<CurlFunctionSpace>& curl_interpolation,
+   	                     const std::vector<SparseMatrix<Real>>& Nedelec2RT2D,
+   	                           std::vector<std::vector<bool>>& working_set,
+   	                     const VecVecVec& entity2dofs,
+   	                     const Integer pre_smoothing,
+   	                     const Integer post_smoothing,
+   	                     const Integer level,
+   	                     const Integer max_iter,
+   	                     const Real toll,
+   	                     	   std::vector<Real>& residual)
+   {
+   	std::vector<Real> rhs;
+   	Real norm_rhs;
+   	DenseMatrix<Real> local_mat;
+   	DenseMatrix<Real> A_tmp;
+   	DenseMatrix<Real> H_tmp;
+   	std::vector<Real> b_tmp;
+   	std::vector<Real> y_tmp;
+   	std::vector<Real> c_tmp;
+   	// Real toll=1e-8;
 
+
+     
+    std::size_t max_rows=0;
+    for(Integer i=0;i<entity2dofs[level].size();i++)
+     max_rows=max(max_rows,entity2dofs[level][i].size());
+   	local_mat.resize(max_rows,max_rows);
+   	A_tmp.resize(max_rows,max_rows);
+   	H_tmp.resize(max_rows,max_rows);
+   	b_tmp.resize(max_rows);
+   	y_tmp.resize(max_rows);
+   	c_tmp.resize(max_rows);
+
+   	Integer levels_size=levels.size();
+
+     context.build_boundary_info(levels);
+
+     std::vector<Real> norm_rhs_vec;
+     auto & M=truncated_A_levels[level];
+
+
+   	for(Integer i=0;i<max_iter;i++)
+   	{
+     hiptmair_vcycle2(context,curl_context,x,truncated_A_levels,truncated_Curl_levels,
+     	b,levels,interpolation,curl_interpolation,Nedelec2RT2D,working_set,entity2dofs,
+   	 	local_mat,A_tmp,H_tmp,b_tmp,y_tmp,c_tmp,pre_smoothing,post_smoothing,level,level);
+     M.multiply_and_add(rhs,-1.0,x,b);
+     norm_rhs=l2_norm(rhs);     
+     norm_rhs_vec.push_back(log10(norm_rhs));
+
+     M.multiply_and_add(rhs,-1.0,x,b);
+     norm_rhs=l2_norm(rhs);
+     residual.push_back(log10(norm_rhs));
+
+    
+     std::cout<<"patch_multigrid  iteration == "<< i<<"  after norm_rhs="<<norm_rhs<<" with level="<<level<<std::endl;
+     if(norm_rhs<toll)
+     	break;
+   	}
+   }
 
 
 
@@ -20716,7 +20971,8 @@ Real minus_postmooth=0;
     if(level==0)
     {
       Real alpha_coarse=gamma;
-      Integer max_iter_coarse=1000;
+      // Integer max_iter_coarse=1000;
+      Integer max_iter_coarse=1;
 
       uzawa_patch_active_set_gauss_seidel_optimal(Anobc,bnobc,x,truncated_A_levels[level],b,F_constraint_inf,F_constraint_sup,
                       patch_dofs[level],constraint_dofs[level],border_dofs[level],gamma,//alpha2,
@@ -21514,7 +21770,7 @@ Real minus_postmooth=0;
    //      {
    //      	detection++;
    //      }
-   //      else if(detection>1)
+   //      else if(detection>=0)
    //      {
    //      	detection=0;
    //      	position--;
@@ -29335,11 +29591,11 @@ void mixed_bc_truncation(std::shared_ptr<FunctionSpace> W_ptr,
 
 
 
-		auto bilinearform_weak=
-		L2Inner(Div(sigma),Div(tau))+
-		L2Inner(C_inverse(sigma)-Epsilon(u),C_inverse(tau)-Epsilon(v))
-		+surface_integral(5,Trace(sigma),big_const*Trace(tau))
-		;
+		// auto bilinearform_weak=
+		// L2Inner(Div(sigma),Div(tau))+
+		// L2Inner(C_inverse(sigma)-Epsilon(u),C_inverse(tau)-Epsilon(v))
+		// +surface_integral(5,Trace(sigma),big_const*Trace(tau))
+		// ;
 
 
 
@@ -39222,11 +39478,11 @@ void DivDivHiptmair(int argc, char *argv[])
      
         for(Integer i=levels.size()-2;i>=(Integer(levels.size())-3)&& i>=0;i--)
         { 
-        	std::cout<<"i=="<<i<<std::endl;
+        	// std::cout<<"i=="<<i<<std::endl;
             ACurl_levels[i]=ACurl_levels[i+1].multiply_left_transpose_and_multiply_right(curl_interp.matrix(i));
-            std::cout<<"--i=="<<i<<std::endl;
+            // std::cout<<"--i=="<<i<<std::endl;
             truncated_ACurl_levels[i]=ACurl_levels[i+1].multiply_left_transpose_and_multiply_right(curl_interp.matrix(i),curl_working_set[i+1]);
-            std::cout<<"-----i=="<<i<<std::endl;
+            // std::cout<<"-----i=="<<i<<std::endl;
         }
        
         for(Integer i=levels.size()-3;i>=0;i--)
@@ -39861,7 +40117,8 @@ void LSFEMElasticityHiptmair(int argc, char *argv[])
 		auto u = MakeTrial<1>(W_ptr);
 		auto v = MakeTest<1>(W_ptr);
 
-		auto f = MakeFunction<0,FunctionNthComponent<ManifoldDim,1,FuncMinus001>>(W_ptr);
+        auto f = MakeFunction<0,FunctionZero<ManifoldDim>>(W_ptr);
+		// auto f = MakeFunction<0,FunctionNthComponent<ManifoldDim,1,FuncMinus001>>(W_ptr);
 		// auto f = MakeFunction<0,ExactLinearElasticity<ManifoldDim>>(W_ptr);
 
 		if(argc==4)
@@ -39890,7 +40147,40 @@ void LSFEMElasticityHiptmair(int argc, char *argv[])
 			}
 		}
 
-        
+  			std::vector<Integer> boundary4_changeto5{205,211,225,230};
+			std::vector<Integer> boundary4_changeto1{204,231};
+
+			for(Integer i=0;i<boundary4_changeto5.size();i++)
+			{
+				Integer el=boundary4_changeto5[i];
+
+
+				auto&elem= mesh.elem(el);
+				auto& side_tags=elem.side_tags;
+				auto& nodes=elem.nodes;
+				// std::cout<<"boundary4_changeto5 "<<el<<std::endl;
+				// for(Integer s=0;s<nodes.size();s++)
+				// std::cout<<mesh.points()[nodes[s]]<<" ";
+				// std::cout<<std::endl;
+
+				// for(Integer s=0;s<side_tags.size();s++)
+				// std::cout<<side_tags[s]<<" ";
+				// std::cout<<std::endl;
+
+				for(Integer s=0;s<side_tags.size();s++)
+				{
+					if(side_tags[s]==2)
+					{
+						side_tags[s]=5;
+					}
+
+				}
+				// for(Integer s=0;s<side_tags.size();s++)
+				// std::cout<<mesh.elem(el).side_tags[s]<<" ";
+				// std::cout<<std::endl;
+
+			}
+
         std::vector<Integer> levels(n_levels+1-level);
 
         for(Integer i=0;i<n_levels+1-level;i++)
@@ -39906,16 +40196,24 @@ void LSFEMElasticityHiptmair(int argc, char *argv[])
 		auto linearform=L2Inner(-Div(tau),f);
 
 		// auto bcs1=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,1);
-		// auto bcs2=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,2);
+		// auto bcs2=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,2);
 		// auto bcs3=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,3);
-		// auto bcs4=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,4);
-		auto bcs1=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,1);
-		auto bcs2=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,2);
-		auto bcs3=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,3);
-		auto bcs4=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,4);
+		// auto bcs4=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,4);
 
   
-		auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4);
+		// auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4);
+		
+
+
+
+		auto bcs1=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,1);
+		auto bcs4=DirichletBC<1,FunctionLastComponent<ManifoldDim,Func001>>(W_ptr,4);
+		auto bcs3=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,3);
+		auto bcs2=DirichletBC<1,FunctionZero<ManifoldDim>>(W_ptr,2);
+		auto bcs5=DirichletBC<0,FunctionZero<ManifoldDim>>(W_ptr,5);
+
+		auto context=create_context(bilinearform,linearform,bcs1,bcs2,bcs3,bcs4,bcs5);
+
 
 	    W_ptr->update();
 	    
@@ -39927,7 +40225,7 @@ void LSFEMElasticityHiptmair(int argc, char *argv[])
 
 		Integer levelL=bisection.tracker().current_iterate()-1;
 		context.assembly(AL,bL,levelL);
-        print_vec(bL,bL.size(),"bL assembly");
+        
 
 	    FullFunctionSpaceLevelsInterpolation<W_type> levels_interp(W_ptr);
 
@@ -39948,10 +40246,15 @@ void LSFEMElasticityHiptmair(int argc, char *argv[])
   		truncated_Ant_levels[levels.size()-1]=AL;
 
         std::vector<Real> b_transformed(bL);
-
-        context.apply_bc(truncated_Ant_levels[levels.size()-1],b_transformed,levelL);
-        print_vec(b_transformed,b_transformed.size(),"b");
-
+        
+        std::cout<<"bL.size()="<<bL.size()<<std::endl;
+        // print_vec(bL,bL.size(),"bL assembly");
+        std::cout<<"isnan bL=="<<isnan(bL)<<std::endl;
+        std::cout<<"levelL="<<levelL<<std::endl;
+        context.apply_bc(truncated_Ant_levels[levels.size()-1],b_transformed,levels.size()-1);
+        std::cout<<"b_transformed.size()="<<b_transformed.size()<<std::endl;
+        // print_vec(b_transformed,b_transformed.size(),"b_transformed");
+        std::cout<<"isnan b_transformed=="<<isnan(b_transformed)<<std::endl;
         std::vector<std::vector<bool>> working_set(levels.size(),std::vector<bool>{});
         
        
@@ -40040,6 +40343,7 @@ void LSFEMElasticityHiptmair(int argc, char *argv[])
 		auto bcs4_curl=DirichletBC<0,FunctionZero<ManifoldDim>>(WCurl_ptr,4);
 
   		auto curl_context=create_context(bilinearformCurl,linearformCurl,bcs1_curl,bcs2_curl,bcs3_curl,bcs4_curl);
+        std::cout<<"curl_context start"<<std::endl;
         curl_context.build_boundary_info(levels);
 		WCurl_ptr->update();
 
@@ -40093,7 +40397,7 @@ void LSFEMElasticityHiptmair(int argc, char *argv[])
                curl_context.apply_zero_bc_for_null_diagonal_element(truncated_ACurl_levels[i]);
         }
 
-        curl_context.apply_bc(truncated_ACurl_levels[levels.size()-1],bCurlL,levelL);
+        curl_context.apply_bc(truncated_ACurl_levels[levels.size()-1],bCurlL,levels.size()-1);
 
 
         // auto Nedelec2RT2D=InterpolationFromPotentialSpace(mesh,context,curl_context,levels);
@@ -40113,7 +40417,7 @@ void LSFEMElasticityHiptmair(int argc, char *argv[])
         std::cout<<" n1= "<<n1<<std::endl;
 
         std::ofstream os1,os2;
-		Integer max_iter=30;
+		Integer max_iter=50;
 		Integer pre_smooth=5;
 		Integer post_smooth=5;
 		Real toll=0.000000001;
@@ -40125,7 +40429,7 @@ void LSFEMElasticityHiptmair(int argc, char *argv[])
 
         for(Integer lev=0;lev<levels.size();lev++)
         {
-        // truncated_ACurl_levels[lev].print_val();
+
         truncated_ACurl_levels[lev].set_zero_row(0);
         truncated_ACurl_levels[lev].set_zero_row(1);
 
@@ -40144,7 +40448,7 @@ void LSFEMElasticityHiptmair(int argc, char *argv[])
         for(Integer i=0;i<levels.size();i++)
         { 
 			truncated_Ant_levels[i].save_mat("div_A"+std::to_string(i)+".dat");     
-			truncated_ACurl_levels[i].save_mat("div_Curl"+std::to_string(i)+".dat");  
+			truncated_ACurl_levels[i].save_mat("CCurl"+std::to_string(i)+".dat");  
 			Nedelec2RT2D[i].save_mat("div_ND"+std::to_string(i)+".dat");
 			// NDinterp[i].save_mat("div2_ND"+std::to_string(i)+".dat");
 		}
@@ -40158,13 +40462,19 @@ void LSFEMElasticityHiptmair(int argc, char *argv[])
 
 
 
-        print_vec(b_transformed,b_transformed.size(),"b");
+        // print_vec(b_transformed,b_transformed.size(),"b");
 
 
         // patch_multigrid(context,active_x,truncated_Ant_levels,b_transformed,levels,levels_interp,e2d,pre_smooth,post_smooth,levels.size()-1,max_iter,toll,residual);
-        hiptmair_multigrid(context,curl_context,active_x,
+       
+        // hiptmair_multigrid(context,curl_context,active_x,
+        // 	 			   truncated_Ant_levels,truncated_ACurl_levels,
+        // 	 			   b_transformed,levels,levels_interp,Nedelec2RT2D,working_set,e2d,
+        // 	 			   pre_smooth,post_smooth,levels.size()-1,max_iter,toll,residual);
+
+        hiptmair_multigrid2(context,curl_context,active_x,
         	 			   truncated_Ant_levels,truncated_ACurl_levels,
-        	 			   b_transformed,levels,levels_interp,Nedelec2RT2D,working_set,e2d,
+        	 			   b_transformed,levels,levels_interp,curl_interp,Nedelec2RT2D,working_set,e2d,
         	 			   pre_smooth,post_smooth,levels.size()-1,max_iter,toll,residual);
 
 

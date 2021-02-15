@@ -765,10 +765,10 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
 
      for(Integer i=0;i<n_dofs;++i)
      {
-      std::cout<<"i="<<i<<"/"<<n_dofs<<std::endl;
-      std::cout<<"level="<<level<<std::endl;
+      // std::cout<<"i="<<i<<"/"<<n_dofs<<std::endl;
+      // std::cout<<"level="<<level<<std::endl;
 
-      std::cout<<constrained_dofs_levels_.size()<<std::endl;
+      // std::cout<<constrained_dofs_levels_.size()<<std::endl;
       if(constrained_dofs_levels_[level][i])
       {        
         b[i]=constrained_vec_levels_[level][i];
@@ -795,7 +795,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
      {       
         if(abs(A(i,i))<toll)
         {
-          std::cout<<"null diagonal i="<<i<<std::endl;
+          // std::cout<<"null diagonal i="<<i<<std::endl;
            A.equal(one,i,i);
            b[i]=0.0;
         }
@@ -950,7 +950,7 @@ class Context<BilinearForm,LinearForm,DirichletBCs...>
         {   
 
          b[i]=constrained_vec[i];
-        std::cout<<i<<"/"<<ndofs<<"   "<<b[i]<<std::endl;
+        // std::cout<<i<<"/"<<ndofs<<"   "<<b[i]<<std::endl;
 
         }
 
