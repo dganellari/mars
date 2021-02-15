@@ -1,7 +1,7 @@
 #ifndef MARS_HPP
 #define MARS_HPP
 
-
+#include "mars_base.hpp"
 
 #include "mars_mesh.hpp"
 #include "mars_bisection.hpp"
