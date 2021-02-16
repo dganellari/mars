@@ -8,6 +8,57 @@
 namespace mars {
 
     using namespace stag;
+
+    template <typename S, typename SP>
+    void assemble_oriented_face(S face_stencil, SP sp) {
+        auto fv_dof_handler = sp.get_dof_handler();
+
+        face_stencil.iterate(MARS_LAMBDA(const Integer stencil_index) {
+            const Integer diag_dof = face_stencil.get_value(stencil_index, SLabel::Diagonal);
+
+            if (!fv_dof_handler.is_boundary_dof(diag_dof)) {
+                sp.set_value(diag_dof, diag_dof, -4);
+
+                const Integer pu = face_stencil.get_value(stencil_index, SSOLabel::VolumeUp);
+                sp.set_value(diag_dof, pu, -1);
+
+                const Integer pd = face_stencil.get_value(stencil_index, SSOLabel::VolumeDown);
+                sp.set_value(diag_dof, pd, 1);
+
+                const Integer vyr = face_stencil.get_value(stencil_index, SSOLabel::FaceRight);
+                if (vyr == -1) {
+                    sp.set_value(diag_dof, diag_dof, -3);
+                } else {
+                    sp.set_value(diag_dof, vyr, 1);
+                }
+                const Integer vyl = face_stencil.get_value(stencil_index, SSOLabel::FaceLeft);
+                if (vyl == -1) {
+                    sp.set_value(diag_dof, diag_dof, -3);
+                } else {
+                    sp.set_value(diag_dof, vyl, 1);
+                }
+
+                const Integer vyu = face_stencil.get_value(stencil_index, SSOLabel::FaceUp);
+                sp.set_value(diag_dof, vyu, 2);
+
+                const Integer vyd = face_stencil.get_value(stencil_index, SSOLabel::FaceDown);
+                sp.set_value(diag_dof, vyd, 2);
+
+                const Integer vxur = face_stencil.get_value(stencil_index, SSOLabel::FaceUpRight);
+                sp.set_value(diag_dof, vxur, 1);
+
+                const Integer vxul = face_stencil.get_value(stencil_index, SSOLabel::FaceUpLeft);
+                sp.set_value(diag_dof, vxul, -1);
+
+                const Integer vxdr = face_stencil.get_value(stencil_index, SSOLabel::FaceDownRight);
+                sp.set_value(diag_dof, vxdr, -1);
+
+                const Integer vxdl = face_stencil.get_value(stencil_index, SSOLabel::FaceDownLeft);
+                sp.set_value(diag_dof, vxdl, 1);
+            }
+        });
+    }
+
     template <typename S, typename SP>
     void assemble_face(S face_stencil, SP sp) {
         auto fv_dof_handler = sp.get_dof_handler();
@@ -132,6 +183,7 @@ namespace mars {
         auto volume_stencil = build_stencil<VStencil>(fv_dof_handler);
         /* print_stencil(fv_dof_handler, volume_stencil); */
 
+        /* auto face_stencil = build_stencil<SStencil, Orient>(fv_dof_handler); */
         auto face_stencil = build_stencil<SStencil>(fv_dof_handler);
         /* print_stencil(fv_dof_handler, face_stencil); */
 
@@ -140,6 +192,7 @@ namespace mars {
 
         assemble_volume(volume_stencil, sp, proc_num);
         assemble_face(face_stencil, sp);
+        /* assemble_oriented_face(face_stencil, sp); */
 
         fv_dof_handler.boundary_dof_iterate(
             MARS_LAMBDA(const Integer local_dof) { sp.set_value(local_dof, local_dof, 1); });

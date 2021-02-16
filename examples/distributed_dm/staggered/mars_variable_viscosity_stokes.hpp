@@ -9,8 +9,9 @@ namespace mars {
 
     using namespace stag;
 
-    //Using the orientation feature of the build stencil. In this way there is no need to distinguish between
-    //x and y directions because the stencil is oriented in that way that you need to write the code the same for both x and y dir.
+    /* Using the orientation feature of the build stencil. In this way there is no need to distinguish between x and y
+    directions because the stencil is oriented in that way that you need to write the code the same for both x and y dir.
+    Write the code as for a normal (ydir) stencil! The orientation take care of the rest! */
     template <typename S, typename SP, typename DM>
     void assemble_oriented_face(S face_stencil, SP sp, const DM &dm) {
         auto fv_dof_handler = sp.get_dof_handler();
@@ -72,8 +73,8 @@ namespace mars {
         });
     }
 
-    //same results as in the oriented case just that here we use a not oriented stencil.
-    //and take care of the directions manually.
+    /* same results as in the oriented case just that here we use a not oriented stencil.
+    and take care of the directions manually. */
     template <typename S, typename SP, typename DM>
     void assemble_face(S face_stencil, SP sp, const DM &dm) {
         auto fv_dof_handler = sp.get_dof_handler();
