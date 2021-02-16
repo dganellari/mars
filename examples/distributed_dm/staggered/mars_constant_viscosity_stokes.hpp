@@ -19,10 +19,10 @@ namespace mars {
                 if (fv_dof_handler.get_orientation(diag_dof) == DofOrient::xDir) {
                     sp.set_value(diag_dof, diag_dof, -4);
 
-                    const Integer pr = face_stencil.get_value(stencil_index, SSXLabel::VolumeRight);
+                    const Integer pr = face_stencil.get_value(stencil_index, SSXLabel::VolumeXRight);
                     sp.set_value(diag_dof, pr, -1);
 
-                    const Integer pl = face_stencil.get_value(stencil_index, SSXLabel::VolumeLeft);
+                    const Integer pl = face_stencil.get_value(stencil_index, SSXLabel::VolumeXLeft);
                     sp.set_value(diag_dof, pl, 1);
 
                     const Integer vxr = face_stencil.get_value(stencil_index, SSXLabel::FaceXRight);
@@ -59,10 +59,10 @@ namespace mars {
                 } else if (fv_dof_handler.get_orientation(diag_dof) == DofOrient::yDir) {
                     sp.set_value(diag_dof, diag_dof, -4);
 
-                    const Integer pu = face_stencil.get_value(stencil_index, SSYLabel::VolumeUp);
+                    const Integer pu = face_stencil.get_value(stencil_index, SSYLabel::VolumeYUp);
                     sp.set_value(diag_dof, pu, -1);
 
-                    const Integer pd = face_stencil.get_value(stencil_index, SSYLabel::VolumeDown);
+                    const Integer pd = face_stencil.get_value(stencil_index, SSYLabel::VolumeYDown);
                     sp.set_value(diag_dof, pd, 1);
 
                     const Integer vyr = face_stencil.get_value(stencil_index, SSYLabel::FaceYRight);

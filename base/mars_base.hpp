@@ -19,11 +19,26 @@ namespace mars {
 
     enum SLabel : int { Diagonal = 0, Right = 1, Left = 2, Up = 3, Down = 4 };
 
+    enum SSOLabel : int {
+        CornerRight = 1,
+        CornerLeft = 2,
+        VolumeUp = 3,
+        VolumeDown = 4,
+        FaceRight = 5,
+        FaceLeft = 6,
+        FaceUp = 7,
+        FaceDown = 8,
+        FaceUpRight = 12,
+        FaceUpLeft = 11,
+        FaceDownRight = 10,
+        FaceDownLeft = 9
+    };
+
     enum SSXLabel : int {
-        VolumeRight = 1,
-        VolumeLeft = 2,
-        CornerUp = 3,
-        CornerDown = 4,
+        VolumeXRight = 1,
+        VolumeXLeft = 2,
+        CornerXUp = 3,
+        CornerXDown = 4,
         FaceXRight = 5,
         FaceXLeft = 6,
         FaceXUp = 7,
@@ -35,10 +50,10 @@ namespace mars {
     };
 
     enum SSYLabel : int {
-        CornerRight = 1,
-        CornerLeft = 2,
-        VolumeUp = 3,
-        VolumeDown = 4,
+        CornerYRight = 1,
+        CornerYLeft = 2,
+        VolumeYUp = 3,
+        VolumeYDown = 4,
         FaceYRight = 5,
         FaceYLeft = 6,
         FaceYUp = 7,
