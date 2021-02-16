@@ -361,13 +361,13 @@ namespace mars {
         // build boundary dof sets as global indexes so that the ghost indices to be global and poissible
         // therefor to go from a global index to a local one also for the ghosts.
         void build_boundary_dof_sets(ViewVectorType<Integer> boundary_dofs_index) {
-            auto proc = get_dof_handler().get_proc();
             auto handler = *this;
             Kokkos::parallel_for(
                 "boundary_iterate", get_boundary_dof_size(), MARS_LAMBDA(const Integer i) {
                     const Integer local_dof = handler.get_boundary_dof(i);
                     const Integer index = handler.local_to_owned_index(local_dof);
                     assert(index != INVALID_INDEX);
+                    auto proc = handler.get_dof_handler().get_proc();
                     boundary_dofs_index(i) = index + handler.get_global_dof_offset(proc);
                 });
         }
@@ -417,9 +417,7 @@ namespace mars {
         constexpr Integer get_elem_type() { return simplex_type::ElemType; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_global_dof_offset(const Integer proc) const {
-            return global_dof_offset(proc);
-        }
+        const Integer get_global_dof_offset(const Integer proc) const { return global_dof_offset(proc); }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_global_dof_offset() const { return global_dof_offset; }
@@ -434,9 +432,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_label(const Integer local_dof) const {
-            return get_dof_handler().get_label(local_dof);
-        }
+        const Integer get_label(const Integer local_dof) const { return get_dof_handler().get_label(local_dof); }
 
         MARS_INLINE_FUNCTION
         const Integer get_owned_label(const Integer owned_dof) const {
