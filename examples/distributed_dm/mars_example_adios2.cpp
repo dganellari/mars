@@ -24,6 +24,8 @@ int main(int argc, char *argv[]) {
     adios2::ADIOS adios;
 #endif
 
+    std::cout << "Running Example Write code written for local array write ADIOS2" << std::endl;
+
     // v0 has the same size on every process at every step
     const size_t Nglobal = 6;
     std::vector<double> v0(Nglobal);
