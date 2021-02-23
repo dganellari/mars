@@ -152,7 +152,7 @@ namespace mars {
     }
 
     template <class BC, class RHS, class AnalyticalFun>
-    void staggered_constant_viscosty_stokes_2D(const int level) {
+    void staggered_constant_viscosty_stokes_2D(const int xDim, const int yDim) {
         using namespace mars;
         mars::proc_allocation resources;
 
@@ -171,7 +171,7 @@ namespace mars {
         Kokkos::Timer timer;
         // create the quad mesh distributed through the mpi procs.
         DistributedQuad4Mesh mesh;
-        generate_distributed_cube(context, mesh, level, level, 0);
+        generate_distributed_cube(context, mesh, xDim, yDim, 0);
 
         // enumerate the dofs locally and globally. The ghost dofs structures
         // are now created and ready to use for the gather and scatter ops.

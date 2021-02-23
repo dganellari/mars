@@ -1099,6 +1099,9 @@ int main(int argc, char *argv[]) {
   Options options("./mars_exec", "Run M.A.R.S. based applications.");
 
   options.add_options()("d,debug", "Enable debugging")                   //
+      ("x,xDim", "Grid X Dim", value<int>()->default_value("4"))  //
+      ("y,yDim", "Grid Y Dim", value<int>()->default_value("4"))  //
+      ("z,zDim", "Grid Z Dim", value<int>()->default_value("4"))  //
       ("l,level", "Number of levels", value<int>()->default_value("1"))  //
       ("r,refine_level", "Number of refinements",
        value<int>()->default_value("1"))  //
@@ -1115,6 +1118,9 @@ int main(int argc, char *argv[]) {
       std::cout << options.help() << std::endl;
     }
 
+    int xDim = args["xDim"].as<int>();
+    int yDim = args["yDim"].as<int>();
+    int zDim = args["zDim"].as<int>();
     int level = args["level"].as<int>();
     int refine_level = args["refine_level"].as<int>();
     std::string filename = args["file"].as<std::string>();
@@ -1192,15 +1198,15 @@ int main(int argc, char *argv[]) {
 
 #ifdef WITH_MPI
     apps["matrix_free_poisson2D"] = [=]() {
-        poisson_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(level);
+        poisson_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(xDim, yDim);
     };
 
     apps["cstokes"] = [=]() {
-        staggered_constant_viscosty_stokes_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(level);
+        staggered_constant_viscosty_stokes_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(xDim, yDim);
     };
 
     apps["vstokes"] = [=]() {
-        staggered_variable_viscosty_stokes_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(level);
+        staggered_variable_viscosty_stokes_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(xDim, yDim);
     };
 
     apps["advection"] = [=]() {
