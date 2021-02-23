@@ -233,6 +233,8 @@ namespace mars {
             sparsity_pattern = crs_graph(col_idx, row_ptr);
 
             matrix = crs_matrix("crs_matrix", owned_size, values, sparsity_pattern);
+
+            printf("Build SparsityPattern ended!\n");
         }
 
         MARS_INLINE_FUNCTION

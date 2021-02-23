@@ -151,7 +151,7 @@ namespace mars {
     }
 
     template <class BC, class RHS, class AnalyticalFun>
-    void poisson_2D(const int level) {
+    void poisson_2D(const int xDim, const int yDim) {
         using namespace mars;
         mars::proc_allocation resources;
 
@@ -170,7 +170,7 @@ namespace mars {
         Kokkos::Timer timer;
         // create the quad mesh distributed through the mpi procs.
         DistributedQuad4Mesh mesh;
-        generate_distributed_cube(context, mesh, level, level, 0);
+        generate_distributed_cube(context, mesh, xDim, yDim, 0);
 
         constexpr Integer Dim = DistributedQuad4Mesh::Dim;
 

@@ -10,8 +10,8 @@ namespace mars {
     using namespace stag;
 
     /* Using the orientation feature of the build stencil. In this way there is no need to distinguish between x and y
-    directions because the stencil is oriented in that way that you need to write the code the same for both x and y dir.
-    Write the code as for a normal (ydir) stencil! The orientation take care of the rest! */
+    directions because the stencil is oriented in that way that you need to write the code the same for both x and y
+    dir. Write the code as for a normal (ydir) stencil! The orientation take care of the rest! */
     template <typename S, typename SP, typename DM>
     void assemble_oriented_face(S face_stencil, SP sp, const DM &dm) {
         auto fv_dof_handler = sp.get_dof_handler();
@@ -191,7 +191,7 @@ namespace mars {
     }
 
     template <class BC, class RHS, class AnalyticalFun>
-    void staggered_variable_viscosty_stokes_2D(const int level) {
+    void staggered_variable_viscosty_stokes_2D(const int xDim, const int yDim) {
         using namespace mars;
         mars::proc_allocation resources;
 
@@ -210,21 +210,25 @@ namespace mars {
         Kokkos::Timer timer;
         // create the quad mesh distributed through the mpi procs.
         DistributedQuad4Mesh mesh;
-        generate_distributed_cube(context, mesh, level, level, 0);
+        generate_distributed_cube(context, mesh, xDim, yDim, 0);
 
         // enumerate the dofs locally and globally. The ghost dofs structures
         // are now created and ready to use for the gather and scatter ops.
         DHandler dof_handler(&mesh, context);
         dof_handler.enumerate_dofs();
 
+        /* dof_handler.print_dofs(proc_num); */
+
+        /* dof_handler.print_mesh_sfc(proc_num); */
+
         FVDH fv_dof_handler(dof_handler);
 
         auto volume_stencil = build_stencil<VStencil>(fv_dof_handler);
-        /* print_stencil(fv_dof_handler, volume_stencil); */
+        /*print_stencil(fv_dof_handler, volume_stencil);*/
 
-        /* auto face_stencil = build_stencil<SStencil, Orient>(fv_dof_handler); */
+        /*auto face_stencil = build_stencil<SStencil, Orient>(fv_dof_handler);*/
         auto face_stencil = build_stencil<SStencil>(fv_dof_handler);
-        /* print_stencil(fv_dof_handler, face_stencil); */
+        /*print_stencil(fv_dof_handler, face_stencil);*/
 
         SPattern sp(fv_dof_handler);
         sp.build_pattern(volume_stencil, face_stencil);
@@ -237,7 +241,7 @@ namespace mars {
         set_data_in_circle(cvdm, 1, 10);
         cvdm.gather_ghost_data<IN>();
 
-        /* cdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
+        /*cdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
             const Integer local_dof = cdm.get_dof_handler().get_local_dof(i);
 
             const auto idata = cdm.get_data<IN>(i);
@@ -254,11 +258,11 @@ namespace mars {
             Dof d = cvdm.get_dof_handler().local_to_global_dof(local_dof);
 
             printf("lid: %li, u: %lf, global: %li, rank: %i\n", i, idata, d.get_gid(), d.get_proc());
-        }); */
+        });*/
 
         assemble_volume(volume_stencil, sp, proc_num);
         assemble_face(face_stencil, sp, cvdm);
-        /* assemble_oriented_face(face_stencil, sp, cvdm); */
+        /*assemble_oriented_face(face_stencil, sp, cvdm);*/
 
         fv_dof_handler.boundary_dof_iterate(
             MARS_LAMBDA(const Integer local_dof) { sp.set_value(local_dof, local_dof, 1); });
