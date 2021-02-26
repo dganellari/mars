@@ -45,7 +45,7 @@ namespace mars {
         // general width 1 stencil used as pressure stencil.
         using CStencil = Stencil<DofLabel::lCorner>;
 
-        using SPattern = SparsityPattern<double, FVDH, VStencil, SStencil>;
+        using SPattern = SparsityPattern<double, default_lno_t, unsigned long, FVDH, VStencil, SStencil>;
         /* using SPattern = SparsityPattern<double, VStencil, FSStencil>; */
         // use as more readable tuple index to identify the data
         static constexpr int IN = 0;
