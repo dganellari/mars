@@ -24,14 +24,17 @@ namespace mars {
         Finite finite_item;
     };
  */
-    template <typename V, typename SHandler, typename... ST>
+    // for default local/global ordinals, you can have for instantiation:
+    // LO=default_lno_t
+    // GO=default_size_type
+    template <typename V, typename LO, typename GO, typename SHandler, typename... ST>
     class SparsityPattern {
     public:
         using stencil_tuple = std::tuple<ST...>;
 
         using Scalar = V;
-        using Ordinal = default_lno_t;
-        using Offset = default_size_type;
+        using Ordinal = LO;
+        using Offset = GO;
         using Layout = default_layout;
 
         using device_type = typename Kokkos::Device<Kokkos::DefaultExecutionSpace, KokkosSpace>;
@@ -304,6 +307,10 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         const Integer get_num_rows() const { return matrix.numRows(); }
+
+        MARS_INLINE_FUNCTION
+        crs_matrix get_matrix() const { return matrix; }
+
 
         /* ***************** print ******************************************** */
 
