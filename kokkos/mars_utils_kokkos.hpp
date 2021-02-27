@@ -29,8 +29,12 @@ constexpr std::size_t arraySize(T (&)[N][M]) noexcept
 	// #endif //KOKKOS_ENABLE_THREADS
 #endif
 
-#ifdef MARS_USE_CUDA
-	#define KokkosSpace Kokkos::CudaSpace
+#if defined(MARS_USE_CUDA)
+	#if defined(MARS_USE_CUDAUVM)
+		#define KokkosSpace Kokkos::CudaUVMSpace
+	#else
+		#define KokkosSpace Kokkos::CudaSpace
+	#endif // MARS_USE_CUDAUVM
 	#define KokkosLayout Kokkos::LayoutLeft
 #else //MARS_USE_CUDA
 	#ifdef KOKKOS_ENABLE_OPENMP

@@ -14,6 +14,7 @@ option(TRY_WITH_KOKKOS
 option(MARS_USE_CUDA "Build mars with cuda support" OFF)
 option(MARS_NO_RDMA "Build mars with NO RDMA support" OFF)
 option(MARS_USE_CUDA "Build mars with cuda support" OFF)
+option(MARS_USE_CUDAUVM "Use as default memory space CUDAUVM. This has only an effect if MARS_USE_CUDA is used too." OFF)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
