@@ -76,9 +76,22 @@ struct mpi_context_impl {
   }
 
   template <typename T>
+  void i_send_recv_all_to_all(const std::vector<T> &send_count,
+                       std::vector<T> &receive_count) const {
+    mpi::i_send_recv_all_to_all(send_count, receive_count, comm_);
+  }
+
+  template <typename T>
   void i_send_recv_vec(const std::vector<T> &send_count,
                        std::vector<T> &receive_count) const {
     mpi::i_send_recv_vec(send_count, receive_count, comm_);
+  }
+
+  template <typename T>
+  void i_send_recv_view_to_all(const ViewVectorType<T> &dest,
+                        const Integer *dest_displ, const ViewVectorType<T> &src,
+                        const Integer *src_displ) const {
+    mpi::i_send_recv_view_to_all(dest, dest_displ, src, src_displ, comm_);
   }
 
   template <typename T>

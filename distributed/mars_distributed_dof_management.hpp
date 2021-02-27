@@ -1509,6 +1509,11 @@ namespace mars {
             return local_to_global(local);
         }
 
+        MARS_INLINE_FUNCTION Integer get_local_sfc_from_octant(const Octant &o) const {
+            const Integer sfc = get_sfc_from_octant<ElemType>(o);
+            return is_local(sfc) ? sfc : INVALID_INDEX;
+        }
+
         MARS_INLINE_FUNCTION Integer get_local_from_octant(const Octant &o) const {
             const Integer sfc = get_sfc_from_octant<ElemType>(o);
             return is_local(sfc) ? sfc_to_local(sfc) : INVALID_INDEX;
