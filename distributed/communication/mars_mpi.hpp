@@ -269,6 +269,104 @@ void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_c
 }
 
 template <typename T>
+void i_send_recv_all_to_all(const std::vector<T> &send_count, std::vector<T> &receive_count, MPI_Comm comm) {
+    Integer proc_count = send_count.size();
+    Integer proc_count_r = receive_count.size();
+
+    printf("proc count proc: %li - %li - %li - %li\n", proc_count, proc_count_r, receive_count.size(), send_count.size());
+    std::vector<MPI_Request> send_req(proc_count);
+    std::vector<MPI_Request> receive_req(proc_count_r);
+
+    int recv_proc = 0;
+    for (int i = 0; i < receive_count.size(); ++i)
+    {
+            i_receive_v(receive_count, i, 1, i, 0, comm, &receive_req[recv_proc++]);
+    }
+
+    int send_proc = 0;
+    for (int i = 0; i < send_count.size(); ++i)
+    {
+            i_send_v(send_count, i, 1, i, 0, comm, &send_req[send_proc++]);
+    }
+
+    if (proc_count > 0)
+    {
+        wait_all_send_recv(proc_count, send_req);
+    }
+    if(proc_count_r > 0)
+    {
+        wait_all_send_recv(proc_count_r, receive_req);
+    }
+}
+
+template <typename T>
+void i_send_recv_view_to_all(const ViewVectorType<T> &dest, const Integer* dest_displ,
+                      const ViewVectorType<T> &src, const Integer* src_displ,
+                      MPI_Comm comm)
+{
+    auto nranks = size(comm);
+
+    int proc_count= 0;
+    int proc_count_r = 0;
+    for (int i = 0; i < nranks; ++i)
+    {
+        Integer count_r = dest_displ[i + 1] - dest_displ[i];
+        Integer count = src_displ[i + 1] - src_displ[i];
+        if (count > 0)
+        {
+            ++proc_count;
+        }
+        if(count_r > 0)
+        {
+            ++proc_count_r;
+        }
+    }
+
+    std::vector<MPI_Request> send_req(proc_count);
+    std::vector<MPI_Request> receive_req(proc_count_r);
+
+
+    int recv_proc = 0;
+    for (int i = 0; i < nranks; ++i)
+    {
+        Integer count = dest_displ[i + 1] - dest_displ[i];
+        if (count > 0)
+        {
+            i_receive(dest, dest_displ[i], count, i, 0, comm, &receive_req[recv_proc++]);
+        }
+    }
+
+#ifdef MARS_NO_RDMA
+    //to avoid the bug in MPICH RDMA during the hackathon 2020
+    ViewVectorHost<T> host_src = Kokkos::create_mirror_view(src);
+    Kokkos::deep_copy(host_src, src);
+#endif
+
+    int send_proc = 0;
+    for (int i = 0; i < nranks; ++i)
+    {
+        Integer count = src_displ[i + 1] - src_displ[i];
+        if (count > 0)
+        {
+#ifdef MARS_NO_RDMA
+            i_send(host_src, 0, count, i, 0, comm, &send_req[send_proc++]);
+#else
+            i_send(src, 0, count, i, 0, comm, &send_req[send_proc++]);
+#endif
+        }
+    }
+
+    if (proc_count > 0)
+    {
+        wait_all_send_recv(proc_count, send_req);
+    }
+    if(proc_count_r > 0)
+    {
+        wait_all_send_recv(proc_count_r, receive_req);
+    }
+}
+
+template <typename T>
 void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ,
                       const ViewVectorType<T> &src, const Integer* src_displ,
                       MPI_Comm comm)
