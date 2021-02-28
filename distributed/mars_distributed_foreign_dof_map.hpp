@@ -151,8 +151,8 @@ namespace mars {
             int rank_size = num_ranks(context);
 
             Integer ghost_size = scan_recv_mirror(rank_size);
-            auto global_ghost_dofs = ViewVectorType<Integer>("ghost_dofs", ghost_size);
-            auto global_ghost_sfcs = ViewVectorType<Integer>("ghost_dofs", ghost_size);
+            global_ghost_dofs = ViewVectorType<Integer>("ghost_dofs", ghost_size);
+            global_ghost_sfcs = ViewVectorType<Integer>("ghost_dofs", ghost_size);
 
             context->distributed->i_send_recv_view(
                 global_ghost_dofs, scan_recv_mirror.data(), owned_dofs, scan_send_mirror.data());
@@ -171,21 +171,20 @@ namespace mars {
             ghost_sfc_to_global_map = UnorderedMap<Integer, Dof>(size);
             auto scan_recv_proc = scan_recv;
             auto gsgm = ghost_sfc_to_global_map;
+
             /* iterate through the unique ghost dofs and build the map */
             Kokkos::parallel_for(
                 "BuildLocalGlobalmap", size, MARS_LAMBDA(const Integer i) {
                     /* read the sfc and the local dof id from the ghost */
                     const Integer gid = ghost_dofs(i);
                     const Integer ghost_sfc = ghost_sfcs(i);
-                    /* find the process by binary search in the scan_recv_proc view of size
-                     * rank_size
-                     * and calculate the global id by adding the ghost local id to the
-                     * global offset for ghost process*/
+                    /* find the process by binary search in the scan_recv_proc view of size rank_size
+                    and calculate the global id by adding the ghost local id to the global offset for ghost process */
                     const Integer owner_proc = find_owner_processor(scan_recv_proc, i, 1, 0);
 
                     // build the ghost dof object and insert into the map
                     const auto result = gsgm.insert(ghost_sfc, Dof(gid, owner_proc));
-                    /* assert(result.success()); */
+                    assert(result.success());
                 });
             /* In the end the size of the map should be as the size of the ghost_dofs.
              * Careful map size  is not capacity */
@@ -261,7 +260,7 @@ namespace mars {
             create_scan_mirrors(context, snd_count, rcv_count);
             exchange_ghost_globals(context, global_dofs, global_sfcs);
 
-            /* build_ghost_global_map(rank_size, global_ghost_dofs, global_ghost_sfcs); */
+            build_ghost_global_map(rank_size, global_ghost_dofs, global_ghost_sfcs);
             std::cout << "Foreign DOf Map: Ending mpi send receive for the ghost sfc dofs " << std::endl;
         }
 
