@@ -72,7 +72,7 @@ namespace mars {
         MARS_INLINE_FUNCTION
         Integer get_sfc_face_nbh(const Octant &oc, const Integer face_nr) const {
             Octant o = oc.sfc_face_nbh<simplex_type::ElemType>(face_nr);
-            return get_sfc_from_octant<simplex_type::ElemType>(o);
+            return get_sfc_from_octant(o);
         }
 
         template <Integer Type>
@@ -85,7 +85,7 @@ namespace mars {
             // convert the octant value into the new nodal sfc system
             o.x *= degree;
             o.y *= degree;
-            Integer sfc = get_sfc_from_octant<Type>(o);
+            Integer sfc = mars::get_sfc_from_octant<Type>(o);
 
             return sfc_to_local(sfc);
         }
@@ -127,7 +127,7 @@ namespace mars {
                 o.x = degree * face_cornerA.x + sign * (j + 1);
                 o.y = degree * face_cornerA.y;
             }
-            Integer sfc = get_sfc_from_octant<Type>(o);
+            Integer sfc = mars::get_sfc_from_octant<Type>(o);
 
             return sfc;
         }
@@ -163,7 +163,7 @@ namespace mars {
                 one_ring_owners[k] = -1;
 
                 if (one_ring[k].is_valid()) {
-                    Integer enc_oc = get_sfc_from_octant<Type>(one_ring[k]);
+                    Integer enc_oc = mars::get_sfc_from_octant<Type>(one_ring[k]);
                     /* check the proc that owns the corner and then decide on the predicate.
                         This works because the corner defines an element and this element is
                         always on the largest proc number due to the z order partitioning*/
@@ -180,7 +180,7 @@ namespace mars {
             // convert the octant value into the new nodal sfc system
             o.x *= degree;
             o.y *= degree;
-            Integer sfc = get_sfc_from_octant<Type>(o);
+            Integer sfc = mars::get_sfc_from_octant<Type>(o);
 
             return sfc;
         }
@@ -199,7 +199,7 @@ namespace mars {
 
             // find owner proc method returns an invalid result with invalid octant.
             if (nbh_oc.is_valid()) {
-                Integer enc_oc = get_sfc_from_octant<Type>(nbh_oc);
+                Integer enc_oc = mars::get_sfc_from_octant<Type>(nbh_oc);
                 owner_proc = find_owner_processor(mesh->get_view_gp(), enc_oc, 2, mesh->get_proc());
             }
 
@@ -229,7 +229,7 @@ namespace mars {
                 o.y = degree * face_cornerA.y;
             }
 
-            Integer sfc = get_sfc_from_octant<Type>(o);
+            Integer sfc = mars::get_sfc_from_octant<Type>(o);
 
             return sfc;
         }
@@ -605,7 +605,7 @@ namespace mars {
                 for (int j = 0; j < degree - 1; j++) {
                     o.x = degree * oc.x + i + 1;
                     o.y = degree * oc.y + j + 1;
-                    Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(o);
+                    Integer enc_oc = mars::get_sfc_from_octant<ElemType>(o);
                     f(mesh, index, enc_oc);
                 }
             }
@@ -1503,19 +1503,23 @@ namespace mars {
             return mars::get_octant_from_sfc<ElemType>(sfc);
         }
 
+        MARS_INLINE_FUNCTION Integer get_sfc_from_octant(const Octant &o) const {
+            return mars::get_sfc_from_octant<ElemType>(o);
+        }
+
         MARS_INLINE_FUNCTION Integer get_global_from_octant(const Octant &o) const {
-            const Integer sfc = get_sfc_from_octant<ElemType>(o);
+            const Integer sfc = get_sfc_from_octant(o);
             const Integer local = is_local(sfc) ? sfc_to_local(sfc) : INVALID_INDEX;
             return local_to_global(local);
         }
 
         MARS_INLINE_FUNCTION Integer get_local_sfc_from_octant(const Octant &o) const {
-            const Integer sfc = get_sfc_from_octant<ElemType>(o);
+            const Integer sfc = get_sfc_from_octant(o);
             return is_local(sfc) ? sfc : INVALID_INDEX;
         }
 
         MARS_INLINE_FUNCTION Integer get_local_from_octant(const Octant &o) const {
-            const Integer sfc = get_sfc_from_octant<ElemType>(o);
+            const Integer sfc = get_sfc_from_octant(o);
             return is_local(sfc) ? sfc_to_local(sfc) : INVALID_INDEX;
         }
 
