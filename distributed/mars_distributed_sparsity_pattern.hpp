@@ -235,7 +235,7 @@ namespace mars {
 
             sparsity_pattern = crs_graph(col_idx, row_ptr);
 
-            matrix = crs_matrix("crs_matrix", owned_size, values, sparsity_pattern);
+            matrix = crs_matrix("crs_matrix", global_size, values, sparsity_pattern);
 
             printf("Build SparsityPattern ended!\n");
         }
@@ -303,7 +303,7 @@ namespace mars {
         const Integer get_nnz() const { return matrix.nnz(); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_num_cols() const { return matrix.numcols(); }
+        const Integer get_num_cols() const { return matrix.numCols(); }
 
         MARS_INLINE_FUNCTION
         const Integer get_num_rows() const { return matrix.numRows(); }
