@@ -211,7 +211,7 @@ namespace mars {
             auto global_size = get_dof_handler().get_global_dof_size();
             auto owned_size = get_dof_handler().get_owned_dof_size();
 
-            printf("global_size: %li, owned_size: %li\n", global_size, owned_size);
+            /* printf("global_size: %li, owned_size: %li\n", global_size, owned_size); */
 
             ViewVectorType<Integer> counter("counter", owned_size);
             expand_tuple<CountUniqueDofs, stencil_tuple, dataidx...>(CountUniqueDofs(counter, get_dof_handler()),

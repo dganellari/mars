@@ -229,6 +229,18 @@ namespace mars {
         /* *******************************local_to_global********************************** */
 
         MARS_INLINE_FUNCTION
+        Integer sfc_to_owned(const Integer sfc) const {
+            const Integer local_dof = get_dof_handler().sfc_to_local(sfc);
+            const Integer owned = get_dof_handler().local_to_owned_dof(local_dof);
+            const Integer pred_value = owned_dof_map(owned + 1) - owned_dof_map(owned);
+            if (pred_value > 0)
+                return owned;
+            else
+                return INVALID_INDEX;
+        }
+
+
+        MARS_INLINE_FUNCTION
         Integer locally_owned_dof(const Integer local_dof) const {
             const Integer owned = get_dof_handler().local_to_owned_dof(local_dof);
             const Integer pred_value = owned_dof_map(owned + 1) - owned_dof_map(owned);
@@ -297,6 +309,17 @@ namespace mars {
             Dof dof = local_to_separated_global_dof(local);
             if (dof.is_valid())
                 return dof.get_proc();
+            else
+                return INVALID_INDEX;
+        }
+
+
+        MARS_INLINE_FUNCTION
+        const Integer sfc_to_global(const Integer sfc) const {
+            const Integer local_dof = get_dof_handler().sfc_to_local(sfc);
+            Dof dof = local_to_separated_global_dof(local_dof);
+            if (dof.is_valid())
+                return dof.get_gid();
             else
                 return INVALID_INDEX;
         }
@@ -374,6 +397,14 @@ namespace mars {
 
         /* *******dof handler related functionalities for completing the handler.******* */
         /* chose this way to hide the full interface of the general handler. Inheritance is the other way*/
+
+        MARS_INLINE_FUNCTION Integer get_sfc_from_octant(const Octant &o) const {
+            return get_dof_handler().get_sfc_from_octant(o);
+        }
+
+        MARS_INLINE_FUNCTION Integer get_local_sfc_from_octant(const Octant &o) const {
+            return get_dof_handler().get_local_sfc_from_octant(o);
+        }
 
         MARS_INLINE_FUNCTION Integer get_local_from_octant(const Octant &o) const {
             return get_dof_handler().get_local_from_octant(o);
