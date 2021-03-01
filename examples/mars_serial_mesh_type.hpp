@@ -1,6 +1,9 @@
 #ifndef MARS_SERIAL_MESH_TYPE_HPP
 #define MARS_SERIAL_MESH_TYPE_HPP
 
+#include "mars_base.hpp"
+#include "mars_mesh_kokkos.hpp"
+
 namespace mars {
     template <class Mesh>
     struct SerialMeshType {};
