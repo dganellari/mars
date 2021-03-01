@@ -154,20 +154,24 @@ namespace mars {
 
         template <typename SDM>
         void print_local_dofs(const SDM dm) {
-            const Integer size = dm.get_dof_handler().get_dof_size();
+            const Integer size = dm.get_dof_size();
             Kokkos::parallel_for(
                 "for", size, MARS_LAMBDA(const int index) {
                     // go through all the dofs of the elem_index element
-                    const Integer local_dof = dm.get_dof_handler().get_local_dof(index);
-                    const Integer dir = dm.get_dof_handler().get_orientation(local_dof);
+                    const Integer local_dof = dm.get_local_dof(index);
+                    const Integer sfc = dm.local_to_sfc(local_dof);
+                    /* const Integer dir = dm.get_orientation(local_dof); */
                     // convert the local dof number to global dof number
-                    Dof d = dm.get_dof_handler().local_to_global_dof(local_dof);
+                    Dof d = dm.local_to_global_dof(local_dof);
+                    auto o = dm.get_octant_from_local(local_dof);
 
                     // do something. In this case we are printing.
-                    printf("Dof: i: %li, local: %li, Dir: %li, global: %li, proc: %li\n",
+                    printf("Dof: i: %li, local: %li, Dir: %li,  o: [%li, %li], global: %li, proc: %li\n",
                            index,
                            local_dof,
-                           dir,
+                           sfc,
+                           o.x,
+                           o.y,
                            d.get_gid(),
                            d.get_proc());
                 });

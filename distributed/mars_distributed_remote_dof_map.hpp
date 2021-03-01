@@ -1,19 +1,17 @@
-#ifndef GENERATION_MARS_DISTRIBUTED_FDofMap_HPP_
-#define GENERATION_MARS_DISTRIBUTED_FDofMap_HPP_
+#ifndef GENERATION_MARS_DISTRIBUTED_RDofMap_HPP_
+#define GENERATION_MARS_DISTRIBUTED_RDofMap_HPP_
 
 #ifdef WITH_MPI
 #ifdef WITH_KOKKOS
 #include "mars_distributed_dof.hpp"
-#include "mars_distributed_user_data.hpp"
 
 namespace mars {
 
     template <typename DofHandler>
-    class ForeignDofMap {
+    class RemoteDofMap {
     public:
-
         MARS_INLINE_FUNCTION
-        ForeignDofMap(DofHandler handler) : dof_handler(handler) {}
+        RemoteDofMap(DofHandler handler) : dof_handler(handler) {}
 
         template <typename V>
         void build_global_dof_per_rank(const V &view,
@@ -31,10 +29,8 @@ namespace mars {
             Kokkos::parallel_for(
                 "build global dofs", size, MARS_LAMBDA(const Integer i) {
                     const Integer sfc = view(i);
-                    printf("view(i( : %li, i: %li, local: %s\n", sfc, i, handler.is_local(sfc) ? "true" : "false");
                     if (handler.is_local(sfc)) {
                         const Integer proc = find_owner_processor(scan_recv_view, i, 1, 0);
-                        printf("PROOOC: %li, i: %li\n", proc, i);
                         rank_view(i, proc) = 1;
                     }
                 });
@@ -55,14 +51,12 @@ namespace mars {
             auto h_ic = create_mirror_view(index_subview);
             // Deep copy device view to host view.
             deep_copy(h_ic, index_subview);
-            printf("h_ic: %li\n", h_ic());
 
             global_dof = V("global_dofs", h_ic());
             global_sfc = V("global_sfcs", h_ic());
 
             parallel_for(
                 MDRangePolicy<Rank<2>>({0, 0}, {size, rank_size}), KOKKOS_LAMBDA(const Integer i, const Integer j) {
-                    printf("rank_view: %li, scan_view: %li, view: %li\n", rank_view(i, j), scan_view(j), view(i));
                     if (rank_view(i, j) == 1) {
                         Integer index = scan_view(j) + rank_scan(i, j);
 
@@ -95,20 +89,17 @@ namespace mars {
                 Integer count = scan_snd(i + 1) - scan_snd(i);
                 if (count > 0) {
                     send_count[i] = count;
-                    /* ++proc_count;
-                    std::cout << "DM:****ToProc: " << s_rank_mirror(i) << " count:" << count
-                              << " Proc: " << proc_num << std::endl; */
                 }
             }
 
             context->distributed->i_send_recv_all_to_all(send_count, receive_count);
 
-            for (int i = 0; i < rank_size; ++i) {
+            /* for (int i = 0; i < rank_size; ++i) {
                 if (receive_count[i] > 0) {
                     std::cout << "Second count:-----FromProc: " << i << " count:" << receive_count[i]
                               << " Proc: " << proc_num << std::endl;
                 }
-            }
+            } */
         }
 
         template <typename V>
@@ -129,18 +120,18 @@ namespace mars {
             scan_send_mirror = create_mirror_view(scan_send);
             make_scan_index_mirror(scan_send_mirror, send_count);
             Kokkos::deep_copy(scan_send, scan_send_mirror);
+            /*
+                        std::cout << "Missing Send_scan: " << std::endl;
+                        for (int i = 0; i < rank_size + 1; ++i) {
+                            std::cout << scan_send_mirror(i) << " ";
+                        }
+                        std::cout << std::endl;
 
-            std::cout << "Missing Send_scan: " << std::endl;
-            for (int i = 0; i < rank_size + 1; ++i) {
-                std::cout << scan_send_mirror(i) << " ";
-            }
-            std::cout << std::endl;
-
-            std::cout << "Missing recv_scan:" << std::endl;
-            for (int i = 0; i < rank_size + 1; ++i) {
-                std::cout << scan_recv_mirror(i) << " ";
-            }
-            std::cout << std::endl;
+                        std::cout << "Missing recv_scan:" << std::endl;
+                        for (int i = 0; i < rank_size + 1; ++i) {
+                            std::cout << scan_recv_mirror(i) << " ";
+                        }
+                        std::cout << std::endl; */
         }
 
         template <typename VW>
@@ -184,14 +175,12 @@ namespace mars {
 
                     // build the ghost dof object and insert into the map
                     const auto result = gsgm.insert(ghost_sfc, Dof(gid, owner_proc));
-                    assert(result.success());
+                    assert(!result.failed());
+
                 });
-            /* In the end the size of the map should be as the size of the ghost_dofs.
-             * Careful map size  is not capacity */
-            assert(size == gsgm.size());
         }
 
-        void build_foreign_dof_map(ViewVectorType<Integer> missing_dofs_sfc) {
+        void build_remote_dof_map(ViewVectorType<Integer> missing_dofs_sfc) {
             using namespace Kokkos;
 
             const auto &context = dof_handler.get_context();
@@ -200,7 +189,6 @@ namespace mars {
             int rank_size = num_ranks(context);
 
             auto missing_dofs_sfc_size = missing_dofs_sfc.extent(0);
-            printf("missing_dofs_sfc_size: %li\n", missing_dofs_sfc_size);
 
             std::vector<Integer> send_count(rank_size, 0);
             std::vector<Integer> receive_count(rank_size, 0);
@@ -210,13 +198,6 @@ namespace mars {
             }
 
             context->distributed->i_send_recv_all_to_all(send_count, receive_count);
-/*
-            for (int i = 0; i < rank_size; ++i) {
-                if (receive_count[i] > 0) {
-                    std::cout << "DM:-----FromProc: " << i << " count:" << receive_count[i] << " Proc: " << proc_num
-                              << std::endl;
-                }
-            } */
 
             /* create the scan recv mirror view from the receive count */
             auto scan_rcv = ViewVectorType<Integer>("scan_rcv_", rank_size + 1);
@@ -230,21 +211,8 @@ namespace mars {
             make_scan_index_mirror(scn_send_mirror, send_count);
             Kokkos::deep_copy(scn_send, scn_send_mirror);
 
-            // THIS IS AN  ALL TO ALL MPI COMM. NOT SCALING WELL!
             Integer ghost_size = scan_rcv_mirror(rank_size);
             auto ghost_dofs_sfc = ViewVectorType<Integer>("ghost_dofs", ghost_size);
-
-            std::cout << "Send_scan: " << std::endl;
-            for (int i = 0; i < rank_size + 1; ++i) {
-                std::cout << scn_send_mirror(i) << " ";
-            }
-            std::cout << std::endl;
-
-            std::cout << "recv_scan:" << std::endl;
-            for (int i = 0; i < rank_size + 1; ++i) {
-                std::cout << scan_rcv_mirror(i) << " ";
-            }
-            std::cout << std::endl;
 
             context->distributed->i_send_recv_view_to_all(
                 ghost_dofs_sfc, scan_rcv_mirror.data(), missing_dofs_sfc, scn_send_mirror.data());
@@ -261,7 +229,7 @@ namespace mars {
             exchange_ghost_globals(context, global_dofs, global_sfcs);
 
             build_ghost_global_map(rank_size, global_ghost_dofs, global_ghost_sfcs);
-            std::cout << "Foreign DOf Map: Ending mpi send receive for the ghost sfc dofs " << std::endl;
+            std::cout << "Remote DOf Map: Ending mpi send receive for the ghost sfc dofs " << std::endl;
         }
 
         MARS_INLINE_FUNCTION
@@ -295,11 +263,9 @@ namespace mars {
         }
 
     private:
-        // data associated to the mesh elements (sfc) within the context.
         DofHandler dof_handler;
 
-        // the local to global mapp for the locally owned is mapped from the sfc_to global view
-        // for the ghost dofs is used the following kokkos unordered map.
+        // remote sfc to global_map.
         UnorderedMap<Integer, Dof> ghost_sfc_to_global_map;
 
         ViewVectorType<Integer> scan_view_rank;
