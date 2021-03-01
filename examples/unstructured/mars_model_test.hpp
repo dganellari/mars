@@ -27,6 +27,7 @@
 #include "mars_invert.hpp"
 #include "mars_laplace_ex.hpp"
 #include "mars_precon_conjugate_grad.hpp"
+#include "mars_serial_mesh_type.hpp"
 #include "mars_simplex_laplacian.hpp"
 #include "mars_umesh_laplace.hpp"
 #include "vtu_writer.hpp"
@@ -36,41 +37,6 @@
 using namespace std::chrono;
 
 namespace mars {
-
-    template <class Mesh>
-    struct SerialMeshType {};
-
-    template <int Dim, int ManifoldDim>
-    struct SerialMeshType<
-        mars::Mesh<Dim, ManifoldDim, KokkosImplementation, Simplex<Dim, ManifoldDim, KokkosImplementation>>> {
-        using Type = mars::Mesh<Dim, ManifoldDim>;
-    };
-
-    template <int Dim, int ManifoldDim, int ElemType>
-    struct SerialMeshType<
-        mars::Mesh<Dim, ManifoldDim, KokkosImplementation, NonSimplex<ElemType, KokkosImplementation>>> {
-        using Type = mars::Mesh<Dim, ManifoldDim, DefaultImplementation, NonSimplex<ElemType>>;
-    };
-
-    template <>
-    struct SerialMeshType<mars::ParallelQuad4Mesh> {
-        using Type = mars::Mesh<2, 2, DefaultImplementation, NonSimplex<4>>;
-    };
-
-    template <>
-    struct SerialMeshType<mars::ParallelMesh2> {
-        using Type = mars::Mesh<2, 2>;
-    };
-
-    template <>
-    struct SerialMeshType<mars::ParallelMesh3> {
-        using Type = mars::Mesh<3, 3>;
-    };
-
-    template <>
-    struct SerialMeshType<mars::ParallelMesh4> {
-        using Type = mars::Mesh<4, 4>;
-    };
 
     template <class PMesh, class Op, class BC, class RHS, class AnalyticalFun>
     class ModelTest {
@@ -110,16 +76,17 @@ namespace mars {
                 // fprintf(file_time, "%ld, %.4fs\n", mesh.n_nodes(), std::chrono::duration<double>(diff).count());
                 // fclose(file_time);
 
-                if (ok) {
-                    if (write_output) {
-                        return write(x);
-                    } else {
-                        return true;
-                    }
-
+                // if (ok) {
+                if (write_output) {
+                    return write(x) && ok;
                 } else {
-                    return false;
+                    return ok;
                 }
+
+                // } else {
+                // std::cerr << "No OK" << std::endl;
+                // return false;
+                // }
             }
 
             bool write(VectorReal &x) {
@@ -190,12 +157,12 @@ namespace mars {
 
                 std::cout << "=====================================" << std::endl;
 
-                if (write_output) {
-                    VTUMeshWriter<SMesh> w;
-                    VectorReal::HostMirror x_exact_host("x_exact_host", mesh.n_nodes());
-                    Kokkos::deep_copy(x_exact_host, x_exact);
-                    return w.write("x_exact.vtu", serial_mesh, x_exact_host);
-                }
+                // if (write_output) {
+                VTUMeshWriter<SMesh> w;
+                VectorReal::HostMirror x_exact_host("x_exact_host", mesh.n_nodes());
+                Kokkos::deep_copy(x_exact_host, x_exact);
+                return w.write("x_exact.vtu", serial_mesh, x_exact_host);
+                // }
 
                 return true;
             }

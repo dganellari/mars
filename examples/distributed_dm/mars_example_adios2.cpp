@@ -1,8 +1,65 @@
 #include <adios2.h>
 #include <iostream>
 #include <thread>
-// #include "mars_context.hpp"
-// #include "mars_globals.hpp"
+
+#include <err.h>
+
+#include <KokkosBlas1_nrm1.hpp>
+#include <KokkosBlas1_nrminf.hpp>
+#include <KokkosBlas1_sum.hpp>
+#include <algorithm>
+#include <cassert>
+#include <chrono>
+#include <cstdlib>
+#include <iostream>
+#include <numeric>
+
+#include "mars_base.hpp"
+#include "mars_boundary_conditions.hpp"
+#include "mars_copy_operator.hpp"
+// #include "mars_fe_values.hpp"
+#include "mars_globals.hpp"
+// #include "mars_gradient_recovery.hpp"
+#include "mars_identity_operator.hpp"
+#include "mars_interpolate.hpp"
+#include "mars_invert.hpp"
+#include "mars_laplace_ex.hpp"
+#include "mars_serial_mesh_type.hpp"
+// #include "mars_precon_conjugate_grad.hpp"
+// #include "mars_simplex_laplacian.hpp"
+// #include "mars_umesh_laplace.hpp"
+#include "vtu_writer.hpp"
+
+#include "mars_mesh_kokkos.hpp"
+
+using namespace std::chrono;
+
+// namespace mars {
+
+//     using VectorReal = mars::ViewVectorType<Real>;
+
+//     template <class PMesh>
+//     bool write(const std::string &path, const PMesh &mesh, VectorReal &x) {
+//         using SMesh = typename SerialMeshType<PMesh>::Type;
+//         std::cout << "Writing results to disk..." << std::endl;
+
+//         Integer n_nodes = mesh.n_nodes();
+
+//         VectorReal::HostMirror x_host("x_host", n_nodes);
+//         Kokkos::deep_copy(x_host, x);
+
+//         SMesh serial_mesh;
+//         convert_parallel_mesh_to_serial(serial_mesh, mesh);
+
+//         VTUMeshWriter<SMesh> w;
+
+//         if (!w.write(path, serial_mesh, x_host)) {
+//             return false;
+//         }
+
+//         return true;
+//     }
+// }  // namespace mars
 
 int main(int argc, char *argv[]) {
     int rank = 0;
@@ -23,6 +80,8 @@ int main(int argc, char *argv[]) {
 #else
     adios2::ADIOS adios;
 #endif
+
+    std::cout << "Writing results to disk..." << std::endl;
 
     std::cout << "Running Example Write code written for local array write ADIOS2" << std::endl;
 

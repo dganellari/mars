@@ -40,6 +40,7 @@
 // #include "mars_fitzhugh_nagumo.hpp"
 #include "mars_mesh_kokkos.hpp"
 #include "mars_model_test.hpp"
+#include "mars_serial_mesh_type.hpp"
 #include "mars_spacetime_ex.hpp"
 #include "mars_umesh_laplace.hpp"
 #include "mars_umesh_st_heat_equation.hpp"

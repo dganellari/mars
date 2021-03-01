@@ -22,6 +22,7 @@
 #include "mars_poisson_operator.hpp"
 #include "mars_precon_conjugate_grad.hpp"
 #include "mars_quad4.hpp"
+#include "mars_serial_mesh_type.hpp"
 #endif  // WITH_KOKKOS
 #endif
 
