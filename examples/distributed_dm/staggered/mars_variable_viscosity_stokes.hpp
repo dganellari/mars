@@ -217,7 +217,7 @@ namespace mars {
         DHandler dof_handler(&mesh, context);
         dof_handler.enumerate_dofs();
 
-        /* dof_handler.print_dofs(proc_num); */
+        dof_handler.print_dofs(proc_num);
 
         /* dof_handler.print_mesh_sfc(proc_num); */
 
