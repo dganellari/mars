@@ -236,7 +236,7 @@ void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_c
     Integer proc_count_r = std::count_if(receive_count.begin(), receive_count.end(),
                                        [](T count) { return count > 0; });
 
-    printf("proc count proc: %li - %li - %li - %li\n", proc_count, proc_count_r, receive_count.size(), send_count.size());
+    /* printf("proc count proc: %li - %li - %li - %li\n", proc_count, proc_count_r, receive_count.size(), send_count.size()); */
     std::vector<MPI_Request> send_req(proc_count);
     std::vector<MPI_Request> receive_req(proc_count_r);
 
@@ -273,7 +273,7 @@ void i_send_recv_all_to_all(const std::vector<T> &send_count, std::vector<T> &re
     Integer proc_count = send_count.size();
     Integer proc_count_r = receive_count.size();
 
-    printf("proc count proc: %li - %li - %li - %li\n", proc_count, proc_count_r, receive_count.size(), send_count.size());
+    /* printf("proc count proc: %li - %li - %li - %li\n", proc_count, proc_count_r, receive_count.size(), send_count.size()); */
     std::vector<MPI_Request> send_req(proc_count);
     std::vector<MPI_Request> receive_req(proc_count_r);
 
