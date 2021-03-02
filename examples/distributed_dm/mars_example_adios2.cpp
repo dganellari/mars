@@ -1,3 +1,4 @@
+#include <adios2.h>
 #include <err.h>
 #include <algorithm>
 #include <cassert>
@@ -251,13 +252,12 @@ int main(int argc, char *argv[]) {
 
         auto args = options.parse(argc, argv);
 
-        ModelTest<ParallelQuad4Mesh,
-                  UMeshSTHeatEquation<ParallelQuad4Mesh>,
-                  ST3BC<ParallelQuad4Mesh>,
-                  ST3RHS,
-                  ST3Analitcal>()
-            .run(args);
-
-        return 0;
+        // ModelTest<ParallelQuad4Mesh,
+        //           UMeshSTHeatEquation<ParallelQuad4Mesh>,
+        //           ST3BC<ParallelQuad4Mesh>,
+        //           ST3RHS,
+        //           ST3Analitcal>()
+        //     .run(args);
     }
+    return env.exit_code();
 }
