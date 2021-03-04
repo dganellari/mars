@@ -65,8 +65,8 @@ namespace mars {
                 const Integer index = fv_dof_handler.local_to_owned_index(local_dof);
                 rhs(index) = rval;
 
-                auto global = fv_dof_handler.get_dof_handler().local_to_global(local_dof);
-                printf("local_dof: %li, global: %li - rval: %lf\n", local_dof, global, rval);
+                /* auto global = fv_dof_handler.get_dof_handler().local_to_global(local_dof);
+                printf("local_dof: %li, global: %li - rval: %lf\n", local_dof, global, rval); */
             }
         });
 

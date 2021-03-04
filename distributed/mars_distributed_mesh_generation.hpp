@@ -156,7 +156,7 @@ void partition_mesh(const context &context, DMesh<Dim, ManifoldDim, Type> &mesh)
 }
 
 //the points and elements can be generated on the fly from the sfc code in case meshless true.
-template <Integer Dim, Integer ManifoldDim, Integer Type, bool Meshless = false>
+template <Integer Dim, Integer ManifoldDim, Integer Type, bool Meshless = true>
 bool generate_distributed_cube(const context &context, DMesh<Dim, ManifoldDim, Type> &mesh,
                                const Integer xDim, const Integer yDim, const Integer zDim)
 {
