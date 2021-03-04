@@ -261,14 +261,14 @@ namespace mars {
         });*/
 
         assemble_volume(volume_stencil, sp, proc_num);
-        assemble_face(face_stencil, sp, cvdm);
-        /*assemble_oriented_face(face_stencil, sp, cvdm);*/
+        /* assemble_face(face_stencil, sp, cvdm); */
+        assemble_oriented_face(face_stencil, sp, cvdm);
 
         fv_dof_handler.boundary_dof_iterate(
             MARS_LAMBDA(const Integer local_dof) { sp.set_value(local_dof, local_dof, 1); });
 
-        print_sparsity_pattern(sp);
-        sp.write("Spattern");
+        /* print_sparsity_pattern(sp); */
+        /* sp.write("Spattern"); */
 
         auto rhs = assemble_rhs(fv_dof_handler, cdm);
 
