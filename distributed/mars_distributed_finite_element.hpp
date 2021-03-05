@@ -267,7 +267,7 @@ namespace mars {
     template <class DofHandler>
     auto build_fe_dof_map(const DofHandler &handler) {
         FEDofMap<DofHandler> fe(handler);
-        fe.template enumerate_local_dofs();
+        fe.enumerate_local_dofs();
         return fe;
     }
 
