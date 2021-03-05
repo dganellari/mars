@@ -1,7 +1,7 @@
 #ifndef MARS_HPP
 #define MARS_HPP
 
-
+#include "mars_base.hpp"
 
 #include "mars_mesh.hpp"
 #include "mars_bisection.hpp"
@@ -37,16 +37,16 @@
 #include "mars_longest_edge_kokkos.hpp"
 #include "mars_mesh_kokkos.hpp"
 #include "mars_lepp_benchmark_kokkos.hpp"
-#include "mars_test_kokkos.hpp"
 #endif //WITH_KOKKOS
 
 #ifdef WITH_MPI
 #include "mars_mpi_guard.hpp"
 #ifdef WITH_KOKKOS
-#include "mars_test_mpi.hpp"
 #include "mars_distributed_mesh_generation.hpp"
 #include "mars_distributed_user_data.hpp"
 #include "mars_distributed_data_management.hpp"
+#include "mars_distributed_staggered_data_management.hpp"
+#include "mars_distributed_sparsity_pattern.hpp"
 #endif //WITH_KOKKOS
 #endif //WITH_MPI
 

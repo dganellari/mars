@@ -36,7 +36,7 @@ namespace mars {
 // using KokkosVector = Kokkos::View<Real *>;
 // using SparseMatrix = KokkosSparse::CrsMatrix<Real, Integer, Kokkos::Serial>;
 
-template <class DM, class FEM = FEDofMap<DM::Degree>>
+template <class DM, class FEM>
 class Operator {
 public:
     virtual ~Operator(){};
@@ -53,12 +53,12 @@ public:
         return *commctx;
     }
 
-    MARS_INLINE_FUNCTION FEDMValues<DM> &values() { return values_; }
-    MARS_INLINE_FUNCTION const FEDMValues<DM> &values() const { return values_; }
+    MARS_INLINE_FUNCTION FEDMValues<DM, FEM> &values() { return values_; }
+    MARS_INLINE_FUNCTION const FEDMValues<DM, FEM> &values() const { return values_; }
 
 private:
     const context &ctx_;
-    FEDMValues<DM> values_;
+    FEDMValues<DM, FEM> values_;
 };
 
 // class ImplicitEulerOperator final : public Operator {
