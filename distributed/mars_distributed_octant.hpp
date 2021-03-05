@@ -153,6 +153,31 @@ namespace mars {
         }
 
         template <Integer Type>
+        MARS_INLINE_FUNCTION void validate_dof_nbh(const Integer xDim,
+                                                   const Integer yDim,
+                                                   const Integer zDim,
+                                                   const bool periodic) {
+            switch (Type) {
+                case ElementType::Quad4: {
+                    if (x < 0 || y < 0 || x > xDim || y > yDim) {
+                        set_invalid();
+                    }
+                    break;
+                }
+                case ElementType::Hex8: {
+                    if (x < 0 || y < 0 || z < 0 || x > xDim || y > yDim || z > zDim) {
+                        set_invalid();
+                    }
+                    break;
+                }
+                default: {
+                    printf("Could not validate: The element type is not valid\n");
+                    break;
+                }
+            }
+        }
+
+        template <Integer Type>
         MARS_INLINE_FUNCTION void validate_nbh(const Integer xDim,
                                                const Integer yDim,
                                                const Integer zDim,
