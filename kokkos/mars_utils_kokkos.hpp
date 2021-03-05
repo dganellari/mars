@@ -3,6 +3,8 @@
 
 #ifdef WITH_KOKKOS
 #include "Kokkos_Layout.hpp"
+#include "KokkosKernels_default_types.hpp"
+#include "KokkosSparse_CrsMatrix.hpp"
 #endif
 #include "mars_globals.hpp"
 #include "mars_vector.hpp"
@@ -27,12 +29,17 @@ constexpr std::size_t arraySize(T (&)[N][M]) noexcept
 	// #endif //KOKKOS_ENABLE_THREADS
 #endif
 
-#ifdef MARS_USE_CUDA
-	#define KokkosSpace Kokkos::CudaSpace
+#if defined(MARS_USE_CUDA)
+	#if defined(MARS_USE_CUDAUVM)
+		#define KokkosSpace Kokkos::CudaUVMSpace
+	#else
+		#define KokkosSpace Kokkos::CudaSpace
+	#endif // MARS_USE_CUDAUVM
 	#define KokkosLayout Kokkos::LayoutLeft
 #else //MARS_USE_CUDA
 	#ifdef KOKKOS_ENABLE_OPENMP
-		#define KokkosSpace Kokkos::OpenMP
+		/* #define KokkosSpace Kokkos::OpenMP */
+        #define KokkosSpace Kokkos::HostSpace
 		#define KokkosLayout Kokkos::LayoutRight
 	#else //KOKKOS_ENABLE_OPENMP
 		// #ifdef KOKKOS_ENABLE_THREADS
@@ -44,7 +51,6 @@ constexpr std::size_t arraySize(T (&)[N][M]) noexcept
 		// #endif //KOKKOS_ENABLE_THREADS
 	#endif //KOKKOS_ENABLE_OPENMP
 #endif //MARS_USE_CUDA
-
 
 template<typename T>
 using ViewVectorTypeStride = Kokkos::View<T*, Kokkos::LayoutStride, KokkosSpace>;

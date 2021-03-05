@@ -1,29 +1,11 @@
-// #include "mars_poisson.hpp"
-#include "Kokkos_ArithTraits.hpp"
-#include "Kokkos_Bitset.hpp"
-#include "Kokkos_Parallel.hpp"
-#include "Kokkos_Parallel_Reduce.hpp"
-#include "mars_context.hpp"
-#include "mars_globals.hpp"
-#include "mars_pvtu_writer.hpp"
-
-// #include <bits/c++config.h>
 #include <exception>
 #include <iostream>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 
+#include "mars.hpp"
 #include "mars_quad4.hpp"
-
-#ifdef WITH_MPI
-#include "mars_mpi_guard.hpp"
-
-#ifdef WITH_KOKKOS
-#include "mars_distributed_data_management.hpp"
-#include "mars_distributed_mesh_generation.hpp"
-#endif // WITH_KOKKOS
-#endif
 
 
 void mesh_test(int &argc, char **&argv, const int level) {
@@ -72,11 +54,12 @@ void mesh_test(int &argc, char **&argv, const int level) {
      */
     constexpr Integer Dim = DistributedQuad4Mesh::Dim;
 
+    using DOFHandler = DofHandler<DistributedQuad4Mesh, 1>;
     using Elem = typename DistributedQuad4Mesh::Elem;
     // the type of the mesh elements. In this case quad4 (Type=4)
     constexpr Integer Type = Elem::ElemType;
 
-    DofHandler dof_handler(&mesh, context);
+    DOFHandler dof_handler(&mesh, context);
     dof_handler.enumerate_dofs(context);
     // create the dm object
     DMQ2 dm(dof_handler);

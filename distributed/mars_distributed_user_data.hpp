@@ -216,6 +216,28 @@ public:
         /* print_nth_tuple<1>(proc_num); */
     }
 
+    void print_mesh_sfc(const int proc)
+    {
+        using namespace Kokkos;
+
+        Integer xDim = host_mesh->get_XDim();
+        Integer yDim = host_mesh->get_YDim();
+        Integer zDim = host_mesh->get_ZDim();
+
+        parallel_for(
+            "print set", host_mesh->get_chunk_size(), KOKKOS_LAMBDA(const Integer i) {
+
+                const Integer sfc = get_sfc(i);
+                double point[3];
+                get_vertex_coordinates_from_sfc<simplex_type::ElemType>(sfc, point, xDim, yDim, zDim);
+
+                Octant o = get_octant_from_sfc<simplex_type::ElemType>(sfc);
+                printf("mesh sfc : %li - %li - %li - (%lf, %lf) -rank: %i\n",
+                       i, sfc, elem_index(o.x, o.y, o.z, xDim, yDim), point[0],
+                       point[1], proc);
+            });
+    }
+
     template <Integer I, typename H = typename std::tuple_element<I, tuple>::type>
     void print_nth_tuple(const int proc)
     {
@@ -574,7 +596,7 @@ public:
     }
 
     //return the sfc from the sfc index from either ghost or local index
-    template <bool Ghost>
+    template <bool Ghost = false>
     MARS_INLINE_FUNCTION
     Integer get_sfc(const Integer sfc_index)
     {

@@ -31,7 +31,7 @@
 
 namespace mars {
 
-    template <class DM, Integer Type, class FEM = FEDofMap<DM::Degree>>
+    template <class DM, Integer Type, class FEM>
     class PVTUMeshWriter {
     private:
         static const int VTU_TRIANGLE = 5;
