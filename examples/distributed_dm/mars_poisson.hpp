@@ -63,19 +63,20 @@ u = P uk */
 
 namespace mars {
 
-    /* using DMQ2 = DM<DistributedQuad4Mesh, 2, double, double>; */
-    using DMQ2 = DM<DistributedQuad4Mesh, 1, double, double, double>;
     using DOFHandler = DofHandler<DistributedQuad4Mesh, 1>;
-    /*
-    enum class DMDataDesc
-    {
-        v = 0,
-        u = 1
-    };
-     */
+    /* using DMQ2 = DM<DistributedQuad4Mesh, 2, double, double>; */
+    using DMQ2 = DM<DOFHandler, double, double, double>;
+    using FE = FEDofMap<DOFHandler>;
+        /*
+        enum class DMDataDesc
+        {
+            v = 0,
+            u = 1
+        };
+         */
 
-    // use as more readable tuple index to identify the data
-    static constexpr int INPUT = 0;
+        // use as more readable tuple index to identify the data
+        static constexpr int INPUT = 0;
     static constexpr int OUTPUT = 1;
     static constexpr int RHSD = 2;
 
@@ -117,13 +118,13 @@ namespace mars {
 
     // print thlocal and the global number of the dof within each element.
     // the dof enumeration within eachlement is topological
-    void print_elem_global_dof(const DMQ2 dm) {
+    void print_elem_global_dof(const DMQ2 dm, const FE &fe) {
         auto dof_handler = dm.get_dof_handler();
         dof_handler.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
             // go through all the dofs of the elem_index element
-            for (int i = 0; i < DMQ2::elem_nodes; i++) {
+            for (int i = 0; i < FE::elem_nodes; i++) {
                 // get the local dof of the i-th index within thelement
-                const Integer local_dof = dof_handler.get_elem_local_dof(elem_index, i);
+                const Integer local_dof = fe.get_elem_local_dof(elem_index, i);
                 // convert the local dof number to global dof number
                 Dof d = dof_handler.local_to_global_dof(local_dof);
 
@@ -150,7 +151,7 @@ namespace mars {
     }
 
     template <class BC, class RHS, class AnalyticalFun>
-    void poisson_2D(const int level) {
+    void poisson_2D(const int xDim, const int yDim) {
         using namespace mars;
         mars::proc_allocation resources;
 
@@ -169,7 +170,7 @@ namespace mars {
         Kokkos::Timer timer;
         // create the quad mesh distributed through the mpi procs.
         DistributedQuad4Mesh mesh;
-        generate_distributed_cube(context, mesh, level, level, 0);
+        generate_distributed_cube(context, mesh, xDim, yDim, 0);
 
         constexpr Integer Dim = DistributedQuad4Mesh::Dim;
 
@@ -178,7 +179,7 @@ namespace mars {
         constexpr Integer Type = Elem::ElemType;
 
         DOFHandler dof_handler(&mesh, context);
-        dof_handler.enumerate_dofs(context);
+        dof_handler.enumerate_dofs();
         // create the dm object
         DMQ2 dm(dof_handler);
         // enumerate the dofs locally and globally. The ghost dofs structures
@@ -191,8 +192,10 @@ namespace mars {
         /* print_dof<Type>(dm.get_local_dof_enum(), proc_num); */
         /* print_dofs<Type>(dm, proc_num); */
 
+        auto fe = build_fe_dof_map(dof_handler);
+
         // print the global dofs for each element's local dof
-        /* print_elem_global_dof(dm); */
+        /* print_elem_global_dof(dm, fe); */
         /* print_ghost_dofs(dm); */
 
         using VectorReal = mars::ViewVectorType<Real>;
@@ -213,7 +216,7 @@ namespace mars {
             std::cout << "Init PoissonOperator..." << std::endl;
         }
 
-        PoissonOperator<DMQ2, INPUT, OUTPUT, RHSD> pop(context, dm);
+        PoissonOperator<INPUT, OUTPUT, RHSD, DMQ2, FE> pop(context, dm, fe);
         pop.init();
 
         if (proc_num == 0) {

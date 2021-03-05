@@ -4,28 +4,30 @@
 #ifdef WITH_MPI
 #ifdef WITH_KOKKOS
 #include "mars_distributed_base_data_management.hpp"
+#include "mars_distributed_finite_element.hpp"
+#include "mars_distributed_stencil.hpp"
 
 namespace mars {
 
-    template <class Mesh, Integer degree, typename... T>
-    class DM : public BDM<Mesh, degree, T...> {
+    template <typename DHandler, typename... T>
+    class DM : public BDM<T...> {
     public:
-        /* using UD = UserData<Mesh, double>; */
-        using UD = UserData<Mesh>;
-        using simplex_type = typename Mesh::Elem;
+        static constexpr Integer Degree = DHandler::Degree;
+
+        using DofHandler = DHandler;
 
         using user_tuple = ViewsTuple<T...>;
         using tuple = std::tuple<T...>;
 
-        using SuperDM = BDM<Mesh, degree, T...>;
+        using SuperDM = BDM<T...>;
 
         template <Integer idx>
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
         MARS_INLINE_FUNCTION
-        DM(DofHandler<Mesh, degree> d) : SuperDM(d) {
+        DM(DofHandler d) : dof_handler(d) {
             SuperDM::template reserve_user_data(
-                user_data, "user_data tuple", SuperDM::get_dof_handler().get_local_dof_enum().get_elem_size());
+                user_data, "user_data tuple", get_dof_handler().get_local_dof_enum().get_elem_size());
         }
 
         MARS_INLINE_FUNCTION
@@ -41,114 +43,53 @@ namespace mars {
             return std::get<idx>(user_data)(i);
         }
 
-        template <Integer... dataidx>
-        void scatter_add(user_tuple &boundary_user_data) {
-            SuperDM::template fill_buffer_data<1, dataidx...>(
-                user_data,
-                boundary_user_data,
-                SuperDM::get_dof_handler().get_boundary_dofs(),
-                SuperDM::get_dof_handler().get_local_dof_enum().get_view_sfc_to_local());
-        }
-
-        template <Integer... dataidx>
-        void scatter_max(user_tuple &boundary_user_data) {
-            SuperDM::template fill_buffer_data<2, dataidx...>(
-                user_data,
-                boundary_user_data,
-                SuperDM::get_dof_handler().get_boundary_dofs(),
-                SuperDM::get_dof_handler().get_local_dof_enum().get_view_sfc_to_local());
-        }
-
-        template <Integer... dataidx>
-        void scatter_min(user_tuple &boundary_user_data) {
-            SuperDM::template fill_buffer_data<3, dataidx...>(
-                user_data,
-                boundary_user_data,
-                SuperDM::get_dof_handler().get_boundary_dofs(),
-                SuperDM::get_dof_handler().get_local_dof_enum().get_view_sfc_to_local());
+        template <std::size_t idx, typename H = typename std::tuple_element<idx, tuple>::type>
+        MARS_INLINE_FUNCTION H &get_data(const Integer i) const {
+            return std::get<idx>(user_data)(i);
         }
 
         // gather operation: fill the data from the received ghost data
         template <Integer... dataidx>
-        void gather_ghost_data(const context &context) {
-            // exchange the ghost dofs first since it will be used to find the address
-            // of the userdata based on the sfc code.
-            int proc_num = rank(context);
-            int size = num_ranks(context);
-
-            Integer ghost_size = SuperDM::get_dof_handler().get_view_scan_recv_mirror()(size);
-            user_tuple ghost_user_data;
-            SuperDM::template reserve_user_data<dataidx...>(ghost_user_data, "ghost_user_data", ghost_size);
-
-            // prepare the buffer to send the boundary data
-            const Integer buffer_size = SuperDM::get_dof_handler().get_boundary_dofs().extent(0);
-            user_tuple buffer_data;
-            SuperDM::template reserve_user_data<dataidx...>(buffer_data, "buffer_data", buffer_size);
-
-            SuperDM::template fill_buffer_data<0, dataidx...>(
-                user_data,
-                buffer_data,
-                SuperDM::get_dof_handler().get_boundary_dofs(),
-                SuperDM::get_dof_handler().get_local_dof_enum().get_view_sfc_to_local());
-
-            SuperDM::template exchange_ghost_dofs_data<dataidx...>(
-                context,
-                ghost_user_data,
-                buffer_data,
-                SuperDM::get_dof_handler().get_view_scan_recv_mirror().data(),
-                SuperDM::get_dof_handler().get_view_scan_send_mirror().data());
-
-            // use the received ghost data and the sfc to put them to the unified local data
-            SuperDM::template fill_user_data<0, dataidx...>(
-                user_data,
-                ghost_user_data,
-                SuperDM::get_dof_handler().get_ghost_dofs(),
-                SuperDM::get_dof_handler().get_local_dof_enum().get_view_sfc_to_local());
+        void gather_ghost_data() {
+            // gather operation: fill the data from the received ghost data
+            SuperDM::template gather_ghost_data<dataidx...>(get_dof_handler(), user_data);
         }
 
         template <Integer... dataidx>
-        user_tuple scatter_ghost_data(const context &context) {
-            // exchange the ghost dofs first since it will be used to find the address
-            // of the userdata based on the sfc code.
-            int proc_num = rank(context);
-            int size = num_ranks(context);
+        user_tuple scatter_ghost_data() {
+            return SuperDM::template scatter_ghost_data<dataidx...>(get_dof_handler(), user_data);
+        }
 
-            Integer ghost_size = SuperDM::get_dof_handler().get_view_scan_recv_mirror()(size);
-            user_tuple ghost_buffer_data;
-            SuperDM::template reserve_user_data<dataidx...>(ghost_buffer_data, "ghost_user_data", ghost_size);
+        template <Integer... dataidx>
+        void scatter_add_ghost_data() {
+            // scatter the data to the procs and keep them in a boundary data tuple
+            // again if no template argument is specified all the data is scattered.
+            // if not all of them then be careful since the tuple is not initialized on
+            // the others example: dm_tuple boundary_data =
+            // dm.scatter_ghost_data<1>();
+            auto boundary_data = scatter_ghost_data<dataidx...>();
 
-            SuperDM::template fill_user_data<1, dataidx...>(
-                user_data,
-                ghost_buffer_data,
-                SuperDM::get_dof_handler().get_ghost_dofs(),
-                SuperDM::get_dof_handler().get_local_dof_enum().get_view_sfc_to_local());
-
-            const Integer boundary_size = SuperDM::get_dof_handler().get_boundary_dofs().extent(0);
-            user_tuple boundary_user_data;
-            SuperDM::template reserve_user_data<dataidx...>(boundary_user_data, "boundary_user_data", boundary_size);
-
-            // prepare the buffer to send the boundary data
-            SuperDM::template exchange_ghost_dofs_data<dataidx...>(
-                context,
-                boundary_user_data,
-                ghost_buffer_data,
-                SuperDM::get_dof_handler().get_view_scan_send_mirror().data(),
-                SuperDM::get_dof_handler().get_view_scan_recv_mirror().data());
-
-            return boundary_user_data;
+            // use the scattered data "boundary_data" to do ops like max, add or min in
+            // the dof contributions. Otherwise you can use predifined features like
+            // scatter_add as following. careful to use the same template argument for
+            // specifing the data as in the scatter_ghost_data since otherwise you might
+            // try to access uninitialized tuplelement and get seg faults. example::
+            // dm.scatter_add<1>(boundary_data); If: dm.scatter_add<0>(boundary_data) then
+            // seg faults.
+            SuperDM::template scatter_add<dataidx...>(get_dof_handler(), boundary_data, user_data);
+            /*dm.scatter_max<u>(boundary_data);*/
+            /*dm.scatter_min<u>(boundary_data);*/
         }
 
         template <Integer idx, typename H = typename std::tuple_element<idx, tuple>::type>
         void get_locally_owned_data(const ViewVectorType<H> &x) {
             using namespace Kokkos;
 
-            assert(SuperDM::get_dof_handler().get_global_dof_enum().get_elem_size() == x.extent(0));
-            const Integer size = SuperDM::get_dof_handler().get_global_dof_enum().get_elem_size();
+            assert(get_dof_handler().get_global_dof_enum().get_elem_size() == x.extent(0));
+            const Integer size = get_dof_handler().get_global_dof_enum().get_elem_size();
 
-            ViewVectorType<Integer> global_to_sfc =
-                SuperDM::get_dof_handler().get_global_dof_enum().get_view_elements();
-            ViewVectorType<Integer> sfc_to_local =
-                SuperDM::get_dof_handler().get_local_dof_enum().get_view_sfc_to_local();
+            ViewVectorType<Integer> global_to_sfc = get_dof_handler().get_global_dof_enum().get_view_elements();
+            ViewVectorType<Integer> sfc_to_local = get_dof_handler().get_local_dof_enum().get_view_sfc_to_local();
             ViewVectorType<H> dof_data = get_dof_data<idx>();
 
             Kokkos::parallel_for(
@@ -163,13 +104,11 @@ namespace mars {
         void set_locally_owned_data(const ViewVectorType<H> &x) {
             using namespace Kokkos;
 
-            assert(SuperDM::get_dof_handler().get_global_dof_enum().get_elem_size() == x.extent(0));
-            const Integer size = SuperDM::get_dof_handler().get_global_dof_enum().get_elem_size();
+            assert(get_dof_handler().get_global_dof_enum().get_elem_size() == x.extent(0));
+            const Integer size = get_dof_handler().get_global_dof_enum().get_elem_size();
 
-            ViewVectorType<Integer> global_to_sfc =
-                SuperDM::get_dof_handler().get_global_dof_enum().get_view_elements();
-            ViewVectorType<Integer> sfc_to_local =
-                SuperDM::get_dof_handler().get_local_dof_enum().get_view_sfc_to_local();
+            ViewVectorType<Integer> global_to_sfc = get_dof_handler().get_global_dof_enum().get_view_elements();
+            ViewVectorType<Integer> sfc_to_local = get_dof_handler().get_local_dof_enum().get_view_sfc_to_local();
             ViewVectorType<H> dof_data = get_dof_data<idx>();
 
             Kokkos::parallel_for(
@@ -180,7 +119,30 @@ namespace mars {
                 });
         }
 
+        /* building the stencil is the responsibility of the specialized DM. */
+        template <typename ST, bool Orient = false>
+        ST build_stencil() {
+            return mars::build_stencil<ST, Orient>(get_dof_handler());
+        }
+
+        /* building the FE dof map*/
+        auto build_fe_dof_map() { return mars::build_fe_dof_map(get_dof_handler()); }
+
+        MARS_INLINE_FUNCTION
+        const DofHandler &get_dof_handler() const { return dof_handler; }
+
+        template <Integer idx, typename F>
+        void owned_data_iterate(F f) const {
+            SuperDM::template owned_data_iterate<idx>(*this, f);
+        }
+
+        template <Integer idx, typename F>
+        void data_iterate(F f) const {
+            SuperDM::template data_iterate<idx>(*this, f);
+        }
+
     private:
+        DofHandler dof_handler;
         // data associated to the dof data.
         user_tuple user_data;
     };
