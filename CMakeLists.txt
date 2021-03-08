@@ -301,7 +301,7 @@ endif()
 find_package(ADIOS2 REQUIRED)
 target_link_libraries(mars adios2::cxx11_mpi MPI::MPI_C)
 if(ADIOS2_FOUND)
-    add_executable(adios_example examples/distributed_dm/mars_example_adios2.cpp)
+    add_executable(adios_example examples/mars_example_adios2.cpp)
     target_link_libraries(adios_example mars mars_io)
 endif()
 

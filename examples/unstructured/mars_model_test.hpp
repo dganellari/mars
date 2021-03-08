@@ -13,7 +13,7 @@
 #include <iostream>
 #include <numeric>
 
-#include <cxxopts.hpp>
+#include <external/cxxopts/include/cxxopts.hpp>
 // #include <Kokkos_sort.hpp>
 
 #include "mars_base.hpp"
