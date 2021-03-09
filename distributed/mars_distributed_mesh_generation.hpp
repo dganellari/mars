@@ -13,43 +13,214 @@ namespace mars
 template <Integer Dim, Integer ManifoldDim, Integer Type>
 using DMesh = Mesh<Dim, ManifoldDim, DistributedImplementation, NonSimplex<Type, DistributedImplementation>>;
 
-template <Integer Dim, Integer ManifoldDim, Integer Type>
-void broadcast_gp_np(const context &context, DMesh<Dim, ManifoldDim, Type> &mesh, const std::vector<int> &counts, ViewVectorType<Integer> elems, Integer n__anchor_nodes)
-{
-    int proc_num = rank(context);
-    int size = num_ranks(context);
+template <typename V>
+void scan_count(const V &GpNp, const std::vector<int> &counts, const Integer size) {
+    auto GpNp_host = create_mirror_view(GpNp);
 
-    ViewVectorType<Integer> GpNp = ViewVectorType<Integer>("global_static_partition", 2 * (size + 1));
-
-    if (proc_num == 0)
-    {
-        auto GpNp_host = create_mirror_view(GpNp);
-
-        auto elem_view_host = create_mirror_view(elems);
-        deep_copy(elem_view_host, elems);
-
-        for (int i = 0; i < size; ++i)
-        {
-            //counts[0] is always chunk size. Kind of scan with the first and the last elem of the sfc
-            GpNp_host(2 * i) = elem_view_host(i * counts[0]);
-
-            // acc sum scan for the count
-            GpNp_host(2 * (i + 1) + 1) = GpNp_host(2 * i + 1) + counts[i];
-        }
-        //insert the last element of the sfc adding 1 to it (to make the last element not part of the linearization) for the binary search to work properly
-        GpNp_host(2 * size) = elem_view_host(n__anchor_nodes - 1) + 1;
-        deep_copy(GpNp, GpNp_host);
+    for (int i = 0; i < size; ++i) {
+        // counts[0] is always chunk size. Kind of scan with the first and the last elem of the sfc
+        // acc sum scan for the count
+        GpNp_host(2 * (i + 1) + 1) = GpNp_host(2 * i + 1) + counts[i];
     }
-
-    context->distributed->broadcast(GpNp); //broadcast to all processors.
-    std::cout << "MPI broadcast ended!" << std::endl;
-
-    mesh.set_view_gp(GpNp);
+    // insert the last element of the sfc adding 1 to it (to make the last element not part of the linearization) for
+    // the binary search to work properly
+    deep_copy(GpNp, GpNp_host);
 
     /* parallel_for(
        "print_elem_gp:", size+1, KOKKOS_LAMBDA(const int i) {
        printf(" elch: (%li-%li) - %i - %i\n", GpNp(2*i),  GpNp(2*i+1), i, proc_num);
        }); */
+}
+
+/* template <Integer Dim, Integer ManifoldDim, Integer Type>
+void broadcast_gp_np(const context &context,
+                     const std::vector<int> &counts,
+                     ViewVectorType<Integer> elems,
+                     Integer n__anchor_nodes) {
+    using namespace Kokkos;
+    int proc_num = rank(context);
+    int size = num_ranks(context);
+
+    auto GpNp_host = create_mirror_view(GpNp);
+
+    auto local = subview(elems, 0);
+    auto local_host = create_mirror_view(local);
+    deep_copy(local_host, local);
+
+    [>mpi_all_gather();<]
+    for (int i = 0; i < size; ++i) {
+        // counts[0] is always chunk size. Kind of scan with the first and the last elem of the sfc
+        GpNp_host(2 * i) = elem_view_host(i * counts[0]);
+    }
+    // insert the last element of the sfc adding 1 to it (to make the last element not part of the linearization) for
+    // the binary search to work properly
+    GpNp_host(2 * size) = elem_view_host(n__anchor_nodes - 1) + 1;
+    deep_copy(GpNp, GpNp_host);
+
+    [>parallel_for(
+       "print_elem_gp:", size+1, KOKKOS_LAMBDA(const int i) {
+       printf(" elch: (%li-%li) - %i - %i\n", GpNp(2*i),  GpNp(2*i+1), i, proc_num);
+       });<]
+} */
+
+struct GenerateSFC {
+    ViewVectorType<bool> predicate;
+    Integer xDim;
+    Integer yDim;
+    Integer zDim;
+
+    GenerateSFC(ViewVectorType<bool> el, Integer xdm, Integer ydm) : predicate(el), xDim(xdm), yDim(ydm) {}
+    GenerateSFC(ViewVectorType<bool> el, Integer xdm, Integer ydm, Integer zdm)
+        : predicate(el), xDim(xdm), yDim(ydm), zDim(zdm) {}
+    KOKKOS_INLINE_FUNCTION
+    void operator()(int j, int i) const {
+        // set to true only those elements from the vector that are generated.
+        // in this way the array is already sorted and you just compact it using scan which is much faster in
+        // parallel.
+        assert(encode_morton_2D(i, j) < encode_morton_2D(xDim, yDim));
+        if (encode_morton_2D(i, j) >= encode_morton_2D(xDim, yDim)) {
+            const Integer chunk_size = xDim * yDim;
+            printf("You have reached the mesh genration limit size. Can not generate mesh %li elements\n", chunk_size);
+            exit(1);
+        }
+
+        predicate(encode_morton_2D(i, j)) = 1;
+    }
+
+    KOKKOS_INLINE_FUNCTION
+    void operator()(int k, int j, int i) const {
+        // set to true only those elements from the vector that are generated.
+        // in this way the array is already sorted and you just compact it using scan which is much faster in
+        // parallel.
+        assert(encode_morton_3D(i, j, k) < encode_morton_3D(xDim, yDim, zDim));
+        if (encode_morton_3D(i, j, k) >= encode_morton_3D(xDim, yDim, zDim)) {
+            const Integer chunk_size = xDim * yDim * zDim;
+            printf("You have reached the mesh genration limit size. Can not generate mesh %li elements\n", chunk_size);
+            exit(1);
+        }
+
+        predicate(encode_morton_3D(i, j, k)) = 1;
+    }
+};
+
+template <typename V>
+MARS_INLINE_FUNCTION Integer
+get_first_sfc_rank(const bool is_sfc, const Integer sfc_to_local, const V &gp, const Integer rank) {
+    const Integer index = -1;
+    bool inside_rank_segment = (sfc_to_local >= gp(2 * rank + 1) && sfc_to_local < gp(2 * (rank + 1) + 1));
+
+    if (is_sfc && inside_rank_segment) {
+        index = sfc_to_local - gp(2 * rank + 1);
+    }
+
+    return index;
+}
+
+template <typename V>
+MARS_INLINE_FUNCTION Integer
+get_local_index(const bool is_sfc, const Integer sfc_to_local, const V &gp, const Integer size) {
+    const Integer index = -1;
+
+    for(Integer i = 0; i< size; ++i) {
+        if (is_fsc && sfc_to_local == gp(2 * i + 1)) {
+            index = i;
+        }
+    }
+
+    return index;
+}
+
+template <Integer Type, typename V>
+inline void build_gp_np(const SFC<Type> &morton,
+                        const ViewVectorType<bool> all_elements,
+                        const V &first_sfc,
+                        const V &gp_np,
+                        const Integer size) {
+    using namespace Kokkos;
+
+    ViewVectorType<Integer> sfc_to_local = morton.get_view_sfc_to_local();
+    parallel_for(
+        morton.get_all_range(), KOKKOS_LAMBDA(const Integer i) {
+            const Integer index = get_first_sfc_rank(all_elements(i), sfc_to_local(i), gp_np, size);
+            if (index >= 0) {
+                first_sfc(index) = i;
+            }
+        });
+}
+
+template <Integer Type, typename V>
+inline void compact_into_local(const SFC<Type> &morton,
+                               const ViewVectorType<bool> all_elements,
+                               const V &local,
+                               const V &gp_np,
+                               const Integer rank) {
+    using namespace Kokkos;
+
+    exclusive_bool_scan(0, morton.get_all_range(), morton.get_view_sfc_to_local(), all_elements);
+
+    // otherwise kokkos lambda will not work with CUDA
+    ViewVectorType<Integer> sfc_to_local = morton.get_view_sfc_to_local();
+    parallel_for(
+        morton.get_all_range(), KOKKOS_LAMBDA(const Integer i) {
+            const Integer index = get_local_index(all_elements(i), sfc_to_local(i), gp_np, rank);
+            if (index >= 0) {
+                local(index) = i;
+            }
+        });
+}
+
+template <Integer Type, typename V>
+inline void generate_sfc(const SFC<Type> &morton, const V &local, const V &GpNp, const context &context) {
+    using namespace Kokkos;
+
+    int rank = rank(context);
+    int size = num_ranks(context);
+
+    const Integer xDim = morton.get_XDim();
+    const Integer yDim = morton.get_YDim();
+    const Integer zDim = morton.get_ZDim();
+
+    ViewVectorType<bool> all_elements("predicate", morton.get_all_range());
+    Integer n__anchor_nodes;
+
+    switch (Type) {
+        case ElementType::Quad4: {
+            assert(xDim != 0);
+            assert(yDim != 0);
+            assert(zDim == 0);
+
+            n__anchor_nodes = xDim * yDim;
+
+            parallel_for(MDRangePolicy<Rank<2>>({0, 0}, {yDim, xDim}), GenerateSFC(all_elements, xDim, yDim));
+            break;
+        }
+        case ElementType::Hex8: {
+            assert(xDim != 0);
+            assert(yDim != 0);
+            assert(zDim != 0);
+
+            n__anchor_nodes = xDim * yDim * zDim;
+            parallel_for(MDRangePolicy<Rank<3>>({0, 0, 0}, {zDim, yDim, xDim}),
+                         GenerateSFC(all_elements, xDim, yDim, zDim));
+            break;
+        }
+        default: {
+            return false;
+        }
+    }
+    // compacting the 1 and 0 array and inserting the "true" index of the all elements
+    // which is the correct morton code leaving the sfc elements array sorted.
+    compact_into_local(morton, all_elements, local, GpNp, rank);
+    /* assert(n__anchor_nodes == get_elem_size()); */
+
+    V first_sfc("first_sfc_per_rank", size);
+    build_gp_np(morton, all_elements, first_sfc, GpNp, size);
+    auto first_sfc_mirror = create_mirror_view(first_sfc);
+    deep_copy(first_sfc_mirror, first_sfc);
+
+    //TODO: Fill the gpnp host from first_sfc mirror and deep copy it on the device. The current data of the gpnp host
+    //mirror should be reused.
+
 }
 
 template <Integer Dim, Integer ManifoldDim, Integer Type>
@@ -100,16 +271,12 @@ void partition_mesh(const context &context, DMesh<Dim, ManifoldDim, Type> &mesh)
         errx(1, " Invalid number of mpi processes. Defined more mpi processes than mesh elements to be generated!");
     }
 
-    SFC<Type> morton(mesh.get_XDim(), mesh.get_YDim(), mesh.get_ZDim());
-
     bool root = mars::rank(context) == 0;
     if (root)
     {
         std::cout << "chunk_size - :    " << chunk_size << std::endl;
         std::cout << "n__anchor_nodes size:: - :    " << n__anchor_nodes << std::endl;
         std::cout << "last_chunk_size size:: - :    " << last_chunk_size << std::endl;
-
-        morton.generate_sfc_elements();
     }
 
     std::vector<int> counts(size);
@@ -122,21 +289,30 @@ void partition_mesh(const context &context, DMesh<Dim, ManifoldDim, Type> &mesh)
             counts[i] = chunk_size;
     }
 
+
+    ViewVectorType<Integer> GpNp = ViewVectorType<Integer>("global_static_partition", 2 * (size + 1));
+
+    scan_count(GpNp, counts, size);
+
     //set the chunk size to the remainder for the last mpi processes.
     if (proc_num == size - 1)
     {
         chunk_size = last_chunk_size;
     }
 
-    ViewVectorType<Integer> local = ViewVectorType<Integer>("local_partition_sfc", chunk_size);
 
-    context->distributed->scatterv_gids(morton.get_view_elements(), local, counts);
+    SFC<Type> morton(mesh.get_XDim(), mesh.get_YDim(), mesh.get_ZDim());
+
+    ViewVectorType<Integer> local("local_partition_sfc", chunk_size);
+    generate_sfc(morton, local, GpNp, proc_num);
+
+    /* context->distributed->scatterv_gids(morton.get_view_elements(), local, counts); */
 
     /* std::cout << "MPI Scatter ended!" << std::endl; */
 
     /* std::cout << "Broadcasting the sfc_to_local..." << std::endl; */
 
-    context->distributed->broadcast(morton.get_view_sfc_to_local()); //broadcast to all processors.
+    /* context->distributed->broadcast(morton.get_view_sfc_to_local()); //broadcast to all processors. */
     /* std::cout << "Broadcasting the sfc_to_local ended!" << std::endl; */
 
     /*  parallel_for(
@@ -144,12 +320,13 @@ void partition_mesh(const context &context, DMesh<Dim, ManifoldDim, Type> &mesh)
         printf(" elch: %u-%i\n", local(i), proc_num);
         }); */
 
+    mesh.set_view_gp(GpNp);
     mesh.set_view_sfc(local);
     mesh.set_view_sfc_to_local(morton.get_view_sfc_to_local());
     mesh.set_chunk_size(chunk_size);
     mesh.set_proc(proc_num);
 
-    broadcast_gp_np(context, mesh, counts, morton.get_view_elements(), n__anchor_nodes);
+    /* broadcast_gp_np(context, mesh, counts, local, n__anchor_nodes); */
 
     double time_gen = timer.seconds();
     std::cout << "Paritioning took: " << time_gen << " seconds. Process: " << proc_num << std::endl;
