@@ -178,6 +178,9 @@ namespace mars {
         DHandler dof_handler(&mesh, context);
         dof_handler.enumerate_dofs();
 
+        /* dof_handler.print_dofs(proc_num); */
+        /* dof_handler.print_mesh_sfc(proc_num); */
+
         auto global_size = dof_handler.get_global_dof_size();
         auto owned_size = dof_handler.get_owned_dof_size();
         auto local_size = dof_handler.get_dof_size();
