@@ -3,6 +3,7 @@
 
 #include <err.h>
 
+#include <adios2.h>
 #include <KokkosBlas1_nrm1.hpp>
 #include <KokkosBlas1_nrminf.hpp>
 #include <KokkosBlas1_sum.hpp>
