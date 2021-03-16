@@ -125,7 +125,7 @@ namespace mars {
             return sfc_to_local_;
         }
 
-        Integer get_all_range() { return all_range_; }
+        const Integer get_all_range() const { return all_range_; }
 
         MARS_INLINE_FUNCTION
         SFC() = default;
@@ -147,13 +147,13 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        Integer get_XDim() const { return xDim; }
+        const Integer get_XDim() const { return xDim; }
 
         MARS_INLINE_FUNCTION
-        Integer get_YDim() const { return yDim; }
+        const Integer get_YDim() const { return yDim; }
 
         MARS_INLINE_FUNCTION
-        Integer get_ZDim() const { return zDim; }
+        const Integer get_ZDim() const { return zDim; }
 
     private:
         ViewVectorType<Integer> elements_;
