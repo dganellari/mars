@@ -178,6 +178,19 @@ namespace mars {
         DHandler dof_handler(&mesh, context);
         dof_handler.enumerate_dofs();
 
+        /* dof_handler.print_dofs(proc_num); */
+        /* dof_handler.print_mesh_sfc(proc_num); */
+
+        auto global_size = dof_handler.get_global_dof_size();
+        auto owned_size = dof_handler.get_owned_dof_size();
+        auto local_size = dof_handler.get_dof_size();
+
+        printf("Global Dof size: %li, Owned Dof Size: %li, Local_dof_size: %li, Ghost Dof Size: %li\n",
+               global_size,
+               owned_size,
+               local_size,
+               local_size - owned_size);
+
         FVDH fv_dof_handler(dof_handler);
 
         auto volume_stencil = build_stencil<VStencil>(fv_dof_handler);
@@ -198,20 +211,20 @@ namespace mars {
             MARS_LAMBDA(const Integer local_dof) { sp.set_value(local_dof, local_dof, 1); });
 
         /* print_sparsity_pattern(sp); */
-        sp.write("Spattern");
+        /* sp.write("Spattern"); */
 
         CornerDM cdm(dof_handler);
         set_data_in_circle(cdm, 0, 1);
         cdm.gather_ghost_data<IN>();
 
-        cdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
+        /* cdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
             const Integer local_dof = cdm.get_dof_handler().get_local_dof(i);
 
             const auto idata = cdm.get_data<IN>(i);
             Dof d = cdm.get_dof_handler().local_to_global_dof(local_dof);
 
             printf("lid: %li, u: %lf, global: %li, rank: %i\n", i, idata, d.get_gid(), d.get_proc());
-        });
+        }); */
 
         auto rhs = assemble_rhs(fv_dof_handler, cdm);
 
@@ -242,7 +255,6 @@ namespace mars {
 
         double time = timer.seconds();
         std::cout << "Stag DM Setup took: " << time << " seconds." << std::endl;
-
 #endif
     }
 
