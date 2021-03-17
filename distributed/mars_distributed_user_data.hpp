@@ -223,11 +223,12 @@ public:
         Integer xDim = host_mesh->get_XDim();
         Integer yDim = host_mesh->get_YDim();
         Integer zDim = host_mesh->get_ZDim();
+        auto m = mesh;
 
         parallel_for(
             "print set", host_mesh->get_chunk_size(), KOKKOS_LAMBDA(const Integer i) {
 
-                const Integer sfc = get_sfc(i);
+                const Integer sfc = m->get_sfc(i);
                 double point[3];
                 get_vertex_coordinates_from_sfc<simplex_type::ElemType>(sfc, point, xDim, yDim, zDim);
 
