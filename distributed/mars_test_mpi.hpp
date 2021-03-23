@@ -132,9 +132,7 @@ struct functor
     }
 };
 
-void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(int &argc, char **&argv, const int level)
-{
-
+void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(const int x, const int y) {
     using namespace mars;
     try
     {
@@ -151,7 +149,7 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(int &argc, char 
 
 #ifdef WITH_MPI
         // initialize MPI
-        marsenv::mpi_guard guard(argc, argv, false);
+        /* marsenv::mpi_guard guard(argc, argv, false); */
 
         // assign a unique gpu to this rank if available
         /*  resources.gpu_id = marsenv::find_private_gpu(MPI_COMM_WORLD); */
@@ -169,7 +167,7 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(int &argc, char 
 #ifdef WITH_KOKKOS
 
         DistributedQuad4Mesh mesh;
-        generate_distributed_cube(context, mesh, level, level, 0);
+        generate_distributed_cube(context, mesh, x, y, 0);
 #endif
     }
     catch (std::exception &e)
@@ -178,9 +176,7 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(int &argc, char 
     }
 }
 
-void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char **&argv, const int level)
-{
-
+void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(const int x, const int y, const int z) {
     using namespace mars;
 
     try
@@ -198,7 +194,7 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char 
 
 #ifdef WITH_MPI
         /* initialize MPI */
-        marsenv::mpi_guard guard(argc, argv, false);
+        /* marsenv::mpi_guard guard(argc, argv, false); */
 
         /* assign a unique gpu to this rank if available */
         /* resources.gpu_id = marsenv::find_private_gpu(MPI_COMM_WORLD);*/
@@ -217,7 +213,7 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(int &argc, char 
         using namespace Kokkos;
 
         DistributedHex8Mesh mesh;
-        generate_distributed_cube(context, mesh, level, level, level);
+        generate_distributed_cube(context, mesh, x, y, z);
 
 #endif
     }

@@ -296,7 +296,7 @@ namespace mars {
         mesh.set_proc(proc_num);
 
         double time_gen = timer.seconds();
-        std::cout << "Mesh Generation and Partition took: " << time_gen << " seconds. Process: " << proc_num
+        std::cout << "SFC Generation and Partition took: " << time_gen << " seconds. Process: " << proc_num
                   << std::endl;
     }
 
@@ -332,7 +332,7 @@ namespace mars {
             gen_elm = mesh.template generate_elements<Type>();
 
             double time_gen = timer_gen.seconds();
-            std::cout << "Distributed Generation kokkos took: " << time_gen << " seconds. Process: " << proc_num
+            std::cout << "Distributed Mesh Generation took: " << time_gen << " seconds. Process: " << proc_num
                       << std::endl;
 
             if (!gen_pts || !gen_elm) std::cerr << "Not implemented for other dimensions yet" << std::endl;

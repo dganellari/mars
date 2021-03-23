@@ -1197,6 +1197,15 @@ int main(int argc, char *argv[]) {
     };
 
 #ifdef WITH_MPI
+
+    apps["mars_distributed_mesh_generation_2D"] = [=]() {
+        test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(xDim, yDim);
+    };
+
+    apps["mars_distributed_mesh_generation_3D"] = [=]() {
+        test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(xDim, yDim, zDim);
+    };
+
     apps["matrix_free_poisson2D"] = [=]() {
         poisson_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(xDim, yDim);
     };

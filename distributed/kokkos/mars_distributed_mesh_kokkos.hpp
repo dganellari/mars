@@ -484,11 +484,9 @@ namespace mars {
 
                             ViewVectorType<Integer> local_to_global;
 
-                            const Integer allrange = encode_morton_2D(
-                                xDim + 1, yDim + 1);  // TODO : check if enough. Test with xdim != ydim.
+                            const Integer allrange = encode_morton_2D(xDim + 1, yDim + 1);
 
                             const Integer nr_points = compact_elements<Type>(local_to_global, allrange);
-                            /* printf("nr_p: %u\n", nr_points); */
 
                             reserve_points(nr_points);
 
