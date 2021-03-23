@@ -9,7 +9,8 @@ namespace mars {
 
         static constexpr Integer Degree = 2;
 
-        using DHandler = DofHandler<DistributedQuad4Mesh, Degree>;
+        template <Integer Type = ElementType::Quad4>
+        using DHandler = DofHandler<DistributedMesh<Type>, Degree>;
 
         // Finite Element DM
         using FEDM = DM<DHandler, double, double>;

@@ -1210,9 +1210,9 @@ int main(int argc, char *argv[]) {
         poisson_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(xDim, yDim);
     };
 
-    apps["cstokes"] = [=]() {
-        staggered_constant_viscosty_stokes_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(xDim, yDim);
-    };
+    apps["cstokes"] = [=]() { staggered_constant_viscosty_stokes<ElementType::Quad4>(xDim, yDim, 0); };
+
+    /* apps["cstokes3D"] = [=]() { staggered_constant_viscosty_stokes<ElementType::Hex8>(xDim, yDim, zDim); }; */
 
     apps["vstokes"] = [=]() {
         staggered_variable_viscosty_stokes_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(xDim, yDim);

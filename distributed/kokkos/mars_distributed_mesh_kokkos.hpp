@@ -10,6 +10,7 @@
 #include <fstream>
 #include <memory>
 #include <sstream>
+#include <type_traits>
 #include <vector>
 
 #ifdef WITH_MPI
@@ -917,22 +918,48 @@ namespace mars {
                 }
             }
 
-            MARS_INLINE_FUNCTION
-            void operator()(int index) const {
-                const Integer gl_index = global(index);
-                Octant ref_octant = get_octant_from_sfc<Type>(gl_index);
-
-                /* const int offset = xDim + 1; */
-
-                for (int face = 0; face < 2 * ManifoldDim; ++face) {
-                    Octant o = ref_octant.face_nbh<Type>(face, xDim, yDim, zDim, periodic);
+            template <Integer T = Type>
+            MARS_INLINE_FUNCTION std::enable_if_t<T == ElementType::Hex8, void> predicate_edge(const Octant ref_octant,
+                                                                                               const Integer index,
+                                                                                               const Integer xDim,
+                                                                                               const Integer yDim,
+                                                                                               const Integer zDim,
+                                                                                               bool periodic) const {
+                for (int edge = 0; edge < 4 * ManifoldDim; ++edge) {
+                    Octant o = ref_octant.edge_nbh<Type>(edge, xDim, yDim, zDim, periodic);
                     if (o.is_valid()) {
-                        /*  printf("face Nbh of %li (%li) is : %li with--- x and y: %li - %li\n", gl_index,
-                               ref_octant.x + offset * ref_octant.y, o.x + offset * o.y, o.x, o.y); */
                         setPredicate(index, o);
                     }
                 }
+            }
 
+            template <Integer T = Type>
+            MARS_INLINE_FUNCTION std::enable_if_t<T != ElementType::Hex8, void> predicate_edge(const Octant ref_octant,
+                                                                                               const Integer index,
+                                                                                               const Integer xDim,
+                                                                                               const Integer yDim,
+                                                                                               const Integer zDim,
+                                                                                               bool periodic) const {}
+            MARS_INLINE_FUNCTION void predicate_face(const Octant ref_octant,
+                                                     const Integer index,
+                                                     const Integer xDim,
+                                                     const Integer yDim,
+                                                     const Integer zDim,
+                                                     bool periodic) const {
+                for (int face = 0; face < 2 * ManifoldDim; ++face) {
+                    Octant o = ref_octant.face_nbh<Type>(face, xDim, yDim, zDim, periodic);
+                    if (o.is_valid()) {
+                        setPredicate(index, o);
+                    }
+                }
+            }
+
+            MARS_INLINE_FUNCTION void predicate_corner(const Octant ref_octant,
+                                                       const Integer index,
+                                                       const Integer xDim,
+                                                       const Integer yDim,
+                                                       const Integer zDim,
+                                                       bool periodic) const {
                 for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner) {
                     Octant o = ref_octant.corner_nbh<Type>(corner, xDim, yDim, zDim, periodic);
                     if (o.is_valid()) {
@@ -941,6 +968,16 @@ namespace mars {
                         setPredicate(index, o);
                     }
                 }
+            }
+
+            MARS_INLINE_FUNCTION
+            void operator()(int index) const {
+                const Integer gl_index = global(index);
+                Octant ref_octant = get_octant_from_sfc<Type>(gl_index);
+
+                predicate_face(ref_octant, index, xDim, yDim, zDim, periodic);
+                predicate_corner(ref_octant, index, xDim, yDim, zDim, periodic);
+                predicate_edge(ref_octant, index, xDim, yDim, zDim, periodic);
             }
         };
 
@@ -1111,11 +1148,8 @@ namespace mars {
     using DistributedQuad4Mesh = mars::Mesh<2, 2, DistributedImplementation, Quad4DElem>;
     using DistributedHex8Mesh = mars::Mesh<3, 3, DistributedImplementation, Hex8DElem>;
 
-    template <Integer Type>
-    using DistributedNSMesh2 = mars::Mesh<2, 2, DistributedImplementation, NonSimplex<Type, DistributedImplementation>>;
-
-    template <Integer Dim, Integer ManifoldDim, Integer Type>
-    using DistributedNSMesh =
+    template <Integer Type, Integer Dim = (Type == ElementType::Quad4) ? 2 : 3, Integer ManifoldDim = Dim>
+    using DistributedMesh =
         mars::Mesh<Dim, ManifoldDim, DistributedImplementation, NonSimplex<Type, DistributedImplementation>>;
 }  // namespace mars
 #endif  // MARS_MESH_HPP
