@@ -170,13 +170,22 @@ namespace mars {
 
         Kokkos::Timer timer;
         // create the quad mesh distributed through the mpi procs.
-        /* DistributedQuad4Mesh mesh; */
         DistributedMesh<Type> mesh;
         generate_distributed_cube(context, mesh, xDim, yDim, zDim);
 
+        constexpr Integer Degree = 2;
+        using MyDofTypes = DofTypes<DistributedMesh<Type>, Degree>;
+
+        using DofHandler = typename MyDofTypes::DHandler;
+        using FVDofHandler = typename MyDofTypes::FVDH;
+        using VolumeStencil = typename MyDofTypes::VStencil;
+        using StokesStencil = typename MyDofTypes::SStencil;
+        using SparsityPattern = typename MyDofTypes::SPattern;
+        using CornerDM = typename MyDofTypes::CornerDM;
+
         // enumerate the dofs locally and globally. The ghost dofs structures
         // are now created and ready to use for the gather and scatter ops.
-        DHandler dof_handler(&mesh, context);
+        DofHandler dof_handler(&mesh, context);
         dof_handler.enumerate_dofs();
 
         /* dof_handler.print_dofs(proc_num); */
@@ -192,16 +201,16 @@ namespace mars {
                local_size,
                local_size - owned_size);
 
-        FVDH fv_dof_handler(dof_handler);
+        FVDofHandler fv_dof_handler(dof_handler);
 
-        auto volume_stencil = build_stencil<VStencil>(fv_dof_handler);
+        auto volume_stencil = build_stencil<VolumeStencil>(fv_dof_handler);
         /* print_stencil(fv_dof_handler, volume_stencil); */
 
         /* auto face_stencil = build_stencil<SStencil, Orient>(fv_dof_handler); */
-        auto face_stencil = build_stencil<SStencil>(fv_dof_handler);
+        auto face_stencil = build_stencil<StokesStencil>(fv_dof_handler);
         /* print_stencil(fv_dof_handler, face_stencil); */
 
-        SPattern sp(fv_dof_handler);
+        SparsityPattern sp(fv_dof_handler);
         sp.build_pattern(volume_stencil, face_stencil);
 
         assemble_volume(volume_stencil, sp, proc_num);
@@ -216,7 +225,7 @@ namespace mars {
 
         CornerDM cdm(dof_handler);
         set_data_in_circle(cdm, 0, 1);
-        cdm.gather_ghost_data<IN>();
+        cdm.template gather_ghost_data<IN>();
 
         /* cdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
             const Integer local_dof = cdm.get_dof_handler().get_local_dof(i);
@@ -231,14 +240,14 @@ namespace mars {
 
         /* ********************************gather scatter ghost data**************************************** */
 
-        /* FaceVolumeDM fvdm(fv_dof_handler);
+        /* MyDofTypes::FaceVolumeDM fvdm(fv_dof_handler);
         fvdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
             fvdm.get_data<IN>(i) = 3.0;
             fvdm.get_data<OUT>(i) = proc_num;
         });
 
         fvdm.gather_ghost_data<OUT>();
-        scatter_add_ghost_data<FaceVolumeDM, OUT>(fvdm); */
+        scatter_add_ghost_data<MyDofTypes::FaceVolumeDM, OUT>(fvdm); */
 
         // print using the index iterate
         /* fvdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {

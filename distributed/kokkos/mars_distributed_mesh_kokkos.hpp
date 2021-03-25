@@ -918,28 +918,6 @@ namespace mars {
                 }
             }
 
-            template <Integer T = Type>
-            MARS_INLINE_FUNCTION std::enable_if_t<T == ElementType::Hex8, void> predicate_edge(const Octant ref_octant,
-                                                                                               const Integer index,
-                                                                                               const Integer xDim,
-                                                                                               const Integer yDim,
-                                                                                               const Integer zDim,
-                                                                                               bool periodic) const {
-                for (int edge = 0; edge < 4 * ManifoldDim; ++edge) {
-                    Octant o = ref_octant.edge_nbh<Type>(edge, xDim, yDim, zDim, periodic);
-                    if (o.is_valid()) {
-                        setPredicate(index, o);
-                    }
-                }
-            }
-
-            template <Integer T = Type>
-            MARS_INLINE_FUNCTION std::enable_if_t<T != ElementType::Hex8, void> predicate_edge(const Octant ref_octant,
-                                                                                               const Integer index,
-                                                                                               const Integer xDim,
-                                                                                               const Integer yDim,
-                                                                                               const Integer zDim,
-                                                                                               bool periodic) const {}
             MARS_INLINE_FUNCTION void predicate_face(const Octant ref_octant,
                                                      const Integer index,
                                                      const Integer xDim,
@@ -969,6 +947,29 @@ namespace mars {
                     }
                 }
             }
+
+            template <Integer T = Type>
+            MARS_INLINE_FUNCTION std::enable_if_t<T == ElementType::Hex8, void> predicate_edge(const Octant ref_octant,
+                                                                                               const Integer index,
+                                                                                               const Integer xDim,
+                                                                                               const Integer yDim,
+                                                                                               const Integer zDim,
+                                                                                               bool periodic) const {
+                for (int edge = 0; edge < 4 * ManifoldDim; ++edge) {
+                    Octant o = ref_octant.edge_nbh<Type>(edge, xDim, yDim, zDim, periodic);
+                    if (o.is_valid()) {
+                        setPredicate(index, o);
+                    }
+                }
+            }
+
+            template <Integer T = Type>
+            MARS_INLINE_FUNCTION std::enable_if_t<T != ElementType::Hex8, void> predicate_edge(const Octant ref_octant,
+                                                                                               const Integer index,
+                                                                                               const Integer xDim,
+                                                                                               const Integer yDim,
+                                                                                               const Integer zDim,
+                                                                                               bool periodic) const {}
 
             MARS_INLINE_FUNCTION
             void operator()(int index) const {
