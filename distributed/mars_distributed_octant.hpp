@@ -196,29 +196,29 @@ namespace mars {
             // adapted from the p4est corner neighbor for the mesh generation
             assert(0 <= edge && edge < 12);
             auto direction = edge / 4;
-            Octant o;
+            Integer x_ = -1, y_ = -1, z_ = -1;
 
             switch (direction) {
                 case 0:
-                    o.x = x;
-                    o.y = y + (2 * (edge & 1) - 1);
-                    o.z = z + ((edge & 2) - 1);
+                    x_ = x;
+                    y_ = y + (2 * (edge & 1) - 1);
+                    z_ = z + ((edge & 2) - 1);
                     break;
                 case 1:
-                    o.x = x + (2 * (edge & 1) - 1);
-                    o.y = y;
-                    o.z = z + ((edge & 2) - 1);
+                    x_ = x + (2 * (edge & 1) - 1);
+                    y_ = y;
+                    z_ = z + ((edge & 2) - 1);
                     break;
                 case 2:
-                    o.x = x + (2 * (edge & 1) - 1);
-                    o.y = y + ((edge & 2) - 1);
-                    o.z = z;
+                    x_ = x + (2 * (edge & 1) - 1);
+                    y_ = y + ((edge & 2) - 1);
+                    z_ = z;
                     break;
                 default:
                     printf("The element type is not valid\n");
                     break;
             }
-            return o;
+            return Octant(x_, y_, z_);
         }
 
         // Only a 3D functionality defined for hex8 elements only.

@@ -927,6 +927,14 @@ namespace mars {
                 for (int face = 0; face < 2 * ManifoldDim; ++face) {
                     Octant o = ref_octant.face_nbh<Type>(face, xDim, yDim, zDim, periodic);
                     if (o.is_valid()) {
+                        printf("Face Nbh of %li (%li) is : (%li) with--- x and y z: %li - %li - %li\n",
+                               index,
+                               elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim),
+                               elem_index(o.x, o.y, o.z, xDim, yDim),
+                               o.x,
+                               o.y,
+                               o.z);
+
                         setPredicate(index, o);
                     }
                 }
@@ -941,8 +949,14 @@ namespace mars {
                 for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner) {
                     Octant o = ref_octant.corner_nbh<Type>(corner, xDim, yDim, zDim, periodic);
                     if (o.is_valid()) {
-                        /* printf("corner Nbh of %li (%li) is : %li with--- x and y: %li - %li\n", gl_index,
-                               ref_octant.x + offset * ref_octant.y, o.x + offset * o.y, o.x, o.y); */
+                        printf("Corner Nbh of %li (%li) is : (%li) with--- x and y z: %li - %li - %li\n",
+                               index,
+                               elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim),
+                               elem_index(o.x, o.y, o.z, xDim, yDim),
+                               o.x,
+                               o.y,
+                               o.z);
+
                         setPredicate(index, o);
                     }
                 }
@@ -958,6 +972,14 @@ namespace mars {
                 for (int edge = 0; edge < 4 * ManifoldDim; ++edge) {
                     Octant o = ref_octant.edge_nbh<Type>(edge, xDim, yDim, zDim, periodic);
                     if (o.is_valid()) {
+                        printf("Edge Nbh of %li (%li) is : (%li) with--- x and y z: %li - %li - %li\n",
+                               index,
+                               elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim),
+                               elem_index(o.x, o.y, o.z, xDim, yDim),
+                               o.x,
+                               o.y,
+                               o.z);
+
                         setPredicate(index, o);
                     }
                 }

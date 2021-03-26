@@ -233,9 +233,9 @@ public:
                 get_vertex_coordinates_from_sfc<simplex_type::ElemType>(sfc, point, xDim, yDim, zDim);
 
                 Octant o = get_octant_from_sfc<simplex_type::ElemType>(sfc);
-                printf("mesh sfc : %li - %li - %li - (%lf, %lf) -rank: %i\n",
+                printf("mesh sfc : %li - %li - %li - (%lf, %lf, %lf) -rank: %i\n",
                        i, sfc, elem_index(o.x, o.y, o.z, xDim, yDim), point[0],
-                       point[1], proc);
+                       point[1], point[2], proc);
             });
     }
 
