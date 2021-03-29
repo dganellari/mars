@@ -623,8 +623,8 @@ namespace mars {
 #ifdef WITH_KOKKOS
 
         DistributedQuad4Mesh mesh;
+        mesh.set_periodic();  // set the domain to be periodic before generation!
         generate_distributed_cube(context, mesh, level, level, 0);
-        mesh.set_periodic();  // set the domain to be periodic
 
         const Integer xDim = mesh.get_XDim();
         const Integer yDim = mesh.get_YDim();
@@ -690,7 +690,8 @@ namespace mars {
                 data.get_elem_data<1>(i) = 2;
             }); */
 
-        create_ghost_layer<Data, Type>(context, data);
+        //The ghost layer is created when the mesh is generated.
+        /* create_ghost_layer<Data, Type>(context, data); */
         exchange_ghost_user_data(context, data);
 
         /* data.print_nth_tuple<DataDesc::u>(proc_num); */

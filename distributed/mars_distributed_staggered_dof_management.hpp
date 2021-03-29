@@ -13,7 +13,7 @@ namespace mars {
     public:
         using Mesh = Mesh_;
 
-        using UD = UserData<Mesh>;
+        using MM = MeshManager<Mesh>;
         using simplex_type = typename Mesh::Elem;
 
         static constexpr Integer ElemType = simplex_type::ElemType;
@@ -484,7 +484,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        UD get_data() const { return get_dof_handler().get_data(); }
+        MM get_mesh_manager() const { return get_dof_handler().get_mesh_manager(); }
 
         MARS_INLINE_FUNCTION
         const Integer get_proc() const { return get_dof_handler().get_proc(); }

@@ -302,7 +302,7 @@ namespace mars {
 
     // the points and elements can be generated on the fly from the sfc code in case meshless true.
     template <Integer Dim, Integer ManifoldDim, Integer Type, bool Meshless = true>
-    bool generate_distributed_cube(const context &context,
+    void generate_distributed_cube(const context &context,
                                    DMesh<Dim, ManifoldDim, Type> &mesh,
                                    const Integer xDim,
                                    const Integer yDim,
@@ -321,15 +321,15 @@ namespace mars {
         // partition the mesh and then generate the points and elements.
         partition_mesh(context, mesh);
 
-        bool gen_pts = true, gen_elm = true;
+        mesh.template create_ghost_layer<Type>(context);
 
         if (!Meshless) {
             Kokkos::Timer timer_gen;
 
             // the mesh construct depends on template parameters.
-            gen_pts = mesh.template generate_points<Type>();
+            auto gen_pts = mesh.template generate_points<Type>();
 
-            gen_elm = mesh.template generate_elements<Type>();
+            auto gen_elm = mesh.template generate_elements<Type>();
 
             double time_gen = timer_gen.seconds();
             std::cout << "Distributed Mesh Generation took: " << time_gen << " seconds. Process: " << proc_num
@@ -337,10 +337,6 @@ namespace mars {
 
             if (!gen_pts || !gen_elm) std::cerr << "Not implemented for other dimensions yet" << std::endl;
         }
-
-        /* mesh.template build_boundary_element_sets<Type>(); */
-
-        return (gen_pts && gen_elm);
     }
 }  // namespace mars
 

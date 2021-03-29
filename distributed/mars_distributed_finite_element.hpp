@@ -37,7 +37,7 @@ namespace mars {
 
             MARS_INLINE_FUNCTION void volume_iterate(const Integer sfc_index, Integer &index) const {
                 Octant o;
-                Octant oc = dofHandler.get_data().get_mesh()->get_octant(sfc_index);
+                Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index);
                 // go through all the inside dofs for the current element
                 // Currently no topological order within the volume dofs if more than 1.
                 for (int j = 0; j < degree - 1; j++) {
@@ -52,7 +52,7 @@ namespace mars {
             }
 
             MARS_INLINE_FUNCTION void corner_iterate(const Integer sfc_index, Integer &index) const {
-                Octant oc = dofHandler.get_data().get_mesh()->get_octant(sfc_index);
+                Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index);
 
                 // go through all the corner dofs for the current element counterclockwise
                 /* for (const auto &x : {{0,0}, {1, 0}, {1, 1}, {0, 1}}) */
@@ -73,7 +73,7 @@ namespace mars {
 
             template <Integer part>
             MARS_INLINE_FUNCTION void face_iterate(const Integer sfc_index, Integer &index) const {
-                Octant oc = dofHandler.get_data().get_mesh()->get_octant(sfc_index);
+                Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index);
                 // side  0 means origin side and 1 destination side.
                 for (int dir = 0; dir < 2; ++dir) {
                     Octant face_cornerA = DofHandler::template enum_face_corner<part>(oc, dir);
@@ -126,7 +126,7 @@ namespace mars {
 
         void enumerate_local_dofs() {
             auto handler = get_dof_handler();
-            const Integer size = handler.get_data().get_host_mesh()->get_chunk_size();
+            const Integer size = handler.get_mesh_manager().get_host_mesh()->get_chunk_size();
 
             Integer elem_size = elem_nodes;
 

@@ -4,7 +4,7 @@
 #ifdef WITH_MPI
 #ifdef WITH_KOKKOS
 #include "mars_distributed_dof.hpp"
-#include "mars_distributed_user_data.hpp"
+#include "mars_distributed_mesh_management.hpp"
 
 namespace mars {
 
@@ -13,7 +13,7 @@ namespace mars {
     public:
         using Mesh = Mesh_;
 
-        using UD = UserData<Mesh>;
+        using MM = MeshManager<Mesh>;
         using simplex_type = typename Mesh::Elem;
 
         static constexpr Integer ElemType = simplex_type::ElemType;
@@ -34,9 +34,7 @@ namespace mars {
         constexpr Integer get_elem_type() { return simplex_type::ElemType; }
 
         MARS_INLINE_FUNCTION
-        DofHandler(Mesh *mesh, const context &c) : data(UD(mesh)), ctx(c) {
-            create_ghost_layer<UD, simplex_type::ElemType>(c, data);
-        }
+        DofHandler(Mesh *mesh, const context &c) : mesh_manager(MM(mesh)), ctx(c) {}
 
         template <typename H>
         MARS_INLINE_FUNCTION void owned_iterate(H f) const {
@@ -55,18 +53,18 @@ namespace mars {
             Kokkos::parallel_for("init_initial_cond", size, f);
         }
 
-        void print_mesh_sfc(const int proc) const { get_data().print_mesh_sfc(proc); }
-
         template <typename H>
         MARS_INLINE_FUNCTION void elem_iterate(H f) const {
-            get_data().elem_iterate(f);
+            get_mesh_manager().elem_iterate(f);
         }
 
-        MARS_INLINE_FUNCTION Integer get_elem_size() const { return get_data().get_host_mesh()->get_chunk_size(); }
+        MARS_INLINE_FUNCTION Integer get_elem_size() const {
+            return get_mesh_manager().get_host_mesh()->get_chunk_size();
+        }
 
         template <typename H>
         MARS_INLINE_FUNCTION void face_iterate(H f) const {
-            get_data().face_iterate(f);
+            get_mesh_manager().face_iterate(f);
         }
 
         MARS_INLINE_FUNCTION
@@ -382,12 +380,11 @@ namespace mars {
                                      const Integer nbh_rank_size) {
             using namespace Kokkos;
 
-            /* const Integer size = data.get_host_mesh()->get_chunk_size(); */
-            const Integer size = data.get_view_boundary().extent(0);
+            const Integer size = get_mesh_manager().get_host_mesh()->get_view_boundary().extent(0);
 
-            Integer xDim = data.get_host_mesh()->get_XDim();
-            Integer yDim = data.get_host_mesh()->get_YDim();
-            Integer zDim = data.get_host_mesh()->get_ZDim();
+            Integer xDim = get_mesh_manager().get_host_mesh()->get_XDim();
+            Integer yDim = get_mesh_manager().get_host_mesh()->get_YDim();
+            Integer zDim = get_mesh_manager().get_host_mesh()->get_ZDim();
 
             const Integer chunk_size_ = global_dof_enum.get_elem_size();
             ViewMatrixType<bool> rank_boundary("count_per_proc", chunk_size_, nbh_rank_size);
@@ -397,7 +394,7 @@ namespace mars {
                 "identify_boundary_predicate",
                 size,
                 IdentifyBoundaryDofPerRank(
-                    data.get_mesh(), rank_boundary, sender_ranks_scan, global_dof_enum.get_view_sfc_to_local()));
+                    get_mesh_manager().get_mesh(), rank_boundary, sender_ranks_scan, global_dof_enum.get_view_sfc_to_local()));
 
             /* perform a scan for each row with the sum at the end for each rank */
             ViewMatrixType<Integer> rank_scan("rank_scan", chunk_size_ + 1, nbh_rank_size);
@@ -439,7 +436,7 @@ namespace mars {
 
             /* parallel_for(
                 "print set", h_ic(), KOKKOS_LAMBDA(const Integer i) {
-                    Integer proc = data.get_host_mesh()->get_proc();
+                    Integer proc = get_mesh_manager().get_host_mesh()->get_proc();
                     const Integer rank = find_owner_processor(scan_boundary, i, 1, proc);
 
                     printf("i:%li - boundary_ : %i - %li (%li) - proc: %li - rank: %li\n", i, boundary_dofs_sfc(i),
@@ -805,7 +802,7 @@ namespace mars {
                     Integer gid = -1, proc = -1;
 
                     if (locally_owned_dof(sfc_elem)) {
-                        proc = data.get_mesh()->get_proc();
+                        proc = get_mesh_manager().get_mesh()->get_proc();
                         const Integer sfc_lid = global_dof_enum.get_view_sfc_to_local()(sfc_elem);
                         gid = sfc_lid + global_dof_offset(proc);
                     }
@@ -841,12 +838,12 @@ namespace mars {
         }
 
         void build_lg_predicate(const context &context, ViewVectorType<bool> &npbs, ViewVectorType<bool> &npbr) {
-            Integer xDim = data.get_host_mesh()->get_XDim();
-            Integer yDim = data.get_host_mesh()->get_YDim();
-            Integer zDim = data.get_host_mesh()->get_ZDim();
+            Integer xDim = get_mesh_manager().get_host_mesh()->get_XDim();
+            Integer yDim = get_mesh_manager().get_host_mesh()->get_YDim();
+            Integer zDim = get_mesh_manager().get_host_mesh()->get_ZDim();
 
-            const Integer size = data.get_host_mesh()->get_chunk_size();
-            const Integer ghost_size = data.get_view_ghost().extent(0);
+            const Integer size = get_mesh_manager().get_host_mesh()->get_chunk_size();
+            const Integer ghost_size = get_mesh_manager().get_host_mesh()->get_view_ghost().extent(0);
 
             /* TODO: xdim and ydim should be changed to max xdim and ydim
              * of the local partition to reduce memory footprint */
@@ -863,18 +860,26 @@ namespace mars {
 
             /* generate the sfc for the local and global dofs containing the generation locally
             for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
-            Kokkos::parallel_for(
-                "lg_predicate",
-                size,
-                BuildLocalGlobalPredicate<false>(
-                    data.get_mesh(), local_predicate, local_label, global_predicate, global_label, npbs, npbr));
+            Kokkos::parallel_for("lg_predicate",
+                                 size,
+                                 BuildLocalGlobalPredicate<false>(get_mesh_manager().get_mesh(),
+                                                                  local_predicate,
+                                                                  local_label,
+                                                                  global_predicate,
+                                                                  global_label,
+                                                                  npbs,
+                                                                  npbr));
 
             // Iterate through ghost sfc and enumerate
-            Kokkos::parallel_for(
-                "lg_predicate_from_ghost",
-                ghost_size,
-                BuildLocalGlobalPredicate<true>(
-                    data.get_mesh(), local_predicate, local_label, global_predicate, global_label, npbs, npbr));
+            Kokkos::parallel_for("lg_predicate_from_ghost",
+                                 ghost_size,
+                                 BuildLocalGlobalPredicate<true>(get_mesh_manager().get_mesh(),
+                                                                 local_predicate,
+                                                                 local_label,
+                                                                 global_predicate,
+                                                                 global_label,
+                                                                 npbs,
+                                                                 npbr));
 
             local_dof_enum.compact_element_and_labels(local_predicate, local_label);
             global_dof_enum.compact_element_and_labels(global_predicate, global_label);
@@ -1031,8 +1036,8 @@ namespace mars {
         };
 
         void build_local_orientation() {
-            const Integer size = data.get_host_mesh()->get_chunk_size();
-            const Integer ghost_size = data.get_view_ghost().extent(0);
+            const Integer size = get_mesh_manager().get_host_mesh()->get_chunk_size();
+            const Integer ghost_size = get_mesh_manager().get_host_mesh()->get_view_ghost().extent(0);
 
             const Integer local_size = get_local_dof_enum().get_elem_size();
 
@@ -1042,13 +1047,13 @@ namespace mars {
                      for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
             Kokkos::parallel_for("orient_dofs",
                                  size,
-                                 OrientDofs<false>(data.get_mesh(),
+                                 OrientDofs<false>(get_mesh_manager().get_mesh(),
                                                    local_dof_enum.get_view_element_orientations(),
                                                    get_local_dof_enum().get_view_sfc_to_local()));
 
             Kokkos::parallel_for("orient_ghost_dofs",
                                  ghost_size,
-                                 OrientDofs<true>(data.get_mesh(),
+                                 OrientDofs<true>(get_mesh_manager().get_mesh(),
                                                   local_dof_enum.get_view_element_orientations(),
                                                   get_local_dof_enum().get_view_sfc_to_local()));
         }
@@ -1158,7 +1163,7 @@ namespace mars {
             /* iterate through the unique ghost dofs and build the map */
             Kokkos::parallel_for("BuildLocalGlobalmap",
                                  size,
-                                 BuildLocalToGlobalGhostMap(data.get_mesh(),
+                                 BuildLocalToGlobalGhostMap(get_mesh_manager().get_mesh(),
                                                             ghost_local_to_global_map,
                                                             global_dof_offset,
                                                             scan_recv,
@@ -1201,7 +1206,7 @@ namespace mars {
         Dof sfc_to_global_dof(const Integer sfc) const {
             Dof dof;
             if (locally_owned_dof(sfc)) {
-                const Integer proc = data.get_mesh()->get_proc();
+                const Integer proc = get_mesh_manager().get_mesh()->get_proc();
                 const Integer sfc_lid = global_dof_enum.get_view_sfc_to_local()(sfc);
                 const Integer gid = sfc_lid + global_dof_offset(proc);
                 dof.set_gid(gid);
@@ -1442,10 +1447,10 @@ namespace mars {
             return local_dof_enum.get_view_sfc_to_local()(local_dof);
         }
 
-        UD get_data() const { return data; }
+        MM get_mesh_manager() const { return mesh_manager; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_proc() const { return data.get_mesh()->get_proc(); }
+        const Integer get_proc() const { return get_mesh_manager().get_mesh()->get_proc(); }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_scan_recv() const { return scan_recv; }
@@ -1512,23 +1517,17 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_XMax() const {
-            return Degree *  data.get_mesh()->get_XDim();
-        }
+        const Integer get_XMax() const { return Degree * get_mesh_manager().get_mesh()->get_XDim(); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_YMax() const {
-            return Degree *  data.get_mesh()->get_YDim();
-        }
+        const Integer get_YMax() const { return Degree * get_mesh_manager().get_mesh()->get_YDim(); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_ZMax() const {
-            return Degree *  data.get_mesh()->get_ZDim();
-        }
+        const Integer get_ZMax() const { return Degree * get_mesh_manager().get_mesh()->get_ZDim(); }
 
     private:
         // data associated to the mesh elements (sfc) within the context.
-        UD data;
+        MM mesh_manager;
         const context  &ctx;
 
         // local dof enumeration containing the local to sfc and sfc to local views.

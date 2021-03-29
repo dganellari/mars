@@ -1069,6 +1069,111 @@ namespace mars {
             compact_boundary_elements(scan_boundary_, rank_boundary, rank_scan, rank_size);
         }
 
+        void exchange_ghost_counts(const context &context) {
+            using namespace Kokkos;
+
+            Kokkos::Timer timer;
+
+            int proc_num = rank(context);
+            int size = num_ranks(context);
+
+            std::vector<Integer> send_count(size, 0);
+            std::vector<Integer> receive_count(size, 0);
+
+            scan_send_mirror = create_mirror_view(get_view_scan_boundary());
+            Kokkos::deep_copy(scan_send_mirror, get_view_scan_boundary());
+
+            for (int i = 0; i < size; ++i) {
+                Integer count = scan_send_mirror(i + 1) - scan_send_mirror(i);
+                if (count > 0) {
+                    send_count[i] = count;
+                    receive_count[i] = count;
+                }
+            }
+
+            context->distributed->i_send_recv_vec(send_count, receive_count);
+
+            // create the scan recv mirror view from the receive count
+            reserve_scan_ghost(size + 1);
+
+            scan_recv_mirror = create_mirror_view(get_view_scan_ghost());
+            make_scan_index_mirror(scan_recv_mirror, receive_count);
+            Kokkos::deep_copy(get_view_scan_ghost(), scan_recv_mirror);
+        }
+
+        void exchange_ghost_layer(const context &context) {
+            using namespace Kokkos;
+
+            Kokkos::Timer timer;
+
+            int size = num_ranks(context);
+
+            Integer ghost_size = scan_recv_mirror(size);
+
+            reserve_ghost(ghost_size);
+
+            context->distributed->i_send_recv_view(
+                get_view_ghost(), scan_recv_mirror.data(), get_view_boundary(), scan_send_mirror.data());
+
+            std::cout << "MPI send receive for the mesh ghost layer done." << std::endl;
+        }
+
+        template <Integer Type>
+        void create_ghost_layer(const context &context) {
+            build_boundary_element_sets<Type>();
+
+            exchange_ghost_counts(context);
+            exchange_ghost_layer(context);
+
+            /* Not needed anymore since the Mesh manager is now doing the update */
+            /* data.copy_mesh_to_device();  // update the boundary device pointers */
+
+            std::cout << "Finished building the ghost layer (boundary element set). Rank: " << get_proc() << std::endl;
+        }
+
+        void print_ghost_layer(const context &context) {
+            using namespace Kokkos;
+            int proc_num = rank(context);
+            int rank_size = num_ranks(context);
+
+            Integer ghost_size = scan_recv_mirror(rank_size);
+
+            auto sv = get_view_ghost();
+            auto scv = get_view_scan_ghost();
+            parallel_for(
+                "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
+                    const Integer rank = find_owner_processor(scv, i, 1, proc_num);
+
+                    printf(" ghost_sfc: %i - %li - proc: %li - rank: %li\n", i, sv(i), rank, proc_num);
+                });
+        }
+
+        void print_sfc() {
+            using namespace Kokkos;
+
+            Integer xDim = get_XDim();
+            Integer yDim = get_YDim();
+            Integer zDim = get_ZDim();
+
+            auto sfcv = get_view_sfc();
+            parallel_for(
+                "print set", get_chunk_size(), KOKKOS_LAMBDA(const Integer i) {
+                    const Integer sfc = sfcv(i);
+                    double point[3];
+                    get_vertex_coordinates_from_sfc<Elem::ElemType>(sfc, point, xDim, yDim, zDim);
+
+                    Octant o = get_octant_from_sfc<Elem::ElemType>(sfc);
+                    printf("mesh sfc : %li - %li - %li - (%lf, %lf, %lf) -rank: %i\n",
+                           i,
+                           sfc,
+                           elem_index(o.x, o.y, o.z, xDim, yDim),
+                           point[0],
+                           point[1],
+                           point[2],
+                           get_proc());
+                });
+        }
+
         MARS_INLINE_FUNCTION
         Integer get_sfc_index(const Integer enc_oc) {
             return binary_search(get_view_sfc(), 0, get_chunk_size(), enc_oc);
@@ -1134,33 +1239,48 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_ghost() const { return ghost_; }
 
-    private:
-        ViewMatrixTextureC<Integer, Comb::value, 2> combinations;
 
-        ViewMatrixType<Integer> elements_;
-        ViewMatrixType<Real> points_;
-        ViewVectorType<bool> active_;
-        Integer elements_size_;
-        Integer points_size_;
+    MARS_INLINE_FUNCTION
+    const ViewVectorType<Integer>::HostMirror &get_view_scan_recv_mirror() const { return scan_recv_mirror; }
 
-        ViewVectorType<Integer> local_sfc_;
-        ViewVectorType<Integer> sfc_to_local_;  // global to local map from sfc allrange
-        ViewVectorType<Integer> gp_np;          // parallel partition info shared among all processes.
-        Integer xDim, yDim, zDim;
-        Integer chunk_size_;
-        Integer proc;
+    MARS_INLINE_FUNCTION
+    const ViewVectorType<Integer>::HostMirror &get_view_scan_send_mirror() const { return scan_send_mirror; }
 
-        bool periodic = false;
+private:
+    // This block represents the SFC data and the data structures needed to manage it in a distributed manner.
+    ViewVectorType<Integer> local_sfc_;
+    ViewVectorType<Integer> sfc_to_local_;  // global to local map from sfc allrange
+    ViewVectorType<Integer> gp_np;          // parallel partition info shared among all processes.
+    Integer xDim, yDim, zDim;
+    Integer chunk_size_;
+    Integer proc;
 
-        UnorderedMap<Integer, Integer> global_to_local_map_;  // global to local map for the mesh elem indices.
+    // Periodic mesh feature supported.
+    bool periodic = false;
 
-        ViewVectorType<Integer> boundary_;             // sfc code for the ghost layer
-        ViewVectorType<Integer> boundary_lsfc_index_;  // view index of the previous
-        ViewVectorType<Integer> scan_boundary_;
+    ViewMatrixTextureC<Integer, Comb::value, 2> combinations;
 
-        // ghost and boundary layers
-        ViewVectorType<Integer> ghost_;
-        ViewVectorType<Integer> scan_ghost_;
+    /* If generated "meshless" then the following block is not reserved in memory.
+    Check distributed generation for more details. */
+    ViewMatrixType<Integer> elements_;
+    ViewMatrixType<Real> points_;
+    ViewVectorType<bool> active_;
+    Integer elements_size_;
+    Integer points_size_;
+    /* global to local map for the mesh elem indices. */
+    UnorderedMap<Integer, Integer> global_to_local_map_;
+
+    // Boundary and ghost layer data
+    ViewVectorType<Integer> boundary_;             // sfc code for the ghost layer
+    ViewVectorType<Integer> boundary_lsfc_index_;  // view index of the previous
+    ViewVectorType<Integer> scan_boundary_;
+    // mirror view on the mesh scan boundary view used for the mpi send
+    ViewVectorType<Integer>::HostMirror scan_send_mirror;
+    // ghost data
+    ViewVectorType<Integer> ghost_;
+    ViewVectorType<Integer> scan_ghost_;
+    // mirror view on the scan_ghost view for the mpi receive
+    ViewVectorType<Integer>::HostMirror scan_recv_mirror;
     };
 
     using DistributedMesh1 = mars::Mesh<1, 1, DistributedImplementation, Simplex<1, 1, DistributedImplementation>>;
