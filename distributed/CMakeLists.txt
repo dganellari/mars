@@ -38,5 +38,13 @@ if(MPI_FOUND)
     set(MARS_INCLUDES
         "${MARS_INCLUDES};${DISTRIBUTED_INCLUDES}"
         PARENT_SCOPE)
+    set(MARS_HEADERS
+        "${MARS_HEADERS};${LOCAL_HEADERS}"
+        PARENT_SCOPE)
 
+    install(
+        TARGETS mars_mpi
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib)
 endif()

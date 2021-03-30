@@ -187,6 +187,24 @@ namespace mars {
         for_each_arg<F, I + 1, Args...>(f, t, v);
     }
 
+    template <typename F, typename T, Integer... dataidx>
+    MARS_INLINE_FUNCTION static void expand_tuple(const F &f, T &t) {
+        if (sizeof...(dataidx) == 0) {
+            apply_impl(f, t);
+        } else {
+            for_each_arg<F, 0, dataidx...>(f, t);
+        }
+    }
+
+    template <typename F, typename T, Integer... dataidx>
+    MARS_INLINE_FUNCTION static void expand_tuple(const F &f, T &t, T &v) {
+        if (sizeof...(dataidx) == 0) {
+            apply_impl(f, t, v);
+        } else {
+            for_each_arg<F, 0, dataidx...>(f, t, v);
+        }
+    }
+
     /* ***************************general utils************************************************** */
 
 #ifdef WITH_KOKKOS
@@ -282,8 +300,8 @@ namespace mars {
     }
 
     // standard binary search
-    template <typename T>
-    MARS_INLINE_FUNCTION Integer binary_search(const ViewVectorType<T> view, Integer f, Integer l, const T enc_oc) {
+    template <typename V, typename T>
+    MARS_INLINE_FUNCTION Integer binary_search(const V view, Integer f, Integer l, const T enc_oc) {
         while (f <= l) {
             Integer guess = (l + f) / 2;
 
@@ -395,19 +413,100 @@ namespace mars {
         ViewVectorType<T> x_;
     };
 
-//**********************************dof handler utils******************************************
+    //**********************************dof handler utils******************************************
+
+    // The staggered grid implementation forbids unifying these two methods.
+    // They work for both general and staggered dof handlers (unified for handlers).
+    // However not possible to unify for owned and local. Either one or the other.
+    template <Integer Label, typename H>
+    ViewVectorType<Integer> compact_owned_dofs(const H &dof_handler, ViewVectorType<Integer> &locally_owned_dofs) {
+        using namespace Kokkos;
+
+        const Integer local_size = dof_handler.get_owned_dof_size();
+
+        ViewVectorType<bool> dof_predicate("label_dof_predicate", local_size);
+        Kokkos::parallel_for(
+            "separateowneddoflabels", local_size, KOKKOS_LAMBDA(const Integer i) {
+                const Integer local = dof_handler.get_owned_dof(i);
+                if (dof_handler.get_label(local) & Label) {
+                    dof_predicate(i) = 1;
+                }
+            });
+
+        /* perform a scan on the dof predicate*/
+        ViewVectorType<Integer> owned_dof_map("owned_dof_scan", local_size + 1);
+        incl_excl_scan(0, local_size, dof_predicate, owned_dof_map);
+
+        auto vol_subview = subview(owned_dof_map, local_size);
+        auto h_vs = create_mirror_view(vol_subview);
+        // Deep copy device view to host view.
+        deep_copy(h_vs, vol_subview);
+
+        locally_owned_dofs = ViewVectorType<Integer>("locally_owned_dofs", h_vs());
+
+        parallel_for(
+            local_size, KOKKOS_LAMBDA(const Integer i) {
+                if (dof_predicate(i) == 1) {
+                    Integer vindex = owned_dof_map(i);
+                    const Integer local = dof_handler.get_owned_dof(i);
+                    locally_owned_dofs(vindex) = local;
+                }
+            });
+
+        return owned_dof_map;
+    }
+
+    template <Integer Label, typename H>
+    ViewVectorType<Integer> compact_local_dofs(const H &dof_handler, ViewVectorType<Integer> &local_dofs) {
+        using namespace Kokkos;
+
+        const Integer local_size = dof_handler.get_dof_size();
+
+        ViewVectorType<bool> dof_predicate("label_dof_predicate", local_size);
+        Kokkos::parallel_for(
+            "separatelocaldoflabels", local_size, KOKKOS_LAMBDA(const Integer i) {
+                const Integer local = dof_handler.get_local_dof(i);
+                if (dof_handler.get_label(local) & Label) {
+                    dof_predicate(i) = 1;
+                }
+            });
+
+        /* perform a scan on the dof predicate*/
+        ViewVectorType<Integer> local_dof_map("local_dof_scan", local_size + 1);
+        incl_excl_scan(0, local_size, dof_predicate, local_dof_map);
+
+        auto vol_subview = subview(local_dof_map, local_size);
+        auto h_vs = create_mirror_view(vol_subview);
+        // Deep copy device view to host view.
+        deep_copy(h_vs, vol_subview);
+
+        local_dofs = ViewVectorType<Integer>("local_dofs", h_vs());
+
+        /* Compact the predicate into the volume and face dofs views */
+        parallel_for(
+            local_size, KOKKOS_LAMBDA(const Integer i) {
+                if (dof_predicate(i) == 1) {
+                    Integer vindex = local_dof_map(i);
+                    const Integer local = dof_handler.get_local_dof(i);
+                    local_dofs(vindex) = local;
+                }
+            });
+
+        return local_dof_map;
+    }
 
     template <typename DH, typename F>
     ViewVectorType<bool> build_sfc_to_local_predicate(DH dofhandler,
-                                                         F f,
-                                                         const Integer local_size,
-                                                         const ViewVectorType<Integer> in) {
+                                                      F f,
+                                                      const Integer local_size,
+                                                      const ViewVectorType<Integer> in) {
         ViewVectorType<bool> predicate("separated_predicate", local_size);
 
         Kokkos::parallel_for(
             "separatedoflabelss", local_size, KOKKOS_LAMBDA(const Integer i) {
                 const Integer sfc = in(i);
-                if (f(dofhandler.sfc_to_local(sfc))) {
+                /* if (f(dofhandler.sfc_to_local(sfc))) { */
+                if (f(sfc)) {
                     predicate(i) = 1;
                 }
             });
