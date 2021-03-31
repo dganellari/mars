@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 2.8.12)
 
-project(mars)
+project(mars C CXX)
+
+if(POLICY CMP0074)
+  cmake_policy(SET CMP0074 NEW)
+endif()
+set(CMAKE_CXX_STANDARD 11)
 
 # FIXME make them usable from avaialble installation
 add_subdirectory(external/googletest)
@@ -302,11 +307,14 @@ endif()
 # ##############################################################################
 #ADIOS STUFF
 
+
 find_package(ADIOS2 REQUIRED)
-target_link_libraries(mars adios2::cxx11_mpi MPI::MPI_C)
 if(ADIOS2_FOUND)
+    target_link_libraries(mars adios2::adios2 MPI::MPI_C)
     add_executable(adios_example examples/mars_example_adios2.cpp)
     target_link_libraries(adios_example mars mars_io)
+else()
+    message("Adios Not Found")
 endif()
 
 include(tests/tests.cmake)
