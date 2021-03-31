@@ -22,11 +22,11 @@ env
 hostname
 
 DATE=$(date +"%Y%m%d%H%M")
-SCRATCH=/scratch/snx3000/gandanie
+SCRATCH=/scratch/snx3000/anfink
 
 for cpu_gpu in cpu ; do
-  mkdir build_${cpu_gpu}
-  pushd build_${cpu_gpu}
+  mkdir mars_${cpu_gpu}
+  pushd mars_${cpu_gpu}
   source $SCRATCH/build/${cpu_gpu}/${cpu_gpu}_jenkins_Release/environment
   cmake -DCMAKE_BUILD_TYPE=release -DCMAKE_VERBOSE_MAKEFILE=true ..
   make -j16
