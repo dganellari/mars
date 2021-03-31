@@ -1,0 +1,23 @@
+pipeline {
+    agent any
+    stages {
+        stage('checkout') {
+            steps {
+                echo 'Checking out the repo'
+                git branch: 'jenkins', url: 'https://bitbucket.org/zulianp/mars.git'
+                sh 'git submodule update --init --recursive'
+            }
+        }
+        stage('build') {
+            steps {
+                echo 'Building Mars'
+                sh 'set -e'
+                sh 'set -x'
+                sh 'pwd -P'
+                sh 'ls -lh'
+                sh 'hostname'
+                sh 'ci/jenkins/cscs/source/jenkins_submit.sh ci/jenkins/cscs/compute_node_mars.sh'
+            }
+        }
+    }
+}
