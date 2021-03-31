@@ -7,8 +7,8 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --partition=normal
 #SBATCH --constraint=mc
-#SBATCH --error=/scratch/snx3000/gandanie/build/jenkins-faster-%j.err
-#SBATCH --output=/scratch/snx3000/gandanie/build/jenkins-faster-%j.out
+#SBATCH --error=/scratch/snx3000/gandanie/build/jenkins-mars-%j.err
+#SBATCH --output=/scratch/snx3000/gandanie/build/jenkins-mars-%j.out
 
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
