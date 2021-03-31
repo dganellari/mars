@@ -155,28 +155,6 @@ namespace mars {
                 io.SetEngine("BP3");
                 io.SetParameters({{"verbose", "4"}});
 
-                std::string extent = std::to_string()
-
-                    const std::string imageData = R"(
-                <?xml version="1.0"?>
-                <VTKFile type="ImageData" version="0.1" byte_order="LittleEndian">
-                  <ImageData WholeExtent=")" + extent +
-                                                  R"(" Origin="0 0 0" Spacing="1 1 1">
-                    <Piece Extent=")" + extent +
-                                                  R"(">
-                      <CellData Scalars="U">
-                          <DataArray Name="U" />
-                          <DataArray Name="V" />
-                          <DataArray Name="TIME">
-                            step
-                          </DataArray>
-                      </CellData>
-                    </Piece>
-                  </ImageData>
-                </VTKFile>)";
-
-                io.DefineAttribute<std::string>("vtk.xml", imageData);
-
                 /*
                  * Define local array: type, name, local size
                  * Global dimension and starting offset must be an empty vector
@@ -225,8 +203,9 @@ namespace mars {
                     // v2
 
                     // random size per process per step, 5..10 each
-                    Nelems = x.size();
-                    x.reserve(Nelems);
+                    std::cout << x.data() << std::endl;
+                    // Nelems = x.size();
+                    // x.reserve(Nelems);
                     for (size_t i = 0; i < Nelems; i++) {
                         v2[i] = rank * 1.0 + step * 0.1;
                     }
@@ -234,7 +213,7 @@ namespace mars {
                     // Set the size of the array now because we did not know
                     // the size at the time of definition
                     varV2.SetSelection(adios2::Box<adios2::Dims>({}, {Nelems}));
-                    writer.Put<double>(varV2, x.data());
+                    // writer.Put<double>(varV2, x.data());
 
                     // v3
 
