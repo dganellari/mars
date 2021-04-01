@@ -1,3 +1,4 @@
+#include "adios2.h"
 #include "mars_base.hpp"
 #include "mars_boundary_conditions.hpp"
 #include "mars_copy_operator.hpp"
@@ -5,6 +6,7 @@
 #include "mars_globals.hpp"
 #include "mars_gradient_recovery.hpp"
 #include "mars_identity_operator.hpp"
+#include "mars_image_data_writer_settings.hpp"
 #include "mars_interpolate.hpp"
 #include "mars_invert.hpp"
 #include "mars_laplace_ex.hpp"
