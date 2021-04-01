@@ -10,7 +10,7 @@ Settings::Settings() {
     Du = 0.05;
     Dv = 0.1;
     noise = 0.0;
-    output = "foo.bp";
+    output = "solution.bp";
     checkpoint = false;
     checkpoint_freq = 2000;
     checkpoint_output = "gs_ckpt.bp";

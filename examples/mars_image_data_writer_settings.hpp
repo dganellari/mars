@@ -1,5 +1,5 @@
-#ifndef __SETTINGS_H__
-#define __SETTINGS_H__
+#ifndef MARS_IMAGE_DATA_WRITER_SETTINGS.HPP
+#define MARS_IMAGE_DATA_WRITER_SETTINGS .HPP
 
 #include <string>
 
