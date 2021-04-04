@@ -23,6 +23,10 @@ BUILDSCRIPT_DIR=$(dirname $(realpath $0))
 
 # TRILINOS_DIR=${TRILINOS_DIR:-${SCRATCH}/build/trilinos/install}
 
+echo "Mars directories comp:"
+echo ${SRCDIR}
+echo ${MAINDIR}
+
 mkdir -p ${SRCDIR}
 mkdir -p ${BUILDDIR}
 mkdir -p ${INSTALLDIR}
