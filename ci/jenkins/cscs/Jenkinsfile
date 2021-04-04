@@ -16,7 +16,7 @@ pipeline {
                 sh 'pwd -P'
                 sh 'ls -lh'
                 sh 'hostname'
-                sh 'bash ci/jenkins/cscs/source/jenkins_submit.sh ci/jenkins/cscs/source/compute_node_mars.sh'
+                sh 'bash ci/jenkins/cscs/sources/jenkins_submit.sh ci/jenkins/cscs/sources/compute_node_mars.sh'
             }
         }
     }

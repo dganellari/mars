@@ -47,11 +47,11 @@ for cpu_gpu in cpu gpu; do
     built_new_version="false"
     if [[ "${debug_release}" == "Debug" ]]; then
       if [[ $(( ${BUILD_NUMBER} % 7 )) == 3 ]]; then
-        build_${cpu_gpu}_debug.sh ${BUILDDIR} ${INSTALLDIR}
+        ci/jenkins/cscs/sources/build_${cpu_gpu}_debug.sh ${BUILDDIR} ${INSTALLDIR}
         built_new_version="true"
       fi
     else
-      build_${cpu_gpu}.sh ${BUILDDIR} ${INSTALLDIR}
+      ci/jenkins/cscs/sources/build_${cpu_gpu}.sh ${BUILDDIR} ${INSTALLDIR}
       built_new_version="true"
     fi
 
