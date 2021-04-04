@@ -47,11 +47,11 @@ for cpu_gpu in cpu gpu; do
     built_new_version="false"
     if [[ "${debug_release}" == "Debug" ]]; then
       if [[ $(( ${BUILD_NUMBER} % 7 )) == 3 ]]; then
-        ~gandanie/buildscripts/build_${cpu_gpu}_debug.sh ${BUILDDIR} ${INSTALLDIR}
+        build_${cpu_gpu}_debug.sh ${BUILDDIR} ${INSTALLDIR}
         built_new_version="true"
       fi
     else
-      ~gandanie/buildscripts/build_${cpu_gpu}.sh ${BUILDDIR} ${INSTALLDIR}
+      build_${cpu_gpu}.sh ${BUILDDIR} ${INSTALLDIR}
       built_new_version="true"
     fi
 
