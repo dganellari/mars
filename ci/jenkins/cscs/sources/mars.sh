@@ -27,6 +27,12 @@ echo $SRCDIR
 mkdir -p ${BUILDDIR}
 mkdir -p ${INSTALLDIR}
 
+KOKKOS="OFF"
+if [[ $BUILD_WITH_OMP_SUPPORT == 1 ]]; then
+  OMP_FLAGS="-fopenmp"
+  KOKKOS="ON"
+fi
+
 CUDA_FLAGS=""
 if [[ $BUILD_WITH_CUDA_SUPPORT == 1 ]]; then
 #  if $CXX --version | grep -q GCC ; then
@@ -34,6 +40,7 @@ if [[ $BUILD_WITH_CUDA_SUPPORT == 1 ]]; then
 #  fi
   PATCHES=""
   CUDA_FLAGS="-DMARS_USE_CUDA=ON"
+  KOKKOS="ON"
 fi
 
 PATCHES="$PATCHES"
@@ -48,12 +55,12 @@ done
 pushd ${BUILDDIR}
 cmake -DCMAKE_VERBOSE_MAKEFILE=ON \
       -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -g" \
-      -DCMAKE_CXX_FLAGS="-fopenmp $MARCH" \
+      -DCMAKE_CXX_FLAGS="$OMP_FLAGS $MARCH" \
       -DCMAKE_INSTALL_PREFIX=${INSTALLDIR} \
       -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
       -DCMAKE_CXX_EXTENSIONS=OFF \
       -DCMAKE_CXX_STANDARD=14 \
-      -DTRY_WITH_KOKKOS=ON \
+      -DTRY_WITH_KOKKOS=${KOKKOS} \
       ${CUDA_FLAGS} \
       ${SRCDIR}
 make -j16

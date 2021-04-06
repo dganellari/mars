@@ -2,8 +2,8 @@ set -e
 set -x
 set -o pipefail
 
-BUILDBASE=${1:-${SCRATCH}/build/cpu}
-INSTALLBASE=${2:-${PROJECT}/install/cpu}
+BUILDBASE=${1:-${SCRATCH}/build/serial}
+INSTALLBASE=${2:-${PROJECT}/install/serial}
 
 SCRIPTBASE=$(dirname $(realpath $0))
 
@@ -28,8 +28,6 @@ echo "CXXFLAGS=\"\$(printf '%s\n' \"\${CXXFLAGS} -std=c++14\" | awk -v RS='[[:sp
 echo "export CXXFLAGS" >> "${INSTALLBASE}/environment"
 
 ENVBASE=/apps/daint/UES/anfink/cpu
-export TRILINOS_DIR="${ENVBASE}/trilinos"
-echo "export TRILINOS_DIR=\"${TRILINOS_DIR}\"" >> "${INSTALLBASE}/environment"
 export CMAKE_DIR="${ENVBASE}/cmake"
 echo "export CMAKE_DIR=\"${CMAKE_DIR}\"" >> "${INSTALLBASE}"/environment
 echo "export PATH=\"\${CMAKE_DIR}/bin:\${PATH}\"" >> "${INSTALLBASE}"/environment
@@ -37,7 +35,7 @@ echo "export PATH=\"\${CMAKE_DIR}/bin:\${PATH}\"" >> "${INSTALLBASE}"/environmen
 source "${INSTALLBASE}/environment"
 
 mkdir -p ${BUILDBASE}/mars
-BUILD_WITH_OMP_SUPPORT="1" "${SCRIPTBASE}/mars.sh" "${BUILDBASE}/mars" "${INSTALLBASE}/mars" |& tee ${BUILDBASE}/mars/logfile
+"${SCRIPTBASE}/mars.sh" "${BUILDBASE}/mars" "${INSTALLBASE}/mars" |& tee ${BUILDBASE}/mars/logfile
 export MARS_DIR="${INSTALLBASE}/mars"
 cp ${BUILDBASE}/mars/logfile ${INSTALLBASE}/mars/build.log
 rm -Rf "${BUILDBASE}/mars"
