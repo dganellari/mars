@@ -29,7 +29,7 @@ public:
     adios2::Variable<double> var_v;
     adios2::Variable<int> var_step;
 
-    ImageWriter(const Settings &settings, adios2::IO io);
+    ImageWriter(const Settings &settings, adios2::IO &io);
     ~ImageWriter();
     void open(const std::string &fname);
     void write(int step);

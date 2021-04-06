@@ -53,7 +53,38 @@ void define_bpvtk_attribute(const Settings &s, adios2::IO &io) {
 
 // TODO add PMesh as GrayScott sim
 
-ImageWriter::ImageWriter(const Settings &settings, adios2::IO io) {}
+ImageWriter::ImageWriter(const Settings &settings, PMesh &mesh, adios2::IO &io) {
+    // io.DefineAttribute<double>("F", settings.F);
+    // io.DefineAttribute<double>("k", settings.k);
+    // io.DefineAttribute<double>("dt", settings.dt);
+    io.DefineAttribute<double>("Du", settings.Du);
+    // io.DefineAttribute<double>("Dv", settings.Dv);
+    // io.DefineAttribute<double>("noise", settings.noise);
+
+    if (!settings.mesh_type.empty()) {
+        define_bpvtk_attribute(settings, io);
+    }
+
+    var_u = io.DefineVariable<double>("U",
+                                      {settings.L, settings.L, settings.L},
+                                      {sim.offset_z, sim.offset_y, sim.offset_x},
+                                      {sim.size_z, sim.size_y, sim.size_x});
+
+    var_v = io.DefineVariable<double>("V",
+                                      {settings.L, settings.L, settings.L},
+                                      {sim.offset_z, sim.offset_y, sim.offset_x},
+                                      {sim.size_z, sim.size_y, sim.size_x});
+
+    // TODO: figure out what this does...
+    // size_x, size_z and size_y are dimentions of local array
+    // What is sim? PMesh?
+    if (settings.adios_memory_selection) {
+        var_u.SetMemorySelection({{1, 1, 1}, {sim.size_z + 2, sim.size_y + 2, sim.size_x + 2}});
+        var_v.SetMemorySelection({{1, 1, 1}, {sim.size_z + 2, sim.size_y + 2, sim.size_x + 2}});
+    }
+
+    var_step = io.DefineVariable<int>("step");
+}
 
 ImageWriter::open(const std::string &fname) { writer = io.Open(fname, adios2::Mode::Write); }
 
