@@ -23,6 +23,10 @@ pipeline {
     }
 
     post {
+        success {
+            echo 'Mars Build is successful in Jenkins!'
+        }
+
         failure {
             mail body: "<b>Mars Build Failed in Jenkins:</b><br>Project: ${env.JOB_NAME} <br>Build Number: ${env.BUILD_NUMBER} <br> URL : ${env.BUILD_URL}", cc: 'patrick.zulian@usi.ch', charset: 'UTF-8', from: '', mimeType: 'text/html', subject: "ERROR CI: Project name -> ${env.JOB_NAME}", to: "ganellari.d@gmail.com";
         }

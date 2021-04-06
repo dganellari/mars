@@ -8,8 +8,8 @@ set -x
 set -o pipefail
 
 
-BUILDBASE=${1:-${SCRATCH}/build/cpu}
-INSTALLBASE=${2:-${PROJECT}/install/cpu}
+BUILDBASE=${1:-${SCRATCH}/build/kokkos_serial}
+INSTALLBASE=${2:-${PROJECT}/install/kokkos_serial}
 
 SCRIPTBASE=$(dirname $(realpath $0))
 
