@@ -2,8 +2,8 @@ set -e
 set -x
 set -o pipefail
 
-BUILDBASE=${1:-${SCRATCH}/build/gpu}
-INSTALLBASE=${2:-${PROJECT}/install/gpu}
+BUILDBASE=${1:-${SCRATCH}/build/kokkos_cuda}
+INSTALLBASE=${2:-${PROJECT}/install/kokkos_cuda}
 
 SCRIPTBASE=$(dirname $(realpath $0))
 

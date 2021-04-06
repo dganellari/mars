@@ -28,6 +28,11 @@ mkdir -p ${BUILDDIR}
 mkdir -p ${INSTALLDIR}
 
 MARS_USE_KOKKOS="OFF"
+
+if [[ $BUILD_WITH_SERIAL_SUPPORT == 1 ]]; then
+  MARS_USE_KOKKOS="ON"
+fi
+
 if [[ $BUILD_WITH_OMP_SUPPORT == 1 ]]; then
   OMP_FLAGS="-fopenmp"
   MARS_USE_KOKKOS="ON"
