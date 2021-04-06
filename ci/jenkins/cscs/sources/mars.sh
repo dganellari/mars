@@ -5,7 +5,6 @@ set -e
 
 # $1=MAINDIR
 # $2=INSTALLDIR
-# $3=SRCDIR
 # $4=BUILDDIR
 
 
@@ -20,6 +19,7 @@ MARCH=${MARCH:-"-march=native"}
 BUILD_TYPE=${BUILD_TYPE:-"Release"}
 
 BUILDSCRIPT_DIR=$(dirname $(realpath $0))
+# When used the jenkins pipeline the src dir is the current directory if not push or pop dir are done before
 SRCDIR=$(pwd)
 echo "SRCDIR"
 echo $SRCDIR
@@ -27,10 +27,10 @@ echo $SRCDIR
 mkdir -p ${BUILDDIR}
 mkdir -p ${INSTALLDIR}
 
-KOKKOS="OFF"
+MARS_USE_KOKKOS="OFF"
 if [[ $BUILD_WITH_OMP_SUPPORT == 1 ]]; then
   OMP_FLAGS="-fopenmp"
-  KOKKOS="ON"
+  MARS_USE_KOKKOS="ON"
 fi
 
 CUDA_FLAGS=""
@@ -40,7 +40,7 @@ if [[ $BUILD_WITH_CUDA_SUPPORT == 1 ]]; then
 #  fi
   PATCHES=""
   CUDA_FLAGS="-DMARS_USE_CUDA=ON"
-  KOKKOS="ON"
+  MARS_USE_KOKKOS="ON"
 fi
 
 PATCHES="$PATCHES"
@@ -60,7 +60,7 @@ cmake -DCMAKE_VERBOSE_MAKEFILE=ON \
       -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
       -DCMAKE_CXX_EXTENSIONS=OFF \
       -DCMAKE_CXX_STANDARD=14 \
-      -DTRY_WITH_KOKKOS=${KOKKOS} \
+      -DTRY_WITH_KOKKOS=${MARS_USE_KOKKOS} \
       ${CUDA_FLAGS} \
       ${SRCDIR}
 make -j16

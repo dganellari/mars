@@ -30,6 +30,7 @@ echo "export CXXFLAGS" >> "${INSTALLBASE}/environment"
 ENVBASE=/apps/daint/UES/anfink/cpu
 export TRILINOS_DIR="${ENVBASE}/trilinos"
 echo "export TRILINOS_DIR=\"${TRILINOS_DIR}\"" >> "${INSTALLBASE}/environment"
+
 export CMAKE_DIR="${ENVBASE}/cmake"
 echo "export CMAKE_DIR=\"${CMAKE_DIR}\"" >> "${INSTALLBASE}"/environment
 echo "export PATH=\"\${CMAKE_DIR}/bin:\${PATH}\"" >> "${INSTALLBASE}"/environment
