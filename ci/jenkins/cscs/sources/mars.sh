@@ -11,8 +11,8 @@ set -e
 
 MAINDIR=${1:-${SCRATCH}/build/mars}
 INSTALLDIR=${2:-${MAINDIR}/install}
-SRCDIR=${3:-${MAINDIR}/src}
 BUILDDIR=${4:-${MAINDIR}/build}
+
 
 [[ -f ${INSTALLDIR}/build.log ]] && exit 0
 
@@ -20,32 +20,12 @@ MARCH=${MARCH:-"-march=native"}
 BUILD_TYPE=${BUILD_TYPE:-"Release"}
 
 BUILDSCRIPT_DIR=$(dirname $(realpath $0))
+SRCDIR=$(pwd)
+echo "SRCDIR"
+echo $SRCDIR
 
-echo "BUILDSCRIPT_DIR"
-echo ${BUILDSCRIPT_DIR}
-echo ${1}
-echo ${3}
-pwd -P
-ls -lh
-# TRILINOS_DIR=${TRILINOS_DIR:-${SCRATCH}/build/trilinos/install}
-
-echo "Mars directories comp:"
-echo ${SRCDIR}
-echo ${MAINDIR}
-
-mkdir -p ${SRCDIR}
 mkdir -p ${BUILDDIR}
 mkdir -p ${INSTALLDIR}
-
-pushd ${MAINDIR}
-if [[ -f ${SRCDIR}/CMakeLists.txt ]]; then
-  # it seems we have cloned it already
-  pushd ${SRCDIR}
-#  git pull
-else
-  git clone --recurse-submodules ${GIT_DEPTH} -b master https://bitbucket.org/zulianp/mars.git ${SRCDIR}
-  pushd ${SRCDIR}
-fi
 
 CUDA_FLAGS=""
 if [[ $BUILD_WITH_CUDA_SUPPORT == 1 ]]; then
