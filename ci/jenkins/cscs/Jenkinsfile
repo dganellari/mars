@@ -4,8 +4,9 @@ pipeline {
         stage('checkout') {
             steps {
                 echo 'Checking out the repo'
-                git branch: 'jenkins', url: 'https://bitbucket.org/zulianp/mars.git'
+                checkout scm
                 sh 'git submodule update --init --recursive'
+                echo "Running ${env.BUILD_ID} on ${env.JENKINS_URL}"
             }
         }
         stage('build') {
