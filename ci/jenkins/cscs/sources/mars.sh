@@ -20,7 +20,10 @@ MARCH=${MARCH:-"-march=native"}
 BUILD_TYPE=${BUILD_TYPE:-"Release"}
 
 BUILDSCRIPT_DIR=$(dirname $(realpath $0))
-
+echo "BUILDSCRIPT_DIR"
+echo ${BUILDSCRIPT_DIR}
+pwd -P
+ls -lh
 # TRILINOS_DIR=${TRILINOS_DIR:-${SCRATCH}/build/trilinos/install}
 
 echo "Mars directories comp:"
