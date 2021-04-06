@@ -24,11 +24,15 @@ pipeline {
 
     post {
         failure {
-            mail body: "<b>Mars Failure Details:</b><br>Project: ${env.JOB_NAME} <br>Build Number: ${env.BUILD_NUMBER} <br> URL : ${env.BUILD_URL}", cc: 'patrick.zulian@usi.ch', charset: 'UTF-8', from: '', mimeType: 'text/html', subject: "ERROR CI: Project name -> ${env.JOB_NAME}", to: "ganellari.d@gmail.com";
+            mail body: "<b>Mars Build Failed in Jenkins:</b><br>Project: ${env.JOB_NAME} <br>Build Number: ${env.BUILD_NUMBER} <br> URL : ${env.BUILD_URL}", cc: 'patrick.zulian@usi.ch', charset: 'UTF-8', from: '', mimeType: 'text/html', subject: "ERROR CI: Project name -> ${env.JOB_NAME}", to: "ganellari.d@gmail.com";
         }
 
-        always{
+        always {
             mail body: "<b>Mars Build Details</b><br>Project: ${env.JOB_NAME} <br>Build Number: ${env.BUILD_NUMBER} <br> URL : ${env.BUILD_URL}", charset: 'UTF-8', from: '', mimeType: 'text/html', subject: "Build CI End: Project name -> ${env.JOB_NAME}", to: "ganellari.d@gmail.com";
+        }
+
+        fixed {
+            mail body: "<b>Mars Build is back to normal. Fixed! </b><br>Project: ${env.JOB_NAME} <br>Build Number: ${env.BUILD_NUMBER} <br> URL : ${env.BUILD_URL}", cc: 'patrick.zulian@usi.ch', charset: 'UTF-8', from: '', mimeType: 'text/html', subject: "Build CI Changed: Project name -> ${env.JOB_NAME}", to: "ganellari.d@gmail.com";
         }
     }
 }
