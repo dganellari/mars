@@ -38,7 +38,6 @@ for dir in $(find $SCRATCH/build -mindepth 2 -maxdepth 2 -type d -regex '.*20.*\
   rm -Rf "${dir}" "${dir}.install"
 done
 
-#for cpu_gpu in mars_cpu mars_gpu ; do
 for cpu_gpu in serial kokkos_serial kokkos_openmp kokkos_cuda; do
   for debug_release in Debug Release ; do
     BUILDDIR=${SCRATCH}/build/${cpu_gpu}/${DATE}_${BUILD_NUMBER}_${debug_release}
