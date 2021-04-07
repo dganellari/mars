@@ -56,13 +56,26 @@ using namespace std::chrono;
 
 namespace mars {
 
+    double simple_func(const double &x, const double &y, const double &z) { return x * y * z; }
+
     void create_data(const int &Nx, const int &Ny, const int &Nz) {
         int size = Nx * Ny * Nz;
-        int X[size];
+        double H[3];
+        H[0] = 0.5;
+        H[1] = 0.25;
+        H[2] = 1;
+        double data[size];
+        double x;
+        double y;
+        double z;
 
         for (int i = 0; i < Nx; ++i) {
             for (int j = 0; j < Ny; ++j) {
                 for (int k = 0; k < Nz; ++k) {
+                    x = i * H[0];
+                    y = j * H[1];
+                    z = k * H[2];
+                    data[i * Ny * Nz + j * Nz + k] = simple_func(x, y, z);
                 }
             }
         }
@@ -122,44 +135,47 @@ namespace mars {
 }  // namespace mars
 
 int main(int argc, char *argv[]) {
-    std::cout << "Writing results to disk..." << std::endl;
+    int Nx, Ny, Nz;
+    Nx = 3;
+    Ny = 3;
+    Nz = 3;
+    int size = Nx * Ny * Nz;
+    double H[3];
+    H[0] = 0.5;
+    H[1] = 0.25;
+    H[2] = 1;
+    double data[size];
+    double x;
+    double y;
+    double z;
 
-    using namespace mars;
-
-    Env env(argc, argv);
-
-#if ADIOS2_USE_MPI
-    adios2::ADIOS adios(MPI_COMM_WORLD);
-#else
-    adios2::ADIOS adios;
-#endif
-
-    {
-        using namespace cxxopts;
-        Options options("./adios_example", "Run M.A.R.S. based applications.");
-
-        options.add_options()("d,debug", "Enable debugging")                                     //
-            ("l,level", "Number of levels", value<Integer>()->default_value("1"))                //
-            ("x,nx", "Number of elements in x direction", value<Integer>()->default_value("6"))  //
-            ("y,ny", "Number of elements in y direction", value<Integer>()->default_value("6"))  //
-            ("z,nz", "Number of elements in z direction", value<Integer>()->default_value("6"))  //
-            ("t,nt", "Number of elements in t direction", value<Integer>()->default_value("6"))  //
-            ("a,adaptive", "Adaptivity", value<bool>()->default_value("false"))                  //
-            ("o,output", "Enable output", value<bool>()->default_value("true"))                  //
-            ("r,refine_level",
-             "Number of refinements",
-             value<Integer>()->default_value("1"))                                  //
-            ("v,verbose", "Verbose output", value<bool>()->default_value("false"))  //
-            ("h,help", "Print usage");
-
-        auto args = options.parse(argc, argv);
-
-        ModelTest<ParallelQuad4Mesh,
-                  UMeshSTHeatEquation<ParallelQuad4Mesh>,
-                  ST3BC<ParallelQuad4Mesh>,
-                  ST3RHS,
-                  ST3Analitcal>()
-            .run(args);
+    for (int i = 0; i < Nx; ++i) {
+        for (int j = 0; j < Ny; ++j) {
+            for (int k = 0; k < Nz; ++k) {
+                x = i * H[0];
+                y = j * H[1];
+                z = k * H[2];
+                data[i * Ny * Nz + j * Nz + k] = mars::simple_func(x, y, z);
+            }
+        }
     }
-    return env.exit_code();
+
+    Settings settings;
+    adios2::ADIOS adios(settings.adios_config, adios2::DebugON);
+    adios2::IO io_main = adios.DeclareIO("SimulationOutput");
+
+    ImageWriter main_image(settings, io_main);
+    // main_writer.open(settings.output);
+    // main_writer.write(1, data);
+    // main_writer.close();
+
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+    //
 }
