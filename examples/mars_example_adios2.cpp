@@ -56,30 +56,30 @@ using namespace std::chrono;
 
 namespace mars {
 
-    double simple_func(const double &x, const double &y, const double &z) { return x * y * z; }
+    // double simple_func(const double &x, const double &y, const double &z) { return x * y * z; }
 
-    void create_data(const int &Nx, const int &Ny, const int &Nz) {
-        int size = Nx * Ny * Nz;
-        double H[3];
-        H[0] = 0.5;
-        H[1] = 0.25;
-        H[2] = 1;
-        double data[size];
-        double x;
-        double y;
-        double z;
+    // void create_data(const int &Nx, const int &Ny, const int &Nz) {
+    //     int size = Nx * Ny * Nz;
+    //     double H[3];
+    //     H[0] = 0.5;
+    //     H[1] = 0.25;
+    //     H[2] = 1;
+    //     double data[size];
+    //     double x;
+    //     double y;
+    //     double z;
 
-        for (int i = 0; i < Nx; ++i) {
-            for (int j = 0; j < Ny; ++j) {
-                for (int k = 0; k < Nz; ++k) {
-                    x = i * H[0];
-                    y = j * H[1];
-                    z = k * H[2];
-                    data[i * Ny * Nz + j * Nz + k] = simple_func(x, y, z);
-                }
-            }
-        }
-    }
+    //     for (int i = 0; i < Nx; ++i) {
+    //         for (int j = 0; j < Ny; ++j) {
+    //             for (int k = 0; k < Nz; ++k) {
+    //                 x = i * H[0];
+    //                 y = j * H[1];
+    //                 z = k * H[2];
+    //                 data[i * Ny * Nz + j * Nz + k] = simple_func(x, y, z);
+    //             }
+    //         }
+    //     }
+    // }
 
     // using VectorReal = mars::ViewVectorType<Real>;
 
@@ -135,39 +135,41 @@ namespace mars {
 }  // namespace mars
 
 int main(int argc, char *argv[]) {
-    int Nx, Ny, Nz;
-    Nx = 3;
-    Ny = 3;
-    Nz = 3;
-    int size = Nx * Ny * Nz;
-    double H[3];
-    H[0] = 0.5;
-    H[1] = 0.25;
-    H[2] = 1;
-    double data[size];
-    double x;
-    double y;
-    double z;
+    // int Nx, Ny, Nz;
+    // Nx = 3;
+    // Ny = 3;
+    // Nz = 3;
+    // int size = Nx * Ny * Nz;
+    // double H[3];
+    // H[0] = 0.5;
+    // H[1] = 0.25;
+    // H[2] = 1;
+    // double data[size];
+    // double x;
+    // double y;
+    // double z;
 
-    for (int i = 0; i < Nx; ++i) {
-        for (int j = 0; j < Ny; ++j) {
-            for (int k = 0; k < Nz; ++k) {
-                x = i * H[0];
-                y = j * H[1];
-                z = k * H[2];
-                data[i * Ny * Nz + j * Nz + k] = mars::simple_func(x, y, z);
-            }
-        }
-    }
+    // for (int i = 0; i < Nx; ++i) {
+    //     for (int j = 0; j < Ny; ++j) {
+    //         for (int k = 0; k < Nz; ++k) {
+    //             x = i * H[0];
+    //             y = j * H[1];
+    //             z = k * H[2];
+    //             data[i * Ny * Nz + j * Nz + k] = mars::simple_func(x, y, z);
+    //         }
+    //     }
+    // }
 
     Settings settings;
-    adios2::ADIOS adios(settings.adios_config, adios2::DebugON);
+    adios2::ADIOS adios(adios2::DebugON);
     adios2::IO io_main = adios.DeclareIO("SimulationOutput");
 
     ImageWriter main_image(settings, io_main);
-    // main_writer.open(settings.output);
-    // main_writer.write(1, data);
-    // main_writer.close();
+
+    main_image.new_data(2, 2, 1);
+    main_image.open(settings.output);
+    main_image.write(1);
+    main_image.close();
 
     //
     //

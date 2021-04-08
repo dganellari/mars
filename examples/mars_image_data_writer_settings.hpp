@@ -21,5 +21,7 @@ struct Settings {
     bool adios_span;
     bool adios_memory_selection;
     std::string mesh_type;
+
+    Settings();
 };
 #endif

@@ -1,19 +1,33 @@
+#include "mars_image_data_writer.hpp"
+#include <iostream>
 #include "adios2.h"
-#include "mars_base.hpp"
-#include "mars_boundary_conditions.hpp"
-#include "mars_copy_operator.hpp"
-#include "mars_fe_values.hpp"
-#include "mars_globals.hpp"
-#include "mars_gradient_recovery.hpp"
-#include "mars_identity_operator.hpp"
 #include "mars_image_data_writer_settings.hpp"
-#include "mars_interpolate.hpp"
-#include "mars_invert.hpp"
-#include "mars_laplace_ex.hpp"
-#include "mars_precon_conjugate_grad.hpp"
-#include "mars_serial_mesh_type.hpp"
-#include "mars_simplex_laplacian.hpp"
-#include "mars_umesh_laplace.hpp"
+
+double simple_func(const double &x, const double &y, const double &z) { return x * y * z; }
+
+void ImageWriter::new_data(const unsigned long &Nx, const unsigned long &Ny, const unsigned long &Nz) {
+    unsigned long size = Nx * Ny * Nz;
+    double H[3];
+    H[0] = 0.5;
+    H[1] = 0.25;
+    H[2] = 1;
+    data.resize(size);
+    double x;
+    double y;
+    double z;
+
+    for (int i = 0; i < Nx; ++i) {
+        for (int j = 0; j < Ny; ++j) {
+            for (int k = 0; k < Nz; ++k) {
+                x = i * H[0];
+                y = j * H[1];
+                z = k * H[2];
+                data[i * Ny * Nz + j * Nz + k] = simple_func(x, y, z);
+            }
+        }
+    }
+    var_data = io.DefineVariable<double>("U", {Nx, Ny, Nz}, {0UL, 0UL, 0UL}, {Nx, Ny, Nz});
+}
 
 void define_bpvtk_attribute(const Settings &s, adios2::IO &io) {
     auto lf_VTKImage = [](const Settings &s, adios2::IO &io) {
@@ -29,10 +43,6 @@ void define_bpvtk_attribute(const Settings &s, adios2::IO &io) {
                                       R"(">
               <CellData Scalars="U">
                   <DataArray Name="U" />
-                  <DataArray Name="V" />
-                  <DataArray Name="TIME">
-                    step
-                  </DataArray>
               </CellData>
             </Piece>
           </ImageData>
@@ -51,28 +61,26 @@ void define_bpvtk_attribute(const Settings &s, adios2::IO &io) {
     // TODO extend to other formats e.g. structured
 }
 
-ImageWriter::ImageWriter(const Settings &settings, adios2::IO io) {
-    io.DefineAttribute<double>("Du", settings.Du);
-
-    if (!settings.mesh_type.empty()) {
-        define_bpvtk_attribute(settings, io);
-    }
-
-    var_u = io.DefineVariable<double>("U", {settings.L, settings.L, settings.L});
-
-    // if (settings.adios_memory_selection) {
-    //     var_u.SetMemorySelection({{1, 1, 1}, {sim.size_z + 2, sim.size_y + 2, sim.size_x + 2}});
-    //     var_v.SetMemorySelection({{1, 1, 1}, {sim.size_z + 2, sim.size_y + 2, sim.size_x + 2}});
+ImageWriter::ImageWriter(const Settings &settings, adios2::IO io) : io(io) {
+    // if (!settings.mesh_type.empty()) {
+    //     define_bpvtk_attribute(settings, io);
     // }
 
-    var_step = io.DefineVariable<int>("step");
+    // var_u = io.DefineVariable<double>("U", {settings.L, settings.L, settings.L});
+
+    // // if (settings.adios_memory_selection) {
+    // //     var_u.SetMemorySelection({{1, 1, 1}, {sim.size_z + 2, sim.size_y + 2, sim.size_x + 2}});
+    // //     var_v.SetMemorySelection({{1, 1, 1}, {sim.size_z + 2, sim.size_y + 2, sim.size_x + 2}});
+    // // }
+
+    // var_step = io.DefineVariable<int>("step");
 }
 
-ImageWriter::open(const std::string &fname) { writer = io.Open(fname, adios2::Mode::Write); }
+void ImageWriter::open(const std::string &fname) { writer = io.Open(fname, adios2::Mode::Write); }
 
-void ImageWriter::write(int step, double &data[]) {
+void ImageWriter::write(int step) {
     writer.BeginStep();
-    writer.Put<double>(var_u, data.data());
+    writer.Put<double>(var_data, data.data());
     writer.EndStep();
 }
 void ImageWriter::close() { writer.Close(); }

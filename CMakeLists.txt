@@ -311,7 +311,11 @@ endif()
 find_package(ADIOS2 REQUIRED)
 if(ADIOS2_FOUND)
     target_link_libraries(mars adios2::adios2 MPI::MPI_C)
-    add_executable(adios_example examples/mars_example_adios2.cpp)
+
+    add_executable(adios_example examples/mars_example_adios2.cpp 
+    examples/mars_image_data_writer_settings.cpp
+    examples/mars_image_data_writer.cpp)
+
     target_link_libraries(adios_example mars mars_io)
 else()
     message("Adios Not Found")
