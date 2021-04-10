@@ -184,6 +184,43 @@ namespace mars {
         }
 
         template <Integer Type, Integer dir>
+        static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Hex8, void>
+        build_starting_face_corner(Octant &face_cornerA, const int side, const Octant &oc) {
+            // find the starting corner "face_cornerA" of the face and use the direction
+            const int val = side ^ 1;
+            if (dir == 0) {
+                face_cornerA.x = oc.x + val;
+                face_cornerA.y = oc.y;
+                face_cornerA.z = oc.z;
+            }
+            if (dir == 1) {
+                face_cornerA.x = oc.x;
+                face_cornerA.y = oc.y + val;
+                face_cornerA.z = oc.z;
+            }
+            if (dir == 2) {
+                face_cornerA.x = oc.x;
+                face_cornerA.y = oc.y;
+                face_cornerA.z = oc.z + val;
+            }
+        }
+
+        template <Integer Type, Integer dir>
+        static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Quad4, void>
+        build_starting_face_corner(Octant &face_cornerA, const int side, const Octant &oc) {
+            // find the starting corner "face_cornerA" of the face and use the direction
+            const int val = side ^ 1;
+            if (dir == 0) {
+                face_cornerA.x = oc.x + val;
+                face_cornerA.y = oc.y;
+            }
+            if (dir == 1) {
+                face_cornerA.x = oc.x;
+                face_cornerA.y = oc.y + val;
+            }
+        }
+
+        template <Integer Type, Integer dir>
         static MARS_INLINE_FUNCTION Integer
         process_face_corner(Octant &face_cornerA, const Mesh *mesh, const int side, const Octant &oc) {
             Integer face_nr;
@@ -201,22 +238,14 @@ namespace mars {
                 owner_proc = find_owner_processor(mesh->get_view_gp(), enc_oc, 2, mesh->get_proc());
             }
 
-            // find the starting corner "face_cornerA" of the face and use the direction
-            const int val = side ^ 1;
-            if (dir == 0) {
-                face_cornerA.x = oc.x + val;
-                face_cornerA.y = oc.y;
-            }
-            if (dir == 1) {
-                face_cornerA.x = oc.x;
-                face_cornerA.y = oc.y + val;
-            }
+            build_starting_face_corner<Type, dir>(face_cornerA, side, oc);
 
             return owner_proc;
         }
 
-        template <Integer Type, Integer dir>
-        static MARS_INLINE_FUNCTION Integer process_face_node(const Octant &face_cornerA, const int j) {
+        template <Integer Type, Integer dir, typename F>
+        static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Quad4, Integer>
+        build_face_node(F f, const Octant &face_cornerA, const int j) {
             Octant o;
             if (dir == 0) {
                 o.x = degree * face_cornerA.x;
@@ -226,10 +255,34 @@ namespace mars {
                 o.x = degree * face_cornerA.x + j + 1;
                 o.y = degree * face_cornerA.y;
             }
+            return f(o);
+        }
 
-            Integer sfc = mars::get_sfc_from_octant<Type>(o);
+        template <Integer Type, Integer dir, typename F>
+        static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Hex8, Integer>
+        build_face_node(F f, const Octant &face_cornerA, const int j) {
+            Octant o;
+            if (dir == 0) {
+                o.x = degree * face_cornerA.x;
+                o.y = degree * face_cornerA.y + j + 1;
+                o.z = degree * face_cornerA.z + j + 1;
+            }
+            if (dir == 1) {
+                o.x = degree * face_cornerA.x + j + 1;
+                o.y = degree * face_cornerA.y;
+                o.z = degree * face_cornerA.z + j + 1;
+            }
+            if (dir == 2) {
+                o.x = degree * face_cornerA.x + j + 1;
+                o.y = degree * face_cornerA.y + j + 1;
+                o.z = degree * face_cornerA.z;
+            }
+            return f(o);
+        }
 
-            return sfc;
+        template <Integer Type, Integer dir>
+        static MARS_INLINE_FUNCTION Integer process_face_node(const Octant &face_cornerA, const int j) {
+            return build_face_node<Type, dir>(mars::get_sfc_from_octant<Type>, face_cornerA, j);
         }
 
         template <bool Ghost>
@@ -593,17 +646,40 @@ namespace mars {
             }
         };
 
-        template <typename F>
-        static MARS_INLINE_FUNCTION void volume_iterate(const Integer sfc, const Mesh *mesh, const Integer index, F f) {
-            Octant o;
+        // sfc | octant_from_sfc | volume_octant_transform. Composable functions.
+        template <typename F, Integer ET = ElemType>
+        static void volume_iterate(const Integer sfc, const Mesh *mesh, const Integer index, F f) {
             Octant oc = mesh->octant_from_sfc(sfc);
+            volume_octant_transform(oc, mesh, index, f, mars::get_sfc_from_octant<ElemType>);
+        }
+
+        template <typename F, typename G, Integer ET = ElemType>
+        static MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Quad4, void>
+        volume_octant_transform(const Octant &oc, const Mesh *mesh, const Integer index, F f, G g) {
+            Octant o;
             // go through all the inside dofs for the current element
             for (int i = 0; i < degree - 1; i++) {
                 for (int j = 0; j < degree - 1; j++) {
                     o.x = degree * oc.x + i + 1;
                     o.y = degree * oc.y + j + 1;
-                    Integer enc_oc = mars::get_sfc_from_octant<ElemType>(o);
-                    f(mesh, index, enc_oc);
+                    f(mesh, index, g(o));
+                }
+            }
+        }
+
+        template <typename F, typename G, Integer ET = ElemType>
+        static MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Hex8, void>
+        volume_octant_transform(const Octant &oc, const Mesh *mesh, const Integer index, F f, G g) {
+            Octant o;
+            // go through all the inside dofs for the current element
+            for (int i = 0; i < degree - 1; i++) {
+                for (int j = 0; j < degree - 1; j++) {
+                    for (int k = 0; k < degree - 1; k++) {
+                        o.x = degree * oc.x + i + 1;
+                        o.y = degree * oc.y + j + 1;
+                        o.z = degree * oc.z + k + 1;
+                        f(mesh, index, g(o));
+                    }
                 }
             }
         }
@@ -675,6 +751,23 @@ namespace mars {
                 face_predicate(mesh, i, dof_sfc, owner_proc, std::integral_constant<bool, Ghost>{});
             }
         };
+
+        template <typename F, Integer Type = ElemType>
+        static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Quad4, void>
+        face_dir_iterate(const Integer sfc, const Mesh *mesh, const Integer i, F f) {
+            // dir 0 = x, 1 = y
+            face_iterate<0>(sfc, mesh, i, f);
+            face_iterate<1>(sfc, mesh, i, f);
+        }
+
+        template <typename F, Integer Type = ElemType>
+        static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Hex8, void>
+        face_dir_iterate(const Integer sfc, const Mesh *mesh, const Integer i, F f) {
+            // dir 0 = x, 1 = y, 2 = z
+            face_iterate<0>(sfc, mesh, i, f);
+            face_iterate<1>(sfc, mesh, i, f);
+            face_iterate<2>(sfc, mesh, i, f);
+        }
 
         // careful: do not use this function for face iteration when expensive operations are involved. Useful mainly
         // for predicate builder. instead use the locally_owned_face_dof array to iterate over face dof sfcs.
@@ -756,7 +849,7 @@ namespace mars {
             void operator()(const Integer i) const {
                 const Integer sfc = get_sfc_ghost_or_local<Ghost>(mesh, i);
                 const Integer proc = mesh->get_proc();
-                corner_iterate(sfc,
+                /* corner_iterate(sfc,
                                mesh,
                                i,
                                CornerPredicate<Ghost>(local_predicate,
@@ -765,7 +858,7 @@ namespace mars {
                                                       global_label,
                                                       nbh_proc_predicate_send,
                                                       nbh_proc_predicate_recv,
-                                                      proc));
+                                                      proc)); */
 
                 if (face_nodes > 0) {
                     FacePredicate<Ghost> fp = FacePredicate<Ghost>(local_predicate,
@@ -775,8 +868,7 @@ namespace mars {
                                                                    nbh_proc_predicate_send,
                                                                    nbh_proc_predicate_recv,
                                                                    proc);
-                    face_iterate<0>(sfc, mesh, i, fp);
-                    face_iterate<1>(sfc, mesh, i, fp);
+                    face_dir_iterate(sfc, mesh, i, fp);
                 }
 
                 if (volume_nodes > 0) {
@@ -845,6 +937,7 @@ namespace mars {
             const Integer size = get_mesh_manager().get_host_mesh()->get_chunk_size();
             const Integer ghost_size = get_mesh_manager().get_host_mesh()->get_view_ghost().extent(0);
 
+            printf("Dims: %li, %li, %li - size: %li, %li\n", xDim, yDim, zDim, size, ghost_size);
             /* TODO: xdim and ydim should be changed to max xdim and ydim
              * of the local partition to reduce memory footprint */
             local_dof_enum = SFC<simplex_type::ElemType>(degree * xDim, degree * yDim, degree * zDim);
@@ -858,6 +951,7 @@ namespace mars {
             ViewVectorType<bool> global_predicate("gpred", gall_range);
             ViewVectorType<Integer> global_label("glabel", gall_range);
 
+            printf("Allrange: %li, %li, \n", lall_range, gall_range);
             /* generate the sfc for the local and global dofs containing the generation locally
             for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
             Kokkos::parallel_for("lg_predicate",
@@ -881,7 +975,7 @@ namespace mars {
                                                                  npbs,
                                                                  npbr));
 
-            local_dof_enum.compact_element_and_labels(local_predicate, local_label);
+            /* local_dof_enum.compact_element_and_labels(local_predicate, local_label);
             global_dof_enum.compact_element_and_labels(global_predicate, global_label);
 
             const int rank_size = num_ranks(context);
@@ -892,7 +986,7 @@ namespace mars {
             const Integer global_size = global_dof_enum.get_elem_size();
             context->distributed->gather_all_view(global_size, global_dof_size_per_rank);
 
-            incl_excl_scan(0, rank_size, global_dof_size_per_rank, global_dof_offset);
+            incl_excl_scan(0, rank_size, global_dof_size_per_rank, global_dof_offset); */
         }
 
         void exchange_ghost_counts(const context &context,
@@ -1069,50 +1163,51 @@ namespace mars {
             ViewVectorType<Integer> proc_scan_send("nbh_scan_send", rank_size + 1);
             ViewVectorType<Integer> proc_scan_recv("nbh_scan_recv", rank_size + 1);
 
+
             build_lg_predicate(context, nbh_proc_predicate_send, nbh_proc_predicate_recv);
-            build_local_orientation();
-
-
-            incl_excl_scan(0, rank_size, nbh_proc_predicate_send, proc_scan_send);
-            incl_excl_scan(0, rank_size, nbh_proc_predicate_recv, proc_scan_recv);
-
-            auto ps = subview(proc_scan_send, rank_size);
-            auto pr = subview(proc_scan_recv, rank_size);
-            auto h_ps = create_mirror_view(ps);
-            auto h_pr = create_mirror_view(pr);
-            // Deep copy device view to host view.
-            deep_copy(h_ps, ps);
-            deep_copy(h_pr, pr);
-
-            ViewVectorType<Integer> sender_ranks("sender_ranks", h_ps());
-            ViewVectorType<Integer> recver_ranks("receiver_ranks", h_pr());
-            compact_scan(nbh_proc_predicate_send, proc_scan_send, sender_ranks);
-            compact_scan(nbh_proc_predicate_recv, proc_scan_recv, recver_ranks);
-
-            ViewVectorType<Integer> scan_boundary, boundary_dofs_index;
-            build_boundary_dof_sets(scan_boundary, boundary_dofs_index, proc_scan_send, h_ps());
-
-            std::vector<Integer> s_count(rank_size, 0);
-            std::vector<Integer> r_count(rank_size, 0);
-
-            exchange_ghost_counts(context, scan_boundary, sender_ranks, recver_ranks, s_count, r_count);
-
-            /* create the scan recv mirror view from the receive count */
-            scan_recv = ViewVectorType<Integer>("scan_recv_", rank_size + 1);
-            scan_recv_mirror = create_mirror_view(scan_recv);
-            make_scan_index_mirror(scan_recv_mirror, r_count);
-            Kokkos::deep_copy(scan_recv, scan_recv_mirror);
-
-            /*create the scan send mirror view from the send count*/
-            scan_send = ViewVectorType<Integer>("scan_send_", rank_size + 1);
-            scan_send_mirror = create_mirror_view(scan_send);
-            make_scan_index_mirror(scan_send_mirror, s_count);
-            Kokkos::deep_copy(scan_send, scan_send_mirror);
-
-            ViewVectorType<Integer> ghost_dofs_index;
-            exchange_ghost_dofs(context, boundary_dofs_index, ghost_dofs_index);
-
-            build_ghost_local_global_map(context, ghost_dofs_index);
+/*             build_local_orientation(); */
+            /*  */
+            /*  */
+            /* incl_excl_scan(0, rank_size, nbh_proc_predicate_send, proc_scan_send); */
+            /* incl_excl_scan(0, rank_size, nbh_proc_predicate_recv, proc_scan_recv); */
+            /*  */
+            /* auto ps = subview(proc_scan_send, rank_size); */
+            /* auto pr = subview(proc_scan_recv, rank_size); */
+            /* auto h_ps = create_mirror_view(ps); */
+            /* auto h_pr = create_mirror_view(pr); */
+            /* // Deep copy device view to host view. */
+            /* deep_copy(h_ps, ps); */
+            /* deep_copy(h_pr, pr); */
+            /*  */
+            /* ViewVectorType<Integer> sender_ranks("sender_ranks", h_ps()); */
+            /* ViewVectorType<Integer> recver_ranks("receiver_ranks", h_pr()); */
+            /* compact_scan(nbh_proc_predicate_send, proc_scan_send, sender_ranks); */
+            /* compact_scan(nbh_proc_predicate_recv, proc_scan_recv, recver_ranks); */
+            /*  */
+            /* ViewVectorType<Integer> scan_boundary, boundary_dofs_index; */
+            /* build_boundary_dof_sets(scan_boundary, boundary_dofs_index, proc_scan_send, h_ps()); */
+            /*  */
+            /* std::vector<Integer> s_count(rank_size, 0); */
+            /* std::vector<Integer> r_count(rank_size, 0); */
+            /*  */
+            /* exchange_ghost_counts(context, scan_boundary, sender_ranks, recver_ranks, s_count, r_count); */
+            /*  */
+            /* [> create the scan recv mirror view from the receive count <] */
+            /* scan_recv = ViewVectorType<Integer>("scan_recv_", rank_size + 1); */
+            /* scan_recv_mirror = create_mirror_view(scan_recv); */
+            /* make_scan_index_mirror(scan_recv_mirror, r_count); */
+            /* Kokkos::deep_copy(scan_recv, scan_recv_mirror); */
+            /*  */
+            /* [>create the scan send mirror view from the send count<] */
+            /* scan_send = ViewVectorType<Integer>("scan_send_", rank_size + 1); */
+            /* scan_send_mirror = create_mirror_view(scan_send); */
+            /* make_scan_index_mirror(scan_send_mirror, s_count); */
+            /* Kokkos::deep_copy(scan_send, scan_send_mirror); */
+            /*  */
+            /* ViewVectorType<Integer> ghost_dofs_index; */
+            /* exchange_ghost_dofs(context, boundary_dofs_index, ghost_dofs_index); */
+            /*  */
+            /* build_ghost_local_global_map(context, ghost_dofs_index); */
         }
 
         /* build a map only for the ghost dofs as for the local ones the global dof enum can be used */
@@ -1552,7 +1647,7 @@ namespace mars {
         // mirror view on the scan_ghost view used as an offset to receive ghost dofs.
         ViewVectorType<Integer> scan_recv;
         ViewVectorType<Integer>::HostMirror scan_recv_mirror;
-    };
+        };
 
 }  // namespace mars
 

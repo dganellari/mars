@@ -1156,6 +1156,7 @@ namespace mars {
             Integer zDim = get_ZDim();
 
             auto sfcv = get_view_sfc();
+            auto proc_num = get_proc();
             parallel_for(
                 "print set", get_chunk_size(), KOKKOS_LAMBDA(const Integer i) {
                     const Integer sfc = sfcv(i);
@@ -1170,7 +1171,7 @@ namespace mars {
                            point[0],
                            point[1],
                            point[2],
-                           get_proc());
+                           proc_num);
                 });
         }
 
