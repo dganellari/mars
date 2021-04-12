@@ -155,7 +155,7 @@ namespace mars {
             o.y = oc.y + j;
 
             Octant one_ring[simplex_type::ElemType];
-            o.one_ring_nbh<Type, ManifoldDim>(one_ring, xDim, yDim, zDim, mesh->is_periodic());
+            o.one_ring_nbh<Type>(one_ring, xDim, yDim, zDim, mesh->is_periodic());
 
             for (int k = 0; k < Type; k++) {
                 one_ring_owners[k] = -1;
@@ -849,7 +849,7 @@ namespace mars {
             void operator()(const Integer i) const {
                 const Integer sfc = get_sfc_ghost_or_local<Ghost>(mesh, i);
                 const Integer proc = mesh->get_proc();
-                /* corner_iterate(sfc,
+                corner_iterate(sfc,
                                mesh,
                                i,
                                CornerPredicate<Ghost>(local_predicate,
@@ -858,7 +858,7 @@ namespace mars {
                                                       global_label,
                                                       nbh_proc_predicate_send,
                                                       nbh_proc_predicate_recv,
-                                                      proc)); */
+                                                      proc));
 
                 if (face_nodes > 0) {
                     FacePredicate<Ghost> fp = FacePredicate<Ghost>(local_predicate,

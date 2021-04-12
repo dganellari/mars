@@ -305,19 +305,44 @@ namespace mars {
             return nbh;
         }
 
-        template <Integer Type, Integer ManifoldDim>
-        MARS_INLINE_FUNCTION void one_ring_nbh(Octant one_ring[Type],
-                                               const Integer xDim,
-                                               const Integer yDim,
-                                               const Integer zDim,
-                                               const bool periodic) const {
-            for (int i = 0; i < ManifoldDim; i++) {
-                for (int j = 0; j < ManifoldDim; j++)
-                /* for (int z = 0; z < ManifoldDim; z++) // 3D case*/
-                {
-                    Octant nbh(x - i, y - j);
-                    nbh.validate_nbh<Type>(xDim, yDim, zDim, periodic);
-                    one_ring[i * ManifoldDim + j] = nbh;
+        struct Depth {
+            Integer x;
+            Integer y;
+            Integer z;
+
+            Depth(Integer xd, Integer yd, Integer zd) : x(xd), y(yd), z(zd) {}
+        };
+
+
+        //This gives a depth one one ring neighbors since the largest you are substracting from the x is 1.
+        template <Integer Type>
+        MARS_INLINE_FUNCTION ::enable_if_t<Type == ElementType::Hex8, Depth> set_depth() {
+            Depth d(2, 2, 2);
+            return d;
+        }
+
+        //This is the 2D case. Meaning that the z coordinate is skipped.
+        template <Integer Type>
+        MARS_INLINE_FUNCTION ::enable_if_t<Type == ElementType::Quad4, Depth> set_depth() {
+            Depth d(2, 2, 1);
+            return d;
+        }
+
+        template <Integer Type>
+        MARS_INLINE_FUNCTION one_ring_nbh(Octant one_ring[Type],
+                                          const Integer xDim,
+                                          const Integer yDim,
+                                          const Integer zDim,
+                                          const bool periodic) const {
+            auto depth = set_depth();
+
+            for (int k = 0; k < depth.z; k++) {
+                for (int j = 0; j < depth.y; j++) {
+                    for (int i = 0; i < depth.x; i++) {
+                        Octant nbh(x - i, y - j, z - k);
+                        nbh.validate_nbh<Type>(xDim, yDim, zDim, periodic);
+                        one_ring[k * depth.y * depth.x + j * depth.x + i] = nbh;
+                    }
                 }
             }
         }
