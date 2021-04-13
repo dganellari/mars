@@ -311,30 +311,32 @@ namespace mars {
             Integer z;
 
             Depth(Integer xd, Integer yd, Integer zd) : x(xd), y(yd), z(zd) {}
+
+            // This gives a depth one one ring neighbors since the largest you are substracting from the x is 1.
+            template <Integer Type>
+            static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Hex8, Depth> set_depth(
+                const Integer depth) {
+                Depth d(depth, depth, depth);
+                return d;
+            }
+
+            // This is the 2D case. Meaning that the z coordinate is skipped.
+            template <Integer Type>
+            static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Quad4, Depth> set_depth(
+                const Integer depth) {
+                Depth d(depth, depth, 1);
+                return d;
+            }
         };
 
-
-        //This gives a depth one one ring neighbors since the largest you are substracting from the x is 1.
         template <Integer Type>
-        MARS_INLINE_FUNCTION ::enable_if_t<Type == ElementType::Hex8, Depth> set_depth() {
-            Depth d(2, 2, 2);
-            return d;
-        }
-
-        //This is the 2D case. Meaning that the z coordinate is skipped.
-        template <Integer Type>
-        MARS_INLINE_FUNCTION ::enable_if_t<Type == ElementType::Quad4, Depth> set_depth() {
-            Depth d(2, 2, 1);
-            return d;
-        }
-
-        template <Integer Type>
-        MARS_INLINE_FUNCTION one_ring_nbh(Octant one_ring[Type],
-                                          const Integer xDim,
-                                          const Integer yDim,
-                                          const Integer zDim,
-                                          const bool periodic) const {
-            auto depth = set_depth();
+        MARS_INLINE_FUNCTION void one_ring_nbh(Octant one_ring[Type],
+                                               const Integer xDim,
+                                               const Integer yDim,
+                                               const Integer zDim,
+                                               const bool periodic) const {
+            const Integer ring_depth = 2;
+            auto depth = Depth::set_depth<Type>(ring_depth);
 
             for (int k = 0; k < depth.z; k++) {
                 for (int j = 0; j < depth.y; j++) {

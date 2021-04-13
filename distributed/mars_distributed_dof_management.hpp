@@ -27,6 +27,7 @@ namespace mars {
         static constexpr Integer volume_nodes = (degree - 1) * (degree - 1);
         static constexpr Integer face_nodes = (degree - 1);
         static constexpr Integer corner_nodes = 1;
+        static constexpr Integer corner_depth = 2;
         static constexpr Integer elem_nodes = (degree + 1) * (degree + 1);
 
 
@@ -136,51 +137,6 @@ namespace mars {
                                                            const int j,
                                                            const int dir) {
             return sfc_to_local(sfc_face_node<part, Type>(face_cornerA, j, dir));
-        }
-
-        template <Integer Type, Integer ManifoldDim>
-        static MARS_INLINE_FUNCTION Integer process_corner(Integer &max_proc,
-                                                           Integer one_ring_owners[Type],
-                                                           const Mesh *mesh,
-                                                           const Octant &oc,
-                                                           const int i,
-                                                           const int j) {
-            Integer xDim = mesh->get_XDim();
-            Integer yDim = mesh->get_YDim();
-            Integer zDim = mesh->get_ZDim();
-
-            Octant o;
-            // get the next corner using the elem sfc
-            o.x = oc.x + i;
-            o.y = oc.y + j;
-
-            Octant one_ring[simplex_type::ElemType];
-            o.one_ring_nbh<Type>(one_ring, xDim, yDim, zDim, mesh->is_periodic());
-
-            for (int k = 0; k < Type; k++) {
-                one_ring_owners[k] = -1;
-
-                if (one_ring[k].is_valid()) {
-                    Integer enc_oc = mars::get_sfc_from_octant<Type>(one_ring[k]);
-                    /* check the proc that owns the corner and then decide on the predicate.
-                        This works because the corner defines an element and this element is
-                        always on the largest proc number due to the z order partitioning*/
-                    Integer owner_proc = find_owner_processor(mesh->get_view_gp(), enc_oc, 2, mesh->get_proc());
-                    /* assert(owner_proc >= 0); */
-
-                    one_ring_owners[k] = owner_proc;
-                    if (owner_proc > max_proc) {
-                        max_proc = owner_proc;
-                    }
-                }
-            }
-
-            // convert the octant value into the new nodal sfc system
-            o.x *= degree;
-            o.y *= degree;
-            Integer sfc = mars::get_sfc_from_octant<Type>(o);
-
-            return sfc;
         }
 
         template <Integer Type, Integer dir>
@@ -594,20 +550,92 @@ namespace mars {
             }
         };
 
+        template <Integer Type>
+        static MARS_INLINE_FUNCTION Integer process_corner(Integer one_ring_owners[Type],
+                                                           const Mesh *mesh,
+                                                           const Octant &o) {
+            Integer xDim = mesh->get_XDim();
+            Integer yDim = mesh->get_YDim();
+            Integer zDim = mesh->get_ZDim();
+
+            Integer max_proc = -1;
+
+            Octant one_ring[simplex_type::ElemType];
+            o.one_ring_nbh<Type>(one_ring, xDim, yDim, zDim, mesh->is_periodic());
+
+            for (int k = 0; k < Type; k++) {
+                one_ring_owners[k] = -1;
+
+                if (one_ring[k].is_valid()) {
+                    Integer enc_oc = mars::get_sfc_from_octant<Type>(one_ring[k]);
+                    /* check the proc that owns the corner and then decide on the predicate.
+                        This works because the corner defines an element and this element is
+                        always on the largest proc number due to the z order partitioning*/
+                    Integer owner_proc = find_owner_processor(mesh->get_view_gp(), enc_oc, 2, mesh->get_proc());
+                    /* assert(owner_proc >= 0); */
+
+                    one_ring_owners[k] = owner_proc;
+                    if (owner_proc > max_proc) {
+                        max_proc = owner_proc;
+                    }
+                }
+            }
+
+            return max_proc;
+        }
+
         template <typename F>
         static MARS_INLINE_FUNCTION void corner_iterate(const Integer sfc, const Mesh *mesh, const Integer index, F f) {
             Octant oc = mesh->octant_from_sfc(sfc);
-            // go through all the corner dofs for the current element
-            for (int i = 0; i < Mesh::ManifoldDim; i++) {
-                for (int j = 0; j < Mesh::ManifoldDim; j++)
-                /* for (int z = 0; z < Mesh::ManifoldDim; z++) // 3D case*/
-                {
-                    Integer max_proc = -1;
-                    Integer one_ring_owners[simplex_type::ElemType];
-                    Integer dof_sfc = process_corner<simplex_type::ElemType, Mesh::ManifoldDim>(
-                        max_proc, one_ring_owners, mesh, oc, i, j);
+            corner_octant_transform(oc, mesh, index, f);
+        }
+
+        template <typename F, Integer ET = ElemType>
+        static MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Quad4, void>
+        corner_octant_transform(const Octant &oc, const Mesh *mesh, const Integer index, F f) {
+            for (int i = 0; i < corner_depth; i++) {
+                for (int j = 0; j < corner_depth; j++) {
+                    Octant o;
+                    // get the next corner using the elem sfc
+                    o.x = oc.x + i;
+                    o.y = oc.y + j;
+
+                    Integer one_ring_owners[ElemType];
+                    Integer max_proc = process_corner<ElemType>(one_ring_owners, mesh, o);
+
+                    // convert the octant value into the new nodal sfc system
+                    o.x *= degree;
+                    o.y *= degree;
+                    Integer dof_sfc = mars::get_sfc_from_octant<ElemType>(o);
 
                     f(mesh, index, dof_sfc, max_proc, one_ring_owners);
+                }
+            }
+        }
+
+        template <typename F, Integer ET = ElemType>
+        static MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Hex8, void>
+        corner_octant_transform(const Octant &oc, const Mesh *mesh, const Integer index, F f) {
+            for (int i = 0; i < corner_depth; i++) {
+                for (int j = 0; j < corner_depth; j++) {
+                    for (int k = 0; k < corner_depth; k++) {
+                        Octant o;
+                        // get the next corner using the elem sfc
+                        o.x = oc.x + i;
+                        o.y = oc.y + j;
+                        o.z = oc.z + k;
+
+                        Integer one_ring_owners[ElemType];
+                        Integer max_proc = process_corner<ElemType>(one_ring_owners, mesh, o);
+
+                        // convert the octant value into the new nodal sfc system
+                        o.x *= degree;
+                        o.y *= degree;
+                        o.z *= degree;
+                        Integer dof_sfc = mars::get_sfc_from_octant<ElemType>(o);
+
+                        f(mesh, index, dof_sfc, max_proc, one_ring_owners);
+                    }
                 }
             }
         }
@@ -975,7 +1003,7 @@ namespace mars {
                                                                  npbs,
                                                                  npbr));
 
-            /* local_dof_enum.compact_element_and_labels(local_predicate, local_label);
+            local_dof_enum.compact_element_and_labels(local_predicate, local_label);
             global_dof_enum.compact_element_and_labels(global_predicate, global_label);
 
             const int rank_size = num_ranks(context);
@@ -986,7 +1014,7 @@ namespace mars {
             const Integer global_size = global_dof_enum.get_elem_size();
             context->distributed->gather_all_view(global_size, global_dof_size_per_rank);
 
-            incl_excl_scan(0, rank_size, global_dof_size_per_rank, global_dof_offset); */
+            incl_excl_scan(0, rank_size, global_dof_size_per_rank, global_dof_offset);
         }
 
         void exchange_ghost_counts(const context &context,
@@ -1165,49 +1193,49 @@ namespace mars {
 
 
             build_lg_predicate(context, nbh_proc_predicate_send, nbh_proc_predicate_recv);
-/*             build_local_orientation(); */
-            /*  */
-            /*  */
-            /* incl_excl_scan(0, rank_size, nbh_proc_predicate_send, proc_scan_send); */
-            /* incl_excl_scan(0, rank_size, nbh_proc_predicate_recv, proc_scan_recv); */
-            /*  */
-            /* auto ps = subview(proc_scan_send, rank_size); */
-            /* auto pr = subview(proc_scan_recv, rank_size); */
-            /* auto h_ps = create_mirror_view(ps); */
-            /* auto h_pr = create_mirror_view(pr); */
-            /* // Deep copy device view to host view. */
-            /* deep_copy(h_ps, ps); */
-            /* deep_copy(h_pr, pr); */
-            /*  */
-            /* ViewVectorType<Integer> sender_ranks("sender_ranks", h_ps()); */
-            /* ViewVectorType<Integer> recver_ranks("receiver_ranks", h_pr()); */
-            /* compact_scan(nbh_proc_predicate_send, proc_scan_send, sender_ranks); */
-            /* compact_scan(nbh_proc_predicate_recv, proc_scan_recv, recver_ranks); */
-            /*  */
-            /* ViewVectorType<Integer> scan_boundary, boundary_dofs_index; */
-            /* build_boundary_dof_sets(scan_boundary, boundary_dofs_index, proc_scan_send, h_ps()); */
-            /*  */
-            /* std::vector<Integer> s_count(rank_size, 0); */
-            /* std::vector<Integer> r_count(rank_size, 0); */
-            /*  */
-            /* exchange_ghost_counts(context, scan_boundary, sender_ranks, recver_ranks, s_count, r_count); */
-            /*  */
-            /* [> create the scan recv mirror view from the receive count <] */
-            /* scan_recv = ViewVectorType<Integer>("scan_recv_", rank_size + 1); */
-            /* scan_recv_mirror = create_mirror_view(scan_recv); */
-            /* make_scan_index_mirror(scan_recv_mirror, r_count); */
-            /* Kokkos::deep_copy(scan_recv, scan_recv_mirror); */
-            /*  */
-            /* [>create the scan send mirror view from the send count<] */
-            /* scan_send = ViewVectorType<Integer>("scan_send_", rank_size + 1); */
-            /* scan_send_mirror = create_mirror_view(scan_send); */
-            /* make_scan_index_mirror(scan_send_mirror, s_count); */
-            /* Kokkos::deep_copy(scan_send, scan_send_mirror); */
-            /*  */
-            /* ViewVectorType<Integer> ghost_dofs_index; */
-            /* exchange_ghost_dofs(context, boundary_dofs_index, ghost_dofs_index); */
-            /*  */
-            /* build_ghost_local_global_map(context, ghost_dofs_index); */
+            build_local_orientation();
+
+
+            incl_excl_scan(0, rank_size, nbh_proc_predicate_send, proc_scan_send);
+            incl_excl_scan(0, rank_size, nbh_proc_predicate_recv, proc_scan_recv);
+
+            auto ps = subview(proc_scan_send, rank_size);
+            auto pr = subview(proc_scan_recv, rank_size);
+            auto h_ps = create_mirror_view(ps);
+            auto h_pr = create_mirror_view(pr);
+            // Deep copy device view to host view.
+            deep_copy(h_ps, ps);
+            deep_copy(h_pr, pr);
+
+            ViewVectorType<Integer> sender_ranks("sender_ranks", h_ps());
+            ViewVectorType<Integer> recver_ranks("receiver_ranks", h_pr());
+            compact_scan(nbh_proc_predicate_send, proc_scan_send, sender_ranks);
+            compact_scan(nbh_proc_predicate_recv, proc_scan_recv, recver_ranks);
+
+            ViewVectorType<Integer> scan_boundary, boundary_dofs_index;
+            build_boundary_dof_sets(scan_boundary, boundary_dofs_index, proc_scan_send, h_ps());
+
+            std::vector<Integer> s_count(rank_size, 0);
+            std::vector<Integer> r_count(rank_size, 0);
+
+            exchange_ghost_counts(context, scan_boundary, sender_ranks, recver_ranks, s_count, r_count);
+
+            /* create the scan recv mirror view from the receive count */
+            scan_recv = ViewVectorType<Integer>("scan_recv_", rank_size + 1);
+            scan_recv_mirror = create_mirror_view(scan_recv);
+            make_scan_index_mirror(scan_recv_mirror, r_count);
+            Kokkos::deep_copy(scan_recv, scan_recv_mirror);
+
+            /*create the scan send mirror view from the send count*/
+            scan_send = ViewVectorType<Integer>("scan_send_", rank_size + 1);
+            scan_send_mirror = create_mirror_view(scan_send);
+            make_scan_index_mirror(scan_send_mirror, s_count);
+            Kokkos::deep_copy(scan_send, scan_send_mirror);
+
+            ViewVectorType<Integer> ghost_dofs_index;
+            exchange_ghost_dofs(context, boundary_dofs_index, ghost_dofs_index);
+
+            build_ghost_local_global_map(context, ghost_dofs_index);
         }
 
         /* build a map only for the ghost dofs as for the local ones the global dof enum can be used */
