@@ -345,29 +345,42 @@ namespace mars {
             }
         };
 
+        template <typename CornerF, typename FaceF, typename VolumeF>
+        static MARS_INLINE_FUNCTION void elem_dof_iterate(const Integer sfc,
+                                                          const Mesh *mesh,
+                                                          const Integer i,
+                                                          CornerF cf,
+                                                          FaceF ff,
+                                                          VolumeF vf) {
+            if (corner_nodes > 0) {
+                corner_iterate(sfc, mesh, i, cf);
+            }
+
+            if (face_nodes > 0) {
+                face_dir_iterate(sfc, mesh, i, ff);
+            }
+
+            if (volume_nodes > 0) {
+                volume_iterate(sfc, mesh, i, vf);
+            }
+        }
+
         struct IdentifyBoundaryDofPerRank {
             MARS_INLINE_FUNCTION
             void operator()(const Integer i) const {
                 const Integer sfc = mesh->get_boundary_sfc(i);
-                /* const Integer sfc = mesh->get_sfc(i); */
                 const Integer proc = mesh->get_proc();
 
                 constexpr bool BoundaryIter = false;
-                corner_iterate(
-                    sfc, mesh, i, CornerRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc));
+                auto crb = CornerRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc);
 
-                if (face_nodes > 0) {
-                    FaceRankBoundary<BoundaryIter> fp =
-                        FaceRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc);
-                    face_iterate<0>(sfc, mesh, i, fp);
-                    face_iterate<1>(sfc, mesh, i, fp);
-                }
+                auto frb = FaceRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc);
 
-                if (volume_nodes > 0) {
-                    volume_iterate(
-                        sfc, mesh, i, VolumeRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc));
-                }
-                // TODO: 3D part
+                auto vrb = VolumeRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc);
+
+                /* auto erb = VolumeRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc); */
+
+                elem_dof_iterate(sfc, mesh, i, crb, frb, vrb);
             }
 
             IdentifyBoundaryDofPerRank(Mesh *m,
@@ -877,36 +890,25 @@ namespace mars {
             void operator()(const Integer i) const {
                 const Integer sfc = get_sfc_ghost_or_local<Ghost>(mesh, i);
                 const Integer proc = mesh->get_proc();
-                corner_iterate(sfc,
-                               mesh,
-                               i,
-                               CornerPredicate<Ghost>(local_predicate,
-                                                      local_label,
-                                                      global_predicate,
-                                                      global_label,
-                                                      nbh_proc_predicate_send,
-                                                      nbh_proc_predicate_recv,
-                                                      proc));
+                auto cp = CornerPredicate<Ghost>(local_predicate,
+                                                 local_label,
+                                                 global_predicate,
+                                                 global_label,
+                                                 nbh_proc_predicate_send,
+                                                 nbh_proc_predicate_recv,
+                                                 proc);
 
-                if (face_nodes > 0) {
-                    FacePredicate<Ghost> fp = FacePredicate<Ghost>(local_predicate,
-                                                                   local_label,
-                                                                   global_predicate,
-                                                                   global_label,
-                                                                   nbh_proc_predicate_send,
-                                                                   nbh_proc_predicate_recv,
-                                                                   proc);
-                    face_dir_iterate(sfc, mesh, i, fp);
-                }
+                auto fp = FacePredicate<Ghost>(local_predicate,
+                                               local_label,
+                                               global_predicate,
+                                               global_label,
+                                               nbh_proc_predicate_send,
+                                               nbh_proc_predicate_recv,
+                                               proc);
+                auto vp = VolumePredicate<Ghost>(local_predicate, local_label, global_predicate, global_label);
+                /* auto ep = EdgePredicate<Ghost>(local_predicate, local_label, global_predicate, global_label); */
 
-                if (volume_nodes > 0) {
-                    volume_iterate(
-                        sfc,
-                        mesh,
-                        i,
-                        VolumePredicate<Ghost>(local_predicate, local_label, global_predicate, global_label));
-                }
-                // TODO: 3D part
+                elem_dof_iterate(sfc, mesh, i, cp, fp, vp);
             }
         };
 
@@ -1144,8 +1146,7 @@ namespace mars {
                 if (face_nodes > 0) {
                     FaceOrientDof<Ghost> fp =
                         FaceOrientDof<Ghost>(face_dir, sfc_to_local, proc);
-                    face_iterate<0>(sfc, mesh, i, fp);
-                    face_iterate<1>(sfc, mesh, i, fp);
+                    face_dir_iterate(sfc, mesh, i, fp);
                 }
             }
 
