@@ -8,6 +8,27 @@
 
 namespace mars {
 
+    template <Integer degree, Integer Type>
+    struct NumDofs {};
+
+    template <Integer degree>
+    struct NumDofs<degree, ElementType::Quad4> {
+        static constexpr Integer corner_dofs = 1;
+        static constexpr Integer face_dofs = (degree - 1);
+        static constexpr Integer volume_dofs = (degree - 1) * (degree - 1);
+        static constexpr Integer edge_dofs = 0;
+        static constexpr Integer elem_dofs = (degree + 1) * (degree + 1);
+    };
+
+    template <Integer degree>
+    struct NumDofs<degree, ElementType::Hex8> {
+        static constexpr Integer corner_dofs = 1;
+        static constexpr Integer face_dofs = (degree - 1) * (degree - 1);
+        static constexpr Integer volume_dofs = (degree - 1) * (degree - 1) * (degree - 1);
+        static constexpr Integer edge_dofs = (degree - 1);
+        static constexpr Integer elem_dofs = (degree + 1) * (degree + 1) * (degree + 1);
+    };
+
     template <class Mesh_, Integer degree>
     class DofHandler {
     public:
@@ -24,12 +45,13 @@ namespace mars {
         static constexpr Integer Dim = Mesh::Dim;
         static constexpr Integer ManifoldDim = Mesh::ManifoldDim;
 
-        static constexpr Integer volume_nodes = (degree - 1) * (degree - 1);
-        static constexpr Integer face_nodes = (degree - 1);
-        static constexpr Integer corner_nodes = 1;
-        static constexpr Integer corner_depth = 2;
-        static constexpr Integer elem_nodes = (degree + 1) * (degree + 1);
+        using NDofs = NumDofs<degree, ElemType>;
 
+        static constexpr Integer corner_dofs = NDofs::corner_dofs;
+        static constexpr Integer face_dofs = NDofs::face_dofs;
+        static constexpr Integer volume_dofs = NDofs::volume_dofs;
+        static constexpr Integer edge_dofs = NDofs::edge_dofs;
+        static constexpr Integer elem_dofs = NDofs::elem_dofs;
 
         MARS_INLINE_FUNCTION
         constexpr Integer get_elem_type() { return simplex_type::ElemType; }
@@ -344,6 +366,66 @@ namespace mars {
                 volume_rank_boundary(mesh, i, dof_sfc, std::integral_constant<bool, Ghost>{});
             }
         };
+/*
+        template <Integer dir>
+        static MARS_INLINE_FUNCTION void build_starting_edge_corner(Octant &edge_cornerA,
+                                                                    const int edge,
+                                                                    const Octant &oc) {
+            // find the starting corner "face_cornerA" of the edge and use the direction
+            const int val = side ^ 1;
+            if (dir == 0) {
+                face_cornerA.x = oc.x + val;
+                face_cornerA.y = oc.y;
+                face_cornerA.z = oc.z;
+            }
+            if (dir == 1) {
+                face_cornerA.x = oc.x;
+                face_cornerA.y = oc.y + val;
+                face_cornerA.z = oc.z;
+            }
+            if (dir == 2) {
+                face_cornerA.x = oc.x;
+                face_cornerA.y = oc.y;
+                face_cornerA.z = oc.z + val;
+            }
+        } */
+
+        template <Integer Type, Integer dir>
+        static MARS_INLINE_FUNCTION Integer
+        process_edge_corner(Octant &edge_cornerA, const Mesh *mesh, const int edge, const Octant &oc) {
+            Octant nbh_oc = mesh->get_octant_edge_nbh(oc, edge);
+            Integer owner_proc = -1;
+
+            // find owner proc method returns an invalid result with invalid octant.
+            if (nbh_oc.is_valid()) {
+                Integer enc_oc = mars::get_sfc_from_octant<Type>(nbh_oc);
+                owner_proc = find_owner_processor(mesh->get_view_gp(), enc_oc, 2, mesh->get_proc());
+            }
+
+            /* build_starting_edge_corner<Type, dir>(edge_cornerA, edge, oc); */
+
+            return owner_proc;
+        }
+
+        template <Integer T = ElemType>
+        MARS_INLINE_FUNCTION std::enable_if_t<T == ElementType::Hex8, void> edge_iterate(const Integer sfc,
+                                                                                         const Mesh *mesh,
+                                                                                         const Integer i,
+                                                                                         F f) {
+            Octant edge_cornerA;
+            Octant oc = mesh->octant_from_sfc(sfc);
+            for (int edge = 0; edge < 4 * ManifoldDim; ++edge) {
+                process_edge_corner(edge_cornerA, edge, oc);
+            }
+        }
+
+        template <Integer T = ElemType>
+        MARS_INLINE_FUNCTION std::enable_if_t<T != ElementType::Hex8, void> edge_iterate(const Octant ref_octant,
+                                                                                         const Integer index,
+                                                                                         const Integer xDim,
+                                                                                         const Integer yDim,
+                                                                                         const Integer zDim,
+                                                                                         bool periodic) const {}
 
         template <typename CornerF, typename FaceF, typename VolumeF>
         static MARS_INLINE_FUNCTION void elem_dof_iterate(const Integer sfc,
@@ -352,16 +434,22 @@ namespace mars {
                                                           CornerF cf,
                                                           FaceF ff,
                                                           VolumeF vf) {
-            if (corner_nodes > 0) {
+            if (corner_dofs > 0) {
                 corner_iterate(sfc, mesh, i, cf);
             }
 
-            if (face_nodes > 0) {
+            if (face_dofs > 0) {
                 face_dir_iterate(sfc, mesh, i, ff);
             }
 
-            if (volume_nodes > 0) {
+            if (volume_dofs > 0) {
+                printf("Volume DOFS: %li, %li\n", volume_dofs, elem_dofs);
                 volume_iterate(sfc, mesh, i, vf);
+            }
+
+            if(edge_dofs > 0) {
+                printf("edge DOFS: %li\n", edge_dofs);
+                /* edge_iterate(sfc, mesh, i, ef); */
             }
         }
 
@@ -606,8 +694,9 @@ namespace mars {
         template <typename F, Integer ET = ElemType>
         static MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Quad4, void>
         corner_octant_transform(const Octant &oc, const Mesh *mesh, const Integer index, F f) {
-            for (int i = 0; i < corner_depth; i++) {
-                for (int j = 0; j < corner_depth; j++) {
+            printf("ET2D: %li\n", ElemType);
+            for (int i = 0; i < corner_dofs + 1; i++) {
+                for (int j = 0; j < corner_dofs + 1; j++) {
                     Octant o;
                     // get the next corner using the elem sfc
                     o.x = oc.x + i;
@@ -629,9 +718,10 @@ namespace mars {
         template <typename F, Integer ET = ElemType>
         static MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Hex8, void>
         corner_octant_transform(const Octant &oc, const Mesh *mesh, const Integer index, F f) {
-            for (int i = 0; i < corner_depth; i++) {
-                for (int j = 0; j < corner_depth; j++) {
-                    for (int k = 0; k < corner_depth; k++) {
+            printf("ET3D: %li\n", ElemType);
+            for (int i = 0; i < corner_dofs + 1; i++) {
+                for (int j = 0; j < corner_dofs + 1; j++) {
+                    for (int k = 0; k < corner_dofs + 1; k++) {
                         Octant o;
                         // get the next corner using the elem sfc
                         o.x = oc.x + i;
@@ -821,7 +911,7 @@ namespace mars {
                 Octant face_cornerA;
                 Integer owner_proc = process_face_corner<simplex_type::ElemType, dir>(face_cornerA, mesh, side, oc);
 
-                for (int j = 0; j < face_nodes; j++) {
+                for (int j = 0; j < face_dofs; j++) {
                     Integer dof_sfc = process_face_node<simplex_type::ElemType, dir>(face_cornerA, j);
                     f(mesh, index, dof_sfc, owner_proc, dir);
                 }
@@ -837,7 +927,7 @@ namespace mars {
                 Octant face_cornerA;
                 Integer owner_proc = process_face_corner<simplex_type::ElemType, dir>(face_cornerA, mesh, side, oc);
 
-                for (int j = 0; j < face_nodes; j++) {
+                for (int j = 0; j < face_dofs; j++) {
                     Integer dof_sfc = process_face_node<simplex_type::ElemType, dir>(face_cornerA, j);
                     f(dof_sfc, owner_proc, dir);
                 }
@@ -1143,7 +1233,7 @@ namespace mars {
                 const Integer sfc = get_sfc_ghost_or_local<Ghost>(mesh, i);
                 const Integer proc = mesh->get_proc();
 
-                if (face_nodes > 0) {
+                if (face_dofs > 0) {
                     FaceOrientDof<Ghost> fp =
                         FaceOrientDof<Ghost>(face_dir, sfc_to_local, proc);
                     face_dir_iterate(sfc, mesh, i, fp);
@@ -1676,7 +1766,7 @@ namespace mars {
         // mirror view on the scan_ghost view used as an offset to receive ghost dofs.
         ViewVectorType<Integer> scan_recv;
         ViewVectorType<Integer>::HostMirror scan_recv_mirror;
-        };
+    };
 
 }  // namespace mars
 

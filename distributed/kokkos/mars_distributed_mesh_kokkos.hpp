@@ -1210,15 +1210,27 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        Octant get_octant_corner_nbh(const Octant &oc, const Integer corner_nr) {
-            return oc.corner_nbh<Elem::ElemType>(corner_nr, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
-        }
-
-        MARS_INLINE_FUNCTION
         Octant get_octant_face_nbh(const Integer sfc_index, const Integer face_nr) const {
             Octant oc = get_octant(sfc_index);
 
             return oc.face_nbh<Elem::ElemType>(face_nr, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
+        }
+
+        MARS_INLINE_FUNCTION
+        Octant get_octant_edge_nbh(const Octant &oc, const Integer edge) const {
+            return oc.edge_nbh<Elem::ElemType>(edge, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
+        }
+
+        MARS_INLINE_FUNCTION
+        Octant get_octant_edge_nbh(const Integer sfc_index, const Integer edge) const {
+            Octant oc = get_octant(sfc_index);
+
+            return oc.edge_nbh<Elem::ElemType>(edge, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
+        }
+
+        MARS_INLINE_FUNCTION
+        Octant get_octant_corner_nbh(const Octant &oc, const Integer corner_nr) {
+            return oc.corner_nbh<Elem::ElemType>(corner_nr, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
         }
 
         MARS_INLINE_FUNCTION
