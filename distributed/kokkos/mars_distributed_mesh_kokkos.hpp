@@ -1217,6 +1217,18 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
+        Octant get_octant_edge_start(const Octant &oc, const Integer edge) const {
+            return oc.edge_start<Elem::ElemType>(edge, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
+        }
+
+        MARS_INLINE_FUNCTION
+        Octant get_octant_edge_start(const Integer sfc_index, const Integer edge) const {
+            Octant oc = get_octant(sfc_index);
+
+            return oc.edge_start<Elem::ElemType>(edge, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
+        }
+
+        MARS_INLINE_FUNCTION
         Octant get_octant_edge_nbh(const Octant &oc, const Integer edge) const {
             return oc.edge_nbh<Elem::ElemType>(edge, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
         }

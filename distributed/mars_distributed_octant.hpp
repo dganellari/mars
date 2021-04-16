@@ -192,10 +192,52 @@ namespace mars {
             }
         }
 
+        MARS_INLINE_FUNCTION Integer get_edge_direction(const int edge) const { return edge / 4; }
+
+        MARS_INLINE_FUNCTION Octant sfc_edge_start(const int edge) const {
+            assert(0 <= edge && edge < 12);
+            auto direction = get_edge_direction(edge);
+            auto e = edge % 4;
+            Integer x_ = -1, y_ = -1, z_ = -1;
+
+            switch (direction) {
+                case 0:
+                    x_ = x;
+                    y_ = y + (e & 1);
+                    z_ = z + e / 2;
+                    break;
+                case 1:
+                    x_ = x + (e & 1);
+                    y_ = y;
+                    z_ = z + e / 2;
+                    break;
+                case 2:
+                    x_ = x + (e & 1);
+                    y_ = y + e / 2;
+                    z_ = z;
+                    break;
+                default:
+                    printf("The element type is not valid\n");
+                    break;
+            }
+            return Octant(x_, y_, z_);
+        }
+
+        // Only a 3D functionality defined for hex8 elements only.
+        template <Integer Type>
+        MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Hex8, Octant> edge_start(const int edge,
+                                                                                            const Integer xDim,
+                                                                                            const Integer yDim,
+                                                                                            const Integer zDim,
+                                                                                            const bool periodic) const {
+            Octant nbh = sfc_edge_start(edge);
+            nbh.validate_nbh<Type>(xDim, yDim, zDim, periodic);
+            return nbh;
+        }
         MARS_INLINE_FUNCTION Octant sfc_edge_nbh(const int edge) const {
             // adapted from the p4est corner neighbor for the mesh generation
             assert(0 <= edge && edge < 12);
-            auto direction = edge / 4;
+            auto direction = get_edge_direction(edge);
             Integer x_ = -1, y_ = -1, z_ = -1;
 
             switch (direction) {
