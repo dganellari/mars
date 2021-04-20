@@ -372,11 +372,11 @@ namespace mars {
         };
 
         template <Integer Type>
-        MARS_INLINE_FUNCTION void one_ring_nbh(Octant one_ring[Type],
-                                               const Integer xDim,
-                                               const Integer yDim,
-                                               const Integer zDim,
-                                               const bool periodic) const {
+        MARS_INLINE_FUNCTION void one_ring_corner_nbhs(Octant one_ring[Type],
+                                                       const Integer xDim,
+                                                       const Integer yDim,
+                                                       const Integer zDim,
+                                                       const bool periodic) const {
             const Integer ring_depth = 2;
             auto depth = Depth::set_depth<Type>(ring_depth);
 
@@ -389,6 +389,52 @@ namespace mars {
                     }
                 }
             }
+        }
+
+        template <Integer Type, typename F>
+        MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Hex8, void> one_ring_edge_nbhs(
+            F f,
+            const Integer direction,
+            const Integer xDim,
+            const Integer yDim,
+            const Integer zDim,
+            const bool periodic) const {
+            const Integer ring_depth = 2;
+            auto depth = Depth::set_depth<Type>(ring_depth);
+
+            for (int j = 0; j < depth.y; j++) {
+                for (int i = 0; i < depth.x; i++) {
+                    Octant nbh = get_edge_ring_nbh(i, j, direction);
+                    nbh.validate_nbh<Type>(xDim, yDim, zDim, periodic);
+                    f(nbh);
+                }
+            }
+        }
+
+        MARS_INLINE_FUNCTION Octant get_edge_ring_nbh(const int i, const int j, const Integer direction) const {
+            Integer x_ = -1, y_ = -1, z_ = -1;
+
+            switch (direction) {
+                case 0:
+                    x_ = x;
+                    y_ = y - i;
+                    z_ = z - j;
+                    break;
+                case 1:
+                    x_ = x - i;
+                    y_ = y;
+                    z_ = z - j;
+                    break;
+                case 2:
+                    x_ = x - i;
+                    y_ = y - j;
+                    z_ = z;
+                    break;
+                default:
+                    printf("The element type is not valid\n");
+                    break;
+            }
+            return Octant(x - x_, y - y_, z - z_);
         }
     };
 

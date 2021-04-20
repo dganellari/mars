@@ -35,6 +35,7 @@ namespace mars {
 #define KokkosSpace Kokkos::CudaSpace
 #endif  // MARS_USE_CUDAUVM
 #define KokkosLayout Kokkos::LayoutLeft
+#define MARS_LAMBDA_REF [&] __device__
 #else  // MARS_USE_CUDA
 #ifdef KOKKOS_ENABLE_OPENMP
 #define KokkosSpace Kokkos::HostSpace
@@ -43,6 +44,7 @@ namespace mars {
 #define KokkosSpace Kokkos::HostSpace
 #define KokkosLayout Kokkos::LayoutRight
 #endif  // KOKKOS_ENABLE_OPENMP
+#define MARS_LAMBDA_REF [&]
 #endif  // MARS_USE_CUDA
 
     template <typename T>

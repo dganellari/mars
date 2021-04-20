@@ -264,17 +264,17 @@ namespace mars {
         }
 
         template <bool Ghost>
-        struct CornerRankBoundary {
+        struct OneRingRankBoundary {
             ViewMatrixType<bool> rank_boundary;
             ViewVectorType<Integer> sfc_to_locally_owned;
             ViewVectorType<Integer> map;
             Integer proc;
 
             MARS_INLINE_FUNCTION
-            CornerRankBoundary(ViewMatrixType<bool> rb,
-                               ViewVectorType<Integer> sl,
-                               ViewVectorType<Integer> m,
-                               Integer p)
+            OneRingRankBoundary(ViewMatrixType<bool> rb,
+                                ViewVectorType<Integer> sl,
+                                ViewVectorType<Integer> m,
+                                Integer p)
                 : rank_boundary(rb), sfc_to_locally_owned(sl), map(m), proc(p) {}
 
             /* void corner_rank_boundary(const Mesh *mesh,
@@ -335,7 +335,11 @@ namespace mars {
             }
 
             MARS_INLINE_FUNCTION
-            void operator()(const Mesh *mesh, const Integer i, const Integer dof_sfc, const Integer owner_proc, const Integer dir) const {
+            void operator()(const Mesh *mesh,
+                            const Integer i,
+                            const Integer dof_sfc,
+                            const Integer owner_proc,
+                            const Integer dir) const {
                 face_rank_boundary(mesh, i, dof_sfc, owner_proc, std::integral_constant<bool, Ghost>{});
             }
         };
@@ -389,20 +393,6 @@ namespace mars {
             return f(o);
         }
 
-        template <Integer Type>
-        static MARS_INLINE_FUNCTION Integer process_edge_corner(const Mesh *mesh, const int edge, const Octant &oc) {
-            Octant nbh_oc = mesh->get_octant_edge_nbh(oc, edge);
-            Integer owner_proc = -1;
-
-            // find owner proc method returns an invalid result with invalid octant.
-            if (nbh_oc.is_valid()) {
-                Integer enc_oc = mars::get_sfc_from_octant<Type>(nbh_oc);
-                owner_proc = find_owner_processor(mesh->get_view_gp(), enc_oc, 2, mesh->get_proc());
-            }
-
-            return owner_proc;
-        }
-
         template <typename F, Integer T = ElemType>
         static MARS_INLINE_FUNCTION std::enable_if_t<T == ElementType::Hex8, void> edge_iterate(const Integer sfc,
                                                                                                 const Mesh *mesh,
@@ -412,13 +402,36 @@ namespace mars {
             for (int edge = 0; edge < 4 * ManifoldDim; ++edge) {
                 // get the starting node of the edge to be used to compute the dofs contained in that edge.
                 const Integer direction = oc.get_edge_direction(edge);
-                Octant edge_cornerA = mesh->get_octant_edge_start(oc, edge);
-                const Integer owner_proc = process_edge_corner<ElemType>(mesh, edge, oc);
+                const Octant start = mesh->get_octant_edge_start(oc, edge);
+
+                Integer max_proc = -1;
+                mesh->get_one_ring_edge_nbhs(
+                    start, direction, MARS_LAMBDA_REF(const Octant &nbh_oc) {
+                        // find owner proc method returns an invalid result with invalid octant.
+                        if (nbh_oc.is_valid()) {
+                            Integer enc_oc = mars::get_sfc_from_octant<ElemType>(nbh_oc);
+                            Integer owner_proc = find_owner_processor(mesh->get_view_gp(), enc_oc, 2, mesh->get_proc());
+                            if (owner_proc > max_proc) {
+                                max_proc = owner_proc;
+                            }
+                        }
+                    });
+
+                Integer one_ring_owners[4] = {-1};
+                Integer l = 0;
+                mesh->get_one_ring_edge_nbhs(
+                    start, direction, MARS_LAMBDA_REF(const Octant &nbh_oc) {
+                        if (nbh_oc.is_valid()) {
+                            Integer enc_oc = mars::get_sfc_from_octant<ElemType>(nbh_oc);
+                            Integer owner_proc = find_owner_processor(mesh->get_view_gp(), enc_oc, 2, mesh->get_proc());
+                            one_ring_owners[l++] = owner_proc;
+                        }
+                    });
 
                 for (int j = 0; j < edge_dofs; j++) {
                     Integer dof_sfc =
-                        process_edge_node<ElemType>(mars::get_sfc_from_octant<ElemType>, edge_cornerA, direction, j);
-                    f(mesh, i, dof_sfc, owner_proc, direction);
+                        process_edge_node<ElemType>(mars::get_sfc_from_octant<ElemType>, start, direction, j);
+                    f(mesh, i, dof_sfc, max_proc, one_ring_owners);
                 }
             }
         }
@@ -447,7 +460,7 @@ namespace mars {
                 volume_iterate(sfc, mesh, i, vf);
             }
             if (edge_dofs > 0) {
-                /* edge_iterate(sfc, mesh, i, ef); */
+                edge_iterate(sfc, mesh, i, ef);
             }
         }
 
@@ -458,11 +471,12 @@ namespace mars {
                 const Integer proc = mesh->get_proc();
 
                 constexpr bool BoundaryIter = false;
-                auto crb = CornerRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc);
+                // used for corners and edges that are based on one ring nbh logic.
+                auto crb = OneRingRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc);
                 auto frb = FaceRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc);
                 auto vrb = VolumeRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc);
                 // use frb for the edge logic as well. Same logic different input from the iterate.
-                elem_dof_iterate(sfc, mesh, i, crb, frb, vrb, frb);
+                elem_dof_iterate(sfc, mesh, i, crb, frb, vrb, crb);
             }
 
             IdentifyBoundaryDofPerRank(Mesh *m,
@@ -494,11 +508,12 @@ namespace mars {
             ViewMatrixType<bool> rank_boundary("count_per_proc", chunk_size_, nbh_rank_size);
             /* generate the sfc for the local and global dofs containing the generation locally
             for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
-            Kokkos::parallel_for(
-                "identify_boundary_predicate",
-                size,
-                IdentifyBoundaryDofPerRank(
-                    get_mesh_manager().get_mesh(), rank_boundary, sender_ranks_scan, global_dof_enum.get_view_sfc_to_local()));
+            Kokkos::parallel_for("identify_boundary_predicate",
+                                 size,
+                                 IdentifyBoundaryDofPerRank(get_mesh_manager().get_mesh(),
+                                                            rank_boundary,
+                                                            sender_ranks_scan,
+                                                            global_dof_enum.get_view_sfc_to_local()));
 
             /* perform a scan for each row with the sum at the end for each rank */
             ViewMatrixType<Integer> rank_scan("rank_scan", chunk_size_ + 1, nbh_rank_size);
@@ -566,8 +581,8 @@ namespace mars {
             local_predicate(enc_oc) = 1;
         } */
 
-        template <bool Ghost>
-        struct CornerPredicate {
+        template <bool Ghost, Integer Label>
+        struct OneRingPredicate {
             ViewVectorType<bool> local_predicate;
             ViewVectorType<Integer> local_label;
             ViewVectorType<bool> global_predicate;
@@ -577,13 +592,13 @@ namespace mars {
             Integer proc;
 
             MARS_INLINE_FUNCTION
-            CornerPredicate(ViewVectorType<bool> lp,
-                            ViewVectorType<Integer> llp,
-                            ViewVectorType<bool> gp,
-                            ViewVectorType<Integer> lgp,
-                            ViewVectorType<bool> npps,
-                            ViewVectorType<bool> nppr,
-                            Integer p)
+            OneRingPredicate(ViewVectorType<bool> lp,
+                             ViewVectorType<Integer> llp,
+                             ViewVectorType<bool> gp,
+                             ViewVectorType<Integer> lgp,
+                             ViewVectorType<bool> npps,
+                             ViewVectorType<bool> nppr,
+                             Integer p)
                 : local_predicate(lp),
                   local_label(llp),
                   global_predicate(gp),
@@ -604,7 +619,7 @@ namespace mars {
 
                 if (elem_sfc_proc >= max_proc) {
                     local_predicate(sfc) = 1;
-                    local_label(sfc) = DofLabel::lCorner;
+                    local_label(sfc) = Label;
                 }
             }
 
@@ -616,11 +631,11 @@ namespace mars {
                                   Integer one_ring_owners[simplex_type::ElemType],
                                   std::false_type) const {
                 local_predicate(sfc) = 1;
-                local_label(sfc) = DofLabel::lCorner;
+                local_label(sfc) = Label;
 
                 if (proc >= max_proc) {
                     global_predicate(sfc) = 1;
-                    global_label(sfc) = DofLabel::lCorner;
+                    global_label(sfc) = Label;
                 }
 
                 // is the one ring owners needed here? Maybe using max proc is enough?
@@ -656,7 +671,7 @@ namespace mars {
             Integer max_proc = -1;
 
             Octant one_ring[simplex_type::ElemType];
-            o.one_ring_nbh<Type>(one_ring, xDim, yDim, zDim, mesh->is_periodic());
+            o.one_ring_corner_nbhs<Type>(one_ring, xDim, yDim, zDim, mesh->is_periodic());
 
             for (int k = 0; k < Type; k++) {
                 one_ring_owners[k] = -1;
@@ -871,7 +886,11 @@ namespace mars {
             }
 
             MARS_INLINE_FUNCTION
-            void operator()(const Mesh *mesh, const Integer i, const Integer dof_sfc, const Integer owner_proc, const Integer dir) const {
+            void operator()(const Mesh *mesh,
+                            const Integer i,
+                            const Integer dof_sfc,
+                            const Integer owner_proc,
+                            const Integer dir) const {
                 face_predicate(mesh, i, dof_sfc, owner_proc, std::integral_constant<bool, Ghost>{});
             }
         };
@@ -927,8 +946,12 @@ namespace mars {
             }
         }
 
-        static MARS_INLINE_FUNCTION Integer get_ghost_sfc(const Mesh* mesh, const Integer index) { return mesh->get_ghost_sfc(index); }
-        static MARS_INLINE_FUNCTION Integer get_local_sfc(const Mesh *mesh, const Integer index) { return mesh->get_sfc(index); }
+        static MARS_INLINE_FUNCTION Integer get_ghost_sfc(const Mesh *mesh, const Integer index) {
+            return mesh->get_ghost_sfc(index);
+        }
+        static MARS_INLINE_FUNCTION Integer get_local_sfc(const Mesh *mesh, const Integer index) {
+            return mesh->get_sfc(index);
+        }
 
         template <bool G>
         static MARS_INLINE_FUNCTION typename std::enable_if<G == true, Integer>::type get_sfc_ghost_or_local(
@@ -973,13 +996,13 @@ namespace mars {
             void operator()(const Integer i) const {
                 const Integer sfc = get_sfc_ghost_or_local<Ghost>(mesh, i);
                 const Integer proc = mesh->get_proc();
-                auto cp = CornerPredicate<Ghost>(local_predicate,
-                                                 local_label,
-                                                 global_predicate,
-                                                 global_label,
-                                                 nbh_proc_predicate_send,
-                                                 nbh_proc_predicate_recv,
-                                                 proc);
+                auto cp = OneRingPredicate<Ghost, DofLabel::lCorner>(local_predicate,
+                                                                     local_label,
+                                                                     global_predicate,
+                                                                     global_label,
+                                                                     nbh_proc_predicate_send,
+                                                                     nbh_proc_predicate_recv,
+                                                                     proc);
 
                 auto fp = FacePredicate<Ghost, DofLabel::lFace>(local_predicate,
                                                                 local_label,
@@ -990,13 +1013,13 @@ namespace mars {
                                                                 proc);
 
                 // fp logic is the same as the edge one. Just different label.
-                auto ep = FacePredicate<Ghost, DofLabel::lEdge>(local_predicate,
-                                                                local_label,
-                                                                global_predicate,
-                                                                global_label,
-                                                                nbh_proc_predicate_send,
-                                                                nbh_proc_predicate_recv,
-                                                                proc);
+                auto ep = OneRingPredicate<Ghost, DofLabel::lEdge>(local_predicate,
+                                                                   local_label,
+                                                                   global_predicate,
+                                                                   global_label,
+                                                                   nbh_proc_predicate_send,
+                                                                   nbh_proc_predicate_recv,
+                                                                   proc);
 
                 auto vp = VolumePredicate<Ghost>(local_predicate, local_label, global_predicate, global_label);
 
@@ -1007,33 +1030,33 @@ namespace mars {
         void print_dofs(const int rank) {
             auto handler = *this;
 
-            /* SFC<ElemType> gdof = get_global_dof_enum(); */
-            /* Kokkos::parallel_for(
+            SFC<ElemType> gdof = get_global_dof_enum();
+            Kokkos::parallel_for(
                 "for", gdof.get_elem_size(), MARS_LAMBDA(const int i) {
                     const Integer sfc_elem = handler.owned_to_sfc(i);
                     const Dof global_dof = handler.sfc_to_global_dof(sfc_elem);
 
-                    Integer gid = -1, proc = -1;
+                    /* Integer gid = -1, proc = -1;
 
                     if (locally_owned_dof(sfc_elem)) {
                         proc = get_mesh_manager().get_mesh()->get_proc();
                         const Integer sfc_lid = global_dof_enum.get_view_sfc_to_local()(sfc_elem);
                         gid = sfc_lid + global_dof_offset(proc);
-                    }
+                    } */
 
                     Octant o = get_octant_from_sfc(sfc_elem);
 
-                    printf("i: %i global sfc: %li gdof: %li : %li ocntant --- [%li, %li] -  rank: %i\n",
+                    printf("i: %i global sfc: %li gdof: %li octant: [%li, %li, %li] -  rank: %i\n",
                            i,
                            sfc_elem,
                            global_dof.get_gid(),
-                           gid,
                            o.x,
                            o.y,
-                           proc);
-                }); */
+                           o.z,
+                           global_dof.get_proc());
+                });
 
-            SFC<ElemType> dof = get_local_dof_enum();
+            /* SFC<ElemType> dof = get_local_dof_enum();
             Kokkos::parallel_for(
                 "for", dof.get_elem_size(), MARS_LAMBDA(const int i) {
                     const Integer sfc_elem = handler.local_to_sfc(i);
@@ -1041,14 +1064,15 @@ namespace mars {
 
                     Octant o = get_octant_from_sfc(sfc_elem);
 
-                    printf("i: %i, local sfc: %li gdof: %li --- octant: [%li, %li] -  rank: %i\n",
+                    printf("i: %i, local sfc: %li gdof: %li --- octant: [%li, %li, %li] -  rank: %i\n",
                            i,
                            sfc_elem,
                            global_dof.get_gid(),
                            o.x,
                            o.y,
+                           o.z,
                            global_dof.get_proc());
-                });
+                }); */
         }
 
         void build_lg_predicate(const context &context, ViewVectorType<bool> &npbs, ViewVectorType<bool> &npbr) {
@@ -1223,7 +1247,11 @@ namespace mars {
             }
 
             MARS_INLINE_FUNCTION
-            void operator()(const Mesh *mesh, const Integer i, const Integer dof_sfc, const Integer owner_proc, const Integer dir) const {
+            void operator()(const Mesh *mesh,
+                            const Integer i,
+                            const Integer dof_sfc,
+                            const Integer owner_proc,
+                            const Integer dir) const {
                 face_orient_dof(mesh, i, dof_sfc, owner_proc, dir, std::integral_constant<bool, Ghost>{});
             }
         };
@@ -1236,8 +1264,7 @@ namespace mars {
                 const Integer proc = mesh->get_proc();
 
                 if (face_dofs > 0) {
-                    FaceOrientDof<Ghost> fp =
-                        FaceOrientDof<Ghost>(face_dir, sfc_to_local, proc);
+                    FaceOrientDof<Ghost> fp = FaceOrientDof<Ghost>(face_dir, sfc_to_local, proc);
                     face_dir_iterate(sfc, mesh, i, fp);
                 }
             }
@@ -1284,10 +1311,8 @@ namespace mars {
             ViewVectorType<Integer> proc_scan_send("nbh_scan_send", rank_size + 1);
             ViewVectorType<Integer> proc_scan_recv("nbh_scan_recv", rank_size + 1);
 
-
             build_lg_predicate(context, nbh_proc_predicate_send, nbh_proc_predicate_recv);
             build_local_orientation();
-
 
             incl_excl_scan(0, rank_size, nbh_proc_predicate_send, proc_scan_send);
             incl_excl_scan(0, rank_size, nbh_proc_predicate_recv, proc_scan_recv);
@@ -1594,7 +1619,7 @@ namespace mars {
             return i;
         }
 
-        //get the local dof of the owned index.
+        // get the local dof of the owned index.
         MARS_INLINE_FUNCTION
         const Integer get_owned_dof(const Integer i) const {
             const Integer sfc = get_global_dof_enum().get_view_elements()(i);
@@ -1631,24 +1656,16 @@ namespace mars {
         const UnorderedMap<Integer, Dof> &get_ghost_lg_map() const { return ghost_local_to_global_map; }
 
         MARS_INLINE_FUNCTION
-        Integer get_boundary_dof(const Integer i) const {
-            return sfc_to_local(get_boundary_dofs()(i));
-        }
+        Integer get_boundary_dof(const Integer i) const { return sfc_to_local(get_boundary_dofs()(i)); }
 
         MARS_INLINE_FUNCTION
-        Integer get_boundary_dof_size() const {
-            return get_boundary_dofs().extent(0);
-        }
+        Integer get_boundary_dof_size() const { return get_boundary_dofs().extent(0); }
 
         MARS_INLINE_FUNCTION
-        Integer get_ghost_dof(const Integer i) const {
-            return sfc_to_local(get_ghost_dofs()(i));
-        }
+        Integer get_ghost_dof(const Integer i) const { return sfc_to_local(get_ghost_dofs()(i)); }
 
         MARS_INLINE_FUNCTION
-        Integer get_ghost_dof_size() const {
-            return get_ghost_dofs().extent(0);
-        }
+        Integer get_ghost_dof_size() const { return get_ghost_dofs().extent(0); }
 
         template <typename F>
         void ghost_iterate(F f) const {
@@ -1686,9 +1703,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_label(const Integer local_dof) const {
-            return get_local_dof_enum().get_label(local_dof);
-        }
+        const Integer get_label(const Integer local_dof) const { return get_local_dof_enum().get_label(local_dof); }
 
         MARS_INLINE_FUNCTION
         const Integer get_owned_label(const Integer owned_dof) const {
@@ -1744,7 +1759,7 @@ namespace mars {
     private:
         // data associated to the mesh elements (sfc) within the context.
         MM mesh_manager;
-        const context  &ctx;
+        const context &ctx;
 
         // local dof enumeration containing the local to sfc and sfc to local views.
         SFC<simplex_type::ElemType> local_dof_enum;

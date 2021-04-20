@@ -268,7 +268,7 @@ namespace mars {
         void set_proc(Integer p) { proc = p; }
 
         MARS_INLINE_FUNCTION
-        Integer get_proc() const { return proc; }
+        const Integer get_proc() const { return proc; }
 
         MARS_INLINE_FUNCTION
         void set_global_to_local_map(const UnorderedMap<Integer, Integer> &gl_map) { global_to_local_map_ = gl_map; }
@@ -1250,6 +1250,11 @@ namespace mars {
             Octant oc = get_octant(sfc_index);
 
             return oc.corner_nbh<Elem::ElemType>(corner_nr, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
+        }
+
+        template <typename F>
+        MARS_INLINE_FUNCTION void get_one_ring_edge_nbhs(const Octant &oc, const Integer direction, F f) const {
+            oc.one_ring_edge_nbhs<Elem::ElemType, F>(f, direction, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
         }
 
         void reserve_ghost(const Integer n_elements) { ghost_ = ViewVectorType<Integer>("ghost_", n_elements); }
