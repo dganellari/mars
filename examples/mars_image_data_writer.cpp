@@ -48,30 +48,18 @@ void define_bpvtk_attribute(const Settings &s, adios2::IO &io) {
           </ImageData>
         </VTKFile>)";
 
-        io.DefineAttribute<std::string>("vtk.xml", imageData);
+        io.DefineAttribute<std::string>("adios2.xml", imageData);
     };
 
     if (s.mesh_type == "image") {
         lf_VTKImage(s, io);
-    } else if (s.mesh_type == "structured") {
-        throw std::invalid_argument(
-            "ERROR: mesh_type=structured not yet "
-            "   supported in settings.json, use mesh_type=image instead\n");
     }
-    // TODO extend to other formats e.g. structured
 }
 
 ImageWriter::ImageWriter(const Settings &settings, adios2::IO io) : io(io) {
-    // if (!settings.mesh_type.empty()) {
-    //     define_bpvtk_attribute(settings, io);
-    // }
-
+    define_bpvtk_attribute(settings, io);
+    io.DefineAttribute<double>("Du", settings.Du);
     // var_u = io.DefineVariable<double>("U", {settings.L, settings.L, settings.L});
-
-    // // if (settings.adios_memory_selection) {
-    // //     var_u.SetMemorySelection({{1, 1, 1}, {sim.size_z + 2, sim.size_y + 2, sim.size_x + 2}});
-    // //     var_v.SetMemorySelection({{1, 1, 1}, {sim.size_z + 2, sim.size_y + 2, sim.size_x + 2}});
-    // // }
 
     // var_step = io.DefineVariable<int>("step");
 }
