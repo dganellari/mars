@@ -417,7 +417,7 @@ namespace mars {
                         }
                     });
 
-                Integer one_ring_owners[4] = {-1};
+                /* Integer one_ring_owners[4] = {-1};
                 Integer l = 0;
                 mesh->get_one_ring_edge_nbhs(
                     start, direction, MARS_LAMBDA_REF(const Octant &nbh_oc) {
@@ -426,12 +426,19 @@ namespace mars {
                             Integer owner_proc = find_owner_processor(mesh->get_view_gp(), enc_oc, 2, mesh->get_proc());
                             one_ring_owners[l++] = owner_proc;
                         }
-                    });
+                    }); */
+
+                /* printf("max_proc: %li , one ring: %li, %li, %li, %li\n",
+                       max_proc,
+                       one_ring_owners[0],
+                       one_ring_owners[1],
+                       one_ring_owners[2],
+                       one_ring_owners[3]); */
 
                 for (int j = 0; j < edge_dofs; j++) {
                     Integer dof_sfc =
                         process_edge_node<ElemType>(mars::get_sfc_from_octant<ElemType>, start, direction, j);
-                    f(mesh, i, dof_sfc, max_proc, one_ring_owners);
+                    f(mesh, i, dof_sfc, max_proc, direction);
                 }
             }
         }
@@ -476,7 +483,7 @@ namespace mars {
                 auto frb = FaceRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc);
                 auto vrb = VolumeRankBoundary<BoundaryIter>(rank_boundary, sfc_to_locally_owned, map, proc);
                 // use frb for the edge logic as well. Same logic different input from the iterate.
-                elem_dof_iterate(sfc, mesh, i, crb, frb, vrb, crb);
+                elem_dof_iterate(sfc, mesh, i, crb, frb, vrb, frb);
             }
 
             IdentifyBoundaryDofPerRank(Mesh *m,
@@ -1013,13 +1020,13 @@ namespace mars {
                                                                 proc);
 
                 // fp logic is the same as the edge one. Just different label.
-                auto ep = OneRingPredicate<Ghost, DofLabel::lEdge>(local_predicate,
-                                                                   local_label,
-                                                                   global_predicate,
-                                                                   global_label,
-                                                                   nbh_proc_predicate_send,
-                                                                   nbh_proc_predicate_recv,
-                                                                   proc);
+                auto ep = FacePredicate<Ghost, DofLabel::lEdge>(local_predicate,
+                                                                local_label,
+                                                                global_predicate,
+                                                                global_label,
+                                                                nbh_proc_predicate_send,
+                                                                nbh_proc_predicate_recv,
+                                                                proc);
 
                 auto vp = VolumePredicate<Ghost>(local_predicate, local_label, global_predicate, global_label);
 

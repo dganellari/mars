@@ -434,7 +434,7 @@ namespace mars {
                     printf("The element type is not valid\n");
                     break;
             }
-            return Octant(x - x_, y - y_, z - z_);
+            return Octant(x_, y_, z_);
         }
     };
 
