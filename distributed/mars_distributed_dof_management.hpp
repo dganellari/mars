@@ -648,6 +648,8 @@ namespace mars {
                 if (elem_sfc_proc >= owner_proc) {
                     local_predicate(sfc) = 1;
                     local_label(sfc) = Label;
+                    nbh_proc_predicate_send(elem_sfc_proc) = 1;
+                    nbh_proc_predicate_recv(elem_sfc_proc) = 1;
                 }
             }
 
@@ -657,15 +659,11 @@ namespace mars {
                               const Integer sfc,
                               const Integer owner_proc,
                               std::false_type) const {
-                /* if the face neighbor element is ghost then check if the processor
+                /* if the neighbor element is ghost then check if the processor
                     is less than the owner. This is how the dofs are partitioned*/
                 if (proc >= owner_proc) {
                     global_predicate(sfc) = 1;
                     global_label(sfc) = Label;
-                }
-                if (proc != owner_proc) {
-                    nbh_proc_predicate_send(owner_proc) = 1;
-                    nbh_proc_predicate_recv(owner_proc) = 1;
                 }
                 local_predicate(sfc) = 1;
                 local_label(sfc) = Label;
