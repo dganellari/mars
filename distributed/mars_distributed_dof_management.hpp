@@ -290,11 +290,7 @@ namespace mars {
             }
 
             MARS_INLINE_FUNCTION
-            void operator()(const Mesh *mesh,
-                            const Integer i,
-                            const Integer dof_sfc,
-                            const Integer owner_proc,
-                            const Integer dir) const {
+            void operator()(const Mesh *mesh, const Integer i, const Integer dof_sfc, const Integer owner_proc) const {
                 all_rank_boundary(mesh, i, dof_sfc, owner_proc, std::integral_constant<bool, Ghost>{});
             }
         };
@@ -398,13 +394,14 @@ namespace mars {
                 corner_iterate(sfc, mesh, i, cf);
             }
             if (face_dofs > 0) {
-                face_dir_iterate(sfc, mesh, i, ff);
+                // templetized with 1 value means filtered on the direction (No dir is forwarded to the f call).
+                face_dir_iterate<1>(sfc, mesh, i, ff);
             }
             if (volume_dofs > 0) {
                 volume_iterate(sfc, mesh, i, vf);
             }
             if (edge_dofs > 0) {
-                edge_iterate(sfc, mesh, i, ef);
+                edge_iterate(sfc, mesh, i, IterateFilter<EdgeF, 1>(ef));
             }
         }
 
@@ -577,7 +574,7 @@ namespace mars {
                     o.y *= degree;
                     Integer dof_sfc = mars::get_sfc_from_octant<ElemType>(o);
 
-                    f(mesh, index, dof_sfc, max_proc, 0);
+                    f(mesh, index, dof_sfc, max_proc);
                 }
             }
         }
@@ -602,7 +599,7 @@ namespace mars {
                         o.z *= degree;
                         Integer dof_sfc = mars::get_sfc_from_octant<ElemType>(o);
 
-                        f(mesh, index, dof_sfc, max_proc, 0);
+                        f(mesh, index, dof_sfc, max_proc);
                     }
                 }
             }
@@ -670,11 +667,7 @@ namespace mars {
             }
 
             MARS_INLINE_FUNCTION
-            void operator()(const Mesh *mesh,
-                            const Integer i,
-                            const Integer dof_sfc,
-                            const Integer owner_proc,
-                            const Integer dir) const {
+            void operator()(const Mesh *mesh, const Integer i, const Integer dof_sfc, const Integer owner_proc) const {
                 lg_predicate(mesh, i, dof_sfc, owner_proc, std::integral_constant<bool, Ghost>{});
             }
         };
@@ -751,21 +744,61 @@ namespace mars {
             }
         }
 
-        template <typename F, Integer Type = ElemType>
+        // Iterate filter redirecting the call with filtered number of parameters to different functors.
+        template <typename F, Integer Params = 0>
+        struct IterateFilter {
+            F f;
+
+            MARS_INLINE_FUNCTION
+            IterateFilter(F fun) : f(fun) {}
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Mesh *mesh,
+                            const Integer i,
+                            const Integer dof_sfc,
+                            const Integer owner_proc,
+                            const Integer dir) const {
+                f(mesh, i, dof_sfc, owner_proc, dir);
+            }
+        };
+
+        // Could have specialized on a bool for dir or not dir but left it open for further filters.
+        // For example one might need a face_iterate with only mesh, i, dofs_sfc parameteres.
+        template <typename F>
+        struct IterateFilter<F, 1> {
+            F f;
+
+            MARS_INLINE_FUNCTION
+            IterateFilter(F fun) : f(fun) {}
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Mesh *mesh,
+                            const Integer i,
+                            const Integer dof_sfc,
+                            const Integer owner_proc,
+                            const Integer dir) const {
+                f(mesh, i, dof_sfc, owner_proc);
+            }
+        };
+
+        template <Integer Params, typename F, Integer Type = ElemType>
         static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Quad4, void>
         face_dir_iterate(const Integer sfc, const Mesh *mesh, const Integer i, F f) {
+            auto filter = IterateFilter<F, Params>(f);
             // dir 0 = x, 1 = y
-            face_iterate<0>(sfc, mesh, i, f);
-            face_iterate<1>(sfc, mesh, i, f);
+            face_iterate<0>(sfc, mesh, i, filter);
+            face_iterate<1>(sfc, mesh, i, filter);
         }
 
-        template <typename F, Integer Type = ElemType>
+        template <Integer Params, typename F, Integer Type = ElemType>
         static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Hex8, void>
         face_dir_iterate(const Integer sfc, const Mesh *mesh, const Integer i, F f) {
+            auto filter = IterateFilter<F, Params>(f);
+            // dir 0 = x, 1 = y
             // dir 0 = x, 1 = y, 2 = z
-            face_iterate<0>(sfc, mesh, i, f);
-            face_iterate<1>(sfc, mesh, i, f);
-            face_iterate<2>(sfc, mesh, i, f);
+            face_iterate<0>(sfc, mesh, i, filter);
+            face_iterate<1>(sfc, mesh, i, filter);
+            face_iterate<2>(sfc, mesh, i, filter);
         }
 
         // careful: do not use this function for face iteration when expensive operations are involved. Useful mainly
@@ -786,7 +819,7 @@ namespace mars {
             }
         }
 
-        template <Integer dir, typename F>
+        /* template <Integer dir, typename F>
         static MARS_INLINE_FUNCTION void face_iterate(const Integer sfc, const Mesh *mesh, F f) {
             // side  0 means origin side and 1 destination side.
             Octant oc = mesh->octant_from_sfc(sfc);
@@ -800,7 +833,7 @@ namespace mars {
                     f(dof_sfc, owner_proc, dir);
                 }
             }
-        }
+        } */
 
         static MARS_INLINE_FUNCTION Integer get_ghost_sfc(const Mesh *mesh, const Integer index) {
             return mesh->get_ghost_sfc(index);
@@ -1120,7 +1153,8 @@ namespace mars {
 
                 if (face_dofs > 0) {
                     FaceOrientDof<Ghost> fp = FaceOrientDof<Ghost>(face_dir, sfc_to_local, proc);
-                    face_dir_iterate(sfc, mesh, i, fp);
+                    // templatized with 0 values means no filter
+                    face_dir_iterate<0>(sfc, mesh, i, fp);
                 }
             }
 
