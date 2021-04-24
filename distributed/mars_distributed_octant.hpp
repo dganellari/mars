@@ -392,6 +392,26 @@ namespace mars {
         }
 
         template <Integer Type, typename F>
+        MARS_INLINE_FUNCTION void one_ring_corner_nbhs(F f,
+                                                       const Integer xDim,
+                                                       const Integer yDim,
+                                                       const Integer zDim,
+                                                       const bool periodic) const {
+            const Integer ring_depth = 2;
+            auto depth = Depth::set_depth<Type>(ring_depth);
+
+            for (int k = 0; k < depth.z; k++) {
+                for (int j = 0; j < depth.y; j++) {
+                    for (int i = 0; i < depth.x; i++) {
+                        Octant nbh(x - i, y - j, z - k);
+                        nbh.validate_nbh<Type>(xDim, yDim, zDim, periodic);
+                        f(nbh);
+                    }
+                }
+            }
+        }
+
+        template <Integer Type, typename F>
         MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Hex8, void> one_ring_edge_nbhs(
             F f,
             const Integer direction,

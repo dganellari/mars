@@ -1257,6 +1257,11 @@ namespace mars {
             oc.one_ring_edge_nbhs<Elem::ElemType, F>(f, direction, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
         }
 
+        template <typename F>
+        MARS_INLINE_FUNCTION void get_one_ring_corner_nbhs(const Octant &oc, F f) const {
+            oc.one_ring_corner_nbhs<Elem::ElemType, F>(f, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
+        }
+
         void reserve_ghost(const Integer n_elements) { ghost_ = ViewVectorType<Integer>("ghost_", n_elements); }
 
         void reserve_scan_ghost(const Integer n_elements) {

@@ -344,6 +344,38 @@ namespace mars {
             return f(o);
         }
 
+        // TODO: Use this instead of the following functor when switching to c++17 and Cuda 11.
+        /* auto max_lambda = MARS_LAMBDA_REF(const Octant &nbh_oc) {
+            // find owner proc method returns an invalid result with invalid octant.
+            if (nbh_oc.is_valid()) {
+                Integer enc_oc = mars::get_sfc_from_octant<ElemType>(nbh_oc);
+                Integer owner_proc = find_owner_processor(mesh->get_view_gp(), enc_oc, 2, mesh->get_proc());
+                if (owner_proc > max_proc) {
+                    max_proc = owner_proc;
+                }
+            }
+        }; */
+
+        struct MaxOneRingProc {
+            Integer &max_proc;
+            ViewVectorType<Integer> gp;
+            Integer proc;
+
+            MaxOneRingProc(ViewVectorType<Integer> g, Integer p, Integer &mx) :
+                gp(g), proc(p), max_proc(mx) {}
+
+            void operator()(const Octant &nbh_oc) const {
+                // find owner proc method returns an invalid result with invalid octant.
+                if (nbh_oc.is_valid()) {
+                    Integer enc_oc = mars::get_sfc_from_octant<ElemType>(nbh_oc);
+                    Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
+                    if (owner_proc > max_proc) {
+                        max_proc = owner_proc;
+                    }
+                }
+            }
+        };
+
         template <typename F, Integer T = ElemType>
         static MARS_INLINE_FUNCTION std::enable_if_t<T == ElementType::Hex8, void> edge_iterate(const Integer sfc,
                                                                                                 const Mesh *mesh,
@@ -357,16 +389,7 @@ namespace mars {
 
                 Integer max_proc = -1;
                 mesh->get_one_ring_edge_nbhs(
-                    start, direction, MARS_LAMBDA_REF(const Octant &nbh_oc) {
-                        // find owner proc method returns an invalid result with invalid octant.
-                        if (nbh_oc.is_valid()) {
-                            Integer enc_oc = mars::get_sfc_from_octant<ElemType>(nbh_oc);
-                            Integer owner_proc = find_owner_processor(mesh->get_view_gp(), enc_oc, 2, mesh->get_proc());
-                            if (owner_proc > max_proc) {
-                                max_proc = owner_proc;
-                            }
-                        }
-                    });
+                    start, direction, MaxOneRingProc(mesh->get_view_gp(), mesh->get_proc(), max_proc));
 
                 for (int j = 0; j < edge_dofs; j++) {
                     Integer dof_sfc =
@@ -439,6 +462,7 @@ namespace mars {
                                      const Integer nbh_rank_size) {
             using namespace Kokkos;
 
+            printf("Bilding the Boundary DOF Sets!\n");
             const Integer size = get_mesh_manager().get_host_mesh()->get_view_boundary().extent(0);
 
             Integer xDim = get_mesh_manager().get_host_mesh()->get_XDim();
@@ -567,8 +591,11 @@ namespace mars {
                     o.x = oc.x + i;
                     o.y = oc.y + j;
 
-                    Integer max_proc = process_corner<ElemType>(mesh, o);
+                    /* Integer mp = process_corner<ElemType>(mesh, o); */
+                    Integer max_proc = -1;
+                    mesh->get_one_ring_corner_nbhs(o, MaxOneRingProc(mesh->get_view_gp(), mesh->get_proc(), max_proc));
 
+                    /* assert(mp == max_proc); */
                     // convert the octant value into the new nodal sfc system
                     o.x *= degree;
                     o.y *= degree;
@@ -591,7 +618,11 @@ namespace mars {
                         o.y = oc.y + j;
                         o.z = oc.z + k;
 
-                        Integer max_proc = process_corner<ElemType>(mesh, o);
+                        /* Integer mp = process_corner<ElemType>(mesh, o); */
+                        Integer max_proc = -1;
+                        mesh->get_one_ring_corner_nbhs(o,
+                                                       MaxOneRingProc(mesh->get_view_gp(), mesh->get_proc(), max_proc));
+                        /* assert(mp == max_proc); */
 
                         // convert the octant value into the new nodal sfc system
                         o.x *= degree;
@@ -1082,6 +1113,7 @@ namespace mars {
                                  ViewVectorType<Integer> &ghost_dofs_index) {
             int rank_size = num_ranks(context);
             Integer ghost_size = scan_recv_mirror(rank_size);
+            std::cout << "DofHandler:MPI send receive for the ghost dofs layer started..." << std::endl;
 
             ghost_dofs_sfc = ViewVectorType<Integer>("ghost_dofs", ghost_size);
             ghost_dofs_index = ViewVectorType<Integer>("ghost_dofs_index", ghost_size);
@@ -1190,6 +1222,8 @@ namespace mars {
         }
 
         virtual void enumerate_dofs() {
+            printf("Enumerating the Degrees of Freedom on the Mesh with Degree: %li\n", degree);
+
             const auto &context = get_context();
 
             const Integer rank_size = num_ranks(context);
@@ -1302,6 +1336,7 @@ namespace mars {
             /* In the end the size of the map should be as the size of the ghost_dofs.
              * Careful map size  is not capacity */
             assert(size == ghost_local_to_global_map.size());
+            printf("Built the Ghost Local to Global Map.\n");
         }
 
         MARS_INLINE_FUNCTION
