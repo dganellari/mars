@@ -1240,12 +1240,22 @@ int main(int argc, char *argv[])
 
 	/*test_uniform_bisection_3D(3, test_mars_mesh_generation_3D(1,1,1));*/
 	//parallel with kokkos.
+
+// LSFEMElasticityHiptmair<2>(argc,argv);
+
+
 char *p;
 auto fifth=std::strtol(argv[5], &p, 10);
-        if(fifth==0 || fifth==2)
- DUALContactLinearElasticity5<2,1>(argc,argv);
-        else if(fifth==1)
-SquareHoleDUALContactLinearElasticity<2,1>(argc,argv);
+// DUALContactLinearElasticity5<2,1>(argc,argv);
+FrictionDualSquare<2,1>(argc,argv);
+
+
+    //    if(fifth==0 || fifth==2)
+// DUALContactLinearElasticity5<2,1>(argc,argv);
+     //   else if(fifth==1)
+// SquareHoleDUALContactLinearElasticity<2,1>(argc,argv);
+
+
 // DUALContactLinearElasticity5<2,1>(argc,argv);
 // LSContact<2,0>(argc,argv);
 	
@@ -1260,7 +1270,6 @@ SquareHoleDUALContactLinearElasticity<2,1>(argc,argv);
 
 // DivDivHiptmair<2>(argc,argv);
 // LSFEMPoissonHiptmair<2>(argc,argv);
-// LSFEMElasticityHiptmair<2>(argc,argv);
 // LSFEMContactHiptmair<2>(argc,argv);
 
 // LSFEM_Poisson<2,0,1>(argc,argv);
