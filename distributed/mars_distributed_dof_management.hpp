@@ -361,9 +361,11 @@ namespace mars {
             ViewVectorType<Integer> gp;
             Integer proc;
 
+            MARS_INLINE_FUNCTION
             MaxOneRingProc(ViewVectorType<Integer> g, Integer p, Integer &mx) :
                 gp(g), proc(p), max_proc(mx) {}
 
+            MARS_INLINE_FUNCTION
             void operator()(const Octant &nbh_oc) const {
                 // find owner proc method returns an invalid result with invalid octant.
                 if (nbh_oc.is_valid()) {
