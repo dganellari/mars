@@ -2,7 +2,6 @@
 #define MARS_IMAGE_DATA_WRITER_HPP
 
 #include "adios2.h"
-#include "array"
 #include "mars_image_data_writer_settings.hpp"
 #include "vector"
 
