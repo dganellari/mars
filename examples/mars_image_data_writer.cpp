@@ -1,10 +1,13 @@
 #include "mars_image_data_writer.hpp"
 #include <iostream>
 #include "adios2.h"
+#include "mars_base.hpp"
+#include "mars_globals.hpp"
 #include "mars_image_data_writer_settings.hpp"
 
-double simple_func(const double &x, const double &y, const double &z) { return x * y * z; }
+double simple_func(const double &x, const double &y, const double &z) { return x * x + y * y + z * z; }
 
+// Example data vector creation.
 void ImageWriter::new_data(const unsigned long &Nx, const unsigned long &Ny, const unsigned long &Nz) {
     unsigned long size = Nx * Ny * Nz;
     double H[3];
@@ -27,6 +30,7 @@ void ImageWriter::new_data(const unsigned long &Nx, const unsigned long &Ny, con
         }
     }
     var_data = io.DefineVariable<double>("U", {Nx, Ny, Nz}, {0UL, 0UL, 0UL}, {Nx, Ny, Nz});
+    std::cout << "ImageWriter::\n";
 }
 
 void define_bpvtk_attribute(const Settings &s, adios2::IO &io) {
@@ -56,16 +60,13 @@ void define_bpvtk_attribute(const Settings &s, adios2::IO &io) {
     }
 }
 
-ImageWriter::ImageWriter(const Settings &settings, adios2::IO io) : io(io) {
-    define_bpvtk_attribute(settings, io);
-    io.DefineAttribute<double>("Du", settings.Du);
-    // var_u = io.DefineVariable<double>("U", {settings.L, settings.L, settings.L});
-
-    // var_step = io.DefineVariable<int>("step");
-}
+ImageWriter::ImageWriter(const Settings &settings, adios2::IO io) : io(io) { define_bpvtk_attribute(settings, io); }
 
 void ImageWriter::open(const std::string &fname) { writer = io.Open(fname, adios2::Mode::Write); }
 
+/*
+ *Writing step, Begin part, put, End part
+ */
 void ImageWriter::write(int step) {
     writer.BeginStep();
     writer.Put<double>(var_data, data.data());
