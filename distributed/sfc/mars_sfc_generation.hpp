@@ -131,7 +131,7 @@ namespace mars {
         SFC() = default;
 
         MARS_INLINE_FUNCTION
-        SFC(const int x, const int y, const int z) : xDim(x), yDim(y), zDim(z) {
+        SFC(const Integer x, const Integer y, const Integer z) : xDim(x), yDim(y), zDim(z) {
             switch (Type) {
                 case ElementType::Quad4: {
                     all_range_ = encode_morton_2D(xDim + 1, yDim + 1);

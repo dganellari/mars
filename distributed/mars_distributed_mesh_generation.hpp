@@ -132,34 +132,32 @@ namespace mars {
             : predicate(el), xDim(xdm), yDim(ydm), zDim(zdm) {}
         KOKKOS_INLINE_FUNCTION
         void operator()(int j, int i) const {
+            const Integer enc_oc = encode_morton_2D(i, j);
+            const Integer max_oc = encode_morton_2D(xDim, yDim);
             // set to true only those elements from the vector that are generated.
-            // in this way the array is already sorted and you just compact it using scan which is much faster in
-            // parallel.
-            assert(encode_morton_2D(i, j) < encode_morton_2D(xDim, yDim));
-            if (encode_morton_2D(i, j) >= encode_morton_2D(xDim, yDim)) {
+            assert(enc_oc < max_oc);
+            if (enc_oc >= max_oc) {
                 const Integer chunk_size = xDim * yDim;
                 printf("You have reached the mesh genration limit size. Can not generate mesh %li elements\n",
                        chunk_size);
                 exit(1);
             }
-
-            predicate(encode_morton_2D(i, j)) = 1;
+            predicate(enc_oc) = 1;
         }
 
         KOKKOS_INLINE_FUNCTION
         void operator()(int k, int j, int i) const {
+            const Integer enc_oc = encode_morton_3D(i, j, k);
+            const Integer max_oc = encode_morton_3D(xDim, yDim, zDim);
             // set to true only those elements from the vector that are generated.
-            // in this way the array is already sorted and you just compact it using scan which is much faster in
-            // parallel.
-            assert(encode_morton_3D(i, j, k) < encode_morton_3D(xDim, yDim, zDim));
-            if (encode_morton_3D(i, j, k) >= encode_morton_3D(xDim, yDim, zDim)) {
+            assert(enc_oc < max_oc);
+            if (enc_oc >= max_oc) {
                 const Integer chunk_size = xDim * yDim * zDim;
                 printf("You have reached the mesh genration limit size. Can not generate mesh %li elements\n",
                        chunk_size);
                 exit(1);
             }
-
-            predicate(encode_morton_3D(i, j, k)) = 1;
+            predicate(enc_oc) = 1;
         }
     };
 
