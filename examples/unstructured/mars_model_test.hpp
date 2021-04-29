@@ -116,17 +116,6 @@ namespace mars {
                 if (!w.write("rhs.vtu", serial_mesh, rhs_host)) {
                     return false;
                 }
-
-                // Settings settings;
-                // adios2::ADIOS adios(adios2::DebugON);
-                // adios2::IO io_main = adios.DeclareIO("SimulationOutput");
-
-                // ImageWriter main_image(settings, io_main);
-
-                // main_image.open(settings.output);
-                // main_image.write(1, x);
-                // main_image.close();
-                // return true;
             }
 
             bool measure_actual_error(VectorReal &x) {

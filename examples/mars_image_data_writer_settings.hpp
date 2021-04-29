@@ -14,5 +14,6 @@ struct Settings {
     std::string mesh_type;
 
     Settings();
+    Settings(const std::string &fname);
 };
 #endif

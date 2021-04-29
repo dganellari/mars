@@ -315,7 +315,7 @@ if(ADIOS2_FOUND)
     add_executable(adios_example examples/mars_example_adios2.cpp 
     examples/mars_image_data_writer_settings.cpp
     examples/mars_image_data_writer.cpp
-    examples/mars_unstructured_writer.cpp)
+    examples/mars_mesh_writer.cpp)
 
     target_link_libraries(adios_example mars mars_io)
 else()
