@@ -97,7 +97,7 @@ namespace mars {
         }
 
         template <Integer Type>
-        static MARS_INLINE_FUNCTION Integer
+        static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Quad4, Integer>
         enum_corner(const ViewVectorType<Integer> &sfc_to_local, const Octant &oc, const int i, const int j) {
             Octant o;
             // get the next corner using the elem sfc
@@ -106,6 +106,27 @@ namespace mars {
             // convert the octant value into the new nodal sfc system
             o.x *= degree;
             o.y *= degree;
+            Integer sfc = mars::get_sfc_from_octant<Type>(o);
+
+            return sfc_to_local(sfc);
+        }
+
+        template <Integer Type>
+        static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Hex8, Integer> enum_corner(
+            const ViewVectorType<Integer> &sfc_to_local,
+            const Octant &oc,
+            const int i,
+            const int j,
+            const int k) {
+            Octant o;
+            // get the next corner using the elem sfc
+            o.x = oc.x + i;
+            o.y = oc.y + j;
+            o.z = oc.z + k;
+            // convert the octant value into the new nodal sfc system
+            o.x *= degree;
+            o.y *= degree;
+            o.z *= degree;
             Integer sfc = mars::get_sfc_from_octant<Type>(o);
 
             return sfc_to_local(sfc);

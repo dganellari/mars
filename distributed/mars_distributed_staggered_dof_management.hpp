@@ -24,6 +24,15 @@ namespace mars {
         static constexpr Integer Dim = Mesh::Dim;
         static constexpr Integer ManifoldDim = Mesh::ManifoldDim;
 
+
+        using NDofs = NumDofs<degree, ElemType>;
+
+        static constexpr Integer corner_dofs = NDofs::corner_dofs;
+        static constexpr Integer face_dofs = NDofs::face_dofs;
+        static constexpr Integer volume_dofs = NDofs::volume_dofs;
+        static constexpr Integer edge_dofs = NDofs::edge_dofs;
+        static constexpr Integer elem_dofs = NDofs::elem_dofs;
+
         MARS_INLINE_FUNCTION
         SDofHandler(DofHandler<Mesh, degree> d) : dof_handler(d) { prepare_separated_dofs(); }
 

@@ -13,17 +13,19 @@ namespace mars {
         static constexpr Integer degree = DofHandler::Degree;
         static constexpr Integer Dim = DofHandler::ManifoldDim;
 
-        static constexpr Integer volume_nodes = (degree - 1) * (degree - 1);
-        static constexpr Integer face_nodes = (degree - 1);
-        static constexpr Integer corner_nodes = 1;
-        static constexpr Integer elem_nodes = (degree + 1) * (degree + 1);
+        static constexpr Integer ElemType = DofHandler::ElemType;
+
+        static constexpr Integer volume_nodes = DofHandler::volume_dofs;
+        static constexpr Integer face_nodes = DofHandler::face_dofs;
+        static constexpr Integer corner_nodes = DofHandler::corner_dofs;
+        static constexpr Integer elem_nodes = DofHandler::elem_dofs;
         /* static constexpr Integer elem_nodes = (degree + 1) ^ Dim; Should be in general. */
 
         using DHandler = DofHandler;
         //! regular grids only. This can be a specialized version of the  non uniform impl.
         // Each node has max 2^Dim neighboring elements and  3^DIM neighboring nodes.
         // To account for the dofs we multiply with the degree.
-        static constexpr Integer max_dof_to_dof_size = power((degree * 2 + 1), Dim);
+        /* static constexpr Integer max_dof_to_dof_size = power((degree * 2 + 1), Dim); */
 
         MARS_INLINE_FUNCTION
         FEDofMap() = default;
@@ -32,10 +34,16 @@ namespace mars {
         FEDofMap(DofHandler handler) : dof_handler(handler) {}
 
         struct EnumLocalDofs {
-            using SimplexType = typename DofHandler::simplex_type;
-            static constexpr Integer Type = SimplexType::ElemType;
+            MARS_INLINE_FUNCTION void enumerate_volume(const Octant &o, const Integer sfc_index, Integer &index) const {
+                Integer sfc = get_sfc_from_octant<ElemType>(o);
+                Integer localid = dofHandler.sfc_to_local(sfc);
+                elem_dof_enum(sfc_index, index++) = localid;
+            }
 
-            MARS_INLINE_FUNCTION void volume_iterate(const Integer sfc_index, Integer &index) const {
+            template <Integer ET = ElemType>
+            MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Quad4, void> volume_iterate(
+                const Integer sfc_index,
+                Integer &index) const {
                 Octant o;
                 Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index);
                 // go through all the inside dofs for the current element
@@ -44,30 +52,84 @@ namespace mars {
                     for (int i = 0; i < degree - 1; i++) {
                         o.x = degree * oc.x + i + 1;
                         o.y = degree * oc.y + j + 1;
-                        Integer sfc = get_sfc_from_octant<Type>(o);
-                        Integer localid = dofHandler.sfc_to_local(sfc);
-                        elem_dof_enum(sfc_index, index++) = localid;
+                        enumerate_volume(o, sfc_index, index);
                     }
                 }
             }
 
-            MARS_INLINE_FUNCTION void corner_iterate(const Integer sfc_index, Integer &index) const {
+            template <Integer ET = ElemType>
+            MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Hex8, void> volume_iterate(
+                    const Integer sfc_index,
+                    Integer &index) const {
+                Octant o;
+                Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index);
+                // go through all the inside dofs for the current element
+                // Currently no topological order within the volume dofs if more than 1.
+                for (int j = 0; j < degree - 1; j++) {
+                    for (int i = 0; i < degree - 1; i++) {
+                        for (int k = 0; k < degree - 1; k++) {
+                            o.x = degree * oc.x + i + 1;
+                            o.y = degree * oc.y + j + 1;
+                            o.z = degree * oc.z + k + 1;
+                            enumerate_volume(o, sfc_index, index);
+                        }
+                    }
+                }
+            }
+
+            template <Integer ET = ElemType>
+            MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Quad4, void> corner_iterate(
+                const Integer sfc_index,
+                Integer &index) const {
                 Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index);
 
                 // go through all the corner dofs for the current element counterclockwise
                 /* for (const auto &x : {{0,0}, {1, 0}, {1, 1}, {0, 1}}) */
                 /* for (i,j from 0 to 2) first = (i + j) % 2; second = i;*/
 
-                Integer localid = DofHandler::template enum_corner<Type>(sfc_to_local, oc, 0, 0);
+                Integer localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 0, 0);
                 elem_dof_enum(sfc_index, index++) = localid;
 
-                localid = DofHandler::template enum_corner<Type>(sfc_to_local, oc, 1, 0);
+                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 1, 0);
                 elem_dof_enum(sfc_index, index++) = localid;
 
-                localid = DofHandler::template enum_corner<Type>(sfc_to_local, oc, 1, 1);
+                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 1, 1);
                 elem_dof_enum(sfc_index, index++) = localid;
 
-                localid = DofHandler::template enum_corner<Type>(sfc_to_local, oc, 0, 1);
+                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 0, 1);
+                elem_dof_enum(sfc_index, index++) = localid;
+            }
+
+            template <Integer ET = ElemType>
+            MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Hex8, void> corner_iterate(
+                const Integer sfc_index,
+                Integer &index) const {
+                Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index);
+
+                // go through all the corner dofs for the current element counterclockwise
+
+                Integer localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 0, 0, 0);
+                elem_dof_enum(sfc_index, index++) = localid;
+
+                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 1, 0, 0);
+                elem_dof_enum(sfc_index, index++) = localid;
+
+                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 1, 1, 0);
+                elem_dof_enum(sfc_index, index++) = localid;
+
+                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 0, 1, 0);
+                elem_dof_enum(sfc_index, index++) = localid;
+
+                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 0, 0, 1);
+                elem_dof_enum(sfc_index, index++) = localid;
+
+                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 1, 0, 1);
+                elem_dof_enum(sfc_index, index++) = localid;
+
+                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 1, 1, 1);
+                elem_dof_enum(sfc_index, index++) = localid;
+
+                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 0, 1, 1);
                 elem_dof_enum(sfc_index, index++) = localid;
             }
 
@@ -80,7 +142,7 @@ namespace mars {
 
                     for (int j = 0; j < face_nodes; j++) {
                         Integer localid =
-                            DofHandler::template enum_face_node<part, Type>(sfc_to_local, face_cornerA, j, dir);
+                            DofHandler::template enum_face_node<part, ElemType>(sfc_to_local, face_cornerA, j, dir);
                         elem_dof_enum(sfc_index, index++) = localid;
                     }
                 }
@@ -165,7 +227,7 @@ namespace mars {
                     Integer col_index = end;
                     for (int i = 0; i < end; ++i) {
                         const Integer sfc = dm.local_to_sfc(map(index, i));
-                        Octant oc = get_octant_from_sfc<DM::simplex_type::ElemType>(sfc);
+                        Octant oc = get_octant_from_sfc<ElemType>(sfc);
 
                         Integer face_nr;
                         for (int side = 0; side < 2; ++side) {
@@ -176,8 +238,8 @@ namespace mars {
 
                             Octant o = oc;
                             for (int w = 0; w < degree; ++w) {
-                                o = o.sfc_face_nbh<DM::simplex_type::ElemType>(face_nr);
-                                const Integer nbh_sfc = get_sfc_from_octant<DM::simplex_type::ElemType>(o);
+                                o = o.sfc_face_nbh<ElemType>(face_nr);
+                                const Integer nbh_sfc = get_sfc_from_octant<ElemType>(o);
                                 Integer nbh_id = dm.is_local(nbh_sfc) ? dm.sfc_to_local(nbh_sfc) : -1;
                                 map(index, col_index) = nbh_id;
                                 ++col_index;
