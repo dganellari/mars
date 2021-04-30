@@ -24,14 +24,20 @@ namespace mars {
         static constexpr Integer Dim = Mesh::Dim;
         static constexpr Integer ManifoldDim = Mesh::ManifoldDim;
 
-
-        using NDofs = NumDofs<degree, ElemType>;
+        using NDofs = NumDofs<degree, Label, ElemType>;
 
         static constexpr Integer corner_dofs = NDofs::corner_dofs;
+        static constexpr Integer num_corners = NDofs::num_corners;
+
         static constexpr Integer face_dofs = NDofs::face_dofs;
+        static constexpr Integer num_faces = NDofs::num_faces;
+
         static constexpr Integer volume_dofs = NDofs::volume_dofs;
+
         static constexpr Integer edge_dofs = NDofs::edge_dofs;
-        static constexpr Integer elem_dofs = NDofs::elem_dofs;
+        static constexpr Integer num_edges = NDofs::num_edges;
+
+        static constexpr Integer elem_dofs = NDofs::elem_dofs();
 
         MARS_INLINE_FUNCTION
         SDofHandler(DofHandler<Mesh, degree> d) : dof_handler(d) { prepare_separated_dofs(); }
@@ -525,9 +531,9 @@ namespace mars {
         MARS_INLINE_FUNCTION
         bool is_local(const Integer sfc) const { return get_dof_handler().is_local(sfc); }
 
-        template <Integer part>
+        template <Integer part, Integer Type>
         static MARS_INLINE_FUNCTION Octant enum_face_corner(Octant &oc, const int dir) {
-            return DofHandler<Mesh, degree>::template enum_face_corner<part>(oc, dir);
+            return DofHandler<Mesh, degree>::template enum_face_corner<part, Type>(oc, dir);
         }
 
         template <Integer part, Integer Type>

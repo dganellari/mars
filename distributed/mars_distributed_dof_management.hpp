@@ -8,25 +8,70 @@
 
 namespace mars {
 
-    template <Integer degree, Integer Type>
+    template <Integer degree, Integer Label, Integer Type>
     struct NumDofs {};
 
-    template <Integer degree>
-    struct NumDofs<degree, ElementType::Quad4> {
+    template <Integer degree, Integer Label>
+    struct NumDofs<degree, Label, ElementType::Quad4> {
+        static constexpr Integer Dim = 2;
+
+        static constexpr Integer num_corners = power_of_2(Dim);
+        static constexpr Integer num_faces = 2 * Dim;
+        static constexpr Integer num_edges = 0;
+
         static constexpr Integer corner_dofs = 1;
         static constexpr Integer face_dofs = (degree - 1);
         static constexpr Integer volume_dofs = (degree - 1) * (degree - 1);
         static constexpr Integer edge_dofs = 0;
-        static constexpr Integer elem_dofs = (degree + 1) * (degree + 1);
+        static constexpr Integer total_elem_dofs = (degree + 1) * (degree + 1);
+
+        static constexpr Integer elem_dofs() noexcept {
+            auto result = 0;
+
+            if (Label & DofLabel::lCorner) {
+                result += corner_dofs * num_corners;
+            }
+            if (Label & DofLabel::lVolume) {
+                result += volume_dofs;
+            }
+            if (Label & DofLabel::lFace) {
+                result += face_dofs * num_faces;
+            }
+            return result;
+        }
     };
 
-    template <Integer degree>
-    struct NumDofs<degree, ElementType::Hex8> {
+    template <Integer degree, Integer Label>
+    struct NumDofs<degree, Label, ElementType::Hex8> {
+        static constexpr Integer Dim = 3;
+
+        static constexpr Integer num_corners = power_of_2(Dim);
+        static constexpr Integer num_faces = 2 * Dim;
+        static constexpr Integer num_edges = 4 * Dim;
+
         static constexpr Integer corner_dofs = 1;
         static constexpr Integer face_dofs = (degree - 1) * (degree - 1);
         static constexpr Integer volume_dofs = (degree - 1) * (degree - 1) * (degree - 1);
         static constexpr Integer edge_dofs = (degree - 1);
-        static constexpr Integer elem_dofs = (degree + 1) * (degree + 1) * (degree + 1);
+        static constexpr Integer total_elem_dofs = (degree + 1) * (degree + 1) * (degree + 1);
+
+        static constexpr Integer elem_dofs() noexcept {
+            auto result = 0;
+
+            if (Label & DofLabel::lCorner) {
+                result += corner_dofs * num_corners;
+            }
+            if (Label & DofLabel::lEdge) {
+                result += edge_dofs * num_edges;
+            }
+            if (Label & DofLabel::lVolume) {
+                result += volume_dofs;
+            }
+            if (Label & DofLabel::lFace) {
+                result += face_dofs * num_faces;
+            }
+            return result;
+        }
     };
 
     template <class Mesh_, Integer degree>
@@ -45,13 +90,20 @@ namespace mars {
         static constexpr Integer Dim = Mesh::Dim;
         static constexpr Integer ManifoldDim = Mesh::ManifoldDim;
 
-        using NDofs = NumDofs<degree, ElemType>;
+        using NDofs = NumDofs<degree, dofLabel, ElemType>;
 
         static constexpr Integer corner_dofs = NDofs::corner_dofs;
+        static constexpr Integer num_corners = NDofs::num_corners;
+
         static constexpr Integer face_dofs = NDofs::face_dofs;
+        static constexpr Integer num_faces = NDofs::num_faces;
+
         static constexpr Integer volume_dofs = NDofs::volume_dofs;
+
         static constexpr Integer edge_dofs = NDofs::edge_dofs;
-        static constexpr Integer elem_dofs = NDofs::elem_dofs;
+        static constexpr Integer num_edges = NDofs::num_edges;
+
+        static constexpr Integer elem_dofs = NDofs::elem_dofs();
 
         MARS_INLINE_FUNCTION
         constexpr Integer get_elem_type() { return simplex_type::ElemType; }
@@ -132,8 +184,10 @@ namespace mars {
             return sfc_to_local(sfc);
         }
 
-        template <Integer part>
-        static MARS_INLINE_FUNCTION Octant enum_face_corner(Octant &oc, const int dir) {
+        template <Integer part, Integer Type>
+        static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Quad4, Octant> enum_face_corner(
+            Octant &oc,
+            const int dir) {
             Octant face_cornerA;
             /*This is how the face nr is computed to get a topological order of the faces
             Integer face_nr;
@@ -157,7 +211,17 @@ namespace mars {
         }
 
         template <Integer part, Integer Type>
-        static MARS_INLINE_FUNCTION Integer sfc_face_node(const Octant &face_cornerA, const int j, const int dir) {
+        static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Hex8, Octant> enum_face_corner(
+            Octant &oc,
+            const int dir) {
+            Octant face_cornerA;
+            build_starting_face_corner<Type, part>(face_cornerA, dir, oc);
+            return face_cornerA;
+        }
+
+        template <Integer part, Integer Type>
+        static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Quad4, Integer>
+        sfc_face_node(const Octant &face_cornerA, const int j, const int dir) {
             int sign = (part == 1) ? -1 : 1;
             // dir is 1 for y direction and 0 for x direction
             Octant o;
@@ -172,6 +236,12 @@ namespace mars {
             Integer sfc = mars::get_sfc_from_octant<Type>(o);
 
             return sfc;
+        }
+
+        template <Integer part, Integer Type>
+        static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Hex8, Integer>
+        sfc_face_node(const Octant &face_cornerA, const int j, const int dir) {
+            return build_face_node<Type, part>(mars::get_sfc_from_octant<Type>, face_cornerA, j);
         }
 
         template <Integer part, Integer Type>
