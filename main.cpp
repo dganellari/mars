@@ -1206,8 +1206,12 @@ int main(int argc, char *argv[]) {
         test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(xDim, yDim, zDim);
     };
 
-    apps["matrix_free_poisson2D"] = [=]() {
-        poisson_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(xDim, yDim);
+    apps["mfpoisson"] = [=]() {
+        matrix_free_poisson<Example2Dirichlet, Example2RHS, Example2Analitcal, ElementType::Quad4>(xDim, yDim, 0);
+    };
+
+    apps["mfpoisson3D"] = [=]() {
+        matrix_free_poisson<Example2Dirichlet, Example2RHS, Example2Analitcal, ElementType::Hex8>(xDim, yDim, zDim);
     };
 
     apps["cstokes"] = [=]() { staggered_constant_viscosty_stokes<ElementType::Quad4>(xDim, yDim, 0); };
