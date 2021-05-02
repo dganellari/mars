@@ -72,18 +72,19 @@ void MeshWriter::open(const std::string& fname) {
     engine = io.Open(fname, adios2::Mode::Write);
     engine.BeginStep();
 }
-void MeshWriter::write(Mesh& mesh, int step) {
-    size_t nelements = 0;
-    size_t element_nvertices = 0;
-    auto elements = mesh.get_view_elements();
-    std::cout << elements.extent(0);
-    std::cout << elements.extent(1);
-    nelements = mesh.n_elements();
-    assert(nelements == elements.extent(0));
-    element_nvertices = elements.extent(1);
-    int dim = Mesh::Dim;
-    size_t n_nodes = mesh.n_nodes();
-    auto points = mesh.get_view_points();
+
+void MeshWriter::write(int step) {
+    // size_t nelements = 0;
+    // size_t element_nvertices = 0;
+    // auto elements = mesh.get_view_elements();
+    // std::cout << elements.extent(0);
+    // std::cout << elements.extent(1);
+    // nelements = mesh.n_elements();
+    // assert(nelements == elements.extent(0));
+    // element_nvertices = elements.extent(1);
+    // // int dim = Mesh::Dim;
+    // size_t n_nodes = mesh.n_nodes();
+    // auto points = mesh.get_view_points();
 
     // io.DefineVariable<uint64_t>("connectivity", {}, {}, {nelements, element_nvertices + 1});
 }

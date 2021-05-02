@@ -4,10 +4,11 @@
 #include "mars_image_data_writer_settings.hpp"
 #include "mars_mesh_writer.hpp"
 
-class ST3Analitcal {
-public:
-    MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex3_st_exact(p); }
-};
+// pass to interpolate.
+// class ST3Analitcal {
+// public:
+//     MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex3_st_exact(p); }
+// };
 
 // class ST3RHS {
 // public:
