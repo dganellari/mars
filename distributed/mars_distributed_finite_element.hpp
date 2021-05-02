@@ -131,18 +131,15 @@ namespace mars {
                 elem_dof_enum(sfc_index, index++) = localid;
             }
 
-            template <Integer part>
-            MARS_INLINE_FUNCTION void face_iterate(const Integer sfc_index, Integer &index) const {
+            template <Integer dir>
+            MARS_INLINE_FUNCTION void face_iterate(const Integer sfc_index, Integer &index, const int side) const {
                 Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index);
-                // side  0 means origin side and 1 destination side.
-                for (int dir = 0; dir < 2; ++dir) {
-                    Octant face_cornerA = DofHandler::template enum_face_corner<part, ElemType>(oc, dir);
+                Octant face_cornerA = DofHandler::template enum_face_corner<dir, ElemType>(oc, side);
 
-                    for (int j = 0; j < face_nodes; j++) {
-                        Integer localid =
-                            DofHandler::template enum_face_node<part, ElemType>(sfc_to_local, face_cornerA, j, dir);
-                        elem_dof_enum(sfc_index, index++) = localid;
-                    }
+                for (int j = 0; j < face_nodes; j++) {
+                    Integer localid =
+                        DofHandler::template enum_face_node<dir, ElemType>(sfc_to_local, face_cornerA, j, side);
+                    elem_dof_enum(sfc_index, index++) = localid;
                 }
             }
 
@@ -155,8 +152,10 @@ namespace mars {
                     corner_iterate(i, index);
                 }
                 if (DofHandler::dofLabel & DofLabel::lFace) {
-                    face_iterate<0>(i, index);
-                    face_iterate<1>(i, index);
+                    face_iterate<0>(i, index, 0);
+                    face_iterate<0>(i, index, 1);
+                    face_iterate<1>(i, index, 0);
+                    face_iterate<1>(i, index, 1);
                 }
                 if (DofHandler::dofLabel & DofLabel::lVolume) {
                     volume_iterate(i, index);
@@ -177,9 +176,12 @@ namespace mars {
                     volume_iterate(i, index);
                 }
                 if (DofHandler::dofLabel & DofLabel::lFace) {
-                    face_iterate<2>(i, index);  // z direction first for the counterclockwise
-                    face_iterate<0>(i, index);  // x dir
-                    face_iterate<1>(i, index);  // y dir
+                    face_iterate<2>(i, index, 1);  // z direction first for the counterclockwise
+                    face_iterate<2>(i, index, 0);  // z direction first for the counterclockwise
+                    face_iterate<0>(i, index, 1);  // x dir
+                    face_iterate<0>(i, index, 0);  // x dir
+                    face_iterate<1>(i, index, 1);  // y dir
+                    face_iterate<1>(i, index, 0);  // y dir
                 }
             }
 
