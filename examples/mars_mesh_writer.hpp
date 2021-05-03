@@ -30,7 +30,12 @@
 
 class MeshWriter {
 public:
-    MeshWriter(adios2::IO io, const std::string engineType);
+    static const int Dim;
+    static const int ManifoldDim;
+
+    mars::Mesh<3, 3> mesh;
+
+    MeshWriter(adios2::IO io);
     std::string VTKSchema();
     void open(const std::string& fname);
     void write(int step);

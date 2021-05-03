@@ -62,10 +62,9 @@ std::string VTKSchema() {
     return vtkSchema;
 }
 
-MeshWriter::MeshWriter(adios2::IO io, const std::string engineType) {
+MeshWriter::MeshWriter(adios2::IO io) {
     adios2::ADIOS adios(adios2::DebugON);
     io = adios.DeclareIO("SimulationOutput");
-    io.SetEngine(engineType);
 }
 
 void MeshWriter::open(const std::string& fname) {
@@ -74,6 +73,7 @@ void MeshWriter::open(const std::string& fname) {
 }
 
 void MeshWriter::write(int step) {
+    // std::cout << Dim;
     // size_t nelements = 0;
     // size_t element_nvertices = 0;
     // auto elements = mesh.get_view_elements();

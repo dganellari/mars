@@ -64,6 +64,13 @@ void write_image() {
     // Close writer
     main_image.close();
 }
-void write_mesh() {}
+void write_mesh() {
+    adios2::ADIOS adios(adios2::DebugON);
+    adios2::IO io_main = adios.DeclareIO("SimulationOutput");
+    MeshWriter writer(io_main);
+    writer.write(3);
+}
 
-int main(int argc, char *argv[]) { write_image(); }
+int main(int argc, char *argv[]) {  // write_image();
+    // write_mesh();
+}
