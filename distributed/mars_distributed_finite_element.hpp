@@ -143,6 +143,21 @@ namespace mars {
                 }
             }
 
+            template <Integer T = ElemType>
+            MARS_INLINE_FUNCTION std::enable_if_t<T == ElementType::Hex8, void> edge_iterate(const Integer sfc_index,
+                                                                                             Integer &index,
+                                                                                             const int edge) const {
+                const Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index);
+                const Octant start = dofHandler.get_mesh_manager().get_mesh()->get_octant_edge_start(oc, edge);
+                const Integer direction = oc.get_edge_direction(edge);
+
+                for (int j = 0; j < DofHandler::edge_dofs; j++) {
+                    Integer dof_sfc = DofHandler::template process_edge_node<ElemType>(
+                        mars::get_sfc_from_octant<ElemType>, start, direction, j);
+                    elem_dof_enum(sfc_index, index++) = sfc_to_local(dof_sfc);
+                }
+            }
+
             // counter clockwise enumeration of the element dofs.
             template <Integer ET = ElemType>
             MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Quad4, void> ordered_dof_enumeration(
@@ -162,7 +177,7 @@ namespace mars {
                 }
             }
 
-            /* Handling cases for DofLabel::lAll (classical dof handler)  or separated handler like: lCorner + lFace */
+            /* Handling cases for DofLabel::lAll (classical dof handler)  & separated handler like: lCorner + lFace */
             template <Integer ET = ElemType>
             MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Hex8, void> ordered_dof_enumeration(
                 const Integer i,
@@ -171,6 +186,20 @@ namespace mars {
                     corner_iterate(i, index);
                 }
                 if (DofHandler::dofLabel & DofLabel::lEdge) {
+                    edge_iterate(i, index, 0);
+                    edge_iterate(i, index, 5);
+                    edge_iterate(i, index, 1);
+                    edge_iterate(i, index, 4);
+
+                    edge_iterate(i, index, 8);
+                    edge_iterate(i, index, 9);
+                    edge_iterate(i, index, 11);
+                    edge_iterate(i, index, 10);
+
+                    edge_iterate(i, index, 2);
+                    edge_iterate(i, index, 7);
+                    edge_iterate(i, index, 3);
+                    edge_iterate(i, index, 6);
                 }
                 if (DofHandler::dofLabel & DofLabel::lVolume) {
                     volume_iterate(i, index);
