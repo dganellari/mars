@@ -7,7 +7,7 @@
 
 namespace mars {
 
-    template <class DofHandler>
+    template <class DofHandler, Integer Label = DofHandler::dofLabel>
     class FEDofMap {
     public:
         static constexpr Integer degree = DofHandler::Degree;
@@ -18,7 +18,10 @@ namespace mars {
         static constexpr Integer volume_nodes = DofHandler::volume_dofs;
         static constexpr Integer face_nodes = DofHandler::face_dofs;
         static constexpr Integer corner_nodes = DofHandler::corner_dofs;
-        static constexpr Integer elem_nodes = DofHandler::elem_dofs;
+        /* static constexpr Integer elem_nodes = DofHandler::elem_dofs; */
+
+        using NDofs = NumDofs<degree, Label, ElemType>;
+        static constexpr Integer elem_nodes = NDofs::elem_dofs();
         /* static constexpr Integer elem_nodes = (degree + 1) ^ Dim; Should be in general. */
 
         using DHandler = DofHandler;
@@ -163,16 +166,16 @@ namespace mars {
             MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Quad4, void> ordered_dof_enumeration(
                 const Integer i,
                 Integer &index) const {
-                if (DofHandler::dofLabel & DofLabel::lCorner) {
+                if (Label & DofLabel::lCorner) {
                     corner_iterate(i, index);
                 }
-                if (DofHandler::dofLabel & DofLabel::lFace) {
+                if (Label & DofLabel::lFace) {
                     face_iterate<0>(i, index, 0);
                     face_iterate<0>(i, index, 1);
                     face_iterate<1>(i, index, 0);
                     face_iterate<1>(i, index, 1);
                 }
-                if (DofHandler::dofLabel & DofLabel::lVolume) {
+                if (Label & DofLabel::lVolume) {
                     volume_iterate(i, index);
                 }
             }
@@ -182,10 +185,10 @@ namespace mars {
             MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Hex8, void> ordered_dof_enumeration(
                 const Integer i,
                 Integer &index) const {
-                if (DofHandler::dofLabel & DofLabel::lCorner) {
+                if (Label & DofLabel::lCorner) {
                     corner_iterate(i, index);
                 }
-                if (DofHandler::dofLabel & DofLabel::lEdge) {
+                if (Label & DofLabel::lEdge) {
                     edge_iterate(i, index, 0);
                     edge_iterate(i, index, 5);
                     edge_iterate(i, index, 1);
@@ -201,10 +204,10 @@ namespace mars {
                     edge_iterate(i, index, 3);
                     edge_iterate(i, index, 6);
                 }
-                if (DofHandler::dofLabel & DofLabel::lVolume) {
+                if (Label & DofLabel::lVolume) {
                     volume_iterate(i, index);
                 }
-                if (DofHandler::dofLabel & DofLabel::lFace) {
+                if (Label & DofLabel::lFace) {
                     face_iterate<2>(i, index, 1);  // z direction first for the counterclockwise
                     face_iterate<2>(i, index, 0);  // z direction first for the counterclockwise
                     face_iterate<0>(i, index, 1);  // x dir
@@ -350,9 +353,9 @@ namespace mars {
     }
 
  */
-    template <class DofHandler>
+    template <class DofHandler, Integer Label = DofHandler::dofLabel>
     auto build_fe_dof_map(const DofHandler &handler) {
-        FEDofMap<DofHandler> fe(handler);
+        FEDofMap<DofHandler, Label> fe(handler);
         fe.enumerate_local_dofs();
         return fe;
     }

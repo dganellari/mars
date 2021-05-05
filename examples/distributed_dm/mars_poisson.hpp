@@ -32,32 +32,16 @@ uk =[ u1, ... uL ], L = 4
 ---------------------
 //local to global
 u = P uk */
-
-#include "mars_context.hpp"
-#include "mars_globals.hpp"
-// #include <bits/c++config.h>
-#include <exception>
-#include <iostream>
-#include <tuple>
-#include <type_traits>
-#include <utility>
-
-#ifdef WITH_MPI
-
-#include "mars_mpi_guard.hpp"
-
+#include "mars.hpp"
 #ifdef WITH_KOKKOS
 #include <KokkosBlas1_sum.hpp>
 #include "mars_boundary_conditions.hpp"
-#include "mars_distributed_data_management.hpp"
-#include "mars_distributed_mesh_generation.hpp"
 #include "mars_dm_interpolate.hpp"
 #include "mars_laplace_ex.hpp"
 #include "mars_poisson_operator.hpp"
 #include "mars_precon_conjugate_grad.hpp"
 #include "mars_quad4.hpp"
 #endif  // WITH_KOKKOS
-#endif
 
 // #include "mars_pvtu_writer.hpp"  // VTK
 
@@ -157,8 +141,7 @@ namespace mars {
         DMesh mesh;
         generate_distributed_cube(context, mesh, xDim, yDim, zDim);
 
-        constexpr Integer Dim = DistributedQuad4Mesh::Dim;
-
+        /* constexpr Integer Dim = DMesh::Dim; */
         /* using Elem = typename DistributedQuad4Mesh::Elem; */
         /* constexpr Integer Type = Elem::ElemType; */
 
@@ -166,6 +149,7 @@ namespace mars {
         using DOFHandler = DofHandler<DMesh, Degree>;
         using DMQ = DM<DOFHandler, double, double, double>;
         using FE = FEDofMap<DOFHandler>;
+        /* using SPattern = SparsityPattern<double, default_lno_t, unsigned long, DOFHandler>; */
 
         // use as more readable tuple index to identify the data
         static constexpr int INPUT = 0;
@@ -174,6 +158,8 @@ namespace mars {
 
         DOFHandler dof_handler(&mesh, context);
         dof_handler.enumerate_dofs();
+
+        /* dof_handler.print_dofs(proc_num); */
 
         auto fe = build_fe_dof_map(dof_handler);
 

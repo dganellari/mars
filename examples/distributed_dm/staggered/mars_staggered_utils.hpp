@@ -39,7 +39,9 @@ namespace mars {
             // general width 1 stencil used as pressure stencil.
             using CStencil = Stencil<DofLabel::lCorner>;
 
-            using SPattern = SparsityPattern<double, default_lno_t, unsigned long, FVDH, VStencil, SStencil>;
+            /* using SPattern = SparsityPattern<double, default_lno_t, unsigned long, FVDH, VStencil, SStencil>; */
+
+            using SPattern = SparsityPattern<double, default_lno_t, unsigned long, FVDH>;
 
             template <Integer idx>
             using VDMDataType = typename VolumeDM::UserDataType<idx>;

@@ -27,11 +27,9 @@ namespace mars {
     // for default local/global ordinals, you can have for instantiation:
     // LO=default_lno_t
     // GO=default_size_type
-    template <typename V, typename LO, typename GO, typename SHandler, typename... ST>
+    template <typename V, typename LO, typename GO, typename SHandler>
     class SparsityPattern {
     public:
-        using stencil_tuple = std::tuple<ST...>;
-
         using Scalar = V;
         using Ordinal = LO;
         using Offset = GO;
@@ -204,8 +202,11 @@ namespace mars {
             SHandler dhandler;
         };
 
-        template <Integer... dataidx>
+
+        template <typename... ST>
         void build_pattern(ST... s) {
+            using stencil_tuple = std::tuple<ST...>;
+
             stencil_tuple stencils(std::make_tuple(s...));
 
             auto global_size = get_dof_handler().get_global_dof_size();
@@ -214,7 +215,7 @@ namespace mars {
             printf("Global Dof size: %li, Owned Dof Size: %li\n", global_size, owned_size);
 
             ViewVectorType<Integer> counter("counter", owned_size);
-            expand_tuple<CountUniqueDofs, stencil_tuple, dataidx...>(CountUniqueDofs(counter, get_dof_handler()),
+            expand_tuple<CountUniqueDofs, stencil_tuple>(CountUniqueDofs(counter, get_dof_handler()),
                                                                      stencils);
             crs_row row_ptr("counter_scan", owned_size + 1);
             incl_excl_scan(0, owned_size, counter, row_ptr);
@@ -226,7 +227,7 @@ namespace mars {
             crs_col col_idx("ColdIdx", h_ss());
             crs_value values("values", h_ss());
 
-            expand_tuple<InsertSortedDofs, stencil_tuple, dataidx...>(
+            expand_tuple<InsertSortedDofs, stencil_tuple>(
                 InsertSortedDofs(row_ptr, col_idx, get_dof_handler()), stencils);
 
             /* Alternatively: use the following kokkos segmented radix sort.
@@ -238,6 +239,11 @@ namespace mars {
             matrix = crs_matrix("crs_matrix", global_size, values, sparsity_pattern);
 
             printf("Build SparsityPattern ended!\n");
+        }
+
+        template <Integer... Label>
+        void build_pattern(FEDofMap<SHandler, Label>... fe) {
+            printf("Testing");
         }
 
         MARS_INLINE_FUNCTION
