@@ -61,34 +61,49 @@ std::string VTKSchema() {
 
     return vtkSchema;
 }
-
-MeshWriter::MeshWriter(adios2::IO io) {
+template <class Mesh>
+MeshWriter<Mesh>::MeshWriter() {
     adios2::ADIOS adios(adios2::DebugON);
     io = adios.DeclareIO("SimulationOutput");
 }
 
-void MeshWriter::open(const std::string& fname) {
+template <class Mesh>
+MeshWriter<Mesh>::MeshWriter(adios2::IO io) {
+    adios2::ADIOS adios(adios2::DebugON);
+    MeshWriter::io = adios.DeclareIO("SimulationOutput");
+}
+template <class Mesh>
+void MeshWriter<Mesh>::open(const std::string& fname) {
     engine = io.Open(fname, adios2::Mode::Write);
     engine.BeginStep();
 }
 
-void MeshWriter::write(int step) {
-    // std::cout << Dim;
-    // size_t nelements = 0;
-    // size_t element_nvertices = 0;
-    // auto elements = mesh.get_view_elements();
-    // std::cout << elements.extent(0);
-    // std::cout << elements.extent(1);
-    // nelements = mesh.n_elements();
-    // assert(nelements == elements.extent(0));
-    // element_nvertices = elements.extent(1);
-    // // int dim = Mesh::Dim;
-    // size_t n_nodes = mesh.n_nodes();
-    // auto points = mesh.get_view_points();
+template <class Mesh>
+void MeshWriter<Mesh>::generate_data_cube() {
+    mars::generate_cube(mesh, 3, 3, 3);
+    std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+    std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
+    auto elements = mesh.get_view_elements();
+}
+
+template <class Mesh>
+void MeshWriter<Mesh>::write(int step) {
+    size_t nelements = 0;
+    size_t element_nvertices = 0;
+    auto elements = mesh.get_view_elements();
+    std::cout << elements.extent(0);
+    std::cout << elements.extent(1);
+    nelements = mesh.n_elements();
+    assert(nelements == elements.extent(0));
+    element_nvertices = elements.extent(1);
+    // int dim = Mesh::Dim;
+    size_t n_nodes = mesh.n_nodes();
+    auto points = mesh.get_view_points();
 
     // io.DefineVariable<uint64_t>("connectivity", {}, {}, {nelements, element_nvertices + 1});
 }
-void MeshWriter::close() {
+template <class Mesh>
+void MeshWriter<Mesh>::close() {
     // Need to write the ouput in vtk schema:
     // MFEM does like this:
     // SafeDefineAttribute<std::string>(io, "vtk.xml", VTKSchema() );

@@ -28,15 +28,16 @@
 #include "mars_utils.hpp"
 #include "mars_vtk_writer.hpp"
 
+template <class Mesh>
 class MeshWriter {
 public:
     static const int Dim;
     static const int ManifoldDim;
 
-    mars::Mesh<3, 3> mesh;
-
+    MeshWriter();
     MeshWriter(adios2::IO io);
     std::string VTKSchema();
+    void generate_data_cube();
     void open(const std::string& fname);
     void write(int step);
     void close();
@@ -44,5 +45,8 @@ public:
 protected:
     adios2::IO io;
     adios2::Engine engine;
+
+private:
+    Mesh& mesh;
 };
 #endif

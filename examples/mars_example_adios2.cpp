@@ -67,10 +67,13 @@ void write_image() {
 void write_mesh() {
     adios2::ADIOS adios(adios2::DebugON);
     adios2::IO io_main = adios.DeclareIO("SimulationOutput");
-    MeshWriter writer(io_main);
-    writer.write(3);
+    mars::Mesh<3, 3> mesh;
+    mars::ParallelQuad4Mesh parMesh;
+    // MeshWriter<mars::Mesh<3, 3>> writer;
+    // writer.write(3);
+    // writer.generate_data_cube();
 }
 
 int main(int argc, char *argv[]) {  // write_image();
-    // write_mesh();
+    write_mesh();
 }
