@@ -241,9 +241,41 @@ namespace mars {
             printf("Build SparsityPattern ended!\n");
         }
 
-        template <Integer... Label>
-        void build_pattern(FEDofMap<SHandler, Label>... fe) {
+
+        //Finite Element Sparsity pattern creation
+
+        /* template <Integer... Label>
+        void build_pattern(FEDofMap<SHandler, Label>... fe) { */
+
+        template <Integer Label>
+        void build_pattern(FEDofMap<SHandler, Label> fe) {
             printf("Testing");
+            /* using fe_tuple = std::tuple<ST...>; */
+            /* fe_tuple fes(std::make_tuple(fe...)); */
+
+            auto node_to_element = fe.build_node_element_dof_map();
+            auto handler = fe.get_dof_handler();
+
+            auto owned_size = handler.get_owned_dof_size();
+            Kokkos::parallel_for(
+                "print_node_elem", owned_size, MARS_LAMBDA(const Integer i) {
+                    auto owned_dof = handler.get_owned_dof(i);
+                    auto gid = handler.local_to_global(owned_dof);
+                    for (int j = 0; j < 4; j++) {
+                        auto elem_index = node_to_element(i, j);
+                        if (elem_index != -1) {
+                            auto elem_sfc = handler.get_mesh_manager().get_mesh()->get_sfc_elem(elem_index);
+                            auto o = handler.get_mesh_manager().get_mesh()->octant_from_sfc(elem_sfc);
+                            printf("Node: %li -  %li, SFC index: %li, octant: [%li, %li, %li]\n",
+                                   owned_dof,
+                                   gid,
+                                   elem_index,
+                                   o.x,
+                                   o.y,
+                                   o.z);
+                        }
+                    }
+                });
         }
 
         MARS_INLINE_FUNCTION

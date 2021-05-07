@@ -1461,6 +1461,11 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
+        Integer local_to_owned_index(const Integer local) const {
+            return local_to_owned_dof(local);
+        }
+
+        MARS_INLINE_FUNCTION
         Dof sfc_to_global_dof(const Integer sfc) const {
             Dof dof;
             if (locally_owned_dof(sfc)) {
