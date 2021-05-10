@@ -262,6 +262,9 @@ namespace mars {
         void set_chunk_size(Integer size) { chunk_size_ = size; }
 
         MARS_INLINE_FUNCTION
+        Integer get_ghost_size() const { return get_view_ghost().extent(0); }
+
+        MARS_INLINE_FUNCTION
         Integer get_chunk_size() const { return chunk_size_; }
 
         MARS_INLINE_FUNCTION
@@ -1193,11 +1196,17 @@ namespace mars {
         Integer get_ghost_sfc(const Integer index) const { return ghost_(index); }
 
         MARS_INLINE_FUNCTION
+        Octant get_ghost_octant(const Integer index) const {
+            const Integer sfc_code = ghost_(index);
+            return get_octant_from_sfc<Elem::ElemType>(sfc_code);
+        }
+
+        MARS_INLINE_FUNCTION
         Integer get_sfc(const Integer sfc_index) const { return local_sfc_(sfc_index); }
 
         MARS_INLINE_FUNCTION
         Octant get_octant(const Integer sfc_index) const {
-            Integer sfc_code = local_sfc_(sfc_index);
+            const Integer sfc_code = local_sfc_(sfc_index);
             return get_octant_from_sfc<Elem::ElemType>(sfc_code);
         }
 
@@ -1280,6 +1289,28 @@ namespace mars {
 
     MARS_INLINE_FUNCTION
     const ViewVectorType<Integer>::HostMirror &get_view_scan_send_mirror() const { return scan_send_mirror; }
+
+
+    MARS_INLINE_FUNCTION
+    bool is_owned_index(const Integer sfc_index) const {
+        auto sfc = get_sfc(sfc_index);
+        auto stl = get_view_sfc_to_local();
+        if ((sfc + 1) >= stl.extent(0)) return false;
+        /* use the sfc to local which is the scan of the predicate.
+         * To get the predicate value the difference with the successive index is needed. */
+        const Integer pred_value = stl(sfc + 1) - stl(sfc);
+        return (pred_value > 0);
+    }
+
+    MARS_INLINE_FUNCTION
+    bool is_owned(const Integer sfc) const {
+        auto stl = get_view_sfc_to_local();
+        if ((sfc + 1) >= stl.extent(0)) return false;
+        /* use the sfc to local which is the scan of the predicate.
+         * To get the predicate value the difference with the successive index is needed. */
+        const Integer pred_value = stl(sfc + 1) - stl(sfc);
+        return (pred_value > 0);
+    }
 
 private:
     // This block represents the SFC data and the data structures needed to manage it in a distributed manner.

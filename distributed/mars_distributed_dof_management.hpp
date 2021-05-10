@@ -959,6 +959,20 @@ namespace mars {
             }
         } */
 
+        template <bool G>
+        static MARS_INLINE_FUNCTION typename std::enable_if<G == true, Octant>::type get_octant_ghost_or_local(
+            const Mesh *mesh,
+            const Integer index) {
+            return mesh->get_ghost_octant(index);
+        }
+
+        template <bool G>
+        static MARS_INLINE_FUNCTION typename std::enable_if<G == false, Octant>::type get_octant_ghost_or_local(
+            const Mesh *mesh,
+            const Integer index) {
+            return mesh->get_octant(index);
+        }
+
         static MARS_INLINE_FUNCTION Integer get_ghost_sfc(const Mesh *mesh, const Integer index) {
             return mesh->get_ghost_sfc(index);
         }

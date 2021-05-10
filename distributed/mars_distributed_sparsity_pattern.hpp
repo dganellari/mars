@@ -249,7 +249,6 @@ namespace mars {
 
         template <Integer Label>
         void build_pattern(FEDofMap<SHandler, Label> fe) {
-            printf("Testing");
             /* using fe_tuple = std::tuple<ST...>; */
             /* fe_tuple fes(std::make_tuple(fe...)); */
 
@@ -263,8 +262,9 @@ namespace mars {
                     auto gid = handler.local_to_global(owned_dof);
                     for (int j = 0; j < 4; j++) {
                         auto elem_index = node_to_element(i, j);
-                        if (elem_index != -1) {
-                            auto elem_sfc = handler.get_mesh_manager().get_mesh()->get_sfc_elem(elem_index);
+
+                        if (fe.is_valid(elem_index)) {
+                            auto elem_sfc = fe.get_elem_sfc(elem_index);
                             auto o = handler.get_mesh_manager().get_mesh()->octant_from_sfc(elem_sfc);
                             printf("Node: %li -  %li, SFC index: %li, octant: [%li, %li, %li]\n",
                                    owned_dof,

@@ -413,6 +413,20 @@ namespace mars {
         /* *******dof handler related functionalities for completing the handler.******* */
         /* chose this way to hide the full interface of the general handler. Inheritance is the other way*/
 
+        template <bool G>
+        static MARS_INLINE_FUNCTION typename std::enable_if<G == true, Octant>::type get_octant_ghost_or_local(
+            const Mesh *mesh,
+            const Integer index) {
+            return mesh->get_ghost_octant(index);
+        }
+
+        template <bool G>
+        static MARS_INLINE_FUNCTION typename std::enable_if<G == false, Octant>::type get_octant_ghost_or_local(
+            const Mesh *mesh,
+            const Integer index) {
+            return mesh->get_octant(index);
+        }
+
         MARS_INLINE_FUNCTION Integer get_sfc_from_octant(const Octant &o) const {
             return get_dof_handler().get_sfc_from_octant(o);
         }
