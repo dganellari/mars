@@ -34,19 +34,16 @@ public:
     static const int Dim;
     static const int ManifoldDim;
 
-    MeshWriter();
-    MeshWriter(adios2::IO io);
+    MeshWriter(Mesh& mesh, adios2::IO io);
     std::string VTKSchema();
     void generate_data_cube();
     void open(const std::string& fname);
     void write(int step);
     void close();
 
-protected:
-    adios2::IO io;
-    adios2::Engine engine;
-
 private:
-    Mesh& mesh;
+    Mesh& mesh_;
+    adios2::IO io_;
+    adios2::Engine engine_;
 };
 #endif

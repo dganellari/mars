@@ -1,11 +1,12 @@
 #include "mars_image_data_writer.hpp"
+#include <cmath>
 #include <iostream>
 #include "adios2.h"
 #include "mars_base.hpp"
 #include "mars_globals.hpp"
 #include "mars_image_data_writer_settings.hpp"
 
-double simple_func(const double &x, const double &y, const double &z) { return x * x + y * y + z * z; }
+double simple_func(const double &x, const double &y, const double &z) { return std::sqrt(x * x + y * y + z * z); }
 
 // Example data vector creation.
 void ImageWriter::new_data(const unsigned long &Nx, const unsigned long &Ny, const unsigned long &Nz) {

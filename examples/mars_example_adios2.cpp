@@ -48,6 +48,7 @@
 /*
  * Write a structured image.
  */
+
 void write_image() {
     Settings settings("solutionImage.bp");
     adios2::ADIOS adios(adios2::DebugON);
@@ -56,7 +57,7 @@ void write_image() {
     ImageWriter main_image(settings, io_main);
 
     // Create example data vector
-    main_image.new_data(300, 400, 1);
+    main_image.new_data(30, 40, 2);
     // Open the writer, (which now is in write mode), with the settings found.
     main_image.open(settings.output);
     // Write with the following steps
@@ -64,16 +65,22 @@ void write_image() {
     // Close writer
     main_image.close();
 }
+
 void write_mesh() {
     adios2::ADIOS adios(adios2::DebugON);
     adios2::IO io_main = adios.DeclareIO("SimulationOutput");
-    mars::Mesh<3, 3> mesh;
     mars::ParallelQuad4Mesh parMesh;
-    // MeshWriter<mars::Mesh<3, 3>> writer;
-    // writer.write(3);
+
+    MeshWriter<mars::ParallelQuad4Mesh> writer(parMesh, io_main);
+    // writer.open("example.bp");
     // writer.generate_data_cube();
+    // writer.write(3);
+    // writer.close();
 }
 
-int main(int argc, char *argv[]) {  // write_image();
+int main(int argc, char *argv[]) {
+// write_image();
+#ifdef WITH_KOKKOS
     write_mesh();
+#endif
 }
