@@ -247,18 +247,66 @@ namespace mars {
         /* template <Integer... Label>
         void build_pattern(FEDofMap<SHandler, Label>... fe) { */
 
+        MARS_INLINE_FUNCTION
+        Integer label_based_node_count(const Integer label) {
+            switch (label) {
+                case DofLabel::lVolume: {
+                    return 9;
+                }
+                case DofLabel::lCorner: {
+                    return 25;
+                }
+                case DofLabel::lFace: {
+                    return 15;
+                }
+                case DofLabel::lEdge: {
+                    return 9;
+                }
+                default: {
+                    printf("Invalid Label!\n");
+                    return 0;
+                }
+            }
+        }
+
+        MARS_INLINE_FUNCTION
+        void insert_sorted_fe(const ViewMatrixType<Integer> &col,
+                              const Integer row,
+                              const Integer value,
+                              Integer &count) const {
+            Integer i = 0;
+            while (value > col(row, i) && i < count) {
+                i++;
+            }
+
+            for (int j = count; j > i; --j) {
+                col(row, j) = col(row, j - 1);
+            }
+            col(row, i) = value;
+            ++count;
+        }
+
+        MARS_INLINE_FUNCTION
+        bool is_unique(const ViewMatrixType<Integer> &col,
+                       const Integer row,
+                       const Integer value,
+                       const Integer count) const {
+            auto index = binary_search(&col(row, 0), 0, count, value);
+            return (index == INVALID_INDEX);
+        }
+
         template <Integer Label>
-        void build_pattern(FEDofMap<SHandler, Label> fe) {
-            /* using fe_tuple = std::tuple<ST...>; */
-            /* fe_tuple fes(std::make_tuple(fe...)); */
+        auto generate_fe_node_to_node_matrix(FEDofMap<SHandler, Label> fe, const crs_row &row_ptr) {
+            auto handler = get_dof_handler();
+            auto owned_size = handler.get_owned_dof_size();
+            auto node_max_size = label_based_node_count(DofLabel::lCorner);
 
             auto node_to_element = fe.build_node_element_dof_map();
-            auto handler = fe.get_dof_handler();
 
-            auto owned_size = handler.get_owned_dof_size();
             Kokkos::parallel_for(
                 "print_node_elem", owned_size, MARS_LAMBDA(const Integer i) {
                     auto owned_dof = handler.get_owned_dof(i);
+                    auto label = handler.get_label(owned_dof);
                     auto gid = handler.local_to_global(owned_dof);
                     for (int j = 0; j < 4; j++) {
                         auto elem_index = node_to_element(i, j);
@@ -266,16 +314,82 @@ namespace mars {
                         if (fe.is_valid(elem_index)) {
                             auto elem_sfc = fe.get_elem_sfc(elem_index);
                             auto o = handler.get_mesh_manager().get_mesh()->octant_from_sfc(elem_sfc);
-                            printf("Node: %li -  %li, SFC index: %li, octant: [%li, %li, %li]\n",
+                            printf("Node: %li -  %li, Label: %li, octant: [%li, %li, %li]\n",
                                    owned_dof,
                                    gid,
-                                   elem_index,
+                                   label,
                                    o.x,
                                    o.y,
                                    o.z);
                         }
                     }
                 });
+
+            ViewVectorType<Integer> counter("count_node_view", owned_size);
+
+            ViewMatrixType<Integer> ntn("count_node_view", owned_size, node_max_size);
+            Kokkos::parallel_for(
+                "Count_nodes", owned_size, MARS_LAMBDA(const Integer i) {
+                    for (int j = 0; j < node_max_size; j++) {
+                        ntn(i, j) = INVALID_INDEX;
+                    }
+                });
+
+            Kokkos::parallel_for(
+                "Count_nodes", owned_size, MARS_LAMBDA(const Integer i) {
+                    auto owned_dof = handler.get_owned_dof(i);
+                    auto label = handler.get_label(owned_dof);
+
+                    Integer count = 0;
+                    for (int j = 0; j < 4; j++) {
+                        auto elem_index = node_to_element(i, j);
+
+                        if (fe.is_valid(elem_index)) {
+                            for (int k = 0; k < fe.get_fe_size(); k++) {
+                                auto local_dof = fe.get_elem_local_dof(elem_index, k);
+                                const Integer global = handler.local_to_global(local_dof);
+                                if (is_unique(ntn, i, global, count - 1)) {
+                                    insert_sorted_fe(ntn, i, global, count);
+                                }
+                            }
+                        }
+                    }
+
+                    counter(i) = count;
+                });
+
+            incl_excl_scan(0, owned_size, counter, row_ptr);
+
+            return ntn;
+        }
+
+        template <Integer Label>
+        void build_pattern(FEDofMap<SHandler, Label> fe) {
+            /* using fe_tuple = std::tuple<ST...>; */
+            /* fe_tuple fes(std::make_tuple(fe...)); */
+
+            auto handler = get_dof_handler();
+
+            auto owned_size = handler.get_owned_dof_size();
+
+            crs_row row_ptr("counter_scan", owned_size + 1);
+            /* auto row_ptr = generate_fe_row_ptr(); */
+            auto node_to_node = generate_fe_node_to_node_matrix(fe, row_ptr);
+
+            auto node_max_size = label_based_node_count(DofLabel::lCorner);
+            ViewMatrixType<Integer> ntn("count_node_view", owned_size, node_max_size);
+            Kokkos::parallel_for(
+                "Count_nodes", owned_size, MARS_LAMBDA(const Integer i) {
+                    auto owned_dof = handler.get_owned_dof(i);
+                    auto gid = handler.local_to_global(owned_dof);
+                    printf("Node: %li  scan: %li : - ", gid, row_ptr(i));
+                    for (int j = 0; j < node_max_size; j++) {
+                        printf("%li, ", node_to_node(i, j));
+                    }
+
+                    printf("\n");
+                });
+
         }
 
         MARS_INLINE_FUNCTION
@@ -298,7 +412,7 @@ namespace mars {
             const Integer row_idx = sparsity_pattern.row_map(row);
             const Integer next_row_idx = sparsity_pattern.row_map(row + 1);
 
-            const Integer i = binary_search(sparsity_pattern.entries, row_idx, next_row_idx, col);
+            const Integer i = binary_search(sparsity_pattern.entries.data(), row_idx, next_row_idx, col);
             return i;
         }
 
