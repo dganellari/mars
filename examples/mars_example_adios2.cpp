@@ -72,15 +72,17 @@ void write_mesh() {
     mars::ParallelQuad4Mesh parMesh;
 
     MeshWriter<mars::ParallelQuad4Mesh> writer(parMesh, io_main);
-    // writer.open("example.bp");
-    // writer.generate_data_cube();
+    writer.open("example.bp");
+    writer.generate_data_cube();
     // writer.write(3);
-    // writer.close();
+    writer.close();
 }
 
 int main(int argc, char *argv[]) {
 // write_image();
 #ifdef WITH_KOKKOS
+    Kokkos::initialize();
     write_mesh();
+    Kokkos::finalize();
 #endif
 }

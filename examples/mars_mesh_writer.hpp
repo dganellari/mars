@@ -34,9 +34,12 @@ public:
     static const int Dim;
     static const int ManifoldDim;
 
+    using VectorReal = mars::ViewVectorType<mars::Real>;
+
     MeshWriter(Mesh& mesh, adios2::IO io);
     std::string VTKSchema();
     void generate_data_cube();
+    void interpolate(VectorReal& x);
     void open(const std::string& fname);
     void write(int step);
     void close();
