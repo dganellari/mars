@@ -222,7 +222,7 @@ namespace mars {
         fv_dof_handler.boundary_dof_iterate(
             MARS_LAMBDA(const Integer local_dof) { sp.set_value(local_dof, local_dof, 1); });
 
-        /* print_sparsity_pattern(sp); */
+        /* sp.print_sparsity_pattern(); */
         /* sp.write("Spattern"); */
 
         CornerDM cdm(dof_handler);

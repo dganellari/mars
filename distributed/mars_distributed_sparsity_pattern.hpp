@@ -168,7 +168,6 @@ namespace mars {
                 insert<S>(stencil); */
             }
 
-
             /* TODO:specialize for stokes because normally the boundary would be excluded. */
             template <typename S>
             MARS_INLINE_FUNCTION void insert(S st) const {
@@ -202,7 +201,6 @@ namespace mars {
             SHandler dhandler;
         };
 
-
         template <typename... ST>
         void build_pattern(ST... s) {
             using stencil_tuple = std::tuple<ST...>;
@@ -215,8 +213,7 @@ namespace mars {
             printf("Global Dof size: %li, Owned Dof Size: %li\n", global_size, owned_size);
 
             ViewVectorType<Integer> counter("counter", owned_size);
-            expand_tuple<CountUniqueDofs, stencil_tuple>(CountUniqueDofs(counter, get_dof_handler()),
-                                                                     stencils);
+            expand_tuple<CountUniqueDofs, stencil_tuple>(CountUniqueDofs(counter, get_dof_handler()), stencils);
             crs_row row_ptr("counter_scan", owned_size + 1);
             incl_excl_scan(0, owned_size, counter, row_ptr);
 
@@ -227,8 +224,8 @@ namespace mars {
             crs_col col_idx("ColdIdx", h_ss());
             crs_value values("values", h_ss());
 
-            expand_tuple<InsertSortedDofs, stencil_tuple>(
-                InsertSortedDofs(row_ptr, col_idx, get_dof_handler()), stencils);
+            expand_tuple<InsertSortedDofs, stencil_tuple>(InsertSortedDofs(row_ptr, col_idx, get_dof_handler()),
+                                                          stencils);
 
             /* Alternatively: use the following kokkos segmented radix sort.
             For that switching to the sort function instead of insert_sorted in the InsertSortedDofs struct is needed.
@@ -241,8 +238,7 @@ namespace mars {
             printf("Build SparsityPattern ended!\n");
         }
 
-
-        //Finite Element Sparsity pattern creation
+        // Finite Element Sparsity pattern creation
 
         /* template <Integer... Label>
         void build_pattern(FEDofMap<SHandler, Label>... fe) { */
@@ -296,7 +292,7 @@ namespace mars {
         }
 
         template <Integer Label>
-        auto generate_fe_node_to_node_matrix(FEDofMap<SHandler, Label> fe, const crs_row &row_ptr) {
+        ViewMatrixType<Integer> generate_fe_node_to_node_matrix(FEDofMap<SHandler, Label> fe, const crs_row &row_ptr) {
             auto handler = get_dof_handler();
             auto owned_size = handler.get_owned_dof_size();
             auto node_max_size = label_based_node_count(DofLabel::lCorner);
@@ -363,6 +359,22 @@ namespace mars {
             return ntn;
         }
 
+        /* Possible optmization by putting ntn to the shared memory.
+        Another way is to parallelize through col indices instead of owned dof indices,
+        to end up with coalesced writes instead of the current coalesced reads. */
+        template <typename N>
+        void generate_col_idx_from_node_to_node(crs_col col, const crs_row row, const N ntn) {
+            auto owned_size = get_dof_handler().get_owned_dof_size();
+            Kokkos::parallel_for(
+                "generate columsn from node to node connectivity", owned_size, MARS_LAMBDA(const Integer i) {
+                    auto count = row(i + 1) - row(i);
+                    auto index = row(i);
+                    for (int j = 0; j < count; ++j) {
+                        col(index + j) = ntn(i, j);
+                    }
+                });
+        }
+
         template <Integer Label>
         void build_pattern(FEDofMap<SHandler, Label> fe) {
             /* using fe_tuple = std::tuple<ST...>; */
@@ -370,7 +382,10 @@ namespace mars {
 
             auto handler = get_dof_handler();
 
+            auto global_size = get_dof_handler().get_global_dof_size();
             auto owned_size = handler.get_owned_dof_size();
+
+            printf("Global Dof size: %li, Owned Dof Size: %li\n", global_size, owned_size);
 
             crs_row row_ptr("counter_scan", owned_size + 1);
             /* auto row_ptr = generate_fe_row_ptr(); */
@@ -390,6 +405,21 @@ namespace mars {
                     printf("\n");
                 });
 
+            auto ss = subview(row_ptr, owned_size);
+            auto h_ss = create_mirror_view(ss);
+            deep_copy(h_ss, ss);
+
+            crs_col col_idx("ColdIdx", h_ss());
+            crs_value values("values", h_ss());
+
+            generate_col_idx_from_node_to_node(col_idx, row_ptr, node_to_node);
+
+            sparsity_pattern = crs_graph(col_idx, row_ptr);
+            matrix = crs_matrix("crs_matrix", global_size, values, sparsity_pattern);
+
+            print_sparsity_pattern();
+
+            printf("Build FE SparsityPattern ended!\n");
         }
 
         MARS_INLINE_FUNCTION
@@ -410,7 +440,7 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const Integer get_col_index_from_global(const Integer row, const Integer col) const {
             const Integer row_idx = sparsity_pattern.row_map(row);
-            const Integer next_row_idx = sparsity_pattern.row_map(row + 1);
+            const Integer next_row_idx = sparsity_pattern.row_map(row + 1) - 1;
 
             const Integer i = binary_search(sparsity_pattern.entries.data(), row_idx, next_row_idx, col);
             return i;
@@ -463,8 +493,38 @@ namespace mars {
         MARS_INLINE_FUNCTION
         crs_matrix get_matrix() const { return matrix; }
 
-
         /* ***************** print ******************************************** */
+
+        void print_sparsity_pattern() {
+            const Integer size = get_num_rows();
+            Kokkos::parallel_for(
+                "for", size, MARS_LAMBDA(const int row) {
+                    const Integer start = get_row_map(row);
+                    const Integer end = get_row_map(row + 1);
+
+                    // print only if end - start > 0. Otherwise segfaults.
+                    // The row index is not a global index of the current process!
+                    for (int i = start; i < end; ++i) {
+                        auto value = get_value(i);
+                        auto col = get_col(i);
+                        // do something. In this case we are printing.
+
+                        const Integer local_dof = get_dof_handler().get_owned_dof(row);
+                        const Integer global_row = get_dof_handler().local_to_global(local_dof);
+
+                        /* const Integer local_col = get_dof_handler().global_to_local(col); */
+                        /* const Integer global_col = get_dof_handler().local_to_global(local_col); */
+
+                        /* printf("row_dof: %li - %li, col_dof: %li - %li, value: %lf\n", */
+                        printf("row_dof: %li - %li, col_dof: %li, value: %lf\n",
+                               row,
+                               global_row,
+                               col,
+                               /* global_col, */
+                               value);
+                    }
+                });
+        }
 
         bool write(const std::string &file_path) {
             auto proc = mars::rank(get_dof_handler().get_context());

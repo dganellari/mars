@@ -41,10 +41,10 @@ namespace mars {
 
             /* using SPattern = SparsityPattern<double, default_lno_t, unsigned long, FVDH, VStencil, SStencil>; */
 
-            using SPattern = SparsityPattern<double, default_lno_t, unsigned long, FVDH>;
+            using SPattern = SparsityPattern<double, Integer, unsigned long, FVDH>;
 
             template <Integer idx>
-            using VDMDataType = typename VolumeDM::UserDataType<idx>;
+            using VDMDataType = typename VolumeDM::template UserDataType<idx>;
         };
 
         // use as more readable tuple index to identify the data
@@ -113,37 +113,6 @@ namespace mars {
                            local_dof,
                            d.get_gid(),
                            d.get_proc());
-                });
-        }
-
-        template <typename S>
-        void print_sparsity_pattern(S &sp) {
-            const Integer size = sp.get_num_rows();
-            Kokkos::parallel_for(
-                "for", size, MARS_LAMBDA(const int row) {
-                    const Integer start = sp.get_row_map(row);
-                    const Integer end = sp.get_row_map(row + 1);
-
-                    // print only if end - start > 0. Otherwise segfaults.
-                    // The row index is not a global index of the current process!
-                    for (int i = start; i < end; ++i) {
-                        auto value = sp.get_value(i);
-                        auto col = sp.get_col(i);
-                        // do something. In this case we are printing.
-
-                        const Integer local_dof = sp.get_dof_handler().get_owned_dof(row);
-                        const Integer global_row = sp.get_dof_handler().get_dof_handler().local_to_global(local_dof);
-
-                        const Integer local_col = sp.get_dof_handler().global_to_local(col);
-                        const Integer global_col = sp.get_dof_handler().get_dof_handler().local_to_global(local_col);
-
-                        printf("row_dof: %li - %li, col_dof: %li - %li, value: %lf\n",
-                               row,
-                               global_row,
-                               col,
-                               global_col,
-                               value);
-                    }
                 });
         }
 

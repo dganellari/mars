@@ -334,7 +334,7 @@ namespace mars {
             }
         };
 
-        auto build_node_element_dof_map() {
+        ViewMatrixType<Integer> build_node_element_dof_map() {
             auto handler = get_dof_handler();
 
             const Integer size = handler.get_mesh_manager().get_host_mesh()->get_chunk_size();

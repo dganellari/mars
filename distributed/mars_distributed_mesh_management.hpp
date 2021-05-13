@@ -74,7 +74,7 @@ namespace mars {
                             /* const int start_index = 0;
                 const int last_index = ghost_layer.extent(0) -1; */
 
-                            index = binary_search(ghost_layer, start_index, last_index, enc_oc);
+                            index = binary_search(ghost_layer.data(), start_index, last_index, enc_oc);
                             assert(index >= 0);
                         } else {
                             // using the sfc (global) to local mapping of the mesh.

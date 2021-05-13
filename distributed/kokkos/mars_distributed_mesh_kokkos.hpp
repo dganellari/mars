@@ -1180,7 +1180,7 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         Integer get_sfc_index(const Integer enc_oc) {
-            return binary_search(get_view_sfc(), 0, get_chunk_size(), enc_oc);
+            return binary_search(get_view_sfc().data(), 0, get_chunk_size() - 1, enc_oc);
         }
 
         MARS_INLINE_FUNCTION

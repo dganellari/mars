@@ -300,12 +300,12 @@ namespace mars {
     }
 
     // standard binary search
-    template <typename V, typename T>
-    MARS_INLINE_FUNCTION Integer binary_search(const V view, Integer f, Integer l, const T enc_oc) {
+    template <typename T>
+    MARS_INLINE_FUNCTION Integer binary_search(const T *view, Integer f, Integer l, const T enc_oc) {
         while (f <= l) {
             Integer guess = (l + f) / 2;
 
-            T current = view(guess);
+            T current = *(view + guess);
 
             if (enc_oc == current) {
                 return guess;
