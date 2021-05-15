@@ -342,10 +342,10 @@ namespace mars {
 
             auto owned_size = handler.get_owned_dof_size();
 
-            ViewMatrixType<Integer> dof_enum("build_node_element_dof_map", owned_size, 4);
+            ViewMatrixType<Integer> dof_enum("build_node_element_dof_map", owned_size, ElemType);
             Kokkos::parallel_for(
                 "init", owned_size, MARS_LAMBDA(const Integer i) {
-                    for (int j = 0; j < 4; j++) {
+                    for (int j = 0; j < ElemType; j++) {
                         dof_enum(i, j) = -1;
                     }
                 });
