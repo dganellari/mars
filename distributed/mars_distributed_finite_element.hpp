@@ -36,7 +36,7 @@ namespace mars {
         MARS_INLINE_FUNCTION
         FEDofMap(DofHandler handler) : dof_handler(handler) {}
 
-        template <typename F, bool G>
+        template <typename F, bool G, Integer L = Label>
         struct EnumLocalDofs {
             MARS_INLINE_FUNCTION void enumerate_volume(const Octant &o, const Integer sfc_index, Integer &index) const {
                 Integer sfc = get_sfc_from_octant<ElemType>(o);
@@ -196,16 +196,16 @@ namespace mars {
             MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Quad4, void> ordered_dof_enumeration(
                 const Integer i,
                 Integer &index) const {
-                if (Label & DofLabel::lCorner) {
+                if (L & DofLabel::lCorner) {
                     corner_iterate(i, index);
                 }
-                if (Label & DofLabel::lFace) {
+                if (L & DofLabel::lFace) {
                     face_iterate<0>(i, index, 0);
                     face_iterate<0>(i, index, 1);
                     face_iterate<1>(i, index, 0);
                     face_iterate<1>(i, index, 1);
                 }
-                if (Label & DofLabel::lVolume) {
+                if (L & DofLabel::lVolume) {
                     volume_iterate(i, index);
                 }
             }
@@ -215,10 +215,10 @@ namespace mars {
             MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Hex8, void> ordered_dof_enumeration(
                 const Integer i,
                 Integer &index) const {
-                if (Label & DofLabel::lCorner) {
+                if (L & DofLabel::lCorner) {
                     corner_iterate(i, index);
                 }
-                if (Label & DofLabel::lEdge) {
+                if (L & DofLabel::lEdge) {
                     edge_iterate(i, index, 0);
                     edge_iterate(i, index, 5);
                     edge_iterate(i, index, 1);
@@ -234,10 +234,10 @@ namespace mars {
                     edge_iterate(i, index, 3);
                     edge_iterate(i, index, 6);
                 }
-                if (Label & DofLabel::lVolume) {
+                if (L & DofLabel::lVolume) {
                     volume_iterate(i, index);
                 }
-                if (Label & DofLabel::lFace) {
+                if (L & DofLabel::lFace) {
                     face_iterate<2>(i, index, 1);  // z direction first for the counterclockwise
                     face_iterate<2>(i, index, 0);  // z direction first for the counterclockwise
                     face_iterate<0>(i, index, 1);  // x dir
@@ -318,29 +318,67 @@ namespace mars {
             DofHandler handler;
             ViewMatrixType<Integer> dof_enum;
             ViewVectorType<Integer> owned_index;
+            ViewVectorType<Integer> owned_map;
             Integer size;
 
             MARS_INLINE_FUNCTION
-            NodeElementDofMap(DofHandler h, ViewMatrixType<Integer> ede, ViewVectorType<Integer> o, Integer s)
-                : handler(h), dof_enum(ede), owned_index(o), size(s) {}
+            NodeElementDofMap(DofHandler h,
+                              ViewMatrixType<Integer> ede,
+                              ViewVectorType<Integer> o,
+                              ViewVectorType<Integer> om,
+                              Integer s)
+                : handler(h), dof_enum(ede), owned_index(o), owned_map(om), size(s) {}
 
             MARS_INLINE_FUNCTION void operator()(const Integer sfc_index, Integer &index, const Integer localid) const {
-                auto id = handler.local_to_owned_index(localid);
+                auto lid = handler.local_to_owned_index(localid);
 
-                if (id > INVALID_INDEX) {
-                    auto aindex = Kokkos::atomic_fetch_add(&owned_index(id), 1);
+                if (lid > INVALID_INDEX) {
+                    auto id = owned_map(lid);
+                    auto aindex = Kokkos::atomic_fetch_add(&owned_index(lid), 1);
                     dof_enum(id, aindex) = sfc_index + size;
                 }
             }
         };
 
+
+        // Unique number of dofs on theelements that share a volume, corner, face or edge.
+        MARS_INLINE_FUNCTION
+        template <Integer label>
+        constexpr Integer label_based_element_count() {
+            constexpr Integer base = 2 * (SHandler::Degree + 1) - 1;
+            constexpr Integer height = power((SHandler::Degree + 1), SHandler::ManifoldDim - 1);
+            switch (label) {
+                case DofLabel::lVolume: {
+                    return SHandler::elem_dofs;
+                }
+                case DofLabel::lCorner: {
+                    return power(base, SHandler::ManifoldDim);
+                }
+                case DofLabel::lFace: {
+                    return base * height;
+                }
+                case DofLabel::lEdge: {
+                    // height * length * width/2
+                    return base * base * height;
+                }
+                default: {
+                    printf("Invalid Label!\n");
+                    return 0;
+                }
+            }
+        }
+        template <Integer L = Label>
         ViewMatrixType<Integer> build_node_element_dof_map() {
             auto handler = get_dof_handler();
 
             const Integer size = handler.get_mesh_manager().get_host_mesh()->get_chunk_size();
             const Integer ghost_size = handler.get_mesh_manager().get_host_mesh()->get_ghost_size();
 
-            auto owned_size = handler.get_owned_dof_size();
+            ViewVectorType<Integer> locally_owned_dofs;
+            auto owned_dof_map = compact_owned_dofs<Label>(get_dof_handler(), locally_owned_dofs);
+            const Integer owned_size = locally_owned_dofs.extent(0);
+
+            auto owned_dof_size = handler.get_owned_dof_size();
 
             ViewMatrixType<Integer> dof_enum("build_node_element_dof_map", owned_size, ElemType);
             Kokkos::parallel_for(
@@ -350,20 +388,21 @@ namespace mars {
                     }
                 });
 
-            ViewVectorType<Integer> owned_index("owned_index", owned_size);
+            ViewVectorType<Integer> owned_index("owned_index", owned_dof_size);
             /* enumerates the dofs within each element topologically */
-            Kokkos::parallel_for(
-                "enum_local_dofs",
-                size,
-                EnumLocalDofs<NodeElementDofMap, false>(handler,
-                                                        NodeElementDofMap(handler, dof_enum, owned_index, 0),
-                                                        handler.get_local_dof_enum().get_view_sfc_to_local()));
-            Kokkos::parallel_for(
-                "enum_local_dofs",
-                ghost_size,
-                EnumLocalDofs<NodeElementDofMap, true>(handler,
-                                                       NodeElementDofMap(handler, dof_enum, owned_index, size),
-                                                       handler.get_local_dof_enum().get_view_sfc_to_local()));
+            Kokkos::parallel_for("enum_local_dofs",
+                                 size,
+                                 EnumLocalDofs<NodeElementDofMap, false, L>(
+                                     handler,
+                                     NodeElementDofMap(handler, dof_enum, owned_index, , owned_dof_map, 0),
+                                     handler.get_local_dof_enum().get_view_sfc_to_local()));
+
+            Kokkos::parallel_for("enum_local_dofs",
+                                 ghost_size,
+                                 EnumLocalDofs<NodeElementDofMap, true, L>(
+                                     handler,
+                                     NodeElementDofMap(handler, dof_enum, owned_index, owned_dof_map, size),
+                                     handler.get_local_dof_enum().get_view_sfc_to_local()));
             return dof_enum;
         }
 
