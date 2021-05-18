@@ -244,12 +244,11 @@ namespace mars {
         void build_pattern(FEDofMap<SHandler, Label>... fe) { */
 
         // Unique number of dofs on theelements that share a volume, corner, face or edge.
-        MARS_INLINE_FUNCTION
-        template <Integer label>
-        constexpr Integer label_based_node_count() {
+        template <Integer LL>
+        constexpr Integer label_based_node_count() const {
             constexpr Integer base = 2 * (SHandler::Degree + 1) - 1;
             constexpr Integer height = power((SHandler::Degree + 1), SHandler::ManifoldDim - 1);
-            switch (label) {
+            switch (LL) {
                 case DofLabel::lVolume: {
                     return SHandler::elem_dofs;
                 }
@@ -300,10 +299,10 @@ namespace mars {
         ViewMatrixType<Integer> generate_fe_node_to_node_matrix(const FE &fe, const ViewVectorType<Integer> &counter, ViewVectorType<Integer> & locally_owned_dofs) {
             auto handler = get_dof_handler();
 
-            auto node_to_element = fe.build_node_element_dof_map<L>();
+            auto node_to_element = fe.template build_node_element_dof_map<L>(locally_owned_dofs);
             auto owned_size = node_to_element.extent(0);
 
-            constexpr auto node_max_size = label_based_node_count<L>();
+            Integer node_max_size = label_based_node_count<L>();
             ViewMatrixType<Integer> ntn("count_node_view", owned_size, node_max_size);
             Kokkos::parallel_for(
                 "Count_nodes", owned_size, MARS_LAMBDA(const Integer i) {
@@ -312,16 +311,17 @@ namespace mars {
                     }
                 });
 
-            compact_owned_dofs<Label>(get_dof_handler(), locally_owned_dofs);
+            /* compact_owned_dofs<L>(get_dof_handler(), locally_owned_dofs); */
             assert(owned_size == locally_owned_dofs.extent(0));
 
+            auto el_max_size = fe.template label_based_element_count<L>();
             Kokkos::parallel_for(
                 "Count_nodes", owned_size, MARS_LAMBDA(const Integer i) {
                     /* auto owned_dof = handler.get_owned_dof(i); */
                     /* auto label = handler.get_label(owned_dof); */
 
                     Integer count = 0;
-                    for (int j = 0; j < SHandler::ElemType; j++) {
+                    for (int j = 0; j < el_max_size; j++) {
                         auto elem_index = node_to_element(i, j);
 
                         if (fe.is_valid(elem_index)) {
@@ -346,7 +346,7 @@ namespace mars {
                     auto owned_dof = locally_owned_dofs(i);
                     auto label = handler.get_label(owned_dof);
                     auto gid = handler.local_to_global(owned_dof);
-                    for (int j = 0; j < SHandler::ElemType; j++) {
+                    for (int j = 0; j < el_max_size; j++) {
                         auto elem_index = node_to_element(i, j);
 
                         if (fe.is_valid(elem_index)) {
@@ -371,14 +371,14 @@ namespace mars {
             /* Possible optmization by putting ntn to the shared memory.
             Another way is to parallelize through col indices instead of owned dof indices,
             to end up with coalesced writes instead of the current coalesced reads. */
-            template <typename N>
-            void generate_col_idx_from_node_to_node(const N ntn) {
+            template <typename M, typename S>
+            void generate_col_idx_from_node_to_node(const M &ntn, const S &lod) const {
                 auto handler = dhandler;
-                auto owned_size = locally_owned_dofs.extent(0);
-                assert(ntn.extent(0) == locally_owned_dofs.extent(0));
+                auto owned_size = lod.extent(0);
+                assert(ntn.extent(0) == lod.extent(0));
                 Kokkos::parallel_for(
                     "generate columsn from node to node connectivity", owned_size, MARS_LAMBDA(const Integer i) {
-                        auto local_dof = locally_owned_dofs(i);
+                        auto local_dof = lod(i);
                         auto owned_index = handler.local_to_owned_index(local_dof);
                         auto count = row(owned_index + 1) - row(owned_index);
                         auto index = row(owned_index);
@@ -388,19 +388,17 @@ namespace mars {
                     });
             }
 
-            template <typename N>
-            MARS_INLINE_FUNCTION void operator()(const N &ntn, size_t I) const {
-                generate_col_idx_from_node_to_node(ntn);
+            template <typename M, typename S>
+            MARS_INLINE_FUNCTION void operator()(const M &ntn, const S &lod) const {
+                generate_col_idx_from_node_to_node(ntn, lod);
             }
 
             MARS_INLINE_FUNCTION
-            GenColIdxFromNodeToNodeTuple(SHandler dh, crs_col c, crs_row r, ViewVectorType<Integer> l)
-                : dhandler(dh), col(c), row(r), locally_owned_dofs(l) {}
+            GenColIdxFromNodeToNodeTuple(SHandler dh, crs_col c, crs_row r) : dhandler(dh), col(c), row(r) {}
 
             SHandler dhandler;
             crs_col col;
             crs_row row;
-            ViewVectorType<Integer> locally_owned_dofs;
         };
 
         /* template <typename N>
@@ -416,11 +414,13 @@ namespace mars {
                 });
         } */
 
-        template <class FE, ET = SHandler::ElemType>
-        std::enable_if_t<ET == ElementType::Quad4, auto> build_all_node_to_node(
+        /* Split and interated in a split mode is done for reducing the memory footprint.
+        When done like this different size of matrix are needed for volume, corner face edge,
+        reducing in this way the matrix padding. */
+        template <class FE, Integer ET = SHandler::ElemType>
+        std::enable_if_t<ET == ElementType::Quad4, void> build_all_node_to_node(
             const FE &fe,
-            const ViewVectorType<Integer> &counter
-            T& lod_tuple) {
+            const ViewVectorType<Integer> &counter) {
             ViewVectorType<Integer> vlod, flod, clod;
 
             auto vntn = generate_fe_node_to_node_matrix<DofLabel::lVolume>(fe, counter, vlod);
@@ -428,16 +428,14 @@ namespace mars {
             auto cntn = generate_fe_node_to_node_matrix<DofLabel::lCorner>(fe, counter, clod);
 
             auto ntn_tuple = std::make_tuple(vntn, fntn, cntn);
-            lod_tuple = std::make_tuple(vlod, flod, clod);
+            auto lod_tuple = std::make_tuple(vlod, flod, clod);
 
-            return ntn_tuple;
+            create_sparsity_pattern(ntn_tuple, lod_tuple, counter);
         }
 
-        template <class FE, class T, ET = SHandler::ElemType>
-        std::enable_if_t<ET == ElementType::Hex8, auto> build_all_node_to_node(
-                const FE &fe,
-                const ViewVectorType<Integer> &counter,
-                T& lod_tupl) {
+        template <class FE, Integer ET = SHandler::ElemType>
+        std::enable_if_t<ET == ElementType::Hex8, void> build_all_node_to_node(const FE &fe,
+                                                                               const ViewVectorType<Integer> &counter) {
             ViewVectorType<Integer> vlod, flod, clod, elod;
 
             auto vntn = generate_fe_node_to_node_matrix<DofLabel::lVolume>(fe, counter, vlod);
@@ -446,28 +444,22 @@ namespace mars {
             auto entn = generate_fe_node_to_node_matrix<DofLabel::lEdge>(fe, counter, elod);
 
             auto ntn_tuple = std::make_tuple(vntn, fntn, cntn, entn);
-            lod_tuple = std::make_tuple(vlod, flod, clod, elod);
+            auto lod_tuple = std::make_tuple(vlod, flod, clod, elod);
 
-            return ntn_tuple;
+            create_sparsity_pattern(ntn_tuple, lod_tuple, counter);
         }
 
-        template <class FE>
-        void build_pattern(const FE &fe) {
-            /* using fe_tuple = std::tuple<ST...>; */
-            /* fe_tuple fes(std::make_tuple(fe...)); */
-
+        template <class M, class S>
+        void create_sparsity_pattern(M &ntn_tuple, S &lod_tuple, const ViewVectorType<Integer> &counter) {
             auto handler = get_dof_handler();
 
             auto global_size = get_dof_handler().get_global_dof_size();
             auto owned_size = handler.get_owned_dof_size();
+            assert(owned_size == counter.extent(0));
 
             printf("Global Dof size: %li, Owned Dof Size: %li\n", global_size, owned_size);
 
-            ViewVectorType<Integer> counter("count_node_view", owned_size);
             crs_row row_ptr("counter_scan", owned_size + 1);
-            /* auto row_ptr = generate_fe_row_ptr(); */
-            auto ntn_tuple = build_all_node_to_node(fe, counter, lod_tuple);
-
             incl_excl_scan(0, owned_size, counter, row_ptr);
             /* auto node_max_size = label_based_node_count(DofLabel::lCorner);
             Kokkos::parallel_for(
@@ -489,8 +481,8 @@ namespace mars {
             crs_col col_idx("ColdIdx", h_ss());
             crs_value values("values", h_ss());
 
-            expand_tuple<GenColIdxFromNodeToNodeTuple, ntn_tuple>(
-                GenColIdxFromNodeToNodeTuple(handler, col_idx, row_ptr, lod_tuple), ntn_tuple);
+            expand_tuple<GenColIdxFromNodeToNodeTuple, M, S>(
+                GenColIdxFromNodeToNodeTuple(get_dof_handler(), col_idx, row_ptr), ntn_tuple, lod_tuple);
 
             sparsity_pattern = crs_graph(col_idx, row_ptr);
             matrix = crs_matrix("crs_matrix", global_size, values, sparsity_pattern);
@@ -498,6 +490,15 @@ namespace mars {
             print_sparsity_pattern();
 
             printf("Build FE SparsityPattern ended!\n");
+        }
+
+        template <class FE>
+        void build_pattern(const FE &fe) {
+            /* using fe_tuple = std::tuple<ST...>; */
+            /* fe_tuple fes(std::make_tuple(fe...)); */
+
+            ViewVectorType<Integer> counter("count_node_view", get_dof_handler().get_owned_dof_size());
+            build_all_node_to_node(fe, counter);
         }
 
         MARS_INLINE_FUNCTION
@@ -655,7 +656,7 @@ namespace mars {
         crs_matrix matrix;
 
         SHandler dof_handler;
-    };
+        };
 }  // namespace mars
 
 #endif

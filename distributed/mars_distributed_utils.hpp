@@ -158,6 +158,20 @@ namespace mars {
         apply_impl<F, I + 1, Tp...>(f, t, v);
     }
 
+    /* forwards expansion of a tuple from 0-N */
+    template <typename F, std::size_t I = 0, typename... Tp>
+    inline typename std::enable_if<I == sizeof...(Tp), void>::type apply_impl(const F &f,
+                                                                              std::tuple<ViewMatrixType<Tp>...> &t,
+                                                                              std::tuple<ViewVectorType<Tp>...> &v) {}
+
+    template <typename F, std::size_t I = 0, typename... Tp>
+        inline typename std::enable_if < I<sizeof...(Tp), void>::type apply_impl(const F &f,
+                                                                                 std::tuple<ViewMatrixType<Tp>...> &t,
+                                                                                 std::tuple<ViewVectorType<Tp>...> &v) {
+        f(std::get<I>(t), std::get<I>(v));
+        apply_impl<F, I + 1, Tp...>(f, t, v);
+    }
+
     template <typename F, Integer I = 0, Integer... Args, typename... Tp>
     typename std::enable_if<I == sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F &f,
                                                                                                 std::tuple<Tp...> &t) {}
@@ -187,6 +201,21 @@ namespace mars {
         for_each_arg<F, I + 1, Args...>(f, t, v);
     }
 
+    template <typename F, Integer I = 0, Integer... Args, typename... Tp>
+    typename std::enable_if<I == sizeof...(Args), void>::type MARS_INLINE_FUNCTION
+    for_each_arg(const F &f, std::tuple<ViewMatrixType<Tp>...> &t, std::tuple<ViewVectorType<Tp>...> &v) {}
+
+    template <typename F, Integer I = 0, Integer... Args, typename... Tp>
+        typename std::enable_if <
+        I<sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F &f,
+                                                                         std::tuple<ViewMatrixType<Tp>...> &t,
+                                                                         std::tuple<ViewVectorType<Tp>...> &v) {
+        constexpr Integer dataIndex = NthValue<I, Args...>::value;
+
+        f(std::get<dataIndex>(t), std::get<dataIndex>(v));
+        for_each_arg<F, I + 1, Args...>(f, t, v);
+    }
+
     template <typename F, typename T, Integer... dataidx>
     MARS_INLINE_FUNCTION static void expand_tuple(const F &f, T &t) {
         if (sizeof...(dataidx) == 0) {
@@ -198,6 +227,15 @@ namespace mars {
 
     template <typename F, typename T, Integer... dataidx>
     MARS_INLINE_FUNCTION static void expand_tuple(const F &f, T &t, T &v) {
+        if (sizeof...(dataidx) == 0) {
+            apply_impl(f, t, v);
+        } else {
+            for_each_arg<F, 0, dataidx...>(f, t, v);
+        }
+    }
+
+    template <typename F, typename M, typename T, Integer... dataidx>
+    MARS_INLINE_FUNCTION static void expand_tuple(const F &f, M &t, T &v) {
         if (sizeof...(dataidx) == 0) {
             apply_impl(f, t, v);
         } else {
