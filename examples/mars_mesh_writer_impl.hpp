@@ -37,8 +37,8 @@
 
 using VectorReal = mars::ViewVectorType<mars::Real>;
 
-double simple_func(const double& x, const double& y, const double& z) { return std::sqrt(x * x + y * y + z * z); }
-
+template <class Mesh>
+void example_func() {}
 std::string VTKSchema() {
     std::string vtkSchema = R"(
 <?xml version="1.0"?>
@@ -83,6 +83,7 @@ void MeshWriter<Mesh>::generate_data_cube() {
     size_t element_nvertices = 0;
     size_t n_nodes = mesh_.n_nodes();
     auto points = mesh_.get_view_points();
+    const size_t spaceDim = static_cast<size_t>(mesh_.Dim);
 
     mars::generate_cube(mesh_, 3, 3, 3);
 
@@ -97,9 +98,10 @@ void MeshWriter<Mesh>::generate_data_cube() {
     std::cout << "elements extent(0): " << elements.extent(0) << std::endl;
     std::cout << "elements extent(1): " << elements.extent(1) << std::endl;
 
-    // io_.DefineVariable<uint64_t>("connectivity", {}, {}, {nelements, element_nvertices + 1});
-    // io_.DefineVariable<uint32_t>(io_, "types");
-    // io_.DefineVariable<uint32_t>(io_, "NumOfElements", {adios2::LocalValueDim});
+    io_.DefineVariable<uint64_t>("connectivity", {}, {}, {nelements, element_nvertices + 1});
+    io_.DefineVariable<uint32_t>("types");
+    io_.DefineVariable<uint32_t>("NumOfElements", {adios2::LocalValueDim});
+    io_.DefineVariable<double>("vertices", {}, {}, {n_nodes, spaceDim});
 }
 
 template <class Mesh>
@@ -108,9 +110,16 @@ void MeshWriter<Mesh>::interpolate(VectorReal& x) {
     mars::Interpolate<Mesh> interpMesh(mesh_);
     // interpMesh.apply(x, );
 }
+
 template <class Mesh>
 void MeshWriter<Mesh>::write(int step) {
+    adios2::Variable<uint64_t> varConnectivity = io_.InquireVariable<uint64_t>("connectivity");
+    adios2::Variable<uint32_t> varTypes = io_.InquireVariable<uint32_t>("types");
+
     engine_.Put("NumOfElements", static_cast<uint32_t>(mesh_.n_active_elements()));
+    engine_.Put("vertices", static_cast<double>(mesh_.n_nodes()));
+    engine_.Put<uint64_t>(varConnectivity);
+    // engine_.Put("types", varTypes);
 }
 
 template <class Mesh>
