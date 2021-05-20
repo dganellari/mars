@@ -29,6 +29,8 @@
 #include "mars_vtk_writer.hpp"
 
 std::string VTKSchema();
+template <class Mesh>
+void interpolate();
 
 template <class Mesh>
 class MeshWriter {

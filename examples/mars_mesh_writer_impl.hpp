@@ -70,6 +70,12 @@ std::string VTKSchema() {
     return vtkSchema;
 }
 
+// template <class Mesh>
+// void interpolate(VectorReal& x) {
+//     x = VectorReal("x", mesh_.n_nodes());
+//     mars::Interpolate<Mesh> interpMesh(mesh_);
+// }
+
 template <class Mesh>
 MeshWriter<Mesh>::MeshWriter(Mesh& mesh, adios2::IO io) : mesh_(mesh), io_(io) {}
 
@@ -118,7 +124,8 @@ template <class Mesh>
 void MeshWriter<Mesh>::interpolate(VectorReal& x) {
     x = VectorReal("x", mesh_.n_nodes());
     mars::Interpolate<Mesh> interpMesh(mesh_);
-    // interpMesh.apply(x, );
+    interpMesh.apply(
+        x, MARS_LAMBDA(const mars::Real* p)->mars::Real { return p[0] * p[0]; });
 }
 
 // Write step, write tthe results to the variables we defined before.
@@ -129,8 +136,19 @@ void MeshWriter<Mesh>::write() {
 
     engine_.Put("NumOfElements", static_cast<uint32_t>(mesh_.n_active_elements()));
     engine_.Put("vertices", static_cast<double>(mesh_.n_nodes()));
-    engine_.Put<uint64_t>(varConnectivity);
     // engine_.Put("types", varTypes);
+
+    adios2::Variable<uint64_t>::Span spanConnectivity = engine_.Put<uint64_t>(varConnectivity);
+
+    // size_t elementPosition = 0;
+    // for (int e = 0; e < mesh_.n_active_elements; ++e) {
+    //     const int nVertices = mesh_.elements[e]->n_nodes();
+    //     spanConnectivity[elementPosition] = nVertices;
+    //     for (int v = 0; v < nVertices; ++v) {
+    //         spanConnectivity[elementPosition + v + 1] = mesh_.elements[e]->n_nodes()[v];
+    //     }
+    //     elementPosition += nVertices + 1;
+    // }
 }
 
 template <class Mesh>
