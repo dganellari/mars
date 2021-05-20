@@ -111,9 +111,6 @@ void MeshWriter<Mesh>::generate_data_cube() {
     io_.DefineVariable<uint32_t>("types");
     io_.DefineVariable<uint32_t>("NumOfElements", {adios2::LocalValueDim});
     io_.DefineVariable<double>("vertices", {}, {}, {n_nodes, spaceDim});
-
-    // Define attribute of vtk schema, which for some ..... reason is not working.
-    io_.DefineAttribute<std::string>("vtk.xml", VTKSchema(), {}, {});
 }
 
 // Here we want to apply a function to the mesh.
@@ -140,6 +137,8 @@ template <class Mesh>
 void MeshWriter<Mesh>::close() {
     // Need to write the ouput in vtk schema:
     // MFEM does like this:
+    // Define attribute of vtk schema
+    io_.DefineAttribute<std::string>("vtk.xml", VTKSchema(), {}, {});
     engine_.EndStep();
     engine_.Close();
 }

@@ -28,6 +28,8 @@
 #include "mars_utils.hpp"
 #include "mars_vtk_writer.hpp"
 
+std::string VTKSchema();
+
 template <class Mesh>
 class MeshWriter {
 public:
@@ -37,7 +39,6 @@ public:
     using VectorReal = mars::ViewVectorType<mars::Real>;
 
     MeshWriter(Mesh& mesh, adios2::IO io);
-    std::string VTKSchema();
     void generate_data_cube();
     void interpolate(VectorReal& x);
     void open(const std::string& fname);
