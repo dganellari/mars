@@ -39,6 +39,8 @@ using VectorReal = mars::ViewVectorType<mars::Real>;
 
 template <class Mesh>
 void example_func() {}
+
+// Vtk schema for visualizing in ParaView.
 std::string VTKSchema() {
     std::string vtkSchema = R"(
 <?xml version="1.0"?>
@@ -71,6 +73,7 @@ std::string VTKSchema() {
 template <class Mesh>
 MeshWriter<Mesh>::MeshWriter(Mesh& mesh, adios2::IO io) : mesh_(mesh), io_(io) {}
 
+// Here we open the IO of adios and define what kind of operation we want to do, in this case a write operation.
 template <class Mesh>
 void MeshWriter<Mesh>::open(const std::string& fname) {
     engine_ = io_.Open(fname, adios2::Mode::Write);
@@ -79,31 +82,38 @@ void MeshWriter<Mesh>::open(const std::string& fname) {
 
 template <class Mesh>
 void MeshWriter<Mesh>::generate_data_cube() {
+    // Setup intial values of vertices, nelements and Dim.
     size_t nelements = 0;
     size_t element_nvertices = 0;
     size_t n_nodes = mesh_.n_nodes();
     auto points = mesh_.get_view_points();
     const size_t spaceDim = static_cast<size_t>(mesh_.Dim);
 
+    // Generate 3,3,3 cube on mesh_.
     mars::generate_cube(mesh_, 3, 3, 3);
 
+    // Get new values for nelements.
     auto elements = mesh_.get_view_elements();
     nelements = mesh_.n_elements();
 
     assert(nelements == elements.extent(0));
     element_nvertices = elements.extent(1);
 
+    // Print out some info on the mesh.
     std::cout << "n_active_elements: " << mesh_.n_active_elements() << std::endl;
     std::cout << "n_nodes: " << mesh_.n_nodes() << std::endl;
     std::cout << "elements extent(0): " << elements.extent(0) << std::endl;
     std::cout << "elements extent(1): " << elements.extent(1) << std::endl;
+    std::cout << "Space dim:" << mesh_.Dim << std::endl;
 
+    // Define the multiple variables that we need, such as vertices, types and elements.
     io_.DefineVariable<uint64_t>("connectivity", {}, {}, {nelements, element_nvertices + 1});
     io_.DefineVariable<uint32_t>("types");
     io_.DefineVariable<uint32_t>("NumOfElements", {adios2::LocalValueDim});
     io_.DefineVariable<double>("vertices", {}, {}, {n_nodes, spaceDim});
 }
 
+// Here we want to apply a function to the mesh.
 template <class Mesh>
 void MeshWriter<Mesh>::interpolate(VectorReal& x) {
     x = VectorReal("x", mesh_.n_nodes());
@@ -111,6 +121,7 @@ void MeshWriter<Mesh>::interpolate(VectorReal& x) {
     // interpMesh.apply(x, );
 }
 
+// Write step, write tthe results to the variables we defined before.
 template <class Mesh>
 void MeshWriter<Mesh>::write(int step) {
     adios2::Variable<uint64_t> varConnectivity = io_.InquireVariable<uint64_t>("connectivity");
@@ -127,7 +138,7 @@ void MeshWriter<Mesh>::close() {
     // Need to write the ouput in vtk schema:
     // MFEM does like this:
     // io_.DefineAttribute<std::string>(io_, "vtk.xml", VTKSchema());
-    // For us would be DefineAttribute...
+    io_.DefineAttribute<std::string>(io_, "vtk.xml", VTKSchema());
     engine_.EndStep();
     engine_.Close();
 }
