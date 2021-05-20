@@ -111,6 +111,9 @@ void MeshWriter<Mesh>::generate_data_cube() {
     io_.DefineVariable<uint32_t>("types");
     io_.DefineVariable<uint32_t>("NumOfElements", {adios2::LocalValueDim});
     io_.DefineVariable<double>("vertices", {}, {}, {n_nodes, spaceDim});
+
+    // Define attribute of vtk schema, which for some ..... reason is not working.
+    io_.DefineAttribute<std::string>("vtk.xml", VTKSchema(), {}, {});
 }
 
 // Here we want to apply a function to the mesh.
@@ -123,7 +126,7 @@ void MeshWriter<Mesh>::interpolate(VectorReal& x) {
 
 // Write step, write tthe results to the variables we defined before.
 template <class Mesh>
-void MeshWriter<Mesh>::write(int step) {
+void MeshWriter<Mesh>::write() {
     adios2::Variable<uint64_t> varConnectivity = io_.InquireVariable<uint64_t>("connectivity");
     adios2::Variable<uint32_t> varTypes = io_.InquireVariable<uint32_t>("types");
 
@@ -137,8 +140,6 @@ template <class Mesh>
 void MeshWriter<Mesh>::close() {
     // Need to write the ouput in vtk schema:
     // MFEM does like this:
-    // io_.DefineAttribute<std::string>(io_, "vtk.xml", VTKSchema());
-    io_.DefineAttribute<std::string>(io_, "vtk.xml", VTKSchema());
     engine_.EndStep();
     engine_.Close();
 }

@@ -74,7 +74,7 @@ void write_mesh() {
     MeshWriter<mars::ParallelQuad4Mesh> writer(parMesh, io_main);
     writer.open("example.bp");
     writer.generate_data_cube();
-    writer.write(3);
+    writer.write();
     writer.close();
 }
 

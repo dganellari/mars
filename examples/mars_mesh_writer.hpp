@@ -41,7 +41,7 @@ public:
     void generate_data_cube();
     void interpolate(VectorReal& x);
     void open(const std::string& fname);
-    void write(int step);
+    void write();
     void close();
 
 private:
