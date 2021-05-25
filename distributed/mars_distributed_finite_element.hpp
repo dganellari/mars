@@ -293,7 +293,7 @@ namespace mars {
                 EnumLocalDofs<DofMap, false>(
                     handler, DofMap(elem_dof_enum, 0), handler.get_local_dof_enum().get_view_sfc_to_local()));
 
-            //go through the ghost layer
+            // go through the ghost layer
             Kokkos::parallel_for(
                 "enum_local_dofs",
                 ghost_size,

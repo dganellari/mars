@@ -240,9 +240,6 @@ namespace mars {
 
         // Finite Element Sparsity pattern creation
 
-        /* template <Integer... Label>
-        void build_pattern(FEDofMap<SHandler, Label>... fe) { */
-
         // Unique number of dofs on theelements that share a volume, corner, face or edge.
         template <Integer LL>
         constexpr Integer label_based_node_count() const {
@@ -344,6 +341,7 @@ namespace mars {
             Kokkos::parallel_for(
                 "print_node_elem", owned_size, MARS_LAMBDA(const Integer i) {
                     auto owned_dof = locally_owned_dofs(i);
+                    auto od = handler.get_octant_from_local(owned_dof);
                     auto label = handler.get_label(owned_dof);
                     auto gid = handler.local_to_global(owned_dof);
                     for (int j = 0; j < el_max_size; j++) {
@@ -352,11 +350,14 @@ namespace mars {
                         if (fe.is_valid(elem_index)) {
                             auto elem_sfc = fe.get_elem_sfc(elem_index);
                             auto o = handler.get_mesh_manager().get_mesh()->octant_from_sfc(elem_sfc);
-                            printf("Node: %li -  %li - %li, Label: %li, octant: [%li, %li, %li]\n",
+                            printf("Node: %li -  %li - %li, Label: %li, [%li, %li, %li] - octant: [%li, %li, %li]\n",
                                    owned_dof,
                                    gid,
                                    counter(i),
                                    label,
+                                   od.x,
+                                   od.y,
+                                   od.z,
                                    o.x,
                                    o.y,
                                    o.z);
@@ -487,10 +488,11 @@ namespace mars {
             sparsity_pattern = crs_graph(col_idx, row_ptr);
             matrix = crs_matrix("crs_matrix", global_size, values, sparsity_pattern);
 
-            print_sparsity_pattern();
-
             printf("Build FE SparsityPattern ended!\n");
         }
+
+        /* template <Integer... Label>
+        void build_pattern(FEDofMap<SHandler, Label>... fe) { */
 
         template <class FE>
         void build_pattern(const FE &fe) {
@@ -595,7 +597,7 @@ namespace mars {
                         /* const Integer global_col = get_dof_handler().local_to_global(local_col); */
 
                         /* printf("row_dof: %li - %li, col_dof: %li - %li, value: %lf\n", */
-                        printf("row_dof: %li - %li, col_dof: %li, value: %lf\n",
+                        printf("SP - Row_Dof: %li - %li, col_dof: %li, value: %lf\n",
                                row,
                                global_row,
                                col,

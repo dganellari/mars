@@ -254,6 +254,8 @@ namespace mars {
                 return INVALID_INDEX;
         }
 
+        MARS_INLINE_FUNCTION
+        bool is_owned(const Integer local) const { return locally_owned_dof(local); }
 
         MARS_INLINE_FUNCTION
         Integer locally_owned_dof(const Integer local_dof) const {

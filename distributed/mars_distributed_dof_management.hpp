@@ -1457,6 +1457,12 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
+        bool is_owned(const Integer local) const {
+            const Integer sfc = local_to_sfc(local);
+            return locally_owned_dof(sfc);
+        }
+
+        MARS_INLINE_FUNCTION
         bool locally_owned_dof(const Integer sfc) const {
             // use the sfc to local which the scan of the predicate. To get the predicate
             // value the difference with the successive index is needed.
