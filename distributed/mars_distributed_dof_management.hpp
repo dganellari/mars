@@ -74,8 +74,14 @@ namespace mars {
         }
     };
 
+    class IDofHandler {
+    public:
+        virtual MARS_INLINE_FUNCTION ~IDofHandler() {}
+        // virtual MARS_FUNCTION const Integer get_ZMax() const;
+    };
+
     template <class Mesh_, Integer degree>
-    class DofHandler {
+    class DofHandler : public IDofHandler {
     public:
         using Mesh = Mesh_;
 
@@ -367,10 +373,10 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void all_rank_boundary(const Mesh *mesh,
-                                    const Integer i,
-                                    const Integer sfc,
-                                    const Integer owner_proc,
-                                    std::false_type) const {
+                                   const Integer i,
+                                   const Integer sfc,
+                                   const Integer owner_proc,
+                                   std::false_type) const {
                 const Integer ghost_proc = find_owner_processor(mesh->get_view_scan_boundary(), i, 1, proc);
 
                 /* if (proc >= owner_proc && owner_proc >= 0) { */
@@ -394,10 +400,7 @@ namespace mars {
             Integer proc;
 
             MARS_INLINE_FUNCTION
-            RankBoundary(ViewMatrixType<bool> rb,
-                               ViewVectorType<Integer> sl,
-                               ViewVectorType<Integer> m,
-                               Integer p)
+            RankBoundary(ViewMatrixType<bool> rb, ViewVectorType<Integer> sl, ViewVectorType<Integer> m, Integer p)
                 : rank_boundary(rb), sfc_to_locally_owned(sl), map(m), proc(p) {}
 
             MARS_INLINE_FUNCTION
@@ -453,8 +456,7 @@ namespace mars {
             Integer proc;
 
             MARS_INLINE_FUNCTION
-            MaxOneRingProc(ViewVectorType<Integer> g, Integer p, Integer &mx) :
-                gp(g), proc(p), max_proc(mx) {}
+            MaxOneRingProc(ViewVectorType<Integer> g, Integer p, Integer &mx) : gp(g), proc(p), max_proc(mx) {}
 
             MARS_INLINE_FUNCTION
             void operator()(const Octant &nbh_oc) const {
@@ -729,7 +731,7 @@ namespace mars {
             }
         }
 
-        //generic local predicate functor to be used for edge, face and corners. The volume is specialized.
+        // generic local predicate functor to be used for edge, face and corners. The volume is specialized.
         template <bool Ghost, Integer Label>
         struct LocalGlobalPredicate {
             ViewVectorType<bool> local_predicate;
@@ -758,10 +760,10 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void lg_predicate(const Mesh *mesh,
-                                const Integer i,
-                                const Integer sfc,
-                                const Integer owner_proc,
-                                std::true_type) const {
+                              const Integer i,
+                              const Integer sfc,
+                              const Integer owner_proc,
+                              std::true_type) const {
                 Integer elem_sfc_proc =
                     find_owner_processor(mesh->get_view_gp(), mesh->get_ghost_sfc(i), 2, mesh->get_proc());
 
@@ -1055,7 +1057,7 @@ namespace mars {
             }
         };
 
-        void print_dofs(const int rank) {
+        void print_dofs(const int rank = 0) {
             auto handler = *this;
 
             SFC<ElemType> gdof = get_global_dof_enum();
@@ -1481,9 +1483,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        Integer local_to_owned_index(const Integer local) const {
-            return local_to_owned_dof(local);
-        }
+        Integer local_to_owned_index(const Integer local) const { return local_to_owned_dof(local); }
 
         MARS_INLINE_FUNCTION
         Dof sfc_to_global_dof(const Integer sfc) const {
