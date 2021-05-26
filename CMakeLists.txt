@@ -1,11 +1,6 @@
 cmake_minimum_required(VERSION 2.8.12)
-
-project(mars C CXX)
-
-if(POLICY CMP0074)
-  cmake_policy(SET CMP0074 NEW)
-endif()
-set(CMAKE_CXX_STANDARD 11)
+cmake_policy(SET CMP0048 NEW)
+project(mars VERSION 0.1.0)
 
 # FIXME make them usable from avaialble installation
 add_subdirectory(external/googletest)

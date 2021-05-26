@@ -794,10 +794,9 @@ namespace mars {
         };
 
         void print_dofs(const int rank) {
-            SFC<ElemType> dof = get_local_dof_enum();
-            SFC<ElemType> gdof = get_global_dof_enum();
             auto handler = *this;
 
+            /* SFC<ElemType> gdof = get_global_dof_enum(); */
             /* Kokkos::parallel_for(
                 "for", gdof.get_elem_size(), MARS_LAMBDA(const int i) {
                     const Integer sfc_elem = handler.owned_to_sfc(i);
@@ -821,34 +820,23 @@ namespace mars {
                            o.x,
                            o.y,
                            proc);
-                });
- */
+                }); */
+
+            SFC<ElemType> dof = get_local_dof_enum();
             Kokkos::parallel_for(
                 "for", dof.get_elem_size(), MARS_LAMBDA(const int i) {
                     const Integer sfc_elem = handler.local_to_sfc(i);
                     const Dof global_dof = handler.local_to_global_dof(i);
 
-                    Integer local_sfc = dof.get_view_elements()(i);
-
-                    Integer gid = -1, proc = -1;
-
-                    if (locally_owned_dof(sfc_elem)) {
-                        proc = data.get_mesh()->get_proc();
-                        const Integer sfc_lid = global_dof_enum.get_view_sfc_to_local()(local_sfc);
-                        gid = sfc_lid + global_dof_offset(proc);
-                    }
-
                     Octant o = get_octant_from_sfc(sfc_elem);
 
-                    printf("i: %i, local sfc: %li - %li gdof: %li : %li --- octant: [%li, %li] -  rank: %i\n",
+                    printf("i: %i, local sfc: %li gdof: %li --- octant: [%li, %li] -  rank: %i\n",
                            i,
-                           local_sfc,
                            sfc_elem,
                            global_dof.get_gid(),
-                           gid,
                            o.x,
                            o.y,
-                           proc);
+                           global_dof.get_proc());
                 });
         }
 
