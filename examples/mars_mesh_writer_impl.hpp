@@ -37,9 +37,6 @@
 
 using VectorReal = mars::ViewVectorType<mars::Real>;
 
-template <class Mesh>
-void example_func() {}
-
 // Vtk schema for visualizing in ParaView.
 std::string VTKSchema() {
     std::string vtkSchema = R"(
@@ -122,7 +119,8 @@ void MeshWriter<Mesh>::generate_data_cube() {
 // Here we want to apply a function to the mesh.
 template <class Mesh>
 void MeshWriter<Mesh>::interpolate(VectorReal& x) {
-    x = VectorReal("x", mesh_.n_nodes());
+    const mars::Integer n_nodes = mesh_.n_nodes();
+    x = VectorReal("x", n_nodes);
     mars::Interpolate<Mesh> interpMesh(mesh_);
     interpMesh.apply(
         x, MARS_LAMBDA(const mars::Real* p)->mars::Real { return p[0] * p[0]; });

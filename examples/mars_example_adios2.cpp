@@ -3,47 +3,50 @@
 #include "mars_image_data_writer.hpp"
 #include "mars_image_data_writer_settings.hpp"
 #include "mars_mesh_writer.hpp"
+#include "mars_spacetime_ex.hpp"
 
-// pass to interpolate.
-class ST3Analitcal {
-public:
-    MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex3_st_exact(p); }
-};
+namespace mars {
+    // // pass to interpolate.
+    class ST3Analitcal {
+    public:
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex3_st_exact(p); }
+    };
 
-// class ST3RHS {
-// public:
-//     MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex3_st_spacetime(p); }
-// };
+    class ST3RHS {
+    public:
+        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex3_st_spacetime(p); }
+    };
 
-template <class Mesh>
-class ST3BC {
-public:
-    /* BC --> zero dirichlet + natural neumann on upper bound */
-    static const int Dim = Mesh::Dim;
+    template <class Mesh>
+    class ST3BC {
+    public:
+        /* BC --> zero dirichlet + natural neumann on upper bound */
+        static const int Dim = Mesh::Dim;
 
-    MARS_INLINE_FUNCTION void operator()(const Real *p, Real &val) const {
-        if (is_boundary(p)) {
-            val = ex3_st_exact(p);
-        }
-    }
-
-    MARS_INLINE_FUNCTION static bool is_boundary(const Real *p) {
-        bool ret = false;
-        for (int d = 0; d < Dim; ++d) {
-            if (p[d] <= 1e-14) {
-                ret = true;
-                break;
-            }
-
-            if (d < Dim - 1 && p[d] >= 1 - 1e-14) {
-                ret = true;
-                break;
+        MARS_INLINE_FUNCTION void operator()(const Real *p, Real &val) const {
+            if (is_boundary(p)) {
+                val = ex3_st_exact(p);
             }
         }
 
-        return ret;
-    }
-};
+        MARS_INLINE_FUNCTION static bool is_boundary(const Real *p) {
+            bool ret = false;
+            for (int d = 0; d < Dim; ++d) {
+                if (p[d] <= 1e-14) {
+                    ret = true;
+                    break;
+                }
+
+                if (d < Dim - 1 && p[d] >= 1 - 1e-14) {
+                    ret = true;
+                    break;
+                }
+            }
+
+            return ret;
+        }
+    };
+}  // namespace mars
 
 /*
  * Write a structured image.
@@ -74,7 +77,7 @@ void write_mesh() {
     MeshWriter<mars::ParallelQuad4Mesh> writer(parMesh, io_main);
     writer.open("example.bp");
     writer.generate_data_cube();
-    // writer.interpolate()
+    writer.interpolate(mesh_);
     writer.write();
     writer.close();
 }
