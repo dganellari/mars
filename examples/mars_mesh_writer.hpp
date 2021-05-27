@@ -42,7 +42,7 @@ public:
 
     MeshWriter(Mesh& mesh, adios2::IO io);
     void generate_data_cube();
-    void interpolate(VectorReal& x);
+    void interpolate();
     void open(const std::string& fname);
     void write();
     void close();

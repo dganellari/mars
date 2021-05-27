@@ -2,6 +2,7 @@
 #include <KokkosBlas1_nrm1.hpp>
 #include <KokkosBlas1_nrminf.hpp>
 #include <iostream>
+#include <typeinfo>
 #include "mars_mesh_writer.hpp"
 
 #include "mars_benchmark.hpp"
@@ -114,13 +115,14 @@ void MeshWriter<Mesh>::generate_data_cube() {
     io_.DefineVariable<uint32_t>("types");
     io_.DefineVariable<uint32_t>("NumOfElements", {adios2::LocalValueDim});
     io_.DefineVariable<double>("vertices", {}, {}, {n_nodes, spaceDim});
+    io_.DefineVariable<int32_t>("attribute", {}, {}, {nelements});
 }
 
 // Here we want to apply a function to the mesh.
 template <class Mesh>
-void MeshWriter<Mesh>::interpolate(VectorReal& x) {
+void MeshWriter<Mesh>::interpolate() {
     const mars::Integer n_nodes = mesh_.n_nodes();
-    x = VectorReal("x", n_nodes);
+    VectorReal x = VectorReal("x", n_nodes);
     mars::Interpolate<Mesh> interpMesh(mesh_);
     interpMesh.apply(
         x, MARS_LAMBDA(const mars::Real* p)->mars::Real { return p[0] * p[0]; });
@@ -132,21 +134,58 @@ void MeshWriter<Mesh>::write() {
     adios2::Variable<uint64_t> varConnectivity = io_.InquireVariable<uint64_t>("connectivity");
     adios2::Variable<uint32_t> varTypes = io_.InquireVariable<uint32_t>("types");
 
+    // For MFEM attribute is specifying matrial properties
+    adios2::Variable<int32_t> varElementAttribute = io_.InquireVariable<int32_t>("attribute");
+
     engine_.Put("NumOfElements", static_cast<uint32_t>(mesh_.n_active_elements()));
     engine_.Put("vertices", static_cast<double>(mesh_.n_nodes()));
     // engine_.Put("types", varTypes);
 
-    adios2::Variable<uint64_t>::Span spanConnectivity = engine_.Put<uint64_t>(varConnectivity);
+    //###############################Attribute###########################
+    // adios2::Variable<uint64_t>::Span spanConnectivity = engine_.Put<uint64_t>(varConnectivity);
+
+    // // zero-copy access to adios2 buffer to put non-contiguous to contiguous memory
+    // adios2::Variable<int32_t>::Span spanElementAttribute = engine_.Put<int32_t>(varElementAttribute);
 
     // size_t elementPosition = 0;
-    // for (int e = 0; e < mesh_.n_active_elements; ++e) {
-    //     const int nVertices = mesh_.elements[e]->n_nodes();
-    //     spanConnectivity[elementPosition] = nVertices;
-    //     for (int v = 0; v < nVertices; ++v) {
-    //         spanConnectivity[elementPosition + v + 1] = mesh_.elements[e]->n_nodes()[v];
-    //     }
-    //     elementPosition += nVertices + 1;
+    // for (int e = 0; e < mesh_.n_active_elements(); ++e) {
+    //     // spanElementAttribute[e] = static_cast<int32_t>(mesh.GetAttribute(e));
+    //     // const int nVertices = mesh_.n_elements[e]->n_nodes();
+    //     // spanConnectivity[elementPosition] = nVertices;
+
+    //     // for (int v = 0; v < nVertices; ++v) {
+    //     //     spanConnectivity[elementPosition + v + 1] = mesh_.elements[e]->n_nodes()[v];
+    //     // }
+    //     // elementPosition += nVertices + 1;
     // }
+
+    //###################################################################
+
+    //############################Vertices###############################
+
+    std::vector<mars::Integer> e_nodes;
+    // mars::IElem element;
+    adios2::Variable<double> varVertices = io_.InquireVariable<double>("vertices");
+    // zero-copy access to adios2 buffer to put non-contiguous to contiguous memory
+    adios2::Variable<double>::Span spanVertices = engine_.Put(varVertices);
+
+    // For each of the nodes (in this case 16 for cube 3,3,3) we iterate through the size of
+    // the space_dim which is in the case of ParallelQuad4Mesh 2.
+    for (int v = 0; v < mesh_.n_nodes(); ++v) {
+        const int space_dim = static_cast<int>(mesh_.Dim);
+        std::cout << "This is the space dim size: " << space_dim << std::endl;
+        for (int coord = 0; coord < space_dim; ++coord) {
+            auto points = mesh_.points();
+            auto points_view = mesh_.get_view_points();
+            // for (int i = 0; i < points.size(); ++i) {
+            // std::cout << points[i];
+            // }
+
+            // spanVertices[v * space_dim + coord] = points[v](coord);
+        }
+    }
+
+    //##################################################################
 }
 
 template <class Mesh>
