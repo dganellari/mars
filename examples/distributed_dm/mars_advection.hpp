@@ -569,7 +569,9 @@ namespace mars {
     }
 
     template <Integer Type, Integer Dim>
-    void timestep(const context &context, Data &data, ProblemDesc<Dim> &pd, double time) {
+    void timestep(Data &data, ProblemDesc<Dim> &pd, double time) {
+        const context &context = data.get_mesh_manager().get_host_mesh()->get_context();
+
         DataType<DataDesc::dudt> dt = 0.;
         DataType<DataDesc::dudt> t = 0.;
         int i = 0;
@@ -596,7 +598,7 @@ namespace mars {
 
             timestep_update(data, dt);
 
-            exchange_ghost_user_data(context, data);
+            exchange_ghost_user_data(data);
 
             // 1 and 2 are the derivatives in the tuple
             reset_derivatives<DataDesc::du_0, DataDesc::du_1>(data);
@@ -622,9 +624,9 @@ namespace mars {
 
 #ifdef WITH_KOKKOS
 
-        DistributedQuad4Mesh mesh;
+        DistributedQuad4Mesh mesh(context);
         mesh.set_periodic();  // set the domain to be periodic before generation!
-        generate_distributed_cube(context, mesh, level, level, 0);
+        generate_distributed_cube(mesh, level, level, 0);
 
         const Integer xDim = mesh.get_XDim();
         const Integer yDim = mesh.get_YDim();
@@ -691,8 +693,8 @@ namespace mars {
             }); */
 
         //The ghost layer is created when the mesh is generated.
-        /* create_ghost_layer<Data, Type>(context, data); */
-        exchange_ghost_user_data(context, data);
+        /* create_ghost_layer<Data, Type>(data); */
+        exchange_ghost_user_data(data);
 
         /* data.print_nth_tuple<DataDesc::u>(proc_num); */
 
@@ -705,7 +707,7 @@ namespace mars {
         double time = timer.seconds();
         std::cout << "face iterate took: " << time << " seconds." << std::endl;
 
-        timestep<Type>(context, data, pd, 0.8);
+        timestep<Type>(data, pd, 0.8);
 
         print_derivatives<Type, DataDesc::du_0, DataDesc::du_1>(data);
 #endif

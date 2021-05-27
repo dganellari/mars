@@ -209,8 +209,8 @@ namespace mars {
 
         Kokkos::Timer timer;
         // create the quad mesh distributed through the mpi procs.
-        DistributedMesh<Type> mesh;
-        generate_distributed_cube(context, mesh, xDim, yDim, zDim);
+        DistributedMesh<Type> mesh(context);
+        generate_distributed_cube(mesh, xDim, yDim, zDim);
 
         constexpr Integer Degree = 2;
         using MyDofTypes = DofTypes<DistributedMesh<Type>, Degree>;
@@ -226,7 +226,7 @@ namespace mars {
 
         // enumerate the dofs locally and globally. The ghost dofs structures
         // are now created and ready to use for the gather and scatter ops.
-        DofHandler dof_handler(&mesh, context);
+        DofHandler dof_handler(&mesh);
         dof_handler.enumerate_dofs();
 
         //curently only working for the cpu version for debugging purposes.

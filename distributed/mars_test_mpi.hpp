@@ -166,8 +166,8 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(const int x, con
 
 #ifdef WITH_KOKKOS
 
-        DistributedQuad4Mesh mesh;
-        generate_distributed_cube(context, mesh, x, y, 0);
+        DistributedQuad4Mesh mesh(context);
+        generate_distributed_cube(mesh, x, y, 0);
 #endif
     }
     catch (std::exception &e)
@@ -212,8 +212,8 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(const int x, con
 #ifdef WITH_KOKKOS
         using namespace Kokkos;
 
-        DistributedHex8Mesh mesh;
-        generate_distributed_cube(context, mesh, x, y, z);
+        DistributedHex8Mesh mesh(context);
+        generate_distributed_cube(mesh, x, y, z);
 
 #endif
     }

@@ -115,7 +115,7 @@ namespace mars {
         constexpr Integer get_elem_type() { return simplex_type::ElemType; }
 
         MARS_INLINE_FUNCTION
-        DofHandler(Mesh *mesh, const context &c) : mesh_manager(MM(mesh)), ctx(c) {}
+        DofHandler(Mesh *mesh) : mesh_manager(MM(mesh)) {}
 
         template <typename H>
         MARS_INLINE_FUNCTION void owned_iterate(H f) const {
@@ -1752,7 +1752,7 @@ namespace mars {
             return get_global_dof_enum().get_label(owned_dof);
         }
 
-        const context &get_context() const { return ctx; }
+        const context &get_context() const { return get_mesh_manager().get_host_mesh()->get_context(); }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_boundary_dofs() const { return boundary_dofs_sfc; }
@@ -1799,9 +1799,8 @@ namespace mars {
         const Integer get_ZMax() const { return Degree * get_mesh_manager().get_mesh()->get_ZDim(); }
 
     private:
-        // data associated to the mesh elements (sfc) within the context.
+        //manages host and device mesh objects.
         MM mesh_manager;
-        const context &ctx;
 
         // local dof enumeration containing the local to sfc and sfc to local views.
         SFC<simplex_type::ElemType> local_dof_enum;

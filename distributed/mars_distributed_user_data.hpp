@@ -300,7 +300,8 @@ namespace mars {
     };
 
     template <class UserData>
-    void exchange_ghost_user_data(const context &context, UserData &data) {
+    void exchange_ghost_user_data(UserData &data) {
+        const context &context = data.get_mesh_manager().get_host_mesh()->get_context();
         int size = num_ranks(context);
 
         if (data.get_mesh_manager().get_host_mesh()->get_view_scan_recv_mirror()(size) ==

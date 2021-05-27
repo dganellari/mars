@@ -43,13 +43,20 @@ namespace mars {
         using Point = mars::Point<Real, Dim>;
         using Comb = Combinations<ManifoldDim + 1, 2, DistributedImplementation>;
 
-        MARS_INLINE_FUNCTION Mesh()
+        /* MARS_INLINE_FUNCTION Mesh()
             : ParallelIMesh<Dim_>(),
               elements_size_(0),
               points_size_(0)
         //, combinations(nullptr)
-        {}
+        {} */
 
+        MARS_INLINE_FUNCTION Mesh(const context &c)
+            : ParallelIMesh<Dim_>(),
+              elements_size_(0),
+              points_size_(0),
+              ctx(c)
+        //, combinations(nullptr)
+        {}
         void reserve(const std::size_t n_elements, const std::size_t n_points) override {
             elements_size_ = n_elements;
             points_size_ = n_points;
@@ -1122,7 +1129,8 @@ namespace mars {
         }
 
         template <Integer Type>
-        void create_ghost_layer(const context &context) {
+        void create_ghost_layer() {
+            const context &context = get_context();
             build_boundary_element_sets<Type>();
 
             exchange_ghost_counts(context);
@@ -1134,8 +1142,10 @@ namespace mars {
             std::cout << "Finished building the ghost layer (boundary element set). Rank: " << get_proc() << std::endl;
         }
 
-        void print_ghost_layer(const context &context) {
+        void print_ghost_layer() {
             using namespace Kokkos;
+
+            const context &context = get_context();
             int proc_num = rank(context);
             int rank_size = num_ranks(context);
 
@@ -1312,7 +1322,12 @@ namespace mars {
         return (pred_value > 0);
     }
 
+    const context &get_context() const { return ctx; }
+    void set_context(const context &c) { ctx = c; }
+
 private:
+    // careful: not a device pointer!
+    const context &ctx;
     // This block represents the SFC data and the data structures needed to manage it in a distributed manner.
     ViewVectorType<Integer> local_sfc_;
     ViewVectorType<Integer> sfc_to_local_;  // global to local map from sfc allrange

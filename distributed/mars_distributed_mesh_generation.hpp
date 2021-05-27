@@ -221,10 +221,12 @@ namespace mars {
     }
 
     template <Integer Dim, Integer ManifoldDim, Integer Type>
-    void partition_mesh(const context &context, DMesh<Dim, ManifoldDim, Type> &mesh) {
+    void partition_mesh(DMesh<Dim, ManifoldDim, Type> &mesh) {
         using namespace Kokkos;
 
         Kokkos::Timer timer;
+
+        const context &context = mesh.get_context();
 
         int proc_num = rank(context);
         // std::cout << "rank -:    " << proc_num << std::endl;
@@ -300,8 +302,7 @@ namespace mars {
 
     // the points and elements can be generated on the fly from the sfc code in case meshless true.
     template <Integer Dim, Integer ManifoldDim, Integer Type, bool Meshless = true>
-    void generate_distributed_cube(const context &context,
-                                   DMesh<Dim, ManifoldDim, Type> &mesh,
+    void generate_distributed_cube(DMesh<Dim, ManifoldDim, Type> &mesh,
                                    const Integer xDim,
                                    const Integer yDim,
                                    const Integer zDim) {
@@ -310,6 +311,8 @@ namespace mars {
         assert(Dim <= 3);
         assert(ManifoldDim <= Dim);
 
+        const context &context = mesh.get_context();
+
         int proc_num = rank(context);
 
         mesh.set_XDim(xDim);
@@ -317,9 +320,9 @@ namespace mars {
         mesh.set_ZDim(zDim);
 
         // partition the mesh and then generate the points and elements.
-        partition_mesh(context, mesh);
+        partition_mesh(mesh);
 
-        mesh.template create_ghost_layer<Type>(context);
+        mesh.template create_ghost_layer<Type>();
 
         if (!Meshless) {
             Kokkos::Timer timer_gen;

@@ -138,8 +138,8 @@ namespace mars {
         using DMesh = DistributedMesh<Type>;
 
         // create the quad mesh distributed through the mpi procs.
-        DMesh mesh;
-        generate_distributed_cube(context, mesh, xDim, yDim, zDim);
+        DMesh mesh(context);
+        generate_distributed_cube(mesh, xDim, yDim, zDim);
 
         /* constexpr Integer Dim = DMesh::Dim; */
         /* using Elem = typename DistributedQuad4Mesh::Elem; */
@@ -149,14 +149,14 @@ namespace mars {
         using DOFHandler = DofHandler<DMesh, Degree>;
         using DMQ = DM<DOFHandler, double, double, double>;
         using FE = FEDofMap<DOFHandler>;
-        /* using SPattern = SparsityPattern<double, default_lno_t, unsigned long, DOFHandler>; */
+        /* using SPattern = SparsityPattern<double, Integer, unsigned long, DOFHandler>; */
 
         // use as more readable tuple index to identify the data
         static constexpr int INPUT = 0;
         static constexpr int OUTPUT = 1;
         static constexpr int RHSD = 2;
 
-        DOFHandler dof_handler(&mesh, context);
+        DOFHandler dof_handler(&mesh);
         dof_handler.enumerate_dofs();
 
         /* dof_handler.print_dofs(proc_num); */
@@ -166,6 +166,10 @@ namespace mars {
         // print the global dofs for each element's local dof
         /* print_fe_dof_map(dof_handler, fe); */
         /* print_ghost_dofs(dm); */
+
+        /* SPattern sp(dof_handler);
+        sp.build_pattern(fe);
+        sp.print_sparsity_pattern(); */
 
         // create the dm object
         DMQ dm(dof_handler);
