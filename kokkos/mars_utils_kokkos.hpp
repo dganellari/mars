@@ -1,10 +1,13 @@
 #ifndef GENERATION_MARS_UTILS_KOKKOS_HPP_
 #define GENERATION_MARS_UTILS_KOKKOS_HPP_
 
+#include "mars_config.hpp"
+
 #ifdef WITH_KOKKOS
 #include "KokkosKernels_default_types.hpp"
 #include "KokkosSparse_CrsMatrix.hpp"
 #include "Kokkos_Layout.hpp"
+#include "Kokkos_UnorderedMap.hpp"
 #endif
 #include <err.h>
 #include "mars_globals.hpp"
@@ -22,7 +25,7 @@ namespace mars {
 #ifdef KOKKOS_ENABLE_OPENMP
 #define KokkosHostSpace Kokkos::HostSpace
 #define KokkosHostExecSpace Kokkos::OpenMP
-#else //Serial
+#else  // Serial
 #define KokkosHostSpace Kokkos::HostSpace
 #define KokkosHostExecSpace Kokkos::Serial
 #endif
@@ -196,9 +199,8 @@ namespace mars {
         typename ViewMatrixTextureC<T, xDim_, yDim_>::HostMirror h_view = create_mirror_view(map_side_to_nodes);
 
         parallel_for(
-            MDRangePolicy<Rank<2>, KokkosHostExecSpace>({0, 0}, {xDim, yDim}), KOKKOS_LAMBDA(int i, int j) {
-                h_view(i, j) = hostData[i][j];
-            });
+            MDRangePolicy<Rank<2>, KokkosHostExecSpace>({0, 0}, {xDim, yDim}),
+            KOKKOS_LAMBDA(int i, int j) { h_view(i, j) = hostData[i][j]; });
 
         Kokkos::deep_copy(map_side_to_nodes, h_view);
     }

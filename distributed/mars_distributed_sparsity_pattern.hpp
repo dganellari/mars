@@ -4,9 +4,9 @@
 #ifdef WITH_MPI
 #ifdef WITH_KOKKOS
 #include <sstream>
+#include "KokkosKernels_SparseUtils.hpp"
 #include "mars_distributed_finite_element.hpp"
 #include "mars_distributed_stencil.hpp"
-#include "KokkosKernels_SparseUtils.hpp"
 
 namespace mars {
 
@@ -27,12 +27,12 @@ namespace mars {
     // for default local/global ordinals, you can have for instantiation:
     // LO=default_lno_t
     // GO=default_size_type
-    template <typename V, typename LO, typename GO, typename SHandler>
+    template <typename V, typename LO, typename GO, typename SHandler, typename Offset = GO>
     class SparsityPattern {
     public:
         using Scalar = V;
         using Ordinal = LO;
-        using Offset = GO;
+        // using Offset = GO;
         using Layout = default_layout;
 
         using device_type = typename Kokkos::Device<Kokkos::DefaultExecutionSpace, KokkosSpace>;
@@ -293,7 +293,9 @@ namespace mars {
         }
 
         template <Integer L = SHandler::dofLabel, class FE>
-        ViewMatrixType<Integer> generate_fe_node_to_node_matrix(const FE &fe, const ViewVectorType<Integer> &counter, ViewVectorType<Integer> & locally_owned_dofs) {
+        ViewMatrixType<Integer> generate_fe_node_to_node_matrix(const FE &fe,
+                                                                const ViewVectorType<Integer> &counter,
+                                                                ViewVectorType<Integer> &locally_owned_dofs) {
             auto handler = get_dof_handler();
 
             auto node_to_element = fe.template build_node_element_dof_map<L>(locally_owned_dofs);
@@ -336,7 +338,6 @@ namespace mars {
                     auto local_owned_index = handler.local_to_owned_index(local_owned_dof);
                     counter(local_owned_index) = count;
                 });
-
 
             Kokkos::parallel_for(
                 "print_node_elem", owned_size, MARS_LAMBDA(const Integer i) {
@@ -658,7 +659,7 @@ namespace mars {
         crs_matrix matrix;
 
         SHandler dof_handler;
-        };
+    };
 }  // namespace mars
 
 #endif
