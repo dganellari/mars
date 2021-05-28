@@ -492,6 +492,12 @@ namespace mars {
             printf("Build FE SparsityPattern ended!\n");
         }
 
+        crs_matrix new_crs_matrix() const {
+            auto global_size = get_dof_handler().get_global_dof_size();
+            crs_value values("values", get_nnz());
+            return crs_matrix("crs_matrix", global_size, values, sparsity_pattern);
+        }
+
         /* template <Integer... Label>
         void build_pattern(FEDofMap<SHandler, Label>... fe) { */
 
