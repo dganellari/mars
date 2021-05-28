@@ -284,7 +284,7 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/base/mars_config.hpp.in
 include_directories(${CMAKE_BINARY_DIR})
 
 install(
-    TARGETS mars mars_exec
+    TARGETS mars mars_exec mars_examples
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib)

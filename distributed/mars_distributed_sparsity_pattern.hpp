@@ -10,6 +10,11 @@
 
 namespace mars {
 
+    class ISparsityPattern{
+    public:
+        virtual MARS_INLINE_FUNCTION ~ISparsityPattern() {}
+    };
+
     /* template <class Finite>
     class SparsityPattern {
     public:
@@ -28,7 +33,7 @@ namespace mars {
     // LO=default_lno_t
     // GO=default_size_type
     template <typename V, typename LO, typename GO, typename SHandler, typename Offset = GO>
-    class SparsityPattern {
+    class SparsityPattern : public ISparsityPattern {
     public:
         using Scalar = V;
         using Ordinal = LO;
