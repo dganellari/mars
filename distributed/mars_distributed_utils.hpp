@@ -553,10 +553,10 @@ namespace mars {
     }
 
     template <typename DH, typename F>
-    ViewVectorType<bool> compact_sfc_to_local(DH dofhandler,
-                                              F f,
-                                              const ViewVectorType<Integer> in,
-                                              ViewVectorType<Integer> &out) {
+    inline ViewVectorType<bool> compact_sfc_to_local(DH dofhandler,
+                                                     F f,
+                                                     const ViewVectorType<Integer> in,
+                                                     ViewVectorType<Integer> &out) {
         using namespace Kokkos;
 
         auto local_size = in.extent(0);
@@ -585,8 +585,8 @@ namespace mars {
         return in_predicate;
     }
 
-    ViewVectorType<Integer> count_sfc_to_local(const ViewVectorType<Integer> in_scan,
-                                               const ViewVectorType<bool> in_predicate) {
+    inline ViewVectorType<Integer> count_sfc_to_local(const ViewVectorType<Integer> in_scan,
+                                                      const ViewVectorType<bool> in_predicate) {
         using namespace Kokkos;
 
         const Integer count_size = in_scan.extent(0) - 1;

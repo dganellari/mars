@@ -583,7 +583,7 @@ namespace mars {
 
         /* ***************** print ******************************************** */
 
-        void print_sparsity_pattern() {
+        void print_sparsity_pattern() const {
             const Integer size = get_num_rows();
             Kokkos::parallel_for(
                 "for", size, MARS_LAMBDA(const int row) {
