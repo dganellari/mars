@@ -549,16 +549,53 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const void set_value(const Integer index, const V val) const { matrix.values(index) = val; }
+        void matrix_apply_constraints(const Integer row, crs_matrix &m, const V value) {
+            auto diag_row = get_dof_handler().local_to_owned_index(row);
+            auto diag_col = get_dof_handler().local_to_global(row);
+
+            const Integer row_idx = sparsity_pattern.row_map(diag_row);
+            const Integer next_row_idx = sparsity_pattern.row_map(diag_row + 1) - 1;
+
+            const Integer col_index = binary_search(sparsity_pattern.entries.data(), row_idx, next_row_idx, diag_col);
+
+            for (int i = row_idx; i <= next_row_idx; ++i) {
+                if (i == col_index) {
+                    m.values(i) = value;
+                } else {
+                    m.values(i) = 0;
+                }
+            }
+        }
 
         MARS_INLINE_FUNCTION
-        const void set_value(const Integer row, const Integer col, const V val) const {
+        void vector_apply_constraints(const Integer row, ViewVectorType<V> v, const V value) {
+            auto diag_row = get_dof_handler().local_to_owned_index(row);
+            v(diag_row) = value;
+        }
+
+        MARS_INLINE_FUNCTION
+        void vector_apply_constraints(const Integer row, ViewVectorType<V> v) {
+            const Integer index = get_col_index(row, row);
+            auto val = get_value(index);
+            vector_apply_constraints(row, v, val);
+        }
+
+        MARS_INLINE_FUNCTION
+        void apply_zero_constraints(const Integer row, ViewVectorType<V> v) {
+            vector_apply_constraints(row, v, 0);
+        }
+
+        MARS_INLINE_FUNCTION
+        void set_value(const Integer index, const V val) const { matrix.values(index) = val; }
+
+        MARS_INLINE_FUNCTION
+        void set_value(const Integer row, const Integer col, const V val) const {
             const Integer index = get_col_index(row, col);
             if (index > -1) matrix.values(index) = val;
         }
 
         MARS_INLINE_FUNCTION
-        const void set_value_from_global(const Integer row, const Integer col, const V val) const {
+        void set_value_from_global(const Integer row, const Integer col, const V val) const {
             const Integer index = get_col_index_from_global(row, col);
             if (index > -1) matrix.values(index) = val;
         }

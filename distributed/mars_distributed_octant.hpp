@@ -1,6 +1,7 @@
 #ifndef MARS_DIST_OCTANT_HPP
 #define MARS_DIST_OCTANT_HPP
 
+#include <map>
 #include <type_traits>
 #include "mars_base.hpp"
 #include "mars_globals.hpp"
@@ -44,8 +45,8 @@ namespace mars {
         MARS_INLINE_FUNCTION
         bool is_equals(Octant o) const { return (x == o.x && y == o.y && z == o.z); }
 
-        template <Integer Type, Integer Face = -1>
-        MARS_INLINE_FUNCTION bool is_boundary(const int xdim, const int ydim, const int zdim) {
+        template <Integer Type>
+        MARS_INLINE_FUNCTION bool is_boundary(const int xdim, const int ydim, const int zdim, const Integer Face = -1) {
             switch (Face) {
                 case 0: {
                     return (x == 0);
@@ -501,11 +502,38 @@ namespace mars {
     }
 
     //-1 for all boundary. 0 left, 1 right, 2 down, 3 up and 4 and 5 for z dim.
-    template <Integer Type, Integer Face = -1>
-    MARS_INLINE_FUNCTION bool is_boundary_sfc(const Integer sfc, const int xdim, const int ydim, const int zdim) {
+    template <Integer Type>
+    MARS_INLINE_FUNCTION bool is_boundary_sfc(const Integer sfc,
+                                              const int xdim,
+                                              const int ydim,
+                                              const int zdim,
+                                              const Integer Face = -1) {
         Octant o = get_octant_from_sfc<Type>(sfc);
-        return o.is_boundary<Type, Face>(xdim, ydim, zdim);
+        return o.is_boundary<Type>(xdim, ydim, zdim, Face);
     }
+
+    Integer find_map_side(const std::map<std::string, Integer> &side_map, const std::string side) {
+        auto search = side_map.find(side);
+        if (side_map.end() != search) {
+            return search->second;
+        }
+        return -1;
+    }
+
+        // SFC based face numbering needs the following if top bottom face nr are differnet for 2D and 3D.
+    template <Integer Type>
+    std::enable_if_t<Type == ElementType::Quad4, Integer> map_side_to_value(const std::string side) {
+        std::map<std::string, Integer> side_map{{"all", -1}, {"left", 0}, {"right", 1}, {"bottom", 2}, {"top", 3}};
+        return find_map_side(side_map, side);
+    }
+
+    template <Integer Type>
+    std::enable_if_t<Type == ElementType::Hex8, Integer> map_side_to_value(const std::string side) {
+        std::map<std::string, Integer> side_map{
+            {"all", -1}, {"left", 0}, {"right", 1}, {"front", 2}, {" back ", 3}, {" bottom ", 4}, {" top ", 5}};
+        return find_map_side(side_map, side);
+    }
+
     template <Integer Type>
     MARS_INLINE_FUNCTION void get_vertex_coordinates_from_sfc(const Integer sfc,
                                                               double *point,

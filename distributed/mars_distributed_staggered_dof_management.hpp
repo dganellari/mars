@@ -458,23 +458,25 @@ namespace mars {
             get_dof_handler().template get_dof_coordinates_from_local<ElemType>(local, point);
         }
 
-        template <Integer Type, Integer FaceNr = -1>
-        MARS_INLINE_FUNCTION bool is_boundary(const Integer local) const {
-            return get_dof_handler().template is_boundary<Type, FaceNr>(local);
+        template <Integer Type>
+        MARS_INLINE_FUNCTION bool is_boundary(const Integer local, const Integer FaceNr = -1) const {
+            return get_dof_handler().template is_boundary<Type>(local, FaceNr);
         }
 
-        template <Integer FaceNr = -1>
-        MARS_INLINE_FUNCTION bool is_boundary_dof(const Integer local) const {
-            return is_boundary<ElemType, FaceNr>(local);
+        MARS_INLINE_FUNCTION bool is_boundary_dof(const Integer local, const Integer FaceNr = -1) const {
+            return is_boundary<ElemType>(local, FaceNr);
         }
 
-        template <Integer face_nr = -1, typename F>
-        void boundary_dof_iterate(F f) {
+        template <typename F>
+        void boundary_dof_iterate(F f, const std::string side = "all") {
             auto handler = *this;
+            const Integer side_value = map_side_to_value<ElemType>(side);
+            assert(side_value != INVALID_INDEX);
+
             Kokkos::parallel_for(
                 "boundary_iterate", get_owned_dof_size(), MARS_LAMBDA(const Integer i) {
                     const Integer local = handler.get_owned_dof(i);
-                    if (handler.template is_boundary_dof<face_nr>(local)) {
+                    if (handler.template is_boundary_dof(local, side_value)) {
                         f(local);
                     }
                 });

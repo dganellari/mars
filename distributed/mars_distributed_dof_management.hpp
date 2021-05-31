@@ -1591,23 +1591,22 @@ namespace mars {
             get_dof_coordinates_from_local<ElemType>(local, point);
         }
 
-        template <Integer Type, Integer FaceNr = -1>
-        MARS_INLINE_FUNCTION bool is_boundary(const Integer local) const {
+        template <Integer Type>
+        MARS_INLINE_FUNCTION bool is_boundary(const Integer local, const Integer FaceNr = -1) const {
             const Integer sfc = local_to_sfc(local);
             const Integer xdim = get_local_dof_enum().get_XDim();
             const Integer ydim = get_local_dof_enum().get_YDim();
             const Integer zdim = get_local_dof_enum().get_ZDim();
 
-            return is_boundary_sfc<Type, FaceNr>(sfc, xdim, ydim, zdim);
+            return is_boundary_sfc<Type>(sfc, xdim, ydim, zdim, FaceNr);
         }
 
-        template <Integer FaceNr = -1>
-        MARS_INLINE_FUNCTION bool is_boundary_dof(const Integer local) const {
-            return is_boundary<ElemType, FaceNr>(local);
+        MARS_INLINE_FUNCTION bool is_boundary_dof(const Integer local, const Integer FaceNr = -1) const {
+            return is_boundary<ElemType>(local, FaceNr);
         }
 
-        template <Integer face_nr = -1, typename F>
-        void boundary_owned_dof_iterate(F f) {
+        template <typename F>
+        void boundary_owned_dof_iterate(F f, const std::string side = "all") {
             using namespace Kokkos;
             constexpr Integer Type = simplex_type::ElemType;
 
@@ -1617,18 +1616,20 @@ namespace mars {
             const Integer xdim = get_local_dof_enum().get_XDim();
             const Integer ydim = get_local_dof_enum().get_YDim();
             const Integer zdim = get_local_dof_enum().get_ZDim();
+            const Integer side_value = map_side_to_value<Type>(side);
+            assert(side_value != INVALID_INDEX);
 
             Kokkos::parallel_for(
                 "boundary_owned_dof_iterate", size, MARS_LAMBDA(const Integer i) {
                     const Integer sfc = global_to_sfc(i);
-                    if (is_boundary_sfc<Type, face_nr>(sfc, xdim, ydim, zdim)) {
+                    if (is_boundary_sfc<Type>(sfc, xdim, ydim, zdim, side_value)) {
                         f(i, sfc);
                     }
                 });
         }
 
-        template <Integer face_nr = -1, typename F>
-        void boundary_dof_iterate(F f) {
+        template <typename F>
+        void boundary_dof_iterate(F f, const std::string side = "all") {
             using namespace Kokkos;
             constexpr Integer Type = simplex_type::ElemType;
 
@@ -1640,13 +1641,15 @@ namespace mars {
             const Integer xdim = get_local_dof_enum().get_XDim();
             const Integer ydim = get_local_dof_enum().get_YDim();
             const Integer zdim = get_local_dof_enum().get_ZDim();
+            const Integer side_value = map_side_to_value<Type>(side);
+            assert(side_value != INVALID_INDEX);
 
             Kokkos::parallel_for(
                 "boundary_iterate", size, MARS_LAMBDA(const Integer i) {
                     const Integer sfc = global_to_sfc(i);
                     const Integer local = sfc_to_local(sfc);
 
-                    if (is_boundary_sfc<Type, face_nr>(sfc, xdim, ydim, zdim)) {
+                    if (is_boundary_sfc<Type>(sfc, xdim, ydim, zdim, side_value)) {
                         f(local);
                     }
                 });
