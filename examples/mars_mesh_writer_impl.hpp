@@ -92,6 +92,7 @@ void MeshWriter<Mesh>::generate_data_cube() {
     size_t n_nodes = mesh_.n_nodes();
     auto points = mesh_.get_view_points();
     const size_t spaceDim = static_cast<size_t>(mesh_.Dim);
+    const uint32_t dimension = static_cast<uint32_t>(mesh_.Dim);
 
     // Generate 3,3,3 cube on mesh_.
     mars::generate_cube(mesh_, 3, 3, 3);
@@ -113,9 +114,13 @@ void MeshWriter<Mesh>::generate_data_cube() {
     // Define the multiple variables that we need, such as vertices, types and elements.
     io_.DefineVariable<uint64_t>("connectivity", {}, {}, {nelements, element_nvertices + 1});
     io_.DefineVariable<uint32_t>("types");
+
+    // LocalValueDim: values local to the MPI process
+    // adios2::LocalValueDim is an enum
     io_.DefineVariable<uint32_t>("NumOfElements", {adios2::LocalValueDim});
     io_.DefineVariable<double>("vertices", {}, {}, {n_nodes, spaceDim});
     io_.DefineVariable<int32_t>("attribute", {}, {}, {nelements});
+    io_.DefineVariable<uint32_t>("dimension", {}, {}, {dimension});
 }
 
 // Here we want to apply a function to the mesh.
@@ -134,30 +139,31 @@ void MeshWriter<Mesh>::write() {
     adios2::Variable<uint64_t> varConnectivity = io_.InquireVariable<uint64_t>("connectivity");
     adios2::Variable<uint32_t> varTypes = io_.InquireVariable<uint32_t>("types");
 
+    // std::cout << static_cast<uint32_t>(adios2::LocalValueDim);
     // For MFEM attribute is specifying matrial properties
     adios2::Variable<int32_t> varElementAttribute = io_.InquireVariable<int32_t>("attribute");
 
-    engine_.Put("NumOfElements", static_cast<uint32_t>(mesh_.n_active_elements()));
+    engine_.Put("NumOfElements", static_cast<uint32_t>(mesh_.n_elements()));
     engine_.Put("vertices", static_cast<double>(mesh_.n_nodes()));
     // engine_.Put("types", varTypes);
 
     //###############################Attribute###########################
-    // adios2::Variable<uint64_t>::Span spanConnectivity = engine_.Put<uint64_t>(varConnectivity);
+    adios2::Variable<uint64_t>::Span spanConnectivity = engine_.Put<uint64_t>(varConnectivity);
 
     // // zero-copy access to adios2 buffer to put non-contiguous to contiguous memory
-    // adios2::Variable<int32_t>::Span spanElementAttribute = engine_.Put<int32_t>(varElementAttribute);
+    adios2::Variable<int32_t>::Span spanElementAttribute = engine_.Put<int32_t>(varElementAttribute);
 
-    // size_t elementPosition = 0;
-    // for (int e = 0; e < mesh_.n_active_elements(); ++e) {
-    //     // spanElementAttribute[e] = static_cast<int32_t>(mesh.GetAttribute(e));
-    //     // const int nVertices = mesh_.n_elements[e]->n_nodes();
-    //     // spanConnectivity[elementPosition] = nVertices;
+    auto elements = mesh_.get_view_elements();
+    size_t elementPosition = 0;
+    for (int e = 0; e < mesh_.n_elements(); ++e) {
+        spanElementAttribute[e] = static_cast<int32_t>(1);
+        spanConnectivity[elementPosition] = Mesh::Elem::NNodes;
 
-    //     // for (int v = 0; v < nVertices; ++v) {
-    //     //     spanConnectivity[elementPosition + v + 1] = mesh_.elements[e]->n_nodes()[v];
-    //     // }
-    //     // elementPosition += nVertices + 1;
-    // }
+        for (int v = 0; v < Mesh::Elem::NNodes; ++v) {
+            spanConnectivity[elementPosition + v + 1] = elements(e, v);
+        }
+        elementPosition += Mesh::Elem::NNodes + 1;
+    }
 
     //###################################################################
 
@@ -168,20 +174,21 @@ void MeshWriter<Mesh>::write() {
     adios2::Variable<double> varVertices = io_.InquireVariable<double>("vertices");
     // zero-copy access to adios2 buffer to put non-contiguous to contiguous memory
     adios2::Variable<double>::Span spanVertices = engine_.Put(varVertices);
+    auto points = mesh_.get_view_points();
 
     // For each of the nodes (in this case 16 for cube 3,3,3) we iterate through the size of
     // the space_dim which is in the case of ParallelQuad4Mesh 2.
     for (int v = 0; v < mesh_.n_nodes(); ++v) {
         const int space_dim = static_cast<int>(mesh_.Dim);
-        std::cout << "This is the space dim size: " << space_dim << std::endl;
         for (int coord = 0; coord < space_dim; ++coord) {
-            auto points = mesh_.points();
-            auto points_view = mesh_.get_view_points();
+            // std::vector<mars::Vector<mars::Real, >> mesh_.points();
+            // auto points_view = mesh_.get_view_points();
             // for (int i = 0; i < points.size(); ++i) {
             // std::cout << points[i];
             // }
 
-            // spanVertices[v * space_dim + coord] = points[v](coord);
+            // Not working maybe because of auto points...
+            spanVertices[v * space_dim + coord] = points(v, coord);
         }
     }
 
