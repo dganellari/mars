@@ -573,12 +573,12 @@ namespace mars {
             v(diag_row) = value;
         }
 
-        MARS_INLINE_FUNCTION
+        /* MARS_INLINE_FUNCTION
         void vector_apply_constraints(const Integer row, ViewVectorType<V> v) {
             const Integer index = get_col_index(row, row);
             auto val = get_value(index);
             vector_apply_constraints(row, v, val);
-        }
+        } */
 
         MARS_INLINE_FUNCTION
         void apply_zero_constraints(const Integer row, ViewVectorType<V> v) {

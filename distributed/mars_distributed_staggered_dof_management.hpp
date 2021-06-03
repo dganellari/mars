@@ -471,7 +471,6 @@ namespace mars {
         void boundary_dof_iterate(F f, const std::string side = "all") {
             auto handler = *this;
             const Integer side_value = map_side_to_value<ElemType>(side);
-            assert(side_value != INVALID_INDEX);
 
             Kokkos::parallel_for(
                 "boundary_iterate", get_owned_dof_size(), MARS_LAMBDA(const Integer i) {

@@ -517,7 +517,13 @@ namespace mars {
         if (side_map.end() != search) {
             return search->second;
         }
-        return -1;
+
+        std::cerr
+            << "An invalid side named: " << side
+            << "has been provided for the boundary iterator. Valid definitions are: all, left, right, bottom, top (2D) "
+               "back and front (3D)!"
+            << std::endl;
+        std::exit(1);
     }
 
         // SFC based face numbering needs the following if top bottom face nr are differnet for 2D and 3D.

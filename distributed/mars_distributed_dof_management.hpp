@@ -1617,7 +1617,6 @@ namespace mars {
             const Integer ydim = get_local_dof_enum().get_YDim();
             const Integer zdim = get_local_dof_enum().get_ZDim();
             const Integer side_value = map_side_to_value<Type>(side);
-            assert(side_value != INVALID_INDEX);
 
             Kokkos::parallel_for(
                 "boundary_owned_dof_iterate", size, MARS_LAMBDA(const Integer i) {
@@ -1642,7 +1641,6 @@ namespace mars {
             const Integer ydim = get_local_dof_enum().get_YDim();
             const Integer zdim = get_local_dof_enum().get_ZDim();
             const Integer side_value = map_side_to_value<Type>(side);
-            assert(side_value != INVALID_INDEX);
 
             Kokkos::parallel_for(
                 "boundary_iterate", size, MARS_LAMBDA(const Integer i) {
