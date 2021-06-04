@@ -512,7 +512,7 @@ namespace mars {
         return o.is_boundary<Type>(xdim, ydim, zdim, Face);
     }
 
-    Integer find_map_side(const std::map<std::string, Integer> &side_map, const std::string side) {
+    inline Integer find_map_side(const std::map<std::string, Integer> &side_map, const std::string side) {
         auto search = side_map.find(side);
         if (side_map.end() != search) {
             return search->second;
@@ -526,7 +526,7 @@ namespace mars {
         std::exit(1);
     }
 
-        // SFC based face numbering needs the following if top bottom face nr are differnet for 2D and 3D.
+    // SFC based face numbering needs the following if top bottom face nr are differnet for 2D and 3D.
     template <Integer Type>
     std::enable_if_t<Type == ElementType::Quad4, Integer> map_side_to_value(const std::string side) {
         std::map<std::string, Integer> side_map{{"all", -1}, {"left", 0}, {"right", 1}, {"bottom", 2}, {"top", 3}};
