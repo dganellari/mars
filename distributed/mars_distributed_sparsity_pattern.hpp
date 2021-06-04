@@ -48,6 +48,7 @@ namespace mars {
 
         using crs_row = typename crs_graph::row_map_type::non_const_type;
         using crs_col = typename crs_graph::entries_type::non_const_type;
+        using col_index_type = typename crs_graph::entries_type::value_type;
         using crs_value = typename crs_matrix::values_type::non_const_type;
 
         MARS_INLINE_FUNCTION
@@ -531,7 +532,7 @@ namespace mars {
         const crs_row get_row_map() { return get_sparsity_pattern().row_map; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_col_index_from_global(const Integer row, const Integer col) const {
+        const Integer get_col_index_from_global(const Integer row, const col_index_type col) const {
             const Integer row_idx = sparsity_pattern.row_map(row);
             const Integer next_row_idx = sparsity_pattern.row_map(row + 1) - 1;
 
@@ -549,9 +550,9 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        void matrix_apply_constraints(const Integer row, crs_matrix &m, const V value) {
-            auto diag_row = get_dof_handler().local_to_owned_index(row);
-            auto diag_col = get_dof_handler().local_to_global(row);
+        void matrix_apply_constraints(const Integer row, crs_matrix m, const V value) const {
+            const Integer diag_row = get_dof_handler().local_to_owned_index(row);
+            const col_index_type diag_col = get_dof_handler().local_to_global(row);
 
             const Integer row_idx = sparsity_pattern.row_map(diag_row);
             const Integer next_row_idx = sparsity_pattern.row_map(diag_row + 1) - 1;
@@ -567,21 +568,15 @@ namespace mars {
             }
         }
 
+        template <class VIEW>
         MARS_INLINE_FUNCTION
-        void vector_apply_constraints(const Integer row, ViewVectorType<V> v, const V value) {
+        void vector_apply_constraints(const Integer row, VIEW v, const V value) const {
             auto diag_row = get_dof_handler().local_to_owned_index(row);
-            v(diag_row) = value;
+            v(diag_row, 0) = value;
         }
 
-        /* MARS_INLINE_FUNCTION
-        void vector_apply_constraints(const Integer row, ViewVectorType<V> v) {
-            const Integer index = get_col_index(row, row);
-            auto val = get_value(index);
-            vector_apply_constraints(row, v, val);
-        } */
-
-        MARS_INLINE_FUNCTION
-        void apply_zero_constraints(const Integer row, ViewVectorType<V> v) {
+        template <class VIEW>
+        MARS_INLINE_FUNCTION void apply_zero_constraints(const Integer row, VIEW v) const {
             vector_apply_constraints(row, v, 0);
         }
 
