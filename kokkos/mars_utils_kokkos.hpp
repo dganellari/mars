@@ -23,29 +23,29 @@ namespace mars {
 
 // Defined for host operations that need to be performed always on the host
 #ifdef KOKKOS_ENABLE_OPENMP
-#define KokkosHostSpace Kokkos::HostSpace
-#define KokkosHostExecSpace Kokkos::OpenMP
+    using KokkosHostSpace = Kokkos::HostSpace;
+    using KokkosHostExecSpace = Kokkos::OpenMP;
 #else  // Serial
-#define KokkosHostSpace Kokkos::HostSpace
-#define KokkosHostExecSpace Kokkos::Serial
+    using KokkosHostSpace = Kokkos::HostSpace;
+    using KokkosHostExecSpace = Kokkos::Serial;
 #endif
 
 // Default Kokkos Exec space.
 #if defined(MARS_USE_CUDA)
 #if defined(MARS_USE_CUDAUVM)
-#define KokkosSpace Kokkos::CudaUVMSpace
+    using KokkosSpace = Kokkos::CudaUVMSpace;
 #else
-#define KokkosSpace Kokkos::CudaSpace
+    using KokkosSpace = Kokkos::CudaSpace;
 #endif  // MARS_USE_CUDAUVM
-#define KokkosLayout Kokkos::LayoutLeft
-#define MARS_LAMBDA_REF [&] __device__
+    using KokkosLayout = Kokkos::LayoutLeft;
+#define MARS_LAMBDA_REF [&] __device__;
 #else  // MARS_USE_CUDA
 #ifdef KOKKOS_ENABLE_OPENMP
-#define KokkosSpace Kokkos::HostSpace
-#define KokkosLayout Kokkos::LayoutRight
-#else  // Serial
-#define KokkosSpace Kokkos::HostSpace
-#define KokkosLayout Kokkos::LayoutRight
+    using KokkosSpace = Kokkos::HostSpace;
+    using KokkosLayout = Kokkos::LayoutRight;
+#else   // Serial
+    using KokkosSpace = Kokkos::HostSpace;
+    using KokkosLayout = Kokkos::LayoutRight;
 #endif  // KOKKOS_ENABLE_OPENMP
 #define MARS_LAMBDA_REF [&]
 #endif  // MARS_USE_CUDA
