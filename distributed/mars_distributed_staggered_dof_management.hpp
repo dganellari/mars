@@ -475,7 +475,7 @@ namespace mars {
             Kokkos::parallel_for(
                 "boundary_iterate", get_owned_dof_size(), MARS_LAMBDA(const Integer i) {
                     const Integer local = handler.get_owned_dof(i);
-                    if (handler.template is_boundary_dof(local, side_value)) {
+                    if (handler.is_boundary_dof(local, side_value)) {
                         f(local);
                     }
                 });
