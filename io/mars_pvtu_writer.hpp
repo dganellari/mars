@@ -31,7 +31,7 @@
 
 namespace mars {
 
-    template <class DM, Integer Type, class FEM>
+    template <class DM, class FEM, Integer Type = FEM::ElemType>
     class PVTUMeshWriter {
     private:
         static const int VTU_TRIANGLE = 5;
@@ -52,7 +52,8 @@ namespace mars {
             return true;
         }
 
-        bool write_vtu(const std::string &path, const DM &dm, const FEM &fe, const ViewVectorType<Real> &data) {
+        template <class View>
+        bool write_vtu(const std::string &path, const DM &dm, const FEM &fe, const View &data) {
             vtkSmartPointer<vtkXMLUnstructuredGridWriter> writer = vtkSmartPointer<vtkXMLUnstructuredGridWriter>::New();
 
             vtkSmartPointer<vtkUnstructuredGrid> unstructuredGrid = vtkSmartPointer<vtkUnstructuredGrid>::New();
@@ -67,7 +68,8 @@ namespace mars {
             Integer n = data.extent(0);
             fun->SetNumberOfValues(n);
 
-            Kokkos::parallel_for("write_vtu", n, [&](const int i) { fun->SetValue(i, data(i)); });
+            assert(data.rank() == 2);
+            Kokkos::parallel_for("write_vtu", n, [&](const int i) { fun->SetValue(i, data(i, 0)); });
 
             // Kokkos::parallel_for("for", dof.get_elem_size(), [&](const int i) {
             //     const Integer sfc_elem = dm.local_to_sfc(i);

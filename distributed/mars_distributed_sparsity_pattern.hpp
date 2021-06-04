@@ -10,7 +10,7 @@
 
 namespace mars {
 
-    class ISparsityPattern{
+    class ISparsityPattern {
     public:
         virtual MARS_INLINE_FUNCTION ~ISparsityPattern() {}
     };
@@ -50,6 +50,8 @@ namespace mars {
         using crs_col = typename crs_graph::entries_type::non_const_type;
         using col_index_type = typename crs_graph::entries_type::value_type;
         using crs_value = typename crs_matrix::values_type::non_const_type;
+
+        using DofHandler = SHandler;
 
         MARS_INLINE_FUNCTION
         SparsityPattern(SHandler h) : dof_handler(h) {}
@@ -569,8 +571,7 @@ namespace mars {
         }
 
         template <class VIEW>
-        MARS_INLINE_FUNCTION
-        void vector_apply_constraints(const Integer row, VIEW v, const V value) const {
+        MARS_INLINE_FUNCTION void vector_apply_constraints(const Integer row, VIEW v, const V value) const {
             auto diag_row = get_dof_handler().local_to_owned_index(row);
             v(diag_row, 0) = value;
         }
@@ -587,6 +588,14 @@ namespace mars {
         void set_value(const Integer row, const Integer col, const V val) const {
             const Integer index = get_col_index(row, col);
             if (index > -1) matrix.values(index) = val;
+        }
+
+        MARS_INLINE_FUNCTION
+        void atomic_add_value(const Integer row, const Integer col, const V val) const {
+            const Integer index = get_col_index(row, col);
+            if (index > -1) {
+                Kokkos::atomic_fetch_add(&matrix.values(index), val);
+            }
         }
 
         MARS_INLINE_FUNCTION
