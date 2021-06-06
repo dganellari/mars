@@ -28,7 +28,6 @@
 #include "mars_utils.hpp"
 #include "mars_vtk_writer.hpp"
 
-std::string VTKSchema();
 template <class Mesh>
 void interpolate();
 
@@ -51,5 +50,7 @@ private:
     Mesh& mesh_;
     adios2::IO io_;
     adios2::Engine engine_;
+    std::set<std::string> point_data_variables;
+    std::string VTKSchema();
 };
 #endif

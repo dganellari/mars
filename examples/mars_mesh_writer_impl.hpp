@@ -39,7 +39,8 @@
 using VectorReal = mars::ViewVectorType<mars::Real>;
 
 // Vtk schema for visualizing in ParaView.
-std::string VTKSchema() {
+template <class Mesh>
+std::string MeshWriter<Mesh>::VTKSchema() {
     std::string vtkSchema = R"(
 <?xml version="1.0"?>
 <VTKFile type="UnstructuredGrid" version="0.2" byte_order="LittleEndian">
@@ -65,6 +66,14 @@ std::string VTKSchema() {
      </UnstructuredGrid>
    </VTKFile>)";
 
+    if (point_data_variables.empty()) {
+        vtkSchema += "\n";
+    } else {
+        for (const std::string& point_datum : point_data_variables) {
+            vtkSchema += "        <DataArray Name=\"" + point_datum + "\"/>\n";
+        }
+    }
+
     return vtkSchema;
 }
 
@@ -86,16 +95,17 @@ void MeshWriter<Mesh>::open(const std::string& fname) {
 
 template <class Mesh>
 void MeshWriter<Mesh>::generate_data_cube() {
+    // Generate 3,3,3 cube on mesh_.
+    mars::generate_cube(mesh_, 4, 3, 0);
+
     // Setup intial values of vertices, nelements and Dim.
     size_t nelements = 0;
     size_t element_nvertices = 0;
     size_t n_nodes = mesh_.n_nodes();
+    assert(n_nodes > 0);
     auto points = mesh_.get_view_points();
     const size_t spaceDim = static_cast<size_t>(mesh_.Dim);
-    const uint32_t dimension = static_cast<uint32_t>(mesh_.Dim);
-
-    // Generate 3,3,3 cube on mesh_.
-    mars::generate_cube(mesh_, 3, 3, 3);
+    const size_t dimension = static_cast<uint32_t>(mesh_.Dim);
 
     // Get new values for nelements.
     auto elements = mesh_.get_view_elements();
@@ -118,9 +128,11 @@ void MeshWriter<Mesh>::generate_data_cube() {
     // LocalValueDim: values local to the MPI process
     // adios2::LocalValueDim is an enum
     io_.DefineVariable<uint32_t>("NumOfElements", {adios2::LocalValueDim});
+    io_.DefineVariable<uint32_t>("NumOfVertices", {adios2::LocalValueDim});
     io_.DefineVariable<double>("vertices", {}, {}, {n_nodes, spaceDim});
     io_.DefineVariable<int32_t>("attribute", {}, {}, {nelements});
     io_.DefineVariable<uint32_t>("dimension", {}, {}, {dimension});
+    io_.DefineVariable<double>("U", {}, {}, {n_nodes});
 }
 
 // Here we want to apply a function to the mesh.
@@ -130,24 +142,21 @@ void MeshWriter<Mesh>::interpolate() {
     VectorReal x = VectorReal("x", n_nodes);
     mars::Interpolate<Mesh> interpMesh(mesh_);
     interpMesh.apply(
-        x, MARS_LAMBDA(const mars::Real* p)->mars::Real { return p[0] * p[0]; });
+        x, MARS_LAMBDA(const mars::Real* p)->mars::Real { return p[0] * p[0] * p[0]; });
 }
 
 // Write step, write tthe results to the variables we defined before.
 template <class Mesh>
 void MeshWriter<Mesh>::write() {
+    // Still don't really understand what this does, but on mFEM
+    const uint32_t vtktype = 9;
     adios2::Variable<uint64_t> varConnectivity = io_.InquireVariable<uint64_t>("connectivity");
     adios2::Variable<uint32_t> varTypes = io_.InquireVariable<uint32_t>("types");
-
-    // std::cout << static_cast<uint32_t>(adios2::LocalValueDim);
-    // For MFEM attribute is specifying matrial properties
-    adios2::Variable<int32_t> varElementAttribute = io_.InquireVariable<int32_t>("attribute");
-
-    engine_.Put("NumOfElements", static_cast<uint32_t>(mesh_.n_elements()));
-    engine_.Put("vertices", static_cast<double>(mesh_.n_nodes()));
-    // engine_.Put("types", varTypes);
+    engine_.Put(varTypes, vtktype);
 
     //###############################Attribute###########################
+    // For MFEM attribute is specifying matrial properties
+    adios2::Variable<int32_t> varElementAttribute = io_.InquireVariable<int32_t>("attribute");
     adios2::Variable<uint64_t>::Span spanConnectivity = engine_.Put<uint64_t>(varConnectivity);
 
     // // zero-copy access to adios2 buffer to put non-contiguous to contiguous memory
@@ -168,12 +177,16 @@ void MeshWriter<Mesh>::write() {
     //###################################################################
 
     //############################Vertices###############################
+    engine_.Put("NumOfElements", static_cast<uint32_t>(mesh_.n_elements()));
+    // engine_.Put("vertices", static_cast<double>(mesh_.n_nodes()));
+    engine_.Put("NumOfVertices", static_cast<uint32_t>(mesh_.n_nodes()));
 
     std::vector<mars::Integer> e_nodes;
     // mars::IElem element;
     adios2::Variable<double> varVertices = io_.InquireVariable<double>("vertices");
     // zero-copy access to adios2 buffer to put non-contiguous to contiguous memory
-    adios2::Variable<double>::Span spanVertices = engine_.Put(varVertices);
+    adios2::Variable<double>::Span spanVertices = engine_.Put<double>(varVertices);
+
     auto points = mesh_.get_view_points();
 
     // For each of the nodes (in this case 16 for cube 3,3,3) we iterate through the size of
@@ -181,18 +194,25 @@ void MeshWriter<Mesh>::write() {
     for (int v = 0; v < mesh_.n_nodes(); ++v) {
         const int space_dim = static_cast<int>(mesh_.Dim);
         for (int coord = 0; coord < space_dim; ++coord) {
-            // std::vector<mars::Vector<mars::Real, >> mesh_.points();
-            // auto points_view = mesh_.get_view_points();
-            // for (int i = 0; i < points.size(); ++i) {
-            // std::cout << points[i];
-            // }
-
-            // Not working maybe because of auto points...
             spanVertices[v * space_dim + coord] = points(v, coord);
         }
     }
 
-    //##################################################################
+    //#################################Interpolate#################################
+
+    const mars::Integer n_nodes = mesh_.n_nodes();
+    VectorReal x = VectorReal("x", n_nodes);
+    mars::Interpolate<Mesh> interpMesh(mesh_);
+    interpMesh.apply(
+        x, MARS_LAMBDA(const mars::Real* p)->mars::Real { return p[0] * p[0] * p[0]; });
+
+    adios2::Variable<double> varU = io_.InquireVariable<double>("U");
+    // zero-copy access to adios2 buffer to put non-contiguous to contiguous memory
+    adios2::Variable<double>::Span spanU = engine_.Put<double>(varU);
+
+    for (int v = 0; v < mesh_.n_nodes(); ++v) {
+        spanU[v] = x(v);
+    }
 }
 
 template <class Mesh>
