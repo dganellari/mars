@@ -121,6 +121,14 @@ void MeshWriter<Mesh>::generate_data_cube() {
     std::cout << "elements extent(1): " << elements.extent(1) << std::endl;
     std::cout << "Space dim:" << mesh_.Dim << std::endl;
 
+    std::string mesh_type = "Mars Unstructured Mesh";
+    std::vector<std::string> viz_tools;
+    viz_tools.push_back("Paraview: ADIOS2VTXReader");
+    viz_tools.push_back("VTK: vtkADIOS2VTXReader.h");
+
+    io_.DefineAttribute<std::string>("format/mars_mesh", mesh_type);
+    io_.DefineAttribute<std::string>("format/viz_tools", viz_tools.data(), viz_tools.size());
+
     // Define the multiple variables that we need, such as vertices, types and elements.
     io_.DefineVariable<uint64_t>("connectivity", {}, {}, {nelements, element_nvertices + 1});
     io_.DefineVariable<uint32_t>("types");
