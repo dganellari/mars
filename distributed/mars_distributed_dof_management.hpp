@@ -362,13 +362,13 @@ namespace mars {
 
         template <bool Ghost, Integer Label = DofLabel::lAll>
         struct RankBoundary {
-            ViewMatrixType<bool> rank_boundary;
+            ViewMatrixTypeLeft<bool> rank_boundary;
             ViewVectorType<Integer> sfc_to_locally_owned;
             ViewVectorType<Integer> map;
             Integer proc;
 
             MARS_INLINE_FUNCTION
-            RankBoundary(ViewMatrixType<bool> rb, ViewVectorType<Integer> sl, ViewVectorType<Integer> m, Integer p)
+            RankBoundary(ViewMatrixTypeLeft<bool> rb, ViewVectorType<Integer> sl, ViewVectorType<Integer> m, Integer p)
                 : rank_boundary(rb), sfc_to_locally_owned(sl), map(m), proc(p) {}
 
             MARS_INLINE_FUNCTION
@@ -394,13 +394,13 @@ namespace mars {
 
         template <bool Ghost>
         struct RankBoundary<Ghost, DofLabel::lVolume> {
-            ViewMatrixType<bool> rank_boundary;
+            ViewMatrixTypeLeft<bool> rank_boundary;
             ViewVectorType<Integer> sfc_to_locally_owned;
             ViewVectorType<Integer> map;
             Integer proc;
 
             MARS_INLINE_FUNCTION
-            RankBoundary(ViewMatrixType<bool> rb, ViewVectorType<Integer> sl, ViewVectorType<Integer> m, Integer p)
+            RankBoundary(ViewMatrixTypeLeft<bool> rb, ViewVectorType<Integer> sl, ViewVectorType<Integer> m, Integer p)
                 : rank_boundary(rb), sfc_to_locally_owned(sl), map(m), proc(p) {}
 
             MARS_INLINE_FUNCTION
@@ -539,14 +539,14 @@ namespace mars {
             }
 
             IdentifyBoundaryDofPerRank(Mesh *m,
-                                       ViewMatrixType<bool> npb,
+                                       ViewMatrixTypeLeft<bool> npb,
                                        ViewVectorType<Integer> mp,
                                        ViewVectorType<Integer> l)
                 : mesh(m), rank_boundary(npb), map(mp), sfc_to_locally_owned(l) {}
 
             Mesh *mesh;
 
-            ViewMatrixType<bool> rank_boundary;
+            ViewMatrixTypeLeft<bool> rank_boundary;
             ViewVectorType<Integer> map;
             ViewVectorType<Integer> sfc_to_locally_owned;
         };
@@ -565,7 +565,7 @@ namespace mars {
             Integer zDim = get_mesh_manager().get_host_mesh()->get_ZDim();
 
             const Integer chunk_size_ = global_dof_enum.get_elem_size();
-            ViewMatrixType<bool> rank_boundary("count_per_proc", chunk_size_, nbh_rank_size);
+            ViewMatrixTypeLeft<bool> rank_boundary("count_per_proc", chunk_size_, nbh_rank_size);
             /* generate the sfc for the local and global dofs containing the generation locally
             for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
             Kokkos::parallel_for("identify_boundary_predicate",
@@ -576,7 +576,7 @@ namespace mars {
                                                             global_dof_enum.get_view_sfc_to_local()));
 
             /* perform a scan for each row with the sum at the end for each rank */
-            ViewMatrixType<Integer> rank_scan("rank_scan", chunk_size_ + 1, nbh_rank_size);
+            ViewMatrixTypeLeft<Integer> rank_scan("rank_scan", chunk_size_ + 1, nbh_rank_size);
             for (int i = 0; i < nbh_rank_size; ++i) {
                 auto subpredicate = subview(rank_boundary, ALL, i);
                 auto subscan = subview(rank_scan, ALL, i);

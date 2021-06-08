@@ -893,7 +893,7 @@ namespace mars {
         template <Integer Type>
         struct IdentifyBoundaryPerRank {
             ViewVectorType<Integer> global;
-            ViewMatrixType<bool> predicate;
+            ViewMatrixTypeLeft<bool> predicate;
             ViewVectorType<Integer> gp;
 
             Integer proc;
@@ -905,7 +905,7 @@ namespace mars {
             bool periodic;
 
             IdentifyBoundaryPerRank(ViewVectorType<Integer> gl,
-                                    ViewMatrixType<bool> pr,
+                                    ViewMatrixTypeLeft<bool> pr,
                                     ViewVectorType<Integer> g,
                                     Integer p,
                                     Integer xdm,
@@ -1015,8 +1015,8 @@ namespace mars {
         };
 
         inline void compact_boundary_elements(const ViewVectorType<Integer> scan_indices,
-                                              const ViewMatrixType<bool> predicate,
-                                              const ViewMatrixType<Integer> predicate_scan,
+                                              const ViewMatrixTypeLeft<bool> predicate,
+                                              const ViewMatrixTypeLeft<Integer> predicate_scan,
                                               const Integer rank_size) {
             using namespace Kokkos;
 
@@ -1044,7 +1044,7 @@ namespace mars {
 
             const Integer rank_size = gp_np.extent(0) / 2 - 1;
 
-            ViewMatrixType<bool> rank_boundary("count_per_proc", chunk_size_, rank_size);
+            ViewMatrixTypeLeft<bool> rank_boundary("count_per_proc", chunk_size_, rank_size);
             scan_boundary_ = ViewVectorType<Integer>("scan_boundary_", rank_size + 1);
 
             parallel_for(
@@ -1053,7 +1053,7 @@ namespace mars {
                 IdentifyBoundaryPerRank<Type>(local_sfc_, rank_boundary, gp_np, proc, xDim, yDim, zDim, periodic));
 
             /* perform a scan for each row with the sum at the end for each rank */
-            ViewMatrixType<Integer> rank_scan("rank_scan", chunk_size_ + 1, rank_size);
+            ViewMatrixTypeLeft<Integer> rank_scan("rank_scan", chunk_size_ + 1, rank_size);
             for (int i = 0; i < rank_size; ++i) {
                 if (i != proc) {
                     auto proc_predicate = subview(rank_boundary, ALL, i);
@@ -1064,7 +1064,6 @@ namespace mars {
 
             // perform a scan on the last row to get the total sum.
             row_scan(rank_size, chunk_size_, rank_scan, scan_boundary_);
-
             auto index_subview = subview(scan_boundary_, rank_size);
             auto h_ic = create_mirror_view(index_subview);
 
@@ -1131,6 +1130,7 @@ namespace mars {
         template <Integer Type>
         void create_ghost_layer() {
             const context &context = get_context();
+
             build_boundary_element_sets<Type>();
 
             exchange_ghost_counts(context);

@@ -166,8 +166,13 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(const int x, con
 
 #ifdef WITH_KOKKOS
 
+        Kokkos::Timer timer_gen;
         DistributedQuad4Mesh mesh(context);
         generate_distributed_cube(mesh, x, y, 0);
+
+        double time_gen = timer_gen.seconds();
+        std::cout << "2D Mesh Generation took: " << time_gen << std::endl;
+
 #endif
     }
     catch (std::exception &e)
@@ -213,7 +218,11 @@ void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(const int x, con
         using namespace Kokkos;
 
         DistributedHex8Mesh mesh(context);
+        Kokkos::Timer timer_gen;
         generate_distributed_cube(mesh, x, y, z);
+
+        double time_gen = timer_gen.seconds();
+        std::cout << "3D Mesh Generation took: " << time_gen << std::endl;
 
 #endif
     }

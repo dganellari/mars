@@ -22,7 +22,7 @@ namespace mars {
             using namespace Kokkos;
 
             const Integer size = view.extent(0);
-            ViewMatrixType<bool> rank_view("count_per_proc", size, rank_size);
+            ViewMatrixTypeLeft<bool> rank_view("count_per_proc", size, rank_size);
 
             auto handler = dof_handler;
             // build predicate
@@ -35,7 +35,7 @@ namespace mars {
                     }
                 });
 
-            ViewMatrixType<Integer> rank_scan("rank_scan", size + 1, rank_size);
+            ViewMatrixTypeLeft<Integer> rank_scan("rank_scan", size + 1, rank_size);
             for (int i = 0; i < rank_size; ++i) {
                 auto subpredicate = subview(rank_view, ALL, i);
                 auto subscan = subview(rank_scan, ALL, i);

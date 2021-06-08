@@ -60,6 +60,9 @@ namespace mars {
     using ViewVectorType = Kokkos::View<T*, KokkosLayout, KokkosSpace>;
 
     template <typename T>
+    using ViewMatrixTypeLeft = Kokkos::View<T**, Kokkos::LayoutLeft, KokkosSpace>;
+
+    template <typename T>
     using ViewMatrixType = Kokkos::View<T**, KokkosLayout, KokkosSpace>;
 
     template <typename T, Integer yDim_>
@@ -330,7 +333,7 @@ namespace mars {
 
     // not a very performant scan since its access is not coalesced. However OK for small arrays.
     template <typename T, typename U>
-    void row_scan(const Integer end, const Integer row_idx, const ViewMatrixType<U>& in_, ViewVectorType<T>& out_) {
+    void row_scan(const Integer end, const Integer row_idx, const ViewMatrixTypeLeft<U>& in_, ViewVectorType<T>& out_) {
         using namespace Kokkos;
 
         parallel_scan(
