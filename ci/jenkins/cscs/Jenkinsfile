@@ -1,0 +1,42 @@
+pipeline {
+    agent any
+    stages {
+        stage('checkout') {
+            steps {
+                echo 'Checking out the repo'
+                checkout scm
+                sh 'git submodule update --init --recursive'
+                echo "Running ${env.BUILD_ID} on ${env.JENKINS_URL}"
+            }
+        }
+        stage('build') {
+            steps {
+                echo 'Building Mars'
+                sh 'set -e'
+                sh 'set -x'
+                sh 'pwd -P'
+                sh 'ls -lh'
+                sh 'hostname'
+                sh 'bash ci/jenkins/cscs/sources/jenkins_submit.sh ci/jenkins/cscs/sources/compute_node_mars.sh'
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Mars Build is successful in Jenkins!'
+        }
+
+        failure {
+            mail body: "<b>Mars Build Failed in Jenkins: </b><br>Project: ${env.JOB_NAME} <br>Build Number: ${env.BUILD_NUMBER} <br> URL : ${env.BUILD_URL}", cc: 'patrick.zulian@usi.ch', charset: 'UTF-8', from: '', mimeType: 'text/html', subject: "ERROR CI: Project name -> ${env.JOB_NAME}", to: "ganellari.d@gmail.com";
+        }
+
+        always {
+            mail body: "<b>Mars Build Details: </b><br>Project: ${env.JOB_NAME} <br>Build Number: ${env.BUILD_NUMBER} <br> URL : ${env.BUILD_URL}", charset: 'UTF-8', from: '', mimeType: 'text/html', subject: "Build CI: Project name -> ${env.JOB_NAME}", to: "ganellari.d@gmail.com";
+        }
+
+        fixed {
+            mail body: "<b>Mars Build is back to normal: </b><br>Project: ${env.JOB_NAME} <br>Build Number: ${env.BUILD_NUMBER} <br> URL : ${env.BUILD_URL}", cc: 'patrick.zulian@usi.ch', charset: 'UTF-8', from: '', mimeType: 'text/html', subject: "Build CI Fixed: Project name -> ${env.JOB_NAME}", to: "ganellari.d@gmail.com";
+        }
+    }
+}
