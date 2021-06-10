@@ -4,6 +4,22 @@
 #include "mars_sfc_code.hpp"
 
 namespace mars {
+
+    template <Integer Type>
+    MARS_INLINE_FUNCTION Integer compute_all_range(const Integer x, const Integer y, const Integer z) {
+        switch (Type) {
+            case ElementType::Quad4: {
+                return encode_morton_2D(x + 1, y + 1);
+            }
+            case ElementType::Hex8: {
+                return encode_morton_3D(x + 1, y + 1, z + 1);
+            }
+            default: {
+                return INVALID_INDEX;
+            }
+        }
+    }
+
     template <Integer Type>
     class SFC {
     public:
@@ -132,17 +148,7 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         SFC(const Integer x, const Integer y, const Integer z) : xDim(x), yDim(y), zDim(z) {
-            switch (Type) {
-                case ElementType::Quad4: {
-                    all_range_ = encode_morton_2D(xDim + 1, yDim + 1);
-                    break;
-                }
-                case ElementType::Hex8: {
-                    all_range_ = encode_morton_3D(xDim + 1, yDim + 1, zDim + 1);
-                    break;
-                }
-            }
-
+            all_range_ = compute_all_range<Type>(xDim, yDim, zDim);
             sfc_to_local_ = ViewVectorType<Integer>("sfc_to_local_", all_range_);
         }
 
@@ -166,6 +172,5 @@ namespace mars {
 
         Integer xDim, yDim, zDim;
     };
-
 }  // namespace mars
 #endif
