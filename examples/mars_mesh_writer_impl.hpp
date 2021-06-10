@@ -60,12 +60,6 @@ std::string MeshWriter<Mesh>::VTKSchema() {
       </Cells>
       <PointData>)";
 
-    vtkSchema += R"(
-       </PointData>
-       </Piece>
-     </UnstructuredGrid>
-   </VTKFile>)";
-
     if (point_data_variables.empty()) {
         vtkSchema += "\n";
     } else {
@@ -74,14 +68,18 @@ std::string MeshWriter<Mesh>::VTKSchema() {
         }
     }
 
+    // vtkSchema += "        <DataArray Name=\"TIME\">\n";
+    // vtkSchema += "          TIME\n";
+    // vtkSchema += "        </DataArray>\n";
+
+    vtkSchema += R"(
+       </PointData>
+       </Piece>
+     </UnstructuredGrid>
+   </VTKFile>)";
+
     return vtkSchema;
 }
-
-// template <class Mesh>
-// void interpolate(VectorReal& x) {
-//     x = VectorReal("x", mesh_.n_nodes());
-//     mars::Interpolate<Mesh> interpMesh(mesh_);
-// }
 
 template <class Mesh>
 MeshWriter<Mesh>::MeshWriter(Mesh& mesh, adios2::IO io) : mesh_(mesh), io_(io) {}
@@ -141,6 +139,8 @@ void MeshWriter<Mesh>::generate_data_cube() {
     io_.DefineVariable<int32_t>("attribute", {}, {}, {nelements});
     io_.DefineVariable<uint32_t>("dimension", {}, {}, {dimension});
     io_.DefineVariable<double>("U", {}, {}, {n_nodes});
+
+    point_data_variables.insert("U");
 }
 
 // Here we want to apply a function to the mesh.
@@ -163,7 +163,7 @@ void MeshWriter<Mesh>::write() {
     engine_.Put(varTypes, vtktype);
 
     //###############################Attribute###########################
-    // For MFEM attribute is specifying matrial properties
+    // For MFEM attribute is specifying material properties
     adios2::Variable<int32_t> varElementAttribute = io_.InquireVariable<int32_t>("attribute");
     adios2::Variable<uint64_t>::Span spanConnectivity = engine_.Put<uint64_t>(varConnectivity);
 
@@ -173,7 +173,7 @@ void MeshWriter<Mesh>::write() {
     auto elements = mesh_.get_view_elements();
     size_t elementPosition = 0;
     for (int e = 0; e < mesh_.n_elements(); ++e) {
-        spanElementAttribute[e] = static_cast<int32_t>(1);
+        spanElementAttribute[e] = static_cast<int32_t>(e);
         spanConnectivity[elementPosition] = Mesh::Elem::NNodes;
 
         for (int v = 0; v < Mesh::Elem::NNodes; ++v) {
@@ -225,9 +225,7 @@ void MeshWriter<Mesh>::write() {
 
 template <class Mesh>
 void MeshWriter<Mesh>::close() {
-    // Need to write the ouput in vtk schema:
-    // MFEM does like this:
-    // Define attribute of vtk schema
+    // Define attribute vtk.xml which is how we visualize in ParaView.
     io_.DefineAttribute<std::string>("vtk.xml", VTKSchema(), {}, {});
     engine_.EndStep();
     engine_.Close();
