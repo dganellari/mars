@@ -59,7 +59,14 @@ namespace mars {
 
             template <class View>
             bool write(const std::string &path, const View &data) {
+                auto &ctx = dm.get_context();
+                int comm_size = ::mars::num_ranks(ctx);
+
+                // if (comm_size == 1) {
                 return write_vtu(path, dm, fe, data);
+                // } else {
+                //     return write_pvtu(path, dm, fe, data);
+                // }
             }
 
         private:
@@ -139,7 +146,7 @@ namespace mars {
 #endif
                 writer->Write();
 
-                export_pvtu(unstructuredGrid);
+                // export_pvtu(unstructuredGrid);
 
                 return true;
             }
@@ -157,8 +164,6 @@ namespace mars {
                 convert_cells(dm, fe, *unstructuredGrid);
 
                 auto fun = vtkSmartPointer<vtkDoubleArray>::New();
-
-                typename View::HostMirror data_host;
 
                 auto &ctx = dm.get_context();
                 int comm_size = ::mars::num_ranks(ctx);
@@ -195,7 +200,48 @@ namespace mars {
                 writer->SetInputData(unstructuredGrid);
                 writer->Write();
 
-                export_pvtu(unstructuredGrid);
+                // export_pvtu(unstructuredGrid);
+                return true;
+            }
+
+            template <class View>
+            bool write_pvtu(const std::string &path, const DofHandler &dm, const FEDofMap &fe, const View &data) {
+                create_paths(path);
+
+                auto &ctx = dm.get_context();
+                int comm_size = ::mars::num_ranks(ctx);
+
+                auto writer = vtkSmartPointer<vtkXMLPUnstructuredGridWriter>::New();
+                writer->SetNumberOfPieces(comm_size);
+                writer->SetStartPiece(0);
+                writer->SetEndPiece(comm_size - 1);
+
+                vtkSmartPointer<vtkUnstructuredGrid> unstructuredGrid = vtkSmartPointer<vtkUnstructuredGrid>::New();
+
+                convert_points(dm, *unstructuredGrid);
+                convert_cells(dm, fe, *unstructuredGrid);
+
+                auto fun = vtkSmartPointer<vtkDoubleArray>::New();
+
+                ViewVectorType<Real> local_data("local_data", dm.get_dof_size());
+                ::mars::owned_to_local(dm, data, local_data);
+                ::mars::gather_ghost_data(dm, local_data);
+
+                typename ViewVectorType<Real>::HostMirror data_host = Kokkos::create_mirror_view(local_data);
+
+                Integer n = data_host.extent(0);
+                fun->SetNumberOfValues(n);
+
+                for (Integer i = 0; i < n; ++i) {
+                    fun->SetValue(i, data_host(i));
+                }
+
+                unstructuredGrid->GetPointData()->SetScalars(fun);
+
+                writer->SetFileName(main_path.c_str());
+                writer->SetInputData(unstructuredGrid);
+                writer->Update();
+                writer->Write();
                 return true;
             }
 
