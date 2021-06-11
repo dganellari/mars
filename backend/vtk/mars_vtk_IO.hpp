@@ -7,8 +7,10 @@
 #include <vtkSmartPointer.h>
 // #include <vtkTetra.h>
 #include <vtkCellArray.h>
+#include <vtkCellData.h>
 #include <vtkDoubleArray.h>
 #include <vtkHexahedron.h>
+#include <vtkIntArray.h>
 #include <vtkNew.h>
 #include <vtkPointData.h>
 #include <vtkQuad.h>
@@ -62,11 +64,15 @@ namespace mars {
                 auto &ctx = dm.get_context();
                 int comm_size = ::mars::num_ranks(ctx);
 
-                // if (comm_size == 1) {
-                return write_vtu(path, dm, fe, data);
-                // } else {
-                //     return write_pvtu(path, dm, fe, data);
-                // }
+                if (comm_size == 1) {
+                    if (write_vtu(path, dm, fe, data)) {
+                        return true;
+                    } else {
+                        return false;
+                    }
+                } else {
+                    return write_pvtu(path, dm, fe, data);
+                }
             }
 
         private:
@@ -86,7 +92,7 @@ namespace mars {
                 if (comm_size > 1) {
                     std::size_t index = path.find_last_of('.');
                     std::string extension = path.substr(index + 1);
-                    std::string prefix = piece_path.substr(0, index);
+                    std::string prefix = piece_path.substr(0, index) + std::to_string(comm_size);
                     assert(extension == "vtu");
                     piece_path = prefix;
                     piece_path += "_" + std::to_string(rank) + "." + "vtu";
@@ -99,28 +105,30 @@ namespace mars {
             }
 
             void export_pvtu(vtkSmartPointer<vtkUnstructuredGrid> &unstructuredGrid) {
-                //                 auto &ctx = dm.get_context();
-                //                 int comm_size = ::mars::num_ranks(ctx);
-                //                 int rank = ::mars::rank(ctx);
+                auto &ctx = dm.get_context();
+                int comm_size = ::mars::num_ranks(ctx);
+                int rank = ::mars::rank(ctx);
 
-                //                 if (comm_size > 1 && rank == 0) {
-                //                     // auto pwriter = vtkSmartPointer<vtkXMLPUnstructuredGridWriter>::New();
+                if (comm_size > 1 && rank == 0) {
+                    // auto pwriter = vtkSmartPointer<vtkXMLPUnstructuredGridWriter>::New();
 
-                //                     vtkNew<vtkXMLPUnstructuredGridWriter> pwriter;
+                    vtkNew<vtkXMLPUnstructuredGridWriter> pwriter;
 
-                //                     pwriter->SetFileName(main_path.c_str());
-                //                     pwriter->SetNumberOfPieces(comm_size);
-                //                     pwriter->SetStartPiece(0);
-                //                     pwriter->SetEndPiece(comm_size - 1);
+                    pwriter->EncodeAppendedDataOff();
+                    pwriter->SetFileName(main_path.c_str());
+                    pwriter->SetNumberOfPieces(comm_size);
+                    // pwriter->SetStartPiece(0);
+                    // pwriter->SetEndPiece(comm_size - 1);
 
-                // #if VTK_MAJOR_VERSION <= 5
-                //                     pwriter->SetInput(unstructuredGrid);
-                // #else
-                //                     pwriter->SetInputData(unstructuredGrid);
-                // #endif
+                    // #if VTK_MAJOR_VERSION <= 5
+                    //                     pwriter->SetInput(unstructuredGrid);
+                    // #else
+                    pwriter->SetInputData(unstructuredGrid);
+                    // #endif
 
-                //                     pwriter->Write();
-                //                 }
+                    // pwriter->Write();
+                    pwriter->Update();
+                }
             }
 
             // path = /dir/filename.vtu
@@ -146,17 +154,13 @@ namespace mars {
 #endif
                 writer->Write();
 
-                // export_pvtu(unstructuredGrid);
-
+                export_pvtu(unstructuredGrid);
                 return true;
             }
 
             template <class View>
             bool write_vtu(const std::string &path, const DofHandler &dm, const FEDofMap &fe, const View &data) {
                 create_paths(path);
-
-                vtkSmartPointer<vtkXMLUnstructuredGridWriter> writer =
-                    vtkSmartPointer<vtkXMLUnstructuredGridWriter>::New();
 
                 vtkSmartPointer<vtkUnstructuredGrid> unstructuredGrid = vtkSmartPointer<vtkUnstructuredGrid>::New();
 
@@ -194,13 +198,27 @@ namespace mars {
                     }
                 }
 
+                fun->SetName("u");
                 unstructuredGrid->GetPointData()->SetScalars(fun);
 
-                writer->SetFileName(piece_path.c_str());
-                writer->SetInputData(unstructuredGrid);
-                writer->Write();
+                add_meta_data(*unstructuredGrid);
 
-                // export_pvtu(unstructuredGrid);
+                {
+                    vtkSmartPointer<vtkXMLUnstructuredGridWriter> writer =
+                        vtkSmartPointer<vtkXMLUnstructuredGridWriter>::New();
+
+                    writer->SetFileName(piece_path.c_str());
+#if VTK_MAJOR_VERSION <= 5
+                    writer->SetInput(unstructuredGrid);
+#else
+                    writer->SetInputData(unstructuredGrid);
+#endif
+                    writer->Write();
+                }
+
+                ctx->distributed->barrier();
+
+                export_pvtu(unstructuredGrid);
                 return true;
             }
 
@@ -210,11 +228,13 @@ namespace mars {
 
                 auto &ctx = dm.get_context();
                 int comm_size = ::mars::num_ranks(ctx);
+                int rank = ::mars::rank(ctx);
 
                 auto writer = vtkSmartPointer<vtkXMLPUnstructuredGridWriter>::New();
                 writer->SetNumberOfPieces(comm_size);
-                writer->SetStartPiece(0);
-                writer->SetEndPiece(comm_size - 1);
+                writer->SetStartPiece(rank);
+                writer->SetEndPiece(rank);
+                writer->SetWriteSummaryFile(rank == 0);
 
                 vtkSmartPointer<vtkUnstructuredGrid> unstructuredGrid = vtkSmartPointer<vtkUnstructuredGrid>::New();
 
@@ -236,19 +256,45 @@ namespace mars {
                     fun->SetValue(i, data_host(i));
                 }
 
+                fun->SetName("u");
                 unstructuredGrid->GetPointData()->SetScalars(fun);
+
+                add_meta_data(*unstructuredGrid);
 
                 writer->SetFileName(main_path.c_str());
                 writer->SetInputData(unstructuredGrid);
-                writer->Update();
+
                 writer->Write();
                 return true;
+            }
+
+            void add_meta_data(vtkUnstructuredGrid &unstructuredGrid) {
+                auto &ctx = dm.get_context();
+                int comm_size = ::mars::num_ranks(ctx);
+                int rank = ::mars::rank(ctx);
+
+                auto n_elements = dm.get_elem_size();
+
+                auto ranks = vtkSmartPointer<vtkIntArray>::New();
+                ranks->SetNumberOfValues(n_elements);
+
+                for (int i = 0; i < n_elements; ++i) {
+                    ranks->SetValue(i, rank);
+                }
+
+                ranks->SetName("ranks");
+                unstructuredGrid.GetCellData()->AddArray(ranks);
+                unstructuredGrid.GetCellData()->SetActiveScalars("ranks");
             }
 
             void convert_points(const DofHandler &dm, vtkUnstructuredGrid &unstructuredGrid) {
                 vtkSmartPointer<vtkPoints> points = vtkSmartPointer<vtkPoints>::New();
 
                 SFC<Type> dof = dm.get_local_dof_enum();
+
+                auto global_dof_array = vtkSmartPointer<vtkIntArray>::New();
+                global_dof_array->SetNumberOfValues(dof.get_elem_size());
+                global_dof_array->SetName("global_dof_id");
 
                 Kokkos::parallel_for("for", dof.get_elem_size(), [&](const int i) {
                     const Integer sfc_elem = dm.local_to_sfc(i);
@@ -259,9 +305,13 @@ namespace mars {
                         sfc_elem, point, dof.get_XDim(), dof.get_YDim(), dof.get_ZDim());
 
                     points->InsertNextPoint(point[0], point[1], point[2]);
+
+                    global_dof_array->SetValue(i, global_dof);
                 });
 
                 unstructuredGrid.SetPoints(points);
+
+                unstructuredGrid.GetPointData()->AddArray(global_dof_array);
             }
 
             void convert_cells(const DofHandler &dm, const FEDofMap &fe, vtkUnstructuredGrid &unstructuredGrid) {
