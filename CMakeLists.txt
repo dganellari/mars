@@ -6,15 +6,13 @@ project(mars VERSION 0.1.0)
 add_subdirectory(external/googletest)
 add_subdirectory(external/benchmark)
 
+include(cmake/MARSOptions.cmake)
+
 option(TRY_WITH_MOONOLITH
        "Use -DTRY_WITH_MOONOLITH=ON for enabling mesh transfer functions." OFF)
 option(TRY_WITH_KOKKOS
        "Use -DTRY_WITH_KOKKOS=ON for enabling mesh transfer functions." OFF)
 
-option(MARS_USE_CUDA "Build mars with cuda support" OFF)
-option(MARS_NO_RDMA "Build mars with NO RDMA support" OFF)
-option(MARS_USE_CUDA "Build mars with cuda support" OFF)
-option(MARS_USE_CUDAUVM "Use as default memory space CUDAUVM. This has only an effect if MARS_USE_CUDA is used too." OFF)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
@@ -185,6 +183,14 @@ add_subdirectory(distributed)
 add_subdirectory(examples)
 add_subdirectory(io)
 add_subdirectory(kokkos)
+
+if(MARS_ENABLE_ADIOS2)
+    add_subdirectory(backend/adios2)
+endif()
+
+if(MARS_ENABLE_VTK)
+    add_subdirectory(backend/vtk)
+endif()
 
 add_library(mars STATIC ${MARS_HEADERS} ${MARS_SOURCES})
 
