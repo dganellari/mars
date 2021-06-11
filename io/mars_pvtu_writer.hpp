@@ -68,7 +68,7 @@ namespace mars {
             Integer n = data.extent(0);
             fun->SetNumberOfValues(n);
 
-            assert(data.rank() == 2);
+            // assert(data.rank() == 2);
             Kokkos::parallel_for("write_vtu", n, [&](const int i) { fun->SetValue(i, data(i, 0)); });
 
             // Kokkos::parallel_for("for", dof.get_elem_size(), [&](const int i) {
