@@ -8,6 +8,7 @@
 // #include <vtkTetra.h>
 #include <vtkCellArray.h>
 #include <vtkDoubleArray.h>
+#include <vtkHexahedron.h>
 #include <vtkPointData.h>
 #include <vtkQuad.h>
 // #include <vtkXMLUnstructuredGridReader.h>
@@ -36,6 +37,7 @@ namespace mars {
     private:
         static const int VTU_TRIANGLE = 5;
         static const int VTU_QUAD = 9;
+        static const int VTU_HEXAHEDRON = 12;
 
     public:
         bool write_vtu(const std::string &path, const DM &dm, const FEM &fe) {
@@ -115,20 +117,30 @@ namespace mars {
             vtkSmartPointer<vtkCellArray> cell_array = vtkSmartPointer<vtkCellArray>::New();
 
             dm.elem_iterate([&](const Integer elem_index) {
-                vtkSmartPointer<vtkQuad> quad = vtkSmartPointer<vtkQuad>::New();
+                vtkSmartPointer<vtkCell> cell;
+
+                if (DM::Dim == 2) {
+                    cell = vtkSmartPointer<vtkQuad>::New();
+                } else {
+                    cell = vtkSmartPointer<vtkHexahedron>::New();
+                }
 
                 for (int i = 0; i < FEM::elem_nodes; i++) {
                     const Integer local_dof = fe.get_elem_local_dof(elem_index, i);
                     Dof d = dm.local_to_global_dof(local_dof);
 
                     const Integer g_id = d.get_gid();
-                    quad->GetPointIds()->SetId(i, g_id);
+                    cell->GetPointIds()->SetId(i, g_id);
                 }
 
-                cell_array->InsertNextCell(quad);
+                cell_array->InsertNextCell(cell);
             });
 
-            unstructuredGrid.SetCells(VTK_QUAD, cell_array);
+            if (DM::Dim == 2) {
+                unstructuredGrid.SetCells(VTK_QUAD, cell_array);
+            } else {
+                unstructuredGrid.SetCells(VTK_HEXAHEDRON, cell_array);
+            }
         }
     };
 }  // namespace mars
