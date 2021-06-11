@@ -194,6 +194,7 @@ endif()
 
 add_library(mars STATIC ${MARS_HEADERS} ${MARS_SOURCES})
 
+message(STATUS "MARS_LIBRARIES=${MARS_LIBRARIES}")
 target_link_libraries(mars ${MARS_LIBRARIES})
 
 target_link_libraries(
@@ -288,6 +289,15 @@ message(STATUS "${MARS_INCLUDES}")
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/base/mars_config.hpp.in
                ${CMAKE_BINARY_DIR}/mars_config.hpp)
 include_directories(${CMAKE_BINARY_DIR})
+
+if(MARS_WITH_VTK)
+    install(
+        TARGETS mars_vtk
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib)
+endif()
+
 
 install(
     TARGETS mars mars_exec mars_examples

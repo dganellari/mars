@@ -1,6 +1,6 @@
 find_package(
     VTK
-    COMPONENTS vtkCommonCore vtkCommonDataModel vtkFiltersGeneral vtkIOXML
+    COMPONENTS vtkCommonCore vtkCommonDataModel vtkFiltersGeneral vtkIOXML vtkIOParallel vtkIOParallelXML
     REQUIRED)
 
 list(APPEND MARS_VTK_MODULES .)
@@ -34,6 +34,7 @@ endif()
 
 set(MARS_WITH_VTK TRUE)
 set(MARS_WITH_VTK TRUE PARENT_SCOPE)
+
 
 set(MARS_LIBRARIES
     "${MARS_LIBRARIES};mars_vtk"

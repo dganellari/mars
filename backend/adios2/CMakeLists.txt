@@ -1,4 +1,4 @@
-# find_package(ADIOS2 REQUIRED)
+find_package(adios2 REQUIRED)
 
 
 # find_project_files(CMAKE_CURRENT_SOURCE_DIR MARS_ADIOS2_MODULES LOCAL_HEADERS
