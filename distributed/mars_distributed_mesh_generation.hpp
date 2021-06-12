@@ -83,17 +83,14 @@ namespace mars {
         return index;
     }
 
-    template <Integer Type, typename V>
-    inline void build_first_sfc(const SFC<Type> &morton,
+    template <typename V>
+    inline void build_first_sfc(const V &sfc_to_local,
                                 const ViewVectorType<bool> all_elements,
                                 const V &first_sfc,
                                 const V &gp_np,
                                 const Integer size) {
-        using namespace Kokkos;
-
-        ViewVectorType<Integer> sfc_to_local = morton.get_view_sfc_to_local();
-        parallel_for(
-            morton.get_all_range(), KOKKOS_LAMBDA(const Integer i) {
+        Kokkos::parallel_for(
+            sfc_to_local.extent(0), KOKKOS_LAMBDA(const Integer i) {
                 const Integer index = get_first_sfc_rank(all_elements(i), sfc_to_local(i), gp_np, size);
                 if (index >= 0) {
                     first_sfc(index) = i;
@@ -111,24 +108,22 @@ namespace mars {
             });
     }
 
-    template <Integer Type, typename V>
-    inline void compact_into_local(const SFC<Type> &morton,
+    template <typename V>
+    inline void compact_into_local(const V &sfc_to_local,
                                    const ViewVectorType<bool> all_elements,
                                    const V &local,
                                    const V &gp_np,
                                    const Integer rank) {
         using namespace Kokkos;
 
-        exclusive_bool_scan(0, morton.get_all_range(), morton.get_view_sfc_to_local(), all_elements);
+        auto all_range = sfc_to_local.extent(0);
+        exclusive_bool_scan(0, all_range, sfc_to_local, all_elements);
 
-        // otherwise kokkos lambda will not work with CUDA
-        ViewVectorType<Integer> sfc_to_local = morton.get_view_sfc_to_local();
         parallel_for(
-            morton.get_all_range(), KOKKOS_LAMBDA(const Integer i) {
+            all_range, KOKKOS_LAMBDA(const Integer i) {
                 const Integer index = get_local_index(all_elements(i), sfc_to_local(i), gp_np, rank);
                 if (index >= 0) {
                     local(index) = i;
-                    printf("Local: %li, SFc: %li\n", index, i);
                 }
             });
     }
@@ -147,7 +142,6 @@ namespace mars {
             RangePolicy<>(start, end), KOKKOS_LAMBDA(const Integer i) {
                 const Integer index = i - start;
                 local(index) = elem_sfc(i);
-                printf("Local: %li, SFc: %li\n", index, i);
             });
         return local;
     }
@@ -372,51 +366,35 @@ namespace mars {
         auto GpNp_host = scan_count(GpNp, counts, size);
         mesh.set_view_gp(GpNp);
 
-        double time1 = timer.seconds();
-        std::cout << "First SFC Generation and Partition took: " << time1 << " seconds. Process: " << proc_num
-                  << std::endl;
-
-        Timer t1;
         // generate the SFC linearization
         SFC<Type> morton(mesh.get_XDim(), mesh.get_YDim(), mesh.get_ZDim());
         auto all_sfc_elements_predicate = generate_sfc(morton);
-
-
-
-        double ti1 = t1.seconds();
-        std::cout << "Gen SFC Generation and Partition took: " << ti1<< " seconds. Process: " << proc_num
-                  << std::endl;
-
-        Timer t3;
+        morton.reserve_elements(mesh.get_chunk_size());
 
         // compacting sfc predicate and inserting the morton code corresponding to a true value in the predicate
         // leaves the sfc elements array sorted.
-        ViewVectorType<Integer> local("local_partition_sfc", mesh.get_chunk_size());
-        compact_into_local(morton, all_sfc_elements_predicate, local, mesh.get_view_gp(), proc_num);
+        /* ViewVectorType<Integer> local("local_partition_sfc", mesh.get_chunk_size()); */
+        ViewVectorType<Integer> sfc_to_local("sfc_to_local_mesh_generation", morton.get_all_range());
+        compact_into_local(
+            sfc_to_local, all_sfc_elements_predicate, morton.get_view_elements(), mesh.get_view_gp(), proc_num);
 
-        double time3 = t3.seconds();
-        std::cout << "Third: SFC Generation and Partition took: " << time3 << " seconds. Process: " << proc_num
-                  << std::endl;
-
-
-        Timer t4;
         ViewVectorType<Integer> first_sfc("first_sfc_per_rank", size);
-        build_first_sfc(morton, all_sfc_elements_predicate, first_sfc, mesh.get_view_gp(), size);
+        build_first_sfc(sfc_to_local, all_sfc_elements_predicate, first_sfc, mesh.get_view_gp(), size);
 
-        double time4 = t4.seconds();
-        std::cout << "Fourth: SFC Generation and Partition took: " << time4 << " seconds. Process: " << proc_num
-                  << std::endl;
+        auto all_range = morton.get_all_range();
+        build_gp_np(first_sfc, mesh.get_view_gp(), GpNp_host, all_range - 1);
 
-        build_gp_np(first_sfc, mesh.get_view_gp(), GpNp_host, morton.get_all_range() - 1);
-
-        mesh.set_view_sfc(local);
-        mesh.set_view_sfc_to_local(morton.get_view_sfc_to_local());
+        mesh.set_view_sfc(morton.get_view_elements());
+        morton.generate_sfc_to_local_map();
+        mesh.set_sfc_to_local_map(morton.get_sfc_to_local_map());
+        /* mesh.set_view_sfc_to_local(morton.get_view_sfc_to_local()); */
 
         double time_gen = timer.seconds();
         std::cout << "SFC Generation and Partition took: " << time_gen << " seconds. Process: " << proc_num
                   << std::endl;
 
-        generate_local_sfc<Type>(mesh, counts);
+        /* //Classical method using the radix sort. 10x slower than the current one due to the sort.
+        generate_local_sfc<Type>(mesh, counts); */
     }
 
     // the points and elements can be generated on the fly from the sfc code in case meshless true.

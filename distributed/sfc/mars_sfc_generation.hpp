@@ -153,6 +153,17 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
+        const UnorderedMap<Integer, Integer> &get_sfc_to_local_map() const { return sfc_to_local_map_; }
+
+        void generate_sfc_to_local_map() {
+            sfc_to_local_map_ = UnorderedMap<Integer, Integer>(get_elem_size());
+            Kokkos::parallel_for(
+                "generate_sfc_to_local_map", get_elem_size(), MARS_LAMBDA(const Integer i) {
+                    sfc_to_local_map_.insert(elements_(i), i);
+                });
+        }
+
+        MARS_INLINE_FUNCTION
         const Integer get_XDim() const { return xDim; }
 
         MARS_INLINE_FUNCTION
@@ -168,6 +179,7 @@ namespace mars {
         Integer elements_size_;
 
         ViewVectorType<Integer> sfc_to_local_;
+        UnorderedMap<Integer, Integer> sfc_to_local_map_;
         Integer all_range_;
 
         Integer xDim, yDim, zDim;

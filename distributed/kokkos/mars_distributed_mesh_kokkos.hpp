@@ -190,11 +190,12 @@ namespace mars {
         MARS_INLINE_FUNCTION
         void set_view_sfc(const ViewVectorType<Integer> &local) { local_sfc_ = local; }
 
-        MARS_INLINE_FUNCTION
-        const ViewVectorType<Integer> &get_view_sfc_to_local() const { return sfc_to_local_; }
+        /* MARS_INLINE_FUNCTION */
+        /* const ViewVectorType<Integer> &get_view_sfc_to_local() const { return sfc_to_local_; } */
 
-        MARS_INLINE_FUNCTION
-        void set_view_sfc_to_local(const ViewVectorType<Integer> &local) { sfc_to_local_ = local; }
+        /* MARS_INLINE_FUNCTION */
+        /* void set_view_sfc_to_local(const ViewVectorType<Integer> &local) { sfc_to_local_ = local; } */
+
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_gp() const { return gp_np; }
 
@@ -1194,7 +1195,16 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        Integer get_index_of_sfc_elem(const Integer enc_oc) { return sfc_to_local_(enc_oc) - gp_np(2 * proc + 1); }
+        Integer get_index_of_sfc_elem(const Integer enc_oc) {
+            /* return sfc_to_local_(enc_oc) - gp_np(2 * proc + 1); */
+            auto index = INVALID_INDEX;
+            const auto it = get_sfc_to_local_map().find(enc_oc);
+            if (get_sfc_to_local_map().valid_at(it)) {
+                index = get_sfc_to_local_map().value_at(it);
+            }
+            assert(get_sfc_to_local_map().valid_at(it));
+            return index;
+        }
 
         MARS_INLINE_FUNCTION
         void set_periodic() { periodic = true; }
@@ -1293,75 +1303,82 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_ghost() const { return ghost_; }
 
+        MARS_INLINE_FUNCTION
+        const ViewVectorType<Integer>::HostMirror &get_view_scan_recv_mirror() const { return scan_recv_mirror; }
 
-    MARS_INLINE_FUNCTION
-    const ViewVectorType<Integer>::HostMirror &get_view_scan_recv_mirror() const { return scan_recv_mirror; }
+        MARS_INLINE_FUNCTION
+        const ViewVectorType<Integer>::HostMirror &get_view_scan_send_mirror() const { return scan_send_mirror; }
 
-    MARS_INLINE_FUNCTION
-    const ViewVectorType<Integer>::HostMirror &get_view_scan_send_mirror() const { return scan_send_mirror; }
+        /* MARS_INLINE_FUNCTION
+        bool is_owned_index(const Integer sfc_index) const {
+            auto sfc = get_sfc(sfc_index);
+            auto stl = get_view_sfc_to_local();
+            if ((sfc + 1) >= stl.extent(0)) return false;
+            [>use the sfc to local which is the scan of the predicate.
+             * To get the predicate value the difference with the successive index is needed.<]
+            const Integer pred_value = stl(sfc + 1) - stl(sfc);
+            return (pred_value > 0);
+        }*/
 
+        MARS_INLINE_FUNCTION
+        bool is_owned(const Integer sfc) const {
+            const auto it = get_sfc_to_local_map().find(sfc);
+            return (get_sfc_to_local_map().valid_at(it));
+        }
 
-    MARS_INLINE_FUNCTION
-    bool is_owned_index(const Integer sfc_index) const {
-        auto sfc = get_sfc(sfc_index);
-        auto stl = get_view_sfc_to_local();
-        if ((sfc + 1) >= stl.extent(0)) return false;
-        /* use the sfc to local which is the scan of the predicate.
-         * To get the predicate value the difference with the successive index is needed. */
-        const Integer pred_value = stl(sfc + 1) - stl(sfc);
-        return (pred_value > 0);
-    }
+        MARS_INLINE_FUNCTION
+        bool is_owned_index(const Integer sfc_index) const {
+            auto sfc = get_sfc(sfc_index);
+            return is_owned(sfc);
+        }
 
-    MARS_INLINE_FUNCTION
-    bool is_owned(const Integer sfc) const {
-        auto stl = get_view_sfc_to_local();
-        if ((sfc + 1) >= stl.extent(0)) return false;
-        /* use the sfc to local which is the scan of the predicate.
-         * To get the predicate value the difference with the successive index is needed. */
-        const Integer pred_value = stl(sfc + 1) - stl(sfc);
-        return (pred_value > 0);
-    }
+        const context &get_context() const { return ctx; }
+        void set_context(const context &c) { ctx = c; }
 
-    const context &get_context() const { return ctx; }
-    void set_context(const context &c) { ctx = c; }
+        MARS_INLINE_FUNCTION
+        const UnorderedMap<Integer, Integer> &get_sfc_to_local_map() const { return sfc_to_local_map_; }
 
-private:
-    // careful: not a device pointer!
-    const context &ctx;
-    // This block represents the SFC data and the data structures needed to manage it in a distributed manner.
-    ViewVectorType<Integer> local_sfc_;
-    ViewVectorType<Integer> sfc_to_local_;  // global to local map from sfc allrange
-    ViewVectorType<Integer> gp_np;          // parallel partition info shared among all processes.
-    Integer xDim, yDim, zDim;
-    Integer chunk_size_;
-    Integer proc;
+        MARS_INLINE_FUNCTION
+        void set_sfc_to_local_map(const UnorderedMap<Integer, Integer> &map) { sfc_to_local_map_ = map; }
 
-    // Periodic mesh feature supported.
-    bool periodic = false;
+    private:
+        // careful: not a device pointer!
+        const context &ctx;
+        // This block represents the SFC data and the data structures needed to manage it in a distributed manner.
+        ViewVectorType<Integer> local_sfc_;
+        /* ViewVectorType<Integer> sfc_to_local_;  // global to local map from sfc allrange */
+        UnorderedMap<Integer, Integer> sfc_to_local_map_;
+        ViewVectorType<Integer> gp_np;  // parallel partition info shared among all processes.
+        Integer xDim, yDim, zDim;
+        Integer chunk_size_;
+        Integer proc;
 
-    ViewMatrixTextureC<Integer, Comb::value, 2> combinations;
+        // Periodic mesh feature supported.
+        bool periodic = false;
 
-    /* If generated "meshless" then the following block is not reserved in memory.
-    Check distributed generation for more details. */
-    ViewMatrixType<Integer> elements_;
-    ViewMatrixType<Real> points_;
-    ViewVectorType<bool> active_;
-    Integer elements_size_;
-    Integer points_size_;
-    /* global to local map for the mesh elem indices. */
-    UnorderedMap<Integer, Integer> global_to_local_map_;
+        ViewMatrixTextureC<Integer, Comb::value, 2> combinations;
 
-    // Boundary and ghost layer data
-    ViewVectorType<Integer> boundary_;             // sfc code for the ghost layer
-    ViewVectorType<Integer> boundary_lsfc_index_;  // view index of the previous
-    ViewVectorType<Integer> scan_boundary_;
-    // mirror view on the mesh scan boundary view used for the mpi send
-    ViewVectorType<Integer>::HostMirror scan_send_mirror;
-    // ghost data
-    ViewVectorType<Integer> ghost_;
-    ViewVectorType<Integer> scan_ghost_;
-    // mirror view on the scan_ghost view for the mpi receive
-    ViewVectorType<Integer>::HostMirror scan_recv_mirror;
+        /* If generated "meshless" then the following block is not reserved in memory.
+        Check distributed generation for more details. */
+        ViewMatrixType<Integer> elements_;
+        ViewMatrixType<Real> points_;
+        ViewVectorType<bool> active_;
+        Integer elements_size_;
+        Integer points_size_;
+        /* global to local map for the mesh elem indices. */
+        UnorderedMap<Integer, Integer> global_to_local_map_;
+
+        // Boundary and ghost layer data
+        ViewVectorType<Integer> boundary_;             // sfc code for the ghost layer
+        ViewVectorType<Integer> boundary_lsfc_index_;  // view index of the previous
+        ViewVectorType<Integer> scan_boundary_;
+        // mirror view on the mesh scan boundary view used for the mpi send
+        ViewVectorType<Integer>::HostMirror scan_send_mirror;
+        // ghost data
+        ViewVectorType<Integer> ghost_;
+        ViewVectorType<Integer> scan_ghost_;
+        // mirror view on the scan_ghost view for the mpi receive
+        ViewVectorType<Integer>::HostMirror scan_recv_mirror;
     };
 
     using DistributedMesh1 = mars::Mesh<1, 1, DistributedImplementation, Simplex<1, 1, DistributedImplementation>>;
