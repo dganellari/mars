@@ -23,12 +23,14 @@ namespace mars {
     template <Integer Type>
     class SFC {
     public:
-        inline void compact_elements(const ViewVectorType<bool> all_elements) {
+        inline void compact_elements(const ViewVectorType<Integer> &sfc_to_local,
+                                     const ViewVectorType<bool> all_elements) {
             using namespace Kokkos;
 
-            exclusive_bool_scan(0, get_all_range(), get_view_sfc_to_local(), all_elements);
+            /* exclusive_bool_scan(0, get_all_range(), get_view_sfc_to_local(), all_elements); */
+            exclusive_bool_scan(0, get_all_range(), sfc_to_local, all_elements);
 
-            auto sfc_subview = subview(get_view_sfc_to_local(), get_all_range() - 1);
+            auto sfc_subview = subview(sfc_to_local, get_all_range() - 1);
             auto elm_subview = subview(all_elements, get_all_range() - 1);
             auto h_sfc = create_mirror_view(sfc_subview);
             auto h_elm = create_mirror_view(elm_subview);
@@ -37,10 +39,10 @@ namespace mars {
 
             const Integer elem_size = h_sfc() + h_elm();
             reserve_elements(elem_size);
+            sfc_to_local_ = sfc_to_local;
 
             // otherwise kokkos lambda will not work with CUDA
             ViewVectorType<Integer> el = elements_;
-            ViewVectorType<Integer> sfc_to_local = sfc_to_local_;
             parallel_for(
                 get_all_range(), KOKKOS_LAMBDA(const Integer i) {
                     if (all_elements(i) == 1) {
@@ -51,15 +53,13 @@ namespace mars {
                 });
         }
 
-        inline void compact_elements(const ViewVectorType<bool> all_elements,
+        inline void compact_elements(const ViewVectorType<Integer> &sfc_to_local,
+                                     const ViewVectorType<bool> all_elements,
                                      const ViewVectorType<Integer> all_labels,
                                      ViewVectorType<Integer> &elb) {
             using namespace Kokkos;
-
             elb = ViewVectorType<Integer>("compacted_elb", get_elem_size());
-
             // otherwise kokkos lambda will not work with CUDA
-            ViewVectorType<Integer> sfc_to_local = sfc_to_local_;
             parallel_for(
                 get_all_range(), KOKKOS_LAMBDA(const Integer i) {
                     if (all_elements(i) == 1) {
@@ -70,11 +70,12 @@ namespace mars {
                 });
         }
 
-        inline void compact_element_and_labels(const ViewVectorType<bool> all_elements,
+        inline void compact_element_and_labels(const ViewVectorType<Integer> &sfc_to_local,
+                                               const ViewVectorType<bool> all_elements,
                                                const ViewVectorType<Integer> all_labels) {
-            compact_elements(all_elements);  // this should come first!
+            compact_elements(sfc_to_local, all_elements);  // this should come first!
             /* compact_element_labels(all_elements, all_labels); */
-            compact_elements(all_elements, all_labels, element_labels_);
+            compact_elements(sfc_to_local, all_elements, all_labels, element_labels_);
         }
 
         inline void compact_element_orientations(const ViewVectorType<bool> all_elements,

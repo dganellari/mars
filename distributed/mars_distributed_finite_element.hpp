@@ -102,19 +102,19 @@ namespace mars {
                 /* for (const auto &x : {{0,0}, {1, 0}, {1, 1}, {0, 1}}) */
                 /* for (i,j from 0 to 2) first = (i + j) % 2; second = i;*/
 
-                Integer localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 0, 0);
+                Integer localid = dofHandler.template enum_corner<ElemType>(oc, 0, 0);
                 f(sfc_index, index, localid);
                 /* elem_dof_enum(sfc_index, index++) = localid; */
 
-                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 1, 0);
+                localid = dofHandler.template enum_corner<ElemType>(oc, 1, 0);
                 f(sfc_index, index, localid);
                 /* elem_dof_enum(sfc_index, index++) = localid; */
 
-                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 1, 1);
+                localid = dofHandler.template enum_corner<ElemType>(oc, 1, 1);
                 f(sfc_index, index, localid);
                 /* elem_dof_enum(sfc_index, index++) = localid; */
 
-                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 0, 1);
+                localid = dofHandler.template enum_corner<ElemType>(oc, 0, 1);
                 f(sfc_index, index, localid);
                 /* elem_dof_enum(sfc_index, index++) = localid; */
             }
@@ -128,35 +128,35 @@ namespace mars {
 
                 // go through all the corner dofs for the current element counterclockwise
 
-                Integer localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 0, 0, 0);
+                Integer localid = dofHandler.template enum_corner<ElemType>(oc, 0, 0, 0);
                 f(sfc_index, index, localid);
                 /* elem_dof_enum(sfc_index, index++) = localid; */
 
-                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 1, 0, 0);
+                localid = dofHandler.template enum_corner<ElemType>(oc, 1, 0, 0);
                 f(sfc_index, index, localid);
                 /* elem_dof_enum(sfc_index, index++) = localid; */
 
-                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 1, 1, 0);
+                localid = dofHandler.template enum_corner<ElemType>(oc, 1, 1, 0);
                 f(sfc_index, index, localid);
                 /* elem_dof_enum(sfc_index, index++) = localid; */
 
-                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 0, 1, 0);
+                localid = dofHandler.template enum_corner<ElemType>(oc, 0, 1, 0);
                 f(sfc_index, index, localid);
                 /* elem_dof_enum(sfc_index, index++) = localid; */
 
-                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 0, 0, 1);
+                localid = dofHandler.template enum_corner<ElemType>(oc, 0, 0, 1);
                 f(sfc_index, index, localid);
                 /* elem_dof_enum(sfc_index, index++) = localid; */
 
-                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 1, 0, 1);
+                localid = dofHandler.template enum_corner<ElemType>(oc, 1, 0, 1);
                 f(sfc_index, index, localid);
                 /* elem_dof_enum(sfc_index, index++) = localid; */
 
-                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 1, 1, 1);
+                localid = dofHandler.template enum_corner<ElemType>(oc, 1, 1, 1);
                 f(sfc_index, index, localid);
                 /* elem_dof_enum(sfc_index, index++) = localid; */
 
-                localid = DofHandler::template enum_corner<ElemType>(sfc_to_local, oc, 0, 1, 1);
+                localid = dofHandler.template enum_corner<ElemType>(oc, 0, 1, 1);
                 f(sfc_index, index, localid);
                 /* elem_dof_enum(sfc_index, index++) = localid; */
             }
@@ -170,7 +170,7 @@ namespace mars {
 
                 for (int j = 0; j < face_nodes; j++) {
                     Integer localid =
-                        DofHandler::template enum_face_node<dir, ElemType>(sfc_to_local, face_cornerA, j, side);
+                        dofHandler.template enum_face_node<dir, ElemType>(face_cornerA, j, side);
                     f(sfc_index, index, localid);
                     /* elem_dof_enum(sfc_index, index++) = localid; */
                 }
@@ -190,7 +190,7 @@ namespace mars {
                 for (int j = 0; j < DofHandler::edge_dofs; j++) {
                     Integer dof_sfc = DofHandler::template process_edge_node<ElemType>(
                         mars::get_sfc_from_octant<ElemType>, start, direction, j);
-                    auto localid = sfc_to_local(dof_sfc);
+                    auto localid = dofHandler.sfc_to_local(dof_sfc);
                     f(sfc_index, index, localid);
                     /* elem_dof_enum(sfc_index, index++) = sfc_to_local(dof_sfc); */
                 }
@@ -258,17 +258,11 @@ namespace mars {
                 ordered_dof_enumeration(i, index);
             }
 
-            /* EnumLocalDofs(DofHandler d, ViewMatrixType<Integer> ede, ViewVectorType<Integer> stl) */
-            /* : dofHandler(d), elem_dof_enum(ede), sfc_to_local(stl) {} */
-
             MARS_INLINE_FUNCTION
-            EnumLocalDofs(DofHandler d, F fun, ViewVectorType<Integer> stl)
-                : dofHandler(d), f(fun), sfc_to_local(stl) {}
+            EnumLocalDofs(DofHandler d, F fun) : dofHandler(d), f(fun) {}
 
             DofHandler dofHandler;
             F f;
-            /* ViewMatrixType<Integer> elem_dof_enum; */
-            ViewVectorType<Integer> sfc_to_local;
         };
 
         struct DofMap {
@@ -293,17 +287,11 @@ namespace mars {
             elem_dof_enum = ViewMatrixType<Integer>("elem_dof_enum", size + ghost_size, elem_nodes);
             /* enumerates the dofs within each element topologically */
             Kokkos::parallel_for(
-                "enum_local_dofs",
-                size,
-                EnumLocalDofs<DofMap, false>(
-                    handler, DofMap(elem_dof_enum, 0), handler.get_local_dof_enum().get_view_sfc_to_local()));
+                "enum_local_dofs", size, EnumLocalDofs<DofMap, false>(handler, DofMap(elem_dof_enum, 0)));
 
             // go through the ghost layer
             Kokkos::parallel_for(
-                "enum_local_dofs",
-                ghost_size,
-                EnumLocalDofs<DofMap, true>(
-                    handler, DofMap(elem_dof_enum, size), handler.get_local_dof_enum().get_view_sfc_to_local()));
+                "enum_local_dofs", ghost_size, EnumLocalDofs<DofMap, true>(handler, DofMap(elem_dof_enum, size)));
         }
 
         // Unique number of elemnts that share a dof
@@ -380,16 +368,12 @@ namespace mars {
             Kokkos::parallel_for("enum_local_dofs",
                                  size,
                                  EnumLocalDofs<NodeElementDofMap, false, L>(
-                                     handler,
-                                     NodeElementDofMap(handler, dof_enum, owned_index, owned_dof_map, 0),
-                                     handler.get_local_dof_enum().get_view_sfc_to_local()));
+                                     handler, NodeElementDofMap(handler, dof_enum, owned_index, owned_dof_map, 0)));
 
             Kokkos::parallel_for("enum_local_dofs",
                                  ghost_size,
                                  EnumLocalDofs<NodeElementDofMap, true, L>(
-                                     handler,
-                                     NodeElementDofMap(handler, dof_enum, owned_index, owned_dof_map, size),
-                                     handler.get_local_dof_enum().get_view_sfc_to_local()));
+                                     handler, NodeElementDofMap(handler, dof_enum, owned_index, owned_dof_map, size)));
             return dof_enum;
         }
 

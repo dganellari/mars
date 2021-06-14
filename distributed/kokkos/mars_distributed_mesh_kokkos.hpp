@@ -1323,7 +1323,7 @@ namespace mars {
         MARS_INLINE_FUNCTION
         bool is_owned(const Integer sfc) const {
             const auto it = get_sfc_to_local_map().find(sfc);
-            return (get_sfc_to_local_map().valid_at(it));
+            return get_sfc_to_local_map().valid_at(it);
         }
 
         MARS_INLINE_FUNCTION

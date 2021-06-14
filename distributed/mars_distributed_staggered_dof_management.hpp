@@ -255,10 +255,10 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        bool is_owned(const Integer local) const { return locally_owned_dof(local); }
+        bool is_owned(const Integer local) const { return is_owned_dof_sfc(local); }
 
         MARS_INLINE_FUNCTION
-        Integer locally_owned_dof(const Integer local_dof) const {
+        Integer is_owned_dof_sfc(const Integer local_dof) const {
             const Integer owned = get_dof_handler().local_to_owned_dof(local_dof);
             const Integer pred_value = owned_dof_map(owned + 1) - owned_dof_map(owned);
             return (pred_value > 0);
@@ -270,6 +270,15 @@ namespace mars {
             const Integer pred_value = owned_dof_map(owned + 1) - owned_dof_map(owned);
             if (pred_value > 0)
                 return owned_dof_map(owned);
+            else
+                return INVALID_INDEX;
+        }
+
+        MARS_INLINE_FUNCTION
+        Integer get_local_index(const Integer local_dof) const {
+            const Integer pred_value = local_dof_map(local_dof + 1) - local_dof_map(local_dof);
+            if (pred_value > 0)
+                return local_dof_map(local_dof);
             else
                 return INVALID_INDEX;
         }
@@ -537,12 +546,12 @@ namespace mars {
         Integer local_to_sfc(const Integer local) const { return get_local_dof_enum().get_view_elements()(local); }
 
         MARS_INLINE_FUNCTION
-        Integer sfc_to_local(const Integer sfc) const { return get_local_dof_enum().get_view_sfc_to_local()(sfc); }
+        Integer sfc_to_local(const Integer sfc) const { return get_dof_handler().sfc_to_local(sfc); }
 
         template <Integer Type>
-        static MARS_INLINE_FUNCTION Integer
-        enum_corner(const ViewVectorType<Integer> &sfc_to_local, const Octant &oc, const int i, const int j) {
-            return DofHandler<Mesh, degree>::template enum_corner<Type>(sfc_to_local, oc, i, j);
+        MARS_INLINE_FUNCTION Integer
+        enum_corner(const Octant &oc, const int i, const int j) const {
+            return get_dof_handler().template enum_corner<Type>(oc, i, j);
         }
 
         MARS_INLINE_FUNCTION
@@ -554,11 +563,8 @@ namespace mars {
         }
 
         template <Integer part, Integer Type>
-        static MARS_INLINE_FUNCTION Integer enum_face_node(const ViewVectorType<Integer> &sfc_to_local,
-                                                           const Octant &face_cornerA,
-                                                           const int j,
-                                                           const int dir) {
-            return DofHandler<Mesh, degree>::template enum_face_node<part, Type>(sfc_to_local, face_cornerA, j, dir);
+        MARS_INLINE_FUNCTION Integer enum_face_node(const Octant &face_cornerA, const int j, const int dir) const {
+            return get_dof_handler().template enum_face_node<part, Type>(face_cornerA, j, dir);
         }
 
         MARS_INLINE_FUNCTION
