@@ -190,12 +190,6 @@ namespace mars {
         MARS_INLINE_FUNCTION
         void set_view_sfc(const ViewVectorType<Integer> &local) { local_sfc_ = local; }
 
-        /* MARS_INLINE_FUNCTION */
-        /* const ViewVectorType<Integer> &get_view_sfc_to_local() const { return sfc_to_local_; } */
-
-        /* MARS_INLINE_FUNCTION */
-        /* void set_view_sfc_to_local(const ViewVectorType<Integer> &local) { sfc_to_local_ = local; } */
-
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_gp() const { return gp_np; }
 

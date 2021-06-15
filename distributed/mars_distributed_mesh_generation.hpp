@@ -129,7 +129,7 @@ namespace mars {
     }
 
     template <typename V, typename M>
-    auto compact_into_local(const V &elem_sfc, M &mesh) {
+    ViewVectorType<Integer> compact_into_local(const V &elem_sfc, M &mesh) {
         using namespace Kokkos;
 
         ViewVectorType<Integer> local("local_partition_sfc", mesh.get_chunk_size());
@@ -206,14 +206,15 @@ namespace mars {
         build_gp_np(first_sfc, mesh.get_view_gp(), GpNp_host, last_sfc - 1);
     }
 
+    using unsigned_l = unsigned long;
+
     template <Integer Dim, Integer ManifoldDim, Integer Type>
-    auto generate_elements_sfc(DMesh<Dim, ManifoldDim, Type> &mesh) {
+    ViewVectorType<unsigned_l> generate_elements_sfc(DMesh<Dim, ManifoldDim, Type> &mesh) {
         using namespace Kokkos;
         const Integer xDim = mesh.get_XDim();
         const Integer yDim = mesh.get_YDim();
         const Integer zDim = mesh.get_ZDim();
 
-        using unsigned_l = unsigned long;
 
         Integer number_of_elements = get_number_of_elements(mesh);
         ViewVectorType<unsigned_l> element_sfc("element_sfc", number_of_elements);
@@ -387,7 +388,6 @@ namespace mars {
         mesh.set_view_sfc(morton.get_view_elements());
         morton.generate_sfc_to_local_map();
         mesh.set_sfc_to_local_map(morton.get_sfc_to_local_map());
-        /* mesh.set_view_sfc_to_local(morton.get_view_sfc_to_local()); */
 
         double time_gen = timer.seconds();
         std::cout << "SFC Generation and Partition took: " << time_gen << " seconds. Process: " << proc_num

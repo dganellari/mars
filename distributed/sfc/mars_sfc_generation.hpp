@@ -27,7 +27,6 @@ namespace mars {
                                      const ViewVectorType<bool> all_elements) {
             using namespace Kokkos;
 
-            /* exclusive_bool_scan(0, get_all_range(), get_view_sfc_to_local(), all_elements); */
             exclusive_bool_scan(0, get_all_range(), sfc_to_local, all_elements);
 
             auto sfc_subview = subview(sfc_to_local, get_all_range() - 1);
@@ -39,7 +38,6 @@ namespace mars {
 
             const Integer elem_size = h_sfc() + h_elm();
             reserve_elements(elem_size);
-            sfc_to_local_ = sfc_to_local;
 
             // otherwise kokkos lambda will not work with CUDA
             ViewVectorType<Integer> el = elements_;
@@ -76,11 +74,6 @@ namespace mars {
             compact_elements(sfc_to_local, all_elements);  // this should come first!
             /* compact_element_labels(all_elements, all_labels); */
             compact_elements(sfc_to_local, all_elements, all_labels, element_labels_);
-        }
-
-        inline void compact_element_orientations(const ViewVectorType<bool> all_elements,
-                                                 const ViewVectorType<Integer> all_labels) {
-            compact_elements(all_elements, all_labels, element_orientations_);
         }
 
         void init_element_orientations(const Integer n_elements) {
@@ -137,11 +130,6 @@ namespace mars {
 
         const Integer get_elem_size() const { return elements_size_; }
 
-        const ViewVectorType<Integer> &get_view_sfc_to_local() const  // override
-        {
-            return sfc_to_local_;
-        }
-
         const Integer get_all_range() const { return all_range_; }
 
         MARS_INLINE_FUNCTION
@@ -150,7 +138,6 @@ namespace mars {
         MARS_INLINE_FUNCTION
         SFC(const Integer x, const Integer y, const Integer z) : xDim(x), yDim(y), zDim(z) {
             all_range_ = compute_all_range<Type>(xDim, yDim, zDim);
-            sfc_to_local_ = ViewVectorType<Integer>("sfc_to_local_", all_range_);
         }
 
         MARS_INLINE_FUNCTION
@@ -179,7 +166,6 @@ namespace mars {
         ViewVectorType<Integer> element_orientations_;
         Integer elements_size_;
 
-        ViewVectorType<Integer> sfc_to_local_;
         UnorderedMap<Integer, Integer> sfc_to_local_map_;
         Integer all_range_;
 

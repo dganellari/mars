@@ -89,13 +89,13 @@ namespace mars {
             const Integer size = get_dof_handler().get_global_dof_enum().get_elem_size();
 
             ViewVectorType<Integer> global_to_sfc = get_dof_handler().get_global_dof_enum().get_view_elements();
-            ViewVectorType<Integer> sfc_to_local = get_dof_handler().get_local_dof_enum().get_view_sfc_to_local();
             ViewVectorType<H> dof_data = get_dof_data<idx>();
 
             Kokkos::parallel_for(
                 "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
                     const Integer sfc = global_to_sfc(i);
-                    const Integer local = sfc_to_local(sfc);
+                    const Integer local = dof_handler.get_local_index(sfc);
+                    assert(INVALID_INDEX != local);
                     x(i) = dof_data(local);
                 });
         }
@@ -108,13 +108,13 @@ namespace mars {
             const Integer size = get_dof_handler().get_global_dof_enum().get_elem_size();
 
             ViewVectorType<Integer> global_to_sfc = get_dof_handler().get_global_dof_enum().get_view_elements();
-            ViewVectorType<Integer> sfc_to_local = get_dof_handler().get_local_dof_enum().get_view_sfc_to_local();
             ViewVectorType<H> dof_data = get_dof_data<idx>();
 
             Kokkos::parallel_for(
                 "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
                     const Integer sfc = global_to_sfc(i);
-                    const Integer local = sfc_to_local(sfc);
+                    const Integer local = dof_handler.get_local_index(sfc);
+                    assert(INVALID_INDEX != local);
                     dof_data(local) = x(i);
                 });
         }
