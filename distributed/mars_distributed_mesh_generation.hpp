@@ -421,7 +421,7 @@ namespace mars {
 
         mesh.template create_ghost_layer<Type>();
 
-        if (Meshless) {
+        if (!Meshless) {
             Kokkos::Timer timer_gen;
 
             // the mesh construct depends on template parameters.

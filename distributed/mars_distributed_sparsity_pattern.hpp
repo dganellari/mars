@@ -347,6 +347,17 @@ namespace mars {
                     counter(local_owned_index) = count;
                 });
 
+            /* print_node_to_element<L, FE>(fe, locally_owned_dofs, node_to_element); */
+            return ntn;
+        }
+
+        template <Integer L = SHandler::dofLabel, class FE>
+        void print_node_to_element(const FE &fe,
+                                   const ViewVectorType<Integer> &locally_owned_dofs,
+                                   const ViewMatrixType<Integer> &node_to_element) {
+            auto owned_size = node_to_element.extent(0);
+            auto handler = get_dof_handler();
+            auto el_max_size = fe.template label_based_element_count<L>();
             Kokkos::parallel_for(
                 "print_node_elem", owned_size, MARS_LAMBDA(const Integer i) {
                     auto owned_dof = locally_owned_dofs(i);
@@ -359,10 +370,9 @@ namespace mars {
                         if (fe.is_valid(elem_index)) {
                             auto elem_sfc = fe.get_elem_sfc(elem_index);
                             auto o = handler.get_mesh_manager().get_mesh()->octant_from_sfc(elem_sfc);
-                            printf("Node: %li -  %li - %li, Label: %li, [%li, %li, %li] - octant: [%li, %li, %li]\n",
+                            printf("Node: %li -  %li, Label: %li, [%li, %li, %li] - octant: [%li, %li, %li]\n",
                                    owned_dof,
                                    gid,
-                                   counter(i),
                                    label,
                                    od.x,
                                    od.y,
@@ -373,8 +383,6 @@ namespace mars {
                         }
                     }
                 });
-
-            return ntn;
         }
 
         struct GenColIdxFromNodeToNodeTuple {
