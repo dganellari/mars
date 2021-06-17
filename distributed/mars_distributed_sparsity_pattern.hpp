@@ -229,8 +229,8 @@ namespace mars {
             auto h_ss = create_mirror_view(ss);
             deep_copy(h_ss, ss);
 
-            crs_col col_idx("ColdIdx", h_ss());
-            crs_value values("values", h_ss());
+            crs_col col_idx("ColIdxST", h_ss());
+            crs_value values("valuesST", h_ss());
 
             expand_tuple<InsertSortedDofs, stencil_tuple>(InsertSortedDofs(row_ptr, col_idx, get_dof_handler()),
                                                           stencils);
@@ -284,6 +284,8 @@ namespace mars {
                 i++;
             }
 
+            if (value == col(row, i)) return;
+
             for (int j = count; j > i; --j) {
                 col(row, j) = col(row, j - 1);
             }
@@ -335,9 +337,9 @@ namespace mars {
                             for (int k = 0; k < fe.get_fe_size(); k++) {
                                 auto local_dof = fe.get_elem_local_dof(elem_index, k);
                                 const Integer global = handler.local_to_global(local_dof);
-                                if (is_unique(ntn, i, global, count - 1)) {
-                                    insert_sorted_fe(ntn, i, global, count);
-                                }
+                                /* if (is_unique(ntn, i, global, count - 1)) { */
+                                insert_sorted_fe(ntn, i, global, count);
+                                /* } */
                             }
                         }
                     }
@@ -498,8 +500,8 @@ namespace mars {
             auto h_ss = create_mirror_view(ss);
             deep_copy(h_ss, ss);
 
-            crs_col col_idx("ColdIdx", h_ss());
-            crs_value values("values", h_ss());
+            crs_col col_idx("ColIdxFe", h_ss());
+            crs_value values("valuesFe", h_ss());
 
             expand_tuple<GenColIdxFromNodeToNodeTuple, M, S>(
                 GenColIdxFromNodeToNodeTuple(get_dof_handler(), col_idx, row_ptr), ntn_tuple, lod_tuple);
