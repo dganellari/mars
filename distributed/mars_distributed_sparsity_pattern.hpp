@@ -392,16 +392,18 @@ namespace mars {
             template <typename M, typename S>
             void generate_col_idx_from_node_to_node(const M &ntn, const S &lod) const {
                 auto handler = dhandler;
+                auto r = row;
+                auto c = col;
                 auto owned_size = lod.extent(0);
                 assert(ntn.extent(0) == lod.extent(0));
                 Kokkos::parallel_for(
                     "generate columsn from node to node connectivity", owned_size, MARS_LAMBDA(const Integer i) {
                         auto local_dof = lod(i);
                         auto owned_index = handler.local_to_owned_index(local_dof);
-                        auto count = row(owned_index + 1) - row(owned_index);
-                        auto index = row(owned_index);
+                        auto index = r(owned_index);
+                        auto count = r(owned_index + 1) - index;
                         for (int j = 0; j < count; ++j) {
-                            col(index + j) = ntn(i, j);
+                            c(index + j) = ntn(i, j);
                         }
                     });
             }

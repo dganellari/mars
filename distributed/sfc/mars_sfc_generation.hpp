@@ -96,31 +96,37 @@ namespace mars {
             elements_ = ViewVectorType<Integer>("morton_code", n_elements);
         }
 
+        MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_element_orientations() const  // override
         {
             return element_orientations_;
         }
 
+        MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_element_labels() const  // override
         {
             return element_labels_;
         }
 
+        MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_elements() const  // override
         {
             return elements_;
         }
 
+        MARS_INLINE_FUNCTION
         const Integer get_sfc(const Integer i) const  // override
         {
             return elements_(i);
         }
 
+        MARS_INLINE_FUNCTION
         const Integer get_orientation(const Integer i) const  // override
         {
             return element_orientations_(i);
         }
 
+        MARS_INLINE_FUNCTION
         const Integer get_label(const Integer i) const  // override
         {
             return element_labels_(i);
@@ -145,9 +151,12 @@ namespace mars {
 
         void generate_sfc_to_local_map() {
             sfc_to_local_map_ = UnorderedMap<Integer, Integer>(get_elem_size());
+            //copies needed because of cuda lambda functions. Issue: Copied as *this.{} host pointer.
+            auto element_view = elements_;
+            auto sfc_map = sfc_to_local_map_;
             Kokkos::parallel_for(
                 "generate_sfc_to_local_map", get_elem_size(), MARS_LAMBDA(const Integer i) {
-                    sfc_to_local_map_.insert(elements_(i), i);
+                    sfc_map.insert(element_view(i), i);
                 });
         }
 
