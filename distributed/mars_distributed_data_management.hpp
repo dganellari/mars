@@ -85,16 +85,17 @@ namespace mars {
         void get_locally_owned_data(const ViewVectorType<H> &x) {
             using namespace Kokkos;
 
-            assert(get_dof_handler().get_global_dof_enum().get_elem_size() == x.extent(0));
-            const Integer size = get_dof_handler().get_global_dof_enum().get_elem_size();
+            auto dhandler = get_dof_handler();
+            assert(dhandler.get_global_dof_enum().get_elem_size() == x.extent(0));
+            const Integer size = dhandler.get_global_dof_enum().get_elem_size();
 
-            ViewVectorType<Integer> global_to_sfc = get_dof_handler().get_global_dof_enum().get_view_elements();
+            ViewVectorType<Integer> global_to_sfc = dhandler.get_global_dof_enum().get_view_elements();
             ViewVectorType<H> dof_data = get_dof_data<idx>();
 
             Kokkos::parallel_for(
                 "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
                     const Integer sfc = global_to_sfc(i);
-                    const Integer local = dof_handler.get_local_index(sfc);
+                    const Integer local = dhandler.get_local_index(sfc);
                     assert(INVALID_INDEX != local);
                     x(i) = dof_data(local);
                 });
@@ -104,16 +105,17 @@ namespace mars {
         void set_locally_owned_data(const ViewVectorType<H> &x) {
             using namespace Kokkos;
 
-            assert(get_dof_handler().get_global_dof_enum().get_elem_size() == x.extent(0));
-            const Integer size = get_dof_handler().get_global_dof_enum().get_elem_size();
+            auto dhandler = get_dof_handler();
+            assert(dhandler.get_global_dof_enum().get_elem_size() == x.extent(0));
+            const Integer size = dhandler.get_global_dof_enum().get_elem_size();
 
-            ViewVectorType<Integer> global_to_sfc = get_dof_handler().get_global_dof_enum().get_view_elements();
+            ViewVectorType<Integer> global_to_sfc = dhandler.get_global_dof_enum().get_view_elements();
             ViewVectorType<H> dof_data = get_dof_data<idx>();
 
             Kokkos::parallel_for(
                 "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
                     const Integer sfc = global_to_sfc(i);
-                    const Integer local = dof_handler.get_local_index(sfc);
+                    const Integer local = dhandler.get_local_index(sfc);
                     assert(INVALID_INDEX != local);
                     dof_data(local) = x(i);
                 });

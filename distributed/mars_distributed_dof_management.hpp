@@ -1502,8 +1502,17 @@ namespace mars {
             return is_owned_dof_sfc(sfc);
         }
 
-        template <class UMAP>
-        static MARS_INLINE_FUNCTION Integer get_eval_value_in_map(const UMAP map, const Integer sfc) {
+        MARS_INLINE_FUNCTION Integer get_eval_value_in_local_map(const Integer sfc) const {
+            auto map = get_local_dof_enum().get_sfc_to_local_map();
+            const auto it = map.find(sfc);
+            if (map.valid_at(it)) {
+                return map.value_at(it);
+            }
+            return INVALID_INDEX;
+        }
+
+        MARS_INLINE_FUNCTION Integer get_eval_value_in_global_map(const Integer sfc) const {
+            auto map = get_global_dof_enum().get_sfc_to_local_map();
             const auto it = map.find(sfc);
             if (map.valid_at(it)) {
                 return map.value_at(it);
@@ -1514,7 +1523,7 @@ namespace mars {
         MARS_INLINE_FUNCTION
         Integer local_to_owned_dof(const Integer local) const {
             const Integer sfc = local_to_sfc(local);
-            return get_eval_value_in_map(get_global_dof_enum().get_sfc_to_local_map(), sfc);
+            return get_eval_value_in_global_map(sfc);
         }
 
         MARS_INLINE_FUNCTION
@@ -1523,7 +1532,7 @@ namespace mars {
         MARS_INLINE_FUNCTION
         Dof sfc_to_global_dof(const Integer sfc) const {
             Dof dof;
-            const Integer sfc_lid = get_eval_value_in_map(get_global_dof_enum().get_sfc_to_local_map(), sfc);
+            const Integer sfc_lid = get_eval_value_in_global_map(sfc);
             if (sfc_lid != INVALID_INDEX) {
                 const Integer proc = get_mesh_manager().get_mesh()->get_proc();
                 const Integer gid = sfc_lid + global_dof_offset(proc);
@@ -1598,15 +1607,15 @@ namespace mars {
         const Integer local_to_owned(const Integer local) const { return local_to_owned_dof(local); }
 
         MARS_INLINE_FUNCTION
-        Integer sfc_to_owned(const Integer sfc) const { return get_eval_value_in_map(get_global_dof_enum(), sfc); }
+        Integer sfc_to_owned(const Integer sfc) const { return get_eval_value_in_global_map(sfc); }
 
         MARS_INLINE_FUNCTION
         Integer sfc_to_local(const Integer sfc) const {
-            return get_eval_value_in_map(get_local_dof_enum().get_sfc_to_local_map(), sfc);
+            return get_eval_value_in_local_map(sfc);
         }
 
         MARS_INLINE_FUNCTION
-        Integer get_local_index(const Integer sfc) const { sfc_to_local(sfc); }
+        Integer get_local_index(const Integer sfc) const { return sfc_to_local(sfc); }
 
         template <Integer Type>
         MARS_INLINE_FUNCTION void get_dof_coordinates_from_sfc(const Integer sfc, double *point) const {
