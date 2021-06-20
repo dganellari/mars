@@ -1685,10 +1685,11 @@ namespace mars {
             const Integer zdim = get_local_dof_enum().get_ZDim();
             const Integer side_value = map_side_to_value<Type>(side);
 
+            auto handler = *this;
             Kokkos::parallel_for(
                 "boundary_iterate", size, MARS_LAMBDA(const Integer i) {
                     const Integer sfc = global_to_sfc(i);
-                    const Integer local = sfc_to_local(sfc);
+                    const Integer local = handler.sfc_to_local(sfc);
 
                     if (is_boundary_sfc<Type>(sfc, xdim, ydim, zdim, side_value)) {
                         f(local);
