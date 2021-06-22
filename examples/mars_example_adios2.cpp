@@ -72,21 +72,36 @@ void write_image() {
 void write_mesh() {
     adios2::ADIOS adios(adios2::DebugON);
     adios2::IO io_main = adios.DeclareIO("SimulationOutput");
-    mars::ParallelQuad4Mesh parMesh;
+    mars::ParallelMesh2 parMesh;
 
-    MeshWriter<mars::ParallelQuad4Mesh> writer(parMesh, io_main);
+    MeshWriter<mars::ParallelMesh2> writer(parMesh, io_main);
     writer.open("example.bp");
     writer.generate_data_cube();
-    // writer.interpolate();
+    // writer.interpolate()
     writer.write();
     writer.close();
 }
 
+void read_image(const std::string inputFile) {
+    adios2::ADIOS adios(adios2::DebugON);
+    adios2::IO io_main = adios.DeclareIO("SimulationInput");
+    adios2::Engine reader;
+    reader = io_main.Open(inputFile, adios2::Mode::Read);
+    adios2::Variable<double> data;
+
+    reader.BeginStep();
+    // adios2::Get(data);
+    reader.EndStep();
+    reader.Close();
+}
+void read_mesh() {}
+
 int main(int argc, char *argv[]) {
-    // write_image();
+// write_image();
 #ifdef WITH_KOKKOS
     Kokkos::initialize();
     write_mesh();
     Kokkos::finalize();
 #endif
+    read_image(argv[1]);
 }
