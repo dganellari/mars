@@ -40,7 +40,7 @@ public:
     using VectorReal = mars::ViewVectorType<mars::Real>;
 
     MeshWriter(Mesh& mesh, adios2::IO io);
-    void generate_data_cube();
+    void generate_data_cube(const int space);
     void interpolate();
     void open(const std::string& fname);
     void write();

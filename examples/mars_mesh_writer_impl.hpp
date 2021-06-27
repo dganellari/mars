@@ -92,9 +92,15 @@ void MeshWriter<Mesh>::open(const std::string& fname) {
 }
 
 template <class Mesh>
-void MeshWriter<Mesh>::generate_data_cube() {
+void MeshWriter<Mesh>::generate_data_cube(const int space) {
     // Generate 3,3,3 cube on mesh_.
-    mars::generate_cube(mesh_, 4, 3, 0);
+
+    switch (space) {
+        case 2:
+            mars::generate_cube(mesh_, 4, 3, 0);
+        case 3:
+            mars::generate_cube(mesh_, 4, 3, 3);
+    }
 
     // Setup intial values of vertices, nelements and Dim.
     size_t nelements = 0;

@@ -6,102 +6,60 @@
 #include "mars_spacetime_ex.hpp"
 
 namespace mars {
-    // // pass to interpolate.
-    class ST3Analitcal {
-    public:
-        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex3_st_exact(p); }
-    };
 
-    class ST3RHS {
-    public:
-        MARS_INLINE_FUNCTION Real operator()(const Real *p) const { return ex3_st_spacetime(p); }
-    };
+    void write_image() {
+        Settings settings("solutionImage.bp");
+        adios2::ADIOS adios(adios2::DebugON);
+        adios2::IO io_main = adios.DeclareIO("SimulationOutput");
 
-    template <class Mesh>
-    class ST3BC {
-    public:
-        /* BC --> zero dirichlet + natural neumann on upper bound */
-        static const int Dim = Mesh::Dim;
+        ImageWriter main_image(settings, io_main);
 
-        MARS_INLINE_FUNCTION void operator()(const Real *p, Real &val) const {
-            if (is_boundary(p)) {
-                val = ex3_st_exact(p);
-            }
-        }
+        // Create example data vector
+        main_image.new_data(30, 40, 2);
+        // Open the writer, (which now is in write mode), with the settings found.
+        main_image.open(settings.output);
+        // Write with the following steps
+        main_image.write(1);
+        // Close writer
+        main_image.close();
+    }
 
-        MARS_INLINE_FUNCTION static bool is_boundary(const Real *p) {
-            bool ret = false;
-            for (int d = 0; d < Dim; ++d) {
-                if (p[d] <= 1e-14) {
-                    ret = true;
-                    break;
-                }
+    void write_mesh() {
+        adios2::ADIOS adios(adios2::DebugON);
+        adios2::IO io_main = adios.DeclareIO("SimulationOutput");
+        // Switch to figure out which mesh is given
+        mars::ParallelMesh2 parMesh;
 
-                if (d < Dim - 1 && p[d] >= 1 - 1e-14) {
-                    ret = true;
-                    break;
-                }
-            }
+        MeshWriter<mars::ParallelMesh2> writer(parMesh, io_main);
+        writer.open("example.bp");
+        writer.generate_data_cube(2);
+        // writer.interpolate()
+        writer.write();
+        writer.close();
+    }
 
-            return ret;
-        }
-    };
+    void read_image(const std::string inputFile) {
+        adios2::ADIOS adios(adios2::DebugON);
+        adios2::IO io_main = adios.DeclareIO("SimulationInput");
+        adios2::Engine reader;
+        reader = io_main.Open(inputFile, adios2::Mode::Read);
+        adios2::Variable<double> data;
+
+        reader.BeginStep();
+        // adios2::Get(data);w
+        reader.EndStep();
+        reader.Close();
+    }
+    void read_mesh() {}
 }  // namespace mars
-
-/*
- * Write a structured image.
- */
-
-void write_image() {
-    Settings settings("solutionImage.bp");
-    adios2::ADIOS adios(adios2::DebugON);
-    adios2::IO io_main = adios.DeclareIO("SimulationOutput");
-
-    ImageWriter main_image(settings, io_main);
-
-    // Create example data vector
-    main_image.new_data(30, 40, 2);
-    // Open the writer, (which now is in write mode), with the settings found.
-    main_image.open(settings.output);
-    // Write with the following steps
-    main_image.write(1);
-    // Close writer
-    main_image.close();
-}
-
-void write_mesh() {
-    adios2::ADIOS adios(adios2::DebugON);
-    adios2::IO io_main = adios.DeclareIO("SimulationOutput");
-    mars::ParallelMesh2 parMesh;
-
-    MeshWriter<mars::ParallelMesh2> writer(parMesh, io_main);
-    writer.open("example.bp");
-    writer.generate_data_cube();
-    // writer.interpolate()
-    writer.write();
-    writer.close();
-}
-
-void read_image(const std::string inputFile) {
-    adios2::ADIOS adios(adios2::DebugON);
-    adios2::IO io_main = adios.DeclareIO("SimulationInput");
-    adios2::Engine reader;
-    reader = io_main.Open(inputFile, adios2::Mode::Read);
-    adios2::Variable<double> data;
-
-    reader.BeginStep();
-    // adios2::Get(data);
-    reader.EndStep();
-    reader.Close();
-}
-void read_mesh() {}
-
 int main(int argc, char *argv[]) {
-// write_image();
+    // write_image();
+    // std::cout << type;
 #ifdef WITH_KOKKOS
-    Kokkos::initialize();
-    write_mesh();
-    Kokkos::finalize();
+    // mars::ParallelMesh2 parMesh;
+    // Kokkos::initialize();
+    // write_mesh(mars::ParallelMesh2);
+    // Kokkos::finalize();
 #endif
-    read_image(argv[1]);
+    // read_image(argv[1]);
 }
