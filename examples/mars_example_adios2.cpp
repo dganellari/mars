@@ -24,14 +24,14 @@ namespace mars {
         main_image.close();
     }
 
-    void write_mesh() {
+    void write_mesh(const std::string fileName) {
         adios2::ADIOS adios(adios2::DebugON);
         adios2::IO io_main = adios.DeclareIO("SimulationOutput");
         // Switch to figure out which mesh is given
         mars::ParallelMesh2 parMesh;
 
         MeshWriter<mars::ParallelMesh2> writer(parMesh, io_main);
-        writer.open("example.bp");
+        writer.open(fileName);
         writer.generate_data_cube(2);
         // writer.interpolate()
         writer.write();
@@ -43,10 +43,12 @@ namespace mars {
         adios2::IO io_main = adios.DeclareIO("SimulationInput");
         adios2::Engine reader;
         reader = io_main.Open(inputFile, adios2::Mode::Read);
-        adios2::Variable<double> data;
+        std::vector<double> data;
+
+        // adios2::Variable<double> &data = io_main.DefineVariable<double>("U", {}, {}, {n_nodes});
 
         reader.BeginStep();
-        // adios2::Get(data);w
+        reader.Get("U", data.data(), adios2::Mode::Deferred);
         reader.EndStep();
         reader.Close();
     }
@@ -56,10 +58,12 @@ int main(int argc, char *argv[]) {
     // write_image();
     // std::cout << type;
 #ifdef WITH_KOKKOS
-    // mars::ParallelMesh2 parMesh;
-    // Kokkos::initialize();
-    // write_mesh(mars::ParallelMesh2);
-    // Kokkos::finalize();
+    mars::ParallelMesh2 parMesh;
+    mars::ParallelMesh3 parMesh3;
+    mars::ParallelQuad4Mesh parQuadMesh;
+    Kokkos::initialize();
+    mars::write_mesh("example.bp");
+    Kokkos::finalize();
 #endif
     // read_image(argv[1]);
 }
