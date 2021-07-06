@@ -31,6 +31,8 @@ void ImageWriter::new_data(const unsigned long &Nx, const unsigned long &Ny, con
         }
     }
     var_data = io.DefineVariable<double>("U", {Nx, Ny, Nz}, {0UL, 0UL, 0UL}, {Nx, Ny, Nz});
+    std::cout << "Var_Data:" << var_data.Type() << std::endl;
+    std::cout << Nx << std::endl << Ny << std::endl << Nz << std::endl;
     std::cout << "ImageWriter::\n";
 }
 

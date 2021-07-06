@@ -1,12 +1,19 @@
 #include <adios2.h>
 #include <iostream>
+#include "cxxopts.hpp"
 #include "mars_image_data_writer.hpp"
 #include "mars_image_data_writer_settings.hpp"
 #include "mars_mesh_writer.hpp"
 #include "mars_spacetime_ex.hpp"
 
-void write_image() {
-    Settings settings("solutionImage.bp");
+/**
+ * Run
+ *
+ *
+ * @param fileName name of .bp file we want to create.
+ **/
+void write_image(const std::string fileName) {
+    Settings settings(fileName);
     adios2::ADIOS adios(adios2::DebugON);
     adios2::IO io_main = adios.DeclareIO("SimulationOutput");
 
@@ -59,19 +66,46 @@ void read_image(const std::string inputFile) {
     std::vector<double> data;
 
     reader.BeginStep();
-
+    reader.Get("U", data.data(), adios2::Mode::Deferred);
     reader.EndStep();
+    reader.Close();
 }
+
+void run(cxxopts::ParseResult &args) {
+    bool values[4] = {
+        args["image"].as<bool>(), args["mesh"].as<bool>(), args["write"].as<bool>(), args["read"].as<bool>()};
+    std::string fileName = args["file"].as<std::string>();
+
+    if (values[0] && values[2]) {
+        fileName = fileName + "-image.bp";
+        write_image(fileName);
+    }
+
+    if (values[1] && values[2]) {
+        fileName = fileName + "-mesh.bp";
+        Kokkos::initialize();
+        write_mesh(fileName);
+        Kokkos::finalize();
+    }
+}
+
 int main(int argc, char *argv[]) {
-    // write_image();
-    // std::cout << type;
-#ifdef WITH_KOKKOS
-    // mars::ParallelMesh2 parMesh;
-    // mars::ParallelMesh3 parMesh3;
-    // mars::ParallelQuad4Mesh parQuadMesh;
-    Kokkos::initialize();
-    // write_mesh("example.bp");
-    Kokkos::finalize();
-#endif
-    read_image(argv[1]);
+    using namespace mars;
+    using namespace cxxopts;
+
+    Options options("./adios_example", "Run M.A.R.S with Adios2");
+    options.add_options()("i,image", "Write/Read Image")                               // bool param
+        ("m,mesh", "Write/Read Mesh")("r,read", "Read Mode")("w,write", "Write Mode")  // bool param
+        ("f,file", "File Name", value<std::string>());
+
+    auto result = options.parse(argc, argv);
+
+    run(result);
+
+    // #ifdef WITH_KOKKOS
+    //     Kokkos::initialize();
+    //     // write_mesh("example.bp");
+    //     // read_mesh(argv[1]);
+    //     Kokkos::finalize();
+    // #endif
 }
