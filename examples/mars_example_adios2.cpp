@@ -1,8 +1,10 @@
 #include <adios2.h>
 #include <iostream>
 #include "cxxopts.hpp"
+#include "mars_base.hpp"
 #include "mars_image_data_writer.hpp"
 #include "mars_image_data_writer_settings.hpp"
+#include "mars_mesh.hpp"
 #include "mars_mesh_writer.hpp"
 #include "mars_spacetime_ex.hpp"
 
