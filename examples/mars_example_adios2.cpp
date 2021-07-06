@@ -7,8 +7,7 @@
 #include "mars_spacetime_ex.hpp"
 
 /**
- * Run
- *
+ * Run the writing operation of an imageusing adios2.
  *
  * @param fileName name of .bp file we want to create.
  **/
@@ -29,6 +28,11 @@ void write_image(const std::string fileName) {
     main_image.close();
 }
 
+/**
+ * Run the writing operatino of a mesh using adios2.
+ *
+ * @param fileName name of .bp file we want to create.
+ **/
 void write_mesh(const std::string fileName) {
     adios2::ADIOS adios(adios2::DebugON);
     adios2::IO io_main = adios.DeclareIO("SimulationOutput");
@@ -38,10 +42,17 @@ void write_mesh(const std::string fileName) {
     MeshWriter<mars::ParallelMesh2> writer(parMesh, io_main);
     writer.open(fileName);
     writer.generate_data_cube(2);
-    // writer.interpolate()
     writer.write();
     writer.close();
 }
+
+/**
+ * Given a .bp file of a mesh we read the adios variables and
+ * attributes defined for the mesh. Ultimately print out the
+ * values to terminal.
+ *
+ * @param name of input file
+ **/
 
 void read_mesh(const std::string inputFile) {
     adios2::ADIOS adios(adios2::DebugON);
@@ -58,6 +69,14 @@ void read_mesh(const std::string inputFile) {
     reader.EndStep();
     reader.Close();
 }
+
+/**
+ * Given a .bp file of an image we read the adios variables and
+ * attributes defined for the image. Ultimately print out the
+ * values to terminal.
+ *
+ * @param name of input file
+ **/
 void read_image(const std::string inputFile) {
     adios2::ADIOS adios(adios2::DebugON);
     adios2::IO io_main = adios.DeclareIO("SimulationInput");
@@ -71,6 +90,11 @@ void read_image(const std::string inputFile) {
     reader.Close();
 }
 
+/**
+ * Given the arguments of the command line execution
+ * choose which method to run. Read/Write, Mesh/Image.
+ *
+ **/
 void run(cxxopts::ParseResult &args) {
     bool values[4] = {
         args["image"].as<bool>(), args["mesh"].as<bool>(), args["write"].as<bool>(), args["read"].as<bool>()};
@@ -101,11 +125,4 @@ int main(int argc, char *argv[]) {
     auto result = options.parse(argc, argv);
 
     run(result);
-
-    // #ifdef WITH_KOKKOS
-    //     Kokkos::initialize();
-    //     // write_mesh("example.bp");
-    //     // read_mesh(argv[1]);
-    //     Kokkos::finalize();
-    // #endif
 }
