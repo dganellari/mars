@@ -6,9 +6,20 @@
 #include "mars_globals.hpp"
 #include "mars_image_data_writer_settings.hpp"
 
+/**
+ * Simple function to perform on the vector values.
+ *
+ * @param x,y,z values of 3-dimentional vector.
+ **/
 double simple_func(const double &x, const double &y, const double &z) { return std::sqrt(x * x + y * y + z * z); }
 
-// Example data vector creation.
+/**
+ * Given Nx,Ny,Nz, which are the number of cells we want to create.
+ * Apply a function simple_func(x,y,z) to each of the cells and then store these values
+ * in a adios2 Variable called "U".
+ *
+ * @param Nx, Ny, Nz size of the image.
+ **/
 void ImageWriter::new_data(const unsigned long &Nx, const unsigned long &Ny, const unsigned long &Nz) {
     unsigned long size = Nx * Ny * Nz;
     double H[3];
@@ -31,11 +42,18 @@ void ImageWriter::new_data(const unsigned long &Nx, const unsigned long &Ny, con
         }
     }
     var_data = io.DefineVariable<double>("U", {Nx, Ny, Nz}, {0UL, 0UL, 0UL}, {Nx, Ny, Nz});
-    std::cout << "Var_Data:" << var_data.Type() << std::endl;
-    std::cout << Nx << std::endl << Ny << std::endl << Nz << std::endl;
-    std::cout << "ImageWriter::\n";
+    //     std::cout << "Var_Data:" << var_data.Type() << std::endl;
+    //     std::cout << Nx << std::endl << Ny << std::endl << Nz << std::endl;
+    //     std::cout << "ImageWriter::\n";
 }
 
+/**
+ * Define the adios2.xml attribute which contains this xml string
+ * which can be read by ParaView for visualizing the data files.
+ *
+ * @param s Settings object which contains details on how to create the xml.
+ * @param io IO for Defining attributes,variables and other functionalities.
+ **/
 void define_bpvtk_attribute(const Settings &s, adios2::IO &io) {
     auto lf_VTKImage = [](const Settings &s, adios2::IO &io) {
         const std::string extent =
@@ -63,16 +81,30 @@ void define_bpvtk_attribute(const Settings &s, adios2::IO &io) {
     }
 }
 
+/**
+ * Constructor of class ImageWriter. For now it calls the define_bpvtk_attribute() method.
+ *
+ * @param settings
+ * @param io IO of adios2
+ **/
 ImageWriter::ImageWriter(const Settings &settings, adios2::IO io) : io(io) { define_bpvtk_attribute(settings, io); }
 
+/**
+ * Tells the engine(writer) to open fname for writing.
+ * @param fname, name of file.
+ **/
 void ImageWriter::open(const std::string &fname) { writer = io.Open(fname, adios2::Mode::Write); }
 
-/*
- *Writing step, Begin part, put, End part
- */
+/**
+ * Writing step: Begin, Put data from the data vector into var_data adios variable.
+ * @param step, which is useless right now.
+ **/
 void ImageWriter::write(int step) {
     writer.BeginStep();
     writer.Put<double>(var_data, data.data());
     writer.EndStep();
 }
+/**
+ * Close the engine.
+ **/
 void ImageWriter::close() { writer.Close(); }

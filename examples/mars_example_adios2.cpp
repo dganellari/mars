@@ -96,9 +96,20 @@ void read_image(const std::string inputFile) {
  *
  **/
 void run(cxxopts::ParseResult &args) {
+    const std::string help =
+        "Usage is as follows: \n"
+        "        -i : Create an image.\n"
+        "        -m : Create a mesh.\n"
+        "        -w : Write the object.\n"
+        "        -r : Read the.bp file.\n"
+        "        -f : Name of the file ";
+
     bool values[4] = {
         args["image"].as<bool>(), args["mesh"].as<bool>(), args["write"].as<bool>(), args["read"].as<bool>()};
     std::string fileName = args["file"].as<std::string>();
+    if (args["help"].as<bool>()) {
+        std::cout << help;
+    }
 
     if (values[0] && values[2]) {
         fileName = fileName + "-image.bp";
@@ -118,9 +129,10 @@ int main(int argc, char *argv[]) {
     using namespace cxxopts;
 
     Options options("./adios_example", "Run M.A.R.S with Adios2");
-    options.add_options()("i,image", "Write/Read Image")                               // bool param
-        ("m,mesh", "Write/Read Mesh")("r,read", "Read Mode")("w,write", "Write Mode")  // bool param
-        ("f,file", "File Name", value<std::string>());
+    options.add_options()("i,image", "Write/Read Image")  // bool param
+        ("m,mesh", "Write/Read Mesh")("r,read", "Read Mode")("w,write", "Write Mode")("h,help",
+                                                                                      "Print usage")  // bool param
+        ("f,file", "File Name", value<std::string>()->default_value("solution"));
 
     auto result = options.parse(argc, argv);
 
