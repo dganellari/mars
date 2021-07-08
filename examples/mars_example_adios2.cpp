@@ -8,6 +8,7 @@
 #include "mars_mesh_io.hpp"
 #include "mars_mesh_writer.hpp"
 #include "mars_spacetime_ex.hpp"
+#include "mpi.h"
 
 /**
  * Run the writing operation of an imageusing adios2.
@@ -90,9 +91,13 @@ void read_image(const std::string inputFile) {
     adios2::Variable<double> uVar = io_main.InquireVariable<double>("U");
     if (uVar)  // it exists
     {
+        size_t n = 1;
         std::cout << "Got it ";
-        std::cout << uVar.Sizeof();
-        data.resize(uVar.Sizeof());
+        // std::cout << uVar.Shape().size();
+        for (auto i : uVar.Shape()) {
+            n *= i;
+        }
+        data.resize(n);
         reader.Get(uVar, data.data());
     }
     reader.EndStep();
@@ -110,7 +115,7 @@ void run(cxxopts::ParseResult &args) {
         "        -i : Create an image.\n"
         "        -m : Create a mesh.\n"
         "        -w : Write the object.\n"
-        "        -r : Read the.bp file.\n"
+        "        -r : Read the .bp file.\n"
         "        -f : Name of the file ";
 
     bool values[4] = {
@@ -127,10 +132,8 @@ void run(cxxopts::ParseResult &args) {
 
     if (values[1] && values[2]) {
         fileName = fileName + "-mesh.bp";
-        Kokkos::initialize();
         mars::Mesh_IO<mars::ParallelMesh2> io;
-        Kokkos::finalize();
-        // io.write(fileName);
+        io.write(fileName);
     }
 
     if (values[0] && values[3]) {
@@ -146,6 +149,8 @@ int main(int argc, char *argv[]) {
     using namespace mars;
     using namespace cxxopts;
 
+    Env env(argc, argv);
+
     Options options("./adios_example", "Run M.A.R.S with Adios2");
     options.add_options()("i,image", "Write/Read Image")  // bool param
         ("m,mesh", "Write/Read Mesh")("r,read", "Read Mode")("w,write", "Write Mode")("h,help",
@@ -154,5 +159,7 @@ int main(int argc, char *argv[]) {
 
     auto result = options.parse(argc, argv);
 
+#ifdef WITH_MPI
+#endif
     run(result);
 }
