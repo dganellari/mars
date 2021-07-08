@@ -5,6 +5,7 @@
 #include "mars_image_data_writer.hpp"
 #include "mars_image_data_writer_settings.hpp"
 #include "mars_mesh.hpp"
+#include "mars_mesh_io.hpp"
 #include "mars_mesh_writer.hpp"
 #include "mars_spacetime_ex.hpp"
 
@@ -30,23 +31,23 @@ void write_image(const std::string fileName) {
     main_image.close();
 }
 
-/**
- * Run the writing operatino of a mesh using adios2.
- *
- * @param fileName name of .bp file we want to create.
- **/
-void write_mesh(const std::string fileName) {
-    adios2::ADIOS adios(adios2::DebugON);
-    adios2::IO io_main = adios.DeclareIO("SimulationOutput");
-    // Switch to figure out which mesh is given
-    mars::ParallelMesh2 parMesh;
+// /**
+//  * Run the writing operatino of a mesh using adios2.
+//  *
+//  * @param fileName name of .bp file we want to create.
+//  **/
+// void write_mesh(const std::string fileName) {
+//     adios2::ADIOS adios(adios2::DebugON);
+//     adios2::IO io_main = adios.DeclareIO("SimulationOutput");
+//     // Switch to figure out which mesh is given
+//     mars::ParallelMesh2 parMesh;
 
-    MeshWriter<mars::ParallelMesh2> writer(parMesh, io_main);
-    writer.open(fileName);
-    writer.generate_data_cube(2);
-    writer.write();
-    writer.close();
-}
+//     MeshWriter<mars::ParallelMesh2> writer(parMesh, io_main);
+//     writer.open(fileName);
+//     writer.generate_data_cube(2);
+//     writer.write();
+//     writer.close();
+// }
 
 /**
  * Given a .bp file of a mesh we read the adios variables and
@@ -61,13 +62,11 @@ void read_mesh(const std::string inputFile) {
     adios2::IO io_main = adios.DeclareIO("SimulationInput");
     adios2::Engine reader;
     reader = io_main.Open(inputFile, adios2::Mode::Read);
-    std::vector<double> data;
-
-    // adios2::Variable<double> &data = io_main.DefineVariable<double>("U", {}, {}, {n_nodes});
-
     reader.BeginStep();
 
-    reader.Get("U", data.data(), adios2::Mode::Deferred);
+    // reader.Get("U", data.data(), adios2::Mode::Deferred);
+    adios2::Variable<double> uVar = io_main.InquireVariable<double>("U");
+
     reader.EndStep();
     reader.Close();
 }
@@ -87,7 +86,15 @@ void read_image(const std::string inputFile) {
     std::vector<double> data;
 
     reader.BeginStep();
-    reader.Get("U", data.data(), adios2::Mode::Deferred);
+    // reader.Get("U", data.data(), adios2::Mode::Deferred);
+    adios2::Variable<double> uVar = io_main.InquireVariable<double>("U");
+    if (uVar)  // it exists
+    {
+        std::cout << "Got it ";
+        std::cout << uVar.Sizeof();
+        data.resize(uVar.Sizeof());
+        reader.Get(uVar, data.data());
+    }
     reader.EndStep();
     reader.Close();
 }
@@ -121,8 +128,17 @@ void run(cxxopts::ParseResult &args) {
     if (values[1] && values[2]) {
         fileName = fileName + "-mesh.bp";
         Kokkos::initialize();
-        write_mesh(fileName);
+        mars::Mesh_IO<mars::ParallelMesh2> io;
         Kokkos::finalize();
+        // io.write(fileName);
+    }
+
+    if (values[0] && values[3]) {
+        read_image(fileName);
+    }
+
+    if (values[1] && values[3]) {
+        read_mesh(fileName);
     }
 }
 
