@@ -16,7 +16,7 @@ namespace mars {
 
         void write(const std::string fileName) {
             writer_.open(fileName);
-            writer_.generate_data_cube(2);
+            writer_.generate_data_cube(3);
             writer_.write();
             writer_.close();
         };

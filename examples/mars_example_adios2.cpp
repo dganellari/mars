@@ -10,6 +10,8 @@
 #include "mars_spacetime_ex.hpp"
 #include "mpi.h"
 
+// void testReadWriteImage(const std::vector read, const std::vector write) {}
+
 /**
  * Run the writing operation of an imageusing adios2.
  *
@@ -63,13 +65,20 @@ void read_mesh(const std::string inputFile) {
     adios2::IO io_main = adios.DeclareIO("SimulationInput");
     adios2::Engine reader;
     reader = io_main.Open(inputFile, adios2::Mode::Read);
+
     reader.BeginStep();
 
     // reader.Get("U", data.data(), adios2::Mode::Deferred);
     adios2::Variable<double> uVar = io_main.InquireVariable<double>("U");
+    if (uVar) {
+        std::cout << "Got it";
+        for (auto i : uVar.Shape()) {
+            std::cout << i;
+        }
 
-    reader.EndStep();
-    reader.Close();
+        reader.EndStep();
+        reader.Close();
+    }
 }
 
 /**
@@ -87,13 +96,11 @@ void read_image(const std::string inputFile) {
     std::vector<double> data;
 
     reader.BeginStep();
-    // reader.Get("U", data.data(), adios2::Mode::Deferred);
     adios2::Variable<double> uVar = io_main.InquireVariable<double>("U");
     if (uVar)  // it exists
     {
         size_t n = 1;
         std::cout << "Got it ";
-        // std::cout << uVar.Shape().size();
         for (auto i : uVar.Shape()) {
             n *= i;
         }
@@ -102,6 +109,10 @@ void read_image(const std::string inputFile) {
     }
     reader.EndStep();
     reader.Close();
+
+    for (auto i = data.begin(); i != data.end(); ++i) {
+        std::cout << *i << '\n';
+    }
 }
 
 /**
@@ -132,7 +143,7 @@ void run(cxxopts::ParseResult &args) {
 
     if (values[1] && values[2]) {
         fileName = fileName + "-mesh.bp";
-        mars::Mesh_IO<mars::ParallelMesh2> io;
+        mars::Mesh_IO<mars::ParallelMesh3> io;
         io.write(fileName);
     }
 
