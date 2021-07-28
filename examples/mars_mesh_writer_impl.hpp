@@ -123,6 +123,7 @@ void MeshWriter<Mesh>::generate_data_cube(const int space) {
     std::cout << "n_nodes: " << mesh_.n_nodes() << std::endl;
     std::cout << "elements extent(0): " << elements.extent(0) << std::endl;
     std::cout << "elements extent(1): " << elements.extent(1) << std::endl;
+    std::cout << "elements extent(2): " << elements.extent(2) << std::endl;
     std::cout << "Space dim:" << mesh_.Dim << std::endl;
 
     std::string mesh_type = "Mars Unstructured Mesh";

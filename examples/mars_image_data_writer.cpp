@@ -5,6 +5,7 @@
 #include "mars_base.hpp"
 #include "mars_globals.hpp"
 #include "mars_image_data_writer_settings.hpp"
+#include "mpi.h"
 
 /**
  * Simple function to perform on the vector values.
@@ -42,6 +43,7 @@ void ImageWriter::new_data(const unsigned long &Nx, const unsigned long &Ny, con
         }
     }
     var_data = io.DefineVariable<double>("U", {Nx, Ny, Nz}, {0UL, 0UL, 0UL}, {Nx, Ny, Nz});
+
     // std::cout<< var_data.Sizeof()
     //     std::cout << "Var_Data:" << var_data.Type() << std::endl;
     //     std::cout << Nx << std::endl << Ny << std::endl << Nz << std::endl;
