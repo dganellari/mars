@@ -8,7 +8,10 @@
 #include "mars_mesh_io.hpp"
 #include "mars_mesh_writer.hpp"
 #include "mars_spacetime_ex.hpp"
-#include "mpi.h"
+
+#if ADIOS2_USE_MPI
+#include <mpi.h>
+#endif
 
 // void testReadWriteImage(const std::vector read, const std::vector write) {}
 
@@ -159,7 +162,7 @@ void run(cxxopts::ParseResult &args) {
     }
 
     if (values[1] && values[3]) {
-        read_mesh(fileName);
+        read_image(fileName);
     }
 }
 
@@ -177,12 +180,17 @@ int main(int argc, char *argv[]) {
 
     auto result = options.parse(argc, argv);
 
-#ifdef WITH_MPI
-    // MPI_Init(argc, argv)
-    // MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    // MPI_Comm_size(MPI_COMM_WORLD, &size);
-    // printf("I am %d of %d\n", rank, size);
-    // MPI_Finalize();
+// TODO: Need to create this specific adios for when using MPI.
+#if ADIOS2_USE_MPI
+    int rank, size;
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    adios2::ADIOS adios(MPI_COMM_WORLD);
+
+    MPI_Finalize();
+
 #endif
     run(result);
 }
