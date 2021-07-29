@@ -37,7 +37,6 @@ namespace mars {
                 std::cout << "Got it\n";
                 reader.Get(uVar, example, adios2::Mode::Deferred);
                 std::cout << example.size() << std::endl;
-                // }
             }
         }
 

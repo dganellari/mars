@@ -118,7 +118,7 @@ void MeshWriter<Mesh>::generate_data_cube(const int space) {
     assert(nelements == elements.extent(0));
     element_nvertices = elements.extent(1);
 
-    // Print out some info on the mesh.
+    // Print out some info of the mesh.
     std::cout << "n_active_elements: " << mesh_.n_active_elements() << std::endl;
     std::cout << "n_nodes: " << mesh_.n_nodes() << std::endl;
     std::cout << "elements extent(0): " << elements.extent(0) << std::endl;
@@ -126,8 +126,8 @@ void MeshWriter<Mesh>::generate_data_cube(const int space) {
     std::cout << "elements extent(2): " << elements.extent(2) << std::endl;
     std::cout << "Space dim:" << mesh_.Dim << std::endl;
 
-    std::string mesh_type = "Mars Unstructured Mesh";
-    std::vector<std::string> viz_tools;
+    // TODO: Write the type of Mesh that this was so that we can instantiate one when we read.
+    std::string mesh_type = "Mars Unstructured Mesh" std::vector<std::string> viz_tools;
     viz_tools.push_back("Paraview: ADIOS2VTXReader");
     viz_tools.push_back("VTK: vtkADIOS2VTXReader.h");
 

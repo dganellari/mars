@@ -2,7 +2,6 @@
 #include <cmath>
 #include <iostream>
 #include "adios2.h"
-#include "mars_base.hpp"
 #include "mars_globals.hpp"
 #include "mars_image_data_writer_settings.hpp"
 #include "mpi.h"

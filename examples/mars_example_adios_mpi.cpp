@@ -1,7 +1,6 @@
 #include <iostream>
 #include "adios2.h"
 #include "cxxopts.hpp"
-#include "mars_base.hpp"
 #include "mars_image_data_writer.hpp"
 #include "mars_image_data_writer_settings.hpp"
 #include "mars_mesh.hpp"
@@ -27,8 +26,11 @@ int main(int argc, char *argv[]) {
     Settings settings("exampleParallelImage.bp");
     ImageWriter writer(settings, par_io);
 
+    // This just parallizes the Puts not the data creation. Since ther is just one Put operation...
+    // Still takes a lot of time beacuse the data creation is not parallel.
+
     // Create example data vector
-    writer.new_data(30, 40, 2);
+    writer.new_data(3000, 4000, 4);
     // Open the writer, (which now is in write mode), with the settings found.
     writer.open(settings.output);
     // Write with the following steps
@@ -37,6 +39,10 @@ int main(int argc, char *argv[]) {
     writer.close();
 
     MPI_Finalize();
+    return 0;
+#else
+    // Serial Implementation
+
 #endif
     return 0;
 }

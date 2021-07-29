@@ -9,10 +9,6 @@
 #include "mars_mesh_writer.hpp"
 #include "mars_spacetime_ex.hpp"
 
-#if ADIOS2_USE_MPI
-#include <mpi.h>
-#endif
-
 // void testReadWriteImage(const std::vector read, const std::vector write) {}
 
 /**
@@ -28,7 +24,7 @@ void write_image(const std::string fileName) {
     ImageWriter main_image(settings, io_main);
 
     // Create example data vector
-    main_image.new_data(30, 40, 2);
+    main_image.new_data(3000, 4000, 4);
     // Open the writer, (which now is in write mode), with the settings found.
     main_image.open(settings.output);
     // Write with the following steps
@@ -180,17 +176,5 @@ int main(int argc, char *argv[]) {
 
     auto result = options.parse(argc, argv);
 
-// TODO: Need to create this specific adios for when using MPI.
-#if ADIOS2_USE_MPI
-    int rank, size;
-    MPI_Init(&argc, &argv);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
-
-    adios2::ADIOS adios(MPI_COMM_WORLD);
-
-    MPI_Finalize();
-
-#endif
     run(result);
 }
