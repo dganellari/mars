@@ -21,7 +21,6 @@
 
 #include "mars_longest_edge.hpp"
 #include "mars_mesh_reader.hpp"
-#include "mars_mesh_writer.hpp"
 #include "mars_oldest_edge.hpp"
 #include "mars_ranked_edge.hpp"
 #include "mars_test.hpp"
@@ -127,7 +126,8 @@ void MeshWriter<Mesh>::generate_data_cube(const int space) {
     std::cout << "Space dim:" << mesh_.Dim << std::endl;
 
     // TODO: Write the type of Mesh that this was so that we can instantiate one when we read.
-    std::string mesh_type = "Mars Unstructured Mesh" std::vector<std::string> viz_tools;
+    std::string mesh_type = "Mars Unstructured Mesh";
+    std::vector<std::string> viz_tools;
     viz_tools.push_back("Paraview: ADIOS2VTXReader");
     viz_tools.push_back("VTK: vtkADIOS2VTXReader.h");
 
@@ -164,6 +164,7 @@ void MeshWriter<Mesh>::interpolate() {
 template <class Mesh>
 void MeshWriter<Mesh>::write() {
     // Still don't really understand what this does, but on mFEM
+    // TODO: FIX THIS.
     const uint32_t vtktype = 9;
     adios2::Variable<uint64_t> varConnectivity = io_.InquireVariable<uint64_t>("connectivity");
     adios2::Variable<uint32_t> varTypes = io_.InquireVariable<uint32_t>("types");
@@ -215,7 +216,9 @@ void MeshWriter<Mesh>::write() {
 
     //#################################Interpolate#################################
 
+    // Find out how many nodes we have.
     const mars::Integer n_nodes = mesh_.n_nodes();
+    // Create a vector of the size of the nodes.
     VectorReal x = VectorReal("x", n_nodes);
     mars::Interpolate<Mesh> interpMesh(mesh_);
     interpMesh.apply(

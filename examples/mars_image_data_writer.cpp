@@ -31,16 +31,22 @@ void ImageWriter::new_data(const unsigned long &Nx, const unsigned long &Ny, con
     double y;
     double z;
 
+    // TODO: Need to parallelize this somehow.
     for (int i = 0; i < Nx; ++i) {
         for (int j = 0; j < Ny; ++j) {
             for (int k = 0; k < Nz; ++k) {
                 x = i * H[0];
                 y = j * H[1];
+                // Create global index for k.
                 z = k * H[2];
                 data[i * Ny * Nz + j * Nz + k] = simple_func(x, y, z);
             }
         }
     }
+    // Indicizzazione local to global.
+    // NZlocal, NZGlobal.
+    // Remember remainder of div.
+    // data = NX * Ny * NZlocal
     var_data = io.DefineVariable<double>("U", {Nx, Ny, Nz}, {0UL, 0UL, 0UL}, {Nx, Ny, Nz});
 
     // std::cout<< var_data.Sizeof()

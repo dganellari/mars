@@ -28,9 +28,10 @@ int main(int argc, char *argv[]) {
 
     // This just parallizes the Puts not the data creation. Since ther is just one Put operation...
     // Still takes a lot of time beacuse the data creation is not parallel.
+    // Need to ask what to do with send, recv..
 
     // Create example data vector
-    writer.new_data(3000, 4000, 4);
+    writer.new_data(300, 400, 4);
     // Open the writer, (which now is in write mode), with the settings found.
     writer.open(settings.output);
     // Write with the following steps
