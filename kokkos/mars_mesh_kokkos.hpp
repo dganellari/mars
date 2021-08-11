@@ -1656,7 +1656,7 @@ namespace mars {
      writeVertices(mesh, os);
 
      os.close();
-     //	clear();
+     os.clear();
      return true;
 
      }
@@ -1716,7 +1716,7 @@ namespace mars {
 
      }
 
-    /*inline bool mesh_hyper_cube(
+     inline bool mesh_hyper_cube(
      const std::array<Integer, 4> &dims,
      const Vector<Real, 4> &lobo,
      const Vector<Real, 4> &upbo,

@@ -87,10 +87,10 @@ namespace mars {
                 con->distributed->i_send_recv_view(el_1, sc_rcv_mirror.data(), el_2, sc_snd_mirror.data());
             }
 
+            const context &con;
+
             ViewVectorType<Integer>::HostMirror sc_rcv_mirror;
             ViewVectorType<Integer>::HostMirror sc_snd_mirror;
-
-            const context &con;
         };
 
         void exchange_ghost_data(const context &context) {
@@ -102,7 +102,7 @@ namespace mars {
             // of the userdata based on the sfc code.
             /* exchange_ghost_layer(context); */
 
-            int proc_num = rank(context);
+            /* int proc_num = rank(context); */
             int size = num_ranks(context);
 
             auto scan_send_mirror = get_mesh_manager().get_host_mesh()->get_view_scan_send_mirror();
@@ -304,8 +304,8 @@ namespace mars {
         const context &context = data.get_mesh_manager().get_host_mesh()->get_context();
         int size = num_ranks(context);
 
-        if (data.get_mesh_manager().get_host_mesh()->get_view_scan_recv_mirror()(size) ==
-            data.get_mesh_manager().get_host_mesh()->get_view_ghost().extent(0)) {
+        Unsigned scan_size = data.get_mesh_manager().get_host_mesh()->get_view_scan_recv_mirror()(size);
+        if (scan_size == data.get_mesh_manager().get_host_mesh()->get_view_ghost().extent(0)) {
             std::cout << "Exchange the ghost data..." << std::endl;
             data.exchange_ghost_data(context);
         } else {

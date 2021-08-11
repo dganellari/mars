@@ -26,6 +26,7 @@ namespace mars {
             Real gi[Dim], g[Dim], g_x[Dim - 1];
             Real pk[Dim];
 
+            unused(g);
             auto &q_points = q.q_p;
             auto &q_weights = q.q_w;
             int n_qp = q.n_points();
@@ -89,6 +90,7 @@ namespace mars {
                     g_x[d] = g[d];
                 }
 
+                unused(g_x);
                 assert(det_J > 0.0);
                 const Real dx = det_J * q_weights(k);
 

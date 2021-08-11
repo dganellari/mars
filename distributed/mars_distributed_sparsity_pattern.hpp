@@ -119,6 +119,7 @@ namespace mars {
             template <typename S>
             MARS_INLINE_FUNCTION void operator()(S &stencil, size_t I) const {
                 count_unique<S>(stencil);
+                unused(I);
             }
 
             ViewVectorType<Integer> counter;
@@ -172,6 +173,7 @@ namespace mars {
             template <typename S>
             MARS_INLINE_FUNCTION void operator()(S &stencil, size_t I) const {
                 insert_sorted<S>(stencil);
+                unused(I);
                 /* //To be used with kokkos radix sort. Currently slower than the insert_sorted routine.
                 insert<S>(stencil); */
             }
@@ -534,19 +536,19 @@ namespace mars {
         const crs_graph get_sparsity_pattern() const { return sparsity_pattern; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_col(const Integer index) const { return get_sparsity_pattern().entries(index); }
+        Integer get_col(const Integer index) const { return get_sparsity_pattern().entries(index); }
 
         MARS_INLINE_FUNCTION
         const crs_col get_col() const { return get_sparsity_pattern().entries; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_row_map(const Integer index) const { return get_sparsity_pattern().row_map(index); }
+        Integer get_row_map(const Integer index) const { return get_sparsity_pattern().row_map(index); }
 
         MARS_INLINE_FUNCTION
         const crs_row get_row_map() { return get_sparsity_pattern().row_map; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_col_index_from_global(const Integer row, const col_index_type col) const {
+        Integer get_col_index_from_global(const Integer row, const col_index_type col) const {
             const Integer row_idx = sparsity_pattern.row_map(row);
             const Integer next_row_idx = sparsity_pattern.row_map(row + 1) - 1;
 
@@ -555,7 +557,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_col_index(const Integer local_row, const Integer local_col) const {
+        Integer get_col_index(const Integer local_row, const Integer local_col) const {
             // translate the row to the owned index and the col to the global index first.
             auto row = get_dof_handler().local_to_owned_index(local_row);
             auto col = get_dof_handler().local_to_global(local_col);
@@ -628,13 +630,13 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_nnz() const { return matrix.nnz(); }
+        Integer get_nnz() const { return matrix.nnz(); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_num_cols() const { return matrix.numCols(); }
+        Integer get_num_cols() const { return matrix.numCols(); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_num_rows() const { return matrix.numRows(); }
+        Integer get_num_rows() const { return matrix.numRows(); }
 
         MARS_INLINE_FUNCTION
         crs_matrix get_matrix() const { return matrix; }

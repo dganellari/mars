@@ -442,7 +442,7 @@ namespace mars {
         const ViewMatrixTypeRC<Integer, max_dof_to_dof_size> get_dof_to_dof_map() const { return dof_to_dof_map; } */
 
         MARS_INLINE_FUNCTION
-        const Integer get_elem_local_dof(const Integer elem_index, const Integer i) const {
+        Integer get_elem_local_dof(const Integer elem_index, const Integer i) const {
             return elem_dof_enum(elem_index, i);
         }
 
@@ -521,8 +521,8 @@ namespace mars {
             });
         }
 
-        const Integer get_fe_dof_map_size() const { return elem_dof_enum.extent(0); }
-        const Integer get_fe_size() const { return elem_dof_enum.extent(1); }
+        Integer get_fe_dof_map_size() const { return elem_dof_enum.extent(0); }
+        Integer get_fe_size() const { return elem_dof_enum.extent(1); }
 
         /* const Integer get_dof_to_dof_map_size() const { return dof_to_dof_map.extent(0); } */
         /* const Integer get_nbh_dof_size() const { return dof_to_dof_map.extent(1); } */

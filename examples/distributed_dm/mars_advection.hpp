@@ -309,7 +309,7 @@ namespace mars {
                 sfc_elem, point, data.get_mesh()->get_XDim(), data.get_mesh()->get_YDim(), data.get_mesh()->get_ZDim());
 
             printf(
-                "derivative data: %li - (%lf, %lf) - rank: %i - u: %lf - dudt: %lf "
+                "derivative data: %i - (%lf, %lf) - rank: %li - u: %lf - dudt: %lf "
                 "- derivatives: [%lf - %lf]\n",
                 i,
                 point[0],
@@ -431,7 +431,7 @@ namespace mars {
 
     template <Integer Dim>
     struct UpwindFlux {
-        UpwindFlux(Data d, ProblemDesc<Dim> p, int l) : data(d), pd(p), ii(l) {}
+        UpwindFlux(Data d, ProblemDesc<Dim> p, int l) : pd(p), data(d), ii(l) {}
 
         template <Integer Type, Integer Dir>
         MARS_INLINE_FUNCTION void operator()(const Face<Type, Dir> &face) const {
@@ -615,7 +615,7 @@ namespace mars {
 #ifdef WITH_MPI
         // create a distributed context
         auto context = mars::make_context(resources, MPI_COMM_WORLD);
-        int proc_num = mars::rank(context);
+        /* int proc_num = mars::rank(context); */
 #else
         // resources.gpu_id = marsenv::default_gpu();
         // // create a local context

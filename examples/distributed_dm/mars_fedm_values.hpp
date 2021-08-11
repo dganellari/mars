@@ -162,7 +162,7 @@ namespace mars {
 
                     for (int i = 0; i < FEM::elem_nodes; i++) {
                         // for each dof get the local number
-                        const Integer local_dof = fe.get_elem_local_dof(elem_index, i);
+                        /* const Integer local_dof = fe.get_elem_local_dof(elem_index, i); */
                         FEQuad4<Real>::Grad::affine_f(i, J_inv_e, pk, gi);
 
                         res(elem_index, i) += Algebra<dim>::dot(g, gi) * dx;

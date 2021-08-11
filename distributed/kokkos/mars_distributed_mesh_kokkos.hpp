@@ -52,9 +52,9 @@ namespace mars {
 
         MARS_INLINE_FUNCTION Mesh(const context &c)
             : ParallelIMesh<Dim_>(),
+              ctx(c),
               elements_size_(0),
-              points_size_(0),
-              ctx(c)
+              points_size_(0)
         //, combinations(nullptr)
         {}
         void reserve(const std::size_t n_elements, const std::size_t n_points) override {
@@ -273,7 +273,7 @@ namespace mars {
         void set_proc(Integer p) { proc = p; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_proc() const { return proc; }
+        Integer get_proc() const { return proc; }
 
         MARS_INLINE_FUNCTION
         void set_global_to_local_map(const UnorderedMap<Integer, Integer> &gl_map) { global_to_local_map_ = gl_map; }
@@ -598,7 +598,7 @@ namespace mars {
                               ViewVectorType<bool> ac,
                               Integer xdm,
                               Integer ydm)
-                : elem(el), global(gl), map(mp), active(ac), xDim(xdm), yDim(ydm) {}
+                : elem(el), active(ac), global(gl), map(mp), xDim(xdm), yDim(ydm) {}
 
             AddNonSimplexElem(ViewMatrixType<Integer> el,
                               ViewVectorType<Integer> gl,
@@ -607,7 +607,7 @@ namespace mars {
                               Integer xdm,
                               Integer ydm,
                               Integer zdm)
-                : elem(el), global(gl), map(mp), active(ac), xDim(xdm), yDim(ydm), zDim(zdm) {}
+                : elem(el), active(ac), global(gl), map(mp), xDim(xdm), yDim(ydm), zDim(zdm) {}
 
             KOKKOS_INLINE_FUNCTION
             void operator()(int index) const {
@@ -1078,7 +1078,7 @@ namespace mars {
 
             Kokkos::Timer timer;
 
-            int proc_num = rank(context);
+            /* int proc_num = rank(context); */
             int size = num_ranks(context);
 
             std::vector<Integer> send_count(size, 0);

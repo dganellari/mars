@@ -230,6 +230,7 @@ namespace mars {
             VectorReal refined_x("refined_x", mesh.n_nodes());
             interpolate(mesh, values, new_elem_offset, x, refined_x);
             x = refined_x;
+            return true;
         }
 
         bool interpolate(PMesh &mesh,
@@ -390,7 +391,7 @@ namespace mars {
             const Integer n_nodes = mesh.n_nodes();
             VectorReal x("X", n_nodes);
 
-            Integer refs{0};
+            /* Integer refs{0}; */
 
             // do {
             Problem problem(mesh);

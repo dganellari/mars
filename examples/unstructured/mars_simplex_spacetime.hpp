@@ -144,4 +144,4 @@ namespace mars {
 
 }  // namespace mars
 
-#endif MARS_SIMPLEX_SPACETIME_HPP
+#endif //MARS_SIMPLEX_SPACETIME_HPP

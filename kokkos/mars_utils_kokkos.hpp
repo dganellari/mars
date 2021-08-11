@@ -50,6 +50,8 @@ namespace mars {
 #define MARS_LAMBDA_REF [&]
 #endif  // MARS_USE_CUDA
 
+#define unused(x) ((void)(x))
+
     template <typename T>
     using ViewVectorTypeStride = Kokkos::View<T*, Kokkos::LayoutStride, KokkosSpace>;
 

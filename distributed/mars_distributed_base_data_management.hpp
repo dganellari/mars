@@ -137,9 +137,9 @@ namespace mars {
                 con->distributed->i_send_recv_view(el_1, sc_rcv_mirror, el_2, sc_snd_mirror);
             }
 
+            const context &con;
             Integer *sc_rcv_mirror;
             Integer *sc_snd_mirror;
-            const context &con;
         };
 
         template <Integer... dataidx>

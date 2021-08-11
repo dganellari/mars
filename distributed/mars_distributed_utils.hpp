@@ -533,11 +533,10 @@ namespace mars {
         return local_dof_map;
     }
 
-    template <typename DH, typename F>
-    ViewVectorType<bool> build_sfc_to_local_predicate(DH dofhandler,
-                                                      F f,
-                                                      const Integer local_size,
-                                                      const ViewVectorType<Integer> in) {
+    /* template <typename DH, typename F> */
+    /* ViewVectorType<bool> build_sfc_to_local_predicate(DH dofhandler, */
+    template <typename F>
+    ViewVectorType<bool> build_sfc_to_local_predicate(F f, const Integer local_size, const ViewVectorType<Integer> in) {
         ViewVectorType<bool> predicate("separated_predicate", local_size);
 
         Kokkos::parallel_for(
@@ -560,7 +559,7 @@ namespace mars {
         using namespace Kokkos;
 
         auto local_size = in.extent(0);
-        auto in_predicate = build_sfc_to_local_predicate<DH, F>(dofhandler, f, local_size, in);
+        auto in_predicate = build_sfc_to_local_predicate<F>(f, local_size, in);
 
         /* perform a scan on the separated dof predicate*/
         auto bscan = ViewVectorType<Integer>("boudnary_separated_scan", local_size + 1);

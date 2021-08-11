@@ -76,7 +76,7 @@ namespace mars {
             compact_elements(sfc_to_local, all_elements, all_labels, element_labels_);
         }
 
-        void init_element_orientations(const Integer n_elements) {
+        void init_element_orientations() {
             // reserve the view then init
             element_orientations_ = ViewVectorType<Integer>("Orientation", get_elem_size());
 
@@ -115,28 +115,28 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_sfc(const Integer i) const  // override
+        Integer get_sfc(const Integer i) const  // override
         {
             return elements_(i);
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_orientation(const Integer i) const  // override
+        Integer get_orientation(const Integer i) const  // override
         {
             return element_orientations_(i);
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_label(const Integer i) const  // override
+        Integer get_label(const Integer i) const  // override
         {
             return element_labels_(i);
         }
 
         void set_elem_size(const Integer size) { elements_size_ = size; }
 
-        const Integer get_elem_size() const { return elements_size_; }
+        Integer get_elem_size() const { return elements_size_; }
 
-        const Integer get_all_range() const { return all_range_; }
+        Integer get_all_range() const { return all_range_; }
 
         MARS_INLINE_FUNCTION
         SFC() = default;
@@ -161,13 +161,13 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_XDim() const { return xDim; }
+        Integer get_XDim() const { return xDim; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_YDim() const { return yDim; }
+        Integer get_YDim() const { return yDim; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_ZDim() const { return zDim; }
+        Integer get_ZDim() const { return zDim; }
 
     private:
         ViewVectorType<Integer> elements_;

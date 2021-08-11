@@ -184,12 +184,12 @@ namespace mars {
         /* print_dofs<Type>(dm, proc_num); */
 
         using VectorReal = mars::ViewVectorType<Real>;
-        using VectorInt = mars::ViewVectorType<Integer>;
-        using VectorBool = mars::ViewVectorType<bool>;
+        /* using VectorInt = mars::ViewVectorType<Integer>; */
+        /* using VectorBool = mars::ViewVectorType<bool>; */
 
         BC bc_fun;
         RHS rhs_fun;
-        AnalyticalFun an_fun;
+        /* AnalyticalFun an_fun; */
 
         const Integer locally_owned_dof_size = dof_handler.get_owned_dof_size();
         printf("Locally owned dof size: %li\n", locally_owned_dof_size);

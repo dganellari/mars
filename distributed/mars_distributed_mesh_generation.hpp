@@ -44,7 +44,7 @@ namespace mars {
         auto first_sfc_mirror = create_mirror_view(first_sfc);
         deep_copy(first_sfc_mirror, first_sfc);
 
-        for (int i = 0; i < size; ++i) {
+        for (auto i = 0; i < size; ++i) {
             GpNp_host(2 * i) = first_sfc_mirror(i);
         }
         /* insert the last element of the sfc adding 1 to it to make the last element not part of the linearization.

@@ -16,7 +16,7 @@ namespace mars {
         using simplex_type = typename Mesh::Elem;
 
     public:
-        MARS_INLINE_FUNCTION MeshManager(Mesh *mesh) : host_mesh(mesh), mesh(nullptr) { copy_mesh_to_device(); }
+        MARS_INLINE_FUNCTION MeshManager(Mesh *mesh) : mesh(nullptr), host_mesh(mesh) { copy_mesh_to_device(); }
 
         template <typename H>
         MARS_INLINE_FUNCTION void elem_iterate(H f) {

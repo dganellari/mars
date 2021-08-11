@@ -26,8 +26,8 @@ namespace mars {
             ViewMatrixType<Real> points = mesh_.get_view_points();
             auto active = mesh_.get_view_active();
 
-            auto ne = elems.extent(0);
-            auto nen = elems.extent(1);
+            /* auto ne = elems.extent(0); */
+            /* auto nen = elems.extent(1); */
 
             det_J_ = ViewVectorType<Real>("det_J", mesh_.n_elements());
             J_inv_ = ViewMatrixType<Real>("J_inv", mesh_.n_elements(), Dim * Dim);
@@ -45,6 +45,7 @@ namespace mars {
                     for (int k = 0; k < NFuns; ++k) {
                         idx[k] = elems(i, k);
                         assert(idx[k] < n_nodes);
+                        unused(n_nodes);
                     }
 
                     Real det_J_e;
