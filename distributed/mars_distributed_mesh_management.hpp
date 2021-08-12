@@ -52,7 +52,7 @@ namespace mars {
                     Octant nbh_oc = mesh->get_octant_face_nbh(i, face_nr);
 
                     bool ghost = false;
-                    Integer index;
+                    Integer index = 0;
 
                     if (nbh_oc.is_valid()) {
                         Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(nbh_oc);

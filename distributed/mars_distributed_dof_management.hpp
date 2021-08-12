@@ -452,9 +452,9 @@ namespace mars {
         }; */
 
         struct MaxOneRingProc {
-            Integer &max_proc;
             ViewVectorType<Integer> gp;
             Integer proc;
+            Integer &max_proc;
 
             MARS_INLINE_FUNCTION
             MaxOneRingProc(ViewVectorType<Integer> g, Integer p, Integer &mx) : gp(g), proc(p), max_proc(mx) {}
@@ -561,9 +561,9 @@ namespace mars {
             printf("Bilding the Boundary DOF Sets!\n");
             const Integer size = get_mesh_manager().get_host_mesh()->get_view_boundary().extent(0);
 
-            Integer xDim = get_mesh_manager().get_host_mesh()->get_XDim();
-            Integer yDim = get_mesh_manager().get_host_mesh()->get_YDim();
-            Integer zDim = get_mesh_manager().get_host_mesh()->get_ZDim();
+            /* Integer xDim = get_mesh_manager().get_host_mesh()->get_XDim(); */
+            /* Integer yDim = get_mesh_manager().get_host_mesh()->get_YDim(); */
+            /* Integer zDim = get_mesh_manager().get_host_mesh()->get_ZDim(); */
 
             const Integer chunk_size_ = global_dof_enum.get_elem_size();
             ViewMatrixTypeLeft<bool> rank_boundary("count_per_proc", chunk_size_, nbh_rank_size);
@@ -1186,8 +1186,8 @@ namespace mars {
 
             Kokkos::Timer timer;
 
-            int proc_num = rank(context);
-            int size = num_ranks(context);
+            /* int proc_num = rank(context);
+            int size = num_ranks(context); */
 
             auto scan_snd = create_mirror_view(scan_boundary);
             Kokkos::deep_copy(scan_snd, scan_boundary);
@@ -1443,6 +1443,7 @@ namespace mars {
                 // build the ghost dof object and insert into the map
                 const auto result = glgm.insert(ghost_sfc, Dof(gid, owner_proc));
                 assert(result.success());
+                unused(result);
             }
         };
 

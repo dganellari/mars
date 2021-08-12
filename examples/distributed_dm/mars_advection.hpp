@@ -490,7 +490,7 @@ namespace mars {
                                                           data.get_mesh()->get_YDim(),
                                                           data.get_mesh()->get_ZDim());
 
-                    if (ii == 1 && data.get_mesh()->get_proc() == 0)
+                    /* if (ii == 1 && data.get_mesh()->get_proc() == 0)
                         printf(
                             "(%i %lf:%lf) q: %lf, uavg: %lf - %i -  %i, rank: "
                             "%i\n",
@@ -501,7 +501,7 @@ namespace mars {
                             uavg,
                             face.get_side(i).get_face_side(),
                             Dir,
-                            data.get_mesh()->get_proc());
+                            data.get_mesh()->get_proc()); */
                 }
             }
         }
