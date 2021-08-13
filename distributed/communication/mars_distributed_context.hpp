@@ -53,7 +53,7 @@ namespace mars
     virtual T min(T value) const = 0;  \
     virtual T max(T value) const = 0;  \
     virtual T sum(T value) const = 0;  \
-    virtual std::vector<T> gather(T value, int root) const = 0; 
+    virtual std::vector<T> gather(T value, int root) const = 0;
 
 #define MARS_WRAP_COLLECTIVES_(T)                                \
     T min(T value) const override { return wrapped.min(value); } \
@@ -90,7 +90,7 @@ namespace mars
     virtual void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ, \
                 const ViewVectorType<T> &src, const Integer* src_displ) const = 0; \
     virtual void gather_all_view(T value, const ViewVectorType<T> &buffer) const = 0;
-    
+
 #define MARS_WRAP_PTOP_(T)                                \
     ViewObject<T> min(ViewObject<T> value) const override { return wrapped.min(value); } \
     ViewObject<T> max(ViewObject<T> value) const override { return wrapped.max(value); } \
@@ -106,7 +106,7 @@ namespace mars
                 { wrapped.i_send_recv_view(dest, dest_displ, src, src_displ); } \
     void gather_all_view(T value, const ViewVectorType<T> &buffer) const override \
                 { wrapped.gather_all_view(value, buffer); }
-    
+
 #define MARS_PTOP_TYPES_ double, Integer, float, int, unsigned, short
 #endif
 
@@ -282,48 +282,57 @@ struct local_context
     using gid_vector = std::vector<Integer>;
 #ifdef WITH_KOKKOS
     using local_sfc = ViewVectorType<Integer>;
-    local_sfc
-    scatter_gids(const local_sfc global, const local_sfc local) const
-    {
-        return ViewVectorType<Integer>("local_context_view", 0);
+    local_sfc scatter_gids(const local_sfc global, const local_sfc local) const {
+        deep_copy(local, global);
+        return local;
     }
 
-    void
-    scatterv_gids(const local_sfc global, const local_sfc local,
-                const std::vector<int> &counts) const
-    {
+    void scatterv_gids(const local_sfc global, const local_sfc local, const std::vector<int> &counts) const {
+        deep_copy(local, global);
+        unused(counts);
     }
 
     template <typename T>
     void i_send_recv_all_to_all(const std::vector<T> &send_count, std::vector<T> &receive_count) const
     {
+        receive_count = send_count;
     }
 
     template <typename T>
     void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count) const
     {
+        receive_count = send_count;
     }
 
-    template<typename T>
-    void i_send_recv_view_to_all(const ViewVectorType<T> &dest, const Integer* dest_displ,
-                const ViewVectorType<T> &src, const Integer* src_displ) const
-    {
-    }
-    template<typename T>
-    void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ,
-                const ViewVectorType<T> &src, const Integer* src_displ) const
-    {
-    }
-
-    template<typename T>
-    void gather_all_view(T value, const ViewVectorType<T> &buffer) const
-    {
+    template <typename T>
+    void i_send_recv_view_to_all(const ViewVectorType<T> &dest,
+                                 const Integer *dest_displ,
+                                 const ViewVectorType<T> &src,
+                                 const Integer *src_displ) const {
+        deep_copy(dest, src);
+        unused(dest_displ);
+        unused(src_displ);
     }
 
-    void
-    broadcast(const ViewVectorType<Integer> global) const
-    {
+    template <typename T>
+    void i_send_recv_view(const ViewVectorType<T> &dest,
+                          const Integer *dest_displ,
+                          const ViewVectorType<T> &src,
+                          const Integer *src_displ) const {
+        deep_copy(dest, src);
+        unused(dest_displ);
+        unused(src_displ);
     }
+
+    template <typename T>
+    void gather_all_view(T value, const ViewVectorType<T> &buffer) const {
+        auto hv = create_mirror_view(buffer);
+        hv(0) = value;
+        deep_copy(buffer, hv);
+    }
+
+    //do nothing when one process! Use unused macro to avoid the warning.
+    void broadcast(const ViewVectorType<Integer> global) const { unused(global); }
 
     template <typename T>
     ViewObject<T> min(ViewObject<T> value) const { return value; }
