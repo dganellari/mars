@@ -307,6 +307,21 @@ namespace mars {
                     f(dm.get_data<idx>(i));
                 });
         }
+
+        template <Integer dataidx, typename H, typename DH>
+        static void set_locally_owned_data(const DH &dhandler, user_tuple &dof_data, const ViewVectorType<H> &x) {
+            assert(dhandler.get_global_dof_enum().get_elem_size() == x.extent(0));
+            const Integer size = dhandler.get_global_dof_enum().get_elem_size();
+
+            ViewVectorType<Integer> global_to_sfc = dhandler.get_global_dof_enum().get_view_elements();
+            Kokkos::parallel_for(
+                "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
+                    const Integer sfc = global_to_sfc(i);
+                    const Integer local = dhandler.get_local_index(sfc);
+                    assert(INVALID_INDEX != local);
+                    std::get<dataidx>(dof_data)(local) = x(i);
+                });
+        }
     };
 
     // gather operation: fill the data from the received ghost data
@@ -331,6 +346,14 @@ namespace mars {
     template <class DM, Integer... dataidx>
     void scatter_add_ghost_data(DM &dm) {
         dm.template scatter_add_ghost_data<dataidx...>();
+    }
+
+    template <typename H, typename T>
+    void set_locally_owned_data(const H &dof_handler, ViewVectorType<T> &data, ViewVectorType<T> owned) {
+        assert(data.extent(0) == dof_handler.get_local_dof_enum().get_elem_size());
+        using SuperDM = BDM<T>;
+        auto tuple = std::make_tuple(data);
+        SuperDM::template set_locally_owned_data<0>(dof_handler, tuple, owned);
     }
 
 }  // namespace mars
