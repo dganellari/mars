@@ -18,6 +18,8 @@ namespace mars {
         static constexpr Integer degree = DofHandler::Degree;
         static constexpr Integer Dim = DofHandler::ManifoldDim;
 
+        static constexpr Integer Block = DofHandler::Block;
+
         static constexpr Integer ElemType = DofHandler::ElemType;
 
         static constexpr Integer volume_nodes = DofHandler::volume_dofs;
@@ -26,7 +28,7 @@ namespace mars {
         /* static constexpr Integer elem_nodes = DofHandler::elem_dofs; */
 
         using NDofs = NumDofs<degree, Label, ElemType>;
-        static constexpr Integer elem_nodes = NDofs::elem_dofs();
+        static constexpr Integer elem_nodes = Block * NDofs::elem_dofs();
         /* static constexpr Integer elem_nodes = (degree + 1) ^ Dim; Should be in general. */
 
         using DHandler = DofHandler;
@@ -265,6 +267,7 @@ namespace mars {
             F f;
         };
 
+        //Handling block structures (vector valued) FE
         struct DofMap {
             ViewMatrixType<Integer> dof_enum;
             Integer size;
@@ -273,7 +276,9 @@ namespace mars {
             DofMap(ViewMatrixType<Integer> ede, Integer s) : dof_enum(ede), size(s) {}
 
             MARS_INLINE_FUNCTION void operator()(const Integer sfc_index, Integer &index, const Integer localid) const {
-                dof_enum(sfc_index + size, index++) = localid;
+                for (Integer i = 0; i < Block; ++i) {
+                    dof_enum(sfc_index + size, index++) = Block * localid + i;
+                }
             }
         };
 
@@ -337,8 +342,11 @@ namespace mars {
 
                 if (lid > INVALID_INDEX) {
                     auto id = owned_map(lid);
-                    auto aindex = Kokkos::atomic_fetch_add(&owned_index(id), 1);
-                    dof_enum(id, aindex) = sfc_index + size;
+                    for (Integer bi = 0; bi < Block; ++bi) {
+                        auto bid = Block * id + bi;
+                        auto aindex = Kokkos::atomic_fetch_add(&owned_index(bid), 1);
+                        dof_enum(bid, aindex) = sfc_index + size;
+                    }
                 }
             }
         };
@@ -352,7 +360,7 @@ namespace mars {
 
             /* ViewVectorType<Integer> locally_owned_dofs; */
             auto owned_dof_map = compact_owned_dofs<L>(get_dof_handler(), locally_owned_dofs);
-            const Integer owned_size = locally_owned_dofs.extent(0);
+            const Integer owned_size = Block * locally_owned_dofs.extent(0);
 
             auto node_max_size = label_based_element_count<L>();
             ViewMatrixType<Integer> dof_enum("build_node_element_dof_map", owned_size, node_max_size);

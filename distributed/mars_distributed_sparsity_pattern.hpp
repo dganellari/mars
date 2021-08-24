@@ -53,6 +53,8 @@ namespace mars {
 
         using DofHandler = SHandler;
 
+        static constexpr Integer Block = DofHandler::Block;
+
         MARS_INLINE_FUNCTION
         SparsityPattern(SHandler h) : dof_handler(h) {}
 
@@ -311,7 +313,7 @@ namespace mars {
             auto node_to_element = fe.template build_node_element_dof_map<L>(locally_owned_dofs);
             auto owned_size = node_to_element.extent(0);
 
-            Integer node_max_size = label_based_node_count<L>();
+            Integer node_max_size = Block * label_based_node_count<L>();
             ViewMatrixType<Integer> ntn("count_node_view", owned_size, node_max_size);
             Kokkos::parallel_for(
                 "Count_nodes", owned_size, MARS_LAMBDA(const Integer i) {
@@ -321,7 +323,7 @@ namespace mars {
                 });
 
             /* compact_owned_dofs<L>(get_dof_handler(), locally_owned_dofs); */
-            assert(owned_size == locally_owned_dofs.extent(0));
+            assert(owned_size == Block * locally_owned_dofs.extent(0));
 
             auto el_max_size = fe.template label_based_element_count<L>();
             Kokkos::parallel_for(
@@ -344,8 +346,12 @@ namespace mars {
                         }
                     }
 
-                    auto local_owned_dof = locally_owned_dofs(i);
-                    auto local_owned_index = handler.local_to_owned_index(local_owned_dof);
+                    auto base_index = handler.compute_base(i);
+                    auto local_owned_dof = locally_owned_dofs(base_index);
+                    auto comp_index = handler.compute_component(i);
+
+                    auto block_owned = handler.compute_block_index(local_owned_dof, comp_index);
+                    auto local_owned_index = handler.local_to_owned_dof(block_owned);
                     counter(local_owned_index) = count;
                 });
 
@@ -396,12 +402,15 @@ namespace mars {
                 auto handler = dhandler;
                 auto r = row;
                 auto c = col;
-                auto owned_size = lod.extent(0);
-                assert(ntn.extent(0) == lod.extent(0));
+                /* auto owned_size = lod.extent(0); */
+                auto owned_size = ntn.extent(0);
+                assert(owned_size == Block * lod.extent(0));
                 Kokkos::parallel_for(
                     "generate columsn from node to node connectivity", owned_size, MARS_LAMBDA(const Integer i) {
-                        auto local_dof = lod(i);
-                        auto owned_index = handler.local_to_owned_index(local_dof);
+                        auto local_owned_dof = lod(handler.compute_base(i));
+                        auto comp_index = handler.compute_component(i);
+                        auto block_owned = handler.compute_block_index(local_owned_dof, comp_index);
+                        auto owned_index = handler.local_to_owned_dof(block_owned);
                         auto index = r(owned_index);
                         auto count = r(owned_index + 1) - index;
                         for (int j = 0; j < count; ++j) {
@@ -526,7 +535,8 @@ namespace mars {
             /* using fe_tuple = std::tuple<ST...>; */
             /* fe_tuple fes(std::make_tuple(fe...)); */
 
-            ViewVectorType<Integer> counter("count_node_view", get_dof_handler().get_owned_dof_size());
+            auto counter_size = get_dof_handler().get_owned_dof_size();
+            ViewVectorType<Integer> counter("count_node_view", counter_size);
             build_all_node_to_node(fe, counter);
         }
 
