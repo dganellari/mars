@@ -8,10 +8,12 @@
 
 namespace mars {
 
-    template <Integer Label, class Mesh_, Integer degree>
+    template <Integer Label, typename DofHandler>
     class SDofHandler {
     public:
-        using Mesh = Mesh_;
+        using Mesh = typename DofHandler::Mesh;
+        static constexpr Integer Degree = DofHandler::Degree;
+        static constexpr Integer Block = DofHandler::Block;
 
         using MM = MeshManager<Mesh>;
         using simplex_type = typename Mesh::Elem;
@@ -20,11 +22,10 @@ namespace mars {
 
         static constexpr Integer dofLabel = Label;
 
-        static constexpr Integer Degree = degree;
         static constexpr Integer Dim = Mesh::Dim;
         static constexpr Integer ManifoldDim = Mesh::ManifoldDim;
 
-        using NDofs = NumDofs<degree, Label, ElemType>;
+        using NDofs = NumDofs<Degree, Label, ElemType>;
 
         static constexpr Integer corner_dofs = NDofs::corner_dofs;
         static constexpr Integer num_corners = NDofs::num_corners;
@@ -40,15 +41,14 @@ namespace mars {
         static constexpr Integer elem_dofs = NDofs::elem_dofs();
 
         MARS_INLINE_FUNCTION
-        SDofHandler(DofHandler<Mesh, degree> d) : dof_handler(d) { prepare_separated_dofs(); }
+        SDofHandler(DofHandler d) : dof_handler(d) { prepare_separated_dofs(); }
 
         struct IsSeparatedDof {
             ViewVectorType<Integer> local_separated_dof_map;
-            DofHandler<Mesh, degree> handler;
+            DofHandler handler;
 
             MARS_INLINE_FUNCTION
-            IsSeparatedDof(ViewVectorType<Integer> map, DofHandler<Mesh, degree> d)
-                : local_separated_dof_map(map), handler(d) {}
+            IsSeparatedDof(ViewVectorType<Integer> map, DofHandler d) : local_separated_dof_map(map), handler(d) {}
 
             MARS_INLINE_FUNCTION
             bool operator()(const Integer sfc) const {
@@ -231,7 +231,7 @@ namespace mars {
         Integer get_owned_dof_size() const { return get_owned_dofs().extent(0); }
 
         MARS_INLINE_FUNCTION
-        const DofHandler<Mesh, degree> &get_dof_handler() const { return dof_handler; }
+        const DofHandler &get_dof_handler() const { return dof_handler; }
 
         const context &get_context() const { return get_dof_handler().get_context(); }
 
@@ -266,7 +266,7 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         Integer local_to_owned_index(const Integer local_dof) const {
-            const Integer owned = get_dof_handler().local_to_owned_dof(local_dof);
+            const Integer owned = get_dof_handler().template local_to_owned_dof<Block>(local_dof);
             const Integer pred_value = owned_dof_map(owned + 1) - owned_dof_map(owned);
             if (pred_value > 0)
                 return owned_dof_map(owned);
@@ -559,7 +559,7 @@ namespace mars {
 
         template <Integer part, Integer Type>
         static MARS_INLINE_FUNCTION Octant enum_face_corner(Octant &oc, const int dir) {
-            return DofHandler<Mesh, degree>::template enum_face_corner<part, Type>(oc, dir);
+            return DofHandler::template enum_face_corner<part, Type>(oc, dir);
         }
 
         template <Integer part, Integer Type>
@@ -579,7 +579,7 @@ namespace mars {
         /* *************************************************************************** */
 
     private:
-        DofHandler<Mesh, degree> dof_handler;
+        DofHandler dof_handler;
 
         // local dofs vector of locally owned dofs. Needed to build the stencils.
         ViewVectorType<Integer> locally_owned_dofs;
@@ -602,21 +602,19 @@ namespace mars {
     };
 
     template <class DofHandler>
-    using CornerVolumeDofHandler =
-        SDofHandler<DofLabel::lVolume + DofLabel::lCorner, typename DofHandler::Mesh, DofHandler::Degree>;
+    using CornerVolumeDofHandler = SDofHandler<DofLabel::lVolume + DofLabel::lCorner, DofHandler>;
 
     template <class DofHandler>
-    using FaceVolumeDofHandler =
-        SDofHandler<DofLabel::lVolume + DofLabel::lFace, typename DofHandler::Mesh, DofHandler::Degree>;
+    using FaceVolumeDofHandler = SDofHandler<DofLabel::lVolume + DofLabel::lFace, DofHandler>;
 
     template <class DofHandler>
-    using VolumeDofHandler = SDofHandler<DofLabel::lVolume, typename DofHandler::Mesh, DofHandler::Degree>;
+    using VolumeDofHandler = SDofHandler<DofLabel::lVolume, DofHandler>;
 
     template <class DofHandler>
-    using FaceDofHandler = SDofHandler<DofLabel::lFace, typename DofHandler::Mesh, DofHandler::Degree>;
+    using FaceDofHandler = SDofHandler<DofLabel::lFace, DofHandler>;
 
     template <class DofHandler>
-    using CornerDofHandler = SDofHandler<DofLabel::lCorner, typename DofHandler::Mesh, DofHandler::Degree>;
+    using CornerDofHandler = SDofHandler<DofLabel::lCorner, DofHandler>;
 
 }  // namespace mars
 

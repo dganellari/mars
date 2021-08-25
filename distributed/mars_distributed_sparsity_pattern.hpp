@@ -406,11 +406,12 @@ namespace mars {
                 auto owned_size = ntn.extent(0);
                 assert(owned_size == Block * lod.extent(0));
                 Kokkos::parallel_for(
-                    "generate columsn from node to node connectivity", owned_size, MARS_LAMBDA(const Integer i) {
+                    "generate columns from node to node connectivity", owned_size, MARS_LAMBDA(const Integer i) {
                         auto local_owned_dof = lod(handler.compute_base(i));
                         auto comp_index = handler.compute_component(i);
                         auto block_owned = handler.compute_block_index(local_owned_dof, comp_index);
                         auto owned_index = handler.local_to_owned_dof(block_owned);
+
                         auto index = r(owned_index);
                         auto count = r(owned_index + 1) - index;
                         for (int j = 0; j < count; ++j) {

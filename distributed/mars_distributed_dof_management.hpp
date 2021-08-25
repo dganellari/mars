@@ -120,15 +120,31 @@ namespace mars {
         DofHandler(Mesh *mesh) : mesh_manager(MM(mesh)) {}
 
         //computes the component (block) from the block local
-        std::enable_if<Block == 1, Integer> compute_component(const Integer local) const { return 0; }
-        std::enable_if<Block != 1, Integer> compute_component(const Integer local) const { return local % Block; }
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION typename std::enable_if<B == 1, Integer>::type compute_component(
+            const Integer local) const {
+            return 0;
+        }
+
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION typename std::enable_if<B != 1, Integer>::type compute_component(
+            const Integer local) const {
+            return local % Block;
+        }
 
         //computes the base (scalar) local id from the block local
-        std::enable_if<Block == 1, Integer> compute_base(const Integer local) const { return local; }
-        std::enable_if<Block != 1, Integer> compute_base(const Integer local) const { return local / Block; }
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION typename std::enable_if<B == 1, Integer>::type compute_base(const Integer local) const {
+            return local;
+        }
 
-        //Computes the block local ID from the scalar local ID and the component.
-        Integer compute_block_index(const Integer base_local, const Integer component) const {
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION typename std::enable_if<B != 1, Integer>::type compute_base(const Integer local) const {
+            return local / Block;
+        }
+
+        // Computes the block local ID from the scalar local ID and the component.
+        MARS_INLINE_FUNCTION Integer compute_block_index(const Integer base_local, const Integer component) const {
             return base_local * Block + component;
         }
 
@@ -1536,8 +1552,8 @@ namespace mars {
             return INVALID_INDEX;
         }
 
-        MARS_INLINE_FUNCTION
-        std::enable_if<Block != 1, Integer> local_to_owned_dof(const Integer local) const {
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION typename std::enable_if<B != 1, Integer>::type local_to_owned_dof(const Integer local) const {
             const Integer base_local = compute_base(local);
             const Integer comp_local = compute_component(local);
             const Integer sfc = local_to_sfc(base_local);
@@ -1545,8 +1561,8 @@ namespace mars {
             return compute_block_index(base_owned, comp_local);
         }
 
-        MARS_INLINE_FUNCTION
-        std::enable_if<Block == 1, Integer> local_to_owned_dof(const Integer local) const {
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION typename std::enable_if<B == 1, Integer>::type local_to_owned_dof(const Integer local) const {
             const Integer sfc = local_to_sfc(local);
             return get_eval_value_in_global_map(sfc);
         }
@@ -1574,14 +1590,14 @@ namespace mars {
             return dof;
         }
 
-        MARS_INLINE_FUNCTION
-        std::enable_if<Block == 1, Dof> local_to_global_dof(const Integer local) const {
+        template <Integer B>
+        MARS_INLINE_FUNCTION typename std::enable_if<B == 1, Dof>::type local_to_global_dof(const Integer local) const {
             const Integer local_sfc = local_to_sfc(local);
             return sfc_to_global_dof(local_sfc);
         }
 
-        MARS_INLINE_FUNCTION
-        std::enable_if<Block != 1, Dof> local_to_global_dof(const Integer local) const {
+        template <Integer B>
+        MARS_INLINE_FUNCTION typename std::enable_if<B != 1, Dof>::type local_to_global_dof(const Integer local) const {
             const Integer base_local = compute_base<Block>(local);
             // use the local to sfc view (elements) to get the sfc of the local numbering.
             const Integer component = compute_component<Block>(local);
@@ -1603,7 +1619,7 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         Integer local_to_global(const Integer local) const {
-            Dof dof = local_to_global_dof(local);
+            Dof dof = local_to_global_dof<Block>(local);
             if (dof.is_valid())
                 return dof.get_gid();
             else
@@ -1621,7 +1637,7 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         Integer local_to_global_proc(const Integer local) const {
-            Dof dof = local_to_global_dof(local);
+            Dof dof = local_to_global_dof<Block>(local);
             if (dof.is_valid())
                 return dof.get_proc();
             else
@@ -1825,18 +1841,18 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         const Integer get_orientation(const Integer local_dof) const {
-            const Integer base_local = compute_base<Block>(local);
+            const Integer base_local = compute_base(local_dof);
             return get_local_dof_enum().get_orientation(base_local);
         }
 
         MARS_INLINE_FUNCTION
         const Integer get_label(const Integer local_dof) const {
-            const Integer base_local = compute_base<Block>(local);
+            const Integer base_local = compute_base(local_dof);
             return get_local_dof_enum().get_label(base_local); }
 
         MARS_INLINE_FUNCTION
         const Integer get_owned_label(const Integer owned_dof) const {
-            const Integer base_owned = compute_base<Block>(owned_dof);
+            const Integer base_owned = compute_base(owned_dof);
             return get_global_dof_enum().get_label(base_owned);
         }
 
@@ -1849,7 +1865,7 @@ namespace mars {
         const ViewVectorType<Integer> &get_ghost_dofs() const { return ghost_dofs_sfc; }
 
         MARS_INLINE_FUNCTION Octant get_octant_from_local(const Integer local) const {
-            const Integer base_local = compute_base<Block>(local);
+            const Integer base_local = compute_base(local);
             const Integer sfc = local_to_sfc(base_local);
             return get_octant_from_sfc(sfc);
         }
