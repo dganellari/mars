@@ -56,14 +56,19 @@ int main(int argc, char *argv[]) {
     nx_local += coordinates[0] < mod_x;
     ny_local += coordinates[1] < mod_y;
 
-    // MPI_Exscan(const void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm);
-    for (int i_proc = 0; i_proc < coordinates[0]; i_proc++) {
-        offset_x += Nx / dims[0] + (i_proc < mod_x);
-    }
+    int recv_buf = 0;
+    MPI_Exscan(&coordinates[0], &recv_buf, 1, MPI_INTEGER, MPI_SUM, gridComm);
+    // The only varying part of this code is the coordinates of the processor. i.e (i_proc).
+    // for (int i_proc = 0; i_proc < coordinates[0]; i_proc++) {
+    std::cout << "rank:" << rank << "recv_buf" << offset_x << std::endl;
+    //     offset_x += Nx / dims[0] + (i_proc < mod_x);
+    // }
 
-    for (int j_proc = 0; j_proc < coordinates[1]; j_proc++) {
-        offset_y += Ny / dims[1] + (j_proc < mod_y);
-    }
+    // MPI_Exscan(&coordinates[1], &test, 1, MPI_INTEGER, MPI_SUM, gridComm);
+    // for (int j_proc = 0; j_proc < coordinates[1]; j_proc++) {
+    //     std::cout << "test" << test << std::endl;
+    //     offset_y += Ny / dims[1] + (j_proc < mod_y);
+    // }
     // TODO: Revisit with MPI exclusive scan (inclusive scan).
     // Cumulative sums.
 
