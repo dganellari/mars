@@ -227,8 +227,10 @@ namespace mars {
         MARS_INLINE_FUNCTION
         Integer get_dof_size() const { return get_local_dofs().extent(0); }
 
-        MARS_INLINE_FUNCTION
-        Integer get_owned_dof_size() const { return get_owned_dofs().extent(0); }
+        template <Integer B = Block>
+        MARS_INLINE_FUNCTION Integer get_owned_dof_size() const {
+            return B * get_owned_dofs().extent(0);
+        }
 
         MARS_INLINE_FUNCTION
         const DofHandler &get_dof_handler() const { return dof_handler; }
@@ -266,7 +268,7 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         Integer local_to_owned_index(const Integer local_dof) const {
-            const Integer owned = get_dof_handler().template local_to_owned_dof<Block>(local_dof);
+            const Integer owned = get_dof_handler().local_to_owned_dof(local_dof);
             const Integer pred_value = owned_dof_map(owned + 1) - owned_dof_map(owned);
             if (pred_value > 0)
                 return owned_dof_map(owned);
@@ -508,8 +510,10 @@ namespace mars {
             return get_dof_handler().get_orientation(local_dof);
         }
 
-        MARS_INLINE_FUNCTION
-        const Integer get_label(const Integer local_dof) const { return get_dof_handler().get_label(local_dof); }
+        template <Integer B = Block>
+        MARS_INLINE_FUNCTION const Integer get_label(const Integer local_dof) const {
+            return get_dof_handler().template get_label<B>(local_dof);
+        }
 
         MARS_INLINE_FUNCTION
         const Integer get_owned_label(const Integer owned_dof) const {

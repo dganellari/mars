@@ -460,13 +460,13 @@ namespace mars {
     ViewVectorType<Integer> compact_owned_dofs(const H &dof_handler, ViewVectorType<Integer> &locally_owned_dofs) {
         using namespace Kokkos;
 
-        const Integer local_size = dof_handler.get_owned_dof_size();
+        const Integer local_size = dof_handler.template get_owned_dof_size<1>();
 
         ViewVectorType<bool> dof_predicate("label_dof_predicate", local_size);
         Kokkos::parallel_for(
             "separateowneddoflabels", local_size, KOKKOS_LAMBDA(const Integer i) {
                 const Integer local = dof_handler.get_owned_dof(i);
-                if (dof_handler.get_label(local) & Label) {
+                if (dof_handler.template get_label<1>(local) & Label) {
                     dof_predicate(i) = 1;
                 }
             });
@@ -498,13 +498,13 @@ namespace mars {
     ViewVectorType<Integer> compact_local_dofs(const H &dof_handler, ViewVectorType<Integer> &local_dofs) {
         using namespace Kokkos;
 
-        const Integer local_size = dof_handler.get_dof_size();
+        const Integer local_size = dof_handler.template get_dof_size<1>();
 
         ViewVectorType<bool> dof_predicate("label_dof_predicate", local_size);
         Kokkos::parallel_for(
             "separatelocaldoflabels", local_size, KOKKOS_LAMBDA(const Integer i) {
                 const Integer local = dof_handler.get_local_dof(i);
-                if (dof_handler.get_label(local) & Label) {
+                if (dof_handler.template get_label<1>(local) & Label) {
                     dof_predicate(i) = 1;
                 }
             });

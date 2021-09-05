@@ -338,7 +338,8 @@ namespace mars {
                 : handler(h), dof_enum(ede), owned_index(o), owned_map(om), size(s) {}
 
             MARS_INLINE_FUNCTION void operator()(const Integer sfc_index, Integer &index, const Integer localid) const {
-                auto lid = handler.local_to_owned_index(localid);
+                // base local ID is received in all cases, i.e Block=1. No need for vector valued.
+                auto lid = handler.local_to_owned_index<1>(localid);
 
                 if (lid > INVALID_INDEX) {
                     auto id = owned_map(lid);
