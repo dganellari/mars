@@ -18,8 +18,8 @@ int main(int argc, char *argv[]) {
     int ny_local;
     int mod_x;
     int mod_y;
-    int Nx = 7;
-    int Ny = 5;
+    int Nx = 5;
+    int Ny = 4;
 
     // What is the offset of this processor compared to the origin. In this case
     // origin is (0,0).
@@ -45,7 +45,6 @@ int main(int argc, char *argv[]) {
     // We evaluate the rank of this processor passing the communicator as parameter.
     MPI_Comm_rank(gridComm, &my_grid_rank);
     // We evaluate the coordinates of this processor and store these coordinates in the array coordinates[].
-    MPI_Cart_coords(gridComm, my_grid_rank, 2, coordinates);
 
     nx_local = Nx / dims[0];
     mod_x = Nx % dims[0];
@@ -57,18 +56,18 @@ int main(int argc, char *argv[]) {
     ny_local += coordinates[1] < mod_y;
 
     int recv_buf = 0;
-    MPI_Exscan(&coordinates[0], &recv_buf, 1, MPI_INTEGER, MPI_SUM, gridComm);
+
+    // Works only for 1-dimensional decomp.
+    // MPI_Exscan(&nx_local, &offset_x, 1, MPI_INTEGER, MPI_SUM, gridComm);
     // The only varying part of this code is the coordinates of the processor. i.e (i_proc).
-    // for (int i_proc = 0; i_proc < coordinates[0]; i_proc++) {
-    std::cout << "rank:" << rank << "recv_buf" << offset_x << std::endl;
-    //     offset_x += Nx / dims[0] + (i_proc < mod_x);
-    // }
+    for (int i_proc = 0; i_proc < coordinates[0]; i_proc++) {
+        offset_x += Nx / dims[0] + (i_proc < mod_x);
+    }
 
     // MPI_Exscan(&coordinates[1], &test, 1, MPI_INTEGER, MPI_SUM, gridComm);
-    // for (int j_proc = 0; j_proc < coordinates[1]; j_proc++) {
-    //     std::cout << "test" << test << std::endl;
-    //     offset_y += Ny / dims[1] + (j_proc < mod_y);
-    // }
+    for (int j_proc = 0; j_proc < coordinates[1]; j_proc++) {
+        offset_y += Ny / dims[1] + (j_proc < mod_y);
+    }
     // TODO: Revisit with MPI exclusive scan (inclusive scan).
     // Cumulative sums.
 
