@@ -1,6 +1,7 @@
 #ifndef GENERATION_MARS_DISTRIBUTED_DofHandler_HPP_
 #define GENERATION_MARS_DISTRIBUTED_DofHandler_HPP_
 
+#include <cstdlib>
 #ifdef WITH_MPI
 #ifdef WITH_KOKKOS
 #include "mars_distributed_dof.hpp"
@@ -127,10 +128,18 @@ namespace mars {
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B != 1, Integer>::type compute_component(
+        MARS_INLINE_FUNCTION typename std::enable_if<(B > 1), Integer>::type compute_component(
             const Integer local) const {
             return local % Block;
         }
+
+        //B==0 goes for runtime block input. Useful for interfacing with UtopiaFE.
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION typename std::enable_if<B == 0, Integer>::type compute_component(
+            const Integer local) const {
+            return local % get_block();
+        }
+
 
         //computes the base (scalar) local id from the block local
         template <Integer B = Block_>
@@ -139,13 +148,26 @@ namespace mars {
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B != 1, Integer>::type compute_base(const Integer local) const {
+        MARS_INLINE_FUNCTION typename std::enable_if<(B > 1), Integer>::type compute_base(const Integer local) const {
             return local / Block;
         }
 
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION typename std::enable_if<B == 0, Integer>::type compute_base(const Integer local) const {
+            return local / get_block();
+        }
+
         // Computes the block local ID from the scalar local ID and the component.
-        MARS_INLINE_FUNCTION Integer compute_block_index(const Integer base_local, const Integer component) const {
-            return base_local * Block + component;
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION typename std::enable_if<B != 0, Integer>::type compute_block_index(const Integer base_local,
+                                                                                 const Integer component) const {
+            return base_local * B + component;
+        }
+
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION typename std::enable_if<B == 0, Integer>::type compute_block_index(const Integer base_local,
+                                                                                 const Integer component) const {
+            return base_local * get_block() + component;
         }
 
         template <typename H>
@@ -154,15 +176,23 @@ namespace mars {
         }
 
         template <typename H, Integer B = Block_>
-        MARS_INLINE_FUNCTION void owned_dof_iterate(H f) const {
-            const Integer size = global_dof_enum.get_elem_size();
-            Kokkos::parallel_for("init_initial_cond", B * size, f);
+        MARS_INLINE_FUNCTION typename std::enable_if<B != 0, void>::type owned_dof_iterate(H f) const {
+            Kokkos::parallel_for("init_initial_cond", B * global_dof_enum.get_elem_size(), f);
         }
 
         template <typename H, Integer B = Block_>
-        MARS_INLINE_FUNCTION void dof_iterate(H f) const {
-            const Integer size = local_dof_enum.get_elem_size();
-            Kokkos::parallel_for("init_initial_cond", B * size, f);
+        MARS_INLINE_FUNCTION typename std::enable_if<B == 0, void>::type owned_dof_iterate(H f) const {
+            Kokkos::parallel_for("init_initial_cond", get_block() * global_dof_enum.get_elem_size(), f);
+        }
+
+        template <typename H, Integer B = Block_>
+        MARS_INLINE_FUNCTION typename std::enable_if<B != 0, void>::type dof_iterate(H f) const {
+            Kokkos::parallel_for("init_initial_cond", B * local_dof_enum.get_elem_size(), f);
+        }
+
+        template <typename H, Integer B = Block_>
+        MARS_INLINE_FUNCTION typename std::enable_if<B == 0, void>::type dof_iterate(H f) const {
+            Kokkos::parallel_for("init_initial_cond", get_block() * local_dof_enum.get_elem_size(), f);
         }
 
         template <typename H>
@@ -1558,7 +1588,7 @@ namespace mars {
             const Integer comp_local = compute_component<B>(local);
             const Integer sfc = local_to_sfc(base_local);
             const Integer base_owned = get_eval_value_in_global_map(sfc);
-            return compute_block_index(base_owned, comp_local);
+            return compute_block_index<B>(base_owned, comp_local);
         }
 
         template <Integer B = Block_>
@@ -1606,7 +1636,7 @@ namespace mars {
 
             const Integer local_sfc = local_to_sfc(base_local);
             auto dof = sfc_to_global_dof(local_sfc);
-            dof.set_gid(compute_block_index(dof.get_gid(), component));
+            dof.set_gid(compute_block_index<B>(dof.get_gid(), component));
             return dof;
         }
 
@@ -1755,7 +1785,12 @@ namespace mars {
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION const Integer get_dof_size() const {
+        MARS_INLINE_FUNCTION typename std::enable_if<B == 0, const Integer>::type get_dof_size() const {
+            return get_block() * local_dof_enum.get_elem_size();
+        }
+
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION typename std::enable_if<B != 0, const Integer>::type get_dof_size() const {
             return B * local_dof_enum.get_elem_size();
         }
 
@@ -1777,8 +1812,13 @@ namespace mars {
         const Integer get_base_owned_dof_size() const { return global_dof_enum.get_elem_size(); }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION const Integer get_owned_dof_size() const {
+        MARS_INLINE_FUNCTION typename std::enable_if<B != 0, const Integer>::type get_owned_dof_size() const {
             return B * global_dof_enum.get_elem_size();
+        }
+
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION typename std::enable_if<B == 0, const Integer>::type get_owned_dof_size() const {
+            return get_block() * global_dof_enum.get_elem_size();
         }
 
         MARS_INLINE_FUNCTION
@@ -1793,15 +1833,24 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_global_dof_offset() const { return global_dof_offset; }
 
-        template <Integer B = Block_>
-        MARS_INLINE_FUNCTION const Integer get_global_dof_size() const {
+        MARS_INLINE_FUNCTION const Integer get_global_base_dof_size() const {
             const Integer rank_size = num_ranks(get_context());
 
             auto ss = subview(global_dof_offset, rank_size);
             auto h_ss = create_mirror_view(ss);
             deep_copy(h_ss, ss);
 
-            return B * h_ss();
+            return h_ss();
+        }
+
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION typename std::enable_if<B == 0, const Integer>::type get_global_dof_size() const {
+            return get_block() * get_global_base_dof_size();
+        }
+
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION typename std::enable_if<B != 0, const Integer>::type get_global_dof_size() const {
+            return B * get_global_base_dof_size();
         }
 
         MARS_INLINE_FUNCTION
@@ -1915,6 +1964,13 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const Integer get_ZMax() const { return Degree * get_mesh_manager().get_mesh()->get_ZDim(); }
 
+
+        MARS_INLINE_FUNCTION
+        void set_block(const Integer b) { block = b; }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_block() const { return block; }
+
     private:
         //manages host and device mesh objects.
         MM mesh_manager;
@@ -1941,6 +1997,8 @@ namespace mars {
         // mirror view on the scan_ghost view used as an offset to receive ghost dofs.
         ViewVectorType<Integer> scan_recv;
         ViewVectorType<Integer>::HostMirror scan_recv_mirror;
+
+        Integer block;
     };
 
 }  // namespace mars
