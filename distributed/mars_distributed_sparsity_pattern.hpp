@@ -542,6 +542,36 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
+        void matrix_apply_constraints(const Integer row, crs_matrix m, const V value) const {
+            const Integer diag_row = get_dof_handler().local_to_owned_index(row);
+            const col_index_type diag_col = get_dof_handler().local_to_global(row);
+
+            const Integer row_idx = sparsity_pattern.row_map(diag_row);
+            const Integer next_row_idx = sparsity_pattern.row_map(diag_row + 1) - 1;
+
+            const Integer col_index = binary_search(sparsity_pattern.entries.data(), row_idx, next_row_idx, diag_col);
+
+            for (int i = row_idx; i <= next_row_idx; ++i) {
+                if (i == col_index) {
+                    m.values(i) = value;
+                } else {
+                    m.values(i) = 0;
+                }
+            }
+        }
+
+        template <class VIEW>
+        MARS_INLINE_FUNCTION void vector_apply_constraints(const Integer row, VIEW v, const V value) const {
+            auto diag_row = get_dof_handler().local_to_owned_index(row);
+            v(diag_row, 0) = value;
+        }
+
+        template <class VIEW>
+        MARS_INLINE_FUNCTION void apply_zero_constraints(const Integer row, VIEW v) const {
+            vector_apply_constraints(row, v, 0);
+        }
+
+        MARS_INLINE_FUNCTION
         const crs_graph get_sparsity_pattern() const { return sparsity_pattern; }
 
         MARS_INLINE_FUNCTION
@@ -572,36 +602,6 @@ namespace mars {
             auto col = get_dof_handler().local_to_global(local_col);
 
             return get_col_index_from_global(row, col);
-        }
-
-        MARS_INLINE_FUNCTION
-        void matrix_apply_constraints(const Integer row, crs_matrix m, const V value) const {
-            const Integer diag_row = get_dof_handler().local_to_owned_index(row);
-            const col_index_type diag_col = get_dof_handler().local_to_global(row);
-
-            const Integer row_idx = sparsity_pattern.row_map(diag_row);
-            const Integer next_row_idx = sparsity_pattern.row_map(diag_row + 1) - 1;
-
-            const Integer col_index = binary_search(sparsity_pattern.entries.data(), row_idx, next_row_idx, diag_col);
-
-            for (int i = row_idx; i <= next_row_idx; ++i) {
-                if (i == col_index) {
-                    m.values(i) = value;
-                } else {
-                    m.values(i) = 0;
-                }
-            }
-        }
-
-        template <class VIEW>
-        MARS_INLINE_FUNCTION void vector_apply_constraints(const Integer row, VIEW v, const V value) const {
-            auto diag_row = get_dof_handler().local_to_owned_index(row);
-            v(diag_row, 0) = value;
-        }
-
-        template <class VIEW>
-        MARS_INLINE_FUNCTION void apply_zero_constraints(const Integer row, VIEW v) const {
-            vector_apply_constraints(row, v, 0);
         }
 
         MARS_INLINE_FUNCTION
