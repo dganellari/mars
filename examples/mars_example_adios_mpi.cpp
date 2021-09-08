@@ -37,8 +37,8 @@ int main(int argc, char *argv[]) {
     int ny_local;
     int mod_x;
     int mod_y;
-    int Nx = 300;
-    int Ny = 400;
+    int Nx = 3000;
+    int Ny = 4000;
 
     std::vector<double> data;
     data.resize(Nx * Ny);
@@ -51,7 +51,7 @@ int main(int argc, char *argv[]) {
     // Specify the size of each dimension.
     // Can also specify how many proceses are on each dims, which in the general case
     // is not useful since MPI_Dims_create() takes care of that.
-    int dims[2] = {3, 2};
+    int dims[2];
 
     MPI_Dims_create(size, 2, dims);
 
@@ -109,8 +109,8 @@ int main(int argc, char *argv[]) {
                     int idx_global = i_global * Ny + j_global;
                     // std::cout << i << "," << j << "->" << idx_local << " ";
                     // std::cout << "global: " << i_global << "," << j_global << "->" << idx_global << std::endl;
-                    x = i * 0.5;
-                    y = j * 0.25;
+                    x = i_global * 0.5;
+                    y = j_global * 0.25;
                     data[idx_local] = simple_func(x, y);
                 }
             }
