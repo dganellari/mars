@@ -25,7 +25,7 @@ void ImageWriter::new_data(const unsigned long &Nx, const unsigned long &Ny, con
     double H[3];
     H[0] = 0.5;
     H[1] = 0.25;
-    H[2] = 1;
+    H[2] = 0;
     data.resize(size);
     double x;
     double y;
