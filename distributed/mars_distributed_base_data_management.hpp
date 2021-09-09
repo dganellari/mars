@@ -40,9 +40,12 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                const Integer sfc_index = dof_handler.get_local_index(boundary_sfc(i));
+                auto base = dof_handler.compute_base(i);
+                auto component = dof_handler.compute_component(i);
+                const Integer sfc_index = dof_handler.get_local_index(boundary_sfc(base));
                 assert(INVALID_INDEX != sfc_index);
-                buffer_data(i) = user_data(sfc_index);
+                auto block_local = dof_handler.compute_block_index(sfc_index, component);
+                buffer_data(i) = user_data(block_local);
             }
         };
 
@@ -58,9 +61,12 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                const Integer sfc_index = dof_handler.get_local_index(boundary_sfc(i));
+                auto base = dof_handler.compute_base(i);
+                auto component = dof_handler.compute_component(i);
+                const Integer sfc_index = dof_handler.get_local_index(boundary_sfc(base));
                 assert(INVALID_INDEX != sfc_index);
-                Kokkos::atomic_add(&user_data(sfc_index), buffer_data(i));
+                auto block_local = dof_handler.compute_block_index(sfc_index, component);
+                Kokkos::atomic_add(&user_data(block_local), buffer_data(i));
             }
         };
 
@@ -76,9 +82,12 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                const Integer sfc_index = dof_handler.get_local_index(boundary_sfc(i));
+                auto base = dof_handler.compute_base(i);
+                auto component = dof_handler.compute_component(i);
+                const Integer sfc_index = dof_handler.get_local_index(boundary_sfc(base));
                 assert(INVALID_INDEX != sfc_index);
-                Kokkos::atomic_fetch_max(&user_data(sfc_index), buffer_data(i));
+                auto block_local = dof_handler.compute_block_index(sfc_index, component);
+                Kokkos::atomic_fetch_max(&user_data(block_local), buffer_data(i));
             }
         };
 
@@ -94,9 +103,12 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                const Integer sfc_index = dof_handler.get_local_index(boundary_sfc(i));
+                auto base = dof_handler.compute_base(i);
+                auto component = dof_handler.compute_component(i);
+                const Integer sfc_index = dof_handler.get_local_index(boundary_sfc(base));
                 assert(INVALID_INDEX != sfc_index);
-                Kokkos::atomic_fetch_min(&user_data(sfc_index), buffer_data(i));
+                auto block_local = dof_handler.compute_block_index(sfc_index, component);
+                Kokkos::atomic_fetch_min(&user_data(block_local), buffer_data(i));
             }
         };
 
@@ -123,7 +135,8 @@ namespace mars {
                                                           user_tuple &buffer_data,
                                                           const ViewVectorType<Integer> &boundary,
                                                           const H &dof_handler) {
-            const Integer size = boundary.extent(0);
+            const auto block = get_block(dof_handler);
+            const Integer size = boundary.extent(0) * block;
             expand_tuple<FillBufferDataFunctor<Op, H>, user_tuple, dataidx...>(
                 FillBufferDataFunctor<Op, H>("fill_buffer_data", size, boundary, dof_handler), buffer_data, udata);
         }
@@ -143,31 +156,34 @@ namespace mars {
         };
 
         template <Integer B>
-        MARS_INLINE_FUNCTION std::enable_if<B == 1, Integer *>::type compute_block_scan(const Integer *mirror,
-                                                                                        const Integer size) {
+        MARS_INLINE_FUNCTION static typename std::enable_if<B == 1, Integer *>::type
+        compute_block_scan(Integer *mirror, const Integer size, const Integer block) {
             return mirror;
         }
 
         template <Integer B>
-        MARS_INLINE_FUNCTION std::enable_if<B != 1, Integer *>::type compute_block_scan(const Integer *mirror,
-                                                                                        const Integer size) {
+        MARS_INLINE_FUNCTION static typename std::enable_if<B != 1, Integer *>::type
+        compute_block_scan(Integer *mirror, const Integer size, const Integer block) {
             std::vector<Integer> block_scan(size, 0);
             for (int i = 0; i < size; ++i) {
-                block_scan(i) = B * mirror[i];
+                block_scan[i] = block * mirror[i];
             }
 
             return block_scan.data();
         }
 
-        template <Integer... dataidx, Integer Block>
+        template <typename H, Integer... dataidx>
         MARS_INLINE_FUNCTION static void exchange_ghost_dofs_data(const context &c,
+                                                                  const Integer block,
                                                                   user_tuple &recv_data,
                                                                   user_tuple &send_data,
                                                                   Integer *r_mirror,
                                                                   Integer *s_mirror) {
+            constexpr Integer Block = H::Block;
+
             const int rank_size = num_ranks(c) + 1;
-            Integer *recv_mirror = compute_block_scan<Block>(r_mirror,rank_size);
-            Integer *send_mirror = compute_block_scan<Block>(s_mirror, rank_size);
+            Integer *recv_mirror = compute_block_scan<Block>(r_mirror,rank_size, block);
+            Integer *send_mirror = compute_block_scan<Block>(s_mirror, rank_size, block);
 
             expand_tuple<ExchangeGhostDofsData, user_tuple, dataidx...>(
                 ExchangeGhostDofsData(c, recv_mirror, send_mirror), recv_data, send_data);
@@ -186,9 +202,12 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                const Integer local_sfc_index = dof_handler.get_local_index(ghost_sfc(i));
+                auto base = dof_handler.compute_base(i);
+                auto component = dof_handler.compute_component(i);
+                const Integer local_sfc_index = dof_handler.get_local_index(ghost_sfc(base));
                 assert(local_sfc_index != INVALID_INDEX);
-                user_data(local_sfc_index) = ghost_data(i);
+                auto block_local = dof_handler.compute_block_index(local_sfc_index, component);
+                user_data(block_local) = ghost_data(i);
             }
         };
 
@@ -205,9 +224,12 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                const Integer local_sfc_index = dof_handler.get_local_index(ghost_sfc(i));
+                auto base = dof_handler.compute_base(i);
+                auto component = dof_handler.compute_component(i);
+                const Integer local_sfc_index = dof_handler.get_local_index(ghost_sfc(base));
                 assert(local_sfc_index != INVALID_INDEX);
-                ghost_data(i) = user_data(local_sfc_index);
+                auto block_local = dof_handler.compute_block_index(local_sfc_index, component);
+                ghost_data(i) = user_data(block_local);
             }
         };
 
@@ -234,9 +256,20 @@ namespace mars {
                                                         user_tuple &ghost_user_data,
                                                         const ViewVectorType<Integer> &ghost_sfc,
                                                         const H &dof_handler) {
-            const Integer size = ghost_sfc.extent(0);
+            const auto block = get_block(dof_handler);
+            const Integer size = ghost_sfc.extent(0) * block;
             expand_tuple<FillUserDataFunctor<Op, H>, user_tuple, dataidx...>(
                 FillUserDataFunctor<Op, H>("fill_user_data", size, ghost_sfc, dof_handler), ghost_user_data, udata);
+        }
+
+        template <typename H>
+        static std::enable_if_t<H::Block == 0, Integer> get_block(const H &dof_handler) {
+            return dof_handler.get_block();
+        }
+
+        template <typename H>
+        static std::enable_if_t<(H::Block > 0), Integer> get_block(const H &dof_handler) {
+            return H::Block;
         }
 
         // gather operation: fill the data from the received ghost data
@@ -248,19 +281,20 @@ namespace mars {
             /* int proc_num = rank(context); */
             int size = num_ranks(context);
 
-            Integer ghost_size = dof_handler.get_view_scan_recv_mirror()(size);
+
+            Integer ghost_size = get_block(dof_handler) * dof_handler.get_view_scan_recv_mirror()(size);
             user_tuple ghost_user_data;
             reserve_user_data<dataidx...>(ghost_user_data, "ghost_user_data", ghost_size);
 
             /* prepare the buffer to send the boundary data */
-            const Integer buffer_size = dof_handler.get_boundary_dof_size();
+            const Integer buffer_size = get_block(dof_handler) * dof_handler.get_boundary_dof_size();
             user_tuple buffer_data;
             reserve_user_data<dataidx...>(buffer_data, "buffer_data", buffer_size);
 
             fill_buffer_data<H, 0, dataidx...>(user_data, buffer_data, dof_handler.get_boundary_dofs(), dof_handler);
 
-            constexpr Integer B = H::Block;
-            exchange_ghost_dofs_data<dataidx..., B>(context,
+            exchange_ghost_dofs_data<H, dataidx...>(context,
+                                                    get_block(dof_handler),
                                                     ghost_user_data,
                                                     buffer_data,
                                                     dof_handler.get_view_scan_recv_mirror().data(),
@@ -291,19 +325,19 @@ namespace mars {
             /* int proc_num = rank(context); */
             int size = num_ranks(context);
 
-            Integer ghost_size = dof_handler.get_view_scan_recv_mirror()(size);
+            Integer ghost_size = get_block(dof_handler) * dof_handler.get_view_scan_recv_mirror()(size);
             user_tuple ghost_buffer_data;
             reserve_user_data<dataidx...>(ghost_buffer_data, "ghost_user_data", ghost_size);
 
             fill_user_data<H, 1, dataidx...>(user_data, ghost_buffer_data, dof_handler.get_ghost_dofs(), dof_handler);
 
-            const Integer boundary_size = dof_handler.get_boundary_dofs().extent(0);
+            const Integer boundary_size = get_block(dof_handler) * dof_handler.get_boundary_dofs().extent(0);
             user_tuple boundary_user_data;
             reserve_user_data<dataidx...>(boundary_user_data, "boundary_user_data", boundary_size);
 
-            constexpr Integer B = H::Block;
             // prepare the buffer to send the boundary data
-            exchange_ghost_dofs_data<dataidx..., B>(context,
+            exchange_ghost_dofs_data<H, dataidx...>(context,
+                                                    get_block(dof_handler),
                                                     boundary_user_data,
                                                     ghost_buffer_data,
                                                     dof_handler.get_view_scan_send_mirror().data(),
