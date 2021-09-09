@@ -142,12 +142,33 @@ namespace mars {
             const context &con;
         };
 
-        template <Integer... dataidx>
+        template <Integer B>
+        MARS_INLINE_FUNCTION std::enable_if<B == 1, Integer *>::type compute_block_scan(const Integer *mirror,
+                                                                                        const Integer size) {
+            return mirror;
+        }
+
+        template <Integer B>
+        MARS_INLINE_FUNCTION std::enable_if<B != 1, Integer *>::type compute_block_scan(const Integer *mirror,
+                                                                                        const Integer size) {
+            std::vector<Integer> block_scan(size, 0);
+            for (int i = 0; i < size; ++i) {
+                block_scan(i) = B * mirror[i];
+            }
+
+            return block_scan.data();
+        }
+
+        template <Integer... dataidx, Integer Block>
         MARS_INLINE_FUNCTION static void exchange_ghost_dofs_data(const context &c,
                                                                   user_tuple &recv_data,
                                                                   user_tuple &send_data,
-                                                                  Integer *recv_mirror,
-                                                                  Integer *send_mirror) {
+                                                                  Integer *r_mirror,
+                                                                  Integer *s_mirror) {
+            const int rank_size = num_ranks(c) + 1;
+            Integer *recv_mirror = compute_block_scan<Block>(r_mirror,rank_size);
+            Integer *send_mirror = compute_block_scan<Block>(s_mirror, rank_size);
+
             expand_tuple<ExchangeGhostDofsData, user_tuple, dataidx...>(
                 ExchangeGhostDofsData(c, recv_mirror, send_mirror), recv_data, send_data);
         }
@@ -238,11 +259,12 @@ namespace mars {
 
             fill_buffer_data<H, 0, dataidx...>(user_data, buffer_data, dof_handler.get_boundary_dofs(), dof_handler);
 
-            exchange_ghost_dofs_data<dataidx...>(context,
-                                                 ghost_user_data,
-                                                 buffer_data,
-                                                 dof_handler.get_view_scan_recv_mirror().data(),
-                                                 dof_handler.get_view_scan_send_mirror().data());
+            constexpr Integer B = H::Block;
+            exchange_ghost_dofs_data<dataidx..., B>(context,
+                                                    ghost_user_data,
+                                                    buffer_data,
+                                                    dof_handler.get_view_scan_recv_mirror().data(),
+                                                    dof_handler.get_view_scan_send_mirror().data());
 
             /* use the received ghost data and the sfc to put them to the unified local data */
             fill_user_data<H, 0, dataidx...>(user_data, ghost_user_data, dof_handler.get_ghost_dofs(), dof_handler);
@@ -279,12 +301,13 @@ namespace mars {
             user_tuple boundary_user_data;
             reserve_user_data<dataidx...>(boundary_user_data, "boundary_user_data", boundary_size);
 
+            constexpr Integer B = H::Block;
             // prepare the buffer to send the boundary data
-            exchange_ghost_dofs_data<dataidx...>(context,
-                                                 boundary_user_data,
-                                                 ghost_buffer_data,
-                                                 dof_handler.get_view_scan_send_mirror().data(),
-                                                 dof_handler.get_view_scan_recv_mirror().data());
+            exchange_ghost_dofs_data<dataidx..., B>(context,
+                                                    boundary_user_data,
+                                                    ghost_buffer_data,
+                                                    dof_handler.get_view_scan_send_mirror().data(),
+                                                    dof_handler.get_view_scan_recv_mirror().data());
 
             return boundary_user_data;
         }
@@ -310,31 +333,42 @@ namespace mars {
 
         template <Integer dataidx, typename H, typename DH>
         static void set_locally_owned_data(const DH &dhandler, user_tuple &dof_data, const ViewVectorType<H> &x) {
-            assert(dhandler.get_global_dof_enum().get_elem_size() == x.extent(0));
-            const Integer size = dhandler.get_global_dof_enum().get_elem_size();
+            const Integer size = dhandler.get_owned_dof_size();
+            assert(size == x.extent(0));
 
             ViewVectorType<Integer> global_to_sfc = dhandler.get_global_dof_enum().get_view_elements();
             Kokkos::parallel_for(
                 "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
-                    const Integer sfc = global_to_sfc(i);
+                    // vector valued support
+                    const auto block = dhandler.compute_component(i);
+                    const auto base = dhandler.compute_base(i);
+
+                    const Integer sfc = global_to_sfc(base);
                     const Integer local = dhandler.get_local_index(sfc);
                     assert(INVALID_INDEX != local);
-                    std::get<dataidx>(dof_data)(local) = x(i);
+
+                    const auto block_local = dhandler.compute_block_index(local);
+                    std::get<dataidx>(dof_data)(block_local) = x(i);
                 });
         }
 
         template <Integer dataidx, typename H, typename DH>
         static void get_locally_owned_data(const DH &dhandler, const ViewVectorType<H> &x, user_tuple &dof_data) {
-            assert(dhandler.get_global_dof_enum().get_elem_size() == x.extent(0));
-            const Integer size = dhandler.get_global_dof_enum().get_elem_size();
+            const Integer size = dhandler.get_owned_dof_size();
+            assert(size == x.extent(0));
 
             ViewVectorType<Integer> global_to_sfc = dhandler.get_global_dof_enum().get_view_elements();
             Kokkos::parallel_for(
                 "get_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
-                    const Integer sfc = global_to_sfc(i);
+                    const auto block = dhandler.compute_component(i);
+                    const auto base = dhandler.compute_base(i);
+
+                    const Integer sfc = global_to_sfc(base);
                     const Integer local = dhandler.get_local_index(sfc);
                     assert(INVALID_INDEX != local);
-                    x(i) = std::get<dataidx>(dof_data)(local);
+
+                    const auto block_local = dhandler.compute_block_index(local);
+                    x(i) = std::get<dataidx>(dof_data)(block_local);
                 });
         }
     };
@@ -342,7 +376,7 @@ namespace mars {
     // gather operation: fill the data from the received ghost data
     template <typename H, typename T>
     void gather_ghost_data(const H &dof_handler, ViewVectorType<T> &data) {
-        assert(data.extent(0) == dof_handler.get_local_dof_enum().get_elem_size());
+        assert(data.extent(0) == dof_handler.get_dof_size());
         using SuperDM = BDM<T>;
         auto tuple = std::make_tuple(data);
         SuperDM::template gather_ghost_data<0>(dof_handler, tuple);
@@ -351,7 +385,7 @@ namespace mars {
     // scatter add but using the handler and the view instead of a dm.
     template <typename H, typename T>
     void scatter_add_ghost_data(const H &dof_handler, ViewVectorType<T> &data) {
-        assert(data.extent(0) == dof_handler.get_local_dof_enum().get_elem_size());
+        assert(data.extent(0) == dof_handler.get_dof_size());
         using SuperDM = BDM<T>;
         auto tuple = std::make_tuple(data);
         auto boundary_data = SuperDM::template scatter_ghost_data<0>(dof_handler, tuple);
@@ -365,7 +399,7 @@ namespace mars {
 
     template <typename H, typename T>
     void set_locally_owned_data(const H &dof_handler, ViewVectorType<T> &data, ViewVectorType<T> owned) {
-        assert(data.extent(0) == dof_handler.get_local_dof_enum().get_elem_size());
+        assert(data.extent(0) == dof_handler.get_dof_size());
         using SuperDM = BDM<T>;
         auto tuple = std::make_tuple(data);
         SuperDM::template set_locally_owned_data<0>(dof_handler, tuple, owned);
@@ -373,7 +407,7 @@ namespace mars {
 
     template <typename H, typename T>
     void get_locally_owned_data(const H &dof_handler, ViewVectorType<T> owned, ViewVectorType<T> &data) {
-        assert(data.extent(0) == dof_handler.get_local_dof_enum().get_elem_size());
+        assert(data.extent(0) == dof_handler.get_dof_size());
         using SuperDM = BDM<T>;
         auto tuple = std::make_tuple(data);
         SuperDM::template get_locally_owned_data<0>(dof_handler, owned, tuple);
