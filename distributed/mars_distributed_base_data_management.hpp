@@ -156,20 +156,19 @@ namespace mars {
         };
 
         template <Integer B>
-        MARS_INLINE_FUNCTION static typename std::enable_if<B == 1, Integer *>::type
+        MARS_INLINE_FUNCTION static typename std::enable_if<B == 1, std::vector<Integer> >::type
         compute_block_scan(Integer *mirror, const Integer size, const Integer block) {
-            return mirror;
+            return std::vector<Integer>(mirror, mirror + size);
         }
 
         template <Integer B>
-        MARS_INLINE_FUNCTION static typename std::enable_if<B != 1, Integer *>::type
+        MARS_INLINE_FUNCTION static typename std::enable_if<B != 1, std::vector<Integer> >::type
         compute_block_scan(Integer *mirror, const Integer size, const Integer block) {
             std::vector<Integer> block_scan(size, 0);
             for (int i = 0; i < size; ++i) {
                 block_scan[i] = block * mirror[i];
             }
-
-            return block_scan.data();
+            return block_scan;
         }
 
         template <typename H, Integer... dataidx>
@@ -182,11 +181,11 @@ namespace mars {
             constexpr Integer Block = H::Block;
 
             const int rank_size = num_ranks(c) + 1;
-            Integer *recv_mirror = compute_block_scan<Block>(r_mirror,rank_size, block);
-            Integer *send_mirror = compute_block_scan<Block>(s_mirror, rank_size, block);
+            auto recv_mirror = compute_block_scan<Block>(r_mirror, rank_size, block);
+            auto send_mirror = compute_block_scan<Block>(s_mirror, rank_size, block);
 
             expand_tuple<ExchangeGhostDofsData, user_tuple, dataidx...>(
-                ExchangeGhostDofsData(c, recv_mirror, send_mirror), recv_data, send_data);
+                ExchangeGhostDofsData(c, recv_mirror.data(), send_mirror.data()), recv_data, send_data);
         }
 
         // gather operation: fill the data from the received ghost data
@@ -281,20 +280,21 @@ namespace mars {
             /* int proc_num = rank(context); */
             int size = num_ranks(context);
 
+            const auto block_size = get_block(dof_handler);
 
-            Integer ghost_size = get_block(dof_handler) * dof_handler.get_view_scan_recv_mirror()(size);
+            Integer ghost_size = block_size * dof_handler.get_view_scan_recv_mirror()(size);
             user_tuple ghost_user_data;
             reserve_user_data<dataidx...>(ghost_user_data, "ghost_user_data", ghost_size);
 
             /* prepare the buffer to send the boundary data */
-            const Integer buffer_size = get_block(dof_handler) * dof_handler.get_boundary_dof_size();
+            const Integer buffer_size = block_size * dof_handler.get_boundary_dof_size();
             user_tuple buffer_data;
             reserve_user_data<dataidx...>(buffer_data, "buffer_data", buffer_size);
 
             fill_buffer_data<H, 0, dataidx...>(user_data, buffer_data, dof_handler.get_boundary_dofs(), dof_handler);
 
             exchange_ghost_dofs_data<H, dataidx...>(context,
-                                                    get_block(dof_handler),
+                                                    block_size,
                                                     ghost_user_data,
                                                     buffer_data,
                                                     dof_handler.get_view_scan_recv_mirror().data(),
