@@ -188,8 +188,12 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_owned_dofs() const { return locally_owned_dofs; }
 
-        MARS_INLINE_FUNCTION
-        const Integer get_owned_dof(const Integer i) const { return locally_owned_dofs(i); }
+        template <Integer B = Block>
+        MARS_INLINE_FUNCTION const Integer get_owned_dof(const Integer i) const {
+            auto base = get_dof_handler().template compute_base<B>(i);
+            auto component = get_dof_handler().template compute_component<B>(i);
+            return get_dof_handler().template compute_block_index<B>(locally_owned_dofs(base), component);
+        }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_local_dof_map() const { return local_dof_map; }
@@ -518,6 +522,22 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const Integer get_owned_label(const Integer owned_dof) const {
             return get_dof_handler().get_owned_label(owned_dof);
+        }
+
+        //computes the component (block) from the block local
+        template <Integer B = Block>
+        MARS_INLINE_FUNCTION Integer compute_component(const Integer local) const {
+            return get_dof_handler().template compute_component<B>(local);
+        }
+
+        template <Integer B = Block>
+        MARS_INLINE_FUNCTION Integer compute_base(const Integer local) const {
+            return get_dof_handler().template compute_base<B>(local);
+        }
+
+        template <Integer B = Block>
+        MARS_INLINE_FUNCTION Integer compute_block_index(const Integer base_local, const Integer component) const {
+            return get_dof_handler().template compute_block_index<B>(base_local, component);
         }
 
         /* MARS_INLINE_FUNCTION

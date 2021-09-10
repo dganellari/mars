@@ -1801,12 +1801,13 @@ namespace mars {
         }
 
         // get the local dof of the owned index.
-        MARS_INLINE_FUNCTION
-        const Integer get_owned_dof(const Integer i) const {
-            const Integer sfc = get_global_dof_enum().get_view_elements()(i);
-            return sfc_to_local(sfc);
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION const Integer get_owned_dof(const Integer owned_dof) const {
+            auto base = compute_base<B>(owned_dof);
+            auto component = compute_component<B>(owned_dof);
+            const Integer sfc = get_global_dof_enum().get_view_elements()(base);
+            return compute_block_index<B>(sfc_to_local(sfc), component);
         }
-
 
         MARS_INLINE_FUNCTION
         const Integer get_base_owned_dof_size() const { return global_dof_enum.get_elem_size(); }

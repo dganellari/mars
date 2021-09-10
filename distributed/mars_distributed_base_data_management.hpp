@@ -374,14 +374,14 @@ namespace mars {
             Kokkos::parallel_for(
                 "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
                     // vector valued support
-                    const auto block = dhandler.compute_component(i);
+                    const auto component = dhandler.compute_component(i);
                     const auto base = dhandler.compute_base(i);
 
                     const Integer sfc = global_to_sfc(base);
                     const Integer local = dhandler.get_local_index(sfc);
                     assert(INVALID_INDEX != local);
 
-                    const auto block_local = dhandler.compute_block_index(local);
+                    const auto block_local = dhandler.compute_block_index(local, component);
                     std::get<dataidx>(dof_data)(block_local) = x(i);
                 });
         }
@@ -394,14 +394,14 @@ namespace mars {
             ViewVectorType<Integer> global_to_sfc = dhandler.get_global_dof_enum().get_view_elements();
             Kokkos::parallel_for(
                 "get_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
-                    const auto block = dhandler.compute_component(i);
+                    const auto component = dhandler.compute_component(i);
                     const auto base = dhandler.compute_base(i);
 
                     const Integer sfc = global_to_sfc(base);
                     const Integer local = dhandler.get_local_index(sfc);
                     assert(INVALID_INDEX != local);
 
-                    const auto block_local = dhandler.compute_block_index(local);
+                    const auto block_local = dhandler.compute_block_index(local, component);
                     x(i) = std::get<dataidx>(dof_data)(block_local);
                 });
         }
