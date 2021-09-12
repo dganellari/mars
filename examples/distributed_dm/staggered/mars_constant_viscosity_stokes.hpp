@@ -242,21 +242,21 @@ namespace mars {
 
         /* ********************************gather scatter ghost data**************************************** */
 
-        /* MyDofTypes::FaceVolumeDM fvdm(fv_dof_handler);
+        /* typename MyDofTypes::FaceVolumeDM fvdm(fv_dof_handler);
         fvdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
-            fvdm.get_data<IN>(i) = 3.0;
-            fvdm.get_data<OUT>(i) = proc_num;
+            fvdm.template get_data<IN>(i) = 3.0;
+            fvdm.template get_data<OUT>(i) = proc_num;
         });
 
-        fvdm.gather_ghost_data<OUT>();
-        scatter_add_ghost_data<MyDofTypes::FaceVolumeDM, OUT>(fvdm); */
+        fvdm.template gather_ghost_data<OUT>(); */
+        /* scatter_add_ghost_data<MyDofTypes::FaceVolumeDM, OUT>(fvdm); */
 
-        // print using the index iterate
+        /* print using the index iterate */
         /* fvdm.get_dof_handler().iterate(MARS_LAMBDA(const Integer i) {
             const Integer local_dof = fvdm.get_dof_handler().get_local_dof(i);
 
-            const auto idata = fvdm.get_data<IN>(i);
-            const auto odata = fvdm.get_data<OUT>(i);
+            const auto idata = fvdm.template get_data<IN>(i);
+            const auto odata = fvdm.template get_data<OUT>(i);
 
             Dof d = fvdm.get_dof_handler().local_to_global_dof(local_dof);
 

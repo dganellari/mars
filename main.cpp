@@ -1206,6 +1206,12 @@ int main(int argc, char *argv[]) {
         test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(xDim, yDim, zDim);
     };
 
+    apps["distributed_vector_valued_3D"] = [=]() {
+        test_mars_distributed_vector_valued<ElementType::Hex8>(xDim, yDim, zDim);
+    };
+
+    apps["distributed_vector_valued"] = [=]() { test_mars_distributed_vector_valued(xDim, yDim, 0); };
+
     apps["mfpoisson"] = [=]() {
         matrix_free_poisson<Example2Dirichlet, Example2RHS, Example2Analitcal, ElementType::Quad4>(xDim, yDim, 0);
     };
