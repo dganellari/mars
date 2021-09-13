@@ -13,6 +13,8 @@ namespace mars {
         MARS_INLINE_FUNCTION
         RemoteDofMap(DofHandler handler) : dof_handler(handler) {}
 
+        static_assert(DofHandler::Block == 1, "RemoteDofMap does not support yet vector valued block structures.");
+
         template <typename V>
         void build_global_dof_per_rank(const V &view,
                                        V &global_dof,

@@ -11,6 +11,9 @@ namespace mars {
     template <Integer Label, typename DofHandler>
     class SDofHandler {
     public:
+        static_assert(DofHandler::Block == 1,
+                      "Staggered Dof Handler does not support yet vector valued block structures.");
+
         using Mesh = typename DofHandler::Mesh;
         static constexpr Integer Degree = DofHandler::Degree;
         static constexpr Integer Block = DofHandler::Block;

@@ -1559,8 +1559,7 @@ namespace mars {
 
         template <Integer B = Block_>
         MARS_INLINE_FUNCTION bool is_owned(const Integer local) const {
-            const Integer base_local = compute_base<B>(local);
-            const Integer sfc = local_to_sfc(base_local);
+            const Integer sfc = local_to_sfc<B>(local);
             return is_owned_dof_sfc(sfc);
         }
 
@@ -1584,16 +1583,15 @@ namespace mars {
 
         template <Integer B = Block_>
         MARS_INLINE_FUNCTION typename std::enable_if<B != 1, Integer>::type local_to_owned_dof(const Integer local) const {
-            const Integer base_local = compute_base<B>(local);
             const Integer comp_local = compute_component<B>(local);
-            const Integer sfc = local_to_sfc(base_local);
+            const Integer sfc = local_to_sfc<B>(local);
             const Integer base_owned = get_eval_value_in_global_map(sfc);
             return compute_block_index<B>(base_owned, comp_local);
         }
 
         template <Integer B = Block_>
         MARS_INLINE_FUNCTION typename std::enable_if<B == 1, Integer>::type local_to_owned_dof(const Integer local) const {
-            const Integer sfc = local_to_sfc(local);
+            const Integer sfc = local_to_sfc<B>(local);
             return get_eval_value_in_global_map(sfc);
         }
 
@@ -1624,17 +1622,16 @@ namespace mars {
 
         template <Integer B = Block_>
         MARS_INLINE_FUNCTION typename std::enable_if<B == 1, Dof>::type local_to_global_dof(const Integer local) const {
-            const Integer local_sfc = local_to_sfc(local);
+            const Integer local_sfc = local_to_sfc<B>(local);
             return sfc_to_global_dof(local_sfc);
         }
 
         template <Integer B = Block_>
         MARS_INLINE_FUNCTION typename std::enable_if<B != 1, Dof>::type local_to_global_dof(const Integer local) const {
-            const Integer base_local = compute_base<B>(local);
             // use the local to sfc view (elements) to get the sfc of the local numbering.
             const Integer component = compute_component<B>(local);
 
-            const Integer local_sfc = local_to_sfc(base_local);
+            const Integer local_sfc = local_to_sfc<B>(local);
             auto dof = sfc_to_global_dof(local_sfc);
             dof.set_gid(compute_block_index<B>(dof.get_gid(), component));
             return dof;
@@ -1682,17 +1679,30 @@ namespace mars {
             return get_local_dof_enum().get_view_element_labels()(base_local);
         }
 
-        MARS_INLINE_FUNCTION
-        Integer local_to_sfc(const Integer local) const { return get_local_dof_enum().get_view_elements()(local); }
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION Integer local_to_sfc(const Integer local) const {
+            auto base = compute_base<B>(local);
+            return get_local_dof_enum().get_view_elements()(base);
+        }
 
-        MARS_INLINE_FUNCTION
-        Integer owned_to_sfc(const Integer owned) const { return get_global_dof_enum().get_view_elements()(owned); }
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION Integer owned_to_sfc(const Integer owned) const {
+            auto base = compute_base<B>(owned);
+            return get_global_dof_enum().get_view_elements()(base);
+        }
 
-        MARS_INLINE_FUNCTION
-        const Integer local_to_owned(const Integer local) const { return local_to_owned_dof(local); }
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION const Integer local_to_owned(const Integer local) const {
+            return local_to_owned_dof<B>(local);
+        }
 
         MARS_INLINE_FUNCTION
         Integer sfc_to_owned(const Integer sfc) const { return get_eval_value_in_global_map(sfc); }
+
+        MARS_INLINE_FUNCTION
+        Integer sfc_to_owned(const Integer sfc, const Integer component) const {
+            return compute_block_index<Block>(get_eval_value_in_global_map(sfc), component);
+        }
 
         MARS_INLINE_FUNCTION
         Integer sfc_to_local(const Integer sfc) const {
@@ -1700,7 +1710,17 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
+        Integer sfc_to_local(const Integer sfc, const Integer component) const {
+            return compute_block_index<Block>(get_eval_value_in_local_map(sfc), component);
+        }
+
+        MARS_INLINE_FUNCTION
         Integer get_local_index(const Integer sfc) const { return sfc_to_local(sfc); }
+
+        MARS_INLINE_FUNCTION
+        Integer get_local_index(const Integer sfc, const Integer component) const {
+            return sfc_to_local(sfc, component);
+        }
 
         template <Integer Type>
         MARS_INLINE_FUNCTION void get_dof_coordinates_from_sfc(const Integer sfc, double *point) const {
@@ -1713,19 +1733,18 @@ namespace mars {
 
         template <Integer Type, Integer B = Block_>
         MARS_INLINE_FUNCTION void get_dof_coordinates_from_local(const Integer local, double *point) const {
-            const Integer base_local = compute_base<B>(local);
-            const Integer sfc = local_to_sfc(base_local);
+            const Integer sfc = local_to_sfc<B>(local);
             return get_dof_coordinates_from_sfc<Type>(sfc, point);
         }
 
+        template <Integer B = Block_>
         MARS_INLINE_FUNCTION void get_local_dof_coordinates(const Integer local, double *point) const {
-            get_dof_coordinates_from_local<ElemType>(local, point);
+            get_dof_coordinates_from_local<ElemType, B>(local, point);
         }
 
         template <Integer Type, Integer B = Block_>
         MARS_INLINE_FUNCTION bool is_boundary(const Integer local, const Integer FaceNr = -1) const {
-            const Integer base_local = compute_base<B>(local);
-            const Integer sfc = local_to_sfc(base_local);
+            const Integer sfc = local_to_sfc<B>(local);
             const Integer xdim = get_local_dof_enum().get_XDim();
             const Integer ydim = get_local_dof_enum().get_YDim();
             const Integer zdim = get_local_dof_enum().get_ZDim();
@@ -1742,7 +1761,7 @@ namespace mars {
             using namespace Kokkos;
             constexpr Integer Type = simplex_type::ElemType;
 
-            const Integer size = get_global_dof_enum().get_elem_size();
+            const Integer size = get_owned_dof_size();
             ViewVectorType<Integer> global_to_sfc = get_global_dof_enum().get_view_elements();
 
             const Integer xdim = get_local_dof_enum().get_XDim();
@@ -1752,7 +1771,8 @@ namespace mars {
 
             Kokkos::parallel_for(
                 "boundary_owned_dof_iterate", size, MARS_LAMBDA(const Integer i) {
-                    const Integer sfc = global_to_sfc(i);
+                    auto base = compute_base<Block>(i);
+                    const Integer sfc = global_to_sfc(base);
                     if (is_boundary_sfc<Type>(sfc, xdim, ydim, zdim, side_value)) {
                         f(i, sfc);
                     }
@@ -1764,7 +1784,7 @@ namespace mars {
             using namespace Kokkos;
             constexpr Integer Type = simplex_type::ElemType;
 
-            const Integer size = get_global_dof_enum().get_elem_size();
+            const Integer size = get_owned_dof_size();
             ViewVectorType<Integer> global_to_sfc = get_global_dof_enum().get_view_elements();
 
             const Integer xdim = get_local_dof_enum().get_XDim();
@@ -1775,11 +1795,13 @@ namespace mars {
             auto handler = *this;
             Kokkos::parallel_for(
                 "boundary_iterate", size, MARS_LAMBDA(const Integer i) {
-                    const Integer sfc = global_to_sfc(i);
+                    auto base = compute_base<Block>(i);
+                    auto comp = compute_component<Block>(i);
+                    const Integer sfc = global_to_sfc(base);
                     const Integer local = handler.sfc_to_local(sfc);
 
                     if (is_boundary_sfc<Type>(sfc, xdim, ydim, zdim, side_value)) {
-                        f(local);
+                        f(compute_block_index<Block>(local, comp));
                     }
                 });
         }
@@ -1794,6 +1816,7 @@ namespace mars {
             return B * local_dof_enum.get_elem_size();
         }
 
+        //no need to be vector valued since it will give the same result.
         MARS_INLINE_FUNCTION
         const Integer get_local_dof(const Integer i) const {
             assert(i < get_dof_size());
@@ -1879,8 +1902,8 @@ namespace mars {
             return get_local_dof_enum().get_sfc_to_local_map();
         }
 
-        MARS_INLINE_FUNCTION
-        const Integer get_local_dof_map(const Integer sfc) const { return sfc_to_local(sfc); }
+        /* MARS_INLINE_FUNCTION
+        const Integer get_local_dof_map(const Integer sfc) const { return sfc_to_local(sfc); } */
 
         MM get_mesh_manager() const { return mesh_manager; }
 
@@ -1927,8 +1950,7 @@ namespace mars {
 
         template <Integer B = Block_>
         MARS_INLINE_FUNCTION Octant get_octant_from_local(const Integer local) const {
-            const Integer base_local = compute_base<B>(local);
-            const Integer sfc = local_to_sfc(base_local);
+            const Integer sfc = local_to_sfc<B>(local);
             return get_octant_from_sfc(sfc);
         }
 
@@ -1954,6 +1976,11 @@ namespace mars {
         MARS_INLINE_FUNCTION Integer get_local_from_octant(const Octant &o) const {
             const Integer sfc = get_sfc_from_octant(o);
             return is_local(sfc) ? sfc_to_local(sfc) : INVALID_INDEX;
+        }
+
+        MARS_INLINE_FUNCTION Integer get_local_from_octant(const Octant &o, const Integer component) const {
+            auto local = get_local_from_octant(o);
+            return compute_block_index<Block>(local, component);
         }
 
         MARS_INLINE_FUNCTION
