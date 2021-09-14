@@ -38,12 +38,13 @@ namespace mars {
         const Integer size = dof_handler.get_global_dof_enum().get_elem_size();
 
         ViewVectorType<Integer> global_to_sfc = dof_handler.get_global_dof_enum().get_view_elements();
-        ViewVectorType<Integer> sfc_to_local = dof_handler.get_local_dof_enum().get_view_sfc_to_local();
+        // ViewVectorType<Integer> sfc_to_local = dof_handler.get_local_dof_enum().get_view_sfc_to_local();
 
         Kokkos::parallel_for(
             "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
                 const Integer sfc = global_to_sfc(i);
-                const Integer local = sfc_to_local(sfc);
+                // const Integer local = sfc_to_local(sfc);
+                const Integer local = dof_handler.sfc_to_local(sfc);
                 local_data(local) = owned_data(i, 0);
             });
     }
