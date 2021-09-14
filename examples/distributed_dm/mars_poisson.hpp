@@ -80,21 +80,23 @@ namespace mars {
     void print_fe_dof_map(const DH &dof_handler, const FE &fe) {
         dof_handler.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
             // go through all the dofs of the elem_index element
-            for (int i = 0; i < FE::elem_nodes; i++) {
+            for (int i = 0; i < fe.get_elem_nodes(); i++) {
                 // get the local dof of the i-th index within thelement
                 const Integer local_dof = fe.get_elem_local_dof(elem_index, i);
                 // convert the local dof number to global dof number
                 Dof d = dof_handler.local_to_global_dof(local_dof);
                 auto octant = dof_handler.get_octant_from_local(local_dof);
 
+                auto base_global = dof_handler.compute_base(d.get_gid());
                 // do something. In this case we are printing.
-                printf("lgm: i: %li, local: %li, octant: [%li, %li, %li], global: %li, proc: %li\n",
+                printf("lgm: i: %li, local: %li, octant: [%li, %li, %li], global: %li, base_global: %li, proc: %li\n",
                        i,
                        local_dof,
                        octant.x,
                        octant.y,
                        octant.z,
                        d.get_gid(),
+                       base_global,
                        d.get_proc());
             }
         });
@@ -150,6 +152,8 @@ namespace mars {
         using DMQ = DM<DOFHandler, double, double, double>;
         using FE = FEDofMap<DOFHandler>;
         /* using SPattern = SparsityPattern<double, Integer, unsigned long, DOFHandler>; */
+
+        static_assert(DOFHandler::Block == 1, "Poisson example does not support yet vector valued block structures.");
 
         // use as more readable tuple index to identify the data
         static constexpr int INPUT = 0;

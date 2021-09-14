@@ -135,7 +135,7 @@ namespace mars {
                                                           user_tuple &buffer_data,
                                                           const ViewVectorType<Integer> &boundary,
                                                           const H &dof_handler) {
-            const auto block = get_block(dof_handler);
+            const auto block = dof_handler.get_block();
             const Integer size = boundary.extent(0) * block;
             expand_tuple<FillBufferDataFunctor<Op, H>, user_tuple, dataidx...>(
                 FillBufferDataFunctor<Op, H>("fill_buffer_data", size, boundary, dof_handler), buffer_data, udata);
@@ -155,7 +155,7 @@ namespace mars {
             const context &con;
         };
 
-        template <Integer B>
+        /* template <Integer B>
         MARS_INLINE_FUNCTION static typename std::enable_if<B == 1, std::vector<Integer> >::type
         compute_block_scan(Integer *mirror, const Integer size, const Integer block) {
             return std::vector<Integer>(mirror, mirror + size);
@@ -169,6 +169,24 @@ namespace mars {
                 block_scan[i] = block * mirror[i];
             }
             return block_scan;
+        } */
+
+        MARS_INLINE_FUNCTION static std::vector<Integer> compute_block_scan(Integer *mirror,
+                                                                            const Integer size,
+                                                                            const Integer block) {
+            assert(block > 0);
+
+            if (block == 1) {
+                return std::vector<Integer>(mirror, mirror + size);
+            } else if (block > 1) {
+                std::vector<Integer> block_scan(size, 0);
+                for (int i = 0; i < size; ++i) {
+                    block_scan[i] = block * mirror[i];
+                }
+                return block_scan;
+            } else {
+                Abort("Block size for the vector valued problem should be > 1!");
+            }
         }
 
         template <typename H, Integer... dataidx>
@@ -178,11 +196,9 @@ namespace mars {
                                                                   user_tuple &send_data,
                                                                   Integer *r_mirror,
                                                                   Integer *s_mirror) {
-            constexpr Integer Block = H::Block;
-
             const int rank_size = num_ranks(c) + 1;
-            auto recv_mirror = compute_block_scan<Block>(r_mirror, rank_size, block);
-            auto send_mirror = compute_block_scan<Block>(s_mirror, rank_size, block);
+            auto recv_mirror = compute_block_scan(r_mirror, rank_size, block);
+            auto send_mirror = compute_block_scan(s_mirror, rank_size, block);
 
             expand_tuple<ExchangeGhostDofsData, user_tuple, dataidx...>(
                 ExchangeGhostDofsData(c, recv_mirror.data(), send_mirror.data()), recv_data, send_data);
@@ -255,13 +271,13 @@ namespace mars {
                                                         user_tuple &ghost_user_data,
                                                         const ViewVectorType<Integer> &ghost_sfc,
                                                         const H &dof_handler) {
-            const auto block = get_block(dof_handler);
+            const auto block = dof_handler.get_block();
             const Integer size = ghost_sfc.extent(0) * block;
             expand_tuple<FillUserDataFunctor<Op, H>, user_tuple, dataidx...>(
                 FillUserDataFunctor<Op, H>("fill_user_data", size, ghost_sfc, dof_handler), ghost_user_data, udata);
         }
 
-        template <typename H>
+        /* template <typename H>
         static std::enable_if_t<H::Block == 0, Integer> get_block(const H &dof_handler) {
             return dof_handler.get_block();
         }
@@ -269,7 +285,7 @@ namespace mars {
         template <typename H>
         static std::enable_if_t<(H::Block > 0), Integer> get_block(const H &dof_handler) {
             return H::Block;
-        }
+        } */
 
         // gather operation: fill the data from the received ghost data
         template <Integer... dataidx, typename H>
@@ -280,7 +296,7 @@ namespace mars {
             /* int proc_num = rank(context); */
             int size = num_ranks(context);
 
-            const auto block_size = get_block(dof_handler);
+            const auto block_size = dof_handler.get_block();
 
             Integer ghost_size = block_size * dof_handler.get_view_scan_recv_mirror()(size);
             user_tuple ghost_user_data;
@@ -324,20 +340,21 @@ namespace mars {
             const context &context = dof_handler.get_context();
             /* int proc_num = rank(context); */
             int size = num_ranks(context);
+            const auto block_size = dof_handler.get_block();
 
-            Integer ghost_size = get_block(dof_handler) * dof_handler.get_view_scan_recv_mirror()(size);
+            Integer ghost_size = block_size * dof_handler.get_view_scan_recv_mirror()(size);
             user_tuple ghost_buffer_data;
             reserve_user_data<dataidx...>(ghost_buffer_data, "ghost_user_data", ghost_size);
 
             fill_user_data<H, 1, dataidx...>(user_data, ghost_buffer_data, dof_handler.get_ghost_dofs(), dof_handler);
 
-            const Integer boundary_size = get_block(dof_handler) * dof_handler.get_boundary_dofs().extent(0);
+            const Integer boundary_size = block_size * dof_handler.get_boundary_dofs().extent(0);
             user_tuple boundary_user_data;
             reserve_user_data<dataidx...>(boundary_user_data, "boundary_user_data", boundary_size);
 
             // prepare the buffer to send the boundary data
             exchange_ghost_dofs_data<H, dataidx...>(context,
-                                                    get_block(dof_handler),
+                                                    block_size,
                                                     boundary_user_data,
                                                     ghost_buffer_data,
                                                     dof_handler.get_view_scan_send_mirror().data(),

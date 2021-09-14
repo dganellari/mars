@@ -11,6 +11,20 @@
 
 namespace mars {
 
+    void Abort() {
+        int error_code = -1;
+#ifdef WITH_MPI
+        MPI_Abort(MPI_COMM_WORLD, error_code);
+#else
+        exit(error_code);
+#endif
+    }
+
+    void Abort(const std::string &message) {
+        std::cerr << message << '\n';
+        Abort();
+    }
+
     /******************** Tuple utils *****************************/
 
     /* getting the index of a type in a variadic template definition */

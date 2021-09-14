@@ -234,7 +234,8 @@ namespace mars {
         /* constexpr Integer Type = Elem::ElemType; */
 
         constexpr Integer Degree = 2;
-        constexpr Integer Block = DMesh::Dim;
+        /* constexpr Integer Block = DMesh::Dim; */
+        constexpr Integer Block = 0;
         /* using DOFHandler = DofHandler<DMesh, Degree>; */
         using DOFHandler = DofHandler<DMesh, Degree, Block>;
         using DMQ = DM<DOFHandler, double, double, double>;
@@ -248,18 +249,18 @@ namespace mars {
 
         DOFHandler dof_handler(&mesh);
         dof_handler.enumerate_dofs();
+        dof_handler.set_block(2);
 
         /* dof_handler.print_dofs(proc_num); */
 
         auto fe = build_fe_dof_map(dof_handler);
 
         // print the global dofs for each element's local dof
-        /* print_fe_dof_map(dof_handler, fe); */
+        print_fe_dof_map(dof_handler, fe);
         /* print_ghost_dofs(dm); */
 
         SPattern sp(dof_handler);
         sp.build_pattern(fe);
-        /* sp.print_sparsity_pattern(); */
 
         // create the dm object
         /* DMQ dm(dof_handler); */
@@ -274,7 +275,12 @@ namespace mars {
         /* print_dofs<Type>(dm, proc_num); */
 
         ViewVectorType<Integer> x_local("local_data", dof_handler.get_dof_size());
-        dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) { x_local(i) = -1; });
+        dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) {
+            x_local(i) = -1;
+            if (dof_handler.is_owned(i)) sp.set_value(i, i, 9);
+        });
+
+        sp.print_sparsity_pattern();
 
         auto owned_size = dof_handler.get_owned_dof_size();
         ViewVectorType<Integer> owned("owned_data", owned_size);

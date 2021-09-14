@@ -603,6 +603,15 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const Integer get_ZMax() const { return get_dof_handler().get_ZMax(); }
 
+
+        MARS_INLINE_FUNCTION
+        void set_block(const Integer b) { get_dof_handler().set_block(b); }
+
+        template <Integer B = Block>
+        MARS_INLINE_FUNCTION constexpr Integer get_block() const {
+            return get_dof_handler().template get_block<B>();
+        }
+
         /* *************************************************************************** */
 
     private:

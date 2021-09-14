@@ -127,17 +127,11 @@ namespace mars {
             return 0;
         }
 
-        template <Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<(B > 1), Integer>::type compute_component(
-            const Integer local) const {
-            return local % Block;
-        }
-
         //B==0 goes for runtime block input. Useful for interfacing with UtopiaFE.
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B == 0, Integer>::type compute_component(
+        MARS_INLINE_FUNCTION typename std::enable_if<B != 1, Integer>::type compute_component(
             const Integer local) const {
-            return local % get_block();
+            return local % get_block<B>();
         }
 
 
@@ -148,26 +142,13 @@ namespace mars {
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<(B > 1), Integer>::type compute_base(const Integer local) const {
-            return local / Block;
+        MARS_INLINE_FUNCTION typename std::enable_if<B != 1, Integer>::type compute_base(const Integer local) const {
+            return local / get_block<B>();
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B == 0, Integer>::type compute_base(const Integer local) const {
-            return local / get_block();
-        }
-
-        // Computes the block local ID from the scalar local ID and the component.
-        template <Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B != 0, Integer>::type compute_block_index(const Integer base_local,
-                                                                                 const Integer component) const {
-            return base_local * B + component;
-        }
-
-        template <Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B == 0, Integer>::type compute_block_index(const Integer base_local,
-                                                                                 const Integer component) const {
-            return base_local * get_block() + component;
+        MARS_INLINE_FUNCTION Integer compute_block_index(const Integer base_local, const Integer component) const {
+            return base_local * get_block<B>() + component;
         }
 
         template <typename H>
@@ -176,23 +157,13 @@ namespace mars {
         }
 
         template <typename H, Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B != 0, void>::type owned_dof_iterate(H f) const {
-            Kokkos::parallel_for("init_initial_cond", B * global_dof_enum.get_elem_size(), f);
+        MARS_INLINE_FUNCTION void owned_dof_iterate(H f) const {
+            Kokkos::parallel_for("init_initial_cond", get_block<B>() * global_dof_enum.get_elem_size(), f);
         }
 
         template <typename H, Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B == 0, void>::type owned_dof_iterate(H f) const {
-            Kokkos::parallel_for("init_initial_cond", get_block() * global_dof_enum.get_elem_size(), f);
-        }
-
-        template <typename H, Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B != 0, void>::type dof_iterate(H f) const {
-            Kokkos::parallel_for("init_initial_cond", B * local_dof_enum.get_elem_size(), f);
-        }
-
-        template <typename H, Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B == 0, void>::type dof_iterate(H f) const {
-            Kokkos::parallel_for("init_initial_cond", get_block() * local_dof_enum.get_elem_size(), f);
+        MARS_INLINE_FUNCTION void dof_iterate(H f) const {
+            Kokkos::parallel_for("init_initial_cond", get_block<B>() * local_dof_enum.get_elem_size(), f);
         }
 
         template <typename H>
@@ -1807,13 +1778,8 @@ namespace mars {
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B == 0, const Integer>::type get_dof_size() const {
-            return get_block() * local_dof_enum.get_elem_size();
-        }
-
-        template <Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B != 0, const Integer>::type get_dof_size() const {
-            return B * local_dof_enum.get_elem_size();
+        MARS_INLINE_FUNCTION const Integer get_dof_size() const {
+            return get_block<B>() * local_dof_enum.get_elem_size();
         }
 
         //no need to be vector valued since it will give the same result.
@@ -1836,13 +1802,8 @@ namespace mars {
         const Integer get_base_owned_dof_size() const { return global_dof_enum.get_elem_size(); }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B != 0, const Integer>::type get_owned_dof_size() const {
-            return B * global_dof_enum.get_elem_size();
-        }
-
-        template <Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B == 0, const Integer>::type get_owned_dof_size() const {
-            return get_block() * global_dof_enum.get_elem_size();
+        MARS_INLINE_FUNCTION const Integer get_owned_dof_size() const {
+            return get_block<B>() * global_dof_enum.get_elem_size();
         }
 
         MARS_INLINE_FUNCTION
@@ -1868,13 +1829,8 @@ namespace mars {
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B == 0, const Integer>::type get_global_dof_size() const {
-            return get_block() * get_global_base_dof_size();
-        }
-
-        template <Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B != 0, const Integer>::type get_global_dof_size() const {
-            return B * get_global_base_dof_size();
+        MARS_INLINE_FUNCTION const Integer get_global_dof_size() const {
+            return get_block<B>() * get_global_base_dof_size();
         }
 
         MARS_INLINE_FUNCTION
@@ -1994,10 +1950,21 @@ namespace mars {
 
 
         MARS_INLINE_FUNCTION
-        void set_block(const Integer b) { block = b; }
+        void set_block(const Integer b) {
+            assert(b > 0);
+            block = b;
+        }
 
-        MARS_INLINE_FUNCTION
-        const Integer get_block() const { return block; }
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION typename std::enable_if<B == 0, Integer>::type get_block() const {
+            assert(block > 0);
+            return block;
+        }
+
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION constexpr typename std::enable_if<(B > 0), Integer>::type get_block() const {
+            return B;
+        }
 
     private:
         //manages host and device mesh objects.

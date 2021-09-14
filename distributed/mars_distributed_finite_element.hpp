@@ -25,11 +25,13 @@ namespace mars {
         static constexpr Integer volume_nodes = DofHandler::volume_dofs;
         static constexpr Integer face_nodes = DofHandler::face_dofs;
         static constexpr Integer corner_nodes = DofHandler::corner_dofs;
-        /* static constexpr Integer elem_nodes = DofHandler::elem_dofs; */
 
         using NDofs = NumDofs<degree, Label, ElemType>;
+        /* elem_nodes = (degree + 1) ^ Dim; Should be in general. */
         static constexpr Integer elem_nodes = Block * NDofs::elem_dofs();
-        /* static constexpr Integer elem_nodes = (degree + 1) ^ Dim; Should be in general. */
+
+        MARS_INLINE_FUNCTION
+        Integer get_elem_nodes() const { return get_dof_handler().get_block() * NDofs::elem_dofs(); }
 
         using DHandler = DofHandler;
         //! regular grids only. This can be a specialized version of the  non uniform impl.
@@ -271,13 +273,14 @@ namespace mars {
         struct DofMap {
             ViewMatrixType<Integer> dof_enum;
             Integer size;
+            Integer block;
 
             MARS_INLINE_FUNCTION
-            DofMap(ViewMatrixType<Integer> ede, Integer s) : dof_enum(ede), size(s) {}
+            DofMap(ViewMatrixType<Integer> ede, Integer s, Integer b) : dof_enum(ede), size(s), block(b) {}
 
             MARS_INLINE_FUNCTION void operator()(const Integer sfc_index, Integer &index, const Integer localid) const {
-                for (Integer i = 0; i < Block; ++i) {
-                    dof_enum(sfc_index + size, index++) = Block * localid + i;
+                for (Integer i = 0; i < block; ++i) {
+                    dof_enum(sfc_index + size, index++) = block * localid + i;
                 }
             }
         };
@@ -287,16 +290,18 @@ namespace mars {
             const Integer size = handler.get_mesh_manager().get_host_mesh()->get_chunk_size();
             const Integer ghost_size = handler.get_mesh_manager().get_host_mesh()->get_ghost_size();
 
+            const Integer block = handler.get_block();
             // This is the way to go to avoid atomic on critical code parts when building the unique sorted sparsity
             // pattern. Further on, it can be optimized by storing it to shared memory.
-            elem_dof_enum = ViewMatrixType<Integer>("elem_dof_enum", size + ghost_size, elem_nodes);
+            elem_dof_enum = ViewMatrixType<Integer>("elem_dof_enum", size + ghost_size, get_elem_nodes());
             /* enumerates the dofs within each element topologically */
             Kokkos::parallel_for(
-                "enum_local_dofs", size, EnumLocalDofs<DofMap, false>(handler, DofMap(elem_dof_enum, 0)));
+                "enum_local_dofs", size, EnumLocalDofs<DofMap, false>(handler, DofMap(elem_dof_enum, 0, block)));
 
             // go through the ghost layer
-            Kokkos::parallel_for(
-                "enum_local_dofs", ghost_size, EnumLocalDofs<DofMap, true>(handler, DofMap(elem_dof_enum, size)));
+            Kokkos::parallel_for("enum_local_dofs",
+                                 ghost_size,
+                                 EnumLocalDofs<DofMap, true>(handler, DofMap(elem_dof_enum, size, block)));
         }
 
         // Unique number of elemnts that share a dof
@@ -343,8 +348,8 @@ namespace mars {
 
                 if (lid > INVALID_INDEX) {
                     auto id = owned_map(lid);
-                    for (Integer bi = 0; bi < Block; ++bi) {
-                        auto bid = Block * id + bi;
+                    for (Integer bi = 0; bi < handler.get_block(); ++bi) {
+                        auto bid = handler.get_block() * id + bi;
                         auto aindex = Kokkos::atomic_fetch_add(&owned_index(bid), 1);
                         dof_enum(bid, aindex) = sfc_index + size;
                     }
@@ -361,7 +366,7 @@ namespace mars {
 
             /* ViewVectorType<Integer> locally_owned_dofs; */
             auto owned_dof_map = compact_owned_dofs<L>(get_dof_handler(), locally_owned_dofs);
-            const Integer owned_size = Block * locally_owned_dofs.extent(0);
+            const Integer owned_size = handler.get_block() * locally_owned_dofs.extent(0);
 
             auto node_max_size = label_based_element_count<L>();
             ViewMatrixType<Integer> dof_enum("build_node_element_dof_map", owned_size, node_max_size);
@@ -510,7 +515,7 @@ namespace mars {
         void print() {
             iterate(MARS_LAMBDA(const Integer elem_index) {
                 // go through all the dofs of the elem_index element
-                for (int i = 0; i < elem_nodes; i++) {
+                for (int i = 0; i < get_elem_nodes(); i++) {
                     // get the local dof of the i-th index within thelement
                     const Integer local_dof = get_elem_local_dof(elem_index, i);
                     // convert the local dof number to global dof number

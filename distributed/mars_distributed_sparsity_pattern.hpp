@@ -309,11 +309,12 @@ namespace mars {
                                                                 const ViewVectorType<Integer> &counter,
                                                                 ViewVectorType<Integer> &locally_owned_dofs) {
             auto handler = get_dof_handler();
+            const auto block = handler.get_block();
 
             auto node_to_element = fe.template build_node_element_dof_map<L>(locally_owned_dofs);
             auto owned_size = node_to_element.extent(0);
 
-            Integer node_max_size = Block * label_based_node_count<L>();
+            Integer node_max_size = block * label_based_node_count<L>();
             ViewMatrixType<Integer> ntn("count_node_view", owned_size, node_max_size);
             Kokkos::parallel_for(
                 "Count_nodes", owned_size, MARS_LAMBDA(const Integer i) {
@@ -323,7 +324,7 @@ namespace mars {
                 });
 
             /* compact_owned_dofs<L>(get_dof_handler(), locally_owned_dofs); */
-            assert(owned_size == Block * locally_owned_dofs.extent(0));
+            assert(owned_size == block * locally_owned_dofs.extent(0));
 
             auto el_max_size = fe.template label_based_element_count<L>();
             Kokkos::parallel_for(
@@ -404,7 +405,7 @@ namespace mars {
                 auto c = col;
                 /* auto owned_size = lod.extent(0); */
                 auto owned_size = ntn.extent(0);
-                assert(owned_size == Block * lod.extent(0));
+                assert(owned_size == handler.get_block() * lod.extent(0));
                 Kokkos::parallel_for(
                     "generate columns from node to node connectivity", owned_size, MARS_LAMBDA(const Integer i) {
                         auto local_owned_dof = lod(handler.compute_base(i));
@@ -610,6 +611,7 @@ namespace mars {
         MARS_INLINE_FUNCTION
         void set_value(const Integer row, const Integer col, const V val) const {
             const Integer index = get_col_index(row, col);
+            assert(index > -1);
             if (index > -1) matrix.values(index) = val;
         }
 
@@ -669,14 +671,18 @@ namespace mars {
                         const Integer local_dof = get_dof_handler().get_owned_dof(row);
                         const Integer global_row = get_dof_handler().local_to_global(local_dof);
 
+                        auto base_col = dof_handler.compute_base(col);
+                        auto base_row = dof_handler.compute_base(global_row);
                         /* const Integer local_col = get_dof_handler().global_to_local(col); */
                         /* const Integer global_col = get_dof_handler().local_to_global(local_col); */
 
                         /* printf("row_dof: %li - %li, col_dof: %li - %li, value: %lf\n", */
-                        printf("SP - Row_Dof: %li - %li, col_dof: %li, value: %lf\n",
+                        printf("SP - Row_Dof: %li - %li, base_row:%li, col_dof: %li, base_col: %li, value: %lf\n",
                                row,
                                global_row,
+                               base_row,
                                col,
+                               base_col,
                                /* global_col, */
                                value);
                     }
