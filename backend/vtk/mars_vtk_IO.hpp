@@ -35,17 +35,21 @@ namespace mars {
         using namespace Kokkos;
 
         assert(dof_handler.get_global_dof_enum().get_elem_size() == owned_data.extent(0));
-        const Integer size = dof_handler.get_global_dof_enum().get_elem_size();
+        // const Integer size = dof_handler.get_global_dof_enum().get_elem_size();
+        const Integer size = dof_handler.get_owned_dof_size();
 
         ViewVectorType<Integer> global_to_sfc = dof_handler.get_global_dof_enum().get_view_elements();
         // ViewVectorType<Integer> sfc_to_local = dof_handler.get_local_dof_enum().get_view_sfc_to_local();
 
         Kokkos::parallel_for(
             "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
-                const Integer sfc = global_to_sfc(i);
+                const Integer base = dof_handler.compute_base(i);
+                const Integer component = dof_handler.compute_component(i);
+                const Integer sfc = global_to_sfc(base);
+
                 // const Integer local = sfc_to_local(sfc);
                 const Integer local = dof_handler.sfc_to_local(sfc);
-                local_data(local) = owned_data(i, 0);
+                local_data(dof_handler.compute_block_index(local, component)) = owned_data(i, 0);
             });
     }
 
@@ -329,7 +333,7 @@ namespace mars {
                         cell = vtkSmartPointer<vtkHexahedron>::New();
                     }
 
-                    for (int i = 0; i < FEDofMap::elem_nodes; i++) {
+                    for (int i = 0; i < fe.get_elem_nodes(); i++) {
                         const Integer local_dof = fe.get_elem_local_dof(elem_index, i);
                         Dof d = dm.local_to_global_dof(local_dof);
 
