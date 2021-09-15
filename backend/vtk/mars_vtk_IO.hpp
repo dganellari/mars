@@ -34,7 +34,7 @@ namespace mars {
     void owned_to_local(const DofHandler &dof_handler, const TpetraMultiView &owned_data, LocalView &local_data) {
         using namespace Kokkos;
 
-        assert(dof_handler.get_global_dof_enum().get_elem_size() == owned_data.extent(0));
+        assert(dof_handler.get_owned_dof_size() == owned_data.extent(0));
         // const Integer size = dof_handler.get_global_dof_enum().get_elem_size();
         const Integer size = dof_handler.get_owned_dof_size();
 
@@ -105,7 +105,7 @@ namespace mars {
                     main_path = prefix;
                     main_path += ".pvtu";
 
-                    std::cout << piece_path << "\n";
+                    // std::cout << piece_path << "\n";
                 }
             }
 
@@ -171,40 +171,41 @@ namespace mars {
 
                 convert_points(dm, *unstructuredGrid);
                 convert_cells(dm, fe, *unstructuredGrid);
+                add_data(*unstructuredGrid, dm, fe, data);
 
-                auto fun = vtkSmartPointer<vtkDoubleArray>::New();
+                // auto fun = vtkSmartPointer<vtkDoubleArray>::New();
 
                 auto &ctx = dm.get_context();
                 int comm_size = ::mars::num_ranks(ctx);
 
-                Integer n;
-                if (comm_size > 1) {
-                    ViewVectorType<Real> local_data("local_data", dm.get_dof_size());
-                    ::mars::owned_to_local(dm, data, local_data);
-                    ::mars::gather_ghost_data(dm, local_data);
+                // Integer n;
+                // if (comm_size > 1) {
+                //     ViewVectorType<Real> local_data("local_data", dm.get_dof_size());
+                //     ::mars::owned_to_local(dm, data, local_data);
+                //     ::mars::gather_ghost_data(dm, local_data);
 
-                    typename ViewVectorType<Real>::HostMirror data_host = Kokkos::create_mirror_view(local_data);
+                //     typename ViewVectorType<Real>::HostMirror data_host = Kokkos::create_mirror_view(local_data);
 
-                    n = data_host.extent(0);
-                    fun->SetNumberOfValues(n);
+                //     n = data_host.extent(0);
+                //     fun->SetNumberOfValues(n);
 
-                    for (Integer i = 0; i < n; ++i) {
-                        fun->SetValue(i, data_host(i));
-                    }
+                //     for (Integer i = 0; i < n; ++i) {
+                //         fun->SetValue(i, data_host(i));
+                //     }
 
-                } else {
-                    typename View::HostMirror data_host = Kokkos::create_mirror_view(data);
+                // } else {
+                //     typename View::HostMirror data_host = Kokkos::create_mirror_view(data);
 
-                    n = data_host.extent(0);
-                    fun->SetNumberOfValues(n);
+                //     n = data_host.extent(0);
+                //     fun->SetNumberOfValues(n);
 
-                    for (Integer i = 0; i < n; ++i) {
-                        fun->SetValue(i, data_host(i, 0));
-                    }
-                }
+                //     for (Integer i = 0; i < n; ++i) {
+                //         fun->SetValue(i, data_host(i, 0));
+                //     }
+                // }
 
-                fun->SetName("u");
-                unstructuredGrid->GetPointData()->SetScalars(fun);
+                // fun->SetName("u");
+                // unstructuredGrid->GetPointData()->SetScalars(fun);
 
                 add_meta_data(*unstructuredGrid);
 
@@ -228,6 +229,51 @@ namespace mars {
             }
 
             template <class View>
+            void add_data(vtkUnstructuredGrid &unstructuredGrid,
+                          const DofHandler &dm,
+                          const FEDofMap &fe,
+                          const View &data) {
+                auto &ctx = dm.get_context();
+                int comm_size = ::mars::num_ranks(ctx);
+
+                auto fun = vtkSmartPointer<vtkDoubleArray>::New();
+
+                int block_size = dm.get_block();
+
+                ViewVectorType<Real> local_data("local_data", dm.get_dof_size());
+                ::mars::owned_to_local(dm, data, local_data);
+
+                if (comm_size > 1) {
+                    ::mars::gather_ghost_data(dm, local_data);
+                }
+
+                typename ViewVectorType<Real>::HostMirror data_host = Kokkos::create_mirror_view(local_data);
+
+                Integer n = data_host.extent(0);
+                fun->SetNumberOfValues(n);
+
+                if (block_size == 1) {
+                    fun->SetName("u");
+
+                } else {
+                    Integer n_blocks = n / block_size;
+                    fun->SetNumberOfComponents(block_size);
+                    // std::cout << "n_blocks: " << n_blocks << " block_size: " << block_size << "\n";
+                    fun->SetName("vec");
+                }
+
+                for (Integer i = 0; i < n; ++i) {
+                    fun->SetValue(i, data_host(i));
+                }
+
+                if (block_size == 1) {
+                    unstructuredGrid.GetPointData()->SetScalars(fun);
+                } else {
+                    unstructuredGrid.GetPointData()->AddArray(fun);
+                }
+            }
+
+            template <class View>
             bool write_pvtu(const std::string &path, const DofHandler &dm, const FEDofMap &fe, const View &data) {
                 create_paths(path);
 
@@ -246,23 +292,7 @@ namespace mars {
                 convert_points(dm, *unstructuredGrid);
                 convert_cells(dm, fe, *unstructuredGrid);
 
-                auto fun = vtkSmartPointer<vtkDoubleArray>::New();
-
-                ViewVectorType<Real> local_data("local_data", dm.get_dof_size());
-                ::mars::owned_to_local(dm, data, local_data);
-                ::mars::gather_ghost_data(dm, local_data);
-
-                typename ViewVectorType<Real>::HostMirror data_host = Kokkos::create_mirror_view(local_data);
-
-                Integer n = data_host.extent(0);
-                fun->SetNumberOfValues(n);
-
-                for (Integer i = 0; i < n; ++i) {
-                    fun->SetValue(i, data_host(i));
-                }
-
-                fun->SetName("u");
-                unstructuredGrid->GetPointData()->SetScalars(fun);
+                add_data(*unstructuredGrid, dm, fe, data);
 
                 add_meta_data(*unstructuredGrid);
 
@@ -301,8 +331,20 @@ namespace mars {
                 global_dof_array->SetNumberOfValues(dof.get_elem_size());
                 global_dof_array->SetName("global_dof_id");
 
-                Kokkos::parallel_for("for", dof.get_elem_size(), [&](const int i) {
-                    const Integer sfc_elem = dm.local_to_sfc(i);
+                // const Integer base = dof_handler.compute_base(i);
+                // const Integer component = dof_handler.compute_component(i);
+                // const Integer sfc = global_to_sfc(base);
+
+                Integer n_nodes = dof.get_elem_size();
+                Integer block_size = dm.get_block();
+
+                // std::cout << "n_nodes: " << n_nodes << "\n";
+
+                Kokkos::parallel_for("for", n_nodes, [&](const int i) {
+                    // const Integer base = dm.compute_base(i * block_size);
+                    const Integer sfc_elem = dm.local_to_sfc(i * block_size);
+
+                    // const Integer sfc_elem = dm.local_to_sfc(i);
                     const Integer global_dof = dm.local_to_global(i);
 
                     double point[3];
@@ -324,24 +366,33 @@ namespace mars {
 
                 vtkSmartPointer<vtkCellArray> cell_array = vtkSmartPointer<vtkCellArray>::New();
 
+                int block_size = dm.get_block();
+
                 dm.elem_iterate([&](const Integer elem_index) {
                     vtkSmartPointer<vtkCell> cell;
 
+                    int n_nodes = 0;
+
                     if (DofHandler::Dim == 2) {
                         cell = vtkSmartPointer<vtkQuad>::New();
+                        n_nodes = 4;
                     } else {
                         cell = vtkSmartPointer<vtkHexahedron>::New();
+                        n_nodes = 8;
                     }
 
-                    for (int i = 0; i < fe.get_elem_nodes(); i++) {
-                        const Integer local_dof = fe.get_elem_local_dof(elem_index, i);
-                        Dof d = dm.local_to_global_dof(local_dof);
+                    // std::cout << "[" << elem_index << "]: ";
+                    for (int i = 0; i < n_nodes; i++) {
+                        const Integer local_dof = fe.get_elem_local_dof(elem_index, i * block_size);
+                        const Integer base = dm.compute_base(local_dof);
 
-                        // const Integer g_id = d.get_gid();
-                        // cell->GetPointIds()->SetId(i, g_id);
+                        // std::cout << base << " ";
 
-                        cell->GetPointIds()->SetId(i, local_dof);
+                        assert(i < 8);
+                        cell->GetPointIds()->SetId(i, base);
                     }
+
+                    // std::cout << "\n";
 
                     cell_array->InsertNextCell(cell);
                 });
