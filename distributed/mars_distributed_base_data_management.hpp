@@ -32,19 +32,13 @@ namespace mars {
         struct FillBufferData {
             ElementType buffer_data;
             ElementType user_data;
-            ViewVectorType<Integer> boundary_sfc;
             H dof_handler;
 
-            FillBufferData(ElementType bf, ElementType ud, ViewVectorType<Integer> bd, H d)
-                : buffer_data(bf), user_data(ud), boundary_sfc(bd), dof_handler(d) {}
+            FillBufferData(ElementType bf, ElementType ud, H d) : buffer_data(bf), user_data(ud), dof_handler(d) {}
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                auto base = dof_handler.compute_base(i);
-                auto component = dof_handler.compute_component(i);
-                const Integer sfc_index = dof_handler.get_local_index(boundary_sfc(base));
-                assert(INVALID_INDEX != sfc_index);
-                auto block_local = dof_handler.compute_block_index(sfc_index, component);
+                auto block_local = dof_handler.get_boundary_dof(i);
                 buffer_data(i) = user_data(block_local);
             }
         };
@@ -53,19 +47,13 @@ namespace mars {
         struct FillBufferData<H, ElementType, 1> {
             ElementType buffer_data;
             ElementType user_data;
-            ViewVectorType<Integer> boundary_sfc;
             H dof_handler;
 
-            FillBufferData(ElementType bf, ElementType ud, ViewVectorType<Integer> bd, H d)
-                : buffer_data(bf), user_data(ud), boundary_sfc(bd), dof_handler(d) {}
+            FillBufferData(ElementType bf, ElementType ud, H d) : buffer_data(bf), user_data(ud), dof_handler(d) {}
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                auto base = dof_handler.compute_base(i);
-                auto component = dof_handler.compute_component(i);
-                const Integer sfc_index = dof_handler.get_local_index(boundary_sfc(base));
-                assert(INVALID_INDEX != sfc_index);
-                auto block_local = dof_handler.compute_block_index(sfc_index, component);
+                auto block_local = dof_handler.get_boundary_dof(i);
                 Kokkos::atomic_add(&user_data(block_local), buffer_data(i));
             }
         };
@@ -74,19 +62,13 @@ namespace mars {
         struct FillBufferData<H, ElementType, 2> {
             ElementType buffer_data;
             ElementType user_data;
-            ViewVectorType<Integer> boundary_sfc;
             H dof_handler;
 
-            FillBufferData(ElementType bf, ElementType ud, ViewVectorType<Integer> bd, H d)
-                : buffer_data(bf), user_data(ud), boundary_sfc(bd), dof_handler(d) {}
+            FillBufferData(ElementType bf, ElementType ud, H d) : buffer_data(bf), user_data(ud), dof_handler(d) {}
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                auto base = dof_handler.compute_base(i);
-                auto component = dof_handler.compute_component(i);
-                const Integer sfc_index = dof_handler.get_local_index(boundary_sfc(base));
-                assert(INVALID_INDEX != sfc_index);
-                auto block_local = dof_handler.compute_block_index(sfc_index, component);
+                auto block_local = dof_handler.get_boundary_dof(i);
                 Kokkos::atomic_fetch_max(&user_data(block_local), buffer_data(i));
             }
         };
@@ -95,50 +77,38 @@ namespace mars {
         struct FillBufferData<H, ElementType, 3> {
             ElementType buffer_data;
             ElementType user_data;
-            ViewVectorType<Integer> boundary_sfc;
             H dof_handler;
 
-            FillBufferData(ElementType bf, ElementType ud, ViewVectorType<Integer> bd, H d)
-                : buffer_data(bf), user_data(ud), boundary_sfc(bd), dof_handler(d) {}
+            FillBufferData(ElementType bf, ElementType ud, H d) : buffer_data(bf), user_data(ud), dof_handler(d) {}
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                auto base = dof_handler.compute_base(i);
-                auto component = dof_handler.compute_component(i);
-                const Integer sfc_index = dof_handler.get_local_index(boundary_sfc(base));
-                assert(INVALID_INDEX != sfc_index);
-                auto block_local = dof_handler.compute_block_index(sfc_index, component);
+                auto block_local = dof_handler.get_boundary_dof(i);
                 Kokkos::atomic_fetch_min(&user_data(block_local), buffer_data(i));
             }
         };
 
         template <Integer Op, typename H>
         struct FillBufferDataFunctor {
-            FillBufferDataFunctor(std::string d, size_t s, ViewVectorType<Integer> b, H hd)
-                : desc(d), size(s), boundary_sfc(b), dof_handler(hd) {}
+            FillBufferDataFunctor(std::string d, size_t s, H hd) : desc(d), size(s), dof_handler(hd) {}
 
             template <typename ElementType>
             void operator()(ElementType &el_1, ElementType &el_2) const {
-                Kokkos::parallel_for(
-                    desc, size, FillBufferData<H, ElementType, Op>(el_1, el_2, boundary_sfc, dof_handler));
+                Kokkos::parallel_for(desc, size, FillBufferData<H, ElementType, Op>(el_1, el_2, dof_handler));
             }
 
             std::string desc;
             size_t size;
-
-            ViewVectorType<Integer> boundary_sfc;
             H dof_handler;
         };
 
         template <typename H, Integer Op, Integer... dataidx>
         MARS_INLINE_FUNCTION static void fill_buffer_data(user_tuple &udata,
                                                           user_tuple &buffer_data,
-                                                          const ViewVectorType<Integer> &boundary,
                                                           const H &dof_handler) {
-            const auto block = dof_handler.get_block();
-            const Integer size = boundary.extent(0) * block;
+            const Integer size = dof_handler.get_boundary_dof_size();
             expand_tuple<FillBufferDataFunctor<Op, H>, user_tuple, dataidx...>(
-                FillBufferDataFunctor<Op, H>("fill_buffer_data", size, boundary, dof_handler), buffer_data, udata);
+                FillBufferDataFunctor<Op, H>("fill_buffer_data", size, dof_handler), buffer_data, udata);
         }
 
         struct ExchangeGhostDofsData {
@@ -209,19 +179,13 @@ namespace mars {
         struct FillUserData {
             ElementType ghost_data;
             ElementType user_data;
-            ViewVectorType<Integer> ghost_sfc;
             H dof_handler;
 
-            FillUserData(ElementType gd, ElementType ud, ViewVectorType<Integer> gs, H d)
-                : ghost_data(gd), user_data(ud), ghost_sfc(gs), dof_handler(d) {}
+            FillUserData(ElementType gd, ElementType ud, H d) : ghost_data(gd), user_data(ud), dof_handler(d) {}
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                auto base = dof_handler.compute_base(i);
-                auto component = dof_handler.compute_component(i);
-                const Integer local_sfc_index = dof_handler.get_local_index(ghost_sfc(base));
-                assert(local_sfc_index != INVALID_INDEX);
-                auto block_local = dof_handler.compute_block_index(local_sfc_index, component);
+                auto block_local = dof_handler.get_ghost_dof(i);
                 user_data(block_local) = ghost_data(i);
             }
         };
@@ -231,37 +195,28 @@ namespace mars {
         struct FillUserData<H, ElementType, 1> {
             ElementType ghost_data;
             ElementType user_data;
-            ViewVectorType<Integer> ghost_sfc;
             H dof_handler;
 
-            FillUserData(ElementType gd, ElementType ud, ViewVectorType<Integer> gs, H d)
-                : ghost_data(gd), user_data(ud), ghost_sfc(gs), dof_handler(d) {}
+            FillUserData(ElementType gd, ElementType ud, H d) : ghost_data(gd), user_data(ud), dof_handler(d) {}
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                auto base = dof_handler.compute_base(i);
-                auto component = dof_handler.compute_component(i);
-                const Integer local_sfc_index = dof_handler.get_local_index(ghost_sfc(base));
-                assert(local_sfc_index != INVALID_INDEX);
-                auto block_local = dof_handler.compute_block_index(local_sfc_index, component);
+                auto block_local = dof_handler.get_ghost_dof(i);
                 ghost_data(i) = user_data(block_local);
             }
         };
 
         template <bool Op, typename H>
         struct FillUserDataFunctor {
-            FillUserDataFunctor(std::string d, size_t s, ViewVectorType<Integer> b, H hd)
-                : desc(d), size(s), ghost_sfc(b), dof_handler(hd) {}
+            FillUserDataFunctor(std::string d, size_t s, H hd) : desc(d), size(s), dof_handler(hd) {}
 
             template <typename ElementType>
             void operator()(ElementType &el_1, ElementType &el_2) const {
-                Kokkos::parallel_for(desc, size, FillUserData<H, ElementType, Op>(el_1, el_2, ghost_sfc, dof_handler));
+                Kokkos::parallel_for(desc, size, FillUserData<H, ElementType, Op>(el_1, el_2, dof_handler));
             }
 
             std::string desc;
             size_t size;
-
-            ViewVectorType<Integer> ghost_sfc;
             H dof_handler;
         };
 
@@ -269,12 +224,10 @@ namespace mars {
         template <typename H, bool Op, Integer... dataidx>
         MARS_INLINE_FUNCTION static void fill_user_data(user_tuple &udata,
                                                         user_tuple &ghost_user_data,
-                                                        const ViewVectorType<Integer> &ghost_sfc,
                                                         const H &dof_handler) {
-            const auto block = dof_handler.get_block();
-            const Integer size = ghost_sfc.extent(0) * block;
+            const Integer size = dof_handler.get_ghost_dof_size();
             expand_tuple<FillUserDataFunctor<Op, H>, user_tuple, dataidx...>(
-                FillUserDataFunctor<Op, H>("fill_user_data", size, ghost_sfc, dof_handler), ghost_user_data, udata);
+                FillUserDataFunctor<Op, H>("fill_user_data", size, dof_handler), ghost_user_data, udata);
         }
 
         /* template <typename H>
@@ -293,22 +246,18 @@ namespace mars {
             const context &context = dof_handler.get_context();
             // exchange the ghost dofs first since it will be used to find the address
             // of the userdata based on the sfc code.
-            /* int proc_num = rank(context); */
-            int size = num_ranks(context);
-
-            const auto block_size = dof_handler.get_block();
-
-            Integer ghost_size = block_size * dof_handler.get_view_scan_recv_mirror()(size);
+            Integer ghost_size = dof_handler.get_ghost_dof_size();
             user_tuple ghost_user_data;
             reserve_user_data<dataidx...>(ghost_user_data, "ghost_user_data", ghost_size);
 
             /* prepare the buffer to send the boundary data */
-            const Integer buffer_size = block_size * dof_handler.get_boundary_dof_size();
+            const Integer buffer_size = dof_handler.get_boundary_dof_size();
             user_tuple buffer_data;
             reserve_user_data<dataidx...>(buffer_data, "buffer_data", buffer_size);
 
-            fill_buffer_data<H, 0, dataidx...>(user_data, buffer_data, dof_handler.get_boundary_dofs(), dof_handler);
+            fill_buffer_data<H, 0, dataidx...>(user_data, buffer_data, dof_handler);
 
+            const auto block_size = dof_handler.get_block();
             exchange_ghost_dofs_data<H, dataidx...>(context,
                                                     block_size,
                                                     ghost_user_data,
@@ -317,41 +266,40 @@ namespace mars {
                                                     dof_handler.get_view_scan_send_mirror().data());
 
             /* use the received ghost data and the sfc to put them to the unified local data */
-            fill_user_data<H, 0, dataidx...>(user_data, ghost_user_data, dof_handler.get_ghost_dofs(), dof_handler);
+            fill_user_data<H, 0, dataidx...>(user_data, ghost_user_data, dof_handler);
         }
 
         template <Integer... dataidx, typename H>
         static void scatter_add(const H &handler, user_tuple &boundary_user_data, user_tuple &user_data) {
-            fill_buffer_data<H, 1, dataidx...>(user_data, boundary_user_data, handler.get_boundary_dofs(), handler);
+            fill_buffer_data<H, 1, dataidx...>(user_data, boundary_user_data, handler);
         }
 
         template <Integer... dataidx, typename H>
         void scatter_max(const H &handler, user_tuple &boundary_user_data, user_tuple &user_data) {
-            fill_buffer_data<H, 2, dataidx...>(user_data, boundary_user_data, handler.get_boundary_dofs(), handler);
+            fill_buffer_data<H, 2, dataidx...>(user_data, boundary_user_data, handler);
         }
 
         template <Integer... dataidx, typename H>
         void scatter_min(const H &handler, user_tuple &boundary_user_data, user_tuple &user_data) {
-            fill_buffer_data<H, 3, dataidx...>(user_data, boundary_user_data, handler.get_boundary_dofs(), handler);
+            fill_buffer_data<H, 3, dataidx...>(user_data, boundary_user_data, handler);
         }
 
         template <Integer... dataidx, typename H>
         static user_tuple scatter_ghost_data(const H &dof_handler, user_tuple &user_data) {
             const context &context = dof_handler.get_context();
             /* int proc_num = rank(context); */
-            int size = num_ranks(context);
-            const auto block_size = dof_handler.get_block();
 
-            Integer ghost_size = block_size * dof_handler.get_view_scan_recv_mirror()(size);
+            Integer ghost_size = dof_handler.get_ghost_dof_size();
             user_tuple ghost_buffer_data;
             reserve_user_data<dataidx...>(ghost_buffer_data, "ghost_user_data", ghost_size);
 
-            fill_user_data<H, 1, dataidx...>(user_data, ghost_buffer_data, dof_handler.get_ghost_dofs(), dof_handler);
+            fill_user_data<H, 1, dataidx...>(user_data, ghost_buffer_data, dof_handler);
 
-            const Integer boundary_size = block_size * dof_handler.get_boundary_dofs().extent(0);
+            const Integer boundary_size = dof_handler.get_boundary_dof_size();
             user_tuple boundary_user_data;
             reserve_user_data<dataidx...>(boundary_user_data, "boundary_user_data", boundary_size);
 
+            const auto block_size = dof_handler.get_block();
             // prepare the buffer to send the boundary data
             exchange_ghost_dofs_data<H, dataidx...>(context,
                                                     block_size,

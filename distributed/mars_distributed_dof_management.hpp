@@ -1819,17 +1819,33 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const UnorderedMap<Integer, Dof> &get_ghost_lg_map() const { return ghost_local_to_global_map; }
 
-        MARS_INLINE_FUNCTION
-        Integer get_boundary_dof(const Integer i) const { return sfc_to_local(get_boundary_dofs()(i)); }
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION Integer get_boundary_dof(const Integer i) const {
+            const auto base = compute_base<B>(i);
+            const auto component = compute_component<B>(i);
+            const auto local = sfc_to_local(get_boundary_dofs()(base));
+            assert(INVALID_INDEX != local);
+            return compute_block_index<B>(local, component);
+        }
 
-        MARS_INLINE_FUNCTION
-        Integer get_boundary_dof_size() const { return get_boundary_dofs().extent(0); }
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION Integer get_boundary_dof_size() const {
+            return get_block<B>() * get_boundary_dofs().extent(0);
+        }
 
-        MARS_INLINE_FUNCTION
-        Integer get_ghost_dof(const Integer i) const { return sfc_to_local(get_ghost_dofs()(i)); }
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION Integer get_ghost_dof(const Integer i) const {
+            const auto base = compute_base<B>(i);
+            const auto component = compute_component<B>(i);
+            const auto local =sfc_to_local(get_ghost_dofs()(base));
+            assert(INVALID_INDEX != local);
+            return compute_block_index<B>(local, component);
+        }
 
-        MARS_INLINE_FUNCTION
-        Integer get_ghost_dof_size() const { return get_ghost_dofs().extent(0); }
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION Integer get_ghost_dof_size() const {
+            return get_block<B>() * get_ghost_dofs().extent(0);
+        }
 
         template <typename F>
         void ghost_iterate(F f) const {
