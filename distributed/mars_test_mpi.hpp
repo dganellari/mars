@@ -256,23 +256,10 @@ namespace mars {
         auto fe = build_fe_dof_map(dof_handler);
 
         // print the global dofs for each element's local dof
-        print_fe_dof_map(dof_handler, fe);
-        /* print_ghost_dofs(dm); */
+        fe.print();
 
         SPattern sp(dof_handler);
         sp.build_pattern(fe);
-
-        // create the dm object
-        /* DMQ dm(dof_handler); */
-        // enumerate the dofs locally and globally. The ghost dofs structures
-        // are now created and ready to use for the gather and scatter ops.
-        //
-        // print locally owned dof numbering
-        /* print_dof<Type>(dm.get_global_dof_enum(), proc_num); */
-
-        // print local dof numbering
-        /* print_dof<Type>(dm.get_local_dof_enum(), proc_num); */
-        /* print_dofs<Type>(dm, proc_num); */
 
         ViewVectorType<Integer> x_local("local_data", dof_handler.get_dof_size());
         dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) {

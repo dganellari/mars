@@ -384,43 +384,22 @@ namespace mars {
 
         template <Integer dataidx, typename H, typename DH>
         static void set_locally_owned_data(const DH &dhandler, user_tuple &dof_data, const ViewVectorType<H> &x) {
-            const Integer size = dhandler.get_owned_dof_size();
-            assert(size == x.extent(0));
+            assert(dhandler.get_owned_dof_size() == x.extent(0));
 
-            ViewVectorType<Integer> global_to_sfc = dhandler.get_global_dof_enum().get_view_elements();
-            Kokkos::parallel_for(
-                "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
-                    // vector valued support
-                    const auto component = dhandler.compute_component(i);
-                    const auto base = dhandler.compute_base(i);
-
-                    const Integer sfc = global_to_sfc(base);
-                    const Integer local = dhandler.get_local_index(sfc);
-                    assert(INVALID_INDEX != local);
-
-                    const auto block_local = dhandler.compute_block_index(local, component);
-                    std::get<dataidx>(dof_data)(block_local) = x(i);
-                });
+            dhandler.owned_dof_iterate(MARS_LAMBDA(const Integer i) {
+                const auto block_local = dhandler.get_owned_dof(i);
+                std::get<dataidx>(dof_data)(block_local) = x(i);
+            });
         }
 
         template <Integer dataidx, typename H, typename DH>
         static void get_locally_owned_data(const DH &dhandler, const ViewVectorType<H> &x, user_tuple &dof_data) {
-            const Integer size = dhandler.get_owned_dof_size();
-            assert(size == x.extent(0));
+            assert(dhandler.get_owned_dof_size() == x.extent(0));
 
-            ViewVectorType<Integer> global_to_sfc = dhandler.get_global_dof_enum().get_view_elements();
-            Kokkos::parallel_for(
-                "get_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
-                    const auto component = dhandler.compute_component(i);
-                    const auto base = dhandler.compute_base(i);
-
-                    const Integer sfc = global_to_sfc(base);
-                    const Integer local = dhandler.get_local_index(sfc);
-                    assert(INVALID_INDEX != local);
-
-                    const auto block_local = dhandler.compute_block_index(local, component);
-                    x(i) = std::get<dataidx>(dof_data)(block_local);
-                });
+            dhandler.owned_dof_iterate(MARS_LAMBDA(const Integer i) {
+                const auto block_local = dhandler.get_owned_dof(i);
+                x(i) = std::get<dataidx>(dof_data)(block_local);
+            });
         }
     };
 

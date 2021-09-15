@@ -656,34 +656,29 @@ namespace mars {
 
         void print_sparsity_pattern() const {
             const Integer size = get_num_rows();
+            auto sp = *this;
             Kokkos::parallel_for(
                 "for", size, MARS_LAMBDA(const int row) {
-                    const Integer start = get_row_map(row);
-                    const Integer end = get_row_map(row + 1);
+                    const Integer start = sp.get_row_map(row);
+                    const Integer end = sp.get_row_map(row + 1);
 
                     // print only if end - start > 0. Otherwise segfaults.
                     // The row index is not a global index of the current process!
                     for (int i = start; i < end; ++i) {
-                        auto value = get_value(i);
-                        auto col = get_col(i);
-                        // do something. In this case we are printing.
+                        auto value = sp.get_value(i);
+                        auto col = sp.get_col(i);
 
-                        const Integer local_dof = get_dof_handler().get_owned_dof(row);
-                        const Integer global_row = get_dof_handler().local_to_global(local_dof);
+                        const Integer local_dof = sp.get_dof_handler().get_owned_dof(row);
+                        const Integer global_row = sp.get_dof_handler().local_to_global(local_dof);
 
-                        auto base_col = dof_handler.compute_base(col);
-                        auto base_row = dof_handler.compute_base(global_row);
-                        /* const Integer local_col = get_dof_handler().global_to_local(col); */
-                        /* const Integer global_col = get_dof_handler().local_to_global(local_col); */
-
-                        /* printf("row_dof: %li - %li, col_dof: %li - %li, value: %lf\n", */
+                        auto base_col = sp.get_dof_handler().compute_base(col);
+                        auto base_row = sp.get_dof_handler().compute_base(global_row);
                         printf("SP - Row_Dof: %li - %li, base_row:%li, col_dof: %li, base_col: %li, value: %lf\n",
                                row,
                                global_row,
                                base_row,
                                col,
                                base_col,
-                               /* global_col, */
                                value);
                     }
                 });

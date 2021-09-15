@@ -1713,14 +1713,19 @@ namespace mars {
             get_dof_coordinates_from_local<ElemType, B>(local, point);
         }
 
-        template <Integer Type, Integer B = Block_>
-        MARS_INLINE_FUNCTION bool is_boundary(const Integer local, const Integer FaceNr = -1) const {
-            const Integer sfc = local_to_sfc<B>(local);
+        template <Integer Type>
+        MARS_INLINE_FUNCTION bool boundary_sfc(const Integer sfc, const Integer FaceNr = -1) const {
             const Integer xdim = get_local_dof_enum().get_XDim();
             const Integer ydim = get_local_dof_enum().get_YDim();
             const Integer zdim = get_local_dof_enum().get_ZDim();
 
             return is_boundary_sfc<Type>(sfc, xdim, ydim, zdim, FaceNr);
+        }
+
+        template <Integer Type, Integer B = Block_>
+        MARS_INLINE_FUNCTION bool is_boundary(const Integer local, const Integer FaceNr = -1) const {
+            const Integer sfc = local_to_sfc<B>(local);
+            return boundary_sfc<Type>(sfc, FaceNr);
         }
 
         MARS_INLINE_FUNCTION bool is_boundary_dof(const Integer local, const Integer FaceNr = -1) const {
@@ -1729,52 +1734,30 @@ namespace mars {
 
         template <typename F>
         void boundary_owned_dof_iterate(F f, const std::string side = "all") {
-            using namespace Kokkos;
-            constexpr Integer Type = simplex_type::ElemType;
+            const Integer side_value = map_side_to_value<ElemType>(side);
 
-            const Integer size = get_owned_dof_size();
-            ViewVectorType<Integer> global_to_sfc = get_global_dof_enum().get_view_elements();
-
-            const Integer xdim = get_local_dof_enum().get_XDim();
-            const Integer ydim = get_local_dof_enum().get_YDim();
-            const Integer zdim = get_local_dof_enum().get_ZDim();
-            const Integer side_value = map_side_to_value<Type>(side);
-
-            Kokkos::parallel_for(
-                "boundary_owned_dof_iterate", size, MARS_LAMBDA(const Integer i) {
-                    auto base = compute_base<Block>(i);
-                    const Integer sfc = global_to_sfc(base);
-                    if (is_boundary_sfc<Type>(sfc, xdim, ydim, zdim, side_value)) {
-                        f(i, sfc);
-                    }
-                });
+            auto handler = *this;
+            owned_dof_iterate(MARS_LAMBDA(const Integer i) {
+                const Integer sfc = handler.owned_to_sfc(i);
+                if (handler.template boundary_sfc<ElemType>(sfc, side_value)) {
+                    f(i, sfc);
+                }
+            });
         }
 
         template <typename F>
         void boundary_dof_iterate(F f, const std::string side = "all") {
-            using namespace Kokkos;
-            constexpr Integer Type = simplex_type::ElemType;
-
-            const Integer size = get_owned_dof_size();
-            ViewVectorType<Integer> global_to_sfc = get_global_dof_enum().get_view_elements();
-
-            const Integer xdim = get_local_dof_enum().get_XDim();
-            const Integer ydim = get_local_dof_enum().get_YDim();
-            const Integer zdim = get_local_dof_enum().get_ZDim();
-            const Integer side_value = map_side_to_value<Type>(side);
+            const Integer side_value = map_side_to_value<ElemType>(side);
 
             auto handler = *this;
-            Kokkos::parallel_for(
-                "boundary_iterate", size, MARS_LAMBDA(const Integer i) {
-                    auto base = compute_base<Block>(i);
-                    auto comp = compute_component<Block>(i);
-                    const Integer sfc = global_to_sfc(base);
+            owned_dof_iterate(MARS_LAMBDA(const Integer i) {
+                const Integer sfc = handler.owned_to_sfc(i);
+                if (handler.template boundary_sfc<ElemType>(sfc, side_value)) {
                     const Integer local = handler.sfc_to_local(sfc);
-
-                    if (is_boundary_sfc<Type>(sfc, xdim, ydim, zdim, side_value)) {
-                        f(compute_block_index<Block>(local, comp));
-                    }
-                });
+                    auto comp = handler.compute_component(i);
+                    f(handler.compute_block_index(local, comp));
+                }
+            });
         }
 
         template <Integer B = Block_>

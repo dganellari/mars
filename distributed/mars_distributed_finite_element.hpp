@@ -513,24 +513,29 @@ namespace mars {
         // print thlocal and the global number of the dof within each element.
         // the dof enumeration within eachlement is topological
         void print() {
+            auto fe = *this;
             iterate(MARS_LAMBDA(const Integer elem_index) {
                 // go through all the dofs of the elem_index element
-                for (int i = 0; i < get_elem_nodes(); i++) {
+                for (int i = 0; i < fe.get_elem_nodes(); i++) {
                     // get the local dof of the i-th index within thelement
-                    const Integer local_dof = get_elem_local_dof(elem_index, i);
+                    const Integer local_dof = fe.get_elem_local_dof(elem_index, i);
                     // convert the local dof number to global dof number
-                    Dof d = get_dof_handler().local_to_global_dof(local_dof);
-                    auto octant = get_dof_handler().get_octant_from_local(local_dof);
+                    Dof d = fe.get_dof_handler().local_to_global_dof(local_dof);
+                    auto octant = fe.get_dof_handler().get_octant_from_local(local_dof);
 
-                    // do something. In this case we are printing.
-                    printf("fe_dof: i: %li, local: %li, octant: [%li, %li, %li], global: %li, proc: %li\n",
-                           i,
-                           local_dof,
-                           octant.x,
-                           octant.y,
-                           octant.z,
-                           d.get_gid(),
-                           d.get_proc());
+                    auto base_global = fe.get_dof_handler().compute_base(d.get_gid());
+
+                    printf(
+                        "fe_dof: i: %li, local: %li, octant: [%li, %li, %li], global: %li, base_global: %li, proc: "
+                        "%li\n",
+                        i,
+                        local_dof,
+                        octant.x,
+                        octant.y,
+                        octant.z,
+                        d.get_gid(),
+                        base_global,
+                        d.get_proc());
                 }
             });
         }
