@@ -9,9 +9,13 @@
 #include "Kokkos_ArithTraits.hpp"
 #endif
 
+#ifdef WITH_MPI
+#include <mpi.h>
+#endif
+
 namespace mars {
 
-    void Abort() {
+    inline void Abort() {
         int error_code = -1;
 #ifdef WITH_MPI
         MPI_Abort(MPI_COMM_WORLD, error_code);
@@ -20,7 +24,7 @@ namespace mars {
 #endif
     }
 
-    void Abort(const std::string &message) {
+    inline void Abort(const std::string &message) {
         std::cerr << message << '\n';
         Abort();
     }
