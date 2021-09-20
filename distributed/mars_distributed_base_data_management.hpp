@@ -145,17 +145,16 @@ namespace mars {
                                                                             const Integer size,
                                                                             const Integer block) {
             assert(block > 0);
+            if (block < 1) Abort("Block size for the vector valued problem should be > 1!");
 
             if (block == 1) {
                 return std::vector<Integer>(mirror, mirror + size);
-            } else if (block > 1) {
+            } else {
                 std::vector<Integer> block_scan(size, 0);
                 for (int i = 0; i < size; ++i) {
                     block_scan[i] = block * mirror[i];
                 }
                 return block_scan;
-            } else {
-                Abort("Block size for the vector valued problem should be > 1!");
             }
         }
 

@@ -344,14 +344,16 @@ namespace mars {
 
             MARS_INLINE_FUNCTION void operator()(const Integer sfc_index, Integer &index, const Integer localid) const {
                 // base local ID is received in all cases, i.e Block=1. No need for vector valued.
-                auto lid = handler.template local_to_owned_index<1>(localid);
+                if (localid > INVALID_INDEX) {
+                    auto lid = handler.template local_to_owned_index<1>(localid);
 
-                if (lid > INVALID_INDEX) {
-                    auto id = owned_map(lid);
-                    for (Integer bi = 0; bi < handler.get_block(); ++bi) {
-                        auto bid = handler.get_block() * id + bi;
-                        auto aindex = Kokkos::atomic_fetch_add(&owned_index(bid), 1);
-                        dof_enum(bid, aindex) = sfc_index + size;
+                    if (lid > INVALID_INDEX) {
+                        auto id = owned_map(lid);
+                        for (Integer bi = 0; bi < handler.get_block(); ++bi) {
+                            auto bid = handler.get_block() * id + bi;
+                            auto aindex = Kokkos::atomic_fetch_add(&owned_index(bid), 1);
+                            dof_enum(bid, aindex) = sfc_index + size;
+                        }
                     }
                 }
             }

@@ -277,10 +277,10 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        void insert_sorted_fe(const ViewMatrixType<Integer> &col,
-                              const Integer row,
-                              const Integer value,
-                              Integer &count) const {
+        void insert_sorted_unique_fe(const ViewMatrixType<Integer> &col,
+                                     const Integer row,
+                                     const Integer value,
+                                     Integer &count) const {
             Integer i = 0;
             while (value > col(row, i) && i < count) {
                 i++;
@@ -339,10 +339,10 @@ namespace mars {
                         if (fe.is_valid(elem_index)) {
                             for (int k = 0; k < fe.get_fe_size(); k++) {
                                 auto local_dof = fe.get_elem_local_dof(elem_index, k);
-                                const Integer global = handler.local_to_global(local_dof);
-                                /* if (is_unique(ntn, i, global, count - 1)) { */
-                                insert_sorted_fe(ntn, i, global, count);
-                                /* } */
+                                if (local_dof > INVALID_INDEX) {
+                                    const Integer global = handler.local_to_global(local_dof);
+                                    insert_sorted_unique_fe(ntn, i, global, count);
+                                }
                             }
                         }
                     }
@@ -494,16 +494,12 @@ namespace mars {
 
             crs_row row_ptr("counter_scan", owned_size + 1);
             incl_excl_scan(0, owned_size, counter, row_ptr);
-            /* auto node_max_size = label_based_node_count(DofLabel::lCorner);
-            Kokkos::parallel_for(
+
+            /* Kokkos::parallel_for(
                 "Count_nodes", owned_size, MARS_LAMBDA(const Integer i) {
                     auto owned_dof = handler.get_owned_dof(i);
                     auto gid = handler.local_to_global(owned_dof);
                     printf("Node: %li  scan: %li : - ", gid, row_ptr(i));
-                    for (int j = 0; j < node_max_size; j++) {
-                        printf("%li, ", node_to_node(i, j));
-                    }
-
                     printf("\n");
                 }); */
 
@@ -593,6 +589,7 @@ namespace mars {
             const Integer next_row_idx = sparsity_pattern.row_map(row + 1) - 1;
 
             const Integer i = binary_search(sparsity_pattern.entries.data(), row_idx, next_row_idx, col);
+            /* if (i == -1) printf("indexrow: %li, %li, %li, %li\n", row, col, row_idx, next_row_idx); */
             return i;
         }
 

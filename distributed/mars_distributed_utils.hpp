@@ -25,7 +25,7 @@ namespace mars {
     }
 
     inline void Abort(const std::string &message) {
-        std::cerr << message << '\n';
+        std::printf("%s\n", message.c_str());
         Abort();
     }
 
