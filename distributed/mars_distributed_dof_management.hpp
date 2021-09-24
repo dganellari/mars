@@ -1745,17 +1745,22 @@ namespace mars {
             });
         }
 
+        MARS_INLINE_FUNCTION
+        static bool is_separated_block(const Integer block, const Integer component) {
+            return (block == -1 || block == component);
+        }
+
         template <typename F>
-        void boundary_dof_iterate(F f, const std::string side = "all") {
+        void boundary_dof_iterate(F f, const std::string side = "all", const Integer block = -1) {
             const Integer side_value = map_side_to_value<ElemType>(side);
 
             auto handler = *this;
             owned_dof_iterate(MARS_LAMBDA(const Integer i) {
                 const Integer sfc = handler.owned_to_sfc(i);
-                if (handler.template boundary_sfc<ElemType>(sfc, side_value)) {
-                    const Integer local = handler.sfc_to_local(sfc);
-                    auto comp = handler.compute_component(i);
-                    f(handler.compute_block_index(local, comp));
+                auto comp = handler.compute_component(i);
+                if (is_separated_block(block, comp) && handler.template boundary_sfc<ElemType>(sfc, side_value)) {
+                    const Integer local = handler.sfc_to_local(sfc, comp);
+                    f(local);
                 }
             });
         }
