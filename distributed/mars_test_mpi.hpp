@@ -277,6 +277,13 @@ namespace mars {
         gather_ghost_data(dof_handler, x_local);
         /* scatter_add_ghost_data(dof_handler, x_local); */
 
+
+        dof_handler.boundary_dof_iterate(
+            MARS_LAMBDA(const Integer local_dof) { x_local(local_dof) = 7; }, 0);
+
+        dof_handler.boundary_dof_iterate(
+            MARS_LAMBDA(const Integer local_dof) { x_local(local_dof) = 8; }, 1);
+
         /*print using the index iterate*/
         dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) {
             auto idata = x_local(i);

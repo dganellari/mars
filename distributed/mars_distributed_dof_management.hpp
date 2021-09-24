@@ -1751,16 +1751,26 @@ namespace mars {
         }
 
         template <typename F>
-        void boundary_dof_iterate(F f, const std::string side = "all", const Integer block = -1) {
+        void boundary_dof_iterate(F f, const std::string side) {
+            boundary_dof_iterate(f, side, -1);
+        }
+
+        template <typename F>
+        void boundary_dof_iterate(F f, const Integer bl) {
+            boundary_dof_iterate(f, "all", bl);
+        }
+
+        template <typename F>
+        void boundary_dof_iterate(F f, const std::string side = "all", const Integer bl = -1) {
             const Integer side_value = map_side_to_value<ElemType>(side);
 
             auto handler = *this;
             owned_dof_iterate(MARS_LAMBDA(const Integer i) {
                 const Integer sfc = handler.owned_to_sfc(i);
                 auto comp = handler.compute_component(i);
-                if (is_separated_block(block, comp) && handler.template boundary_sfc<ElemType>(sfc, side_value)) {
-                    const Integer local = handler.sfc_to_local(sfc, comp);
-                    f(local);
+                if (is_separated_block(bl, comp) && handler.template boundary_sfc<ElemType>(sfc, side_value)) {
+                    const Integer local = handler.sfc_to_local(sfc);
+                    f(handler.compute_block_index(local, comp));
                 }
             });
         }
