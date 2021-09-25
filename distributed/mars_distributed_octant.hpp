@@ -536,7 +536,7 @@ namespace mars {
     template <Integer Type>
     std::enable_if_t<Type == ElementType::Hex8, Integer> map_side_to_value(const std::string side) {
         std::map<std::string, Integer> side_map{
-            {"all", -1}, {"left", 0}, {"right", 1}, {"front", 2}, {"back", 3}, {"bottom", 4}, {"top", 5}};
+            {"all", -1}, {"left", 0}, {"right", 1}, {"bottom", 2}, {"top", 3}, {"front", 4}, {"back", 5}};
         return find_map_side(side_map, side);
     }
 
