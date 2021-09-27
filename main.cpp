@@ -1216,9 +1216,10 @@ int main(int argc, char *argv[]) {
         matrix_free_poisson<Example2Dirichlet, Example2RHS, Example2Analitcal, ElementType::Quad4>(xDim, yDim, 0);
     };
 
-    apps["mfpoisson3D"] = [=]() {
+    //Quadrature for Hex8 not added yet. Only FEQuad4 currently available in Mars.
+    /* apps["mfpoisson3D"] = [=]() {
         matrix_free_poisson<Example2Dirichlet, Example2RHS, Example2Analitcal, ElementType::Hex8>(xDim, yDim, zDim);
-    };
+    }; */
 
     apps["cstokes"] = [=]() { staggered_constant_viscosty_stokes<ElementType::Quad4>(xDim, yDim, 0); };
 
