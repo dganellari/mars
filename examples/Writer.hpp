@@ -10,38 +10,41 @@ namespace mars {
     class Writer {
     public:
         Writer();
+        Writer(adios2::IO par_io, adios2::Engine writer, Image image)
+            : new_image(image), new_par_io(par_io), new_writer(writer){};
         // Writer(mars::Image image);
         // Writer(mars::Image image);
 #if ADIOS2_USE_MPI
-        // adios2::ADIOS adios(MPI_COMM_WORLD);
-        // adios2::IO par_io = adios.DeclareIO("BPFile_SZ");
-        // adios2::Engine writer;
-        // adios2::Variable<double> var_data;
-        // mars::Image image = image;
-        // void setup_variables() {
-        //     var_data = par_io.DefineVariable<double>(
-        //         "U",
-        //         {static_cast<unsigned long>(image.Nx), static_cast<unsigned long>(image.Ny), 1UL},
-        //         {static_cast<unsigned long>(image.offset_x), static_cast<unsigned long>(image.offset_y), 0UL},
-        //         {static_cast<unsigned long>(image.nx_local), static_cast<unsigned long>(image.ny_local), 1UL});
+        void setup_variables() {
+            var_data = new_par_io.DefineVariable<double>(
+                "U",
+                {static_cast<unsigned long>(new_image.Nx), static_cast<unsigned long>(new_image.Ny), 1UL},
+                {static_cast<unsigned long>(new_image.offset_x), static_cast<unsigned long>(new_image.offset_y), 0UL},
+                {static_cast<unsigned long>(new_image.nx_local), static_cast<unsigned long>(new_image.ny_local), 1UL});
 
-        //     auto rank_data = par_io.DefineVariable<int>(
-        //         "Rank",
-        //         {static_cast<unsigned long>(image.Nx), static_cast<unsigned long>(image.Ny), 1UL},
-        //         {static_cast<unsigned long>(image.offset_x), static_cast<unsigned long>(image.offset_y), 0UL},
-        //         {static_cast<unsigned long>(image.nx_local), static_cast<unsigned long>(image.ny_local), 1UL});
-        // };
+            rank_data = new_par_io.DefineVariable<int>(
+                "Rank",
+                {static_cast<unsigned long>(new_image.Nx), static_cast<unsigned long>(new_image.Ny), 1UL},
+                {static_cast<unsigned long>(new_image.offset_x), static_cast<unsigned long>(new_image.offset_y), 0UL},
+                {static_cast<unsigned long>(new_image.nx_local), static_cast<unsigned long>(new_image.ny_local), 1UL});
+        };
 
-        // void write(std::vector<double> data) {
-        //     writer = par_io.Open("adios_mpi.bp", adios2::Mode::Write);
-        //     writer.BeginStep();
-        //     writer.Put<double>(var_data, data.data());
-        //     // writer.Put<int>(rank_data, ranks.data());
-        //     writer.EndStep();
-        //     writer.Close();
-        // };
+        void write() {
+            new_writer = new_par_io.Open("adios_mpi.bp", adios2::Mode::Write);
+            new_writer.BeginStep();
+            new_writer.Put<double>(var_data, new_image.data.data());
+            new_writer.Put<int>(rank_data, new_image.ranks.data());
+            new_writer.EndStep();
+            new_writer.Close();
+        };
 
 #endif
+    private:
+        adios2::IO new_par_io;
+        adios2::Engine new_writer;
+        Image new_image;
+        adios2::Variable<double> var_data;
+        adios2::Variable<int> rank_data;
     };
 }  // namespace mars
 #endif

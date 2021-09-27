@@ -40,6 +40,7 @@ namespace mars {
             double d_x = (x_max - x_min) / (Nx - 1);
             double d_y = (y_max - y_min) / (Ny - 1);
             data.resize(Nx * Ny);
+            ranks.resize(Nx * Ny);
 
             for (int i = 0; i < nx_local; i++) {
                 for (int j = 0; j < ny_local; j++) {
@@ -62,8 +63,8 @@ namespace mars {
         };
 
         // Fields:
-        int Nx = 7680;
-        int Ny = 4320;
+        int Nx;
+        int Ny;
         int Nz;
         int nx_local;
         int ny_local;
@@ -77,7 +78,14 @@ namespace mars {
         double x_max = 0;
         double y_min = 0.375;
         double y_max = 0.75;
+
+        // Normal for presentation.
+        // double x_min = -2.5;
+        // double x_max = 1.5;
+        // double y_min = -1.5;
+        // double y_max = 1.5;
         std::vector<double> data;
+        std::vector<int> ranks;
     };
 }  // namespace mars
 
