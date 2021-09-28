@@ -1,8 +1,8 @@
-#ifndef IMAGE_HPP
-#define IMAGE_HPP
+#ifndef MARS_IMAGE_HPP
+#define MARS_IMAGE_HPP
 #include <vector>
-#include "Mandelbrot.hpp"
 #include "adios2.h"
+#include "mars_mandelbrot.hpp"
 #if ADIOS2_USE_MPI
 #include <mpi.h>
 #endif

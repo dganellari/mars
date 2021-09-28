@@ -1,9 +1,9 @@
 #include <complex>
 #include <iostream>
-#include "Image.hpp"
-#include "Writer.hpp"
 #include "adios2.h"
 #include "cxxopts.hpp"
+#include "mars_image.hpp"
+#include "mars_image_adios_writer.hpp"
 
 #if ADIOS2_USE_MPI
 #include <mpi.h>

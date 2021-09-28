@@ -1,8 +1,8 @@
-#ifndef WRITER_HPP
-#define WRITER_HPP
-#include "Image.hpp"
-#include "Mandelbrot.hpp"
+#ifndef MARS_IMAGE_ADIOS_WRITER_HPP
+#define MARS_IMAGE_ADIOS_WRITER_HPP
 #include "adios2.h"
+#include "mars_image.hpp"
+#include "mars_mandelbrot.hpp"
 #if ADIOS2_USE_MPI
 #include <mpi.h>
 #endif
@@ -12,8 +12,6 @@ namespace mars {
         Writer();
         Writer(adios2::IO par_io, adios2::Engine writer, Image image)
             : new_image(image), new_par_io(par_io), new_writer(writer){};
-        // Writer(mars::Image image);
-        // Writer(mars::Image image);
 #if ADIOS2_USE_MPI
         void setup_variables() {
             var_data = new_par_io.DefineVariable<double>(

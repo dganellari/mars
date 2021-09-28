@@ -1,8 +1,8 @@
-#ifndef MANDELBROT_HPP
-#define MANDELBROT_HPP
+#ifndef MARS_MANDELBROT_HPP
+#define MARS_MANDELBROT_HPP
 
 #include <complex>
-#include "Image.hpp"
+#include "mars_image.hpp"
 
 namespace mars {
     class Mandelbrot {
