@@ -1844,6 +1844,11 @@ namespace mars {
         }
 
         template <Integer B = Block_>
+        MARS_INLINE_FUNCTION Integer get_boundary_local_index(const Integer i) const {
+            return get_boundary_dof<B>(i);
+        }
+
+        template <Integer B = Block_>
         MARS_INLINE_FUNCTION Integer get_boundary_dof_size() const {
             return get_block<B>() * get_boundary_dofs().extent(0);
         }
@@ -1852,9 +1857,14 @@ namespace mars {
         MARS_INLINE_FUNCTION Integer get_ghost_dof(const Integer i) const {
             const auto base = compute_base<B>(i);
             const auto component = compute_component<B>(i);
-            const auto local =sfc_to_local(get_ghost_dofs()(base));
+            const auto local = sfc_to_local(get_ghost_dofs()(base));
             assert(INVALID_INDEX != local);
             return compute_block_index<B>(local, component);
+        }
+
+        template <Integer B = Block_>
+        MARS_INLINE_FUNCTION Integer get_ghost_local_index(const Integer i) const {
+            return get_ghost_dof<B>(i);
         }
 
         template <Integer B = Block_>

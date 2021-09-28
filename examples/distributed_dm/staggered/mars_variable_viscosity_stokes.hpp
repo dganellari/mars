@@ -221,7 +221,7 @@ namespace mars {
         using StokesStencil = typename MyDofTypes::SStencil;
         using SparsityPattern = typename MyDofTypes::SPattern;
         using CornerDM = typename MyDofTypes::CornerDM;
-        using CornerVolumeDM = typename MyDofTypes::CornerDM;
+        using CornerVolumeDM = typename MyDofTypes::CornerVolumeDM;
 
 
         // enumerate the dofs locally and globally. The ghost dofs structures

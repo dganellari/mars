@@ -38,7 +38,7 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                auto block_local = dof_handler.get_boundary_dof(i);
+                auto block_local = dof_handler.get_boundary_local_index(i);
                 buffer_data(i) = user_data(block_local);
             }
         };
@@ -53,7 +53,7 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                auto block_local = dof_handler.get_boundary_dof(i);
+                auto block_local = dof_handler.get_boundary_local_index(i);
                 Kokkos::atomic_add(&user_data(block_local), buffer_data(i));
             }
         };
@@ -68,7 +68,7 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                auto block_local = dof_handler.get_boundary_dof(i);
+                auto block_local = dof_handler.get_boundary_local_index(i);
                 Kokkos::atomic_fetch_max(&user_data(block_local), buffer_data(i));
             }
         };
@@ -83,7 +83,7 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                auto block_local = dof_handler.get_boundary_dof(i);
+                auto block_local = dof_handler.get_boundary_local_index(i);
                 Kokkos::atomic_fetch_min(&user_data(block_local), buffer_data(i));
             }
         };
@@ -184,7 +184,7 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                auto block_local = dof_handler.get_ghost_dof(i);
+                auto block_local = dof_handler.get_ghost_local_index(i);
                 user_data(block_local) = ghost_data(i);
             }
         };
@@ -200,7 +200,7 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                auto block_local = dof_handler.get_ghost_dof(i);
+                auto block_local = dof_handler.get_ghost_local_index(i);
                 ghost_data(i) = user_data(block_local);
             }
         };

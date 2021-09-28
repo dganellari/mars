@@ -214,7 +214,13 @@ namespace mars {
         Integer get_boundary_dof(const Integer index) const { return boundary_dofs(index); }
 
         MARS_INLINE_FUNCTION
+        Integer get_boundary_local_index(const Integer index) const { return get_local_index(boundary_dofs(index)); }
+
+        MARS_INLINE_FUNCTION
         Integer get_ghost_dof(const Integer index) const { return ghost_dofs(index); }
+
+        MARS_INLINE_FUNCTION
+        Integer get_ghost_local_index(const Integer index) const { return get_local_index(ghost_dofs(index)); }
 
         MARS_INLINE_FUNCTION
         Integer get_boundary_dof_size() const { return boundary_dofs.extent(0); }
