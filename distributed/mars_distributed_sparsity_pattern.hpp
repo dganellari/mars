@@ -615,6 +615,7 @@ namespace mars {
         MARS_INLINE_FUNCTION
         void atomic_add_value(const Integer row, const Integer col, const V val) const {
             const Integer index = get_col_index(row, col);
+            assert(index > -1);
             if (index > -1) {
                 Kokkos::atomic_fetch_add(&matrix.values(index), val);
             }
