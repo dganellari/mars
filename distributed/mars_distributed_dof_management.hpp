@@ -1751,11 +1751,6 @@ namespace mars {
         }
 
         template <typename F>
-        void boundary_dof_iterate(F f, const std::string side) {
-            boundary_dof_iterate(f, side, -1);
-        }
-
-        template <typename F>
         void boundary_dof_iterate(F f, const Integer bl) {
             boundary_dof_iterate(f, "all", bl);
         }
