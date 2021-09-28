@@ -223,6 +223,7 @@ namespace mars {
         using CornerDM = typename MyDofTypes::CornerDM;
         using CornerVolumeDM = typename MyDofTypes::CornerVolumeDM;
 
+        static constexpr bool Orient = MyDofTypes::Orient;
 
         // enumerate the dofs locally and globally. The ghost dofs structures
         // are now created and ready to use for the gather and scatter ops.
@@ -238,8 +239,8 @@ namespace mars {
         auto volume_stencil = build_stencil<VolumeStencil>(fv_dof_handler);
         /*print_stencil(fv_dof_handler, volume_stencil);*/
 
-        /*auto face_stencil = build_stencil<SStencil, Orient>(fv_dof_handler);*/
-        auto face_stencil = build_stencil<StokesStencil>(fv_dof_handler);
+        auto face_stencil = build_stencil<StokesStencil, Orient>(fv_dof_handler);
+        /* auto face_stencil = build_stencil<StokesStencil>(fv_dof_handler); */
         /*print_stencil(fv_dof_handler, face_stencil);*/
 
         SparsityPattern sp(fv_dof_handler);
@@ -273,8 +274,11 @@ namespace mars {
         });*/
 
         assemble_volume(volume_stencil, sp, proc_num);
-        /* assemble_face(face_stencil, sp, cvdm); */
+        //Only use with Oriented stencil!!!
         assemble_oriented_face(face_stencil, sp, cvdm);
+        //otherwise use the following:
+        /* assemble_face(face_stencil, sp, cvdm); */
+
 
         fv_dof_handler.boundary_dof_iterate(
             MARS_LAMBDA(const Integer local_dof) { sp.set_value(local_dof, local_dof, 1); });
