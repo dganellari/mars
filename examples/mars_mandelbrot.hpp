@@ -27,6 +27,8 @@ namespace mars {
 
             return i;
         }
+
+        int operator()(double x, double y, double z, double p) const { return x * x + y * y + z * z; }
     };
 }  // namespace mars
 

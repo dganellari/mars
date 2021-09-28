@@ -14,17 +14,27 @@ namespace mars {
             : new_image(image), new_par_io(par_io), new_writer(writer){};
 #if ADIOS2_USE_MPI
         void setup_variables() {
-            var_data = new_par_io.DefineVariable<double>(
-                "U",
-                {static_cast<unsigned long>(new_image.Nx), static_cast<unsigned long>(new_image.Ny), 1UL},
-                {static_cast<unsigned long>(new_image.offset_x), static_cast<unsigned long>(new_image.offset_y), 0UL},
-                {static_cast<unsigned long>(new_image.nx_local), static_cast<unsigned long>(new_image.ny_local), 1UL});
+            var_data = new_par_io.DefineVariable<double>("U",
+                                                         {static_cast<unsigned long>(new_image.Nx),
+                                                          static_cast<unsigned long>(new_image.Ny),
+                                                          static_cast<unsigned long>(new_image.Nz)},
+                                                         {static_cast<unsigned long>(new_image.offset_x),
+                                                          static_cast<unsigned long>(new_image.offset_y),
+                                                          static_cast<unsigned long>(new_image.offset_z)},
+                                                         {static_cast<unsigned long>(new_image.nx_local),
+                                                          static_cast<unsigned long>(new_image.ny_local),
+                                                          static_cast<unsigned long>(new_image.nz_local)});
 
-            rank_data = new_par_io.DefineVariable<int>(
-                "Rank",
-                {static_cast<unsigned long>(new_image.Nx), static_cast<unsigned long>(new_image.Ny), 1UL},
-                {static_cast<unsigned long>(new_image.offset_x), static_cast<unsigned long>(new_image.offset_y), 0UL},
-                {static_cast<unsigned long>(new_image.nx_local), static_cast<unsigned long>(new_image.ny_local), 1UL});
+            rank_data = new_par_io.DefineVariable<int>("Rank",
+                                                       {static_cast<unsigned long>(new_image.Nx),
+                                                        static_cast<unsigned long>(new_image.Ny),
+                                                        static_cast<unsigned long>(new_image.Nz)},
+                                                       {static_cast<unsigned long>(new_image.offset_x),
+                                                        static_cast<unsigned long>(new_image.offset_y),
+                                                        static_cast<unsigned long>(new_image.offset_z)},
+                                                       {static_cast<unsigned long>(new_image.nx_local),
+                                                        static_cast<unsigned long>(new_image.ny_local),
+                                                        static_cast<unsigned long>(new_image.nz_local)});
         };
 
         void write() {

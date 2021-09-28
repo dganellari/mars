@@ -12,23 +12,23 @@
 // Open/Close
 // Desingn by contract.
 
-double simple_func(const double x, const double y, const double z) { return std::sqrt(x * x + y * y + z * z); }
-
 int main(int argc, char *argv[]) {
-    int periods[2] = {0, 0};
+    int periods[3] = {0, 0, 0};
 
     int rank, size;
-    int coordinates[2];
+    int coordinates[3];
     int my_grid_rank;
-    int Nx = 7680;
-    int Ny = 4320;
+    int Nx = 1300;
+    int Ny = 1300;
+    int Nz = 2;
 
     if (argc == 3) {
         Nx = atoi(argv[1]);
         Ny = atoi(argv[2]);
+        Nz = atoi(argv[3]);
     }
 
-    mars::Image image(Nx, Ny, 0);
+    mars::Image image(Nx, Ny, Nz);
 
 #if ADIOS2_USE_MPI
     MPI_Init(&argc, &argv);
@@ -36,7 +36,6 @@ int main(int argc, char *argv[]) {
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     MPI_Comm gridComm;
 
-    // mars::Writer writer(image);
     adios2::ADIOS adios(MPI_COMM_WORLD);
     adios2::IO par_io = adios.DeclareIO("BPFile_SZ");
     adios2::Engine writer;
@@ -47,23 +46,21 @@ int main(int argc, char *argv[]) {
     // Specify the size of each dimension.
     // Can also specify how many proceses are on each dims, which in the general case
     // is not useful since MPI_Dims_create() takes care of that.
-    int dims[2] = {0, 0};
+    int dims[3] = {0, 0, 0};
 
-    MPI_Dims_create(size, 2, dims);
+    MPI_Dims_create(size, 3, dims);
 
     // Print out how the grid has been decomposed.
     if (rank == 0) {
-        std::cout << "Decomposition is:" << dims[0] << "," << dims[1] << std::endl;
+        std::cout << "Decomposition is:" << dims[0] << "," << dims[1] << "," << dims[2] << std::endl;
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);
-
     // We previously created a new communicator which we will now assign to this dims
-    MPI_Cart_create(MPI_COMM_WORLD, 2, dims, periods, 0, &gridComm);
+    MPI_Cart_create(MPI_COMM_WORLD, 3, dims, periods, 0, &gridComm);
     // We evaluate the rank of this processor passing the communicator as parameter.
     MPI_Comm_rank(gridComm, &my_grid_rank);
     // We evaluate the coordinates of this processor and store these coordinates in the array coordinates[].
-    MPI_Cart_coords(gridComm, my_grid_rank, 2, coordinates);
+    MPI_Cart_coords(gridComm, my_grid_rank, 3, coordinates);
 
     MPI_Barrier(MPI_COMM_WORLD);
     double tick = MPI_Wtime();
