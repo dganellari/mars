@@ -315,8 +315,11 @@ if(ADIOS2_FOUND)
 
     add_executable(adios_mpi_example examples/mars_example_adios_mpi.cpp)
 
+    add_executable(adios_mpi_mesh_example examples/mars_mesh_mpi_adios.cpp)
+
     target_link_libraries(adios_example mars mars_io)
     target_link_libraries(adios_mpi_example mars mars_io)
+    target_link_libraries(adios_mpi_mesh_example mars mars_io)
 else()
     message("Adios Not Found")
 endif()

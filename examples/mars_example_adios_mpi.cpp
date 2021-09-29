@@ -18,15 +18,16 @@ int main(int argc, char *argv[]) {
     int rank, size;
     int coordinates[3];
     int my_grid_rank;
-    int Nx = 1300;
-    int Ny = 1300;
-    int Nz = 2;
+    int Nx = 1200;
+    int Ny = 1000;
+    int Nz = 20;
 
-    if (argc == 3) {
+    if (argc == 4) {
         Nx = atoi(argv[1]);
         Ny = atoi(argv[2]);
         Nz = atoi(argv[3]);
     }
+    std::cout << argc;
 
     mars::Image image(Nx, Ny, Nz);
 
