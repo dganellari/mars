@@ -10,10 +10,11 @@ namespace mars {
     class Image {
     public:
         Image();
-        Image(const int Nx, const int Ny, const int Nz) {
+        Image(const int Nx, const int Ny, const int Nz, int rank) {
             this->Nx = Nx;
             this->Ny = Ny;
             this->Nz = Nz;
+            this->rank = rank;
         };
         void setup(int dims[], int coordinates[]) {
             nx_local = Nx / dims[0];
@@ -71,7 +72,7 @@ namespace mars {
                         z += z_min;
                         // data[idx_local] = simple_func(x, y);
                         // data[idx_local] = f(x, y, 0, 30, 4) + rank * 30;
-                        data[idx_local] = f(x, y, z);  //+ rank * 80;
+                        data[idx_local] = f(x, y, z) + rank * 80;
                     }
                 }
             }
@@ -81,6 +82,7 @@ namespace mars {
         int Nx;
         int Ny;
         int Nz;
+        int rank;
         int nx_local;
         int ny_local;
         int nz_local;

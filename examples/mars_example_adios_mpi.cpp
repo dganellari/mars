@@ -27,9 +27,8 @@ int main(int argc, char *argv[]) {
         Ny = atoi(argv[2]);
         Nz = atoi(argv[3]);
     }
-    std::cout << argc;
 
-    mars::Image image(Nx, Ny, Nz);
+    mars::Image image(Nx, Ny, Nz, rank);
 
 #if ADIOS2_USE_MPI
     MPI_Init(&argc, &argv);
