@@ -204,8 +204,8 @@ namespace mars {
         }
     }
 
-    template <Integer Type = ElementType::Quad4>
-    void test_mars_distributed_vector_valued(const int xDim, const int yDim, const int zDim) {
+    template <Integer Type = ElementType::Quad4, Integer Degree = 1>
+    void test_mars_distributed_vector_valued(const int xDim, const int yDim, const int zDim, const int block) {
         using namespace mars;
         mars::proc_allocation resources;
 
@@ -233,7 +233,7 @@ namespace mars {
         /* using Elem = typename DistributedQuad4Mesh::Elem; */
         /* constexpr Integer Type = Elem::ElemType; */
 
-        constexpr Integer Degree = 2;
+        /* constexpr Integer Degree = 2; */
         /* constexpr Integer Block = DMesh::Dim; */
         constexpr Integer Block = 0;
         /* using DOFHandler = DofHandler<DMesh, Degree>; */
@@ -247,19 +247,40 @@ namespace mars {
         static constexpr int OUTPUT = 1;
         static constexpr int RHSD = 2;
 
+        double time_gen = timer.seconds();
+        std::cout << "Mesh Generation took: " << time_gen << std::endl;
+
+        Kokkos::Timer timer_dof;
+
         DOFHandler dof_handler(&mesh);
         dof_handler.enumerate_dofs();
-        dof_handler.set_block(2);
+        dof_handler.set_block(block);
+
+        double time_dh= timer_dof.seconds();
+        std::cout << "DOFHandler enum took: " << time_dh<< std::endl;
+
+        Kokkos::Timer timer_map;
 
         /* dof_handler.print_dofs(proc_num); */
 
         auto fe = build_fe_dof_map(dof_handler);
 
+
+        double time_map= timer_map.seconds();
+        std::cout << "DOFMAP took: " << time_map<< std::endl;
+
+        Kokkos::Timer timer_sp;
         // print the global dofs for each element's local dof
-        fe.print();
+        /* fe.print(); */
 
         SPattern sp(dof_handler);
         sp.build_pattern(fe);
+
+        double time_sp= timer_sp.seconds();
+        std::cout << "SP build took: " << time_sp<< std::endl;
+
+        double time_all = timer.seconds();
+        std::cout << "Discretization: " << time_all<< std::endl;
 
         ViewVectorType<Integer> x_local("local_data", dof_handler.get_dof_size());
         dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) {
@@ -267,7 +288,7 @@ namespace mars {
             if (dof_handler.is_owned(i)) sp.set_value(i, i, 9);
         });
 
-        sp.print_sparsity_pattern();
+        /* sp.print_sparsity_pattern(); */
 
         auto owned_size = dof_handler.get_owned_dof_size();
         ViewVectorType<Integer> owned("owned_data", owned_size);
@@ -285,7 +306,7 @@ namespace mars {
             MARS_LAMBDA(const Integer local_dof) { x_local(local_dof) = 8; }, 1);
 
         /*print using the index iterate*/
-        dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) {
+        /* dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) {
             auto idata = x_local(i);
 
             Dof d = dof_handler.local_to_global_dof(i);
@@ -297,7 +318,7 @@ namespace mars {
                    d.get_gid(),
                    base_global,
                    d.get_proc());
-        });
+        }); */
 
 #endif
     }
