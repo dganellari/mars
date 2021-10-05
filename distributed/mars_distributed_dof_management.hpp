@@ -1205,6 +1205,37 @@ namespace mars {
             sfc_enum.compact_element_and_labels(sfc_to_local, predicate, label);
             sfc_enum.generate_sfc_to_local_map();
         }
+/*
+        void build_sfc_from_predicate(SFC<ElemType> &sfc_enum,
+                                      const ViewVectorType<bool> &predicate,
+                                      const ViewVectorType<Integer> &label) {
+            [>ViewVectorType<Integer> sfc_to_local("sfc_to_local dof handler", sfc_enum.get_all_range());<]
+            [>sfc_enum.compact_element_and_labels(sfc_to_local, predicate, label);<]
+            auto all_range = sfc_enum.get_all_range();
+
+            Integer nr_elements = 0;
+            Kokkos::parallel_reduce(
+                "Number of SFC codes",
+                all_range,
+                MARS_LAMBDA(const Integer i, Integer &update) { update += predicate(i); },
+                nr_elements);
+
+            sfc_enum.reserve_elements(nr_elements);
+            sfc_enum.reserve_element_labels(nr_elements);
+
+            //compact using the segmented scan to avoid storing all_range vector.
+            auto elms = sfc_enum.get_view_elements();
+            auto lbl = sfc_enum.get_view_element_labels();
+            segmented_scan(
+                all_range, predicate, MARS_LAMBDA(const Integer count, const Integer index) {
+                    if (predicate(index) == 1) {
+                        elms(count) = index;
+                        lbl(count) = label(index);
+                    }
+                });
+
+            sfc_enum.generate_sfc_to_local_map();
+        } */
 
         void exchange_ghost_counts(const context &context,
                                    ViewVectorType<Integer> &scan_boundary,
