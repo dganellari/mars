@@ -1155,9 +1155,9 @@ namespace mars {
             const Integer gall_range = global_dof_enum.get_all_range();
 
             ViewVectorType<bool> local_predicate("lpred", lall_range);
-            ViewVectorType<Integer> local_label("llabel", lall_range);
+            /* ViewVectorType<Integer> local_label("llabel", lall_range); */
             ViewVectorType<bool> global_predicate("gpred", gall_range);
-            ViewVectorType<Integer> global_label("glabel", gall_range);
+            /* ViewVectorType<Integer> global_label("glabel", gall_range); */
 
             /* generate the sfc for the local and global dofs containing the generation locally
             for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
@@ -1395,7 +1395,7 @@ namespace mars {
 
             const Integer local_size = get_local_dof_enum().get_elem_size();
 
-            local_dof_enum.init_element_orientations(local_size);
+            get_local_dof_enum().init_element_orientations(local_size);
 
             /* generate the sfc for the local and global dofs containing the generation locally
                      for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
@@ -1408,8 +1408,130 @@ namespace mars {
             Kokkos::parallel_for("orient_ghost_dofs",
                                  ghost_size,
                                  OrientDofs<true>(get_mesh_manager().get_mesh(),
-                                                  local_dof_enum.get_view_element_orientations(),
+                                                  get_local_dof_enum().get_view_element_orientations(),
                                                   get_local_dof_enum().get_sfc_to_local_map()));
+        }
+
+        // generic local predicate functor to be used for edge, face and corners. The volume is specialized.
+        template <bool Ghost, Integer Label>
+        struct LocalGlobalLabel{
+            SFC<ElemType> local_enum;
+            SFC<ElemType> global_enum;
+            Integer proc;
+
+            MARS_INLINE_FUNCTION
+            LocalGlobalLabel(SFC<ElemType> le, SFC<ElemType> ge, Integer p)
+                : local_enum(le), : global_enum(ge), proc(p) {}
+
+            MARS_INLINE_FUNCTION
+            void set_label_from_sfc(const Mesh *mesh,
+                                    const Integer i,
+                                    const Integer sfc,
+                                    const Integer owner_proc,
+                                    std::true_type) const {
+                Integer elem_sfc_proc =
+                    find_owner_processor(mesh->get_view_gp(), mesh->get_ghost_sfc(i), 2, mesh->get_proc());
+
+                // if the ghost elem owns the dof then he is able to send it.
+                if (elem_sfc_proc >= owner_proc) {
+                    auto index = get_value_in_map(local_enum.get_sfc_to_local_map(), sfc);
+                    local_enum.set_label(index, Label);
+                }
+            }
+
+            MARS_INLINE_FUNCTION
+            void set_label_from_sfc(const Mesh *mesh,
+                              const Integer i,
+                              const Integer sfc,
+                              const Integer owner_proc,
+                              std::false_type) const {
+                /* if the neighbor element is ghost then check if the processor
+                    is less than the owner. This is how the dofs are partitioned*/
+                if (proc >= owner_proc) {
+                    auto gindex = get_value_in_map(global_enum.get_sfc_to_local_map(), sfc);
+                    global_enum.set_label(index, Label);
+                }
+                auto index = get_value_in_map(local_enum.get_sfc_to_local_map(), sfc);
+                local_enum.set_label(index, Label);
+            }
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Mesh *mesh, const Integer i, const Integer dof_sfc, const Integer owner_proc) const {
+                set_label_from_sfc(mesh, i, dof_sfc, owner_proc, std::integral_constant<bool, Ghost>{});
+            }
+        };
+
+        template <bool Ghost>
+        struct LocalGlobalLabel<Ghost, DofLabel::lVolume> {
+            SFC<ElemType> local_enum;
+            SFC<ElemType> global_enum;
+
+            MARS_INLINE_FUNCTION
+            LocalGlobalLabel(SFC<ElemType> le, SFC<ElemType> ge) : local_enum(le), : global_enum(ge) {}
+
+            MARS_INLINE_FUNCTION
+            void volume_label(const Integer sfc, std::true_type) const {
+                auto index = get_value_in_map(local_enum.get_sfc_to_local_map(), sfc);
+                local_enum.set_label(index, DofLabel::lVolume);
+            }
+
+            MARS_INLINE_FUNCTION
+            void volume_label(const Integer sfc, std::false_type) const {
+                auto gindex = get_value_in_map(global_enum.get_sfc_to_local_map(), sfc);
+                global_enum.set_label(index, DofLabel::lVolume);
+                auto index = get_value_in_map(local_enum.get_sfc_to_local_map(), sfc);
+                local_enum.set_label(index, DofLabel::lVolume);
+            }
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Mesh *mesh, const Integer i, const Integer enc_oc) const {
+                volume_label(enc_oc, std::integral_constant<bool, Ghost>{});
+            }
+        };
+
+
+        template <bool Ghost>
+        struct BuildLocalGlobalLabel{
+            BuildLocalGlobalLabel(Mesh *m, SFC<ElemType> le, SFC<ElemType> ge)
+                : mesh(m), local_enum(le), global_enum(ge) {}
+
+            Mesh *mesh;
+            SFC<ElemType> local_enum;
+            SFC<ElemType> global_enum;
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Integer i) const {
+                const Integer sfc = get_sfc_ghost_or_local<Ghost>(mesh, i);
+                const Integer proc = mesh->get_proc();
+                auto cp = LocalGlobalLabel<Ghost, DofLabel::lCorner>(local_enum, global_enum, proc);
+
+                auto fp = LocalGlobalLabel<Ghost, DofLabel::lFace>(local_enum, global_enum, proc);
+
+                // fp logic is the same as the edge one. Just different label.
+                auto ep = LocalGlobalLabel<Ghost, DofLabel::lEdge>(local_enum, global_enum, proc);
+
+                auto vp = LocalGlobalLabel<Ghost, DofLabel::lVolume>(local_enum, global_enum);
+
+                elem_dof_iterate(sfc, mesh, i, cp, fp, vp, ep);
+            }
+        };
+
+        void label_local_global_dofs() {
+            const Integer size = get_mesh_manager().get_host_mesh()->get_chunk_size();
+            const Integer ghost_size = get_mesh_manager().get_host_mesh()->get_view_ghost().extent(0);
+
+            /* generate the sfc for the local and global dofs containing the generation locally
+            for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
+            Kokkos::parallel_for("label_local",
+                                 size,
+                                 BuildLocalGlobalLabel<false>(
+                                     get_mesh_manager().get_mesh(), get_local_dof_enum(), get_global_dof_enum()));
+
+            // Iterate through ghost sfc and enumerate
+            Kokkos::parallel_for("label_ghost",
+                                 ghost_size,
+                                 BuildLocalGlobalLabel<true>(
+                                     get_mesh_manager().get_mesh(), get_local_dof_enum(), get_global_dof_enum()));
         }
 
         virtual void enumerate_dofs() {
@@ -1427,6 +1549,7 @@ namespace mars {
 
             build_lg_predicate(context, nbh_proc_predicate_send, nbh_proc_predicate_recv);
             build_local_orientation();
+            label_local_global_dofs();
 
             incl_excl_scan(0, rank_size, nbh_proc_predicate_send, proc_scan_send);
             incl_excl_scan(0, rank_size, nbh_proc_predicate_recv, proc_scan_recv);
