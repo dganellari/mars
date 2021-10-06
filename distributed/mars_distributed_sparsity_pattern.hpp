@@ -621,6 +621,18 @@ namespace mars {
             }
         }
 
+        template <typename C>
+        MARS_INLINE_FUNCTION void atomic_add_value(const Integer row,
+                                                   const Integer col,
+                                                   const V val,
+                                                   C &crs_matrix) const {
+            const Integer index = get_col_index(row, col);
+            assert(index > -1);
+            if (index > -1) {
+                Kokkos::atomic_fetch_add(&crs_matrix.values(index), val);
+            }
+        }
+
         MARS_INLINE_FUNCTION
         void set_value_from_global(const Integer row, const Integer col, const V val) const {
             const Integer index = get_col_index_from_global(row, col);
