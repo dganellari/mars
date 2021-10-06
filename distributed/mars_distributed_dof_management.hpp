@@ -1205,12 +1205,11 @@ namespace mars {
             sfc_enum.compact_element_and_labels(sfc_to_local, predicate, label);
             sfc_enum.generate_sfc_to_local_map();
         }
-/*
-        void build_sfc_from_predicate(SFC<ElemType> &sfc_enum,
+
+        // Memory efficient implementation but poor performance due to the segmented scan.
+        /* void build_sfc_from_predicate(SFC<ElemType> &sfc_enum,
                                       const ViewVectorType<bool> &predicate,
                                       const ViewVectorType<Integer> &label) {
-            [>ViewVectorType<Integer> sfc_to_local("sfc_to_local dof handler", sfc_enum.get_all_range());<]
-            [>sfc_enum.compact_element_and_labels(sfc_to_local, predicate, label);<]
             auto all_range = sfc_enum.get_all_range();
 
             Integer nr_elements = 0;
