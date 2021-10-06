@@ -504,7 +504,14 @@ namespace mars {
         template <typename F>
         void owned_iterate(F f) const {
             const Integer size = get_dof_handler().get_mesh_manager().get_host_mesh()->get_chunk_size();
-            Kokkos::parallel_for("fedomap iterate", size, f);
+            Kokkos::parallel_for("fedomap owned iterate", size, f);
+        }
+
+        template <typename F>
+        void ghost_iterate(F f) const {
+            const Integer owned_size = get_dof_handler().get_mesh_manager().get_host_mesh()->get_chunk_size();
+            const Integer size = get_fe_dof_map_size();
+            Kokkos::parallel_for("fedomap ghost iterate", Kokkos::RangePolicy<>(owned_size, size), f);
         }
 
         template <typename F>
@@ -516,7 +523,7 @@ namespace mars {
         // the dof enumeration within eachlement is topological
         void print() {
             auto fe = *this;
-            iterate(MARS_LAMBDA(const Integer elem_index) {
+            ghost_iterate(MARS_LAMBDA(const Integer elem_index) {
                 // go through all the dofs of the elem_index element
                 for (int i = 0; i < fe.get_elem_nodes(); i++) {
                     // get the local dof of the i-th index within thelement
