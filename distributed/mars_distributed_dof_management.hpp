@@ -768,25 +768,19 @@ namespace mars {
         template <bool Ghost, Integer Label>
         struct LocalGlobalPredicate {
             ViewVectorType<bool> local_predicate;
-            ViewVectorType<Integer> local_label;
             ViewVectorType<bool> global_predicate;
-            ViewVectorType<Integer> global_label;
             ViewVectorType<bool> nbh_proc_predicate_send;
             ViewVectorType<bool> nbh_proc_predicate_recv;
             Integer proc;
 
             MARS_INLINE_FUNCTION
             LocalGlobalPredicate(ViewVectorType<bool> lp,
-                                 ViewVectorType<Integer> llp,
                                  ViewVectorType<bool> gp,
-                                 ViewVectorType<Integer> lgp,
                                  ViewVectorType<bool> npps,
                                  ViewVectorType<bool> nppr,
                                  Integer p)
                 : local_predicate(lp),
-                  local_label(llp),
                   global_predicate(gp),
-                  global_label(lgp),
                   nbh_proc_predicate_send(npps),
                   nbh_proc_predicate_recv(nppr),
                   proc(p) {}
@@ -803,7 +797,6 @@ namespace mars {
                 // if the ghost elem owns the dof then he is able to send it.
                 if (elem_sfc_proc >= owner_proc) {
                     local_predicate(sfc) = 1;
-                    local_label(sfc) = Label;
                     nbh_proc_predicate_send(elem_sfc_proc) = 1;
                     nbh_proc_predicate_recv(elem_sfc_proc) = 1;
                 }
@@ -819,10 +812,8 @@ namespace mars {
                     is less than the owner. This is how the dofs are partitioned*/
                 if (proc >= owner_proc) {
                     global_predicate(sfc) = 1;
-                    global_label(sfc) = Label;
                 }
                 local_predicate(sfc) = 1;
-                local_label(sfc) = Label;
             }
 
             MARS_INLINE_FUNCTION
@@ -834,29 +825,21 @@ namespace mars {
         template <bool Ghost>
         struct LocalGlobalPredicate<Ghost, DofLabel::lVolume> {
             ViewVectorType<bool> local_predicate;
-            ViewVectorType<Integer> local_label;
             ViewVectorType<bool> global_predicate;
-            ViewVectorType<Integer> global_label;
 
             MARS_INLINE_FUNCTION
-            LocalGlobalPredicate(ViewVectorType<bool> lp,
-                                 ViewVectorType<Integer> llp,
-                                 ViewVectorType<bool> gp,
-                                 ViewVectorType<Integer> lgp)
-                : local_predicate(lp), local_label(llp), global_predicate(gp), global_label(lgp) {}
+            LocalGlobalPredicate(ViewVectorType<bool> lp, ViewVectorType<bool> gp)
+                : local_predicate(lp), global_predicate(gp) {}
 
             MARS_INLINE_FUNCTION
             void volume_predicate(const Integer sfc, std::true_type) const {
                 local_predicate(sfc) = 1;
-                local_label(sfc) = DofLabel::lVolume;
             }
 
             MARS_INLINE_FUNCTION
             void volume_predicate(const Integer sfc, std::false_type) const {
                 local_predicate(sfc) = 1;
-                local_label(sfc) = DofLabel::lVolume;
                 global_predicate(sfc) = 1;
-                global_label(sfc) = DofLabel::lVolume;
             }
 
             MARS_INLINE_FUNCTION
@@ -1033,24 +1016,18 @@ namespace mars {
         struct BuildLocalGlobalPredicate {
             BuildLocalGlobalPredicate(Mesh *m,
                                       ViewVectorType<bool> lp,
-                                      ViewVectorType<Integer> llp,
                                       ViewVectorType<bool> gp,
-                                      ViewVectorType<Integer> lgp,
                                       ViewVectorType<bool> npbs,
                                       ViewVectorType<bool> npbr)
                 : mesh(m),
                   local_predicate(lp),
-                  local_label(llp),
                   global_predicate(gp),
-                  global_label(lgp),
                   nbh_proc_predicate_send(npbs),
                   nbh_proc_predicate_recv(npbr) {}
 
             Mesh *mesh;
             ViewVectorType<bool> local_predicate;
-            ViewVectorType<Integer> local_label;
             ViewVectorType<bool> global_predicate;
-            ViewVectorType<Integer> global_label;
             ViewVectorType<bool> nbh_proc_predicate_send;
             ViewVectorType<bool> nbh_proc_predicate_recv;
 
@@ -1058,33 +1035,17 @@ namespace mars {
             void operator()(const Integer i) const {
                 const Integer sfc = get_sfc_ghost_or_local<Ghost>(mesh, i);
                 const Integer proc = mesh->get_proc();
-                auto cp = LocalGlobalPredicate<Ghost, DofLabel::lCorner>(local_predicate,
-                                                                         local_label,
-                                                                         global_predicate,
-                                                                         global_label,
-                                                                         nbh_proc_predicate_send,
-                                                                         nbh_proc_predicate_recv,
-                                                                         proc);
+                auto cp = LocalGlobalPredicate<Ghost, DofLabel::lCorner>(
+                    local_predicate, global_predicate, nbh_proc_predicate_send, nbh_proc_predicate_recv, proc);
 
-                auto fp = LocalGlobalPredicate<Ghost, DofLabel::lFace>(local_predicate,
-                                                                       local_label,
-                                                                       global_predicate,
-                                                                       global_label,
-                                                                       nbh_proc_predicate_send,
-                                                                       nbh_proc_predicate_recv,
-                                                                       proc);
+                auto fp = LocalGlobalPredicate<Ghost, DofLabel::lFace>(
+                    local_predicate, global_predicate, nbh_proc_predicate_send, nbh_proc_predicate_recv, proc);
 
                 // fp logic is the same as the edge one. Just different label.
-                auto ep = LocalGlobalPredicate<Ghost, DofLabel::lEdge>(local_predicate,
-                                                                       local_label,
-                                                                       global_predicate,
-                                                                       global_label,
-                                                                       nbh_proc_predicate_send,
-                                                                       nbh_proc_predicate_recv,
-                                                                       proc);
+                auto ep = LocalGlobalPredicate<Ghost, DofLabel::lEdge>(
+                    local_predicate, global_predicate, nbh_proc_predicate_send, nbh_proc_predicate_recv, proc);
 
-                auto vp = LocalGlobalPredicate<Ghost, DofLabel::lVolume>(
-                    local_predicate, local_label, global_predicate, global_label);
+                auto vp = LocalGlobalPredicate<Ghost, DofLabel::lVolume>(local_predicate, global_predicate);
 
                 elem_dof_iterate(sfc, mesh, i, cp, fp, vp, ep);
             }
@@ -1151,41 +1112,24 @@ namespace mars {
             local_dof_enum = SFC<simplex_type::ElemType>(degree * xDim, degree * yDim, degree * zDim);
             global_dof_enum = SFC<simplex_type::ElemType>(degree * xDim, degree * yDim, degree * zDim);
 
-            const Integer lall_range = local_dof_enum.get_all_range();
-            const Integer gall_range = global_dof_enum.get_all_range();
-
-            ViewVectorType<bool> local_predicate("lpred", lall_range);
-            /* ViewVectorType<Integer> local_label("llabel", lall_range); */
-            ViewVectorType<bool> global_predicate("gpred", gall_range);
-            /* ViewVectorType<Integer> global_label("glabel", gall_range); */
+            ViewVectorType<bool> local_predicate("lpred", local_dof_enum.get_all_range());
+            ViewVectorType<bool> global_predicate("gpred", global_dof_enum.get_all_range());
 
             /* generate the sfc for the local and global dofs containing the generation locally
             for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
             Kokkos::parallel_for("lg_predicate",
                                  size,
-                                 BuildLocalGlobalPredicate<false>(get_mesh_manager().get_mesh(),
-                                                                  local_predicate,
-                                                                  local_label,
-                                                                  global_predicate,
-                                                                  global_label,
-                                                                  npbs,
-                                                                  npbr));
+                                 BuildLocalGlobalPredicate<false>(
+                                     get_mesh_manager().get_mesh(), local_predicate, global_predicate, npbs, npbr));
 
             // Iterate through ghost sfc and enumerate
             Kokkos::parallel_for("lg_predicate_from_ghost",
                                  ghost_size,
-                                 BuildLocalGlobalPredicate<true>(get_mesh_manager().get_mesh(),
-                                                                 local_predicate,
-                                                                 local_label,
-                                                                 global_predicate,
-                                                                 global_label,
-                                                                 npbs,
-                                                                 npbr));
+                                 BuildLocalGlobalPredicate<true>(
+                                     get_mesh_manager().get_mesh(), local_predicate, global_predicate, npbs, npbr));
 
-            /* local_dof_enum.compact_element_and_labels(local_predicate, local_label); */
-            /* global_dof_enum.compact_element_and_labels(global_predicate, global_label); */
-            build_sfc_from_predicate(local_dof_enum, local_predicate, local_label);
-            build_sfc_from_predicate(global_dof_enum, global_predicate, global_label);
+            build_sfc_from_predicate(local_dof_enum, local_predicate);
+            build_sfc_from_predicate(global_dof_enum, global_predicate);
 
             const int rank_size = num_ranks(context);
 
@@ -1198,11 +1142,9 @@ namespace mars {
             incl_excl_scan(0, rank_size, global_dof_size_per_rank, global_dof_offset);
         }
 
-        void build_sfc_from_predicate(SFC<ElemType> &sfc_enum,
-                                      const ViewVectorType<bool> &predicate,
-                                      const ViewVectorType<Integer> &label) {
+        void build_sfc_from_predicate(SFC<ElemType> &sfc_enum, const ViewVectorType<bool> &predicate) {
             ViewVectorType<Integer> sfc_to_local("sfc_to_local dof handler", sfc_enum.get_all_range());
-            sfc_enum.compact_element_and_labels(sfc_to_local, predicate, label);
+            sfc_enum.compact_elements(sfc_to_local, predicate);
             sfc_enum.generate_sfc_to_local_map();
         }
 
@@ -1395,7 +1337,7 @@ namespace mars {
 
             const Integer local_size = get_local_dof_enum().get_elem_size();
 
-            get_local_dof_enum().init_element_orientations(local_size);
+            local_dof_enum.init_element_orientations(local_size);
 
             /* generate the sfc for the local and global dofs containing the generation locally
                      for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
@@ -1421,7 +1363,7 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             LocalGlobalLabel(SFC<ElemType> le, SFC<ElemType> ge, Integer p)
-                : local_enum(le), : global_enum(ge), proc(p) {}
+                : local_enum(le), global_enum(ge), proc(p) {}
 
             MARS_INLINE_FUNCTION
             void set_label_from_sfc(const Mesh *mesh,
@@ -1449,7 +1391,7 @@ namespace mars {
                     is less than the owner. This is how the dofs are partitioned*/
                 if (proc >= owner_proc) {
                     auto gindex = get_value_in_map(global_enum.get_sfc_to_local_map(), sfc);
-                    global_enum.set_label(index, Label);
+                    global_enum.set_label(gindex, Label);
                 }
                 auto index = get_value_in_map(local_enum.get_sfc_to_local_map(), sfc);
                 local_enum.set_label(index, Label);
@@ -1467,7 +1409,7 @@ namespace mars {
             SFC<ElemType> global_enum;
 
             MARS_INLINE_FUNCTION
-            LocalGlobalLabel(SFC<ElemType> le, SFC<ElemType> ge) : local_enum(le), : global_enum(ge) {}
+            LocalGlobalLabel(SFC<ElemType> le, SFC<ElemType> ge) : local_enum(le), global_enum(ge) {}
 
             MARS_INLINE_FUNCTION
             void volume_label(const Integer sfc, std::true_type) const {
@@ -1478,7 +1420,7 @@ namespace mars {
             MARS_INLINE_FUNCTION
             void volume_label(const Integer sfc, std::false_type) const {
                 auto gindex = get_value_in_map(global_enum.get_sfc_to_local_map(), sfc);
-                global_enum.set_label(index, DofLabel::lVolume);
+                global_enum.set_label(gindex, DofLabel::lVolume);
                 auto index = get_value_in_map(local_enum.get_sfc_to_local_map(), sfc);
                 local_enum.set_label(index, DofLabel::lVolume);
             }
@@ -1520,6 +1462,8 @@ namespace mars {
             const Integer size = get_mesh_manager().get_host_mesh()->get_chunk_size();
             const Integer ghost_size = get_mesh_manager().get_host_mesh()->get_view_ghost().extent(0);
 
+            local_dof_enum.reserve_element_labels(local_dof_enum.get_elem_size());
+            global_dof_enum.reserve_element_labels(global_dof_enum.get_elem_size());
             /* generate the sfc for the local and global dofs containing the generation locally
             for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
             Kokkos::parallel_for("label_local",
@@ -1548,8 +1492,8 @@ namespace mars {
             ViewVectorType<Integer> proc_scan_recv("nbh_scan_recv", rank_size + 1);
 
             build_lg_predicate(context, nbh_proc_predicate_send, nbh_proc_predicate_recv);
-            build_local_orientation();
             label_local_global_dofs();
+            build_local_orientation();
 
             incl_excl_scan(0, rank_size, nbh_proc_predicate_send, proc_scan_send);
             incl_excl_scan(0, rank_size, nbh_proc_predicate_recv, proc_scan_recv);
