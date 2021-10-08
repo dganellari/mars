@@ -523,7 +523,7 @@ namespace mars {
         // the dof enumeration within eachlement is topological
         void print() {
             auto fe = *this;
-            ghost_iterate(MARS_LAMBDA(const Integer elem_index) {
+            iterate(MARS_LAMBDA(const Integer elem_index) {
                 // go through all the dofs of the elem_index element
                 for (int i = 0; i < fe.get_elem_nodes(); i++) {
                     // get the local dof of the i-th index within thelement
