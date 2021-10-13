@@ -45,7 +45,7 @@ namespace mars {
         MARS_INLINE_FUNCTION
         FEDofMap(DofHandler handler) : dof_handler(handler) {}
 
-        template <typename F, bool G, Integer L = Label>
+        template <typename F, bool G, typename O, Integer L = Label>
         struct EnumLocalDofs {
             MARS_INLINE_FUNCTION void enumerate_volume(const Octant &o, const Integer sfc_index, Integer &index) const {
                 Integer sfc = get_sfc_from_octant<ElemType>(o);
@@ -260,14 +260,82 @@ namespace mars {
                 Integer index = 0;
                 // topological order within the element
                 ordered_dof_enumeration(i, index);
+
+                //optinal functor to be used in special cases.
+                if (o) {
+                    auto callable = o.value();
+                    callable(i, index);
+                }
             }
 
             MARS_INLINE_FUNCTION
             EnumLocalDofs(DofHandler d, F fun) : dofHandler(d), f(fun) {}
 
+            MARS_INLINE_FUNCTION
+            EnumLocalDofs(DofHandler d, F fun, std::optional<O> opt) : dofHandler(d), f(fun), o(opt) {}
+
             DofHandler dofHandler;
             F f;
+            std::optional<O> o;
         };
+
+        //Build predicate for elements that contain only owned dofs and for all the others.
+        struct PredicateOwned{
+            DofHandler handler;
+            ViewVectorType<bool> pred;
+
+            MARS_INLINE_FUNCTION
+            PredicateOwned(DofHandler h, ViewVectorType<bool> pred) : handler(h), predicate(pred) {}
+
+            MARS_INLINE_FUNCTION void operator()(const Integer sfc_index, Integer &index, const Integer localid) const {
+                //Set to 1 only elements that contain at least one non-owned dof.
+                if (localid > INVALID_INDEX && !handler.template is_owned<1>(localid)) {
+                    predicate(sfc_index) = 1;
+                }
+            }
+        };
+
+        template <typename P, typename S>
+        void invert_predicate_and_reset_scan(const P &t, const S &v) {
+            Kokkos::parallel_for(
+                "invert_predicate_and_reset_scan", t.extent(0), MARS_LAMBDA(const Integer i) {
+                    t(i) ^= 1; //invert from 0 to 1 and viceversa.
+                    v(i + 1) = 0;
+                });
+        }
+
+        template <typename P, typename S>
+        void build_map_from_scan(const P &predicate, const S &scan, const Integer offset = 0) {
+            Kokkos::parallel_for(
+                "build_map_from_scan", predicate.extent(0), MARS_LAMBDA(const Integer i) {
+                    if (predicate(i) == 1) {
+                        auto index = scan(i) + offset;
+                        sfc_to_elem_index.insert(i, index);
+                        elem_index(index) = i;
+                    }
+                });
+        }
+
+        /* void predicate_elements() {
+            auto handler = get_dof_handler();
+            const Integer size = handler.get_mesh_manager().get_host_mesh()->get_chunk_size();
+            ViewVectorType<bool> predicate("predicate_elements", size);
+            ViewVectorType<Integer> scan("predicate_elements", size + 1);
+            [>enumerates the dofs within each element topologically<]
+            Kokkos::parallel_for("predicate_local_dofs",
+                                 size,
+                                 EnumLocalDofs<PredicateOwned, false>(handler, PredicateOwned(handler, predicate)));
+
+            incl_excl_scan(0, size, predicate, scan);
+            build_map(predicate, scan);
+
+            //First predicate is used to filter the elements that contain the non-owned.
+            //After the invertion the predicate filters the elements with only owned dofs.
+            invert_predicate_and_reset_scan(predicate, scan);
+
+            incl_excl_scan(0, size, predicate, scan);
+            build_map(scan);
+        } */
 
         //Handling block structures (vector valued) FE
         struct DofMap {
@@ -284,6 +352,56 @@ namespace mars {
                 }
             }
         };
+
+        void enumerate_local_dofs() {
+            auto handler = get_dof_handler();
+            const Integer size = handler.get_mesh_manager().get_host_mesh()->get_chunk_size();
+            const Integer ghost_size = handler.get_mesh_manager().get_host_mesh()->get_ghost_size();
+            const Integer block = handler.get_block();
+
+            sfc_to_elem_index = UnorderedMap<Integer, Integer>("sfc_to_elem_index", size);
+            elem_index = ViewVectorType<Integer>("elem_index", size);
+
+            ViewVectorType<bool> predicate("predicate_elements", size);
+            ViewVectorType<Integer> scan("predicate_elements", size + 1);
+            /* enumerates the dofs within each element topologically */
+            Kokkos::parallel_for(
+                "predicate_local_dofs",
+                size,
+                EnumLocalDofs<PredicateOwned, false>(handler, PredicateOwned(handler, predicate), Count(predicate)));
+
+            incl_excl_scan(0, size, predicate, scan);
+            owned_size = get_size_from_scan(scan);
+            build_map_from_scan(predicate, scan);
+
+            //First predicate is used to filter the elements that contain the non-owned.
+            //After the invertion the predicate filters the elements with only owned dofs.
+            invert_predicate_and_reset_scan(predicate, scan);
+
+            incl_excl_scan(0, size, predicate, scan);
+            non_owned_size = get_size_from_scan(scan);
+            build_map_from_scan(predicate, scan, owned_size);
+
+            assert(size == non_owned_size + owned_size);
+
+            //compact_map_into_elem_index();
+
+            elem_dof_enum = ViewMatrixType<Integer>("elem_dof_enum", size + ghost_size, get_elem_nodes());
+            /* enumerates the dofs within each element topologically */
+
+            Kokkos::parallel_for(
+                "enum_local_dofs", owned_size, EnumLocalDofs<DofMap, false>(handler, DofMap(elem_dof_enum, 0, block)));
+
+            Kokkos::parallel_for(
+                "enum_local_dofs", non_owned_size, EnumLocalDofs<DofMap, false>(handler, DofMap(elem_dof_enum, 0, block)));
+
+            // go through the ghost layer
+            Kokkos::parallel_for("enum_local_dofs",
+                                 ghost_size,
+                                 EnumLocalDofs<DofMap, true>(handler, DofMap(elem_dof_enum, size, block)));
+
+
+        }
 
         void enumerate_local_dofs() {
             auto handler = get_dof_handler();
@@ -502,13 +620,25 @@ namespace mars {
         }
 
         template <typename F>
-        void owned_iterate(F f) const {
+        void owned_dof_element_iterate(F f) const {
+            const Integer size = get_dof_handler().get_mesh_manager().get_host_mesh()->get_chunk_size();
+            Kokkos::parallel_for("fedomap owned iterate", owned_size, f(owned_elem_index(i));
+        }
+
+        template <typename F>
+        void boundary_dof_element_iterate(F f) const {
+            const Integer size = get_dof_handler().get_mesh_manager().get_host_mesh()->get_chunk_size();
+            Kokkos::parallel_for("fedomap ghost iterate", Kokkos::RangePolicy<>(owned_size, size), f(boundary_elem_index(i));
+        }
+
+        template <typename F>
+        void non_owned_dof_element_iterate(F f) const {
             const Integer size = get_dof_handler().get_mesh_manager().get_host_mesh()->get_chunk_size();
             Kokkos::parallel_for("fedomap owned iterate", size, f);
         }
 
         template <typename F>
-        void ghost_iterate(F f) const {
+        void ghost_element_iterate(F f) const {
             const Integer owned_size = get_dof_handler().get_mesh_manager().get_host_mesh()->get_chunk_size();
             const Integer size = get_fe_dof_map_size();
             Kokkos::parallel_for("fedomap ghost iterate", Kokkos::RangePolicy<>(owned_size, size), f);
@@ -564,6 +694,10 @@ namespace mars {
         /* ViewMatrixType<Integer> ghost_elem_dof_enum; */
         // owned dof to local dofs map (including ghosts). owned dof rows, (>), local dof columns. Sparse.
         /* ViewMatrixTypeRC<Integer, max_dof_to_dof_size> dof_to_dof_map; */
+        Integer owned_size;
+        Integer non_owned_size;
+        ViewVectorType<Integer> elem_index;
+        UnorderedMap<Integer, Integer> sfc_to_elem_index;
     };
 
     /* template <typename Mesh, Integer Degree>
