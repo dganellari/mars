@@ -93,6 +93,9 @@ int main(int argc, char* argv[]) {
         const uint32_t vtktype = 9;
         // // auto elements l= mesh.get_view_elements();
         size_t nelements = mesh.n_elements();
+        size_t element_nvertices = 0;
+
+        element_nvertices = elementsmesh.extent(1);
 
         // Create vector for global index of each node.
 
@@ -116,7 +119,7 @@ int main(int argc, char* argv[]) {
         io.DefineVariable<uint32_t>("NumOfElements", {adios2::LocalValueDim});
         io.DefineVariable<uint32_t>("NumOfVertices", {adios2::LocalValueDim});
         io.DefineVariable<double>("vertices", {}, {}, {n_nodes, spaceDim});
-        io.DefineVariable<uint64_t>("connectivity", {}, {}, {nelements});
+        io.DefineVariable<uint64_t>("connectivity", {}, {}, {nelements, element_nvertices + 1});
         io.DefineVariable<int32_t>("attribute", {}, {}, {nelements});
         io.DefineVariable<uint32_t>("types");
 
@@ -127,6 +130,8 @@ int main(int argc, char* argv[]) {
 
         io.DefineAttribute<std::string>("format/mars_mesh", mesh_type);
         io.DefineAttribute<std::string>("format/viz_tools", viz_tools.data(), viz_tools.size());
+
+        engine.Put("NumOfElements", static_cast<uint32_t>(mesh.n_elements()));
 
         adios2::Variable<int32_t> varElementAttribute = io.InquireVariable<int32_t>("attribute");
         adios2::Variable<int32_t>::Span spanElementAttribute = engine.Put<int32_t>(varElementAttribute);
@@ -145,6 +150,7 @@ int main(int argc, char* argv[]) {
             elementPosition += mars::ParallelMesh3::Elem::NNodes + 1;
         }
 
+        engine.Put("NumOfVertices", static_cast<uint32_t>(mesh.n_nodes()));
         adios2::Variable<double> varVertices = io.InquireVariable<double>("vertices");
         // zero-copy access to adios2 buffer to put non-contiguous to contiguous memory
         adios2::Variable<double>::Span spanVertices = engine.Put<double>(varVertices);
@@ -160,9 +166,6 @@ int main(int argc, char* argv[]) {
             }
         }
         engine.Put(varTypes, vtktype);
-        engine.Put("NumOfElements", static_cast<uint32_t>(mesh.n_elements()));
-        engine.Put("NumOfVertices", static_cast<uint32_t>(mesh.n_nodes()));
-
         io.DefineAttribute<std::string>("vtk.xml", VTKSchema(), {}, {});
 
         engine.EndStep();
