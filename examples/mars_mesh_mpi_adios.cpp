@@ -3,6 +3,7 @@
 #include "adios2.h"
 #include "cxxopts.hpp"
 #include "mars_globals.hpp"
+#include "mars_interpolate.hpp"
 #include "mars_mesh.hpp"
 #include "mars_mesh_generation.hpp"
 #include "mars_test_mesh.hpp"
@@ -16,7 +17,9 @@
 #include <mpi.h>
 #endif
 
-std::string VTKSchema() {
+using VectorReal = mars::ViewVectorType<mars::Real>;
+
+std::string VTKSchema(std::set<std::string> point_data_variables) {
     std::string vtkSchema = R"(
 <?xml version="1.0"?>
 <VTKFile type="UnstructuredGrid" version="0.2" byte_order="LittleEndian">
@@ -36,13 +39,13 @@ std::string VTKSchema() {
       </Cells>
       <PointData>)";
 
-    // if (point_data_variables.empty()) {
-    //     vtkSchema += "\n";
-    // } else {
-    //     for (const std::string& point_datum : point_data_variables) {
-    //         vtkSchema += "        <DataArray Name=\"" + point_datum + "\"/>\n";
-    //     }
-    // }
+    if (point_data_variables.empty()) {
+        vtkSchema += "\n";
+    } else {
+        for (const std::string& point_datum : point_data_variables) {
+            vtkSchema += "        <DataArray Name=\"" + point_datum + "\"/>\n";
+        }
+    }
 
     // vtkSchema += "        <DataArray Name=\"TIME\">\n";
     // vtkSchema += "          TIME\n";
@@ -81,6 +84,7 @@ int main(int argc, char* argv[]) {
 
     // mars::Mesh<3> mesh = mars::generate_unit_cube();
     {
+        std::set<std::string> point_data_variables;
         mars::ParallelMesh3 mesh;
 
         mars::generate_cube(mesh, 1, 1, 1);
@@ -122,6 +126,8 @@ int main(int argc, char* argv[]) {
         io.DefineVariable<uint64_t>("connectivity", {}, {}, {nelements, element_nvertices + 1});
         io.DefineVariable<int32_t>("attribute", {}, {}, {nelements});
         io.DefineVariable<uint32_t>("types");
+        io.DefineVariable<double>("U", {}, {}, {n_nodes});
+        point_data_variables.insert("U");
 
         std::string mesh_type = "Mars Unstructured Mesh";
         std::vector<std::string> viz_tools;
@@ -165,8 +171,42 @@ int main(int argc, char* argv[]) {
                 spanVertices[v * space_dim + coord] = points(v, coord);
             }
         }
+
+        int maxiter{500};
+        int outofbounds{3};
+
+        // Find out how many nodes we have.
+        // const mars::Integer n_nodes = mesh.n_nodes();
+        // Create a vector of the size of the nodes.
+        VectorReal x = VectorReal("x", n_nodes);
+        mars::Interpolate<mars::ParallelMesh3> interpMesh(mesh);
+        interpMesh.apply(
+            x, MARS_LAMBDA(const mars::Real* p)->mars::Real {
+                std::complex<double> c{p[0], p[1]};
+                std::complex<double> z = c;
+                int i = 0;
+                while (i < maxiter) {
+                    double n = std::norm(z);
+                    if (n > outofbounds) {
+                        break;
+                    }
+
+                    z = z * z + c;
+                    i++;
+                }
+
+                return i;
+            });
+
+        adios2::Variable<double> varU = io.InquireVariable<double>("U");
+        // zero-copy access to adios2 buffer to put non-contiguous to contiguous memory
+        adios2::Variable<double>::Span spanU = engine.Put<double>(varU);
+
+        for (int v = 0; v < mesh.n_nodes(); ++v) {
+            spanU[v] = x(v);
+        }
         engine.Put(varTypes, vtktype);
-        io.DefineAttribute<std::string>("vtk.xml", VTKSchema(), {}, {});
+        io.DefineAttribute<std::string>("vtk.xml", VTKSchema(point_data_variables), {}, {});
 
         engine.EndStep();
         engine.Close();
