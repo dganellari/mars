@@ -45,223 +45,233 @@ namespace mars {
         MARS_INLINE_FUNCTION
         FEDofMap(DofHandler handler) : dof_handler(handler) {}
 
-        template <typename F, bool G, typename O, Integer L = Label>
-        struct EnumLocalDofs {
-            MARS_INLINE_FUNCTION void enumerate_volume(const Octant &o, const Integer sfc_index, Integer &index) const {
-                Integer sfc = get_sfc_from_octant<ElemType>(o);
-                Integer localid = dofHandler.sfc_to_local(sfc);
-                f(sfc_index, index, localid);
-                /* elem_dof_enum(sfc_index, index++) = localid; */
-            }
+        static MARS_INLINE_FUNCTION Integer enumerate_volume(const DofHandler &handler, const Octant &o) const {
+            Integer sfc = get_sfc_from_octant<ElemType>(o);
+            Integer localid = handler.sfc_to_local(sfc);
+            return local_id;
+        }
 
-            template <Integer ET = ElemType>
-            MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Quad4, void> volume_iterate(
-                const Integer sfc_index,
-                Integer &index) const {
-                Octant o;
-                /* Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index); */
-                Octant oc = DofHandler::template get_octant_ghost_or_local<G>(dofHandler.get_mesh_manager().get_mesh(),
-                                                                              sfc_index);
-                // go through all the inside dofs for the current element
-                // Currently no topological order within the volume dofs if more than 1.
-                for (int j = 0; j < degree - 1; j++) {
-                    for (int i = 0; i < degree - 1; i++) {
+        template <typename F, Integer ET = ElemType>
+        static MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Quad4, void>
+        volume_iterate(const DofHandler &handler, F f, const Integer sfc_index, Integer &index) const {
+            Octant o;
+            /* Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index); */
+            Octant oc =
+                DofHandler::template get_octant_ghost_or_local<G>(handler.get_mesh_manager().get_mesh(), sfc_index);
+            // go through all the inside dofs for the current element
+            // Currently no topological order within the volume dofs if more than 1.
+            for (int j = 0; j < degree - 1; j++) {
+                for (int i = 0; i < degree - 1; i++) {
+                    o.x = degree * oc.x + i + 1;
+                    o.y = degree * oc.y + j + 1;
+                    f(sfc_index, index, enumerate_volume(handler, o));
+                }
+            }
+        }
+
+        template <typename F, Integer ET = ElemType>
+        static MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Hex8, void>
+        volume_iterate(const DofHandler &handler, F f, const Integer sfc_index, Integer &index) const {
+            Octant o;
+            /* Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index); */
+            Octant oc =
+                DofHandler::template get_octant_ghost_or_local<G>(handler.get_mesh_manager().get_mesh(), sfc_index);
+            // go through all the inside dofs for the current element
+            // Currently no topological order within the volume dofs if more than 1.
+            for (int j = 0; j < degree - 1; j++) {
+                for (int i = 0; i < degree - 1; i++) {
+                    for (int k = 0; k < degree - 1; k++) {
                         o.x = degree * oc.x + i + 1;
                         o.y = degree * oc.y + j + 1;
-                        enumerate_volume(o, sfc_index, index);
+                        o.z = degree * oc.z + k + 1;
+                        f(sfc_index, index, enumerate_volume(handler, o));
                     }
                 }
             }
+        }
 
-            template <Integer ET = ElemType>
-            MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Hex8, void> volume_iterate(const Integer sfc_index,
-                                                                                                Integer &index) const {
-                Octant o;
-                /* Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index); */
-                Octant oc = DofHandler::template get_octant_ghost_or_local<G>(dofHandler.get_mesh_manager().get_mesh(),
-                                                                              sfc_index);
-                // go through all the inside dofs for the current element
-                // Currently no topological order within the volume dofs if more than 1.
-                for (int j = 0; j < degree - 1; j++) {
-                    for (int i = 0; i < degree - 1; i++) {
-                        for (int k = 0; k < degree - 1; k++) {
-                            o.x = degree * oc.x + i + 1;
-                            o.y = degree * oc.y + j + 1;
-                            o.z = degree * oc.z + k + 1;
-                            enumerate_volume(o, sfc_index, index);
-                        }
-                    }
-                }
+        template <typename F, Integer ET = ElemType>
+        static MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Quad4, void>
+        corner_iterate(const DofHandler &dofHandler, F f, const Integer sfc_index, Integer &index) const {
+            /* Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index); */
+            Octant oc =
+                DofHandler::template get_octant_ghost_or_local<G>(dofHandler.get_mesh_manager().get_mesh(), sfc_index);
+
+            // go through all the corner dofs for the current element counterclockwise
+            /* for (const auto &x : {{0,0}, {1, 0}, {1, 1}, {0, 1}}) */
+            /* for (i,j from 0 to 2) first = (i + j) % 2; second = i;*/
+
+            Integer localid = dofHandler.template enum_corner<ElemType>(oc, 0, 0);
+            f(sfc_index, index, localid);
+            /* elem_dof_enum(sfc_index, index++) = localid; */
+
+            localid = dofHandler.template enum_corner<ElemType>(oc, 1, 0);
+            f(sfc_index, index, localid);
+            /* elem_dof_enum(sfc_index, index++) = localid; */
+
+            localid = dofHandler.template enum_corner<ElemType>(oc, 1, 1);
+            f(sfc_index, index, localid);
+            /* elem_dof_enum(sfc_index, index++) = localid; */
+
+            localid = dofHandler.template enum_corner<ElemType>(oc, 0, 1);
+            f(sfc_index, index, localid);
+            /* elem_dof_enum(sfc_index, index++) = localid; */
+        }
+
+        template <typename F, Integer ET = ElemType>
+        static MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Hex8, void>
+        corner_iterate(const DofHandler &dofHandler, F f, const Integer sfc_index, Integer &index) const {
+            /* Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index); */
+            Octant oc =
+                DofHandler::template get_octant_ghost_or_local<G>(dofHandler.get_mesh_manager().get_mesh(), sfc_index);
+
+            // go through all the corner dofs for the current element counterclockwise
+
+            Integer localid = dofHandler.template enum_corner<ElemType>(oc, 0, 0, 0);
+            f(sfc_index, index, localid);
+            /* elem_dof_enum(sfc_index, index++) = localid; */
+
+            localid = dofHandler.template enum_corner<ElemType>(oc, 1, 0, 0);
+            f(sfc_index, index, localid);
+            /* elem_dof_enum(sfc_index, index++) = localid; */
+
+            localid = dofHandler.template enum_corner<ElemType>(oc, 1, 1, 0);
+            f(sfc_index, index, localid);
+            /* elem_dof_enum(sfc_index, index++) = localid; */
+
+            localid = dofHandler.template enum_corner<ElemType>(oc, 0, 1, 0);
+            f(sfc_index, index, localid);
+            /* elem_dof_enum(sfc_index, index++) = localid; */
+
+            localid = dofHandler.template enum_corner<ElemType>(oc, 0, 0, 1);
+            f(sfc_index, index, localid);
+            /* elem_dof_enum(sfc_index, index++) = localid; */
+
+            localid = dofHandler.template enum_corner<ElemType>(oc, 1, 0, 1);
+            f(sfc_index, index, localid);
+            /* elem_dof_enum(sfc_index, index++) = localid; */
+
+            localid = dofHandler.template enum_corner<ElemType>(oc, 1, 1, 1);
+            f(sfc_index, index, localid);
+            /* elem_dof_enum(sfc_index, index++) = localid; */
+
+            localid = dofHandler.template enum_corner<ElemType>(oc, 0, 1, 1);
+            f(sfc_index, index, localid);
+            /* elem_dof_enum(sfc_index, index++) = localid; */
+        }
+
+        template <Integer dir, typename F>
+        static MARS_INLINE_FUNCTION void face_iterate(const DofHandler &dofHandler,
+                                                      F f,
+                                                      const Integer sfc_index,
+                                                      Integer &index,
+                                                      const int side) const {
+            /* Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index); */
+            Octant oc =
+                DofHandler::template get_octant_ghost_or_local<G>(dofHandler.get_mesh_manager().get_mesh(), sfc_index);
+            Octant face_cornerA = DofHandler::template enum_face_corner<dir, ElemType>(oc, side);
+
+            for (int j = 0; j < face_nodes; j++) {
+                Integer localid = dofHandler.template enum_face_node<dir, ElemType>(face_cornerA, j, side);
+                f(sfc_index, index, localid);
             }
+        }
 
-            template <Integer ET = ElemType>
-            MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Quad4, void> corner_iterate(
-                const Integer sfc_index,
-                Integer &index) const {
-                /* Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index); */
-                Octant oc = DofHandler::template get_octant_ghost_or_local<G>(dofHandler.get_mesh_manager().get_mesh(),
-                                                                              sfc_index);
+        template <typename F, Integer T = ElemType>
+        static MARS_INLINE_FUNCTION std::enable_if_t<T == ElementType::Hex8, void>
+        edge_iterate(const DofHandler &dofHandler, F f, const Integer sfc_index, Integer &index, const int edge) const {
+            /* const Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index); */
+            const Octant oc =
+                DofHandler::template get_octant_ghost_or_local<G>(dofHandler.get_mesh_manager().get_mesh(), sfc_index);
 
-                // go through all the corner dofs for the current element counterclockwise
-                /* for (const auto &x : {{0,0}, {1, 0}, {1, 1}, {0, 1}}) */
-                /* for (i,j from 0 to 2) first = (i + j) % 2; second = i;*/
+            const Octant start = dofHandler.get_mesh_manager().get_mesh()->get_octant_edge_start(oc, edge);
+            const Integer direction = oc.get_edge_direction(edge);
 
-                Integer localid = dofHandler.template enum_corner<ElemType>(oc, 0, 0);
+            for (int j = 0; j < DofHandler::edge_dofs; j++) {
+                Integer dof_sfc = DofHandler::template process_edge_node<ElemType>(
+                    mars::get_sfc_from_octant<ElemType>, start, direction, j);
+                auto localid = dofHandler.sfc_to_local(dof_sfc);
                 f(sfc_index, index, localid);
-                /* elem_dof_enum(sfc_index, index++) = localid; */
-
-                localid = dofHandler.template enum_corner<ElemType>(oc, 1, 0);
-                f(sfc_index, index, localid);
-                /* elem_dof_enum(sfc_index, index++) = localid; */
-
-                localid = dofHandler.template enum_corner<ElemType>(oc, 1, 1);
-                f(sfc_index, index, localid);
-                /* elem_dof_enum(sfc_index, index++) = localid; */
-
-                localid = dofHandler.template enum_corner<ElemType>(oc, 0, 1);
-                f(sfc_index, index, localid);
-                /* elem_dof_enum(sfc_index, index++) = localid; */
             }
+        }
 
-            template <Integer ET = ElemType>
-            MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Hex8, void> corner_iterate(const Integer sfc_index,
-                                                                                                Integer &index) const {
-                /* Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index); */
-                Octant oc = DofHandler::template get_octant_ghost_or_local<G>(dofHandler.get_mesh_manager().get_mesh(),
-                                                                              sfc_index);
-
-                // go through all the corner dofs for the current element counterclockwise
-
-                Integer localid = dofHandler.template enum_corner<ElemType>(oc, 0, 0, 0);
-                f(sfc_index, index, localid);
-                /* elem_dof_enum(sfc_index, index++) = localid; */
-
-                localid = dofHandler.template enum_corner<ElemType>(oc, 1, 0, 0);
-                f(sfc_index, index, localid);
-                /* elem_dof_enum(sfc_index, index++) = localid; */
-
-                localid = dofHandler.template enum_corner<ElemType>(oc, 1, 1, 0);
-                f(sfc_index, index, localid);
-                /* elem_dof_enum(sfc_index, index++) = localid; */
-
-                localid = dofHandler.template enum_corner<ElemType>(oc, 0, 1, 0);
-                f(sfc_index, index, localid);
-                /* elem_dof_enum(sfc_index, index++) = localid; */
-
-                localid = dofHandler.template enum_corner<ElemType>(oc, 0, 0, 1);
-                f(sfc_index, index, localid);
-                /* elem_dof_enum(sfc_index, index++) = localid; */
-
-                localid = dofHandler.template enum_corner<ElemType>(oc, 1, 0, 1);
-                f(sfc_index, index, localid);
-                /* elem_dof_enum(sfc_index, index++) = localid; */
-
-                localid = dofHandler.template enum_corner<ElemType>(oc, 1, 1, 1);
-                f(sfc_index, index, localid);
-                /* elem_dof_enum(sfc_index, index++) = localid; */
-
-                localid = dofHandler.template enum_corner<ElemType>(oc, 0, 1, 1);
-                f(sfc_index, index, localid);
-                /* elem_dof_enum(sfc_index, index++) = localid; */
+        // counter clockwise enumeration of the element dofs.
+        template <typename F, bool G, Integer L = Label, Integer ET = ElemType>
+        static MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Quad4, void>
+        ordered_dof_enumeration(const DofHandler &handler, F f, const Integer i, Integer &index) const {
+            if (L & DofLabel::lCorner) {
+                corner_iterate(handler, f, i, index);
             }
-
-            template <Integer dir>
-            MARS_INLINE_FUNCTION void face_iterate(const Integer sfc_index, Integer &index, const int side) const {
-                /* Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index); */
-                Octant oc = DofHandler::template get_octant_ghost_or_local<G>(dofHandler.get_mesh_manager().get_mesh(),
-                                                                              sfc_index);
-                Octant face_cornerA = DofHandler::template enum_face_corner<dir, ElemType>(oc, side);
-
-                for (int j = 0; j < face_nodes; j++) {
-                    Integer localid =
-                        dofHandler.template enum_face_node<dir, ElemType>(face_cornerA, j, side);
-                    f(sfc_index, index, localid);
-                    /* elem_dof_enum(sfc_index, index++) = localid; */
-                }
+            if (L & DofLabel::lFace) {
+                face_iterate<0>(handler, f, i, index, 0);
+                face_iterate<0>(handler, f, i, index, 1);
+                face_iterate<1>(handler, f, i, index, 0);
+                face_iterate<1>(handler, f, i, index, 1);
             }
-
-            template <Integer T = ElemType>
-            MARS_INLINE_FUNCTION std::enable_if_t<T == ElementType::Hex8, void> edge_iterate(const Integer sfc_index,
-                                                                                             Integer &index,
-                                                                                             const int edge) const {
-                /* const Octant oc = dofHandler.get_mesh_manager().get_mesh()->get_octant(sfc_index); */
-                const Octant oc = DofHandler::template get_octant_ghost_or_local<G>(
-                    dofHandler.get_mesh_manager().get_mesh(), sfc_index);
-
-                const Octant start = dofHandler.get_mesh_manager().get_mesh()->get_octant_edge_start(oc, edge);
-                const Integer direction = oc.get_edge_direction(edge);
-
-                for (int j = 0; j < DofHandler::edge_dofs; j++) {
-                    Integer dof_sfc = DofHandler::template process_edge_node<ElemType>(
-                        mars::get_sfc_from_octant<ElemType>, start, direction, j);
-                    auto localid = dofHandler.sfc_to_local(dof_sfc);
-                    f(sfc_index, index, localid);
-                    /* elem_dof_enum(sfc_index, index++) = sfc_to_local(dof_sfc); */
-                }
+            if (L & DofLabel::lVolume) {
+                volume_iterate(handler, f, i, index);
             }
+        }
 
-            // counter clockwise enumeration of the element dofs.
-            template <Integer ET = ElemType>
-            MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Quad4, void> ordered_dof_enumeration(
-                const Integer i,
-                Integer &index) const {
-                if (L & DofLabel::lCorner) {
-                    corner_iterate(i, index);
-                }
-                if (L & DofLabel::lFace) {
-                    face_iterate<0>(i, index, 0);
-                    face_iterate<0>(i, index, 1);
-                    face_iterate<1>(i, index, 0);
-                    face_iterate<1>(i, index, 1);
-                }
-                if (L & DofLabel::lVolume) {
-                    volume_iterate(i, index);
-                }
+        /* Handling cases for DofLabel::lAll (classical dof handler)  & separated handler like: lCorner + lFace */
+        template <typename F, bool G, Integer L = Label, Integer ET = ElemType>
+        static MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Hex8, void>
+        ordered_dof_enumeration(const DofHandler &handler, F f, const Integer i, Integer &index) const {
+            if (L & DofLabel::lCorner) {
+                corner_iterate(handler, f, i, index);
             }
+            if (L & DofLabel::lEdge) {
+                edge_iterate(handler, f, i, index, 0);
+                edge_iterate(handler, f, i, index, 5);
+                edge_iterate(handler, f, i, index, 1);
+                edge_iterate(handler, f, i, index, 4);
 
-            /* Handling cases for DofLabel::lAll (classical dof handler)  & separated handler like: lCorner + lFace */
-            template <Integer ET = ElemType>
-            MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Hex8, void> ordered_dof_enumeration(
-                const Integer i,
-                Integer &index) const {
-                if (L & DofLabel::lCorner) {
-                    corner_iterate(i, index);
-                }
-                if (L & DofLabel::lEdge) {
-                    edge_iterate(i, index, 0);
-                    edge_iterate(i, index, 5);
-                    edge_iterate(i, index, 1);
-                    edge_iterate(i, index, 4);
+                edge_iterate(handler, f, i, index, 8);
+                edge_iterate(handler, f, i, index, 9);
+                edge_iterate(handler, f, i, index, 11);
+                edge_iterate(handler, f, i, index, 10);
 
-                    edge_iterate(i, index, 8);
-                    edge_iterate(i, index, 9);
-                    edge_iterate(i, index, 11);
-                    edge_iterate(i, index, 10);
-
-                    edge_iterate(i, index, 2);
-                    edge_iterate(i, index, 7);
-                    edge_iterate(i, index, 3);
-                    edge_iterate(i, index, 6);
-                }
-                if (L & DofLabel::lVolume) {
-                    volume_iterate(i, index);
-                }
-                if (L & DofLabel::lFace) {
-                    face_iterate<2>(i, index, 1);  // z direction first for the counterclockwise
-                    face_iterate<2>(i, index, 0);  // z direction first for the counterclockwise
-                    face_iterate<0>(i, index, 1);  // x dir
-                    face_iterate<0>(i, index, 0);  // x dir
-                    face_iterate<1>(i, index, 1);  // y dir
-                    face_iterate<1>(i, index, 0);  // y dir
-                }
+                edge_iterate(handler, f, i, index, 2);
+                edge_iterate(handler, f, i, index, 7);
+                edge_iterate(handler, f, i, index, 3);
+                edge_iterate(handler, f, i, index, 6);
             }
+            if (L & DofLabel::lVolume) {
+                volume_iterate(handler, f, i, index);
+            }
+            if (L & DofLabel::lFace) {
+                face_iterate<2>(handler, f, i, index, 1);  // z direction first for the counterclockwise
+                face_iterate<2>(handler, f, i, index, 0);  // z direction first for the counterclockwise
+                face_iterate<0>(handler, f, i, index, 1);  // x dir
+                face_iterate<0>(handler, f, i, index, 0);  // x dir
+                face_iterate<1>(handler, f, i, index, 1);  // y dir
+                face_iterate<1>(handler, f, i, index, 0);  // y dir
+            }
+        }
 
+        template <typename F, bool G, Integer L = Label>
+        struct EnumLocalDofs {
             MARS_INLINE_FUNCTION void operator()(const Integer i) const {
                 Integer index = 0;
                 // topological order within the element
-                ordered_dof_enumeration(i, index);
+                ordered_dof_enumeration<F, G, L>(dofHandler, f, i, index);
+            }
 
-                //optinal functor to be used in special cases.
+            MARS_INLINE_FUNCTION
+            EnumLocalDofs(DofHandler d, F fun) : dofHandler(d), f(fun) {}
+
+            DofHandler dofHandler;
+            F f;
+        };
+
+        /* template <typename F, bool G, Integer L = Label, typename O = std::nullopt_t>
+        struct EnumLocalDofs {
+            MARS_INLINE_FUNCTION void operator()(const Integer i) const {
+                Integer index = 0;
+                topological order within the element
+                ordered_dof_enumeration<F, G, L>(dofHandler, f, i, index);
+
+                optinal functor to be used in special cases.
                 if (o) {
                     auto callable = o.value();
                     callable(i, index);
@@ -277,29 +287,13 @@ namespace mars {
             DofHandler dofHandler;
             F f;
             std::optional<O> o;
-        };
-
-        //Build predicate for elements that contain only owned dofs and for all the others.
-        struct PredicateOwned{
-            DofHandler handler;
-            ViewVectorType<bool> pred;
-
-            MARS_INLINE_FUNCTION
-            PredicateOwned(DofHandler h, ViewVectorType<bool> pred) : handler(h), predicate(pred) {}
-
-            MARS_INLINE_FUNCTION void operator()(const Integer sfc_index, Integer &index, const Integer localid) const {
-                //Set to 1 only elements that contain at least one non-owned dof.
-                if (localid > INVALID_INDEX && !handler.template is_owned<1>(localid)) {
-                    predicate(sfc_index) = 1;
-                }
-            }
-        };
+        }; */
 
         template <typename P, typename S>
         void invert_predicate_and_reset_scan(const P &t, const S &v) {
             Kokkos::parallel_for(
                 "invert_predicate_and_reset_scan", t.extent(0), MARS_LAMBDA(const Integer i) {
-                    t(i) ^= 1; //invert from 0 to 1 and viceversa.
+                    t(i) ^= 1;  // invert from 0 to 1 and viceversa.
                     v(i + 1) = 0;
                 });
         }
@@ -316,28 +310,38 @@ namespace mars {
                 });
         }
 
-        /* void predicate_elements() {
-            auto handler = get_dof_handler();
-            const Integer size = handler.get_mesh_manager().get_host_mesh()->get_chunk_size();
-            ViewVectorType<bool> predicate("predicate_elements", size);
-            ViewVectorType<Integer> scan("predicate_elements", size + 1);
-            [>enumerates the dofs within each element topologically<]
-            Kokkos::parallel_for("predicate_local_dofs",
-                                 size,
-                                 EnumLocalDofs<PredicateOwned, false>(handler, PredicateOwned(handler, predicate)));
+        // Build predicate for elements that contain only owned dofs and for all the others.
+        struct CountOwned {
+            DofHandler handler;
 
-            incl_excl_scan(0, size, predicate, scan);
-            build_map(predicate, scan);
+            MARS_INLINE_FUNCTION
+            CountOwned(DofHandler h) : handler(h) {}
 
-            //First predicate is used to filter the elements that contain the non-owned.
-            //After the invertion the predicate filters the elements with only owned dofs.
-            invert_predicate_and_reset_scan(predicate, scan);
+            MARS_INLINE_FUNCTION void operator()(const Integer sfc_index, Integer &index, const Integer localid) const {
+                // Set to 1 only elements that contain at least one non-owned dof.
+                if (localid > INVALID_INDEX && !handler.template is_owned<1>(localid)) {
+                    ++index;
+                }
+            }
+        };
 
-            incl_excl_scan(0, size, predicate, scan);
-            build_map(scan);
-        } */
+        // Handling block structures (vector valued) FE
+        struct OrderedDofMap {
+            ViewMatrixType<Integer> dof_enum;
+            Integer row_index;
+            Integer block;
 
-        //Handling block structures (vector valued) FE
+            MARS_INLINE_FUNCTION
+            DofMap(ViewMatrixType<Integer> ede, Integer s, Integer b) : dof_enum(ede), row_index(s), block(b) {}
+
+            MARS_INLINE_FUNCTION void operator()(const Integer sfc_index, Integer &index, const Integer localid) const {
+                for (Integer i = 0; i < block; ++i) {
+                    dof_enum(row_index, index++) = block * localid + i;
+                }
+            }
+        };
+
+        // Handling block structures (vector valued) FE
         struct DofMap {
             ViewMatrixType<Integer> dof_enum;
             Integer size;
@@ -353,7 +357,18 @@ namespace mars {
             }
         };
 
-        void enumerate_local_dofs() {
+        template <typename V>
+        Integer get_size_from_scan(const V &scan) {
+            auto ps = Kokkos::subview(scan, scan.extent(0) - 1);
+            auto h_ps = Kokkos::create_mirror_view(ps);
+            // Deep copy device view to host view.
+            Kokkos::deep_copy(h_ps, ps);
+
+            return h_ps();
+        }
+
+        template <bool Overlap>
+        std::enable_if_t<Overlap == true, void> enumerate_local_dofs() {
             auto handler = get_dof_handler();
             const Integer size = handler.get_mesh_manager().get_host_mesh()->get_chunk_size();
             const Integer ghost_size = handler.get_mesh_manager().get_host_mesh()->get_ghost_size();
@@ -364,18 +379,29 @@ namespace mars {
 
             ViewVectorType<bool> predicate("predicate_elements", size);
             ViewVectorType<Integer> scan("predicate_elements", size + 1);
-            /* enumerates the dofs within each element topologically */
+
+            // possibly when we switch to C++17
+            /* Kokkos::parallel_for("predicate_local_dofs",
+                                 size,
+                                 EnumLocalDofs<CountOwned, false, Label, PredicateOwned>(
+                                     handler, CountOwned(handler), std::make_optional<PredicateOwned>(predicate))); */
+
             Kokkos::parallel_for(
-                "predicate_local_dofs",
-                size,
-                EnumLocalDofs<PredicateOwned, false>(handler, PredicateOwned(handler, predicate), Count(predicate)));
+                "predicate_local_dofs", size, MARS_LAMBDA(const Integer i) {
+                    Integer index = 0;
+                    ordered_dof_enumeration<CountOwned, false>(handler, CountOwned(handler), i, index);
+                    // If index remained 0 (no unowned dof were found in the element) then set the predicate.
+                    if (index == 0) {
+                        predicate(i) = 1
+                    }
+                });
 
             incl_excl_scan(0, size, predicate, scan);
             owned_size = get_size_from_scan(scan);
             build_map_from_scan(predicate, scan);
 
-            //First predicate is used to filter the elements that contain the non-owned.
-            //After the invertion the predicate filters the elements with only owned dofs.
+            // First predicate is used to filter the elements that contain the non-owned.
+            // After the invertion the predicate filters the elements with only owned dofs.
             invert_predicate_and_reset_scan(predicate, scan);
 
             incl_excl_scan(0, size, predicate, scan);
@@ -384,26 +410,27 @@ namespace mars {
 
             assert(size == non_owned_size + owned_size);
 
-            //compact_map_into_elem_index();
-
             elem_dof_enum = ViewMatrixType<Integer>("elem_dof_enum", size + ghost_size, get_elem_nodes());
             /* enumerates the dofs within each element topologically */
 
             Kokkos::parallel_for(
-                "enum_local_dofs", owned_size, EnumLocalDofs<DofMap, false>(handler, DofMap(elem_dof_enum, 0, block)));
-
-            Kokkos::parallel_for(
-                "enum_local_dofs", non_owned_size, EnumLocalDofs<DofMap, false>(handler, DofMap(elem_dof_enum, 0, block)));
+                "enum_local_dofs", size, MARS_LAMBDA(const Integer i) {
+                    Integer index = 0;
+                    // write coalesced by going through the new order of ids and mapping it to the old order.
+                    auto sfc_index = elem_index(i);
+                    // topological order within the element
+                    ordered_dof_enumeration<OrderedDofMap, false>(
+                        handler, OrderedDofMap(elem_dof_enum, i, block), sfc_index, index);
+                });
 
             // go through the ghost layer
-            Kokkos::parallel_for("enum_local_dofs",
+            Kokkos::parallel_for("enum_ghost_dofs",
                                  ghost_size,
                                  EnumLocalDofs<DofMap, true>(handler, DofMap(elem_dof_enum, size, block)));
-
-
         }
 
-        void enumerate_local_dofs() {
+        template <bool Overlap>
+        std::enable_if_t<Overlap == false, void> enumerate_local_dofs() {
             auto handler = get_dof_handler();
             const Integer size = handler.get_mesh_manager().get_host_mesh()->get_chunk_size();
             const Integer ghost_size = handler.get_mesh_manager().get_host_mesh()->get_ghost_size();
@@ -412,7 +439,7 @@ namespace mars {
             // This is the way to go to avoid atomic on critical code parts when building the unique sorted sparsity
             // pattern. Further on, it can be optimized by storing it to shared memory.
             elem_dof_enum = ViewMatrixType<Integer>("elem_dof_enum", size + ghost_size, get_elem_nodes());
-            /* enumerates the dofs within each element topologically */
+            /*enumerates the dofs within each element topologically*/
             Kokkos::parallel_for(
                 "enum_local_dofs", size, EnumLocalDofs<DofMap, false>(handler, DofMap(elem_dof_enum, 0, block)));
 
@@ -511,8 +538,7 @@ namespace mars {
             return dof_enum;
         }
 
-        /*
-                template <typename DM, typename H>
+        /*      template <typename DM, typename H>
                 MARS_INLINE_FUNCTION void add_directional_neighbors(const DM &dm,
                                                                     H map,
                                                                     const Integer index,
@@ -573,7 +599,8 @@ namespace mars {
         const ViewMatrixType<Integer> get_elem_dof_map() const { return elem_dof_enum; }
 
         /* MARS_INLINE_FUNCTION
-        const ViewMatrixTypeRC<Integer, max_dof_to_dof_size> get_dof_to_dof_map() const { return dof_to_dof_map; } */
+        const ViewMatrixTypeRC<Integer, max_dof_to_dof_size> get_dof_to_dof_map() const { return dof_to_dof_map; }
+      */
 
         MARS_INLINE_FUNCTION
         const Integer get_elem_local_dof(const Integer elem_index, const Integer i) const {
@@ -696,6 +723,9 @@ namespace mars {
         /* ViewMatrixTypeRC<Integer, max_dof_to_dof_size> dof_to_dof_map; */
         Integer owned_size;
         Integer non_owned_size;
+
+        // One map and one elem index for both in the same order as the elem_dof_enum.
+        // TODO: Check if these are needed at all?
         ViewVectorType<Integer> elem_index;
         UnorderedMap<Integer, Integer> sfc_to_elem_index;
     };
@@ -709,11 +739,10 @@ namespace mars {
     }
 
  */
-    template <class DofHandler, Integer Label = DofHandler::dofLabel>
+    template <class DofHandler, Integer Label = DofHandler::dofLabel, bool Overlap = true>
     auto build_fe_dof_map(const DofHandler &handler) {
         FEDofMap<DofHandler, Label> fe(handler);
-        fe.enumerate_local_dofs();
-        /* fe.enumerate_ghost_local_dofs(); */
+        fe.enumerate_local_dofs<Overlap>();
         return fe;
     }
 
