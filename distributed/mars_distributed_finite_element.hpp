@@ -269,12 +269,14 @@ namespace mars {
 
         template <typename P, typename S>
         void build_map_from_scan(const P &predicate, const S &scan, const Integer offset = 0) {
+            auto map = sfc_to_elem_index;
+            auto view = elem_index;
             Kokkos::parallel_for(
                 "build_map_from_scan", predicate.extent(0), MARS_LAMBDA(const Integer i) {
                     if (predicate(i) == 1) {
                         auto index = scan(i) + offset;
-                        sfc_to_elem_index.insert(i, index);
-                        elem_index(index) = i;
+                        map.insert(i, index);
+                        view(index) = i;
                     }
                 });
         }
@@ -368,20 +370,24 @@ namespace mars {
             elem_dof_enum = ViewMatrixType<Integer>("elem_dof_enum", size + ghost_size, get_elem_nodes());
             /* enumerates the dofs within each element topologically */
 
+            //This view copy is not needed if C++17 is used!
+            auto elem_dof_enum_view = elem_dof_enum;
+            auto elem_index_view = elem_index;
+
             Kokkos::parallel_for(
                 "enum_local_dofs", size, MARS_LAMBDA(const Integer i) {
                     Integer index = 0;
                     // write coalesced by going through the new order of ids and mapping it to the old order.
-                    auto sfc_index = elem_index(i);
+                    auto sfc_index = elem_index_view(i);
                     // topological order within the element
-                    ordered_dof_enumeration<DofMap, false>(handler, DofMap(elem_dof_enum, i, block), sfc_index, index);
+                    ordered_dof_enumeration<DofMap, false>(handler, DofMap(elem_dof_enum_view, i, block), sfc_index, index);
                 });
 
             // go through the ghost layer
             Kokkos::parallel_for(
                 "enum_ghost_dofs", ghost_size, MARS_LAMBDA(const Integer i) {
                     Integer index = 0;
-                    ordered_dof_enumeration<DofMap, true>(handler, DofMap(elem_dof_enum, i + size, block), i, index);
+                    ordered_dof_enumeration<DofMap, true>(handler, DofMap(elem_dof_enum_view, i + size, block), i, index);
                 });
         }
 
@@ -396,17 +402,18 @@ namespace mars {
             // pattern. Further on, it can be optimized by storing it to shared memory.
             elem_dof_enum = ViewMatrixType<Integer>("elem_dof_enum", size + ghost_size, get_elem_nodes());
             /*enumerates the dofs within each element topologically*/
+            auto elem_dof_enum_view = elem_dof_enum;
             Kokkos::parallel_for(
                 "enum_local_dofs", size, MARS_LAMBDA(const Integer i) {
                     Integer index = 0;
-                    ordered_dof_enumeration<DofMap, false>(handler, DofMap(elem_dof_enum, i, block), i, index);
+                    ordered_dof_enumeration<DofMap, false>(handler, DofMap(elem_dof_enum_view, i, block), i, index);
                 });
 
             // go through the ghost layer
             Kokkos::parallel_for(
                 "enum_local_dofs", ghost_size, MARS_LAMBDA(const Integer i) {
                     Integer index = 0;
-                    ordered_dof_enumeration<DofMap, true>(handler, DofMap(elem_dof_enum, i + size, block), i, index);
+                    ordered_dof_enumeration<DofMap, true>(handler, DofMap(elem_dof_enum_view, i + size, block), i, index);
                 });
         }
 
@@ -487,10 +494,11 @@ namespace mars {
 
             ViewVectorType<Integer> owned_index("owned_index", owned_size);
             /* enumerates the dofs within each element topologically */
+            auto elem_index_view = elem_index;
             Kokkos::parallel_for(
                 "enum_local_dofs", size, MARS_LAMBDA(const Integer i) {
                     Integer index = 0;
-                    auto sfc_index = elem_index(i);
+                    auto sfc_index = elem_index_view(i);
                     ordered_dof_enumeration<NodeElementDofMap, false, L>(
                         handler, NodeElementDofMap(handler, dof_enum, owned_index, owned_dof_map, i), sfc_index, index);
                 });
