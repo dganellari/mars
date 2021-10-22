@@ -222,7 +222,7 @@ namespace mars {
 
         template <Integer part, Integer Type>
         static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Quad4, Octant> enum_face_corner(
-            Octant &oc,
+            const Octant &oc,
             const int dir) {
             Octant face_cornerA;
             /*This is how the face nr is computed to get a topological order of the faces
@@ -248,7 +248,7 @@ namespace mars {
 
         template <Integer part, Integer Type>
         static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Hex8, Octant> enum_face_corner(
-            Octant &oc,
+            const Octant &oc,
             const int dir) {
             Octant face_cornerA;
             build_starting_face_corner<Type, part>(face_cornerA, dir, oc);

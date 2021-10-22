@@ -269,8 +269,10 @@ namespace mars {
                 return INVALID_INDEX;
         }
 
-        MARS_INLINE_FUNCTION
-        bool is_owned(const Integer local) const { return is_owned_dof_sfc(local); }
+        template <Integer B = Block>
+        MARS_INLINE_FUNCTION bool is_owned(const Integer local) const {
+            return is_owned_dof_sfc(local);
+        }
 
         MARS_INLINE_FUNCTION
         Integer is_owned_dof_sfc(const Integer local_dof) const {
@@ -591,7 +593,7 @@ namespace mars {
         bool is_local(const Integer sfc) const { return get_dof_handler().is_local(sfc); }
 
         template <Integer part, Integer Type>
-        static MARS_INLINE_FUNCTION Octant enum_face_corner(Octant &oc, const int dir) {
+        static MARS_INLINE_FUNCTION Octant enum_face_corner(const Octant &oc, const int dir) {
             return DofHandler::template enum_face_corner<part, Type>(oc, dir);
         }
 
