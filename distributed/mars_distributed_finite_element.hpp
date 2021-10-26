@@ -269,13 +269,13 @@ namespace mars {
 
         template <typename P, typename S>
         void build_map_from_scan(const P &predicate, const S &scan, const Integer offset = 0) {
-            auto map = sfc_to_elem_index;
+            /* auto map = sfc_to_elem_index; */
             auto view = elem_index;
             Kokkos::parallel_for(
                 "build_map_from_scan", predicate.extent(0), MARS_LAMBDA(const Integer i) {
                     if (predicate(i) == 1) {
                         auto index = scan(i) + offset;
-                        map.insert(i, index);
+                        /* map.insert(i, index); */
                         view(index) = i;
                     }
                 });
@@ -322,8 +322,8 @@ namespace mars {
             return h_ps();
         }
 
-        //Store the elements with all owned dofs first (first matrix rows) and then elements with non-owned dofs.
-        //Finally add ghost elements. This to overlap assembly with communication of ghost layer data.
+        // Store the elements with all owned dofs first (first matrix rows) and then elements with non-owned dofs.
+        // Finally add ghost elements. This to overlap assembly with communication of ghost layer data.
         template <bool Overlap>
         std::enable_if_t<Overlap == true, void> enumerate_local_dofs() {
             auto handler = get_dof_handler();
@@ -331,7 +331,7 @@ namespace mars {
             const Integer ghost_size = handler.get_mesh_manager().get_host_mesh()->get_ghost_size();
             const Integer block = handler.get_block();
 
-            sfc_to_elem_index = UnorderedMap<Integer, Integer>(size);
+            /* sfc_to_elem_index = UnorderedMap<Integer, Integer>(size); */
             elem_index = ViewVectorType<Integer>("elem_index", size);
 
             ViewVectorType<bool> predicate("predicate_elements", size);
@@ -370,7 +370,7 @@ namespace mars {
             elem_dof_enum = ViewMatrixType<Integer>("elem_dof_enum", size + ghost_size, get_elem_nodes());
             /* enumerates the dofs within each element topologically */
 
-            //This view copy is not needed if C++17 is used!
+            // This view copy is not needed if C++17 is used!
             auto elem_dof_enum_view = elem_dof_enum;
             auto elem_index_view = elem_index;
 
@@ -380,14 +380,16 @@ namespace mars {
                     // write coalesced by going through the new order of ids and mapping it to the old order.
                     auto sfc_index = elem_index_view(i);
                     // topological order within the element
-                    ordered_dof_enumeration<DofMap, false>(handler, DofMap(elem_dof_enum_view, i, block), sfc_index, index);
+                    ordered_dof_enumeration<DofMap, false>(
+                        handler, DofMap(elem_dof_enum_view, i, block), sfc_index, index);
                 });
 
             // go through the ghost layer
             Kokkos::parallel_for(
                 "enum_ghost_dofs", ghost_size, MARS_LAMBDA(const Integer i) {
                     Integer index = 0;
-                    ordered_dof_enumeration<DofMap, true>(handler, DofMap(elem_dof_enum_view, i + size, block), i, index);
+                    ordered_dof_enumeration<DofMap, true>(
+                        handler, DofMap(elem_dof_enum_view, i + size, block), i, index);
                 });
         }
 
@@ -413,7 +415,8 @@ namespace mars {
             Kokkos::parallel_for(
                 "enum_local_dofs", ghost_size, MARS_LAMBDA(const Integer i) {
                     Integer index = 0;
-                    ordered_dof_enumeration<DofMap, true>(handler, DofMap(elem_dof_enum_view, i + size, block), i, index);
+                    ordered_dof_enumeration<DofMap, true>(
+                        handler, DofMap(elem_dof_enum_view, i + size, block), i, index);
                 });
         }
 
@@ -706,17 +709,15 @@ namespace mars {
         DofHandler dof_handler;
         // local enumeration of the dofs topologically foreach element
         ViewMatrixType<Integer> elem_dof_enum;
-        /* ViewMatrixType<Integer> ghost_elem_dof_enum; */
         // owned dof to local dofs map (including ghosts). owned dof rows, (>), local dof columns. Sparse.
         /* ViewMatrixTypeRC<Integer, max_dof_to_dof_size> dof_to_dof_map; */
         Integer owned_size;
         Integer non_owned_size;
 
-        // One map and one elem index for both in the same order as the elem_dof_enum.
-        // TODO: Check if these are needed at all?
         ViewVectorType<Integer> elem_index;
-        UnorderedMap<Integer, Integer> sfc_to_elem_index;
-        };
+        // A map serving as an sfc to local for the dof map element indices. Maybe needed in the future.
+        /* UnorderedMap<Integer, Integer> sfc_to_elem_index; */
+    };
 
     /* template <typename Mesh, Integer Degree>
     auto build_dof_to_dof_map(const DofHandler<Mesh, Degree> &handler) {
