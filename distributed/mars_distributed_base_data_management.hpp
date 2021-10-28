@@ -243,6 +243,14 @@ namespace mars {
         template <Integer... dataidx, typename H>
         static void gather_ghost_data(const H &dof_handler, user_tuple &user_data) {
             const context &context = dof_handler.get_context();
+
+            gather_ghost_data(dof_handler, user_data, []() {});
+        }
+
+        // gather operation: fill the data from the received ghost data
+        template <Integer... dataidx, typename H, typename F>
+        static void gather_ghost_data(const H &dof_handler, user_tuple &user_data, F callback) {
+            const context &context = dof_handler.get_context();
             // exchange the ghost dofs first since it will be used to find the address
             // of the userdata based on the sfc code.
             Integer ghost_size = dof_handler.get_ghost_dof_size();
@@ -255,6 +263,11 @@ namespace mars {
             reserve_user_data<dataidx...>(buffer_data, "buffer_data", buffer_size);
 
             fill_buffer_data<H, 0, dataidx...>(user_data, buffer_data, dof_handler);
+
+            Kokkos::fence();
+
+            //overlapping computational callback method with the MPI comm.
+            callback();
 
             const auto block_size = dof_handler.get_block();
             exchange_ghost_dofs_data<H, dataidx...>(context,
