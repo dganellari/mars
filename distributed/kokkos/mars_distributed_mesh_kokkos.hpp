@@ -1128,6 +1128,8 @@ namespace mars {
 
             build_boundary_element_sets<Type>();
 
+            Kokkos::fence();
+
             exchange_ghost_counts(context);
             exchange_ghost_layer(context);
 

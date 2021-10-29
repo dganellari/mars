@@ -242,8 +242,6 @@ namespace mars {
         // gather operation: fill the data from the received ghost data
         template <Integer... dataidx, typename H>
         static void gather_ghost_data(const H &dof_handler, user_tuple &user_data) {
-            const context &context = dof_handler.get_context();
-
             gather_ghost_data(dof_handler, user_data, []() {});
         }
 
@@ -266,7 +264,7 @@ namespace mars {
 
             Kokkos::fence();
 
-            //overlapping computational callback method with the MPI comm.
+            // overlapping computational callback method with the MPI comm.
             callback();
 
             const auto block_size = dof_handler.get_block();
@@ -298,8 +296,12 @@ namespace mars {
 
         template <Integer... dataidx, typename H>
         static user_tuple scatter_ghost_data(const H &dof_handler, user_tuple &user_data) {
+            scatter_ghost_data(dof_handler, user_data, []() {});
+        }
+
+        template <Integer... dataidx, typename H, typename F>
+        static user_tuple scatter_ghost_data(const H &dof_handler, user_tuple &user_data, F callback) {
             const context &context = dof_handler.get_context();
-            /* int proc_num = rank(context); */
 
             Integer ghost_size = dof_handler.get_ghost_dof_size();
             user_tuple ghost_buffer_data;
@@ -310,6 +312,11 @@ namespace mars {
             const Integer boundary_size = dof_handler.get_boundary_dof_size();
             user_tuple boundary_user_data;
             reserve_user_data<dataidx...>(boundary_user_data, "boundary_user_data", boundary_size);
+
+            Kokkos::fence();
+
+            // overlapping computational callback method with the MPI comm.
+            callback();
 
             const auto block_size = dof_handler.get_block();
             // prepare the buffer to send the boundary data

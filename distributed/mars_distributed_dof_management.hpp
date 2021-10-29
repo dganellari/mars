@@ -1514,9 +1514,10 @@ namespace mars {
             ViewVectorType<Integer> scan_boundary, boundary_dofs_index;
             build_boundary_dof_sets(scan_boundary, boundary_dofs_index, proc_scan_send, h_ps());
 
+            Kokkos::fence();
+
             std::vector<Integer> s_count(rank_size, 0);
             std::vector<Integer> r_count(rank_size, 0);
-
             exchange_ghost_counts(context, scan_boundary, sender_ranks, recver_ranks, s_count, r_count);
 
             /* create the scan recv mirror view from the receive count */

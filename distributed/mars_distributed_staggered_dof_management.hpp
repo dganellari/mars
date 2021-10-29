@@ -116,6 +116,8 @@ namespace mars {
                 ViewVectorType<Integer>("bounary_dofs_index", get_boundary_dof_size());
             build_boundary_dof_sets(boundary_dofs_index);
 
+            Kokkos::fence();
+
             ViewVectorType<Integer> ghost_dofs_index("ghost_index_dof", get_ghost_dof_size());
             get_dof_handler().get_context()->distributed->i_send_recv_view(ghost_dofs_index,
                                                                            get_view_scan_recv_mirror().data(),
