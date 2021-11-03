@@ -98,7 +98,7 @@ void MeshWriter<Mesh>::generate_data_cube(const int space) {
         case 2:
             mars::generate_cube(mesh_, 4, 3, 0);
         case 3:
-            mars::generate_cube(mesh_, 4, 3, 3);
+            mars::generate_cube(mesh_, 1, 1, 1);
     }
 
     // Setup intial values of vertices, nelements and Dim.
@@ -157,7 +157,7 @@ void MeshWriter<Mesh>::interpolate() {
     VectorReal x = VectorReal("x", n_nodes);
     mars::Interpolate<Mesh> interpMesh(mesh_);
     interpMesh.apply(
-        x, MARS_LAMBDA(const mars::Real* p)->mars::Real { return p[0] * p[0] * p[0]; });
+        x, MARS_LAMBDA(const mars::Real* p)->mars::Real { return p[0] * p[1] * p[2]; });
 }
 
 // Write step, write tthe results to the variables we defined before.
@@ -178,6 +178,8 @@ void MeshWriter<Mesh>::write() {
     // // zero-copy access to adios2 buffer to put non-contiguous to contiguous memory
     adios2::Variable<int32_t>::Span spanElementAttribute = engine_.Put<int32_t>(varElementAttribute);
 
+    std::cout << "n_nodes" << mesh_.n_nodes() << std::endl;
+    std::cout << "Mesh::thingy" << Mesh::Elem::NNodes;
     auto elements = mesh_.get_view_elements();
     size_t elementPosition = 0;
     for (int e = 0; e < mesh_.n_elements(); ++e) {
@@ -189,7 +191,6 @@ void MeshWriter<Mesh>::write() {
         }
         elementPosition += Mesh::Elem::NNodes + 1;
     }
-
     //###################################################################
 
     //############################Vertices###############################
@@ -197,7 +198,6 @@ void MeshWriter<Mesh>::write() {
     // engine_.Put("vertices", static_cast<double>(mesh_.n_nodes()));
     engine_.Put("NumOfVertices", static_cast<uint32_t>(mesh_.n_nodes()));
 
-    std::vector<mars::Integer> e_nodes;
     // mars::IElem element;
     adios2::Variable<double> varVertices = io_.InquireVariable<double>("vertices");
     // zero-copy access to adios2 buffer to put non-contiguous to contiguous memory
