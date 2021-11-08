@@ -68,9 +68,9 @@ std::string VTKSchema(std::set<std::string> point_data_variables) {
         }
     }
 
-    vtkSchema += "        <DataArray Name=\"TIME\">\n";
-    vtkSchema += "          TIME\n";
-    vtkSchema += "        </DataArray>\n";
+    // vtkSchema += "        <DataArray Name=\"TIME\">\n";
+    // vtkSchema += "          TIME\n";
+    // vtkSchema += "        </DataArray>\n";
 
     vtkSchema += R"(
        </PointData>
@@ -139,6 +139,7 @@ int main(int argc, char* argv[]) {
 
         // Where the solution to the function is written.
         io.DefineVariable<double>("U", {}, {}, {n_nodes});
+        point_data_variables.insert("U");
 
         // More info written in .bp file.
         std::string mesh_type = "Mars Unstructured Mesh";
@@ -193,21 +194,21 @@ int main(int argc, char* argv[]) {
         mars::Interpolate<mars::ParallelMesh3> interpMesh(mesh);
         interpMesh.apply(
             x, MARS_LAMBDA(const mars::Real* p)->mars::Real {
-                std::complex<double> c{p[0], p[1]};
-                std::complex<double> z = c;
-                int i = 0;
-                while (i < maxiter) {
-                    double n = std::norm(z);
-                    if (n > outofbounds) {
-                        break;
-                    }
+                // std::complex<double> c{p[0], p[1]};
+                // std::complex<double> z = c;
+                // int i = 0;
+                // while (i < maxiter) {
+                //     double n = std::norm(z);
+                //     if (n > outofbounds) {
+                //         break;
+                //     }
 
-                    z = z * z + c;
-                    i++;
-                }
+                //     z = z * z + c;
+                //     i++;
+                // }
 
-                return i;
-                // return p[0] * p[1] * p[2];
+                // return i;
+                return (p[0] * p[1] * p[2]);
             });
 
         // Variables for U.
@@ -217,6 +218,7 @@ int main(int argc, char* argv[]) {
         for (int v = 0; v < n_nodes; ++v) {
             spanU[v] = x(v);
         }
+
         engine.Put(varTypes, vtktype);
         io.DefineAttribute<std::string>("vtk.xml", VTKSchema(point_data_variables), {}, {});
 
