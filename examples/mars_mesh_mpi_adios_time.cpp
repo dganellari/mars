@@ -1,3 +1,4 @@
+#include <cmath>
 #include <complex>
 #include <iostream>
 #include "adios2.h"
@@ -200,10 +201,16 @@ int main(int argc, char* argv[]) {
         // engine.Put(var_time);
 
         double t = 2;
+        double timeBegin = 0.00;
+        double time = timeBegin;
         VectorReal x = VectorReal("x", n_nodes);
         mars::Interpolate<mars::ParallelMesh3> interpMesh(mesh);
         interpMesh.apply(
-            x, MARS_LAMBDA(const mars::Real* p)->mars::Real { return p[0] * p[1] * p[2] * t; });
+            x, MARS_LAMBDA(const mars::Real* p)->mars::Real {
+                // return std::ln(p[0]) * std::sqrt(p[1]) * std::sqrt(p[2]) * t;
+
+                return p[0] * p[1] * p[2] * t * time;
+            });
 
         // Variables for U.
         adios2::Variable<double> varU = io.InquireVariable<double>("U");
@@ -216,25 +223,16 @@ int main(int argc, char* argv[]) {
 
         engine.EndStep();
 
-        // For loop 1->n_steps
-        // BeginStep
-        // Write U
-        // EndStep
-        double max_steps = 7;
-        t = 2;
+        double time_end = 7;
+        double dt = 0.05;
 
-        for (double i = 0.05; i < max_steps; i = i + 0.05) {
+        for (time = timeBegin + dt; time < time_end; time = time + dt) {
             engine.BeginStep();
-            // adios2::Variable<double> var_time = io.InquireVariable<double>("TIME");
-            engine.Put<double>(var_time, i);
+            engine.Put<double>(var_time, time);
 
-            VectorReal x = VectorReal("x", n_nodes);
-            mars::Interpolate<mars::ParallelMesh3> interpMesh(mesh);
             interpMesh.apply(
-                x, MARS_LAMBDA(const mars::Real* p)->mars::Real { return p[0] * p[1] * p[2] * (t * i); });
-
-            // adios2::Variable<double> varU = io.InquireVariable<double>("U");
-            adios2::Variable<double>::Span spanU = engine.Put<double>(varU);
+                x, MARS_LAMBDA(const mars::Real* p)->mars::Real { return p[0] * p[1] * p[2] * (t * time); });
+            spanU = engine.Put<double>(varU);
             for (int v = 0; v < n_nodes; ++v) {
                 spanU[v] = x(v);
             }
