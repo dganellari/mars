@@ -98,13 +98,10 @@ int main(int argc, char* argv[]) {
     adios2::IO io = adios.DeclareIO("BPFile_SZ");
     adios2::Engine engine;
 
-    // Declaring field set for later
-    // std::map<std::string> field_info_map;
-
     // Initialize Kokkos
     Kokkos::initialize();
 
-    // Create a scope for the mesh, without it it will not delete from memory.
+    // Create a scope for the mesh, without it it will not delete it from memory.
     {
         // Mesh creation and generation.
         mars::ParallelMesh3 mesh;
@@ -133,6 +130,7 @@ int main(int argc, char* argv[]) {
 
         if (engine.CurrentStep() == 0) {
             // Define all adios variables
+            // DefineVariable<>("name", shape, start, count, constantDims);
             io.DefineVariable<uint32_t>("NumOfElements", {adios2::LocalValueDim});
             io.DefineVariable<uint32_t>("NumOfVertices", {adios2::LocalValueDim});
             io.DefineVariable<double>("vertices", {}, {}, {n_nodes, spaceDim});
@@ -167,7 +165,7 @@ int main(int argc, char* argv[]) {
             engine.Put("NumOfElements", static_cast<uint32_t>(mesh.n_elements()));
 
             // Getting the previously defined variables and storing in new ones.
-            // Could be done with one single line.
+            // Could be done with one single line. See TIME variable.
             adios2::Variable<int32_t> varElementAttribute = io.InquireVariable<int32_t>("attribute");
             adios2::Variable<int32_t>::Span spanElementAttribute = engine.Put<int32_t>(varElementAttribute);
             adios2::Variable<uint32_t> varTypes = io.InquireVariable<uint32_t>("types");
@@ -205,10 +203,7 @@ int main(int argc, char* argv[]) {
         }
 
         adios2::Variable<double> var_time = io.DefineVariable<double>("TIME");
-
         mars::Mandelbrot mandel;
-
-        double t = 2;
         double timeBegin = 0.00;
         double time = timeBegin;
         VectorReal x = VectorReal("x", n_nodes);
@@ -236,10 +231,7 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        io.DefineAttribute<std::string>("vtk.xml", VTKSchema(point_data_variables), {}, {});
-
         engine.EndStep();
-
         double time_end = 2;
         double dt = 0.01;
 
@@ -264,6 +256,8 @@ int main(int argc, char* argv[]) {
             }
             engine.EndStep();
         }
+
+        io.DefineAttribute<std::string>("vtk.xml", VTKSchema(point_data_variables), {}, {});
 
         engine.Close();
     }
