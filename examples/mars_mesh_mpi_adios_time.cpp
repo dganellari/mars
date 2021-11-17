@@ -101,6 +101,8 @@ int main(int argc, char* argv[]) {
     // Initialize Kokkos
     Kokkos::initialize();
 
+    MPI_Barrier(MPI_COMM_WORLD);
+    double tick = MPI_Wtime();
     // Create a scope for the mesh, without it it will not delete it from memory.
     {
         // Mesh creation and generation.
@@ -200,6 +202,7 @@ int main(int argc, char* argv[]) {
                     spanVertices[v * space_dim + coord] = points(v, coord);
                 }
             }
+            io.DefineAttribute<std::string>("vtk.xml", VTKSchema(point_data_variables), {}, {});
         }
 
         adios2::Variable<double> var_time = io.DefineVariable<double>("TIME");
@@ -240,7 +243,7 @@ int main(int argc, char* argv[]) {
             engine.Put<double>(var_time, time);
 
             interpMesh.apply(
-                x, MARS_LAMBDA(const mars::Real* p)->mars::Real { return mandel(p[0] * time, p[1], p[2]); });
+                x, MARS_LAMBDA(const mars::Real* p)->mars::Real { return mandel((p[0] - 1) * time, p[1], p[2]); });
 
             interpMesh.apply(
                 p, MARS_LAMBDA(const mars::Real* p)->mars::Real { return p[0] * p[1] * p[2] * time; });
@@ -257,9 +260,13 @@ int main(int argc, char* argv[]) {
             engine.EndStep();
         }
 
-        io.DefineAttribute<std::string>("vtk.xml", VTKSchema(point_data_variables), {}, {});
-
         engine.Close();
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+    double tock = MPI_Wtime();
+    double elapsed = tock - tick;
+    if (rank == 0) {
+        std::cout << "Elapsed = " << elapsed << " seconds." << std::endl;
     }
     Kokkos::finalize();
     MPI_Finalize();
