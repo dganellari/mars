@@ -5,6 +5,7 @@
 #include "cxxopts.hpp"
 #include "mars_globals.hpp"
 #include "mars_interpolate.hpp"
+#include "mars_mandelbrot.hpp"
 #include "mars_mesh.hpp"
 #include "mars_mesh_generation.hpp"
 #include "mars_test_mesh.hpp"
@@ -146,6 +147,14 @@ int main(int argc, char* argv[]) {
             io.DefineVariable<double>("U", {}, {}, {n_nodes});
             point_data_variables.insert("U");
 
+            // Definizione variabile vettoriale
+            adios2::Dims count = adios2::Dims{n_nodes, spaceDim};
+            // Variable that works for every node depending on xyz.
+            io.DefineVariable<double>("V", {}, {}, count);
+            point_data_variables.insert("V");
+
+            // io.DefineVariable<double>
+
             // More info written in .bp file.
             std::string mesh_type = "Mars Unstructured Mesh";
             std::vector<std::string> viz_tools;
@@ -195,10 +204,9 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // adios2::Variable<int> var_cycle = SafeDefineVariable<int>(io, "CYCLE");
-        // engine.Put(var_cycle, cycle);
         adios2::Variable<double> var_time = io.DefineVariable<double>("TIME");
-        // engine.Put(var_time);
+
+        mars::Mandelbrot mandel;
 
         double t = 2;
         double timeBegin = 0.00;
@@ -206,11 +214,7 @@ int main(int argc, char* argv[]) {
         VectorReal x = VectorReal("x", n_nodes);
         mars::Interpolate<mars::ParallelMesh3> interpMesh(mesh);
         interpMesh.apply(
-            x, MARS_LAMBDA(const mars::Real* p)->mars::Real {
-                // return std::ln(p[0]) * std::sqrt(p[1]) * std::sqrt(p[2]) * t;
-
-                return p[0] * p[1] * p[2] * t * time;
-            });
+            x, MARS_LAMBDA(const mars::Real* p)->mars::Real { return mandel(p[0], p[1], p[2]); });
 
         // Variables for U.
         adios2::Variable<double> varU = io.InquireVariable<double>("U");
@@ -219,22 +223,44 @@ int main(int argc, char* argv[]) {
         for (int v = 0; v < n_nodes; ++v) {
             spanU[v] = x(v);
         }
+
+        VectorReal p = VectorReal("p", n_nodes);
+        interpMesh.apply(
+            p, MARS_LAMBDA(const mars::Real* p)->mars::Real { return p[0] * p[1] * p[2]; });
+
+        adios2::Variable<double> varV = io.InquireVariable<double>("V");
+        adios2::Variable<double>::Span spanV = engine.Put<double>(varV);
+        for (int i = 0; i < n_nodes; ++i) {
+            for (int d = 0; d < spaceDim; ++d) {
+                spanV[i * spaceDim + d] = p(i);
+            }
+        }
+
         io.DefineAttribute<std::string>("vtk.xml", VTKSchema(point_data_variables), {}, {});
 
         engine.EndStep();
 
-        double time_end = 7;
-        double dt = 0.05;
+        double time_end = 2;
+        double dt = 0.01;
 
         for (time = timeBegin + dt; time < time_end; time = time + dt) {
             engine.BeginStep();
             engine.Put<double>(var_time, time);
 
             interpMesh.apply(
-                x, MARS_LAMBDA(const mars::Real* p)->mars::Real { return p[0] * p[1] * p[2] * (t * time); });
+                x, MARS_LAMBDA(const mars::Real* p)->mars::Real { return mandel(p[0] * time, p[1], p[2]); });
+
+            interpMesh.apply(
+                p, MARS_LAMBDA(const mars::Real* p)->mars::Real { return p[0] * p[1] * p[2] * time; });
             spanU = engine.Put<double>(varU);
+            spanV = engine.Put<double>(varV);
             for (int v = 0; v < n_nodes; ++v) {
                 spanU[v] = x(v);
+            }
+            for (int i = 0; i < n_nodes; ++i) {
+                for (int d = 0; d < spaceDim; ++d) {
+                    spanV[i * spaceDim + d] = p(i);
+                }
             }
             engine.EndStep();
         }

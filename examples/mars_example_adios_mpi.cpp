@@ -65,8 +65,14 @@ int main(int argc, char *argv[]) {
     MPI_Barrier(MPI_COMM_WORLD);
     double tick = MPI_Wtime();
 
+    if (rank == 0) {
+        std::cout << "Calculating function... \n";
+    }
     image.setup(dims, coordinates);
     image.calc_function(mars::Mandelbrot());
+    if (rank == 0) {
+        std::cout << "Writing data... \n";
+    }
 
     mars::Writer testWriter(par_io, writer, image);
     // Calculate how long it takes to create data.
@@ -74,7 +80,7 @@ int main(int argc, char *argv[]) {
     double tock = MPI_Wtime();
     double elapsed = tock - tick;
     if (rank == 0) {
-        std::cout << "Creating data, Elapsed = " << elapsed << " seconds." << std::endl;
+        std::cout << "Elapsed = " << elapsed << " seconds." << std::endl;
     }
     testWriter.setup_variables();
     testWriter.write();
