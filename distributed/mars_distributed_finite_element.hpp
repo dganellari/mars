@@ -12,7 +12,7 @@ namespace mars {
         virtual MARS_INLINE_FUNCTION ~IFEDofMap() {}
     };
 
-    template <class DofHandler, Integer Label = DofHandler::dofLabel>
+    template <class DofHandler, Integer Label = DofHandler::dofLabel, bool Overlap = true>
     class FEDofMap : public IFEDofMap {
     public:
         static constexpr Integer degree = DofHandler::Degree;
@@ -322,16 +322,14 @@ namespace mars {
             return h_ps();
         }
 
+
         // Store the elements with all owned dofs first (first matrix rows) and then elements with non-owned dofs.
         // Finally add ghost elements. This to overlap assembly with communication of ghost layer data.
-        template <bool Overlap>
-        std::enable_if_t<Overlap == true, void> enumerate_local_dofs() {
+        template <bool O = Overlap>
+        std::enable_if_t<O == true, void> build_elem_index() {
             auto handler = get_dof_handler();
             const Integer size = handler.get_mesh_manager().get_host_mesh()->get_chunk_size();
-            const Integer ghost_size = handler.get_mesh_manager().get_host_mesh()->get_ghost_size();
-            const Integer block = handler.get_block();
 
-            /* sfc_to_elem_index = UnorderedMap<Integer, Integer>(size); */
             elem_index = ViewVectorType<Integer>("elem_index", size);
 
             ViewVectorType<bool> predicate("predicate_elements", size);
@@ -366,7 +364,23 @@ namespace mars {
             build_map_from_scan(predicate, scan, owned_size);
 
             assert(size == non_owned_size + owned_size);
+        }
 
+        template <bool O = Overlap>
+        std::enable_if_t<O == false, void> build_elem_index() {}
+
+        // Store the elements with all owned dofs first (first matrix rows) and then elements with non-owned dofs.
+        // Finally add ghost elements. This to overlap assembly with communication of ghost layer data.
+        void enumerate_local_dofs() {
+            auto handler = get_dof_handler();
+            const Integer size = handler.get_mesh_manager().get_host_mesh()->get_chunk_size();
+            const Integer ghost_size = handler.get_mesh_manager().get_host_mesh()->get_ghost_size();
+            const Integer block = handler.get_block();
+
+            build_elem_index();
+
+            // This is the way to go to avoid atomic on critical code parts when building the unique sorted sparsity
+            // pattern. Further on, it can be optimized by storing it to shared memory.
             elem_dof_enum = ViewMatrixType<Integer>("elem_dof_enum", size + ghost_size, get_elem_nodes());
             /* enumerates the dofs within each element topologically */
 
@@ -378,7 +392,7 @@ namespace mars {
                 "enum_local_dofs", size, MARS_LAMBDA(const Integer i) {
                     Integer index = 0;
                     // write coalesced by going through the new order of ids and mapping it to the old order.
-                    auto sfc_index = elem_index_view(i);
+                    auto sfc_index = get_element_index(elem_index_view, i);
                     // topological order within the element
                     ordered_dof_enumeration<DofMap, false>(
                         handler, DofMap(elem_dof_enum_view, i, block), sfc_index, index);
@@ -387,33 +401,6 @@ namespace mars {
             // go through the ghost layer
             Kokkos::parallel_for(
                 "enum_ghost_dofs", ghost_size, MARS_LAMBDA(const Integer i) {
-                    Integer index = 0;
-                    ordered_dof_enumeration<DofMap, true>(
-                        handler, DofMap(elem_dof_enum_view, i + size, block), i, index);
-                });
-        }
-
-        template <bool Overlap>
-        std::enable_if_t<Overlap == false, void> enumerate_local_dofs() {
-            auto handler = get_dof_handler();
-            const Integer size = handler.get_mesh_manager().get_host_mesh()->get_chunk_size();
-            const Integer ghost_size = handler.get_mesh_manager().get_host_mesh()->get_ghost_size();
-
-            const Integer block = handler.get_block();
-            // This is the way to go to avoid atomic on critical code parts when building the unique sorted sparsity
-            // pattern. Further on, it can be optimized by storing it to shared memory.
-            elem_dof_enum = ViewMatrixType<Integer>("elem_dof_enum", size + ghost_size, get_elem_nodes());
-            /*enumerates the dofs within each element topologically*/
-            auto elem_dof_enum_view = elem_dof_enum;
-            Kokkos::parallel_for(
-                "enum_local_dofs", size, MARS_LAMBDA(const Integer i) {
-                    Integer index = 0;
-                    ordered_dof_enumeration<DofMap, false>(handler, DofMap(elem_dof_enum_view, i, block), i, index);
-                });
-
-            // go through the ghost layer
-            Kokkos::parallel_for(
-                "enum_local_dofs", ghost_size, MARS_LAMBDA(const Integer i) {
                     Integer index = 0;
                     ordered_dof_enumeration<DofMap, true>(
                         handler, DofMap(elem_dof_enum_view, i + size, block), i, index);
@@ -475,6 +462,20 @@ namespace mars {
             }
         };
 
+        template <bool O = Overlap>
+        static MARS_INLINE_FUNCTION std::enable_if_t<O == true, Integer> get_element_index(
+            const ViewVectorType<Integer> &view,
+            const Integer i) {
+            return view(i);
+        }
+
+        template <bool O = Overlap>
+        static MARS_INLINE_FUNCTION std::enable_if_t<O == false, Integer> get_element_index(
+            const ViewVectorType<Integer> &view,
+            const Integer i) {
+            return i;
+        }
+
         template <Integer L = Label>
         ViewMatrixType<Integer> build_node_element_dof_map(ViewVectorType<Integer> &locally_owned_dofs) const {
             auto handler = get_dof_handler();
@@ -501,7 +502,7 @@ namespace mars {
             Kokkos::parallel_for(
                 "enum_local_dofs", size, MARS_LAMBDA(const Integer i) {
                     Integer index = 0;
-                    auto sfc_index = elem_index_view(i);
+                    auto sfc_index = get_element_index(elem_index_view, i);
                     ordered_dof_enumeration<NodeElementDofMap, false, L>(
                         handler, NodeElementDofMap(handler, dof_enum, owned_index, owned_dof_map, i), sfc_index, index);
                 });
@@ -639,8 +640,8 @@ namespace mars {
 
         template <typename F>
         void non_owned_dof_element_iterate(F f) const {
-            const Integer size = get_dof_handler().get_mesh_manager().get_host_mesh()->get_chunk_size();
-            Kokkos::parallel_for("fedomap non owned dof iterate", Kokkos::RangePolicy<>(owned_size, size), f);
+            const Integer local_size = get_dof_handler().get_mesh_manager().get_host_mesh()->get_chunk_size();
+            Kokkos::parallel_for("fedomap non owned dof iterate", Kokkos::RangePolicy<>(owned_size, local_size), f);
         }
 
         template <typename F>
@@ -730,8 +731,8 @@ namespace mars {
  */
     template <class DofHandler, Integer Label = DofHandler::dofLabel, bool Overlap = true>
     auto build_fe_dof_map(const DofHandler &handler) {
-        FEDofMap<DofHandler, Label> fe(handler);
-        fe.template enumerate_local_dofs<Overlap>();
+        FEDofMap<DofHandler, Label, Overlap> fe(handler);
+        fe.enumerate_local_dofs();
         return fe;
     }
 
