@@ -150,7 +150,7 @@ namespace mars {
         constexpr Integer Degree = 1;
         using DOFHandler = DofHandler<DMesh, Degree>;
         using DMQ = DM<DOFHandler, double, double, double>;
-        using FE = FEDofMap<DOFHandler>;
+        using FE = FEDofMap<DOFHandler, false>;
         /* using SPattern = SparsityPattern<double, Integer, unsigned long, DOFHandler>; */
 
         static_assert(DOFHandler::Block == 1, "Poisson example does not support yet vector valued block structures.");
@@ -165,7 +165,7 @@ namespace mars {
 
         /* dof_handler.print_dofs(proc_num); */
 
-        auto fe = build_fe_dof_map(dof_handler);
+        auto fe = build_fe_dof_map<DOFHandler, false>(dof_handler);
 
         // print the global dofs for each element's local dof
         /* print_fe_dof_map(dof_handler, fe); */

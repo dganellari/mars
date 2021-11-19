@@ -296,7 +296,7 @@ namespace mars {
 
         template <Integer... dataidx, typename H>
         static user_tuple scatter_ghost_data(const H &dof_handler, user_tuple &user_data) {
-            scatter_ghost_data(dof_handler, user_data, []() {});
+            return scatter_ghost_data(dof_handler, user_data, []() {});
         }
 
         template <Integer... dataidx, typename H, typename F>

@@ -12,7 +12,7 @@ namespace mars {
         virtual MARS_INLINE_FUNCTION ~IFEDofMap() {}
     };
 
-    template <class DofHandler, Integer Label = DofHandler::dofLabel, bool Overlap = true>
+    template <class DofHandler, bool Overlap = true, Integer Label = DofHandler::dofLabel>
     class FEDofMap : public IFEDofMap {
     public:
         static constexpr Integer degree = DofHandler::Degree;
@@ -729,9 +729,9 @@ namespace mars {
     }
 
  */
-    template <class DofHandler, Integer Label = DofHandler::dofLabel, bool Overlap = true>
+    template <class DofHandler, bool Overlap = true, Integer Label = DofHandler::dofLabel>
     auto build_fe_dof_map(const DofHandler &handler) {
-        FEDofMap<DofHandler, Label, Overlap> fe(handler);
+        FEDofMap<DofHandler, Overlap, Label> fe(handler);
         fe.enumerate_local_dofs();
         return fe;
     }
