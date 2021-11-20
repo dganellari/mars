@@ -204,7 +204,7 @@ namespace mars {
         }
     }
 
-    template <Integer Type = ElementType::Quad4, Integer Degree = 1>
+    template <Integer Type = ElementType::Quad4, Integer Degree = 1, bool Overlap = true>
     void test_mars_distributed_vector_valued(const int xDim, const int yDim, const int zDim, const int block) {
         using namespace mars;
         mars::proc_allocation resources;
@@ -263,8 +263,7 @@ namespace mars {
 
         /* dof_handler.print_dofs(proc_num); */
 
-        auto fe = build_fe_dof_map(dof_handler);
-
+        auto fe = build_fe_dof_map<DOFHandler, Overlap>(dof_handler);
 
         double time_map= timer_map.seconds();
         std::cout << "DOFMAP took: " << time_map<< std::endl;
@@ -282,21 +281,31 @@ namespace mars {
         double time_all = timer.seconds();
         std::cout << "Discretization: " << time_all<< std::endl;
 
+        Kokkos::Timer timer_as;
         ViewVectorType<Integer> x_local("local_data", dof_handler.get_dof_size());
         dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) {
             x_local(i) = -1;
             if (dof_handler.is_owned(i)) sp.set_value(i, i, 9);
         });
 
+        double time_aall = timer_as.seconds();
+        std::cout << "Assembly: " << time_aall<< std::endl;
+
         /* sp.print_sparsity_pattern(); */
+        /* sp.write("overlap_sp.txt"); */
 
         auto owned_size = dof_handler.get_owned_dof_size();
         ViewVectorType<Integer> owned("owned_data", owned_size);
         dof_handler.owned_dof_iterate(MARS_LAMBDA(const Integer i) { owned(i) = proc_num; });
 
         set_locally_owned_data(dof_handler, x_local, owned);
+
+        Kokkos::Timer timer_c;
         gather_ghost_data(dof_handler, x_local);
         /* scatter_add_ghost_data(dof_handler, x_local); */
+
+        double time_call = timer_c.seconds();
+        std::cout << "Collect: " << time_call<< std::endl;
 
 
         dof_handler.boundary_dof_iterate(
