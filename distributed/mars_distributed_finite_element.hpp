@@ -638,18 +638,21 @@ namespace mars {
             /* Kokkos::parallel_for("fedomap ghost iterate", Kokkos::RangePolicy<>(owned_size, size), f(elem_index(i)); */
         }
 
+        //iterate on the elements that contain only owned local dofs.
         template <typename F>
         void non_owned_dof_element_iterate(F f) const {
             const Integer local_size = get_dof_handler().get_mesh_manager().get_host_mesh()->get_chunk_size();
             Kokkos::parallel_for("fedomap non owned dof iterate", Kokkos::RangePolicy<>(owned_size, local_size), f);
         }
 
+        //iterate on the owned elements
         template <typename F>
         void owned_element_iterate(F f) const {
             const Integer local_size = get_dof_handler().get_mesh_manager().get_host_mesh()->get_chunk_size();
             Kokkos::parallel_for("fedomap ghost iterate", local_size, f);
         }
 
+        //iterate on the elements that containt ghost dofs.
         template <typename F>
         void ghost_element_iterate(F f) const {
             const Integer local_size = get_dof_handler().get_mesh_manager().get_host_mesh()->get_chunk_size();
@@ -657,6 +660,7 @@ namespace mars {
             Kokkos::parallel_for("fedomap ghost iterate", Kokkos::RangePolicy<>(local_size, size), f);
         }
 
+        //iterate on all elements, owned + ghost
         template <typename F>
         void iterate(F f) const {
             Kokkos::parallel_for("fedomap iterate", get_fe_dof_map_size(), f);

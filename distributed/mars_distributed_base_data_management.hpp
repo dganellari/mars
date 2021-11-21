@@ -371,22 +371,34 @@ namespace mars {
     };
 
     // gather operation: fill the data from the received ghost data
-    template <typename H, typename T>
-    void gather_ghost_data(const H &dof_handler, ViewVectorType<T> &data) {
+    template <typename H, typename T, typename F>
+    void gather_ghost_data(const H &dof_handler, ViewVectorType<T> &data, F callback) {
         assert(data.extent(0) == dof_handler.get_dof_size());
         using SuperDM = BDM<T>;
         auto tuple = std::make_tuple(data);
-        SuperDM::template gather_ghost_data<0>(dof_handler, tuple);
+        SuperDM::template gather_ghost_data<0>(dof_handler, tuple, callback);
+    }
+
+    // gather operation: fill the data from the received ghost data
+    template <typename H, typename T>
+    void gather_ghost_data(const H &dof_handler, ViewVectorType<T> &data) {
+        gather_ghost_data(dof_handler, data, []() {});
+    }
+
+    // scatter add but using the handler and the view instead of a dm.
+    template <typename H, typename T, typename F>
+    void scatter_add_ghost_data(const H &dof_handler, ViewVectorType<T> &data, F callback) {
+        assert(data.extent(0) == dof_handler.get_dof_size());
+        using SuperDM = BDM<T>;
+        auto tuple = std::make_tuple(data);
+        auto boundary_data = SuperDM::template scatter_ghost_data<0>(dof_handler, tuple, callback);
+        SuperDM::template scatter_add<0>(dof_handler, boundary_data, tuple);
     }
 
     // scatter add but using the handler and the view instead of a dm.
     template <typename H, typename T>
     void scatter_add_ghost_data(const H &dof_handler, ViewVectorType<T> &data) {
-        assert(data.extent(0) == dof_handler.get_dof_size());
-        using SuperDM = BDM<T>;
-        auto tuple = std::make_tuple(data);
-        auto boundary_data = SuperDM::template scatter_ghost_data<0>(dof_handler, tuple);
-        SuperDM::template scatter_add<0>(dof_handler, boundary_data, tuple);
+        scatter_add_ghost_data(dof_handler, data, []() {});
     }
 
     template <class DM, Integer... dataidx>
