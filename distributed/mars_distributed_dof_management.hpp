@@ -2083,7 +2083,7 @@ namespace mars {
             return B;
         }
 
-        template <class VIEW>
+        template <class VIEW, class V>
         MARS_INLINE_FUNCTION void vector_apply_constraints(const Integer row, VIEW v, const V value) const {
             auto diag_row = local_to_owned_index(row);
             v(diag_row, 0) = value;
