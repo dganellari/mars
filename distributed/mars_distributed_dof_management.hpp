@@ -2083,6 +2083,17 @@ namespace mars {
             return B;
         }
 
+        template <class VIEW>
+        MARS_INLINE_FUNCTION void vector_apply_constraints(const Integer row, VIEW v, const V value) const {
+            auto diag_row = local_to_owned_index(row);
+            v(diag_row, 0) = value;
+        }
+
+        template <class VIEW>
+        MARS_INLINE_FUNCTION void apply_zero_constraints(const Integer row, VIEW v) const {
+            vector_apply_constraints(row, v, 0);
+        }
+
     private:
         //manages host and device mesh objects.
         MM mesh_manager;

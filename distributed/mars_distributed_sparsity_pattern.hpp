@@ -516,7 +516,7 @@ namespace mars {
             sparsity_pattern = crs_graph(col_idx, row_ptr);
             matrix = crs_matrix("crs_matrix", global_size, values, sparsity_pattern);
 
-            printf("Build FE SparsityPattern ended!\n");
+            /* printf("Build FE SparsityPattern ended!\n"); */
         }
 
         crs_matrix new_crs_matrix() const {
@@ -555,17 +555,6 @@ namespace mars {
                     m.values(i) = 0;
                 }
             }
-        }
-
-        template <class VIEW>
-        MARS_INLINE_FUNCTION void vector_apply_constraints(const Integer row, VIEW v, const V value) const {
-            auto diag_row = get_dof_handler().local_to_owned_index(row);
-            v(diag_row, 0) = value;
-        }
-
-        template <class VIEW>
-        MARS_INLINE_FUNCTION void apply_zero_constraints(const Integer row, VIEW v) const {
-            vector_apply_constraints(row, v, 0);
         }
 
         MARS_INLINE_FUNCTION
