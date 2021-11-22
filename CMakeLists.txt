@@ -1,6 +1,9 @@
-cmake_minimum_required(VERSION 2.8.12)
+# cmake_minimum_required(VERSION 2.8.12)
+cmake_minimum_required(VERSION 3.17)
 cmake_policy(SET CMP0048 NEW)
 project(mars VERSION 0.1.0)
+
+
 
 # FIXME make them usable from avaialble installation
 add_subdirectory(external/googletest)
@@ -27,6 +30,11 @@ endif(NOT CMAKE_BUILD_TYPE)
 
 if(UNIX AND NOT APPLE)
     set(LINUX TRUE)
+endif()
+
+
+if(MARS_ENABLE_ADIOS2)
+    find_package(adios2 REQUIRED)
 endif()
 
 # ##############################################################################
