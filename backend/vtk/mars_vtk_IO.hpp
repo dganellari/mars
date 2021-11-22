@@ -54,15 +54,18 @@ namespace mars {
     }
 
     namespace vtk {
-        template <class DofHandler, class FEDofMap, Integer Type = FEDofMap::ElemType>
+        template <class FEDofMap>
         class IO {
         private:
+            using DofHandler = typename FEDofMap::DHandler;
+            static constexpr Integer Type = FEDofMap::ElemType;
+
             static const int VTU_TRIANGLE = 5;
             static const int VTU_QUAD = 9;
             static const int VTU_HEXAHEDRON = 12;
 
         public:
-            IO(const DofHandler &dm, const FEDofMap &fe) : dm(dm), fe(fe) {}
+            IO(const FEDofMap &fe) : dm(fe.get_dof_handler()), fe(fe) {}
 
             template <class View>
             bool write(const std::string &path, const View &data) {

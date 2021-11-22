@@ -307,6 +307,16 @@ if(MARS_WITH_VTK)
 endif()
 
 
+
+if(MARS_WITH_ADIOS2)
+    install(
+        TARGETS mars_adios2
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib)
+endif()
+
+
 install(
     TARGETS mars mars_exec mars_examples
     RUNTIME DESTINATION bin

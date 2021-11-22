@@ -1,6 +1,10 @@
 
 #include "mars_adios2_IO.hpp"
 
+#include "mars_distributed_base_data_management.hpp"
+#include "mars_distributed_dof_management.hpp"
+#include "mars_distributed_finite_element.hpp"
+
 #include "mars_globals.hpp"
 #include "mars_mesh.hpp"
 #include "mars_mesh_generation.hpp"
@@ -84,6 +88,134 @@ namespace mars {
                 }
             }
         };
+
+        template <class DofHandler>
+        class Adios2Helper<FEDofMap<DofHandler>> {
+        public:
+            using FEDofMap = mars::FEDofMap<DofHandler>;
+
+            static Integer n_nodes(const FEDofMap& fe_dof_map) {
+                auto dof = fe_dof_map.get_dof_handler().get_local_dof_enum();
+                return dof.get_elem_size();
+            }
+
+            static Integer n_elements(const FEDofMap& fe_dof_map) {
+                return fe_dof_map.get_dof_handler().get_elem_size();
+            }
+
+            static Integer n_nodes_x_element(const FEDofMap& fe_dof_map) {
+                return fe_dof_map.get_dof_handler().get_elem_type();
+            }
+
+            static void write_elements(const FEDofMap& fe_dof_map,
+                                       ::adios2::Variable<uint64_t>::Span& span_connectivity,
+                                       ::adios2::Variable<int32_t>::Span& span_element_attribute) {
+                auto dof_handler = fe_dof_map.get_dof_handler();
+                int block_size = dof_handler.get_block();
+                int nne = n_nodes_x_element(dof_handler);
+                int ne = n_elements(dof_handler);
+
+                ViewVectorType<int> cells("cells", ne * (nne + 1));
+                ViewVectorType<int>::HostMirror cells_host = Kokkos::create_mirror_view(cells);
+
+                dof_handler.elem_iterate([&](const Integer elem_index) {
+                    auto offset = elem_index * (nne + 1);
+                    cells(offset) = nne;
+
+                    for (int i = 0; i < nne; i++) {
+                        const Integer local_dof = fe_dof_map.get_elem_local_dof(elem_index, i * block_size);
+                        const Integer base = dof_handler.compute_base(local_dof);
+                        assert(i < 8);
+
+                        cells(offset + 1 + i) = base;
+                    }
+                });
+
+                Kokkos::deep_copy(cells_host, cells);
+
+                for (Integer i = 0; i < ne; ++i) {
+                    span_connectivity[i] = i;
+                }
+
+                auto len = cells_host.size();
+                for (Integer i = 0; i < len; ++i) {
+                    span_connectivity[i] = cells_host[i];
+                }
+            }
+
+            static void write_nodes(const FEDofMap& fe_dof_map, ::adios2::Variable<Real>::Span& span_vertices) {
+                auto dof_handler = fe_dof_map.get_dof_handler();
+                auto dof = dof_handler.get_local_dof_enum();
+
+                Integer n_nodes = dof.get_elem_size();
+                Integer block_size = dof_handler.get_block();
+                int dim = DofHandler::Dim;
+
+                ViewVectorType<Real> points("points", n_nodes * dim);
+                ViewVectorType<Real>::HostMirror points_host = Kokkos::create_mirror_view(points);
+
+                Kokkos::parallel_for("for", n_nodes, [&](const int i) {
+                    const Integer sfc_elem = dof_handler.local_to_sfc(i * block_size);
+                    const Integer global_dof = dof_handler.local_to_global(i);
+
+                    Real point[3] = {0., 0., 0.};
+                    get_vertex_coordinates_from_sfc<DofHandler::ElemType>(
+                        sfc_elem, point, dof.get_XDim(), dof.get_YDim(), dof.get_ZDim());
+
+                    for (int d = 0; d < dim; ++d) {
+                        points[i * dim + d] = point[d];
+                    }
+                });
+
+                Kokkos::deep_copy(points_host, points);
+
+                for (Integer i = 0; i < n_nodes; ++i) {
+                    for (int d = 0; d < dim; ++d) {
+                        span_vertices[i * dim + d] = points_host[i * dim + d];
+                    }
+                }
+            }
+
+            static void write_field(const FEDofMap& fe_dof_map,
+                                    int n_components,
+                                    const ViewVectorType<Real>& owned_data,
+                                    ::adios2::Variable<Real>::Span& span) {
+                auto dof_handler = fe_dof_map.get_dof_handler();
+                auto& ctx = dof_handler.get_context();
+                int comm_size = ::mars::num_ranks(ctx);
+
+                assert(dof_handler.get_owned_dof_size() == owned_data.extent(0));
+                const Integer size = dof_handler.get_owned_dof_size();
+
+                ViewVectorType<Integer> global_to_sfc = dof_handler.get_global_dof_enum().get_view_elements();
+
+                ViewVectorType<Real> local_data("local_data", dof_handler.get_dof_size());
+
+                Kokkos::parallel_for(
+                    "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
+                        const Integer base = dof_handler.compute_base(i);
+                        const Integer component = dof_handler.compute_component(i);
+                        const Integer sfc = global_to_sfc(base);
+
+                        const Integer local = dof_handler.sfc_to_local(sfc);
+                        local_data(dof_handler.compute_block_index(local, component)) = owned_data(i);
+                    });
+
+                if (comm_size > 1) {
+                    ::mars::gather_ghost_data(dof_handler, local_data);
+                }
+
+                typename ViewVectorType<Real>::HostMirror data_host = Kokkos::create_mirror_view(local_data);
+                Kokkos::deep_copy(data_host, local_data);
+                Integer n = data_host.extent(0);
+
+                // Integer nn = n_nodes(mesh);
+
+                for (int v = 0; v < n; ++v) {
+                    span[v] = data_host[v];
+                }
+            }
+        };  // namespace adios2
 
         template <class Mesh>
         class IO<Mesh>::Impl {
@@ -213,7 +345,7 @@ namespace mars {
 
                 Adios2Helper::write_elements(mesh, span_connectivity, span_element_attribute);
 
-                engine.Put("NumOfVertices", static_cast<uint32_t>(mesh.n_nodes()));
+                engine.Put("NumOfVertices", static_cast<uint32_t>(n_nodes));
                 ::adios2::Variable<Real> var_vertices = io.InquireVariable<Real>("vertices");
                 ::adios2::Variable<Real>::Span span_vertices = engine.Put<Real>(var_vertices);
 
@@ -288,7 +420,28 @@ namespace mars {
             impl_->close();
         }
 
+        template <class Mesh>
+        bool IO<Mesh>::aux_write(const std::string& path, ViewVectorType<Real>& data) {
+            // TODO
+            set_output_path(path);
+            add_field("U", -1, data);
+            if (!open_output()) {
+                return false;
+            }
+
+            write_step();
+
+            close();
+            return true;
+        }
+
         template class IO<mars::ParallelMesh3>;
+
+        using DMesh2 = ::mars::DistributedMesh<::mars::ElementType::Quad4>;
+        using DMesh3 = ::mars::DistributedMesh<::mars::ElementType::Hex8>;
+
+        template class IO<mars::FEDofMap<mars::DofHandler<DMesh2, 1, 0>>>;
+        template class IO<mars::FEDofMap<mars::DofHandler<DMesh3, 1, 0>>>;
 
     }  // namespace adios2
 }  // namespace mars

@@ -8,7 +8,7 @@ namespace mars {
         using Hex8DofHandler = ::mars::DofHandler<Hex8Mesh, 1>;
         using Hex8FEDofMap = ::mars::FEDofMap<Hex8DofHandler>;
 
-        template class IO<Hex8DofHandler, Hex8FEDofMap>;
+        template class IO<Hex8FEDofMap>;
 
     }  // namespace vtk
 

@@ -49,9 +49,17 @@ namespace mars {
             void close();
             bool write_step();
 
+            template <class View>
+            bool write(const std::string &path, const View &data) {
+                ::mars::ViewVectorType<Real> x_view_rank1(::Kokkos::subview(data, ::Kokkos::ALL, 0));
+                return aux_write(path, x_view_rank1);
+            }
+
         private:
             class Impl;
             std::unique_ptr<Impl> impl_;
+
+            bool aux_write(const std::string &path, ViewVectorType<Real> &data);
         };
     }  // namespace adios2
 }  // namespace mars
