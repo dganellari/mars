@@ -428,5 +428,25 @@ namespace mars {
         std::partial_sum(c.begin(), c.end(), out.data() + 1);
     }
 
+    // Segmented scan on a bool view using hierachical Parallelism. Cub lib has the best impl.
+    template <typename F>
+    void segmented_scan(const Integer teams, ViewVectorType<bool> in_, F f) {
+        Kokkos::parallel_for(
+            "naive scan",
+            Kokkos::TeamPolicy<>(teams, Kokkos::AUTO),
+            MARS_LAMBDA(const Kokkos::TeamPolicy<>::member_type& teamMember) {
+                Integer i = teamMember.league_rank();
+                if (in_(i) == 1) {
+                    Integer segmentSum = 0;
+                    Kokkos::parallel_reduce(
+                        Kokkos::TeamVectorRange(teamMember, i),
+                        [=](const Integer j, Integer& innerUpdate) { innerUpdate += in_(j); },
+                        segmentSum);
+
+                    f(segmentSum, i);
+                }
+            });
+    }
+
 }  // namespace mars
 #endif /* GENERATION_MARS_UTILS_KOKKOS_HPP_ */

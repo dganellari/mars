@@ -116,6 +116,8 @@ namespace mars {
                 ViewVectorType<Integer>("bounary_dofs_index", get_boundary_dof_size());
             build_boundary_dof_sets(boundary_dofs_index);
 
+            Kokkos::fence();
+
             ViewVectorType<Integer> ghost_dofs_index("ghost_index_dof", get_ghost_dof_size());
             get_dof_handler().get_context()->distributed->i_send_recv_view(ghost_dofs_index,
                                                                            get_view_scan_recv_mirror().data(),
@@ -269,8 +271,10 @@ namespace mars {
                 return INVALID_INDEX;
         }
 
-        MARS_INLINE_FUNCTION
-        bool is_owned(const Integer local) const { return is_owned_dof_sfc(local); }
+        template <Integer B = Block>
+        MARS_INLINE_FUNCTION bool is_owned(const Integer local) const {
+            return is_owned_dof_sfc(local);
+        }
 
         MARS_INLINE_FUNCTION
         Integer is_owned_dof_sfc(const Integer local_dof) const {
@@ -591,7 +595,7 @@ namespace mars {
         bool is_local(const Integer sfc) const { return get_dof_handler().is_local(sfc); }
 
         template <Integer part, Integer Type>
-        static MARS_INLINE_FUNCTION Octant enum_face_corner(Octant &oc, const int dir) {
+        static MARS_INLINE_FUNCTION Octant enum_face_corner(const Octant &oc, const int dir) {
             return DofHandler::template enum_face_corner<part, Type>(oc, dir);
         }
 

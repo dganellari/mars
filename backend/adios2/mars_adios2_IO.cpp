@@ -70,6 +70,19 @@ namespace mars {
                     }
                 }
             }
+
+            static void write_field(const ParallelMesh3& mesh,
+                                    int n_components,
+                                    const ViewVectorType<Real>& data,
+                                    ::adios2::Variable<Real>::Span& span) {
+                Integer nn = n_nodes(mesh);
+
+                for (int v = 0; v < nn; ++v) {
+                    for (int d = 0; d < n_components; ++d) {
+                        span[v * n_components + d] = data(v * n_components + d);
+                    }
+                }
+            }
         };
 
         template <class Mesh>
@@ -130,7 +143,7 @@ namespace mars {
 
                 // TODO
                 for (const auto& point_datum : point_fields) {
-                    point_datum->set(engine, io);
+                    point_datum->set(mesh, engine, io);
                 }
 
                 engine.EndStep();
@@ -236,11 +249,12 @@ namespace mars {
         }
 
         template <class Mesh>
-        void IO<Mesh>::RealField::set(::adios2::Engine& engine, ::adios2::IO& io) {
+        void IO<Mesh>::RealField::set(const Mesh& mesh, ::adios2::Engine& engine, ::adios2::IO& io) {
+            using Adios2Helper = mars::adios2::Adios2Helper<Mesh>;
+
             ::adios2::Variable<Real> var = io.InquireVariable<Real>(this->name);
             ::adios2::Variable<Real>::Span span = engine.Put<Real>(var);
-
-            // TODO
+            Adios2Helper::write_field(mesh, this->n_components, this->data, span);
         }
 
         template <class Mesh>

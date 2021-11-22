@@ -1220,6 +1220,10 @@ int main(int argc, char *argv[]) {
         test_mars_distributed_vector_valued<ElementType::Hex8>(xDim, yDim, zDim, block_size);
     };
 
+    apps["distributed_vector_valued_no_overlap_3D"] = [=]() {
+        test_mars_distributed_vector_valued<ElementType::Hex8, 1, false>(xDim, yDim, zDim, block_size);
+    };
+
     apps["distributed_vector_valued"] = [=]() { test_mars_distributed_vector_valued(xDim, yDim, 0, block_size); };
 
     apps["mfpoisson"] = [=]() {

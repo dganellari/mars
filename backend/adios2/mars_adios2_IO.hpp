@@ -26,7 +26,7 @@ namespace mars {
                 Field(std::string name, int n_components) : name(name), n_components(n_components) {}
 
                 virtual void define(::adios2::IO &io) = 0;
-                virtual void set(::adios2::Engine &engine, ::adios2::IO &io) = 0;
+                virtual void set(const Mesh &mesh, ::adios2::Engine &engine, ::adios2::IO &io) = 0;
 
                 std::string name;
                 int n_components{1};
@@ -38,7 +38,7 @@ namespace mars {
                     : Field(std::move(name), n_components), data(data) {}
 
                 void define(::adios2::IO &io) override;
-                void set(::adios2::Engine &engine, ::adios2::IO &io) override;
+                void set(const Mesh &mesh, ::adios2::Engine &engine, ::adios2::IO &io) override;
 
                 ViewVectorType<Real> data;
             };

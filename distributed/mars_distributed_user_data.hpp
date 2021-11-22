@@ -113,6 +113,8 @@ namespace mars {
             user_tuple buffer_data;
             fill_buffer_data(buffer_data);
 
+            Kokkos::fence();
+
             apply_impl(exchange_ghost_data_functor(context, scan_recv_mirror, scan_send_mirror),
                        ghost_user_data_,
                        buffer_data);

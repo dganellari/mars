@@ -127,6 +127,12 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
+        void set_label(const Integer i, const Integer label) const  // override
+        {
+            element_labels_(i) = label;
+        }
+
+        MARS_INLINE_FUNCTION
         const Integer get_label(const Integer i) const  // override
         {
             return element_labels_(i);
