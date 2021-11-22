@@ -419,5 +419,14 @@ namespace mars {
             });
     }
 
+    // returns the prefix sum of C into a mirror view
+    template <typename C>
+    void make_scan_index_mirror(const ViewVectorType<Integer>::HostMirror& out, C const& c) {
+        static_assert(std::is_integral<typename C::value_type>::value, "make_index only applies to integral types");
+
+        out(0) = 0;
+        std::partial_sum(c.begin(), c.end(), out.data() + 1);
+    }
+
 }  // namespace mars
 #endif /* GENERATION_MARS_UTILS_KOKKOS_HPP_ */
