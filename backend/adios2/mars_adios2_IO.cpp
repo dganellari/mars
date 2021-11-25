@@ -332,6 +332,8 @@ namespace mars {
                 std::stringstream ss;
                 header(ss);
 
+                std::cout << ss.str() << std::endl;
+
                 io.DefineAttribute<std::string>("vtk.xml", ss.str(), {}, {});
                 ///////////////////////////////////////////////////////////////////////////////
 
@@ -371,11 +373,16 @@ namespace mars {
 
         template <class Mesh>
         void IO<Mesh>::RealField::define(::adios2::IO& io) {
-            if (this->n_components == 1) {
+            int nc = this->n_components;
+            if (nc == -1) {
+                // FIXME automatic detection of block_size
+                nc = 1;
+            }
+
+            if (nc == 1) {
                 io.DefineVariable<Real>(this->name, {}, {}, {this->data.size()});
             } else {
-                ::adios2::Dims count =
-                    ::adios2::Dims{this->data.size() / this->n_components, size_t(this->n_components)};
+                ::adios2::Dims count = ::adios2::Dims{this->data.size() / this->n_components, size_t(nc)};
                 io.DefineVariable<Real>(this->name, {}, {}, count);
             }
         }
@@ -421,13 +428,15 @@ namespace mars {
         }
 
         template <class Mesh>
-        bool IO<Mesh>::aux_write(const std::string& path, ViewVectorType<Real>& data) {
-            // TODO
+        bool IO<Mesh>::aux_write(const std::string& path, const ViewVectorType<Real>& data) {
             set_output_path(path);
             add_field("U", -1, data);
             if (!open_output()) {
                 return false;
             }
+
+            impl_->define_variables();
+            impl_->define_mesh();
 
             write_step();
 
