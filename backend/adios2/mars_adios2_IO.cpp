@@ -118,7 +118,7 @@ namespace mars {
                 ViewVectorType<int> cells("cells", ne * (nne + 1));
                 ViewVectorType<int>::HostMirror cells_host = Kokkos::create_mirror_view(cells);
 
-                dof_handler.elem_iterate([&](const Integer elem_index) {
+                fe_dof_map.owned_element_iterate([&](const Integer elem_index) {
                     auto offset = elem_index * (nne + 1);
                     cells(offset) = nne;
 
@@ -273,6 +273,9 @@ namespace mars {
             bool write_step() {
                 engine.BeginStep();
 
+                ::adios2::Variable<double> var_time = io.InquireVariable<double>("TIME");
+                engine.Put<double>(var_time, 0.);
+
                 // TODO
                 for (const auto& point_datum : point_fields) {
                     point_datum->set(mesh, engine, io);
@@ -304,6 +307,7 @@ namespace mars {
                 io.DefineVariable<Real>("vertices", {}, {}, {n_nodes, Dim});
                 io.DefineVariable<uint64_t>("connectivity", {}, {}, {n_elements, n_nodes_x_element + 1});
                 io.DefineVariable<int32_t>("attribute", {}, {}, {n_elements});
+                io.DefineVariable<double>("TIME");
 
                 ///////////////////////////
                 io.DefineVariable<uint32_t>("types");
@@ -380,9 +384,9 @@ namespace mars {
             }
 
             if (nc == 1) {
-                io.DefineVariable<Real>(this->name, {}, {}, {this->data.size()});
+                io.DefineVariable<Real>(this->name, {}, {}, {size_t(this->n_nodes)});
             } else {
-                ::adios2::Dims count = ::adios2::Dims{this->data.size() / this->n_components, size_t(nc)};
+                ::adios2::Dims count = ::adios2::Dims{size_t(this->n_nodes), size_t(nc)};
                 io.DefineVariable<Real>(this->name, {}, {}, count);
             }
         }
@@ -404,7 +408,8 @@ namespace mars {
 
         template <class Mesh>
         void IO<Mesh>::add_field(const std::string& name, const int n_components, const ViewVectorType<Real>& data) {
-            impl_->point_fields.insert(std::make_unique<RealField>(name, n_components, data));
+            impl_->point_fields.insert(
+                std::make_unique<RealField>(name, Adios2Helper<Mesh>::n_nodes(impl_->mesh), n_components, data));
         }
 
         template <class Mesh>

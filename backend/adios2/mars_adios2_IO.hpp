@@ -23,19 +23,21 @@ namespace mars {
             public:
                 virtual ~Field() = default;
 
-                Field(std::string name, int n_components) : name(name), n_components(n_components) {}
+                Field(std::string name, const Integer n_nodes, int n_components)
+                    : name(name), n_nodes(n_nodes), n_components(n_components) {}
 
                 virtual void define(::adios2::IO &io) = 0;
                 virtual void set(const Mesh &mesh, ::adios2::Engine &engine, ::adios2::IO &io) = 0;
 
                 std::string name;
+                int n_nodes;
                 int n_components{1};
             };
 
             class RealField : public Field {
             public:
-                RealField(std::string name, int n_components, const ViewVectorType<Real> &data)
-                    : Field(std::move(name), n_components), data(data) {}
+                RealField(std::string name, const Integer n_nodes, int n_components, const ViewVectorType<Real> &data)
+                    : Field(std::move(name), n_nodes, n_components), data(data) {}
 
                 void define(::adios2::IO &io) override;
                 void set(const Mesh &mesh, ::adios2::Engine &engine, ::adios2::IO &io) override;

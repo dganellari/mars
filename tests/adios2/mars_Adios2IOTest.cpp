@@ -44,14 +44,15 @@ class Adios2IOTest {
 public:
     static constexpr Integer Block = 0;
     static constexpr Integer Degree = 1;
+    static constexpr int Dim = MeshType::Dim;
     // static constexpr bool Overlap = true;
     using DOFHandler_t = mars::DofHandler<MeshType, Degree, Block>;
     using FEDofMap_t = mars::FEDofMap<DOFHandler_t>;
     using Adios2IO_t = mars::adios2::IO<FEDofMap_t>;
 
     void set_up() {
-        constexpr Integer n_x_dim = 10;
-        for (Integer d = 0; d < MeshType::Dim; ++d) {
+        constexpr Integer n_x_dim = 40;
+        for (int d = 0; d < Dim; ++d) {
             dims[d] = n_x_dim;
         }
     }
@@ -97,12 +98,12 @@ public:
 
         auto dof = fe.get_dof_handler().get_local_dof_enum();
 
-        ViewVectorType<Real> data("data", dof.get_elem_size());
+        ViewVectorType<Real> data("data", dof_handler.get_owned_dof_size());
 
-        Kokkos::deep_copy(data, 1);
+        Kokkos::deep_copy(data, proc_num);
 
         Adios2IO_t io(fe);
-        io.write("out.bp", data);
+        io.write("out_" + std::to_string(Dim) + ".bp", data);
 #endif
     }
 
