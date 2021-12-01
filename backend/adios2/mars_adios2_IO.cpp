@@ -118,7 +118,7 @@ namespace mars {
                 ViewVectorType<int> cells("cells", ne * (nne + 1));
                 ViewVectorType<int>::HostMirror cells_host = Kokkos::create_mirror_view(cells);
 
-                fe_dof_map.owned_element_iterate([&](const Integer elem_index) {
+                fe_dof_map.owned_element_iterate(MARS_LAMBDA(const Integer elem_index) {
                     auto offset = elem_index * (nne + 1);
                     cells(offset) = nne;
 
@@ -154,7 +154,7 @@ namespace mars {
                 ViewVectorType<Real> points("points", n_nodes * dim);
                 ViewVectorType<Real>::HostMirror points_host = Kokkos::create_mirror_view(points);
 
-                Kokkos::parallel_for("for", n_nodes, [&](const int i) {
+                Kokkos::parallel_for("for", n_nodes, MARS_LAMBDA(const int i) {
                     const Integer sfc_elem = dof_handler.local_to_sfc(i * block_size);
                     const Integer global_dof = dof_handler.local_to_global(i);
 
