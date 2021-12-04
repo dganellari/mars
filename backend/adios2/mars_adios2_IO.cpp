@@ -46,6 +46,8 @@ namespace mars {
                 return element_nvertices;
             }
 
+            static void write_elements(const ParallelMesh3& mesh, const ViewVectorType<uint64_t>& cells) {}
+
             static void write_elements(const ParallelMesh3& mesh,
                                        ::adios2::Variable<uint64_t>::Span& span_connectivity,
                                        ::adios2::Variable<int32_t>::Span& span_element_attribute) {
@@ -63,6 +65,8 @@ namespace mars {
                     elementPosition += meshNNodes + 1;
                 }
             }
+
+            static void write_nodes(const ParallelMesh3& mesh, const ViewVectorType<Real>& points) {}
 
             static void write_nodes(const ParallelMesh3& mesh, ::adios2::Variable<Real>::Span& span_vertices) {
                 auto points = mesh.get_view_points();
@@ -108,6 +112,27 @@ namespace mars {
             }
 
             static void write_elements(const FEDofMap& fe_dof_map,
+                    const ViewVectorType<uint64_t>& cells) {
+                auto dof_handler = fe_dof_map.get_dof_handler();
+                int block_size = dof_handler.get_block();
+                int nne = n_nodes_x_element(dof_handler);
+                int ne = n_elements(dof_handler);
+
+                fe_dof_map.owned_element_iterate(MARS_LAMBDA(const Integer elem_index) {
+                    auto offset = elem_index * (nne + 1);
+                    cells(offset) = nne;
+
+                    for (int i = 0; i < nne; i++) {
+                        const Integer local_dof = fe_dof_map.get_elem_local_dof(elem_index, i * block_size);
+                        const Integer base = dof_handler.compute_base(local_dof);
+                        assert(i < 8);
+
+                        cells(offset + 1 + i) = base;
+                    }
+                });
+            }
+
+            /* static void write_elements(const FEDofMap& fe_dof_map,
                                        ::adios2::Variable<uint64_t>::Span& span_connectivity,
                                        ::adios2::Variable<int32_t>::Span& span_element_attribute) {
                 auto dof_handler = fe_dof_map.get_dof_handler();
@@ -142,7 +167,33 @@ namespace mars {
                     span_connectivity[i] = cells_host[i];
                 }
             }
+ */
 
+            static void write_nodes(const FEDofMap& fe_dof_map, const ViewVectorType<Real>& points) {
+                auto dof_handler = fe_dof_map.get_dof_handler();
+                auto dof = dof_handler.get_local_dof_enum();
+
+                Integer n_nodes = dof.get_elem_size();
+                Integer block_size = dof_handler.get_block();
+                int dim = DofHandler::Dim;
+
+                /* ViewVectorType<Real> points("points", n_nodes * dim);
+                ViewVectorType<Real>::HostMirror points_host = Kokkos::create_mirror_view(points); */
+
+                Kokkos::parallel_for("for", n_nodes, MARS_LAMBDA(const int i) {
+                    const Integer sfc_elem = dof_handler.local_to_sfc(i * block_size);
+                    const Integer global_dof = dof_handler.local_to_global(i);
+
+                    Real point[3] = {0., 0., 0.};
+                    get_vertex_coordinates_from_sfc<DofHandler::ElemType>(
+                        sfc_elem, point, dof.get_XDim(), dof.get_YDim(), dof.get_ZDim());
+
+                    for (int d = 0; d < dim; ++d) {
+                        points(i * dim + d) = point[d];
+                    }
+                });
+            }
+/*
             static void write_nodes(const FEDofMap& fe_dof_map, ::adios2::Variable<Real>::Span& span_vertices) {
                 auto dof_handler = fe_dof_map.get_dof_handler();
                 auto dof = dof_handler.get_local_dof_enum();
@@ -174,7 +225,7 @@ namespace mars {
                         span_vertices[i * dim + d] = points_host[i * dim + d];
                     }
                 }
-            }
+            } */
 
             static void write_field(const FEDofMap& fe_dof_map,
                                     int n_components,
@@ -264,6 +315,7 @@ namespace mars {
             }
 
             bool open_output() {
+                /* io.SetEngine("BP4"); */
                 engine = io.Open(output_path, ::adios2::Mode::Write);
 
                 // FIXME: handle failures
@@ -341,22 +393,40 @@ namespace mars {
                 io.DefineAttribute<std::string>("vtk.xml", ss.str(), {}, {});
                 ///////////////////////////////////////////////////////////////////////////////
 
-                engine.Put("NumOfElements", static_cast<uint32_t>(n_elements));
-
                 ::adios2::Variable<int32_t> var_element_attribute = io.InquireVariable<int32_t>("attribute");
                 ::adios2::Variable<int32_t>::Span span_element_attribute = engine.Put<int32_t>(var_element_attribute);
 
+                engine.Put("NumOfElements", static_cast<uint32_t>(n_elements));
                 ::adios2::Variable<uint64_t> var_connectivity = io.InquireVariable<uint64_t>("connectivity");
-                ::adios2::Variable<uint64_t>::Span span_connectivity = engine.Put<uint64_t>(var_connectivity);
 
-                Adios2Helper::write_elements(mesh, span_connectivity, span_element_attribute);
+                /* ::adios2::Variable<uint64_t>::Span span_connectivity = engine.Put<uint64_t>(var_connectivity);
+                Adios2Helper::write_elements(mesh, span_connectivity, span_element_attribute); */
 
                 engine.Put("NumOfVertices", static_cast<uint32_t>(n_nodes));
                 ::adios2::Variable<Real> var_vertices = io.InquireVariable<Real>("vertices");
-                ::adios2::Variable<Real>::Span span_vertices = engine.Put<Real>(var_vertices);
 
-                Adios2Helper::write_nodes(mesh, span_vertices);
-            }
+                /* ::adios2::Variable<Real>::Span span_vertices = engine.Put<Real>(var_vertices);
+                Adios2Helper::write_nodes(mesh, span_vertices); */
+
+                ViewVectorType<uint64_t> cells("cells", n_elements * (n_nodes_x_element + 1));
+                Adios2Helper::write_elements(mesh, cells);
+
+                ViewVectorType<Real> points("points", n_nodes * Dim);
+                Adios2Helper::write_nodes(mesh, points);
+
+                /* engine.BeginStep(); */
+
+#ifdef MARS_USE_CUDA
+                var_connectivity.SetMemorySpace(::adios2::MemorySpace::CUDA);
+                var_vertices.SetMemorySpace(::adios2::MemorySpace::CUDA);
+#endif
+                engine.Put<uint64_t>(var_connectivity, cells.data(), ::adios2::Mode::Sync);
+                engine.Put<Real>(var_vertices, points.data(), ::adios2::Mode::Sync);
+
+                /* write_step(); */
+
+                /* engine.EndStep(); */
+           }
 
             Impl(Mesh& mesh, MPI_Comm comm) : mesh(mesh), adios(comm), io(adios.DeclareIO("BPFile_SZ")), engine() {}
 
