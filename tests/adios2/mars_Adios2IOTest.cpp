@@ -51,7 +51,7 @@ public:
     using Adios2IO_t = mars::adios2::IO<FEDofMap_t>;
 
     void set_up() {
-        constexpr Integer n_x_dim = 40;
+        constexpr Integer n_x_dim = 200;
         for (int d = 0; d < Dim; ++d) {
             dims[d] = n_x_dim;
         }
