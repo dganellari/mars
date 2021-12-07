@@ -79,6 +79,10 @@ namespace mars {
                 }
             }
 
+            static ViewVectorType<Real> write_field(const ParallelMesh3& mesh,
+                                                    ViewVectorType<Real>& local_data,
+                                                    const ViewVectorType<Real>& data) {}
+
             static void write_field(const ParallelMesh3& mesh,
                                     int n_components,
                                     const ViewVectorType<Real>& data,
@@ -155,43 +159,27 @@ namespace mars {
             }
 
             static void write_field(const FEDofMap& fe_dof_map,
-                                    int n_components,
-                                    const ViewVectorType<Real>& owned_data,
-                                    ::adios2::Variable<Real>::Span& span) {
+                                    ViewVectorType<Real>& local_data,
+                                    const ViewVectorType<Real>& data) {
                 auto dof_handler = fe_dof_map.get_dof_handler();
-                auto& ctx = dof_handler.get_context();
-                int comm_size = ::mars::num_ranks(ctx);
+                auto data_size = data.extent(0);
 
-                assert(dof_handler.get_owned_dof_size() == owned_data.extent(0));
-                const Integer size = dof_handler.get_owned_dof_size();
+                // if onwed data is provided then this data is put into a local data size view.
+                if (data_size == dof_handler.get_owned_dof_size()) {
+                    auto& ctx = dof_handler.get_context();
+                    int comm_size = ::mars::num_ranks(ctx);
 
-                ViewVectorType<Integer> global_to_sfc = dof_handler.get_global_dof_enum().get_view_elements();
-
-                ViewVectorType<Real> local_data("local_data", dof_handler.get_dof_size());
-
-                Kokkos::parallel_for(
-                    "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
-                        const Integer base = dof_handler.compute_base(i);
-                        const Integer component = dof_handler.compute_component(i);
-                        const Integer sfc = global_to_sfc(base);
-
-                        const Integer local = dof_handler.sfc_to_local(sfc);
-                        local_data(dof_handler.compute_block_index(local, component)) = owned_data(i);
-                    });
-
-                if (comm_size > 1) {
-                    ::mars::gather_ghost_data(dof_handler, local_data);
+                    local_data = ViewVectorType<Real>("local_data", dof_handler.get_dof_size());
+                    ::mars::set_locally_owned_data(dof_handler, local_data, data);
+                    if (comm_size > 1) {
+                        ::mars::gather_ghost_data(dof_handler, local_data);
+                    }
+                    Kokkos::fence();
+                    return;
                 }
-
-                typename ViewVectorType<Real>::HostMirror data_host = Kokkos::create_mirror_view(local_data);
-                Kokkos::deep_copy(data_host, local_data);
-                Integer n = data_host.extent(0);
-
-                // Integer nn = n_nodes(mesh);
-
-                for (int v = 0; v < n; ++v) {
-                    span[v] = data_host[v];
-                }
+                // In case a local dof size view is provided there is no need for all the above.
+                assert(dof_handler.get_dof_size() == data_size);
+                local_data = data;
             }
         };  // namespace adios2
 
@@ -384,8 +372,13 @@ namespace mars {
             using Adios2Helper = mars::adios2::Adios2Helper<Mesh>;
 
             ::adios2::Variable<Real> var = io.InquireVariable<Real>(this->name);
-            ::adios2::Variable<Real>::Span span = engine.Put<Real>(var);
-            Adios2Helper::write_field(mesh, this->n_components, this->data, span);
+            ViewVectorType<Real> local_data;
+            Adios2Helper::write_field(mesh, local_data, this->data);
+#ifdef MARS_USE_CUDA
+            var.SetMemorySpace(::adios2::MemorySpace::CUDA);
+#endif
+            engine.Put<Real>(var, local_data.data());
+            engine.PerformPuts();
         }
 
         template <class Mesh>
