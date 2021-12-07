@@ -160,9 +160,15 @@ namespace mars {
             Kokkos::parallel_for("init_initial_cond", get_block<B>() * global_dof_enum.get_elem_size(), f);
         }
 
+
         template <typename H, Integer B = Block_>
         MARS_INLINE_FUNCTION void dof_iterate(H f) const {
             Kokkos::parallel_for("init_initial_cond", get_block<B>() * local_dof_enum.get_elem_size(), f);
+        }
+
+        template <typename H>
+        MARS_INLINE_FUNCTION void base_dof_iterate(H f) const {
+            Kokkos::parallel_for("init_initial_cond", local_dof_enum.get_elem_size(), f);
         }
 
         template <typename H>
@@ -1808,6 +1814,10 @@ namespace mars {
             get_dof_coordinates_from_local<ElemType, B>(local, point);
         }
 
+        MARS_INLINE_FUNCTION void get_base_local_dof_coordinates(const Integer local, double *point) const {
+            get_dof_coordinates_from_local<ElemType, 1>(local, point);
+        }
+
         template <Integer Type>
         MARS_INLINE_FUNCTION bool boundary_sfc(const Integer sfc, const Integer FaceNr = -1) const {
             const Integer xdim = get_local_dof_enum().get_XDim();
@@ -1869,6 +1879,8 @@ namespace mars {
         MARS_INLINE_FUNCTION const Integer get_dof_size() const {
             return get_block<B>() * local_dof_enum.get_elem_size();
         }
+
+        MARS_INLINE_FUNCTION const Integer get_base_dof_size() const { return local_dof_enum.get_elem_size(); }
 
         // no need to be vector valued since it will give the same result.
         MARS_INLINE_FUNCTION

@@ -103,8 +103,7 @@ namespace mars {
             using FEDofMap = mars::FEDofMap<DofHandler>;
 
             static Integer n_nodes(const FEDofMap& fe_dof_map) {
-                auto dof = fe_dof_map.get_dof_handler().get_local_dof_enum();
-                return dof.get_elem_size();
+                return fe_dof_map.get_dof_handler().get_base_dof_size();
             }
 
             static Integer n_elements(const FEDofMap& fe_dof_map) {
@@ -138,20 +137,16 @@ namespace mars {
 
             static void write_nodes(const FEDofMap& fe_dof_map, const ViewVectorType<Real>& points) {
                 auto dof_handler = fe_dof_map.get_dof_handler();
-                auto dof = dof_handler.get_local_dof_enum();
+                constexpr Integer dim = DofHandler::Dim;
+                //Block=1 omits the block size automatic computations as needed in this case,
+                //as multiple block dof components are based on the same vertex coordinate.
+                //base_<> named method are functionalities with Block == 1;
 
-                Integer n_nodes = dof.get_elem_size();
-                Integer block_size = dof_handler.get_block();
-                int dim = DofHandler::Dim;
-
-                Kokkos::parallel_for("for", n_nodes, MARS_LAMBDA(const int i) {
-                    const Integer sfc_elem = dof_handler.local_to_sfc(i * block_size);
-                    const Integer global_dof = dof_handler.local_to_global(i);
-
+                /* constexpr Integer Block = 1; */
+                dof_handler.base_dof_iterate(MARS_LAMBDA(const int i) {
                     Real point[3] = {0., 0., 0.};
-                    get_vertex_coordinates_from_sfc<DofHandler::ElemType>(
-                        sfc_elem, point, dof.get_XDim(), dof.get_YDim(), dof.get_ZDim());
-
+                    /* dof_handler.template get_local_dof_coordinates<Block>(i, point); */
+                    dof_handler.get_base_local_dof_coordinates(i, point);
                     for (int d = 0; d < dim; ++d) {
                         points(i * dim + d) = point[d];
                     }
