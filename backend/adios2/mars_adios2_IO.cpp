@@ -119,7 +119,6 @@ namespace mars {
                 auto dof_handler = fe_dof_map.get_dof_handler();
                 int block_size = dof_handler.get_block();
                 int nne = n_nodes_x_element(dof_handler);
-                int ne = n_elements(dof_handler);
 
                 fe_dof_map.owned_element_iterate(MARS_LAMBDA(const Integer elem_index) {
                     auto offset = elem_index * (nne + 1);

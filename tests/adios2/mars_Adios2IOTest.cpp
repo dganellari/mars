@@ -82,7 +82,7 @@ public:
 
         double time_gen = timer.seconds();
         std::cout << "Mesh Generation took: " << time_gen << std::endl;
-
+/*
         Kokkos::Timer timer_dof;
 
         DOFHandler_t dof_handler(&mesh);
@@ -91,12 +91,13 @@ public:
 
         double time_dh = timer_dof.seconds();
         std::cout << "DOFHandler enum took: " << time_dh << std::endl;
-
+        auto fe = build_fe_dof_map<DOFHandler_t>(dof_handler);
+ */
         Kokkos::Timer timer_map;
 
-        auto fe = build_fe_dof_map<DOFHandler_t>(dof_handler);
-
-        auto dof = fe.get_dof_handler().get_local_dof_enum();
+        //builds FEDOFMAP from the mesh and block 1.
+        auto fe = build_fe_dof_map<DOFHandler_t>(mesh, 1);
+        auto dof_handler = fe.get_dof_handler();
 
         ViewVectorType<Real> data("data", dof_handler.get_owned_dof_size());
 

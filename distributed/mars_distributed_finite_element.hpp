@@ -740,6 +740,14 @@ namespace mars {
         return fe;
     }
 
+    template <class DofHandler, class Mesh, bool Overlap = true, Integer Label = DofHandler::dofLabel>
+    auto build_fe_dof_map(Mesh &mesh, const Integer block = 1) {
+        DofHandler handler(&mesh);
+        handler.enumerate_dofs();
+        handler.set_block(block);
+        return build_fe_dof_map<DofHandler, Overlap, Label>(handler);
+    }
+
 }  // namespace mars
 
 #endif
