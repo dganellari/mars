@@ -252,12 +252,12 @@ namespace mars {
 
 		Integer capacity()
 		{
-			mapping_.capacity();
+			return mapping_.capacity();
 		}
 
 		Integer size()
 		{
-			mapping_.size();
+			return mapping_.size();
 		}
 
 

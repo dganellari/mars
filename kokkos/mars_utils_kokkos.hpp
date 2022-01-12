@@ -1,10 +1,13 @@
 #ifndef GENERATION_MARS_UTILS_KOKKOS_HPP_
 #define GENERATION_MARS_UTILS_KOKKOS_HPP_
 
+#include "mars_config.hpp"
+
 #ifdef WITH_KOKKOS
 #include "KokkosKernels_default_types.hpp"
 #include "KokkosSparse_CrsMatrix.hpp"
 #include "Kokkos_Layout.hpp"
+#include "Kokkos_UnorderedMap.hpp"
 #endif
 #include <err.h>
 #include "mars_globals.hpp"
@@ -20,29 +23,31 @@ namespace mars {
 
 // Defined for host operations that need to be performed always on the host
 #ifdef KOKKOS_ENABLE_OPENMP
-#define KokkosHostSpace Kokkos::HostSpace
-#define KokkosHostExecSpace Kokkos::OpenMP
-#else //Serial
-#define KokkosHostSpace Kokkos::HostSpace
-#define KokkosHostExecSpace Kokkos::Serial
+    using KokkosHostSpace = Kokkos::HostSpace;
+    using KokkosHostExecSpace = Kokkos::OpenMP;
+#else  // Serial
+    using KokkosHostSpace = Kokkos::HostSpace;
+    using KokkosHostExecSpace = Kokkos::Serial;
 #endif
 
 // Default Kokkos Exec space.
 #if defined(MARS_USE_CUDA)
 #if defined(MARS_USE_CUDAUVM)
-#define KokkosSpace Kokkos::CudaUVMSpace
+    using KokkosSpace = Kokkos::CudaUVMSpace;
 #else
-#define KokkosSpace Kokkos::CudaSpace
+    using KokkosSpace = Kokkos::CudaSpace;
 #endif  // MARS_USE_CUDAUVM
-#define KokkosLayout Kokkos::LayoutLeft
+    using KokkosLayout = Kokkos::LayoutLeft;
+#define MARS_LAMBDA_REF [&] __device__;
 #else  // MARS_USE_CUDA
 #ifdef KOKKOS_ENABLE_OPENMP
-#define KokkosSpace Kokkos::HostSpace
-#define KokkosLayout Kokkos::LayoutRight
-#else  // Serial
-#define KokkosSpace Kokkos::HostSpace
-#define KokkosLayout Kokkos::LayoutRight
+    using KokkosSpace = Kokkos::HostSpace;
+    using KokkosLayout = Kokkos::LayoutRight;
+#else   // Serial
+    using KokkosSpace = Kokkos::HostSpace;
+    using KokkosLayout = Kokkos::LayoutRight;
 #endif  // KOKKOS_ENABLE_OPENMP
+#define MARS_LAMBDA_REF [&]
 #endif  // MARS_USE_CUDA
 
     template <typename T>
@@ -53,6 +58,9 @@ namespace mars {
 
     template <typename T>
     using ViewVectorType = Kokkos::View<T*, KokkosLayout, KokkosSpace>;
+
+    template <typename T>
+    using ViewMatrixTypeLeft = Kokkos::View<T**, Kokkos::LayoutLeft, KokkosSpace>;
 
     template <typename T>
     using ViewMatrixType = Kokkos::View<T**, KokkosLayout, KokkosSpace>;
@@ -194,9 +202,8 @@ namespace mars {
         typename ViewMatrixTextureC<T, xDim_, yDim_>::HostMirror h_view = create_mirror_view(map_side_to_nodes);
 
         parallel_for(
-            MDRangePolicy<Rank<2>, KokkosHostExecSpace>({0, 0}, {xDim, yDim}), KOKKOS_LAMBDA(int i, int j) {
-                h_view(i, j) = hostData[i][j];
-            });
+            MDRangePolicy<Rank<2>, KokkosHostExecSpace>({0, 0}, {xDim, yDim}),
+            KOKKOS_LAMBDA(int i, int j) { h_view(i, j) = hostData[i][j]; });
 
         Kokkos::deep_copy(map_side_to_nodes, h_view);
     }
@@ -326,7 +333,7 @@ namespace mars {
 
     // not a very performant scan since its access is not coalesced. However OK for small arrays.
     template <typename T, typename U>
-    void row_scan(const Integer end, const Integer row_idx, const ViewMatrixType<U>& in_, ViewVectorType<T>& out_) {
+    void row_scan(const Integer end, const Integer row_idx, const ViewMatrixTypeLeft<U>& in_, ViewVectorType<T>& out_) {
         using namespace Kokkos;
 
         parallel_scan(
@@ -409,6 +416,35 @@ namespace mars {
                 }
 
                 upd += val_i;
+            });
+    }
+
+    // returns the prefix sum of C into a mirror view
+    template <typename C>
+    void make_scan_index_mirror(const ViewVectorType<Integer>::HostMirror& out, C const& c) {
+        static_assert(std::is_integral<typename C::value_type>::value, "make_index only applies to integral types");
+
+        out(0) = 0;
+        std::partial_sum(c.begin(), c.end(), out.data() + 1);
+    }
+
+    // Segmented scan on a bool view using hierachical Parallelism. Cub lib has the best impl.
+    template <typename F>
+    void segmented_scan(const Integer teams, ViewVectorType<bool> in_, F f) {
+        Kokkos::parallel_for(
+            "naive scan",
+            Kokkos::TeamPolicy<>(teams, Kokkos::AUTO),
+            MARS_LAMBDA(const Kokkos::TeamPolicy<>::member_type& teamMember) {
+                Integer i = teamMember.league_rank();
+                if (in_(i) == 1) {
+                    Integer segmentSum = 0;
+                    Kokkos::parallel_reduce(
+                        Kokkos::TeamVectorRange(teamMember, i),
+                        [=](const Integer j, Integer& innerUpdate) { innerUpdate += in_(j); },
+                        segmentSum);
+
+                    f(segmentSum, i);
+                }
             });
     }
 
