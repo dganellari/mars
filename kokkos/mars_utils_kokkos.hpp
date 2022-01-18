@@ -97,6 +97,9 @@ namespace mars {
 
     template <typename... T>
     using ViewsTuple = std::tuple<ViewVectorType<T>...>;
+
+    template <typename... T>
+    using ViewsTupleHost = std::tuple<typename ViewVectorType<T>::HostMirror...>;
     /*
 
     template<typename T>

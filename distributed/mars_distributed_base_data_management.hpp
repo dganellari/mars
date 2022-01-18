@@ -11,6 +11,7 @@ namespace mars {
     class BDM {
     public:
         using user_tuple = ViewsTuple<T...>;
+        using host_user_tuple = ViewsTupleHost<T...>;
         using tuple = std::tuple<T...>;
 
         template <Integer idx>
@@ -21,6 +22,12 @@ namespace mars {
                                                            std::string view_desc,
                                                            const Integer size) {
             expand_tuple<resize_view_functor, user_tuple, dataidx...>(resize_view_functor(view_desc, size), tuple);
+        }
+
+        template <bool mirror, bool copy_hd, bool copy_dh, Integer... dataidx>
+        MARS_INLINE_FUNCTION static void mirror_user_data(user_tuple &tuple, host_user_tuple &htuple) {
+            expand_tuple<mirror_view_functor, user_tuple, host_user_tuple, dataidx...>(
+                mirror_view_functor(mirror, copy_hd, copy_dh), tuple, htuple);
         }
 
         template <typename H>
@@ -111,20 +118,6 @@ namespace mars {
                 FillBufferDataFunctor<Op, H>("fill_buffer_data", size, dof_handler), buffer_data, udata);
         }
 
-        struct ExchangeGhostDofsData {
-            ExchangeGhostDofsData(const context &c, Integer *sr, Integer *ss)
-                : con(c), sc_rcv_mirror(sr), sc_snd_mirror(ss) {}
-
-            template <typename ElementType>
-            void operator()(ElementType &el_1, ElementType &el_2) const {
-                con->distributed->i_send_recv_view(el_1, sc_rcv_mirror, el_2, sc_snd_mirror);
-            }
-
-            Integer *sc_rcv_mirror;
-            Integer *sc_snd_mirror;
-            const context &con;
-        };
-
         /* template <Integer B>
         MARS_INLINE_FUNCTION static typename std::enable_if<B == 1, std::vector<Integer> >::type
         compute_block_scan(Integer *mirror, const Integer size, const Integer block) {
@@ -158,19 +151,37 @@ namespace mars {
             }
         }
 
-        template <typename H, Integer... dataidx>
+        struct ExchangeGhostDofsData {
+            ExchangeGhostDofsData(const context &c, Integer *sr, Integer *ss)
+                : con(c), sc_rcv_mirror(sr), sc_snd_mirror(ss) {}
+
+            template <typename ElementType>
+            void operator()(ElementType &el_1, ElementType &el_2) const {
+                con->distributed->i_send_recv_view(el_1, sc_rcv_mirror, el_2, sc_snd_mirror);
+            }
+
+            Integer *sc_rcv_mirror;
+            Integer *sc_snd_mirror;
+            const context &con;
+        };
+
+        template <typename Tpl, Integer... dataidx>
         MARS_INLINE_FUNCTION static void exchange_ghost_dofs_data(const context &c,
                                                                   const Integer block,
-                                                                  user_tuple &recv_data,
-                                                                  user_tuple &send_data,
+                                                                  Tpl &recv_data,
+                                                                  Tpl &send_data,
                                                                   Integer *r_mirror,
                                                                   Integer *s_mirror) {
+            /* Kokkos::Timer timer_c; */
             const int rank_size = num_ranks(c) + 1;
             auto recv_mirror = compute_block_scan(r_mirror, rank_size, block);
             auto send_mirror = compute_block_scan(s_mirror, rank_size, block);
 
-            expand_tuple<ExchangeGhostDofsData, user_tuple, dataidx...>(
+            expand_tuple<ExchangeGhostDofsData, Tpl, dataidx...>(
                 ExchangeGhostDofsData(c, recv_mirror.data(), send_mirror.data()), recv_data, send_data);
+
+            /* double time_call = timer_c.seconds(); */
+            /* std::cout << "Collect: " << time_call << std::endl; */
         }
 
         // gather operation: fill the data from the received ghost data
@@ -264,17 +275,38 @@ namespace mars {
 
             Kokkos::fence();
 
+#ifdef MARS_NO_RDMA
+            host_user_tuple host_buffer_data;
+            host_user_tuple host_ghost_user_data;
+            mirror_user_data<1, 0, 1, dataidx...>(buffer_data, host_buffer_data);
+            mirror_user_data<1, 0, 0, dataidx...>(ghost_user_data, host_ghost_user_data);
+#endif
             // overlapping computational callback method with the MPI comm.
             callback();
 
-            const auto block_size = dof_handler.get_block();
-            exchange_ghost_dofs_data<H, dataidx...>(context,
-                                                    block_size,
-                                                    ghost_user_data,
-                                                    buffer_data,
-                                                    dof_handler.get_view_scan_recv_mirror().data(),
-                                                    dof_handler.get_view_scan_send_mirror().data());
+#ifdef MARS_NO_RDMA
+            using TupleType = user_tuple;
+#else
+            using TupleType = host_user_tuple;
+#endif
 
+            const auto block_size = dof_handler.get_block();
+            exchange_ghost_dofs_data<host_user_tuple, dataidx...>(context,
+                                                                  block_size,
+#ifdef MARS_NO_RDMA
+                                                                  host_ghost_user_data,
+                                                                  host_buffer_data,
+#elif
+                                                                  ghost_user_data,
+                                                                  buffer_data,
+#endif
+                                                                  dof_handler.get_view_scan_recv_mirror().data(),
+                                                                  dof_handler.get_view_scan_send_mirror().data());
+
+#ifdef MARS_NO_RDMA
+            // Only deep copy now from the host received data to the device
+            mirror_user_data<0, 1, 0, dataidx...>(ghost_user_data, host_ghost_user_data);
+#endif
             /* use the received ghost data and the sfc to put them to the unified local data */
             fill_user_data<H, 0, dataidx...>(user_data, ghost_user_data, dof_handler);
         }
@@ -320,7 +352,7 @@ namespace mars {
 
             const auto block_size = dof_handler.get_block();
             // prepare the buffer to send the boundary data
-            exchange_ghost_dofs_data<H, dataidx...>(context,
+            exchange_ghost_dofs_data<dataidx...>(context,
                                                     block_size,
                                                     boundary_user_data,
                                                     ghost_buffer_data,

@@ -190,6 +190,22 @@ namespace mars {
         apply_impl<F, I + 1, Tp...>(f, t, v);
     }
 
+    /* forwards expansion of a tuple from 0-N */
+    template <typename F, std::size_t I = 0, typename... Tp>
+    inline typename std::enable_if<I == sizeof...(Tp), void>::type apply_impl(
+        const F &f,
+        std::tuple<ViewVectorType<Tp>...> &t,
+        std::tuple<typename ViewVectorType<Tp>::HostMirror...> &v) {}
+
+    template <typename F, std::size_t I = 0, typename... Tp>
+        inline typename std::enable_if <
+        I<sizeof...(Tp), void>::type apply_impl(const F &f,
+                                                std::tuple<ViewVectorType<Tp>...> &t,
+                                                std::tuple<typename ViewVectorType<Tp>::HostMirror...> &v) {
+        f(std::get<I>(t), std::get<I>(v));
+        apply_impl<F, I + 1, Tp...>(f, t, v);
+    }
+
     template <typename F, Integer I = 0, Integer... Args, typename... Tp>
     typename std::enable_if<I == sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F &f,
                                                                                                 std::tuple<Tp...> &t) {}
@@ -228,6 +244,21 @@ namespace mars {
         I<sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F &f,
                                                                          std::tuple<ViewMatrixType<Tp>...> &t,
                                                                          std::tuple<ViewVectorType<Tp>...> &v) {
+        constexpr Integer dataIndex = NthValue<I, Args...>::value;
+
+        f(std::get<dataIndex>(t), std::get<dataIndex>(v));
+        for_each_arg<F, I + 1, Args...>(f, t, v);
+    }
+
+    template <typename F, Integer I = 0, Integer... Args, typename... Tp>
+    typename std::enable_if<I == sizeof...(Args), void>::type MARS_INLINE_FUNCTION
+    for_each_arg(const F &f, std::tuple<ViewVectorType<Tp>...> &t, std::tuple<typename ViewVectorType<Tp>::HostMirror...> &v) {}
+
+    template <typename F, Integer I = 0, Integer... Args, typename... Tp>
+        typename std::enable_if < I<sizeof...(Args), void>::type MARS_INLINE_FUNCTION
+                                  for_each_arg(const F &f,
+                                               std::tuple<ViewVectorType<Tp>...> &t,
+                                               std::tuple<typename ViewVectorType<Tp>::HostMirror...> &v) {
         constexpr Integer dataIndex = NthValue<I, Args...>::value;
 
         f(std::get<dataIndex>(t), std::get<dataIndex>(v));
@@ -300,6 +331,20 @@ namespace mars {
                 std::cout << "i: " << i << " value: " << view(i) << std::endl;
             });
     }
+
+    struct mirror_view_functor {
+        mirror_view_functor(bool m, bool chd, bool cdh) : mirror(m), copy_host_device(chd), copy_device_host(cdh) {}
+        template <typename ElementType, typename MirrorElementType>
+        void operator()(ElementType &el, MirrorElementType &mel) const {
+            if (mirror) mel = Kokkos::create_mirror_view(el);
+            if (copy_host_device) Kokkos::deep_copy(el, mel);
+            if (copy_device_host) Kokkos::deep_copy(Kokkos::OpenMP(), mel, el);
+        }
+
+        bool mirror;
+        bool copy_host_device;
+        bool copy_device_host;
+    };
 
     struct resize_view_functor {
         resize_view_functor(std::string d, size_t s) : _desc(d), _size(s) {}
