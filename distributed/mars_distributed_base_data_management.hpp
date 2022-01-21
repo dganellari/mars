@@ -157,7 +157,7 @@ namespace mars {
 
             template <typename ElementType>
             void operator()(ElementType &el_1, ElementType &el_2) const {
-                con->distributed->i_send_recv_view(el_1, sc_rcv_mirror, el_2, sc_snd_mirror);
+                con->distributed->i_send_recv_view(el_1.data(), sc_rcv_mirror, el_2.data(), sc_snd_mirror);
             }
 
             Integer *sc_rcv_mirror;
@@ -172,16 +172,12 @@ namespace mars {
                                                                   Tpl &send_data,
                                                                   Integer *r_mirror,
                                                                   Integer *s_mirror) {
-            /* Kokkos::Timer timer_c; */
             const int rank_size = num_ranks(c) + 1;
             auto recv_mirror = compute_block_scan(r_mirror, rank_size, block);
             auto send_mirror = compute_block_scan(s_mirror, rank_size, block);
 
             expand_tuple<ExchangeGhostDofsData, Tpl, dataidx...>(
                 ExchangeGhostDofsData(c, recv_mirror.data(), send_mirror.data()), recv_data, send_data);
-
-            /* double time_call = timer_c.seconds(); */
-            /* std::cout << "Collect: " << time_call << std::endl; */
         }
 
         // gather operation: fill the data from the received ghost data
@@ -285,13 +281,13 @@ namespace mars {
             callback();
 
 #ifdef MARS_NO_RDMA
-            using TupleType = user_tuple;
-#else
             using TupleType = host_user_tuple;
+#else
+            using TupleType = user_tuple;
 #endif
 
             const auto block_size = dof_handler.get_block();
-            exchange_ghost_dofs_data<host_user_tuple, dataidx...>(context,
+            exchange_ghost_dofs_data<TupleType, dataidx...>(context,
                                                                   block_size,
 #ifdef MARS_NO_RDMA
                                                                   host_ghost_user_data,

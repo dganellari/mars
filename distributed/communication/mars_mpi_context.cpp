@@ -95,6 +95,13 @@ struct mpi_context_impl {
   }
 
   template <typename T>
+  void i_send_recv_view(T *dest,
+                        const Integer *dest_displ, const T *src,
+                        const Integer *src_displ) const {
+    mpi::i_send_recv_view(dest, dest_displ, src, src_displ, comm_);
+  }
+
+  template <typename T>
   void i_send_recv_view(const ViewVectorType<T> &dest,
                         const Integer *dest_displ, const ViewVectorType<T> &src,
                         const Integer *src_displ) const {

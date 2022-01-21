@@ -53,7 +53,7 @@ namespace mars
     virtual T min(T value) const = 0;  \
     virtual T max(T value) const = 0;  \
     virtual T sum(T value) const = 0;  \
-    virtual std::vector<T> gather(T value, int root) const = 0; 
+    virtual std::vector<T> gather(T value, int root) const = 0;
 
 #define MARS_WRAP_COLLECTIVES_(T)                                \
     T min(T value) const override { return wrapped.min(value); } \
@@ -77,6 +77,9 @@ namespace mars
     void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ, \
                 const ViewVectorType<T> &src, const Integer* src_displ) \
                 { impl_->i_send_recv_view(dest, dest_displ, src, src_displ); } \
+    void i_send_recv_view(T* dest, const Integer* dest_displ, \
+                const T* src, const Integer* src_displ) \
+                { impl_->i_send_recv_view(dest, dest_displ, src, src_displ); } \
     void gather_all_view(T value, const ViewVectorType<T> &buffer) \
                 { impl_->gather_all_view(value, buffer); }
 
@@ -89,8 +92,10 @@ namespace mars
                 const ViewVectorType<T> &src, const Integer* src_displ) const = 0; \
     virtual void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ, \
                 const ViewVectorType<T> &src, const Integer* src_displ) const = 0; \
+    virtual void i_send_recv_view(T* dest, const Integer* dest_displ, \
+                const T* src, const Integer* src_displ) const = 0; \
     virtual void gather_all_view(T value, const ViewVectorType<T> &buffer) const = 0;
-    
+
 #define MARS_WRAP_PTOP_(T)                                \
     ViewObject<T> min(ViewObject<T> value) const override { return wrapped.min(value); } \
     ViewObject<T> max(ViewObject<T> value) const override { return wrapped.max(value); } \
@@ -104,9 +109,12 @@ namespace mars
     void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ, \
                 const ViewVectorType<T> &src, const Integer* src_displ) const override \
                 { wrapped.i_send_recv_view(dest, dest_displ, src, src_displ); } \
+    void i_send_recv_view(T* dest, const Integer* dest_displ, \
+                const T* src, const Integer* src_displ) const override \
+                { wrapped.i_send_recv_view(dest, dest_displ, src, src_displ); } \
     void gather_all_view(T value, const ViewVectorType<T> &buffer) const override \
                 { wrapped.gather_all_view(value, buffer); }
-    
+
 #define MARS_PTOP_TYPES_ double, Integer, float, int, unsigned, short
 #endif
 
@@ -309,6 +317,13 @@ struct local_context
                 const ViewVectorType<T> &src, const Integer* src_displ) const
     {
     }
+
+    template<typename T>
+    void i_send_recv_view(T* dest, const Integer* dest_displ,
+                const T* src, const Integer* src_displ) const
+    {
+    }
+
     template<typename T>
     void i_send_recv_view(const ViewVectorType<T> &dest, const Integer* dest_displ,
                 const ViewVectorType<T> &src, const Integer* src_displ) const
