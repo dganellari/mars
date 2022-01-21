@@ -7,56 +7,51 @@ namespace mars {
 
     namespace stag {
 
-        static constexpr Integer Degree = 2;
+        template <class Mesh, Integer Degree>
+        class DofTypes {
+        public:
+            using DHandler = DofHandler<Mesh, Degree>;
 
-        using DHandler = DofHandler<DistributedQuad4Mesh, Degree>;
+            // Finite Element DM
+            using FEDM = DM<DHandler, double, double>;
 
-        // Finite Element DM
-        using FEDM = DM<DHandler, double, double>;
+            // Staggered DofHandlers
+            using VDH = VolumeDofHandler<DHandler>;
+            using CDH = CornerDofHandler<DHandler>;
+            using FDH = FaceDofHandler<DHandler>;
 
-        // Staggered DofHandlers
-        using VDH = VolumeDofHandler<DHandler>;
-        using CDH = CornerDofHandler<DHandler>;
-        using FDH = FaceDofHandler<DHandler>;
+            using FVDH = FaceVolumeDofHandler<DHandler>;
+            using CVDH = CornerVolumeDofHandler<DHandler>;
+            // Staggered DMs
+            using VolumeDM = SDM<VDH, double, double>;
+            using CornerDM = SDM<CDH, double>;
+            using FaceDM = SDM<FDH, double, double>;
 
-        using FVDH = FaceVolumeDofHandler<DHandler>;
-        using CVDH = CornerVolumeDofHandler<DHandler>;
+            using FaceVolumeDM = SDM<FVDH, double, double>;
+            using CornerVolumeDM = SDM<CVDH, double>;
 
-        // Staggered DMs
-        using VolumeDM = SDM<VDH, double, double>;
-        using CornerDM = SDM<CDH, double>;
-        using FaceDM = SDM<FDH, double, double>;
+            static constexpr bool Orient = true;
 
-        using FaceVolumeDM = SDM<FVDH, double, double>;
-        using CornerVolumeDM = SDM<CVDH, double>;
+            using SStencil = StokesStencil<DofLabel::lFace>;
+            using FSStencil = FullStokesStencil<DofLabel::lFace>;
+            // general width 2 stencil used as constant viscosity stokes.
+            using VStencil = Stencil<DofLabel::lVolume>;
+            // general width 1 stencil used as pressure stencil.
+            using CStencil = Stencil<DofLabel::lCorner>;
 
-        /*
-            using VolumeDM = VDM<DHandler, double, double>;
-            using CornerDM = CDM<DHandler, double>;
-            using FaceDM = FDM<DHandler, double, double, double>;
-         */
+            /* using SPattern = SparsityPattern<double, default_lno_t, unsigned long, FVDH, VStencil, SStencil>; */
 
-        static constexpr bool Orient = true;
+            using SPattern = SparsityPattern<double, Integer, unsigned long, FVDH>;
 
-        using SStencil = StokesStencil<DofLabel::lFace>;
-        using FSStencil = FullStokesStencil<DofLabel::lFace>;
-        // general width 2 stencil used as constant viscosity stokes.
-        using VStencil = Stencil<DofLabel::lVolume>;
-        // general width 1 stencil used as pressure stencil.
-        using CStencil = Stencil<DofLabel::lCorner>;
+            template <Integer idx>
+            using VDMDataType = typename VolumeDM::template UserDataType<idx>;
+        };
 
-        using SPattern = SparsityPattern<double, default_lno_t, unsigned long, FVDH, VStencil, SStencil>;
-        /* using SPattern = SparsityPattern<double, VStencil, FSStencil>; */
         // use as more readable tuple index to identify the data
         static constexpr int IN = 0;
         static constexpr int OUT = 1;
-
-        template <Integer idx>
-        using VDMDataType = typename VolumeDM::UserDataType<idx>;
-
         /* template <typename... T>
         using tuple = mars::ViewsTuple<T...>;
-
         using dm_tuple = typename SDM::user_tuple; */
 
         template <class SDM, Integer Type>
@@ -118,37 +113,6 @@ namespace mars {
                            local_dof,
                            d.get_gid(),
                            d.get_proc());
-                });
-        }
-
-        template <typename S>
-        void print_sparsity_pattern(S &sp) {
-            const Integer size = sp.get_num_rows();
-            Kokkos::parallel_for(
-                "for", size, MARS_LAMBDA(const int row) {
-                    const Integer start = sp.get_row_map(row);
-                    const Integer end = sp.get_row_map(row + 1);
-
-                    // print only if end - start > 0. Otherwise segfaults.
-                    // The row index is not a global index of the current process!
-                    for (int i = start; i < end; ++i) {
-                        auto value = sp.get_value(i);
-                        auto col = sp.get_col(i);
-                        // do something. In this case we are printing.
-
-                        const Integer local_dof = sp.get_dof_handler().get_owned_dof(row);
-                        const Integer global_row = sp.get_dof_handler().get_dof_handler().local_to_global(local_dof);
-
-                        const Integer local_col = sp.get_dof_handler().global_to_local(col);
-                        const Integer global_col = sp.get_dof_handler().get_dof_handler().local_to_global(local_col);
-
-                        printf("row_dof: %li - %li, col_dof: %li - %li, value: %lf\n",
-                               row,
-                               global_row,
-                               col,
-                               global_col,
-                               value);
-                    }
                 });
         }
 
@@ -277,109 +241,112 @@ namespace mars {
             });
         }
 
-    //shows how to use most of the mars utilities.
-    template <class BC, class RHS, class AnalyticalFun>
-    void staggered_dm_multi_test(const int level) {
-        using namespace mars;
-        mars::proc_allocation resources;
+        // shows how to use most of the mars utilities.
+        template <class BC, class RHS, class AnalyticalFun>
+        void staggered_dm_multi_test(const int level) {
+            using namespace mars;
+            mars::proc_allocation resources;
 
 #ifdef WITH_MPI
-        // create a distributed context
-        auto context = mars::make_context(resources, MPI_COMM_WORLD);
-        int proc_num = mars::rank(context);
+            // create a distributed context
+            auto context = mars::make_context(resources, MPI_COMM_WORLD);
+            int proc_num = mars::rank(context);
 #else
-        // resources.gpu_id = marsenv::default_gpu();
-        // // create a local context
-        // auto context = mars::make_context(resources);
+            // resources.gpu_id = marsenv::default_gpu();
+            // // create a local context
+            // auto context = mars::make_context(resources);
 #endif
 
 #ifdef WITH_KOKKOS
 
-        Kokkos::Timer timer;
-        // create the quad mesh distributed through the mpi procs.
-        DistributedQuad4Mesh mesh;
-        generate_distributed_cube(context, mesh, level, level, 0);
+            Kokkos::Timer timer;
+            // create the quad mesh distributed through the mpi procs.
+            DistributedQuad4Mesh mesh(context);
+            generate_distributed_cube(mesh, level, level, 0);
 
-        double mtime = timer.seconds();
-        std::cout << "Mesh generation took: " << mtime << " seconds." << std::endl;
+            constexpr Integer Degree = 2;
+            using MyDofTypes = DofTypes<DistributedQuad4Mesh, Degree>;
 
-        /* constexpr Integer Dim = DistributedQuad4Mesh::Dim; */
+            double mtime = timer.seconds();
+            std::cout << "Mesh generation took: " << mtime << " seconds." << std::endl;
 
-        // enumerate the dofs locally and globally. The ghost dofs structures
-        // are now created and ready to use for the gather and scatter ops.
-        DHandler dof_handler(&mesh, context);
-        dof_handler.enumerate_dofs();
+            /* constexpr Integer Dim = DistributedQuad4Mesh::Dim; */
 
-        double dtime = timer.seconds();
-        std::cout << "Dof Handler enumeration took: " << dtime << " seconds." << std::endl;
+            // enumerate the dofs locally and globally. The ghost dofs structures
+            // are now created and ready to use for the gather and scatter ops.
+            typename MyDofTypes::DHandler dof_handler(&mesh);
+            dof_handler.enumerate_dofs();
 
-        FEDM fedm(dof_handler);
+            double dtime = timer.seconds();
+            std::cout << "Dof Handler enumeration took: " << dtime << " seconds." << std::endl;
 
-        /* print_ghost_dofs(fedm); */
+            typename MyDofTypes::FEDM fedm(dof_handler);
 
-        auto fe = build_fe_dof_map(dof_handler);
-        /* print_elem_global_dof(dof_handler, fe); */
+            /* print_ghost_dofs(fedm); */
 
-        /* auto fed = build_dof_to_dof_map(dof_handler); */
-        /* print_dof_to_dof_map(dof_handler, fed); */
+            auto fe = build_fe_dof_map(dof_handler);
+            /* print_elem_global_dof(dof_handler, fe); */
 
-        // it gives the size of the local dofs of the dm. If volume then only volume dofs.
-        const Integer dof_size = dof_handler.get_dof_size();
+            /* auto fed = build_dof_to_dof_map(dof_handler); */
+            /* print_dof_to_dof_map(dof_handler, fed); */
 
-        // if manually managed the data view should have the size of local dof size.
-        ViewVectorType<double> data("IN", dof_size);
-        dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) { data(i) = proc_num; });
+            // it gives the size of the local dofs of the dm. If volume then only volume dofs.
+            const Integer dof_size = dof_handler.get_dof_size();
 
-        gather_ghost_data(dof_handler, data);
-        scatter_add_ghost_data(dof_handler, data);
+            // if manually managed the data view should have the size of local dof size.
+            ViewVectorType<double> data("IN", dof_size);
+            dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) { data(i) = proc_num; });
 
-        /* dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) {
-            const auto idata = data(i);
+            gather_ghost_data(dof_handler, data);
+            scatter_add_ghost_data(dof_handler, data);
 
-            Dof d = dof_handler.local_to_global_dof(i);
+            /* dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) {
+                const auto idata = data(i);
 
-            printf("vlid: %li, u: %lf, global: %li, rank: %i\n", i, idata, d.get_gid(), d.get_proc());
-        }); */
+                Dof d = dof_handler.local_to_global_dof(i);
 
-        // create the DM object from the dof handler
-        /* VolumeDofHandler vdh(dof_handler); */
-        /* FaceDofHandler fdh(dof_handler); */
+                printf("vlid: %li, u: %lf, global: %li, rank: %i\n", i, idata, d.get_gid(), d.get_proc());
+            }); */
 
-        // use a part of the dof handler (separate it and use only volume for example)
-        /* VolumeDM vdm(vdh); */
-        /* VolumeDM vdm(dof_handler); */
-        FaceDM fdm(dof_handler);
-        /* CornerDM cdm(dof_handler); */
+            // create the DM object from the dof handler
+            /* VolumeDofHandler vdh(dof_handler); */
+            /* FaceDofHandler fdh(dof_handler); */
 
-        /* auto fe = build_fe_dof_map(vdm.get_dof_handler()); */
-        /* print_elem_global_dof(vdm.get_dof_handler(), fe); */
+            // use a part of the dof handler (separate it and use only volume for example)
+            /* VolumeDM vdm(vdh); */
+            /* VolumeDM vdm(dof_handler); */
+            typename MyDofTypes::FaceDM fdm(dof_handler);
+            /* CornerDM cdm(dof_handler); */
 
-        auto ffe = build_fe_dof_map(fdm.get_dof_handler());
-        print_elem_global_dof(fdm.get_dof_handler(), ffe);
+            /* auto fe = build_fe_dof_map(vdm.get_dof_handler()); */
+            /* print_elem_global_dof(vdm.get_dof_handler(), fe); */
 
-        /* auto cfe = build_fe_dof_map(cdm.get_dof_handler());
-        print_elem_global_dof(cdm.get_dof_handler(), cfe);<] */
+            auto ffe = build_fe_dof_map(fdm.get_dof_handler());
+            print_elem_global_dof(fdm.get_dof_handler(), ffe);
 
-        /* print_local_dofs(fdm); */
-        /* print_owned_dofs(fdm); */
+            /* auto cfe = build_fe_dof_map(cdm.get_dof_handler());
+            print_elem_global_dof(cdm.get_dof_handler(), cfe);<] */
 
-        /* print_partition_boundary_dofs(vdm); */
-        /* print_ghost_dofs(vdm); */
+            /* print_local_dofs(fdm); */
+            /* print_owned_dofs(fdm); */
 
-        /* If you Orient then the same order is applied through all stencil
-         * based on the orientation. Otherwise no order but just a normal stencil. */
-        /* auto volume_stencil = vdm.build_stencil<VStencil, Orient>(); */
-        /* auto volume_stencil = build_stencil<VStencil>(vdm.get_dof_handler()); */
-        /* print_stencil(vdm.get_dof_handler(), volume_stencil); */
+            /* print_partition_boundary_dofs(vdm); */
+            /* print_ghost_dofs(vdm); */
 
-        auto face_stencil = build_stencil<SStencil>(fdm.get_dof_handler());
-        /* print_stencil(fdm.get_dof_handler(), face_stencil); */
+            /* If you Orient then the same order is applied through all stencil
+             * based on the orientation. Otherwise no order but just a normal stencil. */
+            /* auto volume_stencil = vdm.build_stencil<VStencil, Orient>(); */
+            /* auto volume_stencil = build_stencil<VStencil>(vdm.get_dof_handler()); */
+            /* print_stencil(vdm.get_dof_handler(), volume_stencil); */
 
-        double time = timer.seconds();
-        std::cout << "Stag DM test took: " << time << " seconds." << std::endl;
+            auto face_stencil = build_stencil<typename MyDofTypes::SStencil>(fdm.get_dof_handler());
+            /* print_stencil(fdm.get_dof_handler(), face_stencil); */
+
+            double time = timer.seconds();
+            std::cout << "Stag DM test took: " << time << " seconds." << std::endl;
 
 #endif
-    }
+        }
 
     }  // namespace stag
 }  // namespace mars

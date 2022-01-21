@@ -13,6 +13,8 @@ namespace mars {
         MARS_INLINE_FUNCTION
         RemoteDofMap(DofHandler handler) : dof_handler(handler) {}
 
+        static_assert(DofHandler::Block == 1, "RemoteDofMap does not support yet vector valued block structures.");
+
         template <typename V>
         void build_global_dof_per_rank(const V &view,
                                        V &global_dof,
@@ -22,7 +24,7 @@ namespace mars {
             using namespace Kokkos;
 
             const Integer size = view.extent(0);
-            ViewMatrixType<bool> rank_view("count_per_proc", size, rank_size);
+            ViewMatrixTypeLeft<bool> rank_view("count_per_proc", size, rank_size);
 
             auto handler = dof_handler;
             // build predicate
@@ -35,7 +37,7 @@ namespace mars {
                     }
                 });
 
-            ViewMatrixType<Integer> rank_scan("rank_scan", size + 1, rank_size);
+            ViewMatrixTypeLeft<Integer> rank_scan("rank_scan", size + 1, rank_size);
             for (int i = 0; i < rank_size; ++i) {
                 auto subpredicate = subview(rank_view, ALL, i);
                 auto subscan = subview(rank_scan, ALL, i);
@@ -220,9 +222,10 @@ namespace mars {
             ViewVectorType<Integer> global_dofs, global_sfcs;
             build_global_dof_per_rank(ghost_dofs_sfc, global_dofs, global_sfcs, scan_rcv, rank_size);
 
+            Kokkos::fence();
+
             std::vector<Integer> snd_count(rank_size, 0);
             std::vector<Integer> rcv_count(rank_size, 0);
-
             exchange_ghost_counts(context, snd_count, rcv_count);
 
             create_scan_mirrors(context, snd_count, rcv_count);

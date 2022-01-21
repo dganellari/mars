@@ -32,61 +32,20 @@ uk =[ u1, ... uL ], L = 4
 ---------------------
 //local to global
 u = P uk */
-
-#include "mars_context.hpp"
-#include "mars_globals.hpp"
-// #include <bits/c++config.h>
-#include <exception>
-#include <iostream>
-#include <tuple>
-#include <type_traits>
-#include <utility>
-
-#ifdef WITH_MPI
-
-#include "mars_mpi_guard.hpp"
-
+#include "mars.hpp"
 #ifdef WITH_KOKKOS
 #include <KokkosBlas1_sum.hpp>
 #include "mars_boundary_conditions.hpp"
-#include "mars_distributed_data_management.hpp"
-#include "mars_distributed_mesh_generation.hpp"
 #include "mars_dm_interpolate.hpp"
 #include "mars_laplace_ex.hpp"
 #include "mars_poisson_operator.hpp"
 #include "mars_precon_conjugate_grad.hpp"
 #include "mars_quad4.hpp"
 #endif  // WITH_KOKKOS
-#endif
 
 // #include "mars_pvtu_writer.hpp"  // VTK
 
 namespace mars {
-
-    using DOFHandler = DofHandler<DistributedQuad4Mesh, 1>;
-    /* using DMQ2 = DM<DistributedQuad4Mesh, 2, double, double>; */
-    using DMQ2 = DM<DOFHandler, double, double, double>;
-    using FE = FEDofMap<DOFHandler>;
-        /*
-        enum class DMDataDesc
-        {
-            v = 0,
-            u = 1
-        };
-         */
-
-        // use as more readable tuple index to identify the data
-        static constexpr int INPUT = 0;
-    static constexpr int OUTPUT = 1;
-    static constexpr int RHSD = 2;
-
-    template <Integer idx>
-    using DMDataType = typename DMQ2::UserDataType<idx>;
-
-    template <typename... T>
-    using tuple = mars::ViewsTuple<T...>;
-
-    using dm_tuple = typename DMQ2::user_tuple;
 
     template <Integer Type>
     void print_dof(const SFC<Type> &dof, const int rank) {
@@ -101,42 +60,51 @@ namespace mars {
             });
     }
 
-    template <Integer Type>
-    void print_dofs(const DMQ2 &dm, const int rank) {
-        auto dofhandler = dm.get_dof_handler();
-        SFC<Type> dof = dofhandler.get_local_dof_enum();
+    template <typename DH>
+    void print_dofs(const DH &dofhandler, const int rank) {
+        SFC<DH::ElemType> dof = dofhandler.get_local_dof_enum();
         Kokkos::parallel_for(
             "for", dof.get_elem_size(), MARS_LAMBDA(const int i) {
-                const Integer sfc_elem = dm.get_dof_handler().local_to_sfc(i);
-                const Integer global_dof = dm.get_dof_handler().local_to_global(i);
+                const Integer sfc_elem = dofhandler.local_to_sfc(i);
+                const Integer global_dof = dofhandler.local_to_global(i);
 
                 double point[3];
-                dofhandler.get_dof_coordinates_from_sfc<Type>(sfc_elem, point);
+                dofhandler.get_dof_coordinates_from_sfc<DH::ElemType>(sfc_elem, point);
                 printf("dof: %li - gdof: %li --- (%lf, %lf) - rank: %i\n", i, global_dof, point[0], point[1], rank);
             });
     }
 
     // print thlocal and the global number of the dof within each element.
     // the dof enumeration within eachlement is topological
-    void print_elem_global_dof(const DMQ2 dm, const FE &fe) {
-        auto dof_handler = dm.get_dof_handler();
+    template <typename DH, typename FE>
+    void print_fe_dof_map(const DH &dof_handler, const FE &fe) {
         dof_handler.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
             // go through all the dofs of the elem_index element
-            for (int i = 0; i < FE::elem_nodes; i++) {
+            for (int i = 0; i < fe.get_elem_nodes(); i++) {
                 // get the local dof of the i-th index within thelement
                 const Integer local_dof = fe.get_elem_local_dof(elem_index, i);
                 // convert the local dof number to global dof number
                 Dof d = dof_handler.local_to_global_dof(local_dof);
+                auto octant = dof_handler.get_octant_from_local(local_dof);
 
+                auto base_global = dof_handler.compute_base(d.get_gid());
                 // do something. In this case we are printing.
-                printf("lgm: i: %li, local: %li, global: %li, proc: %li\n", i, local_dof, d.get_gid(), d.get_proc());
+                printf("lgm: i: %li, local: %li, octant: [%li, %li, %li], global: %li, base_global: %li, proc: %li\n",
+                       i,
+                       local_dof,
+                       octant.x,
+                       octant.y,
+                       octant.z,
+                       d.get_gid(),
+                       base_global,
+                       d.get_proc());
             }
         });
     }
 
     // print the local and global numbering of the ghost dofs per process
-    void print_ghost_dofs(const DMQ2 datamanager) {
-        auto dm = datamanager.get_dof_handler();
+    template <typename DH>
+    void print_ghost_dofs(const DH &dm) {
         Kokkos::parallel_for(
             dm.get_ghost_lg_map().capacity(), KOKKOS_LAMBDA(Integer i) {
                 if (dm.get_ghost_lg_map().valid_at(i)) {
@@ -150,8 +118,8 @@ namespace mars {
             });
     }
 
-    template <class BC, class RHS, class AnalyticalFun>
-    void poisson_2D(const int xDim, const int yDim) {
+    template <class BC, class RHS, class AnalyticalFun, Integer Type = ElementType::Quad4>
+    void matrix_free_poisson(const int xDim, const int yDim, const int zDim) {
         using namespace mars;
         mars::proc_allocation resources;
 
@@ -168,20 +136,47 @@ namespace mars {
 #ifdef WITH_KOKKOS
 
         Kokkos::Timer timer;
+
+        using DMesh = DistributedMesh<Type>;
+
         // create the quad mesh distributed through the mpi procs.
-        DistributedQuad4Mesh mesh;
-        generate_distributed_cube(context, mesh, xDim, yDim, 0);
+        DMesh mesh(context);
+        generate_distributed_cube(mesh, xDim, yDim, zDim);
 
-        constexpr Integer Dim = DistributedQuad4Mesh::Dim;
+        /* constexpr Integer Dim = DMesh::Dim; */
+        /* using Elem = typename DistributedQuad4Mesh::Elem; */
+        /* constexpr Integer Type = Elem::ElemType; */
 
-        using Elem = typename DistributedQuad4Mesh::Elem;
-        // the type of the mesh elements. In this case quad4 (Type=4)
-        constexpr Integer Type = Elem::ElemType;
+        constexpr Integer Degree = 1;
+        using DOFHandler = DofHandler<DMesh, Degree>;
+        using DMQ = DM<DOFHandler, double, double, double>;
+        using FE = FEDofMap<DOFHandler, false>;
+        /* using SPattern = SparsityPattern<double, Integer, unsigned long, DOFHandler>; */
 
-        DOFHandler dof_handler(&mesh, context);
+        static_assert(DOFHandler::Block == 1, "Poisson example does not support yet vector valued block structures.");
+
+        // use as more readable tuple index to identify the data
+        static constexpr int INPUT = 0;
+        static constexpr int OUTPUT = 1;
+        static constexpr int RHSD = 2;
+
+        DOFHandler dof_handler(&mesh);
         dof_handler.enumerate_dofs();
+
+        /* dof_handler.print_dofs(proc_num); */
+
+        auto fe = build_fe_dof_map<DOFHandler, false>(dof_handler);
+
+        // print the global dofs for each element's local dof
+        /* print_fe_dof_map(dof_handler, fe); */
+        /* print_ghost_dofs(dm); */
+
+        /* SPattern sp(dof_handler);
+        sp.build_pattern(fe);
+        sp.print_sparsity_pattern(); */
+
         // create the dm object
-        DMQ2 dm(dof_handler);
+        DMQ dm(dof_handler);
         // enumerate the dofs locally and globally. The ghost dofs structures
         // are now created and ready to use for the gather and scatter ops.
         //
@@ -191,12 +186,6 @@ namespace mars {
         // print local dof numbering
         /* print_dof<Type>(dm.get_local_dof_enum(), proc_num); */
         /* print_dofs<Type>(dm, proc_num); */
-
-        auto fe = build_fe_dof_map(dof_handler);
-
-        // print the global dofs for each element's local dof
-        /* print_elem_global_dof(dm, fe); */
-        /* print_ghost_dofs(dm); */
 
         using VectorReal = mars::ViewVectorType<Real>;
         using VectorInt = mars::ViewVectorType<Integer>;
@@ -216,7 +205,7 @@ namespace mars {
             std::cout << "Init PoissonOperator..." << std::endl;
         }
 
-        PoissonOperator<INPUT, OUTPUT, RHSD, DMQ2, FE> pop(context, dm, fe);
+        PoissonOperator<INPUT, OUTPUT, RHSD, DMQ, FE> pop(context, dm, fe);
         pop.init();
 
         if (proc_num == 0) {
@@ -225,14 +214,14 @@ namespace mars {
 
         pop.assemble_rhs(rhs_fun, rhs);
 
-                // if no facenr specified all the boundary is processed. If more than one and less than all
+        // if no facenr specified all the boundary is processed. If more than one and less than all
         // is needed than choose all (do not provide face number) and check manually within the lambda
         dof_handler.boundary_owned_dof_iterate(MARS_LAMBDA(const Integer owned_dof_index, const Integer sfc) {
             /* do something with the local dof number if needed.
             For example: If no face nr is specified at the boundary dof iterate: */
             /*if (dm.is_boundary<Type, left>(local_dof) || dm.is_boundary<Type, up>(local_dof))*/
             double point[2];
-            dm.get_dof_handler().get_dof_coordinates_from_sfc<Type>(sfc, point);
+            dm.get_dof_handler().template get_dof_coordinates_from_sfc<Type>(sfc, point);
             /* bc_fun(point, value); */
             bc_fun(point, x(owned_dof_index));
             bc_fun(point, rhs(owned_dof_index));
@@ -258,9 +247,10 @@ namespace mars {
 
         /* print_ghost_dofs(dm); */
         double time_bcg = timer_bcg.seconds();
-        std::cout << "Bicgstab took: " << time_bcg << " seconds on proc: " << proc_num <<std::endl;
+        std::cout << "Bicgstab took: " << time_bcg << " seconds on proc: " << proc_num << std::endl;
 
-        std::cout << "[" << proc_num << "] ndofs : " << dm.get_dof_handler().get_local_dof_enum().get_elem_size() << std::endl;
+        std::cout << "[" << proc_num << "] ndofs : " << dm.get_dof_handler().get_local_dof_enum().get_elem_size()
+                  << std::endl;
 
         /* dm.dof_iterate(MARS_LAMBDA(const Integer i) {
           printf("ggid: %li, INPUT: %lf, OUTPUT: %lf, rank: %i\n", i,
@@ -271,27 +261,26 @@ namespace mars {
         time = timer.seconds();
         std::cout << "Matrix free took: " << time << " seconds on proc: " << proc_num << std::endl;
 
-
         /* VectorReal x_exact("X_E", locally_owned_dof_size); */
 
         /* Real sum_rhs = KokkosBlas::sum(rhs);
         Real tot = context->distributed->sum(sum_rhs);
         printf("sum_rh****: %lf\n", tot);
  */
-        /* DMInterpolate<DMQ2> ip(dm);
+        /* DMInterpolate<DMQ> ip(dm);
         ip.apply(an_fun, x_exact); */
 
-        // PVTUMeshWriter<DMQ2, Type> w;                   // VTK
+        // PVTUMeshWriter<DMQ, Type> w;                   // VTK
         // w.write_vtu("poisson_exact.vtu", dm, x_exact);  // VTK
         // w.write_vtu("poisson_rhs.vtu", dm, rhs);        // VTK
-/*
-        VectorReal diff("diff", locally_owned_dof_size);
-        pop.apply(x_exact, diff);
+        /*
+                VectorReal diff("diff", locally_owned_dof_size);
+                pop.apply(x_exact, diff);
 
-        Real sum_diff = KokkosBlas::sum(diff);
-        Real diffT = context->distributed->sum(sum_diff);
-        printf("diff****: %lf\n", diffT);
- */
+                Real sum_diff = KokkosBlas::sum(diff);
+                Real diffT = context->distributed->sum(sum_diff);
+                printf("diff****: %lf\n", diffT);
+         */
 
 #endif
     }

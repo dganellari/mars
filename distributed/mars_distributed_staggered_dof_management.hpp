@@ -8,32 +8,50 @@
 
 namespace mars {
 
-    template <Integer Label, class Mesh_, Integer degree>
+    template <Integer Label, typename DofHandler>
     class SDofHandler {
     public:
-        using Mesh = Mesh_;
+        static_assert(DofHandler::Block == 1,
+                      "Staggered Dof Handler does not support yet vector valued block structures.");
 
-        using UD = UserData<Mesh>;
+        using Mesh = typename DofHandler::Mesh;
+        static constexpr Integer Degree = DofHandler::Degree;
+        static constexpr Integer Block = DofHandler::Block;
+
+        using MM = MeshManager<Mesh>;
         using simplex_type = typename Mesh::Elem;
 
         static constexpr Integer ElemType = simplex_type::ElemType;
 
         static constexpr Integer dofLabel = Label;
 
-        static constexpr Integer Degree = degree;
         static constexpr Integer Dim = Mesh::Dim;
         static constexpr Integer ManifoldDim = Mesh::ManifoldDim;
 
+        using NDofs = NumDofs<Degree, Label, ElemType>;
+
+        static constexpr Integer corner_dofs = NDofs::corner_dofs;
+        static constexpr Integer num_corners = NDofs::num_corners;
+
+        static constexpr Integer face_dofs = NDofs::face_dofs;
+        static constexpr Integer num_faces = NDofs::num_faces;
+
+        static constexpr Integer volume_dofs = NDofs::volume_dofs;
+
+        static constexpr Integer edge_dofs = NDofs::edge_dofs;
+        static constexpr Integer num_edges = NDofs::num_edges;
+
+        static constexpr Integer elem_dofs = NDofs::elem_dofs();
+
         MARS_INLINE_FUNCTION
-        SDofHandler(DofHandler<Mesh, degree> d) : dof_handler(d) { prepare_separated_dofs(); }
+        SDofHandler(DofHandler d) : dof_handler(d) { prepare_separated_dofs(); }
 
         struct IsSeparatedDof {
             ViewVectorType<Integer> local_separated_dof_map;
-            DofHandler<Mesh, degree> handler;
+            DofHandler handler;
 
             MARS_INLINE_FUNCTION
-            IsSeparatedDof(ViewVectorType<Integer> map, DofHandler<Mesh, degree> d)
-                : local_separated_dof_map(map), handler(d) {}
+            IsSeparatedDof(ViewVectorType<Integer> map, DofHandler d) : local_separated_dof_map(map), handler(d) {}
 
             MARS_INLINE_FUNCTION
             bool operator()(const Integer sfc) const {
@@ -97,6 +115,8 @@ namespace mars {
             ViewVectorType<Integer> boundary_dofs_index =
                 ViewVectorType<Integer>("bounary_dofs_index", get_boundary_dof_size());
             build_boundary_dof_sets(boundary_dofs_index);
+
+            Kokkos::fence();
 
             ViewVectorType<Integer> ghost_dofs_index("ghost_index_dof", get_ghost_dof_size());
             get_dof_handler().get_context()->distributed->i_send_recv_view(ghost_dofs_index,
@@ -173,8 +193,12 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_owned_dofs() const { return locally_owned_dofs; }
 
-        MARS_INLINE_FUNCTION
-        const Integer get_owned_dof(const Integer i) const { return locally_owned_dofs(i); }
+        template <Integer B = Block>
+        MARS_INLINE_FUNCTION const Integer get_owned_dof(const Integer i) const {
+            auto base = get_dof_handler().template compute_base<B>(i);
+            auto component = get_dof_handler().template compute_component<B>(i);
+            return get_dof_handler().template compute_block_index<B>(locally_owned_dofs(base), component);
+        }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_local_dof_map() const { return local_dof_map; }
@@ -192,7 +216,13 @@ namespace mars {
         Integer get_boundary_dof(const Integer index) const { return boundary_dofs(index); }
 
         MARS_INLINE_FUNCTION
+        Integer get_boundary_local_index(const Integer index) const { return get_local_index(boundary_dofs(index)); }
+
+        MARS_INLINE_FUNCTION
         Integer get_ghost_dof(const Integer index) const { return ghost_dofs(index); }
+
+        MARS_INLINE_FUNCTION
+        Integer get_ghost_local_index(const Integer index) const { return get_local_index(ghost_dofs(index)); }
 
         MARS_INLINE_FUNCTION
         Integer get_boundary_dof_size() const { return boundary_dofs.extent(0); }
@@ -212,11 +242,13 @@ namespace mars {
         MARS_INLINE_FUNCTION
         Integer get_dof_size() const { return get_local_dofs().extent(0); }
 
-        MARS_INLINE_FUNCTION
-        Integer get_owned_dof_size() const { return get_owned_dofs().extent(0); }
+        template <Integer B = Block>
+        MARS_INLINE_FUNCTION Integer get_owned_dof_size() const {
+            return B * get_owned_dofs().extent(0);
+        }
 
         MARS_INLINE_FUNCTION
-        const DofHandler<Mesh, degree> &get_dof_handler() const { return dof_handler; }
+        const DofHandler &get_dof_handler() const { return dof_handler; }
 
         const context &get_context() const { return get_dof_handler().get_context(); }
 
@@ -239,9 +271,13 @@ namespace mars {
                 return INVALID_INDEX;
         }
 
+        template <Integer B = Block>
+        MARS_INLINE_FUNCTION bool is_owned(const Integer local) const {
+            return is_owned_dof_sfc(local);
+        }
 
         MARS_INLINE_FUNCTION
-        Integer locally_owned_dof(const Integer local_dof) const {
+        Integer is_owned_dof_sfc(const Integer local_dof) const {
             const Integer owned = get_dof_handler().local_to_owned_dof(local_dof);
             const Integer pred_value = owned_dof_map(owned + 1) - owned_dof_map(owned);
             return (pred_value > 0);
@@ -253,6 +289,15 @@ namespace mars {
             const Integer pred_value = owned_dof_map(owned + 1) - owned_dof_map(owned);
             if (pred_value > 0)
                 return owned_dof_map(owned);
+            else
+                return INVALID_INDEX;
+        }
+
+        MARS_INLINE_FUNCTION
+        Integer get_local_index(const Integer local_dof) const {
+            const Integer pred_value = local_dof_map(local_dof + 1) - local_dof_map(local_dof);
+            if (pred_value > 0)
+                return local_dof_map(local_dof);
             else
                 return INVALID_INDEX;
         }
@@ -312,7 +357,6 @@ namespace mars {
             else
                 return INVALID_INDEX;
         }
-
 
         MARS_INLINE_FUNCTION
         const Integer sfc_to_global(const Integer sfc) const {
@@ -398,6 +442,20 @@ namespace mars {
         /* *******dof handler related functionalities for completing the handler.******* */
         /* chose this way to hide the full interface of the general handler. Inheritance is the other way*/
 
+        template <bool G>
+        static MARS_INLINE_FUNCTION typename std::enable_if<G == true, Octant>::type get_octant_ghost_or_local(
+            const Mesh *mesh,
+            const Integer index) {
+            return mesh->get_ghost_octant(index);
+        }
+
+        template <bool G>
+        static MARS_INLINE_FUNCTION typename std::enable_if<G == false, Octant>::type get_octant_ghost_or_local(
+            const Mesh *mesh,
+            const Integer index) {
+            return mesh->get_octant(index);
+        }
+
         MARS_INLINE_FUNCTION Integer get_sfc_from_octant(const Octant &o) const {
             return get_dof_handler().get_sfc_from_octant(o);
         }
@@ -427,30 +485,31 @@ namespace mars {
             get_dof_handler().template get_dof_coordinates_from_local<ElemType>(local, point);
         }
 
-        template <Integer Type, Integer FaceNr = -1>
-        MARS_INLINE_FUNCTION bool is_boundary(const Integer local) const {
-            return get_dof_handler().template is_boundary<Type, FaceNr>(local);
+        template <Integer Type>
+        MARS_INLINE_FUNCTION bool is_boundary(const Integer local, const Integer FaceNr = -1) const {
+            return get_dof_handler().template is_boundary<Type>(local, FaceNr);
         }
 
-        template <Integer FaceNr = -1>
-        MARS_INLINE_FUNCTION bool is_boundary_dof(const Integer local) const {
-            return is_boundary<ElemType, FaceNr>(local);
+        MARS_INLINE_FUNCTION bool is_boundary_dof(const Integer local, const Integer FaceNr = -1) const {
+            return is_boundary<ElemType>(local, FaceNr);
         }
 
-        template <Integer face_nr = -1, typename F>
-        void boundary_dof_iterate(F f) {
+        template <typename F>
+        void boundary_dof_iterate(F f, const std::string side = "all") {
             auto handler = *this;
+            const Integer side_value = map_side_to_value<ElemType>(side);
+
             Kokkos::parallel_for(
                 "boundary_iterate", get_owned_dof_size(), MARS_LAMBDA(const Integer i) {
                     const Integer local = handler.get_owned_dof(i);
-                    if (handler.template is_boundary_dof<face_nr>(local)) {
+                    if (handler.is_boundary_dof(local, side_value)) {
                         f(local);
                     }
                 });
         }
 
         MARS_INLINE_FUNCTION
-        constexpr Integer get_elem_type() { return simplex_type::ElemType; }
+        constexpr Integer get_elem_type() const { return simplex_type::ElemType; }
 
         MARS_INLINE_FUNCTION
         const Integer get_global_dof_offset(const Integer proc) const { return global_dof_offset(proc); }
@@ -467,12 +526,30 @@ namespace mars {
             return get_dof_handler().get_orientation(local_dof);
         }
 
-        MARS_INLINE_FUNCTION
-        const Integer get_label(const Integer local_dof) const { return get_dof_handler().get_label(local_dof); }
+        template <Integer B = Block>
+        MARS_INLINE_FUNCTION const Integer get_label(const Integer local_dof) const {
+            return get_dof_handler().template get_label<B>(local_dof);
+        }
 
         MARS_INLINE_FUNCTION
         const Integer get_owned_label(const Integer owned_dof) const {
             return get_dof_handler().get_owned_label(owned_dof);
+        }
+
+        // computes the component (block) from the block local
+        template <Integer B = Block>
+        MARS_INLINE_FUNCTION Integer compute_component(const Integer local) const {
+            return get_dof_handler().template compute_component<B>(local);
+        }
+
+        template <Integer B = Block>
+        MARS_INLINE_FUNCTION Integer compute_base(const Integer local) const {
+            return get_dof_handler().template compute_base<B>(local);
+        }
+
+        template <Integer B = Block>
+        MARS_INLINE_FUNCTION Integer compute_block_index(const Integer base_local, const Integer component) const {
+            return get_dof_handler().template compute_block_index<B>(base_local, component);
         }
 
         /* MARS_INLINE_FUNCTION
@@ -484,7 +561,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        UD get_data() const { return get_dof_handler().get_data(); }
+        MM get_mesh_manager() const { return get_dof_handler().get_mesh_manager(); }
 
         MARS_INLINE_FUNCTION
         const Integer get_proc() const { return get_dof_handler().get_proc(); }
@@ -505,28 +582,24 @@ namespace mars {
         Integer local_to_sfc(const Integer local) const { return get_local_dof_enum().get_view_elements()(local); }
 
         MARS_INLINE_FUNCTION
-        Integer sfc_to_local(const Integer sfc) const { return get_local_dof_enum().get_view_sfc_to_local()(sfc); }
+        Integer sfc_to_local(const Integer sfc) const { return get_dof_handler().sfc_to_local(sfc); }
 
         template <Integer Type>
-        static MARS_INLINE_FUNCTION Integer
-        enum_corner(const ViewVectorType<Integer> &sfc_to_local, const Octant &oc, const int i, const int j) {
-            return DofHandler<Mesh, degree>::template enum_corner<Type>(sfc_to_local, oc, i, j);
+        MARS_INLINE_FUNCTION Integer enum_corner(const Octant &oc, const int i, const int j) const {
+            return get_dof_handler().template enum_corner<Type>(oc, i, j);
         }
 
         MARS_INLINE_FUNCTION
         bool is_local(const Integer sfc) const { return get_dof_handler().is_local(sfc); }
 
-        template <Integer part>
-        static MARS_INLINE_FUNCTION Octant enum_face_corner(Octant &oc, const int dir) {
-            return DofHandler<Mesh, degree>::template enum_face_corner<part>(oc, dir);
+        template <Integer part, Integer Type>
+        static MARS_INLINE_FUNCTION Octant enum_face_corner(const Octant &oc, const int dir) {
+            return DofHandler::template enum_face_corner<part, Type>(oc, dir);
         }
 
         template <Integer part, Integer Type>
-        static MARS_INLINE_FUNCTION Integer enum_face_node(const ViewVectorType<Integer> &sfc_to_local,
-                                                           const Octant &face_cornerA,
-                                                           const int j,
-                                                           const int dir) {
-            return DofHandler<Mesh, degree>::template enum_face_node<part, Type>(sfc_to_local, face_cornerA, j, dir);
+        MARS_INLINE_FUNCTION Integer enum_face_node(const Octant &face_cornerA, const int j, const int dir) const {
+            return get_dof_handler().template enum_face_node<part, Type>(face_cornerA, j, dir);
         }
 
         MARS_INLINE_FUNCTION
@@ -538,10 +611,18 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const Integer get_ZMax() const { return get_dof_handler().get_ZMax(); }
 
+        MARS_INLINE_FUNCTION
+        void set_block(const Integer b) { get_dof_handler().set_block(b); }
+
+        template <Integer B = Block>
+        MARS_INLINE_FUNCTION constexpr Integer get_block() const {
+            return get_dof_handler().template get_block<B>();
+        }
+
         /* *************************************************************************** */
 
     private:
-        DofHandler<Mesh, degree> dof_handler;
+        DofHandler dof_handler;
 
         // local dofs vector of locally owned dofs. Needed to build the stencils.
         ViewVectorType<Integer> locally_owned_dofs;
@@ -564,21 +645,19 @@ namespace mars {
     };
 
     template <class DofHandler>
-    using CornerVolumeDofHandler =
-        SDofHandler<DofLabel::lVolume + DofLabel::lCorner, typename DofHandler::Mesh, DofHandler::Degree>;
+    using CornerVolumeDofHandler = SDofHandler<DofLabel::lVolume + DofLabel::lCorner, DofHandler>;
 
     template <class DofHandler>
-    using FaceVolumeDofHandler =
-        SDofHandler<DofLabel::lVolume + DofLabel::lFace, typename DofHandler::Mesh, DofHandler::Degree>;
+    using FaceVolumeDofHandler = SDofHandler<DofLabel::lVolume + DofLabel::lFace, DofHandler>;
 
     template <class DofHandler>
-    using VolumeDofHandler = SDofHandler<DofLabel::lVolume, typename DofHandler::Mesh, DofHandler::Degree>;
+    using VolumeDofHandler = SDofHandler<DofLabel::lVolume, DofHandler>;
 
     template <class DofHandler>
-    using FaceDofHandler = SDofHandler<DofLabel::lFace, typename DofHandler::Mesh, DofHandler::Degree>;
+    using FaceDofHandler = SDofHandler<DofLabel::lFace, DofHandler>;
 
     template <class DofHandler>
-    using CornerDofHandler = SDofHandler<DofLabel::lCorner, typename DofHandler::Mesh, DofHandler::Degree>;
+    using CornerDofHandler = SDofHandler<DofLabel::lCorner, DofHandler>;
 
 }  // namespace mars
 

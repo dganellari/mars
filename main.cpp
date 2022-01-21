@@ -1102,6 +1102,7 @@ int main(int argc, char *argv[]) {
       ("x,xDim", "Grid X Dim", value<int>()->default_value("4"))  //
       ("y,yDim", "Grid Y Dim", value<int>()->default_value("4"))  //
       ("z,zDim", "Grid Z Dim", value<int>()->default_value("4"))  //
+      ("b,block_size", "Vector Valued Block Size", value<int>()->default_value("1"))  //
       ("l,level", "Number of levels", value<int>()->default_value("1"))  //
       ("r,refine_level", "Number of refinements",
        value<int>()->default_value("1"))  //
@@ -1121,6 +1122,7 @@ int main(int argc, char *argv[]) {
     int xDim = args["xDim"].as<int>();
     int yDim = args["yDim"].as<int>();
     int zDim = args["zDim"].as<int>();
+    int block_size = args["block_size"].as<int>();
     int level = args["level"].as<int>();
     int refine_level = args["refine_level"].as<int>();
     std::string filename = args["file"].as<std::string>();
@@ -1197,17 +1199,49 @@ int main(int argc, char *argv[]) {
     };
 
 #ifdef WITH_MPI
-    apps["matrix_free_poisson2D"] = [=]() {
-        poisson_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(xDim, yDim);
+
+    apps["mars_distributed_mesh_generation_2D"] = [=]() {
+        test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(xDim, yDim);
     };
 
-    apps["cstokes"] = [=]() {
-        staggered_constant_viscosty_stokes_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(xDim, yDim);
+    apps["mars_distributed_mesh_generation_3D"] = [=]() {
+        test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(xDim, yDim, zDim);
     };
 
-    apps["vstokes"] = [=]() {
-        staggered_variable_viscosty_stokes_2D<Example2Dirichlet, Example2RHS, Example2Analitcal>(xDim, yDim);
+    apps["distributed_vector_valued_3D_degree2"] = [=]() {
+        test_mars_distributed_vector_valued<ElementType::Hex8, 2>(xDim, yDim, zDim, block_size);
     };
+
+    apps["distributed_vector_valued_degree2"] = [=]() {
+        test_mars_distributed_vector_valued<ElementType::Quad4, 2>(xDim, yDim, 0, block_size);
+    };
+
+    apps["distributed_vector_valued_3D"] = [=]() {
+        test_mars_distributed_vector_valued<ElementType::Hex8>(xDim, yDim, zDim, block_size);
+    };
+
+    apps["distributed_vector_valued_no_overlap_3D"] = [=]() {
+        test_mars_distributed_vector_valued<ElementType::Hex8, 1, false>(xDim, yDim, zDim, block_size);
+    };
+
+    apps["distributed_vector_valued"] = [=]() { test_mars_distributed_vector_valued(xDim, yDim, 0, block_size); };
+
+    apps["mfpoisson"] = [=]() {
+        matrix_free_poisson<Example2Dirichlet, Example2RHS, Example2Analitcal, ElementType::Quad4>(xDim, yDim, 0);
+    };
+
+    //Quadrature for Hex8 not added yet. Only FEQuad4 currently available in Mars.
+    /* apps["mfpoisson3D"] = [=]() {
+        matrix_free_poisson<Example2Dirichlet, Example2RHS, Example2Analitcal, ElementType::Hex8>(xDim, yDim, zDim);
+    }; */
+
+    apps["cstokes"] = [=]() { staggered_constant_viscosty_stokes<ElementType::Quad4>(xDim, yDim, 0); };
+
+    apps["cstokes3D"] = [=]() { staggered_constant_viscosty_stokes<ElementType::Hex8>(xDim, yDim, zDim); };
+
+    apps["vstokes"] = [=]() { staggered_variable_viscosty_stokes<ElementType::Quad4>(xDim, yDim, 0); };
+
+    apps["vstokes3D"] = [=]() { staggered_variable_viscosty_stokes<ElementType::Hex8>(xDim, yDim, zDim); };
 
     apps["advection"] = [=]() {
         advection(level);

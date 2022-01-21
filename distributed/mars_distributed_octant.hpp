@@ -1,6 +1,8 @@
 #ifndef MARS_DIST_OCTANT_HPP
 #define MARS_DIST_OCTANT_HPP
 
+#include <map>
+#include <type_traits>
 #include "mars_base.hpp"
 #include "mars_globals.hpp"
 #include "mars_sfc_code.hpp"
@@ -43,8 +45,8 @@ namespace mars {
         MARS_INLINE_FUNCTION
         bool is_equals(Octant o) const { return (x == o.x && y == o.y && z == o.z); }
 
-        template <Integer Type, Integer Face = -1>
-        MARS_INLINE_FUNCTION bool is_boundary(const int xdim, const int ydim, const int zdim) {
+        template <Integer Type>
+        MARS_INLINE_FUNCTION bool is_boundary(const int xdim, const int ydim, const int zdim, const Integer Face = -1) {
             switch (Face) {
                 case 0: {
                     return (x == 0);
@@ -128,31 +130,6 @@ namespace mars {
         }
 
         template <Integer Type>
-        MARS_INLINE_FUNCTION Octant sfc_face_nbh(const int face) const {
-            switch (Type) {
-                case ElementType::Quad4: {
-                    // adapted from the p4est corner neighbor for the mesh generation
-                    const Integer x_ = x + ((face == 0) ? -1 : (face == 1) ? 1 : 0);
-                    const Integer y_ = y + ((face == 2) ? -1 : (face == 3) ? 1 : 0);
-
-                    return Octant(x_, y_);
-                }
-                case ElementType::Hex8: {
-                    // adapted from the p4est corner neighbor for the mesh generation
-                    const Integer x_ = x + ((face == 0) ? -1 : (face == 1) ? 1 : 0);
-                    const Integer y_ = y + ((face == 2) ? -1 : (face == 3) ? 1 : 0);
-                    const Integer z_ = z + ((face == 4) ? -1 : (face == 5) ? 1 : 0);
-
-                    return Octant(x_, y_, z_);
-                }
-                default: {
-                    printf("The element type is not valid\n");
-                    return Octant();
-                }
-            }
-        }
-
-        template <Integer Type>
         MARS_INLINE_FUNCTION void validate_dof_nbh(const Integer xDim,
                                                    const Integer yDim,
                                                    const Integer zDim,
@@ -216,16 +193,127 @@ namespace mars {
             }
         }
 
+        MARS_INLINE_FUNCTION Integer get_edge_direction(const int edge) const { return edge / 4; }
+
+        MARS_INLINE_FUNCTION Octant sfc_edge_start(const int edge) const {
+            assert(0 <= edge && edge < 12);
+            auto direction = get_edge_direction(edge);
+            auto e = edge % 4;
+            Integer x_ = -1, y_ = -1, z_ = -1;
+
+            switch (direction) {
+                case 0:
+                    x_ = x;
+                    y_ = y + (e & 1);
+                    z_ = z + e / 2;
+                    break;
+                case 1:
+                    x_ = x + (e & 1);
+                    y_ = y;
+                    z_ = z + e / 2;
+                    break;
+                case 2:
+                    x_ = x + (e & 1);
+                    y_ = y + e / 2;
+                    z_ = z;
+                    break;
+                default:
+                    printf("The element type is not valid\n");
+                    break;
+            }
+            return Octant(x_, y_, z_);
+        }
+
+        // Only a 3D functionality defined for hex8 elements only.
         template <Integer Type>
-        MARS_INLINE_FUNCTION Octant
-        face_nbh(const int face, const Integer xDim, const Integer yDim, const Integer zDim, const bool periodic) const {
+        MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Hex8, Octant> edge_start(const int edge,
+                                                                                            const Integer xDim,
+                                                                                            const Integer yDim,
+                                                                                            const Integer zDim,
+                                                                                            const bool periodic) const {
+            Octant nbh = sfc_edge_start(edge);
+            nbh.validate_nbh<Type>(xDim, yDim, zDim, periodic);
+            return nbh;
+        }
+        MARS_INLINE_FUNCTION Octant sfc_edge_nbh(const int edge) const {
+            // adapted from the p4est corner neighbor for the mesh generation
+            assert(0 <= edge && edge < 12);
+            auto direction = get_edge_direction(edge);
+            Integer x_ = -1, y_ = -1, z_ = -1;
+
+            switch (direction) {
+                case 0:
+                    x_ = x;
+                    y_ = y + (2 * (edge & 1) - 1);
+                    z_ = z + ((edge & 2) - 1);
+                    break;
+                case 1:
+                    x_ = x + (2 * (edge & 1) - 1);
+                    y_ = y;
+                    z_ = z + ((edge & 2) - 1);
+                    break;
+                case 2:
+                    x_ = x + (2 * (edge & 1) - 1);
+                    y_ = y + ((edge & 2) - 1);
+                    z_ = z;
+                    break;
+                default:
+                    printf("The element type is not valid\n");
+                    break;
+            }
+            return Octant(x_, y_, z_);
+        }
+
+        // Only a 3D functionality defined for hex8 elements only.
+        template <Integer Type>
+        MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Hex8, Octant> edge_nbh(const int edge,
+                                                                                          const Integer xDim,
+                                                                                          const Integer yDim,
+                                                                                          const Integer zDim,
+                                                                                          const bool periodic) const {
+            Octant nbh = sfc_edge_nbh(edge);
+            nbh.validate_nbh<Type>(xDim, yDim, zDim, periodic);
+            return nbh;
+        }
+
+        template <Integer Type>
+        MARS_INLINE_FUNCTION Octant sfc_face_nbh(const int face) const {
+            switch (Type) {
+                case ElementType::Quad4: {
+                    // adapted from the p4est corner neighbor for the mesh generation
+                    const Integer x_ = x + ((face == 0) ? -1 : (face == 1) ? 1 : 0);
+                    const Integer y_ = y + ((face == 2) ? -1 : (face == 3) ? 1 : 0);
+
+                    return Octant(x_, y_);
+                }
+                case ElementType::Hex8: {
+                    // adapted from the p4est corner neighbor for the mesh generation
+                    const Integer x_ = x + ((face == 0) ? -1 : (face == 1) ? 1 : 0);
+                    const Integer y_ = y + ((face == 2) ? -1 : (face == 3) ? 1 : 0);
+                    const Integer z_ = z + ((face == 4) ? -1 : (face == 5) ? 1 : 0);
+
+                    return Octant(x_, y_, z_);
+                }
+                default: {
+                    printf("The element type is not valid\n");
+                    return Octant();
+                }
+            }
+        }
+
+        template <Integer Type>
+        MARS_INLINE_FUNCTION Octant face_nbh(const int face,
+                                             const Integer xDim,
+                                             const Integer yDim,
+                                             const Integer zDim,
+                                             const bool periodic) const {
             Octant nbh = sfc_face_nbh<Type>(face);
             nbh.validate_nbh<Type>(xDim, yDim, zDim, periodic);
             return nbh;
         }
 
         template <Integer Type>
-        MARS_INLINE_FUNCTION Octant sfc_corner_nbh(const int corner) {
+        MARS_INLINE_FUNCTION Octant sfc_corner_nbh(const int corner) const {
             switch (Type) {
                 case ElementType::Quad4: {
                     // adapted from the p4est corner neighbor for the mesh generation
@@ -250,28 +338,124 @@ namespace mars {
         }
 
         template <Integer Type>
-        MARS_INLINE_FUNCTION Octant
-        corner_nbh(const int corner, const Integer xDim, const Integer yDim, const Integer zDim, const bool periodic) {
+        MARS_INLINE_FUNCTION Octant corner_nbh(const int corner,
+                                               const Integer xDim,
+                                               const Integer yDim,
+                                               const Integer zDim,
+                                               const bool periodic) const {
             Octant nbh = sfc_corner_nbh<Type>(corner);
             nbh.validate_nbh<Type>(xDim, yDim, zDim, periodic);
             return nbh;
         }
 
-        template <Integer Type, Integer ManifoldDim>
-        MARS_INLINE_FUNCTION void one_ring_nbh(Octant one_ring[Type],
-                                               const Integer xDim,
-                                               const Integer yDim,
-                                               const Integer zDim,
-                                               const bool periodic) const {
-            for (int i = 0; i < ManifoldDim; i++) {
-                for (int j = 0; j < ManifoldDim; j++)
-                /* for (int z = 0; z < ManifoldDim; z++) // 3D case*/
-                {
-                    Octant nbh(x - i, y - j);
-                    nbh.validate_nbh<Type>(xDim, yDim, zDim, periodic);
-                    one_ring[i * ManifoldDim + j] = nbh;
+        struct Depth {
+            Integer x;
+            Integer y;
+            Integer z;
+
+            Depth(Integer xd, Integer yd, Integer zd) : x(xd), y(yd), z(zd) {}
+
+            // This gives a depth one one ring neighbors since the largest you are substracting from the x is 1.
+            template <Integer Type>
+            static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Hex8, Depth> set_depth(
+                const Integer depth) {
+                Depth d(depth, depth, depth);
+                return d;
+            }
+
+            // This is the 2D case. Meaning that the z coordinate is skipped.
+            template <Integer Type>
+            static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Quad4, Depth> set_depth(
+                const Integer depth) {
+                Depth d(depth, depth, 1);
+                return d;
+            }
+        };
+
+        template <Integer Type>
+        MARS_INLINE_FUNCTION void one_ring_corner_nbhs(Octant one_ring[Type],
+                                                       const Integer xDim,
+                                                       const Integer yDim,
+                                                       const Integer zDim,
+                                                       const bool periodic) const {
+            const Integer ring_depth = 2;
+            auto depth = Depth::set_depth<Type>(ring_depth);
+
+            for (int k = 0; k < depth.z; k++) {
+                for (int j = 0; j < depth.y; j++) {
+                    for (int i = 0; i < depth.x; i++) {
+                        Octant nbh(x - i, y - j, z - k);
+                        nbh.validate_nbh<Type>(xDim, yDim, zDim, periodic);
+                        one_ring[k * depth.y * depth.x + j * depth.x + i] = nbh;
+                    }
                 }
             }
+        }
+
+        template <Integer Type, typename F>
+        MARS_INLINE_FUNCTION void one_ring_corner_nbhs(F f,
+                                                       const Integer xDim,
+                                                       const Integer yDim,
+                                                       const Integer zDim,
+                                                       const bool periodic) const {
+            const Integer ring_depth = 2;
+            auto depth = Depth::set_depth<Type>(ring_depth);
+
+            for (int k = 0; k < depth.z; k++) {
+                for (int j = 0; j < depth.y; j++) {
+                    for (int i = 0; i < depth.x; i++) {
+                        Octant nbh(x - i, y - j, z - k);
+                        nbh.validate_nbh<Type>(xDim, yDim, zDim, periodic);
+                        f(nbh);
+                    }
+                }
+            }
+        }
+
+        template <Integer Type, typename F>
+        MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Hex8, void> one_ring_edge_nbhs(
+            F f,
+            const Integer direction,
+            const Integer xDim,
+            const Integer yDim,
+            const Integer zDim,
+            const bool periodic) const {
+            const Integer ring_depth = 2;
+            auto depth = Depth::set_depth<Type>(ring_depth);
+
+            for (int j = 0; j < depth.y; j++) {
+                for (int i = 0; i < depth.x; i++) {
+                    Octant nbh = get_edge_ring_nbh(i, j, direction);
+                    nbh.validate_nbh<Type>(xDim, yDim, zDim, periodic);
+                    f(nbh);
+                }
+            }
+        }
+
+        MARS_INLINE_FUNCTION Octant get_edge_ring_nbh(const int i, const int j, const Integer direction) const {
+            Integer x_ = -1, y_ = -1, z_ = -1;
+
+            switch (direction) {
+                case 0:
+                    x_ = x;
+                    y_ = y - i;
+                    z_ = z - j;
+                    break;
+                case 1:
+                    x_ = x - i;
+                    y_ = y;
+                    z_ = z - j;
+                    break;
+                case 2:
+                    x_ = x - i;
+                    y_ = y - j;
+                    z_ = z;
+                    break;
+                default:
+                    printf("The element type is not valid\n");
+                    break;
+            }
+            return Octant(x_, y_, z_);
         }
     };
 
@@ -318,11 +502,44 @@ namespace mars {
     }
 
     //-1 for all boundary. 0 left, 1 right, 2 down, 3 up and 4 and 5 for z dim.
-    template <Integer Type, Integer Face = -1>
-    MARS_INLINE_FUNCTION bool is_boundary_sfc(const Integer sfc, const int xdim, const int ydim, const int zdim) {
+    template <Integer Type>
+    MARS_INLINE_FUNCTION bool is_boundary_sfc(const Integer sfc,
+                                              const int xdim,
+                                              const int ydim,
+                                              const int zdim,
+                                              const Integer Face = -1) {
         Octant o = get_octant_from_sfc<Type>(sfc);
-        return o.is_boundary<Type, Face>(xdim, ydim, zdim);
+        return o.is_boundary<Type>(xdim, ydim, zdim, Face);
     }
+
+    inline Integer find_map_side(const std::map<std::string, Integer> &side_map, const std::string side) {
+        auto search = side_map.find(side);
+        if (side_map.end() != search) {
+            return search->second;
+        }
+
+        std::cerr
+            << "An invalid side named: " << side
+            << "has been provided for the boundary iterator. Valid definitions are: all, left, right, bottom, top (2D) "
+               "back and front (3D)!"
+            << std::endl;
+        std::exit(1);
+    }
+
+    // SFC based face numbering needs the following if top bottom face nr are differnet for 2D and 3D.
+    template <Integer Type>
+    std::enable_if_t<Type == ElementType::Quad4, Integer> map_side_to_value(const std::string side) {
+        std::map<std::string, Integer> side_map{{"all", -1}, {"left", 0}, {"right", 1}, {"bottom", 2}, {"top", 3}};
+        return find_map_side(side_map, side);
+    }
+
+    template <Integer Type>
+    std::enable_if_t<Type == ElementType::Hex8, Integer> map_side_to_value(const std::string side) {
+        std::map<std::string, Integer> side_map{
+            {"all", -1}, {"left", 0}, {"right", 1}, {"bottom", 2}, {"top", 3}, {"front", 4}, {"back", 5}};
+        return find_map_side(side_map, side);
+    }
+
     template <Integer Type>
     MARS_INLINE_FUNCTION void get_vertex_coordinates_from_sfc(const Integer sfc,
                                                               double *point,

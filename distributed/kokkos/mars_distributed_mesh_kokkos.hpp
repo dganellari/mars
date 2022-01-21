@@ -10,6 +10,7 @@
 #include <fstream>
 #include <memory>
 #include <sstream>
+#include <type_traits>
 #include <vector>
 
 #ifdef WITH_MPI
@@ -42,13 +43,20 @@ namespace mars {
         using Point = mars::Point<Real, Dim>;
         using Comb = Combinations<ManifoldDim + 1, 2, DistributedImplementation>;
 
-        MARS_INLINE_FUNCTION Mesh()
+        /* MARS_INLINE_FUNCTION Mesh()
             : ParallelIMesh<Dim_>(),
               elements_size_(0),
               points_size_(0)
         //, combinations(nullptr)
-        {}
+        {} */
 
+        MARS_INLINE_FUNCTION Mesh(const context &c)
+            : ParallelIMesh<Dim_>(),
+              elements_size_(0),
+              points_size_(0),
+              ctx(c)
+        //, combinations(nullptr)
+        {}
         void reserve(const std::size_t n_elements, const std::size_t n_points) override {
             elements_size_ = n_elements;
             points_size_ = n_points;
@@ -183,11 +191,6 @@ namespace mars {
         void set_view_sfc(const ViewVectorType<Integer> &local) { local_sfc_ = local; }
 
         MARS_INLINE_FUNCTION
-        const ViewVectorType<Integer> &get_view_sfc_to_local() const { return sfc_to_local_; }
-
-        MARS_INLINE_FUNCTION
-        void set_view_sfc_to_local(const ViewVectorType<Integer> &local) { sfc_to_local_ = local; }
-        MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_gp() const { return gp_np; }
 
         MARS_INLINE_FUNCTION
@@ -261,13 +264,16 @@ namespace mars {
         void set_chunk_size(Integer size) { chunk_size_ = size; }
 
         MARS_INLINE_FUNCTION
+        Integer get_ghost_size() const { return get_view_ghost().extent(0); }
+
+        MARS_INLINE_FUNCTION
         Integer get_chunk_size() const { return chunk_size_; }
 
         MARS_INLINE_FUNCTION
         void set_proc(Integer p) { proc = p; }
 
         MARS_INLINE_FUNCTION
-        Integer get_proc() const { return proc; }
+        const Integer get_proc() const { return proc; }
 
         MARS_INLINE_FUNCTION
         void set_global_to_local_map(const UnorderedMap<Integer, Integer> &gl_map) { global_to_local_map_ = gl_map; }
@@ -484,11 +490,9 @@ namespace mars {
 
                             ViewVectorType<Integer> local_to_global;
 
-                            const Integer allrange = encode_morton_2D(
-                                xDim + 1, yDim + 1);  // TODO : check if enough. Test with xdim != ydim.
+                            const Integer allrange = encode_morton_2D(xDim + 1, yDim + 1);
 
                             const Integer nr_points = compact_elements<Type>(local_to_global, allrange);
-                            /* printf("nr_p: %u\n", nr_points); */
 
                             reserve_points(nr_points);
 
@@ -738,12 +742,12 @@ namespace mars {
                 for (int face = 0; face < 2 * ManifoldDim; ++face) {
                     Octant o = ref_octant.face_nbh<Type>(face, xDim, yDim, zDim, periodic);
                     if (o.is_valid()) {
-                        printf("face Nbh of %li (%li) is : %li with--- x and y: %li - %li\n",
+                        /* printf("face Nbh of %li (%li) is : %li with--- x and y: %li - %li\n",
                                gl_index,
                                elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim),
                                elem_index(o.x, o.y, o.z, xDim, yDim),
                                o.x,
-                               o.y);
+                               o.y); */
                         increment(o);
                     }
                 }
@@ -751,12 +755,12 @@ namespace mars {
                 for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner) {
                     Octant o = ref_octant.corner_nbh<Type>(corner, xDim, yDim, zDim, periodic);
                     if (o.is_valid()) {
-                        printf("Corner Nbh of %li (%li) is : %li with--- x and y: %li - %li\n",
+                        /* printf("Corner Nbh of %li (%li) is : %li with--- x and y: %li - %li\n",
                                gl_index,
                                elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim),
                                elem_index(o.x, o.y, o.z, xDim, yDim),
                                o.x,
-                               o.y);
+                               o.y); */
                         increment(o);
                     }
                 }
@@ -884,7 +888,7 @@ namespace mars {
         template <Integer Type>
         struct IdentifyBoundaryPerRank {
             ViewVectorType<Integer> global;
-            ViewMatrixType<bool> predicate;
+            ViewMatrixTypeLeft<bool> predicate;
             ViewVectorType<Integer> gp;
 
             Integer proc;
@@ -896,7 +900,7 @@ namespace mars {
             bool periodic;
 
             IdentifyBoundaryPerRank(ViewVectorType<Integer> gl,
-                                    ViewMatrixType<bool> pr,
+                                    ViewMatrixTypeLeft<bool> pr,
                                     ViewVectorType<Integer> g,
                                     Integer p,
                                     Integer xdm,
@@ -919,36 +923,95 @@ namespace mars {
                 }
             }
 
+            MARS_INLINE_FUNCTION void predicate_face(const Octant ref_octant,
+                                                     const Integer index,
+                                                     const Integer xDim,
+                                                     const Integer yDim,
+                                                     const Integer zDim,
+                                                     bool periodic) const {
+                for (int face = 0; face < 2 * ManifoldDim; ++face) {
+                    Octant o = ref_octant.face_nbh<Type>(face, xDim, yDim, zDim, periodic);
+                    if (o.is_valid()) {
+                        /* printf("Face Nbh of %li (%li) is : (%li) with--- x and y z: %li - %li - %li\n",
+                               index,
+                               elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim),
+                               elem_index(o.x, o.y, o.z, xDim, yDim),
+                               o.x,
+                               o.y,
+                               o.z); */
+
+                        setPredicate(index, o);
+                    }
+                }
+            }
+
+            MARS_INLINE_FUNCTION void predicate_corner(const Octant ref_octant,
+                                                       const Integer index,
+                                                       const Integer xDim,
+                                                       const Integer yDim,
+                                                       const Integer zDim,
+                                                       bool periodic) const {
+                for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner) {
+                    Octant o = ref_octant.corner_nbh<Type>(corner, xDim, yDim, zDim, periodic);
+                    if (o.is_valid()) {
+                        /* printf("Corner Nbh of %li (%li) is : (%li) with--- x and y z: %li - %li - %li\n",
+                               index,
+                               elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim),
+                               elem_index(o.x, o.y, o.z, xDim, yDim),
+                               o.x,
+                               o.y,
+                               o.z); */
+
+                        setPredicate(index, o);
+                    }
+                }
+            }
+
+            template <Integer T = Type>
+            MARS_INLINE_FUNCTION std::enable_if_t<T == ElementType::Hex8, void> predicate_edge(const Octant ref_octant,
+                                                                                               const Integer index,
+                                                                                               const Integer xDim,
+                                                                                               const Integer yDim,
+                                                                                               const Integer zDim,
+                                                                                               bool periodic) const {
+                for (int edge = 0; edge < 4 * ManifoldDim; ++edge) {
+                    Octant o = ref_octant.edge_nbh<Type>(edge, xDim, yDim, zDim, periodic);
+                    if (o.is_valid()) {
+                        /* printf("Edge Nbh of %li (%li) is : (%li) with--- x and y z: %li - %li - %li\n",
+                               index,
+                               elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim),
+                               elem_index(o.x, o.y, o.z, xDim, yDim),
+                               o.x,
+                               o.y,
+                               o.z); */
+
+                        setPredicate(index, o);
+                    }
+                }
+            }
+
+            template <Integer T = Type>
+            MARS_INLINE_FUNCTION std::enable_if_t<T != ElementType::Hex8, void> predicate_edge(const Octant ref_octant,
+                                                                                               const Integer index,
+                                                                                               const Integer xDim,
+                                                                                               const Integer yDim,
+                                                                                               const Integer zDim,
+                                                                                               bool periodic) const {}
+
             MARS_INLINE_FUNCTION
             void operator()(int index) const {
                 const Integer gl_index = global(index);
                 Octant ref_octant = get_octant_from_sfc<Type>(gl_index);
 
-                /* const int offset = xDim + 1; */
-
-                for (int face = 0; face < 2 * ManifoldDim; ++face) {
-                    Octant o = ref_octant.face_nbh<Type>(face, xDim, yDim, zDim, periodic);
-                    if (o.is_valid()) {
-                        /*  printf("face Nbh of %li (%li) is : %li with--- x and y: %li - %li\n", gl_index,
-                               ref_octant.x + offset * ref_octant.y, o.x + offset * o.y, o.x, o.y); */
-                        setPredicate(index, o);
-                    }
-                }
-
-                for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner) {
-                    Octant o = ref_octant.corner_nbh<Type>(corner, xDim, yDim, zDim, periodic);
-                    if (o.is_valid()) {
-                        /* printf("corner Nbh of %li (%li) is : %li with--- x and y: %li - %li\n", gl_index,
-                               ref_octant.x + offset * ref_octant.y, o.x + offset * o.y, o.x, o.y); */
-                        setPredicate(index, o);
-                    }
-                }
+                predicate_face(ref_octant, index, xDim, yDim, zDim, periodic);
+                predicate_corner(ref_octant, index, xDim, yDim, zDim, periodic);
+                predicate_edge(ref_octant, index, xDim, yDim, zDim, periodic);
             }
         };
 
         inline void compact_boundary_elements(const ViewVectorType<Integer> scan_indices,
-                                              const ViewMatrixType<bool> predicate,
-                                              const ViewMatrixType<Integer> predicate_scan,
+                                              const ViewMatrixTypeLeft<bool> predicate,
+                                              const ViewMatrixTypeLeft<Integer> predicate_scan,
                                               const Integer rank_size) {
             using namespace Kokkos;
 
@@ -976,7 +1039,7 @@ namespace mars {
 
             const Integer rank_size = gp_np.extent(0) / 2 - 1;
 
-            ViewMatrixType<bool> rank_boundary("count_per_proc", chunk_size_, rank_size);
+            ViewMatrixTypeLeft<bool> rank_boundary("count_per_proc", chunk_size_, rank_size);
             scan_boundary_ = ViewVectorType<Integer>("scan_boundary_", rank_size + 1);
 
             parallel_for(
@@ -985,7 +1048,7 @@ namespace mars {
                 IdentifyBoundaryPerRank<Type>(local_sfc_, rank_boundary, gp_np, proc, xDim, yDim, zDim, periodic));
 
             /* perform a scan for each row with the sum at the end for each rank */
-            ViewMatrixType<Integer> rank_scan("rank_scan", chunk_size_ + 1, rank_size);
+            ViewMatrixTypeLeft<Integer> rank_scan("rank_scan", chunk_size_ + 1, rank_size);
             for (int i = 0; i < rank_size; ++i) {
                 if (i != proc) {
                     auto proc_predicate = subview(rank_boundary, ALL, i);
@@ -996,7 +1059,6 @@ namespace mars {
 
             // perform a scan on the last row to get the total sum.
             row_scan(rank_size, chunk_size_, rank_scan, scan_boundary_);
-
             auto index_subview = subview(scan_boundary_, rank_size);
             auto h_ic = create_mirror_view(index_subview);
 
@@ -1011,13 +1073,134 @@ namespace mars {
             compact_boundary_elements(scan_boundary_, rank_boundary, rank_scan, rank_size);
         }
 
-        MARS_INLINE_FUNCTION
-        Integer get_sfc_index(const Integer enc_oc) {
-            return binary_search(get_view_sfc(), 0, get_chunk_size(), enc_oc);
+        void exchange_ghost_counts(const context &context) {
+            using namespace Kokkos;
+
+            Kokkos::Timer timer;
+
+            int proc_num = rank(context);
+            int size = num_ranks(context);
+
+            std::vector<Integer> send_count(size, 0);
+            std::vector<Integer> receive_count(size, 0);
+
+            scan_send_mirror = create_mirror_view(get_view_scan_boundary());
+            Kokkos::deep_copy(scan_send_mirror, get_view_scan_boundary());
+
+            for (int i = 0; i < size; ++i) {
+                Integer count = scan_send_mirror(i + 1) - scan_send_mirror(i);
+                if (count > 0) {
+                    send_count[i] = count;
+                    receive_count[i] = count;
+                }
+            }
+
+            context->distributed->i_send_recv_vec(send_count, receive_count);
+
+            // create the scan recv mirror view from the receive count
+            reserve_scan_ghost(size + 1);
+
+            scan_recv_mirror = create_mirror_view(get_view_scan_ghost());
+            make_scan_index_mirror(scan_recv_mirror, receive_count);
+            Kokkos::deep_copy(get_view_scan_ghost(), scan_recv_mirror);
+        }
+
+        void exchange_ghost_layer(const context &context) {
+            using namespace Kokkos;
+
+            Kokkos::Timer timer;
+
+            int size = num_ranks(context);
+
+            Integer ghost_size = scan_recv_mirror(size);
+
+            reserve_ghost(ghost_size);
+
+            context->distributed->i_send_recv_view(
+                get_view_ghost(), scan_recv_mirror.data(), get_view_boundary(), scan_send_mirror.data());
+
+            std::cout << "MPI send receive for the mesh ghost layer done." << std::endl;
+        }
+
+        template <Integer Type>
+        void create_ghost_layer() {
+            const context &context = get_context();
+
+            build_boundary_element_sets<Type>();
+
+            Kokkos::fence();
+
+            exchange_ghost_counts(context);
+            exchange_ghost_layer(context);
+
+            /* Not needed anymore since the Mesh manager is now doing the update */
+            /* data.copy_mesh_to_device();  // update the boundary device pointers */
+
+            std::cout << "Finished building the ghost layer (boundary element set). Rank: " << get_proc() << std::endl;
+        }
+
+        void print_ghost_layer() {
+            using namespace Kokkos;
+
+            const context &context = get_context();
+            int proc_num = rank(context);
+            int rank_size = num_ranks(context);
+
+            Integer ghost_size = scan_recv_mirror(rank_size);
+
+            auto sv = get_view_ghost();
+            auto scv = get_view_scan_ghost();
+            parallel_for(
+                "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
+                    const Integer rank = find_owner_processor(scv, i, 1, proc_num);
+
+                    printf(" ghost_sfc: %i - %li - proc: %li - rank: %li\n", i, sv(i), rank, proc_num);
+                });
+        }
+
+        void print_sfc() {
+            using namespace Kokkos;
+
+            Integer xDim = get_XDim();
+            Integer yDim = get_YDim();
+            Integer zDim = get_ZDim();
+
+            auto sfcv = get_view_sfc();
+            auto proc_num = get_proc();
+            parallel_for(
+                "print set", get_chunk_size(), KOKKOS_LAMBDA(const Integer i) {
+                    const Integer sfc = sfcv(i);
+                    double point[3];
+                    get_vertex_coordinates_from_sfc<Elem::ElemType>(sfc, point, xDim, yDim, zDim);
+
+                    Octant o = get_octant_from_sfc<Elem::ElemType>(sfc);
+                    printf("mesh sfc : %li - %li - %li - (%lf, %lf, %lf) -rank: %i\n",
+                           i,
+                           sfc,
+                           elem_index(o.x, o.y, o.z, xDim, yDim),
+                           point[0],
+                           point[1],
+                           point[2],
+                           proc_num);
+                });
         }
 
         MARS_INLINE_FUNCTION
-        Integer get_index_of_sfc_elem(const Integer enc_oc) { return sfc_to_local_(enc_oc) - gp_np(2 * proc + 1); }
+        Integer get_sfc_index(const Integer enc_oc) {
+            return binary_search(get_view_sfc().data(), 0, get_chunk_size() - 1, enc_oc);
+        }
+
+        MARS_INLINE_FUNCTION
+        Integer get_index_of_sfc_elem(const Integer enc_oc) {
+            /* return sfc_to_local_(enc_oc) - gp_np(2 * proc + 1); */
+            auto index = INVALID_INDEX;
+            const auto it = get_sfc_to_local_map().find(enc_oc);
+            if (get_sfc_to_local_map().valid_at(it)) {
+                index = get_sfc_to_local_map().value_at(it);
+            }
+            assert(get_sfc_to_local_map().valid_at(it));
+            return index;
+        }
 
         MARS_INLINE_FUNCTION
         void set_periodic() { periodic = true; }
@@ -1029,11 +1212,17 @@ namespace mars {
         Integer get_ghost_sfc(const Integer index) const { return ghost_(index); }
 
         MARS_INLINE_FUNCTION
+        Octant get_ghost_octant(const Integer index) const {
+            const Integer sfc_code = ghost_(index);
+            return get_octant_from_sfc<Elem::ElemType>(sfc_code);
+        }
+
+        MARS_INLINE_FUNCTION
         Integer get_sfc(const Integer sfc_index) const { return local_sfc_(sfc_index); }
 
         MARS_INLINE_FUNCTION
         Octant get_octant(const Integer sfc_index) const {
-            Integer sfc_code = local_sfc_(sfc_index);
+            const Integer sfc_code = local_sfc_(sfc_index);
             return get_octant_from_sfc<Elem::ElemType>(sfc_code);
         }
 
@@ -1046,11 +1235,6 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        Octant get_octant_corner_nbh(const Octant &oc, const Integer corner_nr) {
-            return oc.corner_nbh<Elem::ElemType>(corner_nr, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
-        }
-
-        MARS_INLINE_FUNCTION
         Octant get_octant_face_nbh(const Integer sfc_index, const Integer face_nr) const {
             Octant oc = get_octant(sfc_index);
 
@@ -1058,10 +1242,49 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
+        Octant get_octant_edge_start(const Octant &oc, const Integer edge) const {
+            return oc.edge_start<Elem::ElemType>(edge, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
+        }
+
+        MARS_INLINE_FUNCTION
+        Octant get_octant_edge_start(const Integer sfc_index, const Integer edge) const {
+            Octant oc = get_octant(sfc_index);
+
+            return oc.edge_start<Elem::ElemType>(edge, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
+        }
+
+        MARS_INLINE_FUNCTION
+        Octant get_octant_edge_nbh(const Octant &oc, const Integer edge) const {
+            return oc.edge_nbh<Elem::ElemType>(edge, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
+        }
+
+        MARS_INLINE_FUNCTION
+        Octant get_octant_edge_nbh(const Integer sfc_index, const Integer edge) const {
+            Octant oc = get_octant(sfc_index);
+
+            return oc.edge_nbh<Elem::ElemType>(edge, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
+        }
+
+        MARS_INLINE_FUNCTION
+        Octant get_octant_corner_nbh(const Octant &oc, const Integer corner_nr) {
+            return oc.corner_nbh<Elem::ElemType>(corner_nr, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
+        }
+
+        MARS_INLINE_FUNCTION
         Octant get_octant_corner_nbh(const Integer sfc_index, const Integer corner_nr) {
             Octant oc = get_octant(sfc_index);
 
             return oc.corner_nbh<Elem::ElemType>(corner_nr, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
+        }
+
+        template <typename F>
+        MARS_INLINE_FUNCTION void get_one_ring_edge_nbhs(const Octant &oc, const Integer direction, F f) const {
+            oc.one_ring_edge_nbhs<Elem::ElemType, F>(f, direction, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
+        }
+
+        template <typename F>
+        MARS_INLINE_FUNCTION void get_one_ring_corner_nbhs(const Octant &oc, F f) const {
+            oc.one_ring_corner_nbhs<Elem::ElemType, F>(f, get_XDim(), get_YDim(), get_ZDim(), is_periodic());
         }
 
         void reserve_ghost(const Integer n_elements) { ghost_ = ViewVectorType<Integer>("ghost_", n_elements); }
@@ -1076,33 +1299,82 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_ghost() const { return ghost_; }
 
+        MARS_INLINE_FUNCTION
+        const ViewVectorType<Integer>::HostMirror &get_view_scan_recv_mirror() const { return scan_recv_mirror; }
+
+        MARS_INLINE_FUNCTION
+        const ViewVectorType<Integer>::HostMirror &get_view_scan_send_mirror() const { return scan_send_mirror; }
+
+        /* MARS_INLINE_FUNCTION
+        bool is_owned_index(const Integer sfc_index) const {
+            auto sfc = get_sfc(sfc_index);
+            auto stl = get_view_sfc_to_local();
+            if ((sfc + 1) >= stl.extent(0)) return false;
+            [>use the sfc to local which is the scan of the predicate.
+             * To get the predicate value the difference with the successive index is needed.<]
+            const Integer pred_value = stl(sfc + 1) - stl(sfc);
+            return (pred_value > 0);
+        }*/
+
+        MARS_INLINE_FUNCTION
+        bool is_owned(const Integer sfc) const {
+            const auto it = get_sfc_to_local_map().find(sfc);
+            return get_sfc_to_local_map().valid_at(it);
+        }
+
+        MARS_INLINE_FUNCTION
+        bool is_owned_index(const Integer sfc_index) const {
+            auto sfc = get_sfc(sfc_index);
+            return is_owned(sfc);
+        }
+
+        const context &get_context() const { return ctx; }
+        void set_context(const context &c) { ctx = c; }
+
+        MARS_INLINE_FUNCTION
+        const UnorderedMap<Integer, Integer> &get_sfc_to_local_map() const { return sfc_to_local_map_; }
+
+        MARS_INLINE_FUNCTION
+        void set_sfc_to_local_map(const UnorderedMap<Integer, Integer> &map) { sfc_to_local_map_ = map; }
+
     private:
+        // careful: not a device pointer!
+        const context &ctx;
+        // This block represents the SFC data and the data structures needed to manage it in a distributed manner.
+        ViewVectorType<Integer> local_sfc_;
+        /* ViewVectorType<Integer> sfc_to_local_;  // global to local map from sfc allrange */
+        UnorderedMap<Integer, Integer> sfc_to_local_map_;
+        ViewVectorType<Integer> gp_np;  // parallel partition info shared among all processes.
+        Integer xDim, yDim, zDim;
+        Integer chunk_size_;
+        Integer proc;
+
+        // Periodic mesh feature supported.
+        bool periodic = false;
+
         ViewMatrixTextureC<Integer, Comb::value, 2> combinations;
 
+        /* If generated "meshless" then the following block is not reserved in memory.
+        Check distributed generation for more details. */
         ViewMatrixType<Integer> elements_;
         ViewMatrixType<Real> points_;
         ViewVectorType<bool> active_;
         Integer elements_size_;
         Integer points_size_;
+        /* global to local map for the mesh elem indices. */
+        UnorderedMap<Integer, Integer> global_to_local_map_;
 
-        ViewVectorType<Integer> local_sfc_;
-        ViewVectorType<Integer> sfc_to_local_;  // global to local map from sfc allrange
-        ViewVectorType<Integer> gp_np;          // parallel partition info shared among all processes.
-        Integer xDim, yDim, zDim;
-        Integer chunk_size_;
-        Integer proc;
-
-        bool periodic = false;
-
-        UnorderedMap<Integer, Integer> global_to_local_map_;  // global to local map for the mesh elem indices.
-
+        // Boundary and ghost layer data
         ViewVectorType<Integer> boundary_;             // sfc code for the ghost layer
         ViewVectorType<Integer> boundary_lsfc_index_;  // view index of the previous
         ViewVectorType<Integer> scan_boundary_;
-
-        // ghost and boundary layers
+        // mirror view on the mesh scan boundary view used for the mpi send
+        ViewVectorType<Integer>::HostMirror scan_send_mirror;
+        // ghost data
         ViewVectorType<Integer> ghost_;
         ViewVectorType<Integer> scan_ghost_;
+        // mirror view on the scan_ghost view for the mpi receive
+        ViewVectorType<Integer>::HostMirror scan_recv_mirror;
     };
 
     using DistributedMesh1 = mars::Mesh<1, 1, DistributedImplementation, Simplex<1, 1, DistributedImplementation>>;
@@ -1113,11 +1385,8 @@ namespace mars {
     using DistributedQuad4Mesh = mars::Mesh<2, 2, DistributedImplementation, Quad4DElem>;
     using DistributedHex8Mesh = mars::Mesh<3, 3, DistributedImplementation, Hex8DElem>;
 
-    template <Integer Type>
-    using DistributedNSMesh2 = mars::Mesh<2, 2, DistributedImplementation, NonSimplex<Type, DistributedImplementation>>;
-
-    template <Integer Dim, Integer ManifoldDim, Integer Type>
-    using DistributedNSMesh =
+    template <Integer Type, Integer Dim = (Type == ElementType::Quad4) ? 2 : 3, Integer ManifoldDim = Dim>
+    using DistributedMesh =
         mars::Mesh<Dim, ManifoldDim, DistributedImplementation, NonSimplex<Type, DistributedImplementation>>;
 }  // namespace mars
 #endif  // MARS_MESH_HPP

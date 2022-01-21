@@ -9,7 +9,25 @@
 #include "Kokkos_ArithTraits.hpp"
 #endif
 
+#ifdef WITH_MPI
+#include <mpi.h>
+#endif
+
 namespace mars {
+
+    inline void Abort() {
+        int error_code = -1;
+#ifdef WITH_MPI
+        MPI_Abort(MPI_COMM_WORLD, error_code);
+#else
+        exit(error_code);
+#endif
+    }
+
+    inline void Abort(const std::string &message) {
+        std::printf("%s\n", message.c_str());
+        Abort();
+    }
 
     /******************** Tuple utils *****************************/
 
@@ -158,6 +176,20 @@ namespace mars {
         apply_impl<F, I + 1, Tp...>(f, t, v);
     }
 
+    /* forwards expansion of a tuple from 0-N */
+    template <typename F, std::size_t I = 0, typename... Tp>
+    inline typename std::enable_if<I == sizeof...(Tp), void>::type apply_impl(const F &f,
+                                                                              std::tuple<ViewMatrixType<Tp>...> &t,
+                                                                              std::tuple<ViewVectorType<Tp>...> &v) {}
+
+    template <typename F, std::size_t I = 0, typename... Tp>
+        inline typename std::enable_if < I<sizeof...(Tp), void>::type apply_impl(const F &f,
+                                                                                 std::tuple<ViewMatrixType<Tp>...> &t,
+                                                                                 std::tuple<ViewVectorType<Tp>...> &v) {
+        f(std::get<I>(t), std::get<I>(v));
+        apply_impl<F, I + 1, Tp...>(f, t, v);
+    }
+
     template <typename F, Integer I = 0, Integer... Args, typename... Tp>
     typename std::enable_if<I == sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F &f,
                                                                                                 std::tuple<Tp...> &t) {}
@@ -187,6 +219,21 @@ namespace mars {
         for_each_arg<F, I + 1, Args...>(f, t, v);
     }
 
+    template <typename F, Integer I = 0, Integer... Args, typename... Tp>
+    typename std::enable_if<I == sizeof...(Args), void>::type MARS_INLINE_FUNCTION
+    for_each_arg(const F &f, std::tuple<ViewMatrixType<Tp>...> &t, std::tuple<ViewVectorType<Tp>...> &v) {}
+
+    template <typename F, Integer I = 0, Integer... Args, typename... Tp>
+        typename std::enable_if <
+        I<sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F &f,
+                                                                         std::tuple<ViewMatrixType<Tp>...> &t,
+                                                                         std::tuple<ViewVectorType<Tp>...> &v) {
+        constexpr Integer dataIndex = NthValue<I, Args...>::value;
+
+        f(std::get<dataIndex>(t), std::get<dataIndex>(v));
+        for_each_arg<F, I + 1, Args...>(f, t, v);
+    }
+
     template <typename F, typename T, Integer... dataidx>
     MARS_INLINE_FUNCTION static void expand_tuple(const F &f, T &t) {
         if (sizeof...(dataidx) == 0) {
@@ -198,6 +245,15 @@ namespace mars {
 
     template <typename F, typename T, Integer... dataidx>
     MARS_INLINE_FUNCTION static void expand_tuple(const F &f, T &t, T &v) {
+        if (sizeof...(dataidx) == 0) {
+            apply_impl(f, t, v);
+        } else {
+            for_each_arg<F, 0, dataidx...>(f, t, v);
+        }
+    }
+
+    template <typename F, typename M, typename T, Integer... dataidx>
+    MARS_INLINE_FUNCTION static void expand_tuple(const F &f, M &t, T &v) {
         if (sizeof...(dataidx) == 0) {
             apply_impl(f, t, v);
         } else {
@@ -300,12 +356,12 @@ namespace mars {
     }
 
     // standard binary search
-    template <typename V, typename T>
-    MARS_INLINE_FUNCTION Integer binary_search(const V view, Integer f, Integer l, const T enc_oc) {
+    template <typename T>
+    MARS_INLINE_FUNCTION Integer binary_search(const T *view, Integer f, Integer l, const T enc_oc) {
         while (f <= l) {
             Integer guess = (l + f) / 2;
 
-            T current = view(guess);
+            T current = *(view + guess);
 
             if (enc_oc == current) {
                 return guess;
@@ -422,13 +478,13 @@ namespace mars {
     ViewVectorType<Integer> compact_owned_dofs(const H &dof_handler, ViewVectorType<Integer> &locally_owned_dofs) {
         using namespace Kokkos;
 
-        const Integer local_size = dof_handler.get_owned_dof_size();
+        const Integer local_size = dof_handler.template get_owned_dof_size<1>();
 
         ViewVectorType<bool> dof_predicate("label_dof_predicate", local_size);
         Kokkos::parallel_for(
             "separateowneddoflabels", local_size, KOKKOS_LAMBDA(const Integer i) {
-                const Integer local = dof_handler.get_owned_dof(i);
-                if (dof_handler.get_label(local) & Label) {
+                const Integer local = dof_handler.template get_owned_dof<1>(i);
+                if (dof_handler.template get_label<1>(local) & Label) {
                     dof_predicate(i) = 1;
                 }
             });
@@ -448,7 +504,7 @@ namespace mars {
             local_size, KOKKOS_LAMBDA(const Integer i) {
                 if (dof_predicate(i) == 1) {
                     Integer vindex = owned_dof_map(i);
-                    const Integer local = dof_handler.get_owned_dof(i);
+                    const Integer local = dof_handler.template get_owned_dof<1>(i);
                     locally_owned_dofs(vindex) = local;
                 }
             });
@@ -460,13 +516,13 @@ namespace mars {
     ViewVectorType<Integer> compact_local_dofs(const H &dof_handler, ViewVectorType<Integer> &local_dofs) {
         using namespace Kokkos;
 
-        const Integer local_size = dof_handler.get_dof_size();
+        const Integer local_size = dof_handler.template get_dof_size<1>();
 
         ViewVectorType<bool> dof_predicate("label_dof_predicate", local_size);
         Kokkos::parallel_for(
             "separatelocaldoflabels", local_size, KOKKOS_LAMBDA(const Integer i) {
                 const Integer local = dof_handler.get_local_dof(i);
-                if (dof_handler.get_label(local) & Label) {
+                if (dof_handler.template get_label<1>(local) & Label) {
                     dof_predicate(i) = 1;
                 }
             });
@@ -515,10 +571,10 @@ namespace mars {
     }
 
     template <typename DH, typename F>
-    ViewVectorType<bool> compact_sfc_to_local(DH dofhandler,
-                                              F f,
-                                              const ViewVectorType<Integer> in,
-                                              ViewVectorType<Integer> &out) {
+    inline ViewVectorType<bool> compact_sfc_to_local(DH dofhandler,
+                                                     F f,
+                                                     const ViewVectorType<Integer> in,
+                                                     ViewVectorType<Integer> &out) {
         using namespace Kokkos;
 
         auto local_size = in.extent(0);
@@ -547,8 +603,8 @@ namespace mars {
         return in_predicate;
     }
 
-    ViewVectorType<Integer> count_sfc_to_local(const ViewVectorType<Integer> in_scan,
-                                               const ViewVectorType<bool> in_predicate) {
+    inline ViewVectorType<Integer> count_sfc_to_local(const ViewVectorType<Integer> in_scan,
+                                                      const ViewVectorType<bool> in_predicate) {
         using namespace Kokkos;
 
         const Integer count_size = in_scan.extent(0) - 1;

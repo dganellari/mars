@@ -28,100 +28,87 @@ namespace mars {
             Kokkos::parallel_for("init_initial_cond", size, f);
         }
 
-        template <typename ElementType, Integer Op = 0>
+        template <typename H, typename ElementType, Integer Op = 0>
         struct FillBufferData {
             ElementType buffer_data;
             ElementType user_data;
-            ViewVectorType<Integer> boundary_sfc;
-            ViewVectorType<Integer> sfc_to_local;
+            H dof_handler;
 
-            FillBufferData(ElementType bf, ElementType ud, ViewVectorType<Integer> bd, ViewVectorType<Integer> stl)
-                : buffer_data(bf), user_data(ud), boundary_sfc(bd), sfc_to_local(stl) {}
+            FillBufferData(ElementType bf, ElementType ud, H d) : buffer_data(bf), user_data(ud), dof_handler(d) {}
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                const Integer sfc_index = sfc_to_local(boundary_sfc(i));
-                buffer_data(i) = user_data(sfc_index);
+                auto block_local = dof_handler.get_boundary_local_index(i);
+                buffer_data(i) = user_data(block_local);
             }
         };
 
-        template <typename ElementType>
-        struct FillBufferData<ElementType, 1> {
+        template <typename H, typename ElementType>
+        struct FillBufferData<H, ElementType, 1> {
             ElementType buffer_data;
             ElementType user_data;
-            ViewVectorType<Integer> boundary_sfc;
-            ViewVectorType<Integer> sfc_to_local;
+            H dof_handler;
 
-            FillBufferData(ElementType bf, ElementType ud, ViewVectorType<Integer> bd, ViewVectorType<Integer> stl)
-                : buffer_data(bf), user_data(ud), boundary_sfc(bd), sfc_to_local(stl) {}
+            FillBufferData(ElementType bf, ElementType ud, H d) : buffer_data(bf), user_data(ud), dof_handler(d) {}
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                const Integer sfc_index = sfc_to_local(boundary_sfc(i));
-                Kokkos::atomic_add(&user_data(sfc_index), buffer_data(i));
+                auto block_local = dof_handler.get_boundary_local_index(i);
+                Kokkos::atomic_add(&user_data(block_local), buffer_data(i));
             }
         };
 
-        template <typename ElementType>
-        struct FillBufferData<ElementType, 2> {
+        template <typename H, typename ElementType>
+        struct FillBufferData<H, ElementType, 2> {
             ElementType buffer_data;
             ElementType user_data;
-            ViewVectorType<Integer> boundary_sfc;
-            ViewVectorType<Integer> sfc_to_local;
+            H dof_handler;
 
-            FillBufferData(ElementType bf, ElementType ud, ViewVectorType<Integer> bd, ViewVectorType<Integer> stl)
-                : buffer_data(bf), user_data(ud), boundary_sfc(bd), sfc_to_local(stl) {}
+            FillBufferData(ElementType bf, ElementType ud, H d) : buffer_data(bf), user_data(ud), dof_handler(d) {}
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                const Integer sfc_index = sfc_to_local(boundary_sfc(i));
-                Kokkos::atomic_fetch_max(&user_data(sfc_index), buffer_data(i));
+                auto block_local = dof_handler.get_boundary_local_index(i);
+                Kokkos::atomic_fetch_max(&user_data(block_local), buffer_data(i));
             }
         };
 
-        template <typename ElementType>
-        struct FillBufferData<ElementType, 3> {
+        template <typename H, typename ElementType>
+        struct FillBufferData<H, ElementType, 3> {
             ElementType buffer_data;
             ElementType user_data;
-            ViewVectorType<Integer> boundary_sfc;
-            ViewVectorType<Integer> sfc_to_local;
+            H dof_handler;
 
-            FillBufferData(ElementType bf, ElementType ud, ViewVectorType<Integer> bd, ViewVectorType<Integer> stl)
-                : buffer_data(bf), user_data(ud), boundary_sfc(bd), sfc_to_local(stl) {}
+            FillBufferData(ElementType bf, ElementType ud, H d) : buffer_data(bf), user_data(ud), dof_handler(d) {}
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                const Integer sfc_index = sfc_to_local(boundary_sfc(i));
-                Kokkos::atomic_fetch_min(&user_data(sfc_index), buffer_data(i));
+                auto block_local = dof_handler.get_boundary_local_index(i);
+                Kokkos::atomic_fetch_min(&user_data(block_local), buffer_data(i));
             }
         };
 
-        template <Integer Op>
+        template <Integer Op, typename H>
         struct FillBufferDataFunctor {
-            FillBufferDataFunctor(std::string d, size_t s, ViewVectorType<Integer> b, ViewVectorType<Integer> stl)
-                : desc(d), size(s), boundary_sfc(b), sfc_to_local(stl) {}
+            FillBufferDataFunctor(std::string d, size_t s, H hd) : desc(d), size(s), dof_handler(hd) {}
 
             template <typename ElementType>
             void operator()(ElementType &el_1, ElementType &el_2) const {
-                Kokkos::parallel_for(
-                    desc, size, FillBufferData<ElementType, Op>(el_1, el_2, boundary_sfc, sfc_to_local));
+                Kokkos::parallel_for(desc, size, FillBufferData<H, ElementType, Op>(el_1, el_2, dof_handler));
             }
 
             std::string desc;
             size_t size;
-
-            ViewVectorType<Integer> boundary_sfc;
-            ViewVectorType<Integer> sfc_to_local;
+            H dof_handler;
         };
 
-        template <Integer Op, Integer... dataidx>
+        template <typename H, Integer Op, Integer... dataidx>
         MARS_INLINE_FUNCTION static void fill_buffer_data(user_tuple &udata,
                                                           user_tuple &buffer_data,
-                                                          const ViewVectorType<Integer> &boundary,
-                                                          const ViewVectorType<Integer> &map) {
-            const Integer size = boundary.extent(0);
-            expand_tuple<FillBufferDataFunctor<Op>, user_tuple, dataidx...>(
-                FillBufferDataFunctor<Op>("fill_buffer_data", size, boundary, map), buffer_data, udata);
+                                                          const H &dof_handler) {
+            const Integer size = dof_handler.get_boundary_dof_size();
+            expand_tuple<FillBufferDataFunctor<Op, H>, user_tuple, dataidx...>(
+                FillBufferDataFunctor<Op, H>("fill_buffer_data", size, dof_handler), buffer_data, udata);
         }
 
         struct ExchangeGhostDofsData {
@@ -138,90 +125,133 @@ namespace mars {
             const context &con;
         };
 
-        template <Integer... dataidx>
+        /* template <Integer B>
+        MARS_INLINE_FUNCTION static typename std::enable_if<B == 1, std::vector<Integer> >::type
+        compute_block_scan(Integer *mirror, const Integer size, const Integer block) {
+            return std::vector<Integer>(mirror, mirror + size);
+        }
+
+        template <Integer B>
+        MARS_INLINE_FUNCTION static typename std::enable_if<B != 1, std::vector<Integer> >::type
+        compute_block_scan(Integer *mirror, const Integer size, const Integer block) {
+            std::vector<Integer> block_scan(size, 0);
+            for (int i = 0; i < size; ++i) {
+                block_scan[i] = block * mirror[i];
+            }
+            return block_scan;
+        } */
+
+        MARS_INLINE_FUNCTION static std::vector<Integer> compute_block_scan(Integer *mirror,
+                                                                            const Integer size,
+                                                                            const Integer block) {
+            assert(block > 0);
+            if (block < 1) Abort("Block size for the vector valued problem should be > 1!");
+
+            if (block == 1) {
+                return std::vector<Integer>(mirror, mirror + size);
+            } else {
+                std::vector<Integer> block_scan(size, 0);
+                for (int i = 0; i < size; ++i) {
+                    block_scan[i] = block * mirror[i];
+                }
+                return block_scan;
+            }
+        }
+
+        template <typename H, Integer... dataidx>
         MARS_INLINE_FUNCTION static void exchange_ghost_dofs_data(const context &c,
+                                                                  const Integer block,
                                                                   user_tuple &recv_data,
                                                                   user_tuple &send_data,
-                                                                  Integer *recv_mirror,
-                                                                  Integer *send_mirror) {
+                                                                  Integer *r_mirror,
+                                                                  Integer *s_mirror) {
+            const int rank_size = num_ranks(c) + 1;
+            auto recv_mirror = compute_block_scan(r_mirror, rank_size, block);
+            auto send_mirror = compute_block_scan(s_mirror, rank_size, block);
+
             expand_tuple<ExchangeGhostDofsData, user_tuple, dataidx...>(
-                ExchangeGhostDofsData(c, recv_mirror, send_mirror), recv_data, send_data);
+                ExchangeGhostDofsData(c, recv_mirror.data(), send_mirror.data()), recv_data, send_data);
         }
 
         // gather operation: fill the data from the received ghost data
-        template <typename ElementType, bool Op = 0>
+        template <typename H, typename ElementType, bool Op = 0>
         struct FillUserData {
             ElementType ghost_data;
             ElementType user_data;
-            ViewVectorType<Integer> ghost_sfc;
-            ViewVectorType<Integer> sfc_to_local;
+            H dof_handler;
 
-            FillUserData(ElementType gd, ElementType ud, ViewVectorType<Integer> gs, ViewVectorType<Integer> stl)
-                : ghost_data(gd), user_data(ud), ghost_sfc(gs), sfc_to_local(stl) {}
+            FillUserData(ElementType gd, ElementType ud, H d) : ghost_data(gd), user_data(ud), dof_handler(d) {}
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                const Integer local_sfc_index = sfc_to_local(ghost_sfc(i));
-                user_data(local_sfc_index) = ghost_data(i);
+                auto block_local = dof_handler.get_ghost_local_index(i);
+                user_data(block_local) = ghost_data(i);
             }
         };
 
         // scatter operation: fill the to be sent ghost buffer from data
-        template <typename ElementType>
-        struct FillUserData<ElementType, 1> {
+        template <typename H, typename ElementType>
+        struct FillUserData<H, ElementType, 1> {
             ElementType ghost_data;
             ElementType user_data;
-            ViewVectorType<Integer> ghost_sfc;
-            ViewVectorType<Integer> sfc_to_local;
+            H dof_handler;
 
-            FillUserData(ElementType gd, ElementType ud, ViewVectorType<Integer> gs, ViewVectorType<Integer> stl)
-                : ghost_data(gd), user_data(ud), ghost_sfc(gs), sfc_to_local(stl) {}
+            FillUserData(ElementType gd, ElementType ud, H d) : ghost_data(gd), user_data(ud), dof_handler(d) {}
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                const Integer local_sfc_index = sfc_to_local(ghost_sfc(i));
-                ghost_data(i) = user_data(local_sfc_index);
+                auto block_local = dof_handler.get_ghost_local_index(i);
+                ghost_data(i) = user_data(block_local);
             }
         };
 
-        template <bool Op>
+        template <bool Op, typename H>
         struct FillUserDataFunctor {
-            FillUserDataFunctor(std::string d, size_t s, ViewVectorType<Integer> b, ViewVectorType<Integer> stl)
-                : desc(d), size(s), ghost_sfc(b), sfc_to_local(stl) {}
+            FillUserDataFunctor(std::string d, size_t s, H hd) : desc(d), size(s), dof_handler(hd) {}
 
             template <typename ElementType>
             void operator()(ElementType &el_1, ElementType &el_2) const {
-                Kokkos::parallel_for(desc, size, FillUserData<ElementType, Op>(el_1, el_2, ghost_sfc, sfc_to_local));
+                Kokkos::parallel_for(desc, size, FillUserData<H, ElementType, Op>(el_1, el_2, dof_handler));
             }
 
             std::string desc;
             size_t size;
-
-            ViewVectorType<Integer> ghost_sfc;
-            ViewVectorType<Integer> sfc_to_local;
+            H dof_handler;
         };
 
         /* fill the user data views from the ghost data that were filled in FillBufferData and received through mpi. */
-        template <bool Op, Integer... dataidx>
+        template <typename H, bool Op, Integer... dataidx>
         MARS_INLINE_FUNCTION static void fill_user_data(user_tuple &udata,
                                                         user_tuple &ghost_user_data,
-                                                        const ViewVectorType<Integer> &ghost_sfc,
-                                                        const ViewVectorType<Integer> &map) {
-            const Integer size = ghost_sfc.extent(0);
-            expand_tuple<FillUserDataFunctor<Op>, user_tuple, dataidx...>(
-                FillUserDataFunctor<Op>("fill_user_data", size, ghost_sfc, map), ghost_user_data, udata);
+                                                        const H &dof_handler) {
+            const Integer size = dof_handler.get_ghost_dof_size();
+            expand_tuple<FillUserDataFunctor<Op, H>, user_tuple, dataidx...>(
+                FillUserDataFunctor<Op, H>("fill_user_data", size, dof_handler), ghost_user_data, udata);
         }
+
+        /* template <typename H>
+        static std::enable_if_t<H::Block == 0, Integer> get_block(const H &dof_handler) {
+            return dof_handler.get_block();
+        }
+
+        template <typename H>
+        static std::enable_if_t<(H::Block > 0), Integer> get_block(const H &dof_handler) {
+            return H::Block;
+        } */
 
         // gather operation: fill the data from the received ghost data
         template <Integer... dataidx, typename H>
         static void gather_ghost_data(const H &dof_handler, user_tuple &user_data) {
+            gather_ghost_data(dof_handler, user_data, []() {});
+        }
+
+        // gather operation: fill the data from the received ghost data
+        template <Integer... dataidx, typename H, typename F>
+        static void gather_ghost_data(const H &dof_handler, user_tuple &user_data, F callback) {
             const context &context = dof_handler.get_context();
             // exchange the ghost dofs first since it will be used to find the address
             // of the userdata based on the sfc code.
-            /* int proc_num = rank(context); */
-            int size = num_ranks(context);
-
-            Integer ghost_size = dof_handler.get_view_scan_recv_mirror()(size);
+            Integer ghost_size = dof_handler.get_ghost_dof_size();
             user_tuple ghost_user_data;
             reserve_user_data<dataidx...>(ghost_user_data, "ghost_user_data", ghost_size);
 
@@ -230,61 +260,72 @@ namespace mars {
             user_tuple buffer_data;
             reserve_user_data<dataidx...>(buffer_data, "buffer_data", buffer_size);
 
-            fill_buffer_data<0, dataidx...>(
-                user_data, buffer_data, dof_handler.get_boundary_dofs(), dof_handler.get_local_dof_map());
+            fill_buffer_data<H, 0, dataidx...>(user_data, buffer_data, dof_handler);
 
-            exchange_ghost_dofs_data<dataidx...>(context,
-                                                 ghost_user_data,
-                                                 buffer_data,
-                                                 dof_handler.get_view_scan_recv_mirror().data(),
-                                                 dof_handler.get_view_scan_send_mirror().data());
+            Kokkos::fence();
+
+            // overlapping computational callback method with the MPI comm.
+            callback();
+
+            const auto block_size = dof_handler.get_block();
+            exchange_ghost_dofs_data<H, dataidx...>(context,
+                                                    block_size,
+                                                    ghost_user_data,
+                                                    buffer_data,
+                                                    dof_handler.get_view_scan_recv_mirror().data(),
+                                                    dof_handler.get_view_scan_send_mirror().data());
 
             /* use the received ghost data and the sfc to put them to the unified local data */
-            fill_user_data<0, dataidx...>(
-                user_data, ghost_user_data, dof_handler.get_ghost_dofs(), dof_handler.get_local_dof_map());
+            fill_user_data<H, 0, dataidx...>(user_data, ghost_user_data, dof_handler);
         }
 
         template <Integer... dataidx, typename H>
         static void scatter_add(const H &handler, user_tuple &boundary_user_data, user_tuple &user_data) {
-            fill_buffer_data<1, dataidx...>(
-                user_data, boundary_user_data, handler.get_boundary_dofs(), handler.get_local_dof_map());
+            fill_buffer_data<H, 1, dataidx...>(user_data, boundary_user_data, handler);
         }
 
         template <Integer... dataidx, typename H>
         void scatter_max(const H &handler, user_tuple &boundary_user_data, user_tuple &user_data) {
-            fill_buffer_data<2, dataidx...>(
-                user_data, boundary_user_data, handler.get_boundary_dofs(), handler.get_local_dof_map());
+            fill_buffer_data<H, 2, dataidx...>(user_data, boundary_user_data, handler);
         }
 
         template <Integer... dataidx, typename H>
         void scatter_min(const H &handler, user_tuple &boundary_user_data, user_tuple &user_data) {
-            fill_buffer_data<3, dataidx...>(
-                user_data, boundary_user_data, handler.get_boundary_dofs(), handler.get_local_dof_map());
+            fill_buffer_data<H, 3, dataidx...>(user_data, boundary_user_data, handler);
         }
 
         template <Integer... dataidx, typename H>
         static user_tuple scatter_ghost_data(const H &dof_handler, user_tuple &user_data) {
-            const context &context = dof_handler.get_context();
-            /* int proc_num = rank(context); */
-            int size = num_ranks(context);
+            return scatter_ghost_data(dof_handler, user_data, []() {});
+        }
 
-            Integer ghost_size = dof_handler.get_view_scan_recv_mirror()(size);
+        template <Integer... dataidx, typename H, typename F>
+        static user_tuple scatter_ghost_data(const H &dof_handler, user_tuple &user_data, F callback) {
+            const context &context = dof_handler.get_context();
+
+            Integer ghost_size = dof_handler.get_ghost_dof_size();
             user_tuple ghost_buffer_data;
             reserve_user_data<dataidx...>(ghost_buffer_data, "ghost_user_data", ghost_size);
 
-            fill_user_data<1, dataidx...>(
-                user_data, ghost_buffer_data, dof_handler.get_ghost_dofs(), dof_handler.get_local_dof_map());
+            fill_user_data<H, 1, dataidx...>(user_data, ghost_buffer_data, dof_handler);
 
-            const Integer boundary_size = dof_handler.get_boundary_dofs().extent(0);
+            const Integer boundary_size = dof_handler.get_boundary_dof_size();
             user_tuple boundary_user_data;
             reserve_user_data<dataidx...>(boundary_user_data, "boundary_user_data", boundary_size);
 
+            Kokkos::fence();
+
+            // overlapping computational callback method with the MPI comm.
+            callback();
+
+            const auto block_size = dof_handler.get_block();
             // prepare the buffer to send the boundary data
-            exchange_ghost_dofs_data<dataidx...>(context,
-                                                 boundary_user_data,
-                                                 ghost_buffer_data,
-                                                 dof_handler.get_view_scan_send_mirror().data(),
-                                                 dof_handler.get_view_scan_recv_mirror().data());
+            exchange_ghost_dofs_data<H, dataidx...>(context,
+                                                    block_size,
+                                                    boundary_user_data,
+                                                    ghost_buffer_data,
+                                                    dof_handler.get_view_scan_send_mirror().data(),
+                                                    dof_handler.get_view_scan_recv_mirror().data());
 
             return boundary_user_data;
         }
@@ -307,30 +348,78 @@ namespace mars {
                     f(dm.get_data<idx>(i));
                 });
         }
+
+        template <Integer dataidx, typename H, typename DH>
+        static void set_locally_owned_data(const DH &dhandler, user_tuple &dof_data, const ViewVectorType<H> &x) {
+            assert(dhandler.get_owned_dof_size() == x.extent(0));
+
+            dhandler.owned_dof_iterate(MARS_LAMBDA(const Integer i) {
+                const auto block_local = dhandler.get_owned_dof(i);
+                std::get<dataidx>(dof_data)(block_local) = x(i);
+            });
+        }
+
+        template <Integer dataidx, typename H, typename DH>
+        static void get_locally_owned_data(const DH &dhandler, const ViewVectorType<H> &x, user_tuple &dof_data) {
+            assert(dhandler.get_owned_dof_size() == x.extent(0));
+
+            dhandler.owned_dof_iterate(MARS_LAMBDA(const Integer i) {
+                const auto block_local = dhandler.get_owned_dof(i);
+                x(i) = std::get<dataidx>(dof_data)(block_local);
+            });
+        }
     };
+
+    // gather operation: fill the data from the received ghost data
+    template <typename H, typename T, typename F>
+    void gather_ghost_data(const H &dof_handler, ViewVectorType<T> &data, F callback) {
+        assert(data.extent(0) == dof_handler.get_dof_size());
+        using SuperDM = BDM<T>;
+        auto tuple = std::make_tuple(data);
+        SuperDM::template gather_ghost_data<0>(dof_handler, tuple, callback);
+    }
 
     // gather operation: fill the data from the received ghost data
     template <typename H, typename T>
     void gather_ghost_data(const H &dof_handler, ViewVectorType<T> &data) {
-        assert(data.extent(0) == dof_handler.get_local_dof_enum().get_elem_size());
+        gather_ghost_data(dof_handler, data, []() {});
+    }
+
+    // scatter add but using the handler and the view instead of a dm.
+    template <typename H, typename T, typename F>
+    void scatter_add_ghost_data(const H &dof_handler, ViewVectorType<T> &data, F callback) {
+        assert(data.extent(0) == dof_handler.get_dof_size());
         using SuperDM = BDM<T>;
         auto tuple = std::make_tuple(data);
-        SuperDM::template gather_ghost_data<0>(dof_handler, tuple);
+        auto boundary_data = SuperDM::template scatter_ghost_data<0>(dof_handler, tuple, callback);
+        SuperDM::template scatter_add<0>(dof_handler, boundary_data, tuple);
     }
 
     // scatter add but using the handler and the view instead of a dm.
     template <typename H, typename T>
     void scatter_add_ghost_data(const H &dof_handler, ViewVectorType<T> &data) {
-        assert(data.extent(0) == dof_handler.get_local_dof_enum().get_elem_size());
-        using SuperDM = BDM<T>;
-        auto tuple = std::make_tuple(data);
-        auto boundary_data = SuperDM::template scatter_ghost_data<0>(dof_handler, tuple);
-        SuperDM::template scatter_add<0>(dof_handler, boundary_data, tuple);
+        scatter_add_ghost_data(dof_handler, data, []() {});
     }
 
     template <class DM, Integer... dataidx>
     void scatter_add_ghost_data(DM &dm) {
         dm.template scatter_add_ghost_data<dataidx...>();
+    }
+
+    template <typename H, typename T>
+    void set_locally_owned_data(const H &dof_handler, ViewVectorType<T> &data, ViewVectorType<T> owned) {
+        assert(data.extent(0) == dof_handler.get_dof_size());
+        using SuperDM = BDM<T>;
+        auto tuple = std::make_tuple(data);
+        SuperDM::template set_locally_owned_data<0>(dof_handler, tuple, owned);
+    }
+
+    template <typename H, typename T>
+    void get_locally_owned_data(const H &dof_handler, ViewVectorType<T> owned, ViewVectorType<T> &data) {
+        assert(data.extent(0) == dof_handler.get_dof_size());
+        using SuperDM = BDM<T>;
+        auto tuple = std::make_tuple(data);
+        SuperDM::template get_locally_owned_data<0>(dof_handler, owned, tuple);
     }
 
 }  // namespace mars

@@ -83,40 +83,12 @@ namespace mars {
 
         template <Integer idx, typename H = typename std::tuple_element<idx, tuple>::type>
         void get_locally_owned_data(const ViewVectorType<H> &x) {
-            using namespace Kokkos;
-
-            assert(get_dof_handler().get_global_dof_enum().get_elem_size() == x.extent(0));
-            const Integer size = get_dof_handler().get_global_dof_enum().get_elem_size();
-
-            ViewVectorType<Integer> global_to_sfc = get_dof_handler().get_global_dof_enum().get_view_elements();
-            ViewVectorType<Integer> sfc_to_local = get_dof_handler().get_local_dof_enum().get_view_sfc_to_local();
-            ViewVectorType<H> dof_data = get_dof_data<idx>();
-
-            Kokkos::parallel_for(
-                "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
-                    const Integer sfc = global_to_sfc(i);
-                    const Integer local = sfc_to_local(sfc);
-                    x(i) = dof_data(local);
-                });
+            SuperDM::template get_locally_owned_data<idx>(get_dof_handler(), x, user_data);
         }
 
         template <Integer idx, typename H = typename std::tuple_element<idx, tuple>::type>
         void set_locally_owned_data(const ViewVectorType<H> &x) {
-            using namespace Kokkos;
-
-            assert(get_dof_handler().get_global_dof_enum().get_elem_size() == x.extent(0));
-            const Integer size = get_dof_handler().get_global_dof_enum().get_elem_size();
-
-            ViewVectorType<Integer> global_to_sfc = get_dof_handler().get_global_dof_enum().get_view_elements();
-            ViewVectorType<Integer> sfc_to_local = get_dof_handler().get_local_dof_enum().get_view_sfc_to_local();
-            ViewVectorType<H> dof_data = get_dof_data<idx>();
-
-            Kokkos::parallel_for(
-                "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
-                    const Integer sfc = global_to_sfc(i);
-                    const Integer local = sfc_to_local(sfc);
-                    dof_data(local) = x(i);
-                });
+            SuperDM::template set_locally_owned_data<idx>(get_dof_handler(), user_data, x);
         }
 
         /* building the stencil is the responsibility of the specialized DM. */

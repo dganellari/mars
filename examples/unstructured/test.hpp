@@ -44,8 +44,8 @@ void mesh_test(int &argc, char **&argv, const int level) {
 
     Kokkos::Timer timer;
     // create the quad mesh distributed through the mpi procs.
-    DistributedQuad4Mesh mesh;
-    generate_distributed_cube(context, mesh, level, level, 0);
+    DistributedQuad4Mesh mesh(context);
+    generate_distributed_cube(mesh, level, level, 0);
     /* mesh.set_periodic(); //set the domain to be periodic */
     /*
             const Integer xDim = mesh.get_XDim();
@@ -59,8 +59,8 @@ void mesh_test(int &argc, char **&argv, const int level) {
     // the type of the mesh elements. In this case quad4 (Type=4)
     constexpr Integer Type = Elem::ElemType;
 
-    DOFHandler dof_handler(&mesh, context);
-    dof_handler.enumerate_dofs(context);
+    DOFHandler dof_handler(&mesh);
+    dof_handler.enumerate_dofs();
     // create the dm object
     DMQ2 dm(dof_handler);
     // enumerate the dofs locally and globally. The ghost dofs structures
