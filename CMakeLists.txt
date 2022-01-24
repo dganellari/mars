@@ -316,9 +316,16 @@ if(MARS_WITH_ADIOS2)
         ARCHIVE DESTINATION lib)
 endif()
 
+if(Kokkos_FOUND)
+install(
+    TARGETS mars_examples
+    RUNTIME DESTINATION bin
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib)
+endif()
 
 install(
-    TARGETS mars mars_exec mars_examples
+    TARGETS mars mars_exec
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib)
