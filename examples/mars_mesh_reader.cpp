@@ -40,11 +40,11 @@ void read(std::string filename) {
     adios2::Attribute<std::string> uAttr = io_main.InquireAttribute<std::string>("format/mars_mesh");
     adios2::Variable<uint32_t> numOfElements = io_main.InquireVariable<uint32_t>("NumOfElements");
     if (uVar) {
-        std::vector<double> example;
+        std::vector<double> myU;
         std::cout << "Got it\n";
 
-        reader.Get(uVar, example, adios2::Mode::Deferred);
-        std::cout << example.size() << std::endl;
+        reader.Get(uVar, myU, adios2::Mode::Deferred);
+        std::cout << myU.size() << std::endl;
     }
     reader.EndStep();
 }
