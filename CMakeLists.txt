@@ -339,13 +339,13 @@ endif()
 
 find_package(ADIOS2 REQUIRED)
 if(ADIOS2_FOUND)
-    target_link_libraries(mars adios2::adios2 MPI::MPI_C)
+    target_link_libraries(mars adios2::cxx11_mpi MPI::MPI_C)
 
-    add_executable(adios_example examples/mars_example_adios2.cpp 
-    examples/mars_image_data_writer_settings.cpp
-    examples/mars_image_data_writer.cpp
-    examples/mars_mesh_writer.cpp
-    examples/mars_mesh_io.cpp)
+    # add_executable(adios_example examples/mars_example_adios2.cpp 
+    # examples/mars_image_data_writer_settings.cpp
+    # examples/mars_image_data_writer.cpp
+    # examples/mars_mesh_writer.cpp
+    # examples/mars_mesh_io.cpp)
 
     add_executable(adios_mpi_example examples/mars_example_adios_mpi.cpp)
 
@@ -355,7 +355,7 @@ if(ADIOS2_FOUND)
 
     add_executable(adios_mesh_reader examples/mars_mesh_reader.cpp)
 
-    target_link_libraries(adios_example mars mars_io)
+    # target_link_libraries(adios_example mars mars_io)
     target_link_libraries(adios_mpi_example mars mars_io)
     target_link_libraries(adios_mpi_mesh_example mars mars_io)
     target_link_libraries(adios_mpi_mesh_time_example mars mars_io)
