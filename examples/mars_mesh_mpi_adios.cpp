@@ -6,6 +6,7 @@
 #include "mars_interpolate.hpp"
 #include "mars_mesh.hpp"
 #include "mars_mesh_generation.hpp"
+#include "mars_mesh_reader.hpp"
 #include "mars_test_mesh.hpp"
 
 #ifdef WITH_KOKKOS
@@ -226,7 +227,9 @@ int main(int argc, char* argv[]) {
         engine.Close();
     }
     Kokkos::finalize();
-    MPI_Finalize();
+
+    // read("adios-mesh-mpi.bp", rank, x);
+
 #endif
     return 0;
 }
