@@ -36,14 +36,17 @@ RelWithDebInfo MinSizeRel." FORCE)
     message(STATUS "[Status] CMAKE_BUILD_TYPE=Release")
 endif(NOT CMAKE_BUILD_TYPE)
 
+
+# ##############################################################################
+# ##############################################################################
+# ##############################################################################
+
+                ################## OS TYPE ################## 
+
 if(UNIX AND NOT APPLE)
     set(LINUX TRUE)
 endif()
 
-
-if(MARS_ENABLE_ADIOS2)
-    find_package(adios2 REQUIRED)
-endif()
 
 # ##############################################################################
 # ##############################################################################
@@ -86,6 +89,9 @@ endfunction()
 # ##############################################################################
 # ##############################################################################
 
+
+                ##################  MPI STUFF ################## 
+
 find_package(MPIExtended)
 
 if(MPI_FOUND)
@@ -99,9 +105,25 @@ if(NOT DEFINED CMAKE_CXX_STANDARD)
     set(CMAKE_CXX_STANDARD 14)
 endif()
 
+# ##############################################################################
+# ##############################################################################
+# ##############################################################################
 
 
-############### KOKKOS STUFF ###########################
+
+                ################## ADIOS 2 STUFF ################## 
+
+if(MARS_ENABLE_ADIOS2)
+    find_package(ADIOS2 REQUIRED)
+    add_subdirectory(backend/adios2)
+endif()
+
+
+# ##############################################################################
+# ##############################################################################
+# ##############################################################################
+
+                ##################  KOKKOS STUFF ################## 
 if(TRY_WITH_KOKKOS)
     if(NOT TRILINOS_DIR)
         message(STATUS "Setting TRILINOS_DIR to $ENV{TRILINOS_DIR}")
@@ -192,6 +214,8 @@ if(TRY_WITH_KOKKOS)
 endif()
 
 # ##############################################################################
+# ##############################################################################
+# ##############################################################################
 
 list(APPEND MARS_HEADERS mars.hpp mars_env.hpp)
 list(APPEND MARS_SOURCES mars.cpp mars_env.cpp)
@@ -203,9 +227,6 @@ add_subdirectory(examples)
 add_subdirectory(io)
 add_subdirectory(kokkos)
 
-if(MARS_ENABLE_ADIOS2)
-    add_subdirectory(backend/adios2)
-endif()
 
 if(MARS_ENABLE_VTK)
     add_subdirectory(backend/vtk)
@@ -213,6 +234,7 @@ endif()
 
 add_library(mars STATIC ${MARS_HEADERS} ${MARS_SOURCES})
 
+# TODO: Print only the names of the libraries without the semilcolon.
 message(STATUS "MARS_LIBRARIES=${MARS_LIBRARIES}")
 target_link_libraries(mars ${MARS_LIBRARIES})
 
@@ -233,8 +255,12 @@ target_link_libraries(mars ${MPI_LIBRARIES})
 target_compile_features(mars PUBLIC cxx_std_14)
 target_include_directories(mars PUBLIC .)
 
+# ##############################################################################
+# ##############################################################################
+# ##############################################################################
 
-################################### MORE KOKKOS STUFF ###########################################
+
+                ################## MORE KOKKOS STUFF ################## 
 
 if(Kokkos_FOUND)
 
@@ -289,9 +315,13 @@ if(Kokkos_FOUND)
 endif()
 
 
-################################# END OF KOKKOS STUFF #####################################
+                ################## END OF KOKKOS STUFF ################## 
 
-################################ EXACUTABLES AND INSTALL ###############################
+# ##############################################################################
+# ##############################################################################
+# ##############################################################################
+
+                ##################  EXECUTABLES AND INSTALL ################## 
 
 add_executable(mars_exec main.cpp)
 target_link_libraries(mars_exec mars)

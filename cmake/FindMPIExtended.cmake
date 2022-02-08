@@ -6,7 +6,7 @@ if(APPLE)
         NAMES mpi mpich
         PATHS /opt/local/lib/openmpi-mp/ /opt/local/lib/mpich-mp/
               /opt/local/lib/mpich-clang/ /opt/local/lib
-        DOC "The MPI_CXX_CLANG_LIBRARY library to link against")
+        DOC "The MPI_C_CLANG_LIBRARY library to link against")
 
     find_library(
         MPI_CXX_CLANG_LIBRARY
