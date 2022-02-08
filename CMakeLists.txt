@@ -9,15 +9,20 @@ project(mars
 
 
 # FIXME make them usable from avaialble installation
+# Don't know what this means.
 add_subdirectory(external/googletest)
 add_subdirectory(external/benchmark)
 
+# Cmake imports.
 include(cmake/MARSOptions.cmake)
 
-option(TRY_WITH_MOONOLITH
-       "Use -DTRY_WITH_MOONOLITH=ON for enabling mesh transfer functions." OFF)
-option(TRY_WITH_KOKKOS
-       "Use -DTRY_WITH_KOKKOS=ON for enabling mesh transfer functions." OFF)
+if(MARS_ENABLE_BENCHMARK)
+    include(bench/benchmarks.cmake)
+endif()
+
+if(MARS_ENABLE_TESTING)
+    include(tests/tests.cmake)
+endif()
 
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -94,6 +99,9 @@ if(NOT DEFINED CMAKE_CXX_STANDARD)
     set(CMAKE_CXX_STANDARD 14)
 endif()
 
+
+
+############### KOKKOS STUFF ###########################
 if(TRY_WITH_KOKKOS)
     if(NOT TRILINOS_DIR)
         message(STATUS "Setting TRILINOS_DIR to $ENV{TRILINOS_DIR}")
@@ -225,6 +233,9 @@ target_link_libraries(mars ${MPI_LIBRARIES})
 target_compile_features(mars PUBLIC cxx_std_14)
 target_include_directories(mars PUBLIC .)
 
+
+################################### MORE KOKKOS STUFF ###########################################
+
 if(Kokkos_FOUND)
 
     message(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
@@ -276,6 +287,11 @@ if(Kokkos_FOUND)
     endif()
 
 endif()
+
+
+################################# END OF KOKKOS STUFF #####################################
+
+################################ EXACUTABLES AND INSTALL ###############################
 
 add_executable(mars_exec main.cpp)
 target_link_libraries(mars_exec mars)
@@ -343,5 +359,3 @@ if(Kokkos_FOUND)
     target_link_libraries(st_example mars mars_io)
 endif()
 
-include(tests/tests.cmake)
-include(bench/benchmarks.cmake)

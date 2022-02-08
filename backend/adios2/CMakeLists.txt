@@ -8,7 +8,7 @@ find_project_files(CMAKE_CURRENT_SOURCE_DIR MARS_ADIOS2_MODULES LOCAL_HEADERS
 
 
 add_library(mars_adios2  ${LOCAL_HEADERS} ${LOCAL_SOURCES})
-target_link_libraries(mars_adios2 PUBLIC adios2::adios2 MPI::MPI_C)
+target_link_libraries(mars_adios2 PUBLIC adios2::cxx11_mpi MPI::MPI_C)
 target_link_libraries(mars_adios2 PUBLIC mars_mpi)
 target_include_directories(mars_adios2 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 

@@ -1,4 +1,3 @@
-
 #include "mars_adios2_IO.hpp"
 
 #include "mars_distributed_base_data_management.hpp"
@@ -11,7 +10,6 @@
 
 #ifdef WITH_KOKKOS
 #include "mars_mesh_kokkos.hpp"
-#endif
 
 ////////////////////////////////////
 
@@ -114,8 +112,7 @@ namespace mars {
                 return fe_dof_map.get_dof_handler().get_elem_type();
             }
 
-            static void write_elements(const FEDofMap& fe_dof_map,
-                    const ViewVectorType<uint64_t>& cells) {
+            static void write_elements(const FEDofMap& fe_dof_map, const ViewVectorType<uint64_t>& cells) {
                 auto dof_handler = fe_dof_map.get_dof_handler();
                 int block_size = dof_handler.get_block();
                 int nne = n_nodes_x_element(dof_handler);
@@ -137,9 +134,9 @@ namespace mars {
             static void write_nodes(const FEDofMap& fe_dof_map, const ViewVectorType<Real>& points) {
                 auto dof_handler = fe_dof_map.get_dof_handler();
                 constexpr Integer dim = DofHandler::Dim;
-                //Block=1 omits the block size automatic computations as needed in this case,
-                //as multiple block dof components are based on the same vertex coordinate.
-                //base_<> named method are functionalities with Block == 1;
+                // Block=1 omits the block size automatic computations as needed in this case,
+                // as multiple block dof components are based on the same vertex coordinate.
+                // base_<> named method are functionalities with Block == 1;
 
                 /* constexpr Integer Block = 1; */
                 dof_handler.base_dof_iterate(MARS_LAMBDA(const int i) {
@@ -311,7 +308,7 @@ namespace mars {
                 engine.Put("NumOfVertices", static_cast<uint32_t>(n_nodes));
                 ::adios2::Variable<Real> var_vertices = io.InquireVariable<Real>("vertices");
 
-                //Fill up the buffers in parallel with Kokkos
+                // Fill up the buffers in parallel with Kokkos
                 ViewVectorType<uint64_t> cells("cells", n_elements * (n_nodes_x_element + 1));
                 Adios2Helper::write_elements(mesh, cells);
 
@@ -322,11 +319,11 @@ namespace mars {
                 var_connectivity.SetMemorySpace(::adios2::MemorySpace::CUDA);
                 var_vertices.SetMemorySpace(::adios2::MemorySpace::CUDA);
 #endif
-                //put the buffers into the adios variables
+                // put the buffers into the adios variables
                 engine.Put<uint64_t>(var_connectivity, cells.data());
                 engine.Put<Real>(var_vertices, points.data());
                 engine.PerformPuts();
-           }
+            }
 
             Impl(Mesh& mesh, MPI_Comm comm) : mesh(mesh), adios(comm), io(adios.DeclareIO("BPFile_SZ")), engine() {}
 
@@ -434,3 +431,4 @@ namespace mars {
 
     }  // namespace adios2
 }  // namespace mars
+#endif
