@@ -1,3 +1,7 @@
+
+if(MARS_ENABLE_TESTING)
+
+
 set(MARS_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
 list(APPEND TEST_MODULES .)
@@ -28,3 +32,5 @@ target_compile_features(mars_test PUBLIC cxx_std_14)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MARS_DEV_FLAGS}")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g ${MARS_DEV_FLAGS}")
+
+endif()
