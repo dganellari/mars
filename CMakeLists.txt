@@ -68,13 +68,8 @@ target_include_directories(mars PUBLIC ${MARS_DEP_INCLUDES})
 # #############################################################################
 #link 
 
-
-
 target_link_libraries(mars PUBLIC ${MARS_DEP_LIBRARIES})
 target_link_libraries(mars PUBLIC ${MPI_LIBRARIES})
-
-
-
 
 # ##############################################################################
 # ##############################################################################

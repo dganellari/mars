@@ -155,29 +155,50 @@ if(Kokkos_FOUND)
             "Kokkos_INCLUDE_DIRS=${Kokkos_INCLUDE_DIRS}, ${Kokkos_TPL_INCLUDE_DIRS}"
     )
 
-    # if(Kokkos_CXX_COMPILER)
+
+
+            # Add kokkos_libraries to variable Mars-dep_libraries like with MPI.
+   
+
+    if(Kokkos_CXX_COMPILER)
+        set(MARS_DEP_LIBRARIES
+            "${MARS_DEP_LIBRARIES};${Kokkos_LIBRARIES}")
+
+        set(MARS_DEP_LIBRARIES
+            "${MARS_DEP_LIBRARIES};${Kokkos_TPL_LIBRARIES}")
+
     #     target_link_libraries(mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES})
     # else()
     #     target_link_libraries(mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES}
     #                           -L${Kokkos_LIBRARY_DIRS})
-    # endif()
+    endif()
 
-    # if(KokkosKernels_FOUND)
-    #     if (TARGET Kokkos::kokkoskernels)
-    #         target_link_libraries(mars Kokkos::kokkoskernels)
-    #     else()
-    #         target_include_directories(mars PUBLIC ${KokkosKernels_TPL_INCLUDE_DIRS}
-    #                                                        ${KokkosKernels_INCLUDE_DIRS})
+    if(KokkosKernels_FOUND)
 
-    #         if(Kokkos_CXX_COMPILER)
-    #             target_link_libraries(mars ${KokkosKernels_LIBRARIES}
-    #                                   ${KokkosKernels_TPL_LIBRARIES})
-    #         else()
-    #             target_link_libraries(
-    #                 mars ${KokkosKernels_LIBRARIES} ${KokkosKernels_TPL_LIBRARIES}
-    #                 -L${KokkosKernels_LIBRARY_DIRS})
-    #         endif()
-    #     endif()
-    # endif()
+
+        set(MARS_DEP_INCLUDES
+        "${MARS_DEP_LIBRARIES};${KokkosKernels_TPL_INCLUDE_DIRS}"
+        "${MARS_DEP_LIBRARIES};${KokkosKernels_INCLUDE_DIRS}")
+
+        set(MARS_DEP_LIBRARIES
+            "${MARS_DEP_LIBRARIES};${KokkosKernels_LIBRARIES}"
+            "${MARS_DEP_LIBRARIES};${KokkosKernels_TPL_LIBRARIES}")
+
+        # if (TARGET Kokkos::kokkoskernels)
+        #     target_link_libraries(mars Kokkos::kokkoskernels)
+        # else()
+        #     target_include_directories(mars PUBLIC ${KokkosKernels_TPL_INCLUDE_DIRS}
+        #                                                    ${KokkosKernels_INCLUDE_DIRS})
+
+        #     if(Kokkos_CXX_COMPILER)
+        #         target_link_libraries(mars ${KokkosKernels_LIBRARIES}
+        #                               ${KokkosKernels_TPL_LIBRARIES})
+        #     else()
+        #         target_link_libraries(
+        #             mars ${KokkosKernels_LIBRARIES} ${KokkosKernels_TPL_LIBRARIES}
+        #             -L${KokkosKernels_LIBRARY_DIRS})
+        #     endif()
+        # endif()
+    endif()
 
 endif()
