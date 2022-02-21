@@ -53,10 +53,19 @@
 #         ARCHIVE DESTINATION lib)
 # endif()
 
-scan_directories(${CMAKE_CURRENT_SOURCE_DIR} "." MARS_INCLUDES MARS_HEADERS MARS_SOURCES)
+list(APPEND DISTRIBUTED_MODULES 
+    .
+    communication
+    communication/util
+    kokkos
+    mars_env
+    sfc)
 
-set(MARS_INCLUDES
-    ${MARS_INCLUDES}
+
+scan_directories(${CMAKE_CURRENT_SOURCE_DIR} "${DISTRIBUTED_MODULES}" MARS_BUILD_INCLUDES MARS_HEADERS MARS_SOURCES)
+
+set(MARS_BUILD_INCLUDES
+    ${MARS_BUILD_INCLUDES}
     PARENT_SCOPE)
 
 set(MARS_HEADERS

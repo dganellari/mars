@@ -1,31 +1,45 @@
 if(Kokkos_FOUND)
 
-    list(APPEND MARS_KOKKOS_MODULES .)
+    # list(APPEND MARS_KOKKOS_MODULES .)
 
-    find_project_files(CMAKE_CURRENT_SOURCE_DIR MARS_KOKKOS_MODULES
-                       LOCAL_HEADERS LOCAL_SOURCES)
+    # find_project_files(CMAKE_CURRENT_SOURCE_DIR MARS_KOKKOS_MODULES
+    #                    LOCAL_HEADERS LOCAL_SOURCES)
 
-    add_library(mars_kokkos INTERFACE)
-    # target_compile_features(mars_kokkos INTERFACE cxx_std_14)
-    target_link_libraries(mars_kokkos INTERFACE ${KOKKOS_LIBRARIES})
+    # add_library(mars_kokkos INTERFACE)
+    # # target_compile_features(mars_kokkos INTERFACE cxx_std_14)
+    # target_link_libraries(mars_kokkos INTERFACE ${KOKKOS_LIBRARIES})
 
-    target_include_directories(mars_kokkos
-                               INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_include_directories(mars_kokkos INTERFACE ${CMAKE_BINARY_DIR})
-    target_include_directories(mars_kokkos
-                               INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-    target_include_directories(mars_kokkos INTERFACE ${KOKKOS_INCLUDES})
-    target_include_directories(mars_kokkos BEFORE INTERFACE ${KOKKOS_INCLUDES})
+    # target_include_directories(mars_kokkos
+    #                            INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
+    # target_include_directories(mars_kokkos INTERFACE ${CMAKE_BINARY_DIR})
+    # target_include_directories(mars_kokkos
+    #                            INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    # target_include_directories(mars_kokkos INTERFACE ${KOKKOS_INCLUDES})
+    # target_include_directories(mars_kokkos BEFORE INTERFACE ${KOKKOS_INCLUDES})
 
-    target_include_directories(mars_kokkos INTERFACE ${Kokkos_TPL_INCLUDE_DIRS}
-                                                     ${Kokkos_INCLUDE_DIRS})
-    set(MARS_LIBRARIES
-        "${MARS_LIBRARIES};mars_kokkos;${KOKKOS_LIBRARIES}"
-        PARENT_SCOPE)
-    set(MARS_INCLUDES
-        "${MARS_INCLUDES};${KOKKOS_INCLUDES}"
-        PARENT_SCOPE)
-    set(MARS_HEADERS
-        "${MARS_HEADERS};${LOCAL_HEADERS}"
-        PARENT_SCOPE)
+    # target_include_directories(mars_kokkos INTERFACE ${Kokkos_TPL_INCLUDE_DIRS}
+    #                                                  ${Kokkos_INCLUDE_DIRS})
+    # set(MARS_LIBRARIES
+    #     "${MARS_LIBRARIES};mars_kokkos;${KOKKOS_LIBRARIES}"
+    #     PARENT_SCOPE)
+    # set(MARS_INCLUDES
+    #     "${MARS_INCLUDES};${KOKKOS_INCLUDES}"
+    #     PARENT_SCOPE)
+    # set(MARS_HEADERS
+    #     "${MARS_HEADERS};${LOCAL_HEADERS}"
+    #     PARENT_SCOPE)
+
+scan_directories(${CMAKE_CURRENT_SOURCE_DIR} "." MARS_BUILD_INCLUDES MARS_HEADERS MARS_SOURCES)
+
+set(MARS_BUILD_INCLUDES
+    ${MARS_BUILD_INCLUDES}
+    PARENT_SCOPE)
+
+set(MARS_HEADERS
+    ${MARS_HEADERS}
+    PARENT_SCOPE)
+
+set(MARS_SOURCES
+    ${MARS_SOURCES}
+    PARENT_SCOPE)
 endif()

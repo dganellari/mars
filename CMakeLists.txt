@@ -71,8 +71,7 @@ target_include_directories(mars PUBLIC ${MARS_DEP_INCLUDES})
 
 
 target_link_libraries(mars PUBLIC ${MARS_DEP_LIBRARIES})
-# target_link_libraries(mars ${MPI_LIBRARIES})
-
+target_link_libraries(mars PUBLIC ${MPI_LIBRARIES})
 
 
 
@@ -98,6 +97,14 @@ endif()
 if(MARS_ENABLE_ADIOS2)
     find_package(ADIOS2 REQUIRED)
     add_subdirectory(backend/adios2)
+endif()
+
+if(TRY_WITH_MOONOLITH)
+    add_subdirectory(moonolith_adapter)
+
+    if(WITH_PAR_MOONOLITH)
+        target_link_libraries(mars mars_moonolith)
+    endif()
 endif()
 
 
@@ -165,13 +172,13 @@ target_link_libraries(mars_exec mars)
 target_include_directories(
     mars PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/cxxopts/include)
 
-if(TRY_WITH_MOONOLITH)
-    add_subdirectory(moonolith_adapter)
+# if(TRY_WITH_MOONOLITH)
+#     add_subdirectory(moonolith_adapter)
 
-    if(WITH_PAR_MOONOLITH)
-        target_link_libraries(mars mars_moonolith)
-    endif()
-endif()
+#     if(WITH_PAR_MOONOLITH)
+#         target_link_libraries(mars mars_moonolith)
+#     endif()
+# endif()
 
 # target_link_libraries(mars ${MARS_LIBRARIES})
 target_include_directories(mars PUBLIC ${CMAKE_BINARY_DIR})
@@ -183,31 +190,37 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/base/mars_config.hpp.in
                ${CMAKE_BINARY_DIR}/mars_config.hpp)
 include_directories(${CMAKE_BINARY_DIR})
 
-if(MARS_WITH_VTK)
-    install(
-        TARGETS mars_vtk
-        RUNTIME DESTINATION bin
-        LIBRARY DESTINATION lib
-        ARCHIVE DESTINATION lib)
-endif()
 
 
 
-if(MARS_WITH_ADIOS2)
-    install(
-        TARGETS mars_adios2
-        RUNTIME DESTINATION bin
-        LIBRARY DESTINATION lib
-        ARCHIVE DESTINATION lib)
-endif()
 
-if(Kokkos_FOUND)
-install(
-    TARGETS mars_examples
-    RUNTIME DESTINATION bin
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib)
-endif()
+
+
+# if(MARS_WITH_VTK)
+#     install(
+#         TARGETS mars_vtk
+#         RUNTIME DESTINATION bin
+#         LIBRARY DESTINATION lib
+#         ARCHIVE DESTINATION lib)
+# endif()
+
+
+
+# if(MARS_WITH_ADIOS2)
+#     install(
+#         TARGETS mars_adios2
+#         RUNTIME DESTINATION bin
+#         LIBRARY DESTINATION lib
+#         ARCHIVE DESTINATION lib)
+# endif()
+
+# if(Kokkos_FOUND)
+# install(
+#     TARGETS mars_examples
+#     RUNTIME DESTINATION bin
+#     LIBRARY DESTINATION lib
+#     ARCHIVE DESTINATION lib)
+# endif()
 
 install(
     TARGETS mars mars_exec
@@ -219,9 +232,4 @@ install(FILES ${MARS_HEADERS} DESTINATION include)
 install(FILES ${CMAKE_BINARY_DIR}/mars_config.hpp DESTINATION include)
 
 # ##############################################################################
-
-if(Kokkos_FOUND)
-    add_executable(st_example examples/mars_st_example.cpp)
-    target_link_libraries(st_example mars mars_io)
-endif()
 

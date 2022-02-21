@@ -112,7 +112,7 @@ if(NOT TRILINOS_DIR)
             ${TRILINOS_DIR}/lib64/cmake/KokkosKernels
             REQUIRED)
 
-        find_package(OpenMP)
+        
 
         if(OPENMP_FOUND)
             set(CMAKE_Fortran_FLAGS
@@ -148,36 +148,36 @@ if(Kokkos_FOUND)
         kokkos_check(OPTIONS CUDA_LAMBDA)
     endif()
 
-    target_include_directories(mars SYSTEM PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
+    # target_include_directories(mars SYSTEM PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
 
     message(
         STATUS
             "Kokkos_INCLUDE_DIRS=${Kokkos_INCLUDE_DIRS}, ${Kokkos_TPL_INCLUDE_DIRS}"
     )
 
-    if(Kokkos_CXX_COMPILER)
-        target_link_libraries(mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES})
-    else()
-        target_link_libraries(mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES}
-                              -L${Kokkos_LIBRARY_DIRS})
-    endif()
+    # if(Kokkos_CXX_COMPILER)
+    #     target_link_libraries(mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES})
+    # else()
+    #     target_link_libraries(mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES}
+    #                           -L${Kokkos_LIBRARY_DIRS})
+    # endif()
 
-    if(KokkosKernels_FOUND)
-        if (TARGET Kokkos::kokkoskernels)
-            target_link_libraries(mars Kokkos::kokkoskernels)
-        else()
-            target_include_directories(mars PUBLIC ${KokkosKernels_TPL_INCLUDE_DIRS}
-                                                           ${KokkosKernels_INCLUDE_DIRS})
+    # if(KokkosKernels_FOUND)
+    #     if (TARGET Kokkos::kokkoskernels)
+    #         target_link_libraries(mars Kokkos::kokkoskernels)
+    #     else()
+    #         target_include_directories(mars PUBLIC ${KokkosKernels_TPL_INCLUDE_DIRS}
+    #                                                        ${KokkosKernels_INCLUDE_DIRS})
 
-            if(Kokkos_CXX_COMPILER)
-                target_link_libraries(mars ${KokkosKernels_LIBRARIES}
-                                      ${KokkosKernels_TPL_LIBRARIES})
-            else()
-                target_link_libraries(
-                    mars ${KokkosKernels_LIBRARIES} ${KokkosKernels_TPL_LIBRARIES}
-                    -L${KokkosKernels_LIBRARY_DIRS})
-            endif()
-        endif()
-    endif()
+    #         if(Kokkos_CXX_COMPILER)
+    #             target_link_libraries(mars ${KokkosKernels_LIBRARIES}
+    #                                   ${KokkosKernels_TPL_LIBRARIES})
+    #         else()
+    #             target_link_libraries(
+    #                 mars ${KokkosKernels_LIBRARIES} ${KokkosKernels_TPL_LIBRARIES}
+    #                 -L${KokkosKernels_LIBRARY_DIRS})
+    #         endif()
+    #     endif()
+    # endif()
 
 endif()
