@@ -112,6 +112,14 @@ if(NOT TRILINOS_DIR)
             ${TRILINOS_DIR}/lib64/cmake/KokkosKernels
             REQUIRED)
 
+
+        if(KokkosKernels_FOUND)
+
+
+
+        message("KokkosKernels_LIBRARIES;${KokkosKernels_LIBRARIES}")
+        endif()
+
         
 
         if(OPENMP_FOUND)
@@ -132,10 +140,10 @@ endif()
 
 if(Kokkos_FOUND)
 
-    message(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
-    message(" Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
-    message(" Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
-    message(" Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
+    # message(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
+    # message(" Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
+    # message(" Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
+    # message(" Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
 
     if(MARS_USE_CUDA AND (NOT DEFINED Kokkos_ENABLE_CUDA OR NOT ${Kokkos_ENABLE_CUDA}))
             message(
@@ -174,17 +182,22 @@ if(Kokkos_FOUND)
     endif()
 
     if(KokkosKernels_FOUND)
+    if (TARGET Kokkos::kokkoskernels)
+            message(STATUS "Kokkos::kokkoskernels is a target, get include directories from the target")
+            get_target_property(KokkosKernels_INCLUDE_DIRS Kokkos::kokkoskernels INTERFACE_INCLUDE_DIRECTORIES)
+            get_target_property(KokkosKernels_LIBRARIES Kokkos::kokkoskernels INTERFACE_LINK_LIBRARIES)
+            get_target_property(KokkosKernels_LIBRARY_DIRS Kokkos::kokkoskernels INTERFACE_LINK_DIRECTORIES)
+        endif()
 
 
         set(MARS_DEP_INCLUDES
-        "${MARS_DEP_LIBRARIES};${KokkosKernels_TPL_INCLUDE_DIRS}"
-        "${MARS_DEP_LIBRARIES};${KokkosKernels_INCLUDE_DIRS}")
+        "${MARS_DEP_INCLUDES};${KokkosKernels_TPL_INCLUDE_DIRS}"
+        "${MARS_DEP_INCLUDES};${KokkosKernels_INCLUDE_DIRS}")
 
         set(MARS_DEP_LIBRARIES
             "${MARS_DEP_LIBRARIES};${KokkosKernels_LIBRARIES}"
             "${MARS_DEP_LIBRARIES};${KokkosKernels_TPL_LIBRARIES}")
 
-        # if (TARGET Kokkos::kokkoskernels)
         #     target_link_libraries(mars Kokkos::kokkoskernels)
         # else()
         #     target_include_directories(mars PUBLIC ${KokkosKernels_TPL_INCLUDE_DIRS}
@@ -198,7 +211,10 @@ if(Kokkos_FOUND)
         #             mars ${KokkosKernels_LIBRARIES} ${KokkosKernels_TPL_LIBRARIES}
         #             -L${KokkosKernels_LIBRARY_DIRS})
         #     endif()
-        # endif()
     endif()
 
 endif()
+
+message(STATUS "MARS_DEP_INCLUDES=${MARS_DEP_INCLUDES}")
+message(STATUS "MARS_DEP_LIBRARIES=${MARS_DEP_LIBRARIES}")
+

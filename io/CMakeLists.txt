@@ -6,8 +6,8 @@
 #     QUIET)
 # if(NOT VTK_FOUND)
     # message("Skipping IO: ${VTK_NOT_FOUND_MESSAGE}")
-    add_library(mars_io INTERFACE)
-    target_include_directories(mars_io INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
+    # add_library(mars_io INTERFACE)
+    # target_include_directories(mars_io INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 
 # else(VTK_FOUND)
 
@@ -48,13 +48,33 @@
 
 # endif()
 
-set(MARS_LIBRARIES
-    "${MARS_LIBRARIES};mars_io"
+# set(MARS_LIBRARIES
+#     "${MARS_LIBRARIES};mars_io"
+#     PARENT_SCOPE)
+# # set(MARS_INCLUDES "${MARS_INCLUDES};${VTK_INCLUDES}" PARENT_SCOPE)
+
+# set(MARS_HEADERS
+#     "${MARS_HEADERS};${LOCAL_HEADERS}"
+#      PARENT_SCOPE)
+
+
+# if (VTK_FOUND)
+
+scan_directories(${CMAKE_CURRENT_SOURCE_DIR} "." MARS_BUILD_INCLUDES MARS_HEADERS MARS_SOURCES)
+
+set(MARS_BUILD_INCLUDES
+    ${MARS_BUILD_INCLUDES}
     PARENT_SCOPE)
-# set(MARS_INCLUDES "${MARS_INCLUDES};${VTK_INCLUDES}" PARENT_SCOPE)
 
 set(MARS_HEADERS
-    "${MARS_HEADERS};${LOCAL_HEADERS}"
-     PARENT_SCOPE)
+    ${MARS_HEADERS}
+    PARENT_SCOPE)
+
+set(MARS_SOURCES
+    ${MARS_SOURCES}
+    PARENT_SCOPE)
+
+
+# endif()
 
 

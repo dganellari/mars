@@ -66,10 +66,56 @@ target_include_directories(mars PUBLIC ${MARS_DEP_INCLUDES})
 
 
 # #############################################################################
-#link 
+# link 
 
 target_link_libraries(mars PUBLIC ${MARS_DEP_LIBRARIES})
-target_link_libraries(mars PUBLIC ${MPI_LIBRARIES})
+# target_link_libraries(mars PUBLIC ${MPI_LIBRARIES})
+
+
+
+# #############################################################################
+# properties
+
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE
+        "Release"
+        CACHE STRING "Choose the type of build, options are: Debug Release
+RelWithDebInfo MinSizeRel." FORCE)
+
+    message(STATUS "[Status] CMAKE_BUILD_TYPE=Release")
+endif(NOT CMAKE_BUILD_TYPE)
+
+
+if(NOT DEFINED CMAKE_CXX_STANDARD_REQUIRED)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+endif()
+if(NOT DEFINED CMAKE_CXX_STANDARD)
+    set(CMAKE_CXX_STANDARD 14)
+endif()
+
+
+# add_library(mars STATIC ${MARS_HEADERS} ${MARS_SOURCES})
+
+# TODO: Print only the names of the libraries without the semilcolon.
+message(STATUS "MARS_LIBRARIES=${MARS_LIBRARIES}")
+# target_link_libraries(mars ${MARS_LIBRARIES})
+
+target_link_libraries(
+    mars # $<$<CONFIG:RelWithDebInfo>:asan> # $<$<CONFIG:RelWithDebInfo>:ubsan>
+)
+
+target_compile_options(
+    mars
+    PUBLIC -Wall -Wextra
+           # $<$<CONFIG:RelWithDebInfo>:-fsanitize=address -fsanitize=leak
+           # -fsanitize=undefined -fsanitize-address-use-after-scope>
+    # $<$<CONFIG:RelWithDebInfo>:-fsanitize=memory
+    # -fsanitize-memory-track-origins>
+)
+
+# target_link_libraries(mars ${MPI_LIBRARIES})
+target_compile_features(mars PUBLIC cxx_std_14)
+target_include_directories(mars PUBLIC .)
 
 # ##############################################################################
 # ##############################################################################
@@ -103,58 +149,6 @@ if(TRY_WITH_MOONOLITH)
 endif()
 
 
-
-# ##############################################################################
-# ##############################################################################
-# ##############################################################################
-
-
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE
-        "Release"
-        CACHE STRING "Choose the type of build, options are: Debug Release
-RelWithDebInfo MinSizeRel." FORCE)
-
-    message(STATUS "[Status] CMAKE_BUILD_TYPE=Release")
-endif(NOT CMAKE_BUILD_TYPE)
-
-
-if(NOT DEFINED CMAKE_CXX_STANDARD_REQUIRED)
-    set(CMAKE_CXX_STANDARD_REQUIRED ON)
-endif()
-if(NOT DEFINED CMAKE_CXX_STANDARD)
-    set(CMAKE_CXX_STANDARD 14)
-endif()
-
-# ##############################################################################
-# ##############################################################################
-# ##############################################################################
-
-
-# add_library(mars STATIC ${MARS_HEADERS} ${MARS_SOURCES})
-
-# TODO: Print only the names of the libraries without the semilcolon.
-message(STATUS "MARS_LIBRARIES=${MARS_LIBRARIES}")
-# target_link_libraries(mars ${MARS_LIBRARIES})
-
-target_link_libraries(
-    mars # $<$<CONFIG:RelWithDebInfo>:asan> # $<$<CONFIG:RelWithDebInfo>:ubsan>
-)
-
-target_compile_options(
-    mars
-    PUBLIC -Wall -Wextra
-           # $<$<CONFIG:RelWithDebInfo>:-fsanitize=address -fsanitize=leak
-           # -fsanitize=undefined -fsanitize-address-use-after-scope>
-    # $<$<CONFIG:RelWithDebInfo>:-fsanitize=memory
-    # -fsanitize-memory-track-origins>
-)
-
-# target_link_libraries(mars ${MPI_LIBRARIES})
-target_compile_features(mars PUBLIC cxx_std_14)
-target_include_directories(mars PUBLIC .)
-
-
 # ##############################################################################
 # ##############################################################################
 # ##############################################################################
@@ -184,12 +178,6 @@ message(STATUS "${MARS_INCLUDES}")
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/base/mars_config.hpp.in
                ${CMAKE_BINARY_DIR}/mars_config.hpp)
 include_directories(${CMAKE_BINARY_DIR})
-
-
-
-
-
-
 
 # if(MARS_WITH_VTK)
 #     install(
