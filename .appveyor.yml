@@ -1,0 +1,34 @@
+version: '{build}'
+clone_folder: c:\projects\mars
+
+# https://www.appveyor.com/docs/build-environment/#build-worker-images
+image: Visual Studio 2017
+
+install:
+# Install MS-MPI
+- ps: Start-FileDownload 'https://download.microsoft.com/download/B/2/E/B2EB83FE-98C2-4156-834A-E1711E6884FB/MSMpiSetup.exe'
+- MSMpiSetup.exe -unattend
+- set PATH=C:\Program Files\Microsoft MPI\Bin;%PATH%
+
+# Install MS-MPI SDK
+- ps: Start-FileDownload 'https://download.microsoft.com/download/B/2/E/B2EB83FE-98C2-4156-834A-E1711E6884FB/msmpisdk.msi'
+- msmpisdk.msi /passive
+- set PATH=C:\Program Files\Microsoft MPI\Bin;%PATH%
+
+# cache:
+
+# ParMoonolith
+before_build:
+- cmake -Ball_builds -DMARS_ENABLE_TESTING=ON -DMARS_ENABLE_BENCHMARK=ON -DMARS_ALLOW_DISCOVER_TESTS=ON -DCMAKE_INSTALL_PREFIX=install  -DMPI_C_INCLUDE_PATH="C:\Program Files (x86)\Microsoft SDKs\MPI\Include" -DMPI_C_LIBRARIES="C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x86\msmpi.lib" -DMPI_CXX_LIBRARIES="C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x86\msmpi.lib" -DMPI_CXX_INCLUDE_PATH="C:\Program Files (x86)\Microsoft SDKs\MPI\Include" #-DCMAKE_VERBOSE_MAKEFILE=ON
+# -DBUILD_SHARED_LIBS=ON
+
+build_script:
+- cmake --build all_builds --config Release --target all
+- ls -lah all_builds
+- ls -lah all_builds/Release
+- cmake --build all_builds --config Release --target install
+
+after_build:
+- .\all_builds\Release\mars_test.exe
+- .\all_builds\Release\mars_bench.exe
+# - cmake --build all_builds --config Release --target test_install
