@@ -1,0 +1,43 @@
+language: cpp
+
+os: linux
+dist: bionic
+
+addons:
+  apt:
+    packages:
+      - libopenmpi-dev
+      - openmpi-bin
+      - lcov
+
+script:
+    ############################################################################
+    # Build main and tests
+    ###########################################################################
+    - echo ${TRAVIS_BUILD_DIR}
+    - cmake --version
+    - cd ${TRAVIS_BUILD_DIR}
+    - mkdir -p build
+    - cd build
+    ##########################################################################################
+    - echo "Testing release config"
+    - cmake .. -DCMAKE_INSTALL_PREFIX=${TRAVIS_BUILD_DIR}/install_release -DCMAKE_BUILD_TYPE=Release -DMARS_ALLOW_DISCOVER_TESTS=OFF -DMARS_ENABLE_BENCHMARK=ON
+    - make
+    - mpiexec -np 1 ./mars_bench
+    - mpiexec -np 2 ./mars_test
+    - make install_all
+    - make test_install
+    ##########################################################################################
+    - echo "Testing debug config"
+    - cmake .. -DCMAKE_INSTALL_PREFIX=${TRAVIS_BUILD_DIR}/install_cov -DCMAKE_BUILD_TYPE=Coverage -DMARS_ALLOW_DISCOVER_TESTS=OFF -DMARS_ENABLE_BENCHMARK=OFF
+    - make moonolith_complete
+    - make moonolith_coverage
+
+after_success:
+    - pip install --user cpp-coveralls;
+    - pip install --user pyyaml;
+    - PATH=$HOME/local/bin:$PATH;
+    - coveralls --include api --include configuration --include core --include intersection --include mesh --include mpi --exclude opencl --include spatialhasing --include tree --include utils --include visual --exclude /usr --gcov-options '\-lp' --root $TRAVIS_BUILD_DIR;
+    - cd ${TRAVIS_BUILD_DIR}
+    - cd build
+    - make mars_coverage_upload_only
