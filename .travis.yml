@@ -9,7 +9,8 @@ addons:
       - libopenmpi-dev
       - openmpi-bin
       - lcov
-      - libtrilinos-kokkos-kernels
+      - libtrilinos-kokkos-dev
+      - libtrilinos-kokkos-kernels12
 
 script:
     ############################################################################
