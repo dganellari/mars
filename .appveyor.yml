@@ -20,6 +20,16 @@ install:
 - msmpisdk.msi /passive
 - set PATH=C:\Program Files\Microsoft MPI\Bin;%PATH%
 
+
+# Install Kokkos
+- ps: Start-FileDownload 'https://github.com/kokkos/kokkos/archive/refs/tags/3.5.00.tar.gz'
+- 7z x 3.5.00.tar.gz -so | 7z x -si -ttar > nul
+- cd kokkos-3.5.00
+- mkdir build &&
+    cd build &&
+    cmake .. -DKokkos_ENABLE_TESTS=ON -DCMAKE_INSTALL_PREFIX=deps -DCMAKE_CXX_FLAGS="/W0 /EHsc" -DKokkos_ENABLE_DEPRECATED_CODE_3=ON -DKokkos_ENABLE_DEPRECATION_WARNINGS=OFF &&
+    cmake --build . --target install
+
 # cache:
 # - C:\Program Files\Microsoft 
 # - C:\Program Files (x86)
@@ -35,6 +45,7 @@ build_script:
 - ls -lah all_builds
 - ls -lah all_builds/Release
 - cmake --build all_builds --config Release --target install
+
 
 after_build:
 - .\all_builds\Release\mars_test.exe
