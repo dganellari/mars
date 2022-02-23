@@ -58,8 +58,6 @@ if(NOT TRILINOS_DIR)
             CACHE PATH "Directory where Kokkos is installed")
     endif()
 
-    # FIND_PACKAGE(Trilinos PATHS ${TRILINOS_DIR}/lib/cmake/Trilinos QUIET)
-
     find_package(
         Kokkos
         HINTS
@@ -89,14 +87,9 @@ if(NOT TRILINOS_DIR)
             message(" Kokkos CUDA Enabled = ${Kokkos_ENABLE_CUDA}")
         endif()
 
-        # message("   Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}") message("
-        # Kokkos_C_COMPILER = ${Kokkos_C_COMPILER}")
-
         if(Kokkos_CXX_COMPILER)
             set(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
             set(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
-            # message( "Setting CMAKE_CXX_COMPILER to
-            # Kokkos_CXX_COMPILER=${Kokkos_CXX_COMPILER}" )
         endif()
 
         set(WITH_KOKKOS ON)
@@ -111,16 +104,6 @@ if(NOT TRILINOS_DIR)
             ${TRILINOS_DIR}/lib/cmake/KokkosKernels
             ${TRILINOS_DIR}/lib64/cmake/KokkosKernels
             REQUIRED)
-
-
-        if(KokkosKernels_FOUND)
-
-
-
-        message("KokkosKernels_LIBRARIES;${KokkosKernels_LIBRARIES}")
-        endif()
-
-        
 
         if(OPENMP_FOUND)
             set(CMAKE_Fortran_FLAGS
@@ -140,11 +123,6 @@ endif()
 
 if(Kokkos_FOUND)
 
-    # message(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
-    # message(" Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
-    # message(" Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
-    # message(" Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
-
     if(MARS_USE_CUDA AND (NOT DEFINED Kokkos_ENABLE_CUDA OR NOT ${Kokkos_ENABLE_CUDA}))
             message(
                 FATAL_ERROR
@@ -156,18 +134,6 @@ if(Kokkos_FOUND)
         kokkos_check(OPTIONS CUDA_LAMBDA)
     endif()
 
-    # target_include_directories(mars SYSTEM PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
-
-    message(
-        STATUS
-            "Kokkos_INCLUDE_DIRS=${Kokkos_INCLUDE_DIRS}, ${Kokkos_TPL_INCLUDE_DIRS}"
-    )
-
-
-
-            # Add kokkos_libraries to variable Mars-dep_libraries like with MPI.
-   
-
     if(Kokkos_CXX_COMPILER)
         set(MARS_DEP_LIBRARIES
             "${MARS_DEP_LIBRARIES};${Kokkos_LIBRARIES}")
@@ -175,14 +141,12 @@ if(Kokkos_FOUND)
         set(MARS_DEP_LIBRARIES
             "${MARS_DEP_LIBRARIES};${Kokkos_TPL_LIBRARIES}")
 
-    #     target_link_libraries(mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES})
-    # else()
-    #     target_link_libraries(mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES}
-    #                           -L${Kokkos_LIBRARY_DIRS})
+        set(MARS_DEP_INCLUDES
+            "${MARS_DEP_INCLUDES};${Kokkos_INCLUDE_DIRS}")
     endif()
 
     if(KokkosKernels_FOUND)
-    if (TARGET Kokkos::kokkoskernels)
+        if (TARGET Kokkos::kokkoskernels)
             message(STATUS "Kokkos::kokkoskernels is a target, get include directories from the target")
             get_target_property(KokkosKernels_INCLUDE_DIRS Kokkos::kokkoskernels INTERFACE_INCLUDE_DIRECTORIES)
             get_target_property(KokkosKernels_LIBRARIES Kokkos::kokkoskernels INTERFACE_LINK_LIBRARIES)
@@ -198,23 +162,17 @@ if(Kokkos_FOUND)
             "${MARS_DEP_LIBRARIES};${KokkosKernels_LIBRARIES}"
             "${MARS_DEP_LIBRARIES};${KokkosKernels_TPL_LIBRARIES}")
 
-        #     target_link_libraries(mars Kokkos::kokkoskernels)
-        # else()
-        #     target_include_directories(mars PUBLIC ${KokkosKernels_TPL_INCLUDE_DIRS}
-        #                                                    ${KokkosKernels_INCLUDE_DIRS})
-
-        #     if(Kokkos_CXX_COMPILER)
-        #         target_link_libraries(mars ${KokkosKernels_LIBRARIES}
-        #                               ${KokkosKernels_TPL_LIBRARIES})
-        #     else()
-        #         target_link_libraries(
-        #             mars ${KokkosKernels_LIBRARIES} ${KokkosKernels_TPL_LIBRARIES}
-        #             -L${KokkosKernels_LIBRARY_DIRS})
-        #     endif()
     endif()
 
 endif()
 
-message(STATUS "MARS_DEP_INCLUDES=${MARS_DEP_INCLUDES}")
-message(STATUS "MARS_DEP_LIBRARIES=${MARS_DEP_LIBRARIES}")
+message(STATUS "\nMARS_DEP_INCLUDES")
+foreach(INCLUDE ${MARS_DEP_INCLUDES})
+message(STATUS "${INCLUDE}")
+endforeach()
+
+message(STATUS "\nMARS_DEP_LIBRARIES")
+foreach(LIBRARIES ${MARS_DEP_LIBRARIES})
+message(STATUS "${LIBRARIES}")
+endforeach()
 

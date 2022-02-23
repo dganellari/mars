@@ -96,8 +96,6 @@ endif()
 
 # add_library(mars STATIC ${MARS_HEADERS} ${MARS_SOURCES})
 
-# TODO: Print only the names of the libraries without the semilcolon.
-message(STATUS "MARS_LIBRARIES=${MARS_LIBRARIES}")
 # target_link_libraries(mars ${MARS_LIBRARIES})
 
 target_link_libraries(
