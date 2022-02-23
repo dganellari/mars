@@ -46,7 +46,8 @@
 list(APPEND EXAMPLES_MODULES 
     .
     unstructured
-    distributed_dm)
+    distributed_dm
+    distributed_dm/staggered)
 
 
 scan_directories(${CMAKE_CURRENT_SOURCE_DIR} "${EXAMPLES_MODULES}" MARS_BUILD_INCLUDES MARS_HEADERS MARS_SOURCES)
@@ -66,11 +67,11 @@ set(MARS_SOURCES
 
 
 
-if(Kokkos_FOUND)
-    add_executable(st_example mars_st_example.cpp)
-    target_link_libraries(st_example PRIVATE mars mars_io)
+# if(Kokkos_FOUND)
+#     add_executable(st_example mars_st_example.cpp)
+#     target_link_libraries(st_example PRIVATE mars mars_io)
 
 
-    add_custom_target(mars_examples)
-    # add_dependencies()
-endif()
+#     add_custom_target(mars_examples)
+#     # add_dependencies()
+# endif()

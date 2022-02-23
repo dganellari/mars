@@ -151,7 +151,11 @@ if(Kokkos_FOUND)
             get_target_property(KokkosKernels_INCLUDE_DIRS Kokkos::kokkoskernels INTERFACE_INCLUDE_DIRECTORIES)
             get_target_property(KokkosKernels_LIBRARIES Kokkos::kokkoskernels INTERFACE_LINK_LIBRARIES)
             get_target_property(KokkosKernels_LIBRARY_DIRS Kokkos::kokkoskernels INTERFACE_LINK_DIRECTORIES)
+            set(MARS_DEP_LIBRARIES
+                "${MARS_DEP_LIBRARIES};Kokkos::kokkoskernels")
         endif()
+
+        message("\nKokkosKernels_LIBRARIES=${KokkosKernels_LIBRARIES}")
 
 
         set(MARS_DEP_INCLUDES
