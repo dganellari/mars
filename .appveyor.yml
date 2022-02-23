@@ -15,7 +15,9 @@ install:
 - msmpisdk.msi /passive
 - set PATH=C:\Program Files\Microsoft MPI\Bin;%PATH%
 
-# cache:
+cache:
+- C:\Program Files\Microsoft 
+- C:\Program Files (x86)
 
 # ParMoonolith
 before_build:
