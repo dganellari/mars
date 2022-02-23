@@ -1,8 +1,13 @@
 version: '{build}'
 clone_folder: c:\projects\mars
 
+
 # https://www.appveyor.com/docs/build-environment/#build-worker-images
 image: Visual Studio 2017
+
+cache:
+- C:\Program Files\Microsoft 
+- C:\Program Files (x86)
 
 install:
 # Install MS-MPI
@@ -15,9 +20,9 @@ install:
 - msmpisdk.msi /passive
 - set PATH=C:\Program Files\Microsoft MPI\Bin;%PATH%
 
-cache:
-- C:\Program Files\Microsoft 
-- C:\Program Files (x86)
+# cache:
+# - C:\Program Files\Microsoft 
+# - C:\Program Files (x86)
 
 # HEllo
 
