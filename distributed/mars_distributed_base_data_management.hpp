@@ -292,7 +292,7 @@ namespace mars {
 #ifdef MARS_NO_RDMA
                                                                   host_ghost_user_data,
                                                                   host_buffer_data,
-#elif
+#else
                                                                   ghost_user_data,
                                                                   buffer_data,
 #endif
