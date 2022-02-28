@@ -312,6 +312,39 @@ namespace mars {
             }
         };
 
+        struct NodeElementIndexDofMap {
+            DofHandler handler;
+            ViewMatrixType<Integer> dof_enum;
+            ViewMatrixType<Integer> dof_enum_index;
+            ViewVectorType<Integer> owned_index;
+            Integer sfc_index;
+
+
+            MARS_INLINE_FUNCTION
+            NodeElementIndexDofMap(DofHandler h,
+                              ViewMatrixType<Integer> ede,
+                              ViewMatrixType<Integer> edex,
+                              ViewVectorType<Integer> o,
+                              Integer s)
+                : handler(h), dof_enum(ede), dof_enum_index(edex), owned_index(o), sfc_index(s) {}
+
+            MARS_INLINE_FUNCTION void operator()(Integer &index, const Integer localid) const {
+                // base local ID is received in all cases, i.e Block=1. No need for vector valued.
+                if (localid > INVALID_INDEX) {
+                    auto lid = handler.template local_to_owned_index<1>(localid);
+
+                    if (lid > INVALID_INDEX) {
+                        for (Integer bi = 0; bi < handler.get_block(); ++bi) {
+                            auto bid = handler.get_block() * lid + bi;
+                            auto aindex = Kokkos::atomic_fetch_add(&owned_index(bid), 1);
+                            dof_enum(bid, aindex) = sfc_index;
+                            dof_enum_index(bid, aindex) = index++;
+                        }
+                    }
+                }
+            }
+        };
+
         template <typename V>
         Integer get_size_from_scan(const V &scan) {
             auto ps = Kokkos::subview(scan, scan.extent(0) - 1);
@@ -378,7 +411,6 @@ namespace mars {
             const Integer block = handler.get_block();
 
             build_elem_index();
-            build_node_element_dof_map();
 
             // This is the way to go to avoid atomic on critical code parts when building the unique sorted sparsity
             // pattern. Further on, it can be optimized by storing it to shared memory.
@@ -544,7 +576,7 @@ namespace mars {
         }
 
         //Use this function for Lable = lAll.
-        void build_node_element_dof_map() {
+        void build_node_element_index_dof_map() {
             auto handler = get_dof_handler();
 
             const Integer size = handler.get_mesh_manager().get_host_mesh()->get_chunk_size();
@@ -554,12 +586,15 @@ namespace mars {
             auto node_max_size = DofHandler::num_corners;
 
             node_to_elem = ViewMatrixType<Integer>("owned_dof_to_elem", owned_size, node_max_size);
+            node_to_elem_index = ViewMatrixType<Integer>("owned_dof_to_elem_index", owned_size, node_max_size);
             auto dof_enum = node_to_elem;
+            auto dof_enum_index = node_to_elem_index;
 
             Kokkos::parallel_for(
                 "init", owned_size, MARS_LAMBDA(const Integer i) {
                     for (int j = 0; j < node_max_size; j++) {
                         dof_enum(i, j) = -1;
+                        dof_enum_index(i, j) = -1;
                     }
                 });
 
@@ -570,15 +605,21 @@ namespace mars {
                 "enum_local_dofs", size, MARS_LAMBDA(const Integer i) {
                     Integer index = 0;
                     auto sfc_index = get_element_index(elem_index_view, i);
-                    ordered_dof_enumeration<NodeElementDofMap<DofLabel::lAll>, false, DofLabel::lAll>(
-                        handler, NodeElementDofMap<DofLabel::lAll>(handler, dof_enum, owned_index, i), sfc_index, index);
+                    ordered_dof_enumeration<NodeElementIndexDofMap, false>(
+                        handler,
+                        NodeElementIndexDofMap(handler, dof_enum, dof_enum_index, owned_index, i),
+                        sfc_index,
+                        index);
                 });
 
             Kokkos::parallel_for(
                 "ghost_enum_local_dofs", ghost_size, MARS_LAMBDA(const Integer i) {
                     Integer index = 0;
-                    ordered_dof_enumeration<NodeElementDofMap<DofLabel::lAll>, true, DofLabel::lAll>(
-                        handler, NodeElementDofMap<DofLabel::lAll>(handler, dof_enum, owned_index, i + size), i, index);
+                    ordered_dof_enumeration<NodeElementIndexDofMap, true>(
+                        handler,
+                        NodeElementIndexDofMap(handler, dof_enum, dof_enum_index, owned_index, i + size),
+                        i,
+                        index);
                 });
         }
 
@@ -638,6 +679,14 @@ namespace mars {
                         generate_dof_to_dof_map(dm, map, localid, i);
                     });
                 } */
+
+        MARS_INLINE_FUNCTION
+        const ViewMatrixType<Integer> get_node_index_in_elem() const { return node_to_elem_index; }
+
+        MARS_INLINE_FUNCTION
+        const Integer get_node_index_in_elem(const Integer owned_index, const Integer i) const {
+            return node_to_elem_index(owned_index, i);
+        }
 
         MARS_INLINE_FUNCTION
         const ViewMatrixType<Integer> get_node_to_elem() const { return node_to_elem; }
@@ -796,7 +845,9 @@ namespace mars {
         // A map serving as an sfc to local for the dof map element indices. Maybe needed in the future.
         /* UnorderedMap<Integer, Integer> sfc_to_elem_index; */
 
+        //Optional data needed for node to element FE assembly approach.
         ViewMatrixType<Integer> node_to_elem;
+        ViewMatrixType<Integer> node_to_elem_index;
     };
 
     /* template <typename Mesh, Integer Degree>
@@ -812,6 +863,7 @@ namespace mars {
     auto build_fe_dof_map(const DofHandler &handler) {
         FEDofMap<DofHandler, Overlap, Label> fe(handler);
         fe.enumerate_local_dofs();
+        fe.build_node_element_index_dof_map();
         return fe;
     }
 
