@@ -44,20 +44,21 @@ endif()
 
 #Kokkos
 
-if(NOT TRILINOS_DIR)
-        message(STATUS "Setting TRILINOS_DIR to $ENV{TRILINOS_DIR}")
-        set(TRILINOS_DIR
-            $ENV{TRILINOS_DIR}
-            CACHE PATH "Directory where Kokkos is installed")
-    endif()
+    if(USE_KOKKOS)
+        message(STATUS "Setup Kokkos")
+        if(NOT TRILINOS_DIR)
+            message(STATUS "Setting TRILINOS_DIR to $ENV{TRILINOS_DIR}")
+            set(TRILINOS_DIR
+                $ENV{TRILINOS_DIR}
+                CACHE PATH "Directory where Kokkos is installed")
+        endif()
 
-    if(NOT KOKKOS_DIR)
-        message(STATUS "Setting KOKKOS_DIR to $ENV{KOKKOS_DIR}")
-        set(KOKKOS_DIR
-            $ENV{KOKKOS_DIR}
-            CACHE PATH "Directory where Kokkos is installed")
-    endif()
-
+        if(NOT KOKKOS_DIR)
+            message(STATUS "Setting KOKKOS_DIR to $ENV{KOKKOS_DIR}")
+            set(KOKKOS_DIR
+                $ENV{KOKKOS_DIR}
+                CACHE PATH "Directory where Kokkos is installed")
+        endif()
     find_package(
         Kokkos
         HINTS
@@ -67,58 +68,76 @@ if(NOT TRILINOS_DIR)
         ${TRILINOS_DIR}
         ${TRILINOS_DIR}/lib/cmake/Kokkos
         ${TRILINOS_DIR}/lib64/cmake/Kokkos
-        QUIET)
+        REQUIRED)
+    message(VERBOSE "Found Kokkos")
+    message(VERBOSE "Kokkos_CXX_FLAGS: ${Kokkos_CXX_FLAGS}")
+    message(VERBOSE "Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
+    message(VERBOSE "Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
+    message(VERBOSE "Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
+    message(VERBOSE "Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
+    message(VERBOSE "Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
 
-    if(Kokkos_FOUND)
-        if (TARGET Kokkos::kokkos)
-            message(STATUS "Kokkos::kokkos is a target, get include directories from the target")
-            get_target_property(Kokkos_INCLUDE_DIRS Kokkos::kokkos INTERFACE_INCLUDE_DIRECTORIES)
-            get_target_property(Kokkos_LIBRARIES Kokkos::kokkos INTERFACE_LINK_LIBRARIES)
-            get_target_property(Kokkos_LIBRARY_DIRS Kokkos::kokkos INTERFACE_LINK_DIRECTORIES)
-        endif()
-        message("\nFound Kokkos!  Here are the details: ")
-        message(" Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
-        message(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
-        message(" Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
-        message(" Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
-        message(" Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
+    set(_KK_TARGET "Kokkos::kokkos")
 
-        if(MARS_USE_CUDA)
-            message(" Kokkos CUDA Enabled = ${Kokkos_ENABLE_CUDA}")
-        endif()
-
-        if(Kokkos_CXX_COMPILER)
-            set(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
-            set(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
-        endif()
-
-        set(WITH_KOKKOS ON)
-
-        find_package(
-            KokkosKernels
-            HINTS
-            ${KOKKOS_DIR}
-            ${KOKKOS_DIR}/lib/CMake/KokkosKernels
-            ${KOKKOS_DIR}/lib64/cmake/KokkosKernels
-            ${TRILINOS_DIR}
-            ${TRILINOS_DIR}/lib/cmake/KokkosKernels
-            ${TRILINOS_DIR}/lib64/cmake/KokkosKernels
-            REQUIRED)
-
-        if(OPENMP_FOUND)
-            set(CMAKE_Fortran_FLAGS
-                "${CMAKE_Fortran_FLAGS} ${OpenMP_Fortran_FLAGS}")
-            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-            set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
-            set(CMAKE_CXX_LINK_FLAGS
-                "${CMAKE_CXX_LINK_FLAGS} ${OpenMP_CXX_FLAGS}")
-        endif()
-
+    if(NOT TARGET ${_KK_TARGET})
+        message(DEBUG "Kokkos target is not defined")
+        add_library(${_KK_TARGET} INTERFACE IMPORTED)
+        set_target_properties(${_KK_TARGET}
+            PROPERTIES
+                INTERFACE_INCLUDE_DIRECTORIES ${Kokkos_INCLUDE_DIRS} ${Kokkos_TPL_INCLUDE_DIRS}
+                INTERFACE_LINK_LIBRARIES ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES}
+                INTERFACE_LINK_DIRECTORIES ${Kokkos_LIBRARY_DIRS}
+                INTERFACE_COMPILE_OPTIONS ${_openmp}
+        )
     else()
-        message(WARNING "Could not find Kokkos!")
-        if(MARS_USE_CUDA)
-            message(FATAL_ERROR "Could not use CUDA without Kokkos!")
-        endif()
+        message(DEBUG "Kokkos target is defined")
+    endif()
+
+    get_target_property(Kokkos_INTERFACE_COMPILE_OPTIONS ${_KK_TARGET} INTERFACE_COMPILE_OPTIONS)
+    message(DEBUG "Kokkos_INTERFACE_COMPILE_OPTIONS: ${Kokkos_INTERFACE_COMPILE_OPTIONS}")
+    get_target_property(Kokkos_INTERFACE_LINK_LIBRARIES ${_KK_TARGET} INTERFACE_LINK_LIBRARIES)
+    message(DEBUG "Kokkos_INTERFACE_LINK_LIBRARIES: ${Kokkos_INTERFACE_LINK_LIBRARIES}")
+    get_target_property(Kokkos_INTERFACE_INCLUDE_DIRECTORIES ${_KK_TARGET} INTERFACE_INCLUDE_DIRECTORIES)
+    message(DEBUG "Kokkos_INTERFACE_INCLUDE_DIRECTORIES: ${Kokkos_INTERFACE_INCLUDE_DIRECTORIES}")
+
+
+    if(MARS_USE_CUDA)
+        message(" Kokkos CUDA Enabled = ${Kokkos_ENABLE_CUDA}")
+    endif()
+
+    if(Kokkos_CXX_COMPILER)
+        set(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
+        set(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
+    endif()
+
+    set(WITH_KOKKOS ON)
+
+    find_package(
+        KokkosKernels
+        HINTS
+        ${KOKKOS_DIR}
+        ${KOKKOS_DIR}/lib/CMake/KokkosKernels
+        ${KOKKOS_DIR}/lib64/cmake/KokkosKernels
+        ${TRILINOS_DIR}
+        ${TRILINOS_DIR}/lib/cmake/KokkosKernels
+        ${TRILINOS_DIR}/lib64/cmake/KokkosKernels
+        REQUIRED)
+
+    if(OPENMP_FOUND)
+        set(CMAKE_Fortran_FLAGS
+            "${CMAKE_Fortran_FLAGS} ${OpenMP_Fortran_FLAGS}")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
+        set(CMAKE_CXX_LINK_FLAGS
+            "${CMAKE_CXX_LINK_FLAGS} ${OpenMP_CXX_FLAGS}")
+    endif()
+    
+    unset (_KK_TARGET)
+else()
+    message(WARNING "Could not find Kokkos!")
+    if(MARS_USE_CUDA)
+        message(FATAL_ERROR "Could not use CUDA without Kokkos!")
+    endif()
 endif()
 
 if(Kokkos_FOUND)
