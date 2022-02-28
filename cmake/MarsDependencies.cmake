@@ -175,13 +175,13 @@ find_package(
       STATUS
         "Kokkos::kokkoskernels is a target, get include directories from the target"
     )
-    get_target_property(KokkosKernels_INCLUDE_DIRS Kokkos::kokkoskernels
+    get_target_property(KokkosKernels_INCLUDE_DIRS _KKK_TARGET
                         INTERFACE_INCLUDE_DIRECTORIES)
-    get_target_property(KokkosKernels_LIBRARIES Kokkos::kokkoskernels
+    get_target_property(KokkosKernels_LIBRARIES _KKK_TARGET
                         INTERFACE_LINK_LIBRARIES)
-    get_target_property(KokkosKernels_LIBRARY_DIRS Kokkos::kokkoskernels
+    get_target_property(KokkosKernels_LIBRARY_DIRS _KKK_TARGET
                         INTERFACE_LINK_DIRECTORIES)
-    set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};Kokkos::kokkoskernels")
+    set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};_KKK_TARGET")
   endif()
 
   message("\nKokkosKernels_LIBRARIES=${KokkosKernels_LIBRARIES}")
