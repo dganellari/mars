@@ -69,13 +69,13 @@ endif()
         ${TRILINOS_DIR}/lib/cmake/Kokkos
         ${TRILINOS_DIR}/lib64/cmake/Kokkos
         REQUIRED)
-    message(VERBOSE "Found Kokkos")
-    message(VERBOSE "Kokkos_CXX_FLAGS: ${Kokkos_CXX_FLAGS}")
-    message(VERBOSE "Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
-    message(VERBOSE "Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
-    message(VERBOSE "Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
-    message(VERBOSE "Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
-    message(VERBOSE "Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
+    message(STATUS "Found Kokkos")
+    message(STATUS "Kokkos_CXX_FLAGS: ${Kokkos_CXX_FLAGS}")
+    message(STATUS "Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
+    message(STATUS "Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
+    message(STATUS "Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
+    message(STATUS "Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
+    message(STATUS "Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
 
     set(_KK_TARGET "Kokkos::kokkos")
 
@@ -131,7 +131,7 @@ endif()
         set(CMAKE_CXX_LINK_FLAGS
             "${CMAKE_CXX_LINK_FLAGS} ${OpenMP_CXX_FLAGS}")
     endif()
-    
+
     unset (_KK_TARGET)
 else()
     message(WARNING "Could not find Kokkos!")
@@ -139,63 +139,63 @@ else()
         message(FATAL_ERROR "Could not use CUDA without Kokkos!")
     endif()
 endif()
-
-if(Kokkos_FOUND)
-
-    if(MARS_USE_CUDA AND (NOT DEFINED Kokkos_ENABLE_CUDA OR NOT ${Kokkos_ENABLE_CUDA}))
-            message(
-                FATAL_ERROR
-                    "Enable Kokkos Cuda or unset MARS_USE_CUDA to continue with OpenMP!"
-            )
-    endif()
-
-    if(Kokkos_ENABLE_CUDA)
-        kokkos_check(OPTIONS CUDA_LAMBDA)
-    endif()
-
-    if(Kokkos_CXX_COMPILER)
-        set(MARS_DEP_LIBRARIES
-            "${MARS_DEP_LIBRARIES};${Kokkos_LIBRARIES}")
-
-        set(MARS_DEP_LIBRARIES
-            "${MARS_DEP_LIBRARIES};${Kokkos_TPL_LIBRARIES}")
-
-        set(MARS_DEP_INCLUDES
-            "${MARS_DEP_INCLUDES};${Kokkos_INCLUDE_DIRS}")
-    endif()
-
-    if(KokkosKernels_FOUND)
-        if (TARGET Kokkos::kokkoskernels)
-            message(STATUS "Kokkos::kokkoskernels is a target, get include directories from the target")
-            get_target_property(KokkosKernels_INCLUDE_DIRS Kokkos::kokkoskernels INTERFACE_INCLUDE_DIRECTORIES)
-            get_target_property(KokkosKernels_LIBRARIES Kokkos::kokkoskernels INTERFACE_LINK_LIBRARIES)
-            get_target_property(KokkosKernels_LIBRARY_DIRS Kokkos::kokkoskernels INTERFACE_LINK_DIRECTORIES)
-            set(MARS_DEP_LIBRARIES
-                "${MARS_DEP_LIBRARIES};Kokkos::kokkoskernels")
-        endif()
-
-        message("\nKokkosKernels_LIBRARIES=${KokkosKernels_LIBRARIES}")
-
-
-        set(MARS_DEP_INCLUDES
-        "${MARS_DEP_INCLUDES};${KokkosKernels_TPL_INCLUDE_DIRS}"
-        "${MARS_DEP_INCLUDES};${KokkosKernels_INCLUDE_DIRS}")
-
-        set(MARS_DEP_LIBRARIES
-            "${MARS_DEP_LIBRARIES};${KokkosKernels_LIBRARIES}"
-            "${MARS_DEP_LIBRARIES};${KokkosKernels_TPL_LIBRARIES}")
-
-    endif()
-
 endif()
+# if(Kokkos_FOUND)
 
-message(STATUS "\nMARS_DEP_INCLUDES")
-foreach(INCLUDE ${MARS_DEP_INCLUDES})
-message(STATUS "${INCLUDE}")
-endforeach()
+#     if(MARS_USE_CUDA AND (NOT DEFINED Kokkos_ENABLE_CUDA OR NOT ${Kokkos_ENABLE_CUDA}))
+#             message(
+#                 FATAL_ERROR
+#                     "Enable Kokkos Cuda or unset MARS_USE_CUDA to continue with OpenMP!"
+#             )
+#     endif()
 
-message(STATUS "\nMARS_DEP_LIBRARIES")
-foreach(LIBRARIES ${MARS_DEP_LIBRARIES})
-message(STATUS "${LIBRARIES}")
-endforeach()
+#     if(Kokkos_ENABLE_CUDA)
+#         kokkos_check(OPTIONS CUDA_LAMBDA)
+#     endif()
+
+#     if(Kokkos_CXX_COMPILER)
+#         set(MARS_DEP_LIBRARIES
+#             "${MARS_DEP_LIBRARIES};${Kokkos_LIBRARIES}")
+
+#         set(MARS_DEP_LIBRARIES
+#             "${MARS_DEP_LIBRARIES};${Kokkos_TPL_LIBRARIES}")
+
+#         set(MARS_DEP_INCLUDES
+#             "${MARS_DEP_INCLUDES};${Kokkos_INCLUDE_DIRS}")
+#     endif()
+
+#     if(KokkosKernels_FOUND)
+#         if (TARGET Kokkos::kokkoskernels)
+#             message(STATUS "Kokkos::kokkoskernels is a target, get include directories from the target")
+#             get_target_property(KokkosKernels_INCLUDE_DIRS Kokkos::kokkoskernels INTERFACE_INCLUDE_DIRECTORIES)
+#             get_target_property(KokkosKernels_LIBRARIES Kokkos::kokkoskernels INTERFACE_LINK_LIBRARIES)
+#             get_target_property(KokkosKernels_LIBRARY_DIRS Kokkos::kokkoskernels INTERFACE_LINK_DIRECTORIES)
+#             set(MARS_DEP_LIBRARIES
+#                 "${MARS_DEP_LIBRARIES};Kokkos::kokkoskernels")
+#         endif()
+
+#         message("\nKokkosKernels_LIBRARIES=${KokkosKernels_LIBRARIES}")
+
+
+#         set(MARS_DEP_INCLUDES
+#         "${MARS_DEP_INCLUDES};${KokkosKernels_TPL_INCLUDE_DIRS}"
+#         "${MARS_DEP_INCLUDES};${KokkosKernels_INCLUDE_DIRS}")
+
+#         set(MARS_DEP_LIBRARIES
+#             "${MARS_DEP_LIBRARIES};${KokkosKernels_LIBRARIES}"
+#             "${MARS_DEP_LIBRARIES};${KokkosKernels_TPL_LIBRARIES}")
+
+#     endif()
+
+# endif()
+
+# message(STATUS "\nMARS_DEP_INCLUDES")
+# foreach(INCLUDE ${MARS_DEP_INCLUDES})
+# message(STATUS "${INCLUDE}")
+# endforeach()
+
+# message(STATUS "\nMARS_DEP_LIBRARIES")
+# foreach(LIBRARIES ${MARS_DEP_LIBRARIES})
+# message(STATUS "${LIBRARIES}")
+# endforeach()
 
