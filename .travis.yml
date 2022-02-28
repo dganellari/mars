@@ -12,6 +12,7 @@ addons:
       - libtrilinos-kokkos-dev
       - libtrilinos-kokkos-kernels12
       - libtrilinos-kokkos-kernels-dev
+      - libtrilinos-teuchos-dev
 
 script:
     ############################################################################
