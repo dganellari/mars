@@ -139,7 +139,6 @@ else()
         message(FATAL_ERROR "Could not use CUDA without Kokkos!")
     endif()
 endif()
-endif()
 # if(Kokkos_FOUND)
 
 #     if(MARS_USE_CUDA AND (NOT DEFINED Kokkos_ENABLE_CUDA OR NOT ${Kokkos_ENABLE_CUDA}))
