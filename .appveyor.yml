@@ -36,7 +36,7 @@ install:
 - cd ../../..
 - mkdir kokkos-kernels_git
 - cd kokkos-kernels_git
-- ps: Start-FileDownload 'https://github.com/kokkos/kokkos-kernels/archive/refs/tags/3.5.00.tar.gz
+- ps: Start-FileDownload 'https://github.com/kokkos/kokkos-kernels/archive/refs/tags/3.5.00.tar.gz'
 - 7z x 3.5.00.tar.gz -so | 7z x -si -ttar > nul
 - cd kokkos-kernels-3.5.00
 - mkdir build &&
