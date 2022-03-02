@@ -23,7 +23,7 @@ install:
 
 # Install Kokkos
 - ps: Start-FileDownload 'https://github.com/kokkos/kokkos/archive/refs/tags/3.5.00.tar.gz'
-- 7z x 3.5.00.tar.gz -so | 7z x -si -ttar > nul
+- 7z x kokkos-3.5.00.tar.gz -so | 7z x -si -ttar > nul
 - cd kokkos-3.5.00
 - mkdir build &&
     cd build &&
@@ -32,8 +32,8 @@ install:
 
 #Install KokkosKernels
 - cd ../..
-- ps: Start-FileDownload 'https://github.com/kokkos/kokkos-kernels/archive/refs/tags/3.5.00.tar.gz'
-- 7z x 3.5.00.tar.gz -so | 7z x -si -ttar > nul
+- ps: Start-FileDownload 'https://github.com/kokkos/kokkos-kernels/archive/refs/tags/3.5.00.tar.gz
+- 7z x kokkos-kernels-3.5.00.tar.gz -so | 7z x -si -ttar > nul
 - cd kokkos-kernels-3.5.00
 - mkdir build &&
     cd build &&
