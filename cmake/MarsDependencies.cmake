@@ -186,7 +186,7 @@ if(USE_KOKKOS_KERNELS)
     set_property(TARGET ${_KKK_TARGET} PROPERTY INTERFACE_LINK_DIRECTORIES
                                                 ${KokkosKernels_LIBRARY_DIRS})
 
-    set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};_KKK_TARGET")
+    set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};${_KKK_TARGET}")
   endif()
 
   message("\nKokkosKernels_LIBRARIES=${KokkosKernels_LIBRARIES}")
