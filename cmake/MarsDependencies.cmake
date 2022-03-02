@@ -63,6 +63,9 @@ if(USE_KOKKOS)
     ${TRILINOS_DIR}/lib/cmake/Kokkos
     ${TRILINOS_DIR}/lib64/cmake/Kokkos
     REQUIRED)
+
+  # TODO
+  # Not finding these variables...
   message(STATUS "Found Kokkos")
   message(STATUS "Kokkos_CXX_FLAGS: ${Kokkos_CXX_FLAGS}")
   message(STATUS "Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
@@ -71,7 +74,7 @@ if(USE_KOKKOS)
   message(STATUS "Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
   message(STATUS "Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
 
-  set(_KK_TARGET "Kokkos::Kokkos")
+  set(_KK_TARGET "Kokkos::kokkos")
 
   if(NOT TARGET ${_KK_TARGET})
     message(DEBUG "Kokkos target is not defined")
@@ -147,11 +150,10 @@ if(Kokkos_CXX_COMPILER)
   set(MARS_DEP_INCLUDES "${MARS_DEP_INCLUDES};${Kokkos_INCLUDE_DIRS}")
 endif()
 
-
 message(STATUS "Setup Kokkos Kernels")
 
 if(USE_KOKKOS_KERNELS)
-find_package(
+  find_package(
     KokkosKernels
     HINTS
     ${KOKKOS_DIR}
@@ -162,25 +164,28 @@ find_package(
     ${TRILINOS_DIR}/lib64/cmake/KokkosKernels
     REQUIRED)
 
-    message(VERBOSE "Found Kokkos Kernels")
-    message(VERBOSE "KokkosKernels_LIBRARIES = ${KokkosKernels_LIBRARIES}")
-    message(VERBOSE "KokkosKernels_LIBRARY_DIRS = ${KokkosKernels_LIBRARY_DIRS}")
+  message(VERBOSE "Found Kokkos Kernels")
+  message(VERBOSE "KokkosKernels_LIBRARIES = ${KokkosKernels_LIBRARIES}")
+  message(VERBOSE "KokkosKernels_LIBRARY_DIRS = ${KokkosKernels_LIBRARY_DIRS}")
 
+  set(_KKK_TARGET "Kokkos::kokkoskernels")
 
-    set (_KKK_TARGET "Kokkos::KokkosKernels")
-
-
-  if(_KKK_TARGET)
+  if(NOT TARGET _KKK_TARGET)
     message(
       STATUS
         "Kokkos::kokkoskernels is a target, get include directories from the target"
     )
-    get_target_property(KokkosKernels_INCLUDE_DIRS _KKK_TARGET
-                        INTERFACE_INCLUDE_DIRECTORIES)
-    get_target_property(KokkosKernels_LIBRARIES _KKK_TARGET
-                        INTERFACE_LINK_LIBRARIES)
-    get_target_property(KokkosKernels_LIBRARY_DIRS _KKK_TARGET
-                        INTERFACE_LINK_DIRECTORIES)
+    set_property(
+      TARGET ${_KKK_TARGET}
+      PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${KokkosKernels_INCLUDE_DIRS}
+               ${KokkosKernels_TPL_INCLUDE_DIRS})
+    set_property(
+      TARGET ${_KKK_TARGET}
+      PROPERTY INTERFACE_LINK_LIBRARIES ${KokkosKernels_LIBRARIES}
+               ${KokkosKernels_TPL_LIBRARIES})
+    set_property(TARGET ${_KKK_TARGET} PROPERTY INTERFACE_LINK_DIRECTORIES
+                                                ${KokkosKernels_LIBRARY_DIRS})
+
     set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};_KKK_TARGET")
   endif()
 
@@ -191,6 +196,7 @@ find_package(
 
   set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};${KokkosKernels_LIBRARIES}"
                          "${MARS_DEP_LIBRARIES};${KokkosKernels_TPL_LIBRARIES}")
+  unset(_KKK_TARGET)
 endif()
 
 message(STATUS "\nMARS_DEP_INCLUDES")

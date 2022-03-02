@@ -159,15 +159,14 @@ target_link_libraries(mars_exec mars)
 target_include_directories(
     mars PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/cxxopts/include)
 
-# if(TRY_WITH_MOONOLITH)
-#     add_subdirectory(moonolith_adapter)
+if(TRY_WITH_MOONOLITH)
+    add_subdirectory(moonolith_adapter)
 
-#     if(WITH_PAR_MOONOLITH)
-#         target_link_libraries(mars mars_moonolith)
-#     endif()
-# endif()
+    if(WITH_PAR_MOONOLITH)
+        target_link_libraries(mars mars_moonolith)
+    endif()
+endif()
 
-# target_link_libraries(mars ${MARS_LIBRARIES})
 target_include_directories(mars PUBLIC ${CMAKE_BINARY_DIR})
 target_include_directories(mars PUBLIC ${MARS_INCLUDES})
 
