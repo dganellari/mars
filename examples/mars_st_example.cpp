@@ -5,6 +5,7 @@
 #include <iostream>
 #include <numeric>
 
+#ifdef WITH_KOKKOS_KERNELS
 #include <KokkosBlas1_nrm1.hpp>
 #include <KokkosBlas1_nrminf.hpp>
 
@@ -405,3 +406,4 @@ int main(int argc, char *argv[]) {
 
     return env.exit_code();
 }
+#endif

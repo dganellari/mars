@@ -12,6 +12,7 @@
 #include <numeric>
 #include <string>
 
+#ifdef WITH_KOKKOS_KERNELS
 #include <KokkosBlas1_axpby.hpp>
 #include <KokkosBlas1_dot.hpp>
 #include <KokkosBlas1_mult.hpp>
@@ -183,3 +184,4 @@ namespace mars {
 }  // namespace mars
 
 #endif  // MARS_ST_CG_HPP
+#endif

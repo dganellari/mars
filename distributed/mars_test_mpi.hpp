@@ -141,7 +141,7 @@ namespace mars {
             // auto context = mars::make_context(resources);
 #endif
 
-#ifdef WITH_KOKKOS
+#ifdef WITH_KOKKOS_KERNELS
 
             Kokkos::Timer timer_gen;
             DistributedQuad4Mesh mesh(context);
@@ -188,7 +188,7 @@ namespace mars {
             auto context = mars::make_context(resources); */
 #endif
 
-#ifdef WITH_KOKKOS
+#ifdef WITH_KOKKOS_KERNELS
             using namespace Kokkos;
 
             DistributedHex8Mesh mesh(context);
@@ -219,7 +219,7 @@ namespace mars {
         // auto context = mars::make_context(resources);
 #endif
 
-#ifdef WITH_KOKKOS
+#ifdef WITH_KOKKOS_KERNELS
 
         Kokkos::Timer timer;
 
@@ -256,8 +256,8 @@ namespace mars {
         dof_handler.enumerate_dofs();
         dof_handler.set_block(block);
 
-        double time_dh= timer_dof.seconds();
-        std::cout << "DOFHandler enum took: " << time_dh<< std::endl;
+        double time_dh = timer_dof.seconds();
+        std::cout << "DOFHandler enum took: " << time_dh << std::endl;
 
         Kokkos::Timer timer_map;
 
@@ -265,8 +265,8 @@ namespace mars {
 
         auto fe = build_fe_dof_map<DOFHandler, Overlap>(dof_handler);
 
-        double time_map= timer_map.seconds();
-        std::cout << "DOFMAP took: " << time_map<< std::endl;
+        double time_map = timer_map.seconds();
+        std::cout << "DOFMAP took: " << time_map << std::endl;
 
         Kokkos::Timer timer_sp;
         // print the global dofs for each element's local dof
@@ -275,11 +275,11 @@ namespace mars {
         SPattern sp(dof_handler);
         sp.build_pattern(fe);
 
-        double time_sp= timer_sp.seconds();
-        std::cout << "SP build took: " << time_sp<< std::endl;
+        double time_sp = timer_sp.seconds();
+        std::cout << "SP build took: " << time_sp << std::endl;
 
         double time_all = timer.seconds();
-        std::cout << "Discretization: " << time_all<< std::endl;
+        std::cout << "Discretization: " << time_all << std::endl;
 
         Kokkos::Timer timer_as;
         ViewVectorType<Integer> x_local("local_data", dof_handler.get_dof_size());
@@ -289,7 +289,7 @@ namespace mars {
         });
 
         double time_aall = timer_as.seconds();
-        std::cout << "Assembly: " << time_aall<< std::endl;
+        std::cout << "Assembly: " << time_aall << std::endl;
 
         /* sp.print_sparsity_pattern(); */
         /* sp.write("overlap_sp.txt"); */
@@ -305,8 +305,7 @@ namespace mars {
         /* scatter_add_ghost_data(dof_handler, x_local); */
 
         double time_call = timer_c.seconds();
-        std::cout << "Collect: " << time_call<< std::endl;
-
+        std::cout << "Collect: " << time_call << std::endl;
 
         dof_handler.boundary_dof_iterate(
             MARS_LAMBDA(const Integer local_dof) { x_local(local_dof) = 7; }, 0);

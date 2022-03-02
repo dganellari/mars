@@ -30,6 +30,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
  * using MARS instead */
 
 #include "mars.hpp"
+#ifdef WITH_KOKKOS_KERNELS
 
 namespace mars {
 
@@ -692,7 +693,7 @@ namespace mars {
                 data.get_elem_data<1>(i) = 2;
             }); */
 
-        //The ghost layer is created when the mesh is generated.
+        // The ghost layer is created when the mesh is generated.
         /* create_ghost_layer<Data, Type>(data); */
         exchange_ghost_user_data(data);
 
@@ -713,3 +714,4 @@ namespace mars {
 #endif
     }
 }  // namespace mars
+#endif  // WITH_KOKKOS_KERNELS

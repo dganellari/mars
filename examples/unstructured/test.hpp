@@ -38,7 +38,7 @@ void mesh_test(int &argc, char **&argv, const int level) {
         // auto context = mars::make_context(resources);
 #endif
 
-#ifdef WITH_KOKKOS
+#ifdef WITH_KOKKOS_KERNELS
 
         Kokkos::Timer timer;
         // create the quad mesh distributed through the mpi procs.

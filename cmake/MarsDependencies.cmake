@@ -74,7 +74,7 @@ if(MARS_ENABLE_KOKKOS)
         REQUIRED)
 
     message(VERBOSE "Found Kokkos")
-
+    set(WITH_KOKKOS ON)
     # check what was found
     message(VERBOSE "Kokkos_CXX_FLAGS: ${Kokkos_CXX_FLAGS}")
     message(VERBOSE "Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
@@ -168,6 +168,8 @@ if(MARS_ENABLE_KOKKOS)
 
     target_compile_definitions(mars::Kokkos INTERFACE COMPILE_FOR_KOKKOS)
 
+    set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};Kokkos::kokkos")
+
     # done with setting up Kokkos target
     unset(_KK_TARGET)
 
@@ -194,6 +196,7 @@ if(MARS_ENABLE_KOKKOS)
             REQUIRED)
 
         message(VERBOSE "Found Kokkos Kernels")
+        set(WITH_KOKKOS_KERNELS ON)
         message(VERBOSE "KokkosKernels_LIBRARIES = ${KokkosKernels_LIBRARIES}")
         message(VERBOSE "KokkosKernels_LIBRARY_DIRS = ${KokkosKernels_LIBRARY_DIRS}")
 
@@ -214,13 +217,13 @@ if(MARS_ENABLE_KOKKOS)
                 PROPERTY INTERFACE_LINK_DIRECTORIES ${KokkosKernels_LIBRARY_DIRS})
         endif()
 
+
+        set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};Kokkos::kokkoskernels")
+
         # done with setting up Kokkos Kernels target
         unset(_KKK_TARGET)
     endif()
 
     list(POP_BACK CMAKE_MESSAGE_INDENT)
 endif()
-
-set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};Kokkos::kokkos;Kokkos::kokkoskernels")
-set(WITH_KOKKOS ON)
 

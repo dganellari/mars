@@ -5,8 +5,10 @@
 #include <tuple>
 #include <type_traits>
 #include "mars_globals.hpp"
-#ifdef WITH_KOKKOS
+
+#ifdef WITH_KOKKOS_KERNELS
 #include "Kokkos_ArithTraits.hpp"
+#ifdef WITH_KOKKOS
 #include "Kokkos_Atomic.hpp"
 #include "Kokkos_Macros.hpp"
 #if KOKKOS_VERSION == 30500
@@ -145,7 +147,7 @@ namespace mars {
     }
 
     template <int I, class... Ts>
-    auto get_nth_value(Ts &&... ts) -> decltype(std::get<I>(std::forward_as_tuple(ts...))) {
+    auto get_nth_value(Ts &&...ts) -> decltype(std::get<I>(std::forward_as_tuple(ts...))) {
         return std::get<I>(std::forward_as_tuple(ts...));
     }
 
@@ -631,5 +633,5 @@ namespace mars {
     }
 #endif
 }  // namespace mars
-
+#endif
 #endif  // MARS_DISTRIBUTED_UTILS_HPP

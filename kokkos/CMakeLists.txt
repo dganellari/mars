@@ -1,4 +1,4 @@
-if(Kokkos_FOUND AND KokkosKernels_FOUND)
+if(Kokkos_FOUND)
     # list(APPEND MARS_KOKKOS_MODULES .)
 
     # find_project_files(CMAKE_CURRENT_SOURCE_DIR MARS_KOKKOS_MODULES

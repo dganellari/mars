@@ -1,6 +1,7 @@
 #ifndef MARS_CV_STOKES_
 #define MARS_CV_STOKES_
 
+#ifdef WITH_KOKKOS_KERNELS
 #include "mars.hpp"
 #include "mars_staggered_utils.hpp"
 #include "mars_stokes_common.hpp"
@@ -272,4 +273,5 @@ namespace mars {
 
 }  // namespace mars
 
+#endif
 #endif
