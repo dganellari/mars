@@ -41,7 +41,7 @@ install:
 - cd kokkos-kernels-3.5.00
 - mkdir build &&
     cd build &&
-    cmake .. -DKokkosKernels_ENABLE_TESTS=OFF -DCMAKE_INSTALL_PREFIX=C:\projects\installations\kokkos-kernels  -DCMAKE_CXX_FLAGS="/W0 /EHsc" -DKokkoskernels_ENABLE_DEPRECATED_CODE_3=ON -DKokkoskernels_ENABLE_DEPRECATION_WARNINGS=OFF &&
+    cmake .. -DKokkosKernels_ENABLE_TESTS=OFF -DCMAKE_INSTALL_PREFIX=C:\projects\installations\kokkos-kernels  -DCMAKE_CXX_FLAGS="/W0 /EHsc" -DKokkoskernels_ENABLE_DEPRECATED_CODE_3=ON -DKokkos_DIR=C:\projects\installations\kokkos\lib\cmake\Kokkos -DKokkoskernels_ENABLE_DEPRECATION_WARNINGS=OFF &&
     cmake --build . --target install
 
 
