@@ -16,7 +16,7 @@ add_subdirectory(external/benchmark)
 
 # Std CMake imports
 include(CMakePackageConfigHelpers)
-
+include(CMakeDependentOption)
 # Cmake imports.
 include(cmake/MarsDefaults.cmake)
 include(cmake/MarsOptions.cmake)
