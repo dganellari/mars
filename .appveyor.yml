@@ -22,8 +22,9 @@ install:
 
 
 # Install Kokkos
-- mkdir kokkos_git
-- cd kokkos_git
+- cd C:\
+- mkdir kg
+- cd kg
 - ps: Start-FileDownload 'https://github.com/kokkos/kokkos/archive/refs/tags/3.5.00.tar.gz'
 - 7z x 3.5.00.tar.gz -so | 7z x -si -ttar > nul
 - cd kokkos-3.5.00
@@ -33,21 +34,21 @@ install:
     cmake --build . --target install
 
 #Install KokkosKernels
-- cd ../../..
-- mkdir kokkos-kernels_git
-- cd kokkos-kernels_git
+- cd C:\
+- mkdir kkg
+- cd kkg
 - ps: Start-FileDownload 'https://github.com/kokkos/kokkos-kernels/archive/refs/tags/3.5.00.tar.gz'
 - 7z x 3.5.00.tar.gz -so | 7z x -si -ttar > nul
 - cd kokkos-kernels-3.5.00
 - mkdir build &&
     cd build &&
-    cmake .. -DKokkosKernels_ENABLE_TESTS=OFF -DCMAKE_INSTALL_PREFIX=C:\projects\installations\kokkos-kernels  -DCMAKE_CXX_FLAGS="/W0 /EHsc" -DKokkoskernels_ENABLE_DEPRECATED_CODE_3=ON -DKokkos_DIR=C:\projects\installations\kokkos\lib\cmake\Kokkos -DKokkoskernels_ENABLE_DEPRECATION_WARNINGS=OFF &&
+    cmake .. -DKokkosKernels_ENABLE_TESTS=OFF -DCMAKE_INSTALL_PREFIX=C:\projects\installations\kokkos-kernels  -DCMAKE_CXX_FLAGS="/W0 /EHsc" -DKokkos_DIR=C:\projects\installations\kokkos\lib\cmake\Kokkos &&
     cmake --build . --target install
 
 
 # Mars
 before_build:
-- cd ../../..
+- cd c:\projects\mars
 - cmake -Ball_builds -DMARS_ENABLE_TESTING=ON -DMARS_ENABLE_BENCHMARK=ON -DMARS_ALLOW_DISCOVER_TESTS=ON -DCMAKE_INSTALL_PREFIX=install  -DMPI_C_INCLUDE_PATH="C:\Program Files (x86)\Microsoft SDKs\MPI\Include" -DMPI_C_LIBRARIES="C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x86\msmpi.lib" -DMPI_CXX_LIBRARIES="C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x86\msmpi.lib" -DMPI_CXX_INCLUDE_PATH="C:\Program Files (x86)\Microsoft SDKs\MPI\Include -DKokkos_DIR=C:\projects\installations\kokkos\lib\cmake\Kokkos -DKokkosKernels_DIR=C:\projects\installations\kokkos-kernels\lib\cmake\KokkosKernels -DMARS_ENABLE_KOKKOS=ON -DMARS_ENABLE_KOKKOS_KERNELS=ON" #-DCMAKE_VERBOSE_MAKEFILE=ON
 # -DBUILD_SHARED_LIBS=ON
 
