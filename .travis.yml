@@ -6,6 +6,7 @@ dist: bionic
 addons:
   apt:
     packages:
+      - trilinos-all-dev
       - libopenmpi-dev
       - openmpi-bin
       - lcov
