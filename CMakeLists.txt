@@ -19,7 +19,7 @@ include(CMakePackageConfigHelpers)
 
 # Cmake imports.
 include(cmake/MarsDefaults.cmake)
-include(cmake/MARSOptions.cmake)
+include(cmake/MarsOptions.cmake)
 include(cmake/MarsCMakeFunctions.cmake)
 include(cmake/MarsDependencies.cmake)
 

@@ -37,8 +37,6 @@ endif()
 # ##############################################################################
 
 # Kokkos
-
-option(MARS_ENABLE_KOKKOS "Enable Kokkos" ON)
 cmake_dependent_option(MARS_ENABLE_KOKKOS_CUDA "Enable CUDA backend for Kokkos" OFF
     "MARS_ENABLE_KOKKOS" OFF)
 cmake_dependent_option(MARS_ENABLE_KOKKOS_CUDAUVM "Kokkos use as default memory space CUDAUVM" OFF
@@ -148,19 +146,11 @@ if(MARS_ENABLE_KOKKOS)
         # with different CUDA settings
         set(CMAKE_CUDA_FLAGS "${_wrapper_flags} ${_openmp}")
 
-        # strip target
-        # include(StripTarget)
-        # strip_target(${_KK_TARGET} LANGUAGE CUDA)
-
     else()
         string(FIND "${CMAKE_CXX_FLAGS}" "${_openmp}" _pos)
         if(_pos EQUAL -1)
             set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${_openmp}")
         endif()
-
-        # strip target
-        # include(StripTarget)
-        # strip_target(${_KK_TARGET} LANGUAGE CXX)
 
     endif()
 

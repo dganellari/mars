@@ -9,6 +9,6 @@ option(MARS_USE_CUDAUVM "Use as default memory space CUDAUVM. This has only an e
 
 
 option(TRY_WITH_MOONOLITH "Use -DTRY_WITH_MOONOLITH=ON for enabling mesh transfer functions." OFF)
-option(USE_KOKKOS "Use -DUSE_KOKKOS=ON for enabling mesh transfer functions." OFF)
-option(USE_KOKKOS_KERNELS "Use -DUSE_KOKKOS_KERNELS=ON for enabling kokkos_kernels" OFF)
+option(MARS_ENABLE_KOKKOS "Use -DMARS_ENABLE_KOKKOS=ON for enabling mesh transfer functions." ON)
+option(MARS_ENABLE_KOKKOS_KERNELS "Use -DMARS_ENABLE_KOKKOS_KERNELS=ON for enabling kokkos_kernels" ON)
 
