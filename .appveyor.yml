@@ -5,9 +5,9 @@ clone_folder: c:\projects\mars
 # https://www.appveyor.com/docs/build-environment/#build-worker-images
 image: Visual Studio 2019
 
-cache:
-- C:\Program Files\Microsoft 
-- C:\Program Files (x86)
+# cache:
+# - C:\Program Files\Microsoft 
+# - C:\Program Files (x86)
 
 install:
 # Install MS-MPI
@@ -22,8 +22,8 @@ install:
 
 
 # Install Kokkos
-- mkdir kokkos 
-- cd kokkos
+- mkdir kokkos_git
+- cd kokkos_git
 - ps: Start-FileDownload 'https://github.com/kokkos/kokkos/archive/refs/tags/3.5.00.tar.gz'
 - 7z x 3.5.00.tar.gz -so | 7z x -si -ttar > nul
 - cd kokkos-3.5.00
@@ -34,8 +34,8 @@ install:
 
 #Install KokkosKernels
 - cd ../../..
-- mkdir kokkos-kernels
-- cd kokkos-kernels
+- mkdir kokkos-kernels_git
+- cd kokkos-kernels_git
 - ps: Start-FileDownload 'https://github.com/kokkos/kokkos-kernels/archive/refs/tags/3.5.00.tar.gz
 - 7z x 3.5.00.tar.gz -so | 7z x -si -ttar > nul
 - cd kokkos-kernels-3.5.00
