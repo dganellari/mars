@@ -1,8 +1,6 @@
 version: '{build}'
 clone_folder: c:\projects\mars
 
-- ls "C:\projects\mars\external\googletest"
-
 
 # https://www.appveyor.com/docs/build-environment/#build-worker-images
 image: Visual Studio 2019
@@ -13,6 +11,7 @@ image: Visual Studio 2019
 
 install:
 # Install MS-MPI
+- ls "C:\projects\mars\external\googletest"
 - ps: Start-FileDownload 'https://download.microsoft.com/download/B/2/E/B2EB83FE-98C2-4156-834A-E1711E6884FB/MSMpiSetup.exe'
 - MSMpiSetup.exe -unattend
 - set PATH=C:\Program Files\Microsoft MPI\Bin;%PATH%
