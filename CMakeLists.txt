@@ -18,6 +18,7 @@ add_subdirectory(external/benchmark)
 else()
 add_subdirectory(C:/projects/mars/external/googletest)
 add_subdirectory(C:/projects/mars/external/benchmark)
+endif()
 
 
 
