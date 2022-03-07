@@ -62,14 +62,7 @@ if(MARS_ENABLE_KOKKOS)
             CACHE PATH "Directory where Kokkos is installed")
     endif()
 
-    if(WINDOWS)
-        find_package(
-            Kokkos
-            HINTS
-            ${Kokkos_DIR}
-            REQUIRED)
-
-    else()
+    if(APPLE)
     find_package(
         Kokkos
         HINTS
@@ -80,6 +73,12 @@ if(MARS_ENABLE_KOKKOS)
         ${TRILINOS_DIR}/lib/cmake/Kokkos
         ${TRILINOS_DIR}/lib64/cmake/Kokkos
         REQUIRED)
+    else()
+       find_package(
+            Kokkos
+            HINTS
+            ${Kokkos_DIR}
+            REQUIRED)
     endif()
     message(VERBOSE "Found Kokkos")
     set(WITH_KOKKOS ON)
