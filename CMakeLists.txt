@@ -10,8 +10,16 @@ project(mars
 
 # FIXME make them usable from avaialble installation
 # Don't know what this means.
-# add_subdirectory(external/googletest)
-# add_subdirectory(external/benchmark)
+
+if(APPLE)
+add_subdirectory(external/googletest)
+add_subdirectory(external/benchmark)
+
+else()
+add_subdirectory(C:/projects/mars/external/googletest)
+add_subdirectory(C:/projects/mars/external/benchmark)
+
+
 
 
 # Std CMake imports
