@@ -74,6 +74,8 @@ if(MARS_ENABLE_KOKKOS)
         ${TRILINOS_DIR}/lib64/cmake/Kokkos
         REQUIRED)
     else()
+    # Was not finding kokkos in appveyor even when specifying the path
+    # Here it works.
        find_package(
             Kokkos
             HINTS
