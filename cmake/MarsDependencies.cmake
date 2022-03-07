@@ -190,7 +190,7 @@ if(MARS_ENABLE_KOKKOS)
     list(APPEND CMAKE_MESSAGE_INDENT "${MARS_CMAKE_INDENT}")
 
     # Kokkos Kernels
-    if(MARS_ENABLE_KOKKOS_KERNELS)
+    if(MARS_ENABLE_KOKKOS_KERNELS AND APPLE)
         find_package(
             KokkosKernels
             HINTS
