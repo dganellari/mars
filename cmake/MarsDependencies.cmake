@@ -77,7 +77,7 @@ if(MARS_ENABLE_KOKKOS)
        find_package(
             Kokkos
             HINTS
-            ${Kokkos_DIR}
+            C:\projects\installations\kokkos\lib\cmake\Kokkos
             REQUIRED)
     endif()
     message(VERBOSE "Found Kokkos")
