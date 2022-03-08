@@ -55,7 +55,7 @@ before_build:
 # -DBUILD_SHARED_LIBS=ON
 
 build_script:
-- cmake --build all_builds --config Release --target ALL_BUILD
+- cmake --build all_builds --config Release --target all
 - ls -lah all_builds
 - ls -lah all_builds/Release
 - cmake --build all_builds --config Release --target install
