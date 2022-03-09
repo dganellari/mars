@@ -64,14 +64,7 @@ set(MARS_SOURCES
     ${MARS_SOURCES}
     PARENT_SCOPE)
 
-
-
-
-# if(Kokkos_FOUND)
-#     add_executable(st_example mars_st_example.cpp)
-#     target_link_libraries(st_example PRIVATE mars mars_io)
-
-
-#     add_custom_target(mars_examples)
-#     # add_dependencies()
-# endif()
+if(Kokkos_FOUND)
+    add_executable(st_example mars_st_example.cpp)
+    target_link_libraries(st_example PRIVATE mars)
+endif()

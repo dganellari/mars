@@ -150,16 +150,7 @@ target_link_libraries(mars_exec mars)
 target_include_directories(
     mars PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/cxxopts/include)
 
-if(TRY_WITH_MOONOLITH)
-    add_subdirectory(moonolith_adapter)
-
-    if(WITH_PAR_MOONOLITH)
-        target_link_libraries(mars mars_moonolith)
-    endif()
-endif()
-
 target_include_directories(mars PUBLIC ${CMAKE_BINARY_DIR})
-target_include_directories(mars PUBLIC ${MARS_INCLUDES})
 
 message(STATUS "${MARS_INCLUDES}")
 
@@ -167,19 +158,19 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/base/mars_config.hpp.in
                ${CMAKE_BINARY_DIR}/mars_config.hpp)
 include_directories(${CMAKE_BINARY_DIR})
 
-# if(MARS_WITH_VTK)
-#     install(
-#         TARGETS mars_vtk
-#         RUNTIME DESTINATION bin
-#         LIBRARY DESTINATION lib
-#         ARCHIVE DESTINATION lib)
-# endif()
+if(MARS_WITH_VTK)
+    install(
+        TARGETS mars_vtk
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib)
+endif()
 
 
 
 # if(MARS_WITH_ADIOS2)
 #     install(
-#         TARGETS mars_adios2
+#         TARGETS mars
 #         RUNTIME DESTINATION bin
 #         LIBRARY DESTINATION lib
 #         ARCHIVE DESTINATION lib)

@@ -62,7 +62,16 @@ if(MARS_ENABLE_KOKKOS)
             CACHE PATH "Directory where Kokkos is installed")
     endif()
 
-    if(APPLE)
+    if(WIN32)
+        find_package(
+            Kokkos
+            HINTS
+            # C:/projects/installations/kokkos/lib/cmake/Kokkos
+            ${Kokkos_DIR}
+            $ENV{KOKKOS_DIR}
+            REQUIRED)
+    else()
+
     find_package(
         Kokkos
         HINTS
@@ -73,14 +82,6 @@ if(MARS_ENABLE_KOKKOS)
         ${TRILINOS_DIR}/lib/cmake/Kokkos
         ${TRILINOS_DIR}/lib64/cmake/Kokkos
         REQUIRED)
-    else()
-    # Was not finding kokkos in appveyor even when specifying the path
-    # Here it works.
-       find_package(
-            Kokkos
-            HINTS
-            C:/projects/installations/kokkos/lib/cmake/Kokkos
-            REQUIRED)
     endif()
     message(VERBOSE "Found Kokkos")
     set(WITH_KOKKOS ON)
@@ -234,5 +235,17 @@ if(MARS_ENABLE_KOKKOS)
     endif()
 
     list(POP_BACK CMAKE_MESSAGE_INDENT)
+endif()
+
+
+# ##############################################################################
+# Moonolith
+
+if(TRY_WITH_MOONOLITH)
+    add_subdirectory(moonolith_adapter)
+
+    if(WITH_PAR_MOONOLITH)
+        target_link_libraries(mars mars_moonolith)
+    endif()
 endif()
 
