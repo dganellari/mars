@@ -1,6 +1,6 @@
 
 #pragma once
-#include "mars_config.hpp"
+#include "mars_base.hpp"
 namespace mars {
 
     class DefaultImplementation {};
