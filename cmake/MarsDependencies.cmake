@@ -65,7 +65,7 @@ if(MARS_ENABLE_KOKKOS)
     if(WIN32)
         find_package(
             Kokkos
-            PATHS
+            HINTS
             # C:/projects/installations/kokkos/lib/cmake/Kokkos
             ${Kokkos_DIR}
             $ENV{KOKKOS_DIR}
