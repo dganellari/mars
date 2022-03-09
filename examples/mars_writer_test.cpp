@@ -20,7 +20,7 @@
 #include "mars_utils.hpp"
 #include "mars_vtk_writer.hpp"
 
-#include <err.h>
+// #include <err.h> // does not exist in windows.
 #include "mars_longest_edge.hpp"
 #include "mars_mesh_reader.hpp"
 #include "mars_mesh_writer.hpp"

@@ -6,7 +6,7 @@
 #include <mpi.h>
 #endif
 
-#include <err.h>
+// #include <err.h> // does not exist in windows.
 
 #ifdef WITH_KOKKOS_KERNELS
 #include <KokkosBlas1_axpby.hpp>

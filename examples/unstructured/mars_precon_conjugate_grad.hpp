@@ -1,7 +1,7 @@
 #ifndef MARS_ST_CG_HPP
 #define MARS_ST_CG_HPP
 
-#include <err.h>
+// #include <err.h> // does not exist in windows.
 #include <algorithm>
 #include <cassert>
 #include <cmath>

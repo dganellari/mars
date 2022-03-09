@@ -12,7 +12,7 @@
 #include "Kokkos_Layout.hpp"
 #include "Kokkos_UnorderedMap.hpp"
 #endif
-#include <err.h>
+// #include <err.h> // does not exist in windows.
 #include "mars_globals.hpp"
 #include "mars_vector.hpp"
 

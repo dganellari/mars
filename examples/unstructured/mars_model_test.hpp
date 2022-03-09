@@ -1,7 +1,7 @@
 #ifndef MARS_MODEL_TEST_HPP
 #define MARS_MODEL_TEST_HPP
 
-#include <err.h>
+// #include <err.h> // does not exist in windows.
 
 #ifdef WITH_KOKKOS_KERNELS
 #include <KokkosBlas1_nrm1.hpp>
