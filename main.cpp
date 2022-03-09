@@ -1,5 +1,5 @@
 
-// #include <err.h> // does not exist in windows.
+#include "mars_err.hpp"
 
 #include <algorithm>
 #include <cassert>

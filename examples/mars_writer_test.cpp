@@ -20,7 +20,7 @@
 #include "mars_utils.hpp"
 #include "mars_vtk_writer.hpp"
 
-// #include <err.h> // does not exist in windows.
+#include "mars_err.hpp"
 #include "mars_longest_edge.hpp"
 #include "mars_mesh_reader.hpp"
 #include "mars_mesh_writer.hpp"
@@ -66,13 +66,14 @@ int main(int argc, char *argv[]) {
     if (argc > 1) {
         char *end_ptr = argv[1];
         level = strtol(argv[1], &end_ptr, 10);
-        if (*end_ptr != '\0' || end_ptr == argv[1]) warnx("'%s' could not be (completely) converted to long", argv[1]);
+        if (*end_ptr != '\0' || end_ptr == argv[1])
+            warningx("'%s' could not be (completely) converted to long", argv[1]);
 
         if (argc == 3) {
             char *end_ptr = argv[2];
             refine_level = strtol(argv[2], &end_ptr, 10);
             if (*end_ptr != '\0' || end_ptr == argv[1])
-                warnx("'%s' could not be (completely) converted to long", argv[1]);
+                warningx("'%s' could not be (completely) converted to long", argv[1]);
         }
 
     } else

@@ -4,7 +4,7 @@
 #include "mars_bisection.hpp"
 
 #include <stack>
-// #include <err.h> // does not exist in windows.
+#include "mars_err.hpp"
 // #include <omp.h>
 
 #define select_err 1
@@ -109,12 +109,12 @@ namespace mars {
 
         void set_edge_select(const std::shared_ptr<EdgeSelect<Mesh_>> &edge_select) final {
             if (edge_select->name() != "LongestEdge")
-                errx(select_err,
-                     "%s %d %s Error: Calling set_edge_select on LeppBisection with %s is not supported!",
-                     __FILE__,
-                     __LINE__,
-                     __func__,
-                     edge_select->name().c_str());
+                errorx(select_err,
+                       "%s %d %s Error: Calling set_edge_select on LeppBisection with %s is not supported!",
+                       __FILE__,
+                       __LINE__,
+                       __func__,
+                       edge_select->name().c_str());
         }
 
         bool is_leaf(const Integer element_id) {
@@ -259,12 +259,12 @@ Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), edge, i);
 
         void set_edge_select(const std::shared_ptr<EdgeSelect<Mesh_>> &edge_select) {
             if (edge_select->name() != "LongestEdge")
-                errx(select_err,
-                     "%s %d %s Error: Calling set_edge_select on LeppBisection with %s is not supported!",
-                     __FILE__,
-                     __LINE__,
-                     __func__,
-                     edge_select->name().c_str());
+                errorx(select_err,
+                       "%s %d %s Error: Calling set_edge_select on LeppBisection with %s is not supported!",
+                       __FILE__,
+                       __LINE__,
+                       __func__,
+                       edge_select->name().c_str());
         }
 
         /*void compute_lepp(const Integer element_id){ // it does not work directly from the tree because it is still

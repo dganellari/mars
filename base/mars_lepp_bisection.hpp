@@ -4,7 +4,7 @@
 #include "mars_bisection.hpp"
 
 #include <stack>
-// #include <err.h> // does not exist in windows.
+#include "mars_err.hpp"
 
 #define select_err 1
 
@@ -60,12 +60,12 @@ namespace mars {
     private:
         void set_edge_select(const std::shared_ptr<EdgeSelect<Mesh>>& edge_select) {
             if (edge_select->name() != "LongestEdge")
-                errx(select_err,
-                     "%s %d %s Error: Calling set_edge_select on LeppBisection with %s is not supported!",
-                     __FILE__,
-                     __LINE__,
-                     __func__,
-                     edge_select->name().c_str());
+                errorx(select_err,
+                       "%s %d %s Error: Calling set_edge_select on LeppBisection with %s is not supported!",
+                       __FILE__,
+                       __LINE__,
+                       __func__,
+                       edge_select->name().c_str());
         }
 
         void compute_lepp(TreeNode<Integer>& node) {
@@ -192,8 +192,8 @@ namespace mars {
                 if (le_nhb != INVALID_INDEX) {
                     // get the longest edge of that neighbor.
                     edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), edge, le_nhb);
-                    //				edge_num = Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), edge,
-                    //le_nhb);
+                    //				edge_num =
+                    //Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), edge, le_nhb);
 
                     Bisection<Mesh>::get_mesh().elem(le_nhb).edge(edge_num, new_edge.nodes[0], new_edge.nodes[1]);
                     new_edge.fix_ordering();
@@ -217,12 +217,12 @@ namespace mars {
     private:
         void set_edge_select(const std::shared_ptr<LongestEdgeSelect<Mesh>>& edge_select) final {
             if (edge_select->name() != "LongestEdge")
-                errx(select_err,
-                     "%s %d %s Error: Calling set_edge_select on LeppBisection with %s is not supported!",
-                     __FILE__,
-                     __LINE__,
-                     __func__,
-                     edge_select->name().c_str());
+                errorx(select_err,
+                       "%s %d %s Error: Calling set_edge_select on LeppBisection with %s is not supported!",
+                       __FILE__,
+                       __LINE__,
+                       __func__,
+                       edge_select->name().c_str());
         }
     };
 
@@ -258,12 +258,12 @@ namespace mars {
     private:
         void set_edge_select(const std::shared_ptr<EdgeSelect<Mesh_>>& edge_select) final {
             if (edge_select->name() != "LongestEdge")
-                errx(select_err,
-                     "%s %d %s Error: Calling set_edge_select on LeppBisection with %s is not supported!",
-                     __FILE__,
-                     __LINE__,
-                     __func__,
-                     edge_select->name().c_str());
+                errorx(select_err,
+                       "%s %d %s Error: Calling set_edge_select on LeppBisection with %s is not supported!",
+                       __FILE__,
+                       __LINE__,
+                       __func__,
+                       edge_select->name().c_str());
         }
 
         void compute_lepp(std::map<Edge, std::vector<Integer>>& lepp, const Integer element_id) {
@@ -294,7 +294,7 @@ namespace mars {
                     Bisection<Mesh>::edge_select()->can_refine(Bisection<Mesh>::get_mesh(), i)) {
                     Edge new_edge;
                     //				const Integer edge_num =
-                    //Bisection<Mesh>::edge_select()->stable_select(Bisection<Mesh>::get_mesh(),  i);
+                    // Bisection<Mesh>::edge_select()->stable_select(Bisection<Mesh>::get_mesh(),  i);
                     const Integer edge_num =
                         Bisection<Mesh>::edge_select()->select(Bisection<Mesh>::get_mesh(), edge, i);
                     Bisection<Mesh>::get_mesh().elem(i).edge(edge_num, new_edge.nodes[0], new_edge.nodes[1]);

@@ -1,7 +1,6 @@
 #ifndef MARS_ST_CG_HPP
 #define MARS_ST_CG_HPP
 
-// #include <err.h> // does not exist in windows.
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -11,6 +10,7 @@
 #include <map>
 #include <numeric>
 #include <string>
+#include "mars_err.hpp"
 
 #ifdef WITH_KOKKOS_KERNELS
 #include <KokkosBlas1_axpby.hpp>

@@ -303,8 +303,9 @@ namespace mars {
                 break;
             }
             default: {
-                errx(1,
-                     "Unknown elemnt type for the mesh generation. Implemented only for Quad4 and Hex8 element types.");
+                errorx(
+                    1,
+                    "Unknown elemnt type for the mesh generation. Implemented only for Quad4 and Hex8 element types.");
             }
         }
         return number_of_elements;
@@ -336,7 +337,8 @@ namespace mars {
         assert(chunk_size > 0);
 
         if (chunk_size <= 0) {
-            errx(1, " Invalid number of mpi processes. Defined more mpi processes than mesh elements to be generated!");
+            errorx(1,
+                   " Invalid number of mpi processes. Defined more mpi processes than mesh elements to be generated!");
         }
 
         bool root = mars::rank(context) == 0;
