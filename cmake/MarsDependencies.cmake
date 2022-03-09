@@ -66,7 +66,7 @@ if(MARS_ENABLE_KOKKOS)
         find_package(
             Kokkos
             HINTS
-            # C:/projects/installations/kokkos/lib/cmake/Kokkos
+            C:/projects/installations/kokkos/lib/cmake/Kokkos
             ${Kokkos_DIR}
             $ENV{KOKKOS_DIR}
             REQUIRED)
