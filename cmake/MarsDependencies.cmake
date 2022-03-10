@@ -183,7 +183,7 @@ if(MARS_ENABLE_KOKKOS)
     # done with setting up Kokkos target
     unset(_KK_TARGET)
 
-    list(POP_BACK CMAKE_MESSAGE_INDENT)
+    # list(POP_BACK CMAKE_MESSAGE_INDENT)
 
     #
     # to be separated
