@@ -118,7 +118,6 @@ if(MARS_ENABLE_KOKKOS)
         set_property(
             TARGET ${_KK_TARGET} 
             PROPERTY INTERFACE_COMPILE_OPTIONS ${_openmp})
-        )
     else()
         message(DEBUG "Kokkos target is defined")
     endif()
