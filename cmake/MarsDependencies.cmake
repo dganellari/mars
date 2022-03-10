@@ -236,7 +236,7 @@ if(MARS_ENABLE_KOKKOS)
         set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};Kokkos::kokkoskernels")
 
         # done with setting up Kokkos Kernels target
-        unset(_KKK_TARGET)
+        # unset(_KKK_TARGET)
     endif()
 
     # list(POP_BACK CMAKE_MESSAGE_INDENT)
