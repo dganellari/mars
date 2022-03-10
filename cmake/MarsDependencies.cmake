@@ -217,7 +217,7 @@ if(MARS_ENABLE_KOKKOS)
 
         # _KKK_TARGET is set as a local variable
         # do not use outside this file
-        set(_KKK_TARGET "Kokkos::KokkosKernels")
+        set(_KKK_TARGET "Kokkos::kokkoskernels")
         if(NOT TARGET ${_KKK_TARGET})
             message(DEBUG "Kokkos kernel target is not defined")
             add_library(${_KKK_TARGET} INTERFACE IMPORTED)
@@ -236,7 +236,7 @@ if(MARS_ENABLE_KOKKOS)
         set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};Kokkos::kokkoskernels")
 
         # done with setting up Kokkos Kernels target
-        # unset(_KKK_TARGET)
+        unset(_KKK_TARGET)
     endif()
 
     # list(POP_BACK CMAKE_MESSAGE_INDENT)
