@@ -1,9 +1,5 @@
 
-if(LINUX)
-cmake_minimum_required(VERSION 2.8.12)
-else()
 cmake_minimum_required(VERSION 3.5...3.19)
-endif()
 cmake_policy(SET CMP0048 NEW)
 project(mars 
     VERSION 0.1.0

@@ -26,7 +26,7 @@ script:
     - cd build
     ##########################################################################################
     - echo "Testing release config"
-    - cmake .. -DCMAKE_INSTALL_PREFIX=${TRAVIS_BUILD_DIR}/install_release -DCMAKE_BUILD_TYPE=Release -DMARS_ALLOW_DISCOVER_TESTS=OFF -DMARS_ENABLE_BENCHMARK=ON -DMARS_ENABLE_KOKKOS=ON -DMARS_ENABLE_KOKKOS_KERNELS=ON
+    - cmake .. -DCMAKE_INSTALL_PREFIX=${TRAVIS_BUILD_DIR}/install_release -DCMAKE_BUILD_TYPE=Release -DMARS_ENABLE_BENCHMARK=ON -DMARS_ENABLE_KOKKOS=ON -DMARS_ENABLE_KOKKOS_KERNELS=ON
     - make
     - mpiexec -np 1 ./mars_bench
     - mpiexec -np 2 ./mars_test
