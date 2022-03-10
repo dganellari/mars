@@ -106,12 +106,18 @@ if(MARS_ENABLE_KOKKOS)
     if(NOT TARGET ${_KK_TARGET})
         message(DEBUG "Kokkos target is not defined")
         add_library(${_KK_TARGET} INTERFACE IMPORTED)
-        set_target_properties(${_KK_TARGET}
-            PROPERTIES
-                INTERFACE_INCLUDE_DIRECTORIES ${Kokkos_INCLUDE_DIRS} ${Kokkos_TPL_INCLUDE_DIRS}
-                INTERFACE_LINK_LIBRARIES ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES}
-                INTERFACE_LINK_DIRECTORIES ${Kokkos_LIBRARY_DIRS}
-                INTERFACE_COMPILE_OPTIONS ${_openmp}
+        set_property(
+            TARGET ${_KK_TARGET}
+            PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${Kokkos_INCLUDE_DIRS} ${Kokkos_TPL_INCLUDE_DIRS})
+        set_property(
+            TARGET ${_KK_TARGET}
+            PROPERTY INTERFACE_LINK_LIBRARIES ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES})
+        set_property(
+            TARGET ${_KK_TARGET}
+            PROPERTY INTERFACE_LINK_DIRECTORIES ${Kokkos_LIBRARY_DIRS})
+        set_property(
+            TARGET ${_KK_TARGET} 
+            PROPERTY INTERFACE_COMPILE_OPTIONS ${_openmp})
         )
     else()
         message(DEBUG "Kokkos target is defined")
@@ -193,7 +199,7 @@ if(MARS_ENABLE_KOKKOS)
     list(APPEND CMAKE_MESSAGE_INDENT "${MARS_CMAKE_INDENT}")
 
     # Kokkos Kernels
-    if(MARS_ENABLE_KOKKOS_KERNELS AND APPLE)
+    if(MARS_ENABLE_KOKKOS_KERNELS)
         find_package(
             KokkosKernels
             HINTS
