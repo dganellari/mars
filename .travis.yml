@@ -10,8 +10,6 @@ addons:
       - libopenmpi-dev
       - openmpi-bin
       - lcov
-      - libtrilinos-kokkos-13.2
-      - libtrilinos-kokkos-kernels-13.2
       - libtrilinos-kokkos-dev
       - libtrilinos-kokkos-kernels12
       - libtrilinos-kokkos-kernels-dev
