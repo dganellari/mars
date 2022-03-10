@@ -234,7 +234,7 @@ if(MARS_ENABLE_KOKKOS)
         unset(_KKK_TARGET)
     endif()
 
-    list(POP_BACK CMAKE_MESSAGE_INDENT)
+    # list(POP_BACK CMAKE_MESSAGE_INDENT)
 endif()
 
 
