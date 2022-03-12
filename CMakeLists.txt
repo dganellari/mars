@@ -152,7 +152,6 @@ install(FILES ${MARS_HEADERS} DESTINATION include)
 install(FILES ${CMAKE_BINARY_DIR}/mars_config.hpp DESTINATION include)
 
 
-
 #generate the config file that is includes the exports
 # configure_package_config_file(
 #     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ParMoonolithConfig.cmake.in
