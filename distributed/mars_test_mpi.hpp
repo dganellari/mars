@@ -94,6 +94,7 @@ namespace mars {
         }
     }
 
+#ifdef WITH_KOKKOS
     template <typename... T>
     using user_tuple = mars::ViewsTuple<T...>;
 
@@ -109,6 +110,7 @@ namespace mars {
             std::get<1>(tuple)(i) = 1;
         }
     };
+#endif
 
     void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(const int x, const int y) {
         using namespace mars;
