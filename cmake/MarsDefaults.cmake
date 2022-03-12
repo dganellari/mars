@@ -31,4 +31,4 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 # ##############################################################################
 
-# if(NOT MOONOLITH_LAUNCH_EXE) set(MOONOLITH_LAUNCH_EXE "") endif()
+if(NOT MARS_LAUNCH_EXE) set(MARS_LAUNCH_EXE "") endif()
