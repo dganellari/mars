@@ -9,7 +9,7 @@ list(APPEND TEST_DEP_LIBRARIES mars)
 
 if(MARS_ENABLE_ADIOS2)
     list(APPEND TEST_MODULES adios2)
-    list(APPEND TEST_DEP_LIBRARIES mars_adios2)
+    # list(APPEND TEST_DEP_LIBRARIES mars_adios2)
     message("MARS_ENABLE_ADIOS2=ON")
 endif()
 
