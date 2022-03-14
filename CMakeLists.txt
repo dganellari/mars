@@ -22,6 +22,7 @@ include(cmake/MarsOptions.cmake)
 include(cmake/MarsCMakeFunctions.cmake)
 include(cmake/MarsDependencies.cmake)
 
+
 # ##############################################################################
 # ##############################################################################
 # Library
@@ -122,6 +123,9 @@ if(TRY_WITH_MOONOLITH)
   endif()
 endif()
 
+target_include_directories(
+  mars PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/cxxopts/include)
+
 # ##############################################################################
 # ##############################################################################
 # ##############################################################################
@@ -130,9 +134,6 @@ endif()
 
 add_executable(mars_exec main.cpp)
 target_link_libraries(mars_exec mars)
-
-target_include_directories(
-  mars PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/cxxopts/include)
 
 target_include_directories(mars PUBLIC ${CMAKE_BINARY_DIR})
 
