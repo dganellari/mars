@@ -22,7 +22,6 @@ include(cmake/MarsOptions.cmake)
 include(cmake/MarsCMakeFunctions.cmake)
 include(cmake/MarsDependencies.cmake)
 
-
 # ##############################################################################
 # ##############################################################################
 # Library
@@ -138,9 +137,6 @@ target_link_libraries(mars_exec mars)
 target_include_directories(mars PUBLIC ${CMAKE_BINARY_DIR})
 
 message(STATUS "${MARS_INCLUDES}")
-
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/base/mars_config.hpp.in
-               ${CMAKE_BINARY_DIR}/mars_config.hpp)
 include_directories(${CMAKE_BINARY_DIR})
 
 install(
@@ -149,21 +145,22 @@ install(
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib)
 
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/base/mars_config.hpp.in
+               ${CMAKE_BINARY_DIR}/mars_config.hpp)
 install(FILES ${MARS_HEADERS} DESTINATION include)
 install(FILES ${CMAKE_BINARY_DIR}/mars_config.hpp DESTINATION include)
 
-
-#generate the config file that is includes the exports
+# generate the config file that is includes the exports
 configure_package_config_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/MarsConfig.cmake.in
-    "${CMAKE_CURRENT_BINARY_DIR}/MarsConfig.cmake"
-    INSTALL_DESTINATION "lib/cmake")
+  ${CMAKE_CURRENT_SOURCE_DIR}/cmake/MarsConfig.cmake.in
+  "${CMAKE_CURRENT_BINARY_DIR}/MarsConfig.cmake"
+  INSTALL_DESTINATION "lib/cmake")
 
 # generate the version file for the config file
 write_basic_package_version_file(
-    "${CMAKE_CURRENT_BINARY_DIR}/MarsConfigVersion.cmake"
-    VERSION "${MARS_VERSION}"
-    COMPATIBILITY AnyNewerVersion)
+  "${CMAKE_CURRENT_BINARY_DIR}/MarsConfigVersion.cmake"
+  VERSION "${MARS_VERSION}"
+  COMPATIBILITY AnyNewerVersion)
 
 # install the configuration file
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/MarsConfig.cmake
