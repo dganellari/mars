@@ -114,14 +114,6 @@ if(MARS_ENABLE_ADIOS2)
   add_subdirectory(backend/adios2)
 endif()
 
-if(TRY_WITH_MOONOLITH)
-  add_subdirectory(moonolith_adapter)
-
-  if(WITH_PAR_MOONOLITH)
-    target_link_libraries(mars mars_moonolith)
-  endif()
-endif()
-
 target_include_directories(
   mars PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/cxxopts/include)
 
@@ -170,3 +162,15 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/MarsConfig.cmake
 include(cmake/PostInstall.cmake)
 
 # ##############################################################################
+
+# #################  Extra Targets, Complete ##################
+
+add_custom_target(mars_complete)
+
+if(MARS_ENABLE_BENCHMARK)
+  add_dependencies(mars_complete mars_bench)
+endif()
+
+if(MARS_ENABLE_TESTING)
+  add_dependencies(mars_complete mars_test)
+endif()

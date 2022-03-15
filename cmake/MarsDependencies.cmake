@@ -249,8 +249,4 @@ endif()
 
 if(TRY_WITH_MOONOLITH)
   add_subdirectory(moonolith_adapter)
-
-  if(WITH_PAR_MOONOLITH)
-    target_link_libraries(mars mars_moonolith)
-  endif()
 endif()
