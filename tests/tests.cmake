@@ -52,7 +52,7 @@ if(MARS_ENABLE_TESTING)
 
         # Does not work on cluster env where you cannot run MPI on master node
         # So for the moment it will only work on apple laptops (the test can be
-        # run with ./MARS_test anyway but not with make test)
+        # run with ./mars_test anyway but not with make test)
         if(APPLE
            OR WIN32
            OR MARS_ALLOW_DISCOVER_TESTS)
@@ -67,6 +67,5 @@ if(MARS_ENABLE_TESTING)
     # ##########################################################################
 
     mars_add_test(
-        mars_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/test.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mars_MeshGenerationTest.cpp)
+        mars_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/mars_MeshGenerationTest.cpp)
 endif(MARS_ENABLE_TESTING)

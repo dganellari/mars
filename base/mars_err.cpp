@@ -1,4 +1,5 @@
 #include "mars_err.hpp"
+// Handling err.h errors on windows.
 #ifdef _WIN32
 namespace mars {
 
@@ -12,6 +13,7 @@ namespace mars {
         int nchars = snprintf(buffer, 1024, format, file, line, function, message);
         if (nchars <= 1024) {
         }
+        std::cerr << "Windows does not support err.h now.";
         // errx(select_err, format, file, line, function, message);
     }
 
