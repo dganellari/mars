@@ -10,8 +10,8 @@ project(
 )
 
 # FIXME make them usable from avaialble installation Don't know what this means.
-add_subdirectory(external/googletest)
-add_subdirectory(external/benchmark)
+# add_subdirectory(external/googletest)
+# add_subdirectory(external/benchmark)
 
 # Std CMake imports
 include(CMakePackageConfigHelpers)
