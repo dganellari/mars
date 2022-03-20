@@ -36,7 +36,7 @@ foreach(MODULE ${MARS_MODULES})
   add_subdirectory("${MODULE}")
 endforeach(MODULE)
 
-add_library(mars STATIC ${MARS_HEADERS} ${MARS_SOURCES})
+add_library(mars ${MARS_HEADERS} ${MARS_SOURCES})
 
 # ##############################################################################
 # include
@@ -133,6 +133,7 @@ include_directories(${CMAKE_BINARY_DIR})
 
 install(
   TARGETS mars mars_exec
+  EXPORT MarsTargets
   RUNTIME DESTINATION bin
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib)
@@ -142,11 +143,17 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/base/mars_config.hpp.in
 install(FILES ${MARS_HEADERS} DESTINATION include)
 install(FILES ${CMAKE_BINARY_DIR}/mars_config.hpp DESTINATION include)
 
+install(
+    EXPORT MarsTargets
+    FILE MarsTargets.cmake
+    NAMESPACE Mars::
+    DESTINATION lib/cmake)
+
 # generate the config file that is includes the exports
 configure_package_config_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/cmake/MarsConfig.cmake.in
   "${CMAKE_CURRENT_BINARY_DIR}/MarsConfig.cmake"
-  INSTALL_DESTINATION "lib/cmake")
+  INSTALL_DESTINATION "lib/cmake/")
 
 # generate the version file for the config file
 write_basic_package_version_file(
