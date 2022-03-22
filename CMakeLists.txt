@@ -9,10 +9,6 @@ project(
     "Mars is an open-source mesh management library designed to handle N-dimensional elements (N <= 4)"
 )
 
-# FIXME make them usable from avaialble installation Don't know what this means.
-# add_subdirectory(external/googletest)
-# add_subdirectory(external/benchmark)
-
 # Std CMake imports
 include(CMakePackageConfigHelpers)
 include(CMakeDependentOption)
@@ -40,6 +36,9 @@ add_library(mars ${MARS_HEADERS} ${MARS_SOURCES})
 
 # ##############################################################################
 # include
+
+target_include_directories(
+  mars PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/cxxopts/include)
 
 foreach(include ${MARS_BUILD_INCLUDES})
   target_include_directories(mars BEFORE PUBLIC $<BUILD_INTERFACE:${include}>)
@@ -85,7 +84,6 @@ endif()
 # -fsanitize-memory-track-origins> )
 
 target_compile_features(mars PUBLIC cxx_std_14)
-target_include_directories(mars PUBLIC .)
 
 # ##############################################################################
 # ##############################################################################
@@ -114,8 +112,6 @@ if(MARS_ENABLE_ADIOS2)
   add_subdirectory(backend/adios2)
 endif()
 
-target_include_directories(
-  mars PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/cxxopts/include)
 
 # ##############################################################################
 # ##############################################################################
@@ -126,7 +122,7 @@ target_include_directories(
 add_executable(mars_exec main.cpp)
 target_link_libraries(mars_exec mars)
 
-target_include_directories(mars PUBLIC ${CMAKE_BINARY_DIR})
+# target_include_directories(mars PUBLIC ${CMAKE_BINARY_DIR})
 
 message(STATUS "${MARS_INCLUDES}")
 include_directories(${CMAKE_BINARY_DIR})

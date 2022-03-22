@@ -4,6 +4,8 @@ project(mars_usage)
 include(CMakeFindDependencyMacro)
 
 find_package(Mars 0 REQUIRED)
+find_package(Kokkos REQUIRED)
+find_package(KokkosKernels REQUIRED)
 
 # we use one of our examples here
 add_executable(evt_exe ${CMAKE_SOURCE_DIR}/../mars_example_post_install.cpp)
