@@ -37,8 +37,8 @@ add_library(mars ${MARS_HEADERS} ${MARS_SOURCES})
 # ##############################################################################
 # include
 
-target_include_directories(
-  mars PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/cxxopts/include)
+# target_include_directories(
+#   mars PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/cxxopts/include)
 
 foreach(include ${MARS_BUILD_INCLUDES})
   target_include_directories(mars BEFORE PUBLIC $<BUILD_INTERFACE:${include}>)
@@ -96,6 +96,10 @@ endif()
 
 if(MARS_ENABLE_TESTING)
   include(tests/tests.cmake)
+endif()
+
+if(MARS_ENABLE_CXXOPTS)
+  include(cxxopts/cxxopts.cmake)
 endif()
 
 if(MARS_ENABLE_VTK)

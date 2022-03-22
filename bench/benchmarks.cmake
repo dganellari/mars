@@ -21,7 +21,6 @@ if(MARS_ENABLE_BENCHMARK)
         endif()
 
         set_target_properties(benchmark PROPERTIES FOLDER extern)
-        set_target_properties(benchmark_main PROPERTIES FOLDER extern)
 
         set(MARS_BENCH_LIBRARIES benchmark)
     else()
