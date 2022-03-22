@@ -1070,7 +1070,6 @@ void write_file() {
 
 int main(int argc, char *argv[]) {
     using namespace mars;
-#ifdef WITH_CXXOPTS
     using namespace cxxopts;
 
     /* MARS::init(argc, argv); */
@@ -1228,5 +1227,4 @@ int main(int argc, char *argv[]) {
     }
 
     return env.exit_code();
-#endif  // WITH_CXXOPTS
 }

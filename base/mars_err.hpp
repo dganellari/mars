@@ -9,6 +9,8 @@ namespace mars {
                 const char* function,
                 const char* message);
 
+    void errorx(int select_err, const char* format);
+
     void warningx(const char* format, const char* message);
 }  // namespace mars
 #endif

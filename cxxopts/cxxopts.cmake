@@ -20,12 +20,16 @@ if(MARS_ENABLE_CXXOPTS)
         set_target_properties(cxxopts PROPERTIES FOLDER extern)
 
         set(MARS_CXXOPTS_LIBRARIES cxxopts)
+
+        message ("Setup xcxops")
     else()
+        message("Found cxxopts")
         set(MARS_CXXOPTS_LIBRARIES cxxopts::cxxopts)
     endif()
+    set(WITH_CXXOPTS ON)
 
     # ##########################################################################
 
-    # target_include_directories(mars PUBLIC ${MARS_CXXOPTS_LIBRARIES})
-
+    message(${cxxopts_SOURCE_DIR})
+    # target_include_directories(mars PUBLIC ${cxxopts_SOURCE_DIR}/include)
 endif(MARS_ENABLE_CXXOPTS)

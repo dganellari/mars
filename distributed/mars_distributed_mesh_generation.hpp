@@ -1,13 +1,12 @@
 #ifndef GENERATION_MARS_MESH_DISTRIBUTED_GENERATION_HPP_
 #define GENERATION_MARS_MESH_DISTRIBUTED_GENERATION_HPP_
-
+#include "mars_err.hpp"
 #ifdef WITH_MPI
 #include "mars_context.hpp"
 #include "mars_execution_context.hpp"
 #ifdef WITH_KOKKOS_KERNELS
 #include "KokkosKernels_Sorting.hpp"
 #include "mars_distributed_mesh_kokkos.hpp"
-#include "mars_utils_kokkos.hpp"
 namespace mars {
 
     template <Integer Dim, Integer ManifoldDim, Integer Type>
