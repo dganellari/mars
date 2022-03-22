@@ -4,7 +4,10 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdlib>
+
+#ifdef WITH_CXXOPTS
 #include <cxxopts.hpp>
+#endif
 #include <iostream>
 #include <numeric>
 
@@ -1067,6 +1070,7 @@ void write_file() {
 
 int main(int argc, char *argv[]) {
     using namespace mars;
+#ifdef WITH_CXXOPTS
     using namespace cxxopts;
 
     /* MARS::init(argc, argv); */
@@ -1224,4 +1228,5 @@ int main(int argc, char *argv[]) {
     }
 
     return env.exit_code();
+#endif  // WITH_CXXOPTS
 }

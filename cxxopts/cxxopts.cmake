@@ -26,6 +26,6 @@ if(MARS_ENABLE_CXXOPTS)
 
     # ##########################################################################
 
-    target_include_directories(mars PUBLIC ${MARS_CXXOPTS_LIBRARIES})
+    # target_include_directories(mars PUBLIC ${MARS_CXXOPTS_LIBRARIES})
 
 endif(MARS_ENABLE_CXXOPTS)
