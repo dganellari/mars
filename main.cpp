@@ -1,9 +1,8 @@
-
-#include "mars_err.hpp"
-
 #include <algorithm>
 #include <cassert>
 #include <cstdlib>
+#include "mars_config.hpp"
+#include "mars_err.hpp"
 
 #ifdef WITH_CXXOPTS
 #include <cxxopts.hpp>
@@ -1070,6 +1069,7 @@ void write_file() {
 
 int main(int argc, char *argv[]) {
     using namespace mars;
+#ifdef WITH_CXXOPTS
     using namespace cxxopts;
 
     /* MARS::init(argc, argv); */
@@ -1227,4 +1227,5 @@ int main(int argc, char *argv[]) {
     }
 
     return env.exit_code();
+#endif
 }

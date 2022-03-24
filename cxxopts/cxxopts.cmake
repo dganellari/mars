@@ -3,6 +3,7 @@ if(MARS_ENABLE_CXXOPTS)
     find_package(cxxopts QUIET)
 
     if(NOT cxxopts_FOUND)
+        message("cxxopts not found")
         include(FetchContent)
 
         FetchContent_Declare(
@@ -19,9 +20,8 @@ if(MARS_ENABLE_CXXOPTS)
 
         set_target_properties(cxxopts PROPERTIES FOLDER extern)
 
-        set(MARS_CXXOPTS_LIBRARIES cxxopts)
+        set(MARS_CXXOPTS_LIBRARIES cxxopts::cxxopts)
 
-        message ("Setup xcxops")
     else()
         message("Found cxxopts")
         set(MARS_CXXOPTS_LIBRARIES cxxopts::cxxopts)
@@ -30,6 +30,16 @@ if(MARS_ENABLE_CXXOPTS)
 
     # ##########################################################################
 
-    message(${cxxopts_SOURCE_DIR})
-    # target_include_directories(mars PUBLIC ${cxxopts_SOURCE_DIR}/include)
+    # message("MARS_CXXOPTS_LIBRARIES: ${MARS_CXXOPTS_LIBRARIES}")
+
+    if(TARGET ${MARS_CXXOPTS_LIBRARIES})
+        message("MARS_CXXOPTS_LIBRARIES: ${MARS_CXXOPTS_LIBRARIES}")
+        # get_target_property(MARS_CXXOPTS_INCLUDES ${MARS_CXXOPTS_LIBRARIES}
+                      # INTERFACE_INCLUDE_DIRECTORIES)
+        # set(MARS_DEP_INCLUDES "${MARS_DEP_INCLUDES};${MARS_CXXOPTS_INCLUDES}")
+    endif()
+
+    set(MARS_EXEC_DEP_LIBRARIES "${MARS_EXEC_DEP_LIBRARIES};${MARS_CXXOPTS_LIBRARIES}")
+
+
 endif(MARS_ENABLE_CXXOPTS)

@@ -250,3 +250,7 @@ endif()
 if(TRY_WITH_MOONOLITH)
   add_subdirectory(moonolith_adapter)
 endif()
+
+if(MARS_ENABLE_CXXOPTS)
+  include(cxxopts/cxxopts.cmake)
+endif()

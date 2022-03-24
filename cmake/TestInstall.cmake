@@ -7,7 +7,7 @@ add_custom_target(
     COMMAND ${CMAKE_COMMAND} -E remove_directory
             ${CMAKE_CURRENT_BINARY_DIR}/TestInstall/CMakeFiles
     COMMAND
-        ${CMAKE_COMMAND} -DMARS_DIR=${CMAKE_INSTALL_PREFIX}/lib/cmake/
+        ${CMAKE_COMMAND} -DMars_DIR=${CMAKE_INSTALL_PREFIX}/lib/cmake/
         ${CMAKE_SOURCE_DIR}/examples/usage_from_external_cmake_project
     COMMAND ${CMAKE_COMMAND} --build . --config $<IF:$<CONFIG:Debug>,Debug,Release>
     COMMAND ${CMAKE_CTEST_COMMAND} -V -C $<IF:$<CONFIG:Debug>,Debug,Release>
