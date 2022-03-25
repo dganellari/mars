@@ -1,5 +1,6 @@
 #include "mars_err.hpp"
 #include <stdio.h>
+#include <iostream>
 // Handling err.h errors on windows.
 #ifdef _WIN32
 namespace mars {
