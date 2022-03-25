@@ -5,7 +5,7 @@
 #include "mars_err.hpp"
 
 #ifdef WITH_CXXOPTS
-#include <cxxopts.hpp>
+#include "cxxopts.hpp"
 #endif
 #include <iostream>
 #include <numeric>

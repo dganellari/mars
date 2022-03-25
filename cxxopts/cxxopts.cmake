@@ -10,17 +10,22 @@ if(MARS_ENABLE_CXXOPTS)
             cxxopts
             GIT_REPOSITORY https://github.com/jarro2783/cxxopts.git
             GIT_TAG v3.0.0)
+        FetchContent_MakeAvailable(cxxopts)
+        set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};cxxopts::cxxopts")
+        # set(MARS_DEP_INCLUDES "${MARS_DEP_INCLUDES};cxxopts::cxxopts")
 
-        FetchContent_GetProperties(cxxopts)
+        # message(${MARS_DEP_INCLUDES})
 
-        if(NOT cxxopts_POPULATED)
-            FetchContent_Populate(cxxopts)
-            add_subdirectory(${cxxopts_SOURCE_DIR} ${cxxopts_BINARY_DIR})
-        endif()
+        # FetchContent_GetProperties(cxxopts)
 
-        set_target_properties(cxxopts PROPERTIES FOLDER extern)
+        # if(NOT cxxopts_POPULATED)
+        #     FetchContent_Populate(cxxopts)
+        #     add_subdirectory(${cxxopts_SOURCE_DIR} ${cxxopts_BINARY_DIR})
+        # endif()
 
-        set(MARS_CXXOPTS_LIBRARIES cxxopts::cxxopts)
+        # set_target_properties(cxxopts PROPERTIES FOLDER extern)
+
+        # set(MARS_CXXOPTS_LIBRARIES cxxopts::cxxopts)
 
     else()
         message("Found cxxopts")
@@ -32,14 +37,14 @@ if(MARS_ENABLE_CXXOPTS)
 
     # message("MARS_CXXOPTS_LIBRARIES: ${MARS_CXXOPTS_LIBRARIES}")
 
-    if(TARGET ${MARS_CXXOPTS_LIBRARIES})
-        message("MARS_CXXOPTS_LIBRARIES: ${MARS_CXXOPTS_LIBRARIES}")
-        # get_target_property(MARS_CXXOPTS_INCLUDES ${MARS_CXXOPTS_LIBRARIES}
-                      # INTERFACE_INCLUDE_DIRECTORIES)
-        # set(MARS_DEP_INCLUDES "${MARS_DEP_INCLUDES};${MARS_CXXOPTS_INCLUDES}")
-    endif()
+    # if(TARGET ${MARS_CXXOPTS_LIBRARIES})
+    #     message("MARS_CXXOPTS_LIBRARIES: ${MARS_CXXOPTS_LIBRARIES}")
+    #     # get_target_property(MARS_CXXOPTS_INCLUDES ${MARS_CXXOPTS_LIBRARIES}
+    #                   # INTERFACE_INCLUDE_DIRECTORIES)
+    #     set(MARS_DEP_INCLUDES "${MARS_DEP_LIBRARIES};${MARS_CXXOPTS_LIBRARIES}")
+    # endif()
 
-    set(MARS_EXEC_DEP_LIBRARIES "${MARS_EXEC_DEP_LIBRARIES};${MARS_CXXOPTS_LIBRARIES}")
+    # set(MARS_EXEC_DEP_LIBRARIES "${MARS_EXEC_DEP_LIBRARIES};${MARS_CXXOPTS_LIBRARIES}")
 
 
 endif(MARS_ENABLE_CXXOPTS)

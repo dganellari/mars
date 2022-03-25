@@ -74,12 +74,6 @@ if(NOT DEFINED CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 14)
 endif()
 
-# target_compile_options( mars PUBLIC -Wall -Wextra #
-# $<$<CONFIG:RelWithDebInfo>:-fsanitize=address -fsanitize=leak #
-# -fsanitize=undefined -fsanitize-address-use-after-scope> #
-# $<$<CONFIG:RelWithDebInfo>:-fsanitize=memory #
-# -fsanitize-memory-track-origins> )
-
 target_compile_features(mars PUBLIC cxx_std_14)
 
 # ##############################################################################
@@ -118,9 +112,6 @@ endif()
 
 add_executable(mars_exec main.cpp)
 target_link_libraries(mars_exec mars)
-
-
-# target_include_directories(mars PUBLIC ${CMAKE_BINARY_DIR})
 
 message(STATUS "${MARS_INCLUDES}")
 include_directories(${CMAKE_BINARY_DIR})
@@ -175,3 +166,6 @@ endif()
 if(MARS_ENABLE_TESTING)
   add_dependencies(mars_complete mars_test)
 endif()
+
+# message("MARS_DEP_INCLUDES: ${MARS_DEP_INCLUDES}")
+# message("MARS_DEP_LIBRARIES: ${MARS_DEP_LIBRARIES}")
