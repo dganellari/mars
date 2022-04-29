@@ -167,5 +167,5 @@ if(MARS_ENABLE_TESTING)
   add_dependencies(mars_complete mars_test)
 endif()
 
-# message("MARS_DEP_INCLUDES: ${MARS_DEP_INCLUDES}")
-# message("MARS_DEP_LIBRARIES: ${MARS_DEP_LIBRARIES}")
+message("MARS_DEP_INCLUDES: ${MARS_DEP_INCLUDES}")
+message("MARS_DEP_LIBRARIES: ${MARS_DEP_LIBRARIES}")
