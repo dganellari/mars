@@ -4,8 +4,11 @@ find_project_files(CMAKE_CURRENT_SOURCE_DIR MARS_CORE_MODULES LOCAL_HEADERS
                    LOCAL_SOURCES)
 
 add_library(mars_core STATIC ${LOCAL_HEADERS} ${LOCAL_SOURCES})
+if(WITH_MPI)
+    target_link_libraries(mars_core PUBLIC MPI::MPI_CXX)
+endif()
 target_compile_features(mars_core PUBLIC cxx_std_14)
-target_link_libraries(mars_core mars_serial)
+target_link_libraries(mars_core PUBLIC mars_serial)
 
 target_include_directories(mars_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(mars_core PUBLIC ${CMAKE_BINARY_DIR})

@@ -129,14 +129,16 @@ if(TRY_WITH_KOKKOS)
             message(" Kokkos CUDA Enabled = ${Kokkos_ENABLE_CUDA}")
         endif()
 
+        if(MARS_USE_HIP)
+            message(" Kokkos HIP Enabled = ${Kokkos_ENABLE_HIP}")
+        endif()
+
         # message("   Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}") message("
         # Kokkos_C_COMPILER = ${Kokkos_C_COMPILER}")
 
         if(Kokkos_CXX_COMPILER)
             set(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
             set(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
-            # message( "Setting CMAKE_CXX_COMPILER to
-            # Kokkos_CXX_COMPILER=${Kokkos_CXX_COMPILER}" )
         endif()
 
         set(WITH_KOKKOS ON)
@@ -168,6 +170,10 @@ if(TRY_WITH_KOKKOS)
         if(MARS_USE_CUDA)
             message(FATAL_ERROR "Could not use CUDA without Kokkos!")
         endif()
+        if(MARS_USE_HIP)
+            message(FATAL_ERROR "Could not use HIP without Kokkos!")
+        endif()
+
     endif()
 
 endif()
@@ -209,8 +215,7 @@ target_compile_options(
     # $<$<CONFIG:RelWithDebInfo>:-fsanitize=memory
     # -fsanitize-memory-track-origins>
 )
-
-target_link_libraries(mars ${MPI_LIBRARIES})
+target_link_libraries(mars MPI::MPI_CXX)
 target_compile_features(mars PUBLIC cxx_std_14)
 target_include_directories(mars PUBLIC .)
 
@@ -225,6 +230,14 @@ if(Kokkos_FOUND)
             message(
                 FATAL_ERROR
                     "Enable Kokkos Cuda or unset MARS_USE_CUDA to continue with OpenMP!"
+            )
+    endif()
+
+
+    if(MARS_USE_HIP AND (NOT DEFINED Kokkos_ENABLE_HIP OR NOT ${Kokkos_ENABLE_HIP}))
+            message(
+                FATAL_ERROR
+                "Enable Kokkos HIP or unset MARS_USE_HIP to continue with OpenMP!"
             )
     endif()
 
