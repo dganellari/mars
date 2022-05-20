@@ -3,13 +3,16 @@
 
 #include "mars_config.hpp"
 
-#ifdef WITH_KOKKOS
+#ifdef WITH_KOKKOS_KERNELS
 #include "KokkosKernels_default_types.hpp"
 #include "KokkosSparse_CrsMatrix.hpp"
+#endif
+
+#ifdef WITH_KOKKOS
 #include "Kokkos_Layout.hpp"
 #include "Kokkos_UnorderedMap.hpp"
 #endif
-#include <err.h>
+#include "mars_err.hpp"
 #include "mars_globals.hpp"
 #include "mars_vector.hpp"
 

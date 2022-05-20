@@ -2,7 +2,7 @@
 #define GENERATION_MARS_DISTRIBUTED_BDM_HPP_
 
 #ifdef WITH_MPI
-#ifdef WITH_KOKKOS
+#ifdef WITH_KOKKOS_KERNELS
 #include "mars_distributed_dof_management.hpp"
 
 namespace mars {

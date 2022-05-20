@@ -1,6 +1,8 @@
 #ifndef MARS_VV_STOKES_
 #define MARS_VV_STOKES_
 
+#ifdef WITH_KOKKOS_KERNELS
+
 #include "mars.hpp"
 #include "mars_staggered_utils.hpp"
 #include "mars_stokes_common.hpp"
@@ -230,7 +232,7 @@ namespace mars {
         DofHandler dof_handler(&mesh);
         dof_handler.enumerate_dofs();
 
-        //curently only working for the cpu version for debugging purposes.
+        // curently only working for the cpu version for debugging purposes.
         /* dof_handler.print_dofs(proc_num); */
         /* dof_handler.print_mesh_sfc(proc_num); */
 
@@ -274,11 +276,10 @@ namespace mars {
         });*/
 
         assemble_volume(volume_stencil, sp, proc_num);
-        //Only use with Oriented stencil!!!
+        // Only use with Oriented stencil!!!
         assemble_oriented_face(face_stencil, sp, cvdm);
-        //otherwise use the following:
+        // otherwise use the following:
         /* assemble_face(face_stencil, sp, cvdm); */
-
 
         fv_dof_handler.boundary_dof_iterate(
             MARS_LAMBDA(const Integer local_dof) { sp.set_value(local_dof, local_dof, 1); });
@@ -321,4 +322,5 @@ namespace mars {
 
 }  // namespace mars
 
+#endif
 #endif

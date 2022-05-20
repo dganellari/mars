@@ -4,7 +4,7 @@
 #ifdef WITH_MPI
 #include "mars_context.hpp"
 #include "mars_execution_context.hpp"
-#ifdef WITH_KOKKOS
+#ifdef WITH_KOKKOS_KERNELS
 #include "mars_distributed_mesh_kokkos.hpp"
 #include "mars_distributed_mesh_management.hpp"
 #include "mars_utils_kokkos.hpp"
@@ -311,9 +311,9 @@ namespace mars {
             std::cout << "Exchange the ghost data..." << std::endl;
             data.exchange_ghost_data(context);
         } else {
-            errx(1,
-                 "Not allowed to call exchange ghost data before the ghost layer "
-                 "creation. Please call create_ghost_layer method first!");
+            errorx(1,
+                   "Not allowed to call exchange ghost data before the ghost layer "
+                   "creation. Please call create_ghost_layer method first!");
         }
     }
 

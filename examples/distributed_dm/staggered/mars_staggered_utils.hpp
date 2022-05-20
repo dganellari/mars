@@ -2,7 +2,7 @@
 #define MARS_SU_STOKES_
 
 #include "mars.hpp"
-
+#ifdef WITH_KOKKOS_KERNELS
 namespace mars {
 
     namespace stag {
@@ -351,4 +351,5 @@ namespace mars {
     }  // namespace stag
 }  // namespace mars
 
+#endif
 #endif

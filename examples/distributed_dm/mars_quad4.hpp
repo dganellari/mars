@@ -131,6 +131,8 @@ namespace mars {
         static T_ q_weights[6];
         static T_ q_points[6][PhysicalDim_];
 
+#ifdef WITH_KOKKOS_KERNELS
+
         class Quadrature final {
         public:
             static Quadrature make() {
@@ -152,6 +154,7 @@ namespace mars {
                 fill_view_vector(q_w, q_weights);
             }
         };
+#endif
 
     };  // namespace mars
 

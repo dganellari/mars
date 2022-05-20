@@ -1,13 +1,12 @@
 #ifndef GENERATION_MARS_MESH_DISTRIBUTED_GENERATION_HPP_
 #define GENERATION_MARS_MESH_DISTRIBUTED_GENERATION_HPP_
-
+#include "mars_err.hpp"
 #ifdef WITH_MPI
 #include "mars_context.hpp"
 #include "mars_execution_context.hpp"
-#ifdef WITH_KOKKOS
+#ifdef WITH_KOKKOS_KERNELS
 #include "KokkosKernels_Sorting.hpp"
 #include "mars_distributed_mesh_kokkos.hpp"
-#include "mars_utils_kokkos.hpp"
 namespace mars {
 
     template <Integer Dim, Integer ManifoldDim, Integer Type>
@@ -35,10 +34,7 @@ namespace mars {
     }
 
     template <typename V, typename M>
-    void build_gp_np(const V &first_sfc,
-                     const V &GpNp,
-                     const M &GpNp_host,
-                     const Integer last_sfc) {
+    void build_gp_np(const V &first_sfc, const V &GpNp, const M &GpNp_host, const Integer last_sfc) {
         using namespace Kokkos;
         auto size = first_sfc.extent(0);
         auto first_sfc_mirror = create_mirror_view(first_sfc);
@@ -215,7 +211,6 @@ namespace mars {
         const Integer yDim = mesh.get_YDim();
         const Integer zDim = mesh.get_ZDim();
 
-
         Integer number_of_elements = get_number_of_elements(mesh);
         ViewVectorType<unsigned_l> element_sfc("element_sfc", number_of_elements);
 
@@ -307,8 +302,9 @@ namespace mars {
                 break;
             }
             default: {
-                errx(1,
-                     "Unknown elemnt type for the mesh generation. Implemented only for Quad4 and Hex8 element types.");
+                errorx(
+                    1,
+                    "Unknown elemnt type for the mesh generation. Implemented only for Quad4 and Hex8 element types.");
             }
         }
         return number_of_elements;
@@ -340,7 +336,8 @@ namespace mars {
         assert(chunk_size > 0);
 
         if (chunk_size <= 0) {
-            errx(1, " Invalid number of mpi processes. Defined more mpi processes than mesh elements to be generated!");
+            errorx(1,
+                   " Invalid number of mpi processes. Defined more mpi processes than mesh elements to be generated!");
         }
 
         bool root = mars::rank(context) == 0;

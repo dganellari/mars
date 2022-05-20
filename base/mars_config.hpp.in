@@ -3,6 +3,8 @@
 
 #cmakedefine WITH_MPI
 #cmakedefine WITH_KOKKOS
+#cmakedefine WITH_KOKKOS_KERNELS
+#cmakedefine WITH_CXXOPTS
 #cmakedefine MARS_USE_CUDA
 #cmakedefine MARS_USE_CUDAUVM
 #cmakedefine MARS_NO_RDMA
