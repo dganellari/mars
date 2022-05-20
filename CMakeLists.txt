@@ -23,6 +23,8 @@ include(cmake/MarsDependencies.cmake)
 # Library
 # ##############################################################################
 
+
+
 list(APPEND MARS_HEADERS mars.hpp mars_env.hpp)
 list(APPEND MARS_SOURCES mars.cpp mars_env.cpp)
 
@@ -98,11 +100,6 @@ if(MARS_ENABLE_VTK)
   add_subdirectory(backend/vtk)
 endif()
 
-if(MARS_ENABLE_ADIOS2)
-  find_package(ADIOS2 REQUIRED)
-  add_subdirectory(backend/adios2)
-endif()
-
 
 # ##############################################################################
 # ##############################################################################
@@ -117,12 +114,54 @@ message(STATUS "${MARS_INCLUDES}")
 include_directories(${CMAKE_BINARY_DIR})
 
 install(
+  TARGETS mars mars_exec
+  EXPORT MarsTargets
+  RUNTIME DESTINATION bin
+  LIBRARY DESTINATION lib
+  ARCHIVE DESTINATION lib)
 
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/base/mars_config.hpp.in
+               ${CMAKE_BINARY_DIR}/mars_config.hpp)
 install(FILES ${MARS_HEADERS} DESTINATION include)
 install(FILES ${CMAKE_BINARY_DIR}/mars_config.hpp DESTINATION include)
 
+install(
+    EXPORT MarsTargets
+    FILE MarsTargets.cmake
+    NAMESPACE Mars::
+    DESTINATION lib/cmake)
+
+# generate the config file that is includes the exports
+configure_package_config_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/cmake/MarsConfig.cmake.in
+  "${CMAKE_CURRENT_BINARY_DIR}/MarsConfig.cmake"
+  INSTALL_DESTINATION "lib/cmake/")
+
+# generate the version file for the config file
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/MarsConfigVersion.cmake"
+  VERSION "${MARS_VERSION}"
+  COMPATIBILITY AnyNewerVersion)
+
+# install the configuration file
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/MarsConfig.cmake
+              ${CMAKE_CURRENT_BINARY_DIR}/MarsConfigVersion.cmake
+        DESTINATION lib/cmake/)
+
+include(cmake/PostInstall.cmake)
+
 # ##############################################################################
 
+# #################  Extra Targets, Complete ##################
+
+add_custom_target(mars_complete)
+
+if(MARS_ENABLE_BENCHMARK)
+  add_dependencies(mars_complete mars_bench)
+endif()
+
+if(MARS_ENABLE_TESTING)
+  add_dependencies(mars_complete mars_test)
 endif()
 
 message("MARS_DEP_INCLUDES: ${MARS_DEP_INCLUDES}")
