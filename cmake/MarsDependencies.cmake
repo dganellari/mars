@@ -200,7 +200,7 @@ if(MARS_ENABLE_KOKKOS)
   list(APPEND CMAKE_MESSAGE_INDENT "${MARS_CMAKE_INDENT}")
 
   # Kokkos Kernels
-  if(MARS_ENABLE_KOKKOS_KERNELS AND NOT WIN32)
+  if(MARS_ENABLE_KOKKOS_KERNELS)
     find_package(
       KokkosKernels
       HINTS
