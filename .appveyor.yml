@@ -31,7 +31,7 @@ install:
 - cmake -G "Visual Studio 16 2019" -A x64 -S . -B "build64" -DKokkos_ENABLE_TESTS=OFF -DCMAKE_INSTALL_PREFIX="C:\projects\installations\kokkos" -DCMAKE_CXX_FLAGS="/W0 /EHsc" -DKokkos_ENABLE_DEPRECATED_CODE_3=ON -DKokkos_ENABLE_DEPRECATION_WARNINGS=OFF
 - cmake --build build64 --config Release --target install
 
-Install KokkosKernels
+# Install KokkosKernels
 - cd C:\
 - mkdir kkg
 - cd kkg
