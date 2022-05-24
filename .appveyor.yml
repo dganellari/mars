@@ -38,7 +38,7 @@ install:
 - ps: Start-FileDownload 'https://github.com/kokkos/kokkos-kernels/archive/refs/tags/3.5.00.tar.gz'
 - 7z x 3.5.00.tar.gz -so | 7z x -si -ttar > nul
 - cd kokkos-kernels-3.5.00
-- cmake -B "build64" -DKokkosKernels_ENABLE_TESTS=OFF -DCMAKE_INSTALL_PREFIX="C:\projects\installations\kokkos-kernels"  -DCMAKE_CXX_FLAGS="/DWIN32 /D_WINDOWS /GR /EHsc /bigobj" -DKokkos_DIR=C:\projects\installations\kokkos\lib\cmake\Kokkos
+- cmake -G "Visual Studio 16 2019" -B "build64" -DKokkosKernels_ENABLE_TESTS=OFF -DCMAKE_INSTALL_PREFIX="C:\projects\installations\kokkos-kernels  -DCMAKE_CXX_FLAGS="/DWIN32 /D_WINDOWS /GR /EHsc /bigobj" -DKokkos_DIR=C:\projects\installations\kokkos\lib\cmake\Kokkos
 - cmake --build build64 --config Release --target install
 
 
