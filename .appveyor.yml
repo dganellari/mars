@@ -5,9 +5,8 @@ clone_folder: c:\projects\mars
 # https://www.appveyor.com/docs/build-environment/#build-worker-images
 image: Visual Studio 2019
 
-# cache:
-# - C:\Program Files\Microsoft 
-# - C:\Program Files (x86)
+cache:
+  - C:\projects\installations
 
 install:
 # Install MS-MPI
