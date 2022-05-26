@@ -5,8 +5,6 @@ clone_folder: c:\projects\mars
 # https://www.appveyor.com/docs/build-environment/#build-worker-images
 image: Visual Studio 2019
 
-cache:
-  - C:\projects\installations
 
 install:
 # Install MS-MPI
@@ -40,12 +38,16 @@ install:
 - cmake -B "build64" -DKokkosKernels_ENABLE_TESTS=OFF -DCMAKE_EXE_LINKER_FLAGS:STRING="/machine:x64" -DCMAKE_INSTALL_PREFIX="C:\projects\installations\kokkos-kernels"  -DCMAKE_CXX_FLAGS:STRING="/DWIN32 /D_WINDOWS /GR /EHsc /bigobj" -DKokkos_DIR=C:\projects\installations\kokkos\lib\cmake\Kokkos
 - cmake --build build64 --config Release --target install
 
+cache:
+  - C:\projects\installations
+
 
 # Mars
 before_build:
 - cd c:\projects\mars
 - cmake -Ball_builds -DMARS_ENABLE_TESTING=ON -DMARS_ENABLE_BENCHMARK=ON -DMARS_ALLOW_DISCOVER_TESTS=ON -DCMAKE_INSTALL_PREFIX=install  -DMPI_C_INCLUDE_PATH="C:\Program Files (x86)\Microsoft SDKs\MPI\Include" -DMPI_C_LIBRARIES="C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x64\msmpi.lib" -DMPI_CXX_LIBRARIES="C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x64\msmpi.lib" -DMPI_CXX_INCLUDE_PATH="C:\Program Files (x86)\Microsoft SDKs\MPI\Include -DKokkos_DIR="C:\projects\installations\kokkos\lib\cmake\Kokkos" -DKokkosKernels_DIR="C:\projects\installations\kokkos-kernels\lib\cmake\KokkosKernels" -DMARS_ENABLE_KOKKOS=ON -DMARS_ENABLE_KOKKOS_KERNELS=ON  #-DCMAKE_VERBOSE_MAKEFILE=ON
 # -DBUILD_SHARED_LIBS=ON
+
 
 build_script:
 - cmake --build all_builds --config Release -j 4
