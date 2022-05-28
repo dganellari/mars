@@ -201,6 +201,12 @@ if(MARS_ENABLE_KOKKOS)
 
   # Kokkos Kernels
   if(MARS_ENABLE_KOKKOS_KERNELS)
+
+
+    if(WIN32)
+    find_package(KokkosKernels HINTS C:/projects/installations/kokkos-kernels/lib/cmake/KokkosKernels
+                 ${KokkosKernels_DIR} REQUIRED)
+    else()
     find_package(
       KokkosKernels
       HINTS
@@ -211,6 +217,7 @@ if(MARS_ENABLE_KOKKOS)
       ${TRILINOS_DIR}/lib/cmake/KokkosKernels
       ${TRILINOS_DIR}/lib64/cmake/KokkosKernels
       REQUIRED)
+  endif()
 
     message(VERBOSE "Found Kokkos Kernels")
     set(WITH_KOKKOS_KERNELS ON)
