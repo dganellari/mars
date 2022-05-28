@@ -32,14 +32,8 @@ install:
 - cmake --build build64 --config Release --target install
 
 # # Install KokkosKernels
-- cd C:\
-- mkdir kkg
-- cd kkg
-- ps: Start-FileDownload 'https://github.com/kokkos/kokkos-kernels/archive/refs/tags/3.6.00.tar.gz'
-- 7z x 3.6.00.tar.gz -so | 7z x -si -ttar > nul
-- cd kokkos-kernels-3.6.00
-- cmake -B "build64" -DKokkosKernels_ENABLE_TESTS=OFF -DCMAKE_EXE_LINKER_FLAGS:STRING="/machine:x64" -DCMAKE_INSTALL_PREFIX="C:\projects\installations\kokkos-kernels"  -DCMAKE_CXX_FLAGS:STRING="/DWIN32 /D_WINDOWS /GR /EHsc /bigobj" -DKokkos_DIR=C:\projects\installations\kokkos\lib\cmake\Kokkos
-- cmake --build build64 --config Release --target install
+
+- IF NOT EXIST C:\projects\installations\kokkos-kernels cd C:\ && mkdir kkg && cd kkg && Start-FileDownload 'https://github.com/kokkos/kokkos-kernels/archive/refs/tags/3.6.00.tar.gz' && 7z x 3.6.00.tar.gz -so | 7z x -si -ttar > nul && cd kokkos-kernels-3.6.00 && cmake -B "build64" -DKokkosKernels_ENABLE_TESTS=OFF -DCMAKE_EXE_LINKER_FLAGS:STRING="/machine:x64" -DCMAKE_INSTALL_PREFIX="C:\projects\installations\kokkos-kernels"  -DCMAKE_CXX_FLAGS:STRING="/DWIN32 /D_WINDOWS /GR /EHsc /bigobj" -DKokkos_DIR=C:\projects\installations\kokkos\lib\cmake\Kokkos && cmake --build build64 --config Release --target install
 
 
 # # Mars
