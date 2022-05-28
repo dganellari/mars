@@ -51,6 +51,7 @@ install:
 # Install ADIOS2
 - cd C:\ && mkdir adios2 && cd adios2
 - ps: Start-FileDownload 'https://github.com/ornladios/ADIOS2/archive/refs/tags/v2.8.0.tar.gz'
+- ls
 - 7z x ADIOS2-2.8.0.tar.gz -so | 7z x -si -ttar > nul
 - cd ADIOS2-2.8.0
 - IF NOT EXIST C:\projects\installations\adios2 cmake -B "build64" -DCMAKE_EXE_LINKER_FLAGS:STRING="/machine:x64" -DCMAKE_INSTALL_PREFIX="C:\projects\installations\adios2" && cmake --build build64 --config Release --target install
