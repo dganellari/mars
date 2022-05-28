@@ -6,7 +6,7 @@ clone_folder: c:\projects\mars
 image: Visual Studio 2019
 
 cache:
-  - C:\projects\installations -> appveyor.yml
+  - C:\projects\installations\kokkos-kernels -> appveyor.yml
 
 
 install:
@@ -22,24 +22,24 @@ install:
 
 
 # # Install Kokkos
-# - cd C:\
-# - mkdir kg
-# - cd kg
-# - ps: Start-FileDownload 'https://github.com/kokkos/kokkos/archive/refs/tags/3.6.00.tar.gz'
-# - 7z x 3.6.00.tar.gz -so | 7z x -si -ttar > nul
-# - cd kokkos-3.6.00
-# - cmake -G "Visual Studio 16 2019" -A x64 -S . -B "build64" -DKokkos_ENABLE_TESTS=OFF -DCMAKE_INSTALL_PREFIX="C:\projects\installations\kokkos" -DCMAKE_CXX_FLAGS="/W0 /EHsc" -DKokkos_ENABLE_DEPRECATED_CODE_3=ON -DKokkos_ENABLE_DEPRECATION_WARNINGS=OFF
-# - cmake --build build64 --config Release --target install
+- cd C:\
+- mkdir kg
+- cd kg
+- ps: Start-FileDownload 'https://github.com/kokkos/kokkos/archive/refs/tags/3.6.00.tar.gz'
+- 7z x 3.6.00.tar.gz -so | 7z x -si -ttar > nul
+- cd kokkos-3.6.00
+- cmake -G "Visual Studio 16 2019" -A x64 -S . -B "build64" -DKokkos_ENABLE_TESTS=OFF -DCMAKE_INSTALL_PREFIX="C:\projects\installations\kokkos" -DCMAKE_CXX_FLAGS="/W0 /EHsc" -DKokkos_ENABLE_DEPRECATED_CODE_3=ON -DKokkos_ENABLE_DEPRECATION_WARNINGS=OFF
+- cmake --build build64 --config Release --target install
 
 # # Install KokkosKernels
-# - cd C:\
-# - mkdir kkg
-# - cd kkg
-# - ps: Start-FileDownload 'https://github.com/kokkos/kokkos-kernels/archive/refs/tags/3.6.00.tar.gz'
-# - 7z x 3.6.00.tar.gz -so | 7z x -si -ttar > nul
-# - cd kokkos-kernels-3.6.00
-# - cmake -B "build64" -DKokkosKernels_ENABLE_TESTS=OFF -DCMAKE_EXE_LINKER_FLAGS:STRING="/machine:x64" -DCMAKE_INSTALL_PREFIX="C:\projects\installations\kokkos-kernels"  -DCMAKE_CXX_FLAGS:STRING="/DWIN32 /D_WINDOWS /GR /EHsc /bigobj" -DKokkos_DIR=C:\projects\installations\kokkos\lib\cmake\Kokkos
-# - cmake --build build64 --config Release --target install
+- cd C:\
+- mkdir kkg
+- cd kkg
+- ps: Start-FileDownload 'https://github.com/kokkos/kokkos-kernels/archive/refs/tags/3.6.00.tar.gz'
+- 7z x 3.6.00.tar.gz -so | 7z x -si -ttar > nul
+- cd kokkos-kernels-3.6.00
+- cmake -B "build64" -DKokkosKernels_ENABLE_TESTS=OFF -DCMAKE_EXE_LINKER_FLAGS:STRING="/machine:x64" -DCMAKE_INSTALL_PREFIX="C:\projects\installations\kokkos-kernels"  -DCMAKE_CXX_FLAGS:STRING="/DWIN32 /D_WINDOWS /GR /EHsc /bigobj" -DKokkos_DIR=C:\projects\installations\kokkos\lib\cmake\Kokkos
+- cmake --build build64 --config Release --target install
 
 
 # # Mars
