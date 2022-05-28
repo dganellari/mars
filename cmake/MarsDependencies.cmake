@@ -204,7 +204,6 @@ if(MARS_ENABLE_KOKKOS)
 
 
     if(WIN32)
-    file (TO_CMAKE_PATH C:/projects/installations/kokkos-kernels/lib/cmake/KokkosKernels/KokkosKernelsConfig.cmake)
     find_package(KokkosKernels HINTS C:/projects/installations/kokkos-kernels/lib/cmake/KokkosKernels
                  ${KokkosKernels_DIR} $ENV{KokkosKernels_DIR} REQUIRED)
     else()
