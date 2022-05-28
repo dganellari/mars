@@ -112,8 +112,6 @@ endif()
 
 add_executable(mars_exec main.cpp)
 target_link_libraries(mars_exec mars)
-
-message(STATUS "${MARS_INCLUDES}")
 include_directories(${CMAKE_BINARY_DIR})
 
 install(
@@ -166,6 +164,3 @@ endif()
 if(MARS_ENABLE_TESTING)
   add_dependencies(mars_complete mars_test)
 endif()
-
-message("MARS_DEP_INCLUDES: ${MARS_DEP_INCLUDES}")
-message("MARS_DEP_LIBRARIES: ${MARS_DEP_LIBRARIES}")
