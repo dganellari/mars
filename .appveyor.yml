@@ -48,12 +48,12 @@ install:
 - IF NOT EXIST C:\projects\installations\kokkos-kernels cmake -B "build64" -DKokkosKernels_ENABLE_TESTS=OFF -DCMAKE_EXE_LINKER_FLAGS:STRING="/machine:x64" -DCMAKE_INSTALL_PREFIX="C:\projects\installations\kokkos-kernels"  -DCMAKE_CXX_FLAGS:STRING="/DWIN32 /D_WINDOWS /GR /EHsc /bigobj" -DKokkos_DIR="C:/projects/installations/kokkos/lib/cmake/Kokkos" && cmake --build build64 --config Release --target install
 
 
-# Install ADIOS2
+# Install ADIOS2, can be commented out.
 - cd C:\ && mkdir adios2 && cd adios2
 - ps: Start-FileDownload 'https://github.com/ornladios/ADIOS2/archive/refs/tags/v2.8.0.tar.gz'
 - 7z x v2.8.0.tar.gz -so | 7z x -si -ttar > nul
 - cd ADIOS2-2.8.0
-- IF NOT EXIST C:\projects\installations\adios2 cmake -B "build64" -DCMAKE_EXE_LINKER_FLAGS:STRING="/machine:x64" -DCMAKE_INSTALL_PREFIX="C:\projects\installations\adios2" && cmake --build build64 --config Release --target install
+- IF NOT EXIST C:\projects\installations\adios2 cmake -B "build64" -DCMAKE_EXE_LINKER_FLAGS:STRING="/machine:x64" -DCMAKE_INSTALL_PREFIX="C:\projects\installations\adios2" -DADIOS2_BUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF && cmake --build build64 --config Release --target install
 
 
 
